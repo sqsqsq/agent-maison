@@ -34,8 +34,8 @@
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | 源代码 | ✅ | Skill 3 产出的 ArkTS 代码（AI 自动读取） |
-| contracts.yaml | ✅ | 接口契约 Spec，路径 `specs/features/{module}/contracts.yaml` |
-| acceptance.yaml | ✅ | 验收标准 Spec，路径 `specs/features/{module}/acceptance.yaml`，AC 和 BD 是断言的直接来源 |
+| contracts.yaml | ✅ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml` |
+| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml`，AC 和 BD 是断言的直接来源 |
 | design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design.md`，了解业务流程和组件树 |
 | PRD.md | ✅ | 产品需求文档，路径 `doc/features/{module}/PRD.md`，了解业务流程图和异常场景 |
 | doc/architecture.md | ✅ | 模块架构全貌，了解模块间依赖关系 |
@@ -151,8 +151,8 @@ nodes:
 1. 读取功能模块的相关文件：
    - `doc/features/{module}/PRD.md` — 提取业务流程图和异常场景
    - `doc/features/{module}/design.md` — 提取服务层接口和组件树
-   - `specs/features/{module}/acceptance.yaml` — 提取验收标准 AC 和边界 BD
-   - `specs/features/{module}/contracts.yaml` — 提取接口签名和文件清单
+   - `doc/features/{module}/acceptance.yaml` — 提取验收标准 AC 和边界 BD
+   - `doc/features/{module}/contracts.yaml` — 提取接口签名和文件清单
    - `doc/architecture.md` — 了解模块间依赖
 2. 读取 contracts.yaml files 列表中的源代码文件
 3. 分析业务流程，规划需要生成的 DAG 列表：
@@ -372,8 +372,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {modu
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/ut-rules.yaml` — 阶段级通用规则
-- `specs/features/{module-name}/contracts.yaml` — 功能级接口契约
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准
+- `doc/features/{module-name}/contracts.yaml` — 功能级接口契约
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准
 
 **脚本检查覆盖项**：
 
@@ -422,8 +422,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {modu
   - 源代码（Skill 3 输出）
   - `doc/features/{module}/design.md`（Skill 2 输出）
   - `doc/features/{module}/PRD.md`（Skill 1 输出）
-  - `specs/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
-  - `specs/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/ut-rules.yaml`
 - DAG Schema 参考: [templates/dag-schema.md](templates/dag-schema.md)
 - UT 模板参考: [templates/ut-template.md](templates/ut-template.md)

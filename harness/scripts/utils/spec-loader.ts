@@ -4,7 +4,8 @@
 // 读取 YAML 规约文件，返回类型安全的对象。
 // 支持两类 Spec：
 //   1. 阶段级规约 (framework/specs/phase-rules/*.yaml)  ← 框架通用
-//   2. 功能级规约 (<feature_specs_dir>/*/{contracts,acceptance}.yaml) ← 实例工程
+//   2. 功能级规约 (<features_dir>/<feature>/{contracts,acceptance}.yaml) ← 实例工程
+//      阶段 9：contracts/acceptance 与 PRD/design 扁平同目录，无 specs/ 子层。
 // 阶段 3：路径默认值不再硬编码，全部从 `framework/harness/config.ts` 读取。
 //        调用方可通过构造参数显式覆盖（测试/特殊布局）。
 // ============================================================================
@@ -19,7 +20,7 @@ import {
   AcceptanceSpec,
   FeatureSpec,
 } from './types';
-import { resolvePaths, featureDocPath } from '../../config';
+import { resolvePaths, featureFilePath } from '../../config';
 
 const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   prd: 'prd-rules.yaml',
@@ -41,7 +42,7 @@ export class SpecLoader {
     //        调用方可以用构造参数覆盖（单测/自定义 layout）。
     const resolved = resolvePaths(projectRoot);
     this.phaseRulesDir = phaseRulesDir ?? resolved.phaseRulesDir;
-    this.featuresDir = featuresDir ?? resolved.featureSpecsDir;
+    this.featuresDir = featuresDir ?? resolved.featuresDir;
   }
 
   // --------------------------------------------------------------------------
@@ -109,7 +110,7 @@ export class SpecLoader {
    * @param docName 文档名 (如 'PRD.md', 'design.md')
    */
   loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
-    const docPath = featureDocPath(projectRoot, feature, docName);
+    const docPath = featureFilePath(projectRoot, feature, docName);
     if (!fs.existsSync(docPath)) return null;
     return fs.readFileSync(docPath, 'utf-8');
   }

@@ -25,12 +25,12 @@
 |----------|---------|---------|
 | 五层架构合规性 | `doc/architecture.md` | BLOCKER |
 | 模块内四层分层 | `framework/specs/phase-rules/coding-rules.yaml` | BLOCKER |
-| 接口一致性 | `specs/features/{module}/contracts.yaml` | BLOCKER |
-| 文件完整性 | `specs/features/{module}/contracts.yaml` | BLOCKER |
+| 接口一致性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
+| 文件完整性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
 | 资源引用完整性 | `framework/specs/phase-rules/coding-rules.yaml` | BLOCKER |
 | 命名规范 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 硬编码字符串 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
-| 异常处理 | `specs/features/{module}/acceptance.yaml` | MAJOR |
+| 异常处理 | `doc/features/{module}/acceptance.yaml` | MAJOR |
 | 业务逻辑正确性 | `doc/features/{module}/design.md` | MAJOR |
 | 数据所有权 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 模拟数据隔离 | `framework/specs/phase-rules/coding-rules.yaml` | MINOR |
@@ -41,8 +41,8 @@
 |--------|------|------|
 | 功能模块名 | ✅ | 待审查的功能模块名（如 `home-page`），用于定位文件 |
 | design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design.md` |
-| contracts.yaml | ✅ | 接口契约 Spec，路径 `specs/features/{module}/contracts.yaml` |
-| acceptance.yaml | ✅ | 验收标准 Spec，路径 `specs/features/{module}/acceptance.yaml` |
+| contracts.yaml | ✅ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml` |
+| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml` |
 | coding-rules.yaml | ✅ | 编码阶段规约，路径 `framework/specs/phase-rules/coding-rules.yaml` |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源 |
 | 源代码 | ✅ | AI 自动读取 contracts.yaml files 列表中的所有文件 |
@@ -60,8 +60,8 @@
    - `doc/features/{module}/PRD.md` — 需求基准（若存在）
    - `doc/architecture.md` — 架构全貌
    - `framework/specs/phase-rules/coding-rules.yaml` — 编码阶段规约
-   - `specs/features/{module}/contracts.yaml` — 接口契约
-   - `specs/features/{module}/acceptance.yaml` — 验收标准
+   - `doc/features/{module}/contracts.yaml` — 接口契约
+   - `doc/features/{module}/acceptance.yaml` — 验收标准
 3. 根据 `contracts.yaml > files` 列表，读取所有源代码文件
 4. 向用户展示审查范围摘要：
 
@@ -265,8 +265,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 - 上游输入:
   - `doc/features/{module}/design.md`（Skill 2 输出）
   - 源代码（Skill 3 输出）
-  - `specs/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
-  - `specs/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/review-rules.yaml`
 - 编码规约参考: `framework/specs/phase-rules/coding-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-review.ts`

@@ -34,8 +34,8 @@ import { parseScope } from './utils/scope-parser';
 import {
   loadArchitectureDsl,
   getOuterLayerIds,
-  featureDocsDirPath,
-  relFeatureDocsDir,
+  featuresDirPath,
+  relFeaturesDir,
   relCatalog,
 } from '../config';
 
@@ -690,8 +690,8 @@ function checkFeatureScopeIntegrity(
   ctx: CheckContext,
   catalog: ModuleCatalog,
 ): CheckResult[] {
-  const featuresDir = featureDocsDirPath(ctx.projectRoot);
-  const featuresRel = relFeatureDocsDir(ctx.projectRoot);
+  const featuresDir = featuresDirPath(ctx.projectRoot);
+  const featuresRel = relFeaturesDir(ctx.projectRoot);
   if (!fs.existsSync(featuresDir)) {
     return [{
       id: 'feature_scope_integrity', category: 'traceability',

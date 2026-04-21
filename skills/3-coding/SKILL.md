@@ -118,8 +118,8 @@
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | design.md | ✅ | 对应功能的技术设计文档（Skill 2 输出），路径通常为 `doc/features/{module}/design.md` |
-| contracts.yaml | ✅ | 接口契约 Spec（Skill 2 产出），路径为 `specs/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
-| acceptance.yaml | ✅ | 验收标准 Spec（Skill 1 产出），路径为 `specs/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
+| contracts.yaml | ✅ | 接口契约 Spec（Skill 2 产出），路径为 `doc/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
+| acceptance.yaml | ✅ | 验收标准 Spec（Skill 1 产出），路径为 `doc/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源，了解五层架构全貌和已有模块状态 |
 | PRD.md | ❌ | 可选，用于交叉验证功能完整性 |
 | 当前工程代码 | ✅ | AI 自动读取，用于理解现有模块结构和避免冲突 |
@@ -134,8 +134,8 @@
 
 1. 读取指定的 `design.md` 文件
 2. 读取对应的功能级 Spec 文件（编码时的**强契约基准**）：
-   - `specs/features/{module}/contracts.yaml` — 接口签名、数据模型、文件清单、组件 Props 的精确契约
-   - `specs/features/{module}/acceptance.yaml` — 验收标准和边界用例，用于确保代码覆盖所有业务场景
+   - `doc/features/{module}/contracts.yaml` — 接口签名、数据模型、文件清单、组件 Props 的精确契约
+   - `doc/features/{module}/acceptance.yaml` — 验收标准和边界用例，用于确保代码覆盖所有业务场景
 3. 提取以下关键信息（**以 contracts.yaml 为权威来源**，design.md 为补充上下文）：
    - **涉及哪些 Module**（HAP/HAR）及其依赖关系 ← `contracts.yaml > modules` + `module_dependencies`
    - **每个 Module 内涉及哪些层和文件** ← `contracts.yaml > files`
@@ -323,8 +323,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/coding-rules.yaml` — 阶段级通用规则
-- `specs/features/{module-name}/contracts.yaml` — 功能级接口契约
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准
+- `doc/features/{module-name}/contracts.yaml` — 功能级接口契约
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准
 
 **脚本检查覆盖项**：
 
@@ -397,8 +397,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 - 上游输入:
   - `doc/features/{module}/design.md`（Skill 2 输出）
-  - `specs/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
-  - `specs/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/coding-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-coding.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-coding.md`

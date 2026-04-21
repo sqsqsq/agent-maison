@@ -29,7 +29,7 @@ import {
   tableHasColumns,
   getColumnValues,
 } from './utils/markdown-parser';
-import { relFeatureDoc } from '../config';
+import { relFeatureFile } from '../config';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -671,7 +671,7 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const report = loadReviewReport(ctx);
     if (!report) {
-      const reportRel = relFeatureDoc(ctx.projectRoot, ctx.feature, 'review-report.md');
+      const reportRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'review-report.md');
       return [{
         id: 'review_report_exists', category: 'structure',
         description: `${reportRel} 不存在`,

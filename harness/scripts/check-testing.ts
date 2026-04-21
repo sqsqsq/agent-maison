@@ -1,7 +1,7 @@
 // ============================================================================
 // Testing 阶段脚本 Harness — check-testing.ts
 // ============================================================================
-// 读取 framework/specs/phase-rules/testing-rules.yaml + specs/features/{feature}/
+// 读取 framework/specs/phase-rules/testing-rules.yaml + doc/features/{feature}/
 // 执行确定性的静态验证。
 //
 // 检查项（与 testing-rules.yaml 对应）：
@@ -23,7 +23,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { featureDocPath, relFeatureDoc } from '../config';
+import { featureFilePath, relFeatureFile } from '../config';
 import {
   extractHeadings,
   getSectionContent,
@@ -53,7 +53,7 @@ function truncateList(items: string[], max: number): string {
 }
 
 function loadDoc(ctx: CheckContext, docName: string): string | null {
-  const docPath = featureDocPath(ctx.projectRoot, ctx.feature, docName);
+  const docPath = featureFilePath(ctx.projectRoot, ctx.feature, docName);
   if (!fs.existsSync(docPath)) return null;
   return fs.readFileSync(docPath, 'utf-8');
 }
@@ -1183,7 +1183,7 @@ const checker: PhaseChecker = {
         description: '测试计划和测试报告都不存在',
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: `未找到 ${relFeatureDoc(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureDoc(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
+        details: `未找到 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
         suggestion: '请先运行 Skill 6 生成测试计划。',
       }];
     }

@@ -8,11 +8,16 @@
 //      check-*.ts 在运行时决定「什么是合法的 layer / 哪些依赖合法 / 模块内
 //      四层的方向」。原本硬编码在 check-catalog.ts / check-coding.ts /
 //      ast-analyzer.ts 里的「五层 + 模块内四层」从这里统一产出。
-//   2. 可覆盖路径：feature_docs_dir / feature_specs_dir / module_catalog /
-//      glossary / glossary_seed / architecture_md。以前散落在 harness-runner.ts
-//      与各 check-*.ts 里的硬编码前缀（"doc/features"、"doc/module-catalog.yaml"
-//      等）全部收敛到这里；调用方统一用 `resolvePaths(projectRoot)` 或下方
-//      `catalogPath()` / `featureDocPath()` 等便捷函数，不再自行拼 `path.join`。
+//   2. 可覆盖路径：features_dir / module_catalog / glossary / glossary_seed /
+//      architecture_md。以前散落在 harness-runner.ts 与各 check-*.ts 里的硬
+//      编码前缀（"doc/features"、"doc/module-catalog.yaml" 等）全部收敛到
+//      这里；调用方统一用 `resolvePaths(projectRoot)` 或下方 `catalogPath()` /
+//      `featureFilePath()` 等便捷函数，不再自行拼 `path.join`。
+//
+// 阶段 9（合并 specs/features → doc/features）：老字段 `feature_docs_dir` /
+//   `feature_specs_dir` 已收敛为单字段 `features_dir`（默认 "doc/features"），
+//   不再支持兼容 alias；`framework.config.json` 里若仍写老字段会在加载时抛
+//   错提示迁移。
 //
 // 元规则（**framework 必守、不可被 DSL 关掉**）：
 //
@@ -74,10 +79,16 @@ export interface ArchitectureDsl {
 }
 
 export interface FrameworkPaths {
-  /** 功能级文档目录（PRD.md / design.md / review-report.md 等） */
-  feature_docs_dir: string;
-  /** 功能级规约目录（contracts.yaml / acceptance.yaml） */
-  feature_specs_dir: string;
+  /**
+   * 功能级需求目录：每个 feature 一个子目录，扁平归档所有产物
+   * （PRD.md / design.md / contracts.yaml / contracts.planned.yaml /
+   *   acceptance.yaml / boundaries.yaml / review-report.md /
+   *   test-plan.md / test-report.md 等）。
+   *
+   * 阶段 9 前曾存在 `feature_docs_dir` + `feature_specs_dir` 两个字段；
+   * 现已合并为本字段，老字段会在加载时被检测并抛错。
+   */
+  features_dir: string;
   /** 模块画像 SSOT */
   module_catalog: string;
   /** 术语表 SSOT */
@@ -153,13 +164,15 @@ export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
 };
 
 export const DEFAULT_PATHS: FrameworkPaths = {
-  feature_docs_dir: 'doc/features',
-  feature_specs_dir: 'specs/features',
+  features_dir: 'doc/features',
   module_catalog: 'doc/module-catalog.yaml',
   glossary: 'doc/glossary.yaml',
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
 };
+
+/** 阶段 9 被合并废弃的老路径字段，检测到即拒绝加载。 */
+const DEPRECATED_PATH_FIELDS = ['feature_docs_dir', 'feature_specs_dir'] as const;
 
 // --------------------------------------------------------------------------
 // 加载
@@ -195,6 +208,7 @@ export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
         `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
       );
     }
+    assertNoDeprecatedPaths(parsed);
     config = normalizeConfig(parsed as Partial<FrameworkConfig>);
   } else {
     config = buildDefaultConfig();
@@ -229,6 +243,26 @@ function buildDefaultConfig(): FrameworkConfig {
     architecture: cloneDsl(LEGACY_DEFAULT_DSL),
     paths: { ...DEFAULT_PATHS },
   };
+}
+
+/**
+ * 阶段 9：检测 `framework.config.json` 是否仍含被合并掉的老路径字段。
+ * 本仓是目前唯一实例工程，硬切策略——读到老字段直接抛错，引导用户迁移。
+ */
+function assertNoDeprecatedPaths(parsed: unknown): void {
+  if (!parsed || typeof parsed !== 'object') return;
+  const paths = (parsed as { paths?: unknown }).paths;
+  if (!paths || typeof paths !== 'object') return;
+  const record = paths as Record<string, unknown>;
+  const hit = DEPRECATED_PATH_FIELDS.filter((k) => record[k] !== undefined);
+  if (hit.length > 0) {
+    throw new Error(
+      `[framework/config.ts] ${CONFIG_FILENAME} 含有已废弃字段：${hit.join(', ')}。` +
+        '\n阶段 9 起已合并为单字段 `features_dir`（默认 "doc/features"）。' +
+        '\n请把 `paths.feature_docs_dir` 与 `paths.feature_specs_dir` 删除，改为：' +
+        '\n  "paths": { "features_dir": "doc/features", ... }',
+    );
+  }
 }
 
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
@@ -534,10 +568,11 @@ export interface ResolvedPaths {
   reportsDir: string;
   /** framework/harness/prompts 的绝对路径 */
   promptsDir: string;
-  /** 实例工程的 feature 文档目录（如 <root>/doc/features）*/
-  featureDocsDir: string;
-  /** 实例工程的 feature 契约目录（如 <root>/specs/features）*/
-  featureSpecsDir: string;
+  /**
+   * 实例工程的功能级需求目录（如 <root>/doc/features）：每个 feature 子目录
+   * 同时容纳文档（PRD/design/report）与契约（contracts/acceptance）。
+   */
+  featuresDir: string;
   /** 模块画像 SSOT 绝对路径 */
   moduleCatalogYaml: string;
   /** 术语表 SSOT 绝对路径 */
@@ -563,8 +598,7 @@ export function resolvePaths(projectRoot: string, frameworkRoot?: string): Resol
     phaseRulesDir: path.join(fRoot, 'specs', 'phase-rules'),
     reportsDir: path.join(fRoot, 'harness', 'reports'),
     promptsDir: path.join(fRoot, 'harness', 'prompts'),
-    featureDocsDir: path.resolve(projectRoot, cfg.paths.feature_docs_dir),
-    featureSpecsDir: path.resolve(projectRoot, cfg.paths.feature_specs_dir),
+    featuresDir: path.resolve(projectRoot, cfg.paths.features_dir),
     moduleCatalogYaml: path.resolve(projectRoot, cfg.paths.module_catalog),
     glossaryYaml: path.resolve(projectRoot, cfg.paths.glossary),
     glossarySeedTxt: path.resolve(projectRoot, cfg.paths.glossary_seed),
@@ -590,24 +624,23 @@ export function architectureMdPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.architecture_md);
 }
 
-export function featureDocsDirPath(projectRoot: string): string {
-  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.feature_docs_dir);
+/** 功能级需求目录的绝对路径（<root>/doc/features） */
+export function featuresDirPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir);
 }
 
-export function featureSpecsDirPath(projectRoot: string): string {
-  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.feature_specs_dir);
+/** 某 feature 的完整目录（<features_dir>/<feature>） */
+export function featureDir(projectRoot: string, feature: string): string {
+  return path.join(featuresDirPath(projectRoot), feature);
 }
 
-export function featureDocPath(projectRoot: string, feature: string, docName: string): string {
-  return path.join(featureDocsDirPath(projectRoot), feature, docName);
-}
-
-export function featureSpecDir(projectRoot: string, feature: string): string {
-  return path.join(featureSpecsDirPath(projectRoot), feature);
-}
-
-export function featureSpecPath(projectRoot: string, feature: string, specFile: string): string {
-  return path.join(featureSpecDir(projectRoot, feature), specFile);
+/**
+ * feature 目录下的某个文件的绝对路径，如 PRD.md / design.md / contracts.yaml /
+ * acceptance.yaml / review-report.md / test-plan.md / test-report.md 等。
+ * 阶段 9 合并前的 `featureDocPath` 与 `featureSpecPath` 现均由本函数承担。
+ */
+export function featureFilePath(projectRoot: string, feature: string, fileName: string): string {
+  return path.join(featureDir(projectRoot, feature), fileName);
 }
 
 // ---- 单条相对路径（用于 affected_files / 错误消息展示） ------------------
@@ -632,20 +665,17 @@ export function relArchitectureMd(projectRoot: string): string {
   return toPosix(loadFrameworkConfig(projectRoot).paths.architecture_md);
 }
 
-export function relFeatureDocsDir(projectRoot: string): string {
-  return toPosix(loadFrameworkConfig(projectRoot).paths.feature_docs_dir);
+export function relFeaturesDir(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.features_dir);
 }
 
-export function relFeatureSpecsDir(projectRoot: string): string {
-  return toPosix(loadFrameworkConfig(projectRoot).paths.feature_specs_dir);
-}
-
-export function relFeatureDoc(projectRoot: string, feature: string, docName: string): string {
-  return `${relFeatureDocsDir(projectRoot)}/${feature}/${docName}`;
-}
-
-export function relFeatureSpec(projectRoot: string, feature: string, specName: string): string {
-  return `${relFeatureSpecsDir(projectRoot)}/${feature}/${specName}`;
+/**
+ * feature 目录下某文件的相对路径字符串（POSIX 正斜杠，用于错误消息 /
+ * trace 的 affected_files 展示）。阶段 9 前的 `relFeatureDoc` 与
+ * `relFeatureSpec` 现均由本函数承担。
+ */
+export function relFeatureFile(projectRoot: string, feature: string, fileName: string): string {
+  return `${relFeaturesDir(projectRoot)}/${feature}/${fileName}`;
 }
 
 // --------------------------------------------------------------------------

@@ -42,7 +42,7 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import {
-  relFeatureDoc,
+  relFeatureFile,
   relGlossary,
   relCatalog,
 } from '../config';
@@ -641,7 +641,7 @@ function checkTerminologyModulesWithinScope(ctx: CheckContext, prd: string): Che
       '两种合法处理：\n' +
       '(1) 把这些模块补进 in_scope_modules（本需求确实要改）或 out_of_scope_modules（仅消歧用、不改）；\n' +
       '(2) 若该术语本来就不在本需求语境，从术语映射表里删除该行。',
-    affected_files: [relFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md')],
+    affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md')],
   }];
 }
 
@@ -735,7 +735,7 @@ function checkGlossaryTermsUsedInBody(ctx: CheckContext, prd: string): CheckResu
       '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 Skill 2 / 3 阶段因术语歧义改错模块；\n' +
       '若只是正文里偶然带过的非业务用词 → 可直接忽略本 WARN（不会升级为 BLOCKER）。',
     affected_files: [
-      relFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md'),
+      relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md'),
       relGlossary(ctx.projectRoot),
     ],
   }];
@@ -839,7 +839,7 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const prd = loadPrd(ctx);
     if (!prd) {
-      const prdRel = relFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md');
+      const prdRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md');
       return [{
         id: 'prd_file_exists', category: 'structure',
         description: `${prdRel} 不存在`,

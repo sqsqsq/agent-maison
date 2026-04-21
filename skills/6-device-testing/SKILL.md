@@ -34,8 +34,8 @@
 | 功能模块名 | ✅ | 待测试的功能模块名（如 `home-page`），用于定位文件 |
 | PRD.md | ✅ | 产品需求文档，路径 `doc/features/{module}/PRD.md` |
 | design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design.md` |
-| acceptance.yaml | ✅ | 验收标准 Spec，路径 `specs/features/{module}/acceptance.yaml`，测试用例的直接来源 |
-| contracts.yaml | ⬜ | 接口契约 Spec，路径 `specs/features/{module}/contracts.yaml`，用于理解模块边界 |
+| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml`，测试用例的直接来源 |
+| contracts.yaml | ⬜ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml`，用于理解模块边界 |
 | doc/architecture.md | ⬜ | 项目模块架构，了解测试涉及的模块范围 |
 | review-report.md | ⬜ | 可选，确认代码已通过 Review 无 BLOCKER |
 
@@ -49,8 +49,8 @@
 2. 读取以下文件：
    - `doc/features/{module}/PRD.md` — 需求基准（业务流程、异常场景）
    - `doc/features/{module}/design.md` — 技术设计（页面组件树、导航设计）
-   - `specs/features/{module}/acceptance.yaml` — 验收标准（AC 和 BD 是用例的直接来源）
-   - `specs/features/{module}/contracts.yaml` — 接口契约（若存在）
+   - `doc/features/{module}/acceptance.yaml` — 验收标准（AC 和 BD 是用例的直接来源）
+   - `doc/features/{module}/contracts.yaml` — 接口契约（若存在）
    - `doc/architecture.md` — 架构全貌（若存在）
 3. 向用户展示测试范围摘要：
 
@@ -196,7 +196,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/testing-rules.yaml` — 阶段级通用规则
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准（追溯检查）
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准（追溯检查）
 
 **脚本检查覆盖项**：
 
@@ -269,8 +269,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
   - `doc/features/{module}/design.md`（Skill 2 输出）
   - 源代码（Skill 3 输出，可选参考）
   - UT 代码 + DAG（Skill 5 输出，可选参考）
-  - `specs/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
-  - `specs/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
 - 阶段级规约: `framework/specs/phase-rules/testing-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-testing.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-testing.md`

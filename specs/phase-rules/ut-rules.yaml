@@ -200,7 +200,7 @@ traceability_checks:
       for_each_dag_file:
         assertion_nodes:
           expect_reference_to_any_of:
-            - "specs/features/{module}/acceptance.yaml"
+            - "doc/features/{module}/acceptance.yaml"
             - "PRD.md > 验收标准.AC编号"
 
   acceptance_coverage:
@@ -233,5 +233,5 @@ traceability_checks:
       PRD 和 Spec 中定义的边界场景（boundaries）应有对应的 UT 用例
     severity: MAJOR
     ai_prompt_hint: >
-      对照 PRD 异常场景表和 specs/features/{module}/boundaries.yaml，
+      对照 PRD 异常场景表和 doc/features/{module}/boundaries.yaml，
       检查是否有对应的 UT 测试用例

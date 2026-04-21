@@ -18,7 +18,7 @@
 
 ### 文件范围
 
-> 基于 `specs/features/{module-name}/contracts.yaml > files` 列表，共 N 个源代码文件。
+> 基于 `doc/features/{module-name}/contracts.yaml > files` 列表，共 N 个源代码文件。
 
 <详细文件列表或代码块>
 

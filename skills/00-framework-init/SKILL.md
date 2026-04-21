@@ -126,8 +126,7 @@
 | `{{ARCHITECTURE_MD_PATH}}` | 来自 `paths.architecture_md` |
 | `{{MODULE_CATALOG_PATH}}` | `paths.module_catalog` |
 | `{{GLOSSARY_PATH}}` | `paths.glossary` |
-| `{{FEATURE_DOCS_DIR}}` | `paths.feature_docs_dir` |
-| `{{FEATURE_SPECS_DIR}}` | `paths.feature_specs_dir` |
+| `{{FEATURES_DIR}}` | `paths.features_dir`（阶段 9 合并前为 `feature_docs_dir` + `feature_specs_dir` 两字段） |
 
 3. 写入路径 = 所选 adapter 的 `agent_entry_file.target_path`（实例根相对路径）。
 
@@ -179,7 +178,7 @@ terms: []
 
 ### 5.4 功能目录
 
-创建 `paths.feature_docs_dir` 与 `paths.feature_specs_dir`（默认 `doc/features`、`specs/features`）。若仓库需要被 git 跟踪空目录，可在各自目录下放一个 `.gitkeep`（**不要**编造示例 feature 内容）。
+创建 `paths.features_dir`（默认 `doc/features`）。每个 feature 一个子目录，扁平归档 PRD.md / design.md / contracts.yaml / acceptance.yaml / boundaries.yaml / review-report.md / test-plan.md / test-report.md 等全部产物。若仓库需要被 git 跟踪空目录，可在该目录下放一个 `.gitkeep`（**不要**编造示例 feature 内容）。
 
 ---
 

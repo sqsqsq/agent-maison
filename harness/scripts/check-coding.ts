@@ -1,7 +1,7 @@
 // ============================================================================
 // Coding 阶段脚本 Harness — check-coding.ts
 // ============================================================================
-// 读取 framework/specs/phase-rules/coding-rules.yaml + specs/features/{feature}/
+// 读取 framework/specs/phase-rules/coding-rules.yaml + doc/features/{feature}/
 // 执行确定性的静态验证。
 //
 // 检查项（与 coding-rules.yaml 对应）：
@@ -29,9 +29,8 @@ import { parseScope, describeScopeError } from './utils/scope-parser';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
-  featureDocPath,
-  relFeatureDoc,
-  relFeatureSpec,
+  featureFilePath,
+  relFeatureFile,
 } from '../config';
 
 // --------------------------------------------------------------------------
@@ -629,7 +628,7 @@ function gitDiffFiles(projectRoot: string, baseRef: string, mode: 'committed' | 
 }
 
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
-  const designPath = featureDocPath(ctx.projectRoot, ctx.feature, 'design.md');
+  const designPath = featureFilePath(ctx.projectRoot, ctx.feature, 'design.md');
   if (!fs.existsSync(designPath)) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
@@ -648,7 +647,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER', status: 'FAIL',
       details: `无法从 design.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
       suggestion: '请先通过 check-design.ts 的 scope_declaration 检查。',
-      affected_files: [relFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md')],
+      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md')],
     }];
   }
 
@@ -684,7 +683,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER', status: 'FAIL',
       details: `design.in_scope_modules 中以下模块在 contracts.yaml 中无 package_path：${missingPaths.join('、')}`,
       suggestion: '请在 contracts.yaml 的 modules 列表中补充这些模块的 package_path。',
-      affected_files: [relFeatureSpec(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
+      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
     }];
   }
 

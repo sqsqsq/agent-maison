@@ -46,8 +46,7 @@
   },
 
   "paths": {
-    "feature_docs_dir": "doc/features",
-    "feature_specs_dir": "specs/features",
+    "features_dir": "doc/features",
     "module_catalog": "doc/module-catalog.yaml",
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",

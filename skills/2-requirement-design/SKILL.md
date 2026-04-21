@@ -388,11 +388,11 @@ expansions_with_user_approval:
 
 ### Step 11: 提取功能级 Spec
 
-设计文档归档后，**必须**同步提取功能级接口契约到 `specs/features/{module-name}/` 目录。Spec 是连接生成层和验证层的枢纽，也是 Skill 3（编码）的强契约基准。
+设计文档归档后，**必须**同步提取功能级接口契约到 `doc/features/{module-name}/` 目录。Spec 是连接生成层和验证层的枢纽，也是 Skill 3（编码）的强契约基准。
 
 #### 11.1 提取接口契约 (`contracts.yaml`)
 
-从 design.md 中提取结构化接口契约，写入 `specs/features/{module-name}/contracts.yaml`：
+从 design.md 中提取结构化接口契约，写入 `doc/features/{module-name}/contracts.yaml`：
 
 **`modules` 章节**（从设计文档「模块架构图」和模块变更摘要提取）：
 
@@ -451,17 +451,17 @@ expansions_with_user_approval:
 
 #### 11.2 补充边界用例 Spec（若 Skill 1 未产出）
 
-若 `specs/features/{module-name}/acceptance.yaml` 已由 Skill 1 产出，检查并补充设计阶段新增的边界场景（如从技术角度发现的新边界用例）。
+若 `doc/features/{module-name}/acceptance.yaml` 已由 Skill 1 产出，检查并补充设计阶段新增的边界场景（如从技术角度发现的新边界用例）。
 
 若 Skill 1 未产出 `acceptance.yaml`（历史原因），则从 PRD.md 中提取并创建。
 
 #### 11.3 输出文件与参考
 
 ```
-specs/features/{module-name}/contracts.yaml
+doc/features/{module-name}/contracts.yaml
 ```
 
-参考已有示例：`specs/features/home-page/contracts.yaml`
+参考已有示例：`doc/features/home-page/contracts.yaml`
 
 > **为什么这一步如此重要**：`contracts.yaml` 是 Skill 3 编码时的强契约——文件路径、接口签名、组件 Props 必须与 contracts.yaml 一致。Harness 也依赖它做接口一致性验证。
 
@@ -496,8 +496,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase design --feature {
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/design-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、映射覆盖率等）
-- `specs/features/{module-name}/contracts.yaml` — 功能级接口契约（文件清单、接口签名）
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准（PRD 追溯覆盖率）
+- `doc/features/{module-name}/contracts.yaml` — 功能级接口契约（文件清单、接口签名）
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准（PRD 追溯覆盖率）
 
 **若报告中存在 BLOCKER 级问题**：必须修正设计文档并重新提取 Spec（回到 Step 9），直到零 BLOCKER。
 
@@ -536,7 +536,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase design --feature {
 | 产出 | 路径 |
 |------|------|
 | 设计文档 | `doc/features/{module-name}/design.md` |
-| 接口契约 Spec | `specs/features/{module-name}/contracts.yaml` |
+| 接口契约 Spec | `doc/features/{module-name}/contracts.yaml` |
 
 ### 文档结构
 
@@ -588,7 +588,7 @@ framework/skills/2-requirement-design/templates/design-template.md
 - 数据模型模板: [templates/data-model.md](templates/data-model.md)
 - 示例设计文档: [examples/example-design.md](examples/example-design.md)
 - 阶段级规约: `framework/specs/phase-rules/design-rules.yaml`
-- 功能级 Spec 示例: `specs/features/home-page/contracts.yaml`
+- 功能级 Spec 示例: `doc/features/home-page/contracts.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-design.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-design.md`
 
@@ -596,7 +596,7 @@ framework/skills/2-requirement-design/templates/design-template.md
 
 - **上游输入**:
   - `doc/features/{module}/PRD.md`（Skill 1 输出）
-  - `specs/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
   - `doc/architecture.md`（项目架构全貌，跨 Skill 共享）
 - **下游消费者**:
 

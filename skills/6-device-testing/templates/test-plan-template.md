@@ -19,7 +19,7 @@
 
 ### 测试功能点
 
-> 基于 `specs/features/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
+> 基于 `doc/features/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
 
 <列出 P0/P1 功能点摘要>
 

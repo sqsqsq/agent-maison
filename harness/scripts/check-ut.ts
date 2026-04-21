@@ -1,7 +1,7 @@
 // ============================================================================
 // UT 阶段脚本 Harness — check-ut.ts
 // ============================================================================
-// 读取 framework/specs/phase-rules/ut-rules.yaml + specs/features/{feature}/
+// 读取 framework/specs/phase-rules/ut-rules.yaml + doc/features/{feature}/
 // 执行确定性的静态验证。
 //
 // 检查项（与 ut-rules.yaml 对应）：

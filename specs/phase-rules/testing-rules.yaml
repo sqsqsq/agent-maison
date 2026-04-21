@@ -275,11 +275,11 @@ traceability_checks:
 
   boundary_coverage:
     description: >
-      Spec 中定义的边界场景（specs/features/{module}/boundaries.yaml）
+      Spec 中定义的边界场景（doc/features/{module}/boundaries.yaml）
       应被测试计划覆盖
     severity: MAJOR
     rule:
-      source: "specs/features/{module}/boundaries.yaml"
+      source: "doc/features/{module}/boundaries.yaml"
       target: "test-plan.md > 测试用例清单"
       match: "boundary_id_covered"
 

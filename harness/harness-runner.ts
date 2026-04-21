@@ -8,7 +8,7 @@
 //
 // 流程:
 //   1. 读取 framework/specs/phase-rules/{phase}-rules.yaml (阶段级规约)
-//   2. 读取 specs/features/{feature}/ (功能级规约 · 实例工程根)
+//   2. 读取 doc/features/{feature}/ (功能级规约 · 实例工程根，扁平归档)
 //   3. 运行脚本 Harness (scripts/check-{phase}.ts)
 //   4. 输出脚本报告到 framework/harness/reports/{feature}/{phase}/script-report.json
 //   5. 组装 AI Harness 的 prompt (填充模板 + 上下文)
@@ -38,10 +38,9 @@ import {
 } from './scripts/utils/types';
 import {
   resolvePaths,
-  featureDocPath,
-  featureSpecDir,
-  relFeatureDoc,
-  relFeatureSpec,
+  featureFilePath,
+  featureDir,
+  relFeatureFile,
   catalogPath,
   glossaryPath,
   architectureMdPath,
@@ -114,11 +113,11 @@ async function main(): Promise<void> {
   const paths = resolvePaths(projectRoot, path.resolve(__dirname, '..'));
   const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');
-  const featureSpecsRel = path.relative(projectRoot, paths.featureSpecsDir).replace(/\\/g, '/');
+  const featuresRel = path.relative(projectRoot, paths.featuresDir).replace(/\\/g, '/');
 
   // --list 模式
   if (args.list) {
-    printAvailableSpecs(specLoader, projectRoot, phaseRulesRel, featureSpecsRel);
+    printAvailableSpecs(specLoader, projectRoot, phaseRulesRel, featuresRel);
     process.exit(0);
   }
 
@@ -172,12 +171,12 @@ async function main(): Promise<void> {
     console.log(`   ⊘ 全局阶段（${phase}）：跳过功能级规约加载。`);
   } else {
     if (featureSpec.contracts) {
-      console.log(`   ✓ 功能级规约: ${relFeatureSpec(projectRoot, feature, 'contracts.yaml')}`);
+      console.log(`   ✓ 功能级规约: ${relFeatureFile(projectRoot, feature, 'contracts.yaml')}`);
     } else {
       console.log(`   ⊘ 功能级规约: contracts.yaml 不存在 (跳过契约检查)`);
     }
     if (featureSpec.acceptance) {
-      console.log(`   ✓ 功能级规约: ${relFeatureSpec(projectRoot, feature, 'acceptance.yaml')}`);
+      console.log(`   ✓ 功能级规约: ${relFeatureFile(projectRoot, feature, 'acceptance.yaml')}`);
     } else {
       console.log(`   ⊘ 功能级规约: acceptance.yaml 不存在 (跳过验收检查)`);
     }
@@ -327,13 +326,13 @@ function collectContextFiles(
 
   const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
   if (prd) {
-    files.push({ label: relFeatureDoc(projectRoot, feature, 'PRD.md'), content: prd });
+    files.push({ label: relFeatureFile(projectRoot, feature, 'PRD.md'), content: prd });
   }
 
   if (['design', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
     const design = specLoader.loadFeatureDoc(projectRoot, feature, 'design.md');
     if (design) {
-      files.push({ label: relFeatureDoc(projectRoot, feature, 'design.md'), content: design });
+      files.push({ label: relFeatureFile(projectRoot, feature, 'design.md'), content: design });
     }
   }
 
@@ -363,15 +362,15 @@ function collectContextFiles(
   if (phase === 'review') {
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
-      files.push({ label: relFeatureDoc(projectRoot, feature, 'review-report.md'), content: reviewReport });
+      files.push({ label: relFeatureFile(projectRoot, feature, 'review-report.md'), content: reviewReport });
     }
 
-    const specDir = featureSpecDir(projectRoot, feature);
+    const specDir = featureDir(projectRoot, feature);
     for (const specFile of ['acceptance.yaml', 'contracts.yaml']) {
       const specPath = path.join(specDir, specFile);
       if (fs.existsSync(specPath)) {
         files.push({
-          label: relFeatureSpec(projectRoot, feature, specFile),
+          label: relFeatureFile(projectRoot, feature, specFile),
           content: fs.readFileSync(specPath, 'utf-8'),
         });
       }
@@ -379,12 +378,12 @@ function collectContextFiles(
   }
 
   if (phase === 'ut') {
-    const specDir = featureSpecDir(projectRoot, feature);
+    const specDir = featureDir(projectRoot, feature);
     for (const specFile of ['acceptance.yaml', 'contracts.yaml']) {
       const specPath = path.join(specDir, specFile);
       if (fs.existsSync(specPath)) {
         files.push({
-          label: relFeatureSpec(projectRoot, feature, specFile),
+          label: relFeatureFile(projectRoot, feature, specFile),
           content: fs.readFileSync(specPath, 'utf-8'),
         });
       }
@@ -411,12 +410,12 @@ function collectContextFiles(
   }
 
   if (phase === 'testing') {
-    const specDir = featureSpecDir(projectRoot, feature);
+    const specDir = featureDir(projectRoot, feature);
     for (const specFile of ['acceptance.yaml', 'contracts.yaml']) {
       const specPath = path.join(specDir, specFile);
       if (fs.existsSync(specPath)) {
         files.push({
-          label: relFeatureSpec(projectRoot, feature, specFile),
+          label: relFeatureFile(projectRoot, feature, specFile),
           content: fs.readFileSync(specPath, 'utf-8'),
         });
       }
@@ -424,12 +423,12 @@ function collectContextFiles(
 
     const testPlan = specLoader.loadFeatureDoc(projectRoot, feature, 'test-plan.md');
     if (testPlan) {
-      files.push({ label: relFeatureDoc(projectRoot, feature, 'test-plan.md'), content: testPlan });
+      files.push({ label: relFeatureFile(projectRoot, feature, 'test-plan.md'), content: testPlan });
     }
 
     const testReport = specLoader.loadFeatureDoc(projectRoot, feature, 'test-report.md');
     if (testReport) {
-      files.push({ label: relFeatureDoc(projectRoot, feature, 'test-report.md'), content: testReport });
+      files.push({ label: relFeatureFile(projectRoot, feature, 'test-report.md'), content: testReport });
     }
   }
 
@@ -474,7 +473,7 @@ function printAvailableSpecs(
   specLoader: SpecLoader,
   projectRoot: string,
   phaseRulesRel: string,
-  featureSpecsRel: string,
+  featuresRel: string,
 ): void {
   console.log('\n📋 可用的 Spec 文件:\n');
 
@@ -488,7 +487,7 @@ function printAvailableSpecs(
     }
   }
 
-  console.log(`\n  功能级规约 (${featureSpecsRel}/):`);
+  console.log(`\n  功能级需求 (${featuresRel}/):`);
   const features = specLoader.listAvailableFeatures();
   if (features.length === 0) {
     console.log('    (无)');

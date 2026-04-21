@@ -26,7 +26,7 @@ import { SpecLoader } from './utils/spec-loader';
 import {
   architectureMdPath,
   relArchitectureMd,
-  relFeatureDoc,
+  relFeatureFile,
 } from '../config';
 import {
   extractHeadings,
@@ -139,7 +139,7 @@ function checkScopeConsistencyWithPrd(
       severity: 'BLOCKER', status: 'FAIL',
       details: `PRD 的 Scope 声明无法解析：${describeScopeError(prdParse.error)}`,
       suggestion: '请先修复 PRD 的 Scope 声明（运行 check-prd.ts 查看详情）。',
-      affected_files: [relFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md')],
+      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md')],
     }];
   }
   if (designParse.error) {
@@ -182,8 +182,8 @@ function checkScopeConsistencyWithPrd(
     suggestion:
       '要么把相关模块从 design.in_scope_modules 移除并改为就地实现，要么回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
     affected_files: [
-      relFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md'),
-      relFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md'),
+      relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md'),
+      relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md'),
     ],
   }];
 }
@@ -614,7 +614,7 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const design = loadDoc(ctx, 'design.md');
     if (!design) {
-      const designRel = relFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md');
+      const designRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md');
       return [{
         id: 'design_file_exists', category: 'structure',
         description: `${designRel} 不存在`,

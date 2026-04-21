@@ -133,8 +133,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 - Framework 使用说明：[framework/README.md](framework/README.md)
 - 全链路验证说明：[framework/harness/harness-runner.ts](framework/harness/harness-runner.ts) 及各 `framework/skills/<n>/SKILL.md`
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
-- 功能需求产物目录：[{{FEATURE_DOCS_DIR}}]({{FEATURE_DOCS_DIR}})
-- 功能契约目录：[{{FEATURE_SPECS_DIR}}]({{FEATURE_SPECS_DIR}})
+- 功能需求产物目录（扁平归档 PRD / design / contracts / acceptance / review-report / test-plan 等）：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
 - Skill 0 全局阶段 harness 命令（**无 `--feature`**）：
 
  ```bash

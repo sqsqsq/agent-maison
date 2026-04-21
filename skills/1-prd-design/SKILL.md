@@ -176,11 +176,11 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
 
 ### Step 6: 提取功能级 Spec
 
-PRD 归档后，**必须**同步提取功能级规约文件到 `specs/features/{module-name}/` 目录。Spec 是连接生成层（Skill）和验证层（Harness）的枢纽，也是后续 Skill（编码、UT、测试）的参照基准。
+PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{module-name}/` 目录。Spec 是连接生成层（Skill）和验证层（Harness）的枢纽，也是后续 Skill（编码、UT、测试）的参照基准。
 
 #### 6.1 提取验收标准
 
-从 PRD.md 中提取结构化验收标准，写入 `specs/features/{module-name}/acceptance.yaml`：
+从 PRD.md 中提取结构化验收标准，写入 `doc/features/{module-name}/acceptance.yaml`：
 
 **`criteria` 章节**（从 PRD「验收标准」提取）：
 
@@ -221,10 +221,10 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `specs/features/{
 #### 6.2 输出文件与参考
 
 ```
-specs/features/{module-name}/acceptance.yaml
+doc/features/{module-name}/acceptance.yaml
 ```
 
-参考已有示例：`specs/features/home-page/acceptance.yaml`
+参考已有示例：`doc/features/home-page/acceptance.yaml`
 
 > **为什么这一步如此重要**：`acceptance.yaml` 是后续 Harness 验证编码完整性、Skill 5 生成 UT 断言、Skill 6 生成测试用例的基准。若不提取，下游无法自动验证。
 
@@ -244,7 +244,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature {mod
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/prd-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、优先级合法性、追溯完整性等）
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准（若存在则加载；PRD 阶段通常不依赖）
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准（若存在则加载；PRD 阶段通常不依赖）
 
 **若报告中存在 BLOCKER 级问题**：必须修正 PRD 并重新提取 Spec（回到 Step 4），直到零 BLOCKER。
 
@@ -282,7 +282,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature {mod
 | 产出 | 路径 |
 |------|------|
 | PRD 文档 | `doc/features/{module-name}/PRD.md` |
-| 验收标准 Spec | `specs/features/{module-name}/acceptance.yaml` |
+| 验收标准 Spec | `doc/features/{module-name}/acceptance.yaml` |
 
 ### 文档格式
 - 使用 Markdown 格式
@@ -292,7 +292,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature {mod
 
 ### Spec 格式
 - 使用 YAML 格式
-- 遵循 `specs/features/home-page/acceptance.yaml` 的结构模式
+- 遵循 `doc/features/home-page/acceptance.yaml` 的结构模式
 - 所有 ID 字段（AC-N、BD-N、NFR-N）保持唯一
 
 ### 优先级定义
@@ -310,7 +310,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature {mod
 - 功能卡片模板: [templates/feature-card.md](templates/feature-card.md)
 - 示例 PRD: [examples/example-prd.md](examples/example-prd.md)
 - 阶段级规约: `framework/specs/phase-rules/prd-rules.yaml`
-- 功能级 Spec 示例: `specs/features/home-page/acceptance.yaml`
+- 功能级 Spec 示例: `doc/features/home-page/acceptance.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-prd.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-prd.md`
 
