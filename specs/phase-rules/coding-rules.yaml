@@ -1,0 +1,280 @@
+# ============================================================================
+# Coding 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义源代码（Skill 3 产出）必须满足的通用规则。
+# 适用于所有功能模块的 ArkTS/ETS 源代码。
+#
+# 消费者:
+#   - framework/harness/scripts/check-coding.ts  (脚本 Harness, 确定性检查)
+#   - framework/harness/prompts/verify-coding.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: coding
+version: "1.0"
+applies_to: "{layer_dir}/{ModuleName}/src/main/ets/**/*.ets"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  file_completeness:
+    description: >
+      design.md 的「目录/文件结构规划」中列出的所有 .ets 文件必须存在
+    severity: BLOCKER
+    rule:
+      source: "design.md > 目录/文件结构规划"
+      check: "all_files_exist_on_disk"
+
+  layer_compliance:
+    description: >
+      模块内 import 必须遵循 framework.config.json 中
+      architecture.module_inner_layers 声明的依赖方向（upward：索引大的层
+      可依赖索引小的层，反之禁止）。实例工程通过修改 module_inner_layers
+      来调整层集合与顺序；framework 本身不认识具体层名。
+    severity: BLOCKER
+    rule:
+      source: "framework.config.json > architecture.module_inner_layers"
+      for_each_file:
+        layer: "infer_from_path"
+        imports: "extract_import_paths"
+        forbidden: "derived_from_dsl"
+
+  inter_module_dependency:
+    description: >
+      模块间 import 必须遵循 framework.config.json 中
+      architecture.outer_layers[].can_depend_on 声明的许可矩阵；同层内
+      依赖按 intra_layer_deps 模式（forbid / dag / sublayer）裁决。
+      framework 只在启动时校验元规则（DAG、无自指、引用已声明层），
+      具体层名由实例工程声明。
+    severity: BLOCKER
+    rule:
+      source: "framework.config.json > architecture.outer_layers"
+      for_each_import:
+        source_module: "infer_from_file_path"
+        target_module: "infer_from_import_path"
+        validate: "layer_dependency_matrix_from_dsl"
+
+  no_hardcoded_strings:
+    description: >
+      UI 层（presentation/）中的用户可见文本必须通过 $r('app.string.xxx')
+      引用资源文件，禁止硬编码中文或英文 UI 文本
+    severity: MAJOR
+    rule:
+      scope: "presentation/**/*.ets"
+      detect: "literal_string_in_ui_component"
+      exclude:
+        - "log_statements"
+        - "constant_definitions_in_shared"
+        - "test_files"
+
+  resource_integrity:
+    description: >
+      所有 $r('app.string.xxx')、$r('app.color.xxx')、$r('app.float.xxx')
+      引用的资源 key 必须在对应模块的 resources/ 下的 JSON 文件中定义
+    severity: BLOCKER
+    rule:
+      for_each_resource_ref:
+        pattern: '\$r\(''app\.(string|color|float)\.([^'']+)''\)'
+        validate: "key_exists_in_resource_json"
+
+  har_index_export:
+    description: >
+      每个 HAR 模块必须存在由 framework.config.json 的
+      architecture.cross_module_exports_file 声明的跨模块导出入口文件
+      （参考实例默认 Index.ets），且对外暴露的 class/interface/function
+      必须在该文件中 export。
+    severity: BLOCKER
+    rule:
+      source: "framework.config.json > architecture.cross_module_exports_file"
+      for_each_har_module:
+        expect_file_exists: "$cross_module_exports_file"
+        validate: "public_api_exported"
+
+  module_config_registered:
+    description: >
+      每个新增模块必须在根目录 build-profile.json5 的 modules[] 中注册，
+      srcPath 使用层目录前缀格式（如 "./05-SystemBase/CommFunc"）
+    severity: BLOCKER
+    rule:
+      source: "design.md > 模块变更摘要"
+      filter: 'change_type in ["新增"]'
+      validate:
+        - "build_profile_has_entry"
+        - src_path_format: "./{layer_dir}/{ModuleName}"
+
+  oh_package_dependencies:
+    description: >
+      模块的 oh-package.json5 中声明的依赖必须与五层架构依赖规则一致，
+      依赖路径使用层目录相对路径
+    severity: BLOCKER
+    rule:
+      for_each_module:
+        file: "oh-package.json5"
+        validate:
+          - "dependencies_match_layer_rules"
+          - path_format_any_of:
+              - "file:../{layer_dir}/{ModuleName}"
+              - "file:./{layer_dir}/{ModuleName}"
+
+  page_registration:
+    description: >
+      所有 NavDestination 页面必须在对应模块的 main_pages.json 中注册；
+      使用系统路由表时必须在 route_map.json 中配置
+    severity: BLOCKER
+    rule:
+      for_each_page_file:
+        scope: "presentation/pages/*.ets"
+        validate: "registered_in_main_pages_json"
+
+  naming_conventions:
+    description: >
+      命名规范：
+        - 模块名: PascalCase（参考示例：WalletMain、CommFunc 等，实际按本工程 doc/architecture.md 为准）
+        - 组件 struct 名: PascalCase，与文件名一致
+        - 文件名: PascalCase.ets（如 HomeTabPage.ets、CardRepository.ets）
+        - 资源 key: snake_case（如 app.string.tab_home）
+    severity: MAJOR
+    rule:
+      checks:
+        - module_dir_name: "PascalCase"
+        - struct_name: "PascalCase, matches_filename"
+        - ets_filename: "PascalCase"
+        - resource_key: "snake_case"
+
+  no_any_type:
+    description: >
+      代码中不允许使用 any 类型（TypeScript/ArkTS 严格类型约束）
+    severity: MAJOR
+    rule:
+      for_each_file:
+        detect_any_of:
+          - ':\s*any\b'
+          - 'as\s+any\b'
+          - '<any>'
+
+  async_await_pattern:
+    description: >
+      异步操作必须使用 async/await，不允许裸 Promise 回调链（.then().catch()）
+    severity: MINOR
+    rule:
+      detect_any_of:
+        - ".then("
+        - ".catch("
+      exclude:
+        - "Promise.all"
+        - "Promise.race"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  business_logic_correctness:
+    description: >
+      代码逻辑是否正确实现了 design.md 描述的业务流程，
+      包括数据流转、状态变更、页面跳转
+    severity: MAJOR
+    ai_prompt_hint: >
+      对比 design.md 的服务层接口和页面组件树，逐个检查：
+      (1) Repository 方法是否按设计返回正确数据；
+      (2) 页面组件是否按组件树结构组织；
+      (3) 状态管理是否使用了设计指定的装饰器
+
+  error_handling_completeness:
+    description: >
+      PRD 中定义的异常场景是否都有对应的代码处理逻辑
+    severity: MAJOR
+    ai_prompt_hint: >
+      读取 PRD 的异常场景表，逐条检查代码中是否有对应的处理：
+      如网络异常→是否有 try/catch 或降级逻辑；
+      数据为空→是否有空状态 UI
+
+  interface_signature_consistency:
+    description: >
+      代码中实际实现的 class/interface 方法签名必须与 design.md 定义一致，
+      包括方法名、参数类型、返回类型
+    severity: BLOCKER
+    ai_prompt_hint: >
+      逐一对比 design.md 中的接口定义和实际代码中的实现，
+      标出签名不一致的地方
+
+  component_props_consistency:
+    description: >
+      组件的 @Prop/@Link/@State 声明必须与 design.md 的组件接口定义一致
+    severity: MAJOR
+    ai_prompt_hint: >
+      对比 design.md 组件树中定义的 Props 和实际代码中的装饰器声明
+
+  data_ownership_compliance:
+    description: >
+      业务数据的增删改查必须通过 Repository，presentation 层不允许
+      直接操作数据源（如直接访问 AppStorage 写业务数据）
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查 presentation 层代码是否存在绕过 Repository 直接操作数据的情况
+
+  simulation_data_isolation:
+    description: >
+      模拟数据应封装在 data/repository 层内部，
+      presentation 层不应感知数据是真实的还是模拟的
+    severity: MINOR
+    ai_prompt_hint: >
+      检查模拟数据是否都在 Repository 中封装，上层代码是否与数据来源解耦
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  design_to_code:
+    description: >
+      design.md 的「PRD 功能映射表」中每行的「关键文件」路径
+      在代码工程中必须存在对应的文件
+    severity: BLOCKER
+    rule:
+      source: "design.md > PRD 功能映射表.关键文件"
+      check: "file_exists_on_disk"
+
+  design_file_plan_to_code:
+    description: >
+      design.md 的「目录/文件结构规划」中列出的每个文件路径
+      都必须在代码工程中存在
+    severity: BLOCKER
+    rule:
+      source: "design.md > 目录/文件结构规划"
+      extract: "all_file_paths"
+      check: "all_exist_on_disk"
+
+  code_to_design:
+    description: >
+      代码工程中新增的 .ets 文件（非资源/配置）应能在 design.md 中
+      找到对应规划，不允许存在 design.md 中未规划的新文件
+    severity: MAJOR
+    rule:
+      source: "new_ets_files_in_module"
+      target: "design.md > 目录/文件结构规划"
+      coverage: "100%"
+
+  prd_acceptance_to_code:
+    description: >
+      PRD 中 P0/P1 的验收标准（AC 项）应能在代码中找到对应的实现逻辑
+    severity: MAJOR
+    ai_prompt_hint: >
+      逐条审查 PRD 的 P0/P1 验收标准，判断代码中是否有对应的功能实现
+
+  diff_within_scope:
+    description: >
+      git diff 中涉及的所有位于架构层目录下（由 framework.config.json
+      的 outer_layers[].id 构造的顶层前缀集合）的文件，其路径前缀必须属于
+      design.in_scope_modules 对应的 package_path 之一。
+      越界文件即 BLOCKER，用于阻止 Skill 3 默默扩大改动范围。
+      非模块文件（doc/、specs/、skills/、harness/、.claude/、.cursor/、根配置等）
+      视为框架性变更，不纳入本检查。
+    severity: BLOCKER
+    rule:
+      source: "design.md > Scope 声明与继承 > yaml.in_scope_modules"
+      layer_prefixes: "framework.config.json > architecture.outer_layers[].id"
+      module_paths: "contracts.yaml > modules[].package_path"
+      diff_base_ref: "$HARNESS_DIFF_BASE_REF, default HEAD~1; 特殊值 'working' 表示当前工作区 vs HEAD"
+      validate: "all(changed_files, f => not_under_layer_dir(f) or f.starts_with_any(allowed_package_paths))"

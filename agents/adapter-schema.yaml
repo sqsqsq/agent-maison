@@ -1,0 +1,148 @@
+schema_version: "1.0"
+
+# ---------------------------------------------------------------------------
+# Framework Agent Adapter Schema
+# ---------------------------------------------------------------------------
+# 每个 adapter 都是 framework/agents/<adapter_name>/ 目录下的一个插件，
+# 必须提供 adapter.yaml 文件（符合本 schema），并按需在 templates/ 下放置
+# 将被初始化 Skill 消费的模板文件。
+#
+# 核心设计约束：
+# 1. adapter 不承担任何 skill 逻辑——skill 本身是纯 Markdown，adapter 只负责
+#    "按该 agent 的约定把 skill 入口暴露出来"（slash 命令 / 跳板文件 / rules）。
+# 2. adapter 不写任何阶段规则——规则统一在 framework/specs/phase-rules/*.yaml。
+# 3. adapter 不修改 framework/ 自身——它只产出**实例工程根**的文件。
+# 4. 所有 target_path / target_dir 都是**相对于实例工程根**的路径；
+#    所有 template_path / template_dir 都是**相对于仓库根（即 framework/ 的父目录）**
+#    或**相对于 adapter 目录**的路径，见字段注释。
+# ---------------------------------------------------------------------------
+
+required_fields:
+
+  adapter_name:
+    type: string
+    description: adapter 的唯一标识；必须与其所在目录名一致，例如 "generic" / "claude" / "cursor"
+
+  description:
+    type: string
+    description: 面向用户（在初始化 Skill 里选 adapter 时）展示的一句话说明
+
+  agent_entry_file:
+    type: object
+    description: agent 的入口说明文件（相当于当前仓库里的 CLAUDE.md / AGENTS.md）
+    fields:
+      template_path:
+        type: string
+        description: |
+          模板文件位置，相对于 **framework/** 根。通常指向 framework/templates/ 下的
+          共享模板（例如 "templates/AGENTS.md.template"），也允许 adapter 自带变体
+          （指向 "agents/<name>/templates/<xxx>.template"）。
+      target_path:
+        type: string
+        description: |
+          生成到实例工程根的相对路径，例如 "AGENTS.md" / "CLAUDE.md"。
+          **同一个工程一次只能激活一个 adapter**，因此 target_path 不能和其它 adapter
+          的已落地产物冲突——若切换 adapter，初始化 Skill 必须先清理旧产物。
+
+optional_fields:
+
+  commands:
+    type: object | null
+    description: |
+      slash 命令路由文件（Claude Code 的 .claude/commands/*.md 是此字段的典型用例）。
+      若 adapter 所依附的 agent 不支持 slash（例如 Cursor），置为 null。
+    fields:
+      target_dir:
+        type: string
+        description: 生成到实例工程根的目录，例如 ".claude/commands"
+      template_dir:
+        type: string
+        description: |
+          模板目录，相对于 **adapter 目录**（即 framework/agents/<name>/）。
+          目录下每个 *.md 文件对应一个 slash 命令；文件名（去掉 .md）即 slash 名。
+      subagents:
+        type: object | null
+        description: |
+          可选。agent 支持子 agent 配置时使用（Claude Code 的 .claude/agents/*.md）。
+        fields:
+          target_dir:
+            type: string
+          template_dir:
+            type: string
+            description: 相对于 adapter 目录
+
+  skill_bridge:
+    type: object | null
+    description: |
+      Skill 跳板目录（Cursor 的 .cursor/skills/<skill>/SKILL.md 是典型用例）。
+      跳板本身不复述 skill 内容，只声明 metadata 并跳转到 framework/skills/<n>/SKILL.md。
+      若 agent 不需要跳板（例如 Claude Code 直接用 slash 加载），置为 null。
+    fields:
+      target_dir:
+        type: string
+        description: 生成到实例工程根的目录，例如 ".cursor/skills"
+      template_dir:
+        type: string
+        description: |
+          模板目录，相对于 adapter 目录。目录下每个子目录对应一个 skill
+          （目录名 = 实例工程里跳板目录名；其下放一个 SKILL.md）。
+
+  rules:
+    type: object | null
+    description: |
+      规则文件（Cursor 的 .cursor/rules/*.mdc 是典型用例）。
+      若 agent 没有 rules 机制，置为 null。
+    fields:
+      target_dir:
+        type: string
+        description: 生成到实例工程根的目录，例如 ".cursor/rules"
+      template_dir:
+        type: string
+        description: 相对于 adapter 目录
+
+  post_install_hooks:
+    type: list
+    default: []
+    description: |
+      可选。adapter 产物落地后需要执行的脚本列表（路径相对于 adapter 目录）。
+      第一版保持为空，保留字段以便未来扩展（例如 adapter 切换时的清理、版本迁移等）。
+
+  notes:
+    type: string
+    description: 给 adapter 维护者的备注
+
+# ---------------------------------------------------------------------------
+# 占位符约定（模板文件里使用的变量）
+# ---------------------------------------------------------------------------
+# 以下占位符由初始化 Skill（framework/skills/00-framework-init/）根据
+# framework.config.json + 用户交互答复填充。adapter 模板里只可使用这组变量，
+# 不允许内嵌业务硬编码。
+# ---------------------------------------------------------------------------
+placeholders:
+  PROJECT_NAME:
+    source: framework.config.json → project_name
+  PROJECT_TYPE:
+    source: framework.config.json → project_type  # "app" | "atomic_service"
+  PROJECT_TYPE_LABEL:
+    source: |
+      由初始化 Skill 根据 framework.config.json → project_type 映射成展示文案：
+        - "app"             → "应用工程"
+        - "atomic_service"  → "元服务工程"
+      新增 project_type 取值时在 framework/skills/00-framework-init/SKILL.md
+      同步追加映射，保持与模板占位符一致。
+  AGENT_ADAPTER:
+    source: framework.config.json → agent_adapter # 当前激活的 adapter 名
+  AGENT_ENTRY_FILE:
+    source: 当前 adapter.agent_entry_file.target_path
+  ARCHITECTURE_SUMMARY:
+    source: 由初始化 Skill 根据 architecture DSL 渲染的摘要
+  FEATURE_DOCS_DIR:
+    source: framework.config.json → paths.feature_docs_dir
+  FEATURE_SPECS_DIR:
+    source: framework.config.json → paths.feature_specs_dir
+  MODULE_CATALOG_PATH:
+    source: framework.config.json → paths.module_catalog
+  GLOSSARY_PATH:
+    source: framework.config.json → paths.glossary
+  ARCHITECTURE_MD_PATH:
+    source: framework.config.json → paths.architecture_md

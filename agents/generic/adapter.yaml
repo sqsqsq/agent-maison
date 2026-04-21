@@ -1,0 +1,22 @@
+adapter_name: generic
+description: |
+  通用 adapter——仅产出一份 AGENTS.md 作为 agent 的入口指令文件，不生成任何
+  agent 专属目录（如 .claude/commands/ 或 .cursor/skills/）。适用于直接读取
+  AGENTS.md 的通用 AI coding agent，或希望最小化产物的场景。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template   # 共享模板（相对于 framework/ 根）
+  target_path: AGENTS.md                        # 相对于实例工程根
+
+commands: null
+skill_bridge: null
+rules: null
+
+post_install_hooks: []
+
+notes: |
+  - generic adapter 是所有 adapter 的"下限"：只要遵守 AGENTS.md 中列出的 SSOT
+    与阶段路由规则，任何 agent 都能按 framework 流程工作。
+  - 需要 slash / 跳板 / rules 等特性时，请切换到 claude / cursor 等更富实现。
+  - templates/ 目录留空——generic 不需要 agent 专属模板，全部复用
+    framework/templates/ 下的共享模板。

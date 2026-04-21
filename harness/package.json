@@ -1,0 +1,27 @@
+{
+  "name": "harness",
+  "version": "1.0.0",
+  "description": "Spec/Harness verification system for SimulatedWalletForHmos",
+  "private": true,
+  "scripts": {
+    "check": "ts-node harness-runner.ts",
+    "check:prd": "ts-node harness-runner.ts --phase prd",
+    "check:design": "ts-node harness-runner.ts --phase design",
+    "check:coding": "ts-node harness-runner.ts --phase coding",
+    "check:review": "ts-node harness-runner.ts --phase review",
+    "check:ut": "ts-node harness-runner.ts --phase ut",
+    "check:testing": "ts-node harness-runner.ts --phase testing"
+  },
+  "dependencies": {
+    "yaml": "^2.7.0",
+    "glob": "^11.0.0",
+    "chalk": "^4.1.2",
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "ts-node": "^10.9.2",
+    "@types/node": "^22.0.0",
+    "@types/minimist": "^1.2.5"
+  }
+}

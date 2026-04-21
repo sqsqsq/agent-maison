@@ -1,0 +1,219 @@
+# ============================================================================
+# Code Review 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 Code Review 报告（Skill 4 产出）必须满足的通用规则。
+# 适用于所有功能模块的 Review 报告产出。
+#
+# 消费者:
+#   - framework/harness/scripts/check-review.ts  (脚本 Harness, 确定性检查)
+#   - framework/harness/prompts/verify-review.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: review
+version: "1.0"
+applies_to: "doc/features/{module}/review-report.md"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  required_chapters:
+    description: >
+      Review 报告必须包含以下章节：
+      审查范围、审查方法、问题清单、问题统计、修复建议摘要、结论
+    severity: BLOCKER
+    rule:
+      expected_headings:
+        - "审查范围"
+        - '"审查方法" or "审查维度"'
+        - "问题清单"
+        - "问题统计"
+        - '"修复建议" or "修复建议摘要"'
+        - '"结论" or "审查结论"'
+      match: "heading_text_contains"
+
+  issue_table_format:
+    description: >
+      「问题清单」必须包含 Markdown 表格，表头至少包含：
+      编号、严重程度、分类、问题描述、涉及文件、修复建议
+    severity: BLOCKER
+    rule:
+      section: "问题清单"
+      expect: "markdown_table"
+      required_columns:
+        - "编号"
+        - '"严重程度" or "严重等级"'
+        - "分类"
+        - "问题描述"
+        - "涉及文件"
+        - "修复建议"
+
+  severity_values:
+    description: >
+      问题严重程度必须使用统一分级：BLOCKER / MAJOR / MINOR / INFO
+    severity: BLOCKER
+    rule:
+      section: "问题清单"
+      column: "严重程度"
+      allowed_values: ["BLOCKER", "MAJOR", "MINOR", "INFO"]
+
+  issue_category_values:
+    description: >
+      问题分类必须来自预定义类别：
+      分层违规、接口不一致、资源引用、命名规范、
+      硬编码、逻辑错误、异常处理、性能、安全、其他
+    severity: MAJOR
+    rule:
+      section: "问题清单"
+      column: "分类"
+      allowed_values:
+        - "分层违规"
+        - "接口不一致"
+        - "资源引用"
+        - "命名规范"
+        - "硬编码"
+        - "逻辑错误"
+        - "异常处理"
+        - "性能"
+        - "安全"
+        - "其他"
+
+  statistics_summary:
+    description: >
+      「问题统计」章节必须包含各严重程度的计数汇总
+    severity: MAJOR
+    rule:
+      section: "问题统计"
+      expect: "count_by_severity"
+      severities: ["BLOCKER", "MAJOR", "MINOR", "INFO"]
+
+  scope_declaration:
+    description: >
+      「审查范围」必须明确列出本次审查涉及的模块列表和文件范围
+    severity: MAJOR
+    rule:
+      section: "审查范围"
+      expect: '"module_list" or "file_list"'
+
+  conclusion_with_verdict:
+    description: >
+      「结论」章节必须包含明确的审查结论：通过 / 有条件通过 / 不通过，
+      且不通过时必须说明 BLOCKER 数量
+    severity: BLOCKER
+    rule:
+      section: "结论"
+      expect: "verdict"
+      allowed_values: ["通过", "有条件通过", "不通过"]
+
+  metadata_header:
+    description: >
+      报告顶部必须包含模块标识、审查日期、审查版本、审查人等元数据
+    severity: MINOR
+    rule:
+      expect: "blockquote_metadata"
+      required_fields:
+        - "模块标识"
+        - "审查日期"
+        - "审查版本"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  review_dimension_coverage:
+    description: >
+      审查必须覆盖以下维度：
+      架构层合规性（依据 framework.config.json > architecture.outer_layers）、
+      模块内部分层（依据 architecture.module_inner_layers）、
+      接口一致性（vs design.md）、资源引用完整性、命名规范、异常处理、
+      PRD 功能覆盖
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查审查报告是否涵盖了所有关键维度，
+      特别是架构分层和 design.md 一致性是否被审查
+
+  issue_accuracy:
+    description: >
+      报告中指出的问题必须准确——引用的文件路径和代码位置必须真实存在，
+      问题描述必须与实际代码缺陷匹配
+    severity: BLOCKER
+    ai_prompt_hint: >
+      抽样验证问题清单中的若干项：
+      (1) 引用的文件路径是否存在；
+      (2) 问题描述是否与实际代码匹配；
+      (3) 严重程度评级是否合理
+
+  fix_recommendation_actionable:
+    description: >
+      每条问题的修复建议必须具体可操作，不能仅是"请修复"这类模糊表述
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查修复建议是否包含：(1) 具体修改哪个文件/方法；
+      (2) 如何修改（代码示例或明确步骤）
+
+  false_positive_rate:
+    description: >
+      报告中不应包含误报（实际上不是问题的项），误报率应低于 10%
+    severity: MAJOR
+    ai_prompt_hint: >
+      逐条审查问题清单，判断是否存在误报：
+      代码实际上是正确的但被标记为问题的情况
+
+  blocker_threshold:
+    description: >
+      如果存在 BLOCKER 级别问题，结论必须为"不通过"；
+      如果零 BLOCKER 但有 MAJOR，结论应为"有条件通过"
+    severity: BLOCKER
+    ai_prompt_hint: >
+      验证结论与问题统计的一致性：
+      BLOCKER > 0 → 必须"不通过"；
+      BLOCKER = 0 且 MAJOR > 0 → 应"有条件通过"
+
+  coding_rules_referenced:
+    description: >
+      Review 发现的问题应能追溯到 framework/specs/phase-rules/coding-rules.yaml
+      中的具体规则项，确保审查基于统一标准
+    severity: MINOR
+    ai_prompt_hint: >
+      检查问题清单中的分类和描述是否与 coding-rules.yaml 中的规则对应
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  issue_to_file:
+    description: >
+      问题清单中每条的「涉及文件」必须是工程中真实存在的文件路径
+    severity: BLOCKER
+    rule:
+      source: "问题清单.涉及文件"
+      check: "file_exists_on_disk"
+
+  issue_to_coding_rule:
+    description: >
+      问题清单中每条的「分类」应能对应到 coding-rules.yaml 中的某条规则
+    severity: MINOR
+    rule:
+      source: "问题清单.分类"
+      target: "framework/specs/phase-rules/coding-rules.yaml"
+      match: "category_maps_to_rule"
+
+  review_scope_to_design:
+    description: >
+      审查范围中声明的模块列表应与 design.md 的模块变更摘要一致
+    severity: MAJOR
+    rule:
+      source: "审查范围.模块列表"
+      target: "design.md > 模块变更摘要"
+      coverage: "100%"
+
+  blocker_fix_verification:
+    description: >
+      标记为 BLOCKER 的问题在修复后，必须有明确的验证记录
+      （若报告包含修复验证章节）
+    severity: MAJOR
+    ai_prompt_hint: >
+      如果报告中有修复记录，验证每个 BLOCKER 是否都有对应的修复和验证结果

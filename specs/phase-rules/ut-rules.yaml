@@ -1,0 +1,237 @@
+# ============================================================================
+# 业务级 UT 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义业务级单元测试（Skill 5 产出）必须满足的通用规则。
+# 适用于所有功能模块的 UT 代码和 DAG 文件。
+#
+# 核心理念：通过 DAG（有向无环图）描述业务流程，AI 根据 DAG + 源码
+# 自动生成含打桩的端到端 UT。
+#
+# 消费者:
+#   - framework/harness/scripts/check-ut.ts  (脚本 Harness, 确定性检查)
+#   - framework/harness/prompts/verify-ut.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: ut
+version: "1.0"
+applies_to:
+  dag_files: "{module}/test/dag/**/*.yaml"
+  ut_files: "{module}/src/ohosTest/ets/test/**/*.test.ets"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  dag_schema_compliance:
+    description: >
+      DAG 文件必须符合 DAG Schema 规范（YAML 格式），包含以下必填字段：
+      flow_id、flow_name、entry_point、nodes[]
+    severity: BLOCKER
+    rule:
+      for_each_dag_file:
+        required_fields:
+          - "flow_id"
+          - "flow_name"
+          - "entry_point"
+          - "nodes"
+        nodes_each_required:
+          - "id"
+          - "type"
+          - "description"
+
+  dag_node_type_valid:
+    description: >
+      DAG 节点的 type 必须来自预定义枚举：
+      code_execution, async_call, user_intervention,
+      background_task, ui_navigation, assertion, conditional_branch
+    severity: BLOCKER
+    rule:
+      for_each_dag_node:
+        field: "type"
+        allowed_values:
+          - "code_execution"
+          - "async_call"
+          - "user_intervention"
+          - "background_task"
+          - "ui_navigation"
+          - "assertion"
+          - "conditional_branch"
+
+  dag_acyclic:
+    description: >
+      DAG 必须是有向无环图，不允许存在循环引用（next 链不可回指）
+    severity: BLOCKER
+    rule:
+      for_each_dag_file:
+        validate: "topological_sort_possible"
+
+  dag_source_file_exists:
+    description: >
+      DAG 节点的 source.file 引用的文件路径必须在工程中存在
+    severity: BLOCKER
+    rule:
+      for_each_dag_node:
+        if_has: "source.file"
+        check: "file_exists_on_disk"
+
+  ut_file_naming:
+    description: >
+      UT 文件命名必须以 .test.ets 结尾，
+      文件名应反映对应的业务流程或模块名
+    severity: MAJOR
+    rule:
+      for_each_ut_file:
+        expect: "filename_ends_with"
+        suffix: ".test.ets"
+
+  ut_framework_import:
+    description: >
+      UT 文件必须导入 @ohos/hypium 测试框架，
+      使用 describe/it/expect 标准测试结构
+    severity: BLOCKER
+    rule:
+      for_each_ut_file:
+        must_import_from: "@ohos/hypium"
+        must_contain: ["describe(", "it("]
+
+  ut_assertion_exists:
+    description: >
+      每个 it() 测试用例中必须包含至少一条 expect 断言
+    severity: BLOCKER
+    rule:
+      for_each_test_case:
+        min_assertions: 1
+
+  mock_stub_for_async:
+    description: >
+      DAG 中 type=async_call 的节点，对应的 UT 代码中必须有
+      mock/stub 处理（不允许在 UT 中发起真实异步调用）
+    severity: BLOCKER
+    rule:
+      for_each_dag_node:
+        filter: 'type == "async_call"'
+        cross_ref_ut: "expect_mock_or_stub"
+
+  test_registration:
+    description: >
+      所有 UT 文件必须在 ohosTest 的测试清单中注册，确保可被执行
+    severity: MAJOR
+    rule:
+      for_each_ut_file:
+        check: "registered_in_test_runner"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  dag_flow_accuracy:
+    description: >
+      DAG 描述的业务流程必须与 PRD 和 design.md 中的业务流程一致，
+      节点顺序和分支应正确反映实际业务逻辑
+    severity: MAJOR
+    ai_prompt_hint: >
+      对比 DAG 流程与 PRD 业务流程图、design.md 的服务层接口：
+      (1) 节点是否覆盖了关键业务步骤；
+      (2) 分支路径是否与异常场景一致；
+      (3) 节点的 source 引用是否指向正确的函数
+
+  assertion_effectiveness:
+    description: >
+      UT 中的断言必须验证有意义的业务逻辑，
+      不允许仅断言"函数被调用"而不验证结果正确性
+    severity: MAJOR
+    ai_prompt_hint: >
+      审查 UT 断言质量：
+      (1) 是否验证了业务数据的正确性（而非仅验证函数调用）；
+      (2) 是否覆盖了正常值和边界值；
+      (3) 是否有针对异常路径的断言
+
+  mock_reasonableness:
+    description: >
+      Mock/Stub 返回的数据必须合理，与真实场景的数据结构和值域一致，
+      不允许返回不可能的数据
+    severity: MAJOR
+    ai_prompt_hint: >
+      审查 Mock 数据：
+      (1) 数据结构是否与 data/model 定义一致；
+      (2) 值域是否在合理范围内；
+      (3) 异常场景的 Mock 是否模拟了真实的错误类型
+
+  stub_strategy_correctness:
+    description: >
+      打桩策略是否正确匹配了 DAG 节点类型：
+      async_call → mock HTTP/系统 API；
+      user_intervention → 模拟 UI 输入；
+      background_task → 直接调用回调
+    severity: MAJOR
+    ai_prompt_hint: >
+      对照 DAG 节点类型，验证 UT 中使用的打桩方式是否匹配
+
+  branch_coverage:
+    description: >
+      对于 DAG 中的 conditional_branch 节点，UT 应生成多条测试用例
+      覆盖每个分支路径
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查 conditional_branch 节点：(1) 每个分支是否都有对应的测试用例；
+      (2) 分支条件的输入数据是否正确设置
+
+  test_isolation:
+    description: >
+      每条 UT 用例必须独立运行，不依赖其他用例的执行顺序或副作用
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查 UT 代码：(1) 是否在 beforeEach/afterEach 中正确重置状态；
+      (2) 是否存在用例间的数据依赖
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  dag_to_acceptance:
+    description: >
+      每条 DAG 流程的 assertion 节点应关联到 PRD 的验收标准（AC 编号），
+      确保 UT 验证的是业务需求而非实现细节
+    severity: MAJOR
+    rule:
+      for_each_dag_file:
+        assertion_nodes:
+          expect_reference_to_any_of:
+            - "specs/features/{module}/acceptance.yaml"
+            - "PRD.md > 验收标准.AC编号"
+
+  acceptance_coverage:
+    description: >
+      PRD 中 P0/P1 的验收标准必须被至少一条 DAG 的 assertion 节点覆盖
+    severity: BLOCKER
+    rule:
+      source: "PRD.md > 验收标准"
+      filter: 'priority in ["P0", "P1"]'
+      target: "DAG assertion nodes"
+      coverage: "100%"
+
+  dag_to_source:
+    description: >
+      DAG 中每个非 assertion 节点的 source.file + source.function
+      必须能在实际代码中找到对应的文件和函数
+    severity: BLOCKER
+    rule:
+      for_each_dag_node:
+        filter: 'type != "assertion"'
+        if_has: "source"
+        checks:
+          - field: "source.file"
+            expect: "file_exists"
+          - field: "source.function"
+            expect: "function_exists_in_file"
+
+  boundary_coverage:
+    description: >
+      PRD 和 Spec 中定义的边界场景（boundaries）应有对应的 UT 用例
+    severity: MAJOR
+    ai_prompt_hint: >
+      对照 PRD 异常场景表和 specs/features/{module}/boundaries.yaml，
+      检查是否有对应的 UT 测试用例

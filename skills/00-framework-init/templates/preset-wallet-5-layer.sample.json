@@ -1,0 +1,44 @@
+{
+  "outer_layers": [
+    {
+      "id": "01-Product",
+      "can_depend_on": ["02-Feature", "03-CommonBusiness", "04-BusinessBase", "05-SystemBase"],
+      "intra_layer_deps": "forbid"
+    },
+    {
+      "id": "02-Feature",
+      "can_depend_on": ["03-CommonBusiness", "04-BusinessBase", "05-SystemBase"],
+      "intra_layer_deps": "forbid"
+    },
+    {
+      "id": "03-CommonBusiness",
+      "can_depend_on": ["04-BusinessBase", "05-SystemBase"],
+      "intra_layer_deps": "dag"
+    },
+    {
+      "id": "04-BusinessBase",
+      "can_depend_on": ["05-SystemBase"],
+      "intra_layer_deps": "forbid"
+    },
+    {
+      "id": "05-SystemBase",
+      "can_depend_on": [],
+      "intra_layer_deps": "sublayer",
+      "sublayers": [
+        {
+          "id": "CommUI",
+          "members_pattern_or_list": ["CommUI"],
+          "can_depend_on_sublayers": ["CommFunc"]
+        },
+        {
+          "id": "CommFunc",
+          "members_pattern_or_list": ["CommFunc"],
+          "can_depend_on_sublayers": []
+        }
+      ]
+    }
+  ],
+  "module_inner_layers": ["shared", "data", "domain", "presentation"],
+  "inner_dependency_direction": "upward",
+  "cross_module_exports_file": "Index.ets"
+}

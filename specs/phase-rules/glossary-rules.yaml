@@ -1,0 +1,154 @@
+# ============================================================================
+# Glossary 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 doc/glossary.yaml 必须满足的结构与交叉引用规则。
+# 与 catalog 阶段类似，作用的对象是全局文件，没有 --feature 维度。
+#
+# 消费者:
+#   - framework/harness/scripts/check-glossary.ts  (脚本 Harness, 确定性检查)
+# ============================================================================
+
+phase: glossary
+version: "1.0"
+applies_to: "doc/glossary.yaml"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  file_exists:
+    description: >
+      doc/glossary.yaml 必须存在且为合法 YAML。
+    severity: BLOCKER
+    rule:
+      path: "doc/glossary.yaml"
+      must_be_parseable: true
+
+  schema_version_present:
+    description: >
+      根对象必须包含 schema_version 字段（字符串）。
+    severity: BLOCKER
+    rule:
+      required_root_keys:
+        - "schema_version"
+        - "terms"
+      schema_version_type: "string"
+
+  terms_is_list:
+    description: >
+      terms 字段必须是非空数组。
+    severity: BLOCKER
+    rule:
+      field: "terms"
+      type: "array"
+      min_length: 1
+
+  term_required_fields:
+    description: >
+      每条 term 必须包含以下必填字段：
+      term / canonical_module / owner_layer / aliases / easily_confused_with
+    severity: BLOCKER
+    rule:
+      required_fields:
+        - "term"
+        - "canonical_module"
+        - "owner_layer"
+        - "aliases"
+        - "easily_confused_with"
+
+  term_unique:
+    description: >
+      所有 term 字段的值必须全局唯一（不允许同名条目）。
+    severity: BLOCKER
+    rule:
+      field: "term"
+      unique: true
+
+  alias_unique_across_terms:
+    description: >
+      同一 alias 不允许出现在两个不同的 term 里，防止术语消歧时歧义反查。
+    severity: BLOCKER
+    rule:
+      field: "aliases[]"
+      unique_across_parents: true
+
+  owner_layer_value_valid:
+    description: >
+      owner_layer 必须是 framework.config.json 中
+      architecture.outer_layers[].id 声明的合法值之一，
+      与 catalog.modules[].layer 保持同一取值域。
+    severity: BLOCKER
+    rule:
+      field: "owner_layer"
+      allowed_values: "framework.config.json > architecture.outer_layers[].id"
+
+  seed_no_technical_words:
+    description: >
+      `doc/glossary-seed.txt` 的每行业务术语不得是"技术词"。
+      技术词判定（任一命中即视为技术词）：
+        a) 纯英文驼峰：满足正则 ^[A-Z][a-zA-Z0-9]+$（至少 2 字符，首字母大写）
+        b) 等于 doc/module-catalog.yaml 里某 module.name（避免种子填成模块名本身）
+      豁免机制：`doc/glossary-seed-allowlist.txt`（可选）每行 = 一个豁免术语；
+      若种子行出现在豁免清单里则放行（用于极少数行业通用英文缩写，如 HAP / SDK 必要时）。
+
+      命中即 BLOCKER：glossary 是业务自然语言层，技术词污染会让 Skill 1 Step 1.5
+      误把 PRD 里的类名当成业务词去消歧，直接错分模块。
+    severity: BLOCKER
+    rule:
+      seed_file: "doc/glossary-seed.txt"
+      allowlist_file: "doc/glossary-seed-allowlist.txt"
+      forbid_patterns:
+        - "^[A-Z][a-zA-Z0-9]+$"
+      forbid_equals_from: "doc/module-catalog.yaml:modules[].name"
+
+# --------------------------------------------------------------------------
+# 语义级约束（暂不启用）
+# --------------------------------------------------------------------------
+semantic_checks: {}
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 交叉引用校验（core value of glossary）
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  canonical_module_exists_in_catalog:
+    description: >
+      每条 term.canonical_module 必须是 doc/module-catalog.yaml 中存在的模块名。
+      这是术语表与模块画像的核心交叉约束。
+    severity: BLOCKER
+    rule:
+      field: "canonical_module"
+      must_exist_in: "doc/module-catalog.yaml:modules[].name"
+
+  owner_layer_matches_catalog:
+    description: >
+      term.owner_layer 必须与 catalog 中对应 module.layer 相等。
+      不一致通常是手填术语时选错了层。
+    severity: BLOCKER
+    rule:
+      cross_check:
+        this: "owner_layer"
+        against: "doc/module-catalog.yaml:modules[name==canonical_module].layer"
+
+  easily_confused_modules_exist_in_catalog:
+    description: >
+      每条 term.easily_confused_with[].module 必须在 doc/module-catalog.yaml 中存在。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_exist_in: "doc/module-catalog.yaml:modules[].name"
+
+  term_covered_by_catalog_typical_terms:
+    description: >
+      抽样检查：term 或其 aliases 是否出现在 canonical_module 对应模块的
+      typical_business_terms / one_liner / responsibilities 任一字段里？
+      找不到时降级为 MAJOR（不强制 BLOCKER，因为可能是 canonical_module 的
+      typical_business_terms 还没补全），但提示用户回补 catalog。
+    severity: MAJOR
+    rule:
+      cross_check:
+        term_or_aliases_should_appear_in:
+          - "doc/module-catalog.yaml:modules[name==canonical_module].typical_business_terms"
+          - "doc/module-catalog.yaml:modules[name==canonical_module].one_liner"
+          - "doc/module-catalog.yaml:modules[name==canonical_module].responsibilities"

@@ -1,0 +1,2 @@
+# generic adapter 不需要独有模板；所有模板来自 framework/templates/ 共享池。
+# 本 .gitkeep 仅用于确保目录在版本控制中保留。

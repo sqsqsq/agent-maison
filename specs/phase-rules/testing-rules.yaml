@@ -1,0 +1,293 @@
+# ============================================================================
+# Testing（真机测试）阶段规约 (Phase Rules)
+# ============================================================================
+# 定义真机测试计划和测试报告（Skill 6 产出）必须满足的通用规则。
+# 适用于所有功能模块的测试计划和测试报告。
+#
+# 消费者:
+#   - framework/harness/scripts/check-testing.ts  (脚本 Harness, 确定性检查)
+#   - framework/harness/prompts/verify-testing.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: testing
+version: "1.0"
+applies_to:
+  test_plan: "doc/features/{module}/test-plan.md"
+  test_report: "doc/features/{module}/test-report.md"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  # ---- 测试计划 ----
+
+  plan_required_chapters:
+    description: >
+      测试计划必须包含以下章节：
+      测试范围、测试环境、测试用例清单、测试策略、通过标准、风险与依赖
+    severity: BLOCKER
+    rule:
+      file: "test-plan.md"
+      expected_headings:
+        - "测试范围"
+        - "测试环境"
+        - "测试用例清单"
+        - "测试策略"
+        - "通过标准"
+        - '"风险" or "风险与依赖"'
+      match: "heading_text_contains"
+
+  test_case_table_format:
+    description: >
+      「测试用例清单」必须包含 Markdown 表格，表头至少包含：
+      用例编号、用例名称、前置条件、测试步骤、预期结果、优先级、关联 AC
+    severity: BLOCKER
+    rule:
+      file: "test-plan.md"
+      section: "测试用例清单"
+      expect: "markdown_table"
+      required_columns:
+        - '"用例编号" or "编号"'
+        - "用例名称"
+        - "前置条件"
+        - "测试步骤"
+        - "预期结果"
+        - "优先级"
+        - '"关联 AC" or "关联验收标准"'
+
+  test_case_priority_values:
+    description: >
+      测试用例优先级必须为 P0/P1/P2/P3
+    severity: MAJOR
+    rule:
+      file: "test-plan.md"
+      section: "测试用例清单"
+      column: "优先级"
+      allowed_values: ["P0", "P1", "P2", "P3"]
+
+  test_environment_defined:
+    description: >
+      「测试环境」必须明确列出：设备型号/模拟器、系统版本、API 版本、
+      特殊配置要求
+    severity: MAJOR
+    rule:
+      file: "test-plan.md"
+      section: "测试环境"
+      required_fields:
+        - '"设备" or "设备型号"'
+        - "系统版本"
+        - '"API" or "API 版本"'
+
+  pass_criteria_defined:
+    description: >
+      「通过标准」必须定义量化的通过条件，
+      如 P0 用例 100% 通过、P1 用例 ≥ 95% 通过
+    severity: BLOCKER
+    rule:
+      file: "test-plan.md"
+      section: "通过标准"
+      expect: "numeric_thresholds"
+
+  # ---- 测试报告 ----
+
+  report_required_chapters:
+    description: >
+      测试报告必须包含以下章节：
+      测试概览、测试执行结果、缺陷清单（如有）、通过率统计、结论
+    severity: BLOCKER
+    rule:
+      file: "test-report.md"
+      expected_headings:
+        - "测试概览"
+        - "测试执行结果"
+        - '"通过率" or "通过率统计"'
+        - '"结论" or "测试结论"'
+      match: "heading_text_contains"
+
+  execution_result_table:
+    description: >
+      「测试执行结果」必须包含每条用例的执行状态表，
+      状态值限于：通过 / 失败 / 阻塞 / 跳过
+    severity: BLOCKER
+    rule:
+      file: "test-report.md"
+      section: "测试执行结果"
+      expect: "markdown_table"
+      required_columns:
+        - "用例编号"
+        - '"执行状态" or "结果"'
+      allowed_status: ["通过", "失败", "阻塞", "跳过"]
+
+  pass_rate_calculated:
+    description: >
+      「通过率统计」必须包含各优先级的通过率数值，
+      以及总体通过率
+    severity: BLOCKER
+    rule:
+      file: "test-report.md"
+      section: "通过率"
+      expect:
+        per_priority_rate: ["P0", "P1", "P2"]
+        overall_rate: true
+
+  defect_table_format:
+    description: >
+      如有失败用例，「缺陷清单」必须包含：
+      缺陷编号、关联用例、严重程度、描述、状态（待修复/已修复/已关闭）
+    severity: MAJOR
+    rule:
+      file: "test-report.md"
+      section: "缺陷清单"
+      condition: "has_failed_cases"
+      expect: "markdown_table"
+      required_columns:
+        - "缺陷编号"
+        - "关联用例"
+        - "严重程度"
+        - "描述"
+        - "状态"
+
+  report_conclusion_with_verdict:
+    description: >
+      报告结论必须包含明确的判定：达标 / 有条件达标 / 不达标，
+      并引用通过率数据
+    severity: BLOCKER
+    rule:
+      file: "test-report.md"
+      section: "结论"
+      expect: "verdict"
+      allowed_values: ["达标", "有条件达标", "不达标"]
+
+  metadata_header:
+    description: >
+      测试计划和报告顶部必须包含模块标识、版本、日期、测试人员等元数据
+    severity: MINOR
+    rule:
+      expect: "blockquote_metadata"
+      required_fields:
+        - "模块标识"
+        - "版本"
+        - "日期"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  test_case_completeness:
+    description: >
+      测试用例应覆盖所有核心业务路径，包括正常流程和异常流程
+    severity: MAJOR
+    ai_prompt_hint: >
+      对比 PRD 业务流程图，检查测试用例是否覆盖了：
+      (1) 所有正常路径；(2) PRD 中定义的异常场景；
+      (3) 关键的用户交互路径
+
+  test_steps_reproducible:
+    description: >
+      每条测试用例的「测试步骤」必须足够详细，
+      让任何人都能按步骤重复执行
+    severity: MAJOR
+    ai_prompt_hint: >
+      审查测试步骤：(1) 每步操作是否明确（点击什么、输入什么）；
+      (2) 是否有遗漏的中间步骤；(3) 步骤顺序是否正确
+
+  expected_result_specific:
+    description: >
+      每条用例的「预期结果」必须是可观察、可验证的，
+      不允许"正常显示"这类模糊描述
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查预期结果：(1) 是否描述了具体可见的 UI 变化；
+      (2) 是否有明确的验证点（文字内容、颜色、状态等）
+
+  nfr_test_coverage:
+    description: >
+      PRD 中的非功能性需求（性能指标、兼容性等）
+      应有对应的测试用例或测试策略
+    severity: MAJOR
+    ai_prompt_hint: >
+      对照 PRD 非功能性需求章节，检查测试计划中是否有对应的验证方案：
+      如首屏加载时间 ≤ 1.5s、Tab 切换 ≤ 300ms 等
+
+  defect_severity_consistency:
+    description: >
+      缺陷严重程度评级应与其实际影响匹配：
+      阻断核心功能 → BLOCKER；影响主要功能 → MAJOR；
+      体验问题 → MINOR
+    severity: MINOR
+    ai_prompt_hint: >
+      审查缺陷严重程度评级是否合理
+
+  pass_criteria_met:
+    description: >
+      测试报告的结论必须与通过率数据一致：
+      如果 P0 通过率 < 100%，结论不应为"达标"
+    severity: BLOCKER
+    ai_prompt_hint: >
+      验证：(1) P0 通过率是否达到通过标准中定义的阈值；
+      (2) 总体通过率是否达标；(3) 结论与数据是否一致
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  acceptance_to_test_case:
+    description: >
+      PRD 中 P0/P1 的每条验收标准（AC 项）必须被至少一条测试用例覆盖
+      （通过测试用例的「关联 AC」列关联）
+    severity: BLOCKER
+    rule:
+      source: "PRD.md > 验收标准"
+      filter: 'priority in ["P0", "P1"]'
+      target: "test-plan.md > 测试用例清单.关联 AC"
+      coverage: "100%"
+
+  test_case_to_acceptance:
+    description: >
+      每条测试用例必须关联到至少一个验收标准（AC 编号）
+    severity: MAJOR
+    rule:
+      source: "test-plan.md > 测试用例清单"
+      column: "关联 AC"
+      expect: "non_empty"
+
+  exception_scenario_coverage:
+    description: >
+      PRD 异常场景表中的每个场景应有对应的测试用例
+    severity: MAJOR
+    rule:
+      source: "PRD.md > 异常/边界场景处理"
+      target: "test-plan.md > 测试用例清单"
+      match: "scenario_covered"
+
+  plan_to_report_consistency:
+    description: >
+      测试报告中的用例编号必须与测试计划中的用例编号一一对应，
+      不允许报告中出现计划中未定义的用例
+    severity: BLOCKER
+    rule:
+      source: "test-report.md > 测试执行结果.用例编号"
+      target: "test-plan.md > 测试用例清单.用例编号"
+      coverage: "bidirectional"
+
+  boundary_coverage:
+    description: >
+      Spec 中定义的边界场景（specs/features/{module}/boundaries.yaml）
+      应被测试计划覆盖
+    severity: MAJOR
+    rule:
+      source: "specs/features/{module}/boundaries.yaml"
+      target: "test-plan.md > 测试用例清单"
+      match: "boundary_id_covered"
+
+  defect_to_test_case:
+    description: >
+      缺陷清单中每个缺陷的「关联用例」必须指向测试用例清单中的有效编号
+    severity: MAJOR
+    rule:
+      source: "test-report.md > 缺陷清单.关联用例"
+      target: "test-plan.md > 测试用例清单.用例编号"
+      match: "valid_reference"

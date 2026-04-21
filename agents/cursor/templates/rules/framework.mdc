@@ -1,0 +1,32 @@
+---
+description: Framework 全局提示——任何阶段都必须遵守的核心约束索引
+alwaysApply: true
+---
+
+# Framework 全局规则（Cursor）
+
+本规则是 Cursor 会话级的强制提示，任何阶段都必须遵守。**详细内容**参见 `AGENTS.md` 与 `framework/specs/phase-rules/`——本文件只做重点索引，不复述。
+
+## 永恒原则
+
+1. **前置阅读**：每次对话开始，先读完 `AGENTS.md`（agent 入口指令）。
+2. **单点真相**：
+   - 架构与模块划分 → `framework.config.json` 的 `architecture` 段 + `doc/architecture.md`
+   - 模块画像 → `doc/module-catalog.yaml`
+   - 业务术语 → `doc/glossary.yaml`
+   - 阶段规则 → `framework/specs/phase-rules/<phase>-rules.yaml`
+3. **Skill 路由**：
+   - 进入某阶段前必须完整读对应 `framework/skills/<n>/SKILL.md`，不要凭跳板摘要动手。
+   - 本仓库 `.cursor/skills/<skill>/SKILL.md` **只是跳板**，真实逻辑在 `framework/skills/<n>/SKILL.md`。
+4. **BLOCKER 级守门**：
+   - 架构依赖方向违规 → 停。
+   - PRD 的术语映射表 / Scope 模块不在 catalog → 停。
+   - design.md 的 Scope 超出 PRD → 停并发起扩展提议。
+   - `.ets` lint 有 error → 停并逐文件修复。
+5. **产物即契约**：写完 PRD / design 即被后续阶段当 SSOT 用，不允许"先写个草稿，后面再改"心态。
+6. **最小改动**：任何不在原始诉求内的修改先问再做。
+7. **Harness 校验**：每个阶段完成后必须跑 `framework/harness/harness-runner.ts --phase <phase> --feature <name>` 并由独立 verifier 子 agent 审一轮。
+
+## 冲突处理
+
+若本文件与 `AGENTS.md` / `framework/specs/phase-rules/*.yaml` 冲突，**一律以后者为准**，并立即反馈让维护者更新本 rules 文件。

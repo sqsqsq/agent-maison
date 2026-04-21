@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harmonyos-framework/harness/trace.schema.json",
+  "title": "Trace",
+  "description": "单次 AI 跑动日志。由 Claude Code CLI（或等价运行时）在每个阶段结束时产出，路径约定：framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json。用于内网弱模型试运行后结构化回传痛点，指导框架迭代。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "feature",
+    "phase",
+    "model_backend",
+    "started_at",
+    "ended_at",
+    "outcome",
+    "tool_calls",
+    "retries",
+    "human_interventions",
+    "human_pain_points",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema 版本号，当前为 1.0.0",
+      "const": "1.0.0"
+    },
+    "feature": {
+      "type": "string",
+      "description": "功能名，对应 doc/features/<feature>/ 目录",
+      "minLength": 1
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["prd", "design", "coding", "review", "ut", "testing"],
+      "description": "所处阶段"
+    },
+    "model_backend": {
+      "type": "object",
+      "description": "实际运行 AI 的后端信息（用于对比不同模型的表现）",
+      "required": ["vendor", "model", "context_window_tokens"],
+      "properties": {
+        "vendor": {
+          "type": "string",
+          "enum": ["minimax", "glm", "anthropic", "openai", "other"],
+          "description": "厂商"
+        },
+        "model": {
+          "type": "string",
+          "description": "具体模型版本，如 minimax-2.5 / glm-4.5 / claude-sonnet-4"
+        },
+        "context_window_tokens": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "模型的上下文窗口 token 数"
+        },
+        "runtime": {
+          "type": "string",
+          "enum": ["claude-code-cli", "cursor", "other"],
+          "description": "Agent 运行时"
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "本阶段开始时间（ISO 8601）"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "本阶段结束时间（ISO 8601）"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "partial", "failed", "aborted"],
+      "description": "阶段结果：success=全部通过；partial=产物生成但有未修复 WARN；failed=BLOCKER 未修复；aborted=用户或系统中止"
+    },
+    "tool_calls": {
+      "type": "array",
+      "description": "按时间顺序记录关键工具调用（Read/Grep/Write/ReadLints/Shell 等）",
+      "items": {
+        "type": "object",
+        "required": ["name", "count"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "工具名，如 Read / Write / ReadLints / Shell"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "调用次数"
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "失败次数（如 lint 返回 error、shell 非零退出）"
+          }
+        }
+      }
+    },
+    "retries": {
+      "type": "array",
+      "description": "模型回退/重试记录（例如 lint 未过自修、scope 越界回退等）",
+      "items": {
+        "type": "object",
+        "required": ["trigger", "action", "attempts"],
+        "properties": {
+          "trigger": {
+            "type": "string",
+            "description": "触发原因，如 'lint_error' / 'scope_violation' / 'contracts_mismatch' / 'arkts_pitfall'"
+          },
+          "action": {
+            "type": "string",
+            "description": "采取的修复动作描述"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "尝试次数"
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "最终是否解决"
+          },
+          "related_file": {
+            "type": "string",
+            "description": "相关文件路径（可选）"
+          }
+        }
+      }
+    },
+    "harness_checks": {
+      "type": "array",
+      "description": "本阶段运行过的 framework/harness/scripts/check-*.ts 结果",
+      "items": {
+        "type": "object",
+        "required": ["script", "blockers", "majors", "warns"],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "脚本名，如 check-design.ts"
+          },
+          "blockers": { "type": "integer", "minimum": 0 },
+          "majors": { "type": "integer", "minimum": 0 },
+          "warns": { "type": "integer", "minimum": 0 },
+          "report_path": {
+            "type": "string",
+            "description": "报告文件路径（可选）"
+          }
+        }
+      }
+    },
+    "verifier_result": {
+      "type": "object",
+      "description": "verifier 子 agent 的语义判定结果（可选）",
+      "properties": {
+        "blockers": { "type": "integer", "minimum": 0 },
+        "majors": { "type": "integer", "minimum": 0 },
+        "warns": { "type": "integer", "minimum": 0 },
+        "report_path": { "type": "string" }
+      }
+    },
+    "human_interventions": {
+      "type": "array",
+      "description": "用户在本阶段介入的次数与类型（用于评估框架降低人工介入的效果）",
+      "items": {
+        "type": "object",
+        "required": ["type", "description"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "scope_expansion_approval",
+              "clarification",
+              "correction",
+              "rollback",
+              "other"
+            ],
+            "description": "介入类型：scope 扩展批准 / 需求澄清 / 纠正错误 / 回滚 / 其他"
+          },
+          "description": {
+            "type": "string",
+            "description": "简要说明"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "human_pain_points": {
+      "type": "array",
+      "description": "本次跑动中模型表现不佳的结构化痛点清单（由用户或 agent 自我反思填写）。这是框架迭代最重要的输入。",
+      "items": {
+        "type": "object",
+        "required": ["category", "severity", "description"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "scope_creep",
+              "arkts_correctness",
+              "architecture_violation",
+              "contracts_mismatch",
+              "context_loss",
+              "instruction_miss",
+              "tool_misuse",
+              "other"
+            ],
+            "description": "痛点分类"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "major", "minor"]
+          },
+          "description": {
+            "type": "string",
+            "description": "具体描述（示例：'AI 在 design 阶段擅自在某 CommonBusiness 模块新增接口'）"
+          },
+          "related_file": {
+            "type": "string",
+            "description": "相关文件路径（可选）"
+          },
+          "related_step": {
+            "type": "string",
+            "description": "对应 SKILL.md 的哪一步（可选）"
+          },
+          "suggested_mitigation": {
+            "type": "string",
+            "description": "建议的框架改进方向（可选）"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "本阶段产出的文件清单",
+      "items": {
+        "type": "object",
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "prd",
+              "design",
+              "contracts",
+              "acceptance",
+              "code",
+              "ut",
+              "review",
+              "test_plan",
+              "test_report",
+              "other"
+            ]
+          },
+          "lines_added": { "type": "integer", "minimum": 0 },
+          "lines_removed": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "自由格式备注（可选）"
+    }
+  }
+}

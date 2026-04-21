@@ -1,0 +1,22 @@
+{
+  "outer_layers": [
+    {
+      "id": "AppShell",
+      "can_depend_on": ["Feature", "Foundation"],
+      "intra_layer_deps": "forbid"
+    },
+    {
+      "id": "Feature",
+      "can_depend_on": ["Foundation"],
+      "intra_layer_deps": "dag"
+    },
+    {
+      "id": "Foundation",
+      "can_depend_on": [],
+      "intra_layer_deps": "forbid"
+    }
+  ],
+  "module_inner_layers": ["data", "domain", "ui"],
+  "inner_dependency_direction": "upward",
+  "cross_module_exports_file": "Index.ets"
+}

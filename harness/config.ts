@@ -1,0 +1,687 @@
+// ============================================================================
+// Framework Config 加载器（架构 DSL + 可覆盖路径的统一入口）
+// ============================================================================
+// 本文件是阶段 2「架构元模型化」+ 阶段 3「路径参数化」的核心入口，负责从
+// 实例工程根的 `framework.config.json` 读取：
+//
+//   1. 架构 DSL（outer_layers / module_inner_layers / …），供 harness 的
+//      check-*.ts 在运行时决定「什么是合法的 layer / 哪些依赖合法 / 模块内
+//      四层的方向」。原本硬编码在 check-catalog.ts / check-coding.ts /
+//      ast-analyzer.ts 里的「五层 + 模块内四层」从这里统一产出。
+//   2. 可覆盖路径：feature_docs_dir / feature_specs_dir / module_catalog /
+//      glossary / glossary_seed / architecture_md。以前散落在 harness-runner.ts
+//      与各 check-*.ts 里的硬编码前缀（"doc/features"、"doc/module-catalog.yaml"
+//      等）全部收敛到这里；调用方统一用 `resolvePaths(projectRoot)` 或下方
+//      `catalogPath()` / `featureDocPath()` 等便捷函数，不再自行拼 `path.join`。
+//
+// 元规则（**framework 必守、不可被 DSL 关掉**）：
+//
+//   - 所有 outer_layers 的依赖关系构成 DAG（禁止循环）。
+//   - `can_depend_on` 只能指向其他已声明的 layer（不得凭空出现）。
+//   - `module_inner_layers` 的数组顺序即依赖顺序（upward：索引小的层可被
+//     索引大的层 import，反之禁止）。方向只支持 "upward"。
+//   - `cross_module_exports_file` 必须是非空字符串（默认 "Index.ets"），
+//     framework 始终强制「跨模块访问只能通过该文件」。
+//
+// 读取顺序：
+//   ./framework.config.json（实例工程根）→ 未提供时回退到 LEGACY_DEFAULT_DSL
+//   （保留首个参考实例的 5 外层 + 4 内层，作为向后兼容的 defaults；
+//   具体 layer / sublayer id 仅作为示例，新工程应通过 framework.config.json
+//   自行声明）。
+// ============================================================================
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// --------------------------------------------------------------------------
+// 架构 DSL 类型
+// --------------------------------------------------------------------------
+
+export type IntraLayerDepsMode = 'forbid' | 'dag' | 'sublayer';
+
+/** outer_layers[] 中子层级结构（当 intra_layer_deps === 'sublayer' 时生效） */
+export interface SublayerSpec {
+  id: string;
+  /** 该子层包含哪些模块名；可以是精确列表，未来可扩展为 glob 模式 */
+  members_pattern_or_list: string[];
+  /** 该子层可依赖哪些兄弟子层（同一 outer layer 内） */
+  can_depend_on_sublayers: string[];
+}
+
+export interface OuterLayerSpec {
+  id: string;
+  /** 本层可以依赖哪些外层（按 id 引用） */
+  can_depend_on: string[];
+  /**
+   * 层内依赖模式：
+   *   - forbid：同层模块之间不得互相 import
+   *   - dag：同层可依赖，但必须 DAG（由 check-*.ts 在模块粒度扫描）
+   *   - sublayer：同层再拆子层级，按 sublayers[*].can_depend_on_sublayers 判定
+   */
+  intra_layer_deps: IntraLayerDepsMode;
+  /** 仅当 intra_layer_deps === 'sublayer' 时需要填 */
+  sublayers?: SublayerSpec[];
+}
+
+export interface ArchitectureDsl {
+  outer_layers: OuterLayerSpec[];
+  /** 模块内部分层顺序（小索引 → 大索引：小的可以被大的 import） */
+  module_inner_layers: string[];
+  /** 当前版本仅支持 'upward'——按 module_inner_layers 顺序单向依赖 */
+  inner_dependency_direction: 'upward';
+  /** 跨模块唯一合法导出入口文件（默认 Index.ets） */
+  cross_module_exports_file: string;
+}
+
+export interface FrameworkPaths {
+  /** 功能级文档目录（PRD.md / design.md / review-report.md 等） */
+  feature_docs_dir: string;
+  /** 功能级规约目录（contracts.yaml / acceptance.yaml） */
+  feature_specs_dir: string;
+  /** 模块画像 SSOT */
+  module_catalog: string;
+  /** 术语表 SSOT */
+  glossary: string;
+  /** 术语种子 */
+  glossary_seed: string;
+  /** 架构说明文档 */
+  architecture_md: string;
+}
+
+export interface FrameworkConfig {
+  schema_version: string;
+  project_name: string;
+  /** 本阶段仅作占位；阶段 7 会扩展差异化规则 */
+  project_type: 'app' | 'atomic_service';
+  /** 本阶段仅记录，不驱动行为；阶段 5 的 adapter 层会消费 */
+  agent_adapter: 'generic' | 'claude' | 'cursor' | string;
+  architecture: ArchitectureDsl;
+  paths: FrameworkPaths;
+}
+
+// --------------------------------------------------------------------------
+// 参考实例默认 DSL（向后兼容：无 framework.config.json 时以此为准）
+//
+// 以 HarmonyOS 应用常见的 5 外层 + 4 内层作为示例，仅保证历史 feature 在无
+// config 时可继续跑通；新工程应通过 framework.config.json 显式声明自己的
+// 架构 DSL，不要依赖这里的具体 id。
+// --------------------------------------------------------------------------
+
+export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
+  outer_layers: [
+    {
+      id: '01-Product',
+      can_depend_on: ['02-Feature', '03-CommonBusiness', '04-BusinessBase', '05-SystemBase'],
+      intra_layer_deps: 'forbid',
+    },
+    {
+      id: '02-Feature',
+      can_depend_on: ['03-CommonBusiness', '04-BusinessBase', '05-SystemBase'],
+      intra_layer_deps: 'forbid',
+    },
+    {
+      id: '03-CommonBusiness',
+      can_depend_on: ['04-BusinessBase', '05-SystemBase'],
+      intra_layer_deps: 'dag',
+    },
+    {
+      id: '04-BusinessBase',
+      can_depend_on: ['05-SystemBase'],
+      intra_layer_deps: 'forbid',
+    },
+    {
+      id: '05-SystemBase',
+      can_depend_on: [],
+      intra_layer_deps: 'sublayer',
+      sublayers: [
+        {
+          id: 'CommUI',
+          members_pattern_or_list: ['CommUI'],
+          can_depend_on_sublayers: ['CommFunc'],
+        },
+        {
+          id: 'CommFunc',
+          members_pattern_or_list: ['CommFunc'],
+          can_depend_on_sublayers: [],
+        },
+      ],
+    },
+  ],
+  module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+  inner_dependency_direction: 'upward',
+  cross_module_exports_file: 'Index.ets',
+};
+
+export const DEFAULT_PATHS: FrameworkPaths = {
+  feature_docs_dir: 'doc/features',
+  feature_specs_dir: 'specs/features',
+  module_catalog: 'doc/module-catalog.yaml',
+  glossary: 'doc/glossary.yaml',
+  glossary_seed: 'doc/glossary-seed.txt',
+  architecture_md: 'doc/architecture.md',
+};
+
+// --------------------------------------------------------------------------
+// 加载
+// --------------------------------------------------------------------------
+
+const CONFIG_FILENAME = 'framework.config.json';
+
+let cachedConfig: { root: string; config: FrameworkConfig } | null = null;
+
+/**
+ * 加载 framework 配置。读取顺序：
+ *   1. `<projectRoot>/framework.config.json`（若存在且合法）
+ *   2. 回退到 LEGACY_DEFAULT_DSL + DEFAULT_PATHS 组装的默认配置
+ *
+ * 每次调用时针对 projectRoot 做一次内存缓存，避免 check-*.ts 互相调用
+ * 时反复读盘。若同一进程内需要切换项目根（测试场景），可调用
+ * `clearFrameworkConfigCache()` 显式失效。
+ */
+export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
+  if (cachedConfig && cachedConfig.root === projectRoot) {
+    return cachedConfig.config;
+  }
+
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  let config: FrameworkConfig;
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(
+        `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
+      );
+    }
+    config = normalizeConfig(parsed as Partial<FrameworkConfig>);
+  } else {
+    config = buildDefaultConfig();
+  }
+
+  validateArchitectureDsl(config.architecture);
+
+  cachedConfig = { root: projectRoot, config };
+  return config;
+}
+
+/** 方便外层调用——多数 check-*.ts 只关心架构 DSL */
+export function loadArchitectureDsl(projectRoot: string): ArchitectureDsl {
+  return loadFrameworkConfig(projectRoot).architecture;
+}
+
+/** 清缓存（供测试使用） */
+export function clearFrameworkConfigCache(): void {
+  cachedConfig = null;
+}
+
+// --------------------------------------------------------------------------
+// 归一化 / defaults 合并
+// --------------------------------------------------------------------------
+
+function buildDefaultConfig(): FrameworkConfig {
+  return {
+    schema_version: '1.0',
+    project_name: 'unknown',
+    project_type: 'app',
+    agent_adapter: 'generic',
+    architecture: cloneDsl(LEGACY_DEFAULT_DSL),
+    paths: { ...DEFAULT_PATHS },
+  };
+}
+
+function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
+  const fallback = buildDefaultConfig();
+  return {
+    schema_version: raw.schema_version ?? fallback.schema_version,
+    project_name: raw.project_name ?? fallback.project_name,
+    project_type: raw.project_type ?? fallback.project_type,
+    agent_adapter: raw.agent_adapter ?? fallback.agent_adapter,
+    architecture: raw.architecture ? normalizeArchitecture(raw.architecture) : fallback.architecture,
+    paths: { ...fallback.paths, ...(raw.paths ?? {}) },
+  };
+}
+
+function normalizeArchitecture(raw: Partial<ArchitectureDsl>): ArchitectureDsl {
+  const fallback = LEGACY_DEFAULT_DSL;
+  return {
+    outer_layers: raw.outer_layers
+      ? raw.outer_layers.map((l) => ({
+          id: l.id,
+          can_depend_on: [...(l.can_depend_on ?? [])],
+          intra_layer_deps: l.intra_layer_deps ?? 'forbid',
+          sublayers: l.sublayers
+            ? l.sublayers.map((s) => ({
+                id: s.id,
+                members_pattern_or_list: [...(s.members_pattern_or_list ?? [])],
+                can_depend_on_sublayers: [...(s.can_depend_on_sublayers ?? [])],
+              }))
+            : undefined,
+        }))
+      : cloneDsl(fallback).outer_layers,
+    module_inner_layers: raw.module_inner_layers
+      ? [...raw.module_inner_layers]
+      : [...fallback.module_inner_layers],
+    inner_dependency_direction: raw.inner_dependency_direction ?? fallback.inner_dependency_direction,
+    cross_module_exports_file: raw.cross_module_exports_file ?? fallback.cross_module_exports_file,
+  };
+}
+
+function cloneDsl(dsl: ArchitectureDsl): ArchitectureDsl {
+  return JSON.parse(JSON.stringify(dsl)) as ArchitectureDsl;
+}
+
+// --------------------------------------------------------------------------
+// 元规则校验
+// --------------------------------------------------------------------------
+
+/**
+ * 守 4 条 framework 元规则：
+ *
+ *   1. outer_layers[].id 唯一且非空；
+ *   2. outer_layers[].can_depend_on 每个引用都能在 outer_layers[].id 里找到；
+ *   3. outer_layers 的依赖图是 DAG（禁止自环、禁止循环）；
+ *   4. module_inner_layers 非空；inner_dependency_direction === 'upward'；
+ *      cross_module_exports_file 非空。
+ *
+ * 任一失败均抛异常——配置错了就别启动，避免后续 check-*.ts 拿到半残的 DSL
+ * 得出误报结论。
+ */
+export function validateArchitectureDsl(arch: ArchitectureDsl): void {
+  if (!Array.isArray(arch.outer_layers) || arch.outer_layers.length === 0) {
+    throw new Error('[framework/config.ts] architecture.outer_layers 不能为空。');
+  }
+
+  const seenIds = new Set<string>();
+  for (const layer of arch.outer_layers) {
+    if (!layer.id || typeof layer.id !== 'string') {
+      throw new Error(
+        '[framework/config.ts] architecture.outer_layers[].id 必须是非空字符串。',
+      );
+    }
+    if (seenIds.has(layer.id)) {
+      throw new Error(
+        `[framework/config.ts] architecture.outer_layers 中存在重复的 id "${layer.id}"。`,
+      );
+    }
+    seenIds.add(layer.id);
+  }
+
+  for (const layer of arch.outer_layers) {
+    for (const dep of layer.can_depend_on) {
+      if (!seenIds.has(dep)) {
+        throw new Error(
+          `[framework/config.ts] outer layer "${layer.id}".can_depend_on 引用了未声明的 layer "${dep}"。`,
+        );
+      }
+      if (dep === layer.id) {
+        throw new Error(
+          `[framework/config.ts] outer layer "${layer.id}" 不能自依赖（can_depend_on 出现自身）。`,
+        );
+      }
+    }
+
+    if (layer.intra_layer_deps === 'sublayer') {
+      if (!layer.sublayers || layer.sublayers.length === 0) {
+        throw new Error(
+          `[framework/config.ts] outer layer "${layer.id}" 声明了 intra_layer_deps=sublayer，但 sublayers 为空。`,
+        );
+      }
+      const subIds = new Set<string>();
+      for (const sub of layer.sublayers) {
+        if (!sub.id) {
+          throw new Error(
+            `[framework/config.ts] outer layer "${layer.id}".sublayers[].id 必须非空。`,
+          );
+        }
+        if (subIds.has(sub.id)) {
+          throw new Error(
+            `[framework/config.ts] outer layer "${layer.id}" 中存在重复 sublayer id "${sub.id}"。`,
+          );
+        }
+        subIds.add(sub.id);
+      }
+      for (const sub of layer.sublayers) {
+        for (const ref of sub.can_depend_on_sublayers) {
+          if (!subIds.has(ref)) {
+            throw new Error(
+              `[framework/config.ts] outer layer "${layer.id}".sublayer "${sub.id}".can_depend_on_sublayers 引用了未声明的 "${ref}"。`,
+            );
+          }
+          if (ref === sub.id) {
+            throw new Error(
+              `[framework/config.ts] outer layer "${layer.id}".sublayer "${sub.id}" 不能自依赖。`,
+            );
+          }
+        }
+      }
+      // sublayer 依赖图 DAG 自检
+      detectCycle(
+        layer.sublayers.map((s) => s.id),
+        (id) => {
+          const sub = layer.sublayers!.find((s) => s.id === id)!;
+          return sub.can_depend_on_sublayers;
+        },
+        `outer layer "${layer.id}".sublayers`,
+      );
+    } else if (layer.sublayers && layer.sublayers.length > 0) {
+      throw new Error(
+        `[framework/config.ts] outer layer "${layer.id}".sublayers 仅在 intra_layer_deps=sublayer 时允许填写。`,
+      );
+    }
+  }
+
+  // outer 层依赖图 DAG 自检
+  detectCycle(
+    arch.outer_layers.map((l) => l.id),
+    (id) => arch.outer_layers.find((l) => l.id === id)!.can_depend_on,
+    'architecture.outer_layers',
+  );
+
+  if (!Array.isArray(arch.module_inner_layers) || arch.module_inner_layers.length === 0) {
+    throw new Error('[framework/config.ts] architecture.module_inner_layers 不能为空。');
+  }
+  const innerSeen = new Set<string>();
+  for (const l of arch.module_inner_layers) {
+    if (!l || typeof l !== 'string') {
+      throw new Error('[framework/config.ts] module_inner_layers 元素必须为非空字符串。');
+    }
+    if (innerSeen.has(l)) {
+      throw new Error(
+        `[framework/config.ts] module_inner_layers 中存在重复层名 "${l}"。`,
+      );
+    }
+    innerSeen.add(l);
+  }
+
+  if (arch.inner_dependency_direction !== 'upward') {
+    throw new Error(
+      `[framework/config.ts] 当前版本仅支持 inner_dependency_direction="upward"，收到 "${arch.inner_dependency_direction}"。`,
+    );
+  }
+
+  if (!arch.cross_module_exports_file || typeof arch.cross_module_exports_file !== 'string') {
+    throw new Error(
+      '[framework/config.ts] architecture.cross_module_exports_file 必须是非空字符串（例如 "Index.ets"）。',
+    );
+  }
+}
+
+function detectCycle(
+  nodes: string[],
+  getDeps: (id: string) => string[],
+  contextLabel: string,
+): void {
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>(nodes.map((n) => [n, WHITE]));
+
+  const dfs = (node: string, trail: string[]): void => {
+    color.set(node, GRAY);
+    trail.push(node);
+    for (const dep of getDeps(node)) {
+      const c = color.get(dep);
+      if (c === GRAY) {
+        const cycle = trail.slice(trail.indexOf(dep)).concat(dep).join(' → ');
+        throw new Error(
+          `[framework/config.ts] ${contextLabel} 存在循环依赖：${cycle}`,
+        );
+      }
+      if (c === WHITE) dfs(dep, trail);
+    }
+    trail.pop();
+    color.set(node, BLACK);
+  };
+
+  for (const n of nodes) {
+    if (color.get(n) === WHITE) dfs(n, []);
+  }
+}
+
+// --------------------------------------------------------------------------
+// 架构 DSL 消费辅助函数
+// --------------------------------------------------------------------------
+
+/** outer layer id → 在 outer_layers 数组中的索引（便于"索引小的 = 上层"这种判断） */
+export function buildOuterLayerIndex(arch: ArchitectureDsl): Map<string, number> {
+  const idx = new Map<string, number>();
+  arch.outer_layers.forEach((l, i) => idx.set(l.id, i));
+  return idx;
+}
+
+/** inner layer 名 → 在 module_inner_layers 数组中的索引 */
+export function buildInnerLayerIndex(arch: ArchitectureDsl): Map<string, number> {
+  const idx = new Map<string, number>();
+  arch.module_inner_layers.forEach((l, i) => idx.set(l, i));
+  return idx;
+}
+
+/**
+ * 判断"from 模块内层"是否可以 import "to 模块内层"。
+ *
+ * 在 upward 方向下：
+ *   - 自身可依赖自身；
+ *   - 索引大的层（如 presentation）可依赖索引小的层（如 shared / data / domain）；
+ *   - 索引小的层不得反向依赖索引大的层。
+ */
+export function isInnerDepAllowed(arch: ArchitectureDsl, from: string, to: string): boolean {
+  const idx = buildInnerLayerIndex(arch);
+  const fi = idx.get(from);
+  const ti = idx.get(to);
+  if (fi === undefined || ti === undefined) return true;
+  return fi >= ti;
+}
+
+/** 返回内层被禁止 import 的其他内层（即 from 不能向上依赖的那些层） */
+export function getForbiddenInnerImports(arch: ArchitectureDsl, from: string): string[] {
+  const idx = buildInnerLayerIndex(arch);
+  const fi = idx.get(from);
+  if (fi === undefined) return [];
+  return arch.module_inner_layers.filter((_, i) => i > fi);
+}
+
+/** 判断"from outer layer"是否允许依赖"to outer layer" */
+export function isOuterDepAllowed(arch: ArchitectureDsl, from: string, to: string): boolean {
+  if (from === to) {
+    // 同层：由 check-*.ts 在模块/子层粒度另行判定，这里直接返回 true
+    return true;
+  }
+  const fromLayer = arch.outer_layers.find((l) => l.id === from);
+  if (!fromLayer) return true;
+  return fromLayer.can_depend_on.includes(to);
+}
+
+/** 返回所有 outer layer id（按声明顺序） */
+export function getOuterLayerIds(arch: ArchitectureDsl): string[] {
+  return arch.outer_layers.map((l) => l.id);
+}
+
+/** 给定模块名，在 DSL 中查其所属的 sublayer id（没有则返回 undefined） */
+export function findSublayerOf(
+  arch: ArchitectureDsl,
+  outerLayerId: string,
+  moduleName: string,
+): string | undefined {
+  const layer = arch.outer_layers.find((l) => l.id === outerLayerId);
+  if (!layer || layer.intra_layer_deps !== 'sublayer' || !layer.sublayers) return undefined;
+  for (const sub of layer.sublayers) {
+    if (sub.members_pattern_or_list.includes(moduleName)) return sub.id;
+  }
+  return undefined;
+}
+
+// --------------------------------------------------------------------------
+// 路径解析（阶段 3：集中管理可覆盖路径）
+// --------------------------------------------------------------------------
+//
+// 设计原则：
+//   - 调用方只要拿到 `projectRoot`，就能通过本节的函数获得任何框架关心的路径；
+//     不允许绕过这里自己拼 "doc/..." 或 "specs/..." 字符串。
+//   - 绝对路径函数命名为 `xxxPath` / `xxxDir`，相对路径（供错误信息 / 报告
+//     `affected_files` 展示）命名为 `relXxx`。相对路径始终以 POSIX 正斜杠
+//     呈现（Windows 下也不转 `\`），保持错误消息跨平台一致。
+//   - `phaseRulesDir` / `reportsDir` / `promptsDir` 是 framework 侧资产，默认
+//     位于 `<projectRoot>/framework/...` 下；若 framework/ 被放到其他位置，
+//     调用方可显式传入 `frameworkRoot` 覆盖。
+
+/** 运行时解析后的绝对路径集合（由 `resolvePaths` 返回） */
+export interface ResolvedPaths {
+  projectRoot: string;
+  frameworkRoot: string;
+  /** framework/specs/phase-rules 的绝对路径 */
+  phaseRulesDir: string;
+  /** framework/harness/reports 的绝对路径 */
+  reportsDir: string;
+  /** framework/harness/prompts 的绝对路径 */
+  promptsDir: string;
+  /** 实例工程的 feature 文档目录（如 <root>/doc/features）*/
+  featureDocsDir: string;
+  /** 实例工程的 feature 契约目录（如 <root>/specs/features）*/
+  featureSpecsDir: string;
+  /** 模块画像 SSOT 绝对路径 */
+  moduleCatalogYaml: string;
+  /** 术语表 SSOT 绝对路径 */
+  glossaryYaml: string;
+  /** 术语种子绝对路径 */
+  glossarySeedTxt: string;
+  /** 架构说明文档绝对路径 */
+  architectureMd: string;
+}
+
+/**
+ * 把 `framework.config.json` 中声明的相对路径统一解析为绝对路径。
+ *
+ * @param projectRoot 实例工程根的绝对路径
+ * @param frameworkRoot framework/ 所在绝对路径；默认 `<projectRoot>/framework`
+ */
+export function resolvePaths(projectRoot: string, frameworkRoot?: string): ResolvedPaths {
+  const cfg = loadFrameworkConfig(projectRoot);
+  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  return {
+    projectRoot,
+    frameworkRoot: fRoot,
+    phaseRulesDir: path.join(fRoot, 'specs', 'phase-rules'),
+    reportsDir: path.join(fRoot, 'harness', 'reports'),
+    promptsDir: path.join(fRoot, 'harness', 'prompts'),
+    featureDocsDir: path.resolve(projectRoot, cfg.paths.feature_docs_dir),
+    featureSpecsDir: path.resolve(projectRoot, cfg.paths.feature_specs_dir),
+    moduleCatalogYaml: path.resolve(projectRoot, cfg.paths.module_catalog),
+    glossaryYaml: path.resolve(projectRoot, cfg.paths.glossary),
+    glossarySeedTxt: path.resolve(projectRoot, cfg.paths.glossary_seed),
+    architectureMd: path.resolve(projectRoot, cfg.paths.architecture_md),
+  };
+}
+
+// ---- 单条绝对路径 -------------------------------------------------------
+
+export function catalogPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.module_catalog);
+}
+
+export function glossaryPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.glossary);
+}
+
+export function glossarySeedPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.glossary_seed);
+}
+
+export function architectureMdPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.architecture_md);
+}
+
+export function featureDocsDirPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.feature_docs_dir);
+}
+
+export function featureSpecsDirPath(projectRoot: string): string {
+  return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.feature_specs_dir);
+}
+
+export function featureDocPath(projectRoot: string, feature: string, docName: string): string {
+  return path.join(featureDocsDirPath(projectRoot), feature, docName);
+}
+
+export function featureSpecDir(projectRoot: string, feature: string): string {
+  return path.join(featureSpecsDirPath(projectRoot), feature);
+}
+
+export function featureSpecPath(projectRoot: string, feature: string, specFile: string): string {
+  return path.join(featureSpecDir(projectRoot, feature), specFile);
+}
+
+// ---- 单条相对路径（用于 affected_files / 错误消息展示） ------------------
+
+function toPosix(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+export function relCatalog(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.module_catalog);
+}
+
+export function relGlossary(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.glossary);
+}
+
+export function relGlossarySeed(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.glossary_seed);
+}
+
+export function relArchitectureMd(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.architecture_md);
+}
+
+export function relFeatureDocsDir(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.feature_docs_dir);
+}
+
+export function relFeatureSpecsDir(projectRoot: string): string {
+  return toPosix(loadFrameworkConfig(projectRoot).paths.feature_specs_dir);
+}
+
+export function relFeatureDoc(projectRoot: string, feature: string, docName: string): string {
+  return `${relFeatureDocsDir(projectRoot)}/${feature}/${docName}`;
+}
+
+export function relFeatureSpec(projectRoot: string, feature: string, specName: string): string {
+  return `${relFeatureSpecsDir(projectRoot)}/${feature}/${specName}`;
+}
+
+// --------------------------------------------------------------------------
+// 架构 DSL 消费辅助函数（续）
+// --------------------------------------------------------------------------
+
+/**
+ * 判断在某个 outer layer 内，from 模块能否 import to 模块（同层内）：
+ *   - forbid 模式：一律禁止；
+ *   - dag 模式：允许（环路由调用方自己扫，DSL 只给许可）；
+ *   - sublayer 模式：看 from 所在子层的 can_depend_on_sublayers 是否覆盖
+ *     to 所在子层。
+ */
+export function isIntraLayerDepAllowed(
+  arch: ArchitectureDsl,
+  outerLayerId: string,
+  fromModule: string,
+  toModule: string,
+): boolean {
+  const layer = arch.outer_layers.find((l) => l.id === outerLayerId);
+  if (!layer) return true;
+  if (fromModule === toModule) return true;
+
+  switch (layer.intra_layer_deps) {
+    case 'forbid':
+      return false;
+    case 'dag':
+      return true;
+    case 'sublayer': {
+      if (!layer.sublayers) return true;
+      const fromSub = findSublayerOf(arch, outerLayerId, fromModule);
+      const toSub = findSublayerOf(arch, outerLayerId, toModule);
+      if (!fromSub || !toSub) return true; // 未声明的模块不强行拦
+      if (fromSub === toSub) return true;
+      const fromSpec = layer.sublayers.find((s) => s.id === fromSub)!;
+      return fromSpec.can_depend_on_sublayers.includes(toSub);
+    }
+  }
+}

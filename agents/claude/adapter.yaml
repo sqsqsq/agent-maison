@@ -1,0 +1,28 @@
+adapter_name: claude
+description: |
+  Claude Code adapter——入口文件命名为 CLAUDE.md（与 AGENTS.md 同源），
+  并为每个 Skill 生成 .claude/commands/<slash>.md 路由文件，另外生成一份
+  独立语义审查员 .claude/agents/verifier.md。slash 命令只做路由（跳到对应
+  SKILL.md），不复述规则。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template   # 共享模板；Claude Code 只是文件名用 CLAUDE.md
+  target_path: CLAUDE.md
+
+commands:
+  target_dir: .claude/commands                  # 相对于实例工程根
+  template_dir: templates/commands              # 相对于 adapter 目录
+  subagents:
+    target_dir: .claude/agents
+    template_dir: templates/agents
+
+skill_bridge: null
+rules: null
+
+post_install_hooks: []
+
+notes: |
+  - 提供 9 份 slash 路由模板：Skill 0（catalog-bootstrap / glossary-bootstrap）、
+    Skill 1~6，以及 Skill 00（framework-init.md）。
+  - 模板里的 `../../framework/skills/<n>/SKILL.md` 相对路径假设 .claude/commands/
+    在实例工程根下——与当前钱包仓库保持一致。

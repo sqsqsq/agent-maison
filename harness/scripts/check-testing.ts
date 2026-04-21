@@ -1,0 +1,1219 @@
+// ============================================================================
+// Testing 阶段脚本 Harness — check-testing.ts
+// ============================================================================
+// 读取 framework/specs/phase-rules/testing-rules.yaml + specs/features/{feature}/
+// 执行确定性的静态验证。
+//
+// 检查项（与 testing-rules.yaml 对应）：
+//   Structure (plan):  plan_required_chapters, test_case_table_format,
+//                      test_case_priority_values, test_environment_defined,
+//                      pass_criteria_defined, metadata_header
+//   Structure (report): report_required_chapters, execution_result_table,
+//                       pass_rate_calculated, defect_table_format,
+//                       report_conclusion_with_verdict
+//   Traceability:      acceptance_to_test_case, test_case_to_acceptance,
+//                      plan_to_report_consistency, defect_to_test_case
+//
+// 语义级检查由 AI Harness (verify-testing.md) 完成，不在本脚本范围内。
+// ============================================================================
+
+import * as fs from 'fs';
+import {
+  PhaseChecker,
+  CheckContext,
+  CheckResult,
+} from './utils/types';
+import { featureDocPath, relFeatureDoc } from '../config';
+import {
+  extractHeadings,
+  getSectionContent,
+  extractTables,
+  tableHasColumns,
+  getColumnValues,
+  extractMetadata,
+  MdTable,
+} from './utils/markdown-parser';
+
+// --------------------------------------------------------------------------
+// Helpers
+// --------------------------------------------------------------------------
+
+function ruleDesc(
+  ctx: CheckContext,
+  section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
+  id: string,
+): string {
+  const checks = ctx.phaseRule[section] as Record<string, { description: string }>;
+  return checks?.[id]?.description?.trim() ?? id;
+}
+
+function truncateList(items: string[], max: number): string {
+  const shown = items.slice(0, max).map(i => `  - ${i}`).join('\n');
+  return items.length > max ? `${shown}\n  ... 还有 ${items.length - max} 项` : shown;
+}
+
+function loadDoc(ctx: CheckContext, docName: string): string | null {
+  const docPath = featureDocPath(ctx.projectRoot, ctx.feature, docName);
+  if (!fs.existsSync(docPath)) return null;
+  return fs.readFileSync(docPath, 'utf-8');
+}
+
+function headingExists(content: string, keywords: string[]): boolean {
+  const headings = extractHeadings(content);
+  return keywords.some(kw =>
+    headings.some(h => h.text.includes(kw)),
+  );
+}
+
+// --------------------------------------------------------------------------
+// Structure Checks — Test Plan
+// --------------------------------------------------------------------------
+
+function checkPlanRequiredChapters(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'plan_required_chapters';
+  if (!plan) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在，跳过测试计划结构检查。',
+    }];
+  }
+
+  const requiredChapters = [
+    ['测试范围'],
+    ['测试环境'],
+    ['测试用例清单', '测试用例'],
+    ['测试策略'],
+    ['通过标准'],
+    ['风险', '风险与依赖'],
+  ];
+
+  const missing: string[] = [];
+  for (const keywords of requiredChapters) {
+    if (!headingExists(plan, keywords)) {
+      missing.push(keywords[0]);
+    }
+  }
+
+  if (missing.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '测试计划包含全部 6 个必需章节。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `缺少 ${missing.length} 个必需章节：\n${truncateList(missing, 10)}`,
+    suggestion: '测试计划必须包含：测试范围、测试环境、测试用例清单、测试策略、通过标准、风险与依赖。',
+  }];
+}
+
+function checkTestCaseTableFormat(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'test_case_table_format';
+  if (!plan) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(plan, '测试用例');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到「测试用例清单」章节。',
+      suggestion: '测试计划必须包含「测试用例清单」章节。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '「测试用例清单」章节中未找到 Markdown 表格。',
+      suggestion: '测试用例清单必须使用 Markdown 表格格式。',
+    }];
+  }
+
+  const table = tables[0];
+  const requiredCols = [
+    '用例编号" or "编号',
+    '用例名称" or "名称',
+    '前置条件',
+    '测试步骤" or "步骤',
+    '预期结果',
+    '优先级',
+    '关联 AC" or "关联验收标准',
+  ];
+
+  const { hasAll, missing } = tableHasColumns(table, requiredCols);
+
+  if (hasAll) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `用例清单表格包含全部必需列，共 ${table.rows.length} 条用例。`,
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `用例清单表格缺少以下列：\n${truncateList(missing, 10)}`,
+    suggestion: '表头至少需包含：用例编号、用例名称、前置条件、测试步骤、预期结果、优先级、关联 AC。',
+  }];
+}
+
+function checkTestCasePriorityValues(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'test_case_priority_values';
+  if (!plan) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(plan, '测试用例');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: '未找到测试用例清单章节。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: '未找到测试用例表格。',
+    }];
+  }
+
+  const priorities = getColumnValues(tables[0], '优先级');
+  const allowed = ['P0', 'P1', 'P2', 'P3'];
+  const invalid = priorities.filter(p => p && !allowed.includes(p.trim()));
+
+  if (invalid.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: `全部 ${priorities.filter(p => p).length} 条用例的优先级值域合规。`,
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `${invalid.length} 条用例优先级值非法：${[...new Set(invalid)].join(', ')}`,
+    suggestion: '优先级必须为 P0/P1/P2/P3。',
+  }];
+}
+
+function checkTestEnvironmentDefined(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'test_environment_defined';
+  if (!plan) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(plan, '测试环境');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'FAIL',
+      details: '未找到「测试环境」章节。',
+      suggestion: '测试计划必须包含「测试环境」章节，列出设备、系统版本、API 版本。',
+    }];
+  }
+
+  const requiredKeywords = [
+    ['设备', '设备型号', '模拟器'],
+    ['系统版本', 'HarmonyOS'],
+    ['API', 'API 版本'],
+  ];
+
+  const missing: string[] = [];
+  for (const keywords of requiredKeywords) {
+    if (!keywords.some(kw => section.includes(kw))) {
+      missing.push(keywords[0]);
+    }
+  }
+
+  if (missing.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '测试环境章节包含设备、系统版本、API 版本信息。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `测试环境章节可能缺少以下信息：${missing.join(', ')}`,
+    suggestion: '测试环境必须明确列出：设备型号/模拟器、系统版本、API 版本。',
+  }];
+}
+
+function checkPassCriteriaDefined(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'pass_criteria_defined';
+  if (!plan) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(plan, '通过标准');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到「通过标准」章节。',
+      suggestion: '测试计划必须包含「通过标准」章节，定义量化的通过条件。',
+    }];
+  }
+
+  const hasNumeric = /\d+\s*%|\d+%|≥|≤|>=|<=|100%/.test(section);
+  if (hasNumeric) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '通过标准章节包含量化阈值。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: '通过标准章节未包含量化阈值（如百分比、数值等）。',
+    suggestion: '通过标准必须定义量化条件，如 P0 用例 100% 通过、P1 用例 ≥ 95% 通过。',
+  }];
+}
+
+function checkPlanMetadata(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'metadata_header';
+  if (!plan) {
+    return [{
+      id: `plan_${id}`,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const metadata = extractMetadata(plan);
+  const requiredFields = ['模块标识', '版本', '日期'];
+  const missing = requiredFields.filter(f => !metadata[f]);
+
+  if (missing.length === 0) {
+    return [{
+      id: `plan_${id}`,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MINOR',
+      status: 'PASS',
+      details: '测试计划包含元数据头部。',
+    }];
+  }
+
+  return [{
+    id: `plan_${id}`,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'MINOR',
+    status: 'WARN',
+    details: `测试计划顶部缺少元数据：${missing.join(', ')}`,
+    suggestion: '文档顶部应使用 blockquote 格式包含模块标识、版本、日期。',
+  }];
+}
+
+// --------------------------------------------------------------------------
+// Structure Checks — Test Report
+// --------------------------------------------------------------------------
+
+function checkReportRequiredChapters(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'report_required_chapters';
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-report.md 不存在（测试报告可能尚未生成），跳过报告结构检查。',
+    }];
+  }
+
+  const requiredChapters = [
+    ['测试概览'],
+    ['测试执行结果', '执行结果'],
+    ['通过率', '通过率统计'],
+    ['结论', '测试结论'],
+  ];
+
+  const missing: string[] = [];
+  for (const keywords of requiredChapters) {
+    if (!headingExists(report, keywords)) {
+      missing.push(keywords[0]);
+    }
+  }
+
+  if (missing.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '测试报告包含全部必需章节。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `缺少 ${missing.length} 个必需章节：\n${truncateList(missing, 10)}`,
+    suggestion: '测试报告必须包含：测试概览、测试执行结果、通过率统计、结论。',
+  }];
+}
+
+function checkExecutionResultTable(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'execution_result_table';
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-report.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(report, '测试执行结果') ?? getSectionContent(report, '执行结果');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到「测试执行结果」章节。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '「测试执行结果」章节中未找到 Markdown 表格。',
+    }];
+  }
+
+  const table = tables[0];
+  const requiredCols = ['用例编号" or "编号', '执行状态" or "结果" or "状态'];
+  const { hasAll, missing } = tableHasColumns(table, requiredCols);
+
+  if (!hasAll) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `执行结果表格缺少列：${missing.join(', ')}`,
+      suggestion: '表头至少需包含：用例编号、执行状态。',
+    }];
+  }
+
+  const statusCol = getColumnValues(table, '执行状态').length > 0
+    ? getColumnValues(table, '执行状态')
+    : getColumnValues(table, '结果').length > 0
+      ? getColumnValues(table, '结果')
+      : getColumnValues(table, '状态');
+
+  const allowedStatuses = ['通过', '失败', '阻塞', '跳过'];
+  const invalidStatuses = statusCol.filter(s => s && !allowedStatuses.includes(s.trim()));
+
+  if (invalidStatuses.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${invalidStatuses.length} 条执行状态值非法：${[...new Set(invalidStatuses)].join(', ')}`,
+      suggestion: '执行状态仅允许：通过 / 失败 / 阻塞 / 跳过。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `执行结果表格格式合规，共 ${table.rows.length} 条记录。`,
+  }];
+}
+
+function checkPassRateCalculated(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'pass_rate_calculated';
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-report.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(report, '通过率');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到「通过率统计」章节。',
+    }];
+  }
+
+  const hasPerPriority = /P0/.test(section) && /P1/.test(section);
+  const hasOverall = /总/.test(section) || /总计/.test(section) || /合计/.test(section) || /overall/i.test(section);
+  const hasPercentage = /\d+\s*%|\d+%/.test(section);
+
+  if (hasPerPriority && hasPercentage) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '通过率统计章节包含各优先级通过率数值。',
+    }];
+  }
+
+  const issues: string[] = [];
+  if (!hasPerPriority) issues.push('缺少分优先级（P0/P1）的通过率');
+  if (!hasPercentage) issues.push('缺少通过率百分比数值');
+  if (!hasOverall) issues.push('缺少总体通过率');
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: issues.join('；'),
+    suggestion: '通过率统计必须包含 P0、P1 各自的通过率以及总体通过率。',
+  }];
+}
+
+function checkDefectTableFormat(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'defect_table_format';
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-report.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(report, '缺陷');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '未找到缺陷清单章节（可能无缺陷）。',
+    }];
+  }
+
+  if (section.includes('无缺陷') || section.includes('所有用例全部通过')) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '缺陷清单标注为无缺陷。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: '缺陷清单章节存在但未找到 Markdown 表格。',
+      suggestion: '若有失败用例，缺陷清单应使用表格格式。',
+    }];
+  }
+
+  const requiredCols = ['缺陷编号" or "编号', '关联用例', '严重程度', '描述', '状态'];
+  const { hasAll, missing } = tableHasColumns(tables[0], requiredCols);
+
+  if (hasAll) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: `缺陷清单表格格式合规，共 ${tables[0].rows.length} 条缺陷。`,
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `缺陷清单表格缺少列：${missing.join(', ')}`,
+    suggestion: '缺陷清单表头应包含：缺陷编号、关联用例、严重程度、描述、状态。',
+  }];
+}
+
+function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'report_conclusion_with_verdict';
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-report.md 不存在。',
+    }];
+  }
+
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '测试结论');
+  if (!section) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到「结论」章节。',
+    }];
+  }
+
+  const verdicts = ['达标', '有条件达标', '不达标'];
+  const hasVerdict = verdicts.some(v => section.includes(v));
+
+  if (hasVerdict) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '结论章节包含明确的判定。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: '结论章节未包含明确的判定（达标/有条件达标/不达标）。',
+    suggestion: '报告结论必须包含明确判定：达标 / 有条件达标 / 不达标。',
+  }];
+}
+
+// --------------------------------------------------------------------------
+// Traceability Checks
+// --------------------------------------------------------------------------
+
+function extractTestCaseACRefs(plan: string): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  const section = getSectionContent(plan, '测试用例');
+  if (!section) return result;
+
+  const tables = extractTables(section);
+  if (tables.length === 0) return result;
+
+  const table = tables[0];
+  const idCol = table.headers.findIndex(h => h.includes('编号'));
+  const acCol = table.headers.findIndex(h => h.includes('AC') || h.includes('验收'));
+
+  if (idCol === -1 || acCol === -1) return result;
+
+  for (const row of table.rows) {
+    const tcId = (row[idCol] || '').trim();
+    const acRefs = (row[acCol] || '').trim();
+    if (tcId && acRefs) {
+      const refs = acRefs.split(/[,，、\s]+/).filter(r =>
+        r.match(/^(AC|BD)-(G\d+|\d+)$/i),
+      );
+      result.set(tcId, refs);
+    }
+  }
+
+  return result;
+}
+
+function extractTestCaseIds(plan: string): string[] {
+  const section = getSectionContent(plan, '测试用例');
+  if (!section) return [];
+  const tables = extractTables(section);
+  if (tables.length === 0) return [];
+  const idCol = tables[0].headers.findIndex(h => h.includes('编号'));
+  if (idCol === -1) return [];
+  return tables[0].rows.map(row => (row[idCol] || '').trim()).filter(id => id);
+}
+
+function extractReportCaseIds(report: string): string[] {
+  const section = getSectionContent(report, '测试执行结果') ?? getSectionContent(report, '执行结果');
+  if (!section) return [];
+  const tables = extractTables(section);
+  if (tables.length === 0) return [];
+  const idCol = tables[0].headers.findIndex(h => h.includes('编号'));
+  if (idCol === -1) return [];
+  return tables[0].rows.map(row => (row[idCol] || '').trim()).filter(id => id);
+}
+
+function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'acceptance_to_test_case';
+  const acceptance = ctx.featureSpec.acceptance;
+
+  if (!acceptance?.criteria?.length) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'acceptance.yaml 无 criteria 列表。',
+    }];
+  }
+
+  if (!plan) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const acRefs = extractTestCaseACRefs(plan);
+  const allCoveredACs = new Set<string>();
+  for (const refs of acRefs.values()) {
+    for (const ref of refs) {
+      allCoveredACs.add(ref.toUpperCase().replace(/\s/g, ''));
+    }
+  }
+
+  const p0p1Criteria = acceptance.criteria.filter(c =>
+    c.priority === 'P0' || c.priority === 'P1',
+  );
+  const uncovered = p0p1Criteria.filter(c => {
+    const normalizedId = c.id.toUpperCase().replace(/\s/g, '');
+    return !allCoveredACs.has(normalizedId);
+  });
+
+  const allBoundaries = acceptance.boundaries ?? [];
+  const uncoveredBD = allBoundaries.filter(b => {
+    const normalizedId = b.id.toUpperCase().replace(/\s/g, '');
+    return !allCoveredACs.has(normalizedId);
+  });
+
+  const p0Count = acceptance.criteria.filter(c => c.priority === 'P0').length;
+  const p0Covered = acceptance.criteria.filter(c => c.priority === 'P0' && allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
+  const p1Count = acceptance.criteria.filter(c => c.priority === 'P1').length;
+  const p1Covered = acceptance.criteria.filter(c => c.priority === 'P1' && allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
+
+  const details: string[] = [];
+  details.push(`P0 AC 覆盖率: ${p0Covered}/${p0Count}`);
+  details.push(`P1 AC 覆盖率: ${p1Covered}/${p1Count}`);
+  details.push(`BD 覆盖率: ${allBoundaries.length - uncoveredBD.length}/${allBoundaries.length}`);
+
+  if (uncovered.length > 0) {
+    details.push('未被测试用例覆盖的 P0/P1 AC:');
+    for (const c of uncovered.slice(0, 10)) {
+      details.push(`  - ${c.id} (${c.priority}): ${c.description}`);
+    }
+    if (uncovered.length > 10) {
+      details.push(`  ... 还有 ${uncovered.length - 10} 条`);
+    }
+  }
+
+  if (uncovered.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: details.join('\n'),
+    }];
+  }
+
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: details.join('\n'),
+    suggestion: `请为未覆盖的 ${uncovered.length} 个 P0/P1 AC 补充测试用例。`,
+  }];
+}
+
+function checkTestCaseToAcceptance(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'test_case_to_acceptance';
+  if (!plan) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const acRefs = extractTestCaseACRefs(plan);
+  if (acRefs.size === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: '无法解析用例的 AC 关联列。',
+    }];
+  }
+
+  const noRef: string[] = [];
+  for (const [tcId, refs] of acRefs) {
+    if (refs.length === 0) {
+      noRef.push(tcId);
+    }
+  }
+
+  if (noRef.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: `全部 ${acRefs.size} 条测试用例都关联了 AC/BD 编号。`,
+    }];
+  }
+
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `${noRef.length} 条测试用例未关联 AC/BD 编号：\n${truncateList(noRef, 10)}`,
+    suggestion: '每条测试用例的「关联 AC」列应包含至少一个 AC 或 BD 编号。',
+  }];
+}
+
+function checkPlanToReportConsistency(ctx: CheckContext, plan: string | null, report: string | null): CheckResult[] {
+  const id = 'plan_to_report_consistency';
+  if (!plan || !report) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: `${!plan ? 'test-plan.md' : 'test-report.md'} 不存在，无法做一致性校验。`,
+    }];
+  }
+
+  const planIds = new Set(extractTestCaseIds(plan));
+  const reportIds = new Set(extractReportCaseIds(report));
+
+  if (planIds.size === 0 || reportIds.size === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无法解析计划或报告中的用例编号。',
+    }];
+  }
+
+  const inPlanNotReport = [...planIds].filter(id => !reportIds.has(id));
+  const inReportNotPlan = [...reportIds].filter(id => !planIds.has(id));
+
+  if (inPlanNotReport.length === 0 && inReportNotPlan.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `计划与报告的用例编号完全一致（${planIds.size} 条）。`,
+    }];
+  }
+
+  const details: string[] = [];
+  if (inPlanNotReport.length > 0) {
+    details.push(`计划中有但报告中缺失的用例：\n${truncateList(inPlanNotReport, 10)}`);
+  }
+  if (inReportNotPlan.length > 0) {
+    details.push(`报告中有但计划中未定义的用例：\n${truncateList(inReportNotPlan, 10)}`);
+  }
+
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: details.join('\n'),
+    suggestion: '测试报告中的用例编号必须与测试计划中一一对应。',
+  }];
+}
+
+function checkDefectToTestCase(ctx: CheckContext, plan: string | null, report: string | null): CheckResult[] {
+  const id = 'defect_to_test_case';
+  if (!report) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-report.md 不存在。',
+    }];
+  }
+
+  const defectSection = getSectionContent(report, '缺陷');
+  if (!defectSection) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '无缺陷清单章节（可能无缺陷）。',
+    }];
+  }
+
+  if (defectSection.includes('无缺陷') || defectSection.includes('所有用例全部通过')) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '无缺陷。',
+    }];
+  }
+
+  const tables = extractTables(defectSection);
+  if (tables.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: '缺陷清单无表格，无法校验。',
+    }];
+  }
+
+  const defectTable = tables[0];
+  const caseCol = defectTable.headers.findIndex(h => h.includes('关联用例') || h.includes('用例'));
+  if (caseCol === -1) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: '缺陷清单表格无「关联用例」列。',
+      suggestion: '缺陷清单应包含「关联用例」列，引用测试用例编号。',
+    }];
+  }
+
+  const planCaseIds = plan ? new Set(extractTestCaseIds(plan)) : new Set<string>();
+  const invalidRefs: string[] = [];
+
+  for (const row of defectTable.rows) {
+    const caseRef = (row[caseCol] || '').trim();
+    if (caseRef && planCaseIds.size > 0) {
+      const refs = caseRef.split(/[,，、\s]+/).filter(r => r);
+      for (const ref of refs) {
+        if (!planCaseIds.has(ref)) {
+          invalidRefs.push(`${ref}（在缺陷清单中引用但不在测试计划中）`);
+        }
+      }
+    }
+  }
+
+  if (invalidRefs.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '缺陷清单中的用例引用全部有效。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `${invalidRefs.length} 个无效的用例引用：\n${truncateList(invalidRefs, 10)}`,
+    suggestion: '缺陷清单中的「关联用例」编号必须指向测试计划中的有效用例编号。',
+  }];
+}
+
+// --------------------------------------------------------------------------
+// Boundary Coverage (additional traceability)
+// --------------------------------------------------------------------------
+
+function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'boundary_coverage';
+  const acceptance = ctx.featureSpec.acceptance;
+
+  if (!acceptance?.boundaries?.length) {
+    return [{
+      id,
+      category: 'traceability',
+      description: '边界场景应被测试计划覆盖',
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'acceptance.yaml 无 boundaries 列表。',
+    }];
+  }
+
+  if (!plan) {
+    return [{
+      id,
+      category: 'traceability',
+      description: '边界场景应被测试计划覆盖',
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+
+  const acRefs = extractTestCaseACRefs(plan);
+  const allCoveredACs = new Set<string>();
+  for (const refs of acRefs.values()) {
+    for (const ref of refs) {
+      allCoveredACs.add(ref.toUpperCase().replace(/\s/g, ''));
+    }
+  }
+
+  const uncovered = acceptance.boundaries.filter(b => {
+    const normalizedId = b.id.toUpperCase().replace(/\s/g, '');
+    return !allCoveredACs.has(normalizedId);
+  });
+
+  if (uncovered.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: '边界场景应被测试计划覆盖',
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: `全部 ${acceptance.boundaries.length} 个边界场景被测试用例覆盖。`,
+    }];
+  }
+
+  const details: string[] = [];
+  details.push(`BD 覆盖率: ${acceptance.boundaries.length - uncovered.length}/${acceptance.boundaries.length}`);
+  details.push('未覆盖的边界场景:');
+  for (const b of uncovered.slice(0, 10)) {
+    details.push(`  - ${b.id}: ${b.description}`);
+  }
+
+  return [{
+    id,
+    category: 'traceability',
+    description: '边界场景应被测试计划覆盖',
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: details.join('\n'),
+    suggestion: '建议为未覆盖的边界场景补充测试用例。',
+  }];
+}
+
+// --------------------------------------------------------------------------
+// Main Checker
+// --------------------------------------------------------------------------
+
+function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
+  try {
+    return fn();
+  } catch (err) {
+    return [{
+      id: checkId,
+      category: 'structure',
+      description: `${checkId} 执行异常`,
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: `检查执行时发生错误：${(err as Error).message}`,
+    }];
+  }
+}
+
+const checker: PhaseChecker = {
+  phase: 'testing',
+
+  async check(ctx: CheckContext): Promise<CheckResult[]> {
+    const plan = loadDoc(ctx, 'test-plan.md');
+    const report = loadDoc(ctx, 'test-report.md');
+
+    if (!plan && !report) {
+      return [{
+        id: 'testing_docs_missing',
+        category: 'structure',
+        description: '测试计划和测试报告都不存在',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `未找到 ${relFeatureDoc(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureDoc(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
+        suggestion: '请先运行 Skill 6 生成测试计划。',
+      }];
+    }
+
+    const results: CheckResult[] = [];
+
+    // --- Structure checks: Test Plan ---
+    results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));
+    results.push(...safeRun(() => checkTestCaseTableFormat(ctx, plan), 'test_case_table_format'));
+    results.push(...safeRun(() => checkTestCasePriorityValues(ctx, plan), 'test_case_priority_values'));
+    results.push(...safeRun(() => checkTestEnvironmentDefined(ctx, plan), 'test_environment_defined'));
+    results.push(...safeRun(() => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
+    results.push(...safeRun(() => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));
+
+    // --- Structure checks: Test Report ---
+    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
+    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
+    results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
+    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
+    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
+
+    // --- Traceability checks ---
+    results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
+    results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
+    results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
+    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
+    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+
+    return results;
+  },
+};
+
+export default checker;

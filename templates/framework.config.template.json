@@ -1,0 +1,56 @@
+{
+  "$schema_docs": {
+    "description": "framework.config.json 的空白模板。初始化 Skill (framework/skills/00-framework-init) 会基于本模板 + 用户交互答复生成实例工程根的 framework.config.json。本模板本身是合法 JSON（含 $schema_docs 说明键），生成最终 config 时务必整段删除 $schema_docs 键。",
+    "source": "framework/templates/framework.config.template.json",
+    "consumed_by": [
+      "framework/skills/00-framework-init/SKILL.md",
+      "framework/harness/config.ts (loadFrameworkConfig / validateArchitectureDsl)"
+    ],
+    "field_notes": {
+      "schema_version": "固定字符串 \"1.0\"，未来框架 bump 时由维护者同步。",
+      "project_name": "项目名；初始化 Skill 从 oh-package.json5 的 name 字段推断，缺失时回退到仓库目录名。",
+      "project_type": "枚举：\"app\" | \"atomic_service\"。阶段 7 仅作扩展位预留——\"atomic_service\" 合法但不触发差异化规则；未来议题（首包大小、分包、免安装入口等）落地路线见 framework/docs/atomic-service-roadmap.md。",
+      "agent_adapter": "枚举：\"generic\" | \"claude\" | \"cursor\"。一次只能激活一个；切换需由初始化 Skill 走 UPDATE 模式。",
+      "architecture": "架构 DSL；字段语义与元规则见 framework/harness/config.ts 的 ArchitectureDsl + validateArchitectureDsl。",
+      "architecture.outer_layers[].intra_layer_deps": "枚举：\"forbid\" | \"dag\" | \"sublayer\"。\"sublayer\" 时必须填 sublayers 子数组。",
+      "architecture.module_inner_layers": "模块内层名数组；索引小的层可被索引大的层 import（upward 方向）。",
+      "architecture.inner_dependency_direction": "当前版本仅支持 \"upward\"。",
+      "architecture.cross_module_exports_file": "跨模块唯一合法导出入口文件名，默认 \"Index.ets\"。",
+      "paths": "各产物路径，均相对于实例工程根。初始化 Skill 不鼓励偏离默认值，除非实例已有既定目录结构。",
+      "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。"
+    },
+    "generation_rules": [
+      "生成时删除 $schema_docs 顶层键，其余键按用户答复填充。",
+      "JSON 缩进固定 2 空格；末尾保留换行符。",
+      "outer_layers / sublayers 的顺序保持用户确认的声明顺序，便于未来 diff 对比。",
+      "未填的 optional 字段（例如 atomic_service.*）不要写成 null，直接省略该键。"
+    ]
+  },
+
+  "schema_version": "1.0",
+  "project_name": "<project_name>",
+  "project_type": "app",
+  "agent_adapter": "generic",
+
+  "architecture": {
+    "outer_layers": [
+      {
+        "id": "<outer-layer-id>",
+        "can_depend_on": [],
+        "intra_layer_deps": "forbid"
+      }
+    ],
+    "module_inner_layers": ["shared", "data", "domain", "presentation"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "Index.ets"
+  },
+
+  "paths": {
+    "feature_docs_dir": "doc/features",
+    "feature_specs_dir": "specs/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "glossary_seed": "doc/glossary-seed.txt",
+    "architecture_md": "doc/architecture.md"
+  }
+}
