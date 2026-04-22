@@ -19,7 +19,9 @@
 
 ## 落盘职责划分
 
-- **AI（本 Skill）**：写 `framework.config.json` 的 `agent_adapter`；按选中 adapter 的 `adapter.yaml` 把模板拷贝到实例根；渲染 `AGENTS.md` / `CLAUDE.md`。
+> **前置硬约束（BLOCKER，与 `SKILL.md` Step 4 第 2 条一致）**：以下 AI 动作**必须**在收到用户对 `adapter_name` 的**显式选定回复**之后才能执行；IDE 环境 / 聊天上下文 / 已有 `.claude` / `.cursor` 目录痕迹仅作推荐值，**不得**视为用户决定。
+
+- **AI（本 Skill）**：在用户明确选定 adapter 之后——写 `framework.config.json` 的 `agent_adapter`；按选中 adapter 的 `adapter.yaml` 把模板拷贝到实例根；渲染 `AGENTS.md` / `CLAUDE.md`。
 - **Adapter**：不承担 skill 正文，只提供文件模板路径（见 `adapter-schema.yaml`）。
 
 ## 切换 adapter 时的安全提示

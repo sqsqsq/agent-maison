@@ -166,9 +166,14 @@ framework/harness/node_modules/             <档位>       <策略>
 
 按 [prompts/adapter-selection.md](prompts/adapter-selection.md)：
 
-1. 列出 `framework/agents/*/adapter.yaml` 中已实现的 `adapter_name` + `description`。
-2. 用户选择一个 → 写入 `framework.config.json` 的 `agent_adapter` 字段。
-3. **不得**同时生成两套入口文件（例如同时写 `CLAUDE.md` 与一份冲突的 `AGENTS.md` 同名模板变体）；以选中 adapter 的 `agent_entry_file.target_path` 为准。
+1. 列出 `framework/agents/*/adapter.yaml` 中已实现的 `adapter_name` + `description`，并给出**推荐值**（依据 `adapter-selection.md` 的「默认建议逻辑」，例如仓库已有 `.cursor/` 痕迹 → 推荐 `cursor`）。
+2. **BLOCKER — 强制等待显式选定**：在用户**明确回复具体 `adapter_name`**（例如「用 cursor」「选 generic」，仅仅回复「好」「继续」不算选定）之前，严禁：
+   - 写入 / 更新 `framework.config.json` 的 `agent_adapter` 字段；
+   - 拷贝任何 `framework/agents/<name>/templates/**` 下的文件到实例根；
+   - 渲染任何 `AGENTS.md` / `CLAUDE.md` 入口文件。
+   即便你从 IDE 环境、聊天上下文、已有 `.claude/` / `.cursor/` 目录等线索能「推断」出最可能的选项，也**必须**把推断作为**推荐值**亮给用户，由用户确认为「选定」；不得直接当成用户决定落盘。
+3. 用户选定后 → 写入 `framework.config.json` 的 `agent_adapter` 字段。
+4. **不得**同时生成两套入口文件（例如同时写 `CLAUDE.md` 与一份冲突的 `AGENTS.md` 同名模板变体）；以选中 adapter 的 `agent_entry_file.target_path` 为准。
 
 | adapter | 入口文件 | 典型额外产物 |
 |---------|----------|----------------|
@@ -360,6 +365,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 - 无法形成满足 `validateArchitectureDsl` 的 DSL → **不得**写入；继续与用户迭代问卷。
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
+- **未经用户明确选定 `agent_adapter`（具体 `adapter_name` 字符串）就写入 `framework.config.json` 的 `agent_adapter` 字段 / 拷贝任何 adapter `templates/` 下的文件 / 渲染 `AGENTS.md` 或 `CLAUDE.md`** → 严禁；IDE 环境或目录痕迹只能作为**推荐值**亮给用户，不得当成用户决定。
 - 用户拒绝确认 diff（POPULATED 项）→ **该项跳过**，**不得**强行覆盖；但允许其它 MISSING / EMPTY 项继续写入，并在 Step 7 如实列出被跳过清单。
 - **跳过 Step 0.3 体检直接写入** → 严禁；任何写操作前必须先完成体检并打印汇报表。
 - **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。
