@@ -19,9 +19,15 @@
 
 ## 落盘职责划分
 
-> **前置硬约束（BLOCKER，与 `SKILL.md` Step 4 第 2 条一致）**：以下 AI 动作**必须**在收到用户对 `adapter_name` 的**显式选定回复**之后才能执行；IDE 环境 / 聊天上下文 / 已有 `.claude` / `.cursor` 目录痕迹仅作推荐值，**不得**视为用户决定。
+> **前置硬约束（BLOCKER，与 `SKILL.md` Step 0.2.5 一致）**：adapter 的**选定动作**在 `SKILL.md` Step 0.2.5 发起，**位于 Step 0.3 体检之前**；以下 AI 动作**必须**在收到用户对 `adapter_name` 的**显式选定回复**之后才能执行：
+>
+> 1. 进入 Step 0.3 体检（体检表第 2、3 项依赖已选 adapter）；
+> 2. 在任何问题 / diff / CREATE→UPDATE 降级提示里写入具体入口文件名（`AGENTS.md` / `CLAUDE.md`）或 adapter 目录名（`.cursor/` / `.claude/`）；
+> 3. 写 `framework.config.json.agent_adapter`、拷贝 adapter 模板、渲染入口文件。
+>
+> IDE 环境 / 聊天上下文 / 已有 `.claude` / `.cursor` 目录痕迹仅作推荐值，**不得**视为用户决定。
 
-- **AI（本 Skill）**：在用户明确选定 adapter 之后——写 `framework.config.json` 的 `agent_adapter`；按选中 adapter 的 `adapter.yaml` 把模板拷贝到实例根；渲染 `AGENTS.md` / `CLAUDE.md`。
+- **AI（本 Skill）**：在用户明确选定 adapter 之后——按 Step 4 把选中 adapter 的模板拷贝到实例根、渲染 `AGENTS.md` / `CLAUDE.md`；在 Step 5.1 写 `framework.config.json` 的 `agent_adapter`。
 - **Adapter**：不承担 skill 正文，只提供文件模板路径（见 `adapter-schema.yaml`）。
 
 ## 切换 adapter 时的安全提示

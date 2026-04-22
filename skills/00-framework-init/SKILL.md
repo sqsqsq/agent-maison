@@ -44,6 +44,20 @@
 
 **无论哪种模式，Step 0.3 的存在性体检都必须执行**：这是本 Skill 唯一能区分"首次落地"与"用户已长期使用的工程"的入口，任何写入都必须以体检结果为依据。
 
+### 0.2.5 显式选定 `agent_adapter`（BLOCKER，所有后续步骤前置）
+
+> **动机**：Step 0.3 体检表第 2、3 项分别扫描「**所选** adapter 的入口文件（`AGENTS.md` / `CLAUDE.md`）」与「**所选** adapter `templates/` 下的逐个文件」。**没选定 adapter，这两行根本填不出来**，CREATE→UPDATE 降级提示里「将动到哪些文件」的措辞也会失真（把 `CLAUDE.md` 当 `AGENTS.md`、把 `.claude/` 当 `.cursor/` 之类）。因此本 Skill 要求：**adapter 选定必须完成在 Step 0.3 之前**。
+
+按 [prompts/adapter-selection.md](prompts/adapter-selection.md) 执行：
+
+1. 列出 `framework/agents/*/adapter.yaml` 中已实现的 `adapter_name` + `description`，给出**推荐值**（依据 `adapter-selection.md` 的「默认建议逻辑」，例如仓库已有 `.cursor/` 或 `.claude/` 痕迹）。推荐值仅供参考，**不得**直接当成用户选择。
+2. **BLOCKER — 强制等待显式选定**：必须收到用户**具体 `adapter_name` 字符串**（例如「用 cursor」「选 generic」，仅仅回复「好」「继续」「ok」不构成选定）。在选定完成前，**严禁**：
+   - 进入 Step 0.3（体检表第 2、3 项依赖已选 adapter）；
+   - 在任何问题、diff、降级提示里写入具体的入口文件名或 adapter 目录名（`AGENTS.md` / `CLAUDE.md` / `.cursor/` / `.claude/`）；必要时用**占位措辞**（例如「所选 adapter 的入口文件」）。
+   - 写入 / 更新 `framework.config.json` 的 `agent_adapter` 字段、拷贝任何 `framework/agents/<name>/templates/**` 下的文件、渲染任何入口文件。
+3. 即便从 IDE 环境、聊天上下文、已有 `.claude/` / `.cursor/` 目录等线索能「推断」出最可能的选项，也**必须**把推断作为**推荐值**亮给用户，由用户确认为「选定」；不得直接当成用户决定落盘或拿来描述后续动作。
+4. 选定完成后，内存里记录 `agent_adapter`，用于驱动 Step 0.3 的路径扫描与 Step 4.1 的入口文件渲染；`framework.config.json` 的实际写入仍发生在 Step 5.1，按 Step 0.3 体检结果执行。
+
 ### 0.3 产物存在性体检（写入前必做，CREATE / UPDATE 共享）
 
 > 动机：`/framework-init` 常常是**升级重跑**——用户已积累 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/architecture.md` / `doc/features/**` 等资产，甚至在 `CLAUDE.md` / `AGENTS.md` 里补过项目指令。**盲目覆盖就是毁资产**。本步把所有待写路径前置扫一遍，按固定策略矩阵给出动作，**不允许 AI 临场发挥**。
@@ -51,6 +65,8 @@
 #### 0.3.1 体检清单（固定 9 项，按路径顺序扫）
 
 所有路径均相对**实例工程根**；多数路径须先从 `framework.config.json`（若存在）的 `paths` 字段解析，UPDATE 模式优先读实例工程的配置，CREATE 模式以 `framework/harness/config.ts` `DEFAULT_PATHS` 为准。
+
+**前置依赖（BLOCKER）**：第 2、3 项的目标路径来自 **Step 0.2.5** 已选定的 `agent_adapter`（`agent_entry_file.target_path`、adapter `templates/` 下待拷贝文件）。若 Step 0.2.5 尚未完成，**不得**进入本节；体检表也不得用具体文件名硬编码占位（严禁「反正大多数工程是 cursor，就先按 `AGENTS.md` 体检」这类行为）。
 
 | # | 路径 | 档位分类依据 |
 |---|------|--------------|
@@ -86,27 +102,27 @@
 
 #### 0.3.3 汇报表与 CREATE 强制降级
 
-先向用户**完整打印**下面这张表（没有发现的 MISSING 行也要列，便于用户全貌理解），再继续 Step 1：
+先向用户**完整打印**下面这张表（没有发现的 MISSING 行也要列，便于用户全貌理解），再继续 Step 1。**表内第 2、3 行的具体文件名必须基于 Step 0.2.5 已选定的 `agent_adapter` 渲染**（例：`cursor` → `AGENTS.md` + `.cursor/**`；`claude` → `CLAUDE.md` + `.claude/**`；`generic` → `AGENTS.md` + 无 adapter 目录），不得写两个候选名一起糊弄：
 
 ```text
-产物                                        状态         计划动作
-------------------------------------------------------------------
-framework.config.json                       <档位>       <策略>
-CLAUDE.md / AGENTS.md                        <档位>       <策略>
-.claude/commands/*.md（或 .cursor/…）        <档位/逐项>  <策略>
-doc/architecture.md                         <档位>       <策略>
-doc/module-catalog.yaml                     <档位>       <策略>
-doc/glossary.yaml                           <档位>       <策略>
-doc/glossary-seed.txt                       <档位>       <策略>
-doc/features/                               <档位>       <策略>
-framework/harness/node_modules/             <档位>       <策略>
+产物                                          状态         计划动作
+---------------------------------------------------------------------
+framework.config.json                         <档位>       <策略>
+<agent_entry_file.target_path>                <档位>       <策略>
+<adapter templates 下各文件>                   <档位/逐项>  <策略>
+doc/architecture.md                           <档位>       <策略>
+doc/module-catalog.yaml                       <档位>       <策略>
+doc/glossary.yaml                             <档位>       <策略>
+doc/glossary-seed.txt                         <档位>       <策略>
+doc/features/                                 <档位>       <策略>
+framework/harness/node_modules/               <档位>       <策略>
 ```
 
 **CREATE → UPDATE 强制降级**：
 
-若当前标记为 CREATE 模式，但体检中**除第 8 项外**任何一行出现 `POPULATED`，AI 必须停下并打印：
+若当前标记为 CREATE 模式，但体检中**除第 8 项外**任何一行出现 `POPULATED`，AI 必须停下并打印（**文案中列出的遗留文件名必须按 Step 0.2.5 选定 adapter 渲染**，不允许同时出现 `CLAUDE.md / AGENTS.md` 这种「二选一」措辞）：
 
-> 当前无 `framework.config.json`，按 Step 0.2 判定为 CREATE，但上述体检发现工程中已存在既往初始化产物（例如 `CLAUDE.md` / `doc/architecture.md` / `doc/module-catalog.yaml`）。本 Skill 将**强制降级为 UPDATE 模式**：对所有 POPULATED 项一律走 diff + 你口头 `y` 的流程，绝不盲目覆盖。继续？(y/N)
+> 当前无 `framework.config.json`，按 Step 0.2 判定为 CREATE，但上述体检发现工程中已存在既往初始化产物（例如 `<entry-file>`、`doc/architecture.md`、`doc/module-catalog.yaml`）。本 Skill 将**强制降级为 UPDATE 模式**：对所有 POPULATED 项一律走 diff + 你口头 `y` 的流程，绝不盲目覆盖。继续？(y/N)
 
 用户 `y` → 模式切为 UPDATE，继续；`N` 或无响应 → 终止本次 `/framework-init`，让用户排查遗留文件后再重跑。
 
@@ -174,18 +190,11 @@ framework/harness/node_modules/             <档位>       <策略>
 
 ---
 
-## Step 4. 选择 agent adapter
+## Step 4. agent adapter 产物落地
 
-按 [prompts/adapter-selection.md](prompts/adapter-selection.md)：
+> **前置**：adapter 的**选定动作**已在 **Step 0.2.5** 完成，**本 Step 不再发起任何关于 `agent_adapter` 的选择问题**。这里只负责把 Step 0.2.5 选定的 adapter 对应的模板拷贝到实例根，并渲染入口文件。
 
-1. 列出 `framework/agents/*/adapter.yaml` 中已实现的 `adapter_name` + `description`，并给出**推荐值**（依据 `adapter-selection.md` 的「默认建议逻辑」，例如仓库已有 `.cursor/` 痕迹 → 推荐 `cursor`）。
-2. **BLOCKER — 强制等待显式选定**：在用户**明确回复具体 `adapter_name`**（例如「用 cursor」「选 generic」，仅仅回复「好」「继续」不算选定）之前，严禁：
-   - 写入 / 更新 `framework.config.json` 的 `agent_adapter` 字段；
-   - 拷贝任何 `framework/agents/<name>/templates/**` 下的文件到实例根；
-   - 渲染任何 `AGENTS.md` / `CLAUDE.md` 入口文件。
-   即便你从 IDE 环境、聊天上下文、已有 `.claude/` / `.cursor/` 目录等线索能「推断」出最可能的选项，也**必须**把推断作为**推荐值**亮给用户，由用户确认为「选定」；不得直接当成用户决定落盘。
-3. 用户选定后 → 写入 `framework.config.json` 的 `agent_adapter` 字段。
-4. **不得**同时生成两套入口文件（例如同时写 `CLAUDE.md` 与一份冲突的 `AGENTS.md` 同名模板变体）；以选中 adapter 的 `agent_entry_file.target_path` 为准。
+**BLOCKER**：若本 Step 检测到「`agent_adapter` 未在本次对话中由 Step 0.2.5 显式选定」（例如体检阶段被跳过、内存里没有 `agent_adapter` 值），**立即停下回到 Step 0.2.5**，不得在本 Step 重新推断或兜底默认。
 
 | adapter | 入口文件 | 典型额外产物 |
 |---------|----------|----------------|
@@ -196,6 +205,8 @@ framework/harness/node_modules/             <档位>       <策略>
 落地方式：**从对应 adapter 的 `templates/` 目录拷贝到实例根**，若存在 `commands` / `skill_bridge` / `rules` / `subagents`，按该 adapter 的 `adapter.yaml` 中 **相对 adapter 目录** 的 `template_dir` → **相对实例根** 的 `target_dir` 原样复制（保持相对路径引用 `../../framework/skills/...` 与现有一致）。
 
 **逐文件按 Step 0.3 第 3 项体检结果执行**：MISSING / EMPTY 直拷；POPULATED 展示 diff + 用户 `y` 后单文件替换；源模板中不存在但目标目录已有的用户自建文件**一律保留**。
+
+**不得**同时生成两套入口文件（例如同时写 `CLAUDE.md` 与一份冲突的 `AGENTS.md` 同名模板变体）；以 Step 0.2.5 选中 adapter 的 `agent_entry_file.target_path` 为准。切换 adapter 重跑时，**旧 adapter 的既有产物不由本 Skill 自动删除**，由用户自行清理（在 Step 7 收尾时打印提示）。
 
 ### 4.1 渲染 `AGENTS.md` / `CLAUDE.md`
 
@@ -369,7 +380,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 > 「产物是否写 / 如何写」已由 Step 0.3 体检表完全覆盖；本节只补充两件**体检表之外**的、UPDATE 特有的变更语义。
 
 1. **改 DSL**：重新执行 Step 3。DSL 变化的**语义影响**需要显式提醒用户——`check-coding` / `check-catalog` 等 harness 行为会跟着变，既有模块画像的 `allowed_dependencies` 可能突然违规。展示 `architecture` 段 diff 时附带一句"本次变更将影响以下 harness 检查：…"，用户 `y` 后按 Step 5.1 写入。
-2. **切换 `agent_adapter`**：新旧 adapter 的产物路径不同（例 `.claude/` ↔ `.cursor/`）。Step 0.3 体检表**只扫描新 adapter** 的目标路径；旧 adapter 的遗留产物需要在本节**额外列给用户看**（`.claude/commands/*.md` 之类），建议用户手动删除或备份后再继续，**本 Skill 不自动删除其它 adapter 的产物**。
+2. **切换 `agent_adapter`**：用户在 Step 0.2.5 选了与当前 `framework.config.json.agent_adapter` 不同的 adapter 即视为切换。新旧 adapter 的产物路径不同（例 `.claude/` ↔ `.cursor/`）。Step 0.3 体检表**只扫描新 adapter** 的目标路径；旧 adapter 的遗留产物需要在本节**额外列给用户看**（`.claude/commands/*.md` 之类），建议用户手动删除或备份后再继续，**本 Skill 不自动删除其它 adapter 的产物**。
 
 ---
 
@@ -377,7 +388,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 - 无法形成满足 `validateArchitectureDsl` 的 DSL → **不得**写入；继续与用户迭代问卷。
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
-- **未经用户明确选定 `agent_adapter`（具体 `adapter_name` 字符串）就写入 `framework.config.json` 的 `agent_adapter` 字段 / 拷贝任何 adapter `templates/` 下的文件 / 渲染 `AGENTS.md` 或 `CLAUDE.md`** → 严禁；IDE 环境或目录痕迹只能作为**推荐值**亮给用户，不得当成用户决定。
+- **未经用户明确选定 `agent_adapter`（具体 `adapter_name` 字符串）就进入 Step 0.3 体检 / 在降级提示里写入具体入口文件名或 adapter 目录名 / 写入 `framework.config.json.agent_adapter` / 拷贝任何 adapter `templates/` 下的文件 / 渲染 `AGENTS.md` 或 `CLAUDE.md`** → 严禁；adapter 选定必须在 Step 0.2.5 完成，IDE 环境或目录痕迹只能作为**推荐值**亮给用户，不得当成用户决定。
+- **Step 0.3 体检表或 CREATE→UPDATE 降级提示中，采用"`CLAUDE.md / AGENTS.md`"这类二选一措辞**（即尚未按 Step 0.2.5 的选定结果渲染到具体文件名） → 严禁，必须回到 Step 0.2.5 让用户显式选定后再打印体检表。
 - **未经用户逐层显式确认 `outer_layers[*].intra_layer_deps` 就写入 `framework.config.json.architecture`** → 严禁；preset 默认值（包括钱包 `LEGACY_DEFAULT_DSL`）只能作为**推荐值**展示，必须按 Step 3.x 的确认表逐行拿到「按默认 / 改为 X」的显式回复后才能落盘。
 - 用户拒绝确认 diff（POPULATED 项）→ **该项跳过**，**不得**强行覆盖；但允许其它 MISSING / EMPTY 项继续写入，并在 Step 7 如实列出被跳过清单。
 - **跳过 Step 0.3 体检直接写入** → 严禁；任何写操作前必须先完成体检并打印汇报表。
