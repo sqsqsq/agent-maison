@@ -52,12 +52,15 @@ git submodule update --init --recursive
 
 ## Harness 常用命令
 
-在实例仓库中，于 `framework/harness` 目录执行（具体 phase 与 `--feature` 以各 Skill 为准）：
+在实例仓库中，于 `framework/harness` 目录执行（具体 phase 与 `--feature` 以各 Skill 为准）。**首次进入前**（包括新克隆、换机器、CI）需先安装 npm 依赖——`framework/harness/` 的 `node_modules/` 与 `package-lock.json` 均不随框架分发（内网 registry 与外网不同，lock 文件本地生成更稳）：
 
 ```bash
 cd framework/harness
+npm install                   # 仅首次或 package.json 变更后执行
 npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 ```
+
+初始化时由 `/framework-init`（Skill 00 Step 5.5）自动完成 `npm install`，此处仅作手动说明。
 
 Skill 0 的全局 phase（无 `--feature`）示例：
 

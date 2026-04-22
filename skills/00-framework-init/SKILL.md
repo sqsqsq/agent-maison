@@ -182,7 +182,39 @@ terms: []
 
 ---
 
+## Step 5.5. 安装 harness 本地依赖（Step 6 前置）
+
+Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yaml` 等 npm 包。`framework/harness/node_modules/` 与 `package-lock.json` 均已被 `.gitignore` 排除（**内网 registry URL 与外网不同，lock 文件不适合随框架分发**），新克隆的工程此处**必无** `node_modules`，若直接跑 Step 6 会以 `Cannot find module 'ts-node'` / `'yaml'` 失败。由本 Skill 在此统一解决。
+
+### 5.5.1 幂等检测
+
+- 若 `<repo-root>/framework/harness/node_modules/ts-node/package.json` 存在 → **跳过** 5.5.2，直接进入 Step 6。
+- 否则继续 5.5.2。
+
+### 5.5.2 在 `framework/harness/` 内执行 `npm install`
+
+- 运行目录**必须**是 `<repo-root>/framework/harness/`；**不要**把 npm 依赖污染到实例工程根或 `framework/` 根。
+- 命令示例（PowerShell / bash 通用）：`cd framework/harness && npm install`。
+- **不得**传 `--registry` 参数、**不得**生成 `.npmrc`：尊重用户本地镜像配置（内网用户通常在 `~/.npmrc` 或企业镜像里已配好；外网用户走默认 registry）。
+- 首次安装视网络耗时 30s - 2min，AI 执行时请设置对应等待窗口。
+
+### 5.5.3 失败处理
+
+若 `npm install` 非零退出：**停下**，向用户报以下三点排查清单（**不要**擅自改 registry / 关 integrity 校验）：
+
+1. `npm config get registry` 输出的 URL 在当前网络是否可达？（内网用户确认镜像 URL 正确）
+2. 是否处于代理后？`HTTP_PROXY` / `HTTPS_PROXY` 环境变量是否设置正确？
+3. `node --version` ≥ 18？`npm --version` 与 `node` 版本匹配？
+
+用户修好环境后重跑 5.5.2；安装成功前**不要**进入 Step 6。
+
+> 关于鸿蒙侧依赖：`ohpm install`（`oh_modules/`）是实例工程自身 ArkTS 代码的依赖，由 DevEco / Skill 3 编码阶段负责触发，**与本 Skill 无关**，这里不代管。
+
+---
+
 ## Step 6. Harness 验证（初始化完成门禁）
+
+**前置**：Step 5.5 已成功完成（`framework/harness/node_modules/` 存在）。
 
 在实例工程根执行（**无 `--feature`**）：
 
@@ -193,6 +225,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 - 期望：骨架下多为 **WARN**（空 catalog / 空 glossary），不应有 **BLOCKER** 级结构错误。
 - 若 FAIL：根据报告逐项修正 `framework.config.json` 或 YAML，**不要**为通过校验而删减 `schema_version` 等必填字段。
+- 若报 `Cannot find module` 类错误 → 回到 Step 5.5，确认 `framework/harness/node_modules/` 确实装好。
 
 ---
 
@@ -222,6 +255,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 - 无法形成满足 `validateArchitectureDsl` 的 DSL → **不得**写入；继续与用户迭代问卷。
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
 - 用户拒绝确认 diff（UPDATE）→ **不得**覆盖 `framework.config.json`。
+- Step 5.5 的 `npm install` 失败 → **不得**跳过直接跑 Step 6；**不得**擅自改 registry 或 `.npmrc` 绕过；按 5.5.3 三点让用户排查后重试。
 
 ---
 
