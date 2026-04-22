@@ -151,14 +151,26 @@ framework/harness/node_modules/             <档位>       <策略>
    - `module_inner_layers` 数组顺序（**顺序即依赖顺序**，仅支持 `inner_dependency_direction: "upward"`）
    - `cross_module_exports_file`（默认 `Index.ets`）
 
+### Step 3.x. 同层策略逐层确认（BLOCKER，所有路径共用）
+
+无论走选项 A / B / C，在写入 `framework.config.json.architecture` **之前**，必须完成以下动作：
+
+1. 使用 [templates/intra-layer-deps-confirm.template.md](templates/intra-layer-deps-confirm.template.md) 渲染一份「外层 × `intra_layer_deps`」确认表，把当前候选值（preset 默认或问卷答复）填进「当前值」列并展示给用户。
+2. 明确提示：**默认值只是推荐**（尤其钱包 preset 的 `forbid` 是「逼横向协作下沉」的设计选择，**不是**「架构禁止同层互依赖」这种唯一答案）；`forbid` / `dag` / `sublayer` 三者语义见 [framework/harness/config.ts](../../harness/config.ts) 的 `IntraLayerDepsMode` 说明。
+3. 用户**必须逐行**给出显式回复：`按默认` / `改为 dag` / `改为 forbid` / `改为 sublayer(+ 子层)`。**笼统的「好」「继续」「行」不构成逐层确认**；只要有任一行没有显式回复，就继续追问，不得落盘。
+4. 收到全部回复后，再依 Step 3 生成前强制自检（见下节）写入 `framework.config.json`。
+
+> 与 Step 4「adapter 选择 BLOCKER」对称：架构守门有三件事必须显式确认——① adapter；② **每层 `intra_layer_deps`**；③ DSL 自检通过。
+
 **生成前强制自检**（不通过则修正后再写文件）：
 
 - `outer_layers[].id` 唯一；`can_depend_on` 只引用已声明的 id；**外层依赖图无环**。
 - `intra_layer_deps === "sublayer"` 时 `sublayers` 合法且子层依赖图无环。
 - `module_inner_layers` 非空、无重复项。
 - `cross_module_exports_file` 非空字符串。
+- **每一个 `outer_layers[*].intra_layer_deps` 的取值都能在本次对话里追溯到用户的显式回复记录**（「按默认」视作显式回复；AI 静默采纳 preset 默认不视作显式回复）。
 
-（逻辑与 [framework/harness/config.ts](../../harness/config.ts) `validateArchitectureDsl` 一致。）
+（前四条逻辑与 [framework/harness/config.ts](../../harness/config.ts) `validateArchitectureDsl` 一致；第五条由本 Skill 在 Step 3.x 自己把关，`validateArchitectureDsl` 不检查对话记录。）
 
 ---
 
@@ -366,6 +378,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 - 无法形成满足 `validateArchitectureDsl` 的 DSL → **不得**写入；继续与用户迭代问卷。
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
 - **未经用户明确选定 `agent_adapter`（具体 `adapter_name` 字符串）就写入 `framework.config.json` 的 `agent_adapter` 字段 / 拷贝任何 adapter `templates/` 下的文件 / 渲染 `AGENTS.md` 或 `CLAUDE.md`** → 严禁；IDE 环境或目录痕迹只能作为**推荐值**亮给用户，不得当成用户决定。
+- **未经用户逐层显式确认 `outer_layers[*].intra_layer_deps` 就写入 `framework.config.json.architecture`** → 严禁；preset 默认值（包括钱包 `LEGACY_DEFAULT_DSL`）只能作为**推荐值**展示，必须按 Step 3.x 的确认表逐行拿到「按默认 / 改为 X」的显式回复后才能落盘。
 - 用户拒绝确认 diff（POPULATED 项）→ **该项跳过**，**不得**强行覆盖；但允许其它 MISSING / EMPTY 项继续写入，并在 Step 7 如实列出被跳过清单。
 - **跳过 Step 0.3 体检直接写入** → 严禁；任何写操作前必须先完成体检并打印汇报表。
 - **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。
