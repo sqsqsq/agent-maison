@@ -39,8 +39,76 @@
 
 ### 0.2 判定 CREATE / UPDATE 模式
 
-- **若** `<repo-root>/framework.config.json` **不存在** → **CREATE** 模式。
-- **若已存在** → **UPDATE** 模式：必须先 `Read` 完整现有 JSON，后续任何写入前必须展示 **与本次拟定内容的 diff**（键级 / 架构段级均可），用户口头 **`y` 确认**后才可落盘。
+- **若** `<repo-root>/framework.config.json` **不存在** → **CREATE** 模式（预期整工程干净，所有产物均为 MISSING）。
+- **若已存在** → **UPDATE** 模式（framework 升级 / 改架构 / 切 adapter 时重跑）。
+
+**无论哪种模式，Step 0.3 的存在性体检都必须执行**：这是本 Skill 唯一能区分"首次落地"与"用户已长期使用的工程"的入口，任何写入都必须以体检结果为依据。
+
+### 0.3 产物存在性体检（写入前必做，CREATE / UPDATE 共享）
+
+> 动机：`/framework-init` 常常是**升级重跑**——用户已积累 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/architecture.md` / `doc/features/**` 等资产，甚至在 `CLAUDE.md` / `AGENTS.md` 里补过项目指令。**盲目覆盖就是毁资产**。本步把所有待写路径前置扫一遍，按固定策略矩阵给出动作，**不允许 AI 临场发挥**。
+
+#### 0.3.1 体检清单（固定 9 项，按路径顺序扫）
+
+所有路径均相对**实例工程根**；多数路径须先从 `framework.config.json`（若存在）的 `paths` 字段解析，UPDATE 模式优先读实例工程的配置，CREATE 模式以 `framework/harness/config.ts` `DEFAULT_PATHS` 为准。
+
+| # | 路径 | 档位分类依据 |
+|---|------|--------------|
+| 1 | `framework.config.json` | 解析成功且 `architecture.outer_layers.length > 0` → POPULATED；`=== 0` → EMPTY；文件不存在 → MISSING |
+| 2 | 所选 adapter 的 `agent_entry_file.target_path`（`AGENTS.md` 或 `CLAUDE.md`） | 与 `framework/templates/AGENTS.md.template` **按当前 DSL 渲染出的骨架**字节相等 → EMPTY；否则 POPULATED；不存在 → MISSING |
+| 3 | 所选 adapter `templates/` 下每一个会被拷贝的文件（`.claude/**` / `.cursor/**`） | 与源模板字节相等 → EMPTY；否则 POPULATED；不存在 → MISSING（**逐文件**判定，不按目录整体） |
+| 4 | `paths.architecture_md`（默认 `doc/architecture.md`） | 与 `templates/architecture.md.skeleton.md` 渲染后字节相等 → EMPTY；否则 POPULATED |
+| 5 | `paths.module_catalog`（默认 `doc/module-catalog.yaml`） | YAML 解析后 `modules` 数组 `=== 0` → EMPTY；否则 POPULATED |
+| 6 | `paths.glossary`（默认 `doc/glossary.yaml`） | YAML 解析后 `terms` 数组 `=== 0` → EMPTY；否则 POPULATED |
+| 7 | `paths.glossary_seed`（默认 `doc/glossary-seed.txt`） | 与 `templates/glossary-seed.skeleton.txt` 字节相等 → EMPTY；否则 POPULATED |
+| 8 | `paths.features_dir`（默认 `doc/features`） | 目录不存在 → MISSING；存在但空目录 / 只含 `.gitkeep` → EMPTY；有任何子目录或文件 → POPULATED |
+| 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用） |
+
+#### 0.3.2 策略矩阵（**不许偏离**）
+
+| # | 路径 | MISSING 动作 | EMPTY 动作 | POPULATED 动作 |
+|---|------|------|------|------|
+| 1 | `framework.config.json` | 走 Step 5.1 直接写 | 等同 MISSING | **Step 5.1 前 diff + 用户 `y` 确认**，整文件替换 |
+| 2 | agent 入口文件 | 走 Step 4.1 直接写 | 等同 MISSING | **diff + 用户 `y`**，整文件替换 |
+| 3 | adapter 目录下每个文件 | 直接拷贝 | 等同 MISSING | **逐文件 diff + 用户 `y`**；**用户自建、在源模板中不存在的额外文件一律保留** |
+| 4 | `doc/architecture.md` | 走 Step 5.2 写骨架 | 等同 MISSING | **默认跳过**；向用户打印："`doc/architecture.md` 已被你迭代过，本 Skill 不会自动重置。如需回到骨架重新生成，请手动删除该文件后再重跑 `/framework-init`。" |
+| 5 | `doc/module-catalog.yaml` | 写空骨架（`modules: []`） | 保留原骨架，不动 | **永不覆盖**；打印："`doc/module-catalog.yaml` 属于 `catalog-bootstrap` 持续积累的数据资产，本 Skill 不会修改。" |
+| 6 | `doc/glossary.yaml` | 写空骨架（`terms: []`） | 保留原骨架 | **永不覆盖**；打印："`doc/glossary.yaml` 属于 `glossary-bootstrap` 积累资产，本 Skill 不会修改。" |
+| 7 | `doc/glossary-seed.txt` | 写骨架 | 保留 | **默认跳过**；打印："`doc/glossary-seed.txt` 已被编辑，保留原文。" |
+| 8 | `paths.features_dir` | 创建空目录 + 可选 `.gitkeep` | 保留 | **不进入、不扫描、不比对**；打印："`<features_dir>` 下已有业务 feature 产物，本 Skill 不会触碰其中任何文件。" |
+| 9 | `framework/harness/node_modules` | Step 5.5 执行 `npm install` | 不适用 | Step 5.5 幂等跳过 |
+
+**共性纪律**：
+
+- 所有 `POPULATED` 档位的决策全部在 **Step 0.3 阶段一次性展示完体检表**给用户看，随后 Step 5 的各小节**只执行**体检表已决定的动作；不得在 Step 5 里重新询问或翻盘。
+- 用户对第 1/2/3 类的 diff 给出 `n`（拒绝） → 该项跳过写入，**不**中断整体流程，不强制回滚其它已完成项；但必须在 Step 7 的收尾指引里明确列出被跳过项。
+- 任何策略里标注 "不会覆盖 / 不会修改 / 不会触碰" 的项，**即使用户口头要求**本 Skill 也不处理；请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑等既定路径。
+
+#### 0.3.3 汇报表与 CREATE 强制降级
+
+先向用户**完整打印**下面这张表（没有发现的 MISSING 行也要列，便于用户全貌理解），再继续 Step 1：
+
+```text
+产物                                        状态         计划动作
+------------------------------------------------------------------
+framework.config.json                       <档位>       <策略>
+CLAUDE.md / AGENTS.md                        <档位>       <策略>
+.claude/commands/*.md（或 .cursor/…）        <档位/逐项>  <策略>
+doc/architecture.md                         <档位>       <策略>
+doc/module-catalog.yaml                     <档位>       <策略>
+doc/glossary.yaml                           <档位>       <策略>
+doc/glossary-seed.txt                       <档位>       <策略>
+doc/features/                               <档位>       <策略>
+framework/harness/node_modules/             <档位>       <策略>
+```
+
+**CREATE → UPDATE 强制降级**：
+
+若当前标记为 CREATE 模式，但体检中**除第 8 项外**任何一行出现 `POPULATED`，AI 必须停下并打印：
+
+> 当前无 `framework.config.json`，按 Step 0.2 判定为 CREATE，但上述体检发现工程中已存在既往初始化产物（例如 `CLAUDE.md` / `doc/architecture.md` / `doc/module-catalog.yaml`）。本 Skill 将**强制降级为 UPDATE 模式**：对所有 POPULATED 项一律走 diff + 你口头 `y` 的流程，绝不盲目覆盖。继续？(y/N)
+
+用户 `y` → 模式切为 UPDATE，继续；`N` 或无响应 → 终止本次 `/framework-init`，让用户排查遗留文件后再重跑。
 
 ---
 
@@ -110,7 +178,11 @@
 
 落地方式：**从对应 adapter 的 `templates/` 目录拷贝到实例根**，若存在 `commands` / `skill_bridge` / `rules` / `subagents`，按该 adapter 的 `adapter.yaml` 中 **相对 adapter 目录** 的 `template_dir` → **相对实例根** 的 `target_dir` 原样复制（保持相对路径引用 `../../framework/skills/...` 与现有一致）。
 
+**逐文件按 Step 0.3 第 3 项体检结果执行**：MISSING / EMPTY 直拷；POPULATED 展示 diff + 用户 `y` 后单文件替换；源模板中不存在但目标目录已有的用户自建文件**一律保留**。
+
 ### 4.1 渲染 `AGENTS.md` / `CLAUDE.md`
+
+**按 Step 0.3 体检结果执行**：第 2 项为 MISSING / EMPTY 时直接写；POPULATED 时必须先展示新旧内容 diff，用户 `y` 才写入；否则跳过。
 
 1. 读取 [framework/templates/AGENTS.md.template](../../templates/AGENTS.md.template)。
 2. 替换下列占位符（与 `adapter-schema.yaml` 对齐）：
@@ -134,15 +206,25 @@
 
 ## Step 5. 生成目录与文档骨架
 
+> 本步骤的每一小节**仅执行** Step 0.3 体检表已决定的动作；不得在这里重新判断是否覆盖，也不得向用户二次询问。
+
 ### 5.1 `framework.config.json`
 
-- 将 Step 2～4 汇总的 JSON **格式化（2 空格缩进）** 写入实例根。
-- **CREATE** 模式：首次创建。
-- **UPDATE** 模式：仅在被用户确认 diff 后覆盖。
+**按 Step 0.3 第 1 项体检结果执行**：
+
+- `MISSING` / `EMPTY`：将 Step 2～4 汇总的 JSON **格式化（2 空格缩进）** 写入实例根。
+- `POPULATED`：必须已经在 Step 0.3 汇报表阶段展示过 diff 并得到用户 `y`，此处才覆盖；用户 `n` → 跳过，**不得**中断整体流程。
 
 ### 5.2 `doc/architecture.md`（或 `paths.architecture_md` 指向的路径）
 
-- 以 [templates/architecture.md.skeleton.md](templates/architecture.md.skeleton.md) 为起点，替换占位符：
+**按 Step 0.3 第 4 项体检结果执行**：
+
+- `MISSING` / `EMPTY`：以 [templates/architecture.md.skeleton.md](templates/architecture.md.skeleton.md) 为起点生成（见下方渲染步骤）。
+- `POPULATED`：**默认跳过**，不展示 diff、不提议覆盖；本 Skill 不替用户决定是否重置他手工迭代过的架构文档。
+
+MISSING / EMPTY 时的渲染步骤：
+
+- 替换占位符：
   - `{{PROJECT_NAME}}` → 与 `project_name` 一致
   - `{{MODULE_INNER_LAYERS_CSV}}` → `module_inner_layers` 用英文逗号 + 空格连接（例：`shared, data, domain, presentation`）
   - `{{CROSS_MODULE_EXPORTS_FILE}}` → `architecture.cross_module_exports_file`
@@ -154,7 +236,13 @@
 
 ### 5.3 `module-catalog.yaml` / `glossary.yaml` / `glossary-seed.txt`
 
-**与 Skill 0 Step 0 骨架对齐**（内容不得编造业务模块 / 术语）：
+**按 Step 0.3 第 5/6/7 项体检结果执行**：
+
+- `module-catalog.yaml`：`MISSING` 写空骨架；`EMPTY` / `POPULATED` **不动**（POPULATED 属 `catalog-bootstrap` 积累资产，绝不覆盖）。
+- `glossary.yaml`：同上规则（POPULATED 属 `glossary-bootstrap` 积累资产）。
+- `glossary-seed.txt`：`MISSING` 写骨架；`EMPTY` / `POPULATED` **不动**。
+
+骨架内容（仅 MISSING 档位使用）：
 
 - **module-catalog.yaml**：仅
 
@@ -178,7 +266,13 @@ terms: []
 
 ### 5.4 功能目录
 
-创建 `paths.features_dir`（默认 `doc/features`）。每个 feature 一个子目录，扁平归档 PRD.md / design.md / contracts.yaml / acceptance.yaml / boundaries.yaml / review-report.md / test-plan.md / test-report.md 等全部产物。若仓库需要被 git 跟踪空目录，可在该目录下放一个 `.gitkeep`（**不要**编造示例 feature 内容）。
+**按 Step 0.3 第 8 项体检结果执行**：
+
+- `MISSING`：创建 `paths.features_dir`（默认 `doc/features`）空目录；若仓库需要被 git 跟踪空目录，可在该目录下放一个 `.gitkeep`。
+- `EMPTY`：保留现状。
+- `POPULATED`：**不进入、不扫描、不比对**该目录下任何内容；本 Skill 绝不触碰业务 feature 资产。
+
+`doc/features/` 的使用约定（仅作提示，不由本 Skill 生成）：每个 feature 一个子目录，扁平归档 PRD.md / design.md / contracts.yaml / acceptance.yaml / boundaries.yaml / review-report.md / test-plan.md / test-report.md 等全部产物。**不要**编造示例 feature 内容。
 
 ---
 
@@ -231,7 +325,21 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 ## Step 7. 收尾：下一步指引
 
-向用户固定输出以下指引（可精简不可省略意图）：
+**7.1 被跳过项汇报（如有）**
+
+把 Step 0.3 / Step 5 中被判定为"保留 / 默认跳过 / 用户对 diff 回 n"的产物**逐项列出**，例如：
+
+```text
+本次初始化跳过以下产物（均未被写入 / 未被覆盖）：
+- doc/architecture.md（POPULATED，用户已手工迭代；如需重置请删除后重跑）
+- doc/module-catalog.yaml（POPULATED，属 catalog-bootstrap 持续积累资产）
+- doc/glossary.yaml（POPULATED，属 glossary-bootstrap 持续积累资产）
+- .claude/commands/coding.md（POPULATED，你对 diff 回复了 n）
+```
+
+无跳过项时明确打印"本次无跳过项"。
+
+**7.2 下一步指引**（固定输出，可精简不可省略意图）：
 
 1. 为已有模块跑 Skill 0：`/catalog-bootstrap <ModuleName>`，直至 catalog 覆盖主要模块。
 2. 跑 `/glossary-bootstrap` 建立术语表。
@@ -239,14 +347,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 ---
 
-## UPDATE 模式补充
+## UPDATE 模式补充（体检外的两类动作）
 
-1. **改 DSL**：重新执行 Step 3，展示 `architecture` 段 **diff**，强调 `check-coding` / `check-catalog` 等行为将随 DSL 变化；用户 **`y`** 后写入。
-2. **切换 `agent_adapter`**：
-   - 列出旧 adapter 特有文件（如 `.claude/commands/` vs `.cursor/skills/`）；
-   - 建议用户手动删除冲突旧文件或备份后覆盖；
-   - 再按新 adapter 拷贝模板。
-3. **禁止静默扩大 scope**：不要顺带修改 `doc/features` 下已有业务文档，除非用户明确要求。
+> 「产物是否写 / 如何写」已由 Step 0.3 体检表完全覆盖；本节只补充两件**体检表之外**的、UPDATE 特有的变更语义。
+
+1. **改 DSL**：重新执行 Step 3。DSL 变化的**语义影响**需要显式提醒用户——`check-coding` / `check-catalog` 等 harness 行为会跟着变，既有模块画像的 `allowed_dependencies` 可能突然违规。展示 `architecture` 段 diff 时附带一句"本次变更将影响以下 harness 检查：…"，用户 `y` 后按 Step 5.1 写入。
+2. **切换 `agent_adapter`**：新旧 adapter 的产物路径不同（例 `.claude/` ↔ `.cursor/`）。Step 0.3 体检表**只扫描新 adapter** 的目标路径；旧 adapter 的遗留产物需要在本节**额外列给用户看**（`.claude/commands/*.md` 之类），建议用户手动删除或备份后再继续，**本 Skill 不自动删除其它 adapter 的产物**。
 
 ---
 
@@ -254,7 +360,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 - 无法形成满足 `validateArchitectureDsl` 的 DSL → **不得**写入；继续与用户迭代问卷。
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
-- 用户拒绝确认 diff（UPDATE）→ **不得**覆盖 `framework.config.json`。
+- 用户拒绝确认 diff（POPULATED 项）→ **该项跳过**，**不得**强行覆盖；但允许其它 MISSING / EMPTY 项继续写入，并在 Step 7 如实列出被跳过清单。
+- **跳过 Step 0.3 体检直接写入** → 严禁；任何写操作前必须先完成体检并打印汇报表。
+- **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。
+- CREATE 模式体检命中 POPULATED 而用户未同意强制降级为 UPDATE → 终止本次 `/framework-init`。
 - Step 5.5 的 `npm install` 失败 → **不得**跳过直接跑 Step 6；**不得**擅自改 registry 或 `.npmrc` 绕过；按 5.5.3 三点让用户排查后重试。
 
 ---
