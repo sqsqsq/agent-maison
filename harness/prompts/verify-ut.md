@@ -54,7 +54,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 7 项 v2.1 语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 8 项 v2.1 语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: state_model 完备性 (state_model_completeness)
 
@@ -79,13 +79,35 @@
   1. 列出 PRD.md / design.md 中涉及本 use_case 的**所有 UI 节点**（页面、弹窗、组件），对比 `ui_bindings[]`：
      - 每个参与此业务流程的 UI 是否都有条目（`role` 是否合理标注 entry/progress/dialog/result/passive）
      - `subscribes` 是否与 `state_model.phases` / `state_model.fields` 对齐（不应订阅不存在的字段）
-  2. 每个 `user_actions[].calls` 是否指向**真实存在的命名函数**（由 `named_business_handler` 已做结构性检查；你补充语义判断：命名是否表达业务意图，而非 `onClick1`/`handler` 之类空词）
-  3. 检查是否存在**应有未有的 UI 绑定**：例如短验弹框肯定需要 `confirmSms` 这类入口
-  4. `data_boundaries` 是否覆盖业务流涉及的所有外部依赖（云端 / 本地持久化 / 系统服务）；是否混入了不属于数据边界的东西（UI、路由、toast 不应进入 data_boundaries）
+  2. 检查是否存在**应有未有的 UI 绑定**：例如短验弹框肯定需要 `confirmSms` 这类入口
+  3. `data_boundaries` 是否覆盖业务流涉及的所有外部依赖（云端 / 本地持久化 / 系统服务）；是否混入了不属于数据边界的东西（UI、路由、toast 不应进入 data_boundaries）
 
 - **输出**：ui_bindings 完整度评分 + 缺失/冗余条目
 
-### 检查 3: 端到端驱动真实性 (end_to_end_driving) 【BLOCKER】
+### 检查 3: 业务入口可达性 (handler_reachable)
+
+- **严重等级**: MAJOR
+- **前置**：若 `use-cases.yaml` 不存在，整项 SKIP
+- **评估方法**（与 `named_business_handler` 脚本检查互补 — 脚本只验"符号是否存在"，你验"语义是否合理"）:
+  1. 对 `ui_bindings[].user_actions[].calls` 每个目标：
+     - 命名是否表达业务意图（如 `chooseCard` / `confirmSms`），而非 `onClick1` / `handler2` / `btnAction` 之类空词
+     - 对应代码里该命名函数是否实际承载业务逻辑（而非仅是一层转发：`chooseCard() { this.a = 1 }` 没有任何外部副作用也是不可测的）
+     - UT 侧是否真的在调用它（grep UT 文件 → 若从未被任何 `it()` 直接 `await`/调用，该入口形同虚设）
+  2. 对 `coordinator` 字段指向的符号：
+     - 若是类名（如 `CardOpenFlow`），该类是否在 `coordinator_file`（若声明）或其他合理位置真实存在
+     - 若是 `Page.method` 路径，对应 Page 里是否存在该命名方法
+     - 若是导出函数名，是否在任何 `export function {name}` / `export const {name} =` 中可见
+  3. 反模式检查：
+     - 业务逻辑大部分仍写在 `.onClick(async () => { ... })` 里，`ui_bindings.user_actions.calls` 只指向一层转发壳 — FAIL
+     - `calls` 指向 Repository/Api 方法（越过 coordinator 直接调 data 层）— FAIL，业务编排被旁路
+  4. 判定逻辑：
+     - 所有 `calls` 都命名合理、真实存在、且承载了业务逻辑 → PASS
+     - 存在空词命名 / 转发壳 / 被旁路 → FAIL
+     - 信息不足 → WARN
+
+- **输出**：逐条 calls 的可达性评估 + 空壳 / 旁路清单
+
+### 检查 4: 端到端驱动真实性 (end_to_end_driving) 【BLOCKER】
 
 - **严重等级**: **BLOCKER**
 - **评估方法**:
@@ -102,7 +124,7 @@
 
 - **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL
 
-### 检查 4: branch 语义覆盖 (branch_coverage_semantic)
+### 检查 5: branch 语义覆盖 (branch_coverage_semantic)
 
 - **严重等级**: MAJOR
 - **前置**：若 `use-cases.yaml` 不存在，整项 SKIP
@@ -116,7 +138,7 @@
 
 - **输出**：已覆盖/遗漏异常表 + 建议新增 branches
 
-### 检查 5: device AC 委派一致性 (device_ac_delegation)
+### 检查 6: device AC 委派一致性 (device_ac_delegation)
 
 - **严重等级**: MAJOR
 - **评估方法**:
@@ -129,7 +151,7 @@
 
 - **输出**：缺失委派条目 + 模板片段
 
-### 检查 6: 打桩合理性 (stub_reasonableness) 【替代旧的 mock_reasonableness】
+### 检查 7: 打桩合理性 (stub_reasonableness) 【替代旧的 mock_reasonableness】
 
 - **严重等级**: MAJOR
 - **评估方法**:
@@ -143,7 +165,7 @@
 
 - **输出**：替身实现质量评估 + 修正建议
 
-### 检查 7: 测试隔离性 (test_isolation)
+### 检查 8: 测试隔离性 (test_isolation)
 
 - **严重等级**: MAJOR
 - **评估方法**:
@@ -196,10 +218,24 @@ verification_result:
         逐 UseCase × ui_bindings 审查：
         - <use_case_id>.<ui>:
             role: <entry|progress|dialog|result|passive>
-            user_actions 命名质量: <评价>
             subscribes vs state_model 对齐: <YES/NO>
         缺失 UI 绑定: [...]
         data_boundaries 完备性: <评价>
+      affected_files: [...]
+      suggestion: |
+        <修正建议>
+
+    - id: handler_reachable
+      status: PASS | FAIL | WARN | SKIP
+      severity: MAJOR
+      details: |
+        逐条 calls 可达性评估（语义级，与脚本 named_business_handler 结构检查互补）：
+        - <use_case_id>.<ui>.<trigger>:
+            calls: <目标符号>
+            命名语义: <清晰|空壳|含义不明>
+            承载业务: <YES/NO/转发壳>
+            被 UT 调用: <YES/NO>
+        旁路清单: [...]
       affected_files: [...]
       suggestion: |
         <修正建议>
@@ -274,7 +310,7 @@ verification_result:
         <修正建议>
 
   summary:
-    total: 7
+    total: 8
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

@@ -79,52 +79,57 @@ export class CardRepository {
 
 ---
 
-## 二、UseCase 接口规范
+## 二、业务编排 Coordinator 接口规范（v2.1）
 
-UseCase 位于 `domain/usecase/` 层，负责编排多个 Repository 的复杂业务逻辑。
+> **v2.1 定位**：业务编排是一个**概念**而非固定目录 — 代码形态由 Skill 3 按复杂度自选三种合法形式之一（Page 命名方法 / 独立业务类 Flow/Coordinator / 导出命名函数）。**不再**要求必须放在 `domain/usecase/`、**不再**要求新造 `XxxPort` 接口。
 
-### 何时需要 UseCase
+### 何时需要独立业务编排类
 
-| 场景 | 是否需要 UseCase | 说明 |
-|------|-----------------|------|
-| 单 Repository 的简单 CRUD | ❌ | 直接在 presentation 层调用 Repository |
-| 跨多个 Repository 的数据聚合 | ✅ | UseCase 编排多个数据源 |
-| 包含业务规则判断的操作 | ✅ | UseCase 封装业务规则 |
-| 需要多步骤事务的操作 | ✅ | UseCase 管理事务流程 |
+| 场景 | 是否抽独立 Coordinator 类 | 推荐形态 |
+|------|--------------------------|----------|
+| 单 Repository 的简单 CRUD | ❌ | Page 直接调用 Repository |
+| 跨多个 Repository 的数据聚合 | ⚠️ 视情况 | 可用导出函数（无状态）或 Page 命名方法 |
+| 多 UI 节点共享同一业务状态 | ✅ | 独立业务类 Flow/Coordinator |
+| 多步云调用串行（≥2 次） | ✅ | 独立业务类 Flow/Coordinator |
+| 含回滚分支（失败需撤销持久化） | ✅ | 独立业务类 Flow/Coordinator |
 
-### 定义格式
+> 满足后三条任一时，同步产出 `doc/features/{feature}/use-cases.yaml` 作为规约文档；否则 `acceptance.yaml + dag.yaml` 足够。
+
+### 定义格式（形态 B：独立业务类）
 
 ```typescript
 /**
- * {UseCase 说明}
- * 编排逻辑：{概述调用了哪些 Repository、数据如何流转}
+ * {CoordinatorName} — {业务流说明}
+ * 编排逻辑：{概述调用了哪些 data 层类、数据如何流转、状态如何变迁}
  */
-export class {UseCaseName} {
-  private repoA: RepositoryA = new RepositoryA()
-  private repoB: RepositoryB = new RepositoryB()
+export class {CoordinatorName} {
+  state: { phase: PhaseEnum; errorCode: string | null } = { phase: 'Idle', errorCode: null }
+
+  // 直接引用 contracts.yaml 已登记的现有数据层类（api / repository / store）
+  // 禁止为了 UT 打桩新造 Port 接口
+  constructor(
+    private readonly api: {ApiClientType},
+    private readonly store: {StoreType},
+  ) {}
 
   /**
-   * 执行用例
-   * @param {paramName} - {参数说明}
-   * @returns {返回值说明}
-   *
-   * 流程：
-   * 1. 从 RepoA 获取数据 A
-   * 2. 根据业务规则处理数据 A
-   * 3. 从 RepoB 获取关联数据 B
-   * 4. 合并 A + B 返回结果
+   * 命名业务入口（必须是 named method，供 UT 直接 await 调用）
+   * 对应 use-cases.yaml > ui_bindings[].user_actions[].calls 的符号
    */
-  async execute(param: ParamType): Promise<ResultType> {
-    // ...
+  async {namedAction}(param: ParamType): Promise<void> {
+    // 1. 发布中间状态
+    // 2. 调用 data 层（api/store）
+    // 3. 处理成功/失败分支，发布终态
+    // UI 副作用（Toast / 导航）一律通过 state 字段订阅实现，不在此文件 import UI 符号
   }
 }
 ```
 
 ### 方法描述表
 
-| 方法名 | 入参 | 出参 | 异步 | 编排流程 | 说明 |
-|--------|------|------|------|----------|------|
-| execute | ParamType | Promise\<ResultType\> | ✅ | RepoA.get → 处理 → RepoB.get → 合并 | {说明} |
+| 方法名 | 入参 | 出参 | 异步 | 编排流程 | 发布的 state 阶段 | 说明 |
+|--------|------|------|------|----------|-------------------|------|
+| {namedAction} | ParamType | Promise\<void\> | ✅ | api.xxx → 处理 → store.yyy → 发布状态 | Verifying → Success/Failed | {说明} |
 
 ---
 
@@ -177,7 +182,7 @@ export async function {apiFunction}(request: {RequestName}): Promise<{ResponseNa
 
 ```
 presentation/pages/Page.ets
-  └── 调用 → domain/usecase/UseCase.ets
+  └── 调用 → {CoordinatorName}（形态 A/B/C 之一；非强制目录）
         ├── 调用 → data/repository/RepoA.ets
         │     └── 调用 → shared/client/ApiClient.ets（若需远端数据）
         │     └── 使用 → data/model/ModelA.ets
@@ -185,7 +190,7 @@ presentation/pages/Page.ets
               └── 使用 → data/model/ModelB.ets
 ```
 
-**合法调用方向**: presentation → domain → data → shared（自上而下）
+**合法调用方向**: presentation → （可选）业务编排层 → data → shared（自上而下）。若当前 feature 未触发 `use-cases.yaml` 复杂度阈值，可省略中间业务编排层，由 Page 直接调用 Repository。
 
 **禁止调用方向**: shared → data、data → domain、domain → presentation（自下而上）
 

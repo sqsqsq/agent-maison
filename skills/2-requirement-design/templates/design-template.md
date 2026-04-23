@@ -307,30 +307,44 @@ export class {RepositoryName} {
 |------|------|------|------|----------|------|
 | methodName | ParamType | ReturnType | ✅ | 模拟数据 | {说明} |
 
-### 6.2 UseCase: {UseCaseName}（若有）
+### 6.2 业务编排 Coordinator（仅在触发 `use-cases.yaml` 复杂度阈值时产出）
 
-**所在文件**: `{module_name}/src/main/ets/domain/usecase/{UseCaseName}.ets`
+> **产出条件（v2.1）**：仅当满足多 UI 共享状态 / 多步云调用 / 含回滚分支任一条件时，才同步产出 `doc/features/{feature}/use-cases.yaml`；否则无需单独设计业务编排层，页面直接调用 Repository 即可。
+
+**代码形态三选一**（由 Skill 3 编码阶段按复杂度自选，设计阶段**不强制目录**）：
+
+| 形态 | 典型文件位置 | 何时选 |
+|------|--------------|--------|
+| A. Page 命名方法 | `{module}/presentation/pages/{Page}.ets` 内部命名 async 方法 | 单页 + 1~2 步云调用，无跨页状态共享 |
+| B. 独立业务类（Flow / Coordinator） | `{module}/domain/flow/{Name}Flow.ets` 或 `{module}/shared/flow/{Name}Flow.ets` | 多 UI 节点共享状态、回滚分支多的场景 |
+| C. 导出命名函数 | `{module}/domain/actions/{name}.ets` 或 `{module}/shared/actions/{name}.ets` | 无状态工具流程，一个函数就能表达 |
 
 ```typescript
-export class {UseCaseName} {
-  /**
-   * 构造器注入所有外部端口（禁止内部 new）
-   */
+// 示例采用形态 B：独立业务类，可被 UT 直接 new
+export class {CoordinatorName} {
+  state: { phase: {PhaseType}; errorCode: string | null } = { phase: 'Idle', errorCode: null }
+
   constructor(
-    private readonly api: {ApiClientName},
-    private readonly storage: {PersistenceName},
+    private readonly api: {ApiClientType},        // 直接引用 contracts.yaml 已登记的现有 data 层类
+    private readonly store: {StoreType},          // 不新造 Port 接口
   ) {}
 
   /**
-   * {方法说明}
-   * 编排逻辑：调用 api.method() → 处理数据 → 调用 storage.method()
-   * UI 副作用只通过 state 字段传递，禁止在此文件 import UI 符号
+   * 命名业务入口（UT 可直接调用）
+   * - 与 use-cases.yaml > ui_bindings[].user_actions[].calls 的符号名严格一致
+   * - 禁止把业务逻辑放在 `onClick = () => { ... }` 的 inline lambda 里
    */
-  async execute(param: ParamType): Promise<ReturnType> { ... }
+  async {namedEntryAction}(param: ParamType): Promise<void> {
+    this.state = { ...this.state, phase: 'Xxx' }
+    // 编排 api / store 调用；UI 副作用通过 state 字段对外发布，不在此文件 import UI 符号
+  }
 }
 ```
 
-> **强约束**：UseCase 源文件禁止 import `@Component` / `@Consume` / `NavPathStack` / `$r` / `showToast` / `getUIContext` / `@kit.ArkUI`。详见 Skill 3（编码）的 `usecase_class_pure` BLOCKER 规则。
+> **强约束（v2.1）**：
+> - 业务编排源文件禁止 import `@Component` / `@Consume` / `NavPathStack` / `$r` / `showToast` / `getUIContext` / `@kit.ArkUI` / `@kit.ArkGraphics`，以保证其可在 Hypium 单测中脱离 ArkUI runtime 直接实例化
+> - `use-cases.yaml > ui_bindings[].user_actions[].calls` 列出的每个符号必须是**命名方法 / 导出函数 / 类方法**，不能只存在于 inline lambda（由 Skill 3 harness 的 `named_business_handler` BLOCKER 强制）
+> - **禁止**为了"便于 UT 打桩"新造 `XxxPort` 接口；`data_boundaries[].type` 必须引用 `contracts.yaml > interfaces[].class` 中已登记的现有数据层类（由 Skill 5 harness 的 `boundary_matches_contracts` 强制）
 
 ### 6.3 Client: {ApiClientName}（若有远程接口）
 

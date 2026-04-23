@@ -71,7 +71,7 @@
 |------|------|
 | UseCase 规范 Schema | [templates/use-cases-schema.md](templates/use-cases-schema.md) |
 | DAG Schema（v2） | [templates/dag-schema.md](templates/dag-schema.md) |
-| UT 模板 + SpyPort 模板 | [templates/ut-template.md](templates/ut-template.md) |
+| UT 模板 + Spy 模板（子类化既有类 / 原型替换） | [templates/ut-template.md](templates/ut-template.md) |
 | 打桩策略 | [templates/mock-strategy.md](templates/mock-strategy.md) |
 | 规范级样例（开卡流程） | [examples/card-opening/](examples/card-opening/) |
 
@@ -431,13 +431,14 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 ## 关联文件
 
 - 上游输入:
-  - `doc/features/{feature}/use-cases.yaml`（Skill 2 v2 产出）
-  - UseCase 源代码（Skill 3 v2 产出 of `domain/usecase/*.ets`）
+  - `doc/features/{feature}/use-cases.yaml`（Skill 2 v2.1 产出，仅复杂 feature）
+  - 业务编排源代码（Skill 3 v2.1 产出，代码形态由 Skill 3 自选：Page 命名方法 / `Flow`/`Coordinator` 普通类 / 导出函数，**不强制** `domain/usecase/` 目录）
+  - data 层源代码（`data/repository/*.ets` / `shared/client/*.ets` 等）
   - `doc/features/{feature}/design.md` / `PRD.md` / `contracts.yaml` / `acceptance.yaml`
 - 阶段级规约: `framework/specs/phase-rules/ut-rules.yaml`
 - UseCase Schema: [templates/use-cases-schema.md](templates/use-cases-schema.md)
 - DAG Schema: [templates/dag-schema.md](templates/dag-schema.md)
-- UT / SpyPort 模板: [templates/ut-template.md](templates/ut-template.md)
+- UT / Spy 模板: [templates/ut-template.md](templates/ut-template.md)
 - 打桩策略: [templates/mock-strategy.md](templates/mock-strategy.md)
 - 规范级样例: [examples/card-opening/](examples/card-opening/)
 - 脚本 Harness: `framework/harness/scripts/check-ut.ts`
@@ -448,7 +449,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 |--------|-----------|------|
 | **Skill 6 (真机测试)** | `device-testing-todo.md` + UT 代码 + DAG | 真机测试计划与追溯 |
 | **Harness (验证层)** | use-cases.yaml + DAG + UT | 脚本/AI 验证 UT 质量 |
-| **开发者** | DAG + UseCase 源码 | 理解业务流程，维护 UT |
+| **开发者** | DAG + 业务编排源码 | 理解业务流程，维护 UT |
 
 ## 约束与注意事项
 

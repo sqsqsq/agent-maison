@@ -142,7 +142,7 @@
    - **每个 Module 内涉及哪些层和文件** ← `contracts.yaml > files`
    - **数据模型**（data/model/ 下的 interface / class）← `contracts.yaml > data_models`
    - **数据仓库**（data/repository/ 下的 CRUD 接口）← `contracts.yaml > interfaces`
-   - **业务用例**（domain/usecase/ 下的逻辑）← design.md
+   - **业务编排层**（v2.1：条件性产出 — 仅在触发 `use-cases.yaml` 复杂度阈值时；代码形态按 Step 3.5 三选一）← design.md + `use-cases.yaml`（若有）
    - **组件树**（presentation 层的页面和复杂组件构成）← `contracts.yaml > components`
    - **端云接口**（shared/client/ 下的请求定义）← design.md
    - **路由配置**（新增 NavDestination 页面需要注册的路径）← `contracts.yaml > navigation`
@@ -166,7 +166,7 @@
   [data/model]       BannerInfo.ets — Banner 数据模型
   [data/repository]  CardRepository.ets — 卡片数据仓库
   [data/repository]  BannerRepository.ets — Banner 数据仓库
-  [domain/usecase]   LoadHomeDataUseCase.ets — 首页数据加载逻辑
+  [domain/actions 或 Page 内命名方法，按复杂度自选] loadHomeData — 首页数据加载逻辑（本例复杂度低，推荐 Page 命名方法而非独立类）
   [presentation/components] CardSwiper.ets — 卡片轮播复杂组件
   [presentation/components] FunctionGrid.ets — 功能宫格复杂组件
   [presentation/pages] HomePage.ets — 首页(NavDestination)

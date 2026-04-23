@@ -26,6 +26,7 @@ import {
 } from './utils/types';
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { parseScope, describeScopeError } from './utils/scope-parser';
+import { scanNamedBusinessHandler } from './utils/named-handler';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
@@ -791,6 +792,84 @@ function checkCodeToDesign(ctx: CheckContext): CheckResult[] {
 // Main Checker
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// v2.1 业务编排命名入口约束
+// --------------------------------------------------------------------------
+
+function checkNamedBusinessHandlerCoding(ctx: CheckContext): CheckResult[] {
+  const scan = scanNamedBusinessHandler(ctx);
+  if (scan.skip) {
+    return [{
+      id: 'named_business_handler',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'use-cases.yaml 不存在，跳过（简单 feature 由 acceptance.yaml + dag.yaml 主导）。',
+    }];
+  }
+  if (scan.issues.length === 0) {
+    return [{
+      id: 'named_business_handler',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: 'ui_bindings.user_actions.calls 引用的业务函数均为命名函数（非 inline lambda）。',
+    }];
+  }
+  return [{
+    id: 'named_business_handler',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `${scan.issues.length} 处命名入口缺失：\n${truncateList(scan.issues, 10)}`,
+    suggestion: '将 UI 组件 onClick = () => {...} 中的业务逻辑抽成 Page 命名方法 / Flow 类方法 / 导出函数，并在 use-cases.yaml > ui_bindings.user_actions.calls 指向该命名符号，以便 UT 直接调用。',
+  }];
+}
+
+function checkCoordinatorFileExistsIfDeclared(ctx: CheckContext): CheckResult[] {
+  const spec = ctx.featureSpec.useCases;
+  if (!spec) {
+    return [{
+      id: 'coordinator_file_exists_if_declared',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'coordinator_file_exists_if_declared'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'use-cases.yaml 不存在，跳过。',
+    }];
+  }
+  const missing: string[] = [];
+  for (const uc of spec.use_cases ?? []) {
+    if (!uc.coordinator_file) continue;
+    const abs = path.join(ctx.projectRoot, uc.coordinator_file);
+    if (!fs.existsSync(abs)) {
+      missing.push(`${uc.id}: ${uc.coordinator_file}`);
+    }
+  }
+  if (missing.length === 0) {
+    return [{
+      id: 'coordinator_file_exists_if_declared',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'coordinator_file_exists_if_declared'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '声明了 coordinator_file 的 use_case，其文件均存在。',
+    }];
+  }
+  return [{
+    id: 'coordinator_file_exists_if_declared',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'coordinator_file_exists_if_declared'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `${missing.length} 个 coordinator_file 未找到：\n${truncateList(missing, 10)}`,
+    suggestion: '若业务编排以独立文件承载，请确认 coordinator_file 路径真实存在；若编排是 Page 内方法，可省略 coordinator_file 字段。',
+  }];
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
@@ -831,6 +910,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNamingConventions(ctx, analyses), 'naming_conventions'));
     results.push(...safeRun(() => checkNoAnyType(ctx), 'no_any_type'));
     results.push(...safeRun(() => checkAsyncAwaitPattern(ctx), 'async_await_pattern'));
+    results.push(...safeRun(() => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
+    results.push(...safeRun(() => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkDesignToCode(ctx), 'design_to_code'));

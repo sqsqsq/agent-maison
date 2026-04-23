@@ -140,7 +140,7 @@ shared       → 可引用 → 无（本模块内无依赖；可依赖下层 Mod
 | shared/utils | `Utils` | `FormatUtils.ets`、`NumberUtils.ets` |
 | data/model | 语义命名（数据实体名） | `CardInfo.ets`、`BannerInfo.ets` |
 | data/repository | `Repository` | `CardRepository.ets` |
-| domain/usecase | `UseCase` | `LoadHomeDataUseCase.ets` |
+| domain/flow（v2.1 推荐）或 domain/usecase（可选） | `Flow` / `Coordinator` / `UseCase` 任一语义命名 | `CardOpenFlow.ets`、`LoadHomeDataUseCase.ets` |
 | presentation/components | 语义命名（功能描述） | `CardSwiper.ets`、`PaymentBar.ets` |
 | presentation/pages | `Page` 后缀（推荐） | `HomePage.ets`、`CardDetailPage.ets` |
 
@@ -325,44 +325,63 @@ export class CardRepository {
 - 可持有缓存，提供降级策略
 - **不得**包含 UI 逻辑或直接引用组件
 
-### 4.6 domain/usecase — 业务用例
+### 4.6 业务编排层（v2.1：条件性产出，代码形态三选一）
 
+> **v2.1 核心原则**：业务编排是**概念**而非**固定目录**。仅当 feature 满足"多 UI 共享状态 / 多步云调用 / 含回滚分支"任一条件时才同步产出 `use-cases.yaml` 规约；代码形态由本 Skill 按复杂度从以下三种选一：
+
+**形态 A：Page 命名方法（最简单）**
 ```typescript
-// domain/usecase/LoadHomeDataUseCase.ets
-
-import { CardInfo } from '../../data/model/CardInfo'
-import { BannerInfo } from '../../data/model/BannerInfo'
-import { CardRepository } from '../../data/repository/CardRepository'
-import { BannerRepository } from '../../data/repository/BannerRepository'
-
-export interface HomePageData {
-  cards: CardInfo[]
-  banners: BannerInfo[]
-  unreadMessageCount: number
-}
-
-export class LoadHomeDataUseCase {
-  static async execute(userId: string): Promise<HomePageData> {
-    // 并行请求多个数据源
-    const [cards, banners] = await Promise.all([
-      CardRepository.getCards(userId),
-      BannerRepository.getBanners()
-    ])
-
-    return {
-      cards,
-      banners,
-      unreadMessageCount: 0  // 模拟
-    }
+// presentation/pages/HomeTabPage.ets 内部命名 async 方法
+@Component
+export struct HomeTabPage {
+  async triggerLoad(): Promise<void> {
+    const entries = await this.homeRepository.getServiceEntries()
+    const promos = await this.homeRepository.getPromoList()
+    this.serviceEntries = entries
+    this.promoList = promos
   }
 }
 ```
 
-**规则**：
-- 编排**多个 Repository**，提供高层业务逻辑
-- 一个 UseCase 对应一个具体业务动作（命名体现意图）
-- **不得**包含 UI 逻辑
-- 可调用多个 data 层仓库，但不直接调用 shared/client
+**形态 B：独立业务类（中等复杂度）**
+```typescript
+// domain/flow/CardOpenFlow.ets（或 shared/flow/，不强制 domain/usecase/）
+import { CardOpenApi } from '../../data/api/CardOpenApi'
+import { CardStore } from '../../data/store/CardStore'
+
+export class CardOpenFlow {
+  state: { phase: 'Idle' | 'Verifying' | 'WaitingSms' | 'Success' | 'Failed'
+           errorCode: string | null } = { phase: 'Idle', errorCode: null }
+
+  constructor(
+    private readonly api: CardOpenApi,   // 引用 contracts.yaml 已登记的现有类
+    private readonly store: CardStore,   // 不新造 Port 接口
+  ) {}
+
+  async chooseCard(bankInfo: BankInfo): Promise<void> {
+    this.state = { ...this.state, phase: 'Verifying' }
+    // 编排 api / store 调用...
+  }
+}
+```
+
+**形态 C：导出命名函数（无状态流程）**
+```typescript
+// domain/actions/loadHomeData.ets（或 shared/actions/）
+export async function loadHomeData(userId: string): Promise<HomePageData> {
+  const [cards, banners] = await Promise.all([
+    CardRepository.getCards(userId),
+    BannerRepository.getBanners()
+  ])
+  return { cards, banners, unreadMessageCount: 0 }
+}
+```
+
+**通用规则**：
+- 每个 UI 事件最终进入的业务函数必须是**命名方法 / 导出函数 / 类方法**，不能藏在 `onClick = () => { ... }` inline lambda 里（由 harness `named_business_handler` BLOCKER 强制）
+- **不得** import 任何 UI 符号（`@Component` / `NavPathStack` / `showToast` / `$r` / `@kit.ArkUI` 等），保证可在 Hypium 中脱离 ArkUI runtime 实例化
+- 直接复用 `contracts.yaml > interfaces[].class` 已登记的现有数据层类作为构造器依赖（形态 B）；**禁止**为了"便于打桩"新造 `XxxPort` 接口
+- 命名体现业务意图（`chooseCard` / `confirmSms` / `loadHomeData`），避免空词（`handler` / `onClick1`）
 
 ### 4.7 presentation/components — 复杂组件
 

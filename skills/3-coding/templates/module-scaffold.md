@@ -387,58 +387,53 @@ export class XxxRepository {
 
 ---
 
-## 6. Layer 3: domain 层模板
+## 6. Layer 3: domain 层模板（v2.1：条件性产出）
 
-### domain/usecase — 业务用例
+> **v2.1 原则**：业务编排层是**概念**，不强制落在 `domain/usecase/` 目录。仅当 feature 满足"多 UI 共享状态 / 多步云调用 / 含回滚分支"任一条件时产出 `use-cases.yaml` 规约，代码落地形态由本 Skill 按复杂度自选（详见 `coding-standards.md` 4.6 节）。下面示例采用形态 C（导出命名函数，适合无状态流程）；形态 B（独立业务类 Flow/Coordinator，适合多步状态机）请参考 `framework/skills/5-business-ut/examples/card-opening/CardOpenFlow.ets`。
+
+### 形态 C 示例：domain/actions — 导出命名函数
 
 ```typescript
-// domain/usecase/XxxUseCase.ets
+// domain/actions/doSomething.ets（或 shared/actions/；不强制 domain/usecase/）
 
 import { XxxInfo } from '../../data/model/XxxInfo'
 import { XxxRepository } from '../../data/repository/XxxRepository'
 import { AnotherRepository } from '../../data/repository/AnotherRepository'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
-const TAG = 'XxxUseCase'
+const TAG = 'doSomething'
 const DOMAIN = 0x0001
 
-/**
- * 用例命名体现业务意图：动词 + 名词
- */
-export class DoSomethingUseCase {
-  /**
-   * 执行业务逻辑
-   * - 编排多个 Repository
-   * - 处理数据变更和同步
-   */
-  static async execute(userId: string): Promise<XxxUseCaseResult> {
-    try {
-      // 并行获取多个数据源
-      const [xxxList, anotherData] = await Promise.all([
-        XxxRepository.getAll(userId),
-        AnotherRepository.getData()
-      ])
-
-      // 业务逻辑编排
-      const processedList = xxxList.filter(item => item.isActive)
-
-      return {
-        items: processedList,
-        summary: `共 ${processedList.length} 条活跃数据`,
-        success: true
-      }
-    } catch (error) {
-      hilog.error(DOMAIN, TAG, 'UseCase failed: %{public}s',
-        error instanceof Error ? error.message : String(error))
-      return { items: [], summary: '加载失败', success: false }
-    }
-  }
-}
-
-export interface XxxUseCaseResult {
+export interface DoSomethingResult {
   items: XxxInfo[]
   summary: string
   success: boolean
+}
+
+/**
+ * 命名导出函数（UT 可直接 await 调用），命名体现业务意图：动词 + 名词
+ * - 必须是 export function / export const 形式，不可藏在 inline lambda 里
+ * - 不得 import 任何 UI 符号，以便脱离 ArkUI runtime 单元测试
+ */
+export async function doSomething(userId: string): Promise<DoSomethingResult> {
+  try {
+    const [xxxList, anotherData] = await Promise.all([
+      XxxRepository.getAll(userId),
+      AnotherRepository.getData()
+    ])
+
+    const processedList = xxxList.filter(item => item.isActive)
+
+    return {
+      items: processedList,
+      summary: `共 ${processedList.length} 条活跃数据`,
+      success: true
+    }
+  } catch (error) {
+    hilog.error(DOMAIN, TAG, 'doSomething failed: %{public}s',
+      error instanceof Error ? error.message : String(error))
+    return { items: [], summary: '加载失败', success: false }
+  }
 }
 ```
 
@@ -452,7 +447,7 @@ export interface XxxUseCaseResult {
 // presentation/components/XxxPanel.ets
 
 import { XxxInfo } from '../../data/model/XxxInfo'
-import { DoSomethingUseCase, XxxUseCaseResult } from '../../domain/usecase/XxxUseCase'
+import { doSomething, DoSomethingResult } from '../../domain/actions/doSomething'
 
 /**
  * 复杂组件：自带生命周期，完成数据加载→渲染→交互的完整闭环
@@ -481,7 +476,7 @@ export struct XxxPanel {
     this.isLoading = true
     this.errorMessage = ''
     try {
-      const result = await DoSomethingUseCase.execute('mock_user')
+      const result = await doSomething('mock_user')
       this.items = result.items
       if (!result.success) {
         this.errorMessage = result.summary

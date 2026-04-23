@@ -24,6 +24,7 @@ import {
   UseCasesSpec,
   UseCaseDef,
 } from './utils/types';
+import { scanNamedBusinessHandler } from './utils/named-handler';
 
 // UT 文件中禁止出现的 UI/导航/Toast 符号模式（v2.1 扩展：AppStorage / rawfile）
 const UI_FORBIDDEN_PATTERNS: RegExp[] = [
@@ -1034,8 +1035,8 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
 }
 
 function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
-  const spec = loadUseCaseSpec(ctx);
-  if (!spec) {
+  const scan = scanNamedBusinessHandler(ctx);
+  if (scan.skip) {
     return [{
       id: 'named_business_handler',
       category: 'structure',
@@ -1046,85 +1047,7 @@ function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  // 收集候选源码：coordinator_file（若有）+ 业务模块常规 src 路径
-  const candidateFiles: string[] = [];
-  for (const uc of spec.use_cases ?? []) {
-    if (uc.coordinator_file) {
-      const abs = path.join(ctx.projectRoot, uc.coordinator_file);
-      if (fs.existsSync(abs)) candidateFiles.push(abs);
-    }
-  }
-  // 退路：扫描 02-Feature/**/src/main/ets 下 .ets 文件（限于本 feature 的 module）
-  // 简化实现：抓 ctx.featureSpec 里任意已知模块路径；若无则在全仓范围内搜符号
-  const globalSrcRoots = [
-    path.join(ctx.projectRoot, '02-Feature'),
-    path.join(ctx.projectRoot, '01-Business'),
-    path.join(ctx.projectRoot, '00-Common'),
-  ].filter(p => fs.existsSync(p));
-
-  const codeCache = new Map<string, string>();
-  const readCode = (file: string): string => {
-    if (!codeCache.has(file)) {
-      try { codeCache.set(file, fs.readFileSync(file, 'utf-8')); }
-      catch { codeCache.set(file, ''); }
-    }
-    return codeCache.get(file)!;
-  };
-
-  // 预取候选源码内容
-  const knownContents: Array<{ file: string; content: string }> = [];
-  for (const f of candidateFiles) knownContents.push({ file: f, content: readCode(f) });
-
-  // 全仓 ets 搜索（截取到有限大小以避免性能问题）
-  let projectEts: Array<{ file: string; content: string }> = [];
-  try {
-    for (const root of globalSrcRoots) {
-      const stack: string[] = [root];
-      while (stack.length && projectEts.length < 800) {
-        const cur = stack.pop()!;
-        const stat = fs.statSync(cur);
-        if (stat.isDirectory()) {
-          for (const name of fs.readdirSync(cur)) {
-            if (name === 'node_modules' || name === 'build' || name === '.preview') continue;
-            stack.push(path.join(cur, name));
-          }
-        } else if (cur.endsWith('.ets') || cur.endsWith('.ts')) {
-          projectEts.push({ file: cur, content: readCode(cur) });
-        }
-      }
-    }
-  } catch { projectEts = []; }
-
-  const allCandidates = [...knownContents, ...projectEts];
-
-  const issues: string[] = [];
-  for (const uc of spec.use_cases ?? []) {
-    for (const ub of uc.ui_bindings ?? []) {
-      for (const ua of ub.user_actions ?? []) {
-        if (!ua.calls) continue;
-        // 提取最后一段标识符作为符号名
-        const parts = ua.calls.split(/[.]/).filter(Boolean);
-        const symbol = parts[parts.length - 1]?.replace(/\(.*$/, '').trim();
-        if (!symbol) continue;
-        // 跳过明显的字面量/运算符
-        if (!/^[A-Za-z_$][\w$]*$/.test(symbol)) {
-          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": calls="${ua.calls}" 不是合法命名函数符号`);
-          continue;
-        }
-        const reFunc = new RegExp(`\\bfunction\\s+${symbol}\\b`);
-        const reMethod = new RegExp(`\\b${symbol}\\s*\\(([^)]*)\\)\\s*[:{]`);
-        const reExported = new RegExp(`\\bexport\\s+(?:function|const|let|var|class)\\s+${symbol}\\b`);
-        const found = allCandidates.some(f =>
-          reFunc.test(f.content) || reExported.test(f.content) || reMethod.test(f.content)
-        );
-        if (!found) {
-          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": 找不到命名函数 "${symbol}"（来自 calls="${ua.calls}"）`);
-        }
-      }
-    }
-  }
-
-  if (issues.length === 0) {
+  if (scan.issues.length === 0) {
     return [{
       id: 'named_business_handler',
       category: 'structure',
@@ -1141,7 +1064,7 @@ function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
     description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `${issues.length} 处命名入口缺失：\n${truncateList(issues, 10)}`,
+    details: `${scan.issues.length} 处命名入口缺失：\n${truncateList(scan.issues, 10)}`,
     suggestion: 'use-cases.yaml 中 user_actions.calls 声明的业务函数必须是具名函数 / 类方法 / 导出函数（非 inline lambda / 箭头函数赋值给 onClick），以便 UT 直接调用。',
   }];
 }
