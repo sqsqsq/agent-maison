@@ -165,6 +165,86 @@ structure_checks:
         - "Promise.all"
         - "Promise.race"
 
+  # ==========================================================================
+  # UseCase 分层约束（UT 端到端能力的根本保证，配合 doc/features/{f}/use-cases.yaml）
+  # ==========================================================================
+
+  usecase_file_location:
+    description: >
+      use-cases.yaml 中声明的每个 UseCase 源码文件必须位于
+      `{module}/src/main/ets/domain/usecase/` 下，文件名与类名一致。
+      若 use-cases.yaml 不存在则跳过本检查（WARN 引导升级）。
+    severity: BLOCKER
+    rule:
+      source: "doc/features/{feature}/use-cases.yaml > use_cases[].file"
+      validate:
+        - path_prefix: "{module}/src/main/ets/domain/usecase/"
+        - class_name_matches_file: true
+
+  usecase_class_pure:
+    description: >
+      UseCase 源文件禁止 import 任何 UI / 导航 / Toast 符号，
+      保证其可以在 Hypium 单测中脱离 ArkUI 运行时实例化。
+    severity: BLOCKER
+    rule:
+      scope: "{file} where file in use-cases.yaml > use_cases[].file"
+      forbid_import_any_of:
+        - "@Component"
+        - "@Entry"
+        - "@Preview"
+        - "@Consume"
+        - "@Provide"
+        - "NavPathStack"
+        - "NavDestination"
+        - "@kit.ArkUI"
+        - "$r("
+        - "getUIContext"
+        - "PromptAction"
+        - "showToast"
+        - "@aspect/CommUI"
+        - "CommUI"
+
+  usecase_constructor_injection:
+    description: >
+      UseCase 类必须通过构造器接收 use-cases.yaml > ports 中声明的全部端口，
+      不得在类内部出现 `new XxxRepository()` / `XxxApi.getInstance()`
+      / `AppStorage.get(...)` 等硬依赖形式。
+    severity: BLOCKER
+    rule:
+      scope: "{file} where file in use-cases.yaml > use_cases[].file"
+      validate:
+        - constructor_params_match_ports: true
+        - forbid_in_body_any_of:
+            - 'new\s+\w+Repository\('
+            - 'new\s+\w+Api\('
+            - '\.getInstance\('
+            - 'AppStorage\.get\('
+
+  usecase_triggers_match_spec:
+    description: >
+      UseCase 类必须为 use-cases.yaml > use_cases[].triggers 中的每一个
+      event 提供同名 `async` 方法，参数顺序与 params 一致。
+    severity: BLOCKER
+    rule:
+      scope: "{file} where file in use-cases.yaml > use_cases[].file"
+      validate: "method_signature_matches_triggers"
+
+  page_delegates_to_usecase:
+    description: >
+      使用了 UseCase 的页面文件（presentation/pages/*.ets），其 onClick / onChange
+      回调体内只能：(a) 调用 useCase.{trigger}(...)；(b) 读取 useCase.state.*。
+      禁止直接调用 ports 对应的 Repository/Api 方法，也禁止在 onClick 内
+      硬编码 `navPathStack.pushPath` / `showToast` 等业务分支副作用
+      （UI 副作用必须写在 @Watch / 订阅 state 的翻译器里）。
+    severity: MAJOR
+    rule:
+      scope: "presentation/pages/*.ets where imports UseCase"
+      forbid_in_onclick:
+        - 'repo\.\w+\('
+        - 'api\.\w+\('
+        - 'navPathStack\.(push|pop)'
+        - 'showToast\('
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

@@ -20,10 +20,18 @@
 
 ## 核心理念
 
-**基于验收标准生成测试计划 → 人工/真机执行测试 → 生成结构化报告 → Harness 验证闭环**
+**消费 Skill 5 的 `device-testing-todo.md` + 基于验收标准生成测试计划 → 人工/真机执行测试 → 生成结构化报告 → Harness 验证闭环**
 
-业务级 UT（Skill 5）验证的是代码逻辑正确性；真机测试验证的是**端到端用户体验**：
-- 测试用例直接从 `acceptance.yaml` 的 AC/BD 项派生，确保 PRD 验收标准被测试覆盖
+业务级 UT（Skill 5）验证的是 UseCase / state / port 的业务逻辑正确性；真机测试验证的是**端到端用户体验**。
+v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
+
+- **`ut_layer = unit`**：UT 已充分覆盖，本 Skill 不再重复测试（除非 both）
+- **`ut_layer = device`**：UT 不覆盖，**必须**由本 Skill 真机覆盖
+- **`ut_layer = both`**：UT 覆盖业务侧（state/port/数据），本 Skill 补做 UI 侧（Toast / 跳转 / 渲染 / 用户交互）
+
+Skill 5 会产出一份 `doc/features/{module}/device-testing-todo.md`，把所有 `device / both` AC/BD 逐条列出、标注 UT 已覆盖的部分与真机需补验的部分。**本 Skill 必须消费这份 todo**，作为测试用例的首要派生来源。
+
+- 测试用例优先从 `device-testing-todo.md` 派生，其次从 `acceptance.yaml` 中剩余的 `device / both` AC/BD 派生
 - 测试步骤面向真人操作者，描述具体的 UI 交互路径
 - 测试报告包含每条用例的执行结果、缺陷记录和通过率统计
 
@@ -32,12 +40,16 @@
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | 功能模块名 | ✅ | 待测试的功能模块名（如 `home-page`），用于定位文件 |
+| **device-testing-todo.md** | ✅（v2） | Skill 5 产出的真机测试待办，路径 `doc/features/{module}/device-testing-todo.md`，**测试用例的首要派生来源** |
 | PRD.md | ✅ | 产品需求文档，路径 `doc/features/{module}/PRD.md` |
 | design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design.md` |
-| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml`，测试用例的直接来源 |
+| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml`，用于补充 device/both AC/BD |
+| use-cases.yaml | ⬜（v2） | UseCase 规范，路径 `doc/features/{module}/use-cases.yaml`，了解 UT 已覆盖的分支 |
 | contracts.yaml | ⬜ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml`，用于理解模块边界 |
 | doc/architecture.md | ⬜ | 项目模块架构，了解测试涉及的模块范围 |
 | review-report.md | ⬜ | 可选，确认代码已通过 Review 无 BLOCKER |
+
+**若缺少 `device-testing-todo.md`**：如果 `acceptance.yaml` 中存在 `ut_layer ∈ {device, both}` 的 AC/BD，说明 Skill 5 还未按 v2 输出待办清单，提示用户补做 Skill 5 的 Step 6。若 acceptance.yaml 完全没有 device/both 标注，则按老流程从 acceptance.yaml 直接派生用例（兼容模式）。
 
 **若缺少 acceptance.yaml**：提示用户先运行 Skill 1 提取验收标准。测试用例必须追溯到 AC/BD 编号。
 
@@ -47,21 +59,25 @@
 
 1. 向用户确认待测试的功能模块名 `{module-name}`
 2. 读取以下文件：
+   - **`doc/features/{module}/device-testing-todo.md`** — ★ v2 首要来源（来自 Skill 5 Step 6）
    - `doc/features/{module}/PRD.md` — 需求基准（业务流程、异常场景）
    - `doc/features/{module}/design.md` — 技术设计（页面组件树、导航设计）
-   - `doc/features/{module}/acceptance.yaml` — 验收标准（AC 和 BD 是用例的直接来源）
+   - `doc/features/{module}/acceptance.yaml` — 验收标准，按 `ut_layer` 过滤出本 Skill 需要关注的项
+   - `doc/features/{module}/use-cases.yaml` — 若存在，了解 UT 已覆盖的 branch（避免重复测业务逻辑）
    - `doc/features/{module}/contracts.yaml` — 接口契约（若存在）
    - `doc/architecture.md` — 架构全貌（若存在）
-3. 向用户展示测试范围摘要：
+3. 按 `ut_layer` 统计本 Skill 的测试范围，向用户展示：
 
 ```
-📋 测试范围确认：
+📋 测试范围确认（v2 · ut_layer 过滤后）：
   模块名称: {module-name}
-  P0 验收标准: N 条
-  P1 验收标准: N 条
-  边界场景: N 条
+  device-testing-todo.md: 存在/缺失
+  device AC: N 条（仅真机覆盖）
+  both AC:   N 条（UT + 真机共同覆盖，本 Skill 关注 UI 侧）
+  unit AC:   N 条（已由 UT 覆盖，本 Skill 不重复）
+  边界场景（device/both）: N 条
   非功能性需求: N 条（性能指标等）
-  测试基准: acceptance.yaml + PRD.md
+  测试基准: device-testing-todo.md + acceptance.yaml（filter ut_layer∈{device,both}）
 ```
 
 ### Step 2: 生成测试计划
@@ -81,17 +97,34 @@ framework/skills/6-device-testing/templates/test-plan-template.md
 5. **通过标准** — 量化的通过条件（如 P0 用例 100% 通过）
 6. **风险与依赖** — 已知风险、测试依赖、环境限制
 
-#### 2.1 测试用例生成规则
+#### 2.1 测试用例生成规则（v2 · ut_layer 感知）
 
-**从 acceptance.yaml 派生用例**：
+**优先级 1：从 `device-testing-todo.md` 派生**（v2 新增 · 首要来源）
 
-| acceptance.yaml 来源 | 用例生成规则 | 用例优先级 |
-|---------------------|------------|----------|
+Skill 5 产出的 `device-testing-todo.md` 已经为每条 `device / both` AC/BD 整理了：
+
+- UT 已经验证的业务语义（state / port 调用 / 数据）
+- 真机侧需要补验的 UI 层要点（Toast 文案、NavPathStack.push 目标、按钮禁用态、转场动画、输入焦点等）
+
+**派生规则**：
+
+- 每条 device AC → 至少 1 条测试用例（优先级承袭 AC）
+- 每条 both AC → 至少 1 条测试用例，**关注点限定为 UI 层**（业务逻辑已由 UT 覆盖，真机不重复断言数据）
+- `device-testing-todo.md` 里的 checklist 子项可以合并为 1 条 TC 的多个测试步骤
+
+**优先级 2：从 `acceptance.yaml` 过滤派生**（兜底）
+
+当 todo 中缺失或 acceptance.yaml 存在 device/both AC 但 todo 未登记时，按如下规则派生：
+
+| acceptance.yaml 来源（filter `ut_layer ∈ {device, both}`） | 用例生成规则 | 用例优先级 |
+|-----------------------------------------------------------|------------|----------|
 | `criteria` (P0) | 每条 AC 至少生成 1 条测试用例 | P0 |
 | `criteria` (P1) | 每条 AC 至少生成 1 条测试用例 | P1 |
 | `criteria` (P2) | 可选，按资源决定 | P2 |
 | `boundaries` | 每个边界场景至少 1 条测试用例 | 与原 BD 优先级一致 |
 | `performance` | 每个性能指标 1 条验证用例 | P1 |
+
+**不再生成**：`ut_layer = unit` 的 AC 不出现在真机测试计划中，避免与 UT 重复。
 
 **用例编号格式**: `TC-{NNN}`，从 TC-001 开始递增
 
@@ -103,6 +136,14 @@ framework/skills/6-device-testing/templates/test-plan-template.md
 **预期结果要求**：
 - 必须是可观察、可验证的（"卡片列表展示 3 张卡片，每张显示卡名和余额"而非"正常显示"）
 - 关联 UI 元素的具体状态变化
+- 对 `both` AC，聚焦 UI 侧可观察点（Toast 文案、页面跳转、UI 状态），不重复断言 UT 已验证的 state/port
+
+**追溯字段（v2 新增）**：
+
+每条用例的"关联 AC"字段除了 AC/BD id，还应记录：
+
+- `linked_flow` + `linked_branch`（若 AC 来自 `use-cases.yaml` 的某个分支）
+- `ut_layer`（`device` / `both`，用于追溯本用例的分工出处）
 
 ### Step 3: 用户确认测试计划
 
@@ -158,13 +199,14 @@ framework/skills/6-device-testing/templates/test-report-template.md
 [ ] 1. 必需章节：测试范围、测试环境、测试用例清单、测试策略、通过标准、风险与依赖是否齐全？
 [ ] 2. 用例清单格式：表头是否包含编号、名称、前置条件、测试步骤、预期结果、优先级、关联 AC？
 [ ] 3. 优先级值域：是否仅使用 P0/P1/P2/P3？
-[ ] 4. AC 覆盖：P0/P1 的 AC 项是否全部被至少一条测试用例覆盖？
-[ ] 5. BD 覆盖：边界场景是否有对应测试用例？
-[ ] 6. 测试步骤：每条用例步骤是否足够详细（可重复执行）？
-[ ] 7. 预期结果：是否可观察、可验证（无模糊描述）？
-[ ] 8. 测试环境：是否包含设备、系统版本、API 版本？
-[ ] 9. 通过标准：是否包含量化阈值？
-[ ] 10. 元数据：顶部是否包含模块标识、版本、日期？
+[ ] 4. device-testing-todo.md 消费（v2）：todo 中每一条真机待办是否至少生成 1 条 TC？
+[ ] 5. device/both AC 覆盖：acceptance.yaml 中 ut_layer ∈ {device, both} 的 P0/P1 AC 是否 100% 被 TC 覆盖？
+[ ] 6. 不重复：ut_layer = unit 的 AC 是否已从本计划中剔除（避免与 UT 重复）？
+[ ] 7. 测试步骤：每条用例步骤是否足够详细（可重复执行）？
+[ ] 8. 预期结果：是否可观察、可验证（无模糊描述）？
+[ ] 9. 测试环境：是否包含设备、系统版本、API 版本？
+[ ] 10. 通过标准：是否包含量化阈值？
+[ ] 11. 元数据：顶部是否包含模块标识、版本、日期？
 ```
 
 **测试报告自检**：
@@ -265,11 +307,13 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 ## 关联文件
 
 - 上游输入:
+  - **`doc/features/{module}/device-testing-todo.md`（Skill 5 v2 产出的真机待办清单，★首要来源）**
   - `doc/features/{module}/PRD.md`（Skill 1 输出）
   - `doc/features/{module}/design.md`（Skill 2 输出）
+  - `doc/features/{module}/use-cases.yaml`（Skill 2 v2 输出，了解 UT 已覆盖分支）
   - 源代码（Skill 3 输出，可选参考）
   - UT 代码 + DAG（Skill 5 输出，可选参考）
-  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
+  - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec；按 ut_layer 过滤使用）
   - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
 - 阶段级规约: `framework/specs/phase-rules/testing-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-testing.ts`
@@ -286,16 +330,18 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 ## 约束与注意事项
 
-1. **AC 追溯强制**：每条测试用例必须关联到 acceptance.yaml 中的 AC/BD 编号，不允许存在无追溯的用例
-2. **测试计划先行**：先生成测试计划并经用户确认，再根据执行结果生成测试报告
-3. **步骤可重复**：测试步骤必须足够详细，让不了解系统的测试人员也能按步骤执行
-4. **结果可验证**：预期结果必须是可观察的 UI 变化或可测量的数据，禁止"正常显示"等模糊描述
-5. **模拟应用适配**：本项目为模拟应用，部分功能使用模拟数据——测试用例的预期结果应基于模拟数据的实际值，而非真实后端返回值
-6. **双文档产出**：测试计划和测试报告是两个独立文档，分别在不同时间点产出（计划→执行→报告）
-7. **中文输出**：测试计划和测试报告使用简体中文
-8. **P0 优先**：若资源有限，优先覆盖 P0 AC 项，确保核心功能全部被测试
-9. **Harness 验证闭环**：文档完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才认为测试阶段完成
-10. **不修改源码**：生成测试文档时不应修改任何业务代码或 UT 代码
+1. **AC 追溯强制**：每条测试用例必须关联到 acceptance.yaml 中的 AC/BD 编号（推荐同时标注 `ut_layer` 与 `linked_flow/linked_branch`），不允许存在无追溯的用例
+2. **分层分工（v2）**：`ut_layer = unit` 的 AC/BD 由 UT 独家覆盖，**不要**出现在本 Skill 的测试计划中；`device / both` 才是本 Skill 的范围
+3. **device-testing-todo.md 优先（v2）**：若 Skill 5 产出了 todo 清单，按 todo 派生测试用例；acceptance.yaml 作为兜底来源
+4. **测试计划先行**：先生成测试计划并经用户确认，再根据执行结果生成测试报告
+5. **步骤可重复**：测试步骤必须足够详细，让不了解系统的测试人员也能按步骤执行
+6. **结果可验证**：预期结果必须是可观察的 UI 变化或可测量的数据，禁止"正常显示"等模糊描述
+7. **模拟应用适配**：本项目为模拟应用，部分功能使用模拟数据——测试用例的预期结果应基于模拟数据的实际值，而非真实后端返回值
+8. **双文档产出**：测试计划和测试报告是两个独立文档，分别在不同时间点产出（计划→执行→报告）
+9. **中文输出**：测试计划和测试报告使用简体中文
+10. **P0 优先**：若资源有限，优先覆盖 P0 AC 项，确保核心功能全部被测试
+11. **Harness 验证闭环**：文档完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才认为测试阶段完成
+12. **不修改源码**：生成测试文档时不应修改任何业务代码或 UT 代码
 
 ---
 

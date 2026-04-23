@@ -314,12 +314,23 @@ export class {RepositoryName} {
 ```typescript
 export class {UseCaseName} {
   /**
+   * 构造器注入所有外部端口（禁止内部 new）
+   */
+  constructor(
+    private readonly api: {ApiClientName},
+    private readonly storage: {PersistenceName},
+  ) {}
+
+  /**
    * {方法说明}
-   * 编排逻辑：调用 RepoA.method() → 处理数据 → 调用 RepoB.method()
+   * 编排逻辑：调用 api.method() → 处理数据 → 调用 storage.method()
+   * UI 副作用只通过 state 字段传递，禁止在此文件 import UI 符号
    */
   async execute(param: ParamType): Promise<ReturnType> { ... }
 }
 ```
+
+> **强约束**：UseCase 源文件禁止 import `@Component` / `@Consume` / `NavPathStack` / `$r` / `showToast` / `getUIContext` / `@kit.ArkUI`。详见 Skill 3（编码）的 `usecase_class_pure` BLOCKER 规则。
 
 ### 6.3 Client: {ApiClientName}（若有远程接口）
 
@@ -338,6 +349,59 @@ export interface {ResponseName} {
   message: string
 }
 ```
+
+---
+
+## 6.5 业务流程 UseCase 清单（若 feature 有多步骤流程）
+
+> **何时必填**：当任一用户操作会触发 ≥2 次 cloud/local 端口调用，或含 conditional 分支（成功/多种失败/回滚/取消）。
+> **同时必须产出**：`doc/features/{module}/use-cases.yaml`（Schema 见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../../5-business-ut/templates/use-cases-schema.md)）。
+> **样例**：[framework/skills/5-business-ut/examples/card-opening/](../../5-business-ut/examples/card-opening/)
+
+### 6.5.1 UseCase: {UseCaseName}
+
+- **触发入口（triggers）**：UI 层 `onClick` 只能转发到下列方法
+  - `{trigger1}(param1: Type1)` — 触发该入口的 AC：{AC-X}
+  - `{trigger2}(...)` — ...
+- **依赖端口（ports）**（构造器注入；禁 UI 符号）
+  - `api: {ApiClientName}`（ownership: cloud）— 方法：{method list}
+  - `storage: {PersistenceName}`（ownership: local）— 方法：{method list}
+- **发布状态（state）**：`{ phase, errorCode, ... }`，UI 层只订阅，不得直接调 api/storage
+
+#### 状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> {Phase1}: {trigger1}
+  {Phase1} --> {Phase2}: {port ok}
+  {Phase1} --> Failed: {port fail/throw}
+  %% 覆盖所有分支（happy / validate_fail / persist_fail / sms_fail_rollback / user_cancel ...）
+  Success --> [*]
+  Failed --> [*]
+```
+
+#### 分支清单（与 `use-cases.yaml > branches` 1:1 对应，Skill 5 据此生成 UT 用例）
+
+| branch id | 场景 | linked AC |
+|---|---|---|
+| `happy_path` | 全链路成功 | AC-X |
+| `validate_fail` | 云侧校验失败 | AC-Y |
+| `persist_fail` | 本地持久化失败 | AC-Z |
+| `sms_fail_rollback` | 短验失败，回滚已写入卡 | AC-W |
+| `user_cancel_in_waiting_sms` | 用户在 WaitingSms 取消 | AC-U |
+
+#### UI 层职责（对应 `{PageName}.ets`）
+
+- `onClick` → `useCase.{trigger}(...)`；禁止直接调用 `api.*` / `storage.*`
+- 订阅 `useCase.state.phase`，按 phase 翻译副作用：
+  - `Success` → `navPathStack.pushPath('{ResultPage}', { ... })`
+  - `Failed` → `showToast(mapErrorToMessage(state.errorCode))`
+  - `WaitingSms` → 弹出 {SmsDialog}
+
+### 6.5.2 {下一个 UseCase，若有}
+
+（按上述格式逐一列出）
 
 ---
 

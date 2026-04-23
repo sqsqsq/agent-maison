@@ -154,6 +154,13 @@ export interface ContractsSpec {
   navigation?: Record<string, unknown>;
 }
 
+/** UT 分层（AC / BD 级别）：
+ *  - unit   : 仅 Hypium 业务级 UT 覆盖
+ *  - device : 仅真机 UI 自动化覆盖（Skill 6）
+ *  - both   : UT + Device 共同覆盖
+ */
+export type UtLayer = 'unit' | 'device' | 'both';
+
 /** 功能级规约 — 验收标准 (features/{name}/acceptance.yaml) */
 export interface AcceptanceSpec {
   feature: string;
@@ -168,6 +175,14 @@ export interface AcceptanceSpec {
     verification_steps: string[];
     expected_result: string;
     data_constraints?: Record<string, unknown>;
+    /** UT 分层归属（v2 新增，acceptance.yaml 建议必填） */
+    ut_layer?: UtLayer;
+    /** UT 关切点简述（ut_layer ∈ {unit, both} 时推荐） */
+    ut_focus?: string;
+    /** 关联到 use-cases.yaml 中的 use_case id（ut_layer ∈ {unit, both}） */
+    linked_flow?: string;
+    /** 关联到该 use_case 的某个 branch id（ut_layer ∈ {unit, both}） */
+    linked_branch?: string;
   }>;
   boundaries: Array<{
     id: string;
@@ -178,6 +193,10 @@ export interface AcceptanceSpec {
     handling: string;
     expected_behavior: string;
     affected_functions?: string[];
+    ut_layer?: UtLayer;
+    ut_focus?: string;
+    linked_flow?: string;
+    linked_branch?: string;
   }>;
   performance?: Array<{
     id: string;
@@ -188,11 +207,67 @@ export interface AcceptanceSpec {
   }>;
 }
 
+// --------------------------------------------------------------------------
+// use-cases.yaml Schema（v2 新增；Skill 2 产出、Skill 5 消费）
+// --------------------------------------------------------------------------
+
+export interface UseCasePort {
+  name: string;
+  type: string;
+  ownership: 'cloud' | 'local';
+  methods: Array<{
+    name: string;
+    params: string[];
+    returns?: string;
+    async?: boolean;
+  }>;
+}
+
+export interface UseCaseTrigger {
+  event: string;
+  params: Array<{ name: string; type: string }>;
+  from_ac?: string[];
+}
+
+export interface UseCaseBranch {
+  id: string;
+  scenario: string;
+  setup?: Record<string, string>;
+  triggers?: Array<{ event: string; with?: Record<string, unknown> }>;
+  expected_phase_sequence?: string[];
+  expected_port_calls?: string[];
+  expected_state?: Record<string, unknown>;
+  not_called?: string[];
+  linked_acceptance: string[];
+}
+
+export interface UseCaseDef {
+  id: string;
+  class: string;
+  file: string;
+  description?: string;
+  triggers: UseCaseTrigger[];
+  ports: UseCasePort[];
+  state_model: {
+    phases: string[];
+    fields?: Array<{ name: string; type: string }>;
+  };
+  branches: UseCaseBranch[];
+}
+
+export interface UseCasesSpec {
+  schema_version: string;
+  feature: string;
+  use_cases: UseCaseDef[];
+}
+
 /** 加载后的完整功能级规约 */
 export interface FeatureSpec {
   feature: string;
   contracts?: ContractsSpec;
   acceptance?: AcceptanceSpec;
+  /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
+  useCases?: UseCasesSpec;
 }
 
 // --------------------------------------------------------------------------

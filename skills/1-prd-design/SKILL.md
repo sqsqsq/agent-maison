@@ -194,6 +194,10 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `verification_steps` | 从描述中提炼 | 具体的验证操作步骤列表 |
 | `expected_result` | 从描述中提炼 | 可观察的预期结果 |
 | `data_constraints` | 从描述中提炼 | 数据约束（数量、具体值等，可选） |
+| `ut_layer` | **必填** | UT 分层：`unit`（仅 Hypium 业务 UT 覆盖）/ `device`（仅真机 UI 自动化覆盖）/ `both`（两层都需要覆盖）。详见下方《6.1.1 ut_layer 分层指引》 |
+| `ut_focus` | 若 ut_layer ∈ {unit, both} 必填 | 简要说明 UT 要断言什么（如"state 最终为 Success；storage.save 被调用；save 数据字段完整"）；不写具体代码，只点明关切点 |
+| `linked_flow` | 若 ut_layer ∈ {unit, both} 建议填 | 指向 `doc/features/{feature}/use-cases.yaml > use_cases[].id`，如 `card_opening` |
+| `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 指向该 use_case 的 `branches[].id`，如 `sms_fail_rollback` |
 
 **`boundaries` 章节**（从 PRD「异常/边界场景处理」提取）：
 
@@ -205,6 +209,24 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `description` | 场景描述 | |
 | `handling` | 处理方式 | PRD 中定义的处理策略 |
 | `expected_behavior` | 预期行为 | 处理后的可观察结果 |
+| `ut_layer` | **必填** | 同 `criteria.ut_layer` |
+| `ut_focus` | 若 ut_layer ∈ {unit, both} 必填 | 简要说明 UT 关切点 |
+| `linked_flow` / `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 同 `criteria` 字段 |
+
+#### 6.1.1 ut_layer 分层指引
+
+一条 AC / BD 应该归到哪一层，按以下规则判定（从严判 `device`）：
+
+| ut_layer | 典型特征 |
+|---|---|
+| `unit` | 验收点是业务流程/数据/状态层面：数据是否加载成功、Repository 是否返回预期、UseCase 分支是否进入预期 state、本地持久化是否回滚 |
+| `device` | 验收点是 UI 表现/真人交互：Tab 切换动画、点击区域是否可达、Toast 是否出现、键盘/输入焦点、`navPathStack.pushPath` 的真实跳转、深色模式主题切换 |
+| `both` | 既有数据/状态断言，又强依赖真实 UI 反馈（如"点击卡片后跳转到详情页且详情页数据正确"） |
+
+**原则**：
+1. **纯 UI/交互 AC 必须落 device**——UT 里用 Fake NavPathStack / spy showToast 的做法已被明确禁止（见 ut-rules.yaml `no_ui_dep_in_ut` BLOCKER）
+2. **业务流程分支必须落 unit**——"成功/失败/取消/回滚"这类状态流转由 UseCase 在 UT 中端到端覆盖
+3. **ut_layer = both 的 AC**：必须拆出"业务部分" 与 "UI 部分"分别在 `ut_focus` 中写清，UT 只承担业务部分，UI 部分由 Skill 6 覆盖
 
 **`performance` 章节**（从 PRD「非功能性需求」提取）：
 

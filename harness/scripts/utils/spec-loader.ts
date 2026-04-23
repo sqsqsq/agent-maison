@@ -19,6 +19,7 @@ import {
   ContractsSpec,
   AcceptanceSpec,
   FeatureSpec,
+  UseCasesSpec,
 } from './types';
 import { resolvePaths, featureFilePath } from '../../config';
 
@@ -87,6 +88,12 @@ export class SpecLoader {
     const acceptancePath = path.join(featureDir, 'acceptance.yaml');
     if (fs.existsSync(acceptancePath)) {
       spec.acceptance = this.loadYaml<AcceptanceSpec>(acceptancePath);
+    }
+
+    // v2: use-cases.yaml（可选）——定义业务流程 UseCase / ports / branches
+    const useCasesPath = path.join(featureDir, 'use-cases.yaml');
+    if (fs.existsSync(useCasesPath)) {
+      spec.useCases = this.loadYaml<UseCasesSpec>(useCasesPath);
     }
 
     return spec;

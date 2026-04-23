@@ -120,6 +120,7 @@
 | design.md | ✅ | 对应功能的技术设计文档（Skill 2 输出），路径通常为 `doc/features/{module}/design.md` |
 | contracts.yaml | ✅ | 接口契约 Spec（Skill 2 产出），路径为 `doc/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
 | acceptance.yaml | ✅ | 验收标准 Spec（Skill 1 产出），路径为 `doc/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
+| use-cases.yaml | ⚠️ | 业务流程 UseCase Spec（Skill 2 产出，feature 存在多步骤流程时必填），路径为 `doc/features/{module}/use-cases.yaml`，定义了每个 UseCase 的 triggers / ports / state_model / branches |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源，了解五层架构全貌和已有模块状态 |
 | PRD.md | ❌ | 可选，用于交叉验证功能完整性 |
 | 当前工程代码 | ✅ | AI 自动读取，用于理解现有模块结构和避免冲突 |
@@ -236,6 +237,55 @@
 > - 写下一个文件前，**主动用 `ReadLints` / `grep` / `Read` 去验证你引用的符号**，不要凭记忆 import。
 > - 每个文件都是独立的 lint 单元，不要期待"等几个文件都写完一起修"——弱模型的"一起修"在实践中会漏。
 
+### Step 3.5: UseCase 分层强约束（若 feature 存在 use-cases.yaml）
+
+若 `doc/features/{feature}/use-cases.yaml` 存在，本步骤是**BLOCKER 级强制约束**，直接影响 Skill 5（业务级 UT）能否做端到端覆盖。
+
+#### 3.5.1 UseCase 类的物理位置与签名
+
+- 路径：`{module}/src/main/ets/domain/usecase/{UseCaseName}.ets`，**严禁**放到 presentation 层
+- 类名与 `use-cases.yaml > use_cases[].class` 字面一致
+- 构造器：**全部**外部依赖通过参数注入（类型 = `use-cases.yaml > ports[].type`），禁止在 UseCase 内部出现任何形式的 `new XxxRepository()` / `XxxApi.getInstance()` / 全局单例访问
+- 公开方法签名：**每个** `triggers[].event` 必须对应一个同名 `async` 方法，参数顺序与 `params` 一致
+- **state 暴露**：使用 `@Observed class XxxState` 或等价的可订阅模式；UseCase 不得直接调用 `navPathStack.pushPath` / `showToast` 等 UI 副作用
+
+#### 3.5.2 UseCase 源文件的禁用 import 清单（BLOCKER）
+
+UseCase 源文件**禁止** import 下列任一符号（即使只是类型引用）：
+
+```
+@Component, @Entry, @Preview, @Builder, @State, @Prop, @Link, @Observed.../UI 装饰器
+@Consume, @Provide, @ObjectLink/@Observed 以外的 UI 装饰器
+NavPathStack, NavDestination, NavPathInfo from @kit.ArkUI
+$r, getUIContext, getContext, UIContext, PromptAction
+showToast, Toast 等 Toast 辅助函数
+来自 @aspect/CommUI、CommUI 的任何 UI 组件/工具
+```
+
+允许 import：
+- 同模块 `data/model/**`、`data/repository/**`、`shared/client/**`（作为 port 类型）
+- 同模块 `shared/constant/**`、`shared/utils/**`（纯工具）
+- `@Observed` 仅用于标记 state 类（不是 UI 组件）
+
+#### 3.5.3 页面层的最小改造
+
+- 页面 `@Component` 持有（例：`@State useCase: CardOpeningUseCase = new CardOpeningUseCase(api, storage)`），通过 `aboutToAppear`/构造时注入 Spy 或真实 repo
+- 所有 `onClick` / `onChange` 回调**只能**做两件事之一：
+  1. 转发到 `useCase.{trigger}(...)`
+  2. 读取 `useCase.state.*` 做纯展示
+- UI 副作用（Toast / `navPathStack.pushPath` / 弹框显示）统一写在 `@Watch('useCase.state.phase')` 或等价订阅中，**按 state 翻译**，不是在 `onClick` 里直接写业务分支
+
+#### 3.5.4 验证方法
+
+每完成一个 UseCase `.ets` 文件后，立即运行：
+
+```bash
+# Windows PowerShell
+Select-String -Path "<path>/UseCaseName.ets" -Pattern "NavPathStack|showToast|@Component|@Consume|\$r\(|getUIContext"
+```
+
+若命中任一关键字，**立即**停下来改正；这是 Skill 5 Harness 的 `usecase_class_pure` BLOCKER 会无情拦截的点，本 Skill 内自检能节省 Harness 回环成本。
+
 ### Step 4: 模块配置与资源文件
 
 功能代码全部完成后，统一处理配置：
@@ -273,6 +323,8 @@
 [ ] 8. 无硬编码字符串：界面文本是否全部通过 $r() 引用？
 [ ] 9. DAG 合规性：模块间依赖方向是否正确？无循环依赖？
 [ ] 10. 导入完整：所有 import 语句是否完整，路径是否正确？
+[ ] 11. UseCase 纯度（若 use-cases.yaml 存在）：`{module}/src/main/ets/domain/usecase/*.ets` 是否**零**UI/Nav/Toast import？是否**零**内部 new Repository / getInstance？triggers 方法签名是否与 use-cases.yaml 严格一致？
+[ ] 12. 页面层副作用翻译（若 use-cases.yaml 存在）：页面 onClick 是否只转发到 useCase.trigger？Toast/导航是否由订阅 state 翻译而非 onClick 内部硬编码？
 ```
 
 **不通过项**：定位具体问题，自动修复后重新检查，直到全部通过。

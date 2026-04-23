@@ -1,0 +1,197 @@
+# ============================================================================
+# 示例：银行卡开卡流程 UseCase 清单
+# 位置：doc/features/card-opening/use-cases.yaml
+# ============================================================================
+# 业务流程（PRD.md）：
+#   1. 用户在页面选择银行信息并点击开卡（UI, 真人输入）
+#   2. UseCase 调云侧 validateOpen 校验开卡资格
+#   3. 校验通过后调云侧 applyCardResource 申请卡资源
+#   4. 收到卡资源后调本地 storage.save 持久化卡记录，并切到 WaitingSms
+#   5. 用户查看短信验证码并输入到弹框（UI, 真人输入）
+#   6. UseCase 调云侧 verifySmsCode 校验短验
+#   7. 成功则 storage.update 标记激活态、进入 Success；失败则 storage.rollback
+#
+# 其中 1/5 的 UI 输入行为在 UT 里通过直接调用 UseCase 方法模拟；
+# 2/3/4/6/7 全在 UT 内由 SpyPort 端到端打桩覆盖。
+# ============================================================================
+schema_version: "1.0"
+feature: "card-opening"
+
+use_cases:
+  - id: "card_opening"
+    class: "CardOpeningUseCase"
+    file: "02-Feature/CardOpen/src/main/ets/domain/usecase/CardOpeningUseCase.ets"
+    description: "银行卡开卡完整流程：云侧校验 → 申请卡资源 → 本地持久化 → 短验 → 最终激活/回滚"
+
+    triggers:
+      - event: "startOpening"
+        params:
+          - { name: "bankInfo", type: "BankInfo" }
+        from_ac: ["AC-1"]
+      - event: "submitSmsCode"
+        params:
+          - { name: "smsCode", type: "string" }
+        from_ac: ["AC-5"]
+      - event: "cancel"
+        params: []
+        from_ac: ["AC-6"]
+
+    ports:
+      - name: "api"
+        type: "CardOpenApi"
+        ownership: "cloud"
+        methods:
+          - { name: "validateOpen",      params: ["BankInfo"],                returns: "ValidateResult", async: true }
+          - { name: "applyCardResource", params: ["ValidateResult"],          returns: "CardResource",   async: true }
+          - { name: "verifySmsCode",     params: ["string", "string"],        returns: "VerifyResult",   async: true }
+      - name: "storage"
+        type: "CardPersistence"
+        ownership: "local"
+        methods:
+          - { name: "save",     params: ["CardInfo"],        returns: "void",       async: true }
+          - { name: "update",   params: ["CardInfo"],        returns: "void",       async: true }
+          - { name: "rollback", params: ["string"],          returns: "void",       async: true }
+
+    state_model:
+      phases: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Success, Failed]
+      fields:
+        - { name: "errorCode",    type: "string | null" }
+        - { name: "resultCardId", type: "string | null" }
+
+    branches:
+      # ---------------------------------------------------------------------
+      # 成功路径：对应 AC-1（开卡全流程）
+      # ---------------------------------------------------------------------
+      - id: "happy_path"
+        scenario: "开卡全链路成功：校验通过 → 申请卡资源 → 本地持久化 → 短验通过 → 激活"
+        setup:
+          "api.validateOpen":      "ok"
+          "api.applyCardResource": "ok"
+          "api.verifySmsCode":     "ok"
+          "storage.save":          "ok"
+          "storage.update":        "ok"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { event: "submitSmsCode", with: { smsCode: "123456" } }
+        expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Success]
+        expected_port_calls:
+          - "api.validateOpen"
+          - "api.applyCardResource"
+          - "storage.save"
+          - "api.verifySmsCode"
+          - "storage.update"
+        expected_state:
+          errorCode: "null"
+          resultCardId: "c1"
+        linked_acceptance: ["AC-1"]
+
+      # ---------------------------------------------------------------------
+      # 云侧校验失败：不触发 applyCardResource / storage.save
+      # ---------------------------------------------------------------------
+      - id: "validate_fail"
+        scenario: "云侧开卡校验失败（如资格不符），流程在第 2 步终止，不写入任何本地数据"
+        setup:
+          "api.validateOpen": "fail:VAL_ERR"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+        expected_phase_sequence: [Idle, Validating, Failed]
+        expected_port_calls: ["api.validateOpen"]
+        expected_state:
+          errorCode: "VAL_ERR"
+          resultCardId: "null"
+        not_called:
+          - "api.applyCardResource"
+          - "storage.save"
+          - "api.verifySmsCode"
+        linked_acceptance: ["AC-2"]
+
+      # ---------------------------------------------------------------------
+      # 申请卡资源失败：已校验通过，但云侧失败，不写本地
+      # ---------------------------------------------------------------------
+      - id: "apply_fail"
+        scenario: "云侧申请卡资源失败，不触发本地持久化与短验"
+        setup:
+          "api.validateOpen":      "ok"
+          "api.applyCardResource": "fail:APPLY_ERR"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+        expected_phase_sequence: [Idle, Validating, Applying, Failed]
+        expected_port_calls: ["api.validateOpen", "api.applyCardResource"]
+        expected_state:
+          errorCode: "APPLY_ERR"
+        not_called:
+          - "storage.save"
+          - "api.verifySmsCode"
+        linked_acceptance: ["AC-7"]
+
+      # ---------------------------------------------------------------------
+      # 本地持久化失败：流程终止于 Persisting，不进入短验
+      # ---------------------------------------------------------------------
+      - id: "persist_fail"
+        scenario: "本地持久化写入异常，流程在第 4 步终止，不进入短验"
+        setup:
+          "api.validateOpen":      "ok"
+          "api.applyCardResource": "ok"
+          "storage.save":          "throw"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+        expected_phase_sequence: [Idle, Validating, Applying, Persisting, Failed]
+        expected_port_calls: ["api.validateOpen", "api.applyCardResource", "storage.save"]
+        expected_state:
+          errorCode: "PERSIST_ERR"
+        not_called:
+          - "api.verifySmsCode"
+          - "storage.update"
+        linked_acceptance: ["AC-4"]
+
+      # ---------------------------------------------------------------------
+      # 短验失败回滚：已持久化的卡必须被回滚
+      # ---------------------------------------------------------------------
+      - id: "sms_fail_rollback"
+        scenario: "短验失败，必须回滚已写入本地的卡记录"
+        setup:
+          "api.validateOpen":      "ok"
+          "api.applyCardResource": "ok"
+          "storage.save":          "ok"
+          "api.verifySmsCode":     "fail:SMS_ERR"
+          "storage.rollback":      "ok"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { event: "submitSmsCode", with: { smsCode: "999999" } }
+        expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Failed]
+        expected_port_calls:
+          - "api.validateOpen"
+          - "api.applyCardResource"
+          - "storage.save"
+          - "api.verifySmsCode"
+          - "storage.rollback"
+        expected_state:
+          errorCode: "SMS_ERR"
+        not_called: ["storage.update"]
+        linked_acceptance: ["AC-3"]
+
+      # ---------------------------------------------------------------------
+      # 用户取消：在 WaitingSms 态主动退出
+      # ---------------------------------------------------------------------
+      - id: "user_cancel_in_waiting_sms"
+        scenario: "用户在等待短验阶段取消，已持久化的卡应回滚"
+        setup:
+          "api.validateOpen":      "ok"
+          "api.applyCardResource": "ok"
+          "storage.save":          "ok"
+          "storage.rollback":      "ok"
+        triggers:
+          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { event: "cancel", with: {} }
+        expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Failed]
+        expected_port_calls:
+          - "api.validateOpen"
+          - "api.applyCardResource"
+          - "storage.save"
+          - "storage.rollback"
+        expected_state:
+          errorCode: "USER_CANCELLED"
+        not_called:
+          - "api.verifySmsCode"
+          - "storage.update"
+        linked_acceptance: ["AC-6"]

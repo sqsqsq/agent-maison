@@ -379,7 +379,7 @@ function collectContextFiles(
 
   if (phase === 'ut') {
     const specDir = featureDir(projectRoot, feature);
-    for (const specFile of ['acceptance.yaml', 'contracts.yaml']) {
+    for (const specFile of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) {
       const specPath = path.join(specDir, specFile);
       if (fs.existsSync(specPath)) {
         files.push({
