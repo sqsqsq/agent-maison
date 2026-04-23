@@ -1,11 +1,14 @@
 # ============================================================================
-# 业务级 UT 阶段规约 (Phase Rules) — v2
+# 业务级 UT 阶段规约 (Phase Rules) — v2.1（去 UseCase 代码化修正）
 # ============================================================================
-# v2 核心转变：
-#   - UT 不再只做"单数据接口断言"，而要按 use-cases.yaml > branches 1:1
-#     端到端驱动 UseCase（直接调 trigger 方法，spy 所有 ports）。
+# v2.1 核心转变：
+#   - UT 仍然端到端驱动业务流，但业务编排的**代码形态不强制**：
+#     可以是 Page 命名方法 / 普通业务类 / 导出函数；由 Skill 3 按复杂度选择。
+#   - use-cases.yaml 是**规约文档**，不映射固定目录结构；其核心价值在 ui_bindings
+#     映射表（UI 事件 ↔ 命名函数），给 UT 提供机械化翻译的蓝图。
+#   - 外部依赖不再要求抽 Port 接口；直接指向现有 data 层类（data_boundaries）。
 #   - UI 副作用（Toast/Nav）不进 UT，由 Skill 6 消费 device-testing-todo.md。
-#   - DAG/UT 用例必须双向追溯到 AC（ut_layer in unit/both）或 branch。
+#   - 追溯：DAG/UT 用例必须追溯到 AC（ut_layer in unit/both）或 branch。
 #
 # 消费者:
 #   - framework/harness/scripts/check-ut.ts  (脚本 Harness, 确定性检查)
@@ -13,9 +16,9 @@
 # ============================================================================
 
 phase: ut
-version: "2.0"
+version: "2.1"
 applies_to:
-  use_cases_spec: "doc/features/{feature}/use-cases.yaml"
+  use_cases_spec: "doc/features/{feature}/use-cases.yaml"   # 按需产出，非必需
   dag_files: "{module}/test/dag/**/*.yaml"
   ut_files: "{module}/src/ohosTest/ets/test/**/*.test.ets"
   device_todo: "doc/features/{feature}/device-testing-todo.md"
@@ -26,63 +29,209 @@ applies_to:
 structure_checks:
 
   # -----------------------------------------------------------------
-  # A. use-cases.yaml 自身的合规性（v2 新增）
+  # A. use-cases.yaml 自身的合规性（按需触发）
   # -----------------------------------------------------------------
 
-  usecase_spec_exists:
+  usecase_spec_recommended:
     description: >
-      若 feature 的 design.md 声明存在业务流程 UseCase（acceptance.yaml 中
-      任何 AC 的 ut_layer 为 unit/both，或 design.md 出现「业务流程 UseCase 清单」
-      章节），则 doc/features/{feature}/use-cases.yaml 必须存在。
-      若文件不存在，视为未完成 Skill 2 的 Step 6/11——WARN + SKIP 后续 A/B 组检查。
-    severity: BLOCKER
+      若 feature 满足以下任一复杂度条件，推荐产出 use-cases.yaml：
+      (1) 多 UI 节点（页面+组件 ≥ 2）共享同一业务状态；
+      (2) 多步云调用串行（≥ 2 次云端接口顺序依赖）；
+      (3) 含回滚分支。
+      harness 无法精确判定复杂度，仅做弱提示：当 acceptance.yaml 中
+      ut_layer ∈ {unit, both} 的 AC ≥ 3 条 且 use-cases.yaml 缺失时 WARN。
+      单点加载类简单 feature（如 home-page）可只用 acceptance.yaml + dag.yaml。
+    severity: WARN
     rule:
-      required_if_any_of:
-        - "acceptance.yaml has criteria[].ut_layer in [unit, both]"
-        - "design.md contains '业务流程 UseCase 清单'"
-      path: "doc/features/{feature}/use-cases.yaml"
+      trigger_if:
+        - "count(acceptance.yaml > criteria[ut_layer in [unit, both]]) >= 3"
+      and_missing:
+        path: "doc/features/{feature}/use-cases.yaml"
 
   usecase_spec_schema:
     description: >
-      use-cases.yaml 必须符合 Schema：schema_version / feature / use_cases[]；
-      每个 use_case 包含 id / class / file / triggers / ports / state_model / branches。
+      use-cases.yaml 存在时必须符合 Schema v2：
+        schema_version / feature / use_cases[]；
+      每个 use_case 含 id / description / coordinator / ui_bindings / data_boundaries /
+      state_model / branches。
     severity: BLOCKER
     rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
       for_each_use_case:
-        required_fields: ["id", "class", "file", "triggers", "ports", "state_model", "branches"]
-        triggers_each_required: ["event", "params"]
-        ports_each_required: ["name", "type", "ownership", "methods"]
+        required_fields:
+          - "id"
+          - "description"
+          - "coordinator"
+          - "ui_bindings"
+          - "state_model"
+          - "branches"
+        ui_bindings_each_required: ["ui", "role", "user_actions"]
+        data_boundaries_each_required_if_present: ["name", "type", "kind", "methods"]
         branches_each_required: ["id", "scenario", "linked_acceptance"]
-      ports_ownership_enum: ["cloud", "local"]
+      ui_bindings_role_enum: ["entry", "progress", "dialog", "result", "passive"]
+      data_boundaries_kind_enum: ["cloud", "storage", "system"]
 
-  usecase_port_matches_contracts:
+  usecase_ui_bindings_nonempty:
     description: >
-      use-cases.yaml > ports[].type 必须在 contracts.yaml > interfaces[].class 中
-      找到同名接口（确保 UseCase 注入的端口就是 design 阶段声明的接口）。
+      use-cases.yaml 中每个 use_case 的 ui_bindings 至少有 1 条，
+      且全体 user_actions 合起来 ≥ 1 条（否则这条流不涉及 UI 触发，
+      应直接用 dag.yaml 测 Repository 级函数，不应产出 use-cases.yaml）。
+    severity: BLOCKER
+    rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      for_each_use_case:
+        ui_bindings_min_count: 1
+        total_user_actions_min: 1
+
+  boundary_matches_contracts:
+    description: >
+      use-cases.yaml > data_boundaries[].type 必须能在 contracts.yaml >
+      interfaces[].class 中找到同名类（确保 UT 打桩的对象是 design
+      阶段登记的真实 data 层类）。
     severity: MAJOR
     rule:
-      for_each_port:
-        validate: "port.type in contracts.yaml > interfaces[].class"
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      for_each_boundary:
+        validate: "boundary.type in contracts.yaml > interfaces[].class"
 
-  usecase_class_exists:
+  # -----------------------------------------------------------------
+  # B. DAG 与 use-cases.yaml 的结构一致性
+  # -----------------------------------------------------------------
+
+  dag_schema_compliance:
     description: >
-      use-cases.yaml > use_cases[].file 指向的源文件必须存在，且在其中能找到
-      与 class 字段同名的 ArkTS class 定义。
+      DAG 文件必须符合 DAG Schema：必填 flow_id / flow_name / module /
+      entry_point / nodes；当 feature 产出了 use-cases.yaml 时，
+      DAG 额外必填 use_case（指向 use_cases[].id）与 branches（分支 id 列表）。
     severity: BLOCKER
     rule:
-      for_each_use_case:
-        - file_exists: "{use_case.file}"
-        - class_defined_in_file: "{use_case.class}"
+      for_each_dag_file:
+        required_fields:
+          - "flow_id"
+          - "flow_name"
+          - "module"
+          - "entry_point"
+          - "nodes"
+        required_fields_if_use_cases_yaml_exists:
+          - "use_case"
+          - "branches"
+        nodes_each_required:
+          - "id"
+          - "type"
+          - "description"
 
-  usecase_class_pure:
+  dag_node_type_valid:
     description: >
-      UseCase 源文件（use-cases.yaml > use_cases[].file）禁止 import 任何
-      UI / 导航 / Toast 符号：@Component / @Consume / NavPathStack / $r /
-      showToast / getUIContext / @kit.ArkUI / @aspect/CommUI。
-      这是 UT 能够在 Hypium 里脱离 ArkUI runtime 端到端测试 UseCase 的前提。
+      DAG 节点的 type 必须来自合法枚举集。
     severity: BLOCKER
     rule:
-      for_each_use_case_file:
+      for_each_dag_node:
+        field: "type"
+        allowed_values:
+          - "code_execution"
+          - "async_call"
+          - "background_task"
+          - "assertion"
+          - "conditional_branch"
+          - "user_trigger"
+          - "port_call_cloud"
+          - "port_call_local"
+          - "state_transition"
+          - "ui_subscription"      # UI 订阅占位；harness 在 UT 生成阶段忽略
+          - "user_intervention"    # 已弃用（兼容保留）
+          - "ui_navigation"        # 已弃用（兼容保留）
+
+  dag_acyclic:
+    description: "DAG 必须可拓扑排序"
+    severity: BLOCKER
+    rule:
+      for_each_dag_file:
+        validate: "topological_sort_possible"
+
+  dag_source_file_exists:
+    description: "DAG 节点的 source.file 引用的文件在工程中必须存在"
+    severity: BLOCKER
+    rule:
+      for_each_dag_node:
+        if_has: "source.file"
+        check: "file_exists_on_disk"
+
+  dag_linked_usecase:
+    description: >
+      当 feature 产出了 use-cases.yaml 时：
+        DAG.use_case 必须在 use-cases.yaml > use_cases[].id 中存在；
+        DAG.branches[] 必须全部在该 UseCase 的 branches[].id 中存在。
+    severity: BLOCKER
+    rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      for_each_dag_file:
+        - use_case_in_spec: true
+        - branches_all_in_spec: true
+
+  dag_boundary_matches_spec:
+    description: >
+      DAG 中 port_call_cloud / port_call_local 节点的 boundary.name /
+      boundary.type / boundary.method 必须在 use-cases.yaml > data_boundaries
+      中找到对应声明（仅当 use-cases.yaml 存在时适用）。
+    severity: MAJOR
+    rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      for_each_dag_node:
+        filter: 'type in ["port_call_cloud", "port_call_local"]'
+        validate: "boundary.name + boundary.type + boundary.method matches data_boundaries[]"
+
+  dag_assertion_linked_branch:
+    description: >
+      type=assertion 的节点必须声明 linked_branch 或 linked_acceptance
+      （以便 UT 生成时对应到具体分支/验收项）。
+    severity: MAJOR
+    rule:
+      for_each_dag_node:
+        filter: 'type == "assertion"'
+        require_any_of:
+          - field: "linked_branch"
+            non_empty: true
+          - field: "linked_acceptance"
+            non_empty: true
+
+  # -----------------------------------------------------------------
+  # C. UT 代码合规
+  # -----------------------------------------------------------------
+
+  ut_file_naming:
+    description: "UT 文件名以 .test.ets 结尾，文件名反映业务流程"
+    severity: MAJOR
+    rule:
+      for_each_ut_file:
+        expect: "filename_ends_with"
+        suffix: ".test.ets"
+
+  ut_framework_import:
+    description: "UT 文件必须导入 @ohos/hypium 并使用 describe/it 结构"
+    severity: BLOCKER
+    rule:
+      for_each_ut_file:
+        must_import_from: "@ohos/hypium"
+        must_contain: ["describe(", "it("]
+
+  ut_assertion_exists:
+    description: "每个 it() 至少一条 expect 断言"
+    severity: BLOCKER
+    rule:
+      for_each_test_case:
+        min_assertions: 1
+
+  ut_import_whitelist:
+    description: >
+      UT 文件的 import 必须落在白名单内：
+        - @ohos/hypium
+        - 被测模块的 data / domain / 业务编排类及其依赖的数据模型
+        - 同目录下的 spy/ 目录（Spy/Fake/Stub 实现）
+      严禁 import 任何 UI 符号，反向兜底防止 AI 为了"模拟用户动作"
+      new 出 @Component struct。禁单项与 no_ui_dep_in_ut 合并。
+    severity: BLOCKER
+    rule:
+      for_each_ut_file:
         forbid_import_matching_any_of:
           - '@Component\b'
           - '@Entry\b'
@@ -92,170 +241,35 @@ structure_checks:
           - '\bNavPathStack\b'
           - '\bNavDestination\b'
           - '@kit\.ArkUI'
+          - '@kit\.ArkGraphics'
           - '\$r\('
+          - '\$rawfile\('
           - 'getUIContext'
           - 'PromptAction'
-          - 'showToast'
+          - '\bshowToast\b'
           - '@aspect/CommUI'
+          - 'AppStorage'
+          - 'LocalStorage'
 
-  # -----------------------------------------------------------------
-  # B. DAG 与 use-cases.yaml 的结构一致性（v2 新增/修订）
-  # -----------------------------------------------------------------
-
-  dag_schema_compliance:
+  boundaries_all_stubbed:
     description: >
-      DAG 文件必须符合 DAG Schema v2：除原有必填字段外，新增 use_case
-      （指向 use-cases.yaml > use_cases[].class）与 branches（该 UseCase 覆盖的分支 id 列表）。
+      当 feature 产出了 use-cases.yaml 时：use-cases.yaml 中声明的每个
+      data_boundary，对应 UT 文件必须 new 出一个 Spy/Fake/Stub 实现
+      并注入业务编排对象（class 命名格式：Spy{type} / Fake{type} / Stub{type}）。
     severity: BLOCKER
     rule:
-      for_each_dag_file:
-        required_fields:
-          - "flow_id"
-          - "flow_name"
-          - "use_case"          # v2 新增
-          - "branches"          # v2 新增
-          - "entry_point"
-          - "nodes"
-        nodes_each_required:
-          - "id"
-          - "type"
-          - "description"
-
-  dag_node_type_valid:
-    description: >
-      DAG 节点的 type 必须来自 v2 枚举集。
-      v2 新增：user_trigger / port_call_cloud / port_call_local / state_transition。
-      v2 保留：code_execution / async_call / user_intervention /
-      background_task / ui_navigation / assertion / conditional_branch。
-      （user_intervention / ui_navigation 仍然允许用于兼容，但 Skill 5 建议
-      迁移到更精确的 user_trigger 与交由 Skill 6 的设备层。）
-    severity: BLOCKER
-    rule:
-      for_each_dag_node:
-        field: "type"
-        allowed_values:
-          - "code_execution"
-          - "async_call"
-          - "user_intervention"
-          - "background_task"
-          - "ui_navigation"
-          - "assertion"
-          - "conditional_branch"
-          - "user_trigger"        # v2
-          - "port_call_cloud"     # v2
-          - "port_call_local"     # v2
-          - "state_transition"    # v2
-
-  dag_acyclic:
-    description: >
-      DAG 必须是有向无环图，不允许存在循环引用（next 链不可回指）
-    severity: BLOCKER
-    rule:
-      for_each_dag_file:
-        validate: "topological_sort_possible"
-
-  dag_source_file_exists:
-    description: >
-      DAG 节点的 source.file 引用的文件路径必须在工程中存在
-    severity: BLOCKER
-    rule:
-      for_each_dag_node:
-        if_has: "source.file"
-        check: "file_exists_on_disk"
-
-  dag_linked_usecase:
-    description: >
-      DAG 的 use_case 必须在 use-cases.yaml > use_cases[].class 中存在；
-      DAG 的 branches[] 必须全部在该 UseCase 的 branches[].id 中存在。
-    severity: BLOCKER
-    rule:
-      for_each_dag_file:
-        - use_case_in_spec: true
-        - branches_all_in_spec: true
-
-  dag_assertion_linked_branch:
-    description: >
-      DAG 中 type=assertion 的节点必须声明 linked_branch（或至少 linked_acceptance
-      能够被 acceptance.yaml 中某条 AC 的 linked_branch 反查到），确保 UT 生成时
-      能对应到具体分支。
-    severity: MAJOR
-    rule:
-      for_each_dag_node:
-        filter: 'type == "assertion"'
-        require_any_of:
-          - field: "linked_branch"
-            non_empty: true
-          - field: "linked_acceptance"
-            each_reverse_mapped_to_branch: true
-
-  # -----------------------------------------------------------------
-  # C. UT 代码合规（v2 新增/修订）
-  # -----------------------------------------------------------------
-
-  ut_file_naming:
-    description: >
-      UT 文件命名必须以 .test.ets 结尾，文件名应反映对应的业务流程或 UseCase 名。
-    severity: MAJOR
-    rule:
-      for_each_ut_file:
-        expect: "filename_ends_with"
-        suffix: ".test.ets"
-
-  ut_framework_import:
-    description: >
-      UT 文件必须导入 @ohos/hypium 并使用 describe/it 结构。
-    severity: BLOCKER
-    rule:
-      for_each_ut_file:
-        must_import_from: "@ohos/hypium"
-        must_contain: ["describe(", "it("]
-
-  ut_assertion_exists:
-    description: >
-      每个 it() 测试用例中必须包含至少一条 expect 断言。
-    severity: BLOCKER
-    rule:
-      for_each_test_case:
-        min_assertions: 1
-
-  no_ui_dep_in_ut:
-    description: >
-      UT 文件禁止 import 任何 UI / 导航 / Toast 符号。白名单：
-      @ohos/hypium、被测 UseCase 及其源文件依赖的 data/model / data/repository、
-      同目录下的 spy/ SpyPort 实现。
-      这是把"UI 交互"彻底隔离到 Skill 6 设备层的硬约束。
-    severity: BLOCKER
-    rule:
-      for_each_ut_file:
-        forbid_import_matching_any_of:
-          - '@Component\b'
-          - '@Entry\b'
-          - '\bNavPathStack\b'
-          - '\bNavDestination\b'
-          - '@kit\.ArkUI'
-          - '\$r\('
-          - 'getUIContext'
-          - 'showToast'
-          - '@aspect/CommUI'
-
-  ports_all_stubbed:
-    description: >
-      UseCase 在 use-cases.yaml 中声明的每个 port，对应 UT 文件中必须
-      通过构造器注入一个 Spy/Stub/Fake 实现（即：有一个名为 Spy{PortType}
-      或 Fake{PortType} 的 class 被 new 出来并传入 UseCase 构造器）。
-    severity: BLOCKER
-    rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
       for_each_use_case:
-        for_each_port:
+        for_each_boundary:
           expect_in_ut_file_any_of:
-            - 'new\s+Spy{port.type}\('
-            - 'new\s+Fake{port.type}\('
-            - 'new\s+Stub{port.type}\('
+            - 'new\s+Spy{boundary.type}\('
+            - 'new\s+Fake{boundary.type}\('
+            - 'new\s+Stub{boundary.type}\('
 
   it_name_has_ac_or_branch_tag:
     description: >
-      每条 it() 的用例名称必须以 [AC-X] 或 [BRANCH-<id>] 起始标签（两者可组合），
-      以便 AI/人肉眼即可看到与验收/分支的追溯关系。
+      每条 it() 的用例名称以 [AC-X] 或 [BRANCH-<id>] 起始标签起始（可组合），
+      便于追溯验收/分支。
     severity: BLOCKER
     rule:
       for_each_test_case:
@@ -265,26 +279,32 @@ structure_checks:
 
   it_drives_flow:
     description: >
-      每条 it() 的用例体应"端到端驱动"UseCase：
-      至少包含 ≥2 次 port 调用（可通过 callLog 断言或 Spy 方法计数判定），
-      且 ≥2 处 state 断言（useCase.state.* 相关 expect）。
-      这是把"单数据接口测试"升级为"端到端业务流测试"的量化门槛。
+      每条 it() 用例应端到端驱动业务流，不是单接口断言。量化门槛：
+        - 若 feature 产出了 use-cases.yaml：≥2 次 boundary 调用断言 + ≥2 处
+          coordinator.state / flow.state 断言；
+        - 否则：≥1 次对被测函数的调用 + ≥1 条 expect 断言（弱门槛，
+          简单 feature 不强求端到端编排）。
     severity: MAJOR
     rule:
-      for_each_test_case:
-        min_port_call_assertions: 2
-        min_state_assertions: 2
+      when_use_cases_yaml_exists:
+        for_each_test_case:
+          min_boundary_call_assertions: 2
+          min_state_assertions: 2
+      when_use_cases_yaml_absent:
+        for_each_test_case:
+          min_function_calls: 1
+          min_expect: 1
       note: >
-        弱模型兜底：当 UT 中存在显式的 `.callLog` 或 `.calls` 断言、
-        且存在 ≥2 处 `useCase.state.\w+` 访问时视为通过。
+        弱模型兜底：当 UT 存在显式 `.callLog` / `.calls` 断言 且 存在 ≥2 处
+        `flow.state.\w+` 或 `<coord>.state.\w+` 访问时视为通过。
 
   dag_cohesion:
     description: >
-      同一个 UseCase 的所有 DAG 必须共享 use_case 字段且 branches 交集为空、
-      并集 ⊇ use-cases.yaml > branches 中除被标注 device_only 的分支外的全部。
-      （允许一个 UseCase 拆多个 DAG 文件以便阅读；但不允许分支"漏掉"或"重复"）
+      同 UseCase 的所有 DAG 的 branches[] 必须互不重叠、并集覆盖
+      use-cases.yaml 中除标注 device_only 外的全部分支。
     severity: MAJOR
     rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
       for_each_use_case:
         dag_group_by_use_case:
           branches_no_overlap: true
@@ -299,67 +319,79 @@ semantic_checks:
     description: >
       use-cases.yaml > state_model.phases 是否足以表达所有业务分支；
       是否遗漏了 WaitingSms / Verifying / Persisting 等关键中间态；
-      expected_phase_sequence 与 phases 集合是否一致。
+      expected_phase_seq 与 phases 集合是否一致。
     severity: MAJOR
     ai_prompt_hint: >
-      对照 PRD 流程图、design.md 状态机与 use-cases.yaml > branches，
+      对照 PRD 流程图 / design.md 状态机 / use-cases.yaml > branches，
       判断 state_model 是否存在"多个分支共用一个过载态"或"缺必要中间态"。
 
-  port_abstraction_quality:
+  ui_bindings_completeness:
     description: >
-      ports 的抽象粒度是否合理：同一网络行为是否被拆成多条云端口、
-      是否存在把 UI 抽象当 port（错误）、本地与云端口是否分离、
-      方法签名是否与 contracts.yaml 一致。
+      use-cases.yaml > ui_bindings 是否完整覆盖了 design.md 里提到的所有
+      页面/组件；每个用户可触发的交互是否都有对应的 user_actions.calls；
+      role=progress/result 的展示页是否正确地归类为"不产生 user_actions"。
     severity: MAJOR
     ai_prompt_hint: >
-      审查 ports：(1) 是否出现 NavPathStack/Toast 等 UI 伪装成 port；
-      (2) 云/本地边界是否清晰；(3) 是否与 contracts.yaml > interfaces 1:1。
+      核对 design.md 的 UI 清单与 ui_bindings：(1) 是否有遗漏的 UI 节点；
+      (2) 每条 user_actions.trigger 是否有对应的 calls 指向命名函数；
+      (3) role 分类是否正确。
+
+  handler_reachable:
+    description: >
+      ui_bindings.user_actions.calls 指向的每个函数符号必须在代码中存在，
+      且是命名方法 / 导出函数（不能只存在于 inline lambda）。
+      由 Skill 3 的 named_business_handler 规则兜底；此处做语义二次核对，
+      关注"虽然代码里有同名符号，但实际被 inline lambda 覆盖"的伪实现。
+    severity: BLOCKER
+    ai_prompt_hint: >
+      对每个 calls 目标，检查 (1) 符号定义存在；(2) 定义体不仅是对
+      lambda 的转发；(3) UT 可直接 await 该符号。
 
   end_to_end_driving:
     description: >
-      UT 中每条 it() 是否真的在"驱动完整链路"——不是仅调一次 repo 方法
-      做数据条数断言，而是按 use-cases.yaml > branches 的 setup / triggers /
-      expected_port_calls / expected_state 做端到端编排与断言。
+      UT 中每条 it() 是否真在端到端驱动——按 use-cases.yaml > branches
+      的 user_sequence / cloud_stubs / local_stubs / expected_phase_seq /
+      expected_port_calls / expected_state 做编排与断言。
     severity: BLOCKER
     ai_prompt_hint: >
-      审查每条 it()：(1) 是否通过 useCase 的 trigger 方法驱动；
-      (2) 是否对 Spy 的 callLog 做序列断言；(3) 是否对 useCase.state 做多阶段断言。
-      若任一条回答"否"，视为 BLOCKER FAIL。
+      审查每条 it()：(1) 是否按 user_sequence 顺序 await 业务入口函数；
+      (2) 是否对 Spy 的 callLog 做序列断言；(3) 是否对 coord.state
+      做多阶段断言。任一否 → BLOCKER FAIL。
 
   branch_coverage_semantic:
     description: >
-      use-cases.yaml > branches 是否涵盖了 PRD 中所有异常场景（network / validate
-      fail / persist fail / user cancel 等），而不是只列了 happy + 单一失败。
+      use-cases.yaml > branches 是否涵盖 PRD 所有异常场景（network / validate
+      fail / persist fail / user cancel 等），而不是只列 happy + 单一失败。
     severity: MAJOR
     ai_prompt_hint: >
-      对比 PRD 异常场景表 与 use-cases.yaml > branches，列出未覆盖的异常路径。
+      对比 PRD 异常场景表 与 branches，列出未覆盖的异常路径。
 
   device_ac_delegation:
     description: >
-      对于 acceptance.yaml 中 ut_layer in [device, both] 的 AC/BD，
-      doc/features/{feature}/device-testing-todo.md 必须出现对应条目
-      （或 Skill 6 的 test-plan.md 已出现），确保没有 AC"两层都没人测"。
+      acceptance.yaml 中 ut_layer in [device, both] 的 AC/BD，
+      device-testing-todo.md 必须出现对应条目（或 Skill 6 的 test-plan.md
+      已出现），确保无 AC"两层都没人测"。
     severity: MAJOR
     ai_prompt_hint: >
-      逐条比对：device/both 的 AC 是否在 device-testing-todo.md 中有 checklist
-      或任务条目引用其 id。未引用的 AC 列为 gap。
+      逐条比对：device/both 的 AC 是否在 device-testing-todo.md 中有
+      checklist 或任务条目引用其 id；未引用列为 gap。
 
   mock_reasonableness:
     description: >
-      Spy 的预设返回值是否与数据模型一致（字段、类型、值域合理），
-      错误路径的 throw/fail 是否模拟了真实错误码（VAL_ERR / SMS_ERR / PERSIST_ERR 等）。
+      Spy 预设返回值是否与数据模型一致；错误路径的 throw/fail 是否模拟
+      真实错误码（VAL_ERR / SMS_ERR / PERSIST_ERR 等）。
     severity: MAJOR
     ai_prompt_hint: >
-      检查 SpyPort 预设值与 data/model 定义是否吻合；错误码是否能在 UseCase
-      源码中找到对应 fail(code) 调用。
+      检查 SpyPort 预设值与 data/model 定义是否吻合；错误码能否在
+      业务编排源码中找到对应 fail(code) 调用。
 
   test_isolation:
     description: >
-      每条 UT 用例必须独立：beforeEach 重建 Spy 与 UseCase，不跨用例共享状态。
+      每条 UT 用例独立：beforeEach 重建 Spy 与 coordinator，不跨用例共享。
     severity: MAJOR
     ai_prompt_hint: >
-      检查 describe 块：(1) beforeEach 是否重建 api/storage/useCase；
-      (2) 是否存在共享 let 变量被跨用例修改。
+      检查 describe：(1) beforeEach 是否重建；(2) 是否存在共享 let 被
+      跨用例修改。
 
 # --------------------------------------------------------------------------
 # 追溯约束 — 脚本 + AI 联合检查
@@ -368,11 +400,11 @@ traceability_checks:
 
   branch_coverage_full:
     description: >
-      use-cases.yaml 中每个 UseCase 的所有 branches，在 UT 中都必须
-      至少有一个 it() 与之对应（通过 [BRANCH-<id>] 标签识别，或 it() 内部
-      引用了该 branch 名也可以）。缺失视为 BLOCKER。
+      use-cases.yaml 中每个 UseCase 的所有 branches，UT 中必须至少有
+      一个 it() 对应（通过 [BRANCH-<id>] 标签或 body 里引用 branch id 识别）。
     severity: BLOCKER
     rule:
+      only_if_exists: "doc/features/{feature}/use-cases.yaml"
       for_each_use_case:
         for_each_branch:
           expect_test_case_any_of:
@@ -381,8 +413,9 @@ traceability_checks:
 
   ut_case_per_unit_ac:
     description: >
-      acceptance.yaml 中 ut_layer in [unit, both] 且 priority in [P0, P1] 的每条 AC/BD，
-      在 UT 中都必须能找到一个 it()，它的名称或 linked_branch 能追溯到该 AC。
+      acceptance.yaml 中 ut_layer in [unit, both] 且 priority in [P0, P1]
+      的每条 AC/BD，UT 中必须有 it() 能追溯到（name 含 [AC-<id>] 或其
+      linked branch 对应的 it 名含 [BRANCH-<branch>]）。
     severity: BLOCKER
     rule:
       source: "acceptance.yaml > criteria + boundaries"
@@ -392,12 +425,12 @@ traceability_checks:
       matching:
         any_of:
           - 'it name matches \[AC-{ac.id}\]'
-          - 'ac.linked_flow + linked_branch maps to an it() via BRANCH tag'
+          - 'ac is in any branch.linked_acceptance whose branch id matches an it tag'
 
   acceptance_coverage:
     description: >
-      P0/P1 验收标准的 UT 覆盖率（v2 修订：分母只计 ut_layer in [unit, both]
-      的 AC；ut_layer = device 的 AC 不再纳入 UT 分母，交 Skill 6 负责）。
+      P0/P1 验收标准的 UT 覆盖率（分母只计 ut_layer ∈ [unit, both] 的 AC；
+      ut_layer = device 的 AC 不纳入 UT 分母，交 Skill 6 负责）。
     severity: BLOCKER
     rule:
       source: "acceptance.yaml > criteria"
@@ -422,8 +455,8 @@ traceability_checks:
 
   boundary_coverage:
     description: >
-      acceptance.yaml > boundaries 中 ut_layer in [unit, both] 的每条边界
-      都应有对应的 UT 用例或 DAG 分支。
+      acceptance.yaml > boundaries 中 ut_layer in [unit, both] 的每条
+      边界都应有对应的 UT 用例或 use-cases.yaml > branches 条目。
     severity: MAJOR
     rule:
       source: "acceptance.yaml > boundaries"

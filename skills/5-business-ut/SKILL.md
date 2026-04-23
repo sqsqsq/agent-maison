@@ -1,4 +1,4 @@
-# 业务级 UT Skill (`5-business-ut` · v2)
+# 业务级 UT Skill (`5-business-ut` · v2.1)
 
 ## 前置（依赖初始化 Skill 产物）
 
@@ -7,9 +7,9 @@
 ## 概述
 
 你是一位资深鸿蒙（HarmonyOS）测试工程师，擅长使用 @ohos/hypium 框架编写 **业务级端到端单元测试**。
-你的任务是基于 **`use-cases.yaml`（UseCase 规范）+ DAG（有向无环图）**，结合源代码和 Spec 契约，自动生成**端到端驱动 UseCase 的 UT**。
+你的任务是作为**既有代码的消费者**：读懂业务编排源码（由 Skill 3 选择代码形态落地 —— 可能是 Page 命名方法、普通 `Flow`/`Coordinator` 类、或导出函数），结合 **`use-cases.yaml` 规约（若存在）** 或 **`acceptance.yaml` + `dag.yaml` 的退化路径**，**直接调用已存在的命名函数**，在 `data_boundaries`（既有 data 层类）处打桩，生成端到端覆盖的 UT。
 
-本 Skill 是项目全生命周期流水线的**第五环**。上游输入来自 Skill 2（`use-cases.yaml`）、Skill 3（UseCase + 页面代码）与 Skill 4（Code Review），输出（UT + DAG + `device-testing-todo.md`）将流入 Skill 6（真机测试）。
+本 Skill 是项目全生命周期流水线的**第五环**。上游输入来自 Skill 2（`use-cases.yaml`，**条件式**）、Skill 3（业务编排源代码 + UI）与 Skill 4（Code Review），输出（UT + DAG + `device-testing-todo.md`）将流入 Skill 6（真机测试）。
 
 ## 触发条件
 
@@ -18,36 +18,50 @@
 - "端到端测试"、"UseCase 测试"、"分支覆盖 UT"
 - "生成 SpyPort / 生成打桩类"
 
-## 核心理念（v2）
+## 核心理念（v2.1）
 
-**`use-cases.yaml` 定义业务流程 + 分支 → DAG 描述每条分支的拓扑 → UT 端到端驱动 UseCase，断言 state 序列与 port 调用序列 → UI 副作用下沉到 Skill 6 真机覆盖。**
+**UT 是既有代码的消费者，不驱动架构**：
 
-| 维度 | v1 老做法 | v2 新做法 |
+- 🟢 **复杂 feature（有 `use-cases.yaml`）**：按 `ui_bindings[].user_actions[].calls` 声明的**命名函数**直接调用；在 `data_boundaries` 处打桩；断言 state 序列 + 调用序列 + 持久化数据。
+- 🟢 **简单 feature（无 `use-cases.yaml`）**：按 `acceptance.yaml` + `dag.yaml`，直接针对 data 层函数 / Repository / 导出工具函数写 UT，覆盖数据契约与边界异常即可，不要硬凑 UseCase 架构。
+- 🔴 **UI 层绝对禁入 UT**：不 import `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`。由 harness `ut_import_whitelist` BLOCKER 拦截。
+- 🔴 **不要为了 UT 反过来改架构**：不要求新建 `domain/usecase/*.ets` 类、不要求新造 `XxxPort` 接口；若代码可测性差（如业务嵌在 inline lambda 中），反馈 Skill 3 抽出命名方法，不要在 UT 里 new `@Component struct`。
+
+### v2 → v2.1 的关键澄清
+
+| 维度 | v2 老表述 | v2.1 新表述 |
+|------|-----------|-------------|
+| 被测单元 | **UseCase 类**（必须在 domain/usecase/） | **命名业务入口**（Page 方法 / 普通 Flow 类 / 导出函数，由 Skill 3 自选） |
+| 外部依赖抽象 | `ports[]`（必须新造 Port 接口） | `data_boundaries[]`（引用 contracts.yaml 中既有 data 层类） |
+| UseCase 代码 | 强制产物 | **不存在**；`use-cases.yaml` 只是文档规约 |
+| use-cases.yaml | 有 `unit/both` AC 就必须产出 | 仅复杂 feature（多 UI 共享状态 / 多步云调用 / 含回滚分支）产出 |
+| Stub 形式 | `SpyXxxPort`（实现 Port 接口） | `SpyXxx / FakeXxx / StubXxx`（**子类化既有类**）或 **原型方法替换** |
+| DAG use_case | 指向 UseCase class 名 | 指向 `use-cases.yaml > use_cases[].id`（无 use-cases.yaml 则可省） |
+
+### 与其他阶段的边界
+
+| 维度 | v1 老做法 | v2.1 做法 |
 |------|-----------|-----------|
-| 被测单元 | Repository / 单接口 | **UseCase 类**（构造器注入 ports） |
-| 流程描述 | 只有 DAG | `use-cases.yaml` + DAG（分支 1:1） |
-| Mock 粒度 | MockRepository（笼统） | **SpyPort**（cloud / local 分别 Spy） |
-| 用例粒度 | 一个 `it()` 验一条数据接口 | **一个 `it()` 端到端驱动一个 branch** |
-| 断言粒度 | 仅数据 | state 序列 + port 调用序列 + 数据 |
+| 用例粒度 | 一个 `it()` 验一条数据接口 | **一个 `it()` 端到端驱动一个 branch**（或无 use-cases.yaml 时覆盖一条 AC/BD） |
+| 断言粒度 | 仅数据 | state 序列 + data_boundary 调用序列 + 数据 |
 | UI 交互 | 部分在 UT 里走 | ✗ 交 Skill 6（`device-testing-todo.md`） |
 | AC 过滤 | 全部算 UT 覆盖 | `ut_layer in [unit, both]` 进 UT；`device` 交 Skill 6 |
-
-> **强约束**：UT **禁止** import 任何 `@Component` / `NavPathStack` / `showToast` / `$r` / `@kit.ArkUI` 等 UI 相关符号（由 harness `no_ui_dep_in_ut` BLOCKER 拦截）。
 
 ## 输入
 
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
-| **`doc/features/{feature}/use-cases.yaml`** | ✅（有业务流程时） | Skill 2 产出的 UseCase 清单（含 ports / state_model / branches），Skill 5 的 **主规划来源** |
-| 源代码（UseCase + Spy 接口） | ✅ | Skill 3 产出的 `domain/usecase/*.ets` 与 `data/api/*.ets`、`domain/port/*.ets` |
-| `doc/features/{feature}/contracts.yaml` | ✅ | 接口契约 Spec，port 的接口签名来源 |
-| `doc/features/{feature}/acceptance.yaml` | ✅ | 验收标准 Spec，含 `ut_layer / linked_flow / linked_branch` |
-| `doc/features/{feature}/design.md` | ✅ | 状态机 Mermaid、UseCase 清单章节 |
+| **`doc/features/{feature}/use-cases.yaml`** | ⚠️（仅复杂 feature） | Skill 2 产出（仅当满足复杂度阈值）；含 `coordinator / ui_bindings / data_boundaries / state_model / branches`，Skill 5 的**主规划来源** |
+| 业务编排源代码 | ✅ | Skill 3 产出；代码形态由 Skill 3 自选（Page 命名方法 / `Flow` 类 / 导出函数）。UT 按 `ui_bindings.user_actions.calls` 或 acceptance.yaml 指向的函数直接调用 |
+| data 层源代码 | ✅ | `data/repository/*.ets` / `shared/client/*.ets` 等；UT 通过子类化（SpyXxx）或原型替换在这些边界上打桩 |
+| `doc/features/{feature}/contracts.yaml` | ✅ | 接口契约 Spec，`data_boundaries[].type` 必须来自这里的 `interfaces[].class` |
+| `doc/features/{feature}/acceptance.yaml` | ✅ | 验收标准 Spec，含 `ut_layer`；简单 feature 时是主规划来源 |
+| `doc/features/{feature}/design.md` | ✅ | 状态机 Mermaid、UseCase 清单章节（若有） |
 | `doc/features/{feature}/PRD.md` | ✅ | 业务流程图和异常场景 |
 | `doc/architecture.md` | ✅ | 模块架构全貌 |
 | `review-report.md` | ❌ | 可选，用于确认代码已通过 Review |
 
-**若缺少 `use-cases.yaml` 且 `acceptance.yaml` 有 `ut_layer in [unit, both]` 的 AC**：提示用户回到 Skill 2 补齐 UseCase 规范（这是 v2 UT 的前提）。
+**若缺少 `use-cases.yaml`**：不阻塞本 Skill。按 acceptance.yaml + dag.yaml 直接针对 data 层 / 导出函数写 UT；harness 会以 WARN 提示而非 BLOCKER。**严禁**为此回过头去要求 Skill 2 补 use-cases.yaml 以套入架构（除非确实符合复杂度阈值）。
 
 **若缺少 `acceptance.yaml`**：提示用户先运行 Skill 1。
 
@@ -61,20 +75,28 @@
 | 打桩策略 | [templates/mock-strategy.md](templates/mock-strategy.md) |
 | 规范级样例（开卡流程） | [examples/card-opening/](examples/card-opening/) |
 
-## 工作流程（v2）
+## 工作流程（v2.1）
 
-### Step 1：按 `use-cases.yaml` 规划 DAG 与 UT
+### Step 1：规划 DAG 与 UT（按是否有 `use-cases.yaml` 分两条路径）
 
-1. 读取：
-   - `doc/features/{feature}/use-cases.yaml`（若存在）→ 抽取 UseCase 列表及每个 UseCase 的 branches
-   - `doc/features/{feature}/acceptance.yaml`（只关注 `ut_layer in [unit, both]` 的 AC/BD）
-   - `doc/features/{feature}/PRD.md` / `design.md`（异常场景比对）
-   - `doc/features/{feature}/contracts.yaml`（port 接口签名）
-   - UseCase 源文件（`02-Feature/{Module}/src/main/ets/domain/usecase/*.ets`）
-2. 为每个 UseCase 列一张 **Branch × DAG × UT × AC 清单**：
+先读取全部上游输入：
+
+- `doc/features/{feature}/use-cases.yaml`（**若存在**）
+- `doc/features/{feature}/acceptance.yaml`（只关注 `ut_layer in [unit, both]` 的 AC/BD）
+- `doc/features/{feature}/PRD.md` / `design.md`
+- `doc/features/{feature}/contracts.yaml`（data_boundary type 必须在 `interfaces[].class` 中）
+- 业务编排源代码（Skill 3 自选了 Page 方法 / `Flow` 类 / 导出函数）
+
+#### 路径 A：存在 `use-cases.yaml` —— 按 branches × ui_bindings 规划
+
+为每个 use_case 列一张 **Branch × DAG × UT × AC 清单**：
 
 ```markdown
-📋 UT 规划清单（UseCase: CardOpeningUseCase）
+📋 UT 规划清单（use_case: card_opening，coordinator: CardOpenFlow）
+
+ui_bindings 入口（来自 use-cases.yaml）:
+- CardSelectPage.role=entry, user_actions[].calls = "flow.chooseCard"
+- SmsDialog.role=dialog, user_actions[].calls = "flow.confirmSms"
 
 | # | branch id           | DAG 文件                         | it() 用例                         | linked_acceptance |
 |---|---------------------|----------------------------------|-----------------------------------|-------------------|
@@ -87,51 +109,64 @@ unit/both AC 覆盖率: 100% (AC-1..4)
 device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 ```
 
-3. 等待用户确认清单
+#### 路径 B：无 `use-cases.yaml` —— 按 acceptance.yaml 直接规划
 
-### Step 2：生成 DAG 文件（v2）
+按 `ut_layer ∈ {unit, both}` 的 AC/BD 逐条列清单，指向具体的 **被测 data 层函数** 或 **导出业务函数**：
 
-对每个 branch 生成一份 DAG（或合并成同一个 UseCase 的多分支 DAG，只要 branches[] 交集为空、并集覆盖即可）：
+```markdown
+📋 UT 规划清单（feature: home-page，无 use-cases.yaml）
+
+| # | AC/BD id | 被测单元                         | DAG 文件             | it() 用例                     |
+|---|----------|----------------------------------|----------------------|-------------------------------|
+| 1 | AC-1     | HomeRepository.getServiceEntries | home_page_ut.dag.yaml | [AC-1] 首页服务入口数据契约完整 |
+| 2 | AC-2     | HomeRepository.getPromoList      | home_page_ut.dag.yaml | [AC-2] 首页推广位数据契约完整   |
+| 3 | BD-1     | HomeRepository.getPromoList(空)  | home_page_ut.dag.yaml | [AC-1][BD-1] 推广列表为空仍可回落 |
+```
+
+**等待用户确认清单后进入 Step 2**。
+
+### Step 2：生成 DAG 文件
+
+对每个 branch 生成一份 DAG（或合并成同一个 use_case 的多分支 DAG，只要 branches[] 交集为空、并集覆盖即可）：
 
 1. **必填顶层字段**（由 harness `dag_schema_compliance` BLOCKER 强制）：
    - `flow_id` / `flow_name` / `module` / `version`
-   - **`use_case`**（= `use-cases.yaml > use_cases[].class`）
-   - **`branches`**（= 该 DAG 覆盖的分支 id 列表）
-   - `linked_acceptance` / `entry_point` / `nodes`
-2. **节点构建**（使用 v2 节点类型）：
-   - `user_trigger`：对应 UseCase.trigger 方法调用
-   - `port_call_cloud` / `port_call_local`：对应 `use-cases.yaml > ports[]` 的 method 调用（含 stub_strategy / mock_data）
+   - `entry_point` / `nodes`
+   - **若 `use-cases.yaml` 存在**：另需 `use_case`（= `use-cases.yaml > use_cases[].id`）+ `branches[]`（= 该 DAG 覆盖的分支 id 列表）
+   - `linked_acceptance`
+2. **节点构建**：
+   - `user_trigger`：对应业务入口命名函数调用（ui_bindings.user_actions.calls）
+   - `port_call_cloud` / `port_call_local`：对应调用的 data_boundary（节点字段 `boundary` = `data_boundaries[].name`；旧字段 `port` 兼容）
    - `state_transition`：对应 `state_model.phases` 迁移
    - `assertion`：必须声明 `linked_branch` 或 `linked_acceptance`（两者之一）
-3. **UI 副作用不进 DAG**：所有 `NavPathStack.push` / `showToast` 请写入 `device-testing-todo.md`，不要画成节点
-4. **验证 DAG**：无环、source 存在、port 名/方法名能回到 `use-cases.yaml`
+   - `ui_subscription`（v2.1 新）：**仅用于文档化 UI 对 state 的订阅**，UT 忽略，供 device-testing-todo 生成
+3. **UI 副作用不进 UT 断言**：`NavPathStack.push` / `showToast` 只能作为 `ui_subscription` 节点记录，或直接写入 `device-testing-todo.md`，不要画成 `port_call_*` 或 `assertion` 节点
+4. **验证 DAG**：无环、source 存在、`boundary` 名回到 `use-cases.yaml > data_boundaries[].name`（若存在 use-cases.yaml）
 5. **展示 Mermaid** 给用户确认（按节点类型着色）
 6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
 
-### Step 3：生成 UT 代码（v2 · 按 branch 生成 `it()`）
+### Step 3：生成 UT 代码（按 branch 或 AC 生成 `it()`）
 
-对每个 UseCase 生成一份 UT 文件，按 branch 一一生成 `it()`：
+#### 3.1 UT 骨架（路径 A：有 use-cases.yaml）
 
-#### 3.1 UT 骨架
-
-按照 [templates/ut-template.md](templates/ut-template.md) 提供的骨架生成：
+按照 [templates/ut-template.md](templates/ut-template.md) 提供的骨架生成。**直接调用 `ui_bindings.user_actions.calls` 声明的命名函数**，**不 new `@Component struct`**：
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
-import { CardOpeningUseCase, Phase } from '../../../main/ets/domain/usecase/CardOpeningUseCase'
+import { CardOpenFlow, Phase } from '../../../main/ets/domain/flow/CardOpenFlow'
 import { SpyCardOpenApi } from './spy/SpyCardOpenApi'
-import { SpyCardPersistence } from './spy/SpyCardPersistence'
+import { SpyCardStore } from './spy/SpyCardStore'
 
-export default function cardOpeningUseCaseTest() {
-  describe('CardOpeningUseCase', () => {
+export default function cardOpenFlowTest() {
+  describe('CardOpenFlow', () => {
     let api: SpyCardOpenApi
-    let storage: SpyCardPersistence
-    let useCase: CardOpeningUseCase
+    let store: SpyCardStore
+    let flow: CardOpenFlow
 
     beforeEach((): void => {
       api = new SpyCardOpenApi()
-      storage = new SpyCardPersistence()
-      useCase = new CardOpeningUseCase(api, storage)
+      store = new SpyCardStore()
+      flow = new CardOpenFlow(api, store)
     })
 
     it('[BRANCH-happy_path][AC-1] 开卡全链路成功', 0, async () => {
@@ -139,13 +174,15 @@ export default function cardOpeningUseCaseTest() {
       api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' })
       api.whenVerifySmsCode.returns({ ok: true })
 
-      await useCase.startOpening(bankInfo)
-      expect(useCase.state.phase).assertEqual(Phase.WaitingSms)
+      // 对应 ui_bindings[CardSelectPage].user_actions.calls = "flow.chooseCard"
+      await flow.chooseCard(bankInfo)
+      expect(flow.state.phase).assertEqual(Phase.WaitingSms)
 
-      await useCase.submitSmsCode('123456')
-      expect(useCase.state.phase).assertEqual(Phase.Success)
+      // 对应 ui_bindings[SmsDialog].user_actions.calls = "flow.confirmSms"
+      await flow.confirmSms('123456')
+      expect(flow.state.phase).assertEqual(Phase.Success)
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource', 'verifySmsCode'])
-      expect(storage.callLog).assertDeepEquals(['save', 'update'])
+      expect(store.callLog).assertDeepEquals(['save', 'update'])
     })
 
     // ... 每个 branch 对应一个 it()
@@ -153,36 +190,76 @@ export default function cardOpeningUseCaseTest() {
 }
 ```
 
-#### 3.2 SpyPort 代码生成（v2）
+#### 3.1B UT 骨架（路径 B：无 use-cases.yaml）
 
-为每个 port 在 `{module}/src/ohosTest/ets/test/spy/Spy{PortType}.ets` 生成 SpyPort：
+简单 feature 直接针对 data 层或导出函数写 UT：
 
-- **实现对应 port 接口**（`contracts.yaml > interfaces[].class`）
-- 暴露 `callLog: string[]` 记录调用顺序
-- 每个方法一份 `whenXxx.{returns, fails, throws}` preset
-- 本地 port 可额外暴露 `currentCards` / `saved` 等可断言的状态
-- **禁止** 在 Spy 内部写业务判断
+```typescript
+import { describe, it, expect, beforeEach } from '@ohos/hypium'
+import { HomeRepository } from '../../../main/ets/data/repository/HomeRepository'
 
-参考模板见 [templates/ut-template.md](templates/ut-template.md) 的 SpyPort 章节。
+export default function homePageUtTest() {
+  describe('home-page', () => {
+    let repo: HomeRepository
+    beforeEach((): void => { repo = new HomeRepository() })
 
-#### 3.3 每个 `it()` 的三类必备断言
+    it('[AC-1] 首页服务入口数据契约完整', 0, async () => {
+      const entries = await repo.getServiceEntries()
+      expect(entries).not.assertNull()
+      expect(entries.length).assertLarger(0)
+      expect(entries[0].id).not.assertUndefined()
+    })
+  })
+}
+```
 
-v2 强约束（`it_drives_flow` MAJOR 检查）：
+#### 3.2 打桩代码（v2.1 · 不再强制 Port 接口）
 
-1. **state 序列断言**（≥2 次 `useCase.state.*` expect）
-2. **port 调用序列断言**（`assertDeepEquals(spy.callLog, [...])`）
-3. **数据 / 错误码断言**（`saved[].cardId` / `errorCode`）
+v2.1 的打桩针对 **`use-cases.yaml > data_boundaries[].type` 所指的既有 data 层类**，有三种合法形式（任选其一）：
 
-#### 3.4 用例命名（v2 强约束）
+- **形式 1：子类化** — `class SpyCardOpenApi extends CardOpenApi { ... }`，override 实际方法；暴露 `callLog: string[]` 和每个方法一份 `whenXxx.{returns, fails, throws}` preset
+- **形式 2：原型方法替换** — `CardOpenApi.prototype.validateOpen = jest.fn(...)`（`afterEach` 必须恢复）
+- **形式 3：若 data 层已用 DI 注入的接口/抽象类** — 直接提供该接口的 Spy 实现
+
+**统一约束**：
+- **禁止**为打桩方便额外创建 `XxxPort` 接口
+- **禁止**在 Spy 内部写业务判断（业务判断必须留在 coordinator / 命名业务函数里）
+- 若采用形式 2，`afterEach` 必须恢复原型，避免跨用例污染
+
+参考模板见 [templates/ut-template.md](templates/ut-template.md) 的打桩章节。
+
+#### 3.3 每个 `it()` 的必备断言
+
+v2.1 约束（`it_drives_flow` MAJOR 检查）：
+
+**路径 A（有 use-cases.yaml）**：
+1. **命名入口驱动**（调用 `ui_bindings.user_actions.calls` 声明的函数）
+2. **调用序列断言**（`assertDeepEquals(spy.callLog, [...])` 至少 1 次）
+3. **状态多阶段断言**（对 `phase` / `errorCode` 等字段 ≥2 次 expect，覆盖中间态与终态）
+
+**路径 B（无 use-cases.yaml）**：
+- 每个 `it()` 至少 2 次 `expect`，覆盖数据契约字段与边界情形
+
+#### 3.4 用例命名（强约束）
 
 `it()` 必须以 `[BRANCH-<id>]` 或 `[AC-<id>]` 开头（两者可组合，如 `[BRANCH-happy_path][AC-1]`）。
 
-#### 3.5 生成流程
+#### 3.5 import 白名单（BLOCKER · `ut_import_whitelist`）
 
-对每个 UseCase：
+UT 文件**只允许** import 以下来源：
 
-1. 为每个 port 生成 `spy/Spy{PortType}.ets`（若已存在则复用）
-2. 为该 UseCase 生成 `{useCaseId}.test.ets`，每个 branch 一个 `it()`
+- `@ohos/hypium`
+- 被测业务编排符号（Flow 类 / 导出函数 / Page 类 **但只用其命名方法**，**不 new struct**）
+- 被测/依赖的 `data/model/*`、`data/repository/*`、`shared/client/*` 等 data 层符号
+- 同目录 `spy/` / `fake/` / `stub/` 目录的替身
+
+**禁止**（由 harness BLOCKER 拦截）：
+`@Component` / `@Entry` / `@Preview` / `struct` / `NavPathStack` / `NavDestination` / `showToast` / `$r(` / `$rawfile(` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`。
+
+#### 3.6 生成流程
+
+1. 为每个 data_boundary（或路径 B 的直接依赖）在 `{module}/src/ohosTest/ets/test/spy/` 下生成替身（已存在则复用）
+2. 为每个 use_case（路径 A）或每组 AC（路径 B）生成一份 `.test.ets`，每个 branch / AC 一个 `it()`
 3. 展示给用户确认
 4. 写入文件
 
@@ -204,22 +281,25 @@ v2 强约束（`it_drives_flow` MAJOR 检查）：
 └── module.json5
 ```
 
-### Step 5：质量门禁自检（v2）
+### Step 5：质量门禁自检（v2.1）
 
 ```
-[ ] 1.  use-cases.yaml 存在并通过 Schema 校验（含 ports.ownership / branches.linked_acceptance）
-[ ] 2.  UseCase 源文件无 UI/Nav/Toast 依赖（usecase_class_pure）
-[ ] 3.  DAG 合规：顶层声明 use_case + branches[]，节点类型来自 v2 枚举
-[ ] 4.  DAG 分工：同 UseCase 所有 DAG 的 branches[] 交集为空、并集覆盖所有非 device_only 分支
-[ ] 5.  UT 文件 import 白名单：仅 @ohos/hypium / 被测 UseCase / data/model / spy/
-[ ] 6.  SpyPort 完备：每个 port 都有对应 SpyXxx 并通过构造器注入
-[ ] 7.  it() 命名：每条 it() 以 [AC-X] 或 [BRANCH-X] 起始
-[ ] 8.  it() 驱动力：每条 it() ≥2 次 callLog 断言 + ≥2 次 state 断言
-[ ] 9.  AC 覆盖（单元层）：ut_layer in [unit, both] 且 P0/P1 的 AC 100% 对应 it()
-[ ] 10. 分支覆盖：use-cases.yaml 中每个非 device_only 分支都有对应 it()
-[ ] 11. device-testing-todo.md：每条 ut_layer in [device, both] 的 AC 都已登记
-[ ] 12. 测试注册：所有 UT 文件在 List.test.ets 中注册
-[ ] 13. 用例独立性：beforeEach 中重建 Spy 与 UseCase
+[ ] 1.  use-cases.yaml（若存在）通过 schema 校验：含 coordinator / ui_bindings / data_boundaries / state_model / branches
+[ ] 2.  named_business_handler（若有 use-cases.yaml）：ui_bindings[].user_actions[].calls 每个符号在代码中都能找到命名函数 / 方法
+[ ] 3.  boundary_matches_contracts（若有 use-cases.yaml）：data_boundaries[].type 都能在 contracts.yaml > interfaces[].class 中找到
+[ ] 4.  DAG 合规：顶层含 flow_id / flow_name / entry_point / nodes；若有 use-cases.yaml 则另含 use_case（= id）和 branches[]
+[ ] 5.  DAG 分工：同 use_case 所有 DAG 的 branches[] 交集为空、并集覆盖所有非 device_only 分支
+[ ] 6.  ut_import_whitelist（BLOCKER）：UT 文件未 import @Component / struct / NavPathStack / showToast / $r / $rawfile / AppStorage / LocalStorage / @kit.ArkUI / @kit.ArkGraphics 等
+[ ] 7.  boundaries_all_stubbed：每个 data_boundary 都有 Spy/Fake/Stub 子类化或原型替换的证据
+[ ] 8.  it() 命名：每条 it() 以 [AC-X] 或 [BRANCH-X] 起始
+[ ] 9.  it() 驱动力：
+         - 路径 A：每条 it() 调用命名入口 + ≥2 次 callLog 断言 + ≥2 次 state/phase 断言
+         - 路径 B：每条 it() ≥2 次 expect，覆盖数据契约
+[ ] 10. AC 覆盖（单元层）：ut_layer in [unit, both] 且 P0/P1 的 AC 100% 对应 it()
+[ ] 11. 分支覆盖（若有 use-cases.yaml）：每个非 device_only 分支都有对应 it()
+[ ] 12. device-testing-todo.md：每条 ut_layer in [device, both] 的 AC 都已登记；DAG 的 ui_subscription 节点均已翻译成真机条目
+[ ] 13. 测试注册：所有 UT 文件在 List.test.ets 中注册
+[ ] 14. 用例独立性：beforeEach 重建替身；若用原型替换方案，afterEach 还原
 ```
 
 **不通过项**：定位具体问题，自动修复后重新检查，直到全部通过。
@@ -302,20 +382,22 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 - `doc/features/{feature}/contracts.yaml`
 - `doc/features/{feature}/acceptance.yaml`
 
-**v2 新增检查覆盖项**：
+**v2.1 检查覆盖项**：
 
 | 检查类型 | 检查内容 | 严重级别 |
 |----------|---------|---------|
-| usecase_spec_exists | use-cases.yaml 是否存在（需要时） | BLOCKER |
-| usecase_spec_schema | Schema 合规 | BLOCKER |
-| usecase_class_pure | UseCase 源文件无 UI/Nav/Toast 依赖 | BLOCKER |
-| usecase_class_exists | UseCase 源文件与 class 存在 | BLOCKER |
-| dag_linked_usecase | DAG 正确指向 use-cases.yaml | BLOCKER |
-| dag_node_type_valid | 节点类型 in v2 枚举集 | BLOCKER |
-| no_ui_dep_in_ut | UT 文件无 UI/Nav/Toast 依赖 | BLOCKER |
-| ports_all_stubbed | 每个 port 都有 Spy 注入 | BLOCKER |
+| usecase_spec_recommended | 复杂度达阈值时建议产出 use-cases.yaml | WARN |
+| usecase_spec_schema | use-cases.yaml schema 合规（coordinator / ui_bindings / data_boundaries） | BLOCKER |
+| usecase_ui_bindings_nonempty | 每个 use_case 的 ui_bindings & user_actions 非空 | BLOCKER |
+| boundary_matches_contracts | data_boundaries[].type 在 contracts.yaml > interfaces[].class 中 | MAJOR |
+| named_business_handler | ui_bindings.user_actions.calls 所列每个符号是命名函数而非 inline lambda | BLOCKER |
+| dag_linked_usecase | DAG.use_case 回指 use-cases.yaml > use_cases[].id | BLOCKER |
+| dag_boundary_matches_spec | port_call_* 节点 boundary = data_boundaries[].name | MAJOR |
+| dag_node_type_valid | 节点类型合法（含 v2.1 新增 ui_subscription；user_intervention/ui_navigation 已 deprecated） | BLOCKER |
+| ut_import_whitelist | UT 文件 import 仅限白名单（禁 UI 符号） | BLOCKER |
+| boundaries_all_stubbed | 每个 data_boundary 都有 Spy/Fake/Stub 或原型替换 | BLOCKER |
 | it_name_has_ac_or_branch_tag | 用例名带 [AC-X] / [BRANCH-X] 标签 | BLOCKER |
-| it_drives_flow | 每个 it() ≥2 port + ≥2 state 断言 | MAJOR |
+| it_drives_flow | 路径 A 严格判；路径 B 退化为 ≥2 expect | MAJOR |
 | branch_coverage_full | 每个 branch 都有对应 it() | BLOCKER |
 | ut_case_per_unit_ac | 每条 unit/both 的 P0/P1 AC 都有 it() | BLOCKER |
 | acceptance_coverage | 分母只计 ut_layer ∈ {unit, both} | BLOCKER |
@@ -326,14 +408,14 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 #### 8.2 AI Harness（语义级检查）
 
 - **Prompt 模板**：`framework/harness/prompts/verify-ut.md`
-- **v2 新增语义检查**：
-  1. `state_model_completeness` — state_model 是否足以表达所有分支
-  2. `port_abstraction_quality` — port 抽象粒度是否合理（不把 UI 当 port、云/本地分离）
-  3. `end_to_end_driving` — 每个 it() 是否端到端驱动（trigger + callLog + state 多断言）
-  4. `branch_coverage_semantic` — branches 是否涵盖 PRD 中所有异常路径
+- **v2.1 语义检查**：
+  1. `state_model_completeness` — state_model 是否足以表达所有分支（若有 use-cases.yaml）
+  2. `ui_bindings_completeness` — ui_bindings 是否覆盖所有 UI 节点、命名语义是否清晰（若有 use-cases.yaml）
+  3. `end_to_end_driving`（BLOCKER）— 每个 it() 是否端到端驱动（命名入口 + callLog + state 多断言，或退化判断）
+  4. `branch_coverage_semantic` — branches 是否涵盖 PRD 中所有异常路径（若有 use-cases.yaml）
   5. `device_ac_delegation` — device/both 的 AC 是否都在 device-testing-todo.md 中
-  6. `mock_reasonableness` — Spy 预设值是否与 data/model 一致
-  7. `test_isolation` — beforeEach 是否重建 Spy/UseCase
+  6. `stub_reasonableness` — 替身预设值是否与 data/model 一致、跨用例无污染
+  7. `test_isolation` — beforeEach / afterEach 是否正确隔离
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
@@ -370,17 +452,18 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 ## 约束与注意事项
 
-1. **UseCase 先行**：若 feature 涉及多步骤业务流程，必须先有 `use-cases.yaml`；否则回到 Skill 2 补齐
-2. **分支 1:1 映射**：`use-cases.yaml > branches[]` ↔ DAG branches ↔ UT `it()` 三者严格 1:1（允许 1 个 DAG 覆盖多个 branch，但总并集需覆盖全部）
-3. **AC 分层**：只测 `ut_layer in [unit, both]` 的 AC/BD；`device` 的 AC 必须在 `device-testing-todo.md` 中登记，绝不在 UT 里"硬凑"覆盖
-4. **Mock 不真调**：UT 中严禁发起真实网络请求、真实系统 API 调用或真实 IO 操作
-5. **用例隔离**：每个 `it()` 用例独立运行，在 `beforeEach` 中重建 `Spy + UseCase`
-6. **类型安全 Spy**：SpyPort 必须实现对应接口，与 `contracts.yaml` 签名一致
-7. **无 UI import 强约束**：UT 中禁止出现 `@Component` / `NavPathStack` / `showToast` / `$r` / `@kit.ArkUI` 等
-8. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
-9. **中文注释**：DAG / UseCase / UT 的 description 使用中文，便于业务理解
-10. **Harness 验证闭环**：UT 完成后必须引导用户运行 Harness 验证（Step 8），确保零 BLOCKER 后才进入下一阶段
-11. **不修改业务源码**：生成 UT 时不应修改 Skill 3 产出的业务代码。若发现代码无法测试（如 UseCase 内嵌 UI 依赖），应记录在交付摘要中反馈 Skill 3
+1. **UT 是消费者，不驱动架构**：**绝对禁止**为了 UT 反向要求 Skill 2/3 新增 `domain/usecase/XxxUseCase.ets` 或 `XxxPort` 接口。若业务代码无法直接从 UT 调用（例如业务嵌在 `onClick = () => {}` 内），应反馈 Skill 3 抽出命名方法 / 函数，而不是在 UT 里 new `@Component struct`。
+2. **use-cases.yaml 非必需**：仅复杂 feature（多 UI 共享状态 / 多步云调用 / 含回滚分支）才有该文件；简单 feature 直接按 acceptance.yaml + dag.yaml 针对 data 层写 UT，不要硬凑。
+3. **分支 1:1 映射**（路径 A）：`use-cases.yaml > branches[]` ↔ DAG branches ↔ UT `it()` 严格 1:1（允许 1 个 DAG 覆盖多个 branch，但总并集需覆盖全部）
+4. **AC 分层**：只测 `ut_layer in [unit, both]` 的 AC/BD；`device` 的 AC 必须在 `device-testing-todo.md` 中登记，绝不在 UT 里"硬凑"覆盖
+5. **Mock 不真调**：UT 中严禁发起真实网络请求、真实系统 API 调用或真实 IO 操作
+6. **用例隔离**：每个 `it()` 用例独立运行，在 `beforeEach` 中重建替身；原型替换方案必须在 `afterEach` 还原
+7. **替身类型契合**：`SpyXxx` 子类化或 `XxxPort.prototype.method = ...` 必须与 contracts.yaml 中的既有类签名一致
+8. **ut_import_whitelist 强约束**：UT 中禁止 import `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`
+9. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
+10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
+11. **Harness 验证闭环**：UT 完成后必须引导用户运行 Harness 验证（Step 8），确保零 BLOCKER 后才进入下一阶段
+12. **不修改业务源码**：生成 UT 时不应修改 Skill 3 产出的业务代码。若发现代码无法测试，应记录在交付摘要中反馈 Skill 3（推荐改动为：抽出命名方法 / 导出函数 / 普通 class，而非新造 Port 或 UseCase 类）
 
 ---
 

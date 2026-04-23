@@ -1,11 +1,12 @@
 // ============================================================================
-// 示例 SpyPort：云侧端口 CardOpenApi 的测试替身
+// 示例替身（v2.1）：云侧数据边界 CardOpenApi 的 Spy 子类
 // 实际位置：02-Feature/CardOpen/src/ohosTest/ets/test/spy/SpyCardOpenApi.ets
 // ----------------------------------------------------------------------------
 // 统一能力：
 //   1. 预设每个方法的返回值 / 异常（returns / throws）
 //   2. 记录方法调用序列（callLog），用于断言端到端链路
 // ----------------------------------------------------------------------------
+// v2.1：extends 既有 data 层类 CardOpenApi（不是 implements XxxPort）
 // 不要在 Spy 里写业务逻辑——Spy 只做"可预设的打桩 + 调用日志"
 // ============================================================================
 
@@ -27,24 +28,24 @@ class Slot<T> {
   }
 }
 
-export class SpyCardOpenApi implements CardOpenApi {
+export class SpyCardOpenApi extends CardOpenApi {
   readonly whenValidateOpen = new Slot<ValidateResult>();
   readonly whenApplyCardResource = new Slot<CardResource>();
   readonly whenVerifySmsCode = new Slot<VerifyResult>();
 
   readonly callLog: string[] = [];
 
-  async validateOpen(_info: BankInfo): Promise<ValidateResult> {
+  override async validateOpen(_info: BankInfo): Promise<ValidateResult> {
     this.callLog.push('validateOpen');
     return this.whenValidateOpen.resolve();
   }
 
-  async applyCardResource(_vr: ValidateResult): Promise<CardResource> {
+  override async applyCardResource(_vr: ValidateResult): Promise<CardResource> {
     this.callLog.push('applyCardResource');
     return this.whenApplyCardResource.resolve();
   }
 
-  async verifySmsCode(_cardId: string, _sms: string): Promise<VerifyResult> {
+  override async verifySmsCode(_cardId: string, _sms: string): Promise<VerifyResult> {
     this.callLog.push('verifySmsCode');
     return this.whenVerifySmsCode.resolve();
   }

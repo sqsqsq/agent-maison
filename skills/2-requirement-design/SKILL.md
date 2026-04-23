@@ -304,29 +304,48 @@ expansions_with_user_approval:
    - 定义请求体和响应体的 interface
    - 标注接口 URL（模拟数据场景可标注 "模拟"）
 
-### Step 6: 设计领域层（含业务流程 UseCase 清单）
+### Step 6: 设计领域层 / 业务编排（条件式产出 `use-cases.yaml`）
 
-若本 feature 存在**多步骤业务流程**（典型标志：任一用户操作会触发 ≥2 次云侧/本地端口调用，或流程内含 conditional 分支），**必须**抽象为 UseCase 并产出两份强制产物：
+> **v2.1 关键澄清**：`UseCase` 是**文档级业务规约**，不是代码中必须存在的类。
+> design 的任务是："**判断是否需要 `use-cases.yaml`，如需要则只描述业务语义，不强行规定实现形态**"。
+> 真正的业务编排代码（Coordinator / Flow / Page 命名方法 / 导出函数）由 Skill 3 选择最贴合复杂度的形式落地。
+
+#### 6.1 复杂度判定（决定是否产出 `use-cases.yaml`）
+
+仅当**至少满足下列一条**时，才产出 `doc/features/{module}/use-cases.yaml`：
+
+1. **多 UI 节点共享状态**：≥2 个页面/组件订阅同一业务状态，且互相之间的渲染依赖 `phase` 字段（典型：开卡 3 页面 + 短验弹框）
+2. **多步云侧调用**：一个用户动作会触发 ≥2 次独立的云端请求，且调用顺序受前一次结果影响
+3. **存在回滚/补偿分支**：某一步失败需要反向清理已持久化或已修改的状态（云写成功但本地写失败，需回滚云侧；或反之）
+4. **多路人机交互**：流程中涉及 ≥2 次真实用户输入（短验、指纹、权限弹框…）
+
+若本 feature **全部条件都不满足**（例：首页一次性加载、单接口查询、单按钮跳转），**不要**产出 `use-cases.yaml`。Skill 5 会走退化模式，基于 `acceptance.yaml` + `dag.yaml` 直接针对 data 层函数写 UT。
+
+#### 6.2 若决定产出 `use-cases.yaml`
+
+产出以下两份文档（代码形态仍由 Skill 3 决定）：
 
 1. **design.md 新增「业务流程 UseCase 清单」章节**（见 [design-template.md](templates/design-template.md) 的 `## 六、业务流程 UseCase 清单`），含：
-   - 每个 UseCase 的 **触发入口方法**（UI 层 `onClick` 只能转发到它们）
-   - 构造器注入的 **端口清单（ports）**：按 cloud / local 归类
+   - **业务入口映射表**（ui_bindings 的人话版本）：哪一个页面/组件的哪一个用户动作，应调用哪一个业务函数（命名函数，不写实现，只给签名意图）
    - **状态机 Mermaid**（`stateDiagram-v2`），覆盖所有可预期分支（成功、各类失败、用户取消、回滚）
-   - **分支清单表**：列出 happy path + 所有可预期失败路径，每条标注对应的 AC/BD
+   - **数据边界清单**：本流程依赖的外部边界（云端接口 / 本地持久化 / 系统服务），引用 `contracts.yaml > interfaces[].class` 中**已存在**的 data 层类，而不是新造 Port 接口
+   - **分支清单表**：happy path + 所有可预期失败路径，每条标注对应 AC/BD
 
 2. **`doc/features/{module}/use-cases.yaml`**（Spec 文件，与 `contracts.yaml` 同目录）：
    - Schema 见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../5-business-ut/templates/use-cases-schema.md)
    - 规范级样例见 [framework/skills/5-business-ut/examples/card-opening/](../5-business-ut/examples/card-opening/)
-   - 字段：`schema_version / feature / use_cases[]`；每个 use_case 含 `id / class / file / triggers / ports / state_model / branches`
-   - `ports[].type` 必须与 `contracts.yaml.interfaces[].class` 一一对应；`ports[].ownership` 必须是 `cloud` 或 `local`
+   - 必填字段：`schema_version / feature / use_cases[]`；每个 `use_case` 含 `id / coordinator / ui_bindings / state_model / branches`；`coordinator_file` / `data_boundaries` 可选
+   - `coordinator` 只写**符号名**（类名 / `Page.method` / 导出函数名），指向 Skill 3 将要实现（或已存在）的真实代码；**不**强制放在 `domain/usecase/` 下
+   - `ui_bindings[].user_actions[].calls` 必须是一个**命名函数符号**（UT 可直接调用）；inline lambda 或匿名箭头函数不算
+   - `data_boundaries[].type` 必须与 `contracts.yaml.interfaces[].class` 一一对应；`kind` 取 `cloud` / `storage` / `system`
    - `branches[].linked_acceptance` 至少关联一条 AC/BD；Skill 5 会按此清单 1:1 生成 UT 用例
 
-若业务逻辑简单（单 repository 读取、无多步骤编排，如首页一次性加载），**仍建议**抽一个轻量 UseCase（如 `HomeLoadingUseCase`）封装 `Loading → Loaded/Empty/Failed` 的状态流，便于 UI 解耦与 UT 端到端测试；不强制产出 `use-cases.yaml`，但 Skill 5 harness 会 WARN 引导升级。
+#### 6.3 **禁止**的反模式（v2.1 明确约束）
 
-> **分层位置约束**：UseCase 源码放在 `{module}/src/main/ets/domain/usecase/`，Skill 3 编码时强制：
-> - 构造器注入所有 ports（禁止 `new XxxRepository()`）
-> - **禁止 import** 任何 UI 符号：`@Component` / `@Consume` / `@Provide` / `NavPathStack` / `$r` / `showToast` / `getUIContext` / `@kit.ArkUI`
-> - UI 副作用（Toast / 导航 / 弹框显示）只能通过 state 字段传递，由 UI 层订阅后翻译
+- ❌ 在 design / use-cases.yaml 里要求"必须在 `domain/usecase/` 下新建 `XxxUseCase` 类"——代码形态由 Skill 3 决定
+- ❌ 为某个 data 层类额外套一层 `XxxPort` 接口**只为了 UT 注入方便**——直接引用既有 data 层类即可，UT 用 Spy/Fake 子类化或原型替换
+- ❌ 把 `NavPathStack` / `PromptAction` / Toast 等 UI 能力登记为 `data_boundaries`——UI 副作用走 `ui_subscription`（design 与 device-testing-todo 承载），不进 UT
+- ❌ 对业务逻辑非常简单的 feature 硬凑 `use-cases.yaml`（如首页一次性加载）——应直接让 Skill 5 基于 data 层函数 + dag 写 UT
 
 ### Step 7: 设计展示层
 
@@ -386,7 +405,7 @@ expansions_with_user_approval:
 [ ] 10. 组件树完整：每个页面是否都有组件拆分方案？
 [ ] 11. 状态管理明确：关键数据的状态管理策略是否已明确？
 [ ] 12. 路由设计完整：页面间跳转关系是否与 PRD 业务流程图一致？
-[ ] 13. UseCase 完备（若 feature 有多步骤流程）：是否在 design.md 产出「业务流程 UseCase 清单」章节 + Mermaid 状态机 + 分支清单？是否每个 UseCase 的 ports 仅含 cloud/local 端口（无 UI 符号）？是否每条 branch 都有 linked_acceptance？
+[ ] 13. UseCase 规约（仅当满足 Step 6.1 复杂度阈值时）：是否在 design.md 产出「业务流程 UseCase 清单」章节（业务入口映射表 + Mermaid 状态机 + 数据边界清单 + 分支清单）？`use-cases.yaml` 是否字段齐全（coordinator / ui_bindings / data_boundaries / state_model / branches）？`data_boundaries[].type` 是否都能在 `contracts.yaml > interfaces[].class` 中找到（无新造 Port）？每个 `ui_bindings[].user_actions[].calls` 是否为命名函数符号（非 inline lambda）？每条 branch 是否都有 linked_acceptance？**未达复杂度阈值的 feature 跳过此项**。
 ```
 
 **不通过项**：找出具体缺失点，自动补充完善后重新自检，直到全部通过。
@@ -469,15 +488,18 @@ expansions_with_user_approval:
 
 若 Skill 1 未产出 `acceptance.yaml`（历史原因），则从 PRD.md 中提取并创建。
 
-#### 11.3 提取业务流程 UseCase 清单 (`use-cases.yaml`)
+#### 11.3 （条件式）提取业务流程 UseCase 清单 (`use-cases.yaml`)
 
-若 Step 6 产出了 UseCase（含多步骤流程或轻量 UseCase），**必须**同步提取 `doc/features/{module-name}/use-cases.yaml`：
+**仅当** Step 6.1 的复杂度阈值命中时才产出 `doc/features/{module-name}/use-cases.yaml`；不满足阈值的 feature**不写**该文件，交由 Skill 5 基于 `acceptance.yaml` + `dag.yaml` 直接针对 data 层写 UT。
+
+若需要产出：
 
 - Schema：见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../5-business-ut/templates/use-cases-schema.md)
 - 参考样例：[framework/skills/5-business-ut/examples/card-opening/use-cases.yaml](../5-business-ut/examples/card-opening/use-cases.yaml)
 - 关键强约束：
-  - `use_cases[].class` 必须在 `use_cases[].file` 路径下有对应源码（Skill 3 之后检查）
-  - `ports[].type` 必须与 `contracts.yaml.interfaces[].class` 一一对应
+  - `use_cases[].coordinator` 仅声明**符号名**（类名 / `Page.method` / 导出函数），指向 Skill 3 之后会实现（或已存在）的真实代码；`coordinator_file` 可选，不强制放在 `domain/usecase/`
+  - `ui_bindings[].user_actions[].calls` 必须是命名函数（Skill 3 harness 会校验 `named_business_handler`）
+  - `data_boundaries[].type` 必须与 `contracts.yaml.interfaces[].class` 一一对应，且是**既有** data 层类（不新造 Port 接口）；`kind` 取 `cloud` / `storage` / `system`
   - `branches` 至少包含 happy path + 每类可预期失败路径，每条必须 `linked_acceptance` 非空
   - 若某条分支找不到对应 AC/BD，回到 Skill 1 补充后再回填
 
@@ -485,12 +507,12 @@ expansions_with_user_approval:
 
 ```
 doc/features/{module-name}/contracts.yaml
-doc/features/{module-name}/use-cases.yaml   (若 Step 6 有 UseCase)
+doc/features/{module-name}/use-cases.yaml   (仅复杂 feature；简单 feature 不产出)
 ```
 
-参考已有示例：`doc/features/home-page/contracts.yaml`、`framework/skills/5-business-ut/examples/card-opening/use-cases.yaml`
+参考已有示例：`doc/features/home-page/contracts.yaml`（简单 feature，无 use-cases.yaml）、`framework/skills/5-business-ut/examples/card-opening/use-cases.yaml`（多页面多步骤流程样例）
 
-> **为什么这一步如此重要**：`contracts.yaml` 是 Skill 3 编码时的强契约——文件路径、接口签名、组件 Props 必须与 contracts.yaml 一致；`use-cases.yaml` 是 Skill 5 业务级 UT 的蓝图——DAG 与 UT 用例按 branches 1:1 生成。Harness 也依赖它们做接口一致性验证与 UT 覆盖追溯。
+> **为什么这一步如此重要**：`contracts.yaml` 是 Skill 3 编码时的强契约——文件路径、接口签名、组件 Props 必须与 contracts.yaml 一致；`use-cases.yaml`（若存在）是 Skill 5 业务级 UT 的蓝图——DAG 与 UT 用例按 branches 1:1 生成。Harness 也依赖它们做接口一致性验证与 UT 覆盖追溯。未达阈值的简单 feature 不产出 `use-cases.yaml`，避免为测试工具人为引入架构复杂度。
 
 ### Step 12: 架构影响判定与（条件式）架构文档更新
 

@@ -1,21 +1,22 @@
 // ============================================================================
-// 示例：CardOpeningUseCase
-// 实际位置：02-Feature/CardOpen/src/main/ets/domain/usecase/CardOpeningUseCase.ets
+// 示例：CardOpenFlow（v2.1 · 普通 ArkTS 业务编排类，非 UseCase）
+// 实际位置：02-Feature/CardOpen/src/main/ets/domain/flow/CardOpenFlow.ets
 // ----------------------------------------------------------------------------
-// 规则强约束（ut-rules.yaml : usecase_class_pure BLOCKER）
-//   - 本文件不得 import 任何 UI / 导航 / Toast 符号
-//   - 禁止的 import 示例：
-//       import { NavPathStack } from '@kit.ArkUI';
-//       import { showToast } from '@aspect/CommUI';
-//       import { $r, Component } from '...';
-//   - 构造器注入所有 ports；禁止在 UseCase 内 new XxxRepository()
-//   - UI 副作用（Toast / 导航 / 弹框显示）只通过 state 字段传递
+// v2.1 的形态选择（见 Skill 3 Step 3.5.1）：
+//   - 本流程跨 3 个页面 + 1 个弹框，且含回滚分支 → 选形态 B：普通 ArkTS 协调类
+//   - 文件放在 domain/flow/ 下（也可放 shared/ 下，不强制 domain/usecase/）
+//
+// 代码级约束（由 Skill 3 harness named_business_handler / layer_compliance 校验）：
+//   - chooseCard / confirmSms / cancel 都是命名 async 方法，UT 可直接调用
+//     （对应 use-cases.yaml > ui_bindings[].user_actions[].calls）
+//   - 构造器注入既有 data 层类（CardOpenApi / CardStore），**非新造 Port 接口**
+//   - 本文件禁止 import UI/Nav/Toast 符号（ut_import_whitelist 同款禁用清单）
 // ============================================================================
 
 // 下面这些 import 都是业务/数据层类型，不含 UI 符号
 import { BankInfo, CardInfo, CardResource, ValidateResult, VerifyResult } from '../../data/model/CardOpening';
 import { CardOpenApi } from '../../data/api/CardOpenApi';
-import { CardPersistence } from '../../data/storage/CardPersistence';
+import { CardStore } from '../../data/storage/CardStore';
 
 export enum Phase {
   Idle = 'Idle',
@@ -29,14 +30,14 @@ export enum Phase {
 }
 
 @Observed
-export class CardOpeningState {
+export class CardOpenState {
   phase: Phase = Phase.Idle;
   errorCode: string | null = null;
   resultCardId: string | null = null;
 }
 
-export class CardOpeningUseCase {
-  readonly state: CardOpeningState = new CardOpeningState();
+export class CardOpenFlow {
+  readonly state: CardOpenState = new CardOpenState();
 
   // in-flight 上下文：分阶段保存中间结果
   private pendingValidate: ValidateResult | null = null;
@@ -44,18 +45,17 @@ export class CardOpeningUseCase {
 
   constructor(
     private readonly api: CardOpenApi,
-    private readonly storage: CardPersistence,
+    private readonly store: CardStore,
   ) {}
 
   // -----------------------------------------------------------------
-  // trigger: 用户点击"开卡"
+  // 业务入口：用户在 CardSelectPage 点击"开卡"（ui_bindings.calls=flow.chooseCard）
   // -----------------------------------------------------------------
-  async startOpening(bankInfo: BankInfo): Promise<void> {
+  async chooseCard(bankInfo: BankInfo): Promise<void> {
     this.state.phase = Phase.Validating;
     this.state.errorCode = null;
     this.state.resultCardId = null;
 
-    // 步骤 2：云侧校验
     let vr: ValidateResult;
     try {
       vr = await this.api.validateOpen(bankInfo);
@@ -67,7 +67,6 @@ export class CardOpeningUseCase {
     }
     this.pendingValidate = vr;
 
-    // 步骤 3：云侧申请卡资源
     this.state.phase = Phase.Applying;
     let resource: CardResource;
     try {
@@ -79,7 +78,6 @@ export class CardOpeningUseCase {
       return this.fail('APPLY_ERR');
     }
 
-    // 步骤 4：本地持久化
     this.state.phase = Phase.Persisting;
     const cardInfo: CardInfo = {
       cardId: resource.cardId,
@@ -87,20 +85,19 @@ export class CardOpeningUseCase {
       status: 'Pending',
     };
     try {
-      await this.storage.save(cardInfo);
+      await this.store.save(cardInfo);
     } catch (e) {
       return this.fail('PERSIST_ERR');
     }
     this.pendingCard = cardInfo;
 
-    // 等待短验
     this.state.phase = Phase.WaitingSms;
   }
 
   // -----------------------------------------------------------------
-  // trigger: 用户输入短验
+  // 业务入口：用户在 SmsDialog 输入短验并确认（ui_bindings.calls=flow.confirmSms）
   // -----------------------------------------------------------------
-  async submitSmsCode(smsCode: string): Promise<void> {
+  async confirmSms(smsCode: string): Promise<void> {
     if (this.state.phase !== Phase.WaitingSms || !this.pendingCard) {
       return;
     }
@@ -118,9 +115,8 @@ export class CardOpeningUseCase {
       return;
     }
 
-    // 步骤 7 成功：更新本地为激活态
     try {
-      await this.storage.update({ ...this.pendingCard, status: 'Active' });
+      await this.store.update({ ...this.pendingCard, status: 'Active' });
     } catch (e) {
       await this.rollbackAndFail('PERSIST_ERR');
       return;
@@ -130,12 +126,12 @@ export class CardOpeningUseCase {
   }
 
   // -----------------------------------------------------------------
-  // trigger: 用户主动取消（如退出页面）
+  // 业务入口：用户点击取消（ui_bindings.calls=flow.cancel）
   // -----------------------------------------------------------------
   async cancel(): Promise<void> {
     if (this.pendingCard) {
       try {
-        await this.storage.rollback(this.pendingCard.cardId);
+        await this.store.rollback(this.pendingCard.cardId);
       } catch (_e) {
         // 回滚失败仍按取消处理，errorCode 用 USER_CANCELLED
       }
@@ -155,7 +151,7 @@ export class CardOpeningUseCase {
   private async rollbackAndFail(code: string): Promise<void> {
     if (this.pendingCard) {
       try {
-        await this.storage.rollback(this.pendingCard.cardId);
+        await this.store.rollback(this.pendingCard.cardId);
       } catch (_e) {
         // rollback 的异常由 Skill 6 独立覆盖；UT 不要求此分支
       }

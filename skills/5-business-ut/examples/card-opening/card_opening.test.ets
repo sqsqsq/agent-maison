@@ -1,29 +1,30 @@
 // ============================================================================
-// 示例 UT：CardOpeningUseCase 端到端业务级测试
+// 示例 UT：CardOpenFlow 端到端业务级测试（v2.1）
 // 实际位置：02-Feature/CardOpen/src/ohosTest/ets/test/card_opening.test.ets
 // ----------------------------------------------------------------------------
-// 关键特征（符合 ut-rules.yaml）：
-//   - 无任何 UI/Nav/Toast import（no_ui_dep_in_ut BLOCKER）
-//   - 通过构造器注入 SpyPort（ports_all_stubbed BLOCKER）
-//   - 每个 it() 端到端串联多个 port 调用 + 多个 state 断言（end_to_end_driving MAJOR）
+// 关键特征（符合 ut-rules.yaml · v2.1）：
+//   - 无任何 UI/Nav/Toast/AppStorage import（ut_import_whitelist BLOCKER）
+//   - 不 new @Component struct；直接调用 ui_bindings.user_actions.calls 指向的命名方法
+//   - 通过构造器注入 Spy 子类（boundaries_all_stubbed BLOCKER）
+//   - 每个 it() 端到端串联多个 boundary 调用 + 多个 state 断言（it_drives_flow）
 //   - 用例名含 [AC-X] 和 [BRANCH-id] 双标签（it_name_has_ac_or_branch_tag BLOCKER）
 // ============================================================================
 
 import { describe, it, expect, beforeEach } from '@ohos/hypium';
-import { CardOpeningUseCase, Phase } from '../../../main/ets/domain/usecase/CardOpeningUseCase';
+import { CardOpenFlow, Phase } from '../../../main/ets/domain/flow/CardOpenFlow';
 import { SpyCardOpenApi } from './spy/SpyCardOpenApi';
-import { SpyCardPersistence } from './spy/SpyCardPersistence';
+import { SpyCardStore } from './spy/SpyCardStore';
 
-export default function cardOpeningUseCaseTest(): void {
-  describe('CardOpeningUseCase', () => {
+export default function cardOpenFlowTest(): void {
+  describe('CardOpenFlow', () => {
     let api: SpyCardOpenApi;
-    let storage: SpyCardPersistence;
-    let useCase: CardOpeningUseCase;
+    let store: SpyCardStore;
+    let flow: CardOpenFlow;
 
     beforeEach((): void => {
       api = new SpyCardOpenApi();
-      storage = new SpyCardPersistence();
-      useCase = new CardOpeningUseCase(api, storage);
+      store = new SpyCardStore();
+      flow = new CardOpenFlow(api, store);
     });
 
     // ------------------------------------------------------------------ BRANCH-happy_path
@@ -32,33 +33,35 @@ export default function cardOpeningUseCaseTest(): void {
       api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' });
       api.whenVerifySmsCode.returns({ ok: true });
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
+      // 对应 use-cases.yaml > ui_bindings[CardSelectPage].user_actions.calls = "flow.chooseCard"
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
 
-      expect(useCase.state.phase).assertEqual(Phase.WaitingSms);
-      expect(storage.callLog).assertDeepEquals(['save']);
-      expect(storage.saved[0].cardId).assertEqual('c1');
-      expect(storage.saved[0].status).assertEqual('Pending');
+      expect(flow.state.phase).assertEqual(Phase.WaitingSms);
+      expect(store.callLog).assertDeepEquals(['save']);
+      expect(store.saved[0].cardId).assertEqual('c1');
+      expect(store.saved[0].status).assertEqual('Pending');
 
-      await useCase.submitSmsCode('123456');
+      // 对应 ui_bindings[SmsDialog].user_actions.calls = "flow.confirmSms"
+      await flow.confirmSms('123456');
 
-      expect(useCase.state.phase).assertEqual(Phase.Success);
-      expect(useCase.state.resultCardId).assertEqual('c1');
-      expect(useCase.state.errorCode).assertNull();
+      expect(flow.state.phase).assertEqual(Phase.Success);
+      expect(flow.state.resultCardId).assertEqual('c1');
+      expect(flow.state.errorCode).assertNull();
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource', 'verifySmsCode']);
-      expect(storage.callLog).assertDeepEquals(['save', 'update']);
-      expect(storage.currentCards[0].status).assertEqual('Active');
+      expect(store.callLog).assertDeepEquals(['save', 'update']);
+      expect(store.currentCards[0].status).assertEqual('Active');
     });
 
     // ------------------------------------------------------------------ BRANCH-validate_fail
     it('[BRANCH-validate_fail][AC-2] 云侧校验失败：不触发任何后续调用', 0, async () => {
       api.whenValidateOpen.returns({ ok: false, code: 'VAL_ERR' });
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
 
-      expect(useCase.state.phase).assertEqual(Phase.Failed);
-      expect(useCase.state.errorCode).assertEqual('VAL_ERR');
+      expect(flow.state.phase).assertEqual(Phase.Failed);
+      expect(flow.state.errorCode).assertEqual('VAL_ERR');
       expect(api.callLog).assertDeepEquals(['validateOpen']);
-      expect(storage.callLog).assertDeepEquals([]);
+      expect(store.callLog).assertDeepEquals([]);
     });
 
     // ------------------------------------------------------------------ BRANCH-apply_fail
@@ -66,27 +69,27 @@ export default function cardOpeningUseCaseTest(): void {
       api.whenValidateOpen.returns({ ok: true, token: 't' });
       api.whenApplyCardResource.throws(new Error('apply-timeout'));
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
 
-      expect(useCase.state.phase).assertEqual(Phase.Failed);
-      expect(useCase.state.errorCode).assertEqual('APPLY_ERR');
+      expect(flow.state.phase).assertEqual(Phase.Failed);
+      expect(flow.state.errorCode).assertEqual('APPLY_ERR');
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource']);
-      expect(storage.callLog).assertDeepEquals([]);
+      expect(store.callLog).assertDeepEquals([]);
     });
 
     // ------------------------------------------------------------------ BRANCH-persist_fail
     it('[BRANCH-persist_fail][AC-4] 本地持久化失败：流程终止于 Persisting', 0, async () => {
       api.whenValidateOpen.returns({ ok: true, token: 't' });
       api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' });
-      storage.whenSave.throws(new Error('disk-full'));
+      store.whenSave.throws(new Error('disk-full'));
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
 
-      expect(useCase.state.phase).assertEqual(Phase.Failed);
-      expect(useCase.state.errorCode).assertEqual('PERSIST_ERR');
+      expect(flow.state.phase).assertEqual(Phase.Failed);
+      expect(flow.state.errorCode).assertEqual('PERSIST_ERR');
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource']);
-      expect(storage.callLog).assertDeepEquals(['save']);
-      expect(storage.currentCards.length).assertEqual(0);
+      expect(store.callLog).assertDeepEquals(['save']);
+      expect(store.currentCards.length).assertEqual(0);
     });
 
     // ------------------------------------------------------------------ BRANCH-sms_fail_rollback
@@ -95,14 +98,14 @@ export default function cardOpeningUseCaseTest(): void {
       api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' });
       api.whenVerifySmsCode.returns({ ok: false, code: 'SMS_ERR' });
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
-      await useCase.submitSmsCode('999999');
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
+      await flow.confirmSms('999999');
 
-      expect(useCase.state.phase).assertEqual(Phase.Failed);
-      expect(useCase.state.errorCode).assertEqual('SMS_ERR');
+      expect(flow.state.phase).assertEqual(Phase.Failed);
+      expect(flow.state.errorCode).assertEqual('SMS_ERR');
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource', 'verifySmsCode']);
-      expect(storage.callLog).assertDeepEquals(['save', 'rollback']);
-      expect(storage.currentCards.length).assertEqual(0);
+      expect(store.callLog).assertDeepEquals(['save', 'rollback']);
+      expect(store.currentCards.length).assertEqual(0);
     });
 
     // ------------------------------------------------------------------ BRANCH-user_cancel_in_waiting_sms
@@ -110,16 +113,17 @@ export default function cardOpeningUseCaseTest(): void {
       api.whenValidateOpen.returns({ ok: true, token: 't' });
       api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' });
 
-      await useCase.startOpening({ bankCode: 'BOC', userId: 'u1' });
-      expect(useCase.state.phase).assertEqual(Phase.WaitingSms);
+      await flow.chooseCard({ bankCode: 'BOC', userId: 'u1' });
+      expect(flow.state.phase).assertEqual(Phase.WaitingSms);
 
-      await useCase.cancel();
+      // 对应 ui_bindings[SmsDialog].user_actions.calls = "flow.cancel"
+      await flow.cancel();
 
-      expect(useCase.state.phase).assertEqual(Phase.Failed);
-      expect(useCase.state.errorCode).assertEqual('USER_CANCELLED');
+      expect(flow.state.phase).assertEqual(Phase.Failed);
+      expect(flow.state.errorCode).assertEqual('USER_CANCELLED');
       expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource']);
-      expect(storage.callLog).assertDeepEquals(['save', 'rollback']);
-      expect(storage.currentCards.length).assertEqual(0);
+      expect(store.callLog).assertDeepEquals(['save', 'rollback']);
+      expect(store.currentCards.length).assertEqual(0);
     });
   });
 }

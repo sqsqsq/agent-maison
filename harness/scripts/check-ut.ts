@@ -25,7 +25,7 @@ import {
   UseCaseDef,
 } from './utils/types';
 
-// v2 新增：UseCase 源文件和 UT 文件中禁止出现的 UI/导航/Toast 符号模式
+// UT 文件中禁止出现的 UI/导航/Toast 符号模式（v2.1 扩展：AppStorage / rawfile）
 const UI_FORBIDDEN_PATTERNS: RegExp[] = [
   /@Component\b/,
   /@Entry\b/,
@@ -35,11 +35,15 @@ const UI_FORBIDDEN_PATTERNS: RegExp[] = [
   /\bNavPathStack\b/,
   /\bNavDestination\b/,
   /@kit\.ArkUI/,
+  /@kit\.ArkGraphics/,
   /\$r\s*\(/,
+  /\$rawfile\s*\(/,
   /\bgetUIContext\b/,
   /\bPromptAction\b/,
   /\bshowToast\b/,
   /@aspect\/CommUI/,
+  /\bAppStorage\b/,
+  /\bLocalStorage\b/,
 ];
 
 function scanForbiddenImports(content: string, patterns: RegExp[]): string[] {
@@ -122,19 +126,20 @@ interface DagFile {
 // --------------------------------------------------------------------------
 
 const VALID_NODE_TYPES = [
-  // v1 兼容
+  // 通用（保留兼容）
   'code_execution',
   'async_call',
-  'user_intervention',
+  'user_intervention',   // deprecated
   'background_task',
-  'ui_navigation',
+  'ui_navigation',       // deprecated
   'assertion',
   'conditional_branch',
-  // v2 新增
+  // v2 业务视角
   'user_trigger',
   'port_call_cloud',
   'port_call_local',
   'state_transition',
+  'ui_subscription',     // v2.1：UI 订阅占位（UT 忽略；供 device-testing-todo 生成）
 ];
 
 // --------------------------------------------------------------------------
@@ -275,6 +280,7 @@ function checkDagSchemaCompliance(
 
   const issues: string[] = [];
   const affectedFiles: string[] = [];
+  const hasUseCaseSpec = !!loadUseCaseSpec(ctx);
 
   for (const { path: dagPath, dag } of dags) {
     const missing: string[] = [];
@@ -282,6 +288,12 @@ function checkDagSchemaCompliance(
     if (!dag.flow_name) missing.push('flow_name');
     if (!dag.entry_point) missing.push('entry_point');
     if (!dag.nodes || !Array.isArray(dag.nodes) || dag.nodes.length === 0) missing.push('nodes[]');
+    if (hasUseCaseSpec) {
+      if (!dag.use_case) missing.push('use_case（use-cases.yaml 存在时必填）');
+      if (!Array.isArray(dag.branches) || dag.branches.length === 0) {
+        missing.push('branches[]（use-cases.yaml 存在时必填）');
+      }
+    }
 
     if (missing.length > 0) {
       issues.push(`${dagPath}: 缺少必填字段 ${missing.join(', ')}`);
@@ -321,7 +333,7 @@ function checkDagSchemaCompliance(
     status: 'FAIL',
     details: `${issues.length} 处 Schema 问题：\n${truncateList(issues, 10)}`,
     affected_files: [...new Set(affectedFiles)],
-    suggestion: 'DAG 文件必须包含 flow_id、flow_name、entry_point、nodes[] 必填字段，每个节点必须包含 id、type、description。',
+    suggestion: 'DAG 文件必须包含 flow_id、flow_name、entry_point、nodes[]；当 use-cases.yaml 存在时还必须包含 use_case（= use_cases[].id）与 branches[]；每个节点必须包含 id、type、description。',
   }];
 }
 
@@ -340,39 +352,61 @@ function checkDagNodeTypeValid(
     }];
   }
 
+  const DEPRECATED_NODE_TYPES = new Set(['user_intervention', 'ui_navigation']);
   const invalidNodes: string[] = [];
+  const deprecatedNodes: string[] = [];
   const affectedFiles: string[] = [];
+  const deprecatedFiles: string[] = [];
 
   for (const { path: dagPath, dag } of dags) {
     for (const node of dag.nodes ?? []) {
       if (!VALID_NODE_TYPES.includes(node.type)) {
         invalidNodes.push(`${dagPath} > ${node.id}: type="${node.type}"`);
         affectedFiles.push(dagPath);
+      } else if (DEPRECATED_NODE_TYPES.has(node.type)) {
+        deprecatedNodes.push(`${dagPath} > ${node.id}: type="${node.type}"`);
+        deprecatedFiles.push(dagPath);
       }
     }
   }
 
+  const out: CheckResult[] = [];
   if (invalidNodes.length === 0) {
-    return [{
+    out.push({
       id: 'dag_node_type_valid',
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'dag_node_type_valid'),
       severity: 'BLOCKER',
       status: 'PASS',
       details: '所有 DAG 节点类型合法。',
-    }];
+    });
+  } else {
+    out.push({
+      id: 'dag_node_type_valid',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'dag_node_type_valid'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${invalidNodes.length} 个节点类型非法：\n${truncateList(invalidNodes, 10)}`,
+      affected_files: [...new Set(affectedFiles)],
+      suggestion: `合法类型: ${VALID_NODE_TYPES.join(', ')}`,
+    });
   }
 
-  return [{
-    id: 'dag_node_type_valid',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'dag_node_type_valid'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: `${invalidNodes.length} 个节点类型非法：\n${truncateList(invalidNodes, 10)}`,
-    affected_files: [...new Set(affectedFiles)],
-    suggestion: `合法类型: ${VALID_NODE_TYPES.join(', ')}`,
-  }];
+  if (deprecatedNodes.length > 0) {
+    out.push({
+      id: 'dag_node_type_valid',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'dag_node_type_valid'),
+      severity: 'MINOR',
+      status: 'WARN',
+      details: `${deprecatedNodes.length} 个节点使用已废弃类型（兼容保留）：\n${truncateList(deprecatedNodes, 10)}`,
+      affected_files: [...new Set(deprecatedFiles)],
+      suggestion: 'user_intervention / ui_navigation 已废弃；建议用 ui_subscription（UI 订阅 state，UT 忽略）或移除后改由 device-testing-todo.md 承载。',
+    });
+  }
+
+  return out;
 }
 
 function checkDagAcyclic(
@@ -861,41 +895,52 @@ function checkTestRegistration(
 // v2 新增 Structure Checks — use-cases.yaml 自身
 // --------------------------------------------------------------------------
 
-function checkUseCaseSpecExists(ctx: CheckContext): CheckResult[] {
+function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
   const specExists = !!loadUseCaseSpec(ctx);
-  const needed = acceptanceHasUnitLayerRequirement(ctx) || designMentionsUseCaseChapter(ctx);
-
-  if (!needed) {
-    return [{
-      id: 'usecase_spec_exists',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_exists'),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: '未检测到"需要 UseCase"信号（acceptance.yaml 无 unit/both AC，且 design.md 未出现"业务流程 UseCase 清单"章节）。本 feature 暂免 use-cases.yaml。',
-    }];
-  }
+  const unitAcCount = countUnitOrBothAc(ctx);
+  const recommended = unitAcCount >= 3;
 
   if (specExists) {
     return [{
-      id: 'usecase_spec_exists',
+      id: 'usecase_spec_recommended',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_exists'),
-      severity: 'BLOCKER',
+      description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
+      severity: 'MINOR',
       status: 'PASS',
       details: `doc/features/${ctx.feature}/use-cases.yaml 已存在。`,
     }];
   }
 
+  if (!recommended) {
+    return [{
+      id: 'usecase_spec_recommended',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: `ut_layer ∈ {unit, both} 的 AC 仅 ${unitAcCount} 条（阈值 ≥3），本 feature 可只用 acceptance.yaml + dag.yaml。`,
+    }];
+  }
+
   return [{
-    id: 'usecase_spec_exists',
+    id: 'usecase_spec_recommended',
     category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_exists'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: `检测到 UT unit/both 层需求或 design.md 已声明"业务流程 UseCase 清单"，但 doc/features/${ctx.feature}/use-cases.yaml 不存在。`,
-    suggestion: '请按 framework/skills/5-business-ut/templates/use-cases-schema.md 产出 use-cases.yaml；若当前 feature 无多步骤业务流程，请在 acceptance.yaml 中将相关 AC ut_layer 改为 device 并移除 design.md 的 UseCase 清单章节。',
+    description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
+    severity: 'MINOR',
+    status: 'WARN',
+    details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 doc/features/${ctx.feature}/use-cases.yaml 以承载端到端分支。`,
+    suggestion: '若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 framework/skills/5-business-ut/templates/use-cases-schema.md 产出；否则可忽略本告警。',
   }];
+}
+
+function countUnitOrBothAc(ctx: CheckContext): number {
+  const ac = ctx.featureSpec.acceptance;
+  if (!ac) return 0;
+  const hit = (layer?: string) => layer === 'unit' || layer === 'both';
+  return (
+    (ac.criteria?.filter(c => hit(c.ut_layer)).length ?? 0) +
+    (ac.boundaries?.filter(b => hit(b.ut_layer)).length ?? 0)
+  );
 }
 
 function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
@@ -920,25 +965,38 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
 
   for (const uc of spec.use_cases ?? []) {
     const tag = uc.id ? `use_case[${uc.id}]` : 'use_case[?]';
-    const required: Array<keyof UseCaseDef> = ['id', 'class', 'file', 'triggers', 'ports', 'state_model', 'branches'];
+    const required: Array<keyof UseCaseDef> = ['id', 'coordinator', 'ui_bindings', 'state_model', 'branches'];
     for (const key of required) {
       if (uc[key] === undefined || uc[key] === null) {
         issues.push(`${tag}: 缺少字段 ${String(key)}`);
       }
     }
-    for (const tr of uc.triggers ?? []) {
-      if (!tr.event) issues.push(`${tag} > trigger: 缺少 event`);
-      if (!Array.isArray(tr.params)) issues.push(`${tag} > trigger[${tr.event ?? '?'}]: 缺少 params[]`);
-    }
-    for (const port of uc.ports ?? []) {
-      if (!port.name) issues.push(`${tag} > port: 缺少 name`);
-      if (!port.type) issues.push(`${tag} > port[${port.name ?? '?'}]: 缺少 type`);
-      if (!port.ownership) issues.push(`${tag} > port[${port.name ?? '?'}]: 缺少 ownership`);
-      else if (port.ownership !== 'cloud' && port.ownership !== 'local') {
-        issues.push(`${tag} > port[${port.name}]: ownership 必须是 cloud 或 local（当前：${port.ownership}）`);
+    const roleEnum = new Set(['entry', 'progress', 'dialog', 'result', 'passive']);
+    for (const ub of uc.ui_bindings ?? []) {
+      if (!ub.ui) issues.push(`${tag} > ui_binding: 缺少 ui`);
+      if (!ub.role) issues.push(`${tag} > ui_binding[${ub.ui ?? '?'}]: 缺少 role`);
+      else if (!roleEnum.has(ub.role as string)) {
+        issues.push(`${tag} > ui_binding[${ub.ui}]: role 非法（当前：${ub.role}）`);
       }
-      if (!Array.isArray(port.methods) || port.methods.length === 0) {
-        issues.push(`${tag} > port[${port.name ?? '?'}]: methods[] 必填且非空`);
+      if (!Array.isArray(ub.user_actions)) {
+        issues.push(`${tag} > ui_binding[${ub.ui ?? '?'}]: user_actions 必须为数组（空数组表示纯展示）`);
+      } else {
+        for (const ua of ub.user_actions) {
+          if (!ua.trigger) issues.push(`${tag} > ui_binding[${ub.ui}] > user_action: 缺少 trigger`);
+          if (!ua.calls) issues.push(`${tag} > ui_binding[${ub.ui}] > user_action: 缺少 calls（必须是命名函数符号）`);
+        }
+      }
+    }
+    const kindEnum = new Set(['cloud', 'storage', 'system']);
+    for (const b of uc.data_boundaries ?? []) {
+      if (!b.name) issues.push(`${tag} > data_boundary: 缺少 name`);
+      if (!b.type) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 type`);
+      if (!b.kind) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 kind`);
+      else if (!kindEnum.has(b.kind as string)) {
+        issues.push(`${tag} > data_boundary[${b.name}]: kind 必须属于 {cloud, storage, system}（当前：${b.kind}）`);
+      }
+      if (!Array.isArray(b.methods) || b.methods.length === 0) {
+        issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: methods[] 必填且非空`);
       }
     }
     if (uc.state_model && !Array.isArray(uc.state_model.phases)) {
@@ -975,13 +1033,174 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkUseCasePortMatchesContracts(ctx: CheckContext): CheckResult[] {
+function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
   const spec = loadUseCaseSpec(ctx);
   if (!spec) {
     return [{
-      id: 'usecase_port_matches_contracts',
+      id: 'named_business_handler',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_port_matches_contracts'),
+      description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'use-cases.yaml 不存在，跳过。',
+    }];
+  }
+
+  // 收集候选源码：coordinator_file（若有）+ 业务模块常规 src 路径
+  const candidateFiles: string[] = [];
+  for (const uc of spec.use_cases ?? []) {
+    if (uc.coordinator_file) {
+      const abs = path.join(ctx.projectRoot, uc.coordinator_file);
+      if (fs.existsSync(abs)) candidateFiles.push(abs);
+    }
+  }
+  // 退路：扫描 02-Feature/**/src/main/ets 下 .ets 文件（限于本 feature 的 module）
+  // 简化实现：抓 ctx.featureSpec 里任意已知模块路径；若无则在全仓范围内搜符号
+  const globalSrcRoots = [
+    path.join(ctx.projectRoot, '02-Feature'),
+    path.join(ctx.projectRoot, '01-Business'),
+    path.join(ctx.projectRoot, '00-Common'),
+  ].filter(p => fs.existsSync(p));
+
+  const codeCache = new Map<string, string>();
+  const readCode = (file: string): string => {
+    if (!codeCache.has(file)) {
+      try { codeCache.set(file, fs.readFileSync(file, 'utf-8')); }
+      catch { codeCache.set(file, ''); }
+    }
+    return codeCache.get(file)!;
+  };
+
+  // 预取候选源码内容
+  const knownContents: Array<{ file: string; content: string }> = [];
+  for (const f of candidateFiles) knownContents.push({ file: f, content: readCode(f) });
+
+  // 全仓 ets 搜索（截取到有限大小以避免性能问题）
+  let projectEts: Array<{ file: string; content: string }> = [];
+  try {
+    for (const root of globalSrcRoots) {
+      const stack: string[] = [root];
+      while (stack.length && projectEts.length < 800) {
+        const cur = stack.pop()!;
+        const stat = fs.statSync(cur);
+        if (stat.isDirectory()) {
+          for (const name of fs.readdirSync(cur)) {
+            if (name === 'node_modules' || name === 'build' || name === '.preview') continue;
+            stack.push(path.join(cur, name));
+          }
+        } else if (cur.endsWith('.ets') || cur.endsWith('.ts')) {
+          projectEts.push({ file: cur, content: readCode(cur) });
+        }
+      }
+    }
+  } catch { projectEts = []; }
+
+  const allCandidates = [...knownContents, ...projectEts];
+
+  const issues: string[] = [];
+  for (const uc of spec.use_cases ?? []) {
+    for (const ub of uc.ui_bindings ?? []) {
+      for (const ua of ub.user_actions ?? []) {
+        if (!ua.calls) continue;
+        // 提取最后一段标识符作为符号名
+        const parts = ua.calls.split(/[.]/).filter(Boolean);
+        const symbol = parts[parts.length - 1]?.replace(/\(.*$/, '').trim();
+        if (!symbol) continue;
+        // 跳过明显的字面量/运算符
+        if (!/^[A-Za-z_$][\w$]*$/.test(symbol)) {
+          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": calls="${ua.calls}" 不是合法命名函数符号`);
+          continue;
+        }
+        const reFunc = new RegExp(`\\bfunction\\s+${symbol}\\b`);
+        const reMethod = new RegExp(`\\b${symbol}\\s*\\(([^)]*)\\)\\s*[:{]`);
+        const reExported = new RegExp(`\\bexport\\s+(?:function|const|let|var|class)\\s+${symbol}\\b`);
+        const found = allCandidates.some(f =>
+          reFunc.test(f.content) || reExported.test(f.content) || reMethod.test(f.content)
+        );
+        if (!found) {
+          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": 找不到命名函数 "${symbol}"（来自 calls="${ua.calls}"）`);
+        }
+      }
+    }
+  }
+
+  if (issues.length === 0) {
+    return [{
+      id: 'named_business_handler',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: 'ui_bindings.user_actions.calls 引用的函数均为命名函数（不是 inline lambda）。',
+    }];
+  }
+
+  return [{
+    id: 'named_business_handler',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `${issues.length} 处命名入口缺失：\n${truncateList(issues, 10)}`,
+    suggestion: 'use-cases.yaml 中 user_actions.calls 声明的业务函数必须是具名函数 / 类方法 / 导出函数（非 inline lambda / 箭头函数赋值给 onClick），以便 UT 直接调用。',
+  }];
+}
+
+function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
+  const spec = loadUseCaseSpec(ctx);
+  if (!spec) {
+    return [{
+      id: 'usecase_ui_bindings_nonempty',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'usecase_ui_bindings_nonempty'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'use-cases.yaml 不存在，跳过。',
+    }];
+  }
+  const issues: string[] = [];
+  for (const uc of spec.use_cases ?? []) {
+    const bindings = uc.ui_bindings ?? [];
+    if (bindings.length === 0) {
+      issues.push(`${uc.id}: ui_bindings 为空——不涉及 UI 触发的业务流不应产出 use-cases.yaml`);
+      continue;
+    }
+    const totalActions = bindings.reduce(
+      (sum, b) => sum + (b.user_actions?.length ?? 0),
+      0,
+    );
+    if (totalActions === 0) {
+      issues.push(`${uc.id}: 所有 ui_bindings 的 user_actions 合计为 0——请补至少 1 条用户入口，或改用 dag.yaml 直接测 data 层函数`);
+    }
+  }
+  if (issues.length === 0) {
+    return [{
+      id: 'usecase_ui_bindings_nonempty',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'usecase_ui_bindings_nonempty'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '所有 UseCase 的 ui_bindings 与 user_actions 均非空。',
+    }];
+  }
+  return [{
+    id: 'usecase_ui_bindings_nonempty',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'usecase_ui_bindings_nonempty'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `${issues.length} 处 ui_bindings 问题：\n${truncateList(issues, 10)}`,
+    suggestion: 'use-cases.yaml 的价值在于 UI↔业务入口映射表；若某 use_case 不涉及 UI，应删除该 use_case 或退回 dag.yaml。',
+  }];
+}
+
+function checkBoundaryMatchesContracts(ctx: CheckContext): CheckResult[] {
+  const spec = loadUseCaseSpec(ctx);
+  if (!spec) {
+    return [{
+      id: 'boundary_matches_contracts',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'boundary_matches_contracts'),
       severity: 'MAJOR',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
@@ -990,9 +1209,9 @@ function checkUseCasePortMatchesContracts(ctx: CheckContext): CheckResult[] {
   const interfaces = ctx.featureSpec.contracts?.interfaces ?? [];
   if (interfaces.length === 0) {
     return [{
-      id: 'usecase_port_matches_contracts',
+      id: 'boundary_matches_contracts',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_port_matches_contracts'),
+      description: ruleDesc(ctx, 'structure_checks', 'boundary_matches_contracts'),
       severity: 'MAJOR',
       status: 'SKIP',
       details: 'contracts.yaml 未声明 interfaces，跳过。',
@@ -1002,135 +1221,32 @@ function checkUseCasePortMatchesContracts(ctx: CheckContext): CheckResult[] {
   const interfaceClasses = new Set(interfaces.map(i => i.class));
   const mismatches: string[] = [];
   for (const uc of spec.use_cases ?? []) {
-    for (const port of uc.ports ?? []) {
-      if (!interfaceClasses.has(port.type)) {
-        mismatches.push(`${uc.id} > port[${port.name}].type="${port.type}" 不在 contracts.yaml > interfaces[].class 中`);
+    for (const b of uc.data_boundaries ?? []) {
+      if (!interfaceClasses.has(b.type)) {
+        mismatches.push(`${uc.id} > data_boundary[${b.name}].type="${b.type}" 不在 contracts.yaml > interfaces[].class 中`);
       }
     }
   }
 
   if (mismatches.length === 0) {
     return [{
-      id: 'usecase_port_matches_contracts',
+      id: 'boundary_matches_contracts',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_port_matches_contracts'),
+      description: ruleDesc(ctx, 'structure_checks', 'boundary_matches_contracts'),
       severity: 'MAJOR',
       status: 'PASS',
-      details: '所有 ports.type 均能在 contracts.yaml 中找到对应接口。',
+      details: '所有 data_boundaries.type 均能在 contracts.yaml 中找到对应类。',
     }];
   }
 
   return [{
-    id: 'usecase_port_matches_contracts',
+    id: 'boundary_matches_contracts',
     category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'usecase_port_matches_contracts'),
+    description: ruleDesc(ctx, 'structure_checks', 'boundary_matches_contracts'),
     severity: 'MAJOR',
     status: 'WARN',
-    details: `${mismatches.length} 处 port 接口不匹配：\n${truncateList(mismatches, 10)}`,
-    suggestion: 'UseCase 注入的 port.type 应与 design 阶段声明的 interfaces[].class 同名；若 interface 名称变更，请同步更新 use-cases.yaml。',
-  }];
-}
-
-function checkUseCaseClassExists(ctx: CheckContext): CheckResult[] {
-  const spec = loadUseCaseSpec(ctx);
-  if (!spec) {
-    return [{
-      id: 'usecase_class_exists',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_class_exists'),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: 'use-cases.yaml 不存在，跳过。',
-    }];
-  }
-
-  const missing: string[] = [];
-  const affected: string[] = [];
-  for (const uc of spec.use_cases ?? []) {
-    if (!uc.file) continue;
-    const full = path.join(ctx.projectRoot, uc.file);
-    if (!fs.existsSync(full)) {
-      missing.push(`${uc.id}: 文件 ${uc.file} 不存在`);
-      continue;
-    }
-    const content = fs.readFileSync(full, 'utf-8');
-    const classRe = new RegExp(`\\bclass\\s+${uc.class}\\b`);
-    if (!classRe.test(content)) {
-      missing.push(`${uc.id}: ${uc.file} 中找不到 class ${uc.class}`);
-      affected.push(uc.file);
-    }
-  }
-
-  if (missing.length === 0) {
-    return [{
-      id: 'usecase_class_exists',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_class_exists'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: '所有 UseCase 源文件与 class 均存在。',
-    }];
-  }
-
-  return [{
-    id: 'usecase_class_exists',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'usecase_class_exists'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: `${missing.length} 处 UseCase 类/文件缺失：\n${truncateList(missing, 10)}`,
-    affected_files: affected,
-    suggestion: '请按 Skill 3 指引在 domain/usecase/ 目录下创建对应 UseCase 类。',
-  }];
-}
-
-function checkUseCaseClassPure(ctx: CheckContext): CheckResult[] {
-  const spec = loadUseCaseSpec(ctx);
-  if (!spec) {
-    return [{
-      id: 'usecase_class_pure',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_class_pure'),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: 'use-cases.yaml 不存在，跳过。',
-    }];
-  }
-
-  const offences: string[] = [];
-  const affected: string[] = [];
-  for (const uc of spec.use_cases ?? []) {
-    if (!uc.file) continue;
-    const full = path.join(ctx.projectRoot, uc.file);
-    if (!fs.existsSync(full)) continue;
-    const content = fs.readFileSync(full, 'utf-8');
-    const hits = scanForbiddenImports(content, UI_FORBIDDEN_PATTERNS);
-    if (hits.length > 0) {
-      affected.push(uc.file);
-      for (const h of hits) offences.push(`${uc.file} > ${h}`);
-    }
-  }
-
-  if (offences.length === 0) {
-    return [{
-      id: 'usecase_class_pure',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'usecase_class_pure'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: '所有 UseCase 源文件无 UI/Nav/Toast 依赖。',
-    }];
-  }
-
-  return [{
-    id: 'usecase_class_pure',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'usecase_class_pure'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: `${offences.length} 处禁止符号出现在 UseCase 源文件：\n${truncateList(offences, 20)}`,
-    affected_files: [...new Set(affected)],
-    suggestion: 'UseCase 必须是纯逻辑类：禁止 import @Component / NavPathStack / showToast / $r / @kit.ArkUI 等 UI 相关符号；将 UI 副作用下沉到页面层通过订阅 state 翻译。',
+    details: `${mismatches.length} 处边界不匹配：\n${truncateList(mismatches, 10)}`,
+    suggestion: 'use-cases.yaml 的 data_boundaries.type 必须是 contracts.yaml 已登记的现有类（不要新增 Port 接口）。',
   }];
 }
 
@@ -1164,21 +1280,21 @@ function checkDagLinkedUseCase(
     }];
   }
 
-  const ucByClass = new Map<string, UseCaseDef>();
-  for (const uc of spec.use_cases ?? []) ucByClass.set(uc.class, uc);
+  const ucById = new Map<string, UseCaseDef>();
+  for (const uc of spec.use_cases ?? []) ucById.set(uc.id, uc);
 
   const issues: string[] = [];
   const affected: string[] = [];
 
   for (const { path: p, dag } of dags) {
     if (!dag.use_case) {
-      issues.push(`${p}: 缺少顶层 use_case 字段`);
+      issues.push(`${p}: 缺少顶层 use_case 字段（必须为 use-cases.yaml > use_cases[].id）`);
       affected.push(p);
       continue;
     }
-    const uc = ucByClass.get(dag.use_case);
+    const uc = ucById.get(dag.use_case);
     if (!uc) {
-      issues.push(`${p}: use_case="${dag.use_case}" 不在 use-cases.yaml 中`);
+      issues.push(`${p}: use_case="${dag.use_case}" 不在 use-cases.yaml 的 ids 中`);
       affected.push(p);
       continue;
     }
@@ -1216,7 +1332,72 @@ function checkDagLinkedUseCase(
     status: 'FAIL',
     details: `${issues.length} 处 DAG ↔ UseCase 关联问题：\n${truncateList(issues, 10)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'DAG 顶层必须声明 use_case（匹配 use-cases.yaml > use_cases[].class）与 branches[]（子集 of 对应 UseCase 的 branches[].id）。',
+    suggestion: 'DAG 顶层必须声明 use_case（匹配 use-cases.yaml > use_cases[].id）与 branches[]（子集 of 对应 UseCase 的 branches[].id）。',
+  }];
+}
+
+function checkDagBoundaryMatchesSpec(
+  ctx: CheckContext,
+  dags: Array<{ path: string; dag: DagFile }>,
+): CheckResult[] {
+  const spec = loadUseCaseSpec(ctx);
+  if (!spec || dags.length === 0) {
+    return [{
+      id: 'dag_boundary_matches_spec',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'dag_boundary_matches_spec'),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: spec ? '无 DAG 文件可分析。' : 'use-cases.yaml 不存在，跳过。',
+    }];
+  }
+
+  const ucById = new Map<string, UseCaseDef>();
+  for (const uc of spec.use_cases ?? []) ucById.set(uc.id, uc);
+
+  const issues: string[] = [];
+  const affected: string[] = [];
+
+  for (const { path: p, dag } of dags) {
+    const uc = dag.use_case ? ucById.get(dag.use_case) : undefined;
+    if (!uc) continue;
+    const boundaryNames = new Set((uc.data_boundaries ?? []).map(b => b.name));
+    for (const node of dag.nodes ?? []) {
+      if (node.type !== 'port_call_cloud' && node.type !== 'port_call_local') continue;
+      const bname = (node as { boundary?: string; port?: string }).boundary
+        ?? (node as { boundary?: string; port?: string }).port;
+      if (!bname) {
+        issues.push(`${p} > ${node.id}: ${node.type} 节点缺 boundary 字段`);
+        affected.push(p);
+        continue;
+      }
+      if (!boundaryNames.has(bname)) {
+        issues.push(`${p} > ${node.id}: boundary="${bname}" 不在 UseCase ${uc.id} 的 data_boundaries 中`);
+        affected.push(p);
+      }
+    }
+  }
+
+  if (issues.length === 0) {
+    return [{
+      id: 'dag_boundary_matches_spec',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'dag_boundary_matches_spec'),
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: 'DAG 中所有 port_call_* 节点的 boundary 均能映射到 use-cases.yaml 的 data_boundaries。',
+    }];
+  }
+
+  return [{
+    id: 'dag_boundary_matches_spec',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'dag_boundary_matches_spec'),
+    severity: 'MAJOR',
+    status: 'WARN',
+    details: `${issues.length} 处 boundary 不对齐：\n${truncateList(issues, 10)}`,
+    affected_files: [...new Set(affected)],
+    suggestion: 'port_call_cloud / port_call_local 节点必须设置 boundary 字段，其值应等于 use-cases.yaml > data_boundaries[].name（旧字段名 port 仍兼容）。',
   }];
 }
 
@@ -1291,15 +1472,15 @@ function checkDagAssertionLinkedBranch(
   }];
 }
 
-function checkNoUiDepInUt(
+function checkUtImportWhitelist(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
 ): CheckResult[] {
   if (utFiles.length === 0) {
     return [{
-      id: 'no_ui_dep_in_ut',
+      id: 'ut_import_whitelist',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'no_ui_dep_in_ut'),
+      description: ruleDesc(ctx, 'structure_checks', 'ut_import_whitelist'),
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 UT 文件可分析。',
@@ -1319,37 +1500,37 @@ function checkNoUiDepInUt(
 
   if (offences.length === 0) {
     return [{
-      id: 'no_ui_dep_in_ut',
+      id: 'ut_import_whitelist',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'no_ui_dep_in_ut'),
+      description: ruleDesc(ctx, 'structure_checks', 'ut_import_whitelist'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 UT 文件无 UI/Nav/Toast 依赖。',
+      details: '所有 UT 文件 import 均在白名单内，无 UI/Nav/Toast 依赖。',
     }];
   }
 
   return [{
-    id: 'no_ui_dep_in_ut',
+    id: 'ut_import_whitelist',
     category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'no_ui_dep_in_ut'),
+    description: ruleDesc(ctx, 'structure_checks', 'ut_import_whitelist'),
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${offences.length} 处禁止符号出现在 UT：\n${truncateList(offences, 20)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'UT 只允许 import @ohos/hypium、被测 UseCase 及其 data/model、同目录 spy/ 目录；请移除所有 UI/Navigation/Toast 依赖，将 UI 侧验证下沉到 Skill 6 真机测试。',
+    suggestion: 'UT 允许 import：@ohos/hypium、被测模块的 data / domain / 业务编排类及其数据模型、同目录 spy/；禁止 @Component / struct / NavPathStack / showToast / $r / $rawfile / AppStorage / LocalStorage / @kit.ArkUI / @kit.ArkGraphics 等 UI 符号。请将 UI 侧验证下沉到 Skill 6 真机测试。',
   }];
 }
 
-function checkPortsAllStubbed(
+function checkBoundariesAllStubbed(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
 ): CheckResult[] {
   const spec = loadUseCaseSpec(ctx);
   if (!spec) {
     return [{
-      id: 'ports_all_stubbed',
+      id: 'boundaries_all_stubbed',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ports_all_stubbed'),
+      description: ruleDesc(ctx, 'structure_checks', 'boundaries_all_stubbed'),
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
@@ -1357,9 +1538,9 @@ function checkPortsAllStubbed(
   }
   if (utFiles.length === 0) {
     return [{
-      id: 'ports_all_stubbed',
+      id: 'boundaries_all_stubbed',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ports_all_stubbed'),
+      description: ruleDesc(ctx, 'structure_checks', 'boundaries_all_stubbed'),
       severity: 'BLOCKER',
       status: 'SKIP',
       details: '无 UT 文件可分析。',
@@ -1368,54 +1549,55 @@ function checkPortsAllStubbed(
 
   const missing: string[] = [];
   for (const uc of spec.use_cases ?? []) {
-    // 把该 UseCase 关联的 UT 文件过滤出来：名称包含 class 名或 id（去掉下划线）
-    const classLower = uc.class.toLowerCase();
+    const coord = (uc.coordinator ?? '').toLowerCase();
     const idLower = uc.id.toLowerCase().replace(/_/g, '');
     const relatedUts = utFiles.filter(f => {
       const base = path.basename(f.path).toLowerCase();
       return (
-        base.includes(classLower) ||
+        (coord && base.includes(coord)) ||
         base.includes(idLower) ||
-        f.content.includes(uc.class)
+        (uc.coordinator && f.content.includes(uc.coordinator))
       );
     });
     if (relatedUts.length === 0) {
-      missing.push(`${uc.id}: 未找到测试该 UseCase 的 UT 文件`);
+      missing.push(`${uc.id}: 未找到测试该 UseCase 的 UT 文件（按 coordinator="${uc.coordinator}" 或 id 匹配）`);
       continue;
     }
 
-    for (const port of uc.ports ?? []) {
-      const spyPatterns = [
-        new RegExp(`new\\s+Spy${port.type}\\s*\\(`),
-        new RegExp(`new\\s+Fake${port.type}\\s*\\(`),
-        new RegExp(`new\\s+Stub${port.type}\\s*\\(`),
+    for (const b of uc.data_boundaries ?? []) {
+      const stubPatterns = [
+        new RegExp(`new\\s+Spy${b.type}\\s*\\(`),
+        new RegExp(`new\\s+Fake${b.type}\\s*\\(`),
+        new RegExp(`new\\s+Stub${b.type}\\s*\\(`),
+        // 允许直接替换全局/模块级单例的 stub 方案（如 jest.spyOn 风格）——宽松匹配
+        new RegExp(`\\b${b.type}\\.prototype\\.\\w+\\s*=`),
       ];
-      const found = relatedUts.some(f => spyPatterns.some(re => re.test(f.content)));
+      const found = relatedUts.some(f => stubPatterns.some(re => re.test(f.content)));
       if (!found) {
-        missing.push(`${uc.id} > port[${port.name}]: UT 中未发现 new Spy${port.type}(... / new Fake${port.type}(... / new Stub${port.type}(...`);
+        missing.push(`${uc.id} > data_boundary[${b.name}]: UT 中未发现 new Spy${b.type}(... / Fake${b.type} / Stub${b.type} / ${b.type}.prototype.* = 形式的替身`);
       }
     }
   }
 
   if (missing.length === 0) {
     return [{
-      id: 'ports_all_stubbed',
+      id: 'boundaries_all_stubbed',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ports_all_stubbed'),
+      description: ruleDesc(ctx, 'structure_checks', 'boundaries_all_stubbed'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 UseCase 的 ports 都在 UT 中得到了 Spy/Fake/Stub 注入。',
+      details: '所有 UseCase 的 data_boundaries 都在 UT 中得到了替身（Spy/Fake/Stub）。',
     }];
   }
 
   return [{
-    id: 'ports_all_stubbed',
+    id: 'boundaries_all_stubbed',
     category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ports_all_stubbed'),
+    description: ruleDesc(ctx, 'structure_checks', 'boundaries_all_stubbed'),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `${missing.length} 个 port 未在 UT 中打桩：\n${truncateList(missing, 10)}`,
-    suggestion: '请在 UT 中为每个 port 创建 SpyXxx 类（参考 framework/skills/5-business-ut/examples/card-opening/spy/），并通过构造器注入 UseCase。',
+    details: `${missing.length} 个 data_boundary 未在 UT 中打桩：\n${truncateList(missing, 10)}`,
+    suggestion: '请在 UT 中为每个 data_boundary.type 提供替身（SpyXxx/FakeXxx/StubXxx 子类，或直接替换原型方法），避免 UT 触发真实云/本地/系统调用。',
   }];
 }
 
@@ -1485,11 +1667,14 @@ function checkItDrivesFlow(
     }];
   }
 
+  const spec = loadUseCaseSpec(ctx);
+  const strict = !!spec;
+
   const weak: string[] = [];
   const affected: string[] = [];
 
   const portCallRe = /(callLog|calls|\.call(?:ed|Count))\b/g;
-  const stateRe = /useCase\s*\.\s*state\s*\.\s*\w+/g;
+  const stateRe = /\.\s*state\s*\.\s*\w+|phase\s*[:=]\s*['"]?\w+/g;
 
   for (const { path: p, content } of utFiles) {
     if (isHypiumSuiteEntryShim(content)) continue;
@@ -1498,7 +1683,15 @@ function checkItDrivesFlow(
       const portHits = b.body.match(portCallRe) ?? [];
       const stateHits = b.body.match(stateRe) ?? [];
       const expectHits = (b.body.match(/expect\s*\(/g) ?? []).length;
-      if (portHits.length < 2 || stateHits.length < 2 || expectHits < 2) {
+
+      let ok: boolean;
+      if (strict) {
+        ok = portHits.length >= 2 && stateHits.length >= 2 && expectHits >= 2;
+      } else {
+        // 无 use-cases.yaml：退化为基本健康度（至少有 2 次 expect，避免空用例）
+        ok = expectHits >= 2;
+      }
+      if (!ok) {
         weak.push(
           `${p}: "${b.name}" — portRefs=${portHits.length} stateRefs=${stateHits.length} expects=${expectHits}`,
         );
@@ -1514,7 +1707,9 @@ function checkItDrivesFlow(
       description: ruleDesc(ctx, 'structure_checks', 'it_drives_flow'),
       severity: 'MAJOR',
       status: 'PASS',
-      details: '所有 it() 用例均满足"端到端驱动"启发式（≥2 port 引用 + ≥2 state 断言）。',
+      details: strict
+        ? '所有 it() 均满足"端到端驱动"启发式（≥2 port 引用 + ≥2 state 断言 + ≥2 expect）。'
+        : '无 use-cases.yaml，按基础规则（≥2 expect）检测通过。',
     }];
   }
 
@@ -1526,7 +1721,9 @@ function checkItDrivesFlow(
     status: 'WARN',
     details: `${weak.length} 个 it() 用例驱动力不足：\n${truncateList(weak, 15)}`,
     affected_files: [...new Set(affected)],
-    suggestion: '每条 it() 应当：(1) 调用 useCase 的 trigger 方法驱动；(2) 对 SpyXxx.callLog/.calls 做 ≥2 次调用序列断言；(3) 对 useCase.state.* 做 ≥2 次状态断言。',
+    suggestion: strict
+      ? '有 use-cases.yaml 时每条 it() 应：(1) 调用 coordinator 的命名方法驱动；(2) 对 Spy/Fake/Stub 的 callLog/.calls 做 ≥2 次调用序列断言；(3) 对业务状态/phase 做 ≥2 次断言。'
+      : '每条 it() 至少包含 ≥2 个 expect()，避免空断言用例。',
   }];
 }
 
@@ -1548,23 +1745,23 @@ function checkDagCohesion(
 
   const issues: string[] = [];
 
-  const byClass = new Map<string, Array<{ path: string; dag: DagFile }>>();
+  const byId = new Map<string, Array<{ path: string; dag: DagFile }>>();
   for (const d of dags) {
-    const cls = d.dag.use_case;
-    if (!cls) continue;
-    if (!byClass.has(cls)) byClass.set(cls, []);
-    byClass.get(cls)!.push(d);
+    const ucId = d.dag.use_case;
+    if (!ucId) continue;
+    if (!byId.has(ucId)) byId.set(ucId, []);
+    byId.get(ucId)!.push(d);
   }
 
   for (const uc of spec.use_cases ?? []) {
-    const group = byClass.get(uc.class) ?? [];
+    const group = byId.get(uc.id) ?? [];
     if (group.length === 0) continue;
     const allBranchIds = new Set<string>();
     const dupes: string[] = [];
     for (const g of group) {
       const b = Array.isArray(g.dag.branches) ? g.dag.branches : [];
       for (const id of b) {
-        if (allBranchIds.has(id)) dupes.push(`${uc.class} > branch "${id}" 在多个 DAG 重复（最后一次出现：${g.path}）`);
+        if (allBranchIds.has(id)) dupes.push(`${uc.id} > branch "${id}" 在多个 DAG 重复（最后一次出现：${g.path}）`);
         else allBranchIds.add(id);
       }
     }
@@ -1573,7 +1770,7 @@ function checkDagCohesion(
     const expected = new Set((uc.branches ?? []).map(b => b.id));
     for (const want of expected) {
       if (!allBranchIds.has(want)) {
-        issues.push(`${uc.class}: branch "${want}" 未被任何 DAG 覆盖`);
+        issues.push(`${uc.id}: branch "${want}" 未被任何 DAG 覆盖`);
       }
     }
   }
@@ -2114,11 +2311,11 @@ const checker: PhaseChecker = {
 
     // --- Structure checks ---
     // v2 A: use-cases.yaml 自身
-    results.push(...safeRun(() => checkUseCaseSpecExists(ctx), 'usecase_spec_exists'));
+    results.push(...safeRun(() => checkUseCaseSpecRecommended(ctx), 'usecase_spec_recommended'));
     results.push(...safeRun(() => checkUseCaseSpecSchema(ctx), 'usecase_spec_schema'));
-    results.push(...safeRun(() => checkUseCasePortMatchesContracts(ctx), 'usecase_port_matches_contracts'));
-    results.push(...safeRun(() => checkUseCaseClassExists(ctx), 'usecase_class_exists'));
-    results.push(...safeRun(() => checkUseCaseClassPure(ctx), 'usecase_class_pure'));
+    results.push(...safeRun(() => checkUseCaseUiBindingsNonempty(ctx), 'usecase_ui_bindings_nonempty'));
+    results.push(...safeRun(() => checkBoundaryMatchesContracts(ctx), 'boundary_matches_contracts'));
+    results.push(...safeRun(() => checkNamedBusinessHandler(ctx), 'named_business_handler'));
 
     // v1 保留 + v2 修订：DAG 结构
     results.push(...safeRun(() => checkDagSchemaCompliance(ctx, dags), 'dag_schema_compliance'));
@@ -2127,6 +2324,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDagSourceFileExists(ctx, dags), 'dag_source_file_exists'));
     // v2 B: DAG ↔ use-cases 关联
     results.push(...safeRun(() => checkDagLinkedUseCase(ctx, dags), 'dag_linked_usecase'));
+    results.push(...safeRun(() => checkDagBoundaryMatchesSpec(ctx, dags), 'dag_boundary_matches_spec'));
     results.push(...safeRun(() => checkDagAssertionLinkedBranch(ctx, dags), 'dag_assertion_linked_branch'));
     results.push(...safeRun(() => checkDagCohesion(ctx, dags), 'dag_cohesion'));
 
@@ -2137,8 +2335,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, utFiles), 'mock_stub_for_async'));
     results.push(...safeRun(() => checkTestRegistration(ctx, utFiles), 'test_registration'));
     // v2 C: UT 代码
-    results.push(...safeRun(() => checkNoUiDepInUt(ctx, utFiles), 'no_ui_dep_in_ut'));
-    results.push(...safeRun(() => checkPortsAllStubbed(ctx, utFiles), 'ports_all_stubbed'));
+    results.push(...safeRun(() => checkUtImportWhitelist(ctx, utFiles), 'ut_import_whitelist'));
+    results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, utFiles), 'boundaries_all_stubbed'));
     results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, utFiles), 'it_name_has_ac_or_branch_tag'));
     results.push(...safeRun(() => checkItDrivesFlow(ctx, utFiles), 'it_drives_flow'));
 

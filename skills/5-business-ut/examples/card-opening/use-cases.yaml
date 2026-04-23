@@ -1,63 +1,100 @@
 # ============================================================================
-# 示例：银行卡开卡流程 UseCase 清单
+# 示例：银行卡开卡流程 Use Case 规约（v2.1）
 # 位置：doc/features/card-opening/use-cases.yaml
 # ============================================================================
-# 业务流程（PRD.md）：
-#   1. 用户在页面选择银行信息并点击开卡（UI, 真人输入）
-#   2. UseCase 调云侧 validateOpen 校验开卡资格
-#   3. 校验通过后调云侧 applyCardResource 申请卡资源
-#   4. 收到卡资源后调本地 storage.save 持久化卡记录，并切到 WaitingSms
-#   5. 用户查看短信验证码并输入到弹框（UI, 真人输入）
-#   6. UseCase 调云侧 verifySmsCode 校验短验
-#   7. 成功则 storage.update 标记激活态、进入 Success；失败则 storage.rollback
+# 说明：
+#   本文件是一份**业务规约**，而不是"必须产生的代码"。它回答三件事：
+#     1) 流程的"命名业务入口"是哪些（UT 可直接调用）
+#     2) 流程的"数据边界"是哪些（UT 在这里打桩）
+#     3) 流程的"状态机 + 分支"长什么样（UT 的 it() 逐条对齐）
+#   代码形态（Page 命名方法 / 普通 Flow/Coordinator 类 / 导出函数）由 Skill 3 自选。
+#   本样例里选了"普通 ArkTS 类 CardOpenFlow"，放在 domain/flow/ 下。
 #
-# 其中 1/5 的 UI 输入行为在 UT 里通过直接调用 UseCase 方法模拟；
-# 2/3/4/6/7 全在 UT 内由 SpyPort 端到端打桩覆盖。
+# 业务流程（PRD.md）：
+#   1. 用户在 CardSelectPage 选择银行信息并点击开卡（UI 真人输入，在 UT 中直接调用 flow.chooseCard）
+#   2. CardOpenFlow 调云侧 validateOpen 校验开卡资格
+#   3. 校验通过后调云侧 applyCardResource 申请卡资源
+#   4. 收到卡资源后调本地 store.save 持久化卡记录，并切到 WaitingSms
+#   5. 用户在 SmsDialog 输入短信验证码（UI 真人输入，在 UT 中直接调用 flow.confirmSms）
+#   6. CardOpenFlow 调云侧 verifySmsCode 校验短验
+#   7. 成功则 store.update 标记激活态、进入 Success；失败则 store.rollback
 # ============================================================================
-schema_version: "1.0"
+schema_version: "2.1"
 feature: "card-opening"
 
 use_cases:
   - id: "card_opening"
-    class: "CardOpeningUseCase"
-    file: "02-Feature/CardOpen/src/main/ets/domain/usecase/CardOpeningUseCase.ets"
     description: "银行卡开卡完整流程：云侧校验 → 申请卡资源 → 本地持久化 → 短验 → 最终激活/回滚"
 
-    triggers:
-      - event: "startOpening"
-        params:
-          - { name: "bankInfo", type: "BankInfo" }
-        from_ac: ["AC-1"]
-      - event: "submitSmsCode"
-        params:
-          - { name: "smsCode", type: "string" }
-        from_ac: ["AC-5"]
-      - event: "cancel"
-        params: []
-        from_ac: ["AC-6"]
+    # ========================================================================
+    # 业务编排入口（命名符号；代码形态由 Skill 3 自选）
+    # ========================================================================
+    coordinator: "CardOpenFlow"
+    coordinator_file: "02-Feature/CardOpen/src/main/ets/domain/flow/CardOpenFlow.ets"
 
-    ports:
+    # ========================================================================
+    # UI ↔ 业务入口映射（UT 按此直接调用命名方法，不 new struct）
+    # ========================================================================
+    ui_bindings:
+      - ui: "CardSelectPage"
+        role: "entry"
+        subscribes: []
+        user_actions:
+          - trigger: "用户选完银行信息点击开卡"
+            calls: "flow.chooseCard"         # 对应 CardOpenFlow.chooseCard(bankInfo)
+      - ui: "CardOpenProgressPage"
+        role: "progress"
+        subscribes:
+          - "flow.state.phase"
+        user_actions: []                     # 纯展示，无用户动作
+      - ui: "SmsDialog"
+        role: "dialog"
+        subscribes:
+          - "flow.state.phase=WaitingSms"
+        user_actions:
+          - trigger: "用户在短验弹框点击确认"
+            calls: "flow.confirmSms"         # 对应 CardOpenFlow.confirmSms(smsCode)
+          - trigger: "用户点击取消"
+            calls: "flow.cancel"             # 对应 CardOpenFlow.cancel()
+      - ui: "CardOpenResultPage"
+        role: "result"
+        subscribes:
+          - "flow.state.phase=Success"
+          - "flow.state.phase=Failed"
+          - "flow.state.errorCode"
+        user_actions: []                     # 结果页只做展示，UT 不涉及
+
+    # ========================================================================
+    # 数据边界（引用 contracts.yaml > interfaces[].class，非新造 Port）
+    # ========================================================================
+    data_boundaries:
       - name: "api"
-        type: "CardOpenApi"
-        ownership: "cloud"
+        type: "CardOpenApi"                  # 既有 data 层类
+        kind: "cloud"
         methods:
-          - { name: "validateOpen",      params: ["BankInfo"],                returns: "ValidateResult", async: true }
-          - { name: "applyCardResource", params: ["ValidateResult"],          returns: "CardResource",   async: true }
-          - { name: "verifySmsCode",     params: ["string", "string"],        returns: "VerifyResult",   async: true }
-      - name: "storage"
-        type: "CardPersistence"
-        ownership: "local"
+          - { name: "validateOpen",      params: ["BankInfo"],         returns: "ValidateResult", async: true }
+          - { name: "applyCardResource", params: ["ValidateResult"],   returns: "CardResource",   async: true }
+          - { name: "verifySmsCode",     params: ["string", "string"], returns: "VerifyResult",   async: true }
+      - name: "store"
+        type: "CardStore"                    # 既有本地存储类
+        kind: "storage"
         methods:
-          - { name: "save",     params: ["CardInfo"],        returns: "void",       async: true }
-          - { name: "update",   params: ["CardInfo"],        returns: "void",       async: true }
-          - { name: "rollback", params: ["string"],          returns: "void",       async: true }
+          - { name: "save",     params: ["CardInfo"], returns: "void", async: true }
+          - { name: "update",   params: ["CardInfo"], returns: "void", async: true }
+          - { name: "rollback", params: ["string"],   returns: "void", async: true }
 
+    # ========================================================================
+    # 状态机
+    # ========================================================================
     state_model:
       phases: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Success, Failed]
       fields:
         - { name: "errorCode",    type: "string | null" }
         - { name: "resultCardId", type: "string | null" }
 
+    # ========================================================================
+    # 分支清单：UT 按此 1:1 产出 it()
+    # ========================================================================
     branches:
       # ---------------------------------------------------------------------
       # 成功路径：对应 AC-1（开卡全流程）
@@ -68,40 +105,40 @@ use_cases:
           "api.validateOpen":      "ok"
           "api.applyCardResource": "ok"
           "api.verifySmsCode":     "ok"
-          "storage.save":          "ok"
-          "storage.update":        "ok"
+          "store.save":            "ok"
+          "store.update":          "ok"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
-          - { event: "submitSmsCode", with: { smsCode: "123456" } }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.confirmSms", with: { smsCode: "123456" } }
         expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Success]
-        expected_port_calls:
+        expected_boundary_calls:
           - "api.validateOpen"
           - "api.applyCardResource"
-          - "storage.save"
+          - "store.save"
           - "api.verifySmsCode"
-          - "storage.update"
+          - "store.update"
         expected_state:
           errorCode: "null"
           resultCardId: "c1"
         linked_acceptance: ["AC-1"]
 
       # ---------------------------------------------------------------------
-      # 云侧校验失败：不触发 applyCardResource / storage.save
+      # 云侧校验失败：不触发 applyCardResource / store.save
       # ---------------------------------------------------------------------
       - id: "validate_fail"
         scenario: "云侧开卡校验失败（如资格不符），流程在第 2 步终止，不写入任何本地数据"
         setup:
           "api.validateOpen": "fail:VAL_ERR"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
         expected_phase_sequence: [Idle, Validating, Failed]
-        expected_port_calls: ["api.validateOpen"]
+        expected_boundary_calls: ["api.validateOpen"]
         expected_state:
           errorCode: "VAL_ERR"
           resultCardId: "null"
         not_called:
           - "api.applyCardResource"
-          - "storage.save"
+          - "store.save"
           - "api.verifySmsCode"
         linked_acceptance: ["AC-2"]
 
@@ -114,13 +151,13 @@ use_cases:
           "api.validateOpen":      "ok"
           "api.applyCardResource": "fail:APPLY_ERR"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
         expected_phase_sequence: [Idle, Validating, Applying, Failed]
-        expected_port_calls: ["api.validateOpen", "api.applyCardResource"]
+        expected_boundary_calls: ["api.validateOpen", "api.applyCardResource"]
         expected_state:
           errorCode: "APPLY_ERR"
         not_called:
-          - "storage.save"
+          - "store.save"
           - "api.verifySmsCode"
         linked_acceptance: ["AC-7"]
 
@@ -132,16 +169,16 @@ use_cases:
         setup:
           "api.validateOpen":      "ok"
           "api.applyCardResource": "ok"
-          "storage.save":          "throw"
+          "store.save":            "throw"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
         expected_phase_sequence: [Idle, Validating, Applying, Persisting, Failed]
-        expected_port_calls: ["api.validateOpen", "api.applyCardResource", "storage.save"]
+        expected_boundary_calls: ["api.validateOpen", "api.applyCardResource", "store.save"]
         expected_state:
           errorCode: "PERSIST_ERR"
         not_called:
           - "api.verifySmsCode"
-          - "storage.update"
+          - "store.update"
         linked_acceptance: ["AC-4"]
 
       # ---------------------------------------------------------------------
@@ -152,22 +189,22 @@ use_cases:
         setup:
           "api.validateOpen":      "ok"
           "api.applyCardResource": "ok"
-          "storage.save":          "ok"
+          "store.save":            "ok"
           "api.verifySmsCode":     "fail:SMS_ERR"
-          "storage.rollback":      "ok"
+          "store.rollback":        "ok"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
-          - { event: "submitSmsCode", with: { smsCode: "999999" } }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.confirmSms", with: { smsCode: "999999" } }
         expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Verifying, Failed]
-        expected_port_calls:
+        expected_boundary_calls:
           - "api.validateOpen"
           - "api.applyCardResource"
-          - "storage.save"
+          - "store.save"
           - "api.verifySmsCode"
-          - "storage.rollback"
+          - "store.rollback"
         expected_state:
           errorCode: "SMS_ERR"
-        not_called: ["storage.update"]
+        not_called: ["store.update"]
         linked_acceptance: ["AC-3"]
 
       # ---------------------------------------------------------------------
@@ -178,20 +215,20 @@ use_cases:
         setup:
           "api.validateOpen":      "ok"
           "api.applyCardResource": "ok"
-          "storage.save":          "ok"
-          "storage.rollback":      "ok"
+          "store.save":            "ok"
+          "store.rollback":        "ok"
         triggers:
-          - { event: "startOpening", with: { bankCode: "BOC", userId: "u1" } }
-          - { event: "cancel", with: {} }
+          - { call: "flow.chooseCard", with: { bankCode: "BOC", userId: "u1" } }
+          - { call: "flow.cancel",     with: {} }
         expected_phase_sequence: [Idle, Validating, Applying, Persisting, WaitingSms, Failed]
-        expected_port_calls:
+        expected_boundary_calls:
           - "api.validateOpen"
           - "api.applyCardResource"
-          - "storage.save"
-          - "storage.rollback"
+          - "store.save"
+          - "store.rollback"
         expected_state:
           errorCode: "USER_CANCELLED"
         not_called:
           - "api.verifySmsCode"
-          - "storage.update"
+          - "store.update"
         linked_acceptance: ["AC-6"]

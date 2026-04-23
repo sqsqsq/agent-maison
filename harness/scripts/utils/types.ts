@@ -208,13 +208,26 @@ export interface AcceptanceSpec {
 }
 
 // --------------------------------------------------------------------------
-// use-cases.yaml Schema（v2 新增；Skill 2 产出、Skill 5 消费）
+// use-cases.yaml Schema v2（Skill 2 产出、Skill 5 消费）
+// v2 定位：规约文档，不强制代码形态；核心字段是 ui_bindings 映射表
 // --------------------------------------------------------------------------
 
-export interface UseCasePort {
-  name: string;
-  type: string;
-  ownership: 'cloud' | 'local';
+export interface UseCaseUserAction {
+  trigger: string;       // 用户动作的自然语言描述
+  calls: string;         // UT 要调用的命名函数符号（如 "flow.chooseCard"）
+}
+
+export interface UseCaseUiBinding {
+  ui: string;                         // 页面或组件名
+  role: 'entry' | 'progress' | 'dialog' | 'result' | 'passive';
+  subscribes?: string[];              // 订阅的 state 字段
+  user_actions: UseCaseUserAction[];  // 空数组 = 纯展示，UT 不覆盖
+}
+
+export interface UseCaseDataBoundary {
+  name: string;                       // 在 coordinator 里的引用名
+  type: string;                       // 现有类名
+  kind: 'cloud' | 'storage' | 'system';
   methods: Array<{
     name: string;
     params: string[];
@@ -223,31 +236,27 @@ export interface UseCasePort {
   }>;
 }
 
-export interface UseCaseTrigger {
-  event: string;
-  params: Array<{ name: string; type: string }>;
-  from_ac?: string[];
-}
-
 export interface UseCaseBranch {
   id: string;
   scenario: string;
-  setup?: Record<string, string>;
-  triggers?: Array<{ event: string; with?: Record<string, unknown> }>;
-  expected_phase_sequence?: string[];
+  user_sequence?: string[];                // UT 按此顺序 await 的 calls 列表
+  cloud_stubs?: Record<string, unknown>;
+  local_stubs?: Record<string, unknown>;
+  expected_phase_seq?: string[];
   expected_port_calls?: string[];
   expected_state?: Record<string, unknown>;
   not_called?: string[];
+  local_expect?: string[];
   linked_acceptance: string[];
 }
 
 export interface UseCaseDef {
   id: string;
-  class: string;
-  file: string;
   description?: string;
-  triggers: UseCaseTrigger[];
-  ports: UseCasePort[];
+  coordinator: string;                    // 类名 / 方法路径 / 函数名
+  coordinator_file?: string | null;       // optional：简单场景可省
+  ui_bindings: UseCaseUiBinding[];
+  data_boundaries?: UseCaseDataBoundary[];
   state_model: {
     phases: string[];
     fields?: Array<{ name: string; type: string }>;

@@ -1,15 +1,17 @@
-# 真机测试待办 — card-opening（样例）
+# 真机测试待办 — card-opening（样例 · v2.1）
 
-> **v2 样例说明**：本文件由 Skill 5 Step 6 自动产出，供 Skill 6 消费。
+> **v2.1 样例说明**：本文件由 Skill 5 Step 6 自动产出，供 Skill 6 消费。
 > 真实路径：`doc/features/card-opening/device-testing-todo.md`
 >
 > 每条对应 `acceptance.yaml` 中 `ut_layer ∈ {device, both}` 的 AC/BD：
-> - UT 已通过 `useCase.state.*` 与 `spy.callLog` 覆盖业务侧语义；
+> - UT 已通过 `flow.state.*` 与 Spy 的 `callLog` 覆盖业务侧语义；
 > - 本文件列出真机侧需补验的 UI / 交互 / 渲染层要点。
+> - DAG 中的 `ui_subscription` 节点应在这里有对应条目（由 harness `device_ac_delegation` 语义审查）。
 
-## UseCase 映射
+## 业务流程映射
 
-- `CardOpeningUseCase`（`doc/features/card-opening/use-cases.yaml > use_cases[card_opening]`）
+- `use_cases[card_opening]`（`doc/features/card-opening/use-cases.yaml`）
+  - coordinator：`CardOpenFlow`
   - UT 已覆盖分支：`happy_path` / `validate_fail` / `apply_fail` / `persist_fail` / `sms_fail_rollback` / `user_cancel_in_waiting_sms`
 
 ## 真机覆盖项
@@ -19,9 +21,9 @@
 - **来源**：`acceptance.yaml > criteria > AC-5`
 - **linked_flow / linked_branch**：`card_opening / happy_path`
 - **UT 已保证**：
-  - `useCase.state.phase === Phase.Success`
-  - `useCase.state.resultCardId === 'c1'`
-  - `spyStorage.currentCards[0].status === 'Active'`
+  - `flow.state.phase === Phase.Success`
+  - `flow.state.resultCardId === 'c1'`
+  - `spyStore.currentCards[0].status === 'Active'`
 - **真机需验证**：
   - [ ] 短验通过后导航栈栈顶为 `CardOpenResultPage`
   - [ ] 跳转参数包含 `{ cardId }`
@@ -33,8 +35,8 @@
 - **来源**：`acceptance.yaml > criteria > AC-8`
 - **linked_flow / linked_branch**：`card_opening / validate_fail`
 - **UT 已保证**：
-  - `useCase.state.phase === Phase.Failed`
-  - `useCase.state.errorCode === 'VAL_ERR'`
+  - `flow.state.phase === Phase.Failed`
+  - `flow.state.errorCode === 'VAL_ERR'`
   - 不触发任何后续端口调用
 - **真机需验证**：
   - [ ] Toast 文案与 PRD 文案一致（"该卡暂不支持开卡"）
@@ -46,9 +48,9 @@
 - **来源**：`acceptance.yaml > criteria > AC-9`
 - **linked_flow / linked_branch**：`card_opening / sms_fail_rollback`
 - **UT 已保证**：
-  - `useCase.state.phase === Phase.Failed`
-  - `useCase.state.errorCode === 'SMS_ERR'`
-  - `storage.callLog` 为 `['save', 'rollback']`
+  - `flow.state.phase === Phase.Failed`
+  - `flow.state.errorCode === 'SMS_ERR'`
+  - `spyStore.callLog` 为 `['save', 'rollback']`
 - **真机需验证**：
   - [ ] Toast 文案为"短信验证码不正确"
   - [ ] 短验输入框被清空、自动获得焦点
@@ -59,7 +61,7 @@
 
 - **来源**：`acceptance.yaml > criteria > AC-10`
 - **linked_flow / linked_branch**：`card_opening / user_cancel_in_waiting_sms`
-- **UT 已保证**：`useCase.state.phase === Phase.Failed` 且 `errorCode === 'USER_CANCELLED'`；已写入的卡被回滚
+- **UT 已保证**：`flow.state.phase === Phase.Failed` 且 `errorCode === 'USER_CANCELLED'`；已写入的卡被回滚
 - **真机需验证**：
   - [ ] 短验页显示"取消"按钮（非致残态）
   - [ ] 点击取消后弹二次确认 Dialog
@@ -70,7 +72,7 @@
 
 - **来源**：`acceptance.yaml > boundaries > BD-2`
 - **linked_flow / linked_branch**：`card_opening / persist_fail`
-- **UT 已保证**：`useCase.state.phase === Phase.Failed` 且 `errorCode === 'PERSIST_ERR'`
+- **UT 已保证**：`flow.state.phase === Phase.Failed` 且 `errorCode === 'PERSIST_ERR'`
 - **真机需验证**：
   - [ ] "重试"按钮在失败后可点击
   - [ ] "下一步"按钮在失败态下置灰
