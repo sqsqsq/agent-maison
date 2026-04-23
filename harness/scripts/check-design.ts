@@ -5,18 +5,20 @@
 // + PRD.md (交叉验证) 执行确定性的结构 / 追溯验证。
 //
 // 检查项（与 design-rules.yaml 对应）：
-//   Structure:     required_chapters, architecture_diagram, module_change_table,
+//   Structure:     required_chapters, scope_declaration, architecture_impact_declared,
+//                  architecture_diagram, module_change_table,
 //                  file_structure_per_module, data_model_typed,
 //                  interface_signatures_complete, component_tree_per_page,
 //                  prd_mapping_table, state_management_table,
 //                  route_design_table, metadata_header
 //   Traceability:  prd_p0_coverage, prd_p1_coverage, mapping_to_file,
-//                  design_to_architecture
+//                  design_to_architecture (条件触发：architecture_impact != none)
 //
 // 语义级检查由 AI Harness (verify-design.md) 完成，不在本脚本范围内。
 // ============================================================================
 
 import * as fs from 'fs';
+import * as YAML from 'yaml';
 import {
   PhaseChecker,
   CheckContext,
@@ -43,6 +45,118 @@ import {
   describeScopeError,
   findScopeViolations,
 } from './utils/scope-parser';
+
+// --------------------------------------------------------------------------
+// 架构影响声明 (architecture_impact) 解析
+// --------------------------------------------------------------------------
+
+type ArchitectureImpactKind =
+  | 'none'
+  | 'dsl_change'
+  | 'module_set_change'
+  | 'responsibility_rewrite';
+
+const ARCHITECTURE_IMPACT_KINDS: ArchitectureImpactKind[] = [
+  'none',
+  'dsl_change',
+  'module_set_change',
+  'responsibility_rewrite',
+];
+
+interface ArchitectureImpactSpec {
+  impact: ArchitectureImpactKind;
+  affected_items: string[];
+  architecture_md_updates: string[];
+  catalog_updates: string[];
+}
+
+type ArchitectureImpactParseError =
+  | { kind: 'no_section' }
+  | { kind: 'no_yaml_block' }
+  | { kind: 'invalid_yaml'; message: string }
+  | { kind: 'missing_impact_key' }
+  | { kind: 'invalid_impact_value'; value: string }
+  | { kind: 'missing_details_when_not_none' };
+
+interface ArchitectureImpactParseResult {
+  spec: ArchitectureImpactSpec | null;
+  error: ArchitectureImpactParseError | null;
+}
+
+function normalizeToStringArray(v: unknown): string[] {
+  if (v === null || v === undefined) return [];
+  if (Array.isArray(v)) {
+    return v.map(x => String(x).trim()).filter(Boolean);
+  }
+  if (typeof v === 'string') {
+    const trimmed = v.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [];
+}
+
+function parseArchitectureImpact(design: string): ArchitectureImpactParseResult {
+  const section = getSectionContent(design, '架构影响声明');
+  if (!section) return { spec: null, error: { kind: 'no_section' } };
+
+  const yamlBlocks = extractCodeBlocks(section, 'yaml');
+  if (yamlBlocks.length === 0) return { spec: null, error: { kind: 'no_yaml_block' } };
+
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(yamlBlocks[0].content);
+  } catch (err) {
+    return { spec: null, error: { kind: 'invalid_yaml', message: (err as Error).message } };
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { spec: null, error: { kind: 'invalid_yaml', message: 'yaml 顶层必须是对象' } };
+  }
+
+  // 同时兼容两种写法：顶层直接放 impact / 顶层包一层 architecture_impact
+  const obj = parsed as Record<string, unknown>;
+  const inner = (obj.architecture_impact && typeof obj.architecture_impact === 'object')
+    ? (obj.architecture_impact as Record<string, unknown>)
+    : obj;
+
+  if (!('impact' in inner)) {
+    return { spec: null, error: { kind: 'missing_impact_key' } };
+  }
+  const value = String(inner.impact).trim();
+  if (!ARCHITECTURE_IMPACT_KINDS.includes(value as ArchitectureImpactKind)) {
+    return { spec: null, error: { kind: 'invalid_impact_value', value } };
+  }
+
+  const spec: ArchitectureImpactSpec = {
+    impact: value as ArchitectureImpactKind,
+    affected_items: normalizeToStringArray(inner.affected_items),
+    architecture_md_updates: normalizeToStringArray(inner.architecture_md_updates),
+    catalog_updates: normalizeToStringArray(inner.catalog_updates),
+  };
+
+  if (spec.impact !== 'none'
+    && (spec.affected_items.length === 0 || spec.architecture_md_updates.length === 0)) {
+    return { spec: null, error: { kind: 'missing_details_when_not_none' } };
+  }
+
+  return { spec, error: null };
+}
+
+function describeArchitectureImpactError(error: ArchitectureImpactParseError): string {
+  switch (error.kind) {
+    case 'no_section':
+      return '未找到「架构影响声明」章节（预期在 Scope 声明下作为 ### 子节）。';
+    case 'no_yaml_block':
+      return '「架构影响声明」章节内未找到 ```yaml 代码块。';
+    case 'invalid_yaml':
+      return `架构影响声明 yaml 解析失败：${error.message}`;
+    case 'missing_impact_key':
+      return 'yaml 缺少 impact 字段（或 architecture_impact.impact）。';
+    case 'invalid_impact_value':
+      return `impact 取值非法：「${error.value}」，必须是 none / dsl_change / module_set_change / responsibility_rewrite 之一。`;
+    case 'missing_details_when_not_none':
+      return 'impact != none 时 affected_items 与 architecture_md_updates 必须非空。';
+  }
+}
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -185,6 +299,41 @@ function checkScopeConsistencyWithPrd(
       relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md'),
       relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md'),
     ],
+  }];
+}
+
+function checkArchitectureImpactDeclared(ctx: CheckContext, design: string): CheckResult[] {
+  const { spec, error } = parseArchitectureImpact(design);
+  if (error) {
+    return [{
+      id: 'architecture_impact_declared', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'architecture_impact_declared'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: describeArchitectureImpactError(error),
+      suggestion:
+        '请在 Scope 声明与继承 下新增 "### 架构影响声明 (architecture_impact)" 子节，'
+        + '内含 ```yaml 代码块，至少声明 impact 字段（none / dsl_change / '
+        + 'module_set_change / responsibility_rewrite），并在 impact != none 时填写 '
+        + 'affected_items 与 architecture_md_updates。参见 design-template.md。',
+    }];
+  }
+
+  const detailsParts: string[] = [`impact = ${spec!.impact}`];
+  if (spec!.affected_items.length > 0) {
+    detailsParts.push(`affected_items: ${spec!.affected_items.length} 项`);
+  }
+  if (spec!.architecture_md_updates.length > 0) {
+    detailsParts.push(`architecture_md_updates: ${spec!.architecture_md_updates.length} 项`);
+  }
+  if (spec!.catalog_updates.length > 0) {
+    detailsParts.push(`catalog_updates: ${spec!.catalog_updates.length} 项`);
+  }
+
+  return [{
+    id: 'architecture_impact_declared', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'architecture_impact_declared'),
+    severity: 'BLOCKER', status: 'PASS',
+    details: detailsParts.join('；'),
   }];
 }
 
@@ -554,40 +703,80 @@ function checkMappingToFile(ctx: CheckContext, design: string): CheckResult[] {
 }
 
 function checkDesignToArchitecture(ctx: CheckContext, design: string): CheckResult[] {
-  const archPath = architectureMdPath(ctx.projectRoot);
   const archRel = relArchitectureMd(ctx.projectRoot);
+  const archPath = architectureMdPath(ctx.projectRoot);
+
+  // 条件触发：先看 design 的 architecture_impact 声明
+  const { spec, error } = parseArchitectureImpact(design);
+  if (error) {
+    // 解析失败由 architecture_impact_declared BLOCKER 给用户交代，本项 SKIP
+    return [{
+      id: 'design_to_architecture', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: `无法解析 architecture_impact：${describeArchitectureImpactError(error)}。请先处理 architecture_impact_declared BLOCKER。`,
+    }];
+  }
+
+  if (spec!.impact === 'none') {
+    return [{
+      id: 'design_to_architecture', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: 'design 声明 architecture_impact.impact = none，feature 级变更不要求同步 architecture.md（变更历史由 git 与 doc/features/<feature>/ 承担）。',
+    }];
+  }
+
+  // impact != 'none'：必须有 architecture.md 且其中应当反映已声明的更新
   if (!fs.existsSync(archPath)) {
-    return [{ id: 'design_to_architecture', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'), severity: 'MAJOR', status: 'SKIP', details: `${archRel} 不存在，跳过。` }];
+    return [{
+      id: 'design_to_architecture', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
+      severity: 'MAJOR', status: 'FAIL',
+      details: `architecture_impact = ${spec!.impact}，但 ${archRel} 不存在。架构级变更必须同步更新架构文档。`,
+      affected_files: [archRel],
+      suggestion: `请按 Skill 2 Step 12 的 ${spec!.impact} 分支更新 ${archRel}，并追加一行架构级变更记录。`,
+    }];
   }
 
   const archContent = fs.readFileSync(archPath, 'utf-8');
 
-  const allTables = extractTables(design);
-  const changeTable = allTables.find(t => {
-    const hasModule = t.headers.some(h => h.includes('模块') || h.toLowerCase().includes('module'));
-    const hasChangeType = t.headers.some(h => h.includes('变更类型'));
-    return hasModule && hasChangeType;
-  });
-
-  if (!changeTable) {
-    return [{ id: 'design_to_architecture', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'), severity: 'MAJOR', status: 'SKIP', details: '设计文档中未找到模块变更摘要表。' }];
+  // 启发式：从 affected_items 中抽取候选模块名（PascalCase 英文标识符），
+  // 验证这些名字是否在 architecture.md 中已出现
+  const candidateNames = new Set<string>();
+  for (const item of spec!.affected_items) {
+    const matches = item.match(/\b[A-Z][A-Za-z0-9]{2,}\b/g);
+    if (matches) matches.forEach(m => candidateNames.add(m));
   }
 
-  const moduleCol = changeTable.headers.findIndex(h => h.includes('模块') || h.toLowerCase().includes('module'));
-  const moduleNames = changeTable.rows.map(r => r[moduleCol]?.trim()).filter(Boolean);
-  const unregistered = moduleNames.filter(name => !archContent.includes(name));
+  if (candidateNames.size === 0) {
+    // 未能提取到明显的模块名（例如纯 DSL 调整），留给 AI Harness 做语义校验
+    return [{
+      id: 'design_to_architecture', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
+      severity: 'MAJOR', status: 'WARN',
+      details: `architecture_impact = ${spec!.impact}，共声明 ${spec!.architecture_md_updates.length} 项 architecture_md_updates。脚本无法从 affected_items 中提取可机械匹配的模块名，请由 AI Harness / 人工确认这些更新均已落盘到 ${archRel}。`,
+      affected_files: [archRel],
+    }];
+  }
 
+  const unregistered = [...candidateNames].filter(n => !archContent.includes(n));
   if (unregistered.length === 0) {
-    return [{ id: 'design_to_architecture', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'), severity: 'MAJOR', status: 'PASS', details: `全部 ${moduleNames.length} 个模块在 ${archRel} 中均有记录。` }];
+    return [{
+      id: 'design_to_architecture', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
+      severity: 'MAJOR', status: 'PASS',
+      details: `architecture_impact = ${spec!.impact}，affected_items 中的全部 ${candidateNames.size} 个模块名在 ${archRel} 中均已出现。`,
+    }];
   }
 
   return [{
     id: 'design_to_architecture', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'design_to_architecture'),
-    severity: 'MAJOR', status: 'WARN',
-    details: `${unregistered.length} 个模块未在 ${archRel} 中找到：${unregistered.join('、')}`,
+    severity: 'MAJOR', status: 'FAIL',
+    details: `architecture_impact = ${spec!.impact}，但 ${unregistered.length} 个 affected_items 中的模块名未在 ${archRel} 中出现：${unregistered.join('、')}`,
     affected_files: [archRel],
-    suggestion: `请在 ${archRel} 中注册所有新增/修改的模块。`,
+    suggestion: `请在 ${archRel} 的「业务模块清单」补齐这些模块，并在「架构级变更记录」追加一行。`,
   }];
 }
 
@@ -630,6 +819,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_prd'));
+    results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
     results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
     results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
     results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));

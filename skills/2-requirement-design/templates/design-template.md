@@ -47,6 +47,27 @@ expansions_with_user_approval:
 > 若本次设计未发起任何 scope 扩展，`expansions_with_user_approval` 字段应为空数组 `[]`，
 > 且 `inherited_from_prd` 应为 `true`。
 
+### 架构影响声明 (architecture_impact)
+
+> **本节是 Harness 的门禁入口**：`impact` 字段决定 Skill 2 Step 12 是否要更新 `doc/architecture.md`。
+> - `none`：最常见，多数 feature 需求（既有模块内新增页面/接口/数据模型/样式修复）都落在这一档。**不动** `architecture.md`。
+> - `dsl_change`：`framework.config.json > architecture` 结构发生变化（新增外层 / 改同层策略 / 改内层顺序 / 改 `cross_module_exports_file` / 改依赖边矩阵）。
+> - `module_set_change`：模块集合变化（新增模块 / 下线模块 / 模块迁到不同外层）。
+> - `responsibility_rewrite`：`module-catalog.yaml > primary_responsibility` 发生大幅重写（模块主职调整，而非单纯新增能力）。
+>
+> 凡涉及架构级变更，必须在 Skill 2 Step 12 同步更新 `doc/architecture.md`（及 `framework.config.json` / `module-catalog.yaml` 的相应段落）。
+
+```yaml
+architecture_impact:
+  impact: none
+  # impact != none 时以下字段必填；impact == none 时保留空数组即可
+  affected_items: []            # 受影响的模块 / 外层 / DSL 段落，如 ["新增模块 Wallet2Pay"]、["外层 02-Feature can_depend_on 新增 03-CommonBusiness"]
+  architecture_md_updates: []   # architecture.md 需要新增/修改的小节，如 ["业务模块清单：新增 Wallet2Pay 行", "架构级变更记录：追加 2026-04-22 新增 Wallet2Pay 模块"]
+  catalog_updates: []           # 可选：module-catalog.yaml 需要新增/修改的模块条目，如 ["新增 Wallet2Pay 条目"]
+```
+
+> `impact: none` 时 `affected_items` / `architecture_md_updates` / `catalog_updates` 均保留空数组 `[]`，**不要**删除字段（Harness 依赖完整 schema）。
+
 ---
 
 ## 1. 模块架构图

@@ -306,6 +306,22 @@ Signals used:
 - 把 staging 的 `generated_by` / `signals_used` 等元数据带进主 catalog。
 - 合并成功却不删 staging，或把 staging 移到 `_merged/`（本 Skill 已废弃该归档目录）。
 
+### Step 6.5. 同步 architecture.md（架构级事件时触发）
+
+catalog 的变化常伴随 `doc/architecture.md` 的架构级变更，按下表判定：
+
+| catalog 变化类型 | 对应架构影响等级 | 需同步 architecture.md 的小节 |
+|------------------|------------------|------------------------------|
+| 新增模块 / 下线模块 / 迁到不同外层 | `module_set_change` | 业务模块清单增删一行（模块名 + 所属外层 + 一句话职责） + 架构级变更记录追加一行 |
+| 某模块 `primary_responsibility` 大幅重写 | `responsibility_rewrite` | 业务模块清单该模块的「一句话职责」+ 架构级变更记录追加一行 |
+| 仅新增/修改 `exposed_capabilities_public` 等能力项，职责未变 | 非架构级 | **不改** architecture.md |
+
+操作要点：
+
+- 只维护 architecture.md 的**极简模块清单**（模块名 + 所属外层 + 一句话职责 + 链到 catalog），不要把 catalog 的完整字段复制过来——`doc/module-catalog.yaml` 是这些细节的唯一 SSOT。
+- 架构级变更记录表的准入条件和触发时机以 [Skill 2 · Step 12](../2-requirement-design/SKILL.md) 为准，事件描述格式：`| YYYY-MM-DD | module_set_change \| responsibility_rewrite | <具体变化> |`。
+- 若 catalog 变化是由一个具体 feature 的 design 驱动的，且该 design 已经声明了 `architecture_impact != none`，则在 Skill 2 · Step 12 分支中统一处理，不要在本 Skill 里重复追加。
+
 ### Step 7. 第二轮补全 `easily_confused_with`（所有模块建完后）
 
 当 catalog 已覆盖工程的大部分模块（≥ 80%）时，提议跑第二轮：

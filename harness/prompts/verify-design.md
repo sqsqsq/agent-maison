@@ -126,14 +126,16 @@
 ### 检查 7: 架构文档一致性 (architecture_doc_consistency)
 
 - **严重等级**: MAJOR
+- **前置条件**: 先读取 design.md「架构影响声明 (architecture_impact)」子节中的 yaml，获取 `impact` 字段
 - **评估方法**:
-  1. 对比 design.md 中的模块清单/依赖关系与 architecture.md
-  2. 检查以下内容是否一致：
-     - 模块名称和所属层
-     - 模块间依赖关系
-     - 模块格式（HAP/HAR）
-  3. 若存在不一致且未在文档中说明差异原因，判为 FAIL
-  4. 若 architecture.md 不在上下文文件中，标为 WARN
+  1. **若 `impact == none`** —— 直接返回 `status: NOT_APPLICABLE`（在 YAML 中使用 `status: PASS` 并在 details 注明"architecture_impact=none，feature 级变更不要求与 architecture.md 对齐"），**不再**做任何对比
+  2. **若 `impact != none`**：
+     - 对比 design.md 中的「分层归属（外层 id）」、「跨模块依赖边」、「出口约定（Index.ets 文件名）」与 `doc/architecture.md` 及 `framework.config.json > architecture` 是否一致
+     - **不要**比对业务模块清单的行级细节（该职责已由 `doc/module-catalog.yaml` 承担）
+     - 对照 design.md「架构影响声明.architecture_md_updates」列出的每一条，核查相应更新是否已在 architecture.md 中落盘（业务模块清单行、架构级变更记录条目、分层/依赖/出口章节等）
+     - 若分层 / 依赖边 / 出口约定存在不一致且未在 design 中说明差异原因，判为 FAIL
+     - 若 `architecture_md_updates` 中声明的更新未在 architecture.md 中找到对应落盘证据，判为 FAIL
+  3. 若 architecture.md 不在上下文文件中，标为 WARN
 
 ### 检查 8: 导航流程一致性 (navigation_flow_consistency)
 
@@ -247,9 +249,16 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: MAJOR
       details: |
+        architecture_impact: <none | dsl_change | module_set_change | responsibility_rewrite>
+        # impact == none 时：status=PASS，details 仅写 "NOT_APPLICABLE — feature 级变更"
+        # impact != none 时：
         一致性对比：
-        - 模块清单: PASS/FAIL — <不一致之处>
-        - 依赖关系: PASS/FAIL — <不一致之处>
+        - 分层归属: PASS/FAIL — <不一致之处>
+        - 跨模块依赖边: PASS/FAIL — <不一致之处>
+        - 出口约定 (Index.ets): PASS/FAIL — <不一致之处>
+        architecture_md_updates 落盘核查：
+        - <update 条目 1>: PASS/FAIL — <在 architecture.md 第 X 节找到 / 未找到>
+        - <update 条目 2>: PASS/FAIL — ...
       suggestion: |
         <修正建议>
 

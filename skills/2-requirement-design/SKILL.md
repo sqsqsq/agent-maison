@@ -465,20 +465,75 @@ doc/features/{module-name}/contracts.yaml
 
 > **为什么这一步如此重要**：`contracts.yaml` 是 Skill 3 编码时的强契约——文件路径、接口签名、组件 Props 必须与 contracts.yaml 一致。Harness 也依赖它做接口一致性验证。
 
-### Step 12: 更新项目架构文档
+### Step 12: 架构影响判定与（条件式）架构文档更新
 
-设计文档和 Spec 归档后，**必须**同步更新 `doc/architecture.md`，确保架构文档始终反映最新状态：
+`doc/architecture.md` 是**架构契约**而不是 feature 变更日志。**绝大多数 feature 需求（既有模块内新增页面/接口/数据模型/样式修复）都不应动** `architecture.md`——变更历史由 git 与 `doc/features/<feature>/` 承担。
 
-1. **模块总览图**：若新增了模块，在 Mermaid 图中添加节点和依赖箭头
-2. **模块清单表**：
-   - 新增模块：添加一行，状态改为 `已设计`
-   - 已有模块被修改：更新说明列
-   - 规划中模块首次被实际设计：状态从 `未创建（规划中）` 改为 `已设计`
-3. **各模块公共能力清单**：若本次设计为 CommFunc/CommUI/AccountManager/CommonBusiness 等公共模块新增了能力，添加对应行
-4. **功能模块与 PRD/Design 对照表**：更新 Design 列的链接和涉及模块
-5. **变更记录**：追加一行，记录日期、变更内容和关联 Skill
+本 Step 的任务是：**先判定本次 design 的架构影响等级，再按等级决定是否更新 architecture.md / module-catalog.yaml / framework.config.json**。
 
-> **为什么这一步如此重要**：architecture.md 是后续所有 Skill（编码、Review、UT、测试）了解项目全貌的入口。如果不更新，下一个功能模块的设计将基于过时的信息进行。
+#### 12.1 填写「架构影响声明」(必做，无论结果)
+
+在 design.md 的 `## Scope 声明与继承` 章节下，补齐（或确认）`### 架构影响声明 (architecture_impact)` 子节。模板与字段见 [design-template.md](templates/design-template.md)：
+
+```yaml
+architecture_impact:
+  impact: none                  # none | dsl_change | module_set_change | responsibility_rewrite
+  affected_items: []
+  architecture_md_updates: []
+  catalog_updates: []
+```
+
+**架构级变更的三类定义**（互斥，任一命中都属于架构级）：
+
+| 取值 | 含义 | 典型触发场景 |
+|------|------|-------------|
+| `none` | 无架构影响 | 在既有模块内新增页面、接口、数据模型；bug 修复、样式调整；PRD 完全落在已声明的模块集合内 |
+| `dsl_change` | `framework.config.json > architecture` 结构变化 | 新增/下线外层、改同层策略（forbid/dag/sublayer）、改内层顺序、改 `cross_module_exports_file`、改外层 `can_depend_on` 矩阵 |
+| `module_set_change` | 模块集合变化 | 新增模块、下线模块、把某模块从外层 A 迁到外层 B |
+| `responsibility_rewrite` | 模块核心职责大调整 | `module-catalog.yaml` 中某模块的 `primary_responsibility` 被大幅重写（不是单纯新增能力） |
+
+> **判定原则**：**从严判 `none`**。只要不确定是否涉及上述三类，先按 `impact != none` 处理并停下来与用户确认。
+
+#### 12.2 impact = `none` — 本 Step 结束
+
+- `affected_items` / `architecture_md_updates` / `catalog_updates` 全部保留 `[]`。
+- **不要**修改 `doc/architecture.md`、`doc/module-catalog.yaml`、`framework.config.json`。
+- **不要**在 `architecture.md` 追加任何变更记录——feature 级变更历史由 git 承担。
+- 跳到 Step 13。
+
+#### 12.3 impact = `dsl_change`
+
+- 同步修改 [framework.config.json](../../../framework.config.json) 的 `architecture` 段（新增层 / 改同层策略 / 改内层顺序 / 改 `cross_module_exports_file` / 改 `can_depend_on`）。
+- 同步修改 [doc/architecture.md](../../../doc/architecture.md) 相应小节：外层架构 Mermaid / 层间依赖表 / 模块内分层 / 物理目录。
+- 在 architecture.md 末尾的「架构级变更记录」追加一行：`| YYYY-MM-DD | dsl_change | <具体变化，如 "03-CommonBusiness 同层策略由 forbid 改为 dag"> |`
+- 将具体落盘点回填到 design.md `architecture_impact.architecture_md_updates` 数组，供脚本 Harness 核对。
+
+#### 12.4 impact = `module_set_change`
+
+- 更新 [doc/module-catalog.yaml](../../../doc/module-catalog.yaml)：新增 / 删除 / 迁层对应模块条目，见 [Skill 0 catalog-bootstrap](../0-catalog-bootstrap/SKILL.md) Phase A 的增量流程。
+- 更新 [doc/architecture.md](../../../doc/architecture.md) 的**极简业务模块清单**（模块名 + 所属外层 + 一句话职责 + 链到 catalog），只增删一行，**不要**扩展为完整模块画像。
+- 如因新增模块导致外层依赖边需要修订 → 同时触发 `dsl_change` 流程（二者可叠加出现在同一条 design 中）。
+- 在 architecture.md「架构级变更记录」追加一行：`| YYYY-MM-DD | module_set_change | <如 "新增 BankCard 模块（02-Feature）"> |`
+- 将具体落盘点回填到 `architecture_md_updates` 与 `catalog_updates`。
+
+#### 12.5 impact = `responsibility_rewrite`
+
+- 只修改 [doc/module-catalog.yaml](../../../doc/module-catalog.yaml) 中相应模块的 `primary_responsibility` / `NOT_responsible_for` / `easily_confused_with`。
+- 同步修改 [doc/architecture.md](../../../doc/architecture.md) 极简模块清单**那一行**的"一句话职责"文案，保持 catalog 与 architecture 一致。
+- **不要**在 architecture.md 里粘贴完整的职责描述或公共能力清单——那是 catalog 的职责。
+- 在 architecture.md「架构级变更记录」追加一行：`| YYYY-MM-DD | responsibility_rewrite | <如 "AccountManager.primary_responsibility 重写为 ..."> |`
+- 将具体落盘点回填到 `catalog_updates`（必填）与 `architecture_md_updates`（仅那一行的修改）。
+
+#### 12.6 Feature 级变更禁入 architecture.md
+
+以下情形**一律不写入** architecture.md（也不算架构级变更）：
+
+- 在既有模块内新增 / 修改页面、组件、接口、数据模型
+- 修 bug、样式调整、文案修改
+- PRD `in_scope_modules` 完全落在已存在模块集合内
+- 只有 `doc/module-catalog.yaml` 的 `exposed_capabilities_public`（公共能力）新增，而 `primary_responsibility` 未变 —— 这些在 catalog 里记即可
+
+> **为什么这一步这样设计**：architecture.md 是**架构级契约**，负责定义分层 / 模块集合 / 依赖边 / 出口约定；module-catalog.yaml 是**模块画像 SSOT**，负责记录每个模块的细粒度职责与能力；git history + `doc/features/<feature>/` 负责 feature 级变更日志。三者各司其职，避免 architecture.md 被 feature 级变更污染导致心智噪音。
 
 ### Step 13: Harness 验证门禁
 
@@ -582,7 +637,8 @@ framework/skills/2-requirement-design/templates/design-template.md
 
 ## 关联文件
 
-- **项目架构文档**: [doc/architecture.md](../../doc/architecture.md)（必读 + 必更新）
+- **项目架构文档**: [doc/architecture.md](../../doc/architecture.md)（必读；仅当 design 声明 `architecture_impact != none` 时按 Step 12 分支更新）
+- **模块画像 SSOT**: [doc/module-catalog.yaml](../../doc/module-catalog.yaml)（模块职责 / 公共能力 / 易混点真实来源，非 architecture.md）
 - 设计文档模板: [templates/design-template.md](templates/design-template.md)
 - 接口规范模板: [templates/api-spec.md](templates/api-spec.md)
 - 数据模型模板: [templates/data-model.md](templates/data-model.md)

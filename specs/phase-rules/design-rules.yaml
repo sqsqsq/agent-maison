@@ -68,6 +68,35 @@ structure_checks:
         - "design.in_scope_modules ⊆ (prd.in_scope_modules ∪ design.expansions_with_user_approval.modules)"
         - "design.in_scope_modules ∩ prd.out_of_scope_modules ⊆ design.expansions_with_user_approval.modules"
 
+  architecture_impact_declared:
+    description: >
+      design.md 必须在 Scope 节（或其子节）声明「架构影响声明 (architecture_impact)」，
+      包含合法的 impact 枚举与配套字段，作为后续 design_to_architecture /
+      architecture_doc_consistency 规则的前置触发开关。
+      impact 合法取值：none | dsl_change | module_set_change | responsibility_rewrite。
+      架构级变更的准确定义见 framework/skills/2-requirement-design/SKILL.md Step 12。
+    severity: BLOCKER
+    rule:
+      section: "架构影响声明"
+      expect: "yaml_code_block"
+      required_keys:
+        - "impact"
+        - "affected_items"
+        - "architecture_md_updates"
+        - "catalog_updates"
+      allowed_values:
+        impact:
+          - "none"
+          - "dsl_change"
+          - "module_set_change"
+          - "responsibility_rewrite"
+      conditional_required:
+        # impact != none 时 affected_items 与 architecture_md_updates 不允许为空
+        - when: "impact != 'none'"
+          non_empty:
+            - "affected_items"
+            - "architecture_md_updates"
+
   architecture_diagram:
     description: >
       「模块架构图」章节必须包含至少一个 Mermaid 代码块，
@@ -247,12 +276,15 @@ semantic_checks:
 
   architecture_doc_consistency:
     description: >
-      设计文档中的模块清单、依赖关系必须与 doc/architecture.md 一致；
-      若不一致，必须说明差异原因
+      design.md 中涉及的分层归属、跨模块依赖边、出口约定（Index.ets）
+      必须与 doc/architecture.md 声明的外层 / 内层 / cross_module_exports_file 一致；
+      模块清单的行级一致性由 doc/module-catalog.yaml 承担，本规则不再校验。
+      若分层归属 / 依赖边 / 出口约定存在不一致且未在文档中说明差异原因，判为 FAIL。
     severity: MAJOR
     ai_prompt_hint: >
-      对比 design.md 和 architecture.md 的模块清单和依赖关系，
-      标出不一致之处
+      对比 design.md 和 architecture.md 的「分层归属（外层 id）」、
+      「跨模块依赖边」、「出口约定（Index.ets 文件名）」，标出不一致之处；
+      **不要**比对业务模块清单的行级细节。
 
   navigation_flow_consistency:
     description: >
@@ -309,10 +341,14 @@ traceability_checks:
 
   design_to_architecture:
     description: >
-      设计文档中新增/修改的模块信息必须反映到 doc/architecture.md
-      的模块清单和变更记录中（Skill 2 的 Step 11 要求）
+      仅当 design.md 声明 architecture_impact.impact != 'none' 时触发：
+      design.md 在「架构影响声明」中声明的 architecture_md_updates
+      必须已在 doc/architecture.md 中落盘。
+      feature 级变更（impact == 'none'）不触发本规则，check 返回 SKIP，
+      架构文档无需同步（对应 Skill 2 Step 12 的重写条款）。
     severity: MAJOR
     rule:
-      source: "design.md > 模块变更摘要"
-      target: "doc/architecture.md > 模块清单"
-      expect: "all_modules_registered"
+      precondition: "design.md > 架构影响声明 > impact != 'none'"
+      source: "design.md > 架构影响声明 > architecture_md_updates"
+      target: "doc/architecture.md"
+      expect: "all_declared_updates_applied"

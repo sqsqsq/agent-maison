@@ -9,6 +9,37 @@
 
 ---
 
+## 架构影响声明 (architecture_impact) — 示例
+
+> 本示例是"从零建 4 个模块"的场景，属于 `module_set_change`（新增模块集合）。大多数迭代中的 feature 需求落在 `impact: none` 分支——此时只需保留空数组，不用更新 `architecture.md`。
+
+```yaml
+architecture_impact:
+  impact: module_set_change
+  affected_items:
+    - "新增模块 WalletMain（02-Feature）"
+    - "新增模块 AccountManager（04-BusinessBase）"
+    - "新增模块 CommUI（05-SystemBase 子层 CommUI）"
+    - "新增模块 CommFunc（05-SystemBase 子层 CommFunc）"
+  architecture_md_updates:
+    - "业务模块清单：追加 4 行（Phone / WalletMain / AccountManager / CommUI / CommFunc）"
+    - "架构级变更记录：追加一行 '新增 home-page 涉及的 4 个基础模块'"
+  catalog_updates:
+    - "module-catalog.yaml 新增 4 个模块条目"
+```
+
+> 反例（90% 的常见 feature 场景）：在既有 `WalletMain` 内新增一个"账单分析"页面，不新增/下线/迁移任何模块——此时应声明：
+>
+> ```yaml
+> architecture_impact:
+>   impact: none
+>   affected_items: []
+>   architecture_md_updates: []
+>   catalog_updates: []
+> ```
+
+---
+
 ## 0. 功能拆分到模块
 
 基于 PRD 功能清单和五层架构，将各功能点分配到以下模块：
