@@ -38,6 +38,61 @@ git submodule update --init --recursive
 
 ---
 
+## 如何告诉 AI 执行初始化 Skill（移植到新工程时必看）
+
+把 `framework/` 移植到一个新工程后，首次启动的 AI agent（无论内外 Claude、Cursor、还是别的 adapter）**本身并不认识 `framework-init`**——它的"认识"完全依赖实例根下是否已经有 `CLAUDE.md` / `AGENTS.md` / `.claude/commands/` / `.cursor/skills/` 这些由初始化产物生成的入口文件。因此要根据工程当前的状态用不同的方式引导它：
+
+### 场景一：工程里已有 `framework/` + 实例根入口文件（`CLAUDE.md` / `AGENTS.md` 等）
+
+这是"已经初始化过一次、现在只是升级或切 adapter"的情况。任选其一即可：
+
+1. **原生 slash（Claude Code 最省事）**：直接敲 `/framework-init`。Claude Code 启动时会自动扫 `.claude/commands/*.md`，不需要额外引导。
+2. **自然语言触发**：
+   - 「请执行 framework-init skill」
+   - 「按 `framework/skills/00-framework-init/SKILL.md` 接入 framework」
+   - 因为 `CLAUDE.md` / `AGENTS.md` 第四章的 Skill 路由表已经写明了 Skill 00 的路径，agent 启动时会自动加载全局入口，所以这些触发词都认得。
+
+### 场景二：全新工程——只有 `framework/` 子目录，**还没有** `CLAUDE.md` / `AGENTS.md` / `.claude/commands/`
+
+这是"首次移植"最关键的情况。此时 agent 启动时没有任何全局指令，它**不会自动知道**本目录是什么。必须用完整路径手动把它引到 Skill 00：
+
+```text
+请完整读一遍 framework/skills/00-framework-init/SKILL.md，然后按里面的 Step 0 → Step 7 严格执行，把这个工程的 framework 初始化跑完。不要省略任何步骤，遇到需要我确认的事情停下来问我。
+```
+
+要点：
+- **必须给完整路径**，不要让 agent 自己猜。
+- 强调「完整读一遍」+「严格按步骤」，防止弱模型只扫开头就动手。
+- 强调「需要确认就停下来」，契合 Skill 00 的对话式确认设计（Step 0.2.5 的 adapter 选定是 BLOCKER，必须由用户显式选字符串）。
+
+跑完 Step 0 ～ 7 后，实例根会生成 `CLAUDE.md` / `AGENTS.md`、`.claude/commands/framework-init.md` 或 `.cursor/skills/00-framework-init/SKILL.md` 等入口文件，以后再进这个工程就回到**场景一**。
+
+### 场景三：连 `framework/` 子目录都没有
+
+按 Skill 00 Step 0.1 的规定，先在工程根执行：
+
+```bash
+git submodule add <your-framework-repo-url> framework
+git submodule update --init --recursive
+```
+
+然后回到**场景二**的引导语。Skill 00 里专门拦截过这一步："若 `framework/harness/harness-runner.ts` 不存在 → 停下，提示用户先 submodule，不要凭空造一个假 framework 目录"——即便你忘了，合规的 agent 也会自己停住。
+
+### 万能引导语（三种场景通用）
+
+未来移植到其它工程时，下面这段话可以**直接贴给 AI**，不论当前工程有没有 framework、有没有 `CLAUDE.md` 都适用：
+
+```text
+这个工程已经把 framework/ 作为 git submodule 引入（如果没有，请先 git submodule add <framework-repo-url> framework 再继续）。
+请完整阅读 framework/skills/00-framework-init/SKILL.md，按里面的 Step 0 → Step 7 严格执行，
+完成 framework 在本工程的初始化或升级。涉及架构 DSL、adapter 选择、产物路径等关键决策，
+必须停下来让我确认，不要静默写入。
+```
+
+这一句话覆盖了：指明入口 SKILL → 规定执行模式 → 预留人工确认点，在内/外 Claude、Cursor 以及其他遵守 Skill 协议的 agent 上都通用。
+
+---
+
 ## 已支持的 agent adapter
 
 | adapter | 说明 | 入口与产物（由初始化写入实例根） |
