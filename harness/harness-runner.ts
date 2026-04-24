@@ -27,6 +27,7 @@ import {
   assembleAIPrompt,
   generateMergedReport,
   printReportToConsole,
+  failScriptReportWithFatalError,
 } from './scripts/utils/report-generator';
 import {
   Phase,
@@ -199,46 +200,76 @@ async function main(): Promise<void> {
   const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks);
   printReportToConsole(scriptReport);
 
-  // Step 4: 组装 AI prompt
-  console.log('🤖 Step 4: 组装 AI Harness prompt...');
-  const contextFiles = collectContextFiles(specLoader, projectRoot, phase, feature, featureSpec);
-  const specContent = YAML.stringify(phaseRule);
-
-  assembleAIPrompt(
-    harnessRoot,
-    phase,
-    feature,
-    contextFiles,
-    JSON.stringify(scriptReport, null, 2),
-    specContent,
-  );
+  // Step 4/5：组装 AI prompt + 合并报告。
+  // 这两步发生在 Step 3（script-report.json 已落盘）之后，若裸调用崩栈会造成
+  // "磁盘 PASS + 控制台崩栈" 的错位假 PASS。因此统一捕获：任何崩栈都回写
+  // script-report.json 为 FAIL（并清理 ai-prompt.md / merged-report.md 残留）。
   const reportsRel = path.relative(projectRoot, paths.reportsDir).replace(/\\/g, '/');
-  console.log(`   ✓ AI prompt 已写入 ${reportsRel}/${feature}/${phase}/ai-prompt.md`);
+  let finalReport = scriptReport;
 
-  // Step 5: 合并报告
-  console.log('\n📝 Step 5: 生成合并报告...');
-  const aiReportPath = args['ai-report'];
-  let aiReportContent: string | undefined;
-  if (aiReportPath && fs.existsSync(aiReportPath)) {
-    aiReportContent = fs.readFileSync(aiReportPath, 'utf-8');
-    console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
+  try {
+    // Step 4: 组装 AI prompt
+    console.log('🤖 Step 4: 组装 AI Harness prompt...');
+    // Test hook：用于验证 Step 4 崩栈回写链路，仅自动化验证场景使用
+    if (process.env.HARNESS_FORCE_STEP4_FAIL) {
+      throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
+    }
+    const contextFiles = collectContextFiles(specLoader, projectRoot, phase, feature, featureSpec);
+    const specContent = YAML.stringify(phaseRule);
+
+    assembleAIPrompt(
+      harnessRoot,
+      phase,
+      feature,
+      contextFiles,
+      JSON.stringify(scriptReport, null, 2),
+      specContent,
+    );
+    console.log(`   ✓ AI prompt 已写入 ${reportsRel}/${feature}/${phase}/ai-prompt.md`);
+  } catch (err) {
+    const e = err as Error;
+    console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
+    finalReport = failScriptReportWithFatalError(harnessRoot, scriptReport, 'assemble_ai_prompt', e);
   }
 
-  generateMergedReport(harnessRoot, phase, feature, scriptReport, aiReportContent);
-  console.log(`   ✓ 合并报告已写入 ${reportsRel}/${feature}/${phase}/merged-report.md`);
+  if (finalReport === scriptReport) {
+    try {
+      // Step 5: 合并报告（仅当 Step 4 成功时才执行）
+      console.log('\n📝 Step 5: 生成合并报告...');
+      const aiReportPath = args['ai-report'];
+      let aiReportContent: string | undefined;
+      if (aiReportPath && fs.existsSync(aiReportPath)) {
+        aiReportContent = fs.readFileSync(aiReportPath, 'utf-8');
+        console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
+      }
+
+      generateMergedReport(harnessRoot, phase, feature, scriptReport, aiReportContent);
+      console.log(`   ✓ 合并报告已写入 ${reportsRel}/${feature}/${phase}/merged-report.md`);
+    } catch (err) {
+      const e = err as Error;
+      console.error(`   ✗ Step 5 生成合并报告失败: ${e.message}`);
+      finalReport = failScriptReportWithFatalError(harnessRoot, scriptReport, 'generate_merged_report', e);
+    }
+  }
 
   // 最终结果
   console.log('\n' + '='.repeat(60));
-  if (scriptReport.summary.verdict === 'PASS') {
+  if (finalReport.summary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
     console.log('  📤 请将 ai-prompt.md 发送给 AI 模型执行语义验证');
   } else {
-    console.log(`  ❌ 脚本 Harness 检查未通过 (${scriptReport.summary.blockers} BLOCKER)`);
-    console.log('  🔧 请修复 BLOCKER 项后重新运行');
+    const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
+    if (runnerFailed) {
+      console.log(`  ❌ Harness runner 执行异常 (详见 ${reportsRel}/${feature}/${phase}/script-report.json)`);
+      console.log('  🔧 请修复 runner_*_failed 报告项后重新运行');
+    } else {
+      console.log(`  ❌ 脚本 Harness 检查未通过 (${finalReport.summary.blockers} BLOCKER)`);
+      console.log('  🔧 请修复 BLOCKER 项后重新运行');
+    }
   }
   console.log('='.repeat(60) + '\n');
 
-  process.exit(scriptReport.summary.verdict === 'PASS' ? 0 : 1);
+  process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
 }
 
 // --------------------------------------------------------------------------

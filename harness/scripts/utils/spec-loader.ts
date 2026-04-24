@@ -82,7 +82,11 @@ export class SpecLoader {
 
     const contractsPath = path.join(featureDir, 'contracts.yaml');
     if (fs.existsSync(contractsPath)) {
-      spec.contracts = this.loadYaml<ContractsSpec>(contractsPath);
+      const contracts = this.loadYaml<ContractsSpec>(contractsPath);
+      normalizeContractsFiles(contracts, contractsPath);
+      normalizeModuleDependencies(contracts, contractsPath);
+      normalizeTraceability(contracts, contractsPath);
+      spec.contracts = contracts;
     }
 
     const acceptancePath = path.join(featureDir, 'acceptance.yaml');
@@ -134,7 +138,16 @@ export class SpecLoader {
     const result = new Map<string, string>();
     if (!contracts?.files) return result;
 
-    for (const relativePath of contracts.files) {
+    for (let i = 0; i < contracts.files.length; i++) {
+      const raw = contracts.files[i];
+      const relativePath = coerceToPathString(raw);
+      if (relativePath === null) {
+        console.warn(
+          `[spec-loader] contracts.files[${i}] 非字符串，已跳过：` +
+          `${JSON.stringify(raw)}（期望形如 "path/to/file.ets"）`
+        );
+        continue;
+      }
       if (filterExt && !relativePath.endsWith(filterExt)) continue;
 
       const fullPath = path.join(projectRoot, relativePath);
@@ -155,5 +168,164 @@ export class SpecLoader {
     }
     const content = fs.readFileSync(filePath, 'utf-8');
     return YAML.parse(content) as T;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// contracts.files schema 规范化
+// ---------------------------------------------------------------------------
+// 背景：ContractsSpec.files 契约上是 string[]，但历史上出现过以下不规范写法
+// 导致下游 `.endsWith/.includes` 抛 `TypeError: X is not a function`：
+//   1) 误写成对象： `- path: "xxx"` / `- { file: "xxx" }`
+//   2) 漏写引号让值被 YAML 解析成数字/布尔： `- 123`
+//   3) 空项被解析成 null： `- `
+// 这里在加载时做一次校验+兜底：
+//   - 字符串直接接受
+//   - `{path|file|src: string}` 对象形式自动抽取
+//   - 其他情况：抛出带文件路径+索引+原值的清晰错误，便于一眼定位
+// ---------------------------------------------------------------------------
+
+function coerceToPathString(raw: unknown): string | null {
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    const candidate = obj.path ?? obj.file ?? obj.src;
+    if (typeof candidate === 'string') return candidate;
+  }
+  return null;
+}
+
+function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string): void {
+  const files = contracts.files;
+  if (files === undefined || files === null) {
+    contracts.files = [];
+    return;
+  }
+  if (!Array.isArray(files)) {
+    throw new Error(
+      `[spec-loader] ${contractsPath} 的 \`files\` 必须是数组，实际类型：${typeof files}`
+    );
+  }
+
+  const bad: Array<{ index: number; raw: unknown }> = [];
+  const normalized: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const coerced = coerceToPathString(files[i]);
+    if (coerced === null) {
+      bad.push({ index: i, raw: files[i] });
+    } else {
+      normalized.push(coerced);
+    }
+  }
+
+  if (bad.length > 0) {
+    const detail = bad
+      .map(b => `  - files[${b.index}] = ${JSON.stringify(b.raw)}`)
+      .join('\n');
+    throw new Error(
+      `[spec-loader] ${contractsPath} 的 \`files\` 存在非字符串条目（期望形如 "path/to/file.ets"）：\n${detail}`
+    );
+  }
+
+  contracts.files = normalized;
+}
+
+// ---------------------------------------------------------------------------
+// module_dependencies schema 规范化
+// ---------------------------------------------------------------------------
+// 契约上 ContractsSpec.module_dependencies 是 Record<string, string[]>
+// （key = 源模块名，value = 依赖模块名数组）。
+// 但实际 YAML 里常见另一种更自然的写法，来自 Skill 2 从架构图依赖箭头提取：
+//   module_dependencies:
+//     - from: "WalletMain"
+//       to: "CommUI"
+//       kind: "oh_package"
+// 如果下游不识别这种形态，`contracts.module_dependencies[mod.name]` 恒为
+// undefined，`oh_package_dependencies` 规则会在"未检出任何依赖"的情况下
+// 虚假 PASS（规则实际失效）。这里在加载期把数组形归一到 Record 形。
+// ---------------------------------------------------------------------------
+
+function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: string): void {
+  const deps = contracts.module_dependencies as unknown;
+  if (deps === undefined || deps === null) {
+    contracts.module_dependencies = {};
+    return;
+  }
+
+  // 已是 Record 形：原样放行
+  if (!Array.isArray(deps) && typeof deps === 'object') {
+    return;
+  }
+
+  if (!Array.isArray(deps)) {
+    throw new Error(
+      `[spec-loader] ${contractsPath} 的 \`module_dependencies\` 类型非法（期望 Record<string,string[]> 或 {from,to}[]），` +
+      `实际：${typeof deps}`
+    );
+  }
+
+  const rec: Record<string, string[]> = {};
+  const bad: Array<{ index: number; raw: unknown }> = [];
+  for (let i = 0; i < deps.length; i++) {
+    const entry = deps[i];
+    if (!entry || typeof entry !== 'object') {
+      bad.push({ index: i, raw: entry });
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    const from = e.from;
+    const to = e.to;
+    if (typeof from !== 'string' || typeof to !== 'string') {
+      bad.push({ index: i, raw: entry });
+      continue;
+    }
+    if (!rec[from]) rec[from] = [];
+    rec[from].push(to);
+  }
+
+  if (bad.length > 0) {
+    const detail = bad
+      .map(b => `  - module_dependencies[${b.index}] = ${JSON.stringify(b.raw)}`)
+      .join('\n');
+    throw new Error(
+      `[spec-loader] ${contractsPath} 的 \`module_dependencies\` 数组形式要求每项含 from/to 字符串：\n${detail}`
+    );
+  }
+
+  contracts.module_dependencies = rec;
+}
+
+// ---------------------------------------------------------------------------
+// prd_to_code_traceability 字段别名归一
+// ---------------------------------------------------------------------------
+// ContractsSpec 契约字段名是 key_files，但当前 Skill 2 规范和 home-page 样例
+// 写的是 files。如果两种写法都可以被接受，则需要在加载期把 files 别名为
+// key_files，否则下游 `for (const f of item.key_files)` 直接 TypeError。
+// 该规范化**只做别名回填**，不删除原字段，以免影响其他消费者。
+// ---------------------------------------------------------------------------
+
+function normalizeTraceability(contracts: ContractsSpec, contractsPath: string): void {
+  const trace = contracts.prd_to_code_traceability as unknown;
+  if (trace === undefined || trace === null) return;
+  if (!Array.isArray(trace)) {
+    throw new Error(
+      `[spec-loader] ${contractsPath} 的 \`prd_to_code_traceability\` 必须是数组，实际：${typeof trace}`
+    );
+  }
+
+  for (let i = 0; i < trace.length; i++) {
+    const item = trace[i] as Record<string, unknown> | null;
+    if (!item || typeof item !== 'object') continue;
+    if (!item.key_files && Array.isArray(item.files)) {
+      item.key_files = item.files;
+    }
+    // 若仍非数组，赋空数组避免下游 for...of 崩栈（保留可查的告警）
+    if (!Array.isArray(item.key_files)) {
+      console.warn(
+        `[spec-loader] ${contractsPath} prd_to_code_traceability[${i}] 缺少 key_files/files，` +
+        `prd_id=${JSON.stringify((item as { prd_id?: unknown }).prd_id)}；已按空数组处理`
+      );
+      item.key_files = [];
+    }
   }
 }

@@ -874,13 +874,18 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
   } catch (err) {
+    const e = err as Error;
+    const isProgrammerError =
+      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
     return [{
       id: checkId,
       category: 'structure',
       description: `${checkId} 执行异常`,
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
+      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
+      status: isProgrammerError ? 'FAIL' : 'SKIP',
+      details: isProgrammerError
+        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
+        : `检查执行时发生错误：${e.message}`,
     }];
   }
 }

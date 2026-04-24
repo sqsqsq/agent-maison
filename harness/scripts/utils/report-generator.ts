@@ -58,6 +58,55 @@ export function generateScriptReport(
   return report;
 }
 
+/**
+ * Step 4/5（组装 prompt / 合并报告）阶段若出现未捕获异常，
+ * 必须将失败回写到已经落盘的 script-report.json，避免"磁盘 PASS + 控制台崩栈"误导。
+ *
+ * 行为：
+ *   1. 把 err 转成一条 BLOCKER / FAIL 的 CheckResult，追加到 report.checks
+ *   2. 重算 summary（verdict 会自动变成 FAIL）
+ *   3. 覆盖写回 script-report.json
+ *   4. 删除同目录下可能残留的 ai-prompt.md / merged-report.md（避免下游误读）
+ */
+export function failScriptReportWithFatalError(
+  harnessRoot: string,
+  report: ScriptReport,
+  stage: 'assemble_ai_prompt' | 'generate_merged_report',
+  err: Error,
+): ScriptReport {
+  const fatal: CheckResult = {
+    id: `runner_${stage}_failed`,
+    category: 'structure',
+    description: `Harness runner 在 ${stage} 阶段抛出未捕获异常`,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `[Harness runner fatal] ${err.message}\n${err.stack ?? ''}`,
+  };
+
+  const updated: ScriptReport = {
+    ...report,
+    checks: [...report.checks, fatal],
+    summary: computeSummary([...report.checks, fatal]),
+    timestamp: new Date().toISOString(),
+  };
+
+  const dir = ensureReportDir(harnessRoot, updated.feature, updated.phase);
+  fs.writeFileSync(
+    path.join(dir, 'script-report.json'),
+    JSON.stringify(updated, null, 2),
+    'utf-8',
+  );
+
+  for (const stale of ['ai-prompt.md', 'merged-report.md']) {
+    const p = path.join(dir, stale);
+    if (fs.existsSync(p)) {
+      try { fs.unlinkSync(p); } catch { /* best-effort */ }
+    }
+  }
+
+  return updated;
+}
+
 // --------------------------------------------------------------------------
 // AI Prompt 组装
 // --------------------------------------------------------------------------
