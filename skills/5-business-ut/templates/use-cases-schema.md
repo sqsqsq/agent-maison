@@ -133,7 +133,7 @@ use_cases:
 ## 强制规则
 
 1. **`ui_bindings` 必填**：至少一个 UI 条目；否则说明这条业务流不涉及 UI，不应进 `use-cases.yaml`。
-2. **`user_actions.calls` 必须命名**：不能是 inline lambda。由 Skill 3 `named_business_handler` 规则强制。
+2. **`user_actions.calls` 必须命名**：不能是**匿名** inline lambda（直接挂载到 UI 事件）。合法形态含传统函数 / 类方法 / 类字段函数（`handleClick = async () => {}`）/ 顶层命名 const 赋值。由 Skill 3 `named_business_handler` 规则强制。
 3. **`data_boundaries.type` 指向现有类**：禁止为了 UT 新增抽象 Port 接口；现有 Repository/Service/SDK 类已经是自然边界。
 4. **`phases` 首元素为 `Idle`**：`expected_phase_seq` 从 `Idle` 开始。
 5. **branches 覆盖分支爆炸**：happy path + 每种可预期失败路径（云侧失败、本地失败、回滚路径）都列入。

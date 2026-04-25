@@ -285,7 +285,7 @@ UT 文件**只允许** import 以下来源：
 
 ```
 [ ] 1.  use-cases.yaml（若存在）通过 schema 校验：含 coordinator / ui_bindings / data_boundaries / state_model / branches
-[ ] 2.  named_business_handler（若有 use-cases.yaml）：ui_bindings[].user_actions[].calls 每个符号在代码中都能找到命名函数 / 方法
+[ ] 2.  named_business_handler（若有 use-cases.yaml）：ui_bindings[].user_actions[].calls 每个符号在代码中都能找到**命名符号**——传统函数 / 类方法 / 类字段函数（`handler = () => {}`）/ 顶层命名 const 赋值 均合法
 [ ] 3.  boundary_matches_contracts（若有 use-cases.yaml）：data_boundaries[].type 都能在 contracts.yaml > interfaces[].class 中找到
 [ ] 4.  DAG 合规：顶层含 flow_id / flow_name / entry_point / nodes；若有 use-cases.yaml 则另含 use_case（= id）和 branches[]
 [ ] 5.  DAG 分工：同 use_case 所有 DAG 的 branches[] 交集为空、并集覆盖所有非 device_only 分支
@@ -366,6 +366,86 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 - 进入 Skill 6（真机测试）消费 device-testing-todo.md
 ```
 
+### Step 7.5：UT 编译闭环（必要出口）
+
+> v2.2 新增：**UT 编译是 Skill 5 的必要出口条件**。光"写完"不算，必须 hvigor 实际编译过。harness 会通过 `ut_tsc_compiles`（静态 tsc）和 `ut_hvigor_build`（hvigor 实编）双层兜底；本步骤要求 agent 自己跑闭环。
+
+#### 7.5.1 静态 tsc 自检（TypeScript Compiler API）
+
+> 这一步 harness 在 `ut_tsc_compiles` 中自动跑；agent 不用手敲，但要看 harness 报告：若 FAIL，按 details 中的 `file:line:col TSxxxx message` 直接定位修。
+
+#### 7.5.2 hvigor 真实编译
+
+对 `02-Feature/<module>/src/ohosTest/` 所属模块执行：
+
+```bash
+hvigorw --mode module -p module=<ModuleName>@ohosTest -p product=default --no-daemon assembleHap
+```
+
+#### 7.5.3 自闭环修复策略
+
+1. exit code 非 0 → 进入修复；
+2. 完整 Read `framework/harness/reports/<feature>/ut/hvigor-ut-build.log`；
+3. 按错误类型分类：
+   - UT 调用的被测函数签名不符 → 修 UT；
+   - UT import 路径错误 → 修 UT；
+   - 类型注解与被测实际类型不匹配 → 修 UT；
+   - **若错误根因在业务源码** → 进入 Step 7.5.4 严格流程，**禁止**自行动手；
+4. 修完再跑直到 exit code = 0。
+
+#### 7.5.4 触及业务源码时的 HARD STOP
+
+只要错误根因落在 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**`：
+
+1. **立即停手**，向用户输出请求：
+   - 拟变更文件路径；
+   - 拟修改 / 抽取的函数签名；
+   - 为何 UT/Spy/Stub 层不能规避；
+   - 影响面（会触发 Skill 3 的哪些 BLOCKER 重跑）。
+2. 用户**书面同意**前不得修改任何源码文件；
+3. 同意后把授权登记到 `framework/harness/reports/<feature>/ut/gap-notes.md > approved_src_mutations[]`（含时间戳、文件、变更摘要、用户原话）；
+4. 否则触发 harness `ut_no_src_mutation` BLOCKER FAIL。
+
+### Step 7.6：UT 装机运行闭环（必要出口）
+
+> v2.2 新增：UT 必须**实际跑通**，不是只会"看起来对"。`ut_hvigor_test` BLOCKER 会强制此步。
+
+#### 7.6.1 探测设备
+
+```bash
+hdc list targets
+```
+
+输出非空才能进 7.6.2；输出 `[Empty]` 或为空：
+
+- **不允许**继续往下跑后宣称 PASS；
+- **不允许**用"本地无设备"为由把 harness 标绿；
+- 必须先：在 DevEco Studio 启动模拟器 / 接入真机，重新探测；
+- 只有探测到设备后才能继续。
+
+#### 7.6.2 装机执行
+
+```bash
+hvigorw --mode module -p module=<ModuleName>@ohosTest -p product=default --no-daemon test
+```
+
+#### 7.6.3 自闭环修复策略
+
+1. 解析 hypium 输出（`OHOS_REPORT_RESULT: Tests run: N, Failure: F, ...` 行）；
+2. failed > 0：
+   - 读 `framework/harness/reports/<feature>/ut/hvigor-test.log` 完整内容；
+   - 找到 failure 用例的 `OHOS_REPORT_STATUS: stack=...` 堆栈；
+   - 按堆栈定位：是 UT 逻辑错？Spy 预设值错？还是被测业务真有 bug？
+   - **业务真有 bug 时**：仍走 7.5.4 的 HARD STOP 流程，先报告再改；
+3. total = 0：检查 `List.test.ets` 是否注册了所有 `*.test.ets` 入口；
+4. 修完再跑直到 failed = 0 且 total > 0。
+
+#### 7.6.4 绝不允许
+
+- 把"无设备"标成 SKIP / PASS 上交；
+- 用 `HARNESS_SKIP_HVIGOR_TEST=1` 跳过（harness 会转成 BLOCKER FAIL）；
+- "我修过 UT 了，但没跑就交"——必须真的装机跑过且全部 PASS。
+
 ### Step 8：Harness 验证门禁
 
 UT 交付后，引导用户执行 Harness 验证以确保 UT 质量达标。
@@ -390,11 +470,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 | usecase_spec_schema | use-cases.yaml schema 合规（coordinator / ui_bindings / data_boundaries） | BLOCKER |
 | usecase_ui_bindings_nonempty | 每个 use_case 的 ui_bindings & user_actions 非空 | BLOCKER |
 | boundary_matches_contracts | data_boundaries[].type 在 contracts.yaml > interfaces[].class 中 | MAJOR |
-| named_business_handler | ui_bindings.user_actions.calls 所列每个符号是命名函数而非 inline lambda | BLOCKER |
+| named_business_handler | ui_bindings.user_actions.calls 所列每个符号是命名符号（函数/类方法/类字段函数/命名 const）而非匿名 inline lambda | BLOCKER |
 | dag_linked_usecase | DAG.use_case 回指 use-cases.yaml > use_cases[].id | BLOCKER |
 | dag_boundary_matches_spec | port_call_* 节点 boundary = data_boundaries[].name | MAJOR |
 | dag_node_type_valid | 节点类型合法（含 v2.1 新增 ui_subscription；user_intervention/ui_navigation 已 deprecated） | BLOCKER |
 | ut_import_whitelist | UT 文件 import 仅限白名单（禁 UI 符号） | BLOCKER |
+| ut_tsc_compiles | UT 文件 tsc --noEmit 零 Error（v2.2 新增，方案 A 静态编译护城河） | BLOCKER |
 | boundaries_all_stubbed | 每个 data_boundary 都有 Spy/Fake/Stub 或原型替换 | BLOCKER |
 | it_name_has_ac_or_branch_tag | 用例名带 [AC-X] / [BRANCH-X] 标签 | BLOCKER |
 | it_drives_flow | 路径 A 严格判；路径 B 退化为 ≥2 expect | MAJOR |
@@ -464,7 +545,22 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 9. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
 10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
 11. **Harness 验证闭环**：UT 完成后必须引导用户运行 Harness 验证（Step 8），确保零 BLOCKER 后才进入下一阶段
-12. **不修改业务源码**：生成 UT 时不应修改 Skill 3 产出的业务代码。若发现代码无法测试，应记录在交付摘要中反馈 Skill 3（推荐改动为：抽出命名方法 / 导出函数 / 普通 class，而非新造 Port 或 UseCase 类）
+12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下**任何文件的修改**，**必须**满足以下全部条件：
+    1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
+       - 拟变更的文件路径；
+       - 拟抽取/新增的函数签名（或修改 diff 摘要）；
+       - **为何不能通过只修改 UT / DAG / use-cases.yaml 规避**该变更的技术理由；
+       - 预估影响面（会触发 Skill 3 harness 的哪些规则重跑）。
+    2. 用户**书面同意**后方可动手（对话中明确 "同意" / "approved" / "OK" 等正面表述）；
+    3. 动手后必须把授权纪要写入 `framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`：包含时间戳、文件路径、变更摘要、用户确认原话/链接。
+    4. **未登记的 src/main 变更一律视为违规**，会触发 harness `ut_no_src_mutation` BLOCKER；
+    5. **特别禁止**以下常见"便利性"借口直接动手：
+       - "named_business_handler 报错 → 顺手抽个函数/改成命名字段" → 必须先问；
+       - "UT 无法访问私有成员 → 把 private 改成 public" → 必须先问；
+       - "UT 需要某个工具函数 → 顺手新增一个" → 必须先问；
+       - "导入路径不便 → 顺手改 barrel 导出" → 必须先问。
+    违反 HARD STOP 的行为会被后续 Skill 4（Code Review）追溯并标记为质量事件。
+    > 推荐替代路径：优先在 UT/Spy 侧用原型替换、`as unknown as T` 注入等方式绕过可测性障碍；确需源码变更时优先选择"抽出命名方法 / 导出函数 / 普通 class"而非新造 Port / UseCase 类。
 
 ---
 

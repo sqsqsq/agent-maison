@@ -59,7 +59,7 @@ flowchart LR
 
 - ❌ UT 文件 import 任何 UI 符号（`@Component` / `struct` / `NavPathStack` / `showToast` / `$r(` / `$rawfile(` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`）— 由 `ut_import_whitelist` 拦截
 - ❌ UT 文件中 `new XxxPage()` / `new XxxComponent()` 之类直接实例化 `@Component struct`
-- ❌ `ui_bindings[].user_actions[].calls` 指向 inline lambda 而非命名函数/方法 — 由 `named_business_handler` 拦截
+- ❌ `ui_bindings[].user_actions[].calls` 指向**匿名** inline lambda（直接挂载在 UI 事件上，无命名符号）— 由 `named_business_handler` 拦截。合法形态含传统函数 / 类方法 / 类字段函数（`handleClick = async () => {}`）/ 顶层命名 const 赋值
 - ❌ 为打桩方便新造 `XxxPort` 接口；必须复用 `contracts.yaml > interfaces[].class` 已登记的既有类
 - ❌ 业务编排代码（CardOpenFlow 等普通 class / 导出函数）中出现 `showToast` / `NavPathStack` / `AppStorage` / `$r`
 - ❌ 一个 `it()` 只调一个 boundary（退化为"数据接口测试"）— 由 `it_drives_flow` MAJOR 拦截

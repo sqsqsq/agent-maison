@@ -343,7 +343,7 @@ export class {CoordinatorName} {
 
 > **强约束（v2.1）**：
 > - 业务编排源文件禁止 import `@Component` / `@Consume` / `NavPathStack` / `$r` / `showToast` / `getUIContext` / `@kit.ArkUI` / `@kit.ArkGraphics`，以保证其可在 Hypium 单测中脱离 ArkUI runtime 直接实例化
-> - `use-cases.yaml > ui_bindings[].user_actions[].calls` 列出的每个符号必须是**命名方法 / 导出函数 / 类方法**，不能只存在于 inline lambda（由 Skill 3 harness 的 `named_business_handler` BLOCKER 强制）
+> - `use-cases.yaml > ui_bindings[].user_actions[].calls` 列出的每个符号必须是**命名符号**（传统函数 / 类方法 / 类字段函数 `handler = () => {}` / 顶层命名 const 赋值均合法），不能是**匿名** inline lambda（直接挂到 UI 事件上）（由 Skill 3 harness 的 `named_business_handler` BLOCKER 强制）
 > - **禁止**为了"便于 UT 打桩"新造 `XxxPort` 接口；`data_boundaries[].type` 必须引用 `contracts.yaml > interfaces[].class` 中已登记的现有数据层类（由 Skill 5 harness 的 `boundary_matches_contracts` 强制）
 
 ### 6.3 Client: {ApiClientName}（若有远程接口）

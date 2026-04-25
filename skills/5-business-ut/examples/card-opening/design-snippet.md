@@ -74,4 +74,4 @@ stateDiagram-v2
     - `Success` → `navPathStack.pushPath('CardOpenResultPage', { cardId })`
     - `Failed` → `showToast(mapErrorToMessage(state.errorCode))`
   - UI 层**不得**直接调用 `api.*` / `store.*`
-  - UI 层**不得**把业务逻辑写在 inline lambda 里（会被 Skill 3 harness `named_business_handler` 拦截）
+  - UI 层**不得**把业务逻辑写在**匿名** inline lambda 里（会被 Skill 3 harness `named_business_handler` 拦截）；若要就近承载，可改写为**命名**类字段函数（`handleClick = async () => { ... }`）并在 `onClick` 转发调用该字段

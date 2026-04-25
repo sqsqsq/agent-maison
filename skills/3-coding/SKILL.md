@@ -254,8 +254,13 @@
 
 **关键约束（适用于 A / B / C 三种形态）**：
 
-1. `use-cases.yaml > ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名函数 / 方法符号**，与代码中**完全一致**（Skill 5 Harness 的 `named_business_handler` BLOCKER 会严格校验）
-2. **禁止 inline lambda 承载业务**：UI 的 `onClick = () => { 做一堆业务 }` 这种写法**禁止**用于 `use-cases.yaml` 列出的入口；必须抽成命名方法/函数再被 `onClick` 转发
+1. `use-cases.yaml > ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名符号**，与代码中**完全一致**（Skill 5 Harness 的 `named_business_handler` BLOCKER 会严格校验）。合法形态包括：
+   - 传统 `function xxx() {}` / `async function xxx() {}`
+   - 类/对象方法 `xxx() {}` / `async xxx() {}`
+   - 顶层导出 `export function xxx` / `export const xxx = ...`
+   - **ArkTS 类字段函数**（v2.2 放宽）：`handleClick = async () => {}`、`handleClick: () => void = () => {}`、`handleClick = function() {}`
+   - 顶层 `const/let/var xxx = () => {}`
+2. **禁止匿名 inline lambda 承载业务**：UI 的 `.onClick(() => { 做一堆业务 })` 这种**匿名**写法**禁止**用于 `use-cases.yaml` 列出的入口；必须先有命名符号（传统函数 / 命名类字段函数 / 命名 const）再被 `onClick` 转发
 3. 每次 `calls` 引用的实体必须是 UT 可直接调用的（无需构造 `@Component`、无需 UI runtime）——形态 A 需要把业务代码从 struct 中抽成 `class`/`function`，或选形态 B/C
 4. **禁止新造 Port 接口**：`data_boundaries` 的 `type` 必须是 `contracts.yaml` 已登记的**既有** data 层类（Repository / Client 等）。UT 通过 Spy/Fake/Stub 子类化或原型替换实现打桩，不要求额外抽象接口
 
@@ -295,7 +300,7 @@ Select-String -Path "<path>/CardOpenFlow.ets" -Pattern "NavPathStack|showToast|@
 **命名入口一致性自检**：
 1. 打开 `doc/features/{feature}/use-cases.yaml`
 2. 对每个 `ui_bindings[].user_actions[].calls`，在代码中 `grep` 该符号
-3. 确认：(a) 确实存在；(b) 是命名方法/函数（不是 `onClick = () => {}` 这种 inline lambda）
+3. 确认：(a) 确实存在；(b) 是**命名符号**——传统函数/类方法/类字段函数（`handleClick = async () => {}`）/命名 `const` 赋值 的箭头函数 **都算合法**；仅**匿名直接挂载**在 UI 事件上（如 `.onClick(() => { 一堆业务 })`）的写法不合法
 
 Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本 Skill 内自检能节省回环成本。
 
@@ -371,6 +376,41 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 ### 下一步
 建议运行 Harness 验证（Step 7），验证通过后再运行 Skill 4 (Code Review)。
 ```
+
+### Step 6.5: 真实编译闭环（必要出口）
+
+> v2.2 新增：**编译是 Skill 3 的必要出口条件**，不是可选项。本步骤要求 agent **自己**执行 hvigor 编译、读取日志、定位问题、修复并重跑，直到零 error。`coding_hvigor_build` BLOCKER 会在 Step 7 强制兜底；本 Step 是 Skill 3 自检的最后一道。
+
+#### 6.5.1 执行真实编译
+
+对 `contracts.yaml > modules` 中**每个**业务模块（new / modified）执行：
+
+```bash
+hvigorw --mode module -p module=<ModuleName>@default -p product=default --no-daemon assembleHap
+```
+
+> Windows 上为 `hvigorw.bat`；Linux/macOS 为 `hvigorw`。harness 自动选择，agent 直接调用即可。
+
+#### 6.5.2 自闭环修复策略
+
+1. **看 exit code**：非 0 即编译失败，进入修复闭环。
+2. **读完整日志**：harness 会把日志写到 `framework/harness/reports/<feature>/coding/hvigor-build.log`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
+3. **按错误类型分类**：
+   - `ArkTS:ERROR` / `error TSxxxx` → 类型 / 语法错误，回到 Step 3 修文件；
+   - `oh-package.json5` / 模块依赖错误 → 回到 `oh_package_dependencies` 章节补依赖；
+   - 资源引用 (`$r('app.string.xxx')`) 缺失 → 回到资源声明章节补声明。
+4. **修完 → 再跑**：重复 6.5.1，直到 exit code = 0 且日志中无 error。
+5. **绝不允许**：
+   - 把编译失败定性为"环境问题"绕过；
+   - 用 `HARNESS_SKIP_HVIGOR=1` 跳过（harness 会把它转成 BLOCKER FAIL）；
+   - "改了就不验"——必须真的跑过 `hvigorw` 才算闭环。
+
+#### 6.5.3 工具链不可用怎么办
+
+- 若本机找不到 `hvigorw` / `hvigor` CLI：
+  1. 在 DevEco Studio 打开本项目一次让其生成 `hvigorw.bat`；或
+  2. 全局安装 hvigor CLI（ohpm 渠道）并加入 PATH。
+- **不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交。
 
 ### Step 7: Harness 验证门禁
 
