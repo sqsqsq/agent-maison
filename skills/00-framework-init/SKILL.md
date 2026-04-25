@@ -25,7 +25,7 @@
 3. **对话式确认**：把扫描推断结果用表格展示，用户对每条给 **确认 / 修改值**；**禁止**在用户未确认前覆盖已有 `framework.config.json`（UPDATE 模式除外，也需显式 diff + 确认）。
 4. **adapter 互斥**：一次只激活一个 `agent_adapter`；切换 adapter 时必须先展示「将新增 / 可能冲突的旧文件」清单，得到用户明确同意后再写入（**不自动强删**，删除操作建议用户手工或二次确认执行）。
 5. **占位符与模板**：agent 入口文件统一以 [framework/templates/AGENTS.md.template](../../templates/AGENTS.md.template) 为源，按 [framework/agents/adapter-schema.yaml](../../agents/adapter-schema.yaml) 的 `placeholders` 替换变量；路径类占位符一律用 **POSIX 正斜杠**。
-6. **生成后Harness**：引导用户（或你自动执行）跑 `catalog` / `glossary` 两 phase，确认骨架合法。
+6. **生成后 Harness**：在 Step 5.5.4 `npm test` 全绿后，在 Step 6 自动跑全局 phase：`catalog` / `glossary` / **`docs`（v2.4 起，framework 对外文档与清单自检）**。
 
 ---
 
@@ -313,7 +313,7 @@ Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yam
 
 ### 5.5.1 幂等检测
 
-- 若 `<repo-root>/framework/harness/node_modules/ts-node/package.json` 存在 → **跳过** 5.5.2，直接进入 Step 6。
+- 若 `<repo-root>/framework/harness/node_modules/ts-node/package.json` 存在 → **跳过** 5.5.2（不重复 `npm install`），**仍须**执行 5.5.4 自检与 Step 5.6 / Step 6，**不得**从本节直接进入 Step 6 而绕过 5.5.4。
 - 否则继续 5.5.2。
 
 ### 5.5.2 在 `framework/harness/` 内执行 `npm install`
@@ -337,7 +337,7 @@ Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yam
 
 ### 5.5.4 自检：跑 framework 自带回归测试套件（Step 5.6 / Step 6 前置 BLOCKER）
 
-> **动机**：vendor 模式下，用户把 `framework/` 整目录从源仓库同步到目标工程时**可能漏文件**（rsync exclude 配错、zip 解包不完整、git 浅克隆等）。如果直接进 Step 6（catalog/glossary 校验）只能间接发现 framework 损坏（表现为 `Cannot find module` 或某条规则莫名 throw），定位非常慢。本节用 framework 自带的 `tests/` 套件做**整体性自检**，把"framework 文件健康度"和"业务工程配置健康度"解耦：前者由本节兜底，后者由 Step 6 兜底。
+> **动机**：vendor 模式下，用户把 `framework/` 整目录从源仓库同步到目标工程时**可能漏文件**（rsync exclude 配错、zip 解包不完整、git 浅克隆等）。如果直接进 Step 6（catalog / glossary / docs 校验）只能间接发现 framework 损坏（表现为 `Cannot find module` 或某条规则莫名 throw），定位非常慢。本节用 framework 自带的 `tests/` 套件做**整体性自检**，把"framework 文件健康度"和"业务工程配置健康度"解耦：前者由本节兜底，后者由 Step 6 兜底。
 
 #### 5.5.4.1 执行
 
@@ -347,7 +347,7 @@ Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yam
 cd framework/harness && npm test
 ```
 
-期望：unit + fixture 全绿（v2.3 起为 16 unit + 9 fixture = **25 PASS / 0 FAIL**，整体耗时约 25s；具体数字以 `framework/harness/tests/README.md` 为准）。
+期望：unit + fixture 全绿（v2.4 起为 33 unit + 9 fixture = **42 PASS / 0 FAIL**；`doc-freshness` 等 suite 的条数以 `framework/harness/tests/run-unit.ts` 的 `SUITES` 与 `framework/harness/tests/run-tests.ts` 为准，整体耗时约 30s 量级）。
 
 > 该套件**不依赖**真机 / DevEco / hvigor / hdc，纯逻辑 fixture + 纯函数 unit，新工程未配 `toolchain.devEcoStudio.installPath` 也能立即跑通。所以**不允许**以"还没配工具链"为理由跳过本节。
 
@@ -474,9 +474,11 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase catalog
 cd framework/harness && npx ts-node harness-runner.ts --phase glossary
+cd framework/harness && npx ts-node harness-runner.ts --phase docs
 ```
 
-- 期望：骨架下多为 **WARN**（空 catalog / 空 glossary），不应有 **BLOCKER** 级结构错误。
+- **catalog / glossary**：期望骨架下多为 **WARN**（空 catalog / 空 glossary），不应有 **BLOCKER** 级结构错误。
+- **docs（v2.4 起）**：检查 `framework/docs/DOC_INVENTORY.yaml` 与已登记的 `framework/docs/**.md` 是否一致、源路径可解析、基于 git 的**文档新鲜度**；规则最高 **MAJOR**（不引入 BLOCKER），但初始化时应力争 **5 项检查全部 PASS**（见 [`framework/docs/operations/harness-runbook.md`](../../docs/operations/harness-runbook.md) §6）。`docs` 依赖本仓库为 git 工作区且可执行 `git`；若用户环境无 git，`doc_freshness` 会 **SKIP** 而非 FAIL，其余结构检查仍应通过。
 - 若 FAIL：根据报告逐项修正 `framework.config.json` 或 YAML，**不要**为通过校验而删减 `schema_version` 等必填字段。
 - 若报 `Cannot find module` 类错误 → 回到 Step 5.5，确认 `framework/harness/node_modules/` 确实装好。
 

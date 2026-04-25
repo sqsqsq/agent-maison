@@ -149,6 +149,7 @@ git submodule update --remote framework
 **回归方法**：
 - `cd framework/harness && npm test` —— unit 套件应包含 `doc-freshness` 子项且全 PASS。
 - `npx ts-node harness-runner.ts --phase docs` —— 主路烟雾，全 PASS 或仅显示已知 MAJOR（说明哪些 doc 该刷新）。
+- **与 Skill 00 的关系**：`/framework-init`（`00-framework-init`）在 Step 5.5.4 **已自动跑** `npm test`；Step 6 **已包含** `--phase docs`（与 `catalog` / `glossary` 同为全局 phase）。用户**无需**在完整跑完初始化后再单独记两条命令自测；只有**未走 Skill 或只做了部分步骤**时，才需要手工补跑。
 
 ### v2.3：DevEco Studio 工具链识别 + ohosTest 装机闭环
 
