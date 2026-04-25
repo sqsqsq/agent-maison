@@ -383,34 +383,39 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 
 #### 6.5.1 执行真实编译
 
-对 `contracts.yaml > modules` 中**每个**业务模块（new / modified）执行：
+**首选方式（v2.3 起推荐）**：通过 harness 触发，避免 agent 自己拼复杂 hvigor 命令时出错（quoting、`-p module=...@<target>` 形态、`DEVECO_SDK_HOME` / `JAVA_HOME` 注入、Windows 含空格安装路径转义等都已在 `hvigor-runner.ts` 内部处理好）：
 
 ```bash
-hvigorw --mode module -p module=<ModuleName>@default -p product=default --no-daemon assembleHap
+cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name>
 ```
 
-> Windows 上为 `hvigorw.bat`；Linux/macOS 为 `hvigorw`。harness 自动选择，agent 直接调用即可。
+`coding_hvigor_build` BLOCKER 内部会按 `contracts.yaml > modules` 调用项目级 `hvigor assembleApp` 一次性出全 HAP；日志落 `framework/harness/reports/<feature>/coding/hvigor-build.log`。
+
+> **不要**让 agent 自己手敲 `hvigorw --mode module ...`。v2.3 起命令形态、所需环境变量、含空格路径等综合考虑较多，自行拼装容易翻车；harness 已经封装了这一切。
 
 #### 6.5.2 自闭环修复策略
 
-1. **看 exit code**：非 0 即编译失败，进入修复闭环。
-2. **读完整日志**：harness 会把日志写到 `framework/harness/reports/<feature>/coding/hvigor-build.log`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
+1. **看 verdict**：harness 报告里 `coding_hvigor_build` 状态为 PASS 才算编译过；FAIL 进入修复闭环。
+2. **读完整日志**：harness 把日志写到 `framework/harness/reports/<feature>/coding/hvigor-build.log`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - `ArkTS:ERROR` / `error TSxxxx` → 类型 / 语法错误，回到 Step 3 修文件；
    - `oh-package.json5` / 模块依赖错误 → 回到 `oh_package_dependencies` 章节补依赖；
    - 资源引用 (`$r('app.string.xxx')`) 缺失 → 回到资源声明章节补声明。
-4. **修完 → 再跑**：重复 6.5.1，直到 exit code = 0 且日志中无 error。
+4. **修完 → 再跑**：重复 6.5.1，直到 `coding_hvigor_build` PASS。
 5. **绝不允许**：
    - 把编译失败定性为"环境问题"绕过；
    - 用 `HARNESS_SKIP_HVIGOR=1` 跳过（harness 会把它转成 BLOCKER FAIL）；
-   - "改了就不验"——必须真的跑过 `hvigorw` 才算闭环。
+   - "改了就不验"——必须真的过一次 harness 编译规则才算闭环。
 
-#### 6.5.3 工具链不可用怎么办
+#### 6.5.3 工具链不可用怎么办（"未找到 hvigor" 类失败）
 
-- 若本机找不到 `hvigorw` / `hvigor` CLI：
-  1. 在 DevEco Studio 打开本项目一次让其生成 `hvigorw.bat`；或
-  2. 全局安装 hvigor CLI（ohpm 渠道）并加入 PATH。
-- **不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交。
+v2.3 起 hvigor 工具链路径**应通过 `framework.config.json > toolchain.devEcoStudio.installPath` 显式声明**，而不是依赖项目根 `hvigorw.bat`（现代 DevEco Studio ≥ 5.0 不再生成它）。若 harness 报告 `coding_hvigor_build` FAIL 且 details 含「未找到 hvigor / hvigorw」：
+
+1. 检查 `framework.config.json` 是否存在 `toolchain.devEcoStudio.installPath`，且路径在文件系统中存在；
+2. 未配置 / 路径错误 → 跑 `npx ts-node framework/harness/scripts/detect-deveco.ts` 让工具自动探测推荐 installPath，或参考 [framework/skills/00-framework-init/SKILL.md](../00-framework-init/SKILL.md) Step 5.6 走完整配置流程；
+3. 配置后再次跑 6.5.1。
+
+**绝不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交，也不允许把 `HARNESS_SKIP_HVIGOR` 设为 1 绕过。
 
 ### Step 7: Harness 验证门禁
 

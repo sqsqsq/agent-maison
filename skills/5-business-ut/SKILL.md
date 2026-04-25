@@ -376,15 +376,17 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 
 #### 7.5.2 hvigor 真实编译
 
-对 `02-Feature/<module>/src/ohosTest/` 所属模块执行：
+**首选方式（v2.3 起推荐）**：通过 harness 触发，让 `hvigor-runner.ts` 处理底层命令拼装、环境变量（`DEVECO_SDK_HOME` / `JAVA_HOME`）注入、Windows 含空格安装路径转义。`ut_hvigor_build` 内部跑的是 `hvigor genOnDeviceTestHap`（不再是 v2.2 的 `OhosTestCompileArkTS`，后者是 hvigor 内部 task，CLI 不能直接调用）：
 
 ```bash
-hvigorw --mode module -p module=<ModuleName>@ohosTest -p product=default --no-daemon assembleHap
+cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feature-name>
 ```
+
+> **不要**让 agent 自己手敲 `hvigorw --mode module ... @ohosTest`。v2.3 起目标 task / 模块定位 / env 注入比 v2.2 复杂，自行拼装大概率翻车；harness 把这些都封装好了，且日志会落到 `framework/harness/reports/<feature>/ut/hvigor-ut-build.log` 便于排错。
 
 #### 7.5.3 自闭环修复策略
 
-1. exit code 非 0 → 进入修复；
+1. `ut_hvigor_build` FAIL → 进入修复；
 2. 完整 Read `framework/harness/reports/<feature>/ut/hvigor-ut-build.log`；
 3. 按错误类型分类：
    - UT 调用的被测函数签名不符 → 修 UT；
@@ -425,26 +427,34 @@ hdc list targets
 
 #### 7.6.2 装机执行
 
+**首选方式（v2.3 起推荐）**：通过 harness 触发——v2.2 的 `hvigorw test` 路径在 HAR / HSP 库模块上根本走不通（要求 `TestAbility.ets` 而库模块没有），v2.3 改为 `genOnDeviceTestHap` 出 ohosTest HAP → `hdc install -r` 装机 → `hdc shell aa test` 触发 hypium → 解析 `OHOS_REPORT_RESULT`。这条链路全部封装在 `ut_hvigor_test` BLOCKER 内部：
+
 ```bash
-hvigorw --mode module -p module=<ModuleName>@ohosTest -p product=default --no-daemon test
+cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feature-name>
 ```
+
+实测一次 `--phase ut` 同时触发 `ut_hvigor_build`（出包）+ `ut_hvigor_test`（装机执行），两段日志合并落到 `framework/harness/reports/<feature>/ut/hdc-test.log`；运行报告里 `ut_hvigor_test` 的 details 会包含失败阶段标签（`metadata` / `hap_not_found` / `install` / `run` / `no_pass`），方便定位。
+
+> **不要**让 agent 自己手敲 `hvigorw ... test`。v2.3 起这条命令对 HAR 库模块直接报 `srcEntry file '...TestAbility.ets' does not exist`，不是工具坏掉而是路径根本不对——必须走 hdc + aa test。harness 已经处理。
 
 #### 7.6.3 自闭环修复策略
 
-1. 解析 hypium 输出（`OHOS_REPORT_RESULT: Tests run: N, Failure: F, ...` 行）；
+1. 解析 `ut_hvigor_test` 报告中的 hypium 统计（harness 会从 `hdc shell aa test` 输出里扒 `Tests run: N, Failure: F, Error: E, Pass: P, Ignore: I`）；
 2. failed > 0：
-   - 读 `framework/harness/reports/<feature>/ut/hvigor-test.log` 完整内容；
+   - 读 `framework/harness/reports/<feature>/ut/hdc-test.log` 完整内容；
    - 找到 failure 用例的 `OHOS_REPORT_STATUS: stack=...` 堆栈；
    - 按堆栈定位：是 UT 逻辑错？Spy 预设值错？还是被测业务真有 bug？
    - **业务真有 bug 时**：仍走 7.5.4 的 HARD STOP 流程，先报告再改；
-3. total = 0：检查 `List.test.ets` 是否注册了所有 `*.test.ets` 入口；
-4. 修完再跑直到 failed = 0 且 total > 0。
+3. total = 0：报告会标 `失败阶段：no_pass` 或 `run`——通常是测试 ability 没启动 / `testRunner` 路径错 / module name 错；先核对 `<module>/src/ohosTest/module.json5` 与 `AppScope/app.json5` 的 `bundleName`；
+4. 失败阶段是 `metadata` / `hap_not_found` / `install` → 回 7.5（先把 build 跑过）或检查 `framework.config.json > toolchain.devEcoStudio.installPath`；
+5. 修完再跑直到 failed = 0 且 total > 0。
 
 #### 7.6.4 绝不允许
 
 - 把"无设备"标成 SKIP / PASS 上交；
 - 用 `HARNESS_SKIP_HVIGOR_TEST=1` 跳过（harness 会转成 BLOCKER FAIL）；
-- "我修过 UT 了，但没跑就交"——必须真的装机跑过且全部 PASS。
+- "我修过 UT 了，但没跑就交"——必须真的装机跑过且全部 PASS；
+- 因为找不到 `hdc` 就把规则状态写成 SKIP——`hdc` 由 DevEco SDK 的 `toolchains` 提供，正常配过 `framework.config.json > toolchain.devEcoStudio.installPath` 后 PATH 即可命中；如仍找不到，需手工把 `<installPath>/sdk/<api>/toolchains` 加入 PATH。
 
 ### Step 8：Harness 验证门禁
 
