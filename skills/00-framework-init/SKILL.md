@@ -70,7 +70,7 @@
 
 | # | 路径 | 档位分类依据 |
 |---|------|--------------|
-| 1 | `framework.config.json` | 解析成功且 `architecture.outer_layers.length > 0` → POPULATED；`=== 0` → EMPTY；文件不存在 → MISSING |
+| 1 | `framework.config.json` | 解析成功且 `architecture.outer_layers.length > 0` → POPULATED；`=== 0` → EMPTY；文件不存在 → MISSING（**单独再判第 10 项 toolchain 段**） |
 | 2 | 所选 adapter 的 `agent_entry_file.target_path`（`AGENTS.md` 或 `CLAUDE.md`） | 与 `framework/templates/AGENTS.md.template` **按当前 DSL 渲染出的骨架**字节相等 → EMPTY；否则 POPULATED；不存在 → MISSING |
 | 3 | 所选 adapter `templates/` 下每一个会被拷贝的文件（`.claude/**` / `.cursor/**`） | 与源模板字节相等 → EMPTY；否则 POPULATED；不存在 → MISSING（**逐文件**判定，不按目录整体） |
 | 4 | `paths.architecture_md`（默认 `doc/architecture.md`） | 与 `templates/architecture.md.skeleton.md` 渲染后字节相等 → EMPTY；否则 POPULATED |
@@ -79,6 +79,7 @@
 | 7 | `paths.glossary_seed`（默认 `doc/glossary-seed.txt`） | 与 `templates/glossary-seed.skeleton.txt` 字节相等 → EMPTY；否则 POPULATED |
 | 8 | `paths.features_dir`（默认 `doc/features`） | 目录不存在 → MISSING；存在但空目录 / 只含 `.gitkeep` → EMPTY；有任何子目录或文件 → POPULATED |
 | 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用） |
+| 10 | `framework.config.json` 的 `toolchain.devEcoStudio.installPath` | 字段存在且非空字符串且路径在文件系统中存在 → POPULATED；字段缺失 / 空串 / 路径不存在 → MISSING（v2.3 起 `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` 三条 BLOCKER 规则均依赖该字段） |
 
 #### 0.3.2 策略矩阵（**不许偏离**）
 
@@ -93,6 +94,7 @@
 | 7 | `doc/glossary-seed.txt` | 写骨架 | 保留 | **默认跳过**；打印："`doc/glossary-seed.txt` 已被编辑，保留原文。" |
 | 8 | `paths.features_dir` | 创建空目录 + 可选 `.gitkeep` | 保留 | **不进入、不扫描、不比对**；打印："`<features_dir>` 下已有业务 feature 产物，本 Skill 不会触碰其中任何文件。" |
 | 9 | `framework/harness/node_modules` | Step 5.5 执行 `npm install` | 不适用 | Step 5.5 幂等跳过 |
+| 10 | `toolchain.devEcoStudio.installPath` | 走 Step 5.6 探测并写入 | 等同 MISSING | **Step 5.6 跳过**；如需重置请用户手工编辑 `framework.config.json` 后再重跑 |
 
 **共性纪律**：
 
@@ -116,6 +118,7 @@ doc/glossary.yaml                             <档位>       <策略>
 doc/glossary-seed.txt                         <档位>       <策略>
 doc/features/                                 <档位>       <策略>
 framework/harness/node_modules/               <档位>       <策略>
+toolchain.devEcoStudio.installPath            <档位>       <策略>
 ```
 
 **CREATE → UPDATE 强制降级**：
@@ -334,6 +337,101 @@ Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yam
 
 ---
 
+## Step 5.6. DevEco Studio 工具链路径配置（Step 6 前置 + 阶段 3/5 真机闭环前置）
+
+> **背景**：自 framework v2.3 起，编码阶段 (`coding_hvigor_build`) 与业务级 UT 阶段 (`ut_hvigor_build` / `ut_hvigor_test`) 引入了三条 BLOCKER 规则，**强依赖** DevEco Studio 自带的 hvigor / sdk / jbr 工具链。**现代 DevEco Studio (≥ 5.0) 不再在工程根生成 `hvigorw.bat` 包装脚本**，统一从安装目录调用，因此 framework 必须知道 DevEco 装在哪里。
+>
+> 本步骤的目标只有一个：在 `framework.config.json` 写入合法的 `toolchain.devEcoStudio.installPath`，使后续 `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` 不会因"找不到 hvigor"而 BLOCKER FAIL。
+
+### 5.6.1 幂等检测
+
+**按 Step 0.3 第 10 项体检结果执行**：
+
+- `POPULATED`（已有 installPath 且文件系统存在）→ **跳过本节**，直接进入 Step 6。
+- `MISSING` / `EMPTY` → 继续 5.6.2。
+
+### 5.6.2 自动探测候选路径
+
+执行：
+
+```bash
+npx ts-node framework/harness/scripts/detect-deveco.ts --json
+```
+
+`detect-deveco.ts` 会按平台扫描常见安装位置（Windows：`D:/Program Files/Huawei/DevEco Studio` 等 7 个；macOS：`/Applications/DevEco-Studio.app/Contents` 等；Linux：`/opt/deveco-studio` 等），对每个候选验证 `tools/hvigor/bin/hvigorw[.bat]` / `sdk/` / `jbr/bin/java[.exe]` 三个关键子目录是否齐全。
+
+输出 JSON 形态：
+
+```json
+{
+  "recommended": {
+    "status": "ok",
+    "source": "scan",
+    "installPath": "D:/Program Files/Huawei/DevEco Studio",
+    "hvigorBin": "...hvigorw.bat",
+    "sdkHome": "...sdk",
+    "jbrHome": "...jbr",
+    "missing": []
+  },
+  "candidates": [ ... ]
+}
+```
+
+### 5.6.3 用户确认（**BLOCKER**）
+
+按探测结果分三种情况，**严禁未经用户显式回复就落盘 `installPath`**（与 Step 0.2.5 / Step 3.x 同等纪律）：
+
+1. **recommended.status === 'ok'**：
+   把 `recommended.installPath` 作为**推荐值**展示给用户，并提示一句：
+   > 已探测到 DevEco Studio 在 `<path>`，hvigor / sdk / jbr 子目录齐全。是否使用此路径？(y / 自定义路径 / 跳过)
+   - 用户回 `y` → 写入 `framework.config.json > toolchain.devEcoStudio.installPath = <path>`。
+   - 用户回**自定义路径字符串** → 用 `npx ts-node framework/harness/scripts/detect-deveco.ts --path "<user-path>" --json` 验证，命中 `status === 'ok'` 才写入；`incomplete` / `not_found` 把 `missing[]` 列给用户重选。
+   - 用户回 `跳过` → 不写入；进入 Step 5.6.4 警示。
+
+2. **recommended 不存在 / status !== 'ok'**：
+   把所有 `candidates` 的 `[status] installPath` 列给用户参考，提示：
+   > 未在常见路径找到完整的 DevEco Studio 安装。请提供 installPath（DevEco Studio 安装根目录，下面应当能看到 `tools/hvigor` / `sdk` / `jbr` 三个子目录），或回复 `跳过`。
+   收到自定义路径后走第 1 种的"自定义路径"分支验证。
+
+3. **不允许 AI 替用户臆测**：即便 IDE 环境变量里有 `DEVECO_STUDIO_HOME` 之类痕迹也只能作为**推荐值**亮给用户，不得直接当作用户决定。这与 Step 0.2.5 选定 `agent_adapter` 的纪律对称。
+
+### 5.6.4 用户选择"跳过"时的警示
+
+若用户明确不想配置（多见于：仅做 PRD/design/glossary 阶段，不准备真机跑 UT），**允许跳过**，但必须打印以下警示到 Step 7 收尾的"被跳过项汇报"中：
+
+```text
+toolchain.devEcoStudio.installPath（用户跳过，未配置）
+  影响：以下三条 v2.3 BLOCKER 规则将无法通过：
+    - coding_hvigor_build（编码阶段必跑 hvigor assembleApp）
+    - ut_hvigor_build    （UT 阶段必跑 hvigor genOnDeviceTestHap）
+    - ut_hvigor_test     （UT 阶段必跑 hdc install + aa test，需要 DevEco SDK 提供 hdc）
+  跑这些阶段前请手工编辑 framework.config.json 补齐 toolchain.devEcoStudio.installPath。
+```
+
+### 5.6.5 写入 `framework.config.json` 的 `toolchain` 段
+
+最终落盘形态（与 [framework/harness/config.ts](../../harness/config.ts) `ToolchainConfig` 对齐）：
+
+```json
+{
+  "toolchain": {
+    "devEcoStudio": {
+      "installPath": "D:/Program Files/Huawei/DevEco Studio",
+      "hvigorBin": ""
+    }
+  }
+}
+```
+
+字段说明：
+
+- `installPath`（必填）：DevEco Studio 安装根目录。`hvigor-runner.ts` 会从这里派生 hvigor 路径、`DEVECO_SDK_HOME`、`JAVA_HOME`、JBR `bin` 加 PATH。
+- `hvigorBin`（可选）：显式指定 hvigor 可执行文件路径。仅当 DevEco 内部目录结构异于约定（`<installPath>/tools/hvigor/bin/hvigorw[.bat]`）时使用；空串视为不指定。
+
+> 路径分隔符：写入时**统一用 POSIX 正斜杠 `/`**，跨平台 + json 可读。`hvigor-runner.ts` 内部已处理 Windows 反斜杠/带空格路径的 quoting。
+
+---
+
 ## Step 6. Harness 验证（初始化完成门禁）
 
 **前置**：Step 5.5 已成功完成（`framework/harness/node_modules/` 存在）。
@@ -396,6 +494,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 - **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。
 - CREATE 模式体检命中 POPULATED 而用户未同意强制降级为 UPDATE → 终止本次 `/framework-init`。
 - Step 5.5 的 `npm install` 失败 → **不得**跳过直接跑 Step 6；**不得**擅自改 registry 或 `.npmrc` 绕过；按 5.5.3 三点让用户排查后重试。
+- **未经用户显式确认 `toolchain.devEcoStudio.installPath` 就写入 `framework.config.json`** → 严禁；`detect-deveco.ts` 探测出的 `recommended.installPath` 只能作为**推荐值**，必须按 Step 5.6.3 拿到用户 `y` 或自定义路径回复后才能落盘；用户回 `跳过` 视为显式拒绝，不写入但必须按 5.6.4 列入 Step 7 跳过项汇报。
 
 ---
 
@@ -407,6 +506,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 | generic / claude / cursor | [generic](../../agents/generic)、[claude](../../agents/claude)、[cursor](../../agents/cursor) |
 | 共享 AGENTS 模板 | [framework/templates/AGENTS.md.template](../../templates/AGENTS.md.template) |
 | Config 与 DSL 校验 | [framework/harness/config.ts](../../harness/config.ts) |
+| DevEco Studio 路径探测 | [framework/harness/scripts/detect-deveco.ts](../../harness/scripts/detect-deveco.ts) |
 | 扫描 prompt | [prompts/scan-project.md](prompts/scan-project.md) |
 | 预设与问卷 | [prompts/architecture-presets.md](prompts/architecture-presets.md)、[templates/custom-architecture-questionnaire.md](templates/custom-architecture-questionnaire.md) |
 
