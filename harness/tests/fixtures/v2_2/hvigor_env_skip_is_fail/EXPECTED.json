@@ -1,0 +1,15 @@
+{
+  "rules": [
+    {
+      "id": "ut_hvigor_build",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "HARNESS_SKIP_HVIGOR"
+    },
+    {
+      "id": "ut_hvigor_test",
+      "status": "FAIL",
+      "severity": "BLOCKER"
+    }
+  ]
+}

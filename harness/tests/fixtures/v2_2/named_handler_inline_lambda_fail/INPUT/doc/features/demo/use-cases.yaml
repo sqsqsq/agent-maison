@@ -1,0 +1,19 @@
+version: 2.0
+feature: demo
+
+use_cases:
+  - id: "demo_flow"
+    description: "v2.1 硬约束：calls 必须指向命名入口；如源码里只有 inline lambda，应 BLOCKER FAIL"
+    coordinator: "DemoFlow"
+    coordinator_file: "02-Feature/Demo/src/main/ets/domain/flow/DemoFlow.ets"
+    ui_bindings:
+      - ui: "DemoEntryPage"
+        role: "entry"
+        subscribes: []
+        user_actions:
+          - trigger: "用户点击：handler 只存在于 inline lambda 内，无命名入口"
+            calls: "flow.handleClickInlineOnly"
+    data_boundaries: []
+    state_model:
+      phases: [Idle, Done]
+    branches: []

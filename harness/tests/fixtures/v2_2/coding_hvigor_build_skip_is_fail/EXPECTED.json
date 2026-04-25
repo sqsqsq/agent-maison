@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "coding_hvigor_build",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "HARNESS_SKIP_HVIGOR"
+    }
+  ]
+}

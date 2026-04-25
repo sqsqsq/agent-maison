@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "ut_tsc_compiles",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "TS"
+    }
+  ]
+}

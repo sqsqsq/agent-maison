@@ -1,0 +1,19 @@
+version: 2.0
+feature: demo
+
+use_cases:
+  - id: "demo_flow"
+    description: "反向：源码里只有**注释**内写了 `function handleClickCommentOnly`，真正实现缺失 → FAIL"
+    coordinator: "DemoFlow"
+    coordinator_file: "02-Feature/Demo/src/main/ets/domain/flow/DemoFlow.ets"
+    ui_bindings:
+      - ui: "DemoEntryPage"
+        role: "entry"
+        subscribes: []
+        user_actions:
+          - trigger: "用户点击"
+            calls: "flow.handleClickCommentOnly"
+    data_boundaries: []
+    state_model:
+      phases: [Idle, Done]
+    branches: []

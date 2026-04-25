@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "ut_no_src_mutation",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "DemoFlow.ets"
+    }
+  ]
+}

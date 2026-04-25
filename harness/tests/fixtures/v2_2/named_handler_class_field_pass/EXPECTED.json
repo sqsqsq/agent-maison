@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "named_business_handler",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    }
+  ]
+}

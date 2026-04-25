@@ -1,0 +1,25 @@
+version: 2.0
+feature: demo
+
+use_cases:
+  - id: "demo_flow"
+    description: "v2.2 named_business_handler 放宽：类字段函数 / const 赋值函数应被识别为合法命名入口"
+    coordinator: "DemoFlow"
+    coordinator_file: "02-Feature/Demo/src/main/ets/domain/flow/DemoFlow.ets"
+    ui_bindings:
+      - ui: "DemoEntryPage"
+        role: "entry"
+        subscribes: []
+        user_actions:
+          - trigger: "用户点击：触发 ArkTS 类字段箭头函数"
+            calls: "flow.handleClickArrow"
+          - trigger: "用户点击：触发带类型注解的类字段函数"
+            calls: "flow.handleClickWithType"
+          - trigger: "用户点击：触发 const 赋值的箭头函数"
+            calls: "flow.handleClickConst"
+          - trigger: "用户点击：触发传统 method 形式（基线对照）"
+            calls: "flow.handleClickMethod"
+    data_boundaries: []
+    state_model:
+      phases: [Idle, Done]
+    branches: []

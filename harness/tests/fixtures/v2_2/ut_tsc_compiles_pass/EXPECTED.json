@@ -1,0 +1,5 @@
+{
+  "rules": [
+    { "id": "ut_tsc_compiles", "status": "PASS", "severity": "BLOCKER" }
+  ]
+}

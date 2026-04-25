@@ -1,0 +1,136 @@
+# Framework Harness Regression Tests
+
+> 验证 framework 自身 harness 规则的回归测试套件。**不在宿主 app 落地，仅服务于 framework 维护者**。
+
+## 设计原则
+
+1. **跑的是 framework 自己**：每个 fixture 是一个最小化的"虚构工程"，被拷贝到 `os.tmpdir()`，由当前仓库的 `framework/harness/scripts/check-*.ts` 直接调用。
+2. **fixture 不带 framework**：通过 `resolvePaths(projectRoot, frameworkRoot)` 把 fixture 的 projectRoot 与真实 frameworkRoot 解耦——fixture 只装 feature 资产 + 业务源码骨架。
+3. **断言粒度**：只断言期望条目；不在 EXPECTED.json 中提及的规则不强制——避免把无关规则的状态绑定到 fixture。
+4. **跳过 Step 4/5**：不生成 AI prompt / merged report，只校验 Step 3 的 `CheckResult[]`。
+5. **跨平台**：`spawnSync('git', ...)` 不走 shell；fixture 运行时自动 `git init + commit baseline`，让 `ut_no_src_mutation` 等依赖 git 的规则可用。
+
+## 用法
+
+```bash
+# 跑全部 fixture
+npx ts-node framework/harness/tests/run-tests.ts
+
+# 只跑某子集
+npx ts-node framework/harness/tests/run-tests.ts --filter v2_2/ut_tsc
+
+# 调试：保留 fixture tmpdir（默认运行后清理）
+KEEP_TMPDIR=1 npx ts-node framework/harness/tests/run-tests.ts
+```
+
+退出码：0 全部通过；1 任一 fixture 断言失败；2 runner 自身崩栈。
+
+## 目录结构
+
+```
+tests/
+├── README.md                ← 本文件
+├── run-tests.ts             ← 入口
+├── utils/
+│   └── fixture-runner.ts    ← 拷贝 fixture / 跑 checker / 断言
+└── fixtures/
+    └── v2_2/                ← 按 framework 版本分组
+        ├── ut_tsc_compiles_pass/
+        │   ├── INPUT/                              ← 拷贝到 tmpdir 作为 projectRoot；git add + commit 作为 baseline
+        │   │   ├── doc/features/demo/...
+        │   │   └── 02-Feature/Demo/...
+        │   ├── AFTER_BASELINE/   （可选）          ← baseline commit **之后**再 overlay（不 commit）
+        │   ├── REPORTS/           （可选）          ← 隔离的 reports 根，经 HARNESS_REPORTS_ROOT_OVERRIDE 注入，
+        │   │   └── <feature>/<tag>/gap-notes.md      供 gap-notes.md / trace.json 场景使用
+        │   ├── CMD.json                            ← { phase, feature, env? }
+        │   └── EXPECTED.json                       ← 期望规则状态
+        ├── ut_tsc_compiles_fail/
+        └── named_handler_class_field_pass/
+```
+
+## 写新 fixture
+
+最小三件套：
+
+### `INPUT/`
+被拷贝到 tmpdir 作为 projectRoot 的最小工程骨架。一般至少包含：
+- `doc/features/<feature>/acceptance.yaml`（可空数组，但文件必须在）
+- 你要触发的规则所需的源码 / yaml
+
+如果你的规则需要 `framework.config.json`（自定义架构 DSL），把它放到 `INPUT/framework.config.json`。否则走 `LEGACY_DEFAULT_DSL`。
+
+### `CMD.json`
+```json
+{
+  "phase": "ut",
+  "feature": "demo",
+  "env": {
+    "HARNESS_SKIP_HVIGOR": "1",
+    "HARNESS_SKIP_HVIGOR_TEST": "1"
+  }
+}
+```
+
+`env` 可选，会在跑 checker 期间临时注入到 `process.env`。
+
+### `EXPECTED.json`
+```json
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_tsc_compiles",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "TS2322"
+    },
+    {
+      "id": "named_business_handler",
+      "must_be_absent": true
+    }
+  ]
+}
+```
+
+字段语义：
+- `id` — 必填；规则 id（与 `check-*.ts` 中 `CheckResult.id` 对应）
+- `status` — 期望 `PASS / FAIL / WARN / SKIP`
+- `severity` — 期望严重度
+- `details_includes` — `details` 字段必须包含的子串
+- `must_be_absent` — 该规则**不应**出现在 result[]（用于反向断言"该规则未触发"）
+- `verdict`（顶层） — 整体 verdict（任一 BLOCKER FAIL → FAIL，否则 PASS）
+
+## 当前 fixture 一览
+
+| Fixture | 验证 | 期望 |
+|---------|------|------|
+| `v2_2/ut_tsc_compiles_pass` | 干净 UT 文件 → tsc 静态扫描 | `ut_tsc_compiles` PASS/BLOCKER |
+| `v2_2/ut_tsc_compiles_fail` | UT 含 `const x: number = "abc"` | `ut_tsc_compiles` FAIL/BLOCKER，details 含 `TS` |
+| `v2_2/named_handler_class_field_pass` | use-cases 引用类字段函数 / 顶层 const 箭头 / 传统 method | `named_business_handler` PASS/BLOCKER |
+| `v2_2/named_handler_inline_lambda_fail` | calls 指向纯 inline lambda（无命名入口） | `named_business_handler` FAIL/BLOCKER |
+| `v2_2/named_handler_comment_only_fail` | 注释里写了 `function handleFoo`，真实实现缺失 | `named_business_handler` FAIL/BLOCKER（回归：scanner 必须剥注释） |
+| `v2_2/hvigor_env_skip_is_fail` | UT 阶段设 `HARNESS_SKIP_HVIGOR=1` / `HARNESS_SKIP_HVIGOR_TEST=1` | `ut_hvigor_build` / `ut_hvigor_test` 均 FAIL/BLOCKER |
+| `v2_2/coding_hvigor_build_skip_is_fail` | coding 阶段设 `HARNESS_SKIP_HVIGOR=1` | `coding_hvigor_build` FAIL/BLOCKER |
+| `v2_2/ut_no_src_mutation_fail` | baseline 后改 `02-Feature/**/src/main/**`，未登记 gap-notes | `ut_no_src_mutation` FAIL/BLOCKER |
+| `v2_2/ut_no_src_mutation_approved_pass` | baseline 后改业务源码，并在 gap-notes 登记该文件 | `ut_no_src_mutation` PASS/BLOCKER |
+
+共 9 个 fixture。运行耗时约 13-15s（Windows，纯逻辑路径，跳过真实 hvigor）。
+
+## 反向注入覆盖映射
+
+| 反向注入目标 | 对应 fixture |
+|------------|-------------|
+| UT 编译期类型错 | `ut_tsc_compiles_fail` |
+| 放宽 named_handler 后新识别形态 | `named_handler_class_field_pass` |
+| 放宽 named_handler 后**仍应**拒绝的 inline lambda | `named_handler_inline_lambda_fail` |
+| 注释里伪造的命名入口（scanner 剥注释缺陷回归） | `named_handler_comment_only_fail` |
+| 用环境变量软跳 hvigor（UT 阶段） | `hvigor_env_skip_is_fail` |
+| 用环境变量软跳 hvigor（coding 阶段） | `coding_hvigor_build_skip_is_fail` |
+| Skill 5 阶段擅自改业务源码 | `ut_no_src_mutation_fail` |
+| 登记 gap-notes 后允许改业务源码 | `ut_no_src_mutation_approved_pass` |
+
+## 规则
+
+1. **新增 BLOCKER 规则前**：先写正反两个 fixture，跑通后再合入 `check-*.ts`
+2. **修改既有规则**：先看 fixture 是否仍然通过；如果断言要改，连带改 `EXPECTED.json` 并在 PR 描述里说明语义变化
+3. **不要让 fixture 依赖 hvigor / hdc / 模拟器**：那部分是宿主 app 的契约测试范畴，不在本套件

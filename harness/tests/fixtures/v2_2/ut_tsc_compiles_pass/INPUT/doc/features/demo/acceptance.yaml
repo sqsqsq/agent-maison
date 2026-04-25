@@ -1,0 +1,3 @@
+# 最小可加载 acceptance.yaml；fixture 的目的是验证 ut_tsc_compiles，不需要真实 AC。
+feature: demo
+acceptance_criteria: []

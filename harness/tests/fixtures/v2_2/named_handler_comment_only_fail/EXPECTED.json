@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "named_business_handler",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "handleClickCommentOnly"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "ut_no_src_mutation",
+      "status": "PASS",
+      "severity": "BLOCKER",
+      "details_includes": "均已在 approved_src_mutations"
+    }
+  ]
+}
