@@ -331,9 +331,42 @@ Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yam
 2. 是否处于代理后？`HTTP_PROXY` / `HTTPS_PROXY` 环境变量是否设置正确？
 3. `node --version` ≥ 18？`npm --version` 与 `node` 版本匹配？
 
-用户修好环境后重跑 5.5.2；安装成功前**不要**进入 Step 6。
+用户修好环境后重跑 5.5.2；安装成功前**不要**进入 5.5.4 / Step 5.6 / Step 6。
 
 > 关于鸿蒙侧依赖：`ohpm install`（`oh_modules/`）是实例工程自身 ArkTS 代码的依赖，由 DevEco / Skill 3 编码阶段负责触发，**与本 Skill 无关**，这里不代管。
+
+### 5.5.4 自检：跑 framework 自带回归测试套件（Step 5.6 / Step 6 前置 BLOCKER）
+
+> **动机**：vendor 模式下，用户把 `framework/` 整目录从源仓库同步到目标工程时**可能漏文件**（rsync exclude 配错、zip 解包不完整、git 浅克隆等）。如果直接进 Step 6（catalog/glossary 校验）只能间接发现 framework 损坏（表现为 `Cannot find module` 或某条规则莫名 throw），定位非常慢。本节用 framework 自带的 `tests/` 套件做**整体性自检**，把"framework 文件健康度"和"业务工程配置健康度"解耦：前者由本节兜底，后者由 Step 6 兜底。
+
+#### 5.5.4.1 执行
+
+`npm install` 成功后，**强制**在 `<repo-root>/framework/harness/` 执行：
+
+```bash
+cd framework/harness && npm test
+```
+
+期望：unit + fixture 全绿（v2.3 起为 16 unit + 9 fixture = **25 PASS / 0 FAIL**，整体耗时约 25s；具体数字以 `framework/harness/tests/README.md` 为准）。
+
+> 该套件**不依赖**真机 / DevEco / hvigor / hdc，纯逻辑 fixture + 纯函数 unit，新工程未配 `toolchain.devEcoStudio.installPath` 也能立即跑通。所以**不允许**以"还没配工具链"为理由跳过本节。
+
+#### 5.5.4.2 失败处理
+
+若 `npm test` 任一用例失败：**停下**，按以下顺序排查；**严禁**用 `--filter` 缩小集合后报 PASS、**严禁**在用户没看完失败列表前继续 Step 5.6：
+
+1. **fixture 失败**且失败信息含 `ENOENT` / `找不到文件` / `Cannot find module` → 大概率是 framework vendor 不完整。比对源仓库的 `framework/` 全树（重点 `harness/scripts/` / `harness/tests/fixtures/` / `templates/` / `agents/`），重新同步缺失文件后重跑 5.5.4.1。
+2. **unit 失败**（`hdc-runner.unit.test`） → 通常意味着 framework 维护者升级了 `hdc-runner.ts` 但忘改 unit 期望值，**这是 framework 自身 bug**。把失败用例名 + 错误信息原文反馈给 framework 维护者；本次 `/framework-init` **暂停**，待 framework 修复后重跑。
+3. **node 版本不对** / **ts-node 报语法错** → `node --version` 必须 ≥ 18；若版本对但 ts-node 报 "Unexpected token"，检查 `framework/harness/node_modules/typescript/package.json` 中的 `version` 是否 ≥ 5.0。
+4. **git fixture 失败**（fixture runner 报 `not a git repository` / `git: command not found`） → 检查 `git --version`、PATH 是否包含 git；fixture runner 内部会做 `git init + commit baseline`，本应不依赖目标工程是不是 git 仓库。
+
+修复后**重跑** `npm test` 直至全绿，再进入 Step 5.6。
+
+#### 5.5.4.3 严禁的偷懒行为
+
+- 把 5.5.4.1 的 FAIL 解释为"环境问题"而跳过——framework 自带套件**故意不依赖任何外部工具链**，没有合理的"环境失败"。
+- 用 `npm test -- --filter <某子集>` 把失败用例排除在外，凑出 PASS 上交。
+- 把"我装好了 node_modules"等同于"自检通过"——Step 0.3 第 9 项体检只验证依赖是否在，**不验证依赖能否正确执行**，这一节才是后者。
 
 ---
 
@@ -494,6 +527,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 - **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。
 - CREATE 模式体检命中 POPULATED 而用户未同意强制降级为 UPDATE → 终止本次 `/framework-init`。
 - Step 5.5 的 `npm install` 失败 → **不得**跳过直接跑 Step 6；**不得**擅自改 registry 或 `.npmrc` 绕过；按 5.5.3 三点让用户排查后重试。
+- **Step 5.5.4 的 `npm test` 自检失败而进入 Step 5.6 / Step 6** → 严禁；**不得**用 `--filter` 缩小集合凑 PASS、**不得**把失败解释为"环境问题"绕过（framework 自带套件不依赖任何外部工具链）。失败必须按 5.5.4.2 排查清单一项一项过，全绿后才能继续。
 - **未经用户显式确认 `toolchain.devEcoStudio.installPath` 就写入 `framework.config.json`** → 严禁；`detect-deveco.ts` 探测出的 `recommended.installPath` 只能作为**推荐值**，必须按 Step 5.6.3 拿到用户 `y` 或自定义路径回复后才能落盘；用户回 `跳过` 视为显式拒绝，不写入但必须按 5.6.4 列入 Step 7 跳过项汇报。
 
 ---

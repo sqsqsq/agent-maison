@@ -16,23 +16,90 @@
 
 ---
 
-## 子模块（submodule）更新
+## 把 framework 部署到目标工程：两种模式
 
-仅更新 framework 代码而不改实例配置时：
+### 模式 A：Vendor（直接拷源码，无独立 git 仓库）
+
+适用场景：framework 不作为独立 git 仓库管理，作为**目标工程仓库的一部分**跟随提交；典型如「壳子工程训练 framework，定期同步到一个或多个真实业务工程」。
+
+> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、`npm test` 自检、配 `framework.config.json`、配 `toolchain.devEcoStudio.installPath`、harness 验收）**全部由 Skill 00 内部完成**。绝不要让用户在 vendor 之后再手工跑额外命令。
+
+#### 首次部署 / 升级（同一组命令）
+
+在**当前 framework 源仓库**（即维护 framework 的工程）根目录执行：
+
+```bash
+# Linux / macOS / WSL
+rsync -a --delete \
+  --exclude 'node_modules' \
+  --exclude 'dist' \
+  --exclude 'reports/*' \
+  --exclude 'trace' \
+  framework/ <target-repo>/framework/
+```
+
+```powershell
+# Windows PowerShell
+robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports trace
+```
+
+排除项说明（这些都是运行产物，已被 `.gitignore`，不是 framework 本体）：
+- `node_modules` / `dist` — npm 安装结果与 ts 编译产物，目标工程会自己重建
+- `reports/*` — harness 跑出的报告（保留 `reports/.gitkeep`）
+- `trace` — 调试 trace 目录
+
+#### 同步完成后，在目标工程根跑 `/framework-init`
+
+剩下所有动作**全部**由 Skill 00 闭环：
+
+| Skill 00 子步 | 做的事 |
+|---|---|
+| Step 0.3 | 体检 10 项产物 + 决议 CREATE / UPDATE 模式 |
+| Step 0.2.5 | 显式选定 `agent_adapter`（generic / claude / cursor） |
+| Step 1~4 | 元数据 + 架构 DSL + adapter 入口文件 |
+| Step 5.1~5.4 | 写 `framework.config.json` + `doc/architecture.md` 等骨架 |
+| **Step 5.5** | `cd framework/harness && npm install`（装 harness 依赖） |
+| **Step 5.5.4** | `npm test` 自检（v2.3 起加入）—— 验证 framework vendor 完整且行为正常，**任何失败都阻断后续步骤** |
+| **Step 5.6** | 调 `detect-deveco.ts` 自动探测 + 用户确认，写入 `toolchain.devEcoStudio.installPath`（v2.3 起加入） |
+| Step 6 | 跑 `harness-runner.ts --phase catalog` / `glossary` 校验骨架 |
+| Step 7 | 收尾汇报跳过项与下一步指引 |
+
+**严禁**：
+- 在 vendor 之后让用户手工跑 `npm install` / `npm test` / `detect-deveco.ts` —— 这些都由 `/framework-init` 触发。
+- 把 Step 5.5.4 自检失败解释为"环境问题"跳过 —— framework 自带套件不依赖外部工具链，失败一定是 vendor 漏文件或 framework 自身 bug。
+- 在初始化途中绕过 Skill 直接编辑 `framework.config.json` 或拷贝 adapter 模板 —— 体检 + diff 流程的存在就是为了防止覆盖既有资产。
+
+### 模式 B：Submodule（framework 独立 git 仓库）
+
+适用场景：framework 已抽取为独立 repo，被 3+ 个工程通过 `git submodule` 共用；维护者希望"一处发布、多处升级"。
+
+#### 首次部署
+
+```bash
+# 在目标工程根执行
+git submodule add <framework-repo-url> framework
+git submodule update --init --recursive
+# 之后跑 /framework-init，与 Vendor 模式同步完成后的流程一致
+```
+
+#### 升级
 
 ```bash
 git submodule update --remote framework
 # 或进入 framework 目录按你们托管方式 pull / checkout 指定 tag
 ```
 
-子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明。
+子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明，并触发 Step 5.5.4 自检确认 submodule 拉得完整。
 
 ---
 
-## 新建实例 vs 老仓库迁入
+## 模式选择建议
 
-- **新工程**：`git submodule add … framework` → `/framework-init`（CREATE）。
-- **已有文档与代码**：同样先保证 `framework/` 存在，再 `/framework-init`；若已有 `doc/module-catalog.yaml` 等，在对话中与 Skill 对齐 **paths**，避免配置指向错误目录。
+| 场景 | 推荐模式 |
+|---|---|
+| 单壳子工程训练 framework + 1~2 个真实业务工程 | **Vendor**（投入小，演化期适用） |
+| framework 稳定，3+ 真实工程共用 | **Submodule**（一处升级，多处生效） |
+| framework 还在剧烈演化（如 v2.x 这个阶段） | **Vendor**（每次同步前能 diff，便于回滚单次同步） |
 
 ---
 
