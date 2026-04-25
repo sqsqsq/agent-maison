@@ -850,8 +850,9 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
   if (first.toolMissing) {
-    lines.push('原因：未找到 hvigorw / hvigor CLI。');
-    lines.push('修复：在 DevEco Studio 打开项目生成 hvigorw.bat，或全局安装 hvigor CLI；本规则不允许 SKIP。');
+    lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
+    first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
+    lines.push('本规则不允许 SKIP —— 真实编译是出口条件。');
   } else if (first.skippedByEnv) {
     lines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置，显式跳过真实编译不被允许作为出口。');
   } else {
@@ -998,7 +999,8 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
   if (first.toolMissing) {
-    lines.push('原因：未找到 hvigorw / hvigor CLI。');
+    lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
+    first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
   } else if (!first.executed) {
     lines.push(`原因：hvigor 未执行，日志：${first.logExcerpt}`);
   } else if (first.exitCode !== 0 && !first.testResult) {

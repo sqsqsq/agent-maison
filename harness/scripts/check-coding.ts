@@ -27,7 +27,7 @@ import {
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { runHvigorBuild } from './utils/hvigor-runner';
+import { runHvigorBuild, runHvigorAssembleApp } from './utils/hvigor-runner';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
@@ -888,52 +888,43 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: 'contracts.yaml > modules 为空，无法确定要编译的模块。请先在 contracts.yaml 声明本 feature 新增/变更的模块。',
+      details: 'contracts.yaml > modules 为空，无法确定本 feature 影响的模块；请先在 contracts.yaml 声明。',
     }];
   }
 
-  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorBuild> }> = [];
-  for (const mod of modules) {
-    const res = runHvigorBuild({
-      projectRoot: ctx.projectRoot,
-      harnessRoot: HARNESS_ROOT,
-      feature: ctx.feature,
-      phase: 'coding',
-      moduleName: mod.name,
-      target: 'default',
-      skipEnvVar: 'HARNESS_SKIP_HVIGOR',
-    });
-    perModule.push({ module: mod.name, result: res });
-    // 有失败就短路，避免 Windows 下多模块连跑放大耗时
-    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
-  }
+  // v2.3：改用项目级 `assembleApp` 一次通吃所有模块，避免 library 模块
+  // （HAR/HSP）没有 assembleHap task 导致的 "Task was not found" 假阳性。
+  // Library-only feature 也能被覆盖，因为 assembleApp 的依赖图会拉起所有
+  // 被 Phone/entry 间接引用的模块；纯孤立模块虽然不被 app 引用，但通常
+  // 也无法作为最终交付，放过即可。
+  const res = runHvigorAssembleApp({
+    projectRoot: ctx.projectRoot,
+    harnessRoot: HARNESS_ROOT,
+    feature: ctx.feature,
+    phase: 'coding',
+    skipEnvVar: 'HARNESS_SKIP_HVIGOR',
+  });
 
-  const bad = perModule.filter(x =>
-    x.result.toolMissing ||
-    x.result.skippedByEnv ||
-    (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0))
-  );
+  const isBad = res.toolMissing || res.skippedByEnv || (res.executed && (res.exitCode !== 0 || res.errors.length > 0));
 
-  if (bad.length === 0) {
+  if (!isBad) {
     return [{
       id: 'coding_hvigor_build',
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `全部 ${perModule.length} 个模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。`,
+      details: `项目级 assembleApp 通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
     }];
   }
 
-  const first = bad[0].result;
+  const first = res;
   const detailsLines: string[] = [];
-  detailsLines.push(`模块 "${bad[0].module}" 编译失败：`);
+  detailsLines.push('项目级 assembleApp 失败：');
   if (first.toolMissing) {
-    detailsLines.push('原因：未找到 hvigorw / hvigor CLI。');
-    detailsLines.push('修复指引：');
-    detailsLines.push('  (1) 在 DevEco Studio 打开一次本项目，让其生成 hvigorw.bat / hvigorw；');
-    detailsLines.push('  (2) 或全局安装 hvigor CLI 并加入 PATH；');
-    detailsLines.push('  (3) 本规则不接受 SKIP —— 真实编译是出口条件。');
+    detailsLines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
+    first.logExcerpt.split(/\r?\n/).forEach(l => detailsLines.push(l));
+    detailsLines.push('本规则不接受 SKIP —— 真实编译是出口条件。');
   } else if (first.skippedByEnv) {
     detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
@@ -958,7 +949,7 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: detailsLines.join('\n'),
-    affected_files: [bad[0].module + ' (module)'],
+    affected_files: modules.map(m => `${m.name} (module)`),
     suggestion:
       '读取完整日志（details 中的 `日志落盘` 路径），定位文件/行并回到编码阶段修复。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',

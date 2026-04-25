@@ -78,6 +78,35 @@ export interface ArchitectureDsl {
   cross_module_exports_file: string;
 }
 
+/**
+ * 工具链配置（阶段 2.3：DevEco Studio 路径可配置化）
+ *
+ * 场景：现代 DevEco Studio 已把 hvigor 完全内置在 IDE 安装路径下，不再向
+ * 项目根生成 `hvigorw.bat` / `hvigorw` wrapper。coding_hvigor_build /
+ * ut_hvigor_build / ut_hvigor_test 三条 BLOCKER 规则需要真实调用 hvigor，
+ * 因此项目必须通过此处声明 DevEco 的安装路径（或显式 hvigor 可执行文件）。
+ *
+ * 查找顺序（实现在 scripts/utils/hvigor-runner.ts）：
+ *   ① toolchain.devEcoStudio.hvigorBin（显式覆盖，绝对路径）
+ *   ② toolchain.devEcoStudio.installPath → 推导 <installPath>/tools/hvigor/bin/hvigorw{.bat}
+ *   ③ 项目根 hvigorw.bat / hvigorw（向后兼容 Gradle-wrapper 风格工程）
+ *   ④ 系统 PATH
+ *   ⑤ 都命中不到 → toolMissing=true，规则 FAIL，错误消息指向本字段。
+ *
+ * 本节不做实际路径存在性校验（避免 harness 启动强依赖 IDE 安装），
+ * 只做"字段格式 / 必填"校验；存在性由 hvigor-runner 在真实执行时报告。
+ */
+export interface DevEcoStudioConfig {
+  /** DevEco Studio 安装根目录（绝对路径）。Windows 可用正斜杠或反斜杠。 */
+  installPath?: string;
+  /** 显式指定 hvigor 可执行文件（绝对路径）；为空时从 installPath 推导。 */
+  hvigorBin?: string;
+}
+
+export interface ToolchainConfig {
+  devEcoStudio?: DevEcoStudioConfig;
+}
+
 export interface FrameworkPaths {
   /**
    * 功能级需求目录：每个 feature 一个子目录，扁平归档所有产物
@@ -108,6 +137,12 @@ export interface FrameworkConfig {
   agent_adapter: 'generic' | 'claude' | 'cursor' | string;
   architecture: ArchitectureDsl;
   paths: FrameworkPaths;
+  /**
+   * 工具链配置（v2.3 起）。
+   * 可选字段：老工程未声明时保持 undefined，不影响现有 check-*.ts 行为；
+   * 新工程或从 IDE 迁移来的工程应在 framework-init 时填写。
+   */
+  toolchain?: ToolchainConfig;
 }
 
 // --------------------------------------------------------------------------
@@ -274,6 +309,22 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     agent_adapter: raw.agent_adapter ?? fallback.agent_adapter,
     architecture: raw.architecture ? normalizeArchitecture(raw.architecture) : fallback.architecture,
     paths: { ...fallback.paths, ...(raw.paths ?? {}) },
+    toolchain: normalizeToolchain(raw.toolchain),
+  };
+}
+
+function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const deveco = raw.devEcoStudio;
+  if (!deveco || typeof deveco !== 'object') return undefined;
+  const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
+  const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
+  if (!installPath && !hvigorBin) return undefined;
+  return {
+    devEcoStudio: {
+      ...(installPath ? { installPath } : {}),
+      ...(hvigorBin ? { hvigorBin } : {}),
+    },
   };
 }
 
@@ -681,6 +732,74 @@ export function relFeatureFile(projectRoot: string, feature: string, fileName: s
 // --------------------------------------------------------------------------
 // 架构 DSL 消费辅助函数（续）
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// 工具链配置消费辅助（v2.3）
+// --------------------------------------------------------------------------
+
+/**
+ * 从 DevEco Studio 安装根目录推导 hvigor wrapper 的绝对路径。
+ *
+ * 约定（基于 DevEco Studio 5.x / 6.x 实际目录结构）：
+ *   {installPath}/tools/hvigor/bin/hvigorw.bat   (Windows)
+ *   {installPath}/tools/hvigor/bin/hvigorw       (macOS / Linux)
+ *
+ * 若 `installPath` 为空/不是字符串则返回 null；不做文件存在性校验
+ * （由调用方真实执行时报告缺失）。
+ */
+export function deriveHvigorBinFromInstallPath(installPath: string | undefined): string | null {
+  if (!installPath || typeof installPath !== 'string') return null;
+  const trimmed = installPath.trim();
+  if (!trimmed) return null;
+  const winBin = path.join(trimmed, 'tools', 'hvigor', 'bin', 'hvigorw.bat');
+  const unixBin = path.join(trimmed, 'tools', 'hvigor', 'bin', 'hvigorw');
+  return process.platform === 'win32' ? winBin : unixBin;
+}
+
+/**
+ * 从 DevEco Studio 安装根目录推导 DEVECO_SDK_HOME 环境变量的值。
+ * hvigor 在命令行模式下必须能找到 SDK，否则报
+ *   `Invalid value of 'DEVECO_SDK_HOME' in the system environment path`。
+ * 约定：{installPath}/sdk（其下含 default/openharmony + default/hms）。
+ */
+export function deriveSdkHomeFromInstallPath(installPath: string | undefined): string | null {
+  if (!installPath || typeof installPath !== 'string') return null;
+  const trimmed = installPath.trim();
+  if (!trimmed) return null;
+  return path.join(trimmed, 'sdk');
+}
+
+/**
+ * 从 DevEco Studio 安装根目录推导 JAVA_HOME。
+ * DevEco 自带 JBR（{installPath}/jbr），签名工具 hap-sign-tool.jar 依赖 java。
+ * 约定：{installPath}/jbr 下必须含 bin/java(.exe)；由调用方校验存在性。
+ */
+export function deriveJbrHomeFromInstallPath(installPath: string | undefined): string | null {
+  if (!installPath || typeof installPath !== 'string') return null;
+  const trimmed = installPath.trim();
+  if (!trimmed) return null;
+  return path.join(trimmed, 'jbr');
+}
+
+/**
+ * 返回已归一化的 DevEco Studio 配置；未声明则返回 undefined。
+ */
+export function loadDevEcoConfig(projectRoot: string): DevEcoStudioConfig | undefined {
+  return loadFrameworkConfig(projectRoot).toolchain?.devEcoStudio;
+}
+
+/**
+ * 按 v2.3 查找顺序解析 hvigor 可执行文件绝对路径的"config 来源"部分：
+ *   ① toolchain.devEcoStudio.hvigorBin（显式）
+ *   ② toolchain.devEcoStudio.installPath → derive
+ * 若两者都未声明，返回 null，由调用方回退到项目根 wrapper / PATH。
+ */
+export function resolveHvigorBinFromConfig(projectRoot: string): string | null {
+  const cfg = loadDevEcoConfig(projectRoot);
+  if (!cfg) return null;
+  if (cfg.hvigorBin) return cfg.hvigorBin;
+  return deriveHvigorBinFromInstallPath(cfg.installPath);
+}
 
 /**
  * 判断在某个 outer layer 内，from 模块能否 import to 模块（同层内）：

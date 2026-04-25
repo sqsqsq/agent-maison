@@ -8,18 +8,30 @@
 //
 // 设计要点：
 //  - 使用 `child_process.spawnSync`，避免 PowerShell 拼接注入问题；
-//  - Windows 优先跑 `hvigorw.bat`，其次 `hvigorw`，再次 `hvigor`（PATH）；
+//  - v2.3 起查找顺序：
+//      ① framework.config.json > toolchain.devEcoStudio.hvigorBin（显式路径）
+//      ② framework.config.json > toolchain.devEcoStudio.installPath → 推导
+//        {installPath}/tools/hvigor/bin/hvigorw{.bat}
+//      ③ 项目根 hvigorw.bat / hvigorw（向后兼容 Gradle-wrapper 风格工程）
+//      ④ 系统 PATH（全局安装的 hvigor / hvigorw）
+//      ⑤ 全部未命中 → toolMissing=true，由调用点翻译为 BLOCKER FAIL；
+//    现代 DevEco Studio 已不再生成项目本地 wrapper，③④ 基本靠不上，
+//    实际落地必走 ①② 路径，必须在 framework.config.json 中声明 DevEco 安装路径。
 //  - 日志按 feature/phase 落盘到 reports 目录（便于后续追溯）；
 //  - **默认启用**真实编译/运行；环境变量 HARNESS_SKIP_HVIGOR[_TEST]=1 为
 //    "逃生阀"，在调用点被转译为 FAIL（不是 SKIP），详见 check-coding.ts /
 //    check-ut.ts 里的规则实现。
-//  - 兜底：若 hvigor 工具不可用（wrapper/PATH 都找不到），返回 toolMissing=true，
-//    由调用点翻译为 BLOCKER FAIL，并输出诊断指引。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, SpawnSyncReturns } from 'child_process';
+import {
+  resolveHvigorBinFromConfig,
+  loadDevEcoConfig,
+  deriveSdkHomeFromInstallPath,
+  deriveJbrHomeFromInstallPath,
+} from '../../config';
 
 export interface HvigorRunResult {
   /** 是否真正执行了 hvigor（false：工具链缺失 / 被 env 跳过） */
@@ -61,21 +73,41 @@ export interface HypiumTestResult {
 
 const MAX_LOG_CHARS = 200_000;
 
-/** 按优先级解析 hvigor 可执行命令：wrapper (bat > sh) → PATH */
-function resolveHvigorCommand(projectRoot: string): { cmd: string; useShell: boolean } | null {
+/**
+ * 按 v2.3 查找顺序解析 hvigor 可执行命令：
+ *   ① framework.config.json > toolchain.devEcoStudio.hvigorBin（显式）
+ *   ② framework.config.json > toolchain.devEcoStudio.installPath → 推导
+ *   ③ 项目根 hvigorw.bat / hvigorw（老工程兼容）
+ *   ④ 系统 PATH
+ * 返回 `source` 便于诊断信息里告诉用户命中的是哪条路径。
+ */
+function resolveHvigorCommand(
+  projectRoot: string,
+): { cmd: string; useShell: boolean; source: 'config_hvigorBin' | 'config_installPath' | 'project_wrapper' | 'path' } | null {
   const isWin = process.platform === 'win32';
-  const candidates = isWin
-    ? ['hvigorw.bat', 'hvigorw']
-    : ['hvigorw', 'hvigorw.bat'];
 
-  for (const name of candidates) {
+  // ① / ②：从 framework.config.json 解析
+  const configBin = safeResolveFromConfig(projectRoot);
+  if (configBin) {
+    if (fs.existsSync(configBin.path)) {
+      return { cmd: configBin.path, useShell: isWin, source: configBin.source };
+    }
+    // 声明了但路径不存在——不静默回退，返回 null 让调用方把错误消息指回 config
+    // （若路径存在才继续；否则停在这里，保持"配置优先、且不骗人"）
+    // 注：为了不破坏老工程（仅设置了 installPath 但路径错了）的回退能力，这里
+    // 仍然允许继续往下走 ③④，但 toolMissing 的消息会提示配置问题。
+  }
+
+  // ③：项目根 wrapper
+  const wrapperNames = isWin ? ['hvigorw.bat', 'hvigorw'] : ['hvigorw', 'hvigorw.bat'];
+  for (const name of wrapperNames) {
     const abs = path.join(projectRoot, name);
     if (fs.existsSync(abs)) {
-      return { cmd: abs, useShell: isWin };
+      return { cmd: abs, useShell: isWin, source: 'project_wrapper' };
     }
   }
 
-  // PATH 兜底：允许全局 hvigor CLI（DevEco / ohpm 安装）
+  // ④ PATH 兜底：允许全局 hvigor CLI（DevEco / ohpm 安装）
   const globalCandidates = isWin
     ? ['hvigorw.bat', 'hvigor.bat', 'hvigorw', 'hvigor']
     : ['hvigorw', 'hvigor'];
@@ -85,11 +117,121 @@ function resolveHvigorCommand(projectRoot: string): { cmd: string; useShell: boo
       shell: false,
     });
     if (probe.status === 0 && probe.stdout && probe.stdout.trim()) {
-      return { cmd: name, useShell: isWin };
+      return { cmd: name, useShell: isWin, source: 'path' };
     }
   }
 
   return null;
+}
+
+/**
+ * 构造传给 hvigor 子进程的 env：
+ *   - 继承当前进程 env；
+ *   - 若用户未显式设置 DEVECO_SDK_HOME，尝试从 installPath 派生补上。
+ *
+ * HarmonyOS hvigor 命令行跑时，若没有 DEVECO_SDK_HOME 会直接报
+ * `Invalid value of 'DEVECO_SDK_HOME' in the system environment path`。
+ * IDE 内部跑时 DevEco 会注入，但 harness 命令行跑不会。
+ */
+function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  let installPath: string | undefined;
+  try {
+    installPath = loadDevEcoConfig(projectRoot)?.installPath;
+  } catch {
+    // 读取 config 失败时保持 env 不变；hvigor 会自己报错，诊断消息已在
+    // buildToolMissingMessage 中给出。
+    return env;
+  }
+
+  if (!env.DEVECO_SDK_HOME) {
+    const sdkHome = deriveSdkHomeFromInstallPath(installPath);
+    if (sdkHome && fs.existsSync(sdkHome)) env.DEVECO_SDK_HOME = sdkHome;
+  }
+
+  // DevEco 自带 JBR；签名阶段 hap-sign-tool.jar 依赖 `java` 可执行。
+  // 若用户 PATH 中没有 java，这里从 installPath 推导 JBR 并注入：
+  //   - 未设 JAVA_HOME 则填上；
+  //   - 把 <jbrHome>/bin 前插到 PATH，保证 `spawn java` 能命中。
+  // 已有 JAVA_HOME / PATH 的用户不会被覆盖，最大兼容。
+  const jbrHome = deriveJbrHomeFromInstallPath(installPath);
+  if (jbrHome) {
+    const javaExe = process.platform === 'win32'
+      ? path.join(jbrHome, 'bin', 'java.exe')
+      : path.join(jbrHome, 'bin', 'java');
+    if (fs.existsSync(javaExe)) {
+      if (!env.JAVA_HOME) env.JAVA_HOME = jbrHome;
+      const jbrBin = path.join(jbrHome, 'bin');
+      const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+      const cur = env[pathKey] ?? env.PATH ?? '';
+      const sep = process.platform === 'win32' ? ';' : ':';
+      if (!cur.split(sep).some(p => path.resolve(p) === path.resolve(jbrBin))) {
+        env[pathKey] = cur ? `${jbrBin}${sep}${cur}` : jbrBin;
+      }
+    }
+  }
+
+  return env;
+}
+
+/**
+ * 构造 toolMissing 诊断消息：区分"从未配置"与"配置了但路径不对"两种情况，
+ * 明确指向 framework.config.json 的字段，帮助用户一次性修对。
+ */
+function buildToolMissingMessage(projectRoot: string): string {
+  const header = '未找到 hvigor 可执行文件。';
+  const cfgPath = 'framework.config.json > toolchain.devEcoStudio';
+  let configStatus: string;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { loadDevEcoConfig } = require('../../config') as typeof import('../../config');
+    const cfg = loadDevEcoConfig(projectRoot);
+    if (!cfg) {
+      configStatus =
+        `[未配置] 请在 ${cfgPath} 声明 installPath（DevEco Studio 安装路径），示例：\n` +
+        '  "toolchain": { "devEcoStudio": { "installPath": "D:/Program Files/Huawei/DevEco Studio" } }';
+    } else if (cfg.hvigorBin) {
+      configStatus =
+        `[已配置但文件不存在] ${cfgPath}.hvigorBin = "${cfg.hvigorBin}"\n` +
+        '  请确认该路径指向真实存在的 hvigorw 可执行文件。';
+    } else if (cfg.installPath) {
+      configStatus =
+        `[已配置但推导路径不存在] ${cfgPath}.installPath = "${cfg.installPath}"\n` +
+        `  期望存在：${cfg.installPath}/tools/hvigor/bin/hvigorw${process.platform === 'win32' ? '.bat' : ''}\n` +
+        '  请确认 DevEco Studio 已正确安装，或改用 hvigorBin 字段显式指定 wrapper 路径。';
+    } else {
+      configStatus = `[配置异常] ${cfgPath} 既未设置 installPath 也未设置 hvigorBin。`;
+    }
+  } catch (err) {
+    configStatus = `[读取配置失败] ${(err as Error).message}`;
+  }
+  const detector =
+    '自动探测：npx ts-node framework/harness/scripts/utils/detect-deveco.ts';
+  return `${header}\n${configStatus}\n${detector}`;
+}
+
+/**
+ * 从 framework.config.json 解析 hvigor 可执行路径。出错时返回 null，
+ * 不抛异常——加载 config 的错误不应阻断 hvigor-runner 的回退链。
+ */
+function safeResolveFromConfig(
+  projectRoot: string,
+): { path: string; source: 'config_hvigorBin' | 'config_installPath' } | null {
+  try {
+    const bin = resolveHvigorBinFromConfig(projectRoot);
+    if (!bin) return null;
+    // 区分来源：若 config 里直接写了 hvigorBin 则是 config_hvigorBin，否则是 installPath 推导
+    // 重新读一次配置看是走了哪条
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { loadDevEcoConfig } = require('../../config') as typeof import('../../config');
+    const cfg = loadDevEcoConfig(projectRoot);
+    const source: 'config_hvigorBin' | 'config_installPath' = cfg?.hvigorBin
+      ? 'config_hvigorBin'
+      : 'config_installPath';
+    return { path: bin, source };
+  } catch {
+    return null;
+  }
 }
 
 function ensureReportDir(harnessRoot: string, feature: string, phase: string): string {
@@ -209,8 +351,14 @@ function parseHypiumOutput(log: string): HypiumTestResult {
 }
 
 export interface HvigorInvokeOpts {
-  /** 项目根（hvigorw 所在目录） */
+  /** 项目根（hvigorw 所在目录、env / config 解析锚点） */
   projectRoot: string;
+  /**
+   * 子进程 cwd；不传则用 projectRoot。
+   * 模块级 task 必须切到模块目录下跑（hvigor `--mode module` 默认从 cwd 推断
+   * 当前模块），否则即使传 qualified task name 也会报 "Task was not found"。
+   */
+  cwd?: string;
   /** harness 根（reports 落盘） */
   harnessRoot: string;
   /** feature 名（reports 子目录） */
@@ -246,22 +394,48 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
       executed: false,
       toolMissing: true,
       durationMs: Date.now() - t0,
-      logExcerpt:
-        '未找到 hvigorw 可执行文件。请确认 DevEco Studio 已安装，且项目根目录存在 hvigorw.bat / hvigorw 包装脚本，' +
-        '或 hvigor CLI 已加入 PATH（可通过 ohpm 全局安装）。',
+      logExcerpt: buildToolMissingMessage(opts.projectRoot),
       errors: [],
     };
   }
 
+  // Windows 下 .bat 必须用 shell: true，但 DevEco 默认装在 "D:\Program Files\..."
+  // 这种含空格的绝对路径上；若直接把 cmd + args 分开交给 spawnSync，Node 会
+  // 拼成 `D:\Program Files\... --mode ...` 让 cmd.exe 解析，空格会被当作分隔
+  // 符（出现 "'D:\Program' 不是内部或外部命令" 报错）。
+  // 稳妥做法：自己把命令行拼好、按需加引号，交给 shell 当作整串命令执行。
+  const needsShell = resolved.useShell;
+  const quoteIfNeeded = (s: string): string => (/\s/.test(s) ? `"${s}"` : s);
+  const cmdLine = needsShell
+    ? [resolved.cmd, ...opts.args].map(quoteIfNeeded).join(' ')
+    : undefined;
+
+  // 注入 DEVECO_SDK_HOME：DevEco 内嵌 hvigor 在命令行模式下必须能找到 SDK，
+  // 否则会报 `00303217 Invalid value of 'DEVECO_SDK_HOME'`。
+  // 用户已显式导出的 DEVECO_SDK_HOME 优先，其次从 installPath 派生。
+  const childEnv = buildChildEnv(opts.projectRoot);
+
+  const childCwd = opts.cwd ?? opts.projectRoot;
+
   let spawnRet: SpawnSyncReturns<string>;
   try {
-    spawnRet = spawnSync(resolved.cmd, opts.args, {
-      cwd: opts.projectRoot,
-      encoding: 'utf-8',
-      shell: resolved.useShell,
-      timeout: opts.timeoutMs ?? 15 * 60 * 1000,
-      maxBuffer: 64 * 1024 * 1024, // 64 MB，防大日志截断异常
-    });
+    spawnRet = needsShell
+      ? spawnSync(cmdLine!, [], {
+          cwd: childCwd,
+          encoding: 'utf-8',
+          shell: true,
+          timeout: opts.timeoutMs ?? 15 * 60 * 1000,
+          maxBuffer: 64 * 1024 * 1024,
+          env: childEnv,
+        })
+      : spawnSync(resolved.cmd, opts.args, {
+          cwd: childCwd,
+          encoding: 'utf-8',
+          shell: false,
+          timeout: opts.timeoutMs ?? 15 * 60 * 1000,
+          maxBuffer: 64 * 1024 * 1024,
+          env: childEnv,
+        });
   } catch (err) {
     const e = err as Error;
     return {
@@ -274,7 +448,8 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 
   const stdout = spawnRet.stdout ?? '';
   const stderr = spawnRet.stderr ?? '';
-  const fullLog = truncateLog(`$ ${resolved.cmd} ${opts.args.join(' ')}\n\n${stdout}\n${stderr}`);
+  const commandDisplay = cmdLine ?? `${resolved.cmd} ${opts.args.join(' ')}`;
+  const fullLog = truncateLog(`$ ${commandDisplay}\n\n${stdout}\n${stderr}`);
 
   const dir = ensureReportDir(opts.harnessRoot, opts.feature, opts.phase);
   const logAbs = path.join(dir, opts.logBasename);
@@ -294,13 +469,21 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     logExcerpt: fullLog.slice(-8000), // 尾部 8KB 放到 result 方便报告展示
     logPath,
     errors,
-    command: `${resolved.cmd} ${opts.args.join(' ')}`,
+    command: commandDisplay,
   };
 }
 
 /**
- * 模块级编译：assembleHap（或等价 build task）。
- * 用于 coding_hvigor_build / ut_hvigor_build 规则。
+ * 模块级编译。
+ *
+ * 用于 ut_hvigor_build（跑 OhosTestCompileArkTS）。
+ * 也可被 coding_hvigor_build 在"想对特定模块做精细编译"时调用，但默认情况
+ * 下 coding 阶段更推荐 `runHvigorAssembleApp`——项目级 assembleApp 能一次
+ * 覆盖所有模块（含 HAR/HSP，避免对非 entry 模块跑不存在的 assembleHap）。
+ *
+ * 注意：**HAR / HSP 模块没有 assembleHap task**。如果把 `task` 设为
+ * `assembleHap` 同时模块是 library，会报 "Task was not found"；此时应把
+ * `task` 改为 `OhosTestCompileArkTS`（ut 目标）或 `assembleHar`（library 出包）。
  */
 export function runHvigorBuild(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
@@ -308,20 +491,68 @@ export function runHvigorBuild(
     moduleName: string;
     /** 对应 build 目标；ohosTest 模块用 'ohosTest' */
     target?: 'default' | 'ohosTest';
+    /**
+     * 要执行的 hvigor task 名（unqualified hook task）。
+     * - 默认：default 目标 → 'assembleHap'；ohosTest 目标 → 'genOnDeviceTestHap'。
+     *   两者都是 hvigor 命令行直接接受的 hook task：
+     *     · `assembleHap` 触发模块 default target 的完整编译 + 签名；
+     *     · `genOnDeviceTestHap` 触发 ohosTest target 的 ArkTS 编译 + 装机包生成
+     *       （等价于 DevEco "Run ohosTest" 出包的那一步）。
+     *   **不要**传 `OhosTestCompileArkTS` / `UnitTestArkTS` 这类 internal task —
+     *   它们只在 hook 内部展开，CLI 直接调用会报 "Task was not found"。
+     * - 调用方可显式覆盖（比如 HAR 模块想跑 'assembleHar'）。
+     */
+    task?: string;
   },
 ): HvigorRunResult {
   const target = opts.target ?? 'default';
+  const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
+  // hvigor 命令行的"模块级编译"通过 `-p module=<name>@<target>` 选定，
+  // **不传** `--mode`（实测 `--mode module` + 模块 cwd 会让 hvigor 在模块目录
+  // 找 hvigor-config.json5；`--mode project` 又只暴露顶层 hook task）。
+  // cwd 保持项目根，让 hvigor 沿用根 hvigor-config.json5。
   const args = [
-    '--mode', 'module',
     '-p', `module=${opts.moduleName}@${target}`,
     '-p', 'product=default',
     '--no-daemon',
-    'assembleHap',
+    task,
   ];
   return invokeHvigor({
     ...opts,
     args,
     logBasename: target === 'ohosTest' ? 'hvigor-ut-build.log' : 'hvigor-build.log',
+  });
+}
+
+/**
+ * 项目级编译：跑顶级 `assembleApp` task（打 App 包），一次覆盖所有模块。
+ *
+ * 用于 coding_hvigor_build：比起遍历每个模块跑 assembleHap 更稳健，因为：
+ *   - Library 模块（HAR/HSP）没有 assembleHap；
+ *   - DevEco Studio "Build HAP" 顶级 action 走的就是 assembleApp。
+ *
+ * 代价：比单模块编译耗时长；但只在规则触发时跑一次（通常走增量缓存）。
+ */
+export function runHvigorAssembleApp(
+  opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
+    /** 默认 'assembleApp'；允许覆盖为 'build' / 'assembleHap' 等 */
+    task?: string;
+    /** 附加参数，如 '--daemon' / '-p buildMode=release' */
+    extraArgs?: string[];
+  },
+): HvigorRunResult {
+  const task = opts.task ?? 'assembleApp';
+  const args = [
+    '--mode', 'project',
+    '-p', 'product=default',
+    '--no-daemon',
+    ...(opts.extraArgs ?? []),
+    task,
+  ];
+  return invokeHvigor({
+    ...opts,
+    args,
+    logBasename: 'hvigor-build.log',
   });
 }
 
@@ -334,8 +565,10 @@ export function runHvigorTest(
     moduleName: string;
   },
 ): HvigorRunResult {
+  // hvigor 的 `test` hook 等价于 DevEco "Run Unit Test"：
+  // 编译 UnitTestArkTS → 出 testRunner HAP → 装机 → 用 hypium 运行 → 收集结果。
+  // **必须有真机/模拟器**，否则 hvigor 会在装机阶段失败。
   const args = [
-    '--mode', 'module',
     '-p', `module=${opts.moduleName}@ohosTest`,
     '-p', 'product=default',
     '--no-daemon',
