@@ -221,6 +221,84 @@ structure_checks:
       for_each_test_case:
         min_assertions: 1
 
+  ut_tsc_compiles:
+    description: >
+      UT 文件（*.test.ets）必须能通过 TypeScript Compiler 静态编译（tsc --noEmit）：
+      零 Error 级诊断。该规则使用轻量化 CompilerHost，将 .ets 虚拟为 .ts，并关闭
+      import resolution，仅检查测试文件本体的语法和文件内类型错误。
+      目的：防止弱模型生成的 UT 明显编译不过却被 harness 标绿（假 PASS）。
+      跨文件类型错误由 ut_hvigor_build 兜底。
+    severity: BLOCKER
+    rule:
+      for_each_ut_file:
+        expect: "ts_error_count == 0"
+      ambient_symbols:
+        - "describe / it / expect / beforeAll / beforeEach / afterAll / afterEach"
+        - "Level / Size / TestType / DEFAULT (from @ohos/hypium)"
+
+  ut_hvigor_build:
+    description: >
+      v2.2 新增（方案 B）：UT 所在 ohosTest 模块必须能通过 hvigor 真实编译。
+      这是 tsc --noEmit 规则的进阶护城河 —— tsc 只检查单个测试文件本身，
+      hvigor 则跨文件、跨模块编译，能发现 UT 对被测函数签名的实际违约。
+      工具链缺失时 FAIL（不 SKIP）；HARNESS_SKIP_HVIGOR=1 显式跳过也 FAIL。
+    severity: BLOCKER
+    rule:
+      scope: "contracts.yaml > modules[].name （仅 ohosTest 目录下存在 UT 的模块）"
+      command: "hvigorw --mode module -p module=<module>@ohosTest assembleHap --no-daemon"
+      pass_if: "exit_code == 0 AND parsed_error_count == 0"
+      log_persist: "framework/harness/reports/<feature>/ut/hvigor-ut-build.log"
+      on_tool_missing: "FAIL"
+      on_env_skip: "FAIL"
+      short_circuit: "若 ut_tsc_compiles 或 ut_hvigor_build FAIL，后续 ut_hvigor_test 直接短路"
+
+  ut_no_src_mutation:
+    description: >
+      v2.2 新增（Skill 5 红线）：Skill 5（UT）阶段**禁止擅自修改业务源码**。
+      对 02-Feature/**/src/main/**、01-Business/**/src/main/**、00-Common/**/src/main/**
+      等非 ohosTest/test 目录下的任何变更，必须事先征得用户同意并登记到
+      gap-notes.md > approved_src_mutations[] 清单。
+      harness 做法：
+        (1) 确定 baseRef：优先读 trace.json > start_commit；无则回退 HEAD~1；
+        (2) git diff --name-only <base>..HEAD + 未提交变更 + untracked；
+        (3) 按路径前缀筛出业务源码变更；
+        (4) 读 gap-notes.md 的 approved_src_mutations[]；
+        (5) 未登记的文件一律视为违规，FAIL BLOCKER。
+    severity: BLOCKER
+    rule:
+      protected_prefixes:
+        - "02-Feature/"
+        - "01-Business/"
+        - "00-Common/"
+      exclude_patterns:
+        - "**/src/ohosTest/**"
+        - "**/test/**"
+      base_ref: "trace.json > start_commit（否则回退 HEAD~1）"
+      authorized_list: "gap-notes.md > approved_src_mutations[].file"
+      fail_if: "any changed business file not in authorized list"
+
+  ut_hvigor_test:
+    description: >
+      v2.2 新增（方案 C）：UT 必须在真机/模拟器上**实际运行**并全部通过，
+      作为 Skill 5 的必要出口条件（而非 SKIP）。该规则：
+        (1) 先调用 hdc list targets 探测设备；
+        (2) 无设备 → **FAIL BLOCKER**（不 SKIP；内网无设备的"软通过"是已知假 PASS 根因）；
+        (3) 有设备 → hvigorw test 装机运行；
+        (4) 解析 hypium 输出：total / failed / failures；failed > 0 FAIL；
+        (5) HARNESS_SKIP_HVIGOR_TEST=1 逃生阀触发时仍然 FAIL（显式拒绝软通过）。
+    severity: BLOCKER
+    rule:
+      device_probe: "hdc list targets"
+      command: "hvigorw --mode module -p module=<module>@ohosTest test --no-daemon"
+      pass_if: "exit_code == 0 AND hypium.failed == 0 AND hypium.total > 0"
+      log_persist: "framework/harness/reports/<feature>/ut/hvigor-test.log"
+      fail_modes:
+        - "no_device: hdc 探测不到可用目标 → FAIL (BLOCKER) 且提示用户启动模拟器/接入真机"
+        - "tool_missing: 找不到 hvigorw → FAIL (BLOCKER)"
+        - "env_skip: HARNESS_SKIP_HVIGOR_TEST=1 → FAIL (BLOCKER)"
+        - "hypium_failures: failed > 0 → FAIL (BLOCKER) 并列出失败用例堆栈"
+        - "zero_total: 用例总数为 0 → FAIL（说明 ohosTest 未正确注册 List.test.ets）"
+
   ut_import_whitelist:
     description: >
       UT 文件的 import 必须落在白名单内：

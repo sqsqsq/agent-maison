@@ -27,12 +27,15 @@ import {
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
+import { runHvigorBuild } from './utils/hvigor-runner';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
   featureFilePath,
   relFeatureFile,
 } from '../config';
+
+const HARNESS_ROOT = path.resolve(__dirname, '..');
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -870,6 +873,98 @@ function checkCoordinatorFileExistsIfDeclared(ctx: CheckContext): CheckResult[] 
   }];
 }
 
+/**
+ * v2.2 方案 B：对 contracts.yaml 声明的每个业务模块跑 hvigorw assembleHap，
+ * 真实编译失败时以 BLOCKER FAIL 阻塞出口。
+ * 工具链缺失 / HARNESS_SKIP_HVIGOR=1 均翻译为 FAIL（显式拒绝软通过）。
+ */
+function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
+  const contracts = ctx.featureSpec.contracts;
+  const modules = contracts?.modules ?? [];
+  if (modules.length === 0) {
+    return [{
+      id: 'coding_hvigor_build',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: 'contracts.yaml > modules 为空，无法确定要编译的模块。请先在 contracts.yaml 声明本 feature 新增/变更的模块。',
+    }];
+  }
+
+  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorBuild> }> = [];
+  for (const mod of modules) {
+    const res = runHvigorBuild({
+      projectRoot: ctx.projectRoot,
+      harnessRoot: HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: 'coding',
+      moduleName: mod.name,
+      target: 'default',
+      skipEnvVar: 'HARNESS_SKIP_HVIGOR',
+    });
+    perModule.push({ module: mod.name, result: res });
+    // 有失败就短路，避免 Windows 下多模块连跑放大耗时
+    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
+  }
+
+  const bad = perModule.filter(x =>
+    x.result.toolMissing ||
+    x.result.skippedByEnv ||
+    (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0))
+  );
+
+  if (bad.length === 0) {
+    return [{
+      id: 'coding_hvigor_build',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `全部 ${perModule.length} 个模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。`,
+    }];
+  }
+
+  const first = bad[0].result;
+  const detailsLines: string[] = [];
+  detailsLines.push(`模块 "${bad[0].module}" 编译失败：`);
+  if (first.toolMissing) {
+    detailsLines.push('原因：未找到 hvigorw / hvigor CLI。');
+    detailsLines.push('修复指引：');
+    detailsLines.push('  (1) 在 DevEco Studio 打开一次本项目，让其生成 hvigorw.bat / hvigorw；');
+    detailsLines.push('  (2) 或全局安装 hvigor CLI 并加入 PATH；');
+    detailsLines.push('  (3) 本规则不接受 SKIP —— 真实编译是出口条件。');
+  } else if (first.skippedByEnv) {
+    detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
+    detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
+  } else {
+    detailsLines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    detailsLines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+    if (first.errors.length > 0) {
+      detailsLines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
+      first.errors.slice(0, 10).forEach(e =>
+        detailsLines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`)
+      );
+    }
+    detailsLines.push('');
+    detailsLines.push('日志尾部（最多 8 KB）：');
+    detailsLines.push(first.logExcerpt);
+  }
+
+  return [{
+    id: 'coding_hvigor_build',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: detailsLines.join('\n'),
+    affected_files: [bad[0].module + ' (module)'],
+    suggestion:
+      '读取完整日志（details 中的 `日志落盘` 路径），定位文件/行并回到编码阶段修复。' +
+      '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
+  }];
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
@@ -917,6 +1012,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkAsyncAwaitPattern(ctx), 'async_await_pattern'));
     results.push(...safeRun(() => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
     results.push(...safeRun(() => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
+    // v2.2 方案 B：hvigor 真实编译（Skill 3 的编译闭环出口）
+    results.push(...safeRun(() => checkCodingHvigorBuild(ctx), 'coding_hvigor_build'));
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkDesignToCode(ctx), 'design_to_code'));

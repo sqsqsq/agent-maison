@@ -25,9 +25,33 @@ const DEFAULT_SEARCH_ROOTS = [
   '00-Common',
 ];
 
+/**
+ * 剥离 `//` 单行注释与 `/* ... *\/` 块注释，避免在注释里**提到** `function foo`
+ * 之类的伪声明被下游正则误判为真实实现（在真实业务代码中，TODO / 文档注释里
+ * 写函数签名是常见做法）。
+ *
+ * 注意：为避免破坏字符串字面量里的 `//` / `/*`，先用占位符替换合法字符串，
+ * 剥注释后再还原。这对 ArkTS / TS 覆盖度足够；不是完整词法分析，但已可
+ * 剔除 99% 的注释误报。
+ */
+function stripCommentsPreservingStrings(src: string): string {
+  const strs: string[] = [];
+  // 匹配三种字符串：'...' / "..." / `...`（允许换行；`\.` 转义通过）
+  // 不追求严格 ECMA 定义，仅为抑制注释扫描里的字符串内容。
+  const strRe = /(["'`])(?:\\.|(?!\1)[^\\])*\1/gs;
+  const placeholder = (i: number) => `\u0000STR_${i}\u0000`;
+  const withPlaceholders = src.replace(strRe, m => {
+    strs.push(m);
+    return placeholder(strs.length - 1);
+  });
+  const noBlock = withPlaceholders.replace(/\/\*[\s\S]*?\*\//g, '');
+  const noLine = noBlock.replace(/(^|[^:])\/\/[^\n]*/g, '$1'); // `:` 保留以免破坏 `http://`
+  return noLine.replace(/\u0000STR_(\d+)\u0000/g, (_m, i) => strs[Number(i)] ?? '');
+}
+
 function readCode(file: string, cache: Map<string, string>): string {
   if (!cache.has(file)) {
-    try { cache.set(file, fs.readFileSync(file, 'utf-8')); }
+    try { cache.set(file, stripCommentsPreservingStrings(fs.readFileSync(file, 'utf-8'))); }
     catch { cache.set(file, ''); }
   }
   return cache.get(file)!;
@@ -90,11 +114,46 @@ export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanRes
           issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": calls="${ua.calls}" 不是合法命名函数符号`);
           continue;
         }
+        // 传统 `function xxx(...) { ... }`
         const reFunc = new RegExp(`\\bfunction\\s+${symbol}\\b`);
-        const reMethod = new RegExp(`\\b${symbol}\\s*\\(([^)]*)\\)\\s*[:{]`);
+        // 类/对象方法：`xxx(...)[:{]` 形式（可能带泛型 `<T>`、可能带 async / 返回类型注解）
+        const reMethod = new RegExp(
+          `(?:^|[\\s;{}])` +                     // 左边界：行首/空白/分号/花括号
+          `(?:async\\s+)?` +                     // 可选 async
+          `${symbol}\\s*` +
+          `(?:<[^>]*>\\s*)?` +                   // 可选泛型参数 `<T>`
+          `\\([^)]*\\)\\s*` +                    // `(...)`
+          `(?::\\s*[^={;\\n]+)?` +               // 可选返回类型注解 `: Type`
+          `[:{]`                                 // 后面紧跟 `{`（方法体）或 `:`（接口签名）
+        );
+        // `export const|let|var|function|class xxx` 顶层导出
         const reExported = new RegExp(`\\bexport\\s+(?:function|const|let|var|class)\\s+${symbol}\\b`);
+        // v2.2 放宽：ArkTS 类字段 / 顶层 const 赋值为箭头 / function 表达式
+        // 覆盖形态：
+        //   handleClick = async () => { ... }
+        //   handleClick = function(x) { ... }
+        //   handleClick: () => void = async () => { ... }     ← 含 `=>` 的类型注解
+        //   handleClick: MyFuncType = () => { ... }
+        //   const handleClick = () => { ... }
+        //   let handleClick: Func = async () => { ... }
+        // 要求必须是**命名符号**前缀 + `=` + 箭头函数/函数表达式，避免与任意 `x = 1` 混淆。
+        // 难点：类型注解本身可能含 `=>`（如 `: () => void`），因此用"非贪婪 + 负向
+        // 前瞻（=不得紧跟 >）"精确定位赋值等号。
+        const reFieldFunc = new RegExp(
+          `(?:^|[\\s;{}])` +                     // 左边界
+          `(?:(?:public|private|protected|readonly|static|const|let|var)\\s+)*` +
+          `${symbol}\\b` +
+          `(?:\\s*:\\s*[^\\n{;]+?)?` +           // 可选类型注解（非贪婪，不跨行/花括号/分号）
+          `\\s*=(?!>)\\s*` +                     // 赋值 `=`（不得是 `=>`）
+          `(?:async\\s+)?` +                     // 可选 async
+          `(?:function\\b|\\([^)]*\\)\\s*(?::\\s*[^\\n{=]+?)?\\s*=>|[A-Za-z_$][\\w$]*\\s*=>)`
+          // 三选一：`function` 表达式 / `(...) => ...`（可带返回类型）/ `param => ...`
+        );
         const found = candidates.some(f =>
-          reFunc.test(f.content) || reExported.test(f.content) || reMethod.test(f.content)
+          reFunc.test(f.content) ||
+          reExported.test(f.content) ||
+          reMethod.test(f.content) ||
+          reFieldFunc.test(f.content)
         );
         if (!found) {
           issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": 找不到命名函数 "${symbol}"（来自 calls="${ua.calls}"）`);

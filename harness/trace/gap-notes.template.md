@@ -84,7 +84,36 @@
 
 ---
 
-## 5. 附件
+## 5. 授权的源码变更清单（approved_src_mutations）— Skill 5 专用
+
+> 仅当 Skill 5（业务级 UT）阶段，agent 征得用户同意后对 `02-Feature/**/src/main/**`、
+> `01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下的文件做了
+> 变更时，**必须**填写本节。否则 harness 的 `ut_no_src_mutation` BLOCKER 会 FAIL。
+>
+> 未登记 = 未授权 = 违规。
+
+```yaml
+approved_src_mutations:
+  # 每条一个授权项；agent 自检/用户核对时按此顺序读取
+  # - file: "02-Feature/WalletMain/src/main/ets/pages/IndexPage.ets"
+  #   reason: "抽出 handleRefresh 命名字段函数以便 UT 直接调用"
+  #   diff_summary: "新增 handleRefresh = async () => {...}，onRefresh 由 inline lambda 改为转发"
+  #   approved_by: "user"
+  #   approved_at: "2026-04-24T15:00:00+08:00"
+  #   approved_quote: "同意抽成命名字段函数" # 摘录用户原话，便于审计
+  #   skill_step_linked: "Skill 5 / 约束 #12 HARD STOP"
+```
+
+> 填写约束：
+> - `file`：必须是完整相对路径，与 `git diff --name-only` 输出一致；
+> - `reason`：一句话说明为何 UT 层无法规避此变更；
+> - `approved_at`：ISO 8601 时间戳，记录征得同意的时刻；
+> - 若同一文件有多次变更累计到一个授权，可复用同一条目但 `diff_summary` 需合并；
+> - 未授权的改动一律视为违规，触发 harness BLOCKER。
+
+---
+
+## 6. 附件
 
 - trace.json: `./trace.json`
 - harness 报告：`framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/check-<phase>.report.md`

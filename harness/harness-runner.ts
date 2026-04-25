@@ -20,6 +20,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { spawnSync } from 'child_process';
 import minimist from 'minimist';
 import { SpecLoader } from './scripts/utils/spec-loader';
 import {
@@ -193,6 +194,10 @@ async function main(): Promise<void> {
     featureSpec,
   };
 
+  // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
+  // （注意：HEAD 是当前已提交状态；UT 阶段未提交的改动会被 git diff 检测到）
+  recordStartCommit(harnessRoot, phase, feature, projectRoot);
+
   const checks = await runScriptHarness(harnessRoot, context);
 
   // Step 3: 生成脚本报告
@@ -319,6 +324,65 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
       status: 'FAIL',
       details: (err as Error).message,
     }];
+  }
+}
+
+// --------------------------------------------------------------------------
+// trace.json: start_commit 记录
+// --------------------------------------------------------------------------
+
+/**
+ * 在 reports/<feature>/<phase>/trace.json 记录本次 harness 运行起点的 git commit。
+ * 供 ut_no_src_mutation 等规则确定 git diff 的 baseRef。
+ *
+ * 行为约定：
+ *   - 已存在 trace.json 且含 start_commit → 不覆盖（保留首次进入该阶段的 baseline）；
+ *   - 否则写入 { phase, feature, started_at, start_commit }；
+ *   - 非 git 仓库或 git 不可用 → 静默跳过（rule 端会回退 HEAD~1）。
+ */
+function recordStartCommit(
+  harnessRoot: string,
+  phase: Phase,
+  feature: string,
+  projectRoot: string,
+): void {
+  const dir = path.join(harnessRoot, 'reports', feature, phase);
+  const tracePath = path.join(dir, 'trace.json');
+
+  // 已有 start_commit 不动，保留 baseline
+  if (fs.existsSync(tracePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(tracePath, 'utf-8')) as Record<string, unknown>;
+      if (existing && typeof existing.start_commit === 'string' && existing.start_commit) {
+        return;
+      }
+    } catch {
+      // bad JSON → 重新写
+    }
+  }
+
+  const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: projectRoot,
+    encoding: 'utf-8',
+    shell: false,
+  });
+  if (headProbe.status !== 0) {
+    return; // 非 git 仓库或 git 不可用
+  }
+  const startCommit = (headProbe.stdout ?? '').trim();
+  if (!startCommit) return;
+
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const trace = {
+    phase,
+    feature,
+    started_at: new Date().toISOString(),
+    start_commit: startCommit,
+  };
+  try {
+    fs.writeFileSync(tracePath, JSON.stringify(trace, null, 2), 'utf-8');
+  } catch {
+    // best-effort
   }
 }
 

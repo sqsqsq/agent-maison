@@ -25,6 +25,16 @@ import {
   UseCaseDef,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
+import { compileTestFiles } from './utils/ts-compile';
+import { runHvigorBuild, runHvigorTest, probeDevices } from './utils/hvigor-runner';
+import {
+  diffChangedFiles,
+  filterBusinessSourceChanges,
+  readApprovedMutations,
+  readTraceStartCommit,
+} from './utils/git-diff';
+
+const HARNESS_ROOT = path.resolve(__dirname, '..');
 
 // UT 文件中禁止出现的 UI/导航/Toast 符号模式（v2.1 扩展：AppStorage / rawfile）
 const UI_FORBIDDEN_PATTERNS: RegExp[] = [
@@ -702,6 +712,482 @@ function checkUtAssertionExists(
     details: `${noAssertionCases.length} 个测试用例缺少 expect 断言：\n${truncateList(noAssertionCases, 10)}`,
     affected_files: [...new Set(affectedFiles)],
     suggestion: '每个 it() 测试用例中必须包含至少一条 expect() 断言。',
+  }];
+}
+
+/**
+ * 方案 A：对所有 *.test.ets 运行 tsc --noEmit 静态编译检查。
+ * 通过 Skill 3/5 失败案例：弱模型生成的 UT 大量编译不过，但 harness 只做
+ * 正则静态扫描 → 假 PASS。本规则是进入 ut_hvigor_build（方案 B）前的第一道
+ * 护城河，仅检查测试文件本体，不跟随 import（noResolve: true）。
+ */
+function checkUtTscCompiles(
+  ctx: CheckContext,
+  utFiles: Array<{ path: string; content: string }>,
+): CheckResult[] {
+  if (utFiles.length === 0) {
+    return [{
+      id: 'ut_tsc_compiles',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '未找到 UT 文件。',
+    }];
+  }
+
+  const absPaths = utFiles.map(f => path.join(ctx.projectRoot, f.path));
+  const report = compileTestFiles(absPaths, ctx.projectRoot);
+
+  if (report.diagnostics.length === 0) {
+    return [{
+      id: 'ut_tsc_compiles',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `${utFiles.length} 个 UT 文件 tsc --noEmit 通过（耗时 ${report.durationMs} ms）。`,
+    }];
+  }
+
+  const groupedByFile = new Map<string, number>();
+  for (const d of report.diagnostics) {
+    groupedByFile.set(d.file, (groupedByFile.get(d.file) ?? 0) + 1);
+  }
+
+  const preview = report.diagnostics.slice(0, 30).map(d =>
+    `${d.file}:${d.line}:${d.column}  ${d.code}  ${d.message}`,
+  );
+  const summaryByFile = Array.from(groupedByFile.entries())
+    .map(([f, n]) => `${f}: ${n} 条`)
+    .slice(0, 10);
+
+  return [{
+    id: 'ut_tsc_compiles',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${report.durationMs} ms）。\n` +
+      `按文件：\n${summaryByFile.join('\n')}\n\n` +
+      `前 ${preview.length} 条诊断：\n${preview.join('\n')}`,
+    affected_files: Array.from(groupedByFile.keys()),
+    suggestion:
+      'UT 文件必须先通过 tsc --noEmit。请根据上方 TS 错误码修正代码；常见原因：' +
+      '(1) 符号未 import；(2) 调用签名与被测函数不符；(3) 类型字面量错误。' +
+      '修完再跑 harness；该规则是 ut_hvigor_build 之前的第一道护城河。',
+  }];
+}
+
+/**
+ * 识别包含 UT 的模块：遍历 contracts.yaml.modules，
+ * 过滤出 `<mod.package_path>/src/ohosTest/` 实际存在的模块。
+ */
+function findModulesWithUt(ctx: CheckContext): Array<{ name: string; package_path: string }> {
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts?.modules?.length) return [];
+  const out: Array<{ name: string; package_path: string }> = [];
+  for (const mod of contracts.modules) {
+    const ohosTestDir = path.join(ctx.projectRoot, mod.package_path, 'src', 'ohosTest');
+    if (fs.existsSync(ohosTestDir)) {
+      out.push({ name: mod.name, package_path: mod.package_path });
+    }
+  }
+  return out;
+}
+
+/**
+ * v2.2 方案 B：对 ohosTest 模块跑 hvigorw assembleHap。
+ * 与 coding_hvigor_build 呼应，专门覆盖 UT 模块，兜底 tsc --noEmit 漏过的
+ * 跨文件类型错误（UT 对被测 API 签名违约）。
+ */
+function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
+  const mods = findModulesWithUt(ctx);
+  if (mods.length === 0) {
+    return [{
+      id: 'ut_hvigor_build',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
+    }];
+  }
+
+  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorBuild> }> = [];
+  for (const mod of mods) {
+    const res = runHvigorBuild({
+      projectRoot: ctx.projectRoot,
+      harnessRoot: HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: 'ut',
+      moduleName: mod.name,
+      target: 'ohosTest',
+      skipEnvVar: 'HARNESS_SKIP_HVIGOR',
+    });
+    perModule.push({ module: mod.name, result: res });
+    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
+  }
+
+  const bad = perModule.filter(x =>
+    x.result.toolMissing ||
+    x.result.skippedByEnv ||
+    (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0))
+  );
+
+  if (bad.length === 0) {
+    return [{
+      id: 'ut_hvigor_build',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。`,
+    }];
+  }
+
+  const first = bad[0].result;
+  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
+  if (first.toolMissing) {
+    lines.push('原因：未找到 hvigorw / hvigor CLI。');
+    lines.push('修复：在 DevEco Studio 打开项目生成 hvigorw.bat，或全局安装 hvigor CLI；本规则不允许 SKIP。');
+  } else if (first.skippedByEnv) {
+    lines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置，显式跳过真实编译不被允许作为出口。');
+  } else {
+    lines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+    if (first.errors.length > 0) {
+      lines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
+      first.errors.slice(0, 10).forEach(e =>
+        lines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`)
+      );
+    }
+    lines.push('');
+    lines.push('日志尾部（最多 8 KB）：');
+    lines.push(first.logExcerpt);
+  }
+
+  return [{
+    id: 'ut_hvigor_build',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: lines.join('\n'),
+    affected_files: [bad[0].module + '@ohosTest'],
+    suggestion:
+      '读取完整日志（details 中 `日志落盘` 路径），定位文件/行后回到 UT 编写阶段修复；' +
+      '常见原因：(1) UT 调用的被测函数签名已变；(2) import 路径错误；(3) 类型注解与被测实际类型不匹配。',
+  }];
+}
+
+/**
+ * v2.2 方案 C：ohosTest 装机运行 UT（hypium）。
+ * 关键立场：无设备 → FAIL（不是 SKIP）。内网 harness 把"无设备"标绿是已知
+ * 假 PASS 根因；本规则显式拒绝软通过。
+ *
+ * 执行序列：
+ *   (1) hdc list targets 探测；
+ *   (2) HARNESS_SKIP_HVIGOR_TEST=1 → FAIL；
+ *   (3) 无设备 → FAIL 并提示启动模拟器 / 接入真机；
+ *   (4) 有设备 → hvigorw test，解析 hypium 输出；
+ *   (5) failed > 0 或 total == 0 → FAIL 并列出失败用例堆栈。
+ */
+function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
+  // 先检查本规则是否被 ut_hvigor_build 前置失败所短路
+  // 由 main checker 顺序调度决定，这里不主动短路，而是在 details 中提示依赖。
+
+  if (process.env.HARNESS_SKIP_HVIGOR_TEST) {
+    return [{
+      id: 'ut_hvigor_test',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `HARNESS_SKIP_HVIGOR_TEST=${process.env.HARNESS_SKIP_HVIGOR_TEST} 已设置。` +
+        `显式跳过 UT 实际装机运行**不被允许**作为出口条件。请去掉该环境变量并准备好真机/模拟器后重跑。`,
+      suggestion: '取消 HARNESS_SKIP_HVIGOR_TEST 环境变量，启动模拟器或接入真机后重跑。',
+    }];
+  }
+
+  const mods = findModulesWithUt(ctx);
+  if (mods.length === 0) {
+    return [{
+      id: 'ut_hvigor_test',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
+    }];
+  }
+
+  const devProbe = probeDevices();
+  if (!devProbe.available) {
+    const head = devProbe.hdcPresent
+      ? `hdc list targets 返回空（原始输出：${devProbe.raw || '(空)'}）`
+      : `未找到 hdc 工具：${devProbe.raw || '(无详细)'}`;
+    return [{
+      id: 'ut_hvigor_test',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `${head}\n\n` +
+        `Skill 5 必须在真机 / 模拟器上实际运行 UT。当前未检测到可用目标，因此**不能**作为出口条件放行。\n` +
+        `修复指引：\n` +
+        `  (1) 在 DevEco Studio 或 Remote Emulator 启动一台 HarmonyOS 设备；\n` +
+        `  (2) 运行 \`hdc list targets\` 确认输出非空；\n` +
+        `  (3) 重跑 Skill 5 harness。\n` +
+        `  (4) 本规则不允许 SKIP —— 这是内网历史假 PASS 的根因。`,
+      suggestion: '接入真机 / 启动模拟器后重跑；不允许以"本地无设备"为由软通过。',
+    }];
+  }
+
+  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorTest> }> = [];
+  for (const mod of mods) {
+    const res = runHvigorTest({
+      projectRoot: ctx.projectRoot,
+      harnessRoot: HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: 'ut',
+      moduleName: mod.name,
+    });
+    perModule.push({ module: mod.name, result: res });
+    if (res.toolMissing || (res.executed && (res.exitCode !== 0 || (res.testResult && res.testResult.failed > 0)))) {
+      break;
+    }
+  }
+
+  const bad = perModule.filter(x => {
+    const r = x.result;
+    if (r.toolMissing) return true;
+    if (!r.executed) return true;
+    if (r.exitCode !== 0) return true;
+    const t = r.testResult;
+    if (!t) return true;
+    if (t.total <= 0) return true;
+    if (t.failed > 0) return true;
+    return false;
+  });
+
+  if (bad.length === 0) {
+    const totals = perModule.reduce(
+      (acc, x) => ({
+        total: acc.total + (x.result.testResult?.total ?? 0),
+        passed: acc.passed + (x.result.testResult?.passed ?? 0),
+      }),
+      { total: 0, passed: 0 },
+    );
+    return [{
+      id: 'ut_hvigor_test',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        `全部 ${perModule.length} 个 ohosTest 模块装机执行通过：` +
+        `total=${totals.total}, passed=${totals.passed}, failed=0；` +
+        `目标设备：${devProbe.targets.join(' / ')}`,
+    }];
+  }
+
+  const first = bad[0].result;
+  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
+  if (first.toolMissing) {
+    lines.push('原因：未找到 hvigorw / hvigor CLI。');
+  } else if (!first.executed) {
+    lines.push(`原因：hvigor 未执行，日志：${first.logExcerpt}`);
+  } else if (first.exitCode !== 0 && !first.testResult) {
+    lines.push(`hvigor 进程异常退出 exit_code=${first.exitCode}。`);
+    lines.push('日志尾部：');
+    lines.push(first.logExcerpt);
+  } else if (first.testResult) {
+    const t = first.testResult;
+    lines.push(`hypium 结果：total=${t.total}, passed=${t.passed}, failed=${t.failed}, skipped=${t.skipped}`);
+    if (t.total === 0) {
+      lines.push('警告：total=0 表示 hvigor test 没有跑到任何用例。请检查 List.test.ets 是否正确注册了所有 *.test.ets 入口。');
+    }
+    if (t.failures.length > 0) {
+      lines.push(`失败用例（前 15 条）：`);
+      t.failures.slice(0, 15).forEach(f =>
+        lines.push(`  - [${f.suite}] ${f.test}  →  ${f.message}`)
+      );
+    }
+    lines.push('');
+    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+  }
+
+  return [{
+    id: 'ut_hvigor_test',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: lines.join('\n'),
+    affected_files: [bad[0].module + '@ohosTest'],
+    suggestion:
+      '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
+      '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。',
+  }];
+}
+
+/**
+ * v2.2 Skill 5 红线：检测未授权的业务源码变更。
+ * 流程：
+ *   (1) 读 trace.json.start_commit（若存在）；否则回退 HEAD~1；
+ *   (2) git diff + 未提交/untracked，按受保护前缀筛；
+ *   (3) 与 reports/<feature>/ut/**\/gap-notes.md 的 approved_src_mutations[] 对账；
+ *   (4) 未登记 → FAIL BLOCKER。
+ *
+ * 受保护前缀 / 排除路径与 SKILL.md > 约束 #12 HARD STOP 一致。
+ */
+const UT_SRC_PROTECTED_PREFIXES = ['02-Feature/', '01-Business/', '00-Common/'];
+
+/**
+ * 计算 reports/<feature>/ 的扫描根。默认指向真实 framework/harness/reports/<feature>/；
+ * 若设置环境变量 HARNESS_REPORTS_ROOT_OVERRIDE（通常只有 framework tests/ 测试套件
+ * 会设），则指向 <override>/<feature>/——让 fixture 可以提供隔离的 gap-notes.md /
+ * trace.json 而不污染真实仓库。
+ */
+function computeReportsFeatureRoot(feature: string): string {
+  const override = process.env.HARNESS_REPORTS_ROOT_OVERRIDE;
+  if (override) return path.join(override, feature);
+  return path.join(HARNESS_ROOT, 'reports', feature);
+}
+
+function findGapNotesFiles(feature: string): string[] {
+  const reportsRoot = computeReportsFeatureRoot(feature);
+  if (!fs.existsSync(reportsRoot)) return [];
+  const hits: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs, depth + 1);
+      else if (e.isFile() && e.name === 'gap-notes.md') hits.push(abs);
+    }
+  };
+  walk(reportsRoot, 0);
+  return hits;
+}
+
+function findTraceJsonFiles(feature: string): string[] {
+  const reportsRoot = computeReportsFeatureRoot(feature);
+  if (!fs.existsSync(reportsRoot)) return [];
+  const hits: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs, depth + 1);
+      else if (e.isFile() && e.name === 'trace.json') hits.push(abs);
+    }
+  };
+  walk(reportsRoot, 0);
+  return hits;
+}
+
+function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
+  // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
+  const traceFiles = findTraceJsonFiles(ctx.feature).sort((a, b) => {
+    const sa = fs.statSync(a).mtimeMs;
+    const sb = fs.statSync(b).mtimeMs;
+    return sb - sa;
+  });
+  let baseRef: string | undefined;
+  for (const tf of traceFiles) {
+    const sc = readTraceStartCommit(tf);
+    if (sc) { baseRef = sc; break; }
+  }
+
+  const diff = diffChangedFiles({
+    projectRoot: ctx.projectRoot,
+    baseRef,
+    pathspecs: UT_SRC_PROTECTED_PREFIXES,
+  });
+
+  if (!diff.executed) {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `无法运行 git diff：${diff.error ?? '未知错误'}\n` +
+        `该规则要求项目是 git 仓库。请初始化 git 或在 git 环境下跑 harness。`,
+    }];
+  }
+
+  const businessChanges = filterBusinessSourceChanges(diff.changedFiles, UT_SRC_PROTECTED_PREFIXES);
+  if (businessChanges.length === 0) {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
+        `未检测到 ${UT_SRC_PROTECTED_PREFIXES.join(' / ')} 下的业务源码变更。`,
+    }];
+  }
+
+  // 汇总所有 gap-notes.md 的授权清单
+  const gapFiles = findGapNotesFiles(ctx.feature);
+  const approved = new Set<string>();
+  for (const g of gapFiles) {
+    const set = readApprovedMutations(g);
+    set.forEach(f => approved.add(f));
+  }
+
+  const unauthorized = businessChanges.filter(f => !approved.has(f));
+
+  if (unauthorized.length === 0) {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
+        `共检测到 ${businessChanges.length} 个业务源码变更，均已在 approved_src_mutations[] 中登记：\n${businessChanges.map(f => '  - ' + f).join('\n')}`,
+    }];
+  }
+
+  return [{
+    id: 'ut_no_src_mutation',
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback — trace.json.start_commit 未记录，可信度较低)' : ''}\n` +
+      `检测到 ${unauthorized.length} 个**未授权**的业务源码变更：\n${unauthorized.map(f => '  - ' + f).join('\n')}\n\n` +
+      `gap-notes.md 已登记的授权清单（${approved.size} 条）：${Array.from(approved).slice(0, 20).join(', ') || '(空)'}\n` +
+      `扫描到的 gap-notes.md 文件：${gapFiles.length > 0 ? gapFiles.map(f => path.relative(ctx.projectRoot, f).replace(/\\\\/g, '/')).join(', ') : '(无)'}`,
+    affected_files: unauthorized,
+    suggestion:
+      '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
+      'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
+      '禁止以"便利性"借口直接修改业务源码。',
   }];
 }
 
@@ -2212,13 +2698,18 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
   } catch (err) {
+    const e = err as Error;
+    const isProgrammerError =
+      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
     return [{
       id: checkId,
       category: 'structure',
       description: `${checkId} 执行异常`,
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
+      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
+      status: isProgrammerError ? 'FAIL' : 'SKIP',
+      details: isProgrammerError
+        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
+        : `检查执行时发生错误：${e.message}`,
     }];
   }
 }
@@ -2255,6 +2746,28 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkUtFileNaming(ctx, utFiles), 'ut_file_naming'));
     results.push(...safeRun(() => checkUtFrameworkImport(ctx, utFiles), 'ut_framework_import'));
     results.push(...safeRun(() => checkUtAssertionExists(ctx, utFiles), 'ut_assertion_exists'));
+    // v2.2 方案 A：静态 tsc --noEmit 检查
+    results.push(...safeRun(() => checkUtTscCompiles(ctx, utFiles), 'ut_tsc_compiles'));
+    // v2.2 方案 B：hvigor 真实编译（ohosTest 模块）
+    const hvigorBuildResults = safeRun(() => checkUtHvigorBuild(ctx), 'ut_hvigor_build');
+    results.push(...hvigorBuildResults);
+    // v2.2 方案 C：hvigor 装机执行 UT（hypium），无设备/失败均 BLOCKER FAIL；
+    // 若 ut_hvigor_build 已 FAIL，test 短路为 FAIL 避免叠加无意义日志。
+    const buildFailed = hvigorBuildResults.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL');
+    if (buildFailed) {
+      results.push({
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: 'ut_hvigor_build 已 FAIL，test 阶段自动短路为 FAIL（避免重复跑和日志噪声）。请先修复编译。',
+      });
+    } else {
+      results.push(...safeRun(() => checkUtHvigorTest(ctx), 'ut_hvigor_test'));
+    }
+    // v2.2 红线 5.2：Skill 5 不得擅改业务源码
+    results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
     results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, utFiles), 'mock_stub_for_async'));
     results.push(...safeRun(() => checkTestRegistration(ctx, utFiles), 'test_registration'));
     // v2 C: UT 代码
