@@ -116,7 +116,25 @@ flowchart LR
   S5 --> TODO["device-testing-todo.md"]
 ```
 
+**怎么读这张**：从左到右是需求在流水线里走的**阶段顺序**（不是代码 import 关系）。Skill 1～4 为 Skill 5 提供「验收、契约、实现、审阅」；Skill 5 为 Skill 6 交「能跑通的业务流 UT + 追溯材料 + 真机待办」。
+
+- **S1** — PRD 与 `acceptance.yaml`：谁进 UT、谁进真机，由 `ut_layer` 定。
+- **S2** — `design.md`、`contracts.yaml`；复杂 feature 才额外有 `use-cases.yaml`（规划用例与分支的规约）。
+- **S3** — 可测的业务编排 + 命名入口；UT 只消费、不要求你为此再造一套 `UseCase` 架构。
+- **S4** — 可选的审查结论，用来确认编码侧问题已收敛，不是 harness 的硬输入。
+- **S6** — 接 Skill 5 交不出去的 UI / 多机型 / 导航等，用真机/模拟器验。
+
+S5 向下的三条，是**同一次 Skill 5 交付**的三种落盘物：
+
+| 落盘 | 作用 |
+| --- | --- |
+| `*.test.ets` | hypium 可执行用例，真正「重放业务流」的代码。 |
+| `test/dag/*.dag.yaml` | 把「从哪些输入到哪些 it」固化成**可追溯结构**（给 harness 与人工对账用）。 |
+| `device-testing-todo.md` | `ut_layer = device` 或 `both` 里**只能真机验**的部分，避免没人测。 |
+
 ### 3.2 业务级 UT 的内部模型
+
+**本图回答什么**：*规约和源码，怎样一步步变成「规划 → DAG 文件 → UT 代码 → 真机待办」；一个 `it()` 里要干哪三件事。*
 
 ```mermaid
 flowchart TD
@@ -143,7 +161,32 @@ flowchart TD
   Test --> Assert["断言 state + callLog + result"]
 ```
 
+**上半区：四路输入，汇总成「规划」**
+
+| 节点 | 是什么 | 在 UT 里扮演的角色 |
+| --- | --- | --- |
+| `acceptance.yaml` | 验收表 | 标 `ut_layer`：**谁进 UT、谁进真机**的分流开关。 |
+| `use-cases.yaml` | 选填规约 | 仅复杂流需要；有则按 **branch** 规划，没有则不必硬写。 |
+| 业务编排源码 | `Flow` / Page 方法等 | **被测的命名入口**；UT 必须从这里进，不绕过业务编排。 |
+| data 边界 | `Repository` / `Client` 等 | **可打桩的边界**；Stub/Spy 针对「真实 data 类」，不为 UT 新造 `Port` 专供测试。 |
+
+`UT 规划清单` 在图里指 **Step 1 里那张表**（在 SKILL 里要用户确认的），不默认是仓库里固定文件名的单文件；它的结果会**体现**在：DAG 覆盖范围、`it()` 名字里的 `[AC-*]` / `[BRANCH-*]` 标签、以及表格式文字说明中。
+
+**中间区：三样交付物**
+
+- **DAG**：把业务流画成有节点/边的 YAML，方便「这条 branch 是否写到了、是否对上 AC」的机械核对（对应 harness 的 DAG/追溯类规则）。
+- **\*.test.ets**：可执行的 hypium 测试；`describe`/`it` + 打桩类。
+- **device-testing-todo.md**：`device` / `both` 里**UT 里不可测的 UI 部分**的交接清单，给 Skill 6。
+
+**下半区：一个 `it()` 内部的三步**（和上图「产物」是不同抽象层级：这里描述**单次用例在代码里做什么**）
+
+- **调用命名入口** — 对应 `ui_bindings.user_actions` 里声明的函数或你规划表里的被测函数。
+- **在 data boundary 打桩** — 控制云返回、本地存取失败等，不 mock UI 框架。
+- **断言** — 状态序列、Spy 的 `callLog`、落库/返回值等，而不是只断言「数组非空」。
+
 ### 3.3 Harness 双层守门
+
+**本图回答什么**：跑完 UT 相关 harness 时，**机器能自动验什么**、**为什么还要人/模型过一遍 verify**、**读报告从哪进**。
 
 ```mermaid
 flowchart LR
@@ -157,11 +200,87 @@ flowchart LR
   B --> Report
 ```
 
-脚本 Harness 负责可确定检查，例如文件是否存在、标签是否覆盖、能否编译运行。AI Harness 负责语义检查，例如“虽然调用了某函数，但是否真的绕过了业务入口”。
+**脚本 Harness（`check-ut.ts`）**
+
+- **管什么（确定性、可复现）**：  
+  文件与 schema 是否齐、`it()` 是否带上 `[AC-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` 等**（细则见 [§6](#6-质量门禁)）。
+- **产出**：`framework/harness/reports/<feature>/ut/` 下的 `script-report.json`、hvigor/运行日志、以及流程中的 `trace.json`（与改源码对账用）。
+
+**AI Harness（`verify-ut.md`）**
+
+- **管什么（语义、要理解代码）**：  
+  是否**真**按 `user_sequence`/branch 在驱动、有没有「直接调 repo 假装端到端」、Spy 设计是否合理、`device` AC 是否已落到 `device-testing-todo` 等。  
+  脚本**判不了的偷懒**，由这里按 prompt 做二次把关。
+
+**`merged-report.md`**
+
+- **是什么**：同一次运行下，给人类读的**合并说明**（与 `ai-prompt.md` 等产物同目录，具体以 harness 输出为准）。
+- **建议阅读顺序**：先看 `script-report.json` 里 FAIL 的 `id` 与 `details` → 再打开 `merged-report.md` 扫结论 → 需要语义复核时把 `ai-prompt.md` 交给 **verifier**（独立模型/人），避免「自己验自己」。
+
+**一句话对照**：脚本守门保证「**结构真、能编译、能跑、没偷偷改业务**」；AI 守门补「**语义像不像业务、有没有绕过入口**」。
 
 ---
 
 ## 4. 输入与输出
+
+### 4.0 流程全景（从输入到 `ut` 门禁）
+
+**先读图再读下表**：下表是「每个文件干什么」的字段清单；本图是「它们怎么串成一次 Skill 5 交付」的时间顺序。
+
+```mermaid
+flowchart TD
+  subgraph inputs [上游输入]
+    acc["acceptance.yaml"]
+    con["contracts.yaml"]
+    des["design.md"]
+    uc["use-cases.yaml 可选"]
+    srcB["业务编排源码"]
+    srcD["data 层源码"]
+  end
+
+  subgraph plan [规划与分工]
+    split["按 ut_layer 分 UT 与 真机"]
+    pathA["路径 A：有 use-cases<br/>按 branch 列清单"]
+    pathB["路径 B：无 use-cases<br/>按 AC 对 data/入口"]
+  end
+
+  subgraph out [Skill 5 落盘]
+    dagF["{module}/test/dag/*.dag.yaml"]
+    utF["{module}/.../ohosTest/.../*.test.ets"]
+    devTodo["doc/features/.../device-testing-todo.md"]
+  end
+
+  subgraph gate [验证出口]
+    utPhase["harness --phase ut"]
+    device["真机 或 模拟器"]
+  end
+
+  acc --> split
+  con --> pathA
+  con --> pathB
+  des --> pathA
+  des --> pathB
+  uc --> pathA
+  srcB --> pathA
+  srcB --> pathB
+  srcD --> pathA
+  srcD --> pathB
+  split --> pathA
+  split --> pathB
+  pathA --> dagF
+  pathB --> dagF
+  pathA --> utF
+  pathB --> utF
+  acc --> devTodo
+  split --> devTodo
+  utF --> utPhase
+  dagF --> utPhase
+  utPhase --> device
+```
+
+- **`ut_layer`**：`unit` / `both` 驱动写 `utF` 与打桩；`device` 不进 `it()`，进 `devTodo`。
+- **路径 A / B**：同一 feature 二选一，由是否存在 **`use-cases.yaml`** 决定（与 [§5](#5-工作流程) Step 2 一致）。
+- **`--phase ut`**：跑 [§3.3](#33-harness-双层守门) 的脚本 + 后续语义验证；真机/模拟器是 `ut_hvigor_test` 的必要条件（见 [§6](#6-质量门禁) 中「6.3 防“假 PASS”」）。
 
 ### 4.1 输入
 
