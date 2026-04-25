@@ -25,7 +25,8 @@
 3. **对话式确认**：把扫描推断结果用表格展示，用户对每条给 **确认 / 修改值**；**禁止**在用户未确认前覆盖已有 `framework.config.json`（UPDATE 模式除外，也需显式 diff + 确认）。
 4. **adapter 互斥**：一次只激活一个 `agent_adapter`；切换 adapter 时必须先展示「将新增 / 可能冲突的旧文件」清单，得到用户明确同意后再写入（**不自动强删**，删除操作建议用户手工或二次确认执行）。
 5. **占位符与模板**：agent 入口文件统一以 [framework/templates/AGENTS.md.template](../../templates/AGENTS.md.template) 为源，按 [framework/agents/adapter-schema.yaml](../../agents/adapter-schema.yaml) 的 `placeholders` 替换变量；路径类占位符一律用 **POSIX 正斜杠**。
-6. **生成后 Harness**：在 Step 5.5.4 `npm test` 全绿后，在 Step 6 自动跑全局 phase：`catalog` / `glossary` / **`docs`（v2.4 起，framework 对外文档与清单自检）**。
+6. **宿主 `.gitignore` 维护**：framework vendor 到真实工程后，会产生 harness 运行产物（`node_modules` / `dist` / `reports` / `trace` / `package-lock.json`）。本 Skill 必须检查实例工程根 `.gitignore`，缺少 framework 相关忽略项时自动补齐；已有等价规则时不重复追加。
+7. **生成后 Harness**：在 Step 5.5.4 `npm test` 全绿后，在 Step 6 自动跑全局 phase：`catalog` / `glossary` / **`docs`（v2.4 起，framework 对外文档与清单自检）**。
 
 ---
 
@@ -62,7 +63,7 @@
 
 > 动机：`/framework-init` 常常是**升级重跑**——用户已积累 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/architecture.md` / `doc/features/**` 等资产，甚至在 `CLAUDE.md` / `AGENTS.md` 里补过项目指令。**盲目覆盖就是毁资产**。本步把所有待写路径前置扫一遍，按固定策略矩阵给出动作，**不允许 AI 临场发挥**。
 
-#### 0.3.1 体检清单（固定 9 项，按路径顺序扫）
+#### 0.3.1 体检清单（固定 11 项，按路径顺序扫）
 
 所有路径均相对**实例工程根**；多数路径须先从 `framework.config.json`（若存在）的 `paths` 字段解析，UPDATE 模式优先读实例工程的配置，CREATE 模式以 `framework/harness/config.ts` `DEFAULT_PATHS` 为准。
 
@@ -80,6 +81,7 @@
 | 8 | `paths.features_dir`（默认 `doc/features`） | 目录不存在 → MISSING；存在但空目录 / 只含 `.gitkeep` → EMPTY；有任何子目录或文件 → POPULATED |
 | 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用） |
 | 10 | `framework.config.json` 的 `toolchain.devEcoStudio.installPath` | 字段存在且非空字符串且路径在文件系统中存在 → POPULATED；字段缺失 / 空串 / 路径不存在 → MISSING（v2.3 起 `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` 三条 BLOCKER 规则均依赖该字段） |
+| 11 | 实例工程根 `.gitignore` 的 framework 运行产物忽略规则 | 已覆盖 Step 5.4.5 的全部 required ignore patterns（可由更宽泛规则等价覆盖）→ POPULATED；`.gitignore` 不存在或缺任一项 → MISSING（EMPTY 等同 MISSING） |
 
 #### 0.3.2 策略矩阵（**不许偏离**）
 
@@ -95,6 +97,7 @@
 | 8 | `paths.features_dir` | 创建空目录 + 可选 `.gitkeep` | 保留 | **不进入、不扫描、不比对**；打印："`<features_dir>` 下已有业务 feature 产物，本 Skill 不会触碰其中任何文件。" |
 | 9 | `framework/harness/node_modules` | Step 5.5 执行 `npm install` | 不适用 | Step 5.5 幂等跳过 |
 | 10 | `toolchain.devEcoStudio.installPath` | 走 Step 5.6 探测并写入 | 等同 MISSING | **Step 5.6 跳过**；如需重置请用户手工编辑 `framework.config.json` 后再重跑 |
+| 11 | `.gitignore` framework ignore block | Step 5.4.5 创建/追加缺失规则 | 等同 MISSING | **Step 5.4.5 跳过**；已有等价规则不重复追加 |
 
 **共性纪律**：
 
@@ -119,6 +122,7 @@ doc/glossary-seed.txt                         <档位>       <策略>
 doc/features/                                 <档位>       <策略>
 framework/harness/node_modules/               <档位>       <策略>
 toolchain.devEcoStudio.installPath            <档位>       <策略>
+.gitignore framework runtime ignores          <档位>       <策略>
 ```
 
 **CREATE → UPDATE 强制降级**：
@@ -304,6 +308,55 @@ terms: []
 - `POPULATED`：**不进入、不扫描、不比对**该目录下任何内容；本 Skill 绝不触碰业务 feature 资产。
 
 `doc/features/` 的使用约定（仅作提示，不由本 Skill 生成）：每个 feature 一个子目录，扁平归档 PRD.md / design.md / contracts.yaml / acceptance.yaml / boundaries.yaml / review-report.md / test-plan.md / test-report.md 等全部产物。**不要**编造示例 feature 内容。
+
+### 5.4.5 宿主 `.gitignore`：framework 运行产物忽略规则
+
+**按 Step 0.3 第 11 项体检结果执行**。
+
+> 目标：真实工程只提交 framework 本体，不提交 `/framework-init`、harness 自检、docs phase、后续 phase 运行时产生的本地依赖和报告。
+
+#### 5.4.5.1 必须覆盖的忽略项
+
+以下为 canonical ignore patterns（路径相对实例工程根，统一 POSIX 正斜杠）：
+
+```gitignore
+# Framework runtime artifacts (managed by /framework-init)
+framework/harness/node_modules/
+framework/harness/dist/
+framework/harness/reports/*
+!framework/harness/reports/.gitkeep
+framework/harness/trace/
+framework/harness/package-lock.json
+```
+
+说明：
+
+- `node_modules/`：Step 5.5 `npm install` 的本地依赖。
+- `dist/`：harness TypeScript 编译/构建产物（若存在）。
+- `reports/*`：每次 phase 运行生成的报告；保留 `reports/.gitkeep` 让空目录可随 framework 分发。
+- `trace/`：调试 trace / 临时记录目录（若存在）。
+- `package-lock.json`：由目标工程本地 registry / npm 版本生成，不随 framework 分发；内网、外网 lock 内容可能不同。
+
+#### 5.4.5.2 等价覆盖规则
+
+检查 `.gitignore` 时不要只做机械字符串查找；以下更宽泛规则可视为已覆盖：
+
+| canonical pattern | 可接受的等价覆盖 |
+| --- | --- |
+| `framework/harness/node_modules/` | `**/node_modules`、`**/node_modules/`、`node_modules/`、`framework/**/node_modules/` |
+| `framework/harness/package-lock.json` | `**/package-lock.json`、`package-lock.json`、`framework/**/package-lock.json` |
+| `framework/harness/dist/` | `framework/harness/dist`、`framework/harness/dist/`、`framework/**/dist/` |
+| `framework/harness/reports/*` | `framework/harness/reports/*` |
+| `!framework/harness/reports/.gitkeep` | `!framework/harness/reports/.gitkeep` |
+| `framework/harness/trace/` | `framework/harness/trace`、`framework/harness/trace/` |
+
+#### 5.4.5.3 写入策略
+
+- 若实例工程根 `.gitignore` 不存在：创建文件，写入上述完整 block。
+- 若 `.gitignore` 存在且全部规则已被覆盖：**不修改文件**，只在收尾汇报里说明"framework runtime ignore rules 已存在"。
+- 若只缺部分规则：在文件末尾追加一个 `# Framework runtime artifacts (managed by /framework-init)` block，**只写缺失的 canonical patterns**；不要重排、删除、格式化用户原有 `.gitignore`。
+- 追加前确保原文件以换行结尾；不要因为 CRLF/LF 差异重写整个文件。
+- 该步骤不需要用户确认：它只新增忽略运行产物的规则，不覆盖业务资产；但必须在 Step 7 收尾里列出追加了哪些 pattern。
 
 ---
 
