@@ -1,0 +1,81 @@
+# ============================================================================
+# Docs 阶段规约 (Phase Rules) — framework 对外文档新鲜度
+# ============================================================================
+# 校验对象: framework/docs/**.md（由 framework/docs/DOC_INVENTORY.yaml 声明）
+#
+# 与 catalog/glossary 类似，docs 是"全局阶段"：不归属任何 feature。
+# 校验形态：基于 git log 时间戳，比较"被关心的源文件"和"对应文档"哪个更新。
+#
+# 消费者:
+#   - framework/harness/scripts/check-docs.ts  (脚本 Harness)
+# ============================================================================
+
+phase: docs
+version: "1.0"
+applies_to: "framework/docs/**"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  inventory_exists:
+    description: >
+      framework/docs/DOC_INVENTORY.yaml 必须存在且为合法 YAML。
+    severity: BLOCKER
+    rule:
+      path: "framework/docs/DOC_INVENTORY.yaml"
+      must_be_parseable: true
+
+  inventory_schema_valid:
+    description: >
+      inventory 根对象需包含 schema_version (string) 与 docs (array)。
+      docs 数组每项需有 path / role / sources。
+    severity: BLOCKER
+    rule:
+      required_root_keys:
+        - "schema_version"
+        - "docs"
+      doc_required_fields:
+        - "path"
+        - "role"
+        - "sources"
+
+  doc_files_exist:
+    description: >
+      inventory.docs[].path 列出的所有 markdown 文件必须存在于仓库内。
+    severity: MAJOR
+    rule:
+      check_kind: "file_existence"
+      target: "doc.path"
+
+# --------------------------------------------------------------------------
+# 可追溯性约束（doc → source 关系）
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  doc_freshness:
+    description: >
+      对每份 inventory.docs[]：取该文档最近 git 提交的 timestamp 作为 doc_ts，
+      取它声明的 sources[] 各自最近 git 提交的 timestamp 作为 src_ts。
+      若任一 src_ts > doc_ts，标记 MAJOR：source 在 doc 之后改动过，doc 可能已过期。
+      若全部 src_ts <= doc_ts，PASS。
+    severity: MAJOR
+    rule:
+      compare_method: "git_log_last_commit_timestamp"
+      stale_action: "MAJOR"
+      empty_sources_action: "SKIP"
+      missing_doc_action: "delegated_to_doc_files_exist"
+
+  source_paths_resolvable:
+    description: >
+      inventory.docs[].sources[] 中列出的每条路径都必须在仓库内存在
+      （文件或目录）。不存在则提醒维护者从 inventory 中移除或修正。
+    severity: MAJOR
+    rule:
+      check_kind: "source_existence"
+
+# --------------------------------------------------------------------------
+# 语义约束（保留位置，未来可加 AI 复核）
+# --------------------------------------------------------------------------
+semantic_checks: {}

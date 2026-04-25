@@ -113,6 +113,43 @@ git submodule update --remote framework
 
 ## 版本变更记录
 
+### v2.4：framework 自带文档体系 + `--phase docs` 新鲜度门禁
+
+**触发原因**：v2.3 之前，framework 的对外讲解材料散落在实例工程的 `doc/` 下（如 `HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` 等），随 framework 演进很容易过期且与实例工程语境耦合。v2.4 把这些材料吸纳回 framework 自身，并新增"自动检查文档新鲜度"的 harness 阶段。
+
+**新增 / 调整**：
+
+1. **新增目录 `framework/docs/`**：framework 的对外文档统一归口于此（不是给实例工程看的 README，而是给"接入 framework 的开发者 + 跨部门同事 + 决策者"看的长期演进材料）。子目录约定：
+   - `framework/docs/overview.md` — 全景介绍
+   - `framework/docs/skills/<n>-<skill-name>.md` — 每个 Skill 的对外讲解（独立于 `framework/skills/<id>/SKILL.md` 的操作步骤）
+   - `framework/docs/concepts/*.md` — 跨 Skill 的核心理念（如 `terminology-guarding.md`）
+   - `framework/docs/operations/*.md` — 操作手册（如 `harness-runbook.md`）
+   - `framework/docs/evolution/` — 占位，未来放跨大版本演进笔记
+
+2. **新增 `framework/docs/DOC_INVENTORY.yaml`**：声明每份对外文档"关心"哪些 framework 内部资产（SKILL.md / phase-rules / harness 脚本 / agent_adapter 模板等）。
+
+3. **新增 `--phase docs` 全局阶段**：
+   - 实现：`framework/harness/scripts/check-docs.ts` + `framework/harness/scripts/utils/doc-freshness.ts`
+   - 规则：`framework/specs/phase-rules/docs-rules.yaml`
+   - 行为：对 inventory 中每份 doc 取 git committer date，对其 `sources[]` 也取 git committer date；任一 source 在 doc 之后改动过 → 报 MAJOR `doc_freshness`（doc 可能已过期）；source 路径在仓库内不存在 → 报 MAJOR `source_paths_resolvable`。
+   - 入口：`cd framework/harness && npx ts-node harness-runner.ts --phase docs`（无 `--feature`，与 `catalog` / `glossary` 同为全局阶段）。
+   - **不阻塞 CI**：docs phase 设计上不引入 BLOCKER，最高 MAJOR；目的是提醒维护者，而不是卡住业务功能开发。
+
+4. **新增 unit 套件 `tests/unit/doc-freshness.unit.test.ts`**：覆盖 inventory schema 解析、空 sources / 缺失 git history / 多源 stale 等多条分支；接入 `tests/run-unit.ts > SUITES`，`npm test` 自动跑。
+
+5. **`Phase` 类型扩展**：`framework/harness/scripts/utils/types.ts` 的 `Phase` 联合类型新增 `'docs'`；`isGlobalPhase` 同步认领。`harness-runner.ts > VALID_PHASES` 与 `--list` 帮助文本同步更新。
+
+**实例侧迁移要点**：
+
+- 若实例工程的 `doc/` 下仍存有 v2.3 之前从 framework 同步过来的总览类文档（典型文件名：`HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` / `Harness全链路验证说明.md` / `自然语言到技术模块-演进路线图.md`），**应在升级到 v2.4 后删除**——它们已被 `framework/docs/` 内的对应版本取代。
+- 实例工程**自有的**文档（如功能 PRD、design、test-plan、PPT 复盘材料等）**不受影响**，照常留在 `doc/` 下。
+- vendor 模式同步 framework 时，确保 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）一并随 framework 目录拷贝过去。
+- 接入 v2.4 后跑一次 `npx ts-node harness-runner.ts --phase docs` 自检；若有 MAJOR，按 [`docs/operations/harness-runbook.md`](docs/operations/harness-runbook.md) §6.4 的对照表处理。
+
+**回归方法**：
+- `cd framework/harness && npm test` —— unit 套件应包含 `doc-freshness` 子项且全 PASS。
+- `npx ts-node harness-runner.ts --phase docs` —— 主路烟雾，全 PASS 或仅显示已知 MAJOR（说明哪些 doc 该刷新）。
+
 ### v2.3：DevEco Studio 工具链识别 + ohosTest 装机闭环
 
 **触发原因**：v2.2 落地的 `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` 三条 BLOCKER 在现代 DevEco Studio (≥ 5.0) 环境下全部以「未找到 hvigor」FAIL —— DevEco 5.0 起不再在工程根生成 `hvigorw.bat` 包装脚本，统一从安装目录调用 hvigor。v2.2 的「先看根 wrapper、再看 PATH」查找链全断。

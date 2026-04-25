@@ -1,0 +1,128 @@
+# ============================================================================
+# Framework 对外文档清单（DOC_INVENTORY）
+# ============================================================================
+#
+# 用途：声明每份 framework/docs/**.md 文档"关心"哪些 framework 内部资产，
+# 由 framework/harness/scripts/check-docs.ts 自动检查"源资产是否在 doc 之后
+# 改动过"，引导维护者及时同步对外材料。
+#
+# 检查规则（doc_freshness，severity = MAJOR / WARN）：
+#   - 对每份 docs[].path：取 git log 最近一次 commit 的 timestamp 作为 doc_ts
+#   - 对每个 sources[]：取 git log 最近一次 commit 的 timestamp 作为 src_ts
+#   - 任一 src_ts > doc_ts → MAJOR：doc 可能已过期，需人工核对是否同步
+#   - 全部 src_ts <= doc_ts → PASS
+#   - sources[] 路径在仓库中不存在 → WARN（提醒清理 inventory）
+#
+# 故意不强制 BLOCKER：源代码改动不一定影响 doc 语义（比如改了内部变量名），
+# 强制 BLOCKER 会让 framework 维护者疯。MAJOR 级提醒人工判断即可。
+#
+# 同步动作：写完 doc 后无需手工更新 last_synced_commit 或类似字段——直接
+# git commit doc 文件本身，doc_ts 自动等于该 commit 时间，下次 check 会
+# 自动通过。
+# ============================================================================
+
+schema_version: "1.0"
+
+docs:
+  # --------------------------------------------------------------------------
+  # 全景介绍（顶层入口）
+  # --------------------------------------------------------------------------
+  - path: framework/docs/overview.md
+    role: 框架全景介绍 / 对外宣讲材料
+    audience: 跨部门同事 / 新接入工程的开发者 / 决策者
+    sources:
+      # 每个 Skill 的核心定位（overview 引用了它们的总览定位）
+      - framework/skills/00-framework-init/SKILL.md
+      - framework/skills/0-catalog-bootstrap/SKILL.md
+      - framework/skills/1-prd-design/SKILL.md
+      - framework/skills/2-requirement-design/SKILL.md
+      - framework/skills/3-coding/SKILL.md
+      - framework/skills/4-code-review/SKILL.md
+      - framework/skills/5-business-ut/SKILL.md
+      - framework/skills/6-device-testing/SKILL.md
+      # 配置与 DSL 校验（overview 写到了架构 DSL）
+      - framework/harness/config.ts
+      # adapter 协议（overview 列出了 generic / claude / cursor）
+      - framework/agents/adapter-schema.yaml
+      # 升级与迁移（overview 引用了 vendor / submodule 模式）
+      - framework/MIGRATION.md
+      # 入口 README（overview 与之分工：README 偏使用入门，overview 偏对外讲解）
+      - framework/README.md
+    update_triggers:
+      - 任意 SKILL.md 主体段落（Skill 定位 / 关键产物 / 主门禁）变更
+      - framework.config.json schema_version bump
+      - 新增 / 替换 / 删除 agent_adapter
+      - 新增 / 删除 BLOCKER 级 harness 规则
+      - 三层分离 / 双 harness 等核心设计理念调整
+
+  # --------------------------------------------------------------------------
+  # Skill 阶段讲解
+  # --------------------------------------------------------------------------
+  - path: framework/docs/skills/5-business-ut.md
+    role: 业务级 UT 阶段对外讲解（设计哲学 + v2.x 实现 + 常见坑）
+    audience: 在自己工程接入 framework 后准备做 UT 阶段的开发者
+    sources:
+      - framework/skills/5-business-ut/SKILL.md
+      - framework/specs/phase-rules/ut-rules.yaml
+      - framework/harness/scripts/check-ut.ts
+      - framework/harness/scripts/utils/hdc-runner.ts
+      - framework/harness/scripts/utils/hvigor-runner.ts
+      - framework/harness/scripts/utils/ts-compile.ts
+      - framework/harness/scripts/utils/git-diff.ts
+      - framework/harness/prompts/verify-ut.md
+    update_triggers:
+      - SKILL.md 步骤 / 用例形态 / 命名约定调整
+      - ut-rules.yaml 新增 / 调整 BLOCKER
+      - hypium 输出格式或 hdc 命令改变（影响 hdc-runner.ts）
+      - DevEco hap 命名约定改变
+      - tsc / hvigor 调用方式改变
+
+  # --------------------------------------------------------------------------
+  # 跨 Skill 概念
+  # --------------------------------------------------------------------------
+  - path: framework/docs/concepts/terminology-guarding.md
+    role: 术语守门设计与演进路线图（catalog + glossary + 三道 BLOCKER）
+    audience: 想了解 framework 如何对抗"卡中心 → CardManager"类术语误映射的人
+    sources:
+      - framework/skills/0-catalog-bootstrap/SKILL.md
+      - framework/skills/1-prd-design/SKILL.md
+      - framework/skills/1-prd-design/templates/prd-template.md
+      - framework/specs/phase-rules/prd-rules.yaml
+      - framework/specs/phase-rules/catalog-rules.yaml
+      - framework/specs/phase-rules/glossary-rules.yaml
+      - framework/harness/scripts/check-prd.ts
+      - framework/harness/scripts/utils/catalog-parser.ts
+      - framework/harness/scripts/utils/glossary-parser.ts
+    update_triggers:
+      - 术语映射表 schema 改动（新增 / 删除字段）
+      - 三道 BLOCKER 触发条件调整
+      - WP6/WP7/WP8 启动条件 / 决策里程碑变化
+      - 新增 / 删除"易混项"等核心反例机制
+
+  # --------------------------------------------------------------------------
+  # 操作手册
+  # --------------------------------------------------------------------------
+  - path: framework/docs/operations/harness-runbook.md
+    role: Harness 全链路验证操作手册（8 个 phase 怎么跑、报告路径、常见问题）
+    audience: framework 维护者 / CI 集成 / 排查脚本 harness 失败的开发者
+    sources:
+      - framework/harness/harness-runner.ts
+      - framework/harness/scripts/check-catalog.ts
+      - framework/harness/scripts/check-glossary.ts
+      - framework/harness/scripts/check-prd.ts
+      - framework/harness/scripts/check-design.ts
+      - framework/harness/scripts/check-coding.ts
+      - framework/harness/scripts/check-review.ts
+      - framework/harness/scripts/check-ut.ts
+      - framework/harness/scripts/check-testing.ts
+      - framework/harness/scripts/check-docs.ts
+      - framework/specs/phase-rules
+    update_triggers:
+      - 新增 / 删除 phase
+      - report 输出路径改变
+      - --phase / --feature / 全局 vs 功能 phase 语义调整
+      - 新增 BLOCKER 级别 phase（特别是会改变流程图的）
+
+# 备注：其他 Skill（1 PRD / 2 design / 3 coding / 4 code-review / 6 device-testing）
+# 的对外讲解材料尚未撰写，按节奏补齐；写完后再加入 docs[] 并填 sources。
+# inventory 不登记尚未存在的文件（避免 doc_files_exist 长期噪声 MAJOR）。

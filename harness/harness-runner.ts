@@ -68,7 +68,7 @@ const args = minimist(process.argv.slice(2), {
   },
 });
 
-const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary'];
+const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary', 'docs'];
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -82,8 +82,8 @@ Harness — Spec/Harness 验证工具
   npx ts-node harness-runner.ts [options]
 
 选项:
-  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary)
-  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary 阶段不需要
+  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary|docs)
+  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs 阶段不需要
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             显示详细信息
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
@@ -93,6 +93,7 @@ Harness — Spec/Harness 验证工具
   cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature home-page
   cd framework/harness && npx ts-node harness-runner.ts --phase catalog
   cd framework/harness && npx ts-node harness-runner.ts --phase glossary
+  cd framework/harness && npx ts-node harness-runner.ts --phase docs
   cd framework/harness && npx ts-node harness-runner.ts --list
 `);
 }
@@ -414,6 +415,19 @@ function collectContextFiles(
       files.push({
         label: relGlossary(projectRoot),
         content: fs.readFileSync(glosPath, 'utf-8'),
+      });
+    }
+    return files;
+  }
+
+  // docs 是 framework 自检阶段：上下文只放 inventory 自身，
+  // 不读 catalog/glossary，也不读 feature 维度文件。
+  if (phase === 'docs') {
+    const inventoryPath = path.join(projectRoot, 'framework', 'docs', 'DOC_INVENTORY.yaml');
+    if (fs.existsSync(inventoryPath)) {
+      files.push({
+        label: 'framework/docs/DOC_INVENTORY.yaml',
+        content: fs.readFileSync(inventoryPath, 'utf-8'),
       });
     }
     return files;

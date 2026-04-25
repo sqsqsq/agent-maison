@@ -19,7 +19,8 @@ import * as fs from 'fs';
 import type { UnitCaseResult } from './unit/hdc-runner.unit.test';
 
 const SUITES: Array<{ id: string; modulePath: string }> = [
-  { id: 'hdc-runner',  modulePath: './unit/hdc-runner.unit.test' },
+  { id: 'hdc-runner',     modulePath: './unit/hdc-runner.unit.test' },
+  { id: 'doc-freshness',  modulePath: './unit/doc-freshness.unit.test' },
 ];
 
 interface SuiteSummary {
