@@ -59,7 +59,7 @@ docs:
   # Skill 阶段讲解
   # --------------------------------------------------------------------------
   - path: framework/docs/skills/5-business-ut.md
-    role: 业务级 UT 阶段对外讲解（设计哲学 + v2.x 实现 + 常见坑）
+    role: 业务级 UT 阶段对外讲解（当前设计思想 + 架构模型 + 工作流程 + 门禁）
     audience: 在自己工程接入 framework 后准备做 UT 阶段的开发者
     sources:
       - framework/skills/5-business-ut/SKILL.md
