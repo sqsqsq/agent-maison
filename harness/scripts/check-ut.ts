@@ -956,6 +956,9 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
       feature: ctx.feature,
       phase: 'ut',
       moduleName: mod.name,
+      // v2.3 P2：runHvigorTest 内部走 genOnDeviceTestHap → hdc install → aa test
+      // 链路，需要模块 srcPath 来定位 .hap 输出目录、读 ohosTest module.json5。
+      moduleSrcPath: mod.package_path,
     });
     perModule.push({ module: mod.name, result: res });
     if (res.toolMissing || (res.executed && (res.exitCode !== 0 || (res.testResult && res.testResult.failed > 0)))) {
@@ -998,13 +1001,19 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
 
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
+  // v2.3 P2：runHvigorTest 在 errors[0].message 里会标注"失败阶段：metadata|hap_not_found|install|run|no_pass"，
+  // 让用户一眼定位。这里把它前置展示。
+  const stageHint = first.errors?.find(e => /失败阶段：/.test(e.message))?.message;
+  if (stageHint) {
+    lines.push(stageHint + '（详见日志）');
+  }
   if (first.toolMissing) {
-    lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
+    lines.push('原因：未找到 hvigor / hdc 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径，hdc 由 DevEco SDK toolchains 提供）。');
     first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
   } else if (!first.executed) {
-    lines.push(`原因：hvigor 未执行，日志：${first.logExcerpt}`);
+    lines.push(`原因：hvigor / hdc 未执行，日志：${first.logExcerpt}`);
   } else if (first.exitCode !== 0 && !first.testResult) {
-    lines.push(`hvigor 进程异常退出 exit_code=${first.exitCode}。`);
+    lines.push(`链路异常退出 exit_code=${first.exitCode}。`);
     lines.push('日志尾部：');
     lines.push(first.logExcerpt);
   } else if (first.testResult) {

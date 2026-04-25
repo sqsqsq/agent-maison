@@ -557,26 +557,82 @@ export function runHvigorAssembleApp(
 }
 
 /**
- * hypium 装机执行 UT：hvigor test（需要真机/模拟器）。
- * 用于 ut_hvigor_test 规则。
+ * v2.3 P2：真机执行 UT 的完整链路。
+ *
+ * v2.2 旧路：直接跑 `hvigor test` —— 这条 task 走 unit test 路径，强制要求模块下
+ * 存在 TestAbility.ets。HAR / HSP 库模块（典型如 feature-level WalletMain）没有
+ * TestAbility，hvigor 立刻挂在 UnitTestArkTS。
+ *
+ * v2.3 新路（与 DevEco Studio "Run ohosTest" 等效）：
+ *   ① genOnDeviceTestHap：编译 ohosTest 代码 + 打 ohosTest HAP + 签名
+ *   ② hdc install -r <hap>：装机
+ *   ③ hdc shell aa test -b <bundle> -m <module> -s unittest <runner> -w <ms>
+ *   ④ 解析 OHOS_REPORT_RESULT 行得到 hypium 统计
+ *
+ * 任何阶段失败都会被翻译成 HvigorRunResult，并把上下文（命令、日志路径、设备列表、
+ * 失败阶段标记）回填，便于上层 check-ut.ts 给用户精准诊断。
  */
 export function runHvigorTest(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
     moduleName: string;
+    /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/WalletMain' */
+    moduleSrcPath: string;
   },
 ): HvigorRunResult {
-  // hvigor 的 `test` hook 等价于 DevEco "Run Unit Test"：
-  // 编译 UnitTestArkTS → 出 testRunner HAP → 装机 → 用 hypium 运行 → 收集结果。
-  // **必须有真机/模拟器**，否则 hvigor 会在装机阶段失败。
-  const args = [
-    '-p', `module=${opts.moduleName}@ohosTest`,
-    '-p', 'product=default',
-    '--no-daemon',
-    'test',
-  ];
-  const res = invokeHvigor({ ...opts, args, logBasename: 'hvigor-test.log' });
-  if (res.executed) {
-    res.testResult = parseHypiumOutput(res.logExcerpt + '\n' + (fs.existsSync(path.join(opts.harnessRoot, 'reports', opts.feature, opts.phase, 'hvigor-test.log')) ? fs.readFileSync(path.join(opts.harnessRoot, 'reports', opts.feature, opts.phase, 'hvigor-test.log'), 'utf-8') : ''));
+  const t0 = Date.now();
+
+  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task；hvigor 命中 cache 时只需毫秒）。
+  //    ohosTest 模块的 task 入口必须用 hook task，不能用 `test`（要 TestAbility）也不能
+  //    用 OhosTestCompileArkTS（CLI 拒收的内部 task）。
+  const buildRes = runHvigorBuild({
+    ...opts,
+    moduleName: opts.moduleName,
+    target: 'ohosTest',
+    task: 'genOnDeviceTestHap',
+  });
+  if (!buildRes.executed || (buildRes.exitCode !== undefined && buildRes.exitCode !== 0)) {
+    // build 失败/被跳过：直接把 build 结果原样返回，让 check-ut 沿用 ut_hvigor_build 的失败语义。
+    return buildRes;
+  }
+
+  // ② / ③ / ④：装机 + 执行 + 解析（封装在 hdc-runner，避免本文件臃肿）
+  // 这里通过 require 动态导入，避免 hvigor-runner ↔ hdc-runner 之间形成 import 环。
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { runOnDeviceUt } = require('./hdc-runner') as typeof import('./hdc-runner');
+  const onDevice = runOnDeviceUt({
+    projectRoot: opts.projectRoot,
+    harnessRoot: opts.harnessRoot,
+    feature: opts.feature,
+    phase: opts.phase,
+    srcModuleName: opts.moduleName,
+    srcPath: opts.moduleSrcPath,
+    skipEnvVar: opts.skipEnvVar, // 允许跟 build 用同一个 env 变量整体跳过
+  });
+
+  // 把 onDevice 结果折叠进 HvigorRunResult，让上层报告看见完整链路日志。
+  const combinedLog =
+    `[stage 1: build]\n${buildRes.logExcerpt}\n\n` +
+    `[stage 2: on-device]\n${onDevice.logExcerpt}`;
+  const res: HvigorRunResult = {
+    executed: onDevice.executed,
+    toolMissing: onDevice.toolMissing,
+    skippedByEnv: onDevice.skippedByEnv,
+    exitCode: onDevice.aaTest?.exitCode ?? (onDevice.executed ? 1 : -1),
+    durationMs: Date.now() - t0,
+    logExcerpt: truncateLog(combinedLog).slice(-8000),
+    logPath: onDevice.logPath ?? buildRes.logPath,
+    errors: onDevice.errors.length ? onDevice.errors : (buildRes.errors ?? []),
+    testResult: onDevice.report,
+    command: 'genOnDeviceTestHap + hdc install -r + hdc shell aa test',
+  };
+  // 用 onDevice.failedAt 标注失败阶段：当 install 失败时仍属于真实执行链路异常，
+  // 让 check-ut 把它当 BLOCKER FAIL 报；on_pass=有用例 fail 也是 FAIL。
+  // 成功路径下 onDevice.report?.failed === 0 + executed=true，res.exitCode=0。
+  if (onDevice.failedAt && !res.errors.length) {
+    res.errors = [{ message: `失败阶段：${onDevice.failedAt}` }];
+  }
+  if (onDevice.report && onDevice.report.failed === 0 && onDevice.executed) {
+    res.exitCode = 0;
   }
   return res;
 }
