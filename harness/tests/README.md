@@ -134,3 +134,57 @@ tests/
 1. **新增 BLOCKER 规则前**：先写正反两个 fixture，跑通后再合入 `check-*.ts`
 2. **修改既有规则**：先看 fixture 是否仍然通过；如果断言要改，连带改 `EXPECTED.json` 并在 PR 描述里说明语义变化
 3. **不要让 fixture 依赖 hvigor / hdc / 模拟器**：那部分是宿主 app 的契约测试范畴，不在本套件
+
+---
+
+## 单元测试套件（v2.3 起）
+
+`tests/unit/` 下放**白盒级纯函数**单元测试，与 fixture 端到端测试互补。
+
+### 用途
+
+v2.3 引入的 BLOCKER（`coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test`）
+全部依赖真实工具链（hvigor / hdc / 真机），fixture 隔离 tmpdir 无法复现完整失败
+路径，强行 mock 整个 spawnSync 输出价值低。**真正高回归风险的是 `hdc-runner`
+里的纯函数**：
+
+- `parseHypiumStdout` — DevEco / hypium 升级时输出格式可能变
+- `findOhosTestSignedHap` — DevEco 升级时 hap 命名约定可能变
+- `loadAppBundleName` / `loadOhosTestModuleName` — json5 注释/尾逗号兼容
+
+把这些用裸 assert 圈住，DevEco 一旦升级把输出/命名改了，单测立刻挂出来，倒
+逼工具层同步升级。
+
+### 用法
+
+```bash
+# 跑全部 unit
+npx ts-node framework/harness/tests/run-unit.ts
+
+# 子集
+npx ts-node framework/harness/tests/run-unit.ts --filter parseHypium
+
+# fixtures + unit 一起跑
+cd framework/harness && npm test
+```
+
+### 写新 unit 套件
+
+每个套件是一个 `tests/unit/<id>.unit.test.ts`，**导出 `runAll(): UnitCaseResult[]`**：
+
+```ts
+export interface UnitCaseResult { name: string; ok: boolean; error?: string; }
+
+const cases = [
+  { name: '...', run: () => { /* throw on failure */ } },
+];
+
+export function runAll(): UnitCaseResult[] {
+  return cases.map(c => {
+    try { c.run(); return { name: c.name, ok: true }; }
+    catch (e) { return { name: c.name, ok: false, error: (e as Error).message }; }
+  });
+}
+```
+
+然后在 `run-unit.ts` 的 `SUITES` 数组里登记。无需引入额外 test framework。

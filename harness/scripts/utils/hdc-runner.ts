@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, SpawnSyncReturns } from 'child_process';
-import { loadDevEcoConfig, loadFrameworkConfig } from '../../config';
+import { loadDevEcoConfig } from '../../config';
 import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
@@ -277,9 +277,10 @@ export function runAaTest(meta: OhosTestMetadata): AaTestResult {
 
 // ----------------------------------------------------------------------------
 // hypium 输出解析（与 hvigor-runner 保留两份独立解析，避免循环依赖）
+// 导出供单元测试用：DevEco / hypium 升级输出格式时这是回归风险最高的点。
 // ----------------------------------------------------------------------------
 
-function parseHypiumStdout(out: string): HypiumTestResult | undefined {
+export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
   const result: HypiumTestResult = { total: 0, passed: 0, failed: 0, skipped: 0, failures: [] };
   let matched = false;
   let curSuite = '';
@@ -471,6 +472,3 @@ function finalize(
   }
   return res;
 }
-
-// 便于上层（hvigor-runner / check-ut）import
-export { loadFrameworkConfig };

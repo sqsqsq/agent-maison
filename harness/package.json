@@ -10,7 +10,10 @@
     "check:coding": "ts-node harness-runner.ts --phase coding",
     "check:review": "ts-node harness-runner.ts --phase review",
     "check:ut": "ts-node harness-runner.ts --phase ut",
-    "check:testing": "ts-node harness-runner.ts --phase testing"
+    "check:testing": "ts-node harness-runner.ts --phase testing",
+    "test:fixtures": "ts-node tests/run-tests.ts",
+    "test:unit": "ts-node tests/run-unit.ts",
+    "test": "npm run test:unit && npm run test:fixtures"
   },
   "dependencies": {
     "yaml": "^2.7.0",
