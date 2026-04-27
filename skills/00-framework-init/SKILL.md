@@ -63,7 +63,30 @@
 
 > 动机：`/framework-init` 常常是**升级重跑**——用户已积累 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/architecture.md` / `doc/features/**` 等资产，甚至在 `CLAUDE.md` / `AGENTS.md` 里补过项目指令。**盲目覆盖就是毁资产**。本步把所有待写路径前置扫一遍，按固定策略矩阵给出动作，**不允许 AI 临场发挥**。
 
+#### 0.3.0 先决条件 —— 必须先跑 `check-init`（v2.6 起，BLOCKER）
+
+> v2.6 引入「init 阶段全局 Harness」：11 项体检的 `MISSING/EMPTY/POPULATED` 判定与 `POPULATED` 项的 diff 摘要全部由 [framework/harness/scripts/check-init.ts](../../harness/scripts/check-init.ts) 计算。**Skill 自身不再做任何字节比对 / hash 描述 / "看起来一致" 的口头判定**。
+
+进入 0.3.1 之前**必须**先在终端执行（`<已选定 adapter>` 必须填具体值，不允许「`claude|cursor|generic`」三选一占位）：
+
+```bash
+cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter <已选定 adapter>
+```
+
+执行结果产出两份成果：
+
+1. **stdout 11 行体检表**（来自 `check-init.ts` 的 `buildStdoutTable()`）—— 0.3.3 节将原样搬运给用户；
+2. **JSON 报告**：写入 `framework/harness/reports/_global/init/<timestamp>/check-init.json`，由 0.3.2 策略矩阵消费。
+
+**严禁**跳过本步直接由 AI 描述 11 行判定结果。任一行的 `状态` 列、`hash_template`、`hash_target`、`diff_summary` 必须**直接搬运** `check-init.json` 的 `inspections[].status` / `hash_*` / `diff_summary` 字段；**禁止**在 SKILL 本节出现"已与模板一致"、"差异主要是项目特定内容"、"基于 DSL 已渲染" 等占位措辞——后者是 v2.6 之前的事故现场，已由本 SKILL「阻塞与上报（BLOCKER）」段的 **init-diff Hallucination Ban** 条款列为 BLOCKER。
+
+如果脚本退出码非 0：
+- BLOCKER 类问题（adapter 未指定 / adapter.yaml 不可解析 / template 路径缺失 / 11 项无法判定 / POPULATED 项缺 hash/diff）→ **停下来**修复后重跑，不得绕过。
+- 仅 POPULATED 行的 y/n 决策由 SKILL 0.3.2 + 0.3.3 处理，不影响脚本退出码。
+
 #### 0.3.1 体检清单（固定 11 项，按路径顺序扫）
+
+> **本表 11 行的 `状态` 列必须从 `check-init.json` 的 `inspections[].status` 字段直接搬运**；下表的「档位分类依据」只描述 `check-init.ts` 的判定算法，便于审计——**不再要求 AI 自行执行该算法**。
 
 所有路径均相对**实例工程根**；多数路径须先从 `framework.config.json`（若存在）的 `paths` 字段解析，UPDATE 模式优先读实例工程的配置，CREATE 模式以 `framework/harness/config.ts` `DEFAULT_PATHS` 为准。
 
@@ -107,22 +130,32 @@
 
 #### 0.3.3 汇报表与 CREATE 强制降级
 
-先向用户**完整打印**下面这张表（没有发现的 MISSING 行也要列，便于用户全貌理解），再继续 Step 1。**表内第 2、3 行的具体文件名必须基于 Step 0.2.5 已选定的 `agent_adapter` 渲染**（例：`cursor` → `AGENTS.md` + `.cursor/**`；`claude` → `CLAUDE.md` + `.claude/**`；`generic` → `AGENTS.md` + 无 adapter 目录），不得写两个候选名一起糊弄：
+**原样搬运 0.3.0 步骤产生的 `check-init.ts` stdout 11 行体检表**给用户看，再继续 Step 1。脚本输出已经按 Step 0.2.5 选定的 adapter 渲染了第 2/3 行的具体文件名（例：`cursor` → `AGENTS.md` + `.cursor/**`；`claude` → `CLAUDE.md` + `.claude/**`；`generic` → `AGENTS.md` + 无 adapter 目录）。
+
+**搬运纪律（BLOCKER）**：
+
+- **不得**增删任何一行（11 行就是 11 行）。
+- **不得**改写「状态」列的 `MISSING/EMPTY/POPULATED` 三态值。
+- **不得**改写「计划动作」列的策略文案（这些文案与 0.3.2 策略矩阵一一对应）。
+- **不得**改写「诊断」列措辞——尤其是 POPULATED 行的 hash/diff 摘要，必须以 `check-init.json` 中 `inspections[].diff_summary` 字段为准；任何"已与模板一致"、"差异主要是项目特定内容"等占位措辞 → 见「阻塞与上报（BLOCKER）」段的 **init-diff Hallucination Ban** 条款，视为本次 init 失败。
+- 可以**额外在表后**用一两句话提醒用户重点 POPULATED 行（例："第 2 行你的 `CLAUDE.md` 与默认骨架有 diff，进入 Step 4.1 时需要你 `y/n` 确认"），但**不得**改写表内字段。
+
+参考表头格式（实际行内容由脚本生成，AI 不渲染）：
 
 ```text
-产物                                          状态         计划动作
----------------------------------------------------------------------
-framework.config.json                         <档位>       <策略>
-<agent_entry_file.target_path>                <档位>       <策略>
-<adapter templates 下各文件>                   <档位/逐项>  <策略>
-doc/architecture.md                           <档位>       <策略>
-doc/module-catalog.yaml                       <档位>       <策略>
-doc/glossary.yaml                             <档位>       <策略>
-doc/glossary-seed.txt                         <档位>       <策略>
-doc/features/                                 <档位>       <策略>
-framework/harness/node_modules/               <档位>       <策略>
-toolchain.devEcoStudio.installPath            <档位>       <策略>
-.gitignore framework runtime ignores          <档位>       <策略>
+| # | 产物                                | 状态       | 计划动作                          | 诊断 |
+|---|-------------------------------------|------------|-----------------------------------|------|
+| 1 | framework.config.json               | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 2 | <agent_entry_file.target_path>      | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 3 | <adapter templates>                 | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 4 | doc/architecture.md                 | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 5 | doc/module-catalog.yaml             | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 6 | doc/glossary.yaml                   | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 7 | doc/glossary-seed.txt               | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 8 | doc/features/                       | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 9 | framework/harness/node_modules/...  | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 10| toolchain.devEcoStudio.installPath  | <脚本生成> | <脚本生成>                        | <脚本生成> |
+| 11| .gitignore framework runtime ignores| <脚本生成> | <脚本生成>                        | <脚本生成> |
 ```
 
 **CREATE → UPDATE 强制降级**：
@@ -603,6 +636,15 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 - Step 5.5 的 `npm install` 失败 → **不得**跳过直接跑 Step 6；**不得**擅自改 registry 或 `.npmrc` 绕过；按 5.5.3 三点让用户排查后重试。
 - **Step 5.5.4 的 `npm test` 自检失败而进入 Step 5.6 / Step 6** → 严禁；**不得**用 `--filter` 缩小集合凑 PASS、**不得**把失败解释为"环境问题"绕过（framework 自带套件不依赖任何外部工具链）。失败必须按 5.5.4.2 排查清单一项一项过，全绿后才能继续。
 - **未经用户显式确认 `toolchain.devEcoStudio.installPath` 就写入 `framework.config.json`** → 严禁；`detect-deveco.ts` 探测出的 `recommended.installPath` 只能作为**推荐值**，必须按 Step 5.6.3 拿到用户 `y` 或自定义路径回复后才能落盘；用户回 `跳过` 视为显式拒绝，不写入但必须按 5.6.4 列入 Step 7 跳过项汇报。
+- **`init-diff Hallucination Ban`（v2.6 BLOCKER）**：禁止在 Step 0.3 任何位置自行描述 11 项体检的 `MISSING/EMPTY/POPULATED` 状态、字节相等性、hash 一致性、与模板的差异程度。所有判定**必须且只能**来自 [framework/harness/scripts/check-init.ts](../../harness/scripts/check-init.ts) 生成的 `check-init.json`。下列措辞一律视作幻觉、本次 init 失败、必须退出回到 Step 0.3.0 重新跑脚本——
+   - "CLAUDE.md 当前已与模板渲染结果一致"
+   - "diff 无实质变更"
+   - "差异主要是项目特定内容"
+   - "基于 DSL 已渲染"
+   - "与模板字节相等" / "与骨架基本一致" 等任何无 sha256 + diff_summary 支撑的"一致性"声明
+   - 任何写出 11 行判定但**未先执行** `npx ts-node harness-runner.ts --phase init --adapter <X>` 的行为
+  
+  事故现场背景：v2.6 之前 SKILL 把 11 项判定交给 AI 自行执行，弱模型在内网移植时把 `CLAUDE.md` 与新模板（含 commit `a234ca7`）的真实 diff 描述为"已与模板一致"，从而绕过用户 y/n 确认。本条 ban 是该事故的根本性补丁，不接受任何"diff 太大读不下"为理由的偷懒；脚本输出有 50 行截断和聚合 hash，已经控制了上下文体积。
 
 ---
 

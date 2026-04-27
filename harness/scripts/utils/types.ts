@@ -12,14 +12,15 @@ export type Phase =
   | 'testing'
   | 'catalog'    // Skill 0 · Phase A 产物：doc/module-catalog.yaml
   | 'glossary'   // Skill 0 · Phase B 产物：doc/glossary.yaml
-  | 'docs';      // framework 自身对外文档新鲜度（v2.4 起）
+  | 'docs'       // framework 自身对外文档新鲜度（v2.4 起）
+  | 'init';      // Skill 00 framework-init 产物 11 项体检（v2.6 起）
 
-/** catalog / glossary / docs 三个"全局"阶段不归属任何 feature，使用本哨兵值 */
+/** catalog / glossary / docs / init 四个"全局"阶段不归属任何 feature，使用本哨兵值 */
 export const GLOBAL_FEATURE_SENTINEL = '_global';
 
 /** 判断给定 phase 是否是"全局" phase（不需要 --feature 参数） */
 export function isGlobalPhase(phase: Phase): boolean {
-  return phase === 'catalog' || phase === 'glossary' || phase === 'docs';
+  return phase === 'catalog' || phase === 'glossary' || phase === 'docs' || phase === 'init';
 }
 
 /** 检查严重等级 */
@@ -344,4 +345,6 @@ export interface CheckContext {
   projectRoot: string;
   phaseRule: PhaseRuleSpec;
   featureSpec: FeatureSpec;
+  /** init 阶段专用：CLI --adapter 透传值（其他阶段为 undefined） */
+  adapter?: string;
 }

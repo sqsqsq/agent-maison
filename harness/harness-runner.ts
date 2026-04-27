@@ -59,7 +59,7 @@ import * as YAML from 'yaml';
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report'],
+  string: ['phase', 'feature', 'ai-report', 'adapter'],
   boolean: ['list', 'help', 'verbose'],
   alias: {
     p: 'phase',
@@ -70,7 +70,7 @@ const args = minimist(process.argv.slice(2), {
   },
 });
 
-const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary', 'docs'];
+const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary', 'docs', 'init'];
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -84,8 +84,9 @@ Harness — Spec/Harness 验证工具
   npx ts-node harness-runner.ts [options]
 
 选项:
-  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary|docs)
-  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs 阶段不需要
+  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary|docs|init)
+  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs/init 阶段不需要
+  --adapter <name>          init 阶段必传：claude|cursor|generic（其他阶段忽略）
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             显示详细信息
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
@@ -96,6 +97,7 @@ Harness — Spec/Harness 验证工具
   cd framework/harness && npx ts-node harness-runner.ts --phase catalog
   cd framework/harness && npx ts-node harness-runner.ts --phase glossary
   cd framework/harness && npx ts-node harness-runner.ts --phase docs
+  cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter claude
   cd framework/harness && npx ts-node harness-runner.ts --list
 `);
 }
@@ -195,6 +197,7 @@ async function main(): Promise<void> {
     projectRoot,
     phaseRule,
     featureSpec,
+    adapter: typeof args.adapter === 'string' ? args.adapter : undefined,
   };
 
   // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
@@ -461,6 +464,22 @@ function collectContextFiles(
       files.push({
         label: 'framework/docs/DOC_INVENTORY.yaml',
         content: fs.readFileSync(inventoryPath, 'utf-8'),
+      });
+    }
+    return files;
+  }
+
+  // init 是 framework-init 元阶段：上下文最小化，只放 framework.config.json
+  // （若存在）。adapter.yaml / 模板由 check-init.ts 自行解析读取，避免
+  // collectContextFiles 重复 IO。CREATE 模式下 framework.config.json 还
+  // 没有，files 为空也合法（init 没有 verifier 子 agent，AI prompt 只是
+  // 形式上保留）。
+  if (phase === 'init') {
+    const cfgPath = path.join(projectRoot, 'framework.config.json');
+    if (fs.existsSync(cfgPath)) {
+      files.push({
+        label: 'framework.config.json',
+        content: fs.readFileSync(cfgPath, 'utf-8'),
       });
     }
     return files;

@@ -1,0 +1,108 @@
+# ============================================================================
+# Init 阶段规约 (Phase Rules) — framework-init Skill 0.3 产物体检
+# ============================================================================
+# 校验对象: framework-init Skill 0.3 体检表 11 项产物（agent 入口文件 +
+# adapter templates + 架构/数据/工具链/.gitignore 等）。
+#
+# 与 docs 类似，init 是"全局阶段"：不归属任何 feature。校验形态：
+#   1) 选定 adapter 的 adapter.yaml 必须可解析；
+#   2) adapter.yaml 声明的所有 template 文件 / 目录必须真实存在；
+#   3) 11 项体检表必须每行都能给出 MISSING / EMPTY / POPULATED 三态之一；
+#   4) 每个 POPULATED 项必须附带 hash 对比 + diff 摘要（避免弱模型在
+#      UPDATE 模式 diff 步骤上口头描述 "已与模板一致" 的事故）。
+#
+# 消费者:
+#   - framework/harness/scripts/check-init.ts  (脚本 Harness)
+#
+# 注：init 阶段不接 verify-init.md（元阶段无可审），不接 Stop hook
+# （避免 hook 拦自己），不写 phase-completion-receipt（init 无 feature
+# 维度，回执模板不匹配）—— 这三件套刻意不对称。
+# ============================================================================
+
+phase: init
+version: "1.0"
+applies_to: "framework-init Skill 0.3 体检表 11 项产物"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  adapter_yaml_resolvable:
+    description: >
+      选定 adapter 的 framework/agents/<adapter>/adapter.yaml 必须存在且为
+      合法 YAML，且至少包含 adapter_name + agent_entry_file。CREATE 模式下
+      adapter 由 --adapter CLI 参数显式提供；UPDATE 模式可从
+      framework.config.json.agent_adapter 字段读取，二者必须有一个。
+    severity: BLOCKER
+    rule:
+      adapter_source_priority:
+        - "cli_flag:--adapter"
+        - "framework.config.json:agent_adapter"
+      adapter_yaml_path: "framework/agents/<adapter>/adapter.yaml"
+      must_be_parseable: true
+      required_root_keys:
+        - "adapter_name"
+        - "agent_entry_file"
+
+  template_files_resolvable:
+    description: >
+      adapter.yaml 中声明的所有 template_path / template_dir 必须在文件系统
+      中真实存在。包括 agent_entry_file.template_path、commands.template_dir、
+      skill_bridge.template_dir、rules.template_dir、settings_file.template_path、
+      hooks.template_dir 等所有相关字段。
+    severity: BLOCKER
+    rule:
+      check_kind: "template_path_existence"
+      probed_fields:
+        - "agent_entry_file.template_path"
+        - "commands.template_dir"
+        - "skill_bridge.template_dir"
+        - "rules.template_dir"
+        - "settings_file.template_path"
+        - "hooks.template_dir"
+      missing_template_action: "BLOCKER"
+
+  inspection_table_complete:
+    description: >
+      11 项体检（SKILL 0.3.1 表）每行必须给出 MISSING / EMPTY / POPULATED
+      三态之一。任一项无法判定 → BLOCKER（脚本 bug 或环境异常）。
+    severity: BLOCKER
+    rule:
+      required_inspection_count: 11
+      allowed_status:
+        - "MISSING"
+        - "EMPTY"
+        - "POPULATED"
+      missing_inspection_action: "BLOCKER"
+
+# --------------------------------------------------------------------------
+# 可追溯性约束（target ↔ template 漂移检测）
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  diff_for_populated_provided:
+    description: >
+      对每个 status=POPULATED 的体检项（涉及第 2/3/4/7 项有 template 对照），
+      必须给出 hash_template + hash_target + diff_summary 三个字段。当
+      hash_template == hash_target 时 diff_summary 可为 "no diff"；否则
+      必须是非空 unified diff 摘要（前 50 行）。**严禁** "已与模板一致"
+      之类的占位措辞 —— 这是本阶段唯一的核心反幻觉约束。
+    severity: BLOCKER
+    rule:
+      compare_method: "sha256_byte_compare"
+      mandatory_fields_when_populated:
+        - "hash_template"
+        - "hash_target"
+        - "diff_summary"
+      banned_diff_summary_patterns:
+        - "已与模板一致"
+        - "已与模板渲染结果一致"
+        - "diff 无实质变更"
+        - "差异主要是项目特定内容"
+        - "基于 DSL 已渲染"
+
+# --------------------------------------------------------------------------
+# 语义约束（保留位置，init 不接 verifier 子 agent，故为空）
+# --------------------------------------------------------------------------
+semantic_checks: {}

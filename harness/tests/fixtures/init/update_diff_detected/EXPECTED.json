@@ -1,0 +1,13 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    { "id": "adapter_yaml_resolvable",       "status": "PASS", "severity": "BLOCKER" },
+    { "id": "template_files_resolvable",     "status": "PASS", "severity": "BLOCKER" },
+    { "id": "inspection_table_complete",     "status": "PASS", "severity": "BLOCKER" },
+    { "id": "diff_for_populated_provided",   "status": "PASS", "severity": "BLOCKER" },
+    {
+      "id": "inspection_02_CLAUDE_md",
+      "details_includes": "[POPULATED]"
+    }
+  ]
+}

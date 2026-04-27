@@ -33,6 +33,7 @@ const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   catalog: 'catalog-rules.yaml',
   glossary: 'glossary-rules.yaml',
   docs: 'docs-rules.yaml',
+  init: 'init-rules.yaml',
 };
 
 export class SpecLoader {

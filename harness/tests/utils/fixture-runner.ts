@@ -48,6 +48,8 @@ const FIXTURE_FRAMEWORK_ROOT = path.resolve(FIXTURE_HARNESS_ROOT, '..');
 export interface FixtureCmd {
   phase: Phase;
   feature?: string;
+  /** init 阶段：透传到 CheckContext.adapter（其他阶段忽略） */
+  adapter?: string;
   /** 额外环境变量（如 HARNESS_SKIP_HVIGOR=1） */
   env?: Record<string, string>;
 }
@@ -191,6 +193,7 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
       projectRoot: tmpdir,
       phaseRule,
       featureSpec,
+      adapter: cmd.adapter,
     };
 
     // 6. 直接 require checker（绕开 harness-runner 的 Step 4/5）
