@@ -105,6 +105,18 @@ export interface DevEcoStudioConfig {
 
 export interface ToolchainConfig {
   devEcoStudio?: DevEcoStudioConfig;
+  /**
+   * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
+   *
+   * 探测优先级（v2.7 起，由 hvigor-runner.ts `detectProduct` 实现）：
+   *   ① toolchain.preferredProduct（本字段，用户显式覆盖）
+   *   ② 项目根 build-profile.json5 → app.products[0].name
+   *   ③ 兜底常量 'default'
+   *
+   * 多 product 工程（同时声明 default / mirror / phone 等）若希望 framework
+   * harness 走非首位 product，必须在此显式声明。空字符串等同未声明。
+   */
+  preferredProduct?: string;
 }
 
 export interface FrameworkPaths {
@@ -340,16 +352,27 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
 
 function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
+
   const deveco = raw.devEcoStudio;
-  if (!deveco || typeof deveco !== 'object') return undefined;
-  const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
-  const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
-  if (!installPath && !hvigorBin) return undefined;
+  let normalizedDeveco: DevEcoStudioConfig | undefined;
+  if (deveco && typeof deveco === 'object') {
+    const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
+    const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
+    if (installPath || hvigorBin) {
+      normalizedDeveco = {
+        ...(installPath ? { installPath } : {}),
+        ...(hvigorBin ? { hvigorBin } : {}),
+      };
+    }
+  }
+
+  const preferredProduct = typeof raw.preferredProduct === 'string' ? raw.preferredProduct.trim() : '';
+
+  if (!normalizedDeveco && !preferredProduct) return undefined;
+
   return {
-    devEcoStudio: {
-      ...(installPath ? { installPath } : {}),
-      ...(hvigorBin ? { hvigorBin } : {}),
-    },
+    ...(normalizedDeveco ? { devEcoStudio: normalizedDeveco } : {}),
+    ...(preferredProduct ? { preferredProduct } : {}),
   };
 }
 

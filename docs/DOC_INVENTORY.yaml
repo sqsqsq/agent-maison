@@ -103,7 +103,7 @@ docs:
   # 操作手册
   # --------------------------------------------------------------------------
   - path: framework/docs/operations/harness-runbook.md
-    role: Harness 全链路验证操作手册（8 个 phase 怎么跑、报告路径、常见问题）
+    role: Harness 全链路验证操作手册（9 个 phase 怎么跑、报告路径、常见问题、v2.7 hvigor 调优段）
     audience: framework 维护者 / CI 集成 / 排查脚本 harness 失败的开发者
     sources:
       - framework/harness/harness-runner.ts
@@ -116,12 +116,15 @@ docs:
       - framework/harness/scripts/check-ut.ts
       - framework/harness/scripts/check-testing.ts
       - framework/harness/scripts/check-docs.ts
+      - framework/harness/scripts/check-init.ts
+      - framework/harness/scripts/utils/hvigor-runner.ts
       - framework/specs/phase-rules
     update_triggers:
       - 新增 / 删除 phase
       - report 输出路径改变
-      - --phase / --feature / 全局 vs 功能 phase 语义调整
+      - --phase / --feature / --adapter / 全局 vs 功能 phase 语义调整
       - 新增 BLOCKER 级别 phase（特别是会改变流程图的）
+      - hvigor / hdc 调用参数改变（影响 §9.2 / §9.4 排错与调优表）
 
 # 备注：其他 Skill（1 PRD / 2 design / 3 coding / 4 code-review / 6 device-testing）
 # 的对外讲解材料尚未撰写，按节奏补齐；写完后再加入 docs[] 并填 sources。

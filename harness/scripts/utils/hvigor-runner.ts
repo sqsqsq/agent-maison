@@ -29,6 +29,7 @@ import { spawnSync, SpawnSyncReturns } from 'child_process';
 import {
   resolveHvigorBinFromConfig,
   loadDevEcoConfig,
+  loadFrameworkConfig,
   deriveSdkHomeFromInstallPath,
   deriveJbrHomeFromInstallPath,
 } from '../../config';
@@ -350,6 +351,73 @@ function parseHypiumOutput(log: string): HypiumTestResult {
   return result;
 }
 
+// ----------------------------------------------------------------------------
+// product 探测（v2.7 起）
+// ----------------------------------------------------------------------------
+//
+// hvigor `-p product=` 指定使用的 product 名（来自 build-profile.json5
+// app.products[].name）。v2.6 之前 hvigor-runner 把这个值写死成 'default'，
+// 但内网工程实际可能叫 'mirror' / 'phone' / 'tablet'，写死会让 hvigor 报
+// `product not found`，无法过编译。
+//
+// 探测优先级（高 → 低）：
+//   ① framework.config.json > toolchain.preferredProduct（用户显式覆盖渠道）
+//   ② 项目根 build-profile.json5 > app.products[0].name（多 product 工程取首位）
+//   ③ 兜底常量 'default'（让 hvigor 自己报 product not found，不抢报错）
+//
+// 容错纪律：任一阶段失败（文件不存在 / JSON5 解析失败 / 字段缺失 / 字段非字符串）
+// 一律安静回退到下一档，不抛异常 —— framework harness 是个门禁脚本，product
+// 探测本身不应该成为编译失败的原因。
+
+/** 简易 JSON5 解析（容忍 // / /* 注释与尾逗号） */
+function parseProductJson5(content: string): unknown {
+  let s = content.replace(/^\s*\/\/.*$/gm, '');
+  s = s.replace(/([^"':])\s*\/\/.*$/gm, '$1');
+  s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+  s = s.replace(/,(\s*[}\]])/g, '$1');
+  return JSON.parse(s);
+}
+
+/**
+ * 探测当前工程应当传给 hvigor `-p product=` 的 product 名。
+ *
+ * 不抛异常；任何阶段失败都安静兜底到 `'default'`。
+ *
+ * 单测覆盖：framework/harness/tests/unit/detect-product.test.ts。
+ */
+export function detectProduct(projectRoot: string): string {
+  // ① framework.config.json > toolchain.preferredProduct
+  try {
+    const cfg = loadFrameworkConfig(projectRoot);
+    const pref = cfg.toolchain?.preferredProduct;
+    if (typeof pref === 'string' && pref.trim().length > 0) {
+      return pref.trim();
+    }
+  } catch {
+    // 加载 framework.config.json 失败 → 继续兜底
+  }
+
+  // ② build-profile.json5 > app.products[0].name
+  try {
+    const buildProfile = path.join(projectRoot, 'build-profile.json5');
+    if (fs.existsSync(buildProfile)) {
+      const raw = fs.readFileSync(buildProfile, 'utf-8');
+      const obj = parseProductJson5(raw) as {
+        app?: { products?: Array<{ name?: string }> };
+      };
+      const first = obj?.app?.products?.[0]?.name;
+      if (typeof first === 'string' && first.trim().length > 0) {
+        return first.trim();
+      }
+    }
+  } catch {
+    // build-profile.json5 不可解析 → 继续兜底
+  }
+
+  // ③ fallback
+  return 'default';
+}
+
 export interface HvigorInvokeOpts {
   /** 项目根（hvigorw 所在目录、env / config 解析锚点） */
   projectRoot: string;
@@ -507,16 +575,7 @@ export function runHvigorBuild(
 ): HvigorRunResult {
   const target = opts.target ?? 'default';
   const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
-  // hvigor 命令行的"模块级编译"通过 `-p module=<name>@<target>` 选定，
-  // **不传** `--mode`（实测 `--mode module` + 模块 cwd 会让 hvigor 在模块目录
-  // 找 hvigor-config.json5；`--mode project` 又只暴露顶层 hook task）。
-  // cwd 保持项目根，让 hvigor 沿用根 hvigor-config.json5。
-  const args = [
-    '-p', `module=${opts.moduleName}@${target}`,
-    '-p', 'product=default',
-    '--no-daemon',
-    task,
-  ];
+  const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, target, task);
   return invokeHvigor({
     ...opts,
     args,
@@ -542,18 +601,75 @@ export function runHvigorAssembleApp(
   },
 ): HvigorRunResult {
   const task = opts.task ?? 'assembleApp';
-  const args = [
-    '--mode', 'project',
-    '-p', 'product=default',
-    '--no-daemon',
-    ...(opts.extraArgs ?? []),
-    task,
-  ];
+  const args = buildAssembleAppArgs(opts.projectRoot, task, opts.extraArgs);
   return invokeHvigor({
     ...opts,
     args,
     logBasename: 'hvigor-build.log',
   });
+}
+
+// ----------------------------------------------------------------------------
+// args 装配（单测覆盖：tests/unit/hvigor-args.unit.test.ts）
+// ----------------------------------------------------------------------------
+//
+// 把 args 装配从 runHvigorBuild / runHvigorAssembleApp 抽出来，独立函数有两个
+// 好处：
+//   1. 单测可以直接断言"加了哪些 flag、product 是不是探测来的"，而不必 mock
+//      整个 spawnSync；
+//   2. 编辑参数时一处生效，coding / ut / 未来其它 phase 不会漂。
+
+/**
+ * 装配项目级 assembleApp 的 hvigor args（coding 阶段用）。
+ *
+ * v2.7 加速纪律：
+ *   - product 由 detectProduct() 自动探测；
+ *   - 强制 `-p buildMode=debug`：assembleApp 默认 release，coding 门禁只验通过
+ *     性，debug 可砍 30%~50% 编译时间；用户需要 release 校验可通过 `extraArgs`
+ *     传 `-p buildMode=release` 覆盖（hvigor 后传同名 -p 以最后一次为准，因此
+ *     extraArgs 必须放在 task 之前的末端位置）；
+ *   - `--parallel` / `--incremental`：开 hvigor 并发 + 缓存。
+ */
+export function buildAssembleAppArgs(
+  projectRoot: string,
+  task: string = 'assembleApp',
+  extraArgs?: string[],
+): string[] {
+  return [
+    '--mode', 'project',
+    '-p', `product=${detectProduct(projectRoot)}`,
+    '-p', 'buildMode=debug',
+    '--no-daemon',
+    '--parallel',
+    '--incremental',
+    ...(extraArgs ?? []),
+    task,
+  ];
+}
+
+/**
+ * 装配模块级 assembleHap / genOnDeviceTestHap 的 hvigor args（ut 阶段用）。
+ *
+ * 不传 `--mode`（实测 `--mode module` + 模块 cwd 会让 hvigor 去模块目录找
+ * hvigor-config.json5，反而失败；`--mode project` 又只暴露顶层 hook task）。
+ *
+ * **不**加 `-p buildMode=debug`：assembleHap / genOnDeviceTestHap 默认就是
+ * debug，加了只是噪音。
+ */
+export function buildModuleHapArgs(
+  projectRoot: string,
+  moduleName: string,
+  target: 'default' | 'ohosTest',
+  task: string,
+): string[] {
+  return [
+    '-p', `module=${moduleName}@${target}`,
+    '-p', `product=${detectProduct(projectRoot)}`,
+    '--no-daemon',
+    '--parallel',
+    '--incremental',
+    task,
+  ];
 }
 
 /**

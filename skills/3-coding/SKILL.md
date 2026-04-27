@@ -393,6 +393,22 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <
 
 > **不要**让 agent 自己手敲 `hvigorw --mode module ...`。v2.3 起命令形态、所需环境变量、含空格路径等综合考虑较多，自行拼装容易翻车；harness 已经封装了这一切。
 
+**v2.7 起 harness 装配的 hvigor 命令形态**（自动加速 + product 自动探测）：
+
+```
+hvigorw --mode project \
+  -p product=<detectProduct()> \
+  -p buildMode=debug \
+  --no-daemon --parallel --incremental \
+  assembleApp
+```
+
+- `product=` 由 `detectProduct(projectRoot)` 探测：先看 `framework.config.json > toolchain.preferredProduct`，再看 `build-profile.json5 > app.products[0].name`，兜底 `default`。**v2.6 之前硬写死 `default`**，内网某工程 product 名为 `mirror` 时会直接报 `product not found` —— 这条 BLOCKER 已修。
+- `-p buildMode=debug`：assembleApp 默认 `release`（含混淆 / 压缩 / 体积优化），coding 阶段只过门禁不出交付包，固定 `debug` 在大型工程通常能砍 30%~50% 编译时间。
+- `--parallel` / `--incremental`：开 hvigor 并发 + 增量缓存，对**大型多模块工程 + 日常迭代重编**场景显著提速。
+
+实际加速效果与工程规模强相关，详见 [framework/docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md) 的「hvigor 调优」章节，里头记录了本仓库 5 模块小工程的实测反例（warm 路径反而慢 47%），避免 agent 拍脑袋假设"必定加速"。
+
 #### 6.5.2 自闭环修复策略
 
 1. **看 verdict**：harness 报告里 `coding_hvigor_build` 状态为 PASS 才算编译过；FAIL 进入修复闭环。
