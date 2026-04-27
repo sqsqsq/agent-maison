@@ -231,3 +231,12 @@ surveyed 过的 5 个层级方案：
 > 中期靠"分层 Repo Map"让弱模型在不读完全仓的前提下看见真实接口；
 > 长期看收益再决定是否引入语义级检索。
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
+
+<!--
+  last-synced: 2026-04-27
+  reviewed against framework "phase closure / Layer 3 physical interception" patch (commit f71020d)
+  per DOC_INVENTORY.yaml update_triggers (术语映射表 schema / 三道 BLOCKER 触发条件 / WP6-8 决策里程碑 / 易混项机制),
+  this patch only adds a global "阶段闭环必读" tail block to 1-prd-design/SKILL.md and does NOT touch
+  any of the four trigger dimensions above, so no content change required for this doc.
+-->
+

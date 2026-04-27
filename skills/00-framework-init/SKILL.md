@@ -79,7 +79,7 @@
 | 6 | `paths.glossary`（默认 `doc/glossary.yaml`） | YAML 解析后 `terms` 数组 `=== 0` → EMPTY；否则 POPULATED |
 | 7 | `paths.glossary_seed`（默认 `doc/glossary-seed.txt`） | 与 `templates/glossary-seed.skeleton.txt` 字节相等 → EMPTY；否则 POPULATED |
 | 8 | `paths.features_dir`（默认 `doc/features`） | 目录不存在 → MISSING；存在但空目录 / 只含 `.gitkeep` → EMPTY；有任何子目录或文件 → POPULATED |
-| 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用） |
+| 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用）。**探测方式必须用不受 `.gitignore` 影响的真实文件系统探测**（Node `fs.existsSync` / PowerShell `Test-Path` / Shell `test -e`）；**禁止**使用 Cursor `Glob` / `rg --files` 等默认 honor `.gitignore` 的工具——`node_modules/` 几乎一定在工程根 `.gitignore` 中，会假阴性而误触发冗余 `npm install`（不致命，但破坏体检准确性）。 |
 | 10 | `framework.config.json` 的 `toolchain.devEcoStudio.installPath` | 字段存在且非空字符串且路径在文件系统中存在 → POPULATED；字段缺失 / 空串 / 路径不存在 → MISSING（v2.3 起 `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` 三条 BLOCKER 规则均依赖该字段） |
 | 11 | 实例工程根 `.gitignore` 的 framework 运行产物忽略规则 | 已覆盖 Step 5.4.5 的全部 required ignore patterns（可由更宽泛规则等价覆盖）→ POPULATED；`.gitignore` 不存在或缺任一项 → MISSING（EMPTY 等同 MISSING） |
 

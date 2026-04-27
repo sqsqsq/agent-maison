@@ -568,3 +568,12 @@ AI Harness 重点看脚本难以判断的内容：
 > **Skill 5 的价值不是“帮你多写几个测试文件”，而是把验收项、业务分支、命名入口、data 边界和真实运行结果绑在一起。**
 >
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
+
+<!--
+  last-synced: 2026-04-27
+  reviewed against framework "phase closure / Layer 3 physical interception" patch (commit f71020d)
+  per DOC_INVENTORY.yaml update_triggers ("SKILL.md 步骤 / 用例形态 / 命名约定调整"), this patch
+  only adds a global "阶段闭环必读" tail block to 5-business-ut/SKILL.md and does NOT change
+  steps / use-case shape / naming conventions, so no content change required for this doc.
+-->
+
