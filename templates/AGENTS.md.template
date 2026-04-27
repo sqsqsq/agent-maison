@@ -153,6 +153,39 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 > （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
 > 物理层，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
 
+#### 5.1.1 会话边界与跨会话遗留（v2.4 起）
+
+`.current-phase.json` 是**全局单槽**，跨 cli 重启不会自动清理；为避免"上一会话写下的未闭环 state
+拦截下一会话的无关问答"，Stop hook 在判定前会先做**会话边界检查**：
+
+| state.session_id | 当前 cli session_id | 行为 |
+|-----------------|---------------------|------|
+| 与当前 sid 一致 | 存在               | 走闭环判定，未闭环 → exit 2 阻断（同会话遗留） |
+| 与当前 sid 不一致 | 存在               | advisory + exit 0（**不阻断**，跨会话遗留） |
+| 未盖章（null） + state 在 grace_period 内 | 存在 | 视为同会话刚跑完，hook 第一次回填 sid 后走闭环判定 |
+| 未盖章（null） + state 超 grace_period | 存在 | advisory + exit 0（视为前一会话遗留） |
+| state 已盖章 + payload 缺 sid + 在 ttl 内 | — | 保守视作同会话，走闭环判定 |
+| state 已盖章 + payload 缺 sid + 超 ttl | — | advisory + exit 0 |
+
+时间常量在 [framework.config.json](framework.config.json) 的 `state_machine` 段配置，默认值见
+[framework/harness/config.ts](framework/harness/config.ts) `DEFAULT_STATE_MACHINE`。
+
+**用户/agent 在哪个时机会看到什么文案：**
+
+- 同会话未闭环 → "继续 / 放弃二选一"中性提示，给出补齐 4 步与 `--clear-state` 出口；
+- 跨会话遗留 → 仅一条 stderr advisory（"检测到遗留状态文件，已放行；如需清理执行 --clear-state"），
+  **不**注入 prompt 也**不**阻断；
+- agent 见到此 advisory 时**不应**主动接管旧任务——继续做用户当前要求的事即可。
+
+**清理出口**：
+
+```
+cd framework/harness && npx ts-node harness-runner.ts --clear-state
+```
+
+无确认，直接删 `framework/harness/state/.current-phase.json`；历史 verdict / 报告 / 回执仍保留在
+`framework/harness/reports` 与 [{{FEATURES_DIR}}]({{FEATURES_DIR}}) 下。
+
 ---
 
 ## 六、与用户交互的硬性规则
@@ -170,6 +203,10 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
      这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
    - 与之相对：本文件第 4.1 节已**明示授权**主 agent 执行结构级 harness、调用 verifier 子 agent；
      被允许的事项不允许借口"我以为不能"绕过。
+   - **作用域澄清（v2.4 起）**：本条**仅约束同一 cli 会话内**的"假完成"行为。如果当前会话起始就
+     不在某阶段流程中，只是看到了 §5.1.1 描述的"跨会话遗留 state"提示，**不属于**本条的约束对象——
+     此时 agent 应继续执行用户当前真实诉求，而**不是**接管旧任务。换言之：本条防的是"自己漏做了步骤
+     还声称完成"，不是"上一会话留下的尾巴"。
 
 ---
 

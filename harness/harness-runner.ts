@@ -60,7 +60,7 @@ import * as YAML from 'yaml';
 
 const args = minimist(process.argv.slice(2), {
   string: ['phase', 'feature', 'ai-report', 'adapter'],
-  boolean: ['list', 'help', 'verbose'],
+  boolean: ['list', 'help', 'verbose', 'clear-state'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -90,6 +90,7 @@ Harness — Spec/Harness 验证工具
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             显示详细信息
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
+  --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
   -h, --help                显示帮助
 
 示例:
@@ -99,6 +100,9 @@ Harness — Spec/Harness 验证工具
   cd framework/harness && npx ts-node harness-runner.ts --phase docs
   cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter claude
   cd framework/harness && npx ts-node harness-runner.ts --list
+
+放弃当前阶段（清理 Stop hook 的状态文件）:
+  cd framework/harness && npx ts-node harness-runner.ts --clear-state
 `);
 }
 
@@ -125,6 +129,14 @@ async function main(): Promise<void> {
   // --list 模式
   if (args.list) {
     printAvailableSpecs(specLoader, projectRoot, phaseRulesRel, featuresRel);
+    process.exit(0);
+  }
+
+  // --clear-state 模式：明确放弃当前阶段，让 Stop hook 不再以陈旧 state
+  // 拦截后续 cli 会话。无条件删除：state file 本身只承载判定状态，
+  // 历史 verdict / 报告依然保留在 framework/harness/reports/ 下。
+  if (args['clear-state']) {
+    handleClearState(projectRoot);
     process.exit(0);
   }
 
@@ -644,6 +656,12 @@ interface ReceiptValidation {
   message?: string;
 }
 
+/**
+ * runner 写 state 时关心的业务字段。session 维度字段（session_id /
+ * session_id_recorded_at / last_seen_*）由 Stop hook 单边维护，
+ * runner **不写**它们——runner 是 Bash tool 子进程，拿不到稳定的
+ * cli session_id。详见 plan：.cursor/plans/stop_hook_跨会话隔离_*.plan.md
+ */
 interface CurrentPhaseStatePartial {
   phase: Phase;
   feature: string;
@@ -658,6 +676,46 @@ interface CurrentPhaseStatePartial {
 interface CurrentPhaseState extends CurrentPhaseStatePartial {
   schema_version: string;
   updated_at: string;
+  /** Stop hook 第一次命中时回填；runner 不写它，仅在合并旧 state 时透传 */
+  session_id?: string | null;
+  /** session_id 被 hook 回填的时刻，便于审计 */
+  session_id_recorded_at?: string | null;
+  /** 上一次 Stop hook 触发时的 cli session_id（用于审计） */
+  last_seen_session_id?: string | null;
+  /** 上一次 Stop hook 触发时间 */
+  last_seen_at?: string | null;
+}
+
+/**
+ * `--clear-state` 子命令实现：删除阶段状态文件。
+ *
+ * 设计取舍：
+ *   - 无条件删除：用户明确要"放弃"这个阶段时再触发，没必要再加确认；
+ *     脚本化场景（CI / 工具链）友好。
+ *   - 不报错：文件不存在视为"已经是干净状态"，console.log 提示即可。
+ *   - 不删除其它产物：reports/ / receipt md / trace.json 都不动——
+ *     state file 本身只承载 Stop hook 的判定状态，历史审计资料保留。
+ */
+function handleClearState(projectRoot: string): void {
+  const stateAbs = statefilePath(projectRoot);
+  const rel = path.relative(projectRoot, stateAbs).replace(/\\/g, '/');
+  if (fs.existsSync(stateAbs)) {
+    try {
+      fs.unlinkSync(stateAbs);
+      console.log(`✓ 已删除阶段状态文件 ${rel}`);
+    } catch (err) {
+      console.error(`✗ 删除 ${rel} 失败: ${(err as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+  } else {
+    console.log(`⊘ ${rel} 不存在，无需清理`);
+  }
+  console.log('');
+  console.log('提示：');
+  console.log('  - 历史 verdict / 报告 / 回执仍保留在 framework/harness/reports 与 doc/features 下；');
+  console.log('  - 如需重新进入该阶段，按对应 SKILL.md 重新执行 harness-runner.ts；');
+  console.log('  - --clear-state 表示"放弃已有进度"，与"暂停"不同。');
 }
 
 function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStatePartial): void {
@@ -676,21 +734,34 @@ function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStateP
       }
     }
 
+    // 同 phase/feature 时，保留 hook 维护的 session 维度字段——
+    // runner 自己不写它们，但也不能因为重写 state 把旧值清掉，否则
+    // hook 下次触发会误判"刚跑完 + 没盖章"。
+    const sameTask = prev.phase === partial.phase && prev.feature === partial.feature;
+    const carrySessionId = sameTask ? prev.session_id ?? null : null;
+    const carrySessionRecordedAt = sameTask ? prev.session_id_recorded_at ?? null : null;
+    const carryLastSeenSid = sameTask ? prev.last_seen_session_id ?? null : null;
+    const carryLastSeenAt = sameTask ? prev.last_seen_at ?? null : null;
+
     const next: CurrentPhaseState = {
-      schema_version: '1.0',
+      schema_version: '1.1',
       phase: partial.phase,
       feature: partial.feature,
       status: partial.status,
       started_at:
         partial.status === 'running'
           ? partial.started_at ?? new Date().toISOString()
-          : prev.phase === partial.phase && prev.feature === partial.feature
+          : sameTask
             ? prev.started_at ?? partial.started_at
             : partial.started_at,
       last_run_at: partial.last_run_at,
       verdict: partial.verdict,
       blocker_count: partial.blocker_count,
       receipt: partial.receipt ?? null,
+      session_id: carrySessionId,
+      session_id_recorded_at: carrySessionRecordedAt,
+      last_seen_session_id: carryLastSeenSid,
+      last_seen_at: carryLastSeenAt,
       updated_at: new Date().toISOString(),
     };
 

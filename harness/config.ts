@@ -103,6 +103,36 @@ export interface DevEcoStudioConfig {
   hvigorBin?: string;
 }
 
+/**
+ * 阶段状态机时间常量（v2.4：跨会话隔离）
+ *
+ * Stop hook（`.claude/hooks/check-phase-completion.mjs`）在判定 state 是否
+ * "陈旧"时使用本节配置：
+ *   - `grace_period_minutes`：runner 写完 state 到 hook 第一次"盖章"
+ *     （写入 session_id）之间的容忍窗口。该窗口内 state.session_id=null
+ *     不视为遗留——视为"刚跑完 harness 还没来得及盖章"。
+ *   - `ttl_hours`：极端兜底——payload.session_id 缺失（hook 协议异常或
+ *     未来 cli adapter 不传）时，仅靠 state.updated_at 判定陈旧度的
+ *     时间阈值。常规路径走 session_id 比对，TTL 是保险栓。
+ *
+ * 范围限制（双端校验：runner 端抛错、hook 端 best-effort 回退默认值）：
+ *   - grace_period_minutes ∈ (0, 60]
+ *   - ttl_hours            ∈ [1, 168]（一周）
+ *
+ * 默认值见 [DEFAULT_STATE_MACHINE]；hook 内嵌默认值与本常量
+ * 必须保持一致，由 framework/harness/test/hook-stale-state.spec.ts 的
+ * T11"配置一致性"用例兜底校验。
+ */
+export interface StateMachineConfig {
+  grace_period_minutes: number;
+  ttl_hours: number;
+  /**
+   * state schema 版本号；当前实现只识别 '1.1'。
+   * 不在此处声明时，runner 写 state 时仍按 1.1 落盘。
+   */
+  schema_version?: string;
+}
+
 export interface ToolchainConfig {
   devEcoStudio?: DevEcoStudioConfig;
   /**
@@ -178,6 +208,11 @@ export interface FrameworkConfig {
    * 新工程或从 IDE 迁移来的工程应在 framework-init 时填写。
    */
   toolchain?: ToolchainConfig;
+  /**
+   * 阶段状态机时间常量（v2.4 起）。可选；未声明时使用 DEFAULT_STATE_MACHINE。
+   * 给 Stop hook 的"陈旧 state"判定提供可调阈值，详见 [StateMachineConfig]。
+   */
+  state_machine?: StateMachineConfig;
 }
 
 // --------------------------------------------------------------------------
@@ -243,6 +278,26 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
 };
 
+/**
+ * 阶段状态机时间常量默认值（v2.4）。
+ *
+ * **重要**：本对象的字段值必须与 `.claude/hooks/check-phase-completion.mjs`
+ * 内嵌的 `HOOK_DEFAULT_GRACE_MS` / `HOOK_DEFAULT_TTL_MS` 保持一致，由
+ * `framework/harness/test/hook-stale-state.spec.ts` 的 T11"配置一致性"
+ * 用例校验。修改其中一边后必须同步修改另一边。
+ */
+export const DEFAULT_STATE_MACHINE: StateMachineConfig = {
+  grace_period_minutes: 5,
+  ttl_hours: 12,
+  schema_version: '1.1',
+};
+
+/** state_machine 字段的有效范围（双端共享，hook 端通过文档同步而非 import） */
+export const STATE_MACHINE_RANGES = {
+  grace_period_minutes: { min: 0.0001, max: 60 }, // 严格 > 0；上限 60 分钟
+  ttl_hours: { min: 1, max: 168 }, // 1 小时 ~ 7 天
+} as const;
+
 /** 阶段 9 被合并废弃的老路径字段，检测到即拒绝加载。 */
 const DEPRECATED_PATH_FIELDS = ['feature_docs_dir', 'feature_specs_dir'] as const;
 
@@ -287,6 +342,9 @@ export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
   }
 
   validateArchitectureDsl(config.architecture);
+  if (config.state_machine) {
+    validateStateMachine(config.state_machine);
+  }
 
   cachedConfig = { root: projectRoot, config };
   return config;
@@ -314,6 +372,7 @@ function buildDefaultConfig(): FrameworkConfig {
     agent_adapter: 'generic',
     architecture: cloneDsl(LEGACY_DEFAULT_DSL),
     paths: { ...DEFAULT_PATHS },
+    state_machine: { ...DEFAULT_STATE_MACHINE },
   };
 }
 
@@ -347,6 +406,32 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     architecture: raw.architecture ? normalizeArchitecture(raw.architecture) : fallback.architecture,
     paths: { ...fallback.paths, ...(raw.paths ?? {}) },
     toolchain: normalizeToolchain(raw.toolchain),
+    state_machine: normalizeStateMachine(raw.state_machine),
+  };
+}
+
+/**
+ * 归一化 state_machine：
+ *   - 未声明 → 完整默认值
+ *   - 声明部分字段 → 与默认值合并
+ *   - 显式声明的字段会被原样保留供后续 validateStateMachine 校验，
+ *     非法值由校验阶段抛错，归一化阶段不悄悄"修正"。
+ */
+function normalizeStateMachine(raw: StateMachineConfig | undefined): StateMachineConfig {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_STATE_MACHINE };
+  return {
+    grace_period_minutes:
+      typeof raw.grace_period_minutes === 'number'
+        ? raw.grace_period_minutes
+        : DEFAULT_STATE_MACHINE.grace_period_minutes,
+    ttl_hours:
+      typeof raw.ttl_hours === 'number'
+        ? raw.ttl_hours
+        : DEFAULT_STATE_MACHINE.ttl_hours,
+    schema_version:
+      typeof raw.schema_version === 'string' && raw.schema_version.trim()
+        ? raw.schema_version.trim()
+        : DEFAULT_STATE_MACHINE.schema_version,
   };
 }
 
@@ -812,6 +897,67 @@ export function relFeatureFile(projectRoot: string, feature: string, fileName: s
 // --------------------------------------------------------------------------
 // 架构 DSL 消费辅助函数（续）
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// 阶段状态机配置消费辅助（v2.4）
+// --------------------------------------------------------------------------
+
+/**
+ * 校验 state_machine 段。配错即抛——避免 hook / harness 拿到非法值后
+ * 行为退化为"默认值悄悄生效"，而用户以为自己的配置在用。
+ *
+ * 与 validateArchitectureDsl 一样属于"硬校验"层级。
+ */
+export function validateStateMachine(sm: StateMachineConfig): void {
+  const gpm = sm.grace_period_minutes;
+  if (
+    typeof gpm !== 'number' ||
+    !Number.isFinite(gpm) ||
+    gpm <= 0 ||
+    gpm > STATE_MACHINE_RANGES.grace_period_minutes.max
+  ) {
+    throw new Error(
+      `[framework/config.ts] state_machine.grace_period_minutes 必须是 (0, ${STATE_MACHINE_RANGES.grace_period_minutes.max}] 之间的数，收到 ${String(gpm)}`,
+    );
+  }
+  const tlh = sm.ttl_hours;
+  if (
+    typeof tlh !== 'number' ||
+    !Number.isFinite(tlh) ||
+    tlh < STATE_MACHINE_RANGES.ttl_hours.min ||
+    tlh > STATE_MACHINE_RANGES.ttl_hours.max
+  ) {
+    throw new Error(
+      `[framework/config.ts] state_machine.ttl_hours 必须是 [${STATE_MACHINE_RANGES.ttl_hours.min}, ${STATE_MACHINE_RANGES.ttl_hours.max}] 之间的数，收到 ${String(tlh)}`,
+    );
+  }
+}
+
+/**
+ * 返回归一化（含默认值）后的 state_machine 配置。永远不返回 undefined。
+ */
+export function loadStateMachineConfig(projectRoot: string): StateMachineConfig {
+  const cfg = loadFrameworkConfig(projectRoot);
+  return { ...DEFAULT_STATE_MACHINE, ...(cfg.state_machine ?? {}) };
+}
+
+/** state_machine 的运行时时间值（毫秒），由 hook 与 runner 共同使用 */
+export interface ResolvedStateTimings {
+  gracePeriodMs: number;
+  ttlMs: number;
+}
+
+/**
+ * 把 grace_period_minutes / ttl_hours 解析为毫秒值，便于直接与
+ * `Date.now() - new Date(state.updated_at).getTime()` 比较。
+ */
+export function resolveStateTimings(projectRoot: string): ResolvedStateTimings {
+  const sm = loadStateMachineConfig(projectRoot);
+  return {
+    gracePeriodMs: sm.grace_period_minutes * 60 * 1000,
+    ttlMs: sm.ttl_hours * 3600 * 1000,
+  };
+}
 
 // --------------------------------------------------------------------------
 // 工具链配置消费辅助（v2.3）
