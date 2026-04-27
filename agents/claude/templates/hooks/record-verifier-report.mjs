@@ -294,7 +294,7 @@ async function main() {
   // 同步把 receipt 暗示信息回写 state.receipt（不覆盖 harness-runner 的 receipt 状态——
   // 那是 check-receipt.ts 的职责；这里只追加 verifier 维度信息供 Stop hook 参考）
   //
-  // v2.4 起：last_verifier_report 也带上 recorded_in_session，并刷新
+  // v2.8 起：last_verifier_report 也带上 recorded_in_session，并刷新
   // last_seen_session_id / last_seen_at——保持 state 的 session 维度新鲜度
   // 与 check-phase-completion.mjs 一致，避免 Stop hook 把刚跑过 verifier 的
   // 状态当成"陈旧"处理。

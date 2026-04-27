@@ -153,7 +153,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 > （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
 > 物理层，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
 
-#### 5.1.1 会话边界与跨会话遗留（v2.4 起）
+#### 5.1.1 会话边界与跨会话遗留（v2.8 起）
 
 `.current-phase.json` 是**全局单槽**，跨 cli 重启不会自动清理；为避免"上一会话写下的未闭环 state
 拦截下一会话的无关问答"，Stop hook 在判定前会先做**会话边界检查**：
@@ -203,7 +203,7 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
      这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
    - 与之相对：本文件第 4.1 节已**明示授权**主 agent 执行结构级 harness、调用 verifier 子 agent；
      被允许的事项不允许借口"我以为不能"绕过。
-   - **作用域澄清（v2.4 起）**：本条**仅约束同一 cli 会话内**的"假完成"行为。如果当前会话起始就
+   - **作用域澄清（v2.8 起）**：本条**仅约束同一 cli 会话内**的"假完成"行为。如果当前会话起始就
      不在某阶段流程中，只是看到了 §5.1.1 描述的"跨会话遗留 state"提示，**不属于**本条的约束对象——
      此时 agent 应继续执行用户当前真实诉求，而**不是**接管旧任务。换言之：本条防的是"自己漏做了步骤
      还声称完成"，不是"上一会话留下的尾巴"。

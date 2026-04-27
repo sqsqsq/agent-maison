@@ -209,7 +209,7 @@ export interface FrameworkConfig {
    */
   toolchain?: ToolchainConfig;
   /**
-   * 阶段状态机时间常量（v2.4 起）。可选；未声明时使用 DEFAULT_STATE_MACHINE。
+   * 阶段状态机时间常量（v2.8 起）。可选；未声明时使用 DEFAULT_STATE_MACHINE。
    * 给 Stop hook 的"陈旧 state"判定提供可调阈值，详见 [StateMachineConfig]。
    */
   state_machine?: StateMachineConfig;

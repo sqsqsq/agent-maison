@@ -18,7 +18,7 @@
 // v2.4 新增：会话边界判定
 //   v2.3 之前 hook 只看 .current-phase.json 是否"未闭环"，会出现一个严重问题：
 //     上一次会话写下未闭环 state → 重启 cli → 用户问无关问题 → hook 仍然拦截。
-//   v2.4 起：
+//   v2.8 起：
 //     1) hook 入口拿 payload.session_id；
 //     2) 与 state.session_id 比对，区分"当前会话遗留"vs"跨会话陈旧"；
 //     3) 跨会话 / 老 state / 超 TTL 一律 advisory + exit 0；

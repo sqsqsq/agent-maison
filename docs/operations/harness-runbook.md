@@ -379,7 +379,7 @@ runHvigorAssembleApp({
 
 ---
 
-## 10. 中断 / 切换会话 / 放弃阶段（v2.4 起）
+## 10. 中断 / 切换会话 / 放弃阶段（v2.8 起）
 
 ### 10.1 背景
 
@@ -391,7 +391,7 @@ Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 
 - 切换 feature 而旧 feature 的阶段还没收尾；
 - 跨天 / 跨周回来接着干，但记不清上次到哪一步。
 
-v2.4 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
+v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
 [CLAUDE.md §5.1.1](../../../CLAUDE.md)；下面只列日常操作动作。
 
 ### 10.2 配置：`framework.config.json > state_machine`
