@@ -65,6 +65,8 @@ interface FixtureOptions {
   writeStateFile?: boolean;
   /** framework.config.json 的 state_machine 段；不传则不写本字段（走 hook 默认值） */
   stateMachine?: { grace_period_minutes?: unknown; ttl_hours?: unknown } | null;
+  /** state.phase；默认 'coding'。全局阶段（init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
+  phaseOverride?: string;
 }
 
 function makeFixture(opts: FixtureOptions): string {
@@ -104,7 +106,7 @@ function makeFixture(opts: FixtureOptions): string {
     const updatedAt = new Date(Date.now() + (opts.updatedAtOffsetMs ?? 0)).toISOString();
     const state: Record<string, unknown> = {
       schema_version: '1.1',
-      phase: 'coding',
+      phase: opts.phaseOverride ?? 'coding',
       feature: 'demo-feature',
       status: opts.closed ? 'harness_finished' : 'running',
       updated_at: updatedAt,
@@ -412,6 +414,50 @@ function testT12_invalidConfigFallsBack(): void {
 }
 
 // --------------------------------------------------------------------------
+// 全局阶段豁免（v2.8.1 回归修复）：init / catalog / glossary / docs 不参与
+// CLAUDE.md §5.1 闭环判据，hook 看到 state.phase 是这四个值之一一律 allow。
+// --------------------------------------------------------------------------
+
+function testT13_globalPhaseInitBypassesClosure(): void {
+  // 模拟 v2.8.0 时存在的污染 state（runner 当时给 init 也写了 state file），
+  // 即使 receipt=null / verdict=null / status=running，hook 也必须放行。
+  // 否则就会复现 /framework-init 跑到 Step 3 时 hook 拦截 + 自问自答事故。
+  const dir = makeFixture({
+    closed: false,
+    phaseOverride: 'init',
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1 * 60 * 1000,
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 0, 'T13 phase=init + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）');
+    if (/receipt|未闭环|阶段完成回执/.test(out.stderr)) {
+      throw new Error(
+        `T13 hook 不应针对全局阶段输出闭环未达成提示，但 stderr 含拦截文案：${out.stderr.slice(0, 200)}`,
+      );
+    }
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT14_globalPhaseCatalogBypassesClosure(): void {
+  // 同 T13，覆盖 catalog 全局阶段。glossary / docs 同源，不再单独枚举。
+  const dir = makeFixture({
+    closed: false,
+    phaseOverride: 'catalog',
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1 * 60 * 1000,
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 0, 'T14 phase=catalog + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+// --------------------------------------------------------------------------
 // 注册
 // --------------------------------------------------------------------------
 
@@ -428,6 +474,8 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'T10 自定义 ttl 缩短到 1h', fn: testT10_customTtlShortened },
   { name: 'T11 hook 默认值与 config DEFAULT_STATE_MACHINE 一致', fn: testT11_configConsistency },
   { name: 'T12 非法 config → hook 端回退默认值不崩', fn: testT12_invalidConfigFallsBack },
+  { name: 'T13 phase=init 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT13_globalPhaseInitBypassesClosure },
+  { name: 'T14 phase=catalog 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT14_globalPhaseCatalogBypassesClosure },
 ];
 
 export function runAll(): UnitCaseResult[] {

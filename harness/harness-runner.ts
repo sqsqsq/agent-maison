@@ -719,6 +719,24 @@ function handleClearState(projectRoot: string): void {
 }
 
 function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStatePartial): void {
+  // 全局阶段（init / catalog / glossary / docs）不参与"feature 维度阶段闭环判定"——
+  // 它们没有完成回执模板（参见 framework/harness/scripts/check-init.ts 头部
+  // "元阶段三件套刻意不对称"段落，以及 framework/harness/templates/
+  // phase-completion-receipt.md 的字段全部围绕 feature/phase 设计）。
+  //
+  // 若给全局阶段写 state file，Stop hook 会因为 receipt=null 把它误当成
+  // "未闭环 feature 阶段"硬拦，并要求 agent 去填一份**根本不存在**的回执
+  // doc/features/_global/init/phase-completion-receipt.md。这是 v2.8 主体
+  // commit 落地后用户在真实工程跑 /framework-init 时遇到的回归。
+  //
+  // 修复策略：对全局阶段直接不写——不主动清理已存在的 state file，因为
+  // 用户可能正在做 feature 维度阶段（如 coding），中途顺手跑了 docs 全局阶段，
+  // 不应抹掉其 coding state。Hook 端有兜底（evaluateState 看到 phase 是
+  // 全局阶段也直接 allow），即使存在历史污染也不会误拦。
+  if (isGlobalPhase(partial.phase)) {
+    return;
+  }
+
   try {
     const stateAbs = statefilePath(projectRoot);
     const dir = path.dirname(stateAbs);

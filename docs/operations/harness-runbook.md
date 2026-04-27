@@ -394,6 +394,12 @@ Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 
 v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
 [CLAUDE.md §5.1.1](../../../CLAUDE.md)；下面只列日常操作动作。
 
+> **本节仅针对 feature 维度阶段**（PRD / design / coding / review / UT / device-testing）。
+> 全局阶段 `init` / `catalog` / `glossary` / `docs` 没有完成回执模板：
+> v2.8.1 起 `harness-runner.ts` 对全局阶段直接 skip 写 state，Stop hook 同时兜底
+> 在看到 `state.phase` 是这四值之一时一律 allow。所以你跑 `--phase init` 之类
+> 命令时不会留下 `.current-phase.json`，也不需要也无法填写"init 完成回执"。
+
 ### 10.2 配置：`framework.config.json > state_machine`
 
 ```jsonc

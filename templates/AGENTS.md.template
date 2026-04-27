@@ -137,7 +137,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 > 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层（如 Claude Code 的 Stop hook）会读取本节定义的判据决定能否放行 stop。
 
-任何阶段（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
+任何 **feature 维度阶段**（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
 
 1. `framework/harness/reports/<feature>/<phase>/trace.json` 真实存在（**缺失即视为阶段未完成**）；
 2. 主 agent 已自跑 `harness-runner.ts`，verdict = `PASS`（或脚本退出码 0）；
@@ -148,6 +148,11 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 **严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。** 若物理拦截层（Stop hook）检测到任一项缺失，
 将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后**必须**立即补齐缺失项，
 而不是再次声称完成。
+
+> **全局阶段豁免**：`init` / `catalog` / `glossary` / `docs` 四个全局阶段（无 `--feature` 参数，
+> 哨兵值 `_global`）**不**在本节判据范围。这些阶段没有 feature 维度回执模板，
+> harness-runner 不为它们写 `.current-phase.json`，Stop hook 也对 `state.phase` 是这四值之一时一律放行。
+> 详见 [framework/harness/scripts/check-init.ts](framework/harness/scripts/check-init.ts) 头部"元阶段三件套刻意不对称"段落。
 
 > 不同 adapter 物理拦截能力不同：`claude` adapter 通过 `.claude/settings.json` 注册 Stop / SubagentStop hook
 > （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
