@@ -224,17 +224,20 @@ framework/skills/6-device-testing/templates/test-report-template.md
 
 **不通过项**：定位具体问题，自动修正后重新自检，直到全部通过。
 
-### Step 7: Harness 验证门禁
+### Step 7: Harness 验证门禁（agent 必须自跑）
 
-测试文档归档后，引导用户执行 Harness 验证以确保文档质量达标。
+> **CLAUDE.md 4.1 节明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
+> **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
-#### 7.1 脚本 Harness（确定性检查）
+测试文档归档后，agent **必须自己**完成下列验证，再宣布真机测试阶段完成。
 
-告知用户可运行脚本 Harness 检查文档结构合规性：
+#### 7.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature {module-name}
 ```
+
+agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/testing-rules.yaml` — 阶段级通用规则
@@ -261,10 +264,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 #### 7.2 AI Harness（语义级检查）
 
-告知用户可使用 AI Harness 进行语义级深度验证：
+agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"告诉用户去跑"），把 feature / phase / 脚本报告路径传入：
 
-- **Prompt 模板**：`framework/harness/prompts/verify-testing.md`
-- **使用方式**：将 prompt 中的占位符替换为实际内容后，发送给独立 AI 模型执行审查
+- **Prompt 模板**：`framework/harness/prompts/verify-testing.md`（由 verifier 子 agent 自行读取）
+- **触发方式**：Task 工具，subagent_type=verifier，prompt 中给出 feature/phase/脚本报告路径
 - **语义检查覆盖项**：
   1. 测试用例完整性 — 是否覆盖所有核心业务路径（正常 + 异常）
   2. 测试步骤可重复性 — 步骤是否足够详细，任何人可按步骤执行
@@ -275,14 +278,26 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
-#### 7.3 验证完成标志
+#### 7.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT，四条件缺一不可）
+
+> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+
+真机测试阶段宣布"完成"前必须**同时**满足：
+
+1. `framework/harness/reports/<feature>/testing/trace.json` 真实存在；
+2. 脚本 harness 退出码 0、零 BLOCKER；
+3. verifier 子 agent 报告 verdict = PASS；
+4. 完成回执 `doc/features/<feature>/testing/phase-completion-receipt.md` 已填写并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase testing` 校验。
 
 | 验证层 | 通过条件 |
 |--------|---------|
-| 脚本 Harness | 零 BLOCKER |
-| AI Harness | verdict = PASS（无 BLOCKER 级 FAIL） |
+| 脚本 Harness | 零 BLOCKER（agent 自跑） |
+| AI Harness | verdict = PASS（agent 通过 Task 触发 verifier） |
+| 完成回执 | check-receipt.ts 退出码 0 |
+| trace.json | 文件存在且 schema 合法 |
 
-验证全部通过后，真机测试阶段完成。若测试报告结论为"不达标"，开发者需修复代码后重新执行 Skill 3 → Skill 4 → Skill 5 → Skill 6。
+四项全部通过后，真机测试阶段完成。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
+若测试报告结论为"不达标"，开发者需修复代码后重新执行 Skill 3 → Skill 4 → Skill 5 → Skill 6。
 
 ## 输出规范
 
@@ -340,7 +355,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 8. **双文档产出**：测试计划和测试报告是两个独立文档，分别在不同时间点产出（计划→执行→报告）
 9. **中文输出**：测试计划和测试报告使用简体中文
 10. **P0 优先**：若资源有限，优先覆盖 P0 AC 项，确保核心功能全部被测试
-11. **Harness 验证闭环**：文档完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才认为测试阶段完成
+11. **Harness 验证闭环**：文档完成后 agent **必须自己运行** Harness 验证（Step 7），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才认为测试阶段完成（物理拦截层兜底）
 12. **不修改源码**：生成测试文档时不应修改任何业务代码或 UT 代码
 
 ---

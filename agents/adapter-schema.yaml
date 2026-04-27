@@ -100,6 +100,38 @@ optional_fields:
         type: string
         description: 相对于 adapter 目录
 
+  settings_file:
+    type: object | null
+    description: |
+      Adapter 自身的客户端配置文件（Claude Code 的 .claude/settings.json 是典型用例，
+      用于注册 Stop / SubagentStop / PreToolUse 等 hooks）。
+      若 agent 不需要此类配置文件，置为 null。
+      落地方式与 agent_entry_file 相同：原样复制，不做占位符替换
+      （因此模板内必须使用 `${CLAUDE_PROJECT_DIR}` 这类客户端原生变量，不用 `{{...}}`）。
+    fields:
+      template_path:
+        type: string
+        description: 模板文件位置，相对于 adapter 目录，例如 "templates/settings.json"
+      target_path:
+        type: string
+        description: 生成到实例工程根的相对路径，例如 ".claude/settings.json"
+
+  hooks:
+    type: object | null
+    description: |
+      Adapter 客户端 hook 脚本目录（Claude Code 的 .claude/hooks/*.mjs 是典型用例）。
+      hook 脚本由 settings_file 注册并由客户端进程触发；framework 自身不直接调用。
+      若 agent 没有 hooks 机制，置为 null。
+      落地方式：将目录下所有文件原样复制（不做占位符替换；hook 脚本应通过 stdin
+      或 `${CLAUDE_PROJECT_DIR}` 等运行时变量获取上下文）。
+    fields:
+      target_dir:
+        type: string
+        description: 生成到实例工程根的目录，例如 ".claude/hooks"
+      template_dir:
+        type: string
+        description: 模板目录，相对于 adapter 目录，例如 "templates/hooks"
+
   post_install_hooks:
     type: list
     default: []

@@ -49,6 +49,8 @@ import {
   relCatalog,
   relGlossary,
   relArchitectureMd,
+  statefilePath,
+  receiptFilePath,
 } from './config';
 import * as YAML from 'yaml';
 
@@ -199,6 +201,17 @@ async function main(): Promise<void> {
   // （注意：HEAD 是当前已提交状态；UT 阶段未提交的改动会被 git diff 检测到）
   recordStartCommit(harnessRoot, phase, feature, projectRoot);
 
+  // 阶段状态机：标记 running，供 Stop hook 在 agent 想结束消息时判断
+  // "当前是否处于阶段流程中"。harness 跑完后会再次更新 verdict / blocker_count；
+  // claimed_done 始终为 false——只有 agent 显式填写完成回执并通过 check-receipt
+  // 后才会被 Stop hook 视为闭环。
+  writeCurrentPhaseState(projectRoot, {
+    phase,
+    feature,
+    status: 'running',
+    started_at: new Date().toISOString(),
+  });
+
   const checks = await runScriptHarness(harnessRoot, context);
 
   // Step 3: 生成脚本报告
@@ -257,6 +270,26 @@ async function main(): Promise<void> {
       finalReport = failScriptReportWithFatalError(harnessRoot, scriptReport, 'generate_merged_report', e);
     }
   }
+
+  // 阶段状态机：脚本 harness 完毕，写入 verdict / blocker_count
+  // 并尝试 best-effort 跑一遍 check-receipt：
+  //   - 回执存在 → 校验它，把校验结果回填到 state file，给 Stop hook 提供精确判据
+  //   - 回执不存在 → state.receipt.status = 'missing'（不报错；此时阶段未闭环）
+  // 这样 agent 在 harness 跑完之后，仍必须主动填回执 + 通过 check-receipt
+  // 才能把 claimed_done 推到 true（由专门的 markPhaseClaimedDone 流程驱动；
+  // 当前版本里，Stop hook 负责拒绝 claimed_done=false 时的 stop）。
+  const receiptValidation = isGlobalPhase(phase)
+    ? null
+    : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
+  writeCurrentPhaseState(projectRoot, {
+    phase,
+    feature,
+    status: 'harness_finished',
+    last_run_at: new Date().toISOString(),
+    verdict: finalReport.summary.verdict,
+    blocker_count: finalReport.summary.blockers,
+    receipt: receiptValidation,
+  });
 
   // 最终结果
   console.log('\n' + '='.repeat(60));
@@ -572,6 +605,152 @@ function collectFilesFromDir(
     }
   };
   scan(dir);
+}
+
+// --------------------------------------------------------------------------
+// 阶段状态机（agent 工作流强制门 / Layer 3 配套）
+// --------------------------------------------------------------------------
+//
+// 写入 framework/harness/state/.current-phase.json。该文件是 Stop hook
+// （.claude/hooks/check-phase-completion.mjs）的唯一判据：
+//   - status='running'         → harness 还没跑完，agent 不应停下
+//   - status='harness_finished'，verdict='PASS'，receipt.status='passed'
+//                              → 阶段闭环，可放行
+//   - 其它组合                  → Stop hook 阻止 stop 并把缺失项注入下一轮 prompt
+
+interface ReceiptValidation {
+  status: 'passed' | 'failed' | 'missing' | 'error';
+  receipt_path: string;
+  exit_code?: number;
+  message?: string;
+}
+
+interface CurrentPhaseStatePartial {
+  phase: Phase;
+  feature: string;
+  status: 'running' | 'harness_finished';
+  started_at?: string;
+  last_run_at?: string;
+  verdict?: 'PASS' | 'FAIL' | string;
+  blocker_count?: number;
+  receipt?: ReceiptValidation | null;
+}
+
+interface CurrentPhaseState extends CurrentPhaseStatePartial {
+  schema_version: string;
+  updated_at: string;
+}
+
+function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStatePartial): void {
+  try {
+    const stateAbs = statefilePath(projectRoot);
+    const dir = path.dirname(stateAbs);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    // 读旧状态（若存在）做增量合并：started_at 不要被 harness_finished 覆盖
+    let prev: Partial<CurrentPhaseState> = {};
+    if (fs.existsSync(stateAbs)) {
+      try {
+        prev = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as Partial<CurrentPhaseState>;
+      } catch {
+        // 旧文件损坏 → 直接覆盖
+      }
+    }
+
+    const next: CurrentPhaseState = {
+      schema_version: '1.0',
+      phase: partial.phase,
+      feature: partial.feature,
+      status: partial.status,
+      started_at:
+        partial.status === 'running'
+          ? partial.started_at ?? new Date().toISOString()
+          : prev.phase === partial.phase && prev.feature === partial.feature
+            ? prev.started_at ?? partial.started_at
+            : partial.started_at,
+      last_run_at: partial.last_run_at,
+      verdict: partial.verdict,
+      blocker_count: partial.blocker_count,
+      receipt: partial.receipt ?? null,
+      updated_at: new Date().toISOString(),
+    };
+
+    fs.writeFileSync(stateAbs, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+  } catch (err) {
+    // best-effort：不让状态机故障阻塞 harness 主流程
+    console.warn(`   ⚠ 写 .current-phase.json 失败: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * 当回执文件已存在时，主动跑一遍 check-receipt.ts 把判定结果带回 state file。
+ * 回执不存在不视为错误——因为 agent 通常先跑 harness、再填回执；
+ * 真正的"未填即未闭环"由 Stop hook 在 agent 即将结束消息时拦截。
+ */
+function tryValidateReceipt(
+  harnessRoot: string,
+  projectRoot: string,
+  phase: Phase,
+  feature: string,
+): ReceiptValidation {
+  const receiptAbs = receiptFilePath(projectRoot, feature, phase);
+  const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
+
+  if (!fs.existsSync(receiptAbs)) {
+    return {
+      status: 'missing',
+      receipt_path: receiptRel,
+      message: '回执文件不存在；本阶段尚未闭环（CLAUDE.md §5.1 第 4 条）。',
+    };
+  }
+
+  const checker = path.join(harnessRoot, 'scripts', 'check-receipt.ts');
+  if (!fs.existsSync(checker)) {
+    return {
+      status: 'error',
+      receipt_path: receiptRel,
+      message: `check-receipt.ts 不存在于 ${checker}（框架未升级到位）。`,
+    };
+  }
+
+  // 用 tsx/ts-node 直接运行；harness-runner.ts 自己已经在 ts-node 进程里，
+  // 子进程独立 spawn 一份 ts-node 即可，避免污染主流程的 require 缓存。
+  const result = spawnSync(
+    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    [
+      'ts-node',
+      checker,
+      '--feature',
+      feature,
+      '--phase',
+      phase,
+      '--project-root',
+      projectRoot,
+    ],
+    {
+      cwd: harnessRoot,
+      encoding: 'utf-8',
+      shell: false,
+    },
+  );
+
+  if (result.status === 0) {
+    return { status: 'passed', receipt_path: receiptRel, exit_code: 0 };
+  }
+  if (result.status === 1) {
+    return {
+      status: 'failed',
+      receipt_path: receiptRel,
+      exit_code: 1,
+      message: (result.stderr ?? '').slice(0, 800),
+    };
+  }
+  return {
+    status: 'error',
+    receipt_path: receiptRel,
+    exit_code: result.status ?? -1,
+    message: (result.stderr ?? result.error?.message ?? 'unknown').slice(0, 800),
+  };
 }
 
 // --------------------------------------------------------------------------

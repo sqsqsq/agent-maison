@@ -105,6 +105,20 @@
   以及 `framework/harness/prompts/verify-*.md`（语义级，由独立 verifier 子 agent 执行）。
   具体命令与路径以各 `SKILL.md` 为准。
 
+### 4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，避免误读）
+
+> 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。
+> 本节是**反误读的明示授权**，BLOCKER 级，必须遵守：
+
+1. **结构级 harness**（`framework/harness/harness-runner.ts`）：**必须由主 agent 自己执行**。
+   它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。
+   主 agent 在阶段产物完成后，**第一时间**通过 Shell 工具运行该命令，读取退出码与报告文件。
+2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，
+   由独立 verifier 子 agent 执行；**主 agent 必须主动通过 Task 工具触发 verifier**（`subagent_type: verifier`），
+   把 feature / phase / 报告路径完整传入；不得仅"提示用户去跑"或"等用户启动"。
+3. **{{AGENT_ENTRY_FILE}} 全文未禁止主 agent 调用 shell / 执行命令**；空白处一律按"允许"理解。
+   若你以为某条规则限制了你执行命令，请先翻到第六节第 5 条「反假设条款」核对。
+
 ---
 
 ## 五、交付凭证与 Trace
@@ -119,6 +133,26 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 痛点回填结构见 [framework/harness/trace/gap-notes.template.md](framework/harness/trace/gap-notes.template.md)。
 **这是弱模型回传问题的唯一渠道**，不要省略。
 
+### 5.1 阶段闭环判定（trace.json 缺失 = 阶段未完成）
+
+> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层（如 Claude Code 的 Stop hook）会读取本节定义的判据决定能否放行 stop。
+
+任何阶段（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
+
+1. `framework/harness/reports/<feature>/<phase>/trace.json` 真实存在（**缺失即视为阶段未完成**）；
+2. 主 agent 已自跑 `harness-runner.ts`，verdict = `PASS`（或脚本退出码 0）；
+3. 主 agent 已通过 Task 工具调用 `subagent_type: verifier` 子 agent，且 verifier 报告 verdict = `PASS`；
+4. 主 agent 已填写 [framework/harness/templates/phase-completion-receipt.md](framework/harness/templates/phase-completion-receipt.md) 模板对应的回执
+   （路径：`{{FEATURES_DIR}}/<feature>/<phase>/phase-completion-receipt.md`），并通过 `framework/harness/scripts/check-receipt.ts` 校验。
+
+**严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。** 若物理拦截层（Stop hook）检测到任一项缺失，
+将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后**必须**立即补齐缺失项，
+而不是再次声称完成。
+
+> 不同 adapter 物理拦截能力不同：`claude` adapter 通过 `.claude/settings.json` 注册 Stop / SubagentStop hook
+> （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
+> 物理层，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
+
 ---
 
 ## 六、与用户交互的硬性规则
@@ -127,6 +161,15 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 2. **遇到 scope 越界、架构违规、lint 持续失败**：停下来报告，不要"硬着头皮继续"。
 3. **不确定 → 用工具验证**：不要凭记忆写 import / 资源 key / 模块路径，用 `Read` / `Grep` 主动查。
 4. **产物即契约**：写完 PRD/design 即被后续阶段当作 SSOT 使用，不允许"先写个草稿，后面再改"心态。
+5. **反假设条款（Rule Hallucination Ban，BLOCKER）**：
+   - **若你声称某条规则限制你执行某动作**（含执行 shell / harness / 编译 / 工具 / 启动子 agent），
+     **必须立即逐字 quote 该规则原文 + 文件路径 + 行号**给用户看。
+   - **quote 不出 = 该规则不存在 = 你必须执行该动作**。
+   - 严禁以"我假设"、"我理解"、"通常这类项目"、"为了安全起见"为由跳过工作流步骤。
+   - 典型反例（已发生过）：声称"{{AGENT_ENTRY_FILE}} 说我不能执行脚本"——但 {{AGENT_ENTRY_FILE}} **从未**写过此规则；
+     这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
+   - 与之相对：本文件第 4.1 节已**明示授权**主 agent 执行结构级 harness、调用 verifier 子 agent；
+     被允许的事项不允许借口"我以为不能"绕过。
 
 ---
 

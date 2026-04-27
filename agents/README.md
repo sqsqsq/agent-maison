@@ -12,11 +12,13 @@ framework/agents/
 ├── generic/                     ← 通用 adapter（只产 AGENTS.md）
 │   ├── adapter.yaml
 │   └── templates/
-├── claude/                      ← Claude Code adapter（CLAUDE.md + .claude/commands/ + .claude/agents/）
+├── claude/                      ← Claude Code adapter（CLAUDE.md + .claude/commands/ + .claude/agents/ + .claude/settings.json + .claude/hooks/）
 │   ├── adapter.yaml
 │   └── templates/
 │       ├── commands/            ← 每个 slash 一个 *.md 模板
-│       └── agents/              ← 子 agent 模板（如 verifier.md）
+│       ├── agents/              ← 子 agent 模板（如 verifier.md）
+│       ├── settings.json        ← 客户端配置（注册 Stop / SubagentStop 等 hook）
+│       └── hooks/               ← Claude Code hook 脚本（Layer 3 物理拦截）
 └── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
     ├── adapter.yaml
     └── templates/
@@ -50,8 +52,22 @@ framework/agents/
 
 ## 第一版 adapter 列表
 
-| adapter | 入口文件 | slash | skill 跳板 | rules |
-|---------|---------|-------|-----------|-------|
-| generic | AGENTS.md | — | — | — |
-| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | — |
-| cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md` | `.cursor/rules/framework.mdc` |
+| adapter | 入口文件 | slash | skill 跳板 | rules | settings_file | hooks |
+|---------|---------|-------|-----------|-------|---------------|-------|
+| generic | AGENTS.md | — | — | — | — | — |
+| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | — | `.claude/settings.json` | `.claude/hooks/*.mjs` |
+| cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md` | `.cursor/rules/framework.mdc` | — | — |
+
+### Layer 3 物理拦截能力（settings_file + hooks）
+
+`claude` adapter 通过 `settings_file` + `hooks` 两个可选字段提供「弱模型工作流强制门」的 Layer 3
+物理拦截能力（详见 `CLAUDE.md` §5.1）：
+
+- `settings_file` 注册 `Stop` / `SubagentStop` hook；
+- `hooks/check-phase-completion.mjs` 在主 agent 即将结束消息时按 CLAUDE.md §5.1 四条件物理拦截"假完成"；
+- `hooks/record-verifier-report.mjs` 在 verifier 子 agent 结束时落地报告，供 `check-receipt.ts` 引用。
+
+`cursor` / `generic` adapter 暂无等价物理层，闭环依赖 Layer 1（CLAUDE.md §5.1 + §6.5）+ Layer 2
+（`framework/harness/templates/phase-completion-receipt.md` + `framework/harness/scripts/check-receipt.ts`）
+共同保证。后续如要补 cursor 侧的 hooks，按 `adapter-schema.yaml` 中的 `settings_file` / `hooks` 字段定义
+扩展即可。

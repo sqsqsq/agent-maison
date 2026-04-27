@@ -126,6 +126,29 @@ export interface FrameworkPaths {
   glossary_seed: string;
   /** 架构说明文档 */
   architecture_md: string;
+  /**
+   * 阶段状态机文件（agent 工作流强制门 / Layer 3）。
+   *
+   * 由 harness-runner.ts 在每次运行完成后写入；Stop hook
+   * （`.claude/hooks/check-phase-completion.mjs`）在 agent 即将结束消息时读取，
+   * 用于物理拦截"未跑 harness / 未完成 verifier 就声称完成"的弱模型行为。
+   *
+   * 默认 `framework/harness/state/.current-phase.json`。仓库实际可设为 ignore
+   * （每开发者本地状态机），由 `.gitkeep` 占位保留目录结构。
+   */
+  state_file?: string;
+  /**
+   * 阶段完成回执（phase-completion-receipt.md）的目录模式。
+   *
+   * 占位符：
+   *   - `<feature>` 替换为 feature 名
+   *   - `<phase>`   替换为阶段名
+   *
+   * 默认 `doc/features/<feature>/<phase>/phase-completion-receipt.md` 的父目录，
+   * 即 `doc/features/<feature>/<phase>`。check-receipt.ts 与 Stop hook 会按此
+   * 模式定位回执文件。
+   */
+  receipt_dir_pattern?: string;
 }
 
 export interface FrameworkConfig {
@@ -204,6 +227,8 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   glossary: 'doc/glossary.yaml',
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
+  state_file: 'framework/harness/state/.current-phase.json',
+  receipt_dir_pattern: 'doc/features/<feature>/<phase>',
 };
 
 /** 阶段 9 被合并废弃的老路径字段，检测到即拒绝加载。 */
@@ -632,6 +657,10 @@ export interface ResolvedPaths {
   glossarySeedTxt: string;
   /** 架构说明文档绝对路径 */
   architectureMd: string;
+  /** 阶段状态机文件绝对路径（agent 工作流强制门 / Stop hook 读取） */
+  stateFile: string;
+  /** 回执目录模式（含 `<feature>` / `<phase>` 占位符），未替换的相对路径 */
+  receiptDirPattern: string;
 }
 
 /**
@@ -654,6 +683,11 @@ export function resolvePaths(projectRoot: string, frameworkRoot?: string): Resol
     glossaryYaml: path.resolve(projectRoot, cfg.paths.glossary),
     glossarySeedTxt: path.resolve(projectRoot, cfg.paths.glossary_seed),
     architectureMd: path.resolve(projectRoot, cfg.paths.architecture_md),
+    stateFile: path.resolve(
+      projectRoot,
+      cfg.paths.state_file ?? DEFAULT_PATHS.state_file!,
+    ),
+    receiptDirPattern: cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!,
   };
 }
 
@@ -692,6 +726,29 @@ export function featureDir(projectRoot: string, feature: string): string {
  */
 export function featureFilePath(projectRoot: string, feature: string, fileName: string): string {
   return path.join(featureDir(projectRoot, feature), fileName);
+}
+
+/** 阶段状态机文件绝对路径（agent 工作流强制门用） */
+export function statefilePath(projectRoot: string): string {
+  const cfg = loadFrameworkConfig(projectRoot);
+  const rel = cfg.paths.state_file ?? DEFAULT_PATHS.state_file!;
+  return path.resolve(projectRoot, rel);
+}
+
+/**
+ * 将 receipt_dir_pattern 中的 `<feature>` / `<phase>` 占位符替换为实参，并返回绝对路径。
+ * 默认指向 `doc/features/<feature>/<phase>` 目录。
+ */
+export function receiptDirPath(projectRoot: string, feature: string, phase: string): string {
+  const cfg = loadFrameworkConfig(projectRoot);
+  const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
+  const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+  return path.resolve(projectRoot, rel);
+}
+
+/** 阶段完成回执文件绝对路径 = receiptDirPath / phase-completion-receipt.md */
+export function receiptFilePath(projectRoot: string, feature: string, phase: string): string {
+  return path.join(receiptDirPath(projectRoot, feature, phase), 'phase-completion-receipt.md');
 }
 
 // ---- 单条相对路径（用于 affected_files / 错误消息展示） ------------------

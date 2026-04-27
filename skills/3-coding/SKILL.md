@@ -417,17 +417,29 @@ v2.3 起 hvigor 工具链路径**应通过 `framework.config.json > toolchain.de
 
 **绝不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交，也不允许把 `HARNESS_SKIP_HVIGOR` 设为 1 绕过。
 
-### Step 7: Harness 验证门禁
+### Step 7: Harness 验证门禁（agent 必须自跑，不得仅"告知用户"）
 
-编码交付后，引导用户执行 Harness 验证以确保代码质量达标。编码阶段的 Harness 是**价值最高**的验证环节——它能自动检测文件缺失、接口偏离、分层违规、资源引用错误等编码常见问题。
+> **v2.4 强约束（呼应 CLAUDE.md 第 4.1 节）**：本步骤是编码阶段的**必要出口**。
+> agent **必须自己**通过 Shell 工具执行下述 harness 命令、读取报告、判定 verdict；
+> **严禁**只在回复里写"建议用户运行"、"可使用以下命令"然后直接结束对话——
+> 这种行为已经被 CLAUDE.md 第 6 节第 5 条「反假设条款」明确列为软幻觉，由物理拦截层兜底。
 
-#### 7.1 脚本 Harness（确定性检查）
+编码阶段的 Harness 是**价值最高**的验证环节——它能自动检测文件缺失、接口偏离、分层违规、资源引用错误等编码常见问题。
 
-告知用户可运行脚本 Harness 做自动化质量检查：
+#### 7.1 脚本 Harness（确定性检查，agent 自跑）
+
+agent 必须自己执行（不是"提醒用户"，是 agent 通过 Shell 工具直接运行）：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name}
 ```
+
+执行后 agent **必须**：
+
+1. Read 退出码（0 = PASS，非 0 = FAIL）；
+2. Read `framework/harness/reports/<feature>/coding/` 下的报告文件，逐条核对 BLOCKER；
+3. **若有 BLOCKER**：自己回到 Step 3 修复，重跑，直到零 BLOCKER；
+4. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
@@ -453,12 +465,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 **若报告中存在 BLOCKER**：必须修正代码（回到 Step 3），直到零 BLOCKER。
 
-#### 7.2 AI Harness（语义级检查）
+#### 7.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 
-告知用户可使用 AI Harness 进行语义级深度验证：
+agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用户去跑"）：
 
 - **Prompt 模板**：`framework/harness/prompts/verify-coding.md`
-- **使用方式**：将 prompt 中的占位符（`{feature_name}`、`{spec_content}`、`{script_report}`、`{context_files}`）替换为实际内容后，发送给独立 AI 模型执行审查
+- **触发方式**：通过 Task 工具调用 `subagent_type: verifier`，prompt 中传入 feature / phase / 脚本报告路径，子 agent 会自行读取 `verify-coding.md` 并产出报告
 - **语义检查覆盖项**：
   1. 业务逻辑正确性 — 代码是否正确实现了 design.md 描述的业务流程
   2. 异常处理完整性 — acceptance.yaml boundaries 中的每个异常场景是否有对应处理
@@ -470,14 +482,27 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
-#### 7.3 验证完成标志
+#### 7.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT）
+
+> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+
+**编码阶段宣布"完成"前，必须同时满足以下四条**（物理拦截层会按此判据拦截"假完成"）：
+
+1. **trace.json 真实存在**：`framework/harness/reports/<feature>/coding/trace.json` 已写入。
+2. **脚本 harness PASS**：`harness-runner.ts --phase coding --feature <feature>` 退出码 0，零 BLOCKER。
+3. **verifier 子 agent PASS**：通过 Task 工具触发 `subagent_type: verifier`，子 agent 报告 verdict = PASS。
+4. **完成回执通过校验**：填写 `doc/features/<feature>/coding/phase-completion-receipt.md`（模板见 [framework/harness/templates/phase-completion-receipt.md](../../harness/templates/phase-completion-receipt.md)），并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase coding` 校验。
+
+四条缺一不可。**仅靠口头"完成"不算闭环**——物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 | 验证层 | 通过条件 |
 |--------|---------|
-| 脚本 Harness | 零 BLOCKER |
-| AI Harness | verdict = PASS（无 BLOCKER 级 FAIL） |
+| 脚本 Harness | 零 BLOCKER（agent 自跑） |
+| AI Harness | verdict = PASS（agent 通过 Task 触发 verifier 子 agent） |
+| 完成回执 | check-receipt.ts 退出码 0 |
+| trace.json | 文件存在且 schema 合法 |
 
-验证全部通过后，编码阶段完成，可进入 Skill 4（Code Review）。
+四项全部通过后，编码阶段完成，可进入 Skill 4（Code Review）。
 
 ## 编码规范
 
@@ -531,7 +556,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 7. **编译可达**：每完成一个层级后，代码应处于可编译状态
 8. **HAR 导出**：HAR 模块需要通过 `Index.ets` 导出对外暴露的 API，未导出的内容为模块私有
 9. **边界场景覆盖**：代码必须处理 `acceptance.yaml > boundaries` 中定义的所有异常场景（网络异常、空数据、功能暂不支持等）
-10. **Harness 验证闭环**：编码完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才进入下一阶段
+10. **Harness 验证闭环**：编码完成后 agent **必须自己运行** Harness 验证（Step 7），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
 
 ---
 

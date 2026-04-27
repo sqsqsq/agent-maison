@@ -584,33 +584,36 @@ architecture_impact:
 
 > **为什么这一步这样设计**：architecture.md 是**架构级契约**，负责定义分层 / 模块集合 / 依赖边 / 出口约定；module-catalog.yaml 是**模块画像 SSOT**，负责记录每个模块的细粒度职责与能力；git history + `doc/features/<feature>/` 负责 feature 级变更日志。三者各司其职，避免 architecture.md 被 feature 级变更污染导致心智噪音。
 
-### Step 13: Harness 验证门禁
+### Step 13: Harness 验证门禁（agent 必须自跑）
 
-所有产出归档后，引导用户执行验证以确保设计文档质量达标。
+> **CLAUDE.md 4.1 节明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
+> **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
-#### 13.1 脚本 Harness（确定性检查）
+所有产出归档后，agent **必须自己**完成下列验证，再宣布设计阶段完成。
 
-告知用户可运行脚本 Harness 检查设计文档结构合规性：
+#### 13.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase design --feature {module-name}
 ```
+
+agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-design.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/design-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、映射覆盖率等）
 - `doc/features/{module-name}/contracts.yaml` — 功能级接口契约（文件清单、接口签名）
-- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准（PRD 追溯覆盖率）
+- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准(PRD 追溯覆盖率)
 
 **若报告中存在 BLOCKER 级问题**：必须修正设计文档并重新提取 Spec（回到 Step 9），直到零 BLOCKER。
 
-#### 13.2 AI Harness（语义级检查）
+#### 13.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 
-告知用户可使用 AI Harness 进行语义级深度验证：
+agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"告诉用户去跑"），把 feature / phase / 脚本报告路径传入：
 
-- **Prompt 模板**：`framework/harness/prompts/verify-design.md`
-- **使用方式**：将 prompt 中的占位符（`{feature_name}`、`{spec_content}`、`{script_report}`、`{context_files}`）替换为实际内容后，发送给独立 AI 模型执行审查
+- **Prompt 模板**：`framework/harness/prompts/verify-design.md`（由 verifier 子 agent 自行读取）
+- **触发方式**：Task 工具，subagent_type=verifier，prompt 中给出 feature/phase/脚本报告路径
 - **语义检查覆盖项**：
   1. 五层架构合规性（BLOCKER）
   2. 模块内四层合规性（BLOCKER）
@@ -624,14 +627,25 @@ cd framework/harness && npx ts-node harness-runner.ts --phase design --feature {
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
-#### 13.3 验证完成标志
+#### 13.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT，四条件缺一不可）
+
+> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+
+设计阶段宣布"完成"前必须**同时**满足：
+
+1. `framework/harness/reports/<feature>/design/trace.json` 真实存在；
+2. 脚本 harness 退出码 0、零 BLOCKER；
+3. verifier 子 agent 报告 verdict = PASS；
+4. 完成回执 `doc/features/<feature>/design/phase-completion-receipt.md` 已填写并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase design` 校验。
 
 | 验证层 | 通过条件 |
 |--------|---------|
-| 脚本 Harness | 零 BLOCKER |
-| AI Harness | verdict = PASS（无 BLOCKER 级 FAIL） |
+| 脚本 Harness | 零 BLOCKER（agent 自跑） |
+| AI Harness | verdict = PASS（agent 通过 Task 触发 verifier） |
+| 完成回执 | check-receipt.ts 退出码 0 |
+| trace.json | 文件存在且 schema 合法 |
 
-验证全部通过后，设计阶段完成，可进入 Skill 3（编码）。
+四项全部通过后，设计阶段完成，可进入 Skill 3（编码）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 ## 输出规范
 
@@ -723,7 +737,7 @@ framework/skills/2-requirement-design/templates/design-template.md
 7. **中文输出**：所有设计文档内容使用简体中文
 8. **模块最小化**：只创建 PRD 功能实际需要的模块，不额外新增。一个 PRD 的功能通常会跨多个已有模块（如 Feature + AccountManager + CommUI），但不意味着要为每个功能创建新模块
 9. **跨模块拆分是核心能力**：Skill 2 的核心价值之一是将 PRD 中的功能点准确拆分到五层架构的正确模块中，确保职责单一、依赖合规
-10. **Harness 验证闭环**：设计完成后必须引导用户运行 Harness 验证（Step 13），确保零 BLOCKER 后才进入编码阶段
+10. **Harness 验证闭环**：设计完成后 agent **必须自己运行** Harness 验证（Step 13），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入编码阶段（物理拦截层兜底）
 
 ---
 

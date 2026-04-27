@@ -19,6 +19,21 @@ commands:
 skill_bridge: null
 rules: null
 
+# Claude Code 的 .claude/settings.json：注册 Stop / SubagentStop / PreToolUse 等 hook，
+# 是「弱模型工作流强制门」Layer 3 物理拦截的入口。原样拷贝，不做占位符替换。
+settings_file:
+  template_path: templates/settings.json        # 相对于 adapter 目录
+  target_path: .claude/settings.json            # 相对于实例工程根
+
+# Claude Code 的 .claude/hooks/*.mjs：由 settings_file 注册并由 Claude Code 进程触发，
+# 通过 stdin 接收 JSON payload，通过 stderr + exit code 与客户端协议通信。
+# 关键脚本：
+#   - check-phase-completion.mjs（Stop hook，按 CLAUDE.md §5.1 四条件物理拦截"假完成"）
+#   - record-verifier-report.mjs（SubagentStop hook，落地 verifier 子 agent 报告）
+hooks:
+  target_dir: .claude/hooks                     # 相对于实例工程根
+  template_dir: templates/hooks                 # 相对于 adapter 目录
+
 post_install_hooks: []
 
 notes: |
@@ -26,3 +41,9 @@ notes: |
     Skill 1~6，以及 Skill 00（framework-init.md）。
   - 模板里的 `../../framework/skills/<n>/SKILL.md` 相对路径假设 .claude/commands/
     在实例工程根下——与当前钱包仓库保持一致。
+  - settings.json 里的 `${CLAUDE_PROJECT_DIR}` 是 Claude Code CLI 注入的运行时变量，
+    指向实例工程根；不要把它误当成 framework 的 `{{PROJECT_NAME}}` 占位符——本
+    adapter 的 settings_file / hooks 落地时**不做占位符替换**，原样拷贝。
+  - hooks 脚本依赖 `framework/harness/state/.current-phase.json` 与
+    `framework/harness/scripts/check-receipt.ts`，两者都是 framework 共通资产，
+    与 adapter 解耦；因此 hook 脚本不需要在不同 adapter 间复制逻辑。

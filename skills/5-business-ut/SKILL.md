@@ -456,15 +456,20 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
 - "我修过 UT 了，但没跑就交"——必须真的装机跑过且全部 PASS；
 - 因为找不到 `hdc` 就把规则状态写成 SKIP——`hdc` 由 DevEco SDK 的 `toolchains` 提供，正常配过 `framework.config.json > toolchain.devEcoStudio.installPath` 后 PATH 即可命中；如仍找不到，需手工把 `<installPath>/sdk/<api>/toolchains` 加入 PATH。
 
-### Step 8：Harness 验证门禁
+### Step 8：Harness 验证门禁（agent 必须自跑）
 
-UT 交付后，引导用户执行 Harness 验证以确保 UT 质量达标。
+> **CLAUDE.md 4.1 节明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
+> **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
-#### 8.1 脚本 Harness（确定性检查）
+UT 交付后，agent **必须自己**完成下列验证，再宣布 UT 阶段完成。
+
+#### 8.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feature}
 ```
+
+agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/ut-rules.yaml`
@@ -496,9 +501,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 **若报告中存在 BLOCKER**：必须修正（回到 Step 2 / 3），直到零 BLOCKER。
 
-#### 8.2 AI Harness（语义级检查）
+#### 8.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 
-- **Prompt 模板**：`framework/harness/prompts/verify-ut.md`
+agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"告诉用户去跑"），把 feature / phase / 脚本报告路径传入：
+
+- **Prompt 模板**：`framework/harness/prompts/verify-ut.md`（由 verifier 子 agent 自行读取）
+- **触发方式**：Task 工具，subagent_type=verifier，prompt 中给出 feature/phase/脚本报告路径
 - **v2.1 语义检查**：
   1. `state_model_completeness` — state_model 是否足以表达所有分支（若有 use-cases.yaml）
   2. `ui_bindings_completeness` — ui_bindings 是否覆盖所有 UI 节点、命名语义是否清晰（若有 use-cases.yaml）
@@ -510,14 +518,25 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
-#### 8.3 验证完成标志
+#### 8.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT，四条件缺一不可）
+
+> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+
+UT 阶段宣布"完成"前必须**同时**满足：
+
+1. `framework/harness/reports/<feature>/ut/trace.json` 真实存在；
+2. 脚本 harness 退出码 0、零 BLOCKER；
+3. verifier 子 agent 报告 verdict = PASS；
+4. 完成回执 `doc/features/<feature>/ut/phase-completion-receipt.md` 已填写并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase ut` 校验。
 
 | 验证层 | 通过条件 |
 |--------|---------|
-| 脚本 Harness | 零 BLOCKER |
-| AI Harness | verdict = PASS（无 BLOCKER 级 FAIL） |
+| 脚本 Harness | 零 BLOCKER（agent 自跑） |
+| AI Harness | verdict = PASS（agent 通过 Task 触发 verifier） |
+| 完成回执 | check-receipt.ts 退出码 0 |
+| trace.json | 文件存在且 schema 合法 |
 
-验证全部通过后，业务级 UT 阶段完成，可进入 Skill 6（真机测试）。
+四项全部通过后，业务级 UT 阶段完成，可进入 Skill 6（真机测试）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 ## 关联文件
 
@@ -554,7 +573,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 8. **ut_import_whitelist 强约束**：UT 中禁止 import `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`
 9. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
 10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
-11. **Harness 验证闭环**：UT 完成后必须引导用户运行 Harness 验证（Step 8），确保零 BLOCKER 后才进入下一阶段
+11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
 12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下**任何文件的修改**，**必须**满足以下全部条件：
     1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
        - 拟变更的文件路径；

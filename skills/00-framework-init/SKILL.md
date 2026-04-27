@@ -206,12 +206,23 @@ toolchain.devEcoStudio.installPath            <档位>       <策略>
 | adapter | 入口文件 | 典型额外产物 |
 |---------|----------|----------------|
 | `generic` | `AGENTS.md` | 无 |
-| `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md` |
+| `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`、`.cursor/rules/*.mdc` |
 
-落地方式：**从对应 adapter 的 `templates/` 目录拷贝到实例根**，若存在 `commands` / `skill_bridge` / `rules` / `subagents`，按该 adapter 的 `adapter.yaml` 中 **相对 adapter 目录** 的 `template_dir` → **相对实例根** 的 `target_dir` 原样复制（保持相对路径引用 `../../framework/skills/...` 与现有一致）。
+落地方式：**从对应 adapter 的 `templates/` 目录拷贝到实例根**，按该 adapter 的 `adapter.yaml` 声明逐字段处理（字段定义见 [framework/agents/adapter-schema.yaml](../../agents/adapter-schema.yaml)）：
+
+| adapter.yaml 字段 | 处理动作 | 示例（claude adapter） |
+|---|---|---|
+| `agent_entry_file` | **占位符替换**后写入 `target_path` | `templates/AGENTS.md.template` → `CLAUDE.md` |
+| `commands` / `skill_bridge` / `rules` / `commands.subagents` | **整目录原样复制** `template_dir` → `target_dir`（不做占位符替换）| `templates/commands/*.md` → `.claude/commands/*.md` |
+| `settings_file`（可选）| **原样复制** `template_path` → `target_path`（不做占位符替换；模板里只允许使用 `${CLAUDE_PROJECT_DIR}` 这类客户端原生变量）| `templates/settings.json` → `.claude/settings.json` |
+| `hooks`（可选）| **整目录原样复制** `template_dir` → `target_dir`（不做占位符替换）| `templates/hooks/*.mjs` → `.claude/hooks/*.mjs` |
+
+> 保持相对路径引用 `../../framework/skills/...` 与现有一致；模板里硬编码的 `framework/harness/...`、`doc/features/...` 等路径**不做替换**——这些路径在 framework.config.json 里另有 SSOT，但 adapter 模板原样保留即可（与现有 commands 模板做法一致）。
 
 **逐文件按 Step 0.3 第 3 项体检结果执行**：MISSING / EMPTY 直拷；POPULATED 展示 diff + 用户 `y` 后单文件替换；源模板中不存在但目标目录已有的用户自建文件**一律保留**。
+
+> Step 0.3 第 3 项的扫描范围**包含本表所有字段对应的 `target_path` / `target_dir` 下逐文件**（claude adapter 即：`.claude/commands/**`、`.claude/agents/**`、`.claude/settings.json`、`.claude/hooks/**`）；不要漏扫 `settings_file` / `hooks` 这两个 Layer 3 物理拦截相关产物。
 
 **不得**同时生成两套入口文件（例如同时写 `CLAUDE.md` 与一份冲突的 `AGENTS.md` 同名模板变体）；以 Step 0.2.5 选中 adapter 的 `agent_entry_file.target_path` 为准。切换 adapter 重跑时，**旧 adapter 的既有产物不由本 Skill 自动删除**，由用户自行清理（在 Step 7 收尾时打印提示）。
 
@@ -327,6 +338,10 @@ framework/harness/reports/*
 !framework/harness/reports/.gitkeep
 framework/harness/trace/
 framework/harness/package-lock.json
+
+# 阶段状态机：每开发者本地运行时文件，不入仓；目录占位由 .gitkeep 保留
+framework/harness/state/*
+!framework/harness/state/.gitkeep
 ```
 
 说明：
@@ -336,6 +351,7 @@ framework/harness/package-lock.json
 - `reports/*`：每次 phase 运行生成的报告；保留 `reports/.gitkeep` 让空目录可随 framework 分发。
 - `trace/`：调试 trace / 临时记录目录（若存在）。
 - `package-lock.json`：由目标工程本地 registry / npm 版本生成，不随 framework 分发；内网、外网 lock 内容可能不同。
+- `state/*` + `!state/.gitkeep`：「弱模型工作流强制门」Layer 2/3 写入的本地阶段状态机（如 `.current-phase.json`），**仅本机运行时凭证**；保留 `state/.gitkeep` 让空目录可随 framework 分发，避免 hooks 因目录缺失抛错。
 
 #### 5.4.5.2 等价覆盖规则
 
@@ -349,6 +365,8 @@ framework/harness/package-lock.json
 | `framework/harness/reports/*` | `framework/harness/reports/*` |
 | `!framework/harness/reports/.gitkeep` | `!framework/harness/reports/.gitkeep` |
 | `framework/harness/trace/` | `framework/harness/trace`、`framework/harness/trace/` |
+| `framework/harness/state/*` | `framework/harness/state/*`、`framework/harness/state`、`framework/harness/state/` |
+| `!framework/harness/state/.gitkeep` | `!framework/harness/state/.gitkeep` |
 
 #### 5.4.5.3 写入策略
 
@@ -563,10 +581,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 
 ## UPDATE 模式补充（体检外的两类动作）
 
-> 「产物是否写 / 如何写」已由 Step 0.3 体检表完全覆盖；本节只补充两件**体检表之外**的、UPDATE 特有的变更语义。
+> 「产物是否写 / 如何写」已由 Step 0.3 体检表完全覆盖；本节只补充三件**体检表之外**的、UPDATE 特有的变更语义。
 
 1. **改 DSL**：重新执行 Step 3。DSL 变化的**语义影响**需要显式提醒用户——`check-coding` / `check-catalog` 等 harness 行为会跟着变，既有模块画像的 `allowed_dependencies` 可能突然违规。展示 `architecture` 段 diff 时附带一句"本次变更将影响以下 harness 检查：…"，用户 `y` 后按 Step 5.1 写入。
-2. **切换 `agent_adapter`**：用户在 Step 0.2.5 选了与当前 `framework.config.json.agent_adapter` 不同的 adapter 即视为切换。新旧 adapter 的产物路径不同（例 `.claude/` ↔ `.cursor/`）。Step 0.3 体检表**只扫描新 adapter** 的目标路径；旧 adapter 的遗留产物需要在本节**额外列给用户看**（`.claude/commands/*.md` 之类），建议用户手动删除或备份后再继续，**本 Skill 不自动删除其它 adapter 的产物**。
+2. **切换 `agent_adapter`**：用户在 Step 0.2.5 选了与当前 `framework.config.json.agent_adapter` 不同的 adapter 即视为切换。新旧 adapter 的产物路径不同（例 `.claude/` ↔ `.cursor/`）。Step 0.3 体检表**只扫描新 adapter** 的目标路径；旧 adapter 的遗留产物需要在本节**额外列给用户看**（`.claude/commands/*.md`、`.claude/settings.json`、`.claude/hooks/**` 之类），建议用户手动删除或备份后再继续，**本 Skill 不自动删除其它 adapter 的产物**。
+3. **adapter 模板新增字段（如 `settings_file` / `hooks`）的 framework 升级**：当 framework 升级后某 adapter 的 `adapter.yaml` 新增了 `settings_file` / `hooks` 等可选字段（典型如本仓库 Layer 3 物理拦截能力上线），UPDATE 模式必须按 Step 0.3 第 3 项**补扫这些新字段对应的目标路径**（`.claude/settings.json`、`.claude/hooks/**`），按 MISSING / EMPTY / POPULATED 各档处置；**不得**因为"老工程没有这两个产物"就静默跳过——这正是 UPDATE 应该补齐的内容。展示 diff 时附带一句"本次将启用 Layer 3 物理拦截，详见 `{{AGENT_ENTRY_FILE}}` §5.1"。
 
 ---
 

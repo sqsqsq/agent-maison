@@ -189,17 +189,20 @@ framework/skills/4-code-review/templates/review-report-template.md
    ```
 3. 若用户要求修改，根据反馈调整后重新走 Step 4 自检
 
-### Step 6: Harness 验证门禁
+### Step 6: Harness 验证门禁（agent 必须自跑）
 
-审查报告归档后，引导用户执行 Harness 验证以确保报告本身的质量达标。
+> **CLAUDE.md 4.1 节明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
+> **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
-#### 6.1 脚本 Harness（确定性检查）
+审查报告归档后，agent **必须自己**完成下列验证，再宣布 Review 阶段完成。
 
-告知用户可运行脚本 Harness 检查报告结构合规性：
+#### 6.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
 ```
+
+agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/review-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、严重程度值域等）
@@ -219,12 +222,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 **若报告中存在 BLOCKER**：必须修正报告（回到 Step 4），直到零 BLOCKER。
 
-#### 6.2 AI Harness（语义级检查）
+#### 6.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 
-告知用户可使用 AI Harness 进行语义级深度验证：
+agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"告诉用户去跑"），把 feature / phase / 脚本报告路径传入：
 
-- **Prompt 模板**：`framework/harness/prompts/verify-review.md`
-- **使用方式**：将 prompt 中的占位符（`{feature_name}`、`{spec_content}`、`{script_report}`、`{context_files}`）替换为实际内容后，发送给独立 AI 模型执行审查
+- **Prompt 模板**：`framework/harness/prompts/verify-review.md`（由 verifier 子 agent 自行读取）
+- **触发方式**：Task 工具，subagent_type=verifier，prompt 中给出 feature/phase/脚本报告路径
 - **语义检查覆盖项**：
   1. 审查维度覆盖度 — 是否涵盖所有关键维度
   2. 问题准确性（BLOCKER）— 引用的文件路径和代码位置是否真实
@@ -234,6 +237,26 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
   6. 编码规则追溯 — 问题分类是否对应 coding-rules.yaml 中的规则
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
+
+#### 6.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT，四条件缺一不可）
+
+> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+
+Review 阶段宣布"完成"前必须**同时**满足：
+
+1. `framework/harness/reports/<feature>/review/trace.json` 真实存在；
+2. 脚本 harness 退出码 0、零 BLOCKER；
+3. verifier 子 agent 报告 verdict = PASS；
+4. 完成回执 `doc/features/<feature>/review/phase-completion-receipt.md` 已填写并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase review` 校验。
+
+| 验证层 | 通过条件 |
+|--------|---------|
+| 脚本 Harness | 零 BLOCKER（agent 自跑） |
+| AI Harness | verdict = PASS（agent 通过 Task 触发 verifier） |
+| 完成回执 | check-receipt.ts 退出码 0 |
+| trace.json | 文件存在且 schema 合法 |
+
+四项全部通过后，Review 阶段完成。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 #### 6.3 验证完成标志
 
@@ -290,7 +313,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 5. **模拟数据容忍**：本项目为模拟应用，数据全部写死——对模拟数据的类型合法性检查应适度宽容
 6. **中文输出**：审查报告使用简体中文
 7. **不要重复 Harness 已覆盖的检查**：Skill 4 是人工级别的深度审查，应关注语义正确性和架构合理性，确定性结构检查（文件存在、分层合规等）由 Harness 脚本自动完成
-8. **Harness 验证闭环**：报告完成后必须引导用户运行 Harness 验证（Step 6），确保零 BLOCKER 后才认为 Review 阶段完成
+8. **Harness 验证闭环**：报告完成后 agent **必须自己运行** Harness 验证（Step 6），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才认为 Review 阶段完成（物理拦截层兜底）
 
 ---
 
