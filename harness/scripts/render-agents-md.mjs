@@ -13,9 +13,21 @@
 // 何时调用
 // --------
 // - framework/skills/00-framework-init Skill **Step 4.1**：当体检表第 2 项
-//   报 MISSING / EMPTY 时直接渲染、报 POPULATED 且用户回 y 时整文件替换。
-//   AI 可以人工逐占位符替换，也可以调用本脚本一次性完成；两种做法等价。
+//   报 MISSING / EMPTY 时直接渲染、报 POPULATED 且 Step 0.3.4 收到 Q2=y 时
+//   整文件替换。
 // - framework 自检 / 模板迁移验证：手工跑一次确认模板渲染产物符合预期。
+//
+// 路径优先级（v2.8.3 起）
+// ----------------------
+// 本脚本是 Step 4.1 的**首选路径 / 弱模型强制路径**——不再是「可选辅助工具」。
+// 渲染产物 200+ 行中文 markdown，弱模型通过 LLM tool-call 协议向 Write 工具
+// 传递大 content 参数时容易出现 `InputValidationError: file_path / content
+// missing`（已在真实工程发生事故，v2.8.3 BLOCKER `tool-call retry-loop Ban`
+// 的事故现场）。本脚本运行在 Node 进程内，整个大 content 不经过 tool-call
+// 协议，从机制上规避此类失败。
+//
+// 兜底路径（手工 Read 模板 + 占位符替换 + Write 写入）仅在脚本不可用时
+// 启用，且重试 ≥ 2 次仍失败必须切回本脚本——见 SKILL §4.1.2 / §4.1.3。
 //
 // 与 SKILL Step 4.1 占位符表的 SSOT 关系
 // --------------------------------------
