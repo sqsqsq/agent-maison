@@ -454,16 +454,19 @@ Skill 5 的退出条件不是“文件写完”，而是 `ut` phase 通过：
 
 ```bash
 cd framework/harness
-npx ts-node harness-runner.ts --phase ut --feature <feature>
+npx ts-node harness-runner.ts --phase ut --feature <feature> --summary --failures-only
 ```
 
 脚本 Harness 会生成：
 
 - `script-report.json`
+- `summary.json`
 - `ai-prompt.md`
 - `merged-report.md`
 - `trace.json`
 - hvigor / hdc 相关日志
+
+agent / CI 优先读取 `summary.json` 里的 `verdict`、`blockers`、`next_action` 与 `ut_run_status`，不要用 `grep` 解析完整控制台日志。
 
 之后还要把 `ai-prompt.md` 交给 verifier 做语义复核。
 

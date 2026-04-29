@@ -388,7 +388,26 @@ function maybeUpdateState(stateAbs, state, sid, stamp) {
 // 7. 文案构建
 // --------------------------------------------------------------------------
 
-function buildBlockReason(state, missingItems) {
+function readSummaryHint(projectRoot, state) {
+  try {
+    const phase = typeof state?.phase === 'string' ? state.phase : '';
+    const feature = typeof state?.feature === 'string' ? state.feature : '';
+    if (!phase || !feature) return null;
+    const summaryPath = path.join(projectRoot, 'framework', 'harness', 'reports', feature, phase, 'summary.json');
+    const summary = readJSONSafe(summaryPath);
+    if (!summary || typeof summary !== 'object') return null;
+    const nextAction = typeof summary.next_action === 'string' ? summary.next_action : '';
+    if (!nextAction) return null;
+    return {
+      path: path.relative(projectRoot, summaryPath).replace(/\\/g, '/'),
+      nextAction,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildBlockReason(state, missingItems, summaryHint = null) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const lines = [
@@ -400,6 +419,12 @@ function buildBlockReason(state, missingItems) {
     '未满足的闭环条件（CLAUDE.md §5.1）：',
     ...missingItems.map((m) => `  - ${m}`),
     '',
+    ...(summaryHint ? [
+      '最近一次 harness summary 建议：',
+      `  summary = ${summaryHint.path}`,
+      `  next_action = ${summaryHint.nextAction}`,
+      '',
+    ] : []),
     '如果你打算【继续这个阶段】，按下面顺序补齐：',
     `  1. 主 agent 自跑 harness：`,
     `       cd framework/harness && npx ts-node harness-runner.ts \\`,
@@ -499,7 +524,7 @@ async function main() {
   }
 
   // 未闭环 → 中性文案 + exit 2
-  const reason = buildBlockReason(state, result.missing);
+  const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state));
   const decision = {
     decision: 'block',
     reason,

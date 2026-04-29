@@ -386,10 +386,11 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 **首选方式（v2.3 起推荐）**：通过 harness 触发，避免 agent 自己拼复杂 hvigor 命令时出错（quoting、`-p module=...@<target>` 形态、`DEVECO_SDK_HOME` / `JAVA_HOME` 注入、Windows 含空格安装路径转义等都已在 `hvigor-runner.ts` 内部处理好）：
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name>
+cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name> --summary --failures-only
 ```
 
 `coding_hvigor_build` BLOCKER 内部会按 `contracts.yaml > modules` 调用项目级 `hvigor assembleApp` 一次性出全 HAP；日志落 `framework/harness/reports/<feature>/coding/hvigor-build.log`。
+优先读取 `framework/harness/reports/<feature>/coding/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
 
 > **不要**让 agent 自己手敲 `hvigorw --mode module ...`。v2.3 起命令形态、所需环境变量、含空格路径等综合考虑较多，自行拼装容易翻车；harness 已经封装了这一切。
 
@@ -447,15 +448,16 @@ v2.3 起 hvigor 工具链路径**应通过 `framework.config.json > toolchain.de
 agent 必须自己执行（不是"提醒用户"，是 agent 通过 Shell 工具直接运行）：
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name}
+cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name} --summary --failures-only
 ```
 
 执行后 agent **必须**：
 
 1. Read 退出码（0 = PASS，非 0 = FAIL）；
 2. Read `framework/harness/reports/<feature>/coding/` 下的报告文件，逐条核对 BLOCKER；
-3. **若有 BLOCKER**：自己回到 Step 3 修复，重跑，直到零 BLOCKER；
-4. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
+3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
+4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
+5. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 

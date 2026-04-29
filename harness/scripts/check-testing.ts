@@ -1169,6 +1169,46 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   }
 }
 
+function buildTestingRunStatusResult(
+  plan: string | null,
+  report: string | null,
+  results: CheckResult[],
+): CheckResult {
+  const blockerFails = results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
+  const blockerSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER');
+  const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
+  const canClaimDone = Boolean(plan && report) && blockerFails.length === 0 && blockerSkips.length === 0;
+
+  const lines: string[] = [];
+  lines.push(`can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`);
+  lines.push(`test_plan: ${plan ? 'PRESENT' : 'MISSING'}`);
+  lines.push(`test_report: ${report ? 'PRESENT' : 'MISSING'}`);
+  lines.push(`blocker_fail_count: ${blockerFails.length}`);
+  lines.push(`blocker_skip_count: ${blockerSkips.length}`);
+  lines.push(`blocking_warn_count: ${blockingWarnings.length}`);
+  if (blockerFails.length > 0) {
+    lines.push(`blocker_fail_ids: ${blockerFails.map(r => r.id).join(', ')}`);
+  }
+  if (blockerSkips.length > 0) {
+    lines.push(`blocker_skip_ids: ${blockerSkips.map(r => r.id).join(', ')}`);
+  }
+  if (blockingWarnings.length > 0) {
+    lines.push(`blocking_warn_ids: ${blockingWarnings.map(r => r.id).join(', ')}`);
+  }
+
+  return {
+    id: 'testing_run_status',
+    category: 'structure',
+    description: 'Testing 阶段脚本门禁总体状态',
+    severity: 'BLOCKER',
+    status: canClaimDone ? 'PASS' : 'FAIL',
+    details: lines.join('\n'),
+    suggestion: canClaimDone
+      ? '脚本门禁可进入 verifier + receipt 闭环；仍需确认真机测试证据与报告语义质量。'
+      : '补齐 test-plan.md / test-report.md，并修复 BLOCKER FAIL/SKIP 后重跑 testing harness。',
+  };
+}
+
 const checker: PhaseChecker = {
   phase: 'testing',
 
@@ -1177,7 +1217,7 @@ const checker: PhaseChecker = {
     const report = loadDoc(ctx, 'test-report.md');
 
     if (!plan && !report) {
-      return [{
+      const missingDocs: CheckResult = {
         id: 'testing_docs_missing',
         category: 'structure',
         description: '测试计划和测试报告都不存在',
@@ -1185,7 +1225,8 @@ const checker: PhaseChecker = {
         status: 'FAIL',
         details: `未找到 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
         suggestion: '请先运行 Skill 6 生成测试计划。',
-      }];
+      };
+      return [missingDocs, buildTestingRunStatusResult(plan, report, [missingDocs])];
     }
 
     const results: CheckResult[] = [];
@@ -1211,6 +1252,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
     results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
     results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+
+    results.push(buildTestingRunStatusResult(plan, report, results));
 
     return results;
   },

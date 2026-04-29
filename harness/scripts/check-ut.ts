@@ -849,6 +849,7 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
 
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
+  const failureClass = classifyUtHvigorBuildFailure(first, bad[0].module);
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
@@ -857,6 +858,8 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     lines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置，显式跳过真实编译不被允许作为出口。');
   } else {
     lines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    lines.push(`失败归因：${failureClass.kind}`);
+    lines.push(`归因说明：${failureClass.explanation}`);
     lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
     if (first.errors.length > 0) {
       lines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
@@ -877,10 +880,79 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     status: 'FAIL',
     details: lines.join('\n'),
     affected_files: [bad[0].module + '@ohosTest'],
+    failure_kind: failureClass.kind,
+    blocking_class: failureClass.kind === 'external_project_build_blocker' ? 'external' : 'ut_hvigor_build',
     suggestion:
-      '读取完整日志（details 中 `日志落盘` 路径），定位文件/行后回到 UT 编写阶段修复；' +
-      '常见原因：(1) UT 调用的被测函数签名已变；(2) import 路径错误；(3) 类型注解与被测实际类型不匹配。',
+      failureClass.suggestion,
   }];
+}
+
+type UtHvigorFailureKind =
+  | 'toolchain'
+  | 'env_skip'
+  | 'ut_code'
+  | 'feature_code'
+  | 'external_project_build_blocker'
+  | 'unknown';
+
+function classifyUtHvigorBuildFailure(
+  res: ReturnType<typeof runHvigorBuild>,
+  moduleName: string,
+): { kind: UtHvigorFailureKind; explanation: string; suggestion: string } {
+  if (res.toolMissing) {
+    return {
+      kind: 'toolchain',
+      explanation: 'hvigor / DevEco 工具链不可用。',
+      suggestion: '按 framework.config.json > toolchain.devEcoStudio.installPath 配置 DevEco Studio 路径后重跑。',
+    };
+  }
+  if (res.skippedByEnv) {
+    return {
+      kind: 'env_skip',
+      explanation: 'HARNESS_SKIP_HVIGOR 显式跳过真实编译。',
+      suggestion: '取消 HARNESS_SKIP_HVIGOR 后重跑；真实编译是 UT 阶段出口条件。',
+    };
+  }
+
+  const log = `${res.logExcerpt}\n${res.errors.map(e => `${e.file ?? ''} ${e.message}`).join('\n')}`;
+  const hasDependencyResolutionFailure =
+    /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(log);
+  const touchesOhosTest = /\/src\/ohosTest\/|\\src\\ohosTest\\/i.test(log);
+  const touchesCurrentModuleMain = new RegExp(`${escapeRegExp(moduleName)}[/\\\\]src[/\\\\]main`, 'i').test(log);
+
+  if (hasDependencyResolutionFailure && !touchesOhosTest && !touchesCurrentModuleMain) {
+    return {
+      kind: 'external_project_build_blocker',
+      explanation: '依赖解析失败发生在非 ohosTest / 非当前模块 src/main 的项目级或传递依赖链路中；当前 UT 尚未真实运行，且不应通过修改 UT 掩盖该问题。',
+      suggestion: '先修复项目级依赖/构建问题，或在确认不是本轮 UT 引入后记录为外部阻塞并 clear-state；不要声称 UT 已通过。',
+    };
+  }
+
+  if (touchesOhosTest) {
+    return {
+      kind: 'ut_code',
+      explanation: '编译错误指向 src/ohosTest，优先按 UT import、类型签名或 Spy/Stub 实现问题处理。',
+      suggestion: '读取完整日志定位 ohosTest 文件/行，修复 UT 代码后重跑 harness。',
+    };
+  }
+
+  if (touchesCurrentModuleMain) {
+    return {
+      kind: 'feature_code',
+      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 Skill 5 源码修改授权流程。',
+      suggestion: '优先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时先向用户申请并登记 gap-notes。',
+    };
+  }
+
+  return {
+    kind: 'unknown',
+    explanation: '无法仅凭日志判断错误归属。',
+    suggestion: '读取完整日志（details 中 `日志落盘` 路径），定位文件/行；不要仅凭 ut_tsc_compiles PASS 宣称 UT 通过。',
+  };
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

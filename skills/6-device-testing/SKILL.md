@@ -234,10 +234,11 @@ framework/skills/6-device-testing/templates/test-report-template.md
 #### 7.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature {module-name}
+cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature {module-name} --summary --failures-only
 ```
 
 agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
+优先读取 `framework/harness/reports/<feature>/testing/summary.json`；其中 `testing_run_status` 的 `can_claim_done` 必须为 `YES`，否则不能宣称真机测试阶段完成。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/testing-rules.yaml` — 阶段级通用规则

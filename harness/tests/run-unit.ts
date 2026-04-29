@@ -25,6 +25,7 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'har-index-export', modulePath: './unit/har-index-export.unit.test' },
   { id: 'hvigor-args',      modulePath: './unit/hvigor-args.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
+  { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
 ];
 
 interface SuiteSummary {

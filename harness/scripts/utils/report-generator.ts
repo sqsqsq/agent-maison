@@ -297,7 +297,7 @@ export function generateMergedReport(
   if (scriptReport.summary.verdict === 'FAIL') {
     lines.push(`**FAIL** — 存在 ${scriptReport.summary.blockers} 个 BLOCKER 级别失败，必须修复后重新验证。`);
   } else {
-    lines.push('**PASS** — 脚本 Harness 所有检查通过。请继续执行 AI Harness 语义验证。');
+    lines.push('**PASS** — 脚本 Harness 未发现 BLOCKER 失败。注意：脚本 PASS 不代表阶段闭环完成，仍必须继续执行 verifier 语义验证并填写 completion receipt。');
   }
   lines.push('');
 
@@ -312,7 +312,12 @@ export function generateMergedReport(
 // 控制台输出
 // --------------------------------------------------------------------------
 
-export function printReportToConsole(report: ScriptReport): void {
+export interface PrintReportOptions {
+  failuresOnly?: boolean;
+  maxDetailsChars?: number;
+}
+
+export function printReportToConsole(report: ScriptReport, options: PrintReportOptions = {}): void {
   const chalk = tryLoadChalk();
 
   console.log('');
@@ -322,12 +327,26 @@ export function printReportToConsole(report: ScriptReport): void {
   console.log(`${'='.repeat(60)}`);
   console.log('');
 
-  for (const check of report.checks) {
+  const checksToPrint = options.failuresOnly
+    ? report.checks.filter(check => check.status === 'FAIL' || check.status === 'WARN' || (check.status === 'SKIP' && check.severity === 'BLOCKER'))
+    : report.checks;
+
+  if (options.failuresOnly) {
+    const hidden = report.checks.length - checksToPrint.length;
+    console.log(`  Showing FAIL/WARN/BLOCKER-SKIP only (${checksToPrint.length} shown, ${hidden} PASS/SKIP hidden; use --verbose to expand).`);
+    console.log('');
+  }
+
+  if (checksToPrint.length === 0) {
+    console.log('  No FAIL/WARN checks.');
+  }
+
+  for (const check of checksToPrint) {
     const badge = statusBadge(check.status, chalk);
     const sev = severityTag(check.severity, chalk);
     console.log(`  ${badge} ${sev} ${check.id}`);
-    if (check.status !== 'PASS' && check.status !== 'SKIP') {
-      console.log(`       ${check.details}`);
+    if (check.status !== 'PASS') {
+      console.log(`       ${formatConsoleDetails(check.details, options.maxDetailsChars ?? 4000)}`);
       if (check.affected_files?.length) {
         console.log(`       Files: ${check.affected_files.slice(0, 5).join(', ')}${check.affected_files.length > 5 ? ` (+${check.affected_files.length - 5} more)` : ''}`);
       }
@@ -341,6 +360,12 @@ export function printReportToConsole(report: ScriptReport): void {
   console.log(`  Verdict: ${report.summary.verdict === 'PASS' ? (chalk ? chalk.green('PASS') : 'PASS') : (chalk ? chalk.red('FAIL') : 'FAIL')}`);
   console.log(`${'─'.repeat(60)}`);
   console.log('');
+}
+
+function formatConsoleDetails(details: string, maxChars: number): string {
+  const normalized = details.replace(/\r/g, '');
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}\n       ... details truncated in console; read script-report.json for full content.`;
 }
 
 // --------------------------------------------------------------------------

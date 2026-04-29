@@ -84,6 +84,14 @@ npx ts-node harness-runner.ts --phase docs
 # 功能
 npx ts-node harness-runner.ts --phase prd --feature home-page
 npx ts-node harness-runner.ts --phase ut  --feature home-page
+
+# 适合 agent / CI 消费的稳定摘要输出（不要再 grep 完整日志）
+npx ts-node harness-runner.ts --phase coding --feature home-page --summary --failures-only
+npx ts-node harness-runner.ts --phase ut --feature home-page --summary --failures-only
+npx ts-node harness-runner.ts --phase testing --feature home-page --summary --failures-only
+
+# 默认控制台已折叠 PASS 与普通 SKIP；需要完整检查项时显式加 --verbose
+npx ts-node harness-runner.ts --phase coding --feature home-page --verbose
 ```
 
 ### 3.4 列出可用 Spec
@@ -101,6 +109,7 @@ framework/harness/reports/
 ├── _global/
 │   ├── catalog/
 │   │   ├── script-report.json   ← 脚本检查结果（程序消费）
+│   │   ├── summary.json         ← 稳定短摘要（verdict / blockers / next_action）
 │   │   ├── ai-prompt.md         ← AI Harness prompt（人类审 / 喂给模型）
 │   │   ├── merged-report.md     ← 合并后人类可读报告
 │   │   └── trace.json           ← 起点 commit + 时间戳
@@ -120,9 +129,19 @@ framework/harness/reports/
 | 文件                    | 谁读                      | 何时看                                                  |
 | ----------------------- | ------------------------- | ------------------------------------------------------- |
 | `script-report.json`    | CI / 程序                 | 自动化脚本判 PASS/FAIL                                  |
+| `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
 | `ai-prompt.md`          | verifier 子 agent / 你    | 把它发给 AI 模型做语义级复核                            |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 ut_no_src_mutation 用） |
+
+> v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败，阶段闭环仍需要 verifier 子 agent PASS 与 completion receipt。
+
+`summary.json` 的稳定契约见 `framework/harness/schemas/summary.schema.json`。关键字段：
+
+- `run_statuses`：阶段状态面板，例如 `coding_run_status` / `ut_run_status` / `testing_run_status`。
+- `readiness_signals`：非 BLOCKER 但代表"尚未就绪"的信号，例如 catalog/glossary 空骨架、docs freshness 无法判定。
+- `blocking_warnings` / `blocking_skips`：`severity=BLOCKER` 但状态为 `WARN/SKIP` 的检查项，避免被 verdict PASS 掩盖。
+- `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
 
 ---
 

@@ -1000,6 +1000,11 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
   }
 
   const first = res;
+  const failureKind = first.toolMissing
+    ? 'toolchain'
+    : first.skippedByEnv
+      ? 'env_skip'
+      : 'project_build';
   const detailsLines: string[] = [];
   detailsLines.push('项目级 assembleApp 失败：');
   if (first.toolMissing) {
@@ -1036,10 +1041,62 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     status: 'FAIL',
     details: detailsLines.join('\n'),
     affected_files: modules.map(m => `${m.name} (module)`),
+    failure_kind: failureKind,
+    blocking_class: failureKind === 'project_build' ? 'coding_hvigor_build' : failureKind,
     suggestion:
       '读取完整日志（details 中的 `日志落盘` 路径），定位文件/行并回到编码阶段修复。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
   }];
+}
+
+const CODING_CRITICAL_SKIP_IDS = new Set([
+  'file_completeness',
+  'layer_compliance',
+  'inter_module_dependency',
+  'design_to_code',
+  'design_file_plan_to_code',
+  'diff_within_scope',
+]);
+
+function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): CheckResult {
+  const blockerFails = results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
+  const criticalSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER' && CODING_CRITICAL_SKIP_IDS.has(r.id));
+  const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
+  const hvigor = results.find(r => r.id === 'coding_hvigor_build');
+  const contracts = ctx.featureSpec.contracts;
+  const hasContractsFiles = Boolean(contracts?.files?.length);
+  const hasContractsModules = Boolean(contracts?.modules?.length);
+  const canClaimDone = blockerFails.length === 0 && criticalSkips.length === 0;
+
+  const lines: string[] = [];
+  lines.push(`can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`);
+  lines.push(`contracts.files: ${hasContractsFiles ? contracts!.files!.length : 0}`);
+  lines.push(`contracts.modules: ${hasContractsModules ? contracts!.modules!.length : 0}`);
+  lines.push(`hvigor_build: ${hvigor?.status ?? 'MISSING'}`);
+  lines.push(`blocker_fail_count: ${blockerFails.length}`);
+  lines.push(`critical_skip_count: ${criticalSkips.length}`);
+  lines.push(`blocking_warn_count: ${blockingWarnings.length}`);
+  if (blockerFails.length > 0) {
+    lines.push(`blocker_fail_ids: ${blockerFails.map(r => r.id).join(', ')}`);
+  }
+  if (criticalSkips.length > 0) {
+    lines.push(`critical_skip_ids: ${criticalSkips.map(r => r.id).join(', ')}`);
+  }
+  if (blockingWarnings.length > 0) {
+    lines.push(`blocking_warn_ids: ${blockingWarnings.map(r => r.id).join(', ')}`);
+  }
+
+  return {
+    id: 'coding_run_status',
+    category: 'structure',
+    description: 'Coding 阶段脚本门禁总体状态',
+    severity: 'BLOCKER',
+    status: canClaimDone ? 'PASS' : 'FAIL',
+    details: lines.join('\n'),
+    suggestion: canClaimDone
+      ? '脚本门禁可进入 verifier + receipt 闭环；注意 BLOCKER/WARN 仍需人工确认风险。'
+      : '先修复 BLOCKER FAIL；若存在 critical_skip_ids，请补齐 contracts.yaml / design trace / diff baseline 后重跑。',
+  };
 }
 
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
@@ -1097,6 +1154,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDesignFilePlanToCode(ctx), 'design_file_plan_to_code'));
     results.push(...safeRun(() => checkCodeToDesign(ctx), 'code_to_design'));
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
+
+    results.push(buildCodingRunStatusResult(ctx, results));
 
     return results;
   },

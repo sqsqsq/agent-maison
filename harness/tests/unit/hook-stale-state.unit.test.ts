@@ -67,6 +67,8 @@ interface FixtureOptions {
   stateMachine?: { grace_period_minutes?: unknown; ttl_hours?: unknown } | null;
   /** state.phase；默认 'coding'。全局阶段（init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
   phaseOverride?: string;
+  /** 可选写入 reports/<feature>/<phase>/summary.json，供 hook 阻断文案读取 next_action。 */
+  summaryNextAction?: string;
 }
 
 function makeFixture(opts: FixtureOptions): string {
@@ -123,6 +125,30 @@ function makeFixture(opts: FixtureOptions): string {
       state.session_id = opts.stateSessionId;
     }
     fs.writeFileSync(stateAbs, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  }
+  if (opts.summaryNextAction) {
+    const phase = opts.phaseOverride ?? 'coding';
+    const summaryAbs = path.join(dir, 'framework', 'harness', 'reports', 'demo-feature', phase, 'summary.json');
+    fs.mkdirSync(path.dirname(summaryAbs), { recursive: true });
+    fs.writeFileSync(summaryAbs, JSON.stringify({
+      schema_version: '1.0',
+      phase,
+      feature: 'demo-feature',
+      verdict: 'FAIL',
+      blocker_count: 1,
+      fail_count: 1,
+      warn_count: 0,
+      script_report: `framework/harness/reports/demo-feature/${phase}/script-report.json`,
+      merged_report: `framework/harness/reports/demo-feature/${phase}/merged-report.md`,
+      ai_prompt: `framework/harness/reports/demo-feature/${phase}/ai-prompt.md`,
+      summary_json: `framework/harness/reports/demo-feature/${phase}/summary.json`,
+      run_statuses: [],
+      readiness_signals: [],
+      blocking_warnings: [],
+      blocking_skips: [],
+      blockers: [],
+      next_action: opts.summaryNextAction,
+    }, null, 2), 'utf-8');
   }
   return dir;
 }
@@ -457,6 +483,23 @@ function testT14_globalPhaseCatalogBypassesClosure(): void {
   }
 }
 
+function testT15_blockReasonIncludesSummaryNextAction(): void {
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    summaryNextAction: 'fix_run_status_blockers_then_rerun',
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T15 同会话未闭环 + summary.json → exit 2');
+    assertStderrContains(out, '最近一次 harness summary 建议', 'T15 应展示 summary 建议标题');
+    assertStderrContains(out, 'next_action = fix_run_status_blockers_then_rerun', 'T15 应展示 next_action');
+  } finally {
+    rmDir(dir);
+  }
+}
+
 // --------------------------------------------------------------------------
 // 注册
 // --------------------------------------------------------------------------
@@ -476,6 +519,7 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'T12 非法 config → hook 端回退默认值不崩', fn: testT12_invalidConfigFallsBack },
   { name: 'T13 phase=init 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT13_globalPhaseInitBypassesClosure },
   { name: 'T14 phase=catalog 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT14_globalPhaseCatalogBypassesClosure },
+  { name: 'T15 未闭环阻断文案包含 summary.next_action', fn: testT15_blockReasonIncludesSummaryNextAction },
 ];
 
 export function runAll(): UnitCaseResult[] {

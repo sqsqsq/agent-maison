@@ -295,6 +295,10 @@ export interface CheckResult {
   details: string;
   affected_files?: string[];
   suggestion?: string;
+  /** 机器可读失败归因；优先供 summary.json / next_action 消费，details 只做人读。 */
+  failure_kind?: string;
+  /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
+  blocking_class?: string;
 }
 
 /** 报告摘要 */

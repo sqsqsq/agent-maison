@@ -496,10 +496,11 @@ UT 交付后，agent **必须自己**完成下列验证，再宣布 UT 阶段完
 #### 8.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
 ```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feature}
+cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feature} --summary --failures-only
 ```
 
 agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
+优先读取 `framework/harness/reports/{feature}/ut/summary.json`，禁止用 `grep` 解析完整控制台日志。
 
 每次 harness 运行后，agent 必须把 `ut_run_status` 的状态面板完整贴给用户；禁止只用 `grep` 展示局部 PASS/FAIL。尤其当 `ut_hvigor_build` 失败导致 `ut_hvigor_test` 短路时，必须明确说：
 

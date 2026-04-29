@@ -35,6 +35,7 @@ import {
   CheckResult,
   CheckContext,
   PhaseChecker,
+  ScriptReport,
   isGlobalPhase,
   GLOBAL_FEATURE_SENTINEL,
 } from './scripts/utils/types';
@@ -60,7 +61,7 @@ import * as YAML from 'yaml';
 
 const args = minimist(process.argv.slice(2), {
   string: ['phase', 'feature', 'ai-report', 'adapter'],
-  boolean: ['list', 'help', 'verbose', 'clear-state'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'summary', 'failures-only'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -88,9 +89,11 @@ Harness — Spec/Harness 验证工具
   -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs/init 阶段不需要
   --adapter <name>          init 阶段必传：claude|cursor|generic（其他阶段忽略）
   -l, --list                列出可用的 Spec 文件
-  -v, --verbose             显示详细信息
+  -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
+  --summary                 输出稳定短摘要，并写入 reports/<feature>/<phase>/summary.json
+  --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   -h, --help                显示帮助
 
 示例:
@@ -232,7 +235,9 @@ async function main(): Promise<void> {
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
   const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks);
-  printReportToConsole(scriptReport);
+  printReportToConsole(scriptReport, {
+    failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
+  });
 
   // Step 4/5：组装 AI prompt + 合并报告。
   // 这两步发生在 Step 3（script-report.json 已落盘）之后，若裸调用崩栈会造成
@@ -306,6 +311,11 @@ async function main(): Promise<void> {
     receipt: receiptValidation,
   });
 
+  const runSummary = writeRunSummary(harnessRoot, projectRoot, finalReport, receiptValidation);
+  if (args.summary || args['failures-only']) {
+    printStableSummary(runSummary);
+  }
+
   // 最终结果
   console.log('\n' + '='.repeat(60));
   if (finalReport.summary.verdict === 'PASS') {
@@ -324,6 +334,237 @@ async function main(): Promise<void> {
   console.log('='.repeat(60) + '\n');
 
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
+}
+
+interface HarnessRunSummary {
+  schema_version: '1.0';
+  phase: Phase;
+  feature: string;
+  verdict: 'PASS' | 'FAIL';
+  blocker_count: number;
+  fail_count: number;
+  warn_count: number;
+  script_report: string;
+  merged_report: string;
+  ai_prompt: string;
+  summary_json: string;
+  run_statuses: Array<{
+    id: string;
+    status: string;
+    can_claim_done?: boolean;
+    details: string;
+  }>;
+  ut_run_status?: string;
+  readiness_signals: Array<{
+    id: string;
+    status: 'ready' | 'incomplete' | 'unknown';
+    message: string;
+    source_check?: string;
+  }>;
+  blocking_warnings: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blocking_skips: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blockers: Array<{
+    id: string;
+    severity: string;
+    status: string;
+    classification?: string;
+    details_excerpt: string;
+    affected_files?: string[];
+    suggestion?: string;
+  }>;
+  next_action: string;
+  receipt_status?: string;
+}
+
+function writeRunSummary(
+  harnessRoot: string,
+  projectRoot: string,
+  report: ScriptReport,
+  receiptValidation: ReturnType<typeof tryValidateReceipt> | null,
+): HarnessRunSummary {
+  const dir = path.join(harnessRoot, 'reports', report.feature, report.phase);
+  const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
+  const blockers = report.checks
+    .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
+    .map(c => ({
+      id: c.id,
+      severity: c.severity,
+      status: c.status,
+      classification: c.failure_kind ?? extractFailureClassification(c.details),
+      details_excerpt: excerpt(c.details, 800),
+      affected_files: c.affected_files,
+      suggestion: c.suggestion,
+    }));
+  const runStatuses = report.checks
+    .filter(c => c.id.endsWith('_run_status'))
+    .map(c => ({
+      id: c.id,
+      status: c.status,
+      can_claim_done: extractCanClaimDone(c.details),
+      details: c.details,
+    }));
+  const blockingWarnings = report.checks
+    .filter(c => c.status === 'WARN' && c.severity === 'BLOCKER')
+    .map(c => ({
+      id: c.id,
+      blocking_class: c.blocking_class,
+      details_excerpt: excerpt(c.details, 500),
+      suggestion: c.suggestion,
+    }));
+  const blockingSkips = report.checks
+    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER')
+    .map(c => ({
+      id: c.id,
+      blocking_class: c.blocking_class,
+      details_excerpt: excerpt(c.details, 500),
+      suggestion: c.suggestion,
+    }));
+  const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
+  const readinessSignals = buildReadinessSignals(report);
+  const summary: HarnessRunSummary = {
+    schema_version: '1.0',
+    phase: report.phase,
+    feature: report.feature,
+    verdict: report.summary.verdict,
+    blocker_count: report.summary.blockers,
+    fail_count: report.summary.fail,
+    warn_count: report.summary.warn,
+    script_report: rel('script-report.json'),
+    merged_report: rel('merged-report.md'),
+    ai_prompt: rel('ai-prompt.md'),
+    summary_json: rel('summary.json'),
+    run_statuses: runStatuses,
+    ut_run_status: utStatus,
+    readiness_signals: readinessSignals,
+    blocking_warnings: blockingWarnings,
+    blocking_skips: blockingSkips,
+    blockers,
+    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
+    receipt_status: receiptValidation?.status,
+  };
+  fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
+  return summary;
+}
+
+function printStableSummary(summary: HarnessRunSummary): void {
+  console.log('');
+  console.log('HARNESS_SUMMARY');
+  console.log(`phase=${summary.phase}`);
+  console.log(`feature=${summary.feature}`);
+  console.log(`verdict=${summary.verdict}`);
+  console.log(`blocker_count=${summary.blocker_count}`);
+  console.log(`summary_json=${summary.summary_json}`);
+  console.log(`next_action=${summary.next_action}`);
+  if (summary.run_statuses.length > 0) {
+    console.log('run_statuses:');
+    for (const status of summary.run_statuses) {
+      console.log(`  - ${status.id}: ${status.status}${typeof status.can_claim_done === 'boolean' ? `, can_claim_done=${status.can_claim_done ? 'YES' : 'NO'}` : ''}`);
+    }
+  }
+  if (summary.blockers.length > 0) {
+    console.log('blockers:');
+    for (const b of summary.blockers) {
+      console.log(`  - ${b.id}${b.classification ? ` (${b.classification})` : ''}`);
+    }
+  }
+  console.log('END_HARNESS_SUMMARY');
+}
+
+function decideNextAction(
+  report: ScriptReport,
+  blockers: HarnessRunSummary['blockers'],
+  runStatuses: HarnessRunSummary['run_statuses'],
+  blockingSkips: HarnessRunSummary['blocking_skips'],
+  readinessSignals: HarnessRunSummary['readiness_signals'],
+): string {
+  if (runStatuses.some(s => s.can_claim_done === false)) {
+    return 'fix_run_status_blockers_then_rerun';
+  }
+  if (readinessSignals.some(s => s.status === 'incomplete')) {
+    return 'complete_readiness_warnings_then_continue';
+  }
+  if (report.summary.verdict === 'PASS' && blockingSkips.length > 0) {
+    return 'review_blocking_skips_then_verifier';
+  }
+  if (report.summary.verdict === 'PASS') return 'run_verifier_then_receipt';
+  if (blockers.some(b => b.classification === 'external_project_build_blocker')) {
+    return 'defer_external_blocker_or_fix_project_build_then_rerun';
+  }
+  if (blockers.some(b => b.id === 'ut_no_src_mutation' && /baseRef 可能过旧|HARNESS_DIFF_BASE_REF=working/.test(b.details_excerpt))) {
+    return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
+  }
+  if (blockingSkips.length > 0) {
+    return 'resolve_blocking_skips_then_rerun';
+  }
+  return 'fix_blockers_then_rerun';
+}
+
+function extractFailureClassification(details: string): string | undefined {
+  const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
+  return match?.[1];
+}
+
+function excerpt(text: string, max: number): string {
+  const compact = text.replace(/\r/g, '').trim();
+  return compact.length <= max ? compact : `${compact.slice(0, max)}...`;
+}
+
+function extractCanClaimDone(details: string): boolean | undefined {
+  const match = details.match(/can_claim_done:\s*(YES|NO)/i);
+  if (!match) return undefined;
+  return match[1].toUpperCase() === 'YES';
+}
+
+function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
+  const signals: HarnessRunSummary['readiness_signals'] = [];
+
+  if (report.phase === 'docs') {
+    const docFreshness = report.checks.find(c => c.id === 'doc_freshness');
+    if (docFreshness?.status === 'SKIP') {
+      signals.push({
+        id: 'doc_freshness_effective',
+        status: 'unknown',
+        source_check: 'doc_freshness',
+        message: docFreshness.details,
+      });
+    }
+  }
+
+  if (report.phase === 'catalog') {
+    const modules = report.checks.find(c => c.id === 'modules_is_list');
+    if (modules?.status === 'WARN' && /为空/.test(modules.details)) {
+      signals.push({
+        id: 'bootstrap_incomplete',
+        status: 'incomplete',
+        source_check: 'modules_is_list',
+        message: modules.details,
+      });
+    }
+  }
+
+  if (report.phase === 'glossary') {
+    const terms = report.checks.find(c => c.id === 'terms_is_list');
+    if (terms?.status === 'WARN' && /为空/.test(terms.details)) {
+      signals.push({
+        id: 'bootstrap_incomplete',
+        status: 'incomplete',
+        source_check: 'terms_is_list',
+        message: terms.details,
+      });
+    }
+  }
+
+  return signals;
 }
 
 // --------------------------------------------------------------------------
