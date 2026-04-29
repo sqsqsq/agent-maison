@@ -32,6 +32,7 @@ import {
   loadFrameworkConfig,
   deriveSdkHomeFromInstallPath,
   deriveJbrHomeFromInstallPath,
+  HvigorOptionsConfig,
 } from '../../config';
 
 export interface HvigorRunResult {
@@ -51,6 +52,8 @@ export interface HvigorRunResult {
   logPath?: string;
   /** 解析出的错误条目 */
   errors: HvigorError[];
+  /** 运行时诊断提示；不参与 PASS/FAIL 判定，只帮助定位慢编译 / 增量缓存问题 */
+  diagnostics?: string[];
   /** hypium test 解析结果（仅 runHvigorTest 填充） */
   testResult?: HypiumTestResult;
   /** 执行命令的完整 argv，便于复现 */
@@ -73,6 +76,20 @@ export interface HypiumTestResult {
 }
 
 const MAX_LOG_CHARS = 200_000;
+
+interface ResolvedHvigorOptions {
+  daemon: boolean;
+  parallel: boolean;
+  incremental: boolean;
+  analyze: 'off' | 'normal' | 'advanced';
+}
+
+const DEFAULT_HVIGOR_OPTIONS: ResolvedHvigorOptions = {
+  daemon: false,
+  parallel: true,
+  incremental: true,
+  analyze: 'off',
+};
 
 /**
  * 按 v2.3 查找顺序解析 hvigor 可执行命令：
@@ -248,6 +265,33 @@ function truncateLog(text: string): string {
   return `${head}\n\n... [日志过长，已截断中段] ...\n\n${tail}`;
 }
 
+function resolveHvigorOptions(projectRoot: string): ResolvedHvigorOptions {
+  let fromConfig: HvigorOptionsConfig | undefined;
+  try {
+    fromConfig = loadFrameworkConfig(projectRoot).toolchain?.hvigor;
+  } catch {
+    fromConfig = undefined;
+  }
+
+  return {
+    daemon: fromConfig?.daemon ?? DEFAULT_HVIGOR_OPTIONS.daemon,
+    parallel: fromConfig?.parallel ?? DEFAULT_HVIGOR_OPTIONS.parallel,
+    incremental: fromConfig?.incremental ?? DEFAULT_HVIGOR_OPTIONS.incremental,
+    analyze: fromConfig?.analyze ?? DEFAULT_HVIGOR_OPTIONS.analyze,
+  };
+}
+
+function buildHvigorTuningArgs(projectRoot: string): string[] {
+  const opts = resolveHvigorOptions(projectRoot);
+  const args: string[] = [opts.daemon ? '--daemon' : '--no-daemon'];
+
+  if (opts.parallel) args.push('--parallel');
+  if (opts.incremental) args.push('--incremental');
+  if (opts.analyze !== 'off') args.push(`--analyze=${opts.analyze}`);
+
+  return args;
+}
+
 /**
  * 解析 hvigor 编译日志里的错误行。
  * 常见模式：
@@ -292,6 +336,18 @@ function parseBuildErrors(log: string): HvigorError[] {
     // 通用 ERROR 行（降级抓取）
     if (/^\s*ERROR\b/i.test(line) && !/\b0 errors\b/i.test(line)) {
       errors.push({ message: line.trim() });
+      continue;
+    }
+
+    if (/00308018|Failed to find the incremental input file/i.test(line)) {
+      const msg = [line, lines[i + 1], lines[i + 2]]
+        .filter(Boolean)
+        .join(' | ')
+        .trim();
+      errors.push({
+        code: /00308018/.test(msg) ? '00308018' : undefined,
+        message: msg,
+      });
     }
   }
   // 去重（完全相同的 message 合并）
@@ -302,6 +358,43 @@ function parseBuildErrors(log: string): HvigorError[] {
     seen.add(key);
     return true;
   });
+}
+
+export function buildHvigorDiagnostics(log: string): string[] {
+  const diagnostics: string[] = [];
+  const hasIncrementalInputMissing =
+    /00308018/i.test(log) || /Failed to find the incremental input file/i.test(log);
+
+  if (hasIncrementalInputMissing) {
+    const inputMatch = log.match(/Failed to find the incremental input file[:：]?\s*([^\r\n]+)/i);
+    diagnostics.push(
+      [
+        '检测到 hvigor 增量输入缺失（00308018 / Failed to find the incremental input file）。',
+        inputMatch?.[1]?.trim() ? `缺失输入：${inputMatch[1].trim()}` : '',
+        '这通常不是 ArkTS 编译错误，而是签名/打包链路的增量状态引用了不存在的 unsigned 产物。',
+      ].filter(Boolean).join(' '),
+    );
+  }
+
+  if (hasIncrementalInputMissing && /onlineSign|SignHap|archivePackage/i.test(log)) {
+    diagnostics.push(
+      '日志同时出现 onlineSign/SignHap/archivePackage 线索：请优先核对自定义签名任务是否声明 inputs/outputs，以及 unsigned/signed 文件命名是否与标准 PackageHap/SignHap 产物一致。',
+    );
+  }
+
+  if (/--analyze=advanced/.test(log)) {
+    diagnostics.push(
+      '`--analyze=advanced` 已启用；它适合诊断构建图，不建议作为日常 harness 默认参数。请回传关闭 analyze 后的 warm build 对比。',
+    );
+  }
+
+  if (hasIncrementalInputMissing && /--daemon/.test(log)) {
+    diagnostics.push(
+      '`--daemon` 已启用；若 00308018 只在命令行 harness 复现，请补充 daemon=false 的对比日志，以排除 daemon 复用脏增量状态。',
+    );
+  }
+
+  return diagnostics;
 }
 
 /** 解析 hypium test 输出 */
@@ -529,6 +622,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
   const logPath = path.relative(process.cwd(), logAbs).replace(/\\/g, '/');
 
   const errors = parseBuildErrors(fullLog);
+  const diagnostics = buildHvigorDiagnostics(fullLog);
 
   return {
     executed: true,
@@ -537,6 +631,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     logExcerpt: fullLog.slice(-8000), // 尾部 8KB 放到 result 方便报告展示
     logPath,
     errors,
+    diagnostics,
     command: commandDisplay,
   };
 }
@@ -639,9 +734,7 @@ export function buildAssembleAppArgs(
     '--mode', 'project',
     '-p', `product=${detectProduct(projectRoot)}`,
     '-p', 'buildMode=debug',
-    '--no-daemon',
-    '--parallel',
-    '--incremental',
+    ...buildHvigorTuningArgs(projectRoot),
     ...(extraArgs ?? []),
     task,
   ];
@@ -665,9 +758,7 @@ export function buildModuleHapArgs(
   return [
     '-p', `module=${moduleName}@${target}`,
     '-p', `product=${detectProduct(projectRoot)}`,
-    '--no-daemon',
-    '--parallel',
-    '--incremental',
+    ...buildHvigorTuningArgs(projectRoot),
     task,
   ];
 }

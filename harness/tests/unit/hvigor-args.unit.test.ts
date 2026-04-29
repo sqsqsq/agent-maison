@@ -31,6 +31,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  buildHvigorDiagnostics,
   buildAssembleAppArgs,
   buildModuleHapArgs,
 } from '../../scripts/utils/hvigor-runner';
@@ -199,6 +200,74 @@ const cases: Array<{ name: string; run: () => void }> = [
         'ohosTest 路径同样应当以 preferredProduct 覆盖',
       );
     }),
+  },
+  {
+    name: 'hvigor tuning: toolchain.hvigor 可开启 daemon/analyze 并关闭 parallel/incremental',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'product' }] } }),
+      );
+      writeFile(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.0.0',
+          project_name: 'demo',
+          project_type: 'app',
+          agent_adapter: 'generic',
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'Index.ets',
+          },
+          paths: {},
+          toolchain: {
+            hvigor: {
+              daemon: true,
+              parallel: false,
+              incremental: false,
+              analyze: 'advanced',
+            },
+          },
+        }),
+      );
+
+      const args = buildAssembleAppArgs(root, 'assembleHap');
+      assertContains(args, '--daemon', 'daemon=true 时应传 --daemon');
+      assertContains(args, '--analyze=advanced', 'analyze=advanced 时应传诊断参数');
+      assertNotContains(args, '--no-daemon', 'daemon=true 时不应再传 --no-daemon');
+      assertNotContains(args, '--parallel', 'parallel=false 时不应传 --parallel');
+      assertNotContains(args, '--incremental', 'incremental=false 时不应传 --incremental');
+      assertEq(findFlagValues(args, 'product'), ['product'], 'product 仍应正常探测');
+      assertEq(args[args.length - 1], 'assembleHap', 'task 仍应在最后');
+    }),
+  },
+  {
+    name: 'hvigor diagnostics: 00308018 + onlineSign + analyze/daemon 给出定向提示',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics([
+        '$ hvigor --mode module -p product=product -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon',
+        '> hvigor ERROR: Failed ::onlineSignApp...',
+        'Error Code: 00308018 Unknown Error - Failed to find the incremental input file:',
+        'D:/repo/build/product/outputs/product/wallet-product-unsigned.hap',
+        'Archive HAP Package task start.',
+      ].join('\n'));
+
+      assertEq(diagnostics.length, 4, '应识别增量输入缺失、onlineSign、analyze、daemon 四类提示');
+      if (!diagnostics.some(d => d.includes('00308018'))) {
+        throw new Error(`诊断中应包含 00308018：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('onlineSign'))) {
+        throw new Error(`诊断中应包含 onlineSign：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('--analyze=advanced'))) {
+        throw new Error(`诊断中应包含 analyze：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('--daemon'))) {
+        throw new Error(`诊断中应包含 daemon：${JSON.stringify(diagnostics)}`);
+      }
+    },
   },
 ];
 

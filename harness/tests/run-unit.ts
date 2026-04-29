@@ -22,6 +22,7 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hdc-runner',       modulePath: './unit/hdc-runner.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'detect-product',   modulePath: './unit/detect-product.unit.test' },
+  { id: 'har-index-export', modulePath: './unit/har-index-export.unit.test' },
   { id: 'hvigor-args',      modulePath: './unit/hvigor-args.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
 ];

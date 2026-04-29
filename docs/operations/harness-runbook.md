@@ -335,12 +335,39 @@ hvigorw \
   <task>
 ```
 
+默认值保持历史行为；如真实工程存在自定义 `onlineSign` / `archivePackage` / 签名产物改名等逻辑，可通过 `framework.config.json > toolchain.hvigor` 做 A/B：
+
+```json
+{
+  "toolchain": {
+    "hvigor": {
+      "daemon": false,
+      "parallel": true,
+      "incremental": true,
+      "analyze": "off"
+    }
+  }
+}
+```
+
+字段含义：
+
+| 字段 | 默认值 | 效果 |
+| ---- | ------ | ---- |
+| `daemon` | `false` | `false` 传 `--no-daemon`；`true` 传 `--daemon` |
+| `parallel` | `true` | 是否传 `--parallel` |
+| `incremental` | `true` | 是否传 `--incremental` |
+| `analyze` | `"off"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |
+
+`coding_hvigor_build` 报告现在会打印实际 hvigor 命令；若日志命中 `00308018` / `Failed to find the incremental input file`，会追加诊断提示，帮助区分 ArkTS 编译错误和签名/打包增量状态问题。
+
 | Flag                  | 收益来源                                                                  | 风险点                                                                            |
 | --------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `-p product=<detect>` | v2.6 之前硬写死 `default`，product 名为 `mirror` / `phone` 的工程直接报 `product not found` —— v2.7 修复 | 自动探测优先级：`framework.config.json > toolchain.preferredProduct` > `build-profile.json5 > app.products[0].name` > 兜底 `default`；多 product 工程若期望非首位需在 config 显式声明 |
 | `-p buildMode=debug`（仅 assembleApp） | assembleApp 默认 `release`（含混淆 / 压缩 / 体积优化），coding 门禁不出交付包，固定 debug 在大型工程能砍 30%~50% | release 配置缺混淆/压缩规则的工程，debug ≈ release，本 flag 无收益                |
 | `--parallel`          | 多模块工程开 hvigor task 并发，cold path 受益                              | **小工程（≤ 5 模块）反而是负收益**：worker spinup + 协调开销 > 并发节省；warm 路径下尤其明显 |
 | `--incremental`       | 警暖缓存命中时 hvigor 跳过更激进，warm path 受益                           | cold path 缓存为空，开销基本中性；额外缓存扫描有微小负收益                        |
+| `--analyze=advanced`  | 产出更详细构建诊断信息，适合定位任务图 / 缓存问题                            | 日常 harness 不建议默认开启；可能显著增加 I/O 与分析耗时                         |
 
 #### 实测：本仓库（SimulatedWalletForHmos · 5 模块小工程） 4 轮对比
 

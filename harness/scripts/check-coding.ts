@@ -54,6 +54,63 @@ function parseJson5(content: string): unknown {
   return JSON.parse(stripped);
 }
 
+export interface HarExportEntryResolution {
+  relPath: string;
+  source: 'oh-package.json5 main' | 'framework.config fallback';
+  warning?: string;
+  error?: string;
+}
+
+function normalizeRelativePath(relPath: string): string {
+  return relPath
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+export function resolveHarExportEntryPath(
+  projectRoot: string,
+  mod: Pick<ContractsSpec['modules'][number], 'name' | 'package_path'>,
+  indexFileName: string,
+): HarExportEntryResolution {
+  const packagePath = normalizeRelativePath(mod.package_path);
+  const ohPackagePath = path.join(projectRoot, packagePath, 'oh-package.json5');
+  const ohPackageContent = readFileIfExists(ohPackagePath);
+
+  if (ohPackageContent) {
+    try {
+      const ohPkg = parseJson5(ohPackageContent) as Record<string, unknown>;
+      const main = typeof ohPkg.main === 'string' ? ohPkg.main.trim() : '';
+      if (main) {
+        const normalizedMain = normalizeRelativePath(main);
+        if (path.posix.basename(normalizedMain) !== indexFileName) {
+          return {
+            relPath: `${packagePath}/${normalizedMain}`,
+            source: 'oh-package.json5 main',
+            error: `${mod.name}: oh-package.json5 main 指向 ${normalizedMain}，但架构约定 HAR 导出入口文件名必须是 ${indexFileName}`,
+          };
+        }
+        return {
+          relPath: `${packagePath}/${normalizedMain}`,
+          source: 'oh-package.json5 main',
+        };
+      }
+    } catch {
+      return {
+        relPath: `${packagePath}/src/main/ets/${indexFileName}`,
+        source: 'framework.config fallback',
+        warning: `${mod.name}: oh-package.json5 解析失败，已回退到默认出口路径`,
+      };
+    }
+  }
+
+  return {
+    relPath: `${packagePath}/src/main/ets/${indexFileName}`,
+    source: 'framework.config fallback',
+  };
+}
+
 function ruleDesc(ctx: CheckContext, section: 'structure_checks' | 'semantic_checks' | 'traceability_checks', id: string): string {
   const checks = ctx.phaseRule[section] as Record<string, { description: string }>;
   return checks?.[id]?.description?.trim() ?? id;
@@ -256,22 +313,42 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
   const indexFileName = cfg.architecture.cross_module_exports_file;
 
   const missing: string[] = [];
+  const warnings: string[] = [];
+  const invalidEntries: string[] = [];
+  let ohPackageMainCount = 0;
   for (const mod of harModules) {
-    const indexPath = path.join(ctx.projectRoot, mod.package_path, 'src', 'main', 'ets', indexFileName);
-    if (!fs.existsSync(indexPath)) missing.push(`${mod.package_path}/src/main/ets/${indexFileName}`);
+    const entry = resolveHarExportEntryPath(ctx.projectRoot, mod, indexFileName);
+    if (entry.source === 'oh-package.json5 main') ohPackageMainCount += 1;
+    if (entry.warning) warnings.push(entry.warning);
+    if (entry.error) invalidEntries.push(entry.error);
+    if (!fs.existsSync(path.join(ctx.projectRoot, entry.relPath))) missing.push(entry.relPath);
   }
 
-  if (missing.length === 0) {
-    return [{ id: 'har_index_export', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'har_index_export'), severity: 'BLOCKER', status: 'PASS', details: `全部 ${harModules.length} 个 HAR 模块均有 ${indexFileName}。` }];
+  if (missing.length === 0 && invalidEntries.length === 0) {
+    const sourceDetails = ohPackageMainCount > 0
+      ? `其中 ${ohPackageMainCount} 个模块按 oh-package.json5 main 定位入口。`
+      : `均按 framework.config.json 的 architecture.cross_module_exports_file=${indexFileName} 默认路径定位。`;
+    return [{
+      id: 'har_index_export',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'har_index_export'),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `全部 ${harModules.length} 个 HAR 模块均有导出入口。${sourceDetails}${warnings.length > 0 ? `\n${warnings.join('\n')}` : ''}`,
+    }];
   }
 
   return [{
     id: 'har_index_export', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'har_index_export'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${harModules.length} 个 HAR 模块缺少 ${indexFileName}。`,
-    affected_files: missing,
-    suggestion: `每个 HAR 模块必须有 ${indexFileName} 作为对外导出入口（来自 framework.config.json 的 architecture.cross_module_exports_file 声明）。`,
+    details: [
+      missing.length > 0 ? `${missing.length}/${harModules.length} 个 HAR 模块缺少导出入口：\n${truncateList(missing, 15)}` : '',
+      invalidEntries.length > 0 ? `${invalidEntries.length}/${harModules.length} 个 HAR 模块入口文件名不符合架构约定：\n${truncateList(invalidEntries, 15)}` : '',
+      warnings.length > 0 ? warnings.join('\n') : '',
+    ].filter(Boolean).join('\n\n'),
+    affected_files: [...missing, ...invalidEntries],
+    suggestion: `HAR 模块入口文件名必须是 ${indexFileName}。oh-package.json5 的 main 可以指向模块根目录或 src/main/ets 下的 ${indexFileName}；未声明 main 时，默认检查 src/main/ets/${indexFileName}。`,
   }];
 }
 
@@ -914,7 +991,11 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `项目级 assembleApp 通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+      details: [
+        `项目级 assembleApp 通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+        `命令：${res.command ?? '(unknown)'}`,
+        ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map(d => `  - ${d}`)] : []),
+      ].join('\n'),
     }];
   }
 
@@ -930,7 +1011,12 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
   } else {
     detailsLines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    detailsLines.push(`命令：${first.command ?? '(unknown)'}`);
     detailsLines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+    if (first.diagnostics?.length) {
+      detailsLines.push('诊断提示：');
+      first.diagnostics.forEach(d => detailsLines.push(`  - ${d}`));
+    }
     if (first.errors.length > 0) {
       detailsLines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
       first.errors.slice(0, 10).forEach(e =>

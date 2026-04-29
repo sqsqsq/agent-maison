@@ -103,6 +103,27 @@ export interface DevEcoStudioConfig {
   hvigorBin?: string;
 }
 
+export type HvigorAnalyzeMode = 'off' | 'normal' | 'advanced';
+
+/**
+ * hvigor 命令行调优开关。
+ *
+ * 默认值由 `scripts/utils/hvigor-runner.ts` 决定，当前保持历史行为：
+ *   - daemon=false      → 传 `--no-daemon`
+ *   - parallel=true     → 传 `--parallel`
+ *   - incremental=true  → 传 `--incremental`
+ *   - analyze='off'     → 不传 `--analyze`
+ *
+ * 内网工程若存在自定义 onlineSign / archivePackage 等任务，可通过本段做 A/B，
+ * 避免 agent 直接清空缓存掩盖真实问题。
+ */
+export interface HvigorOptionsConfig {
+  daemon?: boolean;
+  parallel?: boolean;
+  incremental?: boolean;
+  analyze?: HvigorAnalyzeMode;
+}
+
 /**
  * 阶段状态机时间常量（v2.4：跨会话隔离）
  *
@@ -135,6 +156,7 @@ export interface StateMachineConfig {
 
 export interface ToolchainConfig {
   devEcoStudio?: DevEcoStudioConfig;
+  hvigor?: HvigorOptionsConfig;
   /**
    * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
    *
@@ -452,13 +474,35 @@ function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig |
   }
 
   const preferredProduct = typeof raw.preferredProduct === 'string' ? raw.preferredProduct.trim() : '';
+  const hvigor = normalizeHvigorOptions(raw.hvigor);
 
-  if (!normalizedDeveco && !preferredProduct) return undefined;
+  if (!normalizedDeveco && !preferredProduct && !hvigor) return undefined;
 
   return {
     ...(normalizedDeveco ? { devEcoStudio: normalizedDeveco } : {}),
+    ...(hvigor ? { hvigor } : {}),
     ...(preferredProduct ? { preferredProduct } : {}),
   };
+}
+
+function normalizeHvigorOptions(raw: HvigorOptionsConfig | undefined): HvigorOptionsConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+
+  const out: HvigorOptionsConfig = {};
+  if (typeof raw.daemon === 'boolean') out.daemon = raw.daemon;
+  if (typeof raw.parallel === 'boolean') out.parallel = raw.parallel;
+  if (typeof raw.incremental === 'boolean') out.incremental = raw.incremental;
+  if (typeof raw.analyze === 'string' && raw.analyze.trim()) {
+    const analyze = raw.analyze.trim();
+    if (analyze !== 'off' && analyze !== 'normal' && analyze !== 'advanced') {
+      throw new Error(
+        `[framework/config.ts] toolchain.hvigor.analyze 只支持 "off" | "normal" | "advanced"，收到 "${raw.analyze}"`,
+      );
+    }
+    out.analyze = analyze;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function normalizeArchitecture(raw: Partial<ArchitectureDsl>): ArchitectureDsl {
