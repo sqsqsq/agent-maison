@@ -75,6 +75,17 @@ export interface HypiumTestResult {
   failures: Array<{ suite: string; test: string; message: string }>;
 }
 
+export interface ProjectDependencyIssue {
+  found: boolean;
+  dependencies: string[];
+  indicators: string[];
+  harnessNodeModulesReady: boolean;
+  ohModulesExists: boolean;
+  ohPackageFiles: string[];
+  missingDeclarations: string[];
+  installHints: string[];
+}
+
 const MAX_LOG_CHARS = 200_000;
 
 interface ResolvedHvigorOptions {
@@ -90,6 +101,106 @@ const DEFAULT_HVIGOR_OPTIONS: ResolvedHvigorOptions = {
   incremental: true,
   analyze: 'advanced',
 };
+
+const PROJECT_DEPENDENCY_PATTERNS = [
+  /Failed to resolve OhmUrl/i,
+  /Cannot find module/i,
+  /Could not resolve/i,
+  /Cannot resolve/i,
+  /Unable to resolve/i,
+  /Module not found/i,
+  /oh_modules/i,
+  /ohpm/i,
+];
+
+export function analyzeProjectDependencyIssue(
+  projectRoot: string,
+  input: Pick<HvigorRunResult, 'logExcerpt' | 'errors'> | string,
+): ProjectDependencyIssue {
+  const log = typeof input === 'string'
+    ? input
+    : `${input.logExcerpt}\n${input.errors.map(e => `${e.file ?? ''} ${e.message}`).join('\n')}`;
+  const indicators = PROJECT_DEPENDENCY_PATTERNS
+    .filter(re => re.test(log))
+    .map(re => re.source.replace(/\\/g, ''));
+  const dependencies = extractDependencyNames(log);
+  const ohPackageFiles = collectOhPackageFiles(projectRoot);
+  const declared = new Set<string>();
+  for (const file of ohPackageFiles) {
+    const content = safeReadText(file);
+    for (const dep of dependencies) {
+      if (content.includes(dep)) declared.add(dep);
+    }
+  }
+  const missingDeclarations = dependencies.filter(dep => !declared.has(dep));
+  const harnessNodeModulesReady = fs.existsSync(path.join(projectRoot, 'framework', 'harness', 'node_modules', 'ts-node', 'package.json'));
+  const ohModulesExists = fs.existsSync(path.join(projectRoot, 'oh_modules'));
+  const installHints: string[] = [];
+  if (!harnessNodeModulesReady) {
+    installHints.push('framework/harness/node_modules 缺失：可在 framework/harness 执行 npm install 后重跑。');
+  }
+  if (!ohModulesExists || dependencies.length > 0) {
+    installHints.push('Harmony 工程依赖可能未安装或未解析：可在工程根执行 ohpm install 后重跑。');
+  }
+  if (missingDeclarations.length > 0) {
+    installHints.push(`以下依赖未在已扫描 oh-package.json5 中声明：${missingDeclarations.join(', ')}；请先确认依赖声明或内网 registry。`);
+  }
+
+  return {
+    found: indicators.length > 0 || dependencies.length > 0,
+    dependencies,
+    indicators,
+    harnessNodeModulesReady,
+    ohModulesExists,
+    ohPackageFiles: ohPackageFiles.map(f => path.relative(projectRoot, f).replace(/\\/g, '/')),
+    missingDeclarations,
+    installHints,
+  };
+}
+
+function extractDependencyNames(log: string): string[] {
+  const deps = new Set<string>();
+  const scopedRe = /@[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._\-\/]+)?/g;
+  for (const match of log.matchAll(scopedRe)) {
+    const raw = match[0].replace(/\\/g, '/');
+    const parts = raw.split('/');
+    if (parts.length >= 2) deps.add(`${parts[0]}/${parts[1]}`);
+  }
+  return Array.from(deps).sort();
+}
+
+function collectOhPackageFiles(projectRoot: string): string[] {
+  const out: string[] = [];
+  const skip = new Set(['.git', 'node_modules', 'oh_modules', 'build', 'dist', '.preview']);
+  const walk = (dir: string, depth: number) => {
+    if (depth > 5) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (skip.has(entry.name)) continue;
+      const abs = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name === 'oh-package.json5') {
+        out.push(abs);
+      } else if (entry.isDirectory()) {
+        walk(abs, depth + 1);
+      }
+    }
+  };
+  walk(projectRoot, 0);
+  return out.sort();
+}
+
+function safeReadText(file: string): string {
+  try {
+    return fs.readFileSync(file, 'utf-8');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * 按 v2.3 查找顺序解析 hvigor 可执行命令：

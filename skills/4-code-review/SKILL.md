@@ -59,6 +59,14 @@
 
 **若缺少 contracts.yaml**：提示用户先运行 Skill 2 或 Skill 3 确保 Spec 文件已生成。
 
+**上下文缺失处理**：脚本 harness 会把缺失输入归类为 `review_context`：
+- `missing_review_report`：本阶段应生成或补齐 `review-report.md`，然后重跑 harness。
+- `missing_contracts`：回到 design 阶段补齐 `contracts.yaml`，不要让用户手工猜源码边界。
+- `missing_acceptance`：回到 PRD 阶段提取 `acceptance.yaml`，不要跳过验收追溯。
+- `missing_source_from_contracts`：先确认 coding 阶段是否完成；若 `contracts.files` 过期，回到 design/coding 同步契约。
+
+review 阶段不执行 `ohpm install`，也不使用 `HARNESS_DIFF_BASE_REF=working`；这些属于 coding/UT 的构建与 diff 自愈职责。
+
 ## 工作流程
 
 ### Step 1: 收集审查上下文

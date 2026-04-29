@@ -502,6 +502,18 @@ function decideNextAction(
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
 ): string {
+  if (blockers.some(b => b.classification === 'stale_diff_base' || b.details_excerpt.includes('stale_diff_base'))) {
+    return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
+  }
+  if (blockers.some(b => b.classification === 'project_dependency_missing')) {
+    return 'resolve_project_dependencies_then_rerun';
+  }
+  if (blockers.some(b => b.classification?.startsWith('missing_') || b.details_excerpt.includes('review_context'))) {
+    return 'complete_review_context_then_rerun';
+  }
+  if (blockers.some(b => b.classification === 'external_project_build_blocker')) {
+    return 'defer_external_blocker_or_fix_project_build_then_rerun';
+  }
   if (runStatuses.some(s => s.can_claim_done === false)) {
     return 'fix_run_status_blockers_then_rerun';
   }
@@ -512,9 +524,6 @@ function decideNextAction(
     return 'review_blocking_skips_then_verifier';
   }
   if (report.summary.verdict === 'PASS') return 'run_verifier_then_receipt';
-  if (blockers.some(b => b.classification === 'external_project_build_blocker')) {
-    return 'defer_external_blocker_or_fix_project_build_then_rerun';
-  }
   if (blockers.some(b => b.id === 'ut_no_src_mutation' && /baseRef 可能过旧|HARNESS_DIFF_BASE_REF=working/.test(b.details_excerpt))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }

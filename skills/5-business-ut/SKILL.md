@@ -431,6 +431,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
    - UT 调用的被测函数签名不符 → 修 UT；
    - UT import 路径错误 → 修 UT；
    - 类型注解与被测实际类型不匹配 → 修 UT；
+   - `project_dependency_missing` / `Failed to resolve OhmUrl` / `Cannot find module` → 工程依赖缺失，不要让用户手工猜。先展示方案：A) 用户确认后在工程根执行 `ohpm install` 并重跑；B) 仅读取 `oh-package.json5` 输出缺失依赖清单；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
    - **若错误根因在业务源码** → 进入 Step 7.5.4 严格流程，**禁止**自行动手；
 4. 修完再跑直到 exit code = 0。
 
@@ -510,6 +511,16 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 优先读取 `framework/harness/reports/{feature}/ut/summary.json`，禁止用 `grep` 解析完整控制台日志。
+
+若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `ut_no_src_mutation` 报 `stale_diff_base`，agent 必须自动重跑一次：
+
+```bash
+HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature {feature} --summary --failures-only
+```
+
+重跑后如果仍有 working 侧业务源码改动，才进入 Step 7.5.4 / 约束 #12 的 HARD STOP 授权流程；禁止要求用户"批量授权历史变更"。
+
+若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `ut_hvigor_build` 报 `project_dependency_missing`，按 Step 7.5.3 的依赖缺失分支处理，不得只要求用户手工执行 DevEco / ohpm 操作。
 
 每次 harness 运行后，agent 必须把 `ut_run_status` 的状态面板完整贴给用户；禁止只用 `grep` 展示局部 PASS/FAIL。尤其当 `ut_hvigor_build` 失败导致 `ut_hvigor_test` 短路时，必须明确说：
 

@@ -26,12 +26,13 @@ import {
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { compileTestFiles } from './utils/ts-compile';
-import { runHvigorBuild, runHvigorTest, probeDevices } from './utils/hvigor-runner';
+import { runHvigorBuild, runHvigorTest, probeDevices, analyzeProjectDependencyIssue } from './utils/hvigor-runner';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
   readApprovedMutations,
   readTraceStartCommit,
+  analyzeDiffStaleness,
 } from './utils/git-diff';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
@@ -849,7 +850,7 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
 
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
-  const failureClass = classifyUtHvigorBuildFailure(first, bad[0].module);
+  const failureClass = classifyUtHvigorBuildFailure(first, bad[0].module, ctx.projectRoot);
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
@@ -881,7 +882,11 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     details: lines.join('\n'),
     affected_files: [bad[0].module + '@ohosTest'],
     failure_kind: failureClass.kind,
-    blocking_class: failureClass.kind === 'external_project_build_blocker' ? 'external' : 'ut_hvigor_build',
+    blocking_class: failureClass.kind === 'external_project_build_blocker'
+      ? 'external'
+      : failureClass.kind === 'project_dependency_missing'
+        ? 'project_dependency_missing'
+        : 'ut_hvigor_build',
     suggestion:
       failureClass.suggestion,
   }];
@@ -892,12 +897,14 @@ type UtHvigorFailureKind =
   | 'env_skip'
   | 'ut_code'
   | 'feature_code'
+  | 'project_dependency_missing'
   | 'external_project_build_blocker'
   | 'unknown';
 
 function classifyUtHvigorBuildFailure(
   res: ReturnType<typeof runHvigorBuild>,
   moduleName: string,
+  projectRoot: string,
 ): { kind: UtHvigorFailureKind; explanation: string; suggestion: string } {
   if (res.toolMissing) {
     return {
@@ -915,10 +922,24 @@ function classifyUtHvigorBuildFailure(
   }
 
   const log = `${res.logExcerpt}\n${res.errors.map(e => `${e.file ?? ''} ${e.message}`).join('\n')}`;
+  const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
   const hasDependencyResolutionFailure =
     /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(log);
   const touchesOhosTest = /\/src\/ohosTest\/|\\src\\ohosTest\\/i.test(log);
   const touchesCurrentModuleMain = new RegExp(`${escapeRegExp(moduleName)}[/\\\\]src[/\\\\]main`, 'i').test(log);
+
+  if (depIssue.found && hasDependencyResolutionFailure && !touchesOhosTest) {
+    return {
+      kind: 'project_dependency_missing',
+      explanation:
+        'hvigor 日志显示工程依赖解析失败，当前失败更可能来自 ohpm/oh_modules/依赖声明或内网 registry，而不是 UT 代码本身。\n' +
+        formatDependencyIssue(depIssue),
+      suggestion:
+        '不要把该问题交给用户手工猜。先向用户展示方案：A) 确认后在工程根执行 ohpm install 并重跑；' +
+        'B) 仅读取 oh-package.json5 输出缺失依赖声明；C) registry/权限不确定时先确认内网源。' +
+        (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
+    };
+  }
 
   if (hasDependencyResolutionFailure && !touchesOhosTest && !touchesCurrentModuleMain) {
     return {
@@ -953,6 +974,23 @@ function classifyUtHvigorBuildFailure(
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependencyIssue>): string {
+  const lines = [
+    `依赖线索：${issue.dependencies.length > 0 ? issue.dependencies.join(', ') : '(未解析出具体包名)'}`,
+    `harness node_modules：${issue.harnessNodeModulesReady ? '存在' : '缺失'}`,
+    `工程 oh_modules：${issue.ohModulesExists ? '存在' : '缺失'}`,
+    `扫描到 oh-package.json5：${issue.ohPackageFiles.length} 个`,
+  ];
+  if (issue.missingDeclarations.length > 0) {
+    lines.push(`未在 oh-package.json5 中声明的依赖：${issue.missingDeclarations.join(', ')}`);
+  }
+  if (issue.installHints.length > 0) {
+    lines.push('建议分支：');
+    issue.installHints.forEach(h => lines.push(`  - ${h}`));
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -1232,11 +1270,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   const workingBusinessChanges = filterProtected(diff.workingTreeFiles);
   const stagedBusinessChanges = filterProtected(diff.stagedFiles);
   const untrackedBusinessChanges = filterProtected(diff.untrackedFiles);
-  const workingSideCount = new Set([
-    ...workingBusinessChanges,
-    ...stagedBusinessChanges,
-    ...untrackedBusinessChanges,
-  ]).size;
+  const staleness = analyzeDiffStaleness(diff);
   const baseHint = envBaseRef
     ? `HARNESS_DIFF_BASE_REF=${envBaseRef}`
     : 'trace.json.start_commit / HEAD~1 fallback';
@@ -1281,12 +1315,8 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const likelyOldBase =
-    !diff.workingOnly &&
-    committedBusinessChanges.length >= 20 &&
-    committedBusinessChanges.length > workingSideCount * 5;
-  const oldBaseHint = likelyOldBase
-    ? '\n\n诊断：committed 历史变更远多于当前工作区变更，baseRef 可能过旧。若本轮只想检查 UT 阶段新增/修改的源码，请用 `HARNESS_DIFF_BASE_REF=working` 重跑；不要批量授权历史变更。'
+  const oldBaseHint = staleness.stale
+    ? '\n\n诊断：stale_diff_base。committed 历史变更远多于当前工作区变更，baseRef 可能过旧。请自动用 `HARNESS_DIFF_BASE_REF=working` 重跑一次；不要批量授权历史变更。'
     : '';
 
   return [{
@@ -1303,10 +1333,14 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       `gap-notes.md 已登记的授权清单（${approved.size} 条）：${Array.from(approved).slice(0, 20).join(', ') || '(空)'}\n` +
       `扫描到的 gap-notes.md 文件：${gapFiles.length > 0 ? gapFiles.map(f => path.relative(ctx.projectRoot, f).replace(/\\\\/g, '/')).join(', ') : '(无)'}${oldBaseHint}`,
     affected_files: unauthorized,
+    failure_kind: staleness.stale ? 'stale_diff_base' : 'unauthorized_src_mutation',
+    blocking_class: staleness.stale ? 'stale_diff_base' : 'ut_no_src_mutation',
     suggestion:
-      '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
-      'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
-      '禁止以"便利性"借口直接修改业务源码。若 committed 历史变更明显污染本轮判断，设置 HARNESS_DIFF_BASE_REF=working 只检查当前工作区。',
+      staleness.stale
+        ? '先自动重跑：HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature <feature>。若重跑后仍有 working 侧业务源码改动，再进入 HARD STOP 授权流程。'
+        : '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
+          'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
+          '禁止以"便利性"借口直接修改业务源码。',
   }];
 }
 

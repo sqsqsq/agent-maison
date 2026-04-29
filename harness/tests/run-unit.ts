@@ -22,10 +22,12 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hdc-runner',       modulePath: './unit/hdc-runner.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'detect-product',   modulePath: './unit/detect-product.unit.test' },
+  { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
   { id: 'har-index-export', modulePath: './unit/har-index-export.unit.test' },
   { id: 'hvigor-args',      modulePath: './unit/hvigor-args.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
+  { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
 ];
 
@@ -34,7 +36,7 @@ interface SuiteSummary {
   results: UnitCaseResult[];
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const filterIdx = process.argv.indexOf('--filter');
   const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
 
@@ -50,13 +52,13 @@ function main(): void {
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(suite.modulePath) as { runAll: () => UnitCaseResult[] };
+    const mod = require(suite.modulePath) as { runAll: () => UnitCaseResult[] | Promise<UnitCaseResult[]> };
     if (typeof mod.runAll !== 'function') {
       console.log(`  [FAIL] suite ${suite.id} 未导出 runAll()`);
       summaries.push({ id: suite.id, results: [{ name: '<suite-load>', ok: false, error: '未导出 runAll()' }] });
       continue;
     }
-    const all = mod.runAll();
+    const all = await mod.runAll();
     const filtered = filter ? all.filter(r => r.name.includes(filter)) : all;
     summaries.push({ id: suite.id, results: filtered });
   }
@@ -91,4 +93,7 @@ function main(): void {
   process.exit(totalFail > 0 ? 1 : 0);
 }
 
-main();
+main().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

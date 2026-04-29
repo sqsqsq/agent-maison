@@ -425,6 +425,7 @@ hvigorw --mode project \
 2. **读完整日志**：harness 把日志写到 `framework/harness/reports/<feature>/coding/hvigor-build.log`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - `ArkTS:ERROR` / `error TSxxxx` → 类型 / 语法错误，回到 Step 3 修文件；
+   - `project_dependency_missing` / `Failed to resolve OhmUrl` / `Cannot find module` → 工程依赖缺失，不要让用户手工猜。先展示方案：A) 用户确认后在工程根执行 `ohpm install` 并重跑；B) 仅读取 `oh-package.json5` 输出缺失依赖清单；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
    - `oh-package.json5` / 模块依赖错误 → 回到 `oh_package_dependencies` 章节补依赖；
    - 资源引用 (`$r('app.string.xxx')`) 缺失 → 回到资源声明章节补声明。
 4. **修完 → 再跑**：重复 6.5.1，直到 `coding_hvigor_build` PASS。
@@ -466,6 +467,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 2. Read `framework/harness/reports/<feature>/coding/` 下的报告文件，逐条核对 BLOCKER；
 3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
 4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
+   - 若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `diff_within_scope` 报 `stale_diff_base`：必须自动重跑一次 `HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>`。重跑后若仍有越界文件，才进入 scope 扩展提议或撤销误改流程。
+   - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `coding_hvigor_build` 报 `project_dependency_missing`：按 Step 6.5.2 的依赖缺失分支处理，不得只要求用户手工操作。
 5. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。

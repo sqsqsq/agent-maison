@@ -54,6 +54,55 @@ function loadDesign(ctx: CheckContext): string | null {
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md');
 }
 
+function checkReviewContext(ctx: CheckContext): CheckResult[] {
+  const results: CheckResult[] = [];
+  if (!ctx.featureSpec.contracts) {
+    results.push({
+      id: 'review_context_contracts',
+      category: 'structure',
+      description: 'Review 阶段需要 contracts.yaml 作为审查边界',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')} 不存在，无法确定源码文件、接口契约和模块边界。`,
+      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
+      suggestion: '回到 design 阶段补齐 contracts.yaml 后重跑 review harness。',
+      failure_kind: 'missing_contracts',
+      blocking_class: 'review_context',
+    });
+  }
+  if (!ctx.featureSpec.acceptance) {
+    results.push({
+      id: 'review_context_acceptance',
+      category: 'structure',
+      description: 'Review 阶段需要 acceptance.yaml 作为验收追溯基准',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')} 不存在，无法审查需求验收覆盖和异常场景处理。`,
+      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')],
+      suggestion: '回到 PRD 阶段提取 acceptance.yaml 后重跑 review harness。',
+      failure_kind: 'missing_acceptance',
+      blocking_class: 'review_context',
+    });
+  }
+  const files = ctx.featureSpec.contracts?.files ?? [];
+  const missingSources = files.filter(f => f.endsWith('.ets') && !fs.existsSync(path.join(ctx.projectRoot, f)));
+  if (missingSources.length > 0) {
+    results.push({
+      id: 'review_context_source_files',
+      category: 'structure',
+      description: 'Review 阶段需要 contracts.files 声明的源码文件真实存在',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${missingSources.length}/${files.length} 个 contracts.files 源码文件不存在：\n${missingSources.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
+      affected_files: missingSources,
+      suggestion: '先确认 coding 阶段是否完成；若 contracts.files 过期，回到 design/coding 同步契约，不要让用户手工猜缺哪一层。',
+      failure_kind: 'missing_source_from_contracts',
+      blocking_class: 'review_context',
+    });
+  }
+  return results;
+}
+
 // --------------------------------------------------------------------------
 // Structure Checks
 // --------------------------------------------------------------------------
@@ -684,10 +733,14 @@ const checker: PhaseChecker = {
         severity: 'BLOCKER', status: 'FAIL',
         details: `审查报告 ${reportRel} 不存在，无法进行任何检查。`,
         affected_files: [reportRel],
+        suggestion: '本阶段应生成或补齐 review-report.md；补齐后重跑 review harness。',
+        failure_kind: 'missing_review_report',
+        blocking_class: 'review_context',
       }];
     }
 
     const results: CheckResult[] = [];
+    results.push(...checkReviewContext(ctx));
 
     // --- Structure checks ---
     results.push(...safeRun(() => checkRequiredChapters(ctx, report), 'required_chapters'));

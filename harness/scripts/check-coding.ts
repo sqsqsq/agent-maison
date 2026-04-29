@@ -17,7 +17,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import {
   PhaseChecker,
   CheckContext,
@@ -27,7 +26,8 @@ import {
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { runHvigorBuild, runHvigorAssembleApp } from './utils/hvigor-runner';
+import { runHvigorBuild, runHvigorAssembleApp, analyzeProjectDependencyIssue } from './utils/hvigor-runner';
+import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
@@ -683,31 +683,6 @@ function isUnderLayerDir(relPath: string, prefixes: string[]): boolean {
   return prefixes.some(prefix => normalized.startsWith(prefix));
 }
 
-function getDiffBaseRef(): { ref: string; mode: 'committed' | 'working' } {
-  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
-  if (envRef.toLowerCase() === 'working') return { ref: 'HEAD', mode: 'working' };
-  if (envRef.length > 0) return { ref: envRef, mode: 'committed' };
-  return { ref: 'HEAD~1', mode: 'committed' };
-}
-
-function gitDiffFiles(projectRoot: string, baseRef: string, mode: 'committed' | 'working'): { files: string[] | null; error?: string } {
-  try {
-    const args = mode === 'working'
-      ? ['diff', '--name-only', baseRef, '--']
-      : ['diff', '--name-only', baseRef, 'HEAD', '--'];
-    const cmd = `git ${args.map(a => JSON.stringify(a)).join(' ')}`;
-    const out = execSync(cmd, {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const files = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    return { files };
-  } catch (err) {
-    return { files: null, error: (err as Error).message };
-  }
-}
-
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   const designPath = featureFilePath(ctx.projectRoot, ctx.feature, 'design.md');
   if (!fs.existsSync(designPath)) {
@@ -768,25 +743,30 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const { ref, mode } = getDiffBaseRef();
-  const { files, error: diffErr } = gitDiffFiles(ctx.projectRoot, ref, mode);
-  if (files === null) {
+  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const diff = diffChangedFiles({
+    projectRoot: ctx.projectRoot,
+    baseRef: envRef || undefined,
+  });
+  if (!diff.executed) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'SKIP',
-      details: `无法执行 git diff（base=${ref}, mode=${mode}）：${diffErr ?? '未知错误'}`,
+      details: `无法执行 git diff：${diff.error ?? '未知错误'}`,
       suggestion:
         '设置环境变量 HARNESS_DIFF_BASE_REF 指向合适的 base ref（如 main 或 HEAD~N），或 "working" 比对工作区与 HEAD。',
     }];
   }
+  const files = diff.changedFiles;
+  const staleness = analyzeDiffStaleness(diff);
 
   if (files.length === 0) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `git diff（base=${ref}, mode=${mode}）无变更文件。`,
+      details: `git diff（base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）无变更文件。`,
     }];
   }
 
@@ -811,18 +791,33 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `git diff（base=${ref}）共 ${files.length} 个变更文件：${inScopeHits.length} 个在 in_scope 模块内，${neutralCount.value} 个为框架性变更（doc/specs/harness/skills 等），0 个越界。`,
+      details:
+        `git diff（base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）共 ${files.length} 个变更文件：` +
+        `${inScopeHits.length} 个在 in_scope 模块内，${neutralCount.value} 个为框架性变更（doc/specs/harness/skills 等），0 个越界。\n` +
+        `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}`,
     }];
   }
+
+  const staleHint = staleness.stale
+    ? '\n\n诊断：stale_diff_base。committed 历史差异远多于当前工作区差异，baseRef 可能早于本轮 coding 起点。请自动用 `HARNESS_DIFF_BASE_REF=working` 重跑一次；不要把历史提交差异误判为本轮 scope 越界。'
+    : '';
 
   return [{
     id: 'diff_within_scope', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${violations.length} 个变更文件越界到 in_scope_modules 之外的模块：\n${truncateList(violations, 15)}\n\nin_scope_modules: ${scope.in_scope_modules.join('、')}\nbase ref: ${ref}（mode=${mode}）`,
+    details:
+      `${violations.length} 个变更文件越界到 in_scope_modules 之外的模块：\n${truncateList(violations, 15)}\n\n` +
+      `in_scope_modules: ${scope.in_scope_modules.join('、')}\n` +
+      `base ref: ${diff.baseRef}（mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）\n` +
+      `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
-      '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+      staleness.stale
+        ? '先自动重跑：HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>。若重跑后仍越界，再回到 Skill 2 发起 scope 扩展或撤销误改。'
+        : '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
+    failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
+    blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',
   }];
 }
 
@@ -1000,11 +995,7 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
   }
 
   const first = res;
-  const failureKind = first.toolMissing
-    ? 'toolchain'
-    : first.skippedByEnv
-      ? 'env_skip'
-      : 'project_build';
+  const failure = classifyCodingHvigorBuildFailure(first, ctx.projectRoot);
   const detailsLines: string[] = [];
   detailsLines.push('项目级 assembleApp 失败：');
   if (first.toolMissing) {
@@ -1016,6 +1007,8 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
   } else {
     detailsLines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    detailsLines.push(`失败归因：${failure.kind}`);
+    detailsLines.push(`归因说明：${failure.explanation}`);
     detailsLines.push(`命令：${first.command ?? '(unknown)'}`);
     detailsLines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
     if (first.diagnostics?.length) {
@@ -1041,12 +1034,76 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     status: 'FAIL',
     details: detailsLines.join('\n'),
     affected_files: modules.map(m => `${m.name} (module)`),
-    failure_kind: failureKind,
-    blocking_class: failureKind === 'project_build' ? 'coding_hvigor_build' : failureKind,
+    failure_kind: failure.kind,
+    blocking_class: failure.kind === 'project_build' ? 'coding_hvigor_build' : failure.kind,
+    suggestion:
+      failure.suggestion,
+  }];
+}
+
+type CodingHvigorFailureKind =
+  | 'toolchain'
+  | 'env_skip'
+  | 'project_dependency_missing'
+  | 'project_build';
+
+function classifyCodingHvigorBuildFailure(
+  res: ReturnType<typeof runHvigorAssembleApp>,
+  projectRoot: string,
+): { kind: CodingHvigorFailureKind; explanation: string; suggestion: string } {
+  if (res.toolMissing) {
+    return {
+      kind: 'toolchain',
+      explanation: 'hvigor / DevEco 工具链不可用。',
+      suggestion: '按 framework.config.json > toolchain.devEcoStudio.installPath 配置 DevEco Studio 路径后重跑。',
+    };
+  }
+  if (res.skippedByEnv) {
+    return {
+      kind: 'env_skip',
+      explanation: 'HARNESS_SKIP_HVIGOR 显式跳过真实编译。',
+      suggestion: '取消 HARNESS_SKIP_HVIGOR 后重跑；真实编译是 coding 阶段出口条件。',
+    };
+  }
+
+  const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
+  if (depIssue.found) {
+    return {
+      kind: 'project_dependency_missing',
+      explanation:
+        'hvigor 日志显示工程依赖解析失败，当前失败更可能来自 ohpm/oh_modules/依赖声明或内网 registry，而不是本轮编码实现本身。\n' +
+        formatDependencyIssue(depIssue),
+      suggestion:
+        '不要把该问题交给用户手工猜。先向用户展示方案：A) 确认后在工程根执行 ohpm install 并重跑；' +
+        'B) 仅读取 oh-package.json5 输出缺失依赖声明；C) registry/权限不确定时先确认内网源。' +
+        (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
+    };
+  }
+
+  return {
+    kind: 'project_build',
+    explanation: '项目级 assembleApp 编译失败，未识别为依赖安装问题。',
     suggestion:
       '读取完整日志（details 中的 `日志落盘` 路径），定位文件/行并回到编码阶段修复。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
-  }];
+  };
+}
+
+function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependencyIssue>): string {
+  const lines = [
+    `依赖线索：${issue.dependencies.length > 0 ? issue.dependencies.join(', ') : '(未解析出具体包名)'}`,
+    `harness node_modules：${issue.harnessNodeModulesReady ? '存在' : '缺失'}`,
+    `工程 oh_modules：${issue.ohModulesExists ? '存在' : '缺失'}`,
+    `扫描到 oh-package.json5：${issue.ohPackageFiles.length} 个`,
+  ];
+  if (issue.missingDeclarations.length > 0) {
+    lines.push(`未在 oh-package.json5 中声明的依赖：${issue.missingDeclarations.join(', ')}`);
+  }
+  if (issue.installHints.length > 0) {
+    lines.push('建议分支：');
+    issue.installHints.forEach(h => lines.push(`  - ${h}`));
+  }
+  return lines.join('\n');
 }
 
 const CODING_CRITICAL_SKIP_IDS = new Set([

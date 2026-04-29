@@ -39,6 +39,13 @@ export interface GitDiffResult {
   error?: string;
 }
 
+export interface DiffStaleness {
+  stale: boolean;
+  committedCount: number;
+  workingSideCount: number;
+  reason?: string;
+}
+
 export interface TraceLike {
   start_commit?: string;
   [k: string]: unknown;
@@ -201,6 +208,28 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     stagedFiles: normalizeSorted(stagedFiles),
     untrackedFiles: normalizeSorted(untrackedFiles),
     workingOnly,
+  };
+}
+
+export function analyzeDiffStaleness(diff: GitDiffResult): DiffStaleness {
+  const workingSide = new Set([
+    ...diff.workingTreeFiles,
+    ...diff.stagedFiles,
+    ...diff.untrackedFiles,
+  ]);
+  const committedCount = new Set(diff.committedFiles).size;
+  const workingSideCount = workingSide.size;
+  const stale =
+    !diff.workingOnly &&
+    committedCount >= 20 &&
+    (workingSideCount === 0 || committedCount > workingSideCount * 5);
+  return {
+    stale,
+    committedCount,
+    workingSideCount,
+    reason: stale
+      ? 'committed 历史差异远多于当前工作区差异，baseRef 很可能早于本轮阶段起点。'
+      : undefined,
   };
 }
 

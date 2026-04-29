@@ -35,6 +35,7 @@ import {
   buildHvigorDiagnostics,
   buildAssembleAppArgs,
   buildModuleHapArgs,
+  analyzeProjectDependencyIssue,
 } from '../../scripts/utils/hvigor-runner';
 import { clearFrameworkConfigCache } from '../../config';
 
@@ -273,6 +274,29 @@ const cases: Array<{ name: string; run: () => void }> = [
         throw new Error(`诊断中应包含 daemon：${JSON.stringify(diagnostics)}`);
       }
     },
+  },
+  {
+    name: 'project dependency issue: Failed to resolve OhmUrl 识别依赖缺失与安装建议',
+    run: () => withTmpDir(root => {
+      writeFile(path.join(root, 'oh-package.json5'), [
+        '{',
+        '  "dependencies": {',
+        '    "@hms-network/url": "file:../mock"',
+        '  }',
+        '}',
+      ].join('\n'));
+      const issue = analyzeProjectDependencyIssue(root, [
+        '1 ERROR: 10311002 ArkTS: ERROR',
+        'Failed to resolve OhmUrl @hms-network/url/src/network/restclient/RequestOption',
+        'Failed to resolve OhmUrl @hms-security/agoh-crypto/src/main/ets/d/crypto/v1/w1',
+      ].join('\n'));
+      assertEq(issue.found, true, '应识别依赖解析失败');
+      assertEq(issue.dependencies, ['@hms-network/url', '@hms-security/agoh-crypto'], '应归一化依赖包名');
+      assertEq(issue.missingDeclarations, ['@hms-security/agoh-crypto'], '应识别未声明依赖');
+      if (!issue.installHints.some(h => h.includes('ohpm install'))) {
+        throw new Error(`应给出 ohpm install 建议：${JSON.stringify(issue.installHints)}`);
+      }
+    }),
   },
 ];
 
