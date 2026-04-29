@@ -175,6 +175,14 @@ framework/harness/reports/
 
 行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致；feature 级规约与文档同目录扁平归档在实例工程根的 `doc/features/<feature>/`，`framework.config.json` 仅保留单字段 `paths.features_dir`，默认 `doc/features`。
 
+#### Feature Artifact Resolution Protocol
+
+所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
+
+- PRD 阶段是创建者：目录不存在时可以创建；若精确路径已存在但不是目录，或仅存在同名归档，应先让用户确认 feature 名称或恢复动作。
+- design / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
+- `SpecLoader.listAvailableFeatures()` 只返回目录；`inspectFeatureArtifacts(feature, phase)` 只做只读诊断，不修改文件、不恢复归档、不依赖 `.current-phase.json` / reports / trace。
+
 **v2.2 / v2.3 关键 BLOCKER**（详见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md) §5）：
 
 | Phase   | 规则                  | 说明                                                                                  |

@@ -23,6 +23,25 @@ import {
 } from './types';
 import { resolvePaths, featureFilePath } from '../../config';
 
+export type FeatureArtifactVerdict =
+  | 'ok'
+  | 'missing_required_files'
+  | 'missing_directory'
+  | 'path_not_directory';
+
+export interface FeatureArtifactInspection {
+  feature: string;
+  featureDir: string;
+  pathKind: 'directory' | 'file' | 'other' | 'missing';
+  requiredFiles: string[];
+  missingRequiredFiles: string[];
+  optionalFiles: string[];
+  presentOptionalFiles: string[];
+  sameNameArchives: string[];
+  relatedSiblingEntries: string[];
+  verdict: FeatureArtifactVerdict;
+}
+
 const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   prd: 'prd-rules.yaml',
   design: 'design-rules.yaml',
@@ -34,6 +53,32 @@ const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   glossary: 'glossary-rules.yaml',
   docs: 'docs-rules.yaml',
   init: 'init-rules.yaml',
+};
+
+const ARCHIVE_EXTENSIONS = [
+  '.rar',
+  '.zip',
+  '.7z',
+  '.tar',
+  '.tar.gz',
+  '.tgz',
+  '.tar.bz2',
+  '.tbz2',
+];
+
+const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
+  prd: ['PRD.md', 'acceptance.yaml'],
+  design: ['PRD.md', 'design.md', 'acceptance.yaml', 'contracts.yaml'],
+  coding: ['design.md', 'acceptance.yaml', 'contracts.yaml'],
+  review: ['design.md', 'acceptance.yaml', 'contracts.yaml'],
+  ut: ['PRD.md', 'design.md', 'acceptance.yaml', 'contracts.yaml'],
+  testing: ['PRD.md', 'design.md', 'acceptance.yaml'],
+};
+
+const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
+  review: ['PRD.md'],
+  ut: ['use-cases.yaml', 'device-testing-todo.md'],
+  testing: ['contracts.yaml', 'use-cases.yaml', 'device-testing-todo.md', 'review-report.md'],
 };
 
 export class SpecLoader {
@@ -103,6 +148,71 @@ export class SpecLoader {
     }
 
     return spec;
+  }
+
+  inspectFeatureArtifacts(feature: string, phase?: Phase): FeatureArtifactInspection {
+    const featureDir = path.join(this.featuresDir, feature);
+    const featureDirParent = this.featuresDir;
+    const requiredFiles = phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+    const optionalFiles = phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+
+    let pathKind: FeatureArtifactInspection['pathKind'] = 'missing';
+    if (fs.existsSync(featureDir)) {
+      const stat = fs.statSync(featureDir);
+      if (stat.isDirectory()) {
+        pathKind = 'directory';
+      } else if (stat.isFile()) {
+        pathKind = 'file';
+      } else {
+        pathKind = 'other';
+      }
+    }
+
+    const missingRequiredFiles = pathKind === 'directory'
+      ? requiredFiles.filter(file => !fs.existsSync(path.join(featureDir, file)))
+      : requiredFiles.slice();
+    const presentOptionalFiles = pathKind === 'directory'
+      ? optionalFiles.filter(file => fs.existsSync(path.join(featureDir, file)))
+      : [];
+
+    const sameNameArchives: string[] = [];
+    const relatedSiblingEntries: string[] = [];
+    if (fs.existsSync(featureDirParent) && fs.statSync(featureDirParent).isDirectory()) {
+      const featureLower = feature.toLowerCase();
+      const exactArchiveNames = new Set(ARCHIVE_EXTENSIONS.map(ext => `${featureLower}${ext}`));
+      for (const dirent of fs.readdirSync(featureDirParent, { withFileTypes: true })) {
+        const nameLower = dirent.name.toLowerCase();
+        if (exactArchiveNames.has(nameLower) && dirent.isFile()) {
+          sameNameArchives.push(dirent.name);
+          continue;
+        }
+        if (dirent.name !== feature && nameLower.startsWith(featureLower)) {
+          relatedSiblingEntries.push(dirent.name);
+        }
+      }
+    }
+
+    let verdict: FeatureArtifactVerdict = 'ok';
+    if (pathKind === 'missing') {
+      verdict = 'missing_directory';
+    } else if (pathKind !== 'directory') {
+      verdict = 'path_not_directory';
+    } else if (missingRequiredFiles.length > 0) {
+      verdict = 'missing_required_files';
+    }
+
+    return {
+      feature,
+      featureDir,
+      pathKind,
+      requiredFiles,
+      missingRequiredFiles,
+      optionalFiles,
+      presentOptionalFiles,
+      sameNameArchives: sameNameArchives.sort(),
+      relatedSiblingEntries: relatedSiblingEntries.sort(),
+      verdict,
+    };
   }
 
   listAvailableFeatures(): string[] {

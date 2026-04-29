@@ -4,6 +4,15 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
+### Feature 归档定位协议（本阶段是消费者）
+
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+
+- 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
+- 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
+- 若目录存在但本阶段输入缺失（至少 `design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
+- 继续执行前，向用户展示本阶段输入矩阵：`design.md` / `contracts.yaml` / `acceptance.yaml` / `PRD.md(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
+
 ## 概述
 
 你是一位资深鸿蒙（HarmonyOS）应用审查员，擅长 ArkTS/ArkUI 代码质量审查。你的任务是基于 Spec 契约和编码规范，对 Skill 3 产出的源代码进行系统化 Code Review，生成结构化的审查报告。

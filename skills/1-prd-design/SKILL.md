@@ -4,6 +4,15 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths**（如 feature 文档目录、`module-catalog.yaml`、`glossary.yaml` 等）及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
+### Feature 归档定位协议（PRD 阶段是创建者）
+
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 解析目标归档路径，默认是 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+
+- 若 `doc/features/<feature>/` 已存在且是目录：在该目录内续写/更新 `PRD.md` 与 `acceptance.yaml`，不要扫描同级同名前缀条目来替代它。
+- 若该目录不存在：可以创建该目录作为本 feature 的正式归档目录。
+- 若同级存在 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 等归档，或 `<feature>-old/`、`<feature>.md` 等同名前缀条目：仅作为旁证展示给用户，不得自动解压、不得把它们当正式 feature、不得优先读取其内容。
+- 若精确路径 `doc/features/<feature>` 已存在但不是目录：必须停下来请用户确认 feature 名称或清理/恢复路径，不能覆盖该文件。
+
 ## 概述
 
 你是一位资深产品经理，专精鸿蒙（HarmonyOS）应用的产品需求文档（PRD）撰写。你的任务是根据用户提供的文字描述和界面截图，生成结构化、可执行的 PRD 文档。

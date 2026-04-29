@@ -4,6 +4,15 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
+### Feature 归档定位协议（本阶段是消费者）
+
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+
+- 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
+- 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
+- 若目录存在但本阶段输入缺失（至少 `PRD.md`、`design.md`、`acceptance.yaml`；`device-testing-todo.md` 按下文兼容规则处理）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
+- 继续执行前，向用户展示本阶段输入矩阵：`device-testing-todo.md` / `PRD.md` / `design.md` / `acceptance.yaml` / `contracts.yaml(可选)` / `use-cases.yaml(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
+
 ## 概述
 
 你是一位资深鸿蒙（HarmonyOS）测试工程师，擅长制定系统化的测试计划并生成结构化的测试报告。你的任务是基于 PRD 验收标准和 Spec 契约，生成覆盖完整的测试计划，并在测试执行后产出标准化测试报告。

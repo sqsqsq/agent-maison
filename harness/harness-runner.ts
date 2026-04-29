@@ -22,7 +22,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
-import { SpecLoader } from './scripts/utils/spec-loader';
+import { SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
 import {
   generateScriptReport,
   assembleAIPrompt,
@@ -182,6 +182,21 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error(`   ✗ 无法加载阶段级规约: ${(err as Error).message}`);
     process.exit(1);
+  }
+
+  const artifactInspection = isGlobalPhase(phase)
+    ? null
+    : specLoader.inspectFeatureArtifacts(feature, phase);
+  if (artifactInspection) {
+    printFeatureArtifactInspection(artifactInspection, featuresRel);
+    if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
+      const blocker = featureArtifactBlocker(projectRoot, artifactInspection);
+      const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker]);
+      printReportToConsole(quickReport, {
+        failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
+      });
+      process.exit(1);
+    }
   }
 
   // catalog/glossary 是全局阶段，不加载功能级规约
@@ -615,6 +630,46 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
       details: (err as Error).message,
     }];
   }
+}
+
+function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, featuresRel: string): void {
+  console.log(`   Feature 目录: ${featuresRel}/${inspection.feature}/ (${inspection.pathKind})`);
+  if (inspection.sameNameArchives.length > 0) {
+    console.log(`   同名归档旁证: ${inspection.sameNameArchives.join(', ')}（已忽略，正式 feature 只认目录）`);
+  }
+  if (inspection.relatedSiblingEntries.length > 0) {
+    console.log(`   同名前缀旁证: ${inspection.relatedSiblingEntries.join(', ')}（不作为精确 feature）`);
+  }
+  if (inspection.requiredFiles.length > 0) {
+    if (inspection.missingRequiredFiles.length === 0) {
+      console.log(`   阶段必需文件: ${inspection.requiredFiles.join(', ')} 均存在`);
+    } else {
+      console.log(`   阶段必需文件缺失: ${inspection.missingRequiredFiles.join(', ')}`);
+    }
+  }
+}
+
+function featureArtifactBlocker(projectRoot: string, inspection: FeatureArtifactInspection): CheckResult {
+  const featuresRel = path.relative(projectRoot, resolvePaths(projectRoot).featuresDir).replace(/\\/g, '/');
+  const relPath = `${featuresRel}/${inspection.feature}`;
+  const archiveHint = inspection.sameNameArchives.length > 0
+    ? `\n检测到同名归档旁证：${inspection.sameNameArchives.join(', ')}。归档不会被当作正式 feature；如需恢复，请先获得用户明确确认后手动恢复为目录。`
+    : '';
+  const siblingHint = inspection.relatedSiblingEntries.length > 0
+    ? `\n检测到同名前缀旁证：${inspection.relatedSiblingEntries.join(', ')}。同名前缀条目不会被当作精确 feature。`
+    : '';
+  return {
+    id: 'feature_artifact_resolution',
+    category: 'structure',
+    description: 'Feature 输入必须解析为 doc/features/<feature>/ 精确目录',
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `无法把 feature="${inspection.feature}" 解析为正式目录：${relPath}/，当前路径类型为 ${inspection.pathKind}。${archiveHint}${siblingHint}`,
+    affected_files: [relPath],
+    suggestion: '请确认 feature 名称，或先把需求产物恢复为 doc/features/<feature>/ 目录后再运行 harness。',
+    failure_kind: 'feature_artifact_resolution_failed',
+    blocking_class: 'feature_artifact_resolution',
+  };
 }
 
 // --------------------------------------------------------------------------
