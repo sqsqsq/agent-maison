@@ -1058,6 +1058,10 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
  */
 const UT_SRC_PROTECTED_PREFIXES = ['02-Feature/', '01-Business/', '00-Common/'];
 
+function filterProtected(changes: string[]): string[] {
+  return filterBusinessSourceChanges(changes, UT_SRC_PROTECTED_PREFIXES);
+}
+
 /**
  * 计算 reports/<feature>/ 的扫描根。默认指向真实 framework/harness/reports/<feature>/；
  * 若设置环境变量 HARNESS_REPORTS_ROOT_OVERRIDE（通常只有 framework tests/ 测试套件
@@ -1116,15 +1120,20 @@ function findTraceJsonFiles(feature: string): string[] {
 
 function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
+  const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
   const traceFiles = findTraceJsonFiles(ctx.feature).sort((a, b) => {
     const sa = fs.statSync(a).mtimeMs;
     const sb = fs.statSync(b).mtimeMs;
     return sb - sa;
   });
   let baseRef: string | undefined;
-  for (const tf of traceFiles) {
-    const sc = readTraceStartCommit(tf);
-    if (sc) { baseRef = sc; break; }
+  if (envBaseRef) {
+    baseRef = envBaseRef;
+  } else {
+    for (const tf of traceFiles) {
+      const sc = readTraceStartCommit(tf);
+      if (sc) { baseRef = sc; break; }
+    }
   }
 
   const diff = diffChangedFiles({
@@ -1146,7 +1155,20 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const businessChanges = filterBusinessSourceChanges(diff.changedFiles, UT_SRC_PROTECTED_PREFIXES);
+  const businessChanges = filterProtected(diff.changedFiles);
+  const committedBusinessChanges = filterProtected(diff.committedFiles);
+  const workingBusinessChanges = filterProtected(diff.workingTreeFiles);
+  const stagedBusinessChanges = filterProtected(diff.stagedFiles);
+  const untrackedBusinessChanges = filterProtected(diff.untrackedFiles);
+  const workingSideCount = new Set([
+    ...workingBusinessChanges,
+    ...stagedBusinessChanges,
+    ...untrackedBusinessChanges,
+  ]).size;
+  const baseHint = envBaseRef
+    ? `HARNESS_DIFF_BASE_REF=${envBaseRef}`
+    : 'trace.json.start_commit / HEAD~1 fallback';
+
   if (businessChanges.length === 0) {
     return [{
       id: 'ut_no_src_mutation',
@@ -1156,6 +1178,8 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       status: 'PASS',
       details:
         `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
+        `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；` +
+        `base 来源：${baseHint}；` +
         `未检测到 ${UT_SRC_PROTECTED_PREFIXES.join(' / ')} 下的业务源码变更。`,
     }];
   }
@@ -1179,9 +1203,19 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       status: 'PASS',
       details:
         `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
+        `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
+        `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +
         `共检测到 ${businessChanges.length} 个业务源码变更，均已在 approved_src_mutations[] 中登记：\n${businessChanges.map(f => '  - ' + f).join('\n')}`,
     }];
   }
+
+  const likelyOldBase =
+    !diff.workingOnly &&
+    committedBusinessChanges.length >= 20 &&
+    committedBusinessChanges.length > workingSideCount * 5;
+  const oldBaseHint = likelyOldBase
+    ? '\n\n诊断：committed 历史变更远多于当前工作区变更，baseRef 可能过旧。若本轮只想检查 UT 阶段新增/修改的源码，请用 `HARNESS_DIFF_BASE_REF=working` 重跑；不要批量授权历史变更。'
+    : '';
 
   return [{
     id: 'ut_no_src_mutation',
@@ -1191,14 +1225,16 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     status: 'FAIL',
     details:
       `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback — trace.json.start_commit 未记录，可信度较低)' : ''}\n` +
+      `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
+      `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +
       `检测到 ${unauthorized.length} 个**未授权**的业务源码变更：\n${unauthorized.map(f => '  - ' + f).join('\n')}\n\n` +
       `gap-notes.md 已登记的授权清单（${approved.size} 条）：${Array.from(approved).slice(0, 20).join(', ') || '(空)'}\n` +
-      `扫描到的 gap-notes.md 文件：${gapFiles.length > 0 ? gapFiles.map(f => path.relative(ctx.projectRoot, f).replace(/\\\\/g, '/')).join(', ') : '(无)'}`,
+      `扫描到的 gap-notes.md 文件：${gapFiles.length > 0 ? gapFiles.map(f => path.relative(ctx.projectRoot, f).replace(/\\\\/g, '/')).join(', ') : '(无)'}${oldBaseHint}`,
     affected_files: unauthorized,
     suggestion:
       '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
       'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
-      '禁止以"便利性"借口直接修改业务源码。',
+      '禁止以"便利性"借口直接修改业务源码。若 committed 历史变更明显污染本轮判断，设置 HARNESS_DIFF_BASE_REF=working 只检查当前工作区。',
   }];
 }
 
@@ -2725,6 +2761,54 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   }
 }
 
+function findFirst(results: CheckResult[], id: string): CheckResult | undefined {
+  return results.find(r => r.id === id);
+}
+
+function statusLabel(r: CheckResult | undefined): string {
+  if (!r) return '未产生结果';
+  return `${r.status}${r.severity === 'BLOCKER' ? ' [BLOCKER]' : ` [${r.severity}]`}`;
+}
+
+function buildUtRunStatusResult(results: CheckResult[]): CheckResult {
+  const build = findFirst(results, 'ut_hvigor_build');
+  const test = findFirst(results, 'ut_hvigor_test');
+  const mutation = findFirst(results, 'ut_no_src_mutation');
+  const tsc = findFirst(results, 'ut_tsc_compiles');
+  const shortCircuited = !!test?.details?.includes('ut_hvigor_build 已 FAIL');
+  const blockerFails = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
+  const canClaimDone = blockerFails.length === 0 && test?.status === 'PASS';
+
+  const staticBlockerFails = blockerFails.filter(r =>
+    r.id !== 'ut_hvigor_build' &&
+    r.id !== 'ut_hvigor_test' &&
+    r.id !== 'ut_no_src_mutation'
+  );
+
+  const lines = [
+    'UT 阶段状态面板：',
+    `- 静态/结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
+    `- tsc 静态编译：${statusLabel(tsc)}`,
+    `- ohosTest hvigor 编译：${statusLabel(build)}`,
+    `- 真机/模拟器执行：${shortCircuited ? '未执行（ut_hvigor_build 失败短路）' : statusLabel(test)}`,
+    `- 源码改动检查：${statusLabel(mutation)}`,
+    `- 当前是否可以宣称 UT 完成：${canClaimDone ? '是' : '否'}`,
+  ];
+
+  if (!canClaimDone) {
+    lines.push(`- 阻塞项：${blockerFails.map(r => r.id).join(', ') || '无 BLOCKER FAIL，但真实执行状态不完整'}`);
+  }
+
+  return {
+    id: 'ut_run_status',
+    category: 'structure',
+    description: 'UT 阶段真实执行状态摘要',
+    severity: 'MINOR',
+    status: canClaimDone ? 'PASS' : 'WARN',
+    details: lines.join('\n'),
+  };
+}
+
 const checker: PhaseChecker = {
   phase: 'ut',
 
@@ -2795,6 +2879,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkBranchCoverageFull(ctx, utFiles), 'branch_coverage_full'));
     results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, utFiles), 'ut_case_per_unit_ac'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, utFiles, dags), 'boundary_coverage'));
+
+    results.push(buildUtRunStatusResult(results));
 
     return results;
   },

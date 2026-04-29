@@ -34,6 +34,7 @@
 3. **必须登记授权**：用户同意后，必须把授权纪要写入 `framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）。
 4. **未授权改动一律违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会硬检测 `src/main` 的 git diff，任何未在 `approved_src_mutations[]` 中登记的源码改动都会 FAIL。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 design.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 PRD/design 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
+6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 `ut_hvigor_test` 为 FAIL / 被 `ut_hvigor_build` 短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
 
 > 典型违规迹象（请特别留意）：
 > - `src/main/**/*.ets` 里新增了命名对称为某个 UT 调用准备的函数，但该函数**没有对应的 PRD/design 条目**；
@@ -71,7 +72,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 8 项 v2.1 语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 9 项 v2.1 语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: state_model 完备性 (state_model_completeness)
 
@@ -140,6 +141,18 @@
      - 信息不足 → WARN
 
 - **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL
+
+### 检查 4B: 业务价值断言密度 (business_assertion_value) 【BLOCKER】
+
+- **严重等级**: **BLOCKER**
+- **评估方法**:
+  1. 每个 `it()` 必须能说明它验证了哪条业务规则，而不是只验证"函数能返回"或"数组非空"。
+  2. happy path 至少包含三类断言中的两类：返回值 / 状态迁移 / data_boundary 调用序列 / 持久化结果。
+  3. 异常 path 必须断言错误状态、错误码、回滚行为或 `not_called`，不能只断言"不会 crash"。
+  4. Spy/Stub 的预设值必须与业务场景相关；重复的 mock 值但不同 `it()` 名称不算有效分支覆盖。
+  5. 若发现形式化 UT（例如每个 it 只有 1 个 expect，或只测 repository 静态数据结构而 acceptance 要求业务流程），判定 FAIL。
+
+- **输出**：逐个 `it()` 标注业务规则、断言类型数量、是否覆盖异常语义。
 
 ### 检查 5: branch 语义覆盖 (branch_coverage_semantic)
 
@@ -273,6 +286,20 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: business_assertion_value
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        逐 it() 业务价值评估：
+        - <file>:"<it name>":
+            linked_rule: <AC/BD/branch>
+            assertion_types: [返回值|状态迁移|调用序列|持久化|错误码|回滚]
+            exception_semantics: <YES/NO/NA>
+            verdict: PASS/FAIL
+      affected_files: [...]
+      suggestion: |
+        <修正建议>
+
     - id: branch_coverage_semantic
       status: PASS | FAIL | WARN | SKIP
       severity: MAJOR
@@ -327,7 +354,7 @@ verification_result:
         <修正建议>
 
   summary:
-    total: 8
+    total: 9
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

@@ -87,6 +87,14 @@
 - `doc/features/{feature}/contracts.yaml`（data_boundary type 必须在 `interfaces[].class` 中）
 - 业务编排源代码（Skill 3 自选了 Page 方法 / `Flow` 类 / 导出函数）
 
+> **HARD STOP — 规划确认门**：Step 1 结束后必须先向用户展示「UT 规划清单」并等待明确确认，禁止直接进入 Step 2/3 写 DAG 或 UT。清单必须包含：
+> - 本轮覆盖的 `AC/BD/branch`，以及不覆盖项和原因（如 `device` 交 Skill 6）；
+> - 每个 `it()` 的名称、被测入口、Spy/Stub 边界、核心断言（状态 / 返回值 / callLog / 持久化）；
+> - 将要新增或修改的 DAG / `*.test.ets` / `List.test.ets` 文件路径；
+> - 明确声明「本轮不改业务源码」。若确需改 `src/main`，必须先走文末约束 #12 的单独授权流程，不能把它混在规划确认里。
+>
+> 用户未确认前，agent 只能继续补充说明或调整规划，不得写文件。
+
 #### 路径 A：存在 `use-cases.yaml` —— 按 branches × ui_bindings 规划
 
 为每个 use_case 列一张 **Branch × DAG × UT × AC 清单**：
@@ -124,6 +132,28 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 ```
 
 **等待用户确认清单后进入 Step 2**。
+
+#### Step 1 输出格式（必须使用）
+
+```markdown
+## UT 规划清单（等待确认）
+
+覆盖范围：
+- unit/both：AC-1、AC-2、BD-1
+- device-only：AC-3（写入 device-testing-todo.md，不进 UT）
+
+用例矩阵：
+| it() | AC/BD/branch | 被测入口 | Spy/Stub 边界 | 核心断言 |
+|------|--------------|----------|---------------|----------|
+| [AC-1] xxx | AC-1 | Flow.submit | PaymentRepositorySpy | phase=Success；callLog=[submit,save] |
+
+将写入文件：
+- `02-Feature/Xxx/test/dag/xxx.dag.yaml`
+- `02-Feature/Xxx/src/ohosTest/ets/test/Xxx.test.ets`
+
+业务源码：
+- 不修改 `src/main`。
+```
 
 ### Step 2：生成 DAG 文件
 
@@ -471,6 +501,22 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
 
+每次 harness 运行后，agent 必须把 `ut_run_status` 的状态面板完整贴给用户；禁止只用 `grep` 展示局部 PASS/FAIL。尤其当 `ut_hvigor_build` 失败导致 `ut_hvigor_test` 短路时，必须明确说：
+
+> 当前不能宣称 UT 通过；ohosTest 未在真机/模拟器上实际执行。
+
+状态面板格式：
+
+```text
+UT 阶段状态：
+- 静态/结构规则：PASS/FAIL
+- tsc 静态编译：PASS/FAIL
+- ohosTest hvigor 编译：PASS/FAIL
+- 真机/模拟器执行：PASS/FAIL/未执行
+- 源码改动检查：PASS/FAIL
+- 当前是否可以宣称 UT 完成：是/否
+```
+
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/ut-rules.yaml`
 - `doc/features/{feature}/use-cases.yaml`（v2 新增）
@@ -574,6 +620,7 @@ UT 阶段宣布"完成"前必须**同时**满足：
 9. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
 10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
 11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
+    - 若 `ut_no_src_mutation` 报告 committed 历史变更多、working tree 变更少，优先怀疑 diff 基线过旧；可设置 `HARNESS_DIFF_BASE_REF=working` 只检查当前工作区。**禁止**要求用户"批量授权所有历史变更"。
 12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下**任何文件的修改**，**必须**满足以下全部条件：
     1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
        - 拟变更的文件路径；

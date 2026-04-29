@@ -25,6 +25,16 @@ export interface GitDiffResult {
   baseIsFallback: boolean;
   /** 被改动的文件列表（相对项目根，正斜杠） */
   changedFiles: string[];
+  /** baseRef..HEAD 的已提交变更 */
+  committedFiles: string[];
+  /** HEAD 到工作区的未暂存变更 */
+  workingTreeFiles: string[];
+  /** 已暂存但未提交的变更 */
+  stagedFiles: string[];
+  /** 未跟踪文件 */
+  untrackedFiles: string[];
+  /** 是否只扫描当前工作区（不包含 baseRef..HEAD 历史提交） */
+  workingOnly: boolean;
   /** 原始错误信息（若 executed=false） */
   error?: string;
 }
@@ -55,7 +65,7 @@ export function readTraceStartCommit(tracePath: string): string | undefined {
 export interface GitDiffOpts {
   /** 项目根（cwd） */
   projectRoot: string;
-  /** baseRef（如 start_commit SHA）；缺省时回退 HEAD~1 */
+  /** baseRef（如 start_commit SHA）；传入 "working" 时只比较当前工作区，不扫历史提交；缺省时回退 HEAD~1 */
   baseRef?: string;
   /** 限定的路径前缀（glob 或目录相对路径），传给 git diff `-- <pathspec>` */
   pathspecs?: string[];
@@ -88,6 +98,11 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
       baseRef: '',
       baseIsFallback: false,
       changedFiles: [],
+      committedFiles: [],
+      workingTreeFiles: [],
+      stagedFiles: [],
+      untrackedFiles: [],
+      workingOnly: false,
       error: `非 git 仓库或 git 不可用：${probe.stderr?.trim() ?? ''}`,
     };
   }
@@ -95,29 +110,43 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   // 解析 baseRef：优先使用传入，其次 HEAD~1
   let baseRef = opts.baseRef ?? '';
   let baseIsFallback = false;
-  if (!baseRef) {
+  const workingOnly = baseRef === 'working';
+  if (workingOnly) {
+    baseRef = 'HEAD';
+  } else if (!baseRef) {
     baseRef = 'HEAD~1';
     baseIsFallback = true;
   }
-  const verify = spawnSync('git', ['rev-parse', '--verify', baseRef], {
-    cwd, encoding: 'utf-8', shell: false,
-  });
-  if (verify.status !== 0) {
-    // 比如全新初始化的仓库，HEAD~1 不存在 → 退到空树（相当于对比 HEAD）
-    baseRef = 'HEAD';
-    baseIsFallback = true;
+  if (!workingOnly) {
+    const verify = spawnSync('git', ['rev-parse', '--verify', baseRef], {
+      cwd, encoding: 'utf-8', shell: false,
+    });
+    if (verify.status !== 0) {
+      // 比如全新初始化的仓库，HEAD~1 不存在 → 退到空树（相当于对比 HEAD）
+      baseRef = 'HEAD';
+      baseIsFallback = true;
+    }
   }
 
   const all = new Set<string>();
+  const committedFiles = new Set<string>();
+  const workingTreeFiles = new Set<string>();
+  const stagedFiles = new Set<string>();
+  const untrackedFiles = new Set<string>();
 
   // 1. commits since baseRef
-  const commit = spawnSync(
-    'git',
-    ['diff', '--name-only', `${baseRef}..HEAD`, ...pathspecArgs],
-    { cwd, encoding: 'utf-8', shell: false },
-  );
-  if (commit.status === 0 && commit.stdout) {
-    commit.stdout.split(/\r?\n/).filter(Boolean).forEach(f => all.add(f));
+  if (!workingOnly) {
+    const commit = spawnSync(
+      'git',
+      ['diff', '--name-only', `${baseRef}..HEAD`, ...pathspecArgs],
+      { cwd, encoding: 'utf-8', shell: false },
+    );
+    if (commit.status === 0 && commit.stdout) {
+      commit.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
+        committedFiles.add(f);
+        all.add(f);
+      });
+    }
   }
 
   // 2. unstaged working-tree changes
@@ -127,7 +156,10 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     { cwd, encoding: 'utf-8', shell: false },
   );
   if (wt.status === 0 && wt.stdout) {
-    wt.stdout.split(/\r?\n/).filter(Boolean).forEach(f => all.add(f));
+    wt.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
+      workingTreeFiles.add(f);
+      all.add(f);
+    });
   }
 
   // 3. staged changes
@@ -137,7 +169,10 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     { cwd, encoding: 'utf-8', shell: false },
   );
   if (staged.status === 0 && staged.stdout) {
-    staged.stdout.split(/\r?\n/).filter(Boolean).forEach(f => all.add(f));
+    staged.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
+      stagedFiles.add(f);
+      all.add(f);
+    });
   }
 
   // 4. untracked files
@@ -147,14 +182,25 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     { cwd, encoding: 'utf-8', shell: false },
   );
   if (untracked.status === 0 && untracked.stdout) {
-    untracked.stdout.split(/\r?\n/).filter(Boolean).forEach(f => all.add(f));
+    untracked.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
+      untrackedFiles.add(f);
+      all.add(f);
+    });
   }
+
+  const normalizeSorted = (items: Set<string>): string[] =>
+    Array.from(items).map(f => f.replace(/\\/g, '/')).sort();
 
   return {
     executed: true,
     baseRef,
     baseIsFallback,
-    changedFiles: Array.from(all).map(f => f.replace(/\\/g, '/')).sort(),
+    changedFiles: normalizeSorted(all),
+    committedFiles: normalizeSorted(committedFiles),
+    workingTreeFiles: normalizeSorted(workingTreeFiles),
+    stagedFiles: normalizeSorted(stagedFiles),
+    untrackedFiles: normalizeSorted(untrackedFiles),
+    workingOnly,
   };
 }
 
