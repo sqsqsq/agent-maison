@@ -17,6 +17,11 @@
       "architecture.inner_dependency_direction": "当前版本仅支持 \"upward\"。",
       "architecture.cross_module_exports_file": "跨模块唯一合法导出入口文件名，默认 \"Index.ets\"。",
       "paths": "各产物路径，均相对于实例工程根。初始化 Skill 不鼓励偏离默认值，除非实例已有既定目录结构。",
+      "toolchain": "工具链相关配置。devEcoStudio.installPath 需要按 Skill 00 Step 5.6 经用户确认后写入；hvigor 是命令行调优开关，默认值对齐内网真实工程常用命令，可按工程表现做 A/B。",
+      "toolchain.hvigor.daemon": "是否传 hvigor daemon 参数。false → --no-daemon；true → --daemon。默认 true。",
+      "toolchain.hvigor.parallel": "是否传 --parallel。默认 true。",
+      "toolchain.hvigor.incremental": "是否传 --incremental。默认 true。",
+      "toolchain.hvigor.analyze": "hvigor analyze 模式：\"off\" | \"normal\" | \"advanced\"。默认 \"advanced\"，即传 --analyze=advanced；若工程 warm build 明显变慢，可改为 off 做对比。",
       "state_machine": "v2.8 起 Stop hook 跨会话隔离的可调阈值。可选；省略本段时 framework/harness/config.ts (normalizeStateMachine) 与 .claude/hooks/check-phase-completion.mjs 各自回退到 DEFAULT_STATE_MACHINE（grace_period_minutes=5 / ttl_hours=12 / schema_version=\"1.1\"）。把这一段写进 skeleton 是为了让工程方在 init 时显式看到这个旋钮，方便决策是否自定义；如不需要自定义可删掉，效果与默认值兜底一致。",
       "state_machine.grace_period_minutes": "新建 .current-phase.json 时的「无 session_id 缓冲期」分钟数（>=1）。期内 hook 把无 session_id 的 state 视作当前会话产物并自动回填 session_id；超过则视作跨会话 / legacy 遗留 advisory 不阻断。默认 5；多任务并发频繁切换的工程可调短到 2~3。",
       "state_machine.ttl_hours": "无 session_id 的 state 文件 TTL 小时数（>=1）。超过 grace 且早于 ttl 仍按 advisory 提示存在；超过 ttl 一律按已废弃处理仅出 advisory。默认 12；CI / 跑批跑得久的工程可加长到 24~48。",
@@ -55,6 +60,15 @@
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md"
+  },
+
+  "toolchain": {
+    "hvigor": {
+      "daemon": true,
+      "parallel": true,
+      "incremental": true,
+      "analyze": "advanced"
+    }
   },
 
   "state_machine": {

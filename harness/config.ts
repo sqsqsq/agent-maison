@@ -108,11 +108,11 @@ export type HvigorAnalyzeMode = 'off' | 'normal' | 'advanced';
 /**
  * hvigor 命令行调优开关。
  *
- * 默认值由 `scripts/utils/hvigor-runner.ts` 决定，当前保持历史行为：
- *   - daemon=false      → 传 `--no-daemon`
+ * 默认值由 `scripts/utils/hvigor-runner.ts` 决定，当前对齐内网真实工程常用命令：
+ *   - daemon=true       → 传 `--daemon`
  *   - parallel=true     → 传 `--parallel`
  *   - incremental=true  → 传 `--incremental`
- *   - analyze='off'     → 不传 `--analyze`
+ *   - analyze='advanced'→ 传 `--analyze=advanced`
  *
  * 内网工程若存在自定义 onlineSign / archivePackage 等任务，可通过本段做 A/B，
  * 避免 agent 直接清空缓存掩盖真实问题。

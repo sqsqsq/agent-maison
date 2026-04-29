@@ -3,7 +3,8 @@
 // ============================================================================
 //
 // 为什么写这层（不是 fixture / 端到端）：
-//   v2.7 加入了 -p buildMode=debug / --parallel / --incremental 三个加速 flag
+//   v2.7+ 加入了 -p buildMode=debug / --parallel / --incremental / --daemon /
+//   --analyze=advanced 等加速与诊断 flag
 //   以及 product 自动探测。这些参数装配错位（例如 buildMode=debug 漏掉、product
 //   写成 default、extraArgs 顺序放反让用户覆盖失效）会让"加速"静默退化甚至直
 //   接编译失败。fixture 里没法跑 hvigor 真实编译（CI 不带 DevEco），只能回到
@@ -14,13 +15,13 @@
 //      a. --mode project 出现且只一次
 //      b. -p product=<detect 结果> 出现
 //      c. -p buildMode=debug 出现（这是 release→debug 加速的关键）
-//      d. --parallel 与 --incremental 都在
+//      d. --daemon / --parallel / --incremental / --analyze=advanced 都在
 //      e. extraArgs 透传到 task 之前的末端（让用户的 -p buildMode=release
 //         能覆盖 framework 默认值）
 //   2. ohosTest 路径（ut 阶段）：
 //      a. -p module=<name>@ohosTest 出现
 //      b. **不**含 -p buildMode=debug（HAP 默认即 debug，多余 flag 反而是噪音）
-//      c. --parallel 与 --incremental 都在
+//      c. --daemon / --parallel / --incremental / --analyze=advanced 都在
 //      d. -p product=<detect 结果> 出现
 //   3. preferredProduct 覆盖：
 //      framework.config.json 写 toolchain.preferredProduct=mirror，buildAssembleAppArgs
@@ -110,7 +111,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       assertContains(args, '--parallel', '应含 --parallel');
       assertContains(args, '--incremental', '应含 --incremental');
-      assertContains(args, '--no-daemon', '应含 --no-daemon');
+      assertContains(args, '--daemon', '应含 --daemon');
+      assertContains(args, '--analyze=advanced', '应含 --analyze=advanced');
+      assertNotContains(args, '--no-daemon', '默认不应再传 --no-daemon');
 
       const buildModes = findFlagValues(args, 'buildMode');
       assertEq(
@@ -143,7 +146,9 @@ const cases: Array<{ name: string; run: () => void }> = [
 
       assertContains(args, '--parallel', '应含 --parallel');
       assertContains(args, '--incremental', '应含 --incremental');
-      assertContains(args, '--no-daemon', '应含 --no-daemon');
+      assertContains(args, '--daemon', '应含 --daemon');
+      assertContains(args, '--analyze=advanced', '应含 --analyze=advanced');
+      assertNotContains(args, '--no-daemon', '默认不应再传 --no-daemon');
 
       const buildModes = findFlagValues(args, 'buildMode');
       assertEq(

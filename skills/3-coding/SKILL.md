@@ -399,13 +399,13 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <
 hvigorw --mode project \
   -p product=<detectProduct()> \
   -p buildMode=debug \
-  --no-daemon --parallel --incremental \
+  --daemon --parallel --incremental --analyze=advanced \
   assembleApp
 ```
 
 - `product=` 由 `detectProduct(projectRoot)` 探测：先看 `framework.config.json > toolchain.preferredProduct`，再看 `build-profile.json5 > app.products[0].name`，兜底 `default`。**v2.6 之前硬写死 `default`**，内网某工程 product 名为 `mirror` 时会直接报 `product not found` —— 这条 BLOCKER 已修。
 - `-p buildMode=debug`：assembleApp 默认 `release`（含混淆 / 压缩 / 体积优化），coding 阶段只过门禁不出交付包，固定 `debug` 在大型工程通常能砍 30%~50% 编译时间。
-- `--parallel` / `--incremental`：开 hvigor 并发 + 增量缓存，对**大型多模块工程 + 日常迭代重编**场景显著提速。
+- `--daemon` / `--parallel` / `--incremental` / `--analyze=advanced`：默认对齐内网真实工程常用命令；如某工程 warm build 反向变慢，可通过 `framework.config.json > toolchain.hvigor` 做 A/B。
 
 实际加速效果与工程规模强相关，详见 [framework/docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md) 的「hvigor 调优」章节，里头记录了本仓库 5 模块小工程的实测反例（warm 路径反而慢 47%），避免 agent 拍脑袋假设"必定加速"。
 

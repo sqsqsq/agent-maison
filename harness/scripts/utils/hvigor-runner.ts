@@ -85,10 +85,10 @@ interface ResolvedHvigorOptions {
 }
 
 const DEFAULT_HVIGOR_OPTIONS: ResolvedHvigorOptions = {
-  daemon: false,
+  daemon: true,
   parallel: true,
   incremental: true,
-  analyze: 'off',
+  analyze: 'advanced',
 };
 
 /**
