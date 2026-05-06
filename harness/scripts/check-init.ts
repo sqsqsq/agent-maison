@@ -1437,7 +1437,7 @@ const checker: PhaseChecker = {
         severity: 'BLOCKER',
         status: 'FAIL',
         details: 'adapter 未指定：CREATE 模式下必须显式传 --adapter；UPDATE 模式下需 framework.config.json.agent_adapter 字段。',
-        suggestion: '在命令行追加 --adapter <claude|cursor|generic>，或检查 framework.config.json 的 agent_adapter 字段',
+        suggestion: '在命令行追加 --adapter <实例所选 adapter 目录名>，或检查 framework.config.json 的 agent_adapter 字段（须与 framework/agents/* 对齐）',
       };
       blockers.push('adapter_yaml_resolvable: adapter 未指定');
     } else {

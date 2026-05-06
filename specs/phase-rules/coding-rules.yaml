@@ -342,7 +342,7 @@ traceability_checks:
       的 outer_layers[].id 构造的顶层前缀集合）的文件，其路径前缀必须属于
       design.in_scope_modules 对应的 package_path 之一。
       越界文件即 BLOCKER，用于阻止 Skill 3 默默扩大改动范围。
-      非模块文件（doc/、specs/、skills/、harness/、.claude/、.cursor/、根配置等）
+      非模块文件（doc/、specs/、skills/、harness/、adapter 在实例根落地的点号开头配置目录、根配置等）
       视为框架性变更，不纳入本检查。
     severity: BLOCKER
     rule:

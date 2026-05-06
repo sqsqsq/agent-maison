@@ -42,7 +42,7 @@ docs:
       - framework/skills/6-device-testing/SKILL.md
       # 配置与 DSL 校验（overview 写到了架构 DSL）
       - framework/harness/config.ts
-      # adapter 协议（overview 列出了 generic / claude / cursor）
+      # adapter 协议（见 overview + agents/README）
       - framework/agents/adapter-schema.yaml
       # 升级与迁移（overview 引用了 vendor / submodule 模式）
       - framework/MIGRATION.md

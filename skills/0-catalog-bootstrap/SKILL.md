@@ -621,9 +621,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 ---
 
-## Claude Code CLI 运行时约定
+## Slash / 快捷入口触发时的 trace 约定
 
-通过 `/catalog-bootstrap <ModuleName>` 或 `/glossary-bootstrap` 进入本 Skill 时，**必须**在阶段结束前产出 trace：
+通过适配器下发的 slash（如 `/catalog-bootstrap`、`/glossary-bootstrap`，命令名以实例根模板为准）进入本 Skill 时，**必须**在阶段结束前产出 trace：
 
 ```
 framework/harness/reports/_catalog/<timestamp>/<model>-catalog/trace.json

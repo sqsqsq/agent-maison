@@ -136,7 +136,7 @@ const cases: Case[] = [
     }),
   },
   {
-    name: 'init eol: rendered CLAUDE.md 仅 CRLF/LF 不同 → EMPTY',
+    name: 'init eol: rendered entry markdown 仅 CRLF/LF 不同 → EMPTY',
     run: () => withTmpProject(root => {
       const env = makeInspectorEnv(root);
       const template = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'templates/AGENTS.md.template'), 'utf-8');

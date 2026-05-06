@@ -3,14 +3,14 @@
 // ============================================================================
 //
 // 为什么写这层（而不是纯函数 import 测）：
-//   .claude/hooks/check-phase-completion.mjs 是 ESM 脚本，framework/harness 走
+//   实例根 Stop hook（ESM）与 framework/harness 单测通过 child_process 对接。
 //   tsconfig.module=commonjs；在 commonjs 入口同步 import ESM 不友好。
 //   改用 child_process.spawnSync 直接驱动 hook 进程：
 //     - 测的是真实端到端行为（exit code + stdout/stderr + state 文件回写）；
 //     - 与 hook 内部实现解耦：未来重构成 lib 抽包也不影响这层；
 //     - 同时挂上"配置一致性"检查（T11）防 HOOK_DEFAULT_* 与 DEFAULT_STATE_MACHINE 漂移。
 //
-// 覆盖矩阵（12 case，对齐 .cursor/plans/stop_hook_跨会话隔离_*.plan.md）：
+// 覆盖矩阵（12 case，对齐 Stop hook 跨会话隔离设计说明）：
 //   T1  同会话 + 闭环达成        → exit 0
 //   T2  同会话 + 未闭环          → exit 2 + 中性文案（包含"继续 / 放弃二选一"）
 //   T3  跨会话遗留               → exit 0 + advisory（"与当前会话无关"）
@@ -441,7 +441,7 @@ function testT12_invalidConfigFallsBack(): void {
 
 // --------------------------------------------------------------------------
 // 全局阶段豁免（v2.8.1 回归修复）：init / catalog / glossary / docs 不参与
-// CLAUDE.md §5.1 闭环判据，hook 看到 state.phase 是这四个值之一一律 allow。
+// 全局入口 §5.1 闭环判据：hook 看到 state.phase 是这四个值之一一律 allow。
 // --------------------------------------------------------------------------
 
 function testT13_globalPhaseInitBypassesClosure(): void {

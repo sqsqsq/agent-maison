@@ -145,7 +145,7 @@ function main(): void {
   if (!fs.existsSync(receiptPath)) {
     console.error('❌ FATAL: 回执文件不存在。');
     console.error('');
-    console.error('阶段闭环判定（CLAUDE.md §5.1）四条件之一未满足：');
+    console.error('阶段闭环判定（全局入口 §5.1）四条件之一未满足：');
     console.error(`  → ${receiptRel} 不存在`);
     console.error('');
     console.error('修复指引：');
@@ -259,7 +259,7 @@ function main(): void {
       issues.push({
         id: 'trace_json_file_not_found',
         severity: 'BLOCKER',
-        message: `trace_json.path="${tj.path}" 在文件系统中不存在（缺失即视为阶段未完成，CLAUDE.md §5.1）。`,
+        message: `trace_json.path="${tj.path}" 在文件系统中不存在（缺失即视为阶段未完成，全局入口 §5.1）。`,
       });
     } else if (tj.schema_valid !== false) {
       // 尽可能解析一下
@@ -351,7 +351,7 @@ function main(): void {
     console.log(`   - commit_sha: ${sha}`);
     console.log('   - 反假设条款 3/3 已勾选');
     console.log('');
-    console.log('阶段闭环判定（CLAUDE.md §5.1）四条件已满足，可放行。\n');
+    console.log('阶段闭环判定（全局入口 §5.1）四条件已满足，可放行。\n');
     process.exit(0);
   }
 
@@ -363,7 +363,7 @@ function main(): void {
   console.error('修复指引：');
   console.error('  1. 不要篡改 receipt 数值伪造通过；check-receipt 会与真实文件 / git 状态比对。');
   console.error('  2. 缺什么补什么：跑 harness、调用 verifier、生成 trace.json、再如实回填。');
-  console.error('  3. CLAUDE.md §6.5 反假设条款适用：本失败列表本身就是"为何不能放行"的逐字证据。');
+  console.error('  3. 全局入口 §6.5 反假设条款适用：本失败列表本身就是"为何不能放行"的逐字证据。');
   console.error('');
   process.exit(1);
 }

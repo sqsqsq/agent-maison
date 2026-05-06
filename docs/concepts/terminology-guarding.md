@@ -25,7 +25,7 @@
 
 - 真实工程数十万 LOC，单个一级模块就有 10 万 LOC
 - 内网模型上下文 200K 量级
-- Agent 运行时是 Claude Code CLI 内网版 / Cursor / 其他
+- Agent 运行在任意已接入的宿主（CLI / IDE 插件 / 内网等）
 - 已有三层 framework `skills + spec + harness`，但出现过"字面相似术语被误映射到错误模块"的事故
 
 ### 1.2 弱模型面临的三个"不可能"
@@ -65,7 +65,7 @@ surveyed 过的 5 个层级方案：
 | L1   | **Domain Glossary**           | 内部团队手工维护                                    | 低         | ⭐⭐⭐⭐⭐（直打核心）            | 否         | 否         |
 | L2   | **Module Catalog / Repo Manifest** | AWS CDK Construct Hub、OpenAI Realtime docs    | 低         | ⭐⭐⭐⭐⭐                        | 否         | 否         |
 | L3   | **Aider-style Repo Map**      | Aider (Paul Gauthier)                               | 中         | ⭐⭐⭐                            | 否         | 否         |
-| L4   | **Local Embedding RAG**       | Sourcegraph Cody、Continue.dev、Cursor              | 中-高      | ⭐⭐（对"未登录术语"有限效）      | 否（模型可本地） | 否（用现成 embedding） |
+| L4   | **Local Embedding RAG**       | 多款 IDE / 编辑器侧助手的 RAG 插件（代表实现略）              | 中-高      | ⭐⭐（对"未登录术语"有限效）      | 否（模型可本地） | 否（用现成 embedding） |
 | L5   | **Symbol Graph / Code Knowledge Graph** | Glean (Facebook)、Kythe (Google)          | 高         | ⭐⭐⭐⭐（结构精准但与自然语言脱节） | 否         | 否         |
 
 **关键结论**（适用于 200K 上下文 + 内网 + 中文业务域）：
@@ -108,8 +108,8 @@ surveyed 过的 5 个层级方案：
 | PRD `## 0. 术语映射表`                         | PRD 模板新章节                                                                       | ✅   |
 | `prd-rules.yaml` 新 BLOCKER                   | `terminology_mapping_table` + `scope_matches_catalog`                                 | ✅   |
 | `check-prd.ts` 三道防线                       | 人工确认 / Catalog 对齐 / Glossary 交叉                                               | ✅   |
-| 工程 `CLAUDE.md` §2.2 术语守门                 | 全局约束清单                                                                         | ✅   |
-| `.claude/commands/prd.md`                     | 强制读 glossary + catalog                                                             | ✅   |
+| 工程全局入口 §2.2 术语守门                 | 全局约束清单                                                                         | ✅   |
+| adapter 下发的 PRD slash 路由              | 强制读 glossary + catalog                                                             | ✅   |
 | `doc/features/<litmus>/`                      | 试金石三件套（README + PRD-request + 违规样例）                                       | ✅   |
 
 ### 4.2 三道防线（全部经实测触发）
@@ -194,7 +194,7 @@ surveyed 过的 5 个层级方案：
 | --------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
 | `trace.schema.json`   | 每次 AI 跑动产出结构化日志，反映痛点                  | `framework/harness/trace/trace.schema.json`             |
 | `gap-notes.template.md` | 人类给 AI 痛点填空模板                              | `framework/harness/trace/gap-notes.template.md`         |
-| verifier 子 agent      | 独立语义评审，防"自己验自己"                          | `.claude/agents/verifier.md`（adapter 实例化产物）       |
+| verifier 子 agent      | 独立语义评审，防"自己验自己"                          | adapter 模板中的 verifier 定义（实例化路径见 `framework/agents/`）       |
 | 沙盒试金石            | 正反用例，复现事故和验证修复                          | `doc/features/*-litmus/`                                |
 
 ---

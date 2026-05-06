@@ -33,8 +33,8 @@
 
 ## 6. Agent 痕迹（仅提示，不强制）
 
-- 存在 `.claude/commands/` → 用户可能期望 **claude** adapter。
-- 存在 `.cursor/skills/` → 可能期望 **cursor** adapter。
-- 仅有 `AGENTS.md` / `CLAUDE.md` 之一 → 记下当前入口文件名，切换 adapter 时避免静默覆盖。
+**只做启发、不得替代用户对 `adapter_name` 的显式选定**——具体指纹与建议表见：
+
+- [framework/agents/README.md](../../../agents/README.md) 中「工程指纹与 adapter 推测」
 
 输出要求：用简体中文列「探测结论 + 推荐 default」，避免超过约 40 行。

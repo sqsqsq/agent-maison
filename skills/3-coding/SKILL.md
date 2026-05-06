@@ -455,10 +455,10 @@ v2.3 起 hvigor 工具链路径**应通过 `framework.config.json > toolchain.de
 
 ### Step 7: Harness 验证门禁（agent 必须自跑，不得仅"告知用户"）
 
-> **v2.4 强约束（呼应 CLAUDE.md 第 4.1 节）**：本步骤是编码阶段的**必要出口**。
+> **v2.4 强约束（呼应全局入口 §4.1）**：本步骤是编码阶段的**必要出口**。
 > agent **必须自己**通过 Shell 工具执行下述 harness 命令、读取报告、判定 verdict；
 > **严禁**只在回复里写"建议用户运行"、"可使用以下命令"然后直接结束对话——
-> 这种行为已经被 CLAUDE.md 第 6 节第 5 条「反假设条款」明确列为软幻觉，由物理拦截层兜底。
+> 这种行为已经被全局入口 §6.5「反假设条款」明确列为软幻觉，由物理拦截层兜底。
 
 编码阶段的 Harness 是**价值最高**的验证环节——它能自动检测文件缺失、接口偏离、分层违规、资源引用错误等编码常见问题。
 
@@ -521,9 +521,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 **若 AI 报告中存在 BLOCKER 级 FAIL**：修正后重新验证。
 
-#### 7.3 阶段闭环判定（CLAUDE.md 5.1 节 SSOT）
+#### 7.3 阶段闭环判定（全局入口 §5.1 SSOT）
 
-> 下文「物理拦截层」是 adapter 中立术语：`claude` adapter 即 `.claude/hooks/check-phase-completion.mjs` 注册的 Stop hook（由 `00-framework-init` 从 [framework/agents/claude/templates/](../../agents/claude/templates/hooks/check-phase-completion.mjs) 下发）；`generic` / `cursor` adapter 暂无等价物，仍以 Layer 1（CLAUDE.md/AGENTS.md §6.5 反假设条款）+ Layer 2（完成回执 + check-receipt.ts）兜底——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+> 下文「物理拦截层」：**部分 adapter** 经 Skill 00 在实例根下发 **Stop hook**，在消息结束前读取 state 并阻断「假完成」（Layer 3 行为与路径见 [framework/agents/README.md](../../agents/README.md)）。**未**配置该能力的 adapter 不设物理层豁免，仍须满足 Layer 1（全局入口 §6.5「反假设条款」）+ Layer 2（完成回执 + `check-receipt.ts`）——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
 
 **编码阶段宣布"完成"前，必须同时满足以下四条**（物理拦截层会按此判据拦截"假完成"）：
 
@@ -599,9 +599,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ---
 
-## Claude Code CLI 运行时约定
+## Slash / 快捷入口触发时的 trace 约定
 
-当本 Skill 通过 `/coding` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+当本 Skill 通过适配器下发的 slash（如 `/coding`）或其它等价快捷入口触发时，**必须**在阶段结束时产出一份 trace 凭证：
 
 - **路径约定**：`framework/harness/reports/<feature>/<timestamp>/<model>-code/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
@@ -614,7 +614,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ---
 
-## 运行时交付约定（Claude Code CLI / 内网弱模型）
+## 运行时交付约定（内网 / 弱模型）
 
 ```
 framework/harness/reports/<feature>/<timestamp>/<model>-coding/

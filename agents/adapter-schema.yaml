@@ -75,7 +75,11 @@ optional_fields:
     type: object | null
     description: |
       Skill 跳板目录（Cursor 的 .cursor/skills/<skill>/SKILL.md 是典型用例）。
-      跳板本身不复述 skill 内容，只声明 metadata 并跳转到 framework/skills/<n>/SKILL.md。
+      跳板本身不复述 skill 内容：只做 frontmatter 与**一条**跳转到
+      framework/skills/<n>/SKILL.md 的链接。不得在跳板内追加业务条款、选型表或次级
+      文档链接（会形成双源分叉，agent 易只读跳板漏掉正文中的 harness/verifier）。
+      扩写必须在 framework/skills 正文及其 prompts/templates/reference；或修改
+      framework/agents/cursor/templates/skills 后经 init/render 下发。
       若 agent 不需要跳板（例如 Claude Code 直接用 slash 加载），置为 null。
     fields:
       target_dir:

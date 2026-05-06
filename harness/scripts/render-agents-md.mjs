@@ -7,7 +7,7 @@
 // ----
 // 把 framework/templates/AGENTS.md.template 按 framework.config.json 中的
 // project_name / project_type / agent_adapter / paths 等字段，加上调用方
-// 提供的 --entry-file（CLAUDE.md|AGENTS.md）与 --summary（架构摘要一句话），
+// 提供的 --entry-file（须与所选 adapter 的 agent_entry_file.target_path 一致）与
 // 替换占位符后写到 --out 指定路径。
 //
 // 何时调用
@@ -47,12 +47,12 @@
 // 用法
 // ----
 //   node framework/harness/scripts/render-agents-md.mjs \
-//     --entry-file CLAUDE.md \
+//     --entry-file AGENTS.md \
 //     --summary "5 外层；模块内 4 层；跨模块出口 Index.ets" \
-//     --out CLAUDE.md
+//     --out AGENTS.md
 //
 // 选项
-//   --entry-file   <CLAUDE.md|AGENTS.md>   入口文件展示名（替换 {{AGENT_ENTRY_FILE}}）
+//   --entry-file   <文件名>   入口文件展示名（替换 {{AGENT_ENTRY_FILE}}）
 //   --summary      <一句话>                 架构摘要（替换 {{ARCHITECTURE_SUMMARY}}）
 //   --out          <实例工程根相对路径>     输出文件（已存在则覆盖）
 //
@@ -146,7 +146,7 @@ function parseArgs(argv) {
 
 function printUsage() {
   process.stderr.write(
-    'Usage: render-agents-md.mjs --entry-file <CLAUDE.md|AGENTS.md> ' +
+    'Usage: render-agents-md.mjs --entry-file <EntryMarkdown.md> ' +
       '--summary "<one-line>" --out <path-relative-to-repo-root>\n',
   );
 }

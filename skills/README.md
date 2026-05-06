@@ -1,6 +1,13 @@
 # Framework Skills 索引
 
-所有 Skill 均为 Markdown 正文，由 agent adapter 以 slash、跳板或直链方式暴露。执行某阶段前请**完整阅读**对应 `SKILL.md` 及其引用的 template / reference。
+所有 Skill 均为 Markdown 正文；各 **agent adapter** 决定如何在实例根暴露入口（slash、技能跳板、仅全局说明文件等）。执行某阶段前请**完整阅读**对应 `framework/skills/<n>/SKILL.md` 及其引用的 template / reference。
+
+## Skill 跳板与「单点真相」
+
+当某 adapter 在实例根生成了指向本目录的轻量入口文件时，该文件**只作跳转**：完整规则、BLOCKER、harness 命令与 verifier 要求**一律**以 `framework/skills/<n>/SKILL.md`（及同目录 `prompts/`、`templates/`、`reference/`）为准。
+
+- **禁止**在实例根跳板内扩写业务条款或堆叠多级链接，以免与正文 **双源分叉**（agent 只读跳板、漏闸门）。
+- **各 adapter 的路径约定、选型建议、跳板守门细则** → 单独写在 [framework/agents/README.md](../agents/README.md)，本索引不赘述。
 
 ---
 

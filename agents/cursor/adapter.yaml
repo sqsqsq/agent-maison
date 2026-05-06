@@ -2,8 +2,8 @@ adapter_name: cursor
 description: |
   Cursor adapter——入口文件保持为 AGENTS.md（Cursor 会自动加载），另外为每个
   Skill 生成 `.cursor/skills/<skill>/SKILL.md` 跳板，并落一份
-  `.cursor/rules/framework.mdc` 总规则索引。跳板只做 metadata 声明 + 跳转，
-  不复述 skill 逻辑。
+  `.cursor/rules/framework.mdc` 总规则索引。跳板只做 metadata 声明 + **一条**
+  跳转，不复述 skill 逻辑；不得在跳板内追加业务条款 / 选型表 / 次级链接（免双源分叉）。
 
 agent_entry_file:
   template_path: templates/AGENTS.md.template   # 共享模板（相对于 framework/ 根）
@@ -28,3 +28,5 @@ notes: |
     跳转到 `../../../framework/skills/<n>/SKILL.md`——与当前钱包仓库对齐。
   - .cursor/rules/framework.mdc 只承载"无论何时都必须遵守"的跨阶段提示，
     详细规则留在 framework/specs/phase-rules/ 与 CLAUDE.md/AGENTS.md。
+  - skill 跳板若需增链接或说明：改 `framework/agents/cursor/templates/skills/**`
+    与 `framework/skills/**` 正文，经 init/render 下发；禁止只在实例 `.cursor/skills` 手工扩写。

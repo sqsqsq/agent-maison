@@ -3,8 +3,7 @@
 本目录用于保存 agent 工作流强制门（Layer 3）所需的本地运行时状态文件，例如：
 
 - `.current-phase.json` —— 当前正在执行的阶段元数据；由 `harness-runner.ts`
-  在每次运行时写入，由 `.claude/hooks/check-phase-completion.mjs` 在 `Stop`
-  事件触发时读取，用以物理拦截弱模型"假完成"。
+  在每次运行时写入；若实例根存在相应 Stop hook，则在其触发时读取，用以拦截弱模型「假完成」。
 
 这些文件是**每开发者本地状态**，不入仓（见仓库根目录 `.gitignore`）。
 保留本目录通过 `.gitkeep` 占位，避免 git clone 后目录缺失导致 hook 报错。

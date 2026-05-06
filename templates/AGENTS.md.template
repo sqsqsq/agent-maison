@@ -79,7 +79,7 @@
 ## 四、工作流与 Skill 路由
 
 每个阶段都有对应 Skill 文档。具体触发方式由当前 adapter（`{{AGENT_ADAPTER}}`）决定——
-有的 agent 用 slash（Claude Code 的 `/xxx`），有的 agent 用跳板文件（Cursor 的 `.cursor/skills/`），
+slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
 也可以直接让 agent 读对应 `framework/skills/<n>/SKILL.md` 进入。
 
 | 阶段 | Skill 路径 |
@@ -135,7 +135,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 ### 5.1 阶段闭环判定（trace.json 缺失 = 阶段未完成）
 
-> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层（如 Claude Code 的 Stop hook）会读取本节定义的判据决定能否放行 stop。
+> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层若存在，则由具备 hooks 能力的 adapter 在实例根下发的脚本读取本节定义的判据决定能否放行 stop（细节见 [framework/agents/README.md](framework/agents/README.md)）。
 
 任何 **feature 维度阶段**（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
 
@@ -154,9 +154,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 > harness-runner 不为它们写 `.current-phase.json`，Stop hook 也对 `state.phase` 是这四值之一时一律放行。
 > 详见 [framework/harness/scripts/check-init.ts](framework/harness/scripts/check-init.ts) 头部"元阶段三件套刻意不对称"段落。
 
-> 不同 adapter 物理拦截能力不同：`claude` adapter 通过 `.claude/settings.json` 注册 Stop / SubagentStop hook
-> （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
-> 物理层，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
+> 具备 Stop hook / Subagent hook 下发能力的 adapter：**安装与配置路径**仅以 [framework/agents/README.md](framework/agents/README.md) 为准；未配置等价物理层的 adapter，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
 
 #### 5.1.1 会话边界与跨会话遗留（v2.8 起）
 
