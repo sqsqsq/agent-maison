@@ -171,6 +171,18 @@
 
 ## 工作流程
 
+### 设计与编码的会话内硬边界（BLOCKER，弱模型必读）
+
+以下规则与 CLAUDE.md / AGENTS.md 的阶段闭环条款**叠加生效**，用于堵住「改了 design 就顺手把实现写完」的常见误routing。
+
+**实现层产物（本小节用语）**：指落在业务模块源代码树内、由 `contracts.yaml` / `design.md`（及本工程等价契约文件）约定为本次 feature **需交付的可编译或可运行实现**的路径上的文件（编程语言与扩展名因实例而异，如 ArkTS、Kotlin、Java、Swift、TypeScript/C++ 等），**不包含**仅限 `doc/features/<feature>/` 以及明文列为文档或门禁脚手架的路径。具体后缀与分层约定以**本实例**与本阶段的 `architecture`/`contracts`/编码规范 Skill 为准，framework **不绑定**某一种扩展名。
+
+1. **请求路由**：用户仅表达「修订 design」「更新技术设计」「改 contracts / Spec」「修复设计段落」「对齐 PRD 调整设计」等，而**未**在同一条或明确承接的指令中同时要求编码（见下条），则**只激活本 Skill**，本轮定性为 **design 迭代**，不是流水线自动滑入 Skill 3。
+2. **何谓同时要求编码（示例，非穷举）**：同一条消息里出现「开始编码」「按现行 design 实现 / 落地」「写代码 / 开发」且指向当前 `doc/features/<feature>/`，可视为用户显式授权连续进入 Skill 3。仅有「把设计改对」「补充设计」**不算**编码授权。
+3. **design 迭代回合内禁止默写实现层产物**：在未满足上一条「显式编码授权」时，**BLOCKER**：不得新增或修改实现层产物（定义见上）；允许改的仅限设计侧 SSOT 与文档（如 `doc/features/...`、`doc/`、`framework/` 等按本实例约定允许的路径）。若用户需要「design 与实现连续交付」，须在指令中**明示**两用意图。
+4. **落盘 → harness → 停等人审（产品闸门）**：每次 `design.md` + Step 11 的 Spec 写入磁盘后，须**立即**进入 Step 13.1 跑 `harness-runner --phase design`（见 Step 13），**禁止**「先改实现再补 design.harness」。Step 13.1 通过后，向用户交付 harness 摘要与设计变更要点；若用户曾表达「要先审 design」或本轮属于 design 修订，则须**等待用户明示「design OK / 可以编码」**之后，才允许进入 Skill 3——**不得**在同一轮 agent 执行流里「写完设计侧 SSOT → 立刻改实现层产物」直连。
+5. **历史阶段不免除**：即使用户过去已跑通 coding / review / UT，只要**本轮改动了** `design.md` 或 `contracts.yaml`（等设计侧 SSOT），设计审阅与「明示编码」流程**重新适用**；不得以「以前实现过」为由跳过。
+
 ### Step 1: 读取并分析 PRD
 
 1. 读取指定的 `doc/features/{module}/PRD.md` 文件
@@ -421,12 +433,15 @@ expansions_with_user_approval:
 
 ### Step 10: 输出与归档
 
-1. 将设计文档展示给用户确认
-2. 用户确认后，将文档保存到项目文档目录：
+> **顺序纠错**：必须把 `design.md` 写入磁盘后，脚本 harness（Step 13.1）才能读取。**「用户确认」指是否冻结设计并授权进入 Skill 3 写源码**，不是「确认后才允许写入 design.md」——否则会出现「没落盘就跑不了 harness」与「先把代码写完再补 harness」的违规路径。
+
+1. 将（更新后的）设计文档写入：
    ```
    doc/features/{module-name}/design.md
    ```
-3. 若用户要求修改，根据反馈调整后重新走 Step 9 自检
+2. 若 Step 11 已在流水线上执行完毕，确保同目录 Spec（`contracts.yaml` 等）与 design 一致并已保存。
+3. 在对话中输出**可读变更摘要**（改了哪些章节/契约、对实现的影响），便于用户审阅；用户若提出修改意见，回到 Step 9（及必要时 Step 11）迭代。
+4. **立即进入 Step 13**：归档落盘后**不得**先做编码；必须先跑 Step 13（至少 13.1，零 BLOCKER），再与用户对齐「可否进入 Skill 3」。若本条与「设计与编码的会话内硬边界」冲突，**以更严格的停等规则为准**。
 
 ### Step 11: 提取功能级 Spec
 
@@ -597,6 +612,8 @@ architecture_impact:
 
 > **CLAUDE.md 4.1 节明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
 > **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
+
+> **顺位（BLOCKER）**：Step 10 + Step 11 落盘结束后的**下一件正事就是本 Step 的 13.1**，不得在宣布设计审阅就绪之前编写或修改**实现层产物**（定义见上文「设计与编码的会话内硬边界」）；「实现改完再补 design.harness」一律视为顺序错误。
 
 所有产出归档后，agent **必须自己**完成下列验证，再宣布设计阶段完成。
 

@@ -28,6 +28,14 @@
 
 ## 工作流程
 
+### PRD 与下游阶段的会话内硬边界（BLOCKER，弱模型必读）
+
+与 Skill 2「设计 / 编码」分界同理：防止「改完 PRD 就顺手生成技术设计或改实现」。
+
+1. **请求路由**：用户仅表达「修订 PRD / 更新需求文档 / 改验收条目 / Scope / 术语表」而未在同一条或明确承接的指令中要求「做技术设计 / 写 design / 更新 contracts 设计契约」时，**只激活 Skill 1**，不得自动滑入 Skill 2（需求设计）。
+2. **BLOCKER**：上述「PRD-only」回合内**不得**新建或实质改写 **`design.md` 中与「怎么做」相关的技术章节**、`contracts.yaml` 中的接口/文件契约（均属 Skill 2）。本 Skill 允许的下游产物仅限于 **`PRD.md` 与 Step 6 从 PRD 提取的 `acceptance.yaml`**（及相关 PRD 阶段 Spec）。若用户要「PRD 定稿后立刻出 design」，须在指令中**同时明示**两重意图。
+3. **Harness 顺位**：PRD.md（及 Step 6 产出）落盘后须**先于**宣称「可进入 Skill 2」执行 **Step 7.1**（`harness-runner --phase prd`）；禁止「先入设计再在回头补 PRD.harness」。若用户明确要求「先人工审 PRD 再立项设计」，则在 Step 7.1 PASS 后交付摘要并等人审，**未获明示前不得开写 `design.md`**。
+
 ### Step 1: 收集输入
 
 向用户确认以下信息（缺失项需主动询问）：
@@ -176,12 +184,14 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
 
 ### Step 5: 输出与归档
 
-1. 将 PRD 文档展示给用户确认
-2. 用户确认后，将文档保存到项目文档目录：
+> **顺序纠错**：必须先把 `PRD.md` 写入磁盘，脚本 harness（Step 7.1）与 Spec 对齐检查才能读到文件。**「用户确认」指是否冻结需求并授权下游（Skill 2）或继续迭代 PRD**，不是「确认后才允许写入 PRD.md」。
+
+1. 将 PRD 保存（或更新）至：
    ```
    doc/features/{module-name}/PRD.md
    ```
-3. 若用户要求修改，根据反馈调整后重新走 Step 4 自检
+2. 在对话中输出变更摘要，便于人工审阅；用户若有修改意见，回到 Step 4（及前置 Step）迭代后再回到本 Step。
+3. 进入 **Step 6**；Step 6 完成后**立即进入 Step 7**，**严禁**跳过 **Step 7.1**。若产品与流程要求「先审 PRD 再进设计」，在 Step 7.1 PASS 之后停等明示，其行为约束见上文「PRD 与下游阶段的会话内硬边界」。
 
 ### Step 6: 提取功能级 Spec
 
@@ -265,6 +275,8 @@ doc/features/{module-name}/acceptance.yaml
 > **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
 Spec 文件提取完成后，agent **必须自己**完成下列验证，再宣布 PRD 阶段完成。
+
+> **顺位（BLOCKER）**：Step 6 结束后的**下一件正事就是 7.1**；不得在「已开始 Skill 2 / 改写 design」之后，才回补本阶段的 prd.harness（除非回档设计侧 SSOT，以 PRD 仍为 SSOT 为前提）。
 
 #### 7.1 脚本 Harness（确定性检查，agent 通过 Shell 工具自跑）
 
