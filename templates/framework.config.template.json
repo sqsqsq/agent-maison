@@ -10,7 +10,7 @@
       "schema_version": "固定字符串 \"1.0\"，未来框架 bump 时由维护者同步。",
       "project_name": "项目名；初始化 Skill 从 oh-package.json5 的 name 字段推断，缺失时回退到仓库目录名。",
       "project_type": "枚举：\"app\" | \"atomic_service\"。阶段 7 仅作扩展位预留——\"atomic_service\" 合法但不触发差异化规则；未来议题（首包大小、分包、免安装入口等）落地路线见 framework/docs/atomic-service-roadmap.md。",
-      "agent_adapter": "枚举：\"generic\" | \"claude\" | \"cursor\"。一次只能激活一个；切换需由初始化 Skill 走 UPDATE 模式。",
+      "agent_adapter": "合法值为 `framework/agents/` 下某子目录名（该目录须含 `adapter.yaml` 的 `adapter_name`）。一次只能激活一个；切换需由初始化 Skill 走 UPDATE 模式；各目录含义见 framework/agents/README.md。",
       "architecture": "架构 DSL；字段语义与元规则见 framework/harness/config.ts 的 ArchitectureDsl + validateArchitectureDsl。",
       "architecture.outer_layers[].intra_layer_deps": "枚举：\"forbid\" | \"dag\" | \"sublayer\"。\"sublayer\" 时必须填 sublayers 子数组。",
       "architecture.module_inner_layers": "模块内层名数组；索引小的层可被索引大的层 import（upward 方向）。",
@@ -22,11 +22,13 @@
       "toolchain.hvigor.parallel": "是否传 --parallel。默认 true。",
       "toolchain.hvigor.incremental": "是否传 --incremental。默认 true。",
       "toolchain.hvigor.analyze": "hvigor analyze 模式：\"off\" | \"normal\" | \"advanced\"。默认 \"advanced\"，即传 --analyze=advanced；若工程 warm build 明显变慢，可改为 off 做对比。",
-      "state_machine": "v2.8 起 Stop hook 跨会话隔离的可调阈值。可选；省略本段时 framework/harness/config.ts (normalizeStateMachine) 与 .claude/hooks/check-phase-completion.mjs 各自回退到 DEFAULT_STATE_MACHINE（grace_period_minutes=5 / ttl_hours=12 / schema_version=\"1.1\"）。把这一段写进 skeleton 是为了让工程方在 init 时显式看到这个旋钮，方便决策是否自定义；如不需要自定义可删掉，效果与默认值兜底一致。",
+      "state_machine": "v2.8 起 Stop hook 跨会话隔离的可调阈值。可选；省略本段时 framework/harness/config.ts (normalizeStateMachine) 与下发到实例根的 hook 脚本内 DEFAULT_STATE_MACHINE 回退值一致（grace_period_minutes=5 / ttl_hours=12 / schema_version=\"1.1\"）。把这一段写进 skeleton 是为了让工程方在 init 时显式看到这个旋钮，方便决策是否自定义；如不需要自定义可删掉，效果与默认值兜底一致。",
       "state_machine.grace_period_minutes": "新建 .current-phase.json 时的「无 session_id 缓冲期」分钟数（>=1）。期内 hook 把无 session_id 的 state 视作当前会话产物并自动回填 session_id；超过则视作跨会话 / legacy 遗留 advisory 不阻断。默认 5；多任务并发频繁切换的工程可调短到 2~3。",
       "state_machine.ttl_hours": "无 session_id 的 state 文件 TTL 小时数（>=1）。超过 grace 且早于 ttl 仍按 advisory 提示存在；超过 ttl 一律按已废弃处理仅出 advisory。默认 12；CI / 跑批跑得久的工程可加长到 24~48。",
       "state_machine.schema_version": "状态文件 schema 版本号字符串。当前 \"1.1\"（v2.8 引入 session_id / session_id_recorded_at / last_seen_session_id / last_seen_at 四字段）。下一次 schema 升级会同步在 framework/harness/harness-runner.ts 的 CurrentPhaseState 与本字段一并 bump。",
-      "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。"
+      "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。",
+      "prd": "可选。PRD 脚本 harness 行为。**初始化时默认写入 skeleton**（含 `visual_handoff_enforcement: warn`）。",
+      "prd.visual_handoff_enforcement": "三选一：**warn**（推荐默认，老 PRD 未补 ui_change 只告警）；**strict**（handoff 不合法则 check-prd 可 FAIL）；**off**（不跑该项）。选型说明与场景表见 framework/skills/00-framework-init/prompts/prd-harness-options.md；PRD 侧字段见 framework/skills/1-prd-design/reference/visual-handoff.md。"
     },
     "generation_rules": [
       "生成时删除 $schema_docs 顶层键，其余键按用户答复填充。",
@@ -75,5 +77,9 @@
     "grace_period_minutes": 5,
     "ttl_hours": 12,
     "schema_version": "1.1"
+  },
+
+  "prd": {
+    "visual_handoff_enforcement": "warn"
   }
 }

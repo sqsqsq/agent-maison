@@ -46,7 +46,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 8 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 9 项语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: 功能概述清晰度 (overview_clarity)
 
@@ -130,6 +130,18 @@
   3. 对每个场景给出追溯结果：
      - 哪个用户操作对应哪个页面的哪个组件
      - 是否存在场景中描述的操作在界面中找不到承载组件的情况
+
+### 检查 9: Visual Handoff 与版面权威 (visual_handoff_semantics)
+
+- **严重等级**: MAJOR（与脚本 `check-prd` 互补：脚本校验结构；你校验语义一致性）
+- **何时可跳过语义核对**：脚本报告已 SKIP Visual Handoff（`enforcement=off` 或 `--skip-visual-handoff`）时，本检查标注 SKIP。
+- **评估方法**:
+  1. 读取 PRD 中带根字段 `ui_change` 的 yaml 块（若脚本已 PASS/WARN Visual Handoff，以此为准）。
+  2. 若 `ui_change` ∈ {`new_or_changed`, `copy_edits_only`}：
+     - `authoritative_refs` 是否与「页面/界面描述」的区域划分大致对应（可追溯）？
+     - 正文是否仍写「仅以当前实现为基线」等与 handoff 矛盾之语？若矛盾 → FAIL 或 WARN。
+  3. 若使用 `repo_assets` / `screenshot_pack`：`path` 所指是否更像是全分辨率真源而非聊天缩略图路径（人工判断）？
+  4. 若使用 URL 类 `kind`：是否仍说明版本/帧，避免「只有一个泛链接」导致无法对齐？
 
 ---
 
@@ -236,8 +248,17 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    # --- 检查 9: Visual Handoff 语义 ---
+    - id: visual_handoff_semantics
+      status: PASS | FAIL | WARN | SKIP
+      severity: MAJOR
+      details: |
+        <ui_change 与版面描述是否一致；是否与「以当前实现为基线」等矛盾>
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 8
+    total: 9
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

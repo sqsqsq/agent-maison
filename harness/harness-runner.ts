@@ -52,6 +52,7 @@ import {
   relArchitectureMd,
   statefilePath,
   receiptFilePath,
+  loadFrameworkConfig,
 } from './config';
 import * as YAML from 'yaml';
 
@@ -61,7 +62,7 @@ import * as YAML from 'yaml';
 
 const args = minimist(process.argv.slice(2), {
   string: ['phase', 'feature', 'ai-report', 'adapter'],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'summary', 'failures-only'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'summary', 'failures-only', 'skip-visual-handoff'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -87,13 +88,14 @@ Harness — Spec/Harness 验证工具
 选项:
   -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary|docs|init)
   -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs/init 阶段不需要
-  --adapter <name>          init 阶段必传：claude|cursor|generic（其他阶段忽略）
+  --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
   --summary                 输出稳定短摘要，并写入 reports/<feature>/<phase>/summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
+  --skip-visual-handoff     PRD 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
   -h, --help                显示帮助
 
 示例:
@@ -101,7 +103,7 @@ Harness — Spec/Harness 验证工具
   cd framework/harness && npx ts-node harness-runner.ts --phase catalog
   cd framework/harness && npx ts-node harness-runner.ts --phase glossary
   cd framework/harness && npx ts-node harness-runner.ts --phase docs
-  cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter claude
+  cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter generic
   cd framework/harness && npx ts-node harness-runner.ts --list
 
 放弃当前阶段（清理 Stop hook 的状态文件）:
@@ -221,6 +223,8 @@ async function main(): Promise<void> {
 
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
+  const fwConfig = loadFrameworkConfig(projectRoot);
+  const vhMode = fwConfig.prd?.visual_handoff_enforcement ?? 'warn';
   const context: CheckContext = {
     phase,
     feature,
@@ -228,6 +232,8 @@ async function main(): Promise<void> {
     phaseRule,
     featureSpec,
     adapter: typeof args.adapter === 'string' ? args.adapter : undefined,
+    visualHandoffEnforcement: vhMode,
+    skipVisualHandoff: Boolean(args['skip-visual-handoff']),
   };
 
   // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
@@ -948,7 +954,7 @@ function collectFilesFromDir(
 // --------------------------------------------------------------------------
 //
 // 写入 framework/harness/state/.current-phase.json。该文件是 Stop hook
-// （.claude/hooks/check-phase-completion.mjs）的唯一判据：
+// （实例根 Stop hook 脚本若存在）读取本 state 的唯一判据：
 //   - status='running'         → harness 还没跑完，agent 不应停下
 //   - status='harness_finished'，verdict='PASS'，receipt.status='passed'
 //                              → 阶段闭环，可放行
@@ -965,7 +971,7 @@ interface ReceiptValidation {
  * runner 写 state 时关心的业务字段。session 维度字段（session_id /
  * session_id_recorded_at / last_seen_*）由 Stop hook 单边维护，
  * runner **不写**它们——runner 是 Bash tool 子进程，拿不到稳定的
- * cli session_id。详见 plan：.cursor/plans/stop_hook_跨会话隔离_*.plan.md
+ * cli session_id。详见 harness 与设计文档中的「Stop hook 跨会话隔离」说明。
  */
 interface CurrentPhaseStatePartial {
   phase: Phase;
@@ -1113,7 +1119,7 @@ function tryValidateReceipt(
     return {
       status: 'missing',
       receipt_path: receiptRel,
-      message: '回执文件不存在；本阶段尚未闭环（CLAUDE.md §5.1 第 4 条）。',
+      message: '回执文件不存在；本阶段尚未闭环（全局入口 §5.1 第 4 条）。',
     };
   }
 

@@ -351,4 +351,11 @@ export interface CheckContext {
   featureSpec: FeatureSpec;
   /** init 阶段专用：CLI --adapter 透传值（其他阶段为 undefined） */
   adapter?: string;
+  /**
+   * PRD：Visual Handoff 脚本守门档位（framework.config.json → prd.visual_handoff_enforcement）。
+   * 未设置时 harness-runner 默认为 `warn`。
+   */
+  visualHandoffEnforcement?: 'strict' | 'warn' | 'off';
+  /** CLI `--skip-visual-handoff`：跳过 Visual Handoff 相关脚本检查 */
+  skipVisualHandoff?: boolean;
 }

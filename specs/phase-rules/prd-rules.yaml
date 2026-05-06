@@ -220,6 +220,20 @@ structure_checks:
         - "创建日期"
         - "状态"
 
+  visual_handoff:
+    description: >
+      （可选守门，由 framework.config.json → prd.visual_handoff_enforcement 控制，
+      CLI --skip-visual-handoff 可跳过。）
+      PRD 中应存在含根字段 ui_change 的 ```yaml``` 代码块（可与 Scope 的 yaml 块分开）。
+      ui_change ∈ {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}。
+      new_or_changed / copy_edits_only 时必须提供 visual_handoff.kind 与
+      authoritative_refs；path 类 kind 要求仓库内路径存在；url 类要求 http(s) URL。
+      详见 framework/skills/1-prd-design/reference/visual-handoff.md。
+    severity: MAJOR
+    rule:
+      expect: "yaml_code_block_with_ui_change"
+      enforcement_config: "framework.config.json#prd.visual_handoff_enforcement"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

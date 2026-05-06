@@ -63,6 +63,20 @@ rationale: |
   {如果未来需要扩展 scope，触发条件是什么？}
 ```
 
+### Visual Handoff（视觉交接，供 check-prd 读取）
+
+> 须使用**单独**的 ` ```yaml ` 代码块，且根对象**必须**含 `ui_change`（不要与 Scope 块合并）。  
+> 规范与示例见 [reference/visual-handoff.md](../reference/visual-handoff.md)。
+
+```yaml
+ui_change: new_or_changed
+visual_handoff:
+  kind: repo_assets
+  authoritative_refs:
+    - id: example_region
+      path: doc/features/{module-id}/ux-reference/README.md
+```
+
 ### 最小改动原则
 
 1. **默认就地实现**：所有逻辑优先实现在 `in_scope_modules` 列出的最底层模块内。

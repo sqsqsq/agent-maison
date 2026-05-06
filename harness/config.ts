@@ -127,7 +127,7 @@ export interface HvigorOptionsConfig {
 /**
  * 阶段状态机时间常量（v2.4：跨会话隔离）
  *
- * Stop hook（`.claude/hooks/check-phase-completion.mjs`）在判定 state 是否
+ * Stop hook（由具备 `hooks` 的 adapter 下发到实例根）在判定 state 是否
  * "陈旧"时使用本节配置：
  *   - `grace_period_minutes`：runner 写完 state 到 hook 第一次"盖章"
  *     （写入 session_id）之间的容忍窗口。该窗口内 state.session_id=null
@@ -194,7 +194,7 @@ export interface FrameworkPaths {
    * 阶段状态机文件（agent 工作流强制门 / Layer 3）。
    *
    * 由 harness-runner.ts 在每次运行完成后写入；Stop hook
-   * （`.claude/hooks/check-phase-completion.mjs`）在 agent 即将结束消息时读取，
+   * （实例根 Stop hook，若已配置）在 agent 即将结束消息时读取，
    * 用于物理拦截"未跑 harness / 未完成 verifier 就声称完成"的弱模型行为。
    *
    * 默认 `framework/harness/state/.current-phase.json`。仓库实际可设为 ignore
@@ -213,6 +213,19 @@ export interface FrameworkPaths {
    * 模式定位回执文件。
    */
   receipt_dir_pattern?: string;
+}
+
+/** PRD harness 可选开关 */
+export type VisualHandoffEnforcementMode = 'strict' | 'warn' | 'off';
+
+export interface PrdHarnessConfig {
+  /**
+   * Visual Handoff（ui_change / kind / authoritative_refs）脚本守门强度：
+   * - strict：`new_or_changed` 等必填项缺失或 refs 不合法 → FAIL
+   * - warn：同类问题仅 WARN（默认归一逻辑，利旧 PRD）
+   * - off：不跑 Visual Handoff 检查
+   */
+  visual_handoff_enforcement?: VisualHandoffEnforcementMode;
 }
 
 export interface FrameworkConfig {
@@ -235,6 +248,8 @@ export interface FrameworkConfig {
    * 给 Stop hook 的"陈旧 state"判定提供可调阈值，详见 [StateMachineConfig]。
    */
   state_machine?: StateMachineConfig;
+  /** PRD 脚本阶段行为（可选） */
+  prd?: PrdHarnessConfig;
 }
 
 // --------------------------------------------------------------------------
@@ -303,8 +318,8 @@ export const DEFAULT_PATHS: FrameworkPaths = {
 /**
  * 阶段状态机时间常量默认值（v2.4）。
  *
- * **重要**：本对象的字段值必须与 `.claude/hooks/check-phase-completion.mjs`
- * 内嵌的 `HOOK_DEFAULT_GRACE_MS` / `HOOK_DEFAULT_TTL_MS` 保持一致，由
+ * **重要**：本对象的字段值须与实例根 Stop hook 脚本内嵌的
+ * `HOOK_DEFAULT_GRACE_MS` / `HOOK_DEFAULT_TTL_MS` 保持一致，由
  * `framework/harness/test/hook-stale-state.spec.ts` 的 T11"配置一致性"
  * 用例校验。修改其中一边后必须同步修改另一边。
  */
@@ -418,6 +433,18 @@ function assertNoDeprecatedPaths(parsed: unknown): void {
   }
 }
 
+function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const mode = raw.visual_handoff_enforcement;
+  if (mode === undefined || mode === null) return undefined;
+  if (mode !== 'strict' && mode !== 'warn' && mode !== 'off') {
+    throw new Error(
+      `[framework/config.ts] prd.visual_handoff_enforcement 必须是 "strict" | "warn" | "off"，收到 ${String(mode)}`,
+    );
+  }
+  return { visual_handoff_enforcement: mode };
+}
+
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
   const fallback = buildDefaultConfig();
   return {
@@ -429,6 +456,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     paths: { ...fallback.paths, ...(raw.paths ?? {}) },
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
+    prd: normalizePrdHarness(raw.prd),
   };
 }
 
