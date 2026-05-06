@@ -26,6 +26,7 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
   { id: 'har-index-export', modulePath: './unit/har-index-export.unit.test' },
   { id: 'hvigor-args',      modulePath: './unit/hvigor-args.unit.test' },
+  { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },

@@ -4,8 +4,9 @@
 // 作用对象: framework-init Skill 0.3 体检表 11 项产物。
 //
 // 设计要点（v2.6 弱模型工作流强制门 · L2+）:
-//   - 11 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于 sha256 字节比对
+//   - 11 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于模板感知比对
 //     与 fs.existsSync 计算，**AI 无任何自由度**；
+//   - 文本模板项使用 EOL-aware 比对：仅 CRLF/LF 不同不算用户漂移；
 //   - 双输出：
 //       (a) JSON   → framework/harness/reports/_global/init/<timestamp>/
 //                    check-init.json （机器读，给 SKILL 0.3.2 推策略）
@@ -124,6 +125,16 @@ const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
   '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
 };
 
+type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
+
+interface TextArtifactComparison {
+  kind: TextArtifactCompareKind;
+  templateHash: string;
+  targetHash: string;
+  templateText: string;
+  targetText: string;
+}
+
 // --------------------------------------------------------------------------
 // 通用工具
 // --------------------------------------------------------------------------
@@ -131,6 +142,34 @@ const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
 function sha256(buf: Buffer | string): string {
   const b = typeof buf === 'string' ? Buffer.from(buf, 'utf-8') : buf;
   return crypto.createHash('sha256').update(b).digest('hex');
+}
+
+function normalizeEol(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+function compareTextArtifact(template: Buffer | string, target: Buffer | string): TextArtifactComparison {
+  const templateText = Buffer.isBuffer(template) ? template.toString('utf-8') : template;
+  const targetText = Buffer.isBuffer(target) ? target.toString('utf-8') : target;
+  const templateHash = sha256(templateText);
+  const targetHash = sha256(targetText);
+  let kind: TextArtifactCompareKind = 'content_different';
+  if (templateHash === targetHash) {
+    kind = 'byte_equal';
+  } else if (normalizeEol(templateText) === normalizeEol(targetText)) {
+    kind = 'eol_only';
+  }
+  return {
+    kind,
+    templateHash,
+    targetHash,
+    templateText,
+    targetText,
+  };
+}
+
+function eolOnlyDiffSummary(): string {
+  return 'no content diff (EOL-only difference ignored)';
 }
 
 function safeReadBuffer(p: string): Buffer | null {
@@ -515,17 +554,17 @@ function strategyText(line: number, status: InspectionStatus): string {
     },
     2: {
       MISSING: 'Step 4.1 直接写',
-      EMPTY: '等同 MISSING（直接写）',
+      EMPTY: '保留现有文件（不重写）',
       POPULATED: 'Step 4.1 前 diff + 用户 y',
     },
     3: {
       MISSING: '直接拷贝',
-      EMPTY: '等同 MISSING（直接拷贝）',
+      EMPTY: '保留现有文件（不重写）',
       POPULATED: '逐文件 diff + 用户 y（自建文件保留）',
     },
     4: {
       MISSING: 'Step 5.2 写骨架',
-      EMPTY: '等同 MISSING',
+      EMPTY: '保留现有文件（不重写）',
       POPULATED: '默认跳过（不重置用户已迭代文档）',
     },
     5: {
@@ -690,20 +729,20 @@ function inspect02(env: InspectorEnv): Inspection {
     };
   }
   const rendered = renderTemplate(tplText, env.renderEnv);
-  const targetText = targetBuf.toString('utf-8');
-  const tplHash = sha256(rendered);
-  const tgHash = sha256(targetText);
-  if (tplHash === tgHash) {
+  const comparison = compareTextArtifact(rendered, targetBuf);
+  if (comparison.kind === 'byte_equal' || comparison.kind === 'eol_only') {
     return {
       index: 2,
       target_path: adapter.entryFile.targetRel,
       template_source: adapter.entryFile.templateRel,
       status: 'EMPTY',
-      hash_template: tplHash,
-      hash_target: tgHash,
-      diff_summary: 'no diff',
+      hash_template: comparison.templateHash,
+      hash_target: comparison.targetHash,
+      diff_summary: comparison.kind === 'byte_equal' ? 'no diff' : eolOnlyDiffSummary(),
       planned_strategy: strategyText(2, 'EMPTY'),
-      diagnosis: '与按当前 DSL 渲染的默认骨架字节相等',
+      diagnosis: comparison.kind === 'byte_equal'
+        ? '与按当前 DSL 渲染的默认骨架字节相等'
+        : '与按当前 DSL 渲染的默认骨架仅换行符不同，已忽略',
     };
   }
   return {
@@ -711,9 +750,9 @@ function inspect02(env: InspectorEnv): Inspection {
     target_path: adapter.entryFile.targetRel,
     template_source: adapter.entryFile.templateRel,
     status: 'POPULATED',
-    hash_template: tplHash,
-    hash_target: tgHash,
-    diff_summary: unifiedDiffSummary(rendered, targetText, 50),
+    hash_template: comparison.templateHash,
+    hash_target: comparison.targetHash,
+    diff_summary: unifiedDiffSummary(comparison.templateText, comparison.targetText, 50),
     planned_strategy: strategyText(2, 'POPULATED'),
     diagnosis: '与默认骨架存在差异，已附 diff_summary',
   };
@@ -757,6 +796,7 @@ function inspect03(env: InspectorEnv): Inspection {
   let missing = 0;
   let drift = 0;
   let identical = 0;
+  let eolOnly = 0;
   const driftLines: string[] = [];
   const tplHashAll: string[] = [];
   const tgHashAll: string[] = [];
@@ -776,15 +816,18 @@ function inspect03(env: InspectorEnv): Inspection {
       missing++;
       continue;
     }
-    const a = sha256(tplBuf);
-    const b = sha256(tgBuf);
-    tplHashAll.push(a);
-    tgHashAll.push(b);
-    if (a === b) {
+    const comparison = compareTextArtifact(tplBuf, tgBuf);
+    tplHashAll.push(comparison.templateHash);
+    tgHashAll.push(comparison.targetHash);
+    if (comparison.kind === 'byte_equal') {
       identical++;
+    } else if (comparison.kind === 'eol_only') {
+      identical++;
+      eolOnly++;
+      driftLines.push(`[EOL] ${f.targetRel}: 仅换行符不同，已忽略 tpl=${comparison.templateHash.slice(0, 8)} target=${comparison.targetHash.slice(0, 8)}`);
     } else {
       drift++;
-      driftLines.push(`[D] ${f.targetRel}: tpl=${a.slice(0, 8)} target=${b.slice(0, 8)}`);
+      driftLines.push(`[D] ${f.targetRel}: tpl=${comparison.templateHash.slice(0, 8)} target=${comparison.targetHash.slice(0, 8)}`);
     }
   }
 
@@ -813,9 +856,11 @@ function inspect03(env: InspectorEnv): Inspection {
       status: 'EMPTY',
       hash_template: aggTplHash,
       hash_target: aggTgHash,
-      diff_summary: 'no diff',
+      diff_summary: eolOnly === 0 ? 'no diff' : eolOnlyDiffSummary(),
       planned_strategy: strategyText(3, 'EMPTY'),
-      diagnosis: `全部 ${identical} 个模板文件与源字节相等`,
+      diagnosis: eolOnly === 0
+        ? `全部 ${identical} 个模板文件与源字节相等`
+        : `全部 ${identical} 个模板文件与源内容相同，其中 ${eolOnly} 个仅换行符不同，已忽略`,
     };
   }
   return {
@@ -871,20 +916,20 @@ function inspect04(env: InspectorEnv): Inspection {
     };
   }
   const rendered = renderTemplate(tplText, env.renderEnv);
-  const targetText = targetBuf.toString('utf-8');
-  const tplHash = sha256(rendered);
-  const tgHash = sha256(targetText);
-  if (tplHash === tgHash) {
+  const comparison = compareTextArtifact(rendered, targetBuf);
+  if (comparison.kind === 'byte_equal' || comparison.kind === 'eol_only') {
     return {
       index: 4,
       target_path: targetRel,
       template_source: tplRel,
       status: 'EMPTY',
-      hash_template: tplHash,
-      hash_target: tgHash,
-      diff_summary: 'no diff',
+      hash_template: comparison.templateHash,
+      hash_target: comparison.targetHash,
+      diff_summary: comparison.kind === 'byte_equal' ? 'no diff' : eolOnlyDiffSummary(),
       planned_strategy: strategyText(4, 'EMPTY'),
-      diagnosis: '与渲染后骨架字节相等',
+      diagnosis: comparison.kind === 'byte_equal'
+        ? '与渲染后骨架字节相等'
+        : '与渲染后骨架仅换行符不同，已忽略',
     };
   }
   return {
@@ -892,9 +937,9 @@ function inspect04(env: InspectorEnv): Inspection {
     target_path: targetRel,
     template_source: tplRel,
     status: 'POPULATED',
-    hash_template: tplHash,
-    hash_target: tgHash,
-    diff_summary: unifiedDiffSummary(rendered, targetText, 50),
+    hash_template: comparison.templateHash,
+    hash_target: comparison.targetHash,
+    diff_summary: unifiedDiffSummary(comparison.templateText, comparison.targetText, 50),
     planned_strategy: strategyText(4, 'POPULATED'),
     diagnosis: '已被用户编辑（与默认骨架不一致）',
   };
@@ -1053,19 +1098,20 @@ function inspect07(env: InspectorEnv): Inspection {
       diagnosis: '骨架模板不可读，记为 POPULATED',
     };
   }
-  const a = sha256(tplBuf);
-  const b = sha256(tgBuf);
-  if (a === b) {
+  const comparison = compareTextArtifact(tplBuf, tgBuf);
+  if (comparison.kind === 'byte_equal' || comparison.kind === 'eol_only') {
     return {
       index: 7,
       target_path: targetRel,
       template_source: tplRel,
       status: 'EMPTY',
-      hash_template: a,
-      hash_target: b,
-      diff_summary: 'no diff',
+      hash_template: comparison.templateHash,
+      hash_target: comparison.targetHash,
+      diff_summary: comparison.kind === 'byte_equal' ? 'no diff' : eolOnlyDiffSummary(),
       planned_strategy: strategyText(7, 'EMPTY'),
-      diagnosis: '与骨架字节相等',
+      diagnosis: comparison.kind === 'byte_equal'
+        ? '与骨架字节相等'
+        : '与骨架仅换行符不同，已忽略',
     };
   }
   return {
@@ -1073,9 +1119,9 @@ function inspect07(env: InspectorEnv): Inspection {
     target_path: targetRel,
     template_source: tplRel,
     status: 'POPULATED',
-    hash_template: a,
-    hash_target: b,
-    diff_summary: unifiedDiffSummary(tplBuf.toString('utf-8'), tgBuf.toString('utf-8'), 50),
+    hash_template: comparison.templateHash,
+    hash_target: comparison.targetHash,
+    diff_summary: unifiedDiffSummary(comparison.templateText, comparison.targetText, 50),
     planned_strategy: strategyText(7, 'POPULATED'),
     diagnosis: '已被用户编辑（与骨架不一致）',
   };
@@ -1636,6 +1682,8 @@ export const __testing = {
   inspect11,
   buildStdoutTable,
   unifiedDiffSummary,
+  normalizeEol,
+  compareTextArtifact,
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
 };
