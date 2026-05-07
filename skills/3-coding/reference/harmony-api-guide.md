@@ -15,7 +15,7 @@
   "name": "@wallet/wallet_home",
   "version": "1.0.0",
   "description": "钱包首页功能模块",
-  "main": "Index.ets",
+  "main": "index.ets",
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {

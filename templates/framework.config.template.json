@@ -15,7 +15,7 @@
       "architecture.outer_layers[].intra_layer_deps": "枚举：\"forbid\" | \"dag\" | \"sublayer\"。\"sublayer\" 时必须填 sublayers 子数组。",
       "architecture.module_inner_layers": "模块内层名数组；索引小的层可被索引大的层 import（upward 方向）。",
       "architecture.inner_dependency_direction": "当前版本仅支持 \"upward\"。",
-      "architecture.cross_module_exports_file": "跨模块唯一合法导出入口文件名，默认 \"Index.ets\"。",
+      "architecture.cross_module_exports_file": "跨模块唯一合法导出入口文件名，默认 \"index.ets\"。",
       "paths": "各产物路径，均相对于实例工程根。初始化 Skill 不鼓励偏离默认值，除非实例已有既定目录结构。",
       "toolchain": "工具链相关配置。devEcoStudio.installPath 需要按 Skill 00 Step 5.6 经用户确认后写入；hvigor 是命令行调优开关，默认值对齐内网真实工程常用命令，可按工程表现做 A/B。",
       "toolchain.hvigor.daemon": "是否传 hvigor daemon 参数。false → --no-daemon；true → --daemon。默认 true。",
@@ -53,7 +53,7 @@
     ],
     "module_inner_layers": ["shared", "data", "domain", "presentation"],
     "inner_dependency_direction": "upward",
-    "cross_module_exports_file": "Index.ets"
+    "cross_module_exports_file": "index.ets"
   },
 
   "paths": {

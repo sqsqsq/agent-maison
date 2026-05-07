@@ -25,7 +25,7 @@
 //   - `can_depend_on` 只能指向其他已声明的 layer（不得凭空出现）。
 //   - `module_inner_layers` 的数组顺序即依赖顺序（upward：索引小的层可被
 //     索引大的层 import，反之禁止）。方向只支持 "upward"。
-//   - `cross_module_exports_file` 必须是非空字符串（默认 "Index.ets"），
+//   - `cross_module_exports_file` 必须是非空字符串（默认 "index.ets"），
 //     framework 始终强制「跨模块访问只能通过该文件」。
 //
 // 读取顺序：
@@ -74,7 +74,7 @@ export interface ArchitectureDsl {
   module_inner_layers: string[];
   /** 当前版本仅支持 'upward'——按 module_inner_layers 顺序单向依赖 */
   inner_dependency_direction: 'upward';
-  /** 跨模块唯一合法导出入口文件（默认 Index.ets） */
+  /** 跨模块唯一合法导出入口文件（默认 index.ets） */
   cross_module_exports_file: string;
 }
 
@@ -302,7 +302,7 @@ export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
   ],
   module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
   inner_dependency_direction: 'upward',
-  cross_module_exports_file: 'Index.ets',
+  cross_module_exports_file: 'index.ets',
 };
 
 export const DEFAULT_PATHS: FrameworkPaths = {
@@ -693,7 +693,7 @@ export function validateArchitectureDsl(arch: ArchitectureDsl): void {
 
   if (!arch.cross_module_exports_file || typeof arch.cross_module_exports_file !== 'string') {
     throw new Error(
-      '[framework/config.ts] architecture.cross_module_exports_file 必须是非空字符串（例如 "Index.ets"）。',
+      '[framework/config.ts] architecture.cross_module_exports_file 必须是非空字符串（例如 "index.ets"）。',
     );
   }
 }

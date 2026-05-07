@@ -18,5 +18,5 @@
   ],
   "module_inner_layers": ["data", "domain", "ui"],
   "inner_dependency_direction": "upward",
-  "cross_module_exports_file": "Index.ets"
+  "cross_module_exports_file": "index.ets"
 }

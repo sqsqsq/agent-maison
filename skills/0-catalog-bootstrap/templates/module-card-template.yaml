@@ -72,8 +72,8 @@ module:
     #     如果描述的是 YYY → 属于 OtherModule。
     #     判定规则: ...
 
-  # 从 Index.ets 提取的主要 export 符号，≤ 10 个
+  # 从 HAR 入口 index.ets（或 config 约定名）提取的主要 export 符号，≤ 10 个
   key_exports: []
 
-  # HAP → EntryAbility 路径；HAR → Index.ets 相对路径
-  entry_file: "<layer_dir>/<ModuleName>/src/main/ets/Index.ets"
+  # HAP → EntryAbility 路径；HAR → 与 cross_module_exports_file 一致的相对路径
+  entry_file: "<layer_dir>/<ModuleName>/src/main/ets/index.ets"

@@ -185,7 +185,7 @@ const cases: Array<{ name: string; run: () => void }> = [
             outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
             module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
             inner_dependency_direction: 'upward',
-            cross_module_exports_file: 'Index.ets',
+            cross_module_exports_file: 'index.ets',
           },
           paths: {},
           toolchain: { preferredProduct: 'mirror' },
@@ -225,7 +225,7 @@ const cases: Array<{ name: string; run: () => void }> = [
             outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
             module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
             inner_dependency_direction: 'upward',
-            cross_module_exports_file: 'Index.ets',
+            cross_module_exports_file: 'index.ets',
           },
           paths: {},
           toolchain: {

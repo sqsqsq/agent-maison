@@ -60,7 +60,7 @@ function writeConfig(root: string): void {
         }],
         module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
         inner_dependency_direction: 'upward',
-        cross_module_exports_file: 'Index.ets',
+        cross_module_exports_file: 'index.ets',
       },
       paths: {
         features_dir: 'doc/features',

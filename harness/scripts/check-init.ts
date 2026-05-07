@@ -483,7 +483,7 @@ function buildArchitectureSummary(arch: any): string {
   const layers: any[] = Array.isArray(arch.outer_layers) ? arch.outer_layers : [];
   const inner: any[] = Array.isArray(arch.module_inner_layers) ? arch.module_inner_layers : [];
   const ids = layers.map(l => l?.id).filter(Boolean);
-  const exitFile = arch.cross_module_exports_file ?? 'Index.ets';
+  const exitFile = arch.cross_module_exports_file ?? 'index.ets';
   const layerPart = ids.length === 0
     ? '0 个外层'
     : `${ids.length} 个外层（${ids[0]}…${ids[ids.length - 1]}）`;
@@ -513,7 +513,7 @@ function buildRenderEnv(
     module_inner_layers_csv: Array.isArray(raw?.architecture?.module_inner_layers)
       ? raw.architecture.module_inner_layers.join(' / ')
       : 'shared / data / domain / presentation',
-    cross_module_exports_file: raw?.architecture?.cross_module_exports_file ?? 'Index.ets',
+    cross_module_exports_file: raw?.architecture?.cross_module_exports_file ?? 'index.ets',
   };
 }
 
