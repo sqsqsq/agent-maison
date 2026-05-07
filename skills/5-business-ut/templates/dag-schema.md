@@ -81,10 +81,12 @@ nodes:
       type: string                 # 现有类名，如 "CardCloudApi"
       method: string               # 被调用方法名
     stub_strategy: enum            # mock_response | mock_error | throw | mock_delay
+    spy_preset: string             # 可选；引用 ut/mock-plan.yaml > methods[].presets[].id（推荐）
     mock_data:
       success: { description: string, value: string }
       error:   { description: string, value: string }
       empty:   { description: string, value: string }
+      # @deprecated 过渡期保留：新 DAG 应使用 spy_preset + mock-plan.yaml，避免在 DAG 内堆无类型字面量
 
     # --- state_transition ---
     transition:
@@ -113,14 +115,14 @@ nodes:
 | type 值 | 说明 | 必填专属字段 |
 |---|---|---|
 | `user_trigger` | 模拟"用户事件"——UT 里就是直接 `await coord.xxx(...)` | `trigger.event` |
-| `port_call_cloud` | 云侧接口调用（真实 data 层类的方法） | `boundary`, `stub_strategy`, `mock_data` |
-| `port_call_local` | 本地持久化/系统能力调用 | `boundary`, `stub_strategy`, `mock_data` |
+| `port_call_cloud` | 云侧接口调用（真实 data 层类的方法） | `boundary`, `stub_strategy`, `spy_preset` 或（deprecated）`mock_data` |
+| `port_call_local` | 本地持久化/系统能力调用 | `boundary`, `stub_strategy`, `spy_preset` 或（deprecated）`mock_data` |
 | `state_transition` | 业务流内部 state.phase 迁移 | `transition.to_phase` |
 | `ui_subscription` | UI 因某 state 变化而渲染/跳转（⚠️ 仅供 design 文档与 `device-testing-todo.md` 生成参考；**UT 不断言、harness 忽略**） | `transition.to_phase` + `subscriber`（UI 名称） |
 | `assertion` | UT 断言点 | `linked_branch` 或 `linked_acceptance`，`assertions` |
 | `conditional_branch` | 条件分支（保留；优先多 DAG 表达） | `condition`, `branches` |
 | `code_execution` | 纯同步计算（保留兼容） | `source` |
-| `async_call` | 通用异步调用（保留兼容；优先用 port_call_*） | `source`, `stub_strategy`, `mock_data` |
+| `async_call` | 通用异步调用（保留兼容；优先用 port_call_*） | `source`, `stub_strategy`, `spy_preset` 或（deprecated）`mock_data` |
 | `background_task` | 后台任务（保留兼容） | `source`, `task` |
 | ~~`user_intervention`~~ | 已弃用 → `device-testing-todo.md` | — |
 | ~~`ui_navigation`~~ | 已弃用 → `device-testing-todo.md` | — |
@@ -156,7 +158,7 @@ nodes:
 6. **boundary 一致性**（当 `use_case` 非空时）：`boundary.name` / `type` / `method` 必须在 `use-cases.yaml > data_boundaries` 中有对应声明
 7. **source 存在性**：`source.file` 引用的文件在工程中必须存在
 8. **ID 唯一**：DAG 内 `nodes[].id` 不重复
-9. **mock 完整**：`port_call_*` / `async_call` 节点至少定义一种 mock_data 场景
+9. **mock 表达**：`port_call_*` / `async_call` 节点应优先使用 `spy_preset` 引用 `ut/mock-plan.yaml`。旧字段 `mock_data` **deprecated**（仍可被旧 harness/工具阅读；新 feature 勿用字面量 `value` 充当代类型）。
 10. **UI 副作用禁入**：DAG 中禁止出现 `NavPathStack.push` / `showToast` / 真实点击等节点（请用 `ui_subscription` 占位或交 `device-testing-todo.md`）
 11. **分支覆盖（当 `use_case` 非空时）**：同 UseCase 的所有 DAG 的 `branches[]` 必须并集覆盖 `use-cases.yaml > branches[].id`，且互不重叠
 

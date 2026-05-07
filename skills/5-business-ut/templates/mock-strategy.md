@@ -1,6 +1,8 @@
 # 打桩（Mock/Stub）策略指南
 
 > **模板说明**：下方代码片段以钱包工程的模型名（`CardInfo` / `BankCard` 等）为参考示例演示 Mock 填法；实际使用请按你自己工程的类型替换。
+>
+> **v2.3 真源**：若 feature 已产出 `doc/features/<feature>/ut/mock-plan.yaml`，则 **Spy / Fake / Stub 的方法签名、spy_fields、presets（含 `ts_expr`）必须以 mock-plan 为唯一真源**，在代码中 **1:1 翻译**，禁止在实现阶段「顺手加字段 / 改返回值形状」导致与 plan、DAG `spy_preset` 引用不一致。打桩策略的**教科书**仍为本文，**机器校验**以 `check-ut.ts` + `mock-plan-schema.md` 为准。
 
 ## 概述
 
