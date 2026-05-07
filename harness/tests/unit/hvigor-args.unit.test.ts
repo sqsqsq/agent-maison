@@ -10,22 +10,12 @@
 //   接编译失败。fixture 里没法跑 hvigor 真实编译（CI 不带 DevEco），只能回到
 //   纯函数 + 字符串断言这一档。
 //
-// 覆盖矩阵（3 case）：
-//   1. assembleApp（coding 阶段）：
-//      a. --mode project 出现且只一次
-//      b. -p product=<detect 结果> 出现
-//      c. -p buildMode=debug 出现（这是 release→debug 加速的关键）
-//      d. --daemon / --parallel / --incremental / --analyze=advanced 都在
-//      e. extraArgs 透传到 task 之前的末端（让用户的 -p buildMode=release
-//         能覆盖 framework 默认值）
-//   2. ohosTest 路径（ut 阶段）：
-//      a. -p module=<name>@ohosTest 出现
-//      b. **不**含 -p buildMode=debug（HAP 默认即 debug，多余 flag 反而是噪音）
-//      c. --daemon / --parallel / --incremental / --analyze=advanced 都在
-//      d. -p product=<detect 结果> 出现
-//   3. preferredProduct 覆盖：
-//      framework.config.json 写 toolchain.preferredProduct=mirror，buildAssembleAppArgs
-//      装出的 -p product=mirror（覆盖 build-profile.json5 默认）
+// 覆盖矩阵：
+//   1. assembleApp（coding 阶段）：…
+//   2. buildUtHvigorArgs（ut / ohosTest）：DevEco 对齐 --mode module、isOhosTest、buildMode=test、task 后接 analyze=normal
+//   3. buildModuleHapArgs(default)： historic 无 --mode
+//   4. preferredProduct 覆盖 ut/coding
+//   …
 // ============================================================================
 
 import * as fs from 'fs';
@@ -35,6 +25,8 @@ import {
   buildHvigorDiagnostics,
   buildAssembleAppArgs,
   buildModuleHapArgs,
+  buildUtHvigorArgs,
+  looksLikeUtHvigorCommandMismatch,
   buildCodingHvigorArgs,
   analyzeProjectDependencyIssue,
 } from '../../scripts/utils/hvigor-runner';
@@ -184,39 +176,55 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 
   {
-    name: 'buildModuleHapArgs(target=ohosTest): 含 module + parallel + incremental，**不**含 buildMode',
+    name: 'buildUtHvigorArgs: DevEco 对齐 --mode module、isOhosTest=true、buildMode=test、task 后接 tuning（analyze=normal）',
     run: () => withTmpDir(root => {
       writeFile(
         path.join(root, 'build-profile.json5'),
         JSON.stringify({ app: { products: [{ name: 'default' }] } }),
       );
-      const args = buildModuleHapArgs(root, 'WalletMain', 'ohosTest', 'genOnDeviceTestHap');
+      const args = buildUtHvigorArgs(root, 'WalletMain', 'genOnDeviceTestHap');
 
-      const modules = findFlagValues(args, 'module');
-      assertEq(modules, ['WalletMain@ohosTest'], '应当形如 module=<name>@ohosTest');
+      assertEq(args[args.indexOf('--mode') + 1], 'module', '--mode module');
+      assertEq(findFlagValues(args, 'module'), ['WalletMain@ohosTest'], 'module=@ohosTest');
+      assertEq(findFlagValues(args, 'isOhosTest'), ['true'], 'isOhosTest=true');
+      assertEq(findFlagValues(args, 'buildMode'), ['test'], 'buildMode=test');
+      assertEq(findFlagValues(args, 'product'), ['default'], 'product 探测');
 
-      const products = findFlagValues(args, 'product');
-      assertEq(products, ['default'], 'product 走 detectProduct');
-
+      const taskIdx = args.indexOf('genOnDeviceTestHap');
+      if (taskIdx < 0) throw new Error('缺 task genOnDeviceTestHap');
+      assertContains(args.slice(taskIdx + 1), '--analyze=normal', 'task 后应为 UT 默认 analyze=normal');
       assertContains(args, '--parallel', '应含 --parallel');
       assertContains(args, '--incremental', '应含 --incremental');
       assertContains(args, '--daemon', '应含 --daemon');
-      assertContains(args, '--analyze=advanced', '应含 --analyze=advanced');
-      assertNotContains(args, '--no-daemon', '默认不应再传 --no-daemon');
+      assertNotContains(args, '--analyze=advanced', 'UT 默认不应沿用全局 advanced');
+    }),
+  },
 
-      const buildModes = findFlagValues(args, 'buildMode');
-      assertEq(
-        buildModes,
-        [],
-        'ohosTest 路径不应硬写 buildMode（HAP / ohosTest 默认即 debug）',
+  {
+    name: 'buildModuleHapArgs(target=default): 无 --mode，仍含 assembleHap 与 product',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'phone' }] } }),
       );
+      const args = buildModuleHapArgs(root, 'WalletMain', 'default', 'assembleHap');
+      assertNotContains(args, '--mode', 'default 模块路径不传 --mode');
+      assertEq(findFlagValues(args, 'module'), ['WalletMain@default'], 'module=@default');
+      assertEq(findFlagValues(args, 'product'), ['phone'], 'product');
+      assertEq(args[args.length - 1], 'assembleHap', 'task 最后');
+    }),
+  },
 
-      assertNotContains(args, '--mode', 'module 级路径不传 --mode');
-      assertEq(
-        args[args.length - 1],
-        'genOnDeviceTestHap',
-        'task 必须是最后一个参数',
+  {
+    name: 'buildModuleHapArgs(ohosTest): 委托 buildUtHvigorArgs',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'default' }] } }),
       );
+      const a = buildModuleHapArgs(root, 'X', 'ohosTest', 'genOnDeviceTestHap');
+      const b = buildUtHvigorArgs(root, 'X', 'genOnDeviceTestHap');
+      assertEq(a, b, 'ohosTest 应与 buildUtHvigorArgs 一致');
     }),
   },
 
@@ -252,9 +260,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         'assembleApp 路径应当以 preferredProduct 覆盖 build-profile',
       );
 
-      const moduleArgs = buildModuleHapArgs(root, 'WalletMain', 'ohosTest', 'genOnDeviceTestHap');
+      const utArgs = buildUtHvigorArgs(root, 'WalletMain', 'genOnDeviceTestHap');
       assertEq(
-        findFlagValues(moduleArgs, 'product'),
+        findFlagValues(utArgs, 'product'),
         ['mirror'],
         'ohosTest 路径同样应当以 preferredProduct 覆盖',
       );
@@ -371,6 +379,36 @@ const cases: Array<{ name: string; run: () => void }> = [
         throw new Error(`应解析出 @my-scope/my-lib：${JSON.stringify(issue.dependencies)}`);
       }
     }),
+  },
+  {
+    name: 'looksLikeUtHvigorCommandMismatch: isOhosTest=false + genOnDeviceTestHap → true',
+    run: () => {
+      const log = '$ hvigorw.bat -p module=M@ohosTest genOnDeviceTestHap\nenableX: false, isOhosTest: false\n';
+      if (!looksLikeUtHvigorCommandMismatch(log)) {
+        throw new Error('应识别命令不对齐');
+      }
+    },
+  },
+  {
+    name: 'looksLikeUtHvigorCommandMismatch: genOnDeviceTestHap 但无 --mode module → true',
+    run: () => {
+      const log = '$ hvigorw.bat -p module=M@ohosTest genOnDeviceTestHap\n';
+      if (!looksLikeUtHvigorCommandMismatch(log)) {
+        throw new Error('缺少 --mode module 应判为不对齐');
+      }
+    },
+  },
+  {
+    name: 'looksLikeUtHvigorCommandMismatch: 已对齐的摘录 → false',
+    run: () => {
+      const log = [
+        '$ node hvigorw.js --mode module -p module=M@ohosTest -p isOhosTest=true -p buildMode=test genOnDeviceTestHap',
+        'isOhosTest: true',
+      ].join('\n');
+      if (looksLikeUtHvigorCommandMismatch(log)) {
+        throw new Error('不应误判已对齐命令');
+      }
+    },
   },
 ];
 

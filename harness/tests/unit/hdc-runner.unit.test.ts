@@ -200,19 +200,27 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'findOhosTestSignedHap: 目录存在但无 *-signed.hap → null',
+    name: 'findOhosTestSignedHap: build/product/outputs/ohosTest 约定命名（非 default product）',
     run: () => withTmpDir(root => {
-      const srcPath = '02-Feature/NoHap';
-      const hapDir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
-      writeFile(path.join(hapDir, 'NoHap-ohosTest-unsigned.hap'), 'fake');
-      const found = findOhosTestSignedHap(root, srcPath, 'NoHap');
-      assertNull(found, '只有 unsigned 时应返回 null');
+      const srcPath = '02-Feature/WalletMain';
+      const hapDir = path.join(root, srcPath, 'build', 'product', 'outputs', 'ohosTest');
+      const expected = path.join(hapDir, 'WalletMain-ohosTest-signed.hap');
+      writeFile(expected, 'fake hap');
+      const found = findOhosTestSignedHap(root, srcPath, 'WalletMain', 'product');
+      assertEq(found, expected, '应优先命中传入的 product 段');
     }),
   },
-
-  // --------------------------------------------------------------------------
-  // loadAppBundleName
-  // --------------------------------------------------------------------------
+  {
+    name: 'findOhosTestSignedHap: 未传 product 时扫描 build/* 命中 product 目录',
+    run: () => withTmpDir(root => {
+      const srcPath = 'mod/A';
+      const hapDir = path.join(root, srcPath, 'build', 'product', 'outputs', 'ohosTest');
+      const expected = path.join(hapDir, 'A-ohosTest-signed.hap');
+      writeFile(expected, 'x');
+      const found = findOhosTestSignedHap(root, srcPath, 'A');
+      assertEq(found, expected, '应扫描到 build/product/...');
+    }),
+  },
   {
     name: 'loadAppBundleName: 标准 app.json5 → 返回 bundleName',
     run: () => withTmpDir(root => {

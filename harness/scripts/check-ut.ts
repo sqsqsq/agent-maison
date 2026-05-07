@@ -26,7 +26,7 @@ import {
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { compileTestFiles } from './utils/ts-compile';
-import { runHvigorBuild, runHvigorTest, probeDevices, analyzeProjectDependencyIssue } from './utils/hvigor-runner';
+import { runHvigorBuild, runHvigorTest, probeDevices, analyzeProjectDependencyIssue, mergeHvigorLogForUtClassification, looksLikeUtHvigorCommandMismatch } from './utils/hvigor-runner';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
@@ -862,6 +862,21 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     lines.push(`失败归因：${failureClass.kind}`);
     lines.push(`归因说明：${failureClass.explanation}`);
     lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+    lines.push(`实际命令：${first.command ?? '(无)'}`);
+    if (first.metaPath) {
+      const metaAbs = path.isAbsolute(first.metaPath)
+        ? first.metaPath
+        : path.resolve(process.cwd(), first.metaPath);
+      if (fs.existsSync(metaAbs)) {
+        try {
+          const metaRaw = fs.readFileSync(metaAbs, 'utf-8');
+          lines.push('hvigor meta（节选）：');
+          lines.push(metaRaw.length > 4000 ? `${metaRaw.slice(0, 4000)}\n…` : metaRaw);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
     if (first.errors.length > 0) {
       lines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
       first.errors.slice(0, 10).forEach(e =>
@@ -895,6 +910,7 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
 type UtHvigorFailureKind =
   | 'toolchain'
   | 'env_skip'
+  | 'ut_hvigor_command_mismatch'
   | 'ut_code'
   | 'feature_code'
   | 'project_dependency_missing'
@@ -916,12 +932,25 @@ function classifyUtHvigorBuildFailure(
   if (res.skippedByEnv) {
     return {
       kind: 'env_skip',
-      explanation: 'HARNESS_SKIP_HVIGOR 显式跳过真实编译。',
+      explanation: 'HARNESS_SKIP_HVIGOR=1 显式跳过真实编译。',
       suggestion: '取消 HARNESS_SKIP_HVIGOR 后重跑；真实编译是 UT 阶段出口条件。',
     };
   }
 
-  const log = `${res.logExcerpt}\n${res.errors.map(e => `${e.file ?? ''} ${e.message}`).join('\n')}`;
+  const mergedLog = mergeHvigorLogForUtClassification(res);
+  if (looksLikeUtHvigorCommandMismatch(mergedLog)) {
+    return {
+      kind: 'ut_hvigor_command_mismatch',
+      explanation:
+        'hvigor 日志/命令形态表明 ohosTest 构建未按 DevEco 默认打开（常见：isOhosTest=false、缺 --mode module、' +
+        'buildMode 非 test 等），容易走进错误构建图并把问题误判成 ohpm 依赖缺失。',
+      suggestion:
+        '先核对 harness 报告中的「实际命令」与 DevEco「Run ohosTest」是否一致（见 harness-runbook UT hvigor 小节）。' +
+        '在确认命令已对齐之前，不要优先执行 ohpm install / npm install / --clear-state；对齐后仍报 Failed to resolve OhmUrl 再按依赖路径处理。',
+    };
+  }
+
+  const log = mergedLog;
   const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
   const hasDependencyResolutionFailure =
     /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(log);

@@ -314,6 +314,51 @@ export function analyzeProjectDependencyIssue(
   };
 }
 
+/**
+ * 合并 UT 失败归因用的 hvigor 文本：优先读落盘全量日志，再拼 excerpt / command / errors。
+ * （与 `analyzeProjectDependencyIssue` 同源思路，避免仅凭 8KB 尾部误判。）
+ */
+export function mergeHvigorLogForUtClassification(
+  res: Pick<HvigorRunResult, 'logExcerpt' | 'errors' | 'logAbsPath' | 'command'>,
+): string {
+  const fromDisk =
+    res.logAbsPath && fs.existsSync(res.logAbsPath)
+      ? readLogTextForAnalysis(res.logAbsPath)
+      : '';
+  return [
+    fromDisk,
+    res.logExcerpt,
+    res.command ?? '',
+    ...((res.errors ?? []).map(e => `${e.file ?? ''} ${e.message}`)),
+  ]
+    .filter(s => s && String(s).trim().length > 0)
+    .join('\n');
+}
+
+/**
+ * 粗粒度识别「hvigor 命令形态未对齐 ohosTest / DevEco」导致的伪编译失败。
+ * 命中时应优先修 harness/参数，而不是引导 `ohpm install`。
+ */
+export function looksLikeUtHvigorCommandMismatch(log: string): boolean {
+  const utContext =
+    /genOnDeviceTestHap/i.test(log) ||
+    /@ohosTest/i.test(log) ||
+    /ohosTest/i.test(log);
+  if (!utContext) return false;
+
+  if (/isOhosTest:\s*false/i.test(log) || /isOhosTest\s*=\s*false/i.test(log)) return true;
+  if (/-p\s+isOhosTest=false/i.test(log) || /-p\s*isOhosTest=false/i.test(log)) return true;
+
+  const firstCmdLine = log.split(/\r?\n/).find(l => l.trim().startsWith('$')) ?? '';
+  if (/genOnDeviceTestHap/i.test(firstCmdLine) && !/--mode\s+module/i.test(firstCmdLine)) return true;
+
+  const mProd = firstCmdLine.match(/-p\s+product=([^\s]+)/);
+  const productArg = mProd?.[1];
+  if (productArg && productArg !== 'default' && /entryTarget:\s*default/i.test(log)) return true;
+
+  return false;
+}
+
 function extractDependencyNames(log: string): string[] {
   const deps = new Set<string>();
   const scopedRe = /@[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._\-\/]+)?/g;
@@ -553,6 +598,22 @@ function buildHvigorTuningArgs(projectRoot: string): string[] {
   if (opts.parallel) args.push('--parallel');
   if (opts.incremental) args.push('--incremental');
   if (opts.analyze !== 'off') args.push(`--analyze=${opts.analyze}`);
+
+  return args;
+}
+
+/**
+ * UT（ohosTest / genOnDeviceTestHap）专用调优参数：parallel / incremental / daemon 仍读全局
+ * `toolchain.hvigor`；`analyze` 在**非 off** 时固定为 `normal`，以对齐 DevEco Run ohosTest。
+ */
+export function buildUtHvigorTuningArgs(projectRoot: string): string[] {
+  const opts = resolveHvigorOptions(projectRoot);
+  const analyzeLevel = opts.analyze === 'off' ? 'off' : 'normal';
+  const args: string[] = [opts.daemon ? '--daemon' : '--no-daemon'];
+
+  if (opts.parallel) args.push('--parallel');
+  if (opts.incremental) args.push('--incremental');
+  if (analyzeLevel !== 'off') args.push(`--analyze=${analyzeLevel}`);
 
   return args;
 }
@@ -911,6 +972,17 @@ export function resolveCodingHvigorSpawnPlan(
   };
 }
 
+/**
+ * UT 阶段 spawn 解析：与 coding 共用 `resolveCodingHvigorSpawnPlan`（node+hvigorw.js 优先），
+ * 仅参数装配由 `buildUtHvigorArgs` 负责，避免在通用 framework.config 模板增加 hvigor.ut 段。
+ */
+export function resolveUtHvigorSpawnPlan(
+  projectRoot: string,
+  hvigorArgs: string[],
+): { spawnPlan: HvigorSpawnPlan } | { toolMissing: true } {
+  return resolveCodingHvigorSpawnPlan(projectRoot, hvigorArgs);
+}
+
 export interface HvigorInvokeOpts {
   /** 项目根（hvigorw 所在目录、env / config 解析锚点） */
   projectRoot: string;
@@ -948,6 +1020,8 @@ export interface HvigorInvokeOpts {
   requireSuccessMarker?: boolean;
   /** 覆盖 config 中的 toolchain.hvigor.coding.successMarkers */
   successMarkerSources?: string[];
+  /** 合并进落盘 *.meta.json 的额外字段（如 `utHvigor`） */
+  metaExtras?: Record<string, unknown>;
 }
 
 function excerptFromLogFile(logAbs: string): string {
@@ -1095,6 +1169,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
       HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),
     },
     logFile: path.basename(logAbs),
+    ...(opts.metaExtras ?? {}),
   };
   try {
     fs.writeFileSync(metaAbs, JSON.stringify(metaPayload, null, 2), 'utf-8');
@@ -1125,8 +1200,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 /**
  * 模块级编译。
  *
- * 用于 ut_hvigor_build（跑 OhosTestCompileArkTS）。
- * 用于 ut_hvigor_build（跑 OhosTestCompileArkTS）。
+ * 用于 ut_hvigor_build（`genOnDeviceTestHap`，与 DevEco Run ohosTest 对齐）。
  * Coding 阶段默认走 `runHvigorAssembleApp`（`toolchain.hvigor.coding`，与 DevEco `--mode module assembleHap` 对齐）。
  *
  * 注意：**HAR / HSP 模块没有 assembleHap task**。如果把 `task` 设为
@@ -1155,11 +1229,43 @@ export function runHvigorBuild(
 ): HvigorRunResult {
   const target = opts.target ?? 'default';
   const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
-  const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, target, task);
+
+  if (target === 'ohosTest') {
+    const utArgs = buildUtHvigorArgs(opts.projectRoot, opts.moduleName, task);
+    const resolved = resolveUtHvigorSpawnPlan(opts.projectRoot, utArgs);
+    if ('toolMissing' in resolved) {
+      return {
+        executed: false,
+        toolMissing: true,
+        durationMs: 0,
+        logExcerpt: buildToolMissingMessage(opts.projectRoot),
+        errors: [],
+      };
+    }
+    const product = detectProduct(opts.projectRoot);
+    return invokeHvigor({
+      ...opts,
+      spawnPlan: resolved.spawnPlan,
+      logBasename: 'hvigor-ut-build.log',
+      timeoutKind: 'ut',
+      requireSuccessMarker: false,
+      metaExtras: {
+        utHvigor: {
+          mode: 'module',
+          product,
+          buildMode: 'test',
+          isOhosTest: true,
+          task,
+        },
+      },
+    });
+  }
+
+  const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, 'default', task);
   return invokeHvigor({
     ...opts,
     args,
-    logBasename: target === 'ohosTest' ? 'hvigor-ut-build.log' : 'hvigor-build.log',
+    logBasename: 'hvigor-build.log',
     timeoutKind: 'ut',
     requireSuccessMarker: false,
   });
@@ -1236,13 +1342,34 @@ export function buildAssembleAppArgs(
 }
 
 /**
- * 装配模块级 assembleHap / genOnDeviceTestHap 的 hvigor args（ut 阶段用）。
+ * 装配 ohosTest / `genOnDeviceTestHap` 的 hvigor args（ut_hvigor_build / ut_hvigor_test 共用）。
  *
- * 不传 `--mode`（实测 `--mode module` + 模块 cwd 会让 hvigor 去模块目录找
- * hvigor-config.json5，反而失败；`--mode project` 又只暴露顶层 hook task）。
+ * 与 DevEco Studio「Run ohosTest」默认对齐：`node hvigorw.js --mode module`
+ * + `-p module=<name>@ohosTest` + `-p isOhosTest=true` + `-p product=<detectProduct()>`
+ * + `-p buildMode=test` + task + `--analyze=normal`（analyze 非 off 时）+ parallel/incremental/daemon。
  *
- * **不**加 `-p buildMode=debug`：assembleHap / genOnDeviceTestHap 默认就是
- * debug，加了只是噪音。
+ * **不**写入通用 `framework.config` 模板；平台默认收敛在本函数与 `resolveUtHvigorSpawnPlan`。
+ */
+export function buildUtHvigorArgs(
+  projectRoot: string,
+  moduleName: string,
+  task: string = 'genOnDeviceTestHap',
+): string[] {
+  return [
+    '--mode', 'module',
+    '-p', `module=${moduleName}@ohosTest`,
+    '-p', 'isOhosTest=true',
+    '-p', `product=${detectProduct(projectRoot)}`,
+    '-p', 'buildMode=test',
+    task,
+    ...buildUtHvigorTuningArgs(projectRoot),
+  ];
+}
+
+/**
+ * 装配模块级 default target 的 hvigor args（历史路径：不传 `--mode`，与 wrapper 直跑兼容）。
+ *
+ * **ohosTest** 请使用 `buildUtHvigorArgs`（`runHvigorBuild(..., target: 'ohosTest')` 已内置）。
  */
 export function buildModuleHapArgs(
   projectRoot: string,
@@ -1250,6 +1377,9 @@ export function buildModuleHapArgs(
   target: 'default' | 'ohosTest',
   task: string,
 ): string[] {
+  if (target === 'ohosTest') {
+    return buildUtHvigorArgs(projectRoot, moduleName, task);
+  }
   return [
     '-p', `module=${moduleName}@${target}`,
     '-p', `product=${detectProduct(projectRoot)}`,
@@ -1308,6 +1438,7 @@ export function runHvigorTest(
     phase: opts.phase,
     srcModuleName: opts.moduleName,
     srcPath: opts.moduleSrcPath,
+    buildProduct: detectProduct(opts.projectRoot),
     skipEnvVar: opts.skipEnvVar, // 允许跟 build 用同一个 env 变量整体跳过
   });
 

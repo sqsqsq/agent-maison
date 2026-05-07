@@ -56,6 +56,12 @@
 | UI 交互 | 部分在 UT 里走 | ✗ 交 Skill 6（`device-testing-todo.md`） |
 | AC 过滤 | 全部算 UT 覆盖 | `ut_layer in [unit, both]` 进 UT；`device` 交 Skill 6 |
 
+### Harness：`ut_hvigor_build` / `ut_hvigor_test`（hvigor）
+
+- **默认命令**（实现于 `framework/harness/scripts/utils/hvigor-runner.ts` 的 `buildUtHvigorArgs`，**不**要求修改通用 `framework.config.template.json`）：与 DevEco「Run ohosTest」对齐——`--mode module`、`-p module=<name>@ohosTest`、`-p isOhosTest=true`、`-p product=<detectProduct()>`、`-p buildMode=test`、`genOnDeviceTestHap`，task 之后接 `--analyze=normal`（除非全局 `analyze=off`）及 `parallel/incremental/daemon`。
+- **HAP 路径**：`<module>/build/<product>/outputs/ohosTest/*-signed.hap`；装机前 harness 按 `product` 查找并可在 `build/*` 下兜底扫描。
+- **失败归因**：`check-ut` 若报 `ut_hvigor_command_mismatch`（如日志 `isOhosTest=false`、命令缺 `--mode module`），应优先核对 harness 命令形态，**不要**未经对齐就按 `project_dependency_missing` 去 `ohpm install` 或进入 Skill 6。对齐后仍出现 `Failed to resolve OhmUrl` 再按依赖问题处理。
+
 ## 输入
 
 | 输入项 | 必需 | 说明 |

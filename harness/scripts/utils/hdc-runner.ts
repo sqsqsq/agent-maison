@@ -160,24 +160,47 @@ export function findOhosTestSignedHap(
   projectRoot: string,
   srcPath: string,
   srcModuleName: string,
+  buildProduct?: string,
 ): string | null {
-  // 优先按"约定"命名找
-  const conventional = path.join(
-    projectRoot,
-    srcPath,
-    'build',
-    'default',
-    'outputs',
-    'ohosTest',
-    `${srcModuleName}-ohosTest-signed.hap`,
-  );
-  if (fs.existsSync(conventional)) return conventional;
+  const segments: string[] = [];
+  if (buildProduct && buildProduct.trim()) {
+    segments.push(buildProduct.trim());
+  }
+  if (!segments.includes('default')) {
+    segments.push('default');
+  }
 
-  // 兜底：在 outputs/ohosTest 下扫第一个 *-ohosTest-signed.hap
-  const dir = path.join(projectRoot, srcPath, 'build', 'default', 'outputs', 'ohosTest');
-  if (!fs.existsSync(dir)) return null;
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('-signed.hap'));
-  return files.length ? path.join(dir, files[0]) : null;
+  for (const seg of segments) {
+    const conventional = path.join(
+      projectRoot,
+      srcPath,
+      'build',
+      seg,
+      'outputs',
+      'ohosTest',
+      `${srcModuleName}-ohosTest-signed.hap`,
+    );
+    if (fs.existsSync(conventional)) return conventional;
+
+    const dir = path.join(projectRoot, srcPath, 'build', seg, 'outputs', 'ohosTest');
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('-signed.hap'));
+      if (files.length) return path.join(dir, files[0]!);
+    }
+  }
+
+  const buildRoot = path.join(projectRoot, srcPath, 'build');
+  if (!fs.existsSync(buildRoot)) return null;
+  for (const ent of fs.readdirSync(buildRoot, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const ohosDir = path.join(buildRoot, ent.name, 'outputs', 'ohosTest');
+    if (!fs.existsSync(ohosDir)) continue;
+    const conv = path.join(ohosDir, `${srcModuleName}-ohosTest-signed.hap`);
+    if (fs.existsSync(conv)) return conv;
+    const files = fs.readdirSync(ohosDir).filter(f => f.endsWith('-signed.hap'));
+    if (files.length) return path.join(ohosDir, files[0]!);
+  }
+  return null;
 }
 
 // ----------------------------------------------------------------------------
@@ -322,6 +345,11 @@ export interface OnDeviceUtOptions {
   srcModuleName: string;
   /** 模块源码相对路径（相对 projectRoot） */
   srcPath: string;
+  /**
+   * 与 hvigor `-p product=` / `build/<product>/outputs/ohosTest` 对齐的产物目录段。
+   * 不传时 `findOhosTestSignedHap` 会尝试 default 并扫描 `build/*`。
+   */
+  buildProduct?: string;
   /** 跳过环境变量（v2.2 风格） */
   skipEnvVar?: string;
 }
@@ -365,9 +393,10 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   }
 
   // 2) 找 hap
-  const hap = findOhosTestSignedHap(opts.projectRoot, opts.srcPath, opts.srcModuleName);
+  const hap = findOhosTestSignedHap(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
   if (!hap) {
-    const msg = `未在 ${opts.srcPath}/build/default/outputs/ohosTest/ 找到 *-signed.hap，请先 genOnDeviceTestHap`;
+    const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : 'default + build/* 扫描';
+    const msg = `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先 genOnDeviceTestHap`;
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',
