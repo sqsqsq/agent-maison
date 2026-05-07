@@ -6,7 +6,10 @@
 //
 // 检查项（与 ut-rules.yaml 对应）：
 //   Structure:     dag_schema_compliance, dag_node_type_valid, dag_acyclic,
-//                  dag_source_file_exists, ut_file_naming, ut_framework_import,
+//                  dag_source_file_exists, ut_testability_audit_present,
+//                  ut_unsupported_targets_handled, ut_mock_plan_present,
+//                  ut_mock_plan_typed, ut_mock_plan_contracts_consistent,
+//                  dag_spy_preset_resolvable, ut_file_naming, ut_framework_import,
 //                  ut_assertion_exists, mock_stub_for_async, test_registration
 //   Traceability:  dag_to_acceptance, acceptance_coverage, dag_to_source
 //
@@ -34,6 +37,14 @@ import {
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
+import {
+  buildMockPlanPresetIndex,
+  collectMockPlanTypedIssues,
+  parseMockPlanFile,
+  parseTestabilityAuditFile,
+  type MockPlanSpec,
+  type TestabilityAuditRecord,
+} from './utils/ut-artifact-parse';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -97,7 +108,15 @@ interface DagNode {
   };
   next?: string[];
   stub_strategy?: string;
+  /** @deprecated 过渡期保留；新 DAG 应使用 spy_preset + ut/mock-plan.yaml */
   mock_data?: Record<string, unknown>;
+  /** 引用 mock-plan.yaml > spies[].methods[].presets[].id（与 port_call_* / async_call 配合） */
+  spy_preset?: string;
+  boundary?: {
+    name?: string;
+    type?: string;
+    method?: string;
+  };
   intervention?: Record<string, unknown>;
   task?: Record<string, unknown>;
   navigation?: Record<string, unknown>;
@@ -2873,6 +2892,524 @@ function checkBoundaryCoverage(
 }
 
 // --------------------------------------------------------------------------
+// Testability audit + mock-plan (v2.3)
+// --------------------------------------------------------------------------
+
+function isUnitUtLayer(layer?: string): boolean {
+  return layer === 'unit' || layer === 'both' || layer === undefined;
+}
+
+/** AC/BD id 须被 testability-audit 覆盖 */
+function collectUnitScopeAcceptanceIds(ctx: CheckContext): string[] {
+  const acceptance = ctx.featureSpec.acceptance;
+  if (!acceptance) return [];
+  const ids: string[] = [];
+  for (const c of acceptance.criteria ?? []) {
+    if (isUnitUtLayer(c.ut_layer)) ids.push(c.id);
+  }
+  for (const b of acceptance.boundaries ?? []) {
+    if (isUnitUtLayer(b.ut_layer)) ids.push(b.id);
+  }
+  return ids;
+}
+
+function testabilityAuditPath(ctx: CheckContext): string {
+  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'ut/testability-audit.md');
+}
+
+function mockPlanPath(ctx: CheckContext): string {
+  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'ut/mock-plan.yaml');
+}
+
+function deviceTestingTodoPath(ctx: CheckContext): string {
+  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'device-testing-todo.md');
+}
+
+function auditLevelNorm(level?: string): string {
+  return (level ?? '').trim().toUpperCase();
+}
+
+function auditRecordsNeedMockPlan(records: TestabilityAuditRecord[]): TestabilityAuditRecord[] {
+  return records.filter(r => {
+    const L = auditLevelNorm(r.testability_level);
+    return L === 'L0' || L === 'L1' || L === 'L2';
+  });
+}
+
+function resolveDagNodeClassName(ctx: CheckContext, node: DagNode): string | undefined {
+  if (node.source?.class) return node.source.class;
+  const file = node.source?.file;
+  if (!file || !ctx.featureSpec.contracts?.interfaces?.length) return undefined;
+  const norm = file.replace(/\\/g, '/');
+  const iface = ctx.featureSpec.contracts.interfaces.find(i => i.file.replace(/\\/g, '/') === norm);
+  return iface?.class;
+}
+
+function resolveAuditEntryPoint(ctx: CheckContext, record: TestabilityAuditRecord): { cls: string; method: string } | undefined {
+  const symbol = record.entry_point?.symbol?.trim();
+  if (symbol && symbol.includes('.')) {
+    const parts = symbol.split('.');
+    const method = parts.pop()?.trim();
+    const cls = parts.join('.').trim();
+    if (cls && method) return { cls, method };
+  }
+
+  const file = record.entry_point?.file?.trim();
+  if (!file || !ctx.featureSpec.contracts?.interfaces?.length) return undefined;
+  const norm = file.replace(/\\/g, '/');
+  const iface = ctx.featureSpec.contracts.interfaces.find(i => i.file.replace(/\\/g, '/') === norm);
+  if (!iface) return undefined;
+
+  const method = symbol && !symbol.includes('.') ? symbol : undefined;
+  if (method) return { cls: iface.class, method };
+
+  return undefined;
+}
+
+function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
+  const id = 'ut_testability_audit_present';
+  const requiredIds = collectUnitScopeAcceptanceIds(ctx);
+  if (requiredIds.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'acceptance.yaml 无 ut_layer∈{unit,both} 的 AC/BD，跳过 testability-audit 门禁。',
+    }];
+  }
+
+  const p = testabilityAuditPath(ctx);
+  if (!fs.existsSync(p)) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `缺少 ${path.relative(ctx.projectRoot, p).replace(/\\/g, '/')}\n` +
+        `模板：framework/skills/5-business-ut/templates/testability-audit-template.md`,
+      suggestion: '为每条 unit/both 的 AC/BD 写入 testability-audit.md（Markdown 内嵌 YAML，根字段 records[]）',
+    }];
+  }
+
+  const records = parseTestabilityAuditFile(p);
+  const byAc = new Map(records.map(r => [r.acceptance_id, r]));
+  const missing = requiredIds.filter(aid => !byAc.has(aid));
+
+  if (missing.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `testability-audit 未覆盖 ${missing.length} 条 unit/both 项：\n${truncateList(missing, 20)}`,
+      suggestion: '在 testability-audit.md 的 records[] 中为上述 id 各补一条记录。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `testability-audit 已覆盖全部 ${requiredIds.length} 条 unit/both AC/BD。`,
+  }];
+}
+
+function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
+  const id = 'ut_unsupported_targets_handled';
+  const requiredIds = collectUnitScopeAcceptanceIds(ctx);
+  if (requiredIds.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无 unit/both AC/BD，跳过 L3 处置门禁。',
+    }];
+  }
+
+  const p = testabilityAuditPath(ctx);
+  if (!fs.existsSync(p)) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'testability-audit.md 不存在（由 ut_testability_audit_present 先行阻断）。',
+    }];
+  }
+
+  const records = parseTestabilityAuditFile(p);
+  const l3 = records.filter(r => auditLevelNorm(r.testability_level) === 'L3');
+  if (l3.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '无 L3（不可测）记录，跳过 option_a/b 处置检查。',
+    }];
+  }
+
+  const deviceTodo = fs.existsSync(deviceTestingTodoPath(ctx))
+    ? fs.readFileSync(deviceTestingTodoPath(ctx), 'utf-8')
+    : '';
+
+  const gapFiles = findGapNotesFiles(ctx.feature);
+  let approvedCount = 0;
+  for (const g of gapFiles) {
+    approvedCount += readApprovedMutations(g).size;
+  }
+
+  const issues: string[] = [];
+  for (const r of l3) {
+    const sel = (r.selected ?? '').trim();
+    if (sel !== 'option_a' && sel !== 'option_b') {
+      issues.push(`${r.acceptance_id}: L3 须设置 selected 为 option_a 或 option_b（当前：${sel || '（空）'}）`);
+      continue;
+    }
+    if (sel === 'option_a') {
+      const tag = r.acceptance_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const ok =
+        new RegExp(`#+\\s*${tag}\\b`).test(deviceTodo) ||
+        new RegExp(`\\b${tag}\\b`).test(deviceTodo);
+      if (!ok) {
+        issues.push(
+          `${r.acceptance_id}: option_a 要求写入 device-testing-todo.md（须出现标题或正文引用 ${r.acceptance_id}）`,
+        );
+      }
+    } else {
+      if (approvedCount === 0) {
+        issues.push(
+          `${r.acceptance_id}: option_b 要求 gap-notes.md > approved_src_mutations[] 至少登记 1 条授权`,
+        );
+      }
+    }
+  }
+
+  if (issues.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${issues.length} 条 L3 处置不合规：\n${truncateList(issues, 15)}`,
+      suggestion:
+        'option_a → 更新 doc/features/<feature>/device-testing-todo.md；option_b → 按 Skill 5 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `全部 ${l3.length} 条 L3 记录均已 option_a/b 处置并可追踪。`,
+  }];
+}
+
+function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditRecord[]): CheckResult[] {
+  const id = 'ut_mock_plan_present';
+  const need = auditRecordsNeedMockPlan(records);
+  if (need.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无 L0/L1/L2 可测性记录，跳过 mock-plan 门禁。',
+    }];
+  }
+
+  const mp = parseMockPlanFile(mockPlanPath(ctx));
+  if (!mp || !(mp.spies?.length)) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[]）。\n` +
+        `模板：framework/skills/5-business-ut/templates/mock-plan-schema.md`,
+      suggestion: '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 Spy 目标类与 presets。',
+    }];
+  }
+
+  const missingSpyForDep: string[] = [];
+  const missingSpyForEntryPoint: string[] = [];
+  for (const rec of need) {
+    const entry = resolveAuditEntryPoint(ctx, rec);
+    if (entry) {
+      const spy = mp.spies!.find(s => s.target_class === entry.cls);
+      const hasMethod = !!spy?.methods?.some(m => m.name === entry.method);
+      if (!hasMethod) {
+        missingSpyForEntryPoint.push(
+          `${rec.acceptance_id}: entry_point ${entry.cls}.${entry.method} 缺少 mock-plan spy/method`,
+        );
+      }
+    }
+
+    const deps = rec.dependencies ?? [];
+    if (deps.length === 0 && !entry) {
+      missingSpyForDep.push(`${rec.acceptance_id}: L0/L1/L2 记录缺少 dependencies 且无法从 entry_point 映射 contracts 接口`);
+      continue;
+    }
+    for (const d of deps) {
+      const kind = (d.kind ?? '').toLowerCase();
+      if (kind === 'pure') continue;
+      const ok = mp.spies!.some(s => s.target_class === d.name);
+      if (!ok) {
+        missingSpyForDep.push(`${rec.acceptance_id}: 依赖 ${d.name}（kind=${d.kind || '?'}) 缺少 spy target_class`);
+      }
+    }
+  }
+
+  if (missingSpyForEntryPoint.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `mock-plan 缺少与审计 entry_point 对齐的 spy/method：\n${truncateList(missingSpyForEntryPoint, 15)}`,
+      suggestion: '为每条 L0/L1/L2 审计记录的 entry_point 补齐 spies[].target_class 与 methods[].name，保持 contracts.yaml / audit / mock-plan 三方一致。',
+    }];
+  }
+
+  if (missingSpyForDep.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `mock-plan 缺少与审计依赖对齐的 spy：\n${truncateList(missingSpyForDep, 15)}`,
+      suggestion: '补全 testability-audit.md 的 dependencies，或在 mock-plan.yaml 中为非 pure 依赖补 spies[].target_class。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `mock-plan 满足 ${need.length} 条 L0/L1/L2 记录的 spy 声明要求。`,
+  }];
+}
+
+function checkUtMockPlanTyped(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
+  const id = 'ut_mock_plan_typed';
+  if (!plan?.spies?.length) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无 mock-plan 或 spies 为空，跳过类型化 ts_expr 检查。',
+    }];
+  }
+
+  const bad = collectMockPlanTypedIssues(plan);
+
+  if (bad.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${bad.length} 处 preset ts_expr 未通过粗类型断言扫描：\n${truncateList(bad, 15)}`,
+      suggestion: '参考 mock-plan-schema.md 的正例，为对象字面量补 "as SomeType" 或使用 new 构造。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: 'mock-plan 全部 preset ts_expr 通过粗校验。',
+  }];
+}
+
+function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
+  const id = 'ut_mock_plan_contracts_consistent';
+  const contracts = ctx.featureSpec.contracts;
+  if (!plan?.spies?.length) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无 mock-plan 或 spies 为空，跳过与 contracts 对齐检查。',
+    }];
+  }
+  if (!contracts?.interfaces?.length) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'feature 缺少 contracts.yaml interfaces[]，跳过 mock-plan 与契约一致性检查。',
+    }];
+  }
+
+  const ifaceByClass = new Map(contracts.interfaces.map(i => [i.class, i]));
+  const issues: string[] = [];
+
+  for (const spy of plan.spies ?? []) {
+    const iface = ifaceByClass.get(spy.target_class);
+    if (!iface) {
+      issues.push(`spy.target_class="${spy.target_class}" 不在 contracts.yaml interfaces[].class 中`);
+      continue;
+    }
+    const methNames = new Set(iface.methods.map(m => m.name));
+    for (const meth of spy.methods ?? []) {
+      if (!methNames.has(meth.name)) {
+        issues.push(`mock-plan: ${spy.target_class}.${meth.name} 未在 contracts 接口方法表中声明`);
+      }
+    }
+  }
+
+  if (issues.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: truncateList(issues, 20),
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: 'mock-plan 的 target_class / methods 与 contracts.yaml 一致。',
+  }];
+}
+
+function checkDagSpyPresetResolvable(
+  ctx: CheckContext,
+  dags: Array<{ path: string; dag: DagFile }>,
+  plan: MockPlanSpec | null,
+): CheckResult[] {
+  const id = 'dag_spy_preset_resolvable';
+  if (dags.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '无 DAG 文件，跳过 spy_preset 解析。',
+    }];
+  }
+
+  const nodesWithPreset: Array<{ dagPath: string; nodeId: string; key: string; preset: string }> = [];
+  for (const { path: dagPath, dag } of dags) {
+    for (const node of dag.nodes ?? []) {
+      const preset = node.spy_preset?.trim();
+      if (!preset) continue;
+      let cls: string | undefined;
+      let meth: string | undefined;
+      if (node.type === 'port_call_cloud' || node.type === 'port_call_local') {
+        cls = node.boundary?.type;
+        meth = node.boundary?.method;
+      } else if (node.type === 'async_call') {
+        cls = resolveDagNodeClassName(ctx, node);
+        meth = node.source?.function;
+      } else {
+        cls = undefined;
+        meth = undefined;
+      }
+      if (!cls || !meth) {
+        nodesWithPreset.push({ dagPath, nodeId: node.id, key: '(无法解析类/方法)', preset });
+        continue;
+      }
+      nodesWithPreset.push({ dagPath, nodeId: node.id, key: `${cls}::${meth}`, preset });
+    }
+  }
+
+  if (nodesWithPreset.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: 'DAG 无 spy_preset 字段（旧 mock_data 写法仍兼容，不强制 spy_preset）。',
+    }];
+  }
+
+  if (!plan?.spies?.length) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: 'DAG 声明了 spy_preset，但 mock-plan.yaml 缺失或 spies 为空，无法解析 preset id。',
+      suggestion: '补齐 ut/mock-plan.yaml，或移除 DAG 中的 spy_preset。',
+    }];
+  }
+
+  const idx = buildMockPlanPresetIndex(plan);
+  const bad: string[] = [];
+  for (const n of nodesWithPreset) {
+    if (n.key === '(无法解析类/方法)') {
+      bad.push(`${n.dagPath} > ${n.nodeId}: spy_preset=${n.preset} 但缺少 boundary / source 定位类与方法`);
+      continue;
+    }
+    const set = idx.get(n.key);
+    if (!set || !set.has(n.preset)) {
+      bad.push(`${n.dagPath} > ${n.nodeId}: spy_preset="${n.preset}" 在 mock-plan 的 ${n.key} presets 中不存在`);
+    }
+  }
+
+  if (bad.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: truncateList(bad, 15),
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `全部 ${nodesWithPreset.length} 处 spy_preset 可在 mock-plan 中解析。`,
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -2950,6 +3487,8 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const dags = loadDagFiles(ctx);
     const utFiles = loadUtFiles(ctx);
+    const mockPlanDoc = parseMockPlanFile(mockPlanPath(ctx));
+    const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
     const results: CheckResult[] = [];
 
@@ -2961,6 +3500,13 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkBoundaryMatchesContracts(ctx), 'boundary_matches_contracts'));
     results.push(...safeRun(() => checkNamedBusinessHandler(ctx), 'named_business_handler'));
 
+    // v2.3：可测性预检 + mock-plan（先于 DAG 拓扑之后的 trace，但逻辑上属于 UT 规约门禁）
+    results.push(...safeRun(() => checkUtTestabilityAuditPresent(ctx), 'ut_testability_audit_present'));
+    results.push(...safeRun(() => checkUtUnsupportedTargetsHandled(ctx), 'ut_unsupported_targets_handled'));
+    results.push(...safeRun(() => checkUtMockPlanPresent(ctx, auditRecordsEarly), 'ut_mock_plan_present'));
+    results.push(...safeRun(() => checkUtMockPlanTyped(ctx, mockPlanDoc), 'ut_mock_plan_typed'));
+    results.push(...safeRun(() => checkUtMockPlanContractsConsistent(ctx, mockPlanDoc), 'ut_mock_plan_contracts_consistent'));
+
     // v1 保留 + v2 修订：DAG 结构
     results.push(...safeRun(() => checkDagSchemaCompliance(ctx, dags), 'dag_schema_compliance'));
     results.push(...safeRun(() => checkDagNodeTypeValid(ctx, dags), 'dag_node_type_valid'));
@@ -2971,6 +3517,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDagBoundaryMatchesSpec(ctx, dags), 'dag_boundary_matches_spec'));
     results.push(...safeRun(() => checkDagAssertionLinkedBranch(ctx, dags), 'dag_assertion_linked_branch'));
     results.push(...safeRun(() => checkDagCohesion(ctx, dags), 'dag_cohesion'));
+    results.push(...safeRun(() => checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc), 'dag_spy_preset_resolvable'));
 
     // v1 保留 + v2 修订：UT 代码
     results.push(...safeRun(() => checkUtFileNaming(ctx, utFiles), 'ut_file_naming'));
