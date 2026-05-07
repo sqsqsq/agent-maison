@@ -72,7 +72,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 9 项 v2.1 语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 **10** 项 v2.1/v2.3 语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: state_model 完备性 (state_model_completeness)
 
@@ -153,6 +153,17 @@
   5. 若发现形式化 UT（例如每个 it 只有 1 个 expect，或只测 repository 静态数据结构而 acceptance 要求业务流程），判定 FAIL。
 
 - **输出**：逐个 `it()` 标注业务规则、断言类型数量、是否覆盖异常语义。
+
+### 检查 4C: mock-plan 与 DAG/UT 对齐（mock_plan_traceability）【v2.3】
+
+- **严重等级**: **BLOCKER**（当 `doc/features/{feature_name}/ut/mock-plan.yaml` 存在且 feature 含 L0/L1/L2 可测项时）
+- **前置**：若 mock-plan 不存在且 harness 对 `ut_mock_plan_present` 为 SKIP，则本项 SKIP
+- **评估方法**:
+  1. 阅读 `ut/mock-plan.yaml`：每个 `presets[].id` 是否在业务上有明确含义（success / 各类失败 / 边界值）
+  2. 对每条 DAG（尤其 `port_call_*` / `async_call`）：若节点含 `spy_preset`，preset 是否能覆盖该分支在 PRD / acceptance 上需要的 happy + 关键失败（与 mock-plan 对照）
+  3. 阅读 UT：切换分支时是否使用 mock-plan 宣言的 preset（或等价命名的 `whenXxx`），**避免**在 `it()` 内重新手写与 mock-plan `ts_expr` 不一致的大段字面量
+  4. 若 mock-plan 有 preset 但 DAG/UT 从未引用对应依赖方法 → WARN 或 FAIL（视是否造成覆盖缺口）
+- **输出**：preset ↔ 分支 ↔ `it()` 映射表；缺口清单
 
 ### 检查 5: branch 语义覆盖 (branch_coverage_semantic)
 
@@ -297,6 +308,17 @@ verification_result:
             exception_semantics: <YES/NO/NA>
             verdict: PASS/FAIL
       affected_files: [...]
+      suggestion: |
+        <修正建议>
+
+    - id: mock_plan_traceability
+      status: PASS | FAIL | WARN | SKIP
+      severity: BLOCKER
+      details: |
+        mock-plan ↔ DAG spy_preset ↔ UT preset 映射：
+        - 缺 preset / 未引用 / 与 ts_expr 不一致: [...]
+      affected_files:
+        - "doc/features/{feature_name}/ut/mock-plan.yaml"
       suggestion: |
         <修正建议>
 
