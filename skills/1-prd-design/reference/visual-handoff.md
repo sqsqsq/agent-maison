@@ -29,9 +29,13 @@
 
 ### `kind` 与每条 `authoritative_refs` 元素
 
-**path 类**（要求在仓库内可打开，脚本会验存在性）：`repo_assets`、`screenshot_pack`
+**path / 本地化资源类**（`repo_assets`、`screenshot_pack`，以及混合类中带 `path` 的条目）
 
-- 每项必填非空 **`path`**：相对仓库根的正斜杠路径。
+- **`path`** 支持以下形态（脚本由 `resolveAuthoritativePath` 解析后以 `existsSync` 判定 **agent-reachable**，URL 不参与本地 exists）：
+  1. **相对仓库根**（不以 `${`、非绝对路径）：与历史行为一致，且不得 `..` 越出仓库根。
+  2. **环境根拼接**：整段 **`path` 必须以 `${`** 开头，例如 **`${UX_ROOT}/pack/v3/`**。花括号内为变量名：`${env:NAME}` 读 `process.env.NAME`，否则先查 `framework.config.json` → `prd.visual_sources.external_roots[NAME]`，再退回 `process.env.NAME`。
+  3. **绝对路径 / Windows 盘符路径**：仅在 `prd.visual_sources.allow_absolute_paths === true` 时允许。
+  4. **UNC 网络路径**（`\\server\share\...`）：仅在 `prd.visual_sources.allow_network_paths === true` 时允许。
 
 **URL 类**（脚本仅校验格式，不抓取网络）：`design_tool_link`、`design_system_doc`、`portal_only`
 
@@ -44,19 +48,42 @@
 
 每项可写可选 **`id`**（逻辑区域名），便于正文引用。
 
-## 实例配置
+## PRD 驱动 + 项目级 opt-in（必读）
 
-实例根 `framework.config.json`：
+- **未**在 `framework.config.json` 配置 `prd` 段，且 PRD **没有**含 `ui_change` 的 yaml 块：`check-prd` **不产生** Visual Handoff 结果（云侧/库工程零噪声）。
+- 已配置 `"prd": { "visual_handoff_enforcement": "strict" }` 等：对「**缺整个块**」按档位 **FAIL / WARN / SKIP**。
+- PRD 已写 `ui_change: new_or_changed`（或 `copy_edits_only`）但 handoff 无效或路径不可达：**无** `prd` 段时默认 **FAIL**（声明即承诺）；若 opt-in 了 `warn` / `reachable` / `off`，按档位降级。
+
+### `visual_handoff_enforcement` 选型
+
+| 取值 | 缺 `ui_change` 块（仅 opt-in `prd` 后出现） | handoff 结构化错误 / 非法路径 | 结构化合法但路径不可达 |
+|------|-----------------------------------------------|------------------------------|--------------------------|
+| （未配置 `prd`） | 静默 | 默认 FAIL | 默认 FAIL |
+| `strict` | FAIL | FAIL | FAIL |
+| `warn` | WARN | WARN | WARN |
+| **`reachable`**（推荐 opt-in） | WARN | WARN | WARN（`agent-reachable=false`） |
+| `off` | SKIP | SKIP | SKIP |
+
+### `doc/features/` 是否入库
+
+与 `paths.docs_committed` 相关：默认 **`false`** 表示过程文档**不假定**进主仓；.harness / receipt 语义见 `framework/docs/visual-handoff-config-migration.md`。
+
+## 实例配置（opt-in）
+
+在实例根 **`framework.config.json`** **手工追加** `prd`（模板默认**不含**此段），例如：
 
 ```json
 "prd": {
-  "visual_handoff_enforcement": "strict"
+  "visual_handoff_enforcement": "reachable",
+  "visual_sources": {
+    "external_roots": { "UX_ROOT": "${env:UX_ROOT}" },
+    "allow_absolute_paths": false,
+    "allow_network_paths": false
+  }
 }
 ```
 
-- `strict`：`new_or_changed` 缺少合法 handoff → **FAIL**
-- `warn`：同类问题仅 **WARN**（未声明本段时 Harness 对该项默认等价于 warn）
-- `off`：不跑 Visual Handoff 脚本检查
+- 详细场景表与 checklist：`framework/skills/00-framework-init/prompts/prd-harness-options.md`。
 
 ## CLI 逃生
 
@@ -78,3 +105,20 @@ visual_handoff:
 ```
 
 Markdown 插图仍可保留，但 **以对 `path`/URL 的声明为准**，不以缩略图为权威。
+
+## 真实工程范式（团队参考）
+
+- **独立 UX git / 内网门户**：`path` 用 **`${UX_ROOT}/...`** 或 URL 类 `kind` + 正文明示版本号 / 归档批次。
+- **NAS / UNC**：打开 `allow_network_paths`，`path` 写 UNC；CI 不可达时配合 `reachable` 档位 **WARN**。
+- **Figma + 本地导出 mirror**：`figma_export_bundle` 同时给 `url`（在线）与 `path`（导出目录）。
+
+## 示例：外部根 `${UX_ROOT}`
+
+```yaml
+ui_change: new_or_changed
+visual_handoff:
+  kind: screenshot_pack
+  authoritative_refs:
+    - id: ext_pack
+      path: ${UX_ROOT}/my-feature/v3/
+```

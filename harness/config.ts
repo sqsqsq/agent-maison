@@ -213,19 +213,32 @@ export interface FrameworkPaths {
    * 模式定位回执文件。
    */
   receipt_dir_pattern?: string;
+  /**
+   * `doc/features/**` 是否预期提交到版本库。
+   *
+   * 默认 **false**：真实工程中需求过程产物仅存工作区不入主仓；
+   * 模拟 / 归档工程可设为 true（如本仓库 sim-wallet 演示）。
+   */
+  docs_committed?: boolean;
 }
 
-/** PRD harness 可选开关 */
-export type VisualHandoffEnforcementMode = 'strict' | 'warn' | 'off';
+/** PRD harness Visual Handoff 守门档位（`prd` 段为 opt-in 时写入） */
+export type VisualHandoffEnforcementMode = 'strict' | 'warn' | 'reachable' | 'off';
+
+export interface VisualSourcesConfig {
+  external_roots?: Record<string, string>;
+  allow_absolute_paths?: boolean;
+  allow_network_paths?: boolean;
+}
 
 export interface PrdHarnessConfig {
   /**
-   * Visual Handoff（ui_change / kind / authoritative_refs）脚本守门强度：
-   * - strict：`new_or_changed` 等必填项缺失或 refs 不合法 → FAIL
-   * - warn：同类问题仅 WARN（默认归一逻辑，利旧 PRD）
-   * - off：不跑 Visual Handoff 检查
+   * Visual Handoff（ui_change / kind / authoritative_refs）脚本守门强度；
+   * 未配置整个 `prd` 段时，check-prd 对「缺失 ui_change 块」**静默**，见 check-prd 文档。
    */
   visual_handoff_enforcement?: VisualHandoffEnforcementMode;
+  /** 外部 UX 根目录与绝对路径 / UNC 安全开关 */
+  visual_sources?: VisualSourcesConfig;
 }
 
 export interface FrameworkConfig {
@@ -313,6 +326,7 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   architecture_md: 'doc/architecture.md',
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+  docs_committed: false,
 };
 
 /**
@@ -435,14 +449,41 @@ function assertNoDeprecatedPaths(parsed: unknown): void {
 
 function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const mode = raw.visual_handoff_enforcement;
-  if (mode === undefined || mode === null) return undefined;
-  if (mode !== 'strict' && mode !== 'warn' && mode !== 'off') {
-    throw new Error(
-      `[framework/config.ts] prd.visual_handoff_enforcement 必须是 "strict" | "warn" | "off"，收到 ${String(mode)}`,
-    );
+
+  let visual_handoff_enforcement: VisualHandoffEnforcementMode | undefined;
+  const modeRaw = raw.visual_handoff_enforcement;
+  if (modeRaw !== undefined && modeRaw !== null) {
+    const mode = String(modeRaw).trim() as VisualHandoffEnforcementMode;
+    const allowed = new Set<VisualHandoffEnforcementMode>(['strict', 'warn', 'reachable', 'off']);
+    if (!allowed.has(mode)) {
+      throw new Error(
+        `[framework/config.ts] prd.visual_handoff_enforcement 必须是 "strict" | "warn" | "reachable" | "off"，收到 ${String(modeRaw)}`,
+      );
+    }
+    visual_handoff_enforcement = mode;
   }
-  return { visual_handoff_enforcement: mode };
+
+  let visual_sources: VisualSourcesConfig | undefined;
+  const vsRaw = raw.visual_sources;
+  if (vsRaw && typeof vsRaw === 'object') {
+    const roots = vsRaw.external_roots;
+    visual_sources = {
+      ...(roots && typeof roots === 'object' && !Array.isArray(roots)
+        ? { external_roots: { ...(roots as Record<string, string>) } }
+        : {}),
+      allow_absolute_paths: Boolean(vsRaw.allow_absolute_paths),
+      allow_network_paths: Boolean(vsRaw.allow_network_paths),
+    };
+  }
+
+  const hasAny =
+    visual_handoff_enforcement !== undefined || (visual_sources !== undefined && Object.keys(visual_sources).length > 0);
+  if (!hasAny) return undefined;
+
+  return {
+    ...(visual_handoff_enforcement !== undefined ? { visual_handoff_enforcement } : {}),
+    ...(visual_sources !== undefined ? { visual_sources } : {}),
+  };
 }
 
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {

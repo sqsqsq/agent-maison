@@ -15,6 +15,8 @@
 //      - trace_json.exists === true  且 trace_json.path 文件真实存在
 //      - claimed_completion_commit_sha 是 40 位 hex 且在仓库中真实存在
 //      - self_check.q1_trace_json_abs_path 真实存在
+//      - self_check.q3_last_diff_file 为非空真实路径；
+//        当 paths.docs_committed=true 时还须在工作区可读（存在）
 //      - self_check.q4_no_hallucinated_rule_used === true
 //      - "反假设条款回顾" 三项 checkbox 全部为 [x]
 //   4. 任一失败 → exit 1 + 详细 BLOCKER 报告；
@@ -31,6 +33,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
+import { loadFrameworkConfig } from '../config';
 
 type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
 
@@ -318,7 +321,38 @@ function main(): void {
     }
   }
 
-  // 7. 自检题 Q4：必须为 true
+  // 7. 自检题 Q3：`git diff --name-only` 末行路径；docs_committed=true 时必须存在
+  let docsCommitted = false;
+  try {
+    docsCommitted = loadFrameworkConfig(projectRoot).paths.docs_committed ?? false;
+  } catch {
+    docsCommitted = false;
+  }
+  const q3 = (sc.q3_last_diff_file ?? '').trim();
+  const q3LooksTemplate =
+    !q3 ||
+    q3.includes('<本阶段 git diff') ||
+    q3.includes('最后一行真实文件路径>');
+  if (q3LooksTemplate) {
+    issues.push({
+      id: 'self_check_q3_missing_or_placeholder',
+      severity: 'BLOCKER',
+      message: 'self_check.q3_last_diff_file 须替换为真实的末行变更路径（不可保留模板占位符）。',
+    });
+  } else if (docsCommitted) {
+    const q3Abs = path.isAbsolute(q3) ? path.normalize(q3) : path.resolve(projectRoot, q3);
+    if (!fs.existsSync(q3Abs)) {
+      issues.push({
+        id: 'self_check_q3_path_not_found',
+        severity: 'BLOCKER',
+        message:
+          `paths.docs_committed=true：self_check.q3_last_diff_file="${q3}" 解析为 ${q3Abs} 但文件不存在。` +
+          ' 若过程产物不入库，请将 framework.config.json 的 paths.docs_committed 置为 false。',
+      });
+    }
+  }
+
+  // 8. 自检题 Q4：必须为 true
   if (sc.q4_no_hallucinated_rule_used !== true) {
     issues.push({
       id: 'self_check_q4_failed',
@@ -329,7 +363,7 @@ function main(): void {
     });
   }
 
-  // 8. "反假设条款回顾" 三项 checkbox 全部为 [x]
+  // 9. "反假设条款回顾" 三项 checkbox 全部为 [x]
   const checkboxResult = scanHallucinationCheckboxes(bodyAfterFm);
   if (checkboxResult.total !== 3 || checkboxResult.checked !== 3) {
     issues.push({

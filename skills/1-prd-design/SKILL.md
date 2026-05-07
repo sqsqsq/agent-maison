@@ -139,7 +139,8 @@
 framework/skills/1-prd-design/templates/prd-template.md
 ```
 
-按模板结构填充内容，**必须包含以下 10 个章节**（另须按模板增加 **Visual Handoff** `yaml` 块，脚本 `check-prd` 可读）：
+按模板结构填充内容，**必须包含以下 10 个章节**。  
+**Visual Handoff**：仅当需求为 **UI 形态**（新屏 / 改版 / 需对齐设计真源）时，须在 Scope 附近增加 **独立** `yaml` 块（根字段含 `ui_change`），写法见 [reference/visual-handoff.md](reference/visual-handoff.md)；**后端 / 库 / 云侧无界面**需求且团队未 opt-in `framework.config.json` 的 `prd.strict` 时，**不写**该块不产生脚本噪声。**doc/features/** 是否提交主仓由实例 **`paths.docs_committed`** 决定，harness 不隐含「必须入库」。
 
 0. **术语映射表** — Step 1.5 产物，所有映射必须 `[x]` 已确认（BLOCKER 起点）
 1. **功能概述** — 一句话描述该功能模块的核心价值
@@ -156,9 +157,9 @@ framework/skills/1-prd-design/templates/prd-template.md
 
 #### Visual Handoff（与截图 / 设计稿对齐）
 
-- 写完 Scope 后，按 [reference/visual-handoff.md](reference/visual-handoff.md) 增加**单独**的 ` ```yaml ` 块，根字段含 `ui_change`。
-- 不动 UI 或 UI 已外落成：使用 `none` / `reuse_only` / `impl_out_of_band` 并避免误报 `new_or_changed`。
-- 有界面改版或新屏：使用 `new_or_changed`（或 `copy_edits_only`），填写 `visual_handoff.kind` 与 `authoritative_refs`（`path` 指向仓库内高清导出，或 `url` 指向设计稿链接，依 kind 而定）。
+- UI 形态：写完 Scope 后，按 [reference/visual-handoff.md](reference/visual-handoff.md) 增加**单独**的 ` ```yaml ` 块，根字段含 `ui_change`。
+- 不动 UI 或 UI 已外落成：在同一独立块中使用 `none` / `reuse_only` / `impl_out_of_band`（**勿**在无依据时写 `new_or_changed`）。
+- 有界面改版或新屏：`new_or_changed`（或 `copy_edits_only`）+ `visual_handoff`；`path` 可为**仓内相对**、**`${UX_ROOT}/...`** 或通过配置允许的绝对路径/UNC；`url` 类 kind 写明 http(s)。
 - PRD 内嵌缩略图仅辅助；**像素权威以 handoff 声明的路径/URL 为准**。
 
 #### Step 3.1 Scope 声明填写规则（必读）
@@ -185,7 +186,7 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
 [ ] 7. 异常场景：是否至少覆盖了网络异常、数据为空、权限不足三种基本场景？
 [ ] 8. 非功能性需求：是否有具体的量化指标（如页面加载 < 2s）？
 [ ] 9. 验收标准：每条标准是否可测试、可量化？是否与功能清单一一对应？
-[ ] 10. Visual Handoff：是否有独立 yaml 块且含 `ui_change`？若 `new_or_changed`，`path`/`url` 是否可比 PRD 内嵌图更精确？
+[ ] 10. Visual Handoff：若为 UI 需求，是否有独立 yaml 块且含 `ui_change`？若 `new_or_changed`，handoff `path`/`url` 是否指向可比 PRD 内嵌图更精确的真源（含外链 `${UX_ROOT}` 等范式）？非 UI / 后端需求可明示 `none` 等或省略整块（与实例 `prd`/`paths.docs_committed` 策略一致）。
 ```
 
 **不通过项**：找出具体缺失点，自动补充完善后重新自检，直到 **10** 项全部通过。

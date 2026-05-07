@@ -30,6 +30,7 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
+  { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
 ];
 
 interface SuiteSummary {

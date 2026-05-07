@@ -38,7 +38,7 @@ import {
   GLOBAL_FEATURE_SENTINEL,
 } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import { resolvePaths, clearFrameworkConfigCache } from '../../config';
+import { resolvePaths, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -181,6 +181,9 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
     }
 
     const paths = resolvePaths(tmpdir, FIXTURE_FRAMEWORK_ROOT);
+    const fwConfig = loadFrameworkConfig(tmpdir);
+    const vhMode = fwConfig.prd?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
+
     const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir);
     const phaseRule = specLoader.loadPhaseRule(phase);
     const featureSpec = isGlobalPhase(phase)
@@ -194,6 +197,9 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
       phaseRule,
       featureSpec,
       adapter: cmd.adapter,
+      visualHandoffEnforcement: vhMode,
+      prdVisualSources: fwConfig.prd?.visual_sources,
+      docsCommitted: fwConfig.paths.docs_committed ?? false,
     };
 
     // 6. 直接 require checker（绕开 harness-runner 的 Step 4/5）

@@ -222,12 +222,15 @@ structure_checks:
 
   visual_handoff:
     description: >
-      （可选守门，由 framework.config.json → prd.visual_handoff_enforcement 控制，
+      （PRD 驱动 + opt-in：`prd` 段默认不在模板 skeleton；仅当配置了 prd.visual_handoff_enforcement
+      或对「缺 ui_change 整块」有特殊 FAIL/WARN 需求时参见 framework.config.json。
       CLI --skip-visual-handoff 可跳过。）
-      PRD 中应存在含根字段 ui_change 的 ```yaml``` 代码块（可与 Scope 的 yaml 块分开）。
-      ui_change ∈ {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}。
-      new_or_changed / copy_edits_only 时必须提供 visual_handoff.kind 与
-      authoritative_refs；path 类 kind 要求仓库内路径存在；url 类要求 http(s) URL。
+      若无含根字段 ui_change 的 ```yaml``` 代码块且无 prd.opt-in.strict/warn/reachable，
+      check-prd 不产生此项（静默）。存在块时 ui_change ∈
+      {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}；
+      new_or_changed / copy_edits_only 必须提供 visual_handoff.kind 与 authoritative_refs；
+      path 经由 resolveAuthoritativePath 解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级），
+      支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。
       详见 framework/skills/1-prd-design/reference/visual-handoff.md。
     severity: MAJOR
     rule:

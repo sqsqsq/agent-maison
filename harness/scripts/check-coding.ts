@@ -683,6 +683,20 @@ function isUnderLayerDir(relPath: string, prefixes: string[]): boolean {
   return prefixes.some(prefix => normalized.startsWith(prefix));
 }
 
+/** `paths.docs_committed` 与本检查关系说明（人读） */
+function diffWithinScopeDocsNote(ctx: CheckContext): string {
+  if (ctx.docsCommitted) {
+    return (
+      '\n\n（paths.docs_committed=true：工程约定将过程产物归档入仓时，请以团队规范为准；' +
+      '本项仍仅以「外层业务模块路径」判断是否越出 design 声明的 in_scope_modules。）'
+    );
+  }
+  return (
+    '\n\n（paths.docs_committed=false：`doc/features/**` 等不入主仓属正常；' +
+    ' 出现在 diff 中且未计入 in_scope_hit 的路径通常归为框架性/neutral，不单独构成本条 FAIL。）'
+  );
+}
+
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   const designPath = featureFilePath(ctx.projectRoot, ctx.feature, 'design.md');
   if (!fs.existsSync(designPath)) {
@@ -766,7 +780,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `git diff（base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）无变更文件。`,
+      details: `git diff（base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）无变更文件。${diffWithinScopeDocsNote(ctx)}`,
     }];
   }
 
@@ -794,7 +808,8 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       details:
         `git diff（base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）共 ${files.length} 个变更文件：` +
         `${inScopeHits.length} 个在 in_scope 模块内，${neutralCount.value} 个为框架性变更（doc/specs/harness/skills 等），0 个越界。\n` +
-        `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}`,
+        `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}` +
+        diffWithinScopeDocsNote(ctx),
     }];
   }
 

@@ -18,6 +18,7 @@ import {
   ScriptReport,
   ReportSummary,
   Severity,
+  VisualHandoffResolutionRow,
 } from './types';
 
 // --------------------------------------------------------------------------
@@ -212,6 +213,19 @@ verification_result:
 // 合并报告
 // --------------------------------------------------------------------------
 
+function collectVisualResolutionRows(scriptReport: ScriptReport): VisualHandoffResolutionRow[] {
+  const out: VisualHandoffResolutionRow[] = [];
+  for (const check of scriptReport.checks) {
+    const rows = check.visual_resolution_rows;
+    if (rows && rows.length > 0) out.push(...rows);
+  }
+  return out;
+}
+
+function escapeMdCell(s: string): string {
+  return s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
+}
+
 /**
  * 合并脚本报告和 AI 报告（AI 报告可选），输出 merged-report.md
  */
@@ -272,6 +286,33 @@ export function generateMergedReport(
       lines.push(`- ${severityBadge(check.severity)} **${check.id}**: ${check.details}`);
     }
     lines.push('');
+  }
+
+  // Visual Handoff：结构化解析与可达性（仅 PRD 且 PRD 声明 handoff 并由脚本写出 visual_resolution_rows）
+  if (phase === 'prd') {
+    const vRows = collectVisualResolutionRows(scriptReport);
+    if (vRows.length > 0) {
+      lines.push('### Resolved Visual Sources');
+      lines.push('');
+      lines.push('| ref_id | declared_path | declared_url | resolution_kind | agent_reachable | resolved_absolute | note |');
+      lines.push('|--------|----------------|--------------|-----------------|-----------------|-------------------|------|');
+      for (const row of vRows) {
+        lines.push(
+          '| ' +
+            [
+              escapeMdCell(row.ref_id),
+              escapeMdCell(row.declared_path ?? '—'),
+              escapeMdCell(row.declared_url ?? '—'),
+              escapeMdCell(row.resolution_kind ?? '—'),
+              escapeMdCell(String(row.agent_reachable)),
+              escapeMdCell(row.resolved_absolute ?? '—'),
+              escapeMdCell(row.note ?? '—'),
+            ].join(' | ') +
+            ' |',
+        );
+      }
+      lines.push('');
+    }
   }
 
   // AI Harness

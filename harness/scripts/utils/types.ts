@@ -286,6 +286,18 @@ export interface FeatureSpec {
 // --------------------------------------------------------------------------
 
 /** 单项检查结果 */
+export interface VisualHandoffResolutionRow {
+  ref_id: string;
+  declared_path?: string;
+  /** URL 类 kind 时填写，供 merged-report「Resolved Visual Sources」列示 */
+  declared_url?: string;
+  resolved_absolute?: string;
+  agent_reachable: boolean;
+  resolution_kind?: string;
+  note?: string;
+}
+
+/** 单项检查结果 */
 export interface CheckResult {
   id: string;
   category: 'structure' | 'semantic' | 'traceability';
@@ -299,6 +311,8 @@ export interface CheckResult {
   failure_kind?: string;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
+  /** PRD Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
+  visual_resolution_rows?: VisualHandoffResolutionRow[];
 }
 
 /** 报告摘要 */
@@ -352,10 +366,18 @@ export interface CheckContext {
   /** init 阶段专用：CLI --adapter 透传值（其他阶段为 undefined） */
   adapter?: string;
   /**
-   * PRD：Visual Handoff 脚本守门档位（framework.config.json → prd.visual_handoff_enforcement）。
-   * 未设置时 harness-runner 默认为 `warn`。
+   * PRD：Visual Handoff 脚本守门档位（framework.config.json → prd.visual_handoff_enforcement，**opt-in**）。
+   * 未设置（整个 `prd` 段缺失或未配置 enforcement）时 check-prd 对「缺失 ui_change 块」静默。
    */
-  visualHandoffEnforcement?: 'strict' | 'warn' | 'off';
+  visualHandoffEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
+  /** PRD：`prd.visual_sources`（opt-in）；未设置则为 undefined */
+  prdVisualSources?: {
+    external_roots?: Record<string, string>;
+    allow_absolute_paths?: boolean;
+    allow_network_paths?: boolean;
+  };
+  /** paths.docs_committed；默认语义见 framework.config.template.json */
+  docsCommitted?: boolean;
   /** CLI `--skip-visual-handoff`：跳过 Visual Handoff 相关脚本检查 */
   skipVisualHandoff?: boolean;
 }

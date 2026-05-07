@@ -17,6 +17,8 @@
       "architecture.inner_dependency_direction": "当前版本仅支持 \"upward\"。",
       "architecture.cross_module_exports_file": "跨模块唯一合法导出入口文件名，默认 \"index.ets\"。",
       "paths": "各产物路径，均相对于实例工程根。初始化 Skill 不鼓励偏离默认值，除非实例已有既定目录结构。",
+      "paths.docs_committed": "布尔，默认模板中为 false；是否把 `doc/features/` 等业务过程文档提交进主代码仓。真实工程常 false（仅本地/外链协作）；演示仓或要强归档时再 true。详见 framework/skills/00-framework-init/prompts/prd-harness-options.md（旁注）与 framework/docs/visual-handoff-config-migration.md。",
+      "prd_opt_in_note": "`prd` 对象（含 `visual_handoff_enforcement` / `visual_sources`）为 opt-in：框架默认不在 skeleton 中写入。仅当本工程有 UI 形态且需脚本级 Visual Handoff 守门时，手工追加到 `framework.config.json`。字段语义见 `framework/skills/00-framework-init/prompts/prd-harness-options.md` 与 `framework/skills/1-prd-design/reference/visual-handoff.md`。",
       "toolchain": "工具链相关配置。devEcoStudio.installPath 需要按 Skill 00 Step 5.6 经用户确认后写入；hvigor 是命令行调优开关，默认值对齐内网真实工程常用命令，可按工程表现做 A/B。",
       "toolchain.hvigor.daemon": "是否传 hvigor daemon 参数。false → --no-daemon；true → --daemon。默认 true。",
       "toolchain.hvigor.parallel": "是否传 --parallel。默认 true。",
@@ -26,9 +28,7 @@
       "state_machine.grace_period_minutes": "新建 .current-phase.json 时的「无 session_id 缓冲期」分钟数（>=1）。期内 hook 把无 session_id 的 state 视作当前会话产物并自动回填 session_id；超过则视作跨会话 / legacy 遗留 advisory 不阻断。默认 5；多任务并发频繁切换的工程可调短到 2~3。",
       "state_machine.ttl_hours": "无 session_id 的 state 文件 TTL 小时数（>=1）。超过 grace 且早于 ttl 仍按 advisory 提示存在；超过 ttl 一律按已废弃处理仅出 advisory。默认 12；CI / 跑批跑得久的工程可加长到 24~48。",
       "state_machine.schema_version": "状态文件 schema 版本号字符串。当前 \"1.1\"（v2.8 引入 session_id / session_id_recorded_at / last_seen_session_id / last_seen_at 四字段）。下一次 schema 升级会同步在 framework/harness/harness-runner.ts 的 CurrentPhaseState 与本字段一并 bump。",
-      "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。",
-      "prd": "可选。PRD 脚本 harness 行为。**初始化时默认写入 skeleton**（含 `visual_handoff_enforcement: warn`）。",
-      "prd.visual_handoff_enforcement": "三选一：**warn**（推荐默认，老 PRD 未补 ui_change 只告警）；**strict**（handoff 不合法则 check-prd 可 FAIL）；**off**（不跑该项）。选型说明与场景表见 framework/skills/00-framework-init/prompts/prd-harness-options.md；PRD 侧字段见 framework/skills/1-prd-design/reference/visual-handoff.md。"
+      "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。"
     },
     "generation_rules": [
       "生成时删除 $schema_docs 顶层键，其余键按用户答复填充。",
@@ -61,7 +61,8 @@
     "module_catalog": "doc/module-catalog.yaml",
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
-    "architecture_md": "doc/architecture.md"
+    "architecture_md": "doc/architecture.md",
+    "docs_committed": false
   },
 
   "toolchain": {
@@ -77,9 +78,5 @@
     "grace_period_minutes": 5,
     "ttl_hours": 12,
     "schema_version": "1.1"
-  },
-
-  "prd": {
-    "visual_handoff_enforcement": "warn"
   }
 }

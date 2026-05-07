@@ -224,7 +224,12 @@ async function main(): Promise<void> {
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = loadFrameworkConfig(projectRoot);
-  const vhMode = fwConfig.prd?.visual_handoff_enforcement ?? 'warn';
+  const vhMode = fwConfig.prd?.visual_handoff_enforcement as
+    | 'strict'
+    | 'warn'
+    | 'reachable'
+    | 'off'
+    | undefined;
   const context: CheckContext = {
     phase,
     feature,
@@ -233,6 +238,8 @@ async function main(): Promise<void> {
     featureSpec,
     adapter: typeof args.adapter === 'string' ? args.adapter : undefined,
     visualHandoffEnforcement: vhMode,
+    prdVisualSources: fwConfig.prd?.visual_sources,
+    docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
   };
 

@@ -1,0 +1,11 @@
+{
+  "rules": [
+    {
+      "id": "visual_handoff",
+      "status": "PASS",
+      "severity": "BLOCKER",
+      "details_includes": "kind=repo_assets"
+    },
+    { "id": "visual_handoff_refs", "must_be_absent": true }
+  ]
+}

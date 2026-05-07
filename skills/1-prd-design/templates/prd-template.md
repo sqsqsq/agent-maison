@@ -77,6 +77,12 @@ visual_handoff:
       path: doc/features/{module-id}/ux-reference/README.md
 ```
 
+<!--
+团队范式注释（不参与脚本）：若真源在工程外独占 git / NAS，可写：
+path: ${UX_ROOT}/{module-id}/v3/
+并在 framework.config.json 的 prd.visual_sources.external_roots 或环境变量 UX_ROOT 中解析根路径。
+-->
+
 ### 最小改动原则
 
 1. **默认就地实现**：所有逻辑优先实现在 `in_scope_modules` 列出的最底层模块内。

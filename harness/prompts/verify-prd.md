@@ -140,8 +140,8 @@
   2. 若 `ui_change` ∈ {`new_or_changed`, `copy_edits_only`}：
      - `authoritative_refs` 是否与「页面/界面描述」的区域划分大致对应（可追溯）？
      - 正文是否仍写「仅以当前实现为基线」等与 handoff 矛盾之语？若矛盾 → FAIL 或 WARN。
-  3. 若使用 `repo_assets` / `screenshot_pack`：`path` 所指是否更像是全分辨率真源而非聊天缩略图路径（人工判断）？
-  4. 若使用 URL 类 `kind`：是否仍说明版本/帧，避免「只有一个泛链接」导致无法对齐？
+  3. 若使用 `repo_assets` / `screenshot_pack`：对照脚本报告可能的 **Resolved Visual Sources**／`visual_resolution_rows`：`path` 是否为全分辨率真源或等价导出目录语义（而非聊天缩略图）？若 `agent_reachable=false`，正文是否给出**人工/NAS**可复验的批次、版本或与内门户截图的对照说明？
+  4. 若使用 URL 类 `kind`：是否仍说明版本/帧/归档批次，避免「只有一个泛链接」导致无法对齐？内网门户若不可直连，是否在正文声明**可达代理**或可下载快照的策略？
 
 ---
 

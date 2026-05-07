@@ -1,0 +1,8 @@
+{
+  "rules": [
+    { "id": "visual_handoff", "must_be_absent": true },
+    { "id": "visual_handoff_ui_change", "must_be_absent": true },
+    { "id": "visual_handoff_refs", "must_be_absent": true },
+    { "id": "visual_handoff_heuristic", "must_be_absent": true }
+  ]
+}
