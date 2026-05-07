@@ -388,6 +388,68 @@ structure_checks:
           branches_no_overlap: true
           branches_cover_all_non_device_only: true
 
+  # -----------------------------------------------------------------
+  # C0. 可测性预检 + mock-plan + DAG spy_preset（v2.3）
+  # -----------------------------------------------------------------
+
+  ut_testability_audit_present:
+    description: >
+      doc/features/{feature}/ut/testability-audit.md 必须存在，且对 acceptance.yaml
+      中每条 ut_layer ∈ {unit, both} 的 AC/BD 各有一条审计记录（acceptance_id 对齐）。
+    severity: BLOCKER
+    rule:
+      path: "doc/features/{feature}/ut/testability-audit.md"
+      records_root: "records[] YAML 或 fenced ```yaml 块"
+      template: "framework/skills/5-business-ut/templates/testability-audit-template.md"
+
+  ut_unsupported_targets_handled:
+    description: >
+      testability-audit.md 中 testability_level=L3 的每条记录必须 selected ∈ {option_a, option_b}：
+      option_a → device-testing-todo.md 必须出现对应 acceptance_id；
+      option_b → reports/{feature}/**/gap-notes.md 的 approved_src_mutations[]
+      至少 1 条（与 ut_no_src_mutation 授权流一致）。
+    severity: BLOCKER
+    rule:
+      device_todo: "doc/features/{feature}/device-testing-todo.md"
+      gap_notes_glob: "framework/harness/reports/{feature}/**/gap-notes.md"
+
+  ut_mock_plan_present:
+    description: >
+      当 testability-audit 存在任一 L0/L1/L2 记录时，doc/features/{feature}/ut/mock-plan.yaml
+      必须存在且 spies 非空；审计 entry_point（若可映射 contracts.yaml interfaces）须在
+      spies[].target_class + methods[].name 中有对应条目；非 pure 依赖须在
+      spies[].target_class 中有对应条目。
+    severity: BLOCKER
+    rule:
+      path: "doc/features/{feature}/ut/mock-plan.yaml"
+      template: "framework/skills/5-business-ut/templates/mock-plan-schema.md"
+
+  ut_mock_plan_typed:
+    description: >
+      mock-plan.yaml 中每个 preset 必须声明 returns.ts_expr 或 throws.ts_expr；
+      ts_expr 须含显式类型断言（as Type）或 new 构造调用（脚本粗校验正则，
+      防 ArkTS 无类型字面量）。
+    severity: BLOCKER
+    rule:
+      scan: "presets[].returns.ts_expr | presets[].throws.ts_expr"
+      pattern_hint: 'as\\s+\\w+|new\\s+\\w+\\('
+
+  ut_mock_plan_contracts_consistent:
+    description: >
+      mock-plan spies[].target_class 与 methods[].name 必须与 contracts.yaml > interfaces[]
+      中对应类与方法表一致。
+    severity: BLOCKER
+    rule:
+      contracts: "doc/features/{feature}/contracts.yaml"
+
+  dag_spy_preset_resolvable:
+    description: >
+      DAG 节点（port_call_cloud / port_call_local / async_call）若声明 spy_preset，
+      则该 id 必须在 mock-plan 对应类与方法下存在；未声明 spy_preset 的旧 DAG 可仅靠 mock_data（deprecated）。
+    severity: BLOCKER
+    rule:
+      mock_plan: "doc/features/{feature}/ut/mock-plan.yaml"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------
