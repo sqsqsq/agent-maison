@@ -7,7 +7,8 @@
 //
 // 设计要点：
 //   - 使用 spawnSync 避免 PowerShell 拼接问题；
-//   - 支持回退 baseRef：优先用 `trace.json.start_commit`，无则用 HEAD~1；
+//   - baseRef 未传时默认 **working**（只统计相对 HEAD 的工作区/暂存/未跟踪，与日常感知一致）；
+//     需要包含「已提交但未 push 的 commits」时用 HARNESS_DIFF_BASE_REF=HEAD~1 或具体 SHA；
 //   - 业务源码目录集由调用方传入（硬编码在 check-ut.ts 中：
 //     02-Feature/**/src/main, 01-Business, 00-Common 等）。
 // ============================================================================
@@ -53,7 +54,7 @@ export interface TraceLike {
 
 /**
  * 从 reports/<feature>/<phase>/trace.json 或 harness 其他位置加载 start_commit。
- * 找不到时返回 undefined，让调用方走 HEAD~1 回退。
+ * 找不到时返回 undefined（调用方可能对 diff 另行默认 working）。
  */
 export function readTraceStartCommit(tracePath: string): string | undefined {
   if (!fs.existsSync(tracePath)) return undefined;
@@ -72,7 +73,7 @@ export function readTraceStartCommit(tracePath: string): string | undefined {
 export interface GitDiffOpts {
   /** 项目根（cwd） */
   projectRoot: string;
-  /** baseRef（如 start_commit SHA）；传入 "working" 时只比较当前工作区，不扫历史提交；缺省时回退 HEAD~1 */
+  /** baseRef（如 start_commit SHA）；传入 "working" 时只比较当前工作区相对 HEAD；缺省时默认即为 working */
   baseRef?: string;
   /** 限定的路径前缀（glob 或目录相对路径），传给 git diff `-- <pathspec>` */
   pathspecs?: string[];
@@ -87,8 +88,7 @@ export interface GitDiffOpts {
  *   4. git ls-files --others --exclude-standard  → untracked 新文件
  *   合并去重后返回。
  *
- * 若 <base> 不存在（即无有效 commit），自动回退 HEAD~1；再失败则视为空初始库，
- * 只比较 HEAD vs 工作区。
+ * 若传入非 working 的 baseRef 不存在，再失败则视为空初始库，只比较 HEAD vs 工作区。
  */
 export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   const cwd = opts.projectRoot;
@@ -114,15 +114,16 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     };
   }
 
-  // 解析 baseRef：优先使用传入，其次 HEAD~1
-  let baseRef = opts.baseRef ?? '';
+  // 解析 baseRef：显式传入优先；未传入时默认 working（与「git status / 本地改动」感知一致）
+  let baseRef = (opts.baseRef ?? '').trim();
   let baseIsFallback = false;
+  if (!baseRef) {
+    baseRef = 'working';
+    baseIsFallback = true;
+  }
   const workingOnly = baseRef === 'working';
   if (workingOnly) {
     baseRef = 'HEAD';
-  } else if (!baseRef) {
-    baseRef = 'HEAD~1';
-    baseIsFallback = true;
   }
   if (!workingOnly) {
     const verify = spawnSync('git', ['rev-parse', '--verify', baseRef], {

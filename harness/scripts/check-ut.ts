@@ -1159,7 +1159,7 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
 /**
  * v2.2 Skill 5 红线：检测未授权的业务源码变更。
  * 流程：
- *   (1) 读 trace.json.start_commit（若存在）；否则回退 HEAD~1；
+ *   (1) `HARNESS_DIFF_BASE_REF` 显式值；否则读 trace.start_commit；（再否则由 git-diff 默认 working）
  *   (2) git diff + 未提交/untracked，按受保护前缀筛；
  *   (3) 与 reports/<feature>/ut/**\/gap-notes.md 的 approved_src_mutations[] 对账；
  *   (4) 未登记 → FAIL BLOCKER。
@@ -1273,7 +1273,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   const staleness = analyzeDiffStaleness(diff);
   const baseHint = envBaseRef
     ? `HARNESS_DIFF_BASE_REF=${envBaseRef}`
-    : 'trace.json.start_commit / HEAD~1 fallback';
+    : 'trace.json.start_commit（若存在）；否则默认 working';
 
   if (businessChanges.length === 0) {
     return [{
@@ -1316,7 +1316,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   }
 
   const oldBaseHint = staleness.stale
-    ? '\n\n诊断：stale_diff_base。committed 历史变更远多于当前工作区变更，baseRef 可能过旧。请自动用 `HARNESS_DIFF_BASE_REF=working` 重跑一次；不要批量授权历史变更。'
+    ? '\n\n诊断：stale_diff_base。你显式收窄/拉长了 diff 区间，committed 远大于当前 working 变更。若只想拦未提交的 UT 改动，请去掉 HARNESS_DIFF_BASE_REF 并确保无 trace.start_commit pinning；或调整后重跑。'
     : '';
 
   return [{
@@ -1337,7 +1337,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     blocking_class: staleness.stale ? 'stale_diff_base' : 'ut_no_src_mutation',
     suggestion:
       staleness.stale
-        ? '先自动重跑：HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature <feature>。若重跑后仍有 working 侧业务源码改动，再进入 HARD STOP 授权流程。'
+        ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
         : '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
           'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
           '禁止以"便利性"借口直接修改业务源码。',

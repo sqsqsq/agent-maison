@@ -443,7 +443,7 @@ git submodule update --init --recursive
 | **Glossary 覆盖**           | 默认沙盒只有 ~15 条术语，真实工程估计需要 50-200 条      | 首轮接入需集中扩充                | Skill 0 `/glossary-bootstrap` 支持增量建档                      |
 | **弱模型吞字防护**          | 计划已出，未全部落地                                    | UPDATE 模式重跑仍有反转风险       | 三分区纪律 + negation-diff verifier 推进中                       |
 | **design 启发式误报**       | `file_structure_per_module` / `interface_signatures_complete` 用正则启发式 | 偶发误报需人工识别噪声            | 后续替换为 AST 精确分析                                         |
-| **diff 基线**               | `diff_within_scope` 依赖 `HARNESS_DIFF_BASE_REF` 环境变量 | CI 需显式指定基线                 | 文档已注明                                                       |
+| **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`） | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base） | 见 `coding-rules.yaml` / `git-diff.ts`                                                            |
 | **Skill 6 真机自动化**      | 真机 harness 脚本未完全搭起来；`device_ac_delegation` 仍为 MAJOR | device AC 闭环偏弱                | 计划升 BLOCKER                                                   |
 | **架构漂移检测**            | 大仓长期 drift 缺 `check-architecture` 类门             | 架构违规靠 code review 兜底       | 纳入后续议题                                                     |
 

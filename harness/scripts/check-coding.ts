@@ -755,7 +755,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER', status: 'SKIP',
       details: `无法执行 git diff：${diff.error ?? '未知错误'}`,
       suggestion:
-        '设置环境变量 HARNESS_DIFF_BASE_REF 指向合适的 base ref（如 main 或 HEAD~N），或 "working" 比对工作区与 HEAD。',
+        '未设置时默认仅统计工作区相对 HEAD 的变更（等价 working）。若需包含已提交差异，请设置 HARNESS_DIFF_BASE_REF（如 HEAD~1、main 或具体 SHA）。',
     }];
   }
   const files = diff.changedFiles;
@@ -799,7 +799,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   }
 
   const staleHint = staleness.stale
-    ? '\n\n诊断：stale_diff_base。committed 历史差异远多于当前工作区差异，baseRef 可能早于本轮 coding 起点。请自动用 `HARNESS_DIFF_BASE_REF=working` 重跑一次；不要把历史提交差异误判为本轮 scope 越界。'
+    ? '\n\n诊断：stale_diff_base。你显式指定的 baseRef 导致 committed 历史差异远多于当前工作区差异。若只想约束未提交改动，请去掉 HARNESS_DIFF_BASE_REF（默认即 working）；若仍要对提交做 scope，请收窄 baseRef 或合并/整理提交后再跑。'
     : '';
 
   return [{
@@ -813,7 +813,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
       staleness.stale
-        ? '先自动重跑：HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>。若重跑后仍越界，再回到 Skill 2 发起 scope 扩展或撤销误改。'
+        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 Skill 2 发起 scope 扩展或撤销误改。'
         : '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
