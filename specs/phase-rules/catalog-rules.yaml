@@ -223,17 +223,17 @@ traceability_checks:
 
   key_exports_fresh_vs_index:
     description: >
-      每个 HAR 模块的 key_exports 应与其 entry_file (Index.ets) 里实际声明的
+      每个 HAR 模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
       top-level export 保持同步。以下两类漂移 → WARN（建议跑
       `/catalog-bootstrap <M>` 进 UPDATE 模式刷新画像）：
-        a) stale_removed：catalog.key_exports[i] 在 Index.ets 中找不到对应的
+        a) stale_removed：catalog.key_exports[i] 在 entry_file 入口中找不到对应的
            export 声明。信号强——说明代码里已删除 / 改名但 catalog 没跟上。
-        b) stale_added：Index.ets 存在未记录在 catalog.key_exports 的新增
+        b) stale_added：入口文件存在未记录在 catalog.key_exports 的新增
            export，**且**当前 key_exports.length < 10（未达 SKILL.md 规定的
            10 条上限，说明不是主动裁剪而是漏记录）。
-      HAP 模块的 entry_file 指向 EntryAbility.ets 而非 Index.ets，此 check 跳过。
+      HAP 模块的 entry_file 指向 EntryAbility.ets 而非 HAR index 入口时，此 check 跳过。
 
-      仅扫 Index.ets 中的 top-level export 声明（含 `export class/function/
+      仅扫 HAR entry_file 中的 top-level export 声明（含 `export class/function/
       const/let/var/interface/type/enum` 与 `export { ... }` 两种形态）。
       `export * from 'xxx'` 通配再导出不纳入比对（递归读取成本高、信号弱）。
     severity: MAJOR

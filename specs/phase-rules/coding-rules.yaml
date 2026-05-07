@@ -82,7 +82,7 @@ structure_checks:
     description: >
       每个 HAR 模块必须存在由 framework.config.json 的
       architecture.cross_module_exports_file 声明的跨模块导出入口文件
-      （参考实例默认 Index.ets），且对外暴露的 class/interface/function
+      （实例默认通常为 index.ets），且对外暴露的 class/interface/function
       必须在该文件中 export。
     severity: BLOCKER
     rule:
@@ -349,5 +349,5 @@ traceability_checks:
       source: "design.md > Scope 声明与继承 > yaml.in_scope_modules"
       layer_prefixes: "framework.config.json > architecture.outer_layers[].id"
       module_paths: "contracts.yaml > modules[].package_path"
-      diff_base_ref: "$HARNESS_DIFF_BASE_REF, default HEAD~1; 特殊值 'working' 表示当前工作区 vs HEAD"
+      diff_base_ref: "未设置时默认 working（当前工作区/暂存/未跟踪 vs HEAD）；$HARNESS_DIFF_BASE_REF 可设为 HEAD~1、分支名或 SHA 以纳入已提交差异"
       validate: "all(changed_files, f => not_under_layer_dir(f) or f.starts_with_any(allowed_package_paths))"

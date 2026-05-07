@@ -276,14 +276,14 @@ semantic_checks:
 
   architecture_doc_consistency:
     description: >
-      design.md 中涉及的分层归属、跨模块依赖边、出口约定（Index.ets）
+      design.md 中涉及的分层归属、跨模块依赖边、出口约定（cross_module_exports_file，如 index.ets）
       必须与 doc/architecture.md 声明的外层 / 内层 / cross_module_exports_file 一致；
       模块清单的行级一致性由 doc/module-catalog.yaml 承担，本规则不再校验。
       若分层归属 / 依赖边 / 出口约定存在不一致且未在文档中说明差异原因，判为 FAIL。
     severity: MAJOR
     ai_prompt_hint: >
       对比 design.md 和 architecture.md 的「分层归属（外层 id）」、
-      「跨模块依赖边」、「出口约定（Index.ets 文件名）」，标出不一致之处；
+      「跨模块依赖边」、「出口约定（导出文件名与 config 一致）」，标出不一致之处；
       **不要**比对业务模块清单的行级细节。
 
   navigation_flow_consistency:
