@@ -575,7 +575,7 @@ function checkLayerMatchesPath(ctx: CheckContext, catalog: ModuleCatalog): Check
 }
 
 /**
- * 从 Index.ets 源码里抽取 top-level export 符号集合。
+ * 从 HAR 模块 entry_file（导出入口，如 index.ets）源码里抽取 top-level export 符号集合。
  *
  * 覆盖两种声明形态：
  *   A) `export class/function/const/let/var/interface/type/enum <Name>`
@@ -585,7 +585,7 @@ function checkLayerMatchesPath(ctx: CheckContext, catalog: ModuleCatalog): Check
  *
  * 忽略：
  *   - `export * from 'xxx'`：通配再导出，想拿到具体名字需递归读文件，
- *     成本高且信号弱，本 check 不处理。若某模块 Index.ets 主要靠通配再导出，
+ *     成本高且信号弱，本 check 不处理。若某模块导出入口主要靠通配再导出，
  *     key_exports 自然会全部 stale_added，用户看到 WARN 可自行决定是否手填。
  */
 function extractTopLevelExports(source: string): Set<string> {
@@ -651,12 +651,12 @@ function checkKeyExportsFreshVsIndex(
 
     const parts: string[] = [];
     if (removed.length > 0) {
-      parts.push(`已记录但 Index.ets 找不到：[${removed.join(', ')}]`);
+      parts.push(`已记录但导出入口中找不到：[${removed.join(', ')}]`);
     }
     if (added.length > 0) {
       const preview = added.slice(0, 5).join(', ');
       const more = added.length > 5 ? ` …共 ${added.length} 个` : '';
-      parts.push(`Index.ets 新增但未记录：[${preview}${more}]（当前 key_exports ${documented.size} 条，未达 ${MAX_CAP} 条上限）`);
+      parts.push(`导出入口新增但未记录：[${preview}${more}]（当前 key_exports ${documented.size} 条，未达 ${MAX_CAP} 条上限）`);
     }
     stale.push(`${m.name}：${parts.join('；')}`);
   }
@@ -666,7 +666,7 @@ function checkKeyExportsFreshVsIndex(
       id: 'key_exports_fresh_vs_index', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'key_exports_fresh_vs_index'),
       severity: 'MAJOR', status: 'PASS',
-      details: '所有 HAR 模块的 key_exports 与 Index.ets 声明的 top-level export 一致。',
+      details: '所有 HAR 模块的 key_exports 与导出入口声明的 top-level export 一致。',
     }];
   }
 
@@ -674,7 +674,7 @@ function checkKeyExportsFreshVsIndex(
     id: 'key_exports_fresh_vs_index', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'key_exports_fresh_vs_index'),
     severity: 'MAJOR', status: 'WARN',
-    details: `${stale.length} 个模块的 key_exports 与 Index.ets 漂移：\n  - ${stale.join('\n  - ')}`,
+    details: `${stale.length} 个模块的 key_exports 与导出入口漂移：\n  - ${stale.join('\n  - ')}`,
     suggestion:
       '对每个漂移模块 <M> 跑 `/catalog-bootstrap <M>` 进入 UPDATE 模式刷新画像；\n' +
       'Skill 0 Step 5.1.B 会给出字段级 diff，确认后 `y` 替换旧画像。',
