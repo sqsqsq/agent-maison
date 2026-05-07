@@ -71,6 +71,8 @@
 | data 层源代码 | ✅ | `data/repository/*.ets` / `shared/client/*.ets` 等；UT 通过子类化（SpyXxx）或原型替换在这些边界上打桩 |
 | `doc/features/{feature}/contracts.yaml` | ✅ | 接口契约 Spec，`data_boundaries[].type` 必须来自这里的 `interfaces[].class` |
 | `doc/features/{feature}/acceptance.yaml` | ✅ | 验收标准 Spec，含 `ut_layer`；简单 feature 时是主规划来源 |
+| `doc/features/{feature}/ut/testability-audit.md` | ✅ | Step 1.5 可测性预检（覆盖全部 unit/both AC/BD） |
+| `doc/features/{feature}/ut/mock-plan.yaml` | ⚠️ | Step 1.6 Test Double Plan；存在 L0/L1/L2 可测项时 **必填** |
 | `doc/features/{feature}/design.md` | ✅ | 状态机 Mermaid、UseCase 清单章节（若有） |
 | `doc/features/{feature}/PRD.md` | ✅ | 业务流程图和异常场景 |
 | `doc/architecture.md` | ✅ | 模块架构全貌 |
@@ -88,7 +90,17 @@
 | DAG Schema（v2） | [templates/dag-schema.md](templates/dag-schema.md) |
 | UT 模板 + Spy 模板（子类化既有类 / 原型替换） | [templates/ut-template.md](templates/ut-template.md) |
 | 打桩策略 | [templates/mock-strategy.md](templates/mock-strategy.md) |
+| 可测性预检模板 | [templates/testability-audit-template.md](templates/testability-audit-template.md) |
+| mock-plan Schema | [templates/mock-plan-schema.md](templates/mock-plan-schema.md) |
 | 规范级样例（开卡流程） | [examples/card-opening/](examples/card-opening/) |
+
+## UT 可测性 / mock-plan 策略决议（v2.3）
+
+以下结论按本仓库计划书落地，作为 Skill 5 的 **SSOT** 口径：
+
+1. **存量 feature 迁移**：已在历史版本通过 UT harness 的 feature，**仅当再次进入 Skill 5 并变更 UT 相关产物时** 回补 `ut/testability-audit.md` 与 `ut/mock-plan.yaml`；**新 feature 自 v2.3 规则生效起一律强制**（与 `ut-rules.yaml` 中 BLOCKER 一致）。
+2. **L3 + option_b 接缝白名单**：仅允许 **构造注入、包装 wrapper、提取命名方法、setter 注入** 等显式接缝；**禁止**「换一种全局单例」式改造敷衍 UT。
+3. **Adapter slash 入口**：**不另设** `/ut-audit` 等独立命令；以本文 **Step 1.5 / 1.6** 及 `framework/skills/5-business-ut/SKILL.md` 为权威入口（agent 完整阅读本 SKILL 后执行）。
 
 ## 工作流程（v2.1）
 
@@ -146,7 +158,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 | 3 | BD-1     | HomeRepository.getPromoList(空)  | home_page_ut.dag.yaml | [AC-1][BD-1] 推广列表为空仍可回落 |
 ```
 
-**等待用户确认清单后进入 Step 2**。
+**等待用户确认清单后进入 Step 1.5（可测性预检）；不得跳过 Step 1.5/1.6 直接进入 Step 2。**
 
 #### Step 1 输出格式（必须使用）
 
@@ -170,6 +182,36 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 - 不修改 `src/main`。
 ```
 
+### Step 1.5：可测性预检（testability-audit.md）【HARD STOP】
+
+在生成 DAG / mock-plan / `*.test.ets` 之前，必须为 **acceptance.yaml 内每条 `ut_layer ∈ {unit, both}` 的 AC/BD** 写一条可测性结论，归档：
+
+`doc/features/{feature}/ut/testability-audit.md`
+
+1. **按模板撰写**：[templates/testability-audit-template.md](templates/testability-audit-template.md)（L0–L3 定义、依赖 kind/seam、YAML 形态）。
+2. **对每条 unit/both 项给出**：
+   - `testability_level`（L0/L1/L2/L3）
+   - 关键 `dependencies`（含 `global_singleton` / `inline_lambda` 等，以便 harness 与人工审阅）
+   - `verdict`：`testable` | `downgrade_device` | `needs_seam`
+3. **若为 L3（不可测或只能高成本测）**：**必须 STOP**，向用户展示 `recommendation.option_a`（降级 device-only）与 `option_b`（源码改造 + gap-notes 授权），迫使用户选择并在文档中填写 `selected: option_a | option_b`：
+   - **option_a**：将对应条目写入/更新 `device-testing-todo.md`（须出现 `acceptance_id` 供 harness 校验）
+   - **option_b**：**不得**在 gap-notes 登记前改 `src/main`；登记 `approved_src_mutations[]` 后按约束 #12 执行接缝改造（仅此路径可解除 L3 在 UT 层的硬阻塞）
+
+> 用户未对 **全部 L3 项** 做完 a/b 选择前，禁止进入 Step 1.6 / Step 2 / Step 3。
+
+### Step 1.6：Test Double Plan（mock-plan.yaml）【HARD STOP】
+
+在 Step 2 之前产出类型骨架，路径：
+
+`doc/features/{feature}/ut/mock-plan.yaml`
+
+1. **规格**：[templates/mock-plan-schema.md](templates/mock-plan-schema.md)（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
+2. **权威对齐**：`spies[].target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在稍后的 Spy 类里脱离 plan 自由发挥字段或方法签名。
+3. **与 Step 3 的关系**：生成 `SpyXxx` / `FakeXxx` 时 **1:1 翻译** mock-plan（preset id、方法名、返回/异常预设），UT 中切换分支时只调用 plan 中声明的 preset（例如 `spy.applyPreset('success')` 一类封装），避免在 `it()` 内手写无类型字面量。
+4. **用户确认**：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
+
+> 无 L0/L1/L2 可测项（例如全部为 L3 且选 option_a）时，mock-plan 由 harness `ut_mock_plan_present` SKIP；**一旦出现可测等级为 L0/L1/L2 的 AC/BD，mock-plan 强制**。
+
 ### Step 2：生成 DAG 文件
 
 对每个 branch 生成一份 DAG（或合并成同一个 use_case 的多分支 DAG，只要 branches[] 交集为空、并集覆盖即可）：
@@ -181,7 +223,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
    - `linked_acceptance`
 2. **节点构建**：
    - `user_trigger`：对应业务入口命名函数调用（ui_bindings.user_actions.calls）
-   - `port_call_cloud` / `port_call_local`：对应调用的 data_boundary（节点字段 `boundary` = `data_boundaries[].name`；旧字段 `port` 兼容）
+   - `port_call_cloud` / `port_call_local`：对应调用的 data_boundary（节点字段 `boundary` = `data_boundaries[].name`；旧字段 `port` 兼容）；**推荐**在此类节点与 `async_call` 上声明 `spy_preset`（引用 `mock-plan.yaml` 的 `presets[].id`）。旧字段 `mock_data` **仍可读但已 deprecated**（过渡期与 `spy_preset` 共存）。
    - `state_transition`：对应 `state_model.phases` 迁移
    - `assertion`：必须声明 `linked_branch` 或 `linked_acceptance`（两者之一）
    - `ui_subscription`（v2.1 新）：**仅用于文档化 UI 对 state 的订阅**，UT 忽略，供 device-testing-todo 生成
@@ -191,6 +233,8 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
 
 ### Step 3：生成 UT 代码（按 branch 或 AC 生成 `it()`）
+
+**mock-plan 优先**：若已产出 `ut/mock-plan.yaml`，Spy 类与 preset 行为必须与其一致；DAG 节点上的 `spy_preset` 仅做追溯，UT 内切换预设时仍以 plan 为真源。
 
 #### 3.1 UT 骨架（路径 A：有 use-cases.yaml）
 

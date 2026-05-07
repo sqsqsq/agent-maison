@@ -487,6 +487,8 @@ expansions_with_user_approval:
 | `class`   | 类名     |                                            |
 | `methods` | 方法列表   | 每个方法含 name、params、return、async、description |
 
+> **UT / mock-plan 门禁（v2.3）**：`interfaces[].methods` 中 **`params` 须含完整类型文本**、`return` 必须填写准确返回类型（含 `Promise<...>`）——下游 Skill 5 的 `ut/mock-plan.yaml` 与 harness `ut_mock_plan_contracts_consistent` 依赖此信息生成可用的类型化 Test Double。
+
 **`components` 章节**（从设计文档「页面组件树」和「状态管理方案」提取）：
 
 | 字段 | 来源 | 说明 |
