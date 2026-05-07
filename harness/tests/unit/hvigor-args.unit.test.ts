@@ -35,6 +35,7 @@ import {
   buildHvigorDiagnostics,
   buildAssembleAppArgs,
   buildModuleHapArgs,
+  buildCodingHvigorArgs,
   analyzeProjectDependencyIssue,
 } from '../../scripts/utils/hvigor-runner';
 import { clearFrameworkConfigCache } from '../../config';
@@ -127,6 +128,58 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(products, ['default'], 'product 应来自 detectProduct，不再硬写死');
 
       assertEq(args[args.length - 1], 'assembleApp', 'task 必须是最后一个参数');
+    }),
+  },
+
+  {
+    name: 'buildCodingHvigorArgs（默认）: --mode module、末尾 assembleHap、buildMode=debug',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'phone' }] } }),
+      );
+      const args = buildCodingHvigorArgs(root);
+      assertEq(args[args.length - 1], 'assembleHap', '默认 task assembleHap');
+      assertEq(args[args.indexOf('--mode') + 1], 'module', '--mode module');
+      assertContains(args, '--parallel', '');
+      assertContains(args, '--daemon', '');
+      assertEq(findFlagValues(args, 'product'), ['phone'], 'product 探测');
+      assertEq(findFlagValues(args, 'buildMode'), ['debug'], '默认 buildMode=debug');
+    }),
+  },
+
+  {
+    name: 'buildCodingHvigorArgs: driver=assemble_app_project → --mode project assembleApp',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'default' }] } }),
+      );
+      writeFile(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.0.0',
+          project_name: 'demo',
+          project_type: 'app',
+          agent_adapter: 'generic',
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: {},
+          toolchain: {
+            hvigor: {
+              coding: { driver: 'assemble_app_project' },
+            },
+          },
+        }),
+      );
+
+      const args = buildCodingHvigorArgs(root);
+      assertEq(args[args.indexOf('--mode') + 1], 'project', 'assemble_app_project');
+      assertEq(args[args.length - 1], 'assembleApp', '默认 assembleApp');
     }),
   },
 
@@ -295,6 +348,27 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(issue.missingDeclarations, ['@hms-security/agoh-crypto'], '应识别未声明依赖');
       if (!issue.installHints.some(h => h.includes('ohpm install'))) {
         throw new Error(`应给出 ohpm install 建议：${JSON.stringify(issue.installHints)}`);
+      }
+    }),
+  },
+  {
+    name: 'analyzeProjectDependencyIssue: logAbsPath 大文件合并分析（不只看 logExcerpt）',
+    run: () => withTmpDir(root => {
+      const logPath = path.join(root, 'hv.log');
+      const pad = 'x'.repeat(60_000);
+      fs.writeFileSync(
+        logPath,
+        `${pad}\nFailed to resolve OhmUrl @my-scope/my-lib/src/main\n`,
+        'utf-8',
+      );
+      const issue = analyzeProjectDependencyIssue(root, {
+        logExcerpt: 'too short',
+        errors: [],
+        logAbsPath: logPath,
+      });
+      assertEq(issue.found, true, '应识别依赖解析失败');
+      if (!issue.dependencies.includes('@my-scope/my-lib')) {
+        throw new Error(`应解析出 @my-scope/my-lib：${JSON.stringify(issue.dependencies)}`);
       }
     }),
   },

@@ -979,11 +979,9 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  // v2.3：改用项目级 `assembleApp` 一次通吃所有模块，避免 library 模块
-  // （HAR/HSP）没有 assembleHap task 导致的 "Task was not found" 假阳性。
-  // Library-only feature 也能被覆盖，因为 assembleApp 的依赖图会拉起所有
-  // 被 Phone/entry 间接引用的模块；纯孤立模块虽然不被 app 引用，但通常
-  // 也无法作为最终交付，放过即可。
+  // v2.9：coding 默认对齐 DevEco 手工命令（`node hvigorw.js --mode module … assembleHap`），
+  // 完整日志落盘 + hvigor-build.meta.json；PASS 需 exitCode=0、无解析 error、未超时、命中成功哨兵。
+  // 若需项目级 `assembleApp`，在 framework.config.json 设 toolchain.hvigor.coding.driver=assemble_app_project。
   const res = runHvigorAssembleApp({
     projectRoot: ctx.projectRoot,
     harnessRoot: HARNESS_ROOT,
@@ -992,7 +990,13 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
   });
 
-  const isBad = res.toolMissing || res.skippedByEnv || (res.executed && (res.exitCode !== 0 || res.errors.length > 0));
+  const passCompile =
+    res.executed &&
+    !res.timedOut &&
+    res.exitCode === 0 &&
+    res.errors.length === 0 &&
+    res.successMarkerFound !== false;
+  const isBad = res.toolMissing || res.skippedByEnv || !passCompile;
 
   if (!isBad) {
     return [{
@@ -1002,8 +1006,10 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'PASS',
       details: [
-        `项目级 assembleApp 通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+        `hvigor 编译通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
         `命令：${res.command ?? '(unknown)'}`,
+        `元数据：${res.metaPath ?? '(无)'}`,
+        `完整日志：${res.logPath ?? '(无)'}`,
         ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map(d => `  - ${d}`)] : []),
       ].join('\n'),
     }];
@@ -1012,7 +1018,7 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
   const first = res;
   const failure = classifyCodingHvigorBuildFailure(first, ctx.projectRoot);
   const detailsLines: string[] = [];
-  detailsLines.push('项目级 assembleApp 失败：');
+  detailsLines.push('coding_hvigor_build（hvigor）失败：');
   if (first.toolMissing) {
     detailsLines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach(l => detailsLines.push(l));
@@ -1021,11 +1027,14 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
   } else {
-    detailsLines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
+    detailsLines.push(
+      `exit_code=${first.exitCode}, durationMs=${first.durationMs}, timedOut=${Boolean(first.timedOut)}, successMarkerFound=${first.successMarkerFound ?? 'n/a'}`,
+    );
     detailsLines.push(`失败归因：${failure.kind}`);
     detailsLines.push(`归因说明：${failure.explanation}`);
     detailsLines.push(`命令：${first.command ?? '(unknown)'}`);
     detailsLines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
+    detailsLines.push(`元数据：${first.metaPath ?? '(无)'}`);
     if (first.diagnostics?.length) {
       detailsLines.push('诊断提示：');
       first.diagnostics.forEach(d => detailsLines.push(`  - ${d}`));
@@ -1050,7 +1059,12 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     details: detailsLines.join('\n'),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
-    blocking_class: failure.kind === 'project_build' ? 'coding_hvigor_build' : failure.kind,
+    blocking_class:
+      failure.kind === 'hvigor_timeout' ||
+      failure.kind === 'hvigor_incomplete_output' ||
+      failure.kind === 'project_build'
+        ? 'coding_hvigor_build'
+        : failure.kind,
     suggestion:
       failure.suggestion,
   }];
@@ -1059,6 +1073,8 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
 type CodingHvigorFailureKind =
   | 'toolchain'
   | 'env_skip'
+  | 'hvigor_timeout'
+  | 'hvigor_incomplete_output'
   | 'project_dependency_missing'
   | 'project_build';
 
@@ -1080,6 +1096,29 @@ function classifyCodingHvigorBuildFailure(
       suggestion: '取消 HARNESS_SKIP_HVIGOR 后重跑；真实编译是 coding 阶段出口条件。',
     };
   }
+  if (res.timedOut) {
+    return {
+      kind: 'hvigor_timeout',
+      explanation:
+        'hvigor 子进程超时退出（默认 coding 45min，可由 toolchain.hvigor.timeoutMs 覆盖）。日志可能不完整。',
+      suggestion:
+        '确认工程体量后调大 toolchain.hvigor.timeoutMs；或先在 DevEco 侧完成一次完整构建再跑 harness。详见 hvigor-build.meta.json 中 timedOut 字段。',
+    };
+  }
+  if (
+    res.executed &&
+    res.exitCode === 0 &&
+    res.errors.length === 0 &&
+    res.successMarkerFound === false
+  ) {
+    return {
+      kind: 'hvigor_incomplete_output',
+      explanation:
+        '进程退出码为 0，但完整日志尾部未命中成功哨兵（默认含 BUILD SUCCESSFUL / Compilation successful!）。可能是日志被截断、hvigor 未跑完或需调整 toolchain.hvigor.coding.successMarkers。',
+      suggestion:
+        '读取日志全文与 hvigor-build.meta.json；若确为完整成功输出，可在 framework.config.json 的 toolchain.hvigor.coding.successMarkers 增加匹配模式。',
+    };
+  }
 
   const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
   if (depIssue.found) {
@@ -1097,7 +1136,7 @@ function classifyCodingHvigorBuildFailure(
 
   return {
     kind: 'project_build',
-    explanation: '项目级 assembleApp 编译失败，未识别为依赖安装问题。',
+    explanation: 'hvigor 编译失败（含非零退出或解析到 error），未识别为依赖安装问题。',
     suggestion:
       '读取完整日志（details 中的 `日志落盘` 路径），定位文件/行并回到编码阶段修复。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',

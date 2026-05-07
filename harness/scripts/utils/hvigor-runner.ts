@@ -7,7 +7,8 @@
 //   - check-ut.ts      ut_hvigor_test（hypium 装机运行 UT，BLOCKER）
 //
 // 设计要点：
-//  - 使用 `child_process.spawnSync`，避免 PowerShell 拼接注入问题；
+//  - 使用 `child_process.spawnSync`；coding/ut 构建 stdout+stderr **直写日志 fd**，
+//    避免 maxBuffer / 内存复制；超时由 spawnSync.timeout 杀死子进程。
 //  - v2.3 起查找顺序：
 //      ① framework.config.json > toolchain.devEcoStudio.hvigorBin（显式路径）
 //      ② framework.config.json > toolchain.devEcoStudio.installPath → 推导
@@ -33,6 +34,7 @@ import {
   deriveSdkHomeFromInstallPath,
   deriveJbrHomeFromInstallPath,
   HvigorOptionsConfig,
+  HvigorCodingConfig,
 } from '../../config';
 
 export interface HvigorRunResult {
@@ -44,12 +46,20 @@ export interface HvigorRunResult {
   skippedByEnv?: boolean;
   /** 退出码（仅当 executed=true） */
   exitCode?: number;
+  /** spawnSync 超时杀死（仅 executed=true） */
+  timedOut?: boolean;
+  /** 日志尾部是否命中成功哨兵（仅 requireSuccessMarker 时检查；UT 路径恒 true） */
+  successMarkerFound?: boolean;
   /** 执行耗时 ms */
   durationMs: number;
-  /** 日志输出（stdout + stderr 合并，截断至 MAX_LOG_CHARS） */
+  /** 报告用日志尾部摘要（约 8KB），非完整日志 */
   logExcerpt: string;
-  /** 落盘的完整日志路径（相对项目根） */
+  /** 落盘的完整日志路径（相对 process.cwd()） */
   logPath?: string;
+  /** hvigor-build.meta.json 等（相对 process.cwd()） */
+  metaPath?: string;
+  /** 日志绝对路径（供上层读取全量，不依赖 cwd） */
+  logAbsPath?: string;
   /** 解析出的错误条目 */
   errors: HvigorError[];
   /** 运行时诊断提示；不参与 PASS/FAIL 判定，只帮助定位慢编译 / 增量缓存问题 */
@@ -58,6 +68,8 @@ export interface HvigorRunResult {
   testResult?: HypiumTestResult;
   /** 执行命令的完整 argv，便于复现 */
   command?: string;
+  /** 调用驱动：node_hvigorw_js / hvigorw_wrapper / path / … */
+  invocationDriver?: string;
 }
 
 export interface HvigorError {
@@ -88,6 +100,137 @@ export interface ProjectDependencyIssue {
 
 const MAX_LOG_CHARS = 200_000;
 
+/** coding 阶段未配置 toolchain.hvigor.timeoutMs 时的默认超时 */
+export const DEFAULT_HVIGOR_TIMEOUT_CODING_MS = 45 * 60 * 1000;
+
+/** ut 相关 hvigor 未配置 timeout 时的默认超时 */
+export const DEFAULT_HVIGOR_TIMEOUT_UT_MS = 15 * 60 * 1000;
+
+const MAX_LOG_ANALYSIS_BYTES = 32 * 1024 * 1024;
+const TAIL_SUCCESS_SCAN_BYTES = 256 * 1024;
+const REPORT_EXCERPT_TAIL_CHARS = 8000;
+
+const DEFAULT_SUCCESS_REGEX_SOURCES = ['BUILD SUCCESSFUL', 'Compilation successful!'];
+
+export function resolveHvigorTimeout(projectRoot: string, kind: 'coding' | 'ut'): number {
+  try {
+    const t = loadFrameworkConfig(projectRoot).toolchain?.hvigor?.timeoutMs;
+    if (typeof t === 'number' && Number.isFinite(t) && t > 0) {
+      return Math.floor(t);
+    }
+  } catch {
+    /* ignore */
+  }
+  return kind === 'coding' ? DEFAULT_HVIGOR_TIMEOUT_CODING_MS : DEFAULT_HVIGOR_TIMEOUT_UT_MS;
+}
+
+function compileSuccessMarkerRegexes(sources: string[] | undefined): RegExp[] {
+  const src = sources?.length ? sources : DEFAULT_SUCCESS_REGEX_SOURCES;
+  return src.map((p) => {
+    const t = p.trim();
+    if (t.startsWith('/') && t.length > 2) {
+      const last = t.lastIndexOf('/');
+      if (last > 0) {
+        try {
+          return new RegExp(t.slice(1, last), t.slice(last + 1));
+        } catch {
+          /* fall through */
+        }
+      }
+    }
+    try {
+      return new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    } catch {
+      return /$^/;
+    }
+  });
+}
+
+function scanSuccessMarkers(text: string, regexes: RegExp[]): boolean {
+  return regexes.some((re) => re.test(text));
+}
+
+function readLogTextForAnalysis(logAbs: string): string {
+  try {
+    const st = fs.statSync(logAbs);
+    if (st.size <= MAX_LOG_ANALYSIS_BYTES) {
+      return fs.readFileSync(logAbs, 'utf-8');
+    }
+    const fd = fs.openSync(logAbs, 'r');
+    const take = MAX_LOG_ANALYSIS_BYTES;
+    const buf = Buffer.alloc(take);
+    const start = st.size - take;
+    fs.readSync(fd, buf, 0, take, start);
+    fs.closeSync(fd);
+    return `[…日志前 ${st.size - take} 字节已省略，以下仅为尾部 ${take} 字节用于错误解析…]\n${buf.toString('utf-8')}`;
+  } catch {
+    return '';
+  }
+}
+
+function readFileTailUtf8(file: string, maxBytes: number): string {
+  try {
+    const st = fs.statSync(file);
+    const take = Math.min(maxBytes, st.size);
+    if (take <= 0) return '';
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(take);
+    fs.readSync(fd, buf, 0, take, st.size - take);
+    fs.closeSync(fd);
+    return buf.toString('utf-8');
+  } catch {
+    return '';
+  }
+}
+
+function metaBasenameFromLog(logBasename: string): string {
+  if (logBasename.endsWith('.log')) {
+    return logBasename.replace(/\.log$/i, '.meta.json');
+  }
+  return `${logBasename}.meta.json`;
+}
+
+function quoteCmdArgWin(s: string): string {
+  if (!/[ \t"&]/.test(s)) return s;
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * 解析 DevEco 安装根：环境变量优先，其次 framework.config.json。
+ */
+function resolveDevEcoInstallRoot(projectRoot: string): string | null {
+  const tryRoot = (raw: string | undefined): string | null => {
+    if (!raw || typeof raw !== 'string') return null;
+    const trimmed = raw.trim().replace(/[/\\]+$/, '');
+    if (!trimmed) return null;
+    const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
+    const nodeExe = path.join(trimmed, 'tools', 'node', nodeName);
+    return fs.existsSync(nodeExe) ? trimmed : null;
+  };
+
+  const fromEnv =
+    tryRoot(process.env.DEVECO_STUDIO_HOME) ??
+    tryRoot(process.env.HUAWEI_DEVECO_STUDIO_HOME);
+  if (fromEnv) return fromEnv;
+
+  try {
+    const p = loadDevEcoConfig(projectRoot)?.installPath;
+    return tryRoot(p);
+  } catch {
+    return null;
+  }
+}
+
+function resolveNodeHvigorwJs(projectRoot: string): { root: string; nodeExe: string; hvigorwJs: string } | null {
+  const root = resolveDevEcoInstallRoot(projectRoot);
+  if (!root) return null;
+  const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
+  const nodeExe = path.join(root, 'tools', 'node', nodeName);
+  const hvigorwJs = path.join(root, 'tools', 'hvigor', 'bin', 'hvigorw.js');
+  if (!fs.existsSync(nodeExe) || !fs.existsSync(hvigorwJs)) return null;
+  return { root, nodeExe, hvigorwJs };
+}
+
 interface ResolvedHvigorOptions {
   daemon: boolean;
   parallel: boolean;
@@ -115,11 +258,24 @@ const PROJECT_DEPENDENCY_PATTERNS = [
 
 export function analyzeProjectDependencyIssue(
   projectRoot: string,
-  input: Pick<HvigorRunResult, 'logExcerpt' | 'errors'> | string,
+  input: Pick<HvigorRunResult, 'logExcerpt' | 'errors' | 'logAbsPath'> | string,
 ): ProjectDependencyIssue {
-  const log = typeof input === 'string'
-    ? input
-    : `${input.logExcerpt}\n${input.errors.map(e => `${e.file ?? ''} ${e.message}`).join('\n')}`;
+  let log: string;
+  if (typeof input === 'string') {
+    log = input;
+  } else {
+    const fromDisk =
+      input.logAbsPath && fs.existsSync(input.logAbsPath)
+        ? readLogTextForAnalysis(input.logAbsPath)
+        : '';
+    log = [
+      fromDisk,
+      input.logExcerpt,
+      ...input.errors.map((e) => `${e.file ?? ''} ${e.message}`),
+    ]
+      .filter((s) => s && String(s).trim().length > 0)
+      .join('\n');
+  }
   const indicators = PROJECT_DEPENDENCY_PATTERNS
     .filter(re => re.test(log))
     .map(re => re.source.replace(/\\/g, ''));
@@ -266,10 +422,8 @@ function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   let installPath: string | undefined;
   try {
-    installPath = loadDevEcoConfig(projectRoot)?.installPath;
+    installPath = resolveDevEcoInstallRoot(projectRoot) ?? loadDevEcoConfig(projectRoot)?.installPath;
   } catch {
-    // 读取 config 失败时保持 env 不变；hvigor 会自己报错，诊断消息已在
-    // buildToolMissingMessage 中给出。
     return env;
   }
 
@@ -566,8 +720,9 @@ function parseHypiumOutput(log: string): HypiumTestResult {
 //
 // 探测优先级（高 → 低）：
 //   ① framework.config.json > toolchain.preferredProduct（用户显式覆盖渠道）
-//   ② 项目根 build-profile.json5 > app.products[0].name（多 product 工程取首位）
-//   ③ 兜底常量 'default'（让 hvigor 自己报 product not found，不抢报错）
+//   ② build-profile.json5 app.products：若存在名为 `product` / `default` 的条目优先于无序首位
+//   ③ 否则取 products[0].name
+//   ④ 兜底常量 'default'（让 hvigor 自己报 product not found，不抢报错）
 //
 // 容错纪律：任一阶段失败（文件不存在 / JSON5 解析失败 / 字段缺失 / 字段非字符串）
 // 一律安静回退到下一档，不抛异常 —— framework harness 是个门禁脚本，product
@@ -601,7 +756,7 @@ export function detectProduct(projectRoot: string): string {
     // 加载 framework.config.json 失败 → 继续兜底
   }
 
-  // ② build-profile.json5 > app.products[0].name
+  // ② build-profile.json5：优先命中名为 product / default 的条目，其次首位
   try {
     const buildProfile = path.join(projectRoot, 'build-profile.json5');
     if (fs.existsSync(buildProfile)) {
@@ -609,9 +764,14 @@ export function detectProduct(projectRoot: string): string {
       const obj = parseProductJson5(raw) as {
         app?: { products?: Array<{ name?: string }> };
       };
-      const first = obj?.app?.products?.[0]?.name;
-      if (typeof first === 'string' && first.trim().length > 0) {
-        return first.trim();
+      const products = obj?.app?.products ?? [];
+      const names = products
+        .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
+        .filter((n) => n.length > 0);
+      if (names.length > 0) {
+        if (names.includes('product')) return 'product';
+        if (names.includes('default')) return 'default';
+        return names[0]!;
       }
     }
   } catch {
@@ -620,6 +780,135 @@ export function detectProduct(projectRoot: string): string {
 
   // ③ fallback
   return 'default';
+}
+
+/** framework.config > toolchain.hvigor.coding 与默认值合并（不抛） */
+function loadResolvedCodingConfig(projectRoot: string): {
+  driver: NonNullable<HvigorCodingConfig['driver']>;
+  mode: 'module' | 'project';
+  task: string;
+  passBuildModeDebug: boolean;
+  extraArgs: string[];
+  successMarkers: string[] | undefined;
+} {
+  let raw: HvigorCodingConfig | undefined;
+  try {
+    raw = loadFrameworkConfig(projectRoot).toolchain?.hvigor?.coding;
+  } catch {
+    raw = undefined;
+  }
+  const driver = raw?.driver ?? 'node_hvigorw_js';
+  const defaultTask = driver === 'assemble_app_project' ? 'assembleApp' : 'assembleHap';
+  return {
+    driver,
+    mode: raw?.mode ?? 'module',
+    task: raw?.task ?? defaultTask,
+    passBuildModeDebug: raw?.passBuildModeDebug !== false,
+    extraArgs: raw?.extraArgs ?? [],
+    successMarkers: raw?.successMarkers,
+  };
+}
+
+/**
+ * coding_hvigor_build 传给 hvigorw 的参数列表（不含 node / wrapper 可执行文件）。
+ * 默认对齐 DevEco：`--mode module … assembleHap`；`driver=assemble_app_project` 时同 `buildAssembleAppArgs`。
+ */
+export function buildCodingHvigorArgs(
+  projectRoot: string,
+  overrides?: { task?: string; extraArgs?: string[] },
+): string[] {
+  const c = loadResolvedCodingConfig(projectRoot);
+  const task = overrides?.task ?? c.task;
+  const extraArgs = overrides?.extraArgs ?? c.extraArgs;
+  if (c.driver === 'assemble_app_project') {
+    return buildAssembleAppArgs(projectRoot, task, extraArgs);
+  }
+  const args: string[] = ['--mode', c.mode];
+  args.push('-p', `product=${detectProduct(projectRoot)}`);
+  if (c.passBuildModeDebug) {
+    args.push('-p', 'buildMode=debug');
+  }
+  args.push(...buildHvigorTuningArgs(projectRoot));
+  args.push(...extraArgs);
+  args.push(task);
+  return args;
+}
+
+export interface HvigorSpawnPlan {
+  spawnFile: string;
+  spawnArgs: string[];
+  useShell: boolean;
+  /** shell 模式下的整条命令行（与 spawnFile 相同） */
+  shellCmdLine?: string;
+  commandDisplay: string;
+  invocationDriver: string;
+}
+
+function buildSpawnPlanFromResolved(
+  resolved: NonNullable<ReturnType<typeof resolveHvigorCommand>>,
+  hvigorArgs: string[],
+  driverLabel: string,
+): HvigorSpawnPlan {
+  const needsShell = resolved.useShell;
+  if (needsShell) {
+    const shellCmdLine = [resolved.cmd, ...hvigorArgs].map(quoteCmdArgWin).join(' ');
+    return {
+      spawnFile: shellCmdLine,
+      spawnArgs: [],
+      useShell: true,
+      shellCmdLine,
+      commandDisplay: shellCmdLine,
+      invocationDriver: driverLabel,
+    };
+  }
+  return {
+    spawnFile: resolved.cmd,
+    spawnArgs: hvigorArgs,
+    useShell: false,
+    commandDisplay: `${resolved.cmd} ${hvigorArgs.join(' ')}`,
+    invocationDriver: driverLabel,
+  };
+}
+
+/**
+ * 解析 coding 阶段真实 spawn 形态：优先 node+hvigorw.js（DevEco 对齐），失败再回退 hvigorw wrapper。
+ */
+export function resolveCodingHvigorSpawnPlan(
+  projectRoot: string,
+  hvigorArgs: string[],
+): { spawnPlan: HvigorSpawnPlan } | { toolMissing: true } {
+  const cfg = loadResolvedCodingConfig(projectRoot);
+
+  if (cfg.driver === 'hvigorw_wrapper') {
+    const resolved = resolveHvigorCommand(projectRoot);
+    if (!resolved) return { toolMissing: true };
+    return { spawnPlan: buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper') };
+  }
+
+  const nodePair = resolveNodeHvigorwJs(projectRoot);
+  if (nodePair) {
+    const display =
+      `${quoteCmdArgWin(nodePair.nodeExe)} ${quoteCmdArgWin(nodePair.hvigorwJs)} ${hvigorArgs.map(quoteCmdArgWin).join(' ')}`;
+    return {
+      spawnPlan: {
+        spawnFile: nodePair.nodeExe,
+        spawnArgs: [nodePair.hvigorwJs, ...hvigorArgs],
+        useShell: false,
+        commandDisplay: display,
+        invocationDriver: 'node_hvigorw_js',
+      },
+    };
+  }
+
+  const resolved = resolveHvigorCommand(projectRoot);
+  if (!resolved) return { toolMissing: true };
+  return {
+    spawnPlan: buildSpawnPlanFromResolved(
+      resolved,
+      hvigorArgs,
+      'hvigorw_wrapper_fallback',
+    ),
+  };
 }
 
 export interface HvigorInvokeOpts {
@@ -639,12 +928,32 @@ export interface HvigorInvokeOpts {
   phase: string;
   /** 日志文件名（相对 reports/<feature>/<phase>/），如 'hvigor-build.log' */
   logBasename: string;
-  /** hvigor 子命令 + 参数，如 ['--mode', 'module', '-p', 'module=WalletMain@default', 'assembleHap'] */
-  args: string[];
+  /**
+   * 传给 hvigor 的参数（不含可执行路径）。与 `spawnPlan` 二选一：
+   * 提供 `spawnPlan` 时忽略此字段。
+   */
+  args?: string[];
+  /** 已解析的 spawn（coding 路径）；未提供时按 ut 语义 `resolveHvigorCommand` + `args`。 */
+  spawnPlan?: HvigorSpawnPlan;
   /** 被此环境变量跳过时，返回 skippedByEnv=true（调用方应翻译为 FAIL） */
   skipEnvVar?: string;
-  /** 超时（ms），默认 15 min */
+  /** 超时（ms）；未设置时用 timeoutKind 默认 */
   timeoutMs?: number;
+  /** 与 toolchain.hvigor.timeoutMs 共同决定默认超时时长 */
+  timeoutKind?: 'coding' | 'ut';
+  /**
+   * coding 门禁：exitCode=0 且无解析 error 时仍要求日志尾部命中成功哨兵；
+   * ut 模块编译为 false。
+   */
+  requireSuccessMarker?: boolean;
+  /** 覆盖 config 中的 toolchain.hvigor.coding.successMarkers */
+  successMarkerSources?: string[];
+}
+
+function excerptFromLogFile(logAbs: string): string {
+  const tailBytes = readFileTailUtf8(logAbs, Math.max(REPORT_EXCERPT_TAIL_CHARS * 6, 24_000));
+  if (tailBytes.length <= REPORT_EXCERPT_TAIL_CHARS) return tailBytes;
+  return tailBytes.slice(-REPORT_EXCERPT_TAIL_CHARS);
 }
 
 function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
@@ -660,55 +969,78 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     };
   }
 
-  const resolved = resolveHvigorCommand(opts.projectRoot);
-  if (!resolved) {
+  const childEnv = buildChildEnv(opts.projectRoot);
+  const childCwd = opts.cwd ?? opts.projectRoot;
+  const timeoutMs =
+    opts.timeoutMs ?? resolveHvigorTimeout(opts.projectRoot, opts.timeoutKind ?? 'ut');
+
+  let spawnPlan: HvigorSpawnPlan;
+  if (opts.spawnPlan) {
+    spawnPlan = opts.spawnPlan;
+  } else {
+    const hvigorArgs = opts.args;
+    if (!hvigorArgs) {
+      return {
+        executed: false,
+        durationMs: Date.now() - t0,
+        logExcerpt: '[Harness 内部错误] invokeHvigor 缺少 args 与 spawnPlan',
+        errors: [{ message: 'invokeHvigor：必须提供 args 或 spawnPlan' }],
+      };
+    }
+    const resolved = resolveHvigorCommand(opts.projectRoot);
+    if (!resolved) {
+      return {
+        executed: false,
+        toolMissing: true,
+        durationMs: Date.now() - t0,
+        logExcerpt: buildToolMissingMessage(opts.projectRoot),
+        errors: [],
+      };
+    }
+    spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
+  }
+
+  const dir = ensureReportDir(opts.harnessRoot, opts.feature, opts.phase);
+  const logAbs = path.join(dir, opts.logBasename);
+  const commandDisplay = spawnPlan.commandDisplay;
+  const header = `$ ${commandDisplay}\n\n`;
+
+  let logFd: number;
+  try {
+    logFd = fs.openSync(logAbs, 'w');
+  } catch (err) {
+    const e = err as Error;
     return {
       executed: false,
-      toolMissing: true,
       durationMs: Date.now() - t0,
-      logExcerpt: buildToolMissingMessage(opts.projectRoot),
-      errors: [],
+      logExcerpt: `[open log error] ${e.message}`,
+      errors: [{ message: `无法创建 hvigor 日志文件：${e.message}` }],
     };
   }
 
-  // Windows 下 .bat 必须用 shell: true，但 DevEco 默认装在 "D:\Program Files\..."
-  // 这种含空格的绝对路径上；若直接把 cmd + args 分开交给 spawnSync，Node 会
-  // 拼成 `D:\Program Files\... --mode ...` 让 cmd.exe 解析，空格会被当作分隔
-  // 符（出现 "'D:\Program' 不是内部或外部命令" 报错）。
-  // 稳妥做法：自己把命令行拼好、按需加引号，交给 shell 当作整串命令执行。
-  const needsShell = resolved.useShell;
-  const quoteIfNeeded = (s: string): string => (/\s/.test(s) ? `"${s}"` : s);
-  const cmdLine = needsShell
-    ? [resolved.cmd, ...opts.args].map(quoteIfNeeded).join(' ')
-    : undefined;
+  fs.writeSync(logFd, header, undefined, 'utf-8');
 
-  // 注入 DEVECO_SDK_HOME：DevEco 内嵌 hvigor 在命令行模式下必须能找到 SDK，
-  // 否则会报 `00303217 Invalid value of 'DEVECO_SDK_HOME'`。
-  // 用户已显式导出的 DEVECO_SDK_HOME 优先，其次从 installPath 派生。
-  const childEnv = buildChildEnv(opts.projectRoot);
-
-  const childCwd = opts.cwd ?? opts.projectRoot;
-
-  let spawnRet: SpawnSyncReturns<string>;
+  let spawnRet: SpawnSyncReturns<string | Buffer>;
   try {
-    spawnRet = needsShell
-      ? spawnSync(cmdLine!, [], {
+    spawnRet = spawnPlan.useShell
+      ? spawnSync(spawnPlan.spawnFile, [], {
           cwd: childCwd,
-          encoding: 'utf-8',
           shell: true,
-          timeout: opts.timeoutMs ?? 15 * 60 * 1000,
-          maxBuffer: 64 * 1024 * 1024,
+          timeout: timeoutMs,
           env: childEnv,
+          stdio: ['ignore', logFd, logFd],
+          windowsHide: true,
         })
-      : spawnSync(resolved.cmd, opts.args, {
+      : spawnSync(spawnPlan.spawnFile, spawnPlan.spawnArgs, {
           cwd: childCwd,
-          encoding: 'utf-8',
           shell: false,
-          timeout: opts.timeoutMs ?? 15 * 60 * 1000,
-          maxBuffer: 64 * 1024 * 1024,
+          timeout: timeoutMs,
           env: childEnv,
+          stdio: ['ignore', logFd, logFd],
+          windowsHide: true,
         });
   } catch (err) {
+    fs.closeSync(logFd);
     const e = err as Error;
     return {
       executed: false,
@@ -718,32 +1050,75 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     };
   }
 
-  const stdout = spawnRet.stdout ?? '';
-  const stderr = spawnRet.stderr ?? '';
-  const commandDisplay = cmdLine ?? `${resolved.cmd} ${opts.args.join(' ')}`;
-  const fullLog = truncateLog(`$ ${commandDisplay}\n\n${stdout}\n${stderr}`);
+  fs.closeSync(logFd);
 
-  const dir = ensureReportDir(opts.harnessRoot, opts.feature, opts.phase);
-  const logAbs = path.join(dir, opts.logBasename);
+  const errCode = spawnRet.error && (spawnRet.error as NodeJS.ErrnoException).code;
+  const timedOut = errCode === 'ETIMEDOUT';
+
+  let logBytes = 0;
   try {
-    fs.writeFileSync(logAbs, fullLog, 'utf-8');
+    logBytes = fs.statSync(logAbs).size;
   } catch {
-    // best-effort；日志落盘失败不应阻断检查
+    logBytes = 0;
   }
-  const logPath = path.relative(process.cwd(), logAbs).replace(/\\/g, '/');
 
-  const errors = parseBuildErrors(fullLog);
-  const diagnostics = buildHvigorDiagnostics(fullLog);
+  const analysisText = readLogTextForAnalysis(logAbs);
+  const errors = parseBuildErrors(analysisText);
+  const diagnostics = buildHvigorDiagnostics(analysisText);
+  const excerptTail = excerptFromLogFile(logAbs);
+
+  const requireMarker = opts.requireSuccessMarker === true;
+  const markers = requireMarker
+    ? compileSuccessMarkerRegexes(
+      opts.successMarkerSources ?? loadResolvedCodingConfig(opts.projectRoot).successMarkers,
+    )
+    : [];
+  const tailForMarker = readFileTailUtf8(logAbs, TAIL_SUCCESS_SCAN_BYTES);
+  const successMarkerFound = requireMarker ? scanSuccessMarkers(tailForMarker, markers) : true;
+
+  const metaAbs = path.join(dir, metaBasenameFromLog(opts.logBasename));
+  const metaPayload = {
+    tool: 'hvigor',
+    command: commandDisplay,
+    cwd: childCwd,
+    exitCode: spawnRet.status ?? null,
+    signal: spawnRet.signal ?? null,
+    durationMs: Date.now() - t0,
+    timedOut,
+    logBytes,
+    successMarkerRequired: requireMarker,
+    successMarkerFound,
+    invocationDriver: spawnPlan.invocationDriver,
+    envProbe: {
+      DEVECO_SDK_HOME: Boolean(childEnv.DEVECO_SDK_HOME),
+      DEVECO_STUDIO_HOME: Boolean(process.env.DEVECO_STUDIO_HOME),
+      HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),
+    },
+    logFile: path.basename(logAbs),
+  };
+  try {
+    fs.writeFileSync(metaAbs, JSON.stringify(metaPayload, null, 2), 'utf-8');
+  } catch {
+    /* best-effort */
+  }
+
+  const logPath = path.relative(process.cwd(), logAbs).replace(/\\/g, '/');
+  const metaPath = path.relative(process.cwd(), metaAbs).replace(/\\/g, '/');
 
   return {
     executed: true,
-    exitCode: spawnRet.status ?? -1,
+    exitCode: timedOut ? -1 : (spawnRet.status ?? -1),
+    timedOut,
+    successMarkerFound,
     durationMs: Date.now() - t0,
-    logExcerpt: fullLog.slice(-8000), // 尾部 8KB 放到 result 方便报告展示
+    logExcerpt: excerptTail,
     logPath,
+    metaPath,
+    logAbsPath: logAbs,
     errors,
     diagnostics,
     command: commandDisplay,
+    invocationDriver: spawnPlan.invocationDriver,
   };
 }
 
@@ -751,9 +1126,8 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
  * 模块级编译。
  *
  * 用于 ut_hvigor_build（跑 OhosTestCompileArkTS）。
- * 也可被 coding_hvigor_build 在"想对特定模块做精细编译"时调用，但默认情况
- * 下 coding 阶段更推荐 `runHvigorAssembleApp`——项目级 assembleApp 能一次
- * 覆盖所有模块（含 HAR/HSP，避免对非 entry 模块跑不存在的 assembleHap）。
+ * 用于 ut_hvigor_build（跑 OhosTestCompileArkTS）。
+ * Coding 阶段默认走 `runHvigorAssembleApp`（`toolchain.hvigor.coding`，与 DevEco `--mode module assembleHap` 对齐）。
  *
  * 注意：**HAR / HSP 模块没有 assembleHap task**。如果把 `task` 设为
  * `assembleHap` 同时模块是 library，会报 "Task was not found"；此时应把
@@ -786,32 +1160,42 @@ export function runHvigorBuild(
     ...opts,
     args,
     logBasename: target === 'ohosTest' ? 'hvigor-ut-build.log' : 'hvigor-build.log',
+    timeoutKind: 'ut',
+    requireSuccessMarker: false,
   });
 }
 
 /**
- * 项目级编译：跑顶级 `assembleApp` task（打 App 包），一次覆盖所有模块。
+ * Coding 阶段项目级 / 模块级 hvigor 门禁入口（默认与 DevEco 一致：`node hvigorw.js --mode module … assembleHap`）。
  *
- * 用于 coding_hvigor_build：比起遍历每个模块跑 assembleHap 更稳健，因为：
- *   - Library 模块（HAR/HSP）没有 assembleHap；
- *   - DevEco Studio "Build HAP" 顶级 action 走的就是 assembleApp。
- *
- * 代价：比单模块编译耗时长；但只在规则触发时跑一次（通常走增量缓存）。
+ * 由 `toolchain.hvigor.coding` 控制 driver/mode/task；`driver=assemble_app_project` 时等价于历史 `assembleApp` 项目级验证。
  */
 export function runHvigorAssembleApp(
-  opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
-    /** 默认 'assembleApp'；允许覆盖为 'build' / 'assembleHap' 等 */
+  opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename' | 'spawnPlan'> & {
+    /** 覆盖 config 中的 coding.task */
     task?: string;
-    /** 附加参数，如 '--daemon' / '-p buildMode=release' */
+    /** 覆盖 / 合并 config 的 coding.extraArgs（此处传入即整段替换 config 的 extraArgs） */
     extraArgs?: string[];
   },
 ): HvigorRunResult {
-  const task = opts.task ?? 'assembleApp';
-  const args = buildAssembleAppArgs(opts.projectRoot, task, opts.extraArgs);
+  const { task, extraArgs, ...rest } = opts;
+  const hvigorArgs = buildCodingHvigorArgs(opts.projectRoot, { task, extraArgs });
+  const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, hvigorArgs);
+  if ('toolMissing' in resolved) {
+    return {
+      executed: false,
+      toolMissing: true,
+      durationMs: 0,
+      logExcerpt: buildToolMissingMessage(opts.projectRoot),
+      errors: [],
+    };
+  }
   return invokeHvigor({
-    ...opts,
-    args,
+    ...rest,
+    spawnPlan: resolved.spawnPlan,
     logBasename: 'hvigor-build.log',
+    timeoutKind: 'coding',
+    requireSuccessMarker: true,
   });
 }
 

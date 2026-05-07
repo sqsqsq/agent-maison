@@ -106,6 +106,28 @@ export interface DevEcoStudioConfig {
 export type HvigorAnalyzeMode = 'off' | 'normal' | 'advanced';
 
 /**
+ * coding_hvigor_build 的 hvigor 调用形态（与 DevEco 手动 / Build 面板对齐时可调）。
+ *
+ * - `node_hvigorw_js`（默认）：`node <DevEco>/tools/hvigor/bin/hvigorw.js --mode module … assembleHap …`
+ * - `hvigorw_wrapper`：走 `hvigorw.bat` / `hvigorw`（与 v2.3 resolve 链一致）
+ * - `assemble_app_project`：项目级 `--mode project assembleApp`（v2.7 旧默认）
+ */
+export interface HvigorCodingConfig {
+  driver?: 'node_hvigorw_js' | 'hvigorw_wrapper' | 'assemble_app_project';
+  mode?: 'module' | 'project';
+  task?: string;
+  /**
+   * 是否显式传 `-p buildMode=debug`。
+   * DevEco 常见手动命令会带上；默认 true。
+   */
+  passBuildModeDebug?: boolean;
+  /** 成功哨兵：正则源字符串；至少命中一条且 exitCode=0 且无解析 error 才允许 coding PASS */
+  successMarkers?: string[];
+  /** 追加在 task 与调优 flag 之后，便于覆盖 `-p` 等 */
+  extraArgs?: string[];
+}
+
+/**
  * hvigor 命令行调优开关。
  *
  * 默认值由 `scripts/utils/hvigor-runner.ts` 决定，当前对齐内网真实工程常用命令：
@@ -122,6 +144,14 @@ export interface HvigorOptionsConfig {
   parallel?: boolean;
   incremental?: boolean;
   analyze?: HvigorAnalyzeMode;
+  /**
+   * hvigor 子进程超时（毫秒）。
+   * 未配置时：coding 默认 45min，ut 相关默认 15min（由 hvigor-runner 分派）。
+   * 上限 6h，防止配置笔误刷爆常驻任务。
+   */
+  timeoutMs?: number;
+  /** coding 阶段专用装配 / 哨兵 */
+  coding?: HvigorCodingConfig;
 }
 
 /**
@@ -160,13 +190,12 @@ export interface ToolchainConfig {
   /**
    * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
    *
-   * 探测优先级（v2.7 起，由 hvigor-runner.ts `detectProduct` 实现）：
+   * 探测优先级（由 hvigor-runner.ts `detectProduct` 实现）：
    *   ① toolchain.preferredProduct（本字段，用户显式覆盖）
-   *   ② 项目根 build-profile.json5 → app.products[0].name
+   *   ② build-profile.json5 app.products：若存在名为 `product` / `default` 的条目则优先于无序首位，否则取 products[0].name
    *   ③ 兜底常量 'default'
    *
-   * 多 product 工程（同时声明 default / mirror / phone 等）若希望 framework
-   * harness 走非首位 product，必须在此显式声明。空字符串等同未声明。
+   * 多 product 工程若 harness 不应猜首位，必须在此显式声明（常见为 `"product"`）。空字符串等同未声明。
    */
   preferredProduct?: string;
 }
@@ -554,6 +583,47 @@ function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig |
   };
 }
 
+function normalizeHvigorCoding(raw: unknown): HvigorCodingConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const allowedDrivers = new Set<string>(['node_hvigorw_js', 'hvigorw_wrapper', 'assemble_app_project']);
+  const out: HvigorCodingConfig = {};
+
+  if (typeof r.driver === 'string' && r.driver.trim()) {
+    const d = r.driver.trim();
+    if (!allowedDrivers.has(d)) {
+      throw new Error(
+        `[framework/config.ts] toolchain.hvigor.coding.driver 必须是 ` +
+          `"node_hvigorw_js" | "hvigorw_wrapper" | "assemble_app_project"，收到 "${d}"`,
+      );
+    }
+    out.driver = d as HvigorCodingConfig['driver'];
+  }
+  if (typeof r.mode === 'string' && r.mode.trim()) {
+    const m = r.mode.trim();
+    if (m !== 'module' && m !== 'project') {
+      throw new Error(`[framework/config.ts] toolchain.hvigor.coding.mode 必须是 "module" | "project"，收到 "${m}"`);
+    }
+    out.mode = m;
+  }
+  if (typeof r.task === 'string' && r.task.trim()) {
+    out.task = r.task.trim();
+  }
+  if (typeof r.passBuildModeDebug === 'boolean') {
+    out.passBuildModeDebug = r.passBuildModeDebug;
+  }
+  if (Array.isArray(r.extraArgs)) {
+    const xs = r.extraArgs.filter((x): x is string => typeof x === 'string');
+    if (xs.length > 0) out.extraArgs = xs;
+  }
+  if (Array.isArray(r.successMarkers)) {
+    const xs = r.successMarkers.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    if (xs.length > 0) out.successMarkers = xs.map((s) => s.trim());
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function normalizeHvigorOptions(raw: HvigorOptionsConfig | undefined): HvigorOptionsConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
 
@@ -570,6 +640,20 @@ function normalizeHvigorOptions(raw: HvigorOptionsConfig | undefined): HvigorOpt
     }
     out.analyze = analyze;
   }
+
+  if (typeof raw.timeoutMs === 'number') {
+    if (!Number.isFinite(raw.timeoutMs) || raw.timeoutMs <= 0) {
+      throw new Error(`[framework/config.ts] toolchain.hvigor.timeoutMs 必须是正数，收到 ${String(raw.timeoutMs)}`);
+    }
+    const cap = 6 * 3600 * 1000;
+    if (raw.timeoutMs > cap) {
+      throw new Error(`[framework/config.ts] toolchain.hvigor.timeoutMs 超过上限 6h（${cap} ms）`);
+    }
+    out.timeoutMs = Math.floor(raw.timeoutMs);
+  }
+
+  const coding = normalizeHvigorCoding(raw.coding);
+  if (coding) out.coding = coding;
 
   return Object.keys(out).length > 0 ? out : undefined;
 }

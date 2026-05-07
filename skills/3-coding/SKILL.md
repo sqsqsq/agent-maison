@@ -407,24 +407,26 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name> --summary --failures-only
 ```
 
-`coding_hvigor_build` BLOCKER 内部会按 `contracts.yaml > modules` 调用项目级 `hvigor assembleApp` 一次性出全 HAP；日志落 `framework/harness/reports/<feature>/coding/hvigor-build.log`。
+`coding_hvigor_build` BLOCKER 默认与 DevEco 手工构建对齐：优先 `node <DevEco>/tools/hvigor/bin/hvigorw.js --mode module … assembleHap`（见 `toolchain.hvigor.coding`）；完整日志落 `framework/harness/reports/<feature>/coding/hvigor-build.log`，元数据 `hvigor-build.meta.json`。PASS 另需日志尾部命中成功哨兵（如 `BUILD SUCCESSFUL`），避免「退出码 0 但输出异常」误判。
 优先读取 `framework/harness/reports/<feature>/coding/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
 
-> **不要**让 agent 自己手敲 `hvigorw --mode module ...`。v2.3 起命令形态、所需环境变量、含空格路径等综合考虑较多，自行拼装容易翻车；harness 已经封装了这一切。
+> **不要**让 agent 自己手敲完整 hvigor 命令行。`DEVECO_SDK_HOME` / `JAVA_HOME`、Windows 含空格路径、`node`+`hvigorw.js` 与 wrapper 回退等已由 `hvigor-runner.ts` 封装。
 
-**v2.7 起 harness 装配的 hvigor 命令形态**（自动加速 + product 自动探测）：
+**v2.9 起默认命令形态**（可通过 `framework.config.json > toolchain.hvigor.coding` 改为 `assemble_app_project` 等项目级 `assembleApp`）：
 
 ```
-hvigorw --mode project \
+node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
+  --mode module \
   -p product=<detectProduct()> \
   -p buildMode=debug \
   --daemon --parallel --incremental --analyze=advanced \
-  assembleApp
+  assembleHap
 ```
 
-- `product=` 由 `detectProduct(projectRoot)` 探测：先看 `framework.config.json > toolchain.preferredProduct`，再看 `build-profile.json5 > app.products[0].name`，兜底 `default`。**v2.6 之前硬写死 `default`**，内网某工程 product 名为 `mirror` 时会直接报 `product not found` —— 这条 BLOCKER 已修。
-- `-p buildMode=debug`：assembleApp 默认 `release`（含混淆 / 压缩 / 体积优化），coding 阶段只过门禁不出交付包，固定 `debug` 在大型工程通常能砍 30%~50% 编译时间。
-- `--daemon` / `--parallel` / `--incremental` / `--analyze=advanced`：默认对齐内网真实工程常用命令；如某工程 warm build 反向变慢，可通过 `framework.config.json > toolchain.hvigor` 做 A/B。
+- `product=` 由 `detectProduct(projectRoot)` 探测：先看 `toolchain.preferredProduct`，再在对 `build-profile.json5 > app.products` 中优先命中名为 `product` / `default` 的项，否则取列表首位，兜底 `default`。
+- **多 product 工程**请在 `toolchain.preferredProduct` 显式声明（本仓库示例为 `"product"`）。
+- `-p buildMode=debug`：与常见 DevEco 手工命令一致；`driver=assemble_app_project` 时仍保留该加速语义（项目级 `assembleApp` 默认偏 release，harness 固定 debug 做门禁）。
+- `--daemon` / `--parallel` / `--incremental` / `--analyze=advanced`：由 `toolchain.hvigor` 调优；coding 默认超时 **45 分钟**（`toolchain.hvigor.timeoutMs` 可覆盖）。
 
 实际加速效果与工程规模强相关，详见 [framework/docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md) 的「hvigor 调优」章节，里头记录了本仓库 5 模块小工程的实测反例（warm 路径反而慢 47%），避免 agent 拍脑袋假设"必定加速"。
 

@@ -7,7 +7,7 @@
 //   覆盖。fixture 反向注入只能验"出口装配是否带 -p product=X"，无法独立暴露
 //   product 探测每一档兜底是否正确。
 //
-// 覆盖矩阵（7 case）：
+// 覆盖矩阵（9 case）：
 //   1. 默认工程（无 framework.config.json，无 build-profile.json5）→ 'default'
 //   2. build-profile.json5 自定义 product 'mirror' → 'mirror'
 //   3. build-profile.json5 app.products 为空数组 → 兜底 'default'
@@ -122,6 +122,40 @@ const cases: Array<{ name: string; run: () => void }> = [
         }),
       );
       assertEq(detectProduct(root), 'phone', 'preferredProduct 应覆盖 build-profile');
+    }),
+  },
+  {
+    name: 'detectProduct: 多 product 时优先命中名为 product 的条目（优于 products[0]）',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({
+          app: {
+            products: [
+              { name: 'mirror' },
+              { name: 'product' },
+            ],
+          },
+        }),
+      );
+      assertEq(detectProduct(root), 'product', '应优先 product 名称');
+    }),
+  },
+  {
+    name: 'detectProduct: 无 product 名时优先命中 default（优于无序首位）',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({
+          app: {
+            products: [
+              { name: 'mirror' },
+              { name: 'default' },
+            ],
+          },
+        }),
+      );
+      assertEq(detectProduct(root), 'default', '应优先 default 名称');
     }),
   },
   {
