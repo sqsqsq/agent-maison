@@ -38,10 +38,7 @@ framework/profiles/<project_profile.name>/skills/<skill>/profile-addendum.md
 | 5 | 业务级 UT | [5-business-ut/SKILL.md](5-business-ut/SKILL.md) | DAG + profile UT |
 | 6 | 真机测试 | [6-device-testing/SKILL.md](6-device-testing/SKILL.md) | 测试计划与报告 |
 
-辅助入口（不改变 SSOT：**仍以 Skill 5 正文为准**）：
-
-- **Cursor**：`framework/agents/cursor/templates/skills/ut-audit/` → init 下发实例 `.cursor/skills/ut-audit/`（读完 Skill 5 后从 Step 1.5 切入）。
-- **Claude Code**：`/ut-audit`，路由同上做可测性预检与后续 mock-plan 步骤。
+如需仅做可测性预检与 mock-plan（Skill 5 的 Step 1.5/1.6），仍在 **`/business-ut`（Claude Code）或 `5-business-ut` 跳板（Cursor）** 入口启动，并在用户消息中明确「仅做到 Step 1.5/1.6 后暂停」；SSOT 仍为 Skill 5 正文。
 
 ---
 

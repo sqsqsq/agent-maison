@@ -52,7 +52,7 @@ framework/agents/
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | 无 |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
-| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（含 `ut-audit` 辅助跳板）、`.cursor/rules/framework.mdc` |
+| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`、`.cursor/rules/framework.mdc` |
 
 ## Init Skill：`adapter.yaml` 字段处理示例（以 claude adapter 为代表）
 

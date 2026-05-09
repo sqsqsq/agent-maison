@@ -111,7 +111,7 @@
 
 1. **存量 feature 迁移**：已在历史版本通过 UT harness 的 feature，**仅当再次进入 Skill 5 并变更 UT 相关产物时** 回补 `ut/testability-audit.md` 与 `ut/mock-plan.yaml`；**新 feature 自 v2.3 规则生效起一律强制**（与 `ut-rules.yaml` 中 BLOCKER 一致）。
 2. **L3 + option_b 接缝白名单**：仅允许 **构造注入、包装 wrapper、提取命名方法、setter 注入** 等显式接缝；**禁止**「换一种全局单例」式改造敷衍 UT。
-3. **Adapter 路由入口**：权威流程仍本文为 SSOT。**Cursor**：`.cursor/skills/ut-audit/SKILL.md` 跳板→从 Step 1.5 切入（须先读完本 SKILL）。**Claude Code**：`/ut-audit` slash → 同上切入；完整 UT 闭环仍走 `/business-ut`。
+3. **可测性预检的独立切入**：如只想完成 Step 1.5/1.6（产出 `testability-audit.md` / `mock-plan.yaml`）后暂停，请在 `/business-ut`（Cursor 即 `5-business-ut` 跳板）入口中明确告知 agent，**不**再提供独立 `/ut-audit` slash 或跳板；完整 UT 闭环仍由 `/business-ut` 收尾。
 
 ## 工作流程（v2.1）
 

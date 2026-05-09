@@ -22,7 +22,7 @@ rules:
 post_install_hooks: []
 
 notes: |
-  - 提供 9 份 skill 跳板模板：Skill 00（00-framework-init）、Skill 0~6、`ut-audit`（可选入口，跳到 Skill 5 自 Step 1.5）；Skill 0
+  - 提供 8 份 skill 跳板模板：Skill 00（00-framework-init）、Skill 0~6；Skill 0
     的两个 phase 合用一份跳板（`0-catalog-bootstrap`），与现有钱包仓库对齐。
   - skill 跳板 SKILL.md 的相对路径假设在 `.cursor/skills/<skill>/SKILL.md`，
     跳转到 `../../../framework/skills/<n>/SKILL.md`——与当前钱包仓库对齐。

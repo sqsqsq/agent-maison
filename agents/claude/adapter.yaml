@@ -37,8 +37,8 @@ hooks:
 post_install_hooks: []
 
 notes: |
-  - 提供 10 份 slash 路由模板：Skill 0（catalog-bootstrap / glossary-bootstrap）、
-    Skill 1~6、`ut-audit.md`（Skill 5 自 Step 1.5 切入）、以及 Skill 00（framework-init.md）。
+  - 提供 9 份 slash 路由模板：Skill 0（catalog-bootstrap / glossary-bootstrap）、
+    Skill 1~6、以及 Skill 00（framework-init.md）。
   - 模板里的 `../../framework/skills/<n>/SKILL.md` 相对路径假设 .claude/commands/
     在实例工程根下——与当前钱包仓库保持一致。
   - settings.json 里的 `${CLAUDE_PROJECT_DIR}` 是 Claude Code CLI 注入的运行时变量，
