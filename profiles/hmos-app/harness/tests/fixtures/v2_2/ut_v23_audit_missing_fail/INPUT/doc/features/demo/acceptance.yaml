@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V23
+    prd_function: FX
+    priority: P2
+    description: v2.3 回归 fixture——要求 testability-audit，本 fixture 刻意缺失该文件。
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

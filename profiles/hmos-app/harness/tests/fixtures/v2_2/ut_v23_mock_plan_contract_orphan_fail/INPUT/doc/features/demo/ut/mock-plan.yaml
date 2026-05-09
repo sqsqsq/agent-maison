@@ -1,0 +1,15 @@
+schema_version: "1.0"
+feature: demo
+
+spies:
+  - target_class: PhantomRepo
+    target_file: 02-Feature/Demo/src/main/ets/data/repository/PhantomRepo.ets
+    base_strategy: subclass
+    methods:
+      - name: fetchData
+        params: []
+        return_type: { text: "Promise<string>" }
+        presets:
+          - id: ok
+            returns:
+              ts_expr: "'ghost' as string"

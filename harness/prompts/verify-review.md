@@ -2,6 +2,8 @@
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+>
+> **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-review.overlay.md`，须与本正文**合并阅读**（代码形态与审查侧重点以 profile 为准）。
 
 ---
 

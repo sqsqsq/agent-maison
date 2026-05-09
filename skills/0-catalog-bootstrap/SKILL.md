@@ -6,13 +6,23 @@
 
 ## 概述
 
-你是一位资深 HarmonyOS 工程架构分析师（本仓库以钱包工程为参考示例，实际工作中请以目标实例工程的 `framework.config.json` / `doc/architecture.md` 为准）。
+你是一位按当前 `project_profile` 自适配的工程架构分析师。实际工作中请以目标实例工程的 `framework.config.json` / `doc/architecture.md` 与 profile addendum 为准。
 你的任务是在**已有真实代码工程**上，为之建立两份"单一事实源"：
 
 - `doc/module-catalog.yaml` — 每个模块的画像卡（职责 / `NOT_responsible_for` / `easily_confused_with` / 业务术语）
 - `doc/glossary.yaml` — 业务自然语言 ↔ 权威模块映射表
 
 本 Skill 是所有后续 Skill（1~6）的**前置**，只有这两个文件建好，PRD 阶段的「术语消歧」和「Scope 声明」才有可校验的基准。
+
+## Step 0. 载入 `project_profile` addendum（强制）
+
+进入任一 Phase（A/B）的步骤前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/0-catalog-bootstrap/profile-addendum.md`
+
+`<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时默认 `hmos-app`）；文件不存在则仅依赖本 SKILL 正文与宿主 `doc/` 路径。
+
+---
 
 ## 触发条件
 
@@ -31,7 +41,7 @@
    - AI 根据用户口头回应**自主**翻转 `confirmed_by_user` 并立即合并
    - **用户无需手动打开 staging 文件改 flag**。手动模式仅作为 fallback 存在（见下方 Step 5.4 / 3.5）。
 3. **AI 绝不直接改** `doc/module-catalog.yaml` / `doc/glossary.yaml` 除非拿到用户 `y`。<br>&nbsp;&nbsp;**唯一例外**：Phase A / Phase B 的 Step 0——若文件完全不存在，AI 可以（且必须）自主创建只含 `schema_version` + 空数组的**骨架**，无需用户 `y`。骨架里禁止塞任何模块/术语条目。
-4. **代码信号 + 文档信号双输入**：若有 `doc/architecture.md` / 模块 README，**优先读文档**；若无则降级到纯代码推导（oh-package.json5 / Index.ets / 目录树）。
+4. **代码信号 + 文档信号双输入**：若有 `doc/architecture.md` / 模块 README，**优先读文档**；若无则按当前 profile addendum 声明的代码信号降级推导。
 5. **harness 守门**：最终产物必须通过 `harness-runner.ts --phase catalog` / `--phase glossary` 的结构与交叉引用校验。
 
 ---
@@ -80,7 +90,7 @@ modules: []
 **入口命令**：用户传入一个模块名，如 `/catalog-bootstrap FinancialCard`。
 
 若用户**没指定**模块名，按以下顺序组装清单：
-1. 读 `build-profile.json5` 的 `modules[]`，提取所有 `srcPath` → 得到"物理存在的模块"全集
+1. 按当前 profile addendum 声明的模块发现方式，得到"物理存在的模块"全集
 2. 对比 `doc/module-catalog.yaml` 的 `modules[].name`，标记每个模块当前是 `未建档` / `已建档`
 3. 把两类混合展示给用户，**让用户选一个**作为本轮目标。示例：
 
@@ -89,7 +99,7 @@ modules: []
   [1] BankCard
   [2] TransportCard
 已建档（可进入 UPDATE 模式刷新画像）：
-  [3] CardManager      最近提交动了 Index.ets 的 exports，建议刷新
+  [3] CardManager      最近提交动了对外导出入口，建议刷新
   [4] WalletMain       上次刷新 2 周前
 ...
 选一个编号 / 模块名：
@@ -123,12 +133,12 @@ else                    → CREATE 模式（新建）
 |------|------|--------|--------|
 | 1 | `doc/architecture.md` 里关于 `<M>` 的小节 | **强锚点**，作为职责定义主来源 | 降级到 2 |
 | 2 | `<module_path>/README.md` | 辅锚点 | 继续到 3 |
-| 3 | `<module_path>/oh-package.json5` | 读 `dependencies` 判定层级关系 | 必读——没有说明不是 HAR 模块 |
-| 4 | `<module_path>/Index.ets` | 读所有 `export` 符号 → `key_exports` | 列空数组 `[]` |
-| 5 | `<module_path>/src/main/ets/` 目录树 | 不读全部源码，**只列目录结构**（深度 ≤ 3） | — |
+| 3 | profile 声明的模块清单/包描述文件 | 读依赖与模块格式 | 若缺失则按 profile addendum 的降级策略处理 |
+| 4 | profile 声明的对外导出入口 | 读公开符号 → `key_exports` | 列空数组 `[]` |
+| 5 | profile 声明的源码目录树 | 不读全部源码，**只列目录结构**（深度 ≤ 3） | — |
 | 6 | 最多 3 个关键文件的头部 60 行 | 仅用于确认职责（如 Repository/Service 的类名与 JSDoc） | — |
 
-**上下文控制**：以上全部内容**单个模块**加起来应 < 30K token。60 万行工程里**不要**读 `src` 下的实现文件。若模块异常大，只读 Index.ets + 目录树 + README。
+**上下文控制**：以上全部内容**单个模块**加起来应 < 30K token。大型工程里**不要**通读源码实现。若模块异常大，只读导出入口 + 目录树 + README。
 
 ### Step 3. 填充模块画像草稿
 
@@ -148,17 +158,17 @@ doc/catalog-staging/<ModuleName>.yaml
 
 | 字段 | 如何填 |
 |------|--------|
-| `name` | 严格与 `oh-package.json5` 或目录名一致（PascalCase） |
+| `name` | 严格与 profile 识别出的包名或目录名一致 |
 | `layer` | 从路径前缀推出：`01-Product` / `02-Feature` / `03-CommonBusiness` / `04-BusinessBase` / `05-SystemBase` |
 | `sub_layer` | 若 architecture.md 里标注了"顶层 / 中间 / 底层"则填，否则 null |
-| `format` | 根据 `oh-package.json5` 的 `module.type`：`entry` → HAP，`har` → HAR |
+| `format` | 根据 profile 声明的模块格式枚举填写 |
 | `one_liner` | **一句话**核心价值。优先复制 architecture.md 原文，禁止自己发挥 |
 | `responsibilities` | 3~6 条，每条具体到"这模块对外提供什么能力 / 持有什么数据" |
 | `NOT_responsible_for` | **最重要**：列出"容易被误塞进来但不归它管"的事。**至少 3 条**，参考易混模块 |
 | `typical_business_terms` | 业务团队/PM 在口头 / PRD 里称呼这个模块时用的词（反向索引） |
 | `easily_confused_with` | 字面相似但语义不同的兄弟模块。每条含 `module` + `disambiguation`（判定规则） |
-| `key_exports` | 从 Index.ets 提取的主要 export 符号，保留 ≤ 10 个 |
-| `entry_file` | HAP → EntryAbility 路径；HAR → Index.ets 相对路径 |
+| `key_exports` | 从 profile 声明的对外导出入口提取主要公开符号，保留 ≤ 10 个 |
+| `entry_file` | profile 声明的模块入口或导出入口相对路径 |
 
 **禁止**：瞎编 `NOT_responsible_for` 和 `easily_confused_with`。这两个字段若没有证据就填 `[]`，**不要**凭字面相似硬造。宁可留空，等第二轮补全再加。
 
@@ -167,9 +177,9 @@ doc/catalog-staging/<ModuleName>.yaml
 草稿写完后，对照以下清单自检：
 
 ```
-[ ] 1. name 与目录名 / oh-package.json5 的 name 一致
+[ ] 1. name 与目录名 / profile 包描述中的名称一致
 [ ] 2. layer 的前缀与物理路径一致（不能把 03 层的模块写成 02）
-[ ] 3. format 与 oh-package.json5 的 module.type 一致
+[ ] 3. format 与 profile 声明的模块格式来源一致
 [ ] 4. one_liner 不是"xxx 模块"这类空话
 [ ] 5. responsibilities 每条都能在代码 / 架构文档里找到依据
 [ ] 6. NOT_responsible_for 至少 3 条（或显式写 "# 暂无已知误塞反例"）
@@ -191,7 +201,7 @@ doc/catalog-staging/<ModuleName>.yaml
 📦 <ModuleName>（新建）  草稿位置：doc/catalog-staging/<ModuleName>.yaml
 ──────────────────────────────────────────────────
 Layer / Sub-layer:   02-Feature / 底层
-Format:              HAR
+Format:              <profile-format>
 One-liner:           金融卡模块，内部包含银行卡和 HuaweiCard 两大分类
 Responsibilities:
   1. 提供银行卡 CRUD 能力…
@@ -204,10 +214,10 @@ NOT_responsible_for:
 Easily_confused_with:
   • CardManager — 管理所有卡种的统一能力 vs 金融卡专有业务
 Key_exports: [BankCardService, HuaweiCardService, ...]
-Entry_file:  02-Feature/FinancialCard/Index.ets
+Entry_file:  <profile-entry-file>
 
 Signals used:
-  ✓ architecture.md  ✓ oh-package.json5  ✓ Index.ets  ✗ README.md  (目录树 depth=3)
+  ✓ architecture.md  ✓ profile package descriptor  ✓ public export entry  ✗ README.md  (目录树 depth=3)
 ```
 
 ##### 5.1.B UPDATE 模式展示格式（**字段级 diff，只高亮变更**）
@@ -248,7 +258,7 @@ Signals used:
 ✓ 其他 6 个字段无变化（name, layer, sub_layer, format, NOT_responsible_for, entry_file）
 
 Signals used:
-  ✓ architecture.md  ✓ oh-package.json5  ✓ Index.ets  ✗ README.md  (目录树 depth=3)
+  ✓ architecture.md  ✓ profile package descriptor  ✓ public export entry  ✗ README.md  (目录树 depth=3)
 ```
 
 **硬约束**：
@@ -558,8 +568,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 
 ### catalog 阶段检查项（完整列表见 `framework/specs/phase-rules/catalog-rules.yaml`）
 
-- **Structure**：schema_version 存在；每条 module 必填字段完整；layer 值合法；format ∈ {HAP, HAR}；name 不重复
-- **Traceability**：`easily_confused_with.module` 指向的模块必须在本文件内存在；`entry_file` 路径在磁盘上真实存在（WARN）；`key_exports` 与该模块 Index.ets 的 top-level export 保持同步（漂移即 WARN）；**feature 反向完整性**（`feature_scope_integrity` WARN）：扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope 声明，提示哪些 feature 引用了本 catalog 未建档的模块——这些 feature 在跑 `--phase prd/design` 时会 BLOCKER on `scope_matches_catalog`，catalog 阶段提前告警。
+- **Structure**：schema_version 存在；每条 module 必填字段完整；layer 值合法；format 属于当前 profile 声明的合法集合；name 不重复
+- **Traceability**：`easily_confused_with.module` 指向的模块必须在本文件内存在；`entry_file` 路径在磁盘上真实存在（WARN）；`key_exports` 与该模块 profile 导出入口的 top-level export 保持同步（漂移即 WARN）；**feature 反向完整性**（`feature_scope_integrity` WARN）：扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope 声明，提示哪些 feature 引用了本 catalog 未建档的模块——这些 feature 在跑 `--phase prd/design` 时会 BLOCKER on `scope_matches_catalog`，catalog 阶段提前告警。
 
 ### glossary 阶段检查项（完整列表见 `framework/specs/phase-rules/glossary-rules.yaml`）
 

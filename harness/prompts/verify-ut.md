@@ -2,6 +2,8 @@
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+>
+> **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-ut.overlay.md`，须与本正文**合并阅读**。
 
 ---
 
@@ -12,9 +14,9 @@
 
 **v2.1 关键原则（与 v2 的差异）：**
 - `UseCase` 不再强制为代码中的类，而是 `use-cases.yaml` 中的**规约 / 导航图**：`coordinator`（指向真实代码里的类/方法/函数）、`ui_bindings`（UI↔业务入口映射）、`data_boundaries`（引用 `contracts.yaml` 已登记的 data 层类，而非新造 Port 接口）
-- **不再校验 `domain/usecase/*.ets`、`Port` 接口、UseCase 类纯净度**等代码形态硬规则
+- **不再强制**校验「`domain/usecase/` 下 UseCase 类文件」、`Port` 接口形态、UseCase 类纯净度等**固定目录/类名**硬规则（以 `use-cases.yaml` 规约为准）
 - UT 作为**既有代码的消费者**：直接调用 `ui_bindings.user_actions.calls` 声明的**命名函数**（Page 方法 / Flow 方法 / 导出函数），在 `data_boundaries` 处打桩
-- **UI 层仍绝对禁止进入 UT**（`@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics` 等）
+- **UI 层仍绝对禁止进入 UT**：具体禁入符号以 harness 的 `ut_import_whitelist` 及当前 profile 阶段规则为准；不得将 UI 组件或页面运行时依赖 import 进 UT。
 
 **审查方针：**
 - 你独立于 UT 生成者，避免"自己验自己"的偏差
@@ -29,15 +31,15 @@
 
 > 以下约束是 Skill 5 阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并在对应检查项补 BLOCKER 级 `src_mutation_discipline` 条目。
 
-1. **禁止擅自修改业务源码**：Skill 5 阶段**禁止**对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。
+1. **禁止擅自修改业务源码**：Skill 5 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。**不得**修改 **UT/测试根目录**以外的业务文件除非走下方授权流程。
 2. **必须先问后改**：如确实无法通过 UT/Spy/Stub/原型替换绕过，**必须**先向用户发出明确请求（含：文件路径、变更签名、为何 UT 层无法规避、影响面评估），并取得用户**书面同意**。
 3. **必须登记授权**：用户同意后，必须把授权纪要写入 `framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）。
 4. **未授权改动一律违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会硬检测 `src/main` 的 git diff，任何未在 `approved_src_mutations[]` 中登记的源码改动都会 FAIL。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 design.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 PRD/design 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
-6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 `ut_hvigor_test` 为 FAIL / 被 `ut_hvigor_build` 短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
+6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
 
 > 典型违规迹象（请特别留意）：
-> - `src/main/**/*.ets` 里新增了命名对称为某个 UT 调用准备的函数，但该函数**没有对应的 PRD/design 条目**；
+> - 业务源码树（非测试目录）里新增了看似仅为 UT 服务的函数，但该函数**没有对应的 PRD/design 条目**；
 > - 原本 `private` 的方法被改为 `public`，且 UT 里就是在调这个刚变更的方法；
 > - 新增的 export barrel / 中间文件只被 UT 导入、未被任何业务代码消费。
 
@@ -163,6 +165,7 @@
   2. 对每条 DAG（尤其 `port_call_*` / `async_call`）：若节点含 `spy_preset`，preset 是否能覆盖该分支在 PRD / acceptance 上需要的 happy + 关键失败（与 mock-plan 对照）
   3. 阅读 UT：切换分支时是否使用 mock-plan 宣言的 preset（或等价命名的 `whenXxx`），**避免**在 `it()` 内重新手写与 mock-plan `ts_expr` 不一致的大段字面量
   4. 若 mock-plan 有 preset 但 DAG/UT 从未引用对应依赖方法 → WARN 或 FAIL（视是否造成覆盖缺口）
+  5. **新 DAG** 须在 `port_call_*` / `async_call` 上优先声明 `spy_preset` 引用 mock-plan；`mock_data` 仅过渡期兼容，新 feature **禁止**再往 DAG 堆无类型字面量（与 `mock-plan-schema.md` / `dag-schema.md` 一致）。
 - **输出**：preset ↔ 分支 ↔ `it()` 映射表；缺口清单
 
 ### 检查 5: branch 语义覆盖 (branch_coverage_semantic)
@@ -392,13 +395,13 @@ verification_result:
 
 1. **不要重复脚本 Harness 已覆盖的检查**（use-cases.yaml schema、ui_bindings 非空、named_business_handler、boundary_matches_contracts、ut_import_whitelist、it 标签格式、boundaries_all_stubbed、覆盖计数等）
 2. 本文件 v2.1 的核心 BLOCKER 是 **end_to_end_driving**——如果用例仍然是"调 Repository 查 length"这种老式单数据接口测试，必须 FAIL
-3. 若 UT 文件依赖了 `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics` 等 UI 符号，脚本 Harness 已经会 FAIL；你无需重复判断，但可在 `test_isolation` 或 `end_to_end_driving` 中顺带引用其对"脱离 UI runtime 驱动"的负面影响
+3. 若 UT 文件依赖了 **UI 层禁入清单**中的符号（具体列表以 harness/profile 为准），脚本 Harness 已经会 FAIL；你无需重复判断，但可在 `test_isolation` 或 `end_to_end_driving` 中顺带引用其对"脱离 UI runtime 驱动"的负面影响
 4. 对每一项检查，请给出**具体的代码证据**（文件路径 + 关键代码行），而非泛泛而谈
 5. 若 `use-cases.yaml` 不存在但 acceptance.yaml 有 `ut_layer ∈ {unit, both}` 的 AC：
    - 检查 1 / 2 / 4 置为 SKIP（SKIP 原因注明"本 feature 未达复杂度阈值或未产出 use-cases.yaml"）
    - 检查 3（end_to_end_driving）仍需以"调用真实业务函数且断言充分"为标准进行判定
    - 检查 5 / 6 / 7 正常执行
-6. **严禁**建议"新增 Port 接口 / 新增 domain/usecase/*.ets 类"——这是 v2.1 明确否定的反模式。如需改善可测试性，建议形式应为：
+6. **严禁**建议"新增 Port 接口 / 新增独立 UseCase 类文件（按旧目录约定）"——这是 v2.1 明确否定的反模式。如需改善可测试性，建议形式应为：
    - 抽取 Page 内部 inline lambda 为命名方法 / 导出函数
-   - 将业务编排从 Page 下沉到独立 `Flow` / `Coordinator` 普通类（非 `@Component struct`）
+   - 将业务编排下沉到独立 `Flow` / `Coordinator` 等**非 UI 组件**的普通类
    - 在 `use-cases.yaml` 的 `ui_bindings` 补映射，在 `data_boundaries` 补边界声明

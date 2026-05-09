@@ -1,0 +1,16 @@
+# `hmos-app` · Skill `1-prd-design` profile addendum
+
+宿主 `project_profile=hmos-app` 时，PRD 常以 **HarmonyOS 应用功能**为背景（ArkUI 页面、能力与权限、多端形态等）。
+
+描述 UI 组件时可优先使用 ArkUI 组件术语（如 `Column`、`Row`、`List`、`Tabs`、`Navigation`），但仍须以用户提供的截图/描述为准，不得凭平台惯例补需求。
+
+## 权威模板与规则
+
+| 用途 | 路径 |
+|------|------|
+| 阶段规则（中立骨架 + 合并） | `framework/specs/phase-rules/prd-rules.yaml`；profile 专属补充以 `framework/profiles/hmos-app/profile.yaml` → `phase-rules-overlays` 为准（若存在与本 stage 对齐的条目） |
+| Visual Handoff / `ui_change`（若启用） | `framework/skills/1-prd-design/` 正文与 `prompts/` |
+
+## `generic` / 中立工程提醒
+
+本体 Skill 正文中的示例（钱包层名、示意截图类型）均以**参考仓库**为准；实际 **Scope、`in_scope_modules`、术语映射**必须与当前实例的 `doc/module-catalog.yaml` 一致。

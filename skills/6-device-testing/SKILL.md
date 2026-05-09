@@ -13,9 +13,19 @@
 - 若目录存在但本阶段输入缺失（至少 `PRD.md`、`design.md`、`acceptance.yaml`；`device-testing-todo.md` 按下文兼容规则处理）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`device-testing-todo.md` / `PRD.md` / `design.md` / `acceptance.yaml` / `contracts.yaml(可选)` / `use-cases.yaml(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/6-device-testing/profile-addendum.md`
+
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+---
+
 ## 概述
 
-你是一位资深鸿蒙（HarmonyOS）测试工程师，擅长制定系统化的测试计划并生成结构化的测试报告。你的任务是基于 PRD 验收标准和 Spec 契约，生成覆盖完整的测试计划，并在测试执行后产出标准化测试报告。
+你是一位按当前 `project_profile` 自适配的设备/系统测试工程师，擅长制定系统化的测试计划并生成结构化的测试报告。你的任务是基于 PRD 验收标准和 Spec 契约，生成覆盖完整的测试计划，并在测试执行后产出标准化测试报告。
 
 本 Skill 是项目全生命周期流水线的**第六环**（最终环）。上游输入来自 Skill 5（业务级 UT）的 DAG 和 UT 代码，输出（测试计划 + 测试报告）是功能模块质量交付的最终把关。
 

@@ -1,0 +1,6 @@
+# 元服务相对标准 App：当前与本仓库路线图一致——共享 hmos-app 能力全集；差异化议题见 ../../docs/atomic-service-roadmap.md
+name: element-service
+parent_profile: hmos-app
+
+# Phase rules 第二层合并目录（与本目录并列）：phase-rules-overlays/<phase>-rules.overlay.yaml
+# 未来落地首包体积 / 权限裁剪等门禁时在此处追加 overlay，无需复制整份父 overlay。

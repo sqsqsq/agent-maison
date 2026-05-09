@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "project_name": "generic-doc-fixture",
+  "project_type": "app",
+  "project_profile": {
+    "name": "generic"
+  },
+  "agent_adapter": "generic",
+  "architecture": {
+    "outer_layers": [{ "id": "01-Product", "can_depend_on": [], "intra_layer_deps": "forbid" }],
+    "module_inner_layers": ["shared"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index.ets"
+  },
+  "paths": {
+    "features_dir": "doc/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "glossary_seed": "doc/glossary-seed.txt",
+    "architecture_md": "doc/architecture.md",
+    "docs_committed": false
+  }
+}

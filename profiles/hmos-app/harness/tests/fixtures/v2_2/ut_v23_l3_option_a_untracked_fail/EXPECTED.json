@@ -1,0 +1,16 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_unsupported_targets_handled",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "AC-V26"
+    },
+    {
+      "id": "ut_mock_plan_present",
+      "status": "SKIP",
+      "severity": "BLOCKER"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_mock_plan_present",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "mock-plan.yaml"
+    },
+    {
+      "id": "ut_mock_plan_typed",
+      "status": "SKIP",
+      "severity": "BLOCKER"
+    }
+  ]
+}

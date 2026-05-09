@@ -26,7 +26,6 @@ import {
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { runHvigorBuild, runHvigorAssembleApp, analyzeProjectDependencyIssue } from './utils/hvigor-runner';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import {
   loadFrameworkConfig,
@@ -34,6 +33,13 @@ import {
   featureFilePath,
   relFeatureFile,
 } from '../config';
+import {
+  isCapabilitySkipped,
+  CANONICAL_CODING_COMPILE_ID,
+  LEGACY_CODING_COMPILE_ID,
+  dispatchCodingCompile,
+  analyzeCodingDependencyIssueViaProfile,
+} from '../capability-registry';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -966,6 +972,28 @@ function checkCoordinatorFileExistsIfDeclared(ctx: CheckContext): CheckResult[] 
  * 工具链缺失 / HARNESS_SKIP_HVIGOR=1 均翻译为 FAIL（显式拒绝软通过）。
  */
 function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
+    const desc = ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
+    const details = 'project_profile 声明 coding.compile 为 SKIP：未调用 hvigor（canonical id: coding_compile）。';
+    return [
+      {
+        id: LEGACY_CODING_COMPILE_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+      {
+        id: CANONICAL_CODING_COMPILE_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+    ];
+  }
   const contracts = ctx.featureSpec.contracts;
   const modules = contracts?.modules ?? [];
   if (modules.length === 0) {
@@ -982,7 +1010,7 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
   // v2.9：coding 默认对齐 DevEco 手工命令（`node hvigorw.js --mode module … assembleHap`），
   // 完整日志落盘 + hvigor-build.meta.json；PASS 需 exitCode=0、无解析 error、未超时、命中成功哨兵。
   // 若需项目级 `assembleApp`，在 framework.config.json 设 toolchain.hvigor.coding.driver=assemble_app_project。
-  const res = runHvigorAssembleApp({
+  const res = dispatchCodingCompile(ctx, {
     projectRoot: ctx.projectRoot,
     harnessRoot: HARNESS_ROOT,
     feature: ctx.feature,
@@ -1010,18 +1038,18 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
         `命令：${res.command ?? '(unknown)'}`,
         `元数据：${res.metaPath ?? '(无)'}`,
         `完整日志：${res.logPath ?? '(无)'}`,
-        ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map(d => `  - ${d}`)] : []),
+        ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map((d: string) => `  - ${d}`)] : []),
       ].join('\n'),
     }];
   }
 
   const first = res;
-  const failure = classifyCodingHvigorBuildFailure(first, ctx.projectRoot);
+  const failure = classifyCodingHvigorBuildFailure(first, ctx, ctx.projectRoot);
   const detailsLines: string[] = [];
   detailsLines.push('coding_hvigor_build（hvigor）失败：');
   if (first.toolMissing) {
     detailsLines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
-    first.logExcerpt.split(/\r?\n/).forEach(l => detailsLines.push(l));
+    first.logExcerpt.split(/\r?\n/).forEach((l: string) => detailsLines.push(l));
     detailsLines.push('本规则不接受 SKIP —— 真实编译是出口条件。');
   } else if (first.skippedByEnv) {
     detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
@@ -1037,11 +1065,11 @@ function checkCodingHvigorBuild(ctx: CheckContext): CheckResult[] {
     detailsLines.push(`元数据：${first.metaPath ?? '(无)'}`);
     if (first.diagnostics?.length) {
       detailsLines.push('诊断提示：');
-      first.diagnostics.forEach(d => detailsLines.push(`  - ${d}`));
+      first.diagnostics.forEach((d: string) => detailsLines.push(`  - ${d}`));
     }
     if (first.errors.length > 0) {
       detailsLines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
-      first.errors.slice(0, 10).forEach(e =>
+      first.errors.slice(0, 10).forEach((e: { file?: string; line?: number; code?: string; message: string }) =>
         detailsLines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`)
       );
     }
@@ -1079,7 +1107,8 @@ type CodingHvigorFailureKind =
   | 'project_build';
 
 function classifyCodingHvigorBuildFailure(
-  res: ReturnType<typeof runHvigorAssembleApp>,
+  res: any,
+  ctx: CheckContext,
   projectRoot: string,
 ): { kind: CodingHvigorFailureKind; explanation: string; suggestion: string } {
   if (res.toolMissing) {
@@ -1120,7 +1149,7 @@ function classifyCodingHvigorBuildFailure(
     };
   }
 
-  const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
+  const depIssue = analyzeCodingDependencyIssueViaProfile(ctx, res);
   if (depIssue.found) {
     return {
       kind: 'project_dependency_missing',
@@ -1143,7 +1172,7 @@ function classifyCodingHvigorBuildFailure(
   };
 }
 
-function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependencyIssue>): string {
+function formatDependencyIssue(issue: any): string {
   const lines = [
     `依赖线索：${issue.dependencies.length > 0 ? issue.dependencies.join(', ') : '(未解析出具体包名)'}`,
     `harness node_modules：${issue.harnessNodeModulesReady ? '存在' : '缺失'}`,
@@ -1155,7 +1184,7 @@ function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependency
   }
   if (issue.installHints.length > 0) {
     lines.push('建议分支：');
-    issue.installHints.forEach(h => lines.push(`  - ${h}`));
+    issue.installHints.forEach((h: string) => lines.push(`  - ${h}`));
   }
   return lines.join('\n');
 }

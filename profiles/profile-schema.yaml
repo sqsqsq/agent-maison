@@ -1,0 +1,40 @@
+# ----------------------------------------------------------------------------
+# Project profile schema (human-readable contract)
+# ----------------------------------------------------------------------------
+# 每个 profile 位于 framework/profiles/<name>/profile.yaml
+# 与 agent adapter 正交：adapter 管 IDE 集成，profile 管工程类型与 harness 能力。
+
+schema_version: "1.0"
+
+required_fields:
+  name:
+    type: string
+    description: 目录名，与 framework/profiles/<name>/ 一致
+  display_name:
+    type: string
+    description: 初始化/文档展示用短名
+
+optional_fields:
+  parent:
+    type: string
+    description: 继承父 profile 的 defaults/overlays（未来扩展）
+  sub_variants:
+    type: array
+    description: 子变体（如 element-service），每项含 name 与 overrides_dir
+  detect:
+    type: object
+    description: init 阶段启发式（signature_files 等）
+  phases_disabled:
+    type: array
+    description: 整阶段跳过脚本 harness（仍出 PASS 级摘要）；如 generic 禁用 coding/ut/testing
+  capabilities:
+    type: object
+    description: >
+      能力键 → { severity: BLOCKER|SKIP|WARN|MAJOR, provider?: string }。
+      具体键由 capability-registry.ts 的 CapabilityKey 枚举为准。
+  catalog_allowed_module_formats:
+    type: array
+    description: Skill 0 / catalog 阶段 module-card `format` 合法枚举（hmos-app 的典型值 HAP/HAR/AtomicService）
+  phase_rules_overlays_dir:
+    type: string
+    description: phase-rules overlay 相对本 profile 目录，默认 phase-rules-overlays

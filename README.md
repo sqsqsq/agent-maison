@@ -9,6 +9,15 @@
 - **架构可配置**：外层/内层模块依赖、路径根目录等由实例根的 `framework.config.json` 声明，harness 从配置读取，不绑死某一种层数或层名。
 - **阶段化工作流**：catalog / glossary → PRD → design → coding → review → UT → testing，每阶段有 Skill 文档 + YAML 规则 + `check-*.ts` 机械守门。
 - **多 agent 入口**：通过 `framework/agents/<adapter>/` 插件，把同一套 Skill 按所选客户端约定暴露出来（slash、跳板、全局说明文件等）；**产品与路径对照仅限** [agents/README.md](agents/README.md)。
+- **工程类型 profile（project_profile）**：与 adapter 正交，声明在实例根 `framework.config.json` 的 `project_profile`（默认 `hmos-app`）。每套模板位于 [profiles/](profiles/README.md)，可禁用整阶段 harness 或声明能力档位。
+
+### Profile 加载顺序
+
+1. `framework.config.json > project_profile.name` 选择 active profile；缺失时兼容回退 `hmos-app`，并输出一次 advisory，提示通过 framework-init UPDATE 补字段。
+2. `framework/profiles/<profile>/config-defaults.json` 为配置缺省来源；显式写在实例 `framework.config.json` 的字段不会被 defaults 覆盖。
+3. 基础 phase rules 先从 `framework/specs/phase-rules/` 读取，再合并 active profile 的 `phase-rules-overlays/`。
+4. 阶段 Skill 主体只保留通用流程；宿主语言、模块格式、toolchain 与 UI/测试细节从 `framework/profiles/<profile>/skills/<skill>/profile-addendum.md` 读取。
+5. verifier prompt 先读取 `framework/harness/prompts/verify-<phase>.md`，再拼接 active profile 的 `harness/prompts/verify-<phase>.overlay.md`（若存在）。
 
 ---
 
@@ -114,6 +123,8 @@ npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 ```
 
 初始化时由 Skill 00 Step 5.5 自动完成 `npm install`，此处仅作手动说明。
+
+**Framework 自身回归**：在同一目录执行 `npm test`，会跑 **单元 + fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
 
 Skill 0 的全局 phase（无 `--feature`）示例：
 

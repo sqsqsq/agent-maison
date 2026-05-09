@@ -1,0 +1,29 @@
+flow_id: demo_mock_plan_contract_orphan_fixture
+flow_name: mock-plan 孤儿类不在 contracts
+module: demo
+linked_acceptance:
+  - AC-V27
+entry_point:
+  module: Demo
+  file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+  function: fetchData
+nodes:
+  - id: n_call
+    type: async_call
+    description: fixture
+    source:
+      file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+      function: fetchData
+    stub_strategy: subclass_fixture
+    next:
+      - n_assert
+  - id: n_assert
+    type: assertion
+    description: trace
+    linked_acceptance:
+      - AC-V27
+    assertions:
+      - type: state_check
+        target: fixture
+        expected: '>= 1'
+    next: []

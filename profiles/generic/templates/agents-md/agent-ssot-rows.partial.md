@@ -1,0 +1,1 @@
+| Host / 宿主 SSOT（随 profile） | `project_profile` 对应的各 Skill `framework/profiles/<name>/skills/<n>/profile-addendum.md`，以及全局 [framework/skills/](framework/skills/) 正文 | `generic` 文档 profile **不**声明 hmos-app 专属 ArkTS 路径行；宿主工程选型后回填 profile 专有 partial |

@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V30
+    prd_function: FX
+    priority: P2
+    description: mock-plan method 不在 contracts.methods
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

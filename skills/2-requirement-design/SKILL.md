@@ -13,9 +13,19 @@
 - 若目录存在但本阶段输入缺失（至少 `PRD.md`）：报告缺失文件并回到 PRD 阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`PRD.md` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/2-requirement-design/profile-addendum.md`
+
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+---
+
 ## 概述
 
-你是一位资深鸿蒙（HarmonyOS）应用架构师，擅长将产品需求转化为可落地的技术设计方案。你的任务是根据 PRD 文档和当前工程代码结构，生成结构化、完整的技术设计文档（design.md）。
+你是一位按当前 `project_profile` 自适配的应用架构师，擅长将产品需求转化为可落地的技术设计方案。你的任务是根据 PRD 文档和当前工程代码结构，生成结构化、完整的技术设计文档（design.md）。
 
 本 Skill 是项目全生命周期流水线的**第二环**。上游输入来自 Skill 1（PRD 设计）的 `PRD.md`，输出（design.md）将流入 Skill 3（编码）。
 
@@ -28,89 +38,15 @@
 
 ## 核心架构认知
 
-**在开始设计前，必须读取 `doc/architecture.md` 获取最新的模块架构全貌。以下是架构的核心规则摘要，详细的模块清单和状态以 architecture.md 为准。**
+**在开始设计前，必须读取 `doc/architecture.md` 获取最新的模块架构全貌，并以 `framework.config.json > architecture` 作为机器可读依赖规则。**
 
-> **通用化说明**：本节的层数（5）、层名（`01-Product` … `05-SystemBase`）、模块名（`WalletMain` / `BankCard` / `CardManager` 等）均以**钱包工程为参考示例**。实际实例工程的分层 / 模块清单以 `framework.config.json` 的 `architecture` 段与 `doc/architecture.md` 为准；下方依赖方向 / DAG / 模块内 upward / 跨模块走 `Index.ets` 这些**规则本身**是 framework 守住的通用元规则，不随实例工程变化。
+核心元规则：
 
-### 一、外层模块架构（示例：钱包工程 5 层）
-
-参考实例采用 **5 层模块架构**，依赖方向**只能自上而下**。模块命名统一采用**大驼峰（PascalCase）**。
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  01-Product（产品层）                                            │
-│    Phone (HAP) — 唯一的 HAP，仅放 Ability 入口代码               │
-├─────────────────────────────────────────────────────────────────┤
-│  02-Feature（特性层）— 内部按依赖关系分 3 个子层级                 │
-│    顶层:   WalletMain — 公共页面（首页/设置等）                    │
-│    中间层: SwipeCard — 刷卡/二维码支付                            │
-│    底层:   BankCard / TransportCard / AccessCard / ...（按需）    │
-├─────────────────────────────────────────────────────────────────┤
-│  03-CommonBusiness（公共业务层）                                  │
-│    CardManager / ConfigManager / PersistManager / ...（按需）    │
-│    同层可互相依赖（DAG，禁循环）                                   │
-├─────────────────────────────────────────────────────────────────┤
-│  04-BusinessBase（业务基座层）                                    │
-│    AccountManager — 华为账号登录管理                              │
-├─────────────────────────────────────────────────────────────────┤
-│  05-SystemBase（系统基座层）                                      │
-│    CommFunc — 系统功能封装（log/状态机/util等）                    │
-│    CommUI  — 公共UI组件（基础页面/弹框/Toast/卡片组件等）           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 二、物理目录结构
-
-模块按所属层级放置在层目录下，层目录以 `{序号}-{层名}` 命名：
-
-```
-{ProjectRoot}/
-├── 01-Product/
-│   └── Phone/                    (HAP)
-├── 02-Feature/
-│   └── WalletMain/               (HAR, 按需新增)
-├── 03-CommonBusiness/             (按需创建)
-├── 04-BusinessBase/
-│   └── AccountManager/            (HAR)
-├── 05-SystemBase/
-│   ├── CommFunc/                  (HAR)
-│   └── CommUI/                    (HAR)
-├── build-profile.json5            ← modules[].srcPath 引用层目录，如 "./01-Product/Phone"
-├── oh-package.json5               ← dependencies 路径如 "file:./05-SystemBase/CommFunc"
-└── ...
-```
-
-> `build-profile.json5` 的 `srcPath` 和 `oh-package.json5` 的依赖路径必须使用层目录前缀。
-
-### 三、层间依赖规则
-
-| 依赖方 ↓ \ 被依赖方 → | 01-Product | 02-Feature | 03-CommonBusiness | 04-BusinessBase | 05-SystemBase |
-|----------------------|-----------|-----------|------------------|----------------|--------------|
-| **01-Product** | — | ✅ | ✅ | ✅ | ✅ |
-| **02-Feature** | ❌ | ⚠️ 见子层级规则 | ✅ | ✅ | ✅ |
-| **03-CommonBusiness** | ❌ | ❌ | ⚠️ DAG，禁循环 | ✅ | ✅ |
-| **04-BusinessBase** | ❌ | ❌ | ❌ | — | ✅ |
-| **05-SystemBase** | ❌ | ❌ | ❌ | ❌ | ⚠️ CommUI→CommFunc 单向 |
-
-**02-Feature 层内部子层级依赖规则**：
-- **WalletMain（顶层）**：可依赖 Feature 层所有其他模块 + 所有下层
-- **SwipeCard（中间层）**：可依赖 Feature 底层模块 + 所有下层。**不可依赖 WalletMain**
-- **BankCard / TransportCard / AccessCard 等（底层）**：**不可依赖 Feature 层任何模块**，只可依赖所有下层
-
-### 四、模块内部结构（统一四层）
-
-**所有模块**统一采用 shared → data → domain → presentation 四层内部结构。不同层级的模块按实际需要填充对应层，允许省略不需要的层，但**已有的代码必须放在正确的层**。
-
-```
-{ModuleName}/src/main/ets/
-  shared/         — 共享层：constant/ | utils/ | client/ | components/（基础组件）
-  data/           — 数据层：model/ | repository/
-  domain/         — 领域层：usecase/ | service/（可选，简单业务可省略）
-  presentation/   — 展示层：components/（复杂组件） | pages/
-  Index.ets       — HAR 导出入口
-```
-
-内部依赖方向：shared ← data ← domain ← presentation（自底向上），**禁止反向依赖**。
+1. 外层模块依赖只按 `architecture.outer_layers[].can_depend_on` 放行。
+2. 同层依赖按 `intra_layer_deps`（如 `forbid` / `dag` / `sublayer`）裁决。
+3. 模块内部依赖顺序按 `architecture.module_inner_layers` + `inner_dependency_direction` 裁决。
+4. 跨模块访问必须经由 `architecture.cross_module_exports_file` 声明的出口文件。
+5. profile 专属目录、语言、模块格式、配置文件与 UI/宿主术语以 Step 0 加载的 profile addendum 为准。
 
 #### 各层模块的典型填充情况
 
@@ -206,7 +142,7 @@
    - 各模块内的目录结构和已有文件
    - 架构文档与实际代码的一致性（若不一致，以实际代码为准并标注差异）
 3. 确定本次设计涉及的模块：
-   - 是否需要**新建** HAR 模块？
+   - 是否需要**新建**当前 profile 下的模块？
    - 是否需要**修改**已有模块（如 `phone`、`common`）？
    - 新模块在 DAG 中的依赖位置
 4. 识别**可复用**的已有组件、工具类、数据模型（优先查阅 architecture.md 的公共能力清单）
@@ -304,8 +240,8 @@ expansions_with_user_approval:
 ### Step 4: 设计模块架构
 
 1. **绘制模块架构图**（Mermaid diagram）：展示本次涉及的所有模块及其依赖关系，标注所属层级
-2. **规划目录/文件结构**：精确到每个新增 `.ets` 文件的完整路径（各层模块使用对应的内部结构）
-3. **确定模块配置变更**：列出需要修改的 `build-profile.json5`、`oh-package.json5`、`module.json5` 等配置文件
+2. **规划目录/文件结构**：精确到每个新增实现文件的完整路径（各层模块使用对应的内部结构）
+3. **确定模块配置变更**：列出需要修改的 profile 专属模块配置文件
 
 ### Step 5: 设计数据层
 
@@ -353,8 +289,8 @@ expansions_with_user_approval:
    - **分支清单表**：happy path + 所有可预期失败路径，每条标注对应 AC/BD
 
 2. **`doc/features/{module}/use-cases.yaml`**（Spec 文件，与 `contracts.yaml` 同目录）：
-   - Schema 见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../5-business-ut/templates/use-cases-schema.md)
-   - 规范级样例见 [framework/skills/5-business-ut/examples/card-opening/](../5-business-ut/examples/card-opening/)
+   - Schema 见 [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)
+   - 规范级样例见 [card-opening/](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/)
    - 必填字段：`schema_version / feature / use_cases[]`；每个 `use_case` 含 `id / coordinator / ui_bindings / state_model / branches`；`coordinator_file` / `data_boundaries` 可选
    - `coordinator` 只写**符号名**（类名 / `Page.method` / 导出函数名），指向 Skill 3 将要实现（或已存在）的真实代码；**不**强制放在 `domain/usecase/` 下
    - `ui_bindings[].user_actions[].calls` 必须是一个**命名函数符号**（UT 可直接调用）；inline lambda 或匿名箭头函数不算
@@ -404,8 +340,8 @@ expansions_with_user_approval:
 
 | PRD 功能编号 | 功能名称 | 优先级 | 所属层 | 实现模块 | 模块内层级 | 关键文件 | 实现说明 |
 |-------------|----------|--------|--------|----------|-----------|----------|----------|
-| F1 | Tab导航 | P0 | 02-Feature | WalletMain | presentation | HomePage.ets | Tabs框架 |
-| F7 | 账号状态 | P0 | 04-BusinessBase | AccountManager | service | AccountService.ets | 登录状态管理 |
+| F1 | Tab导航 | P0 | 02-Feature | WalletMain | presentation | HomePage.<ext> | Tabs框架 |
+| F7 | 账号状态 | P0 | 04-BusinessBase | AccountManager | service | AccountService.<ext> | 登录状态管理 |
 
 **必须确保**：
 - PRD 中每个 P0/P1 功能点都有对应的技术映射行
@@ -424,7 +360,7 @@ expansions_with_user_approval:
 [ ] 4. 模块最小化：是否只创建了 PRD 功能实际需要的模块？没有多余的模块？
 [ ] 5. 功能拆分准确性：每个功能点是否放在了最合适的模块？且分配模块均在 in_scope_modules 内？
 [ ] 6. 文件路径合规：所有新增文件路径是否符合各层模块对应的内部结构？
-[ ] 7. 数据类型合法：数据模型字段类型是否都是 ArkTS 合法类型？
+[ ] 7. 数据类型合法：数据模型字段类型是否符合当前 profile 的宿主语言类型系统？
 [ ] 8. 接口签名完整：所有函数/方法签名是否包含入参类型和返回类型？
 [ ] 9. 无 TBD 项：P0/P1 范围内是否有"待定"、"TBD"、"TODO"等未决项？
 [ ] 10. 组件树完整：每个页面是否都有组件拆分方案？
@@ -461,7 +397,7 @@ expansions_with_user_approval:
 |------|------|------|
 | `name` | 模块名 | 如 WalletMain、CommUI |
 | `layer` | 所属层 | 如 02-Feature、05-SystemBase |
-| `format` | HAP/HAR | |
+| `format` | profile 声明的模块格式 | |
 | `change_type` | 变更类型 | new / modify / migrate_and_modify |
 | `package_path` | 物理路径 | 如 "02-Feature/WalletMain" |
 
@@ -524,8 +460,8 @@ expansions_with_user_approval:
 
 若需要产出：
 
-- Schema：见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../5-business-ut/templates/use-cases-schema.md)
-- 参考样例：[framework/skills/5-business-ut/examples/card-opening/use-cases.yaml](../5-business-ut/examples/card-opening/use-cases.yaml)
+- Schema：见 [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)
+- 参考样例：[use-cases.yaml](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/use-cases.yaml)
 - 关键强约束：
   - `use_cases[].coordinator` 仅声明**符号名**（类名 / `Page.method` / 导出函数），指向 Skill 3 之后会实现（或已存在）的真实代码；`coordinator_file` 可选，不强制放在 `domain/usecase/`
   - `ui_bindings[].user_actions[].calls` 必须是命名函数（Skill 3 harness 会校验 `named_business_handler`）
@@ -540,7 +476,7 @@ doc/features/{module-name}/contracts.yaml
 doc/features/{module-name}/use-cases.yaml   (仅复杂 feature；简单 feature 不产出)
 ```
 
-参考已有示例：`doc/features/home-page/contracts.yaml`（简单 feature，无 use-cases.yaml）、`framework/skills/5-business-ut/examples/card-opening/use-cases.yaml`（多页面多步骤流程样例）
+参考已有示例：`doc/features/home-page/contracts.yaml`（简单 feature，无 use-cases.yaml）、`framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/use-cases.yaml`（多页面多步骤流程样例）
 
 > **为什么这一步如此重要**：`contracts.yaml` 是 Skill 3 编码时的强契约——文件路径、接口签名、组件 Props 必须与 contracts.yaml 一致；`use-cases.yaml`（若存在）是 Skill 5 业务级 UT 的蓝图——DAG 与 UT 用例按 branches 1:1 生成。Harness 也依赖它们做接口一致性验证与 UT 覆盖追溯。未达阈值的简单 feature 不产出 `use-cases.yaml`，避免为测试工具人为引入架构复杂度。
 
@@ -698,7 +634,7 @@ framework/skills/2-requirement-design/templates/design-template.md
 
 1. **Scope 声明与继承** — 继承 PRD 的 in_scope / out_of_scope，登记用户批准的扩展（Scope 守门起点，不可省略）
 2. **模块架构图** — Mermaid diagram，展示模块间依赖关系
-3. **目录/文件结构规划** — 精确到每个新增的 `.ets` 文件路径及其职责说明
+3. **目录/文件结构规划** — 精确到每个新增实现文件路径及其职责说明
 4. **数据模型定义** — interface/class 定义，含字段类型和说明
 5. **页面组件树** — 每个页面拆分为哪些自定义组件，含层级关系
 6. **状态管理方案** — 各装饰器的使用策略和数据流向
@@ -709,7 +645,7 @@ framework/skills/2-requirement-design/templates/design-template.md
 ### 文档格式
 - 使用 Markdown 格式
 - 架构图使用 Mermaid 语法
-- 数据模型使用 TypeScript/ArkTS 代码块
+- 数据模型使用当前 profile 的宿主语言或契约格式代码块
 - 接口定义使用代码块 + 表格补充说明
 - 组件树使用树形文本图
 
@@ -762,8 +698,8 @@ framework/skills/2-requirement-design/templates/design-template.md
 
 1. **PRD 是唯一的需求来源**：不得自行添加 PRD 中未提及的功能，若发现 PRD 缺失重要场景，应标注并建议用户回到 Skill 1 补充
 2. **严格遵循分层架构**：design.md 中规划的每个文件必须落在正确的层级目录，设计阶段就要杜绝分层违规
-3. **鸿蒙生态适配**：组件设计优先使用 ArkUI 原生组件（Column、Row、List、Tabs、Navigation、Swiper 等），避免自造轮子
-4. **ArkTS 类型系统**：数据模型字段类型必须是 ArkTS 合法类型（string、number、boolean、Resource、Array 等），不得使用 any
+3. **宿主生态适配**：组件/接口设计优先使用当前 profile addendum 声明的宿主原生能力，避免自造轮子
+4. **宿主类型系统**：数据模型字段类型必须符合当前 profile 的宿主语言类型系统；禁用项以 profile addendum 和阶段规则为准
 5. **设计即契约**：design.md 中的接口签名、文件路径、组件 Props 定义将作为 Skill 3 编码的强契约，务必精确
 6. **Spec 必须同步产出**：设计文档归档后必须提取 `contracts.yaml`（Step 11），这是下游编码和 Harness 验证的基准。contracts.yaml 的精确度直接影响编码质量和自动化验证的有效性
 7. **中文输出**：所有设计文档内容使用简体中文

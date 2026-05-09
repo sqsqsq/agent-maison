@@ -1,0 +1,29 @@
+flow_id: demo_mock_plan_untyped_fixture
+flow_name: mock-plan ts_expr 无类型断言
+module: demo
+linked_acceptance:
+  - AC-V25
+entry_point:
+  module: Demo
+  file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+  function: fetchData
+nodes:
+  - id: n_call
+    type: async_call
+    description: DAG 不声明 spy_preset，隔离 ut_mock_plan_typed 门禁
+    source:
+      file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+      function: fetchData
+    stub_strategy: subclass_fixture
+    next:
+      - n_assert
+  - id: n_assert
+    type: assertion
+    description: 追溯占位
+    linked_acceptance:
+      - AC-V25
+    assertions:
+      - type: state_check
+        target: fixture
+        expected: '>= 1'
+    next: []

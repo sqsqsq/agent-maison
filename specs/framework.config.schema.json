@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://framework.local/schemas/framework.config.json",
+  "title": "framework.config.json",
+  "description": "SimulatedWallet / framework 实例工程根配置；权威校验逻辑见 framework/harness/config.ts",
+  "type": "object",
+  "required": ["schema_version", "project_name", "agent_adapter", "architecture", "paths"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "project_name": { "type": "string" },
+    "project_type": {
+      "type": "string",
+      "enum": ["app", "atomic_service"],
+      "description": "Deprecated：仅存 alias；权威子型请写 project_profile.sub_variant（element-service = 原 atomic_service）"
+    },
+    "project_profile": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "对应 framework/profiles/<name>/" },
+        "sub_variant": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "agent_adapter": { "type": "string" },
+    "architecture": { "type": "object" },
+    "paths": { "type": "object" },
+    "toolchain": { "type": "object" },
+    "state_machine": { "type": "object" },
+    "prd": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,29 @@
+flow_id: demo_audit_missing_fixture
+flow_name: UT v2.3 缺失 testability-audit 门禁回归
+module: demo
+linked_acceptance:
+  - AC-V23
+entry_point:
+  module: Demo
+  file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+  function: fetchData
+nodes:
+  - id: n_call
+    type: async_call
+    description: 调用 DemoRepository.fetchData（fixture，无 UI）
+    source:
+      file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+      function: fetchData
+    stub_strategy: subclass_fixture
+    next:
+      - n_assert
+  - id: n_assert
+    type: assertion
+    description: DAG 断言占位，链路追溯 AC-V23
+    linked_acceptance:
+      - AC-V23
+    assertions:
+      - type: state_check
+        target: fixture
+        expected: '>= 1'
+    next: []

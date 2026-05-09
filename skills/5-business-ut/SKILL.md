@@ -13,10 +13,21 @@
 - 若目录存在但本阶段输入缺失（至少 `PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`PRD.md` / `design.md` / `contracts.yaml` / `acceptance.yaml` / `use-cases.yaml(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/5-business-ut/profile-addendum.md`
+
+（未声明 `project_profile` 时运行时默认 `hmos-app`。若路径不存在则仅依赖本文与 profile 树下模板/示例。）
+
+---
+
 ## 概述
 
-你是一位资深鸿蒙（HarmonyOS）测试工程师，擅长使用 @ohos/hypium 框架编写 **业务级端到端单元测试**。
-你的任务是作为**既有代码的消费者**：读懂业务编排源码（由 Skill 3 选择代码形态落地 —— 可能是 Page 命名方法、普通 `Flow`/`Coordinator` 类、或导出函数），结合 **`use-cases.yaml` 规约（若存在）** 或 **`acceptance.yaml` + `dag.yaml` 的退化路径**，**直接调用已存在的命名函数**，在 `data_boundaries`（既有 data 层类）处打桩，生成端到端覆盖的 UT。
+你是资深**宿主侧业务级 UT** 工程师。UT 运行框架、测试文件扩展名、编译与执行链路以当前 `project_profile` addendum 与 `ut.compile` / `ut.run` capabilities 为准；其它 profile（如文档型 generic）可能在 harness 层禁用编译/装机规则，勿把宿主特例硬编码为全局真理。
+
+你的任务是作为**既有代码的消费者**：读懂业务编排源码（由 Skill 3 自选形态……
 
 本 Skill 是项目全生命周期流水线的**第五环**。上游输入来自 Skill 2（`use-cases.yaml`，**条件式**）、Skill 3（业务编排源代码 + UI）与 Skill 4（Code Review），输出（UT + DAG + `device-testing-todo.md`）将流入 Skill 6（真机测试）。
 
@@ -33,8 +44,8 @@
 
 - 🟢 **复杂 feature（有 `use-cases.yaml`）**：按 `ui_bindings[].user_actions[].calls` 声明的**命名函数**直接调用；在 `data_boundaries` 处打桩；断言 state 序列 + 调用序列 + 持久化数据。
 - 🟢 **简单 feature（无 `use-cases.yaml`）**：按 `acceptance.yaml` + `dag.yaml`，直接针对 data 层函数 / Repository / 导出工具函数写 UT，覆盖数据契约与边界异常即可，不要硬凑 UseCase 架构。
-- 🔴 **UI 层绝对禁入 UT**：不 import `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`。由 harness `ut_import_whitelist` BLOCKER 拦截。
-- 🔴 **不要为了 UT 反过来改架构**：不要求新建 `domain/usecase/*.ets` 类、不要求新造 `XxxPort` 接口；若代码可测性差（如业务嵌在 inline lambda 中），反馈 Skill 3 抽出命名方法，不要在 UT 里 new `@Component struct`。
+- 🔴 **UI 层绝对禁入 UT**：不 import profile addendum 声明的 UI/资源/页面运行时符号；由 harness 对应 BLOCKER 拦截。
+- 🔴 **不要为了 UT 反过来改架构**：不要求新建特定目录或接口形态；若代码可测性差（如业务嵌在 inline lambda 中），反馈 Skill 3 抽出命名方法，不要在 UT 里实例化 UI 组件。
 
 ### v2 → v2.1 的关键澄清
 
@@ -56,11 +67,11 @@
 | UI 交互 | 部分在 UT 里走 | ✗ 交 Skill 6（`device-testing-todo.md`） |
 | AC 过滤 | 全部算 UT 覆盖 | `ut_layer in [unit, both]` 进 UT；`device` 交 Skill 6 |
 
-### Harness：`ut_hvigor_build` / `ut_hvigor_test`（hvigor）
+### Harness：`ut.compile` / `ut.run` capability
 
-- **默认命令**（实现于 `framework/harness/scripts/utils/hvigor-runner.ts` 的 `buildUtHvigorArgs`，**不**要求修改通用 `framework.config.template.json`）：与 DevEco「Run ohosTest」对齐——`--mode module`、`-p module=<name>@ohosTest`、`-p isOhosTest=true`、`-p product=<detectProduct()>`、`-p buildMode=test`、`genOnDeviceTestHap`，task 之后接 `--analyze=normal`（除非全局 `analyze=off`）及 `parallel/incremental/daemon`。
-- **HAP 路径**：`<module>/build/<product>/outputs/ohosTest/*-signed.hap`；装机前 harness 按 `product` 查找并可在 `build/*` 下兜底扫描。
-- **失败归因**：`check-ut` 若报 `ut_hvigor_command_mismatch`（如日志 `isOhosTest=false`、命令缺 `--mode module`），应优先核对 harness 命令形态，**不要**未经对齐就按 `project_dependency_missing` 去 `ohpm install` 或进入 Skill 6。对齐后仍出现 `Failed to resolve OhmUrl` 再按依赖问题处理。
+- **默认命令**由当前 profile provider 实现；中立 Skill 只要求通过 harness 触发，避免 agent 手拼宿主命令。
+- **产物路径**、装机/运行方式、日志格式由 profile addendum 与 provider 定义。
+- **失败归因**：若 `check-ut` 报命令形态不匹配，应优先核对 profile provider 命令形态，**不要**未经对齐就按依赖缺失处理或进入 Skill 6。
 
 ## 输入
 
@@ -86,13 +97,13 @@
 
 | 规约 | 路径 |
 |------|------|
-| UseCase 规范 Schema | [templates/use-cases-schema.md](templates/use-cases-schema.md) |
-| DAG Schema（v2） | [templates/dag-schema.md](templates/dag-schema.md) |
-| UT 模板 + Spy 模板（子类化既有类 / 原型替换） | [templates/ut-template.md](templates/ut-template.md) |
-| 打桩策略 | [templates/mock-strategy.md](templates/mock-strategy.md) |
-| 可测性预检模板 | [templates/testability-audit-template.md](templates/testability-audit-template.md) |
-| mock-plan Schema | [templates/mock-plan-schema.md](templates/mock-plan-schema.md) |
-| 规范级样例（开卡流程） | [examples/card-opening/](examples/card-opening/) |
+| UseCase 规范 Schema | [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md) |
+| DAG Schema（v2） | [dag-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md) |
+| UT 模板 + Spy 模板（子类化既有类 / 原型替换） | [ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) |
+| 打桩策略 | [mock-strategy.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-strategy.md) |
+| 可测性预检模板 | [testability-audit-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md) |
+| mock-plan Schema | [mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md) |
+| 规范级样例（开卡流程） | [card-opening/](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/) |
 
 ## UT 可测性 / mock-plan 策略决议（v2.3）
 
@@ -100,7 +111,7 @@
 
 1. **存量 feature 迁移**：已在历史版本通过 UT harness 的 feature，**仅当再次进入 Skill 5 并变更 UT 相关产物时** 回补 `ut/testability-audit.md` 与 `ut/mock-plan.yaml`；**新 feature 自 v2.3 规则生效起一律强制**（与 `ut-rules.yaml` 中 BLOCKER 一致）。
 2. **L3 + option_b 接缝白名单**：仅允许 **构造注入、包装 wrapper、提取命名方法、setter 注入** 等显式接缝；**禁止**「换一种全局单例」式改造敷衍 UT。
-3. **Adapter slash 入口**：**不另设** `/ut-audit` 等独立命令；以本文 **Step 1.5 / 1.6** 及 `framework/skills/5-business-ut/SKILL.md` 为权威入口（agent 完整阅读本 SKILL 后执行）。
+3. **Adapter 路由入口**：权威流程仍本文为 SSOT。**Cursor**：`.cursor/skills/ut-audit/SKILL.md` 跳板→从 Step 1.5 切入（须先读完本 SKILL）。**Claude Code**：`/ut-audit` slash → 同上切入；完整 UT 闭环仍走 `/business-ut`。
 
 ## 工作流程（v2.1）
 
@@ -188,7 +199,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 `doc/features/{feature}/ut/testability-audit.md`
 
-1. **按模板撰写**：[templates/testability-audit-template.md](templates/testability-audit-template.md)（L0–L3 定义、依赖 kind/seam、YAML 形态）。
+1. **按模板撰写**：[templates/testability-audit-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md)（L0–L3 定义、依赖 kind/seam、YAML 形态）。
 2. **对每条 unit/both 项给出**：
    - `testability_level`（L0/L1/L2/L3）
    - 关键 `dependencies`（含 `global_singleton` / `inline_lambda` 等，以便 harness 与人工审阅）
@@ -205,7 +216,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 `doc/features/{feature}/ut/mock-plan.yaml`
 
-1. **规格**：[templates/mock-plan-schema.md](templates/mock-plan-schema.md)（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
+1. **规格**：[templates/mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md)（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
 2. **权威对齐**：`spies[].target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在稍后的 Spy 类里脱离 plan 自由发挥字段或方法签名。
 3. **与 Step 3 的关系**：生成 `SpyXxx` / `FakeXxx` 时 **1:1 翻译** mock-plan（preset id、方法名、返回/异常预设），UT 中切换分支时只调用 plan 中声明的 preset（例如 `spy.applyPreset('success')` 一类封装），避免在 `it()` 内手写无类型字面量。
 4. **用户确认**：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
@@ -238,7 +249,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 #### 3.1 UT 骨架（路径 A：有 use-cases.yaml）
 
-按照 [templates/ut-template.md](templates/ut-template.md) 提供的骨架生成。**直接调用 `ui_bindings.user_actions.calls` 声明的命名函数**，**不 new `@Component struct`**：
+按照 [templates/ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) 提供的骨架生成。**直接调用 `ui_bindings.user_actions.calls` 声明的命名函数**，**不 new `@Component struct`**：
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
@@ -315,7 +326,7 @@ v2.1 的打桩针对 **`use-cases.yaml > data_boundaries[].type` 所指的既有
 - **禁止**在 Spy 内部写业务判断（业务判断必须留在 coordinator / 命名业务函数里）
 - 若采用形式 2，`afterEach` 必须恢复原型，避免跨用例污染
 
-参考模板见 [templates/ut-template.md](templates/ut-template.md) 的打桩章节。
+参考模板见 [templates/ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) 的打桩章节。
 
 #### 3.3 每个 `it()` 的必备断言
 
@@ -457,31 +468,31 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 
 ### Step 7.5：UT 编译闭环（必要出口）
 
-> v2.2 新增：**UT 编译是 Skill 5 的必要出口条件**。光"写完"不算，必须 hvigor 实际编译过。harness 会通过 `ut_tsc_compiles`（静态 tsc）和 `ut_hvigor_build`（hvigor 实编）双层兜底；本步骤要求 agent 自己跑闭环。
+> v2.2 新增：**UT 编译/宿主静态检查是 Skill 5 的必要出口条件**。光"写完"不算，必须让当前 profile 的 `ut.compile` capability 实际通过；本步骤要求 agent 自己跑闭环。
 
 #### 7.5.1 静态 tsc 自检（TypeScript Compiler API）
 
 > 这一步 harness 在 `ut_tsc_compiles` 中自动跑；agent 不用手敲，但要看 harness 报告：若 FAIL，按 details 中的 `file:line:col TSxxxx message` 直接定位修。
 
-#### 7.5.2 hvigor 真实编译
+#### 7.5.2 profile UT 编译
 
-**首选方式（v2.3 起推荐）**：通过 harness 触发，让 `hvigor-runner.ts` 处理底层命令拼装、环境变量（`DEVECO_SDK_HOME` / `JAVA_HOME`）注入、Windows 含空格安装路径转义。`ut_hvigor_build` 内部跑的是 `hvigor genOnDeviceTestHap`（不再是 v2.2 的 `OhosTestCompileArkTS`，后者是 hvigor 内部 task，CLI 不能直接调用）：
+**首选方式（v2.3 起推荐）**：通过 harness 触发，由 profile provider 处理底层命令拼装、环境变量注入与平台路径转义：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feature-name>
 ```
 
-> **不要**让 agent 自己手敲 `hvigorw --mode module ... @ohosTest`。v2.3 起目标 task / 模块定位 / env 注入比 v2.2 复杂，自行拼装大概率翻车；harness 把这些都封装好了，且日志会落到 `framework/harness/reports/<feature>/ut/hvigor-ut-build.log` 便于排错。
+> **不要**让 agent 自己手敲宿主 UT 编译命令。目标 task / 模块定位 / env 注入由 harness 与 profile provider 封装，日志会落到 `framework/harness/reports/<feature>/ut/` 便于排错。
 
 #### 7.5.3 自闭环修复策略
 
-1. `ut_hvigor_build` FAIL → 进入修复；
-2. 完整 Read `framework/harness/reports/<feature>/ut/hvigor-ut-build.log`；
+1. `ut.compile` 对应规则 FAIL → 进入修复；
+2. 完整 Read `framework/harness/reports/<feature>/ut/` 下的失败日志；
 3. 按错误类型分类：
    - UT 调用的被测函数签名不符 → 修 UT；
    - UT import 路径错误 → 修 UT；
    - 类型注解与被测实际类型不匹配 → 修 UT；
-   - `project_dependency_missing` / `Failed to resolve OhmUrl` / `Cannot find module` → 工程依赖缺失，不要让用户手工猜。先展示方案：A) 用户确认后在工程根执行 `ohpm install` 并重跑；B) 仅读取 `oh-package.json5` 输出缺失依赖清单；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
+   - `project_dependency_missing` / `Cannot find module` → 工程依赖缺失，不要让用户手工猜。先展示方案：A) 用户确认后执行当前 profile 的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
    - **若错误根因在业务源码** → 进入 Step 7.5.4 严格流程，**禁止**自行动手；
 4. 修完再跑直到 exit code = 0。
 
@@ -500,51 +511,49 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
 
 ### Step 7.6：UT 装机运行闭环（必要出口）
 
-> v2.2 新增：UT 必须**实际跑通**，不是只会"看起来对"。`ut_hvigor_test` BLOCKER 会强制此步。
+> v2.2 新增：UT 必须**实际跑通**，不是只会"看起来对"。当前 profile 的 `ut.run` BLOCKER 会强制此步；若 profile 声明 SKIP，则以 harness verdict 为准。
 
 #### 7.6.1 探测设备
 
-```bash
-hdc list targets
-```
+按当前 profile addendum 声明的方式探测可运行目标。
 
 输出非空才能进 7.6.2；输出 `[Empty]` 或为空：
 
 - **不允许**继续往下跑后宣称 PASS；
 - **不允许**用"本地无设备"为由把 harness 标绿；
-- 必须先：在 DevEco Studio 启动模拟器 / 接入真机，重新探测；
+- 必须先：准备当前 profile 要求的设备/运行环境，重新探测；
 - 只有探测到设备后才能继续。
 
 #### 7.6.2 装机执行
 
-**首选方式（v2.3 起推荐）**：通过 harness 触发——v2.2 的 `hvigorw test` 路径在 HAR / HSP 库模块上根本走不通（要求 `TestAbility.ets` 而库模块没有），v2.3 改为 `genOnDeviceTestHap` 出 ohosTest HAP → `hdc install -r` 装机 → `hdc shell aa test` 触发 hypium → 解析 `OHOS_REPORT_RESULT`。这条链路全部封装在 `ut_hvigor_test` BLOCKER 内部：
+**首选方式（v2.3 起推荐）**：通过 harness 触发，由当前 profile 的 `ut.run` provider 执行安装/运行/结果解析链路：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feature-name>
 ```
 
-实测一次 `--phase ut` 同时触发 `ut_hvigor_build`（出包）+ `ut_hvigor_test`（装机执行），两段日志合并落到 `framework/harness/reports/<feature>/ut/hdc-test.log`；运行报告里 `ut_hvigor_test` 的 details 会包含失败阶段标签（`metadata` / `hap_not_found` / `install` / `run` / `no_pass`），方便定位。
+一次 `--phase ut` 可同时触发 `ut.compile` + `ut.run`；日志与 summary 落到 `framework/harness/reports/<feature>/ut/`，运行报告 details 会包含 provider 声明的失败阶段标签，方便定位。
 
-> **不要**让 agent 自己手敲 `hvigorw ... test`。v2.3 起这条命令对 HAR 库模块直接报 `srcEntry file '...TestAbility.ets' does not exist`，不是工具坏掉而是路径根本不对——必须走 hdc + aa test。harness 已经处理。
+> **不要**让 agent 自己手敲宿主测试命令；必须通过 harness 与 profile provider。
 
 #### 7.6.3 自闭环修复策略
 
-1. 解析 `ut_hvigor_test` 报告中的 hypium 统计（harness 会从 `hdc shell aa test` 输出里扒 `Tests run: N, Failure: F, Error: E, Pass: P, Ignore: I`）；
+1. 解析 `ut.run` 报告中的测试统计；
 2. failed > 0：
    - 读 `framework/harness/reports/<feature>/ut/hdc-test.log` 完整内容；
    - 找到 failure 用例的 `OHOS_REPORT_STATUS: stack=...` 堆栈；
    - 按堆栈定位：是 UT 逻辑错？Spy 预设值错？还是被测业务真有 bug？
    - **业务真有 bug 时**：仍走 7.5.4 的 HARD STOP 流程，先报告再改；
-3. total = 0：报告会标 `失败阶段：no_pass` 或 `run`——通常是测试 ability 没启动 / `testRunner` 路径错 / module name 错；先核对 `<module>/src/ohosTest/module.json5` 与 `AppScope/app.json5` 的 `bundleName`；
-4. 失败阶段是 `metadata` / `hap_not_found` / `install` → 回 7.5（先把 build 跑过）或检查 `framework.config.json > toolchain.devEcoStudio.installPath`；
+3. total = 0：报告会标 `失败阶段：no_pass` 或 `run`——通常是测试入口没启动或 profile 测试配置不匹配；按 profile addendum 核对测试入口配置；
+4. 失败阶段是 `metadata` / `artifact_not_found` / `install` → 回 7.5（先把 build 跑过）或检查当前 profile 的 toolchain 配置；
 5. 修完再跑直到 failed = 0 且 total > 0。
 
 #### 7.6.4 绝不允许
 
 - 把"无设备"标成 SKIP / PASS 上交；
-- 用 `HARNESS_SKIP_HVIGOR_TEST=1` 跳过（harness 会转成 BLOCKER FAIL）；
+- 用环境变量跳过 `ut.run` BLOCKER（harness 会转成 FAIL）；
 - "我修过 UT 了，但没跑就交"——必须真的装机跑过且全部 PASS；
-- 因为找不到 `hdc` 就把规则状态写成 SKIP——`hdc` 由 DevEco SDK 的 `toolchains` 提供，正常配过 `framework.config.json > toolchain.devEcoStudio.installPath` 后 PATH 即可命中；如仍找不到，需手工把 `<installPath>/sdk/<api>/toolchains` 加入 PATH。
+- 因为找不到 profile toolchain 就把规则状态写成 SKIP；必须按 profile addendum 补齐工具链配置后重跑。
 
 ### Step 8：Harness 验证门禁（agent 必须自跑）
 
@@ -663,11 +672,11 @@ UT 阶段宣布"完成"前必须**同时**满足：
   - data 层源代码（`data/repository/*.ets` / `shared/client/*.ets` 等）
   - `doc/features/{feature}/design.md` / `PRD.md` / `contracts.yaml` / `acceptance.yaml`
 - 阶段级规约: `framework/specs/phase-rules/ut-rules.yaml`
-- UseCase Schema: [templates/use-cases-schema.md](templates/use-cases-schema.md)
-- DAG Schema: [templates/dag-schema.md](templates/dag-schema.md)
-- UT / Spy 模板: [templates/ut-template.md](templates/ut-template.md)
-- 打桩策略: [templates/mock-strategy.md](templates/mock-strategy.md)
-- 规范级样例: [examples/card-opening/](examples/card-opening/)
+- UseCase Schema: [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)
+- DAG Schema: [dag-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md)
+- UT / Spy 模板: [ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md)
+- 打桩策略: [mock-strategy.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-strategy.md)
+- 规范级样例: [card-opening/](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/)
 - 脚本 Harness: `framework/harness/scripts/check-ut.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-ut.md`
 - 下游消费者:

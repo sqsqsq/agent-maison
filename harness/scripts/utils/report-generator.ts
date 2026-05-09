@@ -19,6 +19,7 @@ import {
   ReportSummary,
   Severity,
   VisualHandoffResolutionRow,
+  HarnessResolvedProfile,
 } from './types';
 
 // --------------------------------------------------------------------------
@@ -124,6 +125,7 @@ export function assembleAIPrompt(
   contextFiles: Array<{ label: string; content: string }>,
   scriptReportJson: string,
   specContent: string,
+  resolvedProfile?: HarnessResolvedProfile,
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -132,6 +134,21 @@ export function assembleAIPrompt(
     template = fs.readFileSync(templatePath, 'utf-8');
   } else {
     template = buildFallbackTemplate(phase);
+  }
+
+  if (resolvedProfile) {
+    const overlayPath = path.join(
+      resolvedProfile.profileDir,
+      'harness',
+      'prompts',
+      `verify-${phase}.overlay.md`,
+    );
+    if (fs.existsSync(overlayPath)) {
+      const overlay = fs.readFileSync(overlayPath, 'utf-8').trim();
+      if (overlay.length > 0) {
+        template = `${template.trimEnd()}\n\n---\n\n## Profile Overlay：${resolvedProfile.name}\n\n${overlay}\n`;
+      }
+    }
   }
 
   let assembled = template;

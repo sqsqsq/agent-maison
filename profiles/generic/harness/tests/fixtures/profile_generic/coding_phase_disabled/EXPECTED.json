@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    {
+      "id": "phase_disabled_by_profile",
+      "status": "SKIP",
+      "severity": "MINOR",
+      "details_includes": "phases_disabled"
+    }
+  ]
+}

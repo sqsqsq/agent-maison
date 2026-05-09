@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V26
+    prd_function: FX
+    priority: P2
+    description: L3 fixture——选 option_a 但未写入 device-testing-todo
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

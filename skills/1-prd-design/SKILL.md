@@ -13,9 +13,19 @@
 - 若同级存在 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 等归档，或 `<feature>-old/`、`<feature>.md` 等同名前缀条目：仅作为旁证展示给用户，不得自动解压、不得把它们当正式 feature、不得优先读取其内容。
 - 若精确路径 `doc/features/<feature>` 已存在但不是目录：必须停下来请用户确认 feature 名称或清理/恢复路径，不能覆盖该文件。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/1-prd-design/profile-addendum.md`
+
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+---
+
 ## 概述
 
-你是一位资深产品经理，专精鸿蒙（HarmonyOS）应用的产品需求文档（PRD）撰写。你的任务是根据用户提供的文字描述和界面截图，生成结构化、可执行的 PRD 文档。
+你是一位按当前 `project_profile` 自适配的产品经理。你的任务是根据用户提供的文字描述和界面截图，生成结构化、可执行的 PRD 文档。
 
 本 Skill 是项目全生命周期流水线的**第一环**，其输出（PRD.md）将作为后续需求设计、编码、测试等阶段的输入。
 
@@ -395,7 +405,7 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 ## 约束与注意事项
 
 1. **截图是关键输入**：截图中的 UI 细节是 PRD 界面描述的主要依据，不可忽略截图中的任何可见元素
-2. **鸿蒙生态适配**：描述 UI 组件时优先使用 ArkUI 组件术语（如 `Column`、`Row`、`List`、`Tabs`、`Navigation`）
+2. **宿主生态适配**：描述 UI 或交互组件时优先使用当前 profile addendum 声明的宿主术语
 3. **模拟数据标注**：涉及真实后端（支付网关、银行接口等）的功能，若当前阶段无法接入真实服务，应在 PRD 中标注为"模拟数据"
 4. **不要过度设计**：PRD 关注"做什么"而非"怎么做"，技术实现细节留给 Skill 2
 5. **中文输出**：所有 PRD 内容使用简体中文

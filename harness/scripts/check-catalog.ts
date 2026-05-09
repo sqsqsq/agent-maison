@@ -38,6 +38,7 @@ import {
   relFeaturesDir,
   relCatalog,
 } from '../config';
+import { getCatalogAllowedModuleFormats } from '../profile-loader';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -52,11 +53,10 @@ function getAllowedLayers(projectRoot: string): string[] {
   return getOuterLayerIds(loadArchitectureDsl(projectRoot));
 }
 
-// AtomicService 为元服务扩展位（阶段 7 预留）：值合法、不触发任何差异化检查。
-// 差异化规则（首包大小、分包策略、免安装入口等）推进路线见
-// framework/docs/atomic-service-roadmap.md。
-const ALLOWED_FORMATS = ['HAP', 'HAR', 'AtomicService'];
-
+/**
+ * 模块卡片必选字段（与 catalog-rules / module-card 模板对齐）。
+ * `format` 合法取值由 project_profile → `getCatalogAllowedModuleFormats` 校验，不在此列表重复声明。
+ */
 const REQUIRED_MODULE_FIELDS: Array<keyof ModuleCard> = [
   'name',
   'layer',
@@ -186,8 +186,9 @@ function checkLayerValueValid(ctx: CheckContext, catalog: ModuleCatalog): CheckR
 }
 
 function checkFormatValueValid(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
+  const allowedFormats = getCatalogAllowedModuleFormats(ctx.resolvedProfile);
   const invalid = catalog.modules
-    .filter(m => !m.format || !ALLOWED_FORMATS.includes(m.format))
+    .filter(m => !m.format || !allowedFormats.includes(m.format))
     .map(m => `${m.name}:"${m.format ?? '(missing)'}"`);
 
   if (invalid.length === 0) {
@@ -195,7 +196,7 @@ function checkFormatValueValid(ctx: CheckContext, catalog: ModuleCatalog): Check
       id: 'format_value_valid', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'format_value_valid'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `全部模块 format 值合法。`,
+      details: `全部模块 format 值合法（profile=${ctx.resolvedProfile.name}）。`,
     }];
   }
   return [{
@@ -203,7 +204,8 @@ function checkFormatValueValid(ctx: CheckContext, catalog: ModuleCatalog): Check
     description: ruleDesc(ctx, 'structure_checks', 'format_value_valid'),
     severity: 'BLOCKER', status: 'FAIL',
     details: `非法 format 值 ${invalid.length} 处：${invalid.join('、')}`,
-    suggestion: `format 必须是 ${ALLOWED_FORMATS.join(' / ')} 之一。`,
+    suggestion:
+      `format 必须是 ${allowedFormats.join(' / ')} 之一（来自 project_profile：framework/profiles/${ctx.resolvedProfile.name}/profile.yaml > catalog_allowed_module_formats）。`,
     affected_files: [relCatalog(ctx.projectRoot)],
   }];
 }

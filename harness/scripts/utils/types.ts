@@ -347,6 +347,47 @@ export interface AIPromptOutput {
 }
 
 // --------------------------------------------------------------------------
+// Project profile（framework/profiles/<name>/）— 与 adapter 正交
+// --------------------------------------------------------------------------
+
+export type CapabilitySeverityKeyword = 'BLOCKER' | 'SKIP' | 'WARN' | 'MAJOR' | 'MINOR';
+
+export type CapabilityKey =
+  | 'coding.compile'
+  | 'coding.lint'
+  | 'ut.compile'
+  | 'ut.run'
+  | 'device_test.run'
+  | 'prd.visual_handoff';
+
+export interface ProfileCapabilitySpec {
+  provider?: string;
+  severity: CapabilitySeverityKeyword;
+}
+
+/** profile.yaml 解析后的最小结构（供 harness 使用） */
+export interface ProfileYamlStub {
+  name: string;
+  display_name?: string;
+  /** Catalog：module card `format` 合法枚举（由 profile 声明；缺省 HAP/HAR/AtomicService） */
+  catalog_allowed_module_formats?: string[];
+  phases_disabled?: string[];
+  capabilities?: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
+  phase_rules_overlays_dir?: string;
+  [key: string]: unknown;
+}
+
+/** loadResolvedProfile 的运行时结果 */
+export interface HarnessResolvedProfile {
+  name: string;
+  subVariant?: string;
+  profileDir: string;
+  yaml: ProfileYamlStub;
+  phasesDisabled: Set<Phase>;
+  capabilities: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
+}
+
+// --------------------------------------------------------------------------
 // 脚本 Harness 检查器接口
 // --------------------------------------------------------------------------
 
@@ -380,4 +421,6 @@ export interface CheckContext {
   docsCommitted?: boolean;
   /** CLI `--skip-visual-handoff`：跳过 Visual Handoff 相关脚本检查 */
   skipVisualHandoff?: boolean;
+  /** project profile（framework/profiles）。缺配置时由 config 归一为 hmos-app */
+  resolvedProfile: HarnessResolvedProfile;
 }

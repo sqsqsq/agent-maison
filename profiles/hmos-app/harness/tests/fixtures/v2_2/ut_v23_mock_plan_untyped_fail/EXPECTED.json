@@ -1,0 +1,11 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_mock_plan_typed",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "ts_expr"
+    }
+  ]
+}

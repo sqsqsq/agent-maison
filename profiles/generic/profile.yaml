@@ -1,0 +1,25 @@
+name: generic
+display_name: 文档型 / 非端侧编译工程（最小 harness）
+
+catalog_allowed_module_formats:
+  - application
+  - library
+  - service
+  - document
+
+detect:
+  signature_files: []
+
+# 不参与 coding / ut / device 编译类门禁；仅跑 PRD/design/review/catalog/glossary 等文档向阶段
+phases_disabled:
+  - coding
+  - ut
+  - testing
+
+capabilities:
+  coding.compile: { provider: none, severity: SKIP }
+  coding.lint: { provider: none, severity: SKIP }
+  ut.compile: { provider: none, severity: SKIP }
+  ut.run: { provider: none, severity: SKIP }
+  device_test.run: { provider: none, severity: SKIP }
+  prd.visual_handoff: { provider: none, severity: SKIP }

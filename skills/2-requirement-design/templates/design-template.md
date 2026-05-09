@@ -369,8 +369,8 @@ export interface {ResponseName} {
 ## 6.5 业务流程 UseCase 清单（若 feature 有多步骤流程）
 
 > **何时必填**：当任一用户操作会触发 ≥2 次 cloud/local 端口调用，或含 conditional 分支（成功/多种失败/回滚/取消）。
-> **同时必须产出**：`doc/features/{module}/use-cases.yaml`（Schema 见 [framework/skills/5-business-ut/templates/use-cases-schema.md](../../5-business-ut/templates/use-cases-schema.md)）。
-> **样例**：[framework/skills/5-business-ut/examples/card-opening/](../../5-business-ut/examples/card-opening/)
+> **同时必须产出**：`doc/features/{module}/use-cases.yaml`（Schema 见 [use-cases-schema.md](../../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)）。
+> **样例**：[card-opening](../../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/)
 
 ### 6.5.1 UseCase: {UseCaseName}
 

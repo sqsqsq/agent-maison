@@ -1,7 +1,7 @@
 # Visual Handoff 回归覆盖说明
 
-> 三层回归：**单元（白盒）+ fixture（端到端）+ 实例 demo（home-page）**。本目录不再放 fixture——
-> 端到端 fixture 已迁到 [`fixtures/prd/visual_handoff_*`](../prd/)，单元用例在
+> 三层回归：**单元（白盒）+ fixture（端到端）+ 实例 demo（home-page）**。本目录仅存说明；端到端 fixture 在
+> [`profiles/hmos-app/harness/tests/fixtures/prd/`](../../../../profiles/hmos-app/harness/tests/fixtures/prd)，单元用例在
 > [`tests/unit/visual-handoff.unit.test.ts`](../../unit/visual-handoff.unit.test.ts)。
 
 ## 单元（`tests/unit/visual-handoff.unit.test.ts`，由 `tests/run-unit.ts` 挂载）
@@ -17,7 +17,7 @@
 | `allow_absolute_paths=true` → PASS | `absolute_path_allowed_pass` |
 | `resolveAuthoritativePath` 普通相对路径不被当作 ENV 替换 | `resolver_plain_relative_not_env_substitution` |
 
-## Fixture（`fixtures/prd/visual_handoff_*`，由 `tests/run-tests.ts` 挂载）
+## Fixture（`prd/visual_handoff_*`，`tests/run-tests.ts`；目录 `profiles/hmos-app/harness/tests/fixtures/prd/`）
 
 对应 plan §2.0 决策表第 1/2/4 行——通过 `EXPECTED.json.rules` 的 `must_be_absent` 与
 `details_includes` 字段断言局部规则结果，**不**约束其它 prd 检查的状态：

@@ -29,7 +29,6 @@ import {
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { compileTestFiles } from './utils/ts-compile';
-import { runHvigorBuild, runHvigorTest, probeDevices, analyzeProjectDependencyIssue, mergeHvigorLogForUtClassification, looksLikeUtHvigorCommandMismatch } from './utils/hvigor-runner';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
@@ -37,6 +36,19 @@ import {
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
+import {
+  isCapabilitySkipped,
+  CANONICAL_UT_COMPILE_ID,
+  LEGACY_UT_COMPILE_ID,
+  CANONICAL_UT_RUN_ID,
+  LEGACY_UT_RUN_ID,
+  dispatchUtCompile,
+  dispatchUtRun,
+  probeUtRunDevices,
+  analyzeProjectDependencyIssueViaProfile,
+  mergeUtCompileLogForClassification,
+  looksLikeUtCompileCommandMismatch,
+} from '../capability-registry';
 import {
   buildMockPlanPresetIndex,
   collectMockPlanTypedIssues,
@@ -823,6 +835,30 @@ function findModulesWithUt(ctx: CheckContext): Array<{ name: string; package_pat
  * 跨文件类型错误（UT 对被测 API 签名违约）。
  */
 function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
+    const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
+    const details =
+      'project_profile 声明 ut.compile 为 SKIP：未调用 ohosTest hvigor assemble（canonical id: ut_compile）。';
+    return [
+      {
+        id: LEGACY_UT_COMPILE_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+      {
+        id: CANONICAL_UT_COMPILE_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+    ];
+  }
+
   const mods = findModulesWithUt(ctx);
   if (mods.length === 0) {
     return [{
@@ -835,9 +871,9 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorBuild> }> = [];
+  const perModule: Array<{ module: string; result: any }> = [];
   for (const mod of mods) {
-    const res = runHvigorBuild({
+    const res = dispatchUtCompile(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: HARNESS_ROOT,
       feature: ctx.feature,
@@ -869,10 +905,10 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
 
   const first = bad[0].result;
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
-  const failureClass = classifyUtHvigorBuildFailure(first, bad[0].module, ctx.projectRoot);
+  const failureClass = classifyUtHvigorBuildFailure(first, ctx, bad[0].module, ctx.projectRoot);
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
-    first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
+    first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
     lines.push('本规则不允许 SKIP —— 真实编译是出口条件。');
   } else if (first.skippedByEnv) {
     lines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置，显式跳过真实编译不被允许作为出口。');
@@ -898,7 +934,7 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     }
     if (first.errors.length > 0) {
       lines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
-      first.errors.slice(0, 10).forEach(e =>
+      first.errors.slice(0, 10).forEach((e: { file?: string; line?: number; code?: string; message: string }) =>
         lines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`)
       );
     }
@@ -937,7 +973,8 @@ type UtHvigorFailureKind =
   | 'unknown';
 
 function classifyUtHvigorBuildFailure(
-  res: ReturnType<typeof runHvigorBuild>,
+  res: any,
+  ctx: CheckContext,
   moduleName: string,
   projectRoot: string,
 ): { kind: UtHvigorFailureKind; explanation: string; suggestion: string } {
@@ -956,8 +993,8 @@ function classifyUtHvigorBuildFailure(
     };
   }
 
-  const mergedLog = mergeHvigorLogForUtClassification(res);
-  if (looksLikeUtHvigorCommandMismatch(mergedLog)) {
+  const mergedLog = mergeUtCompileLogForClassification(ctx, res);
+  if (looksLikeUtCompileCommandMismatch(ctx, mergedLog)) {
     return {
       kind: 'ut_hvigor_command_mismatch',
       explanation:
@@ -970,7 +1007,7 @@ function classifyUtHvigorBuildFailure(
   }
 
   const log = mergedLog;
-  const depIssue = analyzeProjectDependencyIssue(projectRoot, res);
+  const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, res);
   const hasDependencyResolutionFailure =
     /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(log);
   const touchesOhosTest = /\/src\/ohosTest\/|\\src\\ohosTest\\/i.test(log);
@@ -1024,7 +1061,7 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependencyIssue>): string {
+function formatDependencyIssue(issue: any): string {
   const lines = [
     `依赖线索：${issue.dependencies.length > 0 ? issue.dependencies.join(', ') : '(未解析出具体包名)'}`,
     `harness node_modules：${issue.harnessNodeModulesReady ? '存在' : '缺失'}`,
@@ -1036,7 +1073,7 @@ function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependency
   }
   if (issue.installHints.length > 0) {
     lines.push('建议分支：');
-    issue.installHints.forEach(h => lines.push(`  - ${h}`));
+    issue.installHints.forEach((h: string) => lines.push(`  - ${h}`));
   }
   return lines.join('\n');
 }
@@ -1054,6 +1091,29 @@ function formatDependencyIssue(issue: ReturnType<typeof analyzeProjectDependency
  *   (5) failed > 0 或 total == 0 → FAIL 并列出失败用例堆栈。
  */
 function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
+    const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
+    const details =
+      'project_profile 声明 ut.run 为 SKIP：未执行 hdc/hvigor test（canonical id: ut_run）。';
+    return [
+      {
+        id: LEGACY_UT_RUN_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+      {
+        id: CANONICAL_UT_RUN_ID,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details,
+      },
+    ];
+  }
   // 先检查本规则是否被 ut_hvigor_build 前置失败所短路
   // 由 main checker 顺序调度决定，这里不主动短路，而是在 details 中提示依赖。
 
@@ -1083,7 +1143,7 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const devProbe = probeDevices();
+  const devProbe = probeUtRunDevices(ctx);
   if (!devProbe.available) {
     const head = devProbe.hdcPresent
       ? `hdc list targets 返回空（原始输出：${devProbe.raw || '(空)'}）`
@@ -1106,9 +1166,9 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const perModule: Array<{ module: string; result: ReturnType<typeof runHvigorTest> }> = [];
+  const perModule: Array<{ module: string; result: any }> = [];
   for (const mod of mods) {
-    const res = runHvigorTest({
+    const res = dispatchUtRun(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: HARNESS_ROOT,
       feature: ctx.feature,
@@ -1161,13 +1221,13 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
   // v2.3 P2：runHvigorTest 在 errors[0].message 里会标注"失败阶段：metadata|hap_not_found|install|run|no_pass"，
   // 让用户一眼定位。这里把它前置展示。
-  const stageHint = first.errors?.find(e => /失败阶段：/.test(e.message))?.message;
+  const stageHint = first.errors?.find((e: { message: string }) => /失败阶段：/.test(e.message))?.message;
   if (stageHint) {
     lines.push(stageHint + '（详见日志）');
   }
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor / hdc 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径，hdc 由 DevEco SDK toolchains 提供）。');
-    first.logExcerpt.split(/\r?\n/).forEach(l => lines.push(l));
+    first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
   } else if (!first.executed) {
     lines.push(`原因：hvigor / hdc 未执行，日志：${first.logExcerpt}`);
   } else if (first.exitCode !== 0 && !first.testResult) {
@@ -1182,7 +1242,7 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     }
     if (t.failures.length > 0) {
       lines.push(`失败用例（前 15 条）：`);
-      t.failures.slice(0, 15).forEach(f =>
+      t.failures.slice(0, 15).forEach((f: { suite: string; test: string; message: string }) =>
         lines.push(`  - [${f.suite}] ${f.test}  →  ${f.message}`)
       );
     }
@@ -1617,7 +1677,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
     severity: 'MINOR',
     status: 'WARN',
     details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 doc/features/${ctx.feature}/use-cases.yaml 以承载端到端分支。`,
-    suggestion: '若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 framework/skills/5-business-ut/templates/use-cases-schema.md 产出；否则可忽略本告警。',
+    suggestion: '若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md 产出；否则可忽略本告警。',
   }];
 }
 
@@ -1717,7 +1777,7 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${issues.length} 处 Schema 问题：\n${truncateList(issues, 20)}`,
-    suggestion: '请参照 framework/skills/5-business-ut/templates/use-cases-schema.md 补齐 Schema。',
+    suggestion: '请参照 framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md 补齐 Schema。',
   }];
 }
 
@@ -2718,7 +2778,7 @@ function checkBranchCoverageFull(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${missing.length} 个 branch 无 UT 覆盖：\n${truncateList(missing, 15)}`,
-    suggestion: '请为每个 branch 补充一条 it()，用例名建议格式 [BRANCH-<id>][AC-<id>] ...；参考 framework/skills/5-business-ut/examples/card-opening/card_opening.test.ets。',
+    suggestion: '请为每个 branch 补充一条 it()，用例名建议格式 [BRANCH-<id>][AC-<id>] ...；参考 framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/card_opening.test.ets。',
   }];
 }
 
@@ -2990,7 +3050,7 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details:
         `缺少 ${path.relative(ctx.projectRoot, p).replace(/\\/g, '/')}\n` +
-        `模板：framework/skills/5-business-ut/templates/testability-audit-template.md`,
+        `模板：framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md`,
       suggestion: '为每条 unit/both 的 AC/BD 写入 testability-audit.md（Markdown 内嵌 YAML，根字段 records[]）',
     }];
   }
@@ -3143,7 +3203,7 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
       status: 'FAIL',
       details:
         `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[]）。\n` +
-        `模板：framework/skills/5-business-ut/templates/mock-plan-schema.md`,
+        `模板：framework/profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md`,
       suggestion: '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 Spy 目标类与 presets。',
     }];
   }
@@ -3528,9 +3588,15 @@ const checker: PhaseChecker = {
     // v2.2 方案 B：hvigor 真实编译（ohosTest 模块）
     const hvigorBuildResults = safeRun(() => checkUtHvigorBuild(ctx), 'ut_hvigor_build');
     results.push(...hvigorBuildResults);
-    // v2.2 方案 C：hvigor 装机执行 UT（hypium），无设备/失败均 BLOCKER FAIL；
-    // 若 ut_hvigor_build 已 FAIL，test 短路为 FAIL 避免叠加无意义日志。
     const buildFailed = hvigorBuildResults.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL');
+    const compileSkippedProfile = hvigorBuildResults.some(
+      r =>
+        r.id === LEGACY_UT_COMPILE_ID &&
+        r.status === 'SKIP',
+    );
+
+    const descTest = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
+
     if (buildFailed) {
       results.push({
         id: 'ut_hvigor_test',
@@ -3540,6 +3606,25 @@ const checker: PhaseChecker = {
         status: 'FAIL',
         details: 'ut_hvigor_build 已 FAIL，test 阶段自动短路为 FAIL（避免重复跑和日志噪声）。请先修复编译。',
       });
+    } else if (compileSkippedProfile) {
+      results.push(
+        {
+          id: LEGACY_UT_RUN_ID,
+          category: 'structure',
+          description: descTest,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'ut.compile 已为 profile SKIP，跳过装机 UT 执行。',
+        },
+        {
+          id: CANONICAL_UT_RUN_ID,
+          category: 'structure',
+          description: descTest,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'ut.compile 已为 profile SKIP，跳过装机 UT 执行。',
+        },
+      );
     } else {
       results.push(...safeRun(() => checkUtHvigorTest(ctx), 'ut_hvigor_test'));
     }

@@ -1,0 +1,9 @@
+schema_version: "1.0"
+feature: demo
+
+modules:
+  - name: Demo
+    layer: 02-Feature
+    format: HAR
+    change_type: new
+    package_path: 02-Feature/Demo

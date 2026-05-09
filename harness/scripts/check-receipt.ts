@@ -19,8 +19,9 @@
 //        当 paths.docs_committed=true 时还须在工作区可读（存在）
 //      - self_check.q4_no_hallucinated_rule_used === true
 //      - "反假设条款回顾" 三项 checkbox 全部为 [x]
-//   4. 任一失败 → exit 1 + 详细 BLOCKER 报告；
-//      文件本身缺失 / YAML 解析失败 → exit 2。
+//      任一失败 → exit 1 + 详细 BLOCKER 报告
+//   4. profile `phases_disabled` 命中本 phase 时：不要求回执，直接 exit 0。
+//   5. 致命错误（回执文件缺失 / YAML 解析失败）→ exit 2。
 //
 // 退出码语义（与 harness-runner / Stop hook 协议一致）：
 //   0 = PASS（阶段闭环条件 4 满足）
@@ -34,6 +35,7 @@ import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig } from '../config';
+import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 
 type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
 
@@ -138,6 +140,16 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 
 function main(): void {
   const { feature, phase, projectRoot } = parseArgs();
+
+  const fw = loadFrameworkConfig(projectRoot);
+  const resolved = loadResolvedProfile(projectRoot, fw);
+  if (isPhaseDisabledByProfile(phase, resolved)) {
+    console.log(
+      `\n🧾 check-receipt: feature=${feature}, phase=${phase}` +
+        `\n   project_profile=${resolved.name} 已禁用该阶段（phases_disabled），跳过回执强制校验 → exit 0\n`,
+    );
+    process.exit(0);
+  }
 
   const receiptRel = `doc/features/${feature}/${phase}/phase-completion-receipt.md`;
   const receiptPath = path.join(projectRoot, receiptRel);

@@ -30,22 +30,28 @@ KEEP_TMPDIR=1 npx ts-node framework/harness/tests/run-tests.ts
 ```
 tests/
 ├── README.md                ← 本文件
-├── run-tests.ts             ← 入口
+├── run-tests.ts             ← 入口（三扫描根：本目录 `fixtures/` + `profiles/hmos-app/` + `profiles/generic/` 各自 `tests/fixtures/`）
 ├── utils/
 │   └── fixture-runner.ts    ← 拷贝 fixture / 跑 checker / 断言
 └── fixtures/
-    └── v2_2/                ← 按 framework 版本分组
-        ├── ut_tsc_compiles_pass/
-        │   ├── INPUT/                              ← 拷贝到 tmpdir 作为 projectRoot；git add + commit 作为 baseline
-        │   │   ├── doc/features/demo/...
-        │   │   └── 02-Feature/Demo/...
-        │   ├── AFTER_BASELINE/   （可选）          ← baseline commit **之后**再 overlay（不 commit）
-        │   ├── REPORTS/           （可选）          ← 隔离的 reports 根，经 HARNESS_REPORTS_ROOT_OVERRIDE 注入，
-        │   │   └── <feature>/<tag>/gap-notes.md      供 gap-notes.md / trace.json 场景使用
-        │   ├── CMD.json                            ← { phase, feature, env? }
-        │   └── EXPECTED.json                       ← 期望规则状态
-        ├── ut_tsc_compiles_fail/
-        └── named_handler_class_field_pass/
+    ├── README.md              ← 契约用例迁徙说明（CMD 正文在 profiles/*/harness/tests/fixtures）
+    └── visual_handoff/        ← 仅存回归说明 Markdown
+```
+
+**含 `INPUT/` + `CMD.json` 的 fixture** 已迁至：
+
+- `framework/profiles/hmos-app/harness/tests/fixtures/`（`init/`、`prd/`、`v2_2/`）
+- `framework/profiles/generic/harness/tests/fixtures/`（`profile_generic/`）
+
+`run-tests.ts` 内 **`FIXTURE_TREE_ROOTS_REL_TO_FRAMEWORK`** 列出相对 `framework/` 的树根；新建 profile 契约基线时请追加条目。合并扫描本目录（含仅说明子树）与各 profile；逻辑名全局唯一。
+
+```
+    <group>/<case>/
+        ├── INPUT/                              ← 拷贝到 tmpdir；git baseline
+        ├── AFTER_BASELINE/   （可选）
+        ├── REPORTS/           （可选）
+        ├── CMD.json
+        └── EXPECTED.json
 ```
 
 ## 写新 fixture
@@ -54,8 +60,10 @@ tests/
 
 ### `INPUT/`
 被拷贝到 tmpdir 作为 projectRoot 的最小工程骨架。一般至少包含：
-- `doc/features/<feature>/acceptance.yaml`（可空数组，但文件必须在）
+- `doc/features/<feature>/acceptance.yaml`（可空数组，但文件必须在；**键名须为 `criteria` / `boundaries`**，与 `AcceptanceSpec` 一致——`acceptance_criteria` 不会被 SpecLoader 映射）
 - 你要触发的规则所需的源码 / yaml
+
+**v2.3 UT（可测性 + mock-plan + spy_preset）fixture 示例**：`profiles/hmos-app/harness/tests/fixtures/v2_2/ut_v23_audit_missing_fail`、`ut_v23_l3_option_a_untracked_fail`、`ut_v23_l3_option_b_no_auth_fail`、`ut_v23_mock_plan_contract_orphan_fail`、`ut_v23_mock_plan_method_orphan_fail`、`ut_v23_mock_plan_missing_fail`、`ut_v23_mock_plan_untyped_fail`、`ut_v23_spy_preset_unknown_fail`。
 
 如果你的规则需要 `framework.config.json`（自定义架构 DSL），把它放到 `INPUT/framework.config.json`。否则走 `LEGACY_DEFAULT_DSL`。
 

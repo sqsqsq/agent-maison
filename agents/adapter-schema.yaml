@@ -166,6 +166,17 @@ placeholders:
         - "atomic_service"  → "元服务工程"
       新增 project_type 取值时在 framework/skills/00-framework-init/SKILL.md
       同步追加映射，保持与模板占位符一致。
+  PROJECT_PROFILE_NAME:
+    source: framework.config.json → project_profile.name；缺省或未配置时视同 hmos-app
+  PROJECT_PROFILE_SUB_VARIANT:
+    source: framework.config.json → project_profile.sub_variant（无则用「—」）
+  PROFILE_AGENT_SSOT_ROWS:
+    source: |
+      渲染时从 framework/profiles/<project_profile.name>/templates/agents-md/agent-ssot-rows.partial.md 读入；
+      文件不存在则回落 profiles/generic/agent-ssot-rows.partial.md。（由 render-agents-md.mjs 与 check-init 共用逻辑。）
+  PROFILE_AGENT_GUARDRAILS:
+    source: |
+      同上目录 agent-guardrails.partial.md。
   AGENT_ADAPTER:
     source: framework.config.json → agent_adapter # 当前激活的 adapter 名
   AGENT_ENTRY_FILE:

@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V27
+    prd_function: FX
+    priority: P2
+    description: mock-plan target_class 不在 contracts
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

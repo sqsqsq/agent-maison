@@ -1,0 +1,17 @@
+{
+  "project_profile": {
+    "name": "generic"
+  },
+  "architecture": {
+    "outer_layers": [
+      {
+        "id": "app",
+        "can_depend_on": [],
+        "intra_layer_deps": "dag"
+      }
+    ],
+    "module_inner_layers": ["content"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index"
+  }
+}

@@ -3,7 +3,8 @@
 // ============================================================================
 //
 // 设计：
-//   - 每个 fixture 是 framework/harness/tests/fixtures/<group>/<name>/，含：
+//   - 典型根目录：`framework/harness/tests/fixtures/<group>/<name>/`；
+//     亦可位于 `framework/profiles/hmos-app/harness/tests/fixtures/`（同源结构，便于 profile 拆分）。
 //     * INPUT/          — 拷贝到 tmpdir 作为 projectRoot，**然后 git add + commit**
 //                         作为 baseline；记入 trace.json 的 start_commit
 //     * AFTER_BASELINE/（可选） — baseline commit **之后**再 overlay 到 tmpdir
@@ -22,7 +23,8 @@
 //   - 自动 git init fixture tmpdir，使得 ut_no_src_mutation 等依赖 git 的规则能跑。
 //
 // 用法（被 run-tests.ts 调用）：
-//   const result = await runFixture('framework/harness/tests/fixtures/v2_2/ut_tsc_compiles_fail');
+//   const result = await runFixture('<abs>/.../profiles/hmos-app/harness/tests/fixtures/v2_2/ut_tsc_compiles_fail');
+//     或由 run-tests.ts 合并扫描的任一 **.../tests/fixtures/** 根（逻辑展示名锚定在同一后缀；禁止同名双份）。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -39,6 +41,7 @@ import {
 } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { resolvePaths, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile, loadPhaseRuleWithOverlays, isPhaseDisabledByProfile } from '../../profile-loader';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -63,6 +66,20 @@ export interface ExpectedRule {
   details_includes?: string;
   /** 该规则**不应**出现在 result[] 中（用于"故意没触发"的反向断言） */
   must_be_absent?: boolean;
+}
+
+/**
+ * fixture 可多根目录（见 run-tests.ts）；对外展示名与 filter 匹配的 key 均以路径中最后一次
+ * `/tests/fixtures/` 之后的相对段为准（例：`v2_2/ut_tsc_compiles_pass`）。
+ */
+export function fixtureDisplayName(fixtureDir: string): string {
+  const n = path.resolve(fixtureDir).replace(/\\/g, '/');
+  const needle = '/tests/fixtures/';
+  const idx = n.lastIndexOf(needle);
+  if (idx >= 0) return n.slice(idx + needle.length);
+  return path
+    .relative(path.resolve(__dirname, '..', 'fixtures'), fixtureDir)
+    .replace(/\\/g, '/');
 }
 
 /** EXPECTED.json 顶层 */
@@ -95,10 +112,7 @@ export interface FixtureRunResult {
  *   4. 比对 EXPECTED.json
  */
 export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> {
-  const name = path.relative(
-    path.resolve(__dirname, '..', 'fixtures'),
-    fixtureDir,
-  ).replace(/\\/g, '/');
+  const name = fixtureDisplayName(fixtureDir);
   const failures: string[] = [];
 
   // 1. 读 CMD/EXPECTED
@@ -185,7 +199,9 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
     const vhMode = fwConfig.prd?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
 
     const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir);
-    const phaseRule = specLoader.loadPhaseRule(phase);
+    let phaseRule = specLoader.loadPhaseRule(phase);
+    const resolvedProfile = loadResolvedProfile(tmpdir, fwConfig);
+    phaseRule = loadPhaseRuleWithOverlays(phase, phaseRule, resolvedProfile);
     const featureSpec = isGlobalPhase(phase)
       ? { feature }
       : specLoader.loadFeatureSpec(feature);
@@ -200,20 +216,38 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
       visualHandoffEnforcement: vhMode,
       prdVisualSources: fwConfig.prd?.visual_sources,
       docsCommitted: fwConfig.paths.docs_committed ?? false,
+      skipVisualHandoff: false,
+      resolvedProfile,
     };
 
-    // 6. 直接 require checker（绕开 harness-runner 的 Step 4/5）
-    const checkerPath = path.join(FIXTURE_HARNESS_ROOT, 'scripts', `check-${phase}.ts`);
-    if (!fs.existsSync(checkerPath)) {
-      throw new Error(`checker 不存在：${checkerPath}`);
+    /** 与 harness-runner 对齐：profile 禁用整阶段时不跑 check-*.ts */
+    let actualResults: CheckResult[];
+    if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
+      actualResults = [
+        {
+          id: 'phase_disabled_by_profile',
+          category: 'structure',
+          description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
+          severity: 'MINOR',
+          status: 'SKIP',
+          details:
+            `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
+        },
+      ];
+    } else {
+      // 6. 直接 require checker（绕开 harness-runner 的 Step 4/5）
+      const checkerPath = path.join(FIXTURE_HARNESS_ROOT, 'scripts', `check-${phase}.ts`);
+      if (!fs.existsSync(checkerPath)) {
+        throw new Error(`checker 不存在：${checkerPath}`);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const checkerModule = require(checkerPath);
+      const checker: PhaseChecker = checkerModule.default || checkerModule.checker || checkerModule;
+      if (typeof checker.check !== 'function') {
+        throw new Error(`check-${phase}.ts 未导出有效 checker`);
+      }
+      actualResults = await checker.check(ctx);
     }
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const checkerModule = require(checkerPath);
-    const checker: PhaseChecker = checkerModule.default || checkerModule.checker || checkerModule;
-    if (typeof checker.check !== 'function') {
-      throw new Error(`check-${phase}.ts 未导出有效 checker`);
-    }
-    const actualResults = await checker.check(ctx);
 
     // restore env
     for (const [k, v] of Object.entries(savedEnv)) {

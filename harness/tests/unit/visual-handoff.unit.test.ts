@@ -6,7 +6,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import { checkVisualHandoff } from '../../scripts/check-prd';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { resolveAuthoritativePath } from '../../scripts/utils/visual-source-resolver';
@@ -27,12 +28,16 @@ function stubPhaseRule(): PhaseRuleSpec {
 }
 
 function baseCtx(root: string, o: Partial<CheckContext> = {}): CheckContext {
+  clearFrameworkConfigCache();
+  const fw = loadFrameworkConfig(root);
+  const resolvedProfile = loadResolvedProfile(root, fw);
   return {
     phase: 'prd',
     feature: 'demo',
     projectRoot: root,
     phaseRule: stubPhaseRule(),
     featureSpec: { feature: 'demo' },
+    resolvedProfile,
     ...o,
   };
 }

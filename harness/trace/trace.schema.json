@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://harmonyos-framework/harness/trace.schema.json",
+  "$id": "https://framework.tools/harness/trace.schema.json",
   "title": "Trace",
-  "description": "单次 AI 跑动日志。由 Claude Code CLI（或等价运行时）在每个阶段结束时产出，路径约定：framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json。用于内网弱模型试运行后结构化回传痛点，指导框架迭代。",
+  "description": "单次 AI 跑动日志（project_profile / toolchain 无关的核心字段）。由各 agent 运行时在本阶段结束时产出，路径约定：framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json。",
   "type": "object",
   "required": [
     "schema_version",
@@ -108,7 +108,7 @@
         "properties": {
           "trigger": {
             "type": "string",
-            "description": "触发原因，如 'lint_error' / 'scope_violation' / 'contracts_mismatch' / 'arkts_pitfall'"
+            "description": "触发原因的自由文本短标签，例如 'lint_error' / 'scope_violation' / 'contracts_mismatch' / 'language_rule_violation'（宿主语言专有条目自修，可与具体 toolchain 对应）"
           },
           "action": {
             "type": "string",
@@ -201,6 +201,7 @@
             "type": "string",
             "enum": [
               "scope_creep",
+              "compile_correctness",
               "arkts_correctness",
               "architecture_violation",
               "contracts_mismatch",
@@ -209,7 +210,7 @@
               "tool_misuse",
               "other"
             ],
-            "description": "痛点分类"
+            "description": "痛点分类。compile_correctness 为 toolchain 中立表述。arkts_correctness 历史上用于 hmos-app/ArkTS 工单，保留在 core enum 作向后兼容别名；将来若引入按 profile 拆分的扩展枚举，新宿主类别应优先记入对应 profile 文档，并可逐步将宿主专属标签移出本 core 列表（不破坏已有 trace 解析前需保持兼容）。"
           },
           "severity": {
             "type": "string",

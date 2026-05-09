@@ -1,0 +1,253 @@
+# ----------------------------------------------------------------------------
+# hmos-app phase-rules overlay（合并到 framework/specs/phase-rules/catalog-rules.yaml 骨架之上）
+# ----------------------------------------------------------------------------
+
+# ============================================================================
+# Catalog 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 doc/module-catalog.yaml 必须满足的结构与交叉引用规则。
+# 与其他 6 阶段不同，本阶段作用的对象是全局文件，没有 --feature 维度。
+#
+# 消费者:
+#   - framework/harness/scripts/check-catalog.ts  (脚本 Harness, 确定性检查)
+# ============================================================================
+
+phase: catalog
+version: "1.0"
+applies_to: "doc/module-catalog.yaml"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  file_exists:
+    description: >
+      doc/module-catalog.yaml 必须存在且为合法 YAML。
+      若不存在，所有其他 catalog 检查均被跳过并报 BLOCKER。
+    severity: BLOCKER
+    rule:
+      path: "doc/module-catalog.yaml"
+      must_be_parseable: true
+
+  schema_version_present:
+    description: >
+      根对象必须包含 schema_version 字段（字符串），用于未来兼容性演进。
+    severity: BLOCKER
+    rule:
+      required_root_keys:
+        - "schema_version"
+        - "modules"
+      schema_version_type: "string"
+
+  modules_is_list:
+    description: >
+      modules 字段必须是非空数组。
+    severity: BLOCKER
+    rule:
+      field: "modules"
+      type: "array"
+      min_length: 1
+
+  module_required_fields:
+    description: >
+      每个 module 必须包含全部必填字段：
+      name / layer / format / one_liner / responsibilities /
+      NOT_responsible_for / typical_business_terms / easily_confused_with /
+      key_exports / entry_file
+    severity: BLOCKER
+    rule:
+      required_fields:
+        - "name"
+        - "layer"
+        - "format"
+        - "one_liner"
+        - "responsibilities"
+        - "NOT_responsible_for"
+        - "typical_business_terms"
+        - "easily_confused_with"
+        - "key_exports"
+        - "entry_file"
+
+  layer_value_valid:
+    description: >
+      layer 字段必须是 framework.config.json 中
+      architecture.outer_layers[].id 声明的合法值之一。
+      具体层集合由实例工程声明；framework 只保证候选集非空且互相无环。
+    severity: BLOCKER
+    rule:
+      field: "layer"
+      allowed_values: "framework.config.json > architecture.outer_layers[].id"
+
+  format_value_valid:
+    description: >
+      format 字段必须是 HAP / HAR / AtomicService 之一。
+      AtomicService 为元服务扩展位（阶段 7 预留）：值合法、不触发额外检查；
+      差异化规则（首包大小、分包策略、免安装入口等）见
+      framework/docs/atomic-service-roadmap.md，作为后续独立议题推进。
+    severity: BLOCKER
+    rule:
+      field: "format"
+      allowed_values:
+        - "HAP"
+        - "HAR"
+        - "AtomicService"
+
+  name_unique:
+    description: >
+      所有 module.name 必须全局唯一（去重键）。
+    severity: BLOCKER
+    rule:
+      field: "name"
+      unique: true
+
+  not_responsible_for_min_count:
+    description: >
+      NOT_responsible_for 是 Scope 守门的核心反例字段，**每个模块至少 1 条**。
+      若真无反例，允许用单条特殊值 `# 暂无已知误塞反例` 占位（表示 AI 已审慎考虑过）。
+    severity: MAJOR
+    rule:
+      field: "NOT_responsible_for"
+      min_length: 1
+
+  one_liner_not_empty:
+    description: >
+      one_liner 不能为空字符串，也不能以"xxx 模块"这类空话结尾（反模式检查）。
+    severity: MAJOR
+    rule:
+      field: "one_liner"
+      not_empty: true
+      forbidden_suffix:
+        - "模块"
+        - "功能模块"
+
+  typical_vs_not_responsible_conflict:
+    description: >
+      自相矛盾检查：若某模块的 typical_business_terms[i] 出现在同模块
+      NOT_responsible_for[j] 的文本中（子串命中），视为 catalog 声明冲突。
+      典型原因：作者把"XX 时归本模块、XX 时不归本模块"两种语义未经分界
+      就同时塞进两个数组，下游 glossary 阶段会在该术语上持续产生高置信度
+      误分模块。应在 NOT_responsible_for 里写清消歧规则，或从
+      typical_business_terms 剔除该词。
+    severity: MAJOR
+    rule:
+      scan:
+        source: "typical_business_terms[]"
+        against: "NOT_responsible_for[]"
+        condition: "source_term is substring of against_text (whitespace/punct normalized)"
+
+# --------------------------------------------------------------------------
+# 语义级约束（由 AI Harness 处理，本阶段暂不启用）
+# --------------------------------------------------------------------------
+semantic_checks: {}
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 交叉引用校验
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  easily_confused_references_exist:
+    description: >
+      每条 easily_confused_with.module 指向的模块名，必须在同一 catalog 的 modules[] 中存在。
+      防止写错名或指向未建档模块。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_exist_in: "self.modules[].name"
+
+  easily_confused_no_self_reference:
+    description: >
+      easily_confused_with.module 不得指向模块自己；也不得为空字符串 / null。
+      自引用是低级设计错误（自己跟自己混淆没有意义），空值通常是忘填。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_not_equal_parent: true
+      must_not_be_empty: true
+
+  easily_confused_symmetric:
+    description: >
+      若 A.easily_confused_with 声明与 B 混淆，则 B.easily_confused_with 也应反向声明与 A 混淆。
+      消歧能力必须对称——任何一端漏声明都会让 Skill 1 Step 1.5 术语消歧在另一侧失盲。
+      若业务上确认就是单向易混（罕见），可通过在 disambiguation 文本里加 "unidirectional"
+      关键字显式豁免（当前沙盒未使用豁免）。
+    severity: MAJOR
+    rule:
+      field: "easily_confused_with[].module"
+      must_be_symmetric: true
+      allow_unidirectional_keyword: "unidirectional"
+
+  entry_file_on_disk:
+    description: >
+      每个 entry_file 指向的相对路径应在项目磁盘上真实存在。
+      不存在时降级为 MAJOR（有可能是路径拼写错误或模块尚未创建）。
+    severity: MAJOR
+    rule:
+      field: "entry_file"
+      must_be_existing_file: true
+
+  layer_matches_path:
+    description: >
+      entry_file 的路径前缀（第一层目录）应与 module.layer 一致。
+      候选层目录集合由 framework.config.json > architecture.outer_layers[].id
+      决定（每个 id 同时作为顶层目录前缀）。不一致通常意味着层级标错或
+      模块放错位置。
+    severity: MAJOR
+    rule:
+      field: "entry_file"
+      path_prefix_matches_layer: true
+
+  feature_scope_integrity:
+    description: >
+      反向扫描 doc/features/*/PRD.md 和 doc/features/*/design.md 的
+      Scope 声明（in_scope_modules + out_of_scope_modules），验证每个模块
+      名在当前 catalog.modules[].name 里真实存在。
+      漂移 → WARN（建议立刻修复或显式接受）：
+        a) catalog 里删掉 / 改名了某模块，但历史 feature 还在引用 →
+           后续对该 feature 跑 `--phase prd/design` 将 BLOCKER on
+           `scope_matches_catalog`，提前在 catalog 阶段告知。
+        b) 新加的 feature 引用了尚未建档的模块 → 等价于催促
+           "先把该模块通过 /catalog-bootstrap <M> 补档"。
+      解法（details 里会逐条列出）：
+        (1) 补档：对缺失模块跑 /catalog-bootstrap <M>；
+        (2) 修 feature：改 PRD.md / design.md 里的 scope，删除或改名过期模块；
+        (3) 改名追溯：若本次是改名，在新模块 profile 备注
+            merged_from: <旧名>，方便以后回查。
+      HAP 里未出现 Scope 声明的 feature 目录（如仅有 README.md / litmus
+      sample）被自动跳过；只扫 PRD.md / design.md 两类正式文档。
+    severity: MAJOR
+    rule:
+      scan_files:
+        - "doc/features/*/PRD.md"
+        - "doc/features/*/design.md"
+      extract_fields:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+      must_exist_in: "self.modules[].name"
+
+  key_exports_fresh_vs_index:
+    description: >
+      每个 HAR 模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
+      top-level export 保持同步。以下两类漂移 → WARN（建议跑
+      `/catalog-bootstrap <M>` 进 UPDATE 模式刷新画像）：
+        a) stale_removed：catalog.key_exports[i] 在 entry_file 入口中找不到对应的
+           export 声明。信号强——说明代码里已删除 / 改名但 catalog 没跟上。
+        b) stale_added：入口文件存在未记录在 catalog.key_exports 的新增
+           export，**且**当前 key_exports.length < 10（未达 SKILL.md 规定的
+           10 条上限，说明不是主动裁剪而是漏记录）。
+      HAP 模块的 entry_file 指向 EntryAbility.ets 而非 HAR index 入口时，此 check 跳过。
+
+      仅扫 HAR entry_file 中的 top-level export 声明（含 `export class/function/
+      const/let/var/interface/type/enum` 与 `export { ... }` 两种形态）。
+      `export * from 'xxx'` 通配再导出不纳入比对（递归读取成本高、信号弱）。
+    severity: MAJOR
+    rule:
+      field: "modules[].key_exports"
+      check_against: "modules[].entry_file"
+      applies_to_format: "HAR"
+      max_catalog_cap: 10
+      scan_patterns:
+        - "^\\s*export\\s+(?:default\\s+)?(?:class|function|const|let|var|interface|type|enum)\\s+(\\w+)"
+        - "^\\s*export\\s+\\{([^}]+)\\}"
+      ignored_patterns:
+        - "^\\s*export\\s+\\*\\s+from"

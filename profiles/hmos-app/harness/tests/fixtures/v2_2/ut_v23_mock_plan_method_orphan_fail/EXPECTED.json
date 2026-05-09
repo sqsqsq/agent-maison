@@ -1,0 +1,16 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_mock_plan_present",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "ut_mock_plan_contracts_consistent",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "notRegisteredMethodForUtFixture"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_unsupported_targets_handled",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "ut_mock_plan_present",
+      "status": "SKIP",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "ut_mock_plan_contracts_consistent",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "PhantomRepo"
+    }
+  ]
+}

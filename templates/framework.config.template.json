@@ -10,6 +10,7 @@
       "schema_version": "固定字符串 \"1.0\"，未来框架 bump 时由维护者同步。",
       "project_name": "项目名；初始化 Skill 从 oh-package.json5 的 name 字段推断，缺失时回退到仓库目录名。",
       "project_type": "枚举：\"app\" | \"atomic_service\"。阶段 7 仅作扩展位预留——\"atomic_service\" 合法但不触发差异化规则；未来议题（首包大小、分包、免安装入口等）落地路线见 framework/docs/atomic-service-roadmap.md。",
+      "project_profile": "工程类型模板，与 agent_adapter 正交。`name` 对应 `framework/profiles/<name>/`（如 hmos-app、generic）。可选 `sub_variant`（如与鸿蒙元服务对齐的 element-service）。未在 JSON 中声明时由 config 归一为 `{ \"name\": \"hmos-app\" }`。",
       "agent_adapter": "合法值为 `framework/agents/` 下某子目录名（该目录须含 `adapter.yaml` 的 `adapter_name`）。一次只能激活一个；切换需由初始化 Skill 走 UPDATE 模式；各目录含义见 framework/agents/README.md。",
       "architecture": "架构 DSL；字段语义与元规则见 framework/harness/config.ts 的 ArchitectureDsl + validateArchitectureDsl。",
       "architecture.outer_layers[].intra_layer_deps": "枚举：\"forbid\" | \"dag\" | \"sublayer\"。\"sublayer\" 时必须填 sublayers 子数组。",
@@ -43,6 +44,9 @@
   "schema_version": "1.0",
   "project_name": "<project_name>",
   "project_type": "app",
+  "project_profile": {
+    "name": "hmos-app"
+  },
   "agent_adapter": "generic",
 
   "architecture": {

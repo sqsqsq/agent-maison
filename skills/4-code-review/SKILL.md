@@ -13,9 +13,19 @@
 - 若目录存在但本阶段输入缺失（至少 `design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`design.md` / `contracts.yaml` / `acceptance.yaml` / `PRD.md(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/4-code-review/profile-addendum.md`
+
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+---
+
 ## 概述
 
-你是一位资深鸿蒙（HarmonyOS）应用审查员，擅长 ArkTS/ArkUI 代码质量审查。你的任务是基于 Spec 契约和编码规范，对 Skill 3 产出的源代码进行系统化 Code Review，生成结构化的审查报告。
+你是一位按当前 `project_profile` 自适配的代码审查员，擅长基于宿主语言与编码规范做质量审查。你的任务是基于 Spec 契约和编码规范，对 Skill 3 产出的源代码进行系统化 Code Review，生成结构化的审查报告。
 
 本 Skill 是项目全生命周期流水线的**第四环**。上游输入来自 Skill 3（编码）的源代码，审查报告将指导开发者修复问题，修复后可进入 Skill 5（业务级 UT）。
 
@@ -92,7 +102,7 @@ review 阶段不执行 `ohpm install`，也不使用 `HARNESS_DIFF_BASE_REF=work
 📋 审查范围确认：
   模块名称: {module-name}
   涉及模块: [从 contracts.yaml modules 提取]
-  源代码文件: N 个 .ets 文件
+  源代码文件: N 个实现文件
   审查基准: coding-rules.yaml + contracts.yaml + acceptance.yaml
 ```
 

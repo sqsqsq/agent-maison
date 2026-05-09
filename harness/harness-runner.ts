@@ -54,6 +54,11 @@ import {
   receiptFilePath,
   loadFrameworkConfig,
 } from './config';
+import {
+  loadResolvedProfile,
+  loadPhaseRuleWithOverlays,
+  isPhaseDisabledByProfile,
+} from './profile-loader';
 import * as YAML from 'yaml';
 
 // --------------------------------------------------------------------------
@@ -175,12 +180,17 @@ async function main(): Promise<void> {
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
 
+  const fwConfigEarly = loadFrameworkConfig(projectRoot);
+  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
+
   // Step 1: 加载 Spec
   console.log('📋 Step 1: 加载 Spec 规约...');
   let phaseRule;
   try {
     phaseRule = specLoader.loadPhaseRule(phase);
+    phaseRule = loadPhaseRuleWithOverlays(phase, phaseRule, resolvedProfile);
     console.log(`   ✓ 阶段级规约: ${phaseRulesRel}/${phase}-rules.yaml`);
+    console.log(`   ✓ project_profile: ${resolvedProfile.name}${resolvedProfile.subVariant ? ` / ${resolvedProfile.subVariant}` : ''}`);
   } catch (err) {
     console.error(`   ✗ 无法加载阶段级规约: ${(err as Error).message}`);
     process.exit(1);
@@ -223,7 +233,7 @@ async function main(): Promise<void> {
 
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
-  const fwConfig = loadFrameworkConfig(projectRoot);
+  const fwConfig = fwConfigEarly;
   const vhMode = fwConfig.prd?.visual_handoff_enforcement as
     | 'strict'
     | 'warn'
@@ -241,6 +251,7 @@ async function main(): Promise<void> {
     prdVisualSources: fwConfig.prd?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
+    resolvedProfile,
   };
 
   // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
@@ -258,7 +269,18 @@ async function main(): Promise<void> {
     started_at: new Date().toISOString(),
   });
 
-  const checks = await runScriptHarness(harnessRoot, context);
+  const checks = isPhaseDisabledByProfile(phase, resolvedProfile)
+    ? [
+        {
+          id: 'phase_disabled_by_profile',
+          category: 'structure' as const,
+          description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
+          severity: 'MINOR' as const,
+          status: 'SKIP' as const,
+          details: `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
+        },
+      ]
+    : await runScriptHarness(harnessRoot, context);
 
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
@@ -291,6 +313,7 @@ async function main(): Promise<void> {
       contextFiles,
       JSON.stringify(scriptReport, null, 2),
       specContent,
+      resolvedProfile,
     );
     console.log(`   ✓ AI prompt 已写入 ${reportsRel}/${feature}/${phase}/ai-prompt.md`);
   } catch (err) {

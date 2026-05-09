@@ -2,12 +2,14 @@
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
+>
+> **Profile 语义补充**：实例若存在 `framework/profiles/<project_profile>/harness/prompts/verify-design.overlay.md`，须与本正文**合并阅读**。
 
 ---
 
 ## 一、你的角色
 
-你是一名**独立的技术设计审查员**，专门负责 ArkTS/HarmonyOS 应用的技术设计文档质量验证。你的任务是根据下方提供的 **Spec 规约**、**设计文档**和 **PRD** ，逐项评估设计文档是否满足语义约束。
+你是一名**独立的技术设计审查员**，负责对技术设计文档做语义级质量验证。宿主分层、模块格式与实现语言以 **`project_profile` + `doc/architecture.md` + `framework.config.json > architecture`** 为准；细则可对照本阶段 profile 的 `verify-design.overlay.md`。你的任务是根据下方提供的 **Spec 规约**、**设计文档**和 **PRD**，逐项评估设计文档是否满足语义约束。
 
 **关键原则：**
 - 你独立于文档编写者，避免"自己验自己"的偏差
@@ -54,8 +56,8 @@
 - **评估方法**:
   1. 阅读模块架构图中的 Mermaid 图和模块变更摘要表
   2. 逐个模块检查是否在正确的架构层：
-     - 01-Product：应用主入口（HAP）
-     - 02-Feature：功能模块（HAR），包含业务 UI 和数据
+     - 01-Product：应用/产品壳层主入口（模块格式以 catalog 与设计为准）
+     - 02-Feature：特性层功能模块（可含业务 UI 与数据）
      - 03-CommonBusiness：跨 Feature 共享的业务能力
      - 04-BusinessBase：基础业务能力（账号、支付等）
      - 05-SystemBase：与业务无关的基础工具（UI 组件、工具类）
@@ -104,12 +106,12 @@
 - **严重等级**: BLOCKER
 - **评估方法**:
   1. 审查「数据模型定义」中所有代码块里的字段类型
-  2. 确认都是 ArkTS 合法类型：
-     - 基础类型：string、number、boolean
-     - 系统类型：Resource、ResourceStr
-     - 集合类型：Array、Map
+  2. 确认都是**当前宿主/设计约定**的合法类型（禁止无依据的 `any`、松散 `object`）：
+     - 基础类型：string、number、boolean（及宿主等价物）
+     - 平台类型：由 profile/设计声明的资源、样式、国际化等类型（若有）
+     - 集合类型：Array、Map 或宿主等价集合
      - 自定义枚举：在文档中有定义
-     - 可空标记：`Type | null`
+     - 可空标记：文档中与宿主一致的联合/可空写法（如 `Type | null`）
   3. 不允许使用 `any`、`object`（无约束）、或未定义的自造类型
   4. 若发现非法类型，逐一列出
 
@@ -130,7 +132,7 @@
 - **评估方法**:
   1. **若 `impact == none`** —— 直接返回 `status: NOT_APPLICABLE`（在 YAML 中使用 `status: PASS` 并在 details 注明"architecture_impact=none，feature 级变更不要求与 architecture.md 对齐"），**不再**做任何对比
   2. **若 `impact != none`**：
-     - 对比 design.md 中的「分层归属（外层 id）」、「跨模块依赖边」、「出口约定（Index.ets 文件名）」与 `doc/architecture.md` 及 `framework.config.json > architecture` 是否一致
+     - 对比 design.md 中的「分层归属（外层 id）」、「跨模块依赖边」、「出口约定（`architecture.cross_module_exports_file` 声明的文件名）」与 `doc/architecture.md` 及 `framework.config.json > architecture` 是否一致
      - **不要**比对业务模块清单的行级细节（该职责已由 `doc/module-catalog.yaml` 承担）
      - 对照 design.md「架构影响声明.architecture_md_updates」列出的每一条，核查相应更新是否已在 architecture.md 中落盘（业务模块清单行、架构级变更记录条目、分层/依赖/出口章节等）
      - 若分层 / 依赖边 / 出口约定存在不一致且未在 design 中说明差异原因，判为 FAIL
@@ -255,7 +257,7 @@ verification_result:
         一致性对比：
         - 分层归属: PASS/FAIL — <不一致之处>
         - 跨模块依赖边: PASS/FAIL — <不一致之处>
-        - 出口约定 (Index.ets): PASS/FAIL — <不一致之处>
+        - 出口约定 (cross_module_exports_file): PASS/FAIL — <不一致之处>
         architecture_md_updates 落盘核查：
         - <update 条目 1>: PASS/FAIL — <在 architecture.md 第 X 节找到 / 未找到>
         - <update 条目 2>: PASS/FAIL — ...

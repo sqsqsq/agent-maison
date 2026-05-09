@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import checker from '../../scripts/check-review';
 import { CheckContext } from '../../scripts/utils/types';
 
@@ -34,6 +36,9 @@ function writeFile(filePath: string, content: string): void {
 }
 
 function ctx(root: string, featureSpec: CheckContext['featureSpec']): CheckContext {
+  clearFrameworkConfigCache();
+  const fw = loadFrameworkConfig(root);
+  const resolvedProfile = loadResolvedProfile(root, fw);
   return {
     phase: 'review',
     feature: 'demo',
@@ -45,6 +50,7 @@ function ctx(root: string, featureSpec: CheckContext['featureSpec']): CheckConte
       traceability_checks: {},
     } as CheckContext['phaseRule'],
     featureSpec,
+    resolvedProfile,
   };
 }
 

@@ -463,6 +463,8 @@ interface RenderEnv {
   project_type: string;
   project_type_label: string;
   agent_adapter: string;
+  project_profile_name: string;
+  project_profile_sub_variant: string;
   architecture_summary: string;
   architecture_md_path: string;
   module_catalog_path: string;
@@ -470,6 +472,8 @@ interface RenderEnv {
   features_dir: string;
   module_inner_layers_csv: string;
   cross_module_exports_file: string;
+  profile_agent_ssot_rows: string;
+  profile_agent_guardrails: string;
 }
 
 function projectTypeLabel(kind: string): string {
@@ -493,18 +497,71 @@ function buildArchitectureSummary(arch: any): string {
   return `${layerPart}，${innerPart}，跨模块出口 ${exitFile}`;
 }
 
+function loadProfileAgentsPartial(profileName: string, fileBase: string): string {
+  const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
+  const candidates = [
+    path.join(FRAMEWORK_ROOT, 'profiles', name, 'templates', 'agents-md', `${fileBase}.partial.md`),
+    path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'templates', 'agents-md', `${fileBase}.partial.md`),
+  ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    return fs.readFileSync(p, 'utf8').replace(/\s+$/, '');
+  }
+  return '';
+}
+
+function projectProfileNameFromRaw(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return 'hmos-app';
+  const pp = (raw as Record<string, unknown>).project_profile;
+  if (pp && typeof pp === 'object') {
+    const nm = (pp as Record<string, unknown>).name;
+    if (typeof nm === 'string') {
+      const trimmed = nm.trim();
+      if (trimmed !== '') return trimmed;
+    }
+  }
+  return 'hmos-app';
+}
+
+/** 与 Skill 00 Step 5.2 / init 体检第 4 项一致：profile doc-skeletons → generic → Skill 模板 */
+function resolveArchitectureSkeletonSource(profileName: string): { tplRel: string; tplAbs: string } {
+  const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
+  const orderedAbs = [
+    path.join(FRAMEWORK_ROOT, 'profiles', name, 'doc-skeletons', 'architecture.md.skeleton.md'),
+    path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'doc-skeletons', 'architecture.md.skeleton.md'),
+    path.join(FRAMEWORK_ROOT, 'skills', '00-framework-init', 'templates', 'architecture.md.skeleton.md'),
+  ];
+  for (const abs of orderedAbs) {
+    if (fs.existsSync(abs)) {
+      return { tplRel: path.relative(FRAMEWORK_ROOT, abs).replace(/\\/g, '/'), tplAbs: abs };
+    }
+  }
+  const fallbackAbs = orderedAbs[orderedAbs.length - 1]!;
+  return { tplRel: 'skills/00-framework-init/templates/architecture.md.skeleton.md', tplAbs: fallbackAbs };
+}
+
 function buildRenderEnv(
   cfg: RawFrameworkConfig,
   adapter: AdapterDescriptor | null,
 ): RenderEnv | null {
   if (!cfg.parseable || !cfg.raw || !adapter || !adapter.entryFile) return null;
   const raw = cfg.raw;
+  const pp =
+    raw.project_profile && typeof raw.project_profile === 'object'
+      ? (raw.project_profile as Record<string, unknown>)
+      : {};
+  let profileName = 'hmos-app';
+  let subVariant = '—';
+  if (typeof pp.name === 'string' && pp.name.trim() !== '') profileName = pp.name.trim();
+  if (typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '') subVariant = pp.sub_variant.trim();
   return {
     agent_entry_file: adapter.entryFile.targetRel,
     project_name: typeof raw.project_name === 'string' ? raw.project_name : '',
     project_type: typeof raw.project_type === 'string' ? raw.project_type : 'app',
     project_type_label: projectTypeLabel(raw.project_type ?? 'app'),
     agent_adapter: typeof raw.agent_adapter === 'string' ? raw.agent_adapter : adapter.name,
+    project_profile_name: profileName,
+    project_profile_sub_variant: subVariant,
     architecture_summary: buildArchitectureSummary(raw.architecture),
     architecture_md_path: cfg.paths.architecture_md,
     module_catalog_path: cfg.paths.module_catalog,
@@ -514,6 +571,8 @@ function buildRenderEnv(
       ? raw.architecture.module_inner_layers.join(' / ')
       : 'shared / data / domain / presentation',
     cross_module_exports_file: raw?.architecture?.cross_module_exports_file ?? 'index.ets',
+    profile_agent_ssot_rows: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
+    profile_agent_guardrails: loadProfileAgentsPartial(profileName, 'agent-guardrails'),
   };
 }
 
@@ -524,6 +583,10 @@ function renderTemplate(text: string, env: RenderEnv): string {
     .replace(/\{\{PROJECT_TYPE_LABEL\}\}/g, env.project_type_label)
     .replace(/\{\{PROJECT_TYPE\}\}/g, env.project_type)
     .replace(/\{\{AGENT_ADAPTER\}\}/g, env.agent_adapter)
+    .replace(/\{\{PROJECT_PROFILE_NAME\}\}/g, env.project_profile_name)
+    .replace(/\{\{PROJECT_PROFILE_SUB_VARIANT\}\}/g, env.project_profile_sub_variant)
+    .replace(/\{\{PROFILE_AGENT_SSOT_ROWS\}\}/g, env.profile_agent_ssot_rows)
+    .replace(/\{\{PROFILE_AGENT_GUARDRAILS\}\}/g, env.profile_agent_guardrails)
     .replace(/\{\{ARCHITECTURE_SUMMARY\}\}/g, env.architecture_summary)
     .replace(/\{\{ARCHITECTURE_MD_PATH\}\}/g, env.architecture_md_path)
     .replace(/\{\{MODULE_CATALOG_PATH\}\}/g, env.module_catalog_path)
@@ -881,8 +944,8 @@ function inspect03(env: InspectorEnv): Inspection {
 function inspect04(env: InspectorEnv): Inspection {
   const targetRel = env.cfg.paths.architecture_md;
   const targetAbs = path.join(env.projectRoot, targetRel);
-  const tplRel = 'skills/00-framework-init/templates/architecture.md.skeleton.md';
-  const tplAbs = path.join(FRAMEWORK_ROOT, tplRel);
+  const profileName = projectProfileNameFromRaw(env.cfg.raw);
+  const { tplRel, tplAbs } = resolveArchitectureSkeletonSource(profileName);
 
   const targetBuf = safeReadBuffer(targetAbs);
   const tplText = safeReadText(tplAbs);

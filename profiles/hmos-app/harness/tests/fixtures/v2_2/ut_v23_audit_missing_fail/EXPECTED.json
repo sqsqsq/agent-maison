@@ -1,0 +1,16 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_testability_audit_present",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "doc/features/demo/ut/testability-audit.md"
+    },
+    {
+      "id": "ut_mock_plan_present",
+      "status": "SKIP",
+      "severity": "BLOCKER"
+    }
+  ]
+}

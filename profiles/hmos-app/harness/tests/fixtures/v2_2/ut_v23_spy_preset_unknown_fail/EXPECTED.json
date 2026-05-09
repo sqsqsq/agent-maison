@@ -1,0 +1,16 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_testability_audit_present",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "dag_spy_preset_resolvable",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "no_such_preset"
+    }
+  ]
+}

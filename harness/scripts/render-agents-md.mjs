@@ -6,8 +6,9 @@
 // 用途
 // ----
 // 把 framework/templates/AGENTS.md.template 按 framework.config.json 中的
-// project_name / project_type / agent_adapter / paths 等字段，加上调用方
-// 提供的 --entry-file（须与所选 adapter 的 agent_entry_file.target_path 一致）与
+// project_name / project_type / agent_adapter / paths / project_profile 等字段，
+// 以及 framework/profiles/<project_profile.name>/templates/agents-md/*.partial.md，
+// 再加上调用方提供的 --entry-file（须与所选 adapter 的 agent_entry_file.target_path 一致）与
 // 替换占位符后写到 --out 指定路径。
 //
 // 何时调用
@@ -67,7 +68,8 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../..');
-const TEMPLATE_PATH = path.join(REPO_ROOT, 'framework/templates/AGENTS.md.template');
+const FRAMEWORK_DIR = path.join(REPO_ROOT, 'framework');
+const TEMPLATE_PATH = path.join(FRAMEWORK_DIR, 'templates/AGENTS.md.template');
 const CONFIG_PATH = path.join(REPO_ROOT, 'framework.config.json');
 
 const KNOWN_PROJECT_TYPE_LABELS = {
@@ -78,6 +80,24 @@ const KNOWN_PROJECT_TYPE_LABELS = {
 function fail(message, exitCode = 1) {
   process.stderr.write(`[render-agents-md] ${message}\n`);
   process.exit(exitCode);
+}
+
+/**
+ * 从 `framework/profiles/<name>/templates/agents-md/<fileBase>.partial.md` 读取片段；
+ * 不存在则回落 `profiles/generic/`。
+ */
+function loadProfileAgentsPartial(profileName, fileBase) {
+  const name =
+    typeof profileName === 'string' && profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
+  const candidates = [
+    path.join(FRAMEWORK_DIR, 'profiles', name, 'templates', 'agents-md', `${fileBase}.partial.md`),
+    path.join(FRAMEWORK_DIR, 'profiles', 'generic', 'templates', 'agents-md', `${fileBase}.partial.md`),
+  ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    return fs.readFileSync(p, 'utf8').replace(/\s+$/, '');
+  }
+  return '';
 }
 
 function loadConfig() {
@@ -101,13 +121,20 @@ function loadTemplate() {
 function buildVars(config, { entryFile, architectureSummary }) {
   const projectTypeLabel = KNOWN_PROJECT_TYPE_LABELS[config.project_type] ?? config.project_type;
   const paths = config.paths ?? {};
+  const pp = config.project_profile && typeof config.project_profile === 'object' ? config.project_profile : {};
+  const profileName = typeof pp.name === 'string' && pp.name.trim() !== '' ? pp.name.trim() : 'hmos-app';
   return {
     AGENT_ENTRY_FILE: entryFile,
     PROJECT_NAME: config.project_name ?? '',
     PROJECT_TYPE: config.project_type ?? '',
     PROJECT_TYPE_LABEL: projectTypeLabel ?? '',
     AGENT_ADAPTER: config.agent_adapter ?? '',
+    PROJECT_PROFILE_NAME: profileName,
+    PROJECT_PROFILE_SUB_VARIANT:
+      typeof pp.sub_variant === 'string' && pp.sub_variant.trim() ? pp.sub_variant.trim() : '—',
     ARCHITECTURE_SUMMARY: architectureSummary,
+    PROFILE_AGENT_SSOT_ROWS: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
+    PROFILE_AGENT_GUARDRAILS: loadProfileAgentsPartial(profileName, 'agent-guardrails'),
     ARCHITECTURE_MD_PATH: paths.architecture_md ?? 'doc/architecture.md',
     MODULE_CATALOG_PATH: paths.module_catalog ?? 'doc/module-catalog.yaml',
     GLOSSARY_PATH: paths.glossary ?? 'doc/glossary.yaml',

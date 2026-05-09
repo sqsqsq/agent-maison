@@ -1,0 +1,26 @@
+name: hmos-app
+display_name: HarmonyOS 端侧应用（含元服务子型）
+
+catalog_allowed_module_formats:
+  - HAP
+  - HAR
+  - AtomicService
+
+detect:
+  signature_files:
+    - oh-package.json5
+    - build-profile.json5
+
+phases_disabled: []
+
+capabilities:
+  coding.compile: { provider: hvigor, severity: BLOCKER }
+  coding.lint: { provider: arkts_lint, severity: BLOCKER }
+  ut.compile: { provider: hvigor_ohostest, severity: BLOCKER }
+  ut.run: { provider: hvigor_hypium, severity: BLOCKER }
+  device_test.run: { provider: hdc, severity: BLOCKER }
+  prd.visual_handoff: { provider: script, severity: BLOCKER }
+
+sub_variants:
+  - name: element-service
+    overrides_dir: sub-variants/element-service

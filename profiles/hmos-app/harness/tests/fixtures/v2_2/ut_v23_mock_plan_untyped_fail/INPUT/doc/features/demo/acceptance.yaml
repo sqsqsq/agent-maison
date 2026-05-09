@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V25
+    prd_function: FX
+    priority: P2
+    description: v2.3 回归——mock-plan preset ts_expr 须类型化断言
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

@@ -15,6 +15,14 @@
 
 **[`00-framework-init`](00-framework-init/SKILL.md)** 是所有其它 Skill 的前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。未完成前请勿执行下表中的 Skill 0～6。
 
+进入阶段 Skill 时还必须读取当前 `project_profile` 的 addendum：
+
+```text
+framework/profiles/<project_profile.name>/skills/<skill>/profile-addendum.md
+```
+
+通用 `SKILL.md` 只描述阶段流程、scope/trace/harness 闸门与中立产物契约；宿主语言、模块格式、编译/测试工具链、UI/设备细节由 profile addendum 与 profile capabilities 决定。
+
 ---
 
 ## 阶段列表
@@ -25,10 +33,15 @@
 | 0 | 模块画像 + 术语表自举 | [0-catalog-bootstrap/SKILL.md](0-catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | 1 | PRD | [1-prd-design/SKILL.md](1-prd-design/SKILL.md) | PRD.md、术语映射与 Scope |
 | 2 | 技术设计 | [2-requirement-design/SKILL.md](2-requirement-design/SKILL.md) | design.md、contracts |
-| 3 | 编码 | [3-coding/SKILL.md](3-coding/SKILL.md) | ArkTS 落地 |
+| 3 | 编码 | [3-coding/SKILL.md](3-coding/SKILL.md) | profile 宿主代码落地 |
 | 4 | 代码审查 | [4-code-review/SKILL.md](4-code-review/SKILL.md) | 审查报告 |
-| 5 | 业务级 UT | [5-business-ut/SKILL.md](5-business-ut/SKILL.md) | DAG + Hypium |
+| 5 | 业务级 UT | [5-business-ut/SKILL.md](5-business-ut/SKILL.md) | DAG + profile UT |
 | 6 | 真机测试 | [6-device-testing/SKILL.md](6-device-testing/SKILL.md) | 测试计划与报告 |
+
+辅助入口（不改变 SSOT：**仍以 Skill 5 正文为准**）：
+
+- **Cursor**：`framework/agents/cursor/templates/skills/ut-audit/` → init 下发实例 `.cursor/skills/ut-audit/`（读完 Skill 5 后从 Step 1.5 切入）。
+- **Claude Code**：`/ut-audit`，路由同上做可测性预检与后续 mock-plan 步骤。
 
 ---
 

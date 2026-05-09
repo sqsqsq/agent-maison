@@ -37,6 +37,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { applyDefaults, loadProfileConfigDefaults } from './profile-loader';
 
 // --------------------------------------------------------------------------
 // 架构 DSL 类型
@@ -270,11 +271,23 @@ export interface PrdHarnessConfig {
   visual_sources?: VisualSourcesConfig;
 }
 
+export interface ProjectProfileConfig {
+  /** 与 framework/profiles/<name>/ 对齐 */
+  name: string;
+  /** 同一 profile 下的子变体（如 hmos-app → element-service） */
+  sub_variant?: string;
+}
+
 export interface FrameworkConfig {
   schema_version: string;
   project_name: string;
-  /** 本阶段仅作占位；阶段 7 会扩展差异化规则 */
+  /**
+   * 应用子型（遗留字段）：**请改用** `project_profile.sub_variant`。
+   * `atomic_service` ≡ `sub_variant: element-service`；`app` ≡ 省略 sub_variant 或后续显式 `app`。
+   */
   project_type: 'app' | 'atomic_service';
+  /** 工程类型模板（与 agent_adapter 正交），未在 JSON 中声明时归一为 hmos-app */
+  project_profile: ProjectProfileConfig;
   /** 本阶段仅记录，不驱动行为；阶段 5 的 adapter 层会消费 */
   agent_adapter: 'generic' | 'claude' | 'cursor' | string;
   architecture: ArchitectureDsl;
@@ -389,6 +402,10 @@ const CONFIG_FILENAME = 'framework.config.json';
 
 let cachedConfig: { root: string; config: FrameworkConfig } | null = null;
 
+/** `project_type` 弃用提示：每进程最多 stderr 一次，避免批量单测刷屏 */
+let warnedProjectTypeAliasMigration = false;
+let warnedMissingProjectProfile = false;
+
 /**
  * 加载 framework 配置。读取顺序：
  *   1. `<projectRoot>/framework.config.json`（若存在且合法）
@@ -440,20 +457,72 @@ export function clearFrameworkConfigCache(): void {
   cachedConfig = null;
 }
 
+export function resetFrameworkConfigWarningsForTest(): void {
+  warnedProjectTypeAliasMigration = false;
+  warnedMissingProjectProfile = false;
+}
+
 // --------------------------------------------------------------------------
 // 归一化 / defaults 合并
 // --------------------------------------------------------------------------
 
-function buildDefaultConfig(): FrameworkConfig {
+function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
+  const profileDefaults = loadProfileConfigDefaults(profileName);
+  const projectProfileDefault =
+    profileDefaults.project_profile && typeof profileDefaults.project_profile === 'object'
+      ? (profileDefaults.project_profile as ProjectProfileConfig)
+      : { name: profileName };
+  const architectureDefault = profileDefaults.architecture
+    ? normalizeArchitecture(profileDefaults.architecture as Partial<ArchitectureDsl>, LEGACY_DEFAULT_DSL)
+    : cloneDsl(LEGACY_DEFAULT_DSL);
+  const pathsDefault = applyDefaults(profileDefaults.paths ?? {}, DEFAULT_PATHS) as FrameworkPaths;
   return {
     schema_version: '1.0',
     project_name: 'unknown',
     project_type: 'app',
+    project_profile: {
+      name: projectProfileDefault.name ?? profileName,
+      ...(projectProfileDefault.sub_variant ? { sub_variant: projectProfileDefault.sub_variant } : {}),
+    },
     agent_adapter: 'generic',
-    architecture: cloneDsl(LEGACY_DEFAULT_DSL),
-    paths: { ...DEFAULT_PATHS },
+    architecture: architectureDefault,
+    paths: { ...pathsDefault },
     state_machine: { ...DEFAULT_STATE_MACHINE },
   };
+}
+
+function normalizeProjectProfile(
+  rawProfile: unknown,
+  projectType: 'app' | 'atomic_service' | undefined,
+): ProjectProfileConfig {
+  if (
+    rawProfile &&
+    typeof rawProfile === 'object' &&
+    typeof (rawProfile as ProjectProfileConfig).name === 'string' &&
+    (rawProfile as ProjectProfileConfig).name.trim().length > 0
+  ) {
+    const p = rawProfile as ProjectProfileConfig;
+    const n = p.name.trim();
+    const sv =
+      typeof p.sub_variant === 'string' && p.sub_variant.trim().length > 0
+        ? p.sub_variant.trim()
+        : undefined;
+    return { name: n, ...(sv ? { sub_variant: sv } : {}) };
+  }
+  if (!warnedMissingProjectProfile) {
+    warnedMissingProjectProfile = true;
+    console.warn(
+      '[framework/config] advisory：framework.config.json 缺少 `project_profile`，本进程按 hmos-app 兼容默认值运行。建议执行 framework-init UPDATE 写入显式 project_profile。',
+    );
+  }
+  const sub = projectType === 'atomic_service' ? 'element-service' : undefined;
+  if (projectType === 'atomic_service') {
+    console.warn(
+      `[framework/config] 检测到 legacy project_type=atomic_service：` +
+        ' 推导为 project_profile=hmos-app + sub_variant=element-service。建议在 `framework.config.json` 显式写入 `"project_profile": { "name": "hmos-app", "sub_variant": "element-service" }` 并减少对 project_type 的依赖。',
+    );
+  }
+  return { name: 'hmos-app', ...(sub ? { sub_variant: sub } : {}) };
 }
 
 /**
@@ -516,13 +585,26 @@ function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfi
 }
 
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
-  const fallback = buildDefaultConfig();
+  const project_profile = normalizeProjectProfile(raw.project_profile, raw.project_type);
+  const fallback = buildDefaultConfig(project_profile.name);
+  const project_type =
+    raw.project_type ?? (project_profile.sub_variant === 'element-service' ? 'atomic_service' : 'app');
+  if (raw.project_type !== undefined && !warnedProjectTypeAliasMigration) {
+    warnedProjectTypeAliasMigration = true;
+    console.warn(
+      '[framework/config] Deprecated：`project_type` 仅存 alias；请改用 `project_profile.sub_variant`（`element-service` = 原 atomic_service）。',
+    );
+  }
+
   return {
     schema_version: raw.schema_version ?? fallback.schema_version,
     project_name: raw.project_name ?? fallback.project_name,
-    project_type: raw.project_type ?? fallback.project_type,
+    project_type,
+    project_profile,
     agent_adapter: raw.agent_adapter ?? fallback.agent_adapter,
-    architecture: raw.architecture ? normalizeArchitecture(raw.architecture) : fallback.architecture,
+    architecture: raw.architecture
+      ? normalizeArchitecture(raw.architecture, fallback.architecture)
+      : fallback.architecture,
     paths: { ...fallback.paths, ...(raw.paths ?? {}) },
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
@@ -658,8 +740,10 @@ function normalizeHvigorOptions(raw: HvigorOptionsConfig | undefined): HvigorOpt
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function normalizeArchitecture(raw: Partial<ArchitectureDsl>): ArchitectureDsl {
-  const fallback = LEGACY_DEFAULT_DSL;
+function normalizeArchitecture(
+  raw: Partial<ArchitectureDsl>,
+  fallback: ArchitectureDsl = LEGACY_DEFAULT_DSL,
+): ArchitectureDsl {
   return {
     outer_layers: raw.outer_layers
       ? raw.outer_layers.map((l) => ({

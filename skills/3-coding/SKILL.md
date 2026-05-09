@@ -13,15 +13,25 @@
 - 若目录存在但本阶段输入缺失（至少 `design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`design.md` / `contracts.yaml` / `acceptance.yaml` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
+## Step 0. 载入 `project_profile` addendum（强制）
+
+继续下文前，完整阅读：
+
+`framework/profiles/<project_profile.name>/skills/3-coding/profile-addendum.md`
+
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下已迁移的模板/参考文件路径。
+
+---
+
 ## 概述
 
-你是一位资深鸿蒙（HarmonyOS）应用开发工程师，擅长 ArkTS 和 ArkUI 声明式开发。你的任务是根据技术设计文档（design.md）逐模块、逐层生成高质量的可编译代码。
+你是一位资深**宿主应用**开发工程师。具体技术栈、源码扩展名、模块格式、编译/测试工具链以 Step 0 加载的 `project_profile` addendum 与 profile capabilities 为准。你的任务是根据技术设计文档（design.md）逐模块生成与 **design contracts** 对齐、且可通过本仓库 harness 的出口检查的实现代码。
 
 本 Skill 是项目全生命周期流水线的**第三环**。上游输入来自 Skill 2（需求设计）的 `design.md`，输出（源码）将流入 Skill 4（Code Review）。
 
 > **⚠️ 开工前必读（弱模型环境尤其重要）**
 >
-> 1. **ArkTS 易错手册**：[reference/arkts-pitfalls.md](reference/arkts-pitfalls.md) — 收录了 `@State` 初始化、`$r()` 资源引用、`ForEach keyGenerator`、`Router vs NavPathStack`、HAR `Index.ets` 导出等 15 条弱模型反复踩的坑。**每写一个 `.ets` 文件前必须至少回顾相关条目，写完后对照自检。**
+> 1. **Profile 编码补充**：完整阅读 `framework/profiles/<project_profile.name>/skills/3-coding/profile-addendum.md`。若 addendum 声明了宿主语言易错手册、资源规范或导出规则，写对应文件前必须先回顾相关条目，写完后对照自检。
 > 2. **Scope 守门（新）**：本次编码的 git diff 不得越界到 design.md `in_scope_modules` 之外。Harness 的 `diff_within_scope` 规则会在 Step 7 阻断 BLOCKER。因此写代码时一旦发现要改 in_scope 之外的模块，**立刻停下来**，回到 Skill 2 的 Step 2.5.3 走 scope 扩展提议。
 > 3. **逐文件 Lint 门禁（新）**：Step 3 已强化为"单文件 Lint 不过不得进入下一个文件"，**严禁批量生成多个文件后再统一 lint**。
 
@@ -43,93 +53,15 @@
 
 ## 核心架构认知
 
-**开始编码前，必须读取 `doc/architecture.md` 获取最新的模块架构全貌。以下是架构核心规则摘要，详细的模块清单和状态以 architecture.md 为准。**
+**开始编码前，必须读取 `doc/architecture.md` 获取最新的模块架构全貌，并以 `framework.config.json > architecture` 作为机器可读依赖规则。**
 
-> **通用化说明**：本节的层级名称、模块名（`WalletMain` / `BankCard` / `CardManager` / `CommFunc` 等）均以**钱包工程为参考示例**。实际层数、层名、模块名以本工程 `framework.config.json` 的 `architecture` 段与 `doc/architecture.md` 为准；下方依赖规则（自上而下 DAG、模块内 upward、跨模块走 `Index.ets`）则是 framework 守住的通用元规则。
+核心元规则：
 
-### 一、外层模块架构（示例：钱包工程 5 层）
-
-参考实例采用 **5 层模块架构**，依赖方向**只能自上而下**。模块命名统一采用**大驼峰（PascalCase）**。
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  01-Product（产品层）                                            │
-│    Phone (HAP) — 唯一的 HAP，仅放 Ability 入口代码               │
-├─────────────────────────────────────────────────────────────────┤
-│  02-Feature（特性层）— 内部按依赖关系分 3 个子层级                 │
-│    顶层:   WalletMain — 公共页面（首页/设置等）                    │
-│    中间层: SwipeCard — 刷卡/二维码支付                            │
-│    底层:   BankCard / TransportCard / AccessCard / ...（按需）    │
-├─────────────────────────────────────────────────────────────────┤
-│  03-CommonBusiness（公共业务层）                                  │
-│    CardManager / ConfigManager / PersistManager / ...（按需）    │
-│    同层可互相依赖（DAG，禁循环）                                   │
-├─────────────────────────────────────────────────────────────────┤
-│  04-BusinessBase（业务基座层）                                    │
-│    AccountManager — 华为账号登录管理                              │
-├─────────────────────────────────────────────────────────────────┤
-│  05-SystemBase（系统基座层）                                      │
-│    CommFunc — 系统功能封装（log/状态机/util等）                    │
-│    CommUI  — 公共UI组件（基础页面/弹框/Toast/卡片组件等）           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 物理目录结构
-
-模块按所属层级放置在层目录下，层目录以 `{序号}-{层名}` 命名：
-
-```
-{ProjectRoot}/
-├── 01-Product/Phone/              (HAP)
-├── 02-Feature/WalletMain/         (HAR, 按需新增)
-├── 03-CommonBusiness/              (按需创建)
-├── 04-BusinessBase/AccountManager/ (HAR)
-├── 05-SystemBase/CommFunc/         (HAR)
-├── 05-SystemBase/CommUI/           (HAR)
-├── build-profile.json5             ← srcPath 如 "./01-Product/Phone"
-└── oh-package.json5                ← 依赖路径如 "file:./05-SystemBase/CommFunc"
-```
-
-创建新模块或迁移旧模块时，`build-profile.json5` 的 `srcPath` 和 `oh-package.json5` 的依赖路径必须使用层目录前缀。
-
-**层间依赖规则速查表**：
-
-| 依赖方 ↓ \ 被依赖方 → | 01-Product | 02-Feature | 03-CommonBusiness | 04-BusinessBase | 05-SystemBase |
-|----------------------|-----------|-----------|------------------|----------------|--------------|
-| **01-Product** | — | ✅ | ✅ | ✅ | ✅ |
-| **02-Feature** | ❌ | ⚠️ 见子层级规则 | ✅ | ✅ | ✅ |
-| **03-CommonBusiness** | ❌ | ❌ | ⚠️ DAG，禁循环 | ✅ | ✅ |
-| **04-BusinessBase** | ❌ | ❌ | ❌ | — | ✅ |
-| **05-SystemBase** | ❌ | ❌ | ❌ | ❌ | ⚠️ CommUI→CommFunc 单向 |
-
-**02-Feature 子层级**：WalletMain（顶层）可依赖所有 Feature → SwipeCard（中间层）可依赖 Feature 底层 → BankCard 等（底层）不可依赖任何 Feature。
-
-### 二、模块内部结构（统一四层）
-
-**所有模块**统一采用 shared → data → domain → presentation 四层内部结构。不同层级的模块按实际需要填充对应层，允许省略不需要的层。
-
-| 内部层 | 子目录 | 职责 | 依赖规则 |
-|--------|--------|------|----------|
-| **shared** | `client/` | 端云请求定义 | 无内部依赖 |
-| | `constant/` | 常量、枚举、通用类型 | 同上 |
-| | `components/` | 基础 UI 组件 | 可依赖同层 constant/utils |
-| | `utils/` | 纯函数工具类 | 可依赖同层 constant |
-| | `log/`、`livedata/`、`theme/` 等 | 功能域子目录（SystemBase 模块常用） | 同上 |
-| **data** | `model/` | 业务数据类型 + 内聚方法 | 可依赖 shared 层 |
-| | `repository/` | 数据仓库（CRUD + 数据所有权） | 可依赖同层 model + shared/client |
-| **domain** | `usecase/` | 复杂业务逻辑，编排多个 repository | 可依赖 data + shared |
-| | `service/` | 核心服务逻辑（BusinessBase/CommonBusiness 常用） | 可依赖 data + shared |
-| **presentation** | `components/` | 复杂组件（用户操作→逻辑→数据变更→UI刷新闭环） | 可依赖全部下层 |
-| | `pages/` | NavDestination 页面 | 可依赖全部下层 |
-
-**层间依赖绝对禁令**：shared ← data ← domain ← presentation，禁止反向。检测到反向依赖视为 **BLOCKER**。
-
-#### 各层模块的典型填充
-
-- **Feature 模块**（如 WalletMain）：四层均有内容
-- **BusinessBase / CommonBusiness 模块**（如 AccountManager）：shared/constant + data/model + domain/service（通常无 presentation）
-- **SystemBase / CommUI**：shared/theme + presentation/components
-- **SystemBase / CommFunc**：仅 shared 层（log/、utils/ 等功能域子目录）
+1. 外层依赖按 `architecture.outer_layers[].can_depend_on` 裁决。
+2. 同层依赖按 `intra_layer_deps` 裁决。
+3. 模块内部依赖按 `architecture.module_inner_layers` + `inner_dependency_direction` 裁决。
+4. 跨模块访问必须经由 `architecture.cross_module_exports_file` 声明的出口文件。
+5. profile 专属目录、语言、模块格式、配置文件与资源规范以 Step 0 addendum 为准。
 
 ## 输入
 
@@ -156,7 +88,7 @@
    - `doc/features/{module}/contracts.yaml` — 接口签名、数据模型、文件清单、组件 Props 的精确契约
    - `doc/features/{module}/acceptance.yaml` — 验收标准和边界用例，用于确保代码覆盖所有业务场景
 3. 提取以下关键信息（**以 contracts.yaml 为权威来源**，design.md 为补充上下文）：
-   - **涉及哪些 Module**（HAP/HAR）及其依赖关系 ← `contracts.yaml > modules` + `module_dependencies`
+   - **涉及哪些 Module**（格式按当前 profile）及其依赖关系 ← `contracts.yaml > modules` + `module_dependencies`
    - **每个 Module 内涉及哪些层和文件** ← `contracts.yaml > files`
    - **数据模型**（data/model/ 下的 interface / class）← `contracts.yaml > data_models`
    - **数据仓库**（data/repository/ 下的 CRUD 接口）← `contracts.yaml > interfaces`
@@ -172,25 +104,25 @@
 ```
 📋 待实现清单（按模块和层级排列）：
 
-🔷 Module: common (HAR) — 公共基础模块
-  [shared/constant]  CommonTypes.ets — 全局通用类型
-  [shared/utils]     FormatUtils.ets — 格式化工具
+🔷 Module: common (<profile-format>) — 公共基础模块
+  [shared/constant]  CommonTypes.<ext> — 全局通用类型
+  [shared/utils]     FormatUtils.<ext> — 格式化工具
 
-🔷 Module: wallet_home (HAR) — 首页功能模块
-  [shared/client]    HomeApiClient.ets — 首页数据接口
-  [shared/constant]  HomeConstants.ets — 首页常量
-  [shared/components] BaseCardView.ets — 基础卡片组件
-  [data/model]       CardInfo.ets — 卡片数据模型
-  [data/model]       BannerInfo.ets — Banner 数据模型
-  [data/repository]  CardRepository.ets — 卡片数据仓库
-  [data/repository]  BannerRepository.ets — Banner 数据仓库
+🔷 Module: wallet_home (<profile-format>) — 首页功能模块
+  [shared/client]    HomeApiClient.<ext> — 首页数据接口
+  [shared/constant]  HomeConstants.<ext> — 首页常量
+  [shared/components] BaseCardView.<ext> — 基础卡片组件
+  [data/model]       CardInfo.<ext> — 卡片数据模型
+  [data/model]       BannerInfo.<ext> — Banner 数据模型
+  [data/repository]  CardRepository.<ext> — 卡片数据仓库
+  [data/repository]  BannerRepository.<ext> — Banner 数据仓库
   [domain/actions 或 Page 内命名方法，按复杂度自选] loadHomeData — 首页数据加载逻辑（本例复杂度低，推荐 Page 命名方法而非独立类）
-  [presentation/components] CardSwiper.ets — 卡片轮播复杂组件
-  [presentation/components] FunctionGrid.ets — 功能宫格复杂组件
-  [presentation/pages] HomePage.ets — 首页(NavDestination)
+  [presentation/components] CardSwiper.<ext> — 卡片轮播复杂组件
+  [presentation/components] FunctionGrid.<ext> — 功能宫格复杂组件
+  [presentation/pages] HomePage.<ext> — 首页页面
 
-🔷 Module: phone (HAP) — 主入口
-  [presentation/pages] Index.ets — 主 Navigation 框架
+🔷 Module: app-shell (<profile-format>) — 主入口
+  [presentation/pages] Main.<ext> — 主框架
   [配置] 更新 main_pages.json、route_map、string.json 等
 ```
 
@@ -228,7 +160,7 @@
 对每个实现项执行以下**严格的单文件闭环**，**禁止批量生成多个文件后再统一验证**：
 
 1. **开文件前的自检（针对弱模型尤为重要）**
-   - 重读 [reference/arkts-pitfalls.md](reference/arkts-pitfalls.md) 中与当前文件类型（@Component / Repository / UseCase / Model / Index.ets）相关的 2-3 条。
+   - 重读 profile addendum 声明的宿主语言易错手册中与当前文件类型相关的 2-3 条。
    - 声明当前上下文：哪个 Module、哪个层、依赖了哪些已完成的代码。
    - **Scope 守门**：确认当前要写的文件路径是否在 `doc/features/{feature}/design.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
 
@@ -266,9 +198,9 @@
 
 | 形态 | 何时选用 | 物理位置 | 示例 |
 |------|---------|---------|------|
-| **A. Page 命名方法** | 单页面内的线性业务流（1~3 步调用），无跨 UI 状态共享 | `presentation/pages/XxxPage.ets` 内的命名 `async` 方法 | `HomeTabPage.loadHomeData()` |
-| **B. 普通 ArkTS 协调类（Flow / Coordinator）** | 多 UI 共享状态、多步云调用、可能有回滚 | 放在模块业务语义最贴合的目录（优先 `domain/` 或 `shared/` 均可），是一个**非 `@Component` 的普通 class** | `domain/flow/CardOpenFlow.ets` 中的 `class CardOpenFlow` |
-| **C. 导出命名函数** | 工具化 / 无状态的业务编排 | `domain/` 或 `shared/` 下的 `.ets` 文件，`export async function xxx(...)` | `domain/home/loadHomeData.ts` 中的 `export async function loadHomeData()` |
+| **A. Page 命名方法** | 单页面内的线性业务流（1~3 步调用），无跨 UI 状态共享 | `presentation/pages/XxxPage.<ext>` 内的命名 `async` 方法 | `HomeTabPage.loadHomeData()` |
+| **B. 普通协调类（Flow / Coordinator）** | 多 UI 共享状态、多步调用、可能有回滚 | 放在模块业务语义最贴合的目录（优先 `domain/` 或 `shared/` 均可），是一个**非 UI 组件**的普通 class | `domain/flow/CardOpenFlow.<ext>` 中的 `class CardOpenFlow` |
+| **C. 导出命名函数** | 工具化 / 无状态的业务编排 | `domain/` 或 `shared/` 下的宿主语言文件，`export async function xxx(...)` | `domain/home/loadHomeData.<ext>` 中的 `export async function loadHomeData()` |
 
 **关键约束（适用于 A / B / C 三种形态）**：
 
@@ -276,7 +208,7 @@
    - 传统 `function xxx() {}` / `async function xxx() {}`
    - 类/对象方法 `xxx() {}` / `async xxx() {}`
    - 顶层导出 `export function xxx` / `export const xxx = ...`
-   - **ArkTS 类字段函数**（v2.2 放宽）：`handleClick = async () => {}`、`handleClick: () => void = () => {}`、`handleClick = function() {}`
+   - **宿主语言类字段函数**（若当前 profile 支持）：`handleClick = async () => {}`、`handleClick: () => void = () => {}`、`handleClick = function() {}`
    - 顶层 `const/let/var xxx = () => {}`
 2. **禁止匿名 inline lambda 承载业务**：UI 的 `.onClick(() => { 做一堆业务 })` 这种**匿名**写法**禁止**用于 `use-cases.yaml` 列出的入口；必须先有命名符号（传统函数 / 命名类字段函数 / 命名 const）再被 `onClick` 转发
 3. 每次 `calls` 引用的实体必须是 UT 可直接调用的（无需构造 `@Component`、无需 UI runtime）——形态 A 需要把业务代码从 struct 中抽成 `class`/`function`，或选形态 B/C
@@ -310,7 +242,7 @@ showToast, Toast 等 Toast 辅助函数
 
 ```bash
 # Windows PowerShell —— 禁用 UI 符号扫描（仅形态 B / C 的纯业务文件严格执行）
-Select-String -Path "<path>/CardOpenFlow.ets" -Pattern "NavPathStack|showToast|@Component|@Consume|\$r\(|getUIContext|AppStorage|LocalStorage"
+Select-String -Path "<path>/CardOpenFlow.<ext>" -Pattern "<profile-ui-symbols>"
 ```
 
 命中任一关键字 → 立即停下来改正。
@@ -326,12 +258,12 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 
 功能代码全部完成后，统一处理配置：
 
-**模块级配置（每个新 HAR 模块）**：
-1. `{层目录}/{ModuleName}/oh-package.json5` — 模块包描述和依赖声明（依赖路径使用相对于模块的层目录路径）
-2. `{层目录}/{ModuleName}/build-profile.json5` — 模块构建配置
+**模块级配置（每个新模块）**：
+1. profile 声明的模块包描述文件 — 模块包描述和依赖声明
+2. profile 声明的模块构建配置文件
 3. `{层目录}/{ModuleName}/src/main/module.json5` — 模块元数据
-4. 根目录 `build-profile.json5` — 注册新模块，`srcPath` 使用层目录路径（如 `"./05-SystemBase/CommFunc"`）
-5. 根目录 `oh-package.json5` — 添加模块间依赖，路径使用层目录路径（如 `"file:./05-SystemBase/CommFunc"`）
+4. profile 声明的根级模块清单 — 注册新模块
+5. profile 声明的根级依赖清单 — 添加模块间依赖
 
 **资源文件（每个 Module 内）**：
 1. **`main_pages.json`**：注册所有新增页面路径
@@ -373,15 +305,15 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 ### 模块变更
 | Module | 格式 | 变更类型 | 说明 |
 |--------|------|----------|------|
-| common | HAR | 新增/修改 | 说明 |
-| wallet_home | HAR | 新增 | 说明 |
-| phone | HAP | 修改 | 说明 |
+| common | <profile-format> | 新增/修改 | 说明 |
+| wallet_home | <profile-format> | 新增 | 说明 |
+| app-shell | <profile-format> | 修改 | 说明 |
 
 ### 新增文件（按模块×层级）
 | Module | 层级 | 文件路径 | 说明 |
 |--------|------|----------|------|
-| wallet_home | shared/client | HomeApiClient.ets | 首页接口 |
-| wallet_home | data/model | CardInfo.ets | 卡片数据模型 |
+| wallet_home | shared/client | HomeApiClient.<ext> | 首页接口 |
+| wallet_home | data/model | CardInfo.<ext> | 卡片数据模型 |
 | ... | ... | ... | ... |
 
 ### 质量门禁结果
@@ -397,63 +329,47 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 
 ### Step 6.5: 真实编译闭环（必要出口）
 
-> v2.2 新增：**编译是 Skill 3 的必要出口条件**，不是可选项。本步骤要求 agent **自己**执行 hvigor 编译、读取日志、定位问题、修复并重跑，直到零 error。`coding_hvigor_build` BLOCKER 会在 Step 7 强制兜底；本 Step 是 Skill 3 自检的最后一道。
+> v2.2 新增：**编译/宿主静态检查是 Skill 3 的必要出口条件**，不是可选项。本步骤要求 agent **自己**执行当前 profile 声明的 `coding.compile` capability、读取日志、定位问题、修复并重跑，直到零 error。对应 BLOCKER 会在 Step 7 强制兜底；本 Step 是 Skill 3 自检的最后一道。
 
 #### 6.5.1 执行真实编译
 
-**首选方式（v2.3 起推荐）**：通过 harness 触发，避免 agent 自己拼复杂 hvigor 命令时出错（quoting、`-p module=...@<target>` 形态、`DEVECO_SDK_HOME` / `JAVA_HOME` 注入、Windows 含空格安装路径转义等都已在 `hvigor-runner.ts` 内部处理好）：
+**首选方式（v2.3 起推荐）**：通过 harness 触发，避免 agent 自己拼复杂宿主命令时出错；profile provider 负责具体工具链参数与环境注入：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name> --summary --failures-only
 ```
 
-`coding_hvigor_build` BLOCKER 默认与 DevEco 手工构建对齐：优先 `node <DevEco>/tools/hvigor/bin/hvigorw.js --mode module … assembleHap`（见 `toolchain.hvigor.coding`）；完整日志落 `framework/harness/reports/<feature>/coding/hvigor-build.log`，元数据 `hvigor-build.meta.json`。PASS 另需日志尾部命中成功哨兵（如 `BUILD SUCCESSFUL`），避免「退出码 0 但输出异常」误判。
+`coding.compile` BLOCKER 的具体 provider 与日志格式由当前 profile 声明；完整日志与 summary 落在 `framework/harness/reports/<feature>/coding/` 下。PASS 另需命中 profile provider 声明的成功哨兵，避免「退出码 0 但输出异常」误判。
 优先读取 `framework/harness/reports/<feature>/coding/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
 
-> **不要**让 agent 自己手敲完整 hvigor 命令行。`DEVECO_SDK_HOME` / `JAVA_HOME`、Windows 含空格路径、`node`+`hvigorw.js` 与 wrapper 回退等已由 `hvigor-runner.ts` 封装。
+> **不要**让 agent 自己手敲完整宿主编译命令行；具体命令应由 profile provider 或 harness 封装。
 
-**v2.9 起默认命令形态**（可通过 `framework.config.json > toolchain.hvigor.coding` 改为 `assemble_app_project` 等项目级 `assembleApp`）：
-
-```
-node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
-  --mode module \
-  -p product=<detectProduct()> \
-  -p buildMode=debug \
-  --daemon --parallel --incremental --analyze=advanced \
-  assembleHap
-```
-
-- `product=` 由 `detectProduct(projectRoot)` 探测：先看 `toolchain.preferredProduct`，再在对 `build-profile.json5 > app.products` 中优先命中名为 `product` / `default` 的项，否则取列表首位，兜底 `default`。
-- **多 product 工程**请在 `toolchain.preferredProduct` 显式声明（本仓库示例为 `"product"`）。
-- `-p buildMode=debug`：与常见 DevEco 手工命令一致；`driver=assemble_app_project` 时仍保留该加速语义（项目级 `assembleApp` 默认偏 release，harness 固定 debug 做门禁）。
-- `--daemon` / `--parallel` / `--incremental` / `--analyze=advanced`：由 `toolchain.hvigor` 调优；coding 默认超时 **45 分钟**（`toolchain.hvigor.timeoutMs` 可覆盖）。
-
-实际加速效果与工程规模强相关，详见 [framework/docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md) 的「hvigor 调优」章节，里头记录了本仓库 5 模块小工程的实测反例（warm 路径反而慢 47%），避免 agent 拍脑袋假设"必定加速"。
+profile 专属命令形态、超时与性能调优说明放在对应 `framework/profiles/<profile>/` addendum 或 provider 文档中；中立 Skill 不假设某个工具链一定存在。
 
 #### 6.5.2 自闭环修复策略
 
-1. **看 verdict**：harness 报告里 `coding_hvigor_build` 状态为 PASS 才算编译过；FAIL 进入修复闭环。
-2. **读完整日志**：harness 把日志写到 `framework/harness/reports/<feature>/coding/hvigor-build.log`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
+1. **看 verdict**：harness 报告里 profile compile capability 状态为 PASS 才算编译过；FAIL 进入修复闭环。
+2. **读完整日志**：harness 把日志写到 `framework/harness/reports/<feature>/coding/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
-   - `ArkTS:ERROR` / `error TSxxxx` → 类型 / 语法错误，回到 Step 3 修文件；
-   - `project_dependency_missing` / `Failed to resolve OhmUrl` / `Cannot find module` → 工程依赖缺失，不要让用户手工猜。先展示方案：A) 用户确认后在工程根执行 `ohpm install` 并重跑；B) 仅读取 `oh-package.json5` 输出缺失依赖清单；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
-   - `oh-package.json5` / 模块依赖错误 → 回到 `oh_package_dependencies` 章节补依赖；
+   - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
+   - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → 不要让用户手工猜。先展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
+   - profile 包描述 / 模块依赖错误 → 回到依赖章节补依赖；
    - 资源引用 (`$r('app.string.xxx')`) 缺失 → 回到资源声明章节补声明。
-4. **修完 → 再跑**：重复 6.5.1，直到 `coding_hvigor_build` PASS。
+4. **修完 → 再跑**：重复 6.5.1，直到 profile compile capability PASS。
 5. **绝不允许**：
    - 把编译失败定性为"环境问题"绕过；
-   - 用 `HARNESS_SKIP_HVIGOR=1` 跳过（harness 会把它转成 BLOCKER FAIL）；
+   - 用环境变量跳过当前 profile 的 BLOCKER compile capability（harness 会把它转成 FAIL）；
    - "改了就不验"——必须真的过一次 harness 编译规则才算闭环。
 
-#### 6.5.3 工具链不可用怎么办（"未找到 hvigor" 类失败）
+#### 6.5.3 工具链不可用怎么办
 
-v2.3 起 hvigor 工具链路径**应通过 `framework.config.json > toolchain.devEcoStudio.installPath` 显式声明**，而不是依赖项目根 `hvigorw.bat`（现代 DevEco Studio ≥ 5.0 不再生成它）。若 harness 报告 `coding_hvigor_build` FAIL 且 details 含「未找到 hvigor / hvigorw」：
+若 harness 报告 profile compile capability FAIL 且 details 指向宿主工具链不可用：
 
-1. 检查 `framework.config.json` 是否存在 `toolchain.devEcoStudio.installPath`，且路径在文件系统中存在；
-2. 未配置 / 路径错误 → 跑 `npx ts-node framework/harness/scripts/detect-deveco.ts` 让工具自动探测推荐 installPath，或参考 [framework/skills/00-framework-init/SKILL.md](../00-framework-init/SKILL.md) Step 5.6 走完整配置流程；
+1. 检查 `framework.config.json` 是否存在当前 profile 要求的 toolchain 配置，且路径/命令在文件系统中存在；
+2. 未配置 / 路径错误 → 运行 profile 提供的探测脚本（若有），或参考 [framework/skills/00-framework-init/SKILL.md](../00-framework-init/SKILL.md) 走完整配置流程；
 3. 配置后再次跑 6.5.1。
 
-**绝不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交，也不允许把 `HARNESS_SKIP_HVIGOR` 设为 1 绕过。
+**绝不允许**：因为找不到工具就把规则状态写成 SKIP 或 PASS 上交，也不允许用跳过环境变量绕过。
 
 ### Step 7: Harness 验证门禁（agent 必须自跑，不得仅"告知用户"）
 
@@ -479,7 +395,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
 4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
    - 若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `diff_within_scope` 报 `stale_diff_base`：必须自动重跑一次 `HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>`。重跑后若仍有越界文件，才进入 scope 扩展提议或撤销误改流程。
-   - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `coding_hvigor_build` 报 `project_dependency_missing`：按 Step 6.5.2 的依赖缺失分支处理，不得只要求用户手工操作。
+   - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 compile capability 报 `project_dependency_missing`：按 Step 6.5.2 的依赖缺失分支处理，不得只要求用户手工操作。
 5. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
@@ -498,7 +414,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 | 模块间依赖 | import 是否违反五层架构依赖矩阵 | BLOCKER |
 | 资源引用完整性 | $r() 引用的 key 是否在资源 JSON 中定义 | BLOCKER |
 | 硬编码字符串 | presentation 层是否存在未通过 $r() 引用的 UI 文本 | MAJOR |
-| HAR 导出 | 每个 HAR 模块是否有 Index.ets 并正确导出 | BLOCKER |
+| 模块导出 | 每个需跨模块访问的模块是否通过 DSL 声明的出口正确导出 | BLOCKER |
 | 模块注册 | 新模块是否在 build-profile.json5 中注册 | BLOCKER |
 | 页面注册 | NavDestination 页面是否在 main_pages.json 中注册 | BLOCKER |
 | 命名规范 | 模块名/组件名/文件名/资源 key 是否符合命名约定 | MAJOR |
@@ -547,12 +463,12 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ## 编码规范
 
-生成代码时必须遵守以下规范（完整规范见 [templates/coding-standards.md](templates/coding-standards.md)）：
+生成代码时必须遵守以下规范（完整规范见 [coding-standards.md](../../profiles/hmos-app/skills/3-coding/templates/coding-standards.md)）：
 
 ### 核心规则速记
 
 1. **分层规则**：每个 Module 内严格遵循 shared → data → domain → presentation 4 层架构，禁止反向依赖
-2. **模块格式**：phone 为 HAP，其余为 HAR；HAR 模块需要正确导出 Index.ets
+2. **模块格式**：按当前 profile 的模块格式与导出规则实现
 3. **组件命名**：PascalCase，组件文件名与 struct 名一致
 4. **页面实现**：功能模块的页面基于 NavDestination 实现，仅 phone 的主入口用 `@Entry`
 5. **资源引用**：界面文本用 `$r('app.string.xxx')`，颜色用 `$r('app.color.xxx')`，尺寸用 `$r('app.float.xxx')`
@@ -563,11 +479,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ## 常用参考
 
-- **⭐ ArkTS 易错手册（弱模型必读）**: [reference/arkts-pitfalls.md](reference/arkts-pitfalls.md)
-- ArkUI 组件模式速查: [reference/arkui-patterns.md](reference/arkui-patterns.md)
-- 鸿蒙 API 用法速查: [reference/harmony-api-guide.md](reference/harmony-api-guide.md)
-- 模块脚手架规范: [templates/module-scaffold.md](templates/module-scaffold.md)
-- 编码规范完整版: [templates/coding-standards.md](templates/coding-standards.md)
+- Profile 编码 addendum: `framework/profiles/<profile>/skills/3-coding/profile-addendum.md`
+- Profile 宿主语言/组件/API 参考：以 addendum 中列出的 `reference/` 与 `templates/` 为准
+- 编码规范完整版: [coding-standards.md](../../profiles/hmos-app/skills/3-coding/templates/coding-standards.md)
 
 ## 关联文件
 
@@ -595,7 +509,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 5. **渐进式实现**：先实现 P0 核心功能确保可运行，再叠加 P1/P2 功能
 6. **不破坏现有代码**：修改现有文件时，只做增量修改，不改动无关代码
 7. **编译可达**：每完成一个层级后，代码应处于可编译状态
-8. **HAR 导出**：HAR 模块需要通过 `Index.ets` 导出对外暴露的 API，未导出的内容为模块私有
+8. **模块导出**：需要跨模块访问的 API 必须通过 DSL 声明的出口导出，未导出的内容为模块私有
 9. **边界场景覆盖**：代码必须处理 `acceptance.yaml > boundaries` 中定义的所有异常场景（网络异常、空数据、功能暂不支持等）
 10. **Harness 验证闭环**：编码完成后 agent **必须自己运行** Harness 验证（Step 7），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
 
@@ -608,9 +522,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 - **路径约定**：`framework/harness/reports/<feature>/<timestamp>/<model>-code/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
 - **必须记录的事件**（针对弱模型迭代最关键）：
-  - `tool_calls`：`ReadLints` 的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
-  - `retries`：`lint_error` / `arkts_pitfall` 每次自修尝试次数，`related_file` 必填
-  - `human_pain_points`：逐条记录 ArkTS 错误类型（对照 `arkts-pitfalls.md` 的 15 条）
+  - `tool_calls`：`ReadLints`（或等价宿主静态检查）的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
+  - `retries`：`lint_error` / `language_rule_violation`（及与 `trace.schema.json` 示例一致其它 trigger）每次自修尝试次数，`related_file` 必填；`project_profile=hmos-app` 时常细化为 ArkTS 坑位自修，仍用上述中性 trigger 或附 `notes` 说明
+  - `human_pain_points`：宿主为 ArkTS 工程时可用 `arkts_correctness` 并逐条对照 `arkts-pitfalls.md`；其它 profile 优先用 `compile_correctness` 等 schema 枚举内中性分类（见 `trace.schema.json`）
   - `harness_checks`：`check-coding.ts` 的结果，特别是 `diff_within_scope` 是否通过
 - **痛点回填**：同目录 `gap-notes.md`，模板见 [framework/harness/trace/gap-notes.template.md](../../framework/harness/trace/gap-notes.template.md)。
 
@@ -627,7 +541,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-coding/
 ```
 
 **本 Skill 最容易发生的痛点（记入 `human_pain_points`）**：
-- `arkts_correctness`：ArkTS 语法/API 错误，需命中 `arkts-pitfalls.md` 的哪一条；
+- `arkts_correctness`（见 schema：兼容 hmos-app / ArkTS 工单的分类标签）或更中性的 `compile_correctness`：**宿主语言**语法/API 与设计约束不一致；ArkTS 工程需对照 `arkts-pitfalls.md` 条款；
 - `contracts_mismatch`：实现与 `contracts.yaml` 签名/路径/资源 key 不一致；
 - `scope_creep`：`git diff` 出现 design `in_scope_modules` 外的文件。
 
