@@ -521,3 +521,8 @@ git submodule update --init --recursive
 > 中期靠"分层 Repo Map"让弱模型在不读完全仓的前提下看见真实接口；
 > 长期看收益再决定是否引入语义级检索。
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
+
+<!--
+  last-synced: 2026-05-10 (batch-6)
+  Skill 00 / 0 bootstrap 文档与 profile 模板路径调整后同步复核（doc_freshness）。
+-->

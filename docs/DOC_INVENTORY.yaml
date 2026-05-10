@@ -88,7 +88,7 @@ docs:
     sources:
       - framework/skills/0-catalog-bootstrap/SKILL.md
       - framework/skills/1-prd-design/SKILL.md
-      - framework/skills/1-prd-design/templates/prd-template.md
+      - framework/profiles/hmos-app/skills/1-prd-design/templates/prd-template.md
       - framework/specs/phase-rules/prd-rules.yaml
       - framework/specs/phase-rules/catalog-rules.yaml
       - framework/specs/phase-rules/glossary-rules.yaml

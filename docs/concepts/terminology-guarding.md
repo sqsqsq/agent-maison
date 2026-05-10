@@ -234,8 +234,8 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-10
-  Re-reviewed against Skill 0/1、prd-template、prd/catalog/glossary phase-rules、check-prd.ts（含 checkScopeDeclaration）
-  after framework docs neutralization; §9 补齐 scope_declaration 与术语链路顺序说明；§0 维护规则指向 DOC_INVENTORY sources。
+  last-synced: 2026-05-10 (batch-6)
+  DOC_INVENTORY terminology-guarding sources：prd-template 正文迁至 profiles/hmos-app/skills/1-prd-design/templates/；
+  与 Skill 0/1、prd/catalog/glossary phase-rules、check-prd.ts 对齐复核。
 -->
 
