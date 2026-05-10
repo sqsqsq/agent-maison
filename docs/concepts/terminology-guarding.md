@@ -4,7 +4,7 @@
 >
 > 同时承担"演进路线图"职责：记录弱模型在大型代码仓上完成"自然语言需求 → 技术模块归属"这一核心问题的完整思考、方案对比和分阶段规划。
 >
-> **维护规则**：跨大版本节奏更新即可；细节决策放各 Skill 文档 / `MIGRATION.md`。
+> **维护规则**：跨大版本节奏更新即可；细节决策放各 Skill 文档 / `MIGRATION.md`。与术语/PRD 守门直接相关的上游资产见 [`../DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 中本文件条目的 `sources[]`；任一源文件晚于本文 commit 时，`--phase docs` 的 `doc_freshness` 会标 MAJOR，提示人工核对后**再提交**本文（不要求改语义也可仅做勘误/注记刷新）。
 
 ---
 
@@ -211,10 +211,11 @@ surveyed 过的 5 个层级方案：
 
 ---
 
-## 9. 三道 BLOCKER 是怎么实现的（细节）
+## 9. PRD harness：`check-prd.ts` 中的 Scope / 术语链路（细节）
 
-详见 [`../../harness/scripts/check-prd.ts`](../../harness/scripts/check-prd.ts) 中的：
+详见 [`../../harness/scripts/check-prd.ts`](../../harness/scripts/check-prd.ts) 中与 Scope / 术语相关的检查（执行顺序上，`scope_declaration` 先于术语表解析）：
 
+- `checkScopeDeclaration` —— 解析 PRD 的 Scope 声明 `yaml` 代码块：必须含 `in_scope_modules`（≥1）、`out_of_scope_modules`、`rationale`；结构缺失为 BLOCKER，`rationale` 为空为 WARN
 - `checkTerminologyMappingTable` —— 解析 PRD 的 `## 0. 术语映射表` 章节，校验：
   - 表格列与必填字段（原始术语 / 权威模块 / 用户确认 / 置信度 / 来源）
   - 用户确认列必须每行 `[x]`（防"agent 自己点确认"）
@@ -233,10 +234,8 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-04-27
-  reviewed against framework "phase closure / Layer 3 physical interception" patch (commit f71020d)
-  per DOC_INVENTORY.yaml update_triggers (术语映射表 schema / 三道 BLOCKER 触发条件 / WP6-8 决策里程碑 / 易混项机制),
-  this patch only adds a global "阶段闭环必读" tail block to 1-prd-design/SKILL.md and does NOT touch
-  any of the four trigger dimensions above, so no content change required for this doc.
+  last-synced: 2026-05-10
+  Re-reviewed against Skill 0/1、prd-template、prd/catalog/glossary phase-rules、check-prd.ts（含 checkScopeDeclaration）
+  after framework docs neutralization; §9 补齐 scope_declaration 与术语链路顺序说明；§0 维护规则指向 DOC_INVENTORY sources。
 -->
 
