@@ -12,7 +12,7 @@
 | `dag` | **允许但需无环**：同层模块可互相 `import`，但必须形成 DAG；由 `check-coding` 等按模块扫描。 |
 | `sublayer` | **拆子层**：同层内部再分子层，按 `sublayers[*].can_depend_on_sublayers` 判定；需要同时填 `sublayers` 数组。 |
 
-> **重要**：preset 里各层的默认值（例如钱包 preset 的 `01/02/04 = forbid、03 = dag、05 = sublayer`）是**有意的设计选择**，不是「唯一正确答案」。务必先把选择权交还用户。
+> **重要**：参考实例 preset 里各层的默认同层策略组合（例如典型的 `01/02/04 = forbid、03 = dag、05 = sublayer`）是**有意的设计选择**，不是「唯一正确答案」。务必先把选择权交还用户。
 
 ---
 

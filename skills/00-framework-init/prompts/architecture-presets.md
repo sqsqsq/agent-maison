@@ -2,10 +2,10 @@
 
 在写入 `framework.config.json` 的 `architecture` 段前，AI 按以下顺序向用户提供选项。
 
-## 选项 A：参考实例 — 五层外层 + 子层（钱包回归同款）
+## 选项 A：参考实例 — 5 外层 + 子层
 
 - **何时用**：扫描到 `01-Product`～`05-SystemBase` 式目录，或用户明确要「与 harness LEGACY 默认一致」。
-- **怎样做**：将 [templates/preset-wallet-5-layer.sample.json](../templates/preset-wallet-5-layer.sample.json) 合并进完整 config（补全 `project_name`、`paths`、`agent_adapter` 等）。
+- **怎样做**：将 [hmos-app preset-5-layer.sample.json](../../../profiles/hmos-app/skills/00-framework-init/templates/preset-5-layer.sample.json) 合并进完整 config（补全 `project_name`、`paths`、`agent_adapter` 等）。
 - **同层策略前置确认（BLOCKER，详见 `SKILL.md` Step 3.x）**：preset 里 `01-Product / 02-Feature / 04-BusinessBase = forbid`、`03-CommonBusiness = dag`、`05-SystemBase = sublayer` 是**有意的默认**（上三层用 `forbid` 逼横向协作下沉，仅 `03-CommonBusiness` 允许同层 DAG），**不是**「同层一律禁止」这种唯一答案。合并 preset 前**必须**按 [templates/intra-layer-deps-confirm.template.md](../templates/intra-layer-deps-confirm.template.md) 展示逐层策略表，逐行获得用户显式回复，才能落盘。
 - **说明**：`05-SystemBase` 使用 `intra_layer_deps: sublayer` + `CommUI` / `CommFunc` 子层仅为**示例**；若用户工程不同，必须在问卷里改 `members_pattern_or_list`。
 

@@ -215,7 +215,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 doc/glossary-staging/<term>.yaml
 ```
 
-严格遵循 `framework/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml`。
+严格遵循 `framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml`。
 
 ---
 

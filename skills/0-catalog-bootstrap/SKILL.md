@@ -479,7 +479,7 @@ terms: []
 doc/glossary-staging/<term>.yaml
 ```
 
-模板见 `framework/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml`。
+模板见 `framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml`（`framework/skills/.../glossary-term-template.yaml` 🔀 跳板）。
 
 **易混项强制补全**：若匹配到的 `canonical_module` 在 catalog 里有 `easily_confused_with`，必须把对应条目复制到 staging 的 `easily_confused_with`，让用户直观看到"这个术语也可能被理解成隔壁模块"。
 
