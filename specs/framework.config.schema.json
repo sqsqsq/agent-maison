@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://framework.local/schemas/framework.config.json",
   "title": "framework.config.json",
-  "description": "SimulatedWallet / framework 实例工程根配置；权威校验逻辑见 framework/harness/config.ts",
+  "description": "实例工程根目录 framework.config.json 的结构化描述（project_name 为实例名）；权威解析与默认合并逻辑见 framework/harness/config.ts",
   "type": "object",
   "required": ["schema_version", "project_name", "agent_adapter", "architecture", "paths"],
   "properties": {

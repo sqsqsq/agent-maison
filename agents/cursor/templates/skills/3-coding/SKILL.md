@@ -1,6 +1,6 @@
 ---
 name: coding
-description: design.md → ArkTS 编码（完整流程见 framework/skills/3-coding/SKILL.md）
+description: 按 design / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/3-coding/SKILL.md）
 ---
 
 # 跳板文件

@@ -1,7 +1,7 @@
 {
   "name": "harness",
   "version": "1.0.0",
-  "description": "Spec/Harness verification system for SimulatedWalletForHmos",
+  "description": "Framework phase harness — scripts, fixture regressions, and runner (profile-aware)",
   "private": true,
   "scripts": {
     "check": "ts-node harness-runner.ts",

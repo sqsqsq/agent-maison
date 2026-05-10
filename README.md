@@ -1,4 +1,4 @@
-# HarmonyOS Framework（可复用 Skill + Harness）
+# Framework（多 profile Skill + Harness）
 
 本目录是**与具体业务解耦**的通用资产：阶段规则（`specs/phase-rules`）、全生命周期 Skill（`skills/`）、门禁脚本与 runner（`harness/`）、agent 适配插件（`agents/`）、以及初始化用的模板（`templates/`）。业务工程通过 **git submodule** 引入本目录后，用 **Framework 初始化 Skill** 在**实例工程根**生成 `framework.config.json`、`doc/` 骨架与 agent 路由文件。
 
@@ -21,7 +21,9 @@
 
 ---
 
-## 如何引入到其它 HarmonyOS 工程
+## 如何引入到其它工程
+
+本 framework 通过 **`project_profile`** 区分宿主能力（默认多为 `hmos-app`）；具体 profile 含义见 [文档：profiles](profiles/README.md)。
 
 在目标仓库根执行（远程 URL 换成你的 framework 托管地址）：
 
@@ -149,6 +151,6 @@ npx ts-node harness-runner.ts --phase glossary
 
 ## 贡献指南（framework 维护者）
 
-1. 阶段规则、脚本与 Skill 的正文以本仓库 `framework/` 为 SSOT；合并前应用本仓库钱包示例跑通关键 phase 回归。
+1. 阶段规则、脚本与 Skill 的正文以本仓库 `framework/` 为 SSOT；合并前应用本仓库绑定的 `project_profile`（及至少一个代表性 feature）跑通关键 phase 的 harness 回归。
 2. 新增 adapter：在 `framework/agents/<name>/` 增加目录与 `adapter.yaml`，遵守 `adapter-schema.yaml`；并更新 `agents/README.md` 中的列表与说明。
 3. 元服务（`atomic_service`）等扩展位见 `framework/docs/atomic-service-roadmap.md`，避免在通用规则里硬编码单一场景假设。
