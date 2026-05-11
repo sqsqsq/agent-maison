@@ -56,7 +56,7 @@
 
 - **约束来源**：元服务免安装运行时能调用的系统 API 是 App 的子集（部分权限 / 后台能力受限）。
 - **落地位置**：
-  - `framework/skills/3-coding/reference/` 新增 `atomic-service-api-allowlist.md`（白名单文档）
+  - `framework/profiles/<宿主 project_profile>/skills/3-coding/reference/` 新增 `atomic-service-api-allowlist.md`（白名单文档；无专用 profile 时放 `generic` 或新建子 profile）
   - `check-coding.ts` 扫描 `import` + API 调用，命中黑名单报 BLOCKER
 
 ### 2.5 资源本地化与体积压缩

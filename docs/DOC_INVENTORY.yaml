@@ -40,6 +40,11 @@ docs:
       - framework/skills/4-code-review/SKILL.md
       - framework/skills/5-business-ut/SKILL.md
       - framework/skills/6-device-testing/SKILL.md
+      - framework/skills/README.md
+      - framework/profiles/hmos-app/skills/skill-assets.yaml
+      - framework/profiles/generic/skills/skill-assets.yaml
+      # docs 阶段规约（含 profile_skill_assets_resolvable，与 skills/README 交叉引用）
+      - framework/specs/phase-rules/docs-rules.yaml
       # 配置与 DSL 校验（overview 写到了架构 DSL）
       - framework/harness/config.ts
       # adapter 协议（见 overview + agents/README）
@@ -54,6 +59,7 @@ docs:
       - framework.config.json schema_version bump
       - 新增 / 替换 / 删除 agent_adapter
       - 新增 / 删除 BLOCKER 级 harness 规则
+      - docs-rules.yaml 中 profile_skill_assets_resolvable 或 docs 阶段追溯规则变更
       - 三层分离 / 双 harness 等核心设计理念调整
 
   # --------------------------------------------------------------------------
