@@ -16,16 +16,38 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import type { UnitCaseResult } from './unit/hdc-runner.unit.test';
 
-const SUITES: Array<{ id: string; modulePath: string }> = [
-  { id: 'hdc-runner',       modulePath: './unit/hdc-runner.unit.test' },
+export interface UnitCaseResult {
+  name: string;
+  ok: boolean;
+  error?: string;
+}
+
+function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> {
+  const profilesRoot = path.resolve(__dirname, '..', '..', 'profiles');
+  const out: Array<{ id: string; modulePath: string }> = [];
+  if (!fs.existsSync(profilesRoot)) return out;
+  for (const ent of fs.readdirSync(profilesRoot, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const unitDir = path.join(profilesRoot, ent.name, 'harness', 'tests', 'unit');
+    if (!fs.existsSync(unitDir)) continue;
+    for (const fn of fs.readdirSync(unitDir)) {
+      if (!fn.endsWith('.unit.test.ts')) continue;
+      const absNoExt = path.join(unitDir, fn.replace(/\.ts$/, ''));
+      const rel = path.relative(__dirname, absNoExt).replace(/\\/g, '/');
+      out.push({
+        id: `profile:${ent.name}:${fn.replace(/\.unit\.test\.ts$/, '')}`,
+        modulePath: rel.startsWith('.') ? rel : `./${rel}`,
+      });
+    }
+  }
+  return out;
+}
+
+const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
-  { id: 'detect-product',   modulePath: './unit/detect-product.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
-  { id: 'har-index-export', modulePath: './unit/har-index-export.unit.test' },
-  { id: 'hvigor-args',      modulePath: './unit/hvigor-args.unit.test' },
   { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
@@ -33,8 +55,14 @@ const SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
   { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
+  { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
+  { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
+  { id: 'coding-failure-kinds', modulePath: './unit/coding-failure-kinds.unit.test' },
+  { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },
+  { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
 ];
 
+const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
 interface SuiteSummary {
   id: string;
   results: UnitCaseResult[];
