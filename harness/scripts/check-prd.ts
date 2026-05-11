@@ -42,14 +42,9 @@ import {
   describeGlossaryError,
   lookupTerm,
 } from './utils/glossary-parser';
-import { isPrdVisualHandoffSkipped } from '../capability-registry';
-import {
-  relFeatureFile,
-  relGlossary,
-  relCatalog,
-} from '../config';
-import { checkVisualHandoff } from './hmos-app/prd-visual-handoff-check';
-export { checkVisualHandoff };
+import { isPrdVisualHandoffSkipped, dispatchPrdVisualHandoff } from '../capability-registry';
+import { relCatalog, relGlossary, relFeatureFile } from '../config';
+export { dispatchPrdVisualHandoff as checkVisualHandoff };
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -354,7 +349,8 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: '「术语映射表」章节未找到 Markdown 表格。',
-      suggestion: '请参考 framework/skills/1-prd-design/templates/prd-template.md 中的表格格式。',
+      suggestion:
+        `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/1-prd-design/templates/prd-template.md 中的表格格式。`,
     }];
   }
 
@@ -876,7 +872,7 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 prd.visual_handoff 脚本守门`,
       });
     } else {
-      results.push(...safeRun(() => checkVisualHandoff(ctx, prd), 'visual_handoff'));
+      results.push(...safeRun(() => dispatchPrdVisualHandoff(ctx, prd), 'visual_handoff'));
     }
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
     results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));

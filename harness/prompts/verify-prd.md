@@ -48,7 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 9 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下语义检查项。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-prd.overlay.md`）。
 
 ### 检查 1: 功能概述清晰度 (overview_clarity)
 
@@ -93,14 +93,13 @@
   3. "暂不支持"类功能的 AC，只要指明"弹出 Toast"即视为可测试
   4. 若 AC 仅有定性描述（如"用户体验好"）而无量化标准，判为 FAIL
 
-### 检查 5: UI 组件术语规范 (ui_component_terminology)
+### 检查 5: 宿主 UI 框架术语 (ui_component_terminology)
 
-- **严重等级**: MINOR
+- **严重等级**: 以 merged `prd-rules.yaml`（含 profile overlay）中本检查项声明为准；未声明时 **SKIP**
 - **评估方法**:
-  1. 阅读「页面/界面描述」章节的组件表格
-  2. 检查「类型」列中使用的组件名称是否优先采用 ArkUI 术语
-     （Column、Row、List、Tabs、Navigation、Swiper、Text、Image、Button 等）
-  3. 若大量使用通用 HTML/CSS 术语而非 ArkUI 原生组件名，标注 WARN
+  1. 在上方 Spec 的 `semantic_checks` 中查找是否存在 `ui_component_terminology`
+  2. **若不存在**：`status: SKIP`，`details` 写明「当前 profile 未注册此项」
+  3. **若存在**：按该条的 `description` / `ai_prompt_hint` 执行；并合并阅读 profile 的 `verify-prd.overlay.md`（若存在）中的补充说明
 
 ### 检查 6: 模拟范围意识 (simulation_scope_awareness)
 
@@ -209,12 +208,12 @@ verification_result:
       suggestion: |
         <修正建议>
 
-    # --- 检查 5: UI 组件术语规范 ---
+    # --- 检查 5: 宿主 UI 框架术语（仅当 spec 含 ui_component_terminology） ---
     - id: ui_component_terminology
-      status: PASS | FAIL | WARN
+      status: PASS | FAIL | WARN | SKIP
       severity: MINOR
       details: |
-        <是否使用 ArkUI 组件术语>
+        <SKIP 时写明未注册；否则给出证据>
       suggestion: |
         <修正建议>
 

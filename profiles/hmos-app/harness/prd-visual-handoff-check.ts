@@ -1,19 +1,24 @@
 // ============================================================================
 // PRD · Visual Handoff 脚本守门（hmos-app / prd.visual_handoff capability）
 // ============================================================================
-// 实现放在 harness/scripts 以保证 ts-node / yaml 依赖解析与本仓 tsconfig 一致；
-// 「能力归属」仍由 framework/profiles/hmos-app/profile.yaml 声明启停。
+// 实现位于 `framework/profiles/hmos-app/harness/`；由 capability-registry 经
+// `harness/providers/prd-visual-handoff.ts` 加载。路径解析仍相对 `framework/harness/`。
 // 规则 id 保持不变（fixtures / merged-report / phase-rules 依赖稳定 id）。
 // ============================================================================
 
 import {
   extractCodeBlocks,
   getSectionContent,
-} from '../utils/markdown-parser';
-import * as YAML from 'yaml';
-import { resolveAuthoritativePath } from '../utils/visual-source-resolver';
-import { relFeatureFile, VisualHandoffEnforcementMode } from '../../config';
-import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../utils/types';
+} from '../../../harness/scripts/utils/markdown-parser';
+import { createRequire } from 'module';
+import * as path from 'path';
+import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
+import { relFeatureFile, VisualHandoffEnforcementMode } from '../../../harness/config';
+import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
+
+/** `yaml` 安装于 `framework/harness/node_modules`；本文件在 profile 树内，须从 harness 根解析依赖 */
+const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
+const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 
 function ruleDesc(
   ctx: CheckContext,
@@ -248,14 +253,14 @@ function resolveRefsCheckResult(params: {
   }
 
   return [{
-    id: checkIdPass,
-    category: 'structure',
-    description: desc,
-    severity: 'BLOCKER',
-    status: 'PASS',
-    details: `ui_change=${uiChange}，kind=${kind}；${outcome.rows.length} 条 authoritative_refs 结构化与可达校验通过`,
-    ...baseExtras,
-  }];
+      id: checkIdPass,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `ui_change=${uiChange}，kind=${kind}；${outcome.rows.length} 条 authoritative_refs 结构化与可达校验通过`,
+      ...baseExtras,
+    }];
 }
 
 function parseVisualHandoffYamlRoot(prd: string): Record<string, unknown> | null {

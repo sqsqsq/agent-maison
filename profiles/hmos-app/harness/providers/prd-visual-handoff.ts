@@ -1,5 +1,5 @@
 /**
- * prd.visual_handoff → provider `script`（实现位于 harness/scripts/hmos-app/）
+ * prd.visual_handoff → provider `script`（实现见同目录 `prd-visual-handoff-check.ts`）
  */
 import type { CapabilityProvider } from './types';
 
@@ -9,4 +9,4 @@ export const provider: CapabilityProvider = {
   exports: ['checkVisualHandoff'],
 };
 
-export { checkVisualHandoff } from '../../../../harness/scripts/hmos-app/prd-visual-handoff-check';
+export { checkVisualHandoff } from '../prd-visual-handoff-check';
