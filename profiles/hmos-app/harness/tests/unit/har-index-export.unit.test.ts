@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveHarExportEntryPath } from '../../scripts/check-coding';
+import { resolveHarExportEntryPath } from '../../har-export-resolve';
 
 export interface UnitCaseResult {
   name: string;

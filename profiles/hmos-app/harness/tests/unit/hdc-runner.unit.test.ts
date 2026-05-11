@@ -30,7 +30,7 @@ import {
   findOhosTestSignedHap,
   loadAppBundleName,
   loadOhosTestModuleName,
-} from '../../scripts/utils/hdc-runner';
+} from '../../../../../harness/scripts/utils/hdc-runner';
 
 export interface UnitCaseResult {
   name: string;

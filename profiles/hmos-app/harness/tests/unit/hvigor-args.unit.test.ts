@@ -29,8 +29,8 @@ import {
   looksLikeUtHvigorCommandMismatch,
   buildCodingHvigorArgs,
   analyzeProjectDependencyIssue,
-} from '../../scripts/utils/hvigor-runner';
-import { clearFrameworkConfigCache } from '../../config';
+} from '../../../../../harness/scripts/utils/hvigor-runner';
+import { clearFrameworkConfigCache } from '../../../../../harness/config';
 
 export interface UnitCaseResult {
   name: string;

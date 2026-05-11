@@ -28,7 +28,6 @@ import {
   UseCaseDef,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { compileTestFiles } from './utils/ts-compile';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
@@ -36,19 +35,19 @@ import {
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
+import { findFilesRecursive } from './utils/find-files-recursive';
 import {
-  isCapabilitySkipped,
   CANONICAL_UT_COMPILE_ID,
   LEGACY_UT_COMPILE_ID,
   CANONICAL_UT_RUN_ID,
   LEGACY_UT_RUN_ID,
-  dispatchUtCompile,
-  dispatchUtRun,
-  probeUtRunDevices,
-  analyzeProjectDependencyIssueViaProfile,
-  mergeUtCompileLogForClassification,
-  looksLikeUtCompileCommandMismatch,
 } from '../capability-registry';
+import {
+  tryLoadUtHostImpl,
+  tryLoadDiffExcludeTestPathRegexes,
+  type UtHostSuggestionPaths,
+} from '../profile-host-loader';
+import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
 import {
   buildMockPlanPresetIndex,
   collectMockPlanTypedIssues,
@@ -60,49 +59,50 @@ import {
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
-// UT 文件中禁止出现的 UI/导航/Toast 符号模式（v2.1 扩展：AppStorage / rawfile）
-const UI_FORBIDDEN_PATTERNS: RegExp[] = [
-  /@Component\b/,
-  /@Entry\b/,
-  /@Preview\b/,
-  /@Consume\b/,
-  /@Provide\b/,
-  /\bNavPathStack\b/,
-  /\bNavDestination\b/,
-  /@kit\.ArkUI/,
-  /@kit\.ArkGraphics/,
-  /\$r\s*\(/,
-  /\$rawfile\s*\(/,
-  /\bgetUIContext\b/,
-  /\bPromptAction\b/,
-  /\bshowToast\b/,
-  /@aspect\/CommUI/,
-  /\bAppStorage\b/,
-  /\bLocalStorage\b/,
-];
+interface UtUiImportBanModule {
+  UI_FORBIDDEN_PATTERNS: RegExp[];
+  scanForbiddenImports: (content: string, patterns: RegExp[]) => string[];
+}
 
-function scanForbiddenImports(content: string, patterns: RegExp[]): string[] {
-  const hits: string[] = [];
-  const lines = content.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!/^\s*import\b/.test(line) && !/^\s*from\s+['"]/.test(line)) continue;
-    for (const re of patterns) {
-      if (re.test(line)) hits.push(`L${i + 1}: ${line.trim()}`);
+function tryLoadUtUiImportBan(profileDir: string): UtUiImportBanModule | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require(path.join(profileDir, 'harness', 'ut-ui-import-ban')) as UtUiImportBanModule;
+    if (!Array.isArray(m.UI_FORBIDDEN_PATTERNS) || typeof m.scanForbiddenImports !== 'function') {
+      return null;
     }
+    return m;
+  } catch {
+    return null;
   }
-  // 对 $r( / showToast / getUIContext 这类函数/操作符，也扫整体文件（不仅 import）
-  const bodyPatterns = patterns.filter(p =>
-    /(\\\$r|showToast|getUIContext|NavPathStack|NavDestination)/.test(p.source),
-  );
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\s*import\b/.test(line) || /^\s*from\s+['"]/.test(line)) continue;
-    for (const re of bodyPatterns) {
-      if (re.test(line)) hits.push(`L${i + 1}: ${line.trim()}`);
-    }
-  }
-  return [...new Set(hits)];
+}
+
+/** UT 诊断里指向模板/示例的相对路径：由 profile ut-host-impl 提供；无 host 时用中性占位（避免根脚本硬编码某 profile）。 */
+function utSuggestionPaths(ctx: CheckContext): UtHostSuggestionPaths {
+  const h = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
+  if (h) return h.getUtSuggestionPaths();
+  return {
+    useCasesSchemaTemplateRel:
+      '（当前 project_profile skills/5-business-ut/templates/use-cases-schema.md，见 profile addendum）',
+    mockPlanSchemaTemplateRel:
+      '（当前 project_profile skills/5-business-ut/templates/mock-plan-schema.md，见 profile addendum）',
+    testabilityAuditTemplateRel:
+      '（当前 project_profile skills/5-business-ut/templates/testability-audit-template.md，见 profile addendum）',
+    branchExampleTestRel:
+      '（当前 project_profile skills/5-business-ut/examples/，见 profile addendum）',
+    utHostImplRefRel: '（当前 project_profile harness/ut-host-impl.ts）',
+  };
+}
+
+function isSuiteEntryShim(ctx: CheckContext, content: string): boolean {
+  const h = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
+  if (h) return h.isSuiteEntryShim(content);
+  return isSuiteEntryShimContent(content);
+}
+
+function structureRuleDefined(ctx: CheckContext, id: string): boolean {
+  const sc = ctx.phaseRule.structure_checks as Record<string, unknown> | undefined;
+  return Boolean(sc && Object.prototype.hasOwnProperty.call(sc, id));
 }
 
 // --------------------------------------------------------------------------
@@ -203,28 +203,6 @@ function truncateList(items: string[], max: number): string {
   return items.length > max ? `${shown}\n  ... 还有 ${items.length - max} 项` : shown;
 }
 
-function findFilesRecursive(dir: string, pattern: RegExp): string[] {
-  const results: string[] = [];
-  if (!fs.existsSync(dir)) return results;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...findFilesRecursive(full, pattern));
-    } else if (pattern.test(entry.name)) {
-      results.push(full);
-    }
-  }
-  return results;
-}
-
 // --------------------------------------------------------------------------
 // DAG Loading
 // --------------------------------------------------------------------------
@@ -283,23 +261,6 @@ function acceptanceHasUnitLayerRequirement(ctx: CheckContext): boolean {
 function designMentionsUseCaseChapter(ctx: CheckContext): boolean {
   const md = loadDesignMd(ctx);
   return !!md && md.includes('业务流程 UseCase 清单');
-}
-
-function loadUtFiles(ctx: CheckContext): Array<{ path: string; content: string }> {
-  const results: Array<{ path: string; content: string }> = [];
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) return results;
-
-  for (const mod of contracts.modules) {
-    const testDir = path.join(ctx.projectRoot, mod.package_path, 'src', 'ohosTest', 'ets', 'test');
-    const utFiles = findFilesRecursive(testDir, /\.test\.ets$/);
-    for (const utPath of utFiles) {
-      const relPath = path.relative(ctx.projectRoot, utPath).replace(/\\/g, '/');
-      results.push({ path: relPath, content: fs.readFileSync(utPath, 'utf-8') });
-    }
-  }
-
-  return results;
 }
 
 // --------------------------------------------------------------------------
@@ -585,117 +546,6 @@ function checkDagSourceFileExists(
   }];
 }
 
-function checkUtFileNaming(
-  ctx: CheckContext,
-  utFiles: Array<{ path: string }>,
-): CheckResult[] {
-  if (utFiles.length === 0) {
-    return [{
-      id: 'ut_file_naming',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_file_naming'),
-      severity: 'MAJOR',
-      status: 'SKIP',
-      details: '未找到 UT 文件。',
-    }];
-  }
-
-  const badNames: string[] = [];
-  for (const { path: utPath } of utFiles) {
-    const basename = path.basename(utPath);
-    if (!basename.endsWith('.test.ets')) {
-      badNames.push(utPath);
-    }
-  }
-
-  if (badNames.length === 0) {
-    return [{
-      id: 'ut_file_naming',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_file_naming'),
-      severity: 'MAJOR',
-      status: 'PASS',
-      details: `全部 ${utFiles.length} 个 UT 文件命名规范（*.test.ets）。`,
-    }];
-  }
-
-  return [{
-    id: 'ut_file_naming',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_file_naming'),
-    severity: 'MAJOR',
-    status: 'WARN',
-    details: `${badNames.length} 个 UT 文件命名不规范：\n${truncateList(badNames, 10)}`,
-    affected_files: badNames,
-    suggestion: 'UT 文件应以 .test.ets 结尾。',
-  }];
-}
-
-/** 仅导出 testsuite、用例在其它 *.test.ets 的 Hypium 入口文件（如 List.test.ets） */
-function isHypiumSuiteEntryShim(content: string): boolean {
-  return /export\s+default\s+function\s+testsuite\s*\(/.test(content) &&
-    !/\bdescribe\s*\(/.test(content);
-}
-
-function checkUtFrameworkImport(
-  ctx: CheckContext,
-  utFiles: Array<{ path: string; content: string }>,
-): CheckResult[] {
-  if (utFiles.length === 0) {
-    return [{
-      id: 'ut_framework_import',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_framework_import'),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: '未找到 UT 文件。',
-    }];
-  }
-
-  const missingImport: string[] = [];
-  const missingStructure: string[] = [];
-
-  for (const { path: utPath, content } of utFiles) {
-    if (isHypiumSuiteEntryShim(content)) continue;
-    if (!content.includes('@ohos/hypium')) {
-      missingImport.push(utPath);
-    }
-    if (!content.includes('describe(') || !content.includes('it(')) {
-      missingStructure.push(utPath);
-    }
-  }
-
-  const issues: string[] = [];
-  if (missingImport.length > 0) {
-    issues.push(`${missingImport.length} 个文件缺少 @ohos/hypium 导入：\n${truncateList(missingImport, 5)}`);
-  }
-  if (missingStructure.length > 0) {
-    issues.push(`${missingStructure.length} 个文件缺少 describe/it 测试结构：\n${truncateList(missingStructure, 5)}`);
-  }
-
-  if (issues.length === 0) {
-    return [{
-      id: 'ut_framework_import',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_framework_import'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `全部 ${utFiles.length} 个 UT 文件正确导入测试框架。`,
-    }];
-  }
-
-  return [{
-    id: 'ut_framework_import',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_framework_import'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: issues.join('\n'),
-    affected_files: [...new Set([...missingImport, ...missingStructure])],
-    suggestion: "UT 文件必须 import { describe, it, expect } from '@ohos/hypium' 并使用 describe/it 结构。",
-  }];
-}
-
 function checkUtAssertionExists(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
@@ -748,523 +598,6 @@ function checkUtAssertionExists(
 }
 
 /**
- * 方案 A：对所有 *.test.ets 运行 tsc --noEmit 静态编译检查。
- * 通过 Skill 3/5 失败案例：弱模型生成的 UT 大量编译不过，但 harness 只做
- * 正则静态扫描 → 假 PASS。本规则是进入 ut_hvigor_build（方案 B）前的第一道
- * 护城河，仅检查测试文件本体，不跟随 import（noResolve: true）。
- */
-function checkUtTscCompiles(
-  ctx: CheckContext,
-  utFiles: Array<{ path: string; content: string }>,
-): CheckResult[] {
-  if (utFiles.length === 0) {
-    return [{
-      id: 'ut_tsc_compiles',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: '未找到 UT 文件。',
-    }];
-  }
-
-  const absPaths = utFiles.map(f => path.join(ctx.projectRoot, f.path));
-  const report = compileTestFiles(absPaths, ctx.projectRoot);
-
-  if (report.diagnostics.length === 0) {
-    return [{
-      id: 'ut_tsc_compiles',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `${utFiles.length} 个 UT 文件 tsc --noEmit 通过（耗时 ${report.durationMs} ms）。`,
-    }];
-  }
-
-  const groupedByFile = new Map<string, number>();
-  for (const d of report.diagnostics) {
-    groupedByFile.set(d.file, (groupedByFile.get(d.file) ?? 0) + 1);
-  }
-
-  const preview = report.diagnostics.slice(0, 30).map(d =>
-    `${d.file}:${d.line}:${d.column}  ${d.code}  ${d.message}`,
-  );
-  const summaryByFile = Array.from(groupedByFile.entries())
-    .map(([f, n]) => `${f}: ${n} 条`)
-    .slice(0, 10);
-
-  return [{
-    id: 'ut_tsc_compiles',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details:
-      `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${report.durationMs} ms）。\n` +
-      `按文件：\n${summaryByFile.join('\n')}\n\n` +
-      `前 ${preview.length} 条诊断：\n${preview.join('\n')}`,
-    affected_files: Array.from(groupedByFile.keys()),
-    suggestion:
-      'UT 文件必须先通过 tsc --noEmit。请根据上方 TS 错误码修正代码；常见原因：' +
-      '(1) 符号未 import；(2) 调用签名与被测函数不符；(3) 类型字面量错误。' +
-      '修完再跑 harness；该规则是 ut_hvigor_build 之前的第一道护城河。',
-  }];
-}
-
-/**
- * 识别包含 UT 的模块：遍历 contracts.yaml.modules，
- * 过滤出 `<mod.package_path>/src/ohosTest/` 实际存在的模块。
- */
-function findModulesWithUt(ctx: CheckContext): Array<{ name: string; package_path: string }> {
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) return [];
-  const out: Array<{ name: string; package_path: string }> = [];
-  for (const mod of contracts.modules) {
-    const ohosTestDir = path.join(ctx.projectRoot, mod.package_path, 'src', 'ohosTest');
-    if (fs.existsSync(ohosTestDir)) {
-      out.push({ name: mod.name, package_path: mod.package_path });
-    }
-  }
-  return out;
-}
-
-/**
- * v2.2 方案 B：对 ohosTest 模块跑 hvigorw assembleHap。
- * 与 coding_hvigor_build 呼应，专门覆盖 UT 模块，兜底 tsc --noEmit 漏过的
- * 跨文件类型错误（UT 对被测 API 签名违约）。
- */
-function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
-  if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
-    const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
-    const details =
-      'project_profile 声明 ut.compile 为 SKIP：未调用 ohosTest hvigor assemble（canonical id: ut_compile）。';
-    return [
-      {
-        id: LEGACY_UT_COMPILE_ID,
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details,
-      },
-      {
-        id: CANONICAL_UT_COMPILE_ID,
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details,
-      },
-    ];
-  }
-
-  const mods = findModulesWithUt(ctx);
-  if (mods.length === 0) {
-    return [{
-      id: 'ut_hvigor_build',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
-    }];
-  }
-
-  const perModule: Array<{ module: string; result: any }> = [];
-  for (const mod of mods) {
-    const res = dispatchUtCompile(ctx, {
-      projectRoot: ctx.projectRoot,
-      harnessRoot: HARNESS_ROOT,
-      feature: ctx.feature,
-      phase: 'ut',
-      moduleName: mod.name,
-      target: 'ohosTest',
-      skipEnvVar: 'HARNESS_SKIP_HVIGOR',
-    });
-    perModule.push({ module: mod.name, result: res });
-    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
-  }
-
-  const bad = perModule.filter(x =>
-    x.result.toolMissing ||
-    x.result.skippedByEnv ||
-    (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0))
-  );
-
-  if (bad.length === 0) {
-    return [{
-      id: 'ut_hvigor_build',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。`,
-    }];
-  }
-
-  const first = bad[0].result;
-  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
-  const failureClass = classifyUtHvigorBuildFailure(first, ctx, bad[0].module, ctx.projectRoot);
-  if (first.toolMissing) {
-    lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
-    first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
-    lines.push('本规则不允许 SKIP —— 真实编译是出口条件。');
-  } else if (first.skippedByEnv) {
-    lines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置，显式跳过真实编译不被允许作为出口。');
-  } else {
-    lines.push(`exit_code=${first.exitCode}, durationMs=${first.durationMs}`);
-    lines.push(`失败归因：${failureClass.kind}`);
-    lines.push(`归因说明：${failureClass.explanation}`);
-    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
-    lines.push(`实际命令：${first.command ?? '(无)'}`);
-    if (first.metaPath) {
-      const metaAbs = path.isAbsolute(first.metaPath)
-        ? first.metaPath
-        : path.resolve(process.cwd(), first.metaPath);
-      if (fs.existsSync(metaAbs)) {
-        try {
-          const metaRaw = fs.readFileSync(metaAbs, 'utf-8');
-          lines.push('hvigor meta（节选）：');
-          lines.push(metaRaw.length > 4000 ? `${metaRaw.slice(0, 4000)}\n…` : metaRaw);
-        } catch {
-          /* best-effort */
-        }
-      }
-    }
-    if (first.errors.length > 0) {
-      lines.push(`解析出 ${first.errors.length} 条 error（前 10 条）：`);
-      first.errors.slice(0, 10).forEach((e: { file?: string; line?: number; code?: string; message: string }) =>
-        lines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`)
-      );
-    }
-    lines.push('');
-    lines.push('日志尾部（最多 8 KB）：');
-    lines.push(first.logExcerpt);
-  }
-
-  return [{
-    id: 'ut_hvigor_build',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: lines.join('\n'),
-    affected_files: [bad[0].module + '@ohosTest'],
-    failure_kind: failureClass.kind,
-    blocking_class: failureClass.kind === 'external_project_build_blocker'
-      ? 'external'
-      : failureClass.kind === 'project_dependency_missing'
-        ? 'project_dependency_missing'
-        : 'ut_hvigor_build',
-    suggestion:
-      failureClass.suggestion,
-  }];
-}
-
-type UtHvigorFailureKind =
-  | 'toolchain'
-  | 'env_skip'
-  | 'ut_hvigor_command_mismatch'
-  | 'ut_code'
-  | 'feature_code'
-  | 'project_dependency_missing'
-  | 'external_project_build_blocker'
-  | 'unknown';
-
-function classifyUtHvigorBuildFailure(
-  res: any,
-  ctx: CheckContext,
-  moduleName: string,
-  projectRoot: string,
-): { kind: UtHvigorFailureKind; explanation: string; suggestion: string } {
-  if (res.toolMissing) {
-    return {
-      kind: 'toolchain',
-      explanation: 'hvigor / DevEco 工具链不可用。',
-      suggestion: '按 framework.config.json > toolchain.devEcoStudio.installPath 配置 DevEco Studio 路径后重跑。',
-    };
-  }
-  if (res.skippedByEnv) {
-    return {
-      kind: 'env_skip',
-      explanation: 'HARNESS_SKIP_HVIGOR=1 显式跳过真实编译。',
-      suggestion: '取消 HARNESS_SKIP_HVIGOR 后重跑；真实编译是 UT 阶段出口条件。',
-    };
-  }
-
-  const mergedLog = mergeUtCompileLogForClassification(ctx, res);
-  if (looksLikeUtCompileCommandMismatch(ctx, mergedLog)) {
-    return {
-      kind: 'ut_hvigor_command_mismatch',
-      explanation:
-        'hvigor 日志/命令形态表明 ohosTest 构建未按 DevEco 默认打开（常见：isOhosTest=false、缺 --mode module、' +
-        'buildMode 非 test 等），容易走进错误构建图并把问题误判成 ohpm 依赖缺失。',
-      suggestion:
-        '先核对 harness 报告中的「实际命令」与 DevEco「Run ohosTest」是否一致（见 harness-runbook UT hvigor 小节）。' +
-        '在确认命令已对齐之前，不要优先执行 ohpm install / npm install / --clear-state；对齐后仍报 Failed to resolve OhmUrl 再按依赖路径处理。',
-    };
-  }
-
-  const log = mergedLog;
-  const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, res);
-  const hasDependencyResolutionFailure =
-    /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(log);
-  const touchesOhosTest = /\/src\/ohosTest\/|\\src\\ohosTest\\/i.test(log);
-  const touchesCurrentModuleMain = new RegExp(`${escapeRegExp(moduleName)}[/\\\\]src[/\\\\]main`, 'i').test(log);
-
-  if (depIssue.found && hasDependencyResolutionFailure && !touchesOhosTest) {
-    return {
-      kind: 'project_dependency_missing',
-      explanation:
-        'hvigor 日志显示工程依赖解析失败，当前失败更可能来自 ohpm/oh_modules/依赖声明或内网 registry，而不是 UT 代码本身。\n' +
-        formatDependencyIssue(depIssue),
-      suggestion:
-        '不要把该问题交给用户手工猜。先向用户展示方案：A) 确认后在工程根执行 ohpm install 并重跑；' +
-        'B) 仅读取 oh-package.json5 输出缺失依赖声明；C) registry/权限不确定时先确认内网源。' +
-        (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
-    };
-  }
-
-  if (hasDependencyResolutionFailure && !touchesOhosTest && !touchesCurrentModuleMain) {
-    return {
-      kind: 'external_project_build_blocker',
-      explanation: '依赖解析失败发生在非 ohosTest / 非当前模块 src/main 的项目级或传递依赖链路中；当前 UT 尚未真实运行，且不应通过修改 UT 掩盖该问题。',
-      suggestion: '先修复项目级依赖/构建问题，或在确认不是本轮 UT 引入后记录为外部阻塞并 clear-state；不要声称 UT 已通过。',
-    };
-  }
-
-  if (touchesOhosTest) {
-    return {
-      kind: 'ut_code',
-      explanation: '编译错误指向 src/ohosTest，优先按 UT import、类型签名或 Spy/Stub 实现问题处理。',
-      suggestion: '读取完整日志定位 ohosTest 文件/行，修复 UT 代码后重跑 harness。',
-    };
-  }
-
-  if (touchesCurrentModuleMain) {
-    return {
-      kind: 'feature_code',
-      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 Skill 5 源码修改授权流程。',
-      suggestion: '优先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时先向用户申请并登记 gap-notes。',
-    };
-  }
-
-  return {
-    kind: 'unknown',
-    explanation: '无法仅凭日志判断错误归属。',
-    suggestion: '读取完整日志（details 中 `日志落盘` 路径），定位文件/行；不要仅凭 ut_tsc_compiles PASS 宣称 UT 通过。',
-  };
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function formatDependencyIssue(issue: any): string {
-  const lines = [
-    `依赖线索：${issue.dependencies.length > 0 ? issue.dependencies.join(', ') : '(未解析出具体包名)'}`,
-    `harness node_modules：${issue.harnessNodeModulesReady ? '存在' : '缺失'}`,
-    `工程 oh_modules：${issue.ohModulesExists ? '存在' : '缺失'}`,
-    `扫描到 oh-package.json5：${issue.ohPackageFiles.length} 个`,
-  ];
-  if (issue.missingDeclarations.length > 0) {
-    lines.push(`未在 oh-package.json5 中声明的依赖：${issue.missingDeclarations.join(', ')}`);
-  }
-  if (issue.installHints.length > 0) {
-    lines.push('建议分支：');
-    issue.installHints.forEach((h: string) => lines.push(`  - ${h}`));
-  }
-  return lines.join('\n');
-}
-
-/**
- * v2.2 方案 C：ohosTest 装机运行 UT（hypium）。
- * 关键立场：无设备 → FAIL（不是 SKIP）。内网 harness 把"无设备"标绿是已知
- * 假 PASS 根因；本规则显式拒绝软通过。
- *
- * 执行序列：
- *   (1) hdc list targets 探测；
- *   (2) HARNESS_SKIP_HVIGOR_TEST=1 → FAIL；
- *   (3) 无设备 → FAIL 并提示启动模拟器 / 接入真机；
- *   (4) 有设备 → hvigorw test，解析 hypium 输出；
- *   (5) failed > 0 或 total == 0 → FAIL 并列出失败用例堆栈。
- */
-function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
-  if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
-    const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
-    const details =
-      'project_profile 声明 ut.run 为 SKIP：未执行 hdc/hvigor test（canonical id: ut_run）。';
-    return [
-      {
-        id: LEGACY_UT_RUN_ID,
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details,
-      },
-      {
-        id: CANONICAL_UT_RUN_ID,
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details,
-      },
-    ];
-  }
-  // 先检查本规则是否被 ut_hvigor_build 前置失败所短路
-  // 由 main checker 顺序调度决定，这里不主动短路，而是在 details 中提示依赖。
-
-  if (process.env.HARNESS_SKIP_HVIGOR_TEST) {
-    return [{
-      id: 'ut_hvigor_test',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        `HARNESS_SKIP_HVIGOR_TEST=${process.env.HARNESS_SKIP_HVIGOR_TEST} 已设置。` +
-        `显式跳过 UT 实际装机运行**不被允许**作为出口条件。请去掉该环境变量并准备好真机/模拟器后重跑。`,
-      suggestion: '取消 HARNESS_SKIP_HVIGOR_TEST 环境变量，启动模拟器或接入真机后重跑。',
-    }];
-  }
-
-  const mods = findModulesWithUt(ctx);
-  if (mods.length === 0) {
-    return [{
-      id: 'ut_hvigor_test',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
-    }];
-  }
-
-  const devProbe = probeUtRunDevices(ctx);
-  if (!devProbe.available) {
-    const head = devProbe.hdcPresent
-      ? `hdc list targets 返回空（原始输出：${devProbe.raw || '(空)'}）`
-      : `未找到 hdc 工具：${devProbe.raw || '(无详细)'}`;
-    return [{
-      id: 'ut_hvigor_test',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        `${head}\n\n` +
-        `Skill 5 必须在真机 / 模拟器上实际运行 UT。当前未检测到可用目标，因此**不能**作为出口条件放行。\n` +
-        `修复指引：\n` +
-        `  (1) 在 DevEco Studio 或 Remote Emulator 启动一台 HarmonyOS 设备；\n` +
-        `  (2) 运行 \`hdc list targets\` 确认输出非空；\n` +
-        `  (3) 重跑 Skill 5 harness。\n` +
-        `  (4) 本规则不允许 SKIP —— 这是内网历史假 PASS 的根因。`,
-      suggestion: '接入真机 / 启动模拟器后重跑；不允许以"本地无设备"为由软通过。',
-    }];
-  }
-
-  const perModule: Array<{ module: string; result: any }> = [];
-  for (const mod of mods) {
-    const res = dispatchUtRun(ctx, {
-      projectRoot: ctx.projectRoot,
-      harnessRoot: HARNESS_ROOT,
-      feature: ctx.feature,
-      phase: 'ut',
-      moduleName: mod.name,
-      // v2.3 P2：runHvigorTest 内部走 genOnDeviceTestHap → hdc install → aa test
-      // 链路，需要模块 srcPath 来定位 .hap 输出目录、读 ohosTest module.json5。
-      moduleSrcPath: mod.package_path,
-    });
-    perModule.push({ module: mod.name, result: res });
-    if (res.toolMissing || (res.executed && (res.exitCode !== 0 || (res.testResult && res.testResult.failed > 0)))) {
-      break;
-    }
-  }
-
-  const bad = perModule.filter(x => {
-    const r = x.result;
-    if (r.toolMissing) return true;
-    if (!r.executed) return true;
-    if (r.exitCode !== 0) return true;
-    const t = r.testResult;
-    if (!t) return true;
-    if (t.total <= 0) return true;
-    if (t.failed > 0) return true;
-    return false;
-  });
-
-  if (bad.length === 0) {
-    const totals = perModule.reduce(
-      (acc, x) => ({
-        total: acc.total + (x.result.testResult?.total ?? 0),
-        passed: acc.passed + (x.result.testResult?.passed ?? 0),
-      }),
-      { total: 0, passed: 0 },
-    );
-    return [{
-      id: 'ut_hvigor_test',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        `全部 ${perModule.length} 个 ohosTest 模块装机执行通过：` +
-        `total=${totals.total}, passed=${totals.passed}, failed=0；` +
-        `目标设备：${devProbe.targets.join(' / ')}`,
-    }];
-  }
-
-  const first = bad[0].result;
-  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
-  // v2.3 P2：runHvigorTest 在 errors[0].message 里会标注"失败阶段：metadata|hap_not_found|install|run|no_pass"，
-  // 让用户一眼定位。这里把它前置展示。
-  const stageHint = first.errors?.find((e: { message: string }) => /失败阶段：/.test(e.message))?.message;
-  if (stageHint) {
-    lines.push(stageHint + '（详见日志）');
-  }
-  if (first.toolMissing) {
-    lines.push('原因：未找到 hvigor / hdc 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径，hdc 由 DevEco SDK toolchains 提供）。');
-    first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
-  } else if (!first.executed) {
-    lines.push(`原因：hvigor / hdc 未执行，日志：${first.logExcerpt}`);
-  } else if (first.exitCode !== 0 && !first.testResult) {
-    lines.push(`链路异常退出 exit_code=${first.exitCode}。`);
-    lines.push('日志尾部：');
-    lines.push(first.logExcerpt);
-  } else if (first.testResult) {
-    const t = first.testResult;
-    lines.push(`hypium 结果：total=${t.total}, passed=${t.passed}, failed=${t.failed}, skipped=${t.skipped}`);
-    if (t.total === 0) {
-      lines.push('警告：total=0 表示 hvigor test 没有跑到任何用例。请检查 List.test.ets 是否正确注册了所有 *.test.ets 入口。');
-    }
-    if (t.failures.length > 0) {
-      lines.push(`失败用例（前 15 条）：`);
-      t.failures.slice(0, 15).forEach((f: { suite: string; test: string; message: string }) =>
-        lines.push(`  - [${f.suite}] ${f.test}  →  ${f.message}`)
-      );
-    }
-    lines.push('');
-    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
-  }
-
-  return [{
-    id: 'ut_hvigor_test',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: lines.join('\n'),
-    affected_files: [bad[0].module + '@ohosTest'],
-    suggestion:
-      '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
-      '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。',
-  }];
-}
-
-/**
  * v2.2 Skill 5 红线：检测未授权的业务源码变更。
  * 流程：
  *   (1) `HARNESS_DIFF_BASE_REF` 显式值；否则读 trace.start_commit；（再否则由 git-diff 默认 working）
@@ -1276,8 +609,11 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
  */
 const UT_SRC_PROTECTED_PREFIXES = ['02-Feature/', '01-Business/', '00-Common/'];
 
-function filterProtected(changes: string[]): string[] {
-  return filterBusinessSourceChanges(changes, UT_SRC_PROTECTED_PREFIXES);
+function filterProtected(ctx: CheckContext, changes: string[]): string[] {
+  const extra = tryLoadDiffExcludeTestPathRegexes(ctx.resolvedProfile.profileDir) ?? [];
+  return filterBusinessSourceChanges(changes, UT_SRC_PROTECTED_PREFIXES, {
+    excludeTestPathRegexes: extra,
+  });
 }
 
 /**
@@ -1373,11 +709,11 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const businessChanges = filterProtected(diff.changedFiles);
-  const committedBusinessChanges = filterProtected(diff.committedFiles);
-  const workingBusinessChanges = filterProtected(diff.workingTreeFiles);
-  const stagedBusinessChanges = filterProtected(diff.stagedFiles);
-  const untrackedBusinessChanges = filterProtected(diff.untrackedFiles);
+  const businessChanges = filterProtected(ctx, diff.changedFiles);
+  const committedBusinessChanges = filterProtected(ctx, diff.committedFiles);
+  const workingBusinessChanges = filterProtected(ctx, diff.workingTreeFiles);
+  const stagedBusinessChanges = filterProtected(ctx, diff.stagedFiles);
+  const untrackedBusinessChanges = filterProtected(ctx, diff.untrackedFiles);
   const staleness = analyzeDiffStaleness(diff);
   const baseHint = envBaseRef
     ? `HARNESS_DIFF_BASE_REF=${envBaseRef}`
@@ -1562,83 +898,6 @@ function checkMockStubForAsync(
   }];
 }
 
-function checkTestRegistration(
-  ctx: CheckContext,
-  utFiles: Array<{ path: string }>,
-): CheckResult[] {
-  if (utFiles.length === 0) {
-    return [{
-      id: 'test_registration',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'test_registration'),
-      severity: 'MAJOR',
-      status: 'SKIP',
-      details: '未找到 UT 文件。',
-    }];
-  }
-
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) {
-    return [{
-      id: 'test_registration',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'test_registration'),
-      severity: 'MAJOR',
-      status: 'SKIP',
-      details: 'contracts.yaml 无 modules 列表。',
-    }];
-  }
-
-  const unregistered: string[] = [];
-
-  for (const mod of contracts.modules) {
-    const listTestPath = path.join(
-      ctx.projectRoot, mod.package_path, 'src', 'ohosTest', 'ets', 'test', 'List.test.ets',
-    );
-
-    if (!fs.existsSync(listTestPath)) {
-      const modUtFiles = utFiles.filter(f => f.path.includes(mod.package_path));
-      if (modUtFiles.length > 0) {
-        unregistered.push(`${mod.name}: List.test.ets 不存在（${modUtFiles.length} 个 UT 文件无法注册）`);
-      }
-      continue;
-    }
-
-    const listContent = fs.readFileSync(listTestPath, 'utf-8');
-    const modUtFiles = utFiles.filter(f =>
-      f.path.includes(mod.package_path) && !f.path.endsWith('List.test.ets'),
-    );
-
-    for (const utFile of modUtFiles) {
-      const basename = path.basename(utFile.path, '.test.ets');
-      if (!listContent.includes(basename)) {
-        unregistered.push(`${mod.name}: ${path.basename(utFile.path)} 未在 List.test.ets 中注册`);
-      }
-    }
-  }
-
-  if (unregistered.length === 0) {
-    return [{
-      id: 'test_registration',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'test_registration'),
-      severity: 'MAJOR',
-      status: 'PASS',
-      details: '所有 UT 文件已在 List.test.ets 中注册。',
-    }];
-  }
-
-  return [{
-    id: 'test_registration',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'test_registration'),
-    severity: 'MAJOR',
-    status: 'WARN',
-    details: `${unregistered.length} 个注册问题：\n${truncateList(unregistered, 10)}`,
-    suggestion: '所有 UT 文件的导出函数必须在 List.test.ets 中注册。',
-  }];
-}
-
 // --------------------------------------------------------------------------
 // v2 新增 Structure Checks — use-cases.yaml 自身
 // --------------------------------------------------------------------------
@@ -1677,7 +936,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
     severity: 'MINOR',
     status: 'WARN',
     details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 doc/features/${ctx.feature}/use-cases.yaml 以承载端到端分支。`,
-    suggestion: '若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md 产出；否则可忽略本告警。',
+    suggestion: `若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 ${utSuggestionPaths(ctx).useCasesSchemaTemplateRel} 产出；否则可忽略本告警。`,
   }];
 }
 
@@ -1777,7 +1036,7 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${issues.length} 处 Schema 问题：\n${truncateList(issues, 20)}`,
-    suggestion: '请参照 framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md 补齐 Schema。',
+    suggestion: `请参照 ${utSuggestionPaths(ctx).useCasesSchemaTemplateRel} 补齐 Schema。`,
   }];
 }
 
@@ -2146,6 +1405,30 @@ function checkUtImportWhitelist(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
 ): CheckResult[] {
+  if (!structureRuleDefined(ctx, 'ut_import_whitelist')) {
+    return [{
+      id: 'ut_import_whitelist',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_import_whitelist'),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: '当前合并后的 phase-rules 未声明 ut_import_whitelist，跳过。',
+    }];
+  }
+
+  const ban = tryLoadUtUiImportBan(ctx.resolvedProfile.profileDir);
+  if (!ban || ban.UI_FORBIDDEN_PATTERNS.length === 0) {
+    return [{
+      id: 'ut_import_whitelist',
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_import_whitelist'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        'phase-rules 声明了 ut_import_whitelist，但当前 profile 缺少有效的 harness/ut-ui-import-ban（模块缺失或 UI_FORBIDDEN_PATTERNS 为空）。',
+    }];
+  }
+
   if (utFiles.length === 0) {
     return [{
       id: 'ut_import_whitelist',
@@ -2160,8 +1443,8 @@ function checkUtImportWhitelist(
   const offences: string[] = [];
   const affected: string[] = [];
   for (const { path: p, content } of utFiles) {
-    if (isHypiumSuiteEntryShim(content)) continue;
-    const hits = scanForbiddenImports(content, UI_FORBIDDEN_PATTERNS);
+    if (isSuiteEntryShim(ctx, content)) continue;
+    const hits = ban.scanForbiddenImports(content, ban.UI_FORBIDDEN_PATTERNS);
     if (hits.length > 0) {
       affected.push(p);
       for (const h of hits) offences.push(`${p} > ${h}`);
@@ -2187,7 +1470,8 @@ function checkUtImportWhitelist(
     status: 'FAIL',
     details: `${offences.length} 处禁止符号出现在 UT：\n${truncateList(offences, 20)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'UT 允许 import：@ohos/hypium、被测模块的 data / domain / 业务编排类及其数据模型、同目录 spy/；禁止 @Component / struct / NavPathStack / showToast / $r / $rawfile / AppStorage / LocalStorage / @kit.ArkUI / @kit.ArkGraphics 等 UI 符号。请将 UI 侧验证下沉到 Skill 6 真机测试。',
+    suggestion:
+      'UT 允许 import：profile addendum 列出的测试框架包、被测模块的 data / domain / 业务编排类及其数据模型、同目录 spy/；禁止 UI 组件/导航/Toast/资源宏等（完整清单以 profile 的 `ut-ui-import-ban` 与 addendum 为准）。请将 UI 侧验证下沉到 Skill 6 真机测试。',
   }];
 }
 
@@ -2289,7 +1573,7 @@ function checkItNameHasAcOrBranchTag(
   const untagged: string[] = [];
   const affected: string[] = [];
   for (const { path: p, content } of utFiles) {
-    if (isHypiumSuiteEntryShim(content)) continue;
+    if (isSuiteEntryShim(ctx, content)) continue;
     const blocks = extractItBlocks(content);
     for (const b of blocks) {
       if (!/^\s*\[(AC|BRANCH)-/.test(b.name)) {
@@ -2347,7 +1631,7 @@ function checkItDrivesFlow(
   const stateRe = /\.\s*state\s*\.\s*\w+|phase\s*[:=]\s*['"]?\w+/g;
 
   for (const { path: p, content } of utFiles) {
-    if (isHypiumSuiteEntryShim(content)) continue;
+    if (isSuiteEntryShim(ctx, content)) continue;
     const blocks = extractItBlocks(content);
     for (const b of blocks) {
       const portHits = b.body.match(portCallRe) ?? [];
@@ -2698,20 +1982,26 @@ function checkDagToSource(
 // v2 新增 Traceability Checks — branch / AC / BD 覆盖
 // --------------------------------------------------------------------------
 
-function collectItNames(utFiles: Array<{ path: string; content: string }>): string[] {
+function collectItNames(
+  ctx: CheckContext,
+  utFiles: Array<{ path: string; content: string }>,
+): string[] {
   const names: string[] = [];
   for (const { content } of utFiles) {
-    if (isHypiumSuiteEntryShim(content)) continue;
+    if (isSuiteEntryShim(ctx, content)) continue;
     const blocks = extractItBlocks(content);
     for (const b of blocks) names.push(b.name);
   }
   return names;
 }
 
-function collectItBlocks(utFiles: Array<{ path: string; content: string }>): Array<{ path: string; name: string; body: string }> {
+function collectItBlocks(
+  ctx: CheckContext,
+  utFiles: Array<{ path: string; content: string }>,
+): Array<{ path: string; name: string; body: string }> {
   const blocks: Array<{ path: string; name: string; body: string }> = [];
   for (const f of utFiles) {
-    if (isHypiumSuiteEntryShim(f.content)) continue;
+    if (isSuiteEntryShim(ctx, f.content)) continue;
     for (const b of extractItBlocks(f.content)) {
       blocks.push({ path: f.path, ...b });
     }
@@ -2745,7 +2035,7 @@ function checkBranchCoverageFull(
     }];
   }
 
-  const blocks = collectItBlocks(utFiles);
+  const blocks = collectItBlocks(ctx, utFiles);
   const missing: string[] = [];
 
   for (const uc of spec.use_cases ?? []) {
@@ -2778,7 +2068,7 @@ function checkBranchCoverageFull(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${missing.length} 个 branch 无 UT 覆盖：\n${truncateList(missing, 15)}`,
-    suggestion: '请为每个 branch 补充一条 it()，用例名建议格式 [BRANCH-<id>][AC-<id>] ...；参考 framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/card_opening.test.ets。',
+    suggestion: `请为每个 branch 补充一条 it()，用例名建议格式 [BRANCH-<id>][AC-<id>] ...；参考 ${utSuggestionPaths(ctx).branchExampleTestRel}。`,
   }];
 }
 
@@ -2808,8 +2098,8 @@ function checkUtCasePerUnitAc(
     }];
   }
 
-  const itNames = collectItNames(utFiles);
-  const blocks = collectItBlocks(utFiles);
+  const itNames = collectItNames(ctx, utFiles);
+  const blocks = collectItBlocks(ctx, utFiles);
 
   const isUnit = (layer?: string) => layer === 'unit' || layer === 'both' || layer === undefined;
 
@@ -2893,8 +2183,8 @@ function checkBoundaryCoverage(
     }];
   }
 
-  const itNames = collectItNames(utFiles);
-  const blocks = collectItBlocks(utFiles);
+  const itNames = collectItNames(ctx, utFiles);
+  const blocks = collectItBlocks(ctx, utFiles);
 
   // dag-level AC/BD 引用
   const dagLinked = new Set<string>();
@@ -3050,7 +2340,7 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details:
         `缺少 ${path.relative(ctx.projectRoot, p).replace(/\\/g, '/')}\n` +
-        `模板：framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md`,
+        `模板：${utSuggestionPaths(ctx).testabilityAuditTemplateRel}`,
       suggestion: '为每条 unit/both 的 AC/BD 写入 testability-audit.md（Markdown 内嵌 YAML，根字段 records[]）',
     }];
   }
@@ -3203,7 +2493,7 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
       status: 'FAIL',
       details:
         `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[]）。\n` +
-        `模板：framework/profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md`,
+        `模板：${utSuggestionPaths(ctx).mockPlanSchemaTemplateRel}`,
       suggestion: '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 Spy 目标类与 presets。',
     }];
   }
@@ -3521,7 +2811,7 @@ function buildUtRunStatusResult(results: CheckResult[]): CheckResult {
     'UT 阶段状态面板：',
     `- 静态/结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
     `- tsc 静态编译：${statusLabel(tsc)}`,
-    `- ohosTest hvigor 编译：${statusLabel(build)}`,
+    `- 宿主测试模块编译：${statusLabel(build)}`,
     `- 真机/模拟器执行：${shortCircuited ? '未执行（ut_hvigor_build 失败短路）' : statusLabel(test)}`,
     `- 源码改动检查：${statusLabel(mutation)}`,
     `- 当前是否可以宣称 UT 完成：${canClaimDone ? '是' : '否'}`,
@@ -3545,8 +2835,23 @@ const checker: PhaseChecker = {
   phase: 'ut',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    const utHost = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
+    if (!utHost) {
+      return [
+        {
+          id: 'ut_profile_host_missing',
+          category: 'structure',
+          description: 'UT 宿主实现（profile harness/ut-host-impl）',
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `当前 project_profile 未提供可用的 utHostImpl（profileDir=${ctx.resolvedProfile.profileDir}）。`,
+          suggestion: '请为宿主 profile 实现并导出 harness/ut-host-impl.ts；参考 framework/profiles/hmos-app/harness/ut-host-impl.ts。',
+        },
+      ];
+    }
+
     const dags = loadDagFiles(ctx);
-    const utFiles = loadUtFiles(ctx);
+    const utFiles = utHost.loadUtFiles(ctx);
     const mockPlanDoc = parseMockPlanFile(mockPlanPath(ctx));
     const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
@@ -3579,14 +2884,14 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDagCohesion(ctx, dags), 'dag_cohesion'));
     results.push(...safeRun(() => checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc), 'dag_spy_preset_resolvable'));
 
-    // v1 保留 + v2 修订：UT 代码
-    results.push(...safeRun(() => checkUtFileNaming(ctx, utFiles), 'ut_file_naming'));
-    results.push(...safeRun(() => checkUtFrameworkImport(ctx, utFiles), 'ut_framework_import'));
+    // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
+    results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, utFiles), 'ut_file_naming'));
+    results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, utFiles), 'ut_framework_import'));
     results.push(...safeRun(() => checkUtAssertionExists(ctx, utFiles), 'ut_assertion_exists'));
     // v2.2 方案 A：静态 tsc --noEmit 检查
-    results.push(...safeRun(() => checkUtTscCompiles(ctx, utFiles), 'ut_tsc_compiles'));
-    // v2.2 方案 B：hvigor 真实编译（ohosTest 模块）
-    const hvigorBuildResults = safeRun(() => checkUtHvigorBuild(ctx), 'ut_hvigor_build');
+    results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, utFiles), 'ut_tsc_compiles'));
+    // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
+    const hvigorBuildResults = safeRun(() => utHost.checkUtHvigorBuild(ctx), 'ut_hvigor_build');
     results.push(...hvigorBuildResults);
     const buildFailed = hvigorBuildResults.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL');
     const compileSkippedProfile = hvigorBuildResults.some(
@@ -3626,12 +2931,12 @@ const checker: PhaseChecker = {
         },
       );
     } else {
-      results.push(...safeRun(() => checkUtHvigorTest(ctx), 'ut_hvigor_test'));
+      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：Skill 5 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
     results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, utFiles), 'mock_stub_for_async'));
-    results.push(...safeRun(() => checkTestRegistration(ctx, utFiles), 'test_registration'));
+    results.push(...safeRun(() => utHost.checkTestRegistration(ctx, utFiles), 'test_registration'));
     // v2 C: UT 代码
     results.push(...safeRun(() => checkUtImportWhitelist(ctx, utFiles), 'ut_import_whitelist'));
     results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, utFiles), 'boundaries_all_stubbed'));

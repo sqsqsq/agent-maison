@@ -21,8 +21,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { detectProduct } from '../../scripts/utils/hvigor-runner';
-import { clearFrameworkConfigCache } from '../../config';
+import { detectProduct } from '../../../../../harness/scripts/utils/hvigor-runner';
+import { clearFrameworkConfigCache } from '../../../../../harness/config';
 
 export interface UnitCaseResult {
   name: string;
