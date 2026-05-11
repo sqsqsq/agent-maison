@@ -148,7 +148,7 @@
   3. 对比：
      - PRD 中每条跳转路径是否在导航设计中有对应配置
      - 导航设计中的返回路径是否与 PRD 流程一致
-     - NavDestination 页面是否覆盖了所有需要跳转的目标页
+     - 路由设计中的目标页 / 路由项是否覆盖 PRD 流程中的每条跳转（宿主导航 API 以 `project_profile` 为准；补充语义见同目录 `verify-design.overlay.md`，由 profile 挂载）
   4. 若存在 PRD 流程图中的路径在导航设计中缺失，判为 FAIL
 
 ### 检查 9: 验收标准到接口追溯 (acceptance_to_interface)
