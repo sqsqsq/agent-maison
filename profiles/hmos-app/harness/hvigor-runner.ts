@@ -1326,7 +1326,7 @@ export function runHvigorAssembleApp(
 }
 
 // ----------------------------------------------------------------------------
-// args 装配（单测覆盖：tests/unit/hvigor-args.unit.test.ts）
+// args 装配（单测覆盖：profiles/hmos-app/harness/tests/unit/hvigor-args.unit.test.ts）
 // ----------------------------------------------------------------------------
 //
 // 把 args 装配从 runHvigorBuild / runHvigorAssembleApp 抽出来，独立函数有两个
