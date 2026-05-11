@@ -1,0 +1,50 @@
+# generic profile：Skill 资产委托到 hmos-app 树（本 profile 不重复拷贝宿主模板正文）。
+# 解析规则见 framework/harness/scripts/utils/profile-skill-assets.ts
+# -----------------------------------------------------------------------------
+
+schema_version: "1.0"
+profile: generic
+
+assets:
+  00-framework-init:
+    preset_5_layer_sample: framework/profiles/hmos-app/skills/00-framework-init/templates/preset-5-layer.sample.json
+
+  0-catalog-bootstrap:
+    examples_wallet_domain: framework/profiles/hmos-app/skills/0-catalog-bootstrap/examples-wallet-domain.md
+    module_card_template: framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/module-card-template.yaml
+    glossary_term_template: framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml
+
+  1-prd-design:
+    prd_template: framework/profiles/hmos-app/skills/1-prd-design/templates/prd-template.md
+    example_prd: framework/profiles/hmos-app/skills/1-prd-design/examples/example-prd.md
+    examples_prd_mapping: framework/profiles/hmos-app/skills/1-prd-design/examples-prd-mapping.md
+
+  2-requirement-design:
+    design_template: framework/profiles/hmos-app/skills/2-requirement-design/templates/design-template.md
+    api_spec_template: framework/profiles/hmos-app/skills/2-requirement-design/templates/api-spec.md
+    data_model_template: framework/profiles/hmos-app/skills/2-requirement-design/templates/data-model.md
+    example_design: framework/profiles/hmos-app/skills/2-requirement-design/examples/example-design.md
+
+  3-coding:
+    coding_standards: framework/profiles/hmos-app/skills/3-coding/templates/coding-standards.md
+    module_scaffold: framework/profiles/hmos-app/skills/3-coding/templates/module-scaffold.md
+    arkts_pitfalls: framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md
+    arkui_patterns: framework/profiles/hmos-app/skills/3-coding/reference/arkui-patterns.md
+    harmony_api_guide: framework/profiles/hmos-app/skills/3-coding/reference/harmony-api-guide.md
+
+  4-code-review:
+    review_checklist: framework/profiles/hmos-app/skills/4-code-review/templates/review-checklist.md
+
+  5-business-ut:
+    use_cases_schema: framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md
+    dag_schema: framework/profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md
+    ut_template: framework/profiles/hmos-app/skills/5-business-ut/templates/ut-template.md
+    mock_strategy: framework/profiles/hmos-app/skills/5-business-ut/templates/mock-strategy.md
+    testability_audit_template: framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md
+    mock_plan_schema: framework/profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md
+    card_opening_dir: framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening
+    card_opening_use_cases: framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/use-cases.yaml
+
+  6-device-testing:
+    test_plan_template: framework/profiles/hmos-app/skills/6-device-testing/templates/test-plan-template.md
+    test_report_template: framework/profiles/hmos-app/skills/6-device-testing/templates/test-report-template.md

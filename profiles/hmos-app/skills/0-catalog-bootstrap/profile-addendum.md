@@ -2,15 +2,31 @@
 
 从 **`oh-package.json5` / 模块目录 / `Index.ets`** 等宿主信号推导模块画像时，采用本 profile 提供的 **infer 提示与模块卡模板**。
 
-## Profile 资产
+## 权威资产清单
 
 | 用途 | 路径 |
 |------|------|
 | 模块推断提示 | `framework/profiles/hmos-app/skills/0-catalog-bootstrap/prompts/` |
 | 模块卡草稿模板 | `framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/module-card-template.yaml` |
 | catalog 规则 overlay | `framework/profiles/hmos-app/phase-rules-overlays/catalog-rules.overlay.yaml` |
+| 资产机器清单（根 SKILL 的 `profile-skill-asset:`） | `framework/profiles/hmos-app/skills/skill-assets.yaml` |
 
 合并入 `doc/module-catalog.yaml` / `doc/glossary.yaml` 前，仍需通过 `harness-runner --phase catalog` / `--phase glossary`；**不得**在 catalog 中发明未在代码或已确认文档中出现的模块 ID。
+
+### module-card 草稿模板（字段指引）
+
+- 所有字段都必填（即便值为 `[]` 也要显式写出）。
+- 不要臆造 `NOT_responsible_for` / `easily_confused_with`；无依据则 `[]`。
+- `confirmed_by_user` 默认为 `false`；仅当用户审阅后手改为 `true` 才允许合并进 `doc/module-catalog.yaml`。
+- `signals_used` 须反映真实读过的输入（architecture / README / `oh-package.json5` / 导出入口等）。
+
+### skill-assets.yaml 键
+
+| 键 | 相对 `skills/0-catalog-bootstrap/` |
+|----|--------------------------------------|
+| `examples_wallet_domain` | `examples-wallet-domain.md` |
+| `module_card_template` | `templates/module-card-template.yaml` |
+| `glossary_term_template` | `templates/glossary-term-template.yaml` |
 
 ### `module-card` · `format` 合法取值
 

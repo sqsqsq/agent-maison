@@ -30,6 +30,7 @@ import {
   SourceTimestamp,
   FreshnessReport,
 } from './utils/doc-freshness';
+import { validateProfileSkillAssetsForProject } from './utils/profile-skill-assets';
 
 const INVENTORY_REL = 'framework/docs/DOC_INVENTORY.yaml';
 
@@ -194,6 +195,34 @@ function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckR
   }];
 }
 
+function checkProfileSkillAssetsResolvable(ctx: CheckContext): CheckResult[] {
+  const v = validateProfileSkillAssetsForProject(ctx.projectRoot);
+  if (v.ok) {
+    return [
+      {
+        id: 'profile_skill_assets_resolvable',
+        category: 'traceability',
+        description: ruleDesc(ctx, 'traceability_checks', 'profile_skill_assets_resolvable'),
+        severity: 'MAJOR',
+        status: 'PASS',
+        details: 'profile skill-assets 清单、根 SKILL 资产引用与相对链接校验通过。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'profile_skill_assets_resolvable',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'profile_skill_assets_resolvable'),
+      severity: 'MAJOR',
+      status: 'FAIL',
+      details: v.errors.join('\n'),
+      suggestion:
+        '1) 补全 framework/profiles/<project_profile>/skills/skill-assets.yaml；2) 将根 SKILL 中失效的 templates/ 链接改为 `profile-skill-asset:...`；3) 删除根 SKILL 中对其它 profile 物理目录的硬编码路径。',
+    },
+  ];
+}
+
 function checkDocFreshness(
   ctx: CheckContext,
   docs: DocEntry[],
@@ -289,6 +318,7 @@ const checker: PhaseChecker = {
 
     results.push(...checkDocFilesExist(ctx, docs));
     results.push(...checkSourcePathsResolvable(ctx, docs));
+    results.push(...checkProfileSkillAssetsResolvable(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

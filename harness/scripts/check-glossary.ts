@@ -142,7 +142,8 @@ function checkTermRequiredFields(ctx: CheckContext, glossary: Glossary): CheckRe
     description: ruleDesc(ctx, 'structure_checks', 'term_required_fields'),
     severity: 'BLOCKER', status: 'FAIL',
     details: `${missing.length} 处缺失：${missing.slice(0, 10).join('、')}${missing.length > 10 ? ' …' : ''}`,
-    suggestion: '对照 framework/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml 补齐。',
+    suggestion:
+        `对照 framework/profiles/${ctx.resolvedProfile.name}/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml 补齐。`,
     affected_files: [relGlossary(ctx.projectRoot)],
   }];
 }

@@ -1,79 +1,39 @@
-# ============================================================================
-# 模块画像草稿 — staging 文件
-# ============================================================================
-# 路径: doc/catalog-staging/<ModuleName>.yaml
-# 说明: 一条 catalog 条目的草稿，用户确认后才合并到 doc/module-catalog.yaml
-#
-# 字段填写指引:
-#   - 所有字段都必填（即便值为 []，也要显式写出来）
-#   - 不要瞎编 NOT_responsible_for / easily_confused_with，没有依据就留 []
-#   - confirmed_by_user 默认 false；用户审阅后手动改为 true 才允许合并
-# ============================================================================
+# 模块画像草稿 — staging：`doc/catalog-staging/<ModuleName>.yaml`
+# 合并前须 `confirmed_by_user: true`；字段语义与填写指引见同目录上级 `profile-addendum.md` →「module-card 草稿模板」。
 
-# 用户确认标志：AI 不得修改此字段；用户审阅完成后手动改为 true
+# 用户确认标志：AI 不得修改；用户审阅完成后手动改为 true
 confirmed_by_user: false
 
 # 生成元数据（AI 填）
 generated_by: "<model-id,如 claude-sonnet-4 / minimax-2.5>"
 generated_at: "<YYYY-MM-DD HH:mm:ss>"
 signals_used:
-  # AI 真实读到的输入信号，用于用户审计
-  architecture_doc: false   # 是否读了 doc/architecture.md 里该模块的小节
-  module_readme: false      # 是否读了 <module_path>/README.md
-  oh_package_json5: true    # 几乎总会读
-  index_ets: true           # 几乎总会读
+  architecture_doc: false
+  module_readme: false
+  oh_package_json5: true
+  index_ets: true
   directory_tree_depth: 3
-  sampled_files: []         # 读了头部的关键文件列表
+  sampled_files: []
 
 # ----------------------------------------------------------------------------
-# 实际画像（与 doc/module-catalog.yaml 里的每条 module 同构）
+# 实际画像（与 doc/module-catalog.yaml 每条 module 同构）
 # ----------------------------------------------------------------------------
 module:
-  # 与目录名 / oh-package.json5 的 name 严格一致（PascalCase）
   name: "<ModuleName>"
-
-  # 从物理路径前缀推出，必须是 5 个值之一
   layer: "01-Product | 02-Feature | 03-CommonBusiness | 04-BusinessBase | 05-SystemBase"
-
-  # 若 architecture.md 标了"顶层/中间/底层"就填对应值；无则填 null
   sub_layer: null
-
-  # HAP or HAR；根据 oh-package.json5 的 module.type 判断
   format: "HAR"
-
-  # 一句话核心价值。优先复制 architecture.md 原文。禁止"xxx 模块"这类空话
   one_liner: "<一句话描述该模块的对外核心价值>"
-
-  # 对外提供什么能力 / 持有什么数据（3~6 条）
   responsibilities:
     - "<responsibility 1>"
     - "<responsibility 2>"
-
-  # **最重要**：哪些事容易被误塞进来但不归它管（至少 3 条；若实在想不到，写具体的"非"场景也行）
-  # 这里的每一条都要对应一个真实的反模式（"过去有人想这么做但不对"）
   NOT_responsible_for:
     - "<不负责做的事 1>"
     - "<不负责做的事 2>"
     - "<不负责做的事 3>"
-
-  # 业务团队 / PM / 用户在口头或 PRD 里会用哪些词指代本模块
-  # 这是反向索引：glossary 会靠这些词反查出 canonical_module
   typical_business_terms:
     - "<业务术语 1>"
     - "<业务术语 2>"
-
-  # 字面相似但语义不同的模块（严禁凭字面硬造）
-  # 每条 disambiguation 必须给出**判定规则**，不是解释两边差异
   easily_confused_with: []
-    # 示例形态:
-    # - module: "OtherModule"
-    #   disambiguation: |
-    #     如果 PRD 描述的是 XXX → 属于本模块；
-    #     如果描述的是 YYY → 属于 OtherModule。
-    #     判定规则: ...
-
-  # 从 HAR 入口 index.ets（或 config 约定名）提取的主要 export 符号，≤ 10 个
   key_exports: []
-
-  # HAP → EntryAbility 路径；HAR → 与 cross_module_exports_file 一致的相对路径
   entry_file: "<layer_dir>/<ModuleName>/src/main/ets/index.ets"

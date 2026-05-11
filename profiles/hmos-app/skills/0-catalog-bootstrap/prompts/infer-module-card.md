@@ -227,7 +227,7 @@ for each term in typical_business_terms:
 doc/catalog-staging/<ModuleName>.yaml
 ```
 
-严格遵守 `framework/skills/0-catalog-bootstrap/templates/module-card-template.yaml` 的结构。
+严格遵守 `framework/profiles/hmos-app/skills/0-catalog-bootstrap/templates/module-card-template.yaml` 的结构。
 
 **必填写入：**
 - `confirmed_by_user: false`（不要擅自改 true）

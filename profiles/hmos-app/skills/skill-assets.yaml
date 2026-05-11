@@ -1,0 +1,53 @@
+# Profile-local Skill 资产清单（机器可读）
+# -----------------------------------------------------------------------------
+# 供根目录 framework/skills/**/SKILL.md 通过 `profile-skill-asset:<skill>/<key>` 动态解析。
+# 除下列「repo 根相对」键外，路径均相对 `framework/profiles/<profile>/skills/<skill>/`。
+# schema_version: "1.0"
+# -----------------------------------------------------------------------------
+
+schema_version: "1.0"
+profile: hmos-app
+
+assets:
+  00-framework-init:
+    preset_5_layer_sample: templates/preset-5-layer.sample.json
+
+  0-catalog-bootstrap:
+    examples_wallet_domain: examples-wallet-domain.md
+    module_card_template: templates/module-card-template.yaml
+    glossary_term_template: templates/glossary-term-template.yaml
+
+  1-prd-design:
+    prd_template: templates/prd-template.md
+    example_prd: examples/example-prd.md
+    examples_prd_mapping: examples-prd-mapping.md
+
+  2-requirement-design:
+    design_template: templates/design-template.md
+    api_spec_template: templates/api-spec.md
+    data_model_template: templates/data-model.md
+    example_design: examples/example-design.md
+
+  3-coding:
+    coding_standards: templates/coding-standards.md
+    module_scaffold: templates/module-scaffold.md
+    arkts_pitfalls: reference/arkts-pitfalls.md
+    arkui_patterns: reference/arkui-patterns.md
+    harmony_api_guide: reference/harmony-api-guide.md
+
+  4-code-review:
+    review_checklist: templates/review-checklist.md
+
+  5-business-ut:
+    use_cases_schema: templates/use-cases-schema.md
+    dag_schema: templates/dag-schema.md
+    ut_template: templates/ut-template.md
+    mock_strategy: templates/mock-strategy.md
+    testability_audit_template: templates/testability-audit-template.md
+    mock_plan_schema: templates/mock-plan-schema.md
+    card_opening_dir: examples/card-opening
+    card_opening_use_cases: examples/card-opening/use-cases.yaml
+
+  6-device-testing:
+    test_plan_template: templates/test-plan-template.md
+    test_report_template: templates/test-report-template.md
