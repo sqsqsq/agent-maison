@@ -581,22 +581,37 @@ function checkPageRegistration(ctx: CheckContext): CheckResult[] {
   ];
 }
 
+/**
+ * 当前文件的 .ets 无扩展名 basename 是否与 `architecture.cross_module_exports_file`
+ * 的 basename（去扩展名）一致（大小写不敏感）。一致则视为跨模块导出入口文件：
+ * 文件名可不遵循 PascalCase，且不强制 @Component struct 名与入口文件名一致。
+ */
+export function isCrossModuleExportFileStem(fileStem: string, crossModuleExportsFile: string): boolean {
+  const exportStem = path.parse(crossModuleExportsFile).name;
+  if (!exportStem) return false;
+  return fileStem.toLowerCase() === exportStem.toLowerCase();
+}
+
 function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
   const violations: string[] = [];
   const affectedFiles: string[] = [];
   const pascalRe = /^[A-Z][a-zA-Z0-9]*$/;
   const snakeRe = /^[a-z][a-z0-9_]*$/;
+  const cfg = loadFrameworkConfig(ctx.projectRoot);
+  const crossExports = cfg.architecture.cross_module_exports_file ?? 'index.ets';
 
   for (const a of analyses) {
     const fileName = path.basename(a.filePath, '.ets');
-    if (a.filePath.endsWith('.ets') && !pascalRe.test(fileName) && fileName !== 'Index') {
+    const isExportStem = isCrossModuleExportFileStem(fileName, crossExports);
+
+    if (a.filePath.endsWith('.ets') && !pascalRe.test(fileName) && !isExportStem) {
       violations.push(`文件名 ${a.filePath} 不是 PascalCase`);
       affectedFiles.push(a.filePath);
     }
 
     for (const cls of a.classes) {
       if (cls.kind === 'struct' && cls.decorators.includes('Component')) {
-        if (cls.name !== fileName && fileName !== 'Index') {
+        if (!isExportStem && cls.name !== fileName) {
           violations.push(`${a.filePath}: 组件 ${cls.name} 名称与文件名 ${fileName} 不一致`);
           affectedFiles.push(a.filePath);
         }

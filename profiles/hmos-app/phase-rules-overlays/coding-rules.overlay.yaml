@@ -135,8 +135,11 @@ structure_checks:
     description: >
       命名规范：
         - 模块名: PascalCase（参考示例：WalletMain、CommFunc 等，实际按本工程 doc/architecture.md 为准）
-        - 组件 struct 名: PascalCase，与文件名一致
-        - 文件名: PascalCase.ets（如 HomeTabPage.ets、CardRepository.ets）
+        - 组件 struct 名: PascalCase，与文件名一致（导出入口文件见下条例外）
+        - 文件名: PascalCase.ets（如 HomeTabPage.ets、CardRepository.ets）；
+          例外：`architecture.cross_module_exports_file` 所指的入口文件名
+         （常为 index.ets，大小写因工程而异）不要求 PascalCase，且不强制该文件内
+          @Component struct 名与入口 basename 一致
         - 资源 key: snake_case（如 app.string.tab_home）
     severity: MAJOR
     rule:

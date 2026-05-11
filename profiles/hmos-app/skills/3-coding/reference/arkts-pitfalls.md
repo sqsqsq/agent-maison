@@ -292,7 +292,9 @@ function log(obj: Object): void { console.log(JSON.stringify(obj)) }
 
 ## 13. `@Component` 的 struct 名必须 PascalCase 且与文件名一致
 
-**症状**：命名不一致导致 Index.ets 导出后 import 路径对不上，Harness 的 `naming_conventions` 报 MAJOR。
+**症状**：命名不一致导致页面/组件文件导出后 import 路径对不上，Harness 的 `naming_conventions` 报 MAJOR。
+
+**例外**：与 `framework.config.json` → `architecture.cross_module_exports_file` 同名的导出入口文件（默认 `index.ets`，含小写 `index`）不要求文件名 PascalCase；该文件内若仅有 barrel 导出也可能无 `@Component` 对齐问题。典型页面/组件 `.ets` 仍须 struct 与文件名一致（PascalCase）。
 
 ```ts
 // ❌ 错：文件 home_tab_page.ets 内写 struct homeTabPage
