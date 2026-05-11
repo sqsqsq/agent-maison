@@ -494,6 +494,14 @@ cat framework/harness/state/.current-phase.json
 
 ---
 
+## 维护同步（2026-05）
+
+- **Profile 编排**：`check-coding` 委托 profile `checkCodingCompile`；`check-ut` 委托 `ut-host-impl`（含 `getUtSuggestionPaths`、`isSuiteEntryShim` 与真机 `ut.run`）。  
+- **共享常量**：`ut-suite-entry-shim.ts` 与宿主共用 testsuite 入口判定，避免根脚本与 profile 双写正则。  
+- **命名闸门**：`naming_conventions` 对 `cross_module_exports_file`  basename（如小写 `index`）豁免 PascalCase 文件名。
+
+---
+
 ## 一句话总结
 
 > **Harness 的工作不是"自动化跑代码"，是"卡住错误不让往下传"。
@@ -501,13 +509,7 @@ cat framework/harness/state/.current-phase.json
 > 看到 FAIL 不要急着降 severity，先把环境/产物修对再回来 —— 任何一次降级都是埋一颗"假 PASS"地雷。**
 
 <!--
-  last-synced: 2026-04-27
-  reviewed against framework "phase closure / Layer 3 physical interception" patch (commit f71020d)
-  per DOC_INVENTORY.yaml update_triggers (新增/删除 phase / report 输出路径 / --phase --feature 语义 / 新增 BLOCKER 级 phase),
-  this patch added writeCurrentPhaseState + tryValidateReceipt to harness-runner.ts (an internal subroutine
-  for receipt validation, gated behind the existing per-phase flow); it did NOT add or remove any phase,
-  did NOT change report output paths, did NOT change --phase / --feature semantics, and did NOT introduce
-  a new BLOCKER-level phase, so no content change required for this runbook.
+  last-synced: 2026-05-11（profile 解耦、维护同步段、DOC_INVENTORY 源路径）
 
   v2.4 (2026-04-27) — Stop hook cross-session isolation:
     - 新增 §10「中断 / 切换会话 / 放弃阶段」章节：state_machine 配置、--clear-state 出口、

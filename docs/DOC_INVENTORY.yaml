@@ -72,8 +72,11 @@ docs:
       - framework/skills/5-business-ut/SKILL.md
       - framework/specs/phase-rules/ut-rules.yaml
       - framework/harness/scripts/check-ut.ts
-      - framework/harness/scripts/utils/hdc-runner.ts
-      - framework/harness/scripts/utils/hvigor-runner.ts
+      - framework/harness/profile-host-loader.ts
+      - framework/harness/ut-suite-entry-shim.ts
+      - framework/profiles/hmos-app/harness/ut-host-impl.ts
+      - framework/profiles/hmos-app/harness/hdc-runner.ts
+      - framework/profiles/hmos-app/harness/hvigor-runner.ts
       - framework/harness/scripts/utils/ts-compile.ts
       - framework/harness/scripts/utils/git-diff.ts
       - framework/harness/prompts/verify-ut.md
@@ -113,6 +116,7 @@ docs:
     sources:
       - framework/profiles/hmos-app/harness/hvigor-runner.ts
       - framework/profiles/hmos-app/harness/hdc-runner.ts
+      - framework/profiles/hmos-app/harness/coding-host-rules.ts
       - framework/harness/scripts/check-coding.ts
       - framework/harness/scripts/check-ut.ts
       - framework/specs/phase-rules/coding-rules.yaml

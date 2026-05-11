@@ -515,6 +515,14 @@ git submodule update --init --recursive
 
 ---
 
+## 维护同步（2026-05）
+
+- **Profile 解耦**：`project_profile` 下宿主实现包括 `harness/ut-host-impl.ts`、`harness/coding-host-rules.ts` 等；根 `check-ut` / `check-coding` 仅编排，`profile-host-loader` 负责按 profile 动态加载。
+- **中立 SKILL + 资产**：`framework/skills/*/SKILL.md` 保持宿主无关；`profile-skill-asset:` 与 `profiles/*/skills/skill-assets.yaml` 描述模板/参考的真实路径。
+- **导出入口命名**：`naming_conventions` 对 `architecture.cross_module_exports_file`（默认 `index.ets`，含小写 `index`）豁免 PascalCase 文件名要求。
+
+---
+
 ## 一句话总结
 
 > **短期靠"显式枚举术语与模块的反例与混淆项 + 人工逐条确认"对抗字面相似陷阱；
@@ -523,6 +531,6 @@ git submodule update --init --recursive
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-10 (batch-6)
-  Skill 00 / 0 bootstrap 文档与 profile 模板路径调整后同步复核（doc_freshness）。
+  last-synced: 2026-05-11 (profile decoupling / skill-assets / naming_conventions export stem)
+  Skill 与中台文档路径变更后同步维护同步段落（doc_freshness）。
 -->

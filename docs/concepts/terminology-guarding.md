@@ -226,6 +226,13 @@ surveyed 过的 5 个层级方案：
 
 ---
 
+## 维护同步（2026-05）
+
+- **PRD 模板路径**：`prd-template.md` 等宿主模板位于 `framework/profiles/hmos-app/skills/1-prd-design/templates/`，与根 `SKILL` 跳板分离。  
+- **规约消费**：`check-prd.ts` 仍以合并后的 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
+
+---
+
 ## 10. 一句话总结
 
 > **短期靠"显式枚举术语与模块的反例与混淆项 + 人工逐条确认"对抗字面相似陷阱；
@@ -234,8 +241,6 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-10 (batch-6)
-  DOC_INVENTORY terminology-guarding sources：prd-template 正文迁至 profiles/hmos-app/skills/1-prd-design/templates/；
-  与 Skill 0/1、prd/catalog/glossary phase-rules、check-prd.ts 对齐复核。
+  last-synced: 2026-05-11 (PRD 模板 profile 路径 / 维护同步段)
 -->
 

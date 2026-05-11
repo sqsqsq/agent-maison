@@ -571,6 +571,14 @@ AI Harness 重点看脚本难以判断的内容：
 
 ---
 
+## 9. 维护同步（2026-05）
+
+- **宿主 UT 实现**：Hypium / hdc / hvigor 相关逻辑在 `framework/profiles/hmos-app/harness/`（`ut-host-impl.ts`、`hvigor-runner.ts`、`hdc-runner.ts`）；`framework/harness/scripts/utils/*-runner.ts` 仅为重导出兼容入口。  
+- **脚本入口**：`check-ut.ts` 通过 `profile-host-loader` 调用宿主；真机执行仍以 `ut.run`（历史 id `ut_hvigor_test`）BLOCKER 为准。  
+- **导出入口**：跨模块出口文件名遵循 `cross_module_exports_file`，允许小写 `index.ets`，不触发 coding 阶段「文件名须 PascalCase」误报。
+
+---
+
 ## 一句话总结
 
 > **Skill 5 的价值不是“帮你多写几个测试文件”，而是把验收项、业务分支、命名入口、data 边界和真实运行结果绑在一起。**
@@ -578,10 +586,6 @@ AI Harness 重点看脚本难以判断的内容：
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
 
 <!--
-  last-synced: 2026-04-27
-  reviewed against framework "phase closure / Layer 3 physical interception" patch (commit f71020d)
-  per DOC_INVENTORY.yaml update_triggers ("SKILL.md 步骤 / 用例形态 / 命名约定调整"), this patch
-  only adds a global "阶段闭环必读" tail block to 5-business-ut/SKILL.md and does NOT change
-  steps / use-case shape / naming conventions, so no content change required for this doc.
+  last-synced: 2026-05-11 (ut-host-impl / profile-host-loader / naming export stem)
 -->
 
