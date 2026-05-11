@@ -276,14 +276,6 @@ semantic_checks:
       逐条审查验收标准，判断：(1) 是否包含明确的操作步骤或前置条件；
       (2) 是否包含可观察的预期结果；(3) 是否可以通过手动或自动化方式验证
 
-  ui_component_terminology:
-    description: >
-      界面描述中引用的 UI 组件应优先使用 ArkUI 术语
-      （Column、Row、List、Tabs、Navigation、Swiper 等）
-    severity: MINOR
-    ai_prompt_hint: >
-      检查界面描述中的组件类型是否使用了 ArkUI 组件名称
-
   simulation_scope_awareness:
     description: >
       涉及真实后端（支付网关、银行接口等）的功能点必须标注为"模拟数据"

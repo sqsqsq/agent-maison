@@ -1,7 +1,7 @@
 # ============================================================================
 # UT 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
-# Hypium / .test.ets / ohosTest / hvigor UT / hdc 等设备与编译链路细则在叠加层：
+# 测试文件命名、测试根目录、编译与设备执行链路等宿主细则在叠加层：
 #   framework/profiles/hmos-app/phase-rules-overlays/ut-rules.overlay.yaml
 #
 # 消费者：

@@ -1,7 +1,7 @@
 # ============================================================================
 # Design 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
-# ArkTS/UI 表单节 / NavDestination / 装饰器措辞等细则在叠加层：
+# 设计文档中与宿主 UI / 导航模型相关的措辞细则在叠加层：
 #   framework/profiles/hmos-app/phase-rules-overlays/design-rules.overlay.yaml
 #
 # 消费者：

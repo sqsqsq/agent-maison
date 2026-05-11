@@ -75,6 +75,19 @@ traceability_checks:
     rule:
       check_kind: "source_existence"
 
+  profile_skill_assets_resolvable:
+    description: >
+      实例当前 project_profile 的 framework/profiles/<name>/skills/skill-assets.yaml
+      存在且条目落盘；根 framework/skills/<skill>/SKILL.md 与同目录 prompts/*.md 内
+      profile-skill-asset 引用可解析，且清单中每条路径在仓库中落盘；
+      且上述 SKILL/prompts 文件中不应存在指向 framework/skills 树内缺失目标的相对 Markdown 链接
+      （不扫描各 skill 下 templates/、reference/ 等示意骨架，以免误报）；
+      亦不应在上述 SKILL/prompts 中硬编码 `profiles/hmos-app/`、`framework/profiles/hmos-app/` 等 **hmos-app** 物理路径
+      （应使用 profile-skill-asset 占位符或 <project_profile.name> 说明）。
+    severity: MAJOR
+    rule:
+      check_kind: "profile_skill_assets"
+
 # --------------------------------------------------------------------------
 # 语义约束（保留位置，未来可加 AI 复核）
 # --------------------------------------------------------------------------

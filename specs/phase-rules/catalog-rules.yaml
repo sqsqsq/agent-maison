@@ -1,7 +1,7 @@
 # ============================================================================
 # Catalog 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
-# HAP/HAR/AtomicService、HAR 导出同步等 Harmony 专有说明在叠加层：
+# 模块 format 枚举、导出入口与打包形态相关的宿主说明在叠加层：
 #   framework/profiles/hmos-app/phase-rules-overlays/catalog-rules.overlay.yaml
 #
 # 说明：ALLOWED_FORMATS 等运行时枚举仍可由 harness 脚本与 profile 能力共同演进；
