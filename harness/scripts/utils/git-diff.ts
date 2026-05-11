@@ -9,8 +9,9 @@
 //   - 使用 spawnSync 避免 PowerShell 拼接问题；
 //   - baseRef 未传时默认 **working**（只统计相对 HEAD 的工作区/暂存/未跟踪，与日常感知一致）；
 //     需要包含「已提交但未 push 的 commits」时用 HARNESS_DIFF_BASE_REF=HEAD~1 或具体 SHA；
-//   - 业务源码目录集由调用方传入（硬编码在 check-ut.ts 中：
-//     02-Feature/**/src/main, 01-Business, 00-Common 等）。
+//   - 业务源码目录集由调用方传入（如 UT 红线使用的受保护前缀）。
+//   - 测试工作区路径排除由 filterBusinessSourceChanges 的 opts.excludeTestPathRegexes
+//     提供（见 project_profile > harness/profile-path-conventions）。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -234,25 +235,34 @@ export function analyzeDiffStaleness(diff: GitDiffResult): DiffStaleness {
   };
 }
 
+export interface FilterBusinessSourceOpts {
+  /**
+   * 额外排除：匹配相对路径（正斜杠）的正则列表（由宿主 profile 的 `profile-path-conventions` 等贡献）。
+   * 根 harness 不再默认排除任何测试路径；未传时不排除测试目录。
+   */
+  excludeTestPathRegexes?: RegExp[];
+}
+
 /**
  * 基于一组"受保护目录前缀"过滤出落入保护范围的变更文件。
  * 典型 protectedPrefixes：['02-Feature/', '01-Business/', '00-Common/']
- * 同时**排除**测试目录：`/src/ohosTest/` 与 `/test/`（这些是 UT 合法工作区）。
+ *
+ * **测试工作区排除**由 `excludeTestPathRegexes` 提供（见各 project_profile 的
+ * `harness/profile-path-conventions`）；根目录不再硬编码具体宿主路径。
  */
 export function filterBusinessSourceChanges(
   changedFiles: string[],
   protectedPrefixes: string[],
+  opts?: FilterBusinessSourceOpts,
 ): string[] {
+  const exclude = opts?.excludeTestPathRegexes ?? [];
   return changedFiles.filter(f => {
     const normalized = f.replace(/\\/g, '/');
     if (!protectedPrefixes.some(p => normalized.startsWith(p))) return false;
-    // 排除 ohosTest / test 目录
-    if (/\/src\/ohosTest\//.test(normalized)) return false;
-    if (/\/test\//.test(normalized)) return false;
+    if (exclude.some(rx => rx.test(normalized))) return false;
     // 只看 src/main 下的文件（业务源码；资源文件等也计入）
     if (normalized.includes('/src/main/')) return true;
     // 00-Common / 01-Business / 02-Feature 层的顶层子文件无 src/main 但也属于业务
-    // 这里放宽：只要不是 test/ohosTest 就计入
     return true;
   });
 }

@@ -349,8 +349,8 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
 // （key = 源模块名，value = 依赖模块名数组）。
 // 但实际 YAML 里常见另一种更自然的写法，来自 Skill 2 从架构图依赖箭头提取：
 //   module_dependencies:
-//     - from: "WalletMain"
-//       to: "CommUI"
+//     - from: "<FeatureModule>"
+//       to: "<SharedUIModule>"
 //       kind: "oh_package"
 // 如果下游不识别这种形态，`contracts.module_dependencies[mod.name]` 恒为
 // undefined，`oh_package_dependencies` 规则会在"未检出任何依赖"的情况下
