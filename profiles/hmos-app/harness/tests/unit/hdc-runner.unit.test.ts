@@ -26,6 +26,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  classifyAaTestFailure,
   parseHypiumStdout,
   findOhosTestSignedHap,
   loadAppBundleName,
@@ -60,6 +61,11 @@ function assertThrows(fn: () => unknown, includes: string, label: string): void 
     throw new Error(`${label}\n    expected error to include: "${includes}"\n    actual error: "${msg}"`);
   }
   throw new Error(`${label}\n    expected throw with "${includes}", but did not throw`);
+}
+function assertIncludes(actual: string, expected: string, label: string): void {
+  if (!actual.includes(expected)) {
+    throw new Error(`${label}\n    expected to include: "${expected}"\n    actual: "${actual}"`);
+  }
 }
 
 // ---- 临时目录管理 ------------------------------------------------------------
@@ -164,6 +170,42 @@ const cases: Array<{ name: string; run: () => void }> = [
         'AssertionError: expected 5 to equal 6',
         'failure.message',
       );
+    },
+  },
+
+  // --------------------------------------------------------------------------
+  // classifyAaTestFailure
+  // --------------------------------------------------------------------------
+  {
+    name: 'classifyAaTestFailure: 锁屏导致 ability 启动失败 → device_locked',
+    run: () => {
+      const sample = [
+        'error: failed to start ability.',
+        'Error Code:10106102  Error Message:The device screen is locked during the application launch, unlock screen failed.',
+        'Error cause: The current mode is developer mode, and the screen cannot be unlocked automatically',
+        'TestFinished-ResultCode: -3',
+      ].join('\n');
+      const r = classifyAaTestFailure(sample, 0);
+      assertEq(r.kind, 'device_locked', 'kind');
+      assertIncludes(r.suggestion, '解锁', 'suggestion should mention unlock');
+    },
+  },
+  {
+    name: 'classifyAaTestFailure: ability 启动失败但非锁屏 → ability_start_failed',
+    run: () => {
+      const sample = [
+        'error: failed to start ability.',
+        'TestFinished-ResultCode: -3',
+      ].join('\n');
+      const r = classifyAaTestFailure(sample, 0);
+      assertEq(r.kind, 'ability_start_failed', 'kind');
+    },
+  },
+  {
+    name: 'classifyAaTestFailure: 无 OHOS_REPORT_RESULT → aa_test_no_result',
+    run: () => {
+      const r = classifyAaTestFailure('start ability successfully.', 0);
+      assertEq(r.kind, 'aa_test_no_result', 'kind');
     },
   },
 

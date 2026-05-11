@@ -47,6 +47,7 @@ export interface HdcInstallResult {
   exitCode: number;
   durationMs: number;
   output: string;
+  diagnosis?: HdcFailureDiagnosis;
 }
 
 export interface AaTestResult {
@@ -57,6 +58,21 @@ export interface AaTestResult {
   output: string;
   /** hypium 解析后的统计；仅当能解析到 OHOS_REPORT_RESULT 时填充 */
   report?: HypiumTestResult;
+  diagnosis?: HdcFailureDiagnosis;
+}
+
+export type HdcFailureKind =
+  | 'device_locked'
+  | 'ability_start_failed'
+  | 'aa_test_timeout'
+  | 'aa_test_no_result'
+  | 'install_failed'
+  | 'test_failed';
+
+export interface HdcFailureDiagnosis {
+  kind: HdcFailureKind;
+  summary: string;
+  suggestion: string;
 }
 
 export interface OnDeviceUtRunResult {
@@ -259,7 +275,15 @@ export function installHap(hapPath: string): HdcInstallResult {
   const lower = out.toLowerCase();
   const hasFailureWord = /\bfailed\b|install failed|error\b/.test(lower) && !/successfully/.test(lower);
   const ok = ret.status === 0 && !hasFailureWord;
-  return { ok, exitCode: ret.status ?? -1, durationMs: Date.now() - t0, output: out };
+  const diagnosis = ok
+    ? undefined
+    : {
+        kind: 'install_failed' as const,
+        summary: `hdc install 失败 (exit=${ret.status ?? -1})。`,
+        suggestion:
+          '检查设备是否在线且已授权、空间是否充足、签名/包名是否冲突；可先手动执行日志中的 hdc install 命令确认设备侧错误。',
+      };
+  return { ok, exitCode: ret.status ?? -1, durationMs: Date.now() - t0, output: out, diagnosis };
 }
 
 /**
@@ -288,6 +312,9 @@ export function runAaTest(meta: OhosTestMetadata): AaTestResult {
   const hasResult = !!report;
   const noFailure = report ? report.failed === 0 : false;
   const ok = ret.status === 0 && hasResult && noFailure;
+  const diagnosis = ok
+    ? undefined
+    : classifyAaTestFailure(out, ret.status ?? -1, report);
 
   return {
     ok,
@@ -295,6 +322,7 @@ export function runAaTest(meta: OhosTestMetadata): AaTestResult {
     durationMs: Date.now() - t0,
     output: out,
     report,
+    diagnosis,
   };
 }
 
@@ -330,6 +358,54 @@ export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
     }
   }
   return matched ? result : undefined;
+}
+
+export function classifyAaTestFailure(
+  output: string,
+  exitCode: number,
+  report?: HypiumTestResult,
+): HdcFailureDiagnosis {
+  if (report && report.failed > 0) {
+    return {
+      kind: 'test_failed',
+      summary: `Hypium 用例失败：total=${report.total} passed=${report.passed} failed=${report.failed} skipped=${report.skipped}`,
+      suggestion: '按失败用例堆栈修复 UT 预期、被测实现或 Spy/Stub 预设后重跑。',
+    };
+  }
+
+  if (/screen is locked|unlock screen failed|device screen is locked|Error Code:\s*10106102/i.test(output)) {
+    return {
+      kind: 'device_locked',
+      summary: '设备已连接，但 aa test 启动测试 Ability 时发现屏幕锁定，无法自动解锁。',
+      suggestion:
+        '请手动解锁真机并保持在桌面/前台（不要锁屏），确认 `hdc list targets` 仍非空后重跑 UT harness。',
+    };
+  }
+
+  if (/timed?\s*out|timeout|TestFinished-ResultCode:\s*-?2/i.test(output)) {
+    return {
+      kind: 'aa_test_timeout',
+      summary: `aa test 超时或未在期限内返回 Hypium 结果（exit=${exitCode}）。`,
+      suggestion:
+        '确认设备未息屏、应用测试 Ability 能启动；必要时调大 framework.config.json > toolchain.devEcoStudio.aaTestTimeoutMs 后重跑。',
+    };
+  }
+
+  if (/failed to start ability|start ability failed|TestFinished-ResultCode:\s*-/i.test(output)) {
+    return {
+      kind: 'ability_start_failed',
+      summary: `aa test 未能启动测试 Ability 或启动后异常退出（exit=${exitCode}）。`,
+      suggestion:
+        '检查 bundleName、ohosTest module.name、testRunner 路径与设备状态；若日志含锁屏/权限/签名等 Error Code，优先按对应提示处理。',
+    };
+  }
+
+  return {
+    kind: 'aa_test_no_result',
+    summary: `aa test 未输出 OHOS_REPORT_RESULT（exit=${exitCode}），无法确认用例真实执行。`,
+    suggestion:
+      '查看 hdc-test.log，重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。',
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -438,13 +514,21 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   const install = installHap(hap);
   append(install.output);
   if (!install.ok) {
+    const diagnosis = install.diagnosis;
     return finalize({
       executed: true,
       failedAt: 'install',
       metadata,
       install,
       logExcerpt: logChunks.join('\n'),
-      errors: [{ message: `hdc install 失败 (exit=${install.exitCode})` }],
+      errors: [
+        {
+          message:
+            diagnosis
+              ? `失败阶段：install；${diagnosis.summary}\n修复建议：${diagnosis.suggestion}`
+              : `hdc install 失败 (exit=${install.exitCode})`,
+        },
+      ],
       durationMs: Date.now() - t0,
     }, opts);
   }
@@ -454,9 +538,12 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   append(aa.output);
   if (!aa.ok) {
     const ec = aa.exitCode;
-    const msg = aa.report
-      ? `用例存在失败：total=${aa.report.total} passed=${aa.report.passed} failed=${aa.report.failed} skipped=${aa.report.skipped}`
-      : `aa test 没有输出 OHOS_REPORT_RESULT（exit=${ec}）。常见原因：testRunner 路径错误 / module name 错误 / 测试 ability 未启动。`;
+    const diagnosis = aa.diagnosis;
+    const msg = diagnosis
+      ? `失败阶段：${diagnosis.kind}；${diagnosis.summary}\n修复建议：${diagnosis.suggestion}`
+      : aa.report
+        ? `用例存在失败：total=${aa.report.total} passed=${aa.report.passed} failed=${aa.report.failed} skipped=${aa.report.skipped}`
+        : `aa test 没有输出 OHOS_REPORT_RESULT（exit=${ec}）。常见原因：testRunner 路径错误 / module name 错误 / 测试 ability 未启动。`;
     return finalize({
       executed: true,
       failedAt: aa.report ? 'no_pass' : 'run',

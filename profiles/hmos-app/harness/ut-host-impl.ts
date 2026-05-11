@@ -671,7 +671,7 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
   const stageHint = first.errors?.find((e: { message: string }) => /失败阶段：/.test(e.message))?.message;
   if (stageHint) {
-    lines.push(stageHint + '（详见日志）');
+    lines.push(stageHint);
   }
   if (first.toolMissing) {
     lines.push(
@@ -684,6 +684,14 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     lines.push(`链路异常退出 exit_code=${first.exitCode}。`);
     lines.push('日志尾部：');
     lines.push(first.logExcerpt);
+  } else if (!first.testResult) {
+    lines.push('aa test 未输出 OHOS_REPORT_RESULT，无法证明用例已真实执行。');
+    if (first.errors?.length) {
+      lines.push('诊断：');
+      first.errors.forEach((e: { message: string }) => lines.push(`  - ${e.message}`));
+    }
+    lines.push('');
+    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
   } else if (first.testResult) {
     const t = first.testResult;
     lines.push(`hypium 结果：total=${t.total}, passed=${t.passed}, failed=${t.failed}, skipped=${t.skipped}`);
@@ -712,8 +720,12 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
       details: lines.join('\n'),
       affected_files: [bad[0].module + '@ohosTest'],
       suggestion:
-        '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
-        '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。',
+        stageHint?.includes('device_locked')
+          ? '设备已连接但锁屏：请手动解锁并保持在桌面/前台后重跑。'
+          : stageHint
+            ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.log。'
+            : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
+              '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。',
     },
   ];
 }
