@@ -7,6 +7,7 @@ import type {
   HarnessResolvedProfile,
   CapabilityKey,
   ProfileCapabilitySpec,
+  CheckResult,
 } from './scripts/utils/types';
 import * as path from 'path';
 
@@ -35,6 +36,13 @@ interface ProviderMetadata {
   exports: readonly string[];
 }
 
+/**
+ * Provider 模块 ID → `profiles/<name>/harness/providers/<file>` 基名。
+ *
+ * 与「profile 静态规则包」（如 `coding-host-rules` / `ut-host-impl`）不同：
+ * 后者由根 `check-*` 通过 `profile-host-loader` 按模块名直接 require，
+ * 不经本表的 capability provider 路径。
+ */
 const PROVIDER_MODULE_BY_ID: Record<string, string> = {
   hvigor: 'coding-compile',
   hvigor_ohostest: 'ut-compile',
@@ -172,6 +180,15 @@ export function looksLikeUtCompileCommandMismatch(ctx: CheckContext, log: string
     'looksLikeUtHvigorCommandMismatch',
   );
   return fn(log);
+}
+
+export function dispatchPrdVisualHandoff(ctx: CheckContext, prd: string): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'prd.visual_handoff',
+    'checkVisualHandoff',
+  );
+  return fn(ctx, prd);
 }
 
 /**

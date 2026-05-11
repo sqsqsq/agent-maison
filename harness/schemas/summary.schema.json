@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://simulated-wallet-for-hmos.local/framework/harness/summary.schema.json",
+  "$id": "https://framework.local/harness/summary.schema.json",
   "title": "Framework Harness Run Summary",
   "type": "object",
   "additionalProperties": false,

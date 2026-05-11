@@ -1,8 +1,7 @@
 # ============================================================================
 # Coding 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
-# HarmonyOS / ArkTS / hvigor / $r / HAR-HAP / oh-package.json5 / main_pages.json
-# 等鸿蒙专有条款在主 profile 叠加层：
+# 宿主源码形态、资源系统、模块清单与构建描述等细则在 profile 叠加层：
 #   framework/profiles/hmos-app/phase-rules-overlays/coding-rules.overlay.yaml
 #
 # 消费者：

@@ -184,23 +184,24 @@ structure_checks:
   #     声明的每个符号必须是可被 UT 直接调用的**命名函数**（非 inline lambda）
   # ==========================================================================
 
-  coding_hvigor_build:
+  coding_compile:
     description: >
-      v2.2 新增（方案 B）：真实编译是 Skill 3 编码阶段的**必要出口条件**。
-      对 contracts.yaml 中声明的每个业务模块执行 `hvigorw --mode module ...
-      assembleHap`，zero error 才通过。该规则是 Skill 3 harness 的最后一道
-      出口检查，兜底捕捉"静态结构通过但实际编译失败"的场景。
-      工具链缺失（hvigorw 不存在）时，FAIL（不 SKIP）——用户必须准备好 DevEco
-      / hvigor CLI 再跑。逃生阀：HARNESS_SKIP_HVIGOR=1 显式跳过，但**仍然 FAIL**，
-      防止静默绕过出口。
+      宿主编译闭环（canonical id: coding_compile，历史别名 coding_hvigor_build）：
+      对 contracts.yaml 声明的业务模块执行 profile 配置的真实构建任务，zero error 才通过。
+      工具链由 project_profile 的 coding.compile 能力声明；缺失时 FAIL（不 SKIP）。
+      环境变量 HARNESS_SKIP_HVIGOR=1 显式跳过编译时仍 FAIL，防止静默绕过出口。
     severity: BLOCKER
     rule:
       scope: "contracts.yaml > modules[].name"
-      command: "hvigorw --mode module -p module=<module>@default -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon"
-      pass_if: "exit_code == 0 AND parsed_error_count == 0"
-      log_persist: "framework/harness/reports/<feature>/coding/hvigor-build.log"
-      on_tool_missing: "FAIL (提示安装 DevEco Studio / 全局 hvigor CLI)"
-      on_env_skip: "FAIL (HARNESS_SKIP_HVIGOR=1 不被允许作为出口条件)"
+      canonical_id: "coding_compile"
+      legacy_id: "coding_hvigor_build"
+
+  coding_hvigor_build:
+    description: >
+      （别名）与 coding_compile 相同；保留 id 供历史报告/消费方兼容。
+    severity: BLOCKER
+    rule:
+      alias_of: "coding_compile"
 
   named_business_handler:
     description: >
