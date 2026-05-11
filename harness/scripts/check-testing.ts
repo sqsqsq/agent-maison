@@ -18,6 +18,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as path from 'path';
 import {
   PhaseChecker,
   CheckContext,
@@ -50,6 +51,26 @@ function ruleDesc(
 function truncateList(items: string[], max: number): string {
   const shown = items.slice(0, max).map(i => `  - ${i}`).join('\n');
   return items.length > max ? `${shown}\n  ... 还有 ${items.length - max} 项` : shown;
+}
+
+/** 各 profile 可在 harness/testing-plan-conventions 中覆盖；缺省为与宿主无关的关键词组 */
+function loadTestEnvironmentKeywordGroups(ctx: CheckContext): string[][] {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require(path.join(ctx.resolvedProfile.profileDir, 'harness', 'testing-plan-conventions')) as {
+      testEnvironmentRequiredKeywordGroups?: string[][];
+    };
+    if (Array.isArray(m.testEnvironmentRequiredKeywordGroups)) {
+      return m.testEnvironmentRequiredKeywordGroups;
+    }
+  } catch {
+    /* 使用下方默认 */
+  }
+  return [
+    ['设备', '设备型号', '模拟器'],
+    ['系统版本', 'OS', '操作系统'],
+    ['API', 'API 版本'],
+  ];
 }
 
 function loadDoc(ctx: CheckContext, docName: string): string | null {
@@ -283,11 +304,7 @@ function checkTestEnvironmentDefined(ctx: CheckContext, plan: string | null): Ch
     }];
   }
 
-  const requiredKeywords = [
-    ['设备', '设备型号', '模拟器'],
-    ['系统版本', 'HarmonyOS'],
-    ['API', 'API 版本'],
-  ];
+  const requiredKeywords = loadTestEnvironmentKeywordGroups(ctx);
 
   const missing: string[] = [];
   for (const keywords of requiredKeywords) {
