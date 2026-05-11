@@ -13,5 +13,5 @@ argument-hint: <ModuleName>
 
 > - 全局约束在 `CLAUDE.md`（Claude Code 启动时已自动加载），不要假装没看见。
 > - **本文件不复述任何规则 / BLOCKER / harness 命令 / 完成标准**——如发生冲突，以 SKILL.md 和 CLAUDE.md 原文为准。
-> - 推断字段时对照 [prompts/infer-module-card.md](../../framework/skills/0-catalog-bootstrap/prompts/infer-module-card.md) 的输入采集顺序与填写规则，禁止跳步。
+> - 推断字段时对照 `framework/profiles/<project_profile.name>/skills/0-catalog-bootstrap/prompts/infer-module-card.md`（`<project_profile.name>` 取自实例根 `framework.config.json`），禁止跳步。
 > - 遇到"SKILL.md 没写但我觉得应该做"的念头 → 先停下来问用户，不要自行扩展。

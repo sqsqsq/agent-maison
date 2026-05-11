@@ -13,5 +13,5 @@ argument-hint: [optional-single-term]
 
 > - 全局约束在 `CLAUDE.md`（Claude Code 启动时已自动加载），不要假装没看见。
 > - **本文件不复述任何规则 / BLOCKER / harness 命令 / 完成标准**——如发生冲突，以 SKILL.md 和 CLAUDE.md 原文为准。
-> - 推断映射时对照 [prompts/infer-glossary-term.md](../../framework/skills/0-catalog-bootstrap/prompts/infer-glossary-term.md) 的匹配优先级和 `easily_confused_with` 强制补全规则。
+> - 推断映射时对照 `framework/profiles/<project_profile.name>/skills/0-catalog-bootstrap/prompts/infer-glossary-term.md`（`<project_profile.name>` 取自实例根 `framework.config.json`）的匹配优先级和 `easily_confused_with` 强制补全规则。
 > - 前置门禁：若 `doc/module-catalog.yaml` 覆盖率不足（< 80% 工程模块），先跳转 `/catalog-bootstrap`，**禁止先跑 glossary**。
