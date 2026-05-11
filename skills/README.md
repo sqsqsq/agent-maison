@@ -25,6 +25,27 @@ framework/profiles/<project_profile.name>/skills/<skill>/profile-addendum.md
 
 ---
 
+## Profile skill asset protocol
+
+根目录 `framework/skills/**/SKILL.md`（及同树 `prompts/`）中可能出现占位引用：
+
+```text
+profile-skill-asset:<skill-id>/<asset_key>
+```
+
+含义：**不要**在根 SKILL 写死某个具体 `framework/profiles/<固定 profile 名>/...` 物理路径；按下列顺序解析为仓库内真实路径后再打开文件（`asset_key` 对应清单字段名，使用下划线命名，与当前 profile 的 `skills/skill-assets.yaml` 中 `assets` 表一致）：
+
+1. 读取实例根 `framework.config.json > project_profile.name`（未声明时以 harness 加载时的兼容默认为准，见 [`framework/harness/config.ts`](../harness/config.ts)）。
+2. 读取 `framework/profiles/<project_profile.name>/skills/skill-assets.yaml`。
+3. 在 `assets.<skill-id>.<asset_key>` 取声明的路径：
+   - 若以 `framework/` 开头 → 相对仓库根；
+   - 否则 → 相对 `framework/profiles/<project_profile.name>/skills/<skill-id>/`。
+4. 目标可以是文件或目录；打开前应用 `fs` / IDE 在该路径上解析。
+
+脚本门禁：`framework/harness/scripts/check-docs.ts` 的 `profile_skill_assets_resolvable` 会校验 **清单存在**、**清单条目落盘**、**各 `profile-skill-asset:` 引用可在清单中解析且目标落盘**，以及 **各 `framework/skills/<skill>/SKILL.md` 与 `prompts/*.md` 内不存在指向 `framework/skills` 树内缺失目标的相对 Markdown 链接**（不扫描 `templates/`、`reference/` 等示意文件，规则说明见 [`docs-rules.yaml`](../specs/phase-rules/docs-rules.yaml)）。
+
+---
+
 ## 阶段列表
 
 | 顺序 | Skill | 路径 | 摘要 |

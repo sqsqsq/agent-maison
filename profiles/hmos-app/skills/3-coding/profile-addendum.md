@@ -2,7 +2,7 @@
 
 本工程 `project_profile=hmos-app` 时，编码阶段以 **ArkTS / ArkUI** 为默认宿主形态，并启用 DevEco / hvigor / `.ets` / HAR-HAP 等资源与模块约定。
 
-## 权威资产路径（已迁入本 profile）
+## 权威资产清单
 
 | 用途 | 路径 |
 |------|------|
@@ -11,6 +11,18 @@
 | API 指引 | `skills/3-coding/reference/harmony-api-guide.md` |
 | 编码规范全文 | `skills/3-coding/templates/coding-standards.md` |
 | 模块脚手架 | `skills/3-coding/templates/module-scaffold.md` |
+
+### skill-assets.yaml 键
+
+根 `SKILL.md` 使用 `` `profile-skill-asset:3-coding/<键>` `` 时，与机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml` 对应如下：
+
+| 键 | 相对 `skills/3-coding/` |
+|----|-------------------------|
+| `coding_standards` | `templates/coding-standards.md` |
+| `module_scaffold` | `templates/module-scaffold.md` |
+| `arkts_pitfalls` | `reference/arkts-pitfalls.md` |
+| `arkui_patterns` | `reference/arkui-patterns.md` |
+| `harmony_api_guide` | `reference/harmony-api-guide.md` |
 
 `framework/skills/3-coding/` 下同名路径为**跳板**（仅指针），勿在跳板内追加条款。
 
@@ -25,3 +37,31 @@
 ## 与中立骨架的关系
 
 - `framework/specs/phase-rules/coding-rules.yaml` 仅保留 **profile 中立骨架**；鸿蒙细则由 `framework/profiles/hmos-app/phase-rules-overlays/coding-rules.overlay.yaml` 合并补齐。
+
+## 业务编排（形态 B/C 与 A 的方法体）禁用 import（BLOCKER）
+
+下列符号 **不得** 出现在业务编排源文件的 import 中（含仅类型引用），即便仅用于类型亦然：
+
+```
+@Component, @Entry, @Preview, @Builder, @State, @Prop, @Link（形态 A 仅允许用于 struct 自身 UI 状态声明，不得流入业务方法内的数据模型）
+NavPathStack, NavDestination, NavPathInfo from @kit.ArkUI
+$r, $rawfile, getUIContext, getContext, UIContext, PromptAction
+AppStorage, LocalStorage
+showToast, Toast 等 Toast 辅助函数
+```
+
+> **形态 A（Page 命名方法）**：方法可读写 `this.xxx`（struct 状态），但方法体内调用的下层函数与传入 data 层的参数须为**普通数据模型**；Toast / 路由 / 弹框等 UI 副作用在返回后由 UI 层翻译（如 `@Watch`）。
+
+## 路由与页面注册
+
+- 产品壳（如 `Phone`）中的 `Navigation` 需注册各功能模块的 **`NavDestination`** 页面。
+- 使用系统路由表时，在对应模块 `resources/base/profile/` 下维护 **`route_map.json`**。
+- 新增页面须同步 **`main_pages.json`**、字符串 / 颜色等资源，与设计 `contracts.yaml` 一致。
+
+### 示例（仅在 hmos-app 下）
+
+根 SKILL 中为保持 profile-neutral 已删去的具体形态，在此保留速查：
+
+- **页面注册与资源清单**：常见涉及 `main_pages.json`、`route_map.json`、各 `resources/base/element/*.json` 等（以模块实际路径为准）。
+- **壳入口**：产品壳常见使用 `@Entry` 装饰的入口组件 + Feature 侧路由页。
+- **资源引用**：字符串等常见写法如 `$r('app.string.xxx')`，须与资源定义一致。

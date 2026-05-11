@@ -19,7 +19,9 @@
 
 `framework/profiles/<project_profile.name>/skills/3-coding/profile-addendum.md`
 
-其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下已迁移的模板/参考文件路径。
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 [framework/harness/config.ts](../../harness/config.ts) 与 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下已迁移的模板/参考文件路径。
+
+> **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
 
 ---
 
@@ -95,7 +97,7 @@
    - **业务编排层**（v2.1：条件性产出 — 仅在触发 `use-cases.yaml` 复杂度阈值时；代码形态按 Step 3.5 三选一）← design.md + `use-cases.yaml`（若有）
    - **组件树**（presentation 层的页面和复杂组件构成）← `contracts.yaml > components`
    - **端云接口**（shared/client/ 下的请求定义）← design.md
-   - **路由配置**（新增 NavDestination 页面需要注册的路径）← `contracts.yaml > navigation`
+   - **路由配置**（`contracts.yaml > navigation`；宿主侧页面注册文件见 profile addendum）
    - **验收标准和边界用例** ← `acceptance.yaml > criteria` + `boundaries`
    - **资源 Key 契约** ← `contracts.yaml > resource_keys`
 
@@ -108,7 +110,7 @@
   [shared/constant]  CommonTypes.<ext> — 全局通用类型
   [shared/utils]     FormatUtils.<ext> — 格式化工具
 
-🔷 Module: wallet_home (<profile-format>) — 首页功能模块
+🔷 Module: feature_home（`<profile-format>`）— 示例功能模块
   [shared/client]    HomeApiClient.<ext> — 首页数据接口
   [shared/constant]  HomeConstants.<ext> — 首页常量
   [shared/components] BaseCardView.<ext> — 基础卡片组件
@@ -123,36 +125,31 @@
 
 🔷 Module: app-shell (<profile-format>) — 主入口
   [presentation/pages] Main.<ext> — 主框架
-  [配置] 更新 main_pages.json、route_map、string.json 等
+  [配置] 更新宿主工程声明的**页面注册**与**资源清单**（文件名因 profile 而异；常见键名见 profile addendum，如页面列表、路由表、字符串表等）
 ```
 
 ### Step 2: 确定实现顺序
 
 遵循**双重自底向上**原则：
 
-**第一维度——模块间顺序**（五层架构自底向上）：
-```
-05-SystemBase (CommFunc → CommUI)
-  → 04-BusinessBase (AccountManager)
-    → 03-CommonBusiness (CardManager 等)
-      → 02-Feature (底层BankCard等 → 中间层SwipeCard → 顶层WalletMain)
-        → 01-Product (Phone)
-```
-被依赖的模块先实现，确保下层模块代码就绪后，上层模块可正常引用。
+**第一维度——模块间顺序**（自最底公共层向产品壳 / Feature）：
+
+- 严格顺序由 **`doc/architecture.md` 与 `framework.config.json > architecture`** 声明；脚本 harness 会校验 `outer_layers` / `intra_layer_deps`。
+- 计划实施时：**被依赖方先于依赖方**落地（自底向上）。
 
 **第二维度——模块内顺序**：
-- Feature 层模块（4 层）：`shared → data → domain → presentation`
-- CommonBusiness / BusinessBase 模块：`constant → model → service`
-- SystemBase 模块：按功能域顺序实现
 
-**综合顺序示例**（以首页功能为例）：
+- 遵循当前 profile addendum 的「模块内分层」约定（常见：`shared → data → domain → presentation`，以实例 DSL 为准）。
+
+**综合顺序示例**（占位示意，**禁止**照抄模块名；请替换为架构 SSOT 中的真实依赖链）：
+
 ```
-1. CommFunc（log/utils 等基础能力）
-2. CommUI（Toast/基础页面组件等公共UI）
-3. AccountManager（账号登录/状态管理）
-4. WalletMain/shared → WalletMain/data → WalletMain/presentation
-5. Phone（Ability 入口更新）
-6. 资源文件和模块配置
+1. <systembase_func>（工具 / log 等）
+2. <systembase_ui>（公共 UI）
+3. <businessbase_xxx>（横切能力）
+4. <feature_xxx>：shared → data → … → presentation
+5. <product_shell>（入口 / 产品壳）
+6. 资源与模块包配置
 ```
 
 ### Step 3: 逐模块逐层生成代码（强制逐文件 Lint 门禁）
@@ -174,9 +171,7 @@
    - 有 warning → 评估是否可修（不可忽略）。
    - **只要当前文件 Lint 未过，不得开始写任何其他文件**。这条规则对弱模型尤其重要：弱模型在长上下文中容易累积错误，批量生成后再统一 lint 会把"一个小错误"放大为"多个文件间的连锁错误"。
 
-5. **单文件自校对（对照 arkts-pitfalls.md）**：
-   - 快速扫一遍本文件，确认没有命中 `arkts-pitfalls.md` 里 15 条中任一"❌ 错"模式。
-   - 命中则立即修复，重新走第 4 步。
+5. **单文件自校对**：对照 **profile addendum 列出的宿主语言易错手册**中与当前文件相关的条目。
 
 6. **层间依赖检查**：验证本文件的 `import` 语句未违反模块内四层依赖（shared ← data ← domain ← presentation）和模块间五层依赖矩阵。
 
@@ -199,7 +194,7 @@
 | 形态 | 何时选用 | 物理位置 | 示例 |
 |------|---------|---------|------|
 | **A. Page 命名方法** | 单页面内的线性业务流（1~3 步调用），无跨 UI 状态共享 | `presentation/pages/XxxPage.<ext>` 内的命名 `async` 方法 | `HomeTabPage.loadHomeData()` |
-| **B. 普通协调类（Flow / Coordinator）** | 多 UI 共享状态、多步调用、可能有回滚 | 放在模块业务语义最贴合的目录（优先 `domain/` 或 `shared/` 均可），是一个**非 UI 组件**的普通 class | `domain/flow/CardOpenFlow.<ext>` 中的 `class CardOpenFlow` |
+| **B. 普通协调类（Flow / Coordinator）** | 多 UI 共享状态、多步调用、可能有回滚 | 放在模块业务语义最贴合的目录（优先 `domain/` 或 `shared/` 均可），是一个**非 UI 组件**的普通 class | `domain/flow/CheckoutFlow.<ext>` 中的 `class CheckoutFlow` |
 | **C. 导出命名函数** | 工具化 / 无状态的业务编排 | `domain/` 或 `shared/` 下的宿主语言文件，`export async function xxx(...)` | `domain/home/loadHomeData.<ext>` 中的 `export async function loadHomeData()` |
 
 **关键约束（适用于 A / B / C 三种形态）**：
@@ -211,22 +206,16 @@
    - **宿主语言类字段函数**（若当前 profile 支持）：`handleClick = async () => {}`、`handleClick: () => void = () => {}`、`handleClick = function() {}`
    - 顶层 `const/let/var xxx = () => {}`
 2. **禁止匿名 inline lambda 承载业务**：UI 的 `.onClick(() => { 做一堆业务 })` 这种**匿名**写法**禁止**用于 `use-cases.yaml` 列出的入口；必须先有命名符号（传统函数 / 命名类字段函数 / 命名 const）再被 `onClick` 转发
-3. 每次 `calls` 引用的实体必须是 UT 可直接调用的（无需构造 `@Component`、无需 UI runtime）——形态 A 需要把业务代码从 struct 中抽成 `class`/`function`，或选形态 B/C
+3. 每次 `calls` 引用的实体必须是 UT 可直接调用的（无需构造 **UI 组件**、无需 UI runtime）——形态 A 需要把业务代码从 UI 结构中抽成 `class`/`function`，或选形态 B/C
 4. **禁止新造 Port 接口**：`data_boundaries` 的 `type` 必须是 `contracts.yaml` 已登记的**既有** data 层类（Repository / Client 等）。UT 通过 Spy/Fake/Stub 子类化或原型替换实现打桩，不要求额外抽象接口
 
 #### 3.5.2 业务编排代码的禁用 import（BLOCKER）
 
-形态 B / C 的源文件以及形态 A 中的命名方法体**内**，**禁止** import 下列任一符号（即使只是类型引用）：
+**宿主具体禁入符号清单**（声明式 UI 组件、资源宏、Toast 等）见：
 
-```
-@Component, @Entry, @Preview, @Builder, @State, @Prop, @Link（除非形态 A，且这些仅用于 struct 本身的 UI 状态声明，不允许流入业务方法内的数据模型）
-NavPathStack, NavDestination, NavPathInfo from @kit.ArkUI
-$r, $rawfile, getUIContext, getContext, UIContext, PromptAction
-AppStorage, LocalStorage
-showToast, Toast 等 Toast 辅助函数
-```
+`framework/profiles/<project_profile>/skills/3-coding/profile-addendum.md`
 
-> 形态 A 特殊说明：Page 命名方法**可以**读取 `this.xxx`（struct 状态）并赋值，但**必须**保证：方法主体内调用的下层函数、传给 data 层的参数，都是普通数据模型类型；UI 副作用（Toast / 路由 / 弹框）用 `@Watch` 或在方法返回后由 UI 层翻译。
+以下为**中立约束**：形态 B / C 的源文件以及形态 A 中的命名方法体**内**，禁止 import **任何 UI / 导航 / 资源运行时** API（含仅为类型引用），除非 profile 明确豁免。
 
 #### 3.5.3 UI 层的最小改造（按 `ui_bindings` 落地）
 
@@ -236,13 +225,14 @@ showToast, Toast 等 Toast 辅助函数
 - `subscribes: [state.phase, state.xxx]`：UI 层用 `@Watch` 或状态订阅翻译为渲染/跳转/Toast
 - `user_actions[].calls = <symbol>`：UI 的 `onClick` 只做"参数准备 + 转发调用"，**不写业务分支**
 
-> 形态 B / C 时：页面通过构造时注入（或通过 DI 容器 / 单例持有），例如 `@State private flow: CardOpenFlow = new CardOpenFlow(cardApi, cardStore)`；UT 中同样的 `CardOpenFlow` 可以用 `new CardOpenFlow(new SpyCardApi(), new SpyCardStore())` 直接实例化。
+> 形态 B / C 时：页面通过构造时注入（或通过 DI 容器 / 单例持有），例如持有 `CheckoutFlow` 实例；UT 中可用 Spy 边界在同一类上直接实例化验证。
 
 #### 3.5.4 自检（每完成一个业务编排文件后立即执行）
 
 ```bash
-# Windows PowerShell —— 禁用 UI 符号扫描（仅形态 B / C 的纯业务文件严格执行）
-Select-String -Path "<path>/CardOpenFlow.<ext>" -Pattern "<profile-ui-symbols>"
+# 仅示意：在业务编排源文件上扫描「profile addendum 披露的 UI 禁入关键字」
+# （PowerShell 示例，路径与 pattern 请按宿主文档替换）
+Select-String -Path "<path>/<Flow>.<ext>" -Pattern "<profile-ui-symbols>"
 ```
 
 命中任一关键字 → 立即停下来改正。
@@ -265,16 +255,9 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 4. profile 声明的根级模块清单 — 注册新模块
 5. profile 声明的根级依赖清单 — 添加模块间依赖
 
-**资源文件（每个 Module 内）**：
-1. **`main_pages.json`**：注册所有新增页面路径
-2. **`string.json`**：添加所有界面文本资源，中文同步到 `zh_CN/`
-3. **`color.json`**：添加颜色资源，深色模式同步到 `dark/`
-4. **`float.json`**：添加尺寸/间距资源
-5. **媒体资源**：图标等放入 `resources/base/media/`
+**资源文件（每个 Module 内）**：字符串 / 颜色 / 尺寸 / 媒体等——以 **profile** 声明的资源目录与文件名为准（目录布局见 addendum）。
 
-**路由配置**：
-- phone 模块中的 Navigation 需要注册各功能模块的 NavDestination 页面
-- 如使用系统路由表，需在对应模块的 `resources/base/profile/` 下配置 `route_map.json`
+**路由配置**：**产品壳 / 宿主入口模块**需按.Navigation 约定注册各 Feature 的**页面**；若使用系统路由表，在 profile 声明的 **`route_map.json`** 路径维护映射（详情见 addendum）。
 
 ### Step 5: 质量门禁自检
 
@@ -286,9 +269,9 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 [ ] 3. 文件完整性：design.md 中规划的所有文件是否已全部创建？
 [ ] 4. 接口一致性：组件/函数签名是否与 design.md 定义一致？
 [ ] 5. 编译检查：执行 ReadLints，确认零 error？
-[ ] 6. 资源引用：所有 $r('app.xxx.yyy') 引用的资源是否已定义？
-[ ] 7. 页面注册：所有新增 NavDestination 页面是否已注册到路由配置？
-[ ] 8. 无硬编码字符串：界面文本是否全部通过 $r() 引用？
+[ ] 6. 资源引用：界面文本与样式是否均通过 **宿主声明的资源机制** 引用（API 形态见 addendum）？
+[ ] 7. 页面注册：新增页面是否已按 **navigation / 页面注册文件** 声明（见 profile addendum）？
+[ ] 8. 无硬编码字符串：界面文本是否已消除违规硬编码（以 phase-rules + profile 为准）？
 [ ] 9. DAG 合规性：模块间依赖方向是否正确？无循环依赖？
 [ ] 10. 导入完整：所有 import 语句是否完整，路径是否正确？
 [ ] 11. 命名入口完整性（若 use-cases.yaml 存在）：`ui_bindings[].user_actions[].calls` 所列每个符号是否都能在代码中找到对应命名方法 / 函数 / 导出符号（非 inline lambda）？业务编排源文件（形态 B / C）是否**零**UI/Nav/Toast/AppStorage import？
@@ -306,14 +289,14 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 | Module | 格式 | 变更类型 | 说明 |
 |--------|------|----------|------|
 | common | <profile-format> | 新增/修改 | 说明 |
-| wallet_home | <profile-format> | 新增 | 说明 |
+| feature_home | <profile-format> | 新增 | 说明 |
 | app-shell | <profile-format> | 修改 | 说明 |
 
 ### 新增文件（按模块×层级）
 | Module | 层级 | 文件路径 | 说明 |
 |--------|------|----------|------|
-| wallet_home | shared/client | HomeApiClient.<ext> | 首页接口 |
-| wallet_home | data/model | CardInfo.<ext> | 卡片数据模型 |
+| feature_home | shared/client | HomeApiClient.<ext> | 首页接口 |
+| feature_home | data/model | CardInfo.<ext> | 卡片数据模型 |
 | ... | ... | ... | ... |
 
 ### 质量门禁结果
@@ -354,7 +337,7 @@ profile 专属命令形态、超时与性能调优说明放在对应 `framework/
    - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
    - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → 不要让用户手工猜。先展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
    - profile 包描述 / 模块依赖错误 → 回到依赖章节补依赖；
-   - 资源引用 (`$r('app.string.xxx')`) 缺失 → 回到资源声明章节补声明。
+   - 资源引用（**宿主资源 API**，见 profile）缺失 → 回到资源声明章节补声明。
 4. **修完 → 再跑**：重复 6.5.1，直到 profile compile capability PASS。
 5. **绝不允许**：
    - 把编译失败定性为"环境问题"绕过；
@@ -412,11 +395,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 | 文件完整性 | contracts.yaml 中列出的所有文件是否存在 | BLOCKER |
 | 分层合规 | 模块内 import 是否违反 shared→data→domain→presentation | BLOCKER |
 | 模块间依赖 | import 是否违反五层架构依赖矩阵 | BLOCKER |
-| 资源引用完整性 | $r() 引用的 key 是否在资源 JSON 中定义 | BLOCKER |
-| 硬编码字符串 | presentation 层是否存在未通过 $r() 引用的 UI 文本 | MAJOR |
+| 资源引用完整性 | 宿主资源引用 API 是否与资源定义一致 | BLOCKER |
+| 硬编码字符串 | presentation 层是否存在未走资源机制的 UI 文本 | MAJOR |
 | 模块导出 | 每个需跨模块访问的模块是否通过 DSL 声明的出口正确导出 | BLOCKER |
-| 模块注册 | 新模块是否在 build-profile.json5 中注册 | BLOCKER |
-| 页面注册 | NavDestination 页面是否在 main_pages.json 中注册 | BLOCKER |
+| 模块注册 | 新模块是否在宿主构建清单中注册（文件名因 profile 而异） | BLOCKER |
+| 页面注册 | 新增页面是否在宿主**页面注册 / 路由清单**中登记 | BLOCKER |
 | 命名规范 | 模块名/组件名/文件名/资源 key 是否符合命名约定 | MAJOR |
 | 禁止 any | 代码中是否存在 any 类型 | MAJOR |
 
@@ -432,7 +415,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
   1. 业务逻辑正确性 — 代码是否正确实现了 design.md 描述的业务流程
   2. 异常处理完整性 — acceptance.yaml boundaries 中的每个异常场景是否有对应处理
   3. 接口签名一致性（BLOCKER）— 实际代码签名是否与 contracts.yaml 一致
-  4. 组件 Props 一致性 — @State/@Prop/Events 是否与 contracts.yaml components 一致
+  4. 组件 Props 一致性 — 实际 UI 状态/Props/事件是否与 contracts.yaml components 一致
   5. 数据所有权合规 — presentation 层是否绕过 Repository 直接操作数据
   6. 模拟数据隔离 — 模拟数据是否封装在 Repository 内部
   7. PRD 验收标准覆盖 — acceptance.yaml criteria 中的 P0/P1 AC 是否都有代码实现
@@ -463,25 +446,25 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ## 编码规范
 
-生成代码时必须遵守以下规范（完整规范见 [coding-standards.md](../../profiles/hmos-app/skills/3-coding/templates/coding-standards.md)）：
+生成代码时必须遵守以下规范（**完整条款以当前 `project_profile` 的 `templates/coding-standards.md` 为准**；以下为中立速记）：
 
 ### 核心规则速记
 
-1. **分层规则**：每个 Module 内严格遵循 shared → data → domain → presentation 4 层架构，禁止反向依赖
+1. **分层规则**：每个 Module 内遵循架构 DSL 声明的内层顺序，禁止反向依赖
 2. **模块格式**：按当前 profile 的模块格式与导出规则实现
-3. **组件命名**：PascalCase，组件文件名与 struct 名一致
-4. **页面实现**：功能模块的页面基于 NavDestination 实现，仅 phone 的主入口用 `@Entry`
-5. **资源引用**：界面文本用 `$r('app.string.xxx')`，颜色用 `$r('app.color.xxx')`，尺寸用 `$r('app.float.xxx')`
-6. **数据所有权**：业务数据的增删改查必须通过 Repository，不允许 presentation 层直接操作数据源
-7. **复杂组件**：自带生命周期管理，完成「用户操作 → 逻辑执行 → 数据变更 → UI 刷新」闭环
-8. **异步操作**：使用 `async/await`，不使用裸 Promise 回调链
-9. **列表性能**：超过 20 项的列表必须用 `LazyForEach` + `IDataSource`
+3. **组件命名**：PascalCase；文件名与宿主「组件/类型」命名约定一致
+4. **页面实现**：按宿主壳层与 Feature 页的分工实现（入口装饰符与路由页面形态见 profile addendum）
+5. **资源引用**：界面文案/色值/尺寸走宿主资源系统（引用 API 见 profile addendum）
+6. **数据所有权**：业务数据变更经 Repository（或实例协议规定的边界），presentation 不直接碰数据源
+7. **复杂组件**：封装交互闭环时使用宿主推荐的组件生命周期与刷新模式
+8. **异步操作**：使用宿主推荐的异步范式（如 `async/await`）
+9. **列表性能**：大列表使用宿主推荐的懒加载/虚拟化机制
 
 ## 常用参考
 
 - Profile 编码 addendum: `framework/profiles/<profile>/skills/3-coding/profile-addendum.md`
 - Profile 宿主语言/组件/API 参考：以 addendum 中列出的 `reference/` 与 `templates/` 为准
-- 编码规范完整版: [coding-standards.md](../../profiles/hmos-app/skills/3-coding/templates/coding-standards.md)
+- 编码规范完整版: `` `profile-skill-asset:3-coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol)）
 
 ## 关联文件
 
@@ -523,8 +506,8 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 - **Schema**：[framework/harness/trace/trace.schema.json](../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
 - **必须记录的事件**（针对弱模型迭代最关键）：
   - `tool_calls`：`ReadLints`（或等价宿主静态检查）的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
-  - `retries`：`lint_error` / `language_rule_violation`（及与 `trace.schema.json` 示例一致其它 trigger）每次自修尝试次数，`related_file` 必填；`project_profile=hmos-app` 时常细化为 ArkTS 坑位自修，仍用上述中性 trigger 或附 `notes` 说明
-  - `human_pain_points`：宿主为 ArkTS 工程时可用 `arkts_correctness` 并逐条对照 `arkts-pitfalls.md`；其它 profile 优先用 `compile_correctness` 等 schema 枚举内中性分类（见 `trace.schema.json`）
+  - `retries`：`lint_error` / `language_rule_violation`（及与 `trace.schema.json` 示例一致其它 trigger）每次自修尝试次数，`related_file` 必填；具体宿主 profile 可能在 addendum 中把坑位自修挂到上述中性 trigger，或附 `notes` 说明
+  - `human_pain_points`：**宿主语言**工程可复用 schema 中细分标签（如某 profile 的 pitfalls 清单）；其它 profile 优先用 `compile_correctness` 等 schema 枚举内中性分类（见 `trace.schema.json`）
   - `harness_checks`：`check-coding.ts` 的结果，特别是 `diff_within_scope` 是否通过
 - **痛点回填**：同目录 `gap-notes.md`，模板见 [framework/harness/trace/gap-notes.template.md](../../framework/harness/trace/gap-notes.template.md)。
 
@@ -541,7 +524,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-coding/
 ```
 
 **本 Skill 最容易发生的痛点（记入 `human_pain_points`）**：
-- `arkts_correctness`（见 schema：兼容 hmos-app / ArkTS 工单的分类标签）或更中性的 `compile_correctness`：**宿主语言**语法/API 与设计约束不一致；ArkTS 工程需对照 `arkts-pitfalls.md` 条款；
+- `arkts_correctness`（见 schema：兼容某宿主语言的工单分类标签）或更中性的 `compile_correctness`：**宿主语言**语法/API 与设计约束不一致；具体坑位清单见当前 `project_profile` addendum 指向的易错参考；
 - `contracts_mismatch`：实现与 `contracts.yaml` 签名/路径/资源 key 不一致；
 - `scope_creep`：`git diff` 出现 design `in_scope_modules` 外的文件。
 

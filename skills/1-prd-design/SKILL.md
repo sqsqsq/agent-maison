@@ -19,7 +19,9 @@
 
 `framework/profiles/<project_profile.name>/skills/1-prd-design/profile-addendum.md`
 
-其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
 
 ---
 
@@ -61,7 +63,7 @@
 
 > **本步骤是 PRD 阶段 Scope 守门机制的真正入口。**
 > 用户的自然语言描述中经常出现与模块字面相似但语义错位的术语
-> （最典型：「卡中心」≠「卡管理」CardManager；「我的」≠「账号」AccountManager）。
+> （典型：两个中文名相似但落在不同 `canonical_module`；**领域填充实例**见 `` `profile-skill-asset:1-prd-design/examples_prd_mapping` ``。）
 > 弱模型若直接进入 Step 2 截图分析并写 PRD，非常可能把错误术语映射固化进文档。
 >
 > **本步骤就是把"隐式的术语理解"变成"显式的术语映射表"，交给用户逐条人工确认。**
@@ -96,8 +98,8 @@
 
    | 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项（必读） | 用户确认 |
    |---------|---------|--------|--------|---------------|---------|
-   | 卡中心 | WalletMain | 02-Feature | medium | 卡管理 (CardManager) — 卡中心是 UI 页面，卡管理是后端能力 | [ ] |
-   | 添卡入口 | WalletMain | 02-Feature | high | — | [ ] |
+   | <业务术语 A> | <FeatureModule> | <Layer> | medium | <易混模块> — <消歧一句话> | [ ] |
+   | <业务术语 B> | <FeatureModule> | <Layer> | high | — | [ ] |
    | （未命中示例）X | 候选①：A / 候选②：B / 候选③：C | — | low | 各候选的 NOT_responsible_for 简述 | [ ] |
    ```
 
@@ -123,11 +125,11 @@
 
 #### 1.5.4 反模式（禁止）
 
-- ❌ "卡中心"直接当作 `CardManager`，因为"看起来差不多"
+- ❌ 将用户口语术语直接等同为**错误**的 `canonical_module`，因为"看起来差不多"
 - ❌ 置信度一律标 `high`，让用户全量打钩了事
 - ❌ 用户在聊天里口头说了"OK"，但没把 `[ ]` 改成 `[x]` 就继续
 - ❌ Step 2 截图分析中又出现了未在映射表里的新业务名词，却没有回到 Step 1.5 补条目
-- ❌ 术语映射表写了 `卡中心 → CardManager`，但 Scope 声明的 in/out_of_scope_modules 里都没有 CardManager（自相矛盾）
+- ❌ 术语映射表某行的权威模块与 Scope 的 in/out_of_scope_modules **均无关**（自相矛盾）
 
 ---
 
@@ -143,11 +145,7 @@
 
 ### Step 3: 生成 PRD 初稿
 
-读取 PRD 文档模板：
-
-```
-framework/skills/1-prd-design/templates/prd-template.md
-```
+读取 PRD 文档模板：`` `profile-skill-asset:1-prd-design/prd_template` ``（解析规则见 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol)）。
 
 按模板结构填充内容，**必须包含以下 10 个章节**。  
 **Visual Handoff**：仅当需求为 **UI 形态**（新屏 / 改版 / 需对齐设计真源）时，须在 Scope 附近增加 **独立** `yaml` 块（根字段含 `ui_change`），写法见 [reference/visual-handoff.md](reference/visual-handoff.md)；**后端 / 库 / 云侧无界面**需求且团队未 opt-in `framework.config.json` 的 `prd.strict` 时，**不写**该块不产生脚本噪声。**doc/features/** 是否提交主仓由实例 **`paths.docs_committed`** 决定，harness 不隐含「必须入库」。
@@ -179,7 +177,7 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
 1. 通读需求描述 + 截图，识别要实现的功能。
 2. 对照 `doc/architecture.md` 的"模块清单"，判断哪些模块**必须改**（= `in_scope_modules`）、哪些模块**看似相关但本需求不需要改**（= `out_of_scope_modules`）。
 3. 在 `rationale` 中回答一个问题："如果后续 Skill 2 想把逻辑提到公共模块，我是否同意？不同意的理由是什么？"
-4. `in_scope_modules` 的模块名必须使用 PascalCase，且与 `doc/architecture.md` 保持一致（如 `BankCard`、`WalletMain`，**不要**使用 `bank-card` 或 `bank_card`）。
+4. `in_scope_modules` 的模块名必须使用 PascalCase，且与 `doc/architecture.md` 保持一致（如 `FeatureModuleA`、`FeatureModuleB`，**不要**使用 `kebab-case` 或 `snake_case`）。
 5. 如果确实判断不清楚，宁可把 scope 声明得窄一些（只列最核心那 1 个模块），让 Skill 2 遇到问题时触发用户确认流程，也不要先写得宽松留"后路"。
 
 ### Step 4: 质量门禁自检
@@ -232,10 +230,10 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `verification_steps` | 从描述中提炼 | 具体的验证操作步骤列表 |
 | `expected_result` | 从描述中提炼 | 可观察的预期结果 |
 | `data_constraints` | 从描述中提炼 | 数据约束（数量、具体值等，可选） |
-| `ut_layer` | **必填** | UT 分层：`unit`（仅 Hypium 业务 UT 覆盖）/ `device`（仅真机 UI 自动化覆盖）/ `both`（两层都需要覆盖）。详见下方《6.1.1 ut_layer 分层指引》 |
+| `ut_layer` | **必填** | UT 分层：`unit`（仅 profile 宿主业务 UT 覆盖）/ `device`（仅真机 UI 自动化覆盖）/ `both`（两层都需要覆盖）。详见下方《6.1.1 ut_layer 分层指引》 |
 | `ut_focus` | 若 ut_layer ∈ {unit, both} 必填 | 简要说明 UT 要断言什么（如"state 最终为 Success；storage.save 被调用；save 数据字段完整"）；不写具体代码，只点明关切点 |
-| `linked_flow` | 若 ut_layer ∈ {unit, both} 建议填 | 指向 `doc/features/{feature}/use-cases.yaml > use_cases[].id`，如 `card_opening` |
-| `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 指向该 use_case 的 `branches[].id`，如 `sms_fail_rollback` |
+| `linked_flow` | 若 ut_layer ∈ {unit, both} 建议填 | 指向 `doc/features/{feature}/use-cases.yaml > use_cases[].id`，如 `<flow_id>` |
+| `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 指向该 use_case 的 `branches[].id`，如 `<branch_id>` |
 
 **`boundaries` 章节**（从 PRD「异常/边界场景处理」提取）：
 
@@ -262,7 +260,7 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `both` | 既有数据/状态断言，又强依赖真实 UI 反馈（如"点击卡片后跳转到详情页且详情页数据正确"） |
 
 **原则**：
-1. **纯 UI/交互 AC 必须落 device**——UT 里用 Fake NavPathStack / spy showToast 的做法已被明确禁止（见 ut-rules.yaml `no_ui_dep_in_ut` BLOCKER）
+1. **纯 UI/交互 AC 必须落 device**——业务 UT 中禁止依赖真实 UI 导航/Toast（见 ut-rules.yaml `no_ui_dep_in_ut` BLOCKER；细则随 `project_profile`）
 2. **业务流程分支必须落 unit**——"成功/失败/取消/回滚"这类状态流转由 UseCase 在 UT 中端到端覆盖
 3. **ut_layer = both 的 AC**：必须拆出"业务部分" 与 "UI 部分"分别在 `ut_focus` 中写清，UT 只承担业务部分，UI 部分由 Skill 6 覆盖
 
@@ -382,9 +380,9 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 
 ## 关联文件
 
-- PRD 模板: [templates/prd-template.md](templates/prd-template.md)
-- 功能卡片模板: [templates/feature-card.md](templates/feature-card.md)
-- 示例 PRD: [examples/example-prd.md](examples/example-prd.md)
+- PRD 模板: `` `profile-skill-asset:1-prd-design/prd_template` ``
+- 功能卡片模板: [templates/feature-card.md](templates/feature-card.md)（通用，仍位于本 Skill 树内）
+- 示例 PRD: `` `profile-skill-asset:1-prd-design/example_prd` ``
 - 阶段级规约: `framework/specs/phase-rules/prd-rules.yaml`
 - 功能级 Spec 示例: `doc/features/home-page/acceptance.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-prd.ts`

@@ -19,7 +19,9 @@
 
 `framework/profiles/<project_profile.name>/skills/5-business-ut/profile-addendum.md`
 
-（未声明 `project_profile` 时运行时默认 `hmos-app`。若路径不存在则仅依赖本文与 profile 树下模板/示例。）
+（未声明 `project_profile` 时由 harness 按仓库指纹回落默认 profile；若路径不存在则仅依赖本文与 profile 树下模板/示例。）
+
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 
@@ -79,7 +81,7 @@
 |--------|------|------|
 | **`doc/features/{feature}/use-cases.yaml`** | ⚠️（仅复杂 feature） | Skill 2 产出（仅当满足复杂度阈值）；含 `coordinator / ui_bindings / data_boundaries / state_model / branches`，Skill 5 的**主规划来源** |
 | 业务编排源代码 | ✅ | Skill 3 产出；代码形态由 Skill 3 自选（Page 命名方法 / `Flow` 类 / 导出函数）。UT 按 `ui_bindings.user_actions.calls` 或 acceptance.yaml 指向的函数直接调用 |
-| data 层源代码 | ✅ | `data/repository/*.ets` / `shared/client/*.ets` 等；UT 通过子类化（SpyXxx）或原型替换在这些边界上打桩 |
+| data 层源代码 | ✅ | `data/repository/*.<ext>`、`shared/client/*.<ext>` 等；UT 在 profile 允许的边界上打桩 |
 | `doc/features/{feature}/contracts.yaml` | ✅ | 接口契约 Spec，`data_boundaries[].type` 必须来自这里的 `interfaces[].class` |
 | `doc/features/{feature}/acceptance.yaml` | ✅ | 验收标准 Spec，含 `ut_layer`；简单 feature 时是主规划来源 |
 | `doc/features/{feature}/ut/testability-audit.md` | ✅ | Step 1.5 可测性预检（覆盖全部 unit/both AC/BD） |
@@ -97,13 +99,13 @@
 
 | 规约 | 路径 |
 |------|------|
-| UseCase 规范 Schema | [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md) |
-| DAG Schema（v2） | [dag-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md) |
-| UT 模板 + Spy 模板（子类化既有类 / 原型替换） | [ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) |
-| 打桩策略 | [mock-strategy.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-strategy.md) |
-| 可测性预检模板 | [testability-audit-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md) |
-| mock-plan Schema | [mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md) |
-| 规范级样例（开卡流程） | [card-opening/](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/) |
+| UseCase 规范 Schema | `` `profile-skill-asset:5-business-ut/use_cases_schema` `` |
+| DAG Schema（v2） | `` `profile-skill-asset:5-business-ut/dag_schema` `` |
+| UT 模板 + Spy 模板（子类化既有类 / 原型替换） | `` `profile-skill-asset:5-business-ut/ut_template` `` |
+| 打桩策略 | `` `profile-skill-asset:5-business-ut/mock_strategy` `` |
+| 可测性预检模板 | `` `profile-skill-asset:5-business-ut/testability_audit_template` `` |
+| mock-plan Schema | `` `profile-skill-asset:5-business-ut/mock_plan_schema` `` |
+| 规范级样例（开卡流程） | `` `profile-skill-asset:5-business-ut/card_opening_dir` `` |
 
 ## UT 可测性 / mock-plan 策略决议（v2.3）
 
@@ -128,7 +130,7 @@
 > **HARD STOP — 规划确认门**：Step 1 结束后必须先向用户展示「UT 规划清单」并等待明确确认，禁止直接进入 Step 2/3 写 DAG 或 UT。清单必须包含：
 > - 本轮覆盖的 `AC/BD/branch`，以及不覆盖项和原因（如 `device` 交 Skill 6）；
 > - 每个 `it()` 的名称、被测入口、Spy/Stub 边界、核心断言（状态 / 返回值 / callLog / 持久化）；
-> - 将要新增或修改的 DAG / `*.test.ets` / `List.test.ets` 文件路径；
+> - 将要新增或修改的 DAG / **profile 规定的测试源文件** / 套件注册入口路径；
 > - 明确声明「本轮不改业务源码」。若确需改 `src/main`，必须先走文末约束 #12 的单独授权流程，不能把它混在规划确认里。
 >
 > 用户未确认前，agent 只能继续补充说明或调整规划，不得写文件。
@@ -138,7 +140,7 @@
 为每个 use_case 列一张 **Branch × DAG × UT × AC 清单**：
 
 ```markdown
-📋 UT 规划清单（use_case: card_opening，coordinator: CardOpenFlow）
+📋 UT 规划清单（use_case: `<flow_id>`，coordinator: `<FlowClass>`）
 
 ui_bindings 入口（来自 use-cases.yaml）:
 - CardSelectPage.role=entry, user_actions[].calls = "flow.chooseCard"
@@ -187,7 +189,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 将写入文件：
 - `02-Feature/Xxx/test/dag/xxx.dag.yaml`
-- `02-Feature/Xxx/src/ohosTest/ets/test/Xxx.test.ets`
+- `02-Feature/<Xxx>/src/<profile-test-root>/...`（目录名以 addendum 为准）
 
 业务源码：
 - 不修改 `src/main`。
@@ -195,11 +197,11 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 ### Step 1.5：可测性预检（testability-audit.md）【HARD STOP】
 
-在生成 DAG / mock-plan / `*.test.ets` 之前，必须为 **acceptance.yaml 内每条 `ut_layer ∈ {unit, both}` 的 AC/BD** 写一条可测性结论，归档：
+在生成 DAG / mock-plan / **profile 定义的单测源文件**之前，必须为 **acceptance.yaml 内每条 `ut_layer ∈ {unit, both}` 的 AC/BD** 写一条可测性结论，归档：
 
 `doc/features/{feature}/ut/testability-audit.md`
 
-1. **按模板撰写**：[templates/testability-audit-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md)（L0–L3 定义、依赖 kind/seam、YAML 形态）。
+1. **按模板撰写**：`` `profile-skill-asset:5-business-ut/testability_audit_template` ``（L0–L3 定义、依赖 kind/seam、YAML 形态）。
 2. **对每条 unit/both 项给出**：
    - `testability_level`（L0/L1/L2/L3）
    - 关键 `dependencies`（含 `global_singleton` / `inline_lambda` 等，以便 harness 与人工审阅）
@@ -216,7 +218,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 `doc/features/{feature}/ut/mock-plan.yaml`
 
-1. **规格**：[templates/mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md)（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
+1. **规格**：`` `profile-skill-asset:5-business-ut/mock_plan_schema` ``（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
 2. **权威对齐**：`spies[].target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在稍后的 Spy 类里脱离 plan 自由发挥字段或方法签名。
 3. **与 Step 3 的关系**：生成 `SpyXxx` / `FakeXxx` 时 **1:1 翻译** mock-plan（preset id、方法名、返回/异常预设），UT 中切换分支时只调用 plan 中声明的 preset（例如 `spy.applyPreset('success')` 一类封装），避免在 `it()` 内手写无类型字面量。
 4. **用户确认**：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
@@ -249,7 +251,7 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 #### 3.1 UT 骨架（路径 A：有 use-cases.yaml）
 
-按照 [templates/ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) 提供的骨架生成。**直接调用 `ui_bindings.user_actions.calls` 声明的命名函数**，**不 new `@Component struct`**：
+按照 `` `profile-skill-asset:5-business-ut/ut_template` `` 提供的骨架生成。**直接调用 `ui_bindings.user_actions.calls` 声明的命名函数**，**不 new `@Component struct`**：
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
@@ -326,7 +328,7 @@ v2.1 的打桩针对 **`use-cases.yaml > data_boundaries[].type` 所指的既有
 - **禁止**在 Spy 内部写业务判断（业务判断必须留在 coordinator / 命名业务函数里）
 - 若采用形式 2，`afterEach` 必须恢复原型，避免跨用例污染
 
-参考模板见 [templates/ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md) 的打桩章节。
+参考模板见 `` `profile-skill-asset:5-business-ut/ut_template` `` 的打桩章节。
 
 #### 3.3 每个 `it()` 的必备断言
 
@@ -346,39 +348,30 @@ v2.1 约束（`it_drives_flow` MAJOR 检查）：
 
 #### 3.5 import 白名单（BLOCKER · `ut_import_whitelist`）
 
-UT 文件**只允许** import 以下来源：
+**允许的 import 类别**（细则与**测试框架包名**见 profile addendum）：测试框架、被测命名业务入口、data 层与被允的 Spy/Fake、同目录替身。
 
-- `@ohos/hypium`
-- 被测业务编排符号（Flow 类 / 导出函数 / Page 类 **但只用其命名方法**，**不 new struct**）
-- 被测/依赖的 `data/model/*`、`data/repository/*`、`shared/client/*` 等 data 层符号
-- 同目录 `spy/` / `fake/` / `stub/` 目录的替身
-
-**禁止**（由 harness BLOCKER 拦截）：
-`@Component` / `@Entry` / `@Preview` / `struct` / `NavPathStack` / `NavDestination` / `showToast` / `$r(` / `$rawfile(` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`。
+**禁止的符号清单**由 **profile** 实现（`harness/ut-ui-import-ban.ts` + addendum），脚本仅在与 phase-rules 声明一致时启用。
 
 #### 3.6 生成流程
 
-1. 为每个 data_boundary（或路径 B 的直接依赖）在 `{module}/src/ohosTest/ets/test/spy/` 下生成替身（已存在则复用）
-2. 为每个 use_case（路径 A）或每组 AC（路径 B）生成一份 `.test.ets`，每个 branch / AC 一个 `it()`
+1. 为每个 data_boundary（或路径 B 的直接依赖）在 **profile 规定的测试源码树** 下生成 `spy/`（或等价目录）替身（已存在则复用）
+2. 为每个 use_case（路径 A）或每组 AC（路径 B）生成一份 **profile 规定的测试文件**（扩展名与命名模式见 addendum，如 `*.test.<ext>`），每个 branch / AC 一个 `it()`
 3. 展示给用户确认
 4. 写入文件
 
 ### Step 4：测试注册与配置
 
-1. 确保 `List.test.ets` 中注册了所有新增测试函数
-2. 确认 `@ohos/hypium` 依赖在 ohosTest 的 `oh-package.json5` 中声明
-3. 若模块尚无 ohosTest 目录，按下列标准结构创建：
+1. 确保 **测试套件注册入口**（由 profile 约定文件名，如 `<suite_registry>.<ext>`）登记了所有新增用例
+2. 确认测试框架依赖在 **profile 声明的测试模块包描述** 中声明（常见为宿主侧的包清单文件）
+3. 若模块尚无测试源码目录，按 **profile 标准目录** 创建（路径见 addendum，如 `<module>/<profile-test-root>/...`）
 
 ```
-{module}/src/ohosTest/
-├── ets/
-│   └── test/
-│       ├── List.test.ets              # 测试入口注册
-│       ├── card_opening.test.ets      # UseCase UT
-│       └── spy/
-│           ├── SpyCardOpenApi.ets
-│           └── SpyCardPersistence.ets
-└── module.json5
+{module}/src/<profile-test-root>/
+├── ...
+│   └── <suite_registry>.<ext>        # 测试入口聚合
+│   └── <feature>.test.<ext>          # 分文件用例
+│   └── spy/                          # Spy / Fake
+└── module.json5（若需要）
 ```
 
 ### Step 5：质量门禁自检（v2.1）
@@ -389,7 +382,7 @@ UT 文件**只允许** import 以下来源：
 [ ] 3.  boundary_matches_contracts（若有 use-cases.yaml）：data_boundaries[].type 都能在 contracts.yaml > interfaces[].class 中找到
 [ ] 4.  DAG 合规：顶层含 flow_id / flow_name / entry_point / nodes；若有 use-cases.yaml 则另含 use_case（= id）和 branches[]
 [ ] 5.  DAG 分工：同 use_case 所有 DAG 的 branches[] 交集为空、并集覆盖所有非 device_only 分支
-[ ] 6.  ut_import_whitelist（BLOCKER）：UT 文件未 import @Component / struct / NavPathStack / showToast / $r / $rawfile / AppStorage / LocalStorage / @kit.ArkUI / @kit.ArkGraphics 等
+[ ] 6.  ut_import_whitelist（BLOCKER）：UT 未 import profile 禁止清单中的 UI / 资源运行时符号（完整表见 addendum + `ut-ui-import-ban`）
 [ ] 7.  boundaries_all_stubbed：每个 data_boundary 都有 Spy/Fake/Stub 子类化或原型替换的证据
 [ ] 8.  it() 命名：每条 it() 以 [AC-X] 或 [BRANCH-X] 起始
 [ ] 9.  it() 驱动力：
@@ -398,7 +391,7 @@ UT 文件**只允许** import 以下来源：
 [ ] 10. AC 覆盖（单元层）：ut_layer in [unit, both] 且 P0/P1 的 AC 100% 对应 it()
 [ ] 11. 分支覆盖（若有 use-cases.yaml）：每个非 device_only 分支都有对应 it()
 [ ] 12. device-testing-todo.md：每条 ut_layer in [device, both] 的 AC 都已登记；DAG 的 ui_subscription 节点均已翻译成真机条目
-[ ] 13. 测试注册：所有 UT 文件在 List.test.ets 中注册
+[ ] 13. 测试注册：所有 UT 文件在 **profile 声明的套件入口** 中注册
 [ ] 14. 用例独立性：beforeEach 重建替身；若用原型替换方案，afterEach 还原
 ```
 
@@ -416,17 +409,17 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 
 ## 真机覆盖项
 
-### AC-5 开卡成功后页面跳转到结果页（ut_layer=device）
+### AC-5 <场景标题>（ut_layer=device）
 
 - **来源**：acceptance.yaml > AC-5
-- **linked_flow / linked_branch**：card_opening / happy_path
-- **UT 已保证**：`useCase.state.phase === Success`
+- **linked_flow / linked_branch**：`<flow_id>` / `<branch_id>`
+- **UT 已保证**：`useCase.state.phase === <ExpectedPhase>`
 - **真机需验证**：
-  - [ ] 点击"下一步"按钮后，导航栈栈顶为 `CardOpenResultPage`
-  - [ ] 路由参数包含 `{ cardId: 'c1' }`
-  - [ ] 页面转场动画自然
+  - [ ] <UI 交互 1>
+  - [ ] <导航/参数 2>
+  - [ ] <视觉/动效 3>
 
-### BD-2 短验失败弹出错误 Toast（ut_layer=device）
+### BD-2 <边界场景标题>（ut_layer=device）
 
 - ...
 ```
@@ -439,7 +432,7 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 ### UseCase 清单（来自 use-cases.yaml）
 | UseCase | branches 数 | UT 文件 | DAG 数 |
 |---------|-------------|---------|--------|
-| CardOpeningUseCase | 4 | card_opening.test.ets | 4 |
+| CardOpeningUseCase | 4 | card_opening.test.<ext> | 4 |
 
 ### DAG 文件清单
 | flow_id | use_case | branches | 关联 AC |
@@ -450,7 +443,7 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 ### UT 文件清单
 | 文件 | 测试函数 | 用例数（= branches 数） |
 |------|---------|-------------------------|
-| card_opening.test.ets | cardOpeningUseCaseTest | 4 |
+| card_opening.test.<ext> | cardOpeningUseCaseTest | 4 |
 
 ### 覆盖率统计
 | 指标 | 数值 |
@@ -579,11 +572,11 @@ HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature
 
 重跑后如果仍有 working 侧业务源码改动，才进入 Step 7.5.4 / 约束 #12 的 HARD STOP 授权流程；禁止要求用户"批量授权历史变更"。
 
-若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `ut_hvigor_build` 报 `project_dependency_missing`，按 Step 7.5.3 的依赖缺失分支处理，不得只要求用户手工执行 DevEco / ohpm 操作。
+若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `ut_compile`（及兼容别名 `ut_hvigor_build`）报 `project_dependency_missing`，按 Step 7.5.3 的依赖缺失分支处理，不得只要求用户手工执行宿主 IDE / 包管理器操作而不给出 harness 侧可复现路径。
 
-每次 harness 运行后，agent 必须把 `ut_run_status` 的状态面板完整贴给用户；禁止只用 `grep` 展示局部 PASS/FAIL。尤其当 `ut_hvigor_build` 失败导致 `ut_hvigor_test` 短路时，必须明确说：
+每次 harness 运行后，agent 必须把 `ut_run_status` 的状态面板完整贴给用户；禁止只用 `grep` 展示局部 PASS/FAIL。尤其当 `ut_compile` 失败导致 `ut_run`（及兼容别名 `ut_hvigor_test`）短路时，必须明确说：
 
-> 当前不能宣称 UT 通过；ohosTest 未在真机/模拟器上实际执行。
+> 当前不能宣称 UT 通过；**宿主测试模块未在真机/模拟器上实际执行**（详见 profile 的 `ut.run` 能力说明）。
 
 状态面板格式：
 
@@ -591,7 +584,7 @@ HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature
 UT 阶段状态：
 - 静态/结构规则：PASS/FAIL
 - tsc 静态编译：PASS/FAIL
-- ohosTest hvigor 编译：PASS/FAIL
+- 宿主测试模块编译（**profile 声明的测试编译能力 / 等价命令**）：PASS/FAIL
 - 真机/模拟器执行：PASS/FAIL/未执行
 - 源码改动检查：PASS/FAIL
 - 当前是否可以宣称 UT 完成：是/否
@@ -669,14 +662,14 @@ UT 阶段宣布"完成"前必须**同时**满足：
 - 上游输入:
   - `doc/features/{feature}/use-cases.yaml`（Skill 2 v2.1 产出，仅复杂 feature）
   - 业务编排源代码（Skill 3 v2.1 产出，代码形态由 Skill 3 自选：Page 命名方法 / `Flow`/`Coordinator` 普通类 / 导出函数，**不强制** `domain/usecase/` 目录）
-  - data 层源代码（`data/repository/*.ets` / `shared/client/*.ets` 等）
+  - data 层源代码（`data/repository/*.<ext>` / `shared/client/*.<ext>` 等）
   - `doc/features/{feature}/design.md` / `PRD.md` / `contracts.yaml` / `acceptance.yaml`
 - 阶段级规约: `framework/specs/phase-rules/ut-rules.yaml`
-- UseCase Schema: [use-cases-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)
-- DAG Schema: [dag-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md)
-- UT / Spy 模板: [ut-template.md](../../profiles/hmos-app/skills/5-business-ut/templates/ut-template.md)
-- 打桩策略: [mock-strategy.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-strategy.md)
-- 规范级样例: [card-opening/](../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/)
+- UseCase Schema: `` `profile-skill-asset:5-business-ut/use_cases_schema` ``
+- DAG Schema: `` `profile-skill-asset:5-business-ut/dag_schema` ``
+- UT / Spy 模板: `` `profile-skill-asset:5-business-ut/ut_template` ``
+- 打桩策略: `` `profile-skill-asset:5-business-ut/mock_strategy` ``
+- 规范级样例: `` `profile-skill-asset:5-business-ut/card_opening_dir` ``
 - 脚本 Harness: `framework/harness/scripts/check-ut.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-ut.md`
 - 下游消费者:
@@ -689,19 +682,19 @@ UT 阶段宣布"完成"前必须**同时**满足：
 
 ## 约束与注意事项
 
-1. **UT 是消费者，不驱动架构**：**绝对禁止**为了 UT 反向要求 Skill 2/3 新增 `domain/usecase/XxxUseCase.ets` 或 `XxxPort` 接口。若业务代码无法直接从 UT 调用（例如业务嵌在 `onClick = () => {}` 内），应反馈 Skill 3 抽出命名方法 / 函数，而不是在 UT 里 new `@Component struct`。
+1. **UT 是消费者，不驱动架构**：**绝对禁止**为了 UT 反向要求 Skill 2/3 新增特定目录下的 `XxxUseCase` 类或 Port 接口。若业务嵌在 `onClick = () => {}` 内，应反馈 Skill 3 抽出命名方法，而不是在 UT 里实例化 **UI 组件**。
 2. **use-cases.yaml 非必需**：仅复杂 feature（多 UI 共享状态 / 多步云调用 / 含回滚分支）才有该文件；简单 feature 直接按 acceptance.yaml + dag.yaml 针对 data 层写 UT，不要硬凑。
 3. **分支 1:1 映射**（路径 A）：`use-cases.yaml > branches[]` ↔ DAG branches ↔ UT `it()` 严格 1:1（允许 1 个 DAG 覆盖多个 branch，但总并集需覆盖全部）
 4. **AC 分层**：只测 `ut_layer in [unit, both]` 的 AC/BD；`device` 的 AC 必须在 `device-testing-todo.md` 中登记，绝不在 UT 里"硬凑"覆盖
 5. **Mock 不真调**：UT 中严禁发起真实网络请求、真实系统 API 调用或真实 IO 操作
 6. **用例隔离**：每个 `it()` 用例独立运行，在 `beforeEach` 中重建替身；原型替换方案必须在 `afterEach` 还原
 7. **替身类型契合**：`SpyXxx` 子类化或 `XxxPort.prototype.method = ...` 必须与 contracts.yaml 中的既有类签名一致
-8. **ut_import_whitelist 强约束**：UT 中禁止 import `@Component` / `struct` / `NavPathStack` / `showToast` / `$r` / `$rawfile` / `AppStorage` / `LocalStorage` / `@kit.ArkUI` / `@kit.ArkGraphics`
+8. **ut_import_whitelist 强约束**：UT 仅允许 profile addendum 与 `ut-ui-import-ban` 定义的白名单 import
 9. **P0 优先**：先为 P0 AC / 高危 branch 生成 UT，再扩展 P1 / P2
 10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
 11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
     - 若 `ut_no_src_mutation` 报告 committed 历史变更多、working tree 变更少，优先怀疑 diff 基线过旧；可设置 `HARNESS_DIFF_BASE_REF=working` 只检查当前工作区。**禁止**要求用户"批量授权所有历史变更"。
-12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下**任何文件的修改**，**必须**满足以下全部条件：
+12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 profile 声明的测试/夹具源目录**下**任何文件的修改**，**必须**满足以下全部条件：
     1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
        - 拟变更的文件路径；
        - 拟抽取/新增的函数签名（或修改 diff 摘要）；

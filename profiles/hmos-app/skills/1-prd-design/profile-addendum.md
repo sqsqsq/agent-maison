@@ -4,12 +4,22 @@
 
 描述 UI 组件时可优先使用 ArkUI 组件术语（如 `Column`、`Row`、`List`、`Tabs`、`Navigation`），但仍须以用户提供的截图/描述为准，不得凭平台惯例补需求。
 
-## 权威模板与规则
+## 权威资产清单
 
 | 用途 | 路径 |
 |------|------|
 | 阶段规则（中立骨架 + 合并） | `framework/specs/phase-rules/prd-rules.yaml`；profile 专属补充以 `framework/profiles/hmos-app/profile.yaml` → `phase-rules-overlays` 为准（若存在与本 stage 对齐的条目） |
 | Visual Handoff / `ui_change`（若启用） | `framework/skills/1-prd-design/` 正文与 `prompts/` |
+
+### skill-assets.yaml 键
+
+机器清单：`framework/profiles/hmos-app/skills/skill-assets.yaml`。根 `SKILL.md` 使用 `` `profile-skill-asset:1-prd-design/<键>` `` 指向下列文件：
+
+| 键 | 相对 `skills/1-prd-design/` |
+|----|------------------------------|
+| `prd_template` | `templates/prd-template.md` |
+| `example_prd` | `examples/example-prd.md` |
+| `examples_prd_mapping` | `examples-prd-mapping.md` |
 
 ## `generic` / 中立工程提醒
 

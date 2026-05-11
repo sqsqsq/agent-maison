@@ -19,7 +19,9 @@
 
 `framework/profiles/<project_profile.name>/skills/4-code-review/profile-addendum.md`
 
-其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时运行时默认 `hmos-app`）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 
@@ -81,7 +83,7 @@
 - `missing_acceptance`：回到 PRD 阶段提取 `acceptance.yaml`，不要跳过验收追溯。
 - `missing_source_from_contracts`：先确认 coding 阶段是否完成；若 `contracts.files` 过期，回到 design/coding 同步契约。
 
-review 阶段不执行 `ohpm install`，也不使用 `HARNESS_DIFF_BASE_REF=working`；这些属于 coding/UT 的构建与 diff 自愈职责。
+review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用 `HARNESS_DIFF_BASE_REF=working`；这些属于 coding/UT 的构建与 diff 自愈职责。
 
 ## 工作流程
 
@@ -108,14 +110,14 @@ review 阶段不执行 `ohpm install`，也不使用 `HARNESS_DIFF_BASE_REF=work
 
 ### Step 2: 系统化审查
 
-按照审查检查清单逐维度执行审查。完整检查清单见 [templates/review-checklist.md](templates/review-checklist.md)，以下为核心审查流程：
+按照审查检查清单逐维度执行审查。完整检查清单见 `framework/profiles/<project_profile.name>/skills/4-code-review/templates/review-checklist.md`，以下为核心审查流程：
 
 #### 2.1 架构合规性审查（BLOCKER 级）
 
 1. **五层架构合规**：逐文件检查 import 语句，验证模块间依赖方向是否遵循 `01→02→03→04→05` 规则
 2. **模块内四层分层**：验证 import 是否遵循 `shared→data→domain→presentation` 方向
 3. **文件完整性**：对照 `contracts.yaml > files` 检查每个文件是否存在
-4. **资源引用完整性**：检查每个 `$r()` 调用引用的 key 是否在资源 JSON 中定义
+4. **资源引用完整性**：检查每个**宿主声明的资源引用调用**所引用的 key 是否在资源定义中存在（具体 API 见 profile addendum）
 
 #### 2.2 接口一致性审查（BLOCKER 级）
 
@@ -125,12 +127,12 @@ review 阶段不执行 `ohpm install`，也不使用 `HARNESS_DIFF_BASE_REF=work
 2. **接口签名一致**：对比 `contracts.yaml > interfaces` 和实际代码中的方法实现
    - 方法名、参数（名称+类型）、返回类型、async 标记
 3. **组件 Props 一致**：对比 `contracts.yaml > components` 和实际组件的装饰器声明
-   - @State/@Prop/@Link 变量、事件回调
+   - 宿主状态与参数绑定装饰器所声明的变量、事件回调（语法见 profile addendum）
 
 #### 2.3 编码规范审查（MAJOR 级）
 
 1. **命名规范**：模块名 PascalCase、组件 struct 名与文件名一致、资源 key snake_case
-2. **硬编码字符串**：presentation 层是否存在未通过 `$r()` 引用的 UI 文本
+2. **硬编码字符串**：presentation 层是否存在未通过**宿主资源机制**引用的 UI 文本
 3. **禁止 any 类型**：代码中是否存在 `: any`、`as any`、`<any>`
 4. **async/await 模式**：是否存在 `.then()/.catch()` 回调链（排除 Promise.all 等）
 
@@ -168,7 +170,7 @@ framework/skills/4-code-review/templates/review-report-template.md
 |------|------|---------|
 | 分层违规 | 模块内或模块间依赖方向违规 | coding-rules.yaml: layer_compliance / inter_module_dependency |
 | 接口不一致 | 实际代码与 contracts.yaml 定义不一致 | coding-rules.yaml: interface_signature_consistency |
-| 资源引用 | $r() 引用的 key 缺失或资源文件缺失 | coding-rules.yaml: resource_integrity |
+| 资源引用 | 宿主资源 key 缺失或资源文件缺失 | coding-rules.yaml: resource_integrity |
 | 命名规范 | 文件名/组件名/资源 key 不符合命名约定 | coding-rules.yaml: naming_conventions |
 | 硬编码 | presentation 层存在硬编码 UI 文本 | coding-rules.yaml: no_hardcoded_strings |
 | 逻辑错误 | 业务逻辑实现与 design.md 不一致 | coding-rules.yaml: business_logic_correctness |
@@ -327,8 +329,8 @@ Review 阶段宣布"完成"前必须**同时**满足：
 - 编码规约参考: `framework/specs/phase-rules/coding-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-review.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-review.md`
-- 审查报告模板: [templates/review-report-template.md](templates/review-report-template.md)
-- 审查检查清单: [templates/review-checklist.md](templates/review-checklist.md)
+- 审查报告模板: [templates/review-report-template.md](templates/review-report-template.md)（通用，仍位于本 Skill 树内）
+- 审查检查清单: `` `profile-skill-asset:4-code-review/review_checklist` ``
 - 下游消费者:
 
 | 消费者 | 消费的产出 | 用途 |
