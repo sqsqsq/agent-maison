@@ -1,0 +1,22 @@
+{
+  "outer_layers": [
+    {
+      "id": "app",
+      "can_depend_on": ["features", "platform"],
+      "intra_layer_deps": "forbid"
+    },
+    {
+      "id": "features",
+      "can_depend_on": ["platform"],
+      "intra_layer_deps": "dag"
+    },
+    {
+      "id": "platform",
+      "can_depend_on": [],
+      "intra_layer_deps": "dag"
+    }
+  ],
+  "module_inner_layers": ["api", "domain", "ui"],
+  "inner_dependency_direction": "upward",
+  "cross_module_exports_file": "index.ts"
+}

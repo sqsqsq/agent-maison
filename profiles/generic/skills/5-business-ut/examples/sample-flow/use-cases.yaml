@@ -1,0 +1,74 @@
+# ============================================================================
+# 示例：两段式服务端确认任务（generic · 宿主无关占位）
+# 真实路径通常为 doc/features/<feature>/use-cases.yaml
+# ============================================================================
+schema_version: "2.1"
+feature: "sample-flow"
+
+use_cases:
+  - id: "task_handoff"
+    description: >
+      用户发起任务 → 云端受理 → 本地登记 pending →（可选）二次确认 → Success / 回滚
+
+    coordinator: "HandoffCoordinator"
+    coordinator_file: "<source_root>/<module>/domain/HandoffCoordinator.<ext>"
+
+    ui_bindings:
+      - ui: "TaskComposerPage"
+        role: "entry"
+        user_actions:
+          - trigger: "提交任务草稿"
+            calls: "coord.submitDraft"
+      - ui: "ConfirmDialog"
+        role: "dialog"
+        subscribes: ["coord.state.phase"]
+        user_actions:
+          - trigger: "确认"
+            calls: "coord.confirm"
+          - trigger: "取消"
+            calls: "coord.cancel"
+
+    data_boundaries:
+      - name: "remoteApi"
+        type: "TaskRemoteApi"
+        kind: "cloud"
+        methods:
+          - { name: "enqueue", params: ["TaskDraft"], returns: "EnqueueResult", async: true }
+          - { name: "ack", params: ["string"], returns: "AckResult", async: true }
+      - name: "localStore"
+        type: "TaskLocalStore"
+        kind: "storage"
+        methods:
+          - { name: "savePending", params: ["PendingTask"], returns: "void", async: true }
+          - { name: "finalize", params: ["string"], returns: "void", async: true }
+          - { name: "rollback", params: ["string"], returns: "void", async: true }
+
+    state_model:
+      phases: [Idle, Enqueuing, Pending, WaitingConfirm, Finalizing, Success, Failed]
+      fields:
+        - { name: "errorCode", type: "string | null" }
+        - { name: "taskId", type: "string | null" }
+
+    branches:
+      - id: "happy_path"
+        scenario: "受理成功并完成确认"
+        setup:
+          "remoteApi.enqueue": "ok"
+          "remoteApi.ack": "ok"
+          "localStore.savePending": "ok"
+          "localStore.finalize": "ok"
+        triggers:
+          - { call: "coord.submitDraft", with: { title: "demo" } }
+          - { call: "coord.confirm", with: { token: "t1" } }
+        expected_phase_sequence: [Idle, Enqueuing, Pending, WaitingConfirm, Finalizing, Success]
+        linked_acceptance: ["AC-1"]
+
+      - id: "enqueue_fail"
+        scenario: "云端拒绝受理，不产生本地 pending"
+        setup:
+          "remoteApi.enqueue": "fail:REMOTE_REJECT"
+        triggers:
+          - { call: "coord.submitDraft", with: { title: "demo" } }
+        expected_phase_sequence: [Idle, Enqueuing, Failed]
+        not_called: ["localStore.savePending"]
+        linked_acceptance: ["AC-2"]

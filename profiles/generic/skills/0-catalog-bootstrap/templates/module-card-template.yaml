@@ -1,0 +1,40 @@
+# 模块画像草稿 — staging：`doc/catalog-staging/<ModuleName>.yaml`
+# 合并前须 `confirmed_by_user: true`；字段语义与填写指引见同目录上级 `profile-addendum.md` →「module-card 草稿模板」。
+
+# 用户确认标志：AI 不得修改；用户审阅完成后手动改为 true
+confirmed_by_user: false
+
+# 生成元数据（AI 填）
+generated_by: "<model-id,如 claude-sonnet-4 / minimax-2.5>"
+generated_at: "<YYYY-MM-DD HH:mm:ss>"
+signals_used:
+  architecture_doc: false
+  module_readme: false
+  oh_package_json5: true
+  index_ets: true
+  directory_tree_depth: 3
+  sampled_files: []
+
+# ----------------------------------------------------------------------------
+# 实际画像（与 doc/module-catalog.yaml 每条 module 同构）
+# ----------------------------------------------------------------------------
+module:
+  name: "<ModuleName>"
+  # 必须是 framework.config.json → architecture.outer_layers[].id 之一
+  layer: "<outer_layer_id_from_dsl>"
+  sub_layer: null
+  format: "<ModuleFormat枚举由 profile 声明，如 lib / jar / hap 等>"
+  one_liner: "<一句话描述该模块的对外核心价值>"
+  responsibilities:
+    - "<responsibility 1>"
+    - "<responsibility 2>"
+  NOT_responsible_for:
+    - "<不负责做的事 1>"
+    - "<不负责做的事 2>"
+    - "<不负责做的事 3>"
+  typical_business_terms:
+    - "<业务术语 1>"
+    - "<业务术语 2>"
+  easily_confused_with: []
+  key_exports: []
+  entry_file: "<宿主约定的导出入口路径，以实现侧为准>"
