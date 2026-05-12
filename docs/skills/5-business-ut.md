@@ -353,8 +353,8 @@ flowchart TD
 
 | branch | linked AC | DAG | UT |
 | --- | --- | --- | --- |
-| `happy_path` | `AC-1` | `card_opening_happy.dag.yaml` | `[BRANCH-happy_path][AC-1] 成功开卡` |
-| `sms_fail_rollback` | `AC-3` | `card_opening_sms_fail.dag.yaml` | `[BRANCH-sms_fail_rollback][AC-3] 短验失败回滚` |
+| `happy_path` | `AC-1` | `sample_flow.dag.yaml` | `[BRANCH-happy_path][AC-1] 主路径成功` |
+| `otp_fail_rollback` | `AC-3` | `sample_flow.dag.yaml` | `[BRANCH-otp_fail_rollback][AC-3] 校验失败回滚` |
 
 #### 路径 B：简单 feature，无 `use-cases.yaml`
 
