@@ -61,13 +61,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveSkillAssetPath: generic 清单中 framework/ 前缀指向仓库根',
+    name: 'resolveSkillAssetPath: generic 清单指向本 profile 树下文件',
     run: () => {
       const root = repoRoot();
       const m = loadSkillAssetsManifest(root, 'generic').manifest!;
       const res = resolveSkillAssetPath(root, 'generic', m, '1-prd-design', 'prd_template');
       assert(
-        Boolean(res.ok && res.relRepo?.includes('framework/profiles/hmos-app/')),
+        Boolean(res.ok && res.relRepo?.includes('framework/profiles/generic/')),
         res.relRepo ?? 'relRepo',
       );
       assert(fs.existsSync(res.absPath!), res.absPath!);

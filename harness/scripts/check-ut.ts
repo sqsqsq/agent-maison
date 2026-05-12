@@ -56,6 +56,7 @@ import {
   type MockPlanSpec,
   type TestabilityAuditRecord,
 } from './utils/ut-artifact-parse';
+import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -605,13 +606,15 @@ function checkUtAssertionExists(
  *   (3) 与 reports/<feature>/ut/**\/gap-notes.md 的 approved_src_mutations[] 对账；
  *   (4) 未登记 → FAIL BLOCKER。
  *
- * 受保护前缀 / 排除路径与 SKILL.md > 约束 #12 HARD STOP 一致。
+ * 受保护前缀由实例 `architecture.outer_layers[].id` 推导；与 SKILL.md 约束 #12 对齐。
  */
-const UT_SRC_PROTECTED_PREFIXES = ['02-Feature/', '01-Business/', '00-Common/'];
+function utSrcProtectedPrefixes(ctx: CheckContext): string[] {
+  return deriveBusinessSourcePathPrefixes(ctx.projectRoot);
+}
 
 function filterProtected(ctx: CheckContext, changes: string[]): string[] {
   const extra = tryLoadDiffExcludeTestPathRegexes(ctx.resolvedProfile.profileDir) ?? [];
-  return filterBusinessSourceChanges(changes, UT_SRC_PROTECTED_PREFIXES, {
+  return filterBusinessSourceChanges(changes, utSrcProtectedPrefixes(ctx), {
     excludeTestPathRegexes: extra,
   });
 }
@@ -690,10 +693,12 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }
   }
 
+  const prefixes = utSrcProtectedPrefixes(ctx);
+
   const diff = diffChangedFiles({
     projectRoot: ctx.projectRoot,
     baseRef,
-    pathspecs: UT_SRC_PROTECTED_PREFIXES,
+    pathspecs: prefixes,
   });
 
   if (!diff.executed) {
@@ -730,7 +735,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
         `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
         `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；` +
         `base 来源：${baseHint}；` +
-        `未检测到 ${UT_SRC_PROTECTED_PREFIXES.join(' / ')} 下的业务源码变更。`,
+        `未检测到 ${prefixes.join(' / ')} 下的业务源码变更。`,
     }];
   }
 

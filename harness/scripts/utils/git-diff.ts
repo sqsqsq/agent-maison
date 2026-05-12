@@ -245,7 +245,8 @@ export interface FilterBusinessSourceOpts {
 
 /**
  * 基于一组"受保护目录前缀"过滤出落入保护范围的变更文件。
- * 典型 protectedPrefixes：['02-Feature/', '01-Business/', '00-Common/']
+ * 典型 protectedPrefixes：`deriveBusinessSourcePathPrefixes(projectRoot)` 产出（或由调用方传入），
+ * 每个值为 `architecture.outer_layers[].id` 规范化为目录前缀；无配置时退回历史默认。
  *
  * **测试工作区排除**由 `excludeTestPathRegexes` 提供（见各 project_profile 的
  * `harness/profile-path-conventions`）；根目录不再硬编码具体宿主路径。
@@ -262,7 +263,7 @@ export function filterBusinessSourceChanges(
     if (exclude.some(rx => rx.test(normalized))) return false;
     // 只看 src/main 下的文件（业务源码；资源文件等也计入）
     if (normalized.includes('/src/main/')) return true;
-    // 00-Common / 01-Business / 02-Feature 层的顶层子文件无 src/main 但也属于业务
+    // 非标准 layout 的工程：前缀匹配已落在某外层目录内的路径也视作业务源码
     return true;
   });
 }
