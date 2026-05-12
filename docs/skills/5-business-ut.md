@@ -396,31 +396,28 @@ UI 导航、Toast、弹窗不要画成 UT assertion。它们应进入 `ui_subscr
 UT 的结构通常是：
 
 ```typescript
-// hmos-app 示例：hypium
+// hmos-app 示例：hypium（类名与 Spy 仅为示意，请与 use-cases / 工程实际一致）
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
 
-export default function cardOpenFlowTest() {
-  describe('CardOpenFlow', () => {
-    let flow: CardOpenFlow
-    let api: SpyCardOpenApi
-    let store: SpyCardStore
+export default function sampleFlowTest() {
+  describe('TaskSubmitFlow', () => {
+    let flow: TaskSubmitFlow
+    let remote: SpyRemoteTaskGateway
+    let ledger: SpyLocalTaskLedger
 
     beforeEach((): void => {
-      api = new SpyCardOpenApi()
-      store = new SpyCardStore()
-      flow = new CardOpenFlow(api, store)
+      remote = new SpyRemoteTaskGateway()
+      ledger = new SpyLocalTaskLedger()
+      flow = new TaskSubmitFlow(remote, ledger)
     })
 
-    it('[BRANCH-sms_fail_rollback][AC-3] 短验失败回滚', 0, async () => {
-      api.whenVerifySmsCode.throws({ code: 'SMS_ERR' })
+    it('[BRANCH-remote_fail][AC-2] 远端失败回滚', 0, async () => {
+      remote.whenSubmit.throws({ code: 'REMOTE_ERR' })
 
-      await flow.chooseCard(bankInfo)
-      expect(flow.state.phase).assertEqual(Phase.WaitingSms)
-
-      await flow.confirmSms('000000')
+      await flow.startSubmit(samplePayload)
       expect(flow.state.phase).assertEqual(Phase.Rollback)
-      expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource', 'verifySmsCode'])
-      expect(store.callLog).assertDeepEquals(['rollback'])
+      expect(remote.callLog).assertDeepEquals(['submit'])
+      expect(ledger.callLog).assertDeepEquals(['rollback'])
     })
   })
 }

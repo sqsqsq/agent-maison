@@ -61,7 +61,7 @@ const validReport = [
   '---',
   '# Review',
   '## 审查范围',
-  'WalletMain',
+  'TaskDemo',
   '## 审查方法',
   '按规则审查',
   '## 问题清单',

@@ -247,7 +247,7 @@ export interface FrameworkPaths {
    * `doc/features/**` 是否预期提交到版本库。
    *
    * 默认 **false**：真实工程中需求过程产物仅存工作区不入主仓；
-   * 模拟 / 归档工程可设为 true（如本仓库 sim-wallet 演示）。
+   * 模拟 / 归档工程可设为 true（如本仓库将需求产物归档入库的演示配置）。
    */
   docs_committed?: boolean;
 }

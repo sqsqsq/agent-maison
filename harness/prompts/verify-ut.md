@@ -114,7 +114,7 @@
      - 对应代码里该命名函数是否实际承载业务逻辑（而非仅是一层转发：`chooseCard() { this.a = 1 }` 没有任何外部副作用也是不可测的）
      - UT 侧是否真的在调用它（grep UT 文件 → 若从未被任何 `it()` 直接 `await`/调用，该入口形同虚设）
   2. 对 `coordinator` 字段指向的符号：
-     - 若是类名（如 `CardOpenFlow`），该类是否在 `coordinator_file`（若声明）或其他合理位置真实存在
+     - 若是类名（如 `TaskSubmitFlow`），该类是否在 `coordinator_file`（若声明）或其他合理位置真实存在
      - 若是 `Page.method` 路径，对应 Page 里是否存在该命名方法
      - 若是导出函数名，是否在任何 `export function {name}` / `export const {name} =` 中可见
   3. 反模式检查：

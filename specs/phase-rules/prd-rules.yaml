@@ -278,7 +278,7 @@ semantic_checks:
 
   simulation_scope_awareness:
     description: >
-      涉及真实后端（支付网关、银行接口等）的功能点必须标注为"模拟数据"
+      涉及真实后端（第三方结算网关、账务或金融类开放接口等）的功能点必须标注为"模拟数据"
     severity: MAJOR
     ai_prompt_hint: >
       检查功能清单和界面描述中，是否有依赖真实后端的功能未标注模拟策略

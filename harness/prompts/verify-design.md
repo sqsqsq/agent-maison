@@ -59,7 +59,7 @@
      - 01-Product：应用/产品壳层主入口（模块格式以 catalog 与设计为准）
      - 02-Feature：特性层功能模块（可含业务 UI 与数据）
      - 03-CommonBusiness：跨 Feature 共享的业务能力
-     - 04-BusinessBase：基础业务能力（账号、支付等）
+     - 04-BusinessBase：基础业务能力（账号、鉴权与外部结算能力等）
      - 05-SystemBase：与业务无关的基础工具（UI 组件、工具类）
   3. 检查依赖方向是否全部自上而下（01→02→03→04→05），不允许逆向依赖
   4. 检查 Feature 子层级是否合理（如 02-Feature 内部模块不应互相依赖）

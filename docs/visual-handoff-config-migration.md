@@ -11,7 +11,7 @@
    - 结构化合法、路径不可达 → **WARN**（报告含 `agent-reachable=false`）。
 4. **`paths.docs_committed`** 在模板中默认 **`false`**。  
    - `false`：`check-receipt` 对 Q3 只做**非占位**校验，**不要求** `doc/features/**` 路径在磁盘必然存在。  
-   - `true`（如本仓库 sim-wallet 演示）：Q3 填报的路径须能在工作区解析为**已存在**文件。
+   - `true`（如将需求文档纳入主仓的演示配置）：Q3 填报的路径须能在工作区解析为**已存在**文件。
 
 详见：
 

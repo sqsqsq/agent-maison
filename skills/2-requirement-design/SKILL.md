@@ -52,7 +52,7 @@
 
 #### 模块在各外层中的典型形态（示意）
 
-> **唯一真源**：外层 id、同层策略、`sublayers` 成员名一律以 `framework.config.json > architecture` + `doc/architecture.md` 为准。下表不绑定任何具体钱包/五层命名。
+> **唯一真源**：外层 id、同层策略、`sublayers` 成员名一律以 `framework.config.json > architecture` + `doc/architecture.md` 为准。下表不绑定任何具体产品域专名或固定分层 id 字面。
 
 | 角色（自然语言） | 常见内层使用（当 `module_inner_layers` 采用 shared→data→domain→presentation 时） |
 |-----------------|----------------------------------------|

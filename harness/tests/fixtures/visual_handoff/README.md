@@ -30,8 +30,7 @@
 
 ## 工程实例 demo
 
-`SimulatedWalletForHmos/doc/features/home-page` 是一个真实跑过 PRD harness 的 strict + 可达
-范式，可作为「真实工程怎么写」的活样本。
+本仓库示例中 `doc/features/home-page` 曾用于跑通 strict + 可达的范式，可作为参考（路径以当前实例为准）。
 
 ## 未覆盖场景（仍依赖单元）
 
