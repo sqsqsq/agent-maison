@@ -50,7 +50,7 @@
 
 | 审查维度 | 主要依据 | 严重级别 |
 |----------|---------|---------|
-| 五层架构合规性 | `doc/architecture.md` | BLOCKER |
+| 架构合规性 | `doc/architecture.md` + `framework.config.json > architecture` | BLOCKER |
 | 模块内四层分层 | `framework/specs/phase-rules/coding-rules.yaml` | BLOCKER |
 | 接口一致性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
 | 文件完整性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
@@ -114,8 +114,8 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 #### 2.1 架构合规性审查（BLOCKER 级）
 
-1. **五层架构合规**：逐文件检查 import 语句，验证模块间依赖方向是否遵循 `01→02→03→04→05` 规则
-2. **模块内四层分层**：验证 import 是否遵循 `shared→data→domain→presentation` 方向
+1. **外层依赖合规**：逐文件检查 import / 包依赖是否违反 `outer_layers[].can_depend_on` 与同层 `intra_layer_deps` 策略
+2. **模块内分层**：验证 import 是否遵循宿主 profile 声明的内层顺序（常见：`shared→data→domain→presentation`，以 DSL 为准）
 3. **文件完整性**：对照 `contracts.yaml > files` 检查每个文件是否存在
 4. **资源引用完整性**：检查每个**宿主声明的资源引用调用**所引用的 key 是否在资源定义中存在（具体 API 见 profile addendum）
 

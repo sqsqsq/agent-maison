@@ -110,18 +110,18 @@
   [shared/constant]  CommonTypes.<ext> — 全局通用类型
   [shared/utils]     FormatUtils.<ext> — 格式化工具
 
-🔷 Module: feature_home（`<profile-format>`）— 示例功能模块
-  [shared/client]    HomeApiClient.<ext> — 首页数据接口
-  [shared/constant]  HomeConstants.<ext> — 首页常量
-  [shared/components] BaseCardView.<ext> — 基础卡片组件
-  [data/model]       CardInfo.<ext> — 卡片数据模型
+🔷 Module: feature_demo（`<profile-format>`）— 示例功能模块
+  [shared/client]    DemoApiClient.<ext> — 列表数据接口
+  [shared/constant]  DemoConstants.<ext> — 功能常量
+  [shared/components] ListRowView.<ext> — 列表行基础视图
+  [data/model]       ItemInfo.<ext> — 条目数据模型
   [data/model]       BannerInfo.<ext> — Banner 数据模型
-  [data/repository]  CardRepository.<ext> — 卡片数据仓库
+  [data/repository]  ItemRepository.<ext> — 条目数据仓库
   [data/repository]  BannerRepository.<ext> — Banner 数据仓库
-  [domain/actions 或 Page 内命名方法，按复杂度自选] loadHomeData — 首页数据加载逻辑（本例复杂度低，推荐 Page 命名方法而非独立类）
-  [presentation/components] CardSwiper.<ext> — 卡片轮播复杂组件
-  [presentation/components] FunctionGrid.<ext> — 功能宫格复杂组件
-  [presentation/pages] HomePage.<ext> — 首页页面
+  [domain/actions 或 Page 内命名方法，按复杂度自选] loadDemoPage — 示例数据加载逻辑（本例复杂度低，推荐 Page 命名方法而非独立类）
+  [presentation/components] ItemCarousel.<ext> — 轮播复杂组件
+  [presentation/components] ActionGrid.<ext> — 快捷操作宫格组件
+  [presentation/pages] DemoHomePage.<ext> — 演示首页
 
 🔷 Module: app-shell (<profile-format>) — 主入口
   [presentation/pages] Main.<ext> — 主框架
@@ -289,14 +289,14 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 | Module | 格式 | 变更类型 | 说明 |
 |--------|------|----------|------|
 | common | <profile-format> | 新增/修改 | 说明 |
-| feature_home | <profile-format> | 新增 | 说明 |
+| feature_demo | <profile-format> | 新增 | 说明 |
 | app-shell | <profile-format> | 修改 | 说明 |
 
 ### 新增文件（按模块×层级）
 | Module | 层级 | 文件路径 | 说明 |
 |--------|------|----------|------|
-| feature_home | shared/client | HomeApiClient.<ext> | 首页接口 |
-| feature_home | data/model | CardInfo.<ext> | 卡片数据模型 |
+| feature_demo | shared/client | DemoApiClient.<ext> | 列表接口 |
+| feature_demo | data/model | ItemInfo.<ext> | 条目数据模型 |
 | ... | ... | ... | ... |
 
 ### 质量门禁结果
@@ -487,7 +487,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 1. **contracts.yaml 是强契约**：文件路径、接口签名、数据模型、组件 Props 必须与 `contracts.yaml` 定义一致。若发现 Spec 有明显问题（类型错误、API 不存在、分层违规），先向用户指出并确认修正方案，修正后同步更新 contracts.yaml
 2. **逐模块逐层交付**：按 Module 和层级分批生成代码并等待用户确认，控制每次输出在一个可审阅的粒度
-3. **模拟数据优先**：本项目为模拟应用，涉及真实后端（支付网关、银行接口等）的部分在 shared/client 中定义接口，由 data/repository 用模拟数据实现
+3. **模拟数据优先**：若本轮无法接入真实后端，在 shared/client（或宿主等价层）定义接口，由 data/repository 用本地替身数据实现
 4. **中文注释**：代码中非显而易见的业务逻辑使用中文注释说明意图
 5. **渐进式实现**：先实现 P0 核心功能确保可运行，再叠加 P1/P2 功能
 6. **不破坏现有代码**：修改现有文件时，只做增量修改，不改动无关代码

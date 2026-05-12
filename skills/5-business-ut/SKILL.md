@@ -105,7 +105,7 @@
 | 打桩策略 | `` `profile-skill-asset:5-business-ut/mock_strategy` `` |
 | 可测性预检模板 | `` `profile-skill-asset:5-business-ut/testability_audit_template` `` |
 | mock-plan Schema | `` `profile-skill-asset:5-business-ut/mock_plan_schema` `` |
-| 规范级样例（开卡流程） | `` `profile-skill-asset:5-business-ut/card_opening_dir` `` |
+| 规范级样例（中性多步流程） | `` `profile-skill-asset:5-business-ut/sample_flow_dir` `` |
 
 ## UT 可测性 / mock-plan 策略决议（v2.3）
 
@@ -140,21 +140,19 @@
 为每个 use_case 列一张 **Branch × DAG × UT × AC 清单**：
 
 ```markdown
-📋 UT 规划清单（use_case: `<flow_id>`，coordinator: `<FlowClass>`）
+📋 UT 规划清单（use_case: `task_handoff`，coordinator: `HandoffCoordinator`）
 
 ui_bindings 入口（来自 use-cases.yaml）:
-- CardSelectPage.role=entry, user_actions[].calls = "flow.chooseCard"
-- SmsDialog.role=dialog, user_actions[].calls = "flow.confirmSms"
+- TaskComposerPage.role=entry, user_actions[].calls = "coord.submitDraft"
+- ConfirmDialog.role=dialog, user_actions[].calls = "coord.confirm"
 
-| # | branch id           | DAG 文件                         | it() 用例                         | linked_acceptance |
-|---|---------------------|----------------------------------|-----------------------------------|-------------------|
-| 1 | happy_path          | card_opening_happy.dag.yaml      | [BRANCH-happy_path][AC-1] 成功      | AC-1              |
-| 2 | validate_fail       | card_opening_validate_fail.yaml  | [BRANCH-validate_fail][AC-2] 校验失败 | AC-2              |
-| 3 | sms_fail_rollback   | card_opening_sms_fail.dag.yaml   | [BRANCH-sms_fail_rollback][AC-3] 短验失败回滚 | AC-3 |
-| 4 | persist_fail        | card_opening_persist_fail.yaml   | [BRANCH-persist_fail][AC-4] 持久化失败 | AC-4 |
+| # | branch id       | DAG 文件                           | it() 用例                              | linked_acceptance |
+|---|-----------------|-------------------------------------|----------------------------------------|-------------------|
+| 1 | happy_path      | task_handoff_happy.dag.yaml         | [BRANCH-happy_path][AC-1] 成功          | AC-1              |
+| 2 | enqueue_fail    | task_handoff_enqueue_fail.dag.yaml  | [BRANCH-enqueue_fail][AC-2] 远端拒绝    | AC-2              |
 
-unit/both AC 覆盖率: 100% (AC-1..4)
-device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
+unit/both AC 覆盖率: 100%
+device-only AC: （写入 device-testing-todo.md）
 ```
 
 #### 路径 B：无 `use-cases.yaml` —— 按 acceptance.yaml 直接规划
@@ -162,13 +160,13 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 按 `ut_layer ∈ {unit, both}` 的 AC/BD 逐条列清单，指向具体的 **被测 data 层函数** 或 **导出业务函数**：
 
 ```markdown
-📋 UT 规划清单（feature: home-page，无 use-cases.yaml）
+📋 UT 规划清单（feature: demo-dashboard，无 use-cases.yaml）
 
 | # | AC/BD id | 被测单元                         | DAG 文件             | it() 用例                     |
 |---|----------|----------------------------------|----------------------|-------------------------------|
-| 1 | AC-1     | HomeRepository.getServiceEntries | home_page_ut.dag.yaml | [AC-1] 首页服务入口数据契约完整 |
-| 2 | AC-2     | HomeRepository.getPromoList      | home_page_ut.dag.yaml | [AC-2] 首页推广位数据契约完整   |
-| 3 | BD-1     | HomeRepository.getPromoList(空)  | home_page_ut.dag.yaml | [AC-1][BD-1] 推广列表为空仍可回落 |
+| 1 | AC-1     | DashboardRepository.fetchWidgets | dashboard_ut.dag.yaml | [AC-1] 列表契约完整 |
+| 2 | AC-2     | DashboardRepository.fetchSummary | dashboard_ut.dag.yaml | [AC-2] 摘要契约完整 |
+| 3 | BD-1     | DashboardRepository.fetchSummary(empty) | dashboard_ut.dag.yaml | [AC-2][BD-1] 空列表回落 |
 ```
 
 **等待用户确认清单后进入 Step 1.5（可测性预检）；不得跳过 Step 1.5/1.6 直接进入 Step 2。**
@@ -185,11 +183,11 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 用例矩阵：
 | it() | AC/BD/branch | 被测入口 | Spy/Stub 边界 | 核心断言 |
 |------|--------------|----------|---------------|----------|
-| [AC-1] xxx | AC-1 | Flow.submit | PaymentRepositorySpy | phase=Success；callLog=[submit,save] |
+| [AC-1] xxx | AC-1 | Flow.submitDraft | SpyTaskRemoteApi | phase=Success；callLog=[enqueue,finalize] |
 
 将写入文件：
-- `02-Feature/Xxx/test/dag/xxx.dag.yaml`
-- `02-Feature/<Xxx>/src/<profile-test-root>/...`（目录名以 addendum 为准）
+- `<layer>/<Module>/test/dag/xxx.dag.yaml`
+- `<layer>/<Module>/src/<profile-test-root>/...`（目录名以 addendum 为准）
 
 业务源码：
 - 不修改 `src/main`。
@@ -255,39 +253,32 @@ device AC: AC-5 / AC-6（交 Skill 6，写入 device-testing-todo.md）
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
-import { CardOpenFlow, Phase } from '../../../main/ets/domain/flow/CardOpenFlow'
-import { SpyCardOpenApi } from './spy/SpyCardOpenApi'
-import { SpyCardStore } from './spy/SpyCardStore'
+import { HandoffCoordinator, Phase } from '../../../main/ets/domain/flow/HandoffCoordinator'
+import { SpyTaskRemoteApi } from './spy/SpyTaskRemoteApi'
+import { SpyTaskLocalStore } from './spy/SpyTaskLocalStore'
 
-export default function cardOpenFlowTest() {
-  describe('CardOpenFlow', () => {
-    let api: SpyCardOpenApi
-    let store: SpyCardStore
-    let flow: CardOpenFlow
+export default function taskHandoffFlowTest() {
+  describe('HandoffCoordinator', () => {
+    let api: SpyTaskRemoteApi
+    let store: SpyTaskLocalStore
+    let coord: HandoffCoordinator
 
     beforeEach((): void => {
-      api = new SpyCardOpenApi()
-      store = new SpyCardStore()
-      flow = new CardOpenFlow(api, store)
+      api = new SpyTaskRemoteApi()
+      store = new SpyTaskLocalStore()
+      coord = new HandoffCoordinator(api, store)
     })
 
-    it('[BRANCH-happy_path][AC-1] 开卡全链路成功', 0, async () => {
-      api.whenValidateOpen.returns({ ok: true, token: 't' })
-      api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' })
-      api.whenVerifySmsCode.returns({ ok: true })
-
-      // 对应 ui_bindings[CardSelectPage].user_actions.calls = "flow.chooseCard"
-      await flow.chooseCard(bankInfo)
-      expect(flow.state.phase).assertEqual(Phase.WaitingSms)
-
-      // 对应 ui_bindings[SmsDialog].user_actions.calls = "flow.confirmSms"
-      await flow.confirmSms('123456')
-      expect(flow.state.phase).assertEqual(Phase.Success)
-      expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource', 'verifySmsCode'])
-      expect(store.callLog).assertDeepEquals(['save', 'update'])
+    it('[BRANCH-happy_path][AC-1] 提交流程成功', 0, async () => {
+      api.whenEnqueue.returns({ ok: true, jobId: 'j1' })
+      api.whenAck.returns({ ok: true })
+      await coord.submitDraft({ title: 'demo' })
+      expect(coord.state.phase).assertEqual(Phase.Pending)
+      await coord.confirm({ token: 't1' })
+      expect(coord.state.phase).assertEqual(Phase.Success)
+      expect(api.callLog).assertDeepEquals(['enqueue', 'ack'])
+      expect(store.callLog).assertDeepEquals(['savePending', 'finalize'])
     })
-
-    // ... 每个 branch 对应一个 it()
   })
 }
 ```
@@ -298,18 +289,18 @@ export default function cardOpenFlowTest() {
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
-import { HomeRepository } from '../../../main/ets/data/repository/HomeRepository'
+import { DashboardRepository } from '../../../main/ets/data/repository/DashboardRepository'
 
-export default function homePageUtTest() {
-  describe('home-page', () => {
-    let repo: HomeRepository
-    beforeEach((): void => { repo = new HomeRepository() })
+export default function dashboardRepoTest() {
+  describe('demo-dashboard', () => {
+    let repo: DashboardRepository
+    beforeEach((): void => { repo = new DashboardRepository() })
 
-    it('[AC-1] 首页服务入口数据契约完整', 0, async () => {
-      const entries = await repo.getServiceEntries()
-      expect(entries).not.assertNull()
-      expect(entries.length).assertLarger(0)
-      expect(entries[0].id).not.assertUndefined()
+    it('[AC-1] DashboardRepository 契约完整', 0, async () => {
+      const widgets = await repo.fetchWidgets()
+      expect(widgets).not.assertNull()
+      expect(widgets.length).assertLarger(0)
+      expect(widgets[0].id).not.assertUndefined()
     })
   })
 }
@@ -319,8 +310,8 @@ export default function homePageUtTest() {
 
 v2.1 的打桩针对 **`use-cases.yaml > data_boundaries[].type` 所指的既有 data 层类**，有三种合法形式（任选其一）：
 
-- **形式 1：子类化** — `class SpyCardOpenApi extends CardOpenApi { ... }`，override 实际方法；暴露 `callLog: string[]` 和每个方法一份 `whenXxx.{returns, fails, throws}` preset
-- **形式 2：原型方法替换** — `CardOpenApi.prototype.validateOpen = jest.fn(...)`（`afterEach` 必须恢复）
+- **形式 1：子类化** — `class SpyTaskRemoteApi extends TaskRemoteApi { ... }`，override 实际方法；暴露 `callLog: string[]` 和每个方法一份 `whenXxx.{returns, fails, throws}` preset
+- **形式 2：原型方法替换** — `TaskRemoteApi.prototype.enqueue = (...)`（`afterEach` 必须恢复）
 - **形式 3：若 data 层已用 DI 注入的接口/抽象类** — 直接提供该接口的 Spy 实现
 
 **统一约束**：
@@ -432,18 +423,18 @@ UT 已通过 state/port 断言覆盖的业务侧逻辑，真机侧需补做 UI /
 ### UseCase 清单（来自 use-cases.yaml）
 | UseCase | branches 数 | UT 文件 | DAG 数 |
 |---------|-------------|---------|--------|
-| CardOpeningUseCase | 4 | card_opening.test.<ext> | 4 |
+| TaskHandoff | 2 | task_handoff.test.<ext> | 2 |
 
 ### DAG 文件清单
 | flow_id | use_case | branches | 关联 AC |
 |---------|----------|----------|---------|
-| card_opening_happy | CardOpeningUseCase | [happy_path] | AC-1 |
+| task_handoff_happy | TaskHandoff | [happy_path] | AC-1 |
 | ... |
 
 ### UT 文件清单
 | 文件 | 测试函数 | 用例数（= branches 数） |
 |------|---------|-------------------------|
-| card_opening.test.<ext> | cardOpeningUseCaseTest | 4 |
+| task_handoff.test.<ext> | taskHandoffFlowTest | 2 |
 
 ### 覆盖率统计
 | 指标 | 数值 |
@@ -491,7 +482,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
 
 #### 7.5.4 触及业务源码时的 HARD STOP
 
-只要错误根因落在 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**`：
+只要错误根因落在 **`UT_SRC_PROTECTED_PREFIXES`** 所覆盖的业务源码树（前缀由 `framework/harness/scripts/check-ut.ts` 结合实例 DSL/profile 推导，而非写死单层名）：
 
 1. **立即停手**，向用户输出请求：
    - 拟变更文件路径；
@@ -669,7 +660,7 @@ UT 阶段宣布"完成"前必须**同时**满足：
 - DAG Schema: `` `profile-skill-asset:5-business-ut/dag_schema` ``
 - UT / Spy 模板: `` `profile-skill-asset:5-business-ut/ut_template` ``
 - 打桩策略: `` `profile-skill-asset:5-business-ut/mock_strategy` ``
-- 规范级样例: `` `profile-skill-asset:5-business-ut/card_opening_dir` ``
+- 规范级样例: `` `profile-skill-asset:5-business-ut/sample_flow_dir` ``
 - 脚本 Harness: `framework/harness/scripts/check-ut.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-ut.md`
 - 下游消费者:
@@ -694,7 +685,7 @@ UT 阶段宣布"完成"前必须**同时**满足：
 10. **中文注释**：DAG / UT 的 description 使用中文，便于业务理解
 11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
     - 若 `ut_no_src_mutation` 报告 committed 历史变更多、working tree 变更少，优先怀疑 diff 基线过旧；可设置 `HARNESS_DIFF_BASE_REF=working` 只检查当前工作区。**禁止**要求用户"批量授权所有历史变更"。
-12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 `02-Feature/**/src/main/**`、`01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 profile 声明的测试/夹具源目录**下**任何文件的修改**，**必须**满足以下全部条件：
+12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 **受保护业务源码前缀**（定义见 `check-ut.ts` 与 profile，不再写死 `02-Feature` 等目录名）下、且**非 profile 声明的测试/夹具源目录**内任何文件的修改，**必须**满足以下全部条件：
     1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
        - 拟变更的文件路径；
        - 拟抽取/新增的函数签名（或修改 diff 摘要）；
