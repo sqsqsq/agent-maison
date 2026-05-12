@@ -45,6 +45,15 @@ trace_json:
   schema_valid: true     # 是否能被 trace.schema.json 解析
 
 # ----------------------------------------------------------------------
+# 3.5 Context Exploration Gate（与 check-* 的 context_exploration_* 对齐）
+# ----------------------------------------------------------------------
+context_exploration:
+  summary_path: "doc/features/<feature>/<phase>/context-exploration.md"
+  exists: true
+  ready_to_produce: true
+  has_blocker_coverage_risk: false
+
+# ----------------------------------------------------------------------
 # 4. 自检题（agent 必须自答；check-receipt.ts 会做反编造校验）
 # ----------------------------------------------------------------------
 self_check:

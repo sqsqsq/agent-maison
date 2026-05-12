@@ -30,6 +30,7 @@ import {
   getColumnValues,
 } from './utils/markdown-parser';
 import { relFeatureFile } from '../config';
+import { checkContextExplorationArtifact } from './utils/context-exploration';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -741,6 +742,12 @@ const checker: PhaseChecker = {
 
     const results: CheckResult[] = [];
     results.push(...checkReviewContext(ctx));
+    results.push(
+      ...safeRun(
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'review'),
+        'context_exploration_gate',
+      ),
+    );
 
     // --- Structure checks ---
     results.push(...safeRun(() => checkRequiredChapters(ctx, report), 'required_chapters'));

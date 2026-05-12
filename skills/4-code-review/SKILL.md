@@ -108,6 +108,14 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
   审查基准: coding-rules.yaml + contracts.yaml + acceptance.yaml
 ```
 
+### Context Exploration Gate（BLOCKER）
+
+在**逐步执行审查清单（Step 2）之前**，必须将探索摘要落盘至 **`doc/features/<feature>/review/context-exploration.md`**，模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+
+1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`、`framework/specs/phase-rules/coding-rules.yaml`、`doc/architecture.md`；**Step 1** 已根据 `contracts.yaml > files` 列出全部待审源文件并完成打开。
+2. `key_inputs_read` 须覆盖 **contract**、**acceptance**、**coding-rule**、**design** 子串。
+3. 若审阅文件 **>5** 或跨多模块 import 链复杂，且运行时支持只读子 agent，建议并行分域检索依赖符号并在 `subagents_used` 说明；否则 `not_available`。
+
 ### Step 2: 系统化审查
 
 按照审查检查清单逐维度执行审查。完整检查清单见 `framework/profiles/<project_profile.name>/skills/4-code-review/templates/review-checklist.md`，以下为核心审查流程：

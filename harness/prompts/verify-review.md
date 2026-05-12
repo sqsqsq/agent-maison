@@ -48,7 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 6 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: 审查维度覆盖度 (review_dimension_coverage)
 
@@ -141,6 +141,15 @@
      - "逻辑错误" → business_logic_correctness
      - "异常处理" → error_handling_completeness
   4. 追溯率 ≥ 70%: PASS；< 70%: WARN
+
+### 检查 7: 探索覆盖充分性 (context_exploration_sufficiency)
+
+- **严重等级**: MAJOR（与脚本 Harness 互补：`check-review` 校验探索凭证；你负责判断审查**前**的上下文探索是否足以覆盖 contracts 清单与关键依赖路径）
+- **评估方法**:
+  1. 读取 `doc/features/{feature_name}/review/context-exploration.md`
+  2. 对照审查报告涉及的文件与 contracts：摘要中的 `files_inspected` / `code_searches` 是否覆盖**问题清单中引用的主要源码与合同条目**；若报告讨论跨模块 import 而摘要无相关检索 → FAIL 或 WARN
+  3. 若探索摘要与审查结论范围明显不匹配（例如大量 MAJOR 问题涉及未在摘要中声明的目录）→ FAIL
+  4. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
 
 ---
 
@@ -248,8 +257,19 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    # --- 检查 7: 探索覆盖充分性 ---
+    - id: context_exploration_sufficiency
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        context-exploration.md: <路径>
+        摘要与审查范围/问题涉及文件的一致性: PASS/FAIL — <证据>
+        contracts 与关键依赖是否体现于探索记录: PASS/FAIL/WARN
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 6
+    total: 7
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

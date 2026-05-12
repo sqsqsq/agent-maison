@@ -57,6 +57,7 @@ import {
   type TestabilityAuditRecord,
 } from './utils/ut-artifact-parse';
 import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
+import { checkContextExplorationArtifact } from './utils/context-exploration';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -2861,6 +2862,13 @@ const checker: PhaseChecker = {
     const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
     const results: CheckResult[] = [];
+
+    results.push(
+      ...safeRun(
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'ut'),
+        'context_exploration_gate',
+      ),
+    );
 
     // --- Structure checks ---
     // v2 A: use-cases.yaml 自身

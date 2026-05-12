@@ -48,7 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 9 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 10 项语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: 五层架构合规性 (five_layer_compliance)
 
@@ -162,6 +162,16 @@
      - 组件定义（是否有 UI 组件来展示 AC 描述的内容）
   3. 对每条 P0 AC 给出追溯结果
   4. 若 P0 AC 在设计中找不到任何支撑，判为 FAIL
+
+### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
+
+- **严重等级**: MAJOR（与脚本 Harness 互补：`check-design` 校验探索凭证与最低 `key_inputs_read`；你负责判断摘要是否**实质上**支撑设计决策）
+- **评估方法**:
+  1. 读取 `doc/features/{feature_name}/design/context-exploration.md`
+  2. 对照 PRD、acceptance、architecture、`framework.config.json`、module-catalog 及 design 中的 contracts/导航/模块变更：摘要中的检索与 `decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
+  3. 若设计涉及多模块或大量 contracts 但摘要无对应代码/文档检索痕迹，或 `coverage_risks` 与已知交叉影响矛盾 → FAIL
+  4. subagent/并行探索与 SKILL 触发条件严重不符且复杂度已显然越阈 → WARN 或 FAIL
+  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
 
 ---
 
@@ -286,8 +296,19 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    # --- 检查 10: 探索覆盖充分性 ---
+    - id: context_exploration_sufficiency
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        context-exploration.md: <路径>
+        摘要与设计/配置/PRD 决策可追溯性: PASS/FAIL — <证据>
+        多模块或 contracts 复杂度与探索深度是否匹配: PASS/FAIL/WARN
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 9
+    total: 10
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

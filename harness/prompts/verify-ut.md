@@ -74,7 +74,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 **10** 项 v2.1/v2.3 语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 **11** 项 v2.1/v2.3 语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: state_model 完备性 (state_model_completeness)
 
@@ -221,6 +221,16 @@
   4. 若使用原型方法替换方案，验证 `afterEach` 是否还原，避免污染后续用例
 
 - **输出**：隔离性问题清单
+
+### 检查 9: 探索覆盖充分性 (context_exploration_sufficiency)
+
+- **严重等级**: MAJOR（与脚本 Harness 互补：`check-ut` 校验探索凭证与 `key_inputs_read`；你负责判断 UT 编写前的探索是否覆盖 use-cases、contracts、被测入口与 data boundary）
+- **评估方法**:
+  1. 读取 `doc/features/{feature_name}/ut/context-exploration.md`
+  2. 对照 use-cases.yaml（若存在）、acceptance、contracts、DAG/mock-plan 与 UT 源文件：摘要是否体现对**命名业务入口、打桩边界、既有测试样例**的检索；`decisions_unlocked` 是否与 UT 结构一致
+  3. 若复杂度已触发 SKILL 的并行/子 agent 建议但摘要未说明等价探索路径 → WARN 或 FAIL
+  4. 若 `coverage_risks` 遗漏明显的 Stub/隔离风险而 UT 却大量依赖该路径 → FAIL
+  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
 
 ---
 
@@ -378,8 +388,20 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: context_exploration_sufficiency
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        context-exploration.md: <路径>
+        摘要与 use-cases/contracts/被测入口探索一致性: PASS/FAIL — <证据>
+        复杂度与 subagent/检索深度是否匹配: PASS/FAIL/WARN
+      affected_files:
+        - "doc/features/{feature_name}/ut/context-exploration.md"
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 9
+    total: 11
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

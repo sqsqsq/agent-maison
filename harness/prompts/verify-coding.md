@@ -46,7 +46,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 8 项语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: 业务逻辑正确性 (business_logic_correctness)
 
@@ -133,6 +133,16 @@
      - AC 描述的数据约束是否在代码中体现
   3. 对每条 AC 给出 PASS / FAIL / WARN 判定
   4. 对 P2 的 AC 项，若未实现标注为 WARN（非 FAIL）
+
+### 检查 8: 探索覆盖充分性 (context_exploration_sufficiency)
+
+- **严重等级**: MAJOR（与脚本 Harness 互补：`check-coding` 校验探索凭证与最低 `key_inputs_read`；你负责判断编码前探索是否**实质上**覆盖 contracts、acceptance 与关键源码）
+- **评估方法**:
+  1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`
+  2. 抽样对照 contracts.yaml、acceptance 与设计：摘要是否体现对**实际改动文件/跨模块出口/资源或路由（若有）**的检索；`decisions_unlocked` 是否与实现中的模块边界、签名、资源 key 一致
+  3. 若实现明显依赖某合同路径或导出符号但摘要未出现对应查阅记录，或 `coverage_risks` 粉饰未读区域 → FAIL
+  4. 跨模块/大量 contracts 场景下探索深度明显不足 → WARN 或 FAIL
+  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
 
 ---
 
@@ -241,8 +251,21 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    # --- 检查 8: 探索覆盖充分性 ---
+    - id: context_exploration_sufficiency
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        context-exploration.md: <路径>
+        摘要与 contracts/实现/跨模块导出的一致性: PASS/FAIL — <证据>
+        关键文件是否体现于 files_inspected 或 code_searches: PASS/FAIL
+      affected_files:
+        - "doc/features/{feature_name}/coding/context-exploration.md"
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 7
+    total: 8
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

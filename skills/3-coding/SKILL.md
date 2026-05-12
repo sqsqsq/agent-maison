@@ -128,6 +128,14 @@
   [配置] 更新宿主工程声明的**页面注册**与**资源清单**（文件名因 profile 而异；常见键名见 profile addendum，如页面列表、路由表、字符串表等）
 ```
 
+### Context Exploration Gate（BLOCKER）
+
+在**写入第一个实现层源文件之前**（即进入 **Step 3** 之前），必须将探索摘要落盘至 **`doc/features/<feature>/coding/context-exploration.md`**，模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+
+1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`；若存在 `use-cases.yaml` 须读；`doc/architecture.md` + `framework.config.json > architecture`；**跨模块出口**（`cross_module_exports_file` 声明）；**Step 0** addendum 中与**模块注册/资源/路由/依赖清单**相关的宿主文件类别。
+2. `key_inputs_read` 须覆盖 **design**、**contract**、**acceptance** 子串；若存在 use-cases，条目中应能匹配 **use-case** 或 **`use-cases.yaml`**。
+3. 若 `contracts.yaml > files` 超过 **5** 个实现文件、或本轮涉及跨模块导出/资源或路由注册变更，且运行时支持只读子 agent，应并行分片阅读并在 `subagents_used` 说明；否则 `not_available`。
+
 ### Step 2: 确定实现顺序
 
 遵循**双重自底向上**原则：

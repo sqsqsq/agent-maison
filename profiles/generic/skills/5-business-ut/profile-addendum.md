@@ -4,3 +4,7 @@
 
 - **`device-testing-todo.md`**：仍可按 AC/BD 的 `ut_layer` 整理真机待验证项，即使无自动化 UT。
 - 需要 **Hypium / hdc / 编译 HAP** 时，应切换至 `hmos-app`（或等价端侧 profile）并阅读其 `profile-addendum` 与 `profiles/hmos-app/skills/5-business-ut/` 资产。
+
+## Context Exploration Gate（profile 补充）
+
+未启用 Hypium 时，`context-exploration.md` 仍须覆盖 acceptance/PRD/design/contracts 与计划中的 device 待验项；自动化 UT 相关目录可标为 N/A。

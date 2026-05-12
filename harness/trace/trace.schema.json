@@ -161,6 +161,30 @@
         "report_path": { "type": "string" }
       }
     },
+    "context_exploration": {
+      "type": "object",
+      "description": "Context Exploration Gate 摘要（可选；与 doc/features/<feature>/<phase>/context-exploration.md 对齐）",
+      "properties": {
+        "summary_path": {
+          "type": "string",
+          "description": "context-exploration.md 相对仓库根或绝对路径"
+        },
+        "files_read_count": { "type": "integer", "minimum": 0 },
+        "searches_count": { "type": "integer", "minimum": 0 },
+        "subagents_count": { "type": "integer", "minimum": 0 },
+        "ready_to_produce": { "type": "boolean" },
+        "has_blocker_coverage_risk": { "type": "boolean" },
+        "key_inputs_read": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "与 context-exploration.md frontmatter 一致的摘要副本（可选）"
+        },
+        "coverage_risks_notes": {
+          "type": "string",
+          "description": "未覆盖风险一句话（可选）"
+        }
+      }
+    },
     "human_interventions": {
       "type": "array",
       "description": "用户在本阶段介入的次数与类型（用于评估框架降低人工介入的效果）",

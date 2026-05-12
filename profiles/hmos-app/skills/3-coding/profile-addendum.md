@@ -34,6 +34,10 @@
 - 模块配置与依赖通常落在 `build-profile.json5` / `oh-package.json5` / `module.json5`；新增 HAR/HAP 或调整依赖时必须与 `contracts.yaml`、`doc/architecture.md` 和 `framework.config.json` 对齐。
 - 跨模块导出入口文件名由 `architecture.cross_module_exports_file` 声明；本 profile 默认是 `Index.ets`。
 
+## Context Exploration Gate（profile 补充）
+
+编码前探索须覆盖：**`build-profile.json5` / `oh-package.json5` / 涉及模块的 `module.json5`**；**页面注册**（`main_pages.json`、`route_map.json` 等，以工程实际为准）、**资源目录**（`src/main/resources`）与 **跨模块 `Index.ets`（或 DSL 声明的其它出口文件名）** 中与本轮改动相关的条目。
+
 ## 与中立骨架的关系
 
 - `framework/specs/phase-rules/coding-rules.yaml` 仅保留 **profile 中立骨架**；鸿蒙细则由 `framework/profiles/hmos-app/phase-rules-overlays/coding-rules.overlay.yaml` 合并补齐。

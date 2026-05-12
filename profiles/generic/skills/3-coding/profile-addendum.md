@@ -6,3 +6,7 @@
 - 切换到 `hmos-app`（或其它端侧 profile）后，再启用本仓库的 **ArkTS 易错手册、编码规范、coding overlay** 全套闸门。
 
 `framework/skills/3-coding/SKILL.md` 内指向 `framework/profiles/hmos-app/skills/3-coding/` 的路径，在 `generic` 下仅作**能力说明**；未切 profile 前勿把该树当作当前工程强制 SSOT。
+
+## Context Exploration Gate（profile 补充）
+
+若本 profile 禁用 coding harness，`context-exploration.md` 仍应诚实记录已读的 design/contracts；宿主构建清单以实际工程为准，无统一文件名要求。

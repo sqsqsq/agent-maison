@@ -73,6 +73,10 @@
 - 仅当 design.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [Skill 2 · Step 12](framework/skills/2-requirement-design/SKILL.md) 分支更新 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
 - **[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})** 是模块职责 / 公共能力 / 易混点的唯一 SSOT；不要把这些细节复制到 architecture.md。
 
+### 3.6 Context Exploration Gate（BLOCKER）
+
+在 **PRD / design / coding / review / UT** 写入该阶段主产物前，按对应 `framework/skills/<n>/SKILL.md` 落盘 `doc/features/<feature>/<phase>/context-exploration.md`。契约与模板见 [framework/harness/templates/context-exploration.md](framework/harness/templates/context-exploration.md)；**本文件不展开探索清单**——阶段步骤与宿主侧补充路径以各 SKILL 及 `framework/profiles/<project_profile>/skills/*/profile-addendum.md`（若有）为准。
+
 ---
 
 ## 四、工作流与 Skill 路由

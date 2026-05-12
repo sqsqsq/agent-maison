@@ -16,3 +16,7 @@
 | `review_checklist` | `templates/review-checklist.md` |
 
 若宿主含 **非 `.ets`** 源码形态，仍以 `contracts.yaml` 与实例 `architecture` 为准，避免套错语言规则。
+
+## Context Exploration Gate（profile 补充）
+
+审查前除读全 `contracts.yaml > files` 外，建议对 **HAR `Index.ets` 导出**、**`$r()` 资源 key` 定义文件** 与 **`route_map.json` / 页面注册** 做抽查，以验证「问题清单」是否遗漏宿主特有 BLOCKER。

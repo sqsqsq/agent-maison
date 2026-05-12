@@ -67,6 +67,12 @@ interface ReceiptFrontmatter {
     exists?: boolean;
     schema_valid?: boolean;
   };
+  context_exploration?: {
+    summary_path?: string;
+    exists?: boolean;
+    ready_to_produce?: boolean;
+    has_blocker_coverage_risk?: boolean;
+  };
   self_check?: {
     q1_trace_json_abs_path?: string;
     q2_verifier_verdict_quoted?: string;
@@ -288,6 +294,47 @@ function main(): void {
         });
       }
     }
+  }
+
+  // 3.5 context_exploration（与 Context Exploration Gate 对齐）
+  const ce = frontmatter.context_exploration ?? {};
+  if (ce.exists !== true) {
+    issues.push({
+      id: 'context_exploration_exists_false',
+      severity: 'BLOCKER',
+      message: `context_exploration.exists=${ce.exists ?? '<missing>'}, 必须为 true。`,
+    });
+  }
+  const cePath = (ce.summary_path ?? '').trim();
+  if (!cePath) {
+    issues.push({
+      id: 'context_exploration_summary_path_missing',
+      severity: 'BLOCKER',
+      message: 'context_exploration.summary_path 未填写。',
+    });
+  } else {
+    const ceAbs = path.resolve(projectRoot, cePath);
+    if (!fs.existsSync(ceAbs)) {
+      issues.push({
+        id: 'context_exploration_file_not_found',
+        severity: 'BLOCKER',
+        message: `context_exploration.summary_path="${cePath}" 在文件系统中不存在。`,
+      });
+    }
+  }
+  if (ce.ready_to_produce !== true) {
+    issues.push({
+      id: 'context_exploration_not_ready',
+      severity: 'BLOCKER',
+      message: `context_exploration.ready_to_produce=${ce.ready_to_produce ?? '<missing>'}, 必须为 true。`,
+    });
+  }
+  if (ce.has_blocker_coverage_risk === true) {
+    issues.push({
+      id: 'context_exploration_blocker_risk',
+      severity: 'BLOCKER',
+      message: 'context_exploration.has_blocker_coverage_risk=true，不得在完成回执中宣称阶段闭环。',
+    });
   }
 
   // 5. claimed_completion_commit_sha 必须是 40 位 hex 且在 git 中真实存在

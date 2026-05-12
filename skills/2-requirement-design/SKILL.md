@@ -126,6 +126,15 @@
    - 新模块在 DAG 中的依赖位置
 4. 识别**可复用**的已有组件、工具类、数据模型（优先查阅 architecture.md 的公共能力清单）
 
+### Context Exploration Gate（BLOCKER）
+
+在**功能拆分与 Scope 冻结动作之前**（即进入 **Step 2.5** 之前），必须将探索摘要落盘至 **`doc/features/<feature>/design/context-exploration.md`**（与 `design/phase-completion-receipt.md` 同目录），模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+
+1. **必读**：本 feature `PRD.md`、`acceptance.yaml`、`doc/architecture.md`、`doc/module-catalog.yaml`、实例根 `framework.config.json`（至少 **`architecture` 段**）；完成 **Step 2** 工程结构扫描中规划要打开的关键路径。
+2. **宿主专有路径**（模块清单、`srcPath`、路由/资源注册等）：仅按 **Step 0** `profile-addendum.md` 的「Context Exploration」小节。
+3. frontmatter 与 **prd** 阶段同质要求；`key_inputs_read` 须覆盖脚本可识别的 **prd**、**acceptance**、**architecture**、**module-catalog**、**framework.config** 子串。
+4. 若涉及 ≥2 个 `in_scope_modules` 或复用 **`architecture.md` 公共能力清单**以外的既有实现，且运行时支持只读子 agent，应并行分域探索并在 `subagents_used` 说明；否则 `not_available`。
+
 ### Step 2.5: Scope 继承与提议（Scope 守门机制核心）
 
 这是本 Skill 最关键的一步。**在任何模块设计动作之前**，必须先完成 scope 边界的确认和登记：

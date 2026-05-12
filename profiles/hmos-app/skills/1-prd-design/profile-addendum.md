@@ -24,3 +24,8 @@
 ## `generic` / 中立工程提醒
 
 本体 Skill 正文中的示例（外层占位名、示意截图类型）均以**参考仓库**为准；实际 **Scope、`in_scope_modules`、术语映射**必须与当前实例的 `doc/module-catalog.yaml` 一致。
+
+## Context Exploration Gate（profile 补充）
+
+- 可选旁证：`oh-package.json5`（包名）、`build-profile.json5`（模块 `srcPath`），用于核对 Scope 与物理模块路径。
+- **UI 真源**以 PRD Visual Handoff / 用户截图为准；`context-exploration.md` 须能指向像素权威（`authoritative_refs` 或等价路径）。

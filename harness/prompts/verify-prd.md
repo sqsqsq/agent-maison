@@ -48,7 +48,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下语义检查项。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-prd.overlay.md`）。
+请逐一完成以下 **10** 项语义检查。每项都有具体的评估方法和判定标准（以 merged phase-rules 是否包含对应条目为准；overlay -only 项见 profile 的 `verify-prd.overlay.md`）。
 
 ### 检查 1: 功能概述清晰度 (overview_clarity)
 
@@ -143,6 +143,16 @@
      - 正文是否仍写「仅以当前实现为基线」等与 handoff 矛盾之语？若矛盾 → FAIL 或 WARN。
   3. 若使用 `repo_assets` / `screenshot_pack`：对照脚本报告可能的 **Resolved Visual Sources**／`visual_resolution_rows`：`path` 是否为全分辨率真源或等价导出目录语义（而非聊天缩略图）？若 `agent_reachable=false`，正文是否给出**人工/NAS**可复验的批次、版本或与内门户截图的对照说明？
   4. 若使用 URL 类 `kind`：是否仍说明版本/帧/归档批次，避免「只有一个泛链接」导致无法对齐？内网门户若不可直连，是否在正文声明**可达代理**或可下载快照的策略？
+
+### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
+
+- **严重等级**: MAJOR（与脚本 Harness 互补：`check-prd` 校验探索凭证结构与 `key_inputs_read` 最低子串；你负责判断摘要是否**实质上**支撑 PRD 产出）
+- **评估方法**:
+  1. 读取 `doc/features/{feature_name}/prd/context-exploration.md`（应在上下文文件或脚本报告中可定位）
+  2. 对照 PRD 正文与 Scope/术语映射：摘要中的 `files_inspected`、`code_searches`、`decisions_unlocked` 是否与 PRD 中的模块选型、流程、验收要点可追溯对应，而非泛泛罗列
+  3. 若 `coverage_risks` / `ready_to_produce` 与 PRD 实际盲区矛盾（例如宣称已读 catalog 但 Scope 仍含 catalog 外模块名），或明显「未探索却直接写 PRD」→ FAIL
+  4. 若正文已引用 glossary/catalog/architecture 等但摘要未体现相应检索证据 → WARN
+  5. 探索文件缺失且脚本已报 BLOCKER 时，本项 FAIL 并引用脚本；证据不足 → WARN
 
 ---
 
@@ -258,8 +268,19 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    # --- 检查 10: 探索覆盖充分性 ---
+    - id: context_exploration_sufficiency
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        context-exploration.md 路径: <...>
+        摘要与 PRD 决策可追溯性: PASS/FAIL — <证据>
+        coverage_risks / ready_to_produce 与正文一致性: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 9
+    total: 10
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

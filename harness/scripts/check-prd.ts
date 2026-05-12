@@ -44,6 +44,7 @@ import {
 } from './utils/glossary-parser';
 import { isPrdVisualHandoffSkipped, dispatchPrdVisualHandoff } from '../capability-registry';
 import { relCatalog, relGlossary, relFeatureFile } from '../config';
+import { checkContextExplorationArtifact } from './utils/context-exploration';
 export { dispatchPrdVisualHandoff as checkVisualHandoff };
 
 // --------------------------------------------------------------------------
@@ -888,6 +889,12 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkFeatureToAcceptance(ctx, prd), 'feature_to_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToFeature(ctx, prd), 'acceptance_to_feature'));
     results.push(...safeRun(() => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
+    results.push(
+      ...safeRun(
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'prd'),
+        'context_exploration_gate',
+      ),
+    );
 
     return results;
   },

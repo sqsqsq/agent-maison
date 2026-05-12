@@ -9,6 +9,10 @@
 | Harness | `ut.compile` / `ut.run` 驱动 hvigor + hdc；可被 profile **SKIP**（如 `generic`） |
 | 依赖 | `oh-package.json5` 声明 `@ohos/hypium` 等 |
 
+## Context Exploration Gate（profile 补充）
+
+UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/test/`** 下拟扩展的测试文件、**套件注册入口**（如 `List.test.ets`）、以及 **`oh-package.json5`** 中与 Hypium/测试依赖相关的条目；Spy 类目录与 `mock-plan.yaml` 拟落位路径须在 `context-exploration.md` 中写明。
+
 **禁止反改业务架构**：不要为了 UT 新造 `domain/usecase/*.ets` 或 Port；业务嵌在 inline lambda 中时，反馈 Skill 3 抽出命名方法。
 
 ### skill-assets.yaml 键

@@ -30,6 +30,7 @@ import {
   relArchitectureMd,
   relFeatureFile,
 } from '../config';
+import { checkContextExplorationArtifact } from './utils/context-exploration';
 import {
   extractHeadings,
   getSectionContent,
@@ -841,6 +842,12 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'prd_p1_coverage'), 'prd_p1_coverage'));
     results.push(...safeRun(() => checkMappingToFile(ctx, design), 'mapping_to_file'));
     results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'design_to_architecture'));
+    results.push(
+      ...safeRun(
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'design'),
+        'context_exploration_gate',
+      ),
+    );
 
     return results;
   },
