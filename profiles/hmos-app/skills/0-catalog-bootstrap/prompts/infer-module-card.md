@@ -130,7 +130,7 @@ Read <LAYER_DIR>/<ModuleName>/Index.ets  (若存在)
 - "负责 xxx 业务" ← 模糊
 
 **正例**：
-- "公共页面承载模块（首页 / 我的 / 设置 / 卡包 / 添卡入口等）"
+- "公共页面承载模块（首页 / 我的 / 设置 / 列表区 / 次级入口等）"
 - "跨 Feature 的卡片统一管理：CRUD / 状态订阅 / 功能代理"
 
 ### `responsibilities`
@@ -174,7 +174,7 @@ for each term in typical_business_terms:
 | 选项 | 动作 | 何时选 |
 |---|---|---|
 | A. 从 `typical_business_terms` 移除该词 | 直接删 | 该词实际不归本模块（放进去只是手一滑） |
-| B. 在对应 `NOT_responsible_for[i]` 原文里加消歧规则 | 把原文改成"X 指 A 时属本模块；指 B 时不属（详述 B 属何模块）" | 同词多义（示例：钱包工程里"账户" 可能指"华为登录身份" vs "钱包业务账户"） |
+| B. 在对应 `NOT_responsible_for[i]` 原文里加消歧规则 | 把原文改成"X 指 A 时属本模块；指 B 时不属（详述 B 属何模块）" | 同词多义（示例：同一应用里「账户」可能指「系统登录身份」vs「业务侧账户」） |
 
 **为什么要反扫**：下游 glossary 阶段的 `infer-glossary-term.md` Step 1.5 会因这种冲突把命中置信度从 high 降到 medium——但**最干净的防线是 catalog 自己不出冲突**。Harness `--phase catalog` 会有一条 `typical_vs_not_responsible_conflict` 扫描把这类遗漏抓成 WARN，可作二次兜底，但 AI 自己就该主动解决。
 

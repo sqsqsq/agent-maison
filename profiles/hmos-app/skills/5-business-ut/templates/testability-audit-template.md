@@ -53,7 +53,7 @@ records:
   - acceptance_id: AC-1
     entry_point:
       symbol: HomeRepository.getServiceEntries
-      file: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      file: 02-Feature/TaskDemo/src/main/ets/data/repository/HomeRepository.ets
     testability_level: L1
     dependencies:
       - name: HomeRepository
@@ -63,7 +63,7 @@ records:
   - acceptance_id: AC-2
     entry_point:
       symbol: HomeRepository.getPromoList
-      file: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      file: 02-Feature/TaskDemo/src/main/ets/data/repository/HomeRepository.ets
     testability_level: L1
     dependencies:
       - name: HomeRepository
@@ -78,7 +78,7 @@ records:
   - acceptance_id: AC-X
     entry_point:
       symbol: FooOperator.bar
-      file: 02-Feature/WalletMain/src/main/ets/.../FooOperator.ets
+      file: 02-Feature/TaskDemo/src/main/ets/.../FooOperator.ets
     testability_level: L3
     dependencies:
       - name: JumpManager

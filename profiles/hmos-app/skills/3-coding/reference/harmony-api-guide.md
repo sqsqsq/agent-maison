@@ -2,7 +2,7 @@
 
 > 常用 HarmonyOS API 的用法示例，适配多模块（HAR/HAP）架构。
 >
-> **示例说明**：以下代码片段使用钱包工程的模块命名（`@wallet/*`、`wallet_home`、`card_management` 等）演示 API 用法；实际使用请按你自己工程的模块名替换。
+> **示例说明**：以下代码片段使用演示用模块命名（`@demoapp/*`、`task_shell`、`feature_grid` 等）；实际使用请按你自己工程的模块名替换。
 
 ---
 
@@ -12,14 +12,14 @@
 
 ```json5
 {
-  "name": "@wallet/wallet_home",
+  "name": "@demoapp/task_shell",
   "version": "1.0.0",
-  "description": "钱包首页功能模块",
+  "description": "示例 Feature 模块",
   "main": "index.ets",
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@wallet/common": "file:../common"
+    "@demoapp/common": "file:../common"
   }
 }
 ```
@@ -31,9 +31,9 @@
 ```json5
 {
   "dependencies": {
-    "@wallet/common": "file:../common",
-    "@wallet/wallet_home": "file:../wallet_home",
-    "@wallet/card_management": "file:../card_management"
+    "@demoapp/common": "file:../common",
+    "@demoapp/task_shell": "file:../task_shell",
+    "@demoapp/feature_grid": "file:../feature_grid"
   }
 }
 ```
@@ -41,8 +41,8 @@
 代码中引用 HAR 导出的内容：
 
 ```typescript
-import { homePageBuilder, CardInfo } from '@wallet/wallet_home'
-import { formatCardNumber } from '@wallet/common'
+import { homePageBuilder, ItemSummary } from '@demoapp/task_shell'
+import { maskIdentifierTail } from '@demoapp/common'
 ```
 
 ### 根目录 build-profile.json5 注册模块
@@ -61,8 +61,8 @@ import { formatCardNumber } from '@wallet/common'
       "targets": [{ "name": "default", "applyToProducts": ["default"] }]
     },
     {
-      "name": "wallet_home",
-      "srcPath": "./wallet_home",
+      "name": "task_shell",
+      "srcPath": "./task_shell",
       "targets": [{ "name": "default", "applyToProducts": ["default"] }]
     }
   ]
@@ -78,10 +78,10 @@ import { formatCardNumber } from '@wallet/common'
 @Provide('pageStack') pageStack: NavPathStack = new NavPathStack()
 
 // 跳转
-this.pageStack.pushPath({ name: 'cardDetail', param: { cardId: '123' } })
+this.pageStack.pushPath({ name: 'itemDetail', param: { itemId: '123' } })
 
 // 替换
-this.pageStack.replacePath({ name: 'paymentCode' })
+this.pageStack.replacePath({ name: 'checkoutPreview' })
 
 // 返回
 this.pageStack.pop()
@@ -100,8 +100,8 @@ this.pageStack.size()
 
 ```typescript
 @Component
-struct CardDetailPage {
-  @State cardId: string = ''
+struct ItemDetailPage {
+  @State itemId: string = ''
 
   build() {
     NavDestination() {
@@ -109,8 +109,8 @@ struct CardDetailPage {
     }
     .onReady((context: NavDestinationContext) => {
       const params = context.pathInfo.param as Record<string, Object>
-      if (params?.cardId) {
-        this.cardId = params.cardId as string
+      if (params?.itemId) {
+        this.itemId = params.itemId as string
       }
     })
   }
@@ -138,7 +138,7 @@ struct CardDetailPage {
 ```json5
 {
   "module": {
-    "name": "wallet_home",
+    "name": "task_shell",
     "type": "har",
     "routerMap": "$profile:route_map"
   }
@@ -158,7 +158,7 @@ export class PreferenceUtil {
   private static pref: preferences.Preferences | null = null
 
   static async init(context: Context): Promise<void> {
-    PreferenceUtil.pref = await preferences.getPreferences(context, 'wallet_prefs')
+    PreferenceUtil.pref = await preferences.getPreferences(context, 'app_prefs')
   }
 
   static async put(key: string, value: preferences.ValueType): Promise<void> {
@@ -203,7 +203,7 @@ const isLoggedIn = AppStorage.get<boolean>('isLoggedIn')
 ```typescript
 // 应用入口初始化
 PersistentStorage.persistProp('theme', 'light')
-PersistentStorage.persistProp('defaultCardId', '')
+PersistentStorage.persistProp('defaultItemId', '')
 
 // 组件中自动同步
 @StorageLink('theme') theme: string = 'light'
@@ -268,7 +268,7 @@ export class HttpUtil {
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
 const DOMAIN = 0x0001
-const TAG = 'CardRepository'
+const TAG = 'DraftRepository'
 
 hilog.debug(DOMAIN, TAG, 'Debug: %{public}s', someVar)
 hilog.info(DOMAIN, TAG, 'Info: %{public}s', someVar)
@@ -340,21 +340,21 @@ import { emitter } from '@kit.BasicServicesKit'
 
 // 事件定义（放在 common/shared/constant/ 中）
 export class AppEvents {
-  static readonly CARD_UPDATED: emitter.InnerEvent = { eventId: 1001 }
+  static readonly ITEM_UPDATED: emitter.InnerEvent = { eventId: 1001 }
   static readonly USER_LOGGED_IN: emitter.InnerEvent = { eventId: 1002 }
 }
 
 // 订阅（在 aboutToAppear 中）
-emitter.on(AppEvents.CARD_UPDATED, (data: emitter.EventData) => {
-  const cardId = data?.data?.cardId as string
-  this.refreshCard(cardId)
+emitter.on(AppEvents.ITEM_UPDATED, (data: emitter.EventData) => {
+  const itemId = data?.data?.itemId as string
+  this.refreshItem(itemId)
 })
 
 // 发送
-emitter.emit(AppEvents.CARD_UPDATED, { data: { cardId: '123' } })
+emitter.emit(AppEvents.ITEM_UPDATED, { data: { itemId: '123' } })
 
 // 取消（在 aboutToDisappear 中）
-emitter.off(AppEvents.CARD_UPDATED.eventId)
+emitter.off(AppEvents.ITEM_UPDATED.eventId)
 ```
 
 **放置位置**：事件 ID 定义在 `common/shared/constant/AppEvents.ets`，各模块按需引用。
@@ -440,8 +440,8 @@ export class PermissionUtil {
 ## 12. JSON 操作
 
 ```typescript
-const jsonStr = JSON.stringify(cardInfo)
-const cardInfo: CardInfo = JSON.parse(jsonStr) as CardInfo
+const jsonStr = JSON.stringify(itemPayload)
+const itemPayload: ItemSummary = JSON.parse(jsonStr) as ItemSummary
 
 // 安全解析
 function safeJsonParse<T>(json: string, defaultValue: T): T {

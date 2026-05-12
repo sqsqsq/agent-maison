@@ -215,11 +215,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'findOhosTestSignedHap: 约定命名 <srcModule>-ohosTest-signed.hap 命中',
     run: () => withTmpDir(root => {
-      const srcPath = '02-Feature/WalletMain';
+      const srcPath = '02-Feature/FeatureAlpha';
       const hapDir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
-      const expected = path.join(hapDir, 'WalletMain-ohosTest-signed.hap');
+      const expected = path.join(hapDir, 'FeatureAlpha-ohosTest-signed.hap');
       writeFile(expected, 'fake hap');
-      const found = findOhosTestSignedHap(root, srcPath, 'WalletMain');
+      const found = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha');
       assertEq(found, expected, '应命中约定命名');
     }),
   },
@@ -244,11 +244,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'findOhosTestSignedHap: build/product/outputs/ohosTest 约定命名（非 default product）',
     run: () => withTmpDir(root => {
-      const srcPath = '02-Feature/WalletMain';
+      const srcPath = '02-Feature/FeatureAlpha';
       const hapDir = path.join(root, srcPath, 'build', 'product', 'outputs', 'ohosTest');
-      const expected = path.join(hapDir, 'WalletMain-ohosTest-signed.hap');
+      const expected = path.join(hapDir, 'FeatureAlpha-ohosTest-signed.hap');
       writeFile(expected, 'fake hap');
-      const found = findOhosTestSignedHap(root, srcPath, 'WalletMain', 'product');
+      const found = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha', 'product');
       assertEq(found, expected, '应优先命中传入的 product 段');
     }),
   },
@@ -319,12 +319,12 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'loadOhosTestModuleName: 标准 ohosTest module.json5 → 返回 module.name',
     run: () => withTmpDir(root => {
-      const srcPath = '02-Feature/WalletMain';
+      const srcPath = '02-Feature/FeatureAlpha';
       writeFile(
         path.join(root, srcPath, 'src', 'ohosTest', 'module.json5'),
-        '{ "module": { "name": "walletmain_test", "type": "feature" } }',
+        '{ "module": { "name": "featurealpha_test", "type": "feature" } }',
       );
-      assertEq(loadOhosTestModuleName(root, srcPath), 'walletmain_test', 'module.name');
+      assertEq(loadOhosTestModuleName(root, srcPath), 'featurealpha_test', 'module.name');
     }),
   },
   {

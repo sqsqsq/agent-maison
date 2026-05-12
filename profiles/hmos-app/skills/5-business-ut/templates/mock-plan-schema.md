@@ -20,24 +20,24 @@ imports:
   - { symbol: VerifyResult, from: "02-Feature/.../model/VerifyResult" }
 
 spies:
-  - target_class: CardCloudApi           # 必须 ∈ contracts.yaml > interfaces[].class
-    target_file: 02-Feature/.../api/CardCloudApi.ets
+  - target_class: RemoteTaskGateway           # 必须 ∈ contracts.yaml > interfaces[].class
+    target_file: 02-Feature/.../api/RemoteTaskGateway.ets
     base_strategy: subclass              # subclass | prototype_override
     spy_fields:
       - { name: callLog, type: "string[]", default: "[]" }
     methods:
-      - name: verifyCard
+      - name: submitTask
         params:
-          - { name: draft, type_text: "CardDraft" }
+          - { name: payload, type_text: "TaskPayload" }
         return_type: { text: "Promise<VerifyResult>" }
         presets:
           - id: success
             returns: { ts_expr: "{ ok: true, token: 't' } as VerifyResult" }
-          - id: error_sms
-            throws: { ts_expr: "new BizError('SMS_ERR')" }
+          - id: error_remote
+            throws: { ts_expr: "new BizError('REMOTE_ERR')" }
 
 fixtures:
-  - { name: draftSample, type: "CardDraft", ts_expr: "..." }
+  - { name: draftSample, type: "TaskPayload", ts_expr: "..." }
 ```
 
 ## 字段说明

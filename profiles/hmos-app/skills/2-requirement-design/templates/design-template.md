@@ -61,9 +61,9 @@ expansions_with_user_approval:
 architecture_impact:
   impact: none
   # impact != none 时以下字段必填；impact == none 时保留空数组即可
-  affected_items: []            # 受影响的模块 / 外层 / DSL 段落，如 ["新增模块 Wallet2Pay"]、["外层 02-Feature can_depend_on 新增 03-CommonBusiness"]
-  architecture_md_updates: []   # architecture.md 需要新增/修改的小节，如 ["业务模块清单：新增 Wallet2Pay 行", "架构级变更记录：追加 2026-04-22 新增 Wallet2Pay 模块"]
-  catalog_updates: []           # 可选：module-catalog.yaml 需要新增/修改的模块条目，如 ["新增 Wallet2Pay 条目"]
+  affected_items: []            # 受影响的模块 / 外层 / DSL 段落，如 ["新增模块 FeatureAlpha"]、["外层 02-Feature can_depend_on 新增 03-CommonBusiness"]
+  architecture_md_updates: []   # architecture.md 需要新增/修改的小节，如 ["业务模块清单：新增 FeatureAlpha 行", "架构级变更记录：追加日期行"]
+  catalog_updates: []           # 可选：module-catalog.yaml 需要新增/修改的模块条目，如 ["新增 FeatureAlpha 条目"]
 ```
 
 > `impact: none` 时 `affected_items` / `architecture_md_updates` / `catalog_updates` 均保留空数组 `[]`，**不要**删除字段（Harness 依赖完整 schema）。
@@ -81,7 +81,7 @@ graph TD
     feature_module --> common
 ```
 
-> **使用时**：将 `module_name` 替换为实际模块名（如 `wallet_home`）。
+> **使用时**：将 `module_name` 替换为实际模块名（如 `task_demo`）。
 
 ### 1.1 模块变更摘要
 

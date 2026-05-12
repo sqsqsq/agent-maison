@@ -101,12 +101,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'har_index_export: 无 oh-package main 时回退默认 index.ets 路径',
     run: () => withTmpDir(root => {
       const actual = resolveHarExportEntryPath(root, {
-        name: 'WalletMain',
-        package_path: '02-Feature/WalletMain',
+        name: 'FeatureAlpha',
+        package_path: '02-Feature/FeatureAlpha',
       }, 'index.ets');
 
       assertEq(actual, {
-        relPath: '02-Feature/WalletMain/src/main/ets/index.ets',
+        relPath: '02-Feature/FeatureAlpha/src/main/ets/index.ets',
         source: 'framework.config fallback',
       }, '无 oh-package 时应保留默认路径');
     }),

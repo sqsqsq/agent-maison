@@ -268,7 +268,7 @@ struct Index {
   build() {
     Tabs({ barPosition: BarPosition.End }) {
       TabContent() {
-        // 来自 wallet_home HAR 模块
+        // 来自 task_shell HAR 模块
         homePageBuilder()
       }
       .tabBar(this.TabBarItem(

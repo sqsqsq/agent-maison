@@ -1,6 +1,6 @@
 # 示例：多步任务提交 + 二次校验流程（Neutral Canonical Sample · v2.1）
 
-本目录演示 **Skill 2 → 3 → 5 → 6** 在「中性业务域」下应交付的工件形态：仍以 HarmonyOS ArkTS/Hypium 为宿主，但不绑定钱包/支付叙事。
+本目录演示 **Skill 2 → 3 → 5 → 6** 在通用业务域下应交付的工件形态：仍以 HarmonyOS ArkTS/Hypium 为宿主，示例与具体行业产品解耦。
 
 ## 目录结构
 

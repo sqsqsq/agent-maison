@@ -3,7 +3,7 @@
 > **目标读者**：用 MiniMax / GLM 这类 200K-context 中端模型写 ArkTS 代码时容易反复出错的场景。
 > **使用方式**：Skill 3（Coding）在生成每个 `.ets` 文件之前，对照本手册做一次"自我检查"；写完之后再做一次"自我校对"。
 > **格式约定**：每条都给"❌ 错误示例 → ✅ 正确示例"的对照，便于模型直接做 pattern matching。
-> **示例说明**：部分代码片段使用钱包工程的模块命名（`@hw/BankCard`、`CardRepo` 等）演示具体错法；这只是举例，实际请按你自己工程的模块名替换。
+> **示例说明**：部分代码片段使用演示模块命名（`@hw/LedgerDemo`、`EntryRepo` 等）说明错法；这只是举例，实际请按你自己工程的模块名替换。
 
 ---
 
@@ -138,33 +138,33 @@ class ItemSource implements IDataSource {
 Text($r(`app.string.${this.module}_title`))    // ArkTS 不允许动态资源 key
 
 // ❌ 错：资源 key 没在 string.json 里声明
-Text($r('app.string.bank_card_title'))         // 若 string.json 里没有 bank_card_title 条目则报错
+Text($r('app.string.demo_row_title'))         // 若 string.json 里没有 demo_row_title 条目则报错
 
 // ✅ 对：静态字符串 + 已登记
-// resources/base/element/string.json 中必须有：{"name": "bank_card_title", "value": "银行卡"}
-Text($r('app.string.bank_card_title'))
+// resources/base/element/string.json 中必须有：{"name": "demo_row_title", "value": "演示标题"}
+Text($r('app.string.demo_row_title'))
 ```
 
 ---
 
 ## 7. HAR 模块必须通过 `Index.ets` 导出
 
-**症状**：其他模块 `import { Foo } from '@hw/BankCard'` 找不到符号。
+**症状**：其他模块 `import { Foo } from '@hw/LedgerDemo'` 找不到符号。
 
 ```ts
 // ❌ 错：直接从内部路径 import
-import { CardRepo } from '@hw/BankCard/src/main/ets/data/repository/CardRepo'
+import { EntryRepo } from '@hw/LedgerDemo/src/main/ets/data/repository/EntryRepo'
 
 // ❌ 错：Index.ets 不存在或没有 export
 // Index.ets 内容为空
 
 // ✅ 对：Index.ets 集中导出对外 API
 // Index.ets
-export { CardRepo } from './src/main/ets/data/repository/CardRepo'
-export type { BankCardInfo } from './src/main/ets/data/model/BankCardInfo'
+export { EntryRepo } from './src/main/ets/data/repository/EntryRepo'
+export type { LedgerRow } from './src/main/ets/data/model/LedgerRow'
 
 // 外部使用：
-import { CardRepo, BankCardInfo } from '@hw/BankCard'
+import { EntryRepo, LedgerRow } from '@hw/LedgerDemo'
 ```
 
 ---
@@ -175,16 +175,16 @@ import { CardRepo, BankCardInfo } from '@hw/BankCard'
 
 ```json5
 // ❌ 错：用 npm 风格版本号
-{ "dependencies": { "@hw/BankCard": "^1.0.0" } }
+{ "dependencies": { "@hw/LedgerDemo": "^1.0.0" } }
 
 // ❌ 错：路径少了层目录前缀
-{ "dependencies": { "@hw/BankCard": "file:./BankCard" } }
+{ "dependencies": { "@hw/LedgerDemo": "file:./LedgerDemo" } }
 
 // ✅ 对：file: 协议 + 层目录前缀，相对路径相对于当前 oh-package.json5
 // 位于 01-Product/Phone/oh-package.json5
 {
   "dependencies": {
-    "@hw/BankCard": "file:../../02-Feature/BankCard",
+    "@hw/LedgerDemo": "file:../../02-Feature/LedgerDemo",
     "@hw/CommFunc": "file:../../05-SystemBase/CommFunc"
   }
 }
@@ -254,14 +254,14 @@ Button('load').onClick(async () => {
 
 ```ts
 // ❌ 错
-Text('银行卡')
+Text('演示标题')
 Button('添加')
 
 // ✅ 对
-Text($r('app.string.bank_card_title'))
+Text($r('app.string.demo_row_title'))
 Button($r('app.string.common_add'))
 // resources/base/element/string.json 补上：
-// { "name": "bank_card_title", "value": "银行卡" }
+// { "name": "demo_row_title", "value": "演示标题" }
 // { "name": "common_add", "value": "添加" }
 ```
 
@@ -333,10 +333,10 @@ AppStorage.SetOrCreate<UserInfo>('currentUser', { id: 'x', name: 'foo' })
 
 ```ts
 // ❌ 错：跨模块 import 内部路径
-import { WalletToast } from '@hw/CommUI/src/main/ets/presentation/components/WalletToast'
+import { ShellToast } from '@hw/CommUI/src/main/ets/presentation/components/ShellToast'
 
 // ✅ 对：只 import Index.ets 的公开 API
-import { WalletToast } from '@hw/CommUI'
+import { ShellToast } from '@hw/CommUI'
 ```
 
 ---

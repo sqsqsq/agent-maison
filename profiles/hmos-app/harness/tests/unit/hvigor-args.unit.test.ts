@@ -182,10 +182,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         path.join(root, 'build-profile.json5'),
         JSON.stringify({ app: { products: [{ name: 'default' }] } }),
       );
-      const args = buildUtHvigorArgs(root, 'WalletMain', 'genOnDeviceTestHap');
+      const args = buildUtHvigorArgs(root, 'FeatureAlpha', 'genOnDeviceTestHap');
 
       assertEq(args[args.indexOf('--mode') + 1], 'module', '--mode module');
-      assertEq(findFlagValues(args, 'module'), ['WalletMain@ohosTest'], 'module=@ohosTest');
+      assertEq(findFlagValues(args, 'module'), ['FeatureAlpha@ohosTest'], 'module=@ohosTest');
       assertEq(findFlagValues(args, 'isOhosTest'), ['true'], 'isOhosTest=true');
       assertEq(findFlagValues(args, 'buildMode'), ['test'], 'buildMode=test');
       assertEq(findFlagValues(args, 'product'), ['default'], 'product 探测');
@@ -207,9 +207,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         path.join(root, 'build-profile.json5'),
         JSON.stringify({ app: { products: [{ name: 'phone' }] } }),
       );
-      const args = buildModuleHapArgs(root, 'WalletMain', 'default', 'assembleHap');
+      const args = buildModuleHapArgs(root, 'FeatureAlpha', 'default', 'assembleHap');
       assertNotContains(args, '--mode', 'default 模块路径不传 --mode');
-      assertEq(findFlagValues(args, 'module'), ['WalletMain@default'], 'module=@default');
+      assertEq(findFlagValues(args, 'module'), ['FeatureAlpha@default'], 'module=@default');
       assertEq(findFlagValues(args, 'product'), ['phone'], 'product');
       assertEq(args[args.length - 1], 'assembleHap', 'task 最后');
     }),
@@ -260,7 +260,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'assembleApp 路径应当以 preferredProduct 覆盖 build-profile',
       );
 
-      const utArgs = buildUtHvigorArgs(root, 'WalletMain', 'genOnDeviceTestHap');
+      const utArgs = buildUtHvigorArgs(root, 'FeatureAlpha', 'genOnDeviceTestHap');
       assertEq(
         findFlagValues(utArgs, 'product'),
         ['mirror'],
@@ -317,7 +317,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         '$ hvigor --mode module -p product=product -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon',
         '> hvigor ERROR: Failed ::onlineSignApp...',
         'Error Code: 00308018 Unknown Error - Failed to find the incremental input file:',
-        'D:/repo/build/product/outputs/product/wallet-product-unsigned.hap',
+        'D:/repo/build/product/outputs/product/demo-product-unsigned.hap',
         'Archive HAP Package task start.',
       ].join('\n'));
 

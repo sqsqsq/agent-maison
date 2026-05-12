@@ -2,7 +2,7 @@
 
 > 定义新模块（HAR/HAP）的标准文件结构和各层的样板代码模板。
 >
-> **模板说明**：本模板以钱包工程的命名空间（`@wallet/{module_name}`、`@wallet/common`、`@wallet/wallet_home` 等）为参考示例演示填法；实际使用请按你自己工程的 npm scope 和模块名替换。
+> **模板说明**：本模板以示例命名空间（`@demoapp/{module_name}`、`@demoapp/common`、`@demoapp/task_shell` 等）演示填法；实际使用请按你自己工程的 npm scope 和模块名替换。
 
 ---
 
@@ -55,7 +55,7 @@
 
 ```json5
 {
-  "name": "@wallet/{module_name}",
+  "name": "@demoapp/{module_name}",
   "version": "1.0.0",
   "description": "{模块用途描述}",
   "main": "Index.ets",
@@ -63,7 +63,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     // 声明依赖的其他模块
-    "@wallet/common": "file:../common"
+    "@demoapp/common": "file:../common"
   }
 }
 ```
@@ -131,7 +131,7 @@ export default {
 在根目录 `oh-package.json5` 的 `dependencies` 中添加（若 phone 需依赖此模块）：
 
 ```json5
-"@wallet/{module_name}": "file:./{module_name}"
+"@demoapp/{module_name}": "file:./{module_name}"
 ```
 
 ---
@@ -145,13 +145,13 @@ export default {
 export { homePageBuilder } from './presentation/pages/HomePage'
 
 // 导出需要跨模块复用的数据类型
-export { CardInfo } from './data/model/CardInfo'
+export { ItemSummary } from './data/model/ItemSummary'
 
 // 导出需要跨模块复用的枚举/常量
-export { CardType } from './shared/constant/HomeTypes'
+export { CategoryKind } from './shared/constant/HomeTypes'
 
 // 导出需要跨模块复用的基础组件
-export { BaseCardView } from './shared/components/BaseCardView'
+export { BaseListTile } from './shared/components/BaseListTile'
 
 // ⚠️ 不导出模块私有内容（Repository、UseCase、内部组件等）
 ```
@@ -283,12 +283,12 @@ export struct XxxBaseView {
 // shared/utils/XxxUtils.ets
 
 /**
- * 格式化卡号，保留后四位
+ * 掩码长标识符，仅保留末尾若干位用于展示
  * '6222021234567890' → '**** **** **** 7890'
  */
-export function formatCardNumber(cardNo: string): string {
-  if (cardNo.length < 4) return cardNo
-  return `**** **** **** ${cardNo.slice(-4)}`
+export function maskIdentifierTail(raw: string): string {
+  if (raw.length < 4) return raw
+  return `**** **** **** ${raw.slice(-4)}`
 }
 
 /**
@@ -606,8 +606,8 @@ struct XxxPage {
 ```typescript
 // phone/src/main/ets/presentation/pages/Index.ets
 
-import { homePageBuilder } from '@wallet/wallet_home'
-// import { cardManagementPageBuilder } from '@wallet/card_management'
+import { homePageBuilder } from '@demoapp/task_shell'
+// import { featureGridPageBuilder } from '@demoapp/feature_grid'
 
 @Entry
 @Component
@@ -620,8 +620,8 @@ struct Index {
     if (name === 'home') {
       homePageBuilder()
     }
-    // else if (name === 'card_management') {
-    //   cardManagementPageBuilder()
+    // else if (name === 'feature_grid') {
+    //   featureGridPageBuilder()
     // }
   }
 

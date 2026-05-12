@@ -6,7 +6,7 @@
 //
 // 为什么不直接用 `hvigor test`：
 //   `hvigor test` 走 unit test 路径，强制要求模块下存在 TestAbility.ets。
-//   HAR / HSP 库模块（如 WalletMain）没有 TestAbility，hvigor 立刻报：
+//   HAR / HSP 库模块（如某 Feature 级 HAR）没有 TestAbility，hvigor 立刻报：
 //     ERROR: srcEntry file '.../testability/TestAbility.ets' does not exist.
 //   而 DevEco Studio "Run ohosTest" 实际是用 `genOnDeviceTestHap` 出 ohosTest
 //   HAP，再用 hdc 完成装机 + aa test。本模块按这套流程把它复刻进 harness。
@@ -138,7 +138,7 @@ export function loadAppBundleName(projectRoot: string): string {
 
 /**
  * 读取模块的 ohosTest module.json5，拿到 ohosTest module name。
- * srcPath：模块相对项目根的路径（如 '02-Feature/WalletMain'），即 build-profile.json5
+ * srcPath：模块相对项目根的路径（如 `02-Feature/FeatureAlpha`），即 build-profile.json5
  *          modules[].srcPath 去掉 './' 前缀。
  */
 export function loadOhosTestModuleName(projectRoot: string, srcPath: string): string {

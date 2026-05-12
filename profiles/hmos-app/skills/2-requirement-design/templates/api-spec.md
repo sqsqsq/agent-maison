@@ -64,15 +64,15 @@ export class {RepositoryName} {
 本项目为模拟应用，Repository 的数据来源策略：
 
 ```typescript
-export class CardRepository {
-  private mockCards: Array<CardInfo> = [
+export class DraftRepository {
+  private mockRows: Array<DraftRow> = [
     // 在此定义模拟数据
-    { id: '1', name: '交通卡', type: CardType.TRANSPORT, ... },
-    { id: '2', name: '银行卡', type: CardType.BANK, ... },
+    { id: '1', title: '草稿 A', status: DraftStatus.DRAFT, ... },
+    { id: '2', title: '草稿 B', status: DraftStatus.SYNCED, ... },
   ]
 
-  async getAll(): Promise<Array<CardInfo>> {
-    return this.mockCards
+  async getAll(): Promise<Array<DraftRow>> {
+    return this.mockRows
   }
 }
 ```
@@ -210,9 +210,9 @@ presentation/pages/Page.ets
 
 | 类别 | 约定 | 示例 |
 |------|------|------|
-| Repository 类名 | PascalCase + Repository 后缀 | `CardRepository` |
+| Repository 类名 | PascalCase + Repository 后缀 | `DraftRepository` |
 | UseCase 类名 | PascalCase + UseCase 后缀 | `LoadHomeDataUseCase` |
 | Client 文件名 | PascalCase + ApiClient 后缀 | `HomeApiClient.ets` |
-| 方法名 | camelCase，动词开头 | `getCards`、`loadHomeData` |
-| 请求体 | PascalCase + Request 后缀 | `GetCardsRequest` |
-| 响应体 | PascalCase + Response 后缀 | `GetCardsResponse` |
+| 方法名 | camelCase，动词开头 | `listDrafts`、`loadHomeData` |
+| 请求体 | PascalCase + Request 后缀 | `ListDraftsRequest` |
+| 响应体 | PascalCase + Response 后缀 | `ListDraftsResponse` |

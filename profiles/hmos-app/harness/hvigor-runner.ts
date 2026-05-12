@@ -1412,7 +1412,7 @@ export function buildModuleHapArgs(
  * v2.3 P2：真机执行 UT 的完整链路。
  *
  * v2.2 旧路：直接跑 `hvigor test` —— 这条 task 走 unit test 路径，强制要求模块下
- * 存在 TestAbility.ets。HAR / HSP 库模块（典型如 feature-level WalletMain）没有
+ * 存在 TestAbility.ets。HAR / HSP 库模块（典型如 feature 级 HAR）没有
  * TestAbility，hvigor 立刻挂在 UnitTestArkTS。
  *
  * v2.3 新路（与 DevEco Studio "Run ohosTest" 等效）：
@@ -1427,7 +1427,7 @@ export function buildModuleHapArgs(
 export function runHvigorTest(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
     moduleName: string;
-    /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/WalletMain' */
+    /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/FeatureAlpha' */
     moduleSrcPath: string;
   },
 ): HvigorRunResult {

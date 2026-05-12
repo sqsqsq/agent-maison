@@ -134,7 +134,7 @@ structure_checks:
   naming_conventions:
     description: >
       命名规范：
-        - 模块名: PascalCase（参考示例：WalletMain、CommFunc 等，实际按本工程 doc/architecture.md 为准）
+        - 模块名: PascalCase（参考示例：FeatureAlpha、CommFunc 等，实际按本工程 doc/architecture.md 为准）
         - 组件 struct 名: PascalCase，与文件名一致（导出入口文件见下条例外）
         - 文件名: PascalCase.ets（如 HomeTabPage.ets、CardRepository.ets）；
           例外：`architecture.cross_module_exports_file` 所指的入口文件名
