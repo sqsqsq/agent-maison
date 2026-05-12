@@ -37,13 +37,13 @@ feature: string                 # feature 名，与目录名一致，如 "sample
 # use_cases 列表
 # ============================================================================
 use_cases:
-  - id: string                  # snake_case，feature 内唯一，如 "card_opening"
+  - id: string                  # snake_case，feature 内唯一，如 "task_submit"
     description: string         # 中文说明这条业务流做什么
 
     # ------------------------------------------------------------------------
     # coordinator：业务编排承载对象的名称
     #   可为：
-    #     - 类名，如 "CardOpenFlow"
+    #     - 类名，如 "TaskSubmitFlow"
     #     - 方法路径，如 "HomeTabPage.triggerLoad"（简单场景直接指向 Page 方法）
     #     - 导出函数名，如 "loadHomeData"
     # ------------------------------------------------------------------------
@@ -61,15 +61,15 @@ use_cases:
     #     - 告诉 Skill 6：role ∈ {progress, result} 且 user_actions 为空的 UI 交它
     # ------------------------------------------------------------------------
     ui_bindings:
-      - ui: string                           # 页面或组件名，如 "CardSelectPage"
+      - ui: string                           # 页面或组件名，如 "TaskSubmitPage"
         role: "entry | progress | dialog | result | passive"
-        subscribes: [string]                 # 订阅的 state 字段，如 ["flow.state.phase=WaitingSms"]
+        subscribes: [string]                 # 订阅的 state 字段，如 ["flow.state.phase=WaitingRemote"]
 
         # user_actions：该 UI 上的用户触发事件
         #   空数组表示该 UI 纯展示 → UT 不覆盖，交 Skill 6 真机
         user_actions:
           - trigger: string                  # 中文描述用户动作，如 "提交草稿按钮"
-            calls: string                    # UT 要调用的命名函数，如 "flow.chooseCard"
+            calls: string                    # UT 要调用的命名函数，如 "flow.startSubmit"
                                              # ★ 必须是命名方法/导出函数，不能是 inline lambda
 
     # ------------------------------------------------------------------------
@@ -79,7 +79,7 @@ use_cases:
     # ------------------------------------------------------------------------
     data_boundaries:
       - name: string             # 在 coordinator 里的引用名，如 "cloudApi"
-        type: string             # 现有类名，如 "CardCloudApi"
+        type: string             # 现有类名，如 "RemoteTaskGateway"
         kind: "cloud | storage | system"
         methods:                 # UT 要打桩的方法清单
           - name: string
@@ -105,7 +105,7 @@ use_cases:
 
         # user_sequence：UT 按此顺序调用 ui_bindings.user_actions.calls
         #   对应"用户交互触发序列"
-        user_sequence: [string]  # 如 ["chooseCard", "startVerify", "submitSms"]
+        user_sequence: [string]  # 如 ["startSubmit", "confirmStep", "finish"]
 
         # cloud_stubs / local_stubs：按 data_boundaries 打桩
         #   value 约定：

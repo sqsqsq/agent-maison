@@ -70,7 +70,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 
 ### Step 1.5：反向扫描 NOT_responsible_for（**强制，不可跳过**）
 
-> **为什么必须有这步**：catalog 作者可能在同一模块的 `typical_business_terms` 和 `NOT_responsible_for` 里同时提到了同一个业务词（示例：`AccountPortal` 既把「账号」列为 typical term，又在 NOT 里排除「支付账号」）。弱模型一旦在 Step 1 命中就默认 high 通过，会漏掉这类内部冲突——这是 glossary 误分模块的**首号原因**。
+> **为什么必须有这步**：catalog 作者可能在同一模块的 `typical_business_terms` 和 `NOT_responsible_for` 里同时提到了同一个业务词（示例：`AccountPortal` 既把「账号」列为 typical term，又在 NOT 里排除「外部账务侧账号」）。弱模型一旦在 Step 1 命中就默认 high 通过，会漏掉这类内部冲突——这是 glossary 误分模块的**首号原因**。
 
 对 Step 1 命中 / 或 Step 2 即将产出的**每个**候选模块 m，**逐条**扫 `m.NOT_responsible_for[i]`：
 
@@ -157,7 +157,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 
 ### Step 4.5：同 canonical_module 的 alias-merge 分支（**强制检查**）
 
-> **为什么必须有这步**：种子清单里"账号"和"账户"、"卡包"和"卡包页"这类同义对是常态。若为每个都新建独立 term，glossary 会被同义词撑爆，还会污染 Skill 1 Step 1.5 的消歧逻辑（同一模块出现多个几乎等价的 term，反而降低命中质量）。
+> **为什么必须有这步**：种子清单里"账号"和"账户"、"列表入口"和"列表详情页"这类同义对是常态。若为每个都新建独立 term，glossary 会被同义词撑爆，还会污染 Skill 1 Step 1.5 的消歧逻辑（同一模块出现多个几乎等价的 term，反而降低命中质量）。
 
 在写 staging **之前**，扫以下两处：
 1. `doc/glossary.yaml` 已入库的 `terms[]`
