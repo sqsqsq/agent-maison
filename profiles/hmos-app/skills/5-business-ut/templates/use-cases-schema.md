@@ -31,19 +31,19 @@
 # 顶层必填字段
 # ============================================================================
 schema_version: "2.0"
-feature: string                 # feature 名，与目录名一致，如 "card-opening"
+feature: string                 # feature 名，与目录名一致，如 "task-demo"
 
 # ============================================================================
 # use_cases 列表
 # ============================================================================
 use_cases:
-  - id: string                  # snake_case，feature 内唯一，如 "card_opening"
+  - id: string                  # snake_case，feature 内唯一，如 "task_submission"
     description: string         # 中文说明这条业务流做什么
 
     # ------------------------------------------------------------------------
     # coordinator：业务编排承载对象的名称
     #   可为：
-    #     - 类名，如 "CardOpenFlow"
+    #     - 类名，如 "TaskSubmitFlow"
     #     - 方法路径，如 "HomeTabPage.triggerLoad"（简单场景直接指向 Page 方法）
     #     - 导出函数名，如 "loadHomeData"
     # ------------------------------------------------------------------------
@@ -61,15 +61,15 @@ use_cases:
     #     - 告诉 Skill 6：role ∈ {progress, result} 且 user_actions 为空的 UI 交它
     # ------------------------------------------------------------------------
     ui_bindings:
-      - ui: string                           # 页面或组件名，如 "CardSelectPage"
+      - ui: string                           # 页面或组件名，如 "TaskFormPage"
         role: "entry | progress | dialog | result | passive"
-        subscribes: [string]                 # 订阅的 state 字段，如 ["flow.state.phase=WaitingSms"]
+        subscribes: [string]                 # 订阅的 state 字段，如 ["flow.state.phase=WaitingOtp"]
 
         # user_actions：该 UI 上的用户触发事件
         #   空数组表示该 UI 纯展示 → UT 不覆盖，交 Skill 6 真机
         user_actions:
-          - trigger: string                  # 中文描述用户动作，如 "点击开卡按钮"
-            calls: string                    # UT 要调用的命名函数，如 "flow.chooseCard"
+          - trigger: string                  # 中文描述用户动作，如 "点击提交"
+            calls: string                    # UT 要调用的命名函数，如 "flow.submitTask"
                                              # ★ 必须是命名方法/导出函数，不能是 inline lambda
 
     # ------------------------------------------------------------------------
@@ -79,7 +79,7 @@ use_cases:
     # ------------------------------------------------------------------------
     data_boundaries:
       - name: string             # 在 coordinator 里的引用名，如 "cloudApi"
-        type: string             # 现有类名，如 "CardCloudApi"
+        type: string             # 现有类名，如 "RemoteTaskGateway"
         kind: "cloud | storage | system"
         methods:                 # UT 要打桩的方法清单
           - name: string
@@ -105,7 +105,7 @@ use_cases:
 
         # user_sequence：UT 按此顺序调用 ui_bindings.user_actions.calls
         #   对应"用户交互触发序列"
-        user_sequence: [string]  # 如 ["chooseCard", "startVerify", "submitSms"]
+        user_sequence: [string]  # 如 ["submitTask", "confirmOtp"]
 
         # cloud_stubs / local_stubs：按 data_boundaries 打桩
         #   value 约定：
@@ -158,109 +158,62 @@ flowchart LR
 - 每条 `*.dag.yaml` 必须填 `use_case: <id>` 与 `branch: <branch_id>` 指回本文件
 - `coordinator` 所在文件里，`ui_bindings.user_actions.calls` 指向的每个目标必须以命名方法/导出函数存在（Skill 3 `named_business_handler` 核验）
 
-## 最小示例（开卡流程）
+## 最小示例（多步业务流程）
+
+完整形态见 `` `profile-skill-asset:5-business-ut/sample_flow_use_cases` ``；下列为精简骨架：
 
 ```yaml
 schema_version: "2.0"
-feature: "card-opening"
+feature: "task-demo"
 
 use_cases:
-  - id: "card_opening"
-    description: "跨 3 页 + 短验组件的开卡完整流程"
-    coordinator: "CardOpenFlow"
-    coordinator_file: "02-Feature/WalletMain/src/main/ets/data/flow/CardOpenFlow.ets"
+  - id: "task_submission"
+    description: "远端校验 + 配额 + 本地写入 + 二次校验"
+    coordinator: "TaskSubmitFlow"
+    coordinator_file: "02-Feature/TaskDemo/src/main/ets/domain/flow/TaskSubmitFlow.ets"
 
     ui_bindings:
-      - ui: "CardSelectPage"
+      - ui: "TaskFormPage"
         role: "entry"
         subscribes: []
         user_actions:
-          - { trigger: "点击开卡按钮", calls: "flow.chooseCard" }
-          - { trigger: "chooseCard 成功后自动触发",  calls: "flow.startVerify" }
-
-      - ui: "CardProcessPage"
-        role: "progress"
-        subscribes: ["flow.state.phase"]
-        user_actions: []                     # 纯展示 → UT 不覆盖
-
-      - ui: "SmsVerifyComponent"
+          - { trigger: "点击提交", calls: "flow.submitTask" }
+      - ui: "OtpSheetPage"
         role: "dialog"
-        subscribes: ["flow.state.phase=WaitingSms"]
+        subscribes: ["flow.state.phase=WaitingOtp"]
         user_actions:
-          - { trigger: "输入短验并点下一步", calls: "flow.submitSms" }
-
-      - ui: "CardResultPage"
-        role: "result"
-        subscribes: ["flow.state.phase", "flow.state.cardInfo"]
-        user_actions: []
+          - { trigger: "确认校验码", calls: "flow.confirmOtp" }
 
     data_boundaries:
-      - name: "cloudApi"
-        type: "CardCloudApi"
+      - name: "gateway"
+        type: "RemoteTaskGateway"
         kind: "cloud"
         methods:
-          - { name: "verifyCard",    params: ["CardDraft"], returns: "VerifyResult",   async: true }
-          - { name: "applyResource", params: ["CardDraft"], returns: "ApplyResult",    async: true }
-          - { name: "verifySms",     params: ["string"],    returns: "SmsVerifyResult", async: true }
-      - name: "localStore"
-        type: "CardLocalStore"
+          - { name: "validateRequest", params: ["TaskPayload"], returns: "GateValidateResult", async: true }
+          - { name: "verifyOtpCode", params: ["string", "string"], returns: "OtpVerifyResult", async: true }
+      - name: "ledger"
+        type: "LocalTaskLedger"
         kind: "storage"
         methods:
-          - { name: "savePending",   params: ["CardDraft"],  returns: "void",  async: true }
-          - { name: "markVerified",  params: ["string"],     returns: "void",  async: true }
-          - { name: "commit",        params: ["CardInfo"],   returns: "void",  async: true }
-          - { name: "rollback",      params: ["string"],     returns: "void",  async: true }
+          - { name: "save", params: ["TaskRecord"], returns: "void", async: true }
 
     state_model:
-      phases: [Idle, Verifying, Applying, WaitingSms, Submitting, Success, Failed]
+      phases: [Idle, Preparing, WaitingOtp, Verifying, Success, Failed]
       fields:
         - { name: "errorCode", type: "string | null" }
-        - { name: "cardDraft", type: "CardDraft | null" }
-        - { name: "cardInfo",  type: "CardInfo | null" }
 
     branches:
       - id: "happy_path"
-        scenario: "全程成功"
-        user_sequence: ["chooseCard", "startVerify", "submitSms"]
+        scenario: "主路径成功"
+        user_sequence: ["submitTask", "confirmOtp"]
         cloud_stubs:
-          "cloudApi.verifyCard":    "ok"
-          "cloudApi.applyResource": "ok"
-          "cloudApi.verifySms":     "ok"
+          "gateway.validateRequest": "ok"
+          "gateway.verifyOtpCode": "ok"
         local_stubs:
-          "localStore.savePending":  "ok"
-          "localStore.markVerified": "ok"
-          "localStore.commit":       "ok"
-        expected_phase_seq: [Idle, Verifying, Applying, WaitingSms, Submitting, Success]
-        expected_port_calls:
-          - "cloudApi.verifyCard"
-          - "localStore.savePending"
-          - "cloudApi.applyResource"
-          - "localStore.markVerified"
-          - "cloudApi.verifySms"
-          - "localStore.commit"
-        local_expect: ["savePending", "markVerified", "commit"]
-        linked_acceptance: ["AC-1", "AC-2"]
-
-      - id: "verify_fail"
-        scenario: "开卡校验失败，回滚 pending"
-        user_sequence: ["chooseCard", "startVerify"]
-        cloud_stubs:
-          "cloudApi.verifyCard": "fail:CARD_REJECTED"
-        local_stubs:
-          "localStore.savePending": "ok"
-          "localStore.rollback":    "ok"
-        expected_phase_seq: [Idle, Verifying, Failed]
-        expected_port_calls:
-          - "cloudApi.verifyCard"
-          - "localStore.rollback"
-        local_expect: ["savePending", "rollback"]
-        not_called:
-          - "cloudApi.applyResource"
-          - "cloudApi.verifySms"
-        expected_state:
-          errorCode: "CARD_REJECTED"
-          cardInfo:  null
-        linked_acceptance: ["AC-3", "BD-2"]
+          "ledger.save": "ok"
+        expected_phase_seq: [Idle, Preparing, WaitingOtp, Verifying, Success]
+        expected_port_calls: ["gateway.validateRequest", "ledger.save", "gateway.verifyOtpCode"]
+        linked_acceptance: ["AC-1"]
 ```
 
 ## 校验建议（Harness 做什么）

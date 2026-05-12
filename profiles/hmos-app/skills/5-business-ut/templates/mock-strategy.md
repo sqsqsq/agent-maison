@@ -1,6 +1,6 @@
 # 打桩（Mock/Stub）策略指南
 
-> **模板说明**：下方代码片段以钱包工程的模型名（`CardInfo` / `BankCard` 等）为参考示例演示 Mock 填法；实际使用请按你自己工程的类型替换。
+> **模板说明**：下方代码片段使用中性模型名（如 `ItemSummary` / `ItemRepository`）演示 Mock 形态；实际类型以你方 `contracts.yaml` 为准。
 >
 > **v2.3 真源**：若 feature 已产出 `doc/features/<feature>/ut/mock-plan.yaml`，则 **Spy / Fake / Stub 的方法签名、spy_fields、presets（含 `ts_expr`）必须以 mock-plan 为唯一真源**，在代码中 **1:1 翻译**，禁止在实现阶段「顺手加字段 / 改返回值形状」导致与 plan、DAG `spy_preset` 引用不一致。打桩策略的**教科书**仍为本文，**机器校验**以 `check-ut.ts` + `mock-plan-schema.md` 为准。
 
@@ -30,18 +30,16 @@
 ### 实现模板
 
 ```typescript
-import { CardInfo, CardType } from '../../../main/ets/data/model/CardInfo'
+import { ItemSummary } from '../../../main/ets/data/model/ItemSummary'
 
-export class MockCardRepository {
-  private _cardList: CardInfo[] = []
+export class MockItemRepository {
+  private _items: ItemSummary[] = []
   private _error: Error | null = null
   private _delay: number = 0
   private _callCount: Map<string, number> = new Map()
 
-  // ---- 场景设置 ----
-
-  setCardList(cards: CardInfo[]): void {
-    this._cardList = cards
+  setItemList(items: ItemSummary[]): void {
+    this._items = items
   }
 
   simulateError(error: Error): void {
@@ -52,24 +50,20 @@ export class MockCardRepository {
     this._delay = ms
   }
 
-  // ---- 接口实现（与 contracts.yaml 签名一致）----
-
-  async getCardList(): Promise<CardInfo[]> {
-    this.recordCall('getCardList')
+  async listItems(): Promise<ItemSummary[]> {
+    this.recordCall('listItems')
     if (this._error) throw this._error
     if (this._delay > 0) {
       await new Promise(resolve => setTimeout(resolve, this._delay))
     }
-    return [...this._cardList]
+    return [...this._items]
   }
 
-  async getCardById(id: string): Promise<CardInfo | undefined> {
-    this.recordCall('getCardById')
+  async findById(id: string): Promise<ItemSummary | undefined> {
+    this.recordCall('findById')
     if (this._error) throw this._error
-    return this._cardList.find(c => c.cardId === id)
+    return this._items.find(c => c.itemId === id)
   }
-
-  // ---- 验证辅助 ----
 
   getCallCount(method: string): number {
     return this._callCount.get(method) ?? 0
@@ -79,10 +73,8 @@ export class MockCardRepository {
     this._callCount.set(method, (this._callCount.get(method) ?? 0) + 1)
   }
 
-  // ---- 生命周期 ----
-
   reset(): void {
-    this._cardList = []
+    this._items = []
     this._error = null
     this._delay = 0
     this._callCount.clear()
@@ -93,7 +85,7 @@ export class MockCardRepository {
 ### 关键要求
 
 1. **签名一致**：Mock 方法的参数和返回类型必须与 contracts.yaml 中的定义一致
-2. **返回副本**：`getCardList` 返回 `[...this._cardList]` 而非引用，避免用例间数据污染
+2. **返回副本**：`listItems` 返回 `[...this._items]` 而非引用，避免用例间数据污染
 3. **调用记录**：提供 `getCallCount` 方法，允许断言"函数是否被调用"
 4. **可重置**：`reset()` 清除所有状态，在 `afterEach` 中调用
 
@@ -245,14 +237,14 @@ export class MockRouter {
 }
 
 // UT 中使用:
-it('[AC-X] 点击卡片跳转到详情页', 0, () => {
+it('[AC-X] 点击列表项跳转详情', 0, () => {
   const mockRouter = new MockRouter()
   // 注入 mockRouter...
 
-  component.onCardClick('card_001')
+  component.onItemClick('item_001')
 
-  expect(mockRouter.lastPush?.url).assertEqual('/pages/CardDetail')
-  expect(mockRouter.lastPush?.params?.cardId).assertEqual('card_001')
+  expect(mockRouter.lastPush?.url).assertEqual('/pages/ItemDetail')
+  expect(mockRouter.lastPush?.params?.itemId).assertEqual('item_001')
 })
 ```
 
@@ -263,32 +255,22 @@ it('[AC-X] 点击卡片跳转到详情页', 0, () => {
 ```typescript
 // test/mock/TestDataFactory.ets
 
-import { CardInfo, CardType } from '../../../main/ets/data/model/CardInfo'
+import { ItemSummary, ItemKind } from '../../../main/ets/data/model/ItemSummary'
 
 export class TestDataFactory {
-  static createBankCard(overrides?: Partial<CardInfo>): CardInfo {
+  static createItem(overrides?: Partial<ItemSummary>): ItemSummary {
     return {
-      cardId: 'test_bank_001',
-      cardName: '测试银行卡',
-      cardType: CardType.BANK_CARD,
-      balance: 1000.00,
+      itemId: 'test_item_001',
+      title: '占位标题',
+      kind: ItemKind.STANDARD,
+      quantity: 1,
       ...overrides,
     }
   }
 
-  static createTransportCard(overrides?: Partial<CardInfo>): CardInfo {
-    return {
-      cardId: 'test_transport_001',
-      cardName: '测试公交卡',
-      cardType: CardType.TRANSPORT_CARD,
-      balance: 50.00,
-      ...overrides,
-    }
-  }
-
-  static createCardList(count: number): CardInfo[] {
+  static createItemBatch(count: number): ItemSummary[] {
     return Array.from({ length: count }, (_, i) =>
-      TestDataFactory.createBankCard({ cardId: `card_${i}`, cardName: `卡片 ${i}` })
+      TestDataFactory.createItem({ itemId: `item_${i}`, title: `条目 ${i}` })
     )
   }
 }
@@ -303,15 +285,15 @@ export class TestDataFactory {
 被测类通过构造函数接收依赖，UT 中传入 Mock：
 
 ```typescript
-class HomePage {
-  private cardRepo: CardRepository
-  constructor(cardRepo?: CardRepository) {
-    this.cardRepo = cardRepo ?? new CardRepository()
+class ListPage {
+  private itemRepo: ItemRepository
+  constructor(itemRepo?: ItemRepository) {
+    this.itemRepo = itemRepo ?? new ItemRepository()
   }
 }
 
 // UT:
-const page = new HomePage(mockCardRepo)
+const page = new ListPage(mockItemRepo)
 ```
 
 ### 方式二：Setter 注入
@@ -319,16 +301,16 @@ const page = new HomePage(mockCardRepo)
 被测类通过 setter 方法替换依赖：
 
 ```typescript
-class HomePage {
-  private cardRepo: CardRepository = new CardRepository()
-  setCardRepository(repo: CardRepository): void {
-    this.cardRepo = repo
+class ListPage {
+  private itemRepo: ItemRepository = new ItemRepository()
+  setItemRepository(repo: ItemRepository): void {
+    this.itemRepo = repo
   }
 }
 
 // UT:
-const page = new HomePage()
-page.setCardRepository(mockCardRepo)
+const page = new ListPage()
+page.setItemRepository(mockItemRepo)
 ```
 
 ### 方式三：模块级替换

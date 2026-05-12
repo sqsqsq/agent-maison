@@ -5,7 +5,7 @@
 | 维度 | 说明 |
 |------|------|
 | Hypium 与目录 | UT 运行于 `**/src/ohosTest/ets/test/**/*.test.ets`；`List.test.ets` 常作套件注册入口 |
-| 模板与样例 | `skills/5-business-ut/templates/`、`examples/card-opening/`（与 `` `profile-skill-asset:5-business-ut/...` `` 一致） |
+| 模板与样例 | `skills/5-business-ut/templates/`、`examples/sample-flow/`（与 `` `profile-skill-asset:5-business-ut/...` `` 一致） |
 | Harness | `ut.compile` / `ut.run` 驱动 hvigor + hdc；可被 profile **SKIP**（如 `generic`） |
 | 依赖 | `oh-package.json5` 声明 `@ohos/hypium` 等 |
 
@@ -21,8 +21,10 @@
 | `mock_strategy` | `templates/mock-strategy.md` |
 | `testability_audit_template` | `templates/testability-audit-template.md` |
 | `mock_plan_schema` | `templates/mock-plan-schema.md` |
-| `card_opening_dir` | `examples/card-opening` |
-| `card_opening_use_cases` | `examples/card-opening/use-cases.yaml` |
+| `sample_flow_dir` | `examples/sample-flow` |
+| `sample_flow_use_cases` | `examples/sample-flow/use-cases.yaml` |
+| `card_opening_dir` | `examples/sample-flow`（别名，兼容旧键名） |
+| `card_opening_use_cases` | `examples/sample-flow/use-cases.yaml` |
 
 ### 示例（仅在 hmos-app 下）
 
@@ -30,11 +32,11 @@
 
 | UseCase | branches 数 | UT 文件 | DAG 数 |
 |---------|-------------|---------|--------|
-| CardOpeningUseCase | 4 | `card_opening.test.ets` | 4 |
+| task_submission | 6 | `sample_flow.test.ets` | 1 |
 
 | 文件 | 测试函数 | 用例数 |
 |------|----------|--------|
-| `card_opening.test.ets` | `cardOpeningUseCaseTest` | 4 |
+| `sample_flow.test.ets` | `taskSubmitFlowTest` | 6 |
 
 ## `ut_import_whitelist` 禁止符号（与 `framework/profiles/hmos-app/harness/ut-ui-import-ban.ts` 对齐）
 

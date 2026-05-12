@@ -5,7 +5,7 @@
 > 一条 `it()` 完整驱动一个 branch：命名入口 → `data_boundaries` → state 迁移 → 最终结果。
 > UT 中 **绝对禁止** 出现任何 UI / 导航 / Toast / AppStorage / 资源访问依赖（由 `ut_import_whitelist` BLOCKER 强制，UI 侧交 Skill 6 真机测试）。
 >
-> 参考样例：`framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/`
+> 参考样例：`framework/profiles/hmos-app/skills/5-business-ut/examples/sample-flow/`
 
 ## 概述
 
@@ -35,111 +35,72 @@
 // ============================================================================
 
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
-// 业务编排（形态 B 独立业务类示例；形态 A/C 对应改为 import Page 或 export function）
-import { CardOpenFlow, CardOpenPhase } from '../../../main/ets/domain/flow/CardOpenFlow'
-// data/model：允许直接 import（值对象、枚举）
-import { CardInfo } from '../../../main/ets/data/model/CardInfo'
-// Spy：子类化 contracts.yaml 登记的既有数据层类，不新造 Port 接口
-import { SpyCardOpenApi } from './spy/SpyCardOpenApi'
-import { SpyCardStore } from './spy/SpyCardStore'
+// 业务编排（形态 B：独立 Coordinator 类；形态 A/C 对应改为 Page 命名方法或 export function）
+import { TaskSubmitFlow, Phase } from '../../../main/ets/domain/flow/TaskSubmitFlow'
+import { SpyRemoteTaskGateway } from './spy/SpyRemoteTaskGateway'
+import { SpyLocalTaskLedger } from './spy/SpyLocalTaskLedger'
 
-export default function cardOpeningUseCaseTest() {
-  describe('CardOpenFlow (use_case: card_opening)', () => {
+export default function taskSubmissionUseCaseTest() {
+  describe('TaskSubmitFlow (use_case: task_submission)', () => {
 
-    // ---- Spy 与被测业务编排类 ----
-    let api: SpyCardOpenApi
-    let store: SpyCardStore
-    let flow: CardOpenFlow
+    let gateway: SpyRemoteTaskGateway
+    let ledger: SpyLocalTaskLedger
+    let flow: TaskSubmitFlow
 
-    // ---- 测试数据（固定、可复用的值对象；不可放有状态的 Mock）----
-    const bankInfo = { bankCode: 'BOC', cardBin: '621700' }
+    const payload = { sku: 'SKU1', actorId: 'u1' }
 
-    // ---- Setup ----
-    // 强约束：每条 it() 独立 → 每次都重建 Spy 与被测对象
     beforeEach((): void => {
-      api = new SpyCardOpenApi()
-      store = new SpyCardStore()
-      flow = new CardOpenFlow(api, store)   // 注入既有数据层类的 Spy 子类实例
+      gateway = new SpyRemoteTaskGateway()
+      ledger = new SpyLocalTaskLedger()
+      flow = new TaskSubmitFlow(gateway, ledger)
     })
 
-    // =============================================================
-    // [BRANCH-happy_path][AC-1] 开卡全链路成功
-    // =============================================================
-    it('[BRANCH-happy_path][AC-1] 开卡全链路成功', 0, async () => {
-      // Arrange — 预设所有 data_boundary 返回值（对应 branches[happy_path].cloud_stubs）
-      api.whenValidateOpen.returns({ ok: true, token: 't' })
-      api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' })
-      api.whenVerifySmsCode.returns({ ok: true })
+    it('[BRANCH-happy_path][AC-1] 主路径端到端成功', 0, async () => {
+      gateway.whenValidateRequest.returns({ ok: true, token: 't' })
+      gateway.whenAllocateResource.returns({ taskId: 't1', owner: 'u1' })
+      gateway.whenVerifyOtpCode.returns({ ok: true })
 
-      // Act 1 — 命名入口直调（对应 ui_bindings.user_actions.calls = "flow.chooseCard"）
-      await flow.chooseCard(bankInfo)
+      await flow.submitTask(payload)
+      expect(flow.state.phase).assertEqual(Phase.WaitingOtp)
+      expect(ledger.saved[0].taskId).assertEqual('t1')
 
-      // Assert 1 — 中间态：等待短验
-      expect(flow.state.phase).assertEqual(CardOpenPhase.WaitingSms)
-      expect(store.saved[0].cardId).assertEqual('c1')
-
-      // Act 2 — 第二个命名入口（对应 "flow.confirmSms"）
-      await flow.confirmSms('123456')
-
-      // Assert 2 — 最终态：成功
-      expect(flow.state.phase).assertEqual(CardOpenPhase.Success)
+      await flow.confirmOtp('654321')
+      expect(flow.state.phase).assertEqual(Phase.Success)
       expect(flow.state.errorCode).assertNull()
-
-      // Assert 3 — data_boundary 调用序列（端到端最强断言）
-      expect(api.callLog).assertDeepEquals(
-        ['validateOpen', 'applyCardResource', 'verifySmsCode']
-      )
-      expect(store.callLog).assertDeepEquals(['save', 'update'])
+      expect(gateway.callLog).assertDeepEquals(['validateRequest', 'allocateResource', 'verifyOtpCode'])
+      expect(ledger.callLog).assertDeepEquals(['save', 'update'])
     })
 
-    // =============================================================
-    // [BRANCH-validate_fail][AC-2] 开卡校验失败，不触发持久化
-    // =============================================================
-    it('[BRANCH-validate_fail][AC-2] 云侧开卡校验失败，不触发持久化', 0, async () => {
-      api.whenValidateOpen.fails({ code: 'VAL_ERR' })
-
-      await flow.chooseCard(bankInfo)
-
-      expect(flow.state.phase).assertEqual(CardOpenPhase.Failed)
-      expect(flow.state.errorCode).assertEqual('VAL_ERR')
-      expect(api.callLog).assertDeepEquals(['validateOpen'])
-      expect(store.callLog.length).assertEqual(0)     // 持久化未被触发
+    it('[BRANCH-validate_fail][AC-2] 远程校验失败，不触发持久化', 0, async () => {
+      gateway.whenValidateRequest.fails({ code: 'VAL_ERR' })
+      await flow.submitTask(payload)
+      expect(flow.state.phase).assertEqual(Phase.Failed)
+      expect(gateway.callLog).assertDeepEquals(['validateRequest'])
+      expect(ledger.callLog.length).assertEqual(0)
     })
 
-    // =============================================================
-    // [BRANCH-sms_fail_rollback][AC-3] 短验失败，本地卡记录被回滚
-    // =============================================================
-    it('[BRANCH-sms_fail_rollback][AC-3] 短验失败，本地已写入卡记录被回滚', 0, async () => {
-      api.whenValidateOpen.returns({ ok: true, token: 't' })
-      api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' })
-      api.whenVerifySmsCode.fails({ code: 'SMS_ERR' })
+    it('[BRANCH-otp_fail_rollback][AC-3] 二次校验失败，本地记录回滚', 0, async () => {
+      gateway.whenValidateRequest.returns({ ok: true, token: 't' })
+      gateway.whenAllocateResource.returns({ taskId: 't1', owner: 'u1' })
+      gateway.whenVerifyOtpCode.fails({ code: 'OTP_ERR' })
 
-      await flow.chooseCard(bankInfo)
-      expect(flow.state.phase).assertEqual(CardOpenPhase.WaitingSms)  // 中间态
-
-      await flow.confirmSms('999999')
-
-      expect(flow.state.phase).assertEqual(CardOpenPhase.Failed)
-      expect(flow.state.errorCode).assertEqual('SMS_ERR')
-      expect(store.callLog).assertDeepEquals(['save', 'rollback'])
-      expect(store.currentCards.length).assertEqual(0)  // 残留数据清零
+      await flow.submitTask(payload)
+      expect(flow.state.phase).assertEqual(Phase.WaitingOtp)
+      await flow.confirmOtp('000000')
+      expect(flow.state.phase).assertEqual(Phase.Failed)
+      expect(ledger.callLog).assertDeepEquals(['save', 'rollback'])
+      expect(ledger.currentTasks.length).assertEqual(0)
     })
 
-    // =============================================================
-    // [BRANCH-persist_fail][AC-4] 持久化失败，不进入短验
-    // =============================================================
-    it('[BRANCH-persist_fail][AC-4] 本地持久化写入失败，流程终止于 Persisting', 0, async () => {
-      api.whenValidateOpen.returns({ ok: true, token: 't' })
-      api.whenApplyCardResource.returns({ cardId: 'c1', holder: 'u1' })
-      store.whenSave.throws(new Error('PERSIST_ERR'))
+    it('[BRANCH-persist_fail][AC-4] 本地持久化失败，不进入二次校验', 0, async () => {
+      gateway.whenValidateRequest.returns({ ok: true, token: 't' })
+      gateway.whenAllocateResource.returns({ taskId: 't1', owner: 'u1' })
+      ledger.whenSave.throws(new Error('PERSIST_ERR'))
 
-      await flow.chooseCard(bankInfo)
-
-      expect(flow.state.phase).assertEqual(CardOpenPhase.Failed)
-      expect(flow.state.errorCode).assertEqual('PERSIST_ERR')
-      expect(api.callLog).assertDeepEquals(['validateOpen', 'applyCardResource'])
-      expect(store.callLog).assertDeepEquals(['save'])
-      expect(api.callLog.includes('verifySmsCode')).assertFalse()
+      await flow.submitTask(payload)
+      expect(flow.state.phase).assertEqual(Phase.Failed)
+      expect(gateway.callLog).assertDeepEquals(['validateRequest', 'allocateResource'])
+      expect(gateway.callLog.includes('verifyOtpCode')).assertFalse()
     })
   })
 }
@@ -150,7 +111,7 @@ export default function cardOpeningUseCaseTest() {
 简单 feature（不满足 use-cases.yaml 复杂度阈值）按 `acceptance.yaml` + `dag.yaml` 针对 data 层导出方法直接写 UT，不要硬凑业务编排架构。示例参考：
 
 ```typescript
-// 02-Feature/WalletMain/src/ohosTest/ets/test/home_page_ut.test.ets
+// 02-Feature/FeatureDemo/src/ohosTest/ets/test/home_page_ut.test.ets
 import { describe, it, expect } from '@ohos/hypium'
 import { HomeRepository } from '../../../main/ets/data/repository/HomeRepository'
 
@@ -179,11 +140,11 @@ v2.1 不再要求"实现 Port 接口"的 Spy，而是**直接继承 `contracts.y
 放在 UT 同目录的 `spy/` 子目录下：
 
 ```typescript
-// test/spy/SpyCardOpenApi.ets
+// test/spy/SpyRemoteTaskGateway.ets
 import {
-  CardOpenApi,            // ← 既有数据层类，非 Port 接口
-  ValidateResult, CardResource, VerifyResult
-} from '../../../main/ets/data/api/CardOpenApi'
+  RemoteTaskGateway,
+  GateValidateResult, AllocationResult, OtpVerifyResult
+} from '../../../main/ets/data/api/RemoteTaskGateway'
 
 type Setter<T> = {
   returns: (value: T) => void
@@ -199,33 +160,32 @@ function createSetter<T>(onPreset: (mode: 'ok' | 'fail' | 'throw', payload: unkn
   }
 }
 
-// v2.1 关键：extends 既有数据层类（不 implements 新建的 Port 接口）
-export class SpyCardOpenApi extends CardOpenApi {
+export class SpyRemoteTaskGateway extends RemoteTaskGateway {
   callLog: string[] = []
 
-  private _validateOpen:      { mode: string; payload: unknown } | null = null
-  private _applyCardResource: { mode: string; payload: unknown } | null = null
-  private _verifySmsCode:     { mode: string; payload: unknown } | null = null
+  private _validateRequest:   { mode: string; payload: unknown } | null = null
+  private _allocateResource: { mode: string; payload: unknown } | null = null
+  private _verifyOtpCode:     { mode: string; payload: unknown } | null = null
 
-  whenValidateOpen      = createSetter<ValidateResult>((m, p) => (this._validateOpen      = { mode: m, payload: p }))
-  whenApplyCardResource = createSetter<CardResource>  ((m, p) => (this._applyCardResource = { mode: m, payload: p }))
-  whenVerifySmsCode     = createSetter<VerifyResult>  ((m, p) => (this._verifySmsCode     = { mode: m, payload: p }))
+  whenValidateRequest   = createSetter<GateValidateResult>((m, p) => (this._validateRequest   = { mode: m, payload: p }))
+  whenAllocateResource  = createSetter<AllocationResult>((m, p) => (this._allocateResource = { mode: m, payload: p }))
+  whenVerifyOtpCode     = createSetter<OtpVerifyResult>((m, p) => (this._verifyOtpCode     = { mode: m, payload: p }))
 
-  override async validateOpen(info: unknown): Promise<ValidateResult> {
-    this.callLog.push('validateOpen')
-    return this._consume(this._validateOpen) as ValidateResult
+  override async validateRequest(info: unknown): Promise<GateValidateResult> {
+    this.callLog.push('validateRequest')
+    return this._consume(this._validateRequest) as GateValidateResult
   }
-  override async applyCardResource(token: unknown): Promise<CardResource> {
-    this.callLog.push('applyCardResource')
-    return this._consume(this._applyCardResource) as CardResource
+  override async allocateResource(token: unknown): Promise<AllocationResult> {
+    this.callLog.push('allocateResource')
+    return this._consume(this._allocateResource) as AllocationResult
   }
-  override async verifySmsCode(token: string, code: string): Promise<VerifyResult> {
-    this.callLog.push('verifySmsCode')
-    return this._consume(this._verifySmsCode) as VerifyResult
+  override async verifyOtpCode(taskId: string, code: string): Promise<OtpVerifyResult> {
+    this.callLog.push('verifyOtpCode')
+    return this._consume(this._verifyOtpCode) as OtpVerifyResult
   }
 
   private _consume(preset: { mode: string; payload: unknown } | null): unknown {
-    if (!preset) throw new Error('SpyCardOpenApi: no preset for this method')
+    if (!preset) throw new Error('SpyRemoteTaskGateway: no preset for this method')
     if (preset.mode === 'throw') throw preset.payload as Error
     if (preset.mode === 'fail')  return { ok: false, ...(preset.payload as object) }
     return preset.payload
@@ -238,20 +198,20 @@ export class SpyCardOpenApi extends CardOpenApi {
 ### 备选方案：原型方法替换（不希望子类化时）
 
 ```typescript
-import { CardStore } from '../../../main/ets/data/store/CardStore'
+import { LocalTaskLedger } from '../../../main/ets/data/storage/LocalTaskLedger'
 
-let originalSave: typeof CardStore.prototype.save
+let originalSave: typeof LocalTaskLedger.prototype.save
 
 beforeEach(() => {
-  originalSave = CardStore.prototype.save
-  CardStore.prototype.save = async function(info) {
+  originalSave = LocalTaskLedger.prototype.save
+  LocalTaskLedger.prototype.save = async function(info) {
     // stub 逻辑
-    return { ok: true }
+    return undefined
   }
 })
 
 afterEach(() => {
-  CardStore.prototype.save = originalSave   // 必须还原，避免跨用例污染
+  LocalTaskLedger.prototype.save = originalSave
 })
 ```
 
@@ -263,7 +223,7 @@ afterEach(() => {
 
 | 项目 | 规范 |
 |------|------|
-| 文件名 | `{useCaseId}.test.ets`（与 `use-cases.yaml > use_cases[].id` 对应，如 `card_opening.test.ets`）；无 use-cases.yaml 时取 `{feature}_ut.test.ets` |
+| 文件名 | `{useCaseId}.test.ets`（与 `use-cases.yaml > use_cases[].id` 对应，如 `sample_flow.test.ets`）；无 use-cases.yaml 时取 `{feature}_ut.test.ets` |
 | 路径 | `{module}/src/ohosTest/ets/test/{fileName}.test.ets` |
 | Spy 目录 | `{module}/src/ohosTest/ets/test/spy/Spy{ExistingClassName}.ets` |
 | 导出函数名 | `{useCaseId}Test`（camelCase + Test 后缀） |
@@ -274,10 +234,10 @@ afterEach(() => {
 每个 `it()` 用例名称必须以下列形式起始：
 
 ```typescript
-it('[BRANCH-happy_path][AC-1] 开卡全链路成功', ...)        // ✅ 推荐：branch + AC 双标签
+it('[BRANCH-happy_path][AC-1] 主路径端到端成功', ...)        // ✅ 推荐：branch + AC 双标签
 it('[BRANCH-persist_fail] 本地持久化失败终止流程', ...)     // ✅ 仅 branch（无单独 AC）
-it('[AC-3] 短验失败，本地卡记录被回滚', ...)                // ✅ 仅 AC（适合无 use-cases.yaml 的简单 feature）
-it('首页加载后展示卡片列表', ...)                          // ❌ FAIL：无标签，无法追溯
+it('[AC-3] 二次校验失败，本地记录回滚', ...)                // ✅ 仅 AC（适合无 use-cases.yaml 的简单 feature）
+it('首页加载后展示列表', ...)                          // ❌ FAIL：无标签，无法追溯
 ```
 
 ### 3. AAA 模式 + 端到端驱动（v2.1 强约束）
@@ -292,12 +252,12 @@ it('[BRANCH-xxx][AC-X] 用例描述', 0, async () => {
 
   // Act
   // - 调用 ui_bindings.user_actions.calls 声明的命名入口（直调方法/函数）
-  // - 复杂 branch 可 2 个入口（chooseCard → confirmSms）
+  // - 复杂 branch 可 2 个入口（submitTask → confirmOtp）
 
   // Assert （必须同时包含下列三类）
   // 1. state 序列（≥2 次 flow.state.* / 业务入口返回值断言，覆盖中间态与终态）
   // 2. data_boundary 调用序列（对 spy.callLog 做 assertDeepEquals）
-  // 3. 数据完整性（如 spyStore.currentCards、saved[].cardId）
+  // 3. 数据完整性（如 ledger.currentTasks、saved[].taskId）
 })
 ```
 
@@ -308,7 +268,7 @@ Spy 必须：
 - **继承** `contracts.yaml > interfaces[].class` 中的现有数据层类（或采用原型替换）
 - 暴露 `callLog: string[]` 记录调用顺序（assertDeepEquals 断言的底座）
 - 暴露 `whenXxx.{returns, fails, throws}` 三种预设模式
-- 对"持久化类"可额外暴露受控内部状态（如 `saved[]` / `currentCards`）用于数据断言
+- 对“持久化类”可额外暴露受控内部状态（如 `saved[]` / `currentTasks`）用于数据断言
 - **不得包含业务分支判断**
 - **禁止**为了打桩新造 `XxxPort` 接口
 
@@ -335,11 +295,11 @@ UT 的 import 白名单：
 所有测试函数必须在 `List.test.ets` 中注册：
 
 ```typescript
-import cardOpeningUseCaseTest from './card_opening.test'
+import taskSubmitFlowTest from './sample_flow.test'
 import homePageUt from './home_page_ut.test'
 
 export default function testsuite() {
-  cardOpeningUseCaseTest()
+  taskSubmitFlowTest()
   homePageUt()
 }
 ```
@@ -348,10 +308,10 @@ export default function testsuite() {
 
 | 断言方法 | 用途 | 示例 |
 |---------|------|------|
-| `expect(v).assertEqual(expected)` | 值相等 | `expect(flow.state.phase).assertEqual(CardOpenPhase.Success)` |
-| `expect(v).assertDeepEquals(expected)` | 深度相等 | `expect(api.callLog).assertDeepEquals(['a','b'])` |
+| `expect(v).assertEqual(expected)` | 值相等 | `expect(flow.state.phase).assertEqual(Phase.Success)` |
+| `expect(v).assertDeepEquals(expected)` | 深度相等 | `expect(gateway.callLog).assertDeepEquals(['a','b'])` |
 | `expect(v).assertTrue()` | 为真 | `expect(visible).assertTrue()` |
-| `expect(v).assertFalse()` | 为假 | `expect(api.callLog.includes('x')).assertFalse()` |
+| `expect(v).assertFalse()` | 为假 | `expect(gateway.callLog.includes('x')).assertFalse()` |
 | `expect(v).assertNull()` | 为 null | `expect(flow.state.errorCode).assertNull()` |
 | `expect(v).assertLarger(n)` | 大于 | `expect(len).assertLarger(0)` |
 | `expect(v).assertContain(sub)` | 包含 | `expect(str).assertContain('成功')` |
@@ -361,39 +321,37 @@ export default function testsuite() {
 ```typescript
 // 强制：async/await（Hypium 对异步用例通过返回 Promise 驱动）
 it('异步测试', 0, async () => {
-  await flow.chooseCard(bankInfo)
-  expect(flow.state.phase).assertEqual(CardOpenPhase.Verifying)
+  const payload = { sku: 'SKU1', actorId: 'u1' }
+  await flow.submitTask(payload)
+  expect(flow.state.phase).assertEqual(Phase.Verifying)
 })
 ```
 
 ## 目录结构示例（v2.1）
 
 ```
-02-Feature/CardOpen/
+02-Feature/TaskDemo/
 ├── src/
 │   ├── main/ets/
 │   │   ├── data/
-│   │   │   ├── api/CardOpenApi.ets              # 既有数据层类（云端调用）
-│   │   │   ├── store/CardStore.ets              # 既有数据层类（本地持久化）
-│   │   │   └── model/CardInfo.ets
+│   │   │   ├── api/RemoteTaskGateway.ets
+│   │   │   ├── storage/LocalTaskLedger.ets
+│   │   │   └── model/TaskSample.ets
 │   │   ├── domain/
-│   │   │   └── flow/CardOpenFlow.ets            # ★ 业务编排（形态 B：独立类；v2.1 不强制 domain/usecase/）
-│   │   └── presentation/pages/CardOpenPage.ets  # 订阅 state，翻译 UI 副作用
+│   │   │   └── flow/TaskSubmitFlow.ets
+│   │   └── presentation/pages/TaskFormPage.ets
 │   └── ohosTest/
 │       ├── ets/
 │       │   └── test/
-│       │       ├── List.test.ets                # 测试入口注册
-│       │       ├── card_opening.test.ets        # ★ UseCase UT（本模板）
+│       │       ├── List.test.ets
+│       │       ├── sample_flow.test.ets
 │       │       └── spy/
-│       │           ├── SpyCardOpenApi.ets       # extends CardOpenApi
-│       │           └── SpyCardStore.ets         # extends CardStore
+│       │           ├── SpyRemoteTaskGateway.ets
+│       │           └── SpyLocalTaskLedger.ets
 │       └── module.json5
 └── test/
     └── dag/
-        ├── card_opening_happy.dag.yaml          # 1 UseCase 可拆多个 DAG
-        ├── card_opening_validate_fail.dag.yaml
-        ├── card_opening_sms_fail.dag.yaml
-        └── card_opening_persist_fail.dag.yaml
+        └── sample_flow.dag.yaml                 # 可再拆为多 DAG，视分支而定
 ```
 
 ## 与 Skill 6 的分工

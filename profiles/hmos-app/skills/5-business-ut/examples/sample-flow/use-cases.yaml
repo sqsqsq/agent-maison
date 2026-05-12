@@ -1,0 +1,184 @@
+# ============================================================================
+# 示例：中性多步业务流程 Use Case 规约（v2.1）
+# 位置示意：doc/features/task-demo/use-cases.yaml
+# ============================================================================
+schema_version: "2.1"
+feature: "task-demo"
+
+use_cases:
+  - id: "task_submission"
+    description: "任务提交完整流程：远程校验 → 申请资源配额 → 本地持久化 → 二次校验 → 激活/回滚"
+
+    coordinator: "TaskSubmitFlow"
+    coordinator_file: "02-Feature/TaskDemo/src/main/ets/domain/flow/TaskSubmitFlow.ets"
+
+    ui_bindings:
+      - ui: "TaskFormPage"
+        role: "entry"
+        subscribes: []
+        user_actions:
+          - trigger: "用户填写信息后点击提交"
+            calls: "flow.submitTask"
+      - ui: "TaskProgressPage"
+        role: "progress"
+        subscribes:
+          - "flow.state.phase"
+        user_actions: []
+      - ui: "OtpSheetPage"
+        role: "dialog"
+        subscribes:
+          - "flow.state.phase=WaitingOtp"
+        user_actions:
+          - trigger: "用户在对话框确认校验码"
+            calls: "flow.confirmOtp"
+          - trigger: "用户取消"
+            calls: "flow.cancel"
+      - ui: "TaskResultPage"
+        role: "result"
+        subscribes:
+          - "flow.state.phase=Success"
+          - "flow.state.phase=Failed"
+          - "flow.state.errorCode"
+        user_actions: []
+
+    data_boundaries:
+      - name: "gateway"
+        type: "RemoteTaskGateway"
+        kind: "cloud"
+        methods:
+          - { name: "validateRequest",   params: ["TaskPayload"],         returns: "GateValidateResult", async: true }
+          - { name: "allocateResource",  params: ["GateValidateResult"], returns: "AllocationResult",  async: true }
+          - { name: "verifyOtpCode",     params: ["string", "string"],     returns: "OtpVerifyResult",   async: true }
+      - name: "ledger"
+        type: "LocalTaskLedger"
+        kind: "storage"
+        methods:
+          - { name: "save",     params: ["TaskRecord"], returns: "void", async: true }
+          - { name: "update",   params: ["TaskRecord"], returns: "void", async: true }
+          - { name: "rollback", params: ["string"],     returns: "void", async: true }
+
+    state_model:
+      phases: [Idle, Preparing, Applying, Persisting, WaitingOtp, Verifying, Success, Failed]
+      fields:
+        - { name: "errorCode",    type: "string | null" }
+        - { name: "resultTaskId", type: "string | null" }
+
+    branches:
+      - id: "happy_path"
+        scenario: "端到端成功"
+        setup:
+          "gateway.validateRequest":      "ok"
+          "gateway.allocateResource":      "ok"
+          "gateway.verifyOtpCode":         "ok"
+          "ledger.save":                   "ok"
+          "ledger.update":                 "ok"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+          - { call: "flow.confirmOtp", with: { code: "654321" } }
+        expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Verifying, Success]
+        expected_boundary_calls:
+          - "gateway.validateRequest"
+          - "gateway.allocateResource"
+          - "ledger.save"
+          - "gateway.verifyOtpCode"
+          - "ledger.update"
+        expected_state:
+          errorCode: "null"
+          resultTaskId: "t1"
+        linked_acceptance: ["AC-1"]
+
+      - id: "validate_fail"
+        scenario: "远程校验拒绝"
+        setup:
+          "gateway.validateRequest": "fail:VAL_ERR"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+        expected_phase_sequence: [Idle, Preparing, Failed]
+        expected_boundary_calls: ["gateway.validateRequest"]
+        expected_state:
+          errorCode: "VAL_ERR"
+          resultTaskId: "null"
+        not_called:
+          - "gateway.allocateResource"
+          - "ledger.save"
+          - "gateway.verifyOtpCode"
+        linked_acceptance: ["AC-2"]
+
+      - id: "apply_fail"
+        scenario: "配额申请失败"
+        setup:
+          "gateway.validateRequest":     "ok"
+          "gateway.allocateResource":      "fail:APPLY_ERR"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+        expected_phase_sequence: [Idle, Preparing, Applying, Failed]
+        expected_boundary_calls: ["gateway.validateRequest", "gateway.allocateResource"]
+        expected_state:
+          errorCode: "APPLY_ERR"
+        not_called:
+          - "ledger.save"
+          - "gateway.verifyOtpCode"
+        linked_acceptance: ["AC-7"]
+
+      - id: "persist_fail"
+        scenario: "本地写入失败"
+        setup:
+          "gateway.validateRequest":     "ok"
+          "gateway.allocateResource":      "ok"
+          "ledger.save":                   "throw"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+        expected_phase_sequence: [Idle, Preparing, Applying, Persisting, Failed]
+        expected_boundary_calls: ["gateway.validateRequest", "gateway.allocateResource", "ledger.save"]
+        expected_state:
+          errorCode: "PERSIST_ERR"
+        not_called:
+          - "gateway.verifyOtpCode"
+          - "ledger.update"
+        linked_acceptance: ["AC-4"]
+
+      - id: "otp_fail_rollback"
+        scenario: "二次校验失败，需回滚"
+        setup:
+          "gateway.validateRequest":     "ok"
+          "gateway.allocateResource":      "ok"
+          "ledger.save":                   "ok"
+          "gateway.verifyOtpCode":         "fail:OTP_ERR"
+          "ledger.rollback":               "ok"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+          - { call: "flow.confirmOtp", with: { code: "000000" } }
+        expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Verifying, Failed]
+        expected_boundary_calls:
+          - "gateway.validateRequest"
+          - "gateway.allocateResource"
+          - "ledger.save"
+          - "gateway.verifyOtpCode"
+          - "ledger.rollback"
+        expected_state:
+          errorCode: "OTP_ERR"
+        not_called: ["ledger.update"]
+        linked_acceptance: ["AC-3"]
+
+      - id: "user_cancel_in_waiting_otp"
+        scenario: "等待二次校验时用户取消"
+        setup:
+          "gateway.validateRequest":     "ok"
+          "gateway.allocateResource":      "ok"
+          "ledger.save":                   "ok"
+          "ledger.rollback":               "ok"
+        triggers:
+          - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
+          - { call: "flow.cancel",     with: {} }
+        expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Failed]
+        expected_boundary_calls:
+          - "gateway.validateRequest"
+          - "gateway.allocateResource"
+          - "ledger.save"
+          - "ledger.rollback"
+        expected_state:
+          errorCode: "USER_CANCELLED"
+        not_called:
+          - "gateway.verifyOtpCode"
+          - "ledger.update"
+        linked_acceptance: ["AC-6"]

@@ -1,6 +1,6 @@
 # {模块名称} — 技术设计文档
 
-> **模板说明**：本模板以钱包工程（`wallet_home` / `WalletMain` / `BankCard` 等模块名）为参考示例演示字段填法；实际使用请按你自己工程的实例替换，或参照 `framework.config.json` 与 `doc/architecture.md` 的声明。
+> **模板说明**：本模板以宿主应用常见模块占位名（例如 `demo_home` / `FeatureDemoShell` / `SampleItemDto`）演示字段填法；实际工程请替换为你方 `catalog` / `framework.config.json` / `architecture.md` 中的真实模块标识。
 >
 > **模块标识**: `{module-name}`
 > **对应 PRD**: `doc/features/{module-name}/PRD.md`
@@ -370,7 +370,7 @@ export interface {ResponseName} {
 
 > **何时必填**：当任一用户操作会触发 ≥2 次 cloud/local 端口调用，或含 conditional 分支（成功/多种失败/回滚/取消）。
 > **同时必须产出**：`doc/features/{module}/use-cases.yaml`（Schema 见 [use-cases-schema.md](../../../profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md)）。
-> **样例**：[card-opening](../../../profiles/hmos-app/skills/5-business-ut/examples/card-opening/)
+> **样例**：[sample-flow](../../../profiles/hmos-app/skills/5-business-ut/examples/sample-flow/)
 
 ### 6.5.1 UseCase: {UseCaseName}
 

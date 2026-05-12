@@ -389,7 +389,7 @@ export class XxxRepository {
 
 ## 6. Layer 3: domain 层模板（v2.1：条件性产出）
 
-> **v2.1 原则**：业务编排层是**概念**，不强制落在 `domain/usecase/` 目录。仅当 feature 满足"多 UI 共享状态 / 多步云调用 / 含回滚分支"任一条件时产出 `use-cases.yaml` 规约，代码落地形态由本 Skill 按复杂度自选（详见 `coding-standards.md` 4.6 节）。下面示例采用形态 C（导出命名函数，适合无状态流程）；形态 B（独立业务类 Flow/Coordinator，适合多步状态机）请参考 `framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/CardOpenFlow.ets`。
+> **v2.1 原则**：业务编排层是**概念**，不强制落在 `domain/usecase/` 目录。仅当 feature 满足"多 UI 共享状态 / 多步云调用 / 含回滚分支"任一条件时产出 `use-cases.yaml` 规约，代码落地形态由本 Skill 按复杂度自选（详见 `coding-standards.md` 4.6 节）。下面示例采用形态 C（导出命名函数，适合无状态流程）；形态 B（独立业务类 Flow/Coordinator，适合多步状态机）请参考 `framework/profiles/hmos-app/skills/5-business-ut/examples/sample-flow/TaskSubmitFlow.ets`。
 
 ### 形态 C 示例：domain/actions — 导出命名函数
 

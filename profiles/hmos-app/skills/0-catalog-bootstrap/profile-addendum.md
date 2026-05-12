@@ -24,7 +24,8 @@
 
 | 键 | 相对 `skills/0-catalog-bootstrap/` |
 |----|--------------------------------------|
-| `examples_wallet_domain` | `examples-wallet-domain.md` |
+| `examples_domain_mapping` | `examples-domain-mapping.md` |
+| `examples_wallet_domain` | `examples-domain-mapping.md`（别名） |
 | `module_card_template` | `templates/module-card-template.yaml` |
 | `glossary_term_template` | `templates/glossary-term-template.yaml` |
 

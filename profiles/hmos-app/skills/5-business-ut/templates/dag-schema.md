@@ -26,9 +26,9 @@ v2 修正后的 DAG 定位：
 # 顶层元数据
 # ============================================================================
 
-flow_id: string                    # 唯一标识，snake_case，如 "card_opening_happy"
+flow_id: string                    # 唯一标识，snake_case，如 "task_demo_otp_fail"
 flow_name: string                  # 人类可读名称（中文）
-module: string                     # feature 模块名，如 "card-opening"
+module: string                     # feature 模块名，如 "task-demo"
 version: string                    # 版本号，如 "2.0"
 
 # use_case 仅当产出了 use-cases.yaml 时填；简单 feature 省略
@@ -78,7 +78,7 @@ nodes:
     # --- port_call_cloud / port_call_local ---
     boundary:                      # 对应 use-cases.yaml > data_boundaries[]
       name: string                 # 如 "cloudApi" / "localStore"
-      type: string                 # 现有类名，如 "CardCloudApi"
+      type: string                 # 现有类名，如 "RemoteTaskGateway"
       method: string               # 被调用方法名
     stub_strategy: enum            # mock_response | mock_error | throw | mock_delay
     spy_preset: string             # 可选；引用 ut/mock-plan.yaml > methods[].presets[].id（推荐）
@@ -135,7 +135,7 @@ nodes:
 |---|---|---|
 | `state_check` | 业务编排 state 字段值 | `flow.state.<field>` / `<coordinator>.state.<field>` |
 | `port_call_log` | Spy 调用序列 | `spyCloud.callLog` / `spyLocal.callLog` |
-| `data_check` | 数据完整性（持久化/内存） | `spyLocal.saved[0].cardId` |
+| `data_check` | 数据完整性（持久化/内存） | `spyLocal.saved[0].taskId` |
 | `error_check` | 错误态 | `flow.state.errorCode` |
 | ~~`ui_verify`~~ | 已弃用 → `device-testing-todo.md` | — |
 
@@ -162,161 +162,77 @@ nodes:
 10. **UI 副作用禁入**：DAG 中禁止出现 `NavPathStack.push` / `showToast` / 真实点击等节点（请用 `ui_subscription` 占位或交 `device-testing-todo.md`）
 11. **分支覆盖（当 `use_case` 非空时）**：同 UseCase 的所有 DAG 的 `branches[]` 必须并集覆盖 `use-cases.yaml > branches[].id`，且互不重叠
 
-## 示例：开卡·短验失败回滚分支
+## 示例：二次校验失败回滚（节选）
+
+> 完整文件形态见 `framework/profiles/hmos-app/skills/5-business-ut/examples/sample-flow/sample_flow.dag.yaml`。
 
 ```yaml
-flow_id: card_opening_sms_fail
-flow_name: 开卡-短验失败回滚分支
-module: card-opening
+flow_id: task_demo_otp_fail
+flow_name: 任务提交 - 二次校验失败回滚
+module: task-demo
 version: "2.0"
 
-use_case: card_opening
-branches: [sms_fail_rollback]
+use_case: task_submission
+branches: [otp_fail_rollback]
 linked_acceptance: [AC-3]
 
 entry_point:
-  module: CardOpen
-  file: 02-Feature/WalletMain/src/main/ets/data/flow/CardOpenFlow.ets
-  function: chooseCard
+  module: TaskDemo
+  file: 02-Feature/TaskDemo/src/main/ets/domain/flow/TaskSubmitFlow.ets
+  function: submitTask
 
 nodes:
   - id: n1
     type: user_trigger
-    description: 用户在 CardSelectPage 选卡点开卡
+    description: 用户提交任务
     trigger:
-      event: chooseCard
-      simulated_value: "{ bankCode: 'BOC', cardId: 'c1' }"
-      from_branch: sms_fail_rollback
+      event: submitTask
+      simulated_value: "{ sku: 'SKU1', actorId: 'u1' }"
     next: [n2]
 
   - id: n2
-    type: user_trigger
-    description: chooseCard 成功后内部触发 startVerify
-    trigger:
-      event: startVerify
-      simulated_value: "undefined"
-      from_branch: sms_fail_rollback
+    type: port_call_cloud
+    description: 云端二次校验失败
+    boundary: { name: gateway, type: RemoteTaskGateway, method: verifyOtpCode }
+    stub_strategy: mock_error
+    mock_data:
+      error: { description: "校验失败", value: "{ ok: false, code: 'OTP_ERR' }" }
     next: [n3]
 
   - id: n3
-    type: port_call_cloud
-    description: 云侧校验通过
-    boundary: { name: cloudApi, type: CardCloudApi, method: verifyCard }
-    stub_strategy: mock_response
-    mock_data:
-      success: { description: "通过", value: "{ ok: true, token: 't' }" }
-    next: [n4]
-
-  - id: n4
     type: port_call_local
-    description: 本地登记 pending
-    boundary: { name: localStore, type: CardLocalStore, method: savePending }
-    stub_strategy: mock_response
-    mock_data:
-      success: { description: "写入成功", value: "undefined" }
-    next: [n5]
-
-  - id: n5
-    type: port_call_cloud
-    description: 云侧申请卡资源
-    boundary: { name: cloudApi, type: CardCloudApi, method: applyResource }
-    stub_strategy: mock_response
-    mock_data:
-      success: { description: "返回 cardId", value: "{ cardId: 'c1' }" }
-    next: [n6]
-
-  - id: n6
-    type: port_call_local
-    description: 标记 verified
-    boundary: { name: localStore, type: CardLocalStore, method: markVerified }
+    description: 回滚本地记录
+    boundary: { name: ledger, type: LocalTaskLedger, method: rollback }
     stub_strategy: mock_response
     mock_data:
       success: { description: "ok", value: "undefined" }
-    next: [n7]
+    next: [n4]
 
-  - id: n7
-    type: state_transition
-    description: 进入等待短验态
-    transition: { from_phase: Applying, to_phase: WaitingSms }
-    next: [n8]
-
-  - id: n8
-    type: user_trigger
-    description: 用户在 SmsVerifyComponent 输入短验并下一步
-    trigger:
-      event: submitSms
-      simulated_value: "'999999'"
-      from_branch: sms_fail_rollback
-    next: [n9]
-
-  - id: n9
-    type: port_call_cloud
-    description: 云侧短验失败
-    boundary: { name: cloudApi, type: CardCloudApi, method: verifySms }
-    stub_strategy: mock_error
-    mock_data:
-      error: { description: "短验错", value: "{ ok: false, code: 'SMS_ERR' }" }
-    next: [n10]
-
-  - id: n10
-    type: port_call_local
-    description: 回滚本地记录
-    boundary: { name: localStore, type: CardLocalStore, method: rollback }
-    stub_strategy: mock_response
-    mock_data:
-      success: { description: "回滚成功", value: "undefined" }
-    next: [n11]
-
-  - id: n11
-    type: state_transition
-    description: 进入失败态
-    transition:
-      from_phase: Submitting
-      to_phase: Failed
-      field_updates: { errorCode: "'SMS_ERR'" }
-    next: [n12]
-
-  - id: n12
+  - id: n4
     type: assertion
-    description: 验证终态 + 调用序列
-    linked_branch: sms_fail_rollback
+    linked_branch: otp_fail_rollback
     linked_acceptance: [AC-3]
     assertions:
       - type: state_check
         target: flow.state.phase
-        expected: "Phase.Failed"
-      - type: error_check
-        target: flow.state.errorCode
-        expected: "'SMS_ERR'"
+        expected: "Failed"
       - type: port_call_log
-        target: spyLocal.callLog
-        expected: "['savePending', 'markVerified', 'rollback']"
+        target: spyLedger.callLog
+        expected: "['save','rollback']"
 ```
 
 ## 可视化
 
 ```mermaid
 flowchart TD
-    n1["n1: chooseCard<br/>user_trigger"]:::trg
-    n2["n2: startVerify<br/>user_trigger"]:::trg
-    n3["n3: cloudApi.verifyCard<br/>port_call_cloud ok"]:::cloud
-    n4["n4: localStore.savePending<br/>port_call_local ok"]:::local
-    n5["n5: cloudApi.applyResource<br/>port_call_cloud ok"]:::cloud
-    n6["n6: localStore.markVerified<br/>port_call_local ok"]:::local
-    n7(["n7: → WaitingSms<br/>state_transition"]):::state
-    n8["n8: submitSms<br/>user_trigger"]:::trg
-    n9["n9: cloudApi.verifySms<br/>port_call_cloud FAIL"]:::cloudFail
-    n10["n10: localStore.rollback<br/>port_call_local ok"]:::local
-    n11(["n11: → Failed<br/>state_transition"]):::state
-    n12["n12: assert state + callLog<br/>assertion → AC-3"]:::assert
-
-    n1 --> n2 --> n3 --> n4 --> n5 --> n6 --> n7 --> n8 --> n9 --> n10 --> n11 --> n12
-
-    classDef trg   fill:#ffe0b2,stroke:#f57c00
-    classDef cloud fill:#bbdefb,stroke:#1976d2
+    n1["n1: submitTask"]:::trg
+    n2["n2: gateway.verifyOtpCode FAIL"]:::cloudFail
+    n3["n3: ledger.rollback"]:::local
+    n4["n4: assert"]:::assert
+    n1 --> n2 --> n3 --> n4
+    classDef trg fill:#ffe0b2,stroke:#f57c00
     classDef cloudFail fill:#ffcdd2,stroke:#c62828
     classDef local fill:#c8e6c9,stroke:#388e3c
-    classDef state fill:#e1bee7,stroke:#7b1fa2
     classDef assert fill:#fff59d,stroke:#fbc02d
 ```
 

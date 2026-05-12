@@ -184,8 +184,8 @@ for each term in typical_business_terms:
 
 业务团队 / PM / 用户在口头或 PRD 里会怎么叫这个模块？例如：
 
-- `WalletMain` 模块 → ["首页", "我的", "设置页", "卡包页", "卡聚合页", "卡中心"]
-- `CardManager` 模块 → ["卡管理", "卡 CRUD", "卡数据管理"]
+- `FeatureDemoShell` 模块 → ["首页", "我的", "任务列表页", "设置页"]
+- `ItemCatalogService` 模块 → ["条目目录", "内容聚合", "本地缓存条目"]
 
 **信号来源**：
 - architecture.md 里该模块的自然语言描述

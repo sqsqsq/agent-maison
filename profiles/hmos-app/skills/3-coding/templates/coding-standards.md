@@ -2,7 +2,7 @@
 
 > 适用于 HarmonyOS 应用工程，基于**模块间 DAG + 模块内 4 层架构**的通用规范。
 >
-> **模板说明**：下方目录 / 模块名 / 代码片段（`wallet_home` / `card_management` / `@wallet/*` 等）均以钱包工程为参考示例演示填法；实际使用请按你自己工程的模块名替换。
+> **模板说明**：下方目录 / 模块名 / 代码占位（`entry_app`、`feature_demo`、`@scope/<module>` 等）仅作结构演示；实际以本工程 `architecture` / catalog 为准替换。
 
 ---
 
@@ -10,18 +10,18 @@
 
 ```
 {ProjectRoot}/
-├── phone/                          # HAP — 应用主入口
+├── entry_app/                       # HAP — 应用主入口
 │   └── src/main/ets/
 │       └── presentation/pages/     # 主 Navigation 框架 (Index.ets)
-├── wallet_home/                    # HAR — 首页功能模块
+├── feature_demo/                    # HAR — 演示 feature 聚合
 │   └── src/main/ets/
 │       ├── shared/
 │       ├── data/
 │       ├── domain/
 │       └── presentation/
-├── card_management/                # HAR — 卡片管理模块
+├── inventory_service/               # HAR — 列表示例模块
 │   └── src/main/ets/...
-├── common/                         # HAR — 公共基础模块
+├── shared_platform/                 # HAR — 公共基础模块
 │   └── src/main/ets/
 │       └── shared/                 # 公共模块通常只有 shared 层
 ├── AppScope/                       # 应用级配置与资源
@@ -33,24 +33,24 @@
 ### 模块间依赖规则
 
 ```
-phone (HAP)
-  ├── depends on → wallet_home (HAR)
-  ├── depends on → card_management (HAR)
-  └── depends on → common (HAR)
+entry_app (HAP)
+  ├── depends on → feature_demo (HAR)
+  ├── depends on → inventory_service (HAR)
+  └── depends on → shared_platform (HAR)
 
-wallet_home (HAR)
-  └── depends on → common (HAR)
+feature_demo (HAR)
+  └── depends on → shared_platform (HAR)
 
-card_management (HAR)
-  └── depends on → common (HAR)
+inventory_service (HAR)
+  └── depends on → shared_platform (HAR)
 
-common (HAR)
+shared_platform (HAR)
   └── 无依赖（最底层）
 ```
 
-- **HAP 模块**（phone）：应用入口，聚合各功能模块，只有它可以使用 `@Entry`
+- **HAP 模块**（entry_app）：应用入口，聚合各功能模块，只有它可以使用 `@Entry`
 - **HAR 模块**（其余）：功能/公共模块，通过 `Index.ets` 导出对外 API
-- 功能模块之间**尽量不互相依赖**，共享内容下沉到 `common`
+- 功能模块之间**尽量不互相依赖**，共享内容下沉到 `shared_platform`
 - 检测到循环依赖视为 **BLOCKER**
 
 ---
@@ -64,31 +64,31 @@ common (HAR)
 │   │   └── HomeApiClient.ets       #   请求体/响应体/接口
 │   ├── constant/                   # 常量和通用类型
 │   │   ├── HomeConstants.ets       #   业务常量
-│   │   └── HomeTypes.ets           #   通用类型定义
+│   │   └── DemoTypes.ets           #   通用类型定义
 │   ├── components/                 # 基础 UI 组件（业务无关）
-│   │   ├── BaseCardView.ets        #   通用卡片壳子
+│   │   ├── BaseTileView.ets        #   通用列表项壳
 │   │   └── IconButton.ets          #   图标按钮
 │   └── utils/                      # 工具函数
 │       └── NumberUtils.ets         #   数字格式化工具
 │
 ├── data/                           # Layer 2: 数据层
 │   ├── model/                      # 业务数据类型 + 内聚方法
-│   │   ├── CardInfo.ets            #   卡片数据模型
+│   │   ├── ItemInfo.ets           #   列表示例数据模型
 │   │   └── BannerInfo.ets          #   Banner 数据模型
 │   └── repository/                 # 数据仓库（数据所有权）
-│       ├── CardRepository.ets      #   卡片 CRUD
+│       ├── ItemRepository.ets      #   列表 CRUD
 │       └── BannerRepository.ets    #   Banner CRUD
 │
 ├── domain/                         # Layer 3: 领域层
 │   └── usecase/                    # 业务用例
-│       └── LoadHomeDataUseCase.ets #   首页数据编排
+│       └── LoadDashboardUseCase.ets #   首页数据编排
 │
 ├── presentation/                   # Layer 4: 展示层
 │   ├── components/                 # 复杂组件（自带生命周期 + 数据闭环）
-│   │   ├── CardSwiper.ets          #   卡片轮播复杂组件
+│   │   ├── ItemCarousel.ets        #   横向列表示例组件
 │   │   └── FunctionGrid.ets        #   功能宫格复杂组件
 │   └── pages/                      # 页面（NavDestination）
-│       └── HomePage.ets            #   首页
+│       └── DashboardPage.ets       #   宿主壳页
 │
 └── Index.ets                       # HAR 模块导出入口
 ```
@@ -112,37 +112,37 @@ shared       → 可引用 → 无（本模块内无依赖；可依赖下层 Mod
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
-| Module 目录 | snake_case | `wallet_home/`、`card_management/` |
+| Module 目录 | snake_case | `feature_demo/`、`inventory_service/` |
 | 层级目录 | 固定名称 | `shared/`、`data/`、`domain/`、`presentation/` |
 | 子目录 | 固定名称 | `client/`、`constant/`、`components/`、`utils/`、`model/`、`repository/`、`usecase/`、`pages/` |
-| 文件名 | PascalCase | `CardInfo.ets`、`CardRepository.ets`、`HomePage.ets` |
+| 文件名 | PascalCase | `ItemInfo.ets`、`ItemRepository.ets`、`DashboardPage.ets` |
 
 ### 3.2 标识符命名
 
 | 类别 | 风格 | 示例 |
 |------|------|------|
-| struct（组件） | PascalCase | `CardSwiper`、`FunctionGrid` |
-| interface | PascalCase | `CardInfo`、`ApiResponse` |
-| class | PascalCase | `CardRepository`、`LoadHomeDataUseCase` |
-| 函数/方法 | camelCase | `getCardList()`、`formatCardNumber()` |
-| 变量 | camelCase | `cardList`、`isLoading` |
-| 常量 | UPPER_SNAKE_CASE | `MAX_CARD_COUNT`、`API_TIMEOUT_MS` |
-| 枚举类型 | PascalCase | `CardType` |
-| 枚举值 | PascalCase | `CardType.BankCard` |
+| struct（组件） | PascalCase | `ItemCarousel`、`FunctionGrid` |
+| interface | PascalCase | `ItemInfo`、`ApiResponse` |
+| class | PascalCase | `ItemRepository`、`LoadDashboardUseCase` |
+| 函数/方法 | camelCase | `getItemList()`、`formatSku()` |
+| 变量 | camelCase | `itemList`、`isLoading` |
+| 常量 | UPPER_SNAKE_CASE | `MAX_BATCH_SIZE`、`API_TIMEOUT_MS` |
+| 枚举类型 | PascalCase | `ItemKind` |
+| 枚举值 | PascalCase | `ItemKind.STANDARD` |
 
 ### 3.3 各层文件命名后缀约定
 
 | 层/子目录 | 后缀约定 | 示例 |
 |-----------|----------|------|
-| shared/client | `ApiClient` 或 `Api` | `HomeApiClient.ets` |
-| shared/constant | `Constants` 或 `Types` | `HomeConstants.ets`、`HomeTypes.ets` |
-| shared/components | 语义命名（无特定后缀） | `BaseCardView.ets`、`IconButton.ets` |
+| shared/components | 语义命名（无特定后缀） | `BaseTileView.ets`、`IconButton.ets` |
+| shared/client | `ApiClient` 或 `Api` | `DemoApiClient.ets` |
+| shared/constant | `Constants` 或 `Types` | `HomeConstants.ets`、`DemoTypes.ets` |
 | shared/utils | `Utils` | `FormatUtils.ets`、`NumberUtils.ets` |
-| data/model | 语义命名（数据实体名） | `CardInfo.ets`、`BannerInfo.ets` |
-| data/repository | `Repository` | `CardRepository.ets` |
-| domain/flow（v2.1 推荐）或 domain/usecase（可选） | `Flow` / `Coordinator` / `UseCase` 任一语义命名 | `CardOpenFlow.ets`、`LoadHomeDataUseCase.ets` |
-| presentation/components | 语义命名（功能描述） | `CardSwiper.ets`、`PaymentBar.ets` |
-| presentation/pages | `Page` 后缀（推荐） | `HomePage.ets`、`CardDetailPage.ets` |
+| data/model | 语义命名（数据实体名） | `ItemInfo.ets`、`BannerInfo.ets` |
+| data/repository | `Repository` | `ItemRepository.ets` |
+| domain/flow（v2.1 推荐）或 domain/usecase（可选） | `Flow` / `Coordinator` / `UseCase` 任一语义命名 | `TaskSubmitFlow.ets`、`LoadDashboardUseCase.ets` |
+| presentation/components | 语义命名（功能描述） | `ItemCarousel.ets`、`ActionBar.ets` |
+| presentation/pages | `Page` 后缀（推荐） | `DashboardPage.ets`、`ItemDetailPage.ets` |
 
 ---
 
@@ -151,27 +151,27 @@ shared       → 可引用 → 无（本模块内无依赖；可依赖下层 Mod
 ### 4.1 shared/client — 端云请求
 
 ```typescript
-// shared/client/HomeApiClient.ets
+// shared/client/DemoApiClient.ets
 
-export interface GetCardListRequest {
-  userId: string
+export interface ListItemsRequest {
+  actorId: string
   pageSize?: number
 }
 
-export interface GetCardListResponse {
-  cards: CardDto[]
+export interface ListItemsResponse {
+  items: ItemDto[]
   total: number
 }
 
-export interface CardDto {
+export interface ItemDto {
   id: string
-  bankName: string
-  cardNumber: string
-  cardType: string
+  title: string
+  sku: string
+  kind: string
 }
 
-export class HomeApiClient {
-  static async getCardList(request: GetCardListRequest): Promise<GetCardListResponse> {
+export class DemoApiClient {
+  static async listItems(request: ListItemsRequest): Promise<ListItemsResponse> {
     // 端云请求实现（或模拟实现）
   }
 }
@@ -191,18 +191,17 @@ export class HomeConstants {
   static readonly GRID_COLUMN_COUNT = 4
   static readonly GRID_ROW_COUNT = 2
   static readonly BANNER_AUTO_PLAY_INTERVAL_MS = 3000
-  static readonly CARD_SWIPER_ANIMATION_DURATION_MS = 300
+  static readonly ITEM_CAROUSEL_ANIM_MS = 300
 }
 ```
 
 ```typescript
-// shared/constant/HomeTypes.ets
+// shared/constant/DemoTypes.ets
 
-export enum CardType {
-  BankCard = 'BANK_CARD',
-  TransitCard = 'TRANSIT_CARD',
-  AccessCard = 'ACCESS_CARD',
-  MemberCard = 'MEMBER_CARD'
+export enum ItemKind {
+  STANDARD = 'STANDARD',
+  PREVIEW = 'PREVIEW',
+  ARCHIVE = 'ARCHIVE',
 }
 
 export interface GridItemConfig {
@@ -216,11 +215,11 @@ export interface GridItemConfig {
 ### 4.3 shared/components — 基础 UI 组件
 
 ```typescript
-// shared/components/BaseCardView.ets
+// shared/components/BaseTileView.ets
 
 @Component
-export struct BaseCardView {
-  @Prop cardColor: ResourceColor = $r('app.color.card_default_bg')
+export struct BaseTileView {
+  @Prop tileColor: ResourceColor = $r('app.color.tile_default_bg')
   @Prop borderRadiusValue: number = 12
   @BuilderParam content: () => void
 
@@ -232,7 +231,7 @@ export struct BaseCardView {
     }
     .width('100%')
     .borderRadius(this.borderRadiusValue)
-    .backgroundColor(this.cardColor)
+    .backgroundColor(this.tileColor)
     .padding(16)
   }
 }
@@ -246,24 +245,24 @@ export struct BaseCardView {
 ### 4.4 data/model — 业务数据模型
 
 ```typescript
-// data/model/CardInfo.ets
+// data/model/ItemInfo.ets
 
-import { CardType } from '../../shared/constant/HomeTypes'
+import { ItemKind } from '../../shared/constant/DemoTypes'
 
-export class CardInfo {
+export class ItemInfo {
   id: string = ''
-  bankName: string = ''
-  cardNumber: string = ''
-  cardType: CardType = CardType.BankCard
-  backgroundColor: string = '#1A73E8'
+  title: string = ''
+  sku: string = ''
+  kind: ItemKind = ItemKind.STANDARD
+  accentColor: string = '#1A73E8'
 
-  get maskedNumber(): string {
-    if (this.cardNumber.length < 4) return this.cardNumber
-    return `**** **** **** ${this.cardNumber.slice(-4)}`
+  get displaySku(): string {
+    if (this.sku.length < 4) return this.sku
+    return `···${this.sku.slice(-4)}`
   }
 
-  get shortBankName(): string {
-    return this.bankName.length > 4 ? this.bankName.substring(0, 4) : this.bankName
+  get shortTitle(): string {
+    return this.title.length > 8 ? this.title.substring(0, 8) : this.title
   }
 }
 ```
@@ -276,45 +275,45 @@ export class CardInfo {
 ### 4.5 data/repository — 数据仓库
 
 ```typescript
-// data/repository/CardRepository.ets
+// data/repository/ItemRepository.ets
 
-import { CardInfo } from '../model/CardInfo'
-import { HomeApiClient, GetCardListResponse, CardDto } from '../../shared/client/HomeApiClient'
+import { ItemInfo } from '../model/ItemInfo'
+import { DemoApiClient, ListItemsResponse, ItemDto } from '../../shared/client/DemoApiClient'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
-const TAG = 'CardRepository'
+const TAG = 'ItemRepository'
 const DOMAIN = 0x0001
 
-export class CardRepository {
-  private static cardCache: CardInfo[] = []
+export class ItemRepository {
+  private static itemCache: ItemInfo[] = []
 
-  static async getCards(userId: string): Promise<CardInfo[]> {
+  static async getItems(actorId: string): Promise<ItemInfo[]> {
     try {
-      const response = await HomeApiClient.getCardList({ userId })
-      CardRepository.cardCache = response.cards.map(dto => CardRepository.mapToModel(dto))
-      return CardRepository.cardCache
+      const response = await DemoApiClient.listItems({ actorId })
+      ItemRepository.itemCache = response.items.map(dto => ItemRepository.mapToModel(dto))
+      return ItemRepository.itemCache
     } catch (error) {
-      hilog.error(DOMAIN, TAG, 'Failed to get cards: %{public}s',
+      hilog.error(DOMAIN, TAG, 'Failed to get items: %{public}s',
         error instanceof Error ? error.message : String(error))
-      return CardRepository.cardCache  // 降级返回缓存
+      return ItemRepository.itemCache
     }
   }
 
-  static getCachedCards(): CardInfo[] {
-    return CardRepository.cardCache
+  static getCachedItems(): ItemInfo[] {
+    return ItemRepository.itemCache
   }
 
-  static async deleteCard(cardId: string): Promise<boolean> {
-    CardRepository.cardCache = CardRepository.cardCache.filter(c => c.id !== cardId)
+  static async deleteItem(itemId: string): Promise<boolean> {
+    ItemRepository.itemCache = ItemRepository.itemCache.filter(c => c.id !== itemId)
     return true
   }
 
-  private static mapToModel(dto: CardDto): CardInfo {
-    const card = new CardInfo()
-    card.id = dto.id
-    card.bankName = dto.bankName
-    card.cardNumber = dto.cardNumber
-    return card
+  private static mapToModel(dto: ItemDto): ItemInfo {
+    const it = new ItemInfo()
+    it.id = dto.id
+    it.title = dto.title
+    it.sku = dto.sku
+    return it
   }
 }
 ```
@@ -345,35 +344,35 @@ export struct HomeTabPage {
 
 **形态 B：独立业务类（中等复杂度）**
 ```typescript
-// domain/flow/CardOpenFlow.ets（或 shared/flow/，不强制 domain/usecase/）
-import { CardOpenApi } from '../../data/api/CardOpenApi'
-import { CardStore } from '../../data/store/CardStore'
+// domain/flow/TaskSubmitFlow.ets（或 shared/flow/，不强制路径；与业务规约一致）
+import { RemoteTaskGateway } from '../../data/api/RemoteTaskGateway'
+import { LocalTaskLedger } from '../../data/storage/LocalTaskLedger'
 
-export class CardOpenFlow {
-  state: { phase: 'Idle' | 'Verifying' | 'WaitingSms' | 'Success' | 'Failed'
+export class TaskSubmitFlow {
+  state: { phase: 'Idle' | 'Preparing' | 'WaitingOtp' | 'Success' | 'Failed'
            errorCode: string | null } = { phase: 'Idle', errorCode: null }
 
   constructor(
-    private readonly api: CardOpenApi,   // 引用 contracts.yaml 已登记的现有类
-    private readonly store: CardStore,   // 不新造 Port 接口
+    private readonly gateway: RemoteTaskGateway,
+    private readonly ledger: LocalTaskLedger,
   ) {}
 
-  async chooseCard(bankInfo: BankInfo): Promise<void> {
-    this.state = { ...this.state, phase: 'Verifying' }
-    // 编排 api / store 调用...
+  async submitTask(payload: Record<string, string>): Promise<void> {
+    this.state = { ...this.state, phase: 'Preparing' }
+    // 编排 gateway / ledger 调用（略）
   }
 }
 ```
 
 **形态 C：导出命名函数（无状态流程）**
 ```typescript
-// domain/actions/loadHomeData.ets（或 shared/actions/）
-export async function loadHomeData(userId: string): Promise<HomePageData> {
-  const [cards, banners] = await Promise.all([
-    CardRepository.getCards(userId),
+// domain/actions/loadDashboard.ets（或 shared/actions/）
+export async function loadDashboard(actorId: string): Promise<DashboardVm> {
+  const [items, banners] = await Promise.all([
+    ItemRepository.getItems(actorId),
     BannerRepository.getBanners()
   ])
-  return { cards, banners, unreadMessageCount: 0 }
+  return { items, banners, unreadMessageCount: 0 }
 }
 ```
 
@@ -381,32 +380,32 @@ export async function loadHomeData(userId: string): Promise<HomePageData> {
 - 每个 UI 事件最终进入的业务函数必须是**命名方法 / 导出函数 / 类方法**，不能藏在 `onClick = () => { ... }` inline lambda 里（由 harness `named_business_handler` BLOCKER 强制）
 - **不得** import 任何 UI 符号（`@Component` / `NavPathStack` / `showToast` / `$r` / `@kit.ArkUI` 等），保证可在 Hypium 中脱离 ArkUI runtime 实例化
 - 直接复用 `contracts.yaml > interfaces[].class` 已登记的现有数据层类作为构造器依赖（形态 B）；**禁止**为了"便于打桩"新造 `XxxPort` 接口
-- 命名体现业务意图（`chooseCard` / `confirmSms` / `loadHomeData`），避免空词（`handler` / `onClick1`）
+- 命名体现业务意图（`submitTask` / `confirmOtp` / `loadDashboard`），避免空词（`handler` / `onClick1`）
 
 ### 4.7 presentation/components — 复杂组件
 
 ```typescript
-// presentation/components/CardSwiper.ets
+// presentation/components/ItemCarousel.ets
 
-import { CardInfo } from '../../data/model/CardInfo'
-import { CardRepository } from '../../data/repository/CardRepository'
+import { ItemInfo } from '../../data/model/ItemInfo'
+import { ItemRepository } from '../../data/repository/ItemRepository'
 
 @Component
-export struct CardSwiper {
-  @State cards: CardInfo[] = []
+export struct ItemCarousel {
+  @State items: ItemInfo[] = []
   @State currentIndex: number = 0
   @State isLoading: boolean = true
 
-  onCardSelected?: (card: CardInfo) => void
+  onItemSelected?: (item: ItemInfo) => void
 
   aboutToAppear(): void {
-    this.loadCards()
+    this.loadItems()
   }
 
-  private async loadCards(): Promise<void> {
+  private async loadItems(): Promise<void> {
     this.isLoading = true
     try {
-      this.cards = await CardRepository.getCards('mock_user')
+      this.items = await ItemRepository.getItems('mock_actor')
     } finally {
       this.isLoading = false
     }
@@ -415,24 +414,22 @@ export struct CardSwiper {
   build() {
     Column() {
       if (this.isLoading) {
-        // 加载态
         LoadingProgress().width(32).height(32)
-      } else if (this.cards.length === 0) {
-        // 空态引导
+      } else if (this.items.length === 0) {
         this.EmptyGuide()
       } else {
-        this.CardSwiperContent()
+        this.ItemCarouselContent()
       }
     }
     .width('100%')
   }
 
   @Builder
-  private CardSwiperContent() {
+  private ItemCarouselContent() {
     Swiper() {
-      ForEach(this.cards, (card: CardInfo) => {
-        // 卡片渲染
-      }, (card: CardInfo) => card.id)
+      ForEach(this.items, (it: ItemInfo) => {
+        // 条目渲染占位
+      }, (it: ItemInfo) => it.id)
     }
     .index(this.currentIndex)
     .onChange((index: number) => { this.currentIndex = index })
@@ -441,7 +438,7 @@ export struct CardSwiper {
   @Builder
   private EmptyGuide() {
     Column() {
-      Text($r('app.string.add_first_card'))
+      Text($r('app.string.demo_empty_hint'))
     }
     .justifyContent(FlexAlign.Center)
   }
@@ -457,30 +454,30 @@ export struct CardSwiper {
 ### 4.8 presentation/pages — 页面
 
 ```typescript
-// presentation/pages/HomePage.ets
+// presentation/pages/DashboardPage.ets
 
-import { CardSwiper } from '../components/CardSwiper'
+import { ItemCarousel } from '../components/ItemCarousel'
 import { FunctionGrid } from '../components/FunctionGrid'
 
 @Builder
-export function homePageBuilder() {
-  HomePage()
+export function dashboardPageBuilder() {
+  DashboardPage()
 }
 
 @Component
-struct HomePage {
+struct DashboardPage {
   build() {
     NavDestination() {
       Scroll() {
         Column({ space: 12 }) {
-          CardSwiper()
+          ItemCarousel()
           FunctionGrid()
         }
         .width('100%')
       }
       .scrollBar(BarState.Off)
     }
-    .title($r('app.string.home_title'))
+    .title($r('app.string.dashboard_title'))
     .hideTitleBar(true)
   }
 }
@@ -499,16 +496,13 @@ struct HomePage {
 每个 HAR 模块的根目录有一个 `Index.ets`，控制对外暴露的 API：
 
 ```typescript
-// wallet_home/src/main/ets/Index.ets
+// feature_demo/src/main/ets/Index.ets
 
-// 导出页面 Builder（供 phone 模块路由使用）
-export { homePageBuilder } from './presentation/pages/HomePage'
+// 导出页面 Builder（供 entry_app 路由使用）
+export { dashboardPageBuilder } from './presentation/pages/DashboardPage'
 
-// 导出需要跨模块共享的类型
-export { CardInfo } from './data/model/CardInfo'
-export { CardType } from './shared/constant/HomeTypes'
-
-// 不导出的内容为模块私有：Repository、UseCase、内部组件等
+export { ItemInfo } from './data/model/ItemInfo'
+export { ItemKind } from './shared/constant/DemoTypes'
 ```
 
 **规则**：
@@ -526,10 +520,10 @@ export { CardType } from './shared/constant/HomeTypes'
 
 ```typescript
 // ❌ 错误
-Text('暂无卡片')
+Text('暂无数据')
 
 // ✅ 正确
-Text($r('app.string.no_cards_hint'))
+Text($r('app.string.demo_empty_hint'))
 ```
 
 资源文件位置（每个 Module 各自维护）：
@@ -603,10 +597,10 @@ import { router } from '@kit.ArkUI'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
 // 2. 跨模块引用（通过 HAR 的 Index.ets 导出）
-import { CardInfo, CardType } from '@wallet_home'
+import { ItemInfo, ItemKind } from '@feature_demo'
 
 // 3. 模块内引用（使用相对路径，遵循层间依赖方向）
-import { CardInfo } from '../../data/model/CardInfo'
+import { ItemInfo } from '../../data/model/ItemInfo'
 import { HomeConstants } from '../../shared/constant/HomeConstants'
 ```
 
