@@ -117,7 +117,7 @@ function getUtSuggestionPaths(): UtHostSuggestionPaths {
     testabilityAuditTemplateRel:
       'framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md',
     branchExampleTestRel:
-      'framework/profiles/hmos-app/skills/5-business-ut/examples/card-opening/card_opening.test.ets',
+      'framework/profiles/hmos-app/skills/5-business-ut/examples/sample-flow/sample_flow.test.ets',
     utHostImplRefRel: 'framework/profiles/hmos-app/harness/ut-host-impl.ts',
   };
 }

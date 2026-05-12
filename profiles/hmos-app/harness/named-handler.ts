@@ -11,19 +11,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CheckContext, UseCasesSpec } from '../../../harness/scripts/utils/types';
+import type { NamedHandlerScanResult } from '../../../harness/scripts/utils/named-handler';
+import { deriveNamedHandlerSearchRoots } from '../../../harness/scripts/utils/ut-business-src-scope';
 
-export interface NamedHandlerScanResult {
-  /** true: use-cases.yaml 不存在，调用方应输出 SKIP */
-  skip: boolean;
-  /** 未通过的条目描述（空数组表示全部通过） */
-  issues: string[];
+export type { NamedHandlerScanResult };
+
+function searchRootsForProject(projectRoot: string): string[] {
+  return deriveNamedHandlerSearchRoots(projectRoot);
 }
-
-const DEFAULT_SEARCH_ROOTS = [
-  '02-Feature',
-  '01-Business',
-  '00-Common',
-];
 
 /**
  * 剥离 `//` 单行注释与 `/* ... *\/` 块注释，避免在注释里**提到** `function foo`
@@ -75,7 +70,7 @@ export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanRes
     }
   }
 
-  const roots = DEFAULT_SEARCH_ROOTS
+  const roots = searchRootsForProject(ctx.projectRoot)
     .map(r => path.join(ctx.projectRoot, r))
     .filter(p => fs.existsSync(p));
 
