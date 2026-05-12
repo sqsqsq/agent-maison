@@ -14,6 +14,7 @@ import type {
   ProfileCapabilitySpec,
   CapabilityKey,
 } from './scripts/utils/types';
+import { applyInstanceExtensions } from './extension-loader';
 
 export type { CapabilityKey, ProfileCapabilitySpec } from './scripts/utils/types';
 
@@ -102,6 +103,7 @@ function normalizePhaseDisabled(raw: string[] | undefined): Set<Phase> {
     'glossary',
     'docs',
     'init',
+    'extensions',
   ]);
   for (const p of raw ?? []) {
     if (allow.has(p as Phase)) {
@@ -141,6 +143,11 @@ export function loadPhaseRuleWithOverlays(
     merged = mergeOverlayFromDir(merged, subOverlaysPath);
   }
 
+  const extOverlay = resolved.extensionBundle?.phaseRuleOverlayPaths?.[phase];
+  if (extOverlay) {
+    merged = mergeOverlayFromDir(merged, extOverlay);
+  }
+
   return merged;
 }
 
@@ -158,7 +165,6 @@ function mergeOverlayFromDir(current: PhaseRuleSpec, overlayPath: string): Phase
 }
 
 export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): HarnessResolvedProfile {
-  void projectRoot;
   const name = cfg.project_profile.name;
   const sub = cfg.project_profile.sub_variant?.trim();
 
@@ -176,7 +182,7 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
     ...(yaml.capabilities as Partial<Record<CapabilityKey, ProfileCapabilitySpec>>),
   };
 
-  return {
+  const base: HarnessResolvedProfile = {
     name: yaml.name,
     subVariant: sub,
     profileDir: profileDirPath,
@@ -184,6 +190,8 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
     phasesDisabled: normalizePhaseDisabled(yaml.phases_disabled),
     capabilities,
   };
+
+  return applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir);
 }
 
 export function isPhaseDisabledByProfile(phase: Phase, resolved: HarnessResolvedProfile): boolean {

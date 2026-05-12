@@ -7,9 +7,23 @@
 ## 能做什么
 
 - **架构可配置**：外层/内层模块依赖、路径根目录等由实例根的 `framework.config.json` 声明，harness 从配置读取，不绑死某一种层数或层名。
-- **阶段化工作流**：catalog / glossary → PRD → design → coding → review → UT → testing，每阶段有 Skill 文档 + YAML 规则 + `check-*.ts` 机械守门。
+- **阶段化工作流**：由实例 `active_workflow` 指向的 YAML（默认 `spec-driven`）声明全局元阶段与 feature 链；含 catalog / glossary / **extensions** → PRD → design → coding → …，每阶段有 Skill + YAML 规则 + `check-*.ts` 守门。
 - **多 agent 入口**：通过 `framework/agents/<adapter>/` 插件，把同一套 Skill 按所选客户端约定暴露出来（slash、跳板、全局说明文件等）；**产品与路径对照仅限** [agents/README.md](agents/README.md)。
 - **工程类型 profile（project_profile）**：与 adapter 正交，声明在实例根 `framework.config.json` 的 `project_profile`（默认 `hmos-app`）。每套模板位于 [profiles/](profiles/README.md)，可禁用整阶段 harness 或声明能力档位。
+
+### 逻辑分层（目录角色）
+
+不做物理 `framework/core/` 目录重组（避免海量路径字符串迁移）；顶层目录按**逻辑角色**划分如下：
+
+| 目录 | 角色 | 说明 |
+|------|------|------|
+| `skills/`、`specs/`、`harness/`、`templates/`、`docs/` | **core** | 通用流程、规则、脚本与模板 |
+| `profiles/` | **profile-plugin** | 宿主 toolchain / capability / overlay |
+| `agents/` | **agent-plugin** | IDE 适配（slash / 跳板 / rules） |
+| `workflows/` | **workflow**（可选） | phase DAG YAML，fork 自定义顺序 |
+| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、knowledge、hooks、manifest |
+
+叠加顺序：**framework 默认 → profile → workflow → instance extensions**。详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md)。
 
 ### Profile 加载顺序
 

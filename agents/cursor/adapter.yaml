@@ -15,6 +15,9 @@ skill_bridge:
   target_dir: .cursor/skills                    # 相对于实例工程根
   template_dir: templates/skills                # 相对于 adapter 目录
 
+instance_skill_bridge:
+  skill_stub_target_dir: .cursor/skills
+
 rules:
   target_dir: .cursor/rules
   template_dir: templates/rules

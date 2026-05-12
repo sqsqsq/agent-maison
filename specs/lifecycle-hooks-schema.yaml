@@ -1,0 +1,65 @@
+# Lifecycle hooks invoked by harness (framework / profile / extension sources)
+schema_version: "1.0"
+
+description: >
+  Events and payload contracts for hooks-dispatcher.ts. Hook scripts may be .md (prompt fragment)
+  or .mjs (stdin JSON ctx -> stdout JSON result).
+
+defaults:
+  timeout_ms: 30000
+  failure_severity_by_source:
+    framework: BLOCKER
+    profile: BLOCKER
+    extension: MAJOR
+
+hook_events:
+  - id: pre_phase
+    description: Before harness begins a phase (after args resolved).
+  - id: post_phase
+    description: After phase script completes (before writing final report for that phase).
+  - id: pre_check
+    description: Immediately before invoking the phase check-*.ts script.
+  - id: post_check
+    description: Immediately after check-*.ts returns.
+  - id: pre_verifier
+    description: Before verifier sub-agent prompt is assembled (when applicable).
+  - id: post_verifier
+    description: After verifier completes (when applicable).
+  - id: on_context_load
+    description: While assembling ai-prompt.md / context for the phase.
+  - id: on_violation
+    description: When a check returns BLOCKER or MAJOR (after classification).
+
+hook_ctx:
+  type: object
+  required: [projectRoot, phase, feature, hookEvent, source]
+  properties:
+    projectRoot: { type: string }
+    phase: { type: string }
+    feature: { type: string }
+    hookEvent: { type: string }
+    source:
+      type: string
+      enum: [framework, profile, extension]
+    resolvedProfileName: { type: string }
+    extensionName: { type: string }
+    checkScript: { type: string }
+    promptFragments:
+      type: array
+      items: { type: string }
+    violation:
+      type: object
+      properties:
+        ruleId: { type: string }
+        severity: { type: string }
+        details: { type: string }
+
+hook_script_result:
+  type: object
+  properties:
+    ok: { type: boolean }
+    promptFragments:
+      type: array
+      items: { type: string }
+    severityOverride: { type: string }
+    message: { type: string }

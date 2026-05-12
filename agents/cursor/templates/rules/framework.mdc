@@ -17,7 +17,7 @@ alwaysApply: true
    - 阶段规则 → `framework/specs/phase-rules/<phase>-rules.yaml`
 3. **Skill 路由**：
    - 进入某阶段前必须完整读对应 `framework/skills/<n>/SKILL.md`，不要凭跳板摘要动手。
-   - 本仓库 `.cursor/skills/<skill>/SKILL.md` **只是跳板**，真实逻辑在 `framework/skills/<n>/SKILL.md`。
+   - 本仓库 `.cursor/skills/<skill>/SKILL.md` **只是跳板**，真实逻辑在 `framework/skills/<n>/SKILL.md`；其中 **由 `render-agents-md` 依据 `doc/extensions/skills/` 生成的跳板**同样只保留一条链到正文（`doc/extensions/...`），禁止扩写业务条款。
    - **禁止向跳板追加**业务条款、选型表或次级文档链接（会形成与正文 SKILL 的双源分叉，agent 易只读跳板漏掉正文闸门）。这些内容写在 `framework/skills/<n>/` 正文及其 `prompts/`、`templates/`、`reference/` 下；跳板**仅保留** frontmatter + **一条**跳转到正文 `SKILL.md` 的路径。如需改跳板默认形态：**先改** `framework/agents/cursor/templates/skills/**`，再跑一次 `/framework-init`（或等价 render）下发到 `.cursor/skills/`；不要只在实例跳板里手工扩写。
 4. **BLOCKER 级守门**：
    - 架构依赖方向违规 → 停。

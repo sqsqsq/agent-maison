@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://framework.local/schemas/workflow-schema.json",
+  "title": "FrameworkWorkflow",
+  "schema_version": "1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "artifacts"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Workflow manifest schema version (independent from framework semver)."
+    },
+    "name": {
+      "type": "string",
+      "description": "Workflow id; typically matches file stem (e.g. spec-driven from spec-driven.workflow.yaml)."
+    },
+    "description": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scope", "requires"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "description": "Phase id; must match harness --phase value."
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["global", "feature"]
+          },
+          "check": {
+            "type": "string",
+            "description": "Basename under framework/harness/scripts/ (e.g. check-prd.ts)."
+          },
+          "rule": {
+            "type": "string",
+            "description": "Relative path under framework/specs/ (e.g. phase-rules/prd-rules.yaml)."
+          },
+          "requires": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "optional_deps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "verifier_prompt": {
+            "type": "string",
+            "description": "Relative path under framework/harness/prompts/ (optional)."
+          },
+          "skill_doc": {
+            "type": "string",
+            "description": "Relative path to SKILL.md anchor (optional, informational)."
+          }
+        }
+      }
+    }
+  }
+}

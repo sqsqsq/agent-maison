@@ -1,0 +1,10 @@
+# 实例扩展 manifest 模板 → 拷入 <paths.extension_dir>/manifest.yaml 后按业务填写。
+# 协议：framework/specs/instance-extension-manifest.schema.yaml
+schema_version: "1.0"
+name: "<extension-package-id>"
+# version: "0.1.0"
+# description: ""
+# provides:
+#   skills: []
+#   knowledge: []
+#   hooks: {}

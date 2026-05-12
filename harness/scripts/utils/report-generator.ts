@@ -126,6 +126,7 @@ export function assembleAIPrompt(
   scriptReportJson: string,
   specContent: string,
   resolvedProfile?: HarnessResolvedProfile,
+  lifecycleHookFragments?: string[],
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -162,6 +163,12 @@ export function assembleAIPrompt(
     .map(cf => `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``)
     .join('\n\n');
   assembled = assembled.replace(/\{context_files\}/g, contextSection);
+
+  if (lifecycleHookFragments && lifecycleHookFragments.length > 0) {
+    assembled +=
+      '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
+      lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
+  }
 
   const dir = ensureReportDir(harnessRoot, feature, phase);
   const promptPath = path.join(dir, 'ai-prompt.md');

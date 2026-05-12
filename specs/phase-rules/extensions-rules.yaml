@@ -1,0 +1,12 @@
+phase: extensions
+version: "1.0"
+applies_to: "doc/extensions/**"
+
+structure_checks:
+  extension_manifest_consistent:
+    description: doc/extensions/manifest.yaml（若存在）必须通过 extension-loader 校验且无 bundle.errors。
+    severity: BLOCKER
+
+semantic_checks: {}
+
+traceability_checks: {}

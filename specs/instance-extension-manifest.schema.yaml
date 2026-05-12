@@ -1,0 +1,64 @@
+# Instance extension manifest schema (doc/extensions/manifest.yaml)
+# schema_version is independent from workflow-schema and lifecycle-hooks-schema.
+schema_version: "1.0"
+description: >
+  Schema describing doc/extensions/manifest.yaml. Validation is implemented in
+  framework/harness/extension-loader.ts and check-extensions.ts.
+
+root_object:
+  type: object
+  required:
+    - schema_version
+    - name
+  properties:
+    schema_version:
+      type: string
+      description: Manifest protocol version (e.g. "1.0").
+    name:
+      type: string
+      description: Extension package id (slug, no spaces).
+    version:
+      type: string
+      description: Optional package version for agentskills.io-style frontmatter parity.
+    description:
+      type: string
+    framework_compat:
+      type: string
+      description: Optional semver range string (informative until a resolver exists).
+
+    provides:
+      type: object
+      additionalProperties: false
+      properties:
+        skills:
+          type: array
+          items: { type: string }
+          description: Logical skill ids (directories under doc/extensions/skills/<id>/).
+        knowledge:
+          type: array
+          items: { type: string }
+          description: Basenames or paths under doc/extensions/knowledge/.
+        hooks:
+          type: object
+          description: Map phase id -> map event -> list of paths relative to doc/extensions/.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: array
+              items: { type: string }
+        capabilities:
+          type: object
+          description: >
+            Arbitrary capability keys (string) -> { provider: relative path, severity: BLOCKER|MAJOR|... }.
+          additionalProperties:
+            type: object
+            required: [provider, severity]
+            properties:
+              provider: { type: string }
+              severity:
+                type: string
+                enum: [BLOCKER, SKIP, WARN, MAJOR, MINOR]
+        phase_rules_overlays:
+          type: object
+          description: Map phase string -> relative path to overlay yaml under doc/extensions/.
+          additionalProperties: { type: string }

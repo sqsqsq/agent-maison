@@ -12,6 +12,8 @@ commands: null
 skill_bridge: null
 rules: null
 
+instance_skill_bridge: null
+
 post_install_hooks: []
 
 notes: |

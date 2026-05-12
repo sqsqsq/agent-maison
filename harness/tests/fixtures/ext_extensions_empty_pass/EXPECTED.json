@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    {
+      "id": "extension_manifest_ok",
+      "status": "PASS",
+      "severity": "MINOR",
+      "details_includes": "manifest"
+    }
+  ]
+}

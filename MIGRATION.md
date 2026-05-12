@@ -183,8 +183,25 @@ git submodule update --remote framework
    - Skill 00 Step 5.6：framework-init 增加 DevEco 路径配置子流程。
 
 **回归方法**：
-- 全套：`cd framework/harness && npm test`（16 unit + 9 fixture，约 25s）。
+- 全套：`cd framework/harness && npm test`（条数以 `tests/run-unit.ts` + `tests/run-tests.ts` 为准）。
 - 端到端：在 home-page 上跑全 6 阶段 `harness-runner.ts --feature home-page --phase X`，要求真机在线。
+
+### v2.5：workflow、extensions 元阶段、lifecycle hooks、instance_skill_bridge（当前）
+
+适用：已包含 `framework/workflows/`、`extension-loader`、`hooks-dispatcher`、`check-extensions` 与 adapter `instance_skill_bridge` 的 framework vendor。
+
+**建议在实例 `framework.config.json`（UPDATE diff 确认）补齐：**
+
+| 字段 | 说明 |
+|------|------|
+| `schema_version` | `"1.1"`（与 `framework/specs/framework.config.schema.json` 对齐） |
+| `active_workflow` | 默认 `"spec-driven"` → `framework/workflows/spec-driven.workflow.yaml` |
+| `lifecycle_hooks_enabled` | 默认 `true`；`false` 时 harness 跳过 lifecycle hook 派发 |
+| `paths.extension_dir` | 默认 `"doc/extensions"` |
+
+**升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash；`cd framework/harness && npm test`。
+
+详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md) 与 [docs/evolution/extension-e2e-acceptance.md](docs/evolution/extension-e2e-acceptance.md)。
 
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 

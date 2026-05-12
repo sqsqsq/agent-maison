@@ -250,6 +250,10 @@ export interface FrameworkPaths {
    * 模拟 / 归档工程可设为 true（如本仓库将需求产物归档入库的演示配置）。
    */
   docs_committed?: boolean;
+  /**
+   * 实例侧 extension 根目录（相对实例工程根）。默认 `doc/extensions`。
+   */
+  extension_dir?: string;
 }
 
 /** PRD harness Visual Handoff 守门档位（`prd` 段为 opt-in 时写入） */
@@ -305,6 +309,15 @@ export interface FrameworkConfig {
   state_machine?: StateMachineConfig;
   /** PRD 脚本阶段行为（可选） */
   prd?: PrdHarnessConfig;
+  /**
+   * Harness workflow 名称（无后缀），对应 `framework/workflows/<name>.workflow.yaml`。
+   * 默认 `spec-driven`。
+   */
+  active_workflow?: string;
+  /**
+   * 是否启用 lifecycle hooks（workflow/extension）。默认 true。
+   */
+  lifecycle_hooks_enabled?: boolean;
 }
 
 // --------------------------------------------------------------------------
@@ -369,6 +382,7 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
   docs_committed: false,
+  extension_dir: 'doc/extensions',
 };
 
 /**
@@ -477,7 +491,7 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
     : cloneDsl(LEGACY_DEFAULT_DSL);
   const pathsDefault = applyDefaults(profileDefaults.paths ?? {}, DEFAULT_PATHS) as FrameworkPaths;
   return {
-    schema_version: '1.0',
+    schema_version: '1.1',
     project_name: 'unknown',
     project_type: 'app',
     project_profile: {
@@ -488,6 +502,8 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
     architecture: architectureDefault,
     paths: { ...pathsDefault },
     state_machine: { ...DEFAULT_STATE_MACHINE },
+    active_workflow: 'spec-driven',
+    lifecycle_hooks_enabled: true,
   };
 }
 
@@ -609,6 +625,11 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
     prd: normalizePrdHarness(raw.prd),
+    active_workflow:
+      typeof raw.active_workflow === 'string' && raw.active_workflow.trim().length > 0
+        ? raw.active_workflow.trim()
+        : fallback.active_workflow ?? 'spec-driven',
+    lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
   };
 }
 

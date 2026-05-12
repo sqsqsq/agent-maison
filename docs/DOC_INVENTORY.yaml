@@ -89,6 +89,36 @@ docs:
       - tsc / hvigor 调用方式改变
 
   # --------------------------------------------------------------------------
+  # 可演进性与扩展分层
+  # --------------------------------------------------------------------------
+  - path: framework/docs/concepts/extensibility.md
+    role: framework 扩展分层（workflow / profile / adapter / doc/extensions）与合并顺序 SSOT
+    audience: framework 维护者 / 要在宿主接入业务 knowledge 或自定义 phase DAG 的开发者
+    sources:
+      - framework/README.md
+      - framework/agents/README.md
+      - framework/harness/profile-loader.ts
+      - framework/specs/workflow-schema.json
+      - framework/specs/instance-extension-manifest.schema.yaml
+      - framework/specs/lifecycle-hooks-schema.yaml
+    update_triggers:
+      - workflow-schema.json / manifest schema / lifecycle-hooks-schema 字段变更
+      - profile-loader 合并顺序或 extension 装载语义变更
+      - 新增顶层扩展目录约定
+
+  - path: framework/docs/evolution/extension-protocol-v1.md
+    role: extension/workflow/hooks 三套协议的 schema_version 与 breaking 约定（v1 起点）
+    audience: framework 维护者 / 做多仓库同步的子模块管理者
+    sources:
+      - framework/specs/workflow-schema.json
+      - framework/specs/instance-extension-manifest.schema.yaml
+      - framework/specs/lifecycle-hooks-schema.yaml
+      - framework/MIGRATION.md
+    update_triggers:
+      - 任一则 schema 主版本升级
+      - MIGRATION.md 增加与本协议相关的迁移章节
+
+  # --------------------------------------------------------------------------
   # 跨 Skill 概念
   # --------------------------------------------------------------------------
   - path: framework/docs/concepts/terminology-guarding.md
@@ -152,6 +182,27 @@ docs:
       - --phase / --feature / --adapter / 全局 vs 功能 phase 语义调整
       - 新增 BLOCKER 级别 phase（特别是会改变流程图的）
       - hvigor / hdc 调用参数改变（影响 runbook 对专文的交叉引用；细则在 hmos-app-harness-toolchain.md）
+
+  # --------------------------------------------------------------------------
+  # 演进验收（实例扩展 / adapter 桥接）
+  # --------------------------------------------------------------------------
+  - path: framework/docs/evolution/extension-e2e-acceptance.md
+    role: 实例扩展与 lifecycle hook / render-agents-md 桥接手动手验收清单
+    audience: framework 维护者 / 接入方可演进性改造的开发者
+    sources:
+      - framework/harness/scripts/utils/instance-skill-bridge.ts
+      - framework/harness/scripts/render-agents-md.ts
+      - framework/harness/scripts/render-agents-md.mjs
+      - framework/harness/extension-loader.ts
+      - framework/harness/hooks-dispatcher.ts
+      - framework/agents/adapter-schema.yaml
+      - framework/agents/claude/adapter.yaml
+      - framework/agents/cursor/adapter.yaml
+      - framework/workflows/spec-driven.workflow.yaml
+    update_triggers:
+      - instance_skill_bridge 语义或产物路径变更
+      - extensions 元阶段或 extension manifest 协议变更
+      - lifecycle hook 事件集合或 severity 约定变更
 
 # 备注：其他 Skill（1 PRD / 2 design / 3 coding / 4 code-review / 6 device-testing）
 # 的对外讲解材料尚未撰写，按节奏补齐；写完后再加入 docs[] 并填 sources。

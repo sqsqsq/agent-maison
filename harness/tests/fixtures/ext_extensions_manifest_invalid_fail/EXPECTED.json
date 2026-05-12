@@ -1,0 +1,11 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "extension_manifest_manifest_name",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "name"
+    }
+  ]
+}

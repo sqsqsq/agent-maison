@@ -36,12 +36,12 @@ import {
   CheckContext,
   CheckResult,
   PhaseChecker,
-  isGlobalPhase,
   GLOBAL_FEATURE_SENTINEL,
 } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { resolvePaths, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile, loadPhaseRuleWithOverlays, isPhaseDisabledByProfile } from '../../profile-loader';
+import { resolveWorkflowSpec, isPhaseGlobalInWorkflow } from '../../workflow-loader';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -189,22 +189,26 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
 
     // 5. 构造 SpecLoader 与 CheckContext
     const phase = cmd.phase;
-    const feature = cmd.feature ?? (isGlobalPhase(phase) ? GLOBAL_FEATURE_SENTINEL : undefined);
+    const fwConfig = loadFrameworkConfig(tmpdir);
+    const workflowSpec = resolveWorkflowSpec(tmpdir, {
+      config: fwConfig,
+      frameworkRoot: FIXTURE_FRAMEWORK_ROOT,
+    });
+    const feature =
+      cmd.feature ?? (isPhaseGlobalInWorkflow(workflowSpec, phase) ? GLOBAL_FEATURE_SENTINEL : undefined);
     if (!feature) {
       throw new Error(`CMD.json 必须指定 feature（或使用全局阶段）`);
     }
 
     const paths = resolvePaths(tmpdir, FIXTURE_FRAMEWORK_ROOT);
-    const fwConfig = loadFrameworkConfig(tmpdir);
     const vhMode = fwConfig.prd?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
 
     const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir);
     let phaseRule = specLoader.loadPhaseRule(phase);
     const resolvedProfile = loadResolvedProfile(tmpdir, fwConfig);
     phaseRule = loadPhaseRuleWithOverlays(phase, phaseRule, resolvedProfile);
-    const featureSpec = isGlobalPhase(phase)
-      ? { feature }
-      : specLoader.loadFeatureSpec(feature);
+    const phaseIsGlobal = isPhaseGlobalInWorkflow(workflowSpec, phase);
+    const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature);
 
     const ctx: CheckContext = {
       phase,

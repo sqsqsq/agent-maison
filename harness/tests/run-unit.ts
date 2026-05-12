@@ -61,6 +61,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'coding-failure-kinds', modulePath: './unit/coding-failure-kinds.unit.test' },
   { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },
   { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
+  { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
+  { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
+  { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },
+  { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

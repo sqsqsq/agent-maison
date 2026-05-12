@@ -136,6 +136,22 @@ optional_fields:
         type: string
         description: 模板目录，相对于 adapter 目录，例如 "templates/hooks"
 
+  instance_skill_bridge:
+    type: object | null
+    description: |
+      可选。声明 render-agents-md 渲染入口 Markdown 后，如何把 doc/extensions/skills/<slug>/SKILL.md
+      暴露到 IDE（Cursor 跳板 / Claude slash）。generic adapter 应省略。
+      与内置 Skill 跳板或 slash 同名时自动加 ext- 前缀并 stderr 告警。
+    fields:
+      skill_stub_target_dir:
+        type: string
+        description: |
+          Cursor：生成 .cursor/skills/<bridgeId>/SKILL.md 的根目录（实例相对路径），例如 ".cursor/skills"。
+      commands_target_dir:
+        type: string
+        description: |
+          Claude Code：生成 .claude/commands/<bridgeId>.md 的目录（实例相对路径），例如 ".claude/commands"。
+
   post_install_hooks:
     type: list
     default: []
@@ -193,5 +209,9 @@ placeholders:
     source: framework.config.json → paths.module_catalog
   GLOSSARY_PATH:
     source: framework.config.json → paths.glossary
+  EXTENSION_SKILL_SECTION:
+    source: |
+      由 render-agents-md.ts 扫描 paths.extension_dir（默认 doc/extensions）下 skills/*/SKILL.md，
+      渲染「实例扩展 Skill」Markdown 小节；无扩展时为空白。
   ARCHITECTURE_MD_PATH:
     source: framework.config.json → paths.architecture_md

@@ -36,7 +36,6 @@ import {
   CheckContext,
   PhaseChecker,
   ScriptReport,
-  isGlobalPhase,
   GLOBAL_FEATURE_SENTINEL,
 } from './scripts/utils/types';
 import {
@@ -59,6 +58,18 @@ import {
   loadPhaseRuleWithOverlays,
   isPhaseDisabledByProfile,
 } from './profile-loader';
+import {
+  resolveWorkflowSpec,
+  workflowPhaseIdSet,
+  isPhaseGlobalInWorkflow,
+  listWorkflowPhases,
+  type WorkflowSpec,
+} from './workflow-loader';
+import {
+  dispatchLifecycleHooks,
+  type HookDispatchPayload,
+  type HookEventName,
+} from './hooks-dispatcher';
 import * as YAML from 'yaml';
 
 // --------------------------------------------------------------------------
@@ -66,7 +77,7 @@ import * as YAML from 'yaml';
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter'],
+  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow'],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'summary', 'failures-only', 'skip-visual-handoff'],
   alias: {
     p: 'phase',
@@ -76,8 +87,6 @@ const args = minimist(process.argv.slice(2), {
     v: 'verbose',
   },
 });
-
-const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary', 'docs', 'init'];
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -91,8 +100,9 @@ Harness — Spec/Harness 验证工具
   npx ts-node harness-runner.ts [options]
 
 选项:
-  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary|docs|init)
-  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary/docs/init 阶段不需要
+  -p, --phase <phase>       指定验证阶段（合法集合由当前 workflow 决定，默认见 framework/workflows/spec-driven.workflow.yaml）
+  --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
+  -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
@@ -160,15 +170,30 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (!VALID_PHASES.includes(phase)) {
-    console.error(`错误: 无效的阶段 "${phase}"。有效值: ${VALID_PHASES.join(', ')}`);
+  const fwConfigEarly = loadFrameworkConfig(projectRoot);
+  let workflowSpec: WorkflowSpec;
+  try {
+    workflowSpec = resolveWorkflowSpec(projectRoot, {
+      config: fwConfigEarly,
+      workflowOverride: typeof args.workflow === 'string' ? args.workflow : undefined,
+    });
+  } catch (err) {
+    console.error(`错误: 无法解析 workflow：${(err as Error).message}`);
     process.exit(1);
   }
 
-  // catalog/glossary 是"全局阶段"，不归属任何 feature。
+  const phaseIds = workflowPhaseIdSet(workflowSpec);
+  if (!phaseIds.has(phase)) {
+    const hint = listWorkflowPhases(workflowSpec).join(', ');
+    console.error(`错误: 无效的阶段 "${phase}"。当前 workflow 合法 phase: ${hint}`);
+    process.exit(1);
+  }
+
+  // workflow 中 scope=global 的阶段不归属任何 feature。
   // 若用户显式传了 --feature 也尊重其值（便于在不同 staging 轮次下分别归档报告），
   // 否则使用哨兵值 GLOBAL_FEATURE_SENTINEL（= "_global"）。
-  if (isGlobalPhase(phase)) {
+  const phaseIsGlobal = isPhaseGlobalInWorkflow(workflowSpec, phase);
+  if (phaseIsGlobal) {
     if (!feature) {
       feature = GLOBAL_FEATURE_SENTINEL;
     }
@@ -180,7 +205,6 @@ async function main(): Promise<void> {
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
 
-  const fwConfigEarly = loadFrameworkConfig(projectRoot);
   const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
 
   // Step 1: 加载 Spec
@@ -196,9 +220,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const artifactInspection = isGlobalPhase(phase)
-    ? null
-    : specLoader.inspectFeatureArtifacts(feature, phase);
+  const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase);
   if (artifactInspection) {
     printFeatureArtifactInspection(artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
@@ -212,11 +234,9 @@ async function main(): Promise<void> {
   }
 
   // catalog/glossary 是全局阶段，不加载功能级规约
-  const featureSpec = isGlobalPhase(phase)
-    ? { feature }
-    : specLoader.loadFeatureSpec(feature);
+  const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature);
 
-  if (isGlobalPhase(phase)) {
+  if (phaseIsGlobal) {
     console.log(`   ⊘ 全局阶段（${phase}）：跳过功能级规约加载。`);
   } else {
     if (featureSpec.contracts) {
@@ -262,25 +282,77 @@ async function main(): Promise<void> {
   // "当前是否处于阶段流程中"。harness 跑完后会再次更新 verdict / blocker_count；
   // claimed_done 始终为 false——只有 agent 显式填写完成回执并通过 check-receipt
   // 后才会被 Stop hook 视为闭环。
-  writeCurrentPhaseState(projectRoot, {
+  writeCurrentPhaseState(projectRoot, workflowSpec, {
     phase,
     feature,
     status: 'running',
     started_at: new Date().toISOString(),
   });
 
-  const checks = isPhaseDisabledByProfile(phase, resolvedProfile)
-    ? [
-        {
-          id: 'phase_disabled_by_profile',
-          category: 'structure' as const,
-          description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
-          severity: 'MINOR' as const,
-          status: 'SKIP' as const,
-          details: `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
-        },
-      ]
-    : await runScriptHarness(harnessRoot, context);
+  const hookOpts = {
+    enabled: fwConfig.lifecycle_hooks_enabled !== false,
+    timeoutMs: 30000,
+  };
+  const lifecycleFragments: string[] = [];
+
+  async function emitLifecycle(
+    event: HookEventName,
+    extra?: Partial<Pick<HookDispatchPayload, 'checkScript' | 'violation'>>,
+  ): Promise<CheckResult[]> {
+    const { promptFragments, hookCheckResults } = await dispatchLifecycleHooks(
+      harnessRoot,
+      event,
+      {
+        projectRoot,
+        phase: phase as Phase,
+        feature: feature as string,
+        resolvedProfileName: resolvedProfile.name,
+        hookEvent: event,
+        ...extra,
+      },
+      resolvedProfile,
+      hookOpts,
+    );
+    lifecycleFragments.push(...promptFragments);
+    return hookCheckResults;
+  }
+
+  let checks: CheckResult[] = [];
+  checks.push(...(await emitLifecycle('pre_phase')));
+  checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
+
+  checks.push(
+    ...(isPhaseDisabledByProfile(phase, resolvedProfile)
+      ? [
+          {
+            id: 'phase_disabled_by_profile',
+            category: 'structure' as const,
+            description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
+            severity: 'MINOR' as const,
+            status: 'SKIP' as const,
+            details: `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
+          },
+        ]
+      : await runScriptHarness(harnessRoot, context)),
+  );
+
+  checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
+
+  const violations = checks.filter(
+    c => c.status === 'FAIL' && (c.severity === 'BLOCKER' || c.severity === 'MAJOR'),
+  );
+  for (const v of violations) {
+    checks.push(
+      ...(await emitLifecycle('on_violation', {
+        violation: { ruleId: v.id, severity: v.severity, details: v.details ?? '' },
+      })),
+    );
+  }
+
+  checks.push(...(await emitLifecycle('pre_verifier')));
+  checks.push(...(await emitLifecycle('on_context_load')));
+  checks.push(...(await emitLifecycle('post_verifier')));
+  checks.push(...(await emitLifecycle('post_phase')));
 
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
@@ -314,6 +386,7 @@ async function main(): Promise<void> {
       JSON.stringify(scriptReport, null, 2),
       specContent,
       resolvedProfile,
+      lifecycleFragments,
     );
     console.log(`   ✓ AI prompt 已写入 ${reportsRel}/${feature}/${phase}/ai-prompt.md`);
   } catch (err) {
@@ -349,10 +422,8 @@ async function main(): Promise<void> {
   // 这样 agent 在 harness 跑完之后，仍必须主动填回执 + 通过 check-receipt
   // 才能把 claimed_done 推到 true（由专门的 markPhaseClaimedDone 流程驱动；
   // 当前版本里，Stop hook 负责拒绝 claimed_done=false 时的 stop）。
-  const receiptValidation = isGlobalPhase(phase)
-    ? null
-    : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
-  writeCurrentPhaseState(projectRoot, {
+  const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
+  writeCurrentPhaseState(projectRoot, workflowSpec, {
     phase,
     feature,
     status: 'harness_finished',
@@ -1059,8 +1130,12 @@ function handleClearState(projectRoot: string): void {
   console.log('  - --clear-state 表示"放弃已有进度"，与"暂停"不同。');
 }
 
-function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStatePartial): void {
-  // 全局阶段（init / catalog / glossary / docs）不参与"feature 维度阶段闭环判定"——
+function writeCurrentPhaseState(
+  projectRoot: string,
+  workflowSpec: WorkflowSpec,
+  partial: CurrentPhaseStatePartial,
+): void {
+  // workflow 中 scope=global 的阶段不参与"feature 维度阶段闭环判定"——
   // 它们没有完成回执模板（参见 framework/harness/scripts/check-init.ts 头部
   // "元阶段三件套刻意不对称"段落，以及 framework/harness/templates/
   // phase-completion-receipt.md 的字段全部围绕 feature/phase 设计）。
@@ -1074,7 +1149,7 @@ function writeCurrentPhaseState(projectRoot: string, partial: CurrentPhaseStateP
   // 用户可能正在做 feature 维度阶段（如 coding），中途顺手跑了 docs 全局阶段，
   // 不应抹掉其 coding state。Hook 端有兜底（evaluateState 看到 phase 是
   // 全局阶段也直接 allow），即使存在历史污染也不会误拦。
-  if (isGlobalPhase(partial.phase)) {
+  if (isPhaseGlobalInWorkflow(workflowSpec, partial.phase)) {
     return;
   }
 

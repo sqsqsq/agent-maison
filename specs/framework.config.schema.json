@@ -6,7 +6,10 @@
   "type": "object",
   "required": ["schema_version", "project_name", "agent_adapter", "architecture", "paths"],
   "properties": {
-    "schema_version": { "type": "string" },
+    "schema_version": {
+      "type": "string",
+      "description": "实例 DSL schema 版本；1.1 起包含 workflow/extensions/hooks 默认字段语义。"
+    },
     "project_name": { "type": "string" },
     "project_type": {
       "type": "string",
@@ -24,10 +27,35 @@
     },
     "agent_adapter": { "type": "string" },
     "architecture": { "type": "object" },
-    "paths": { "type": "object" },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "features_dir": { "type": "string" },
+        "module_catalog": { "type": "string" },
+        "glossary": { "type": "string" },
+        "glossary_seed": { "type": "string" },
+        "architecture_md": { "type": "string" },
+        "state_file": { "type": "string" },
+        "receipt_dir_pattern": { "type": "string" },
+        "docs_committed": { "type": "boolean" },
+        "extension_dir": {
+          "type": "string",
+          "description": "实例扩展根目录（相对实例工程根），默认 doc/extensions。"
+        }
+      },
+      "additionalProperties": true
+    },
     "toolchain": { "type": "object" },
     "state_machine": { "type": "object" },
-    "prd": { "type": "object" }
+    "prd": { "type": "object" },
+    "active_workflow": {
+      "type": "string",
+      "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 spec-driven。"
+    },
+    "lifecycle_hooks_enabled": {
+      "type": "boolean",
+      "description": "是否运行 lifecycle hooks（framework/profile/extension）；默认 true。"
+    }
   },
   "additionalProperties": true
 }

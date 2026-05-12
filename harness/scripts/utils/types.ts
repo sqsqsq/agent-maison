@@ -2,25 +2,38 @@
 // Harness 公共类型定义
 // ============================================================================
 
-/** 支持的开发阶段 */
-export type Phase =
+/** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
+export type Phase = string;
+
+/** IDE / 校验脚本常用的已知 phase id（非穷尽） */
+export type KnownPhase =
   | 'prd'
   | 'design'
   | 'coding'
   | 'review'
   | 'ut'
   | 'testing'
-  | 'catalog'    // Skill 0 · Phase A 产物：doc/module-catalog.yaml
-  | 'glossary'   // Skill 0 · Phase B 产物：doc/glossary.yaml
-  | 'docs'       // framework 自身对外文档新鲜度（v2.4 起）
-  | 'init';      // Skill 00 framework-init 产物 11 项体检（v2.6 起）
+  | 'catalog'
+  | 'glossary'
+  | 'docs'
+  | 'init'
+  | 'extensions';
 
-/** catalog / glossary / docs / init 四个"全局"阶段不归属任何 feature，使用本哨兵值 */
+/** catalog / glossary / docs / init / extensions 等全局 phase 使用本哨兵 feature */
 export const GLOBAL_FEATURE_SENTINEL = '_global';
 
-/** 判断给定 phase 是否是"全局" phase（不需要 --feature 参数） */
+/**
+ * 向后兼容启发式：未知 workflow 或未加载 workflow 时的兜底。
+ * 正常运行时应使用 `isPhaseGlobalInWorkflow(spec, phase)`。
+ */
 export function isGlobalPhase(phase: Phase): boolean {
-  return phase === 'catalog' || phase === 'glossary' || phase === 'docs' || phase === 'init';
+  return (
+    phase === 'catalog' ||
+    phase === 'glossary' ||
+    phase === 'docs' ||
+    phase === 'init' ||
+    phase === 'extensions'
+  );
 }
 
 /** 检查严重等级 */
@@ -377,6 +390,26 @@ export interface ProfileYamlStub {
   [key: string]: unknown;
 }
 
+/** 实例扩展 manifest 校验错误（非 extensions phase 仅记入 ExtensionBundle.errors） */
+export interface ExtensionValidationError {
+  severity: 'MAJOR';
+  code: string;
+  message: string;
+  path?: string;
+}
+
+/** doc/extensions 解析产物（manifest 缺失则为零值 + rootDir=null） */
+export interface ExtensionBundle {
+  rootDir: string | null;
+  manifestPath: string | null;
+  skills: string[];
+  knowledgePaths: string[];
+  hooks: Record<string, Record<string, string[]>>;
+  extensionCapabilities: Record<string, ProfileCapabilitySpec>;
+  phaseRuleOverlayPaths: Record<string, string>;
+  errors: ExtensionValidationError[];
+}
+
 /** loadResolvedProfile 的运行时结果 */
 export interface HarnessResolvedProfile {
   name: string;
@@ -385,6 +418,8 @@ export interface HarnessResolvedProfile {
   yaml: ProfileYamlStub;
   phasesDisabled: Set<Phase>;
   capabilities: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
+  /** 实例扩展包；未扫描或无 manifest 时仍为对象（errors/slots 为空） */
+  extensionBundle?: ExtensionBundle;
 }
 
 // --------------------------------------------------------------------------

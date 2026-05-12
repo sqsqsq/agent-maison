@@ -34,6 +34,9 @@ hooks:
   target_dir: .claude/hooks                     # 相对于实例工程根
   template_dir: templates/hooks                 # 相对于 adapter 目录
 
+instance_skill_bridge:
+  commands_target_dir: .claude/commands
+
 post_install_hooks: []
 
 notes: |
