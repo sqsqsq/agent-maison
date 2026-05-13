@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    { "id": "visual_handoff", "must_be_absent": true },
+    { "id": "visual_handoff_ui_change", "must_be_absent": true },
+    { "id": "visual_handoff_refs", "must_be_absent": true },
+    { "id": "visual_handoff_heuristic", "must_be_absent": true },
+    {
+      "id": "context_exploration_present",
+      "status": "WARN",
+      "severity": "MINOR",
+      "details_includes": "[compat_downgraded by doc/features/compat-legacy/compat.yaml]"
+    }
+  ],
+  "script_report": {
+    "expect_compat_applied": true,
+    "compat_applied_ids_includes": ["context_exploration_present"]
+  }
+}

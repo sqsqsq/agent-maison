@@ -42,6 +42,7 @@ import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { resolvePaths, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile, loadPhaseRuleWithOverlays, isPhaseDisabledByProfile } from '../../profile-loader';
 import { resolveWorkflowSpec, isPhaseGlobalInWorkflow } from '../../workflow-loader';
+import { finalizeChecksForScriptReport } from '../../scripts/utils/report-generator';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -88,6 +89,12 @@ export interface FixtureExpected {
   verdict?: 'PASS' | 'FAIL';
   /** 关心的规则断言列表（不在此处的规则不强制） */
   rules: ExpectedRule[];
+  /** 校验 finalizeChecksForScriptReport 产出的 compat 元数据（与 harness generateScriptReport 同源） */
+  script_report?: {
+    expect_compat_applied?: boolean;
+    compat_applied_ids_includes?: string[];
+    expect_compat_expired?: boolean;
+  };
 }
 
 /** 单个 fixture 的运行结果 */
@@ -257,6 +264,44 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
     for (const [k, v] of Object.entries(savedEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
+    }
+
+    // compat 对齐（与 harness generateScriptReport 装配阶段同源）；全局阶段 / _global / profile 整阶段禁用时不应用
+    const compatSkipped =
+      phaseIsGlobal ||
+      feature === GLOBAL_FEATURE_SENTINEL ||
+      isPhaseDisabledByProfile(phase, resolvedProfile);
+    if (!compatSkipped) {
+      const fin = finalizeChecksForScriptReport(actualResults, phase, feature, tmpdir);
+      actualResults = fin.checks;
+      const srExp = expected.script_report;
+      if (srExp) {
+        if (srExp.expect_compat_applied !== undefined) {
+          if (srExp.expect_compat_applied && !fin.compat_applied) {
+            failures.push(`script_report：期望 compat_applied 存在，但实际缺失`);
+          }
+          if (!srExp.expect_compat_applied && fin.compat_applied) {
+            failures.push(`script_report：期望无 compat_applied，但实际存在`);
+          }
+        }
+        if (srExp.compat_applied_ids_includes && fin.compat_applied) {
+          for (const mustId of srExp.compat_applied_ids_includes) {
+            if (!fin.compat_applied.ids.includes(mustId)) {
+              failures.push(
+                `script_report.compat_applied.ids 缺少 "${mustId}"，实际=${JSON.stringify(fin.compat_applied.ids)}`,
+              );
+            }
+          }
+        }
+        if (srExp.expect_compat_expired !== undefined) {
+          if (srExp.expect_compat_expired && !fin.compat_expired) {
+            failures.push(`script_report：期望 compat_expired，但实际缺失`);
+          }
+          if (!srExp.expect_compat_expired && fin.compat_expired) {
+            failures.push(`script_report：期望无 compat_expired，但实际存在`);
+          }
+        }
+      }
     }
 
     // 7. 断言

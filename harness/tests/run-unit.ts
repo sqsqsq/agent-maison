@@ -62,6 +62,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },
   { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
+  { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },
   { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
   { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },
   { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },

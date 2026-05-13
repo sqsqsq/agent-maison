@@ -1,0 +1,7 @@
+schema_version: "1.0"
+terms:
+  - term: "占位"
+    canonical_module: "CloudSvc"
+    owner_layer: "01-Service"
+    aliases: []
+    easily_confused_with: []

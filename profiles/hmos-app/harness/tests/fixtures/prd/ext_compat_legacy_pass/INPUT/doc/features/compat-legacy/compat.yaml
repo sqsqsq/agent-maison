@@ -1,0 +1,7 @@
+schema_version: "1.0"
+feature: compat-legacy
+since_framework_version: "<= fixture"
+exempt_checks:
+  - context_exploration_*
+reason: "fixture — compat 豁免 Context Exploration Gate，验证降级与 compat_applied 聚合段"
+scheduled_backfill_by: "2099-12-31"
