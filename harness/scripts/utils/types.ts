@@ -339,6 +339,18 @@ export interface ReportSummary {
   verdict: Verdict;
 }
 
+/** script-report.json 中 compat 降级审计段 */
+export interface ScriptReportCompatApplied {
+  count: number;
+  ids: string[];
+  suggestion: string;
+}
+
+export interface ScriptReportCompatExpired {
+  feature: string;
+  suggestion: string;
+}
+
 /** 脚本 Harness 报告 */
 export interface ScriptReport {
   phase: Phase;
@@ -347,6 +359,8 @@ export interface ScriptReport {
   project_root: string;
   checks: CheckResult[];
   summary: ReportSummary;
+  compat_applied?: ScriptReportCompatApplied;
+  compat_expired?: ScriptReportCompatExpired;
 }
 
 /** AI Harness 组装后的 prompt 信息 */

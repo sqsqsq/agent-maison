@@ -3,6 +3,7 @@ export { SpecLoader } from './spec-loader';
 export { AstAnalyzer } from './ast-analyzer';
 export {
   generateScriptReport,
+  finalizeChecksForScriptReport,
   assembleAIPrompt,
   generateMergedReport,
   printReportToConsole,

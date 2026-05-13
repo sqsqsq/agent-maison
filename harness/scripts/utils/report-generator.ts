@@ -20,7 +20,11 @@ import {
   Severity,
   VisualHandoffResolutionRow,
   HarnessResolvedProfile,
+  ScriptReportCompatApplied,
+  ScriptReportCompatExpired,
 } from './types';
+import { applyCompatDowngrade } from '../../compat-loader';
+import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
 
 // --------------------------------------------------------------------------
 // 报告目录管理
@@ -36,6 +40,36 @@ function ensureReportDir(harnessRoot: string, feature: string, phase: Phase): st
 // 脚本报告生成
 // --------------------------------------------------------------------------
 
+export function finalizeChecksForScriptReport(
+  checks: CheckResult[],
+  phase: Phase,
+  feature: string,
+  projectRoot: string,
+  nowMs: number = Date.now(),
+): {
+  checks: CheckResult[];
+  compat_applied?: ScriptReportCompatApplied;
+  compat_expired?: ScriptReportCompatExpired;
+} {
+  const { results, stats } = applyCompatDowngrade(checks, { feature, phase, projectRoot }, nowMs);
+  let compat_applied: ScriptReportCompatApplied | undefined;
+  if (stats.appliedIds.length > 0) {
+    compat_applied = {
+      count: stats.appliedIds.length,
+      ids: [...stats.appliedIds],
+      suggestion: fillCompatMessage(SUGGESTION_COMPAT_APPLIED, feature, phase),
+    };
+  }
+  let compat_expired: ScriptReportCompatExpired | undefined;
+  if (stats.expiredFired) {
+    compat_expired = {
+      feature,
+      suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, feature, phase),
+    };
+  }
+  return { checks: results, compat_applied, compat_expired };
+}
+
 export function generateScriptReport(
   harnessRoot: string,
   phase: Phase,
@@ -43,15 +77,23 @@ export function generateScriptReport(
   projectRoot: string,
   checks: CheckResult[],
 ): ScriptReport {
-  const summary = computeSummary(checks);
+  const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
+  const summary = computeSummary(finalized.checks);
   const report: ScriptReport = {
     phase,
     feature,
     timestamp: new Date().toISOString(),
     project_root: projectRoot,
-    checks,
+    checks: finalized.checks,
     summary,
   };
+
+  if (finalized.compat_applied) {
+    report.compat_applied = finalized.compat_applied;
+  }
+  if (finalized.compat_expired) {
+    report.compat_expired = finalized.compat_expired;
+  }
 
   const dir = ensureReportDir(harnessRoot, feature, phase);
   const reportPath = path.join(dir, 'script-report.json');
@@ -90,6 +132,8 @@ export function failScriptReportWithFatalError(
     checks: [...report.checks, fatal],
     summary: computeSummary([...report.checks, fatal]),
     timestamp: new Date().toISOString(),
+    compat_applied: report.compat_applied,
+    compat_expired: report.compat_expired,
   };
 
   const dir = ensureReportDir(harnessRoot, updated.feature, updated.phase);
