@@ -19,6 +19,9 @@ framework/docs/
 │
 ├── overview.md                ← 全景介绍：为什么做这个 framework、它解决什么问题、怎么接入
 │
+├── profiles/                  ← 按 profile 拆出的宿主工具链专文（与 operations 交叉引用）
+│   └── hmos-app-harness-toolchain.md
+│
 ├── skills/                    ← 各 Skill 阶段的对外讲解（设计哲学 + 实现 + 常见坑）
 │   ├── README.md
 │   ├── 1-prd-design.md          (待写)
@@ -26,18 +29,24 @@ framework/docs/
 │   ├── 3-coding.md              (待写)
 │   ├── 4-code-review.md         (待写)
 │   ├── 5-business-ut.md         ★ 已写
-│   └── 6-device-testing.md      (待写)
+│   ├── 6-device-testing.md      (待写)
+│   ├── phase6-keyword-allowlist.md   ← Phase 6 关键词验收：有意保留命中项（与脚本口径一致）
+│   └── phase6-keyword-pattern.regex ← 单行字面供 `rg -f`；勿手改，除非你同步改 allowlist §4
 │
 ├── concepts/                  ← 跨 Skill 的核心理念
 │   ├── README.md
-│   └── terminology-guarding.md  ← 术语守门：catalog + glossary + 三道 BLOCKER + 演进路线图
+│   ├── terminology-guarding.md  ← 术语守门：catalog + glossary + 三道 BLOCKER + 演进路线图
+│   └── extensibility.md         ← 扩展分层（workflow / profile / adapter / doc/extensions）SSOT
 │
 ├── operations/                ← 工程化运行手册
 │   ├── README.md
 │   └── harness-runbook.md       ← Harness 全链路验证操作手册（怎么跑、报告路径、排错）
 │
 └── evolution/                 ← 大版本演进记录（与 MIGRATION 互补）
-    └── README.md                (占位)
+    ├── README.md
+    ├── compat-protocol-v1.md          ← Feature 目录 compat.yaml：降级 / 过期 / 回填边界
+    ├── extension-e2e-acceptance.md    ← 实例扩展与 hooks / render-agents-md 手验清单
+    └── extension-protocol-v1.md       ← workflow / manifest / lifecycle-hooks 三套协议 v1 约定
 ```
 
 ### 各子目录定位
@@ -45,9 +54,10 @@ framework/docs/
 | 子目录          | 写什么                                                                                | 不写什么                                              |
 | --------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `skills/`       | 每个阶段的设计哲学、关键产物、常见坑、与下一个阶段的契约                              | 操作步骤（在 SKILL.md 里）、命令行用法（在 README）   |
-| `concepts/`     | 跨 Skill 的横向理念：术语守门、Scope 守门、双 Harness、模型无关性                     | 单 Skill 的细节                                       |
+| `profiles/`     | 特定 `project_profile` 下的宿主工具链专文（hvigor / hdc / hypium 等），供 runbook 链接 | 通用 harness 概念（concepts）或全 phase 操作复述（operations） |
+| `concepts/`     | 跨 Skill 的横向理念：术语守门、Scope 守门、双 Harness、模型无关性、可演进性分层       | 单 Skill 的细节                                       |
 | `operations/`   | "实际怎么跑 framework"：harness 命令、报告路径、CI 集成、排错案例                     | 设计为什么这样（在 concepts 里）                      |
-| `evolution/`    | 大版本演进的设计记录（v2.0 → v2.1 → v2.2 ...），偏故事性                              | 文件级 changelog（在 MIGRATION.md 里）                |
+| `evolution/`    | 大版本演进的设计记录（v2.0 → v2.1 → v2.2 ...），偏故事性；见 `evolution/README` 已完成表 | 文件级 changelog（在 MIGRATION.md 里）                |
 
 ## 维护规则
 

@@ -4,7 +4,7 @@
 >
 > **不是**：单 Skill 的使用手册（在各 SKILL.md 里）；也不是设计讲解（在 [`../overview.md`](../overview.md) 里）。
 >
-> **读完后你会**：知道 9 个 phase 各自管什么、单条命令怎么写、报告路径在哪、常见错误的排查思路。
+> **读完后你会**：知道默认 **spec-driven** workflow 下的 **phase**（全局 5 + 功能 6）各自管什么、单条命令怎么写、报告路径在哪、常见错误的排查思路。**Phase 合法集合 SSOT**：[`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml)；工作流入门见顶层 [`README.md`](../../README.md)「阶段化工作流」。
 
 ---
 
@@ -27,21 +27,38 @@
 
 ---
 
-## 2. Phase 总览（9 个阶段）
+## 2. Phase 总览（spec-driven：**11** 项 `artifacts`，分全局 / 功能）
 
-| Phase       | 对象                                          | `--feature` | 说明                                                                                                                |
-| ----------- | --------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| `catalog`   | `doc/module-catalog.yaml`                     | **不需要**（全局） | Skill 0 · Phase A 产物；含模块画像结构、`easily_confused_with`、`key_exports_fresh_vs_index`、`feature_scope_integrity` 等 |
-| `glossary`  | `doc/glossary.yaml`                           | **不需要**（全局） | Skill 0 · Phase B 产物；术语结构、`seed_no_technical_words` 等                                                         |
-| `prd`       | `doc/features/<feature>/PRD.md`               | **必填**    | `terminology_mapping_table` / `scope_matches_catalog` / `terminology_modules_within_scope` / `glossary_terms_used_in_body` 等 |
-| `design`    | `doc/features/<feature>/design.md`            | **必填**    | Scope 与 PRD 继承一致性 / `architecture_impact` 声明                                                                |
-| `coding`    | 代码 + contracts                              | **必填**    | `diff_within_scope` / 分层 import / `named_business_handler` / **宿主编译门禁**（hmos-app 典型：`coding_hvigor_build`；是否启用见 active profile）   |
-| `review`    | `doc/features/<feature>/review-report.md`     | **必填**    | Review 结论一致性、BLOCKER 数量                                                                                     |
-| `ut`        | UT 清单与入口                                 | **必填**    | 业务级 UT 的全部门禁；详见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)                                  |
-| `testing`   | 真机测试计划 / 报告                            | **必填**    | P0/P1 通过率、device AC 追溯                                                                                        |
-| `docs`      | `framework/docs/**.md`                        | **不需要**（全局） | v2.4 起：framework 自身对外文档新鲜度；详见 §6                                                                       |
+合法 phase 集合与 **DAG `requires`** 以 **[`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml)** 为准（实例可通过 `framework.config.json > active_workflow` 切换到其它 YAML）。下表对齐该文件：**全局**不要求 `--feature`（runner 使用 `_global`）；**功能**必须 `--feature <name>`。
 
-全局阶段在 `harness-runner` 内使用哨兵 feature `_global`，报告目录形如：
+### 2.1 全局 phase（scope=global，`requires` 均为 `[]`）
+
+| Phase       | check 脚本            | 对象 / 摘要 |
+| ----------- | --------------------- | ----------- |
+| `extensions` | `check-extensions.ts` | 实例扩展目录 [`doc/extensions/`](../../../doc/extensions/README.md)（manifest、hooks、skills 等）合法性 |
+| `init`       | `check-init.ts`       | framework-init **体检**：`framework.config.json`、入口文件、adapter 模板、宿主工具链、`check-init.json` |
+| `catalog`    | `check-catalog.ts`    | `doc/module-catalog.yaml`；画像结构、`easily_confused_with`、`key_exports_fresh_vs_index`、`feature_scope_integrity` 等 |
+| `glossary`   | `check-glossary.ts`    | `doc/glossary.yaml`；术语结构、`seed_no_technical_words` 等 |
+| `docs`       | `check-docs.ts`      | `framework/docs/**/*.md` 登记与新鲜度（`DOC_INVENTORY.yaml`）；详见 §6 |
+
+### 2.2 功能 phase（scope=feature，依赖关系见 YAML `requires`）
+
+| Phase       | 对象                     | `--feature` | `requires`（前置） |
+| ----------- | ------------------------ | ----------- | ------------------ |
+| `prd`       | `doc/features/<feature>/PRD.md` | **必填** | `catalog`, `glossary` |
+| `design`    | `design.md` 等           | **必填** | `prd` |
+| `coding`    | 代码 + contracts       | **必填** | `design` |
+| `review`    | `review-report.md`     | **必填** | `coding` |
+| `ut`        | DAG / `*.test.ets` 等  | **必填** | `coding` |
+| `testing`   | 真机计划 / 报告        | **必填** | `ut` |
+
+`review` 与 `ut` 均挂在 `coding` 之后并行延伸；`testing` 必须在 `ut` PASS 链路之后。
+
+### 2.3 `compat.yaml`（不是 phase）
+
+存量 feature 在 framework 升级后遇 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做 **可过期** 临时降级，仅作用于 **prd / design / coding / review / ut**（**不含 `testing`**；全局 phase **短路**）。协议见 [`../evolution/compat-protocol-v1.md`](../evolution/compat-protocol-v1.md)。
+
+全局阶段在 `harness-runner` 内使用哨兵 feature **`_global`**，报告目录形如：
 `framework/harness/reports/_global/<phase>/`。
 
 ---
@@ -55,17 +72,18 @@
 ```powershell
 Set-Location "framework/harness"
 
-# Skill 0 全局产物（无 --feature）
+# ---------- 全局 phase（无 --feature；顺序可按需调整；init 需 adapter 名） ----------
+npx ts-node harness-runner.ts --phase extensions
+npx ts-node harness-runner.ts --phase init --adapter claude   # 替换为当前 adapter
 npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase glossary
-
-# 功能需求六阶段（需 --feature；home-page 替换为你的 feature 名）
-foreach ($p in @('prd','design','coding','review','ut','testing')) {
-  npx ts-node harness-runner.ts --phase $p --feature home-page
-}
-
-# v2.4：framework 自身文档新鲜度
 npx ts-node harness-runner.ts --phase docs
+
+# ---------- 功能 phase（需 --feature；须满足 workflow requires，如 prd 前先跑过 catalog+glossary） ----------
+$feat = "home-page"
+foreach ($p in @('prd','design','coding','review','ut','testing')) {
+  npx ts-node harness-runner.ts --phase $p --feature $feat
+}
 ```
 
 ### 3.2 bash（Linux / macOS / WSL）
@@ -73,20 +91,24 @@ npx ts-node harness-runner.ts --phase docs
 ```bash
 cd framework/harness
 
+npx ts-node harness-runner.ts --phase extensions
+npx ts-node harness-runner.ts --phase init --adapter claude   # 替换为当前 adapter
 npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase glossary
-
-for p in prd design coding review ut testing; do
-  npx ts-node harness-runner.ts --phase "$p" --feature home-page
-done
-
 npx ts-node harness-runner.ts --phase docs
+
+FEATURE=home-page
+for p in prd design coding review ut testing; do
+  npx ts-node harness-runner.ts --phase "$p" --feature "$FEATURE"
+done
 ```
 
 ### 3.3 单阶段示例
 
 ```bash
 # 全局
+npx ts-node harness-runner.ts --phase extensions
+npx ts-node harness-runner.ts --phase init --adapter claude
 npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase docs
 
@@ -116,6 +138,8 @@ npx ts-node harness-runner.ts --list
 ```
 framework/harness/reports/
 ├── _global/
+│   ├── extensions/              ← manifest / extension 门禁
+│   ├── init/
 │   ├── catalog/
 │   │   ├── script-report.json   ← 脚本检查结果（程序消费）
 │   │   ├── summary.json         ← 稳定短摘要（verdict / blockers / next_action）
@@ -123,7 +147,7 @@ framework/harness/reports/
 │   │   ├── merged-report.md     ← 合并后人类可读报告
 │   │   └── trace.json           ← 起点 commit + 时间戳
 │   ├── glossary/
-│   └── docs/                    ← v2.4 起
+│   └── docs/                    ← framework 文档新鲜度
 └── <feature>/
     ├── prd/
     ├── design/
@@ -252,6 +276,8 @@ framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ## 7. 与 Slash / Skill 的对应关系
 
+全局 phase **`extensions`** / **`init`** / **`docs`** 一般由 CI 或维护者直接用 `--phase`；无统一 slash（adapter 而异时以 [`agents/README.md`](../../agents/README.md) 为准）。`init` 对应 Skill：**[`00-framework-init`](../../skills/00-framework-init/SKILL.md)**。
+
 | Phase       | Slash                                          | Skill                                                                            |
 | ----------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
 | `catalog`   | `/catalog-bootstrap`                           | [`../../skills/0-catalog-bootstrap/SKILL.md`](../../skills/0-catalog-bootstrap/SKILL.md) |
@@ -272,16 +298,19 @@ framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ### 8.1 PR 卡门（推荐）
 
-每个 PR 必跑：
+每个 PR 建议至少跑齐**与 spec-driven 对齐**的全局 phase + 受影响 feature 的六阶段：
 
 ```bash
 cd framework/harness
 npm install --no-audit --no-fund
 
-# 全局 phase（任何 PR 都跑）
+# 全局 phase
+npx ts-node harness-runner.ts --phase extensions
 npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase glossary
 npx ts-node harness-runner.ts --phase docs
+# init：升级 / 改 adapter 时再跑，不必每个 PR
+# npx ts-node harness-runner.ts --phase init --adapter <name>
 
 # 受影响的 feature（按变更文件路径筛选）
 for f in $(detect_affected_features); do
@@ -361,11 +390,9 @@ Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 
 v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
 实例根**全局入口** §5.1.1（与 `AGENTS.md.template` 渲染结果一致）；下面只列日常操作动作。
 
-> **本节仅针对 feature 维度阶段**（PRD / design / coding / review / UT / device-testing）。
-> 全局阶段 `init` / `catalog` / `glossary` / `docs` 没有完成回执模板：
-> v2.8.1 起 `harness-runner.ts` 对全局阶段直接 skip 写 state，Stop hook 同时兜底
-> 在看到 `state.phase` 是这四值之一时一律 allow。所以你跑 `--phase init` 之类
-> 命令时不会留下 `.current-phase.json`，也不需要也无法填写"init 完成回执"。
+> **本节针对 feature 维度阶段**（PRD / design / coding / review / UT / testing）。
+> 所有在 **当前 [`active_workflow`](../../workflows/spec-driven.workflow.yaml)** 中声明为 **`scope: global`** 的阶段（默认含 `extensions` / `init` / `catalog` / `glossary` / `docs`）：**不写** `.current-phase.json`（runner v2.8.1+），也没有 feature 维度完成回执模板。
+> 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1「四件套闭环」判定。
 
 ### 10.2 配置：`framework.config.json > state_machine`
 

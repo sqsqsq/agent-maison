@@ -6,6 +6,7 @@
 | 文件                                                       | 写了什么                                                              |
 | ---------------------------------------------------------- | --------------------------------------------------------------------- |
 | [`terminology-guarding.md`](./terminology-guarding.md)     | 术语守门：catalog + glossary + 三道 BLOCKER + 演进路线图              |
+| [`extensibility.md`](./extensibility.md)                 | 扩展分层与合并顺序：workflow / profile / adapter / `doc/extensions` SSOT |
 
 ## 候选议题（按需补）
 

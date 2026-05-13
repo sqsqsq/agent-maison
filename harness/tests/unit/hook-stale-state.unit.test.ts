@@ -10,7 +10,7 @@
 //     - 与 hook 内部实现解耦：未来重构成 lib 抽包也不影响这层；
 //     - 同时挂上"配置一致性"检查（T11）防 HOOK_DEFAULT_* 与 DEFAULT_STATE_MACHINE 漂移。
 //
-// 覆盖矩阵（12 case，对齐 Stop hook 跨会话隔离设计说明）：
+// 覆盖矩阵（13+ case，对齐 Stop hook 跨会话隔离设计说明）：
 //   T1  同会话 + 闭环达成        → exit 0
 //   T2  同会话 + 未闭环          → exit 2 + 中性文案（包含"继续 / 放弃二选一"）
 //   T3  跨会话遗留               → exit 0 + advisory（"与当前会话无关"）
@@ -65,7 +65,7 @@ interface FixtureOptions {
   writeStateFile?: boolean;
   /** framework.config.json 的 state_machine 段；不传则不写本字段（走 hook 默认值） */
   stateMachine?: { grace_period_minutes?: unknown; ttl_hours?: unknown } | null;
-  /** state.phase；默认 'coding'。全局阶段（init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
+  /** state.phase；默认 'coding'。全局阶段（extensions / init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
   phaseOverride?: string;
   /** 可选写入 reports/<feature>/<phase>/summary.json，供 hook 阻断文案读取 next_action。 */
   summaryNextAction?: string;
@@ -440,8 +440,8 @@ function testT12_invalidConfigFallsBack(): void {
 }
 
 // --------------------------------------------------------------------------
-// 全局阶段豁免（v2.8.1 回归修复）：init / catalog / glossary / docs 不参与
-// 全局入口 §5.1 闭环判据：hook 看到 state.phase 是这四个值之一一律 allow。
+// 全局阶段豁免（v2.8.1+）：extensions / init / catalog / glossary / docs 不参与
+// 全局入口 §5.1 闭环判据：hook 看到 state.phase ∈ GLOBAL_PHASES 一律 allow。
 // --------------------------------------------------------------------------
 
 function testT13_globalPhaseInitBypassesClosure(): void {
@@ -468,7 +468,7 @@ function testT13_globalPhaseInitBypassesClosure(): void {
 }
 
 function testT14_globalPhaseCatalogBypassesClosure(): void {
-  // 同 T13，覆盖 catalog 全局阶段。glossary / docs 同源，不再单独枚举。
+  // 同 T13，覆盖 catalog 全局阶段。glossary / docs 等同源，不再逐个枚举。
   const dir = makeFixture({
     closed: false,
     phaseOverride: 'catalog',
@@ -478,6 +478,26 @@ function testT14_globalPhaseCatalogBypassesClosure(): void {
   try {
     const out = runHook({ session_id: 'sid-A' }, dir);
     assertEq(out.status, 0, 'T14 phase=catalog + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT14b_globalPhaseExtensionsBypassesClosure(): void {
+  // spec-driven workflow 将 extensions 列为 scope=global；须与 runner 不写 state + hook 兜底一致。
+  const dir = makeFixture({
+    closed: false,
+    phaseOverride: 'extensions',
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1 * 60 * 1000,
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(
+      out.status,
+      0,
+      'T14b phase=extensions + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）',
+    );
   } finally {
     rmDir(dir);
   }
@@ -519,6 +539,10 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'T12 非法 config → hook 端回退默认值不崩', fn: testT12_invalidConfigFallsBack },
   { name: 'T13 phase=init 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT13_globalPhaseInitBypassesClosure },
   { name: 'T14 phase=catalog 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT14_globalPhaseCatalogBypassesClosure },
+  {
+    name: 'T14b phase=extensions 全局阶段 → 即使 receipt=null 也 exit 0',
+    fn: testT14b_globalPhaseExtensionsBypassesClosure,
+  },
   { name: 'T15 未闭环阻断文案包含 summary.next_action', fn: testT15_blockReasonIncludesSummaryNextAction },
 ];
 

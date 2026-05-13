@@ -8,6 +8,14 @@
 | `MIGRATION.md`      | 升级 / 迁移用户指南（字段级 changelog + 操作步骤）           | 工具书      |
 | `evolution/`        | 大版本背后的设计故事（"为什么 v2 翻车 / v2.1 怎么修正"）     | 演进笔记    |
 
+## 已完成（沉淀为专文）
+
+| 文档 | 角色 |
+| ---- | ---- |
+| [`compat-protocol-v1.md`](./compat-protocol-v1.md) | Feature 目录 `compat.yaml`：降级算法、过期、与回填脚本 / Context Gate 边界 |
+| [`extension-e2e-acceptance.md`](./extension-e2e-acceptance.md) | 实例扩展与 lifecycle hook、`render-agents-md` 桥接手动手验收 |
+| [`extension-protocol-v1.md`](./extension-protocol-v1.md) | extension / workflow / hooks 三套协议的 schema_version 与 breaking 约定（v1 起点） |
+
 ## 候选议题（按需补）
 
 - `v2-to-v2.1-ut-rollback.md`：v2 强制 UseCase 类的失败 + v2.1 回退为 YAML 规约

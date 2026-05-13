@@ -54,6 +54,9 @@ docs:
       # 入口 README（overview 与之分工：README 偏使用入门，overview 偏对外讲解）
       - framework/README.md
       - framework/docs/profiles/hmos-app-harness-toolchain.md
+      - framework/workflows/spec-driven.workflow.yaml
+      - framework/harness/compat-loader.ts
+      - framework/specs/feature-compat.schema.yaml
     update_triggers:
       - 任意 SKILL.md 主体段落（Skill 定位 / 关键产物 / 主门禁）变更
       - framework.config.json schema_version bump
@@ -61,6 +64,7 @@ docs:
       - 新增 / 删除 BLOCKER 级 harness 规则
       - docs-rules.yaml 中 profile_skill_assets_resolvable 或 docs 阶段追溯规则变更
       - 三层分离 / 双 harness 等核心设计理念调整
+      - workflow DAG（`spec-driven.workflow.yaml`）或 feature-compat 能力与 overview §1.3.1 / §2 叙事不一致
 
   # --------------------------------------------------------------------------
   # Skill 阶段讲解
@@ -78,6 +82,7 @@ docs:
       - framework/profiles/hmos-app/harness/hdc-runner.ts
       - framework/profiles/hmos-app/harness/hvigor-runner.ts
       - framework/harness/scripts/utils/ts-compile.ts
+      - framework/profiles/hmos-app/harness/ts-compile.ts
       - framework/harness/scripts/utils/git-diff.ts
       - framework/harness/prompts/verify-ut.md
       - framework/docs/profiles/hmos-app-harness-toolchain.md
@@ -87,6 +92,16 @@ docs:
       - hypium 输出格式或 hdc 命令改变（影响 hdc-runner.ts）
       - DevEco hap 命名约定改变
       - tsc / hvigor 调用方式改变
+
+  - path: framework/docs/skills/phase6-keyword-allowlist.md
+    role: Phase 6 关键词验收命中分流（有意保留 vs 应继续清理），与 `rg`/testing 门禁口径对齐
+    audience: framework 维护者 / Phase 6 正文词表清理与复验
+    sources:
+      - framework/harness/scripts/check-testing.ts
+      - framework/specs/phase-rules/testing-rules.yaml
+    update_triggers:
+      - testing phase 关键词 / allowlist 判定口径变更
+      - Phase 6 脚本对「兼容键名 / 五层字面 / fixture」的排除规则变更
 
   # --------------------------------------------------------------------------
   # 可演进性与扩展分层
@@ -98,6 +113,7 @@ docs:
       - framework/README.md
       - framework/agents/README.md
       - framework/harness/profile-loader.ts
+      - framework/workflows/spec-driven.workflow.yaml
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
       - framework/specs/lifecycle-hooks-schema.yaml
@@ -160,10 +176,13 @@ docs:
   # 操作手册
   # --------------------------------------------------------------------------
   - path: framework/docs/operations/harness-runbook.md
-    role: Harness 全链路验证操作手册（9 个 phase 怎么跑、报告路径、常见问题；宿主工具链细节见 profiles/hmos-app-harness-toolchain.md）
+    role: Harness 全链路验证操作手册（默认 spec-driven：**11** 项 phase、`--feature`/`_global`、报告路径、常见问题；宿主工具链见 profiles/hmos-app-harness-toolchain.md）
     audience: framework 维护者 / CI 集成 / 排查脚本 harness 失败的开发者
     sources:
       - framework/harness/harness-runner.ts
+      - framework/workflows/spec-driven.workflow.yaml
+      - framework/agents/claude/templates/hooks/check-phase-completion.mjs
+      - framework/harness/scripts/check-extensions.ts
       - framework/harness/scripts/check-catalog.ts
       - framework/harness/scripts/check-glossary.ts
       - framework/harness/scripts/check-prd.ts
@@ -222,6 +241,4 @@ docs:
       - script-report compat_applied / compat_expired 结构变更
       - backfill:context CLI 或退出码语义变更
 
-# 备注：其他 Skill（1 PRD / 2 design / 3 coding / 4 code-review / 6 device-testing）
-# 的对外讲解材料尚未撰写，按节奏补齐；写完后再加入 docs[] 并填 sources。
-# inventory 不登记尚未存在的文件（避免 doc_files_exist 长期噪声 MAJOR）。
+# 未在 docs[] 中出现的 `framework/docs/**/*.md`（若存在）应在补写 inventory 或移出目录，避免 doc_files_exist MAJOR。

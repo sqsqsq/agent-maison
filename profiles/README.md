@@ -2,7 +2,7 @@
 
 与 `framework/agents/<adapter>/` **正交**：
 
-- **adapter**：Claude / Cursor / generic — 决定入口文件、rules、hopoks 等 IDE 集成形态。
+- **adapter**：Claude / Cursor / generic — 决定入口文件、rules、hooks 等 IDE 集成形态。
 - **profile**（本目录）：`hmos-app`、`generic` 等 — 决定 HarmonyOS / 文档型等 harness 能力与 phase-rules overlay。
 
 激活方式：实例根 `framework.config.json` 的 `project_profile.name`（及可选 `sub_variant`）。未声明时 harness 默认 `hmos-app` 以保持历史行为。

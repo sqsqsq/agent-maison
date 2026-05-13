@@ -65,4 +65,4 @@ profile-skill-asset:<skill-id>/<asset_key>
 
 ## Harness
 
-门禁 runner 与脚本位于 [../harness/](../harness/)。具体命令与各 Skill 的「完成标准」一致。
+门禁 runner 与脚本位于 [../harness/](../harness/)。默认 **spec-driven** workflow 下合法 phase、`requires` DAG、全局阶段无 `--feature` 等均以 [`../workflows/spec-driven.workflow.yaml`](../workflows/spec-driven.workflow.yaml) 为准；命令行与 CI 范式见 **[`../docs/operations/harness-runbook.md`](../docs/operations/harness-runbook.md)**。各 Skill 的「完成标准」仍以对应 SKILL.md 正文为准。

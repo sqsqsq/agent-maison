@@ -6,11 +6,13 @@
 
 ## 合并顺序（overlay precedence）
 
-```
-framework default → profile overlay → workflow schema → instance extensions
-```
+自上而下争权（**后者覆盖前者**）：**实例 `doc/extensions`** > **`workflows/` 中选定的 DAG** > **profile**（`profiles/<name>/`）> **framework 仓库默认**。
 
-后者覆盖前者：**实例扩展 > workflow > profile > framework 默认**（同一字段合并策略见各 loader 实现）。
+与顶层 [README 逻辑分层](../../README.md) 表内「自底向上叠加」四句同义：先落 framework 默认，再叠 profile、workflow、instance extensions；最终在**同一键**上发生冲突时按上式裁决。实现入口：[profile-loader.ts](../../harness/profile-loader.ts)（phase-rules overlay）、[extension-loader.ts](../../harness/extension-loader.ts)（manifest / capability）。
+
+```
+framework 默认 → profile → workflow（active_workflow YAML）→ doc/extensions（实例根）
+```
 
 ---
 
