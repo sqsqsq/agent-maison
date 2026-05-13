@@ -1,0 +1,26 @@
+# doc/features/<feature>/compat.yaml — 框架升级兼容协议 v1（字段约束 SSOT）
+
+<!-- 机器校验由 framework/harness/compat-loader.ts 手写 narrow 逻辑实现；本文件为协议说明。 -->
+
+## 必填与类型（附录 A.1）
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `schema_version` | string | 是 | 固定 `"1.0"`；否则 `compat_invalid_schema_version`，compat 视为 disabled |
+| `feature` | string | 是 | 必须与 compat 所在目录名一致（`dirname` = feature）；否则 `compat_feature_mismatch` |
+| `since_framework_version` | string | 否 | 审计用自由文本 |
+| `exempt_checks` | string[] | 是 | 至少 1 项；每项为完整 check `id`，或**仅后缀**带 `*` 的前缀模式（禁止中缀 `*`） |
+| `reason` | string | 是 | trim 后非空 |
+| `scheduled_backfill_by` | string | 是 | `YYYY-MM-DD` 或可 `Date.parse` 的 ISO 8601 |
+| `phases` | string[] | 否 | 缺省 = `prd`、`design`、`coding`、`review`、`ut` 全开；若有则每项须属于该集合 |
+
+## 行为摘要
+
+- 不存在 `compat.yaml`：严格门禁，无副作用。
+- 解析/字段非法：向 harness 结果追加 **MINOR / WARN** advisory（不替代原 BLOCKER），compat 不生效。
+- `scheduled_backfill_by` 过期（UTC 口径，见 `compat-loader.isScheduledBackfillExpired`）：不降级；追加 `compat_expired` **BLOCKER / FAIL**。
+- 合法且未过期：将命中 `exempt_checks` 的 **BLOCKER + FAIL** 降为 **MINOR + WARN**，`details` 追加 `[compat_downgraded by doc/features/<feature>/compat.yaml]`。
+
+## 与宿主配置的关系
+
+**不**读取、不写入实例根 `framework.config.json`；compat 为 feature 过程态，与全局 DSL 解耦。

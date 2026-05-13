@@ -1129,6 +1129,11 @@ export function featureDir(projectRoot: string, feature: string): string {
   return path.join(featuresDirPath(projectRoot), feature);
 }
 
+/** feature 局部的框架升级 compat 约定路径（<features_dir>/<feature>/compat.yaml） */
+export function featureCompatPath(projectRoot: string, feature: string): string {
+  return path.join(featureDir(projectRoot, feature), 'compat.yaml');
+}
+
 /**
  * feature 目录下的某个文件的绝对路径，如 PRD.md / design.md / contracts.yaml /
  * acceptance.yaml / review-report.md / test-plan.md / test-report.md 等。
