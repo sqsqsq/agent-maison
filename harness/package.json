@@ -13,7 +13,8 @@
     "check:testing": "ts-node harness-runner.ts --phase testing",
     "test:fixtures": "ts-node tests/run-tests.ts",
     "test:unit": "ts-node tests/run-unit.ts",
-    "test": "npm run test:unit && npm run test:fixtures"
+    "test": "npm run test:unit && npm run test:fixtures",
+    "backfill:context": "ts-node scripts/backfill-context-exploration.ts"
   },
   "dependencies": {
     "yaml": "^2.7.0",
