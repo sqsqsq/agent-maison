@@ -24,6 +24,16 @@
 - P0/P1 且 `ut_layer in [unit, both]` 的验收项是否 100% 有测试追溯；
 - UT 本身是否真的编译、装机、运行过，而不是只通过了文本扫描。
 
+### 1.1 与正文 SKILL 的版本对齐（v2.1 / v2.3）
+
+本节保证对外讲解与 [`../../skills/5-business-ut/SKILL.md`](../../skills/5-business-ut/SKILL.md) 同一口径；细节仍以正文为准。
+
+- **Context Exploration Gate**：在输出「UT 规划清单」并进入用户确认门前，必须先落盘 `doc/features/<feature>/ut/context-exploration.md`（模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)）。
+- **HARD STOP 规划确认门**：用户未确认清单前不得写 DAG / UT；若必须改 `src/main`，走 SKILL 文末单独授权流程，不得混在规划确认里。
+- **可测性与 mock-plan（v2.3）**：新 feature 一律强制 `ut/testability-audit.md`，存在 L0/L1/L2 可测项时 **必填** `ut/mock-plan.yaml`；存量 feature 仅在再次进入 Skill 5 且变更 UT 相关产物时回补。L3 接缝只允许构造注入、wrapper、提取命名方法、setter 注入等 **显式** 手段（禁止「换全局单例」式敷衍）。
+- **入口约定**：只做 Step 1.5 / 1.6 时，在 **`/business-ut`**（或等价跳板）内向 agent 声明即可；**不**再提供独立 `/ut-audit` slash。
+- **Harness 能力命名**：中立叙述使用 `ut.compile` / `ut.run`；**hmos-app** 报告里仍常见历史规则 ID `ut_hvigor_*` / `ut_tsc_compiles`，以 profile 注册与 `check-ut.ts` 输出为准。
+
 ---
 
 ## 2. 设计思想
@@ -205,7 +215,7 @@ flowchart LR
 **脚本 Harness（`check-ut.ts`）**
 
 - **管什么（确定性、可复现）**：  
-  文件与 schema 是否齐、`it()` 是否带上 `[AC-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **profile 注册的编译/真机类检查**（**hmos-app** 常见：`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`；细则见 [§6](#6-质量门禁) 与 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)）。
+  文件与 schema 是否齐（含 v2.3 下 testability-audit / mock-plan 等契约）、`it()` 是否带上 `[AC-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **profile 注册的编译/运行类检查**（能力侧为 `ut.compile` / `ut.run`；**hmos-app** 报告常见 ID：`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`；细则见 [§6](#6-质量门禁) 与 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)）。
 - **产出**：`framework/harness/reports/<feature>/ut/` 下的 `script-report.json`、**宿主构建/运行**日志（hmos-app：hvigor/hdc）、以及流程中的 `trace.json`（与改源码对账用）。
 
 **AI Harness（`verify-ut.md`）**
@@ -334,6 +344,13 @@ flowchart TD
 - 命名业务入口是否真实存在；
 - data boundary 是哪些既有类；
 - UT 是否需要 `use-cases.yaml` 作为主规划来源。
+
+在进入下列路径 A/B 的详细规划表之前，还须满足正文 SKILL 的闸门顺序：
+
+1. **Context Exploration**：落盘 `ut/context-exploration.md`（探索摘要、`key_inputs_read` 等见模板）。
+2. **展示「UT 规划清单」并 HARD STOP**：等待用户明确确认后，才允许进入 Step 1.5 / 1.6 与后续写文件。
+3. **Step 1.5 可测性预检**：产出 `ut/testability-audit.md`（覆盖全部 `unit`/`both` AC/BD）。
+4. **Step 1.6 mock-plan**：存在 L0/L1/L2 可测项时产出 `ut/mock-plan.yaml`，然后再进入 Step 2（选路径）与 DAG / UT 实现。
 
 ### Step 2：选择规划路径
 
@@ -568,11 +585,12 @@ AI Harness 重点看脚本难以判断的内容：
 
 ---
 
-## 9. 维护同步（2026-05）
+## 9. 维护同步（2026-05-13）
 
-- **宿主 UT 实现**：Hypium / hdc / hvigor 相关逻辑在 `framework/profiles/hmos-app/harness/`（`ut-host-impl.ts`、`hvigor-runner.ts`、`hdc-runner.ts`）；`framework/harness/scripts/utils/*-runner.ts` 仅为重导出兼容入口。  
-- **脚本入口**：`check-ut.ts` 通过 `profile-host-loader` 调用宿主；真机执行仍以 `ut.run`（历史 id `ut_hvigor_test`）BLOCKER 为准。  
-- **导出入口**：跨模块出口文件名遵循 `cross_module_exports_file`，允许小写 `index.ets`，不触发 coding 阶段「文件名须 PascalCase」误报。
+- **宿主 UT 实现**：Hypium / hdc / hvigor 相关逻辑在 `framework/profiles/hmos-app/harness/`（`ut-host-impl.ts`、`hvigor-runner.ts`、`hdc-runner.ts`）；`framework/harness/scripts/utils/ts-compile.ts` 等与 profile 侧 `ts-compile.ts` 协同；旧版 `*-runner` 重导出若仍存在则仅作兼容入口，以 inventory 列出路径为准。  
+- **脚本入口**：`check-ut.ts` 经 `profile-host-loader`、`ut-suite-entry-shim` 调度宿主；`ut-rules.yaml` 与 `verify-ut.md` 变更时须复核本节与 §6。  
+- **导出入口**：跨模块出口文件名遵循 `cross_module_exports_file`，允许小写 `index.ets`，不触发 coding 阶段「文件名须 PascalCase」误报。  
+- **本文刷新**：已对照 `SKILL.md` v2.1/v2.3（Context Gate、规划确认门、testability-audit / mock-plan、`ut.compile`/`ut.run` 叙述）做一次语义对齐。
 
 ---
 
@@ -583,6 +601,6 @@ AI Harness 重点看脚本难以判断的内容：
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
 
 <!--
-  last-synced: 2026-05-11 (ut-host-impl / profile-host-loader / naming export stem)
+  last-synced: 2026-05-13 (SKILL v2.1/v2.3 gates + ut.compile/ut.run wording + harness inventory sources)
 -->
 
