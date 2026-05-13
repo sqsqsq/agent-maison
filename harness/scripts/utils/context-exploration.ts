@@ -10,11 +10,12 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { receiptDirPath } from '../../config';
 import { CheckResult } from './types';
+import { fillCompatMessage, SUGGESTION_CONTEXT_EXPLORATION_MISSING } from '../../compat-messages';
 
 export type ContextExplorationPhase = 'prd' | 'design' | 'coding' | 'review' | 'ut';
 
 /** 各阶段 frontmatter.key_inputs_read 中须能覆盖到的子串（小写匹配，profile-neutral） */
-const PHASE_INPUT_SUBSTRINGS: Record<ContextExplorationPhase, string[]> = {
+export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExplorationPhase, string[]> = {
   prd: ['glossary', 'module-catalog', 'architecture'],
   design: ['prd', 'acceptance', 'architecture', 'module-catalog', 'framework.config'],
   coding: ['design', 'contract', 'acceptance'],
@@ -89,8 +90,7 @@ export function checkContextExplorationArtifact(
         severity: 'BLOCKER',
         status: 'FAIL',
         details: `缺失：${relFromRoot}`,
-        suggestion:
-          '复制 framework/harness/templates/context-exploration.md，按 Skill「Context Exploration Gate」填写后保存。',
+        suggestion: fillCompatMessage(SUGGESTION_CONTEXT_EXPLORATION_MISSING, feature, phase),
         affected_files: [relFromRoot],
       },
     ];
@@ -177,7 +177,7 @@ export function checkContextExplorationArtifact(
   }
 
   const haystack = flattenKeyInputs(fm.key_inputs_read);
-  const required = PHASE_INPUT_SUBSTRINGS[phase];
+  const required = CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS[phase];
   const missing = required.filter(sub => !haystack.includes(sub.toLowerCase()));
   if (missing.length > 0) {
     results.push({
