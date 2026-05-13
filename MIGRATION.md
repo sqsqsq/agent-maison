@@ -203,6 +203,33 @@ git submodule update --remote framework
 
 详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md) 与 [docs/evolution/extension-e2e-acceptance.md](docs/evolution/extension-e2e-acceptance.md)。
 
+### v2.6：框架升级兼容协议（compat）+ context-exploration 回填
+
+适用：framework 升级后为**既有 feature** 增加新的脚本 BLOCKER（典型：Context Exploration Gate）时，需要在**不修改**实例 `framework.config.json` / 不升全局 schema 的前提下完成过渡。
+
+**核心原则**：
+
+- **framework.config.json 不承载任何具体 feature 名或豁免状态**；不出现「compat 段」或 legacy feature 列表。
+- **过程态落在 feature 目录**：`doc/features/<feature>/compat.yaml`（约定文件名）。删除/归档 feature 即删除 compat。
+- **决策延后到撞墙**：仅当用户对某 `--feature <name> --phase <phase>` 跑 harness 失败时，报告与 suggestion 给出双路径：**回填脚本（推荐）** vs **compat 临时降级**。
+- **Skill 00**：零接触 compat（无 schema diff、无额外公告条目）。
+
+**compat 行为概要**：
+
+- harness 在写 `script-report.json` 前对 `CheckResult[]` 应用 `applyCompatDowngrade`；全局阶段（`init`/`catalog`/`glossary`/`docs`/`extensions`）与 `feature=_global` **短路**。
+- 合法 compat 可将指定 `BLOCKER+FAIL` 降为 `MINOR+WARN`（并在报告增加 `compat_applied`）；`scheduled_backfill_by` 过期则注入 `compat_expired` BLOCKER。
+- 字段 SSOT：`framework/specs/feature-compat.schema.yaml`；演进说明：`framework/docs/evolution/compat-protocol-v1.md`。
+
+**回填脚本**：
+
+```bash
+cd framework/harness && npm run backfill:context -- --feature <name> --phases prd,design,coding,review,ut [--dry-run] [--overwrite]
+```
+
+成功后若曾使用 compat，请手动删除对应 `compat.yaml`。退出码：`0` 成功，`2` 参数/门禁错误，`3` 存在已存在文件且未 `--overwrite` 的跳过项。
+
+**回归**：`cd framework/harness && npm test`；`npx tsc --noEmit -p tsconfig.json`。
+
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。

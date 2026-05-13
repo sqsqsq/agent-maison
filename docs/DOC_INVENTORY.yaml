@@ -204,6 +204,24 @@ docs:
       - extensions 元阶段或 extension manifest 协议变更
       - lifecycle hook 事件集合或 severity 约定变更
 
+  # --------------------------------------------------------------------------
+  # 演进：框架升级 compat 协议（feature 局部）
+  # --------------------------------------------------------------------------
+  - path: framework/docs/evolution/compat-protocol-v1.md
+    role: Feature 目录 compat.yaml 协议：降级算法、过期、与回填脚本 / Context Gate 边界
+    audience: framework 维护者 / 升级后处理存量 feature 的开发者
+    sources:
+      - framework/harness/compat-loader.ts
+      - framework/harness/compat-messages.ts
+      - framework/harness/scripts/utils/context-exploration.ts
+      - framework/harness/scripts/utils/report-generator.ts
+      - framework/harness/scripts/backfill-context-exploration.ts
+      - framework/specs/feature-compat.schema.yaml
+    update_triggers:
+      - compat 字段或降级/过期语义变更
+      - script-report compat_applied / compat_expired 结构变更
+      - backfill:context CLI 或退出码语义变更
+
 # 备注：其他 Skill（1 PRD / 2 design / 3 coding / 4 code-review / 6 device-testing）
 # 的对外讲解材料尚未撰写，按节奏补齐；写完后再加入 docs[] 并填 sources。
 # inventory 不登记尚未存在的文件（避免 doc_files_exist 长期噪声 MAJOR）。
