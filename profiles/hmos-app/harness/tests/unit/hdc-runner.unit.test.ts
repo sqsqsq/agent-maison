@@ -31,6 +31,9 @@ import {
   findOhosTestSignedHap,
   loadAppBundleName,
   loadOhosTestModuleName,
+  loadAppInstallCandidateMeta,
+  parseInstalledBundleVersionFromDump,
+  diagnoseHdcInstallFailure,
 } from '../../../../../harness/scripts/utils/hdc-runner';
 
 export interface UnitCaseResult {
@@ -311,6 +314,104 @@ const cases: Array<{ name: string; run: () => void }> = [
         '错误消息应点出缺失字段',
       );
     }),
+  },
+
+  // --------------------------------------------------------------------------
+  // loadAppInstallCandidateMeta / parseInstalledBundleVersionFromDump / diagnoseHdcInstallFailure
+  // --------------------------------------------------------------------------
+  {
+    name: 'loadAppInstallCandidateMeta: versionCode 数字 + versionName',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'AppScope', 'app.json5'),
+        '{ "app": { "bundleName": "com.example.app", "versionCode": 10002, "versionName": "1.0.2" } }',
+      );
+      const m = loadAppInstallCandidateMeta(root);
+      assertEq(m.bundleName, 'com.example.app', 'bundleName');
+      assertEq(m.versionCode, 10002, 'versionCode');
+      assertEq(m.versionName, '1.0.2', 'versionName');
+    }),
+  },
+  {
+    name: 'loadAppInstallCandidateMeta: versionCode 字符串数字',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'AppScope', 'app.json5'),
+        '{ "app": { "bundleName": "com.example.app", "versionCode": "90001" } }',
+      );
+      const m = loadAppInstallCandidateMeta(root);
+      assertEq(m.versionCode, 90001, 'versionCode');
+    }),
+  },
+  {
+    name: 'loadAppInstallCandidateMeta: 未声明 versionCode → null',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'AppScope', 'app.json5'),
+        '{ "app": { "bundleName": "com.example.app" } }',
+      );
+      const m = loadAppInstallCandidateMeta(root);
+      assertEq(m.versionCode, null, 'versionCode 缺失应为 null');
+    }),
+  },
+  {
+    name: 'parseInstalledBundleVersionFromDump: JSON 含 versionCode',
+    run: () => {
+      const dump = '{"bundleName":"com.example.app","versionCode":5000001}\n';
+      const p = parseInstalledBundleVersionFromDump(dump);
+      assertEq(p.installed, true, 'installed');
+      assertEq(p.versionCode, 5000001, 'versionCode');
+    },
+  },
+  {
+    name: 'parseInstalledBundleVersionFromDump: 文本混排 versionCode',
+    run: () => {
+      const dump = [
+        'bundleName: com.example.app',
+        '"versionCode": 42',
+        'hapModuleInfos:',
+      ].join('\n');
+      const p = parseInstalledBundleVersionFromDump(dump);
+      assertEq(p.installed, true, 'installed');
+      assertEq(p.versionCode, 42, 'versionCode');
+    },
+  },
+  {
+    name: 'parseInstalledBundleVersionFromDump: 未安装提示',
+    run: () => {
+      const p = parseInstalledBundleVersionFromDump('bundle does not exist on device');
+      assertEq(p.installed, false, 'installed');
+      assertEq(p.versionCode, null, 'versionCode');
+    },
+  },
+  {
+    name: 'diagnoseHdcInstallFailure: downgrade → install_downgrade',
+    run: () => {
+      const d = diagnoseHdcInstallFailure('install failed: downgrade versionCode lower than installed', 255);
+      assertEq(d.kind, 'install_downgrade', 'kind');
+      assertIncludes(d.suggestion, 'HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL', '应提示可选 env');
+    },
+  },
+  {
+    name: 'diagnoseHdcInstallFailure: signature → install_signature_mismatch',
+    run: () => {
+      const d = diagnoseHdcInstallFailure('verify signature failed', 1);
+      assertEq(d.kind, 'install_signature_mismatch', 'kind');
+    },
+  },
+  {
+    name: 'diagnoseHdcInstallFailure: conflict → install_conflict',
+    run: () => {
+      const d = diagnoseHdcInstallFailure('bundle conflict detected', 1);
+      assertEq(d.kind, 'install_conflict', 'kind');
+    },
+  },
+  {
+    name: 'diagnoseHdcInstallFailure: 未知 → install_failed',
+    run: () => {
+      const d = diagnoseHdcInstallFailure('something obscure happened', 9);
+      assertEq(d.kind, 'install_failed', 'kind');
+    },
   },
 
   // --------------------------------------------------------------------------

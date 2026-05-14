@@ -67,6 +67,9 @@ export type HdcFailureKind =
   | 'aa_test_timeout'
   | 'aa_test_no_result'
   | 'install_failed'
+  | 'install_downgrade'
+  | 'install_signature_mismatch'
+  | 'install_conflict'
   | 'test_failed';
 
 export interface HdcFailureDiagnosis {
@@ -134,6 +137,52 @@ export function loadAppBundleName(projectRoot: string): string {
     throw new Error('AppScope/app.json5 > app.bundleName 缺失或非字符串');
   }
   return name;
+}
+
+/** Skill 6 装机门禁：与「本次编译输入」对齐的版本信息（来源 AppScope/app.json5）。 */
+export interface AppInstallCandidateMeta {
+  bundleName: string;
+  /** 缺失时为 null，仅跳过数值型降级预检，不阻断装机尝试 */
+  versionCode: number | null;
+  versionName?: string;
+}
+
+/**
+ * 读取 bundleName + versionCode（可选），用于与设备 bm dump 对比。
+ * versionCode 未声明或为非法类型时返回 null，由上层决定是否跳过降级比对。
+ */
+export function loadAppInstallCandidateMeta(projectRoot: string): AppInstallCandidateMeta {
+  const appJson = path.join(projectRoot, 'AppScope', 'app.json5');
+  if (!fs.existsSync(appJson)) {
+    throw new Error(`未找到 AppScope/app.json5：${appJson}`);
+  }
+  const obj = parseJson5(fs.readFileSync(appJson, 'utf-8')) as {
+    app?: {
+      bundleName?: string;
+      versionCode?: number | string;
+      versionName?: string;
+    };
+  };
+  const name = obj?.app?.bundleName;
+  if (!name || typeof name !== 'string') {
+    throw new Error('AppScope/app.json5 > app.bundleName 缺失或非字符串');
+  }
+
+  let versionCode: number | null = null;
+  const rawVc = obj?.app?.versionCode;
+  if (typeof rawVc === 'number' && Number.isFinite(rawVc)) {
+    versionCode = rawVc;
+  } else if (typeof rawVc === 'string') {
+    const s = rawVc.trim();
+    if (s && /^\d+$/.test(s)) {
+      versionCode = Number(s);
+    }
+  }
+
+  const versionName =
+    typeof obj?.app?.versionName === 'string' ? obj.app.versionName : undefined;
+
+  return { bundleName: name, versionCode, versionName };
 }
 
 /**
@@ -225,7 +274,7 @@ export function findOhosTestSignedHap(
 
 export function probeDevices(): DeviceProbeResult {
   const isWin = process.platform === 'win32';
-  const probe = spawnSync('hdc', ['list', 'targets'], {
+  const probe = spawnSync('hdc', [...hdcTargetPrefix(), 'list', 'targets'], {
     encoding: 'utf-8',
     shell: isWin,
     timeout: 5000,
@@ -254,13 +303,162 @@ function truncate(s: string): string {
   return s.length > MAX_LOG_CHARS ? s.slice(0, MAX_LOG_CHARS) + '\n... [truncated]' : s;
 }
 
+/** 多设备时指定序列号：`hdc -t <id> ……`（环境变量 `HARNESS_HDC_TARGET`）。导出供 `probeDevices` 等与装机链路对齐。 */
+export function hdcTargetPrefix(): string[] {
+  const t = process.env.HARNESS_HDC_TARGET?.trim();
+  return t ? ['-t', t] : [];
+}
+
 function runHdc(args: string[], timeoutMs = 60_000): SpawnSyncReturns<string> {
-  return spawnSync('hdc', args, {
+  return spawnSync('hdc', [...hdcTargetPrefix(), ...args], {
     encoding: 'utf-8',
     shell: process.platform === 'win32',
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
   });
+}
+
+export interface HdcBmDumpResult {
+  exitCode: number;
+  output: string;
+}
+
+/** `hdc shell bm dump -n <bundleName>`，输出形态随 API 版本可能为 JSON 或混排文本。 */
+export function runHdcShellBmDump(bundleName: string, timeoutMs = 45_000): HdcBmDumpResult {
+  const ret = runHdc(['shell', 'bm', 'dump', '-n', bundleName], timeoutMs);
+  const merged = `${ret.stdout ?? ''}\n${ret.stderr ?? ''}`;
+  return { exitCode: ret.status ?? -1, output: merged.trim() };
+}
+
+/** bm uninstall：`bm uninstall -n bundleName`，可选 `-k` 保留用户数据（参见宿主 bm-tool）。 */
+export function uninstallBundleViaBm(bundleName: string, opts?: { keepUserData?: boolean }): HdcBmDumpResult {
+  const args = ['shell', 'bm', 'uninstall', '-n', bundleName];
+  if (opts?.keepUserData) {
+    args.push('-k');
+  }
+  const ret = runHdc(args, 120_000);
+  const merged = `${ret.stdout ?? ''}\n${ret.stderr ?? ''}`;
+  return { exitCode: ret.status ?? -1, output: merged.trim() };
+}
+
+export interface InstalledBundleVersionParse {
+  /** true：解析认为 bundle 已安装（含 dump 成功但版本码未解析出） */
+  installed: boolean;
+  /** 已从输出中提取的版本码；无法解析时为 null */
+  versionCode: number | null;
+  /** 无法从文本判定是否安装时供上层记录 */
+  ambiguous?: boolean;
+}
+
+/**
+ * 从 bm dump 文本中提取 versionCode，并粗判「是否未安装」。
+ * 不同 OS/API 输出差异大，失败时不抛错，由 ambiguous / versionCode=null 表达不确定性。
+ */
+export function parseInstalledBundleVersionFromDump(output: string): InstalledBundleVersionParse {
+  const text = output.trim();
+
+  const notInstalledHints =
+    /bundle\s*(name\s*)?does\s*not\s*exist|cannot\s*find|failed\s+to\s+query|no\s+bundle|not\s+installed|不存在|未安装|查询失败|bundleinfo\s*is\s*empty|error\s*code\s*:\s*\d{5}/i.test(
+      text,
+    );
+
+  let versionCode: number | null = null;
+  const q = text.match(/"versionCode"\s*:\s*(\d+)/i);
+  const plain = q ?? text.match(/\bversionCode\s*[:=]\s*(\d+)/i);
+  if (plain) {
+    const n = Number(plain[1]);
+    if (Number.isFinite(n)) {
+      versionCode = n;
+    }
+  }
+
+  if (versionCode === null && text.startsWith('{')) {
+    try {
+      const obj = JSON.parse(text) as { versionCode?: number };
+      if (typeof obj?.versionCode === 'number' && Number.isFinite(obj.versionCode)) {
+        versionCode = obj.versionCode;
+      }
+    } catch {
+      /* 非单一 JSON */
+    }
+  }
+
+  const hasBundleShape =
+    /hapModuleInfos|\bbundleName\b|abilityInfos|applicationInfo/i.test(text);
+
+  let installed = false;
+  if (notInstalledHints) {
+    installed = false;
+  } else if (versionCode !== null || hasBundleShape) {
+    installed = true;
+  }
+
+  const ambiguous = !notInstalledHints && !installed && text.length > 0;
+
+  return {
+    installed,
+    versionCode,
+    ambiguous: ambiguous || undefined,
+  };
+}
+
+/**
+ * 基于 hdc install 合并日志做启发式分类（中文建议便于 Skill / harness 展示）。
+ */
+export function diagnoseHdcInstallFailure(output: string, exitCode: number): HdcFailureDiagnosis {
+  const lower = output.toLowerCase();
+
+  const downgradeHints =
+    /versioncode|version\s*code|downgrade|lower\s+version|older\s+version|版本.*低|降级|无法降级|code\s*962|code\s*956/i.test(
+      output,
+    );
+  if (downgradeHints) {
+    return {
+      kind: 'install_downgrade',
+      summary: `疑为版本降级或设备端版本更高导致拒绝覆盖（hdc install exit=${exitCode}）。`,
+      suggestion: [
+        '在 AppScope/app.json5 提高 app.versionCode 后重新编译打 HAP；或',
+        '手动卸载设备上的该应用后再装：`hdc shell bm uninstall -n <bundleName>`；',
+        '自动化（慎用）：设置环境变量 HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL=1 后重跑 testing harness。',
+      ].join('\n'),
+    };
+  }
+
+  const sigHints =
+    /signature|signing|certificate|cert\b|签名|验签|9625652|9578716/i.test(output);
+  if (sigHints) {
+    return {
+      kind: 'install_signature_mismatch',
+      summary: `疑为签名/证书与设备上已装应用不一致（hdc install exit=${exitCode}）。`,
+      suggestion: [
+        '确认 debug/release 签名配置与设备上现有包一致；或先卸载旧包再安装当前包。',
+        '可手动：`hdc shell bm uninstall -n <bundleName>` 后再执行 `hdc install -r <hap>`。',
+      ].join('\n'),
+    };
+  }
+
+  const conflictHints =
+    /conflict|inconsistent|mismatch|already\s+exists|duplicate|冲突|不一致|包名/i.test(lower);
+  if (conflictHints && !/successfully/.test(lower)) {
+    return {
+      kind: 'install_conflict',
+      summary: `疑为包冲突或元数据不一致（hdc install exit=${exitCode}）。`,
+      suggestion: [
+        '检查 bundleName 是否与设备上其他壳应用冲突；清理冲突应用或更换调试包名。',
+        '查看完整日志中的错误码行；必要时指定设备：`HARNESS_HDC_TARGET=<序列号>`。',
+      ].join('\n'),
+    };
+  }
+
+  return {
+    kind: 'install_failed',
+    summary: `hdc install 失败 (exit=${exitCode})。`,
+    suggestion: [
+      '检查设备是否在线且已授权、存储空间是否充足；',
+      '核对签名/包名是否与设备上已有应用冲突；可先手动执行日志中的 hdc install 命令查看设备侧报错。',
+      '多设备连接时请设置 HARNESS_HDC_TARGET 与 hdc list targets 中的序列号一致。',
+    ].join('\n'),
+  };
 }
 
 /**
@@ -275,14 +473,7 @@ export function installHap(hapPath: string): HdcInstallResult {
   const lower = out.toLowerCase();
   const hasFailureWord = /\bfailed\b|install failed|error\b/.test(lower) && !/successfully/.test(lower);
   const ok = ret.status === 0 && !hasFailureWord;
-  const diagnosis = ok
-    ? undefined
-    : {
-        kind: 'install_failed' as const,
-        summary: `hdc install 失败 (exit=${ret.status ?? -1})。`,
-        suggestion:
-          '检查设备是否在线且已授权、空间是否充足、签名/包名是否冲突；可先手动执行日志中的 hdc install 命令确认设备侧错误。',
-      };
+  const diagnosis = ok ? undefined : diagnoseHdcInstallFailure(out, ret.status ?? -1);
   return { ok, exitCode: ret.status ?? -1, durationMs: Date.now() - t0, output: out, diagnosis };
 }
 

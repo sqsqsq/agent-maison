@@ -1357,6 +1357,7 @@ function checkDeviceTestInstallGate(
     }
 
     const res = dispatchDeviceTestInstall(ctx, {
+      projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
       feature: ctx.feature,
       phase: ctx.phase,

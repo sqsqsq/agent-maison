@@ -22,6 +22,9 @@ export function describeDeviceTestHarnessEnvHints(): string {
     'HARNESS_DEVICE_TEST_PRODUCT：覆盖传给 hvigor 的 `-p product=`（默认与 detectProduct / toolchain.preferredProduct 一致）。',
     'HARNESS_DEVICE_TEST_BUILD_MODE：`debug`（默认）或 `release`。',
     'HARNESS_SKIP_DEVICE_TEST_BUILD / HARNESS_SKIP_DEVICE_TEST_INSTALL：设置后跳过对应步骤；testing harness 将其视为失败（与 coding 阶段跳过真实编译一致）。',
+    'HARNESS_HDC_TARGET：多设备时指定 hdc 序列号（写入后形如 `hdc -t <serial> …`，与 bm dump / install / uninstall 同源）。',
+    'HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL：`1`/`true`/`yes` 时允许在降级预检或首次 install 失败后执行一次 `bm uninstall` 并重试至多一次 install（慎用）。',
+    'HARNESS_DEVICE_TEST_UNINSTALL_KEEP_DATA：与上一变量同时启用时，`bm uninstall` 追加 `-k` 保留用户数据。',
   ].join('\n');
 }
 
