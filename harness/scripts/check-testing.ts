@@ -7,7 +7,8 @@
 // 检查项（与 testing-rules.yaml 对应）：
 //   Structure (plan):  plan_required_chapters, test_case_table_format,
 //                      test_case_priority_values, test_environment_defined,
-//                      pass_criteria_defined, metadata_header
+//                      pass_criteria_defined, device_test_build,
+//                      device_test_install, metadata_header
 //   Structure (report): report_required_chapters, execution_result_table,
 //                       pass_rate_calculated, defect_table_format,
 //                       report_conclusion_with_verdict
@@ -34,6 +35,13 @@ import {
   extractMetadata,
   MdTable,
 } from './utils/markdown-parser';
+import {
+  isCapabilitySkipped,
+  dispatchDeviceTestBuild,
+  dispatchDeviceTestInstall,
+} from '../capability-registry';
+import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
+import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1168,6 +1176,246 @@ function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckRes
 }
 
 // --------------------------------------------------------------------------
+// Skill 6 · device_test.build / device_test.install（profile capability 驱动）
+// --------------------------------------------------------------------------
+
+const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
+
+function checkDeviceTestBuildGate(
+  ctx: CheckContext,
+  out: { hapPath: string | null },
+): CheckResult[] {
+  const id = 'device_test_build';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+
+  try {
+    if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.build')) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'project_profile 声明 device_test.build 为 SKIP，未执行真机包编译。',
+        },
+      ];
+    }
+
+    const res = dispatchDeviceTestBuild(ctx, {
+      projectRoot: ctx.projectRoot,
+      harnessRoot: TESTING_HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: ctx.phase,
+    }) as DeviceTestBuildResult;
+
+    out.hapPath = res.hapPath;
+
+    const hv = res.hvigor;
+    if (hv.skippedByEnv) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `已设置跳过环境变量，不允许作为 testing 出口。\n${hv.logExcerpt ?? ''}`,
+        },
+      ];
+    }
+    if (hv.toolMissing) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: hv.logExcerpt ?? 'hvigor 工具缺失',
+        },
+      ];
+    }
+
+    const compileOk =
+      hv.executed &&
+      !hv.timedOut &&
+      hv.exitCode === 0 &&
+      (hv.errors?.length ?? 0) === 0 &&
+      hv.successMarkerFound !== false;
+
+    if (!compileOk) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            `device_test.build 失败：exit=${hv.exitCode}, timedOut=${Boolean(hv.timedOut)}, successMarker=${String(hv.successMarkerFound)}`,
+            `命令：${hv.command ?? '(unknown)'}`,
+            `日志：${hv.logPath ?? '(无)'}`,
+            res.hapPath ? `解析 HAP：${res.hapPath}` : '未解析到 signed 主 HAP（编译失败或未产出）',
+            '',
+            hv.logExcerpt ?? '',
+          ].join('\n'),
+        },
+      ];
+    }
+
+    if (!res.hapPath) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            `hvigor 已通过但未在各模块 build/${res.resolvedProduct}/outputs/default/ 下找到合适的 *-signed.hap。`,
+            '请确认入口模块已产出主应用 HAP；可参考 reports/<feature>/testing/device-test-build.result.json。',
+          ].join('\n'),
+        },
+      ];
+    }
+
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'PASS',
+        details: [
+          `product=${res.resolvedProduct} buildMode=${res.resolvedBuildMode}`,
+          `HAP: ${res.hapPath}`,
+          `hvigor 日志: ${hv.logPath ?? '(无)'}`,
+        ].join('\n'),
+      },
+    ];
+  } catch (err) {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `device_test.build 执行异常：${(err as Error).message}`,
+      },
+    ];
+  }
+}
+
+function checkDeviceTestInstallGate(
+  ctx: CheckContext,
+  holder: { hapPath: string | null },
+): CheckResult[] {
+  const id = 'device_test_install';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+
+  try {
+    if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.install')) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'project_profile 声明 device_test.install 为 SKIP。',
+        },
+      ];
+    }
+
+    if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.build')) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'device_test.build 已 SKIP，同步跳过装机门禁。',
+        },
+      ];
+    }
+
+    const hapPath = holder.hapPath;
+    if (!hapPath) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: '无可用主应用 HAP 路径（请先修复 device_test.build）。',
+        },
+      ];
+    }
+
+    const res = dispatchDeviceTestInstall(ctx, {
+      harnessRoot: TESTING_HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: ctx.phase,
+      hapPath,
+    }) as DeviceTestInstallResult;
+
+    if (res.skippedByEnv) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: res.errors.map(e => e.message).join('\n'),
+        },
+      ];
+    }
+
+    if (!res.ok) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [...res.errors.map(e => e.message), res.logPath ? `装机日志: ${res.logPath}` : '']
+            .filter(Boolean)
+            .join('\n'),
+        },
+      ];
+    }
+
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'PASS',
+        details: [`已安装: ${hapPath}`, res.logPath ? `日志: ${res.logPath}` : ''].filter(Boolean).join('\n'),
+      },
+    ];
+  } catch (err) {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `device_test.install 执行异常：${(err as Error).message}`,
+      },
+    ];
+  }
+}
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -1247,6 +1495,10 @@ const checker: PhaseChecker = {
     }
 
     const results: CheckResult[] = [];
+
+    const deviceTestHapHolder: { hapPath: string | null } = { hapPath: null };
+    results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
+    results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
 
     // --- Structure checks: Test Plan ---
     results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));

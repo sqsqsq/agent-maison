@@ -843,6 +843,117 @@ export function detectProduct(projectRoot: string): string {
   return 'default';
 }
 
+/**
+ * 枚举 build-profile.json5 中声明的全部 product 名（供 Skill 6 真机打包前展示选项）。
+ * 解析失败或为空时返回 `['default']`。
+ */
+export function listAvailableProducts(projectRoot: string): string[] {
+  try {
+    const buildProfile = path.join(projectRoot, 'build-profile.json5');
+    if (!fs.existsSync(buildProfile)) {
+      return ['default'];
+    }
+    const raw = fs.readFileSync(buildProfile, 'utf-8');
+    const obj = parseProductJson5(raw) as {
+      app?: { products?: Array<{ name?: string }> };
+    };
+    const names = (obj?.app?.products ?? [])
+      .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
+      .filter((n) => n.length > 0);
+    return names.length > 0 ? names : ['default'];
+  } catch {
+    return ['default'];
+  }
+}
+
+export interface BuildProfileModuleEntry {
+  name: string;
+  srcPath: string;
+}
+
+/**
+ * 读取 build-profile.json5 > modules[]（相对路径去掉 `./`），用于扫描主应用 HAP 产物目录。
+ */
+export function listBuildProfileModules(projectRoot: string): BuildProfileModuleEntry[] {
+  try {
+    const buildProfile = path.join(projectRoot, 'build-profile.json5');
+    if (!fs.existsSync(buildProfile)) {
+      return [];
+    }
+    const raw = fs.readFileSync(buildProfile, 'utf-8');
+    const obj = parseProductJson5(raw) as {
+      modules?: Array<{ name?: string; srcPath?: string }>;
+    };
+    const mods = obj?.modules ?? [];
+    return mods
+      .map((m) => ({
+        name: typeof m?.name === 'string' ? m.name.trim() : '',
+        srcPath: typeof m?.srcPath === 'string' ? m.srcPath.replace(/^\.\//, '').trim() : '',
+      }))
+      .filter((m) => m.name.length > 0 && m.srcPath.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 在模块 `build/<product>/outputs/default/` 下查找已签名的主应用 HAP（非 ohosTest）。
+ * 优先不含 `ohosTest` 语义的文件名；多命中时取字典序最后一条以稳定输出。
+ */
+export function findAppSignedHap(projectRoot: string, buildProduct?: string): string | null {
+  const segments: string[] = [];
+  if (buildProduct && buildProduct.trim()) {
+    segments.push(buildProduct.trim());
+  }
+  if (!segments.includes('default')) {
+    segments.push('default');
+  }
+
+  const modules = listBuildProfileModules(projectRoot);
+
+  const pickSigned = (dir: string): string | null => {
+    if (!fs.existsSync(dir)) return null;
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith('-signed.hap'));
+    } catch {
+      return null;
+    }
+    if (files.length === 0) return null;
+    const appLike = files.filter((f) => !/ohostest/i.test(f));
+    const pool = appLike.length > 0 ? appLike : files;
+    pool.sort();
+    return path.join(dir, pool[pool.length - 1]!);
+  };
+
+  for (const seg of segments) {
+    for (const m of modules) {
+      const dir = path.join(projectRoot, m.srcPath, 'build', seg, 'outputs', 'default');
+      const hit = pickSigned(dir);
+      if (hit) return hit;
+    }
+  }
+
+  for (const m of modules) {
+    const buildRoot = path.join(projectRoot, m.srcPath, 'build');
+    if (!fs.existsSync(buildRoot)) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const dir = path.join(buildRoot, ent.name, 'outputs', 'default');
+      const hit = pickSigned(dir);
+      if (hit) return hit;
+    }
+  }
+
+  return null;
+}
+
 /** framework.config > toolchain.hvigor.coding 与默认值合并（不抛） */
 function loadResolvedCodingConfig(projectRoot: string): {
   driver: NonNullable<HvigorCodingConfig['driver']>;
@@ -876,17 +987,30 @@ function loadResolvedCodingConfig(projectRoot: string): {
  */
 export function buildCodingHvigorArgs(
   projectRoot: string,
-  overrides?: { task?: string; extraArgs?: string[] },
+  overrides?: {
+    task?: string;
+    extraArgs?: string[];
+    /** 覆盖 detectProduct / preferredProduct（含显式 `-p product=`） */
+    product?: string;
+    /** 显式 buildMode；不设时沿用 config.passBuildModeDebug（默认追 debug） */
+    buildMode?: 'debug' | 'release';
+  },
 ): string[] {
   const c = loadResolvedCodingConfig(projectRoot);
   const task = overrides?.task ?? c.task;
   const extraArgs = overrides?.extraArgs ?? c.extraArgs;
+  const product = overrides?.product?.trim() || detectProduct(projectRoot);
   if (c.driver === 'assemble_app_project') {
-    return buildAssembleAppArgs(projectRoot, task, extraArgs);
+    return buildAssembleAppArgs(projectRoot, task, extraArgs, {
+      product: overrides?.product?.trim() || undefined,
+      buildMode: overrides?.buildMode,
+    });
   }
   const args: string[] = ['--mode', c.mode];
-  args.push('-p', `product=${detectProduct(projectRoot)}`);
-  if (c.passBuildModeDebug) {
+  args.push('-p', `product=${product}`);
+  if (overrides?.buildMode) {
+    args.push('-p', `buildMode=${overrides.buildMode}`);
+  } else if (c.passBuildModeDebug) {
     args.push('-p', 'buildMode=debug');
   }
   args.push(...buildHvigorTuningArgs(projectRoot));
@@ -1292,9 +1416,15 @@ export function runHvigorAssembleApp(
     task?: string;
     /** 覆盖 / 合并 config 的 coding.extraArgs（此处传入即整段替换 config 的 extraArgs） */
     extraArgs?: string[];
+    /** 覆盖 `-p product=`（Skill 6 device-testing 等） */
+    product?: string;
+    /** 覆盖 `-p buildMode=` */
+    buildMode?: 'debug' | 'release';
+    /** 自定义日志基名（默认 hvigor-build.log） */
+    logBasename?: string;
   },
 ): HvigorRunResult {
-  const { task, extraArgs, ...rest } = opts;
+  const { task, extraArgs, product, buildMode, logBasename, ...rest } = opts;
   if (rest.skipEnvVar && process.env[rest.skipEnvVar]) {
     return {
       executed: false,
@@ -1305,7 +1435,7 @@ export function runHvigorAssembleApp(
     };
   }
 
-  const hvigorArgs = buildCodingHvigorArgs(opts.projectRoot, { task, extraArgs });
+  const hvigorArgs = buildCodingHvigorArgs(opts.projectRoot, { task, extraArgs, product, buildMode });
   const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, hvigorArgs);
   if ('toolMissing' in resolved) {
     return {
@@ -1319,7 +1449,7 @@ export function runHvigorAssembleApp(
   return invokeHvigor({
     ...rest,
     spawnPlan: resolved.spawnPlan,
-    logBasename: 'hvigor-build.log',
+    logBasename: logBasename ?? 'hvigor-build.log',
     timeoutKind: 'coding',
     requireSuccessMarker: true,
   });
@@ -1350,11 +1480,14 @@ export function buildAssembleAppArgs(
   projectRoot: string,
   task: string = 'assembleApp',
   extraArgs?: string[],
+  assembleOpts?: { product?: string; buildMode?: 'debug' | 'release' },
 ): string[] {
+  const product = assembleOpts?.product ?? detectProduct(projectRoot);
+  const buildMode = assembleOpts?.buildMode ?? 'debug';
   return [
     '--mode', 'project',
-    '-p', `product=${detectProduct(projectRoot)}`,
-    '-p', 'buildMode=debug',
+    '-p', `product=${product}`,
+    '-p', `buildMode=${buildMode}`,
     ...buildHvigorTuningArgs(projectRoot),
     ...(extraArgs ?? []),
     task,

@@ -385,6 +385,8 @@ export type CapabilityKey =
   | 'ut.compile'
   | 'ut.run'
   | 'device_test.run'
+  | 'device_test.build'
+  | 'device_test.install'
   | 'prd.visual_handoff';
 
 export interface ProfileCapabilitySpec {

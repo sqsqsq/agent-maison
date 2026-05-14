@@ -12,7 +12,9 @@ export type CapabilityProviderId =
   | 'hvigor'
   | 'hvigor_ohostest'
   | 'hvigor_hypium'
+  | 'hvigor_app'
   | 'hdc'
+  | 'hdc_app'
   | 'script'
   | 'none';
 

@@ -47,7 +47,9 @@ const PROVIDER_MODULE_BY_ID: Record<string, string> = {
   hvigor: 'coding-compile',
   hvigor_ohostest: 'ut-compile',
   hvigor_hypium: 'ut-run',
+  hvigor_app: 'device-test-build',
   hdc: 'device-test',
+  hdc_app: 'device-test-install',
   script: 'prd-visual-handoff',
 };
 
@@ -189,6 +191,22 @@ export function dispatchPrdVisualHandoff(ctx: CheckContext, prd: string): CheckR
     'checkVisualHandoff',
   );
   return fn(ctx, prd);
+}
+
+export function dispatchDeviceTestBuild(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.build', 'runDeviceTestAppBuild');
+  return fn(options);
+}
+
+export function dispatchDeviceTestInstall(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.install', 'installDeviceTestApp');
+  return fn(options);
 }
 
 /**

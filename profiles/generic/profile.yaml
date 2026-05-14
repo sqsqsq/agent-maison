@@ -22,4 +22,6 @@ capabilities:
   ut.compile: { provider: none, severity: SKIP }
   ut.run: { provider: none, severity: SKIP }
   device_test.run: { provider: none, severity: SKIP }
+  device_test.build: { provider: none, severity: SKIP }
+  device_test.install: { provider: none, severity: SKIP }
   prd.visual_handoff: { provider: none, severity: SKIP }

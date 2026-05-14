@@ -89,6 +89,20 @@ structure_checks:
       section: "通过标准"
       expect: "numeric_thresholds"
 
+  device_test_build:
+    description: >
+      当 project_profile 将 device_test.build 声明为 BLOCKER 且未 SKIP 时，
+      harness 必须通过 hvigor 编译产出可安装的主应用 signed HAP，并落盘编译日志；
+      声明 SKIP 时本检查 SKIP。
+    severity: BLOCKER
+
+  device_test_install:
+    description: >
+      当 project_profile 将 device_test.install 声明为 BLOCKER 且未 SKIP 时，
+      harness 必须将主应用 HAP 通过 hdc 安装到已连接设备；声明 SKIP 或上游 device_test.build
+      SKIP 时本检查 SKIP。
+    severity: BLOCKER
+
   # ---- 测试报告 ----
 
   report_required_chapters:

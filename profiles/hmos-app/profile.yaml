@@ -19,6 +19,8 @@ capabilities:
   ut.compile: { provider: hvigor_ohostest, severity: BLOCKER }
   ut.run: { provider: hvigor_hypium, severity: BLOCKER }
   device_test.run: { provider: hdc, severity: BLOCKER }
+  device_test.build: { provider: hvigor_app, severity: BLOCKER }
+  device_test.install: { provider: hdc_app, severity: BLOCKER }
   prd.visual_handoff: { provider: script, severity: BLOCKER }
 
 sub_variants:
