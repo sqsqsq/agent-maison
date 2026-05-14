@@ -88,6 +88,9 @@ const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework/harness/package-lock.json',
   'framework/harness/state/*',
   '!framework/harness/state/.gitkeep',
+  // Skill 0：合并入 SSOT 前的 staging 草稿目录，不入仓
+  'doc/catalog-staging/',
+  'doc/glossary-staging/',
 ];
 
 /** SKILL 5.4.5.2 等价覆盖映射 */
@@ -123,6 +126,8 @@ const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     'framework/harness/state/',
   ],
   '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
+  'doc/catalog-staging/': ['doc/catalog-staging/', 'doc/catalog-staging', '**/catalog-staging/'],
+  'doc/glossary-staging/': ['doc/glossary-staging/', 'doc/glossary-staging', '**/glossary-staging/'],
 };
 
 type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
@@ -1323,7 +1328,7 @@ function inspect10(env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 11 项: 实例工程根 .gitignore 的 framework runtime ignore ------------
+// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + Skill 0 staging）----
 function parseGitignoreLines(text: string): string[] {
   // 移除注释行 / 空白行；保留模式（含 ! 反向规则）。
   return text
@@ -1344,7 +1349,7 @@ function inspect11(env: InspectorEnv): Inspection {
   if (txt === null) {
     return {
       index: 11,
-      target_path: targetRel + ' (framework runtime ignores)',
+      target_path: targetRel + ' (init canonical ignores)',
       template_source: null,
       status: 'MISSING',
       hash_template: null,
@@ -1364,19 +1369,19 @@ function inspect11(env: InspectorEnv): Inspection {
   if (missingPatterns.length === 0) {
     return {
       index: 11,
-      target_path: targetRel + ' (framework runtime ignores)',
+      target_path: targetRel + ' (init canonical ignores)',
       template_source: null,
       status: 'POPULATED',
       hash_template: null,
       hash_target: sha256(txt),
       diff_summary: null,
       planned_strategy: strategyText(11, 'POPULATED'),
-      diagnosis: `${CANONICAL_IGNORE_PATTERNS.length} 条 canonical patterns 全部已覆盖`,
+      diagnosis: `Step 5.4.5：${CANONICAL_IGNORE_PATTERNS.length} 条 canonical patterns 已全部等价覆盖`,
     };
   }
   return {
     index: 11,
-    target_path: targetRel + ' (framework runtime ignores)',
+      target_path: targetRel + ' (init canonical ignores)',
     template_source: null,
     status: 'MISSING',
     hash_template: null,

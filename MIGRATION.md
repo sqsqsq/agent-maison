@@ -50,7 +50,8 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 
 同步到目标工程后，`/framework-init` 的 Step 5.4.5 会自动检查宿主工程根 `.gitignore`：
 - 若已存在等价规则（如 `**/node_modules` / `**/package-lock.json` / `framework/harness/reports/*`），不重复追加。
-- 若缺少 framework 运行产物规则，会补齐 `framework/harness/node_modules/`、`dist/`、`reports/*`、`trace/`、`package-lock.json` 等忽略项。
+- 若缺少 framework 运行产物规则，会补齐 `framework/harness/node_modules/`、`dist/`、`reports/*`、`trace/`、`package-lock.json`、`framework/harness/state/*`（及对应 `!.gitkeep`）等忽略项。
+- Skill 0 合并前的草稿目录：`doc/catalog-staging/`、`doc/glossary-staging/`（与 `framework/harness/scripts/check-init.ts` 中 `CANONICAL_IGNORE_PATTERNS` 对齐）。
 - 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。
 
 #### 同步完成后，在目标工程根跑 `/framework-init`
