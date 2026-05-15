@@ -151,6 +151,40 @@ const cases: Case[] = [
       }),
   },
   {
+    name: 'inspect01：老 config（缺 active_workflow / state_machine / extension_dir 等）→ missing_keys 非空且诊断含"白名单字段缺失"',
+    run: () =>
+      withTmpProject(root => {
+        const inspection = __testing.inspect01(makeInspectorEnv(root));
+        assertEq(inspection.status, 'POPULATED', '老 fixture 有 outer_layers，应为 POPULATED');
+        assert(
+          Array.isArray(inspection.missing_keys) && (inspection.missing_keys ?? []).length > 0,
+          'missing_keys 应非空（fixture 老 config 缺多个白名单字段）',
+        );
+        const mk = inspection.missing_keys ?? [];
+        for (const p of [
+          'active_workflow',
+          'lifecycle_hooks_enabled',
+          'paths.extension_dir',
+          'paths.state_file',
+          'paths.receipt_dir_pattern',
+          'paths.docs_committed',
+          'state_machine.grace_period_minutes',
+          'state_machine.ttl_hours',
+          'state_machine.schema_version',
+          'toolchain.hvigor.daemon',
+        ]) {
+          assert(mk.includes(p), `missing_keys 应包含 ${p}（实际：${mk.join(',')}）`);
+        }
+        // schema_version 已写为 "1.0.0"，不应判定为缺失
+        assert(!mk.includes('schema_version'), 'schema_version 已存在，不应识别为缺失');
+        assert(
+          inspection.diagnosis.includes('白名单字段缺失') &&
+            inspection.diagnosis.includes('merge-framework-config.mjs --apply'),
+          `诊断应提示补缺命令；实际：${inspection.diagnosis}`,
+        );
+      }),
+  },
+  {
     name: 'inspectionsForInit034Prompt：POPULATED + auto_overwrite 的 #3 不出现在 Q 列表',
     run: () => {
       const inspections: Inspection[] = [

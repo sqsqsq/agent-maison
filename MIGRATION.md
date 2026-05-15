@@ -296,7 +296,67 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 **升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash；`cd framework/harness && npm test`。
 
+> v3.1 起这些字段（含 `state_machine.*`、`paths.state_file` / `receipt_dir_pattern` / `docs_committed`、
+> `toolchain.hvigor.*` 等）由 Skill 00 §5.1.A **机器化补缺合并**——见 §v3.1。
+
 详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md) 与 [docs/evolution/extension-e2e-acceptance.md](docs/evolution/extension-e2e-acceptance.md)。
+
+### v3.1：framework.config.json 字段级"只补缺、不覆盖"合并（merge-framework-config）
+
+**触发原因**：v2.5 之前 Skill 00 §5.1 在 UPDATE 模式下只有「整文件替换 / 跳过」两档，
+新版本 framework 引入新字段（如 `paths.extension_dir`、`paths.state_file`、`state_machine.*`、
+`active_workflow`、`lifecycle_hooks_enabled`、`paths.docs_committed`、`toolchain.hvigor.*`）后，
+老工程跑 `/framework-init` 无法机器化追平：选 Q1=y 会丢掉用户自定义的 `architecture` /
+`project_name` 等字段；选 Q1=n 则新字段全漏。已观察到的真实事故：宿主工程 UPDATE 后仅补上
+`project_profile` 单段，其它新字段全部缺失。
+
+**升级后动作**（落在 framework 内，对实例**无破坏**）：
+
+1. 新增 [scripts/utils/config-field-merger.ts](harness/scripts/utils/config-field-merger.ts)
+   持有 `BACKFILL_FIELDS` 白名单（SSOT），定义"哪些字段允许在缺失时回填默认值"，
+   默认值与 `harness/config.ts` 的 `DEFAULT_PATHS` / `DEFAULT_STATE_MACHINE` 单点对齐。
+2. 新增 CLI 工具 [scripts/merge-framework-config.mjs](harness/scripts/merge-framework-config.mjs)：
+
+   ```bash
+   # 仅查看缺失字段与合并预览（不写盘）
+   node framework/harness/scripts/merge-framework-config.mjs --dry-run
+
+   # 备份原文 → 字段级"只补缺、不覆盖"合并并写回
+   node framework/harness/scripts/merge-framework-config.mjs --apply
+   ```
+
+   `--apply` 会先把原 `framework.config.json` 备份到
+   `<repo>/.framework-backup/<UTC>/framework.config.json`（与 adapter `auto_overwrite`
+   机制同槽），再字段级合并写回。
+3. `check-init.ts` 第 1 项（`inspect01`）在 POPULATED 时填充 `Inspection.missing_keys`，
+   `stdout` 体检表的"诊断"列会追加一句「另有 N 个白名单字段缺失，建议跑
+   `merge-framework-config.mjs --apply` 补齐」；`check-init.json` 携带完整字段路径列表。
+4. Skill 00 §5.1.A 在 §0.3.4 表里追加 `Q1.A` 子问题：当 `missing_keys` 非空且用户已选 `Q1=n`
+   时枚举（`Q1=y` 整文件替换涵盖该场景，自动跳过 `Q1.A`），用户 `y` 即调本 CLI `--apply`。
+
+**Framework 维护者侧**——后续若再引入新字段，**只需**：
+
+1. 在 [harness/config.ts](harness/config.ts) `DEFAULT_PATHS` / `DEFAULT_STATE_MACHINE`（或同级常量）
+   给出真实默认值；
+2. 在 [scripts/utils/config-field-merger.ts](harness/scripts/utils/config-field-merger.ts) 的
+   `BACKFILL_FIELDS` 数组追加一条 `{ path, defaultValue, note }`；
+3. 在 [templates/framework.config.template.json](templates/framework.config.template.json) skeleton
+   一并写入（保持 CREATE 模式与白名单同源）。
+
+老工程下一次 `/framework-init` UPDATE 就会自动机器化追平，**无需**维护者再去 MIGRATION 里
+逐条 checklist。
+
+**严禁纳入白名单**（必须维护者显式决定）：`project_name` / `project_type` / `agent_adapter` /
+`architecture.*`（必填）、`toolchain.devEcoStudio.*`（由 Skill 5.6 detect-deveco 独立交互处理）、
+`prd.*`（opt-in，需手工选 strict/warn/reachable/off 档位）、`atomic_service.*`（预留位）、
+`paths.reports_dir_pattern`（未配置时回退 legacy 报告路径，自动补会让升级后报告搬家，属行为级变更）。
+
+**回归方法**：
+- 单测：`cd framework/harness && npx ts-node tests/run-unit.ts`，包含
+  `Suite [config-field-merger]` 9 用例 + `Suite [init-update-policy]` 的「inspect01 missing_keys」用例。
+- 端到端：在缺字段的老工程上 `node framework/harness/scripts/merge-framework-config.mjs --dry-run`
+  查看缺失清单，再 `--apply` 验证写回内容（`git diff framework.config.json` 应仅新增白名单字段，
+  不动 `architecture` / `project_name` 等敏感段）。
 
 ### adapter `update_policy` + `.framework-backup/`（实例侧 hooks/settings 等与 framework 对齐）
 

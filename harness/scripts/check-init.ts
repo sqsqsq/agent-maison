@@ -27,6 +27,10 @@ import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import {
+  detectMissingBackfillFields,
+  MissingFieldEntry,
+} from './utils/config-field-merger';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 
 // --------------------------------------------------------------------------
@@ -49,6 +53,14 @@ export interface Inspection {
   diagnosis: string;                   // 本行的诊断短句（写进 stdout 表）
   /** 体检第 3 项逐文件展开时：该模板文件所属 adapter 段的 update_policy；其余行为 null */
   update_policy?: AdapterUpdatePolicy | null;
+  /**
+   * 第 1 项专用：UPDATE 模式下 framework.config.json 缺失的白名单字段（点分路径）。
+   * 来源：scripts/utils/config-field-merger.ts BACKFILL_FIELDS。
+   * 当本字段非空时，Skill 00 §5.1 应触发 Q1.A「字段补缺合并」子问题；
+   * 推荐执行：`node framework/harness/scripts/merge-framework-config.mjs --apply`。
+   * CREATE 模式（cfg 不存在）或非 POPULATED 状态下为 null / 不设置。
+   */
+  missing_keys?: string[] | null;
 }
 
 export interface CheckInitReport {
@@ -262,6 +274,12 @@ interface RawFrameworkConfig {
   outerLayersLen: number;
   agentAdapter: string | null;
   toolchainInstallPath: string | null;
+  /**
+   * UPDATE 模式下：framework.config.json 中缺失的白名单字段（按 BACKFILL_FIELDS 顺序）。
+   * CREATE 模式（exists=false / parseable=false）下为空数组。
+   * 来源：scripts/utils/config-field-merger.ts detectMissingBackfillFields。
+   */
+  missingBackfillFields: MissingFieldEntry[];
 }
 
 function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
@@ -275,6 +293,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      missingBackfillFields: [],
     };
   }
   let raw: any;
@@ -289,6 +308,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      missingBackfillFields: [],
     };
   }
   const paths = {
@@ -305,6 +325,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     outerLayersLen: Array.isArray(outerLayers) ? outerLayers.length : 0,
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
+    missingBackfillFields: detectMissingBackfillFields(raw),
   };
 }
 
@@ -757,6 +778,7 @@ function inspect01(env: InspectorEnv): Inspection {
       diff_summary: null,
       planned_strategy: strategyText(1, 'MISSING'),
       diagnosis: 'CREATE 模式：实例工程根尚无 framework.config.json',
+      missing_keys: null,
     };
   }
   if (!env.cfg.parseable) {
@@ -770,6 +792,7 @@ function inspect01(env: InspectorEnv): Inspection {
       diff_summary: env.cfg.parseError ?? 'JSON 解析失败',
       planned_strategy: strategyText(1, 'POPULATED'),
       diagnosis: `JSON 解析失败：${env.cfg.parseError ?? '未知'}`,
+      missing_keys: null,
     };
   }
   if (env.cfg.outerLayersLen === 0) {
@@ -783,8 +806,16 @@ function inspect01(env: InspectorEnv): Inspection {
       diff_summary: null,
       planned_strategy: strategyText(1, 'EMPTY'),
       diagnosis: 'architecture.outer_layers 为空',
+      missing_keys: null,
     };
   }
+  // POPULATED：进一步识别 UPDATE 模式下的「白名单字段缺失」，
+  // 供 Skill 00 §5.1 Q1.A 触发 merge-framework-config.mjs --apply。
+  const missingPaths = env.cfg.missingBackfillFields.map(f => f.path);
+  const baseDiag = `outer_layers.length=${env.cfg.outerLayersLen}，已配置`;
+  const diagnosis = missingPaths.length === 0
+    ? baseDiag
+    : `${baseDiag}；另有 ${missingPaths.length} 个白名单字段缺失（建议跑 merge-framework-config.mjs --apply 补齐）`;
   return {
     index: 1,
     target_path: target,
@@ -794,7 +825,8 @@ function inspect01(env: InspectorEnv): Inspection {
     hash_target: null,
     diff_summary: null,
     planned_strategy: strategyText(1, 'POPULATED'),
-    diagnosis: `outer_layers.length=${env.cfg.outerLayersLen}，已配置`,
+    diagnosis,
+    missing_keys: missingPaths.length > 0 ? missingPaths : null,
   };
 }
 

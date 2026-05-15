@@ -67,6 +67,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
   { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },
   { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
+  { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
