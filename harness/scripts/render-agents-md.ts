@@ -49,6 +49,26 @@ function loadProfileAgentsPartial(profileName: string, fileBase: string): string
   return '';
 }
 
+/**
+ * 与 framework/harness/config.ts normalizeFrameworkConfig 中 project_type 回退对齐：
+ * 未显式写 project_type 时，由 project_profile.sub_variant 推导，避免占位符落空。
+ */
+function effectiveProjectType(config: Record<string, unknown>): string {
+  if (typeof config.project_type === 'string' && config.project_type.trim() !== '') {
+    return config.project_type.trim();
+  }
+  const pp =
+    config.project_profile && typeof config.project_profile === 'object'
+      ? (config.project_profile as Record<string, unknown>)
+      : {};
+  const sub =
+    typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '' ? pp.sub_variant.trim() : '';
+  if (sub === 'element-service') {
+    return 'atomic_service';
+  }
+  return 'app';
+}
+
 function loadConfig(): Record<string, unknown> {
   if (!fs.existsSync(CONFIG_PATH)) {
     fail(`framework.config.json 不存在：${CONFIG_PATH}`);
@@ -71,8 +91,10 @@ function buildVars(
   config: Record<string, unknown>,
   opts: { entryFile: string; architectureSummary: string },
 ): Record<string, string> {
+  const projectType = effectiveProjectType(config);
   const projectTypeLabel =
-    KNOWN_PROJECT_TYPE_LABELS[String(config.project_type)] ?? String(config.project_type ?? '');
+    KNOWN_PROJECT_TYPE_LABELS[projectType] ??
+    projectType;
   const paths = (config.paths && typeof config.paths === 'object'
     ? config.paths
     : {}) as Record<string, unknown>;
@@ -94,7 +116,7 @@ function buildVars(
   return {
     AGENT_ENTRY_FILE: opts.entryFile,
     PROJECT_NAME: String(config.project_name ?? ''),
-    PROJECT_TYPE: String(config.project_type ?? ''),
+    PROJECT_TYPE: projectType,
     PROJECT_TYPE_LABEL: projectTypeLabel ?? '',
     AGENT_ADAPTER: String(config.agent_adapter ?? ''),
     PROJECT_PROFILE_NAME: profileName,
