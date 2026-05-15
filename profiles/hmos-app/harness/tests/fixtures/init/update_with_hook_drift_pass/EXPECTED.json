@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    { "id": "adapter_yaml_resolvable",       "status": "PASS", "severity": "BLOCKER" },
+    { "id": "template_files_resolvable",     "status": "PASS", "severity": "BLOCKER" },
+    { "id": "inspection_table_complete",     "status": "PASS", "severity": "BLOCKER" },
+    { "id": "diff_for_populated_provided",   "status": "PASS", "severity": "BLOCKER" },
+    {
+      "id": "inspection_02_CLAUDE_md",
+      "details_includes": "[POPULATED]"
+    },
+    {
+      "id": "inspection_03_claude_hooks_check-phase-completion_mjs",
+      "details_includes": "update_policy=auto_overwrite"
+    }
+  ]
+}

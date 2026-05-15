@@ -10,7 +10,8 @@
 //   - 双输出：
 //       (a) JSON   → framework/harness/reports/_global/init/<timestamp>/
 //                    check-init.json （机器读，给 SKILL 0.3.2 推策略）
-//       (b) stdout → SKILL 0.3.3 11 行人类可读体检表（AI 仅原样搬运）
+//       (b) stdout → SKILL 0.3.3 体检表（含 `update_policy` 列；#3 可按文件展开，总行数≥基线；
+//                     AI 仅原样搬运）
 //   - 由 PhaseChecker 接口对齐 harness-runner.ts 调度（与 catalog/glossary/
 //     docs 三个全局阶段同型），不单独跑 main()。
 //
@@ -33,6 +34,7 @@ import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 
 export type InspectionStatus = 'MISSING' | 'EMPTY' | 'POPULATED';
 export type InitMode = 'create' | 'update';
+export type AdapterUpdatePolicy = 'auto_overwrite' | 'prompt_if_changed';
 
 export interface Inspection {
   index: number;                       // 1..11
@@ -44,16 +46,21 @@ export interface Inspection {
   diff_summary: string | null;         // POPULATED 项给前 50 行 unified-style diff
   planned_strategy: string;            // 命中 SKILL 0.3.2 哪一行的策略文案
   diagnosis: string;                   // 本行的诊断短句（写进 stdout 表）
+  /** 体检第 3 项逐文件展开时：该模板文件所属 adapter 段的 update_policy；其余行为 null */
+  update_policy?: AdapterUpdatePolicy | null;
 }
 
 export interface CheckInitReport {
-  schema_version: '1.0';
+  schema_version: '1.1';
   mode: InitMode;
   adapter: string | null;
   inspections: Inspection[];
   blockers: string[];
   verdict: 'PASS' | 'FAIL';
   generated_at: string;
+  /** init 通过后自动对齐 auto_overwrite 机制产物时的备份目录（相对实例根），无对齐时为 null */
+  mechanism_backup_rel_dir?: string | null;
+  mechanism_synced_files?: number;
 }
 
 // --------------------------------------------------------------------------
@@ -91,6 +98,8 @@ const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   // Skill 0：合并入 SSOT 前的 staging 草稿目录，不入仓
   'doc/catalog-staging/',
   'doc/glossary-staging/',
+  // init：auto_overwrite 机制同步时的旧文件备份根（managed by check-init / Skill 00）
+  '.framework-backup/',
 ];
 
 /** SKILL 5.4.5.2 等价覆盖映射 */
@@ -128,6 +137,11 @@ const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
   '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
   'doc/catalog-staging/': ['doc/catalog-staging/', 'doc/catalog-staging', '**/catalog-staging/'],
   'doc/glossary-staging/': ['doc/glossary-staging/', 'doc/glossary-staging', '**/glossary-staging/'],
+  '.framework-backup/': [
+    '.framework-backup',
+    '.framework-backup/',
+    '**/.framework-backup/',
+  ],
 };
 
 type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
@@ -306,6 +320,8 @@ interface AdapterTemplateFile {
   kind: 'rendered' | 'verbatim';
   /** 映射来源字段名（用于诊断） */
   origin: string;
+  /** UPDATE 模式下第 3 项 POPULATED 时的对齐策略；缺省 prompt_if_changed */
+  update_policy: AdapterUpdatePolicy;
 }
 
 interface AdapterDescriptor {
@@ -340,6 +356,11 @@ function listFilesRecursive(dirAbs: string): string[] {
     }
   }
   return out;
+}
+
+export function parseUpdatePolicy(raw: unknown): AdapterUpdatePolicy {
+  if (raw === 'auto_overwrite') return 'auto_overwrite';
+  return 'prompt_if_changed';
 }
 
 function loadAdapter(adapter: string): AdapterDescriptor {
@@ -383,6 +404,7 @@ function loadAdapter(adapter: string): AdapterDescriptor {
       templateRel: entry.template_path,
       kind: 'rendered',
       origin: 'agent_entry_file',
+      update_policy: parseUpdatePolicy(entry.update_policy),
     };
     desc.declaredTemplatePaths.push({
       field: 'agent_entry_file.template_path',
@@ -396,6 +418,7 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     relUnderAdapter: string,
     targetDir: string,
     fieldLabel: string,
+    updatePolicy: AdapterUpdatePolicy,
   ): void => {
     const absDir = path.join(adapterDir, relUnderAdapter);
     desc.declaredTemplatePaths.push({
@@ -411,33 +434,55 @@ function loadAdapter(adapter: string): AdapterDescriptor {
         templateRel: toPosix(path.join('agents', adapter, relUnderAdapter, fileRel)),
         kind: 'verbatim',
         origin: `${fieldLabel}/${fileRel}`,
+        update_policy: updatePolicy,
       });
     }
   };
 
   if (cfg.commands && typeof cfg.commands === 'object') {
     if (cfg.commands.template_dir && cfg.commands.target_dir) {
-      collectDir(cfg.commands.template_dir, cfg.commands.target_dir, 'commands.template_dir');
+      collectDir(
+        cfg.commands.template_dir,
+        cfg.commands.target_dir,
+        'commands.template_dir',
+        parseUpdatePolicy(cfg.commands.update_policy),
+      );
     }
     if (cfg.commands.subagents && cfg.commands.subagents.template_dir && cfg.commands.subagents.target_dir) {
       collectDir(
         cfg.commands.subagents.template_dir,
         cfg.commands.subagents.target_dir,
         'commands.subagents.template_dir',
+        parseUpdatePolicy(cfg.commands.subagents.update_policy),
       );
     }
   }
   if (cfg.skill_bridge && typeof cfg.skill_bridge === 'object'
     && cfg.skill_bridge.template_dir && cfg.skill_bridge.target_dir) {
-    collectDir(cfg.skill_bridge.template_dir, cfg.skill_bridge.target_dir, 'skill_bridge.template_dir');
+    collectDir(
+      cfg.skill_bridge.template_dir,
+      cfg.skill_bridge.target_dir,
+      'skill_bridge.template_dir',
+      parseUpdatePolicy(cfg.skill_bridge.update_policy),
+    );
   }
   if (cfg.rules && typeof cfg.rules === 'object'
     && cfg.rules.template_dir && cfg.rules.target_dir) {
-    collectDir(cfg.rules.template_dir, cfg.rules.target_dir, 'rules.template_dir');
+    collectDir(
+      cfg.rules.template_dir,
+      cfg.rules.target_dir,
+      'rules.template_dir',
+      parseUpdatePolicy(cfg.rules.update_policy),
+    );
   }
   if (cfg.hooks && typeof cfg.hooks === 'object'
     && cfg.hooks.template_dir && cfg.hooks.target_dir) {
-    collectDir(cfg.hooks.template_dir, cfg.hooks.target_dir, 'hooks.template_dir');
+    collectDir(
+      cfg.hooks.template_dir,
+      cfg.hooks.target_dir,
+      'hooks.template_dir',
+      parseUpdatePolicy(cfg.hooks.update_policy),
+    );
   }
   if (cfg.settings_file && typeof cfg.settings_file === 'object'
     && cfg.settings_file.template_path && cfg.settings_file.target_path) {
@@ -452,6 +497,7 @@ function loadAdapter(adapter: string): AdapterDescriptor {
       templateRel: toPosix(path.join('agents', adapter, cfg.settings_file.template_path)),
       kind: 'verbatim',
       origin: 'settings_file',
+      update_policy: parseUpdatePolicy(cfg.settings_file.update_policy),
     });
   }
 
@@ -674,6 +720,28 @@ function strategyText(line: number, status: InspectionStatus): string {
   return m[line][status];
 }
 
+/** 体检第 3 项逐文件：POPULATED + auto_overwrite 时由 check-init 机制同步（备份后覆盖） */
+function strategyText3Template(status: InspectionStatus, policy: AdapterUpdatePolicy): string {
+  if (status === 'MISSING') return strategyText(3, 'MISSING');
+  if (status === 'EMPTY') return strategyText(3, 'EMPTY');
+  if (policy === 'auto_overwrite') {
+    return 'check-init PASS：自动备份至 .framework-backup/<ts>/ 后对齐模板';
+  }
+  return strategyText(3, 'POPULATED');
+}
+
+function validateInspectionShape(inspections: Inspection[]): boolean {
+  const countByIndex = new Map<number, number>();
+  for (const ins of inspections) {
+    countByIndex.set(ins.index, (countByIndex.get(ins.index) ?? 0) + 1);
+  }
+  const singleRequired = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11];
+  for (const idx of singleRequired) {
+    if (countByIndex.get(idx) !== 1) return false;
+  }
+  return (countByIndex.get(3) ?? 0) >= 1;
+}
+
 // ---- 第 1 项: framework.config.json ----------------------------------------
 function inspect01(env: InspectorEnv): Inspection {
   const target = 'framework.config.json';
@@ -826,11 +894,11 @@ function inspect02(env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 3 项: adapter templates 下逐文件 -----------------------------------
-function inspect03(env: InspectorEnv): Inspection {
+// ---- 第 3 项: adapter templates 下逐文件（可展开多行） -----------------------
+function inspect03(env: InspectorEnv): Inspection[] {
   const adapter = env.adapter;
   if (!adapter) {
-    return {
+    return [{
       index: 3,
       target_path: '<adapter templates>',
       template_source: null,
@@ -840,11 +908,11 @@ function inspect03(env: InspectorEnv): Inspection {
       diff_summary: null,
       planned_strategy: strategyText(3, 'MISSING'),
       diagnosis: 'adapter 未选定 / adapter.yaml 不可解析',
-    };
+      update_policy: null,
+    }];
   }
   if (adapter.templateFiles.length === 0) {
-    // generic adapter 无 templates → 视为 EMPTY（直接拷贝阶段无操作）
-    return {
+    return [{
       index: 3,
       target_path: `agents/${adapter.name}/templates/`,
       template_source: null,
@@ -854,70 +922,78 @@ function inspect03(env: InspectorEnv): Inspection {
       diff_summary: 'adapter 未声明任何 commands/skill_bridge/rules/hooks/settings_file 模板',
       planned_strategy: strategyText(3, 'EMPTY'),
       diagnosis: `${adapter.name} adapter 无附加模板`,
-    };
+      update_policy: null,
+    }];
   }
 
-  // 逐文件 sha256 比对：
-  //   - 任一目标缺失   → 该项 MISSING
-  //   - 全部字节相等   → EMPTY
-  //   - 否则           → POPULATED（diff_summary 给前若干差异行）
-  let missing = 0;
-  let drift = 0;
-  let identical = 0;
-  let eolOnly = 0;
-  const driftLines: string[] = [];
-  const tplHashAll: string[] = [];
-  const tgHashAll: string[] = [];
-
+  type FileRow = {
+    f: AdapterTemplateFile;
+    status: InspectionStatus;
+    hash_template: string | null;
+    hash_target: string | null;
+    diff_summary: string | null;
+    diagnosis: string;
+  };
+  const fileRows: FileRow[] = [];
   for (const f of adapter.templateFiles) {
     const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
     const tgAbs = path.join(env.projectRoot, f.targetRel);
     const tplBuf = safeReadBuffer(tplAbs);
     const tgBuf = safeReadBuffer(tgAbs);
     if (tplBuf === null) {
-      driftLines.push(`[E] 模板缺失：${f.templateRel}`);
-      drift++;
+      fileRows.push({
+        f,
+        status: 'POPULATED',
+        hash_template: null,
+        hash_target: tgBuf !== null ? sha256(tgBuf) : null,
+        diff_summary: `模板缺失或不可读：${f.templateRel}`,
+        diagnosis: `模板 ${f.templateRel} 读取失败`,
+      });
       continue;
     }
     if (tgBuf === null) {
-      driftLines.push(`[M] 目标缺失：${f.targetRel}`);
-      missing++;
+      fileRows.push({
+        f,
+        status: 'MISSING',
+        hash_template: sha256(tplBuf),
+        hash_target: null,
+        diff_summary: `目标缺失：${f.targetRel}`,
+        diagnosis: `${f.targetRel} 不存在`,
+      });
       continue;
     }
     const comparison = compareTextArtifact(tplBuf, tgBuf);
-    tplHashAll.push(comparison.templateHash);
-    tgHashAll.push(comparison.targetHash);
-    if (comparison.kind === 'byte_equal') {
-      identical++;
-    } else if (comparison.kind === 'eol_only') {
-      identical++;
-      eolOnly++;
-      driftLines.push(`[EOL] ${f.targetRel}: 仅换行符不同，已忽略 tpl=${comparison.templateHash.slice(0, 8)} target=${comparison.targetHash.slice(0, 8)}`);
-    } else {
-      drift++;
-      driftLines.push(`[D] ${f.targetRel}: tpl=${comparison.templateHash.slice(0, 8)} target=${comparison.targetHash.slice(0, 8)}`);
+    if (comparison.kind === 'byte_equal' || comparison.kind === 'eol_only') {
+      fileRows.push({
+        f,
+        status: 'EMPTY',
+        hash_template: comparison.templateHash,
+        hash_target: comparison.targetHash,
+        diff_summary: comparison.kind === 'byte_equal' ? 'no diff' : eolOnlyDiffSummary(),
+        diagnosis: comparison.kind === 'byte_equal'
+          ? `与源模板字节相等：${f.targetRel}`
+          : `与源模板仅换行符不同（已忽略）：${f.targetRel}`,
+      });
+      continue;
     }
+    fileRows.push({
+      f,
+      status: 'POPULATED',
+      hash_template: comparison.templateHash,
+      hash_target: comparison.targetHash,
+      diff_summary: unifiedDiffSummary(comparison.templateText, comparison.targetText, 50),
+      diagnosis: `与源模板内容不一致：${f.targetRel}`,
+    });
   }
 
-  // 聚合 hash：把每个文件的 hash 串拼起来再 sha256，作为整体指纹
-  const aggTplHash = sha256(tplHashAll.join('\n'));
-  const aggTgHash = sha256(tgHashAll.join('\n'));
-
-  if (missing > 0 && drift === 0 && identical === 0) {
-    return {
-      index: 3,
-      target_path: `<adapter ${adapter.name} templates>`,
-      template_source: `framework/agents/${adapter.name}/templates/**`,
-      status: 'MISSING',
-      hash_template: aggTplHash,
-      hash_target: null,
-      diff_summary: driftLines.slice(0, 50).join('\n'),
-      planned_strategy: strategyText(3, 'MISSING'),
-      diagnosis: `全部 ${missing} 个模板文件在工程内均不存在`,
-    };
-  }
-  if (drift === 0 && missing === 0) {
-    return {
+  const needAttention = fileRows.filter(r => r.status !== 'EMPTY');
+  if (needAttention.length === 0) {
+    const tplHashAll = fileRows.map(r => r.hash_template!).filter(Boolean);
+    const tgHashAll = fileRows.map(r => r.hash_target!).filter(Boolean);
+    const aggTplHash = sha256(tplHashAll.join('\n'));
+    const aggTgHash = sha256(tgHashAll.join('\n'));
+    const eolOnly = fileRows.filter(r => r.diff_summary === eolOnlyDiffSummary()).length;
+    return [{
       index: 3,
       target_path: `<adapter ${adapter.name} templates>`,
       template_source: `framework/agents/${adapter.name}/templates/**`,
@@ -927,22 +1003,24 @@ function inspect03(env: InspectorEnv): Inspection {
       diff_summary: eolOnly === 0 ? 'no diff' : eolOnlyDiffSummary(),
       planned_strategy: strategyText(3, 'EMPTY'),
       diagnosis: eolOnly === 0
-        ? `全部 ${identical} 个模板文件与源字节相等`
-        : `全部 ${identical} 个模板文件与源内容相同，其中 ${eolOnly} 个仅换行符不同，已忽略`,
-    };
+        ? `全部 ${fileRows.length} 个模板文件与源字节相等`
+        : `全部 ${fileRows.length} 个模板文件与源内容相同，其中 ${eolOnly} 个仅换行符不同，已忽略`,
+      update_policy: null,
+    }];
   }
-  return {
+
+  return needAttention.map(r => ({
     index: 3,
-    target_path: `<adapter ${adapter.name} templates>`,
-    template_source: `framework/agents/${adapter.name}/templates/**`,
-    status: 'POPULATED',
-    hash_template: aggTplHash,
-    hash_target: aggTgHash,
-    diff_summary: driftLines.slice(0, 50).join('\n')
-      || `逐文件比对：identical=${identical}, drift=${drift}, missing=${missing}`,
-    planned_strategy: strategyText(3, 'POPULATED'),
-    diagnosis: `逐文件 diff：${drift} 漂移 / ${missing} 缺 / ${identical} 一致`,
-  };
+    target_path: r.f.targetRel,
+    template_source: r.f.templateRel,
+    status: r.status,
+    hash_template: r.hash_template,
+    hash_target: r.hash_target,
+    diff_summary: r.diff_summary,
+    planned_strategy: strategyText3Template(r.status, r.f.update_policy),
+    diagnosis: r.diagnosis,
+    update_policy: r.f.update_policy,
+  }));
 }
 
 // ---- 第 4 项: doc/architecture.md ------------------------------------------
@@ -1381,7 +1459,7 @@ function inspect11(env: InspectorEnv): Inspection {
   }
   return {
     index: 11,
-      target_path: targetRel + ' (init canonical ignores)',
+    target_path: targetRel + ' (init canonical ignores)',
     template_source: null,
     status: 'MISSING',
     hash_template: null,
@@ -1390,6 +1468,73 @@ function inspect11(env: InspectorEnv): Inspection {
     planned_strategy: strategyText(11, 'MISSING'),
     diagnosis: `缺 ${missingPatterns.length} 条 canonical pattern（.gitignore 已存在但未覆盖完整）`,
   };
+}
+
+/**
+ * adapter.yaml 中声明为 auto_overwrite 的模板：在 init 脚本 harness PASS 后，
+ * 将实例根目标与 framework 模板对齐；已存在且内容不同则先备份至 .framework-backup/<UTC>/
+ */
+function applyInitMechanismSync(
+  projectRoot: string,
+  adapter: AdapterDescriptor,
+): { syncedFiles: number; backupRelDir: string | null } {
+  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
+    return { syncedFiles: 0, backupRelDir: null };
+  }
+
+  let syncedFiles = 0;
+  let backupRelDir: string | null = null;
+
+  for (const f of adapter.templateFiles) {
+    if (f.update_policy !== 'auto_overwrite') continue;
+
+    const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
+    const tgAbs = path.join(projectRoot, f.targetRel);
+    const tplBuf = safeReadBuffer(tplAbs);
+    if (tplBuf === null) {
+      process.stderr.write(`[check-init] mechanism sync skip（模板缺失）：${f.templateRel}\n`);
+      continue;
+    }
+
+    const tgBuf = safeReadBuffer(tgAbs);
+    if (tgBuf === null) {
+      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+      fs.writeFileSync(tgAbs, tplBuf);
+      syncedFiles++;
+      continue;
+    }
+
+    const cmp = compareTextArtifact(tplBuf, tgBuf);
+    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+      continue;
+    }
+
+    if (!backupRelDir) {
+      const stamp = nowStamp();
+      backupRelDir = `.framework-backup/${stamp}`;
+      fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
+    }
+    const backupAbs = path.join(projectRoot, backupRelDir, f.targetRel);
+    fs.mkdirSync(path.dirname(backupAbs), { recursive: true });
+    fs.copyFileSync(tgAbs, backupAbs);
+    fs.writeFileSync(tgAbs, tplBuf);
+    syncedFiles++;
+  }
+
+  return { syncedFiles, backupRelDir };
+}
+
+/**
+ * 与 SKILL 00 · §0.3.4.1 对齐：`auto_overwrite` 的 adapter 机制段已由 check-init 在 PASS 后自动对齐，
+ * 不进入结构化 Q 收集；此处返回「实际需要用户在 0.3.4 收 y/n」的 inspection 行。
+ */
+export function inspectionsForInit034Prompt(inspections: Inspection[]): Inspection[] {
+  return inspections.filter(ins => {
+    if (ins.status !== 'POPULATED') return false;
+    if (ins.index === 1 || ins.index === 2) return true;
+    if (ins.index === 3) return ins.update_policy !== 'auto_overwrite';
+    return false;
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -1408,22 +1553,28 @@ function resolveAdapterName(ctx: CheckContext, cfg: RawFrameworkConfig): {
 }
 
 function buildStdoutTable(report: CheckInitReport): string {
-  // SKILL 0.3.3 要求的 11 行表
+  // SKILL 0.3.3 体检表（6 列；#3 可展开）
   const header = [
     `Init 体检报告 [mode=${report.mode}, adapter=${report.adapter ?? 'N/A'}]`,
     `生成时间: ${report.generated_at}`,
     `verdict: ${report.verdict}${report.blockers.length > 0 ? `（${report.blockers.length} BLOCKER）` : ''}`,
   ].join('\n');
 
+  const cols = ['#', '产物', '状态', 'update_policy', '计划动作', '诊断'];
+  const policyCol = (i: Inspection): string => {
+    if (i.index !== 3) return '—';
+    if (i.update_policy === 'auto_overwrite') return 'auto_overwrite';
+    if (i.update_policy === 'prompt_if_changed') return 'prompt_if_changed';
+    return '—';
+  };
   const rows: string[][] = report.inspections.map(i => [
     String(i.index),
     i.target_path,
     i.status,
+    policyCol(i),
     i.planned_strategy,
     i.diagnosis,
   ]);
-
-  const cols = ['#', '产物', '状态', '计划动作', '诊断'];
   const widths = cols.map((c, idx) =>
     Math.max(c.length, ...rows.map(r => visualWidth(r[idx]))),
   );
@@ -1594,7 +1745,7 @@ const checker: PhaseChecker = {
     const inspections: Inspection[] = [
       inspect01(inspectorEnv),
       inspect02(inspectorEnv),
-      inspect03(inspectorEnv),
+      ...inspect03(inspectorEnv),
       inspect04(inspectorEnv),
       inspect05(inspectorEnv),
       inspect06(inspectorEnv),
@@ -1608,25 +1759,35 @@ const checker: PhaseChecker = {
     // 4. inspection_table_complete
     const incomplete = inspections.filter(i =>
       !['MISSING', 'EMPTY', 'POPULATED'].includes(i.status));
-    const tableCompleteResult: CheckResult = incomplete.length === 0
-      ? {
+    const shapeOk = validateInspectionShape(inspections);
+    const tableCompleteResult: CheckResult =
+      incomplete.length === 0 && shapeOk
+        ? {
           id: 'inspection_table_complete',
           category: 'structure',
-          description: '11 行体检全部能给出 MISSING/EMPTY/POPULATED 判定',
+          description: '基线体检项（含第 3 项可展开）全部能给出 MISSING/EMPTY/POPULATED 判定且行数合法',
           severity: 'BLOCKER',
           status: 'PASS',
-          details: '11 项判定齐全（脚本计算，AI 无自由度）',
+          details: `判定齐全：共 ${inspections.length} 行（索引 1–2、4–11 各恰好 1 行；索引 3≥1 行）`,
         }
-      : (() => {
-          blockers.push(`inspection_table_complete: ${incomplete.length} 行无法判定`);
+        : (() => {
+          const parts: string[] = [];
+          if (incomplete.length > 0) {
+            blockers.push(`inspection_table_complete: ${incomplete.length} 行无法判定`);
+            parts.push(`${incomplete.length} 行状态非法：\n` +
+              incomplete.map(i => `  - #${i.index} ${i.target_path}`).join('\n'));
+          }
+          if (!shapeOk) {
+            blockers.push('inspection_table_complete: 体检行数/shape 不符合基线（应为 #1 #2 各 1 行、#3≥1 行、#4–#11 各 1 行）');
+            parts.push('索引 1–2、4–11 须各出现恰好 1 行；索引 3 须至少 1 行（可展开多行）');
+          }
           return {
             id: 'inspection_table_complete',
             category: 'structure',
-            description: '11 行体检全部能给出 MISSING/EMPTY/POPULATED 判定',
+            description: '基线体检项（含第 3 项可展开）shape 与三态合法',
             severity: 'BLOCKER',
             status: 'FAIL',
-            details: `${incomplete.length} 行无法判定：\n` +
-              incomplete.map(i => `  - #${i.index} ${i.target_path}`).join('\n'),
+            details: parts.join('\n\n'),
           };
         })();
 
@@ -1659,10 +1820,22 @@ const checker: PhaseChecker = {
           };
         })();
 
-    // 6. 装配 check-init.json + stdout 11 行表
+    // 6. 装配 check-init.json + stdout 体检表（#3 可展开多行；check-init.json schema_version 1.1）
     const verdict: 'PASS' | 'FAIL' = blockers.length > 0 ? 'FAIL' : 'PASS';
-    const report: CheckInitReport = {
-      schema_version: '1.0',
+
+    let mechanism_backup_rel_dir: string | null = null;
+    let mechanism_synced_files = 0;
+    if (verdict === 'PASS' && adapter) {
+      const syncOutcome = applyInitMechanismSync(ctx.projectRoot, adapter);
+      mechanism_backup_rel_dir = syncOutcome.backupRelDir;
+      mechanism_synced_files = syncOutcome.syncedFiles;
+    }
+
+    const reportBase: Omit<CheckInitReport, keyof {
+      mechanism_backup_rel_dir?: string | null;
+      mechanism_synced_files?: number;
+    }> = {
+      schema_version: '1.1',
       mode,
       adapter: adapterPick.name,
       inspections,
@@ -1670,6 +1843,14 @@ const checker: PhaseChecker = {
       verdict,
       generated_at: new Date().toISOString(),
     };
+    const report: CheckInitReport =
+      verdict === 'PASS'
+        ? {
+            ...reportBase,
+            mechanism_backup_rel_dir,
+            mechanism_synced_files,
+          }
+        : reportBase;
 
     let writtenPath: string | null = null;
     try {
@@ -1679,7 +1860,7 @@ const checker: PhaseChecker = {
       console.error(`[check-init] 写 check-init.json 失败：${(e as Error).message}`);
     }
 
-    // stdout 11 行表（被 SKILL 0.3.3 原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
+    // stdout 体检表（被 SKILL 0.3.3 原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
     // 抑制（fixture 单测使用，避免污染 jest 输出）。
     if (!process.env.CHECK_INIT_QUIET) {
       console.log('\n========== check-init: SKILL 0.3.3 体检表（脚本生成，AI 仅搬运） ==========');
@@ -1698,13 +1879,17 @@ const checker: PhaseChecker = {
       diffResult,
     ];
     for (const ins of inspections) {
+      const policyTag =
+        ins.index === 3 && ins.update_policy
+          ? ` update_policy=${ins.update_policy}`
+          : '';
       results.push({
         id: `inspection_${String(ins.index).padStart(2, '0')}_${shortKey(ins.target_path)}`,
         category: 'traceability',
         description: `#${ins.index} ${ins.target_path}`,
         severity: 'MINOR',
         status: ins.status === 'MISSING' ? 'WARN' : 'PASS', // 状态非裁定，只为可读
-        details: `[${ins.status}] ${ins.diagnosis}` +
+        details: `[${ins.status}]${policyTag} ${ins.diagnosis}` +
           (ins.diff_summary && ins.diff_summary !== 'no diff'
             ? `\n${truncate(ins.diff_summary, 600)}`
             : ''),
@@ -1754,4 +1939,7 @@ export const __testing = {
   compareTextArtifact,
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
+  parseUpdatePolicy,
+  inspectionsForInit034Prompt,
+  applyInitMechanismSync,
 };

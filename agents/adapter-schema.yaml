@@ -43,6 +43,12 @@ required_fields:
           生成到实例工程根的相对路径，例如 "AGENTS.md" / "CLAUDE.md"。
           **同一个工程一次只能激活一个 adapter**，因此 target_path 不能和其它 adapter
           的已落地产物冲突——若切换 adapter，初始化 Skill 必须先清理旧产物。
+      update_policy:
+        type: string | optional
+        description: >
+          UPDATE 模式下若将入口文件也纳入模板扫描策略时使用（少见）。
+          缺省或未写等价于 prompt_if_changed（与其它段一致）。
+        enum: ["auto_overwrite", "prompt_if_changed"]
 
 optional_fields:
 
@@ -70,6 +76,17 @@ optional_fields:
           template_dir:
             type: string
             description: 相对于 adapter 目录
+          update_policy:
+            type: string | optional
+            description: >
+              UPDATE 体检第 3 项：POPULATED 时是否免 y/n 自动对齐模板。
+              auto_overwrite=机制代码（hooks/settings 等）；缺省或未写=prompt_if_changed（与用户入口一致，需 diff + y）。
+            enum: ["auto_overwrite", "prompt_if_changed"]
+      update_policy:
+        type: string | optional
+        description: >
+          同上，作用于 slash commands 整块（不含 subagents）。
+        enum: ["auto_overwrite", "prompt_if_changed"]
 
   skill_bridge:
     type: object | null
@@ -90,6 +107,10 @@ optional_fields:
         description: |
           模板目录，相对于 adapter 目录。目录下每个子目录对应一个 skill
           （目录名 = 实例工程里跳板目录名；其下放一个 SKILL.md）。
+      update_policy:
+        type: string | optional
+        enum: ["auto_overwrite", "prompt_if_changed"]
+        description: UPDATE 模式下 POPULATED 时对 Cursor 跳板是否自动覆盖模板（默认 prompt_if_changed）。
 
   rules:
     type: object | null
@@ -103,6 +124,10 @@ optional_fields:
       template_dir:
         type: string
         description: 相对于 adapter 目录
+      update_policy:
+        type: string | optional
+        enum: ["auto_overwrite", "prompt_if_changed"]
+        description: UPDATE 模式下 POPULATED 时对 rules 是否自动覆盖（默认 prompt_if_changed）。
 
   settings_file:
     type: object | null
@@ -119,6 +144,10 @@ optional_fields:
       target_path:
         type: string
         description: 生成到实例工程根的相对路径，例如 ".claude/settings.json"
+      update_policy:
+        type: string | optional
+        enum: ["auto_overwrite", "prompt_if_changed"]
+        description: UPDATE 模式下 POPULATED 时是否备份后对齐 settings 模板（默认 prompt_if_changed）。
 
   hooks:
     type: object | null
@@ -135,6 +164,12 @@ optional_fields:
       template_dir:
         type: string
         description: 模板目录，相对于 adapter 目录，例如 "templates/hooks"
+      update_policy:
+        type: string | optional
+        enum: ["auto_overwrite", "prompt_if_changed"]
+        description: >
+          UPDATE 模式下 POPULATED 时 hooks 是否与 framework 模板自动对齐；
+          Claude Code 等对 hook 协议敏感时应声明 auto_overwrite。
 
   instance_skill_bridge:
     type: object | null

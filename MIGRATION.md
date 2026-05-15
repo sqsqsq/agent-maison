@@ -52,6 +52,7 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - 若已存在等价规则（如 `**/node_modules` / `**/package-lock.json` / `framework/harness/reports/*`），不重复追加。
 - 若缺少 framework 运行产物规则，会补齐 `framework/harness/node_modules/`、`dist/`、`reports/*`、`trace/`、`package-lock.json`、`framework/harness/state/*`（及对应 `!.gitkeep`）等忽略项。
 - Skill 0 合并前的草稿目录：`doc/catalog-staging/`、`doc/glossary-staging/`（与 `framework/harness/scripts/check-init.ts` 中 `CANONICAL_IGNORE_PATTERNS` 对齐）。
+- **`init` 机制模板自动对齐备份**：`.framework-backup/`（UPDATE 模式下 `check-init` PASS 后覆盖 `adapter.yaml` 中 `update_policy=auto_overwrite` 目标前的备份根；由体检 #11 canonical patterns 收口）。
 - 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。
 
 #### 同步完成后，在目标工程根跑 `/framework-init`
@@ -296,6 +297,22 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash；`cd framework/harness && npm test`。
 
 详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md) 与 [docs/evolution/extension-e2e-acceptance.md](docs/evolution/extension-e2e-acceptance.md)。
+
+### adapter `update_policy` + `.framework-backup/`（实例侧 hooks/settings 等与 framework 对齐）
+
+适用：已从本仓库 vendor / submodule **更新 framework** 后，老实例的 Claude Code **`hooks`、`settings.json`、verifier 子 agent** 等仍停在旧版本，导致 `npm test`（hook 行为）或其它 harness 契约回归。
+
+**行为摘要**：
+
+- [adapter-schema.yaml](agents/adapter-schema.yaml) 各段可选 `update_policy`：`prompt_if_changed`（**缺省**）或 `auto_overwrite`。Claude adapter 已对 `hooks` / `settings_file` / `commands.subagents` 声明 **`auto_overwrite`**。
+- [check-init.ts](harness/scripts/check-init.ts)：体检 **#3 逐文件展开**， stdout / `check-init.json` 中带 `update_policy` 列；`auto_overwrite` 且 POPULATED **不进入** Skill 00 Step 0.3.4 的 `Q3.x`。
+- **PASS** 时（除非 `CHECK_INIT_SKIP_MECHANISM_SYNC=1`）自动对该类目标 **`cp` → `.framework-backup/<UTC>/…` → 模板覆盖**。报告 `schema_version: "1.1"`，`mechanism_backup_rel_dir` / `mechanism_synced_files`。
+- `.framework-backup/` 已计入体检 **#11** canonical `.gitignore`；Step 5.4.5 缺则补齐。
+
+**实例 checklist**：
+
+1. 更新 `framework/` 后在实例根重跑 **`/framework-init`**（UPDATE），保证 Step 0.3 跑出最新 `check-init`。
+2. 若曾对机制文件做过**有意**本地补丁：PASS 前先阅体检表 drift，或改用 patch 挂载到不会被覆盖的路径；对齐后从 `.framework-backup/<timestamp>/` 取回对比。
 
 ### v2.6：框架升级兼容协议（compat）+ context-exploration 回填
 

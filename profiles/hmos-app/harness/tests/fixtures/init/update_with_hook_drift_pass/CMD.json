@@ -1,0 +1,8 @@
+{
+  "phase": "init",
+  "adapter": "claude",
+  "env": {
+    "CHECK_INIT_QUIET": "1",
+    "CHECK_INIT_SKIP_MECHANISM_SYNC": "1"
+  }
+}

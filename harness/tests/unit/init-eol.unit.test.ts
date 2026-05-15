@@ -112,7 +112,9 @@ const cases: Case[] = [
         writeFile(path.join(root, f.targetRel), withOppositeEol(template));
       }
 
-      const inspection = __testing.inspect03(makeInspectorEnv(root));
+      const rows = __testing.inspect03(makeInspectorEnv(root));
+      assertEq(rows.length, 1, 'EOL-only 应聚合为一行');
+      const inspection = rows[0]!;
       assertEq(inspection.status, 'EMPTY', 'adapter templates 仅 EOL 差异不应进入 POPULATED');
       assertEq(inspection.planned_strategy, '保留现有文件（不重写）', 'EOL-only adapter templates 不应触发重拷贝');
       assert(inspection.diagnosis.includes('仅换行符不同'), '诊断应说明 EOL-only 已忽略');
@@ -130,9 +132,10 @@ const cases: Case[] = [
         writeFile(path.join(root, f.targetRel), content);
       }
 
-      const inspection = __testing.inspect03(makeInspectorEnv(root));
-      assertEq(inspection.status, 'POPULATED', '真实内容差异仍必须进入 POPULATED');
-      assert(inspection.diff_summary?.includes('[D] .claude/commands/coding.md') === true, 'diff_summary 应列出真实漂移文件');
+      const rows = __testing.inspect03(makeInspectorEnv(root));
+      const drift = rows.find(r => r.diff_summary?.includes('real content drift'));
+      assertEq(drift?.status, 'POPULATED', '真实内容差异仍必须进入 POPULATED');
+      assert(drift?.diff_summary != null, 'diff_summary 不能为空');
     }),
   },
   {

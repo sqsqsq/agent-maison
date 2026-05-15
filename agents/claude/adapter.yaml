@@ -15,6 +15,7 @@ commands:
   subagents:
     target_dir: .claude/agents
     template_dir: templates/agents
+    update_policy: auto_overwrite               # verifier 等为协议级子 agent 配置
 
 skill_bridge: null
 rules: null
@@ -24,6 +25,7 @@ rules: null
 settings_file:
   template_path: templates/settings.json        # 相对于 adapter 目录
   target_path: .claude/settings.json            # 相对于实例工程根
+  update_policy: auto_overwrite                 # hooks 注册表，协议级
 
 # Claude Code 的 .claude/hooks/*.mjs：由 settings_file 注册并由 Claude Code 进程触发，
 # 通过 stdin 接收 JSON payload，通过 stderr + exit code 与客户端协议通信。
@@ -33,6 +35,7 @@ settings_file:
 hooks:
   target_dir: .claude/hooks                     # 相对于实例工程根
   template_dir: templates/hooks                 # 相对于 adapter 目录
+  update_policy: auto_overwrite                 # Stop hook 等与 harness 契约绑定
 
 instance_skill_bridge:
   commands_target_dir: .claude/commands

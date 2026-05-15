@@ -21,7 +21,7 @@
 
 phase: init
 version: "1.0"
-applies_to: "framework-init Skill 0.3 体检表 11 项产物"
+applies_to: "framework-init Skill 0.3 体检表：11 个逻辑索引（#3 可按文件展开多行）的产物"
 
 # --------------------------------------------------------------------------
 # 结构约束
@@ -65,11 +65,18 @@ structure_checks:
 
   inspection_table_complete:
     description: >
-      11 项体检（SKILL 0.3.1 表）每行必须给出 MISSING / EMPTY / POPULATED
-      三态之一。任一项无法判定 → BLOCKER（脚本 bug 或环境异常）。
+      基线体检项必须每行给出 MISSING / EMPTY / POPULATED 三态。
+      #1/#2/#4/#5/#6/#7/#8/#9/#10/#11 各占「恰好一行」；
+      #3 可能因为 adapter 模板逐文件展开而≥1 行。
+      任一行无法判定或索引出现次数不符合上述 shape → BLOCKER。
     severity: BLOCKER
     rule:
-      required_inspection_count: 11
+      required_logical_items: 11
+      inspection_shape:
+        singleton_indices: [1, 2, 4, 5, 6, 7, 8, 9, 10, 11]
+        expandable_indices:
+          - index: 3
+            min_rows: 1
       allowed_status:
         - "MISSING"
         - "EMPTY"
