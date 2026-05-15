@@ -9,6 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import {
   emitInstanceSkillBridge,
   formatExtensionSkillSectionMarkdown,
@@ -121,7 +122,9 @@ function buildVars(
     AGENT_ADAPTER: String(config.agent_adapter ?? ''),
     PROJECT_PROFILE_NAME: profileName,
     PROJECT_PROFILE_SUB_VARIANT:
-      typeof pp.sub_variant === 'string' && pp.sub_variant.trim() ? pp.sub_variant.trim() : '—',
+      typeof pp.sub_variant === 'string' && pp.sub_variant.trim()
+        ? pp.sub_variant.trim()
+        : DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY,
     ARCHITECTURE_SUMMARY: opts.architectureSummary,
     PROFILE_AGENT_SSOT_ROWS: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
     PROFILE_AGENT_GUARDRAILS: loadProfileAgentsPartial(profileName, 'agent-guardrails'),

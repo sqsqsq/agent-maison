@@ -220,7 +220,7 @@ placeholders:
   PROJECT_PROFILE_NAME:
     source: framework.config.json → project_profile.name；缺省或未配置时视同 hmos-app
   PROJECT_PROFILE_SUB_VARIANT:
-    source: framework.config.json → project_profile.sub_variant（无则用「—」）
+    source: framework.config.json → project_profile.sub_variant（无则用「标准应用」；见 harness/config.ts DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY）
   PROFILE_AGENT_SSOT_ROWS:
     source: |
       渲染时从 framework/profiles/<project_profile.name>/templates/agents-md/agent-ssot-rows.partial.md 读入；

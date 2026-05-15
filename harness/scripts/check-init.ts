@@ -26,6 +26,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 
 // --------------------------------------------------------------------------
@@ -602,7 +603,7 @@ function buildRenderEnv(
       ? (raw.project_profile as Record<string, unknown>)
       : {};
   let profileName = 'hmos-app';
-  let subVariant = '—';
+  let subVariant = DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY;
   if (typeof pp.name === 'string' && pp.name.trim() !== '') profileName = pp.name.trim();
   if (typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '') subVariant = pp.sub_variant.trim();
   return {

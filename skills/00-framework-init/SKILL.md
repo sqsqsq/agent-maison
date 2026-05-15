@@ -464,7 +464,7 @@ node framework/harness/scripts/render-agents-md.mjs \
 | `{{PROJECT_TYPE}}` | `app` / `atomic_service` |
 | `{{PROJECT_TYPE_LABEL}}` | 展示文案，按 `project_type` 映射：`app` → `应用工程`；`atomic_service` → `元服务工程`。若未来新增 `project_type` 值，此处同步追加映射 |
 | `{{PROJECT_PROFILE_NAME}}` | `framework.config.json → project_profile.name`；缺失时由 harness 按仓库指纹回落默认（见 [framework/harness/config.ts](../../harness/config.ts)） |
-| `{{PROJECT_PROFILE_SUB_VARIANT}}` | `project_profile.sub_variant`，无则用 `—` |
+| `{{PROJECT_PROFILE_SUB_VARIANT}}` | `project_profile.sub_variant`，无则用 `标准应用`（与 `DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY` 常量一致） |
 | `{{AGENT_ADAPTER}}` | 所选 adapter 名 |
 | `{{ARCHITECTURE_SUMMARY}}` | 一句话，如：「5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→presentation，跨模块出口见 DSL `cross_module_exports_file`」 |
 | `{{ARCHITECTURE_MD_PATH}}` | 来自 `paths.architecture_md` |

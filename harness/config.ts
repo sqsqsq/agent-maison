@@ -293,6 +293,11 @@ export interface ProjectProfileConfig {
   sub_variant?: string;
 }
 
+/**
+ * AGENTS.md / CLAUDE.md 等入口文档中「子型」占位符：未配置 `project_profile.sub_variant` 时的展示文案（如标准 HAP 应用）。
+ */
+export const DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY = '标准应用';
+
 export interface FrameworkConfig {
   schema_version: string;
   project_name: string;
