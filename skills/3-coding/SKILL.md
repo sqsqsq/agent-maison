@@ -330,8 +330,8 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name> --summary --failures-only
 ```
 
-`coding.compile` BLOCKER 的具体 provider 与日志格式由当前 profile 声明；完整日志与 summary 落在 `framework/harness/reports/<feature>/coding/` 下。PASS 另需命中 profile provider 声明的成功哨兵，避免「退出码 0 但输出异常」误判。
-优先读取 `framework/harness/reports/<feature>/coding/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
+`coding.compile` BLOCKER 的具体 provider 与日志格式由当前 profile 声明；完整日志与 summary 落在 `doc/features/<feature>/coding/reports/` 下。PASS 另需命中 profile provider 声明的成功哨兵，避免「退出码 0 但输出异常」误判。
+优先读取 `doc/features/<feature>/coding/reports/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
 
 > **不要**让 agent 自己手敲完整宿主编译命令行；具体命令应由 profile provider 或 harness 封装。
 
@@ -340,7 +340,7 @@ profile 专属命令形态、超时与性能调优说明放在对应 `framework/
 #### 6.5.2 自闭环修复策略
 
 1. **看 verdict**：harness 报告里 profile compile capability 状态为 PASS 才算编译过；FAIL 进入修复闭环。
-2. **读完整日志**：harness 把日志写到 `framework/harness/reports/<feature>/coding/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
+2. **读完整日志**：harness 把日志写到 `doc/features/<feature>/coding/reports/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
    - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → 不要让用户手工猜。先展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
@@ -382,7 +382,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 执行后 agent **必须**：
 
 1. Read 退出码（0 = PASS，非 0 = FAIL）；
-2. Read `framework/harness/reports/<feature>/coding/` 下的报告文件，逐条核对 BLOCKER；
+2. Read `doc/features/<feature>/coding/reports/` 下的报告文件，逐条核对 BLOCKER；
 3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
 4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
    - 若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `diff_within_scope` 报 `stale_diff_base`：必须自动重跑一次 `HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>`。重跑后若仍有越界文件，才进入 scope 扩展提议或撤销误改流程。
@@ -436,7 +436,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 **编码阶段宣布"完成"前，必须同时满足以下四条**（物理拦截层会按此判据拦截"假完成"）：
 
-1. **trace.json 真实存在**：`framework/harness/reports/<feature>/coding/trace.json` 已写入。
+1. **trace.json 真实存在**：`doc/features/<feature>/coding/reports/trace.json` 已写入。
 2. **脚本 harness PASS**：`harness-runner.ts --phase coding --feature <feature>` 退出码 0，零 BLOCKER。
 3. **verifier 子 agent PASS**：通过 Task 工具触发 `subagent_type: verifier`，子 agent 报告 verdict = PASS。
 4. **完成回执通过校验**：填写 `doc/features/<feature>/coding/phase-completion-receipt.md`（模板见 [framework/harness/templates/phase-completion-receipt.md](../../harness/templates/phase-completion-receipt.md)），并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase coding` 校验。
@@ -510,7 +510,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 当本 Skill 通过适配器下发的 slash（如 `/coding`）或其它等价快捷入口触发时，**必须**在阶段结束时产出一份 trace 凭证：
 
-- **路径约定**：`framework/harness/reports/<feature>/<timestamp>/<model>-code/trace.json`
+- **路径约定**：`doc/features/<feature>/coding/reports/<timestamp>/<model>-code/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
 - **必须记录的事件**（针对弱模型迭代最关键）：
   - `tool_calls`：`ReadLints`（或等价宿主静态检查）的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
@@ -524,7 +524,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 ## 运行时交付约定（内网 / 弱模型）
 
 ```
-framework/harness/reports/<feature>/<timestamp>/<model>-coding/
+doc/features/<feature>/coding/reports/<timestamp>/<model>-coding/
 ├── trace.json                 # phase = "coding"
 ├── gap-notes.md
 ├── check-coding.report.md     # 包含 diff_within_scope 结果

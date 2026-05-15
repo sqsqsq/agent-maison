@@ -13,7 +13,7 @@
 //     * REPORTS/（可选）— 临时放到隔离的 reports 根下（通过环境变量
 //                         HARNESS_REPORTS_ROOT_OVERRIDE 接入），支持 fixture 提供
 //                         gap-notes.md 做"已授权"断言；目录结构应与真实
-//                         framework/harness/reports/<feature>/ 一致，例如：
+//                         doc/features/<feature>/<phase>/reports/（或遗留 layout 下同名相对路径），例如：
 //                           REPORTS/demo/fixture-run/gap-notes.md
 //     * CMD.json        — { phase, feature, env? }
 //     * EXPECTED.json   — { rules: [{ id, status, severity, details_includes? }] }
@@ -173,7 +173,7 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
 
     // 3c. 若 fixture 含 REPORTS/，把它拷到 tmpdir/__fixture_reports/，并通过
     //     环境变量 HARNESS_REPORTS_ROOT_OVERRIDE 告知 check-ut.ts 去这里找
-    //     gap-notes.md / trace.json。不污染真实仓库 framework/harness/reports/。
+    //     gap-notes.md / trace.json。不污染真实仓库的默认 reports 根目录。
     const reportsFixtureDir = path.join(fixtureDir, 'REPORTS');
     const reportsTmpRoot = path.join(tmpdir, '__fixture_reports');
     if (fs.existsSync(reportsFixtureDir)) {

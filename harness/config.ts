@@ -254,6 +254,17 @@ export interface FrameworkPaths {
    * 实例侧 extension 根目录（相对实例工程根）。默认 `doc/extensions`。
    */
   extension_dir?: string;
+  /**
+   * Feature 阶段 harness 报告目录（相对实例工程根）的占位符模式。
+   *
+   * 占位符：`<feature>`、`<phase>`（与 `receipt_dir_pattern` 一致）。
+   * 典型值：`doc/features/<feature>/<phase>/reports` —— 报告与需求产物同树，
+   * 便于整体替换 `framework/` 子目录而不丢失过程记录。
+   *
+   * **未在 `framework.config.json` 中声明时**：回退到旧布局
+   * `framework/harness/reports/<feature>/<phase>/`（与历史实例兼容）。
+   */
+  reports_dir_pattern?: string;
 }
 
 /** PRD harness Visual Handoff 守门档位（`prd` 段为 opt-in 时写入） */
@@ -1030,6 +1041,9 @@ export function findSublayerOf(
   return undefined;
 }
 
+/** 与 `scripts/utils/types` 中 GLOBAL_FEATURE_SENTINEL（`_global`）一致；不 import types 以防环依赖 */
+const GLOBAL_FEATURE_REPORTS_SENTINEL = '_global';
+
 // --------------------------------------------------------------------------
 // 路径解析（阶段 3：集中管理可覆盖路径）
 // --------------------------------------------------------------------------
@@ -1043,6 +1057,8 @@ export function findSublayerOf(
 //   - `phaseRulesDir` / `reportsDir` / `promptsDir` 是 framework 侧资产，默认
 //     位于 `<projectRoot>/framework/...` 下；若 framework/ 被放到其他位置，
 //     调用方可显式传入 `frameworkRoot` 覆盖。
+//   - Feature 维度脚本报告：优先 `featurePhaseReportsDir()`（可与 `doc/features/.../reports`
+//     对齐）；全局阶段 `_global` 仍使用 `reportsDir` 树下路径。
 
 /** 运行时解析后的绝对路径集合（由 `resolvePaths` 返回） */
 export interface ResolvedPaths {
@@ -1050,7 +1066,7 @@ export interface ResolvedPaths {
   frameworkRoot: string;
   /** framework/specs/phase-rules 的绝对路径 */
   phaseRulesDir: string;
-  /** framework/harness/reports 的绝对路径 */
+  /** framework/harness/reports 的绝对路径（全局 `_global` 与未配置 reports_dir_pattern 时的 feature 回退） */
   reportsDir: string;
   /** framework/harness/prompts 的绝对路径 */
   promptsDir: string;
@@ -1164,6 +1180,44 @@ export function receiptDirPath(projectRoot: string, feature: string, phase: stri
 /** 阶段完成回执文件绝对路径 = receiptDirPath / phase-completion-receipt.md */
 export function receiptFilePath(projectRoot: string, feature: string, phase: string): string {
   return path.join(receiptDirPath(projectRoot, feature, phase), 'phase-completion-receipt.md');
+}
+
+/**
+ * 某一 feature 在某 phase 下 harness 报告产出目录的绝对路径。
+ *
+ * - `feature === '_global'`（全局阶段 catalog / glossary / init 等）：固定为
+ *   `<frameworkRoot>/harness/reports/_global/<phase>`。
+ * - 否则：若配置了 `paths.reports_dir_pattern`，按占位符解析到实例根下路径；
+ *   未配置则回退到 `<frameworkRoot>/harness/reports/<feature>/<phase>`。
+ */
+export function featurePhaseReportsDir(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string {
+  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  if (feature === GLOBAL_FEATURE_REPORTS_SENTINEL) {
+    return path.join(fRoot, 'harness', 'reports', '_global', phase);
+  }
+  const cfg = loadFrameworkConfig(projectRoot);
+  const pattern = cfg.paths.reports_dir_pattern;
+  if (typeof pattern === 'string' && pattern.trim().length > 0) {
+    const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+    return path.resolve(projectRoot, rel);
+  }
+  return path.join(fRoot, 'harness', 'reports', feature, phase);
+}
+
+/** `featurePhaseReportsDir` 相对 `projectRoot` 的 POSIX 风格路径（用于日志 / summary）。 */
+export function relFeaturePhaseReportsDir(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string {
+  const abs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  return toPosix(path.relative(projectRoot, abs));
 }
 
 // ---- 单条相对路径（用于 affected_files / 错误消息展示） ------------------

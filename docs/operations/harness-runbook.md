@@ -135,27 +135,32 @@ npx ts-node harness-runner.ts --list
 
 ## 4. 报告输出路径
 
+**全局阶段**（`init` / `catalog` / `glossary` / `docs` / `extensions`，`feature` 哨兵 `_global`）仍在 **framework 树下**：
+
 ```
-framework/harness/reports/
-├── _global/
-│   ├── extensions/              ← manifest / extension 门禁
-│   ├── init/
-│   ├── catalog/
-│   │   ├── script-report.json   ← 脚本检查结果（程序消费）
-│   │   ├── summary.json         ← 稳定短摘要（verdict / blockers / next_action）
-│   │   ├── ai-prompt.md         ← AI Harness prompt（人类审 / 喂给模型）
-│   │   ├── merged-report.md     ← 合并后人类可读报告
-│   │   └── trace.json           ← 起点 commit + 时间戳
-│   ├── glossary/
-│   └── docs/                    ← framework 文档新鲜度
-└── <feature>/
-    ├── prd/
-    ├── design/
-    ├── coding/
-    ├── review/
-    ├── ut/
-    └── testing/
+framework/harness/reports/_global/
+├── extensions/
+├── init/<timestamp>/...
+├── catalog/<timestamp>/...
+├── glossary/<timestamp>/...
+└── docs/...
 ```
+
+**Feature 维度阶段**（prd / design / coding / review / ut / testing）的报告目录由 **`framework.config.json` → `paths.reports_dir_pattern`** 解析；推荐与默认实例一致：
+
+```
+doc/features/<feature>/
+├── prd/reports/
+├── design/reports/
+├── coding/reports/
+├── review/reports/
+├── ut/reports/
+└── testing/reports/
+```
+
+每个 `reports/` 下典型包含：`script-report.json`、`summary.json`、`merged-report.md`、`ai-prompt.md`、`trace.json`、`verifier.report.md`，以及宿主 profile 落地的构建/装机日志等。
+
+若 **未配置** `reports_dir_pattern`，harness **回退**到历史布局：`framework/harness/reports/<feature>/<phase>/`（与 `_global/` 并列）。
 
 **关键文件**：
 
@@ -432,7 +437,7 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 
 行为：
 - 删除 `framework/harness/state/.current-phase.json`（无确认）；
-- 历史 verdict / 报告 / 回执仍保留在 `framework/harness/reports/<feature>/<phase>/` 与
+- 历史 verdict / 报告 / 回执仍保留在 `doc/features/<feature>/<phase>/reports/`（或 legacy：`framework/harness/reports/<feature>/<phase>/`）与
   `doc/features/<feature>/<phase>/` 下，用于审计；
 - 下次 stop hook 找不到 state 文件 → 直接放行；
 - 想接着这个 feature/phase 干，按对应 SKILL.md 重新进入即可（state 会被 `harness-runner.ts` 重新写起来）。

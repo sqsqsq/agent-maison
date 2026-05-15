@@ -10,9 +10,8 @@
 //   - 输入：stdin 收到 JSON，含 session_id / transcript_path / cwd /
 //     hook_event_name / stop_hook_active 等。
 //   - 输出：本 hook 不阻断（exit 0）；只做"旁观记录"，把 verifier 子 agent
-//     的转录摘要写到：
-//       framework/harness/reports/<feature>/<phase>/verifier.report.md
-//       framework/harness/reports/<feature>/<phase>/verifier.report.json
+//     的转录摘要写到（默认与 paths.reports_dir_pattern 对齐，未配置时为 framework/harness/reports/...）：
+//       doc/features/<feature>/<phase>/reports/verifier.report.md （推荐）
 //     供 check-receipt.ts 在 verifier_subagent.report_path 字段中引用。
 //
 // 落地内容：
@@ -93,6 +92,34 @@ function readStateFileRelFromConfig(projectRoot) {
     return null;
   } catch {
     return null;
+  }
+}
+
+/** 对齐 harness/config.featurePhaseReportsDir —— Hook 不落 TS，纯 Node 复刻占位符语义 */
+function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
+  if (!feature || !phase || feature === 'unknown' || phase === 'unknown') return null;
+  try {
+    const cfgPath = path.resolve(projectRoot, 'framework.config.json');
+    if (feature === '_global') {
+      return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
+    }
+    let pattern = null;
+    try {
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        const p = cfg?.paths?.reports_dir_pattern;
+        if (typeof p === 'string' && p.trim()) pattern = p.trim();
+      }
+    } catch {
+      pattern = null;
+    }
+    if (pattern) {
+      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      return path.resolve(projectRoot, rel);
+    }
+    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+  } catch {
+    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }
 }
 
@@ -242,10 +269,12 @@ async function main() {
   const feature = state?.feature ?? 'unknown';
   const phase = state?.phase ?? 'unknown';
 
-  const reportDir =
+  const resolved =
     state && state.feature && state.phase
-      ? path.resolve(projectRoot, 'framework/harness/reports', state.feature, state.phase)
-      : path.resolve(projectRoot, 'framework/harness/state');
+      ? resolveFeaturePhaseReportDir(projectRoot, String(state.feature), String(state.phase))
+      : null;
+  const reportDir =
+    resolved ?? path.resolve(projectRoot, 'framework/harness/state');
 
   const mdPath =
     state && state.feature && state.phase

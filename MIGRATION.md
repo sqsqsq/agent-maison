@@ -119,6 +119,99 @@ git submodule update --remote framework
 
 ## 版本变更记录
 
+### Feature-phase harness 报告外置（`paths.reports_dir_pattern`）
+
+**适用范围**：已将 instance 升级到支持 `paths.reports_dir_pattern` 的 harness；希望 feature 维度脚本报告、`trace.json`、合并报告等与 `doc/features/<feature>/` 同树的工程。
+
+**行为摘要**：
+
+- **`paths.reports_dir_pattern`**（占位符 `<feature>`、`<phase>`）：解析为实例根下目录；推荐默认 **`doc/features/<feature>/<phase>/reports`**。
+- **未配置**：harness **回退**写入 **`framework/harness/reports/<feature>/<phase>/`**（与 `_global/` 并存）。
+- **`_global` 哨兵**：`init` / `catalog` / `glossary` / `docs` / `extensions` 等全局阶段始终在 **`framework/harness/reports/_global/<phase>/`**，不参与本重写规则。
+
+**实例 checklist**：
+
+1. `framework.config.json` → `paths.reports_dir_pattern` 填入期望模式并得到用户确认（Skill 00 UPDATE）。
+2. 宿主 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则）；保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局。
+3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「一次性搬迁」脚本。
+
+#### 一次性搬迁（Bash）
+
+在**仓库根**执行。跳过目录 `_global`；同名目标文件已存在则打印 `skip` 不覆盖。
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+REPORTS_ROOT="${1:-framework/harness/reports}"
+FEATURES_ROOT="${2:-doc/features}"
+
+[[ -d "$REPORTS_ROOT" ]] || { echo "missing dir: $REPORTS_ROOT"; exit 1; }
+
+shopt -s nullglob dotglob
+for feature_dir in "$REPORTS_ROOT"/*; do
+  [[ -d "$feature_dir" ]] || continue
+  feature="$(basename "$feature_dir")"
+  [[ "$feature" == "_global" ]] && continue
+
+  for phase_dir in "$feature_dir"/*; do
+    [[ -d "$phase_dir" ]] || continue
+    phase="$(basename "$phase_dir")"
+    dest="$FEATURES_ROOT/$feature/$phase/reports"
+    mkdir -p "$dest"
+
+    for path in "$phase_dir"/*; do
+      [[ -e "$path" ]] || continue
+      base="$(basename "$path")"
+      if [[ -e "$dest/$base" ]]; then
+        echo "skip (exists): $dest/$base"
+        continue
+      fi
+      mv "$path" "$dest/"
+    done
+  done
+done
+shopt -u nullglob dotglob
+```
+
+#### 一次性搬迁（PowerShell）
+
+```powershell
+param(
+  [string]$ReportsRoot = "framework/harness/reports",
+  [string]$FeaturesRoot = "doc/features"
+)
+if (-not (Test-Path -LiteralPath $ReportsRoot)) { throw "missing $ReportsRoot" }
+
+Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
+  $feature = $_.Name
+  if ($feature -eq "_global") { return }
+
+  Get-ChildItem -LiteralPath $_.FullName -Directory | ForEach-Object {
+    $phase = $_.Name
+    $dest = Join-Path $FeaturesRoot $feature | Join-Path -ChildPath $phase | Join-Path -ChildPath "reports"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+    Get-ChildItem -LiteralPath $_.FullName -Force | ForEach-Object {
+      $target = Join-Path $dest $_.Name
+      if (Test-Path -LiteralPath $target) {
+        Write-Host "skip (exists): $target"
+      } else {
+        Move-Item -LiteralPath $_.FullName -Destination $target
+      }
+    }
+    if (-not (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue)) {
+      Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+  }
+  $featurePath = Join-Path $ReportsRoot $feature
+  if (-not (Get-ChildItem -LiteralPath $featurePath -Force -ErrorAction SilentlyContinue)) {
+    Remove-Item -LiteralPath $featurePath -Force -ErrorAction SilentlyContinue
+  }
+}
+```
+
+**回归**：搬迁后任选 feature 跑一次 `cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <name> --summary`，确认新报告落在 `doc/features/<feature>/ut/reports/`（或与自定义 pattern 一致）。
+
 ### v2.4：framework 自带文档体系 + `--phase docs` 新鲜度门禁
 
 **触发原因**：v2.3 之前，framework 的对外讲解材料散落在实例工程的 `doc/` 下（如 `HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` 等），随 framework 演进很容易过期且与实例工程语境耦合。v2.4 把这些材料吸纳回 framework 自身，并新增"自动检查文档新鲜度"的 harness 阶段。

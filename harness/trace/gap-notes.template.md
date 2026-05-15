@@ -1,8 +1,8 @@
 # Gap Notes — {feature} / {phase}
 
 > 本文件是**内网弱模型跑动后的结构化痛点回传模板**。
-> 每次内网 Claude Code CLI 跑完某阶段产物后，由用户或 agent 自我反思填写，与 `trace.json` 一并放在：
-> `framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/gap-notes.md`
+> 每次内网 Claude Code CLI 跑完某阶段产物后，由用户或 agent 自我反思填写，与 `trace.json` 放在同一 **feature-phase 报告目录**（由 `paths.reports_dir_pattern` 解析）：推荐 **`doc/features/<feature>/<phase>/reports/gap-notes.md`**；未配置时为 legacy：**`framework/harness/reports/<feature>/<phase>/gap-notes.md`**。
+> 若以 `<timestamp>/<model>-<phase>` 子目录存档，与同目录下的 `gap-notes.md`、`trace.json` 配对。
 >
 > 目的：积累真实的弱模型失败样本，**直接驱动 skills / specs / harness 的下一波迭代**。
 > 请尽量保持**事实 + 证据 + 可执行建议**三段式。
@@ -115,7 +115,7 @@ approved_src_mutations:
 
 ## 6. 附件
 
-- trace.json: `./trace.json`
-- harness 报告：`framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/check-<phase>.report.md`
-- verifier 报告：`framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/verifier.report.md`
+- trace.json: `./trace.json`（与同目录 `gap-notes.md` 配对）
+- 脚本 harness：`script-report.json`、`summary.json`、`merged-report.md` 等，与上文同目录（推荐前缀 `doc/features/<feature>/<phase>/reports/`；未配置 `reports_dir_pattern` 时为 `framework/harness/reports/<feature>/<phase>/`）
+- verifier 报告：`verifier.report.md`（同上目录）
 - 关键对话片段（可选，脱敏后贴）：

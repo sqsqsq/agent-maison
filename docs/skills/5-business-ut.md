@@ -216,7 +216,7 @@ flowchart LR
 
 - **管什么（确定性、可复现）**：  
   文件与 schema 是否齐（含 v2.3 下 testability-audit / mock-plan 等契约）、`it()` 是否带上 `[AC-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **profile 注册的编译/运行类检查**（能力侧为 `ut.compile` / `ut.run`；**hmos-app** 报告常见 ID：`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`；细则见 [§6](#6-质量门禁) 与 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)）。
-- **产出**：`framework/harness/reports/<feature>/ut/` 下的 `script-report.json`、**宿主构建/运行**日志（hmos-app：hvigor/hdc）、以及流程中的 `trace.json`（与改源码对账用）。
+- **产出**：`doc/features/<feature>/ut/reports/` 下的 `script-report.json`、**宿主构建/运行**日志（hmos-app：hvigor/hdc）、以及流程中的 `trace.json`（与改源码对账用）。
 
 **AI Harness（`verify-ut.md`）**
 
@@ -321,7 +321,7 @@ flowchart TD
 | 测试源文件 | **hmos-app**：`{module}/src/ohosTest/ets/test/*.test.ets` | profile 下的测试框架（hypium） |
 | DAG 文件 | **hmos-app**：`{module}/test/dag/*.dag.yaml` | 业务流与测试的可视化追溯 |
 | `device-testing-todo.md` | `doc/features/<feature>/` | 移交 Skill 6 的 UI / 真机验收清单 |
-| harness report | `framework/harness/reports/<feature>/ut/` | 脚本检查、AI prompt、合并报告、trace |
+| harness report | `doc/features/<feature>/ut/reports/` | 脚本检查、AI prompt、合并报告、trace |
 
 ---
 

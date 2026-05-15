@@ -18,7 +18,7 @@ tools: Read, Glob, Grep
 - `feature`: 功能名，如 `home-page` / `bank-card`
 - `phase`: `prd` | `design` | `coding` | `review` | `ut` | `testing`
 - （可选）`script_report_path`: 脚本 Harness (`check-<phase>.ts`) 的报告路径
-- （可选）`trace_dir`: `framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/`
+- （可选）`trace_dir`: `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/`（未配置 `paths.reports_dir_pattern` 时 legacy：`framework/harness/reports/...`）
 
 ## 工作流
 

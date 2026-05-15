@@ -22,7 +22,7 @@ claimed_completion_commit_sha: "<git rev-parse HEAD 真实值>"
 script_harness:
   command: "cd framework/harness && npx ts-node harness-runner.ts --phase <phase> --feature <feature>"
   exit_code: 0           # 必须为 0；非 0 = FAIL；缺省 = 反假设
-  report_dir: "framework/harness/reports/<feature>/<phase>"
+  report_dir: "doc/features/<feature>/<phase>/reports"
   blocker_count: 0       # 必须为 0
   ran_at: "<ISO 8601>"
 
@@ -32,7 +32,7 @@ script_harness:
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"   # 不允许 "told user to run"
   prompt_template: "framework/harness/prompts/verify-<phase>.md"
-  report_path: "framework/harness/reports/<feature>/<phase>/verifier.report.md"
+  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.md"
   verdict: "PASS"        # PASS | FAIL；FAIL 即未闭环
   ran_at: "<ISO 8601>"
 
@@ -40,7 +40,7 @@ verifier_subagent:
 # 3. trace.json 凭证（Layer 1 凭证，全局入口 §5）
 # ----------------------------------------------------------------------
 trace_json:
-  path: "framework/harness/reports/<feature>/<phase>/trace.json"
+  path: "doc/features/<feature>/<phase>/reports/trace.json"
   exists: true           # check-receipt.ts 会真实 fs.existsSync 校验
   schema_valid: true     # 是否能被 trace.schema.json 解析
 

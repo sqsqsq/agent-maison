@@ -388,12 +388,42 @@ function maybeUpdateState(stateAbs, state, sid, stamp) {
 // 7. 文案构建
 // --------------------------------------------------------------------------
 
+/** 对齐 harness/featurePhaseReportsDir —— Hook 不落 TS，纯 Node 复刻占位符语义 */
+function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
+  if (!feature || !phase || feature === 'unknown' || phase === 'unknown') return null;
+  try {
+    if (feature === '_global') {
+      return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
+    }
+    let pattern = null;
+    try {
+      const cfgPath = path.resolve(projectRoot, 'framework.config.json');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        const p = cfg?.paths?.reports_dir_pattern;
+        if (typeof p === 'string' && p.trim()) pattern = p.trim();
+      }
+    } catch {
+      pattern = null;
+    }
+    if (pattern) {
+      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      return path.resolve(projectRoot, rel);
+    }
+    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+  } catch {
+    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+  }
+}
+
 function readSummaryHint(projectRoot, state) {
   try {
     const phase = typeof state?.phase === 'string' ? state.phase : '';
     const feature = typeof state?.feature === 'string' ? state.feature : '';
     if (!phase || !feature) return null;
-    const summaryPath = path.join(projectRoot, 'framework', 'harness', 'reports', feature, phase, 'summary.json');
+    const reportsRoot = resolveFeaturePhaseReportDir(projectRoot, feature, phase);
+    if (!reportsRoot) return null;
+    const summaryPath = path.join(reportsRoot, 'summary.json');
     const summary = readJSONSafe(summaryPath);
     if (!summary || typeof summary !== 'object') return null;
     const nextAction = typeof summary.next_action === 'string' ? summary.next_action : '';

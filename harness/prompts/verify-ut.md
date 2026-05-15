@@ -33,7 +33,7 @@
 
 1. **禁止擅自修改业务源码**：Skill 5 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。**不得**修改 **UT/测试根目录**以外的业务文件除非走下方授权流程。
 2. **必须先问后改**：如确实无法通过 UT/Spy/Stub/原型替换绕过，**必须**先向用户发出明确请求（含：文件路径、变更签名、为何 UT 层无法规避、影响面评估），并取得用户**书面同意**。
-3. **必须登记授权**：用户同意后，必须把授权纪要写入 `framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）。
+3. **必须登记授权**：用户同意后，必须把授权纪要写入 `doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）（未配置 `paths.reports_dir_pattern` 时可能仍在 `framework/harness/reports/...`）。
 4. **未授权改动一律违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会硬检测 `src/main` 的 git diff，任何未在 `approved_src_mutations[]` 中登记的源码改动都会 FAIL。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 design.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 PRD/design 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
 6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。

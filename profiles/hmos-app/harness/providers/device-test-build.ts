@@ -3,6 +3,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { featurePhaseReportsDir } from '../../../../harness/config';
 import type { CapabilityProvider } from './types';
 import { runHvigorAssembleApp, findAppSignedHap, type HvigorRunResult } from '../hvigor-runner';
 import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from '../testing-build-conventions';
@@ -58,7 +59,7 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   }
 
   try {
-    const reportDir = path.join(opts.harnessRoot, 'reports', opts.feature, opts.phase);
+    const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
     fs.mkdirSync(reportDir, { recursive: true });
     const summaryPath = path.join(reportDir, 'device-test-build.result.json');
     fs.writeFileSync(

@@ -10,9 +10,9 @@
 //   1. 读取 framework/specs/phase-rules/{phase}-rules.yaml (阶段级规约)
 //   2. 读取 doc/features/{feature}/ (功能级规约 · 实例工程根，扁平归档)
 //   3. 运行脚本 Harness (scripts/check-{phase}.ts)
-//   4. 输出脚本报告到 framework/harness/reports/{feature}/{phase}/script-report.json
+//   4. 输出脚本报告到实例解析的报告目录（默认可为 doc/features/{feature}/{phase}/reports/script-report.json）
 //   5. 组装 AI Harness 的 prompt (填充模板 + 上下文)
-//   6. 输出 prompt 到 framework/harness/reports/{feature}/{phase}/ai-prompt.md
+//   6. 输出 prompt 到同目录 ai-prompt.md
 //   7. 生成合并报告 merged-report.md
 //
 // 模型无关: 第 5/6 步只生成 prompt，不调用任何 AI API。
@@ -52,6 +52,8 @@ import {
   statefilePath,
   receiptFilePath,
   loadFrameworkConfig,
+  relFeaturePhaseReportsDir,
+  featurePhaseReportsDir,
 } from './config';
 import {
   loadResolvedProfile,
@@ -108,7 +110,7 @@ Harness — Spec/Harness 验证工具
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
-  --summary                 输出稳定短摘要，并写入 reports/<feature>/<phase>/summary.json
+  --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     PRD 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
   -h, --help                显示帮助
@@ -154,7 +156,7 @@ async function main(): Promise<void> {
 
   // --clear-state 模式：明确放弃当前阶段，让 Stop hook 不再以陈旧 state
   // 拦截后续 cli 会话。无条件删除：state file 本身只承载判定状态，
-  // 历史 verdict / 报告依然保留在 framework/harness/reports/ 下。
+  // 历史 verdict / 报告落在 paths.reports_dir_pattern 解析目录，或遗留 layout 下的 framework/harness/reports。
   if (args['clear-state']) {
     handleClearState(projectRoot);
     process.exit(0);
@@ -365,7 +367,7 @@ async function main(): Promise<void> {
   // 这两步发生在 Step 3（script-report.json 已落盘）之后，若裸调用崩栈会造成
   // "磁盘 PASS + 控制台崩栈" 的错位假 PASS。因此统一捕获：任何崩栈都回写
   // script-report.json 为 FAIL（并清理 ai-prompt.md / merged-report.md 残留）。
-  const reportsRel = path.relative(projectRoot, paths.reportsDir).replace(/\\/g, '/');
+  const reportDirRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, paths.frameworkRoot);
   let finalReport = scriptReport;
 
   try {
@@ -380,6 +382,7 @@ async function main(): Promise<void> {
 
     assembleAIPrompt(
       harnessRoot,
+      projectRoot,
       phase,
       feature,
       contextFiles,
@@ -388,11 +391,11 @@ async function main(): Promise<void> {
       resolvedProfile,
       lifecycleFragments,
     );
-    console.log(`   ✓ AI prompt 已写入 ${reportsRel}/${feature}/${phase}/ai-prompt.md`);
+    console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
     const e = err as Error;
     console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-    finalReport = failScriptReportWithFatalError(harnessRoot, scriptReport, 'assemble_ai_prompt', e);
+    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e);
   }
 
   if (finalReport === scriptReport) {
@@ -406,12 +409,12 @@ async function main(): Promise<void> {
         console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
       }
 
-      generateMergedReport(harnessRoot, phase, feature, scriptReport, aiReportContent);
-      console.log(`   ✓ 合并报告已写入 ${reportsRel}/${feature}/${phase}/merged-report.md`);
+      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent);
+      console.log(`   ✓ 合并报告已写入 ${reportDirRel}/merged-report.md`);
     } catch (err) {
       const e = err as Error;
       console.error(`   ✗ Step 5 生成合并报告失败: ${e.message}`);
-      finalReport = failScriptReportWithFatalError(harnessRoot, scriptReport, 'generate_merged_report', e);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'generate_merged_report', e);
     }
   }
 
@@ -433,7 +436,7 @@ async function main(): Promise<void> {
     receipt: receiptValidation,
   });
 
-  const runSummary = writeRunSummary(harnessRoot, projectRoot, finalReport, receiptValidation);
+  const runSummary = writeRunSummary(projectRoot, finalReport, receiptValidation);
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
@@ -446,7 +449,7 @@ async function main(): Promise<void> {
   } else {
     const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
     if (runnerFailed) {
-      console.log(`  ❌ Harness runner 执行异常 (详见 ${reportsRel}/${feature}/${phase}/script-report.json)`);
+      console.log(`  ❌ Harness runner 执行异常 (详见 ${reportDirRel}/script-report.json)`);
       console.log('  🔧 请修复 runner_*_failed 报告项后重新运行');
     } else {
       console.log(`  ❌ 脚本 Harness 检查未通过 (${finalReport.summary.blockers} BLOCKER)`);
@@ -509,12 +512,11 @@ interface HarnessRunSummary {
 }
 
 function writeRunSummary(
-  harnessRoot: string,
   projectRoot: string,
   report: ScriptReport,
   receiptValidation: ReturnType<typeof tryValidateReceipt> | null,
 ): HarnessRunSummary {
-  const dir = path.join(harnessRoot, 'reports', report.feature, report.phase);
+  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
   const blockers = report.checks
     .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
@@ -802,12 +804,12 @@ function featureArtifactBlocker(projectRoot: string, inspection: FeatureArtifact
  *   - 非 git 仓库或 git 不可用 → 静默跳过（rule 端会回退 HEAD~1）。
  */
 function recordStartCommit(
-  harnessRoot: string,
+  _harnessRoot: string,
   phase: Phase,
   feature: string,
   projectRoot: string,
 ): void {
-  const dir = path.join(harnessRoot, 'reports', feature, phase);
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
   const tracePath = path.join(dir, 'trace.json');
 
   // 已有 start_commit 不动，保留 baseline
@@ -1125,7 +1127,7 @@ function handleClearState(projectRoot: string): void {
   }
   console.log('');
   console.log('提示：');
-  console.log('  - 历史 verdict / 报告 / 回执仍保留在 framework/harness/reports 与 doc/features 下；');
+  console.log('  - 历史 verdict / 报告通常在 doc/features/<feature>/<phase>/reports/（配置了 reports_dir_pattern 时），回执仍在 doc/features 下；');
   console.log('  - 如需重新进入该阶段，按对应 SKILL.md 重新执行 harness-runner.ts；');
   console.log('  - --clear-state 表示"放弃已有进度"，与"暂停"不同。');
 }

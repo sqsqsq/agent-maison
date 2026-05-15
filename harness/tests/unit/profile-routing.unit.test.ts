@@ -150,12 +150,15 @@ const cases: Case[] = [
   {
     name: 'verify prompt: profile overlay is appended when present',
     run: () => {
-      const harnessRoot = mkTmp('prompt-overlay-harness-');
+      const projectRoot = mkTmp('prompt-overlay-proj-');
+      const harnessRoot = path.join(projectRoot, 'framework', 'harness');
       const profileDir = mkTmp('prompt-overlay-profile-');
+      fs.mkdirSync(path.join(harnessRoot, 'prompts'), { recursive: true });
       writeFile(path.join(harnessRoot, 'prompts', 'verify-coding.md'), 'base {feature_name} {context_files}');
       writeFile(path.join(profileDir, 'harness', 'prompts', 'verify-coding.overlay.md'), 'overlay rules');
       const assembled = assembleAIPrompt(
         harnessRoot,
+        projectRoot,
         'coding',
         'demo',
         [{ label: 'Doc', content: 'content' }],
@@ -166,7 +169,7 @@ const cases: Case[] = [
       assertIncludes(assembled, 'base demo', 'base template should still be rendered');
       assertIncludes(assembled, 'Profile Overlay：unit-profile', 'profile overlay heading should be appended');
       assertIncludes(assembled, 'overlay rules', 'overlay content should be appended');
-      fs.rmSync(harnessRoot, { recursive: true, force: true });
+      fs.rmSync(projectRoot, { recursive: true, force: true });
       fs.rmSync(profileDir, { recursive: true, force: true });
     },
   },

@@ -356,7 +356,7 @@ git submodule update --init --recursive
 /device-testing
 ```
 
-每一步的脚本 Harness 结果 + AI Harness 语义审查都会落在 `framework/harness/reports/<feature>/<phase>/`，PASS 之前不要进入下一阶段。
+每一步的脚本 Harness 结果 + AI Harness 语义审查都会落在 `doc/features/<feature>/<phase>/reports/`（未配置 `paths.reports_dir_pattern` 时仍为 `framework/harness/reports/<feature>/<phase>/`），PASS 之前不要进入下一阶段。
 
 ### 2.7 为什么这个 framework 是"工程级资产"
 

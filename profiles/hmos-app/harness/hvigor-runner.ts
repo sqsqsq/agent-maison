@@ -35,6 +35,7 @@ import {
   deriveJbrHomeFromInstallPath,
   HvigorOptionsConfig,
   HvigorCodingConfig,
+  featurePhaseReportsDir,
 } from '../../../harness/config';
 
 export interface HvigorRunResult {
@@ -562,8 +563,8 @@ function safeResolveFromConfig(
   }
 }
 
-function ensureReportDir(harnessRoot: string, feature: string, phase: string): string {
-  const dir = path.join(harnessRoot, 'reports', feature, phase);
+function ensureHvigorLogReportDir(projectRoot: string, feature: string, phase: string): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -1198,7 +1199,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
   }
 
-  const dir = ensureReportDir(opts.harnessRoot, opts.feature, opts.phase);
+  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase);
   const logAbs = path.join(dir, opts.logBasename);
   const commandDisplay = spawnPlan.commandDisplay;
   const header = `$ ${commandDisplay}\n\n`;

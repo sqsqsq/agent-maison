@@ -639,10 +639,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 通过适配器下发的 slash（如 `/catalog-bootstrap`、`/glossary-bootstrap`，命令名以实例根模板为准）进入本 Skill 时，**必须**在阶段结束前产出 trace：
 
 ```
-framework/harness/reports/_catalog/<timestamp>/<model>-catalog/trace.json
-framework/harness/reports/_glossary/<timestamp>/<model>-glossary/trace.json
+framework/harness/reports/_global/catalog/<timestamp>/<model>-catalog/trace.json
+framework/harness/reports/_global/glossary/<timestamp>/<model>-glossary/trace.json
 ```
 
-（`_catalog` / `_glossary` 是特殊 feature 标识，表示这是全局性产物）
+（catalog / glossary 为全局阶段：`--feature` 缺省为 `_global`，报告写在 `framework/harness/reports/_global/<phase>/`）
 
 其它约定同其他 Skill：gap-notes.md + check-*.report.md 同目录产出。

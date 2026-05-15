@@ -3,6 +3,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { featurePhaseReportsDir } from '../../../../harness/config';
 import type { CapabilityProvider } from './types';
 import {
   installHap,
@@ -66,7 +67,7 @@ function writeInstallArtifacts(
   },
 ): string | undefined {
   try {
-    const reportDir = path.join(opts.harnessRoot, 'reports', opts.feature, opts.phase);
+    const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
     fs.mkdirSync(reportDir, { recursive: true });
     const logAbs = path.join(reportDir, 'hdc-app-install.log');
     fs.writeFileSync(logAbs, payload.logLines.join('\n\n'), 'utf-8');

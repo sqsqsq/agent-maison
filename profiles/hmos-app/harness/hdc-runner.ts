@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, SpawnSyncReturns } from 'child_process';
-import { loadDevEcoConfig } from '../../../harness/config';
+import { loadDevEcoConfig, featurePhaseReportsDir } from '../../../harness/config';
 import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
@@ -621,8 +621,8 @@ export interface OnDeviceUtOptions {
   skipEnvVar?: string;
 }
 
-function ensureReportDir(harnessRoot: string, feature: string, phase: string): string {
-  const dir = path.join(harnessRoot, 'reports', feature, phase);
+function ensureHdcLogReportDir(projectRoot: string, feature: string, phase: string): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -766,7 +766,7 @@ function finalize(
 ): OnDeviceUtRunResult {
   // 落盘日志
   try {
-    const dir = ensureReportDir(opts.harnessRoot, opts.feature, opts.phase);
+    const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase);
     const file = path.join(dir, 'hdc-test.log');
     fs.writeFileSync(file, res.logExcerpt, 'utf-8');
     res.logPath = path.relative(process.cwd(), file).replace(/\\/g, '/');

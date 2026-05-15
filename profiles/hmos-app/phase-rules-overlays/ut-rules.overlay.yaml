@@ -251,7 +251,7 @@ structure_checks:
       scope: "contracts.yaml > modules[].name （仅 ohosTest 目录下存在 UT 的模块）"
       command: "hvigorw --mode module -p module=<module>@ohosTest -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon"
       pass_if: "exit_code == 0 AND parsed_error_count == 0"
-      log_persist: "framework/harness/reports/<feature>/ut/hvigor-ut-build.log"
+      log_persist: "doc/features/<feature>/ut/reports/hvigor-ut-build.log"
       on_tool_missing: "FAIL"
       on_env_skip: "FAIL"
       short_circuit: "若 ut_tsc_compiles 或 ut_hvigor_build FAIL，后续 ut_hvigor_test 直接短路"
@@ -295,7 +295,7 @@ structure_checks:
       device_probe: "hdc list targets"
       command: "hvigorw --mode module -p module=<module>@ohosTest -p buildMode=debug test --analyze=advanced --parallel --incremental --daemon"
       pass_if: "exit_code == 0 AND hypium.failed == 0 AND hypium.total > 0"
-      log_persist: "framework/harness/reports/<feature>/ut/hvigor-test.log"
+      log_persist: "doc/features/<feature>/ut/reports/hvigor-test.log"
       fail_modes:
         - "no_device: hdc 探测不到可用目标 → FAIL (BLOCKER) 且提示用户启动模拟器/接入真机"
         - "tool_missing: 找不到 hvigorw → FAIL (BLOCKER)"
@@ -415,7 +415,7 @@ structure_checks:
     severity: BLOCKER
     rule:
       device_todo: "doc/features/{feature}/device-testing-todo.md"
-      gap_notes_glob: "framework/harness/reports/{feature}/**/gap-notes.md"
+      gap_notes_glob: "doc/features/{feature}/**/gap-notes.md"
 
   ut_mock_plan_present:
     description: >

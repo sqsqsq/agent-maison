@@ -583,6 +583,9 @@ framework/harness/state/*
 # Skill 0 staging：合并入 SSOT 前的 catalog / glossary 草稿，不入仓
 doc/catalog-staging/
 doc/glossary-staging/
+
+# Feature-phase harness：`paths.reports_dir_pattern` 写到各 phase `reports/` 下的本地产物
+doc/features/*/*/reports/*
 ```
 
 说明：
@@ -594,6 +597,7 @@ doc/glossary-staging/
 - `package-lock.json`：由目标工程本地 registry / npm 版本生成，不随 framework 分发；内网、外网 lock 内容可能不同。
 - `state/*` + `!state/.gitkeep`：「弱模型工作流强制门」Layer 2/3 写入的本地阶段状态机（如 `.current-phase.json`），**仅本机运行时凭证**；保留 `state/.gitkeep` 让空目录可随 framework 分发，避免 hooks 因目录缺失抛错。
 - `doc/catalog-staging/`、`doc/glossary-staging/`：Skill 0 Phase A/B 在写入权威 YAML 前的本地草稿目录；审计仍以合并后的 `doc/module-catalog.yaml` / `doc/glossary.yaml` 与 git 历史为准。
+- `doc/features/*/*/reports/*`：配置了 `paths.reports_dir_pattern`（默认在各 phase 目录下 `reports/`）时，feature 维度的 harness 脚本报告、合并报告、trace、verifier 产出、宿主编译/装机日志等通常不入仓。
 
 #### 5.4.5.2 等价覆盖规则
 
@@ -606,6 +610,7 @@ doc/glossary-staging/
 | `framework/harness/dist/` | `framework/harness/dist`、`framework/harness/dist/`、`framework/**/dist/` |
 | `framework/harness/reports/*` | `framework/harness/reports/*` |
 | `!framework/harness/reports/.gitkeep` | `!framework/harness/reports/.gitkeep` |
+| `doc/features/*/*/reports/*` | `doc/features/*/*/reports`、`doc/features/*/*/reports/` |
 | `framework/harness/trace/` | `framework/harness/trace`、`framework/harness/trace/` |
 | `framework/harness/state/*` | `framework/harness/state/*`、`framework/harness/state`、`framework/harness/state/` |
 | `!framework/harness/state/.gitkeep` | `!framework/harness/state/.gitkeep` |

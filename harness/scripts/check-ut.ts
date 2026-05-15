@@ -42,6 +42,7 @@ import {
   CANONICAL_UT_RUN_ID,
   LEGACY_UT_RUN_ID,
 } from '../capability-registry';
+import { loadFrameworkConfig, featuresDirPath } from '../config';
 import {
   tryLoadUtHostImpl,
   tryLoadDiffExcludeTestPathRegexes,
@@ -621,19 +622,23 @@ function filterProtected(ctx: CheckContext, changes: string[]): string[] {
 }
 
 /**
- * 计算 reports/<feature>/ 的扫描根。默认指向真实 framework/harness/reports/<feature>/；
- * 若设置环境变量 HARNESS_REPORTS_ROOT_OVERRIDE（通常只有 framework tests/ 测试套件
- * 会设），则指向 <override>/<feature>/——让 fixture 可以提供隔离的 gap-notes.md /
- * trace.json 而不污染真实仓库。
+ * 计算 reports/<feature>/ 的扫描根。
+ * - 配置了 `reports_dir_pattern`：`doc/features/<feature>/` 整树（含 `<phase>/reports/`）。
+ * - 否则：`framework/harness/reports/<feature>/<phase>/`（未配置 `reports_dir_pattern` 时的旧布局）。
+ * 若设置 HARNESS_REPORTS_ROOT_OVERRIDE，则 `<override>/<feature>/`。
  */
-function computeReportsFeatureRoot(feature: string): string {
+function computeReportsFeatureRoot(projectRoot: string, feature: string): string {
   const override = process.env.HARNESS_REPORTS_ROOT_OVERRIDE;
   if (override) return path.join(override, feature);
+  const cfg = loadFrameworkConfig(projectRoot);
+  if (typeof cfg.paths.reports_dir_pattern === 'string' && cfg.paths.reports_dir_pattern.trim().length > 0) {
+    return path.join(featuresDirPath(projectRoot), feature);
+  }
   return path.join(HARNESS_ROOT, 'reports', feature);
 }
 
-function findGapNotesFiles(feature: string): string[] {
-  const reportsRoot = computeReportsFeatureRoot(feature);
+function findGapNotesFiles(projectRoot: string, feature: string): string[] {
+  const reportsRoot = computeReportsFeatureRoot(projectRoot, feature);
   if (!fs.existsSync(reportsRoot)) return [];
   const hits: string[] = [];
   const walk = (dir: string, depth: number) => {
@@ -654,8 +659,8 @@ function findGapNotesFiles(feature: string): string[] {
   return hits;
 }
 
-function findTraceJsonFiles(feature: string): string[] {
-  const reportsRoot = computeReportsFeatureRoot(feature);
+function findTraceJsonFiles(projectRoot: string, feature: string): string[] {
+  const reportsRoot = computeReportsFeatureRoot(projectRoot, feature);
   if (!fs.existsSync(reportsRoot)) return [];
   const hits: string[] = [];
   const walk = (dir: string, depth: number) => {
@@ -679,7 +684,7 @@ function findTraceJsonFiles(feature: string): string[] {
 function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
   const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
-  const traceFiles = findTraceJsonFiles(ctx.feature).sort((a, b) => {
+  const traceFiles = findTraceJsonFiles(ctx.projectRoot, ctx.feature).sort((a, b) => {
     const sa = fs.statSync(a).mtimeMs;
     const sb = fs.statSync(b).mtimeMs;
     return sb - sa;
@@ -741,7 +746,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   }
 
   // 汇总所有 gap-notes.md 的授权清单
-  const gapFiles = findGapNotesFiles(ctx.feature);
+  const gapFiles = findGapNotesFiles(ctx.projectRoot, ctx.feature);
   const approved = new Set<string>();
   for (const g of gapFiles) {
     const set = readApprovedMutations(g);
@@ -789,7 +794,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       staleness.stale
         ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
         : '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
-          'framework/harness/reports/<feature>/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
+          'doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
           '禁止以"便利性"借口直接修改业务源码。',
   }];
 }
@@ -2420,7 +2425,7 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
     ? fs.readFileSync(deviceTestingTodoPath(ctx), 'utf-8')
     : '';
 
-  const gapFiles = findGapNotesFiles(ctx.feature);
+  const gapFiles = findGapNotesFiles(ctx.projectRoot, ctx.feature);
   let approvedCount = 0;
   for (const g of gapFiles) {
     approvedCount += readApprovedMutations(g).size;

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://framework.tools/harness/trace.schema.json",
   "title": "Trace",
-  "description": "单次 AI 跑动日志（project_profile / toolchain 无关的核心字段）。由各 agent 运行时在本阶段结束时产出，路径约定：framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json。",
+  "description": "单次 AI 跑动日志（project_profile / toolchain 无关的核心字段）。由各 agent/harness 在本阶段结束时产出。落盘目录由实例 framework.config.json 的 paths.reports_dir_pattern 解析（与 harness 的 featurePhaseReportsDir() 对齐）：推荐 doc/features/<feature>/<phase>/reports/trace.json；未配置该字段时 legacy 为 framework/harness/reports/<feature>/<phase>/trace.json。若以 <timestamp>/<model>-<phase> 子目录形式存档，与同目录产物一并配对即可。",
   "type": "object",
   "required": [
     "schema_version",

@@ -93,6 +93,7 @@ function makeFixture(opts: FixtureOptions): string {
       architecture_md: 'doc/architecture.md',
       state_file: 'framework/harness/state/.current-phase.json',
       receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+      reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
     },
   };
   if (opts.stateMachine !== undefined && opts.stateMachine !== null) {
@@ -128,7 +129,7 @@ function makeFixture(opts: FixtureOptions): string {
   }
   if (opts.summaryNextAction) {
     const phase = opts.phaseOverride ?? 'coding';
-    const summaryAbs = path.join(dir, 'framework', 'harness', 'reports', 'demo-feature', phase, 'summary.json');
+    const summaryAbs = path.join(dir, 'doc', 'features', 'demo-feature', phase, 'reports', 'summary.json');
     fs.mkdirSync(path.dirname(summaryAbs), { recursive: true });
     fs.writeFileSync(summaryAbs, JSON.stringify({
       schema_version: '1.0',
@@ -138,10 +139,10 @@ function makeFixture(opts: FixtureOptions): string {
       blocker_count: 1,
       fail_count: 1,
       warn_count: 0,
-      script_report: `framework/harness/reports/demo-feature/${phase}/script-report.json`,
-      merged_report: `framework/harness/reports/demo-feature/${phase}/merged-report.md`,
-      ai_prompt: `framework/harness/reports/demo-feature/${phase}/ai-prompt.md`,
-      summary_json: `framework/harness/reports/demo-feature/${phase}/summary.json`,
+      script_report: `doc/features/demo-feature/${phase}/reports/script-report.json`,
+      merged_report: `doc/features/demo-feature/${phase}/reports/merged-report.md`,
+      ai_prompt: `doc/features/demo-feature/${phase}/reports/ai-prompt.md`,
+      summary_json: `doc/features/demo-feature/${phase}/reports/summary.json`,
       run_statuses: [],
       readiness_signals: [],
       blocking_warnings: [],

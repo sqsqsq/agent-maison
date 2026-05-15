@@ -6,11 +6,12 @@
 //   2. 组装 ai-prompt.md（填充 AI Harness prompt 模板 + 上下文）
 //   3. 生成 merged-report.md（合并报告，供人工审查）
 //
-// 报告输出到 framework/harness/reports/{feature}/{phase}/ 目录。
+// 报告目录由 config.featurePhaseReportsDir() 解析（默认可走 doc/features/.../reports）。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { featurePhaseReportsDir } from '../../config';
 import {
   Phase,
   CheckResult,
@@ -30,8 +31,8 @@ import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED
 // 报告目录管理
 // --------------------------------------------------------------------------
 
-function ensureReportDir(harnessRoot: string, feature: string, phase: Phase): string {
-  const dir = path.join(harnessRoot, 'reports', feature, phase);
+function ensureReportDir(projectRoot: string, feature: string, phase: Phase): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -71,7 +72,7 @@ export function finalizeChecksForScriptReport(
 }
 
 export function generateScriptReport(
-  harnessRoot: string,
+  _harnessRoot: string,
   phase: Phase,
   feature: string,
   projectRoot: string,
@@ -95,7 +96,7 @@ export function generateScriptReport(
     report.compat_expired = finalized.compat_expired;
   }
 
-  const dir = ensureReportDir(harnessRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase);
   const reportPath = path.join(dir, 'script-report.json');
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
@@ -113,7 +114,6 @@ export function generateScriptReport(
  *   4. 删除同目录下可能残留的 ai-prompt.md / merged-report.md（避免下游误读）
  */
 export function failScriptReportWithFatalError(
-  harnessRoot: string,
   report: ScriptReport,
   stage: 'assemble_ai_prompt' | 'generate_merged_report',
   err: Error,
@@ -136,7 +136,7 @@ export function failScriptReportWithFatalError(
     compat_expired: report.compat_expired,
   };
 
-  const dir = ensureReportDir(harnessRoot, updated.feature, updated.phase);
+  const dir = ensureReportDir(updated.project_root, updated.feature, updated.phase);
   fs.writeFileSync(
     path.join(dir, 'script-report.json'),
     JSON.stringify(updated, null, 2),
@@ -164,6 +164,7 @@ export function failScriptReportWithFatalError(
  */
 export function assembleAIPrompt(
   harnessRoot: string,
+  projectRoot: string,
   phase: Phase,
   feature: string,
   contextFiles: Array<{ label: string; content: string }>,
@@ -214,7 +215,7 @@ export function assembleAIPrompt(
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
 
-  const dir = ensureReportDir(harnessRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase);
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
 
@@ -299,6 +300,7 @@ function escapeMdCell(s: string): string {
  */
 export function generateMergedReport(
   harnessRoot: string,
+  projectRoot: string,
   phase: Phase,
   feature: string,
   scriptReport: ScriptReport,
@@ -389,7 +391,7 @@ export function generateMergedReport(
   if (aiReportContent) {
     lines.push(aiReportContent);
   } else {
-    const dir = ensureReportDir(harnessRoot, feature, phase);
+    const dir = ensureReportDir(projectRoot, feature, phase);
     const promptPath = path.join(dir, 'ai-prompt.md');
     if (fs.existsSync(promptPath)) {
       lines.push(`> AI Harness prompt 已生成，请将以下文件发送给任意 AI 模型执行验证：`);
@@ -411,7 +413,7 @@ export function generateMergedReport(
   lines.push('');
 
   const report = lines.join('\n');
-  const dir = ensureReportDir(harnessRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase);
   fs.writeFileSync(path.join(dir, 'merged-report.md'), report, 'utf-8');
 
   return report;
