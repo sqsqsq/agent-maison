@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,11 +15,19 @@ const harnessRoot = path.resolve(__dirname, '..');
 const tsScript = path.join(__dirname, 'render-agents-md.ts');
 const extra = process.argv.slice(2);
 
-const cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const r = spawnSync(cmd, ['ts-node', '--transpile-only', tsScript, ...extra], {
+// 直接拉起本地 ts-node：避免 Windows 上 npx.cmd + shell:true 截断含空格的 --summary，也避免 shell:false 无法执行 .cmd。
+const requireHarness = createRequire(import.meta.url);
+let tsNodeBin;
+try {
+  tsNodeBin = requireHarness.resolve('ts-node/dist/bin.js');
+} catch {
+  process.stderr.write('[render-agents-md] 未找到 ts-node，请在 framework/harness 执行 npm install\n');
+  process.exit(1);
+}
+
+const r = spawnSync(process.execPath, [tsNodeBin, '--transpile-only', tsScript, ...extra], {
   cwd: harnessRoot,
   stdio: 'inherit',
-  shell: process.platform === 'win32',
 });
 
 process.exit(r.status === null ? 1 : r.status);
