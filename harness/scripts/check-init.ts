@@ -1079,19 +1079,22 @@ function inspect04(env: InspectorEnv): Inspection {
     };
   }
   if (tplText === null || env.renderEnv === null) {
-    // 无法渲染骨架 → 任何已存在内容均按 POPULATED
+    // 无法渲染骨架对比：仍可记录「未渲染骨架模板哈希 vs 磁盘」以满足 POPULATED 可追溯性，
+    // 避免 CREATE + 已有 architecture.md 时触发 diff_for_populated_provided BLOCKER。
+    const templateHash = tplText !== null ? sha256(tplText) : null;
     return {
       index: 4,
       target_path: targetRel,
       template_source: tplRel,
       status: 'POPULATED',
-      hash_template: null,
+      hash_template: templateHash,
       hash_target: sha256(targetBuf),
       diff_summary: tplText === null
         ? '骨架模板不可读'
-        : 'CREATE 模式：framework.config.json 不存在，无法渲染骨架',
+        : 'CREATE：无 framework.config.json，无法渲染占位符骨架；仅能对比磁盘 architecture.md 与未渲染 skeleton 哈希（非字节级统一 diff）。',
       planned_strategy: strategyText(4, 'POPULATED'),
-      diagnosis: '无法生成默认骨架进行 diff，记为 POPULATED',
+      diagnosis:
+        tplText === null ? '骨架模板不可读' : '无法生成默认占位符骨架进行等价 diff；记为 POPULATED',
     };
   }
   const rendered = renderTemplate(tplText, env.renderEnv);
