@@ -107,6 +107,12 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
     "devEcoStudio": {
       "installPath": "D:/Program Files/Huawei/DevEco Studio",
       "hvigorBin": ""
+    },
+    "hvigor": {
+      "daemon": true,
+      "parallel": true,
+      "incremental": true,
+      "analyze": "advanced"
     }
   }
 }
@@ -116,6 +122,7 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 
 - `installPath`（必填）：DevEco Studio 安装根目录。`hvigor-runner.ts` 会从这里派生 hvigor 路径、`DEVECO_SDK_HOME`、`JAVA_HOME`、JBR `bin` 加 PATH。
 - `hvigorBin`（可选）：显式指定 hvigor 可执行文件路径。仅当 DevEco 内部目录结构异于约定（`<installPath>/tools/hvigor/bin/hvigorw[.bat]`）时使用；空串视为不指定。
+- `hvigor`（可选对象）：hvigor 命令行调优开关。各子字段说明见 [`framework/templates/framework.config.template.json`](../../../../templates/framework.config.template.json) 的 `$schema_docs.field_notes.toolchain.hvigor.*`。不写时 [`hvigor-runner.ts`](../../harness/hvigor-runner.ts) 内部 `DEFAULT_HVIGOR_OPTIONS` 兜底（与此处默认值一致），但**显式写入有利于工程方一眼看到旋钮**。
 
 > 路径分隔符：写入时**统一用 POSIX 正斜杠 `/`**。`hvigor-runner.ts` 内部已处理 Windows 反斜杠/带空格路径的 quoting。
 
