@@ -22,7 +22,7 @@ const SCRIPT_DIR = __dirname;
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../..');
 const FRAMEWORK_DIR = path.join(REPO_ROOT, 'framework');
 const TEMPLATE_PATH = path.join(FRAMEWORK_DIR, 'templates/AGENTS.md.template');
-const CONFIG_PATH = path.join(REPO_ROOT, 'framework.config.json');
+const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'framework.config.json');
 
 const KNOWN_PROJECT_TYPE_LABELS: Record<string, string> = {
   app: '应用工程',
@@ -70,12 +70,20 @@ function effectiveProjectType(config: Record<string, unknown>): string {
   return 'app';
 }
 
-function loadConfig(): Record<string, unknown> {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    fail(`framework.config.json 不存在：${CONFIG_PATH}`);
+function resolveConfigPath(cliPath: string | undefined): string {
+  if (!cliPath || cliPath.trim() === '') {
+    return DEFAULT_CONFIG_PATH;
+  }
+  const t = cliPath.trim();
+  return path.isAbsolute(t) ? t : path.resolve(REPO_ROOT, t);
+}
+
+function loadConfig(configPath: string): Record<string, unknown> {
+  if (!fs.existsSync(configPath)) {
+    fail(`config 不存在或不可读（可用 --config 指定路径）：${configPath}`);
   }
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) as Record<string, unknown>;
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
   } catch (err) {
     fail(`framework.config.json 解析失败：${(err as Error).message}`);
   }
@@ -153,13 +161,15 @@ function parseArgs(argv: string[]): {
   '--entry-file'?: string;
   '--summary'?: string;
   '--out'?: string;
+  '--config'?: string;
   '--no-instance-bridge'?: boolean;
 } {
-  const known = new Set(['--entry-file', '--summary', '--out', '--no-instance-bridge']);
+  const known = new Set(['--entry-file', '--summary', '--out', '--config', '--no-instance-bridge']);
   const result: {
     '--entry-file'?: string;
     '--summary'?: string;
     '--out'?: string;
+    '--config'?: string;
     '--no-instance-bridge'?: boolean;
   } = {};
   for (let i = 0; i < argv.length; i++) {
@@ -175,7 +185,15 @@ function parseArgs(argv: string[]): {
     if (typeof value === 'undefined' || value.startsWith('--')) {
       fail(`选项 ${flag} 缺少值`);
     }
-    result[flag as '--entry-file' | '--summary' | '--out'] = value;
+    if (flag === '--entry-file') {
+      result['--entry-file'] = value;
+    } else if (flag === '--summary') {
+      result['--summary'] = value;
+    } else if (flag === '--out') {
+      result['--out'] = value;
+    } else if (flag === '--config') {
+      result['--config'] = value;
+    }
     i++;
   }
   return result;
@@ -184,7 +202,9 @@ function parseArgs(argv: string[]): {
 function printUsage(): void {
   process.stderr.write(
     'Usage: render-agents-md.ts --entry-file <EntryMarkdown.md> ' +
-      '--summary "<one-line>" --out <path-relative-to-repo-root> [--no-instance-bridge]\n',
+      '--summary "<one-line>" --out <path-relative-to-repo-root> ' +
+      '[--config <path>] [--no-instance-bridge]\n' +
+      '  --config: 默认读取仓库根下 framework.config.json；可指向其它 JSON（绝对路径或相对仓库根）。\n',
   );
 }
 
@@ -196,7 +216,8 @@ function main(): void {
     process.exit(1);
   }
 
-  const config = loadConfig();
+  const configPath = resolveConfigPath(args['--config']);
+  const config = loadConfig(configPath);
   const tpl = loadTemplate();
   const vars = buildVars(config, {
     entryFile: args['--entry-file'],

@@ -684,9 +684,9 @@ function strategyText(line: number, status: InspectionStatus): string {
   // 与 SKILL 0.3.2 策略矩阵一一对应；保持简短便于 stdout 表显示。
   const m: Record<number, Record<InspectionStatus, string>> = {
     1: {
-      MISSING: 'Step 5.1 直接写',
+      MISSING: 'Step 3.5 直接写',
       EMPTY: '等同 MISSING（直接写）',
-      POPULATED: 'Step 5.1 前 diff + 用户 y',
+      POPULATED: 'Step 3.5 前 diff + 用户 y（或与 Q1 决策一致的动作）',
     },
     2: {
       MISSING: 'Step 4.1 直接写',

@@ -22,7 +22,7 @@
 
 根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **DevEco / hvigor 路径、`framework.config.json` 工具链字段、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；执行 `/framework-init` 时结合 Step 0.3 体检结果与用户对 `installPath` 的显式确认。
 
-`/framework-init` 写入 **`framework.config.json` 前应已声明或默认 `project_profile.name: hmos-app`**（或由用户显式选其它 profile）；渲染 `AGENTS.md.template` **必须**走 `render-agents-md.mjs`，使上述 partial 与生成的入口 Markdown 对齐。
+`/framework-init`：**整文件写入 `framework.config.json`（Step 3.5）须早于 adapter 拷贝与 `render-agents-md`** —— Step **3.5** 之后才满足「磁盘 JSON 可被 §4.1.1 读取」。模板侧仍须走 `render-agents-md.mjs`，使 partial 与生成的入口 Markdown 对齐。
 
 ---
 
