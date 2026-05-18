@@ -10,10 +10,11 @@
 // Exit: 0 + JSON to stdout when found; non-zero when git missing / path absent.
 // ============================================================================
 
-const { spawnSync } = require('child_process');
-const path = require('path');
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SCRIPT_DIR = __dirname;
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../..'); // harness/scripts → repo root
 
 function printUsage() {
