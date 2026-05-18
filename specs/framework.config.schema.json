@@ -46,6 +46,7 @@
       "additionalProperties": true
     },
     "toolchain": { "type": "object" },
+    "tools": { "type": "object" },
     "state_machine": { "type": "object" },
     "prd": { "type": "object" },
     "active_workflow": {

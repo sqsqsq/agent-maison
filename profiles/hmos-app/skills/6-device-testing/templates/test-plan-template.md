@@ -109,3 +109,11 @@
 ### 环境限制
 
 - {列出已知的环境限制，如模拟器不支持某些 API}
+
+---
+
+> **派生提示**：本计划由 agent 在 Skill 6 Step 4.5 派生为可执行格式 **`test-plan.hylyre.md`**，
+> 落于 `doc/features/{module-name}/testing/reports/<timestamp>/hylyre/`。顶层计划是人审 SSOT，
+> 派生文件由 agent 自动维护，请勿手工编辑后者。规则见 **hmos-app** 的
+> [`profile-addendum.md`](../profile-addendum.md)「真机自动化」章及模板
+> [`test-plan-hylyre-template.md`](test-plan-hylyre-template.md)。

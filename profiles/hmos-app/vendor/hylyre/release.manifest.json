@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "hylyre_version": "0.1.0",
+  "wheel": {
+    "filename": "hylyre-0.1.0-py3-none-any.whl",
+    "sha256": "b48ea5471c1dc07d68ae2e665f2781fbf20531ccf47f716553d43e93dc0b2ab7",
+    "size_bytes": 99809
+  },
+  "generated_at": "2026-05-18T13:16:37Z",
+  "generator": {
+    "python": "3.14.5",
+    "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",
+    "platform": "Windows-11-10.0.26100-SP0"
+  },
+  "note": "Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI."
+}

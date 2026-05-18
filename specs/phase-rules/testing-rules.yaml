@@ -103,6 +103,13 @@ structure_checks:
       SKIP 时本检查 SKIP。
     severity: BLOCKER
 
+  device_test_run:
+    description: >
+      当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时，
+      harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace；
+      声明 SKIP 或上游 device_test.install SKIP 时本检查 SKIP。
+    severity: BLOCKER
+
   # ---- 测试报告 ----
 
   report_required_chapters:

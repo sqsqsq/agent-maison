@@ -50,4 +50,61 @@
 | 键 | 相对 `skills/6-device-testing/` |
 |----|-----------------------------------|
 | `test_plan_template` | `templates/test-plan-template.md` |
+| `test_plan_hylyre_template` | `templates/test-plan-hylyre-template.md` |
 | `test_report_template` | `templates/test-report-template.md` |
+
+---
+
+## Skill 6 · 真机自动化（Hylyre · hmos-app）
+
+本节是 **`device_test.run` capability** 的宿主 SSOT：与 **`device_test.build` / `device_test.install`** 串接顺序为 **build → install → run**；脚本 harness 在 `testing` 阶段按此顺序触发。
+
+### 能力概述
+
+- **`profile.yaml`** 将 **`device_test.run`** 声明为 **provider: hylyre**（与 `framework/profiles/hmos-app/harness/providers/device-test-run.ts` 对齐）。
+- **vendor**：`framework/profiles/hmos-app/vendor/hylyre/` 入库 **hylyre-*.whl** + `release.manifest.json`（参见该目录 `README.md` 同步流程）。
+- **隔离环境**：默认在仓库根 **`.hylyre/venv`**（`framework.config.json > tools.hylyre.venv_dir`）；由 runner **自动** `python -m venv` + `pip install <wheel> "hylyre[device,mcp]"`（可选 `--extra-index-url`，**追加**索引不覆盖用户 `~/.pip/pip.conf`）。
+- **首次安装**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
+- **自检**：首次安装成功后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`。
+- **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过自动 venv。
+
+### App 快照缓存（`doc/app-snapshot-cache/`）
+
+- 默认根目录与 `doc/features/` **同级**，跨 feature 共享；**`.gitignore`** 忽略该目录（由 framework-init 写入）。
+- Runner 在子进程环境中设置 **`HYLYRE_APP_STORE_DIR=<绝对路径>`**；**不要**对 `run --plan` 传入 `--store-dir`（CLI 不接受）。
+- **`hylyre run --plan`** 本身不消费该目录；**`hylyre app page save/load/find`** 与 **`hylyre find`** 在派生/探索阶段使用缓存。
+
+### 顶层 test-plan.md → 派生执行计划
+
+- **派生路径**：`doc/features/<feature>/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`
+- **硬性约束**（与 Hylyre `agent-plan-a` 一致）：
+  - 锚点标题：**`## 测试用例清单`**（或 `### …`）
+  - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
+  - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
+  - JSON **5 类根键**：`action` / `touch` / `input` / `swipe` / `scroll`
+- **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
+
+模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**
+
+### 报告合成（Step 5）
+
+- Hylyre 子目录产出 **`test-report.md`（5 章节）** 与 **`trace.json`（cases[]）**。
+- Agent 将 **cases[].status** 与顶层计划对齐合并到 **`doc/features/<feature>/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
+- 未进入派生计划的 TC 在顶层报告中 **跳过**，备注示例：缺少稳定 selector，需补 design.md / contracts.yaml。
+
+### 环境变量（摘要）
+
+| 变量 | 含义 |
+|------|------|
+| `HYLYRE_APP_STORE_DIR` | 由 harness 注入（绝对路径），指向快照根目录 |
+| `HYLYRE_PYTHON` / `HYLYRE_HOME` | 用户可选覆盖解释器 / venv |
+| `HARNESS_HDC_TARGET` | 透传设备序列号（`--device-sn`） |
+| `HARNESS_HYLYRE_RUN_TIMEOUT_MS` | 覆盖 `run` 默认 30 分钟超时 |
+| `HARNESS_HYLYRE_PIP_TIMEOUT_MS` | 覆盖首次 `pip install` 默认 600s |
+
+### 故障转移
+
+- **hypium / opencv 无法下载**：优先在用户 **`~/.pip/pip.conf`** 配置可达的 **index-url**；或将 `framework.config.json > tools.hylyre.pypi_extra_index_url` 指到内网/华为源；framework 使用的 **`--extra-index-url`** 为追加，与已有 **index-url** 不冲突。
+- **导入失败**：删除 `.hylyre/venv` 后重跑 testing harness。
+- **真机断连**：`hdc list targets`、重连；trace 中可出现 **阻塞** 状态。
+- **selector 不可靠**：`hylyre dump-ui` 探索界面 → 回写 design/contracts。

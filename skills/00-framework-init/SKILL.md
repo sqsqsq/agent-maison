@@ -699,6 +699,10 @@ doc/glossary-staging/
 
 # Feature-phase harness：`paths.reports_dir_pattern` 写到各 phase `reports/` 下的本地产物
 doc/features/*/*/reports/*
+
+# Skill 6：真机自动化相关的本地 Python venv 与 app 页面快照根（未跑过 Skill 6 时可不存在）
+/.hylyre/
+/doc/app-snapshot-cache/
 ```
 
 说明：
@@ -712,6 +716,8 @@ doc/features/*/*/reports/*
 - `doc/catalog-staging/`、`doc/glossary-staging/`：Skill 0 Phase A/B 在写入权威 YAML 前的本地草稿目录；审计仍以合并后的 `doc/module-catalog.yaml` / `doc/glossary.yaml` 与 git 历史为准。
 - `.framework-backup/`：`check-init` 在 PASS 后对 `adapter.yaml` 中 `update_policy=auto_overwrite` 的目标做模板对齐前，对被覆盖文件的备份根目录。
 - `doc/features/*/*/reports/*`：配置了 `paths.reports_dir_pattern`（默认在各 phase 目录下 `reports/`）时，feature 维度的 harness 脚本报告、合并报告、trace、verifier 产出、宿主编译/装机日志等通常不入仓。
+- `/.hylyre/`：真机自动化侧 harness 可能在本机创建的隔离 Python venv（无对应工具或未执行时目录可不存在）。
+- `/doc/app-snapshot-cache/`：真机自动化相关的 app 页面快照缓存根（跨 feature；未跑过对应步骤时可不存在）。
 
 #### 5.4.5.2 等价覆盖规则
 
@@ -731,6 +737,8 @@ doc/features/*/*/reports/*
 | `doc/catalog-staging/` | `doc/catalog-staging`、`doc/catalog-staging/`、`**/catalog-staging/` |
 | `doc/glossary-staging/` | `doc/glossary-staging`、`doc/glossary-staging/`、`**/glossary-staging/` |
 | `.framework-backup/` | `.framework-backup`、`.framework-backup/`、`**/.framework-backup/` |
+| `/.hylyre/` | `.hylyre/`、`/.hylyre/`、`/**/.hylyre/` |
+| `/doc/app-snapshot-cache/` | `doc/app-snapshot-cache/`、`doc/app-snapshot-cache`、`/**/app-snapshot-cache/` |
 
 #### 5.4.5.3 写入策略
 
@@ -739,6 +747,7 @@ doc/features/*/*/reports/*
 - 若只缺部分规则：在文件末尾追加注释分段（可与 5.4.5.1 示例一致：`# Framework runtime artifacts …` 与 `# Skill 0 staging …`），**只写缺失的 canonical patterns**；不要重排、删除、格式化用户原有 `.gitignore`。
 - 追加前确保原文件以换行结尾；不要因为 CRLF/LF 差异重写整个文件。
 - 该步骤不需要用户确认：它只新增忽略运行产物的规则，不覆盖业务资产；但必须在 Step 7 收尾里列出追加了哪些 pattern。
+- **厂商包目录例外**：`framework/profiles/<project_profile.name>/vendor/` 下由 profile 随框架分发的三方 wheel 等**须入库**，禁止用本节 canonical block 覆盖；若用户自定义 `.gitignore` 误写了 `**/vendor/`，应提示其收窄规则以免把 profile vendor 排进忽略。
 
 ---
 

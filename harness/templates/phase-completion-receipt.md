@@ -27,6 +27,15 @@ script_harness:
   ran_at: "<ISO 8601>"
 
 # ----------------------------------------------------------------------
+# 1.5 Testing 阶段 · 真机自动化产物路径（仅 phase=testing 且 profile 未 SKIP device_test.run 时必填）
+# ----------------------------------------------------------------------
+testing_run_artifacts:
+  hylyre_run_exit_code: 0                  # 子进程退出码；若无需执行可填 -1（与 profile SKIP 对齐时由校验脚本忽略本块）
+  hylyre_report_path: "doc/features/<feature>/testing/reports/<ts>/hylyre/test-report.md"
+  hylyre_trace_path:  "doc/features/<feature>/testing/reports/<ts>/hylyre/trace.json"
+  app_snapshot_cache_dir: "doc/app-snapshot-cache"
+
+# ----------------------------------------------------------------------
 # 2. Verifier 子 agent（Layer 2 凭证）
 # ----------------------------------------------------------------------
 verifier_subagent:

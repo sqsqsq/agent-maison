@@ -48,7 +48,21 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 6 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
+
+### 检查 7: 真机自动化消费 (device_test_run_consumption)
+
+- **严重等级**: BLOCKER（profile 将 `device_test.run` 声明为 BLOCKER 时） / SKIP（profile 声明 SKIP 时）
+- **评估方法**:
+  1. 若 profile **`device_test.run`** 为 SKIP → 整项 SKIP
+  2. 检查派生可执行计划是否存在：`doc/features/<feature>/testing/reports/<latest_ts>/hylyre/test-plan.hylyre.md`
+  3. 检查派生计划是否含 **`## 测试用例清单`** 标题锚点 + 7 列表头固定顺序（与 Hylyre `plan_parse` / `agent-plan-a` 一致）
+  4. 检查顶层 `test-report.md` 是否含 **5 必填章节**：测试概览 / 测试执行结果 / 缺陷清单 / 通过率统计 / 结论
+  5. 检查「测试执行结果」表格的「执行状态」列只出现 **4 状态**：通过 / 失败 / 阻塞 / 跳过
+  6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
+  7. 抽样 3–5 条「失败」/「阻塞」/「跳过」用例，核对派生子目录 **`trace.json`** 的 `cases[]` 中是否有对应 `id` / `status` 记录
+  8. **TC 编号一致性**：顶层 `test-plan.md` 的 TC 集合 ⊇ 派生计划的 TC；不能有「凭空出现」的派生 TC
+  9. 核对完成回执 `testing_run_artifacts` 中 **`hylyre_report_path` / `hylyre_trace_path`** 与磁盘一致（若 profile 要求）
 
 ### 检查 1: 测试用例完整性 (test_case_completeness)
 
@@ -142,6 +156,18 @@ verification_result:
   timestamp: "{timestamp}"
 
   checks:
+    # --- 检查 7: 真机自动化消费 ---
+    - id: device_test_run_consumption
+      status: PASS | FAIL | SKIP
+      severity: BLOCKER
+      details: |
+        profile device_test.run 状态：BLOCKER / SKIP
+        派生计划存在性 / 锚点 / 列顺序：...
+        trace.json 与报告对账：...
+      affected_files: []
+      suggestion: |
+        <修正建议；SKIP 时说明 profile 跳过原因>
+
     # --- 检查 1: 测试用例完整性 ---
     - id: test_case_completeness
       status: PASS | FAIL | WARN
@@ -221,13 +247,13 @@ verification_result:
         <修正建议>
 
   summary:
-    total: 6
+    total: 7
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
     blockers: <severity=BLOCKER 且 status=FAIL 的数量>
     verdict: PASS | FAIL
-    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS
+    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS（SKIP 不计入 FAIL）
 ```
 
 ---

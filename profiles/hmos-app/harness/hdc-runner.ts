@@ -27,6 +27,91 @@ import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
 
+/** 解析结果缓存：同进程内 hdc 路径不变，避免重复探测。单测可 `resetHdcExecutableCache()`。 */
+let cachedHdcExecutable: string | null = null;
+
+function findFrameworkInstanceRoot(startDir: string, maxUp = 12): string | null {
+  let d = path.resolve(startDir);
+  for (let i = 0; i < maxUp; i++) {
+    if (fs.existsSync(path.join(d, 'framework.config.json'))) {
+      return d;
+    }
+    const parent = path.dirname(d);
+    if (parent === d) {
+      break;
+    }
+    d = parent;
+  }
+  return null;
+}
+
+function defaultHdcPathUnderDevEco(installPath: string): string {
+  const toolchains = path.join(installPath, 'sdk', 'default', 'openharmony', 'toolchains');
+  return process.platform === 'win32' ? path.join(toolchains, 'hdc.exe') : path.join(toolchains, 'hdc');
+}
+
+function hdcListTargetsProbe(executable: string): boolean {
+  const isWin = process.platform === 'win32';
+  const useShell = isWin && executable === 'hdc';
+  const probe = spawnSync(executable, [...hdcTargetPrefix(), 'list', 'targets'], {
+    encoding: 'utf-8',
+    shell: useShell,
+    timeout: 5000,
+  });
+  return !probe.error && probe.status === 0;
+}
+
+/**
+ * 解析可执行的 hdc。
+ *
+ * 顺序：`HARNESS_HDC_EXE` / `HDC_EXE`（须为可执行文件路径）→ PATH 上的 `hdc` →
+ * 自 `framework.config.json`（自 cwd 向上找到实例根）`toolchain.devEcoStudio.installPath` 推导
+ * `…/sdk/default/openharmony/toolchains/hdc(.exe)`。
+ *
+ * Cursor / CI 子进程常 **不继承** 用户图形会话里配的 PATH；本回退与 hvigor 已配置的 DevEco 路径对齐。
+ */
+export function resolveHdcExecutableSync(): string {
+  if (cachedHdcExecutable !== null) {
+    return cachedHdcExecutable;
+  }
+
+  const fromEnv = (process.env.HARNESS_HDC_EXE ?? process.env.HDC_EXE ?? '').trim();
+  if (fromEnv && fs.existsSync(fromEnv) && hdcListTargetsProbe(fromEnv)) {
+    cachedHdcExecutable = fromEnv;
+    return fromEnv;
+  }
+
+  if (hdcListTargetsProbe('hdc')) {
+    cachedHdcExecutable = 'hdc';
+    return 'hdc';
+  }
+
+  const root = findFrameworkInstanceRoot(process.cwd());
+  if (root) {
+    const dev = loadDevEcoConfig(root);
+    const installPath = dev?.installPath?.trim();
+    if (installPath) {
+      const candidate = defaultHdcPathUnderDevEco(installPath);
+      if (fs.existsSync(candidate) && hdcListTargetsProbe(candidate)) {
+        cachedHdcExecutable = candidate;
+        return candidate;
+      }
+      if (fs.existsSync(candidate)) {
+        cachedHdcExecutable = candidate;
+        return candidate;
+      }
+    }
+  }
+
+  cachedHdcExecutable = 'hdc';
+  return 'hdc';
+}
+
+/** 仅单测或需要强制重解析 PATH / 配置变更时使用。 */
+export function resetHdcExecutableCache(): void {
+  cachedHdcExecutable = null;
+}
+
 export interface OhosTestMetadata {
   bundleName: string;
   ohosTestModuleName: string;
@@ -274,9 +359,11 @@ export function findOhosTestSignedHap(
 
 export function probeDevices(): DeviceProbeResult {
   const isWin = process.platform === 'win32';
-  const probe = spawnSync('hdc', [...hdcTargetPrefix(), 'list', 'targets'], {
+  const exe = resolveHdcExecutableSync();
+  const useShell = isWin && exe === 'hdc';
+  const probe = spawnSync(exe, [...hdcTargetPrefix(), 'list', 'targets'], {
     encoding: 'utf-8',
-    shell: isWin,
+    shell: useShell,
     timeout: 5000,
   });
   if (probe.error || probe.status !== 0) {
@@ -310,9 +397,11 @@ export function hdcTargetPrefix(): string[] {
 }
 
 function runHdc(args: string[], timeoutMs = 60_000): SpawnSyncReturns<string> {
-  return spawnSync('hdc', [...hdcTargetPrefix(), ...args], {
+  const exe = resolveHdcExecutableSync();
+  const useShell = process.platform === 'win32' && exe === 'hdc';
+  return spawnSync(exe, [...hdcTargetPrefix(), ...args], {
     encoding: 'utf-8',
-    shell: process.platform === 'win32',
+    shell: useShell,
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
   });

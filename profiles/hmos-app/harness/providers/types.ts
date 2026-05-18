@@ -15,6 +15,7 @@ export type CapabilityProviderId =
   | 'hvigor_app'
   | 'hdc'
   | 'hdc_app'
+  | 'hylyre'
   | 'script'
   | 'none';
 

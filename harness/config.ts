@@ -201,6 +201,31 @@ export interface ToolchainConfig {
   preferredProduct?: string;
 }
 
+/** Skill 6 真机自动化（hmos-app profile · tools.hylyre） */
+export interface HylyreToolConfig {
+  /** 相对 projectRoot：vendor wheel + release.manifest.json */
+  vendor_dir: string;
+  /** 相对 projectRoot：隔离 Python 环境目录 */
+  venv_dir: string;
+  /** 相对 projectRoot：App 快照缓存根目录（经环境变量注入子进程） */
+  app_snapshot_cache_dir: string;
+  /** PyPI extra index；空字符串表示仅使用用户/全局 pip 配置 */
+  pypi_extra_index_url: string;
+  /** false：环境缺失时 fail-fast，不自动建 venv / 安装 */
+  auto_install: boolean;
+  /** true：首次 pip 安装成功后执行一次 doctor */
+  doctor_first_run: boolean;
+  /**
+   * Hypium `start_app` 的 ability 名（与 hylyre `run --page-name` 一致，对应 entry 模块 `module.json5` 的 mainElement）。
+   * 空字符串时由 device-test-run 自动扫描工程内首个 `"type": "entry"` 模块的 mainElement。
+   */
+  hypium_page_name: string;
+}
+
+export interface FrameworkToolsConfig {
+  hylyre?: Partial<HylyreToolConfig>;
+}
+
 export interface FrameworkPaths {
   /**
    * 功能级需求目录：每个 feature 一个子目录，扁平归档所有产物
@@ -334,6 +359,10 @@ export interface FrameworkConfig {
    * 是否启用 lifecycle hooks（workflow/extension）。默认 true。
    */
   lifecycle_hooks_enabled?: boolean;
+  /**
+   * 可选宿主工具配置（如 hmos-app 真机自动化）；未声明时由 resolve* 辅助函数回退默认值。
+   */
+  tools?: FrameworkToolsConfig;
 }
 
 // --------------------------------------------------------------------------
@@ -577,6 +606,13 @@ function assertNoDeprecatedPaths(parsed: unknown): void {
   }
 }
 
+function normalizeTools(raw: FrameworkToolsConfig | undefined): FrameworkToolsConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const hy = raw.hylyre;
+  if (!hy || typeof hy !== 'object') return undefined;
+  return { hylyre: { ...hy } };
+}
+
 function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
 
@@ -646,6 +682,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
         ? raw.active_workflow.trim()
         : fallback.active_workflow ?? 'spec-driven',
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
+    tools: normalizeTools(raw.tools),
   };
 }
 
@@ -1391,6 +1428,47 @@ export function resolveHvigorBinFromConfig(projectRoot: string): string | null {
   if (!cfg) return null;
   if (cfg.hvigorBin) return cfg.hvigorBin;
   return deriveHvigorBinFromInstallPath(cfg.installPath);
+}
+
+// --------------------------------------------------------------------------
+// tools.hylyre（hmos-app · 真机自动化消费）
+// --------------------------------------------------------------------------
+
+const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
+  vendor_dir: 'framework/profiles/hmos-app/vendor/hylyre',
+  venv_dir: '.hylyre/venv',
+  app_snapshot_cache_dir: 'doc/app-snapshot-cache',
+  pypi_extra_index_url: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+  auto_install: true,
+  doctor_first_run: true,
+  hypium_page_name: '',
+};
+
+/**
+ * 合并 `framework.config.json > tools.hylyre` 与默认值；字段均为解析后的绝对/相对路径语义（相对路径仍相对于 projectRoot）。
+ */
+export function resolveHylyreToolConfig(projectRoot: string): HylyreToolConfig {
+  const partial = loadFrameworkConfig(projectRoot).tools?.hylyre;
+  const p = partial ?? {};
+  return {
+    vendor_dir: (typeof p.vendor_dir === 'string' && p.vendor_dir.trim()) ? p.vendor_dir.trim() : DEFAULT_HYLYRE_TOOL_CONFIG.vendor_dir,
+    venv_dir: (typeof p.venv_dir === 'string' && p.venv_dir.trim()) ? p.venv_dir.trim() : DEFAULT_HYLYRE_TOOL_CONFIG.venv_dir,
+    app_snapshot_cache_dir:
+      (typeof p.app_snapshot_cache_dir === 'string' && p.app_snapshot_cache_dir.trim())
+        ? p.app_snapshot_cache_dir.trim()
+        : DEFAULT_HYLYRE_TOOL_CONFIG.app_snapshot_cache_dir,
+    pypi_extra_index_url:
+      typeof p.pypi_extra_index_url === 'string'
+        ? p.pypi_extra_index_url.trim()
+        : DEFAULT_HYLYRE_TOOL_CONFIG.pypi_extra_index_url,
+    auto_install: typeof p.auto_install === 'boolean' ? p.auto_install : DEFAULT_HYLYRE_TOOL_CONFIG.auto_install,
+    doctor_first_run:
+      typeof p.doctor_first_run === 'boolean' ? p.doctor_first_run : DEFAULT_HYLYRE_TOOL_CONFIG.doctor_first_run,
+    hypium_page_name:
+      typeof p.hypium_page_name === 'string'
+        ? p.hypium_page_name.trim()
+        : DEFAULT_HYLYRE_TOOL_CONFIG.hypium_page_name,
+  };
 }
 
 /**

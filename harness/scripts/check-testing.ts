@@ -25,7 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { featureFilePath, relFeatureFile } from '../config';
+import { featureFilePath, relFeatureFile, featurePhaseReportsDir, resolveHylyreToolConfig } from '../config';
 import {
   extractHeadings,
   getSectionContent,
@@ -39,9 +39,12 @@ import {
   isCapabilitySkipped,
   dispatchDeviceTestBuild,
   dispatchDeviceTestInstall,
+  dispatchDeviceTestEnsureReady,
+  dispatchDeviceTestRun,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
+import type { HylyreReadyResult, HylyreRunResult } from '../../profiles/hmos-app/harness/providers/device-test-run';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1181,9 +1184,15 @@ function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckRes
 
 const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
 
+/** build → install → run 共享：build 写入 hapPath；install PASS 时置 installPassed */
+interface DeviceTestPipelineHolder {
+  hapPath: string | null;
+  installPassed: boolean;
+}
+
 function checkDeviceTestBuildGate(
   ctx: CheckContext,
-  out: { hapPath: string | null },
+  out: DeviceTestPipelineHolder,
 ): CheckResult[] {
   const id = 'device_test_build';
   const desc = ruleDesc(ctx, 'structure_checks', id);
@@ -1310,7 +1319,7 @@ function checkDeviceTestBuildGate(
 
 function checkDeviceTestInstallGate(
   ctx: CheckContext,
-  holder: { hapPath: string | null },
+  holder: DeviceTestPipelineHolder,
 ): CheckResult[] {
   const id = 'device_test_install';
   const desc = ruleDesc(ctx, 'structure_checks', id);
@@ -1392,6 +1401,8 @@ function checkDeviceTestInstallGate(
       ];
     }
 
+    holder.installPassed = true;
+
     return [
       {
         id,
@@ -1411,6 +1422,235 @@ function checkDeviceTestInstallGate(
         severity: 'BLOCKER',
         status: 'FAIL',
         details: `device_test.install 执行异常：${(err as Error).message}`,
+      },
+    ];
+  }
+}
+
+function readBundleNameFromAppScope(projectRoot: string): string {
+  const p = path.join(projectRoot, 'AppScope', 'app.json5');
+  const raw = fs.readFileSync(p, 'utf-8');
+  const m = raw.match(/"bundleName"\s*:\s*"([^"]+)"/);
+  if (!m) {
+    throw new Error('无法在 AppScope/app.json5 解析 bundleName');
+  }
+  return m[1];
+}
+
+function extractTcIdsFromPlanTable(planMd: string): string[] {
+  const section = getSectionContent(planMd, '测试用例') ?? '';
+  const tables = extractTables(section);
+  if (tables.length === 0) return [];
+  const t = tables[0];
+  const idx = t.headers.findIndex(h => h.includes('用例编号') || h.includes('编号'));
+  const col = idx >= 0 ? idx : 0;
+  const ids = new Set<string>();
+  for (const row of t.rows) {
+    const cell = row[col] || '';
+    const found = cell.match(/TC-\d+/gi);
+    if (found) {
+      for (const x of found) {
+        ids.add(x.toUpperCase());
+      }
+    }
+  }
+  return [...ids];
+}
+
+function resolveDerivedHylyrePlan(ctx: CheckContext): { exists: boolean; path: string; expectedDir: string } {
+  const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+  const expectedDir = path.join(base, '<timestamp>', 'hylyre');
+  if (!fs.existsSync(base)) {
+    return { exists: false, path: '', expectedDir };
+  }
+  const entries = fs
+    .readdirSync(base, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name)
+    .sort()
+    .reverse();
+  for (const name of entries) {
+    const p = path.join(base, name, 'hylyre', 'test-plan.hylyre.md');
+    if (fs.existsSync(p)) {
+      return { exists: true, path: p, expectedDir: path.dirname(p) };
+    }
+  }
+  return { exists: false, path: '', expectedDir };
+}
+
+function verifyDerivedPlanTcConsistency(ctx: CheckContext, derivedPath: string): { extra: string[] } {
+  const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  if (!fs.existsSync(topPath)) {
+    return { extra: [] };
+  }
+  const top = fs.readFileSync(topPath, 'utf-8');
+  const derived = fs.readFileSync(derivedPath, 'utf-8');
+  const topIds = new Set(extractTcIdsFromPlanTable(top));
+  const derIds = extractTcIdsFromPlanTable(derived);
+  const extra = derIds.filter(id => !topIds.has(id));
+  return { extra };
+}
+
+function checkDeviceTestRunGate(
+  ctx: CheckContext,
+  hapHolder: DeviceTestPipelineHolder,
+): CheckResult[] {
+  const id = 'device_test_run';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+
+  try {
+    if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.run')) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'project_profile 声明 device_test.run 为 SKIP，未执行真机自动化测试。',
+        },
+      ];
+    }
+
+    if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.install')) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'device_test.install 已 SKIP，同步跳过真机自动化测试。',
+        },
+      ];
+    }
+
+    if (!hapHolder.installPassed) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'device_test.install 未 PASS（或未执行成功），同步跳过真机自动化测试。',
+        },
+      ];
+    }
+
+    const derivedPlan = resolveDerivedHylyrePlan(ctx);
+    if (!derivedPlan.exists) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `未找到派生可执行测试计划（期望位于 ${derivedPlan.expectedDir} 下）。请按 Skill 6 Step 4.5 派生 test-plan.hylyre.md 后重试。`,
+        },
+      ];
+    }
+
+    const consistency = verifyDerivedPlanTcConsistency(ctx, derivedPlan.path);
+    if (consistency.extra.length > 0) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `派生计划包含顶层 test-plan.md 中未声明的用例编号：${consistency.extra.join(', ')}`,
+        },
+      ];
+    }
+
+    const ready = dispatchDeviceTestEnsureReady(ctx, {
+      projectRoot: ctx.projectRoot,
+      harnessRoot: TESTING_HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: ctx.phase,
+    }) as HylyreReadyResult;
+
+    if (!ready.ok) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            '真机自动化环境准备失败：',
+            ...ready.errors.map(e => `  - ${e.message}`),
+            ready.logPath ? `详细日志：${ready.logPath}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          suggestion: '若 Python 依赖无法安装，请按 hmos-app profile 附录「真机自动化」章配置 PyPI 镜像或内部源。',
+        },
+      ];
+    }
+
+    const bundleName = readBundleNameFromAppScope(ctx.projectRoot);
+    const hylyreOutDir = path.dirname(derivedPlan.path);
+    const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
+    const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
+    fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
+
+    const run = dispatchDeviceTestRun(ctx, {
+      projectRoot: ctx.projectRoot,
+      harnessRoot: TESTING_HARNESS_ROOT,
+      feature: ctx.feature,
+      phase: ctx.phase,
+      pythonPath: ready.pythonPath,
+      derivedPlanPath: path.resolve(derivedPlan.path),
+      reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
+      traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
+      bundleName,
+      deviceSn: process.env.HARNESS_HDC_TARGET,
+      skipAssertExpected: true,
+      appSnapshotCacheAbs,
+    }) as HylyreRunResult;
+
+    if (!run.ok) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [`真机自动化执行失败：exit=${run.exitCode}`, `命令：${run.command}`, `日志：${run.logPath}`, ...run.errors.map(e => `  - ${e.message}`)].join('\n'),
+        },
+      ];
+    }
+
+    const summary = run.trace
+      ? `outcome=${run.trace.outcome}, cases=${(run.trace.cases ?? []).length}`
+      : '无 trace.json';
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'PASS',
+        details: [`真机自动化执行完成：exit=${run.exitCode}, ${summary}`, `报告：${run.reportPath}`, `trace：${run.tracePath}`].join('\n'),
+        suggestion:
+          '失败 / 阻塞 / 跳过用例的具体分类由顶层 test-report.md 合成步骤承载；本检查只确认自动化执行未崩溃。',
+      },
+    ];
+  } catch (err) {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `device_test.run 执行异常：${(err as Error).message}`,
       },
     ];
   }
@@ -1497,9 +1737,10 @@ const checker: PhaseChecker = {
 
     const results: CheckResult[] = [];
 
-    const deviceTestHapHolder: { hapPath: string | null } = { hapPath: null };
+    const deviceTestHapHolder: DeviceTestPipelineHolder = { hapPath: null, installPassed: false };
     results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
+    results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
 
     // --- Structure checks: Test Plan ---
     results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));

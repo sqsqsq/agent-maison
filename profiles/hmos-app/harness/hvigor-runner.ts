@@ -37,6 +37,7 @@ import {
   HvigorCodingConfig,
   featurePhaseReportsDir,
 } from '../../../harness/config';
+import { resolveHdcExecutableSync } from './hdc-runner';
 
 export interface HvigorRunResult {
   /** 是否真正执行了 hvigor（false：工具链缺失 / 被 env 跳过） */
@@ -1635,9 +1636,11 @@ export function probeDevices(): {
   raw: string;
 } {
   const isWin = process.platform === 'win32';
-  const probe = spawnSync('hdc', ['list', 'targets'], {
+  const exe = resolveHdcExecutableSync();
+  const useShell = isWin && exe === 'hdc';
+  const probe = spawnSync(exe, ['list', 'targets'], {
     encoding: 'utf-8',
-    shell: isWin,
+    shell: useShell,
     timeout: 5000,
   });
 

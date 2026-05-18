@@ -50,6 +50,7 @@ const PROVIDER_MODULE_BY_ID: Record<string, string> = {
   hvigor_app: 'device-test-build',
   hdc: 'device-test',
   hdc_app: 'device-test-install',
+  hylyre: 'device-test-run',
   script: 'prd-visual-handoff',
 };
 
@@ -206,6 +207,22 @@ export function dispatchDeviceTestInstall(
   options: Record<string, unknown>,
 ): unknown {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.install', 'installDeviceTestApp');
+  return fn(options);
+}
+
+export function dispatchDeviceTestEnsureReady(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.run', 'ensureHylyreReady');
+  return fn(options);
+}
+
+export function dispatchDeviceTestRun(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.run', 'runHylyreDeviceTest');
   return fn(options);
 }
 

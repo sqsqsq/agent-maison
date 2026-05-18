@@ -13,6 +13,7 @@
 //      - script_harness.exit_code === 0  &&  blocker_count === 0
 //      - verifier_subagent.verdict === "PASS"
 //      - trace_json.exists === true  且 trace_json.path 文件真实存在
+//      - testing 阶段且 profile 未 SKIP device_test.run 时：testing_run_artifacts 四字段与 Hylyre 产物路径
 //      - claimed_completion_commit_sha 是 40 位 hex 且在仓库中真实存在
 //      - self_check.q1_trace_json_abs_path 真实存在
 //      - self_check.q3_last_diff_file 为非空真实路径；
@@ -35,6 +36,7 @@ import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig } from '../config';
+import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 
 type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
@@ -79,6 +81,13 @@ interface ReceiptFrontmatter {
     q3_last_diff_file?: string;
     q4_no_hallucinated_rule_used?: boolean;
     q4_evidence?: string;
+  };
+  /** testing 阶段且 profile 未 SKIP device_test.run 时必填 */
+  testing_run_artifacts?: {
+    hylyre_run_exit_code?: number;
+    hylyre_report_path?: string;
+    hylyre_trace_path?: string;
+    app_snapshot_cache_dir?: string;
   };
 }
 
@@ -335,6 +344,91 @@ function main(): void {
       severity: 'BLOCKER',
       message: 'context_exploration.has_blocker_coverage_risk=true，不得在完成回执中宣称阶段闭环。',
     });
+  }
+
+  // 4.5 testing_run_artifacts（Hylyre 子产物；仅 phase=testing 且 device_test.run 非 SKIP）
+  if (phase === 'testing' && !isCapabilitySkipped(resolved, 'device_test.run')) {
+    const tra = frontmatter.testing_run_artifacts ?? {};
+    if (typeof tra.hylyre_run_exit_code !== 'number') {
+      issues.push({
+        id: 'testing_run_artifacts_exit_code_missing',
+        severity: 'BLOCKER',
+        message: `testing_run_artifacts.hylyre_run_exit_code 必须为数字，收到 ${String(tra.hylyre_run_exit_code ?? '<missing>')}。`,
+      });
+    }
+    const repRel = (tra.hylyre_report_path ?? '').trim();
+    const trcRel = (tra.hylyre_trace_path ?? '').trim();
+    const cacheRel = (tra.app_snapshot_cache_dir ?? '').trim();
+    if (!repRel) {
+      issues.push({
+        id: 'testing_run_artifacts_report_missing',
+        severity: 'BLOCKER',
+        message: 'testing_run_artifacts.hylyre_report_path 未填写。',
+      });
+    }
+    if (!trcRel) {
+      issues.push({
+        id: 'testing_run_artifacts_trace_missing',
+        severity: 'BLOCKER',
+        message: 'testing_run_artifacts.hylyre_trace_path 未填写。',
+      });
+    }
+    if (!cacheRel) {
+      issues.push({
+        id: 'testing_run_artifacts_cache_missing',
+        severity: 'BLOCKER',
+        message: 'testing_run_artifacts.app_snapshot_cache_dir 未填写。',
+      });
+    }
+    if (repRel) {
+      const repAbs = path.resolve(projectRoot, repRel);
+      if (!fs.existsSync(repAbs)) {
+        issues.push({
+          id: 'testing_run_artifacts_report_not_found',
+          severity: 'BLOCKER',
+          message: `testing_run_artifacts.hylyre_report_path="${repRel}" 在文件系统中不存在。`,
+        });
+      }
+    }
+    if (trcRel) {
+      const trcAbs = path.resolve(projectRoot, trcRel);
+      if (!fs.existsSync(trcAbs)) {
+        issues.push({
+          id: 'testing_run_artifacts_hylyre_trace_not_found',
+          severity: 'BLOCKER',
+          message: `testing_run_artifacts.hylyre_trace_path="${trcRel}" 在文件系统中不存在。`,
+        });
+      } else {
+        try {
+          const hylyreTrace = JSON.parse(fs.readFileSync(trcAbs, 'utf-8')) as Record<string, unknown>;
+          if (typeof hylyreTrace.feature !== 'string' || typeof hylyreTrace.outcome !== 'string') {
+            issues.push({
+              id: 'testing_run_artifacts_trace_schema_soft_fail',
+              severity: 'BLOCKER',
+              message:
+                'Hylyre trace.json 缺少软校验必填字段：`feature`（string）与 `outcome`（string）。',
+            });
+          }
+          if (
+            hylyreTrace.phase !== undefined &&
+            hylyreTrace.phase !== null &&
+            String(hylyreTrace.phase) !== 'testing'
+          ) {
+            issues.push({
+              id: 'testing_run_artifacts_trace_phase_mismatch',
+              severity: 'BLOCKER',
+              message: `Hylyre trace.json phase=「${String(hylyreTrace.phase)}」，期望 testing。`,
+            });
+          }
+        } catch (e) {
+          issues.push({
+            id: 'testing_run_artifacts_trace_not_json',
+            severity: 'BLOCKER',
+            message: `无法解析 Hylyre trace.json：${(e as Error).message}`,
+          });
+        }
+      }
+    }
   }
 
   // 5. claimed_completion_commit_sha 必须是 40 位 hex 且在 git 中真实存在
