@@ -135,7 +135,7 @@ git submodule update --init --recursive
 
 ```bash
 cd framework/harness
-npm install                   # 仅首次或 package.json 变更后执行
+npm install                   # 仅首次或 package.json 变更后执行（Tier_1 详见 framework/skills/reference/host-harness-readiness.md）
 npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 ```
 

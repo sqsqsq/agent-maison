@@ -4,6 +4,8 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
+**Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `framework/harness/scripts/check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md)。
+
 ### Feature 归档定位协议（本阶段是消费者）
 
 进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
@@ -343,7 +345,7 @@ profile 专属命令形态、超时与性能调优说明放在对应 `framework/
 2. **读完整日志**：harness 把日志写到 `doc/features/<feature>/coding/reports/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
-   - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → 不要让用户手工猜。先展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源。若 `framework/harness/node_modules` 缺失，可直接在 `framework/harness` 执行 `npm install`；
+   - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → **先**按 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 核对 harness 自身 `npm install` / `node_modules/ts-node`（Tier_1 细节以该 SSOT 为准）。若 Tier_1 已满足仍判定为宿主工程依赖问题，不要让用户手工猜，展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源；
    - profile 包描述 / 模块依赖错误 → 回到依赖章节补依赖；
    - 资源引用（**宿主资源 API**，见 profile）缺失 → 回到资源声明章节补声明。
 4. **修完 → 再跑**：重复 6.5.1，直到 profile compile capability PASS。

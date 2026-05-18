@@ -41,6 +41,7 @@ docs:
       - framework/skills/5-business-ut/SKILL.md
       - framework/skills/6-device-testing/SKILL.md
       - framework/skills/README.md
+      - framework/skills/reference/host-harness-readiness.md
       - framework/profiles/hmos-app/skills/skill-assets.yaml
       - framework/profiles/generic/skills/skill-assets.yaml
       # docs 阶段规约（含 profile_skill_assets_resolvable，与 skills/README 交叉引用）

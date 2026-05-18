@@ -15,6 +15,8 @@
 
 **[`00-framework-init`](00-framework-init/SKILL.md)** 是所有其它 Skill 的前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。未完成前请勿执行下表中的 Skill 0～6。
 
+**Harness 运行时前置（Tier_1）**：在 Skill **0～6** 中执行任何 `harness-runner` / `npx ts-node harness-runner.ts`、或在缺少 harness npm 依赖的前提下执行 `framework/harness/scripts/check-receipt.ts` 等脚本之前，须先满足 **[`reference/host-harness-readiness.md`](reference/host-harness-readiness.md)**（与 Skill 00 **Step 5.5** 中 Tier_1 等价；init 流程仍须在 Step 5.5 **落地执行** `npm install`，而非仅阅读本文）。
+
 进入阶段 Skill 时还必须读取当前 `project_profile` 的 addendum：
 
 ```text

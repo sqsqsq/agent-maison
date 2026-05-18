@@ -128,11 +128,53 @@ Harness — Spec/Harness 验证工具
 `);
 }
 
+/**
+ * Tier_1：若 harness 自身 npm 未安装，部分环境下顶层 import 仍可能侥幸启动；
+ * 在正式进入 phase 逻辑前做确定性探测，给出可读报错或按需自动安装。
+ */
+function ensureHarnessTier1DepsOrExit(): void {
+  const harnessRoot = __dirname;
+  const marker = path.join(harnessRoot, 'node_modules', 'ts-node', 'package.json');
+  if (fs.existsSync(marker)) {
+    return;
+  }
+
+  if (process.env.HARNESS_AUTO_NPM_INSTALL === '1') {
+    console.error('[harness] HARNESS_AUTO_NPM_INSTALL=1 → 正在 framework/harness 执行 npm install ...');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const result = spawnSync(npmCmd, ['install'], {
+      cwd: harnessRoot,
+      stdio: 'inherit',
+      env: process.env,
+    });
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+    if (!fs.existsSync(marker)) {
+      console.error(
+        '[harness] npm install 已结束但仍未检测到 ts-node；请见 framework/skills/reference/host-harness-readiness.md'
+      );
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error(
+    '[harness] Tier_1 缺失：未检测到 framework/harness/node_modules/ts-node（请先安装 harness npm 依赖）。\n' +
+      '  cd framework/harness && npm install\n' +
+      '  SSOT: framework/skills/reference/host-harness-readiness.md\n' +
+      '  可选（自担 registry/联网策略）：HARNESS_AUTO_NPM_INSTALL=1 cd framework/harness && npx ts-node harness-runner.ts ...'
+  );
+  process.exit(1);
+}
+
 // --------------------------------------------------------------------------
 // 主流程
 // --------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  ensureHarnessTier1DepsOrExit();
+
   if (args.help) {
     printHelp();
     process.exit(0);

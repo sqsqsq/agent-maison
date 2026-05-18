@@ -729,6 +729,8 @@ doc/features/*/*/reports/*
 
 ## Step 5.5. 安装 harness 本地依赖（Step 6 前置）
 
+> **Tier_1 权威 SSOT（交叉引用）**：日常克隆与独立拉起其它 Skill 时的叙事锚点为 [`../reference/host-harness-readiness.md`](../reference/host-harness-readiness.md)。**本节不可替代为「仅阅读 SSOT」**——init 流程仍须在本 Step **落地执行** `npm install`、失败排查与 **5.5.4 `npm test`** 自检。
+
 Step 6 会调用 `framework/harness/harness-runner.ts`，依赖 `ts-node` / `yaml` 等 npm 包。`framework/harness/node_modules/` 与 `package-lock.json` 均已被 `.gitignore` 排除（**内网 registry URL 与外网不同，lock 文件不适合随框架分发**），新克隆的工程此处**必无** `node_modules`，若直接跑 Step 6 会以 `Cannot find module 'ts-node'` / `'yaml'` 失败。由本 Skill 在此统一解决。
 
 ### 5.5.1 幂等检测

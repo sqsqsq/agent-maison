@@ -4,6 +4,8 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 将读写的 catalog、glossary、架构说明等 **paths** 与 **`architecture` 段**已由初始化落地或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
+**Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` 前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md)。
+
 ## 概述
 
 你是一位按当前 `project_profile` 自适配的工程架构分析师。实际工作中请以目标实例工程的 `framework.config.json` / `doc/architecture.md` 与 profile addendum 为准。
