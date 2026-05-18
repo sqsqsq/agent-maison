@@ -19,3 +19,9 @@
 | Extension manifest schema | `framework/specs/instance-extension-manifest.schema.yaml` |
 | Lifecycle hooks schema | `framework/specs/lifecycle-hooks-schema.yaml` |
 | 实例升级备忘 | `framework/MIGRATION.md` |
+
+---
+
+## 维护同步（2026-05-18）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`workflow-schema.json`、`instance-extension-manifest.schema.yaml`、`lifecycle-hooks-schema.yaml` 与本文件 §schema_version / breaking 叙事一致；`MIGRATION.md` 仍为实例升级交叉索引 SSOT。

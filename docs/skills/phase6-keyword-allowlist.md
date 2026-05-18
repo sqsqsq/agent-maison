@@ -43,3 +43,10 @@ rg -n -f framework/docs/skills/phase6-keyword-pattern.regex framework \
 ```
 
 判定：§1–§3 中已登记命中 → **允许的兼容项**；其它路径 → **继续清理**候选。
+
+---
+
+## 维护同步（2026-05-18）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`framework/harness/scripts/check-testing.ts` 与 `framework/specs/phase-rules/testing-rules.yaml` 仍为 Phase 6 关键词分流 SSOT；本文 §1–§4 判定口径不变。
+- **`doc_freshness`**：当任一登记 `sources[]` 的 git 提交时间晚于本文时，需复核本节并与 [`phase6-keyword-pattern.regex`](phase6-keyword-pattern.regex) 对齐后再提交本文。

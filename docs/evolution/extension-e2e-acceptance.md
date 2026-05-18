@@ -44,3 +44,11 @@ node framework/harness/scripts/render-agents-md.mjs \
 - [framework/harness/scripts/render-agents-md.ts](../../harness/scripts/render-agents-md.ts)
 - [framework/harness/extension-loader.ts](../../harness/extension-loader.ts)
 - [framework/harness/hooks-dispatcher.ts](../../harness/hooks-dispatcher.ts)
+
+---
+
+## 维护同步（2026-05-18）
+
+- **`render-agents-md`**：默认读取实例根 `framework.config.json`（可用 `--config`）；须在 SKILL **Step 3.5** 写入 JSON 后再渲染占位符。`render-agents-md.mjs` 为 Node ESM shim，拉起 `render-agents-md.ts`。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件 §3–§4 描述一致。
+

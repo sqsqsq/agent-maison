@@ -99,3 +99,10 @@ flowchart TB
 - [`framework/specs/lifecycle-hooks-schema.yaml`](../../specs/lifecycle-hooks-schema.yaml) — lifecycle hook 事件与上下文
 
 演进与 breaking 约定见：[extension-protocol-v1.md](../evolution/extension-protocol-v1.md)。
+
+---
+
+## 维护同步（2026-05-18）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`framework/README.md` / `agents/README.md` / `profile-loader.ts` / workflow 与 schema 仍为本文分层表与「协议 SSOT」的引用基准；合并顺序（framework → profile → extension）未变。
+- **`doc_freshness`**：当登记 `sources[]` 任一提交晚于本文时，需复核本节与 upstream 仓库是否仍一致。

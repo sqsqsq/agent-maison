@@ -156,6 +156,7 @@ runHvigorAssembleApp({
 - **实现位置**：`hvigor-runner.ts` / `hdc-runner.ts` 正文在 `framework/profiles/hmos-app/harness/`；根 `check-coding` / `check-ut` 的宿主逻辑由 **`coding-host-rules`**、**`ut-host-impl`** 承担（`profile-host-loader` 动态加载）。  
 - **失败归类**：coding 编译失败 kind 使用 `compile_timeout` / `compile_incomplete_output`（历史 `hvigor_*` 字面已弃用）。  
 - **导出入口文件名**：与 `architecture.cross_module_exports_file` 一致的入口文件（常见 `index.ets`）**不要求** PascalCase，与 harness `naming_conventions` 一致。
+- **2026-05-18**：对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 harness 源文件复核 ——命令行 argv、产物路径与诊断档位未改；§4 性能对比样本仍为早期仓库快照，不作为通用 SLA。
 
 ---
 

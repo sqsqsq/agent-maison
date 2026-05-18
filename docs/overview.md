@@ -550,7 +550,7 @@ git submodule update --init --recursive
 
 - [`concepts/terminology-guarding.md`](concepts/terminology-guarding.md) · 术语守门：为什么 catalog + glossary 比 RAG 更直打问题
 - [`skills/5-business-ut.md`](skills/5-business-ut.md) · 业务级 UT 的设计哲学 + v2 → v2.1 → v2.2 演进
-- [`operations/harness-runbook.md`](operations/harness-runbook.md) · Harness 8 phase 的命令、报告、排错速查
+- [`operations/harness-runbook.md`](operations/harness-runbook.md) · Harness（默认 **11** 项 phase / spec-driven DAG）的命令、报告、排错速查
 
 ---
 
@@ -559,6 +559,7 @@ git submodule update --init --recursive
 - **Profile 解耦**：`project_profile` 下宿主实现包括 `harness/ut-host-impl.ts`、`harness/coding-host-rules.ts` 等；根 `check-ut` / `check-coding` 仅编排，`profile-host-loader` 负责按 profile 动态加载。
 - **中立 SKILL + 资产**：`framework/skills/*/SKILL.md` 保持宿主无关；`profile-skill-asset:` 与 `profiles/*/skills/skill-assets.yaml` 描述模板/参考的真实路径。
 - **导出入口命名**：`naming_conventions` 对 `architecture.cross_module_exports_file`（默认 `index.ets`，含小写 `index`）豁免 PascalCase 文件名要求。
+- **Framework-init（实例侧）**：`framework.config.json` 在 SKILL **Step 3.5** 整文件落盘，须早于 `render-agents-md` 读取占位符；实例根缺失时可从 git 历史取 JSON（如 `framework/harness/scripts/show-last-committed-framework-config.mjs`）。CREATE 且无磁盘 config 时，`check-init` 对 POPULATED 的 `doc/architecture.md` 仍可给出模板哈希级摘要以满足追溯。
 
 ---
 
@@ -570,6 +571,6 @@ git submodule update --init --recursive
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-11 (profile decoupling / skill-assets / naming_conventions export stem)
+  last-synced: 2026-05-18 (framework-init Step 3.5 timing / check-init POPULATED architecture / runbook phase count / doc_freshness)
   Skill 与中台文档路径变更后同步维护同步段落（doc_freshness）。
 -->

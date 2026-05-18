@@ -585,12 +585,12 @@ AI Harness 重点看脚本难以判断的内容：
 
 ---
 
-## 9. 维护同步（2026-05-13）
+## 9. 维护同步（2026-05-18）
 
 - **宿主 UT 实现**：Hypium / hdc / hvigor 相关逻辑在 `framework/profiles/hmos-app/harness/`（`ut-host-impl.ts`、`hvigor-runner.ts`、`hdc-runner.ts`）；`framework/harness/scripts/utils/ts-compile.ts` 等与 profile 侧 `ts-compile.ts` 协同；旧版 `*-runner` 重导出若仍存在则仅作兼容入口，以 inventory 列出路径为准。  
 - **脚本入口**：`check-ut.ts` 经 `profile-host-loader`、`ut-suite-entry-shim` 调度宿主；`ut-rules.yaml` 与 `verify-ut.md` 变更时须复核本节与 §6。  
 - **导出入口**：跨模块出口文件名遵循 `cross_module_exports_file`，允许小写 `index.ets`，不触发 coding 阶段「文件名须 PascalCase」误报。  
-- **本文刷新**：已对照 `SKILL.md` v2.1/v2.3（Context Gate、规划确认门、testability-audit / mock-plan、`ut.compile`/`ut.run` 叙述）做一次语义对齐。
+- **对照 SSOT**：已对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 `framework/skills/5-business-ut/SKILL.md` 与 harness 脚本路径；叙事与 Stage / compile / run 门禁一致，为满足 `doc_freshness` 刷新本段。
 
 ---
 
@@ -601,6 +601,6 @@ AI Harness 重点看脚本难以判断的内容：
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
 
 <!--
-  last-synced: 2026-05-13 (SKILL v2.1/v2.3 gates + ut.compile/ut.run wording + harness inventory sources)
+  last-synced: 2026-05-18 (doc_freshness / SKILL + check-ut paths)
 -->
 

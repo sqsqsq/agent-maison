@@ -103,3 +103,10 @@ cd framework/harness && npm run backfill:context -- --feature home-page --phases
 
 - 文案常量集中在 [framework/harness/compat-messages.ts](../../harness/compat-messages.ts)，避免多处分叉。  
 - 修改降级语义时：同步更新本文件、`feature-compat.schema.yaml`、`compat-loader.ts` 与 `compat-loader.unit.test.ts` / fixture `ext_compat_legacy_pass`。
+
+---
+
+## 维护同步（2026-05-18）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`compat-loader`、`report-generator`、`feature-compat.schema.yaml` 与本文件 §3–§7（降级 / 过期 / 报告审计段）一致；回填 CLI 仍为 `npm run backfill:context`。
+

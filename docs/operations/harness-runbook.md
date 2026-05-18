@@ -531,6 +531,7 @@ cat framework/harness/state/.current-phase.json
 - **Profile 编排**：`check-coding` 委托 profile `checkCodingCompile`；`check-ut` 委托 `ut-host-impl`（含 `getUtSuggestionPaths`、`isSuiteEntryShim` 与真机 `ut.run`）。  
 - **共享常量**：`ut-suite-entry-shim.ts` 与宿主共用 testsuite 入口判定，避免根脚本与 profile 双写正则。  
 - **命名闸门**：`naming_conventions` 对 `cross_module_exports_file`  basename（如小写 `index`）豁免 PascalCase 文件名。
+- **2026-05-18**：对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) —— `check-init.ts` 支持 CREATE 且无磁盘 config 时对 POPULATED `architecture.md` 的哈希级摘要；全局 **`docs`** phase 检查对外文档清单新鲜度（`doc_freshness`，MAJOR）。SKILL **00** 约定 **`framework.config.json` Step 3.5** 早于入口 `render-agents-md`。workflow DAG 仍以 [`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 为 SSOT。
 
 ---
 
@@ -541,7 +542,7 @@ cat framework/harness/state/.current-phase.json
 > 看到 FAIL 不要急着降 severity，先把环境/产物修对再回来 —— 任何一次降级都是埋一颗"假 PASS"地雷。**
 
 <!--
-  last-synced: 2026-05-11（profile 解耦、维护同步段、DOC_INVENTORY 源路径）
+  last-synced: 2026-05-18（check-init / docs phase doc_freshness / init Step 3.5）
 
   v2.4 (2026-04-27) — Stop hook cross-session isolation:
     - 新增 §10「中断 / 切换会话 / 放弃阶段」章节：state_machine 配置、--clear-state 出口、
