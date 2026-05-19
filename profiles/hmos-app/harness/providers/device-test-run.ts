@@ -11,6 +11,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir, resolveHylyreToolConfig } from '../../../../harness/config';
+import {
+  evaluateVendorSyncNeed,
+  fingerprintFromManifest,
+  pickVendorWheelPath,
+  readInstallFingerprint,
+  sha256FileHex,
+  writeInstallFingerprint,
+} from '../hylyre-vendor-sync';
 import { hdcTargetPrefix, resolveHdcExecutableSync } from '../hdc-runner';
 import type { CapabilityProvider } from './types';
 
@@ -197,12 +205,96 @@ function readVendorManifest(projectRoot: string, vendorRel: string): HylyreRelea
   return j;
 }
 
-function findVendorWheel(projectRoot: string, vendorRel: string): string | null {
+function findVendorWheel(
+  projectRoot: string,
+  vendorRel: string,
+  manifest: HylyreReleaseManifest | null,
+): string | null {
   const abs = path.join(projectRoot, vendorRel);
-  if (!fs.existsSync(abs)) return null;
-  const wheels = fs.readdirSync(abs).filter(f => f.startsWith('hylyre-') && f.endsWith('.whl'));
-  if (wheels.length === 0) return null;
-  return path.join(abs, wheels[0]);
+  return pickVendorWheelPath(abs, manifest);
+}
+
+function runHylyreDoctor(
+  pythonPath: string,
+  projectRoot: string,
+  logPath: string,
+): { ok: boolean; exitCode: number | null } {
+  appendLogSync(logPath, `\npython -m hylyre doctor\n`);
+  const doc = spawnSync(pythonPath, ['-m', 'hylyre', 'doctor'], {
+    cwd: projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env },
+  });
+  const docOut = `${doc.stdout ?? ''}${doc.stderr ?? ''}`;
+  appendLogSync(logPath, docOut);
+  process.stdout.write(docOut);
+  return { ok: doc.status === 0, exitCode: doc.status };
+}
+
+/**
+ * 将 venv 内 hylyre 对齐 vendor 发布件（pip upgrade → 必要时 force-reinstall）。
+ * 在 canImportHylyre 已为 true 时调用；vendor 升级后 testing harness 自动触发，无需手删 venv。
+ */
+function syncVendorHylyreInVenv(args: {
+  pythonPath: string;
+  wheel: string;
+  projectRoot: string;
+  logPath: string;
+  pypiExtraIndexUrl: string;
+  manifest: HylyreReleaseManifest;
+  venvRoot: string;
+}): { ok: boolean; upgraded: boolean; hylyreVersion: string; errors: string[] } {
+  const errors: string[] = [];
+  appendLogSync(
+    args.logPath,
+    `vendor 发布件与 venv 不一致，自动 pip 对齐 manifest=${args.manifest.hylyre_version} wheel=${path.basename(args.wheel)}\n`,
+  );
+
+  const pipUpgrade = runHylyrePipInstall({
+    pythonPath: args.pythonPath,
+    wheel: args.wheel,
+    projectRoot: args.projectRoot,
+    logPath: args.logPath,
+    pypiExtraIndexUrl: args.pypiExtraIndexUrl,
+    mode: 'upgrade',
+  });
+
+  let hylyreVersion = pipShowVersion(args.pythonPath);
+  const manifestVer = args.manifest.hylyre_version.trim();
+  let upgraded = pipUpgrade.ok;
+
+  if (pipUpgrade.ok && manifestVer && hylyreVersion.trim() !== manifestVer) {
+    appendLogSync(
+      args.logPath,
+      `pip --upgrade 后版本仍不一致（pip=${hylyreVersion} manifest=${manifestVer}），尝试 force-reinstall\n`,
+    );
+    const pipForce = runHylyrePipInstall({
+      pythonPath: args.pythonPath,
+      wheel: args.wheel,
+      projectRoot: args.projectRoot,
+      logPath: args.logPath,
+      pypiExtraIndexUrl: args.pypiExtraIndexUrl,
+      mode: 'force-reinstall',
+    });
+    upgraded = pipForce.ok;
+    if (!pipForce.ok) {
+      errors.push(`pip 强制重装 hylyre 失败（exit=${pipForce.exitCode}）`);
+    } else {
+      hylyreVersion = pipShowVersion(args.pythonPath);
+    }
+  } else if (!pipUpgrade.ok) {
+    errors.push(`pip upgrade hylyre 失败（exit=${pipUpgrade.exitCode}）`);
+  }
+
+  if (errors.length === 0 && manifestVer && hylyreVersion.trim() === manifestVer) {
+    const wheelSha = sha256FileHex(args.wheel);
+    writeInstallFingerprint(args.venvRoot, fingerprintFromManifest(args.manifest, wheelSha));
+    console.log(`hylyre 已自动对齐 vendor ${manifestVer}`);
+  }
+
+  return { ok: errors.length === 0, upgraded, hylyreVersion, errors };
 }
 
 function runHylyrePipInstall(args: {
@@ -488,7 +580,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
       pythonPath = venvPython(venvRoot);
     }
 
-    const wheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir);
+    const wheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
     if (!wheel) {
       errors.push({
         message: `vendor wheel 缺失：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
@@ -540,6 +632,9 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     console.log('hylyre 与传递依赖安装完成');
     source = 'venv_installed';
     installedNow = true;
+    if (manifest) {
+      writeInstallFingerprint(venvRoot, fingerprintFromManifest(manifest, sha256FileHex(wheel)));
+    }
   }
 
   // 同版本号 wheel 可能曾缺少 package data：仅 import 成功不够，须具备 contracts 否则 verify_report 异常退出。
@@ -612,7 +707,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         logPath,
       };
     }
-    const repairWheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir);
+    const repairWheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
     if (!repairWheel) {
       errors.push({
         message: `无法补齐 contracts：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
@@ -679,34 +774,106 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     console.log('hylyre 已强制重装以补齐 contracts');
     source = 'venv_installed';
     installedNow = true;
+    if (manifest) {
+      writeInstallFingerprint(venvRoot, fingerprintFromManifest(manifest, sha256FileHex(repairWheel)));
+    }
+  }
+
+  hylyreVersion = pipShowVersion(pythonPath);
+
+  // vendor 对齐：venv 已可 import 且 contracts 完整时，按 manifest 版本 + wheel sha256 自动 pip 升级/重装。
+  let upgradedNow = false;
+  let vendorSyncReason: string | undefined;
+
+  if (
+    source !== 'env_override' &&
+    cfg.auto_install &&
+    manifest &&
+    canImportHylyre(pythonPath, logPath) &&
+    hylyrePackageContractsPresent(pythonPath, logPath)
+  ) {
+    if (!venvRoot) {
+      venvRoot = path.resolve(opts.projectRoot, cfg.venv_dir);
+    }
+    const vendorWheel = findVendorWheel(opts.projectRoot, cfg.vendor_dir, manifest);
+    if (!vendorWheel) {
+      errors.push({
+        message: `vendor wheel 缺失：在 ${cfg.vendor_dir} 下未找到 hylyre-*.whl`,
+        kind: 'vendor',
+      });
+    } else {
+      const wheelSha = sha256FileHex(vendorWheel);
+      const cachedFp = readInstallFingerprint(venvRoot);
+      const syncEval = evaluateVendorSyncNeed({
+        manifest,
+        pipVersion: hylyreVersion,
+        wheelSha256: wheelSha,
+        cachedFingerprint: cachedFp,
+      });
+      vendorSyncReason = syncEval.reason;
+
+      if (syncEval.manifestWheelMismatch) {
+        errors.push({
+          message: `vendor wheel 文件 sha256 与 release.manifest.json 声明不一致（${path.basename(vendorWheel)}），请重新同步 vendor 发布件`,
+          kind: 'vendor',
+        });
+      } else if (syncEval.needsSync) {
+        const sync = syncVendorHylyreInVenv({
+          pythonPath,
+          wheel: vendorWheel,
+          projectRoot: opts.projectRoot,
+          logPath,
+          pypiExtraIndexUrl: cfg.pypi_extra_index_url,
+          manifest,
+          venvRoot,
+        });
+        if (!sync.ok) {
+          for (const msg of sync.errors) {
+            errors.push({ message: msg, kind: 'pip' });
+          }
+          if (manifestVersion && sync.hylyreVersion.trim() !== manifestVersion.trim()) {
+            errors.push({
+              message: `hylyre 自动升级后版本仍不一致：pip=${sync.hylyreVersion} manifest=${manifestVersion}`,
+              kind: 'version_drift',
+            });
+          }
+        } else {
+          hylyreVersion = sync.hylyreVersion;
+          upgradedNow = sync.upgraded;
+          if (sync.upgraded) {
+            source = 'venv_installed';
+          }
+        }
+      }
+    }
+  } else if (
+    source === 'env_override' &&
+    manifestVersion &&
+    hylyreVersion &&
+    manifestVersion.trim() !== hylyreVersion.trim()
+  ) {
+    errors.push({
+      message: `HYLYRE_PYTHON 环境 hylyre 版本与 vendor manifest 不一致（pip=${hylyreVersion} manifest=${manifestVersion}）。请手动升级该环境，或取消 HYLYRE_PYTHON 以使用默认 venv 自动对齐。`,
+      kind: 'version_drift',
+    });
   }
 
   hylyreVersion = pipShowVersion(pythonPath);
 
   const versionConsistent =
     !manifestVersion || !hylyreVersion ? true : manifestVersion.trim() === hylyreVersion.trim();
-  if (!versionConsistent) {
+  if (!versionConsistent && source !== 'env_override') {
     errors.push({
       message: `hylyre 版本漂移：pip=${hylyreVersion} manifest=${manifestVersion}`,
       kind: 'version_drift',
     });
   }
 
-  if (cfg.doctor_first_run && installedNow) {
-    appendLogSync(logPath, `\npython -m hylyre doctor\n`);
-    const doc = spawnSync(pythonPath, ['-m', 'hylyre', 'doctor'], {
-      cwd: opts.projectRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-      maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env },
-    });
-    const docOut = `${doc.stdout ?? ''}${doc.stderr ?? ''}`;
-    appendLogSync(logPath, docOut);
-    process.stdout.write(docOut);
-    doctorOk = doc.status === 0;
+  if (cfg.doctor_first_run && (installedNow || upgradedNow)) {
+    const doc = runHylyreDoctor(pythonPath, opts.projectRoot, logPath);
+    doctorOk = doc.ok;
     if (!doctorOk) {
-      errors.push({ message: `hylyre doctor 失败（exit=${doc.status}）`, kind: 'doctor' });
+      errors.push({ message: `hylyre doctor 失败（exit=${doc.exitCode}）`, kind: 'doctor' });
       fs.writeFileSync(
         metaPath,
         JSON.stringify(
@@ -740,7 +907,9 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     doctorOk = true;
   }
 
-  const ok = errors.filter(e => e.kind !== 'version_drift').length === 0;
+  const ok = errors.length === 0;
+  const installFingerprint =
+    venvRoot && fs.existsSync(venvRoot) ? readInstallFingerprint(venvRoot) : null;
   fs.writeFileSync(
     metaPath,
     JSON.stringify(
@@ -752,6 +921,8 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         versionConsistent,
         source,
         doctorOk,
+        vendorSyncReason,
+        installFingerprint,
         errors,
       },
       null,

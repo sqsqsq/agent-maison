@@ -64,9 +64,11 @@
 - **`profile.yaml`** 将 **`device_test.run`** 声明为 **provider: hylyre**（与 `framework/profiles/hmos-app/harness/providers/device-test-run.ts` 对齐）。
 - **vendor**：`framework/profiles/hmos-app/vendor/hylyre/` 入库 **hylyre-*.whl** + `release.manifest.json`（参见该目录 `README.md` 同步流程）。
 - **隔离环境**：默认在仓库根 **`.hylyre/venv`**（`framework.config.json > tools.hylyre.venv_dir`）；由 runner **自动** `python -m venv` + `pip install <wheel> "hylyre[device,mcp]"`（可选 `--extra-index-url`，**追加**索引不覆盖用户 `~/.pip/pip.conf`）。
-- **首次安装**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
-- **自检**：首次安装成功后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`。
-- **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过自动 venv。
+- **ensure 触发点**：**非** Skill 6 入口独立步骤；**agent 在 Skill 6 Step 7 自跑 `testing` harness** 时，在 **`device_test.run`** 前自动调用 **`ensureHylyreReady`**（build → install → ensure → run）。**用户不直接执行 harness 脚本**。
+- **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下 wheel + `release.manifest.json` 后，**用户只需用自然语言重新发起 Skill 6 真机测试**；agent 在 Step 7 自跑 testing harness 时，默认 venv 会按 manifest 版本与 wheel sha256 自动 **`pip install --upgrade`**（必要时 **`--force-reinstall`**），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**；**通常无需手删 `.hylyre/venv`**。
+- **首次安装 / 升级**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
+- **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
+- **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需手动升级或取消该变量。
 
 ### App 快照缓存（`doc/app-snapshot-cache/`）
 
@@ -87,7 +89,7 @@
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
   - 点击：`{"touch":{"selector":{"text":"确认"}}}`
   - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
-  - 返回：`{"action":{"name":"back"}}`
+  - 返回：`{"back":{}}` 或 `{"action":{"type":"back"}}`
 
 ### `hylyre dump-ui` 与快照缓存
 
@@ -130,6 +132,6 @@
 ### 故障转移
 
 - **hypium / opencv 无法下载**：优先在用户 **`~/.pip/pip.conf`** 配置可达的 **index-url**；或将 `framework.config.json > tools.hylyre.pypi_extra_index_url` 指到内网/华为源；framework 使用的 **`--extra-index-url`** 为追加，与已有 **index-url** 不冲突。
-- **导入失败**：删除 `.hylyre/venv` 后重跑 testing harness。
+- **导入失败 / pip 对齐失败**：优先检查 `hylyre-doctor.log` 与 `hylyre-ready.meta.json`；仍无法恢复时，**请 agent 重新执行 Skill 6 闭环**；必要时删除 `.hylyre/venv` 后由 agent 再次自跑 Step 7（兜底，非 vendor 升级常规路径）。
 - **真机断连**：`hdc list targets`、重连；trace 中可出现 **阻塞** 状态。
 - **selector 不可靠**：`hylyre dump-ui` 探索界面 → 回写 design/contracts。

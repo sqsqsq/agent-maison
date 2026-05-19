@@ -35,15 +35,19 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 - Commit message 建议：`chore(vendor): hylyre 0.1.0 -> 0.2.0`
 - 正文粘贴 `release.manifest.json` 中关键字段（如 `hylyre_version`、`wheel.sha256`）
+- **覆盖 vendor 后无需手删 `.hylyre/venv`**：协作者/用户用自然语言重新发起 **Skill 6 真机测试**即可；**agent 在 Skill 6 Step 7 自跑 testing harness** 时，**`ensureHylyreReady`** 会按 manifest 版本与 wheel sha256 自动 pip 对齐（`tools.hylyre.auto_install=true` 且未设置 `HYLYRE_PYTHON` 时）。**用户不直接执行 harness 脚本。**
+- venv 内 **`.hylyre-vendor-fingerprint.json`** 记录上次安装的 wheel 指纹；同版本号补丁 wheel（sha256 变化）也会触发重装
 
 ## 故障排查
 
 | 现象 | 处置 |
 |------|------|
 | `build_wheel.py --verify` 报 sha256 不匹配 | 删除旧 wheel 后重新从 `dist/release` 覆盖拷贝 |
-| 旧 wheel 残留 | 按同步流程② 先 `Remove-Item` 再拷贝 |
+| 旧 wheel 残留 | 按同步流程② 先 `Remove-Item` 再拷贝；runner 优先 `manifest.wheel.filename`，多 wheel 时按版本取最新 |
 | Python 版本错误 | 使用 **Python 3.10+** 创建隔离环境 |
-| `verify_report` / 缺 `report-sections.yaml` | 新版 `ensureHylyreReady` 会探测 contracts，缺失时对默认 venv 执行 `pip --force-reinstall` vendor wheel；仍失败则按 README 同步 `dist/release` 并必要时删 `.hylyre/venv` |
+| `verify_report` / 缺 `report-sections.yaml` | `ensureHylyreReady` 会探测 contracts，缺失时对默认 venv 执行 `pip --force-reinstall` vendor wheel |
+| vendor 已更新但 venv 仍旧版 | 用户重新发起 Skill 6；agent Step 7 自跑 testing harness 时会自动对齐；仍失败则查 `hylyre-doctor.log`，必要时删 `.hylyre/venv` 后由 agent 再跑 Step 7 |
+| 设置了 `HYLYRE_PYTHON` 且版本与 manifest 不一致 | harness **BLOCKER**；在该环境手动升级 hylyre，或取消 `HYLYRE_PYTHON` 改用默认 venv |
 
 ## 不要做
 

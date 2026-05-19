@@ -3,10 +3,10 @@
   "hylyre_version": "0.1.0",
   "wheel": {
     "filename": "hylyre-0.1.0-py3-none-any.whl",
-    "sha256": "b48ea5471c1dc07d68ae2e665f2781fbf20531ccf47f716553d43e93dc0b2ab7",
-    "size_bytes": 99809
+    "sha256": "f51c16369857ce79956ceaa7c0bab39d5de61e6e8b2840f5a606251aac43fefe",
+    "size_bytes": 105605
   },
-  "generated_at": "2026-05-18T13:16:37Z",
+  "generated_at": "2026-05-19T07:16:44Z",
   "generator": {
     "python": "3.14.5",
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",
