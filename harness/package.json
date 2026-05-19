@@ -14,7 +14,8 @@
     "test:fixtures": "ts-node tests/run-tests.ts",
     "test:unit": "ts-node tests/run-unit.ts",
     "test": "npm run test:unit && npm run test:fixtures",
-    "backfill:context": "ts-node scripts/backfill-context-exploration.ts"
+    "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
+    "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts"
   },
   "dependencies": {
     "yaml": "^2.7.0",

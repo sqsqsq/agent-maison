@@ -775,6 +775,53 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
 
 // -------- runHylyreDeviceTest --------
 
+function defaultPageSaveTimeoutMs(): number {
+  const raw = process.env.HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS;
+  if (raw && /^\d+$/.test(raw.trim())) return parseInt(raw.trim(), 10);
+  return 60_000;
+}
+
+/** hylyre run 结束后写入当前页快照，供下次派生读取 app-snapshot-cache/<bundle>/。失败不反转 ok。 */
+function tryHylyreAppPageSaveAfterRun(args: {
+  pythonPath: string;
+  projectRoot: string;
+  bundleName: string;
+  deviceSn: string | undefined;
+  appSnapshotCacheAbs: string;
+  logPath: string;
+}): { attempted: boolean; exitCode: number | null } {
+  const pipArgs = [
+    '-m',
+    'hylyre',
+    'app',
+    'page',
+    'save',
+    '--bundle',
+    args.bundleName,
+  ];
+  if (args.deviceSn && args.deviceSn.trim()) {
+    pipArgs.push('--device-sn', args.deviceSn.trim());
+  }
+  appendLogSync(args.logPath, `\n$ ${args.pythonPath} ${pipArgs.join(' ')}\n`);
+  const r = spawnSync(args.pythonPath, pipArgs, {
+    cwd: args.projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    maxBuffer: 2 * 1024 * 1024,
+    timeout: defaultPageSaveTimeoutMs(),
+    env: { ...process.env, HYLYRE_APP_STORE_DIR: args.appSnapshotCacheAbs },
+  });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  if (out.trim()) appendLogSync(args.logPath, out);
+  if (r.status !== 0) {
+    appendLogSync(
+      args.logPath,
+      `hylyre app page save 结束 exit=${r.status}（非致命；缓存可能未更新）\n`,
+    );
+  }
+  return { attempted: true, exitCode: r.status };
+}
+
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const errors: HylyreRunResult['errors'] = [];
   const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
@@ -918,6 +965,15 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const blocked_count = cases.filter(c => c.status === '阻塞').length;
   const skipped_count = cases.filter(c => c.status === '跳过').length;
 
+  const pageSave = tryHylyreAppPageSaveAfterRun({
+    pythonPath: opts.pythonPath,
+    projectRoot: opts.projectRoot,
+    bundleName: opts.bundleName,
+    deviceSn: opts.deviceSn,
+    appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
+    logPath,
+  });
+
   fs.writeFileSync(
     metaPath,
     JSON.stringify(
@@ -935,6 +991,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         omit_bundle_for_hylyre: omitBundleForHylyre,
         deviceSn: opts.deviceSn ?? null,
         ran_at: new Date().toISOString(),
+        hylyre_page_save: {
+          attempted: pageSave.attempted,
+          exit_code: pageSave.exitCode,
+        },
         trace_summary: trace
           ? {
               outcome: trace.outcome,

@@ -703,6 +703,8 @@ doc/features/*/*/reports/*
 # Skill 6：真机自动化相关的本地 Python venv 与 app 页面快照根（未跑过 Skill 6 时可不存在）
 /.hylyre/
 /doc/app-snapshot-cache/
+# Skill 6 即席（自然语言）用例临时产物根
+/doc/features/_adhoc/
 ```
 
 说明：
@@ -718,6 +720,7 @@ doc/features/*/*/reports/*
 - `doc/features/*/*/reports/*`：配置了 `paths.reports_dir_pattern`（默认在各 phase 目录下 `reports/`）时，feature 维度的 harness 脚本报告、合并报告、trace、verifier 产出、宿主编译/装机日志等通常不入仓。
 - `/.hylyre/`：真机自动化侧 harness 可能在本机创建的隔离 Python venv（无对应工具或未执行时目录可不存在）。
 - `/doc/app-snapshot-cache/`：真机自动化相关的 app 页面快照缓存根（跨 feature；未跑过对应步骤时可不存在）。
+- `/doc/features/_adhoc/`：即席自然语言用例生成的临时派生计划与报告目录（不入仓）。
 
 #### 5.4.5.2 等价覆盖规则
 
@@ -739,6 +742,7 @@ doc/features/*/*/reports/*
 | `.framework-backup/` | `.framework-backup`、`.framework-backup/`、`**/.framework-backup/` |
 | `/.hylyre/` | `.hylyre/`、`/.hylyre/`、`/**/.hylyre/` |
 | `/doc/app-snapshot-cache/` | `doc/app-snapshot-cache/`、`doc/app-snapshot-cache`、`/**/app-snapshot-cache/` |
+| `/doc/features/_adhoc/` | `doc/features/_adhoc/`、`doc/features/_adhoc` |
 
 #### 5.4.5.3 写入策略
 

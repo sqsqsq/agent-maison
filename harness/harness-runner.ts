@@ -1283,8 +1283,9 @@ function tryValidateReceipt(
 
   // 用 tsx/ts-node 直接运行；harness-runner.ts 自己已经在 ts-node 进程里，
   // 子进程独立 spawn 一份 ts-node 即可，避免污染主流程的 require 缓存。
+  const isWin = process.platform === 'win32';
   const result = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    (isWin ? 'npx.cmd' : 'npx'),
     [
       'ts-node',
       checker,
@@ -1298,7 +1299,7 @@ function tryValidateReceipt(
     {
       cwd: harnessRoot,
       encoding: 'utf-8',
-      shell: false,
+      shell: isWin ? true : false,
     },
   );
 

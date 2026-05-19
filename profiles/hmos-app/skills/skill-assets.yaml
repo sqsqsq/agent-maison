@@ -55,4 +55,5 @@ assets:
 
   6-device-testing:
     test_plan_template: templates/test-plan-template.md
+    test_plan_hylyre_template: templates/test-plan-hylyre-template.md
     test_report_template: templates/test-report-template.md

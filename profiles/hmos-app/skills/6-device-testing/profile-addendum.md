@@ -83,6 +83,26 @@
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
   - JSON **5 类根键**：`action` / `touch` / `input` / `swipe` / `scroll`
 - **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
+- **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` 通常需 `selector`（或 Hylyre 文档认可的等价字段）；`action` 用于 `back`、`wait` 等无坐标动作。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。
+- **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
+  - 点击：`{"touch":{"selector":{"text":"确认"}}}`
+  - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
+  - 返回：`{"action":{"name":"back"}}`
+
+### `hylyre dump-ui` 与快照缓存
+
+- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `design.md` / `contracts.yaml` 后再派生。
+- **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行一次 **`hylyre app page save --bundle <bundleName>`**（透传 `--device-sn`），把当前页写入快照根目录，供下一轮 `find` / 派生使用。该步骤**失败不会**把本次 `run` 判为失败；详情见同目录 **`device-test-run.log`** 与 **`device-test-run.meta.json`** 的 **`hylyre_page_save`** 字段。
+- **超时**：环境变量 **`HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS`**（毫秒，仅数字；默认 **60000**）覆盖 `spawnSync` 对 `app page save` 的等待上限。
+
+### plan 派生缺失时的结构化提示
+
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`**：内容来自顶层 **`test-plan.md`**「测试用例」节首张表的解析行（`TC` id、自然语言步骤等），便于下一轮对照生成 Hylyre 表。
+- **只读抽取 CLI**（不写入 feature 目录，默认 stdout）：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`；可选 `--out <path>` 写文件。
+
+### 即席模式（`_adhoc`）
+
+- 占位目录 **`doc/features/_adhoc/`**（仓库 **`.gitignore`** 通常忽略），用于「不绑正式 feature」的当场跑机；派生计划路径形如 **`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`**。不要求 `harness-runner testing --feature _adhoc` 整套文档门禁通过；协议见 Skill 6 正文 **Step 4.B**。
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**
 
@@ -100,6 +120,7 @@
 | `HYLYRE_PYTHON` / `HYLYRE_HOME` | 用户可选覆盖解释器 / venv |
 | `HARNESS_HDC_TARGET` | 透传设备序列号（`--device-sn`） |
 | `HARNESS_HYLYRE_RUN_TIMEOUT_MS` | 覆盖 `run` 默认 30 分钟超时 |
+| `HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS` | `hylyre app page save`（run 后自动快照）等待上限，默认 60000ms |
 | `HARNESS_HYLYRE_PIP_TIMEOUT_MS` | 覆盖首次 `pip install` 默认 600s |
 
 ### 故障转移

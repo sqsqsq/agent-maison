@@ -26,6 +26,7 @@ import {
   CheckResult,
 } from './utils/types';
 import { featureFilePath, relFeatureFile, featurePhaseReportsDir, resolveHylyreToolConfig } from '../config';
+import { extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 import {
   extractHeadings,
   getSectionContent,
@@ -1491,6 +1492,41 @@ function verifyDerivedPlanTcConsistency(ctx: CheckContext, derivedPath: string):
   return { extra };
 }
 
+/**
+ * 派生计划缺失时写入 JSON，供 agent 按 test_cases 生成 test-plan.hylyre.md。
+ * @returns 绝对路径；写盘失败时返回 null
+ */
+function writeDeriveHintFromPlanJson(ctx: CheckContext): string | null {
+  try {
+    const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+    fs.mkdirSync(base, { recursive: true });
+    const hintPath = path.join(base, 'derive-hint-from-plan.json');
+    const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    let test_cases = [] as ReturnType<typeof extractTopPlanTestCasesForDeriveHint>;
+    let source_relative = relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    if (fs.existsSync(topPath)) {
+      const raw = fs.readFileSync(topPath, 'utf-8');
+      test_cases = extractTopPlanTestCasesForDeriveHint(raw);
+    } else {
+      source_relative = '(test-plan.md 不存在)';
+    }
+    const payload = {
+      schema: 1,
+      feature: ctx.feature,
+      phase: ctx.phase,
+      generated_at: new Date().toISOString(),
+      source_relative,
+      test_cases,
+      next_agent_step:
+        '按 profile「真机自动化」章与 test-plan-hylyre-template 生成 testing/reports/<timestamp>/hylyre/test-plan.hylyre.md',
+    };
+    fs.writeFileSync(hintPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+    return hintPath;
+  } catch {
+    return null;
+  }
+}
+
 function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -1540,6 +1576,10 @@ function checkDeviceTestRunGate(
 
     const derivedPlan = resolveDerivedHylyrePlan(ctx);
     if (!derivedPlan.exists) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx);
+      const hintLine = hintPath
+        ? `已从 test-plan.md 抽取结构化用例列表写入：${hintPath}（供 agent 生成 hylyre 派生计划）。`
+        : '未能写入 derive-hint-from-plan.json（检查 testing/reports 目录写权限）。';
       return [
         {
           id,
@@ -1547,7 +1587,7 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `未找到派生可执行测试计划（期望位于 ${derivedPlan.expectedDir} 下）。请按 Skill 6 Step 4.5 派生 test-plan.hylyre.md 后重试。`,
+          details: `未找到派生可执行测试计划（期望位于 ${derivedPlan.expectedDir} 下）。请按 Skill 6 Step 4.5 派生 test-plan.hylyre.md 后重试。\n${hintLine}`,
         },
       ];
     }
