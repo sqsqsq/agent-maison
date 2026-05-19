@@ -21,6 +21,10 @@ import {
 } from '../hylyre-vendor-sync';
 import { hdcTargetPrefix, resolveHdcExecutableSync } from '../hdc-runner';
 import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
+import {
+  ensureHypiumWorkDir,
+  removeLegacyHypiumTmpAtProjectRoot,
+} from '../device-test-hypium-workdir';
 import type { CapabilityProvider } from './types';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug } from '../device-test-page-save';
@@ -982,7 +986,7 @@ function defaultPageSaveTimeoutMs(): number {
 /** hylyre run 结束后写入当前页快照，供下次派生读取 app-snapshot-cache/<bundle>/。失败不反转 ok。 */
 function tryHylyreAppPageSaveAfterRun(args: {
   pythonPath: string;
-  projectRoot: string;
+  hypiumWorkDir: string;
   bundleName: string;
   deviceSn: string | undefined;
   appSnapshotCacheAbs: string;
@@ -999,7 +1003,7 @@ function tryHylyreAppPageSaveAfterRun(args: {
   appendLogSync(args.logPath, `\n$ ${args.pythonPath} ${pipArgs.join(' ')}\n`);
   const t0 = Date.now();
   const r = spawnSync(args.pythonPath, pipArgs, {
-    cwd: args.projectRoot,
+    cwd: args.hypiumWorkDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
     maxBuffer: 2 * 1024 * 1024,
@@ -1021,6 +1025,8 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const errors: HylyreRunResult['errors'] = [];
   const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
   fs.mkdirSync(reportsBase, { recursive: true });
+  const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
+  const legacyTmp = removeLegacyHypiumTmpAtProjectRoot(opts.projectRoot);
   const logPath = path.join(reportsBase, 'device-test-run.log');
   const metaPath = path.join(reportsBase, 'device-test-run.meta.json');
 
@@ -1031,6 +1037,18 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     `--- hylyre run ${new Date().toISOString()} feature=${opts.feature} ---\n`,
     'utf-8',
   );
+  appendLogSync(
+    logPath,
+    `hypium 工作目录（cwd）: ${hypiumWorkDir}（tmp_hypium 将落在其下，不写入工程根）\n`,
+  );
+  if (legacyTmp.attempted) {
+    appendLogSync(
+      logPath,
+      legacyTmp.removed
+        ? `已清理工程根遗留 ${legacyTmp.legacyPath}\n`
+        : `未能清理工程根遗留 ${legacyTmp.legacyPath}${legacyTmp.error ? `: ${legacyTmp.error}` : ''}\n`,
+    );
+  }
 
   const pageName = resolveHypiumPageNameForRun(opts.projectRoot, opts.hypiumPageName);
   let omitBundleForHylyre = false;
@@ -1110,7 +1128,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const runStartedAt = new Date().toISOString();
   const runT0 = Date.now();
   const run = spawnSync(opts.pythonPath, args, {
-    cwd: opts.projectRoot,
+    cwd: hypiumWorkDir,
     env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
@@ -1164,7 +1182,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
 
   const pageSave = tryHylyreAppPageSaveAfterRun({
     pythonPath: opts.pythonPath,
-    projectRoot: opts.projectRoot,
+    hypiumWorkDir,
     bundleName: opts.bundleName,
     deviceSn: opts.deviceSn,
     appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
@@ -1191,6 +1209,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         aa_start_ok: pageName ? true : null,
         omit_bundle_for_hylyre: omitBundleForHylyre,
         deviceSn: opts.deviceSn ?? null,
+        hypium_workdir: hypiumWorkDir,
         run_started_at: runStartedAt,
         run_ended_at: runEndedAt,
         run_duration_ms: runDurationMs,

@@ -78,6 +78,12 @@
 - **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
 - **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需在该环境手动升级或取消该变量。
 
+### hypium 临时目录（`tmp_hypium/`）
+
+- **来源**：Hylyre 传递依赖 **hypium** 在进程 **cwd** 下创建 `./tmp_hypium`（UI 树 `*_tmp_uitree.json`、截图等），非本仓库业务代码。
+- **Framework 行为**（`device-test-run.ts`）：`hylyre run` / `app page save` 子进程的 **cwd** 设为 `doc/features/<feature>/testing/reports/.hypium-workdir`，故实际落盘为 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `doc/features/*/*/reports/*` gitignore 内）；每次 run 起会 **best-effort 删除工程根** 遗留的 `<repo>/tmp_hypium/`。
+- **勿**在实例根 `.gitignore` 单独加 `tmp_hypium` 作为长期方案——应依赖上述 harness 隔离。
+
 ### App 快照缓存（`doc/app-snapshot-cache/`）
 
 - 默认根目录与 `doc/features/` **同级**，跨 feature 共享；**`.gitignore`** 忽略该目录（由 framework-init 写入）。
