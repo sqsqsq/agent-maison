@@ -6,7 +6,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
-import { getSectionContent, extractTables } from './markdown-parser';
+import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
+import type { DeriveHintTestCaseRow } from './test-plan-derive-hint';
 
 const PLACEHOLDER_BODY_PATTERNS: RegExp[] = [
   /烟测占位/,
@@ -175,6 +176,260 @@ export type SelectDerivedPlanResult = {
   rejectedPlaceholders: string[];
   allCandidates: DerivedPlanFileInfo[];
 };
+
+export type DerivedPlanCaseRow = {
+  tc_id: string;
+  name: string;
+  precondition: string;
+  steps_raw: string;
+  expected: string;
+  priority: string;
+  ac_ref: string;
+};
+
+const RESET_STEP_ROOTS = new Set([
+  'back',
+  'home',
+  'stop_app',
+  'clear_app',
+  'start_app',
+]);
+
+const HORIZONTAL_SWIPE_DIRS = new Set(['RIGHT', 'LEFT', 'R', 'L']);
+
+function pickColumnIndex(table: MdTable, keywords: string[]): number {
+  for (const kw of keywords) {
+    const idx = table.headers.findIndex(h => h.includes(kw));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/** 从派生 test-plan.hylyre.md 解析用例行（含测试步骤列） */
+export function extractDerivedPlanCases(planMd: string): DerivedPlanCaseRow[] {
+  const section = getSectionContent(planMd, '测试用例') ?? getSectionContent(planMd, '测试用例清单') ?? '';
+  const tables = extractTables(section || planMd);
+  if (tables.length === 0) return [];
+
+  const t = tables[0];
+  const iId = pickColumnIndex(t, ['用例编号', '编号']);
+  const iName = pickColumnIndex(t, ['用例名称', '名称']);
+  const iPre = pickColumnIndex(t, ['前置条件']);
+  const iSteps = pickColumnIndex(t, ['测试步骤', '步骤']);
+  const iExp = pickColumnIndex(t, ['预期结果']);
+  const iPri = pickColumnIndex(t, ['优先级']);
+  const iAc = pickColumnIndex(t, ['关联 AC', '关联']);
+
+  const out: DerivedPlanCaseRow[] = [];
+  for (const row of t.rows) {
+    const tcRaw = (iId >= 0 ? row[iId] : row[0] || '').trim();
+    const m = tcRaw.match(/TC-\d+/i);
+    if (!m) continue;
+    out.push({
+      tc_id: m[0].toUpperCase(),
+      name: (iName >= 0 ? row[iName] : '').trim(),
+      precondition: (iPre >= 0 ? row[iPre] : '').trim(),
+      steps_raw: (iSteps >= 0 ? row[iSteps] : '').trim(),
+      expected: (iExp >= 0 ? row[iExp] : '').trim(),
+      priority: (iPri >= 0 ? row[iPri] : '').trim(),
+      ac_ref: (iAc >= 0 ? row[iAc] : '').trim(),
+    });
+  }
+  return out;
+}
+
+/** 将「测试步骤」单元格拆成逐步 JSON 对象（`;` / `；` 分隔） */
+export function parsePlannedStepsFromCell(stepsRaw: string): { ok: true; steps: Record<string, unknown>[] } | { ok: false; error: string } {
+  const normalized = stepsRaw.replace(/；/g, ';');
+  const parts = normalized
+    .split(';')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const steps: Record<string, unknown>[] = [];
+  for (const part of parts) {
+    try {
+      const obj = JSON.parse(part) as unknown;
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+        return { ok: false, error: `step is not a JSON object: ${part.slice(0, 80)}` };
+      }
+      steps.push(obj as Record<string, unknown>);
+    } catch (e) {
+      return { ok: false, error: `invalid JSON step: ${(e as Error).message}` };
+    }
+  }
+  return { ok: true, steps };
+}
+
+function swipePayloadFromStep(step: Record<string, unknown>): Record<string, unknown> | null {
+  if ('swipe' in step && step.swipe && typeof step.swipe === 'object') {
+    return step.swipe as Record<string, unknown>;
+  }
+  const act = step.action;
+  if (act && typeof act === 'object' && !Array.isArray(act)) {
+    const a = act as Record<string, unknown>;
+    if (String(a.type || '').toLowerCase() === 'swipe') {
+      return a;
+    }
+  }
+  return null;
+}
+
+function swipeHasScrollScope(payload: Record<string, unknown>): boolean {
+  return Boolean(
+    payload.area ||
+      payload.at ||
+      payload.scroll_target ||
+      (payload.area_by_type ?? payload.area_by_text ?? payload.area_by_id),
+  );
+}
+
+/** NAV-001：无 area/at 的横向 swipe 不能充当 Nav 返回 */
+export function isFullscreenHorizontalSwipeStep(step: Record<string, unknown>): boolean {
+  const payload = swipePayloadFromStep(step);
+  if (!payload) return false;
+  const dir = String(payload.direction ?? '')
+    .trim()
+    .toUpperCase();
+  const base = dir.replace(/^SWIPE_/, '');
+  if (!HORIZONTAL_SWIPE_DIRS.has(base) && !HORIZONTAL_SWIPE_DIRS.has(dir)) {
+    return false;
+  }
+  return !swipeHasScrollScope(payload);
+}
+
+export function isNavResetStep(step: Record<string, unknown>): boolean {
+  const roots = Object.keys(step);
+  if (roots.some(r => RESET_STEP_ROOTS.has(r))) return true;
+  const act = step.action;
+  if (act && typeof act === 'object' && !Array.isArray(act)) {
+    const t = String((act as Record<string, unknown>).type ?? '').toLowerCase();
+    if (RESET_STEP_ROOTS.has(t)) return true;
+  }
+  return false;
+}
+
+function touchTargetsTabChrome(step: Record<string, unknown>): boolean {
+  const touch = (step.touch ?? (step.action as Record<string, unknown> | undefined)) as
+    | Record<string, unknown>
+    | undefined;
+  if (!touch || typeof touch !== 'object') return false;
+  const text = String(touch.by_text ?? '').trim();
+  return text === '首页' || text === '+';
+}
+
+export function preconditionRequiresHomeTab(precondition: string): boolean {
+  return /首页\s*Tab|「首页」|已在.*首页|底\s*Tab.*首页/i.test(precondition);
+}
+
+export function preconditionRequiresNavReturn(precondition: string): boolean {
+  return /返回|手势返回|系统返回|回.*首页/i.test(precondition);
+}
+
+export function expectedImpliesSubPageNavigation(expected: string): boolean {
+  return /进入.+页|跳转.+页|push/i.test(expected);
+}
+
+export type NavLintViolation = {
+  rule_id: 'NAV-001' | 'NAV-002' | 'NAV-003';
+  tc_id: string;
+  message: string;
+  suggested_fix: string;
+};
+
+export type LintDerivedHylyrePlanResult = {
+  ok: boolean;
+  violations: NavLintViolation[];
+};
+
+/**
+ * 派生计划步骤静态门禁（NAV-001/002/003）。
+ * @param derivedMd test-plan.hylyre.md 全文
+ * @param topCases 顶层 test-plan 用例行（可选，用于 NAV-002 前置语义）
+ */
+export function lintDerivedHylyrePlanSteps(
+  derivedMd: string,
+  topCases?: DeriveHintTestCaseRow[],
+): LintDerivedHylyrePlanResult {
+  const violations: NavLintViolation[] = [];
+  const derivedCases = extractDerivedPlanCases(derivedMd);
+  const topById = new Map((topCases ?? []).map(c => [c.tc_id.toUpperCase(), c]));
+
+  for (let i = 0; i < derivedCases.length; i++) {
+    const row = derivedCases[i];
+    const top = topById.get(row.tc_id);
+    const precondition = top?.precondition || row.precondition;
+    const expected = top?.expected || row.expected;
+
+    const parsed = parsePlannedStepsFromCell(row.steps_raw);
+    if (!parsed.ok) {
+      violations.push({
+        rule_id: 'NAV-002',
+        tc_id: row.tc_id,
+        message: `测试步骤 JSON 无法解析：${parsed.error}`,
+        suggested_fix: '{"back":{}}',
+      });
+      continue;
+    }
+
+    const steps = parsed.steps;
+
+    for (const step of steps) {
+      if (isFullscreenHorizontalSwipeStep(step)) {
+        violations.push({
+          rule_id: 'NAV-001',
+          tc_id: row.tc_id,
+          message:
+            '全屏横向 swipe（无 area/at/scroll_target）不能代替 Nav 返回；请改用 {"back":{}} 或 {"back":{"mode":"swipe","side":"RIGHT"}}。',
+          suggested_fix: '{"back":{}}',
+        });
+      }
+    }
+
+    if (
+      preconditionRequiresNavReturn(precondition) &&
+      steps.length > 0 &&
+      !isNavResetStep(steps[0]) &&
+      (isFullscreenHorizontalSwipeStep(steps[0]) || touchTargetsTabChrome(steps[0]))
+    ) {
+      violations.push({
+        rule_id: 'NAV-002',
+        tc_id: row.tc_id,
+        message:
+          '前置条件要求先系统/手势返回，但首步不是 back/home/start_app/stop_app 等复位步骤。',
+        suggested_fix: '{"back":{}}',
+      });
+    }
+
+    if (i > 0) {
+      const prev = derivedCases[i - 1];
+      const prevTop = topById.get(prev.tc_id);
+      const prevExpected = prevTop?.expected || prev.expected;
+      if (
+        expectedImpliesSubPageNavigation(prevExpected) &&
+        preconditionRequiresHomeTab(precondition) &&
+        steps.length > 0 &&
+        !isNavResetStep(steps[0])
+      ) {
+        violations.push({
+          rule_id: 'NAV-003',
+          tc_id: row.tc_id,
+          message: `单会话 run --plan：前序用例 ${prev.tc_id} 预期进入子页，本用例前置要求首页 Tab，但首步不是 back/home/start_app/stop_app 等复位步骤。`,
+          suggested_fix: '{"back":{}}',
+        });
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const deduped = violations.filter(v => {
+    const key = `${v.rule_id}:${v.tc_id}:${v.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { ok: deduped.length === 0, violations: deduped };
+}
 
 /** 按 mtime 从新到旧，跳过 placeholder */
 export function selectBestNonPlaceholderDerivedPlan(reportsBase: string): SelectDerivedPlanResult {

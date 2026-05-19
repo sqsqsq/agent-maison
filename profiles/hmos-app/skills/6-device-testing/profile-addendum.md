@@ -64,11 +64,11 @@
 - **`profile.yaml`** 将 **`device_test.run`** 声明为 **provider: hylyre**（与 `framework/profiles/hmos-app/harness/providers/device-test-run.ts` 对齐）。
 - **vendor**：`framework/profiles/hmos-app/vendor/hylyre/` 入库 **hylyre-*.whl** + `release.manifest.json`（参见该目录 `README.md` 同步流程）。
 - **隔离环境**：默认在仓库根 **`.hylyre/venv`**（`framework.config.json > tools.hylyre.venv_dir`）；由 runner **自动** `python -m venv` + `pip install <wheel> "hylyre[device,mcp]"`（可选 `--extra-index-url`，**追加**索引不覆盖用户 `~/.pip/pip.conf`）。
-- **ensure 触发点**：**非** Skill 6 入口独立步骤；**agent 在 Skill 6 Step 7 自跑 `testing` harness** 时，在 **`device_test.run`** 前自动调用 **`ensureHylyreReady`**（build → install → ensure → run）。**用户不直接执行 harness 脚本**。
-- **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下 wheel + `release.manifest.json` 后，**用户只需用自然语言重新发起 Skill 6 真机测试**；agent 在 Step 7 自跑 testing harness 时，默认 venv 会按 manifest 版本与 wheel sha256 自动 **`pip install --upgrade`**（必要时 **`--force-reinstall`**），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**；**通常无需手删 `.hylyre/venv`**。
+- **ensure 触发点**：**非** Skill 6 入口独立步骤；**agent 在 Skill 6 Step 7 自跑 `testing` harness** 时，在 **`device_test.run`** 前自动调用 **`ensureHylyreReady`**（build → install → ensure → run）。**用户不直接执行 harness 脚本**；重试亦用自然语言调起 Skill 6，由 agent 自跑（见 `.cursor/rules/framework-agent-execution.mdc`）。
+- **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下 wheel + `release.manifest.json` 后，**用户只需用自然语言重新发起 Skill 6 真机测试**；agent 自跑 testing harness 时，默认 venv 会按 manifest 版本与 wheel sha256 自动 **`pip install --upgrade`**（无 install fingerprint 或 sha256 变化时亦会重装），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**；**通常无需手删 `.hylyre/venv`**。
 - **首次安装 / 升级**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
 - **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
-- **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需手动升级或取消该变量。
+- **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需在该环境手动升级或取消该变量。
 
 ### App 快照缓存（`doc/app-snapshot-cache/`）
 
@@ -83,13 +83,21 @@
   - 锚点标题：**`## 测试用例清单`**（或 `### …`）
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
-  - JSON **5 类根键**：`action` / `touch` / `input` / `swipe` / `scroll`
+  - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor wheel 内 `hylyre/api/planned_step_keys.py` 为 SSOT）
 - **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
   - 点击：`{"touch":{"selector":{"text":"确认"}}}`
   - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
   - 返回：`{"back":{}}` 或 `{"action":{"type":"back"}}`
+
+### 单会话导航纪律（`hylyre run --plan`）
+
+- **执行模型**：整条派生计划共享一次设备会话；仅在计划开头 `start_app` 一次；**用例之间不会自动清栈**。
+- **Nav 子页回 Tab**：必须用 `{"back":{}}` 或 `{"back":{"mode":"swipe","side":"RIGHT"}}`（Hypium `press_back` / `swipe_to_back`）。**禁止**用无 `area` / `at` / `scroll_target` 的 `swipe RIGHT`/`LEFT` 代替系统/Nav 返回（那是内容区滑动，无法 pop `NavPathStack`）。
+- **进入子页的 TC**：预期含「进入××页」时，若后续仍有要求「已在首页 Tab」的用例，本 TC 末步建议 `{"back":{}}` teardown，或让后续 TC 首步为 `back`。
+- **派生前必读**：`derive-hint-from-plan.json` 中每条 `test_cases[].navigation_hint`（`suggested_preamble_steps` / `forbidden_patterns`）。
+- **Harness 门禁**：`check-testing` 对派生表执行 **NAV-001/002/003** 静态 lint；失败时 `coverage_reason=invalid_derived_steps`，须在新 `testing/reports/<timestamp>/hylyre/` **重新派生**，勿手改旧目录下的 `test-plan.hylyre.md`。
 
 ### `hylyre dump-ui` 与快照缓存
 
@@ -99,7 +107,7 @@
 
 ### plan 派生缺失时的结构化提示
 
-- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`**：内容来自顶层 **`test-plan.md`**「测试用例」节首张表的解析行（`TC` id、自然语言步骤等），便于下一轮对照生成 Hylyre 表。
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 3）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，便于下一轮 Agent 派生。
 - **SSOT 覆盖门禁（v2）**：顶层 **`test-plan.md`** 为唯一用例清单权威；**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）并上 **显式跳过登记** 必须完整覆盖顶层全部 `TC-xxx`。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。
 - **显式跳过登记**（无法写成可靠 Hylyre JSON 的用例）：在派生 **`test-plan.hylyre.md`** 的 **YAML frontmatter** 中写 `explicit_skip_tc_ids: [TC-010, …]`，或在同目录 **`derive-manifest.json`** 写 `{ "explicit_skip_tc_ids": ["TC-010"] }`（可两项合并去重）。须在 Step 5 **test-report.md** 对应用例标 **跳过** 并说明原因。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
@@ -132,6 +140,6 @@
 ### 故障转移
 
 - **hypium / opencv 无法下载**：优先在用户 **`~/.pip/pip.conf`** 配置可达的 **index-url**；或将 `framework.config.json > tools.hylyre.pypi_extra_index_url` 指到内网/华为源；framework 使用的 **`--extra-index-url`** 为追加，与已有 **index-url** 不冲突。
-- **导入失败 / pip 对齐失败**：优先检查 `hylyre-doctor.log` 与 `hylyre-ready.meta.json`；仍无法恢复时，**请 agent 重新执行 Skill 6 闭环**；必要时删除 `.hylyre/venv` 后由 agent 再次自跑 Step 7（兜底，非 vendor 升级常规路径）。
+- **导入失败 / pip 对齐失败**：优先检查 `hylyre-doctor.log` 与 `hylyre-ready.meta.json`；**请 agent 用自然语言重新执行 Skill 6 闭环**（ensure 会尝试 vendor 对齐）；仍无法恢复时 agent 可删 `.hylyre/venv` 后再自跑 Step 7（兜底，非用户手跑 harness）。
 - **真机断连**：`hdc list targets`、重连；trace 中可出现 **阻塞** 状态。
 - **selector 不可靠**：`hylyre dump-ui` 探索界面 → 回写 design/contracts。

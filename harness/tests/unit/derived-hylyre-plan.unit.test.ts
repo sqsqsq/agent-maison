@@ -11,6 +11,8 @@ import {
   selectBestNonPlaceholderDerivedPlan,
   loadExplicitSkipTcIds,
   extractTcIdsFromPlanTable,
+  lintDerivedHylyrePlanSteps,
+  isFullscreenHorizontalSwipeStep,
 } from '../../scripts/utils/derived-hylyre-plan';
 
 export interface UnitCaseResult {
@@ -122,6 +124,55 @@ const cases: Case[] = [
       assertEq(skips.sort(), ['TC-002', 'TC-003'], 'merged skips');
       const ids = extractTcIdsFromPlanTable(md);
       assertEq(ids, ['TC-001'], 'derived ids');
+    },
+  },
+  {
+    name: 'isFullscreenHorizontalSwipeStep: swipe RIGHT 无 area → true',
+    run: () => {
+      assertTrue(
+        isFullscreenHorizontalSwipeStep({ swipe: { direction: 'RIGHT', distance: 60 } }),
+        'horizontal swipe',
+      );
+      assertTrue(
+        !isFullscreenHorizontalSwipeStep({
+          swipe: { direction: 'RIGHT', distance: 60, area: { by_type: 'Scroll' } },
+        }),
+        'scoped swipe',
+      );
+    },
+  },
+  {
+    name: 'lintDerivedHylyrePlanSteps: v7 风格末段 TC-005/003 含 NAV-001 与 NAV-003',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-004 | 进卡包 | 已在「首页」Tab | {"touch":{"by_text":"添加管理卡片"}} | 进入卡包页 | P0 | AC-4 |',
+        '| TC-005 | 加号 | 已在「首页」Tab | {"swipe":{"direction":"RIGHT","distance":60}} ; {"touch":{"by_text":"首页"}} ; {"touch":{"by_text":"+"}} | 进入添卡页 | P0 | AC-5 |',
+        '| TC-003 | 卡面 | 已在「首页」Tab | {"swipe":{"direction":"RIGHT","distance":60}} ; {"touch":{"by_text":"首页"}} | 进入卡包页 | P0 | AC-3 |',
+      ].join('\n');
+      const r = lintDerivedHylyrePlanSteps(md);
+      assertTrue(!r.ok, 'v7-like plan must fail lint');
+      const rules = new Set(r.violations.map(v => v.rule_id));
+      assertTrue(rules.has('NAV-001'), 'NAV-001');
+      assertTrue(rules.has('NAV-003'), 'NAV-003');
+    },
+  },
+  {
+    name: 'lintDerivedHylyrePlanSteps: 合规 back 前缀 → ok',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-004 | 进卡包 | 已在「首页」Tab | {"touch":{"by_text":"添加管理卡片"}} | 进入卡包页 | P0 | AC-4 |',
+        '| TC-005 | 加号 | 已在「首页」Tab | {"back":{}} ; {"touch":{"by_text":"首页"}} ; {"touch":{"by_text":"+"}} | 进入添卡页 | P0 | AC-5 |',
+      ].join('\n');
+      const r = lintDerivedHylyrePlanSteps(md);
+      assertTrue(r.ok, `expected pass, got ${JSON.stringify(r.violations)}`);
     },
   },
   {

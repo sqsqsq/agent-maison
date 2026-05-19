@@ -58,3 +58,66 @@ export function extractTopPlanTestCasesForDeriveHint(planMd: string): DeriveHint
   }
   return out;
 }
+
+/** 供 Agent 派生 test-plan.hylyre.md 时消费的导航约束（机器可读） */
+export interface NavigationHint {
+  requires_nav_reset: boolean;
+  forbidden_patterns: string[];
+  suggested_preamble_steps: string[];
+  suggested_teardown_steps: string[];
+  reason: string;
+}
+
+function preconditionRequiresHomeTab(precondition: string): boolean {
+  return /首页\s*Tab|「首页」|已在.*首页|底\s*Tab.*首页/i.test(precondition);
+}
+
+function preconditionRequiresNavReturn(precondition: string): boolean {
+  return /返回|手势返回|系统返回|需先.*返回|回.*首页/i.test(precondition);
+}
+
+function expectedImpliesSubPageNavigation(expected: string): boolean {
+  return /进入.+页|跳转.+页|push/i.test(expected);
+}
+
+/** 从顶层 test-plan 单行推导导航 hint */
+export function buildNavigationHintForCase(row: DeriveHintTestCaseRow): NavigationHint {
+  const requires =
+    preconditionRequiresNavReturn(row.precondition) ||
+    (preconditionRequiresHomeTab(row.precondition) &&
+      /需先|若.*已入|返回至|回到|先.*返回/i.test(row.precondition));
+  const entersSubPage = expectedImpliesSubPageNavigation(row.expected);
+  const forbidden_patterns: string[] = [];
+  const suggested_preamble_steps: string[] = [];
+  const suggested_teardown_steps: string[] = [];
+  const reasons: string[] = [];
+
+  if (requires) {
+    forbidden_patterns.push('swipe.horizontal.without_area');
+    suggested_preamble_steps.push('{"back":{}}');
+    reasons.push('前置条件要求已在首页 Tab 或需先系统/手势返回');
+  }
+  if (entersSubPage) {
+    suggested_teardown_steps.push('{"back":{}}');
+    reasons.push('预期进入 Nav 子页；单会话 run --plan 时建议用例末 teardown');
+  }
+
+  return {
+    requires_nav_reset: requires,
+    forbidden_patterns,
+    suggested_preamble_steps,
+    suggested_teardown_steps,
+    reason: reasons.join('；') || '无额外导航约束',
+  };
+}
+
+export type DeriveHintTestCaseWithNav = DeriveHintTestCaseRow & {
+  navigation_hint: NavigationHint;
+};
+
+export function attachNavigationHints(cases: DeriveHintTestCaseRow[]): DeriveHintTestCaseWithNav[] {
+  return cases.map(c => ({
+    ...c,
+    navigation_hint: buildNavigationHintForCase(c),
+  }));
+}

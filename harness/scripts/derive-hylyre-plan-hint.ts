@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
-import { extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
+import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -40,12 +40,14 @@ if (!fs.existsSync(planPath)) {
 }
 
 const planMd = fs.readFileSync(planPath, 'utf-8');
-const test_cases = extractTopPlanTestCasesForDeriveHint(planMd);
+const test_cases = attachNavigationHints(extractTopPlanTestCasesForDeriveHint(planMd));
 const payload = {
-  schema: 1,
+  schema: 3,
   feature,
   generated_at: new Date().toISOString(),
   source: path.relative(projectRoot, planPath).replace(/\\/g, '/'),
+  navigation_discipline:
+    'Nav 子页回 Tab 须用 {"back":{}}；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。',
   test_cases,
 };
 

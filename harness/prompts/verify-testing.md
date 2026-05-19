@@ -63,6 +63,7 @@
   7. 抽样 3–5 条「失败」/「阻塞」/「跳过」用例，核对派生子目录 **`trace.json`** 的 `cases[]` 中是否有对应 `id` / `status` 记录
   8. **TC 编号一致性（双向 SSOT）**：顶层 `test-plan.md` 的 TC 集合 ⊇ 派生计划的 TC（禁止凭空 TC）；且派生表 ∪ `explicit_skip_tc_ids`（frontmatter 或 `derive-manifest.json`）须覆盖顶层全部 TC——缺漏则脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`
   9. 核对完成回执 `testing_run_artifacts` 中 **`hylyre_report_path` / `hylyre_trace_path`** 与磁盘一致（若 profile 要求）
+  10. **导航步骤静态门禁（NAV-001/002/003）**：脚本 `check-testing` 在真机 run 前校验派生表 JSON——禁止无 `area`/`at` 的横向 `swipe` 充当 Nav 返回；前序 TC 进入子页后、后续 TC 要求首页 Tab 时首步须 `back` 等。失败则 `coverage_reason=invalid_derived_steps`，须按 `derive-hint-from-plan.json` 的 `lint_violations` 与 `navigation_hint` **重新派生**（勿手改旧 timestamp 目录）
 
 ### 检查 1: 测试用例完整性 (test_case_completeness)
 

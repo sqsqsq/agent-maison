@@ -28,7 +28,7 @@ alwaysApply: true
 5. **架构文档门禁**：`doc/architecture.md` 只承载**架构级契约**（分层 / 模块集合 / 依赖边 / 出口约定）。feature 级变更（既有模块内新增页面 / 接口 / 数据模型 / 修复）**一律不写入**该文件；仅当 design 的 `architecture_impact != none` 时按 Skill 2 Step 12 分支更新，变更历史由 git 与 `doc/features/<feature>/` 承担。
 6. **产物即契约**：写完 PRD / design 即被后续阶段当 SSOT 用，不允许"先写个草稿，后面再改"心态。
 7. **最小改动**：任何不在原始诉求内的修改先问再做。
-8. **Harness 校验**：每个阶段完成后必须跑 `framework/harness/harness-runner.ts --phase <phase> --feature <name>` 并由独立 verifier 子 agent 审一轮。
+8. **Harness 校验**：每个阶段完成后必须跑 `framework/harness/harness-runner.ts --phase <phase> --feature <name>` 并由独立 verifier 子 agent 审一轮。**重试与闭环一律由 agent 自跑**；禁止让用户手动执行 harness/安装命令（见 `framework-agent-execution.mdc`，BLOCKER）。
 
 ## Framework 优先修改原则
 

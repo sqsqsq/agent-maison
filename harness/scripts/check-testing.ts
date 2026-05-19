@@ -26,12 +26,14 @@ import {
   CheckResult,
 } from './utils/types';
 import { featureFilePath, relFeatureFile, featurePhaseReportsDir, resolveHylyreToolConfig } from '../config';
-import { extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
+import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 import {
   extractTcIdsFromPlanTable,
   selectBestNonPlaceholderDerivedPlan,
   evaluateDerivedCoverage,
   loadExplicitSkipTcIds,
+  lintDerivedHylyrePlanSteps,
+  type NavLintViolation,
 } from './utils/derived-hylyre-plan';
 import {
   extractHeadings,
@@ -1445,7 +1447,12 @@ function readBundleNameFromAppScope(projectRoot: string): string {
 }
 
 type DeriveHintAugment = {
-  coverage_reason?: 'no_derived' | 'incomplete' | 'stale' | 'extra_in_derived';
+  coverage_reason?:
+    | 'no_derived'
+    | 'incomplete'
+    | 'stale'
+    | 'extra_in_derived'
+    | 'invalid_derived_steps';
   top_tc_ids?: string[];
   derived_tc_ids?: string[];
   missing_tc_ids?: string[];
@@ -1454,6 +1461,7 @@ type DeriveHintAugment = {
   rejected_placeholder_paths?: string[];
   source_plan_mtime_iso?: string;
   selected_derived_mtime_iso?: string;
+  lint_violations?: NavLintViolation[];
 };
 
 function absToProjectRel(projectRoot: string, abs: string): string {
@@ -1470,14 +1478,14 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     fs.mkdirSync(base, { recursive: true });
     const hintPath = path.join(base, 'derive-hint-from-plan.json');
     const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
-    let test_cases = [] as ReturnType<typeof extractTopPlanTestCasesForDeriveHint>;
+    let test_cases = [] as ReturnType<typeof attachNavigationHints>;
     let source_relative = relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md');
     let source_plan_mtime_iso: string | undefined;
     let defaultTopIds: string[] = [];
 
     if (fs.existsSync(topPath)) {
       const raw = fs.readFileSync(topPath, 'utf-8');
-      test_cases = extractTopPlanTestCasesForDeriveHint(raw);
+      test_cases = attachNavigationHints(extractTopPlanTestCasesForDeriveHint(raw));
       source_plan_mtime_iso = new Date(fs.statSync(topPath).mtimeMs).toISOString();
       defaultTopIds = extractTcIdsFromPlanTable(raw);
     } else {
@@ -1485,7 +1493,7 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     }
 
     const payload = {
-      schema: 2,
+      schema: 3,
       feature: ctx.feature,
       phase: ctx.phase,
       generated_at: new Date().toISOString(),
@@ -1500,8 +1508,11 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
       rejected_placeholder_paths: aug?.rejected_placeholder_paths,
       coverage_reason: aug?.coverage_reason,
       selected_derived_mtime_iso: aug?.selected_derived_mtime_iso,
+      lint_violations: aug?.lint_violations,
+      navigation_discipline:
+        'Nav 子页回 Tab 须用 {"back":{}}（或 back.mode=swipe）；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。单会话 run --plan 时，进入子页的 TC 建议末步 teardown back，后续要求首页 Tab 的 TC 首步须 back。',
       next_agent_step:
-        '按 profile「真机自动化」章与 test-plan-hylyre-template 在 testing/reports/<新 timestamp>/hylyre/ 落盘 test-plan.hylyre.md；顶层 doc/features/<feature>/test-plan.md 为 SSOT，派生表须覆盖其中全部 TC-xxx，无法在 Hylyre 自动化的条目须在派生文件 YAML frontmatter 或同目录 derive-manifest.json 登记 explicit_skip_tc_ids。勿依赖「烟测占位」类目录。',
+        '按 profile「真机自动化」与「单会话导航纪律」在 testing/reports/<新 timestamp>/hylyre/ 落盘 test-plan.hylyre.md；遵守各 test_cases[].navigation_hint；勿使用 forbidden_patterns。顶层 test-plan.md 为 SSOT。',
     };
     fs.writeFileSync(hintPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
     return hintPath;
@@ -1664,6 +1675,37 @@ function checkDeviceTestRunGate(
           severity: 'BLOCKER',
           status: 'FAIL',
           details: `派生计划早于顶层 test-plan.md 更新（mtime），可能过期。请重新派生或更新派生文件后重试。\n${hintLine}`,
+        },
+      ];
+    }
+
+    const topCases = extractTopPlanTestCasesForDeriveHint(topRaw);
+    const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
+    if (!navLint.ok) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'invalid_derived_steps',
+        lint_violations: navLint.violations,
+      });
+      const lines = navLint.violations.map(
+        v => `  - [${v.rule_id}] ${v.tc_id}: ${v.message}（建议：${v.suggested_fix}）`,
+      );
+      const hintLine = hintPath ? `详情与 navigation_hint 见 ${hintPath}` : '';
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            '派生 Hylyre 计划未通过导航步骤静态门禁（NAV-001/002/003）：',
+            ...lines,
+            '请按 framework profile「单会话导航纪律」重新派生 test-plan.hylyre.md（勿手改旧 timestamp 目录）。',
+            hintLine,
+          ]
+            .filter(Boolean)
+            .join('\n'),
         },
       ];
     }

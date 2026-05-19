@@ -19,5 +19,8 @@
 | TC-002 | 充值 100 元 | 在首页 | `{"touch":{"by_text":"充值"}}` ; `{"input":{"text":"100","by_id":"amount_input"}}` ; `{"touch":{"by_text":"确认"}}` | Toast 显示充值成功 | P0 | AC-005 |
 | TC-003 | 横向滚动一屏卡片 | 在卡片列表页 | `{"swipe":{"direction":"LEFT","distance":80,"area":{"by_id":"card_list"}}}` | 下一组卡片露出 | P1 | AC-002 |
 | TC-004 | 滚轮翻页 | 在长内容页 | `{"scroll":{"direction":"down","steps":6,"at":{"by_type":"Scroll"}}}` | 滚动至下一屏 | P2 | AC-008 |
+| TC-010 | 进子页后回 Tab（示例） | 已在「首页」Tab | `{"touch":{"by_text":"进入卡包"}}` ; `{"back":{}}` | 回到首页 Tab，底栏「首页」可点 | P0 | AC-nav |
+| TC-011 | 子页污染后下一用例（示例） | 已在「首页」Tab | `{"back":{}}` ; `{"touch":{"by_text":"+"}}` | 进入目标子页 | P0 | AC-nav |
 
+<!-- 列表内横向滑须带 area；Nav 返回只用 back，勿用无 area 的 swipe RIGHT -->
 <!-- 不进派生计划的 TC（缺 selector / 需人工）由 agent 在顶层 test-report.md 标「跳过」，不在此处出现 -->

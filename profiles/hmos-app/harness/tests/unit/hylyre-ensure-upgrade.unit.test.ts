@@ -105,6 +105,19 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'evaluateVendorSyncNeed: 版本相同但无 install fingerprint → needsSync（同版本补丁 wheel）',
+    run: () => {
+      const r = evaluateVendorSyncNeed({
+        manifest: sampleManifest('0.1.0', 'hylyre-0.1.0-py3-none-any.whl', 'newsha'),
+        pipVersion: '0.1.0',
+        wheelSha256: 'newsha',
+        cachedFingerprint: null,
+      });
+      assertTrue(r.needsSync, 'needsSync');
+      assertEq(r.reason, 'missing_install_fingerprint', 'reason');
+    },
+  },
+  {
     name: 'evaluateVendorSyncNeed: wheel 文件 sha256 与 manifest 声明不一致',
     run: () => {
       const r = evaluateVendorSyncNeed({

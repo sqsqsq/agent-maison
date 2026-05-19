@@ -1,0 +1,52 @@
+---
+description: BLOCKER — harness/闭环/重试必须由 agent 自执行；禁止让用户手动跑脚本；自然语言即可调起
+alwaysApply: true
+---
+
+# Framework 执行权（agent 自跑 · 最高规则）
+
+> 与 `AGENTS.md` §4.1、§6.5（反假设条款）一致；本规则强调**对用户可见话术**的硬性边界。
+
+## 1. 禁止推给用户的手动动作
+
+**不得**在回复中把下列动作写成「请你执行 / 请手动运行 / 复制以下命令」作为完成或重试的**唯一**出路：
+
+- `framework/harness/harness-runner.ts`（任意 `--phase` / `--feature`）
+- `framework/harness/scripts/check-receipt.ts`
+- 宿主打包/装机/真机自动化链（hvigor、hdc install、`device_test.*`、Hylyre `run --plan` 等由 harness 触发的步骤）
+- `pip install` / 删 `.hylyre/venv` / `hylyre doctor` 等 **Skill 6 Step 7 自跑 testing harness 时应由 ensure 覆盖** 的安装动作
+
+**允许**向用户说明：需其完成的**物理/账号类**前置（连接真机、授权 USB、切换飞行模式、确认 product/buildMode 等），但：
+
+- 用户一旦用自然语言表示「已连接 / 继续 / 重试 / 再跑真机测试」，**agent 必须在本轮对话内自行 Shell 重跑**对应 Skill + harness，**不得**再次粘贴 harness 命令让用户自己跑。
+
+## 2. 自然语言 = 调起 Framework 的入口
+
+用户说「对 `<feature>` 做真机测试」「重跑 testing」「补齐 testing 闭环」「设备已连上继续」等，等价于进入 **Skill 6（device-testing）** 或继续该阶段未竟步骤：
+
+1. 读 `framework/skills/6-device-testing/SKILL.md`（及 profile addendum）
+2. **主 agent 自己**跑结构级 harness、修 BLOCKER、更新产物
+3. **Task 触发 verifier**（`subagent_type: verifier`）
+4. 填写并通过 `check-receipt.ts`
+
+**不要**要求用户学会 harness CLI；**不要**用「你本地执行以下命令」代替 agent 执行。
+
+## 3. 阻塞时的正确话术
+
+| 情况 | 错误 | 正确 |
+|------|------|------|
+| harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
+| 缺 verifier | 「请启动 verifier」 | agent 用 Task 工具触发 `subagent_type: verifier` |
+| vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 Skill 6 协议自处理；不向用户抛 install 命令 |
+| 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
+
+## 4. 与「反假设条款」的关系
+
+若 agent 声称「规则禁止我执行脚本」才能跳过 harness → **必须 quote 规则原文**；quote 不出则**必须执行**。
+
+本规则 **加强**的是：即使 harness 失败，**重试路径也留在 agent + 自然语言对话内**，而不是把 CLI 交给用户。
+
+## 5. 维护说明
+
+- 源头：`framework/agents/cursor/templates/rules/framework-agent-execution.mdc`
+- 实例：`.cursor/rules/framework-agent-execution.mdc`（framework-init / render 下发或手工同步）

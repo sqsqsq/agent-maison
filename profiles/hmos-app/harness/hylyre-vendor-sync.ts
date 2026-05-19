@@ -22,6 +22,7 @@ export type VendorSyncReason =
   | 'aligned'
   | 'version_mismatch'
   | 'wheel_sha256_changed'
+  | 'missing_install_fingerprint'
   | 'missing_fingerprint_with_version_mismatch'
   | 'no_manifest';
 
@@ -134,13 +135,18 @@ export function evaluateVendorSyncNeed(args: {
   }
 
   if (wheelSha && cachedFingerprint?.wheel_sha256) {
-    if (cachedFingerprint.wheel_sha256.trim().toLowerCase() !== wheelSha) {
+    const cachedSha = cachedFingerprint.wheel_sha256.trim().toLowerCase();
+    if (cachedSha !== wheelSha) {
       return { needsSync: true, reason: 'wheel_sha256_changed', manifestWheelMismatch };
+    }
+    if (manifestVer && pipVer && manifestVer === pipVer) {
+      return { needsSync: false, reason: 'aligned', manifestWheelMismatch };
     }
   }
 
-  if (manifestVer && pipVer && manifestVer === pipVer && !cachedFingerprint && wheelSha) {
-    return { needsSync: false, reason: 'aligned', manifestWheelMismatch };
+  // pip 版本号与 manifest 相同 ≠ venv 内 wheel 与 vendor 一致（同版本补丁 wheel、或无指纹的旧 venv）
+  if (wheelSha && manifestVer && pipVer && manifestVer === pipVer && !cachedFingerprint) {
+    return { needsSync: true, reason: 'missing_install_fingerprint', manifestWheelMismatch };
   }
 
   return { needsSync: false, reason: 'aligned', manifestWheelMismatch };
