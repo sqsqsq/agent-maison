@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: 4-code-review
 description: 代码审查报告（完整流程见 framework/skills/4-code-review/SKILL.md）
 ---
 

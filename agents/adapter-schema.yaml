@@ -96,8 +96,11 @@ optional_fields:
       framework/skills/<n>/SKILL.md 的链接。不得在跳板内追加业务条款、选型表或次级
       文档链接（会形成双源分叉，agent 易只读跳板漏掉正文中的 harness/verifier）。
       扩写必须在 framework/skills 正文及其 prompts/templates/reference；或修改
-      framework/agents/cursor/templates/skills 后经 init/render 下发。
+      framework/agents/shared/agent-bundle/templates/skills-bridge 后经 init/render 下发。
       若 agent 不需要跳板（例如 Claude Code 直接用 slash 加载），置为 null。
+      **generic adapter**：`target_dir` 由 `framework.config.json` → `paths.agent_bundle_root`
+      + `/skills` 在 harness 运行时解析；`bridge` 模式拷贝 skills-bridge，`inline` 模式由
+      materialize-agent-bundle-skills 从 framework/skills 物化完整 SKILL。
     fields:
       target_dir:
         type: string
@@ -175,7 +178,8 @@ optional_fields:
     type: object | null
     description: |
       可选。声明 render-agents-md 渲染入口 Markdown 后，如何把 doc/extensions/skills/<slug>/SKILL.md
-      暴露到 IDE（Cursor 跳板 / Claude slash）。generic adapter 应省略。
+      暴露到 IDE（Cursor 跳板 / Claude slash）。generic adapter 的
+      `skill_stub_target_dir` 由 `paths.agent_bundle_root` + `/skills` 在运行时解析。
       与内置 Skill 跳板或 slash 同名时自动加 ext- 前缀并 stderr 告警。
     fields:
       skill_stub_target_dir:

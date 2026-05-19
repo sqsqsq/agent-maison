@@ -32,6 +32,16 @@ import {
   MissingFieldEntry,
 } from './utils/config-field-merger';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
+import { loadFrameworkConfig } from '../config';
+import {
+  readAgentBundlePathsFromConfig,
+  type ResolvedAgentBundlePaths,
+} from './utils/agent-bundle-paths';
+import {
+  listFrameworkBuiltinSkillDirs,
+  materializeAgentBundleSkills,
+  materializeInlineSkillMarkdown,
+} from './utils/materialize-agent-bundle-skills';
 
 // --------------------------------------------------------------------------
 // 公共类型
@@ -338,8 +348,10 @@ interface AdapterTemplateFile {
   targetRel: string;
   /** 相对 framework/ 根 */
   templateRel: string;
-  /** 落地方式：rendered（占位符替换）/ verbatim（字节相等比对） */
-  kind: 'rendered' | 'verbatim';
+  /** 落地方式：rendered（占位符替换）/ verbatim（字节相等比对）/ materialized（inline 物化） */
+  kind: 'rendered' | 'verbatim' | 'materialized';
+  /** materialized：framework/skills/<skillDir> */
+  skillDir?: string;
   /** 映射来源字段名（用于诊断） */
   origin: string;
   /** UPDATE 模式下第 3 项 POPULATED 时的对齐策略；缺省 prompt_if_changed */
@@ -524,6 +536,156 @@ function loadAdapter(adapter: string): AdapterDescriptor {
   }
 
   return desc;
+}
+
+function resolveBundleForInitInspect(
+  adapterName: string,
+  rawCfg: RawFrameworkConfig,
+  projectRoot: string,
+): ResolvedAgentBundlePaths | null {
+  if (adapterName !== 'generic') {
+    return null;
+  }
+  if (rawCfg.exists && rawCfg.parseable && rawCfg.raw && typeof rawCfg.raw === 'object') {
+    try {
+      const cfg = loadFrameworkConfig(projectRoot);
+      if (cfg.agent_adapter === 'generic') {
+        return readAgentBundlePathsFromConfig(cfg);
+      }
+    } catch {
+      /* fall through to defaults */
+    }
+  }
+  return {
+    root: '.agents',
+    skillsDir: '.agents/skills',
+    rulesDir: '.agents/rules',
+    skillMode: 'inline',
+  };
+}
+
+function appendSharedRulesTemplates(
+  desc: AdapterDescriptor,
+  rulesTargetDir: string,
+  updatePolicy: AdapterUpdatePolicy,
+): void {
+  const rulesTplAbs = path.join(
+    FRAMEWORK_ROOT,
+    'agents',
+    'shared',
+    'agent-bundle',
+    'templates',
+    'rules',
+  );
+  desc.declaredTemplatePaths.push({
+    field: 'generic.rules.template_dir',
+    abs: rulesTplAbs,
+    exists: existsAbs(rulesTplAbs),
+  });
+  if (!isDir(rulesTplAbs)) {
+    return;
+  }
+  for (const fileRel of listFilesRecursive(rulesTplAbs)) {
+    desc.templateFiles.push({
+      targetRel: toPosix(path.join(rulesTargetDir, fileRel)),
+      templateRel: toPosix(path.join('agents', 'shared', 'agent-bundle', 'templates', 'rules', fileRel)),
+      kind: 'verbatim',
+      origin: `generic.rules/${fileRel}`,
+      update_policy: updatePolicy,
+    });
+  }
+}
+
+function appendSharedBridgeSkillTemplates(
+  desc: AdapterDescriptor,
+  skillsTargetDir: string,
+  updatePolicy: AdapterUpdatePolicy,
+): void {
+  const bridgeAbs = path.join(
+    FRAMEWORK_ROOT,
+    'agents',
+    'shared',
+    'agent-bundle',
+    'templates',
+    'skills-bridge',
+  );
+  desc.declaredTemplatePaths.push({
+    field: 'generic.skill_bridge.template_dir',
+    abs: bridgeAbs,
+    exists: existsAbs(bridgeAbs),
+  });
+  if (!isDir(bridgeAbs)) {
+    return;
+  }
+  for (const fileRel of listFilesRecursive(bridgeAbs)) {
+    desc.templateFiles.push({
+      targetRel: toPosix(path.join(skillsTargetDir, fileRel)),
+      templateRel: toPosix(
+        path.join('agents', 'shared', 'agent-bundle', 'templates', 'skills-bridge', fileRel),
+      ),
+      kind: 'verbatim',
+      origin: `generic.skill_bridge/${fileRel}`,
+      update_policy: updatePolicy,
+    });
+  }
+}
+
+function appendInlineSkillMaterializedTemplates(
+  desc: AdapterDescriptor,
+  bundle: ResolvedAgentBundlePaths,
+  updatePolicy: AdapterUpdatePolicy,
+): void {
+  for (const skillDir of listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT)) {
+    desc.templateFiles.push({
+      targetRel: `${bundle.skillsDir}/${skillDir}/SKILL.md`,
+      templateRel: toPosix(path.join('skills', skillDir, 'SKILL.md')),
+      kind: 'materialized',
+      skillDir,
+      origin: `materialize:${skillDir}`,
+      update_policy: updatePolicy,
+    });
+  }
+}
+
+export function applyGenericAdapterBundle(
+  desc: AdapterDescriptor,
+  bundle: ResolvedAgentBundlePaths,
+): void {
+  desc.templateFiles = desc.templateFiles.filter(
+    f => !f.origin.startsWith('rules.template_dir') && !f.origin.startsWith('generic.'),
+  );
+  let rulesPolicy: AdapterUpdatePolicy = 'prompt_if_changed';
+  try {
+    const rulesRaw = (YAML.parse(fs.readFileSync(desc.yamlPath, 'utf8')) as {
+      rules?: { update_policy?: string };
+    })?.rules?.update_policy;
+    rulesPolicy = parseUpdatePolicy(rulesRaw);
+  } catch {
+    /* keep default */
+  }
+  appendSharedRulesTemplates(desc, bundle.rulesDir, rulesPolicy);
+  const bridgePolicy: AdapterUpdatePolicy = 'prompt_if_changed';
+  if (bundle.skillMode === 'bridge') {
+    appendSharedBridgeSkillTemplates(desc, bundle.skillsDir, bridgePolicy);
+  } else {
+    appendInlineSkillMaterializedTemplates(desc, bundle, bridgePolicy);
+  }
+}
+
+function applyAgentBundleInlineSync(
+  projectRoot: string,
+  bundle: ResolvedAgentBundlePaths,
+): { syncedFiles: number } {
+  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
+    return { syncedFiles: 0 };
+  }
+  const outcome = materializeAgentBundleSkills({
+    projectRoot,
+    frameworkDir: FRAMEWORK_ROOT,
+    bundle,
+    mode: 'inline',
+  });
+  return { syncedFiles: outcome.filesWritten.length };
 }
 
 // --------------------------------------------------------------------------
@@ -971,8 +1133,58 @@ function inspect03(env: InspectorEnv): Inspection[] {
   for (const f of adapter.templateFiles) {
     const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
     const tgAbs = path.join(env.projectRoot, f.targetRel);
-    const tplBuf = safeReadBuffer(tplAbs);
     const tgBuf = safeReadBuffer(tgAbs);
+
+    if (f.kind === 'materialized' && f.skillDir) {
+      let expectedBuf: Buffer;
+      try {
+        expectedBuf = Buffer.from(materializeInlineSkillMarkdown(FRAMEWORK_ROOT, f.skillDir), 'utf8');
+      } catch (e) {
+        fileRows.push({
+          f,
+          status: 'POPULATED',
+          hash_template: null,
+          hash_target: tgBuf !== null ? sha256(tgBuf) : null,
+          diff_summary: `物化失败：${(e as Error).message}`,
+          diagnosis: `inline 物化 ${f.skillDir} 失败`,
+        });
+        continue;
+      }
+      if (tgBuf === null) {
+        fileRows.push({
+          f,
+          status: 'MISSING',
+          hash_template: sha256(expectedBuf),
+          hash_target: null,
+          diff_summary: `目标缺失：${f.targetRel}`,
+          diagnosis: `${f.targetRel} 不存在（init 将 inline 物化）`,
+        });
+        continue;
+      }
+      const comparison = compareTextArtifact(expectedBuf, tgBuf);
+      if (comparison.kind === 'byte_equal' || comparison.kind === 'eol_only') {
+        fileRows.push({
+          f,
+          status: 'EMPTY',
+          hash_template: comparison.templateHash,
+          hash_target: comparison.targetHash,
+          diff_summary: comparison.kind === 'byte_equal' ? 'no diff' : eolOnlyDiffSummary(),
+          diagnosis: `inline 物化内容与目标一致：${f.targetRel}`,
+        });
+        continue;
+      }
+      fileRows.push({
+        f,
+        status: 'POPULATED',
+        hash_template: comparison.templateHash,
+        hash_target: comparison.targetHash,
+        diff_summary: unifiedDiffSummary(comparison.templateText, comparison.targetText, 50),
+        diagnosis: `inline 物化内容与目标不一致：${f.targetRel}`,
+      });
+      continue;
+    }
+
+    const tplBuf = safeReadBuffer(tplAbs);
     if (tplBuf === null) {
       fileRows.push({
         f,
@@ -1522,7 +1734,7 @@ function applyInitMechanismSync(
   let backupRelDir: string | null = null;
 
   for (const f of adapter.templateFiles) {
-    if (f.update_policy !== 'auto_overwrite') continue;
+    if (f.update_policy !== 'auto_overwrite' || f.kind === 'materialized') continue;
 
     const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
     const tgAbs = path.join(projectRoot, f.targetRel);
@@ -1697,6 +1909,20 @@ const checker: PhaseChecker = {
       blockers.push('adapter_yaml_resolvable: adapter 未指定');
     } else {
       adapter = loadAdapter(adapterPick.name);
+      if (adapter.yamlParseable && adapter.name === 'generic') {
+        const bundle = resolveBundleForInitInspect(adapterPick.name, cfg, ctx.projectRoot);
+        if (bundle) {
+          applyGenericAdapterBundle(adapter, bundle);
+        }
+        if (cfg.exists && cfg.parseable) {
+          const root = cfg.raw?.paths?.agent_bundle_root;
+          if (!root || String(root).trim() === '') {
+            blockers.push(
+              'generic_adapter_bundle: agent_adapter=generic 时必须在 framework.config.json 中配置 paths.agent_bundle_root',
+            );
+          }
+        }
+      }
       if (!adapter.yamlExists) {
         adapterCheckResult = {
           id: 'adapter_yaml_resolvable',
@@ -1865,6 +2091,13 @@ const checker: PhaseChecker = {
       const syncOutcome = applyInitMechanismSync(ctx.projectRoot, adapter);
       mechanism_backup_rel_dir = syncOutcome.backupRelDir;
       mechanism_synced_files = syncOutcome.syncedFiles;
+      if (adapter.name === 'generic') {
+        const bundle = resolveBundleForInitInspect('generic', cfg, ctx.projectRoot);
+        if (bundle?.skillMode === 'inline') {
+          const inlineSync = applyAgentBundleInlineSync(ctx.projectRoot, bundle);
+          mechanism_synced_files += inlineSync.syncedFiles;
+        }
+      }
     }
 
     const reportBase: Omit<CheckInitReport, keyof {
@@ -1978,4 +2211,6 @@ export const __testing = {
   parseUpdatePolicy,
   inspectionsForInit034Prompt,
   applyInitMechanismSync,
+  applyGenericAdapterBundle,
+  resolveBundleForInitInspect,
 };

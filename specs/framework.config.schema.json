@@ -41,6 +41,15 @@
         "extension_dir": {
           "type": "string",
           "description": "实例扩展根目录（相对实例工程根），默认 doc/extensions。"
+        },
+        "agent_bundle_root": {
+          "type": "string",
+          "description": "generic adapter：agent bundle 根目录（相对实例工程根），如 .agents。"
+        },
+        "agent_bundle_skill_mode": {
+          "type": "string",
+          "enum": ["bridge", "inline"],
+          "description": "generic adapter：bundle 内 skills 物化方式；默认 inline。"
         }
       },
       "additionalProperties": true

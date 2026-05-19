@@ -1,5 +1,5 @@
 ---
-name: coding
+name: 3-coding
 description: 按 design / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/3-coding/SKILL.md）
 ---
 

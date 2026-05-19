@@ -1,5 +1,5 @@
 ---
-name: catalog-bootstrap
+name: 0-catalog-bootstrap
 description: 模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/0-catalog-bootstrap/SKILL.md）
 ---
 

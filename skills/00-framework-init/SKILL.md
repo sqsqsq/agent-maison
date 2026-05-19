@@ -60,6 +60,11 @@
    - 写入 / 更新 `framework.config.json` 的 `agent_adapter` 字段、拷贝任何 `framework/agents/<name>/templates/**` 下的文件、渲染任何入口文件。
 3. 即便从 IDE 环境、聊天上下文、仓库内已有上一轮 init 落下的目录痕迹能「推断」出最可能的选项，也**必须**把推断作为**推荐值**亮给用户，由用户确认为「选定」；不得直接当成用户决定落盘或拿来描述后续动作。
 4. 选定完成后，内存里记录 `agent_adapter`，用于驱动 Step 0.3 的路径扫描与 Step 4.1 的入口文件渲染；`framework.config.json` 的**整文件写入**发生在 **Step 3.5**（在 Step 4 之前）；字段级补缺：**交互 `Q1.A`** 与 **自动 `5.1.B`** 均在 Step **5.1** 触发（详见各节）。
+5. **若选定 `generic`（BLOCKER 追加）**：在同一轮必须再收集并写入 `framework.config.json` → `paths`：
+   - `agent_bundle_root`：用户指定的 bundle 根目录（相对实例根），如 `.agents`、`.codex`；**必填**。
+   - `agent_bundle_skill_mode`：`inline`（默认，从 `framework/skills/` 物化**完整** SKILL，供 Chrys 等 strict 加载器）或 `bridge`（薄跳板 + 链接，仅适用于会跟进链接的 agent）。
+   - Step 3.5 写入 config 时与 `agent_adapter` **同批**落盘，**不得**拖到 Step 5.1 白名单补缺。
+6. **若选定 `cursor`**：Step 4 拷贝的 skill 跳板来自 `framework/agents/shared/agent-bundle/templates/skills-bridge/`；`name` 必须与目录名一致（含 `00-`/`0-` 数字前缀）。
 
 ### 0.3 产物存在性体检（写入前必做，CREATE / UPDATE 共享）
 

@@ -5,6 +5,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { loadFrameworkConfig } from '../../config';
+import { readAgentBundlePathsFromConfig } from './agent-bundle-paths';
+import {
+  materializeInlineSkillMarkdown,
+  posixRelativeFromSkillStubTo,
+  renderBridgeSkillStubMarkdown,
+} from './materialize-agent-bundle-skills';
 
 export interface ExtensionSkillScanRow {
   sourceSlug: string;
@@ -33,9 +40,16 @@ export function sanitizeBridgeSlug(slug: string): string {
 
 export function loadReservedBridgeIds(frameworkDir: string): Set<string> {
   const reserved = new Set<string>();
-  const cursorSkills = path.join(frameworkDir, 'agents', 'cursor', 'templates', 'skills');
-  if (fs.existsSync(cursorSkills)) {
-    for (const ent of fs.readdirSync(cursorSkills, { withFileTypes: true })) {
+  const sharedBridge = path.join(
+    frameworkDir,
+    'agents',
+    'shared',
+    'agent-bundle',
+    'templates',
+    'skills-bridge',
+  );
+  if (fs.existsSync(sharedBridge)) {
+    for (const ent of fs.readdirSync(sharedBridge, { withFileTypes: true })) {
       if (ent.isDirectory()) {
         reserved.add(ent.name);
       }
@@ -159,10 +173,9 @@ export function parseInstanceSkillBridgeFromAdapter(adapterYamlText: string): Ad
   return { skill_stub_target_dir, commands_target_dir };
 }
 
-/** `.cursor/skills/<bridgeId>/SKILL.md` → 正文 SKILL.md 的相对链接 */
+/** @deprecated 使用 posixRelativeFromSkillStubTo */
 export function posixRelativeFromCursorSkillStubTo(skillMdRepoRelPosix: string): string {
-  const stubDirDepth = 3;
-  return `${'../'.repeat(stubDirDepth)}${skillMdRepoRelPosix}`;
+  return posixRelativeFromSkillStubTo('.cursor/skills/placeholder/SKILL.md', skillMdRepoRelPosix);
 }
 
 /** `.claude/commands/<bridgeId>.md` → 正文 SKILL.md 的相对链接 */
@@ -170,19 +183,52 @@ export function posixRelativeFromClaudeCommandTo(skillMdRepoRelPosix: string): s
   return `../../${skillMdRepoRelPosix}`;
 }
 
+export function resolveSkillStubTargetDir(
+  repoRoot: string,
+  frameworkDir: string,
+  agentAdapter: string,
+): string | undefined {
+  const adapterPath = path.join(frameworkDir, 'agents', agentAdapter, 'adapter.yaml');
+  if (!fs.existsSync(adapterPath)) {
+    return undefined;
+  }
+  const bridgeCfg = parseInstanceSkillBridgeFromAdapter(fs.readFileSync(adapterPath, 'utf8'));
+  if (bridgeCfg?.skill_stub_target_dir) {
+    return bridgeCfg.skill_stub_target_dir;
+  }
+  if (agentAdapter === 'generic') {
+    try {
+      const cfg = loadFrameworkConfig(repoRoot);
+      const bundle = readAgentBundlePathsFromConfig(cfg);
+      return bundle?.skillsDir;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function renderExtensionSkillStubMarkdown(
+  bridgeId: string,
+  skillMdRepoRelPosix: string,
+  stubTargetRelPosix: string,
+  options: { inline: boolean; frameworkDir: string },
+): string {
+  if (options.inline) {
+    const fwSkill = path.join(options.frameworkDir, 'skills', bridgeId, 'SKILL.md');
+    if (fs.existsSync(fwSkill)) {
+      return materializeInlineSkillMarkdown(options.frameworkDir, bridgeId);
+    }
+  }
+  return renderBridgeSkillStubMarkdown(bridgeId, stubTargetRelPosix, skillMdRepoRelPosix);
+}
+
 export function renderCursorSkillStubMarkdown(bridgeId: string, skillMdRepoRelPosix: string): string {
-  const relFromStub = posixRelativeFromCursorSkillStubTo(skillMdRepoRelPosix);
-  return [
-    '---',
-    `name: ${bridgeId}`,
-    `description: 实例扩展 Skill（跳板）。正文见 ${skillMdRepoRelPosix}`,
-    '---',
-    '',
-    '# 跳板文件',
-    '',
-    `完整 Skill 定义请阅读：**[${skillMdRepoRelPosix}](${relFromStub})**`,
-    '',
-  ].join('\n');
+  return renderBridgeSkillStubMarkdown(
+    bridgeId,
+    `.cursor/skills/${bridgeId}/SKILL.md`,
+    skillMdRepoRelPosix,
+  );
 }
 
 export function renderClaudeSlashMarkdown(bridgeId: string, skillMdRepoRelPosix: string): string {
@@ -222,14 +268,16 @@ export function emitInstanceSkillBridge(options: {
   const warnings: string[] = [];
   const filesWritten: string[] = [];
 
+  const skillStubDir = resolveSkillStubTargetDir(repoRoot, frameworkDir, agentAdapter);
   const adapterPath = path.join(frameworkDir, 'agents', agentAdapter, 'adapter.yaml');
-  if (!fs.existsSync(adapterPath)) {
-    warnings.push(`[instance-skill-bridge] adapter.yaml 不存在：${adapterPath}`);
-    return { warnings, filesWritten };
-  }
+  const bridgeCfg = fs.existsSync(adapterPath)
+    ? parseInstanceSkillBridgeFromAdapter(fs.readFileSync(adapterPath, 'utf8'))
+    : null;
 
-  const bridgeCfg = parseInstanceSkillBridgeFromAdapter(fs.readFileSync(adapterPath, 'utf8'));
-  if (!bridgeCfg) {
+  if (!skillStubDir && !bridgeCfg?.commands_target_dir) {
+    if (agentAdapter === 'generic') {
+      warnings.push('[instance-skill-bridge] generic：未配置 paths.agent_bundle_root，跳过扩展 skill 跳板');
+    }
     return { warnings, filesWritten };
   }
 
@@ -238,24 +286,39 @@ export function emitInstanceSkillBridge(options: {
   const { targets, warnings: rw } = resolveBridgeTargets(rows, reserved);
   warnings.push(...rw);
 
+  let useInline = false;
+  if (agentAdapter === 'generic') {
+    try {
+      const cfg = loadFrameworkConfig(repoRoot);
+      const bundle = readAgentBundlePathsFromConfig(cfg);
+      useInline = bundle?.skillMode === 'inline';
+    } catch {
+      useInline = false;
+    }
+  }
+
   const mkdirWrite = (absPath: string, body: string) => {
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
     fs.writeFileSync(absPath, body, 'utf8');
     filesWritten.push(path.relative(repoRoot, absPath).replace(/\\/g, '/'));
   };
 
-  if (bridgeCfg.skill_stub_target_dir) {
-    const base = path.join(
-      repoRoot,
-      ...bridgeCfg.skill_stub_target_dir.replace(/\\/g, '/').split('/').filter(Boolean),
-    );
+  if (skillStubDir) {
+    const base = path.join(repoRoot, ...skillStubDir.replace(/\\/g, '/').split('/').filter(Boolean));
     for (const t of targets) {
       const stubPath = path.join(base, t.bridgeId, 'SKILL.md');
-      mkdirWrite(stubPath, renderCursorSkillStubMarkdown(t.bridgeId, t.skillMdRepoRel));
+      const stubRel = path.relative(repoRoot, stubPath).replace(/\\/g, '/');
+      mkdirWrite(
+        stubPath,
+        renderExtensionSkillStubMarkdown(t.bridgeId, t.skillMdRepoRel, stubRel, {
+          inline: useInline,
+          frameworkDir,
+        }),
+      );
     }
   }
 
-  if (bridgeCfg.commands_target_dir) {
+  if (bridgeCfg?.commands_target_dir) {
     const base = path.join(repoRoot, ...bridgeCfg.commands_target_dir.replace(/\\/g, '/').split('/').filter(Boolean));
     for (const t of targets) {
       const cmdPath = path.join(base, `${t.bridgeId}.md`);

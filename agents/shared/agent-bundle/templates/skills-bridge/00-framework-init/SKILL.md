@@ -1,5 +1,5 @@
 ---
-name: framework-init
+name: 00-framework-init
 description: 接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/00-framework-init/SKILL.md）
 ---
 

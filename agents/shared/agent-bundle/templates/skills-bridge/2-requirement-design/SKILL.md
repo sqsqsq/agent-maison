@@ -1,5 +1,5 @@
 ---
-name: requirement-design
+name: 2-requirement-design
 description: PRD → 技术设计 design.md（完整流程见 framework/skills/2-requirement-design/SKILL.md）
 ---
 

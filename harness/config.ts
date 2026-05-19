@@ -290,7 +290,20 @@ export interface FrameworkPaths {
    * `framework/harness/reports/<feature>/<phase>/`（与历史实例兼容）。
    */
   reports_dir_pattern?: string;
+  /**
+   * generic adapter：agent 产物 bundle 根目录（相对实例工程根），如 `.agents`、`.codex`。
+   * `agent_adapter === "generic"` 时必填。
+   */
+  agent_bundle_root?: string;
+  /**
+   * generic adapter：bundle 内 skills 物化方式。
+   * - `inline`：从 `framework/skills/` 生成带 frontmatter 的完整 SKILL（strict 类 agent）
+   * - `bridge`：薄跳板 + 链接（Cursor 类等会跟进链接的 agent）
+   */
+  agent_bundle_skill_mode?: AgentBundleSkillMode;
 }
+
+export type AgentBundleSkillMode = 'bridge' | 'inline';
 
 /** PRD harness Visual Handoff 守门档位（`prd` 段为 opt-in 时写入） */
 export type VisualHandoffEnforcementMode = 'strict' | 'warn' | 'reachable' | 'off';
@@ -418,6 +431,39 @@ export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
   cross_module_exports_file: 'index.ets',
 };
 
+function mergeAgentBundlePathDefaults(paths: FrameworkPaths, agentAdapter: string): FrameworkPaths {
+  if (agentAdapter !== 'generic') {
+    return paths;
+  }
+  const next = { ...paths };
+  if (!next.agent_bundle_root || !String(next.agent_bundle_root).trim()) {
+    next.agent_bundle_root = '.agents';
+  }
+  if (next.agent_bundle_skill_mode === undefined || next.agent_bundle_skill_mode === null) {
+    next.agent_bundle_skill_mode = 'inline';
+  }
+  return next;
+}
+
+function validateAgentBundleForConfig(cfg: FrameworkConfig): void {
+  if (cfg.agent_adapter !== 'generic') {
+    return;
+  }
+  const root = typeof cfg.paths.agent_bundle_root === 'string' ? cfg.paths.agent_bundle_root.trim() : '';
+  if (!root) {
+    throw new Error(
+      '[agent-bundle] agent_adapter=generic 时必须配置 paths.agent_bundle_root（如 ".agents"）',
+    );
+  }
+  if (root.includes('..') || path.isAbsolute(root) || /^[a-zA-Z]:/.test(root)) {
+    throw new Error('[agent-bundle] paths.agent_bundle_root 必须是相对实例工程根的安全路径');
+  }
+  const mode = cfg.paths.agent_bundle_skill_mode;
+  if (mode !== undefined && mode !== 'bridge' && mode !== 'inline') {
+    throw new Error('[agent-bundle] paths.agent_bundle_skill_mode 必须是 bridge 或 inline');
+  }
+}
+
 export const DEFAULT_PATHS: FrameworkPaths = {
   features_dir: 'doc/features',
   module_catalog: 'doc/module-catalog.yaml',
@@ -501,6 +547,7 @@ export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
   if (config.state_machine) {
     validateStateMachine(config.state_machine);
   }
+  validateAgentBundleForConfig(config);
 
   cachedConfig = { root: projectRoot, config };
   return config;
@@ -535,6 +582,7 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
     ? normalizeArchitecture(profileDefaults.architecture as Partial<ArchitectureDsl>, LEGACY_DEFAULT_DSL)
     : cloneDsl(LEGACY_DEFAULT_DSL);
   const pathsDefault = applyDefaults(profileDefaults.paths ?? {}, DEFAULT_PATHS) as FrameworkPaths;
+  const agentAdapter = 'generic';
   return {
     schema_version: '1.1',
     project_name: 'unknown',
@@ -543,9 +591,9 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
       name: projectProfileDefault.name ?? profileName,
       ...(projectProfileDefault.sub_variant ? { sub_variant: projectProfileDefault.sub_variant } : {}),
     },
-    agent_adapter: 'generic',
+    agent_adapter: agentAdapter,
     architecture: architectureDefault,
-    paths: { ...pathsDefault },
+    paths: mergeAgentBundlePathDefaults({ ...pathsDefault }, agentAdapter),
     state_machine: { ...DEFAULT_STATE_MACHINE },
     active_workflow: 'spec-driven',
     lifecycle_hooks_enabled: true,
@@ -673,7 +721,10 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     architecture: raw.architecture
       ? normalizeArchitecture(raw.architecture, fallback.architecture)
       : fallback.architecture,
-    paths: { ...fallback.paths, ...(raw.paths ?? {}) },
+    paths: mergeAgentBundlePathDefaults(
+      { ...fallback.paths, ...(raw.paths ?? {}) },
+      raw.agent_adapter ?? fallback.agent_adapter,
+    ),
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
     prd: normalizePrdHarness(raw.prd),

@@ -1,0 +1,36 @@
+---
+description: Framework 全局提示——任何阶段都必须遵守的核心约束索引
+alwaysApply: true
+---
+
+# Framework 全局规则
+
+本规则在支持 rules 机制的 agent 中作为会话级强制提示。**详细内容**参见 `AGENTS.md` 与 `framework/specs/phase-rules/`——本文件只做重点索引，不复述。
+
+## 永恒原则
+
+1. **前置阅读**：每次对话开始，先读完 `AGENTS.md`（agent 入口指令）。
+2. **单点真相**：
+   - 架构与模块划分 → `framework.config.json` 的 `architecture` 段 + `doc/architecture.md`
+   - 模块画像 → `doc/module-catalog.yaml`
+   - 业务术语 → `doc/glossary.yaml`
+   - 阶段规则 → `framework/specs/phase-rules/<phase>-rules.yaml`
+3. **Skill 路由**：
+   - 进入某阶段前必须完整读对应 `framework/skills/<n>/SKILL.md`，不要凭 bundle 内摘要动手。
+   - **bridge 模式**（如 Cursor `.cursor/skills/`）：bundle 内 `SKILL.md` 仅为跳板，真实逻辑在 `framework/skills/<n>/SKILL.md`。
+   - **inline 模式**（generic + `paths.agent_bundle_skill_mode: inline`，如 `.agents/skills/`）：bundle 内为从 `framework/skills/` 物化的**完整**正文，可直接加载。
+   - **禁止向跳板追加**业务条款、选型表或次级文档链接。扩写写在 `framework/skills/<n>/` 正文及其 `prompts/`、`templates/`、`reference/`；跳板形态改 `framework/agents/shared/agent-bundle/templates/`，经 init/render 下发。
+4. **BLOCKER 级守门**：架构依赖、术语映射、Scope、design impact、宿主 lint/compile、Harness + verifier——见 `AGENTS.md`。
+5. **架构文档门禁**：`doc/architecture.md` 只承载架构级契约；feature 级变更由 git 与 `doc/features/<feature>/` 承担。
+6. **产物即契约**：写完 PRD / design 即被后续阶段当 SSOT 用。
+7. **最小改动**：任何不在原始诉求内的修改先问再做。
+8. **Harness 校验**：每阶段完成后跑 `framework/harness/harness-runner.ts` 并由独立 verifier 审一轮。
+
+## Framework 优先修改原则
+
+- 优先改 `framework/` 源头资产，而非只在实例 bundle（`.cursor/`、`paths.agent_bundle_root` 下目录）手补。
+- 维护跳板模板：`framework/agents/shared/agent-bundle/templates/`；经 Skill 00 / render 下发到实例。
+
+## 冲突处理
+
+若本文件与 `AGENTS.md` / `framework/specs/phase-rules/*.yaml` 冲突，**一律以后者为准**。

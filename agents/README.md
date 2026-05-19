@@ -50,7 +50,7 @@ framework/agents/
 
 | `adapter_name`（目录名） | 入口文件（`agent_entry_file.target_path`） | 典型额外产物 |
 |--------------------------|--------------------------------------------|--------------|
-| `generic` | `AGENTS.md` | 无 |
+| `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`、`.cursor/rules/framework.mdc` |
 
@@ -77,7 +77,7 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 |--------------|--------------|
 | 已大量使用 **Claude Code** 的 slash 命令流程 | `claude` |
 | 已大量使用 **Cursor** 的技能跳板 / workspace rules | `cursor` |
-| 希望最少生成物、与具体 IDE 耦合最弱 | `generic` |
+| 使用 Chrys / `.agents/skills/` 等 strict 加载器，或需自定义 agent 目录名 | `generic`（配置 `paths.agent_bundle_root` + 默认 `inline` 物化） |
 
 切换 adapter 时：旧入口与其它产物路径可能与新 adapter **不一致**（例如 `.claude/` 与 `.cursor/` 可能在仓库中并存）；须列出「建议删除或手工处理的遗留目录」请用户确认，**不要自动 `rm -rf`**。
 
@@ -107,9 +107,9 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 | adapter | 入口文件 | slash | skill 跳板 | rules | settings_file | hooks |
 |---------|---------|-------|-----------|-------|---------------|-------|
-| generic | AGENTS.md | — | — | — | — | — |
+| generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（inline 或 bridge） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | — | `.claude/settings.json` | `.claude/hooks/*.mjs` |
-| cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md` | `.cursor/rules/framework.mdc` | — | — |
+| cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
 

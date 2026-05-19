@@ -1,5 +1,5 @@
 ---
-name: prd-design
+name: 1-prd-design
 description: PRD 撰写（完整流程见仓库 framework/skills/1-prd-design/SKILL.md）
 ---
 

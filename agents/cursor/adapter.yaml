@@ -13,24 +13,18 @@ commands: null
 
 skill_bridge:
   target_dir: .cursor/skills                    # 相对于实例工程根
-  template_dir: templates/skills                # 相对于 adapter 目录
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
 
 instance_skill_bridge:
   skill_stub_target_dir: .cursor/skills
 
 rules:
   target_dir: .cursor/rules
-  template_dir: templates/rules
+  template_dir: ../shared/agent-bundle/templates/rules
 
 post_install_hooks: []
 
 notes: |
-  - 提供 8 份 skill 跳板模板：Skill 00（00-framework-init）、Skill 0~6；Skill 0
-    的 Phase A/B（catalog / glossary）合用一份跳板（`0-catalog-bootstrap`），属本 adapter 约定，与具体业务仓库名无关。
-  - skill 跳板 SKILL.md 的相对路径假设：实例根下存在 `framework/` 子目录（常见为 git submodule），跳板文件位于
-    `.cursor/skills/<skill>/SKILL.md`，跳转到 `../../../framework/skills/<n>/SKILL.md`。移植到其它仓库时以本文件的
-    `skill_bridge.target_dir` / `template_dir` 为准。
-  - .cursor/rules/framework.mdc 只承载"无论何时都必须遵守"的跨阶段提示，
-    详细规则留在 framework/specs/phase-rules/ 与 CLAUDE.md/AGENTS.md。
-  - skill 跳板若需增链接或说明：改 `framework/agents/cursor/templates/skills/**`
-    与 `framework/skills/**` 正文，经 init/render 下发；禁止只在实例 `.cursor/skills` 手工扩写。
+  - Skill 跳板模板 SSOT：`framework/agents/shared/agent-bundle/templates/skills-bridge/`。
+  - 8 份内置 skill 跳板；`0-catalog-bootstrap` 的 Phase A/B 合用一份跳板。
+  - 跳板 `name` 必须与目录名一致（含 `00-`/`0-` 数字前缀）。

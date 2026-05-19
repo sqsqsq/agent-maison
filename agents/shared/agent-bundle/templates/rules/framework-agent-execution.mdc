@@ -48,5 +48,5 @@ alwaysApply: true
 
 ## 5. 维护说明
 
-- 源头：`framework/agents/cursor/templates/rules/framework-agent-execution.mdc`
-- 实例：`.cursor/rules/framework-agent-execution.mdc`（framework-init / render 下发或手工同步）
+- 源头：`framework/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc`
+- 实例：`<agent_bundle_root>/rules/` 或 `.cursor/rules/`（framework-init / render 下发）

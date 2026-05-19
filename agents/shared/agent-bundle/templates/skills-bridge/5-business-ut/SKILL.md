@@ -1,5 +1,5 @@
 ---
-name: business-ut
+name: 5-business-ut
 description: 业务级 UT / DAG（完整流程见 framework/skills/5-business-ut/SKILL.md）
 ---
 

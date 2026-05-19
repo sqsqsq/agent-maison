@@ -1,5 +1,5 @@
 ---
-name: device-testing
+name: 6-device-testing
 description: 真机测试计划与报告（完整流程见 framework/skills/6-device-testing/SKILL.md）
 ---
 
