@@ -30,11 +30,14 @@ export interface DeviceTestInstallOptions {
   phase: string;
   hapPath: string;
   skipEnvVar?: string;
+  /** 上游 build 是否复用已有 HAP（用于装机复用启发） */
+  buildReused?: boolean;
 }
 
 export interface DeviceTestInstallResult {
   executed: boolean;
   skippedByEnv?: boolean;
+  reused?: boolean;
   probe: DeviceProbeResult;
   install?: HdcInstallResult;
   ok: boolean;
@@ -45,6 +48,19 @@ export interface DeviceTestInstallResult {
 function envTruthy(name: string): boolean {
   const v = process.env[name]?.trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
+}
+
+function envForceInstall(): boolean {
+  return envTruthy('HARNESS_DEVICE_TEST_FORCE_INSTALL');
+}
+
+function hapFileFingerprint(hapPath: string): { mtimeMs: number; size: number } | null {
+  try {
+    const st = fs.statSync(hapPath);
+    return { mtimeMs: st.mtimeMs, size: st.size };
+  } catch {
+    return null;
+  }
 }
 
 function writeInstallArtifacts(
@@ -64,6 +80,9 @@ function writeInstallArtifacts(
     downgradeBlocked: boolean;
     uninstallAttempted: boolean;
     keepUserData: boolean;
+    reused?: boolean;
+    hapMtimeMs?: number | null;
+    hapSizeBytes?: number | null;
   },
 ): string | undefined {
   try {
@@ -94,6 +113,9 @@ function writeInstallArtifacts(
           uninstallAttempted: payload.uninstallAttempted,
           uninstallKeepUserData: payload.keepUserData,
           installDiagnosisKind: payload.install?.diagnosis?.kind ?? null,
+          reused: Boolean(payload.reused),
+          hapMtimeMs: payload.hapMtimeMs ?? null,
+          hapSizeBytes: payload.hapSizeBytes ?? null,
           timestamp: new Date().toISOString(),
         },
         null,
@@ -153,6 +175,26 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     };
   }
 
+  const hapFp = hapFileFingerprint(opts.hapPath);
+  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+  const prevMetaPath = path.join(reportDir, 'device-test-install.meta.json');
+  type PrevInstallMeta = {
+    hapMtimeMs?: number | null;
+    hapSizeBytes?: number | null;
+    bundleName?: string;
+    candidateVersionCode?: number | null;
+    deviceVersionCodeParsed?: number | null;
+    deviceInstalledProbe?: boolean;
+  };
+  let prevMeta: PrevInstallMeta | null = null;
+  if (fs.existsSync(prevMetaPath)) {
+    try {
+      prevMeta = JSON.parse(fs.readFileSync(prevMetaPath, 'utf-8')) as PrevInstallMeta;
+    } catch {
+      prevMeta = null;
+    }
+  }
+
   const uninstallBefore = envTruthy('HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL');
   const keepUserData = envTruthy('HARNESS_DEVICE_TEST_UNINSTALL_KEEP_DATA');
 
@@ -174,8 +216,68 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   const devVc = installedParse.versionCode;
   const candVc = candidate.versionCode;
 
+  /** bm dump 在部分 HarmonyOS 版本上会把 versionCode 误解析为 0；仅在可确信更高版本已装时判降级。 */
   const downgradeDetected =
-    candVc !== null && installedParse.installed && devVc !== null && devVc > candVc;
+    candVc !== null &&
+    installedParse.installed &&
+    devVc !== null &&
+    devVc > 0 &&
+    devVc > candVc;
+
+  const versionAllowsReuse =
+    devVc === null ||
+    candVc === null ||
+    devVc === candVc ||
+    (devVc === 0 && candVc !== null && candVc > 0);
+
+  const canReuseInstall =
+    !envForceInstall() &&
+    !uninstallBefore &&
+    !downgradeDetected &&
+    Boolean(opts.buildReused) &&
+    hapFp !== null &&
+    prevMeta !== null &&
+    prevMeta.hapMtimeMs === hapFp.mtimeMs &&
+    prevMeta.hapSizeBytes === hapFp.size &&
+    prevMeta.bundleName === candidate.bundleName &&
+    prevMeta.candidateVersionCode === candVc &&
+    prevMeta.deviceInstalledProbe === true &&
+    installedParse.installed &&
+    versionAllowsReuse;
+
+  if (canReuseInstall) {
+    const logLines = [
+      `[hap] ${opts.hapPath}`,
+      `[reuse] 跳过 hdc install：HAP 未变且设备已装同 bundle/versionCode`,
+      `[hap_fp] mtimeMs=${hapFp!.mtimeMs} size=${hapFp!.size}`,
+    ];
+    const logPath = writeInstallArtifacts(opts, {
+      logLines,
+      ok: true,
+      bundleName: candidate.bundleName,
+      candidateVersionCode: candVc,
+      candidateVersionName: candidate.versionName,
+      bmDumpExitCode: bmDump.exitCode,
+      deviceInstalledProbe: installedParse.installed,
+      deviceVersionCodeParsed: devVc,
+      deviceParseAmbiguous: Boolean(installedParse.ambiguous),
+      downgradeDetected: false,
+      downgradeBlocked: false,
+      uninstallAttempted: false,
+      keepUserData,
+      reused: true,
+      hapMtimeMs: hapFp!.mtimeMs,
+      hapSizeBytes: hapFp!.size,
+    });
+    return {
+      executed: false,
+      reused: true,
+      probe,
+      ok: true,
+      logPath,
+      errors: [],
+    };
+  }
 
   const logLines: string[] = [];
   logLines.push(`[hap] ${opts.hapPath}`);
@@ -259,10 +361,14 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     downgradeBlocked,
     uninstallAttempted,
     keepUserData,
+    reused: false,
+    hapMtimeMs: hapFp?.mtimeMs ?? null,
+    hapSizeBytes: hapFp?.size ?? null,
   });
 
   return {
     executed: true,
+    reused: false,
     probe,
     install,
     ok,

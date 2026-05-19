@@ -337,6 +337,22 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'hvigor diagnostics: spawn java ENOENT 给出签名链 / JBR / stop-daemon 提示',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics([
+        '> hvigor ERROR: Failed :Phone:default@PackageHap...',
+        'Error Code: 00308018 Unknown Error',
+        'spawn java ENOENT',
+      ].join('\n'));
+      if (!diagnostics.some(d => d.includes('spawn java ENOENT'))) {
+        throw new Error(`应包含 java ENOENT 诊断：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('stop-daemon'))) {
+        throw new Error(`应提及 stop-daemon：${JSON.stringify(diagnostics)}`);
+      }
+    },
+  },
+  {
     name: 'project dependency issue: Failed to resolve OhmUrl 识别依赖缺失与安装建议',
     run: () => withTmpDir(root => {
       writeFile(path.join(root, 'oh-package.json5'), [

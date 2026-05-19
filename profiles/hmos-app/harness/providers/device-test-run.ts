@@ -20,7 +20,10 @@ import {
   writeInstallFingerprint,
 } from '../hylyre-vendor-sync';
 import { hdcTargetPrefix, resolveHdcExecutableSync } from '../hdc-runner';
+import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
 import type { CapabilityProvider } from './types';
+
+export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug } from '../device-test-page-save';
 
 export const provider: CapabilityProvider = {
   id: 'hylyre',
@@ -984,20 +987,17 @@ function tryHylyreAppPageSaveAfterRun(args: {
   deviceSn: string | undefined;
   appSnapshotCacheAbs: string;
   logPath: string;
-}): { attempted: boolean; exitCode: number | null } {
-  const pipArgs = [
-    '-m',
-    'hylyre',
-    'app',
-    'page',
-    'save',
-    '--bundle',
-    args.bundleName,
-  ];
-  if (args.deviceSn && args.deviceSn.trim()) {
-    pipArgs.push('--device-sn', args.deviceSn.trim());
-  }
+  abilityName?: string | null;
+  pageSlug?: string | null;
+}): { attempted: boolean; exitCode: number | null; durationMs: number } {
+  const pipArgs = buildHylyreAppPageSaveArgv({
+    bundleName: args.bundleName,
+    deviceSn: args.deviceSn,
+    abilityName: args.abilityName,
+    pageSlug: args.pageSlug,
+  });
   appendLogSync(args.logPath, `\n$ ${args.pythonPath} ${pipArgs.join(' ')}\n`);
+  const t0 = Date.now();
   const r = spawnSync(args.pythonPath, pipArgs, {
     cwd: args.projectRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1014,7 +1014,7 @@ function tryHylyreAppPageSaveAfterRun(args: {
       `hylyre app page save 结束 exit=${r.status}（非致命；缓存可能未更新）\n`,
     );
   }
-  return { attempted: true, exitCode: r.status };
+  return { attempted: true, exitCode: r.status, durationMs: Date.now() - t0 };
 }
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
@@ -1107,6 +1107,8 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const command = `${opts.pythonPath} ${args.join(' ')}`;
   appendLogSync(logPath, `${command}\n`);
 
+  const runStartedAt = new Date().toISOString();
+  const runT0 = Date.now();
   const run = spawnSync(opts.pythonPath, args, {
     cwd: opts.projectRoot,
     env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
@@ -1167,7 +1169,11 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     deviceSn: opts.deviceSn,
     appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
     logPath,
+    abilityName: pageName,
   });
+
+  const runEndedAt = new Date().toISOString();
+  const runDurationMs = Date.now() - runT0;
 
   fs.writeFileSync(
     metaPath,
@@ -1185,10 +1191,14 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         aa_start_ok: pageName ? true : null,
         omit_bundle_for_hylyre: omitBundleForHylyre,
         deviceSn: opts.deviceSn ?? null,
-        ran_at: new Date().toISOString(),
+        run_started_at: runStartedAt,
+        run_ended_at: runEndedAt,
+        run_duration_ms: runDurationMs,
+        ran_at: runEndedAt,
         hylyre_page_save: {
           attempted: pageSave.attempted,
           exit_code: pageSave.exitCode,
+          duration_ms: pageSave.durationMs,
         },
         trace_summary: trace
           ? {

@@ -269,11 +269,12 @@ framework/profiles/<project_profile.name>/skills/6-device-testing/templates/test
 
 #### Step 5.1 自 Hylyre trace 回填执行状态（必做）
 
-1. 解析 **`trace.json`**：`cases[]` 中每条含 **`id`**（与派生表 `用例编号` 对齐）、**`status`**（**通过 / 失败 / 阻塞 / 跳过**）、**`notes`**（可选）。
-2. **构建行集**：
+1. 读取 **`doc/features/<feature>/testing/reports/device-test-timing.json`**（harness 在 `device_test.run` 成功后写入）。填充测试概览 **「真机流水线耗时」** 表（区分 `build_reused` / `install_reused` 与 `hapBuiltAt`）；在执行结果表增加 **耗时** 列（来自 `cases[].duration_ms`，格式如 `12.4s`）。
+2. 解析 **`trace.json`**：`cases[]` 中每条含 **`id`**（与派生表 `用例编号` 对齐）、**`status`**（**通过 / 失败 / 阻塞 / 跳过**）、**`notes`**（可选）。
+3. **构建行集**：
    - 对 **派生表中出现**的 TC：以 **`cases[]`** 为准写状态与备注；若某 TC 无 case 记录但 run 整体失败 → 标 **阻塞** 或 **失败** 并注原因。
    - 对 **仅在顶层 `test-plan.md`、未进派生表**的 TC：**跳过**，备注示例：「缺少稳定 selector，需补 design.md / contracts.yaml」。
-3. **不要**与 Hylyre 状态枚举混用其它字样（门禁与 receipt 校验依赖一致词表）。
+4. **不要**与 Hylyre 状态枚举混用其它字样（门禁与 receipt 校验依赖一致词表）。
 
 #### Step 5.2 模板五章与结论
 

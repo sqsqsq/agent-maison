@@ -490,14 +490,31 @@ function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
       ? path.join(jbrHome, 'bin', 'java.exe')
       : path.join(jbrHome, 'bin', 'java');
     if (fs.existsSync(javaExe)) {
-      if (!env.JAVA_HOME) env.JAVA_HOME = jbrHome;
+      const existingHome = env.JAVA_HOME;
+      const existingJava =
+        existingHome && typeof existingHome === 'string'
+          ? path.join(
+              existingHome,
+              'bin',
+              process.platform === 'win32' ? 'java.exe' : 'java',
+            )
+          : '';
+      if (!existingHome || !fs.existsSync(existingJava)) {
+        env.JAVA_HOME = jbrHome;
+      }
       const jbrBin = path.join(jbrHome, 'bin');
       const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
       const cur = env[pathKey] ?? env.PATH ?? '';
       const sep = process.platform === 'win32' ? ';' : ':';
-      if (!cur.split(sep).some(p => path.resolve(p) === path.resolve(jbrBin))) {
-        env[pathKey] = cur ? `${jbrBin}${sep}${cur}` : jbrBin;
-      }
+      // 始终前插 DevEco JBR，避免用户 Path 无 java 导致 PackageHap/SignHap spawn ENOENT
+      const rest = cur
+        .split(sep)
+        .map(p => p.trim())
+        .filter(p => p && path.resolve(p) !== path.resolve(jbrBin));
+      const merged = [jbrBin, ...rest].join(sep);
+      env[pathKey] = merged;
+      if (pathKey === 'Path') env.PATH = merged;
+      else env.Path = merged;
     }
   }
 
@@ -719,6 +736,20 @@ export function buildHvigorDiagnostics(log: string): string[] {
   if (hasIncrementalInputMissing && /--daemon/.test(log)) {
     diagnostics.push(
       '`--daemon` 已启用；若 00308018 只在命令行 harness 复现，请补充 daemon=false 的对比日志，以排除 daemon 复用脏增量状态。',
+    );
+  }
+
+  const javaSpawnEnoent =
+    /spawn\s+java\s+ENOENT/i.test(log) ||
+    (/ENOENT/i.test(log) && /spawn\s+java/i.test(log));
+  if (javaSpawnEnoent) {
+    diagnostics.push(
+      [
+        '检测到 PackageHap/SignHap 阶段 spawn java ENOENT：签名链找不到 java 可执行文件（非 ArkTS 编译错误）。',
+        'Harness 已从 framework.config → toolchain.devEcoStudio.installPath 推导 DevEco JBR 并前插 Path/JAVA_HOME。',
+        '真机 testing 在「源码触发重编」前会自动执行 hvigor --stop-daemon，避免旧 daemon worker 沿用无 java 的环境。',
+        '若仍失败：在 DevEco 内 Build Hap 一次，或确认系统 JAVA_HOME 未指向无效目录。',
+      ].join(' '),
     );
   }
 
@@ -1291,6 +1322,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     invocationDriver: spawnPlan.invocationDriver,
     envProbe: {
       DEVECO_SDK_HOME: Boolean(childEnv.DEVECO_SDK_HOME),
+      JAVA_HOME: typeof childEnv.JAVA_HOME === 'string' ? childEnv.JAVA_HOME : null,
       DEVECO_STUDIO_HOME: Boolean(process.env.DEVECO_STUDIO_HOME),
       HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),
     },
@@ -1403,6 +1435,24 @@ export function runHvigorBuild(
     args,
     logBasename: 'hvigor-build.log',
     timeoutKind: 'ut',
+    requireSuccessMarker: false,
+  });
+}
+
+/**
+ * 停止 hvigor daemon（真编译前调用，避免旧 worker 进程缺少 JBR/java 导致 PackageHap ENOENT）。
+ * 失败不阻断后续 assemble；仅 best-effort。
+ */
+export function stopHvigorDaemon(
+  opts: Pick<HvigorInvokeOpts, 'projectRoot' | 'harnessRoot' | 'feature' | 'phase'>,
+): void {
+  const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, ['--stop-daemon']);
+  if ('toolMissing' in resolved) return;
+  invokeHvigor({
+    ...opts,
+    spawnPlan: resolved.spawnPlan,
+    logBasename: 'hvigor-stop-daemon.log',
+    timeoutKind: 'coding',
     requireSuccessMarker: false,
   });
 }

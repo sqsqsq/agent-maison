@@ -92,7 +92,8 @@ structure_checks:
   device_test_build:
     description: >
       当 project_profile 将 device_test.build 声明为 BLOCKER 且未 SKIP 时，
-      harness 必须通过 hvigor 编译产出可安装的主应用 signed HAP，并落盘编译日志；
+      harness 必须产出可安装的主应用 signed HAP（执行 hvigor 或按源码 mtime 复用已有 HAP，
+      `reused: true` 时门禁仍为 PASS）；并落盘编译日志/result.json；
       声明 SKIP 时本检查 SKIP。
     severity: BLOCKER
 

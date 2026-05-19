@@ -54,6 +54,10 @@ import {
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
 import type { HylyreReadyResult, HylyreRunResult } from '../../profiles/hmos-app/harness/providers/device-test-run';
+import {
+  collectDeviceTestTimings,
+  writeDeviceTestTimingJson,
+} from '../../profiles/hmos-app/harness/device-test-timings';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1197,6 +1201,7 @@ const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
 interface DeviceTestPipelineHolder {
   hapPath: string | null;
   installPassed: boolean;
+  buildReused: boolean;
 }
 
 function checkDeviceTestBuildGate(
@@ -1228,6 +1233,7 @@ function checkDeviceTestBuildGate(
     }) as DeviceTestBuildResult;
 
     out.hapPath = res.hapPath;
+    out.buildReused = Boolean(res.reused);
 
     const hv = res.hvigor;
     if (hv.skippedByEnv) {
@@ -1256,11 +1262,12 @@ function checkDeviceTestBuildGate(
     }
 
     const compileOk =
-      hv.executed &&
-      !hv.timedOut &&
-      hv.exitCode === 0 &&
-      (hv.errors?.length ?? 0) === 0 &&
-      hv.successMarkerFound !== false;
+      Boolean(res.reused) ||
+      (hv.executed &&
+        !hv.timedOut &&
+        hv.exitCode === 0 &&
+        (hv.errors?.length ?? 0) === 0 &&
+        hv.successMarkerFound !== false);
 
     if (!compileOk) {
       return [
@@ -1275,6 +1282,9 @@ function checkDeviceTestBuildGate(
             `命令：${hv.command ?? '(unknown)'}`,
             `日志：${hv.logPath ?? '(无)'}`,
             res.hapPath ? `解析 HAP：${res.hapPath}` : '未解析到 signed 主 HAP（编译失败或未产出）',
+            ...(hv.diagnostics?.length
+              ? ['', '── harness 诊断 ──', ...hv.diagnostics.map(d => `• ${d}`)]
+              : []),
             '',
             hv.logExcerpt ?? '',
           ].join('\n'),
@@ -1298,6 +1308,10 @@ function checkDeviceTestBuildGate(
       ];
     }
 
+    const reuseLine = res.reused
+      ? `复用 HAP（跳过 hvigor）：${res.reuseReason ?? ''}；hapBuiltAt=${res.hapBuiltAt ?? '(未知)'}`
+      : `hvigor 已执行；日志: ${hv.logPath ?? '(无)'}`;
+
     return [
       {
         id,
@@ -1308,7 +1322,7 @@ function checkDeviceTestBuildGate(
         details: [
           `product=${res.resolvedProduct} buildMode=${res.resolvedBuildMode}`,
           `HAP: ${res.hapPath}`,
-          `hvigor 日志: ${hv.logPath ?? '(无)'}`,
+          reuseLine,
         ].join('\n'),
       },
     ];
@@ -1380,6 +1394,7 @@ function checkDeviceTestInstallGate(
       feature: ctx.feature,
       phase: ctx.phase,
       hapPath,
+      buildReused: holder.buildReused,
     }) as DeviceTestInstallResult;
 
     if (res.skippedByEnv) {
@@ -1412,6 +1427,10 @@ function checkDeviceTestInstallGate(
 
     holder.installPassed = true;
 
+    const installDetail = res.reused
+      ? `复用装机（跳过 hdc install）：${hapPath}`
+      : `已安装: ${hapPath}`;
+
     return [
       {
         id,
@@ -1419,7 +1438,7 @@ function checkDeviceTestInstallGate(
         description: desc,
         severity: 'BLOCKER',
         status: 'PASS',
-        details: [`已安装: ${hapPath}`, res.logPath ? `日志: ${res.logPath}` : ''].filter(Boolean).join('\n'),
+        details: [installDetail, res.logPath ? `日志: ${res.logPath}` : ''].filter(Boolean).join('\n'),
       },
     ];
   } catch (err) {
@@ -1774,6 +1793,20 @@ function checkDeviceTestRunGate(
     const summary = run.trace
       ? `outcome=${run.trace.outcome}, cases=${(run.trace.cases ?? []).length}`
       : '无 trace.json';
+
+    try {
+      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+      const timingDoc = collectDeviceTestTimings({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        reportsDir,
+        hylyreTracePath: run.tracePath,
+      });
+      writeDeviceTestTimingJson(reportsDir, timingDoc);
+    } catch {
+      /* timing 汇总失败不阻断 run 门禁 */
+    }
+
     return [
       {
         id,
@@ -1881,7 +1914,11 @@ const checker: PhaseChecker = {
 
     const results: CheckResult[] = [];
 
-    const deviceTestHapHolder: DeviceTestPipelineHolder = { hapPath: null, installPassed: false };
+    const deviceTestHapHolder: DeviceTestPipelineHolder = {
+      hapPath: null,
+      installPassed: false,
+      buildReused: false,
+    };
     results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));

@@ -20,17 +20,34 @@
 | 执行用例数 | {N} |
 | 跳过用例数 | {N} |
 
+### 真机流水线耗时
+
+> 数据来源：`doc/features/{module-name}/testing/reports/device-test-timing.json`（harness 在 `device_test.run` 成功后写入）。
+
+| 阶段 | 耗时 | 说明 |
+|------|------|------|
+| 打包 (hvigor) | {build_duration} | {build_reused_note} |
+| 装机 (hdc) | {install_duration} | {install_reused_note} |
+| Hylyre 自动化 | {hylyre_run_duration} | 含设备预启动 |
+| 快照写入 (page save) | {page_save_duration} | 非致命 |
+| **合计（脚本统计）** | **{pipeline_total}** | harness 各阶段之和 |
+
+| 元数据 | 值 |
+|--------|-----|
+| HAP 落盘时间 (hapBuiltAt) | {hap_built_at} |
+| 本次 harness 跑 build 门禁时刻 | {harness_build_ran_at} |
+
 ---
 
 ## 二、测试执行结果
 
-| 用例编号 | 用例名称 | 优先级 | 执行状态 | 备注 |
-|----------|---------|--------|---------|------|
-| TC-001 | {用例名称} | P0 | 通过 | |
-| TC-002 | {用例名称} | P0 | 失败 | 关联 DEF-001 |
-| TC-003 | {用例名称} | P1 | 通过 | |
-| TC-004 | {用例名称} | P1 | 阻塞 | 依赖 TC-002 修复 |
-| ... | ... | ... | ... | ... |
+| 用例编号 | 用例名称 | 优先级 | 执行状态 | 耗时 | 备注 |
+|----------|---------|--------|---------|------|------|
+| TC-001 | {用例名称} | P0 | 通过 | 1.2s | |
+| TC-002 | {用例名称} | P0 | 失败 | 5.0s | 关联 DEF-001 |
+| TC-003 | {用例名称} | P1 | 通过 | 0.8s | |
+| TC-004 | {用例名称} | P1 | 阻塞 | — | 依赖 TC-002 修复 |
+| ... | ... | ... | ... | ... | ... |
 
 > **备注列填写规则**（真机自动化集成）：「失败」填关联缺陷编号（如 `DEF-001`）；「阻塞」填阻塞原因（如真机断连、依赖未修复）；「跳过」填跳过原因（工具链自报，或 agent 标注「缺少稳定 selector，需补 design.md / contracts.yaml」）。
 

@@ -6,9 +6,13 @@
 
 与 **`coding.compile`** 类似，`testing` 阶段可由脚本 harness 触发 **`device_test.build`**（hvigor，产出 **`reports/<feature>/testing/hvigor-app-build.log`**）及 **`device_test.install`**（`hdc install -r`，日志 **`hdc-app-install.log`**）。能力与 **`profile.yaml > capabilities`** 对齐：`hvigor_app` / `hdc_app`。
 
-- **产物指纹**：成功时在 **`reports/<feature>/testing/device-test-build.result.json`** 写入 `resolvedProduct`、`resolvedBuildMode`、`hapPath` 等字段。
+- **产物指纹**：成功时在 **`reports/<feature>/testing/device-test-build.result.json`** 写入 `resolvedProduct`、`resolvedBuildMode`、`hapPath`、`hapBuiltAt`、`reused` 等字段。
+- **HAP 落盘路径**：hvigor 产出在 **`<模块 srcPath>/build/<product>/outputs/default/*-signed.hap`**（如 `01-Product/Phone/build/default/outputs/default/Phone-default-signed.hap`），**不会**复制到 `reports/`；`device-test-build.result.json` 的 `hapPath` 为绝对路径索引。
+- **构建复用**：当 **业务源码 mtime ≤ 已有 HAP mtime** 且 product/buildMode 一致时，**跳过 hvigor**（`reused: true`，门禁仍 PASS）。`timestamp` 为本次跑门禁时刻，**不是** HAP 生成时间——以资源管理器中 HAP 修改时间或 `hapBuiltAt` 为准。
 - **交互默认值**：见 **`framework/profiles/hmos-app/harness/testing-build-conventions.ts`**（导出 **`listAvailableProducts`**、**`describeDeviceTestHarnessEnvHints`** 等）。
 - **可选构建矩阵**：通过环境变量覆盖：`HARNESS_DEVICE_TEST_PRODUCT`、`HARNESS_DEVICE_TEST_BUILD_MODE`（`debug`|`release`）。不要用 **`HARNESS_SKIP_DEVICE_TEST_BUILD` / `HARNESS_SKIP_DEVICE_TEST_INSTALL`** 作为出口——testing harness 会判 **FAIL**。
+- **强制重编**：`HARNESS_DEVICE_TEST_FORCE_BUILD=1` 时始终执行 hvigor。
+- **真编译前停 daemon**：源码新于 HAP、需执行 hvigor 时，harness 会先 **`hvigor --stop-daemon`** 再 assemble，并注入 DevEco **JBR** 到子进程 `Path`（避免旧 daemon worker 在 PackageHap 阶段 `spawn java ENOENT`）。复用 HAP（`reused: true`）时不调 hvigor，亦不停 daemon。
 
 打包语义依赖宿主 **`toolchain.devEcoStudio`/`hvigor`** 配置（与 coding 门禁同源）；装机语义依赖 **`hdc` 可执行并在 PATH**。
 
@@ -30,8 +34,12 @@
 | `HARNESS_HDC_TARGET` | 多设备时指定序列号，所有 `hdc` 子命令（含 `bm dump` / `install` / `uninstall`）前置 `-t`。 |
 | `HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL` | 设为 `1` / `true` / `yes` 时：若预检判定降级，则先 **`bm uninstall`** 再装；若首次 install 失败且尚未卸载过，则卸载后 **再试一次** install。 |
 | `HARNESS_DEVICE_TEST_UNINSTALL_KEEP_DATA` | 与上一变量同时启用时，`bm uninstall` 使用 **`-k`** 保留用户数据。 |
+| `HARNESS_DEVICE_TEST_FORCE_BUILD` | 设为 `1` 时禁止构建复用，强制执行 hvigor。 |
+| `HARNESS_DEVICE_TEST_FORCE_INSTALL` | 设为 `1` 时禁止装机复用，强制执行 `hdc install -r`。 |
 
 默认 **不** 自动卸载（避免误删数据）。Skill 6 Step 1.5 仍要求 agent 与用户对齐 **product/buildMode**；上述变量由 agent 在降级/冲突场景下向用户解释后再选用。
+
+**装机复用**：当 build 已复用、HAP 文件指纹未变且设备已装同 bundle/versionCode 时，可 **跳过 hdc install**（`device-test-install.meta.json` → `reused: true`）。
 
 详细单行清单亦可调用宿主 **`describeDeviceTestHarnessEnvHints()`**（[`testing-build-conventions.ts`](framework/profiles/hmos-app/harness/testing-build-conventions.ts)）。
 
@@ -102,7 +110,7 @@
 ### `hylyre dump-ui` 与快照缓存
 
 - 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `design.md` / `contracts.yaml` 后再派生。
-- **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行一次 **`hylyre app page save --bundle <bundleName>`**（透传 `--device-sn`），把当前页写入快照根目录，供下一轮 `find` / 派生使用。该步骤**失败不会**把本次 `run` 判为失败；详情见同目录 **`device-test-run.log`** 与 **`device-test-run.meta.json`** 的 **`hylyre_page_save`** 字段。
+- **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`），默认 page slug **`home`**（可用 `HARNESS_HYLYRE_PAGE_SAVE_NAME` 覆盖），`--ability` 为 Hypium 主 Ability（如 `PhoneAbility`）。写入 **`doc/app-snapshot-cache/<bundle>/pages/`**。该步骤**失败不会**把本次 `run` 判为失败；见 **`device-test-run.log`** / **`hylyre_page_save`**。
 - **超时**：环境变量 **`HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS`**（毫秒，仅数字；默认 **60000**）覆盖 `spawnSync` 对 `app page save` 的等待上限。
 
 ### plan 派生缺失时的结构化提示
@@ -123,7 +131,8 @@
 ### 报告合成（Step 5）
 
 - Hylyre 子目录产出 **`test-report.md`（5 章节）** 与 **`trace.json`（cases[]）**。
-- Agent 将 **cases[].status** 与顶层计划对齐合并到 **`doc/features/<feature>/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
+- Harness 在 **`device_test.run` 成功后** 写入 **`reports/<feature>/testing/device-test-timing.json`**（流水线各阶段 ms + 各 TC 耗时）。
+- Agent 将 **cases[].status** 与顶层计划对齐合并到 **`doc/features/<feature>/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；**必须**读取 `device-test-timing.json` 填充「真机流水线耗时」表与各用例 **耗时** 列；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
 - 未进入派生计划的 TC 在顶层报告中 **跳过**，备注示例：缺少稳定 selector，需补 design.md / contracts.yaml。
 
 ### 环境变量（摘要）
