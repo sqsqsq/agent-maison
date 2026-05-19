@@ -68,6 +68,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },
   { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
+  { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

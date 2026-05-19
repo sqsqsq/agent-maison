@@ -208,7 +208,7 @@ doc/features/{module-name}/test-plan.md
 
 若 `project_profile` 将 **`device_test.run`** 声明为 **BLOCKER** 且未 **SKIP**，你必须在跑一次 **`testing` harness** 之前，从顶层 **`test-plan.md`**（自然语言步骤表）生成 Hylyre 可消费的 **派生计划**。本小节是 agent 在会话内执行的**操作协议**；具体 JSON 形态、宿主 CLI、`HYLYRE_APP_STORE_DIR` 与「即席」落盘约定见 **profile addendum「真机自动化」** 与模板 `` `profile-skill-asset:6-device-testing/test_plan_hylyre_template` ``。
 
-**门禁提示**：若在跑 harness 前尚未落盘派生文件，`check-testing` 会 **FAIL**，并在 `doc/features/<feature>/testing/reports/derive-hint-from-plan.json` 写入从 **`test-plan.md` 表解析出的结构化 TC 列表**，便于你下一轮直接对照生成 `test-plan.hylyre.md`。另可用 CLI：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`（输出 JSON 到 stdout，或 `--out <path>`）。
+**门禁提示**：`device_test.run` 未 SKIP 时，脚本以顶层 **`test-plan.md`** 为 **SSOT** 校验 Hylyre 派生覆盖：派生表中的 TC ∪ **`explicit_skip_tc_ids`**（派生 md 的 YAML frontmatter 或同目录 **`derive-manifest.json`**）须覆盖顶层全部 `TC-xxx`；否则 **BLOCKER**，并更新 **`derive-hint-from-plan.json`**（`schema: 2`，含 `missing_tc_ids`、`rejected_placeholder_paths` 等）。含 **烟测占位** 等标记的派生文件 **无效**；多目录并存时按 **`test-plan.hylyre.md` 的 mtime** 选最新有效派生（**不再**按目录名字典序）。若仅有占位/缺用例，FAIL 并写 hint。另可用 CLI：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`。
 
 #### Step 4.5.1 解析 TC 表
 
@@ -225,7 +225,7 @@ doc/features/{module-name}/test-plan.md
 3. **`doc/app-snapshot-cache/<bundle>/`**：历史 **`hylyre app page save`** 写入的页面结构（framework 在每次 **`runHylyreDeviceTest`** 结束后会尝试执行 **`app page save`**，失败不阻断 run）。
 4. （可选）设备连线时：`python -m hylyre dump-ui`（或附录中的探索子命令）抓取当前屏，再回填 design/contracts。
 
-仍无可靠 selector 的 TC：**不写入**派生表；在 Step 5 顶层 **test-report.md** 标 **跳过** 并写原因。
+仍无可靠 selector 的 TC：**不写入**派生表行，但必须在派生文件 **frontmatter** 或 **`derive-manifest.json`** 登记 **`explicit_skip_tc_ids`**（否则 harness 判为覆盖不完整）；并在 Step 5 顶层 **test-report.md** 标 **跳过** 并写原因。
 
 #### Step 4.5.3 翻译为 Hylyre JSON 步骤
 
@@ -236,7 +236,7 @@ doc/features/{module-name}/test-plan.md
 #### Step 4.5.4 裁决与跳过登记
 
 - 维护「**进入派生** / **跳过**」两份清单；跳过的须在 Step 5 报告中逐条可见。
-- 派生表中的 **用例编号** 必须 ⊆ 顶层 `test-plan.md`（否则 harness 一致性检查 FAIL）。
+- 派生表中的 **用例编号** 必须 ⊆ 顶层 `test-plan.md`（否则 harness **extra** FAIL）；顶层每一个 TC 必须 **出现于派生表** 或 **`explicit_skip_tc_ids`** 登记中（否则 harness **missing** FAIL）。
 
 #### Step 4.5.5 落盘
 

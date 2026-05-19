@@ -83,7 +83,7 @@
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
   - JSON **5 类根键**：`action` / `touch` / `input` / `swipe` / `scroll`
 - **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
-- **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` 通常需 `selector`（或 Hylyre 文档认可的等价字段）；`action` 用于 `back`、`wait` 等无坐标动作。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。
+- **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
   - 点击：`{"touch":{"selector":{"text":"确认"}}}`
   - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
@@ -98,6 +98,10 @@
 ### plan 派生缺失时的结构化提示
 
 - 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`**：内容来自顶层 **`test-plan.md`**「测试用例」节首张表的解析行（`TC` id、自然语言步骤等），便于下一轮对照生成 Hylyre 表。
+- **SSOT 覆盖门禁（v2）**：顶层 **`test-plan.md`** 为唯一用例清单权威；**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）并上 **显式跳过登记** 必须完整覆盖顶层全部 `TC-xxx`。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。
+- **显式跳过登记**（无法写成可靠 Hylyre JSON 的用例）：在派生 **`test-plan.hylyre.md`** 的 **YAML frontmatter** 中写 `explicit_skip_tc_ids: [TC-010, …]`，或在同目录 **`derive-manifest.json`** 写 `{ "explicit_skip_tc_ids": ["TC-010"] }`（可两项合并去重）。须在 Step 5 **test-report.md** 对应用例标 **跳过** 并说明原因。
+- **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
+- **新鲜度**：若顶层 **`test-plan.md`** 的 mtime **新于**选中的派生文件，脚本 **BLOCKER**（`coverage_reason=stale`），须重派生或更新派生文件。
 - **只读抽取 CLI**（不写入 feature 目录，默认 stdout）：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`；可选 `--out <path>` 写文件。
 
 ### 即席模式（`_adhoc`）

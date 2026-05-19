@@ -55,13 +55,13 @@
 - **严重等级**: BLOCKER（profile 将 `device_test.run` 声明为 BLOCKER 时） / SKIP（profile 声明 SKIP 时）
 - **评估方法**:
   1. 若 profile **`device_test.run`** 为 SKIP → 整项 SKIP
-  2. 检查派生可执行计划是否存在：`doc/features/<feature>/testing/reports/<latest_ts>/hylyre/test-plan.hylyre.md`
+  2. 检查派生可执行计划是否存在：`doc/features/<feature>/testing/reports/<某子目录>/hylyre/test-plan.hylyre.md`（选取规则以脚本为准：排除烟测占位，按 mtime 优先；非「字典序最新目录名」）
   3. 检查派生计划是否含 **`## 测试用例清单`** 标题锚点 + 7 列表头固定顺序（与 Hylyre `plan_parse` / `agent-plan-a` 一致）
   4. 检查顶层 `test-report.md` 是否含 **5 必填章节**：测试概览 / 测试执行结果 / 缺陷清单 / 通过率统计 / 结论
   5. 检查「测试执行结果」表格的「执行状态」列只出现 **4 状态**：通过 / 失败 / 阻塞 / 跳过
   6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
   7. 抽样 3–5 条「失败」/「阻塞」/「跳过」用例，核对派生子目录 **`trace.json`** 的 `cases[]` 中是否有对应 `id` / `status` 记录
-  8. **TC 编号一致性**：顶层 `test-plan.md` 的 TC 集合 ⊇ 派生计划的 TC；不能有「凭空出现」的派生 TC
+  8. **TC 编号一致性（双向 SSOT）**：顶层 `test-plan.md` 的 TC 集合 ⊇ 派生计划的 TC（禁止凭空 TC）；且派生表 ∪ `explicit_skip_tc_ids`（frontmatter 或 `derive-manifest.json`）须覆盖顶层全部 TC——缺漏则脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`
   9. 核对完成回执 `testing_run_artifacts` 中 **`hylyre_report_path` / `hylyre_trace_path`** 与磁盘一致（若 profile 要求）
 
 ### 检查 1: 测试用例完整性 (test_case_completeness)

@@ -28,6 +28,12 @@ import {
 import { featureFilePath, relFeatureFile, featurePhaseReportsDir, resolveHylyreToolConfig } from '../config';
 import { extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 import {
+  extractTcIdsFromPlanTable,
+  selectBestNonPlaceholderDerivedPlan,
+  evaluateDerivedCoverage,
+  loadExplicitSkipTcIds,
+} from './utils/derived-hylyre-plan';
+import {
   extractHeadings,
   getSectionContent,
   extractTables,
@@ -1438,65 +1444,27 @@ function readBundleNameFromAppScope(projectRoot: string): string {
   return m[1];
 }
 
-function extractTcIdsFromPlanTable(planMd: string): string[] {
-  const section = getSectionContent(planMd, '测试用例') ?? '';
-  const tables = extractTables(section);
-  if (tables.length === 0) return [];
-  const t = tables[0];
-  const idx = t.headers.findIndex(h => h.includes('用例编号') || h.includes('编号'));
-  const col = idx >= 0 ? idx : 0;
-  const ids = new Set<string>();
-  for (const row of t.rows) {
-    const cell = row[col] || '';
-    const found = cell.match(/TC-\d+/gi);
-    if (found) {
-      for (const x of found) {
-        ids.add(x.toUpperCase());
-      }
-    }
-  }
-  return [...ids];
-}
+type DeriveHintAugment = {
+  coverage_reason?: 'no_derived' | 'incomplete' | 'stale' | 'extra_in_derived';
+  top_tc_ids?: string[];
+  derived_tc_ids?: string[];
+  missing_tc_ids?: string[];
+  explicit_skip_tc_ids?: string[];
+  selected_derived_path?: string | null;
+  rejected_placeholder_paths?: string[];
+  source_plan_mtime_iso?: string;
+  selected_derived_mtime_iso?: string;
+};
 
-function resolveDerivedHylyrePlan(ctx: CheckContext): { exists: boolean; path: string; expectedDir: string } {
-  const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
-  const expectedDir = path.join(base, '<timestamp>', 'hylyre');
-  if (!fs.existsSync(base)) {
-    return { exists: false, path: '', expectedDir };
-  }
-  const entries = fs
-    .readdirSync(base, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name)
-    .sort()
-    .reverse();
-  for (const name of entries) {
-    const p = path.join(base, name, 'hylyre', 'test-plan.hylyre.md');
-    if (fs.existsSync(p)) {
-      return { exists: true, path: p, expectedDir: path.dirname(p) };
-    }
-  }
-  return { exists: false, path: '', expectedDir };
-}
-
-function verifyDerivedPlanTcConsistency(ctx: CheckContext, derivedPath: string): { extra: string[] } {
-  const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
-  if (!fs.existsSync(topPath)) {
-    return { extra: [] };
-  }
-  const top = fs.readFileSync(topPath, 'utf-8');
-  const derived = fs.readFileSync(derivedPath, 'utf-8');
-  const topIds = new Set(extractTcIdsFromPlanTable(top));
-  const derIds = extractTcIdsFromPlanTable(derived);
-  const extra = derIds.filter(id => !topIds.has(id));
-  return { extra };
+function absToProjectRel(projectRoot: string, abs: string): string {
+  return path.relative(projectRoot, abs).replace(/\\/g, '/');
 }
 
 /**
- * 派生计划缺失时写入 JSON，供 agent 按 test_cases 生成 test-plan.hylyre.md。
+ * 派生计划缺失或不满足 SSOT 覆盖时写入 JSON，供 agent 生成/补齐 test-plan.hylyre.md。
  * @returns 绝对路径；写盘失败时返回 null
  */
-function writeDeriveHintFromPlanJson(ctx: CheckContext): string | null {
+function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment): string | null {
   try {
     const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
     fs.mkdirSync(base, { recursive: true });
@@ -1504,21 +1472,36 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext): string | null {
     const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
     let test_cases = [] as ReturnType<typeof extractTopPlanTestCasesForDeriveHint>;
     let source_relative = relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    let source_plan_mtime_iso: string | undefined;
+    let defaultTopIds: string[] = [];
+
     if (fs.existsSync(topPath)) {
       const raw = fs.readFileSync(topPath, 'utf-8');
       test_cases = extractTopPlanTestCasesForDeriveHint(raw);
+      source_plan_mtime_iso = new Date(fs.statSync(topPath).mtimeMs).toISOString();
+      defaultTopIds = extractTcIdsFromPlanTable(raw);
     } else {
       source_relative = '(test-plan.md 不存在)';
     }
+
     const payload = {
-      schema: 1,
+      schema: 2,
       feature: ctx.feature,
       phase: ctx.phase,
       generated_at: new Date().toISOString(),
       source_relative,
+      source_plan_mtime_iso: aug?.source_plan_mtime_iso ?? source_plan_mtime_iso,
       test_cases,
+      top_tc_ids: aug?.top_tc_ids ?? defaultTopIds,
+      derived_tc_ids: aug?.derived_tc_ids,
+      missing_tc_ids: aug?.missing_tc_ids,
+      explicit_skip_tc_ids: aug?.explicit_skip_tc_ids,
+      selected_derived_path: aug?.selected_derived_path,
+      rejected_placeholder_paths: aug?.rejected_placeholder_paths,
+      coverage_reason: aug?.coverage_reason,
+      selected_derived_mtime_iso: aug?.selected_derived_mtime_iso,
       next_agent_step:
-        '按 profile「真机自动化」章与 test-plan-hylyre-template 生成 testing/reports/<timestamp>/hylyre/test-plan.hylyre.md',
+        '按 profile「真机自动化」章与 test-plan-hylyre-template 在 testing/reports/<新 timestamp>/hylyre/ 落盘 test-plan.hylyre.md；顶层 doc/features/<feature>/test-plan.md 为 SSOT，派生表须覆盖其中全部 TC-xxx，无法在 Hylyre 自动化的条目须在派生文件 YAML frontmatter 或同目录 derive-manifest.json 登记 explicit_skip_tc_ids。勿依赖「烟测占位」类目录。',
     };
     fs.writeFileSync(hintPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
     return hintPath;
@@ -1574,11 +1557,24 @@ function checkDeviceTestRunGate(
       ];
     }
 
-    const derivedPlan = resolveDerivedHylyrePlan(ctx);
-    if (!derivedPlan.exists) {
-      const hintPath = writeDeriveHintFromPlanJson(ctx);
+    const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+    const expectedDir = path.join(reportsBase, '<timestamp>', 'hylyre');
+    const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
+    const topIds = extractTcIdsFromPlanTable(topRaw);
+    const topStat = fs.existsSync(topPath) ? fs.statSync(topPath) : null;
+
+    const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
+    const rejectedRel = pick.rejectedPlaceholders.map(p => absToProjectRel(ctx.projectRoot, p));
+
+    if (!pick.selected) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        coverage_reason: 'no_derived',
+        top_tc_ids: topIds,
+        rejected_placeholder_paths: rejectedRel.length > 0 ? rejectedRel : undefined,
+      });
       const hintLine = hintPath
-        ? `已从 test-plan.md 抽取结构化用例列表写入：${hintPath}（供 agent 生成 hylyre 派生计划）。`
+        ? `已写入 derive-hint-from-plan.json：${hintPath}（含 top_tc_ids / rejected_placeholder_paths）。`
         : '未能写入 derive-hint-from-plan.json（检查 testing/reports 目录写权限）。';
       return [
         {
@@ -1587,13 +1583,42 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `未找到派生可执行测试计划（期望位于 ${derivedPlan.expectedDir} 下）。请按 Skill 6 Step 4.5 派生 test-plan.hylyre.md 后重试。\n${hintLine}`,
+          details: `未找到有效的 Hylyre 派生测试计划（已排除烟测占位；期望路径形如 ${expectedDir}）。请按 Skill 6 Step 4.5 落盘 test-plan.hylyre.md 后重试。\n${hintLine}`,
         },
       ];
     }
 
-    const consistency = verifyDerivedPlanTcConsistency(ctx, derivedPlan.path);
-    if (consistency.extra.length > 0) {
+    const derivedPath = pick.selected.hylyrePath;
+    const derivedContent = pick.selected.content;
+    const explicitSkips = loadExplicitSkipTcIds(derivedPath, derivedContent);
+    const derivedIds = extractTcIdsFromPlanTable(derivedContent);
+    const cov = evaluateDerivedCoverage({
+      topTcIds: topIds,
+      derivedTcIds: derivedIds,
+      explicitSkipTcIds: explicitSkips,
+    });
+
+    const derivedStat = fs.statSync(derivedPath);
+    const derivedMtimeIso = new Date(derivedStat.mtimeMs).toISOString();
+    const topMtimeIso = topStat ? new Date(topStat.mtimeMs).toISOString() : undefined;
+    const stale = Boolean(topStat && derivedStat.mtimeMs < topStat.mtimeMs);
+
+    const hintBase: DeriveHintAugment = {
+      top_tc_ids: topIds,
+      derived_tc_ids: derivedIds,
+      explicit_skip_tc_ids: explicitSkips,
+      selected_derived_path: absToProjectRel(ctx.projectRoot, derivedPath),
+      rejected_placeholder_paths: rejectedRel.length > 0 ? rejectedRel : undefined,
+      source_plan_mtime_iso: topMtimeIso,
+      selected_derived_mtime_iso: derivedMtimeIso,
+    };
+
+    if (cov.extra.length > 0) {
+      writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'extra_in_derived',
+        missing_tc_ids: cov.missing,
+      });
       return [
         {
           id,
@@ -1601,7 +1626,44 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `派生计划包含顶层 test-plan.md 中未声明的用例编号：${consistency.extra.join(', ')}`,
+          details: `派生计划包含顶层 test-plan.md 中未声明的用例编号：${cov.extra.join(', ')}（derive-hint-from-plan.json 已更新）`,
+        },
+      ];
+    }
+
+    if (cov.missing.length > 0) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'incomplete',
+        missing_tc_ids: cov.missing,
+      });
+      const hintLine = hintPath ? `详情见 ${hintPath}` : '';
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `派生 Hylyre 计划未覆盖顶层 test-plan.md 中的用例：${cov.missing.join(', ')}。请在派生表补全或在 YAML frontmatter / derive-manifest.json 登记 explicit_skip_tc_ids。\n${hintLine}`,
+        },
+      ];
+    }
+
+    if (stale) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'stale',
+      });
+      const hintLine = hintPath ? `详情见 ${hintPath}` : '';
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `派生计划早于顶层 test-plan.md 更新（mtime），可能过期。请重新派生或更新派生文件后重试。\n${hintLine}`,
         },
       ];
     }
@@ -1634,7 +1696,7 @@ function checkDeviceTestRunGate(
     }
 
     const bundleName = readBundleNameFromAppScope(ctx.projectRoot);
-    const hylyreOutDir = path.dirname(derivedPlan.path);
+    const hylyreOutDir = path.dirname(derivedPath);
     const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
     const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
     fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
@@ -1645,7 +1707,7 @@ function checkDeviceTestRunGate(
       feature: ctx.feature,
       phase: ctx.phase,
       pythonPath: ready.pythonPath,
-      derivedPlanPath: path.resolve(derivedPlan.path),
+      derivedPlanPath: path.resolve(derivedPath),
       reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
       traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
       bundleName,
