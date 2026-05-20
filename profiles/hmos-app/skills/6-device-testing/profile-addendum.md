@@ -130,9 +130,20 @@
 
 ### 即席模式（`_adhoc`）
 
-- 占位目录 **`doc/features/_adhoc/`**（仓库 **`.gitignore`** 通常忽略），用于「不绑正式 feature」的当场跑机；派生计划路径形如 **`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`**。不要求 `harness-runner testing --feature _adhoc` 整套文档门禁通过；协议见 Skill 6 正文 **Step 4.B**。
+- **首选 CLI**：`cd framework/harness && npm run adhoc-device-test -- --bundle <id> --steps "…"`（见 Skill 6 Step 4.B）。
+- **派生 hint**：`npm run derive-adhoc-hylyre-hint -- --bundle <id> --steps "…"` → schema 4 JSON（含 `snapshot_cache_empty`、`selector_hints`）。
+- **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
+- **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003；即席跑机前 CLI 写 `plan-lint.json`。
+- 占位目录 **`doc/features/_adhoc/`**；不要求 `harness-runner testing --feature _adhoc` 文档门禁。
 
-模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**
+#### Hylyre 报错对照（即席）
+
+| 现象 | 处理 |
+|------|------|
+| 非 JSON + 提示 action 包装 | 去掉步骤列反引号；用 direct `{"touch":…}` |
+| plan 失败、steps-file 成功 | 使用 CLI 生成的无反引号 plan 或 `test-steps.json` |
+
+模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
 
 ### 报告合成（Step 5）
 

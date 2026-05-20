@@ -21,6 +21,7 @@ import {
 } from '../hylyre-vendor-sync';
 import { hdcTargetPrefix, resolveHdcExecutableSync } from '../hdc-runner';
 import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
+import { resolveMainAbilityForBundle } from '../resolve-main-ability';
 import {
   ensureHypiumWorkDir,
   removeLegacyHypiumTmpAtProjectRoot,
@@ -92,6 +93,8 @@ export interface HylyreRunOptions {
   phase: 'testing';
   pythonPath: string;
   derivedPlanPath: string;
+  /** When set, use `hylyre run --steps-file` instead of --plan (adhoc fallback). */
+  stepsFilePath?: string | null;
   reportOutPath: string;
   traceOutPath: string;
   bundleName: string;
@@ -351,60 +354,27 @@ function defaultRunTimeoutMs(opts?: HylyreRunOptions): number {
   return 1_800_000;
 }
 
-const MODULE_JSON_SKIP_DIRS = new Set([
-  'node_modules',
-  'oh_modules',
-  'build',
-  '.git',
-  '.hvigor',
-  'dist',
-  'out',
-]);
+export { discoverEntryMainElement } from '../discover-entry-main-element';
+import { discoverEntryMainElement } from '../discover-entry-main-element';
 
-/**
- * 扫描工程内首个 `"type": "entry"` 的 module.json5，解析 mainElement（json5 源码用正则，与 AppScope bundleName 解析风格一致）。
- */
-export function discoverEntryMainElement(projectRoot: string): string | null {
-  const hits: string[] = [];
-  const rootAbs = path.resolve(projectRoot);
-
-  function walk(dir: string, depth: number): void {
-    if (depth > 16) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (MODULE_JSON_SKIP_DIRS.has(e.name)) continue;
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        walk(p, depth + 1);
-      } else if (e.name === 'module.json5') {
-        let raw: string;
-        try {
-          raw = fs.readFileSync(p, 'utf-8');
-        } catch {
-          continue;
-        }
-        if (!/"type"\s*:\s*"entry"/.test(raw)) continue;
-        const m = raw.match(/"mainElement"\s*:\s*"([^"]+)"/);
-        if (m?.[1]) hits.push(m[1]);
-      }
-    }
-  }
-
-  walk(rootAbs, 0);
-  return hits[0] ?? null;
-}
-
-function resolveHypiumPageNameForRun(projectRoot: string, override?: string | null): string | null {
-  const trimmed = (override ?? '').trim();
-  if (trimmed.length > 0) return trimmed;
-  const cfg = resolveHylyreToolConfig(projectRoot);
-  if (cfg.hypium_page_name.trim()) return cfg.hypium_page_name.trim();
-  return discoverEntryMainElement(projectRoot);
+function resolveHypiumPageNameForRun(
+  projectRoot: string,
+  bundleName: string,
+  override?: string | null,
+  deviceSn?: string,
+): { pageName: string | null; source: string; appMetaPath: string | null } {
+  const resolved = resolveMainAbilityForBundle({
+    projectRoot,
+    bundleName,
+    override,
+    deviceSn,
+    writeCache: true,
+  });
+  return {
+    pageName: resolved.mainAbility,
+    source: resolved.source,
+    appMetaPath: resolved.appMetaPath,
+  };
 }
 
 /**
@@ -1015,10 +985,72 @@ function tryHylyreAppPageSaveAfterRun(args: {
   if (r.status !== 0) {
     appendLogSync(
       args.logPath,
-      `hylyre app page save 结束 exit=${r.status}（非致命；缓存可能未更新）\n`,
+      `hylyre app page save 结束 exit=${r.status}（WARN：非致命；缓存可能未更新）\n`,
     );
+  } else {
+    appendLogSync(args.logPath, `hylyre app page save 成功\n`);
   }
   return { attempted: true, exitCode: r.status, durationMs: Date.now() - t0 };
+}
+
+/** Build minimal trace/report after `hylyre run --steps-file` (no native report contract). */
+function synthesizeTraceFromStepsBatchRun(args: {
+  runOut: string;
+  feature: string;
+  tracePath: string;
+  reportPath: string;
+}): void {
+  let batch: { results?: Array<{ status?: string; error?: string }> } | null = null;
+  try {
+    const jsonMatch = args.runOut.match(/\{[\s\S]*"results"[\s\S]*\}/);
+    if (jsonMatch) {
+      batch = JSON.parse(jsonMatch[0]) as { results?: Array<{ status?: string; error?: string }> };
+    }
+  } catch {
+    batch = null;
+  }
+  const results = batch?.results ?? [];
+  const anyErr = results.some(r => r.status !== 'ok');
+  const trace = {
+    schema_version: '0.1-p0',
+    feature: args.feature,
+    phase: 'testing',
+    outcome: anyErr ? 'failed' : 'success',
+    model_backend: 'none',
+    cases: [
+      {
+        id: 'TC-001',
+        status: anyErr ? '失败' : '通过',
+        priority: 'P0',
+        ac_ref: 'ad-hoc',
+        notes: anyErr
+          ? results
+              .filter(r => r.status !== 'ok')
+              .map(r => r.error ?? 'step error')
+              .join('; ')
+              .slice(0, 500)
+          : '',
+        name: 'adhoc steps batch',
+      },
+    ],
+    artifacts: { adhoc: true, steps_file: true },
+  };
+  fs.mkdirSync(path.dirname(args.tracePath), { recursive: true });
+  fs.writeFileSync(args.tracePath, `${JSON.stringify(trace, null, 2)}\n`, 'utf-8');
+  const reportMd = [
+    '# 测试报告（adhoc · steps-file 合成）',
+    '',
+    `feature: ${args.feature}`,
+    '',
+    '## 测试执行结果',
+    '',
+    '| 用例编号 | 状态 | 备注 |',
+    '|----------|------|------|',
+    `| TC-001 | ${anyErr ? '失败' : '通过'} | steps-file batch |`,
+    '',
+  ].join('\n');
+  fs.mkdirSync(path.dirname(args.reportPath), { recursive: true });
+  fs.writeFileSync(args.reportPath, reportMd, 'utf-8');
 }
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
@@ -1050,14 +1082,20 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     );
   }
 
-  const pageName = resolveHypiumPageNameForRun(opts.projectRoot, opts.hypiumPageName);
+  const abilityResolved = resolveHypiumPageNameForRun(
+    opts.projectRoot,
+    opts.bundleName,
+    opts.hypiumPageName,
+    opts.deviceSn,
+  );
+  const pageName = abilityResolved.pageName;
   let omitBundleForHylyre = false;
 
   if (pageName) {
     const pre = runAaStartPreflight(opts.bundleName, pageName, opts.deviceSn, logPath);
     if (!pre.ok) {
       errors.push({
-        message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
+        message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName} source=${abilityResolved.source}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
       });
       fs.writeFileSync(
         metaPath,
@@ -1071,6 +1109,8 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             log_path: logPath,
             bundleName: opts.bundleName,
             hypium_page_name: pageName,
+            main_ability_source: abilityResolved.source,
+            app_meta_path: abilityResolved.appMetaPath,
             aa_start_preflight: true,
             aa_start_ok: false,
             omit_bundle_for_hylyre: false,
@@ -1099,27 +1139,39 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     omitBundleForHylyre = true;
   }
 
-  const args: string[] = [
-    '-m',
-    'hylyre',
-    'run',
-    '--plan',
-    path.resolve(opts.derivedPlanPath),
-    '--feature',
-    opts.feature,
-    '--report-out',
-    path.resolve(opts.reportOutPath),
-    '--trace-out',
-    path.resolve(opts.traceOutPath),
-  ];
-  if (!omitBundleForHylyre) {
-    args.push('--bundle', opts.bundleName);
+  const stepsFile = (opts.stepsFilePath ?? '').trim();
+  const useStepsFile = stepsFile.length > 0 && fs.existsSync(stepsFile);
+
+  const args: string[] = ['-m', 'hylyre', 'run'];
+  if (useStepsFile) {
+    args.push('--steps-file', path.resolve(stepsFile));
+    if (!omitBundleForHylyre) {
+      args.push('--bundle', opts.bundleName);
+    }
+    if (pageName) {
+      args.push('--page-name', pageName);
+    }
+  } else {
+    args.push(
+      '--plan',
+      path.resolve(opts.derivedPlanPath),
+      '--feature',
+      opts.feature,
+      '--report-out',
+      path.resolve(opts.reportOutPath),
+      '--trace-out',
+      path.resolve(opts.traceOutPath),
+    );
+    if (!omitBundleForHylyre) {
+      args.push('--bundle', opts.bundleName);
+    }
+    if (opts.skipAssertExpected !== false) {
+      args.push('--skip-assert-expected');
+    }
   }
+
   if (opts.deviceSn && opts.deviceSn.trim()) {
     args.push('--device-sn', opts.deviceSn.trim());
-  }
-  if (opts.skipAssertExpected !== false) {
-    args.push('--skip-assert-expected');
   }
 
   const command = `${opts.pythonPath} ${args.join(' ')}`;
@@ -1147,6 +1199,16 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const exitCode = run.status;
   const tracePathResolved = path.resolve(opts.traceOutPath);
   const reportPathResolved = path.resolve(opts.reportOutPath);
+
+  if (useStepsFile && exitCode === 0) {
+    synthesizeTraceFromStepsBatchRun({
+      runOut,
+      feature: opts.feature,
+      tracePath: tracePathResolved,
+      reportPath: reportPathResolved,
+    });
+  }
+
   const trace = parseHylyreTrace(tracePathResolved);
 
   /** plan 跑完后用例失败会导致 exit≠0；若有合法 trace 仍视为「自动化 runner 未崩溃」。Python Traceback（缺打包资源等）不算可接受失败。 */
@@ -1205,6 +1267,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         log_path: logPath,
         bundleName: opts.bundleName,
         hypium_page_name: pageName,
+        main_ability_source: abilityResolved.source,
+        app_meta_path: abilityResolved.appMetaPath,
+        run_mode: useStepsFile ? 'steps_file' : 'plan',
+        steps_file_path: useStepsFile ? path.resolve(stepsFile) : null,
         aa_start_preflight: Boolean(pageName),
         aa_start_ok: pageName ? true : null,
         omit_bundle_for_hylyre: omitBundleForHylyre,

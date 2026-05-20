@@ -221,9 +221,13 @@ doc/features/{module-name}/test-plan.md
 
 #### Step 4.5.3 翻译为 Hylyre JSON 步骤
 
-- 将每步操作译为 **单行 JSON**，允许的根键为 **`action` / `touch` / `input` / `swipe` / `scroll`**（与 Hylyre `agent-plan-a` 一致）。
+- 将每步操作译为 **单行裸 JSON**（**禁止** Markdown 反引号包裹单元格内容）。
+- 允许的根键以 Hylyre `planned_step_keys` 为准（含 **`touch` / `input` / `swipe` / `scroll` / `back` / `home` / `wait_for` / `assert_toast`** 等；见 profile addendum 与 `framework/harness/scripts/utils/hylyre-planned-step-keys.ts`）。
+- **推荐 canonical 形态**：direct 根键，如 `{"touch":{"by_text":"添加管理卡片"}}`；`{"action":{"type":"touch",…}}` 为兼容形态，勿与 direct 混用。
+- **禁止**在步骤列写 `start_app`（harness 已 `aa start` 预启）；**禁止** `dump_ui` / CLI 命令名作为根键。
 - 同格多步用 **`;` 或 `；`** 拼接；**禁止** `<br/>`；格内禁止未转义 `|`。
-- 模板与范例：**test-plan-hylyre-template.md**。
+- 派生前可读 `npm run derive-hylyre-plan-hint` / `derive-adhoc-hylyre-hint` 输出；若 `snapshot_cache_empty: true` 先 warmup 或 `dump-ui`。
+- 模板与范例：**test-plan-hylyre-template.md**（已无反引号示例）。
 
 #### Step 4.5.4 裁决与跳过登记
 
@@ -242,14 +246,32 @@ doc/features/{module-name}/test-plan.md
 
 当本回合按上文「模式分支」判定为 **即席**：
 
-1. **不向用户索取** `home-page` 类正式 feature；使用保留目录名 **`_adhoc`**（路径 `doc/features/_adhoc/`，`.gitignore` 默认忽略，仅本机产物）。
-2. 从用户自然语言 **拆分为有序步骤** → 译成 **一条或多条 TC** 的 Hylyre JSON（可令 `TC-001` 覆盖整段探索流）；**bundle** 取自用户声明（如 `com.huawei.hmos.wallet`）；若用户未声明，须明确要求后再 run。
-3. 落盘：`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`（及同目录 `test-report.md` / `trace.json` 由 Hylyre 写出）。
-4. **不跑** `harness-runner --phase testing --feature _adhoc` 的完整门禁（缺 PRD/acceptance 等会失败）；改由你在本机：
-   - `ensureHylyreReady` 等价流程（`capability-registry` 的 `dispatchDeviceTestEnsureReady`，feature=`_adhoc`，phase=`testing`）；
-   - `runHylyreDeviceTest`（传入 **pythonPath**、**derivedPlanPath**、**reportOutPath**、**traceOutPath**、**bundleName**、**feature=`_adhoc`**、`appSnapshotCacheAbs` 等，与 `device-test-run.ts` 一致）。
-5. **不写** `phase-completion-receipt`、不强制 verifier 闭环；向用户口头/结构化总结 **`trace.json` > `cases[]`**（通过/失败/阻塞/跳过）及 hylyre 子报告路径。
-6. **快照**：`runHylyreDeviceTest` 结束后仍会尝试 **`app page save`**，缓存落在 `doc/app-snapshot-cache/<bundle>/`。
+1. **首选一键入口**（勿手工拼 `hdc` / `hylyre`）：
+   ```bash
+   cd framework/harness && npm run adhoc-device-test -- \
+     --bundle <bundleId> \
+     --steps "打开应用->点击…->…"
+   ```
+   可选：`--ability MainAbility`、`--plan path/to/test-plan.hylyre.md`、`--skip-explore`。
+2. **派生前 hint**（建议）：
+   ```bash
+   cd framework/harness && npm run derive-adhoc-hylyre-hint -- \
+     --bundle <bundleId> --steps "…"
+   ```
+   关注 `snapshot_cache_empty`、`selector_hints`、`forbidden_in_steps`。
+3. 使用保留目录名 **`_adhoc`**（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）；**bundle** 必须用户声明。
+4. 默认 **单 TC-001** 合并全部步骤；步骤列 **裸 JSON**、**不含 start_app**；同步产出 `test-steps.json` 供 fallback。
+5. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁；CLI 内部 `ensureHylyreReady` → resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。
+6. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
+7. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；ability 由 `resolveMainAbilityForBundle`（config `bundle_abilities` / `app-meta.json` / bm dump）解析。
+
+#### Hylyre 误导性报错对照（即席必读）
+
+| 报错关键词 | 真实含义 | 先做 |
+|-----------|---------|------|
+| 「非 JSON」+ action 示例 | 步骤未被识别为 JSON（**常见：反引号**） | 去掉反引号；读 `plan-lint.json` |
+| `--steps` 能跑、`--plan` 不能 | Markdown 表格格式问题 | 用 CLI 生成的 plan 或 `test-steps.json` |
+| start_app 相关失败 | 重复冷启或嵌套 `action.type` | 删步骤内 start_app；预启交给 harness |
 
 ### Step 5: 生成测试报告（测试执行后）
 

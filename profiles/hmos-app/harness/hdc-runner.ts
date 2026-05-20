@@ -419,6 +419,75 @@ export function runHdcShellBmDump(bundleName: string, timeoutMs = 45_000): HdcBm
   return { exitCode: ret.status ?? -1, output: merged.trim() };
 }
 
+export interface MainAbilityFromDumpResult {
+  ability: string | null;
+  /** coarse strategy label for logs */
+  strategy: 'json_ability_infos' | 'text_main' | 'text_first_ability' | 'none';
+}
+
+/**
+ * Parse main/entry ability name from `hdc shell bm dump -n <bundle>` output.
+ * Output shape varies by HarmonyOS API version (JSON or mixed text).
+ */
+export function discoverMainAbilityFromBmDump(output: string): string | null {
+  const r = discoverMainAbilityFromBmDumpDetailed(output);
+  return r.ability;
+}
+
+export function discoverMainAbilityFromBmDumpDetailed(output: string): MainAbilityFromDumpResult {
+  const text = output.trim();
+  if (!text) return { ability: null, strategy: 'none' };
+
+  // JSON path: abilityInfos[]
+  if (text.includes('abilityInfos') || text.startsWith('{')) {
+    try {
+      const jsonStart = text.indexOf('{');
+      const jsonSlice = jsonStart >= 0 ? text.slice(jsonStart) : text;
+      const obj = JSON.parse(jsonSlice) as {
+        abilityInfos?: Array<{ name?: string; launchType?: string; visible?: boolean }>;
+      };
+      const infos = obj?.abilityInfos;
+      if (Array.isArray(infos) && infos.length > 0) {
+        const standardVisible = infos.find(
+          a =>
+            a?.name &&
+            String(a.launchType ?? '').toLowerCase() === 'standard' &&
+            a.visible !== false,
+        );
+        if (standardVisible?.name) {
+          return { ability: standardVisible.name.trim(), strategy: 'json_ability_infos' };
+        }
+        const named = infos.find(a => a?.name?.trim());
+        if (named?.name) {
+          return { ability: named.name.trim(), strategy: 'json_ability_infos' };
+        }
+      }
+    } catch {
+      /* fall through to text heuristics */
+    }
+  }
+
+  // Text: explicit MainAbility / EntryAbility
+  for (const candidate of ['MainAbility', 'EntryAbility', 'PhoneAbility']) {
+    if (new RegExp(`"${candidate}"|'${candidate}'|\\b${candidate}\\b`).test(text)) {
+      return { ability: candidate, strategy: 'text_main' };
+    }
+  }
+
+  // Text: first *Ability in abilityInfos block
+  const blockMatch = text.match(/abilityInfos[\s\S]{0,4000}?"name"\s*:\s*"([A-Za-z][A-Za-z0-9_]*)"/i);
+  if (blockMatch?.[1]) {
+    return { ability: blockMatch[1], strategy: 'text_first_ability' };
+  }
+
+  const anyAbility = text.match(/\b([A-Za-z][A-Za-z0-9_]*Ability)\b/);
+  if (anyAbility?.[1]) {
+    return { ability: anyAbility[1], strategy: 'text_first_ability' };
+  }
+
+  return { ability: null, strategy: 'none' };
+}
+
 /** bm uninstall：`bm uninstall -n bundleName`，可选 `-k` 保留用户数据（参见宿主 bm-tool）。 */
 export function uninstallBundleViaBm(bundleName: string, opts?: { keepUserData?: boolean }): HdcBmDumpResult {
   const args = ['shell', 'bm', 'uninstall', '-n', bundleName];

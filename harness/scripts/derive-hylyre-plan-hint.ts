@@ -11,6 +11,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
+import {
+  appSnapshotCacheAbsFor,
+  isSnapshotCacheEmpty,
+  listSnapshotPages,
+  resolveDefaultSnapshotBundle,
+} from './utils/app-snapshot-cache-hint';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -41,11 +47,20 @@ if (!fs.existsSync(planPath)) {
 
 const planMd = fs.readFileSync(planPath, 'utf-8');
 const test_cases = attachNavigationHints(extractTopPlanTestCasesForDeriveHint(planMd));
+const snapshotBundle = resolveDefaultSnapshotBundle(projectRoot);
+const cacheAbs = appSnapshotCacheAbsFor(projectRoot);
+const snapshot_cache_empty = snapshotBundle
+  ? isSnapshotCacheEmpty(cacheAbs, snapshotBundle)
+  : true;
+const available_pages = snapshotBundle ? listSnapshotPages(cacheAbs, snapshotBundle) : [];
 const payload = {
   schema: 3,
   feature,
   generated_at: new Date().toISOString(),
   source: path.relative(projectRoot, planPath).replace(/\\/g, '/'),
+  snapshot_bundle: snapshotBundle || null,
+  snapshot_cache_empty,
+  available_pages,
   navigation_discipline:
     'Nav 子页回 Tab 须用 {"back":{}}；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。',
   test_cases,

@@ -71,6 +71,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'generic-bundle', modulePath: './unit/generic-bundle.unit.test' },
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
   { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
+  { id: 'adhoc-step-translate', modulePath: './unit/adhoc-step-translate.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

@@ -220,6 +220,8 @@ export interface HylyreToolConfig {
    * 空字符串时由 device-test-run 自动扫描工程内首个 `"type": "entry"` 模块的 mainElement。
    */
   hypium_page_name: string;
+  /** Optional map: bundleName → mainAbility (e.g. external apps under ad-hoc testing). */
+  bundle_abilities?: Record<string, string>;
 }
 
 export interface FrameworkToolsConfig {
@@ -1519,6 +1521,14 @@ export function resolveHylyreToolConfig(projectRoot: string): HylyreToolConfig {
       typeof p.hypium_page_name === 'string'
         ? p.hypium_page_name.trim()
         : DEFAULT_HYLYRE_TOOL_CONFIG.hypium_page_name,
+    bundle_abilities:
+      p.bundle_abilities && typeof p.bundle_abilities === 'object' && !Array.isArray(p.bundle_abilities)
+        ? Object.fromEntries(
+            Object.entries(p.bundle_abilities as Record<string, unknown>)
+              .filter(([, v]) => typeof v === 'string' && (v as string).trim())
+              .map(([k, v]) => [k.trim(), (v as string).trim()]),
+          )
+        : undefined,
   };
 }
 

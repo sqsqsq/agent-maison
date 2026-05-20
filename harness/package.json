@@ -15,7 +15,9 @@
     "test:unit": "ts-node tests/run-unit.ts",
     "test": "npm run test:unit && npm run test:fixtures",
     "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
-    "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts"
+    "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts",
+    "derive-adhoc-hylyre-hint": "ts-node scripts/derive-adhoc-hylyre-hint.ts",
+    "adhoc-device-test": "ts-node scripts/adhoc-device-test.ts"
   },
   "dependencies": {
     "yaml": "^2.7.0",

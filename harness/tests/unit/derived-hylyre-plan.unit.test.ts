@@ -12,6 +12,8 @@ import {
   loadExplicitSkipTcIds,
   extractTcIdsFromPlanTable,
   lintDerivedHylyrePlanSteps,
+  lintHylyrePlanMarkdown,
+  normalizePlannedStepsCell,
   isFullscreenHorizontalSwipeStep,
 } from '../../scripts/utils/derived-hylyre-plan';
 
@@ -30,6 +32,11 @@ function assertEq<T>(actual: T, expected: T, label: string): void {
 }
 function assertTrue(cond: boolean, label: string): void {
   if (!cond) throw new Error(label);
+}
+function assertIncludes(haystack: string, needle: string, label: string): void {
+  if (!haystack.includes(needle)) {
+    throw new Error(`${label}: expected to include ${JSON.stringify(needle)} in ${JSON.stringify(haystack)}`);
+  }
 }
 
 const minimalTable = (rows: string) =>
@@ -173,6 +180,51 @@ const cases: Case[] = [
       ].join('\n');
       const r = lintDerivedHylyrePlanSteps(md);
       assertTrue(r.ok, `expected pass, got ${JSON.stringify(r.violations)}`);
+    },
+  },
+  {
+    name: 'normalizePlannedStepsCell: strips backticks per fragment',
+    run: () => {
+      const raw = '`{"touch":{"by_text":"首页"}}` ; `{"start_app":{}}`';
+      const out = normalizePlannedStepsCell(raw);
+      assertIncludes(out, '{"touch":{"by_text":"首页"}}', 'touch canonical');
+      assertIncludes(out, '{"start_app":{}}', 'start_app direct');
+      assertTrue(!out.includes('`'), 'no backticks');
+    },
+  },
+  {
+    name: 'lintHylyrePlanMarkdown: STEP-005 backticks → violation',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | x | y | `{"touch":{"by_text":"首页"}}` | z | P0 | AC-1 |',
+      ].join('\n');
+      const r = lintHylyrePlanMarkdown(md);
+      assertTrue(!r.ok, 'should fail');
+      assertTrue(
+        r.violations.some(v => v.rule_id === 'STEP-005'),
+        `expected STEP-005, got ${JSON.stringify(r.violations)}`,
+      );
+    },
+  },
+  {
+    name: 'lintHylyrePlanMarkdown: STEP-006 action wrapper → WARN violation',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | x | y | {"action":{"type":"touch","by_text":"首页"}} | z | P0 | AC-1 |',
+      ].join('\n');
+      const r = lintHylyrePlanMarkdown(md);
+      assertTrue(
+        r.violations.some(v => v.rule_id === 'STEP-006'),
+        `expected STEP-006, got ${JSON.stringify(r.violations)}`,
+      );
     },
   },
   {

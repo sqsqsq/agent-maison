@@ -8,6 +8,10 @@ import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
 import type { DeriveHintTestCaseRow } from './test-plan-derive-hint';
+import {
+  FORBIDDEN_STEP_ROOT_KEY_SET,
+  PLANNED_STEP_ROOT_KEY_SET,
+} from './hylyre-planned-step-keys';
 
 const PLACEHOLDER_BODY_PATTERNS: RegExp[] = [
   /烟测占位/,
@@ -238,12 +242,183 @@ export function extractDerivedPlanCases(planMd: string): DerivedPlanCaseRow[] {
   return out;
 }
 
+/** Strip markdown backticks / normalize semicolons for one step fragment. */
+export function normalizePlannedStepFragment(raw: string): string {
+  let s = raw.trim();
+  if (s.length >= 2 && s[0] === s[s.length - 1] && (s[0] === '`' || s[0] === "'")) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+/** Normalize full 「测试步骤」 cell: `；` → `;`, strip backticks per fragment. */
+export function normalizePlannedStepsCell(raw: string): string {
+  const normalized = raw.replace(/；/g, ';');
+  return normalized
+    .split(';')
+    .map(p => normalizePlannedStepFragment(p))
+    .filter(Boolean)
+    .join(' ; ');
+}
+
+function stepRootKeys(step: Record<string, unknown>): string[] {
+  return Object.keys(step);
+}
+
+function isActionWrappedTouchInputSwipeScroll(step: Record<string, unknown>): boolean {
+  const act = step.action;
+  if (!act || typeof act !== 'object' || Array.isArray(act)) return false;
+  const t = String((act as Record<string, unknown>).type ?? '').toLowerCase();
+  return ['touch', 'input', 'swipe', 'scroll'].includes(t);
+}
+
+function hasMarkdownBacktickInCell(stepsRaw: string): boolean {
+  return /`/.test(stepsRaw);
+}
+
+export type StepLintViolation = {
+  rule_id: 'STEP-001' | 'STEP-002' | 'STEP-003' | 'STEP-004' | 'STEP-005' | 'STEP-006';
+  severity: 'BLOCKER' | 'WARN';
+  tc_id: string;
+  message: string;
+  suggested_fix: string;
+};
+
+export type LintHylyrePlanResult = {
+  ok: boolean;
+  violations: StepLintViolation[];
+  nav: LintDerivedHylyrePlanResult;
+};
+
+export type LintHylyrePlanOptions = {
+  forbidStartApp?: boolean;
+  canonicalTouch?: boolean;
+  /** When false, STEP-005 backtick is WARN only (post-normalize retry path). */
+  backtickBlocker?: boolean;
+};
+
+/** STEP-001~006 static lint on derived plan markdown. */
+export function lintHylyrePlanStepRules(
+  derivedMd: string,
+  opts?: LintHylyrePlanOptions,
+): { ok: boolean; violations: StepLintViolation[] } {
+  const violations: StepLintViolation[] = [];
+  const forbidStartApp = opts?.forbidStartApp !== false;
+  const canonicalTouch = opts?.canonicalTouch !== false;
+  const backtickBlocker = opts?.backtickBlocker !== false;
+
+  for (const row of extractDerivedPlanCases(derivedMd)) {
+    if (hasMarkdownBacktickInCell(row.steps_raw)) {
+      violations.push({
+        rule_id: 'STEP-005',
+        severity: backtickBlocker ? 'BLOCKER' : 'WARN',
+        tc_id: row.tc_id,
+        message: '测试步骤列含 Markdown 反引号；Hylyre _JSONISH 无法识别，请使用裸 JSON。',
+        suggested_fix: normalizePlannedStepsCell(row.steps_raw),
+      });
+    }
+
+    const cellForParse = normalizePlannedStepsCell(row.steps_raw);
+    const parsed = parsePlannedStepsFromCell(cellForParse);
+    if (!parsed.ok) {
+      violations.push({
+        rule_id: 'STEP-001',
+        severity: 'BLOCKER',
+        tc_id: row.tc_id,
+        message: `测试步骤 JSON 无法解析：${parsed.error}`,
+        suggested_fix: '{"touch":{"by_text":"…"}}',
+      });
+      continue;
+    }
+
+    for (const step of parsed.steps) {
+      const roots = stepRootKeys(step);
+      if (roots.length !== 1) {
+        violations.push({
+          rule_id: 'STEP-001',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: `每步须恰好一个 JSON 根键，实际：${roots.join(', ') || '(empty)'}`,
+          suggested_fix: '{"touch":{"by_text":"…"}}',
+        });
+        continue;
+      }
+      const root = roots[0];
+      if (FORBIDDEN_STEP_ROOT_KEY_SET.has(root)) {
+        violations.push({
+          rule_id: 'STEP-002',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: `禁止将 CLI 命令名 "${root}" 作为步骤根键（如 dump-ui 应走探索，不是 plan 步骤）。`,
+          suggested_fix: '{"touch":{"by_text":"…"}}',
+        });
+      } else if (!PLANNED_STEP_ROOT_KEY_SET.has(root)) {
+        violations.push({
+          rule_id: 'STEP-001',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: `未知步骤根键 "${root}"；允许：${[...PLANNED_STEP_ROOT_KEY_SET].join(', ')}`,
+          suggested_fix: '{"touch":{"by_text":"…"}}',
+        });
+      }
+
+      if (forbidStartApp && root === 'start_app') {
+        violations.push({
+          rule_id: 'STEP-003',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: 'harness 已 aa start 预启；步骤列勿重复 start_app，前置条件写「已启动 app」。',
+          suggested_fix: '（删除 start_app 步骤）',
+        });
+      }
+
+      const act = step.action;
+      if (act && typeof act === 'object' && !Array.isArray(act)) {
+        const t = String((act as Record<string, unknown>).type ?? '').toLowerCase();
+        if (t === 'start_app') {
+          violations.push({
+            rule_id: 'STEP-004',
+            severity: 'BLOCKER',
+            tc_id: row.tc_id,
+            message: '禁止 {"action":{"type":"start_app"}}；预启由 harness 完成。',
+            suggested_fix: '（删除该步骤）',
+          });
+        }
+      }
+
+      if (canonicalTouch && isActionWrappedTouchInputSwipeScroll(step)) {
+        violations.push({
+          rule_id: 'STEP-006',
+          severity: 'WARN',
+          tc_id: row.tc_id,
+          message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…"}}），action 包装为兼容形态。',
+          suggested_fix: '改用 direct touch/input/swipe/scroll 根键',
+        });
+      }
+    }
+  }
+
+  const blockers = violations.filter(v => v.severity === 'BLOCKER');
+  return { ok: blockers.length === 0, violations };
+}
+
+/** Combined STEP + NAV lint for test-plan.hylyre.md */
+export function lintHylyrePlanMarkdown(
+  derivedMd: string,
+  topCases?: DeriveHintTestCaseRow[],
+  opts?: LintHylyrePlanOptions,
+): LintHylyrePlanResult {
+  const step = lintHylyrePlanStepRules(derivedMd, opts);
+  const nav = lintDerivedHylyrePlanSteps(derivedMd, topCases);
+  return { ok: step.ok && nav.ok, violations: step.violations, nav };
+}
+
 /** 将「测试步骤」单元格拆成逐步 JSON 对象（`;` / `；` 分隔） */
 export function parsePlannedStepsFromCell(stepsRaw: string): { ok: true; steps: Record<string, unknown>[] } | { ok: false; error: string } {
-  const normalized = stepsRaw.replace(/；/g, ';');
+  const normalized = normalizePlannedStepsCell(stepsRaw);
   const parts = normalized
     .split(';')
-    .map(s => s.trim())
+    .map(s => normalizePlannedStepFragment(s))
     .filter(Boolean);
   const steps: Record<string, unknown>[] = [];
   for (const part of parts) {
