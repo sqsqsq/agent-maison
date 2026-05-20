@@ -9,6 +9,9 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertHarnessCliCwd } from './utils/assert-harness-cli-cwd.mjs';
+
+assertHarnessCliCwd('render-agents-md.mjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const harnessRoot = path.resolve(__dirname, '..');

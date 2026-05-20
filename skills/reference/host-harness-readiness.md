@@ -46,6 +46,10 @@ cd framework/harness && npm install
 1. **先**确认 Tier_1：`node_modules/ts-node/package.json` 存在且已在 `framework/harness` 执行过 `npm install`。
 2. 若模块名指向 **宿主工程**（非 `framework/harness` 树内依赖）→ 属于 **Tier_2 / profile / 宿主包管理器** 范畴，按当前阶段的 [`profile-addendum`](../../profiles/README.md) 与各 Skill（如 Skill 3 / 5）中的 **宿主依赖缺失** 分支处理，不要与 Tier_1 混为一谈。
 
+### Shell cwd（类型 A 脚本，BLOCKER）
+
+在 `framework/harness` 执行过 `harness-runner` / `npm install` 后，**禁止**在同一 shell 用 `framework/harness/scripts/...` 相对路径调用独立脚本（会拼成双 `framework/harness` 路径）。合法写法见 **[harness-cli-cwd.md](./harness-cli-cwd.md)**。
+
 ---
 
 ## Tier_2：宿主工具链与工程依赖（指针）
@@ -71,4 +75,5 @@ cd framework/harness && npm install
 ## 相关入口
 
 - Harness 命令范式：[`framework/README.md`](../../README.md) · Harness 常用命令  
+- **Shell cwd 契约**：[harness-cli-cwd.md](./harness-cli-cwd.md)  
 - Runbook：[`framework/docs/operations/harness-runbook.md`](../../docs/operations/harness-runbook.md)

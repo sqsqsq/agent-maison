@@ -13,6 +13,9 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertHarnessCliCwd } from './utils/assert-harness-cli-cwd.mjs';
+
+assertHarnessCliCwd('show-last-committed-framework-config.mjs');
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../..'); // harness/scripts → repo root

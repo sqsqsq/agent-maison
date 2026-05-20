@@ -4,7 +4,7 @@
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths**（如 feature 文档目录、`module-catalog.yaml`、`glossary.yaml` 等）及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
-**Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `framework/harness/scripts/check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md)。
+**Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../reference/harness-cli-cwd.md)（§7.1 跑完 harness 后，§7.3 用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
 ### Feature 归档定位协议（PRD 阶段是创建者）
 
@@ -352,7 +352,7 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 1. `doc/features/<feature>/prd/reports/trace.json` 真实存在；
 2. 脚本 harness 退出码 0、零 BLOCKER；
 3. verifier 子 agent 报告 verdict = PASS；
-4. 完成回执 `doc/features/<feature>/prd/phase-completion-receipt.md` 已填写并通过 `npx ts-node framework/harness/scripts/check-receipt.ts --feature <feature> --phase prd` 校验。
+4. 完成回执 `doc/features/<feature>/prd/phase-completion-receipt.md` 已填写并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase prd` 校验（与 §7.1 同 shell 接续；勿用 `framework/harness/scripts/...` 前缀）。
 
 | 验证层 | 通过条件 |
 |--------|---------|

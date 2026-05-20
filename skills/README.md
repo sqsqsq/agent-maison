@@ -17,6 +17,8 @@
 
 **Harness 运行时前置（Tier_1）**：在 Skill **0～6** 中执行任何 `harness-runner` / `npx ts-node harness-runner.ts`、或在缺少 harness npm 依赖的前提下执行 `framework/harness/scripts/check-receipt.ts` 等脚本之前，须先满足 **[`reference/host-harness-readiness.md`](reference/host-harness-readiness.md)**（与 Skill 00 **Step 5.5** 中 Tier_1 等价；init 流程仍须在 Step 5.5 **落地执行** `npm install`，而非仅阅读本文）。
 
+**Shell cwd（类型 A 脚本）**：在 shell 中调用 `framework/harness/scripts/*.mjs` 或 `check-receipt.ts` 等独立脚本时，须遵守 **[`reference/harness-cli-cwd.md`](reference/harness-cli-cwd.md)**（尤其 `cd framework/harness && harness-runner` 之后不得在同一 shell 用 `framework/harness/scripts/...` 前缀）。
+
 进入阶段 Skill 时还必须读取当前 `project_profile` 的 addendum：
 
 ```text

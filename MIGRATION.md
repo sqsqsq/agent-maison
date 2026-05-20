@@ -260,7 +260,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 1. **新增必填配置 `framework.config.json > toolchain.devEcoStudio.installPath`**
    - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；典型值如 `D:/Program Files/Huawei/DevEco Studio`。
    - 推荐：跑 `/framework-init` 进入 UPDATE 模式，Skill 00 Step 5.6 会自动调 `framework/harness/scripts/detect-deveco.ts` 探测候选并让用户确认。
-   - 也可手工编辑 `framework.config.json` 后跑 `npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证。
+   - 也可手工编辑 `framework.config.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
 
 2. **`coding_hvigor_build` 改为项目级 `assembleApp`**：v2.2 是按 `contracts.modules` 逐个 `assembleHap`，遇到 HAR/HSP 库模块（无 `assembleHap` task）会假阳性。v2.3 改为一次跑 `hvigor assembleApp`（项目级 hook task），覆盖所有产物。**对实例无破坏**，行为更严格而已。
 
@@ -294,7 +294,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 | `lifecycle_hooks_enabled` | 默认 `true`；`false` 时 harness 跳过 lifecycle hook 派发 |
 | `paths.extension_dir` | 默认 `"doc/extensions"` |
 
-**升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash；`cd framework/harness && npm test`。
+**升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；在 **`<repo-root>`** 重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash（勿在 `framework/harness/` cwd 下写 `framework/harness/scripts/...` 前缀）；`cd framework/harness && npm test`。
 
 > v3.1 起这些字段（含 `state_machine.*`、`paths.state_file` / `receipt_dir_pattern` / `docs_committed`、
 > `toolchain.hvigor.*` 等）由 Skill 00 §5.1.A **机器化补缺合并**——见 §v3.1。
@@ -319,10 +319,10 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
    ```bash
    # 仅查看缺失字段与合并预览（不写盘）
-   node framework/harness/scripts/merge-framework-config.mjs --dry-run
+   cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --dry-run
 
    # 备份原文 → 字段级"只补缺、不覆盖"合并并写回
-   node framework/harness/scripts/merge-framework-config.mjs --apply
+   cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply
    ```
 
    `--apply` 会先把原 `framework.config.json` 备份到
@@ -361,7 +361,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **回归方法**：
 - 单测：`cd framework/harness && npx ts-node tests/run-unit.ts`，包含
   `Suite [config-field-merger]` 10 用例 + `Suite [init-update-policy]` 的「inspect01 missing_keys」用例。
-- 端到端：在缺字段的老工程上 `node framework/harness/scripts/merge-framework-config.mjs --dry-run`
+- 端到端：在缺字段的老工程上 `cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --dry-run`
   查看缺失清单，再 `--apply` 验证写回内容（`git diff framework.config.json` 应仅新增白名单字段，
   不动 `architecture` / `project_name` 等敏感段）。
 

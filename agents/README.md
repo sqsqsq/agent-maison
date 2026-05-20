@@ -81,6 +81,8 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 切换 adapter 时：旧入口与其它产物路径可能与新 adapter **不一致**（例如 `.claude/` 与 `.cursor/` 可能在仓库中并存）；须列出「建议删除或手工处理的遗留目录」请用户确认，**不要自动 `rm -rf`**。
 
+**UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。
+
 ## 工程指纹与 adapter 推测（承接 scan-project）
 
 以下为**只读启发**，不能替代用户对 `adapter_name` 的显式选定：

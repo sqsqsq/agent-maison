@@ -77,7 +77,7 @@ export interface Inspection {
    * 第 1 项专用：UPDATE 模式下 framework.config.json 缺失的白名单字段（点分路径）。
    * 来源：scripts/utils/config-field-merger.ts BACKFILL_FIELDS。
    * 当本字段非空时，Skill 00 §5.1 应触发 Q1.A「字段补缺合并」子问题；
-   * 推荐执行：`node framework/harness/scripts/merge-framework-config.mjs --apply`。
+   * 推荐执行：`cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply`（cwd 契约见 framework/skills/reference/harness-cli-cwd.md）。
    * CREATE 模式（cfg 不存在）或非 POPULATED 状态下为 null / 不设置。
    */
   missing_keys?: string[] | null;

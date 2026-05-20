@@ -44,8 +44,10 @@
 执行：
 
 ```bash
-npx ts-node framework/harness/scripts/detect-deveco.ts --json
+cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 ```
+
+（若 shell cwd 仍在 `framework/harness/`（例如刚跑完 init 体检），可改用：`npx ts-node scripts/detect-deveco.ts --json`。详见 [harness-cli-cwd.md](../../../../skills/reference/harness-cli-cwd.md)。）
 
 `detect-deveco.ts` 会按平台扫描常见安装位置（Windows：`D:/Program Files/Huawei/DevEco Studio` 等 7 个；macOS：`/Applications/DevEco-Studio.app/Contents` 等；Linux：`/opt/deveco-studio` 等），对每个候选验证 `tools/hvigor/bin/hvigorw[.bat]` / `sdk/` / `jbr/bin/java[.exe]` 三个关键子目录是否齐全。
 
@@ -74,7 +76,7 @@ npx ts-node framework/harness/scripts/detect-deveco.ts --json
    把 `recommended.installPath` 作为**推荐值**展示给用户，并提示一句：
    > 已探测到 DevEco Studio 在 `<path>`，hvigor / sdk / jbr 子目录齐全。是否使用此路径？(y / 自定义路径 / 跳过)
    - 用户回 `y` → 写入 `framework.config.json > toolchain.devEcoStudio.installPath = <path>`。
-   - 用户回**自定义路径字符串** → 用 `npx ts-node framework/harness/scripts/detect-deveco.ts --path "<user-path>" --json` 验证，命中 `status === 'ok'` 才写入；`incomplete` / `not_found` 把 `missing[]` 列给用户重选。
+   - 用户回**自定义路径字符串** → 用 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<user-path>" --json`（或 harness 内 `npx ts-node scripts/detect-deveco.ts --path "..." --json`）验证，命中 `status === 'ok'` 才写入；`incomplete` / `not_found` 把 `missing[]` 列给用户重选。
    - 用户回 `跳过` → 不写入；进入 5.6.4 警示。
 
 2. **recommended 不存在 / status !== 'ok'**：

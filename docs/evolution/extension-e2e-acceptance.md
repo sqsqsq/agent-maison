@@ -29,7 +29,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase extensions
 ## 3. `render-agents-md` 与桥接产物
 
 ```bash
-node framework/harness/scripts/render-agents-md.mjs \
+cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
   --entry-file CLAUDE.md \
   --summary "..." \
   --out CLAUDE.md \
