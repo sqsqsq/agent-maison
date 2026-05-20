@@ -74,15 +74,15 @@ export function runAll(): UnitCaseResult[] {
     }
   };
 
-  run('CANONICAL_IGNORE_PATTERNS 长度为 15', () => {
-    assert(CANONICAL_IGNORE_PATTERNS.length === 15, `expected 15, got ${CANONICAL_IGNORE_PATTERNS.length}`);
+  run('CANONICAL_IGNORE_PATTERNS 长度为 16', () => {
+    assert(CANONICAL_IGNORE_PATTERNS.length === 16, `expected 16, got ${CANONICAL_IGNORE_PATTERNS.length}`);
   });
 
   run('空目录 ensure：创建文件且 added 含全部 canonical', () => {
     withTmpProject(root => {
       const r = ensureCanonicalGitignore(root);
       assert(r.created === true, 'created');
-      assert(r.added.length === 15, `added.length=${r.added.length}`);
+      assert(r.added.length === 16, `added.length=${r.added.length}`);
       const txt = fs.readFileSync(path.join(root, '.gitignore'), 'utf-8');
       const missing = listMissingCanonicalPatterns(parseGitignoreLines(txt));
       assert(missing.length === 0, `still missing: ${missing.join(', ')}`);

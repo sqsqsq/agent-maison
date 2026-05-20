@@ -150,7 +150,7 @@ node scripts/render-agents-md.mjs ...
 | 8 | `paths.features_dir`（默认 `doc/features`） | 目录不存在 → MISSING；存在但空目录 / 只含 `.gitkeep` → EMPTY；有任何子目录或文件 → POPULATED |
 | 9 | `framework/harness/node_modules/ts-node/package.json` | 存在 → POPULATED；不存在 → MISSING（EMPTY 不适用）。**探测方式必须用不受 `.gitignore` 影响的真实文件系统探测**（Node `fs.existsSync` / PowerShell `Test-Path` / Shell `test -e`）；**禁止**仅用 IDE / agent 自带的、默认跳过 `.gitignore` 条目或仅索引「工作区可见文件」的列举方式代替——`node_modules/` 几乎一定在工程根 `.gitignore` 中，会假阴性而误触发冗余 `npm install`（不致命，但破坏体检准确性）。 |
 | 10 | `framework.config.json` 的宿主工具链安装路径（字段路径以 `check-init.ts` 与当前 `project_profile` 为准；实例侧常见为 `toolchain.*.installPath`） | 字段存在且非空字符串且路径在文件系统中存在 → POPULATED；字段缺失 / 空串 / 路径不存在 → MISSING（部分 profile 上若干 harness BLOCKER 规则会依赖该路径；细则见对应 profile 的 `00-framework-init` addendum） |
-| 11 | 实例工程根 `.gitignore`（init 约定忽略项：harness 产物 + Skill 0 staging + feature reports + Skill 6 本地产物） | **`check-init` 在 0.3.0 体检前** 已执行 `ensureCanonicalGitignore`（SSOT：`framework/harness/scripts/utils/canonical-gitignore.ts`）；15 条 canonical 均已等价覆盖 → POPULATED；ensure 后仍缺任一项 → MISSING（EMPTY 等同 MISSING） |
+| 11 | 实例工程根 `.gitignore`（init 约定忽略项：harness 产物 + Skill 0 staging + feature reports + Skill 6 本地产物） | **`check-init` 在 0.3.0 体检前** 已执行 `ensureCanonicalGitignore`（SSOT：`framework/harness/scripts/utils/canonical-gitignore.ts`）；16 条 canonical 均已等价覆盖 → POPULATED；ensure 后仍缺任一项 → MISSING（EMPTY 等同 MISSING） |
 
 #### 0.3.2 策略矩阵（**不许偏离**）
 
@@ -785,8 +785,9 @@ doc/glossary-staging/
 # Feature-phase harness：`paths.reports_dir_pattern` 写到各 phase `reports/` 下的本地产物
 doc/features/*/*/reports/*
 
-# Skill 6：真机自动化相关的本地 Python venv 与 app 页面快照根（未跑过 Skill 6 时可不存在）
-/.hylyre/
+# Skill 6：真机自动化相关的本地 Python venv、Hypium 临时目录与 app 页面快照根（未跑过 Skill 6 时可不存在）
+**/.hylyre/
+**/tmp_hypium/
 /doc/app-snapshot-cache/
 # Skill 6 即席（自然语言）用例临时产物根
 /doc/features/_adhoc/
@@ -803,7 +804,8 @@ doc/features/*/*/reports/*
 - `doc/catalog-staging/`、`doc/glossary-staging/`：Skill 0 Phase A/B 在写入权威 YAML 前的本地草稿目录；审计仍以合并后的 `doc/module-catalog.yaml` / `doc/glossary.yaml` 与 git 历史为准。
 - `.framework-backup/`：`check-init` 在 PASS 后对 `adapter.yaml` 中 `update_policy=auto_overwrite` 的目标做模板对齐前，对被覆盖文件的备份根目录。
 - `doc/features/*/*/reports/*`：配置了 `paths.reports_dir_pattern`（默认在各 phase 目录下 `reports/`）时，feature 维度的 harness 脚本报告、合并报告、trace、verifier 产出、宿主编译/装机日志等通常不入仓。
-- `/.hylyre/`：真机自动化侧 harness 可能在本机创建的隔离 Python venv（无对应工具或未执行时目录可不存在）。
+- `**/.hylyre/`：Hylyre 运行时目录（含仓库根 venv `.hylyre/venv` 及任意 cwd 下的 `mcp-server.log` 等；`framework/profiles/*/vendor/hylyre/` 为无点前缀目录，不受影响）。
+- `**/tmp_hypium/`：Hypium 在进程 cwd 下创建的 UI 树/截图临时目录（harness 正常会定向到 `reports/.hypium-workdir`，在 `framework/harness` 等目录直接跑 CLI 时可能误落盘）。
 - `/doc/app-snapshot-cache/`：真机自动化相关的 app 页面快照缓存根（跨 feature；未跑过对应步骤时可不存在）。
 - `/doc/features/_adhoc/`：即席自然语言用例生成的临时派生计划与报告目录（不入仓）。
 
@@ -825,7 +827,8 @@ doc/features/*/*/reports/*
 | `doc/catalog-staging/` | `doc/catalog-staging`、`doc/catalog-staging/`、`**/catalog-staging/` |
 | `doc/glossary-staging/` | `doc/glossary-staging`、`doc/glossary-staging/`、`**/glossary-staging/` |
 | `.framework-backup/` | `.framework-backup`、`.framework-backup/`、`**/.framework-backup/` |
-| `/.hylyre/` | `.hylyre/`、`/.hylyre/`、`/**/.hylyre/` |
+| `**/.hylyre/` | `.hylyre/`、`/.hylyre/`、`/**/.hylyre/`、`**/.hylyre/` |
+| `**/tmp_hypium/` | `tmp_hypium/`、`/tmp_hypium/`、`/**/tmp_hypium/`、`**/tmp_hypium/` |
 | `/doc/app-snapshot-cache/` | `doc/app-snapshot-cache/`、`doc/app-snapshot-cache`、`/**/app-snapshot-cache/` |
 | `/doc/features/_adhoc/` | `doc/features/_adhoc/`、`doc/features/_adhoc` |
 

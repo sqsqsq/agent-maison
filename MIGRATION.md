@@ -50,7 +50,7 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 
 同步到目标工程后，重跑 `cd framework/harness && npx ts-node harness-runner.ts --phase init`（或 `/framework-init`）时，`check-init` 会在体检 **#11 之前** 自动执行 `ensureCanonicalGitignore`（SSOT：`framework/harness/scripts/utils/canonical-gitignore.ts`）：
 - 若已存在等价规则（如 `**/node_modules` / `**/package-lock.json` / `framework/harness/reports/*`），不重复追加。
-- 若缺少 canonical 规则，会幂等追加 **15 条** pattern（含 `doc/features/*/*/reports/*`、`/.hylyre/`、`/doc/app-snapshot-cache/`、`/doc/features/_adhoc/` 等；详见 SKILL 00 §5.4.5.1）。
+- 若缺少 canonical 规则，会幂等追加 **16 条** pattern（含 `doc/features/*/*/reports/*`、`**/.hylyre/`、`**/tmp_hypium/`、`/doc/app-snapshot-cache/`、`/doc/features/_adhoc/` 等；详见 SKILL 00 §5.4.5.1）。
 - Skill 0 草稿：`doc/catalog-staging/`、`doc/glossary-staging/`；机制备份：`.framework-backup/`。
 - **勿手抄** `/harness/reports/*`（缺 `framework/` 前缀无效）；旧错行可手删，脚本只追加、不自动删除。
 - 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。追加摘要见 `check-init.json` → `gitignore_sync`。

@@ -19,7 +19,8 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'doc/glossary-staging/',
   '.framework-backup/',
   'doc/features/*/*/reports/*',
-  '/.hylyre/',
+  '**/.hylyre/',
+  '**/tmp_hypium/',
   '/doc/app-snapshot-cache/',
   '/doc/features/_adhoc/',
 ];
@@ -69,7 +70,8 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     'doc/features/*/*/reports',
     'doc/features/*/*/reports/',
   ],
-  '/.hylyre/': ['.hylyre/', '/.hylyre/', '/**/.hylyre/'],
+  '**/.hylyre/': ['.hylyre/', '/.hylyre/', '/**/.hylyre/', '**/.hylyre/'],
+  '**/tmp_hypium/': ['tmp_hypium/', '/tmp_hypium/', '/**/tmp_hypium/', '**/tmp_hypium/'],
   '/doc/app-snapshot-cache/': [
     'doc/app-snapshot-cache/',
     'doc/app-snapshot-cache',
@@ -112,7 +114,7 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
   },
   {
     header: '# Skill 6 device-testing local artifacts (profile-dependent; dirs may not exist yet)',
-    patterns: ['/.hylyre/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
+    patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
   },
 ];
 
