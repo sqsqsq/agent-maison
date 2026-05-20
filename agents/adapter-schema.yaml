@@ -211,7 +211,7 @@ optional_fields:
       widget_tool_hint:
         type: string
         description: |
-          supported 时提示工具名，例如 AskQuestion（Cursor）或 native_options（Claude Code）。
+          supported 时提示工具名：AskQuestion（Cursor）或 AskUserQuestion（Claude Code）。
       portable_required:
         type: boolean
         default: true

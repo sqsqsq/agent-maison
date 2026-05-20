@@ -129,6 +129,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 - ❌ 仅展示 Markdown 表让用户逐行打字，无 gate/enum
 - ❌ widget 可用却仅给表格
+- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry 登记的 `widget_options_ref`（如 `init.adapter` → [adapter-widget-options.md](../00-framework-init/templates/adapter-widget-options.md)）
 - ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（见 Skill 00 §0.3.4.3）

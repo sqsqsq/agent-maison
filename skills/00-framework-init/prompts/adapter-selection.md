@@ -1,7 +1,8 @@
 # Agent Adapter 选择（跳板）
 
-正文已迁至 **framework 内与具体品牌相关的唯一说明区**：
+执行 **Skill 00 · Step 0.2.5 / §0.2.5.1** 时：
 
-- **[framework/agents/README.md](../../../agents/README.md)**（含「Adapter 选定建议」「切换 adapter 安全提示」「落盘职责划分」与指纹启发）
+1. **推荐逻辑与路径速查**：[framework/agents/README.md](../../../agents/README.md)（含「Adapter 选定建议」「切换 adapter 安全提示」「落盘职责划分」与指纹启发）。
+2. **Widget 固定选项文案（BLOCKER 逐字引用）**：[templates/adapter-widget-options.md](../templates/adapter-widget-options.md) — `AskUserQuestion` / `AskQuestion` 与 claude slash frontmatter 共用同一套 label。
 
-执行 **Skill 00 · Step 0.2.5** 时：**先读**该文档再向用户展示可选 `adapter_name`，并遵守 `SKILL.md` 中同一 Step 的 BLOCKER（显式选定、`agent_adapter` 落盘时机等）。
+遵守 `SKILL.md` 同一 Step 的 BLOCKER（显式选定、`agent_adapter` 落盘时机、禁止自造路径等）。

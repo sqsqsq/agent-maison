@@ -76,8 +76,10 @@
 
 - **禁止**仅通知「当前为 UPDATE、config 里已是 claude，否则保持」后**不等待**即执行 Step 0.3.0。
 - **禁止**把 harness `check-init` 的 `resolveAdapterName`（UPDATE 下从 config 回落）当成「用户本轮已选定」——config 只作**推荐值**展示。
-- **推荐**用 AskQuestion（或等价 structured widget）列出各 `adapter_name`；若 config 为 `claude`，选项文案须让用户回复能映射为字符串 `claude` 的答复，而非默认同意的 opt-out 通知。
-- **同轮必须附 portable 编号菜单**（registry `init.adapter`）：
+- **slash 前置（claude `/framework-init`）**：若 [framework-init.md](../../agents/claude/templates/commands/framework-init.md) 已通过 frontmatter `prompts` 注入 `$PROMPT_ADAPTER` 且值为 `claude`/`cursor`/`generic`，**本节 adapter 枚举视为已满足**，直接进入 Step 0.3.0；值为 `keep_current` 时须读 config 并 **决策复述** 具体 `adapter_name` 后进入 Step 0.3.0。
+- **BLOCKER — Widget（渐进增强，链 [user-confirmation-ux.md](../reference/user-confirmation-ux.md) Tier 1）**：呈现本节 enum 时须先调宿主 widget 工具——**Claude Code：`AskUserQuestion`**；**Cursor：`AskQuestion`**——**同轮仍附**下方 portable 编号；**禁止**仅用 Markdown 大表作为唯一交互。
+- **BLOCKER — Widget 选项文案 SSOT**：`AskUserQuestion` / `AskQuestion` 的 **options label/description 必须逐字引用** [templates/adapter-widget-options.md](templates/adapter-widget-options.md)「固定选项」表；**禁止**仅读 [agents/README.md](../../agents/README.md) 后自行总结路径；**禁止**出现该 SSOT「反模式」段所列字符串（含 `.claude/commands/skills/`、`(Recommended)`）。
+- **同轮必须附 portable 编号菜单**（registry `init.adapter`；正文见 adapter-widget-options SSOT）：
 
   ```text
   请选择（回复编号；widget 可用时可直接选）：
@@ -87,6 +89,7 @@
   4. 保持当前 config 中的 adapter（须复述目录名）
   ```
 
+- **UPDATE 脚注**：展示 enum 时同轮附 adapter-widget-options「UPDATE 说明」段（选项 1 与 4 在 config 已是同一 adapter 时效果相同）。
 - 写入前 **决策复述**（见 user-confirmation-ux §3.6）。
 
 ### 0.3 产物存在性体检（写入前必做，CREATE / UPDATE 共享）
@@ -270,7 +273,9 @@ node scripts/render-agents-md.mjs ...
    - **全选速记**：用户回 `all=y` / `all=n` / `全部 y` / `全部 n` 表示**所有 Q 同向**；这是用户已通读 diff 后明确表达"统一处置"的合法快捷方式。
    - **严禁接受**（Q 数 ≥ 2 时）：裸 `y` / `yes` / `好` / `继续` / `1` —— 这类回复**无法精确映射**到 Q 编号集合，按 0.3.4.3 处理为「歧义」。
 
-3. **AI 输出的提问模板**（强制：先 gate，再允许 Q 格式；见 user-confirmation-ux `init.populated_diff`）：
+3. **AI 输出的提问模板**（强制：先 gate + widget，再允许 Q 格式；见 user-confirmation-ux `init.populated_diff`）：
+
+   **BLOCKER**：先调 widget——Claude **`AskUserQuestion`** / Cursor **`AskQuestion`**（[user-confirmation-ux.md](../reference/user-confirmation-ux.md) Tier 1）——同轮仍附下列 gate 编号；禁止仅 Markdown 表。
 
    ```text
    请选择（回复编号）：
@@ -419,7 +424,7 @@ cd <repo-root> && node framework/harness/scripts/show-last-committed-framework-c
 
 1. 使用 [templates/intra-layer-deps-confirm.template.md](templates/intra-layer-deps-confirm.template.md) 渲染确认表，「当前值」列预填：**若存在 Step 1.25 的 `recovered_framework_config` 快照**，必须以快照中的 `intra_layer_deps` 为预填并说明来源；无快照时才用 preset / 问卷默认值。
 2. 明确提示：`forbid` / `dag` / `sublayer` 语义见 [framework/harness/config.ts](../../harness/config.ts) 的 `IntraLayerDepsMode`；**默认值只是推荐**。
-3. **先展示 gate**（同轮附 portable；widget 可用时 AskQuestion 等价）：
+3. **先展示 gate**（同轮附 portable；**BLOCKER**：Claude 须 **`AskUserQuestion`**，Cursor 须 **`AskQuestion`**，见 [user-confirmation-ux.md](../reference/user-confirmation-ux.md) Tier 1；禁止仅 Markdown 大表）：
 
    ```text
    请选择（回复编号）：

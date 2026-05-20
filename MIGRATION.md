@@ -420,6 +420,47 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 
 adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agents/adapter-schema.yaml)）声明 widget 能力；chrys/codemate 等内部 agent 使用 `generic` + `structured_widget: unsupported`。
 
+### v3.3：Claude Code AskUserQuestion（Track B+ · agents 为主）
+
+**动机**：v3.2 在 skills 层写 portable 编号，但 Claude adapter 仅声明模糊的 `native_options`，运行时 agent 常只画 Markdown 表而不调 widget。
+
+**framework 侧变更**（约 7～8 源文件）：
+
+1. [agents/claude/adapter.yaml](agents/claude/adapter.yaml)：`widget_tool_hint: AskUserQuestion`；启用 `rules` → `.claude/rules/`。
+2. 新建 [agents/claude/templates/rules/confirmation-ux.md](agents/claude/templates/rules/confirmation-ux.md)（SHOULD 级会话规则）。
+3. [agents/claude/templates/commands/framework-init.md](agents/claude/templates/commands/framework-init.md)：`prompts` choice 前置 adapter；正文跳过 Step 0.2.5.1 表格。
+4. Skill 00 **仅 init**：§0.2.5.1 / Step 3.x / §0.3.4 **BLOCKER** 调 AskUserQuestion（Claude）或 AskQuestion（Cursor）。
+
+**实例维护者**（真实工程移植后）：
+
+```text
+/framework-init   # UPDATE；Step 0.3 对 .claude/rules/confirmation-ux.md 与 framework-init.md 走 Q3 确认覆盖
+```
+
+**版本依赖**：slash `prompts` frontmatter 需较新 Claude Code CLI（约 2026-02+）；旧 CLI 忽略 frontmatter 时仍靠 `.claude/rules` + Skill 00 BLOCKER + portable 编号。
+
+**明确未改**：Skill 1～6、confirmation-registry、user-confirmation-ux 扩写、AGENTS 模板、confirmation lint。
+
+### v3.3.1：init.adapter Widget 固定文案
+
+**动机**：Claude Code 调 `AskUserQuestion` 时 agent 自造 option description，曾出现 `.claude/commands/skills/`（不存在）与 `(Recommended)` 标签；slash 实例未同步时同样走 agent 自由扩写路径。
+
+**framework 侧变更**（约 8 源文件）：
+
+1. 新建 [skills/00-framework-init/templates/adapter-widget-options.md](skills/00-framework-init/templates/adapter-widget-options.md) — 4 条固定 label + UPDATE 1/4 等价脚注 + 反模式。
+2. [skills/00-framework-init/SKILL.md](skills/00-framework-init/SKILL.md) §0.2.5.1 **BLOCKER** 逐字引用 SSOT，禁止自造路径。
+3. [agents/claude/templates/commands/framework-init.md](agents/claude/templates/commands/framework-init.md) frontmatter label 与 SSOT 对齐。
+4. [confirmation-registry.yaml](skills/reference/confirmation-registry.yaml) `init.adapter` 增 `widget_options_ref`；`widget_hint` 改为 `AskUserQuestion | AskQuestion`。
+5. [user-confirmation-ux.md](skills/reference/user-confirmation-ux.md)、[agents/README.md](agents/README.md) 反模式 / 误写警示。
+
+**实例维护者验收**（UPDATE init，Q3 覆盖后第二轮 `/framework-init`）：
+
+1. `.claude/commands/framework-init.md` — slash label 与 SSOT 一致，无 `.claude/commands/skills/`。
+2. `.claude/rules/confirmation-ux.md` — Track B+ 规则已下发。
+3. 若走 agent `AskUserQuestion`：选项 1 含 `.claude/commands`，无 `(Recommended)`；菜单下方可见 1/4 等价脚注。
+
+**验证**：`cd framework/harness && npm test`；`npx ts-node harness-runner.ts --phase docs`。
+
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。

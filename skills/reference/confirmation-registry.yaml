@@ -10,7 +10,8 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "§0.2.5 / §0.2.5.1"
     portable_menu: "1=claude 2=cursor 3=generic 4=保持当前"
-    widget_hint: AskQuestion
+    widget_options_ref: templates/adapter-widget-options.md
+    widget_hint: AskUserQuestion | AskQuestion
 
   - id: init.populated_diff
     skill: "00-framework-init"

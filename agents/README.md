@@ -54,6 +54,8 @@ framework/agents/
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`、`.cursor/rules/framework.mdc` |
 
+> **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
+
 ## Init Skill：`adapter.yaml` 字段处理示例（以 claude adapter 为代表）
 
 落地方式：**从选中 adapter 的 `templates/` 拷贝到实例根**，逐字段语义见 `adapter-schema.yaml`。下表仅用 **claude** 示意「模板相对路径 → 实例根路径」的常见形态；其它 adapter 以各自 `adapter.yaml` 为准。
@@ -81,7 +83,14 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 切换 adapter 时：旧入口与其它产物路径可能与新 adapter **不一致**（例如 `.claude/` 与 `.cursor/` 可能在仓库中并存）；须列出「建议删除或手工处理的遗留目录」请用户确认，**不要自动 `rm -rf`**。
 
-**UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。
+**UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。Claude Code 下可通过 `/framework-init` slash **frontmatter choice** 前置注入 adapter，跳过 adapter 表格。
+
+## Claude Code 确认 Widget（Track B+）
+
+- **工具名**：`AskUserQuestion`（非 Cursor 的 `AskQuestion`）。
+- **会话规则**：`.claude/rules/confirmation-ux.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**SHOULD** 优先 widget + 同轮 portable 编号。
+- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 对 Claude/Cursor 分别要求 AskUserQuestion / AskQuestion。
+- **Cursor 对称**：`.cursor/rules/framework.mdc` 第 9 条（AskQuestion）。
 
 ## 内部 agent（Chrys / Codemate 等）
 
@@ -118,7 +127,7 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 | adapter | 入口文件 | slash | skill 跳板 | rules | settings_file | hooks |
 |---------|---------|-------|-----------|-------|---------------|-------|
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（inline 或 bridge） | `{agent_bundle_root}/rules/*.mdc` | — | — |
-| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | — | `.claude/settings.json` | `.claude/hooks/*.mjs` |
+| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
