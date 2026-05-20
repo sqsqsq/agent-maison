@@ -10,7 +10,7 @@ examples/sample-flow/
 ├── TaskSubmitFlow.ets
 ├── sample_flow.dag.yaml
 ├── sample_flow.test.ets
-├── device-testing-todo.md
+├── acceptance.yaml（device_focus，已取代 device-testing-todo.md）
 ├── design-snippet.md
 └── spy/
     ├── SpyRemoteTaskGateway.ets
@@ -26,7 +26,7 @@ flowchart LR
   UC --> FLOW[TaskSubmitFlow.ets]
   UC --> DAG[sample_flow.dag.yaml]
   DAG --> UT[sample_flow.test.ets]
-  UC --> TODO[device-testing-todo.md]
+  UC --> ACC[device_focus in acceptance.yaml]
 ```
 
 ## 要点速览
@@ -35,4 +35,4 @@ flowchart LR
 |---|---|
 | UT 如何测「用户点击提交」？ | 直接 `await flow.submitTask({...})`（与 `ui_bindings.calls` 对齐） |
 | 如何覆盖多个分支？ | `use-cases.yaml` 枚举 branches，`*.test.ets` 中 1 branch ≈ 1 `it()` |
-| 导航/Toast 怎么测？ | UT 不测；由 Skill 6 消费 `device-testing-todo.md` |
+| 导航/Toast 怎么测？ | UT 不测；由 Skill 6 按 acceptance `device_focus` 派生 test-plan |

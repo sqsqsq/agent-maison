@@ -31,6 +31,7 @@ import {
   relFeatureFile,
 } from '../config';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 import {
   extractHeadings,
   getSectionContent,
@@ -837,6 +838,12 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
     results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
+
+    results.push(
+      ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
+        ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
+      ),
+    );
 
     results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P0', 'prd_p0_coverage'), 'prd_p0_coverage'));
     results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'prd_p1_coverage'), 'prd_p1_coverage'));

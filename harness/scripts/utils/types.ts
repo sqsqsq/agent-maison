@@ -192,8 +192,10 @@ export interface AcceptanceSpec {
     data_constraints?: Record<string, unknown>;
     /** UT 分层归属（v2 新增，acceptance.yaml 建议必填） */
     ut_layer?: UtLayer;
-    /** UT 关切点简述（ut_layer ∈ {unit, both} 时推荐） */
+    /** UT 关切点简述（ut_layer ∈ {unit, both} 时必填） */
     ut_focus?: string;
+    /** 真机可观察要点（ut_layer ∈ {device, both} 时必填） */
+    device_focus?: string;
     /** 关联到 use-cases.yaml 中的 use_case id（ut_layer ∈ {unit, both}） */
     linked_flow?: string;
     /** 关联到该 use_case 的某个 branch id（ut_layer ∈ {unit, both}） */
@@ -210,6 +212,7 @@ export interface AcceptanceSpec {
     affected_functions?: string[];
     ut_layer?: UtLayer;
     ut_focus?: string;
+    device_focus?: string;
     linked_flow?: string;
     linked_branch?: string;
   }>;

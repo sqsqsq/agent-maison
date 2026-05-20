@@ -19,7 +19,7 @@ applies_to:
   use_cases_spec: "doc/features/{feature}/use-cases.yaml"
   dag_files: "{module}/test/dag/**/*.yaml"
   ut_files: "{module}/src/test/**/*"
-  device_todo: "doc/features/{feature}/device-testing-todo.md"
+  # device-testing-todo.md 已废弃；见 acceptance.yaml > device_focus
 
 structure_checks: {}
 

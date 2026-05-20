@@ -58,6 +58,12 @@ import {
   collectDeviceTestTimings,
   writeDeviceTestTimingJson,
 } from '../../profiles/hmos-app/harness/device-test-timings';
+import {
+  acceptanceYamlPath,
+  collectDeviceScopeP0P1,
+  isDeviceUtLayer,
+} from './utils/acceptance-layering';
+import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -850,29 +856,27 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
     }
   }
 
-  const p0p1Criteria = acceptance.criteria.filter(c =>
-    c.priority === 'P0' || c.priority === 'P1',
-  );
-  const uncovered = p0p1Criteria.filter(c => {
+  const { criteria: deviceCriteria, boundaries: deviceBoundaries } = collectDeviceScopeP0P1(acceptance);
+  const uncovered = deviceCriteria.filter(c => {
     const normalizedId = c.id.toUpperCase().replace(/\s/g, '');
     return !allCoveredACs.has(normalizedId);
   });
 
-  const allBoundaries = acceptance.boundaries ?? [];
-  const uncoveredBD = allBoundaries.filter(b => {
+  const uncoveredBD = deviceBoundaries.filter(b => {
     const normalizedId = b.id.toUpperCase().replace(/\s/g, '');
     return !allCoveredACs.has(normalizedId);
   });
 
-  const p0Count = acceptance.criteria.filter(c => c.priority === 'P0').length;
-  const p0Covered = acceptance.criteria.filter(c => c.priority === 'P0' && allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
-  const p1Count = acceptance.criteria.filter(c => c.priority === 'P1').length;
-  const p1Covered = acceptance.criteria.filter(c => c.priority === 'P1' && allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
+  const p0Device = deviceCriteria.filter(c => c.priority === 'P0');
+  const p1Device = deviceCriteria.filter(c => c.priority === 'P1');
+  const p0Covered = p0Device.filter(c => allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
+  const p1Covered = p1Device.filter(c => allCoveredACs.has(c.id.toUpperCase().replace(/\s/g, ''))).length;
 
   const details: string[] = [];
-  details.push(`P0 AC 覆盖率: ${p0Covered}/${p0Count}`);
-  details.push(`P1 AC 覆盖率: ${p1Covered}/${p1Count}`);
-  details.push(`BD 覆盖率: ${allBoundaries.length - uncoveredBD.length}/${allBoundaries.length}`);
+  details.push(`追溯分母：ut_layer∈{device,both} 的 P0/P1（不含 unit 层 AC）`);
+  details.push(`P0 AC 覆盖率: ${p0Covered}/${p0Device.length}`);
+  details.push(`P1 AC 覆盖率: ${p1Covered}/${p1Device.length}`);
+  details.push(`BD 覆盖率: ${deviceBoundaries.length - uncoveredBD.length}/${deviceBoundaries.length}`);
 
   if (uncovered.length > 0) {
     details.push('未被测试用例覆盖的 P0/P1 AC:');
@@ -902,7 +906,117 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
     severity: 'BLOCKER',
     status: 'FAIL',
     details: details.join('\n'),
-    suggestion: `请为未覆盖的 ${uncovered.length} 个 P0/P1 AC 补充测试用例。`,
+    suggestion: `请为未覆盖的 ${uncovered.length} 个 device 层 P0/P1 AC 补充测试用例（见 acceptance.yaml device_focus）。`,
+  }];
+}
+
+function checkTestPlanFreshnessVsAcceptance(ctx: CheckContext): CheckResult[] {
+  const id = 'test_plan_freshness_vs_acceptance';
+  const accPath = acceptanceYamlPath(ctx.projectRoot, ctx.feature);
+  const planPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  if (!fs.existsSync(accPath)) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'acceptance.yaml 不存在。',
+    }];
+  }
+  if (!fs.existsSync(planPath)) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+  const accMtime = fs.statSync(accPath).mtimeMs;
+  const planMtime = fs.statSync(planPath).mtimeMs;
+  if (accMtime > planMtime) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        'acceptance.yaml 比 test-plan.md 更新：请按 Skill 6 从 acceptance（ut_layer∈{device,both}）重派生 test-plan 与 hylyre 计划。',
+      suggestion: '更新 test-plan.md 后重新派生 testing/reports/<timestamp>/hylyre/test-plan.hylyre.md。',
+    }];
+  }
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: 'test-plan.md 不早于 acceptance.yaml（按 mtime）。',
+  }];
+}
+
+function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'plan_references_unit_layer_ac';
+  const acceptance = ctx.featureSpec.acceptance;
+  if (!acceptance || !plan) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: 'acceptance 或 test-plan 不可用。',
+    }];
+  }
+  const unitOnlyIds = new Set(
+    (acceptance.criteria ?? [])
+      .filter(c => c.ut_layer === 'unit')
+      .map(c => c.id.toUpperCase().replace(/\s/g, '')),
+  );
+  for (const b of acceptance.boundaries ?? []) {
+    if (b.ut_layer === 'unit') unitOnlyIds.add(b.id.toUpperCase().replace(/\s/g, ''));
+  }
+  if (unitOnlyIds.size === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: '无 ut_layer=unit 的 AC/BD。',
+    }];
+  }
+  const acRefs = extractTestCaseACRefs(plan);
+  const hits: string[] = [];
+  for (const refs of acRefs.values()) {
+    for (const ref of refs) {
+      const norm = ref.toUpperCase().replace(/\s/g, '');
+      if (unitOnlyIds.has(norm)) hits.push(ref);
+    }
+  }
+  const unique = [...new Set(hits)];
+  if (unique.length === 0) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'MINOR',
+      status: 'PASS',
+      details: 'test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。',
+    }];
+  }
+  return [{
+    id,
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', id),
+    severity: 'MINOR',
+    status: 'WARN',
+    details:
+      `test-plan 关联了 ${unique.length} 个 unit 层 AC/BD（应由 Skill 5 UT 覆盖）：\n${truncateList(unique, 10)}`,
+    suggestion: '从真机 test-plan 剔除 unit 层 AC，仅保留 ut_layer∈{device,both}。',
   }];
 }
 
@@ -1157,7 +1271,10 @@ function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckRes
     }
   }
 
-  const uncovered = acceptance.boundaries.filter(b => {
+  const deviceBoundaries = (acceptance.boundaries ?? []).filter(
+    b => isDeviceUtLayer(b.ut_layer),
+  );
+  const uncovered = deviceBoundaries.filter(b => {
     const normalizedId = b.id.toUpperCase().replace(/\s/g, '');
     return !allCoveredACs.has(normalizedId);
   });
@@ -1169,7 +1286,7 @@ function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckRes
       description: '边界场景应被测试计划覆盖',
       severity: 'MAJOR',
       status: 'PASS',
-      details: `全部 ${acceptance.boundaries.length} 个边界场景被测试用例覆盖。`,
+      details: `全部 ${deviceBoundaries.length} 个 device 层边界场景被测试用例覆盖。`,
     }];
   }
 
@@ -1938,8 +2055,16 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
     results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
 
+    results.push(
+      ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
+        ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
+      ),
+    );
+
     // --- Traceability checks ---
+    results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
+    results.push(...safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac'));
     results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
     results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));

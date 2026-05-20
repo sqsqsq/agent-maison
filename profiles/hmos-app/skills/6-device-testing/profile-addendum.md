@@ -51,7 +51,7 @@
 | hdc/hvigor 实现侧 | `framework/profiles/hmos-app/harness/`（runner 经由 `framework/harness` shim） |
 | Skill 6 打包维度 / env 提示 | `framework/profiles/hmos-app/harness/testing-build-conventions.ts` |
 
-上游 **Skill 5** 产物 `device-testing-todo.md` 在宿主侧常为 **Hypium DAG + 打桩契约**的补充清单；计划/报告仍以 AC/BD 与 todo 为第一来源。
+上游 **验收 SSOT** 为 `acceptance.yaml`（`ut_layer` + `device_focus`）；Skill 6 从其中 **过滤 `ut_layer∈{device,both}`** 派生 `test-plan.md`。**`test-plan.md` 为执行层唯一用例清单权威**（与下文 hylyre 派生 SSOT 一致）。已废弃 `device-testing-todo.md` 交接物（见 [acceptance-layering.md](../../../../docs/concepts/acceptance-layering.md)）。
 
 ### skill-assets.yaml 键
 

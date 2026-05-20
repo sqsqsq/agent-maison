@@ -4,11 +4,12 @@ criteria:
   - id: AC-V27
     prd_function: FX
     priority: P2
-    description: mock-plan target_class 不在 contracts
+    description: mock-plan target_class 不在 contracts；L3 option_a 已交真机
     testable: true
     verification_steps:
       - fixture
     expected_result: fixture
-    ut_layer: unit
+    ut_layer: device
+    device_focus: "AC-V27：L3 不可测项，mock-plan 孤儿类由真机侧记录（fixture）"
 
 boundaries: []

@@ -86,7 +86,7 @@ records:
         seam: none
     verdict: downgrade_device
     recommendation:
-      option_a: "标记 device-only，写入 device-testing-todo.md"
+      option_a: "标记 device-only，在 acceptance.yaml 对应条目填写 device_focus"
       option_b: "源码改造：JumpManager 构造注入（须 gap-notes approved_src_mutations）"
     selected: option_a   # 用户确认后填写 option_a 或 option_b
 ```

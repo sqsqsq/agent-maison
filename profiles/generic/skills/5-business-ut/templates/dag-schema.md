@@ -6,7 +6,7 @@
 > **核心原则**：
 > - DAG 是**消费品**，不驱动生产代码形态
 > - DAG 描述**现有代码**的调用链，不描述"应该如何抽象"
-> - UI 副作用（Toast / 导航 / 动画）**永远不画进 DAG**，交 `device-testing-todo.md`
+> - UI 副作用（Toast / 导航 / 动画）**永远不画进 DAG**，交 `acceptance.yaml > device_focus`
 
 ## 概述
 
@@ -112,8 +112,8 @@ nodes:
 | `code_execution` | 纯同步计算（保留兼容） | `source` |
 | `async_call` | 通用异步调用（保留兼容；优先用 port_call_*） | `source`, `stub_strategy`, `spy_preset` 或（deprecated）`mock_data` |
 | `background_task` | 后台任务（保留兼容） | `source`, `task` |
-| ~~`user_intervention`~~ | 已弃用 → `device-testing-todo.md` | — |
-| ~~`ui_navigation`~~ | 已弃用 → `device-testing-todo.md` | — |
+| ~~`user_intervention`~~ | 已弃用 → `acceptance.yaml > device_focus` | — |
+| ~~`ui_navigation`~~ | 已弃用 → `acceptance.yaml > device_focus` | — |
 
 > 关于 `ui_subscription`：本节点类型**不是** UT 关心的对象，只是在 design 阶段为了把"state → UI 反应"的映射可视化而保留的占位节点，方便 Skill 6 从 DAG + `use-cases.yaml > ui_bindings` 生成真机测试清单。UT 扫描时会跳过。
 
@@ -125,7 +125,7 @@ nodes:
 | `port_call_log` | Spy 调用序列 | `spyCloud.callLog` / `spyLocal.callLog` |
 | `data_check` | 数据完整性（持久化/内存） | `spyLocal.saved[0].taskId` |
 | `error_check` | 错误态 | `flow.state.errorCode` |
-| ~~`ui_verify`~~ | 已弃用 → `device-testing-todo.md` | — |
+| ~~`ui_verify`~~ | 已弃用 → `acceptance.yaml > device_focus` | — |
 
 ## 打桩策略枚举
 
@@ -147,7 +147,7 @@ nodes:
 7. **source 存在性**：`source.file` 引用的文件在工程中必须存在
 8. **ID 唯一**：DAG 内 `nodes[].id` 不重复
 9. **mock 表达**：`port_call_*` / `async_call` 节点应优先使用 `spy_preset` 引用 `ut/mock-plan.yaml`。旧字段 `mock_data` **deprecated**（仍可被旧 harness/工具阅读；新 feature 勿用字面量 `value` 充当代类型）。
-10. **UI 副作用禁入**：DAG 中禁止出现路由 push、Toast、真实点击等节点（请用 `ui_subscription` 占位或交 `device-testing-todo.md`）
+10. **UI 副作用禁入**：DAG 中禁止出现路由 push、Toast、真实点击等节点（请用 `ui_subscription` 占位或交 `acceptance.yaml > device_focus`）
 11. **分支覆盖（当 `use_case` 非空时）**：同 UseCase 的所有 DAG 的 `branches[]` 必须并集覆盖 `use-cases.yaml > branches[].id`，且互不重叠
 
 ## 示例：远端受理失败（中性 · 路径占位）
@@ -232,8 +232,8 @@ flowchart TD
 
 | 想表达的内容 | 应出现在 |
 |---|---|
-| 按钮点击、下拉刷新、真实键盘输入、Toast / 路由转场 / 动画 | `device-testing-todo.md`（Skill 6 真机） |
+| 按钮点击、下拉刷新、真实键盘输入、Toast / 路由转场 / 动画 | `acceptance.yaml > device_focus`（Skill 6 真机） |
 | `coord.xxx()` 业务入口调用（按 `ui_bindings.user_actions.calls`） | ✅ DAG `user_trigger` + UT `await` |
 | Spy 打桩的边界调用 | ✅ DAG `port_call_*` |
 | state.phase / state.errorCode 迁移 | ✅ DAG `state_transition` + `assertion` |
-| "某页/组件在 phase=X 时应显示/跳转" | ⚠️ DAG 可写 `ui_subscription`（占位，UT 忽略）；真正的断言写入 `device-testing-todo.md` |
+| "某页/组件在 phase=X 时应显示/跳转" | ⚠️ DAG 可写 `ui_subscription`（占位，UT 忽略）；真正的断言写入 `acceptance.yaml > device_focus` |

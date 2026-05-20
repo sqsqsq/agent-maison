@@ -59,6 +59,8 @@ import {
 } from './utils/ut-artifact-parse';
 import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
+import { buildAcCoverageReport, writeAcCoverageReport } from './utils/ac-coverage-report';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -185,7 +187,7 @@ const VALID_NODE_TYPES = [
   'port_call_cloud',
   'port_call_local',
   'state_transition',
-  'ui_subscription',     // v2.1：UI 订阅占位（UT 忽略；供 device-testing-todo 生成）
+  'ui_subscription',     // v2.1：UI 订阅占位（UT 忽略；与 acceptance device_focus 文档对齐）
 ];
 
 // --------------------------------------------------------------------------
@@ -409,7 +411,7 @@ function checkDagNodeTypeValid(
       status: 'WARN',
       details: `${deprecatedNodes.length} 个节点使用已废弃类型（兼容保留）：\n${truncateList(deprecatedNodes, 10)}`,
       affected_files: [...new Set(deprecatedFiles)],
-      suggestion: 'user_intervention / ui_navigation 已废弃；建议用 ui_subscription（UI 订阅 state，UT 忽略）或移除后改由 device-testing-todo.md 承载。',
+      suggestion: 'user_intervention / ui_navigation 已废弃；建议用 ui_subscription（UI 订阅 state，UT 忽略）或在 acceptance.yaml 填写 device_focus。',
     });
   }
 
@@ -2282,10 +2284,6 @@ function mockPlanPath(ctx: CheckContext): string {
   return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'ut/mock-plan.yaml');
 }
 
-function deviceTestingTodoPath(ctx: CheckContext): string {
-  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'device-testing-todo.md');
-}
-
 function auditLevelNorm(level?: string): string {
   return (level ?? '').trim().toUpperCase();
 }
@@ -2384,17 +2382,6 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
 
 function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
   const id = 'ut_unsupported_targets_handled';
-  const requiredIds = collectUnitScopeAcceptanceIds(ctx);
-  if (requiredIds.length === 0) {
-    return [{
-      id,
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', id),
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details: '无 unit/both AC/BD，跳过 L3 处置门禁。',
-    }];
-  }
 
   const p = testabilityAuditPath(ctx);
   if (!fs.existsSync(p)) {
@@ -2416,14 +2403,12 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
-      status: 'PASS',
+      status: 'SKIP',
       details: '无 L3（不可测）记录，跳过 option_a/b 处置检查。',
     }];
   }
 
-  const deviceTodo = fs.existsSync(deviceTestingTodoPath(ctx))
-    ? fs.readFileSync(deviceTestingTodoPath(ctx), 'utf-8')
-    : '';
+  const acceptance = ctx.featureSpec.acceptance;
 
   const gapFiles = findGapNotesFiles(ctx.projectRoot, ctx.feature);
   let approvedCount = 0;
@@ -2439,13 +2424,11 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
       continue;
     }
     if (sel === 'option_a') {
-      const tag = r.acceptance_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const ok =
-        new RegExp(`#+\\s*${tag}\\b`).test(deviceTodo) ||
-        new RegExp(`\\b${tag}\\b`).test(deviceTodo);
-      if (!ok) {
+      if (!acceptance) {
+        issues.push(`${r.acceptance_id}: option_a 需要 acceptance.yaml，但文件不可用`);
+      } else if (!acceptanceHasDeviceFocusRef(acceptance, r.acceptance_id)) {
         issues.push(
-          `${r.acceptance_id}: option_a 要求写入 device-testing-todo.md（须出现标题或正文引用 ${r.acceptance_id}）`,
+          `${r.acceptance_id}: option_a 须在 acceptance.yaml 对应条目的 device_focus 中声明真机要点（含 ${r.acceptance_id} 引用）`,
         );
       }
     } else {
@@ -2466,7 +2449,7 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details: `${issues.length} 条 L3 处置不合规：\n${truncateList(issues, 15)}`,
       suggestion:
-        'option_a → 更新 doc/features/<feature>/device-testing-todo.md；option_b → 按 Skill 5 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
+        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 按 Skill 5 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
     }];
   }
 
@@ -2875,6 +2858,12 @@ const checker: PhaseChecker = {
       ),
     );
 
+    results.push(
+      ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
+        ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
+      ),
+    );
+
     // --- Structure checks ---
     // v2 A: use-cases.yaml 自身
     results.push(...safeRun(() => checkUseCaseSpecRecommended(ctx), 'usecase_spec_recommended'));
@@ -2969,6 +2958,36 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkBranchCoverageFull(ctx, utFiles), 'branch_coverage_full'));
     results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, utFiles), 'ut_case_per_unit_ac'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, utFiles, dags), 'boundary_coverage'));
+
+    const acceptance = ctx.featureSpec.acceptance;
+    if (acceptance && utFiles.length > 0) {
+      try {
+        const itNames = collectItNames(ctx, utFiles);
+        const report = buildAcCoverageReport(ctx.feature, acceptance, itNames);
+        const outPath = writeAcCoverageReport(ctx.projectRoot, ctx.feature, report);
+        const rel = path.relative(ctx.projectRoot, outPath).replace(/\\/g, '/');
+        const blockers = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
+        if (blockers.length === 0) {
+          results.push({
+            id: 'ut_ac_coverage_report_written',
+            category: 'traceability',
+            description: 'UT 结束后写入 ac-coverage.json 机器回执',
+            severity: 'MINOR',
+            status: 'PASS',
+            details: `已写入 ${rel}（unit_scope ${report.summary.unit_covered}/${report.summary.unit_scope_total}）。`,
+          });
+        }
+      } catch (e) {
+        results.push({
+          id: 'ut_ac_coverage_report_written',
+          category: 'traceability',
+          description: 'UT 结束后写入 ac-coverage.json 机器回执',
+          severity: 'MINOR',
+          status: 'WARN',
+          details: `写入 ac-coverage.json 失败：${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
 
     results.push(buildUtRunStatusResult(results));
 

@@ -359,9 +359,9 @@ it('异步测试', 0, async () => {
 | 你想测的是…                      | 写在哪 | 备注 |
 |--------------------------------|--------|------|
 | 业务编排的分支逻辑、state、data_boundary 调用序列 | **UT**（本模板）| Hypium 端到端驱动命名入口 |
-| Toast 文案、NavPathStack 跳转、UI 卡死、按钮禁用 | `device-testing-todo.md` | 由 Skill 6 真机覆盖 |
-| 真实键盘输入 / 下拉刷新 / 滚动     | `device-testing-todo.md` | 由 Skill 6 真机覆盖 |
-| DAG `ui_subscription` 节点       | `device-testing-todo.md` | UT 忽略，仅文档用，真机验证 |
+| Toast 文案、NavPathStack 跳转、UI 卡死、按钮禁用 | `acceptance.yaml` > `device_focus` | 由 Skill 6 按 test-plan 真机覆盖 |
+| 真实键盘输入 / 下拉刷新 / 滚动     | `acceptance.yaml` > `device_focus` | 由 Skill 6 真机覆盖 |
+| DAG `ui_subscription` 节点       | 与 `device_focus` 对齐 | UT 忽略，仅文档用，真机验证 |
 
-> 所有 `ut_layer in [device, both]` 的 AC 都必须在 `device-testing-todo.md` 中出现，
-> 否则 `device_ac_delegation` 语义检查将告警。
+> 所有 `ut_layer in [device, both]` 的 AC 都必须在 `acceptance.yaml` 中声明非空 `device_focus`，
+> 否则 `acceptance_device_focus_present` / `device_ac_delegation` 门禁将 FAIL。

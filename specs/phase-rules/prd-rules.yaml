@@ -220,6 +220,39 @@ structure_checks:
         - "创建日期"
         - "状态"
 
+  acceptance_yaml_present:
+    description: >
+      doc/features/{feature}/acceptance.yaml 必须存在（Skill 1 从 PRD 提取的验收 SSOT）
+    severity: BLOCKER
+    rule:
+      path: "doc/features/{feature}/acceptance.yaml"
+
+  acceptance_ut_layer_complete:
+    description: >
+      acceptance.yaml 中每条 criterion/boundary 必须声明合法 ut_layer（unit/device/both）
+    severity: BLOCKER
+    rule:
+      file: "acceptance.yaml"
+      field: "ut_layer"
+      allowed_values: ["unit", "device", "both"]
+
+  acceptance_device_focus_present:
+    description: >
+      ut_layer∈{device,both} 须填写 device_focus；both 须同时填写 ut_focus 与 device_focus
+    severity: BLOCKER
+    rule:
+      file: "acceptance.yaml"
+      fields:
+        device: ["device_focus"]
+        both: ["ut_focus", "device_focus"]
+
+  legacy_device_testing_todo_deprecated:
+    description: >
+      device-testing-todo.md 已废弃；若仍存在且缺 device_focus 则 WARN（过渡期）
+    severity: MINOR
+    rule:
+      deprecated_path: "doc/features/{feature}/device-testing-todo.md"
+
   visual_handoff:
     description: >
       （PRD 驱动 + opt-in：`prd` 段默认不在模板 skeleton；仅当配置了 prd.visual_handoff_enforcement

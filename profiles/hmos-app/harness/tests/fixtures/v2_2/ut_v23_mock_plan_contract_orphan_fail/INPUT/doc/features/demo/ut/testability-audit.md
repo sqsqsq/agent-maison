@@ -1,4 +1,4 @@
-# 将 AC-V27 标为 L3，option_a，且 device-testing-todo 可追溯
+# 将 AC-V27 标为 L3，option_a，且 acceptance.device_focus 可追溯
 
 ```yaml
 records:

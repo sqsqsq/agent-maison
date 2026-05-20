@@ -244,6 +244,7 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `data_constraints` | 从描述中提炼 | 数据约束（数量、具体值等，可选） |
 | `ut_layer` | **必填** | UT 分层：`unit`（仅 profile 宿主业务 UT 覆盖）/ `device`（仅真机 UI 自动化覆盖）/ `both`（两层都需要覆盖）。详见下方《6.1.1 ut_layer 分层指引》 |
 | `ut_focus` | 若 ut_layer ∈ {unit, both} 必填 | 简要说明 UT 要断言什么（如"state 最终为 Success；storage.save 被调用；save 数据字段完整"）；不写具体代码，只点明关切点 |
+| `device_focus` | 若 ut_layer ∈ {device, both} 必填 | 真机可观察要点（导航目标页、Toast 文案、布局/性能等）；**both 禁止**把 UI 要点只写进 `ut_focus` |
 | `linked_flow` | 若 ut_layer ∈ {unit, both} 建议填 | 指向 `doc/features/{feature}/use-cases.yaml > use_cases[].id`，如 `<flow_id>` |
 | `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 指向该 use_case 的 `branches[].id`，如 `<branch_id>` |
 
@@ -259,6 +260,7 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 | `expected_behavior` | 预期行为 | 处理后的可观察结果 |
 | `ut_layer` | **必填** | 同 `criteria.ut_layer` |
 | `ut_focus` | 若 ut_layer ∈ {unit, both} 必填 | 简要说明 UT 关切点 |
+| `device_focus` | 若 ut_layer ∈ {device, both} 必填 | 真机可观察要点（同 criteria） |
 | `linked_flow` / `linked_branch` | 若 ut_layer ∈ {unit, both} 建议填 | 同 `criteria` 字段 |
 
 #### 6.1.1 ut_layer 分层指引
@@ -274,7 +276,7 @@ PRD 归档后，**必须**同步提取功能级规约文件到 `doc/features/{mo
 **原则**：
 1. **纯 UI/交互 AC 必须落 device**——业务 UT 中禁止依赖真实 UI 导航/Toast（见 ut-rules.yaml `no_ui_dep_in_ut` BLOCKER；细则随 `project_profile`）
 2. **业务流程分支必须落 unit**——"成功/失败/取消/回滚"这类状态流转由 UseCase 在 UT 中端到端覆盖
-3. **ut_layer = both 的 AC**：必须拆出"业务部分" 与 "UI 部分"分别在 `ut_focus` 中写清，UT 只承担业务部分，UI 部分由 Skill 6 覆盖
+3. **ut_layer = both 的 AC**：必须分别填写 `ut_focus`（业务）与 `device_focus`（UI/真机），禁止混写在单段 `ut_focus` 中；UT 只承担业务部分，UI 由 Skill 6 按 `device_focus` 派生 test-plan
 
 **`performance` 章节**（从 PRD「非功能性需求」提取）：
 

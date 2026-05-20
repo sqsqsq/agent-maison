@@ -45,6 +45,7 @@ import {
 import { isPrdVisualHandoffSkipped, dispatchPrdVisualHandoff } from '../capability-registry';
 import { relCatalog, relGlossary, relFeatureFile } from '../config';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchPrdVisualHandoff as checkVisualHandoff };
 
 // --------------------------------------------------------------------------
@@ -885,6 +886,14 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNfrQuantified(ctx, prd), 'nfr_quantified'));
     results.push(...safeRun(() => checkPageDescriptionCompleteness(ctx, prd), 'page_description_completeness'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, prd), 'metadata_header'));
+
+    const acceptanceRuleDesc = (
+      c: CheckContext,
+      s: string,
+      id: string,
+    ): string =>
+      ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id);
+    results.push(...runAcceptanceYamlStructureChecks(ctx, acceptanceRuleDesc));
 
     results.push(...safeRun(() => checkFeatureToAcceptance(ctx, prd), 'feature_to_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToFeature(ctx, prd), 'acceptance_to_feature'));

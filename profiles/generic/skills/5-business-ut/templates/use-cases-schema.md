@@ -138,7 +138,7 @@ use_cases:
 4. **`phases` 首元素为 `Idle`**：`expected_phase_seq` 从 `Idle` 开始。
 5. **branches 覆盖分支爆炸**：happy path + 每种可预期失败路径（云侧失败、本地失败、回滚路径）都列入。
 6. **`linked_acceptance` 不能为空**：若某分支暂无对应 AC，Skill 1/2 先补 AC。
-7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `doc/features/{feature}/device-testing-todo.md`。
+7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `doc/features/{feature}/acceptance.yaml > device_focus`。
 
 ## 与其他 Spec 的追溯关系
 
@@ -150,7 +150,7 @@ flowchart LR
   AC -. "ut_layer ∈ {unit, both}" .-> UC
   UC --> DAG["*.dag.yaml<br>use_case + branch"]
   DAG --> UT["*.test.ets<br>按 user_sequence 翻译"]
-  AC -->|"ut_layer ∈ {device, both}"| TODO["device-testing-todo.md"]
+  AC -->|"ut_layer ∈ {device, both}"| TODO["acceptance.yaml > device_focus"]
   TODO --> S6["Skill 6 test-plan"]
 ```
 

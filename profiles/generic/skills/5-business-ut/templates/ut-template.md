@@ -28,6 +28,6 @@ for each branch in use_cases[].branches:
 | 维度 | generic / 文档为先 | 端侧 profile |
 |------|-------------------|--------------|
 | 业务编排与数据边界 | 仍可写 mock-plan / DAG 作为**设计资产** | `check-ut.ts` 可强制结构 |
-| UI / 真机交互 | `device-testing-todo.md` | 同左 + 可能跑 harness |
+| UI / 真机交互 | `acceptance.yaml` > `device_focus` | Skill 6 test-plan + harness |
 
-> `ut_layer in [device, both]` 的 AC 仍建议在 `device-testing-todo.md` 中写明人工或 E2E 验证步骤。
+> `ut_layer in [device, both]` 的 AC 须在 `acceptance.yaml` 中声明 `device_focus`（真机/E2E 要点）。

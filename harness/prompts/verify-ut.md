@@ -184,16 +184,16 @@
 
 ### 检查 6: device AC 委派一致性 (device_ac_delegation)
 
-- **严重等级**: MAJOR
+- **严重等级**: BLOCKER
 - **评估方法**:
   1. 找到 `acceptance.yaml` 中所有 `ut_layer ∈ {device, both}` 的 AC/BD
-  2. 检查 `doc/features/{feature_name}/device-testing-todo.md` 是否存在，且每条 device/both AC 都有对应条目（通过 AC id 引用即可）
-  3. 若该文件缺失 → 判定 WARN 并给出最小模板建议
-  4. 若文件存在但遗漏某 AC → 判定 FAIL 并列出遗漏项
-  5. 检查 `both` AC：UT 侧是否已经覆盖了可在 UT 验证的语义部分（state / data_boundary / 业务数据），真机侧是否覆盖了 UI 层
-  6. 参考 DAG 中 `ui_subscription` 节点（仅文档/真机 todo 用，UT 忽略）是否已翻译为 device-testing-todo 条目
+  2. 每条须声明非空、可执行的 `device_focus`（both 还须拆分 `ut_focus`）
+  3. 若缺 `device_focus` → FAIL 并给出补写示例
+  4. 检查 `both` AC：UT 是否覆盖业务语义；`device_focus` 是否覆盖 UI 层
+  5. 参考 DAG `ui_subscription` 是否与 `device_focus` 一致
+  6. legacy `device-testing-todo.md` 若仍存在 → WARN 建议删除（非 SSOT）
 
-- **输出**：缺失委派条目 + 模板片段
+- **输出**：缺失 device_focus 列表 + 补写片段
 
 ### 检查 7: 打桩合理性 (stub_reasonableness) 【替代旧的 mock_reasonableness】
 
@@ -352,17 +352,16 @@ verification_result:
 
     - id: device_ac_delegation
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         device/both AC 列表: [...]
-        device-testing-todo.md 是否存在: YES/NO
-        遗漏条目: [...]
-        ui_subscription 节点翻译情况: [...]
+        缺 device_focus 的 AC/BD: [...]
+        legacy device-testing-todo.md 是否存在（应删除）: YES/NO
+        ui_subscription 与 device_focus 一致性: [...]
       affected_files:
-        - "doc/features/{feature_name}/device-testing-todo.md"
         - "doc/features/{feature_name}/acceptance.yaml"
       suggestion: |
-        <修正建议 + 模板片段>
+        <为缺项补写 device_focus 片段；both 须拆分 ut_focus + device_focus>
 
     - id: stub_reasonableness
       status: PASS | FAIL | WARN

@@ -78,8 +78,8 @@ const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
 
 const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   review: ['PRD.md'],
-  ut: ['use-cases.yaml', 'device-testing-todo.md'],
-  testing: ['contracts.yaml', 'use-cases.yaml', 'device-testing-todo.md', 'review-report.md'],
+  ut: ['use-cases.yaml'],
+  testing: ['contracts.yaml', 'use-cases.yaml', 'review-report.md'],
 };
 
 export class SpecLoader {

@@ -1,4 +1,4 @@
-# Fixture：L3 + option_a 但未在 device-testing-todo 登记
+# Fixture：L3 + option_a 但未在 acceptance.device_focus 登记
 
 ```yaml
 records:

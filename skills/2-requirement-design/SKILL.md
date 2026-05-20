@@ -291,7 +291,7 @@ expansions_with_user_approval:
 
 - ❌ 在 design / use-cases.yaml 里要求"必须在 `domain/usecase/` 下新建 `XxxUseCase` 类"——代码形态由 Skill 3 决定
 - ❌ 为某个 data 层类额外套一层 `XxxPort` 接口**只为了 UT 注入方便**——直接引用既有 data 层类即可，UT 用 Spy/Fake 子类化或原型替换
-- ❌ 把 **路由/弹窗/Toast 等 UI 运行时能力**登记为 `data_boundaries`——UI 副作用走 `ui_subscription`（design 与 device-testing-todo 承载），不进 UT；具体禁入符号见宿主 profile addendum
+- ❌ 把 **路由/弹窗/Toast 等 UI 运行时能力**登记为 `data_boundaries`——UI 副作用走 `ui_subscription`（design 文档化）与 Skill 1 的 `acceptance.yaml` > `device_focus`，不进 UT；具体禁入符号见宿主 profile addendum
 - ❌ 对业务逻辑非常简单的 feature 硬凑 `use-cases.yaml`（如首页一次性加载）——应直接让 Skill 5 基于 data 层函数 + dag 写 UT
 
 ### Step 7: 设计展示层
