@@ -1485,7 +1485,7 @@ export function resolveHvigorBinFromConfig(projectRoot: string): string | null {
 // tools.hylyre（hmos-app · 真机自动化消费）
 // --------------------------------------------------------------------------
 
-const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
+export const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
   vendor_dir: 'framework/profiles/hmos-app/vendor/hylyre',
   venv_dir: '.hylyre/venv',
   app_snapshot_cache_dir: 'doc/app-snapshot-cache',

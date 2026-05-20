@@ -26,6 +26,7 @@
 // ============================================================================
 
 import {
+  DEFAULT_HYLYRE_TOOL_CONFIG,
   DEFAULT_PATHS,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
@@ -45,8 +46,8 @@ export interface BackfillField {
  *
  * 维护原则：
  *   - 这里**只**列允许在缺失时静默补默认值的字段；其它一律不能补。
- *   - 默认值取 framework/harness/config.ts 的 DEFAULT_PATHS / DEFAULT_STATE_MACHINE
- *     等常量；新增字段时先在 config.ts 里给真实默认值，再加到本表，避免双源漂移。
+ *   - 默认值取 framework/harness/config.ts 的 DEFAULT_PATHS / DEFAULT_STATE_MACHINE /
+ *     DEFAULT_HYLYRE_TOOL_CONFIG 等常量；新增字段时先在 config.ts 里给真实默认值，再加到本表，避免双源漂移。
  */
 export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   {
@@ -156,6 +157,43 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     path: 'toolchain.hvigor.analyze',
     defaultValue: 'advanced',
     note: "toolchain.hvigor.analyze 缺失：回填 'advanced'",
+  },
+
+  // tools.hylyre.* —— hmos-app Skill 6 真机自动化；与 DEFAULT_HYLYRE_TOOL_CONFIG / 模板对齐
+  {
+    path: 'tools.hylyre.vendor_dir',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.vendor_dir,
+    note: 'tools.hylyre.vendor_dir 缺失：回填 hmos-app vendor/hylyre 目录',
+  },
+  {
+    path: 'tools.hylyre.venv_dir',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.venv_dir,
+    note: 'tools.hylyre.venv_dir 缺失：回填 .hylyre/venv',
+  },
+  {
+    path: 'tools.hylyre.app_snapshot_cache_dir',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.app_snapshot_cache_dir,
+    note: 'tools.hylyre.app_snapshot_cache_dir 缺失：回填 doc/app-snapshot-cache',
+  },
+  {
+    path: 'tools.hylyre.pypi_extra_index_url',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.pypi_extra_index_url,
+    note: 'tools.hylyre.pypi_extra_index_url 缺失：回填清华 PyPI 镜像（可改内网源）',
+  },
+  {
+    path: 'tools.hylyre.auto_install',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.auto_install,
+    note: 'tools.hylyre.auto_install 缺失：回填 true',
+  },
+  {
+    path: 'tools.hylyre.doctor_first_run',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.doctor_first_run,
+    note: 'tools.hylyre.doctor_first_run 缺失：回填 true',
+  },
+  {
+    path: 'tools.hylyre.hypium_page_name',
+    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.hypium_page_name,
+    note: 'tools.hylyre.hypium_page_name 缺失：回填空串（由 device-test-run 扫描 entry mainElement）',
   },
 ];
 

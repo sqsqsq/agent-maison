@@ -351,9 +351,16 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 `prd.*`（opt-in，需手工选 strict/warn/reachable/off 档位）、`atomic_service.*`（预留位）、
 `paths.reports_dir_pattern`（未配置时回退 legacy 报告路径，自动补会让升级后报告搬家，属行为级变更）。
 
+**已纳入白名单（v2.x+，`tools.hylyre.*`）**：hmos-app Skill 6 真机自动化配置。老实例缺
+`tools` 段或缺任一子键时，`merge-framework-config.mjs --apply` 会按
+`framework/harness/config.ts` 的 `DEFAULT_HYLYRE_TOOL_CONFIG` 补齐 7 个点分路径（与
+`paths.state_file`、`toolchain.hvigor.*` 同级）。CREATE 模式还可由
+`framework/profiles/hmos-app/config-defaults.json` 在 init 深度合并时带入整段 `tools.hylyre`。
+已有 `hypium_page_name` 等定制值**不会被覆盖**。
+
 **回归方法**：
 - 单测：`cd framework/harness && npx ts-node tests/run-unit.ts`，包含
-  `Suite [config-field-merger]` 9 用例 + `Suite [init-update-policy]` 的「inspect01 missing_keys」用例。
+  `Suite [config-field-merger]` 10 用例 + `Suite [init-update-policy]` 的「inspect01 missing_keys」用例。
 - 端到端：在缺字段的老工程上 `node framework/harness/scripts/merge-framework-config.mjs --dry-run`
   查看缺失清单，再 `--apply` 验证写回内容（`git diff framework.config.json` 应仅新增白名单字段，
   不动 `architecture` / `project_name` 等敏感段）。

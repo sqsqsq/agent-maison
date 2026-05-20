@@ -49,6 +49,13 @@ const cases: Array<{ name: string; run: () => void }> = [
         'toolchain.hvigor.parallel',
         'toolchain.hvigor.incremental',
         'toolchain.hvigor.analyze',
+        'tools.hylyre.vendor_dir',
+        'tools.hylyre.venv_dir',
+        'tools.hylyre.app_snapshot_cache_dir',
+        'tools.hylyre.pypi_extra_index_url',
+        'tools.hylyre.auto_install',
+        'tools.hylyre.doctor_first_run',
+        'tools.hylyre.hypium_page_name',
       ];
       for (const p of must) {
         assert(isBackfillablePath(p), `${p} 应在补缺白名单内`);
@@ -135,6 +142,13 @@ const cases: Array<{ name: string; run: () => void }> = [
         'toolchain.hvigor.parallel',
         'toolchain.hvigor.incremental',
         'toolchain.hvigor.analyze',
+        'tools.hylyre.vendor_dir',
+        'tools.hylyre.venv_dir',
+        'tools.hylyre.app_snapshot_cache_dir',
+        'tools.hylyre.pypi_extra_index_url',
+        'tools.hylyre.auto_install',
+        'tools.hylyre.doctor_first_run',
+        'tools.hylyre.hypium_page_name',
       ];
       for (const p of expected) {
         assert(missing.includes(p), `应识别为缺失：${p}（实际缺失：${missing.join(',')}）`);
@@ -196,6 +210,30 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(appliedPaths.includes('paths.extension_dir'));
       assert(appliedPaths.includes('active_workflow'));
       assert(appliedPaths.includes('toolchain.hvigor.parallel'));
+    },
+  },
+  {
+    name: 'mergeBackfillFields：partial tools.hylyre 只补缺、保留 hypium_page_name',
+    run: () => {
+      const user = {
+        tools: {
+          hylyre: {
+            hypium_page_name: 'PhoneAbility',
+          },
+        },
+      };
+      const { merged, report } = mergeBackfillFields(user);
+      const hy = (merged as { tools: { hylyre: Record<string, unknown> } }).tools.hylyre;
+      assert.strictEqual(hy.hypium_page_name, 'PhoneAbility', 'hypium_page_name 应保留用户原值');
+      assert.strictEqual(
+        hy.vendor_dir,
+        'framework/profiles/hmos-app/vendor/hylyre',
+        'vendor_dir 应被回填',
+      );
+      assert.strictEqual(hy.auto_install, true, 'auto_install 应被回填');
+      const appliedPaths = report.appliedFields.map(f => f.path);
+      assert(!appliedPaths.includes('tools.hylyre.hypium_page_name'));
+      assert(appliedPaths.includes('tools.hylyre.vendor_dir'));
     },
   },
   {

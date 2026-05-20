@@ -45,5 +45,16 @@
     "module_inner_layers": ["shared", "data", "domain", "presentation"],
     "inner_dependency_direction": "upward",
     "cross_module_exports_file": "index.ets"
+  },
+  "tools": {
+    "hylyre": {
+      "vendor_dir": "framework/profiles/hmos-app/vendor/hylyre",
+      "venv_dir": ".hylyre/venv",
+      "app_snapshot_cache_dir": "doc/app-snapshot-cache",
+      "pypi_extra_index_url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+      "auto_install": true,
+      "doctor_first_run": true,
+      "hypium_page_name": ""
+    }
   }
 }
