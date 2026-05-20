@@ -129,3 +129,16 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 ### 宿主包管理备注（ohpm）
 
 实例工程侧 `ohpm install`（`oh_modules/`）是 ArkTS 源码依赖，由 DevEco / Skill 3 编码阶段负责触发，**不在 framework-init 代管**。
+
+---
+
+## 实例 `.gitignore` 可选追加（非 framework canonical）
+
+全局 canonical 由 `check-init` → `ensureCanonicalGitignore` 自动维护（见根 SKILL §5.4.5）。**hmos-app** 工程在真机自动化 / 本机差异较大时，可在用户确认后**额外**追加（脚本不会自动写入、也不会删除）：
+
+| pattern | 说明 |
+| --- | --- |
+| `/reports/` | Hylyre/Hypium 曾以**工程根**为 cwd 时落盘的 task 日志；现代 harness 已将 hypium cwd 定向到 `doc/features/<feature>/testing/reports/.hypium-workdir/`（已落在 `doc/features/*/*/reports/*` 内），根目录 `/reports/` 多为历史遗留 |
+| `/build-profile.json5` | 本机 product/SDK 与 CI 不一致时的个人 build-profile；需单独提交时再移出 ignore |
+
+**勿**用 `/harness/reports/*` 代替 `framework/harness/reports/*`（路径错误，无法忽略 harness 全局报告）。

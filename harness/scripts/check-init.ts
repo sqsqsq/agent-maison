@@ -42,6 +42,16 @@ import {
   materializeAgentBundleSkills,
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
+import {
+  CANONICAL_IGNORE_PATTERNS,
+  IGNORE_EQUIV_PATTERNS,
+  collectGitignoreAdvisories,
+  ensureCanonicalGitignore,
+  listMissingCanonicalPatterns,
+  parseGitignoreLines,
+  patternIsCovered,
+  type GitignoreEnsureResult,
+} from './utils/canonical-gitignore';
 
 // --------------------------------------------------------------------------
 // 公共类型
@@ -84,6 +94,8 @@ export interface CheckInitReport {
   /** init 通过后自动对齐 auto_overwrite 机制产物时的备份目录（相对实例根），无对齐时为 null */
   mechanism_backup_rel_dir?: string | null;
   mechanism_synced_files?: number;
+  /** 体检前 ensureCanonicalGitignore 的追加摘要（无写入时为 null） */
+  gitignore_sync?: { created: boolean; added: string[] } | null;
 }
 
 // --------------------------------------------------------------------------
@@ -107,65 +119,6 @@ const DEFAULT_PATHS = {
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
 } as const;
-
-/** SKILL 5.4.5.1 canonical .gitignore patterns */
-const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
-  'framework/harness/node_modules/',
-  'framework/harness/dist/',
-  'framework/harness/reports/*',
-  '!framework/harness/reports/.gitkeep',
-  'framework/harness/trace/',
-  'framework/harness/package-lock.json',
-  'framework/harness/state/*',
-  '!framework/harness/state/.gitkeep',
-  // Skill 0：合并入 SSOT 前的 staging 草稿目录，不入仓
-  'doc/catalog-staging/',
-  'doc/glossary-staging/',
-  // init：auto_overwrite 机制同步时的旧文件备份根（managed by check-init / Skill 00）
-  '.framework-backup/',
-];
-
-/** SKILL 5.4.5.2 等价覆盖映射 */
-const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
-  'framework/harness/node_modules/': [
-    '**/node_modules',
-    '**/node_modules/',
-    'node_modules/',
-    'framework/**/node_modules/',
-    'framework/harness/node_modules',
-    'framework/harness/node_modules/',
-  ],
-  'framework/harness/package-lock.json': [
-    '**/package-lock.json',
-    'package-lock.json',
-    'framework/**/package-lock.json',
-    'framework/harness/package-lock.json',
-  ],
-  'framework/harness/dist/': [
-    'framework/harness/dist',
-    'framework/harness/dist/',
-    'framework/**/dist/',
-  ],
-  'framework/harness/reports/*': ['framework/harness/reports/*'],
-  '!framework/harness/reports/.gitkeep': ['!framework/harness/reports/.gitkeep'],
-  'framework/harness/trace/': [
-    'framework/harness/trace',
-    'framework/harness/trace/',
-  ],
-  'framework/harness/state/*': [
-    'framework/harness/state/*',
-    'framework/harness/state',
-    'framework/harness/state/',
-  ],
-  '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
-  'doc/catalog-staging/': ['doc/catalog-staging/', 'doc/catalog-staging', '**/catalog-staging/'],
-  'doc/glossary-staging/': ['doc/glossary-staging/', 'doc/glossary-staging', '**/glossary-staging/'],
-  '.framework-backup/': [
-    '.framework-backup',
-    '.framework-backup/',
-    '**/.framework-backup/',
-  ],
-};
 
 type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
 
@@ -896,9 +849,9 @@ function strategyText(line: number, status: InspectionStatus): string {
       POPULATED: 'Step 5.6 跳过',
     },
     11: {
-      MISSING: 'Step 5.4.5 创建/追加缺失规则',
-      EMPTY: '等同 MISSING',
-      POPULATED: 'Step 5.4.5 跳过',
+      MISSING: 'check-init 体检前已 ensureCanonicalGitignore（见 stderr / check-init.json）',
+      EMPTY: '等同 MISSING（体检前已 ensure）',
+      POPULATED: 'canonical 已齐备，跳过追加',
     },
   };
   return m[line][status];
@@ -1655,19 +1608,6 @@ function inspect10(env: InspectorEnv): Inspection {
 }
 
 // ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + Skill 0 staging）----
-function parseGitignoreLines(text: string): string[] {
-  // 移除注释行 / 空白行；保留模式（含 ! 反向规则）。
-  return text
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0 && !l.startsWith('#'));
-}
-
-function patternIsCovered(canonical: string, lines: string[]): boolean {
-  const equiv = IGNORE_EQUIV_PATTERNS[canonical] ?? [canonical];
-  return equiv.some(p => lines.includes(p));
-}
-
 function inspect11(env: InspectorEnv): Inspection {
   const targetRel = '.gitignore';
   const targetAbs = path.join(env.projectRoot, targetRel);
@@ -1686,12 +1626,12 @@ function inspect11(env: InspectorEnv): Inspection {
     };
   }
   const lines = parseGitignoreLines(txt);
-  const missingPatterns: string[] = [];
-  for (const p of CANONICAL_IGNORE_PATTERNS) {
-    if (!patternIsCovered(p, lines)) {
-      missingPatterns.push(p);
-    }
-  }
+  const missingPatterns = listMissingCanonicalPatterns(lines);
+  const advisories = collectGitignoreAdvisories(txt);
+  const advisoryNote =
+    advisories.length > 0
+      ? `\n[advisory] ${advisories.join('; ')}`
+      : '';
   if (missingPatterns.length === 0) {
     return {
       index: 11,
@@ -1702,7 +1642,9 @@ function inspect11(env: InspectorEnv): Inspection {
       hash_target: sha256(txt),
       diff_summary: null,
       planned_strategy: strategyText(11, 'POPULATED'),
-      diagnosis: `Step 5.4.5：${CANONICAL_IGNORE_PATTERNS.length} 条 canonical patterns 已全部等价覆盖`,
+      diagnosis:
+        `canonical-gitignore：${CANONICAL_IGNORE_PATTERNS.length} 条 patterns 已全部等价覆盖` +
+        advisoryNote,
     };
   }
   return {
@@ -1714,7 +1656,9 @@ function inspect11(env: InspectorEnv): Inspection {
     hash_target: sha256(txt),
     diff_summary: `缺少 patterns:\n${missingPatterns.map(p => `  - ${p}`).join('\n')}`,
     planned_strategy: strategyText(11, 'MISSING'),
-    diagnosis: `缺 ${missingPatterns.length} 条 canonical pattern（.gitignore 已存在但未覆盖完整）`,
+    diagnosis:
+      `ensure 已执行仍缺 ${missingPatterns.length} 条 canonical（请检查写权限或只读 .gitignore）` +
+      advisoryNote,
   };
 }
 
@@ -1996,6 +1940,18 @@ const checker: PhaseChecker = {
       };
     }
 
+    // 2b. init canonical .gitignore（体检 #11 之前幂等补齐）
+    let gitignoreEnsure: GitignoreEnsureResult | null = null;
+    if (process.env.CHECK_INIT_SKIP_GITIGNORE_SYNC !== '1') {
+      gitignoreEnsure = ensureCanonicalGitignore(ctx.projectRoot);
+      if (gitignoreEnsure.added.length > 0 && !process.env.CHECK_INIT_QUIET) {
+        process.stderr.write(
+          `[check-init] .gitignore: appended ${gitignoreEnsure.added.length} pattern(s): ` +
+            `${gitignoreEnsure.added.join(', ')}\n`,
+        );
+      }
+    }
+
     // 3. 跑 11 项体检
     const renderEnv = buildRenderEnv(cfg, adapter);
     const inspectorEnv: InspectorEnv = {
@@ -2112,14 +2068,20 @@ const checker: PhaseChecker = {
       verdict,
       generated_at: new Date().toISOString(),
     };
+    const gitignore_sync =
+      gitignoreEnsure && !gitignoreEnsure.skipped
+        ? { created: gitignoreEnsure.created, added: gitignoreEnsure.added }
+        : null;
+
     const report: CheckInitReport =
       verdict === 'PASS'
         ? {
             ...reportBase,
             mechanism_backup_rel_dir,
             mechanism_synced_files,
+            gitignore_sync,
           }
-        : reportBase;
+        : { ...reportBase, gitignore_sync };
 
     let writtenPath: string | null = null;
     try {
@@ -2208,6 +2170,11 @@ export const __testing = {
   compareTextArtifact,
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
+  parseGitignoreLines,
+  patternIsCovered,
+  listMissingCanonicalPatterns,
+  collectGitignoreAdvisories,
+  ensureCanonicalGitignore,
   parseUpdatePolicy,
   inspectionsForInit034Prompt,
   applyInitMechanismSync,

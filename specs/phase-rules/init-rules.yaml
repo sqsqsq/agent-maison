@@ -13,6 +13,8 @@
 #
 # 消费者:
 #   - framework/harness/scripts/check-init.ts  (脚本 Harness)
+#   - init canonical .gitignore SSOT: framework/harness/scripts/utils/canonical-gitignore.ts
+#     （check-init 体检 #11 前 ensureCanonicalGitignore；agent 禁止手抄）
 #
 # 注：init 阶段不接 verify-init.md（元阶段无可审），不接 Stop hook
 # （避免 hook 拦自己），不写 phase-completion-receipt（init 无 feature

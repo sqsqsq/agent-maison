@@ -49,6 +49,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
   { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
+  { id: 'canonical-gitignore', modulePath: './unit/canonical-gitignore.unit.test' },
   { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },

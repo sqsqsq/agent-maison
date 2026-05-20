@@ -48,12 +48,12 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - `reports/*` — harness 跑出的报告（保留 `reports/.gitkeep`）
 - `trace` — 调试 trace 目录
 
-同步到目标工程后，`/framework-init` 的 Step 5.4.5 会自动检查宿主工程根 `.gitignore`：
+同步到目标工程后，重跑 `cd framework/harness && npx ts-node harness-runner.ts --phase init`（或 `/framework-init`）时，`check-init` 会在体检 **#11 之前** 自动执行 `ensureCanonicalGitignore`（SSOT：`framework/harness/scripts/utils/canonical-gitignore.ts`）：
 - 若已存在等价规则（如 `**/node_modules` / `**/package-lock.json` / `framework/harness/reports/*`），不重复追加。
-- 若缺少 framework 运行产物规则，会补齐 `framework/harness/node_modules/`、`dist/`、`reports/*`、`trace/`、`package-lock.json`、`framework/harness/state/*`（及对应 `!.gitkeep`）等忽略项。
-- Skill 0 合并前的草稿目录：`doc/catalog-staging/`、`doc/glossary-staging/`（与 `framework/harness/scripts/check-init.ts` 中 `CANONICAL_IGNORE_PATTERNS` 对齐）。
-- **`init` 机制模板自动对齐备份**：`.framework-backup/`（UPDATE 模式下 `check-init` PASS 后覆盖 `adapter.yaml` 中 `update_policy=auto_overwrite` 目标前的备份根；由体检 #11 canonical patterns 收口）。
-- 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。
+- 若缺少 canonical 规则，会幂等追加 **15 条** pattern（含 `doc/features/*/*/reports/*`、`/.hylyre/`、`/doc/app-snapshot-cache/`、`/doc/features/_adhoc/` 等；详见 SKILL 00 §5.4.5.1）。
+- Skill 0 草稿：`doc/catalog-staging/`、`doc/glossary-staging/`；机制备份：`.framework-backup/`。
+- **勿手抄** `/harness/reports/*`（缺 `framework/` 前缀无效）；旧错行可手删，脚本只追加、不自动删除。
+- 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。追加摘要见 `check-init.json` → `gitignore_sync`。
 
 #### 同步完成后，在目标工程根跑 `/framework-init`
 
