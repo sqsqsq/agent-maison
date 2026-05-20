@@ -127,6 +127,47 @@ function venvPython(venvDir: string): string {
   return path.join(venvDir, 'bin', 'python');
 }
 
+/** True when venv site-packages already has packages (prior interrupted bootstrap). */
+function venvSitePackagesHasPackages(venvRoot: string): boolean {
+  const winSp = path.join(venvRoot, 'Lib', 'site-packages');
+  if (fs.existsSync(winSp)) {
+    try {
+      return fs.readdirSync(winSp).some(f => !f.startsWith('.'));
+    } catch {
+      return false;
+    }
+  }
+  const libDir = path.join(venvRoot, 'lib');
+  if (!fs.existsSync(libDir)) return false;
+  for (const entry of fs.readdirSync(libDir)) {
+    if (!entry.startsWith('python')) continue;
+    const sp = path.join(libDir, entry, 'site-packages');
+    if (!fs.existsSync(sp)) continue;
+    try {
+      if (fs.readdirSync(sp).some(f => !f.startsWith('.'))) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+export type RunFailureKind =
+  | 'python_traceback'
+  | 'hypium_timeout'
+  | 'step_unrecognized'
+  | 'device_disconnect'
+  | 'aa_start_preflight_failed'
+  | 'unknown';
+
+export function classifyRunFailure(runOut: string, exitCode: number | null): RunFailureKind {
+  if (/Traceback \(most recent call last\)/.test(runOut)) return 'python_traceback';
+  if (/timeout|timed out/i.test(runOut)) return 'hypium_timeout';
+  if (/unknown step|unsupported step|无法识别.*步骤/i.test(runOut)) return 'step_unrecognized';
+  if (/no devices|target not found|no targets/i.test(runOut)) return 'device_disconnect';
+  return 'unknown';
+}
+
 function readJsonSafe<T>(file: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8')) as T;
@@ -429,6 +470,8 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
   let source: HylyreReadyResult['source'] = 'fail';
   let doctorOk = false;
   let installedNow = false;
+  let bootstrapElapsedMs: number | undefined;
+  let bootstrapWasResumed: boolean | undefined;
 
   if (envPy && fs.existsSync(envPy)) {
     pythonPath = envPy;
@@ -577,6 +620,15 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
       };
     }
 
+    bootstrapWasResumed = venvSitePackagesHasPackages(venvRoot);
+    const bootstrapT0 = Date.now();
+    console.log(
+      `[bootstrap] pip install start (may take 3-10 min on fresh machine; do not interrupt; log: ${logPath})`,
+    );
+    if (bootstrapWasResumed) {
+      console.log('[bootstrap] 检测到 venv 内已有部分 site-packages（可能为上次中断后复用）');
+    }
+
     const pipFirst = runHylyrePipInstall({
       pythonPath,
       wheel,
@@ -585,6 +637,9 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
       pypiExtraIndexUrl: cfg.pypi_extra_index_url,
       mode: 'upgrade',
     });
+
+    bootstrapElapsedMs = Date.now() - bootstrapT0;
+    console.log(`[bootstrap] pip install done in ${(bootstrapElapsedMs / 1000).toFixed(1)}s`);
 
     if (!pipFirst.ok) {
       errors.push({
@@ -900,6 +955,8 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         doctorOk,
         vendorSyncReason,
         installFingerprint,
+        bootstrap_elapsed_ms: bootstrapElapsedMs ?? null,
+        bootstrap_was_resumed: bootstrapWasResumed ?? null,
         errors,
       },
       null,
@@ -1097,6 +1154,27 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
       errors.push({
         message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName} source=${abilityResolved.source}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
       });
+      const preflightKind: RunFailureKind = 'aa_start_preflight_failed';
+      const tracePathResolved = path.resolve(opts.traceOutPath);
+      ensureDirForFile(tracePathResolved);
+      fs.writeFileSync(
+        tracePathResolved,
+        `${JSON.stringify(
+          {
+            schema_version: '0.2-p4',
+            feature: opts.feature,
+            phase: 'testing',
+            outcome: 'failed',
+            error_kind: 'run_crashed',
+            run_failure_kind: preflightKind,
+            error_message: errors.map(e => e.message).join(' | ').slice(0, 2000),
+            cases: [],
+          },
+          null,
+          2,
+        )}\n`,
+        'utf-8',
+      );
       fs.writeFileSync(
         metaPath,
         JSON.stringify(
@@ -1105,7 +1183,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             ok: false,
             command: '',
             report_path: path.resolve(opts.reportOutPath),
-            trace_path: path.resolve(opts.traceOutPath),
+            trace_path: tracePathResolved,
             log_path: logPath,
             bundleName: opts.bundleName,
             hypium_page_name: pageName,
@@ -1116,6 +1194,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             omit_bundle_for_hylyre: false,
             deviceSn: opts.deviceSn ?? null,
             ran_at: new Date().toISOString(),
+            run_failure_kind: preflightKind,
             trace_summary: null,
             errors,
           },
@@ -1209,7 +1288,32 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     });
   }
 
-  const trace = parseHylyreTrace(tracePathResolved);
+  let trace = parseHylyreTrace(tracePathResolved);
+  let runFailureKind: RunFailureKind | null = null;
+
+  if (!trace && exitCode !== 0) {
+    runFailureKind = classifyRunFailure(runOut, exitCode);
+    ensureDirForFile(tracePathResolved);
+    fs.writeFileSync(
+      tracePathResolved,
+      `${JSON.stringify(
+        {
+          schema_version: '0.2-p4',
+          feature: opts.feature,
+          phase: 'testing',
+          outcome: 'failed',
+          error_kind: 'run_crashed',
+          run_failure_kind: runFailureKind,
+          error_message: runOut.slice(-2000),
+          cases: [],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf-8',
+    );
+    trace = parseHylyreTrace(tracePathResolved);
+  }
 
   /** plan 跑完后用例失败会导致 exit≠0；若有合法 trace 仍视为「自动化 runner 未崩溃」。Python Traceback（缺打包资源等）不算可接受失败。 */
   const pythonInfraTraceback =
@@ -1219,7 +1323,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
 
   let ok = exitCode === 0;
   if (!ok && trace && trace.feature && trace.outcome && !pythonInfraTraceback) {
-    ok = true;
+    const caseCount = trace.cases?.length ?? 0;
+    if (caseCount > 0) {
+      ok = true;
+    }
   }
   if (!ok) {
     if (pythonInfraTraceback) {
@@ -1294,6 +1401,8 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
               skipped_count,
             }
           : null,
+        run_failure_kind: runFailureKind,
+        run_out_tail: runOut.slice(-1000),
         errors,
       },
       null,

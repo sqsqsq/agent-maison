@@ -2,7 +2,11 @@
 // resolve-main-ability.unit.test.ts — bm dump main ability parsing
 // ============================================================================
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { discoverMainAbilityFromBmDumpDetailed } from '../../hdc-runner';
+import { markAppMetaCacheStale } from '../../resolve-main-ability';
 
 export interface UnitCaseResult {
   name: string;
@@ -43,6 +47,31 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const r = discoverMainAbilityFromBmDumpDetailed('');
       assertEq(r.ability, null, 'ability');
+    },
+  },
+  {
+    name: 'markAppMetaCacheStale: writes app-meta.stale sentinel',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'app-meta-stale-'));
+      const cfgPath = path.join(root, 'framework.config.json');
+      fs.writeFileSync(
+        cfgPath,
+        JSON.stringify({
+          project_profile: 'hmos-app',
+          tools: { hylyre: { app_snapshot_cache_dir: 'doc/app-snapshot-cache' } },
+        }),
+      );
+      const bundle = 'com.test.app';
+      const metaDir = path.join(root, 'doc', 'app-snapshot-cache', bundle);
+      fs.mkdirSync(metaDir, { recursive: true });
+      const metaPath = path.join(metaDir, 'app-meta.json');
+      fs.writeFileSync(
+        metaPath,
+        JSON.stringify({ bundleName: bundle, mainAbility: 'WrongAbility', source: 'bm_dump' }),
+      );
+      markAppMetaCacheStale(root, bundle);
+      const stalePath = path.join(metaDir, 'app-meta.stale');
+      if (!fs.existsSync(stalePath)) throw new Error('stale sentinel missing');
     },
   },
 ];

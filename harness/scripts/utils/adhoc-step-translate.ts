@@ -59,6 +59,14 @@ export function translateNaturalStepToPlanned(step: string): Record<string, unkn
   return null;
 }
 
+/** Prepend wait_for when snapshot cache is empty (cold start splash). */
+export function injectColdStartWaitFor(
+  planned: Record<string, unknown>[],
+  waitMs = 2000,
+): Record<string, unknown>[] {
+  return [{ wait_for: { duration: waitMs } }, ...planned];
+}
+
 export function translateNaturalStepsToPlanned(steps: string[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   for (const step of steps) {

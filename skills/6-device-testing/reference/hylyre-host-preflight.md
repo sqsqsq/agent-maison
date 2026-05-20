@@ -63,3 +63,23 @@ cd framework/harness && npm run adhoc-device-test -- \
 ```
 
 成功时 stdout 含 `trace` / `report` 路径；失败时 CLI 会打印 `hylyre-doctor.log` 与 `hylyre-ready.meta.json` 的绝对路径。
+
+## 即席 anti-fabrication（必读）
+
+`adhoc-device-test` 在 **stderr** 末尾打印锚点（勿从 stdout JSON 猜路径）：
+
+- `ADHOC_TRACE_FILE=` — 本次 `trace.json`（早期 exit 也会写 `outcome=aborted` 占位）
+- `ADHOC_WARMUP_META=` — `snapshot-warmup.meta.json`（`schema_version: "0.1"`，含 `reason_kind`、`device_info`）
+- `ADHOC_ENSURE_META=` / `ADHOC_RUN_META=`
+
+**禁止** glob `doc/features/_adhoc/testing/reports/*/hylyre/` 取「最近」目录；历史 `<timestamp>` 可能是占位或旧跑。
+
+### warmup 与冷启
+
+| 现象 | 含义 | agent 动作 |
+|------|------|------------|
+| stderr `[WARN] snapshot warmup 失败` | warmup 降级，**仍会**跑 plan | 读 `ADHOC_WARMUP_META` 的 `reason_kind`；跨机先比 `device_info` |
+| `reason_kind=app_not_foreground` | App 未在前台 / 弹窗 | 请用户解锁并切到目标 App 前台后 agent 重跑 |
+| `reason_kind=ability_wrong` | main ability 推断错 | 传 `--ability` 或配置 `bundle_abilities`；会失效 `app-meta.json` |
+| `[info] snapshot_cache_empty → wait_for` | 冷启注入 2s | App 已就绪可加 `--accept-cold-start` |
+| `[bootstrap] pip install start` | 首次 venv 安装，勿中断 | Read `hylyre-ready.meta.json` 的 `bootstrap_elapsed_ms` / `bootstrap_was_resumed` |

@@ -3,6 +3,7 @@
 // ============================================================================
 
 import {
+  injectColdStartWaitFor,
   plannedStepsToCellJson,
   translateNaturalStepToPlanned,
   translateNaturalStepsToPlanned,
@@ -47,6 +48,22 @@ const cases: Array<{ name: string; run: () => void }> = [
       const r = translateNaturalStepsToPlanned(['打开应用', '点击首页']);
       assertEq(r.length, 1, 'count');
       assertEq(JSON.stringify(r[0]), JSON.stringify({ touch: { by_text: '首页' } }), 'touch');
+    },
+  },
+  {
+    name: 'injectColdStartWaitFor: prepends wait_for',
+    run: () => {
+      const r = injectColdStartWaitFor([{ touch: { by_text: '首页' } }], 2000);
+      assertEq(r.length, 2, 'count');
+      assertEq(JSON.stringify(r[0]), JSON.stringify({ wait_for: { duration: 2000 } }), 'wait');
+    },
+  },
+  {
+    name: 'injectColdStartWaitFor: empty planned still gets wait_for',
+    run: () => {
+      const r = injectColdStartWaitFor([], 1500);
+      assertEq(r.length, 1, 'count');
+      assertEq(JSON.stringify(r[0]), JSON.stringify({ wait_for: { duration: 1500 } }), 'wait');
     },
   },
   {

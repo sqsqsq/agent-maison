@@ -9,7 +9,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
-import { resolveHylyreToolConfig } from '../config';
 import {
   ensureHylyreReady,
   parseHylyreTrace,
@@ -18,7 +17,9 @@ import {
 import { resolveMainAbilityForBundle } from '../../profiles/hmos-app/harness/resolve-main-ability';
 import {
   ensureAppSnapshotWarmup,
+  isAppSnapshotCacheEmpty,
   resolveAppSnapshotCacheAbs,
+  type SnapshotWarmupResult,
 } from '../../profiles/hmos-app/harness/app-snapshot-warmup';
 import { ensureHypiumWorkDir } from '../../profiles/hmos-app/harness/device-test-hypium-workdir';
 import { featurePhaseReportsDir } from '../config';
@@ -31,14 +32,20 @@ import {
   splitNaturalLanguageSteps,
   translateNaturalStepsToPlanned,
   plannedStepsToCellJson,
+  injectColdStartWaitFor,
 } from './utils/adhoc-step-translate';
+import {
+  printAdhocAnchors,
+  writeAdhocTracePlaceholder,
+  type AdhocAnchors,
+} from './utils/adhoc-trace-placeholder';
 
 const ADHOC_FEATURE = '_adhoc';
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
 const argv = minimist(process.argv.slice(2), {
   string: ['bundle', 'b', 'steps', 's', 'ability', 'a', 'plan', 'project-root', 'p'],
-  boolean: ['skip-explore', 'skip-explore-warmup'],
+  boolean: ['skip-explore', 'skip-explore-warmup', 'accept-cold-start'],
 });
 
 function defaultProjectRoot(): string {
@@ -76,6 +83,7 @@ const stepsRaw = (argv.steps || argv.s || '').trim();
 const abilityOverride = (argv.ability || argv.a || '').trim();
 const planPathArg = (argv.plan || '').trim();
 const skipExplore = argv['skip-explore'] || argv['skip-explore-warmup'];
+const acceptColdStart = argv['accept-cold-start'] === true;
 
 if (!bundle) {
   console.error('用法: npm run adhoc-device-test -- --bundle <id> (--steps "…" | --plan path/to/test-plan.hylyre.md)');
@@ -85,6 +93,8 @@ if (!planPathArg && !stepsRaw) {
   console.error('必须提供 --steps 或 --plan');
   process.exit(2);
 }
+
+const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
 
 const ts = timestampSlug();
 const hylyreDir = path.join(
@@ -110,9 +120,24 @@ const lintReportPath = path.join(hylyreDir, 'plan-lint.json');
 const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
 const logPath = path.join(reportsBase, 'device-test-run.log');
 
+const anchors: AdhocAnchors = {
+  trace: traceOutPath,
+  report: reportOutPath,
+  warmupMeta: path.join(reportsBase, 'snapshot-warmup.meta.json'),
+  ensureMeta: path.join(reportsBase, 'hylyre-ready.meta.json'),
+  runMeta: path.join(reportsBase, 'device-test-run.meta.json'),
+};
+
 if (!planPathArg) {
   const natural = splitNaturalLanguageSteps(stepsRaw);
-  const planned = translateNaturalStepsToPlanned(natural);
+  let planned = translateNaturalStepsToPlanned(natural);
+  const cacheEmpty = isAppSnapshotCacheEmpty(appSnapshotCacheAbs, bundle);
+  if (cacheEmpty && !acceptColdStart) {
+    planned = injectColdStartWaitFor(planned);
+    console.error(
+      '[info] snapshot_cache_empty → auto-injected wait_for 2s（App 已在前台可加 --accept-cold-start 跳过）',
+    );
+  }
   if (planned.length === 0) {
     console.error('无法从 --steps 解析出任何 Hylyre JSON 步骤');
     process.exit(2);
@@ -147,6 +172,16 @@ fs.writeFileSync(
 
 const blockers = lint.violations.filter(v => v.severity === 'BLOCKER');
 if (blockers.length > 0 && !fs.existsSync(stepsFilePath)) {
+  writeAdhocTracePlaceholder(traceOutPath, {
+    feature: ADHOC_FEATURE,
+    phase: 'testing',
+    outcome: 'aborted',
+    error_kind: 'plan_lint_blocker',
+    error_message: blockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`).join(' | '),
+    bundle,
+    artifacts: { derived_plan: derivedPlanPath },
+  });
+  printAdhocAnchors(anchors);
   console.error('plan-lint BLOCKER:', lintReportPath);
   for (const v of blockers) {
     console.error(`  [${v.rule_id}] ${v.tc_id}: ${v.message}`);
@@ -161,15 +196,25 @@ const ready = ensureHylyreReady({
   phase: 'testing',
 });
 if (!ready.ok) {
-  const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
   const doctorLog = path.join(reportsBase, 'hylyre-doctor.log');
-  const readyMeta = path.join(reportsBase, 'hylyre-ready.meta.json');
+  writeAdhocTracePlaceholder(traceOutPath, {
+    feature: ADHOC_FEATURE,
+    phase: 'testing',
+    outcome: 'aborted',
+    error_kind: 'ensure_failed',
+    error_message: ready.errors.map(e => `[${e.kind ?? 'error'}] ${e.message}`).join(' | '),
+    bundle,
+    artifacts: { ensure_meta: anchors.ensureMeta },
+  });
+  printAdhocAnchors(anchors);
   console.error('ensureHylyreReady 失败（agent 应在本对话内排查宿主环境后重跑本 CLI，勿让用户 pip install）');
   for (const e of ready.errors) console.error(`  - [${e.kind ?? 'error'}] ${e.message}`);
   console.error(`  hylyre-doctor.log: ${doctorLog}`);
-  console.error(`  hylyre-ready.meta.json: ${readyMeta}`);
+  console.error(`  hylyre-ready.meta.json: ${anchors.ensureMeta}`);
   if (process.env.HYLYRE_PYTHON) {
-    console.error(`  HYLYRE_PYTHON=${process.env.HYLYRE_PYTHON}（该环境不会自动 pip 对齐 vendor；可取消后重试）`);
+    console.error(
+      `  HYLYRE_PYTHON=${process.env.HYLYRE_PYTHON}（该环境不会自动 pip 对齐 vendor；可取消后重试）`,
+    );
   }
   process.exit(1);
 }
@@ -183,16 +228,28 @@ const ability = resolveMainAbilityForBundle({
   writeCache: true,
 });
 if (!ability.mainAbility) {
+  writeAdhocTracePlaceholder(traceOutPath, {
+    feature: ADHOC_FEATURE,
+    phase: 'testing',
+    outcome: 'aborted',
+    error_kind: 'main_ability_unresolved',
+    error_message:
+      '无法解析 main ability（override / config map / app-meta / bm dump 均未命中）',
+    bundle,
+    artifacts: { warmup_meta: anchors.warmupMeta },
+  });
+  printAdhocAnchors(anchors);
   console.error('无法解析 main ability；请传 --ability MainAbility 或配置 tools.hylyre.bundle_abilities');
   if (ability.bmDumpExcerpt) console.error(ability.bmDumpExcerpt.slice(0, 800));
   process.exit(1);
 }
 
-const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
 const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
 
+let warmupResult: SnapshotWarmupResult | null = null;
+let warmupDegraded = false;
 if (!skipExplore) {
-  const warm = ensureAppSnapshotWarmup({
+  warmupResult = ensureAppSnapshotWarmup({
     projectRoot,
     bundleName: bundle,
     mainAbility: ability.mainAbility,
@@ -202,15 +259,19 @@ if (!skipExplore) {
     deviceSn,
     logPath,
   });
-  if (!warm.ok && !warm.skipped) {
-    console.error('snapshot warmup 失败:', warm.reason);
-    console.error(warm.log);
-    process.exit(1);
+  if (!warmupResult.ok && !warmupResult.skipped) {
+    warmupDegraded = true;
+    console.error(
+      '[WARN] snapshot warmup 失败:',
+      warmupResult.reason,
+      warmupResult.reasonKind ? `(reason_kind=${warmupResult.reasonKind})` : '',
+      '— 仍尝试运行 plan',
+    );
+    if (warmupResult.log) console.error(warmupResult.log);
   }
 }
 
-const useStepsFallback =
-  blockers.length > 0 && fs.existsSync(stepsFilePath);
+const useStepsFallback = blockers.length > 0 && fs.existsSync(stepsFilePath);
 
 const run = runHylyreDeviceTest({
   projectRoot,
@@ -229,11 +290,38 @@ const run = runHylyreDeviceTest({
   appSnapshotCacheAbs,
 });
 
-const trace = run.trace ?? parseHylyreTrace(traceOutPath);
+let trace = run.trace ?? parseHylyreTrace(traceOutPath);
+if (!trace) {
+  writeAdhocTracePlaceholder(traceOutPath, {
+    feature: ADHOC_FEATURE,
+    phase: 'testing',
+    outcome: 'aborted',
+    error_kind: 'run_crashed',
+    error_message: run.errors.map(e => e.message).join(' | ') || 'hylyre run 未产出有效 trace.json',
+    bundle,
+    artifacts: {
+      run_meta: anchors.runMeta,
+      warmup_meta: anchors.warmupMeta,
+      ensure_meta: anchors.ensureMeta,
+    },
+  });
+  trace = parseHylyreTrace(traceOutPath);
+}
+
 console.log(
   JSON.stringify(
     {
-      ok: run.ok,
+      ok: run.ok && !warmupDegraded,
+      warmup_degraded: warmupDegraded,
+      warmup: warmupResult
+        ? {
+            ok: warmupResult.ok,
+            skipped: warmupResult.skipped,
+            reason: warmupResult.reason ?? null,
+            reason_kind: warmupResult.reasonKind ?? null,
+            meta: warmupResult.metaPath ?? anchors.warmupMeta,
+          }
+        : null,
       bundle,
       main_ability: ability.mainAbility,
       main_ability_source: ability.source,
@@ -249,4 +337,5 @@ console.log(
   ),
 );
 
+printAdhocAnchors(anchors);
 process.exit(run.ok ? 0 : 1);

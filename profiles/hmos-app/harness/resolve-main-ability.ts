@@ -36,7 +36,27 @@ function appMetaPathFor(projectRoot: string, bundleName: string, cacheRel: strin
   return path.join(projectRoot, cacheRel, bundleName, 'app-meta.json');
 }
 
+function appMetaStalePath(metaPath: string): string {
+  return metaPath.replace(/app-meta\.json$/i, 'app-meta.stale');
+}
+
 function readAppMeta(metaPath: string, bundleName: string): AppMetaJson | null {
+  const stalePath = appMetaStalePath(metaPath);
+  if (fs.existsSync(stalePath)) {
+    try {
+      fs.unlinkSync(stalePath);
+    } catch {
+      /* ignore */
+    }
+    if (fs.existsSync(metaPath)) {
+      try {
+        fs.unlinkSync(metaPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
   if (!fs.existsSync(metaPath)) return null;
   try {
     const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as AppMetaJson;
@@ -47,6 +67,15 @@ function readAppMeta(metaPath: string, bundleName: string): AppMetaJson | null {
     /* ignore */
   }
   return null;
+}
+
+/** Invalidate cached app-meta after warmup detects wrong ability / app not foreground. */
+export function markAppMetaCacheStale(projectRoot: string, bundleName: string): void {
+  const cacheRel = resolveHylyreToolConfig(projectRoot).app_snapshot_cache_dir;
+  const metaPath = appMetaPathFor(projectRoot, bundleName, cacheRel);
+  const stalePath = appMetaStalePath(metaPath);
+  fs.mkdirSync(path.dirname(stalePath), { recursive: true });
+  fs.writeFileSync(stalePath, `${new Date().toISOString()}\n`, 'utf-8');
 }
 
 export function writeAppMeta(

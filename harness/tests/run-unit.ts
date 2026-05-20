@@ -72,6 +72,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
   { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
   { id: 'adhoc-step-translate', modulePath: './unit/adhoc-step-translate.unit.test' },
+  { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
 ];
 

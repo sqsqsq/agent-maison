@@ -1,128 +1,589 @@
 /**
+
  * Warm up doc/app-snapshot-cache/<bundle>/ when empty (dump-ui + page save).
+
  */
+
 import * as fs from 'fs';
+
 import * as path from 'path';
+
 import { spawnSync } from 'child_process';
+
 import { resolveHylyreToolConfig } from '../../../harness/config';
+
 import { buildHylyreAppPageSaveArgv } from './device-test-page-save';
+
 import { hdcTargetPrefix, resolveHdcExecutableSync } from './hdc-runner';
 
+import {
+
+  collectDeviceInfo,
+
+  pollUntilForeground,
+
+  type DeviceInfo,
+
+} from './hdc-foreground-probe';
+
+import { markAppMetaCacheStale } from './resolve-main-ability';
+
+
+
 export interface SnapshotWarmupOptions {
+
   projectRoot: string;
+
   bundleName: string;
+
   mainAbility: string;
+
   pythonPath: string;
+
   appSnapshotCacheAbs: string;
+
   hypiumWorkDir: string;
+
   deviceSn?: string;
+
   logPath?: string;
+
   pageSlug?: string;
+
 }
+
+
+
+export type WarmupReasonKind =
+
+  | 'device_locked'
+
+  | 'no_hdc_target'
+
+  | 'aa_start_failed'
+
+  | 'app_not_foreground'
+
+  | 'ability_wrong'
+
+  | 'dump_ui_failed'
+
+  | 'page_save_failed'
+
+  | 'unknown';
+
+
 
 export interface SnapshotWarmupResult {
+
   ok: boolean;
+
   skipped: boolean;
+
   reason?: string;
+
+  reasonKind?: WarmupReasonKind;
+
+  metaPath?: string;
+
   pageSaveExitCode?: number | null;
+
   log: string;
+
 }
+
+
 
 export function isAppSnapshotCacheEmpty(appSnapshotCacheAbs: string, bundleName: string): boolean {
+
   const pagesDir = path.join(appSnapshotCacheAbs, bundleName, 'pages');
+
   if (!fs.existsSync(pagesDir)) return true;
+
   try {
+
     const entries = fs.readdirSync(pagesDir);
+
     return !entries.some(f => f.endsWith('.json'));
+
   } catch {
+
     return true;
+
   }
+
 }
+
+
 
 function appendLog(logPath: string | undefined, line: string): void {
+
   if (!logPath) return;
+
   try {
+
     fs.appendFileSync(logPath, line, 'utf-8');
+
   } catch {
+
     /* ignore */
+
   }
+
 }
 
-function runAaStart(bundle: string, ability: string, deviceSn: string | undefined, logPath?: string): boolean {
+
+
+function warmupMetaPathFromLog(logPath?: string): string {
+
+  if (logPath?.trim()) {
+
+    return path.join(path.dirname(logPath), 'snapshot-warmup.meta.json');
+
+  }
+
+  return 'snapshot-warmup.meta.json';
+
+}
+
+
+
+function writeWarmupMeta(metaPath: string, body: Record<string, unknown>): void {
+
+  fs.mkdirSync(path.dirname(metaPath), { recursive: true });
+
+  fs.writeFileSync(
+    metaPath,
+    `${JSON.stringify({ schema_version: '0.1', ...body }, null, 2)}\n`,
+    'utf-8',
+  );
+
+}
+
+
+
+export interface AaStartCapture {
+
+  ok: boolean;
+
+  exitCode: number | null;
+
+  output: string;
+
+  stderr: string;
+
+}
+
+
+
+export function runAaStartWithCapture(
+
+  bundle: string,
+
+  ability: string,
+
+  deviceSn: string | undefined,
+
+  logPath?: string,
+
+): AaStartCapture {
+
   const args = [...hdcTargetPrefix(), 'shell', 'aa', 'start', '-a', ability, '-b', bundle];
+
   appendLog(logPath, `$ hdc ${args.join(' ')}\n`);
+
   const hdcExe = resolveHdcExecutableSync();
+
   const useShell = process.platform === 'win32' && hdcExe === 'hdc';
+
   const r = spawnSync(hdcExe, args, {
+
     encoding: 'utf-8',
+
     shell: useShell,
+
     timeout: 120_000,
+
     maxBuffer: 2 * 1024 * 1024,
+
   });
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  appendLog(logPath, out);
-  return r.status === 0;
+
+  const stdout = r.stdout ?? '';
+
+  const stderr = r.stderr ?? '';
+
+  const output = `${stdout}${stderr}`;
+
+  appendLog(logPath, output);
+
+  return { ok: r.status === 0, exitCode: r.status, output, stderr };
+
 }
 
-export function ensureAppSnapshotWarmup(opts: SnapshotWarmupOptions): SnapshotWarmupResult {
-  const logLines: string[] = [];
-  if (!isAppSnapshotCacheEmpty(opts.appSnapshotCacheAbs, opts.bundleName)) {
-    return { ok: true, skipped: true, reason: 'cache_nonempty', log: 'snapshot cache already has pages\n' };
-  }
 
-  logLines.push(`snapshot warmup: cache empty for ${opts.bundleName}\n`);
-  if (!runAaStart(opts.bundleName, opts.mainAbility, opts.deviceSn, opts.logPath)) {
-    const msg = 'aa start failed during snapshot warmup';
-    logLines.push(msg + '\n');
-    return { ok: false, skipped: false, reason: msg, log: logLines.join('') };
-  }
+
+interface CommandCapture {
+
+  exitCode: number | null;
+
+  stderr: string;
+
+  stdout: string;
+
+}
+
+
+
+function runDumpUi(
+
+  pythonPath: string,
+
+  hypiumWorkDir: string,
+
+  appSnapshotCacheAbs: string,
+
+  deviceSn: string | undefined,
+
+  logPath?: string,
+
+): CommandCapture {
 
   const dumpArgs = ['-m', 'hylyre', 'dump-ui'];
-  if (opts.deviceSn?.trim()) dumpArgs.push('--device-sn', opts.deviceSn.trim());
-  appendLog(opts.logPath, `$ ${opts.pythonPath} ${dumpArgs.join(' ')}\n`);
-  const dump = spawnSync(opts.pythonPath, dumpArgs, {
-    cwd: opts.hypiumWorkDir,
+
+  if (deviceSn?.trim()) dumpArgs.push('--device-sn', deviceSn.trim());
+
+  appendLog(logPath, `$ ${pythonPath} ${dumpArgs.join(' ')}\n`);
+
+  const dump = spawnSync(pythonPath, dumpArgs, {
+
+    cwd: hypiumWorkDir,
+
     encoding: 'utf-8',
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
+
+    env: { ...process.env, HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
+
     timeout: 120_000,
+
     maxBuffer: 8 * 1024 * 1024,
+
   });
-  const dumpOut = `${dump.stdout ?? ''}${dump.stderr ?? ''}`;
-  appendLog(opts.logPath, dumpOut);
-  logLines.push(`dump-ui exit=${dump.status}\n`);
+
+  const stdout = dump.stdout ?? '';
+
+  const stderr = dump.stderr ?? '';
+
+  appendLog(logPath, `${stdout}${stderr}`);
+
+  return { exitCode: dump.status, stderr, stdout };
+
+}
+
+
+
+function runPageSave(
+
+  pythonPath: string,
+
+  hypiumWorkDir: string,
+
+  appSnapshotCacheAbs: string,
+
+  opts: SnapshotWarmupOptions,
+
+): CommandCapture {
 
   const saveArgs = buildHylyreAppPageSaveArgv({
+
     bundleName: opts.bundleName,
+
     deviceSn: opts.deviceSn,
+
     abilityName: opts.mainAbility,
+
     pageSlug: opts.pageSlug ?? 'home',
+
   });
-  appendLog(opts.logPath, `$ ${opts.pythonPath} ${saveArgs.join(' ')}\n`);
-  const save = spawnSync(opts.pythonPath, saveArgs, {
+
+  appendLog(opts.logPath, `$ ${pythonPath} ${saveArgs.join(' ')}\n`);
+
+  const save = spawnSync(pythonPath, saveArgs, {
+
     cwd: opts.hypiumWorkDir,
+
     encoding: 'utf-8',
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
+
+    env: { ...process.env, HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
+
     timeout: 60_000,
+
     maxBuffer: 4 * 1024 * 1024,
+
   });
-  const saveOut = `${save.stdout ?? ''}${save.stderr ?? ''}`;
-  appendLog(opts.logPath, saveOut);
-  logLines.push(`page save exit=${save.status}\n`);
+
+  const stdout = save.stdout ?? '';
+
+  const stderr = save.stderr ?? '';
+
+  appendLog(opts.logPath, `${stdout}${stderr}`);
+
+  return { exitCode: save.status, stderr, stdout };
+
+}
+
+
+
+export function classifyWarmupFailure(
+
+  aaStart: { ok: boolean; output: string },
+
+  foreground: { ok: boolean; lastDumpExcerpt: string },
+
+  dumpUi: { exitCode: number | null; stderr: string },
+
+  pageSave: { exitCode: number | null; stderr: string },
+
+): WarmupReasonKind {
+
+  const aaOut = aaStart.output;
+
+  if (!aaStart.ok && /screen.*locked|need.*unlock|UserId.*not active/i.test(aaOut)) return 'device_locked';
+
+  if (!aaStart.ok && /no targets|no device/i.test(aaOut)) return 'no_hdc_target';
+
+  if (!aaStart.ok) return 'aa_start_failed';
+
+  if (!foreground.ok) return 'app_not_foreground';
+
+  const dumpErr = dumpUi.stderr;
+
+  if (dumpUi.exitCode !== 0 && dumpUi.exitCode !== null) {
+
+    if (/ability.*not.*found|page.*not.*registered/i.test(dumpErr)) return 'ability_wrong';
+
+    return 'dump_ui_failed';
+
+  }
+
+  if (pageSave.exitCode !== 0 && pageSave.exitCode !== null) return 'page_save_failed';
+
+  return 'unknown';
+
+}
+
+
+
+export function ensureAppSnapshotWarmup(opts: SnapshotWarmupOptions): SnapshotWarmupResult {
+
+  const logLines: string[] = [];
+
+  const metaPath = warmupMetaPathFromLog(opts.logPath);
+
+  const deviceInfo: DeviceInfo = collectDeviceInfo(opts.deviceSn);
+
+
+
+  if (!isAppSnapshotCacheEmpty(opts.appSnapshotCacheAbs, opts.bundleName)) {
+
+    writeWarmupMeta(metaPath, {
+
+      skipped: true,
+
+      ok: true,
+
+      reason: 'cache_nonempty',
+
+      bundle: opts.bundleName,
+
+      device_info: deviceInfo,
+
+      ran_at: new Date().toISOString(),
+
+    });
+
+    return {
+
+      ok: true,
+
+      skipped: true,
+
+      reason: 'cache_nonempty',
+
+      metaPath,
+
+      log: 'snapshot cache already has pages\n',
+
+    };
+
+  }
+
+
+
+  logLines.push(`snapshot warmup: cache empty for ${opts.bundleName}\n`);
+
+
+
+  const aa = runAaStartWithCapture(opts.bundleName, opts.mainAbility, opts.deviceSn, opts.logPath);
+
+  const fg = aa.ok
+
+    ? pollUntilForeground(opts.bundleName, opts.deviceSn)
+
+    : { ok: false, tookMs: 0, lastDumpExcerpt: '', attempts: 0 };
+
+
+
+  const dump = runDumpUi(
+
+    opts.pythonPath,
+
+    opts.hypiumWorkDir,
+
+    opts.appSnapshotCacheAbs,
+
+    opts.deviceSn,
+
+    opts.logPath,
+
+  );
+
+  logLines.push(`dump-ui exit=${dump.exitCode}\n`);
+
+
+
+  const save = runPageSave(opts.pythonPath, opts.hypiumWorkDir, opts.appSnapshotCacheAbs, opts);
+
+  logLines.push(`page save exit=${save.exitCode}\n`);
+
+
 
   const stillEmpty = isAppSnapshotCacheEmpty(opts.appSnapshotCacheAbs, opts.bundleName);
-  if (save.status !== 0 || stillEmpty) {
-    return {
-      ok: false,
-      skipped: false,
-      reason: stillEmpty ? 'page save did not populate cache' : `page save exit=${save.status}`,
-      pageSaveExitCode: save.status,
-      log: logLines.join(''),
-    };
+
+  const reasonKind = stillEmpty
+
+    ? classifyWarmupFailure(aa, fg, dump, save)
+
+    : undefined;
+
+
+
+  writeWarmupMeta(metaPath, {
+
+    skipped: false,
+
+    ok: !stillEmpty,
+
+    reason_kind: reasonKind ?? null,
+
+    bundle: opts.bundleName,
+
+    main_ability: opts.mainAbility,
+
+    device_info: deviceInfo,
+
+    aa_start: {
+
+      ok: aa.ok,
+
+      exit_code: aa.exitCode,
+
+      stderr_excerpt: aa.stderr.slice(0, 2000),
+
+      output_excerpt: aa.output.slice(0, 2000),
+
+    },
+
+    foreground_check: {
+
+      ok: fg.ok,
+
+      took_ms: fg.tookMs,
+
+      attempts: fg.attempts,
+
+      last_dump_excerpt: fg.lastDumpExcerpt,
+
+    },
+
+    dump_ui: {
+
+      exit_code: dump.exitCode,
+
+      stderr_excerpt: dump.stderr.slice(0, 2000),
+
+    },
+
+    page_save: {
+
+      exit_code: save.exitCode,
+
+      stderr_excerpt: save.stderr.slice(0, 2000),
+
+    },
+
+    ran_at: new Date().toISOString(),
+
+  });
+
+
+
+  if (reasonKind === 'app_not_foreground' || reasonKind === 'ability_wrong') {
+
+    markAppMetaCacheStale(opts.projectRoot, opts.bundleName);
+
   }
-  return { ok: true, skipped: false, pageSaveExitCode: save.status, log: logLines.join('') };
+
+
+
+  if (stillEmpty) {
+
+    const msg = `warmup_failed:${reasonKind ?? 'unknown'}`;
+
+    return {
+
+      ok: false,
+
+      skipped: false,
+
+      reason: msg,
+
+      reasonKind,
+
+      metaPath,
+
+      pageSaveExitCode: save.exitCode,
+
+      log: logLines.join(''),
+
+    };
+
+  }
+
+
+
+  return {
+
+    ok: true,
+
+    skipped: false,
+
+    pageSaveExitCode: save.exitCode,
+
+    metaPath,
+
+    log: logLines.join(''),
+
+  };
+
 }
 
+
+
 export function resolveAppSnapshotCacheAbs(projectRoot: string): string {
+
   const cfg = resolveHylyreToolConfig(projectRoot);
+
   return path.resolve(projectRoot, cfg.app_snapshot_cache_dir);
+
 }
+
+

@@ -268,6 +268,10 @@ doc/features/{module-name}/test-plan.md
 6. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
 7. **ensure 失败**：agent 在本对话内 Read `doc/features/_adhoc/testing/reports/hylyre-doctor.log` 与 `hylyre-ready.meta.json`，按 `errors[].kind` 处理宿主因素（`HYLYRE_PYTHON`、Python 3.10+、pip 网络、损坏的 `.hylyre/venv`）后**重跑** `adhoc-device-test`；单机诊断见 `framework/skills/6-device-testing/reference/hylyre-host-preflight.md`。
 8. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；ability 由 `resolveMainAbilityForBundle`（config `bundle_abilities` / `app-meta.json` / bm dump）解析。
+9. **本次结果 SSOT**：agent 只读 CLI stderr 打印的 `ADHOC_TRACE_FILE` 路径；**禁止 glob `<timestamp>` 目录**取最近作本次结果。
+10. **诊断驱动**：`outcome=aborted` 时按 `error_kind` 与 `snapshot-warmup.meta.json` 的 `reason_kind` 给用户**有据**结论；跨机失败前先比对两端 `device_info`、`reason_kind`，不要先猜 framework 版本。
+11. **冷启提示**：派生 `snapshot_cache_empty=true` 时 CLI 会自动在 plan 头加 `{"wait_for":{"duration":2000}}`；如确认 App 已在前台可加 `--accept-cold-start` 跳过注入。
+12. **warmup 软失败**：snapshot warmup 失败时 CLI 仍继续 `hylyre run`（stderr `[WARN]`）；勿因 warmup  alone 宣称「无法自动化」。
 
 #### Hylyre 误导性报错对照（即席必读）
 

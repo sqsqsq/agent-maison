@@ -17,6 +17,8 @@ alwaysApply: true
 - `pip install` / 删 `.hylyre/venv` / `hylyre doctor` 等 **Skill 6 Step 7 自跑 testing harness 时应由 ensure 覆盖** 的安装动作
 - **即席（ad-hoc）**场景下向用户提供「选项 A 手动真机 / 选项 B 你去安装 Hylyre」作为**唯一**出路（Hylyre 由 `npm run adhoc-device-test` 内 `ensureHylyreReady` 自动对齐，见 Skill 6 Step 4.B）
 - 即席场景下使用 `harness-runner --phase testing --feature _adhoc`（该入口会 exit 1 并提示正确 CLI）
+- 即席真机结果**只能**从 `adhoc-device-test` CLI 在 stderr 打印的 `ADHOC_TRACE_FILE=` 锚点读取 `trace.json`；**严禁** glob `doc/features/_adhoc/testing/reports/*/hylyre/` 取「最近 timestamp」目录当作本次执行结果（会读到旧/占位目录并捏造结论）
+- 若 trace `outcome=aborted`，必须按 `error_kind` + `artifacts.warmup_meta` / `ensure_meta` / `run_meta` 给用户**结构化诊断**，**禁止**回退「需要 VLM / 步骤改 JSON」之类无依据话术
 
 **允许**向用户说明：需其完成的**物理/账号类**前置（连接真机、授权 USB、切换飞行模式、确认 product/buildMode 等），但：
 
