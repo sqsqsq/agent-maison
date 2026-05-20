@@ -16,6 +16,7 @@
 > 置信度 `high` 也必须人工逐条确认（本项目不启用 auto-approve）。
 >
 > 详细执行方法见 [framework/skills/1-prd-design/SKILL.md#step-15-术语消歧](../../framework/skills/1-prd-design/SKILL.md)。
+> **对话确认**（可选）：agent 可用编号菜单辅助（`1=全部确认 high 行` / `2=逐行确认` / `3=逐行修改`），但 **必须写回** 本表 `[x]` 列 —— 见 [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md) · `prd.terminology`。
 
 | 原始术语 | 权威模块 | 所属层 | 置信度（high / medium / low）| 易混项（必须亮出）| 用户确认 |
 |---------|---------|--------|-------------------------------|-------------------|---------|

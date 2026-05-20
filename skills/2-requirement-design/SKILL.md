@@ -1,5 +1,7 @@
 # 需求设计 Skill (`2-requirement-design`)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `design.scope_expansion` / `design.ok_to_code` / `design.arch_impact` / `design.split_table`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -97,7 +99,7 @@
 1. **请求路由**：用户仅表达「修订 design」「更新技术设计」「改 contracts / Spec」「修复设计段落」「对齐 PRD 调整设计」等，而**未**在同一条或明确承接的指令中同时要求编码（见下条），则**只激活本 Skill**，本轮定性为 **design 迭代**，不是流水线自动滑入 Skill 3。
 2. **何谓同时要求编码（示例，非穷举）**：同一条消息里出现「开始编码」「按现行 design 实现 / 落地」「写代码 / 开发」且指向当前 `doc/features/<feature>/`，可视为用户显式授权连续进入 Skill 3。仅有「把设计改对」「补充设计」**不算**编码授权。
 3. **design 迭代回合内禁止默写实现层产物**：在未满足上一条「显式编码授权」时，**BLOCKER**：不得新增或修改实现层产物（定义见上）；允许改的仅限设计侧 SSOT 与文档（如 `doc/features/...`、`doc/`、`framework/` 等按本实例约定允许的路径）。若用户需要「design 与实现连续交付」，须在指令中**明示**两用意图。
-4. **落盘 → harness → 停等人审（产品闸门）**：每次 `design.md` + Step 11 的 Spec 写入磁盘后，须**立即**进入 Step 13.1 跑 `harness-runner --phase design`（见 Step 13），**禁止**「先改实现再补 design.harness」。Step 13.1 通过后，向用户交付 harness 摘要与设计变更要点；若用户曾表达「要先审 design」或本轮属于 design 修订，则须**等待用户明示「design OK / 可以编码」**之后，才允许进入 Skill 3——**不得**在同一轮 agent 执行流里「写完设计侧 SSOT → 立刻改实现层产物」直连。
+4. **落盘 → harness → 停等人审（产品闸门）**：每次 `design.md` + Step 11 的 Spec 写入磁盘后，须**立即**进入 Step 13.1 跑 `harness-runner --phase design`（见 Step 13），**禁止**「先改实现再补 design.harness」。Step 13.1 通过后，向用户交付 harness 摘要与设计变更要点；若用户曾表达「要先审 design」或本轮属于 design 修订，则须 **`design.ok_to_code` 编号确认**：`1=design OK，可编码` / `2=继续改 design`——**不得**在同一轮 agent 执行流里「写完设计侧 SSOT → 立刻改实现层产物」直连。
 5. **历史阶段不免除**：即使用户过去已跑通 coding / review / UT，只要**本轮改动了** `design.md` 或 `contracts.yaml`（等设计侧 SSOT），设计审阅与「明示编码」流程**重新适用**；不得以「以前实现过」为由跳过。
 
 ### Step 1: 读取并分析 PRD
@@ -175,7 +177,14 @@
 - 备选方案：{是否考虑过在现有 in_scope 模块内就地实现？为什么不行？}
 - 复用检查：{已查阅 architecture.md 公共能力清单，确认无已有能力可复用}
 
-**请用户明确回复**：
+**请用户明确回复**（`design.scope_expansion` · freeform + portable，**须先展示上列完整提议**）：
+
+```text
+1. 已读并同意扩展（须记录用户原话到 expansions_with_user_approval）
+2. 拒绝扩展
+3. 修改提议后再议
+```
+
 - 同意扩展 → 我会在 design.md 的「Scope 声明与继承」章节的 `expansions_with_user_approval` 字段登记，并继续设计
 - 不同意 → 我会重新思考如何在原 in_scope 内解决
 ```
@@ -212,7 +221,7 @@ expansions_with_user_approval:
    - 多个 Feature 共享的业务服务 → 选择在架构中承担“共享业务能力”的模块（若在 in_scope）
    - **若天然归属模块不在 in_scope**：先在 in_scope 中就地实现；实在不行回到 Step 2.5.3
 
-2. **输出功能拆分表**（先于详细设计，供用户确认）：
+2. **输出功能拆分表**（先于详细设计；`design.split_table`：`1=确认拆分` / `2=修改拆分`）：
 
    | PRD 编号 | 功能名称 | 分配模块 | 所属外层 id | 拆分理由 |
    |----------|----------|----------|-------------|----------|

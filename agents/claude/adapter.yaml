@@ -40,6 +40,11 @@ hooks:
 instance_skill_bridge:
   commands_target_dir: .claude/commands
 
+user_confirmation:
+  structured_widget: supported
+  widget_tool_hint: native_options
+  portable_required: true
+
 post_install_hooks: []
 
 notes: |

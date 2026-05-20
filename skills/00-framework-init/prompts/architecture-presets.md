@@ -6,7 +6,7 @@
 
 - **何时用**：扫描到 `01-Product`～`05-SystemBase` 式目录，或用户明确要「与 harness LEGACY 默认一致」。
 - **怎样做**：将 `` `profile-skill-asset:00-framework-init/preset_5_layer_sample` `` 解析得到的 JSON 合并进完整 config（补全 `project_name`、`paths`、`agent_adapter` 等）。
-- **同层策略前置确认（BLOCKER，详见 `SKILL.md` Step 3.x）**：preset 里 `01-Product / 02-Feature / 04-BusinessBase = forbid`、`03-CommonBusiness = dag`、`05-SystemBase = sublayer` 是**有意的默认**（上三层用 `forbid` 逼横向协作下沉，仅 `03-CommonBusiness` 允许同层 DAG），**不是**「同层一律禁止」这种唯一答案。合并 preset 前**必须**按 [templates/intra-layer-deps-confirm.template.md](../templates/intra-layer-deps-confirm.template.md) 展示逐层策略表，逐行获得用户显式回复，才能落盘。
+- **同层策略前置确认（BLOCKER，详见 `SKILL.md` Step 3.x · `init.intra_layer_deps`）**：preset 里各层默认同层策略是有**意的设计选择**，**不是**唯一答案。合并 preset 前**必须**按 Step **3.x.0 gate**（见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)）确认；gate=1 等价于每层「按默认」。
 - **说明**：`05-SystemBase` 使用 `intra_layer_deps: sublayer` + `CommUI` / `CommFunc` 子层仅为**示例**；若用户工程不同，必须在问卷里改 `members_pattern_or_list`。
 
 ## 选项 B：极简三外层（小型 App）

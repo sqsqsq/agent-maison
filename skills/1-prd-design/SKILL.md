@@ -1,5 +1,7 @@
 # PRD 设计 Skill (`1-prd-design`)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `prd.terminology` / `prd.feature_path` / `prd.freeze`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths**（如 feature 文档目录、`module-catalog.yaml`、`glossary.yaml` 等）及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -13,7 +15,7 @@
 - 若 `doc/features/<feature>/` 已存在且是目录：在该目录内续写/更新 `PRD.md` 与 `acceptance.yaml`，不要扫描同级同名前缀条目来替代它。
 - 若该目录不存在：可以创建该目录作为本 feature 的正式归档目录。
 - 若同级存在 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 等归档，或 `<feature>-old/`、`<feature>.md` 等同名前缀条目：仅作为旁证展示给用户，不得自动解压、不得把它们当正式 feature、不得优先读取其内容。
-- 若精确路径 `doc/features/<feature>` 已存在但不是目录：必须停下来请用户确认 feature 名称或清理/恢复路径，不能覆盖该文件。
+- 若精确路径 `doc/features/<feature>` 已存在但不是目录：必须停下来请用户确认 feature 名称或清理/恢复路径，不能覆盖该文件。**交互**（`prd.feature_path`）：`1=换 feature 名` / `2=清理或恢复路径`。
 
 ## Step 0. 载入 `project_profile` addendum（强制）
 
@@ -102,7 +104,18 @@
 4. **对每个已命中术语，强制检查 `easily_confused_with`**
    即便已精确命中，若该术语 / 其 `canonical_module` 存在 `easily_confused_with`，**必须在映射表里显示该混淆项**，置信度从 `high` 降级为 `medium`。这一步是本 Skill 的核心反模式：**"命中不等于正确，混淆项必须亮给用户看"**。
 
-5. **生成「术语映射表」并停下来等人工确认**
+5. **生成「术语映射表」并停下来等人工确认**（registry `prd.terminology` · artifact `[x]` + 对话 gate）
+
+   先展示 gate（同轮 portable；widget 可用时 AskQuestion）：
+
+   ```text
+   1. 全部确认 confidence=high 的行（写回 PRD [x]）
+   2. 逐行确认
+   3. 逐行修改映射
+   ```
+
+   逐行时：`1=确认该行（写回 [x]）` / `2=改映射`。
+
    以下面的格式输出为 PRD 的前置章节：
 
    ```markdown
@@ -220,7 +233,8 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
    doc/features/{module-name}/PRD.md
    ```
 2. 在对话中输出变更摘要，便于人工审阅；用户若有修改意见，回到 Step 4（及前置 Step）迭代后再回到本 Step。
-3. 进入 **Step 6**；Step 6 完成后**立即进入 Step 7**，**严禁**跳过 **Step 7.1**。若产品与流程要求「先审 PRD 再进设计」，在 Step 7.1 PASS 之后停等明示，其行为约束见上文「PRD 与下游阶段的会话内硬边界」。
+3. **冻结 / 下游授权**（`prd.freeze`）：`1=冻结 PRD，可进 Skill 2` / `2=继续改 PRD`（口头 OK 无效）。
+4. 进入 **Step 6**；Step 6 完成后**立即进入 Step 7**，**严禁**跳过 **Step 7.1**。若产品与流程要求「先审 PRD 再进设计」，在 Step 7.1 PASS 之后停等明示，其行为约束见上文「PRD 与下游阶段的会话内硬边界」。
 
 ### Step 6: 提取功能级 Spec
 

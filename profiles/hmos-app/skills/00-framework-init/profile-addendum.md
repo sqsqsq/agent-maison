@@ -68,14 +68,20 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 }
 ```
 
-### 5.6.3 用户确认（**BLOCKER**）
+### 5.6.3 用户确认（**BLOCKER** · registry `init.toolchain_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
 
-按探测结果分三种情况，**严禁未经用户显式回复就落盘 `installPath`**（与根 SKILL Step 0.2.5 / Step 3.x 同等纪律）：
+按探测结果分三种情况，**严禁未经用户显式回复就落盘 `installPath`**：
 
 1. **recommended.status === 'ok'**：
-   把 `recommended.installPath` 作为**推荐值**展示给用户，并提示一句：
-   > 已探测到 DevEco Studio 在 `<path>`，hvigor / sdk / jbr 子目录齐全。是否使用此路径？(y / 自定义路径 / 跳过)
-   - 用户回 `y` → 写入 `framework.config.json > toolchain.devEcoStudio.installPath = <path>`。
+   把 `recommended.installPath` 作为**推荐值**展示给用户，并附 **编号菜单**：
+
+   ```text
+   1. 采用探测路径（y）
+   2. 自定义路径（请给出字符串）
+   3. 跳过
+   ```
+
+   - 用户回 `1` / `y` → 写入 `framework.config.json > toolchain.devEcoStudio.installPath = <path>`。
    - 用户回**自定义路径字符串** → 用 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<user-path>" --json`（或 harness 内 `npx ts-node scripts/detect-deveco.ts --path "..." --json`）验证，命中 `status === 'ok'` 才写入；`incomplete` / `not_found` 把 `missing[]` 列给用户重选。
    - 用户回 `跳过` → 不写入；进入 5.6.4 警示。
 

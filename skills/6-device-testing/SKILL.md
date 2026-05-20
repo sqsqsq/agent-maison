@@ -1,5 +1,7 @@
 # 真机测试 Skill (`6-device-testing`)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `testing.module_name` / `testing.packaging` / `testing.plan_confirm`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -88,7 +90,7 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 
 ### Step 1: 收集测试上下文
 
-1. 向用户确认待测试的功能模块名 `{module-name}`
+1. 向用户确认待测试的功能模块名 `{module-name}`（`testing.module_name`：`1=确认` / `2=修改`）
 2. 读取以下文件：
    - `doc/features/{module}/acceptance.yaml` — ★ 验收 SSOT（按 `ut_layer∈{device,both}` + `device_focus` 派生用例）
    - `doc/features/{module}/PRD.md` — 需求基准（业务流程、异常场景）
@@ -117,7 +119,8 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 
 1. **读取宿主指南**：完整阅读  
    `framework/profiles/<project_profile.name>/skills/6-device-testing/profile-addendum.md`，其中的宿主 toolchain、环境与 harness 变量以 **单一宿主附录为 SSOT**；根 SKILL 不复述宿主专有名词。
-2. **与用户确认打包维度（必选语义）**  
+2. **与用户确认打包维度（必选语义）**（`testing.packaging` · user-confirmation-ux §3.2）  
+   展示 product / buildMode 推荐值后附：`1=确认` / `2=修改`。  
    - **product**：枚举宿主工程中可用的制品维度（附录列出如何用宿主 tooling 读取 **`products`** 清单）；默认应与宿主侧的 **`preferredProduct`/`detectProduct` 语义**一致（仍为宿主附录用语）。  
    - **buildMode**：宿主侧的 **`debug`（默认）** 或 **`release`**；需在会话或环境里记下所选组合供 **`testing` harness** 复现。附录 **`testing-build-conventions.ts`** 说明可用的 **`HARNESS_DEVICE_TEST_*`** 变量。
 3. **执行链路（中性措辞）：** 经由 **`capability-registry`** → **`dispatchDeviceTestBuild`** 产出 signed 应用程序包；再 **`dispatchDeviceTestInstall`** 触发设备安装步骤（宿主附录写明等价 CLI）。宿主实现在 **`profiles/<name>/harness/providers/device-test-build.ts`** 与 **`device-test-install.ts`**；日志与结构化摘要的约定文件名见宿主 **`profile-addendum`**（同一 **`reports/<feature>/testing/`** 目录下）。
@@ -185,8 +188,8 @@ framework/profiles/<project_profile.name>/skills/6-device-testing/templates/test
 ### Step 3: 用户确认测试计划
 
 1. 展示完整的测试计划给用户
-2. 等待用户确认或反馈修改意见
-3. 若需修改，调整后重新展示
+2. **`testing.plan_confirm`**：`1=确认测试计划` / `2=修改计划`
+3. 若需修改，调整后重新展示并再次编号确认
 
 ### Step 4: 归档测试计划
 

@@ -19,6 +19,11 @@ rules:
 
 instance_skill_bridge: null
 
+user_confirmation:
+  structured_widget: unsupported
+  widget_tool_hint: none
+  portable_required: true
+
 post_install_hooks: []
 
 notes: |

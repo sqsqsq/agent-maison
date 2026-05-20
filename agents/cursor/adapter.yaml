@@ -18,6 +18,11 @@ skill_bridge:
 instance_skill_bridge:
   skill_stub_target_dir: .cursor/skills
 
+user_confirmation:
+  structured_widget: supported
+  widget_tool_hint: AskQuestion
+  portable_required: true
+
 rules:
   target_dir: .cursor/rules
   template_dir: ../shared/agent-bundle/templates/rules

@@ -408,6 +408,18 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 
 **回归**：`cd framework/harness && npm test`；`npx tsc --noEmit -p tsconfig.json`。
 
+### v3.2：用户确认 UX SSOT + 静态 lint
+
+新增 [framework/skills/reference/user-confirmation-ux.md](skills/reference/user-confirmation-ux.md) 与 [confirmation-registry.yaml](skills/reference/confirmation-registry.yaml)。
+
+**维护者约定**：新增或修改 Skill 中的用户确认步骤时：
+
+1. 先在 `confirmation-registry.yaml` 登记 `id` / `interaction_class`；
+2. Skill 正文只链 SSOT（≤10 行），使用 gate/enum/portable 编号；
+3. 跑 `cd framework/harness && npm test` —— `check-docs` 阶段会执行 `check-skills-confirmation-ux` BLOCKER。
+
+adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agents/adapter-schema.yaml)）声明 widget 能力；chrys/codemate 等内部 agent 使用 `generic` + `structured_widget: unsupported`。
+
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。

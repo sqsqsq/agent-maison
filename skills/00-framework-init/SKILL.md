@@ -10,6 +10,8 @@
 
 你是一位**工程架构顾问**（宿主栈与工具链以 `project_profile` 及对应 `framework/profiles/<name>/skills/00-framework-init/profile-addendum.md` 为准）。你的任务是在**已有真实代码树**的工程里，把本仓库的 `framework/` 资产**实例化**：扫描目录与特征文件 → 与用户逐项确认项目元数据、架构 DSL、adapter 选择 → 在**实例工程根**（不是 `framework/` 内部）写出约定产物，并完成 harness 门禁提示。
 
+> **用户确认 UX SSOT**（BLOCKER 确认须 progressive enhancement）：[reference/user-confirmation-ux.md](../reference/user-confirmation-ux.md) · registry：`init.adapter` / `init.populated_diff` / `init.intra_layer_deps` / `init.toolchain_path` 等见 [confirmation-registry.yaml](../reference/confirmation-registry.yaml)。
+
 **产物一律写在实例工程根**；adapter 只消费 `framework/agents/<name>/` 下的模板，不写回 framework 本体。
 
 ## 触发条件
@@ -74,7 +76,18 @@
 
 - **禁止**仅通知「当前为 UPDATE、config 里已是 claude，否则保持」后**不等待**即执行 Step 0.3.0。
 - **禁止**把 harness `check-init` 的 `resolveAdapterName`（UPDATE 下从 config 回落）当成「用户本轮已选定」——config 只作**推荐值**展示。
-- **推荐**用 AskQuestion（或等价结构化选项）列出各 `adapter_name`；若 config 为 `claude`，选项文案须让用户回复能映射为字符串 `claude` 的答复，而非默认同意的 opt-out 通知。
+- **推荐**用 AskQuestion（或等价 structured widget）列出各 `adapter_name`；若 config 为 `claude`，选项文案须让用户回复能映射为字符串 `claude` 的答复，而非默认同意的 opt-out 通知。
+- **同轮必须附 portable 编号菜单**（registry `init.adapter`）：
+
+  ```text
+  请选择（回复编号；widget 可用时可直接选）：
+  1. claude
+  2. cursor
+  3. generic
+  4. 保持当前 config 中的 adapter（须复述目录名）
+  ```
+
+- 写入前 **决策复述**（见 user-confirmation-ux §3.6）。
 
 ### 0.3 产物存在性体检（写入前必做，CREATE / UPDATE 共享）
 
@@ -257,7 +270,16 @@ node scripts/render-agents-md.mjs ...
    - **全选速记**：用户回 `all=y` / `all=n` / `全部 y` / `全部 n` 表示**所有 Q 同向**；这是用户已通读 diff 后明确表达"统一处置"的合法快捷方式。
    - **严禁接受**（Q 数 ≥ 2 时）：裸 `y` / `yes` / `好` / `继续` / `1` —— 这类回复**无法精确映射**到 Q 编号集合，按 0.3.4.3 处理为「歧义」。
 
-3. **AI 输出的提问模板**（强制末尾追加）：
+3. **AI 输出的提问模板**（强制：先 gate，再允许 Q 格式；见 user-confirmation-ux `init.populated_diff`）：
+
+   ```text
+   请选择（回复编号）：
+   1. all=y（全部 POPULATED 项同意覆盖 / 等价于下方 all=y）
+   2. all=n（全部保留当前磁盘）
+   3. 逐项指定（进入 Q1=y Q2=n … 格式）
+   ```
+
+   若用户选 `3` 或直接进入逐项模式，**强制末尾追加**：
 
    > **请按以下任一格式回复**（共 `<N>` 项）：
    > - `Q1=y Q2=n Q3.1=y …`（逐项指定）
@@ -350,7 +372,9 @@ cd <repo-root> && node framework/harness/scripts/show-last-committed-framework-c
 
 ### 1.6 用户显式确认（BLOCKER）
 
-必须用表格同时展示：**推荐 profile**、**依据**、**将启用的 capabilities 摘要**（可读 `profile.yaml` / `config-defaults.json`），并要求用户对 `project_profile.name`（及 `sub_variant` 若适用）给出**明确字符串**；含糊的「好 / 继续」不构成确认。
+必须用表格同时展示：**推荐 profile**、**依据**、**将启用的 capabilities 摘要**（可读 `profile.yaml` / `config-defaults.json`）。
+
+**交互**（registry `init.project_profile` · user-confirmation-ux §3.2）：列出 profile 名称后附编号菜单，例如 `1=hmos-app 2=generic 3=自定义（请给字符串）`；含糊的「好 / 继续」不构成确认。
 
 ### 1.7 与 `config-defaults.json` 合并
 
@@ -389,12 +413,30 @@ cd <repo-root> && node framework/harness/scripts/show-last-committed-framework-c
 
 ### Step 3.x. 同层策略逐层确认（BLOCKER，所有路径共用）
 
-无论走选项 A / B / C，在写入 `framework.config.json.architecture` **之前**，必须完成以下动作：
+无论走选项 A / B / C，在写入 `framework.config.json.architecture` **之前**，必须完成以下动作（SSOT：`init.intra_layer_deps` · [user-confirmation-ux.md](../reference/user-confirmation-ux.md)）：
 
-1. 使用 [templates/intra-layer-deps-confirm.template.md](templates/intra-layer-deps-confirm.template.md) 渲染一份「外层 × `intra_layer_deps`」确认表，把当前候选值填入「当前值」列并展示给用户：**若存在 Step 1.25 的 `recovered_framework_config` 快照**，则各层「当前值」**必须**以快照中的 `intra_layer_deps` 为预填（与用户展示并说明来源），**不得**静默用 preset 覆盖；无快照时才用 preset / 问卷默认值。
-2. 明确提示：**默认值只是推荐**（尤其某 legacy preset 的 `forbid` 是「逼横向协作下沉」的设计选择，**不是**「架构禁止同层互依赖」这种唯一答案）；`forbid` / `dag` / `sublayer` 三者语义见 [framework/harness/config.ts](../../harness/config.ts) 的 `IntraLayerDepsMode` 说明。
-3. 用户**必须逐行**给出显式回复：`按默认` / `改为 dag` / `改为 forbid` / `改为 sublayer(+ 子层)`。**笼统的「好」「继续」「行」不构成逐层确认**；只要有任一行没有显式回复，就继续追问，不得落盘。
-4. 收到全部回复后，再依 Step 3 生成前强制自检（见下节）汇编待写 JSON —— **磁盘落盘由 Step 3.5 统一执行**。
+#### Step 3.x.0 Gate（默认路径，BLOCKER）
+
+1. 使用 [templates/intra-layer-deps-confirm.template.md](templates/intra-layer-deps-confirm.template.md) 渲染确认表，「当前值」列预填：**若存在 Step 1.25 的 `recovered_framework_config` 快照**，必须以快照中的 `intra_layer_deps` 为预填并说明来源；无快照时才用 preset / 问卷默认值。
+2. 明确提示：`forbid` / `dag` / `sublayer` 语义见 [framework/harness/config.ts](../../harness/config.ts) 的 `IntraLayerDepsMode`；**默认值只是推荐**。
+3. **先展示 gate**（同轮附 portable；widget 可用时 AskQuestion 等价）：
+
+   ```text
+   请选择（回复编号）：
+   1. 全部维持「当前值」列所示策略（等价于每层显式回复「按默认」；合法速记：`1` / `全部按默认` / `all=default`）
+   2. 我要调整某几层（进入 Step 3.x.1 matrix）
+   3. 先讨论 forbid / dag / sublayer 语义
+   ```
+
+4. 用户选 `1` 或等价 widget → **视为每一外层均已显式「按默认」**，无需逐行打字；**决策复述**后进入生成前自检。
+5. 用户选 `2` → Step 3.x.1；选 `3` → 解释语义后回到 gate。
+6. **笼统的「好」「继续」「行」不构成确认**。
+
+#### Step 3.x.1 Matrix（仅 gate=2）
+
+对需调整的外层，每层附编号子菜单（user-confirmation-ux §3.3）：`1=按默认 2=dag 3=forbid 4=sublayer(+子层问卷)`。表格保留作可读摘要，**不得**作为唯一交互。
+
+7. 收到全部层级的显式取值后，再依 Step 3 生成前强制自检汇编 JSON —— **磁盘落盘由 Step 3.5 统一执行**。
 
 > 与 Step 4「adapter 选择 BLOCKER」对称：架构守门有三件事必须显式确认——① adapter；② **每层 `intra_layer_deps`**；③ DSL 自检通过。
 
@@ -929,7 +971,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 - 探测不到 `framework/` → **不得**生成假 framework；停下并指引 submodule。
 - **未经用户明确选定 `agent_adapter`（具体 `adapter_name` 字符串）就进入 Step 0.3 体检 / 在降级提示里写入未按 Step 0.2.5 解析的具体入口文件名或 adapter 专有目录 / 写入 `framework.config.json.agent_adapter` / 拷贝任何 adapter `templates/` 下的文件 / 渲染入口文件** → 严禁；adapter 选定必须在 Step 0.2.5 完成，IDE 环境或目录痕迹只能作为**推荐值**亮给用户，不得当成用户决定。
 - **Step 0.3 体检表或 CREATE→UPDATE 降级提示中，在未解析出唯一 `agent_entry_file.target_path` 前就并列写出两个可能的入口文件名** → 严禁，必须回到 Step 0.2.5 让用户显式选定后再打印体检表。
-- **未经用户逐层显式确认 `outer_layers[*].intra_layer_deps` 就写入 `framework.config.json.architecture`** → 严禁；preset 默认值（包括示例工程 `LEGACY_DEFAULT_DSL`）只能作为**推荐值**展示，必须按 Step 3.x 的确认表逐行拿到「按默认 / 改为 X」的显式回复后才能落盘。
+- **未经用户逐层显式确认 `outer_layers[*].intra_layer_deps` 就写入 `framework.config.json.architecture`** → 严禁；preset 默认值只能作为**推荐值**展示，必须按 Step 3.x gate（`1`=全部按默认 或 matrix 子菜单）拿到显式回复后才能落盘。
 - 用户拒绝确认 diff（POPULATED 项）→ **该项跳过**，**不得**强行覆盖；但允许其它 MISSING / EMPTY 项继续写入，并在 Step 7 如实列出被跳过清单。
 - **跳过 Step 0.3 体检直接写入** → 严禁；任何写操作前必须先完成体检并打印汇报表。
 - **覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / `doc/architecture.md` / `doc/features/**`** → 严禁，无论用户是否要求；这些均属持续积累资产或手工迭代产物，本 Skill 不是它们的维护者，请引导用户走 `catalog-bootstrap` / `glossary-bootstrap` / 手工删除后重跑。

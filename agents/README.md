@@ -83,6 +83,14 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 **UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。
 
+## 内部 agent（Chrys / Codemate 等）
+
+不单独建 adapter 时：实例使用 **`generic`** + `paths.agent_bundle_root`（如 `.agents`）+ 默认 **`inline`** 物化。
+
+- `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
+- 确认交互只展示 **portable 编号菜单**（见 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
+- 禁止假设 AskQuestion 或宿主原生选项可用
+
 ## 工程指纹与 adapter 推测（承接 scan-project）
 
 以下为**只读启发**，不能替代用户对 `adapter_name` 的显式选定：

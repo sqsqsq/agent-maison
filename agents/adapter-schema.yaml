@@ -198,6 +198,26 @@ optional_fields:
       可选。adapter 产物落地后需要执行的脚本列表（路径相对于 adapter 目录）。
       第一版保持为空，保留字段以便未来扩展（例如 adapter 切换时的清理、版本迁移等）。
 
+  user_confirmation:
+    type: object | null
+    description: |
+      可选。声明宿主 agent 是否支持结构化确认 widget（Cursor AskQuestion、Claude Code 原生选项等）。
+      Skill 正文 SSOT：framework/skills/reference/user-confirmation-ux.md。
+      generic / 内部 agent（chrys、codemate）应声明 structured_widget: unsupported。
+    fields:
+      structured_widget:
+        type: string
+        enum: ["supported", "unsupported"]
+      widget_tool_hint:
+        type: string
+        description: |
+          supported 时提示工具名，例如 AskQuestion（Cursor）或 native_options（Claude Code）。
+      portable_required:
+        type: boolean
+        default: true
+        description: |
+          为 true 时：即使 structured_widget=supported，同轮消息仍须附 portable 编号菜单脚注。
+
   notes:
     type: string
     description: 给 adapter 维护者的备注

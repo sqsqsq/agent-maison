@@ -1,5 +1,7 @@
 # 编码 Skill (`3-coding`)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -36,7 +38,7 @@
 > **⚠️ 开工前必读（弱模型环境尤其重要）**
 >
 > 1. **Profile 编码补充**：完整阅读 `framework/profiles/<project_profile.name>/skills/3-coding/profile-addendum.md`。若 addendum 声明了宿主语言易错手册、资源规范或导出规则，写对应文件前必须先回顾相关条目，写完后对照自检。
-> 2. **Scope 守门（新）**：本次编码的 git diff 不得越界到 design.md `in_scope_modules` 之外。Harness 的 `diff_within_scope` 规则会在 Step 7 阻断 BLOCKER。因此写代码时一旦发现要改 in_scope 之外的模块，**立刻停下来**，回到 Skill 2 的 Step 2.5.3 走 scope 扩展提议。
+> 2. **Scope 守门（新）**：本次编码的 git diff 不得越界到 design.md `in_scope_modules` 之外。Harness 的 `diff_within_scope` 规则会在 Step 7 阻断 BLOCKER。因此写代码时一旦发现要改 in_scope 之外的模块，**立刻停下来**（`coding.scope_stop`：`1=回 Skill 2 走 Scope 扩展` / `2=收窄实现`），回到 Skill 2 的 Step 2.5.3 走 scope 扩展提议。
 > 3. **逐文件 Lint 门禁（新）**：Step 3 已强化为"单文件 Lint 不过不得进入下一个文件"，**严禁批量生成多个文件后再统一 lint**。
 
 ## 触发条件
@@ -103,7 +105,7 @@
    - **验收标准和边界用例** ← `acceptance.yaml > criteria` + `boundaries`
    - **资源 Key 契约** ← `contracts.yaml > resource_keys`
 
-4. 输出**模块 × 层**的实现清单供用户确认：
+4. 输出**模块 × 层**的实现清单；**`coding.module_batch`**：`1=继续下一模块` / `2=修改本模块`。
 
 ```
 📋 待实现清单（按模块和层级排列）：
@@ -496,7 +498,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 ## 约束与注意事项
 
 1. **contracts.yaml 是强契约**：文件路径、接口签名、数据模型、组件 Props 必须与 `contracts.yaml` 定义一致。若发现 Spec 有明显问题（类型错误、API 不存在、分层违规），先向用户指出并确认修正方案，修正后同步更新 contracts.yaml
-2. **逐模块逐层交付**：按 Module 和层级分批生成代码并等待用户确认，控制每次输出在一个可审阅的粒度
+2. **逐模块逐层交付**：按 Module 和层级分批生成代码；每批 **`coding.module_batch`** 编号确认后再继续
 3. **模拟数据优先**：若本轮无法接入真实后端，在 shared/client（或宿主等价层）定义接口，由 data/repository 用本地替身数据实现
 4. **中文注释**：代码中非显而易见的业务逻辑使用中文注释说明意图
 5. **渐进式实现**：先实现 P0 核心功能确保可运行，再叠加 P1/P2 功能

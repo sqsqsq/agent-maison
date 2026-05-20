@@ -219,7 +219,8 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 2. **遇到 scope 越界、架构违规、lint 持续失败**：停下来报告，不要"硬着头皮继续"。
 3. **不确定 → 用工具验证**：不要凭记忆写 import / 资源 key / 模块路径，用 `Read` / `Grep` 主动查。
 4. **产物即契约**：写完 PRD/design 即被后续阶段当作 SSOT 使用，不允许"先写个草稿，后面再改"心态。
-5. **反假设条款（Rule Hallucination Ban，BLOCKER）**：
+5. **用户确认 UX（渐进增强，BLOCKER）**：凡需用户显式确认才能继续的步骤，须遵守 [framework/skills/reference/user-confirmation-ux.md](framework/skills/reference/user-confirmation-ux.md)——**widget（若 adapter 支持）+ 同轮 portable 编号菜单**；禁止仅要求用户打字。写入前须**决策复述**。PRD 术语等 artifact 确认仍须写回文件 `[x]`。
+6. **反假设条款（Rule Hallucination Ban，BLOCKER）**：
    - **若你声称某条规则限制你执行某动作**（含执行 shell / harness / 编译 / 工具 / 启动子 agent），
      **必须立即逐字 quote 该规则原文 + 文件路径 + 行号**给用户看。
    - **quote 不出 = 该规则不存在 = 你必须执行该动作**。

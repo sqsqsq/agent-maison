@@ -6,6 +6,8 @@
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` 前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md)。
 
+**用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `catalog.staging_module` / `catalog.staging_glossary`。
+
 ## 概述
 
 你是一位按当前 `project_profile` 自适配的工程架构分析师。实际工作中请以目标实例工程的 `framework.config.json` / `doc/architecture.md` 与 profile addendum 为准。
@@ -275,13 +277,13 @@ Signals used:
 
 #### 5.2 邀请用户给简短回复
 
-**只问一个问题**，不要一次塞一堆选项让用户找：
+**只问一个问题**（SSOT：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · registry `catalog.staging_module`）：
 
-> 请选择：
->   `y` 确认并合并
->   `e <修改指令>` 修改某字段（例：`e 把 one_liner 改成 XXX` / `e 给 NOT_responsible_for 加一条` / `e 删掉 easily_confused_with 的某模块`）
->   `s` 跳过（staging 保留，之后再决定）
->   `q` 作废
+> 请选择（回复编号；`1`/`2`/`3`/`4` 等价于 y/e/s/q）：
+>   `1` / `y` — 确认并合并
+>   `2` / `e <修改指令>` — 修改某字段
+>   `3` / `s` — 跳过（staging 保留）
+>   `4` / `q` — 作废
 
 | 回复 | CREATE 模式下的含义 | UPDATE 模式下的含义 |
 |---|---|---|
@@ -515,7 +517,7 @@ Aliases: []
 
 Sample usage: "<示例用语>"
 
-请选择：y（确认） / e <改指令> / s（跳过） / q（作废）
+请选择（回复编号）：`1`/y 确认 · `2`/e 改指令 · `3`/s 跳过 · `4`/q 作废
 ```
 
 > **领域填充实例**：`` `profile-skill-asset:0-catalog-bootstrap/examples_domain_mapping` ``。

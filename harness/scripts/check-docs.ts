@@ -31,6 +31,7 @@ import {
   FreshnessReport,
 } from './utils/doc-freshness';
 import { validateProfileSkillAssetsForProject } from './utils/profile-skill-assets';
+import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
 
 const INVENTORY_REL = 'framework/docs/DOC_INVENTORY.yaml';
 
@@ -319,6 +320,7 @@ const checker: PhaseChecker = {
     results.push(...checkDocFilesExist(ctx, docs));
     results.push(...checkSourcePathsResolvable(ctx, docs));
     results.push(...checkProfileSkillAssetsResolvable(ctx));
+    results.push(...runConfirmationUxChecks(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

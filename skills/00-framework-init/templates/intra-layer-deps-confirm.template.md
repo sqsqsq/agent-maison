@@ -1,6 +1,6 @@
 # 同层策略（`intra_layer_deps`）逐层确认表
 
-> 本模板供 Skill `00-framework-init` 的 Step 3.x 使用。AI 在写入 `framework.config.json.architecture` **之前**，按下表逐层展示并获取用户显式回复。**只要有一行未被显式确认，就不得落盘。**
+> 本模板供 Skill `00-framework-init` 的 Step 3.x 使用。AI 在写入 `framework.config.json.architecture` **之前**，按下表展示并获取用户显式回复。**交互 SSOT**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · registry `init.intra_layer_deps`。
 
 ---
 
@@ -16,19 +16,27 @@
 
 ---
 
-## 确认表（AI 渲染时填充「当前值」列，其余保持空白供用户写回复）
+## 确认表（AI 渲染时填充「当前值」列；交互以 Step 3.x.0 gate 为主）
 
-| 外层 id | `can_depend_on` | 当前值（preset / 问卷） | 你的选择（`按默认` / `dag` / `forbid` / `sublayer(+ 子层定义)`） | 备注 |
-|--------|-----------------|------------------------|--------------------------------------------------------------|------|
-| `<layer-id-1>` | `<layer-id-2>, <layer-id-3>` | `<forbid | dag | sublayer>` | ` ` | 例：是否希望同层 DAG |
-| `<layer-id-2>` | `<layer-id-3>` | `<forbid | dag | sublayer>` | ` ` |  |
-| `...` | `...` | `...` | ` ` |  |
+| 外层 id | `can_depend_on` | 当前值（preset / 问卷 / 快照） | 备注 |
+|--------|-----------------|-------------------------------|------|
+| `<layer-id-1>` | `<layer-id-2>, …` | `<forbid \| dag \| sublayer>` |  |
+| `...` | `...` | `...` |  |
 
 ---
 
-## AI 在展示此表时必须随表提示的话术（模板）
+## AI 展示此表时必须附带的 gate（模板）
 
-> 上表列出了本次即将写入 `framework.config.json` 的各外层同层策略。`forbid` / `dag` / `sublayer` 三者语义如上。**默认值只是推荐**，请**逐行**明确回复 `按默认` 或一个具体取值；笼统的「好」「继续」不构成逐层确认，我会继续追问直到每一行都有显式回复。
+```text
+请选择（回复编号；widget 可用时可直接选，同轮仍附下列编号）：
+1. 全部维持「当前值」列所示策略（等价于每层「按默认」）
+2. 我要调整某几层（进入 matrix 子菜单）
+3. 先讨论 forbid / dag / sublayer 语义
+```
+
+- 用户选 **1** → 视为每层已显式「按默认」；**不得**再要求逐行打字。
+- 用户选 **2** → 对需改层使用 `1=按默认 2=dag 3=forbid 4=sublayer` 子菜单。
+- 笼统的「好」「继续」**不构成**确认。
 
 ## 用户选择 `sublayer` 时的追加问卷
 

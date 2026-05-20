@@ -25,6 +25,7 @@ alwaysApply: true
 6. **产物即契约**：写完 PRD / design 即被后续阶段当 SSOT 用。
 7. **最小改动**：任何不在原始诉求内的修改先问再做。
 8. **Harness 校验**：每阶段完成后跑 `framework/harness/harness-runner.ts` 并由独立 verifier 审一轮。
+9. **用户确认 UX**：凡 BLOCKER / HARD STOP 须 [user-confirmation-ux.md](../../framework/skills/reference/user-confirmation-ux.md) 渐进增强（widget + portable 编号）；Cursor 须 AskQuestion + 同轮编号脚注；禁止仅要求用户打字。
 
 ## Framework 优先修改原则
 

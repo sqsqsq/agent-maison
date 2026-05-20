@@ -1,5 +1,7 @@
 # 业务级 UT Skill (`5-business-ut` · v2.1)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -137,7 +139,7 @@
 - `doc/features/{feature}/contracts.yaml`（data_boundary type 必须在 `interfaces[].class` 中）
 - 业务编排源代码（Skill 3 自选了 Page 方法 / `Flow` 类 / 导出函数）
 
-> **HARD STOP — 规划确认门**：Step 1 结束后必须先向用户展示「UT 规划清单」并等待明确确认，禁止直接进入 Step 2/3 写 DAG 或 UT。清单必须包含：
+> **HARD STOP — 规划确认门**（`ut.plan_confirm` · user-confirmation-ux §3.1）：Step 1 结束后必须先向用户展示「UT 规划清单」。**gate**：`1=确认清单` / `2=调整清单`。禁止直接进入 Step 2/3 写 DAG 或 UT。清单必须包含：
 > - 本轮覆盖的 `AC/BD/branch`，以及不覆盖项和原因（如 `device` 交 Skill 6）；
 > - 每个 `it()` 的名称、被测入口、Spy/Stub 边界、核心断言（状态 / 返回值 / callLog / 持久化）；
 > - 将要新增或修改的 DAG / **profile 规定的测试源文件** / 套件注册入口路径；
@@ -229,7 +231,7 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 1. **规格**：`` `profile-skill-asset:5-business-ut/mock_plan_schema` ``（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
 2. **权威对齐**：`spies[].target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在稍后的 Spy 类里脱离 plan 自由发挥字段或方法签名。
 3. **与 Step 3 的关系**：生成 `SpyXxx` / `FakeXxx` 时 **1:1 翻译** mock-plan（preset id、方法名、返回/异常预设），UT 中切换分支时只调用 plan 中声明的 preset（例如 `spy.applyPreset('success')` 一类封装），避免在 `it()` 内手写无类型字面量。
-4. **用户确认**：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
+4. **用户确认**（`ut.mock_plan`：`1=确认 mock-plan` / `2=调整`）：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
 
 > 无 L0/L1/L2 可测项（例如全部为 L3 且选 option_a）时，mock-plan 由 harness `ut_mock_plan_present` SKIP；**一旦出现可测等级为 L0/L1/L2 的 AC/BD，mock-plan 强制**。
 
@@ -250,7 +252,7 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
    - `ui_subscription`（v2.1 新）：**仅用于文档化 UI 对 state 的订阅**，UT 忽略；真机要点写入 acceptance `device_focus`
 3. **UI 副作用不进 UT 断言**：`NavPathStack.push` / `showToast` 只能作为 `ui_subscription` 节点记录，或在 Skill 1 的 `acceptance.yaml` > `device_focus` 中声明，不要画成 `port_call_*` 或 `assertion` 节点
 4. **验证 DAG**：无环、source 存在、`boundary` 名回到 `use-cases.yaml > data_boundaries[].name`（若存在 use-cases.yaml）
-5. **展示 Mermaid** 给用户确认（按节点类型着色）
+5. **展示 Mermaid** 给用户确认（`ut.dag_confirm`：`1=确认DAG` / `2=修改DAG`；按节点类型着色）
 6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
 
 ### Step 3：生成 UT 代码（按 branch 或 AC 生成 `it()`）
@@ -677,7 +679,15 @@ UT 阶段宣布"完成"前必须**同时**满足：
 11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
     - 若 `ut_no_src_mutation` 报告 committed 历史变更多、working tree 变更少，优先怀疑 diff 基线过旧；可设置 `HARNESS_DIFF_BASE_REF=working` 只检查当前工作区。**禁止**要求用户"批量授权所有历史变更"。
 12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：Skill 5 阶段 agent 对 **受保护业务源码前缀**（定义见 `check-ut.ts` 与 profile，不再写死 `02-Feature` 等目录名）下、且**非 profile 声明的测试/夹具源目录**内任何文件的修改，**必须**满足以下全部条件：
-    1. **动手前**显式向用户提出请求（禁止先改后问、禁止边改边问），请求中必须包含：
+    1. **动手前**显式向用户提出请求（`ut.src_mutation` · freeform + portable；**须先展示完整变更描述**）：
+
+       ```text
+       1. 授权改源码
+       2. 拒绝
+       3. 先看 diff
+       ```
+
+       请求中必须包含：
        - 拟变更的文件路径；
        - 拟抽取/新增的函数签名（或修改 diff 摘要）；
        - **为何不能通过只修改 UT / DAG / use-cases.yaml 规避**该变更的技术理由；

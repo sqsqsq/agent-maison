@@ -19,6 +19,16 @@
 
 **Shell cwd（类型 A 脚本）**：在 shell 中调用 `framework/harness/scripts/*.mjs` 或 `check-receipt.ts` 等独立脚本时，须遵守 **[`reference/harness-cli-cwd.md`](reference/harness-cli-cwd.md)**（尤其 `cd framework/harness && harness-runner` 之后不得在同一 shell 用 `framework/harness/scripts/...` 前缀）。
 
+**用户确认 UX（reference）**：
+
+| 文档 | 说明 |
+|------|------|
+| [reference/user-confirmation-ux.md](reference/user-confirmation-ux.md) | gate / enum / artifact 渐进增强 SSOT |
+| [reference/confirmation-registry.yaml](reference/confirmation-registry.yaml) | 全库确认点登记 |
+| [reference/host-harness-readiness.md](reference/host-harness-readiness.md) | harness npm 前置 |
+
+**贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`）。
+
 进入阶段 Skill 时还必须读取当前 `project_profile` 的 addendum：
 
 ```text

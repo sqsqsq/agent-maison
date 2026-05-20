@@ -1,5 +1,7 @@
 # Code Review Skill (`4-code-review`)
 
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save`。
+
 ## 前置（依赖初始化 Skill 产物）
 
 本工程须先完成 [`00-framework-init`](../00-framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
@@ -91,7 +93,7 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 ### Step 1: 收集审查上下文
 
-1. 向用户确认待审查的功能模块名 `{module-name}`
+1. 向用户确认待审查的功能模块名 `{module-name}`（`review.module_name`：`1=确认` / `2=修改`）
 2. 读取以下文件：
    - `doc/features/{module}/design.md` — 技术设计基准
    - `doc/features/{module}/PRD.md` — 需求基准（若存在）
@@ -227,7 +229,7 @@ framework/skills/4-code-review/templates/review-report-template.md
 
 ### Step 5: 输出与归档
 
-1. 将审查报告展示给用户确认
+1. 将审查报告展示给用户确认（`review.report_save`：`1=确认落盘` / `2=修改后再落盘`）
 2. 用户确认后，将报告保存到项目文档目录：
    ```
    doc/features/{module-name}/review-report.md
