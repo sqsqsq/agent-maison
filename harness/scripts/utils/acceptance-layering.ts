@@ -49,6 +49,7 @@ export function hasNonEmptyFocus(value?: string): boolean {
 type AcLike = {
   id: string;
   priority: string;
+  description?: string;
   ut_layer?: UtLayer;
   ut_focus?: string;
   device_focus?: string;
