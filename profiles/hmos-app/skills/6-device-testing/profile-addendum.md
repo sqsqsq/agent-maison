@@ -77,6 +77,8 @@
 - **首次安装 / 升级**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
 - **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
 - **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需在该环境手动升级或取消该变量。
+- **即席入口**：`npm run adhoc-device-test`（Skill 6 Step 4.B）同样在 run 前 **`ensureHylyreReady`**；**勿**使用 `harness-runner --feature _adhoc`。
+- **单机 ensure 失败诊断**：[hylyre-host-preflight.md](../../../../skills/6-device-testing/reference/hylyre-host-preflight.md)（agent 按日志处理宿主因素，不要求用户 pip）。
 
 ### hypium 临时目录（`tmp_hypium/`）
 

@@ -261,9 +261,10 @@ doc/features/{module-name}/test-plan.md
    关注 `snapshot_cache_empty`、`selector_hints`、`forbidden_in_steps`。
 3. 使用保留目录名 **`_adhoc`**（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）；**bundle** 必须用户声明。
 4. 默认 **单 TC-001** 合并全部步骤；步骤列 **裸 JSON**、**不含 start_app**；同步产出 `test-steps.json` 供 fallback。
-5. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁；CLI 内部 `ensureHylyreReady` → resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。
+5. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁（runner 会对该组合 **exit 1** 并提示本 CLI）；CLI 内部 **`ensureHylyreReady`**（venv / vendor pip / doctor）→ resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。**禁止**在未执行 ensure 前宣称「Hylyre 未安装」并让用户选手动测试或自行 `pip install`。
 6. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
-7. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；ability 由 `resolveMainAbilityForBundle`（config `bundle_abilities` / `app-meta.json` / bm dump）解析。
+7. **ensure 失败**：agent 在本对话内 Read `doc/features/_adhoc/testing/reports/hylyre-doctor.log` 与 `hylyre-ready.meta.json`，按 `errors[].kind` 处理宿主因素（`HYLYRE_PYTHON`、Python 3.10+、pip 网络、损坏的 `.hylyre/venv`）后**重跑** `adhoc-device-test`；单机诊断见 `framework/skills/6-device-testing/reference/hylyre-host-preflight.md`。
+8. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；ability 由 `resolveMainAbilityForBundle`（config `bundle_abilities` / `app-meta.json` / bm dump）解析。
 
 #### Hylyre 误导性报错对照（即席必读）
 

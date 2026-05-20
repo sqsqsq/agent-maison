@@ -15,6 +15,8 @@ alwaysApply: true
 - `framework/harness/scripts/check-receipt.ts`
 - 宿主打包/装机/真机自动化链（hvigor、hdc install、`device_test.*`、Hylyre `run --plan` 等由 harness 触发的步骤）
 - `pip install` / 删 `.hylyre/venv` / `hylyre doctor` 等 **Skill 6 Step 7 自跑 testing harness 时应由 ensure 覆盖** 的安装动作
+- **即席（ad-hoc）**场景下向用户提供「选项 A 手动真机 / 选项 B 你去安装 Hylyre」作为**唯一**出路（Hylyre 由 `npm run adhoc-device-test` 内 `ensureHylyreReady` 自动对齐，见 Skill 6 Step 4.B）
+- 即席场景下使用 `harness-runner --phase testing --feature _adhoc`（该入口会 exit 1 并提示正确 CLI）
 
 **允许**向用户说明：需其完成的**物理/账号类**前置（连接真机、授权 USB、切换飞行模式、确认 product/buildMode 等），但：
 
@@ -38,6 +40,7 @@ alwaysApply: true
 | harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
 | 缺 verifier | 「请启动 verifier」 | agent 用 Task 工具触发 `subagent_type: verifier` |
 | vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 Skill 6 协议自处理；不向用户抛 install 命令 |
+| 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
 | 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
 
 ## 4. 与「反假设条款」的关系
