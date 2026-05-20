@@ -161,8 +161,16 @@ const ready = ensureHylyreReady({
   phase: 'testing',
 });
 if (!ready.ok) {
-  console.error('ensureHylyreReady 失败');
-  for (const e of ready.errors) console.error(`  - ${e.message}`);
+  const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
+  const doctorLog = path.join(reportsBase, 'hylyre-doctor.log');
+  const readyMeta = path.join(reportsBase, 'hylyre-ready.meta.json');
+  console.error('ensureHylyreReady 失败（agent 应在本对话内排查宿主环境后重跑本 CLI，勿让用户 pip install）');
+  for (const e of ready.errors) console.error(`  - [${e.kind ?? 'error'}] ${e.message}`);
+  console.error(`  hylyre-doctor.log: ${doctorLog}`);
+  console.error(`  hylyre-ready.meta.json: ${readyMeta}`);
+  if (process.env.HYLYRE_PYTHON) {
+    console.error(`  HYLYRE_PYTHON=${process.env.HYLYRE_PYTHON}（该环境不会自动 pip 对齐 vendor；可取消后重试）`);
+  }
   process.exit(1);
 }
 

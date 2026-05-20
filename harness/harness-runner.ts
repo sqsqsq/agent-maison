@@ -249,6 +249,16 @@ async function main(): Promise<void> {
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
 
+  if (phase === 'testing' && feature === '_adhoc') {
+    console.error(
+      '   ✗ 即席（ad-hoc）真机测试勿使用 harness-runner --feature _adhoc。\n' +
+        '     请改用: cd framework/harness && npm run adhoc-device-test -- --bundle <id> --steps "…"\n' +
+        '     （CLI 内自动 ensureHylyreReady，不要求用户 pip install / 手删 .hylyre/venv）\n' +
+        '     详见 framework/skills/6-device-testing/SKILL.md Step 4.B',
+    );
+    process.exit(1);
+  }
+
   const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
 
   // Step 1: 加载 Spec
