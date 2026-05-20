@@ -132,8 +132,8 @@
 
 ### 即席模式（`_adhoc`）
 
-- **首选 CLI**：`cd framework/harness && npm run adhoc-device-test -- --bundle <id> --steps "…"`（见 Skill 6 Step 4.B）。
-- **派生 hint**：`npm run derive-adhoc-hylyre-hint -- --bundle <id> --steps "…"` → schema 4 JSON（含 `snapshot_cache_empty`、`selector_hints`）。
+- **Derive**（不跑机）：`derive-adhoc-hylyre-hint` 或 `adhoc-device-test --steps "…"` → schema 4（`natural_steps`、`selector_hints`；**无** `planned_steps`）；固定副本 `doc/features/_adhoc/testing/reports/derive-adhoc-last.json`。
+- **执行**（agent 已写 JSON）：`adhoc-device-test --bundle <id> --plan …` 或 `--steps-file …`（harness **不**翻译 NL）。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
 - **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003；即席跑机前 CLI 写 `plan-lint.json`。
 - 占位目录 **`doc/features/_adhoc/`**；不要求 `harness-runner testing --feature _adhoc` 文档门禁。
@@ -143,7 +143,7 @@
 | 现象 | 处理 |
 |------|------|
 | 非 JSON + 提示 action 包装 | 去掉步骤列反引号；用 direct `{"touch":…}` |
-| plan 失败、steps-file 成功 | 使用 CLI 生成的无反引号 plan 或 `test-steps.json` |
+| plan 失败、steps-file 成功 | agent 修正 plan 或改用 `--steps-file` |
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
 

@@ -252,7 +252,8 @@ async function main(): Promise<void> {
   if (phase === 'testing' && feature === '_adhoc') {
     console.error(
       '   ✗ 即席（ad-hoc）真机测试勿使用 harness-runner --feature _adhoc。\n' +
-        '     请改用: cd framework/harness && npm run adhoc-device-test -- --bundle <id> --steps "…"\n' +
+        '     请改用: derive-adhoc-hylyre-hint 或 adhoc-device-test --steps "…"（derive）；\n' +
+        '     跑机: adhoc-device-test --bundle <id> --plan <agent写的 test-plan.hylyre.md>\n' +
         '     （CLI 内自动 ensureHylyreReady，不要求用户 pip install / 手删 .hylyre/venv）\n' +
         '     详见 framework/skills/6-device-testing/SKILL.md Step 4.B',
     );

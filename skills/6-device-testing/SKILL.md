@@ -249,36 +249,38 @@ doc/features/{module-name}/test-plan.md
 
 当本回合按上文「模式分支」判定为 **即席**：
 
-1. **首选一键入口**（勿手工拼 `hdc` / `hylyre`）：
+1. **Derive hint**（机械切分 NL + cache 提示，**不跑机**、**不**把 NL 翻译成 Hylyre JSON）：
+   ```bash
+   cd framework/harness && npm run derive-adhoc-hylyre-hint -- \
+     --bundle <bundleId> --steps "打开应用->点击…->…"
+   ```
+   或等价：`npm run adhoc-device-test -- --bundle <bundleId> --steps "…"`（仅 derive，写 `derive-adhoc-last.json`，stderr `ADHOC_DERIVE_FILE=`）。
+   关注 `snapshot_cache_empty`、`selector_hints`、`forbidden_in_steps`、`next_action`。
+2. **Agent 写 Hylyre JSON**（与 Step 4.5 相同判断力）：读 hint / dump，手写 `test-plan.hylyre.md` 或 `test-steps.json`（屏上真实 `by_text` / `by_id`；探索/汇总类 NL **不进** plan）。
+3. **执行**（勿手工拼 `hdc` / `hylyre`）：
    ```bash
    cd framework/harness && npm run adhoc-device-test -- \
      --bundle <bundleId> \
-     --steps "打开应用->点击…->…"
+     --plan path/to/test-plan.hylyre.md
    ```
-   可选：`--ability MainAbility`、`--plan path/to/test-plan.hylyre.md`、`--skip-explore`。
-2. **派生前 hint**（建议）：
-   ```bash
-   cd framework/harness && npm run derive-adhoc-hylyre-hint -- \
-     --bundle <bundleId> --steps "…"
-   ```
-   关注 `snapshot_cache_empty`、`selector_hints`、`forbidden_in_steps`。
-3. 使用保留目录名 **`_adhoc`**（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）；**bundle** 必须用户声明。
-4. 默认 **单 TC-001** 合并全部步骤；步骤列 **裸 JSON**、**不含 start_app**；同步产出 `test-steps.json` 供 fallback。
-5. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁（runner 会对该组合 **exit 1** 并提示本 CLI）；CLI 内部 **`ensureHylyreReady`**（venv / vendor pip / doctor）→ resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。**禁止**在未执行 ensure 前宣称「Hylyre 未安装」并让用户选手动测试或自行 `pip install`。
-6. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
-7. **ensure 失败**：agent 在本对话内 Read `doc/features/_adhoc/testing/reports/hylyre-doctor.log` 与 `hylyre-ready.meta.json`，按 `errors[].kind` 处理宿主因素（`HYLYRE_PYTHON`、Python 3.10+、pip 网络、损坏的 `.hylyre/venv`）后**重跑** `adhoc-device-test`；单机诊断见 `framework/skills/6-device-testing/reference/hylyre-host-preflight.md`。
-8. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；ability 由 `resolveMainAbilityForBundle`（config `bundle_abilities` / `app-meta.json` / bm dump）解析。
-9. **本次结果 SSOT**：agent 只读 CLI stderr 打印的 `ADHOC_TRACE_FILE` 路径；**禁止 glob `<timestamp>` 目录**取最近作本次结果。
-10. **诊断驱动**：`outcome=aborted` 时按 `error_kind` 与 `snapshot-warmup.meta.json` 的 `reason_kind` 给用户**有据**结论；跨机失败前先比对两端 `device_info`、`reason_kind`，不要先猜 framework 版本。
-11. **冷启提示**：派生 `snapshot_cache_empty=true` 时 CLI 会自动在 plan 头加 `{"wait_for":{"duration":2000}}`；如确认 App 已在前台可加 `--accept-cold-start` 跳过注入。
-12. **warmup 软失败**：snapshot warmup 失败时 CLI 仍继续 `hylyre run`（stderr `[WARN]`）；勿因 warmup  alone 宣称「无法自动化」。
+   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（跳过 snapshot warmup）。
+4. 使用保留目录名 **`_adhoc`**（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）；**bundle** 必须用户声明。
+5. 默认 **单 TC-001**；步骤列 **裸 JSON**、**不含 start_app**；`--steps-file` 为 agent 产物，非 harness 自动翻译。
+6. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁（runner 会对该组合 **exit 1** 并提示本 CLI）；**执行模式**内 **`ensureHylyreReady`** → resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。**禁止**在未执行 ensure 前宣称「Hylyre 未安装」并让用户选手动测试或自行 `pip install`。
+7. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
+8. **ensure 失败**：agent 在本对话内 Read `doc/features/_adhoc/testing/reports/hylyre-doctor.log` 与 `hylyre-ready.meta.json`，按 `errors[].kind` 处理宿主因素后**重跑** `adhoc-device-test --plan` / `--steps-file`；单机诊断见 `framework/skills/6-device-testing/reference/hylyre-host-preflight.md`。
+9. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；stderr 有 `ADHOC_CACHE_DIR` / `ADHOC_CACHE_UPDATED`。
+10. **本次结果 SSOT**：执行模式只读 stderr `ADHOC_TRACE_FILE=`；derive 模式读 `ADHOC_DERIVE_FILE=`。**禁止 glob `<timestamp>`** 当本次结果。
+11. **诊断驱动**：`outcome=aborted` 时按 `error_kind` 与 `reason_kind` 有据结论。
+12. **冷启 / warmup**：`snapshot_cache_empty=true` 时执行模式会尝试 warmup；App 已就绪可加 `--accept-cold-start` **跳过 warmup**（不再向 plan 注入 `wait_for`）。
+13. **warmup 软失败**：warmup 失败仍继续 `hylyre run`（`[WARN]`）。
 
 #### Hylyre 误导性报错对照（即席必读）
 
 | 报错关键词 | 真实含义 | 先做 |
 |-----------|---------|------|
 | 「非 JSON」+ action 示例 | 步骤未被识别为 JSON（**常见：反引号**） | 去掉反引号；读 `plan-lint.json` |
-| `--steps` 能跑、`--plan` 不能 | Markdown 表格格式问题 | 用 CLI 生成的 plan 或 `test-steps.json` |
+| `--plan` 不能、`--steps-file` 能跑 | Markdown 表格格式问题 | agent 修正 plan 或改用 `--steps-file` |
 | start_app 相关失败 | 重复冷启或嵌套 `action.type` | 删步骤内 start_app；预启交给 harness |
 
 ### Step 5: 生成测试报告（测试执行后）

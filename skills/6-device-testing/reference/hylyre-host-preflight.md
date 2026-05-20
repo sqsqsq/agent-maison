@@ -81,5 +81,5 @@ cd framework/harness && npm run adhoc-device-test -- \
 | stderr `[WARN] snapshot warmup 失败` | warmup 降级，**仍会**跑 plan | 读 `ADHOC_WARMUP_META` 的 `reason_kind`；跨机先比 `device_info` |
 | `reason_kind=app_not_foreground` | App 未在前台 / 弹窗 | 请用户解锁并切到目标 App 前台后 agent 重跑 |
 | `reason_kind=ability_wrong` | main ability 推断错 | 传 `--ability` 或配置 `bundle_abilities`；会失效 `app-meta.json` |
-| `[info] snapshot_cache_empty → wait_for` | 冷启注入 2s | App 已就绪可加 `--accept-cold-start` |
+| `[info] snapshot_cache_empty` / `ADHOC_CACHE_DIR` | 将尝试 snapshot warmup | App 已就绪可加 `--accept-cold-start` 跳过 warmup |
 | `[bootstrap] pip install start` | 首次 venv 安装，勿中断 | Read `hylyre-ready.meta.json` 的 `bootstrap_elapsed_ms` / `bootstrap_was_resumed` |

@@ -71,7 +71,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'generic-bundle', modulePath: './unit/generic-bundle.unit.test' },
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
   { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
-  { id: 'adhoc-step-translate', modulePath: './unit/adhoc-step-translate.unit.test' },
+  { id: 'adhoc-nl-split', modulePath: './unit/adhoc-nl-split.unit.test' },
+  { id: 'adhoc-input-path', modulePath: './unit/adhoc-input-path.unit.test' },
+  { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
 ];
