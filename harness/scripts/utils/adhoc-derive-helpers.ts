@@ -127,4 +127,7 @@ export const STEPS_FILE_CONTRACT = {
   observation_nl_not_in_steps: true,
   agent_may_replace_minimal_example: true,
   lint_cli: 'npm run lint-adhoc-steps -- --file <path>',
+  recommended_write_path: 'doc/features/_adhoc/testing/staging/test-steps.json',
+  forbidden_write_prefixes: ['framework/harness/'],
+  run_output_dir_pattern: 'doc/features/_adhoc/testing/reports/<timestamp>/hylyre/',
 } as const;

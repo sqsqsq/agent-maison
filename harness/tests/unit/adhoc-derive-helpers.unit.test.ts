@@ -8,6 +8,7 @@ import {
   classifyObservationSteps,
   extractTouchByText,
   hasObservationIntent,
+  STEPS_FILE_CONTRACT,
 } from '../../scripts/utils/adhoc-derive-helpers';
 
 export interface UnitCaseResult {
@@ -56,6 +57,20 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'hasObservationIntent',
     run: () => {
       if (!hasObservationIntent('点击->查看所有', ['点击', '查看所有'])) throw new Error('obs');
+    },
+  },
+  {
+    name: 'STEPS_FILE_CONTRACT: canonical path fields',
+    run: () => {
+      if (STEPS_FILE_CONTRACT.recommended_write_path !== 'doc/features/_adhoc/testing/staging/test-steps.json') {
+        throw new Error('recommended_write_path');
+      }
+      if (!STEPS_FILE_CONTRACT.forbidden_write_prefixes.includes('framework/harness/')) {
+        throw new Error('forbidden_write_prefixes');
+      }
+      if (!STEPS_FILE_CONTRACT.run_output_dir_pattern.includes('doc/features/_adhoc/')) {
+        throw new Error('run_output_dir_pattern');
+      }
     },
   },
 ];

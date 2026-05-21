@@ -50,6 +50,7 @@ export function writeAdhocTracePlaceholder(
 export interface AdhocAnchors {
   trace: string;
   report: string;
+  hylyreRunDir: string;
   warmupMeta: string;
   ensureMeta: string;
   runMeta: string;
@@ -60,6 +61,7 @@ export function printAdhocAnchors(anchors: AdhocAnchors): void {
     [
       `ADHOC_TRACE_FILE=${anchors.trace}`,
       `ADHOC_REPORT_FILE=${anchors.report}`,
+      `ADHOC_HYLYRE_RUN_DIR=${anchors.hylyreRunDir}`,
       `ADHOC_WARMUP_META=${anchors.warmupMeta}`,
       `ADHOC_ENSURE_META=${anchors.ensureMeta}`,
       `ADHOC_RUN_META=${anchors.runMeta}`,

@@ -67,11 +67,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'printAdhocAnchors: stderr five KEY=value lines',
+    name: 'printAdhocAnchors: stderr six KEY=value lines',
     run: () => {
       const anchors = {
         trace: '/tmp/trace.json',
         report: '/tmp/report.md',
+        hylyreRunDir: '/tmp/hylyre-run',
         warmupMeta: '/tmp/snapshot-warmup.meta.json',
         ensureMeta: '/tmp/hylyre-ready.meta.json',
         runMeta: '/tmp/device-test-run.meta.json',
@@ -88,15 +89,16 @@ const cases: Array<{ name: string; run: () => void }> = [
         process.stderr.write = orig;
       }
       const lines = captured.trim().split('\n');
-      if (lines.length !== 5) throw new Error(`expected 5 lines, got ${lines.length}`);
+      if (lines.length !== 6) throw new Error(`expected 6 lines, got ${lines.length}`);
       const expected = [
         'ADHOC_TRACE_FILE=/tmp/trace.json',
         'ADHOC_REPORT_FILE=/tmp/report.md',
+        'ADHOC_HYLYRE_RUN_DIR=/tmp/hylyre-run',
         'ADHOC_WARMUP_META=/tmp/snapshot-warmup.meta.json',
         'ADHOC_ENSURE_META=/tmp/hylyre-ready.meta.json',
         'ADHOC_RUN_META=/tmp/device-test-run.meta.json',
       ];
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 6; i++) {
         if (lines[i] !== expected[i]) throw new Error(`line ${i}: ${lines[i]}`);
       }
     },

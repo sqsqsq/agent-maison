@@ -70,6 +70,7 @@ cd framework/harness && npm run adhoc-device-test -- \
 `adhoc-device-test` 在 **stderr** 末尾打印锚点（勿从 stdout JSON 猜路径）：
 
 - `ADHOC_TRACE_FILE=` — 本次 `trace.json`（早期 exit 也会写 `outcome=aborted` 占位）
+- `ADHOC_HYLYRE_RUN_DIR=` — 本次执行报告目录（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）
 - `ADHOC_WARMUP_META=` — `snapshot-warmup.meta.json`（`schema_version: "0.1"`，含 `reason_kind`、`device_info`）
 - `ADHOC_ENSURE_META=` / `ADHOC_RUN_META=`
 

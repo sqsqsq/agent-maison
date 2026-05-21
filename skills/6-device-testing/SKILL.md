@@ -256,14 +256,14 @@ doc/features/{module-name}/test-plan.md
    ```
    或等价：`npm run adhoc-device-test -- --bundle <bundleId> --steps "…"`（仅 derive，写 `derive-adhoc-last.json`，stderr `ADHOC_DERIVE_FILE=`）。
    关注 `snapshot_cache_empty`、`cache_layout_expected`、`cache_layout_mismatch`、`selector_hints`、`steps_file_contract`、`observation_steps`、`forbidden_in_steps`。
-2. **Agent 写 Hylyre JSON**：读 derive 的 `steps_file_contract`、`step_shape_catalog`；**可选** `steps_file_minimal_example`（仅 touch 机械映射，**可整段替换**）。手写 `test-steps.json`（探索/汇总类 NL **不进** steps）。**禁止**向 `doc/app-snapshot-cache/<bundle>/` 根目录 Write page JSON（cache 仅 `pages/` 由 page save 写入）。写后**先** `npm run lint-adhoc-steps -- --file <path>`（可加 `--normalize`），通过后再跑机（**STEP-TOUCH** / **STEP-002 start_app** 须在 lint 阶段清零）。
+2. **Agent 写 Hylyre JSON**：读 derive 的 `steps_file_contract`、`step_shape_catalog`；**可选** `steps_file_minimal_example`（仅 touch 机械映射，**可整段替换**）。手写 **`doc/features/_adhoc/testing/staging/test-steps.json`**（`steps_file_contract.recommended_write_path`；探索/汇总类 NL **不进** steps）。**禁止**向 `framework/harness/` Write 即席 steps / trace / report；**禁止**向 `doc/app-snapshot-cache/<bundle>/` 根目录 Write page JSON（cache 仅 `pages/` 由 page save 写入）。写后**先** `npm run lint-adhoc-steps -- --file <path>`（可加 `--normalize`），通过后再跑机（**STEP-TOUCH** / **STEP-002 start_app** 须在 lint 阶段清零）。
 3. **执行**（勿手工拼 `hdc` / `hylyre`）：
    ```bash
    cd framework/harness && npm run adhoc-device-test -- \
      --bundle <bundleId> \
      --plan path/to/test-plan.hylyre.md
    ```
-   或 `--steps-file path/to/test-steps.json`。推荐 **`--steps-file`**（观察型 NL 走 dump 分支）。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（**仅跳过 snapshot warmup**，非 UI 复位）、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。**默认 execute 冷重启**（`hdc aa force-stop` + `aa start`）；保留 Nav 栈调试加 **`--continue-session`**。stderr：`ADHOC_COLD_RESTART=`、`ADHOC_UI_RESET_RECOMMENDED=`（读固定 `device-test-run.meta.json`，非本次新 timestamp trace）、`ADHOC_CACHE_LAYOUT_MISMATCH=`。
+   或 `--steps-file path/to/test-steps.json`（推荐 staging 路径）。执行报告**永远**落在 `doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`（stderr **`ADHOC_HYLYRE_RUN_DIR=`** / **`ADHOC_TRACE_FILE=`**）；steps-file 路径仅作输入。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（**仅跳过 snapshot warmup**，非 UI 复位）、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。**默认 execute 冷重启**（`hdc aa force-stop` + `aa start`）；保留 Nav 栈调试加 **`--continue-session`**。stderr：`ADHOC_COLD_RESTART=`、`ADHOC_UI_RESET_RECOMMENDED=`（读固定 `device-test-run.meta.json`，非本次新 timestamp trace）、`ADHOC_CACHE_LAYOUT_MISMATCH=`、`ADHOC_STEPS_OUTSIDE_CANONICAL=1`（steps 不在 `doc/features/_adhoc/` 时 warn）。
 4. **观察汇总决策树**（含「查看/汇总/所有/列表」类 NL）：
    - touch 步骤**只写到导航终点**；**禁止**在 steps-file 写 `dump_ui`（STEP-002）
    - run 成功后：`npm run adhoc-device-test -- --bundle <id> --dump-ui-only` → stderr `ADHOC_DUMP_UI_PATH=`
@@ -287,7 +287,7 @@ doc/features/{module-name}/test-plan.md
 7. **不写** receipt / verifier；交付 **`trace.json` cases[]** 摘要；观察型另交付 dump 汇总。
 8. **ensure 失败**：Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后 agent 重跑。
 9. **快照**：默认 run 后 `app page save`；`--skip-page-save` 或 `--observe-ui` 可跳过。
-10. **结果 SSOT**：`ADHOC_TRACE_FILE=` / `ADHOC_DERIVE_FILE=`；**禁止 glob timestamp**。
+10. **结果 SSOT**：`ADHOC_TRACE_FILE=` / `ADHOC_DERIVE_FILE=` / `ADHOC_HYLYRE_RUN_DIR=`；**禁止 glob timestamp**。
 11. **重跑 / UI 复位**：execute **默认冷重启**（清 Nav 栈）；前次 run 非全 pass 后**禁止**在未复位时假设仍在首页 Tab。`--continue-session` 显式保留 Nav 栈；若见 `ADHOC_UI_RESET_RECOMMENDED=1` 须去掉 `--continue-session` 或确认已冷重启。`--accept-cold-start` **只**跳过 snapshot warmup，**不能**代替冷重启。
 12. **warmup 软失败**：仍继续 run（`[WARN]`）。
 

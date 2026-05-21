@@ -78,6 +78,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'adhoc-ui-reset-meta', modulePath: './unit/adhoc-ui-reset-meta.unit.test' },
   { id: 'app-snapshot-cache-hint', modulePath: './unit/app-snapshot-cache-hint.unit.test' },
   { id: 'adhoc-input-path', modulePath: './unit/adhoc-input-path.unit.test' },
+  { id: 'adhoc-canonical-paths', modulePath: './unit/adhoc-canonical-paths.unit.test' },
   { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },

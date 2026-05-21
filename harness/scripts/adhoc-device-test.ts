@@ -47,6 +47,10 @@ import {
   readPreviousRunOutcome,
   shouldEmitUiResetRecommended,
 } from './utils/adhoc-ui-reset-meta';
+import {
+  adhocHylyreRunDir,
+  isUnderAdhocFeatureDir,
+} from './utils/adhoc-canonical-paths';
 
 const ADHOC_FEATURE = '_adhoc';
 const HARNESS_ROOT = path.resolve(__dirname, '..');
@@ -114,16 +118,7 @@ function emitCacheLayoutStderr(cacheAbs: string, bundleId: string): void {
 
 function hylyreDirForRun(projectRoot: string): string {
   const ts = timestampSlug();
-  const dir = path.join(
-    projectRoot,
-    'doc',
-    'features',
-    ADHOC_FEATURE,
-    'testing',
-    'reports',
-    ts,
-    'hylyre',
-  );
+  const dir = adhocHylyreRunDir(projectRoot, ts);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -183,6 +178,8 @@ const stepsRaw = (argv.steps || argv.s || '').trim();
 const abilityOverride = (argv.ability || argv.a || '').trim();
 const planPathArg = (argv.plan || '').trim();
 let stepsFileArg = (argv['steps-file'] || '').trim();
+/** Set when --observe-ui auto-materializes steps under a fresh hylyre run dir. */
+let reservedHylyreRunDir: string | null = null;
 let skipExplore = argv['skip-explore'] || argv['skip-explore-warmup'];
 const acceptColdStart = argv['accept-cold-start'] === true;
 const dumpUiOnly = argv['dump-ui-only'] === true;
@@ -265,8 +262,8 @@ if (observeUi) {
       process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
       process.exit(2);
     }
-    const hylyreDir = hylyreDirForRun(projectRoot);
-    const autoPath = path.join(hylyreDir, 'test-steps.json');
+    reservedHylyreRunDir = hylyreDirForRun(projectRoot);
+    const autoPath = path.join(reservedHylyreRunDir, 'test-steps.json');
     fs.writeFileSync(autoPath, `${JSON.stringify(minimal.steps, null, 2)}\n`, 'utf-8');
     stepsFileArg = autoPath;
     console.error(`ADHOC_AUTO_STEPS_FILE=${autoPath}`);
@@ -309,9 +306,7 @@ if (isAppSnapshotCacheEmpty(appSnapshotCacheAbs, bundle)) {
   console.error('[info] snapshot_cache_empty=true — 可加 --accept-cold-start 跳过 warmup');
 }
 
-const hylyreDir = stepsFileArg
-  ? path.dirname(resolveAdhocInputPath(projectRoot, stepsFileArg))
-  : hylyreDirForRun(projectRoot);
+const hylyreDir = reservedHylyreRunDir ?? hylyreDirForRun(projectRoot);
 
 const derivedPlanPath = planPathArg
   ? resolveAdhocInputPath(projectRoot, planPathArg)
@@ -323,9 +318,23 @@ const reportOutPath = path.join(hylyreDir, 'test-report.md');
 const traceOutPath = path.join(hylyreDir, 'trace.json');
 const lintReportPath = path.join(hylyreDir, 'plan-lint.json');
 
+if (stepsFileArg && !isUnderAdhocFeatureDir(projectRoot, stepsFilePath)) {
+  console.error('ADHOC_STEPS_OUTSIDE_CANONICAL=1');
+  console.error(
+    `[warn] steps-file 不在 doc/features/_adhoc/ 下（${stepsFilePath}）；执行报告仍写入 ${hylyreDir}`,
+  );
+}
+
+const archivedStepsPath = path.join(hylyreDir, 'test-steps.json');
+if (stepsFileArg && path.resolve(stepsFilePath) !== path.resolve(archivedStepsPath)) {
+  fs.copyFileSync(stepsFilePath, archivedStepsPath);
+  console.error(`ADHOC_ARCHIVED_STEPS_FILE=${path.resolve(archivedStepsPath)}`);
+}
+
 const anchors: AdhocAnchors = {
   trace: traceOutPath,
   report: reportOutPath,
+  hylyreRunDir: hylyreDir,
   warmupMeta: path.join(reportsBase, 'snapshot-warmup.meta.json'),
   ensureMeta: path.join(reportsBase, 'hylyre-ready.meta.json'),
   runMeta: path.join(reportsBase, 'device-test-run.meta.json'),
