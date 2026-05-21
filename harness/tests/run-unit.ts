@@ -75,6 +75,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'adhoc-derive-helpers', modulePath: './unit/adhoc-derive-helpers.unit.test' },
   { id: 'hylyre-steps-normalize', modulePath: './unit/hylyre-steps-normalize.unit.test' },
   { id: 'adhoc-summarize-dump', modulePath: './unit/adhoc-summarize-dump.unit.test' },
+  { id: 'adhoc-ui-reset-meta', modulePath: './unit/adhoc-ui-reset-meta.unit.test' },
   { id: 'adhoc-input-path', modulePath: './unit/adhoc-input-path.unit.test' },
   { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },

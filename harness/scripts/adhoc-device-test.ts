@@ -3,7 +3,7 @@
  * Ad-hoc device test orchestration (Skill 6 Step 4.B).
  *
  * Derive:     --bundle <id> --steps "打开->点击…"
- * Execute:    --bundle <id> --plan <path> | --steps-file <path>
+ * Execute:    --bundle <id> --plan <path> | --steps-file <path>  (default cold-restart; --continue-session keeps Nav)
  * Dump only:  --bundle <id> --dump-ui-only [--dump-ui-out <path>]
  * Observe:    --bundle <id> --steps "…" --observe-ui  (touch-only NL auto-run + dump + summarize)
  */
@@ -43,6 +43,10 @@ import { resolveAdhocInputPath } from './utils/adhoc-input-path';
 import { logAdhocPhase, logAdhocRunDone } from './utils/adhoc-phase-log';
 import { runAdhocDumpUi } from './utils/adhoc-dump-ui';
 import { summarizeAdhocDumpFile } from './utils/adhoc-summarize-dump';
+import {
+  readPreviousTraceOutcome,
+  shouldEmitUiResetRecommended,
+} from './utils/adhoc-ui-reset-meta';
 
 const ADHOC_FEATURE = '_adhoc';
 const HARNESS_ROOT = path.resolve(__dirname, '..');
@@ -69,6 +73,7 @@ const argv = minimist(process.argv.slice(2), {
     'skip-page-save',
     'observe-ui',
     'no-normalize',
+    'continue-session',
   ],
 });
 
@@ -190,6 +195,9 @@ const observeUi = argv['observe-ui'] === true;
 const useNormalize = argv['no-normalize'] !== true;
 const dumpUiOutArg = (argv['dump-ui-out'] || '').trim();
 const deviceSn = process.env.HARNESS_HDC_TARGET;
+const continueSession = argv['continue-session'] === true;
+/** Default cold restart on execute; opt out with --continue-session or --no-cold-restart. */
+const coldRestart = !continueSession && !process.argv.includes('--no-cold-restart');
 
 if (!bundle) {
   console.error(
@@ -387,13 +395,17 @@ if (planPathArg && !observeUi) {
     'utf-8',
   );
   const blockers = lint.violations.filter(v => v.severity === 'BLOCKER');
-  if (blockers.length > 0 && !useStepsFile) {
+  const navViolations = lint.nav.violations;
+  if ((blockers.length > 0 || navViolations.length > 0) && !useStepsFile) {
     writeAdhocTracePlaceholder(traceOutPath, {
       feature: ADHOC_FEATURE,
       phase: 'testing',
       outcome: 'aborted',
       error_kind: 'plan_lint_blocker',
-      error_message: blockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`).join(' | '),
+      error_message: [
+        ...blockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`),
+        ...navViolations.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`),
+      ].join(' | '),
       bundle,
       artifacts: { derived_plan: derivedPlanPath },
     });
@@ -467,6 +479,13 @@ if (!skipExplore) {
 }
 
 const effectiveSkipPageSaveFinal = effectiveSkipPageSave;
+
+const previousOutcome = readPreviousTraceOutcome(traceOutPath);
+if (shouldEmitUiResetRecommended(previousOutcome, continueSession)) {
+  console.error('ADHOC_UI_RESET_RECOMMENDED=1');
+}
+console.error(`ADHOC_COLD_RESTART=${coldRestart ? '1' : '0'}`);
+
 logAdhocPhase('run');
 const runT0 = Date.now();
 const run = runHylyreDeviceTest({
@@ -484,6 +503,7 @@ const run = runHylyreDeviceTest({
   deviceSn,
   skipAssertExpected: true,
   skipPageSave: effectiveSkipPageSaveFinal,
+  coldRestart,
   appSnapshotCacheAbs,
 });
 

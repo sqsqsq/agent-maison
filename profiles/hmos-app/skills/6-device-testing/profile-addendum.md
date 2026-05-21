@@ -134,10 +134,11 @@
 
 - **Derive**（不跑机）：schema 4 含 `steps_file_contract`、`step_shape_catalog`、可选 `steps_file_minimal_example`（非 SSOT）、`observation_steps`。
 - **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。
-- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；`--dump-ui-only`；`--observe-ui --steps "…"`（touch-only 一站式）；`--skip-page-save`。
+- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。
+- **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
-- **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003 + **STEP-WAIT-SECONDS**（`wait.seconds`）；即席跑机前 CLI 写 `plan-lint.json`。
+- **Plan lint 规则 ID**：STEP-001~006 + NAV-001~003 + **STEP-WAIT-SECONDS**；即席 **`--plan`** 时 STEP 与 **NAV 违规均 BLOCKER**（写 `plan-lint.json`）；`--steps-file` 不跑 NAV。
 - **Planned step 字段 SSOT**：[hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)（含 `wait.seconds` vs `wait_for.timeout` 对照）。
 - 占位目录 **`doc/features/_adhoc/`**；不要求 `harness-runner testing --feature _adhoc` 文档门禁。
 
@@ -149,6 +150,7 @@
 | plan 失败、steps-file 成功 | agent 修正 plan 或改用 `--steps-file` |
 | `wait requires seconds` | 改用 `{"wait":{"seconds":N}}`；勿在 `wait` 内写 `timeout` |
 | STEP-002 禁止 dump_ui | 导航 run 后用 `--dump-ui-only` |
+| 重跑找不到首页控件 | 默认已冷重启；若 `--continue-session` 见 `ADHOC_UI_RESET_RECOMMENDED=1` → 去掉 continue-session |
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
 

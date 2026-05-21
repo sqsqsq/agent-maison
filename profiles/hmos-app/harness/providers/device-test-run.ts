@@ -26,6 +26,11 @@ import {
   ensureHypiumWorkDir,
   removeLegacyHypiumTmpAtProjectRoot,
 } from '../device-test-hypium-workdir';
+import {
+  computeLastFailedStepIndex,
+  parseStepsBatchFromRunOut,
+  uiResetHintForOutcome,
+} from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug } from '../device-test-page-save';
@@ -104,6 +109,8 @@ export interface HylyreRunOptions {
   skipAssertExpected?: boolean;
   /** When true, skip post-run hylyre app page save (adhoc fast path). */
   skipPageSave?: boolean;
+  /** When true, hdc aa force-stop before aa start (adhoc Nav reset). */
+  coldRestart?: boolean;
   appSnapshotCacheAbs: string;
   timeoutMs?: number;
 }
@@ -428,6 +435,27 @@ function resolveHypiumPageNameForRun(
  * hylyre 0.1.0 的 `run --plan` 路径不向 Hypium 传递 `--page-name`，故在拉起 hylyre 前用
  * `hdc shell aa start -a <ability> -b <bundle>` 显式冷启；成功后省略 hylyre 的 `--bundle`，避免再走错误的 start_app。
  */
+/** Kill app process before aa start — clears Nav stack for idempotent adhoc reruns. */
+export function runAaForceStop(
+  bundle: string,
+  deviceSn: string | undefined,
+  logPath: string,
+): { ok: boolean; output: string; attempted: boolean } {
+  const args = [...hdcTargetPrefix(), 'shell', 'aa', 'force-stop', '-b', bundle];
+  appendLogSync(logPath, `$ hdc ${args.join(' ')}\n`);
+  const hdcExe = resolveHdcExecutableSync();
+  const useShell = process.platform === 'win32' && hdcExe === 'hdc';
+  const r = spawnSync(hdcExe, args, {
+    encoding: 'utf-8',
+    shell: useShell,
+    timeout: 60_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  appendLogSync(logPath, out);
+  return { ok: r.status === 0, output: out, attempted: true };
+}
+
 function runAaStartPreflight(
   bundle: string,
   pageName: string,
@@ -1056,28 +1084,23 @@ function tryHylyreAppPageSaveAfterRun(args: {
 }
 
 /** Build minimal trace/report after `hylyre run --steps-file` (no native report contract). */
-function synthesizeTraceFromStepsBatchRun(args: {
+export function synthesizeTraceFromStepsBatchRun(args: {
   runOut: string;
   feature: string;
   tracePath: string;
   reportPath: string;
-}): void {
-  let batch: { results?: Array<{ status?: string; error?: string }> } | null = null;
-  try {
-    const jsonMatch = args.runOut.match(/\{[\s\S]*"results"[\s\S]*\}/);
-    if (jsonMatch) {
-      batch = JSON.parse(jsonMatch[0]) as { results?: Array<{ status?: string; error?: string }> };
-    }
-  } catch {
-    batch = null;
-  }
+}): { lastStepIndex: number | null; uiResetHint: string | null } {
+  const batch = parseStepsBatchFromRunOut(args.runOut);
   const results = batch?.results ?? [];
   const anyErr = results.some(r => r.status !== 'ok');
+  const lastStepIndex = computeLastFailedStepIndex(batch);
+  const outcome = anyErr ? 'failed' : 'success';
+  const uiResetHint = uiResetHintForOutcome(outcome, lastStepIndex);
   const trace = {
     schema_version: '0.1-p0',
     feature: args.feature,
     phase: 'testing',
-    outcome: anyErr ? 'failed' : 'success',
+    outcome,
     model_backend: 'none',
     cases: [
       {
@@ -1095,7 +1118,12 @@ function synthesizeTraceFromStepsBatchRun(args: {
         name: 'adhoc steps batch',
       },
     ],
-    artifacts: { adhoc: true, steps_file: true },
+    artifacts: {
+      adhoc: true,
+      steps_file: true,
+      last_step_index: lastStepIndex,
+      ui_reset_hint: uiResetHint,
+    },
   };
   fs.mkdirSync(path.dirname(args.tracePath), { recursive: true });
   fs.writeFileSync(args.tracePath, `${JSON.stringify(trace, null, 2)}\n`, 'utf-8');
@@ -1113,6 +1141,7 @@ function synthesizeTraceFromStepsBatchRun(args: {
   ].join('\n');
   fs.mkdirSync(path.dirname(args.reportPath), { recursive: true });
   fs.writeFileSync(args.reportPath, reportMd, 'utf-8');
+  return { lastStepIndex, uiResetHint };
 }
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
@@ -1152,8 +1181,18 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   );
   const pageName = abilityResolved.pageName;
   let omitBundleForHylyre = false;
+  let coldRestartAttempted = false;
+  let coldRestartOk: boolean | null = null;
 
   if (pageName) {
+    if (opts.coldRestart) {
+      const stop = runAaForceStop(opts.bundleName, opts.deviceSn, logPath);
+      coldRestartAttempted = stop.attempted;
+      coldRestartOk = stop.ok;
+      if (!stop.ok) {
+        appendLogSync(logPath, '[WARN] aa force-stop 未成功，仍尝试 aa start\n');
+      }
+    }
     const pre = runAaStartPreflight(opts.bundleName, pageName, opts.deviceSn, logPath);
     if (!pre.ok) {
       errors.push({
@@ -1197,6 +1236,9 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             aa_start_preflight: true,
             aa_start_ok: false,
             omit_bundle_for_hylyre: false,
+            cold_restart: opts.coldRestart === true,
+            cold_restart_attempted: coldRestartAttempted,
+            cold_restart_ok: coldRestartOk,
             deviceSn: opts.deviceSn ?? null,
             ran_at: new Date().toISOString(),
             run_failure_kind: preflightKind,
@@ -1284,13 +1326,21 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const tracePathResolved = path.resolve(opts.traceOutPath);
   const reportPathResolved = path.resolve(opts.reportOutPath);
 
+  let batchLastStepIndex: number | null = null;
+  let batchUiResetHint: string | null = null;
   if (useStepsFile && exitCode === 0) {
-    synthesizeTraceFromStepsBatchRun({
+    const syn = synthesizeTraceFromStepsBatchRun({
       runOut,
       feature: opts.feature,
       tracePath: tracePathResolved,
       reportPath: reportPathResolved,
     });
+    batchLastStepIndex = syn.lastStepIndex;
+    batchUiResetHint = syn.uiResetHint;
+  } else if (useStepsFile && exitCode !== 0) {
+    const batch = parseStepsBatchFromRunOut(runOut);
+    batchLastStepIndex = computeLastFailedStepIndex(batch);
+    batchUiResetHint = uiResetHintForOutcome('failed', batchLastStepIndex);
   }
 
   let trace = parseHylyreTrace(tracePathResolved);
@@ -1388,6 +1438,11 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         aa_start_preflight: Boolean(pageName),
         aa_start_ok: pageName ? true : null,
         omit_bundle_for_hylyre: omitBundleForHylyre,
+        cold_restart: opts.coldRestart === true,
+        cold_restart_attempted: coldRestartAttempted,
+        cold_restart_ok: coldRestartOk,
+        last_step_index: batchLastStepIndex,
+        ui_reset_hint: batchUiResetHint,
         deviceSn: opts.deviceSn ?? null,
         hypium_workdir: hypiumWorkDir,
         run_started_at: runStartedAt,

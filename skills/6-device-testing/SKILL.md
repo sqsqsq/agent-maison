@@ -263,7 +263,7 @@ doc/features/{module-name}/test-plan.md
      --bundle <bundleId> \
      --plan path/to/test-plan.hylyre.md
    ```
-   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。
+   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（**仅跳过 snapshot warmup**，非 UI 复位）、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。**默认 execute 冷重启**（`hdc aa force-stop` + `aa start`）；保留 Nav 栈调试加 **`--continue-session`**。stderr：`ADHOC_COLD_RESTART=`、`ADHOC_UI_RESET_RECOMMENDED=`（前次非 success 且 continue-session 时）。
 4. **观察汇总决策树**（含「查看/汇总/所有/列表」类 NL）：
    - touch 步骤**只写到导航终点**；**禁止**在 steps-file 写 `dump_ui`（STEP-002）
    - run 成功后：`npm run adhoc-device-test -- --bundle <id> --dump-ui-only` → stderr `ADHOC_DUMP_UI_PATH=`
@@ -287,7 +287,7 @@ doc/features/{module-name}/test-plan.md
 8. **ensure 失败**：Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后 agent 重跑。
 9. **快照**：默认 run 后 `app page save`；`--skip-page-save` 或 `--observe-ui` 可跳过。
 10. **结果 SSOT**：`ADHOC_TRACE_FILE=` / `ADHOC_DERIVE_FILE=`；**禁止 glob timestamp**。
-11. **重复跑同一 bundle**：加 `--accept-cold-start` 跳过 warmup。
+11. **重跑 / UI 复位**：execute **默认冷重启**（清 Nav 栈）；前次 run 非全 pass 后**禁止**在未复位时假设仍在首页 Tab。`--continue-session` 显式保留 Nav 栈；若见 `ADHOC_UI_RESET_RECOMMENDED=1` 须去掉 `--continue-session` 或确认已冷重启。`--accept-cold-start` **只**跳过 snapshot warmup，**不能**代替冷重启。
 12. **warmup 软失败**：仍继续 run（`[WARN]`）。
 
 ### Step 5: 生成测试报告（测试执行后）
