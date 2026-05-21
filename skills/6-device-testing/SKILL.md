@@ -255,15 +255,15 @@ doc/features/{module-name}/test-plan.md
      --bundle <bundleId> --steps "打开应用->点击…->…"
    ```
    或等价：`npm run adhoc-device-test -- --bundle <bundleId> --steps "…"`（仅 derive，写 `derive-adhoc-last.json`，stderr `ADHOC_DERIVE_FILE=`）。
-   关注 `snapshot_cache_empty`、`selector_hints`、`steps_file_contract`、`observation_steps`、`forbidden_in_steps`。
-2. **Agent 写 Hylyre JSON**：读 derive 的 `steps_file_contract`、`step_shape_catalog`；**可选** `steps_file_minimal_example`（仅 touch 机械映射，**可整段替换**）。手写 `test-steps.json`（探索/汇总类 NL **不进** steps）。写后**先** `npm run lint-adhoc-steps -- --file <path>`（可加 `--normalize`），通过后再跑机。
+   关注 `snapshot_cache_empty`、`cache_layout_expected`、`cache_layout_mismatch`、`selector_hints`、`steps_file_contract`、`observation_steps`、`forbidden_in_steps`。
+2. **Agent 写 Hylyre JSON**：读 derive 的 `steps_file_contract`、`step_shape_catalog`；**可选** `steps_file_minimal_example`（仅 touch 机械映射，**可整段替换**）。手写 `test-steps.json`（探索/汇总类 NL **不进** steps）。**禁止**向 `doc/app-snapshot-cache/<bundle>/` 根目录 Write page JSON（cache 仅 `pages/` 由 page save 写入）。写后**先** `npm run lint-adhoc-steps -- --file <path>`（可加 `--normalize`），通过后再跑机（**STEP-TOUCH** / **STEP-002 start_app** 须在 lint 阶段清零）。
 3. **执行**（勿手工拼 `hdc` / `hylyre`）：
    ```bash
    cd framework/harness && npm run adhoc-device-test -- \
      --bundle <bundleId> \
      --plan path/to/test-plan.hylyre.md
    ```
-   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（**仅跳过 snapshot warmup**，非 UI 复位）、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。**默认 execute 冷重启**（`hdc aa force-stop` + `aa start`）；保留 Nav 栈调试加 **`--continue-session`**。stderr：`ADHOC_COLD_RESTART=`、`ADHOC_UI_RESET_RECOMMENDED=`（前次非 success 且 continue-session 时）。
+   或 `--steps-file path/to/test-steps.json`。推荐 **`--steps-file`**（观察型 NL 走 dump 分支）。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（**仅跳过 snapshot warmup**，非 UI 复位）、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。**默认 execute 冷重启**（`hdc aa force-stop` + `aa start`）；保留 Nav 栈调试加 **`--continue-session`**。stderr：`ADHOC_COLD_RESTART=`、`ADHOC_UI_RESET_RECOMMENDED=`（读固定 `device-test-run.meta.json`，非本次新 timestamp trace）、`ADHOC_CACHE_LAYOUT_MISMATCH=`。
 4. **观察汇总决策树**（含「查看/汇总/所有/列表」类 NL）：
    - touch 步骤**只写到导航终点**；**禁止**在 steps-file 写 `dump_ui`（STEP-002）
    - run 成功后：`npm run adhoc-device-test -- --bundle <id> --dump-ui-only` → stderr `ADHOC_DUMP_UI_PATH=`
@@ -280,6 +280,7 @@ doc/features/{module-name}/test-plan.md
 | start_app 相关失败 | 重复冷启或嵌套 `action.type` | 删步骤内 start_app；预启交给 harness |
 | STEP-002 禁止 dump_ui | 观察型 NL 误写进 steps | 导航 run 后用 `--dump-ui-only`，勿写进 JSON |
 | `wait requires seconds` | `wait` 误用 `timeout` 或缺 `seconds` | 改用 `{"wait":{"seconds":N}}`；写前跑 `lint-adhoc-steps` |
+| `Unsupported touch payload` / STEP-TOUCH | touch 嵌套 `selector` | 改用 `{"touch":{"by_text":"…"}}`；写前跑 `lint-adhoc-steps` |
 
 5. 使用保留目录名 **`_adhoc`**；**bundle** 必须用户声明。默认 **单 TC-001**；步骤 **裸 JSON 数组**、**不含 start_app**。
 6. **不跑** `harness-runner --feature _adhoc`；执行链 **`ensureHylyreReady`** → resolve ability →（可选）warmup → lint → run。**禁止**未 ensure 前让用户 pip install。

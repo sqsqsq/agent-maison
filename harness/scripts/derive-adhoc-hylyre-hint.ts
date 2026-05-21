@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import { buildAdhocDerivePayload } from './utils/adhoc-derive-payload';
+import { appSnapshotCacheAbsFor, isCacheLayoutMismatch } from './utils/app-snapshot-cache-hint';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['bundle', 'b', 'steps', 's', 'project-root', 'p', 'out', 'o'],
@@ -35,6 +36,10 @@ if (!bundle || !stepsRaw) {
 }
 
 const payload = buildAdhocDerivePayload(projectRoot, bundle, stepsRaw);
+const cacheAbs = appSnapshotCacheAbsFor(projectRoot);
+if (isCacheLayoutMismatch(cacheAbs, bundle)) {
+  console.error('ADHOC_CACHE_LAYOUT_MISMATCH=1');
+}
 const text = `${JSON.stringify(payload, null, 2)}\n`;
 if (outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

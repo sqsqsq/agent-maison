@@ -70,6 +70,29 @@ export function validatePlannedStepObject(step: unknown, index: number): Planned
       }
     }
   }
+  if (root === 'start_app') {
+    out.push({
+      index,
+      rule_id: 'STEP-002',
+      message: '即席 steps 禁止 start_app；冷启由 harness 负责',
+    });
+  }
+  if (root === 'touch') {
+    const tb = obj.touch;
+    if (!tb || typeof tb !== 'object' || Array.isArray(tb)) {
+      out.push({ index, rule_id: 'STEP-TOUCH', message: 'touch 须为对象' });
+    } else {
+      const t = tb as Record<string, unknown>;
+      if (t.selector !== undefined) {
+        out.push({
+          index,
+          rule_id: 'STEP-TOUCH',
+          message:
+            'touch 禁止嵌套 selector；改用 {"touch":{"by_text":"…"}} 或 {"touch":{"by_id":"…"}}',
+        });
+      }
+    }
+  }
   if (root === 'wait_for') {
     const wf = obj.wait_for;
     if (!wf || typeof wf !== 'object' || Array.isArray(wf)) {

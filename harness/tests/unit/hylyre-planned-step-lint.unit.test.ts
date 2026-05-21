@@ -62,6 +62,26 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    name: 'validatePlannedStepsArray: touch selector nested FAIL',
+    run: () => {
+      const r = validatePlannedStepsArray([{ touch: { selector: { text: '确认' } } }]);
+      if (r.ok) throw new Error('expected FAIL');
+      if (!r.violations.some(v => v.rule_id === 'STEP-TOUCH')) {
+        throw new Error(`violations: ${JSON.stringify(r.violations)}`);
+      }
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: start_app FAIL',
+    run: () => {
+      const r = validatePlannedStepsArray([{ start_app: { bundle: 'com.test' } }]);
+      if (r.ok) throw new Error('expected FAIL');
+      if (!r.violations.some(v => v.rule_id === 'STEP-002' && v.message.includes('start_app'))) {
+        throw new Error(`violations: ${JSON.stringify(r.violations)}`);
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

@@ -5,6 +5,8 @@ import { buildNavigationHintForCase } from './test-plan-derive-hint';
 import {
   appSnapshotCacheAbsFor,
   buildSelectorHints,
+  CACHE_LAYOUT_EXPECTED,
+  isCacheLayoutMismatch,
   isSnapshotCacheEmpty,
   listSnapshotPages,
 } from './app-snapshot-cache-hint';
@@ -36,6 +38,7 @@ export function buildAdhocDerivePayload(
   const natural_steps = splitNaturalLanguageSteps(stepsRaw);
   const cacheAbs = appSnapshotCacheAbsFor(projectRoot);
   const snapshot_cache_empty = isSnapshotCacheEmpty(cacheAbs, bundle);
+  const cache_layout_mismatch = isCacheLayoutMismatch(cacheAbs, bundle);
   const available_pages = listSnapshotPages(cacheAbs, bundle);
   const selector_hints = buildSelectorHints(cacheAbs, bundle, natural_steps);
 
@@ -65,6 +68,8 @@ export function buildAdhocDerivePayload(
     has_observation,
     navigation_hint: buildNavigationHintForCase(navRow),
     snapshot_cache_empty,
+    cache_layout_expected: CACHE_LAYOUT_EXPECTED,
+    cache_layout_mismatch,
     available_pages,
     selector_hints,
     steps_file_contract: {

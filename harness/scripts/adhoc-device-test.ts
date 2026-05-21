@@ -22,7 +22,7 @@ import {
   resolveAppSnapshotCacheAbs,
   type SnapshotWarmupResult,
 } from '../../profiles/hmos-app/harness/app-snapshot-warmup';
-import { listSnapshotPages } from './utils/app-snapshot-cache-hint';
+import { listSnapshotPages, isCacheLayoutMismatch, listSnapshotPageJsonPaths } from './utils/app-snapshot-cache-hint';
 import { ensureHypiumWorkDir } from '../../profiles/hmos-app/harness/device-test-hypium-workdir';
 import { featurePhaseReportsDir } from '../config';
 import {
@@ -44,7 +44,7 @@ import { logAdhocPhase, logAdhocRunDone } from './utils/adhoc-phase-log';
 import { runAdhocDumpUi } from './utils/adhoc-dump-ui';
 import { summarizeAdhocDumpFile } from './utils/adhoc-summarize-dump';
 import {
-  readPreviousTraceOutcome,
+  readPreviousRunOutcome,
   shouldEmitUiResetRecommended,
 } from './utils/adhoc-ui-reset-meta';
 
@@ -103,16 +103,12 @@ function deriveLastJsonPath(projectRoot: string): string {
   );
 }
 
-function listCachePageFiles(cacheAbs: string, bundle: string): string[] {
-  const pagesDir = path.join(cacheAbs, bundle, 'pages');
-  if (!fs.existsSync(pagesDir)) return [];
-  try {
-    return fs
-      .readdirSync(pagesDir)
-      .filter(f => f.endsWith('.json'))
-      .map(f => path.join(pagesDir, f));
-  } catch {
-    return [];
+function emitCacheLayoutStderr(cacheAbs: string, bundleId: string): void {
+  if (isCacheLayoutMismatch(cacheAbs, bundleId)) {
+    console.error('ADHOC_CACHE_LAYOUT_MISMATCH=1');
+    console.error(
+      '[warn] bundle 根目录有 page-like JSON 但 pages/ 为空；官方 layout 为 pages/<slug>.json；勿 agent Write 根目录替代 page save',
+    );
   }
 }
 
@@ -257,6 +253,7 @@ if (observeUi) {
     fs.mkdirSync(path.dirname(derivePath), { recursive: true });
     fs.writeFileSync(derivePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
     console.error(`ADHOC_DERIVE_FILE=${path.resolve(derivePath)}`);
+    emitCacheLayoutStderr(appSnapshotCacheAbs, bundle);
     const minimal = payload.steps_file_minimal_example as
       | { steps: Record<string, unknown>[] }
       | null
@@ -288,6 +285,7 @@ if (isDeriveOnly) {
   fs.mkdirSync(path.dirname(derivePath), { recursive: true });
   fs.writeFileSync(derivePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
   console.error(`ADHOC_DERIVE_FILE=${path.resolve(derivePath)}`);
+  emitCacheLayoutStderr(appSnapshotCacheAbs, bundle);
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   process.exit(0);
 }
@@ -303,9 +301,10 @@ if (!isExecute && !observeUi) {
 
 if (acceptColdStart) skipExplore = true;
 
-const cachePagesBefore = listCachePageFiles(appSnapshotCacheAbs, bundle);
+const cachePagesBefore = listSnapshotPageJsonPaths(appSnapshotCacheAbs, bundle);
 console.error(`ADHOC_CACHE_DIR=${appSnapshotCacheAbs}`);
 console.error(`ADHOC_AVAILABLE_PAGES=${listSnapshotPages(appSnapshotCacheAbs, bundle).join(',')}`);
+emitCacheLayoutStderr(appSnapshotCacheAbs, bundle);
 if (isAppSnapshotCacheEmpty(appSnapshotCacheAbs, bundle)) {
   console.error('[info] snapshot_cache_empty=true — 可加 --accept-cold-start 跳过 warmup');
 }
@@ -480,7 +479,7 @@ if (!skipExplore) {
 
 const effectiveSkipPageSaveFinal = effectiveSkipPageSave;
 
-const previousOutcome = readPreviousTraceOutcome(traceOutPath);
+const previousOutcome = readPreviousRunOutcome(anchors.runMeta);
 if (shouldEmitUiResetRecommended(previousOutcome, continueSession)) {
   console.error('ADHOC_UI_RESET_RECOMMENDED=1');
 }
@@ -548,7 +547,7 @@ if (!effectiveSkipPageSave) {
   logAdhocPhase('page_save');
 }
 
-const cachePagesAfter = listCachePageFiles(appSnapshotCacheAbs, bundle);
+const cachePagesAfter = listSnapshotPageJsonPaths(appSnapshotCacheAbs, bundle);
 let cacheUpdated = false;
 let pageSaveExit: number | null = null;
 try {

@@ -785,7 +785,7 @@ doc/glossary-staging/
 # Feature-phase harness：`paths.reports_dir_pattern` 写到各 phase `reports/` 下的本地产物
 doc/features/*/*/reports/*
 
-# Skill 6：真机自动化相关的本地 Python venv、Hypium 临时目录与 app 页面快照根（未跑过 Skill 6 时可不存在）
+# Skill 6：真机自动化相关的本地 Python venv、设备 UI 自动化栈临时目录与 app 页面快照根（未跑过 Skill 6 时可不存在）
 **/.hylyre/
 **/tmp_hypium/
 /doc/app-snapshot-cache/
@@ -805,7 +805,7 @@ doc/features/*/*/reports/*
 - `.framework-backup/`：`check-init` 在 PASS 后对 `adapter.yaml` 中 `update_policy=auto_overwrite` 的目标做模板对齐前，对被覆盖文件的备份根目录。
 - `doc/features/*/*/reports/*`：配置了 `paths.reports_dir_pattern`（默认在各 phase 目录下 `reports/`）时，feature 维度的 harness 脚本报告、合并报告、trace、verifier 产出、宿主编译/装机日志等通常不入仓。
 - `**/.hylyre/`：Hylyre 运行时目录（含仓库根 venv `.hylyre/venv` 及任意 cwd 下的 `mcp-server.log` 等；`framework/profiles/*/vendor/hylyre/` 为无点前缀目录，不受影响）。
-- `**/tmp_hypium/`：Hypium 在进程 cwd 下创建的 UI 树/截图临时目录（harness 正常会定向到 `reports/.hypium-workdir`，在 `framework/harness` 等目录直接跑 CLI 时可能误落盘）。
+- `**/tmp_hypium/`：设备 UI 自动化栈在进程 cwd 下创建的 UI 树/截图临时目录（harness 正常会定向到 `reports/.hypium-workdir`，在 `framework/harness` 等目录直接跑 CLI 时可能误落盘）。
 - `/doc/app-snapshot-cache/`：真机自动化相关的 app 页面快照缓存根（跨 feature；未跑过对应步骤时可不存在）。
 - `/doc/features/_adhoc/`：即席自然语言用例生成的临时派生计划与报告目录（不入仓）。
 

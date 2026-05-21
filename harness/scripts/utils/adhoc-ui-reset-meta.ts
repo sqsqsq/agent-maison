@@ -40,6 +40,30 @@ export function readPreviousTraceOutcome(tracePath: string): string | null {
   }
 }
 
+/**
+ * Read prior run outcome from fixed reports/device-test-run.meta.json (not new timestamp trace).
+ */
+export function readPreviousRunOutcome(runMetaPath: string): string | null {
+  if (!fs.existsSync(runMetaPath)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(runMetaPath, 'utf-8')) as {
+      trace_summary?: { outcome?: string };
+      trace_path?: string;
+    };
+    const fromSummary = raw.trace_summary?.outcome;
+    if (typeof fromSummary === 'string' && fromSummary.trim().length > 0) {
+      return fromSummary;
+    }
+    const tracePath = raw.trace_path;
+    if (typeof tracePath === 'string' && tracePath.trim().length > 0) {
+      return readPreviousTraceOutcome(tracePath);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** stderr ADHOC_UI_RESET_RECOMMENDED=1 when continuing session after non-success run. */
 export function shouldEmitUiResetRecommended(
   previousOutcome: string | null,

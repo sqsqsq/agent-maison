@@ -103,7 +103,8 @@
 - **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
-  - 点击：`{"touch":{"selector":{"text":"确认"}}}`
+  - 点击（即席推荐）：`{"touch":{"by_text":"确认"}}`
+  - 点击（派生 plan 表格，Hylyre agent-plan-a 形态）：以 vendor `hylyre-planned-step-fields.md` 为准
   - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
   - 返回：`{"back":{}}` 或 `{"action":{"type":"back"}}`
 
@@ -118,7 +119,8 @@
 ### `hylyre dump-ui` 与快照缓存
 
 - 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `design.md` / `contracts.yaml` 后再派生。
-- **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`），默认 page slug **`home`**（可用 `HARNESS_HYLYRE_PAGE_SAVE_NAME` 覆盖），`--ability` 为 Hypium 主 Ability（如 `PhoneAbility`）。写入 **`doc/app-snapshot-cache/<bundle>/pages/`**。该步骤**失败不会**把本次 `run` 判为失败；见 **`device-test-run.log`** / **`hylyre_page_save`**。
+- **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`），默认 page slug **`home`**（可用 `HARNESS_HYLYRE_PAGE_SAVE_NAME` 覆盖），`--ability` 为 Hypium 主 Ability（如 `PhoneAbility`）。写入 **`doc/app-snapshot-cache/<bundle>/pages/<slug>.json`**（官方 layout）。该步骤**失败不会**把本次 `run` 判为失败；见 **`device-test-run.log`** / **`hylyre_page_save`** / stderr **`ADHOC_PAGE_SAVE_EXIT`**。
+- **Cache layout SSOT**：derive/warmup/selector_hints 扫描 **`pages/*.json`**，并 **兼容** bundle 根目录 legacy flat layout（排除 `app-meta.json`、`dump-ui-*`、`*summary*`）。官方 pipeline **只写** `pages/`；若 derive stderr **`ADHOC_CACHE_LAYOUT_MISMATCH=1`**，表示根目录有 page-like JSON 但 `pages/` 为空——**禁止 agent Write 根目录 JSON 替代 page save**；应修 page save 或手动迁入 `pages/`。
 - **超时**：环境变量 **`HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS`**（毫秒，仅数字；默认 **60000**）覆盖 `spawnSync` 对 `app page save` 的等待上限。
 
 ### plan 派生缺失时的结构化提示
@@ -132,10 +134,12 @@
 
 ### 即席模式（`_adhoc`）
 
-- **Derive**（不跑机）：schema 4 含 `steps_file_contract`、`step_shape_catalog`、可选 `steps_file_minimal_example`（非 SSOT）、`observation_steps`。
-- **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。
+- **Derive**（不跑机）：schema 4 含 `steps_file_contract`、`step_shape_catalog`、可选 `steps_file_minimal_example`（非 SSOT）、`observation_steps`、`cache_layout_expected`（`pages/<slug>.json`）、`cache_layout_mismatch`。
+- **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。**STEP-TOUCH** 拦截 `touch.selector` 嵌套；**STEP-002** 禁 `start_app` / `dump_ui`。
+- **Agent 纪律（BLOCKER）**：**禁止**向 `doc/app-snapshot-cache/<bundle>/` **根目录** Write page 结构 JSON；cache 仅由 **`hylyre app page save`** / warmup 写入 `pages/`。page save 失败时读 `ADHOC_PAGE_SAVE_EXIT` / `device-test-run.meta.json`，**勿**自行 Write 替代。
+- **执行协议（Step 4.B）**：derive（`adhoc-device-test --steps` 写 `derive-adhoc-last.json`）→ 读 contract → 手写 **`--steps-file`**（观察 NL **不进** steps）→ **`lint-adhoc-steps`** → **`adhoc-device-test --steps-file`** → 成功后 **`--dump-ui-only`** + **`summarize-adhoc-dump`**。
 - **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.config.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
-- **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
+- **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`（读固定 **`device-test-run.meta.json`** 的 `trace_summary.outcome`，非本次新 timestamp trace）；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
 - **Plan lint 规则 ID**：STEP-001~006 + NAV-001~003 + **STEP-WAIT-SECONDS**；即席 **`--plan`** 时 STEP 与 **NAV 违规均 BLOCKER**（写 `plan-lint.json`）；`--steps-file` 不跑 NAV。
@@ -150,6 +154,7 @@
 | plan 失败、steps-file 成功 | agent 修正 plan 或改用 `--steps-file` |
 | `wait requires seconds` | 改用 `{"wait":{"seconds":N}}`；勿在 `wait` 内写 `timeout` |
 | STEP-002 禁止 dump_ui | 导航 run 后用 `--dump-ui-only` |
+| `Unsupported touch payload` / STEP-TOUCH | 改用 `{"touch":{"by_text":"…"}}`（勿嵌套 `selector`）；写前 `lint-adhoc-steps` |
 | 重跑找不到首页控件 | 默认已冷重启；若 `--continue-session` 见 `ADHOC_UI_RESET_RECOMMENDED=1` → 去掉 continue-session |
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
@@ -179,3 +184,9 @@
 - **导入失败 / pip 对齐失败**：优先检查 `hylyre-doctor.log` 与 `hylyre-ready.meta.json`；**请 agent 用自然语言重新执行 Skill 6 闭环**（ensure 会尝试 vendor 对齐）；仍无法恢复时 agent 可删 `.hylyre/venv` 后再自跑 Step 7（兜底，非用户手跑 harness）。
 - **真机断连**：`hdc list targets`、重连；trace 中可出现 **阻塞** 状态。
 - **selector 不可靠**：`hylyre dump-ui` 探索界面 → 回写 design/contracts。
+
+### 应用工程同步 framework（WalletForHarmonyOS 等）
+
+- **SSOT**：`SimulatedWalletForHmos/framework/`（或 git submodule）为 harness / Skill 6 源码；应用工程须 **同步 ≥ 当前 framework HEAD**（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等）。
+- **同步后**：在应用工程根执行 Skill 00 render（或手动复制 `.cursor/rules/framework-agent-execution.mdc`、Skill 6 跳板）；重跑 `npm run adhoc-device-test -- --bundle <id> --steps "…"` 刷新 `derive-adhoc-last.json`（schema 4 + `cache_layout_*`）。
+- **Cache**：若 stderr `ADHOC_CACHE_LAYOUT_MISMATCH=1`，将根目录 page JSON 迁入 `pages/` 或修 page save；**勿** agent Write 根目录替代。

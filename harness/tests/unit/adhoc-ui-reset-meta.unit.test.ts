@@ -5,6 +5,7 @@
 import {
   computeLastFailedStepIndex,
   parseStepsBatchFromRunOut,
+  readPreviousRunOutcome,
   readPreviousTraceOutcome,
   shouldEmitUiResetRecommended,
   uiResetHintForOutcome,
@@ -67,6 +68,30 @@ const cases: Array<{ name: string; run: () => void }> = [
       const p = path.join(dir, 'trace.json');
       fs.writeFileSync(p, JSON.stringify({ outcome: 'aborted' }), 'utf-8');
       if (readPreviousTraceOutcome(p) !== 'aborted') throw new Error('read fail');
+    },
+  },
+  {
+    name: 'readPreviousRunOutcome from device-test-run.meta.json',
+    run: () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adhoc-meta-'));
+      const meta = path.join(dir, 'device-test-run.meta.json');
+      fs.writeFileSync(
+        meta,
+        JSON.stringify({ trace_summary: { outcome: 'failed' } }),
+        'utf-8',
+      );
+      if (readPreviousRunOutcome(meta) !== 'failed') throw new Error('meta summary fail');
+    },
+  },
+  {
+    name: 'readPreviousRunOutcome falls back to trace_path',
+    run: () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adhoc-meta2-'));
+      const trace = path.join(dir, 'trace.json');
+      fs.writeFileSync(trace, JSON.stringify({ outcome: 'aborted' }), 'utf-8');
+      const meta = path.join(dir, 'device-test-run.meta.json');
+      fs.writeFileSync(meta, JSON.stringify({ trace_path: trace }), 'utf-8');
+      if (readPreviousRunOutcome(meta) !== 'aborted') throw new Error('meta trace_path fail');
     },
   },
 ];

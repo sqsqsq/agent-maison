@@ -27,6 +27,7 @@ import {
 } from './hdc-foreground-probe';
 
 import { markAppMetaCacheStale } from './resolve-main-ability';
+import { isSnapshotCacheEmpty } from '../../../harness/scripts/utils/app-snapshot-cache-hint';
 
 
 
@@ -94,24 +95,9 @@ export interface SnapshotWarmupResult {
 
 
 
+/** Delegates to harness SSOT (pages/ + legacy flat root layout). */
 export function isAppSnapshotCacheEmpty(appSnapshotCacheAbs: string, bundleName: string): boolean {
-
-  const pagesDir = path.join(appSnapshotCacheAbs, bundleName, 'pages');
-
-  if (!fs.existsSync(pagesDir)) return true;
-
-  try {
-
-    const entries = fs.readdirSync(pagesDir);
-
-    return !entries.some(f => f.endsWith('.json'));
-
-  } catch {
-
-    return true;
-
-  }
-
+  return isSnapshotCacheEmpty(appSnapshotCacheAbs, bundleName);
 }
 
 
