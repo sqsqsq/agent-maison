@@ -228,6 +228,24 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'lintHylyrePlanMarkdown: STEP-WAIT-SECONDS wait+timeout → BLOCKER',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | x | y | {"wait":{"timeout":3}} | z | P0 | AC-1 |',
+      ].join('\n');
+      const r = lintHylyrePlanMarkdown(md);
+      assertTrue(!r.ok, 'should fail');
+      assertTrue(
+        r.violations.some(v => v.rule_id === 'STEP-WAIT-SECONDS'),
+        `expected STEP-WAIT-SECONDS, got ${JSON.stringify(r.violations)}`,
+      );
+    },
+  },
+  {
     name: 'selectBestNonPlaceholderDerivedPlan: 占位目录 mtime 更新时先被剔除，再选有效派生',
     run: () => {
       const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hylyre-mtime-'));

@@ -43,6 +43,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'classifyRunFailure: step_field_invalid wait requires seconds',
+    run: () => {
+      const out = 'ValueError: wait requires seconds\nTraceback (most recent call last):';
+      assertEq(classifyRunFailure(out, 1), 'step_field_invalid', 'kind');
+    },
+  },
+  {
     name: 'classifyRunFailure: unknown',
     run: () => {
       assertEq(classifyRunFailure('generic failure', 1), 'unknown', 'kind');

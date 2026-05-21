@@ -279,6 +279,7 @@ doc/features/{module-name}/test-plan.md
 | `--plan` 不能、`--steps-file` 能跑 | Markdown 表格格式问题 | agent 修正 plan 或改用 `--steps-file` |
 | start_app 相关失败 | 重复冷启或嵌套 `action.type` | 删步骤内 start_app；预启交给 harness |
 | STEP-002 禁止 dump_ui | 观察型 NL 误写进 steps | 导航 run 后用 `--dump-ui-only`，勿写进 JSON |
+| `wait requires seconds` | `wait` 误用 `timeout` 或缺 `seconds` | 改用 `{"wait":{"seconds":N}}`；写前跑 `lint-adhoc-steps` |
 
 5. 使用保留目录名 **`_adhoc`**；**bundle** 必须用户声明。默认 **单 TC-001**；步骤 **裸 JSON 数组**、**不含 start_app**。
 6. **不跑** `harness-runner --feature _adhoc`；执行链 **`ensureHylyreReady`** → resolve ability →（可选）warmup → lint → run。**禁止**未 ensure 前让用户 pip install。

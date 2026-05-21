@@ -35,6 +35,33 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!r.ok) throw new Error(JSON.stringify(r));
     },
   },
+  {
+    name: 'validatePlannedStepsArray: wait with seconds ok',
+    run: () => {
+      const r = validatePlannedStepsArray([{ wait: { seconds: 2 } }]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: wait with timeout FAIL',
+    run: () => {
+      const r = validatePlannedStepsArray([{ wait: { timeout: 3 } }]);
+      if (r.ok) throw new Error('expected FAIL');
+      if (!r.violations.some(v => v.rule_id === 'STEP-WAIT-SECONDS')) {
+        throw new Error(`violations: ${JSON.stringify(r.violations)}`);
+      }
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: wait missing seconds FAIL',
+    run: () => {
+      const r = validatePlannedStepsArray([{ wait: {} }]);
+      if (r.ok) throw new Error('expected FAIL');
+      if (!r.violations.some(v => v.rule_id === 'STEP-WAIT-SECONDS')) {
+        throw new Error(`violations: ${JSON.stringify(r.violations)}`);
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

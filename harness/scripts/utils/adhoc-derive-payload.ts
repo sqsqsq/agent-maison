@@ -16,6 +16,7 @@ import { splitNaturalLanguageSteps } from './adhoc-nl-split';
 import {
   STEPS_FILE_CONTRACT,
   STEP_SHAPE_CATALOG,
+  WAIT_FIELD_TIMING_REF,
   buildMinimalTouchExample,
   classifyNavigationSteps,
   classifyObservationSteps,
@@ -24,6 +25,8 @@ import {
 
 const HYLYRE_TEMPLATE_REF =
   'framework/profiles/hmos-app/skills/6-device-testing/templates/test-plan-hylyre-template.md';
+const HYLYRE_PLANNED_STEP_FIELDS_REF =
+  'framework/profiles/hmos-app/skills/6-device-testing/reference/hylyre-planned-step-fields.md';
 
 export function buildAdhocDerivePayload(
   projectRoot: string,
@@ -71,11 +74,13 @@ export function buildAdhocDerivePayload(
     },
     steps_file_minimal_example,
     step_shape_catalog: STEP_SHAPE_CATALOG,
+    wait_field_timing_ref: WAIT_FIELD_TIMING_REF,
     hylyre_template_ref: HYLYRE_TEMPLATE_REF,
+    hylyre_planned_step_fields_ref: HYLYRE_PLANNED_STEP_FIELDS_REF,
     allowed_step_roots: [...PLANNED_STEP_ROOT_KEYS],
     forbidden_in_steps: ['start_app', ...FORBIDDEN_STEP_ROOT_KEYS],
     canonical_format:
-      'steps-file 顶层为 JSON 数组；每步恰好一个根键；示例可整段替换；lint 只校验语法不校验业务。',
+      'steps-file 顶层为 JSON 数组；每步恰好一个根键。观察用 --dump-ui-only（禁止 steps 内 dump_ui）。固定等待用 {"wait":{"seconds":N}}（勿用 timeout）。',
     next_action: has_observation
       ? 'Read contract + minimal_example (if any); write navigation-only steps-file; lint; adhoc-device-test --steps-file; then --dump-ui-only + summarize-adhoc-dump'
       : 'Read selector_hints + contract; write steps-file; npm run lint-adhoc-steps; adhoc-device-test --steps-file',

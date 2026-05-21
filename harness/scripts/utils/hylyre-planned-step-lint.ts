@@ -30,6 +30,46 @@ export function validatePlannedStepObject(step: unknown, index: number): Planned
   } else if (!PLANNED_STEP_ROOT_KEY_SET.has(root)) {
     out.push({ index, rule_id: 'STEP-001', message: `未知根键: ${root}` });
   }
+  if (root === 'wait') {
+    const wb = obj.wait;
+    if (!wb || typeof wb !== 'object' || Array.isArray(wb)) {
+      out.push({
+        index,
+        rule_id: 'STEP-WAIT-SECONDS',
+        message: 'wait 须为对象且含 seconds（数字）',
+      });
+    } else {
+      const w = wb as Record<string, unknown>;
+      const sec = w.seconds;
+      if (sec === undefined || sec === null) {
+        out.push({
+          index,
+          rule_id: 'STEP-WAIT-SECONDS',
+          message: 'wait 必须有 seconds（数字）；固定等待勿用 timeout',
+        });
+      } else if (typeof sec !== 'number' || !Number.isFinite(sec)) {
+        out.push({
+          index,
+          rule_id: 'STEP-WAIT-SECONDS',
+          message: 'wait.seconds 须为有限数字',
+        });
+      }
+      if (w.timeout !== undefined) {
+        out.push({
+          index,
+          rule_id: 'STEP-WAIT-SECONDS',
+          message: 'wait 内禁止 timeout；改用 {"wait":{"seconds":N}}',
+        });
+      }
+      if (w.duration !== undefined) {
+        out.push({
+          index,
+          rule_id: 'STEP-WAIT-SECONDS',
+          message: 'wait 内禁止 duration；改用 {"wait":{"seconds":N}}',
+        });
+      }
+    }
+  }
   if (root === 'wait_for') {
     const wf = obj.wait_for;
     if (!wf || typeof wf !== 'object' || Array.isArray(wf)) {
@@ -44,7 +84,7 @@ export function validatePlannedStepObject(step: unknown, index: number): Planned
         out.push({
           index,
           rule_id: 'STEP-WAIT',
-          message: 'wait_for 缺少 selector / by_text / by_id（禁止仅 duration）',
+          message: 'wait_for 缺少 selector / by_text / by_id（禁止仅 duration/timeout）',
         });
       }
     }

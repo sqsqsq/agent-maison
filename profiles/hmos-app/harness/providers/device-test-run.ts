@@ -158,11 +158,14 @@ export type RunFailureKind =
   | 'python_traceback'
   | 'hypium_timeout'
   | 'step_unrecognized'
+  | 'step_field_invalid'
   | 'device_disconnect'
   | 'aa_start_preflight_failed'
   | 'unknown';
 
 export function classifyRunFailure(runOut: string, exitCode: number | null): RunFailureKind {
+  if (/wait requires seconds/i.test(runOut)) return 'step_field_invalid';
+  if (/assert_toast requires text/i.test(runOut)) return 'step_field_invalid';
   if (/Traceback \(most recent call last\)/.test(runOut)) return 'python_traceback';
   if (/timeout|timed out/i.test(runOut)) return 'hypium_timeout';
   if (/unknown step|unsupported step|无法识别.*步骤/i.test(runOut)) return 'step_unrecognized';

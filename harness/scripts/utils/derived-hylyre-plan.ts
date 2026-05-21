@@ -12,6 +12,7 @@ import {
   FORBIDDEN_STEP_ROOT_KEY_SET,
   PLANNED_STEP_ROOT_KEY_SET,
 } from './hylyre-planned-step-keys';
+import { validatePlannedStepObject } from './hylyre-planned-step-lint';
 
 const PLACEHOLDER_BODY_PATTERNS: RegExp[] = [
   /烟测占位/,
@@ -277,12 +278,26 @@ function hasMarkdownBacktickInCell(stepsRaw: string): boolean {
 }
 
 export type StepLintViolation = {
-  rule_id: 'STEP-001' | 'STEP-002' | 'STEP-003' | 'STEP-004' | 'STEP-005' | 'STEP-006';
+  rule_id:
+    | 'STEP-001'
+    | 'STEP-002'
+    | 'STEP-003'
+    | 'STEP-004'
+    | 'STEP-005'
+    | 'STEP-006'
+    | 'STEP-WAIT'
+    | 'STEP-WAIT-SECONDS';
   severity: 'BLOCKER' | 'WARN';
   tc_id: string;
   message: string;
   suggested_fix: string;
 };
+
+function suggestedFixForSharedStepLint(ruleId: string): string {
+  if (ruleId === 'STEP-WAIT-SECONDS') return '{"wait":{"seconds":2}}';
+  if (ruleId === 'STEP-WAIT') return '{"wait_for":{"by_text":"…","timeout":10}}';
+  return '{"touch":{"by_text":"…"}}';
+}
 
 export type LintHylyrePlanResult = {
   ok: boolean;
@@ -331,7 +346,8 @@ export function lintHylyrePlanStepRules(
       continue;
     }
 
-    for (const step of parsed.steps) {
+    for (let stepIndex = 0; stepIndex < parsed.steps.length; stepIndex++) {
+      const step = parsed.steps[stepIndex];
       const roots = stepRootKeys(step);
       if (roots.length !== 1) {
         violations.push({
@@ -393,6 +409,17 @@ export function lintHylyrePlanStepRules(
           tc_id: row.tc_id,
           message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…"}}），action 包装为兼容形态。',
           suggested_fix: '改用 direct touch/input/swipe/scroll 根键',
+        });
+      }
+
+      for (const v of validatePlannedStepObject(step, stepIndex)) {
+        if (v.rule_id !== 'STEP-WAIT' && v.rule_id !== 'STEP-WAIT-SECONDS') continue;
+        violations.push({
+          rule_id: v.rule_id,
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: v.message,
+          suggested_fix: suggestedFixForSharedStepLint(v.rule_id),
         });
       }
     }

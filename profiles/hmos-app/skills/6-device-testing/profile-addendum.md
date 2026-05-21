@@ -137,7 +137,8 @@
 - **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；`--dump-ui-only`；`--observe-ui --steps "…"`（touch-only 一站式）；`--skip-page-save`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
-- **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003；即席跑机前 CLI 写 `plan-lint.json`。
+- **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003 + **STEP-WAIT-SECONDS**（`wait.seconds`）；即席跑机前 CLI 写 `plan-lint.json`。
+- **Planned step 字段 SSOT**：[hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)（含 `wait.seconds` vs `wait_for.timeout` 对照）。
 - 占位目录 **`doc/features/_adhoc/`**；不要求 `harness-runner testing --feature _adhoc` 文档门禁。
 
 #### Hylyre 报错对照（即席）
@@ -146,6 +147,8 @@
 |------|------|
 | 非 JSON + 提示 action 包装 | 去掉步骤列反引号；用 direct `{"touch":…}` |
 | plan 失败、steps-file 成功 | agent 修正 plan 或改用 `--steps-file` |
+| `wait requires seconds` | 改用 `{"wait":{"seconds":N}}`；勿在 `wait` 内写 `timeout` |
+| STEP-002 禁止 dump_ui | 导航 run 后用 `--dump-ui-only` |
 
 模板：**[test-plan-hylyre-template.md](templates/test-plan-hylyre-template.md)**（步骤列为裸 JSON）
 
