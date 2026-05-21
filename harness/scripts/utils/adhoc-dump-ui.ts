@@ -5,7 +5,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { ensureHypiumWorkDir } from '../../../profiles/hmos-app/harness/device-test-hypium-workdir';
+import { mergeEnvWithHdcOnPath } from '../../../profiles/hmos-app/harness/hdc-runner';
 import { featurePhaseReportsDir } from '../../config';
+
+function hylyreSpawnEnv(appSnapshotCacheAbs: string): NodeJS.ProcessEnv {
+  return {
+    ...mergeEnvWithHdcOnPath(process.env),
+    HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs,
+  };
+}
 
 export interface AdhocDumpUiOptions {
   projectRoot: string;
@@ -47,7 +55,7 @@ export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
   spawnSync(opts.pythonPath, sessionArgs, {
     cwd: opts.projectRoot,
     encoding: 'utf-8',
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
+    env: hylyreSpawnEnv(opts.appSnapshotCacheAbs),
     timeout: 30_000,
   });
 
@@ -63,7 +71,7 @@ export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
   const dump = spawnSync(opts.pythonPath, dumpArgs, {
     cwd: hypiumWorkDir,
     encoding: 'utf-8',
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
+    env: hylyreSpawnEnv(opts.appSnapshotCacheAbs),
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
   });

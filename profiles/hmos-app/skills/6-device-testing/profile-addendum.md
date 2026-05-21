@@ -134,7 +134,7 @@
 
 - **Derive**（不跑机）：schema 4 含 `steps_file_contract`、`step_shape_catalog`、可选 `steps_file_minimal_example`（非 SSOT）、`observation_steps`。
 - **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。
-- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。
+- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.config.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
 - **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
@@ -166,6 +166,7 @@
 | 变量 | 含义 |
 |------|------|
 | `HYLYRE_APP_STORE_DIR` | 由 harness 注入（绝对路径），指向快照根目录 |
+| `HARNESS_HDC_EXE` / `HDC_EXE` | hdc 可执行文件**绝对路径**（Claude Code CLI 等子进程 PATH 不含 toolchains 时推荐显式设置） |
 | `HYLYRE_PYTHON` / `HYLYRE_HOME` | 用户可选覆盖解释器 / venv |
 | `HARNESS_HDC_TARGET` | 透传设备序列号（`--device-sn`） |
 | `HARNESS_HYLYRE_RUN_TIMEOUT_MS` | 覆盖 `run` 默认 30 分钟超时 |

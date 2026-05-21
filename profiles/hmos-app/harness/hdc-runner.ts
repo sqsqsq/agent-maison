@@ -112,6 +112,60 @@ export function resetHdcExecutableCache(): void {
   cachedHdcExecutable = null;
 }
 
+/**
+ * 解析 hdc 所在 toolchains 目录（不要求 `hdc list targets` 探测成功）。
+ * 供 Python/Hypium 子进程 PATH 注入：Hypium 以裸命令 `hdc` 查找，不读 Node 侧绝对路径。
+ */
+export function resolveHdcToolchainsDirSync(): string | null {
+  const fromEnv = (process.env.HARNESS_HDC_EXE ?? process.env.HDC_EXE ?? '').trim();
+  if (fromEnv) {
+    const absEnv = path.isAbsolute(fromEnv) ? fromEnv : path.resolve(fromEnv);
+    if (fs.existsSync(absEnv)) {
+      return path.dirname(absEnv);
+    }
+  }
+
+  const exe = resolveHdcExecutableSync();
+  if (exe && exe !== 'hdc') {
+    const abs = path.isAbsolute(exe) ? exe : path.resolve(exe);
+    if (fs.existsSync(abs)) {
+      return path.dirname(abs);
+    }
+  }
+
+  const root = findFrameworkInstanceRoot(process.cwd());
+  if (root) {
+    const dev = loadDevEcoConfig(root);
+    const installPath = dev?.installPath?.trim();
+    if (installPath) {
+      const candidate = defaultHdcPathUnderDevEco(installPath);
+      if (fs.existsSync(candidate)) {
+        return path.dirname(candidate);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 将 hdc toolchains 目录 prepend 到 PATH / Path。
+ * Claude Code CLI、CI 等子进程常不继承用户图形会话 PATH；与 `resolveHdcExecutableSync` 互补。
+ */
+export function mergeEnvWithHdcOnPath(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const dir = resolveHdcToolchainsDirSync();
+  if (!dir) {
+    return { ...base };
+  }
+  const sep = path.delimiter;
+  const merged = `${dir}${sep}${base.Path ?? base.PATH ?? ''}`;
+  const out: NodeJS.ProcessEnv = { ...base, PATH: merged };
+  if (process.platform === 'win32') {
+    out.Path = merged;
+  }
+  return out;
+}
+
 export interface OhosTestMetadata {
   bundleName: string;
   ohosTestModuleName: string;

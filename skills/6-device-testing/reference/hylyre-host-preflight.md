@@ -40,6 +40,7 @@
 | `HYLYRE_PYTHON` | 指向的环境 **不会** 自动 pip 升级；与 vendor manifest 不一致 → BLOCKER |
 | `HYLYRE_HOME` | 使用已有 venv 根；需与 vendor 版本一致 |
 | `HARNESS_HDC_TARGET` | 多设备时指定序列号 |
+| `HARNESS_HDC_EXE` | hdc 绝对路径；Claude Code CLI 等子进程 PATH 不含 DevEco toolchains 时推荐设置 |
 
 Windows PowerShell 临时取消：`Remove-Item Env:HYLYRE_PYTHON -ErrorAction SilentlyContinue`
 

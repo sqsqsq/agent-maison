@@ -19,7 +19,7 @@ import {
   sha256FileHex,
   writeInstallFingerprint,
 } from '../hylyre-vendor-sync';
-import { hdcTargetPrefix, resolveHdcExecutableSync } from '../hdc-runner';
+import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync } from '../hdc-runner';
 import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
 import { resolveMainAbilityForBundle } from '../resolve-main-ability';
 import {
@@ -1012,30 +1012,6 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
 }
 
 // -------- runHylyreDeviceTest --------
-
-/**
- * 将 `resolveHdcExecutableSync()` 解析到的 hdc 所在目录置于 PATH 前部。
- * Python/Hypium 在 Windows 上常以无 shell 的 spawn 调用 `hdc`；Cursor/CI 子进程的 PATH
- * 常不含 `.../toolchains`（见 debug H5），导致 ENOENT，而 Node 侧仍可通过 config 回退解析到绝对路径。
- */
-function mergeEnvWithHdcOnPath(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const exe = resolveHdcExecutableSync();
-  if (!exe || exe === 'hdc') {
-    return { ...base };
-  }
-  const abs = path.isAbsolute(exe) ? exe : path.resolve(exe);
-  if (!fs.existsSync(abs)) {
-    return { ...base };
-  }
-  const dir = path.dirname(abs);
-  const sep = path.delimiter;
-  const merged = `${dir}${sep}${base.Path ?? base.PATH ?? ''}`;
-  const out: NodeJS.ProcessEnv = { ...base, PATH: merged };
-  if (process.platform === 'win32') {
-    out.Path = merged;
-  }
-  return out;
-}
 
 function defaultPageSaveTimeoutMs(): number {
   const raw = process.env.HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS;

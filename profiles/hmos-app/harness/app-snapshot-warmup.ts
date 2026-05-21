@@ -14,7 +14,7 @@ import { resolveHylyreToolConfig } from '../../../harness/config';
 
 import { buildHylyreAppPageSaveArgv } from './device-test-page-save';
 
-import { hdcTargetPrefix, resolveHdcExecutableSync } from './hdc-runner';
+import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync } from './hdc-runner';
 
 import {
 
@@ -260,7 +260,7 @@ function runDumpUi(
 
     encoding: 'utf-8',
 
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
+    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
 
     timeout: 120_000,
 
@@ -312,7 +312,7 @@ function runPageSave(
 
     encoding: 'utf-8',
 
-    env: { ...process.env, HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
+    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
 
     timeout: 60_000,
 

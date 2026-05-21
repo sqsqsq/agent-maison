@@ -34,6 +34,8 @@ import {
   loadAppInstallCandidateMeta,
   parseInstalledBundleVersionFromDump,
   diagnoseHdcInstallFailure,
+  mergeEnvWithHdcOnPath,
+  resetHdcExecutableCache,
 } from '../../../../../harness/scripts/utils/hdc-runner';
 
 export interface UnitCaseResult {
@@ -451,6 +453,36 @@ const cases: Array<{ name: string; run: () => void }> = [
         'module.name',
         '错误消息应点出缺失字段',
       );
+    }),
+  },
+
+  // --------------------------------------------------------------------------
+  // mergeEnvWithHdcOnPath — Hypium 子进程 PATH 注入
+  // --------------------------------------------------------------------------
+  {
+    name: 'mergeEnvWithHdcOnPath: HARNESS_HDC_EXE 存在时 prepend toolchains 到 PATH',
+    run: () => withTmpDir(root => {
+      const hdcDir = path.join(root, 'toolchains');
+      fs.mkdirSync(hdcDir, { recursive: true });
+      const hdcExe = path.join(hdcDir, process.platform === 'win32' ? 'hdc.exe' : 'hdc');
+      fs.writeFileSync(hdcExe, '');
+      const prevExe = process.env.HARNESS_HDC_EXE;
+      process.env.HARNESS_HDC_EXE = hdcExe;
+      resetHdcExecutableCache();
+      try {
+        const merged = mergeEnvWithHdcOnPath({ PATH: '/usr/bin' });
+        assertIncludes(merged.PATH ?? '', hdcDir, 'PATH should prepend toolchains');
+        if (process.platform === 'win32') {
+          assertIncludes(merged.Path ?? '', hdcDir, 'Path should prepend toolchains on win32');
+        }
+      } finally {
+        if (prevExe === undefined) {
+          delete process.env.HARNESS_HDC_EXE;
+        } else {
+          process.env.HARNESS_HDC_EXE = prevExe;
+        }
+        resetHdcExecutableCache();
+      }
     }),
   },
 ];
