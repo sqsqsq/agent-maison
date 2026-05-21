@@ -18,7 +18,7 @@ alwaysApply: true
 - **即席（ad-hoc）**场景下向用户提供「选项 A 手动真机 / 选项 B 你去安装 Hylyre」作为**唯一**出路（Hylyre 由 `npm run adhoc-device-test` 内 `ensureHylyreReady` 自动对齐，见 Skill 6 Step 4.B）
 - 即席场景下使用 `harness-runner --phase testing --feature _adhoc`（该入口会 exit 1 并提示正确 CLI）
 - 即席真机结果**只能**从 `adhoc-device-test` **执行模式**（`--plan` / `--steps-file`）stderr 的 `ADHOC_TRACE_FILE=` 读取 `trace.json`；derive 用 `ADHOC_DERIVE_FILE=`。**严禁** glob `doc/features/_adhoc/testing/reports/*/hylyre/` 当本次结果
-- 即席 **`--steps` 仅 derive hint**，harness **不**把 NL 翻译成 Hylyre JSON；agent 须根据 hint/dump **手写** plan 后再 `adhoc-device-test --plan` 或 `--steps-file`
+- 即席 **`--steps` 仅 derive hint**；agent 须读 `derive-adhoc-last.json` 的 **contract**，写 steps 后 **`npm run lint-adhoc-steps`** 通过，再 `adhoc-device-test --plan` / `--steps-file`；观察汇总用 **`--dump-ui-only`** + **`summarize-adhoc-dump`**，**禁止** steps 内 `dump_ui`
 - 若 trace `outcome=aborted`，必须按 `error_kind` + `artifacts.warmup_meta` / `ensure_meta` / `run_meta` 给用户**结构化诊断**，**禁止**回退「需要 VLM / 步骤改 JSON」之类无依据话术
 
 **允许**向用户说明：需其完成的**物理/账号类**前置（连接真机、授权 USB、切换飞行模式、确认 product/buildMode 等），但：

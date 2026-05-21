@@ -255,25 +255,21 @@ doc/features/{module-name}/test-plan.md
      --bundle <bundleId> --steps "打开应用->点击…->…"
    ```
    或等价：`npm run adhoc-device-test -- --bundle <bundleId> --steps "…"`（仅 derive，写 `derive-adhoc-last.json`，stderr `ADHOC_DERIVE_FILE=`）。
-   关注 `snapshot_cache_empty`、`selector_hints`、`forbidden_in_steps`、`next_action`。
-2. **Agent 写 Hylyre JSON**（与 Step 4.5 相同判断力）：读 hint / dump，手写 `test-plan.hylyre.md` 或 `test-steps.json`（屏上真实 `by_text` / `by_id`；探索/汇总类 NL **不进** plan）。
+   关注 `snapshot_cache_empty`、`selector_hints`、`steps_file_contract`、`observation_steps`、`forbidden_in_steps`。
+2. **Agent 写 Hylyre JSON**：读 derive 的 `steps_file_contract`、`step_shape_catalog`；**可选** `steps_file_minimal_example`（仅 touch 机械映射，**可整段替换**）。手写 `test-steps.json`（探索/汇总类 NL **不进** steps）。写后**先** `npm run lint-adhoc-steps -- --file <path>`（可加 `--normalize`），通过后再跑机。
 3. **执行**（勿手工拼 `hdc` / `hylyre`）：
    ```bash
    cd framework/harness && npm run adhoc-device-test -- \
      --bundle <bundleId> \
      --plan path/to/test-plan.hylyre.md
    ```
-   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`（跳过 snapshot warmup）。
-4. 使用保留目录名 **`_adhoc`**（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）；**bundle** 必须用户声明。
-5. 默认 **单 TC-001**；步骤列 **裸 JSON**、**不含 start_app**；`--steps-file` 为 agent 产物，非 harness 自动翻译。
-6. **不跑** `harness-runner --phase testing --feature _adhoc` 全套门禁（runner 会对该组合 **exit 1** 并提示本 CLI）；**执行模式**内 **`ensureHylyreReady`** → resolve main ability →（可选）snapshot warmup → lint → `runHylyreDeviceTest`。**禁止**在未执行 ensure 前宣称「Hylyre 未安装」并让用户选手动测试或自行 `pip install`。
-7. **不写** receipt / 不强制 verifier；向用户交付 **`trace.json` cases[]** 摘要及 hylyre 报告路径。
-8. **ensure 失败**：agent 在本对话内 Read `doc/features/_adhoc/testing/reports/hylyre-doctor.log` 与 `hylyre-ready.meta.json`，按 `errors[].kind` 处理宿主因素后**重跑** `adhoc-device-test --plan` / `--steps-file`；单机诊断见 `framework/skills/6-device-testing/reference/hylyre-host-preflight.md`。
-9. **快照**：run 后 `app page save` → `doc/app-snapshot-cache/<bundle>/`；stderr 有 `ADHOC_CACHE_DIR` / `ADHOC_CACHE_UPDATED`。
-10. **本次结果 SSOT**：执行模式只读 stderr `ADHOC_TRACE_FILE=`；derive 模式读 `ADHOC_DERIVE_FILE=`。**禁止 glob `<timestamp>`** 当本次结果。
-11. **诊断驱动**：`outcome=aborted` 时按 `error_kind` 与 `reason_kind` 有据结论。
-12. **冷启 / warmup**：`snapshot_cache_empty=true` 时执行模式会尝试 warmup；App 已就绪可加 `--accept-cold-start` **跳过 warmup**（不再向 plan 注入 `wait_for`）。
-13. **warmup 软失败**：warmup 失败仍继续 `hylyre run`（`[WARN]`）。
+   或 `--steps-file path/to/test-steps.json`。可选：`--ability MainAbility`、`--skip-explore`、`--accept-cold-start`、`--skip-page-save`、`--dump-ui-only`、`--observe-ui`。
+4. **观察汇总决策树**（含「查看/汇总/所有/列表」类 NL）：
+   - touch 步骤**只写到导航终点**；**禁止**在 steps-file 写 `dump_ui`（STEP-002）
+   - run 成功后：`npm run adhoc-device-test -- --bundle <id> --dump-ui-only` → stderr `ADHOC_DUMP_UI_PATH=`
+   - 汇总：`npm run summarize-adhoc-dump -- --file <dump路径>` → `ADHOC_SUMMARY_JSON=`
+   - 或 touch-only NL：`--observe-ui --steps "…"`（复杂 NL → `ADHOC_NEED_AGENT_STEPS=1`）
+5. **进度锚点**：stderr 含 `ADHOC_PHASE=`、`ADHOC_RUN_DONE=`；run 结束后**先**交付 cases 摘要，再 dump/汇总。
 
 #### Hylyre 误导性报错对照（即席必读）
 
@@ -282,6 +278,16 @@ doc/features/{module-name}/test-plan.md
 | 「非 JSON」+ action 示例 | 步骤未被识别为 JSON（**常见：反引号**） | 去掉反引号；读 `plan-lint.json` |
 | `--plan` 不能、`--steps-file` 能跑 | Markdown 表格格式问题 | agent 修正 plan 或改用 `--steps-file` |
 | start_app 相关失败 | 重复冷启或嵌套 `action.type` | 删步骤内 start_app；预启交给 harness |
+| STEP-002 禁止 dump_ui | 观察型 NL 误写进 steps | 导航 run 后用 `--dump-ui-only`，勿写进 JSON |
+
+5. 使用保留目录名 **`_adhoc`**；**bundle** 必须用户声明。默认 **单 TC-001**；步骤 **裸 JSON 数组**、**不含 start_app**。
+6. **不跑** `harness-runner --feature _adhoc`；执行链 **`ensureHylyreReady`** → resolve ability →（可选）warmup → lint → run。**禁止**未 ensure 前让用户 pip install。
+7. **不写** receipt / verifier；交付 **`trace.json` cases[]** 摘要；观察型另交付 dump 汇总。
+8. **ensure 失败**：Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后 agent 重跑。
+9. **快照**：默认 run 后 `app page save`；`--skip-page-save` 或 `--observe-ui` 可跳过。
+10. **结果 SSOT**：`ADHOC_TRACE_FILE=` / `ADHOC_DERIVE_FILE=`；**禁止 glob timestamp**。
+11. **重复跑同一 bundle**：加 `--accept-cold-start` 跳过 warmup。
+12. **warmup 软失败**：仍继续 run（`[WARN]`）。
 
 ### Step 5: 生成测试报告（测试执行后）
 

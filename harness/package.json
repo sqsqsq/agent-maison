@@ -17,6 +17,8 @@
     "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
     "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts",
     "derive-adhoc-hylyre-hint": "ts-node scripts/derive-adhoc-hylyre-hint.ts",
+    "lint-adhoc-steps": "ts-node scripts/lint-adhoc-steps.ts",
+    "summarize-adhoc-dump": "ts-node scripts/summarize-adhoc-dump.ts",
     "adhoc-device-test": "ts-node scripts/adhoc-device-test.ts"
   },
   "dependencies": {

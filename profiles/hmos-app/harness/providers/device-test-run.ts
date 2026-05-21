@@ -102,6 +102,8 @@ export interface HylyreRunOptions {
   hypiumPageName?: string | null;
   deviceSn?: string;
   skipAssertExpected?: boolean;
+  /** When true, skip post-run hylyre app page save (adhoc fast path). */
+  skipPageSave?: boolean;
   appSnapshotCacheAbs: string;
   timeoutMs?: number;
 }
@@ -1349,15 +1351,17 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const blocked_count = cases.filter(c => c.status === '阻塞').length;
   const skipped_count = cases.filter(c => c.status === '跳过').length;
 
-  const pageSave = tryHylyreAppPageSaveAfterRun({
-    pythonPath: opts.pythonPath,
-    hypiumWorkDir,
-    bundleName: opts.bundleName,
-    deviceSn: opts.deviceSn,
-    appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
-    logPath,
-    abilityName: pageName,
-  });
+  const pageSave = opts.skipPageSave
+    ? { attempted: false, exitCode: null, durationMs: 0 }
+    : tryHylyreAppPageSaveAfterRun({
+        pythonPath: opts.pythonPath,
+        hypiumWorkDir,
+        bundleName: opts.bundleName,
+        deviceSn: opts.deviceSn,
+        appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
+        logPath,
+        abilityName: pageName,
+      });
 
   const runEndedAt = new Date().toISOString();
   const runDurationMs = Date.now() - runT0;

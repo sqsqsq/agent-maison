@@ -132,8 +132,10 @@
 
 ### 即席模式（`_adhoc`）
 
-- **Derive**（不跑机）：`derive-adhoc-hylyre-hint` 或 `adhoc-device-test --steps "…"` → schema 4（`natural_steps`、`selector_hints`；**无** `planned_steps`）；固定副本 `doc/features/_adhoc/testing/reports/derive-adhoc-last.json`。
-- **执行**（agent 已写 JSON）：`adhoc-device-test --bundle <id> --plan …` 或 `--steps-file …`（harness **不**翻译 NL）。
+- **Derive**（不跑机）：schema 4 含 `steps_file_contract`、`step_shape_catalog`、可选 `steps_file_minimal_example`（非 SSOT）、`observation_steps`。
+- **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。
+- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；`--dump-ui-only`；`--observe-ui --steps "…"`（touch-only 一站式）；`--skip-page-save`。
+- **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
 - **Plan lint 规则 ID**：STEP-001~006（根键 / 禁 CLI 名 / 禁 start_app / 禁反引号 / canonical WARN）+ NAV-001~003；即席跑机前 CLI 写 `plan-lint.json`。
 - 占位目录 **`doc/features/_adhoc/`**；不要求 `harness-runner testing --feature _adhoc` 文档门禁。

@@ -2,12 +2,10 @@
 /**
  * Ad-hoc device test orchestration (Skill 6 Step 4.B).
  *
- * Derive (no device run):
- *   npm run adhoc-device-test -- --bundle <id> --steps "打开->点击…"
- *
- * Execute (agent-authored Hylyre JSON):
- *   npm run adhoc-device-test -- --bundle <id> --plan path/to/test-plan.hylyre.md
- *   npm run adhoc-device-test -- --bundle <id> --steps-file path/to/test-steps.json
+ * Derive:     --bundle <id> --steps "打开->点击…"
+ * Execute:    --bundle <id> --plan <path> | --steps-file <path>
+ * Dump only:  --bundle <id> --dump-ui-only [--dump-ui-out <path>]
+ * Observe:    --bundle <id> --steps "…" --observe-ui  (touch-only NL auto-run + dump + summarize)
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,19 +33,43 @@ import {
 } from './utils/derived-hylyre-plan';
 import { buildAdhocDerivePayload } from './utils/adhoc-derive-payload';
 import { validatePlannedStepsArray } from './utils/hylyre-planned-step-lint';
+import { normalizePlannedStepsInput } from './utils/hylyre-steps-normalize';
 import {
   printAdhocAnchors,
   writeAdhocTracePlaceholder,
   type AdhocAnchors,
 } from './utils/adhoc-trace-placeholder';
 import { resolveAdhocInputPath } from './utils/adhoc-input-path';
+import { logAdhocPhase, logAdhocRunDone } from './utils/adhoc-phase-log';
+import { runAdhocDumpUi } from './utils/adhoc-dump-ui';
+import { summarizeAdhocDumpFile } from './utils/adhoc-summarize-dump';
 
 const ADHOC_FEATURE = '_adhoc';
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
 const argv = minimist(process.argv.slice(2), {
-  string: ['bundle', 'b', 'steps', 's', 'ability', 'a', 'plan', 'steps-file', 'project-root', 'p'],
-  boolean: ['skip-explore', 'skip-explore-warmup', 'accept-cold-start'],
+  string: [
+    'bundle',
+    'b',
+    'steps',
+    's',
+    'ability',
+    'a',
+    'plan',
+    'steps-file',
+    'project-root',
+    'p',
+    'dump-ui-out',
+  ],
+  boolean: [
+    'skip-explore',
+    'skip-explore-warmup',
+    'accept-cold-start',
+    'dump-ui-only',
+    'skip-page-save',
+    'observe-ui',
+    'no-normalize',
+  ],
 });
 
 function defaultProjectRoot(): string {
@@ -89,32 +111,168 @@ function listCachePageFiles(cacheAbs: string, bundle: string): string[] {
   }
 }
 
+function hylyreDirForRun(projectRoot: string): string {
+  const ts = timestampSlug();
+  const dir = path.join(
+    projectRoot,
+    'doc',
+    'features',
+    ADHOC_FEATURE,
+    'testing',
+    'reports',
+    ts,
+    'hylyre',
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function parseStepsFileWithNormalize(
+  filePath: string,
+  lintReportPath: string,
+  useNormalize: boolean,
+): { ok: true; steps: Record<string, unknown>[] } | { ok: false } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (e) {
+    console.error(`steps-file JSON 解析失败: ${(e as Error).message}`);
+    return { ok: false };
+  }
+  let toLint: unknown = parsed;
+  if (useNormalize) {
+    const norm = normalizePlannedStepsInput(parsed);
+    for (const w of norm.warnings) console.error(`[normalize] ${w}`);
+    if (norm.changed) {
+      const normPath = path.join(path.dirname(filePath), 'test-steps.normalized.json');
+      fs.writeFileSync(normPath, `${JSON.stringify(norm.steps, null, 2)}\n`, 'utf-8');
+      console.error(`ADHOC_NORMALIZED_FILE=${path.resolve(normPath)}`);
+      toLint = norm.steps;
+    }
+  }
+  const v = validatePlannedStepsArray(toLint);
+  if (!v.ok) {
+    fs.writeFileSync(
+      lintReportPath,
+      `${JSON.stringify({ ok: false, violations: v.violations, source: 'steps-file' }, null, 2)}\n`,
+      'utf-8',
+    );
+    console.error('steps-file lint BLOCKER:', lintReportPath);
+    for (const x of v.violations) {
+      console.error(`  [${x.rule_id}] #${x.index}: ${x.message}`);
+    }
+    return { ok: false };
+  }
+  return v;
+}
+
+function runSummarizeDump(dumpPath: string): string | null {
+  try {
+    const summary = summarizeAdhocDumpFile(dumpPath);
+    return JSON.stringify(summary);
+  } catch (e) {
+    console.error(`[warn] summarize 失败: ${(e as Error).message}`);
+    return null;
+  }
+}
+
 const projectRoot = path.resolve(argv['project-root'] || argv.p || defaultProjectRoot());
 const bundle = (argv.bundle || argv.b || '').trim();
 const stepsRaw = (argv.steps || argv.s || '').trim();
 const abilityOverride = (argv.ability || argv.a || '').trim();
 const planPathArg = (argv.plan || '').trim();
-const stepsFileArg = (argv['steps-file'] || '').trim();
+let stepsFileArg = (argv['steps-file'] || '').trim();
 let skipExplore = argv['skip-explore'] || argv['skip-explore-warmup'];
 const acceptColdStart = argv['accept-cold-start'] === true;
+const dumpUiOnly = argv['dump-ui-only'] === true;
+const skipPageSaveFlag = argv['skip-page-save'] === true;
+const observeUi = argv['observe-ui'] === true;
+const useNormalize = argv['no-normalize'] !== true;
+const dumpUiOutArg = (argv['dump-ui-out'] || '').trim();
+const deviceSn = process.env.HARNESS_HDC_TARGET;
 
 if (!bundle) {
   console.error(
-    '用法: npm run adhoc-device-test -- --bundle <id> (--steps "…" | --plan <path> | --steps-file <path>)',
+    '用法: npm run adhoc-device-test -- --bundle <id> (--steps "…" | --plan <path> | --steps-file <path> | --dump-ui-only | --observe-ui)',
   );
   process.exit(2);
 }
 
-const isDeriveOnly = Boolean(stepsRaw) && !planPathArg && !stepsFileArg;
-const isExecute = Boolean(planPathArg || stepsFileArg);
+const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
+const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
+const logPath = path.join(reportsBase, 'device-test-run.log');
 
-if (!isDeriveOnly && !isExecute) {
-  console.error('必须提供以下之一：');
-  console.error('  --steps "NL…"  （仅 derive hint，不跑机）');
-  console.error('  --plan path/to/test-plan.hylyre.md  （agent 已写派生计划）');
-  console.error('  --steps-file path/to/test-steps.json  （agent 已写 Hylyre JSON 数组）');
-  process.exit(2);
+// --- dump-ui-only mode ---
+if (dumpUiOnly) {
+  logAdhocPhase('dump_ui_only');
+  const ready = ensureHylyreReady({
+    projectRoot,
+    harnessRoot: HARNESS_ROOT,
+    feature: ADHOC_FEATURE,
+    phase: 'testing',
+  });
+  if (!ready.ok) {
+    console.error('ensureHylyreReady 失败');
+    for (const e of ready.errors) console.error(`  - ${e.message}`);
+    process.exit(1);
+  }
+  const dump = runAdhocDumpUi({
+    projectRoot,
+    bundle,
+    pythonPath: ready.pythonPath,
+    appSnapshotCacheAbs,
+    deviceSn,
+    outPath: dumpUiOutArg || undefined,
+    logPath,
+  });
+  console.error(`ADHOC_DUMP_UI_PATH=${dump.outPath}`);
+  if (!dump.ok) {
+    console.error('dump-ui 失败', dump.stderr.slice(0, 1500));
+    process.exit(1);
+  }
+  const summary = runSummarizeDump(dump.outPath);
+  if (summary) console.log(summary);
+  process.exit(0);
 }
+
+// --- observe-ui: prepare steps-file when NL is touch-only ---
+if (observeUi) {
+  if (!stepsRaw && !stepsFileArg) {
+    console.error('--observe-ui 需要 --steps "NL…" 或 --steps-file <path>');
+    process.exit(2);
+  }
+  logAdhocPhase('observe_ui_derive');
+  skipExplore = true;
+  if (stepsRaw && !stepsFileArg) {
+    const payload = buildAdhocDerivePayload(projectRoot, bundle, stepsRaw);
+    const derivePath = deriveLastJsonPath(projectRoot);
+    fs.mkdirSync(path.dirname(derivePath), { recursive: true });
+    fs.writeFileSync(derivePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+    console.error(`ADHOC_DERIVE_FILE=${path.resolve(derivePath)}`);
+    const minimal = payload.steps_file_minimal_example as
+      | { steps: Record<string, unknown>[] }
+      | null
+      | undefined;
+    if (!minimal?.steps?.length) {
+      console.error(
+        'ADHOC_NEED_AGENT_STEPS=1 — 复杂 NL 无法机械生成 touch 步骤；请读 derive contract 手写 steps-file',
+      );
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+      process.exit(2);
+    }
+    const hylyreDir = hylyreDirForRun(projectRoot);
+    const autoPath = path.join(hylyreDir, 'test-steps.json');
+    fs.writeFileSync(autoPath, `${JSON.stringify(minimal.steps, null, 2)}\n`, 'utf-8');
+    stepsFileArg = autoPath;
+    console.error(`ADHOC_AUTO_STEPS_FILE=${autoPath}`);
+  }
+}
+
+const effectiveSkipPageSave = skipPageSaveFlag || observeUi;
+
+const isDeriveOnly =
+  Boolean(stepsRaw) && !planPathArg && !stepsFileArg && !observeUi && !dumpUiOnly;
+const isExecute = Boolean(planPathArg || stepsFileArg);
 
 if (isDeriveOnly) {
   const payload = buildAdhocDerivePayload(projectRoot, bundle, stepsRaw);
@@ -126,30 +284,27 @@ if (isDeriveOnly) {
   process.exit(0);
 }
 
-if (acceptColdStart) {
-  skipExplore = true;
+if (!isExecute && !observeUi) {
+  console.error('必须提供以下之一：');
+  console.error('  --steps "NL…"  （仅 derive hint）');
+  console.error('  --plan / --steps-file  （执行）');
+  console.error('  --dump-ui-only  （当前屏 dump-ui）');
+  console.error('  --observe-ui --steps "…"  （touch-only 一站式）');
+  process.exit(2);
 }
 
-const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
+if (acceptColdStart) skipExplore = true;
+
 const cachePagesBefore = listCachePageFiles(appSnapshotCacheAbs, bundle);
 console.error(`ADHOC_CACHE_DIR=${appSnapshotCacheAbs}`);
 console.error(`ADHOC_AVAILABLE_PAGES=${listSnapshotPages(appSnapshotCacheAbs, bundle).join(',')}`);
 if (isAppSnapshotCacheEmpty(appSnapshotCacheAbs, bundle)) {
-  console.error('[info] snapshot_cache_empty=true — 执行模式将尝试 warmup（可加 --accept-cold-start 跳过）');
+  console.error('[info] snapshot_cache_empty=true — 可加 --accept-cold-start 跳过 warmup');
 }
 
-const ts = timestampSlug();
-const hylyreDir = path.join(
-  projectRoot,
-  'doc',
-  'features',
-  ADHOC_FEATURE,
-  'testing',
-  'reports',
-  ts,
-  'hylyre',
-);
-fs.mkdirSync(hylyreDir, { recursive: true });
+const hylyreDir = stepsFileArg
+  ? path.dirname(resolveAdhocInputPath(projectRoot, stepsFileArg))
+  : hylyreDirForRun(projectRoot);
 
 const derivedPlanPath = planPathArg
   ? resolveAdhocInputPath(projectRoot, planPathArg)
@@ -161,9 +316,6 @@ const reportOutPath = path.join(hylyreDir, 'test-report.md');
 const traceOutPath = path.join(hylyreDir, 'trace.json');
 const lintReportPath = path.join(hylyreDir, 'plan-lint.json');
 
-const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
-const logPath = path.join(reportsBase, 'device-test-run.log');
-
 const anchors: AdhocAnchors = {
   trace: traceOutPath,
   report: reportOutPath,
@@ -174,46 +326,31 @@ const anchors: AdhocAnchors = {
 
 let useStepsFile = false;
 
-if (stepsFileArg) {
+if (stepsFileArg || observeUi) {
   if (!fs.existsSync(stepsFilePath)) {
     console.error(`steps-file 不存在: ${stepsFilePath}`);
-    if (stepsFileArg && !path.isAbsolute(stepsFileArg)) {
-      console.error(
-        `  提示: 相对路径先试 cwd(${process.cwd()})，再试 projectRoot(${projectRoot})；推荐 doc/features/_adhoc/... 或绝对路径`,
-      );
-    }
     process.exit(2);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(stepsFilePath, 'utf-8'));
-  } catch (e) {
-    console.error(`steps-file JSON 解析失败: ${(e as Error).message}`);
-    process.exit(2);
-  }
-  const v = validatePlannedStepsArray(parsed);
+  logAdhocPhase('lint_steps_file');
+  const v = parseStepsFileWithNormalize(stepsFilePath, lintReportPath, useNormalize);
   if (!v.ok) {
-    fs.writeFileSync(
-      lintReportPath,
-      `${JSON.stringify({ ok: false, violations: v.violations, source: 'steps-file' }, null, 2)}\n`,
-      'utf-8',
-    );
     writeAdhocTracePlaceholder(traceOutPath, {
       feature: ADHOC_FEATURE,
       phase: 'testing',
       outcome: 'aborted',
       error_kind: 'plan_lint_blocker',
-      error_message: v.violations.map(x => `[${x.rule_id}] #${x.index}: ${x.message}`).join(' | '),
+      error_message: 'steps-file lint failed',
       bundle,
       artifacts: { derived_plan: stepsFilePath },
     });
     printAdhocAnchors(anchors);
-    console.error('steps-file lint BLOCKER:', lintReportPath);
-    for (const x of v.violations) {
-      console.error(`  [${x.rule_id}] #${x.index}: ${x.message}`);
-    }
     process.exit(2);
   }
+  fs.writeFileSync(
+    lintReportPath,
+    `${JSON.stringify({ ok: true, source: 'steps-file', violations: [] }, null, 2)}\n`,
+    'utf-8',
+  );
   useStepsFile = true;
 }
 
@@ -223,7 +360,7 @@ let lint: LintHylyrePlanResult = {
   nav: { ok: true, violations: [] },
 };
 
-if (planPathArg) {
+if (planPathArg && !observeUi) {
   if (!fs.existsSync(derivedPlanPath)) {
     console.error(`plan 不存在: ${derivedPlanPath}`);
     process.exit(2);
@@ -261,23 +398,11 @@ if (planPathArg) {
       artifacts: { derived_plan: derivedPlanPath },
     });
     printAdhocAnchors(anchors);
-    console.error('plan-lint BLOCKER:', lintReportPath);
-    for (const v of blockers) {
-      console.error(`  [${v.rule_id}] ${v.tc_id}: ${v.message}`);
-    }
     process.exit(2);
   }
-  if (blockers.length > 0 && useStepsFile) {
-    console.error('[warn] plan-lint BLOCKER — 将 fallback 到 --steps-file');
-  }
-} else if (useStepsFile) {
-  fs.writeFileSync(
-    lintReportPath,
-    `${JSON.stringify({ ok: true, source: 'steps-file', violations: [] }, null, 2)}\n`,
-    'utf-8',
-  );
 }
 
+logAdhocPhase('ensure');
 const ready = ensureHylyreReady({
   projectRoot,
   harnessRoot: HARNESS_ROOT,
@@ -285,7 +410,6 @@ const ready = ensureHylyreReady({
   phase: 'testing',
 });
 if (!ready.ok) {
-  const doctorLog = path.join(reportsBase, 'hylyre-doctor.log');
   writeAdhocTracePlaceholder(traceOutPath, {
     feature: ADHOC_FEATURE,
     phase: 'testing',
@@ -296,19 +420,11 @@ if (!ready.ok) {
     artifacts: { ensure_meta: anchors.ensureMeta },
   });
   printAdhocAnchors(anchors);
-  console.error('ensureHylyreReady 失败（agent 应在本对话内排查宿主环境后重跑本 CLI，勿让用户 pip install）');
-  for (const e of ready.errors) console.error(`  - [${e.kind ?? 'error'}] ${e.message}`);
-  console.error(`  hylyre-doctor.log: ${doctorLog}`);
-  console.error(`  hylyre-ready.meta.json: ${anchors.ensureMeta}`);
-  if (process.env.HYLYRE_PYTHON) {
-    console.error(
-      `  HYLYRE_PYTHON=${process.env.HYLYRE_PYTHON}（该环境不会自动 pip 对齐 vendor；可取消后重试）`,
-    );
-  }
+  console.error('ensureHylyreReady 失败');
   process.exit(1);
 }
 
-const deviceSn = process.env.HARNESS_HDC_TARGET;
+logAdhocPhase('resolve_ability');
 const ability = resolveMainAbilityForBundle({
   projectRoot,
   bundleName: bundle,
@@ -322,44 +438,37 @@ if (!ability.mainAbility) {
     phase: 'testing',
     outcome: 'aborted',
     error_kind: 'main_ability_unresolved',
-    error_message:
-      '无法解析 main ability（override / config map / app-meta / bm dump 均未命中）',
+    error_message: '无法解析 main ability',
     bundle,
     artifacts: { warmup_meta: anchors.warmupMeta },
   });
   printAdhocAnchors(anchors);
-  console.error('无法解析 main ability；请传 --ability MainAbility 或配置 tools.hylyre.bundle_abilities');
-  if (ability.bmDumpExcerpt) console.error(ability.bmDumpExcerpt.slice(0, 800));
   process.exit(1);
 }
-
-const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
 
 let warmupResult: SnapshotWarmupResult | null = null;
 let warmupDegraded = false;
 if (!skipExplore) {
+  logAdhocPhase('warmup');
   warmupResult = ensureAppSnapshotWarmup({
     projectRoot,
     bundleName: bundle,
     mainAbility: ability.mainAbility,
     pythonPath: ready.pythonPath,
     appSnapshotCacheAbs,
-    hypiumWorkDir,
+    hypiumWorkDir: ensureHypiumWorkDir(reportsBase),
     deviceSn,
     logPath,
   });
   if (!warmupResult.ok && !warmupResult.skipped) {
     warmupDegraded = true;
-    console.error(
-      '[WARN] snapshot warmup 失败:',
-      warmupResult.reason,
-      warmupResult.reasonKind ? `(reason_kind=${warmupResult.reasonKind})` : '',
-      '— 仍尝试运行 plan',
-    );
-    if (warmupResult.log) console.error(warmupResult.log);
+    console.error('[WARN] snapshot warmup 失败 — 仍尝试 run');
   }
 }
 
+const effectiveSkipPageSaveFinal = effectiveSkipPageSave;
+logAdhocPhase('run');
+const runT0 = Date.now();
 const run = runHylyreDeviceTest({
   projectRoot,
   harnessRoot: HARNESS_ROOT,
@@ -374,25 +483,49 @@ const run = runHylyreDeviceTest({
   hypiumPageName: ability.mainAbility,
   deviceSn,
   skipAssertExpected: true,
+  skipPageSave: effectiveSkipPageSaveFinal,
   appSnapshotCacheAbs,
 });
 
 let trace = run.trace ?? parseHylyreTrace(traceOutPath);
+logAdhocRunDone(Date.now() - runT0, trace?.cases?.length ?? 0);
+
+if (observeUi && run.ok) {
+  logAdhocPhase('dump_ui');
+  const dump = runAdhocDumpUi({
+    projectRoot,
+    bundle,
+    pythonPath: ready.pythonPath,
+    appSnapshotCacheAbs,
+    deviceSn,
+    logPath,
+  });
+  console.error(`ADHOC_DUMP_UI_PATH=${dump.outPath}`);
+  if (dump.ok) {
+    logAdhocPhase('summarize');
+    const summary = runSummarizeDump(dump.outPath);
+    if (summary) {
+      console.log(summary);
+      console.error(`ADHOC_SUMMARY_JSON=${summary}`);
+    }
+  }
+}
+
 if (!trace) {
   writeAdhocTracePlaceholder(traceOutPath, {
     feature: ADHOC_FEATURE,
     phase: 'testing',
     outcome: 'aborted',
     error_kind: 'run_crashed',
-    error_message: run.errors.map(e => e.message).join(' | ') || 'hylyre run 未产出有效 trace.json',
+    error_message: run.errors.map(e => e.message).join(' | ') || 'hylyre run 未产出 trace',
     bundle,
-    artifacts: {
-      run_meta: anchors.runMeta,
-      warmup_meta: anchors.warmupMeta,
-      ensure_meta: anchors.ensureMeta,
-    },
+    artifacts: { run_meta: anchors.runMeta },
   });
   trace = parseHylyreTrace(traceOutPath);
+}
+
+if (!effectiveSkipPageSave) {
+  logAdhocPhase('page_save');
 }
 
 const cachePagesAfter = listCachePageFiles(appSnapshotCacheAbs, bundle);
@@ -400,58 +533,28 @@ let cacheUpdated = false;
 let pageSaveExit: number | null = null;
 try {
   const runMeta = JSON.parse(fs.readFileSync(anchors.runMeta, 'utf-8')) as {
-    hylyre_page_save?: { exit_code?: number | null };
+    hylyre_page_save?: { exit_code?: number | null; attempted?: boolean };
   };
   pageSaveExit = runMeta.hylyre_page_save?.exit_code ?? null;
-  if (pageSaveExit === 0) {
-    cacheUpdated = true;
-  }
+  if (pageSaveExit === 0) cacheUpdated = true;
 } catch {
-  /* run_meta 缺失时回退 mtime 启发 */
+  /* ignore */
 }
-if (!cacheUpdated) {
-  if (cachePagesAfter.length > cachePagesBefore.length) {
-    cacheUpdated = true;
-  } else if (cachePagesAfter.length > 0 && cachePagesBefore.length > 0) {
-    const beforeMax = Math.max(...cachePagesBefore.map(p => fs.statSync(p).mtimeMs));
-    const afterMax = Math.max(...cachePagesAfter.map(p => fs.statSync(p).mtimeMs));
-    cacheUpdated = afterMax > beforeMax;
-  } else if (cachePagesAfter.length > 0 && cachePagesBefore.length === 0) {
-    cacheUpdated = true;
-  }
-}
-if (pageSaveExit === 0 && !cacheUpdated) {
-  console.error(
-    '[warn] hylyre_page_save exit=0 但 pages/ mtime 未变（可能末屏非 home slug）；见 device-test-run.meta.json',
-  );
-}
-console.error(`ADHOC_PAGE_SAVE_EXIT=${pageSaveExit ?? 'null'}`);
+if (!cacheUpdated && cachePagesAfter.length > cachePagesBefore.length) cacheUpdated = true;
+
+console.error(`ADHOC_PAGE_SAVE_EXIT=${effectiveSkipPageSaveFinal ? 'skipped' : String(pageSaveExit ?? 'null')}`);
 console.error(`ADHOC_CACHE_UPDATED=${cacheUpdated}`);
-console.error(`ADHOC_CACHE_PAGES=${listSnapshotPages(appSnapshotCacheAbs, bundle).join(',')}`);
 
 console.log(
   JSON.stringify(
     {
       ok: run.ok && !warmupDegraded,
-      warmup_degraded: warmupDegraded,
-      warmup: warmupResult
-        ? {
-            ok: warmupResult.ok,
-            skipped: warmupResult.skipped,
-            reason: warmupResult.reason ?? null,
-            reason_kind: warmupResult.reasonKind ?? null,
-            meta: warmupResult.metaPath ?? anchors.warmupMeta,
-          }
-        : null,
+      observe_ui: observeUi,
+      skip_page_save: effectiveSkipPageSaveFinal,
       bundle,
       main_ability: ability.mainAbility,
-      main_ability_source: ability.source,
-      plan: planPathArg ? derivedPlanPath : null,
       steps_file: useStepsFile ? stepsFilePath : null,
-      report: reportOutPath,
       trace: traceOutPath,
-      lint: lintReportPath,
-      cache_updated: cacheUpdated,
       cases: trace?.cases ?? [],
     },
     null,
