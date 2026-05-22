@@ -456,6 +456,34 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 
 **验证**：`cd framework/harness && npm test`；`npx tsc --noEmit -p tsconfig.json`。
 
+### v2.10：exploration_strategy — default-on + 复合评分 + sequential 等价
+
+适用：大型代码库（单模块 10 万+ LOC）下，原 `require_subagent_when_*` 单一计数阈值不足以触发深度探索。
+
+**核心变更**：
+
+| 机制 | 说明 |
+|------|------|
+| `exploration_strategy` | phase-rules 新段；与 `exploration_thresholds` 并存 |
+| design/coding **default-on** | 默认须 subagent；**L1 trivial**（rename/typo + loc<30 + 单层）可豁免 |
+| prd/review/ut **scoring** | 复合评分（module_loc / scope / cross_layer / api_surface / fan_out），≥60 须 subagent |
+| frontmatter 变更信号 | `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports` |
+| sequential 等价 | 无 subagent 时用 `sequential`，量化阈值 × `sequential_multiplier`（默认 2.0） |
+| `fan-out-scanner.ts` | 静态估算 in-scope 模块 import fan-out |
+
+**向后兼容**：
+
+- 无 `exploration_strategy` 段 → 回落 v2.9 `require_subagent_when_*` legacy 逻辑
+- schema 1.1.0 不变；新 frontmatter 字段 optional（缺失时按非 trivial 处理）
+
+**实例维护者**：
+
+1. vendor framework 后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
+2. 新 feature 的 `context-exploration.md` 填写变更信号 frontmatter
+3. design/coding 默认 `exploration_mode: subagent`；Chrys/generic 用 sequential + 更高量化阈值
+
+**验证**：`cd framework/harness && npm test`
+
 ### v3.2：用户确认 UX SSOT + 静态 lint
 
 新增 [framework/skills/reference/user-confirmation-ux.md](skills/reference/user-confirmation-ux.md) 与 [confirmation-registry.yaml](skills/reference/confirmation-registry.yaml)。

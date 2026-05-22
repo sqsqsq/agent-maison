@@ -77,6 +77,7 @@ export function mergePhaseRuleSpec(base: PhaseRuleSpec, overlay: Partial<PhaseRu
       ...(base.exploration_thresholds ?? {}),
       ...(overlay.exploration_thresholds ?? {}),
     },
+    exploration_strategy: overlay.exploration_strategy ?? base.exploration_strategy,
   };
 }
 

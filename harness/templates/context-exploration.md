@@ -18,6 +18,12 @@ key_inputs_read:
 source_code_paths: []
 # subagent | sequential | minimal（复杂度越阈时禁止 minimal）
 exploration_mode: "sequential"
+# 变更意图（v2.10 exploration_strategy 分类器输入）
+change_intent: "feature"
+estimated_loc_delta: 0
+touches_layers: []
+adds_new_exports: false
+single_function_scope: false
 # 本次探索解锁、即将写入主产物的决策（1:1 对应后续章节/文件）
 decisions_unlocked: []
 subagents_used: ""

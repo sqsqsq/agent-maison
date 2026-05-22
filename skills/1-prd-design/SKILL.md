@@ -168,7 +168,7 @@
 
 1. **读本阶段 SSOT**：`doc/glossary.yaml`、`doc/module-catalog.yaml`、`doc/architecture.md`；用户视觉/文本输入；相关 feature 既有实现（**至少 `source_code_paths` 含 2 个源码文件**）。
 2. **宿主路径**：按 Step 0 `profile-addendum.md`「Context Exploration」+ profile `exploration-snippets` 声明的必查路径（见 `framework/profiles/<profile>/harness/exploration-snippets.yaml`）。
-3. **`in_scope_modules` ≥ 3 时 MUST** 启动 explore 子 agent（`exploration_mode: subagent`）。
+3. **frontmatter 变更信号**：填写 `change_intent`、`estimated_loc_delta`、`touches_layers`、`adds_new_exports`；harness 按 `exploration_strategy` **复合评分**（模块 LOC / scope / 跨层 / fan-out）决定是否须 subagent；评分 ≥ 60 时 MUST explore 子 agent（`exploration_mode: subagent`），无 subagent 能力时用 `sequential` + 倍率阈值。
 
 #### 2.5.2 收集 Code Facts
 

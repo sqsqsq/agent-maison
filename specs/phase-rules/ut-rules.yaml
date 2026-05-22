@@ -36,3 +36,40 @@ exploration_thresholds:
   exploration_mode_allowed:
     - subagent
     - sequential
+
+# --------------------------------------------------------------------------
+# Context Exploration 触发策略（v2.10 — 复合评分）
+# --------------------------------------------------------------------------
+exploration_strategy:
+  default_mode: sequential
+  scoring:
+    threshold: 60
+    dimensions:
+      - id: module_loc
+        weight: 25
+        tiers:
+          - { gte: 50000, score: 25 }
+          - { gte: 20000, score: 15 }
+          - { gte: 5000, score: 8 }
+      - id: scope_breadth
+        weight: 20
+        tiers:
+          - { gte: 3, score: 20 }
+          - { gte: 2, score: 12 }
+          - { gte: 1, score: 5 }
+      - id: cross_layer
+        weight: 20
+        signal: touches_multiple_outer_layers
+        score_if_true: 20
+      - id: new_api_surface
+        weight: 15
+        signal: adds_exports_or_public_api
+        score_if_true: 15
+      - id: dependency_fan_out
+        weight: 20
+        tiers:
+          - { gte: 10, score: 20 }
+          - { gte: 5, score: 12 }
+          - { gte: 2, score: 5 }
+  sequential_multiplier: 2.0
+  sequential_min_files_inspected_add: 5

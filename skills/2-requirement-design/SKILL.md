@@ -140,7 +140,7 @@
 
 1. **必读**：本 feature `PRD.md`、`acceptance.yaml`、`doc/architecture.md`、`doc/module-catalog.yaml`、`framework.config.json`（`architecture` 段）；Step 2 中规划打开的**全部源码路径**（`source_code_paths` ≥ 5）。
 2. **宿主路径**：Step 0 addendum + profile `exploration-snippets` 声明的必查路径（见 `framework/profiles/<profile>/harness/exploration-snippets.yaml`）。
-3. **`in_scope_modules` ≥ 2 时 MUST** 并行 explore 子 agent（`exploration_mode: subagent`）。
+3. **默认 subagent**（`exploration_strategy.default_mode`）：design 阶段**默认 MUST** explore 子 agent；**仅** L1 trivial（`change_intent` 为 rename/typo 等 + `estimated_loc_delta` < 30 + 单层）可豁免。无 subagent 时用 `sequential`，量化阈值 ×2。
 
 #### 2.3.2 收集 Code Facts
 

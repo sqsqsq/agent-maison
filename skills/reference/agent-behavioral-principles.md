@@ -17,7 +17,7 @@
 1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘 `context-exploration.md`（`schema_version: "1.1.0"`）。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；harness 会验证磁盘存在。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
-4. **复杂度越阈时必须启动 explore 子 agent**（见各 SKILL Research Sub-Phase 与 `exploration_thresholds`）。
+4. **探索深度由 `exploration_strategy` 决定**（v2.10）：design/coding **默认 subagent**（仅 L1 trivial 可豁免）；prd/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
 5. **不确定时停下来问用户**，禁止静默猜测后继续写 PRD/design/code。
 
 ### 各阶段反例 / 正例
@@ -115,7 +115,7 @@
 [ ] source_code_paths 中每个路径在仓库中存在
 [ ] Code Facts 表格 ≥ 本阶段 min_code_facts
 [ ] key_inputs_read 覆盖 phase-rules + profile 要求的子串
-[ ] 复杂度越阈时已启动 explore 子 agent（exploration_mode ≠ minimal）
+[ ] 须深度探索时已启动 explore 子 agent 或 sequential 等价路径（见 exploration_strategy / frontmatter 变更信号）
 [ ] decisions_unlocked 列出即将做的决策，且每条有 Code Facts 支撑
 [ ] ready_to_produce = true 且 has_blocker_coverage_risk = false
 ```

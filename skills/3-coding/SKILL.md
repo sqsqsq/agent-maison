@@ -163,7 +163,7 @@
 在**写入第一个实现层源文件之前**（即进入 **Step 3** 之前），必须完成本 Step。
 
 1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、architecture DSL、跨模块出口；**打开 contracts 涉及的已有源码**（`source_code_paths` ≥ 3）。
-2. **`contracts.yaml > files` > 5 时 MUST** explore 子 agent 分片阅读。
+2. **默认 subagent**：coding 阶段**默认 MUST** explore 子 agent 分片阅读；**仅** L1 trivial 可豁免（见 `change_intent` / `estimated_loc_delta`）。无 subagent 时用 `sequential` + 倍率阈值。
 3. 落盘 `doc/features/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空。
 
 ### Step 3: 逐模块逐层生成代码（强制逐文件 Lint 门禁）

@@ -82,6 +82,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
+  { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

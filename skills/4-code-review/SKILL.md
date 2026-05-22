@@ -119,7 +119,7 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 在**逐步执行审查清单（Step 2）之前**，必须完成本 Step。
 
 1. **必读**：Step 1 列出的**全部待审源文件**（须 Read 每个文件）；`design.md`、`contracts.yaml`、`acceptance.yaml`、`coding-rules.yaml`。
-2. **待审文件 > 8 时 MUST** explore 子 agent。
+2. **复合评分触发**：填写 frontmatter 变更信号；harness 评分 ≥ 60 或 L4 架构级变更时 MUST explore 子 agent；否则 sequential 须满足量化阈值。
 3. 落盘 `doc/features/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**，`source_code_paths` 覆盖待审文件。
 
 ### Step 2: 系统化审查

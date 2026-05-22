@@ -9,8 +9,11 @@ import { receiptDirPath, loadFrameworkConfig } from '../../config';
 import { CheckResult } from './types';
 import type { ExplorationThresholds, PhaseRuleSpec } from './types';
 import { fillCompatMessage, SUGGESTION_CONTEXT_EXPLORATION_MISSING } from '../../compat-messages';
-import { parseScope } from './scope-parser';
-import { SpecLoader } from './spec-loader';
+import {
+  applySequentialMultiplier,
+  determineExplorationMode,
+  resolveExplorationStrategy,
+} from './exploration-strategy';
 
 export type ContextExplorationPhase = 'prd' | 'design' | 'coding' | 'review' | 'ut';
 
@@ -84,6 +87,11 @@ export interface ContextExplorationFrontmatter {
   exploration_mode?: string;
   decisions_unlocked?: unknown;
   legacy_backfill?: boolean;
+  change_intent?: unknown;
+  estimated_loc_delta?: unknown;
+  touches_layers?: unknown;
+  adds_new_exports?: unknown;
+  single_function_scope?: unknown;
 }
 
 export interface ContextExplorationCheckOptions {
@@ -213,67 +221,6 @@ function countCodeFactsRows(body: string): number {
   return count;
 }
 
-function countInScopeModules(projectRoot: string, feature: string): number {
-  const loader = new SpecLoader(projectRoot);
-  const prd = loader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
-  if (!prd) return 0;
-  const { scope } = parseScope(prd);
-  return scope?.in_scope_modules?.length ?? 0;
-}
-
-function countContractFiles(projectRoot: string, feature: string): number {
-  const loader = new SpecLoader(projectRoot);
-  const raw = loader.loadFeatureDoc(projectRoot, feature, 'contracts.yaml');
-  if (!raw) return 0;
-  try {
-    const parsed = YAML.parse(raw) as { files?: unknown[] };
-    return Array.isArray(parsed.files) ? parsed.files.length : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function countUseCases(projectRoot: string, feature: string): number {
-  const loader = new SpecLoader(projectRoot);
-  const raw = loader.loadFeatureDoc(projectRoot, feature, 'use-cases.yaml');
-  if (!raw) return 0;
-  try {
-    const parsed = YAML.parse(raw) as { use_cases?: unknown[] };
-    return Array.isArray(parsed.use_cases) ? parsed.use_cases.length : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function requiresSubagent(
-  phase: ContextExplorationPhase,
-  projectRoot: string,
-  feature: string,
-  thresholds: ExplorationThresholds,
-): boolean {
-  if (phase === 'prd' || phase === 'design') {
-    const gte = thresholds.require_subagent_when_scope_gte;
-    if (gte === undefined || gte <= 0) return false;
-    return countInScopeModules(projectRoot, feature) >= gte;
-  }
-  if (phase === 'coding') {
-    const gt = thresholds.require_subagent_when_contract_files_gt;
-    if (gt === undefined) return false;
-    return countContractFiles(projectRoot, feature) > gt;
-  }
-  if (phase === 'review') {
-    const gt = thresholds.require_subagent_when_review_files_gt;
-    if (gt === undefined) return false;
-    return countContractFiles(projectRoot, feature) > gt;
-  }
-  if (phase === 'ut') {
-    const gt = thresholds.require_subagent_when_use_cases_gt;
-    if (gt === undefined) return false;
-    return countUseCases(projectRoot, feature) > gt;
-  }
-  return false;
-}
-
 function runQuantitativeChecks(
   projectRoot: string,
   feature: string,
@@ -284,13 +231,27 @@ function runQuantitativeChecks(
   options?: ContextExplorationCheckOptions,
 ): CheckResult[] {
   const results: CheckResult[] = [];
-  const thresholds = resolveThresholds(phase, options?.phaseRule);
+  let thresholds = resolveThresholds(phase, options?.phaseRule);
   const profileName =
     options?.profileName ?? loadFrameworkConfig(projectRoot).project_profile?.name ?? 'hmos-app';
 
+  const strategy = resolveExplorationStrategy(phase, options?.phaseRule);
+  const decision = determineExplorationMode(
+    phase,
+    projectRoot,
+    feature,
+    fm,
+    thresholds,
+    options?.phaseRule,
+  );
+  const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
+
+  if (decision.applySequentialMultiplier && strategy) {
+    thresholds = applySequentialMultiplier(thresholds, strategy);
+  }
+
   const sourcePaths = normalizeStringArray(fm.source_code_paths);
   const decisions = normalizeStringArray(fm.decisions_unlocked);
-  const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
   const subagents = String(fm.subagents_used ?? '').trim().toLowerCase();
   const filesInspected = Number(fm.files_inspected_count ?? 0);
   const searches = Number(fm.searches_performed_estimate ?? 0);
@@ -394,27 +355,44 @@ function runQuantitativeChecks(
     });
   }
 
-  if (requiresSubagent(phase, projectRoot, feature, thresholds)) {
+  if (decision.requiresSubagent) {
     if (mode === 'minimal') {
       results.push({
         id: 'context_exploration_subagent_required',
         category: 'structure',
-        description: '复杂度越阈时 exploration_mode 不得为 minimal',
+        description: '须深度探索时 exploration_mode 不得为 minimal',
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: '本 feature/阶段复杂度已触发子 agent 探索要求',
+        details: `${decision.reason}（complexity=${decision.complexity}${
+          decision.score !== undefined ? `, score=${decision.score}` : ''
+        }）`,
         affected_files: [relFromRoot],
       });
-    }
-    if (!subagents || subagents === 'not_available' || subagents === 'not available') {
+    } else if (mode === 'subagent') {
+      if (!subagents || subagents === 'not_available' || subagents === 'not available') {
+        results.push({
+          id: 'context_exploration_subagents_used',
+          category: 'structure',
+          description: '须 subagent 探索时 subagents_used 不得为 not_available',
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: `subagents_used="${fm.subagents_used ?? ''}"；${decision.reason}`,
+          suggestion: '启动 explore 子 agent 并在 subagents_used 简述分域范围。',
+          affected_files: [relFromRoot],
+        });
+      }
+    } else if (mode === 'sequential') {
+      // sequential 等价路径：已通过 applySequentialMultiplier 抬高量化阈值，不要求 subagents_used
+    } else if (!mode) {
       results.push({
-        id: 'context_exploration_subagents_used',
+        id: 'context_exploration_mode_required',
         category: 'structure',
-        description: '复杂度越阈时 subagents_used 不得为 not_available',
+        description: '须深度探索时须声明 exploration_mode 为 subagent 或 sequential',
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: `subagents_used="${fm.subagents_used ?? ''}"`,
-        suggestion: '启动 explore 子 agent 并在 subagents_used 简述分域范围。',
+        details: decision.reason,
+        suggestion:
+          '有 subagent 能力时用 exploration_mode: subagent；否则 sequential（量化阈值已按倍率抬高）。',
         affected_files: [relFromRoot],
       });
     }

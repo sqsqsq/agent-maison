@@ -91,6 +91,69 @@ export interface ExplorationThresholds {
   phase_input_snippets_extra?: string[];
 }
 
+/** L1–L4 变更复杂度（exploration_strategy 分类器输出） */
+export type ExplorationComplexityLevel =
+  | 'L1_trivial'
+  | 'L2_small'
+  | 'L3_moderate'
+  | 'L4_architectural';
+
+export interface ScoringTier {
+  gte: number;
+  score: number;
+}
+
+export interface ScoringDimension {
+  id: string;
+  weight?: number;
+  tiers?: ScoringTier[];
+  signal?: string;
+  score_if_true?: number;
+}
+
+export interface TrivialExemptionCondition {
+  intent?: string[];
+  prd_loc_delta_lt?: number;
+  single_function_scope?: boolean;
+}
+
+export interface ExplorationScoringConfig {
+  threshold: number;
+  dimensions: ScoringDimension[];
+}
+
+/** phase-rules exploration_strategy 段（v2.10 default-on + scoring） */
+export interface ExplorationStrategy {
+  default_mode?: 'subagent' | 'sequential' | 'minimal';
+  trivial_exemption?: {
+    enabled?: boolean;
+    conditions_any?: TrivialExemptionCondition[];
+  };
+  scoring?: ExplorationScoringConfig;
+  sequential_multiplier?: number;
+  sequential_min_files_inspected_add?: number;
+}
+
+/** determineExplorationMode 决策结果 */
+export interface ExplorationModeDecision {
+  requiresSubagent: boolean;
+  applySequentialMultiplier: boolean;
+  complexity: ExplorationComplexityLevel;
+  score?: number;
+  scoreThreshold?: number;
+  reason: string;
+  usedLegacyFallback: boolean;
+}
+
+/** context-exploration frontmatter 变更意图字段（schema 1.1.0+） */
+export interface ExplorationChangeSignals {
+  change_intent?: string;
+  estimated_loc_delta?: number;
+  touches_layers?: string[];
+  adds_new_exports?: boolean;
+  single_function_scope?: boolean;
+}
+
 /** 阶段级规约 (phase-rules/*.yaml) */
 export interface PhaseRuleSpec {
   phase: string;
@@ -100,6 +163,7 @@ export interface PhaseRuleSpec {
   semantic_checks: Record<string, SemanticCheck>;
   traceability_checks: Record<string, TraceabilityCheck>;
   exploration_thresholds?: ExplorationThresholds;
+  exploration_strategy?: ExplorationStrategy;
 }
 
 interface ResourceEntry {

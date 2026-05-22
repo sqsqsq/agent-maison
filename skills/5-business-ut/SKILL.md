@@ -130,7 +130,7 @@
 在输出下文 **「UT 规划清单」** 之前，必须完成本 Step 并落盘 **`doc/features/<feature>/ut/context-exploration.md`**（**`schema_version: "1.1.0"`**）。
 
 1. **必读**：`PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、被测命名入口源码（`source_code_paths` ≥ 3）。
-2. **use_cases > 2 时 MUST** explore 子 agent。
+2. **复合评分触发**：填写 frontmatter 变更信号；评分 ≥ 60 或 L4 时 MUST explore 子 agent；无 subagent 时用 sequential + 倍率阈值。
 3. Code Facts 须覆盖 `data_boundaries` 与被测 handler/Flow。
 
 先读取全部上游输入：
