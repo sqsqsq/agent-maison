@@ -64,5 +64,4 @@ notes: |
   - hooks 脚本依赖 `framework/harness/state/.current-phase.json` 与
     `framework/harness/scripts/check-receipt.ts`，两者都是 framework 共通资产，
     与 adapter 解耦；因此 hook 脚本不需要在不同 adapter 间复制逻辑。
-  - `.claude/rules/confirmation-ux.md`：Claude 确认 UX SHOULD（AskUserQuestion + portable）；
-    与 CLAUDE.md 同优先级加载；init 步骤级 BLOCKER 仍在 Skill 00。
+  - `.claude/rules/confirmation-ux.md`：Claude 确认 UX **BLOCKER**（AskUserQuestion + portable + widget-options/）；与 CLAUDE.md 同优先级；init adapter 仍用 Skill 00 adapter-widget-options SSOT。

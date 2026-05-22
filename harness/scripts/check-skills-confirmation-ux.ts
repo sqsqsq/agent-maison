@@ -19,6 +19,30 @@ const SCAN_GLOBS = [
   'framework/profiles',
 ] as const;
 
+const CLAUDE_TEMPLATES_REL = 'framework/agents/claude/templates';
+
+const CLAUDE_WIDGET_OPTION_FILES = [
+  'rules/widget-options/index.md',
+  'rules/widget-options/skill0-catalog-options.md',
+  'rules/widget-options/skill1-prd-options.md',
+  'rules/widget-options/skill2-design-options.md',
+  'rules/widget-options/skill3-coding-options.md',
+  'rules/widget-options/skill4-review-options.md',
+  'rules/widget-options/skill5-ut-options.md',
+  'rules/widget-options/skill6-testing-options.md',
+] as const;
+
+const CLAUDE_SLASH_WIDGET_COMMANDS = [
+  'commands/prd-design.md',
+  'commands/requirement-design.md',
+  'commands/coding.md',
+  'commands/code-review.md',
+  'commands/business-ut.md',
+  'commands/device-testing.md',
+  'commands/catalog-bootstrap.md',
+  'commands/glossary-bootstrap.md',
+] as const;
+
 function listMarkdownFiles(root: string, sub: string): string[] {
   const base = path.join(root, sub);
   if (!fs.existsSync(base)) return [];
@@ -94,6 +118,147 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
 
   if (registryIds.length < 20) {
     results.push(warn('registry_size', `confirmation-registry 仅 ${registryIds.length} 条，预期 ≥20`, [REGISTRY_REL]));
+  }
+
+  results.push(...lintClaudeConfirmationTemplates(projectRoot));
+
+  return results;
+}
+
+function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const base = path.join(projectRoot, CLAUDE_TEMPLATES_REL);
+  if (!fs.existsSync(base)) {
+    return results;
+  }
+
+  for (const rel of CLAUDE_WIDGET_OPTION_FILES) {
+    const abs = path.join(base, rel);
+    const posix = `${CLAUDE_TEMPLATES_REL}/${rel}`.replace(/\\/g, '/');
+    if (!fs.existsSync(abs)) {
+      results.push(blocker(
+        'claude_widget_options_missing',
+        `Claude widget-options SSOT 缺失: ${posix}`,
+        [posix],
+      ));
+    }
+  }
+
+  const confirmUxPath = path.join(base, 'rules/confirmation-ux.md');
+  const confirmUxRel = `${CLAUDE_TEMPLATES_REL}/rules/confirmation-ux.md`;
+  if (!fs.existsSync(confirmUxPath)) {
+    results.push(blocker(
+      'claude_confirmation_ux_missing',
+      'Claude confirmation-ux.md 模板缺失',
+      [confirmUxRel],
+    ));
+    return results;
+  }
+
+  const confirmUx = fs.readFileSync(confirmUxPath, 'utf-8');
+  if (/非 Skill 逐步 BLOCKER/.test(confirmUx) || /\*\*SHOULD\*\*/.test(confirmUx)) {
+    results.push(blocker(
+      'claude_confirmation_ux_should_only',
+      'confirmation-ux.md 仍为 SHOULD；须为 Claude 会话级 BLOCKER',
+      [confirmUxRel],
+    ));
+  }
+  if (!confirmUx.includes('AskUserQuestion')) {
+    results.push(blocker(
+      'claude_confirmation_ux_no_ask_user',
+      'confirmation-ux.md 须声明 AskUserQuestion',
+      [confirmUxRel],
+    ));
+  }
+  if (!confirmUx.includes('widget-options/index.md')) {
+    results.push(blocker(
+      'claude_confirmation_ux_no_index',
+      'confirmation-ux.md 须链 widget-options/index.md',
+      [confirmUxRel],
+    ));
+  }
+  if (!confirmUx.includes('../../framework/skills/reference/user-confirmation-ux.md')) {
+    results.push(blocker(
+      'claude_confirmation_ux_bad_ssot_link',
+      'confirmation-ux.md SSOT 链接须为部署后路径 ../../framework/skills/reference/user-confirmation-ux.md',
+      [confirmUxRel],
+    ));
+  }
+  const adapterWidgetRelFromRules = '../../framework/skills/00-framework-init/templates/adapter-widget-options.md';
+  if (!confirmUx.includes(adapterWidgetRelFromRules)) {
+    results.push(blocker(
+      'claude_confirmation_ux_bad_adapter_widget_link',
+      `confirmation-ux.md init adapter 链接须为部署后路径 ${adapterWidgetRelFromRules}`,
+      [confirmUxRel],
+    ));
+  }
+  if (/\.\.\/\.\.\/\.\.\/skills\//.test(confirmUx)) {
+    results.push(blocker(
+      'claude_confirmation_ux_legacy_skills_link',
+      'confirmation-ux.md 不得使用 ../../../skills/ 旧路径（缺 framework/ 段）',
+      [confirmUxRel],
+    ));
+  }
+
+  const widgetIndexPath = path.join(base, 'rules/widget-options/index.md');
+  const widgetIndexRel = `${CLAUDE_TEMPLATES_REL}/rules/widget-options/index.md`;
+  if (fs.existsSync(widgetIndexPath)) {
+    const widgetIndex = fs.readFileSync(widgetIndexPath, 'utf-8');
+    const adapterFromWidgetIndex = '../../../framework/skills/00-framework-init/templates/adapter-widget-options.md';
+    if (!widgetIndex.includes(adapterFromWidgetIndex)) {
+      results.push(blocker(
+        'claude_widget_index_bad_adapter_link',
+        `widget-options/index.md init 链接须为部署后路径 ${adapterFromWidgetIndex}`,
+        [widgetIndexRel],
+      ));
+    }
+    if (/\.\.\/\.\.\/\.\.\/\.\.\/skills\//.test(widgetIndex)) {
+      results.push(blocker(
+        'claude_widget_index_legacy_skills_link',
+        'widget-options/index.md 不得使用 ../../../../skills/ 旧路径',
+        [widgetIndexRel],
+      ));
+    }
+  }
+
+  for (const rel of CLAUDE_SLASH_WIDGET_COMMANDS) {
+    const abs = path.join(base, rel);
+    const posix = `${CLAUDE_TEMPLATES_REL}/${rel}`.replace(/\\/g, '/');
+    if (!fs.existsSync(abs)) {
+      results.push(blocker(
+        'claude_slash_missing',
+        `Claude slash 模板缺失: ${posix}`,
+        [posix],
+      ));
+      continue;
+    }
+    const content = fs.readFileSync(abs, 'utf-8');
+    if (!content.includes('AskUserQuestion') || !content.includes('BLOCKER')) {
+      results.push(blocker(
+        'claude_slash_no_widget_blocker',
+        `${posix} 须含 AskUserQuestion Widget BLOCKER 段`,
+        [posix],
+      ));
+    }
+    if (!content.includes('../rules/widget-options/')) {
+      results.push(blocker(
+        'claude_slash_no_widget_options_ref',
+        `${posix} 须链 ../rules/widget-options/ SSOT`,
+        [posix],
+      ));
+    }
+  }
+
+  const initSlash = path.join(base, 'commands/framework-init.md');
+  if (fs.existsSync(initSlash)) {
+    const initContent = fs.readFileSync(initSlash, 'utf-8');
+    if (initContent.includes('../rules/widget-options/skill1-prd-options.md')) {
+      results.push(blocker(
+        'claude_init_slash_polluted',
+        'framework-init.md 不得注入 Skills 1–6 widget-options（init 自有 adapter-widget-options）',
+        [`${CLAUDE_TEMPLATES_REL}/commands/framework-init.md`],
+      ));
+    }
   }
 
   return results;

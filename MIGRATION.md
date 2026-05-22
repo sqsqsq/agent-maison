@@ -537,6 +537,29 @@ adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agen
 
 **验证**：`cd framework/harness && npm test`；`npx ts-node harness-runner.ts --phase docs`。
 
+### v3.4：Claude AskUserQuestion 全覆盖（Track B+ · Skills 1–6 · agents-only）
+
+**动机**：v3.3 仅 init 有 widget BLOCKER；Skills 1–6 的 20 个 registry 确认点仍只有 portable 文本菜单，Claude Code 下 agent 常跳过 `AskUserQuestion`。
+
+**framework 侧变更**（仅 `framework/agents/claude/templates/` + harness lint + 文档；**不改** `framework/skills/**`、**不改**实例 `.claude/**`）：
+
+1. [agents/claude/templates/rules/confirmation-ux.md](agents/claude/templates/rules/confirmation-ux.md) — SHOULD → **BLOCKER**；registry 20 点索引；SSOT 链接按部署后 `.claude/rules/` 路径（`../../framework/skills/...`）。
+2. 新建 [agents/claude/templates/rules/widget-options/](agents/claude/templates/rules/widget-options/)（index + skill0–6 共 8 文件）— AskUserQuestion label SSOT。
+3. 8 个 Skill slash（`prd-design` … `glossary-bootstrap`）注入 Widget BLOCKER 段；**不改** `framework-init.md`。
+4. [harness/scripts/check-skills-confirmation-ux.ts](harness/scripts/check-skills-confirmation-ux.ts) — 增量 lint Claude templates。
+
+**实例维护者**（vendor framework 后 **自行** UPDATE init；agent 不代写 `.claude/`）：
+
+```text
+/framework-init   # UPDATE；Step 0.3 对 rules/commands 走 Q3 确认覆盖
+```
+
+预期下发：`.claude/rules/confirmation-ux.md`、`.claude/rules/widget-options/*.md`、8 个 skill slash。
+
+验收：confirmation-ux 含 BLOCKER；PRD Step 1.5 出现 AskUserQuestion + portable 脚注；init slash 行为不变。
+
+**验证**：`cd framework/harness && npm test`。
+
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。

@@ -27,6 +27,14 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!sizeWarn, 'registry too small');
     },
   },
+  {
+    name: 'lintConfirmationUx: Claude templates widget BLOCKER',
+    run: () => {
+      const out = lintConfirmationUx({ projectRoot: REPO_ROOT });
+      const fails = out.filter(r => r.status === 'FAIL' && r.id.startsWith('claude_'));
+      assert(fails.length === 0, `claude template blockers: ${fails.map(f => f.details).join('; ')}`);
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

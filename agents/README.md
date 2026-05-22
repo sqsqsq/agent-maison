@@ -88,8 +88,9 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 ## Claude Code 确认 Widget（Track B+）
 
 - **工具名**：`AskUserQuestion`（非 Cursor 的 `AskQuestion`）。
-- **会话规则**：`.claude/rules/confirmation-ux.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**SHOULD** 优先 widget + 同轮 portable 编号。
-- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 对 Claude/Cursor 分别要求 AskUserQuestion / AskQuestion。
+- **会话规则**：`.claude/rules/confirmation-ux.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**BLOCKER**：Skills 0–6 共 22 个 registry 确认点须 AskUserQuestion + portable 脚注；label SSOT 在 `.claude/rules/widget-options/`（v3.4 起）。
+- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + [adapter-widget-options.md](../skills/00-framework-init/templates/adapter-widget-options.md)；`/framework-init` slash frontmatter。
+- **实例下发**：vendor v3.4+ 后用户自行 `/framework-init` UPDATE（Step 0.3 Q3 覆盖 rules/commands）；**勿**手改 `.claude/` 绕过 init。
 - **Cursor 对称**：`.cursor/rules/framework.mdc` 第 9 条（AskQuestion）。
 
 ## 内部 agent（Chrys / Codemate 等）
