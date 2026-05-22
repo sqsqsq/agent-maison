@@ -900,7 +900,10 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'prd'),
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'prd', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+        }),
         'context_exploration_gate',
       ),
     );

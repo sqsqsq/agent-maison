@@ -25,6 +25,8 @@
 
 （未声明 `project_profile` 时由 harness 按仓库指纹回落默认 profile；若路径不存在则仅依赖本文与 profile 树下模板/示例。）
 
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止输出 UT 规划清单。**
+
 > **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。
 
 ---
@@ -123,13 +125,13 @@
 
 ### Step 1：规划 DAG 与 UT（按是否有 `use-cases.yaml` 分两条路径）
 
-### Context Exploration Gate（BLOCKER）
+#### Step 1.0: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
-在输出下文 **「UT 规划清单」**（进入 HARD STOP 确认门）之前，必须将探索摘要落盘至 **`doc/features/<feature>/ut/context-exploration.md`**，模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+在输出下文 **「UT 规划清单」** 之前，必须完成本 Step 并落盘 **`doc/features/<feature>/ut/context-exploration.md`**（**`schema_version: "1.1.0"`**）。
 
-1. **必读**：`PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`；若存在 `use-cases.yaml` 须读；被测命名入口与 `data_boundaries` 对应源码；**Step 0** addendum 中 **UT 目录、套件注册、测试框架与 import 禁入** 等宿主约定。
-2. `key_inputs_read` 须覆盖 **acceptance**、**contract**、**prd**、**design** 子串；若存在 `use-cases.yaml`，条目中须能匹配 **use-case** 或 **`use-cases.yaml`**。
-3. 若多 `branch` / 多 `use_case` 或 Spy 边界 **≥3**，且运行时支持只读子 agent，应并行分域探索并记入 `subagents_used`；否则 `not_available`。
+1. **必读**：`PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、被测命名入口源码（`source_code_paths` ≥ 3）。
+2. **use_cases > 2 时 MUST** explore 子 agent。
+3. Code Facts 须覆盖 `data_boundaries` 与被测 handler/Flow。
 
 先读取全部上游输入：
 

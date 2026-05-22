@@ -18,3 +18,13 @@ structure_checks: {}
 semantic_checks: {}
 
 traceability_checks: {}
+
+exploration_thresholds:
+  min_files_inspected: 6
+  min_source_code_paths: 3
+  min_searches: 4
+  min_code_facts: 3
+  require_subagent_when_contract_files_gt: 5
+  exploration_mode_allowed:
+    - subagent
+    - sequential

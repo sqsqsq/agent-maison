@@ -35,6 +35,7 @@
 | 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary / **extensions** 等阶段 YAML 规则（以当前激活 workflow 为准） |
 | 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
 | Harness 运行时前置（Tier_1 · npm） | [framework/skills/reference/host-harness-readiness.md](framework/skills/reference/host-harness-readiness.md) | 克隆或独立拉起 Skill 跑 `harness-runner` 前须安装 `framework/harness` 依赖；与 Skill 00 Step 5.5 Tier_1 等价；宿主 IDE/hvigor 仍按 profile |
+| Agent 行为规约（Karpathy 四原则） | [framework/skills/reference/agent-behavioral-principles.md](framework/skills/reference/agent-behavioral-principles.md) | Research First / Minimum Viable / Surgical / Verify — 各 Skill Research Sub-Phase 强制前读；verifier 行为维度 BLOCKER 语义依据 |
 
 ---
 
@@ -77,6 +78,17 @@
 ### 3.6 Context Exploration Gate（BLOCKER）
 
 在 **PRD / design / coding / review / UT** 写入该阶段主产物前，按对应 `framework/skills/<n>/SKILL.md` 落盘 `doc/features/<feature>/<phase>/context-exploration.md`。契约与模板见 [framework/harness/templates/context-exploration.md](framework/harness/templates/context-exploration.md)；**本文件不展开探索清单**——阶段步骤与宿主侧补充路径以各 SKILL 及 `framework/profiles/<project_profile>/skills/*/profile-addendum.md`（若有）为准。
+
+**schema 1.1.0 起**（见 [MIGRATION.md v2.9](framework/MIGRATION.md)）：`source_code_paths` / `decisions_unlocked` / **Code Facts** 与 `phase-rules` → `exploration_thresholds` 由 harness **BLOCKER 量化校验**；`ready_to_produce: true` 须真实探索后手动设定，backfill 骨架不再自动放行。
+
+### 3.7 Agent 行为规约（BLOCKER）
+
+1. 进入任一 feature 阶段（PRD / design / coding / review / UT）的 **Research Sub-Phase** 前，须完整阅读 [agent-behavioral-principles.md](framework/skills/reference/agent-behavioral-principles.md)。
+2. **Research First**：不确定时停下来问；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
+3. **Minimum Viable**：产出不得超出用户诉求 / 上游契约（PRD→design→contracts→code）范围；禁止投机性抽象或"顺便加上"。
+4. **Surgical**：coding / review 仅触碰 scope 内变更；禁止顺手改相邻格式、注释或无关文件。
+5. **Verify Before Proceed**：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
+6. 语义级行为合规由 verifier `behavior_*` 检查项（BLOCKER / MAJOR）与 Layer 2 量化门禁交叉 enforcement。
 
 ---
 

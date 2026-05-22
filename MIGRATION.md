@@ -408,6 +408,54 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 
 **回归**：`cd framework/harness && npm test`；`npx tsc --noEmit -p tsconfig.json`。
 
+### v2.9：Karpathy 四原则全生命周期 + context-exploration schema 1.1.0
+
+适用：framework 升级后引入 **Agent 行为规约**、Context Exploration **量化 BLOCKER**、verifier **行为审查维度**，以及 profile 级 `exploration-snippets` 宿主路径注入。
+
+**核心变更**：
+
+| 层级 | 资产 | 说明 |
+|------|------|------|
+| Layer 1 | `framework/skills/reference/agent-behavioral-principles.md` | Research First / Minimum Viable / Surgical / Verify — 各 Skill Research Sub-Phase 强制前读 |
+| Layer 2 | `context-exploration.md` schema **1.1.0** | 新增 `source_code_paths` / `exploration_mode` / `decisions_unlocked` + 正文 **Code Facts** 必填段 |
+| Layer 2 | `phase-rules/*.yaml` → `exploration_thresholds` | 各阶段差异化阈值（min_source_code_paths、min_code_facts、require_subagent_when_* 等） |
+| Layer 2 | `context-exploration.ts` | schema 1.1.0 启用 BLOCKER 量化校验；1.0.0 仍走旧 frontmatter 关键词逻辑 |
+| Layer 2 | `profiles/<profile>/harness/exploration-snippets.yaml` | 宿主必查路径 overlay（hmos-app：`.ets`、`module.json5`、`build-profile.json5` 等） |
+| Layer 3 | `verify-*.md` | 新增 `behavior_research_grounded` / `behavior_minimum_viable` / `behavior_scope_surgical` / `behavior_verify_loop`；`context_exploration_sufficiency` 升为 BLOCKER |
+| 流程 | Skill 1–5 | Context Exploration Gate 升级为独立编号 **Research Sub-Phase** |
+| 入口 | `AGENTS.md` / adapter rules | SSOT 表 + §3.7 Agent 行为规约 |
+
+**向后兼容（迁移窗口）**：
+
+- 既有 `context-exploration.md` 若 frontmatter 仍为 **`schema_version: "1.0.0"`**，harness 仅执行 v2.6 及以前的 frontmatter 关键词校验，**不强制**新字段。
+- **新写入或主动升级**到 **`schema_version: "1.1.0"`** 的文件，须满足对应 phase 的 `exploration_thresholds`（yaml 未配置时 fallback 到脚本内宽松默认值）。
+- 建议：新 feature 自 prd 起直接使用 1.1.0；既有 in-flight feature 可在下一 phase 升级，或继续 1.0.0 直至 feature 归档（不阻塞旧 harness PASS）。
+
+**backfill 行为变更**：
+
+```bash
+cd framework/harness && npm run backfill:context -- --feature <name> --phases prd,design,coding,review,ut [--dry-run] [--overwrite]
+```
+
+- 回填模板现为 **schema 1.1.0**，且 **`ready_to_produce: false`**（不再自动设 `true` 放行主产物）。
+- 回填成功仅生成**待补全骨架**；须 agent 完成真实探索、填 Code Facts / source_code_paths 后手动设 `ready_to_produce: true`，再跑 harness。
+- 脚本对骨架预期未过门禁时 **warn 而非 exit 2**（便于批量生成占位文件）；真正 BLOCKER 在用户/agent 跑 `--phase <phase> --feature <name>` 时触发。
+
+**实例维护者动作**（vendor / submodule 更新 framework 后）：
+
+1. 阅读 [agent-behavioral-principles.md](skills/reference/agent-behavioral-principles.md)（agent 会话级约束已写入 `AGENTS.md` §3.7）。
+2. 可选：对 in-flight feature 的 `context-exploration.md` 升级到 1.1.0 并补全 Code Facts（或依赖 v2.6 compat 临时降级至过期日）。
+3. hmos-app 实例：确认 `framework/profiles/hmos-app/harness/exploration-snippets.yaml` 已 vendor；无需改 `framework.config.json`。
+4. 重跑 `cd framework/harness && npm test`；对受影响 feature 重跑对应 `--phase` harness + verifier。
+
+**零回归保证**：
+
+- 未改 `framework.config.json` schema；compat 协议（v2.6）仍适用。
+- verify 新增检查项不改变既有检查项语义；仅增加 fail 面。
+- Skill 0 / init 无额外步骤；render `/framework-init` UPDATE 可刷新 `AGENTS.md` / `.cursor/rules/framework.mdc` 中的 §3.7 引用。
+
+**验证**：`cd framework/harness && npm test`；`npx tsc --noEmit -p tsconfig.json`。
+
 ### v3.2：用户确认 UX SSOT + 静态 lint
 
 新增 [framework/skills/reference/user-confirmation-ux.md](skills/reference/user-confirmation-ux.md) 与 [confirmation-registry.yaml](skills/reference/confirmation-registry.yaml)。

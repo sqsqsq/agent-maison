@@ -144,12 +144,31 @@
 
 ### 检查 7: 探索覆盖充分性 (context_exploration_sufficiency)
 
-- **严重等级**: MAJOR（与脚本 Harness 互补：`check-review` 校验探索凭证；你负责判断审查**前**的上下文探索是否足以覆盖 contracts 清单与关键依赖路径）
+- **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/review/context-exploration.md`
-  2. 对照审查报告涉及的文件与 contracts：摘要中的 `files_inspected` / `code_searches` 是否覆盖**问题清单中引用的主要源码与合同条目**；若报告讨论跨模块 import 而摘要无相关检索 → FAIL 或 WARN
-  3. 若探索摘要与审查结论范围明显不匹配（例如大量 MAJOR 问题涉及未在摘要中声明的目录）→ FAIL
-  4. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
+  1. 读取 `doc/features/{feature_name}/review/context-exploration.md`（schema 1.1.0）
+  2. 对照审查范围与 contracts：`source_code_paths`、`Code Facts` 是否覆盖被审源码
+  3. 探索与结论范围明显不匹配 → FAIL
+
+### 检查 8: 行为合规 — 研究有据 (behavior_research_grounded)
+
+- **严重等级**: BLOCKER
+- **评估方法**: 问题清单中的代码引用是否真实；未读代码即下结论 → FAIL
+
+### 检查 9: 行为合规 — 最小可行 (behavior_minimum_viable)
+
+- **严重等级**: MAJOR
+- **评估方法**: 是否提出超出本次变更范围的「顺手改进」→ FAIL
+
+### 检查 10: 行为合规 — 追溯闭环 (behavior_verify_loop)
+
+- **严重等级**: MAJOR
+- **评估方法**: 问题 ↔ coding-rules ↔ contracts 追溯是否断链 → FAIL
+
+### 检查 11: 行为合规 — Scope 精准 (behavior_scope_surgical)
+
+- **严重等级**: BLOCKER
+- **评估方法**: 审查是否局限于本次 feature diff；评 unrelated 预存问题为 BLOCKER 且无依据 → FAIL
 
 ---
 
@@ -260,16 +279,48 @@ verification_result:
     # --- 检查 7: 探索覆盖充分性 ---
     - id: context_exploration_sufficiency
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         context-exploration.md: <路径>
         摘要与审查范围/问题涉及文件的一致性: PASS/FAIL — <证据>
-        contracts 与关键依赖是否体现于探索记录: PASS/FAIL/WARN
+        source_code_paths / Code Facts: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_research_grounded
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        问题引用 ↔ 实际源码: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_minimum_viable
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        超出 diff 的改进建议: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_verify_loop
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        问题 ↔ rules/contracts: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_scope_surgical
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        审查范围 ↔ 本次 diff: PASS/FAIL
       suggestion: |
         <修正建议>
 
   summary:
-    total: 7
+    total: 11
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

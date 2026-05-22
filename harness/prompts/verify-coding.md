@@ -136,13 +136,31 @@
 
 ### 检查 8: 探索覆盖充分性 (context_exploration_sufficiency)
 
-- **严重等级**: MAJOR（与脚本 Harness 互补：`check-coding` 校验探索凭证与最低 `key_inputs_read`；你负责判断编码前探索是否**实质上**覆盖 contracts、acceptance 与关键源码）
+- **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`
-  2. 抽样对照 contracts.yaml、acceptance 与设计：摘要是否体现对**实际改动文件/跨模块出口/资源或路由（若有）**的检索；`decisions_unlocked` 是否与实现中的模块边界、签名、资源 key 一致
-  3. 若实现明显依赖某合同路径或导出符号但摘要未出现对应查阅记录，或 `coverage_risks` 粉饰未读区域 → FAIL
-  4. 跨模块/大量 contracts 场景下探索深度明显不足 → WARN 或 FAIL
-  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
+  1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
+  2. 对照 contracts、acceptance、design：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
+  3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
+
+### 检查 9: 行为合规 — 研究有据 (behavior_research_grounded)
+
+- **严重等级**: BLOCKER
+- **评估方法**: 实现是否能在 Code Facts 中找到依据；凭空虚构 API/路径 → FAIL
+
+### 检查 10: 行为合规 — 最小可行 (behavior_minimum_viable)
+
+- **严重等级**: MAJOR
+- **评估方法**: 是否实现 contracts 未声明的符号或投机抽象 → FAIL
+
+### 检查 11: 行为合规 — 追溯闭环 (behavior_verify_loop)
+
+- **严重等级**: MAJOR
+- **评估方法**: contracts ↔ 源码 ↔ acceptance 是否断链 → FAIL
+
+### 检查 12: 行为合规 — Scope 精准 (behavior_scope_surgical)
+
+- **严重等级**: BLOCKER
+- **评估方法**: git diff / 变更是否超出 design scope 与 contracts 文件清单 → FAIL
 
 ---
 
@@ -254,18 +272,50 @@ verification_result:
     # --- 检查 8: 探索覆盖充分性 ---
     - id: context_exploration_sufficiency
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         context-exploration.md: <路径>
         摘要与 contracts/实现/跨模块导出的一致性: PASS/FAIL — <证据>
-        关键文件是否体现于 files_inspected 或 code_searches: PASS/FAIL
+        source_code_paths / Code Facts: PASS/FAIL
       affected_files:
         - "doc/features/{feature_name}/coding/context-exploration.md"
       suggestion: |
         <修正建议>
 
+    - id: behavior_research_grounded
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        Code Facts ↔ 实现决策: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_minimum_viable
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        超 contracts 投机实现: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_verify_loop
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        contracts ↔ code ↔ acceptance: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_scope_surgical
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        diff 超出 design scope/contracts: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 8
+    total: 12
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

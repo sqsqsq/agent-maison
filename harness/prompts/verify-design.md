@@ -165,13 +165,44 @@
 
 ### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
 
-- **严重等级**: MAJOR（与脚本 Harness 互补：`check-design` 校验探索凭证与最低 `key_inputs_read`；你负责判断摘要是否**实质上**支撑设计决策）
+- **严重等级**: BLOCKER（与脚本 Harness 互补：量化阈值 + 本项语义审查）
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/design/context-exploration.md`
-  2. 对照 PRD、acceptance、architecture、`framework.config.json`、module-catalog 及 design 中的 contracts/导航/模块变更：摘要中的检索与 `decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
+  1. 读取 `doc/features/{feature_name}/design/context-exploration.md`（schema 1.1.0）
+  2. 对照 PRD、acceptance、architecture、`framework.config.json`、module-catalog 及 design 中的 contracts/导航/模块变更：摘要中的 `source_code_paths`、`Code Facts`、`decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
   3. 若设计涉及多模块或大量 contracts 但摘要无对应代码/文档检索痕迹，或 `coverage_risks` 与已知交叉影响矛盾 → FAIL
-  4. subagent/并行探索与 SKILL 触发条件严重不符且复杂度已显然越阈 → WARN 或 FAIL
+  4. subagent/并行探索与 SKILL 触发条件严重不符且复杂度已显然越阈 → FAIL
   5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
+
+### 检查 11: 行为合规 — 研究有据 (behavior_research_grounded)
+
+- **严重等级**: BLOCKER
+- **评估方法**:
+  1. 对照 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md) 原则 1（Research First）
+  2. design 中的模块划分、文件路径、接口签名、复用决策是否均能在 Code Facts 或 `decisions_unlocked` 中找到代码/文档事实依据
+  3. 存在明显「凭空臆断」的路径、类名、依赖边 → FAIL
+
+### 检查 12: 行为合规 — 最小可行 (behavior_minimum_viable)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 对照原则 2（Minimum Viable Output）
+  2. 是否新增 PRD 未驱动的模块/抽象/文件？是否过度工程化？
+  3. 明显超出 PRD P0/P1 范围的设计 → FAIL
+
+### 检查 13: 行为合规 — 追溯闭环 (behavior_verify_loop)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 对照原则 4（Verify Before Proceed）
+  2. PRD 功能 ↔ design 映射表 ↔ 文件结构/接口是否断链？
+  3. P0 需求在设计中无对应实现规划 → FAIL
+
+### 检查 14: 行为合规 — Scope 精准 (behavior_scope_surgical)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. design.in_scope 是否严格继承 PRD（含已批准扩展）？
+  2. 是否静默规划 out_of_scope 模块内实现？→ FAIL
 
 ---
 
@@ -299,7 +330,7 @@ verification_result:
     # --- 检查 10: 探索覆盖充分性 ---
     - id: context_exploration_sufficiency
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         context-exploration.md: <路径>
         摘要与设计/配置/PRD 决策可追溯性: PASS/FAIL — <证据>
@@ -307,8 +338,40 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: behavior_research_grounded
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        Code Facts ↔ design 决策因果: PASS/FAIL — <证据>
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_minimum_viable
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        过度工程化/超 PRD 范围: PASS/FAIL — <证据>
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_verify_loop
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        PRD ↔ design 追溯断链: PASS/FAIL — <证据>
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_scope_surgical
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        Scope 继承/静默扩展: PASS/FAIL — <证据>
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 10
+    total: 14
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

@@ -25,6 +25,8 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 [framework/harness/config.ts](../../harness/config.ts) 与 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止进入 Step 2.5（Scope 冻结）及后续设计撰写。**
+
 > **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。
 
 ---
@@ -130,14 +132,25 @@
    - 新模块在 DAG 中的依赖位置
 4. 识别**可复用**的已有组件、工具类、数据模型（优先查阅 architecture.md 的公共能力清单）
 
-### Context Exploration Gate（BLOCKER）
+### Step 2.3: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
-在**功能拆分与 Scope 冻结动作之前**（即进入 **Step 2.5** 之前），必须将探索摘要落盘至 **`doc/features/<feature>/design/context-exploration.md`**（与 `design/phase-completion-receipt.md` 同目录），模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+在**功能拆分与 Scope 冻结动作之前**（即进入 **Step 2.5** 之前），必须完成本 Step。
 
-1. **必读**：本 feature `PRD.md`、`acceptance.yaml`、`doc/architecture.md`、`doc/module-catalog.yaml`、实例根 `framework.config.json`（至少 **`architecture` 段**）；完成 **Step 2** 工程结构扫描中规划要打开的关键路径。
-2. **宿主专有路径**（模块清单、`srcPath`、路由/资源注册等）：仅按 **Step 0** `profile-addendum.md` 的「Context Exploration」小节。
-3. frontmatter 与 **prd** 阶段同质要求；`key_inputs_read` 须覆盖脚本可识别的 **prd**、**acceptance**、**architecture**、**module-catalog**、**framework.config** 子串。
-4. 若涉及 ≥2 个 `in_scope_modules` 或复用 **`architecture.md` 公共能力清单**以外的既有实现，且运行时支持只读子 agent，应并行分域探索并在 `subagents_used` 说明；否则 `not_available`。
+#### 2.3.1 启动探索
+
+1. **必读**：本 feature `PRD.md`、`acceptance.yaml`、`doc/architecture.md`、`doc/module-catalog.yaml`、`framework.config.json`（`architecture` 段）；Step 2 中规划打开的**全部源码路径**（`source_code_paths` ≥ 5）。
+2. **宿主路径**：Step 0 addendum + profile `exploration-snippets` 声明的必查路径（见 `framework/profiles/<profile>/harness/exploration-snippets.yaml`）。
+3. **`in_scope_modules` ≥ 2 时 MUST** 并行 explore 子 agent（`exploration_mode: subagent`）。
+
+#### 2.3.2 收集 Code Facts
+
+每条 design 决策（模块选型、文件路径、接口签名、复用组件）须在 **Code Facts** 中有代码事实支撑。
+
+#### 2.3.3 落盘
+
+- 路径：`doc/features/<feature>/design/context-exploration.md`
+- **`schema_version: "1.1.0"`**；`decisions_unlocked` 列出即将在 design 中冻结的决策
+- 自检通过后 `ready_to_produce: true`
 
 ### Step 2.5: Scope 继承与提议（Scope 守门机制核心）
 

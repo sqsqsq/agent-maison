@@ -217,3 +217,13 @@ traceability_checks:
     severity: MAJOR
     ai_prompt_hint: >
       如果报告中有修复记录，验证每个 BLOCKER 是否都有对应的修复和验证结果
+
+exploration_thresholds:
+  min_files_inspected: 5
+  min_source_code_paths: 3
+  min_searches: 4
+  min_code_facts: 3
+  require_subagent_when_review_files_gt: 8
+  exploration_mode_allowed:
+    - subagent
+    - sequential

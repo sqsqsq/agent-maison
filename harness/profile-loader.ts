@@ -73,6 +73,10 @@ export function mergePhaseRuleSpec(base: PhaseRuleSpec, overlay: Partial<PhaseRu
       ...(base.traceability_checks ?? {}),
       ...(overlay.traceability_checks ?? {}),
     },
+    exploration_thresholds: {
+      ...(base.exploration_thresholds ?? {}),
+      ...(overlay.exploration_thresholds ?? {}),
+    },
   };
 }
 

@@ -25,6 +25,8 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止执行 Step 2 审查清单。**
+
 > **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。
 
 ---
@@ -112,13 +114,13 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
   审查基准: coding-rules.yaml + contracts.yaml + acceptance.yaml
 ```
 
-### Context Exploration Gate（BLOCKER）
+### Step 1.5: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
-在**逐步执行审查清单（Step 2）之前**，必须将探索摘要落盘至 **`doc/features/<feature>/review/context-exploration.md`**，模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
+在**逐步执行审查清单（Step 2）之前**，必须完成本 Step。
 
-1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`、`framework/specs/phase-rules/coding-rules.yaml`、`doc/architecture.md`；**Step 1** 已根据 `contracts.yaml > files` 列出全部待审源文件并完成打开。
-2. `key_inputs_read` 须覆盖 **contract**、**acceptance**、**coding-rule**、**design** 子串。
-3. 若审阅文件 **>5** 或跨多模块 import 链复杂，且运行时支持只读子 agent，建议并行分域检索依赖符号并在 `subagents_used` 说明；否则 `not_available`。
+1. **必读**：Step 1 列出的**全部待审源文件**（须 Read 每个文件）；`design.md`、`contracts.yaml`、`acceptance.yaml`、`coding-rules.yaml`。
+2. **待审文件 > 8 时 MUST** explore 子 agent。
+3. 落盘 `doc/features/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**，`source_code_paths` 覆盖待审文件。
 
 ### Step 2: 系统化审查
 

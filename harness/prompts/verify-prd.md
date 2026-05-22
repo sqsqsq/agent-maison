@@ -146,13 +146,32 @@
 
 ### 检查 10: 探索覆盖充分性 (context_exploration_sufficiency)
 
-- **严重等级**: MAJOR（与脚本 Harness 互补：`check-prd` 校验探索凭证结构与 `key_inputs_read` 最低子串；你负责判断摘要是否**实质上**支撑 PRD 产出）
+- **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/prd/context-exploration.md`（应在上下文文件或脚本报告中可定位）
-  2. 对照 PRD 正文与 Scope/术语映射：摘要中的 `files_inspected`、`code_searches`、`decisions_unlocked` 是否与 PRD 中的模块选型、流程、验收要点可追溯对应，而非泛泛罗列
-  3. 若 `coverage_risks` / `ready_to_produce` 与 PRD 实际盲区矛盾（例如宣称已读 catalog 但 Scope 仍含 catalog 外模块名），或明显「未探索却直接写 PRD」→ FAIL
-  4. 若正文已引用 glossary/catalog/architecture 等但摘要未体现相应检索证据 → WARN
-  5. 探索文件缺失且脚本已报 BLOCKER 时，本项 FAIL 并引用脚本；证据不足 → WARN
+  1. 读取 `doc/features/{feature_name}/prd/context-exploration.md`（schema 1.1.0）
+  2. 对照 PRD 正文与 Scope/术语映射：`source_code_paths`、`Code Facts`、`decisions_unlocked` 是否与 PRD 中的模块选型、流程、验收要点可追溯对应
+  3. 若 `coverage_risks` / `ready_to_produce` 与 PRD 实际盲区矛盾 → FAIL
+  4. 探索文件缺失且脚本已 FAIL → 本项 FAIL
+
+### 检查 11: 行为合规 — 研究有据 (behavior_research_grounded)
+
+- **严重等级**: BLOCKER
+- **评估方法**: PRD 中的现状描述/模块归属是否能在 Code Facts 中找到代码或 catalog 事实依据；凭空臆造 → FAIL
+
+### 检查 12: 行为合规 — 最小可行 (behavior_minimum_viable)
+
+- **严重等级**: MAJOR
+- **评估方法**: PRD 是否超出用户诉求臆造功能/模块；明显投机需求 → FAIL
+
+### 检查 13: 行为合规 — 追溯闭环 (behavior_verify_loop)
+
+- **严重等级**: MAJOR
+- **评估方法**: 功能清单 ↔ 验收标准 ↔ Scope 是否断链 → FAIL
+
+### 检查 14: 行为合规 — Scope 精准 (behavior_scope_surgical)
+
+- **严重等级**: MAJOR
+- **评估方法**: in_scope/out_of_scope 是否与 catalog 一致；静默扩 scope → FAIL
 
 ---
 
@@ -271,7 +290,7 @@ verification_result:
     # --- 检查 10: 探索覆盖充分性 ---
     - id: context_exploration_sufficiency
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         context-exploration.md 路径: <...>
         摘要与 PRD 决策可追溯性: PASS/FAIL — <证据>
@@ -279,8 +298,40 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: behavior_research_grounded
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        Code Facts ↔ PRD 现状/模块归属: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_minimum_viable
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        超用户诉求/投机功能: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_verify_loop
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        功能清单 ↔ AC ↔ Scope: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_scope_surgical
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        Scope 与 catalog 一致: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 10
+    total: 14
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

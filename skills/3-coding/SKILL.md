@@ -25,6 +25,8 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 [framework/harness/config.ts](../../harness/config.ts) 与 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下已迁移的模板/参考文件路径。
 
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)（原则 3 Surgical · 原则 4 Verify）。**Research Sub-Phase 完成前禁止写入第一个实现层源文件。**
+
 > **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
 
 ---
@@ -132,14 +134,6 @@
   [配置] 更新宿主工程声明的**页面注册**与**资源清单**（文件名因 profile 而异；常见键名见 profile addendum，如页面列表、路由表、字符串表等）
 ```
 
-### Context Exploration Gate（BLOCKER）
-
-在**写入第一个实现层源文件之前**（即进入 **Step 3** 之前），必须将探索摘要落盘至 **`doc/features/<feature>/coding/context-exploration.md`**，模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
-
-1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`；若存在 `use-cases.yaml` 须读；`doc/architecture.md` + `framework.config.json > architecture`；**跨模块出口**（`cross_module_exports_file` 声明）；**Step 0** addendum 中与**模块注册/资源/路由/依赖清单**相关的宿主文件类别。
-2. `key_inputs_read` 须覆盖 **design**、**contract**、**acceptance** 子串；若存在 use-cases，条目中应能匹配 **use-case** 或 **`use-cases.yaml`**。
-3. 若 `contracts.yaml > files` 超过 **5** 个实现文件、或本轮涉及跨模块导出/资源或路由注册变更，且运行时支持只读子 agent，应并行分片阅读并在 `subagents_used` 说明；否则 `not_available`。
-
 ### Step 2: 确定实现顺序
 
 遵循**双重自底向上**原则：
@@ -163,6 +157,14 @@
 5. <product_shell>（入口 / 产品壳）
 6. 资源与模块包配置
 ```
+
+### Step 2.5: Research Sub-Phase（Context Exploration Gate · BLOCKER）
+
+在**写入第一个实现层源文件之前**（即进入 **Step 3** 之前），必须完成本 Step。
+
+1. **必读**：`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、architecture DSL、跨模块出口；**打开 contracts 涉及的已有源码**（`source_code_paths` ≥ 3）。
+2. **`contracts.yaml > files` > 5 时 MUST** explore 子 agent 分片阅读。
+3. 落盘 `doc/features/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空。
 
 ### Step 3: 逐模块逐层生成代码（强制逐文件 Lint 门禁）
 

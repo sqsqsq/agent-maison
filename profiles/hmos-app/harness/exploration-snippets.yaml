@@ -1,0 +1,23 @@
+# hmos-app profile — Context Exploration key_inputs_read 额外子串（脚本 harness 必匹配）
+# 加载：framework/harness/scripts/utils/context-exploration.ts → loadProfileExplorationSnippets
+schema_version: "1.0"
+phases:
+  prd:
+    extra_snippets:
+      - build-profile
+      - ".ets"
+  design:
+    extra_snippets:
+      - build-profile
+      - ".ets"
+      - module.json5
+  coding:
+    extra_snippets:
+      - build-profile
+      - ".ets"
+  review:
+    extra_snippets:
+      - ".ets"
+  ut:
+    extra_snippets:
+      - ".ets"

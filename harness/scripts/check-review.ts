@@ -744,7 +744,10 @@ const checker: PhaseChecker = {
     results.push(...checkReviewContext(ctx));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'review'),
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'review', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+        }),
         'context_exploration_gate',
       ),
     );

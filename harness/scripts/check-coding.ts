@@ -540,7 +540,10 @@ const checker: PhaseChecker = {
 
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'coding'),
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'coding', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+        }),
         'context_exploration_gate',
       ),
     );

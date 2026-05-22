@@ -224,13 +224,31 @@
 
 ### 检查 9: 探索覆盖充分性 (context_exploration_sufficiency)
 
-- **严重等级**: MAJOR（与脚本 Harness 互补：`check-ut` 校验探索凭证与 `key_inputs_read`；你负责判断 UT 编写前的探索是否覆盖 use-cases、contracts、被测入口与 data boundary）
+- **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/ut/context-exploration.md`
-  2. 对照 use-cases.yaml（若存在）、acceptance、contracts、DAG/mock-plan 与 UT 源文件：摘要是否体现对**命名业务入口、打桩边界、既有测试样例**的检索；`decisions_unlocked` 是否与 UT 结构一致
-  3. 若复杂度已触发 SKILL 的并行/子 agent 建议但摘要未说明等价探索路径 → WARN 或 FAIL
-  4. 若 `coverage_risks` 遗漏明显的 Stub/隔离风险而 UT 却大量依赖该路径 → FAIL
-  5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
+  1. 读取 `doc/features/{feature_name}/ut/context-exploration.md`（schema 1.1.0）
+  2. 对照 use-cases、contracts、被测入口：`source_code_paths`、`Code Facts` 是否一致
+  3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
+
+### 检查 10: 行为合规 — 研究有据 (behavior_research_grounded)
+
+- **严重等级**: BLOCKER
+- **评估方法**: UT 结构是否基于 Code Facts 中的被测实现；臆造 handler → FAIL
+
+### 检查 11: 行为合规 — 最小可行 (behavior_minimum_viable)
+
+- **严重等级**: MAJOR
+- **评估方法**: 是否超出 acceptance/use-cases 堆测试 → FAIL
+
+### 检查 12: 行为合规 — 追溯闭环 (behavior_verify_loop)
+
+- **严重等级**: MAJOR
+- **评估方法**: branches ↔ linked_acceptance ↔ UT 断言是否断链 → FAIL
+
+### 检查 13: 行为合规 — Scope 精准 (behavior_scope_surgical)
+
+- **严重等级**: MAJOR
+- **评估方法**: UT 是否测试 scope 外模块/未声明 boundary → FAIL
 
 ---
 
@@ -389,18 +407,50 @@ verification_result:
 
     - id: context_exploration_sufficiency
       status: PASS | FAIL | WARN
-      severity: MAJOR
+      severity: BLOCKER
       details: |
         context-exploration.md: <路径>
         摘要与 use-cases/contracts/被测入口探索一致性: PASS/FAIL — <证据>
-        复杂度与 subagent/检索深度是否匹配: PASS/FAIL/WARN
+        source_code_paths / Code Facts: PASS/FAIL
       affected_files:
         - "doc/features/{feature_name}/ut/context-exploration.md"
       suggestion: |
         <修正建议>
 
+    - id: behavior_research_grounded
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        Code Facts ↔ 被测实现: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_minimum_viable
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        超 acceptance 堆测: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_verify_loop
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        branches ↔ AC ↔ UT: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
+    - id: behavior_scope_surgical
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        UT 范围 ↔ contracts/boundaries: PASS/FAIL
+      suggestion: |
+        <修正建议>
+
   summary:
-    total: 11
+    total: 15
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

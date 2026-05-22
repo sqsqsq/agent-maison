@@ -385,3 +385,17 @@ traceability_checks:
       target_section_excluded: "术语映射表"
       coverage_via: "PRD 术语映射表第 1 列（含 glossary 同义传递）"
       severity_on_miss: "WARN"
+
+# --------------------------------------------------------------------------
+# Context Exploration Gate 量化阈值（schema 1.1.0）
+# --------------------------------------------------------------------------
+exploration_thresholds:
+  min_files_inspected: 4
+  min_source_code_paths: 2
+  min_searches: 3
+  min_code_facts: 2
+  require_subagent_when_scope_gte: 3
+  exploration_mode_allowed:
+    - subagent
+    - sequential
+    - minimal

@@ -25,6 +25,8 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)（Karpathy 四原则 · Research First / Minimum Viable / Surgical / Verify Before Proceed）。**Research Sub-Phase 完成前禁止写入 PRD 正文。**
+
 > **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
 
 ---
@@ -51,16 +53,6 @@
 1. **请求路由**：用户仅表达「修订 PRD / 更新需求文档 / 改验收条目 / Scope / 术语表」而未在同一条或明确承接的指令中要求「做技术设计 / 写 design / 更新 contracts 设计契约」时，**只激活 Skill 1**，不得自动滑入 Skill 2（需求设计）。
 2. **BLOCKER**：上述「PRD-only」回合内**不得**新建或实质改写 **`design.md` 中与「怎么做」相关的技术章节**、`contracts.yaml` 中的接口/文件契约（均属 Skill 2）。本 Skill 允许的下游产物仅限于 **`PRD.md` 与 Step 6 从 PRD 提取的 `acceptance.yaml`**（及相关 PRD 阶段 Spec）。若用户要「PRD 定稿后立刻出 design」，须在指令中**同时明示**两重意图。
 3. **Harness 顺位**：PRD.md（及 Step 6 产出）落盘后须**先于**宣称「可进入 Skill 2」执行 **Step 7.1**（`harness-runner --phase prd`）；禁止「先入设计再在回头补 PRD.harness」。若用户明确要求「先人工审 PRD 再立项设计」，则在 Step 7.1 PASS 后交付摘要并等人审，**未获明示前不得开写 `design.md`**。
-
-### Context Exploration Gate（BLOCKER）
-
-在**首次写入「功能概述」等 PRD 正文大块之前**（即进入 **Step 3** 之前），必须完成探索摘要并落盘：
-
-1. **读本阶段 SSOT**：`doc/glossary.yaml`、`doc/module-catalog.yaml`、`doc/architecture.md`（路径以 `framework.config.json > paths` 为准）；用户提供的视觉/文本权威输入；必要时对照同 feature 或相关 feature 既有 `PRD.md`（若存在）。
-2. **宿主/工具链专有路径**（具体文件名、模块注册表、资源目录等）：**仅**按 **Step 0** `profile-addendum.md` 的「Context Exploration」小节补充，**禁止**要求根 SKILL 写死宿主路径。
-3. 将摘要写入 **`doc/features/<feature>/prd/context-exploration.md`**（与 `prd/phase-completion-receipt.md` 同目录；若 `paths.receipt_dir_pattern` 覆盖则需解析为同等位置），模板见 [`../../harness/templates/context-exploration.md`](../../harness/templates/context-exploration.md)。
-4. frontmatter：`schema_version: "1.0.0"`，**`feature` / `phase` 与 CLI 一致**，`ready_to_produce: true`，`has_blocker_coverage_risk: false`（若仍存在 BLOCKER 级覆盖缺口则不得进入 Step 3）；`key_inputs_read` 合起来须使脚本能匹配 **glossary**、**module-catalog**、**architecture**（子串，不区分大小写）。
-5. **多代理探索**：若运行时支持只读子 agent，且 Scope 跨多模块或术语/目录线索冲突需分域核实，应并行启动探索子代理并在 `subagents_used` 简述；否则填 `not_available` 并由主代理完成等价的 `Read`/`Grep`。
 
 ### Step 1: 收集输入
 
@@ -167,6 +159,26 @@
 3. **交互线索**：可点击元素、滑动区域、切换动作、跳转目标
 4. **视觉层次**：主次信息的排列、颜色/字号的层级关系
 5. **数据展示**：页面上展示了哪些动态数据（金额、卡号、状态等）
+
+### Step 2.5: Research Sub-Phase（Context Exploration Gate · BLOCKER）
+
+在**首次写入「功能概述」等 PRD 正文大块之前**（即进入 **Step 3** 之前），必须完成本 Step。**未完成不得写 PRD 正文。**
+
+#### 2.5.1 启动探索
+
+1. **读本阶段 SSOT**：`doc/glossary.yaml`、`doc/module-catalog.yaml`、`doc/architecture.md`；用户视觉/文本输入；相关 feature 既有实现（**至少 `source_code_paths` 含 2 个源码文件**）。
+2. **宿主路径**：按 Step 0 `profile-addendum.md`「Context Exploration」+ profile `exploration-snippets` 声明的必查路径（见 `framework/profiles/<profile>/harness/exploration-snippets.yaml`）。
+3. **`in_scope_modules` ≥ 3 时 MUST** 启动 explore 子 agent（`exploration_mode: subagent`）。
+
+#### 2.5.2 收集 Code Facts
+
+填写 [`context-exploration.md`](../../harness/templates/context-exploration.md) 正文 **Code Facts** 表格（路径 + 事实 + 对 PRD 的影响）。
+
+#### 2.5.3 落盘
+
+- 路径：`doc/features/<feature>/prd/context-exploration.md`
+- frontmatter：**`schema_version: "1.1.0"`**，`source_code_paths` / `decisions_unlocked` 非空，`key_inputs_read` 覆盖 glossary、module-catalog、architecture 及 profile 子串
+- 自检通过后：`ready_to_produce: true`，`has_blocker_coverage_risk: false`
 
 ### Step 3: 生成 PRD 初稿
 

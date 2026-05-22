@@ -187,12 +187,15 @@ async function main(): Promise<void> {
     const key_inputs_read = buildKeyInputs(projectRoot, featureAbs, phase);
 
     const fm: Record<string, unknown> = {
-      schema_version: '1.0.0',
+      schema_version: '1.1.0',
       feature,
       phase,
-      ready_to_produce: true,
+      ready_to_produce: false,
       has_blocker_coverage_risk: false,
       key_inputs_read,
+      source_code_paths: [],
+      exploration_mode: 'minimal',
+      decisions_unlocked: [],
       subagents_used: 'not_available',
       searches_performed_estimate: 0,
       files_inspected_count: 0,
@@ -221,9 +224,9 @@ async function main(): Promise<void> {
 
       const fails = checkContextExplorationArtifact(projectRoot, feature, phase).filter(r => r.status === 'FAIL');
       if (fails.length > 0) {
-        console.error(JSON.stringify(fails, null, 2));
-        console.error(`错误：回填后仍无法通过门禁：${relOut}`);
-        process.exit(2);
+        console.warn(
+          `[backfill] 骨架已写入但未通过完整门禁（预期）：${relOut} — 须补齐 Research Sub-Phase 后再设 ready_to_produce=true`,
+        );
       }
     }
   }
@@ -234,7 +237,8 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    '\n回填完成。若曾使用 compat.yaml 做临时豁免，请考虑删除 '
+    '\n回填完成（stub：ready_to_produce=false，须人工补齐 Research Sub-Phase / Code Facts 后再置 true）。'
+      + ' 若曾使用 compat.yaml 做临时豁免，请考虑删除 '
       + `'${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'compat.yaml')}' 以恢复严格门禁。`,
   );
 

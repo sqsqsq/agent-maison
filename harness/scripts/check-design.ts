@@ -851,7 +851,10 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'design_to_architecture'));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'design'),
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'design', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+        }),
         'context_exploration_gate',
       ),
     );

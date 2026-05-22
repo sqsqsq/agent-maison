@@ -77,6 +77,20 @@ export interface TraceabilityCheck {
   ai_prompt_hint?: string;
 }
 
+/** Context Exploration Gate 量化阈值（phase-rules exploration_thresholds 段） */
+export interface ExplorationThresholds {
+  min_files_inspected?: number;
+  min_source_code_paths?: number;
+  min_searches?: number;
+  min_code_facts?: number;
+  require_subagent_when_scope_gte?: number;
+  require_subagent_when_contract_files_gt?: number;
+  require_subagent_when_review_files_gt?: number;
+  require_subagent_when_use_cases_gt?: number;
+  exploration_mode_allowed?: string[];
+  phase_input_snippets_extra?: string[];
+}
+
 /** 阶段级规约 (phase-rules/*.yaml) */
 export interface PhaseRuleSpec {
   phase: string;
@@ -85,6 +99,7 @@ export interface PhaseRuleSpec {
   structure_checks: Record<string, StructureCheck>;
   semantic_checks: Record<string, SemanticCheck>;
   traceability_checks: Record<string, TraceabilityCheck>;
+  exploration_thresholds?: ExplorationThresholds;
 }
 
 interface ResourceEntry {

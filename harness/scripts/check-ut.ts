@@ -2853,7 +2853,10 @@ const checker: PhaseChecker = {
 
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'ut'),
+        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'ut', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+        }),
         'context_exploration_gate',
       ),
     );
