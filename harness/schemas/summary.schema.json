@@ -60,7 +60,8 @@
       "items": { "$ref": "#/$defs/blocker" }
     },
     "next_action": { "type": "string", "minLength": 1 },
-    "receipt_status": { "type": "string" }
+    "receipt_status": { "type": "string" },
+    "compile_first_error": { "$ref": "#/$defs/compile_first_error" }
   },
   "$defs": {
     "run_status": {
@@ -111,6 +112,17 @@
           "items": { "type": "string" }
         },
         "suggestion": { "type": "string" }
+      }
+    },
+    "compile_first_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string" }
       }
     }
   }

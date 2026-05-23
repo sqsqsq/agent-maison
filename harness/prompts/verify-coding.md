@@ -17,6 +17,21 @@
 
 ---
 
+## 【HARD STOP — 不可绕过的产出约束】
+
+> 以下约束是 Skill 3 编码阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
+
+1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取脚本 Harness 报告（`{script_report}`）及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
+2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
+3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
+4. **禁止用 verifier PASS 代替脚本 harness**：父 agent 在脚本 harness 退出码非 0 或 `can_claim_done=NO` 时**不得**调用本子 agent；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
+
+> 典型误读（须避免）：
+> - 脚本 `coding_compile` FAIL 但 contracts/业务语义「看起来对」→ 仍 FAIL；
+> - 「pre-existing 工程问题」→ 须向用户报告阻塞与 `next_action`，**不得**建议进入 Skill 4（Code Review）。
+
+---
+
 ## 二、功能模块
 
 - **模块名称**: {feature_name}
@@ -46,7 +61,17 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 8 项语义检查。每项都有具体的评估方法和判定标准。
+请**先**完成检查 0（`coding_compile_gate`），再完成其余语义检查。
+
+### 检查 0: 真实编译门禁 (coding_compile_gate)
+
+- **严重等级**: BLOCKER
+- **评估方法**:
+  1. 从第四节脚本报告中定位 `coding_run_status`、`coding_compile` / `coding_hvigor_build`
+  2. 若 `can_claim_done: NO` 或 compile 检查为 FAIL/SKIP(BLOCKER) → 本项 **FAIL**
+  3. 在 details 中写入：第一条编译错误（`file:line` + message）、`failure_kind`、`next_action` 摘要
+  4. 若 compile PASS 且 `can_claim_done: YES` → 本项 PASS
+- **注意**: 即使错误模块不在本 feature 的 `contracts.modules` 内，也不得 PASS
 
 ### 检查 1: 业务逻辑正确性 (business_logic_correctness)
 
@@ -183,6 +208,20 @@ verification_result:
   timestamp: "{timestamp}"
 
   checks:
+    # --- 检查 0: 真实编译门禁 ---
+    - id: coding_compile_gate
+      status: PASS | FAIL | WARN
+      severity: BLOCKER
+      details: |
+        can_claim_done: YES/NO
+        coding_compile: PASS/FAIL/...
+        第一条编译错误: <file>:<line> — <message>
+        failure_kind: <project_dependency_missing|project_build|...>
+        next_action: <summary.next_action 或脚本建议>
+      affected_files: [...]
+      suggestion: |
+        <按 Skill 3 Step 6.5.2 修复后重跑 harness；禁止提议进入 Skill 4>
+
     # --- 检查 1: 业务逻辑正确性 ---
     - id: business_logic_correctness
       status: PASS | FAIL | WARN
@@ -315,21 +354,22 @@ verification_result:
         <修正建议>
 
   summary:
-    total: 12
+    total: 13
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
     blockers: <severity=BLOCKER 且 status=FAIL 的数量>
     verdict: PASS | FAIL
-    # verdict 规则：若存在任何 BLOCKER 级 FAIL → FAIL；否则 → PASS
+    # verdict 规则：coding_compile_gate 或任何 BLOCKER 级 FAIL → FAIL；can_claim_done=NO 时也必须 FAIL
 ```
 
 ---
 
 ## 八、注意事项
 
-1. **不要重复脚本 Harness 已覆盖的检查**（文件存在性、分层合规、资源引用等）
-2. 若源代码文件缺失导致无法进行某项语义检查，将该检查标为 WARN 并说明原因
-3. 对于"暂不支持"类的占位功能，只要 Toast 正确弹出即视为 PASS
-4. 模拟阶段的数据正确性要求：写死数据的格式和数量需满足 contracts.yaml 中的约束，但不要求真实 API 调用
-5. 对每一项检查，请给出**具体的代码证据**（文件路径 + 关键代码行），而非泛泛而谈
+1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 时不得给出整体 PASS
+2. **不要重复脚本 Harness 已覆盖的检查**（文件存在性、分层合规、资源引用等）
+3. 若源代码文件缺失导致无法进行某项语义检查，将该检查标为 WARN 并说明原因
+4. 对于"暂不支持"类的占位功能，只要 Toast 正确弹出即视为 PASS
+5. 模拟阶段的数据正确性要求：写死数据的格式和数量需满足 contracts.yaml 中的约束，但不要求真实 API 调用
+6. 对每一项检查，请给出**具体的代码证据**（文件路径 + 关键代码行），而非泛泛而谈

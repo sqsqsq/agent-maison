@@ -957,10 +957,12 @@ export function classifyCodingCompileFailure(
       kind: 'project_dependency_missing',
       explanation:
         '构建日志显示工程依赖解析失败，当前失败更可能来自依赖安装 / 依赖声明或内网 registry，而不是本轮编码实现本身。\n' +
-        formatDependencyIssue(depIssue),
+        formatDependencyIssue(depIssue) +
+        '\n这不表示可跳过 coding 出口或进入 Skill 4（Code Review）；须修复工程依赖或取得用户对放弃本阶段的明示后再执行 --clear-state。',
       suggestion:
         '不要把该问题交给用户手工猜。先向用户展示方案：A) 确认后在工程根执行包管理器安装并重跑；' +
         'B) 读取依赖清单文件输出缺失声明；C) registry/权限不确定时先确认内网源。' +
+        '须向用户报告首条编译错误与 summary.next_action，禁止提议进入下一阶段。' +
         (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
     };
   }

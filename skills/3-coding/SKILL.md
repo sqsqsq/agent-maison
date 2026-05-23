@@ -395,6 +395,30 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
    - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 compile capability 报 `project_dependency_missing`：按 Step 6.5.2 的依赖缺失分支处理，不得只要求用户手工操作。
 5. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
+#### 7.1.1 脚本 / 编译 FAIL 时用户可见汇报（BLOCKER）
+
+harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done=false` 时，向用户的**首段**必须是脚本结论，**禁止**先问「是否进入 Skill 4（Code Review）」或并列展示「verifier PASS + 脚本 FAIL」暗示可推进。
+
+**必须同步执行**（禁止后台 harness + 并行 verifier）：
+
+1. Read `doc/features/<feature>/coding/reports/summary.json`：`verdict`、`next_action`、`compile_first_error`（若有）、`run_statuses`
+2. Read 编译日志路径（`coding_compile` details 中的 `日志落盘` / `元数据` 路径；profile 落盘文件名见 addendum），摘录**第一条**错误：`文件:行 — 消息`
+3. 按下列模板汇报（可增删细节，但五项不可缺）：
+
+```markdown
+## Coding 阶段：未完成（脚本 harness FAIL）
+
+- **脚本 verdict**: FAIL | blocker_count: N | can_claim_done: NO
+- **编译** (`coding_compile`): FAIL
+- **首条错误**: `<path>:<line> — <message>`
+- **归因**: `<failure_kind>`（若错误不在本 feature contracts.modules，仍须写明「全工程编译未通过」）
+- **下一步**: `<summary.next_action>` → 按 Step 6.5.2 处理（A/B/C），agent 自跑修复与重试
+
+**禁止**：提议 Skill 4；用 verifier PASS 代替脚本 PASS；称「无法确认是否编译」而不读日志。
+```
+
+**`--clear-state`**：仅当用户**明示放弃**当前 feature 的 coding 阶段（如「放弃 coding」「不闭环了」）时可用；**禁止**为进入 Skill 4 或消除 Stop hook 而 clear-state。
+
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
 脚本读取以下 Spec 文件执行自动化检查：

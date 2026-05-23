@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: 独立的阶段产物语义审查员。当父 agent 完成某阶段（PRD / design / coding / review / ut / testing）产物并通过脚本 Harness 检查后，使用本子 agent 执行对应的 `framework/harness/prompts/verify-<phase>.md` 语义级验证，避免"自己验自己"的偏差。传入参数：feature, phase, 以及 check-*.ts 的结构报告路径。
+description: 独立的阶段产物语义审查员。仅当父 agent 已完成该阶段产物且脚本 Harness 退出码为 0（零 BLOCKER、coding/ut 的 can_claim_done=YES）后，才调用本子 agent 执行 verify-<phase>.md。脚本 FAIL 时禁止调用。传入 feature、phase、script_report_path。
 tools: Read, Glob, Grep
 ---
 
@@ -22,6 +22,7 @@ tools: Read, Glob, Grep
 
 ## 工作流
 
+0. **脚本门禁（BLOCKER，coding/ut 必做）**：若提供了 `script_report_path`，先 Read 该报告及同目录 `summary.json`。若 `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，或 `coding_compile`/`coding_hvigor_build`/`ut.compile` 等为 FAIL → 仅输出 `coding_compile_gate`（或 ut 等价项）FAIL，**summary.verdict=FAIL**，不要对其余项给 PASS。父 agent 在脚本未 PASS 时调用你属于流程违规。
 1. **读取规则**：`framework/specs/phase-rules/<phase>-rules.yaml`
 2. **读取 prompt 模板**：`framework/harness/prompts/verify-<phase>.md`
 3. **读取待审产物**（按 phase）：
@@ -72,3 +73,4 @@ tools: Read, Glob, Grep
 3. **不重复脚本 Harness 已做的确定性检查**（结构 / 字段存在性 / 格式）。
 4. 报告必须可追溯到 `verify-<phase>.md` 的具体检查项 id。
 5. 若 feature / phase 无效，立即报错退出，不要尝试"猜"。
+6. **coding 阶段**：脚本 harness 未 PASS 时被误调用 → `coding_compile_gate` 必须 FAIL，整体 verdict 必须 FAIL；不得建议进入 Skill 4（Code Review）。

@@ -45,14 +45,22 @@ alwaysApply: true
 | vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 Skill 6 协议自处理；不向用户抛 install 命令 |
 | 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
 | 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
+| 脚本 harness FAIL 仍问下一阶段 | 「是否继续 Skill 4？」「verifier PASS 了」 | **禁止**提议进入下一 Skill；首段汇报 FAIL + 首条编译错误 + `next_action` |
+| 为躲 Stop hook 清 state | 擅自 `--clear-state` 后进入 Skill 4 | **仅**当用户明示「放弃本阶段」才可 clear-state；否则继续修 BLOCKER 并重跑 harness |
 
-## 4. 与「反假设条款」的关系
+## 4. 阶段推进与 clear-state（BLOCKER）
+
+- **脚本 harness 退出码非 0** 或 `can_claim_done=NO` 时：不得提议 Skill 4 / 5 / 6 等下一阶段；不得用 verifier PASS 覆盖脚本 FAIL。
+- **coding**：须先同步跑 harness、Read `summary.json` 与编译日志，**再**触发 verifier（禁止并行）。
+- **`--clear-state`**：表示放弃当前 phase 的闭环判定，不是「解锁下一阶段」；仅用户明示放弃后可用。
+
+## 5. 与「反假设条款」的关系
 
 若 agent 声称「规则禁止我执行脚本」才能跳过 harness → **必须 quote 规则原文**；quote 不出则**必须执行**。
 
 本规则 **加强**的是：即使 harness 失败，**重试路径也留在 agent + 自然语言对话内**，而不是把 CLI 交给用户。
 
-## 5. 维护说明
+## 6. 维护说明
 
 - 源头：`framework/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc`
 - 实例：`<agent_bundle_root>/rules/` 或 `.cursor/rules/`（framework-init / render 下发）

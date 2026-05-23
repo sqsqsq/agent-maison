@@ -69,6 +69,12 @@ function validSample(): Record<string, unknown> {
     }],
     next_action: 'fix_run_status_blockers_then_rerun',
     receipt_status: 'missing',
+    compile_first_error: {
+      file: '02-Feature/TransportCard/src/main/ets/WiseCardService.ets',
+      line: 4,
+      message: "Cannot find module '@hms-paf/wisepaf-api'",
+      kind: 'project_dependency_missing',
+    },
   };
 }
 
@@ -102,13 +108,17 @@ function assertSummaryShape(summary: Record<string, unknown>): void {
   assert(Array.isArray(summary.blocking_warnings), 'blocking_warnings 必须是数组');
   assert(Array.isArray(summary.blocking_skips), 'blocking_skips 必须是数组');
   assert(Array.isArray(summary.blockers), 'blockers 必须是数组');
+  if (summary.compile_first_error != null) {
+    const e = summary.compile_first_error as Record<string, unknown>;
+    assert(typeof e.message === 'string' && e.message.length > 0, 'compile_first_error.message 必填');
+  }
 }
 
 function testSchemaRequiredFields(): void {
   const schema = loadSchema();
   const required = schema.required as string[];
   for (const key of Object.keys(validSample())) {
-    if (key === 'receipt_status') continue;
+    if (key === 'receipt_status' || key === 'compile_first_error') continue;
     assert(required.includes(key), `schema.required 未声明 ${key}`);
   }
 }

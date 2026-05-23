@@ -562,6 +562,13 @@ interface HarnessRunSummary {
   }>;
   next_action: string;
   receipt_status?: string;
+  /** coding 阶段：从 coding_compile / coding_hvigor_build 报告解析的首条编译错误，供 agent 无需通读日志即可汇报 */
+  compile_first_error?: {
+    file?: string;
+    line?: number;
+    message: string;
+    kind?: string;
+  };
 }
 
 function writeRunSummary(
@@ -629,6 +636,10 @@ function writeRunSummary(
     next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     receipt_status: receiptValidation?.status,
   };
+  const compileFirstError = extractCompileFirstError(report);
+  if (compileFirstError) {
+    summary.compile_first_error = compileFirstError;
+  }
   fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
   return summary;
 }
@@ -642,6 +653,11 @@ function printStableSummary(summary: HarnessRunSummary): void {
   console.log(`blocker_count=${summary.blocker_count}`);
   console.log(`summary_json=${summary.summary_json}`);
   console.log(`next_action=${summary.next_action}`);
+  if (summary.compile_first_error) {
+    const e = summary.compile_first_error;
+    const loc = e.file ? `${e.file}${e.line != null ? ':' + e.line : ''}` : '(no file)';
+    console.log(`compile_first_error=${loc} — ${e.message}${e.kind ? ` [${e.kind}]` : ''}`);
+  }
   if (summary.run_statuses.length > 0) {
     console.log('run_statuses:');
     for (const status of summary.run_statuses) {
@@ -709,6 +725,53 @@ function extractCanClaimDone(details: string): boolean | undefined {
   const match = details.match(/can_claim_done:\s*(YES|NO)/i);
   if (!match) return undefined;
   return match[1].toUpperCase() === 'YES';
+}
+
+const CODING_COMPILE_CHECK_IDS = new Set(['coding_compile', 'coding_hvigor_build']);
+
+function extractCompileFirstError(report: ScriptReport): HarnessRunSummary['compile_first_error'] | undefined {
+  if (report.phase !== 'coding') return undefined;
+  const compileCheck = report.checks.find(
+    c => CODING_COMPILE_CHECK_IDS.has(c.id) && c.status === 'FAIL',
+  );
+  if (!compileCheck) return undefined;
+
+  const details = compileCheck.details ?? '';
+  const kind = compileCheck.failure_kind ?? extractFailureClassification(details);
+
+  const parsedLine = details.match(/^\s*-\s+(\S+?):(\d+)\s{2,}\S*\s{2,}(.+)$/m);
+  if (parsedLine) {
+    return {
+      file: parsedLine[1].trim(),
+      line: Number(parsedLine[2]),
+      message: parsedLine[3].trim(),
+      kind,
+    };
+  }
+
+  const atFile = details.match(/At File:\s*([^\r\n]+?):(\d+)(?::\d+)?/i);
+  const errMsg = details.match(/Error Message:\s*([^\r\n]+)/i);
+  if (atFile || errMsg) {
+    return {
+      file: atFile?.[1]?.trim(),
+      line: atFile ? Number(atFile[2]) : undefined,
+      message: (errMsg?.[1] ?? '编译失败，详见完整日志').trim(),
+      kind,
+    };
+  }
+
+  const cannotFind = details.match(/Cannot find module\s+['"]([^'"]+)['"]/);
+  if (cannotFind) {
+    return {
+      message: `Cannot find module '${cannotFind[1]}'`,
+      kind: kind ?? 'project_dependency_missing',
+    };
+  }
+
+  if (kind) {
+    return { message: compileCheck.suggestion ?? 'coding_compile 失败，详见 script-report', kind };
+  }
+  return undefined;
 }
 
 function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
