@@ -38,7 +38,13 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 去掉 `--no-instance-bridge` 时：在 **claude** adapter 下应生成或更新 `.claude/commands/<bridgeId>.md`；在 **cursor** adapter 下应生成 `.cursor/skills/<bridgeId>/SKILL.md`。与内置 slash/跳板同名时 **`ext-` 前缀** + stderr 告警。
 
-## 4. 相关源码（维护者）
+**弱模型路径（v2.8.3+）**：大文件渲染应优先 `render-agents-md.mjs`（Node 进程内落盘），避免 Write tool-call 传 200+ 行 content 失败；见 Skill 00 Step 4.1 `tool-call retry-loop Ban`。
+
+## 4. 确认 UX（Claude adapter）
+
+扩展 Skill 若含 BLOCKER 级确认点，Claude adapter 须 **AskUserQuestion** + portable 编号菜单（`.claude/rules/confirmation-ux.md`）；registry 见 [`../../skills/reference/confirmation-registry.yaml`](../../skills/reference/confirmation-registry.yaml)。
+
+## 5. 相关源码（维护者）
 
 - [framework/harness/scripts/utils/instance-skill-bridge.ts](../../harness/scripts/utils/instance-skill-bridge.ts)
 - [framework/harness/scripts/render-agents-md.ts](../../harness/scripts/render-agents-md.ts)
@@ -47,8 +53,10 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 ---
 
-## 维护同步（2026-05-18）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **`render-agents-md`**：默认读取实例根 `framework.config.json`（可用 `--config`）；须在 SKILL **Step 3.5** 写入 JSON 后再渲染占位符。`render-agents-md.mjs` 为 Node ESM shim，拉起 `render-agents-md.ts`。
-- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件 §3–§4 描述一致。
+- **`render-agents-md`**：Step 3.5 先落盘 `framework.config.json`；`render-agents-md.mjs` 为弱模型首选渲染路径。
+- **Claude adapter**：`adapter.yaml` 含 `user_confirmation.widget_tool_hint: AskUserQuestion`；扩展 Skill 确认点须登记 registry。
+- **Cursor adapter**：`instance_skill_bridge` 写入 `.cursor/skills/` 跳板；正文 SSOT 仍在 `framework/skills/`。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件一致。
 

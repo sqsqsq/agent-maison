@@ -17,6 +17,9 @@
 | ut      | `ut_hvigor_build`     | `buildUtHvigorArgs` → 与 DevEco「Run ohosTest」对齐：`node hvigorw.js --mode module`、`-p isOhosTest=true`、`-p buildMode=test`、`genOnDeviceTestHap` + task 后 `analyze=normal`（及 parallel/incremental/daemon）；详见 profile 内 `hvigor-runner.ts` |
 | ut      | `ut_hvigor_test`      | 同上出包 → `hdc install` → `hdc shell aa test`；解析 hypium 报告；HAP 在 `build/<product>/outputs/ohosTest/`           |
 | ut      | `ut_no_src_mutation`  | git diff 检测业务源码改动；未在 `gap-notes.md > approved_src_mutations[]` 登记的 FAIL |
+| testing | `device_test.build` / `install` / `run` | 经 **`capability-registry.ts`** 调度 profile provider；Hylyre vendor wheel + venv；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/` |
+
+根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主实现见 `profiles/hmos-app/harness/providers/`。
 
 ---
 
@@ -151,12 +154,12 @@ runHvigorAssembleApp({
 
 ---
 
-## 维护同步（2026-05）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **实现位置**：`hvigor-runner.ts` / `hdc-runner.ts` 正文在 `framework/profiles/hmos-app/harness/`；根 `check-coding` / `check-ut` 的宿主逻辑由 **`coding-host-rules`**、**`ut-host-impl`** 承担（`profile-host-loader` 动态加载）。  
-- **失败归类**：coding 编译失败 kind 使用 `compile_timeout` / `compile_incomplete_output`（历史 `hvigor_*` 字面已弃用）。  
-- **导出入口文件名**：与 `architecture.cross_module_exports_file` 一致的入口文件（常见 `index.ets`）**不要求** PascalCase，与 harness `naming_conventions` 一致。
-- **2026-05-18**：对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 harness 源文件复核 ——命令行 argv、产物路径与诊断档位未改；§4 性能对比样本仍为早期仓库快照，不作为通用 SLA。
+- **实现位置**：`hvigor-runner.ts` / `hdc-runner.ts` 在 `framework/profiles/hmos-app/harness/`；根 harness 经 **`capability-registry.ts`** 调度。
+- **Skill 6 / Hylyre**：`device_test.*` capability 与 UT 链独立；配置 SSOT `framework.config.json > tools.hylyre.*`；即席 `_adhoc` 见 Skill 6 / `npm run adhoc-device-test`。
+- **失败归类**：coding 编译失败 kind 使用 `compile_timeout` / `compile_incomplete_output`。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 harness 源文件复核 argv / 产物路径 / 诊断档位。
 
 ---
 

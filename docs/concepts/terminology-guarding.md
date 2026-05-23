@@ -223,14 +223,17 @@ surveyed 过的 5 个层级方案：
   - 与 `glossary.yaml` 的 `terms[].canonical_module` 无冲突
 - `checkScopeMatchesCatalog` —— 解析 PRD 的 Scope 声明 YAML 块，每个 in_scope / out_of_scope 模块必须建档
 - `checkTerminologyModulesWithinScope` —— 术语映射表的"权威模块"必须出现在 in_scope 或 out_of_scope 之一
+- **Context Exploration Gate（v2.9）**：PRD 主产物前须 `context-exploration.md`（schema **1.1.0**）；与术语映射表正交——探索门确保「读过真实代码路径」，术语门确保「业务名词归属正确」。详见 [`../../skills/reference/agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
 
 ---
 
-## 维护同步（2026-05）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **PRD 模板路径**：`prd-template.md` 等宿主模板位于 `framework/profiles/hmos-app/skills/1-prd-design/templates/`，与根 `SKILL` 跳板分离。  
-- **规约消费**：`check-prd.ts` 仍以合并后的 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
-- **2026-05-18**：对照清单 `sources[]`（catalog / glossary / prd SKILL 与 `check-prd` 等）复核 —— Scope / 术语映射表 / catalog+glossary 解析链路对外描述仍成立；为满足 `doc_freshness` 刷新本段。
+- **PRD 模板路径**：宿主模板在 `framework/profiles/hmos-app/skills/1-prd-design/templates/`，与根 SKILL 跳板分离。
+- **规约消费**：`check-prd.ts` 以合并 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
+- **Context Gate**：`context-exploration.ts` schema **1.1.0** + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` / `backfill:context` 过渡。
+- **确认 UX**：PRD 术语映射表须用户 `[x]` 确认；Claude adapter 关键步骤 **AskUserQuestion BLOCKER**。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) `sources[]` 复核 Scope / 术语 / catalog+glossary 链路。
 
 ---
 
@@ -242,6 +245,6 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-18 (doc_freshness / terminology sources[])
+  last-synced: 2026-05-22 (context-exploration 1.1.0, confirmation UX, check-prd)
 -->
 

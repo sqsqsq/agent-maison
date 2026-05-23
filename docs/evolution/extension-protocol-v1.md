@@ -9,7 +9,7 @@
 - **Breaking**（主版本升）：删除字段、改字段类型、改变默认严重级别或默认合并行为。
 - **Non-breaking**（次版本升）：仅新增可选字段且旧实例在无该字段时有明确默认。
 
-详细 breaking vs non-breaking 矩阵维护在仓库 **plan「Framework 可演进性重构」§十**（implementation 完成后同步回本文件的表格）。
+Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRATION.md) 对应章节；实例升级优先 `merge-framework-config.mjs` 补缺字段。
 
 ## 相关资产
 
@@ -19,9 +19,14 @@
 | Extension manifest schema | `framework/specs/instance-extension-manifest.schema.yaml` |
 | Lifecycle hooks schema | `framework/specs/lifecycle-hooks-schema.yaml` |
 | 实例升级备忘 | `framework/MIGRATION.md` |
+| 扩展概念 SSOT | [`../concepts/extensibility.md`](../concepts/extensibility.md) |
+| 端到端验收清单 | [`extension-e2e-acceptance.md`](extension-e2e-acceptance.md) |
 
 ---
 
-## 维护同步（2026-05-18）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`workflow-schema.json`、`instance-extension-manifest.schema.yaml`、`lifecycle-hooks-schema.yaml` 与本文件 §schema_version / breaking 叙事一致；`MIGRATION.md` 仍为实例升级交叉索引 SSOT。
+- 三套 schema 仍为 **1.0** 起点；`--phase extensions` 全局门禁不变。
+- **render-agents-md** + `instance_skill_bridge` 为扩展 Skill 下发首选路径（弱模型强制，见 Skill 00 Step 4.1）。
+- **workflow 默认**：`spec-driven.workflow.yaml`（11 phase：5 全局 + 6 feature）。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 与 [`MIGRATION.md`](../../MIGRATION.md) 保持交叉索引一致。

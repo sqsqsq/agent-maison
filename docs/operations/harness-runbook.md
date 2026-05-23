@@ -227,6 +227,9 @@ doc/features/<feature>/
 | ------- | --------------------- | ---- |
 | coding  | `coding_hvigor_build` | 宿主编译（hvigor / DevEco 对齐） |
 | ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、harness 允许的源码变更登记 |
+| testing | `device_test.build` / `install` / `run` | Hylyre 真机链；`acceptance.yaml` > `device_focus` 派生 test-plan |
+
+**Context Exploration Gate（v2.9）**：prd / design / coding / review / ut 写主产物前须 `context-exploration.md`（schema **1.1.0**）；量化阈值见 phase-rules + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` 或 `npm run backfill:context`。
 
 **命令装配、日志、`toolchain.hvigor` 调优与逐项排障**：见 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)。
 
@@ -234,6 +237,13 @@ doc/features/<feature>/
 
 - 详见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)
 - 简明清单：`ut_import_whitelist` / `it_drives_flow` / `branch_coverage_full` / `acceptance_coverage` / `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`
+- 调度：`capability-registry.ts` → profile `ut-host-impl` / `hvigor-runner` / `hdc-runner`
+
+### 5.6 testing（`check-testing.ts`）
+
+- 标准 feature：`acceptance.yaml`（`device_focus`）→ 派生 / lint `test-plan.md` → **`device_test.build`** → **`install`** → **`run`**（Hylyre）
+- 即席 `_adhoc`：`npm run adhoc-device-test`（derive → `test-steps.json` → lint → 执行）；详见 [`../../skills/6-device-testing/SKILL.md`](../../skills/6-device-testing/SKILL.md)
+- **`device-testing-todo.md` 已废弃**；SSOT 为 acceptance 分层，见 [`../concepts/acceptance-layering.md`](../concepts/acceptance-layering.md)
 
 ---
 
@@ -526,12 +536,14 @@ cat framework/harness/state/.current-phase.json
 
 ---
 
-## 维护同步（2026-05）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **Profile 编排**：`check-coding` 委托 profile `checkCodingCompile`；`check-ut` 委托 `ut-host-impl`（含 `getUtSuggestionPaths`、`isSuiteEntryShim` 与真机 `ut.run`）。  
-- **共享常量**：`ut-suite-entry-shim.ts` 与宿主共用 testsuite 入口判定，避免根脚本与 profile 双写正则。  
-- **命名闸门**：`naming_conventions` 对 `cross_module_exports_file`  basename（如小写 `index`）豁免 PascalCase 文件名。
-- **2026-05-18**：对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) —— `check-init.ts` 支持 CREATE 且无磁盘 config 时对 POPULATED `architecture.md` 的哈希级摘要；全局 **`docs`** phase 检查对外文档清单新鲜度（`doc_freshness`，MAJOR）。SKILL **00** 约定 **`framework.config.json` Step 3.5** 早于入口 `render-agents-md`。workflow DAG 仍以 [`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 为 SSOT。
+- **Profile 编排**：`check-coding` / `check-ut` / `check-testing` 经 **`capability-registry.ts`** 调度 profile provider。
+- **Context Gate**：schema **1.1.0** + `exploration-strategy.ts`；`backfill:context` / `compat.yaml` 过渡存量 feature。
+- **Hylyre 真机**：testing phase `device_test.*`；报告外置 `doc/features/<feature>/<phase>/reports/`。
+- **确认 UX**：docs phase 含 `confirmation_ux_lint` BLOCKER；Claude adapter AskUserQuestion 见 Skill 0–6 registry。
+- **Agent 行为**：各 feature phase Research Sub-Phase 前读 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
+- workflow DAG 仍以 [`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 为 SSOT（**11** phase）。
 
 ---
 
@@ -542,7 +554,7 @@ cat framework/harness/state/.current-phase.json
 > 看到 FAIL 不要急着降 severity，先把环境/产物修对再回来 —— 任何一次降级都是埋一颗"假 PASS"地雷。**
 
 <!--
-  last-synced: 2026-05-18（check-init / docs phase doc_freshness / init Step 3.5）
+  last-synced: 2026-05-22 (2.0: capability-registry, Hylyre, context-exploration, confirmation UX)
 
   v2.4 (2026-04-27) — Stop hook cross-session isolation:
     - 新增 §10「中断 / 切换会话 / 放弃阶段」章节：state_machine 配置、--clear-state 出口、

@@ -8,7 +8,7 @@
 
 自上而下争权（**后者覆盖前者**）：**实例 `doc/extensions`** > **`workflows/` 中选定的 DAG** > **profile**（`profiles/<name>/`）> **framework 仓库默认**。
 
-与顶层 [README 逻辑分层](../../README.md) 表内「自底向上叠加」四句同义：先落 framework 默认，再叠 profile、workflow、instance extensions；最终在**同一键**上发生冲突时按上式裁决。实现入口：[profile-loader.ts](../../harness/profile-loader.ts)（phase-rules overlay）、[extension-loader.ts](../../harness/extension-loader.ts)（manifest / capability）。
+与顶层 [README 逻辑分层](../../README.md) 表内「自底向上叠加」四句同义：先落 framework 默认，再叠 profile、workflow、instance extensions；最终在**同一键**上发生冲突时按上式裁决。实现入口：[profile-loader.ts](../../harness/profile-loader.ts)（phase-rules overlay）、[extension-loader.ts](../../harness/extension-loader.ts)（manifest / capability）、[capability-registry.ts](../../harness/capability-registry.ts)（profile 宿主 toolchain 调度，如 `coding.compile` / `device_test.*`）。
 
 ```
 framework 默认 → profile → workflow（active_workflow YAML）→ doc/extensions（实例根）
@@ -102,7 +102,9 @@ flowchart TB
 
 ---
 
-## 维护同步（2026-05-18）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`framework/README.md` / `agents/README.md` / `profile-loader.ts` / workflow 与 schema 仍为本文分层表与「协议 SSOT」的引用基准；合并顺序（framework → profile → extension）未变。
-- **`doc_freshness`**：当登记 `sources[]` 任一提交晚于本文时，需复核本节与 upstream 仓库是否仍一致。
+- **四层模型**：framework → profile → workflow → `doc/extensions`；争权顺序不变。详见 [`../overview.md`](../overview.md) §1.3.2。
+- **capability-registry**：宿主编译 / UT / 真机能力由 profile 注册，根 harness 只做编排；详见 [`../../profiles/README.md`](../../profiles/README.md)。
+- **adapter 桥接**：`render-agents-md` + `instance_skill_bridge` 下发扩展 Skill；Claude **AskUserQuestion** 确认 UX 见 [`../../skills/reference/user-confirmation-ux.md`](../../skills/reference/user-confirmation-ux.md)。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`agents/README.md` / `profile-loader.ts` / workflow 与 schema 仍为本文 SSOT。

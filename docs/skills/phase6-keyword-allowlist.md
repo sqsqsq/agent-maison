@@ -46,7 +46,8 @@ rg -n -f framework/docs/skills/phase6-keyword-pattern.regex framework \
 
 ---
 
-## 维护同步（2026-05-18）
+## 维护同步（2026-05-22）
 
-- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`framework/harness/scripts/check-testing.ts` 与 `framework/specs/phase-rules/testing-rules.yaml` 仍为 Phase 6 关键词分流 SSOT；本文 §1–§4 判定口径不变。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`check-testing.ts` 与 `testing-rules.yaml` 仍为 Phase 6 关键词分流 SSOT；本文 §1–§4 判定口径不变。
+- **Skill 6 / Hylyre**：testing phase 正文已中性化；legacy 键名 allowlist 仍适用于 profile YAML 别名，不适用于 Hylyre plan/steps 契约。
 - **`doc_freshness`**：当任一登记 `sources[]` 的 git 提交时间晚于本文时，需复核本节并与 [`phase6-keyword-pattern.regex`](phase6-keyword-pattern.regex) 对齐后再提交本文。

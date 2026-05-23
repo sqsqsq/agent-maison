@@ -76,7 +76,8 @@
 
 - **lifecycle hooks**：仍按原 workflow 与 manifest 派发；compat **不**代替 hooks，也不修改 hook 产物。  
 - **extensions**：扩展 manifest / 能力档位与 compat 正交；compat 只作用于标准 `check-*.ts` 汇总的 `CheckResult`。  
-- **正式修复路径**：优先用 `backfill:context` 生成合规 `context-exploration.md`；compat 仅为止血带，且受 `scheduled_backfill_by` 强制到期。
+- **正式修复路径**：优先用 `backfill:context` 生成合规 `context-exploration.md`（schema **1.1.0**，含 `source_code_paths` / `decisions_unlocked` / `ready_to_produce`）；compat 仅为止血带，且受 `scheduled_backfill_by` 强制到期。
+- **exploration_strategy**：`exploration-strategy.ts` 按 phase 决定 subagent vs sequential；compat 不豁免 exploration 量化阈值（除非 `exempt_checks` 显式命中对应 `context_exploration_*` id）。
 
 ---
 
@@ -106,7 +107,9 @@ cd framework/harness && npm run backfill:context -- --feature home-page --phases
 
 ---
 
-## 维护同步（2026-05-18）
+## 维护同步（2026-05-22 · 对齐 2.0）
 
-- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`compat-loader`、`report-generator`、`feature-compat.schema.yaml` 与本文件 §3–§7（降级 / 过期 / 报告审计段）一致；回填 CLI 仍为 `npm run backfill:context`。
+- **Context Gate schema 1.1.0**：`context-exploration.ts` 量化阈值与 `exploration-strategy.ts` 联动；回填 CLI `npm run backfill:context` 不变。
+- **testing 阶段不在 compat 范围**：Hylyre 真机链无 compat 降级；须修 acceptance / test-plan 或环境。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`compat-loader`、`report-generator`、`feature-compat.schema.yaml` 与 §3–§7 一致。
 
