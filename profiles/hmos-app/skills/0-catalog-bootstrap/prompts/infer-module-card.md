@@ -46,18 +46,21 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 - `dependencies` 字段 → 推断该模块依赖哪些下层模块（辅助判断它属于哪一层）
 - 模块类型（若有 `module.type`，`entry` → HAP，`har` → HAR；否则看根目录 `build-profile.json5` 里该模块条目）
 
-### 4. Index.ets（必读）
+### 4. 导出入口文件（必读）
 
 ```
-Read <LAYER_DIR>/<ModuleName>/Index.ets  (若存在)
+Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 ```
+
+- 读取 `main` 字段确定 HAR 导出入口相对路径（常见 `index.ets` 在模块根，或 `src/main/ets/index.ets`）
+- 再 Read `<LAYER_DIR>/<ModuleName>/{main}` 指向的文件（若存在）
 
 提取所有 `export { ... }` / `export class X` / `export function y` / `export interface Z`：
 - 保留 ≤ 10 个最主要的符号
 - 写到 `key_exports` 数组
 - 这些符号本身就是"对外核心能力"的强提示，可以反推 `responsibilities`
 
-**HAP 模块（01-Product）通常没有 Index.ets**，改读 `EntryAbility.ets`，`key_exports` 填 `[]`。
+**HAP 模块（01-Product）通常没有 HAR 导出入口**，改读 `EntryAbility.ets`，`key_exports` 填 `[]`。
 
 ### 5. 目录树（必读，只看结构不看内容）
 
@@ -68,7 +71,7 @@ Read <LAYER_DIR>/<ModuleName>/Index.ets  (若存在)
 - 有 `repository/` `service/` → 有业务能力的公共模块
 - 有 `util/` `helper/` → 工具性质模块
 
-**禁止**：打开任何具体 `.ets` 文件内容（除 Index.ets 已读）。
+**禁止**：打开任何具体 `.ets` 文件内容（除 oh-package main 指向的导出入口已读）。
 
 ### 6. 极少量关键文件头部（可选）
 
@@ -210,12 +213,12 @@ for each term in typical_business_terms:
 
 ### `key_exports`
 
-从 Index.ets 直接取，保留 ≤ 10 个最主要的。保留顺序：Page > Class > Interface > Function > Constant。
+从导出入口文件（oh-package.json5 → `main`）直接取，保留 ≤ 10 个最主要的。保留顺序：Page > Class > Interface > Function > Constant。
 
 ### `entry_file`
 
 - HAP → `01-Product/<ModuleName>/src/main/ets/entryability/EntryAbility.ets`（或该工程实际路径）
-- HAR → `<LAYER_DIR>/<ModuleName>/src/main/ets/Index.ets`
+- HAR → `<LAYER_DIR>/<ModuleName>/{oh-package.json5 main}`；无 `main` 时 fallback `<LAYER_DIR>/<ModuleName>/{cross_module_exports_file}`（通常 `index.ets`）
 
 ---
 

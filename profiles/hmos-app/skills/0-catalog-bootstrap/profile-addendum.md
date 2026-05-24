@@ -45,8 +45,8 @@
 
 1. `doc/architecture.md` 中对应模块小节：强锚点，作为职责定义主来源。
 2. `<module_path>/README.md`：辅助锚点。
-3. `<module_path>/oh-package.json5`：读取 `dependencies`、`module.type`，判定模块关系与 `HAP`/`HAR`。
-4. `<module_path>/Index.ets` 或 DSL 声明的导出入口：提取 top-level export，形成 `key_exports`。
+3. `<module_path>/oh-package.json5`：读取 `main`（导出入口路径）、`dependencies`、`module.type`，判定模块关系与 `HAP`/`HAR`。
+4. `<module_path>/{oh-package main}` 或 DSL 声明的导出入口：提取 top-level export，形成 `key_exports`。
 5. `<module_path>/src/main/ets/` 目录树：只列目录结构，深度不超过 3。
 6. 最多 3 个关键文件头部 60 行：仅用于确认职责，不通读全部源码。
 

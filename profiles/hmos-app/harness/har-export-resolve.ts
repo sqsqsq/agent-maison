@@ -28,11 +28,57 @@ export function normalizeRelativePath(relPath: string): string {
     .replace(/\/+$/, '');
 }
 
+/**
+ * 当前文件的 .ets 无扩展名 basename 是否与 cross_module_exports_file 的 stem 一致（大小写不敏感）。
+ */
+export function isCrossModuleExportFileStem(
+  fileStem: string,
+  crossModuleExportsFile: string,
+): boolean {
+  const exportStem = path.parse(crossModuleExportsFile).name;
+  if (!exportStem) return false;
+  return fileStem.toLowerCase() === exportStem.toLowerCase();
+}
+
+export function readOhPackageField(
+  projectRoot: string,
+  packagePath: string,
+  field: 'main' | 'name',
+): string | null {
+  const ohPackagePath = path.join(projectRoot, normalizeRelativePath(packagePath), 'oh-package.json5');
+  const ohPackageContent = readFileIfExists(ohPackagePath);
+  if (!ohPackageContent) return null;
+  try {
+    const ohPkg = parseJson5(ohPackageContent) as Record<string, unknown>;
+    const value = ohPkg[field];
+    return typeof value === 'string' ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface HarExportEntryResolution {
   relPath: string;
   source: 'oh-package.json5 main' | 'framework.config fallback';
   warning?: string;
   error?: string;
+}
+
+function resolveFallbackEntryPath(
+  projectRoot: string,
+  packagePath: string,
+  indexFileName: string,
+): string {
+  const candidates = [
+    `${packagePath}/${indexFileName}`,
+    `${packagePath}/src/main/ets/${indexFileName}`,
+  ];
+  for (const relPath of candidates) {
+    if (fs.existsSync(path.join(projectRoot, relPath))) {
+      return relPath;
+    }
+  }
+  return candidates[0];
 }
 
 export function resolveHarExportEntryPath(
@@ -50,11 +96,14 @@ export function resolveHarExportEntryPath(
       const main = typeof ohPkg.main === 'string' ? ohPkg.main.trim() : '';
       if (main) {
         const normalizedMain = normalizeRelativePath(main);
-        if (path.posix.basename(normalizedMain) !== indexFileName) {
+        const mainStem = path.parse(path.posix.basename(normalizedMain)).name;
+        if (!isCrossModuleExportFileStem(mainStem, indexFileName)) {
           return {
             relPath: `${packagePath}/${normalizedMain}`,
             source: 'oh-package.json5 main',
-            error: `${mod.name}: oh-package.json5 main 指向 ${normalizedMain}，但架构约定 HAR 导出入口文件名必须是 ${indexFileName}`,
+            error:
+              `${mod.name}: oh-package.json5 main 指向 ${normalizedMain}，` +
+              `但架构约定 HAR 导出入口文件名 stem 须与 ${indexFileName} 一致（大小写不敏感）`,
           };
         }
         return {
@@ -64,7 +113,7 @@ export function resolveHarExportEntryPath(
       }
     } catch {
       return {
-        relPath: `${packagePath}/src/main/ets/${indexFileName}`,
+        relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName),
         source: 'framework.config fallback',
         warning: `${mod.name}: oh-package.json5 解析失败，已回退到默认出口路径`,
       };
@@ -72,7 +121,7 @@ export function resolveHarExportEntryPath(
   }
 
   return {
-    relPath: `${packagePath}/src/main/ets/${indexFileName}`,
+    relPath: resolveFallbackEntryPath(projectRoot, packagePath, indexFileName),
     source: 'framework.config fallback',
   };
 }

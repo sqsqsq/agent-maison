@@ -86,8 +86,10 @@ structure_checks:
     description: >
       每个 HAR 模块必须存在由 framework.config.json 的
       architecture.cross_module_exports_file 声明的跨模块导出入口文件
-      （实例默认通常为 index.ets），且对外暴露的 class/interface/function
-      必须在该文件中 export。
+      （实例默认通常为 index.ets）。入口物理路径以各模块 oh-package.json5 的
+      main 字段为准（可为模块根 index.ets 或 src/main/ets/index.ets 等）；
+      文件名 stem 须与 cross_module_exports_file 一致（大小写不敏感）。
+      对外暴露的 class/interface/function 应在该文件中 export。
     severity: BLOCKER
     rule:
       source: "framework.config.json > architecture.cross_module_exports_file"
@@ -110,7 +112,9 @@ structure_checks:
   oh_package_dependencies:
     description: >
       模块的 oh-package.json5 中声明的依赖必须与五层架构依赖规则一致，
-      依赖路径使用层目录相对路径
+      依赖路径使用层目录相对路径。Harness 匹配时除模块名外，亦认可
+      ohpm 包名（如 @wallet/common-functions）与 file: 相对路径指向
+      目标模块目录的声明。
     severity: BLOCKER
     rule:
       for_each_module:

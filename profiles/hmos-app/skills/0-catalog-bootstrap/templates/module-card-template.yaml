@@ -36,4 +36,4 @@ module:
     - "<业务术语 2>"
   easily_confused_with: []
   key_exports: []
-  entry_file: "<layer_dir>/<ModuleName>/src/main/ets/index.ets"
+  entry_file: "<layer_dir>/<ModuleName>/<从 oh-package.json5 main 解析，或 cross_module_exports_file>"

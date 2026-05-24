@@ -11,7 +11,7 @@
 //                  typical_vs_not_responsible_conflict
 //   Traceability:  easily_confused_references_exist, easily_confused_no_self_reference,
 //                  easily_confused_symmetric, entry_file_on_disk, layer_matches_path,
-//                  key_exports_fresh_vs_index
+//                  entry_file_matches_oh_package_main, key_exports_fresh_vs_index
 //
 // 语义级检查此阶段暂不启用（catalog 本身就是 SSOT，没有语义歧义）。
 // ============================================================================
@@ -577,6 +577,38 @@ function checkLayerMatchesPath(ctx: CheckContext, catalog: ModuleCatalog): Check
   }];
 }
 
+function runEntryFileMatchesOhPackageMain(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
+  const trace = ctx.phaseRule.traceability_checks as Record<string, unknown> | undefined;
+  if (!trace || !('entry_file_matches_oh_package_main' in trace)) {
+    return [{
+      id: 'entry_file_matches_oh_package_main',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'entry_file_matches_oh_package_main'),
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details:
+        '当前 project_profile 的 phase-rules 未声明 entry_file_matches_oh_package_main。',
+    }];
+  }
+  try {
+    const augPath = path.join(ctx.resolvedProfile.profileDir, 'harness', 'catalog-entry-file-har');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(augPath) as {
+      checkEntryFileMatchesOhPackageMain: (c: CheckContext, cat: ModuleCatalog) => CheckResult[];
+    };
+    return mod.checkEntryFileMatchesOhPackageMain(ctx, catalog);
+  } catch (e) {
+    return [{
+      id: 'entry_file_matches_oh_package_main',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'entry_file_matches_oh_package_main'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `entry_file 与 oh-package main 同步规则需要 profile 实现，但加载失败：${(e as Error).message}`,
+    }];
+  }
+}
+
 function runKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
   const trace = ctx.phaseRule.traceability_checks as Record<string, unknown> | undefined;
   if (!trace || !('key_exports_fresh_vs_index' in trace)) {
@@ -755,6 +787,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog), 'easily_confused_symmetric'));
     results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
     results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
+    results.push(...safeRun(() => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main'));
     results.push(...safeRun(() => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
     results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
 

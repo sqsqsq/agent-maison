@@ -32,11 +32,11 @@
 - **hvigor / hdc** 实现位于 `framework/profiles/hmos-app/harness/`（`framework/harness/scripts/utils/*-runner` 为 re-export shim）。
 - 写 `.ets` 文件前，先按变更类型阅读 `arkts-pitfalls.md` 相关条目；尤其关注 `@State` 初始化、`$r()` 资源引用、`ForEach keyGenerator`、`Router vs NavPathStack`、HAR `Index.ets` 导出。
 - 模块配置与依赖通常落在 `build-profile.json5` / `oh-package.json5` / `module.json5`；新增 HAR/HAP 或调整依赖时必须与 `contracts.yaml`、`doc/architecture.md` 和 `framework.config.json` 对齐。
-- 跨模块导出入口文件名由 `architecture.cross_module_exports_file` 声明；本 profile 默认是 `Index.ets`。
+- 跨模块导出入口文件名由 `architecture.cross_module_exports_file` 声明（以 `framework.config.json` 为准，默认 `index.ets`）；**物理路径**以各模块 `oh-package.json5` → `main` 为准，不固定为 `src/main/ets/`。
 
 ## Context Exploration Gate（profile 补充）
 
-编码前探索须覆盖：**`build-profile.json5` / `oh-package.json5` / 涉及模块的 `module.json5`**；**页面注册**（`main_pages.json`、`route_map.json` 等，以工程实际为准）、**资源目录**（`src/main/resources`）与 **跨模块 `Index.ets`（或 DSL 声明的其它出口文件名）** 中与本轮改动相关的条目。
+编码前探索须覆盖：**`build-profile.json5` / `oh-package.json5` / 涉及模块的 `module.json5`**；**页面注册**（`main_pages.json`、`route_map.json` 等，以工程实际为准）、**资源目录**（`src/main/resources`）与 **各 HAR 模块 oh-package `main` 指向的导出入口文件**（或 DSL 声明的 `cross_module_exports_file`）中与本轮改动相关的条目。真实工程 layout 以 oh-package main 为准；虚拟工程示例中的 `src/main/ets/` 仅为一种合法布局。
 
 ## 与中立骨架的关系
 

@@ -13,6 +13,13 @@ import {
   dispatchCodingCompile,
   analyzeCodingDependencyIssueViaProfile,
 } from '../../../harness/capability-registry';
+import {
+  isCrossModuleExportFileStem,
+  readOhPackageField,
+  normalizeRelativePath,
+} from './har-export-resolve';
+
+export { isCrossModuleExportFileStem } from './har-export-resolve';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../..', 'harness');
 
@@ -458,12 +465,21 @@ function checkOhPackageDependencies(ctx: CheckContext): CheckResult[] {
       continue;
     }
 
-    const declaredDeps = Object.keys((ohPkg.dependencies as Record<string, string>) ?? {});
+    const declaredDeps = (ohPkg.dependencies as Record<string, string>) ?? {};
     const expectedDeps = contracts.module_dependencies[mod.name] ?? [];
 
-    for (const expected of expectedDeps) {
-      const found = declaredDeps.some(d => d.toLowerCase().includes(expected.toLowerCase()));
-      if (!found) issues.push(`${mod.name}: 缺少对 ${expected} 的依赖声明`);
+    for (const expectedName of expectedDeps) {
+      const targetModule = contracts.modules.find(m => m.name === expectedName);
+      if (
+        !isDependencyDeclared(
+          declaredDeps,
+          expectedName,
+          targetModule?.package_path,
+          ctx.projectRoot,
+        )
+      ) {
+        issues.push(`${mod.name}: 缺少对 ${expectedName} 的依赖声明`);
+      }
     }
   }
 
@@ -504,6 +520,52 @@ function checkOhPackageDependencies(ctx: CheckContext): CheckResult[] {
       suggestion: '请在 oh-package.json5 中补充缺失的依赖声明。',
     },
   ];
+}
+
+function normDependencyToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * 判断 oh-package dependencies 是否已声明对 expectedModuleName 的依赖。
+ * 匹配策略：归一化 dep key / file: 路径 / 目标模块 oh-package name。
+ */
+export function isDependencyDeclared(
+  declaredDeps: Record<string, string>,
+  expectedModuleName: string,
+  expectedPackagePath: string | undefined,
+  projectRoot: string,
+): boolean {
+  const expectedNorm = normDependencyToken(expectedModuleName);
+  const packageSuffix = expectedPackagePath
+    ? normalizeRelativePath(expectedPackagePath).replace(/\\/g, '/')
+    : '';
+
+  for (const [depKey, depValue] of Object.entries(declaredDeps)) {
+    if (normDependencyToken(depKey).includes(expectedNorm)) {
+      return true;
+    }
+    if (
+      packageSuffix &&
+      typeof depValue === 'string' &&
+      normalizeRelativePath(depValue).replace(/\\/g, '/').includes(packageSuffix)
+    ) {
+      return true;
+    }
+  }
+
+  if (expectedPackagePath) {
+    const ohPackageName = readOhPackageField(projectRoot, expectedPackagePath, 'name');
+    if (ohPackageName) {
+      for (const depKey of Object.keys(declaredDeps)) {
+        if (depKey.toLowerCase() === ohPackageName.toLowerCase()) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 function checkPageRegistration(ctx: CheckContext): CheckResult[] {
@@ -579,17 +641,6 @@ function checkPageRegistration(ctx: CheckContext): CheckResult[] {
       suggestion: '请在 main_pages.json 和/或 route_map.json 中注册页面。',
     },
   ];
-}
-
-/**
- * 当前文件的 .ets 无扩展名 basename 是否与 `architecture.cross_module_exports_file`
- * 的 basename（去扩展名）一致（大小写不敏感）。一致则视为跨模块导出入口文件：
- * 文件名可不遵循 PascalCase，且不强制 @Component struct 名与入口文件名一致。
- */
-export function isCrossModuleExportFileStem(fileStem: string, crossModuleExportsFile: string): boolean {
-  const exportStem = path.parse(crossModuleExportsFile).name;
-  if (!exportStem) return false;
-  return fileStem.toLowerCase() === exportStem.toLowerCase();
 }
 
 function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
