@@ -84,4 +84,4 @@
 **下一步建议**:
 - 若"不通过"：修复所有 BLOCKER 后重新审查
 - 若"有条件通过"：修复 MAJOR 后建议重新审查，或经团队评审后可进入下一阶段
-- 若"通过"：可直接进入 Skill 5（业务级 UT）
+- 若"通过"：若需 UT，请用户明示 Skill 5 意图或确认 **`review.ok_to_ut` / `phase.next_step`**（user-confirmation-ux §8）；**禁止** agent 因报告结论自动开 Skill 5

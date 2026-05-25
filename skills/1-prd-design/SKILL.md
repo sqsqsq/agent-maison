@@ -1,6 +1,6 @@
 # PRD 设计 Skill (`1-prd-design`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `prd.terminology` / `prd.feature_path` / `prd.freeze`。
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `prd.terminology` / `prd.feature_path` / `prd.freeze` / `phase.next_step`。
 
 ## 前置（依赖初始化 Skill 产物）
 
@@ -387,7 +387,9 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，PRD 阶段完成，可进入 Skill 2（需求设计）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
+四项全部通过后，PRD 阶段完成，**具备**进入 Skill 2（需求设计）的**资格**；**不授权**自动开 Skill 2。
+
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：除非用户消息为 **batch 多阶段授权**（§8.2），否则须 **`phase.next_step`**（AskQuestion + portable 编号）停等。**`prd.freeze` 只冻结 PRD 内容**，不等同于 harness 通过后可在同一执行流自动写 `design.md`。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 ## 输出规范
 

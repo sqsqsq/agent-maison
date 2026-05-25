@@ -47,10 +47,13 @@ alwaysApply: true
 | 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
 | 脚本 harness FAIL 仍问下一阶段 | 「是否继续 Skill 4？」「verifier PASS 了」 | **禁止**提议进入下一 Skill；首段汇报 FAIL + 首条编译错误 + `next_action` |
 | 为躲 Stop hook 清 state | 擅自 `--clear-state` 后进入 Skill 4 | **仅**当用户明示「放弃本阶段」才可 clear-state；否则继续修 BLOCKER 并重跑 harness |
+| harness PASS 后 autopilot | 闭环后直接 Read Skill 4 并写 review | 汇报闭环摘要 + **`phase.next_step` 停等**（manual 默认）；见 user-confirmation-ux §8 |
+| 误读 receipt / trace | 「回执齐全 → 下一步 review」 | 回执只证**当前 phase 完成**，不证下一阶段授权 |
 
 ## 4. 阶段推进与 clear-state（BLOCKER）
 
 - **脚本 harness 退出码非 0** 或 `can_claim_done=NO` 时：不得提议 Skill 4 / 5 / 6 等下一阶段；不得用 verifier PASS 覆盖脚本 FAIL。
+- **脚本 harness PASS 且四件套齐全时**：**不得**在同一 agent 执行流自动启动下一 Skill；须 `phase.next_step` 或用户/batch 明示（user-confirmation-ux §8）。
 - **coding**：须先同步跑 harness、Read `summary.json` 与编译日志，**再**触发 verifier（禁止并行）。
 - **`--clear-state`**：表示放弃当前 phase 的闭环判定，不是「解锁下一阶段」；仅用户明示放弃后可用。
 

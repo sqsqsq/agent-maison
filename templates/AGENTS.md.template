@@ -90,6 +90,10 @@
 5. **Verify Before Proceed**：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
 6. 语义级行为合规由 verifier `behavior_*` 检查项（BLOCKER / MAJOR）与 Layer 2 量化门禁交叉 enforcement。
 
+### 3.8 阶段边界推进（BLOCKER）
+
+**阶段四件套 PASS ≠ 授权下一 Skill。** 默认 `transition_policy=manual`：闭环后须 `phase.next_step` 或用户/batch 明示授权，**禁止**同一执行流自动开下一阶段。细则与 batch 白名单见 [user-confirmation-ux.md §8](framework/skills/reference/user-confirmation-ux.md)。
+
 ---
 
 ## 四、工作流与 Skill 路由

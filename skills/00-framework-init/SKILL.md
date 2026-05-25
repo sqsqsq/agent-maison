@@ -1003,11 +1003,13 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 
 无跳过项时明确打印"本次无跳过项"。
 
-**7.2 下一步指引**（固定输出，可精简不可省略意图）：
+**7.2 下一步指引**（固定输出，可精简不可省略意图；**指引 ≠ 自动执行**）：
 
 1. 为已有模块跑 Skill 0：`/catalog-bootstrap <ModuleName>`，直至 catalog 覆盖主要模块。
 2. 跑 `/glossary-bootstrap` 建立术语表。
 3. 再进入 `/prd-design`（Skill 1）及后续阶段。
+
+**禁止**：init 四件套 / Step 7 收尾完成后，在同一 agent 执行流自动开 catalog / glossary / PRD。须用户明示或 **`phase.next_step`** 等价确认后再进入下游 Skill。
 
 ---
 

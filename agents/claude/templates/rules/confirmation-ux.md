@@ -21,9 +21,10 @@
 | `catalog.staging_module` / `catalog.staging_glossary` / `catalog.seed_tech_word` | [skill0-catalog-options.md](widget-options/skill0-catalog-options.md) |
 | `prd.feature_path` / `prd.terminology` / `prd.freeze` | [skill1-prd-options.md](widget-options/skill1-prd-options.md) |
 | `design.scope_expansion` / `design.ok_to_code` / `design.arch_impact` / `design.split_table` | [skill2-design-options.md](widget-options/skill2-design-options.md) |
-| `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` | [skill3-coding-options.md](widget-options/skill3-coding-options.md) |
-| `review.module_name` / `review.report_save` | [skill4-review-options.md](widget-options/skill4-review-options.md) |
-| `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm` | [skill5-ut-options.md](widget-options/skill5-ut-options.md) |
+| `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review` | [skill3-coding-options.md](widget-options/skill3-coding-options.md) |
+| `phase.next_step` | [phase-next-step-options.md](widget-options/phase-next-step-options.md) |
+| `review.module_name` / `review.report_save` / `review.ok_to_ut` | [skill4-review-options.md](widget-options/skill4-review-options.md) |
+| `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm` / `ut.ok_to_testing` | [skill5-ut-options.md](widget-options/skill5-ut-options.md) |
 | `testing.module_name` / `testing.packaging` / `testing.plan_confirm` | [skill6-testing-options.md](widget-options/skill6-testing-options.md) |
 
 init 7 点（`init.adapter` 等）见 Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + [adapter-widget-options.md](../../framework/skills/00-framework-init/templates/adapter-widget-options.md)。
@@ -43,3 +44,4 @@ init 7 点（`init.adapter` 等）见 Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + 
 - widget 可用却仅给 Markdown 表 + 文本编号，未调 AskUserQuestion。
 - option label 自造路径（含 `.claude/commands/skills/`）或 `(Recommended)` 标签。
 - 跳过 Research Sub-Phase 直接写 PRD 正文大块（Step 2.5 仍 BLOCKER）。
+- 阶段四件套 PASS 后在同一执行流自动 Read 下一 Skill（须 `phase.next_step` 停等，见 user-confirmation-ux §8）。

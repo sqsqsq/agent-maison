@@ -154,6 +154,22 @@ entries:
     skill_step: "依赖缺失 A/B/C"
     portable_menu: "1=确认安装重跑 2=只读清单 3=先确认源"
 
+  - id: coding.ok_to_review
+    skill: "3-coding"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §8"
+    skill_step: "Step 7.3 闭环 / coding→review"
+    portable_menu: "1=coding OK可进Skill4 2=暂停 3=其它"
+    widget_options_ref: rules/widget-options/skill3-coding-options.md
+
+  - id: phase.next_step
+    skill: "_cross_phase"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §8.3"
+    skill_step: "任一 feature phase 四件套 PASS 后"
+    portable_menu: "1=进入下一Skill 2=暂停 3=其它"
+    widget_options_ref: rules/widget-options/phase-next-step-options.md
+
   # --- Skill 4 review ---
   - id: review.module_name
     skill: "4-code-review"
@@ -168,6 +184,14 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "报告落盘前"
     portable_menu: "1=确认落盘 2=修改后再落盘"
+
+  - id: review.ok_to_ut
+    skill: "4-code-review"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §8"
+    skill_step: "Step 6.3 闭环 / review→UT"
+    portable_menu: "1=review OK可进Skill5 2=暂停 3=其它"
+    widget_options_ref: rules/widget-options/skill4-review-options.md
 
   # --- Skill 5 UT ---
   - id: ut.plan_confirm
@@ -198,6 +222,14 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Mermaid DAG"
     portable_menu: "1=确认DAG 2=修改DAG"
+
+  - id: ut.ok_to_testing
+    skill: "5-business-ut"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §8"
+    skill_step: "Step 8 闭环 / UT→testing"
+    portable_menu: "1=UT OK可进Skill6 2=暂停 3=其它"
+    widget_options_ref: rules/widget-options/skill5-ut-options.md
 
   # --- Skill 6 testing ---
   - id: testing.module_name

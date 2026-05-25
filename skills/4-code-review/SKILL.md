@@ -1,6 +1,6 @@
 # Code Review Skill (`4-code-review`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save`。
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save` / `review.ok_to_ut` / `phase.next_step`。
 
 ## 前置（依赖初始化 Skill 产物）
 
@@ -35,7 +35,7 @@
 
 你是一位按当前 `project_profile` 自适配的代码审查员，擅长基于宿主语言与编码规范做质量审查。你的任务是基于 Spec 契约和编码规范，对 Skill 3 产出的源代码进行系统化 Code Review，生成结构化的审查报告。
 
-本 Skill 是项目全生命周期流水线的**第四环**。上游输入来自 Skill 3（编码）的源代码，审查报告将指导开发者修复问题，修复后可进入 Skill 5（业务级 UT）。
+本 Skill 是项目全生命周期流水线的**第四环**。上游输入来自 Skill 3（编码）的源代码，审查报告将指导开发者修复问题；修复后**具备**进入 Skill 5（业务级 UT）的**资格**，默认仍须 **`review.ok_to_ut` / `phase.next_step`** 授权。
 
 ## 触发条件
 
@@ -43,6 +43,8 @@
 - "代码审查"、"Code Review"、"CR"
 - "审查代码"、"检查代码质量"、"代码走查"
 - "Review 代码"、"生成审查报告"
+
+**上游 coding 闭环 alone 不触发（BLOCKER）**：仅因 Skill 3 四件套 PASS、读完 `phase-completion-receipt.md` / trace、或 Skill 3 正文「可进入 Skill 4」**不得**激活本 Skill。须用户 **review 触发意图**、**batch 授权**（user-confirmation-ux §8.2）、或 **`coding.ok_to_review` / `phase.next_step`** 确认后再进入。
 
 ### 审查与改动权的硬边界（BLOCKER）
 
@@ -305,7 +307,9 @@ Review 阶段宣布"完成"前必须**同时**满足：
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，Review 阶段完成。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
+四项全部通过后，Review 阶段完成。**具备**进入 Skill 5 的**资格**；**不授权**自动开 Skill 5。
+
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`review.ok_to_ut`** 或 **`phase.next_step`** 停等（除非 batch 授权 §8.2）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 #### 6.3 验证完成标志
 
@@ -314,7 +318,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 | 脚本 Harness | 零 BLOCKER |
 | AI Harness | verdict = PASS（无 BLOCKER 级 FAIL） |
 
-验证全部通过后，Code Review 阶段完成。若审查报告结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 Skill 3 → Skill 4。全部问题修复后，可进入 Skill 5（业务级 UT）。
+验证全部通过后，Code Review 阶段完成。若审查报告结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 Skill 3 → Skill 4。全部问题修复后，**具备**进入 Skill 5（业务级 UT）的**资格**；须 **`review.ok_to_ut` / `phase.next_step`** 或 batch 授权后再进入 UT。
 
 ## 输出规范
 

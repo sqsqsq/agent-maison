@@ -1,6 +1,6 @@
 # 业务级 UT Skill (`5-business-ut` · v2.1)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm`。
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm` / `ut.ok_to_testing` / `phase.next_step`。
 
 ## 前置（依赖初始化 Skill 产物）
 
@@ -442,7 +442,7 @@ v2.1 约束（`it_drives_flow` MAJOR 检查）：
 
 ### 下一步
 - 运行 Harness 验证（Step 8）
-- 进入 Skill 6：按 acceptance `device_focus` 派生 test-plan
+- 四件套 PASS 后 **`ut.ok_to_testing` / `phase.next_step` 停等**（user-confirmation-ux §8）；真机 test-plan 须在用户授权 Skill 6 后再派生
 ```
 
 ### Step 7.5：UT 编译闭环（必要出口）
@@ -641,7 +641,9 @@ UT 阶段宣布"完成"前必须**同时**满足：
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，业务级 UT 阶段完成，可进入 Skill 6（真机测试）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
+四项全部通过后，业务级 UT 阶段完成，**具备**进入 Skill 6（真机测试）的**资格**；**不授权**自动开 Skill 6。
+
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`ut.ok_to_testing`** 或 **`phase.next_step`** 停等（除非 batch 授权 §8.2）。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 ## 关联文件
 

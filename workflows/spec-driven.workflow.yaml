@@ -4,6 +4,11 @@ description: >
   Default harness workflow — mirrors legacy VALID_PHASES / phase DAG before optional
   instance extensions phase. Global phases have no deps; feature phases follow
   catalog+glossary → PRD → design → coding → (review | UT parallel) → testing.
+#
+# Phase transition (agent UX, not harness runtime):
+#   default transition_policy: manual — see framework/docs/concepts/phase-transition-policy.md
+#   future transition_policy: goal_mode | batch_authorized | manual
+#   future auto_chain: [prd, design, coding, review, ut, testing]
 
 artifacts:
   - id: extensions

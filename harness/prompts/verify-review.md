@@ -170,6 +170,11 @@
 - **严重等级**: BLOCKER
 - **评估方法**: 审查是否局限于本次 feature diff；评 unrelated 预存问题为 BLOCKER 且无依据 → FAIL
 
+### 检查 12: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
+
+- **严重等级**: MAJOR
+- **评估方法**: review 四件套 PASS 后 agent 在同一执行流自动开 Skill 5，且**无** `review.ok_to_ut` / `phase.next_step` / batch 授权 → FAIL
+
 ---
 
 ## 六、上下文文件
@@ -319,8 +324,16 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: phase_transition_autopilot
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        review 闭环后未授权即开 Skill 5: PASS/FAIL
+      suggestion: |
+        闭环后须 review.ok_to_ut / phase.next_step 停等（user-confirmation-ux §8）
+
   summary:
-    total: 11
+    total: 12
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

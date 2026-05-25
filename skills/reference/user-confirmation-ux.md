@@ -133,6 +133,63 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 - ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（见 Skill 00 §0.3.4.3）
+- ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
+- ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
+
+---
+
+## 8. 阶段边界推进（BLOCKER）
+
+**阶段闭环（harness + verifier + receipt + trace 四件套 PASS）只证明当前 phase 完成，不授权下一 Skill。**
+
+「可进入 Skill N」= **资格**，≠ **授权**。Stop hook 只管「假完成」，不管「擅自开下一阶段」。
+
+### 8.1 默认策略 `transition_policy=manual`
+
+启动下一 Skill 前，须满足以下**任一**：
+
+1. 用户消息含下一 Skill **触发意图**（各 SKILL「触发条件」关键词）；
+2. 用户消息含 **batch 多阶段意图**（§8.2）→ `transition_policy=batch_authorized`；
+3. 用户通过 **`phase.next_step`** 或对应 **`*.ok_to_*`** 闭环闸门确认（见 registry）；
+4. （预留）`workflow.auto_chain` / goal manifest 为 `enabled`（adapter 注入，本次未实现）。
+
+**禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
+
+**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（AskQuestion + portable 编号）→ **停等**。
+
+| 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
+|-------------------|--------------------------------------------------|
+| prd | `phase.next_step`（`prd.freeze` 只冻结 PRD 内容，不替代闭环停等，除非 batch 授权） |
+| design | `design.ok_to_code`（Step 13.1 PASS 后 **每次** MUST，含首遍 design） |
+| coding | `coding.ok_to_review` 或 `phase.next_step` |
+| review | `review.ok_to_ut` 或 `phase.next_step` |
+| ut | `ut.ok_to_testing` 或 `phase.next_step` |
+| testing | `phase.next_step`（通常仅「暂停 / 结束」） |
+
+### 8.2 Batch 多阶段授权（`batch_authorized`）
+
+用户**同一条或可追溯承接**的消息声明多阶段范围时，允许在**已声明范围内**连续执行；**超出范围仍须停等**。
+
+启发式示例（非穷举）：
+
+- 「做到 review / 做到 CR / coding 并 review」
+- 「PRD 到 UT / 全链路交付 / 从设计到真机测试」
+- 「对 `<feature>` 做到 `<phase>` 为止」
+
+解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
+
+### 8.3 `phase.next_step` portable 模板
+
+```text
+{current_phase} 阶段已闭环（harness / verifier / receipt / trace 齐全）。
+
+请选择下一步（回复编号；支持 widget 时可直接选，同轮仍附下列编号）：
+1. 进入下一 Skill — {next_skill_label}
+2. 暂停 — 本阶段到此，暂不进入下游
+3. 其它 — 我在对话中说明意图
+```
+
+选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→Skill 2 design、coding→Skill 4 review）。
 
 ---
 

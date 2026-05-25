@@ -1,6 +1,6 @@
 # Skill 3 coding — Widget 选项固定文案（SSOT）
 
-> registry：`coding.scope_stop` / `coding.module_batch` / `coding.deps_abc`
+> registry：`coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review`
 
 ---
 
@@ -35,3 +35,15 @@ Portable：`1=继续下一模块` / `2=修改本模块`
 | 3 | `confirm_source` | 先确认源 — 确认依赖来源/版本后再继续 |
 
 Portable：`1=确认安装重跑` / `2=只读清单` / `3=先确认源`
+
+---
+
+## ok_to_review（Step 7.3 闭环 · coding→review）
+
+| # | value | label |
+|---|-------|-------|
+| 1 | `ok_review` | coding OK — 可进入 Skill 4 Code Review |
+| 2 | `pause` | 暂停 — 暂不进入 Code Review |
+| 3 | `other` | 其它 — 我在对话中说明意图 |
+
+Portable：`1=coding OK，可进 Skill 4` / `2=暂停` / `3=其它（说明）`

@@ -1,6 +1,6 @@
 # Skill 5 UT — Widget 选项固定文案（SSOT）
 
-> registry：`ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm`
+> registry：`ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm` / `ut.ok_to_testing`
 
 ---
 
@@ -48,3 +48,15 @@ Portable：`1=授权` / `2=拒绝` / `3=先看 diff`
 | 2 | `edit_dag` | 修改 DAG — 我要调整 DAG 结构 |
 
 Portable：`1=确认 DAG` / `2=修改 DAG`
+
+---
+
+## ok_to_testing（Step 8 闭环 · UT→testing）
+
+| # | value | label |
+|---|-------|-------|
+| 1 | `ok_testing` | UT OK — 可进入 Skill 6 真机测试 |
+| 2 | `pause` | 暂停 — 暂不进入真机测试 |
+| 3 | `other` | 其它 — 我在对话中说明意图 |
+
+Portable：`1=UT OK，可进 Skill 6` / `2=暂停` / `3=其它（说明）`

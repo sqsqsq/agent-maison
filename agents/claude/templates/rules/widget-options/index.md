@@ -19,12 +19,16 @@
 | `coding.scope_stop` | enum | skill3-coding-options.md § scope_stop |
 | `coding.module_batch` | enum | skill3-coding-options.md § module_batch |
 | `coding.deps_abc` | enum | skill3-coding-options.md § deps_abc |
+| `coding.ok_to_review` | enum | skill3-coding-options.md § ok_to_review |
+| `phase.next_step` | enum | phase-next-step-options.md § next_step |
 | `review.module_name` | enum | skill4-review-options.md § module_name |
 | `review.report_save` | enum | skill4-review-options.md § report_save |
+| `review.ok_to_ut` | enum | skill4-review-options.md § ok_to_ut |
 | `ut.plan_confirm` | gate | skill5-ut-options.md § plan_confirm |
 | `ut.mock_plan` | enum | skill5-ut-options.md § mock_plan |
 | `ut.src_mutation` | freeform_approval | skill5-ut-options.md § src_mutation |
 | `ut.dag_confirm` | enum | skill5-ut-options.md § dag_confirm |
+| `ut.ok_to_testing` | enum | skill5-ut-options.md § ok_to_testing |
 | `testing.module_name` | enum | skill6-testing-options.md § module_name |
 | `testing.packaging` | enum | skill6-testing-options.md § packaging |
 | `testing.plan_confirm` | enum | skill6-testing-options.md § plan_confirm |

@@ -187,6 +187,11 @@
 - **严重等级**: BLOCKER
 - **评估方法**: git diff / 变更是否超出 design scope 与 contracts 文件清单 → FAIL
 
+### 检查 13: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
+
+- **严重等级**: MAJOR
+- **评估方法**: 若对话/trace 显示 coding 四件套 PASS 后 agent **在同一执行流**自动 Read Skill 4 / 写 review，且**无** `coding.ok_to_review` / `phase.next_step` / batch 授权（user-confirmation-ux §8）→ FAIL；仅「可进入 Skill 4」资格表述不构成授权
+
 ---
 
 ## 六、上下文文件
@@ -353,8 +358,16 @@ verification_result:
       suggestion: |
         <修正建议>
 
+    - id: phase_transition_autopilot
+      status: PASS | FAIL | WARN
+      severity: MAJOR
+      details: |
+        coding 闭环后未授权即开 Skill 4: PASS/FAIL
+      suggestion: |
+        闭环后须 phase.next_step / coding.ok_to_review 停等（user-confirmation-ux §8）
+
   summary:
-    total: 13
+    total: 14
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

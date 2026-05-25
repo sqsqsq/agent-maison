@@ -1,6 +1,6 @@
 # 编码 Skill (`3-coding`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc`。
+> **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review` / `phase.next_step`。
 
 ## 前置（依赖初始化 Skill 产物）
 
@@ -321,7 +321,7 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 - [x] 编译检查：通过（0 error）
 
 ### 下一步
-建议运行 Harness 验证（Step 7），验证通过后再运行 Skill 4 (Code Review)。
+- 运行 Harness 验证（Step 7）；四件套 PASS 后 **`coding.ok_to_review` / `phase.next_step` 停等**（user-confirmation-ux §8），**禁止**同一执行流自动开 Skill 4
 ```
 
 ### Step 6.5: 真实编译闭环（必要出口）
@@ -480,7 +480,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，编码阶段完成，可进入 Skill 4（Code Review）。
+四项全部通过后，编码阶段完成，**具备**进入 Skill 4（Code Review）的**资格**；**不授权**自动开 Skill 4。
+
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（AskQuestion + portable 编号）停等，**禁止**读完 receipt/trace 后在同一执行流 Read Skill 4 并写 review（除非 batch 授权 §8.2）。
 
 ## 编码规范
 

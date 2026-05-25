@@ -1,6 +1,6 @@
 # Skill 4 review — Widget 选项固定文案（SSOT）
 
-> registry：`review.module_name` / `review.report_save`
+> registry：`review.module_name` / `review.report_save` / `review.ok_to_ut`
 
 ---
 
@@ -23,3 +23,15 @@ Portable：`1=确认` / `2=修改`
 | 2 | `edit_first` | 修改后再落盘 — 我要先改报告内容 |
 
 Portable：`1=确认落盘` / `2=修改后再落盘`
+
+---
+
+## ok_to_ut（Step 6.3 闭环 · review→UT）
+
+| # | value | label |
+|---|-------|-------|
+| 1 | `ok_ut` | review OK — 可进入 Skill 5 业务级 UT |
+| 2 | `pause` | 暂停 — 暂不进入 UT |
+| 3 | `other` | 其它 — 我在对话中说明意图 |
+
+Portable：`1=review OK，可进 Skill 5` / `2=暂停` / `3=其它（说明）`
