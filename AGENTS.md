@@ -1,4 +1,4 @@
-﻿# AGENTS.md — AgentMaison 开发指令
+# AGENTS.md — AgentMaison 开发指令
 > 品牌：**AgentMaison**；消费者 submodule 路径仍为 **framework/**。
 ## 目录分层（BLOCKER）
 **发布内容**：skills/ specs/ harness/ profiles/ agents/ workflows/ templates/ docs/
