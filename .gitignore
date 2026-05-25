@@ -1,0 +1,13 @@
+﻿**/node_modules/
+harness/package-lock.json
+harness/state/*
+!harness/state/.gitkeep
+harness/reports/*
+!harness/reports/.gitkeep
+harness/dist/
+harness/trace/*
+!harness/trace/trace.schema.json
+!harness/trace/gap-notes.template.md
+**/.hylyre/
+**/tmp_hypium/
+.cursor/mcp.json
