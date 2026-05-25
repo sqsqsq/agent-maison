@@ -231,6 +231,7 @@ node scripts/render-agents-md.mjs ...
 |--------|------|-----------------|
 | 1 | `framework.config.json`（整文件覆盖决策） | ✅（`Q1`） |
 | 1.A | `framework.config.json` 白名单字段缺失（**当 `inspection.missing_keys` 非空且用户已选 `Q1=n` 时**触发的"字段级只补缺合并"子问题） | ✅（`Q1.A`；执行落在 **§5.1**，不再写整文件） |
+| 1.C | `paths.reports_dir_pattern` 缺失（**当 `inspection.confirm_keys` 含 `reports_dir_pattern` 时**） | ✅（`Q1.C`；执行落在 **§5.1.D**） |
 | 2 | agent 入口文件（所选 `agent_entry_file.target_path`） | ✅ |
 | 3 | adapter `templates/` 下**每一个**漂移文件（`update_policy=prompt_if_changed` 或缺省） | ✅（**逐文件**一项，**严禁**整体折叠为一个"Q3：5 个文件"） |
 | 3 | 同上，但 `update_policy=auto_overwrite`（机制段，如部分 hooks / settings / verifier 子 agent） | ❌（由 `check-init` PASS 后自动备份并对齐模板，**不进入** `Q3.x`） |
@@ -255,6 +256,12 @@ node scripts/render-agents-md.mjs ...
         缺失字段：<inspections[0].missing_keys 前若干条；超过 5 个时截断"... 共 N 项，详见 check-init.json">
         回 y → **Step 5.1** 调 `merge-framework-config.mjs --apply`（先备份原文到 .framework-backup/<UTC>/ 再"只补缺、不覆盖"合并）；回 n → 跳过，Step 7 汇报里列出建议补齐清单
         （注：Q1=y 时本子问题自动跳过——Step 5.1.B 会在 Step 3.5 写入后无条件补缺，无需用户决策；missing_keys 为空时本行不出现。）
+
+   Q1.C feature-phase 报告外置（仅当 inspections[0].confirm_keys 含 reports_dir_pattern 时枚举）
+        是否启用 paths.reports_dir_pattern = doc/features/<feature>/<phase>/reports？
+        **默认推荐 y** / n 保持 legacy framework/harness/reports/<feature>/<phase>/
+        回 y → **Step 5.1.D** 调 merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y
+        回 n → 不写入；Step 7 明确汇报「仍用 legacy 报告路径」
 
    Q2   <agent_entry_file.target_path 的具体文件名由脚本渲染>（POPULATED）
         diff 摘要：<inspections[1].diff_summary>
@@ -395,7 +402,7 @@ cd <repo-root> && node framework/harness/scripts/show-last-committed-framework-c
 | 字段 | 写入位置 | 说明 |
 |------|----------|------|
 | `project_name` | `framework.config.json` | 默认取宿主包清单中的**项目名**字段（字段名以 profile 为准），缺失则目录名 |
-| `project_type` | 同上 | 仅 `app` 或 `atomic_service`（现阶段占位，合法但不触发差异化规则；未来差异化路线见 [framework/docs/atomic-service-roadmap.md](../../docs/atomic-service-roadmap.md)） |
+| `project_profile.sub_variant` | 同上 | 与 Step **1.5～1.7** 已确认的 profile 一致；普通应用写 `"app"`，元服务写 `"element-service"`。**不再写入顶层 `project_type`**（legacy 字段由 §5.1.C migration 自动迁移删除） |
 | `schema_version` | 同上 | 固定 `"1.1"`（v2.8 起从 `"1.0"` bump 至 `"1.1"`，包含 workflow/extensions/hooks/state_machine 语义）；未来框架 bump 时以模板与 `BACKFILL_FIELDS` 为准 |
 | `paths.*` | 同上 | 默认与 [framework/harness/config.ts](../../harness/config.ts) 中 `DEFAULT_PATHS` 一致；若实例已改目录结构，按用户指定覆盖 |
 | `state_machine.*`（v2.8 起） | 同上 | 可选；CREATE / UPDATE 模式都按 [templates/../templates/framework.config.template.json](../../templates/framework.config.template.json) skeleton 显式写入这一段（`grace_period_minutes=5` / `ttl_hours=12` / `schema_version="1.1"`）以便工程方一眼看到旋钮。**默认不主动追问用户**——直接落 skeleton 默认值即可；用户如主动要求自定义，按 [framework/harness/config.ts](../../harness/config.ts) 的 `STATE_MACHINE_RANGES` 边界（grace ≥ 1, ttl ≥ 1）校验后落盘。**UPDATE 模式不要把这一段从用户老 config 里抹掉**——若老 config 已有，按老 config 既有值保留；若老 config 没有，建议加上（写在 `paths` 段后，最末尾） |
@@ -653,11 +660,12 @@ node scripts/render-agents-md.mjs \
 `DEFAULT_PATHS` / `DEFAULT_STATE_MACHINE`（或同级常量）里加好默认值 → 在 `BACKFILL_FIELDS`
 追加一条 → 老工程下一次 `/framework-init` UPDATE 自动机器化追平，无需维护者手工跟。
 
-**严禁补缺的字段**：`project_name`、`project_type`、`agent_adapter`、`architecture.*`、
+**严禁 silent BACKFILL 的字段**：`project_name`、`agent_adapter`、`architecture.*`、
 profile-specific 的宿主工具链路径段（由 Step 5.6 detect 子流程单独处理，参见各 profile
 addendum）、`prd.*`（opt-in，须维护者手工选档）、`atomic_service.*`（预留位）、
-`paths.reports_dir_pattern`（未配置时 harness 回退到 legacy 报告路径，自动补会让老工程升级后
-报告搬家，属于行为级变更，须维护者显式选）。这些字段的缺失走 Skill 主流程。
+`paths.reports_dir_pattern`（行为级变更，须 **Q1.C** 确认后经 `--confirm-reports-dir-pattern=y`
+写入，不进 BACKFILL）。legacy 顶层 `project_type` 由 **§5.1.C migration pass** 自动 modernize，
+Step 2 **不再写入**。
 
 > **`Q1.A` 不适用场景**：体检 #1 **`MISSING` / `EMPTY`** 或 **`POPULATED + Q1=y`** 时不会出现交互 `Q1.A`——白名单补缺改由 **`§5.1.B`** 在 Step **3.5** 后置自动运行（仍只补缺不覆盖）。**仅当** `POPULATED + Q1=n`（磁盘 JSON 未被 Step **3.5** 重写）且 `missing_keys` 非空时，才可能需要用户在 0.3.4 对 `Q1.A` 给 `y`；`missing_keys` 的报告仅在 POPULATED 时出现。
 
@@ -673,8 +681,44 @@ addendum）、`prd.*`（opt-in，须维护者手工选档）、`atomic_service.*
 cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply
 ```
 
-- 若 stdout 表明 **missing fields: 0** → 不写盘或与磁盘一致退出 0 → Step 7 可注明「后置补缺无新增字段」。
-- 若脚本写回并补缺 N（N>0）→ 在 Step **7** 收尾汇报中列出脚本 stdout（或简述补了哪些路径）；备份目录按脚本约定 `.framework-backup/<UTC>/framework.config.json`。
+- 脚本执行 **Pass 1 BACKFILL + Pass 2 MIGRATION**（含 `project_type` → `project_profile.sub_variant`）；**不**自动写入 `paths.reports_dir_pattern`（须 Q1.C）。
+- 若 stdout 表明三 pass 均无变更 → 不写盘或与磁盘一致退出 0 → Step 7 可注明「后置合并无新增字段」。
+- 若脚本写回 → 在 Step **7** 收尾汇报中列出 stdout 摘要（backfill / migration 分项）；备份目录按脚本约定 `.framework-backup/<UTC>/framework.config.json`。
+
+#### 5.1.C migration pass（v3.3 起 · 含于 `--apply`）
+
+> **动机**：老 config 可能仍含 deprecated 顶层 `project_type`、缺 `project_profile.sub_variant`。runtime 虽能推导，但磁盘 JSON 长期不 modernize 会导致 init 体检 PASS 却仍带 legacy 字段。
+
+**动作**：与 **§5.1.B** 同一次 `merge-framework-config.mjs --apply` 内 **Pass 2** 自动执行（`MIGRATION_RULES` SSOT 见 [`config-field-merger.ts`](../../harness/scripts/utils/config-field-merger.ts)）。**BLOCKER**：不得要求维护者手改 JSON 删 `project_type`。
+
+**典型规则**：
+
+| 规则 ID | 触发 | 动作 |
+|---------|------|------|
+| `project_type_to_sub_variant` | 存在顶层 `project_type` | 写 `project_profile.sub_variant`，删 `project_type` |
+| `default_sub_variant_app` | 有 `project_profile.name`、无 `sub_variant`、无 `project_type` | 补 `sub_variant: "app"` |
+
+`check-init` 第 1 项 `migration_keys` 非空时，Step 7 须汇报已执行的 migration 摘要。
+
+#### 5.1.D confirm pass — `Q1.C` reports 外置（v3.3 起）
+
+> **动机**：`paths.reports_dir_pattern` 会让 harness 报告从 `framework/harness/reports/` 搬到 `doc/features/.../reports/`，属行为级变更，不能 silent BACKFILL。
+
+**触发**：Step 0.3.4 **`Q1.C`**（仅当 `inspections[0].confirm_keys` 含 `reports_dir_pattern`）。
+
+**动作**（按 0.3.4 已收答复执行，**禁止**手改 JSON）：
+
+```bash
+# Q1.C=y（推荐）
+cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y
+
+# Q1.C=n
+cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply --confirm-reports-dir-pattern=n
+```
+
+- **y** → 写入 `paths.reports_dir_pattern = doc/features/<feature>/<phase>/reports`（默认值 SSOT：`config.ts` `DEFAULT_REPORTS_DIR_PATTERN`；**不在** `DEFAULT_PATHS`，避免 runtime 绕过 Q1.C）。
+- **n** → 不写入；Step 7 **必须**明示「仍使用 legacy 报告路径 `framework/harness/reports/<feature>/<phase>/`」。
+- init **不自动搬迁** legacy 磁盘上的旧报告；可选 opt-in 见 [framework/MIGRATION.md](../../MIGRATION.md)「Legacy 报告手动迁移」专节。
 
 **`prd` 段（Visual Handoff，opt-in）**：模板 skeleton **默认不写** `prd`。若 Step 2 **未**与用户约定追加，则生成的 `framework.config.json` **不应**含顶层 `prd`。若工程需要脚本级 Visual Handoff 守门，请在 init 完成后由维护者按 [prompts/prd-harness-options.md](prompts/prd-harness-options.md) **手工合并** `prd`（含 `visual_handoff_enforcement` 与可选 `visual_sources`）。**UPDATE** 模式：若用户老 config **已含** `prd` → **原样保留**整段，仅在 Step 7 汇报中提示「已保留 opt-in `prd`；档位含 `reachable`，详见 prd-harness-options.md」。
 
@@ -941,17 +985,21 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 
 ## Step 7. 收尾：下一步指引
 
-**7.1 被跳过项汇报（如有）**
+**7.1 被跳过项 / 已执行 modernize 汇报**
 
-把 Step 0.3 / Step 5 中被判定为"保留 / 默认跳过 / 用户对 diff 回 n"的产物**逐项列出**，例如：
+把 Step 0.3 / Step 5 中被判定为"保留 / 默认跳过 / 用户对 diff 回 n"的产物**逐项列出**，并汇报 **§5.1.C migration** 与 **§5.1.D / Q1.C** 结果，例如：
 
 ```text
+本次 config modernize 已执行：
+- migration：project_type → project_profile.sub_variant=app，已删除 project_type
+- Q1.C=y：已写入 paths.reports_dir_pattern=doc/features/<feature>/<phase>/reports
+
 本次初始化跳过以下产物（均未被写入 / 未被覆盖）：
+- Q1.C=n：仍使用 legacy 报告路径 framework/harness/reports/<feature>/<phase>/
 - doc/architecture.md（POPULATED，用户已手工迭代；如需重置请删除后重跑）
-- doc/module-catalog.yaml（POPULATED，属 catalog-bootstrap 持续积累资产）
-- doc/glossary.yaml（POPULATED，属 glossary-bootstrap 持续积累资产）
-- 某 `commands/*.md`（POPULATED，你对 diff 回复了 n）
 ```
+
+**禁止**在 Step 7 写「请维护者手工编辑 framework.config.json 补 reports_dir_pattern / 删 project_type」——这些须已通过 merge + Q1.C 完成或已在 Q1.C=n 时明示 legacy 路径。
 
 无跳过项时明确打印"本次无跳过项"。
 

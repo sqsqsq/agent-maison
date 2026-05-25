@@ -8,6 +8,7 @@ import * as path from 'path';
 
 import {
   clearFrameworkConfigCache,
+  featurePhaseReportsDir,
   loadFrameworkConfig,
   resetFrameworkConfigWarningsForTest,
 } from '../../config';
@@ -198,6 +199,47 @@ const cases: Case[] = [
         fs.rmSync(root, { recursive: true, force: true });
       }
       assert(warns.some(w => w.includes('缺少 `project_profile`')), 'missing profile advisory should be emitted');
+    },
+  },
+  {
+    name: 'config defaults: 磁盘未写 reports_dir_pattern → normalize 不注入，featurePhaseReportsDir 走 legacy',
+    run: () => {
+      const root = mkTmp('profile-reports-legacy-');
+      writeFile(path.join(root, 'framework.config.json'), JSON.stringify({
+        schema_version: '1.1',
+        project_name: 'legacy-reports',
+        project_profile: { name: 'hmos-app', sub_variant: 'app' },
+        agent_adapter: 'generic',
+        architecture: {
+          outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'forbid' }],
+          module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+          inner_dependency_direction: 'upward',
+          cross_module_exports_file: 'index.ets',
+        },
+        paths: {
+          features_dir: 'doc/features',
+          module_catalog: 'doc/module-catalog.yaml',
+          glossary: 'doc/glossary.yaml',
+          glossary_seed: 'doc/glossary-seed.txt',
+          architecture_md: 'doc/architecture.md',
+        },
+      }, null, 2));
+      clearFrameworkConfigCache();
+      try {
+        const cfg = loadFrameworkConfig(root);
+        assert(
+          cfg.paths.reports_dir_pattern === undefined,
+          `normalize 不应注入 reports_dir_pattern；实际：${String(cfg.paths.reports_dir_pattern)}`,
+        );
+        const legacy = featurePhaseReportsDir(root, 'demo-feature', 'coding');
+        assert(
+          legacy.replace(/\\/g, '/').endsWith('framework/harness/reports/demo-feature/coding'),
+          `应回退 legacy 路径；实际：${legacy}`,
+        );
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

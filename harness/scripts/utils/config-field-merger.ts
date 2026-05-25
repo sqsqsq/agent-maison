@@ -8,26 +8,30 @@
 // 重新跑 /framework-init 无法机器化补齐，常见现象是「重新 init 后只新增了几个
 // 显眼字段，其它新字段全漏」。
 //
-// 本 util 把"哪些字段允许在缺失时回填默认值"的白名单与合并逻辑收敛到单一位置，
-// 供 check-init.ts（识别缺失字段、报告给 stdout）与 merge-framework-config.ts
-// （实际执行合并 + 备份）共用。
+// 本 util 把 framework-init UPDATE 的三档 config 同步收敛到单一位置，供
+// check-init.ts（识别缺失/待迁移/待确认字段）与 merge-framework-config.ts
+// （实际执行合并 + 备份）共用：
 //
-// 严格约束：
+//   Pass 1 — BACKFILL_FIELDS：只补缺失 key，静默安全默认值
+//   Pass 2 — MIGRATION_RULES：modernize 已有 key（如 project_type → sub_variant）
+//   Pass 3 — CONFIRM_FIELDS：行为级变更，须 Skill 00 Q1.C 等显式 y/n 后才写入
+//
+// 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
-//   2. 不动用户必填字段（project_name / project_type / architecture / agent_adapter）
-//      —— 它们的缺失走 Skill 主流程的交互。
-//   3. 不动 opt-in 字段（prd / atomic_service）—— 这些需要维护者手工选择档位。
+//   2. 不动用户必填字段（project_name / architecture / agent_adapter）—— 走 Skill 交互。
+//   3. 不动 opt-in 字段（prd / atomic_service）—— 维护者手工选档。
 //   4. 不动 toolchain.devEcoStudio.installPath —— 由 Skill 5.6 detect-deveco 单独处理。
 //
-// 新增字段时只需扩展本文件的 BACKFILL_FIELDS 白名单：
-//   - check-init 自动把它纳入 "缺失字段" 报告；
-//   - merge-framework-config.ts 自动把它纳入补缺合并范围；
-//   - 老工程下次 UPDATE 即可机器化追平。
+// 新增字段 checklist：
+//   - 静默安全默认 → BACKFILL_FIELDS + config.ts DEFAULT_*
+//   - 弃用/重命名 → MIGRATION_RULES
+//   - 行为变更 → CONFIRM_FIELDS + Skill 00 Q*.C
 // ============================================================================
 
 import {
   DEFAULT_HYLYRE_TOOL_CONFIG,
   DEFAULT_PATHS,
+  DEFAULT_REPORTS_DIR_PATTERN,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
 
@@ -107,12 +111,7 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: DEFAULT_PATHS.receipt_dir_pattern,
     note: 'paths.receipt_dir_pattern 缺失：回填 doc/features/<feature>/<phase>（完成回执目录模式）',
   },
-  // 故意不补 `paths.reports_dir_pattern`：DEFAULT_PATHS 中**有意未定义**该字段，
-  // 未配置时 harness 回退到 legacy 报告路径 `framework/harness/reports/<feature>/<phase>/`
-  // 与历史实例兼容（见 framework/harness/config.ts 第 263-267 行注释）。
-  // 若自动补 "doc/features/<feature>/<phase>/reports"，老工程升级后报告落点会突然搬家，
-  // 属于行为级变更，必须由维护者显式决定 → 留给 Skill 00 Step 7 收尾提示，
-  // 或由维护者手工在 framework.config.json 中添加。
+  // paths.reports_dir_pattern 不在 BACKFILL —— 见 CONFIRM_FIELDS + Skill 00 Q1.C。
   {
     path: 'paths.docs_committed',
     defaultValue: DEFAULT_PATHS.docs_committed,
@@ -196,6 +195,226 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     note: 'tools.hylyre.hypium_page_name 缺失：回填空串（由 device-test-run 扫描 entry mainElement）',
   },
 ];
+
+// --------------------------------------------------------------------------
+// Pass 2 — MIGRATION_RULES（modernize 已有 key，安全等价于 runtime normalize）
+// --------------------------------------------------------------------------
+
+export interface MigrationRule {
+  id: string;
+  note: string;
+  detect: (raw: Record<string, unknown>) => boolean;
+  apply: (base: Record<string, unknown>) => { applied: boolean; summary: string };
+}
+
+function ensureProjectProfileObject(base: Record<string, unknown>): Record<string, unknown> {
+  const existing = base.project_profile;
+  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+    return existing as Record<string, unknown>;
+  }
+  const created: Record<string, unknown> = { name: 'hmos-app' };
+  base.project_profile = created;
+  return created;
+}
+
+function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
+  return typeof pp.sub_variant === 'string' && pp.sub_variant.trim().length > 0;
+}
+
+/**
+ * UPDATE 模式可被自动 modernize 的迁移规则（SSOT）。
+ * 与 BACKFILL 不同：会修改/删除已有 key。
+ */
+export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
+  {
+    id: 'project_type_to_sub_variant',
+    note: '迁移 legacy 顶层 project_type → project_profile.sub_variant 并删除 project_type',
+    detect: raw => Object.prototype.hasOwnProperty.call(raw, 'project_type'),
+    apply: base => {
+      const projectType = base.project_type;
+      const pp = ensureProjectProfileObject(base);
+      let changed = false;
+      if (!hasNonEmptySubVariant(pp)) {
+        pp.sub_variant = projectType === 'atomic_service' ? 'element-service' : 'app';
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'project_type')) {
+        delete base.project_type;
+        changed = true;
+      }
+      return {
+        applied: changed,
+        summary: changed
+          ? `project_type=${String(projectType)} → project_profile.sub_variant=${String(pp.sub_variant)}，已删除 project_type`
+          : 'project_type 已迁移',
+      };
+    },
+  },
+  {
+    id: 'default_sub_variant_app',
+    note: '补全 project_profile.sub_variant=app（无 legacy project_type 且缺 sub_variant 时）',
+    detect: raw => {
+      if (Object.prototype.hasOwnProperty.call(raw, 'project_type')) return false;
+      const pp = raw.project_profile;
+      if (!pp || typeof pp !== 'object' || Array.isArray(pp)) return false;
+      const name = (pp as Record<string, unknown>).name;
+      if (typeof name !== 'string' || name.trim().length === 0) return false;
+      return !hasNonEmptySubVariant(pp as Record<string, unknown>);
+    },
+    apply: base => {
+      const pp = ensureProjectProfileObject(base);
+      if (hasNonEmptySubVariant(pp)) {
+        return { applied: false, summary: 'project_profile.sub_variant 已存在' };
+      }
+      pp.sub_variant = 'app';
+      return { applied: true, summary: '补全 project_profile.sub_variant=app' };
+    },
+  },
+];
+
+export interface PendingMigrationEntry {
+  id: string;
+  note: string;
+}
+
+export interface MigrationReport {
+  appliedMigrations: Array<{ id: string; summary: string }>;
+}
+
+export function detectPendingMigrations(raw: unknown): PendingMigrationEntry[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  const obj = raw as Record<string, unknown>;
+  const out: PendingMigrationEntry[] = [];
+  for (const rule of MIGRATION_RULES) {
+    if (rule.detect(obj)) {
+      out.push({ id: rule.id, note: rule.note });
+    }
+  }
+  return out;
+}
+
+export function applyMigrations(raw: unknown): {
+  merged: Record<string, unknown>;
+  report: MigrationReport;
+} {
+  const base: Record<string, unknown> =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (deepClone(raw) as Record<string, unknown>)
+      : {};
+  const applied: MigrationReport['appliedMigrations'] = [];
+  for (const rule of MIGRATION_RULES) {
+    if (rule.detect(base)) {
+      const result = rule.apply(base);
+      if (result.applied) {
+        applied.push({ id: rule.id, summary: result.summary });
+      }
+    }
+  }
+  return { merged: base, report: { appliedMigrations: applied } };
+}
+
+// --------------------------------------------------------------------------
+// Pass 3 — CONFIRM_FIELDS（行为级变更，须 Q1.C 等显式 y 后才写入）
+// --------------------------------------------------------------------------
+
+export interface ConfirmField {
+  path: string;
+  confirmKey: string;
+  defaultValue: unknown;
+  note: string;
+}
+
+export const CONFIRM_FIELDS: ReadonlyArray<ConfirmField> = [
+  {
+    path: 'paths.reports_dir_pattern',
+    confirmKey: 'reports_dir_pattern',
+    defaultValue: DEFAULT_REPORTS_DIR_PATTERN,
+    note: '启用 feature-phase 报告外置（doc/features/<feature>/<phase>/reports）；拒绝则保持 legacy framework/harness/reports/<feature>/<phase>/',
+  },
+];
+
+export interface PendingConfirmEntry {
+  confirmKey: string;
+  path: string;
+  defaultValue: unknown;
+  note: string;
+}
+
+export interface ConfirmApplyReport {
+  appliedFields: PendingConfirmEntry[];
+  rejectedKeys: string[];
+}
+
+export function detectMissingConfirmFields(raw: unknown): PendingConfirmEntry[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return CONFIRM_FIELDS.map(f => ({
+      confirmKey: f.confirmKey,
+      path: f.path,
+      defaultValue: f.defaultValue,
+      note: f.note,
+    }));
+  }
+  const out: PendingConfirmEntry[] = [];
+  for (const f of CONFIRM_FIELDS) {
+    if (!hasDottedKey(raw, f.path)) {
+      out.push({
+        confirmKey: f.confirmKey,
+        path: f.path,
+        defaultValue: f.defaultValue,
+        note: f.note,
+      });
+    }
+  }
+  return out;
+}
+
+export function applyConfirmFields(
+  raw: unknown,
+  answers: Record<string, boolean>,
+): { merged: Record<string, unknown>; report: ConfirmApplyReport } {
+  const base: Record<string, unknown> =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (deepClone(raw) as Record<string, unknown>)
+      : {};
+  const applied: PendingConfirmEntry[] = [];
+  const rejected: string[] = [];
+  for (const f of CONFIRM_FIELDS) {
+    const ans = answers[f.confirmKey];
+    if (ans === undefined) continue;
+    if (!ans) {
+      rejected.push(f.confirmKey);
+      continue;
+    }
+    if (!hasDottedKey(base, f.path)) {
+      setDottedKey(base, f.path, f.defaultValue);
+      applied.push({
+        confirmKey: f.confirmKey,
+        path: f.path,
+        defaultValue: f.defaultValue,
+        note: f.note,
+      });
+    }
+  }
+  return { merged: base, report: { appliedFields: applied, rejectedKeys: rejected } };
+}
+
+/**
+ * 三 pass 合并：backfill → migration → confirm（confirm 仅当 answers 含对应 key）。
+ */
+export function mergeFrameworkConfig(
+  raw: unknown,
+  confirmAnswers: Record<string, boolean> = {},
+): {
+  merged: Record<string, unknown>;
+  backfillReport: MergeReport;
+  migrationReport: MigrationReport;
+  confirmReport: ConfirmApplyReport;
+} {
+  const { merged: afterBackfill, report: backfillReport } = mergeBackfillFields(raw);
+  const { merged: afterMigration, report: migrationReport } = applyMigrations(afterBackfill);
+  const { merged, report: confirmReport } = applyConfirmFields(afterMigration, confirmAnswers);
+  return { merged, backfillReport, migrationReport, confirmReport };
+}
 
 /** 字段路径是否在白名单内（用于外部诊断/单测）。 */
 export function isBackfillablePath(p: string): boolean {

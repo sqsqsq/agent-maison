@@ -1,29 +1,18 @@
 #!/usr/bin/env node
 // ============================================================================
-// merge-framework-config.ts — UPDATE 模式下「字段级只补缺」合并工具
+// merge-framework-config.ts — UPDATE 模式下 config 三 pass 同步工具
 // ============================================================================
 //
-// 经由 merge-framework-config.mjs shim 调用：`node .../merge-framework-config.mjs`
-// → ts-node 本文件。
-//
-// 设计目标：解决 Skill 00 UPDATE 模式历史只有「整文件替换 / 跳过」两档导致的
-// 「框架新增字段无法机器化追平」问题。本脚本只补缺、不覆盖：
-//
-//   - 老 config 完全没有的白名单字段 → 按 framework 默认值补；
-//   - 老 config 已有的字段（哪怕值不同于默认）→ 一律保留；
-//   - 白名单之外的字段 → 一律不动；
-//   - 白名单 SSOT 在 utils/config-field-merger.ts 的 BACKFILL_FIELDS。
+// Pass 1 — BACKFILL：只补缺、不覆盖（BACKFILL_FIELDS）
+// Pass 2 — MIGRATION：modernize 已有 key（MIGRATION_RULES，如 project_type → sub_variant）
+// Pass 3 — CONFIRM：行为级变更，须 Skill 00 Q1.C 等显式 y 后才写入（CONFIRM_FIELDS）
 //
 // 用法：
 //   node framework/harness/scripts/merge-framework-config.mjs [--dry-run] [--apply] [--config <path>]
-//
-// 参数：
-//   --dry-run             仅打印缺失字段表与合并后预览（默认模式，不写盘）
-//   --apply               写回 framework.config.json，先备份到 .framework-backup/<UTC>/
-//   --config <path>       指定 framework.config.json 绝对路径（默认 <repo-root>/framework.config.json）
+//     [--confirm-reports-dir-pattern=y|n]
 //
 // 退出码：
-//   0  无缺失字段（无需合并） 或 dry-run / apply 成功
+//   0  无需合并 / dry-run / apply 成功
 //   1  CLI 参数错误 / 找不到 / 无法解析 framework.config.json
 //   2  --apply 时写入或备份失败
 // ============================================================================
@@ -33,9 +22,15 @@ import * as path from 'path';
 
 import {
   BACKFILL_FIELDS,
+  CONFIRM_FIELDS,
+  MIGRATION_RULES,
   detectMissingBackfillFields,
-  mergeBackfillFields,
+  detectMissingConfirmFields,
+  detectPendingMigrations,
+  mergeFrameworkConfig,
   MissingFieldEntry,
+  PendingConfirmEntry,
+  PendingMigrationEntry,
 } from './utils/config-field-merger';
 
 const SCRIPT_DIR = __dirname;
@@ -46,6 +41,7 @@ interface CliArgs {
   apply: boolean;
   dryRun: boolean;
   configPath: string;
+  confirmAnswers: Record<string, boolean>;
 }
 
 function fail(msg: string, code = 1): never {
@@ -53,10 +49,18 @@ function fail(msg: string, code = 1): never {
   process.exit(code);
 }
 
+function parseYnFlag(raw: string, flagName: string): boolean {
+  const v = raw.trim().toLowerCase();
+  if (v === 'y' || v === 'yes' || v === 'true' || v === '1') return true;
+  if (v === 'n' || v === 'no' || v === 'false' || v === '0') return false;
+  fail(`${flagName} 必须是 y 或 n，收到：${raw}`);
+}
+
 function parseArgs(argv: string[]): CliArgs {
   let apply = false;
   let dryRun = false;
   let configPath = DEFAULT_CONFIG_PATH;
+  const confirmAnswers: Record<string, boolean> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--apply') apply = true;
@@ -64,11 +68,14 @@ function parseArgs(argv: string[]): CliArgs {
     else if (a === '--config') {
       const next = argv[i + 1];
       if (!next) fail('--config 需要跟一个路径参数');
-      // mjs shim 把 cwd 切到 harnessRoot；--config 的相对路径应**相对于用户调用 shim 时的 cwd**
-      // 解析，否则会把 `framework/harness/foo.json` 误解析为 `<harness>/framework/harness/foo.json`。
       const userCwd = process.env.MERGE_FW_CONFIG_USER_CWD || process.cwd();
       configPath = path.isAbsolute(next) ? next : path.resolve(userCwd, next);
       i++;
+    } else if (a.startsWith('--confirm-reports-dir-pattern=')) {
+      confirmAnswers.reports_dir_pattern = parseYnFlag(
+        a.slice('--confirm-reports-dir-pattern='.length),
+        '--confirm-reports-dir-pattern',
+      );
     } else if (a === '--help' || a === '-h') {
       process.stdout.write(USAGE + '\n');
       process.exit(0);
@@ -77,15 +84,16 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
   if (apply && dryRun) fail('--apply 与 --dry-run 互斥');
-  if (!apply && !dryRun) dryRun = true; // 默认 dry-run，避免误改
-  return { apply, dryRun, configPath };
+  if (!apply && !dryRun) dryRun = true;
+  return { apply, dryRun, configPath, confirmAnswers };
 }
 
-const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>]
+const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>] [--confirm-reports-dir-pattern=y|n]
 
-  --dry-run    仅打印缺失字段与合并预览，不写盘（默认）
-  --apply      先备份到 <repo>/.framework-backup/<UTC>/，再写回 framework.config.json
-  --config     指定 framework.config.json 路径（默认 <repo-root>/framework.config.json）`;
+  --dry-run                         打印三 pass 诊断与合并预览，不写盘（默认）
+  --apply                           先备份到 <repo>/.framework-backup/<UTC>/，再写回
+  --config <path>                   指定 framework.config.json 路径
+  --confirm-reports-dir-pattern=y|n Skill 00 Q1.C 答复；y 写入 paths.reports_dir_pattern`;
 
 function readConfig(p: string): { raw: unknown; text: string } {
   if (!fs.existsSync(p)) fail(`找不到 framework.config.json：${p}`);
@@ -142,27 +150,98 @@ function formatMissingTable(missing: MissingFieldEntry[]): string {
   return lines.join('\n');
 }
 
+function formatMigrationTable(pending: PendingMigrationEntry[]): string {
+  if (pending.length === 0) return '（无）';
+  const lines: string[] = [];
+  lines.push('| # | 规则 ID | 说明 |');
+  lines.push('|---|---------|------|');
+  pending.forEach((m, i) => {
+    lines.push(`| ${i + 1} | \`${m.id}\` | ${m.note} |`);
+  });
+  return lines.join('\n');
+}
+
+function formatConfirmTable(pending: PendingConfirmEntry[]): string {
+  if (pending.length === 0) return '（无）';
+  const lines: string[] = [];
+  lines.push('| # | confirmKey | 字段路径 | 默认值 | 说明 |');
+  lines.push('|---|------------|----------|--------|------|');
+  pending.forEach((c, i) => {
+    const val =
+      typeof c.defaultValue === 'string'
+        ? `"${c.defaultValue}"`
+        : JSON.stringify(c.defaultValue);
+    lines.push(`| ${i + 1} | \`${c.confirmKey}\` | \`${c.path}\` | \`${val}\` | ${c.note} |`);
+  });
+  return lines.join('\n');
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const { raw, text: originalText } = readConfig(args.configPath);
 
   const missing = detectMissingBackfillFields(raw);
+  const pendingMigrations = detectPendingMigrations(raw);
+  const pendingConfirm = detectMissingConfirmFields(raw);
+
   process.stdout.write(`\n=== merge-framework-config ===\n`);
   process.stdout.write(`config: ${args.configPath}\n`);
   process.stdout.write(`mode: ${args.apply ? 'apply' : 'dry-run'}\n`);
   process.stdout.write(`backfill whitelist size: ${BACKFILL_FIELDS.length}\n`);
-  process.stdout.write(`missing fields: ${missing.length}\n\n`);
+  process.stdout.write(`migration rules: ${MIGRATION_RULES.length}\n`);
+  process.stdout.write(`confirm fields: ${CONFIRM_FIELDS.length}\n`);
+  process.stdout.write(`missing backfill fields: ${missing.length}\n`);
+  process.stdout.write(`pending migrations: ${pendingMigrations.length}\n`);
+  process.stdout.write(`pending confirm fields: ${pendingConfirm.length}\n\n`);
 
-  if (missing.length === 0) {
-    process.stdout.write('当前 framework.config.json 已包含所有白名单字段，无需合并。\n');
+  const hasConfirmAnswer = Object.keys(args.confirmAnswers).length > 0;
+  const nothingToDo =
+    missing.length === 0 &&
+    pendingMigrations.length === 0 &&
+    pendingConfirm.length === 0;
+
+  if (nothingToDo && !hasConfirmAnswer) {
+    process.stdout.write('当前 framework.config.json 已 modernize，无需合并。\n');
     process.exit(0);
   }
 
-  process.stdout.write('缺失字段表：\n');
+  process.stdout.write('【Pass 1 · BACKFILL】缺失字段表：\n');
   process.stdout.write(formatMissingTable(missing) + '\n\n');
+  process.stdout.write('【Pass 2 · MIGRATION】待迁移规则：\n');
+  process.stdout.write(formatMigrationTable(pendingMigrations) + '\n\n');
+  process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 Q1.C 等显式 y 才写入）：\n');
+  process.stdout.write(formatConfirmTable(pendingConfirm) + '\n\n');
 
-  const { merged } = mergeBackfillFields(raw);
+  if (
+    pendingConfirm.length > 0 &&
+    args.confirmAnswers.reports_dir_pattern === undefined &&
+    args.apply
+  ) {
+    process.stdout.write(
+      '提示：paths.reports_dir_pattern 未通过 --confirm-reports-dir-pattern=y 确认，Pass 3 跳过写入。\n\n',
+    );
+  }
+
+  const { merged, backfillReport, migrationReport, confirmReport } = mergeFrameworkConfig(
+    raw,
+    args.confirmAnswers,
+  );
   const mergedText = formatJson(merged);
+
+  process.stdout.write('合并摘要：\n');
+  process.stdout.write(`  backfill 写入: ${backfillReport.appliedFields.length} 项\n`);
+  process.stdout.write(`  migration 执行: ${migrationReport.appliedMigrations.length} 项\n`);
+  for (const m of migrationReport.appliedMigrations) {
+    process.stdout.write(`    - ${m.id}: ${m.summary}\n`);
+  }
+  process.stdout.write(`  confirm 写入: ${confirmReport.appliedFields.length} 项\n`);
+  for (const c of confirmReport.appliedFields) {
+    process.stdout.write(`    - ${c.path}\n`);
+  }
+  if (confirmReport.rejectedKeys.length > 0) {
+    process.stdout.write(`  confirm 拒绝: ${confirmReport.rejectedKeys.join(', ')}\n`);
+  }
+  process.stdout.write('\n');
 
   if (args.dryRun) {
     process.stdout.write('--dry-run：未写盘。合并后的 framework.config.json 预览（前 80 行）：\n');
@@ -174,9 +253,7 @@ function main(): void {
     process.exit(0);
   }
 
-  // --apply
   try {
-    // 仅当当前磁盘内容确实与即将写入不同才动盘，避免反复触发 git diff
     if (originalText === mergedText) {
       process.stdout.write('--apply：合并后内容与磁盘一致，跳过写入。\n');
       process.exit(0);
@@ -185,7 +262,6 @@ function main(): void {
     process.stdout.write(`已备份原 framework.config.json 至：${backupRel}\n`);
     fs.writeFileSync(args.configPath, mergedText, 'utf8');
     process.stdout.write(`已写回：${args.configPath}\n`);
-    process.stdout.write(`本次补缺 ${missing.length} 个字段。\n`);
     process.exit(0);
   } catch (err) {
     fail(`--apply 写入失败：${(err as Error).message}`, 2);

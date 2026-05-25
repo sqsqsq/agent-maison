@@ -29,7 +29,11 @@ import * as YAML from 'yaml';
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import {
   detectMissingBackfillFields,
+  detectMissingConfirmFields,
+  detectPendingMigrations,
   MissingFieldEntry,
+  PendingConfirmEntry,
+  PendingMigrationEntry,
 } from './utils/config-field-merger';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
@@ -81,6 +85,16 @@ export interface Inspection {
    * CREATE 模式（cfg 不存在）或非 POPULATED 状态下为 null / 不设置。
    */
   missing_keys?: string[] | null;
+  /**
+   * 第 1 项专用：UPDATE 模式下待执行的 MIGRATION_RULES id 列表。
+   * 来源：scripts/utils/config-field-merger.ts detectPendingMigrations。
+   */
+  migration_keys?: string[] | null;
+  /**
+   * 第 1 项专用：UPDATE 模式下待 Q1.C 等确认的 CONFIRM_FIELDS confirmKey 列表。
+   * 来源：scripts/utils/config-field-merger.ts detectMissingConfirmFields。
+   */
+  confirm_keys?: string[] | null;
 }
 
 export interface CheckInitReport {
@@ -243,6 +257,8 @@ interface RawFrameworkConfig {
    * 来源：scripts/utils/config-field-merger.ts detectMissingBackfillFields。
    */
   missingBackfillFields: MissingFieldEntry[];
+  pendingMigrations: PendingMigrationEntry[];
+  missingConfirmFields: PendingConfirmEntry[];
 }
 
 function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
@@ -257,6 +273,8 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       agentAdapter: null,
       toolchainInstallPath: null,
       missingBackfillFields: [],
+      pendingMigrations: [],
+      missingConfirmFields: [],
     };
   }
   let raw: any;
@@ -272,6 +290,8 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       agentAdapter: null,
       toolchainInstallPath: null,
       missingBackfillFields: [],
+      pendingMigrations: [],
+      missingConfirmFields: [],
     };
   }
   const paths = {
@@ -289,6 +309,8 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
     missingBackfillFields: detectMissingBackfillFields(raw),
+    pendingMigrations: detectPendingMigrations(raw),
+    missingConfirmFields: detectMissingConfirmFields(raw),
   };
 }
 
@@ -894,6 +916,8 @@ function inspect01(env: InspectorEnv): Inspection {
       planned_strategy: strategyText(1, 'MISSING'),
       diagnosis: 'CREATE 模式：实例工程根尚无 framework.config.json',
       missing_keys: null,
+      migration_keys: null,
+      confirm_keys: null,
     };
   }
   if (!env.cfg.parseable) {
@@ -908,6 +932,8 @@ function inspect01(env: InspectorEnv): Inspection {
       planned_strategy: strategyText(1, 'POPULATED'),
       diagnosis: `JSON 解析失败：${env.cfg.parseError ?? '未知'}`,
       missing_keys: null,
+      migration_keys: null,
+      confirm_keys: null,
     };
   }
   if (env.cfg.outerLayersLen === 0) {
@@ -922,15 +948,32 @@ function inspect01(env: InspectorEnv): Inspection {
       planned_strategy: strategyText(1, 'EMPTY'),
       diagnosis: 'architecture.outer_layers 为空',
       missing_keys: null,
+      migration_keys: null,
+      confirm_keys: null,
     };
   }
   // POPULATED：进一步识别 UPDATE 模式下的「白名单字段缺失」，
   // 供 Skill 00 §5.1 Q1.A 触发 merge-framework-config.mjs --apply。
   const missingPaths = env.cfg.missingBackfillFields.map(f => f.path);
+  const migrationIds = env.cfg.pendingMigrations.map(m => m.id);
+  const confirmKeys = env.cfg.missingConfirmFields.map(c => c.confirmKey);
   const baseDiag = `outer_layers.length=${env.cfg.outerLayersLen}，已配置`;
-  const diagnosis = missingPaths.length === 0
-    ? baseDiag
-    : `${baseDiag}；另有 ${missingPaths.length} 个白名单字段缺失（建议跑 merge-framework-config.mjs --apply 补齐）`;
+  const parts = [baseDiag];
+  if (missingPaths.length > 0) {
+    parts.push(
+      `另有 ${missingPaths.length} 个白名单字段缺失（建议 merge-framework-config.mjs --apply 补齐）`,
+    );
+  }
+  if (migrationIds.length > 0) {
+    parts.push(
+      `待迁移 ${migrationIds.length} 项（${migrationIds.join(', ')}；--apply 自动 modernize）`,
+    );
+  }
+  if (confirmKeys.length > 0) {
+    parts.push(
+      `待确认 ${confirmKeys.length} 项（${confirmKeys.join(', ')}；Skill 00 Q1.C 推荐 y）`,
+    );
+  }
   return {
     index: 1,
     target_path: target,
@@ -940,8 +983,10 @@ function inspect01(env: InspectorEnv): Inspection {
     hash_target: null,
     diff_summary: null,
     planned_strategy: strategyText(1, 'POPULATED'),
-    diagnosis,
+    diagnosis: parts.join('；'),
     missing_keys: missingPaths.length > 0 ? missingPaths : null,
+    migration_keys: migrationIds.length > 0 ? migrationIds : null,
+    confirm_keys: confirmKeys.length > 0 ? confirmKeys : null,
   };
 }
 

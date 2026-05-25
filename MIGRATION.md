@@ -132,9 +132,41 @@ git submodule update --remote framework
 
 **实例 checklist**：
 
-1. `framework.config.json` → `paths.reports_dir_pattern` 填入期望模式并得到用户确认（Skill 00 UPDATE）。
+1. 跑 `/framework-init` UPDATE；`check-init` 第 1 项若 `confirm_keys` 含 `reports_dir_pattern`，在 Step 0.3.4 回答 **Q1.C**（默认推荐 **y**）；脚本写入：
+   `merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y`（**非手改 JSON**）。
 2. 宿主 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则）；保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局。
-3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「一次性搬迁」脚本。
+3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「Legacy 报告手动迁移」专节（init **不自动搬文件**）。
+
+#### Legacy 报告手动迁移（opt-in · init + Q1.C=y 之后）
+
+> init 只 modernize config，**不搬磁盘文件**。不迁也不影响新 harness 产出路径。
+
+**路径对照**：
+
+| Legacy | 新路径 |
+|--------|--------|
+| `framework/harness/reports/<feature>/<phase>/*` | `doc/features/<feature>/<phase>/reports/*` |
+
+**不要搬**：`framework/harness/reports/_global/**`、`.gitkeep`
+
+**回执提醒**：若 `phase-completion-receipt.md` 的 `trace_json.path` 仍指 legacy，迁移后需改路径或重跑闭环。
+
+**单 feature 示例（PowerShell，工程根）**：
+
+```powershell
+$feature = "hwp-channel"
+$legacyRoot = "framework/harness/reports/$feature"
+foreach ($phaseDir in Get-ChildItem -LiteralPath $legacyRoot -Directory -ErrorAction SilentlyContinue) {
+  $phase = $phaseDir.Name
+  $dest = "doc/features/$feature/$phase/reports"
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  Get-ChildItem -LiteralPath $phaseDir.FullName -Force | ForEach-Object {
+    $target = Join-Path $dest $_.Name
+    if (Test-Path $target) { Write-Host "skip: $target" }
+    else { Move-Item $_.FullName $target }
+  }
+}
+```
 
 #### 一次性搬迁（Bash）
 
@@ -346,10 +378,36 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 老工程下一次 `/framework-init` UPDATE 就会自动机器化追平，**无需**维护者再去 MIGRATION 里
 逐条 checklist。
 
-**严禁纳入白名单**（必须维护者显式决定）：`project_name` / `project_type` / `agent_adapter` /
+**严禁纳入 BACKFILL**（须 Skill 交互或 confirm pass）：`project_name` / `agent_adapter` /
 `architecture.*`（必填）、`toolchain.devEcoStudio.*`（由 Skill 5.6 detect-deveco 独立交互处理）、
 `prd.*`（opt-in，需手工选 strict/warn/reachable/off 档位）、`atomic_service.*`（预留位）、
-`paths.reports_dir_pattern`（未配置时回退 legacy 报告路径，自动补会让升级后报告搬家，属行为级变更）。
+`paths.reports_dir_pattern`（行为级变更，经 Skill 00 **Q1.C** + `--confirm-reports-dir-pattern=y`
+写入）。legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 `--apply` 时自动 modernize。
+
+### v3.3.2：init config 三 pass 同步（BACKFILL + MIGRATION + CONFIRM）
+
+**适用范围**：framework 升级到含 `MIGRATION_RULES` / `CONFIRM_FIELDS` 的 harness 后，老实例
+`/framework-init` UPDATE 须机器化 modernize `framework.config.json`，**不要求维护者手改 JSON**。
+
+**三 pass 摘要**（SSOT：[config-field-merger.ts](harness/scripts/utils/config-field-merger.ts)）：
+
+| Pass | 机制 | 典型字段 | init 入口 |
+|------|------|----------|-----------|
+| 1 BACKFILL | 只补缺失 key | `paths.state_file`、`state_machine.*`、`toolchain.hvigor.*` | §5.1.B / Q1.A → `--apply` |
+| 2 MIGRATION | modernize 已有 key | `project_type` → `project_profile.sub_variant` | 同上（含于 `--apply`） |
+| 3 CONFIRM | 行为级变更 | `paths.reports_dir_pattern` | Q1.C → `--confirm-reports-dir-pattern=y\|n` |
+
+**`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_REPORTS_DIR_PATTERN`（**故意不在** `DEFAULT_PATHS`，避免 `normalizeConfig` 在磁盘未配置时 runtime 偷偷切到新路径；Q1.C=n 须保持 legacy 回退）。
+
+**发布说明**：[RELEASE-NOTES-v3.3.md](RELEASE-NOTES-v3.3.md)
+
+1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE。
+2. `check-init` 第 1 项查看 `missing_keys` / `migration_keys` / `confirm_keys`。
+3. Step 5.1.B：`merge-framework-config.mjs --apply`（backfill + migration）。
+4. Q1.C=y：`merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y`。
+5. （可选）按上文「Legacy 报告手动迁移」搬迁旧报告文件。
+
+**回归**：`cd framework/harness && npm test`（`config-field-merger` + `init-update-policy` 套件）。
 
 **已纳入白名单（v2.x+，`tools.hylyre.*`）**：hmos-app Skill 6 真机自动化配置。老实例缺
 `tools` 段或缺任一子键时，`merge-framework-config.mjs --apply` 会按

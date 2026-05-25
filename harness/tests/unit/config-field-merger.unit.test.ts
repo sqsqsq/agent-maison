@@ -5,9 +5,16 @@
 import assert from 'assert';
 import {
   BACKFILL_FIELDS,
+  CONFIRM_FIELDS,
+  MIGRATION_RULES,
+  applyConfirmFields,
+  applyMigrations,
   detectMissingBackfillFields,
+  detectMissingConfirmFields,
+  detectPendingMigrations,
   isBackfillablePath,
   mergeBackfillFields,
+  mergeFrameworkConfig,
 } from '../../scripts/utils/config-field-merger';
 
 export interface UnitCaseResult {
@@ -76,8 +83,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'prd',
         'prd.visual_handoff_enforcement',
         'atomic_service',
-        // reports_dir_pattern：未配置时 harness 回退到 legacy 报告路径；
-        // 自动补会让老工程升级后报告搬家，行为级变更，故意不补。
+        // reports_dir_pattern 走 CONFIRM_FIELDS + Q1.C，不进 silent BACKFILL
         'paths.reports_dir_pattern',
       ];
       for (const p of forbidden) {
@@ -245,6 +251,129 @@ const cases: Array<{ name: string; run: () => void }> = [
       sm.grace_period_minutes = 99;
       const again = mergeBackfillFields({}).merged as { state_machine: { grace_period_minutes: number } };
       assert.strictEqual(again.state_machine.grace_period_minutes, 5, '默认值不应被共享引用污染');
+    },
+  },
+  {
+    name: 'CONFIRM_FIELDS 与 BACKFILL_FIELDS 路径不重叠',
+    run: () => {
+      const backfillPaths = new Set(BACKFILL_FIELDS.map(f => f.path));
+      for (const f of CONFIRM_FIELDS) {
+        assert(!backfillPaths.has(f.path), `${f.path} 不应同时出现在 BACKFILL 与 CONFIRM`);
+      }
+    },
+  },
+  {
+    name: 'detectPendingMigrations：含 project_type → project_type_to_sub_variant',
+    run: () => {
+      const raw = {
+        project_type: 'app',
+        project_profile: { name: 'hmos-app' },
+      };
+      const pending = detectPendingMigrations(raw);
+      assert(pending.some(p => p.id === 'project_type_to_sub_variant'));
+    },
+  },
+  {
+    name: 'applyMigrations：project_type=app → sub_variant=app 并删除 project_type',
+    run: () => {
+      const raw = {
+        project_type: 'app',
+        project_profile: { name: 'hmos-app' },
+      };
+      const { merged } = applyMigrations(raw);
+      assert.strictEqual((merged as { project_type?: string }).project_type, undefined);
+      const pp = (merged as { project_profile: { sub_variant: string } }).project_profile;
+      assert.strictEqual(pp.sub_variant, 'app');
+    },
+  },
+  {
+    name: 'applyMigrations：project_type=atomic_service → sub_variant=element-service',
+    run: () => {
+      const raw = { project_type: 'atomic_service', project_profile: { name: 'hmos-app' } };
+      const { merged } = applyMigrations(raw);
+      assert.strictEqual((merged as { project_type?: string }).project_type, undefined);
+      assert.strictEqual(
+        (merged as { project_profile: { sub_variant: string } }).project_profile.sub_variant,
+        'element-service',
+      );
+    },
+  },
+  {
+    name: 'default_sub_variant_app：无 project_type、无 sub_variant → 补 app',
+    run: () => {
+      const raw = { project_profile: { name: 'hmos-app' } };
+      assert(detectPendingMigrations(raw).some(p => p.id === 'default_sub_variant_app'));
+      const { merged } = applyMigrations(raw);
+      assert.strictEqual(
+        (merged as { project_profile: { sub_variant: string } }).project_profile.sub_variant,
+        'app',
+      );
+    },
+  },
+  {
+    name: 'detectMissingConfirmFields：缺 reports_dir_pattern → 待确认',
+    run: () => {
+      const pending = detectMissingConfirmFields({ paths: {} });
+      assert(pending.some(p => p.confirmKey === 'reports_dir_pattern'));
+    },
+  },
+  {
+    name: 'applyConfirmFields：Q1.C=y 写入 reports_dir_pattern',
+    run: () => {
+      const { merged } = applyConfirmFields(
+        { paths: { features_dir: 'doc/features' } },
+        { reports_dir_pattern: true },
+      );
+      assert.strictEqual(
+        (merged as { paths: { reports_dir_pattern: string } }).paths.reports_dir_pattern,
+        'doc/features/<feature>/<phase>/reports',
+      );
+    },
+  },
+  {
+    name: 'applyConfirmFields：Q1.C=n 不写入 reports_dir_pattern',
+    run: () => {
+      const { merged, report } = applyConfirmFields(
+        { paths: { features_dir: 'doc/features' } },
+        { reports_dir_pattern: false },
+      );
+      assert.strictEqual(
+        (merged as { paths: { reports_dir_pattern?: string } }).paths.reports_dir_pattern,
+        undefined,
+      );
+      assert(report.rejectedKeys.includes('reports_dir_pattern'));
+    },
+  },
+  {
+    name: 'mergeFrameworkConfig：老 config 含 project_type、缺 reports → migration + confirm(y)',
+    run: () => {
+      const old = {
+        schema_version: '1.0',
+        project_name: 'Wallet',
+        project_type: 'app',
+        project_profile: { name: 'hmos-app' },
+        paths: { features_dir: 'doc/features' },
+      };
+      const { merged } = mergeFrameworkConfig(old, { reports_dir_pattern: true });
+      assert.strictEqual((merged as { project_type?: string }).project_type, undefined);
+      assert.strictEqual(
+        (merged as { project_profile: { sub_variant: string } }).project_profile.sub_variant,
+        'app',
+      );
+      assert.strictEqual(
+        (merged as { paths: { reports_dir_pattern: string } }).paths.reports_dir_pattern,
+        'doc/features/<feature>/<phase>/reports',
+      );
+    },
+  },
+  {
+    name: 'MIGRATION_RULES id 唯一',
+    run: () => {
+      const seen = new Set<string>();
+      for (const r of MIGRATION_RULES) {
+        assert(!seen.has(r.id), `重复 migration id：${r.id}`);
+        seen.add(r.id);
+      }
     },
   },
   {

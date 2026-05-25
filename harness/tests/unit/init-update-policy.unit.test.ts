@@ -182,6 +182,16 @@ const cases: Case[] = [
             inspection.diagnosis.includes('merge-framework-config.mjs --apply'),
           `诊断应提示补缺命令；实际：${inspection.diagnosis}`,
         );
+        assert(
+          Array.isArray(inspection.migration_keys) &&
+            (inspection.migration_keys ?? []).includes('project_type_to_sub_variant'),
+          `migration_keys 应含 project_type_to_sub_variant；实际：${JSON.stringify(inspection.migration_keys)}`,
+        );
+        assert(
+          Array.isArray(inspection.confirm_keys) &&
+            (inspection.confirm_keys ?? []).includes('reports_dir_pattern'),
+          `confirm_keys 应含 reports_dir_pattern；实际：${JSON.stringify(inspection.confirm_keys)}`,
+        );
       }),
   },
   {
