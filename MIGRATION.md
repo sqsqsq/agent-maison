@@ -399,8 +399,6 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 **`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_REPORTS_DIR_PATTERN`（**故意不在** `DEFAULT_PATHS`，避免 `normalizeConfig` 在磁盘未配置时 runtime 偷偷切到新路径；Q1.C=n 须保持 legacy 回退）。
 
-**发布说明**：[RELEASE-NOTES-v3.3.md](RELEASE-NOTES-v3.3.md)
-
 1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE。
 2. `check-init` 第 1 项查看 `missing_keys` / `migration_keys` / `confirm_keys`。
 3. Step 5.1.B：`merge-framework-config.mjs --apply`（backfill + migration）。
