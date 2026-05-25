@@ -2,8 +2,8 @@
 // Post-UPDATE receipt 路径 reconcile（legacy reports → doc/features/reports）
 // ============================================================================
 // init UPDATE 写入 reports_dir_pattern 后，回执 frontmatter 可能仍指向
-// framework/harness/reports/...；若对应文件已迁到 doc/features/.../reports/，
-// 本模块检测并（在用户确认后）patch 路径字段。
+// framework/harness/reports/...；若 doc/features/.../reports/ 下已有对应文件，
+// 本模块检测并（在用户确认后）patch 路径字段——即使 legacy 侧文件仍在（复制迁移场景）。
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -74,10 +74,6 @@ export function resolveModernReportsRelForLegacyRef(
   if (!legacyRel.startsWith(LEGACY_REPORTS_PREFIX)) {
     return null;
   }
-  const legacyAbs = path.resolve(projectRoot, legacyRel);
-  if (fs.existsSync(legacyAbs)) {
-    return null;
-  }
   const suffix = legacyReportsSuffix(feature, phase, legacyRel);
   if (suffix === null) {
     return null;
@@ -104,9 +100,6 @@ function resolveModernReportDirRel(
   const modernRel = relFeaturePhaseReportsDir(projectRoot, feature, phase);
   const modernAbs = path.resolve(projectRoot, modernRel);
   if (!fs.existsSync(modernAbs)) {
-    return null;
-  }
-  if (fs.existsSync(path.resolve(projectRoot, legacyRel))) {
     return null;
   }
   return modernRel;

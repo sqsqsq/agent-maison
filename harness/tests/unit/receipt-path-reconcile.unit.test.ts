@@ -225,7 +225,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'detectReceiptPathPatches 在 legacy 文件仍存在时不 patch',
+    name: 'detectReceiptPathPatches 在 legacy 与 modern 并存时仍 offer patch',
     run: () => {
       const root = mkProject();
       try {
@@ -237,7 +237,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         const patches = detectReceiptPathPatches(root, 'demo', 'review', {
           trace_json: { path: 'framework/harness/reports/demo/review/trace.json' },
         });
-        assert(patches.length === 0, `should not patch when legacy exists, got ${patches.length}`);
+        assert(patches.length === 1, `expected patch when both exist, got ${patches.length}`);
+        assert(
+          patches[0].to === 'doc/features/demo/review/reports/trace.json',
+          `unexpected target: ${patches[0].to}`,
+        );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
