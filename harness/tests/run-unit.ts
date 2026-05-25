@@ -83,6 +83,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
+  { id: 'phase-state', modulePath: './unit/phase-state.unit.test' },
+  { id: 'receipt-path-reconcile', modulePath: './unit/receipt-path-reconcile.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
 ];
 

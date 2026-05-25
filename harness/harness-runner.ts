@@ -50,11 +50,16 @@ import {
   relGlossary,
   relArchitectureMd,
   statefilePath,
-  receiptFilePath,
   loadFrameworkConfig,
   relFeaturePhaseReportsDir,
   featurePhaseReportsDir,
 } from './config';
+import {
+  mergeAndWritePhaseState,
+  tryValidateReceipt,
+  runSyncClosure,
+  type ReceiptValidation,
+} from './scripts/utils/phase-state';
 import {
   loadResolvedProfile,
   loadPhaseRuleWithOverlays,
@@ -80,7 +85,7 @@ import * as YAML from 'yaml';
 
 const args = minimist(process.argv.slice(2), {
   string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow'],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'summary', 'failures-only', 'skip-visual-handoff'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -110,6 +115,7 @@ Harness — Spec/Harness 验证工具
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
+  --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     PRD 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
@@ -125,6 +131,9 @@ Harness — Spec/Harness 验证工具
 
 放弃当前阶段（清理 Stop hook 的状态文件）:
   cd framework/harness && npx ts-node harness-runner.ts --clear-state
+
+跨会话恢复闭环态（framework 升级 / 新会话前）:
+  cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase review --feature <feature>
 `);
 }
 
@@ -202,6 +211,18 @@ async function main(): Promise<void> {
   if (args['clear-state']) {
     handleClearState(projectRoot);
     process.exit(0);
+  }
+
+  if (args['sync-closure']) {
+    const syncPhase = args.phase as Phase | undefined;
+    const syncFeature = args.feature as string | undefined;
+    if (!syncPhase || !syncFeature) {
+      console.error('错误: --sync-closure 必须同时指定 --phase 与 --feature');
+      printHelp();
+      process.exit(1);
+    }
+    const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase);
+    process.exit(exitCode);
   }
 
   // 参数校验
@@ -337,7 +358,7 @@ async function main(): Promise<void> {
   // "当前是否处于阶段流程中"。harness 跑完后会再次更新 verdict / blocker_count；
   // claimed_done 始终为 false——只有 agent 显式填写完成回执并通过 check-receipt
   // 后才会被 Stop hook 视为闭环。
-  writeCurrentPhaseState(projectRoot, workflowSpec, {
+  mergeAndWritePhaseState(projectRoot, workflowSpec, {
     phase,
     feature,
     status: 'running',
@@ -479,7 +500,7 @@ async function main(): Promise<void> {
   // 才能把 claimed_done 推到 true（由专门的 markPhaseClaimedDone 流程驱动；
   // 当前版本里，Stop hook 负责拒绝 claimed_done=false 时的 stop）。
   const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
-  writeCurrentPhaseState(projectRoot, workflowSpec, {
+  mergeAndWritePhaseState(projectRoot, workflowSpec, {
     phase,
     feature,
     status: 'harness_finished',
@@ -562,6 +583,7 @@ interface HarnessRunSummary {
   }>;
   next_action: string;
   receipt_status?: string;
+  closure_status?: 'open' | 'closed';
   /** coding 阶段：从 coding_compile / coding_hvigor_build 报告解析的首条编译错误，供 agent 无需通读日志即可汇报 */
   compile_first_error?: {
     file?: string;
@@ -615,6 +637,7 @@ function writeRunSummary(
     }));
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
+  const closed = receiptValidation?.status === 'passed';
   const summary: HarnessRunSummary = {
     schema_version: '1.0',
     phase: report.phase,
@@ -633,8 +656,11 @@ function writeRunSummary(
     blocking_warnings: blockingWarnings,
     blocking_skips: blockingSkips,
     blockers,
-    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
+    next_action: closed
+      ? 'phase_closed_wait_user'
+      : decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     receipt_status: receiptValidation?.status,
+    closure_status: closed ? 'closed' : 'open',
   };
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {
@@ -653,6 +679,9 @@ function printStableSummary(summary: HarnessRunSummary): void {
   console.log(`blocker_count=${summary.blocker_count}`);
   console.log(`summary_json=${summary.summary_json}`);
   console.log(`next_action=${summary.next_action}`);
+  if (summary.closure_status) {
+    console.log(`closure_status=${summary.closure_status}`);
+  }
   if (summary.compile_first_error) {
     const e = summary.compile_first_error;
     const loc = e.file ? `${e.file}${e.line != null ? ':' + e.line : ''}` : '(no file)';
@@ -1169,52 +1198,8 @@ function collectFilesFromDir(
 }
 
 // --------------------------------------------------------------------------
-// 阶段状态机（agent 工作流强制门 / Layer 3 配套）
+// 阶段状态机 — 见 scripts/utils/phase-state.ts（check-receipt / harness-runner 共用）
 // --------------------------------------------------------------------------
-//
-// 写入 framework/harness/state/.current-phase.json。该文件是 Stop hook
-// （实例根 Stop hook 脚本若存在）读取本 state 的唯一判据：
-//   - status='running'         → harness 还没跑完，agent 不应停下
-//   - status='harness_finished'，verdict='PASS'，receipt.status='passed'
-//                              → 阶段闭环，可放行
-//   - 其它组合                  → Stop hook 阻止 stop 并把缺失项注入下一轮 prompt
-
-interface ReceiptValidation {
-  status: 'passed' | 'failed' | 'missing' | 'error';
-  receipt_path: string;
-  exit_code?: number;
-  message?: string;
-}
-
-/**
- * runner 写 state 时关心的业务字段。session 维度字段（session_id /
- * session_id_recorded_at / last_seen_*）由 Stop hook 单边维护，
- * runner **不写**它们——runner 是 Bash tool 子进程，拿不到稳定的
- * cli session_id。详见 harness 与设计文档中的「Stop hook 跨会话隔离」说明。
- */
-interface CurrentPhaseStatePartial {
-  phase: Phase;
-  feature: string;
-  status: 'running' | 'harness_finished';
-  started_at?: string;
-  last_run_at?: string;
-  verdict?: 'PASS' | 'FAIL' | string;
-  blocker_count?: number;
-  receipt?: ReceiptValidation | null;
-}
-
-interface CurrentPhaseState extends CurrentPhaseStatePartial {
-  schema_version: string;
-  updated_at: string;
-  /** Stop hook 第一次命中时回填；runner 不写它，仅在合并旧 state 时透传 */
-  session_id?: string | null;
-  /** session_id 被 hook 回填的时刻，便于审计 */
-  session_id_recorded_at?: string | null;
-  /** 上一次 Stop hook 触发时的 cli session_id（用于审计） */
-  last_seen_session_id?: string | null;
-  /** 上一次 Stop hook 触发时间 */
-  last_seen_at?: string | null;
-}
 
 /**
  * `--clear-state` 子命令实现：删除阶段状态文件。
@@ -1246,154 +1231,7 @@ function handleClearState(projectRoot: string): void {
   console.log('  - 历史 verdict / 报告通常在 doc/features/<feature>/<phase>/reports/（配置了 reports_dir_pattern 时），回执仍在 doc/features 下；');
   console.log('  - 如需重新进入该阶段，按对应 SKILL.md 重新执行 harness-runner.ts；');
   console.log('  - --clear-state 表示"放弃已有进度"，与"暂停"不同。');
-}
-
-function writeCurrentPhaseState(
-  projectRoot: string,
-  workflowSpec: WorkflowSpec,
-  partial: CurrentPhaseStatePartial,
-): void {
-  // workflow 中 scope=global 的阶段不参与"feature 维度阶段闭环判定"——
-  // 它们没有完成回执模板（参见 framework/harness/scripts/check-init.ts 头部
-  // "元阶段三件套刻意不对称"段落，以及 framework/harness/templates/
-  // phase-completion-receipt.md 的字段全部围绕 feature/phase 设计）。
-  //
-  // 若给全局阶段写 state file，Stop hook 会因为 receipt=null 把它误当成
-  // "未闭环 feature 阶段"硬拦，并要求 agent 去填一份**根本不存在**的回执
-  // doc/features/_global/init/phase-completion-receipt.md。这是 v2.8 主体
-  // commit 落地后用户在真实工程跑 /framework-init 时遇到的回归。
-  //
-  // 修复策略：对全局阶段直接不写——不主动清理已存在的 state file，因为
-  // 用户可能正在做 feature 维度阶段（如 coding），中途顺手跑了 docs 全局阶段，
-  // 不应抹掉其 coding state。Hook 端有兜底（evaluateState 看到 phase 是
-  // 全局阶段也直接 allow），即使存在历史污染也不会误拦。
-  if (isPhaseGlobalInWorkflow(workflowSpec, partial.phase)) {
-    return;
-  }
-
-  try {
-    const stateAbs = statefilePath(projectRoot);
-    const dir = path.dirname(stateAbs);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    // 读旧状态（若存在）做增量合并：started_at 不要被 harness_finished 覆盖
-    let prev: Partial<CurrentPhaseState> = {};
-    if (fs.existsSync(stateAbs)) {
-      try {
-        prev = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as Partial<CurrentPhaseState>;
-      } catch {
-        // 旧文件损坏 → 直接覆盖
-      }
-    }
-
-    // 同 phase/feature 时，保留 hook 维护的 session 维度字段——
-    // runner 自己不写它们，但也不能因为重写 state 把旧值清掉，否则
-    // hook 下次触发会误判"刚跑完 + 没盖章"。
-    const sameTask = prev.phase === partial.phase && prev.feature === partial.feature;
-    const carrySessionId = sameTask ? prev.session_id ?? null : null;
-    const carrySessionRecordedAt = sameTask ? prev.session_id_recorded_at ?? null : null;
-    const carryLastSeenSid = sameTask ? prev.last_seen_session_id ?? null : null;
-    const carryLastSeenAt = sameTask ? prev.last_seen_at ?? null : null;
-
-    const next: CurrentPhaseState = {
-      schema_version: '1.1',
-      phase: partial.phase,
-      feature: partial.feature,
-      status: partial.status,
-      started_at:
-        partial.status === 'running'
-          ? partial.started_at ?? new Date().toISOString()
-          : sameTask
-            ? prev.started_at ?? partial.started_at
-            : partial.started_at,
-      last_run_at: partial.last_run_at,
-      verdict: partial.verdict,
-      blocker_count: partial.blocker_count,
-      receipt: partial.receipt ?? null,
-      session_id: carrySessionId,
-      session_id_recorded_at: carrySessionRecordedAt,
-      last_seen_session_id: carryLastSeenSid,
-      last_seen_at: carryLastSeenAt,
-      updated_at: new Date().toISOString(),
-    };
-
-    fs.writeFileSync(stateAbs, JSON.stringify(next, null, 2) + '\n', 'utf-8');
-  } catch (err) {
-    // best-effort：不让状态机故障阻塞 harness 主流程
-    console.warn(`   ⚠ 写 .current-phase.json 失败: ${(err as Error).message}`);
-  }
-}
-
-/**
- * 当回执文件已存在时，主动跑一遍 check-receipt.ts 把判定结果带回 state file。
- * 回执不存在不视为错误——因为 agent 通常先跑 harness、再填回执；
- * 真正的"未填即未闭环"由 Stop hook 在 agent 即将结束消息时拦截。
- */
-function tryValidateReceipt(
-  harnessRoot: string,
-  projectRoot: string,
-  phase: Phase,
-  feature: string,
-): ReceiptValidation {
-  const receiptAbs = receiptFilePath(projectRoot, feature, phase);
-  const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
-
-  if (!fs.existsSync(receiptAbs)) {
-    return {
-      status: 'missing',
-      receipt_path: receiptRel,
-      message: '回执文件不存在；本阶段尚未闭环（全局入口 §5.1 第 4 条）。',
-    };
-  }
-
-  const checker = path.join(harnessRoot, 'scripts', 'check-receipt.ts');
-  if (!fs.existsSync(checker)) {
-    return {
-      status: 'error',
-      receipt_path: receiptRel,
-      message: `check-receipt.ts 不存在于 ${checker}（框架未升级到位）。`,
-    };
-  }
-
-  // 用 tsx/ts-node 直接运行；harness-runner.ts 自己已经在 ts-node 进程里，
-  // 子进程独立 spawn 一份 ts-node 即可，避免污染主流程的 require 缓存。
-  const isWin = process.platform === 'win32';
-  const result = spawnSync(
-    (isWin ? 'npx.cmd' : 'npx'),
-    [
-      'ts-node',
-      checker,
-      '--feature',
-      feature,
-      '--phase',
-      phase,
-      '--project-root',
-      projectRoot,
-    ],
-    {
-      cwd: harnessRoot,
-      encoding: 'utf-8',
-      shell: isWin ? true : false,
-    },
-  );
-
-  if (result.status === 0) {
-    return { status: 'passed', receipt_path: receiptRel, exit_code: 0 };
-  }
-  if (result.status === 1) {
-    return {
-      status: 'failed',
-      receipt_path: receiptRel,
-      exit_code: 1,
-      message: (result.stderr ?? '').slice(0, 800),
-    };
-  }
-  return {
-    status: 'error',
-    receipt_path: receiptRel,
-    exit_code: result.status ?? -1,
-    message: (result.stderr ?? result.error?.message ?? 'unknown').slice(0, 800),
-  };
+  console.log('  - --sync-closure 仅对齐闭环态（check-receipt + state），不重跑脚本 harness。');
 }
 
 // --------------------------------------------------------------------------

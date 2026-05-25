@@ -180,6 +180,8 @@ doc/features/<feature>/
 - `readiness_signals`：非 BLOCKER 但代表"尚未就绪"的信号，例如 catalog/glossary 空骨架、docs freshness 无法判定。
 - `blocking_warnings` / `blocking_skips`：`severity=BLOCKER` 但状态为 `WARN/SKIP` 的检查项，避免被 verdict PASS 掩盖。
 - `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
+- `closure_status`：`open` | `closed`；`closed` 当且仅当 `check-receipt.ts` 会通过（与 `receipt_status=passed` 对齐）。closed 时 `next_action=phase_closed_wait_user`。
+- **跨会话恢复**：`cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase <phase> --feature <feature>` 或单独跑 `check-receipt.ts`（PASS 时也会回写 `.current-phase.json`）。见 `AGENTS.md` §5.2。
 
 ---
 

@@ -69,6 +69,7 @@ function validSample(): Record<string, unknown> {
     }],
     next_action: 'fix_run_status_blockers_then_rerun',
     receipt_status: 'missing',
+    closure_status: 'open',
     compile_first_error: {
       file: '02-Feature/TransportCard/src/main/ets/WiseCardService.ets',
       line: 4,
@@ -118,7 +119,7 @@ function testSchemaRequiredFields(): void {
   const schema = loadSchema();
   const required = schema.required as string[];
   for (const key of Object.keys(validSample())) {
-    if (key === 'receipt_status' || key === 'compile_first_error') continue;
+    if (key === 'receipt_status' || key === 'closure_status' || key === 'compile_first_error') continue;
     assert(required.includes(key), `schema.required 未声明 ${key}`);
   }
 }

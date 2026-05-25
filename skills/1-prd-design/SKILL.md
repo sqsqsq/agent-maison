@@ -12,6 +12,8 @@
 
 进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 解析目标归档路径，默认是 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
 
+**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：若 receipt 可能已存在，须**先**自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）。exit 0 → 该 phase 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state/summary 判未闭环或重跑本阶段。
+
 - 若 `doc/features/<feature>/` 已存在且是目录：在该目录内续写/更新 `PRD.md` 与 `acceptance.yaml`，不要扫描同级同名前缀条目来替代它。
 - 若该目录不存在：可以创建该目录作为本 feature 的正式归档目录。
 - 若同级存在 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 等归档，或 `<feature>-old/`、`<feature>.md` 等同名前缀条目：仅作为旁证展示给用户，不得自动解压、不得把它们当正式 feature、不得优先读取其内容。

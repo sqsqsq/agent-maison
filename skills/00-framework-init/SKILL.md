@@ -1011,6 +1011,18 @@ cd framework/harness && npx ts-node harness-runner.ts --phase docs
 
 **禁止**：init 四件套 / Step 7 收尾完成后，在同一 agent 执行流自动开 catalog / glossary / PRD。须用户明示或 **`phase.next_step`** 等价确认后再进入下游 Skill。
 
+**7.3 Post-UPDATE 闭环 reconcile（advisory · UPDATE 模式）**
+
+init UPDATE 且已写入 `paths.reports_dir_pattern`（Q1.C=y）后，扫描 `doc/features/*/*/phase-completion-receipt.md`（若存在）：
+
+1. 若 frontmatter 中 `trace_json.path` / `verifier_subagent.report_path` 仍指向 legacy `framework/harness/reports/<feature>/<phase>/...`，而 `doc/features/<feature>/<phase>/reports/` 下已有对应文件 → **须向用户亮出清单**（遵守 user-confirmation-ux），询问是否 patch frontmatter 为新路径；**禁止**静默改写。
+   - **扫描（dry-run）**：`cd framework/harness && npx ts-node scripts/reconcile-receipt-paths.ts`
+   - **写入（须用户确认后）**：`.../reconcile-receipt-paths.ts --apply [--feature <feature>] [--phase <phase>]`
+2. 对每个存在 receipt 的 `<feature>/<phase>`，建议 agent **自跑**（不向用户抛 CLI）：
+   `cd framework/harness && npx ts-node harness-runner.ts --sync-closure --feature <feature> --phase <phase>`
+   以对齐 `.current-phase.json` 与 `summary.json.closure_status`（framework 升级 / 新成员 pull 后常见 stale state）。
+3. 无 receipt 或用户拒绝 patch → 仅汇报 advisory，不阻塞 init 四件套 PASS。
+
 ---
 
 ## UPDATE 模式补充（体检外的两类动作）

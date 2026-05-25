@@ -35,9 +35,14 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
-import { loadFrameworkConfig } from '../config';
+import { loadFrameworkConfig, receiptFilePath } from '../config';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
+import {
+  applyClosurePatchFromReceiptValidation,
+  syncPhaseStateOnReceiptPass,
+  type FeaturePhase,
+} from './utils/phase-state';
 
 type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
 
@@ -104,7 +109,7 @@ interface CheckIssue {
 function parseArgs() {
   const args = minimist(process.argv.slice(2), {
     string: ['feature', 'phase', 'project-root'],
-    boolean: ['help'],
+    boolean: ['help', 'skip-state-sync'],
     alias: { f: 'feature', p: 'phase', h: 'help' },
   });
 
@@ -132,7 +137,12 @@ function parseArgs() {
     process.exit(2);
   }
 
-  return { feature, phase, projectRoot };
+  return {
+    feature,
+    phase,
+    projectRoot,
+    skipStateSync: Boolean(args['skip-state-sync']),
+  };
 }
 
 function printHelp(): void {
@@ -146,6 +156,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 
 可选：
   --project-root <abs-path>   显式指定仓库根（默认从 __dirname 向上推导）
+  --skip-state-sync          内部用：校验通过但不写 .current-phase.json（harness-runner tryValidateReceipt）
 `);
 }
 
@@ -154,7 +165,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 // --------------------------------------------------------------------------
 
 function main(): void {
-  const { feature, phase, projectRoot } = parseArgs();
+  const { feature, phase, projectRoot, skipStateSync } = parseArgs();
 
   const fw = loadFrameworkConfig(projectRoot);
   const resolved = loadResolvedProfile(projectRoot, fw);
@@ -166,8 +177,8 @@ function main(): void {
     process.exit(0);
   }
 
-  const receiptRel = `doc/features/${feature}/${phase}/phase-completion-receipt.md`;
-  const receiptPath = path.join(projectRoot, receiptRel);
+  const receiptPath = receiptFilePath(projectRoot, feature, phase);
+  const receiptRel = path.relative(projectRoot, receiptPath).replace(/\\/g, '/');
 
   console.log(`\n🧾 check-receipt: feature=${feature}, phase=${phase}`);
   console.log(`   回执路径: ${receiptRel}\n`);
@@ -539,6 +550,24 @@ function main(): void {
     console.log('   - 反假设条款 3/3 已勾选');
     console.log('');
     console.log('阶段闭环判定（全局入口 §5.1）四条件已满足，可放行。\n');
+
+    if (!skipStateSync) {
+      const receiptValidation = {
+        status: 'passed' as const,
+        receipt_path: receiptRel,
+        exit_code: 0,
+      };
+      syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
+        blocker_count: typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
+      });
+      applyClosurePatchFromReceiptValidation(
+        projectRoot,
+        feature,
+        phase as FeaturePhase,
+        receiptValidation,
+      );
+    }
+
     process.exit(0);
   }
 

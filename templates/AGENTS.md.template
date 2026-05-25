@@ -227,6 +227,17 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 
 无确认，直接删 `framework/harness/state/.current-phase.json`；历史 verdict / 脚本报告 / verifier 产出通常在同一 feature 阶段的 `reports/` 子目录（或 legacy：`framework/harness/reports/`），完成回执在 [{{FEATURES_DIR}}]({{FEATURES_DIR}}) 下。
 
+### 5.2 跨会话恢复（Resume · BLOCKER）
+
+新会话、framework 升级后、或用户说「继续 `<feature>` / 做下一阶段」时，**在进入 Skill 工作前**须先对齐闭环态：
+
+1. **若** `{{FEATURES_DIR}}/<feature>/<phase>/phase-completion-receipt.md` **可能存在** → **必须先**执行其一（agent 自跑，不得让用户手动跑）：
+   - `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>`
+   - `cd framework/harness && npx ts-node harness-runner.ts --sync-closure --feature <feature> --phase <phase>`
+2. **`check-receipt` exit 0** → 直接认定该 phase **已闭环**；汇报交付摘要后 **`phase.next_step` 停等**（user-confirmation-ux §8），**禁止**重跑该阶段 harness / verifier。
+3. **`check-receipt` exit 1/2** → 按 BLOCKER 列表补齐缺失项；**禁止**仅凭 `.current-phase.json` 的 `receipt.status=missing` 或 `summary.json` 的 `next_action=run_verifier_then_receipt` 宣告「未闭环」——二者可能滞后于 receipt 磁盘真相。
+4. **`summary.json.closure_status=closed`** 与 **`state.receipt.status=passed`** 可作为辅助信号；**SSOT 仍是 `check-receipt.ts` exit 码**。
+
 ---
 
 ## 六、与用户交互的硬性规则

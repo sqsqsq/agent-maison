@@ -36,6 +36,8 @@ alwaysApply: true
 
 **不要**要求用户学会 harness CLI；**不要**用「你本地执行以下命令」代替 agent 执行。
 
+用户说「继续 `<feature>`」「接着做 `<feature>`」或新会话恢复某 feature 阶段时，**须先**自跑 `check-receipt.ts` 或 `harness-runner --sync-closure`（见 `AGENTS.md` §5.2）；`check-receipt` exit 0 则认定已闭环并停等 `phase.next_step`，勿重跑该阶段。
+
 ## 3. 阻塞时的正确话术
 
 | 情况 | 错误 | 正确 |
