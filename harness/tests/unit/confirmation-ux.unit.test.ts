@@ -2,9 +2,10 @@
 
 import * as path from 'path';
 import { lintConfirmationUx } from '../../scripts/check-skills-confirmation-ux';
+import { detectRepoLayout } from '../../repo-layout';
 import type { UnitCaseResult } from '../run-unit';
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+const { projectRoot: REPO_ROOT } = detectRepoLayout(__dirname);
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);

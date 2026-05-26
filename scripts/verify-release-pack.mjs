@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+// verify-release-pack.mjs — 规则单测 + 临时目录打包/解压/断言
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+import { packRelease } from './pack-release.mjs';
+import {
+  loadReleaseExcludes,
+  matchGlob,
+  runSyntheticRuleTests,
+  toPosixPath,
+} from './release-pack-rules.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '..');
+
+/** @param {string} msg */
+function fail(msg) {
+  throw new Error(msg);
+}
+
+/** @param {string} root @param {string} rel */
+function exists(root, rel) {
+  return fs.existsSync(path.join(root, rel));
+}
+
+/** @param {string} dir */
+function listAllFiles(dir, prefix = '') {
+  /** @type {string[]} */
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+    const abs = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      out.push(...listAllFiles(abs, rel));
+    } else {
+      out.push(toPosixPath(rel));
+    }
+  }
+  return out;
+}
+
+/** @param {string} frameworkRoot */
+function assertZipContents(frameworkRoot) {
+  const mustNotExist = [
+    'AGENTS.md',
+    '.gitignore',
+    'openspec',
+    'scripts',
+    'harness/tests',
+    'RELEASE-NOTES-v1.0.md',
+    'RELEASE-NOTES-v2.0.md',
+  ];
+  for (const rel of mustNotExist) {
+    if (exists(frameworkRoot, rel)) {
+      fail(`must not exist in zip: ${rel}`);
+    }
+  }
+
+  if (exists(frameworkRoot, '.cursor')) {
+    fail('must not exist in zip: .cursor/');
+  }
+
+  const allFiles = listAllFiles(frameworkRoot);
+  for (const f of allFiles) {
+    if (matchGlob('profiles/*/harness/tests/**', f)) {
+      fail(`profile harness test leaked: ${f}`);
+    }
+    if (f.includes('node_modules/') || f.endsWith('package-lock.json')) {
+      fail(`runtime artifact leaked: ${f}`);
+    }
+  }
+
+  const mustExist = [
+    'README.md',
+    'MIGRATION.md',
+    'harness/scripts/check-init.ts',
+    'harness/reports/.gitkeep',
+    'harness/state/.gitkeep',
+    'harness/trace/trace.schema.json',
+    'harness/trace/gap-notes.template.md',
+    'templates/AGENTS.md.template',
+    'profiles/hmos-app/vendor/hylyre/release.manifest.json',
+  ];
+  for (const rel of mustExist) {
+    if (!exists(frameworkRoot, rel)) {
+      fail(`must exist in zip: ${rel}`);
+    }
+  }
+
+  if (!exists(frameworkRoot, 'harness/schemas') && !allFiles.some(f => f.startsWith('harness/schemas/'))) {
+    const schemasDir = path.join(REPO_ROOT, 'harness/schemas');
+    if (fs.existsSync(schemasDir)) {
+      fail('harness/schemas/ missing from zip');
+    }
+  }
+
+  const pkgPath = path.join(frameworkRoot, 'package.json');
+  if (!fs.existsSync(pkgPath)) fail('package.json missing');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  for (const key of Object.keys(pkg.scripts ?? {})) {
+    if (key.startsWith('release:')) fail(`sanitized package.json still has script: ${key}`);
+  }
+  if (pkg.devDependencies?.archiver || pkg.devDependencies?.['extract-zip']) {
+    fail('sanitized package.json still has release devDependencies');
+  }
+  if (!pkg.scripts?.test || !pkg.scripts?.['harness:install']) {
+    fail('sanitized package.json missing consumer scripts');
+  }
+}
+
+export async function verifyReleasePack() {
+  const rules = loadReleaseExcludes();
+
+  console.log('[release:verify] synthetic rule tests...');
+  const synthErrors = runSyntheticRuleTests(REPO_ROOT, rules);
+  if (synthErrors.length > 0) {
+    for (const e of synthErrors) console.error(`  FAIL: ${e}`);
+    fail(`synthetic rule tests: ${synthErrors.length} error(s)`);
+  }
+  console.log('[release:verify] synthetic rule tests PASS');
+
+  const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
+  try {
+    console.log(`[release:verify] packing to ${tmpOut}...`);
+    const { zipPath } = await packRelease({ dryRun: false, outDir: tmpOut });
+    if (!zipPath || !fs.existsSync(zipPath)) fail('pack did not produce zip');
+
+    const extractRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-extract-'));
+    try {
+      const { default: extract } = await import('extract-zip');
+      await extract(zipPath, { dir: extractRoot });
+
+      const top = fs.readdirSync(extractRoot);
+      if (top.length !== 1 || top[0] !== 'framework') {
+        fail(`zip top-level must be only framework/, got: ${top.join(', ')}`);
+      }
+
+      const frameworkRoot = path.join(extractRoot, 'framework');
+      assertZipContents(frameworkRoot);
+      console.log('[release:verify] zip content assertions PASS');
+    } finally {
+      fs.rmSync(extractRoot, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpOut, { recursive: true, force: true });
+  }
+
+  console.log('[release:verify] ALL PASS');
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  verifyReleasePack().catch(err => {
+    console.error('[release:verify] FAIL:', err.message);
+    process.exit(1);
+  });
+}

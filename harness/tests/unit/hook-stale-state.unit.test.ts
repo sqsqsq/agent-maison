@@ -33,6 +33,7 @@ import * as path from 'path';
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 
 import { DEFAULT_STATE_MACHINE } from '../../config';
+import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
 
 export interface UnitCaseResult {
   name: string;
@@ -44,8 +45,8 @@ export interface UnitCaseResult {
 // 路径定位
 // --------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
-const HOOK_PATH = path.join(REPO_ROOT, '.claude', 'hooks', 'check-phase-completion.mjs');
+const LAYOUT = detectRepoLayout(__dirname);
+const HOOK_PATH = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks/check-phase-completion.mjs');
 
 // --------------------------------------------------------------------------
 // fixture 工具

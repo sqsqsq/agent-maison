@@ -78,6 +78,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
+import { detectRepoLayout, frameworkAbs, frameworkRelPath, inferRepoLayout } from './repo-layout';
 
 // --------------------------------------------------------------------------
 // CLI 参数解析
@@ -189,12 +190,10 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // __dirname 指向 framework/harness/；projectRoot 需要再向上一级回到仓库/实例根。
-  // 阶段 3：harness 下所有路径解析统一走 config.resolvePaths；harness-runner
-  //        只把 projectRoot 当输入，不再自拼具体目录字符串。
-  const projectRoot = path.resolve(__dirname, '..', '..');
   const harnessRoot = __dirname;
-  const paths = resolvePaths(projectRoot, path.resolve(__dirname, '..'));
+  const layout = detectRepoLayout(harnessRoot);
+  const { projectRoot, frameworkRoot: resolvedFrameworkRoot } = layout;
+  const paths = resolvePaths(projectRoot, resolvedFrameworkRoot);
   const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');
   const featuresRel = path.relative(projectRoot, paths.featuresDir).replace(/\\/g, '/');
@@ -241,6 +240,7 @@ async function main(): Promise<void> {
     workflowSpec = resolveWorkflowSpec(projectRoot, {
       config: fwConfigEarly,
       workflowOverride: typeof args.workflow === 'string' ? args.workflow : undefined,
+      frameworkRoot: resolvedFrameworkRoot,
     });
   } catch (err) {
     console.error(`错误: 无法解析 workflow：${(err as Error).message}`);
@@ -1030,10 +1030,12 @@ function collectContextFiles(
   // docs 是 framework 自检阶段：上下文只放 inventory 自身，
   // 不读 catalog/glossary，也不读 feature 维度文件。
   if (phase === 'docs') {
-    const inventoryPath = path.join(projectRoot, 'framework', 'docs', 'DOC_INVENTORY.yaml');
+    const docsLayout = inferRepoLayout(projectRoot);
+    const inventoryPath = frameworkAbs(docsLayout, 'docs', 'DOC_INVENTORY.yaml');
+    const inventoryLabel = frameworkRelPath(docsLayout, 'docs', 'DOC_INVENTORY.yaml');
     if (fs.existsSync(inventoryPath)) {
       files.push({
-        label: 'framework/docs/DOC_INVENTORY.yaml',
+        label: inventoryLabel,
         content: fs.readFileSync(inventoryPath, 'utf-8'),
       });
     }

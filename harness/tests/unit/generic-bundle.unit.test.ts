@@ -15,9 +15,9 @@ import {
   renderBridgeSkillStubMarkdown,
 } from '../../scripts/utils/materialize-agent-bundle-skills';
 import { loadReservedBridgeIds } from '../../scripts/utils/instance-skill-bridge';
+import { detectRepoLayout } from '../../repo-layout';
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
-const FRAMEWORK_DIR = path.join(REPO_ROOT, 'framework');
+const FRAMEWORK_DIR = detectRepoLayout(__dirname).frameworkRoot;
 
 export interface UnitCaseResult {
   name: string;

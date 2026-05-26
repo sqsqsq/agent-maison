@@ -14,6 +14,7 @@ import {
   scanMarkdownRelativeLinks,
   validateProfileSkillAssetsForProject,
 } from '../../scripts/utils/profile-skill-assets';
+import { detectRepoLayout } from '../../repo-layout';
 
 export interface UnitCaseResult {
   name: string;
@@ -26,7 +27,7 @@ function assert(cond: boolean, msg: string): void {
 }
 
 function repoRoot(): string {
-  return path.resolve(__dirname, '../../../..');
+  return detectRepoLayout(__dirname).projectRoot;
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -67,7 +68,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const m = loadSkillAssetsManifest(root, 'generic').manifest!;
       const res = resolveSkillAssetPath(root, 'generic', m, '1-prd-design', 'prd_template');
       assert(
-        Boolean(res.ok && res.relRepo?.includes('framework/profiles/generic/')),
+        Boolean(res.ok && res.relRepo?.includes('profiles/generic/')),
         res.relRepo ?? 'relRepo',
       );
       assert(fs.existsSync(res.absPath!), res.absPath!);

@@ -6,6 +6,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig } from '../../config';
+import {
+  frameworkAbs,
+  frameworkRelPath,
+  inferRepoLayout,
+  resolveFrameworkPrefixedPath,
+} from '../../repo-layout';
 
 /** SKILL 正文中的占位引用：profile-skill-asset:<skill-id>/<asset_key> */
 export const PROFILE_SKILL_ASSET_RE = /profile-skill-asset:([0-9a-z-]+)\/([a-z][a-z0-9_]*)/gi;
@@ -23,16 +29,17 @@ export interface LoadedManifest {
   errors: string[];
 }
 
-export function skillAssetsManifestRel(profileName: string): string {
-  return path.posix.join('framework', 'profiles', profileName, 'skills', 'skill-assets.yaml');
+export function skillAssetsManifestRel(projectRoot: string, profileName: string): string {
+  const layout = inferRepoLayout(projectRoot);
+  return frameworkRelPath(layout, 'profiles', profileName, 'skills', 'skill-assets.yaml');
 }
 
 export function loadSkillAssetsManifest(
   projectRoot: string,
   profileName: string,
 ): LoadedManifest {
-  const manifestRelPath = skillAssetsManifestRel(profileName);
-  const abs = path.join(projectRoot, manifestRelPath);
+  const manifestRelPath = skillAssetsManifestRel(projectRoot, profileName);
+  const abs = path.join(projectRoot, ...manifestRelPath.split('/'));
   const errors: string[] = [];
   if (!fs.existsSync(abs)) {
     return {
@@ -90,8 +97,8 @@ export function loadSkillAssetsManifest(
 
 /**
  * 解析清单中的单条路径：
- * - 以 `framework/` 开头 → 相对仓库根
- * - 否则 → 相对 `framework/profiles/<profile>/skills/<skillId>/`
+ * - 以 `framework/` 开头 → 相对 projectRoot（consumer）或去前缀（standalone）
+ * - 否则 → 相对 `profiles/<profile>/skills/<skillId>/`
  */
 export function resolveManifestEntryPath(
   projectRoot: string,
@@ -101,9 +108,10 @@ export function resolveManifestEntryPath(
 ): string {
   const norm = relOrFw.replace(/\\/g, '/').trim();
   if (norm.startsWith('framework/')) {
-    return path.join(projectRoot, norm);
+    return resolveFrameworkPrefixedPath(projectRoot, norm);
   }
-  const base = path.join(projectRoot, 'framework', 'profiles', profileName, 'skills', skillId);
+  const layout = inferRepoLayout(projectRoot);
+  const base = frameworkAbs(layout, 'profiles', profileName, 'skills', skillId);
   return path.join(base, norm);
 }
 
@@ -158,6 +166,8 @@ export function scanMarkdownRelativeLinks(
   mdFileAbs: string,
   content: string,
 ): string[] {
+  const layout = inferRepoLayout(projectRoot);
+  const skillsRootNorm = path.normalize(frameworkAbs(layout, 'skills'));
   const issues: string[] = [];
   const dir = path.dirname(mdFileAbs);
   let m: RegExpExecArray | null;
@@ -170,7 +180,7 @@ export function scanMarkdownRelativeLinks(
     const pathOnly = decoded.split('#')[0].trim();
     if (!pathOnly) continue;
     const joined = path.normalize(path.join(dir, pathOnly));
-    if (!joined.startsWith(path.normalize(path.join(projectRoot, 'framework', 'skills')))) {
+    if (!joined.startsWith(skillsRootNorm)) {
       continue;
     }
     if (!fs.existsSync(joined)) {
@@ -206,7 +216,8 @@ function walkSkillDocMarkdownFiles(skillsRoot: string, out: string[]): void {
 }
 
 export function scanAllRootSkillMarkdown(projectRoot: string): string[] {
-  const root = path.join(projectRoot, 'framework', 'skills');
+  const layout = inferRepoLayout(projectRoot);
+  const root = frameworkAbs(layout, 'skills');
   const files: string[] = [];
   walkSkillDocMarkdownFiles(root, files);
   const issues: string[] = [];
@@ -227,7 +238,8 @@ export function scanAllRootSkillMarkdown(projectRoot: string): string[] {
  * （`generic` 等名在少数「回落链」解释中可出现，不在这里一刀切拦截。）
  */
 export function scanRootSkillsHardcodedProfilePaths(projectRoot: string): string[] {
-  const root = path.join(projectRoot, 'framework', 'skills');
+  const layout = inferRepoLayout(projectRoot);
+  const root = frameworkAbs(layout, 'skills');
   const files: string[] = [];
   walkSkillDocMarkdownFiles(root, files);
   const issues: string[] = [];
@@ -259,6 +271,7 @@ export interface ProfileSkillAssetsValidation {
  */
 export function validateProfileSkillAssetsForProject(projectRoot: string): ProfileSkillAssetsValidation {
   const errors: string[] = [];
+  const layout = inferRepoLayout(projectRoot);
   const cfg = loadFrameworkConfig(projectRoot);
   const profileName = cfg.project_profile.name;
   const loaded = loadSkillAssetsManifest(projectRoot, profileName);
@@ -267,7 +280,7 @@ export function validateProfileSkillAssetsForProject(projectRoot: string): Profi
     return { ok: false, errors };
   }
   const manifest = loaded.manifest;
-  const skillsRoot = path.join(projectRoot, 'framework', 'skills');
+  const skillsRoot = frameworkAbs(layout, 'skills');
   const mdFiles: string[] = [];
   walkSkillDocMarkdownFiles(skillsRoot, mdFiles);
 

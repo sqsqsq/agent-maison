@@ -10,16 +10,7 @@ import * as path from 'path';
 
 import type { CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
-
-const SSOT_REL = 'framework/skills/reference/user-confirmation-ux.md';
-const REGISTRY_REL = 'framework/skills/reference/confirmation-registry.yaml';
-
-const SCAN_GLOBS = [
-  'framework/skills',
-  'framework/profiles',
-] as const;
-
-const CLAUDE_TEMPLATES_REL = 'framework/agents/claude/templates';
+import { frameworkAbs, frameworkRelPath, inferRepoLayout } from '../repo-layout';
 
 const CLAUDE_WIDGET_OPTION_FILES = [
   'rules/widget-options/index.md',
@@ -72,16 +63,19 @@ export interface ConfirmationUxLintOptions {
 export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckResult[] {
   const { projectRoot } = options;
   const results: CheckResult[] = [];
+  const layout = inferRepoLayout(projectRoot);
 
-  const ssotPath = path.join(projectRoot, SSOT_REL);
-  const registryPath = path.join(projectRoot, REGISTRY_REL);
+  const ssotRel = frameworkRelPath(layout, 'skills', 'reference', 'user-confirmation-ux.md');
+  const registryRel = frameworkRelPath(layout, 'skills', 'reference', 'confirmation-registry.yaml');
+  const ssotPath = frameworkAbs(layout, 'skills', 'reference', 'user-confirmation-ux.md');
+  const registryPath = frameworkAbs(layout, 'skills', 'reference', 'confirmation-registry.yaml');
 
   if (!fs.existsSync(ssotPath)) {
-    results.push(blocker('ssot_exists', 'user-confirmation-ux.md 缺失', [SSOT_REL]));
+    results.push(blocker('ssot_exists', 'user-confirmation-ux.md 缺失', [ssotRel]));
     return results;
   }
   if (!fs.existsSync(registryPath)) {
-    results.push(blocker('registry_exists', 'confirmation-registry.yaml 缺失', [REGISTRY_REL]));
+    results.push(blocker('registry_exists', 'confirmation-registry.yaml 缺失', [registryRel]));
     return results;
   }
 
@@ -89,7 +83,10 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   const registryIds = [...registryText.matchAll(/^\s*-\s+id:\s+([a-z0-9_.]+)/gm)].map(m => m[1]);
 
   const files: string[] = [];
-  for (const sub of SCAN_GLOBS) {
+  for (const sub of [
+    frameworkRelPath(layout, 'skills'),
+    frameworkRelPath(layout, 'profiles'),
+  ]) {
     files.push(...listMarkdownFiles(projectRoot, sub));
   }
   for (const extDir of options.extensionSkillDirs ?? []) {
@@ -111,14 +108,14 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
     skillDirs.add(m[1]);
   }
   for (const skill of skillDirs) {
-    const dir = path.join(projectRoot, 'framework/skills', skill, 'SKILL.md');
+    const dir = frameworkAbs(layout, 'skills', skill, 'SKILL.md');
     if (!fs.existsSync(dir)) {
-      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但目录不存在`, [REGISTRY_REL]));
+      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但目录不存在`, [registryRel]));
     }
   }
 
   if (registryIds.length < 20) {
-    results.push(warn('registry_size', `confirmation-registry 仅 ${registryIds.length} 条，预期 ≥20`, [REGISTRY_REL]));
+    results.push(warn('registry_size', `confirmation-registry 仅 ${registryIds.length} 条，预期 ≥20`, [registryRel]));
   }
 
   results.push(...lintClaudeConfirmationTemplates(projectRoot));
@@ -128,14 +125,16 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
 
 function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
   const results: CheckResult[] = [];
-  const base = path.join(projectRoot, CLAUDE_TEMPLATES_REL);
+  const layout = inferRepoLayout(projectRoot);
+  const templatesRel = frameworkRelPath(layout, 'agents', 'claude', 'templates');
+  const base = frameworkAbs(layout, 'agents', 'claude', 'templates');
   if (!fs.existsSync(base)) {
     return results;
   }
 
   for (const rel of CLAUDE_WIDGET_OPTION_FILES) {
     const abs = path.join(base, rel);
-    const posix = `${CLAUDE_TEMPLATES_REL}/${rel}`.replace(/\\/g, '/');
+    const posix = `${templatesRel}/${rel}`.replace(/\\/g, '/');
     if (!fs.existsSync(abs)) {
       results.push(blocker(
         'claude_widget_options_missing',
@@ -146,7 +145,7 @@ function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
   }
 
   const confirmUxPath = path.join(base, 'rules/confirmation-ux.md');
-  const confirmUxRel = `${CLAUDE_TEMPLATES_REL}/rules/confirmation-ux.md`;
+  const confirmUxRel = `${templatesRel}/rules/confirmation-ux.md`;
   if (!fs.existsSync(confirmUxPath)) {
     results.push(blocker(
       'claude_confirmation_ux_missing',
@@ -202,7 +201,7 @@ function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
   }
 
   const widgetIndexPath = path.join(base, 'rules/widget-options/index.md');
-  const widgetIndexRel = `${CLAUDE_TEMPLATES_REL}/rules/widget-options/index.md`;
+  const widgetIndexRel = `${templatesRel}/rules/widget-options/index.md`;
   if (fs.existsSync(widgetIndexPath)) {
     const widgetIndex = fs.readFileSync(widgetIndexPath, 'utf-8');
     const adapterFromWidgetIndex = '../../../framework/skills/00-framework-init/templates/adapter-widget-options.md';
@@ -224,7 +223,7 @@ function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
 
   for (const rel of CLAUDE_SLASH_WIDGET_COMMANDS) {
     const abs = path.join(base, rel);
-    const posix = `${CLAUDE_TEMPLATES_REL}/${rel}`.replace(/\\/g, '/');
+    const posix = `${templatesRel}/${rel}`.replace(/\\/g, '/');
     if (!fs.existsSync(abs)) {
       results.push(blocker(
         'claude_slash_missing',
@@ -257,7 +256,7 @@ function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
       results.push(blocker(
         'claude_init_slash_polluted',
         'framework-init.md 不得注入 Skills 1–6 widget-options（init 自有 adapter-widget-options）',
-        [`${CLAUDE_TEMPLATES_REL}/commands/framework-init.md`],
+        [`${templatesRel}/commands/framework-init.md`],
       ));
     }
   }

@@ -32,8 +32,12 @@ import {
 } from './utils/doc-freshness';
 import { validateProfileSkillAssetsForProject } from './utils/profile-skill-assets';
 import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
-
-const INVENTORY_REL = 'framework/docs/DOC_INVENTORY.yaml';
+import {
+  frameworkAbs,
+  frameworkRelPath,
+  inferRepoLayout,
+  resolveFrameworkPrefixedPath,
+} from '../repo-layout';
 
 // --------------------------------------------------------------------------
 // git log 时间戳读取
@@ -77,7 +81,13 @@ function gitLastCommitTime(projectRoot: string, relOrAbs: string): string | null
 // --------------------------------------------------------------------------
 
 function existsInRepo(projectRoot: string, rel: string): boolean {
-  return fs.existsSync(path.join(projectRoot, rel));
+  return fs.existsSync(resolveFrameworkPrefixedPath(projectRoot, rel));
+}
+
+/** inventory / doc 路径在 git 中使用的仓库相对路径（standalone 会剥掉 framework/ 前缀） */
+function gitPathFromInventoryRel(projectRoot: string, rel: string): string {
+  const abs = resolveFrameworkPrefixedPath(projectRoot, rel);
+  return path.relative(projectRoot, abs).replace(/\\/g, '/');
 }
 
 function ruleDesc(
@@ -97,7 +107,9 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
   results: CheckResult[];
   docs?: DocEntry[];
 } {
-  const inventoryAbs = path.join(ctx.projectRoot, INVENTORY_REL);
+  const layout = inferRepoLayout(ctx.projectRoot);
+  const inventoryRel = frameworkRelPath(layout, 'docs', 'DOC_INVENTORY.yaml');
+  const inventoryAbs = frameworkAbs(layout, 'docs', 'DOC_INVENTORY.yaml');
   const parsed = loadInventoryFromFile(inventoryAbs);
 
   if (!parsed.ok) {
@@ -110,7 +122,7 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
           severity: 'BLOCKER',
           status: 'FAIL',
           details: parsed.errors.map(e => `[${e.kind}] ${e.message}`).join('\n'),
-          affected_files: [INVENTORY_REL],
+          affected_files: [inventoryRel],
           suggestion: '修正 inventory 结构。最小骨架:\n```yaml\nschema_version: "1.0"\ndocs: []\n```',
         },
       ],
@@ -125,7 +137,7 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
         description: ruleDesc(ctx, 'structure_checks', 'inventory_exists'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `${INVENTORY_REL} 存在且为合法 YAML（${parsed.inventory!.docs.length} 条文档登记）。`,
+        details: `${inventoryRel} 存在且为合法 YAML（${parsed.inventory!.docs.length} 条文档登记）。`,
       },
       {
         id: 'inventory_schema_valid',
@@ -243,14 +255,14 @@ function checkDocFreshness(
   const reports: FreshnessReport[] = [];
   for (const d of docs) {
     const docTs = existsInRepo(ctx.projectRoot, d.path)
-      ? gitLastCommitTime(ctx.projectRoot, d.path)
+      ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(ctx.projectRoot, d.path))
       : null;
 
     const sources: SourceTimestamp[] = d.sources.map(s => ({
       path: s,
       exists: existsInRepo(ctx.projectRoot, s),
       ts: existsInRepo(ctx.projectRoot, s)
-        ? gitLastCommitTime(ctx.projectRoot, s)
+        ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(ctx.projectRoot, s))
         : null,
     }));
 

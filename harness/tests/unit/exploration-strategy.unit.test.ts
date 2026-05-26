@@ -12,6 +12,7 @@ import {
   determineExplorationMode,
   extractChangeSignals,
 } from '../../scripts/utils/exploration-strategy';
+import { detectRepoLayout } from '../../repo-layout';
 import type { ExplorationThresholds, PhaseRuleSpec } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
@@ -20,7 +21,7 @@ export interface UnitCaseResult {
   error?: string;
 }
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+const REPO_ROOT = detectRepoLayout(__dirname).projectRoot;
 
 const cases: Array<{ name: string; run: () => void }> = [
   {

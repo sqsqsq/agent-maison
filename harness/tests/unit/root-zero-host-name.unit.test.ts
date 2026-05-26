@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import assert from 'assert';
+import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
 
 export interface UnitCaseResult {
   name: string;
@@ -13,9 +14,10 @@ export interface UnitCaseResult {
   error?: string;
 }
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
-const HARNESS_SCRIPTS = path.join(REPO_ROOT, 'framework', 'harness', 'scripts');
-const SKILLS_ROOT = path.join(REPO_ROOT, 'framework', 'skills');
+const LAYOUT = detectRepoLayout(__dirname);
+const REPO_ROOT = LAYOUT.projectRoot;
+const HARNESS_SCRIPTS = frameworkAbs(LAYOUT, 'harness', 'scripts');
+const SKILLS_ROOT = frameworkAbs(LAYOUT, 'skills');
 
 /** 词边界 / 精确 token，避免 legacy 规则 id（如 ut_hvigor_build）中的子串误伤 */
 const BANNED_LINE_REGEXPS: readonly RegExp[] = [

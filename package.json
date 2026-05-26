@@ -5,6 +5,12 @@
   "description": "AgentMaison — spec-driven agentic workflow framework with harness gates",
   "scripts": {
     "test": "npm --prefix harness test",
-    "harness:install": "npm --prefix harness install"
+    "harness:install": "npm --prefix harness install",
+    "release:pack": "node scripts/pack-release.mjs",
+    "release:verify": "node scripts/verify-release-pack.mjs"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.0",
+    "extract-zip": "^2.0.1"
   }
 }

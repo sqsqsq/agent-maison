@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import type { FrameworkConfig } from './config';
 import { loadFrameworkConfig } from './config';
+import { inferRepoLayout } from './repo-layout';
 
 export interface WorkflowArtifact {
   id: string;
@@ -47,7 +48,8 @@ export function resolveWorkflowSpec(
     cfg.active_workflow?.trim() ||
     'spec-driven';
   const frameworkRoot =
-    (opts?.frameworkRoot && opts.frameworkRoot.trim()) || path.join(projectRoot, 'framework');
+    (opts?.frameworkRoot && opts.frameworkRoot.trim()) ||
+    inferRepoLayout(projectRoot).frameworkRoot;
   return loadWorkflowSpec(frameworkRoot, name);
 }
 

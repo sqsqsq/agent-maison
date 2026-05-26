@@ -1,0 +1,26 @@
+{
+  "excludeRootDirs": [".cursor", ".claude", ".codex", "openspec", ".git", "dist", "scripts"],
+  "excludeGlobs": [
+    "AGENTS.md",
+    "RELEASE-NOTES-v*.md",
+    ".gitignore",
+    ".npmignore",
+    "harness/tests/**",
+    "profiles/*/harness/tests/**",
+    "harness/reports/**",
+    "harness/state/**",
+    "harness/dist/**",
+    "harness/trace/**",
+    "**/node_modules/**",
+    "**/package-lock.json",
+    "**/.hylyre/**",
+    "**/tmp_hypium/**",
+    "**/oh_modules/**"
+  ],
+  "includeOverrides": [
+    "harness/reports/.gitkeep",
+    "harness/state/.gitkeep",
+    "harness/trace/trace.schema.json",
+    "harness/trace/gap-notes.template.md"
+  ]
+}
