@@ -1,0 +1,28 @@
+schema: spec-driven
+
+context: |
+  Product: AgentMaison — spec-driven agentic workflow framework with harness gates
+  Tech stack: TypeScript, Node.js (>=18), YAML schemas, Markdown templates
+  Package manager: npm
+  Architecture: skills/ + specs/ + harness/ + profiles/ + agents/ + workflows/
+  This openspec/ manages the FRAMEWORK ITSELF, not consumer projects.
+  Runtime SSOT remains in specs/, workflows/, harness/ — OpenSpec specs are
+  the readable behavior-description layer that REFERENCES enforcement files.
+  Consumer projects use AgentMaison's Phase 0-6 workflow via harness-runner.
+
+rules:
+  specs:
+    - Every requirement MUST reference its enforcement file (e.g. specs/phase-rules/*.yaml, harness/scripts/check-*.ts)
+    - Use SHALL for harness-enforced rules, MUST for blocking constraints
+    - Each spec domain should map to a harness phase or cross-cutting concern
+  proposal:
+    - Reference affected phase(s) and MIGRATION.md implications
+    - Flag breaking changes that require consumer migration
+  design:
+    - Consider backward compatibility with existing consumer instances
+    - Document profile/adapter impact
+  tasks:
+    - Include npm run release:verify as mandatory verification step
+    - Include harness test verification when touching runtime SSOT
+    - Include MIGRATION.md update if breaking
+    - After `openspec update`, rerun `node scripts/patch-openspec-artifacts.mjs` to re-apply Maison-specific patches
