@@ -27,7 +27,7 @@ Implement tasks from an OpenSpec change.
    If a name is provided, use it. Otherwise:
    - Infer from conversation context if the user mentioned a change
    - Auto-select if only one active change exists
-   - If ambiguous, run `npm run openspec -- list --json` to get available changes and use the **AskUserQuestion tool** to let the user select
+   - If ambiguous, run `npm run openspec -- list --json` to get available changes and ask the user directly in chat to select a change
 
    Always announce: "Using change: <name>" and how to override (e.g., `/opsx-apply <other>`).
 

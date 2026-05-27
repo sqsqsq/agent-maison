@@ -77,6 +77,7 @@ function patchCodex(text) {
   let out = patchCli(text);
   out = patchArchiveStep(out);
   out = out
+    .replace(/use the \*\*AskUserQuestion tool\*\* to let the user select/gi, 'ask the user directly in chat to select a change')
     .replace(/Use the \*\*AskUserQuestion tool\*\* \(open-ended, no preset options\) to ask:/g, 'Ask the user directly in chat:')
     .replace(/Use the \*\*AskUserQuestion tool\*\* to let the user select\./g, 'Ask the user directly in chat to select a change.')
     .replace(/Use \*\*AskUserQuestion tool\*\* to confirm user wants to proceed/g, 'Ask the user directly in chat to confirm before proceeding')
