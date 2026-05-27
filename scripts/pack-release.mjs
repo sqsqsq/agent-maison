@@ -21,15 +21,17 @@ const EXCLUDED_SAMPLE_LIMIT = 50;
 /** @param {string[]} argv */
 function parseArgs(argv) {
   let dryRun = false;
+  let stageOnly = false;
   let outDir = path.join(REPO_ROOT, 'dist');
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dry-run') dryRun = true;
+    if (argv[i] === '--stage-only') stageOnly = true;
     if (argv[i] === '--out' && argv[i + 1]) {
       outDir = path.resolve(argv[i + 1]);
       i += 1;
     }
   }
-  return { dryRun, outDir };
+  return { dryRun, stageOnly, outDir };
 }
 
 function readVersion() {
@@ -93,7 +95,7 @@ function sha256File(zipPath) {
  * @returns {Promise<{ version: string, zipPath: string | null, manifestPath: string | null, included: string[], excluded: string[] }>}
  */
 export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
-  const { dryRun, outDir } = opts;
+  const { dryRun, stageOnly, outDir } = opts;
   const version = readVersion();
   const zipName = `framework-${version}.zip`;
   const manifestName = `framework-${version}.manifest.json`;
@@ -101,20 +103,25 @@ export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
 
   const { included, excluded, excludedCountsByRule } = collectReleaseFiles(REPO_ROOT, rules);
 
-  console.log(`[release:pack] version=${version} dryRun=${dryRun}`);
+  console.log(`[release:pack] version=${version} dryRun=${dryRun} stageOnly=${stageOnly}`);
   console.log(`[release:pack] included=${included.length} excluded=${excluded.length}`);
 
   if (dryRun) {
     for (const [rule, count] of Object.entries(excludedCountsByRule).sort()) {
       console.log(`  excluded ${rule}: ${count}`);
     }
-    return { version, zipPath: null, manifestPath: null, included, excluded };
+    return { version, zipPath: null, manifestPath: null, stagingRoot: null, included, excluded };
   }
 
   const stagingParent = path.join(outDir, 'release-staging');
   const stagingRoot = path.join(stagingParent, FRAMEWORK_DIR_NAME);
   fs.rmSync(stagingParent, { recursive: true, force: true });
   writeStaging(stagingRoot, included);
+
+  if (stageOnly) {
+    console.log(`[release:pack] staged ${stagingRoot} (no zip)`);
+    return { version, zipPath: null, manifestPath: null, stagingRoot, included, excluded };
+  }
 
   const zipPath = path.join(outDir, zipName);
   const bytes = await zipDirectory(stagingRoot, zipPath, FRAMEWORK_DIR_NAME);

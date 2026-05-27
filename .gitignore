@@ -1,7 +1,10 @@
 dist/
 node_modules/
 package-lock.json
+**/package-lock.json
 **/node_modules/
+
+# Harness runtime（standalone 布局：harness/ 非 framework/harness/）
 harness/package-lock.json
 harness/state/*
 !harness/state/.gitkeep
@@ -11,6 +14,16 @@ harness/dist/
 harness/trace/*
 !harness/trace/trace.schema.json
 !harness/trace/gap-notes.template.md
+
+# standalone 误生成 consumer 形路径（layout 烟测/regression 守卫；正确为 harness/）
+framework/harness/
+
+# check-init / Skill 00 自动备份
+.framework-backup/
+
+# Skill 6 / Hylyre 本地产物
 **/.hylyre/
 **/tmp_hypium/
+
+# 本地 IDE 密钥（.cursor/plans 等开发计划可入库）
 .cursor/mcp.json

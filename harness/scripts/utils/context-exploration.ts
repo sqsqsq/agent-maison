@@ -97,6 +97,7 @@ export interface ContextExplorationFrontmatter {
 export interface ContextExplorationCheckOptions {
   phaseRule?: PhaseRuleSpec;
   profileName?: string;
+  frameworkRoot?: string;
 }
 
 interface ProfileExplorationSnippetsFile {
@@ -243,6 +244,7 @@ function runQuantitativeChecks(
     fm,
     thresholds,
     options?.phaseRule,
+    options?.frameworkRoot,
   );
   const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
 

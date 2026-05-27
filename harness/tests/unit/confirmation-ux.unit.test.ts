@@ -1,8 +1,11 @@
 // confirmation-ux.unit.test.ts — check-skills-confirmation-ux 单元测试
 
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { lintConfirmationUx } from '../../scripts/check-skills-confirmation-ux';
 import { detectRepoLayout } from '../../repo-layout';
+import { externalStandaloneLayout } from '../utils/layout-test-helper';
 import type { UnitCaseResult } from '../run-unit';
 
 const { projectRoot: REPO_ROOT } = detectRepoLayout(__dirname);
@@ -34,6 +37,16 @@ const cases: Array<{ name: string; run: () => void }> = [
       const out = lintConfirmationUx({ projectRoot: REPO_ROOT });
       const fails = out.filter(r => r.status === 'FAIL' && r.id.startsWith('claude_'));
       assert(fails.length === 0, `claude template blockers: ${fails.map(f => f.details).join('; ')}`);
+    },
+  },
+  {
+    name: 'lintConfirmationUx: external frameworkRoot 不 infer projectRoot',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cux-ext-'));
+      const layout = externalStandaloneLayout(tmp);
+      const out = lintConfirmationUx({ projectRoot: tmp, layout });
+      const ssotFail = out.find(r => r.status === 'FAIL' && r.id === 'ssot_exists');
+      assert(!ssotFail, `should resolve SSOT via layout: ${ssotFail?.details ?? ''}`);
     },
   },
 ];

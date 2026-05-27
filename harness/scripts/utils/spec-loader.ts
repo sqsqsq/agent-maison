@@ -86,10 +86,10 @@ export class SpecLoader {
   private phaseRulesDir: string;
   private featuresDir: string;
 
-  constructor(projectRoot: string, phaseRulesDir?: string, featuresDir?: string) {
+  constructor(projectRoot: string, phaseRulesDir?: string, featuresDir?: string, frameworkRoot?: string) {
     // 阶段 3：默认值来自 framework.config.json（经 resolvePaths 归一化）；
-    //        调用方可以用构造参数覆盖（单测/自定义 layout）。
-    const resolved = resolvePaths(projectRoot);
+    //        调用方可以用构造参数覆盖（单测/自定义 layout / 外部 frameworkRoot）。
+    const resolved = resolvePaths(projectRoot, frameworkRoot);
     this.phaseRulesDir = phaseRulesDir ?? resolved.phaseRulesDir;
     this.featuresDir = featuresDir ?? resolved.featuresDir;
   }

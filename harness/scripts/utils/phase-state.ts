@@ -59,9 +59,9 @@ export interface HarnessRunSummaryPatch {
   next_action?: string;
 }
 
-function loadWorkflowSpec(projectRoot: string): WorkflowSpec {
+function loadWorkflowSpec(projectRoot: string, frameworkRoot?: string): WorkflowSpec {
   const cfg = loadFrameworkConfig(projectRoot);
-  return resolveWorkflowSpec(projectRoot, { config: cfg });
+  return resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 }
 
 export function mergeAndWritePhaseState(
@@ -127,9 +127,9 @@ export function syncPhaseStateOnReceiptPass(
   feature: string,
   phase: string,
   receiptValidation: ReceiptValidation,
-  opts?: { blocker_count?: number },
+  opts?: { blocker_count?: number; frameworkRoot?: string },
 ): void {
-  const workflowSpec = loadWorkflowSpec(projectRoot);
+  const workflowSpec = loadWorkflowSpec(projectRoot, opts?.frameworkRoot);
   mergeAndWritePhaseState(projectRoot, workflowSpec, {
     phase,
     feature,
@@ -213,8 +213,12 @@ export function patchSummaryClosureStatus(
   feature: string,
   phase: string,
   patch: HarnessRunSummaryPatch,
+  frameworkRoot?: string,
 ): boolean {
-  const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'summary.json');
+  const summaryPath = path.join(
+    featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot),
+    'summary.json',
+  );
   if (!fs.existsSync(summaryPath)) {
     return false;
   }
@@ -241,13 +245,14 @@ export function applyClosurePatchFromReceiptValidation(
   feature: string,
   phase: string,
   receiptValidation: ReceiptValidation | null,
+  frameworkRoot?: string,
 ): void {
   const closed = receiptValidation?.status === 'passed';
   patchSummaryClosureStatus(projectRoot, feature, phase, {
     closure_status: closed ? 'closed' : 'open',
     receipt_status: receiptValidation?.status,
     next_action: closed ? 'phase_closed_wait_user' : undefined,
-  });
+  }, frameworkRoot);
 }
 
 export function runSyncClosure(
@@ -255,13 +260,14 @@ export function runSyncClosure(
   projectRoot: string,
   feature: string,
   phase: string,
+  frameworkRoot?: string,
 ): number {
   const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
-  const workflowSpec = loadWorkflowSpec(projectRoot);
+  const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
   if (receiptValidation.status === 'passed') {
-    syncPhaseStateOnReceiptPass(projectRoot, feature, phase, receiptValidation);
-    applyClosurePatchFromReceiptValidation(projectRoot, feature, phase, receiptValidation);
+    syncPhaseStateOnReceiptPass(projectRoot, feature, phase, receiptValidation, { frameworkRoot });
+    applyClosurePatchFromReceiptValidation(projectRoot, feature, phase, receiptValidation, frameworkRoot);
     console.log('');
     console.log('✅ sync-closure: 阶段已闭环（check-receipt PASS）');
     console.log(`   state: ${path.relative(projectRoot, statefilePath(projectRoot)).replace(/\\/g, '/')}`);
@@ -278,7 +284,7 @@ export function runSyncClosure(
     blocker_count: 0,
     receipt: receiptValidation,
   });
-  applyClosurePatchFromReceiptValidation(projectRoot, feature, phase, receiptValidation);
+  applyClosurePatchFromReceiptValidation(projectRoot, feature, phase, receiptValidation, frameworkRoot);
 
   console.error('');
   console.error(`❌ sync-closure: 未闭环（receipt.status=${receiptValidation.status}）`);

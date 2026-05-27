@@ -152,7 +152,7 @@ export function analyzeProjectDependencyIssueViaProfile(
     'ut.compile',
     'analyzeProjectDependencyIssue',
   );
-  return fn(ctx.projectRoot, result);
+  return fn(ctx.projectRoot, result, ctx.frameworkRoot);
 }
 
 export function analyzeCodingDependencyIssueViaProfile(
@@ -164,7 +164,7 @@ export function analyzeCodingDependencyIssueViaProfile(
     'coding.compile',
     'analyzeProjectDependencyIssue',
   );
-  return fn(ctx.projectRoot, result);
+  return fn(ctx.projectRoot, result, ctx.frameworkRoot);
 }
 
 export function mergeUtCompileLogForClassification(ctx: CheckContext, result: unknown): string {

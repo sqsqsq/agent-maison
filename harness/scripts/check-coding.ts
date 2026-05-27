@@ -543,6 +543,7 @@ const checker: PhaseChecker = {
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'coding', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

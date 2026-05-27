@@ -38,6 +38,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { applyDefaults, loadProfileConfigDefaults } from './profile-loader';
+import { inferRepoLayout } from './repo-layout';
 
 // --------------------------------------------------------------------------
 // 架构 DSL 类型
@@ -1168,6 +1169,8 @@ const GLOBAL_FEATURE_REPORTS_SENTINEL = '_global';
 export interface ResolvedPaths {
   projectRoot: string;
   frameworkRoot: string;
+  /** projectRoot → frameworkRoot 的 POSIX 相对前缀：'' 或 'framework' */
+  frameworkRel: string;
   /** framework/specs/phase-rules 的绝对路径 */
   phaseRulesDir: string;
   /** framework/harness/reports 的绝对路径（全局 `_global` 与未配置 reports_dir_pattern 时的 feature 回退） */
@@ -1193,18 +1196,50 @@ export interface ResolvedPaths {
   receiptDirPattern: string;
 }
 
+export interface ResolveFrameworkRootOptions {
+  /** init CREATE 等尚无 skills/workflows 时允许回退到 `<projectRoot>/framework` */
+  allowMissingFramework?: boolean;
+}
+
+function resolveFrameworkRootArg(
+  projectRoot: string,
+  frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
+): string {
+  if (frameworkRoot && frameworkRoot.trim()) {
+    return path.resolve(frameworkRoot);
+  }
+  try {
+    return inferRepoLayout(projectRoot).frameworkRoot;
+  } catch (err) {
+    if (opts?.allowMissingFramework) {
+      return path.join(path.resolve(projectRoot), 'framework');
+    }
+    throw err;
+  }
+}
+
 /**
  * 把 `framework.config.json` 中声明的相对路径统一解析为绝对路径。
  *
  * @param projectRoot 实例工程根的绝对路径
- * @param frameworkRoot framework/ 所在绝对路径；默认 `<projectRoot>/framework`
+ * @param frameworkRoot framework 资产根；缺省时 `inferRepoLayout(projectRoot).frameworkRoot`
  */
-export function resolvePaths(projectRoot: string, frameworkRoot?: string): ResolvedPaths {
+export function resolvePaths(
+  projectRoot: string,
+  frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
+): ResolvedPaths {
   const cfg = loadFrameworkConfig(projectRoot);
-  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
+  const layoutRel =
+    path.resolve(fRoot) === path.resolve(projectRoot)
+      ? ''
+      : path.relative(path.resolve(projectRoot), fRoot).replace(/\\/g, '/');
   return {
-    projectRoot,
+    projectRoot: path.resolve(projectRoot),
     frameworkRoot: fRoot,
+    frameworkRel: layoutRel,
     phaseRulesDir: path.join(fRoot, 'specs', 'phase-rules'),
     reportsDir: path.join(fRoot, 'harness', 'reports'),
     promptsDir: path.join(fRoot, 'harness', 'prompts'),
@@ -1219,6 +1254,14 @@ export function resolvePaths(projectRoot: string, frameworkRoot?: string): Resol
     ),
     receiptDirPattern: cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!,
   };
+}
+
+/** init CREATE 等早期场景：framework 树尚未落地时可允许缺省 framework/ 回退 */
+export function resolvePathsForInit(
+  projectRoot: string,
+  frameworkRoot?: string,
+): ResolvedPaths {
+  return resolvePaths(projectRoot, frameworkRoot, { allowMissingFramework: true });
 }
 
 // ---- 单条绝对路径 -------------------------------------------------------
@@ -1299,8 +1342,9 @@ export function featurePhaseReportsDir(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
 ): string {
-  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
   if (feature === GLOBAL_FEATURE_REPORTS_SENTINEL) {
     return path.join(fRoot, 'harness', 'reports', '_global', phase);
   }
@@ -1319,8 +1363,9 @@ export function relFeaturePhaseReportsDir(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
 ): string {
-  const abs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const abs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot, opts);
   return toPosix(path.relative(projectRoot, abs));
 }
 

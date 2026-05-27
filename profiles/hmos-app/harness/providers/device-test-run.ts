@@ -75,6 +75,7 @@ export interface HylyreTrace {
 export interface HylyreReadyOptions {
   projectRoot: string;
   harnessRoot: string;
+  frameworkRoot?: string;
   feature: string;
   phase: 'testing';
 }
@@ -94,6 +95,7 @@ export interface HylyreReadyResult {
 export interface HylyreRunOptions {
   projectRoot: string;
   harnessRoot: string;
+  frameworkRoot?: string;
   feature: string;
   phase: 'testing';
   pythonPath: string;
@@ -481,7 +483,7 @@ function runAaStartPreflight(
 
 export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
   const cfg = resolveHylyreToolConfig(opts.projectRoot);
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   fs.mkdirSync(reportsBase, { recursive: true });
   const logPath = path.join(reportsBase, 'hylyre-doctor.log');
   const metaPath = path.join(reportsBase, 'hylyre-ready.meta.json');
@@ -1122,7 +1124,7 @@ export function synthesizeTraceFromStepsBatchRun(args: {
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const errors: HylyreRunResult['errors'] = [];
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   fs.mkdirSync(reportsBase, { recursive: true });
   const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
   const legacyTmp = removeLegacyHypiumTmpAtProjectRoot(opts.projectRoot);

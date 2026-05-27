@@ -34,9 +34,11 @@ import { validateProfileSkillAssetsForProject } from './utils/profile-skill-asse
 import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
 import {
   frameworkAbs,
+  frameworkLogicalRelPath,
   frameworkRelPath,
-  inferRepoLayout,
+  repoLayoutFromContext,
   resolveFrameworkPrefixedPath,
+  type RepoLayout,
 } from '../repo-layout';
 
 // --------------------------------------------------------------------------
@@ -80,14 +82,14 @@ function gitLastCommitTime(projectRoot: string, relOrAbs: string): string | null
 // 检查工具
 // --------------------------------------------------------------------------
 
-function existsInRepo(projectRoot: string, rel: string): boolean {
-  return fs.existsSync(resolveFrameworkPrefixedPath(projectRoot, rel));
+function existsInRepo(layout: RepoLayout, rel: string): boolean {
+  return fs.existsSync(resolveFrameworkPrefixedPath(layout.projectRoot, rel, layout));
 }
 
 /** inventory / doc 路径在 git 中使用的仓库相对路径（standalone 会剥掉 framework/ 前缀） */
-function gitPathFromInventoryRel(projectRoot: string, rel: string): string {
-  const abs = resolveFrameworkPrefixedPath(projectRoot, rel);
-  return path.relative(projectRoot, abs).replace(/\\/g, '/');
+function gitPathFromInventoryRel(layout: RepoLayout, rel: string): string {
+  const abs = resolveFrameworkPrefixedPath(layout.projectRoot, rel, layout);
+  return path.relative(layout.projectRoot, abs).replace(/\\/g, '/');
 }
 
 function ruleDesc(
@@ -107,8 +109,8 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
   results: CheckResult[];
   docs?: DocEntry[];
 } {
-  const layout = inferRepoLayout(ctx.projectRoot);
-  const inventoryRel = frameworkRelPath(layout, 'docs', 'DOC_INVENTORY.yaml');
+  const layout = repoLayoutFromContext(ctx);
+  const inventoryRel = frameworkLogicalRelPath('docs', 'DOC_INVENTORY.yaml');
   const inventoryAbs = frameworkAbs(layout, 'docs', 'DOC_INVENTORY.yaml');
   const parsed = loadInventoryFromFile(inventoryAbs);
 
@@ -153,7 +155,8 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
 }
 
 function checkDocFilesExist(ctx: CheckContext, docs: DocEntry[]): CheckResult[] {
-  const missing = docs.filter(d => !existsInRepo(ctx.projectRoot, d.path));
+  const layout = repoLayoutFromContext(ctx);
+  const missing = docs.filter(d => !existsInRepo(layout, d.path));
   if (missing.length === 0) {
     return [{
       id: 'doc_files_exist',
@@ -178,10 +181,11 @@ function checkDocFilesExist(ctx: CheckContext, docs: DocEntry[]): CheckResult[] 
 }
 
 function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
   const broken: string[] = [];
   for (const d of docs) {
     for (const s of d.sources) {
-      if (!existsInRepo(ctx.projectRoot, s)) {
+      if (!existsInRepo(layout, s)) {
         broken.push(`${d.path} → ${s}`);
       }
     }
@@ -209,7 +213,8 @@ function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckR
 }
 
 function checkProfileSkillAssetsResolvable(ctx: CheckContext): CheckResult[] {
-  const v = validateProfileSkillAssetsForProject(ctx.projectRoot);
+  const layout = repoLayoutFromContext(ctx);
+  const v = validateProfileSkillAssetsForProject(ctx.projectRoot, layout);
   if (v.ok) {
     return [
       {
@@ -252,17 +257,18 @@ function checkDocFreshness(
     }];
   }
 
+  const layout = repoLayoutFromContext(ctx);
   const reports: FreshnessReport[] = [];
   for (const d of docs) {
-    const docTs = existsInRepo(ctx.projectRoot, d.path)
-      ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(ctx.projectRoot, d.path))
+    const docTs = existsInRepo(layout, d.path)
+      ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(layout, d.path))
       : null;
 
     const sources: SourceTimestamp[] = d.sources.map(s => ({
       path: s,
-      exists: existsInRepo(ctx.projectRoot, s),
-      ts: existsInRepo(ctx.projectRoot, s)
-        ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(ctx.projectRoot, s))
+      exists: existsInRepo(layout, s),
+      ts: existsInRepo(layout, s)
+        ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(layout, s))
         : null,
     }));
 

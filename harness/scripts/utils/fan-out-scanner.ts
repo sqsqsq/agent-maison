@@ -18,8 +18,8 @@ interface CatalogFile {
   modules?: CatalogModule[];
 }
 
-function readInScopeModules(projectRoot: string, feature: string): string[] {
-  const loader = new SpecLoader(projectRoot);
+function readInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string): string[] {
+  const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
   const prd = loader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
   if (!prd) return [];
   const { scope } = parseScope(prd);
@@ -89,8 +89,12 @@ function countImportReferences(content: string, tokens: string[]): number {
  * 返回 in-scope 模块的最大 fan-out（被其它 .ets 文件 import 的次数估计）。
  * 扫描 architecture outer_layers 下全部源码；无 catalog 时仅用模块名匹配。
  */
-export function computeMaxDependencyFanOut(projectRoot: string, feature: string): number {
-  const inScope = readInScopeModules(projectRoot, feature);
+export function computeMaxDependencyFanOut(
+  projectRoot: string,
+  feature: string,
+  frameworkRoot?: string,
+): number {
+  const inScope = readInScopeModules(projectRoot, feature, frameworkRoot);
   if (inScope.length === 0) return 0;
 
   const catalog = loadCatalogModules(projectRoot);
@@ -133,8 +137,12 @@ export function computeMaxDependencyFanOut(projectRoot: string, feature: string)
 /**
  * 估算 in-scope 模块源码行数（.ets 文件 LOC 之和，取最大单模块）。
  */
-export function computeMaxInScopeModuleLoc(projectRoot: string, feature: string): number {
-  const inScope = readInScopeModules(projectRoot, feature);
+export function computeMaxInScopeModuleLoc(
+  projectRoot: string,
+  feature: string,
+  frameworkRoot?: string,
+): number {
+  const inScope = readInScopeModules(projectRoot, feature, frameworkRoot);
   if (inScope.length === 0) return 0;
 
   const catalog = loadCatalogModules(projectRoot);

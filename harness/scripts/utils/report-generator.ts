@@ -31,8 +31,8 @@ import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED
 // 报告目录管理
 // --------------------------------------------------------------------------
 
-function ensureReportDir(projectRoot: string, feature: string, phase: Phase): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+function ensureReportDir(projectRoot: string, feature: string, phase: Phase, frameworkRoot?: string): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -77,6 +77,7 @@ export function generateScriptReport(
   feature: string,
   projectRoot: string,
   checks: CheckResult[],
+  frameworkRoot?: string,
 ): ScriptReport {
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
@@ -96,7 +97,7 @@ export function generateScriptReport(
     report.compat_expired = finalized.compat_expired;
   }
 
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const reportPath = path.join(dir, 'script-report.json');
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
@@ -117,6 +118,7 @@ export function failScriptReportWithFatalError(
   report: ScriptReport,
   stage: 'assemble_ai_prompt' | 'generate_merged_report',
   err: Error,
+  frameworkRoot?: string,
 ): ScriptReport {
   const fatal: CheckResult = {
     id: `runner_${stage}_failed`,
@@ -136,7 +138,7 @@ export function failScriptReportWithFatalError(
     compat_expired: report.compat_expired,
   };
 
-  const dir = ensureReportDir(updated.project_root, updated.feature, updated.phase);
+  const dir = ensureReportDir(updated.project_root, updated.feature, updated.phase, frameworkRoot);
   fs.writeFileSync(
     path.join(dir, 'script-report.json'),
     JSON.stringify(updated, null, 2),
@@ -172,6 +174,7 @@ export function assembleAIPrompt(
   specContent: string,
   resolvedProfile?: HarnessResolvedProfile,
   lifecycleHookFragments?: string[],
+  frameworkRoot?: string,
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -215,7 +218,7 @@ export function assembleAIPrompt(
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
 
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
 
@@ -305,6 +308,7 @@ export function generateMergedReport(
   feature: string,
   scriptReport: ScriptReport,
   aiReportContent?: string,
+  frameworkRoot?: string,
 ): string {
   const lines: string[] = [];
 
@@ -391,7 +395,7 @@ export function generateMergedReport(
   if (aiReportContent) {
     lines.push(aiReportContent);
   } else {
-    const dir = ensureReportDir(projectRoot, feature, phase);
+    const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
     const promptPath = path.join(dir, 'ai-prompt.md');
     if (fs.existsSync(promptPath)) {
       lines.push(`> AI Harness prompt 已生成，请将以下文件发送给任意 AI 模型执行验证：`);
@@ -413,7 +417,7 @@ export function generateMergedReport(
   lines.push('');
 
   const report = lines.join('\n');
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   fs.writeFileSync(path.join(dir, 'merged-report.md'), report, 'utf-8');
 
   return report;

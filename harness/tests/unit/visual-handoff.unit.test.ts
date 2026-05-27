@@ -11,6 +11,8 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { checkVisualHandoff } from '../../scripts/check-prd';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { resolveAuthoritativePath } from '../../scripts/utils/visual-source-resolver';
+import { inferRepoLayout } from '../../repo-layout';
+import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -35,6 +37,10 @@ function baseCtx(root: string, o: Partial<CheckContext> = {}): CheckContext {
     phase: 'prd',
     feature: 'demo',
     projectRoot: root,
+    frameworkRoot: DEFAULT_LAYOUT.frameworkRoot,
+    frameworkRel: DEFAULT_LAYOUT.frameworkRel,
+    harnessRoot: path.join(DEFAULT_LAYOUT.frameworkRoot, 'harness'),
+    layoutKind: DEFAULT_LAYOUT.kind,
     phaseRule: stubPhaseRule(),
     featureSpec: { feature: 'demo' },
     resolvedProfile,

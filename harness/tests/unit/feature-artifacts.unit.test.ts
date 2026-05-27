@@ -13,6 +13,7 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache } from '../../config';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -66,6 +67,7 @@ function withTmpProject<T>(fn: (root: string) => T): T {
         },
       }),
     );
+    ensureConsumerFrameworkTree(dir);
     return fn(dir);
   } finally {
     clearFrameworkConfigCache();

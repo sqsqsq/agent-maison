@@ -18,6 +18,7 @@ import {
 } from '../../capability-registry';
 import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 import type { CheckContext, HarnessResolvedProfile } from '../../scripts/utils/types';
+import { withDefaultLayoutFields, ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -58,14 +59,14 @@ function resolvedProfile(
 }
 
 function ctxFor(profile: HarnessResolvedProfile): CheckContext {
-  return {
+  return withDefaultLayoutFields({
     phase: 'coding',
     feature: 'demo',
     projectRoot: process.cwd(),
     phaseRule: { phase: 'coding', structure_checks: {}, semantic_checks: {}, traceability_checks: {} } as any,
     featureSpec: { feature: 'demo' },
     resolvedProfile: profile,
-  };
+  });
 }
 
 interface Case { name: string; run: () => void; }
@@ -152,6 +153,7 @@ const cases: Case[] = [
     name: 'verify prompt: profile overlay is appended when present',
     run: () => {
       const projectRoot = mkTmp('prompt-overlay-proj-');
+      ensureConsumerFrameworkTree(projectRoot);
       const harnessRoot = path.join(projectRoot, 'framework', 'harness');
       const profileDir = mkTmp('prompt-overlay-profile-');
       fs.mkdirSync(path.join(harnessRoot, 'prompts'), { recursive: true });
@@ -226,6 +228,7 @@ const cases: Case[] = [
       }, null, 2));
       clearFrameworkConfigCache();
       try {
+        ensureConsumerFrameworkTree(root);
         const cfg = loadFrameworkConfig(root);
         assert(
           cfg.paths.reports_dir_pattern === undefined,

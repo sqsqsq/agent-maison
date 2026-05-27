@@ -17,6 +17,7 @@ function hylyreSpawnEnv(appSnapshotCacheAbs: string): NodeJS.ProcessEnv {
 
 export interface AdhocDumpUiOptions {
   projectRoot: string;
+  frameworkRoot?: string;
   bundle: string;
   pythonPath: string;
   appSnapshotCacheAbs: string;
@@ -45,7 +46,7 @@ export function resolveAdhocDumpUiOutPath(
 }
 
 export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, '_adhoc', 'testing');
+  const reportsBase = featurePhaseReportsDir(opts.projectRoot, '_adhoc', 'testing', opts.frameworkRoot);
   const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
   const outPath = resolveAdhocDumpUiOutPath(opts.projectRoot, opts.bundle, opts.outPath);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

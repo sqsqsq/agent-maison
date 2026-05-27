@@ -10,11 +10,13 @@ import { clearFrameworkConfigCache } from '../../config';
 import {
   extractProfileSkillAssetRefs,
   loadSkillAssetsManifest,
+  resolveManifestEntryPath,
   resolveSkillAssetPath,
   scanMarkdownRelativeLinks,
   validateProfileSkillAssetsForProject,
 } from '../../scripts/utils/profile-skill-assets';
 import { detectRepoLayout } from '../../repo-layout';
+import { DEFAULT_LAYOUT, externalStandaloneLayout } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -203,6 +205,43 @@ const cases: Array<{ name: string; run: () => void }> = [
       const msg = v.errors.join('\n');
       assert(msg.includes('ghost_asset') || msg.includes('声明缺失'), msg);
       assert(msg.includes('this-file-is-missing.md') || msg.includes('psa-missing-file'), msg);
+    },
+  },
+  {
+    name: 'loadSkillAssetsManifest: 外部 frameworkRoot 从仓根读 manifest 而非 tmp projectRoot',
+    run: () => {
+      clearFrameworkConfigCache();
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-ext-fw-'));
+      fs.writeFileSync(
+        path.join(tmp, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.0',
+          project_name: 'psa-ext-fw',
+          project_profile: { name: 'hmos-app' },
+        }),
+        'utf-8',
+      );
+      const loaded = loadSkillAssetsManifest(tmp, 'hmos-app', DEFAULT_LAYOUT);
+      assert(loaded.ok, loaded.errors.join('\n'));
+      assert(loaded.manifest?.profile === 'hmos-app', 'profile');
+    },
+  },
+  {
+    name: 'resolveManifestEntryPath: framework/ 前缀 + 外部 frameworkRoot',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-fw-prefix-'));
+      const layout = externalStandaloneLayout(tmp);
+      const abs = resolveManifestEntryPath(
+        tmp,
+        'hmos-app',
+        '1-prd-design',
+        'framework/skills/reference/user-confirmation-ux.md',
+        layout,
+      );
+      assert(
+        abs === path.join(DEFAULT_LAYOUT.frameworkRoot, 'skills', 'reference', 'user-confirmation-ux.md'),
+        abs,
+      );
     },
   },
 ];

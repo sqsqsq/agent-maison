@@ -62,7 +62,7 @@ function ruleDesc(
 }
 
 function loadPrd(ctx: CheckContext): string | null {
-  return new SpecLoader(ctx.projectRoot)
+  return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md');
 }
 
@@ -903,6 +903,7 @@ const checker: PhaseChecker = {
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'prd', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

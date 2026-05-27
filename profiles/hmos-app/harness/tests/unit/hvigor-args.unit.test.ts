@@ -31,6 +31,7 @@ import {
   analyzeProjectDependencyIssue,
 } from '../../../../../harness/scripts/utils/hvigor-runner';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
+import { DEFAULT_LAYOUT } from '../../../../../harness/tests/utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -73,6 +74,7 @@ function findFlagValues(args: string[], pKey: string): string[] {
 
 function withTmpDir<T>(fn: (dir: string) => T): T {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hvigor-args-unit-'));
+  fs.mkdirSync(path.join(dir, 'framework', 'workflows'), { recursive: true });
   try {
     clearFrameworkConfigCache();
     return fn(dir);
@@ -395,6 +397,22 @@ const cases: Array<{ name: string; run: () => void }> = [
         throw new Error(`应解析出 @my-scope/my-lib：${JSON.stringify(issue.dependencies)}`);
       }
     }),
+  },
+  {
+    name: 'analyzeProjectDependencyIssue: external frameworkRoot 不 infer projectRoot',
+    run: () => {
+      const host = fs.mkdtempSync(path.join(os.tmpdir(), 'dep-ext-'));
+      const issue = analyzeProjectDependencyIssue(
+        host,
+        'Failed to resolve OhmUrl @hms-network/url/src/network/restclient/RequestOption',
+        DEFAULT_LAYOUT.frameworkRoot,
+      );
+      assertEq(issue.found, true, '应识别依赖解析失败');
+      const expectedHarnessReady = fs.existsSync(
+        path.join(DEFAULT_LAYOUT.frameworkRoot, 'harness', 'node_modules', 'ts-node', 'package.json'),
+      );
+      assertEq(issue.harnessNodeModulesReady, expectedHarnessReady, 'harness 依赖应按 frameworkRoot 判定');
+    },
   },
   {
     name: 'looksLikeUtHvigorCommandMismatch: isOhosTest=false + genOnDeviceTestHap → true',

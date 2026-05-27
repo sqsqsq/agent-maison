@@ -46,12 +46,12 @@ function ruleDesc(
 }
 
 function loadReviewReport(ctx: CheckContext): string | null {
-  return new SpecLoader(ctx.projectRoot)
+  return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'review-report.md');
 }
 
 function loadDesign(ctx: CheckContext): string | null {
-  return new SpecLoader(ctx.projectRoot)
+  return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md');
 }
 
@@ -747,6 +747,7 @@ const checker: PhaseChecker = {
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'review', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

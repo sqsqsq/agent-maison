@@ -43,6 +43,7 @@ import { resolvePaths, clearFrameworkConfigCache, loadFrameworkConfig } from '..
 import { loadResolvedProfile, loadPhaseRuleWithOverlays, isPhaseDisabledByProfile } from '../../profile-loader';
 import { resolveWorkflowSpec, isPhaseGlobalInWorkflow } from '../../workflow-loader';
 import { finalizeChecksForScriptReport } from '../../scripts/utils/report-generator';
+import { inferRepoLayout } from '../../repo-layout';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -210,13 +211,14 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
     const paths = resolvePaths(tmpdir, FIXTURE_FRAMEWORK_ROOT);
     const vhMode = fwConfig.prd?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
 
-    const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir);
+    const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir, paths.featuresDir, FIXTURE_FRAMEWORK_ROOT);
     let phaseRule = specLoader.loadPhaseRule(phase);
     const resolvedProfile = loadResolvedProfile(tmpdir, fwConfig);
     phaseRule = loadPhaseRuleWithOverlays(phase, phaseRule, resolvedProfile);
     const phaseIsGlobal = isPhaseGlobalInWorkflow(workflowSpec, phase);
     const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature);
 
+    const fwLayout = inferRepoLayout(FIXTURE_FRAMEWORK_ROOT);
     const ctx: CheckContext = {
       phase,
       feature,
@@ -229,6 +231,10 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
       docsCommitted: fwConfig.paths.docs_committed ?? false,
       skipVisualHandoff: false,
       resolvedProfile,
+      frameworkRoot: FIXTURE_FRAMEWORK_ROOT,
+      frameworkRel: fwLayout.frameworkRel,
+      harnessRoot: FIXTURE_HARNESS_ROOT,
+      layoutKind: fwLayout.kind,
     };
 
     /** 与 harness-runner 对齐：profile 禁用整阶段时不跑 check-*.ts */

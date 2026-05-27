@@ -6,6 +6,7 @@ import * as path from 'path';
 import assert from 'assert';
 import type { CheckContext } from '../../scripts/utils/types';
 import codingChecker from '../../scripts/check-coding';
+import { withDefaultLayoutFields } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -21,7 +22,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     {
       name: 'check-coding: generic 无 profileCodingHost → coding_host_missing BLOCKER',
       run: async () => {
-        const ctx: CheckContext = {
+        const ctx: CheckContext = withDefaultLayoutFields({
           phase: 'coding',
           feature: 'probe',
           projectRoot: process.cwd(),
@@ -49,7 +50,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
             phasesDisabled: new Set(),
             capabilities: {},
           },
-        };
+        });
         const results = await codingChecker.check(ctx);
         const hit = results.find(r => r.id === 'coding_host_missing');
         assert.ok(hit, '必须产出 coding_host_missing');

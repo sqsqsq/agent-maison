@@ -80,21 +80,53 @@ export function frameworkAbs(layout: RepoLayout, ...segments: string[]): string 
   return path.join(layout.frameworkRoot, ...segments);
 }
 
-export function frameworkRelPath(layout: RepoLayout, ...segments: string[]): string {
+/** 相对 projectRoot 的 POSIX 路径（standalone 无 framework/ 前缀） */
+export function frameworkPhysicalRelPath(layout: RepoLayout, ...segments: string[]): string {
   const parts = layout.frameworkRel ? [layout.frameworkRel, ...segments] : segments;
   return path.posix.join(...parts.map(s => s.replace(/\\/g, '/')));
 }
 
-/** 将 `framework/...` 或裸 segments 解析为绝对路径（兼容 standalone / consumer） */
-export function resolveFrameworkPrefixedPath(projectRoot: string, relPosix: string): string {
-  const layout = inferRepoLayout(projectRoot);
+/** @deprecated 别名；新代码请用 frameworkPhysicalRelPath */
+export const frameworkRelPath = frameworkPhysicalRelPath;
+
+/** 面向用户/发布语义的 POSIX 路径（恒以 framework/ 开头） */
+export function frameworkLogicalRelPath(...segments: string[]): string {
+  return path.posix.join('framework', ...segments.map(s => s.replace(/\\/g, '/')));
+}
+
+export function harnessRootFromLayout(layout: RepoLayout): string {
+  return path.join(layout.frameworkRoot, 'harness');
+}
+
+/** 从 CheckContext 已解析的 layout 字段重建 RepoLayout（避免重复 infer） */
+export function repoLayoutFromContext(ctx: {
+  projectRoot: string;
+  frameworkRoot: string;
+  frameworkRel: string;
+  layoutKind?: RepoLayoutKind;
+}): RepoLayout {
+  return {
+    kind: ctx.layoutKind ?? (ctx.frameworkRel === 'framework' ? 'consumer' : 'standalone'),
+    projectRoot: path.resolve(ctx.projectRoot),
+    frameworkRoot: path.resolve(ctx.frameworkRoot),
+    frameworkRel: ctx.frameworkRel,
+  };
+}
+
+/** 将 `framework/...` 或裸 segments 解析为绝对路径（兼容 standalone / consumer / external frameworkRoot） */
+export function resolveFrameworkPrefixedPath(
+  projectRoot: string,
+  relPosix: string,
+  layout?: RepoLayout,
+): string {
+  const L = layout ?? inferRepoLayout(projectRoot);
   const norm = relPosix.replace(/\\/g, '/');
-  if (layout.kind === 'consumer') {
+  if (L.kind === 'consumer') {
     if (norm.startsWith('framework/')) {
-      return path.join(projectRoot, norm);
+      return path.join(L.projectRoot, norm);
     }
-    return frameworkAbs(layout, ...norm.split('/').filter(Boolean));
+    return frameworkAbs(L, ...norm.split('/').filter(Boolean));
   }
   const stripped = norm.startsWith('framework/') ? norm.slice('framework/'.length) : norm;
-  return path.join(projectRoot, ...stripped.split('/').filter(Boolean));
+  return path.join(L.frameworkRoot, ...stripped.split('/').filter(Boolean));
 }

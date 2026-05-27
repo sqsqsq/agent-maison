@@ -174,7 +174,7 @@ function ruleDesc(
 }
 
 function loadDoc(ctx: CheckContext, name: string): string | null {
-  return new SpecLoader(ctx.projectRoot)
+  return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, name);
 }
 
@@ -854,6 +854,7 @@ const checker: PhaseChecker = {
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'design', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

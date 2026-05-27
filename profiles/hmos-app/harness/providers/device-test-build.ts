@@ -23,6 +23,7 @@ export const provider: CapabilityProvider = {
 export interface DeviceTestBuildOptions {
   projectRoot: string;
   harnessRoot: string;
+  frameworkRoot?: string;
   feature: string;
   phase: string;
   product?: string;
@@ -70,7 +71,7 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   });
   const resolvedProduct = reuseDecision.resolvedProduct;
   const resolvedBuildMode = reuseDecision.resolvedBuildMode;
-  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
 
   if (reuseDecision.reuse && reuseDecision.hapPath) {
     const hvigor = reusedHvigorStub(`复用 HAP（跳过 hvigor）：${reuseDecision.reason}`);
@@ -105,6 +106,7 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   stopHvigorDaemon({
     projectRoot: opts.projectRoot,
     harnessRoot: opts.harnessRoot,
+    frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
     phase: opts.phase,
   });
@@ -112,6 +114,7 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   const hvigor = runHvigorAssembleApp({
     projectRoot: opts.projectRoot,
     harnessRoot: opts.harnessRoot,
+    frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
     phase: opts.phase,
     skipEnvVar: opts.skipEnvVar ?? 'HARNESS_SKIP_DEVICE_TEST_BUILD',

@@ -25,6 +25,7 @@ import {
 import { listSnapshotPages, isCacheLayoutMismatch, listSnapshotPageJsonPaths } from './utils/app-snapshot-cache-hint';
 import { ensureHypiumWorkDir } from '../../profiles/hmos-app/harness/device-test-hypium-workdir';
 import { featurePhaseReportsDir } from '../config';
+import { detectRepoLayout } from '../repo-layout';
 import {
   lintHylyrePlanMarkdown,
   normalizePlannedStepsCell,
@@ -54,6 +55,7 @@ import {
 
 const ADHOC_FEATURE = '_adhoc';
 const HARNESS_ROOT = path.resolve(__dirname, '..');
+const ADHOC_FRAMEWORK_ROOT = detectRepoLayout(HARNESS_ROOT).frameworkRoot;
 
 const argv = minimist(process.argv.slice(2), {
   string: [
@@ -200,7 +202,7 @@ if (!bundle) {
 }
 
 const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
-const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing');
+const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing', ADHOC_FRAMEWORK_ROOT);
 const logPath = path.join(reportsBase, 'device-test-run.log');
 
 // --- dump-ui-only mode ---
@@ -209,6 +211,7 @@ if (dumpUiOnly) {
   const ready = ensureHylyreReady({
     projectRoot,
     harnessRoot: HARNESS_ROOT,
+    frameworkRoot: ADHOC_FRAMEWORK_ROOT,
     feature: ADHOC_FEATURE,
     phase: 'testing',
   });
@@ -219,6 +222,7 @@ if (dumpUiOnly) {
   }
   const dump = runAdhocDumpUi({
     projectRoot,
+    frameworkRoot: ADHOC_FRAMEWORK_ROOT,
     bundle,
     pythonPath: ready.pythonPath,
     appSnapshotCacheAbs,
@@ -426,6 +430,7 @@ logAdhocPhase('ensure');
 const ready = ensureHylyreReady({
   projectRoot,
   harnessRoot: HARNESS_ROOT,
+  frameworkRoot: ADHOC_FRAMEWORK_ROOT,
   feature: ADHOC_FEATURE,
   phase: 'testing',
 });
@@ -499,6 +504,7 @@ const runT0 = Date.now();
 const run = runHylyreDeviceTest({
   projectRoot,
   harnessRoot: HARNESS_ROOT,
+  frameworkRoot: ADHOC_FRAMEWORK_ROOT,
   feature: ADHOC_FEATURE,
   phase: 'testing',
   pythonPath: ready.pythonPath,
@@ -522,6 +528,7 @@ if (observeUi && run.ok) {
   logAdhocPhase('dump_ui');
   const dump = runAdhocDumpUi({
     projectRoot,
+    frameworkRoot: ADHOC_FRAMEWORK_ROOT,
     bundle,
     pythonPath: ready.pythonPath,
     appSnapshotCacheAbs,

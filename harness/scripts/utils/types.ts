@@ -556,4 +556,12 @@ export interface CheckContext {
   skipVisualHandoff?: boolean;
   /** project profile（framework/profiles）。缺配置时由 config 归一为 hmos-app */
   resolvedProfile: HarnessResolvedProfile;
+  /** framework 资产根（standalone = projectRoot；consumer = projectRoot/framework） */
+  frameworkRoot: string;
+  /** projectRoot → frameworkRoot 的 POSIX 相对前缀：'' 或 'framework' */
+  frameworkRel: string;
+  /** framework/harness 绝对路径 */
+  harnessRoot: string;
+  /** standalone | consumer */
+  layoutKind?: 'standalone' | 'consumer';
 }

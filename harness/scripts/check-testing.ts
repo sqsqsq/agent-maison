@@ -1345,6 +1345,7 @@ function checkDeviceTestBuildGate(
     const res = dispatchDeviceTestBuild(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
+      frameworkRoot: ctx.frameworkRoot,
       feature: ctx.feature,
       phase: ctx.phase,
     }) as DeviceTestBuildResult;
@@ -1508,6 +1509,7 @@ function checkDeviceTestInstallGate(
     const res = dispatchDeviceTestInstall(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
+      frameworkRoot: ctx.frameworkRoot,
       feature: ctx.feature,
       phase: ctx.phase,
       hapPath,
@@ -1610,7 +1612,7 @@ function absToProjectRel(projectRoot: string, abs: string): string {
  */
 function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment): string | null {
   try {
-    const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+    const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     fs.mkdirSync(base, { recursive: true });
     const hintPath = path.join(base, 'derive-hint-from-plan.json');
     const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
@@ -1704,7 +1706,7 @@ function checkDeviceTestRunGate(
       ];
     }
 
-    const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+    const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const expectedDir = path.join(reportsBase, '<timestamp>', 'hylyre');
     const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
     const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
@@ -1849,6 +1851,7 @@ function checkDeviceTestRunGate(
     const ready = dispatchDeviceTestEnsureReady(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
+      frameworkRoot: ctx.frameworkRoot,
       feature: ctx.feature,
       phase: ctx.phase,
     }) as HylyreReadyResult;
@@ -1882,6 +1885,7 @@ function checkDeviceTestRunGate(
     const run = dispatchDeviceTestRun(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
+      frameworkRoot: ctx.frameworkRoot,
       feature: ctx.feature,
       phase: ctx.phase,
       pythonPath: ready.pythonPath,
@@ -1912,7 +1916,7 @@ function checkDeviceTestRunGate(
       : '无 trace.json';
 
     try {
-      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase);
+      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
       const timingDoc = collectDeviceTestTimings({
         projectRoot: ctx.projectRoot,
         feature: ctx.feature,

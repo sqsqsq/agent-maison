@@ -38,6 +38,7 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { resolveHdcExecutableSync } from './hdc-runner';
+import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 
 export interface HvigorRunResult {
   /** 是否真正执行了 hvigor（false：工具链缺失 / 被 env 跳过） */
@@ -261,6 +262,7 @@ const PROJECT_DEPENDENCY_PATTERNS = [
 export function analyzeProjectDependencyIssue(
   projectRoot: string,
   input: Pick<HvigorRunResult, 'logExcerpt' | 'errors' | 'logAbsPath'> | string,
+  frameworkRoot?: string,
 ): ProjectDependencyIssue {
   let log: string;
   if (typeof input === 'string') {
@@ -291,7 +293,12 @@ export function analyzeProjectDependencyIssue(
     }
   }
   const missingDeclarations = dependencies.filter(dep => !declared.has(dep));
-  const harnessNodeModulesReady = fs.existsSync(path.join(projectRoot, 'framework', 'harness', 'node_modules', 'ts-node', 'package.json'));
+  const harnessRoot = frameworkRoot
+    ? path.join(path.resolve(frameworkRoot), 'harness')
+    : harnessRootFromLayout(inferRepoLayout(projectRoot));
+  const harnessNodeModulesReady = fs.existsSync(
+    path.join(harnessRoot, 'node_modules', 'ts-node', 'package.json'),
+  );
   const ohModulesExists = fs.existsSync(path.join(projectRoot, 'oh_modules'));
   const installHints: string[] = [];
   if (!harnessNodeModulesReady) {
@@ -581,8 +588,13 @@ function safeResolveFromConfig(
   }
 }
 
-function ensureHvigorLogReportDir(projectRoot: string, feature: string, phase: string): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+function ensureHvigorLogReportDir(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -1151,6 +1163,8 @@ export interface HvigorInvokeOpts {
   cwd?: string;
   /** harness 根（reports 落盘） */
   harnessRoot: string;
+  /** framework 资产根；缺省时从 projectRoot infer */
+  frameworkRoot?: string;
   /** feature 名（reports 子目录） */
   feature: string;
   /** phase（reports 子目录） */
@@ -1231,7 +1245,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
   }
 
-  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase);
+  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   const logAbs = path.join(dir, opts.logBasename);
   const commandDisplay = spawnPlan.commandDisplay;
   const header = `$ ${commandDisplay}\n\n`;
@@ -1444,7 +1458,7 @@ export function runHvigorBuild(
  * 失败不阻断后续 assemble；仅 best-effort。
  */
 export function stopHvigorDaemon(
-  opts: Pick<HvigorInvokeOpts, 'projectRoot' | 'harnessRoot' | 'feature' | 'phase'>,
+  opts: Pick<HvigorInvokeOpts, 'projectRoot' | 'harnessRoot' | 'frameworkRoot' | 'feature' | 'phase'>,
 ): void {
   const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, ['--stop-daemon']);
   if ('toolMissing' in resolved) return;
@@ -1639,6 +1653,7 @@ export function runHvigorTest(
   const onDevice = runOnDeviceUt({
     projectRoot: opts.projectRoot,
     harnessRoot: opts.harnessRoot,
+    frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
     phase: opts.phase,
     srcModuleName: opts.moduleName,

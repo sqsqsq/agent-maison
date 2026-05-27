@@ -27,6 +27,7 @@ import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import { frameworkLogicalRelPath } from '../repo-layout';
 import {
   detectMissingBackfillFields,
   detectMissingConfirmFields,
@@ -1579,7 +1580,7 @@ function inspect08(env: InspectorEnv): Inspection {
 // ---- 第 9 项: framework/harness/node_modules/ts-node/package.json ----------
 // 严格用 fs.existsSync——避免 .gitignore 假阴（修了上次 81d454c 的事故）。
 function inspect09(_env: InspectorEnv): Inspection {
-  const targetRel = 'framework/harness/node_modules/ts-node/package.json';
+  const targetRel = frameworkLogicalRelPath('harness', 'node_modules', 'ts-node', 'package.json');
   const targetAbs = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'package.json');
   const exists = fs.existsSync(targetAbs);
   if (!exists) {

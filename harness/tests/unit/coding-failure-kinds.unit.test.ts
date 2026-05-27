@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import assert from 'assert';
 import type { CheckContext } from '../../scripts/utils/types';
+import { withDefaultLayoutFields, DEFAULT_LAYOUT, layoutFieldsForHost } from '../utils/layout-test-helper';
 import {
   classifyCodingCompileFailure,
   type CodingCompileFailureKind,
@@ -22,6 +23,15 @@ const PROFILES_ROOT = path.resolve(__dirname, '..', '..', '..', 'profiles');
 const hmosProfileDir = path.join(PROFILES_ROOT, 'hmos-app');
 
 function mkCtx(projectRoot: string): CheckContext {
+  const layoutFields =
+    projectRoot === DEFAULT_LAYOUT.projectRoot
+      ? {
+          frameworkRoot: DEFAULT_LAYOUT.frameworkRoot,
+          frameworkRel: DEFAULT_LAYOUT.frameworkRel,
+          harnessRoot: path.join(DEFAULT_LAYOUT.frameworkRoot, 'harness'),
+          layoutKind: DEFAULT_LAYOUT.kind,
+        }
+      : layoutFieldsForHost(projectRoot);
   return {
     phase: 'coding',
     feature: 'unit',
@@ -37,6 +47,7 @@ function mkCtx(projectRoot: string): CheckContext {
         'coding.compile': { provider: 'hvigor', severity: 'BLOCKER' },
       },
     },
+    ...layoutFields,
   };
 }
 
@@ -67,7 +78,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const r = classifyCodingCompileFailure(
         { executed: true, exitCode: 0, errors: [], successMarkerFound: false },
-        mkCtx(process.cwd()),
+        mkCtx(DEFAULT_LAYOUT.projectRoot),
       );
       assert.strictEqual(r.kind, 'compile_incomplete_output');
     },
@@ -103,7 +114,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const r = classifyCodingCompileFailure(
         { executed: true, exitCode: 1, errors: [{ message: 'ArkTS compile error in Foo.ets' }] },
-        mkCtx(process.cwd()),
+        mkCtx(DEFAULT_LAYOUT.projectRoot),
       );
       assert.strictEqual(r.kind, 'project_build');
     },

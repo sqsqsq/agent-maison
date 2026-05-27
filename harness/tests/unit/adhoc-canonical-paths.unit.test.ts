@@ -13,6 +13,7 @@ import {
   isForbiddenAdhocWritePath,
   isUnderAdhocFeatureDir,
 } from '../../scripts/utils/adhoc-canonical-paths';
+import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -67,15 +68,30 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'isForbiddenAdhocWritePath: true for framework/harness',
+    name: 'isForbiddenAdhocWritePath: true for harness tree (consumer layout)',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhoc-forbid-'));
+      fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
       const harnessReport = path.join(root, 'framework', 'harness', 'trace.json');
       if (!isForbiddenAdhocWritePath(root, harnessReport)) {
         throw new Error('framework/harness should be forbidden');
       }
       const canonical = adhocHylyreRunDir(root, FIXED_TS);
       if (isForbiddenAdhocWritePath(root, canonical)) {
+        throw new Error('doc/features/_adhoc hylyre dir should be allowed');
+      }
+    },
+  },
+  {
+    name: 'isForbiddenAdhocWritePath: external frameworkRoot 不 infer projectRoot',
+    run: () => {
+      const host = fs.mkdtempSync(path.join(os.tmpdir(), 'adhoc-forbid-ext-'));
+      const harnessReport = path.join(DEFAULT_LAYOUT.frameworkRoot, 'harness', 'trace.json');
+      if (!isForbiddenAdhocWritePath(host, harnessReport, DEFAULT_LAYOUT.frameworkRoot)) {
+        throw new Error('external framework harness path should be forbidden');
+      }
+      const canonical = adhocHylyreRunDir(host, FIXED_TS);
+      if (isForbiddenAdhocWritePath(host, canonical, DEFAULT_LAYOUT.frameworkRoot)) {
         throw new Error('doc/features/_adhoc hylyre dir should be allowed');
       }
     },

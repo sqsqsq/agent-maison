@@ -26,4 +26,6 @@ staging 时会对 zip 内 `package.json` **sanitize**：移除 `release:*` scrip
 
 maison 自身不走 Skill 0–6；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
 
+**依赖安装契约**：standalone 开发在仓根 `npm run harness:install` 或 `cd harness && npm install`；consumer 仅在 `cd framework/harness && npm install`，禁止在宿主工程根安装 framework runtime。
+
 发版前见 [`docs/operations/release-checklist.md`](docs/operations/release-checklist.md)。

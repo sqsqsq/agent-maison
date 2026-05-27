@@ -78,7 +78,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
-import { detectRepoLayout, frameworkAbs, frameworkRelPath, inferRepoLayout } from './repo-layout';
+import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 
 // --------------------------------------------------------------------------
 // CLI 参数解析
@@ -192,9 +192,9 @@ async function main(): Promise<void> {
 
   const harnessRoot = __dirname;
   const layout = detectRepoLayout(harnessRoot);
-  const { projectRoot, frameworkRoot: resolvedFrameworkRoot } = layout;
+  const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
   const paths = resolvePaths(projectRoot, resolvedFrameworkRoot);
-  const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir);
+  const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir, paths.featuresDir, resolvedFrameworkRoot);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');
   const featuresRel = path.relative(projectRoot, paths.featuresDir).replace(/\\/g, '/');
 
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
       printHelp();
       process.exit(1);
     }
-    const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase);
+    const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
     process.exit(exitCode);
   }
 
@@ -300,8 +300,8 @@ async function main(): Promise<void> {
   if (artifactInspection) {
     printFeatureArtifactInspection(artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
-      const blocker = featureArtifactBlocker(projectRoot, artifactInspection);
-      const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker]);
+      const blocker = featureArtifactBlocker(projectRoot, artifactInspection, paths.frameworkRoot);
+      const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker], resolvedFrameworkRoot);
       printReportToConsole(quickReport, {
         failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
       });
@@ -347,12 +347,16 @@ async function main(): Promise<void> {
     prdVisualSources: fwConfig.prd?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
+    frameworkRoot: resolvedFrameworkRoot,
+    frameworkRel,
+    harnessRoot,
+    layoutKind,
     resolvedProfile,
   };
 
   // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
   // （注意：HEAD 是当前已提交状态；UT 阶段未提交的改动会被 git diff 检测到）
-  recordStartCommit(harnessRoot, phase, feature, projectRoot);
+  recordStartCommit(harnessRoot, phase, feature, projectRoot, resolvedFrameworkRoot);
 
   // 阶段状态机：标记 running，供 Stop hook 在 agent 想结束消息时判断
   // "当前是否处于阶段流程中"。harness 跑完后会再次更新 verdict / blocker_count；
@@ -432,7 +436,7 @@ async function main(): Promise<void> {
 
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
-  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks);
+  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot);
   printReportToConsole(scriptReport, {
     failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
   });
@@ -451,7 +455,7 @@ async function main(): Promise<void> {
     if (process.env.HARNESS_FORCE_STEP4_FAIL) {
       throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
     }
-    const contextFiles = collectContextFiles(specLoader, projectRoot, phase, feature, featureSpec);
+    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec);
     const specContent = YAML.stringify(phaseRule);
 
     assembleAIPrompt(
@@ -464,12 +468,13 @@ async function main(): Promise<void> {
       specContent,
       resolvedProfile,
       lifecycleFragments,
+      resolvedFrameworkRoot,
     );
     console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
     const e = err as Error;
     console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e);
+    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
   }
 
   if (finalReport === scriptReport) {
@@ -483,12 +488,12 @@ async function main(): Promise<void> {
         console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
       }
 
-      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent);
+      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent, resolvedFrameworkRoot);
       console.log(`   ✓ 合并报告已写入 ${reportDirRel}/merged-report.md`);
     } catch (err) {
       const e = err as Error;
       console.error(`   ✗ Step 5 生成合并报告失败: ${e.message}`);
-      finalReport = failScriptReportWithFatalError(scriptReport, 'generate_merged_report', e);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'generate_merged_report', e, resolvedFrameworkRoot);
     }
   }
 
@@ -510,7 +515,7 @@ async function main(): Promise<void> {
     receipt: receiptValidation,
   });
 
-  const runSummary = writeRunSummary(projectRoot, finalReport, receiptValidation);
+  const runSummary = writeRunSummary(projectRoot, finalReport, receiptValidation, resolvedFrameworkRoot);
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
@@ -597,8 +602,9 @@ function writeRunSummary(
   projectRoot: string,
   report: ScriptReport,
   receiptValidation: ReturnType<typeof tryValidateReceipt> | null,
+  frameworkRoot: string,
 ): HarnessRunSummary {
-  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase);
+  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
   const blockers = report.checks
     .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
@@ -912,8 +918,12 @@ function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, f
   }
 }
 
-function featureArtifactBlocker(projectRoot: string, inspection: FeatureArtifactInspection): CheckResult {
-  const featuresRel = path.relative(projectRoot, resolvePaths(projectRoot).featuresDir).replace(/\\/g, '/');
+function featureArtifactBlocker(
+  projectRoot: string,
+  inspection: FeatureArtifactInspection,
+  frameworkRoot?: string,
+): CheckResult {
+  const featuresRel = path.relative(projectRoot, resolvePaths(projectRoot, frameworkRoot).featuresDir).replace(/\\/g, '/');
   const relPath = `${featuresRel}/${inspection.feature}`;
   const archiveHint = inspection.sameNameArchives.length > 0
     ? `\n检测到同名归档旁证：${inspection.sameNameArchives.join(', ')}。归档不会被当作正式 feature；如需恢复，请先获得用户明确确认后手动恢复为目录。`
@@ -953,8 +963,9 @@ function recordStartCommit(
   phase: Phase,
   feature: string,
   projectRoot: string,
+  frameworkRoot: string,
 ): void {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   const tracePath = path.join(dir, 'trace.json');
 
   // 已有 start_commit 不动，保留 baseline
@@ -1000,11 +1011,12 @@ function recordStartCommit(
 
 function collectContextFiles(
   specLoader: SpecLoader,
-  projectRoot: string,
+  layout: RepoLayout,
   phase: Phase,
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
 ): Array<{ label: string; content: string }> {
+  const { projectRoot } = layout;
   const files: Array<{ label: string; content: string }> = [];
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
@@ -1030,9 +1042,8 @@ function collectContextFiles(
   // docs 是 framework 自检阶段：上下文只放 inventory 自身，
   // 不读 catalog/glossary，也不读 feature 维度文件。
   if (phase === 'docs') {
-    const docsLayout = inferRepoLayout(projectRoot);
-    const inventoryPath = frameworkAbs(docsLayout, 'docs', 'DOC_INVENTORY.yaml');
-    const inventoryLabel = frameworkRelPath(docsLayout, 'docs', 'DOC_INVENTORY.yaml');
+    const inventoryPath = frameworkAbs(layout, 'docs', 'DOC_INVENTORY.yaml');
+    const inventoryLabel = frameworkLogicalRelPath('docs', 'DOC_INVENTORY.yaml');
     if (fs.existsSync(inventoryPath)) {
       files.push({
         label: inventoryLabel,

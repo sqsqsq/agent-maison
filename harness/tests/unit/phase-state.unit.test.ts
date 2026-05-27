@@ -12,6 +12,7 @@ import {
 } from '../../scripts/utils/phase-state';
 import { statefilePath } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
+import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -149,6 +150,64 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(state.session_id === 'sid-keep-me', 'session_id should be preserved');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'syncPhaseStateOnReceiptPass: external frameworkRoot 不 infer projectRoot',
+    run: () => {
+      const host = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-state-ext-'));
+      try {
+        fs.mkdirSync(path.join(host, 'doc', 'features', 'demo', 'review'), { recursive: true });
+        fs.writeFileSync(
+          path.join(host, 'framework.config.json'),
+          JSON.stringify(
+            {
+              schema_version: '1.1',
+              project_name: 'phase-state-ext',
+              project_profile: { name: 'generic' },
+              agent_adapter: 'generic',
+              architecture: {
+                outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+                module_inner_layers: ['content'],
+                inner_dependency_direction: 'upward',
+                cross_module_exports_file: 'index.ts',
+              },
+              paths: {
+                features_dir: 'doc/features',
+                module_catalog: 'doc/module-catalog.yaml',
+                glossary: 'doc/glossary.yaml',
+                glossary_seed: 'doc/glossary-seed.txt',
+                architecture_md: 'doc/architecture.md',
+                state_file: 'framework/harness/state/.current-phase.json',
+                receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+                reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
+              },
+              active_workflow: 'spec-driven',
+            },
+            null,
+            2,
+          ),
+        );
+        syncPhaseStateOnReceiptPass(
+          host,
+          'demo',
+          'review',
+          {
+            status: 'passed',
+            receipt_path: 'doc/features/demo/review/phase-completion-receipt.md',
+            exit_code: 0,
+          },
+          { blocker_count: 0, frameworkRoot: DEFAULT_LAYOUT.frameworkRoot },
+        );
+        const state = JSON.parse(fs.readFileSync(statefilePath(host), 'utf-8')) as {
+          receipt?: { status?: string };
+          verdict?: string;
+        };
+        assert(state.receipt?.status === 'passed', `expected passed, got ${state.receipt?.status}`);
+        assert(state.verdict === 'PASS', `expected PASS verdict, got ${state.verdict}`);
+      } finally {
+        fs.rmSync(host, { recursive: true, force: true });
       }
     },
   },

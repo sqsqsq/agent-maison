@@ -9,6 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { detectRepoLayout } from '../repo-layout';
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import {
   emitInstanceSkillBridge,
@@ -19,8 +20,9 @@ import {
 } from './utils/instance-skill-bridge';
 
 const SCRIPT_DIR = __dirname;
-const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../..');
-const FRAMEWORK_DIR = path.join(REPO_ROOT, 'framework');
+const layout = detectRepoLayout(SCRIPT_DIR);
+const REPO_ROOT = layout.projectRoot;
+const FRAMEWORK_DIR = layout.frameworkRoot;
 const TEMPLATE_PATH = path.join(FRAMEWORK_DIR, 'templates/AGENTS.md.template');
 const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'framework.config.json');
 

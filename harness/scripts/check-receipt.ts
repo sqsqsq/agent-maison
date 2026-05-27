@@ -166,6 +166,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 
 function main(): void {
   const { feature, phase, projectRoot, skipStateSync } = parseArgs();
+  const frameworkRoot = path.resolve(__dirname, '..', '..');
 
   const fw = loadFrameworkConfig(projectRoot);
   const resolved = loadResolvedProfile(projectRoot, fw);
@@ -559,12 +560,14 @@ function main(): void {
       };
       syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
         blocker_count: typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
+        frameworkRoot,
       });
       applyClosurePatchFromReceiptValidation(
         projectRoot,
         feature,
         phase as FeaturePhase,
         receiptValidation,
+        frameworkRoot,
       );
     }
 

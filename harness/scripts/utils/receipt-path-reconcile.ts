@@ -69,6 +69,7 @@ export function resolveModernReportsRelForLegacyRef(
   feature: string,
   phase: string,
   declaredPath: string,
+  frameworkRoot?: string,
 ): string | null {
   const legacyRel = toPosixRel(projectRoot, declaredPath);
   if (!legacyRel.startsWith(LEGACY_REPORTS_PREFIX)) {
@@ -78,7 +79,7 @@ export function resolveModernReportsRelForLegacyRef(
   if (suffix === null) {
     return null;
   }
-  const modernRel = `${relFeaturePhaseReportsDir(projectRoot, feature, phase)}/${suffix}`;
+  const modernRel = `${relFeaturePhaseReportsDir(projectRoot, feature, phase, frameworkRoot)}/${suffix}`;
   const modernAbs = path.resolve(projectRoot, modernRel);
   if (!fs.existsSync(modernAbs)) {
     return null;
@@ -91,13 +92,14 @@ function resolveModernReportDirRel(
   feature: string,
   phase: string,
   declaredDir: string,
+  frameworkRoot?: string,
 ): string | null {
   const legacyRel = toPosixRel(projectRoot, declaredDir).replace(/\/$/, '');
   const expectedLegacy = `${LEGACY_REPORTS_PREFIX}${feature}/${phase}`.replace(/\/$/, '');
   if (legacyRel !== expectedLegacy) {
     return null;
   }
-  const modernRel = relFeaturePhaseReportsDir(projectRoot, feature, phase);
+  const modernRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   const modernAbs = path.resolve(projectRoot, modernRel);
   if (!fs.existsSync(modernAbs)) {
     return null;
@@ -132,12 +134,15 @@ export function detectReceiptPathPatches(
   feature: string,
   phase: string,
   frontmatter: ReceiptFrontmatter,
+  frameworkRoot?: string,
 ): ReceiptPathPatch[] {
   const patches: ReceiptPathPatch[] = [];
 
   const tracePath = frontmatter.trace_json?.path?.trim();
   if (tracePath) {
-    const modernRel = resolveModernReportsRelForLegacyRef(projectRoot, feature, phase, tracePath);
+    const modernRel = resolveModernReportsRelForLegacyRef(
+      projectRoot, feature, phase, tracePath, frameworkRoot,
+    );
     if (modernRel) {
       patches.push({ field: 'trace_json.path', from: tracePath, to: modernRel });
     }
@@ -145,7 +150,9 @@ export function detectReceiptPathPatches(
 
   const verifierPath = frontmatter.verifier_subagent?.report_path?.trim();
   if (verifierPath) {
-    const modernRel = resolveModernReportsRelForLegacyRef(projectRoot, feature, phase, verifierPath);
+    const modernRel = resolveModernReportsRelForLegacyRef(
+      projectRoot, feature, phase, verifierPath, frameworkRoot,
+    );
     if (modernRel) {
       patches.push({ field: 'verifier_subagent.report_path', from: verifierPath, to: modernRel });
     }
@@ -153,7 +160,7 @@ export function detectReceiptPathPatches(
 
   const reportDir = frontmatter.script_harness?.report_dir?.trim();
   if (reportDir) {
-    const modernDir = resolveModernReportDirRel(projectRoot, feature, phase, reportDir);
+    const modernDir = resolveModernReportDirRel(projectRoot, feature, phase, reportDir, frameworkRoot);
     if (modernDir) {
       patches.push({ field: 'script_harness.report_dir', from: reportDir, to: modernDir });
     }
@@ -161,7 +168,7 @@ export function detectReceiptPathPatches(
 
   const q1 = frontmatter.self_check?.q1_trace_json_abs_path?.trim();
   if (q1) {
-    const modernRel = resolveModernReportsRelForLegacyRef(projectRoot, feature, phase, q1);
+    const modernRel = resolveModernReportsRelForLegacyRef(projectRoot, feature, phase, q1, frameworkRoot);
     if (modernRel) {
       const modernAbs = path.resolve(projectRoot, modernRel);
       patches.push({
@@ -209,7 +216,7 @@ function listReceiptTargets(
 
 export function scanReceiptPathReconcileCandidates(
   projectRoot: string,
-  filter?: { feature?: string; phase?: string },
+  filter?: { feature?: string; phase?: string; frameworkRoot?: string },
 ): ReceiptReconcileCandidate[] {
   if (!isReceiptPathReconcileEnabled(projectRoot)) {
     return [];
@@ -219,7 +226,9 @@ export function scanReceiptPathReconcileCandidates(
   for (const { feature, phase, receiptAbs } of listReceiptTargets(projectRoot, filter)) {
     const raw = fs.readFileSync(receiptAbs, 'utf-8');
     const { frontmatter } = parseFrontmatterAndBody(raw);
-    const patches = detectReceiptPathPatches(projectRoot, feature, phase, frontmatter);
+    const patches = detectReceiptPathPatches(
+      projectRoot, feature, phase, frontmatter, filter?.frameworkRoot,
+    );
     if (patches.length === 0) {
       continue;
     }
@@ -295,17 +304,18 @@ export function applyReceiptPathReconcileCandidates(
 /** 供 init / agent 使用：扫描并可选 apply（apply 须用户确认后再调用）。 */
 export function runReceiptPathReconcile(options: {
   projectRoot: string;
+  frameworkRoot?: string;
   apply?: boolean;
   feature?: string;
   phase?: string;
 }): { exitCode: number; candidates: ReceiptReconcileCandidate[] } {
-  const { projectRoot, apply = false, feature, phase } = options;
+  const { projectRoot, frameworkRoot, apply = false, feature, phase } = options;
   if (!isReceiptPathReconcileEnabled(projectRoot)) {
     console.log('reconcile-receipt-paths: 未配置 paths.reports_dir_pattern，跳过。');
     return { exitCode: 0, candidates: [] };
   }
 
-  const candidates = scanReceiptPathReconcileCandidates(projectRoot, { feature, phase });
+  const candidates = scanReceiptPathReconcileCandidates(projectRoot, { feature, phase, frameworkRoot });
   if (candidates.length === 0) {
     console.log('reconcile-receipt-paths: 未发现需 reconcile 的回执路径。');
     return { exitCode: 0, candidates: [] };

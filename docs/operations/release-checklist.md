@@ -34,6 +34,11 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    npm run release:pack -- --dry-run
    ```
 
+5. **layout 烟测（已纳入 `harness` unit：`runner-layout-smoke`）**
+
+   - standalone：`--phase docs` 报告写入 `harness/reports/`，不得出现 `framework/harness/reports/`
+   - consumer：可用 `npm run release:pack -- --stage-only` 产出 `dist/release-staging/framework/` 作 fixture 来源
+
 ## 人工（可选）
 
 在任意消费者工程（如 SimulatedWalletForHmos）：

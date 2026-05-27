@@ -10,6 +10,9 @@ import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import checker from '../../scripts/check-review';
 import { CheckContext } from '../../scripts/utils/types';
+import { inferRepoLayout } from '../../repo-layout';
+import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
+import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
   name: string;
@@ -23,6 +26,7 @@ function assertTrue(cond: boolean, label: string): void {
 
 async function withTmpProject<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-context-'));
+  ensureConsumerFrameworkTree(dir);
   try {
     return await fn(dir);
   } finally {
@@ -43,6 +47,10 @@ function ctx(root: string, featureSpec: CheckContext['featureSpec']): CheckConte
     phase: 'review',
     feature: 'demo',
     projectRoot: root,
+    frameworkRoot: DEFAULT_LAYOUT.frameworkRoot,
+    frameworkRel: DEFAULT_LAYOUT.frameworkRel,
+    harnessRoot: path.join(DEFAULT_LAYOUT.frameworkRoot, 'harness'),
+    layoutKind: DEFAULT_LAYOUT.kind,
     phaseRule: {
       phase: 'review',
       structure_checks: {},

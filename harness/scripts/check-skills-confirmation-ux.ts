@@ -10,7 +10,7 @@ import * as path from 'path';
 
 import type { CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
-import { frameworkAbs, frameworkRelPath, inferRepoLayout } from '../repo-layout';
+import { frameworkAbs, frameworkLogicalRelPath, frameworkRelPath, inferRepoLayout, repoLayoutFromContext, type RepoLayout } from '../repo-layout';
 
 const CLAUDE_WIDGET_OPTION_FILES = [
   'rules/widget-options/index.md',
@@ -58,15 +58,16 @@ export interface ConfirmationUxLintOptions {
   projectRoot: string;
   /** 实例扩展 skills（可选） */
   extensionSkillDirs?: string[];
+  layout?: RepoLayout;
 }
 
 export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckResult[] {
   const { projectRoot } = options;
   const results: CheckResult[] = [];
-  const layout = inferRepoLayout(projectRoot);
+  const layout = options.layout ?? inferRepoLayout(projectRoot);
 
-  const ssotRel = frameworkRelPath(layout, 'skills', 'reference', 'user-confirmation-ux.md');
-  const registryRel = frameworkRelPath(layout, 'skills', 'reference', 'confirmation-registry.yaml');
+  const ssotRel = frameworkLogicalRelPath('skills', 'reference', 'user-confirmation-ux.md');
+  const registryRel = frameworkLogicalRelPath('skills', 'reference', 'confirmation-registry.yaml');
   const ssotPath = frameworkAbs(layout, 'skills', 'reference', 'user-confirmation-ux.md');
   const registryPath = frameworkAbs(layout, 'skills', 'reference', 'confirmation-registry.yaml');
 
@@ -83,11 +84,11 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   const registryIds = [...registryText.matchAll(/^\s*-\s+id:\s+([a-z0-9_.]+)/gm)].map(m => m[1]);
 
   const files: string[] = [];
-  for (const sub of [
-    frameworkRelPath(layout, 'skills'),
-    frameworkRelPath(layout, 'profiles'),
+  for (const scanRoot of [
+    frameworkAbs(layout, 'skills'),
+    frameworkAbs(layout, 'profiles'),
   ]) {
-    files.push(...listMarkdownFiles(projectRoot, sub));
+    files.push(...listMarkdownFiles(scanRoot, '.'));
   }
   for (const extDir of options.extensionSkillDirs ?? []) {
     const abs = path.isAbsolute(extDir) ? extDir : path.join(projectRoot, extDir);
@@ -118,14 +119,13 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
     results.push(warn('registry_size', `confirmation-registry 仅 ${registryIds.length} 条，预期 ≥20`, [registryRel]));
   }
 
-  results.push(...lintClaudeConfirmationTemplates(projectRoot));
+  results.push(...lintClaudeConfirmationTemplates(layout));
 
   return results;
 }
 
-function lintClaudeConfirmationTemplates(projectRoot: string): CheckResult[] {
+function lintClaudeConfirmationTemplates(layout: RepoLayout): CheckResult[] {
   const results: CheckResult[] = [];
-  const layout = inferRepoLayout(projectRoot);
   const templatesRel = frameworkRelPath(layout, 'agents', 'claude', 'templates');
   const base = frameworkAbs(layout, 'agents', 'claude', 'templates');
   if (!fs.existsSync(base)) {
@@ -405,6 +405,7 @@ export function runConfirmationUxChecks(ctx: CheckContext): CheckResult[] {
   const raw = lintConfirmationUx({
     projectRoot: ctx.projectRoot,
     extensionSkillDirs,
+    layout: repoLayoutFromContext(ctx),
   });
   const pass: CheckResult = {
     id: 'confirmation_ux_lint',
