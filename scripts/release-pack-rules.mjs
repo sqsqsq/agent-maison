@@ -267,7 +267,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
 
   const pkg = {
     name: 'agent-maison',
-    version: '3.0.0',
+    version: '2.0.1',
     scripts: {
       test: 'npm test',
       'release:pack': 'node scripts/pack-release.mjs',
