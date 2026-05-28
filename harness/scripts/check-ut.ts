@@ -51,9 +51,15 @@ import {
 import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
 import {
   buildMockPlanPresetIndex,
+  collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
+  collectUtMockkitGovernanceIssues,
+  getMockPlanEntries,
+  mockPlanAllowsHypiumMockkit,
+  mockPlanHasEntries,
   parseMockPlanFile,
   parseTestabilityAuditFile,
+  utFileImportsHypiumMockkit,
   type MockPlanSpec,
   type TestabilityAuditRecord,
 } from './utils/ut-artifact-parse';
@@ -2478,7 +2484,8 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
   }
 
   const mp = parseMockPlanFile(mockPlanPath(ctx));
-  if (!mp || !(mp.spies?.length)) {
+  const entries = getMockPlanEntries(mp);
+  if (!mp || entries.length === 0) {
     return [{
       id,
       category: 'structure',
@@ -2486,26 +2493,16 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[]）。\n` +
+        `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[] 或 doubles[]）。\n` +
         `模板：${utSuggestionPaths(ctx).mockPlanSchemaTemplateRel}`,
-      suggestion: '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 Spy 目标类与 presets。',
+      suggestion:
+        '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 test double（strategy: spy | mockkit | fake | prototype_patch）与 presets。',
     }];
   }
 
   const missingSpyForDep: string[] = [];
-  const missingSpyForEntryPoint: string[] = [];
   for (const rec of need) {
     const entry = resolveAuditEntryPoint(ctx, rec);
-    if (entry) {
-      const spy = mp.spies!.find(s => s.target_class === entry.cls);
-      const hasMethod = !!spy?.methods?.some(m => m.name === entry.method);
-      if (!hasMethod) {
-        missingSpyForEntryPoint.push(
-          `${rec.acceptance_id}: entry_point ${entry.cls}.${entry.method} 缺少 mock-plan spy/method`,
-        );
-      }
-    }
-
     const deps = rec.dependencies ?? [];
     if (deps.length === 0 && !entry) {
       missingSpyForDep.push(`${rec.acceptance_id}: L0/L1/L2 记录缺少 dependencies 且无法从 entry_point 映射 contracts 接口`);
@@ -2514,23 +2511,11 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
     for (const d of deps) {
       const kind = (d.kind ?? '').toLowerCase();
       if (kind === 'pure') continue;
-      const ok = mp.spies!.some(s => s.target_class === d.name);
+      const ok = entries.some(s => s.target_class === d.name);
       if (!ok) {
-        missingSpyForDep.push(`${rec.acceptance_id}: 依赖 ${d.name}（kind=${d.kind || '?'}) 缺少 spy target_class`);
+        missingSpyForDep.push(`${rec.acceptance_id}: 依赖 ${d.name}（kind=${d.kind || '?'}) 缺少 mock-plan target_class`);
       }
     }
-  }
-
-  if (missingSpyForEntryPoint.length > 0) {
-    return [{
-      id,
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', id),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `mock-plan 缺少与审计 entry_point 对齐的 spy/method：\n${truncateList(missingSpyForEntryPoint, 15)}`,
-      suggestion: '为每条 L0/L1/L2 审计记录的 entry_point 补齐 spies[].target_class 与 methods[].name，保持 contracts.yaml / audit / mock-plan 三方一致。',
-    }];
   }
 
   if (missingSpyForDep.length > 0) {
@@ -2541,7 +2526,8 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `mock-plan 缺少与审计依赖对齐的 spy：\n${truncateList(missingSpyForDep, 15)}`,
-      suggestion: '补全 testability-audit.md 的 dependencies，或在 mock-plan.yaml 中为非 pure 依赖补 spies[].target_class。',
+      suggestion:
+        '补全 testability-audit.md 的 dependencies，或在 mock-plan.yaml 中为非 pure 外部依赖声明 test double（勿将被测 entry_point 写入 mock-plan）。',
     }];
   }
 
@@ -2551,13 +2537,128 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
     description: ruleDesc(ctx, 'structure_checks', id),
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `mock-plan 满足 ${need.length} 条 L0/L1/L2 记录的 spy 声明要求。`,
+    details: `mock-plan 满足 ${need.length} 条 L0/L1/L2 记录的非 pure 依赖声明要求（被测 entry_point 不要求出现在 mock-plan）。`,
+  }];
+}
+
+function collectForbiddenMockkitEntryClasses(
+  ctx: CheckContext,
+  auditRecords: TestabilityAuditRecord[],
+): Set<string> {
+  const forbidden = new Set<string>();
+  for (const rec of auditRecords) {
+    const ep = resolveAuditEntryPoint(ctx, rec);
+    if (ep?.cls) forbidden.add(ep.cls);
+  }
+  const spec = ctx.featureSpec.useCases;
+  for (const uc of spec?.use_cases ?? []) {
+    const coord = (uc.coordinator ?? '').trim();
+    if (coord) forbidden.add(coord);
+  }
+  return forbidden;
+}
+
+function checkUtHypiumMockkitPolicy(
+  ctx: CheckContext,
+  plan: MockPlanSpec | null,
+  utFiles: Array<{ path: string; content: string }>,
+  auditRecords: TestabilityAuditRecord[],
+): CheckResult[] {
+  const id = 'ut_hypium_mockkit_policy';
+  const offenders = utFiles.filter(f => utFileImportsHypiumMockkit(f.content));
+  if (offenders.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'UT 未从 @ohos/hypium 导入 MockKit/when，跳过 @ohos/hypium mock 策略门禁。',
+    }];
+  }
+
+  if (!plan || !mockPlanAllowsHypiumMockkit(plan)) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `${offenders.length} 个 UT 文件导入了 MockKit 或 hypium when，但 mock-plan 无 strategy=mockkit 条目：\n` +
+        truncateList(offenders.map(f => f.path), 10),
+      suggestion:
+        '在 mock-plan.yaml 为外部边界声明 strategy: mockkit 与 presets；或改用 Spy/whenXxx。禁止在消费者 framework 子模块改 ts-compile.ts。',
+    }];
+  }
+
+  const missingDoubleStrategy = collectDoublesMissingStrategy(plan);
+  if (missingDoubleStrategy.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `mock-plan doubles[] 缺少显式 strategy：\n${truncateList(missingDoubleStrategy, 10)}`,
+      suggestion: 'doubles[] 每条须声明 strategy: spy | mockkit | fake | prototype_patch，禁止缺省视为 mockkit。',
+    }];
+  }
+
+  const contracts = ctx.featureSpec.contracts;
+  const ifaceClasses = new Set((contracts?.interfaces ?? []).map(i => i.class));
+  const badClass: string[] = [];
+  for (const e of getMockPlanEntries(plan)) {
+    if (e.strategy !== 'mockkit') continue;
+    if (!ifaceClasses.has(e.target_class)) {
+      badClass.push(e.target_class);
+    }
+  }
+  if (badClass.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `mockkit 条目的 target_class 须在 contracts.yaml interfaces[] 中：\n${truncateList(badClass, 10)}`,
+      suggestion: '仅 mock 已登记的外部 data 边界；禁止 mock 被测 Flow/Coordinator/Page handler。',
+    }];
+  }
+
+  const forbiddenEntries = collectForbiddenMockkitEntryClasses(ctx, auditRecords);
+  const usageIssues: string[] = [];
+  for (const f of offenders) {
+    for (const msg of collectUtMockkitGovernanceIssues(f.content, plan, forbiddenEntries)) {
+      usageIssues.push(`${f.path}: ${msg}`);
+    }
+  }
+  if (usageIssues.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `MockKit/when 用法未与 mock-plan mockkit 条目对齐：\n${truncateList(usageIssues, 15)}`,
+      suggestion:
+        'MockKit.mock / when(Class.method) 仅允许 mock-plan 已声明的 mockkit 边界与方法；禁止 mock entry_point/coordinator；when 须引用 plan presets[].id。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when，mock-plan mockkit 策略、contracts 与用法追溯均已对齐。`,
   }];
 }
 
 function checkUtMockPlanTyped(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
   const id = 'ut_mock_plan_typed';
-  if (!plan?.spies?.length) {
+  if (!mockPlanHasEntries(plan)) {
     return [{
       id,
       category: 'structure',
@@ -2568,7 +2669,10 @@ function checkUtMockPlanTyped(ctx: CheckContext, plan: MockPlanSpec | null): Che
     }];
   }
 
-  const bad = collectMockPlanTypedIssues(plan);
+  const bad = [
+    ...collectDoublesMissingStrategy(plan),
+    ...collectMockPlanTypedIssues(plan!),
+  ];
 
   if (bad.length > 0) {
     return [{
@@ -2595,7 +2699,7 @@ function checkUtMockPlanTyped(ctx: CheckContext, plan: MockPlanSpec | null): Che
 function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpec | null): CheckResult[] {
   const id = 'ut_mock_plan_contracts_consistent';
   const contracts = ctx.featureSpec.contracts;
-  if (!plan?.spies?.length) {
+  if (!mockPlanHasEntries(plan)) {
     return [{
       id,
       category: 'structure',
@@ -2619,10 +2723,10 @@ function checkUtMockPlanContractsConsistent(ctx: CheckContext, plan: MockPlanSpe
   const ifaceByClass = new Map(contracts.interfaces.map(i => [i.class, i]));
   const issues: string[] = [];
 
-  for (const spy of plan.spies ?? []) {
+  for (const spy of getMockPlanEntries(plan)) {
     const iface = ifaceByClass.get(spy.target_class);
     if (!iface) {
-      issues.push(`spy.target_class="${spy.target_class}" 不在 contracts.yaml interfaces[].class 中`);
+      issues.push(`mock-plan target_class="${spy.target_class}" 不在 contracts.yaml interfaces[].class 中`);
       continue;
     }
     const methNames = new Set(iface.methods.map(m => m.name));
@@ -2707,19 +2811,19 @@ function checkDagSpyPresetResolvable(
     }];
   }
 
-  if (!plan?.spies?.length) {
+  if (!mockPlanHasEntries(plan)) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: 'DAG 声明了 spy_preset，但 mock-plan.yaml 缺失或 spies 为空，无法解析 preset id。',
+      details: 'DAG 声明了 spy_preset，但 mock-plan.yaml 缺失或 spies/doubles 为空，无法解析 preset id。',
       suggestion: '补齐 ut/mock-plan.yaml，或移除 DAG 中的 spy_preset。',
     }];
   }
 
-  const idx = buildMockPlanPresetIndex(plan);
+  const idx = buildMockPlanPresetIndex(plan!);
   const bad: string[] = [];
   for (const n of nodesWithPreset) {
     if (n.key === '(无法解析类/方法)') {
@@ -2919,6 +3023,12 @@ const checker: PhaseChecker = {
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
     results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
     results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
+    results.push(
+      ...safeRun(
+        () => checkUtHypiumMockkitPolicy(ctx, mockPlanDoc, allUtFiles, auditRecordsEarly),
+        'ut_hypium_mockkit_policy',
+      ),
+    );
     results.push(...safeRun(() => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
     // v2.2 方案 A：静态 tsc --noEmit 检查
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));

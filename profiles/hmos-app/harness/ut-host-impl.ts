@@ -258,6 +258,7 @@ function checkUtTscCompiles(
       suggestion:
         'UT 文件必须先通过 tsc --noEmit。请根据上方 TS 错误码修正代码；常见原因：' +
         '(1) 符号未 import；(2) 调用签名与被测函数不符；(3) 类型字面量错误。' +
+        '若含 TS2614 且为 MockKit/when：在 mock-plan 声明 strategy=mockkit，勿改消费者 framework 内 ts-compile.ts。' +
         '修完再跑 harness；该规则是 ut_hvigor_build 之前的第一道护城河。',
     },
   ];

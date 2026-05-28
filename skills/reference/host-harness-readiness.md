@@ -76,4 +76,5 @@ cd framework/harness && npm install
 
 - Harness 命令范式：[`framework/README.md`](../../README.md) · Harness 常用命令  
 - **Shell cwd 契约**：[harness-cli-cwd.md](./harness-cli-cwd.md)  
+- **消费者 submodule 边界**：[consumer-framework-boundary.md](./consumer-framework-boundary.md)  
 - Runbook：[`framework/docs/operations/harness-runbook.md`](../../docs/operations/harness-runbook.md)

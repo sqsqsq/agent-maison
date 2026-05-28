@@ -30,7 +30,8 @@ alwaysApply: true
 
 ## Framework 优先修改原则
 
-- 优先改 `framework/` 源头资产，而非只在实例 bundle（`.cursor/`、`paths.agent_bundle_root` 下目录）手补。
+- **agent-maison 维护仓**：优先改 `framework/` 源头资产，而非只在实例 bundle 手补。
+- **消费者实例工程**（submodule/vendor）：**禁止**为过关 UT/harness 修改 `framework/` 已跟踪文件；见 `framework/skills/reference/consumer-framework-boundary.md`。须改 framework 行为时，在 **framework 源仓库** 实现后发版升级。
 - 维护跳板模板：`framework/agents/shared/agent-bundle/templates/`；经 Skill 00 / render 下发到实例。
 
 ## 冲突处理

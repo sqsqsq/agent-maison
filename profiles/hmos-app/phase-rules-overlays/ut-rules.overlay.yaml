@@ -239,6 +239,7 @@ structure_checks:
       ambient_symbols:
         - "describe / it / expect / beforeAll / beforeEach / afterAll / afterEach"
         - "Level / Size / TestType / DEFAULT (from @ohos/hypium)"
+        - "MockKit / when (Hypium mock API; UT import 须 mock-plan strategy=mockkit，见 ut_hypium_mockkit_policy)"
 
   ut_hvigor_build:
     description: >
@@ -420,9 +421,8 @@ structure_checks:
   ut_mock_plan_present:
     description: >
       当 testability-audit 存在任一 L0/L1/L2 记录时，doc/features/{feature}/ut/mock-plan.yaml
-      必须存在且 spies 非空；审计 entry_point（若可映射 contracts.yaml interfaces）须在
-      spies[].target_class + methods[].name 中有对应条目；非 pure 依赖须在
-      spies[].target_class 中有对应条目。
+      必须存在且含 spies[] 或 doubles[]；非 pure dependencies[] 须在 mock-plan 中有
+      target_class 条目。被测 entry_point（Flow/Coordinator 入口）不要求写入 mock-plan。
     severity: BLOCKER
     rule:
       path: "doc/features/{feature}/ut/mock-plan.yaml"
@@ -453,6 +453,19 @@ structure_checks:
     severity: BLOCKER
     rule:
       mock_plan: "doc/features/{feature}/ut/mock-plan.yaml"
+
+  ut_hypium_mockkit_policy:
+    description: >
+      UT 若从 @ohos/hypium 导入 MockKit 或 when（Hypium 全局 mock API），则 mock-plan.yaml
+      必须至少有一条 strategy=mockkit（doubles[] 须显式 strategy，禁止缺省视为 mockkit），
+      target_class 须在 contracts.yaml interfaces[] 中登记；UT 内 MockKit.mock / when(Class.method)
+      须与 plan 中 mockkit 边界及 methods 对齐，禁止 mock testability-audit entry_point 或
+      use-cases coordinator；使用 when(...) 时须在源码引用 plan presets[].id。
+      Spy 路线的 whenXxx 属性名不触发本规则；扫描全部 @ohos/hypium import 子句。
+    severity: BLOCKER
+    rule:
+      mock_plan: "doc/features/{feature}/ut/mock-plan.yaml"
+      contracts: "doc/features/{feature}/contracts.yaml"
 
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查

@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V24
+    prd_function: FX
+    priority: P2
+    description: v2.3 回归——DAG spy_preset 须在 mock-plan 可解析
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

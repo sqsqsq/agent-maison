@@ -1,0 +1,11 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    {
+      "id": "ut_hypium_mockkit_policy",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "strategy=mockkit"
+    }
+  ]
+}

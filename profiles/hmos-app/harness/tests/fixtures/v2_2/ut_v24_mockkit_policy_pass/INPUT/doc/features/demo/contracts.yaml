@@ -1,0 +1,21 @@
+schema_version: "1.0"
+feature: "demo"
+
+modules:
+  - name: "Demo"
+    layer: "02-Feature"
+    format: "HAR"
+    change_type: "new"
+    package_path: "02-Feature/Demo"
+
+interfaces:
+  - module: Demo
+    layer: data/repository
+    file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+    class: DemoRepository
+    methods:
+      - name: fetchData
+        params: []
+        return: Promise<string>
+        async: true
+        description: fixture boundary

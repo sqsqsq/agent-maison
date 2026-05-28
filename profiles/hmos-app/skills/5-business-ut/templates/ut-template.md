@@ -263,7 +263,27 @@ it('[BRANCH-xxx][AC-X] 用例描述', 0, async () => {
 })
 ```
 
-### 4. Spy 规范（v2.1）
+### 4. Hypium MockKit 路线（`mock-plan` 声明 `strategy: mockkit`）
+
+当 testability-audit 表明依赖难注入、不宜为 UT 改生产代码时，可在 `mock-plan.yaml` 的 `doubles[]` 声明 `strategy: mockkit`，UT 从 `@ohos/hypium` 导入 `MockKit` / `when`（**勿**与 Spy 的 `whenXxx` 属性混淆）：
+
+```typescript
+import { describe, it, expect, MockKit, when } from '@ohos/hypium'
+// 仅 mock contracts 登记的外部边界类；禁止 mock 被测 Flow/Coordinator
+
+export default function remoteBoundaryMockkitTest() {
+  describe('RemoteTaskGateway (mockkit)', () => {
+    it('[BRANCH-happy][AC-1] validate 返回 token', 0, async () => {
+      // when(...) 行为须与 mock-plan presets[].id 一致（如 ok_token）
+      expect(true).assertTrue()
+    })
+  })
+}
+```
+
+Harness `ut_hypium_mockkit_policy`：无 mock-plan mockkit 条目时导入 MockKit → FAIL。
+
+### 5. Spy 规范（v2.1，可注入场景推荐）
 
 Spy 必须：
 
@@ -274,7 +294,7 @@ Spy 必须：
 - **不得包含业务分支判断**
 - **禁止**为了打桩新造 `XxxPort` 接口
 
-### 5. UT 禁止出现的 import（BLOCKER，由 `ut_import_whitelist` 拦截）
+### 6. UT 禁止出现的 import（BLOCKER，由 `ut_import_whitelist` 拦截）
 
 以下 import 在 UT 中一律**禁止**：
 
@@ -292,7 +312,7 @@ UT 的 import 白名单：
 - `data/model` / `data/repository` / `data/api` 声明的接口、类和值对象
 - 同目录 `./spy/` 下的 Spy 实现
 
-### 6. 测试注册（List.test.ets）
+### 7. 测试注册（List.test.ets）
 
 所有测试函数必须在 `List.test.ets` 中注册：
 

@@ -59,6 +59,10 @@ function lineIsWhitelisted(fileLabel: string, line: string): boolean {
     if (fileLabel.endsWith('check-coding.ts') || fileLabel.endsWith('check-ut.ts')) return true;
   }
 
+  if (fileLabel.endsWith('check-ut.ts') && /ut_hypium_mockkit|MockKit|mockkit_policy|HypiumMockkit/i.test(line)) {
+    return true;
+  }
+
   return false;
 }
 

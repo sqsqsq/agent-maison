@@ -1,0 +1,15 @@
+schema_version: "1.1"
+feature: demo
+
+doubles:
+  - target_class: DemoRepository
+    strategy: mockkit
+    target_file: 02-Feature/Demo/src/main/ets/data/repository/DemoRepository.ets
+    methods:
+      - name: fetchData
+        params: []
+        return_type: { text: "Promise<string>" }
+        presets:
+          - id: ok_data
+            returns:
+              ts_expr: "'fixture' as string"

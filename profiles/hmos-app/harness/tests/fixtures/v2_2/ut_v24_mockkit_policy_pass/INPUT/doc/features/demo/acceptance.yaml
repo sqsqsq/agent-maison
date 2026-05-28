@@ -1,0 +1,14 @@
+feature: demo
+
+criteria:
+  - id: AC-V24
+    prd_function: FX
+    priority: P2
+    description: mockkit policy fixture
+    testable: true
+    verification_steps:
+      - fixture
+    expected_result: fixture
+    ut_layer: unit
+
+boundaries: []

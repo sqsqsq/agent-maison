@@ -26,6 +26,7 @@
 | [reference/user-confirmation-ux.md](reference/user-confirmation-ux.md) | gate / enum / artifact 渐进增强 SSOT |
 | [reference/confirmation-registry.yaml](reference/confirmation-registry.yaml) | 全库确认点登记 |
 | [reference/host-harness-readiness.md](reference/host-harness-readiness.md) | harness npm 前置 |
+| [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例禁止改 `framework/` submodule |
 
 **贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`）。
 

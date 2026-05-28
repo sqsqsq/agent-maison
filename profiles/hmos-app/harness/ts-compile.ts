@@ -71,6 +71,8 @@ declare module '@ohos/hypium' {
   export const Size: any;
   export const TestType: any;
   export const DEFAULT: any;
+  export const MockKit: any;
+  export const when: any;
   const _default: any;
   export default _default;
 }

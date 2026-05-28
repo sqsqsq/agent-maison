@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { detectRepoLayout } from '../../repo-layout';
 import {
+  collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
   parseMockPlanFile,
   parseTestabilityAuditFromText,
@@ -114,6 +115,9 @@ export function validateMockPlanContent(text: string, filePath?: string): Artifa
   }
 
   if (plan) {
+    for (const msg of collectDoublesMissingStrategy(plan)) {
+      errors.push(err('doubles.strategy', msg));
+    }
     const typed = collectMockPlanTypedIssues(plan);
     for (const msg of typed) {
       errors.push(err('presets', msg));

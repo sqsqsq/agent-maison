@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "ut_hypium_mockkit_policy",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "ut_tsc_compiles",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    }
+  ]
+}

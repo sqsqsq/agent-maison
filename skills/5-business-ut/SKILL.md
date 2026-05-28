@@ -265,9 +265,10 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 
 `doc/features/{feature}/ut/mock-plan.yaml`
 
-1. **规格**：`` `profile-skill-asset:5-business-ut/mock_plan_schema` ``（imports、`spies[]`、methods、presets、`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
-2. **权威对齐**：`spies[].target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在稍后的 Spy 类里脱离 plan 自由发挥字段或方法签名。
-3. **与 Step 3 的关系**：生成 `SpyXxx` / `FakeXxx` 时 **1:1 翻译** mock-plan（preset id、方法名、返回/异常预设），UT 中切换分支时只调用 plan 中声明的 preset（例如 `spy.applyPreset('success')` 一类封装），避免在 `it()` 内手写无类型字面量。
+1. **规格**：`` `profile-skill-asset:5-business-ut/mock_plan_schema` ``（imports、`spies[]` 或 `doubles[]`、每条 `strategy: spy | mockkit | fake | prototype_patch`、methods、presets；`ts_expr` **必须**含 `as Type` 或 `new ...(`）。
+2. **权威对齐**：`target_class` / `methods[].name` 必须可在 `contracts.yaml > interfaces[]` 中找到；**禁止**在 Spy/MockKit 实现里脱离 plan 自由发挥字段或方法签名。
+3. **策略选型**：可注入 + 要调用序追溯 → **Spy**；难注入外部边界 → **mockkit**（须 `@ohos/hypium` 的 `MockKit`/`when` 与 plan preset 对齐）；轻量替身 → **fake**。
+4. **与 Step 3 的关系**：Spy/Fake **1:1 翻译** mock-plan；MockKit 路线在 UT 中用 `when(...)` 落实 plan 的 `presets[].id`，避免在 `it()` 内手写无类型字面量。
 4. **用户确认**（`ut.mock_plan`：`1=确认 mock-plan` / `2=调整`）：展示计划中的 spy 边界与 preset 列表，明确本轮是否仅文档级 mock-plan（不改业务源码）；若需 option_b 接缝，仍走约束 #12。
 
 > 无 L0/L1/L2 可测项（例如全部为 L3 且选 option_a）时，mock-plan 由 harness `ut_mock_plan_present` SKIP；**一旦出现可测等级为 L0/L1/L2 的 AC/BD，mock-plan 强制**。
@@ -519,7 +520,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
    - UT 调用的被测函数签名不符 → 修 UT；
    - UT import 路径错误 → 修 UT；
    - 类型注解与被测实际类型不匹配 → 修 UT；
-   - `project_dependency_missing` / `Cannot find module` → **先**按 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 核对 harness 自身 `npm install` / `node_modules/ts-node`（Tier_1 细节以该 SSOT 为准）。若 Tier_1 已满足仍判定为宿主工程依赖问题，不要让用户手工猜，展示方案：A) 用户确认后执行当前 profile 的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源；
+   - `project_dependency_missing` / `Cannot find module 'yaml'` / `ts-node` → **先**按 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 在 **`framework/harness`** 执行 `npm install`；**禁止**改 `framework/package.json` 根依赖（见 [consumer-framework-boundary.md](../reference/consumer-framework-boundary.md)）；
+   - TS2614 `MockKit`/`when` 无导出 → 在 mock-plan 补 `strategy: mockkit`，或升级 framework 发版；**禁止**改消费者 `framework/` 内 `ts-compile.ts`；
    - **若错误根因在业务源码** → 进入 Step 7.5.4 严格流程，**禁止**自行动手；
 4. 修完再跑直到 exit code = 0。
 

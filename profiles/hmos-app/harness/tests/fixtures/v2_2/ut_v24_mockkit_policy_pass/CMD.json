@@ -1,0 +1,8 @@
+{
+  "phase": "ut",
+  "feature": "demo",
+  "env": {
+    "HARNESS_SKIP_HVIGOR": "1",
+    "HARNESS_SKIP_HVIGOR_TEST": "1"
+  }
+}

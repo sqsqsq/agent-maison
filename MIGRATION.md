@@ -55,6 +55,7 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - **勿手抄** `/harness/reports/*`（缺 `framework/` 前缀无效）；旧错行可手删，脚本只追加、不自动删除。
 - 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。追加摘要见 `check-init.json` → `gitignore_sync`。
 - **Hylyre 工程根污染**（`reports/`、`tmp_hypium/` 出现在实例根）：升级含 `hylyre-spawn.ts` 的 framework 后，harness 将所有 `python -m hylyre …` 的 cwd 定向到 `doc/features/<feature>/testing/reports/.hypium-workdir`；若仍出现根目录污染，查看 `hylyre-ready.meta.json` / `device-test-run.meta.json` 的 `root_pollution` 与 stderr `ROOT_HYLYRE_POLLUTION=1`。canonical **默认不含** 根 `/reports/`（避免掩盖 cwd 泄漏）；可选在 profile addendum 手加 `/reports/`。
+- **消费者误改 framework 子模块**（常见：`framework/package.json` 加 `yaml`、`ts-compile.ts` 补 MockKit ambient）：**须回滚** submodule 脏改；harness 依赖只在 `framework/harness` 安装；Hypium MockKit 须 `mock-plan` 声明 `strategy: mockkit` 并由发版 framework 提供门禁，见 [`skills/reference/consumer-framework-boundary.md`](skills/reference/consumer-framework-boundary.md)。
 
 #### 同步完成后，在目标工程根跑 `/framework-init`
 

@@ -84,8 +84,37 @@ fixtures:
 ## 设计目的
 
 - 将 **ArkTS 强类型** 的返回/异常表达固化在 `ts_expr` 中（含显式类型断言），避免 DAG 或 UT 里散落无类型字面量导致编译失败。
-- **`contracts.yaml > interfaces[]`** 为方法名与签名的权威来源；`mock-plan` 为 Spy / preset 的权威来源。
+- **`contracts.yaml > interfaces[]`** 为方法名与签名的权威来源；`mock-plan` 为 **Test Double**（Spy / MockKit / Fake / prototype_patch）与 preset 的权威来源。
 - DAG 节点可通过 `spy_preset` 引用 `presets[].id`（见 [dag-schema.md](dag-schema.md)）。
+
+## Test Double 策略（`strategy`）
+
+每条 `spies[]` 或 `doubles[]` 须声明策略（`schema_version: "1.1"` 起推荐显式 `strategy`；旧 plan 仅 `spies[]` 时 harness 视为 `spy`）：
+
+| strategy | 适用场景 | UT 形态 |
+|----------|----------|---------|
+| `spy` | 依赖可注入；需要 `callLog` / DAG 追溯 | `SpyXxx` 子类 + `whenXxx.returns` |
+| `mockkit` | 单例/工厂/难注入边界；Hypium 官方 mock | `import { MockKit, when } from '@ohos/hypium'`，preset 与 plan 对齐 |
+| `fake` | 轻量内存替身（如无网络 Repository） | 手写 Fake 类，签名与 contracts 一致 |
+| `prototype_patch` | 少量方法可安全替换 | `base_strategy: prototype_override` 或显式本 strategy |
+
+**MockKit 约束（harness `ut_hypium_mockkit_policy` BLOCKER）**：
+
+- 仅 mock `contracts.yaml` 已登记的 **外部 data 边界**；
+- **禁止** mock 被测 Flow / Coordinator / Page handler；
+- UT 导入 `MockKit`/`when` 时，mock-plan **必须**至少一条 `strategy: mockkit`（可用 `doubles[]`）；
+- **禁止**在消费者工程内改 `framework/.../ts-compile.ts` 过关。
+
+```yaml
+doubles:
+  - target_class: RemoteTaskGateway
+    strategy: mockkit
+    methods:
+      - name: validateRequest
+        presets:
+          - id: ok_token
+            returns: { ts_expr: "{ ok: true, token: 't' } as GateValidateResult" }
+```
 
 ## 顶层结构
 

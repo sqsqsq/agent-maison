@@ -8,11 +8,19 @@ import * as path from 'path';
 
 import {
   buildMockPlanPresetIndex,
+  collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
+  buildMockkitVarClassMap,
+  collectUnparsedHypiumWhenIssues,
+  collectUtMockkitGovernanceIssues,
+  extractUtMockkitTargets,
   extractYamlFencedBlocks,
+  getMockPlanEntries,
+  mockPlanAllowsHypiumMockkit,
   parseMockPlanFile,
   parseTestabilityAuditFile,
   TYPED_EXPR_RE,
+  utFileImportsHypiumMockkit,
 } from '../../scripts/utils/ut-artifact-parse';
 
 export interface UnitCaseResult {
@@ -86,6 +94,125 @@ export function runAll(): UnitCaseResult[] {
     assert(TYPED_EXPR_RE.test('{ ok: true } as VerifyResult'), 'as');
     assert(TYPED_EXPR_RE.test('new BizError(\'x\')'), 'new');
     assert(!TYPED_EXPR_RE.test('{ ok: true }'), 'raw literal should fail');
+  }));
+
+  results.push(run('mockPlanAllowsHypiumMockkit doubles[]', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'DemoRepository',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'fetchData', presets: [{ id: 'ok', returns: { ts_expr: "'x' as string" } }] }],
+      }],
+    };
+    assert(mockPlanAllowsHypiumMockkit(plan), 'mockkit');
+    assert(getMockPlanEntries(plan).length === 1, 'entries');
+  }));
+
+  results.push(run('utFileImportsHypiumMockkit 检测 MockKit import', () => {
+    const yes = "import { describe, it, MockKit, when } from '@ohos/hypium'";
+    const no = "import { describe, it } from '@ohos/hypium'\n  gateway.whenValidateRequest.returns({})";
+    assert(utFileImportsHypiumMockkit(yes), 'mockkit import');
+    assert(!utFileImportsHypiumMockkit(no), 'spy whenXxx');
+  }));
+
+  results.push(run('utFileImportsHypiumMockkit 扫描全部 hypium import 子句', () => {
+    const split = [
+      "import { describe, it, expect } from '@ohos/hypium'",
+      "import { MockKit, when } from '@ohos/hypium'",
+    ].join('\n');
+    assert(utFileImportsHypiumMockkit(split), 'second clause MockKit');
+  }));
+
+  results.push(run('doubles[] 缺 strategy 不视为 mockkit', () => {
+    const plan = {
+      doubles: [{ target_class: 'DemoRepository', methods: [{ name: 'fetchData', presets: [] }] }],
+    };
+    assert(collectDoublesMissingStrategy(plan).length === 1, 'missing strategy');
+    assert(!mockPlanAllowsHypiumMockkit(plan), 'no implicit mockkit');
+    assert(getMockPlanEntries(plan)[0].strategy === undefined, 'unset strategy');
+  }));
+
+  results.push(run('extractUtMockkitTargets 解析 mock/when', () => {
+    const src = [
+      'const repo = MockKit.mock(DemoRepository);',
+      'when(DemoRepository.fetchData).returns();',
+      "when(repo.save).returns('ok_data');",
+    ].join('\n');
+    const targets = extractUtMockkitTargets(src);
+    assert(targets.some(t => t.targetClass === 'DemoRepository' && t.method === 'fetchData'), JSON.stringify(targets));
+    assert(targets.some(t => t.targetClass === 'DemoRepository' && t.method === 'save'), JSON.stringify(targets));
+  }));
+
+  results.push(run('collectUtMockkitGovernanceIssues 拦截未登记边界', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'DemoRepository',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'fetchData', presets: [{ id: 'ok_data', returns: { ts_expr: "'x' as string" } }] }],
+      }],
+    };
+    const ut = 'MockKit.mock(OrphanGateway); when(OrphanGateway.call).returns();';
+    const issues = collectUtMockkitGovernanceIssues(ut, plan, new Set());
+    assert(issues.some(i => i.includes('OrphanGateway')), JSON.stringify(issues));
+  }));
+
+  results.push(run('buildMockkitVarClassMap 支持 new MockKit + kit.mock', () => {
+    const src = [
+      'const kit = new MockKit();',
+      'const repo = kit.mock(DemoRepository);',
+      'when(repo.fetchData(arg)).returns();',
+    ].join('\n');
+    const map = buildMockkitVarClassMap(src);
+    assert(map.get('repo') === 'DemoRepository', JSON.stringify([...map.entries()]));
+    const targets = extractUtMockkitTargets(src);
+    assert(targets.some(t => t.targetClass === 'DemoRepository' && t.method === 'fetchData'), JSON.stringify(targets));
+  }));
+
+  results.push(run('buildMockkitVarClassMap 支持显式类型注解', () => {
+    const src = [
+      'const kit: MockKit = new MockKit();',
+      'const repo: DemoRepository = kit.mock(DemoRepository);',
+      "when(repo.fetchData(arg)).returns('ok_data');",
+    ].join('\n');
+    const map = buildMockkitVarClassMap(src);
+    assert(map.get('repo') === 'DemoRepository', JSON.stringify([...map.entries()]));
+    assert(collectUnparsedHypiumWhenIssues(src, map).length === 0, 'typed when with args');
+  }));
+
+  results.push(run('collectUtMockkitGovernanceIssues 接受 when(method(args))', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'DemoRepository',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'fetchData', presets: [{ id: 'ok_data', returns: { ts_expr: "'x' as string" } }] }],
+      }],
+    };
+    const ut = [
+      'const kit: MockKit = new MockKit();',
+      'const repo: DemoRepository = kit.mock(DemoRepository);',
+      "when(repo.fetchData(arg)).returns('ok_data');",
+    ].join('\n');
+    const issues = collectUtMockkitGovernanceIssues(ut, plan, new Set());
+    assert(issues.length === 0, JSON.stringify(issues));
+  }));
+
+  results.push(run('collectUnparsedHypiumWhenIssues 拦截无法解析的 when', () => {
+    const ut = "when(unknownExpr).returns('ok_data');";
+    const issues = collectUnparsedHypiumWhenIssues(ut, new Map());
+    assert(issues.length === 1, JSON.stringify(issues));
+  }));
+
+  results.push(run('collectUtMockkitGovernanceIssues 禁止 mock entry_point', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'TaskFlow',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'run', presets: [{ id: 'ok', returns: { ts_expr: 'true as boolean' } }] }],
+      }],
+    };
+    const ut = 'MockKit.mock(TaskFlow);';
+    const issues = collectUtMockkitGovernanceIssues(ut, plan, new Set(['TaskFlow']));
+    assert(issues.some(i => i.includes('entry_point')), JSON.stringify(issues));
   }));
 
   results.push(run('collectMockPlanTypedIssues 拦截缺失 ts_expr 的 preset', () => {

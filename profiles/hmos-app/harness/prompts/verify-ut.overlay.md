@@ -5,4 +5,6 @@
 1. **UI 禁入**与主文一致：以 `ut_import_whitelist` 为准；常见需避免 import 的符号包括 `@Component`、`struct`、`NavPathStack`、`showToast`、`$r`、`$rawfile`、`AppStorage`、`LocalStorage`、`@kit.ArkUI`、`@kit.ArkGraphics` 等。
 2. `@ohos/hypium`、`describe`/`it` 结构及 **禁止 UI import**（与 `check-ut` 白名单一致）。
 3. `use-cases.yaml` ↔ DAG ↔ UT 的 **branch / AC** 对齐与命名标签 `[AC-*]` / `[BRANCH-*]`。
-4. mock-plan Spy/Fake **类型化表达式** (`as Type` / `new`) 是否满足脚本粗校验意图。
+4. mock-plan Spy/Fake/MockKit **类型化表达式** (`as Type` / `new`) 是否满足脚本粗校验意图。
+5. **MockKit 滥用（verifier）**：若 UT 使用 `MockKit`/`when`，是否仅 mock `contracts` 外部边界、未 mock 被测 Flow/Coordinator；`when` 预设是否与 `mock-plan` 的 `strategy: mockkit` presets 一致；调用序断言是否仍由 Spy `callLog` 或显式证据覆盖。
+6. **禁止**建议改消费者 `framework/` 内 `ts-compile.ts` 或根 `package.json` 过关。
