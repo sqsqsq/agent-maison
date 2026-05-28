@@ -47,6 +47,9 @@ assets:
     mock_strategy: templates/mock-strategy.md
     testability_audit_template: templates/testability-audit-template.md
     mock_plan_schema: templates/mock-plan-schema.md
+    format_contract: templates/format-contract.md
+    quick_plan_template: templates/quick-plan-template.yaml
+    context_extraction_protocol: templates/context-extraction-protocol.md
     sample_flow_dir: examples/sample-flow
     sample_flow_use_cases: examples/sample-flow/use-cases.yaml
     # 兼容别名

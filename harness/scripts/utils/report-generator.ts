@@ -19,6 +19,7 @@ import {
   ScriptReport,
   ReportSummary,
   Severity,
+  Verdict,
   VisualHandoffResolutionRow,
   HarnessResolvedProfile,
   ScriptReportCompatApplied,
@@ -472,7 +473,13 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'─'.repeat(60)}`);
   console.log(`  Total: ${report.summary.total}  |  PASS: ${report.summary.pass}  |  FAIL: ${report.summary.fail}  |  WARN: ${report.summary.warn}  |  SKIP: ${report.summary.skip}`);
   console.log(`  Blockers: ${report.summary.blockers}`);
-  console.log(`  Verdict: ${report.summary.verdict === 'PASS' ? (chalk ? chalk.green('PASS') : 'PASS') : (chalk ? chalk.red('FAIL') : 'FAIL')}`);
+  const verdictLabel =
+    report.summary.verdict === 'PASS'
+      ? (chalk ? chalk.green('PASS') : 'PASS')
+      : report.summary.verdict === 'INCOMPLETE'
+        ? (chalk ? chalk.yellow('INCOMPLETE') : 'INCOMPLETE')
+        : (chalk ? chalk.red('FAIL') : 'FAIL');
+  console.log(`  Verdict: ${verdictLabel}`);
   console.log(`${'─'.repeat(60)}`);
   console.log('');
 }
@@ -486,6 +493,38 @@ function formatConsoleDetails(details: string, maxChars: number): string {
 // --------------------------------------------------------------------------
 // 辅助方法
 // --------------------------------------------------------------------------
+
+function isUtDeviceExternalBlocked(checks: CheckResult[]): boolean {
+  const build = checks.find(c => c.id === 'ut_hvigor_build');
+  const test = checks.find(c => c.id === 'ut_hvigor_test');
+  if (build?.status !== 'PASS' || test?.status !== 'FAIL') return false;
+  return test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked';
+}
+
+function areBlockersOnlyUtDeviceExternal(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c =>
+      c.id === 'ut_hvigor_test' &&
+      (c.blocking_class === 'externalBlocked' || c.failure_kind === 'device_blocked'),
+  );
+}
+
+/** 供 unit test 与 report 生成复用 */
+export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
+  let blockers = 0;
+  for (const check of checks) {
+    if (check.status === 'FAIL' && check.severity === 'BLOCKER') {
+      blockers++;
+    }
+  }
+  if (blockers === 0) return 'PASS';
+  if (areBlockersOnlyUtDeviceExternal(checks) && isUtDeviceExternalBlocked(checks)) {
+    return 'INCOMPLETE';
+  }
+  return 'FAIL';
+}
 
 function computeSummary(checks: CheckResult[]): ReportSummary {
   const summary: ReportSummary = {
@@ -510,9 +549,7 @@ function computeSummary(checks: CheckResult[]): ReportSummary {
     }
   }
 
-  if (summary.blockers > 0) {
-    summary.verdict = 'FAIL';
-  }
+  summary.verdict = resolveVerdictFromChecks(checks);
 
   return summary;
 }

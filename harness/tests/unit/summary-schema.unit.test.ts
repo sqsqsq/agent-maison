@@ -103,7 +103,7 @@ function assertSummaryShape(summary: Record<string, unknown>): void {
     assert(Object.prototype.hasOwnProperty.call(summary, key), `summary 缺少必填字段：${key}`);
   }
   assert(summary.schema_version === '1.0', 'schema_version 必须为 1.0');
-  assert(['PASS', 'FAIL'].includes(String(summary.verdict)), 'verdict 必须是 PASS/FAIL');
+  assert(['PASS', 'FAIL', 'INCOMPLETE'].includes(String(summary.verdict)), 'verdict 必须是 PASS/FAIL/INCOMPLETE');
   assert(Array.isArray(summary.run_statuses), 'run_statuses 必须是数组');
   assert(Array.isArray(summary.readiness_signals), 'readiness_signals 必须是数组');
   assert(Array.isArray(summary.blocking_warnings), 'blocking_warnings 必须是数组');

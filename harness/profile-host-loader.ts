@@ -27,8 +27,18 @@ export type UtHostSuggestionPaths = {
   utHostImplRefRel: string;
 };
 
+export type UtFileEntry = { path: string; content: string };
+
+export type UtFilePartition = {
+  all: UtFileEntry[];
+  scoped: UtFileEntry[];
+  scopeSources: string[];
+};
+
 export type UtHostImpl = {
-  loadUtFiles(ctx: CheckContext): Array<{ path: string; content: string }>;
+  loadUtFiles(ctx: CheckContext): UtFileEntry[];
+  /** 可选：将全量 UT 文件分区为 all（编译/注册）与 scoped（追溯/命名） */
+  partitionUtFiles?(ctx: CheckContext, allUtFiles: UtFileEntry[]): UtFilePartition;
   checkUtFileNaming(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,

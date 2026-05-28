@@ -42,8 +42,8 @@ export type Severity = 'BLOCKER' | 'MAJOR' | 'MINOR';
 /** 单项检查结果状态 */
 export type CheckStatus = 'PASS' | 'FAIL' | 'WARN' | 'SKIP';
 
-/** 最终裁定 */
-export type Verdict = 'PASS' | 'FAIL';
+/** 最终裁定（INCOMPLETE：如 UT 编译通过但设备不可用） */
+export type Verdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
 // --------------------------------------------------------------------------
 // Spec 相关类型

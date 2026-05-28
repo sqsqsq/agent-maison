@@ -25,6 +25,9 @@ UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/
 | `mock_strategy` | `templates/mock-strategy.md` |
 | `testability_audit_template` | `templates/testability-audit-template.md` |
 | `mock_plan_schema` | `templates/mock-plan-schema.md` |
+| `format_contract` | `templates/format-contract.md` |
+| `quick_plan_template` | `templates/quick-plan-template.yaml` |
+| `context_extraction_protocol` | `templates/context-extraction-protocol.md` |
 | `sample_flow_dir` | `examples/sample-flow` |
 | `sample_flow_use_cases` | `examples/sample-flow/use-cases.yaml` |
 | `card_opening_dir` | `examples/sample-flow`（别名，兼容旧键名） |

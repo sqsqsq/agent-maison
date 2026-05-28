@@ -525,6 +525,9 @@ async function main(): Promise<void> {
   if (finalReport.summary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
     console.log('  📤 请将 ai-prompt.md 发送给 AI 模型执行语义验证');
+  } else if (finalReport.summary.verdict === 'INCOMPLETE') {
+    console.log('  ⚠️  脚本 Harness 部分就绪（INCOMPLETE）');
+    console.log('  📱 编译已通过但真机/模拟器不可用；修复设备环境后重跑 UT');
   } else {
     const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
     if (runnerFailed) {
@@ -544,7 +547,7 @@ interface HarnessRunSummary {
   schema_version: '1.0';
   phase: Phase;
   feature: string;
-  verdict: 'PASS' | 'FAIL';
+  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   blocker_count: number;
   fail_count: number;
   warn_count: number;
@@ -715,6 +718,15 @@ function decideNextAction(
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
 ): string {
+  if (report.summary.verdict === 'INCOMPLETE') {
+    return 'device_ready_then_rerun_ut';
+  }
+  if (blockers.some(b => b.classification === 'install_downgrade_self_healable' || b.details_excerpt.includes('selfHealable'))) {
+    return 'set_HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL_then_rerun';
+  }
+  if (blockers.some(b => b.classification === 'install_needs_confirmation' || b.details_excerpt.includes('needsConfirmation'))) {
+    return 'confirm_install_action_then_rerun_ut';
+  }
   if (blockers.some(b => b.classification === 'stale_diff_base' || b.details_excerpt.includes('stale_diff_base'))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }
@@ -844,6 +856,24 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
         status: 'incomplete',
         source_check: 'terms_is_list',
         message: terms.details,
+      });
+    }
+  }
+
+  if (report.phase === 'ut') {
+    const test = report.checks.find(c => c.id === 'ut_hvigor_test');
+    const build = report.checks.find(c => c.id === 'ut_hvigor_build');
+    if (
+      build?.status === 'PASS' &&
+      test?.status === 'FAIL' &&
+      (test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked')
+    ) {
+      signals.push({
+        id: 'compile_passed_device_blocked',
+        status: 'incomplete',
+        source_check: 'ut_hvigor_test',
+        message:
+          '宿主测试模块编译已通过，但真机/模拟器不可用；summary.verdict=INCOMPLETE，不视为 UT 阶段完成。',
       });
     }
   }

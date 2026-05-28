@@ -127,11 +127,28 @@
 
 ### Step 1：规划 DAG 与 UT（按是否有 `use-cases.yaml` 分两条路径）
 
+#### Lite Mode 判定（Step 1 之前）
+
+满足**全部**条件时可启用 **UT Lite**（减确认点，**不**跳 DAG、**不**降级 harness 规则）：
+
+- `acceptance.yaml` 中 `ut_layer ∈ {unit, both}` 的 AC/BD **≤ 7** 条
+- `testability-audit.md` 结论**全部为 L0/L1**
+- **无** `use-cases.yaml`
+
+Lite 时：
+
+1. 可选产出辅助文档 `doc/features/{feature}/ut/quick-plan.yaml`（模板：`` `profile-skill-asset:5-business-ut/quick_plan_template` ``）
+2. harness **仍强制** `testability-audit.md` + `mock-plan.yaml`
+3. 允许单个 flat DAG（仅 entry + assertion），**跳过** Mermaid 展示确认（`ut.dag_confirm`）
+4. 确认点减为 **2 个**：`ut.plan_confirm` + `ok_to_testing`（仍保留 mock-plan 写前自检，无单独 `ut.mock_plan` gate）
+
 #### Step 1.0: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
 在输出下文 **「UT 规划清单」** 之前，必须完成本 Step 并落盘 **`doc/features/<feature>/ut/context-exploration.md`**（**`schema_version: "1.1.0"`**）。
 
-1. **必读**：`PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、被测命名入口源码（`source_code_paths` ≥ 3）。
+**上下文摘取（BLOCKER）**：禁止通读大模块源文件。按 `` `profile-skill-asset:5-business-ut/context_extraction_protocol` `` 执行 rg 签名摘取；总上下文 **≤ 300 行**。`source_code_paths` 只列被测入口与 UT 目标，不列整模块目录。
+
+1. **必读**：`PRD.md`、`design.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、被测命名入口源码（`source_code_paths` ≥ 3，**签名级**摘取）。
 2. **复合评分触发**：填写 frontmatter 变更信号；评分 ≥ 60 或 L4 时 MUST explore 子 agent；无 subagent 时用 sequential + 倍率阈值。
 3. Code Facts 须覆盖 `data_boundaries` 与被测 handler/Flow。
 
@@ -211,6 +228,14 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 
 ### Step 1.5：可测性预检（testability-audit.md）【HARD STOP】
 
+#### 写入前自检（必须逐条核对后再写文件）
+
+- [ ] 已读 `` `profile-skill-asset:5-business-ut/format_contract` ``
+- [ ] `testability-audit.md`：内容是 fenced ` ```yaml ... ``` ` 块或纯 YAML（**不是** Markdown 表格）
+- [ ] `acceptance_id` 严格来自 `acceptance.yaml` 已有 ID（无子编号如 `-a`/`-b`）
+- [ ] 写完后运行（`<path>` 用相对工程根路径，如 `doc/features/{feature}/ut/testability-audit.md`）：
+  `cd framework/harness && npm run validate:ut-artifact -- --type testability-audit --file doc/features/{feature}/ut/testability-audit.md`
+
 在生成 DAG / mock-plan / **profile 定义的单测源文件**之前，必须为 **acceptance.yaml 内每条 `ut_layer ∈ {unit, both}` 的 AC/BD** 写一条可测性结论，归档：
 
 `doc/features/{feature}/ut/testability-audit.md`
@@ -227,6 +252,14 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 > 用户未对 **全部 L3 项** 做完 a/b 选择前，禁止进入 Step 1.6 / Step 2 / Step 3。
 
 ### Step 1.6：Test Double Plan（mock-plan.yaml）【HARD STOP】
+
+#### 写入前自检
+
+- [ ] 已读 `` `profile-skill-asset:5-business-ut/format_contract` ``
+- [ ] `mock-plan.yaml`：纯 YAML（无 Markdown 标题 / 围栏）
+- [ ] `ts_expr` 包含 `as TypeName` 或 `new ClassName(`
+- [ ] 写完后运行（`<path>` 用相对工程根路径，如 `doc/features/{feature}/ut/mock-plan.yaml`）：
+  `cd framework/harness && npm run validate:ut-artifact -- --type mock-plan --file doc/features/{feature}/ut/mock-plan.yaml`
 
 在 Step 2 之前产出类型骨架，路径：
 
@@ -260,6 +293,11 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
 
 ### Step 3：生成 UT 代码（按 branch 或 AC 生成 `it()`）
+
+#### 写入前自检
+
+- [ ] `it()` 名称以 `[AC-]` 或 `[BRANCH-]` **开头**；BD 用 **`[AC-x][BD-y]` 组合**（禁止单独 `[BD-1]` 或 `[BD-1-a]`）
+- [ ] audit / mock-plan 已通过 `validate:ut-artifact` CLI
 
 **mock-plan 优先**：若已产出 `ut/mock-plan.yaml`，Spy 类与 preset 行为必须与其一致；DAG 节点上的 `spy_preset` 仅做追溯，UT 内切换预设时仍以 plan 为真源。
 
@@ -351,7 +389,15 @@ v2.1 约束（`it_drives_flow` MAJOR 检查）：
 
 #### 3.4 用例命名（强约束）
 
-`it()` 必须以 `[BRANCH-<id>]` 或 `[AC-<id>]` 开头（两者可组合，如 `[BRANCH-happy_path][AC-1]`）。
+`it()` 必须以 `[BRANCH-<id>]` 或 `[AC-<id>]` **开头**（两者可组合，如 `[BRANCH-happy_path][AC-1]`）。
+
+**Boundary（BD）标签**：harness 正则只认 `[AC-]` / `[BRANCH-]` 开头；BD 必须作为**组合标签**：
+
+| ✅ 合法 | ❌ 非法 |
+|---------|---------|
+| `[AC-1][BD-1] getData 空列表回落` | `[BD-1] ...`（正则不认 BD 开头） |
+| `[BRANCH-main][AC-2][BD-1] ...` | `[BD-1-a] ...`（子 ID 不存在） |
+| `[AC-2] 仅 AC` | 无标签开头 |
 
 #### 3.5 import 白名单（BLOCKER · `ut_import_whitelist`）
 
@@ -391,7 +437,7 @@ v2.1 约束（`it_drives_flow` MAJOR 检查）：
 [ ] 5.  DAG 分工：同 use_case 所有 DAG 的 branches[] 交集为空、并集覆盖所有非 device_only 分支
 [ ] 6.  ut_import_whitelist（BLOCKER）：UT 未 import profile 禁止清单中的 UI / 资源运行时符号（完整表见 addendum + `ut-ui-import-ban`）
 [ ] 7.  boundaries_all_stubbed：每个 data_boundary 都有 Spy/Fake/Stub 子类化或原型替换的证据
-[ ] 8.  it() 命名：每条 it() 以 [AC-X] 或 [BRANCH-X] 起始
+[ ] 8.  it() 命名：每条 it() 以 [AC-X] 或 [BRANCH-X] 起始；BD 用 [AC-x][BD-y] 组合，禁止单独 [BD-] 开头
 [ ] 9.  it() 驱动力：
          - 路径 A：每条 it() 调用命名入口 + ≥2 次 callLog 断言 + ≥2 次 state/phase 断言
          - 路径 B：每条 it() ≥2 次 expect，覆盖数据契约
@@ -529,7 +575,18 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
 4. 失败阶段是 `metadata` / `artifact_not_found` / `install` → 回 7.5（先把 build 跑过）或检查当前 profile 的 toolchain 配置；
 5. 修完再跑直到 failed = 0 且 total > 0。
 
-#### 7.6.4 绝不允许
+#### 7.6.4 设备失败分类决策树
+
+读取 `doc/features/<feature>/ut/reports/ut-install-diag.json`（harness 装机前写入）与 `ut_hvigor_test` 报告：
+
+| blockingKind | 条件 | agent 动作 |
+|--------------|------|------------|
+| **selfHealable** | 版本降级且未设 `HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL` | 设置 env 后重跑 harness |
+| **needsConfirmation** | 降级 + 需用户确认卸载/升 versionCode | HARD STOP，列出诊断，等用户选择 |
+| **externalBlocked** | 无设备 / hdc 缺失 | **不循环改 UT**；告知用户准备设备；`summary.verdict=INCOMPLETE` |
+| **clear** | 预检通过 | 继续 7.6.2 装机执行 |
+
+#### 7.6.5 绝不允许
 
 - 把"无设备"标成 SKIP / PASS 上交；
 - 用环境变量跳过 `ut.run` BLOCKER（harness 会转成 FAIL）；
@@ -559,6 +616,14 @@ HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase ut --feature
 ```
 
 重跑后如果仍有 working 侧业务源码改动，才进入 Step 7.5.4 / 约束 #12 的 HARD STOP 授权流程；禁止要求用户"批量授权历史变更"。
+
+**baseline 判定原则**：以 UT 阶段开始时的 working 增量为准。`stale_diff_base` 或 committed 变更远大于 working 时，agent 必须自动用 `HARNESS_DIFF_BASE_REF=working` 重跑；仅 working 侧未授权业务源码变更才走 HARD STOP。
+
+#### 8.3 闭环条件与 INCOMPLETE
+
+- `summary.verdict=PASS` 且零 BLOCKER → 可进入 verifier + 完成回执
+- `summary.verdict=INCOMPLETE`（`partial_readiness: compile_passed_device_blocked`）→ **不满足闭环**；不得写完成回执；`next_action=device_ready_then_rerun_ut`
+- `summary.verdict=FAIL` → 修复 BLOCKER 后重跑
 
 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 `ut_compile`（及兼容别名 `ut_hvigor_build`）报 `project_dependency_missing`，按 Step 7.5.3 的依赖缺失分支处理，不得只要求用户手工执行宿主 IDE / 包管理器操作而不给出 harness 侧可复现路径。
 

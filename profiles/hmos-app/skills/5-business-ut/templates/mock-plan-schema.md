@@ -3,6 +3,84 @@
 > **产出路径**：`doc/features/<feature>/ut/mock-plan.yaml`  
 > **时机**：Skill 5 · Step 1.6，在 DAG / UT 代码之前；**Spy 类必须与本文档 1:1 对齐**，禁止在 Spy 内自由编造字段/方法签名。
 
+## OUTPUT CONTRACT（写文件前必读）
+
+- 扩展名是 **`.yaml`**，文件内容必须是 **纯 YAML**（首行即 `schema_version:` 或 `spies:`）。
+- **禁止**：Markdown 标题（`# 标题` 独占一行）、` ```yaml ` 围栏、Markdown 表格。
+- **允许**：行内 YAML 注释（`# 这是注释`，须在同一行或跟在键值后，不是 markdown 标题块）。
+- 复制下方 **EXACT OUTPUT FORMAT**，只替换 `<placeholder>`；每个 preset 的 `ts_expr` 必须含 `as Type` 或 `new Name(`。
+
+### 常见错误 vs 正确
+
+| 错误（会 FAIL） | 正确 |
+|-----------------|------|
+| `# Test Double Plan` 标题 + prose | 直接 `schema_version: "1.0"` |
+| ` ```yaml ` 围栏包裹内容 | 无围栏，纯 YAML |
+| `returns: true` 无 ts_expr | `returns: { ts_expr: "true as boolean" }` |
+
+## EXACT OUTPUT FORMAT — COPY AND FILL
+
+```yaml
+schema_version: "1.0"
+feature: "<feature>"
+imports:
+  - symbol: HAFullChainService
+    from: "@wallet/common-functions/src/main/ets/hiAnalytics/fullchain/HAFullChainService"
+  - symbol: BundleUtil
+    from: "02-Feature/FinancialCard/src/main/ets/BankCard/shared/utils/BundleUtil"
+spies:
+  - target_class: HAFullChainService
+    target_file: "05-SystemBase/CommonFunctions/src/main/ets/hiAnalytics/fullchain/HAFullChainService.ets"
+    base_strategy: subclass
+    spy_fields:
+      - name: _callLog
+        type: "string[]"
+        default: "[]"
+    methods:
+      - name: getData
+        params:
+          - name: key
+            type_text: "string"
+        return_type:
+          text: "string | undefined"
+        presets:
+          - id: success_both_channels
+            params: []
+            returns:
+              ts_expr: "((key: string): string | undefined => { this._callLog.push(key); if (key === 'mainChannel') return 'account_card'; if (key === 'subChannel') return 'add_card'; return undefined; })(params[0])"
+  - target_class: BundleUtil
+    target_file: "02-Feature/FinancialCard/src/main/ets/BankCard/shared/utils/BundleUtil.ets"
+    base_strategy: subclass
+    spy_fields:
+      - name: _callLog
+        type: "string[]"
+        default: "[]"
+    methods:
+      - name: isVersionControl
+        params:
+          - name: bundleName
+            type_text: "string"
+          - name: key
+            type_text: "string"
+          - name: version
+            type_text: "number"
+        return_type:
+          text: "boolean"
+        presets:
+          - id: version_sufficient
+            params: ["com.huawei.hms.payment", "petal_support_petal_single_bind_version", "10028300"]
+            returns:
+              ts_expr: "true as boolean"
+          - id: version_insufficient
+            params: ["com.huawei.hms.payment", "petal_support_petal_single_bind_version", "10028300"]
+            returns:
+              ts_expr: "false as boolean"
+fixtures:
+  - name: defaultChannelPage
+    type: "string"
+    ts_expr: "'HUAWEI_PAY_208_14'"
+```
+
 ## 设计目的
 
 - 将 **ArkTS 强类型** 的返回/异常表达固化在 `ts_expr` 中（含显式类型断言），避免 DAG 或 UT 里散落无类型字面量导致编译失败。

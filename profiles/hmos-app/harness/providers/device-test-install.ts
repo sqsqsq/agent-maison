@@ -15,6 +15,7 @@ import {
   type DeviceProbeResult,
   type HdcInstallResult,
 } from '../hdc-runner';
+import { detectInstallDowngrade } from '../device-install-diag';
 
 export const provider: CapabilityProvider = {
   id: 'hdc_app',
@@ -218,12 +219,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   const candVc = candidate.versionCode;
 
   /** bm dump 在部分 HarmonyOS 版本上会把 versionCode 误解析为 0；仅在可确信更高版本已装时判降级。 */
-  const downgradeDetected =
-    candVc !== null &&
-    installedParse.installed &&
-    devVc !== null &&
-    devVc > 0 &&
-    devVc > candVc;
+  const downgradeDetected = detectInstallDowngrade(candVc, installedParse);
 
   const versionAllowsReuse =
     devVc === null ||

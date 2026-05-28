@@ -38,6 +38,7 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { resolveHdcExecutableSync } from './hdc-runner';
+import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 
 export interface HvigorRunResult {
@@ -69,6 +70,8 @@ export interface HvigorRunResult {
   diagnostics?: string[];
   /** hypium test 解析结果（仅 runHvigorTest 填充） */
   testResult?: HypiumTestResult;
+  /** 装机预检阻塞诊断（runHvigorTest 在 install_preflight 短路时填充） */
+  installBlocking?: import('./device-install-diag').InstallBlockingDiagnosis;
   /** 执行命令的完整 argv，便于复现 */
   command?: string;
   /** 调用驱动：node_hvigorw_js / hvigorw_wrapper / path / … */
@@ -1644,6 +1647,29 @@ export function runHvigorTest(
   if (!buildRes.executed || (buildRes.exitCode !== undefined && buildRes.exitCode !== 0)) {
     // build 失败/被跳过：直接把 build 结果原样返回，让 check-ut 沿用 ut_hvigor_build 的失败语义。
     return buildRes;
+  }
+
+  // 装机前诊断：版本降级 / 设备可用性（与 testing 侧 device-install-diag 共用逻辑）
+  const installDiag = diagnoseInstallBlocking(opts.projectRoot);
+  writeUtInstallDiagJson(
+    opts.projectRoot,
+    opts.feature,
+    opts.phase,
+    opts.frameworkRoot ?? inferRepoLayout(opts.projectRoot).frameworkRoot,
+    installDiag,
+  );
+  if (installDiag.kind !== 'clear') {
+    return {
+      executed: false,
+      exitCode: 1,
+      durationMs: Date.now() - t0,
+      logExcerpt:
+        `[install-preflight blocked] kind=${installDiag.kind}\n${installDiag.details}`,
+      logPath: buildRes.logPath,
+      errors: [{ message: `失败阶段：install_preflight (${installDiag.kind})` }],
+      installBlocking: installDiag,
+      command: 'genOnDeviceTestHap + install_preflight',
+    };
   }
 
   // ② / ③ / ④：装机 + 执行 + 解析（封装在 hdc-runner，避免本文件臃肿）

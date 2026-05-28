@@ -237,6 +237,8 @@ afterEach(() => {
 it('[BRANCH-happy_path][AC-1] 主路径端到端成功', ...)        // ✅ 推荐：branch + AC 双标签
 it('[BRANCH-persist_fail] 本地持久化失败终止流程', ...)     // ✅ 仅 branch（无单独 AC）
 it('[AC-3] 二次校验失败，本地记录回滚', ...)                // ✅ 仅 AC（适合无 use-cases.yaml 的简单 feature）
+it('[AC-2][BD-1] 空列表回落', ...)                         // ✅ BD 作为 AC 组合标签
+it('[BD-1] 空列表', ...)                                   // ❌ FAIL：正则不认 BD 开头
 it('首页加载后展示列表', ...)                          // ❌ FAIL：无标签，无法追溯
 ```
 

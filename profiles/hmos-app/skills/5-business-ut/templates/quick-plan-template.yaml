@@ -1,0 +1,39 @@
+# UT Lite 辅助规划（可选；harness 仍强制 testability-audit.md + mock-plan.yaml）
+schema_version: "1.0"
+feature: "<feature-name>"
+mode: lite
+trigger:
+  unit_both_ac_bd_count_lte: 7
+  all_testability_l0_l1: true
+  use_cases_yaml: false
+
+testability_summary:
+  - acceptance_id: AC-1
+    testability_level: L0
+    verdict: testable
+  - acceptance_id: BD-1
+    testability_level: L1
+    verdict: testable
+
+mock_boundaries:
+  spies:
+    - target_class: ExampleApi
+      methods: [fetchData]
+
+cases:
+  - it_name: "[AC-1] 主路径契约"
+    entry: ExampleRepository.fetchData
+    spy_preset: success
+    assertions: [returns_non_empty, field_complete]
+  - it_name: "[AC-1][BD-1] 空列表回落"
+    entry: ExampleRepository.fetchData
+    spy_preset: empty
+    assertions: [fallback_value]
+
+files_to_write:
+  dag: "<module>/test/dag/<feature>_ut.dag.yaml"
+  ut: "<module>/src/ohosTest/ets/test/<Feature>.test.ets"
+
+confirmations:
+  - ut.plan_confirm
+  - ok_to_testing

@@ -96,6 +96,28 @@ export function parseTestabilityAuditFile(filePath: string): TestabilityAuditRec
   return mergeParsedYamlDocuments(docs);
 }
 
+/** 从文本解析 testability-audit（不落盘）。 */
+export function parseTestabilityAuditFromText(text: string): TestabilityAuditRecord[] {
+  const docs: unknown[] = [];
+  const fenced = extractYamlFencedBlocks(text);
+  if (fenced.length > 0) {
+    for (const block of fenced) {
+      try {
+        docs.push(YAML.parse(block));
+      } catch {
+        /* skip corrupt block */
+      }
+    }
+  } else {
+    try {
+      docs.push(YAML.parse(text));
+    } catch {
+      return [];
+    }
+  }
+  return mergeParsedYamlDocuments(docs);
+}
+
 export function parseMockPlanFile(filePath: string): MockPlanSpec | null {
   if (!fs.existsSync(filePath)) return null;
   try {

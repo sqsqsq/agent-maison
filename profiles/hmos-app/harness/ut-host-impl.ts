@@ -22,6 +22,13 @@ import {
   looksLikeUtCompileCommandMismatch,
 } from '../../../harness/capability-registry';
 import { isSuiteEntryShimContent } from '../../../harness/ut-suite-entry-shim';
+import { partitionUtFiles } from './ut-file-scope';
+import {
+  buildUtInstallBlockingCheckDetails,
+  diagnoseInstallBlocking,
+  mapInstallBlockingToUtCheckFields,
+  writeUtInstallDiagJson,
+} from './device-install-diag';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -593,6 +600,9 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     const head = devProbe.hdcPresent
       ? `hdc list targets 返回空（原始输出：${devProbe.raw || '(空)'}）`
       : `未找到 hdc 工具：${devProbe.raw || '(无详细)'}`;
+    const installDiag = diagnoseInstallBlocking(ctx.projectRoot);
+    writeUtInstallDiagJson(ctx.projectRoot, ctx.feature, 'ut', ctx.frameworkRoot, installDiag);
+    const meta = mapInstallBlockingToUtCheckFields(installDiag);
     return [
       {
         id: 'ut_hvigor_test',
@@ -600,15 +610,29 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details:
-          `${head}\n\n` +
-          `Skill 5 必须在真机 / 模拟器上实际运行 UT。当前未检测到可用目标，因此**不能**作为出口条件放行。\n` +
-          `修复指引：\n` +
-          `  (1) 在 DevEco Studio 或 Remote Emulator 启动一台 HarmonyOS 设备；\n` +
-          `  (2) 运行 \`hdc list targets\` 确认输出非空；\n` +
-          `  (3) 重跑 Skill 5 harness。\n` +
-          `  (4) 本规则不允许 SKIP —— 这是内网历史假 PASS 的根因。`,
-        suggestion: '接入真机 / 启动模拟器后重跑；不允许以"本地无设备"为由软通过。',
+        details: `${head}\n\n${buildUtInstallBlockingCheckDetails(installDiag)}`,
+        suggestion: meta.suggestion,
+        failure_kind: meta.failure_kind,
+        blocking_class: meta.blocking_class,
+      },
+    ];
+  }
+
+  const installDiag = diagnoseInstallBlocking(ctx.projectRoot);
+  writeUtInstallDiagJson(ctx.projectRoot, ctx.feature, 'ut', ctx.frameworkRoot, installDiag);
+  if (installDiag.kind !== 'clear') {
+    const meta = mapInstallBlockingToUtCheckFields(installDiag);
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: buildUtInstallBlockingCheckDetails(installDiag),
+        suggestion: meta.suggestion,
+        failure_kind: meta.failure_kind,
+        blocking_class: meta.blocking_class,
       },
     ];
   }
@@ -668,6 +692,24 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
   }
 
   const first = bad[0].result;
+  if (first.installBlocking?.kind && first.installBlocking.kind !== 'clear') {
+    const meta = mapInstallBlockingToUtCheckFields(first.installBlocking);
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: buildUtInstallBlockingCheckDetails(first.installBlocking),
+        affected_files: [bad[0].module + '@ohosTest'],
+        failure_kind: meta.failure_kind,
+        blocking_class: meta.blocking_class,
+        suggestion: meta.suggestion,
+      },
+    ];
+  }
+
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
   const stageHint = first.errors?.find((e: { message: string }) => /失败阶段：/.test(e.message))?.message;
   if (stageHint) {
@@ -821,8 +863,11 @@ function checkTestRegistration(
   ];
 }
 
+export { partitionUtFiles };
+
 export const utHostImpl: UtHostImpl = {
   loadUtFiles,
+  partitionUtFiles,
   checkUtFileNaming,
   checkUtFrameworkImport,
   checkUtTscCompiles,

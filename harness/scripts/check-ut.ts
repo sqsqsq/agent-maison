@@ -2250,7 +2250,7 @@ function checkBoundaryCoverage(
     severity: 'MAJOR',
     status: 'WARN',
     details: `${missing.length} 条 boundary 缺 UT 覆盖：\n${truncateList(missing, 15)}`,
-    suggestion: '请为上述 boundary 补一条 it()（建议 [BD-xx] 标签）或将其纳入某个 use-cases.yaml branch 的 linked_acceptance。',
+    suggestion: '请为上述 boundary 补一条 it()（建议 `[AC-x][BD-y]` 组合标签，勿单独 `[BD-xx]` 开头）或将其纳入 use-cases.yaml branch 的 linked_acceptance。',
   }];
 }
 
@@ -2786,12 +2786,19 @@ function statusLabel(r: CheckResult | undefined): string {
   return `${r.status}${r.severity === 'BLOCKER' ? ' [BLOCKER]' : ` [${r.severity}]`}`;
 }
 
-function buildUtRunStatusResult(results: CheckResult[]): CheckResult {
+function buildUtRunStatusResult(
+  results: CheckResult[],
+  scopeInfo?: { allCount: number; scopedCount: number; scopeSources: string[] },
+): CheckResult {
   const build = findFirst(results, 'ut_hvigor_build');
   const test = findFirst(results, 'ut_hvigor_test');
   const mutation = findFirst(results, 'ut_no_src_mutation');
   const tsc = findFirst(results, 'ut_tsc_compiles');
   const shortCircuited = !!test?.details?.includes('ut_hvigor_build 已 FAIL');
+  const deviceExternalBlocked =
+    test?.status === 'FAIL' &&
+    (test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked');
+  const compilePassed = build?.status === 'PASS';
   const blockerFails = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
   const canClaimDone = blockerFails.length === 0 && test?.status === 'PASS';
 
@@ -2803,13 +2810,21 @@ function buildUtRunStatusResult(results: CheckResult[]): CheckResult {
 
   const lines = [
     'UT 阶段状态面板：',
+    ...(scopeInfo
+      ? [`- UT 文件范围：all=${scopeInfo.allCount}, scoped=${scopeInfo.scopedCount}（${scopeInfo.scopeSources.join(', ')}）`]
+      : []),
     `- 静态/结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
     `- tsc 静态编译：${statusLabel(tsc)}`,
     `- 宿主测试模块编译：${statusLabel(build)}`,
     `- 真机/模拟器执行：${shortCircuited ? '未执行（ut_hvigor_build 失败短路）' : statusLabel(test)}`,
     `- 源码改动检查：${statusLabel(mutation)}`,
     `- 当前是否可以宣称 UT 完成：${canClaimDone ? '是' : '否'}`,
+    `can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`,
   ];
+
+  if (deviceExternalBlocked && compilePassed) {
+    lines.push('- partial_readiness: compile_passed_device_blocked（harness verdict 应为 INCOMPLETE，非 PASS）');
+  }
 
   if (!canClaimDone) {
     lines.push(`- 阻塞项：${blockerFails.map(r => r.id).join(', ') || '无 BLOCKER FAIL，但真实执行状态不完整'}`);
@@ -2845,7 +2860,13 @@ const checker: PhaseChecker = {
     }
 
     const dags = loadDagFiles(ctx);
-    const utFiles = utHost.loadUtFiles(ctx);
+    const allUtFiles = utHost.loadUtFiles(ctx);
+    const partition = utHost.partitionUtFiles?.(ctx, allUtFiles) ?? {
+      all: allUtFiles,
+      scoped: allUtFiles,
+      scopeSources: ['fallback:all'],
+    };
+    const scopedUtFiles = partition.scoped;
     const mockPlanDoc = parseMockPlanFile(mockPlanPath(ctx));
     const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
@@ -2896,11 +2917,11 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc), 'dag_spy_preset_resolvable'));
 
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
-    results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, utFiles), 'ut_file_naming'));
-    results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, utFiles), 'ut_framework_import'));
-    results.push(...safeRun(() => checkUtAssertionExists(ctx, utFiles), 'ut_assertion_exists'));
+    results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
+    results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
+    results.push(...safeRun(() => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
     // v2.2 方案 A：静态 tsc --noEmit 检查
-    results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, utFiles), 'ut_tsc_compiles'));
+    results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
     const hvigorBuildResults = safeRun(() => utHost.checkUtHvigorBuild(ctx), 'ut_hvigor_build');
     results.push(...hvigorBuildResults);
@@ -2946,27 +2967,27 @@ const checker: PhaseChecker = {
     }
     // v2.2 红线 5.2：Skill 5 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
-    results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, utFiles), 'mock_stub_for_async'));
-    results.push(...safeRun(() => utHost.checkTestRegistration(ctx, utFiles), 'test_registration'));
-    // v2 C: UT 代码
-    results.push(...safeRun(() => checkUtImportWhitelist(ctx, utFiles), 'ut_import_whitelist'));
-    results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, utFiles), 'boundaries_all_stubbed'));
-    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, utFiles), 'it_name_has_ac_or_branch_tag'));
-    results.push(...safeRun(() => checkItDrivesFlow(ctx, utFiles), 'it_drives_flow'));
+    results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, allUtFiles), 'mock_stub_for_async'));
+    results.push(...safeRun(() => utHost.checkTestRegistration(ctx, allUtFiles), 'test_registration'));
+    // v2 C: UT 代码（feature-scoped 追溯/命名）
+    results.push(...safeRun(() => checkUtImportWhitelist(ctx, scopedUtFiles), 'ut_import_whitelist'));
+    results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, scopedUtFiles), 'boundaries_all_stubbed'));
+    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, scopedUtFiles), 'it_name_has_ac_or_branch_tag'));
+    results.push(...safeRun(() => checkItDrivesFlow(ctx, scopedUtFiles), 'it_drives_flow'));
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkDagToAcceptance(ctx, dags), 'dag_to_acceptance'));
     results.push(...safeRun(() => checkAcceptanceCoverage(ctx, dags), 'acceptance_coverage'));
     results.push(...safeRun(() => checkDagToSource(ctx, dags), 'dag_to_source'));
     // v2 Traceability
-    results.push(...safeRun(() => checkBranchCoverageFull(ctx, utFiles), 'branch_coverage_full'));
-    results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, utFiles), 'ut_case_per_unit_ac'));
-    results.push(...safeRun(() => checkBoundaryCoverage(ctx, utFiles, dags), 'boundary_coverage'));
+    results.push(...safeRun(() => checkBranchCoverageFull(ctx, scopedUtFiles), 'branch_coverage_full'));
+    results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, scopedUtFiles), 'ut_case_per_unit_ac'));
+    results.push(...safeRun(() => checkBoundaryCoverage(ctx, scopedUtFiles, dags), 'boundary_coverage'));
 
     const acceptance = ctx.featureSpec.acceptance;
-    if (acceptance && utFiles.length > 0) {
+    if (acceptance && scopedUtFiles.length > 0) {
       try {
-        const itNames = collectItNames(ctx, utFiles);
+        const itNames = collectItNames(ctx, scopedUtFiles);
         const report = buildAcCoverageReport(ctx.feature, acceptance, itNames);
         const outPath = writeAcCoverageReport(ctx.projectRoot, ctx.feature, report);
         const rel = path.relative(ctx.projectRoot, outPath).replace(/\\/g, '/');
@@ -2993,7 +3014,11 @@ const checker: PhaseChecker = {
       }
     }
 
-    results.push(buildUtRunStatusResult(results));
+    results.push(buildUtRunStatusResult(results, {
+      allCount: partition.all.length,
+      scopedCount: partition.scoped.length,
+      scopeSources: partition.scopeSources,
+    }));
 
     return results;
   },
