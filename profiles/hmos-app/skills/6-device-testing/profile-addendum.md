@@ -83,8 +83,9 @@
 ### hypium 临时目录（`tmp_hypium/`）
 
 - **来源**：Hylyre 传递依赖 **hypium** 在进程 **cwd** 下创建 `./tmp_hypium`（UI 树 `*_tmp_uitree.json`、截图等），非本仓库业务代码。
-- **Framework 行为**（`device-test-run.ts`）：`hylyre run` / `app page save` 子进程的 **cwd** 设为 `doc/features/<feature>/testing/reports/.hypium-workdir`，故实际落盘为 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `doc/features/*/*/reports/*` gitignore 内）；每次 run 起会 **best-effort 删除工程根** 遗留的 `<repo>/tmp_hypium/`。
-- **勿**在实例根 `.gitignore` 单独加 `tmp_hypium` 作为长期方案——应依赖上述 harness 隔离。
+- **Framework 行为**（`hylyre-spawn.ts` / `device-test-run.ts`）：所有 `python -m hylyre …` 子进程（含 `doctor` / `run` / `dump-ui` / `app page save` / `session start`）的 **cwd** 统一为 `doc/features/<feature>/testing/reports/.hypium-workdir`，故 `tmp_hypium` 落在 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `doc/features/*/*/reports/*` gitignore 内）；段首 **best-effort 清理** 工程根遗留 `<repo>/tmp_hypium/`。
+- **污染检测**：ensure/run 结束写入 `hylyre-ready.meta.json` / `device-test-run.meta.json` 的 `root_pollution`；stderr/log 锚点 `ROOT_HYLYRE_POLLUTION=1`（非 BLOCKER，`check-testing` WARN）。
+- **cwd 隔离为主**；canonical `**/tmp_hypium/`（framework-init）仅作兜底，**勿**把工程根 `/reports/` 当作 harness 报告目录。
 
 ### App 快照缓存（`doc/app-snapshot-cache/`）
 

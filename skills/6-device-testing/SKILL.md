@@ -220,7 +220,7 @@ doc/features/{module-name}/test-plan.md
 1. **`contracts.yaml`**：`components`、资源键、与 UI 相关的 id/描述。
 2. **`design.md`**：组件树、按钮/入口文案、路由名。
 3. **`doc/app-snapshot-cache/<bundle>/`**：历史 **`hylyre app page save`** 写入的页面结构（framework 在每次 **`runHylyreDeviceTest`** 结束后会尝试执行 **`app page save`**，失败不阻断 run）。
-4. （可选）设备连线时：`python -m hylyre dump-ui`（或附录中的探索子命令）抓取当前屏，再回填 design/contracts。
+4. （可选）设备连线时：用 harness **`adhoc-device-test --dump-ui-only`**（或 `testing` 阶段已封装的子进程）抓取当前屏，再回填 design/contracts。**禁止**在实例工程根直跑 `python -m hylyre dump-ui`（会在根目录落 `reports/` / `tmp_hypium/`）。
 
 仍无可靠 selector 的 TC：**不写入**派生表行，但必须在派生文件 **frontmatter** 或 **`derive-manifest.json`** 登记 **`explicit_skip_tc_ids`**（否则 harness 判为覆盖不完整）；并在 Step 5 顶层 **test-report.md** 标 **跳过** 并写原因。
 

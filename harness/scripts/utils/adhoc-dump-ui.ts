@@ -3,17 +3,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
-import { ensureHypiumWorkDir } from '../../../profiles/hmos-app/harness/device-test-hypium-workdir';
-import { mergeEnvWithHdcOnPath } from '../../../profiles/hmos-app/harness/hdc-runner';
-import { featurePhaseReportsDir } from '../../config';
-
-function hylyreSpawnEnv(appSnapshotCacheAbs: string): NodeJS.ProcessEnv {
-  return {
-    ...mergeEnvWithHdcOnPath(process.env),
-    HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs,
-  };
-}
+import { resolveHylyreRuntimeWorkDir, spawnHylyre } from '../../../profiles/hmos-app/harness/hylyre-spawn';
 
 export interface AdhocDumpUiOptions {
   projectRoot: string;
@@ -46,41 +36,43 @@ export function resolveAdhocDumpUiOutPath(
 }
 
 export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, '_adhoc', 'testing', opts.frameworkRoot);
-  const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
+  const { reportsBase, hypiumWorkDir } = resolveHylyreRuntimeWorkDir(
+    opts.projectRoot,
+    '_adhoc',
+    'testing',
+    opts.frameworkRoot,
+  );
   const outPath = resolveAdhocDumpUiOutPath(opts.projectRoot, opts.bundle, opts.outPath);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
-  const sessionArgs = ['-m', 'hylyre', 'session', 'start'];
-  if (opts.deviceSn?.trim()) sessionArgs.push('--device-sn', opts.deviceSn.trim());
-  spawnSync(opts.pythonPath, sessionArgs, {
-    cwd: opts.projectRoot,
-    encoding: 'utf-8',
-    env: hylyreSpawnEnv(opts.appSnapshotCacheAbs),
+  const logPath = opts.logPath ?? path.join(reportsBase, 'device-test-run.log');
+  const sessionArgv = ['session', 'start'];
+  if (opts.deviceSn?.trim()) sessionArgv.push('--device-sn', opts.deviceSn.trim());
+  spawnHylyre({
+    pythonPath: opts.pythonPath,
+    hypiumWorkDir,
+    hylyreArgv: sessionArgv,
+    appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
+    logPath: opts.logPath ? logPath : undefined,
     timeout: 30_000,
+    echoToStdout: false,
   });
 
-  const dumpArgs = ['-m', 'hylyre', 'dump-ui', '--out', outPath];
-  if (opts.deviceSn?.trim()) dumpArgs.push('--device-sn', opts.deviceSn.trim());
+  const dumpArgv = ['dump-ui', '--out', outPath];
+  if (opts.deviceSn?.trim()) dumpArgv.push('--device-sn', opts.deviceSn.trim());
 
-  const logPath = opts.logPath ?? path.join(reportsBase, 'device-test-run.log');
-  const cmd = `${opts.pythonPath} ${dumpArgs.join(' ')}`;
-  if (opts.logPath) {
-    fs.appendFileSync(logPath, `\n$ ${cmd}\n`);
-  }
-
-  const dump = spawnSync(opts.pythonPath, dumpArgs, {
-    cwd: hypiumWorkDir,
-    encoding: 'utf-8',
-    env: hylyreSpawnEnv(opts.appSnapshotCacheAbs),
+  const dump = spawnHylyre({
+    pythonPath: opts.pythonPath,
+    hypiumWorkDir,
+    hylyreArgv: dumpArgv,
+    appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
+    logPath: opts.logPath ? logPath : undefined,
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
+    echoToStdout: false,
   });
 
   const stderr = `${dump.stderr ?? ''}${dump.stdout ?? ''}`;
-  if (opts.logPath) {
-    fs.appendFileSync(logPath, stderr);
-  }
 
   const ok = dump.status === 0 && fs.existsSync(outPath);
   return { ok, outPath, exitCode: dump.status, stderr };

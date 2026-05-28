@@ -64,6 +64,10 @@ import {
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import {
+  formatRootPollutionWarnDetails,
+  loadTestingRootPollutionMeta,
+} from './utils/hylyre-root-pollution-warn';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1928,7 +1932,7 @@ function checkDeviceTestRunGate(
       /* timing 汇总失败不阻断 run 门禁 */
     }
 
-    return [
+    const out: CheckResult[] = [
       {
         id,
         category: 'structure',
@@ -1940,6 +1944,21 @@ function checkDeviceTestRunGate(
           '失败 / 阻塞 / 跳过用例的具体分类由顶层 test-report.md 合成步骤承载；本检查只确认自动化执行未崩溃。',
       },
     ];
+    const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+    const pollutionHit = loadTestingRootPollutionMeta(reportsDir);
+    if (pollutionHit) {
+      out.push({
+        id: 'hylyre_root_pollution',
+        category: 'structure',
+        description: '宿主工程根 Hylyre/Hypium 误落盘（root_pollution）',
+        severity: 'MINOR',
+        status: 'WARN',
+        details: formatRootPollutionWarnDetails(pollutionHit, reportsDir),
+        suggestion:
+          '确认 hylyre 子进程 cwd 为 doc/features/<feature>/testing/reports/.hypium-workdir；勿在工程根直跑 python -m hylyre。升级 framework 后重跑 /framework-init。',
+      });
+    }
+    return out;
   } catch (err) {
     return [
       {

@@ -23,9 +23,11 @@ import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync } from
 import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
 import { resolveMainAbilityForBundle } from '../resolve-main-ability';
 import {
-  ensureHypiumWorkDir,
-  removeLegacyHypiumTmpAtProjectRoot,
-} from '../device-test-hypium-workdir';
+  beginHylyrePhasePollutionGuard,
+  finishHylyrePhasePollutionGuard,
+  type RootPollutionMeta,
+} from '../hylyre-root-pollution';
+import { resolveHylyreRuntimeWorkDir, spawnHylyre } from '../hylyre-spawn';
 import {
   computeLastFailedStepIndex,
   parseStepsBatchFromRunOut,
@@ -279,25 +281,6 @@ function findVendorWheel(
   return pickVendorWheelPath(abs, manifest);
 }
 
-function runHylyreDoctor(
-  pythonPath: string,
-  projectRoot: string,
-  logPath: string,
-): { ok: boolean; exitCode: number | null } {
-  appendLogSync(logPath, `\npython -m hylyre doctor\n`);
-  const doc = spawnSync(pythonPath, ['-m', 'hylyre', 'doctor'], {
-    cwd: projectRoot,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf-8',
-    maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env },
-  });
-  const docOut = `${doc.stdout ?? ''}${doc.stderr ?? ''}`;
-  appendLogSync(logPath, docOut);
-  process.stdout.write(docOut);
-  return { ok: doc.status === 0, exitCode: doc.status };
-}
-
 /**
  * 将 venv 内 hylyre 对齐 vendor 发布件（pip upgrade → 必要时 force-reinstall）。
  * 在 canImportHylyre 已为 true 时调用；vendor 升级后 testing harness 自动触发，无需手删 venv。
@@ -483,11 +466,17 @@ function runAaStartPreflight(
 
 export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
   const cfg = resolveHylyreToolConfig(opts.projectRoot);
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  const { reportsBase, hypiumWorkDir } = resolveHylyreRuntimeWorkDir(
+    opts.projectRoot,
+    opts.feature,
+    opts.phase,
+    opts.frameworkRoot,
+  );
   fs.mkdirSync(reportsBase, { recursive: true });
   const logPath = path.join(reportsBase, 'hylyre-doctor.log');
   const metaPath = path.join(reportsBase, 'hylyre-ready.meta.json');
   const errors: HylyreReadyResult['errors'] = [];
+  let rootPollution: RootPollutionMeta | null = null;
 
   fs.writeFileSync(
     logPath,
@@ -937,10 +926,21 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
   }
 
   if (cfg.doctor_first_run && (installedNow || upgradedNow)) {
-    const doc = runHylyreDoctor(pythonPath, opts.projectRoot, logPath);
-    doctorOk = doc.ok;
+    const pollutionBefore = beginHylyrePhasePollutionGuard(opts.projectRoot);
+    const doc = spawnHylyre({
+      pythonPath,
+      hypiumWorkDir,
+      hylyreArgv: ['doctor'],
+      logPath,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    doctorOk = doc.status === 0;
+    rootPollution = finishHylyrePhasePollutionGuard(opts.projectRoot, pollutionBefore, {
+      phase: 'ensure',
+      logPath,
+    });
     if (!doctorOk) {
-      errors.push({ message: `hylyre doctor 失败（exit=${doc.exitCode}）`, kind: 'doctor' });
+      errors.push({ message: `hylyre doctor 失败（exit=${doc.status}）`, kind: 'doctor' });
       fs.writeFileSync(
         metaPath,
         JSON.stringify(
@@ -951,6 +951,8 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
             manifestVersion,
             versionConsistent,
             doctorOk,
+            hypium_workdir: hypiumWorkDir,
+            ...(rootPollution ? { root_pollution: rootPollution } : {}),
             errors,
           },
           null,
@@ -992,6 +994,8 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         installFingerprint,
         bootstrap_elapsed_ms: bootstrapElapsedMs ?? null,
         bootstrap_was_resumed: bootstrapWasResumed ?? null,
+        hypium_workdir: hypiumWorkDir,
+        ...(rootPollution ? { root_pollution: rootPollution } : {}),
         errors,
       },
       null,
@@ -1038,18 +1042,18 @@ function tryHylyreAppPageSaveAfterRun(args: {
     abilityName: args.abilityName,
     pageSlug: args.pageSlug,
   });
-  appendLogSync(args.logPath, `\n$ ${args.pythonPath} ${pipArgs.join(' ')}\n`);
+  const hylyreArgv = pipArgs[0] === '-m' && pipArgs[1] === 'hylyre' ? pipArgs.slice(2) : pipArgs;
   const t0 = Date.now();
-  const r = spawnSync(args.pythonPath, pipArgs, {
-    cwd: args.hypiumWorkDir,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf-8',
+  const r = spawnHylyre({
+    pythonPath: args.pythonPath,
+    hypiumWorkDir: args.hypiumWorkDir,
+    hylyreArgv,
+    appSnapshotCacheAbs: args.appSnapshotCacheAbs,
+    logPath: args.logPath,
     maxBuffer: 2 * 1024 * 1024,
     timeout: defaultPageSaveTimeoutMs(),
-    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: args.appSnapshotCacheAbs },
+    echoToStdout: false,
   });
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  if (out.trim()) appendLogSync(args.logPath, out);
   if (r.status !== 0) {
     appendLogSync(
       args.logPath,
@@ -1124,10 +1128,14 @@ export function synthesizeTraceFromStepsBatchRun(args: {
 
 export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const errors: HylyreRunResult['errors'] = [];
-  const reportsBase = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  const { reportsBase, hypiumWorkDir } = resolveHylyreRuntimeWorkDir(
+    opts.projectRoot,
+    opts.feature,
+    opts.phase,
+    opts.frameworkRoot,
+  );
   fs.mkdirSync(reportsBase, { recursive: true });
-  const hypiumWorkDir = ensureHypiumWorkDir(reportsBase);
-  const legacyTmp = removeLegacyHypiumTmpAtProjectRoot(opts.projectRoot);
+  const pollutionBefore = beginHylyrePhasePollutionGuard(opts.projectRoot);
   const logPath = path.join(reportsBase, 'device-test-run.log');
   const metaPath = path.join(reportsBase, 'device-test-run.meta.json');
 
@@ -1142,14 +1150,6 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     logPath,
     `hypium 工作目录（cwd）: ${hypiumWorkDir}（tmp_hypium 将落在其下，不写入工程根）\n`,
   );
-  if (legacyTmp.attempted) {
-    appendLogSync(
-      logPath,
-      legacyTmp.removed
-        ? `已清理工程根遗留 ${legacyTmp.legacyPath}\n`
-        : `未能清理工程根遗留 ${legacyTmp.legacyPath}${legacyTmp.error ? `: ${legacyTmp.error}` : ''}\n`,
-    );
-  }
 
   const abilityResolved = resolveHypiumPageNameForRun(
     opts.projectRoot,
@@ -1177,6 +1177,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName} source=${abilityResolved.source}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
       });
       const preflightKind: RunFailureKind = 'aa_start_preflight_failed';
+      const rootPollutionEarly = finishHylyrePhasePollutionGuard(opts.projectRoot, pollutionBefore, {
+        phase: 'run',
+        logPath,
+      });
       const tracePathResolved = path.resolve(opts.traceOutPath);
       ensureDirForFile(tracePathResolved);
       fs.writeFileSync(
@@ -1221,6 +1225,8 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             ran_at: new Date().toISOString(),
             run_failure_kind: preflightKind,
             trace_summary: null,
+            hypium_workdir: hypiumWorkDir,
+            ...(rootPollutionEarly ? { root_pollution: rootPollutionEarly } : {}),
             errors,
           },
           null,
@@ -1246,17 +1252,17 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const stepsFile = (opts.stepsFilePath ?? '').trim();
   const useStepsFile = stepsFile.length > 0 && fs.existsSync(stepsFile);
 
-  const args: string[] = ['-m', 'hylyre', 'run'];
+  const hylyreArgv: string[] = ['run'];
   if (useStepsFile) {
-    args.push('--steps-file', path.resolve(stepsFile));
+    hylyreArgv.push('--steps-file', path.resolve(stepsFile));
     if (!omitBundleForHylyre) {
-      args.push('--bundle', opts.bundleName);
+      hylyreArgv.push('--bundle', opts.bundleName);
     }
     if (pageName) {
-      args.push('--page-name', pageName);
+      hylyreArgv.push('--page-name', pageName);
     }
   } else {
-    args.push(
+    hylyreArgv.push(
       '--plan',
       path.resolve(opts.derivedPlanPath),
       '--feature',
@@ -1267,36 +1273,33 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
       path.resolve(opts.traceOutPath),
     );
     if (!omitBundleForHylyre) {
-      args.push('--bundle', opts.bundleName);
+      hylyreArgv.push('--bundle', opts.bundleName);
     }
     if (opts.skipAssertExpected !== false) {
-      args.push('--skip-assert-expected');
+      hylyreArgv.push('--skip-assert-expected');
     }
   }
 
   if (opts.deviceSn && opts.deviceSn.trim()) {
-    args.push('--device-sn', opts.deviceSn.trim());
+    hylyreArgv.push('--device-sn', opts.deviceSn.trim());
   }
 
-  const command = `${opts.pythonPath} ${args.join(' ')}`;
-  appendLogSync(logPath, `${command}\n`);
+  const command = `${opts.pythonPath} -m hylyre ${hylyreArgv.join(' ')}`;
 
   const runStartedAt = new Date().toISOString();
   const runT0 = Date.now();
-  const run = spawnSync(opts.pythonPath, args, {
-    cwd: hypiumWorkDir,
-    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: opts.appSnapshotCacheAbs },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf-8',
+  const run = spawnHylyre({
+    pythonPath: opts.pythonPath,
+    hypiumWorkDir,
+    hylyreArgv,
+    appSnapshotCacheAbs: opts.appSnapshotCacheAbs,
+    logPath,
     maxBuffer: 64 * 1024 * 1024,
     timeout: defaultRunTimeoutMs(opts),
   }) as SpawnSyncReturns<string>;
 
   const runOut = `${run.stdout ?? ''}${run.stderr ?? ''}`;
-  appendLogSync(logPath, runOut);
-  process.stdout.write(runOut);
   if (run.error) {
-    appendLogSync(logPath, `${run.error.message}\n`);
     errors.push({ message: run.error.message });
   }
 
@@ -1396,6 +1399,10 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
 
   const runEndedAt = new Date().toISOString();
   const runDurationMs = Date.now() - runT0;
+  const rootPollution = finishHylyrePhasePollutionGuard(opts.projectRoot, pollutionBefore, {
+    phase: 'run',
+    logPath,
+  });
 
   fs.writeFileSync(
     metaPath,
@@ -1443,6 +1450,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
           : null,
         run_failure_kind: runFailureKind,
         run_out_tail: runOut.slice(-1000),
+        ...(rootPollution ? { root_pollution: rootPollution } : {}),
         errors,
       },
       null,

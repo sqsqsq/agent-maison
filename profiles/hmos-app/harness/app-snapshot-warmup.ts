@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { spawnSync } from 'child_process';
+import { spawnHylyre } from './hylyre-spawn';
 
 import { resolveHylyreToolConfig } from '../../../harness/config';
 
@@ -234,32 +235,22 @@ function runDumpUi(
 
 ): CommandCapture {
 
-  const dumpArgs = ['-m', 'hylyre', 'dump-ui'];
+  const dumpArgv = ['dump-ui'];
+  if (deviceSn?.trim()) dumpArgv.push('--device-sn', deviceSn.trim());
 
-  if (deviceSn?.trim()) dumpArgs.push('--device-sn', deviceSn.trim());
-
-  appendLog(logPath, `$ ${pythonPath} ${dumpArgs.join(' ')}\n`);
-
-  const dump = spawnSync(pythonPath, dumpArgs, {
-
-    cwd: hypiumWorkDir,
-
-    encoding: 'utf-8',
-
-    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
-
+  const dump = spawnHylyre({
+    pythonPath,
+    hypiumWorkDir,
+    hylyreArgv: dumpArgv,
+    appSnapshotCacheAbs,
+    logPath,
     timeout: 120_000,
-
     maxBuffer: 8 * 1024 * 1024,
-
+    echoToStdout: false,
   });
 
   const stdout = dump.stdout ?? '';
-
   const stderr = dump.stderr ?? '';
-
-  appendLog(logPath, `${stdout}${stderr}`);
-
   return { exitCode: dump.status, stderr, stdout };
 
 }
@@ -290,28 +281,21 @@ function runPageSave(
 
   });
 
-  appendLog(opts.logPath, `$ ${pythonPath} ${saveArgs.join(' ')}\n`);
-
-  const save = spawnSync(pythonPath, saveArgs, {
-
-    cwd: opts.hypiumWorkDir,
-
-    encoding: 'utf-8',
-
-    env: { ...mergeEnvWithHdcOnPath(process.env), HYLYRE_APP_STORE_DIR: appSnapshotCacheAbs },
-
+  const hylyreArgv =
+    saveArgs[0] === '-m' && saveArgs[1] === 'hylyre' ? saveArgs.slice(2) : saveArgs;
+  const save = spawnHylyre({
+    pythonPath,
+    hypiumWorkDir: opts.hypiumWorkDir,
+    hylyreArgv,
+    appSnapshotCacheAbs,
+    logPath: opts.logPath,
     timeout: 60_000,
-
     maxBuffer: 4 * 1024 * 1024,
-
+    echoToStdout: false,
   });
 
   const stdout = save.stdout ?? '';
-
   const stderr = save.stderr ?? '';
-
-  appendLog(opts.logPath, `${stdout}${stderr}`);
-
   return { exitCode: save.status, stderr, stdout };
 
 }
