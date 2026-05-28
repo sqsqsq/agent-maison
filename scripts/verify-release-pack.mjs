@@ -6,6 +6,8 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { packRelease } from './pack-release.mjs';
 import {
+  isProbablyBinaryBuffer,
+  isReleaseBinaryRelPath,
   loadReleaseExcludes,
   matchGlob,
   runSyntheticRuleTests,
@@ -40,6 +42,23 @@ function listAllFiles(dir, prefix = '') {
     }
   }
   return out;
+}
+
+/** @param {string} frameworkRoot */
+function assertReleaseTextUsesLf(frameworkRoot) {
+  const offenders = [];
+  for (const rel of listAllFiles(frameworkRoot)) {
+    if (isReleaseBinaryRelPath(rel)) continue;
+    const abs = path.join(frameworkRoot, rel);
+    const buf = fs.readFileSync(abs);
+    if (isProbablyBinaryBuffer(buf)) continue;
+    if (buf.includes('\r')) offenders.push(rel);
+  }
+  if (offenders.length > 0) {
+    const sample = offenders.slice(0, 10).join(', ');
+    const suffix = offenders.length > 10 ? ` (+${offenders.length - 10} more)` : '';
+    fail(`release text files must use LF only; CRLF found in: ${sample}${suffix}`);
+  }
 }
 
 /** @param {string} frameworkRoot */
@@ -140,6 +159,7 @@ export async function verifyReleasePack() {
 
       const frameworkRoot = path.join(extractRoot, 'framework');
       assertZipContents(frameworkRoot);
+      assertReleaseTextUsesLf(frameworkRoot);
       console.log('[release:verify] zip content assertions PASS');
     } finally {
       fs.rmSync(extractRoot, { recursive: true, force: true });

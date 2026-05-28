@@ -10,6 +10,29 @@
 
 **排除规则 SSOT**：[`scripts/release-excludes.json`](scripts/release-excludes.json)
 
+## 行尾（LF，BLOCKER）
+
+文本文件统一 **LF**（与历史 framework 发布件一致）。SSOT：根 [`.gitattributes`](.gitattributes) + [`.editorconfig`](.editorconfig)。
+
+克隆或拉取后在本仓执行一次（仅影响本仓库 local config）：
+
+```bash
+git config --local core.autocrlf false
+git config --local core.eol lf
+```
+
+若工作区行尾与索引不一致（例如从 Windows `autocrlf=true` 环境迁入），一次性归一化：
+
+```bash
+git config --local core.autocrlf false
+git config --local core.eol lf
+node scripts/normalize-repo-eol.mjs
+git add --renormalize .
+git status   # 确认 diff 仅为 CRLF→LF 时可提交
+```
+
+发版打包脚本仍会强制 staging 文本为 LF（`release:verify` 含 LF 断言），与上述策略双保险。
+
 ## 发版打包
 
 ```bash

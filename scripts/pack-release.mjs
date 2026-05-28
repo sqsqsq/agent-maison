@@ -9,7 +9,9 @@ import archiver from 'archiver';
 import {
   collectReleaseFiles,
   loadReleaseExcludes,
+  normalizeReleaseTextEol,
   sanitizePackageJson,
+  stageReleaseFile,
   toPosixPath,
 } from './release-pack-rules.mjs';
 
@@ -52,8 +54,7 @@ function writeStaging(stagingRoot, included) {
   for (const rel of included) {
     const src = path.join(REPO_ROOT, rel);
     const dest = path.join(stagingRoot, rel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(src, dest);
+    stageReleaseFile(src, dest, rel);
   }
 
   const pkgSrc = path.join(REPO_ROOT, 'package.json');
@@ -62,7 +63,7 @@ function writeStaging(stagingRoot, included) {
     const sanitized = sanitizePackageJson(raw);
     fs.writeFileSync(
       path.join(stagingRoot, 'package.json'),
-      `${JSON.stringify(sanitized, null, 2)}\n`,
+      normalizeReleaseTextEol(`${JSON.stringify(sanitized, null, 2)}\n`),
       'utf8',
     );
   }
@@ -124,6 +125,11 @@ export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
   }
 
   const zipPath = path.join(outDir, zipName);
+  const manifestPath = path.join(outDir, manifestName);
+  for (const artifact of [zipPath, manifestPath]) {
+    if (fs.existsSync(artifact)) fs.rmSync(artifact, { force: true });
+  }
+
   const bytes = await zipDirectory(stagingRoot, zipPath, FRAMEWORK_DIR_NAME);
   const sha256 = sha256File(zipPath);
 
@@ -140,8 +146,9 @@ export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
     excludedSample: excluded.slice(0, EXCLUDED_SAMPLE_LIMIT),
   };
 
-  const manifestPath = path.join(outDir, manifestName);
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+  fs.rmSync(stagingParent, { recursive: true, force: true });
 
   console.log(`[release:pack] wrote ${zipPath} (${bytes} bytes)`);
   console.log(`[release:pack] manifest ${manifestPath}`);

@@ -5,6 +5,62 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** @type {ReadonlySet<string>} */
+export const RELEASE_BINARY_EXTENSIONS = new Set([
+  '.whl',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.eot',
+  '.pdf',
+  '.zip',
+  '.gz',
+]);
+
+/** @param {string} relPath relative to repo root, POSIX */
+export function isReleaseBinaryRelPath(relPath) {
+  const ext = path.posix.extname(toPosixPath(relPath)).toLowerCase();
+  return RELEASE_BINARY_EXTENSIONS.has(ext);
+}
+
+/** @param {Buffer} buf */
+export function isProbablyBinaryBuffer(buf) {
+  if (buf.length === 0) return false;
+  const sample = buf.subarray(0, Math.min(buf.length, 8192));
+  return sample.includes(0);
+}
+
+/** @param {string} text */
+export function normalizeReleaseTextEol(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+/**
+ * Copy one release file into staging; text files are normalized to LF.
+ * @param {string} src
+ * @param {string} dest
+ * @param {string} relPath relative to repo root, POSIX
+ */
+export function stageReleaseFile(src, dest, relPath) {
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (isReleaseBinaryRelPath(relPath)) {
+    fs.copyFileSync(src, dest);
+    return;
+  }
+  const raw = fs.readFileSync(src);
+  if (isProbablyBinaryBuffer(raw)) {
+    fs.copyFileSync(src, dest);
+    return;
+  }
+  fs.writeFileSync(dest, normalizeReleaseTextEol(raw.toString('utf8')), 'utf8');
+}
+
 /** @param {string} p */
 export function toPosixPath(p) {
   return p.replace(/\\/g, '/');
@@ -218,6 +274,23 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if (sanitized.scripts['release:pack']) errors.push('sanitize: release:pack still present');
   if (sanitized.devDependencies) errors.push('sanitize: devDependencies still present');
   if (!sanitized.scripts.test) errors.push('sanitize: test script removed');
+
+  const eolCases = [
+    ['a\r\nb\r\nc', 'a\nb\nc'],
+    ['a\rb', 'a\nb'],
+    ['a\nb', 'a\nb'],
+  ];
+  for (const [input, expected] of eolCases) {
+    if (normalizeReleaseTextEol(input) !== expected) {
+      errors.push(`normalizeReleaseTextEol failed for ${JSON.stringify(input)}`);
+    }
+  }
+  if (!isReleaseBinaryRelPath('profiles/hmos-app/vendor/hylyre/foo.whl')) {
+    errors.push('isReleaseBinaryRelPath must treat .whl as binary');
+  }
+  if (isReleaseBinaryRelPath('README.md')) {
+    errors.push('isReleaseBinaryRelPath must not treat README.md as binary');
+  }
 
   return errors;
 }
