@@ -56,6 +56,38 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 
 [`scripts/release-excludes.json`](../../scripts/release-excludes.json)
 
+## 交互层 smoke（v4.0+）
+
+在 framework 仓根执行（**Phase A 源模板 + Phase B 消费者 tmpdir smoke**）：
+
+```bash
+cd framework/harness && npx ts-node scripts/smoke-interaction-renderer.ts
+```
+
+对已 `/framework-init --adapter claude` 的消费者工程，可只验实例产物：
+
+```bash
+npx ts-node framework/harness/scripts/smoke-interaction-renderer.ts --project-root <实例根>
+```
+
+断言（Phase B consumer smoke 覆盖）：
+
+- `.claude/rules/interaction-renderer.md` 存在
+- `.claude/rules/widget-options/` 与 `confirmation-ux.md` **不存在**
+- UPDATE `deprecated_artifacts_cleaned` 清理旧产物（tmpdir 内模拟）
+- generic + 自定义 `paths.agent_bundle_root`（如 `.codex`）时 renderer 落在 `.codex/rules/`，非默认 `.agents/rules/`
+
+## ClaudeCode + MiniMax 2.7 人工验收（发版前建议）
+
+在真实消费者工程 + ClaudeCode CLI + MiniMax 2.7 下实测至少 6 类交互须渲染为**键盘选择**（非纯文本输入）：
+
+1. **init** — adapter 选型（registry `init.adapter`）
+2. **PRD** — 术语映射 artifact gate（`prd.terminology`）
+3. **coding** — 逐模块交付（`coding.module_batch`）
+4. **UT** — DAG 确认（`ut.dag_confirm`）
+5. **phase.next_step** — 跨阶段动态 label
+6. **ad-hoc** — 未登记临时交互仍走 AskUserQuestion fallback
+
 ## 相关命令
 
 | 命令 | 说明 |

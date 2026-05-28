@@ -109,6 +109,13 @@ export interface CheckInitReport {
   /** init 通过后自动对齐 auto_overwrite 机制产物时的备份目录（相对实例根），无对齐时为 null */
   mechanism_backup_rel_dir?: string | null;
   mechanism_synced_files?: number;
+  /** UPDATE 模式下 deprecated_artifacts backup_delete 记录 */
+  deprecated_artifacts_cleaned?: Array<{
+    path: string;
+    action: string;
+    reason: string;
+    backup_path: string | null;
+  }>;
   /** 体检前 ensureCanonicalGitignore 的追加摘要（无写入时为 null） */
   gitignore_sync?: { created: boolean; added: string[] } | null;
 }
@@ -347,6 +354,10 @@ interface AdapterDescriptor {
   templateFiles: AdapterTemplateFile[];
   /** adapter.yaml 中声明的所有 template 路径，用于 template_files_resolvable */
   declaredTemplatePaths: Array<{ field: string; abs: string; exists: boolean }>;
+  /** deprecated_artifacts 列表（check-init UPDATE 时 backup_delete） */
+  deprecatedArtifacts: Array<{ path: string; action: string; reason: string }>;
+  /** 解析后的 adapter.yaml 原始对象（供 target root 等推导） */
+  rawConfig: Record<string, unknown> | null;
 }
 
 /**
@@ -373,6 +384,115 @@ export function parseUpdatePolicy(raw: unknown): AdapterUpdatePolicy {
   return 'prompt_if_changed';
 }
 
+function resolveAdapterTargetRoot(cfg: Record<string, unknown> | null): string | null {
+  if (!cfg) return null;
+  const candidates = [
+    (cfg.rules as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.hooks as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.commands as { target_dir?: string } | undefined)?.target_dir,
+  ].filter((d): d is string => typeof d === 'string' && d.includes('/'));
+  for (const d of candidates) {
+    const posix = d.replace(/\\/g, '/');
+    const idx = posix.lastIndexOf('/');
+    if (idx > 0) return posix.slice(0, idx);
+  }
+  return null;
+}
+
+function appendInteractionRendererRule(
+  desc: AdapterDescriptor,
+  cfg: Record<string, unknown>,
+  adapterDir: string,
+): void {
+  const uc = cfg.user_confirmation as Record<string, unknown> | undefined;
+  if (!uc || typeof uc !== 'object') return;
+  const ruleRel = uc.interaction_renderer_rule;
+  if (typeof ruleRel !== 'string' || !ruleRel.trim()) return;
+  const rulesTarget = (cfg.rules as { target_dir?: string; update_policy?: string } | undefined)?.target_dir;
+  if (!rulesTarget) return;
+
+  const tplAbs = path.join(adapterDir, ruleRel);
+  const fileName = path.basename(ruleRel);
+  const targetRel = toPosix(path.join(rulesTarget, fileName));
+  if (desc.templateFiles.some(f => f.targetRel === targetRel)) return;
+
+  desc.declaredTemplatePaths.push({
+    field: 'user_confirmation.interaction_renderer_rule',
+    abs: tplAbs,
+    exists: existsAbs(tplAbs),
+  });
+  desc.templateFiles.push({
+    targetRel,
+    templateRel: toPosix(path.join('agents', desc.name, ruleRel)),
+    kind: 'verbatim',
+    origin: 'user_confirmation.interaction_renderer_rule',
+    update_policy: parseUpdatePolicy(
+      (cfg.rules as { update_policy?: string } | undefined)?.update_policy,
+    ),
+  });
+}
+
+function copyPathRecursive(srcAbs: string, destAbs: string): void {
+  const st = fs.statSync(srcAbs);
+  if (st.isDirectory()) {
+    fs.mkdirSync(destAbs, { recursive: true });
+    for (const ent of fs.readdirSync(srcAbs, { withFileTypes: true })) {
+      copyPathRecursive(path.join(srcAbs, ent.name), path.join(destAbs, ent.name));
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+  fs.copyFileSync(srcAbs, destAbs);
+}
+
+function removePathRecursive(abs: string): void {
+  if (!fs.existsSync(abs)) return;
+  fs.rmSync(abs, { recursive: true, force: true });
+}
+
+export function applyDeprecatedArtifactsCleanup(
+  projectRoot: string,
+  adapter: AdapterDescriptor,
+  mode: InitMode,
+): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
+  const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
+  if (mode !== 'update' || process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
+    return { cleaned, backupRelDir: null };
+  }
+  const entries = adapter.deprecatedArtifacts;
+  if (!entries.length) return { cleaned, backupRelDir: null };
+
+  const root = resolveAdapterTargetRoot(adapter.rawConfig);
+  if (!root) return { cleaned, backupRelDir: null };
+
+  let backupRelDir: string | null = null;
+  for (const entry of entries) {
+    if (entry.action !== 'backup_delete') continue;
+    const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
+    const absPath = path.join(projectRoot, root, relPath);
+    if (!fs.existsSync(absPath)) continue;
+
+    if (!backupRelDir) {
+      const stamp = nowStamp();
+      backupRelDir = `.framework-backup/${stamp}`;
+      fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
+    }
+    const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
+    copyPathRecursive(absPath, backupAbs);
+    removePathRecursive(absPath);
+    cleaned.push({
+      path: toPosix(path.join(root, relPath)),
+      action: entry.action,
+      reason: entry.reason,
+      backup_path: toPosix(path.join(backupRelDir, root, relPath)),
+    });
+    process.stderr.write(
+      `[check-init] deprecated artifact backup_delete: ${root}/${relPath} → ${backupRelDir}/${root}/${relPath}\n`,
+    );
+  }
+  return { cleaned, backupRelDir };
+}
+
 function loadAdapter(adapter: string): AdapterDescriptor {
   const adapterDir = path.join(FRAMEWORK_ROOT, 'agents', adapter);
   const yamlPath = path.join(adapterDir, 'adapter.yaml');
@@ -384,6 +504,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     entryFile: null,
     templateFiles: [],
     declaredTemplatePaths: [],
+    deprecatedArtifacts: [],
+    rawConfig: null,
   };
   if (!desc.yamlExists) return desc;
 
@@ -405,6 +527,20 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     return desc;
   }
   desc.yamlParseable = true;
+  desc.rawConfig = cfg as Record<string, unknown>;
+
+  if (Array.isArray(cfg.deprecated_artifacts)) {
+    for (const item of cfg.deprecated_artifacts) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (typeof row.path !== 'string' || typeof row.action !== 'string') continue;
+      desc.deprecatedArtifacts.push({
+        path: row.path,
+        action: row.action,
+        reason: typeof row.reason === 'string' ? row.reason : '',
+      });
+    }
+  }
 
   // ----- agent_entry_file（template_path 相对 framework/，target_path 相对实例根）
   const entry = cfg.agent_entry_file;
@@ -510,6 +646,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
       update_policy: parseUpdatePolicy(cfg.settings_file.update_policy),
     });
   }
+
+  appendInteractionRendererRule(desc, cfg as Record<string, unknown>, adapterDir);
 
   return desc;
 }
@@ -630,6 +768,12 @@ export function applyGenericAdapterBundle(
   desc.templateFiles = desc.templateFiles.filter(
     f => !f.origin.startsWith('rules.template_dir') && !f.origin.startsWith('generic.'),
   );
+  for (const f of desc.templateFiles) {
+    if (f.origin === 'user_confirmation.interaction_renderer_rule') {
+      const fileName = path.basename(f.targetRel);
+      f.targetRel = toPosix(path.join(bundle.rulesDir, fileName));
+    }
+  }
   let rulesPolicy: AdapterUpdatePolicy = 'prompt_if_changed';
   try {
     const rulesRaw = (YAML.parse(fs.readFileSync(desc.yamlPath, 'utf8')) as {
@@ -2089,9 +2233,15 @@ const checker: PhaseChecker = {
 
     let mechanism_backup_rel_dir: string | null = null;
     let mechanism_synced_files = 0;
+    let deprecated_artifacts_cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
     if (verdict === 'PASS' && adapter) {
+      const depOutcome = applyDeprecatedArtifactsCleanup(ctx.projectRoot, adapter, mode);
+      deprecated_artifacts_cleaned = depOutcome.cleaned;
+      if (depOutcome.backupRelDir && !mechanism_backup_rel_dir) {
+        mechanism_backup_rel_dir = depOutcome.backupRelDir;
+      }
       const syncOutcome = applyInitMechanismSync(ctx.projectRoot, adapter);
-      mechanism_backup_rel_dir = syncOutcome.backupRelDir;
+      mechanism_backup_rel_dir = syncOutcome.backupRelDir ?? mechanism_backup_rel_dir;
       mechanism_synced_files = syncOutcome.syncedFiles;
       if (adapter.name === 'generic') {
         const bundle = resolveBundleForInitInspect('generic', cfg, ctx.projectRoot);
@@ -2125,6 +2275,7 @@ const checker: PhaseChecker = {
             ...reportBase,
             mechanism_backup_rel_dir,
             mechanism_synced_files,
+            deprecated_artifacts_cleaned,
             gitignore_sync,
           }
         : { ...reportBase, gitignore_sync };

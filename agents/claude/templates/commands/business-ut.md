@@ -7,11 +7,9 @@ argument-hint: <feature-name>
 
 **用户输入**：$ARGUMENTS
 
-> **BLOCKER — 本 Skill registry 确认点（Claude Code）**：
-> 凡 `ut.plan_confirm` / `ut.mock_plan` / `ut.src_mutation` / `ut.dag_confirm`，须**先**调 **AskUserQuestion**，
-> options 逐字引用 [../rules/widget-options/skill5-ut-options.md](../rules/widget-options/skill5-ut-options.md)；
-> **同轮仍附** portable 编号；`ut.src_mutation` 须先展示完整变更描述再 widget。
-> 会话级 SSOT：[../rules/confirmation-ux.md](../rules/confirmation-ux.md)。
+> **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
+> `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
+> 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
 
 # 跳板文件
 

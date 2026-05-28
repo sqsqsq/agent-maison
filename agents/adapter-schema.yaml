@@ -201,22 +201,43 @@ optional_fields:
   user_confirmation:
     type: object | null
     description: |
-      可选。声明宿主 agent 是否支持结构化确认 widget（Cursor AskQuestion、Claude Code 原生选项等）。
+      可选。声明宿主 agent 的用户确认交互能力。
       Skill 正文 SSOT：framework/skills/reference/user-confirmation-ux.md。
+      选项文案 SSOT：framework/skills/reference/confirmation-registry.yaml。
       generic / 内部 agent（chrys、codemate）应声明 structured_widget: unsupported。
     fields:
       structured_widget:
         type: string
         enum: ["supported", "unsupported"]
-      widget_tool_hint:
+      interaction_renderer_rule:
         type: string
         description: |
-          supported 时提示工具名：AskQuestion（Cursor）或 AskUserQuestion（Claude Code）。
+          必填（当 user_confirmation 非 null）。adapter 专属交互渲染规则模板，
+          路径相对于 adapter 目录（如 templates/rules/interaction-renderer.md）。
+          check-init 在 rules.template_dir 拷贝之外单独收集；按 targetRel 去重。
       portable_required:
         type: boolean
         default: true
         description: |
           为 true 时：即使 structured_widget=supported，同轮消息仍须附 portable 编号菜单脚注。
+
+  deprecated_artifacts:
+    type: list
+    default: []
+    description: |
+      已废弃的 adapter 产物路径（相对于 adapter target 根，如 .claude/）。
+      check-init UPDATE 模式下发现时 action: backup_delete，
+      自动备份到 .framework-backup/<timestamp>/ 后删除，结果写入 check-init.json。
+    items:
+      path:
+        type: string
+        description: 相对路径，如 rules/confirmation-ux.md 或 rules/widget-options/（末尾 / 表目录）
+      action:
+        type: string
+        enum: ["backup_delete"]
+      reason:
+        type: string
+        description: 废弃原因，写入 check-init.json 供诊断
 
   notes:
     type: string

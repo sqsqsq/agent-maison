@@ -47,8 +47,16 @@ instance_skill_bridge:
 
 user_confirmation:
   structured_widget: supported
-  widget_tool_hint: AskUserQuestion
   portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.md
+
+deprecated_artifacts:
+  - path: rules/confirmation-ux.md
+    action: backup_delete
+    reason: "v4.0 起合并到 interaction-renderer.md"
+  - path: rules/widget-options/
+    action: backup_delete
+    reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
 
 post_install_hooks: []
 
@@ -64,4 +72,4 @@ notes: |
   - hooks 脚本依赖 `framework/harness/state/.current-phase.json` 与
     `framework/harness/scripts/check-receipt.ts`，两者都是 framework 共通资产，
     与 adapter 解耦；因此 hook 脚本不需要在不同 adapter 间复制逻辑。
-  - `.claude/rules/confirmation-ux.md`：Claude 确认 UX **BLOCKER**（AskUserQuestion + portable + widget-options/）；与 CLAUDE.md 同优先级；init adapter 仍用 Skill 00 adapter-widget-options SSOT。
+  - `.claude/rules/interaction-renderer.md`：Claude 交互渲染 **BLOCKER**；与 CLAUDE.md 同优先级。

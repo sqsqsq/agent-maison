@@ -42,7 +42,7 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 ## 4. 确认 UX（Claude adapter）
 
-扩展 Skill 若含 BLOCKER 级确认点，Claude adapter 须 **AskUserQuestion** + portable 编号菜单（`.claude/rules/confirmation-ux.md`）；registry 见 [`../../skills/reference/confirmation-registry.yaml`](../../skills/reference/confirmation-registry.yaml)。
+扩展 Skill 若含 BLOCKER 级确认点，须遵循 adapter **interaction-renderer** + portable 编号菜单；registry 见 [`../../skills/reference/confirmation-registry.yaml`](../../skills/reference/confirmation-registry.yaml)。
 
 ## 5. 相关源码（维护者）
 
@@ -56,7 +56,7 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
 - **`render-agents-md`**：Step 3.5 先落盘 `framework.config.json`；`render-agents-md.mjs` 为弱模型首选渲染路径。
-- **Claude adapter**：`adapter.yaml` 含 `user_confirmation.widget_tool_hint: AskUserQuestion`；扩展 Skill 确认点须登记 registry。
+- **Claude adapter**：通过 `user_confirmation.interaction_renderer_rule` 下发 `.claude/rules/interaction-renderer.md`；扩展 Skill 确认点须登记 registry。
 - **Cursor adapter**：`instance_skill_bridge` 写入 `.cursor/skills/` 跳板；正文 SSOT 仍在 `framework/skills/`。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件一致。
 

@@ -1,14 +1,14 @@
 # init.adapter — Widget 选项固定文案（SSOT）
 
-> **用途**：registry `init.adapter` 的 `widget_options_ref`。  
-> **消费方**：Skill 00 §0.2.5.1 调 `AskUserQuestion` / `AskQuestion` 时；[framework-init.md](../../../agents/claude/templates/commands/framework-init.md) slash frontmatter `options.label` 须与本表 **措辞一致**。  
+> **用途**：registry `init.adapter` 的 `options` 文案 SSOT（与 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 逐字对齐）。
+> **消费方**：Skill 00 §0.2.5.1 呈现确认菜单时；[framework-init.md](../../../agents/claude/templates/commands/framework-init.md) slash frontmatter `options.label` 须与 registry `init.adapter` **措辞一致**。
 > **路径权威**：与 [framework/agents/README.md](../../../agents/README.md)「产物速查」对齐；**禁止** agent 自造 description。
 
 ---
 
 ## 固定选项（逐字引用）
 
-| # | value | label（AskUserQuestion / AskQuestion / slash 共用） |
+| # | value | label（registry / slash 共用） |
 |---|-------|-----------------------------------------------------|
 | 1 | `claude` | `claude — Claude Code（CLAUDE.md + .claude/commands + .claude/agents + .claude/hooks；Skill 正文在 framework/skills/）` |
 | 2 | `cursor` | `cursor — Cursor（AGENTS.md + .cursor/skills 跳板 + .cursor/rules）` |

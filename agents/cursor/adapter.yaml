@@ -20,8 +20,8 @@ instance_skill_bridge:
 
 user_confirmation:
   structured_widget: supported
-  widget_tool_hint: AskQuestion
   portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.mdc
 
 rules:
   target_dir: .cursor/rules

@@ -21,8 +21,8 @@ instance_skill_bridge: null
 
 user_confirmation:
   structured_widget: unsupported
-  widget_tool_hint: none
   portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.md
 
 post_install_hooks: []
 

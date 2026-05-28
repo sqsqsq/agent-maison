@@ -10,7 +10,7 @@
 
 1. **Canonical 回复值与展示形态解耦**——`1` / widget 选项 id / `全部按默认` / `Q1=y` 映射到同一语义（见 registry `canonical_map`）。
 2. **渐进增强（Progressive Enhancement）**：
-   - **Tier 1 Widget**（adapter 声明 `structured_widget: supported` 时）：优先 AskQuestion（Cursor）或宿主原生选项（Claude Code）。
+   - **Tier 1 Widget**（adapter 声明 `structured_widget: supported` 时）：优先 adapter interaction-renderer 声明的结构化选择控件。
    - **Tier 2 Portable**：**同一轮消息末尾必须附编号菜单**（`1` / `2` / `3`），chrys/codemate 等无 widget 宿主只展示本层。
    - **Tier 3 Recap**：写入磁盘或进入下一步前，**结构化复述决策**供用户最后一轮纠错。
 3. **禁止仅要求用户打字**：不得把「请逐行回复…」「请按以下格式打字…」作为**唯一**交互；须先有 gate/enum/matrix 或 artifact 路径。
@@ -114,12 +114,14 @@
 
 ## 5. Adapter 能力（运行时）
 
-由 `framework/agents/<name>/adapter.yaml` → `user_confirmation` 段声明：
+由 `framework/agents/<name>/adapter.yaml` → `user_confirmation` 段声明；交互渲染协议见各 adapter 下发的 `interaction-renderer` 规则：
 
 | `structured_widget` | Agent 行为 |
 |---------------------|------------|
-| `supported` | 调 widget + **同轮** portable 脚注 |
-| `unsupported` | **仅** portable 编号菜单 |
+| `supported` | 按 interaction-renderer 调结构化选择控件 + **同轮** portable 脚注 |
+| `unsupported` | **仅** portable 编号菜单（generic interaction-renderer） |
+
+选项文案 SSOT：[confirmation-registry.yaml](./confirmation-registry.yaml)。
 
 chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsupported`。
 
@@ -129,7 +131,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 - ❌ 仅展示 Markdown 表让用户逐行打字，无 gate/enum
 - ❌ widget 可用却仅给表格
-- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry 登记的 `widget_options_ref`（如 `init.adapter` → [adapter-widget-options.md](../00-framework-init/templates/adapter-widget-options.md)）
+- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry `options`（如 `init.adapter` → [confirmation-registry.yaml](./confirmation-registry.yaml)）
 - ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（见 Skill 00 §0.3.4.3）
@@ -155,7 +157,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 **禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
 
-**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（AskQuestion + portable 编号）→ **停等**。
+**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（确认菜单 + portable 编号）→ **停等**。
 
 | 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
 |-------------------|--------------------------------------------------|

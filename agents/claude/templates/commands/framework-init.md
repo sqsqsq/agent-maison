@@ -26,6 +26,10 @@ prompts:
 > 若值为 `keep_current`：读取 `framework.config.json` → `agent_adapter`，向用户 **决策复述** 目录名后进入 Step 0.3.0；复述须含具体字符串（如 `claude`），裸「好/继续」无效。  
 > **禁止**在 slash 已注入 adapter 后再画 Unicode adapter 对照表。
 
+> **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
+> `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
+> 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
+
 # 跳板文件
 
 完整 Skill 定义请阅读：**[framework/skills/00-framework-init/SKILL.md](../../framework/skills/00-framework-init/SKILL.md)**

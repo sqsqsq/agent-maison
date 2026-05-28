@@ -85,21 +85,22 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 **UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。Claude Code 下可通过 `/framework-init` slash **frontmatter choice** 前置注入 adapter，跳过 adapter 表格。
 
-## Claude Code 确认 Widget（Track B+）
+## Claude Code 确认 Widget（interaction-renderer）
 
-- **工具名**：`AskUserQuestion`（非 Cursor 的 `AskQuestion`）。
-- **会话规则**：`.claude/rules/confirmation-ux.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**BLOCKER**：Skills 0–6 共 22 个 registry 确认点须 AskUserQuestion + portable 脚注；label SSOT 在 `.claude/rules/widget-options/`（v3.4 起）。
-- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + [adapter-widget-options.md](../skills/00-framework-init/templates/adapter-widget-options.md)；`/framework-init` slash frontmatter。
-- **实例下发**：vendor v3.4+ 后用户自行 `/framework-init` UPDATE（Step 0.3 Q3 覆盖 rules/commands）；**勿**手改 `.claude/` 绕过 init。
-- **Cursor 对称**：`.cursor/rules/framework.mdc` 第 9 条（AskQuestion）。
+- **工具名**：`AskUserQuestion`（Claude adapter 专属；见 `.claude/rules/interaction-renderer.md`）。
+- **会话规则**：`.claude/rules/interaction-renderer.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**BLOCKER**：所有用户选择须 AskUserQuestion + portable 脚注；选项文案 SSOT 在 [confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml)。
+- **slash 强约束**：各 `.claude/commands/*.md` 含一句 AskUserQuestion BLOCKER，链 interaction-renderer。
+- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + registry `init.*` options；`/framework-init` slash frontmatter。
+- **实例下发**：vendor 升级后用户自行 `/framework-init` UPDATE；check-init UPDATE 会自动 `backup_delete` 废弃的 `confirmation-ux.md` / `widget-options/`。
+- **Cursor 对称**：`.cursor/rules/interaction-renderer.mdc`（AskQuestion）。
 
 ## 内部 agent（Chrys / Codemate 等）
 
 不单独建 adapter 时：实例使用 **`generic`** + `paths.agent_bundle_root`（如 `.agents`）+ 默认 **`inline`** 物化。
 
 - `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
-- 确认交互只展示 **portable 编号菜单**（见 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
-- 禁止假设 AskQuestion 或宿主原生选项可用
+- 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
+- 禁止假设结构化 widget 可用
 
 ## 工程指纹与 adapter 推测（承接 scan-project）
 

@@ -87,6 +87,32 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'loadAdapter(generic)+applyGeneric：interaction-renderer 随 bundle root 重定位',
+    run: () => {
+      const adapter = checkInitTesting.loadAdapter('generic');
+      checkInitTesting.applyGenericAdapterBundle(adapter, {
+        root: '.codex',
+        skillsDir: '.codex/skills',
+        rulesDir: '.codex/rules',
+        skillMode: 'inline',
+      });
+      assert(
+        adapter.templateFiles.some(
+          f =>
+            f.origin === 'user_confirmation.interaction_renderer_rule'
+            && f.targetRel === '.codex/rules/interaction-renderer.md',
+        ),
+      );
+      assert(
+        !adapter.templateFiles.some(
+          f =>
+            f.origin === 'user_confirmation.interaction_renderer_rule'
+            && f.targetRel.startsWith('.agents/'),
+        ),
+      );
+    },
+  },
+  {
     name: 'materializeInlineSkillMarkdown：name 与目录一致',
     run: () => {
       const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, '00-framework-init');

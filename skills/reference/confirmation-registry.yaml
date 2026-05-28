@@ -1,6 +1,6 @@
 # Confirmation registry — machine-readable index for user-confirmation-ux.md
-# Lint: check-skills-confirmation-ux.ts validates SKILL.md references and anti-patterns.
-schema_version: "1.0"
+# Lint: check-skills-confirmation-ux.ts validates SKILL.md references and options schema.
+schema_version: "2.0"
 
 entries:
   # --- Skill 00 init ---
@@ -10,8 +10,19 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "§0.2.5 / §0.2.5.1"
     portable_menu: "1=claude 2=cursor 3=generic 4=保持当前"
-    widget_options_ref: templates/adapter-widget-options.md
-    widget_hint: AskUserQuestion | AskQuestion
+    options:
+      - value: claude
+        label: "claude — Claude Code（CLAUDE.md + .claude/commands + .claude/agents + .claude/hooks；Skill 正文在 framework/skills/）"
+        portable: "1=claude"
+      - value: cursor
+        label: "cursor — Cursor（AGENTS.md + .cursor/skills 跳板 + .cursor/rules）"
+        portable: "2=cursor"
+      - value: generic
+        label: "generic — 通用（AGENTS.md + {agent_bundle_root}/skills inline 或 bridge）"
+        portable: "3=generic"
+      - value: keep_current
+        label: "保持当前 — 沿用 framework.config.json 的 agent_adapter（须在本轮复述目录名）"
+        portable: "4=保持当前 config 中的 adapter（须复述目录名）"
 
   - id: init.populated_diff
     skill: "00-framework-init"
@@ -20,6 +31,16 @@ entries:
     skill_step: "§0.3.4"
     portable_menu: "1=all=y 2=all=n 3=逐项指定(Q1=y …)"
     notes: "保留 Q1=y 严谨性；gate 1/2 映射 all=y/all=n"
+    options:
+      - value: all_y
+        label: "全部覆盖 — 等价 all=y"
+        portable: "1=all=y"
+      - value: all_n
+        label: "全部跳过 — 等价 all=n"
+        portable: "2=all=n"
+      - value: per_item
+        label: "逐项指定 — 使用 Q1=y … 格式"
+        portable: "3=逐项指定(Q1=y …)"
 
   - id: init.project_profile
     skill: "00-framework-init"
@@ -27,6 +48,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "§1.6"
     portable_menu: "用户给出 project_profile.name 字符串或编号选 preset"
+    options:
+      - value: preset
+        label: "选择 preset — 从 profile 列表编号选择"
+        portable: "1=选择 preset"
+      - value: custom
+        label: "自定义 — 给出 project_profile.name 字符串"
+        portable: "2=自定义 name 字符串"
 
   - id: init.intra_layer_deps
     skill: "00-framework-init"
@@ -35,6 +63,16 @@ entries:
     skill_step: "Step 3.x"
     portable_menu: "1=全部按默认 2=调整某层 3=讨论语义"
     batch_shorthand: ["全部按默认", "all=default", "1"]
+    options:
+      - value: all_default
+        label: "全部维持「当前值」列所示策略（等价于每层「按默认」）"
+        portable: "1=全部按默认"
+      - value: adjust_layers
+        label: "我要调整某几层（进入 matrix 子菜单）"
+        portable: "2=调整某层"
+      - value: discuss
+        label: "先讨论 forbid / dag / sublayer 语义"
+        portable: "3=讨论语义"
 
   - id: init.intra_layer_deps.matrix
     skill: "00-framework-init"
@@ -42,6 +80,19 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.3"
     skill_step: "Step 3.x.1"
     parent: init.intra_layer_deps
+    matrix_options:
+      - value: default
+        label: "按默认（当前值）"
+        portable: "1=按默认"
+      - value: dag
+        label: "dag"
+        portable: "2=dag"
+      - value: forbid
+        label: "forbid"
+        portable: "3=forbid"
+      - value: sublayer
+        label: "sublayer（+ 子层问卷）"
+        portable: "4=sublayer"
 
   - id: init.toolchain_path
     skill: "00-framework-init"
@@ -49,6 +100,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 5.6 / profile-addendum §5.6.3"
     portable_menu: "1=采用探测路径 2=自定义路径 3=跳过"
+    options:
+      - value: detected
+        label: "采用探测路径 — 使用 check-init 探测到的工具链路径"
+        portable: "1=采用探测路径"
+      - value: custom
+        label: "自定义路径 — 我要指定工具链安装路径"
+        portable: "2=自定义路径"
+      - value: skip
+        label: "跳过 — 本轮不写入工具链路径"
+        portable: "3=跳过"
 
   - id: init.create_downgrade
     skill: "00-framework-init"
@@ -56,6 +117,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "CREATE→UPDATE 降级"
     portable_menu: "y=继续 UPDATE / N=保持 CREATE"
+    options:
+      - value: continue_update
+        label: "继续 UPDATE — 已有 config，走升级模式"
+        portable: "y=继续 UPDATE"
+      - value: keep_create
+        label: "保持 CREATE — 仍按首次落地处理"
+        portable: "N=保持 CREATE"
 
   # --- Skill 0 catalog ---
   - id: catalog.staging_module
@@ -64,6 +132,19 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Phase A Step 5"
     portable_menu: "1=y确认 2=e修改 3=s跳过 4=q作废"
+    options:
+      - value: confirm
+        label: "确认 — 按当前 staging 汇总写入 catalog / glossary"
+        portable: "1=y确认"
+      - value: edit
+        label: "修改 — 我要调整 staging 内容后再确认"
+        portable: "2=e修改"
+      - value: skip
+        label: "跳过 — 本模块/词条本轮不写入"
+        portable: "3=s跳过"
+      - value: void
+        label: "作废 — 放弃本轮 staging"
+        portable: "4=q作废"
 
   - id: catalog.staging_glossary
     skill: "0-catalog-bootstrap"
@@ -71,6 +152,19 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Phase B Step 3"
     portable_menu: "1=y确认 2=e修改 3=s跳过 4=q作废"
+    options:
+      - value: confirm
+        label: "确认 — 按当前 staging 汇总写入 catalog / glossary"
+        portable: "1=y确认"
+      - value: edit
+        label: "修改 — 我要调整 staging 内容后再确认"
+        portable: "2=e修改"
+      - value: skip
+        label: "跳过 — 本模块/词条本轮不写入"
+        portable: "3=s跳过"
+      - value: void
+        label: "作废 — 放弃本轮 staging"
+        portable: "4=q作废"
 
   - id: catalog.seed_tech_word
     skill: "0-catalog-bootstrap"
@@ -78,6 +172,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "glossary 种子守门"
     portable_menu: "1=删词 2=改自然语言 3=allowlist"
+    options:
+      - value: delete
+        label: "删词 — 从种子清单移除该词"
+        portable: "1=删词"
+      - value: rephrase
+        label: "改自然语言 — 修改词条表述"
+        portable: "2=改自然语言"
+      - value: allowlist
+        label: "allowlist — 保留为技术词并登记"
+        portable: "3=allowlist"
 
   # --- Skill 1 PRD ---
   - id: prd.feature_path
@@ -86,6 +190,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "前置路径检查"
     portable_menu: "1=换 feature 名 2=清理/恢复路径"
+    options:
+      - value: rename_feature
+        label: "换 feature 名 — 使用新的 feature 目录名"
+        portable: "1=换 feature 名"
+      - value: fix_path
+        label: "清理或恢复路径 — 修复 doc/features 下冲突路径"
+        portable: "2=清理/恢复路径"
 
   - id: prd.terminology
     skill: "1-prd-design"
@@ -95,6 +206,25 @@ entries:
     portable_menu: "1=全部确认high行 2=逐行确认 3=逐行修改"
     artifact: "PRD.md ## 0. 术语映射表 [x]"
     harness: check-prd terminology_mapping_table
+    options:
+      - value: all_confirm
+        label: "全部确认 — 所有行写回 PRD [x]，进入后续 PRD 步骤"
+        portable: "1=全部确认 high 行"
+        side_effect: "写回 PRD 术语映射表 [x] 列"
+      - value: row_by_row
+        label: "逐行确认 — 逐条确认，有问题可修改"
+        portable: "2=逐行确认"
+      - value: row_edit
+        label: "逐行修改映射 — 我要修改部分术语映射"
+        portable: "3=逐行修改"
+    matrix_options:
+      - value: confirm_row
+        label: "确认该行 — 写回本行 [x]"
+        portable: "1=确认该行"
+        side_effect: "写回 PRD 术语映射表本行 [x]"
+      - value: edit_row
+        label: "改映射 — 修改本行权威模块或消歧"
+        portable: "2=改映射"
 
   - id: prd.freeze
     skill: "1-prd-design"
@@ -102,6 +232,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 5 输出与归档"
     portable_menu: "1=冻结PRD可进Skill2 2=继续改PRD"
+    options:
+      - value: freeze
+        label: "冻结 PRD — 可进入 Skill 2 技术设计"
+        portable: "1=冻结 PRD，可进 Skill 2"
+      - value: continue_edit
+        label: "继续改 PRD — 本轮不冻结"
+        portable: "2=继续改 PRD"
 
   # --- Skill 2 design ---
   - id: design.scope_expansion
@@ -110,6 +247,18 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.5"
     skill_step: "Step 2.5"
     portable_menu: "1=已读并同意 2=拒绝 3=修改提议"
+    requires_preamble: "须先展示完整 Scope 扩展提议正文"
+    options:
+      - value: approve
+        label: "已读并同意扩展 — 记录用户原话到 expansions_with_user_approval"
+        portable: "1=已读并同意"
+        side_effect: "记录用户原话到 gap-notes expansions_with_user_approval"
+      - value: reject
+        label: "拒绝扩展 — 在原 in_scope 内重新设计"
+        portable: "2=拒绝"
+      - value: revise
+        label: "修改提议后再议"
+        portable: "3=修改提议"
 
   - id: design.ok_to_code
     skill: "2-requirement-design"
@@ -117,6 +266,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 13 / 产品闸门"
     portable_menu: "1=design OK可编码 2=继续改design"
+    options:
+      - value: ok
+        label: "design OK — 可进入 Skill 3 编码"
+        portable: "1=design OK，可编码"
+      - value: continue_design
+        label: "继续改 design — 本轮不授权编码"
+        portable: "2=继续改 design"
 
   - id: design.arch_impact
     skill: "2-requirement-design"
@@ -124,6 +280,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "架构影响声明"
     portable_menu: "1=impact=none 2=dsl_change 3=其他(说明)"
+    options:
+      - value: none
+        label: "impact=none — 无架构级变更"
+        portable: "1=impact=none"
+      - value: dsl_change
+        label: "impact=dsl_change — 需更新 architecture DSL"
+        portable: "2=dsl_change"
+      - value: other
+        label: "其他 — 我在对话中说明 impact 类型"
+        portable: "3=其他(说明)"
 
   - id: design.split_table
     skill: "2-requirement-design"
@@ -131,6 +297,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "功能拆分表"
     portable_menu: "1=确认拆分 2=修改拆分"
+    options:
+      - value: confirm_split
+        label: "确认拆分 — 按当前拆分表继续设计"
+        portable: "1=确认拆分"
+      - value: edit_split
+        label: "修改拆分 — 我要调整功能拆分"
+        portable: "2=修改拆分"
 
   # --- Skill 3 coding ---
   - id: coding.scope_stop
@@ -139,6 +312,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Scope 越界停步"
     portable_menu: "1=回Skill2走Scope扩展 2=收窄实现"
+    options:
+      - value: back_design
+        label: "回 Skill 2 — 走 Scope 扩展提议"
+        portable: "1=回 Skill 2 走 Scope 扩展"
+      - value: narrow
+        label: "收窄实现 — 只在当前 in_scope 内完成"
+        portable: "2=收窄实现"
 
   - id: coding.module_batch
     skill: "3-coding"
@@ -146,6 +326,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "逐模块交付"
     portable_menu: "1=继续下一模块 2=修改本模块"
+    options:
+      - value: next_module
+        label: "继续下一模块 — 本模块批次已确认"
+        portable: "1=继续下一模块"
+      - value: edit_module
+        label: "修改本模块 — 我要调整当前模块实现"
+        portable: "2=修改本模块"
 
   - id: coding.deps_abc
     skill: "3-coding"
@@ -153,6 +340,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "依赖缺失 A/B/C"
     portable_menu: "1=确认安装重跑 2=只读清单 3=先确认源"
+    options:
+      - value: install_retry
+        label: "确认安装并重跑 — 按清单安装依赖后重试 harness"
+        portable: "1=确认安装重跑"
+      - value: readonly_list
+        label: "只读清单 — 仅展示依赖清单，暂不安装"
+        portable: "2=只读清单"
+      - value: confirm_source
+        label: "先确认源 — 确认依赖来源/版本后再继续"
+        portable: "3=先确认源"
 
   - id: coding.ok_to_review
     skill: "3-coding"
@@ -160,7 +357,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §8"
     skill_step: "Step 7.3 闭环 / coding→review"
     portable_menu: "1=coding OK可进Skill4 2=暂停 3=其它"
-    widget_options_ref: rules/widget-options/skill3-coding-options.md
+    options:
+      - value: ok_review
+        label: "coding OK — 可进入 Skill 4 Code Review"
+        portable: "1=coding OK，可进 Skill 4"
+      - value: pause
+        label: "暂停 — 暂不进入 Code Review"
+        portable: "2=暂停"
+      - value: other
+        label: "其它 — 我在对话中说明意图"
+        portable: "3=其它（说明）"
 
   - id: phase.next_step
     skill: "_cross_phase"
@@ -168,7 +374,25 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §8.3"
     skill_step: "任一 feature phase 四件套 PASS 后"
     portable_menu: "1=进入下一Skill 2=暂停 3=其它"
-    widget_options_ref: rules/widget-options/phase-next-step-options.md
+    options:
+      - value: enter_next
+        label: "进入下一 Skill — {next_skill_label}"
+        portable: "1=进入下一 Skill"
+        dynamic_label:
+          placeholder: "{next_skill_label}"
+          lookup: |
+            prd → Skill 2 技术设计
+            design → Skill 3 编码
+            coding → Skill 4 Code Review
+            review → Skill 5 业务级 UT
+            ut → Skill 6 真机测试
+            testing → 结束交付 / 归档
+      - value: pause
+        label: "暂停 — 本阶段到此，暂不进入下游"
+        portable: "2=暂停"
+      - value: other
+        label: "其它 — 我在对话中说明意图"
+        portable: "3=其它（说明）"
 
   # --- Skill 4 review ---
   - id: review.module_name
@@ -177,6 +401,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 1"
     portable_menu: "1=确认模块名 2=修改模块名"
+    options:
+      - value: confirm
+        label: "确认模块名 — 按当前模块名继续审查"
+        portable: "1=确认"
+      - value: edit
+        label: "修改模块名 — 我要更正待审查模块"
+        portable: "2=修改"
 
   - id: review.report_save
     skill: "4-code-review"
@@ -184,6 +415,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "报告落盘前"
     portable_menu: "1=确认落盘 2=修改后再落盘"
+    options:
+      - value: save
+        label: "确认落盘 — 将审查报告写入约定路径"
+        portable: "1=确认落盘"
+      - value: edit_first
+        label: "修改后再落盘 — 我要先改报告内容"
+        portable: "2=修改后再落盘"
 
   - id: review.ok_to_ut
     skill: "4-code-review"
@@ -191,7 +429,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §8"
     skill_step: "Step 6.3 闭环 / review→UT"
     portable_menu: "1=review OK可进Skill5 2=暂停 3=其它"
-    widget_options_ref: rules/widget-options/skill4-review-options.md
+    options:
+      - value: ok_ut
+        label: "review OK — 可进入 Skill 5 业务级 UT"
+        portable: "1=review OK，可进 Skill 5"
+      - value: pause
+        label: "暂停 — 暂不进入 UT"
+        portable: "2=暂停"
+      - value: other
+        label: "其它 — 我在对话中说明意图"
+        portable: "3=其它（说明）"
 
   # --- Skill 5 UT ---
   - id: ut.plan_confirm
@@ -200,6 +447,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.1"
     skill_step: "Step 1 HARD STOP"
     portable_menu: "1=确认UT规划清单 2=调整清单"
+    options:
+      - value: confirm_plan
+        label: "确认 UT 规划清单 — 可进入 Step 1.5+ / DAG"
+        portable: "1=确认 UT 规划清单"
+      - value: adjust_plan
+        label: "调整清单 — 我要修改 UT 规划后再继续"
+        portable: "2=调整清单"
 
   - id: ut.mock_plan
     skill: "5-business-ut"
@@ -207,6 +461,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 1.6"
     portable_menu: "1=确认mock-plan 2=调整mock-plan"
+    options:
+      - value: confirm_mock
+        label: "确认 mock-plan — 按当前 mock-plan 继续"
+        portable: "1=确认 mock-plan"
+      - value: adjust_mock
+        label: "调整 mock-plan — 我要修改 spy/preset 计划"
+        portable: "2=调整 mock-plan"
 
   - id: ut.src_mutation
     skill: "5-business-ut"
@@ -215,6 +476,18 @@ entries:
     skill_step: "约束 #12 / §7.5.4"
     portable_menu: "1=授权 2=拒绝 3=先看diff"
     harness: check-ut approved_src_mutations
+    requires_preamble: "须先展示完整变更描述（路径、签名、理由、影响面）"
+    options:
+      - value: approve
+        label: "授权改源码 — 记录用户原话到 gap-notes approved_src_mutations"
+        portable: "1=授权"
+        side_effect: "记录用户原话到 gap-notes approved_src_mutations"
+      - value: reject
+        label: "拒绝 — 不改受保护业务源码"
+        portable: "2=拒绝"
+      - value: see_diff
+        label: "先看 diff — 展示 diff 后再决定"
+        portable: "3=先看 diff"
 
   - id: ut.dag_confirm
     skill: "5-business-ut"
@@ -222,6 +495,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Mermaid DAG"
     portable_menu: "1=确认DAG 2=修改DAG"
+    options:
+      - value: confirm_dag
+        label: "确认 DAG — 按当前 DAG 继续"
+        portable: "1=确认 DAG"
+      - value: edit_dag
+        label: "修改 DAG — 我要调整 DAG 结构"
+        portable: "2=修改 DAG"
 
   - id: ut.ok_to_testing
     skill: "5-business-ut"
@@ -229,7 +509,16 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §8"
     skill_step: "Step 8 闭环 / UT→testing"
     portable_menu: "1=UT OK可进Skill6 2=暂停 3=其它"
-    widget_options_ref: rules/widget-options/skill5-ut-options.md
+    options:
+      - value: ok_testing
+        label: "UT OK — 可进入 Skill 6 真机测试"
+        portable: "1=UT OK，可进 Skill 6"
+      - value: pause
+        label: "暂停 — 暂不进入真机测试"
+        portable: "2=暂停"
+      - value: other
+        label: "其它 — 我在对话中说明意图"
+        portable: "3=其它（说明）"
 
   # --- Skill 6 testing ---
   - id: testing.module_name
@@ -238,6 +527,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 1"
     portable_menu: "1=确认模块名 2=修改"
+    options:
+      - value: confirm
+        label: "确认模块名 — 按当前模块继续真机测试计划"
+        portable: "1=确认"
+      - value: edit
+        label: "修改 — 我要更正待测模块名"
+        portable: "2=修改"
 
   - id: testing.packaging
     skill: "6-device-testing"
@@ -245,6 +541,13 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "打包维度"
     portable_menu: "1=确认product/buildMode 2=修改"
+    options:
+      - value: confirm_pkg
+        label: "确认 product/buildMode — 按当前打包维度继续"
+        portable: "1=确认"
+      - value: edit_pkg
+        label: "修改 — 我要调整 product 或 buildMode"
+        portable: "2=修改"
 
   - id: testing.plan_confirm
     skill: "6-device-testing"
@@ -252,3 +555,10 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 3"
     portable_menu: "1=确认测试计划 2=修改计划"
+    options:
+      - value: confirm_plan
+        label: "确认测试计划 — 可执行真机测试"
+        portable: "1=确认测试计划"
+      - value: edit_plan
+        label: "修改计划 — 我要调整测试计划后再跑"
+        portable: "2=修改计划"

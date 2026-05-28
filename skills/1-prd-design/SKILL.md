@@ -100,7 +100,7 @@
 
 5. **生成「术语映射表」并停下来等人工确认**（registry `prd.terminology` · artifact `[x]` + 对话 gate）
 
-   先展示 gate（同轮 portable；widget 可用时 AskQuestion）：
+   先展示 gate（同轮 portable；widget 可用时按 adapter interaction-renderer 呈现）：
 
    ```text
    1. 全部确认 confidence=high 的行（写回 PRD [x]）
@@ -391,7 +391,7 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 
 四项全部通过后，PRD 阶段完成，**具备**进入 Skill 2（需求设计）的**资格**；**不授权**自动开 Skill 2。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：除非用户消息为 **batch 多阶段授权**（§8.2），否则须 **`phase.next_step`**（AskQuestion + portable 编号）停等。**`prd.freeze` 只冻结 PRD 内容**，不等同于 harness 通过后可在同一执行流自动写 `design.md`。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：除非用户消息为 **batch 多阶段授权**（§8.2），否则须 **`phase.next_step`**（确认菜单 + portable 编号）停等。**`prd.freeze` 只冻结 PRD 内容**，不等同于 harness 通过后可在同一执行流自动写 `design.md`。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
 ## 输出规范
 

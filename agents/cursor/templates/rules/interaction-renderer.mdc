@@ -1,0 +1,41 @@
+---
+description: Framework 用户交互渲染器——Cursor AskQuestion + portable 编号（BLOCKER）
+alwaysApply: true
+---
+
+# 用户交互渲染器（Cursor · BLOCKER）
+
+> 与 [framework/skills/reference/user-confirmation-ux.md](../../framework/skills/reference/user-confirmation-ux.md) 配套。
+> 选项文案 SSOT：[confirmation-registry.yaml](../../framework/skills/reference/confirmation-registry.yaml)。
+
+## 全局规则（BLOCKER）
+
+任何需要用户做选择的场合——无论是 registry 已登记的确认点还是 ad-hoc 临时交互——**必须先调 `AskQuestion`**，禁止仅展示 Markdown 表或文本编号作为唯一交互。
+
+## 已登记确认点
+
+- 读取 `framework/skills/reference/confirmation-registry.yaml`
+- 用 entry 的 `options[].label` **逐字**构造 AskQuestion 选项
+- `dynamic_label.lookup` 存在时，按当前 phase 替换 label 中的占位符
+- `requires_preamble` 非空时，须先展示完整正文再调 AskQuestion
+- 选项含 `side_effect` 时，选择后须执行声明的副作用
+- `matrix_options` 用于 gate=2 后的逐行/逐层子菜单
+
+## 未登记 ad-hoc 交互（fallback · BLOCKER）
+
+临时需要用户选择时，也必须构造 AskQuestion，选项至少 2 个有意义的选择；同轮仍附 portable 编号。
+
+## 同轮 portable 编号
+
+调 AskQuestion 的**同轮消息末尾**仍须附编号菜单脚注。
+
+## 决策复述
+
+写入或进入下一步前须结构化复述决策（user-confirmation-ux §3.6）。
+
+## BLOCKER 反模式
+
+- widget 可用却仅给 Markdown 表 + 文本编号，未调 AskQuestion
+- option label 自造路径
+- freeform 提议未展示正文只要用户回 1
+- 阶段四件套 PASS 后自动开下一阶段

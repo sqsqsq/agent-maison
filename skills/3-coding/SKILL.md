@@ -484,7 +484,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 四项全部通过后，编码阶段完成，**具备**进入 Skill 4（Code Review）的**资格**；**不授权**自动开 Skill 4。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（AskQuestion + portable 编号）停等，**禁止**读完 receipt/trace 后在同一执行流 Read Skill 4 并写 review（除非 batch 授权 §8.2）。
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（确认菜单 + portable 编号）停等，**禁止**读完 receipt/trace 后在同一执行流 Read Skill 4 并写 review（除非 batch 授权 §8.2）。
 
 ## 编码规范
 
