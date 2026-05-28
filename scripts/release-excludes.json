@@ -3,6 +3,8 @@
   "excludeGlobs": [
     "AGENTS.md",
     "RELEASE-NOTES-v*.md",
+    ".editorconfig",
+    ".gitattributes",
     ".gitignore",
     ".npmignore",
     "harness/tests/**",

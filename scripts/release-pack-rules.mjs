@@ -245,6 +245,11 @@ export function runSyntheticRuleTests(repoRoot, rules) {
     if (include) errors.push('scripts/pack-release.mjs must be excluded');
   }
 
+  for (const devOnly of ['.editorconfig', '.gitattributes']) {
+    const { include } = classifyPath(devOnly, rules);
+    if (include) errors.push(`${devOnly} must be excluded from release`);
+  }
+
   const { excluded, excludedCountsByRule } = collectReleaseFiles(repoRoot, rules);
   if (fs.existsSync(packScript) && !excluded.includes('scripts/pack-release.mjs')) {
     errors.push('collect: scripts/pack-release.mjs missing from excluded stats');

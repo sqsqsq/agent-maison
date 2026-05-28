@@ -65,6 +65,8 @@ function assertReleaseTextUsesLf(frameworkRoot) {
 function assertZipContents(frameworkRoot) {
   const mustNotExist = [
     'AGENTS.md',
+    '.editorconfig',
+    '.gitattributes',
     '.gitignore',
     'openspec',
     'scripts',
