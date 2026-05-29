@@ -5,7 +5,7 @@
 // 执行确定性的静态验证。
 //
 // 检查项（与 ut-rules.yaml 对应）：
-//   Structure:     dag_schema_compliance, dag_node_type_valid, dag_acyclic,
+//   Structure:     harness_host_artifact_pollution, dag_schema_compliance, dag_node_type_valid, dag_acyclic,
 //                  dag_source_file_exists, ut_testability_audit_present,
 //                  ut_unsupported_targets_handled, ut_mock_plan_present,
 //                  ut_mock_plan_typed, ut_mock_plan_contracts_consistent,
@@ -46,6 +46,7 @@ import { loadFrameworkConfig, featuresDirPath } from '../config';
 import {
   tryLoadUtHostImpl,
   tryLoadDiffExcludeTestPathRegexes,
+  type UtHostImpl,
   type UtHostSuggestionPaths,
 } from '../profile-host-loader';
 import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
@@ -67,6 +68,10 @@ import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope'
 import { checkContextExplorationArtifact } from './utils/context-exploration';
 import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
 import { buildAcCoverageReport, writeAcCoverageReport } from './utils/ac-coverage-report';
+import {
+  collectContractPackagePathPollution,
+  mergePollutionViolations,
+} from './utils/harness-path-guard';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -2881,6 +2886,53 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   }
 }
 
+function checkHarnessHostArtifactPollution(ctx: CheckContext, utHost: UtHostImpl): CheckResult[] {
+  const desc = ruleDesc(ctx, 'structure_checks', 'harness_host_artifact_pollution');
+  const core = collectContractPackagePathPollution(ctx);
+  const extras = utHost.collectHarnessPollutionExtras?.(ctx) ?? [];
+  const violations = mergePollutionViolations(core, extras);
+
+  if (violations.length === 0) {
+    return [
+      {
+        id: 'harness_host_artifact_pollution',
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'PASS',
+        details: 'framework harness 目录下未发现宿主 module 树或 profile 定义的污染路径。',
+      },
+    ];
+  }
+
+  const moduleHints =
+    ctx.featureSpec.contracts?.modules
+      ?.map(m => m.package_path)
+      .filter(Boolean)
+      .join(', ') ?? '';
+
+  return [
+    {
+      id: 'harness_host_artifact_pollution',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: [
+        '检测到宿主产物误写入 framework harness 目录（常见于 Skill 5 agent cwd 泄漏）：',
+        ...violations.map(v => `  - ${v}`),
+        '',
+        '建议：迁移至 <repo-root>/{package_path}/... 后删除 harness 下误写目录；Write 前 cd <repo-root> 或使用绝对路径。',
+        moduleHints ? `contracts.modules[].package_path：${moduleHints}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      suggestion:
+        '见 framework/skills/reference/harness-cli-cwd.md §2.5 与 framework/skills/reference/consumer-framework-boundary.md',
+    },
+  ];
+}
+
 function findFirst(results: CheckResult[], id: string): CheckResult | undefined {
   return results.find(r => r.id === id);
 }
@@ -2994,6 +3046,9 @@ const checker: PhaseChecker = {
     );
 
     // --- Structure checks ---
+    results.push(
+      ...safeRun(() => checkHarnessHostArtifactPollution(ctx, utHost), 'harness_host_artifact_pollution'),
+    );
     // v2 A: use-cases.yaml 自身
     results.push(...safeRun(() => checkUseCaseSpecRecommended(ctx), 'usecase_spec_recommended'));
     results.push(...safeRun(() => checkUseCaseSpecSchema(ctx), 'usecase_spec_schema'));

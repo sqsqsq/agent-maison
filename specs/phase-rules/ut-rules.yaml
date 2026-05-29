@@ -21,7 +21,12 @@ applies_to:
   ut_files: "{module}/src/test/**/*"
   # device-testing-todo.md 已废弃；见 acceptance.yaml > device_focus
 
-structure_checks: {}
+structure_checks:
+  harness_host_artifact_pollution:
+    description: >
+      framework harness 目录（ctx.harnessRoot）下不得出现 contracts.modules[].package_path
+      对应的宿主 module 树；profile 可扩展额外 glob。任一命中即 BLOCKER。
+    severity: BLOCKER
 
 semantic_checks: {}
 

@@ -3,6 +3,7 @@
  */
 import * as path from 'path';
 import { inferRepoLayout, harnessRootFromLayout } from '../../repo-layout';
+import { isUnderHarnessRoot } from './harness-path-guard';
 
 export const ADHOC_FEATURE = '_adhoc';
 
@@ -50,9 +51,5 @@ export function isForbiddenAdhocWritePath(
   const harnessRoot = frameworkRoot
     ? path.join(path.resolve(frameworkRoot), 'harness')
     : harnessRootFromLayout(inferRepoLayout(projectRoot));
-  const rel = path.relative(harnessRoot, resolved);
-  if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
-    return true;
-  }
-  return false;
+  return isUnderHarnessRoot(harnessRoot, resolved);
 }

@@ -32,6 +32,12 @@ applies_to:
 # --------------------------------------------------------------------------
 structure_checks:
 
+  harness_host_artifact_pollution:
+    description: >
+      framework harness 目录（ctx.harnessRoot）下不得出现 contracts.modules[].package_path
+      对应的宿主 module 树；hmos-app 另扫 ohosTest / test/dag / *.test.ets。任一命中即 BLOCKER。
+    severity: BLOCKER
+
   # -----------------------------------------------------------------
   # A. use-cases.yaml 自身的合规性（按需触发）
   # -----------------------------------------------------------------

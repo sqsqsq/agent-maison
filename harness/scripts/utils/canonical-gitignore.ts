@@ -15,6 +15,8 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework/harness/package-lock.json',
   'framework/harness/state/*',
   '!framework/harness/state/.gitkeep',
+  'framework/harness/**/ohosTest/',
+  'framework/harness/**/test/dag/',
   'doc/catalog-staging/',
   'doc/glossary-staging/',
   '.framework-backup/',
@@ -58,6 +60,14 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     'framework/harness/state/',
   ],
   '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
+  'framework/harness/**/ohosTest/': [
+    'framework/harness/**/ohosTest/',
+    'framework/harness/**/ohosTest',
+  ],
+  'framework/harness/**/test/dag/': [
+    'framework/harness/**/test/dag/',
+    'framework/harness/**/test/dag',
+  ],
   'doc/catalog-staging/': ['doc/catalog-staging/', 'doc/catalog-staging', '**/catalog-staging/'],
   'doc/glossary-staging/': ['doc/glossary-staging/', 'doc/glossary-staging', '**/glossary-staging/'],
   '.framework-backup/': [
@@ -98,6 +108,8 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
       'framework/harness/package-lock.json',
       'framework/harness/state/*',
       '!framework/harness/state/.gitkeep',
+      'framework/harness/**/ohosTest/',
+      'framework/harness/**/test/dag/',
     ],
   },
   {

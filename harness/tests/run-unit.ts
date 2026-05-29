@@ -67,6 +67,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },
   { id: 'repo-layout', modulePath: './unit/repo-layout.unit.test' },
   { id: 'path-guard', modulePath: './unit/path-guard.unit.test' },
+  { id: 'harness-path-guard', modulePath: './unit/harness-path-guard.unit.test' },
   { id: 'runner-layout-smoke', modulePath: './unit/runner-layout-smoke.unit.test' },
   { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },

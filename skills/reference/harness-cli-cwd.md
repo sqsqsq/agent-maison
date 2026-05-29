@@ -55,6 +55,22 @@ npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>
 
 ---
 
+## 2.5 BLOCKER — Write 工具 cwd 泄漏（Skill 5 UT / DAG / Spy）
+
+类型 B 命令（`cd framework/harness && harness-runner …`）之后，**同一 shell** 若用 Write 工具写宿主产物且使用**相对路径**，文件会落在 `framework/harness/...` 而非 `<repo-root>/...`。
+
+**Write 宿主源码 / UT / DAG / Spy 前必须**（二选一）：
+
+```bash
+cd <repo-root>
+```
+
+或使用 **绝对路径**：`<repo-root>/{contracts.modules[].package_path}/...`
+
+**禁止**向 `framework/harness/` Write 任何宿主 module 树、profile 规定的测试源文件、`test/dag/`（`reports/`、`state/` 等 harness 运行产物除外）。门禁：`check-ut` → `harness_host_artifact_pollution`（BLOCKER）。
+
+---
+
 ## 3. 常见类型 A 脚本
 
 | 脚本 | 典型 Skill 步骤 |

@@ -15,6 +15,16 @@ UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/
 
 **禁止反改业务架构**：不要为了 UT 新造 `domain/usecase/*.ets` 或 Port；业务嵌在 inline lambda 中时，反馈 Skill 3 抽出命名方法。
 
+## UT 写入路径（BLOCKER）
+
+| ✅ 正确（相对 `<repo-root>`） | ❌ 错误 |
+|------------------------------|--------|
+| `02-Feature/Demo/src/ohosTest/ets/test/foo.test.ets` | `framework/harness/02-Feature/Demo/src/ohosTest/...` |
+| `02-Feature/Demo/test/dag/flow.dag.yaml` | `framework/harness/02-Feature/Demo/test/dag/...` |
+| `02-Feature/Demo/src/ohosTest/ets/test/spy/SpyX.ets` | 任意 Write 到 `framework/harness/` 下宿主 module 树 |
+
+路径取自 `contracts.yaml > modules[].package_path`。`cd framework/harness && harness-runner` 后 Write 前须 `cd <repo-root>`（见 `harness-cli-cwd.md` §2.5）。门禁：`harness_host_artifact_pollution`。
+
 ### skill-assets.yaml 键
 
 | 键 | 相对 `skills/5-business-ut/` |

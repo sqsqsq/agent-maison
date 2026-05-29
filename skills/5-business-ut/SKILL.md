@@ -293,6 +293,15 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 5. **展示 Mermaid** 给用户确认（`ut.dag_confirm`：`1=确认DAG` / `2=修改DAG`；按节点类型着色）
 6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
 
+### Step 3.0 写入路径 Gate（BLOCKER）
+
+继续 Step 3 写文件前：
+
+- `<repo-root>` = 含 `framework.config.json` 的实例工程根（**不是** `framework/harness`）
+- UT / Spy / DAG 路径 = `{repo-root}/{contracts.modules[].package_path}/...`（测试源树见 profile addendum，如 `src/ohosTest/ets/test/`）
+- 若上一条 shell 为 `cd framework/harness && ...`，Write 前 **必须** `cd <repo-root>` 或使用绝对路径（见 [harness-cli-cwd.md §2.5](../reference/harness-cli-cwd.md)）
+- **禁止** Write 到 `framework/harness/` 下宿主源码（profile 规定的测试源树、`test/dag/`、`{package_path}/` 整树）；harness 内仅允许 reports/state 等运行产物
+
 ### Step 3：生成 UT 代码（按 branch 或 AC 生成 `it()`）
 
 #### 写入前自检

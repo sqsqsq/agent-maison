@@ -16,6 +16,30 @@
 | `framework/package.json` 增加 `dependencies.yaml` | `cd framework/harness && npm install`（Tier_1，见 [host-harness-readiness.md](./host-harness-readiness.md)） |
 | `framework/profiles/hmos-app/harness/ts-compile.ts` 补 `MockKit`/`when` ambient | 升级含 Test Double Policy 的 framework 发版；实例 UT 按 [mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md) 声明 `strategy: mockkit` |
 | 在实例内「改门禁让 UT 变绿」 | 修 **宿主** `ohosTest` / `doc/features/<feature>/ut/` 产物 |
+| UT / Spy / DAG 误写在 `framework/harness/` | 迁回 `<repo-root>/{package_path}/...`；删 harness 下误写目录；见 [harness-cli-cwd.md §2.5](./harness-cli-cwd.md) |
+
+## framework 资产树不承载宿主产物
+
+`framework/harness/` 仅用于 harness 运行时（reports、state、node_modules 等）。**禁止**在此目录 Write 宿主 `*.test.ets`、`ohosTest/`、`test/dag/` 或 `{package_path}/` 整树。`check-ut` 门禁 `harness_host_artifact_pollution` 会 BLOCKER。
+
+### 误写 UT 迁移（示例）
+
+```bash
+# 1. 发现误写
+find framework/harness -name "*.test.ets"
+
+# 2. 迁移（package_path 以 contracts.yaml 为准）
+# framework/harness/02-Feature/Demo/... → 02-Feature/Demo/...
+
+# 3. 清理
+rm -rf framework/harness/02-Feature
+git -C framework status
+
+# 4. 验证
+cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feature> --summary
+```
+
+> **gitignore 二级保险**：init 可能忽略 `framework/harness/**/ohosTest/` — **忽略 ≠ 允许**；仍以 filesystem 门禁为准。
 
 ## `Cannot find module 'yaml'` / `ts-node`
 

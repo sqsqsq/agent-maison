@@ -59,6 +59,8 @@ export type UtHostImpl = {
   ): CheckResult[];
   getUtSuggestionPaths(): UtHostSuggestionPaths;
   isSuiteEntryShim(content: string): boolean;
+  /** 可选：profile 额外扫描 harnessRoot 下宿主测试产物（如 ohosTest / *.test.ets） */
+  collectHarnessPollutionExtras?(ctx: CheckContext): string[];
 };
 
 /**

@@ -29,6 +29,7 @@ import {
   mapInstallBlockingToUtCheckFields,
   writeUtInstallDiagJson,
 } from './device-install-diag';
+import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -864,6 +865,64 @@ function checkTestRegistration(
   ];
 }
 
+const HARNESS_POLLUTION_ALLOWLIST_TOP = new Set([
+  'reports',
+  'state',
+  'trace',
+  'node_modules',
+  'dist',
+  'tests',
+  'prompts',
+  'scripts',
+  'hooks',
+]);
+
+function collectHarnessPollutionExtras(ctx: CheckContext): string[] {
+  const harnessRoot = ctx.harnessRoot;
+  if (!fs.existsSync(harnessRoot)) return [];
+
+  const violations: string[] = [];
+  const seen = new Set<string>();
+
+  function record(absPath: string): void {
+    const display = formatPollutionDisplayPath(ctx, absPath);
+    if (seen.has(display)) return;
+    seen.add(display);
+    violations.push(display);
+  }
+
+  function walk(current: string, relParts: string[]): void {
+    if (relParts.length > 0 && HARNESS_POLLUTION_ALLOWLIST_TOP.has(relParts[0])) {
+      return;
+    }
+
+    const relPosix = relParts.join('/');
+    if (relPosix.includes('ohosTest') || relPosix.includes('test/dag')) {
+      record(current);
+    }
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const ent of entries) {
+      const abs = path.join(current, ent.name);
+      const nextRel = [...relParts, ent.name];
+      if (ent.isDirectory()) {
+        walk(abs, nextRel);
+      } else if (ent.isFile() && ent.name.endsWith('.test.ets')) {
+        record(abs);
+      }
+    }
+  }
+
+  walk(harnessRoot, []);
+  return violations;
+}
+
 export { partitionUtFiles };
 
 export const utHostImpl: UtHostImpl = {
@@ -877,4 +936,5 @@ export const utHostImpl: UtHostImpl = {
   checkTestRegistration,
   getUtSuggestionPaths,
   isSuiteEntryShim: isSuiteEntryShimContent,
+  collectHarnessPollutionExtras,
 };
