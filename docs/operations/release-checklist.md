@@ -56,6 +56,37 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 
 [`scripts/release-excludes.json`](../../scripts/release-excludes.json)
 
+## 消费者 init / setup smoke（编排化重构后）
+
+在解压 zip 后的消费者工程：
+
+1. **项目 init**
+
+   ```bash
+   cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <实例根>
+   ```
+
+   确认 stdout 为合法 `InitTaskPlan` JSON（S1 零写盘：重复执行前后 `.gitignore` / config mtime 不变，除非用户已批准 S3）。
+
+2. **个人 setup**（每位开发者一次）
+
+   ```bash
+   # 对话走 /framework-setup；或 CLI：
+   cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <实例根>
+   ```
+
+   确认生成 `framework.local.json`（gitignored）且 **未** 修改 `materialized_adapters` 以外的项目提交文件。
+
+3. **feature phase 门控**
+
+   ```bash
+   cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature smoke-feature
+   ```
+
+   无 local setup 时应 exit 1 并提示 framework-setup。
+
+4. **legacy config 迁移**（UPDATE）：`agent_adapter` / DevEco installPath 外迁到 local + `materialized_adapters` 写入项目 config（`migrate-config` 任务）。
+
 ## 交互层 smoke（v4.0+）
 
 在 framework 仓根执行（**Phase A 源模板 + Phase B 消费者 tmpdir smoke**）：
@@ -64,7 +95,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 cd framework/harness && npx ts-node scripts/smoke-interaction-renderer.ts
 ```
 
-对已 `/framework-init --adapter claude` 的消费者工程，可只验实例产物：
+对已跑 **项目 init + personal setup** 的消费者工程，可只验实例产物：
 
 ```bash
 npx ts-node framework/harness/scripts/smoke-interaction-renderer.ts --project-root <实例根>
@@ -81,12 +112,13 @@ npx ts-node framework/harness/scripts/smoke-interaction-renderer.ts --project-ro
 
 在真实消费者工程 + ClaudeCode CLI + MiniMax 2.7 下实测至少 6 类交互须渲染为**键盘选择**（非纯文本输入）：
 
-1. **init** — adapter 选型（registry `init.adapter`）
-2. **PRD** — 术语映射 artifact gate（`prd.terminology`）
-3. **coding** — 逐模块交付（`coding.module_batch`）
-4. **UT** — DAG 确认（`ut.dag_confirm`）
-5. **phase.next_step** — 跨阶段动态 label
-6. **ad-hoc** — 未登记临时交互仍走 AskUserQuestion fallback
+1. **init** — `init.materialized_adapters` + `init.task_plan`（**非** legacy Q1=y）
+2. **setup** — `setup.adapter`（personal，仅已物化项）
+3. **PRD** — 术语映射 artifact gate（`prd.terminology`）
+4. **coding** — 逐模块交付（`coding.module_batch`）
+5. **UT** — DAG 确认（`ut.dag_confirm`）
+6. **phase.next_step** — 跨阶段动态 label
+7. **ad-hoc** — 未登记临时交互仍走 AskUserQuestion fallback
 
 ## 相关命令
 

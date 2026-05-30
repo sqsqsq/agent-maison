@@ -8,7 +8,7 @@
 
 ## 1. 设计原则
 
-1. **Canonical 回复值与展示形态解耦**——`1` / widget 选项 id / `全部按默认` / `Q1=y` 映射到同一语义（见 registry `canonical_map`）。
+1. **Canonical 回复值与展示形态解耦**——编号 / widget 选项 id / registry `canonical_map` 映射到同一语义（**禁止**把 legacy `Q1=y` 当作 init/setup 编排的合法确认通道）。
 2. **渐进增强（Progressive Enhancement）**：
    - **Tier 1 Widget**（adapter 声明 `structured_widget: supported` 时）：优先 adapter interaction-renderer 声明的结构化选择控件。
    - **Tier 2 Portable**：**同一轮消息末尾必须附编号菜单**（`1` / `2` / `3`），chrys/codemate 等无 widget 宿主只展示本层。
@@ -44,7 +44,7 @@
 
 合法批量速记：`1`（gate 上下文）、`全部按默认`、`all=default`（仅当 registry 声明）。
 
-### 3.2 Enum（registry: `init.adapter` 等）
+### 3.2 Enum（registry: `init.project_profile` / `setup.adapter` 等）
 
 ```text
 请选择（回复编号）：
@@ -60,7 +60,7 @@
 1. 按默认（当前值：{value}）
 2. dag
 3. forbid
-4. sublayer（+ 子层问卷）
+4. sublayer（须 preset/磁盘已含 sublayers[]；否则 STOP，手动编辑 config 后重跑）
 ```
 
 ### 3.4 Artifact + portable（registry: `prd.terminology`）
@@ -102,9 +102,10 @@
 
 | registry id | widget 选项（示意） | portable | canonical |
 |-------------|---------------------|----------|-----------|
-| `init.adapter` | claude / cursor / generic / 保持 | `1`/`2`/`3`/`4` | adapter 名字符串 |
+| `init.materialized_adapters` | claude / cursor / generic 多选 | checkbox / 编号 | materialized_adapters[] |
+| `setup.adapter` | 从已物化列表选 | `1` | from_materialized |
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
-| `init.populated_diff` | all=y / all=n / 逐项 | `1`/`2`/`3` | `Q1=y …` 或 `all=y` |
+| `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |
 | `catalog.staging` | y / e / s / q | `1`/`2`/`3`/`4` | 同左 |
 | `prd.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | PRD 表 `[x]` |
 
@@ -129,12 +130,13 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 ## 6. 反模式（BLOCKER）
 
+- ❌ init/setup matrix 选 `sublayer` 后在对话追问子层 id / members（须 preset 或磁盘 JSON 预置完整 `sublayers[]`）
 - ❌ 仅展示 Markdown 表让用户逐行打字，无 gate/enum
 - ❌ widget 可用却仅给表格
-- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry `options`（如 `init.adapter` → [confirmation-registry.yaml](./confirmation-registry.yaml)）
+- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry `options`（如 `init.materialized_adapters` → [confirmation-registry.yaml](./confirmation-registry.yaml)）
 - ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
-- ❌ 多题并存时接受裸 `y` / `好`（见 Skill 00 §0.3.4.3）
+- ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
 - ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
 
@@ -199,4 +201,4 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 - Registry：[confirmation-registry.yaml](./confirmation-registry.yaml)
 - Lint：`framework/harness/scripts/check-skills-confirmation-ux.ts`
-- Init 编号 Q 特例：Skill 00 §0.3.4（`Q1=y` / `all=y`，已合规）
+- Init/setup 编排：`init.task_plan` + `init.task_decision` + `init.architecture_preset`（**禁止** legacy `Q1=y` / `all=y` 与 architecture 对话问卷）

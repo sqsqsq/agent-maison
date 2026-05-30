@@ -11,6 +11,8 @@ argument-hint: <feature-name>
 > `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
 > 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
 
+> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --project-root <repo-root>`；exit 1 → 引导 `/framework-setup`（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
+
 # 跳板文件
 
 完整 Skill 定义请阅读：**[framework/skills/2-requirement-design/SKILL.md](../../framework/skills/2-requirement-design/SKILL.md)**

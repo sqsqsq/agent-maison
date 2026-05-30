@@ -7,6 +7,6 @@
     { "id": "diff_for_populated_provided",   "status": "PASS", "severity": "BLOCKER" },
     { "id": "inspection_01_framework_config_json", "details_includes": "[MISSING]" },
     { "id": "inspection_02_CLAUDE_md",            "details_includes": "[MISSING]" },
-    { "id": "inspection_11_gitignore_(init_canonical_ignores)", "details_includes": "[POPULATED]" }
+    { "id": "inspection_11_gitignore_(init_canonical_ignores)", "details_includes": "[MISSING]" }
   ]
 }

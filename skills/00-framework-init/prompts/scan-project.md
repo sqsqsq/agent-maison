@@ -19,7 +19,7 @@
 | 模式 | 特征 | 对架构 DSL 的暗示 |
 |------|------|-------------------|
 | 参考实例（5 外层 + sublayer） | 存在 `01-Product`、`02-Feature`、… | 推荐 hmos-app 5 外层 preset |
-| 扁平特性 | `entry`、`features`、`common` 等 | 可能适合 3 层或自定义 |
+| 扁平特性 | `entry`、`features`、`common` 等 | 可能适合 preset_minimal_3；否则 manual_edit_stop |
 | 已接 framework | 已有 `framework.config.json` | UPDATE 模式 |
 
 ## 4. Submodule

@@ -30,17 +30,27 @@
 
 ## Registry 覆盖（Skills 0–6 · 33 点）
 
-所有确认点见 [confirmation-registry.yaml](../../framework/skills/reference/confirmation-registry.yaml)；init 系列（`init.adapter` 等）options 亦在该文件。
+所有确认点见 [confirmation-registry.yaml](../../framework/skills/reference/confirmation-registry.yaml)；init/setup 系列（`init.materialized_adapters`、`setup.adapter` 等）options 亦在该文件。
 
 ## 纪律
 
-- 裸「好 / 继续 / ok」不构成 BLOCKER 确认（Skill 00 §0.3.4.3 等仍适用）
+- 裸「好 / 继续 / ok」不构成 BLOCKER 确认（init/setup 编排决策须 registry enum）
 - PRD 术语等 **artifact `[x]`** 仍须写回文件；对话 widget 不能替代
 - **不替代** v2.9+ Research Sub-Phase / `context-exploration` harness
 
+## Init / Setup 编排特例（BLOCKER）
+
+项目级 **framework-init** 与个人级 **framework-setup** 的编排决策**禁止自由输入**（无 Q1=y、无自定义路径字符串）：
+
+- **S1 探测**：只读运行 `init-orchestrate.ts`（或 planner）产出 `InitTaskPlan` JSON；AI **仅渲染**任务表，不得写盘。
+- **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox）；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
+- **S3 执行**：将用户选择序列化为 **枚举 decision JSON**，交 `init-orchestrate.ts executeInitPlan`；违反 `allowed_actions` 或依赖闭包时 harness 拒绝。
+- **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表。
+- **个人 setup**：`setup.adapter` 只能从 `materialized_adapters` 已物化项选；`setup.deveco_path` 仅探测候选或跳过；写入 `framework.local.json` 且**不写**项目产物。
+
 ## 与 slash 的关系
 
-- 通过 `/framework-init` 且 slash frontmatter 已注入 `agent_adapter` 时，**勿再画 adapter 选型表**（Step 0.2.5.1 已由 slash 满足）
+- `/framework-init` 走项目级 S1–S4；`/framework-setup` 走个人 setup（不再在 init 里选 active adapter）
 - 各 Skill slash 正文含本 Skill registry 确认点 BLOCKER 段；与本 rules 文件 **同优先级**
 
 ## BLOCKER 反模式

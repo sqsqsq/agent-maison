@@ -6,4 +6,4 @@
 
 **文档骨架**：`doc/architecture.md` / `module-catalog.yaml` 的 MISSING 档位可优先拷贝 `framework/profiles/generic/doc-skeletons/`（与同目录 `module-catalog.skeleton.yaml`）。
 
-**Step 5.6（根 SKILL）**：本 profile **不要求**在 init 阶段写入宿主 IDE 安装路径；除非用户显式要在 `framework.config.json` 落 `toolchain` 占位，否则**跳过**工具链探测，直接进入 Step 6。
+**Step 5.6（根 SKILL）**：本 profile **不要求**在项目 init 写入宿主 IDE 路径；个人路径走 `/framework-setup` → `framework.local.json`（registry `setup.deveco_path`）。

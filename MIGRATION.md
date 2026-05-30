@@ -4,15 +4,24 @@
 
 ---
 
-## 首选路径：初始化 Skill 的 UPDATE 模式
+## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
-当实例根已存在 `framework.config.json` 时，再次执行 [`00-framework-init`](skills/00-framework-init/SKILL.md)（`/framework-init` 或自然语言触发）应进入 **UPDATE** 模式：
+当实例根已存在 `framework.config.json` 时，再次执行 [`00-framework-init`](skills/00-framework-init/SKILL.md)（`/framework-init`）进入 **UPDATE** 模式，流程为：
 
-1. 读取当前 JSON 与本次拟定变更，向用户展示 **diff**（键级或 `architecture` 段级）。
-2. 仅在用户明确确认后写回 `framework.config.json` 及受影响的入口/文档骨架。
-3. **切换 `agent_adapter`** 时：先列出将新增或可能与旧产物冲突的路径，得到同意后再写入；**不自动强删**历史文件，删除操作建议用户确认后手工或分步执行。
+| 步 | 动作 |
+|----|------|
+| **S1 探测** | `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`（**零写盘**） |
+| **S2 计划批准** | `init.task_plan` + `init.materialized_adapters` 多选；手动模式用 `init.task_decision`（**禁止 Q1=y**） |
+| **S3 执行** | `--execute --decision-file` + `context.json` → harness 按 DAG 写盘 |
+| **S4 摘要** | `buildRunSummary(run-log)` |
 
-因此：**日常 framework 版本跟进、路径调整、架构 DSL 修订**，应通过 UPDATE 模式收敛到可审的交互流程，而不是手工散落改多份文件。
+要点：
+
+1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——每位开发者跑 [`00b-framework-setup`](skills/00b-framework-setup/SKILL.md)（`/framework-setup`）写入 gitignored 的 `framework.local.json`。
+3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
+
+日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
 
 ---
 
@@ -48,35 +57,21 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - `reports/*` — harness 跑出的报告（保留 `reports/.gitkeep`）
 - `trace` — 调试 trace 目录
 
-同步到目标工程后，重跑 `cd framework/harness && npx ts-node harness-runner.ts --phase init`（或 `/framework-init`）时，`check-init` 会在体检 **#11 之前** 自动执行 `ensureCanonicalGitignore`（SSOT：`framework/harness/scripts/utils/canonical-gitignore.ts`）：
-- 若已存在等价规则（如 `**/node_modules` / `**/package-lock.json` / `framework/harness/reports/*`），不重复追加。
-- 若缺少 canonical 规则，会幂等追加 **16 条** pattern（含 `doc/features/*/*/reports/*`、`**/.hylyre/`、`**/tmp_hypium/`、`/doc/app-snapshot-cache/`、`/doc/features/_adhoc/` 等；详见 SKILL 00 §5.4.5.1）。
-- Skill 0 草稿：`doc/catalog-staging/`、`doc/glossary-staging/`；机制备份：`.framework-backup/`。
-- **勿手抄** `/harness/reports/*`（缺 `framework/` 前缀无效）；旧错行可手删，脚本只追加、不自动删除。
-- 该步骤只新增忽略规则，不重排或删除用户已有 `.gitignore` 内容。追加摘要见 `check-init.json` → `gitignore_sync`。
-- **Hylyre 工程根污染**（`reports/`、`tmp_hypium/` 出现在实例根）：升级含 `hylyre-spawn.ts` 的 framework 后，harness 将所有 `python -m hylyre …` 的 cwd 定向到 `doc/features/<feature>/testing/reports/.hypium-workdir`；若仍出现根目录污染，查看 `hylyre-ready.meta.json` / `device-test-run.meta.json` 的 `root_pollution` 与 stderr `ROOT_HYLYRE_POLLUTION=1`。canonical **默认不含** 根 `/reports/`（避免掩盖 cwd 泄漏）；可选在 profile addendum 手加 `/reports/`。
-- **消费者误改 framework 子模块**（常见：`framework/package.json` 加 `yaml`、`ts-compile.ts` 补 MockKit ambient）：**须回滚** submodule 脏改；harness 依赖只在 `framework/harness` 安装；Hypium MockKit 须 `mock-plan` 声明 `strategy: mockkit` 并由发版 framework 提供门禁，见 [`skills/reference/consumer-framework-boundary.md`](skills/reference/consumer-framework-boundary.md)。
+同步到目标工程后，在工程根跑 **`/framework-init`**（S1–S4 编排）。`ensure-gitignore` 等 mechanism 任务在 **S3 批准后** 由 executor 执行（不再在探测阶段写盘）。
 
-#### 同步完成后，在目标工程根跑 `/framework-init`
-
-剩下所有动作**全部**由 Skill 00 闭环：
-
-| Skill 00 子步 | 做的事 |
-|---|---|
-| Step 0.3 | 体检 10 项产物 + 决议 CREATE / UPDATE 模式 |
-| Step 0.2.5 | 显式选定 `agent_adapter`（generic / claude / cursor） |
-| Step 1~4 | 元数据 + 架构 DSL + adapter 入口文件 |
-| Step 5.1~5.4 | 写 `framework.config.json` + `doc/architecture.md` 等骨架 |
-| **Step 5.5** | `cd framework/harness && npm install`（装 harness 依赖） |
-| **Step 5.5.4** | `npm test` 自检（v2.3 起加入）—— 验证 framework vendor 完整且行为正常，**任何失败都阻断后续步骤** |
-| **Step 5.6** | 调 `detect-deveco.ts` 自动探测 + 用户确认，写入 `toolchain.devEcoStudio.installPath`（v2.3 起加入） |
-| Step 6 | 跑 `harness-runner.ts --phase catalog` / `glossary` 校验骨架 |
-| Step 7 | 收尾汇报跳过项与下一步指引 |
+| 阶段 | 做的事 |
+|------|--------|
+| **S1** | 只读 `InitTaskPlan`（`init-orchestrate.ts --scope project`） |
+| **S2** | 确认元数据 / 架构 DSL / **`materialized_adapters` 多选**；生成 decision + context JSON |
+| **S3** | executor：config merge/写入、adapter 物化、gitignore、harness-install、全局 phase 等 |
+| **S4** | 结构化摘要 + 提醒团队成员跑 **`/framework-setup`** |
 
 **严禁**：
-- 在 vendor 之后让用户手工跑 `npm install` / `npm test` / `detect-deveco.ts` —— 这些都由 `/framework-init` 触发。
-- 把 Step 5.5.4 自检失败解释为"环境问题"跳过 —— framework 自带套件不依赖外部工具链，失败一定是 vendor 漏文件或 framework 自身 bug。
-- 在初始化途中绕过 Skill 直接编辑 `framework.config.json` 或拷贝 adapter 模板 —— 体检 + diff 流程的存在就是为了防止覆盖既有资产。
+
+- 在 S1 探测阶段写 `.gitignore` / adapter 产物 / config（副作用仅在 S3）。
+- 在项目 init 里配置 personal `agent_adapter` 或 DevEco 路径（走 setup → `framework.local.json`）。
+- 用 legacy **Q1=y / Step 0.3.4** 文本协议代替 registry widget（已废弃）。
+- 把 Step 5.5.4 自检失败解释为「环境问题」跳过——framework 自带套件不依赖外部工具链，失败说明 vendor 漏文件或 framework bug。
 
 ### 模式 B：Submodule（framework 独立 git 仓库）
 
@@ -122,6 +117,47 @@ git submodule update --remote framework
 
 ## 版本变更记录
 
+### Init 编排化重构（两条入口 · `materialized_adapters` + `framework.local.json`）
+
+**适用范围**：升级到含 `init-orchestrate.ts` / `init-task-planner.ts` 的 framework 版本；实例仍用 legacy 单文件 config（含 `agent_adapter`、project 级 DevEco 路径）。
+
+**行为摘要（BREAKING 面向实例维护者）**：
+
+| 旧 | 新 |
+|----|-----|
+| 项目 init 选单个 `agent_adapter` | 项目 init 选 **`materialized_adapters[]`**（可多选 claude/cursor/generic） |
+| `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（gitignored） |
+| project config 写 `toolchain.devEcoStudio.installPath` | 外迁到 **local**；hmos-app 走 **`/framework-setup`** + `setup.deveco_path` |
+| Step 0.3.4 **Q1=y** 文本 | **`init.task_plan` + `init.task_decision`** widget |
+| `check-init` 探测时写 gitignore | S1 **只读**；S3 任务 `ensure-gitignore` 写盘 |
+
+**实例升级 checklist**：
+
+1. **Vendor / submodule 更新** framework 到含编排器的版本。
+2. 工程根跑 **`/framework-init` UPDATE**（S1→S4）；S2 确认 `materialized_adapters` 覆盖团队使用的 IDE。
+3. S3 应执行 **`migrate-config`**（若 planner 挂载）：自动把 legacy `agent_adapter` / DevEco 路径外迁，并在 project config 写入 `materialized_adapters`。
+4. **每位开发者**跑一次 **`/framework-setup`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
+5. 确认 `.gitignore` 含 **`framework.local.json`**（canonical 第 19 条；S3 `ensure-gitignore` 可补齐）。
+6. 跑 feature phase 前：`getFrameworkPersonalSetupStatus().source !== 'fallback'`（harness-runner 否则 exit 1）。
+
+**CLI 速查（工程根）**：
+
+```bash
+# S1 探测（只读）
+cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>
+
+# S3 执行（decision/context 由 Skill S2 生成）
+cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root> \
+  --execute --decision-file /path/to/decision.json --context-file /path/to/context.json
+
+# 个人 setup 探测
+cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <repo-root>
+```
+
+**回滚**：保留 `.framework-backup/<UTC>/` 下 config 备份；删除 `framework.local.json` 不会破坏已物化的 `.claude/` / `.cursor/` 产物。
+
+---
+
 ### Feature-phase harness 报告外置（`paths.reports_dir_pattern`）
 
 **适用范围**：已将 instance 升级到支持 `paths.reports_dir_pattern` 的 harness；希望 feature 维度脚本报告、`trace.json`、合并报告等与 `doc/features/<feature>/` 同树的工程。
@@ -134,12 +170,11 @@ git submodule update --remote framework
 
 **实例 checklist**：
 
-1. 跑 `/framework-init` UPDATE；`check-init` 第 1 项若 `confirm_keys` 含 `reports_dir_pattern`，在 Step 0.3.4 回答 **Q1.C**（默认推荐 **y**）；脚本写入：
-   `merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y`（**非手改 JSON**）。
+1. 跑 `/framework-init` UPDATE；planner 若挂 **`confirm-fields` / `migrate-config`**，在 S2 用 registry 确认；S3 执行 `merge-framework-config` 写入 `paths.reports_dir_pattern`（**非手改 JSON**）。
 2. 宿主 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则）；保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局。
 3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「Legacy 报告手动迁移」专节（init **不自动搬文件**）。
 
-#### Legacy 报告手动迁移（opt-in · init + Q1.C=y 之后）
+#### Legacy 报告手动迁移（opt-in · init S3 之后）
 
 > init 只 modernize config，**不搬磁盘文件**。不迁也不影响新 harness 产出路径。
 
@@ -283,7 +318,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **回归方法**：
 - `cd framework/harness && npm test` —— unit 套件应包含 `doc-freshness` 子项且全 PASS。
 - `npx ts-node harness-runner.ts --phase docs` —— 主路烟雾，全 PASS 或仅显示已知 MAJOR（说明哪些 doc 该刷新）。
-- **与 Skill 00 的关系**：`/framework-init`（`00-framework-init`）在 Step 5.5.4 **已自动跑** `npm test`；Step 6 **已包含** `--phase docs`（与 `catalog` / `glossary` 同为全局 phase）。用户**无需**在完整跑完初始化后再单独记两条命令自测；只有**未走 Skill 或只做了部分步骤**时，才需要手工补跑。
+- **与 Skill 00 的关系**：完整 `/framework-init` S3 含 `harness-install` 与 `run-global-phases`（catalog / glossary / docs）。用户**无需**在完整跑完初始化后再单独记两条命令自测；只有**未走 Skill 或只做了部分步骤**时，才需要手工补跑。
 
 ### v2.3：DevEco Studio 工具链识别 + ohosTest 装机闭环
 
@@ -291,10 +326,10 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 **升级要点（实例侧需要做的事）**：
 
-1. **新增必填配置 `framework.config.json > toolchain.devEcoStudio.installPath`**
-   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；典型值如 `D:/Program Files/Huawei/DevEco Studio`。
-   - 推荐：跑 `/framework-init` 进入 UPDATE 模式，Skill 00 Step 5.6 会自动调 `framework/harness/scripts/detect-deveco.ts` 探测候选并让用户确认。
-   - 也可手工编辑 `framework.config.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
+1. **DevEco 路径改走 personal setup（编排化重构后）**
+   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（gitignored），**不在** project `framework.config.json`。
+   - 推荐：团队成员跑 **`/framework-setup`**（Skill 00b）；hmos-app 用 registry **`setup.deveco_path`** 确认探测候选。
+   - 也可手工编辑 `framework.local.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
 
 2. **`coding_hvigor_build` 改为项目级 `assembleApp`**：v2.2 是按 `contracts.modules` 逐个 `assembleHap`，遇到 HAR/HSP 库模块（无 `assembleHap` task）会假阳性。v2.3 改为一次跑 `hvigor assembleApp`（项目级 hook task），覆盖所有产物。**对实例无破坏**，行为更严格而已。
 
@@ -309,7 +344,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 7. **三个文档默认动作的同步**（v2.2 的 hvigor 命令样例已过时）：
    - Skill 3 Step 6.5：编码阶段编译闭环改为「跑 harness `--phase coding` 触发 `coding_hvigor_build`」，不再让 agent 手敲 `hvigorw ...`。
    - Skill 5 Step 7.5 / 7.6：UT 编译 / 装机闭环同样改为「跑 harness `--phase ut`」，避免 agent 拼错 `hvigor test` 命令。
-   - Skill 00 Step 5.6：framework-init 增加 DevEco 路径配置子流程。
+   - Skill 00 S3：`harness-install` + `run-global-phases` 含全局 phase；DevEco 路径见 **`/framework-setup`**（00b）。
 
 **回归方法**：
 - 全套：`cd framework/harness && npm test`（条数以 `tests/run-unit.ts` + `tests/run-tests.ts` 为准）。
@@ -365,8 +400,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 3. `check-init.ts` 第 1 项（`inspect01`）在 POPULATED 时填充 `Inspection.missing_keys`，
    `stdout` 体检表的"诊断"列会追加一句「另有 N 个白名单字段缺失，建议跑
    `merge-framework-config.mjs --apply` 补齐」；`check-init.json` 携带完整字段路径列表。
-4. Skill 00 §5.1.A 在 §0.3.4 表里追加 `Q1.A` 子问题：当 `missing_keys` 非空且用户已选 `Q1=n`
-   时枚举（`Q1=y` 整文件替换涵盖该场景，自动跳过 `Q1.A`），用户 `y` 即调本 CLI `--apply`。
+4. **编排化后**：S1 planner / check-init 第 1 项在 POPULATED 时填充 `missing_keys`；S2 挂 `backfill-config` 任务，S3 executor 调用 merge（**取代** legacy Q1.A / `--apply` CLI 交互）。
 
 **Framework 维护者侧**——后续若再引入新字段，**只需**：
 
@@ -381,10 +415,10 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 逐条 checklist。
 
 **严禁纳入 BACKFILL**（须 Skill 交互或 confirm pass）：`project_name` / `agent_adapter` /
-`architecture.*`（必填）、`toolchain.devEcoStudio.*`（由 Skill 5.6 detect-deveco 独立交互处理）、
+`architecture.*`（必填）、personal DevEco 路径（**`/framework-setup`** → `framework.local.json`）、
 `prd.*`（opt-in，需手工选 strict/warn/reachable/off 档位）、`atomic_service.*`（预留位）、
-`paths.reports_dir_pattern`（行为级变更，经 Skill 00 **Q1.C** + `--confirm-reports-dir-pattern=y`
-写入）。legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 `--apply` 时自动 modernize。
+`paths.reports_dir_pattern`（行为级变更，经 S2 **`confirm-fields`** / registry 写入）。
+legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-config 时 modernize。
 
 ### v3.3.2：init config 三 pass 同步（BACKFILL + MIGRATION + CONFIRM）
 
@@ -393,18 +427,18 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 **三 pass 摘要**（SSOT：[config-field-merger.ts](harness/scripts/utils/config-field-merger.ts)）：
 
-| Pass | 机制 | 典型字段 | init 入口 |
+| Pass | 机制 | 典型字段 | init 入口（编排化） |
 |------|------|----------|-----------|
-| 1 BACKFILL | 只补缺失 key | `paths.state_file`、`state_machine.*`、`toolchain.hvigor.*` | §5.1.B / Q1.A → `--apply` |
-| 2 MIGRATION | modernize 已有 key | `project_type` → `project_profile.sub_variant` | 同上（含于 `--apply`） |
-| 3 CONFIRM | 行为级变更 | `paths.reports_dir_pattern` | Q1.C → `--confirm-reports-dir-pattern=y\|n` |
+| 1 BACKFILL | 只补缺失 key | `paths.state_file`、`state_machine.*`、`toolchain.hvigor.*` | S3 `backfill-config` |
+| 2 MIGRATION | modernize 已有 key | `project_type` → `project_profile.sub_variant`；personal 外迁 | S3 `migrate-config` |
+| 3 CONFIRM | 行为级变更 | `paths.reports_dir_pattern` | S2 `confirm-fields` → S3 merge |
 
-**`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_REPORTS_DIR_PATTERN`（**故意不在** `DEFAULT_PATHS`，避免 `normalizeConfig` 在磁盘未配置时 runtime 偷偷切到新路径；Q1.C=n 须保持 legacy 回退）。
+**`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_REPORTS_DIR_PATTERN`（**故意不在** `DEFAULT_PATHS`，避免 `normalizeConfig` 在磁盘未配置时 runtime 偷偷切到新路径；拒绝 confirm 时须保持 legacy 回退）。
 
-1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE。
-2. `check-init` 第 1 项查看 `missing_keys` / `migration_keys` / `confirm_keys`。
-3. Step 5.1.B：`merge-framework-config.mjs --apply`（backfill + migration）。
-4. Q1.C=y：`merge-framework-config.mjs --apply --confirm-reports-dir-pattern=y`。
+1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE（S1→S4）。
+2. S1 planner / check-init 查看 `missing_keys` / `migration_keys` / `confirm_keys`。
+3. S2 批准 `backfill-config` / `migrate-config` / `confirm-fields` 决策。
+4. S3 executor 写回 config（**非手改 JSON**）。
 5. （可选）按上文「Legacy 报告手动迁移」搬迁旧报告文件。
 
 **回归**：`cd framework/harness && npm test`（`config-field-merger` + `init-update-policy` 套件）。
@@ -430,14 +464,14 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **行为摘要**：
 
 - [adapter-schema.yaml](agents/adapter-schema.yaml) 各段可选 `update_policy`：`prompt_if_changed`（**缺省**）或 `auto_overwrite`。Claude adapter 已对 `hooks` / `settings_file` / `commands.subagents` 声明 **`auto_overwrite`**。
-- [check-init.ts](harness/scripts/check-init.ts)：体检 **#3 逐文件展开**， stdout / `check-init.json` 中带 `update_policy` 列；`auto_overwrite` 且 POPULATED **不进入** Skill 00 Step 0.3.4 的 `Q3.x`。
-- **PASS** 时（除非 `CHECK_INIT_SKIP_MECHANISM_SYNC=1`）自动对该类目标 **`cp` → `.framework-backup/<UTC>/…` → 模板覆盖**。报告 `schema_version: "1.1"`，`mechanism_backup_rel_dir` / `mechanism_synced_files`。
-- `.framework-backup/` 已计入体检 **#11** canonical `.gitignore`；Step 5.4.5 缺则补齐。
+- [check-init.ts](harness/scripts/check-init.ts)：体检 **#3 逐文件展开**， stdout / `check-init.json` 中带 `update_policy` 列；`auto_overwrite` 且 POPULATED **不进入** S2 `init.task_decision`（由 S3 `sync-auto-overwrite:*` 自动对齐）。
+- **编排化重构后**：机制对齐**不在** check-init PASS 时写盘；须在 S2 批准 S3 任务 `sync-auto-overwrite:*` / `materialize-adapter:<name>`，executor 备份至 `.framework-backup/<UTC>/` 后覆盖。
+- `.framework-backup/` 已计入体检 **#11** canonical `.gitignore`；缺则 S3 `ensure-gitignore` 补齐。
 
 **实例 checklist**：
 
-1. 更新 `framework/` 后在实例根重跑 **`/framework-init`**（UPDATE），保证 Step 0.3 跑出最新 `check-init`。
-2. 若曾对机制文件做过**有意**本地补丁：PASS 前先阅体检表 drift，或改用 patch 挂载到不会被覆盖的路径；对齐后从 `.framework-backup/<timestamp>/` 取回对比。
+1. 更新 `framework/` 后在实例根重跑 **`/framework-init`** UPDATE（S1→S4），S1 只读产出最新体检表。
+2. 若曾对机制文件做过**有意**本地补丁：S2 前阅 drift，或改用 patch 挂载到不会被覆盖的路径；对齐后从 `.framework-backup/<timestamp>/` 取回对比。
 
 ### v2.6：框架升级兼容协议（compat）+ context-exploration 回填
 
@@ -563,12 +597,13 @@ adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agen
 1. [agents/claude/adapter.yaml](agents/claude/adapter.yaml)：`widget_tool_hint: AskUserQuestion`；启用 `rules` → `.claude/rules/`。
 2. 新建 [agents/claude/templates/rules/confirmation-ux.md](agents/claude/templates/rules/confirmation-ux.md)（SHOULD 级会话规则）。
 3. [agents/claude/templates/commands/framework-init.md](agents/claude/templates/commands/framework-init.md)：`prompts` choice 前置 adapter；正文跳过 Step 0.2.5.1 表格。
-4. Skill 00 **仅 init**：§0.2.5.1 / Step 3.x / §0.3.4 **BLOCKER** 调 AskUserQuestion（Claude）或 AskQuestion（Cursor）。
+4. Skill 00 **编排化后**：S2 用 registry `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal setup 用 **`/framework-setup`** + `setup.*`（**已取代** legacy Step 0.3.4 / Q1=y）。
 
 **实例维护者**（真实工程移植后）：
 
 ```text
-/framework-init   # UPDATE；Step 0.3 对 .claude/rules/confirmation-ux.md 与 framework-init.md 走 Q3 确认覆盖
+/framework-init   # UPDATE；S1 只读体检 → S2 批准 → S3 物化/对齐 adapter 产物
+/framework-setup  # 每位开发者一次；写入 framework.local.json
 ```
 
 **版本依赖**：slash `prompts` frontmatter 需较新 Claude Code CLI（约 2026-02+）；旧 CLI 忽略 frontmatter 时仍靠 `.claude/rules` + Skill 00 BLOCKER + portable 编号。
@@ -609,7 +644,7 @@ adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agen
 **实例维护者**（vendor framework 后 **自行** UPDATE init；agent 不代写 `.claude/`）：
 
 ```text
-/framework-init   # UPDATE；Step 0.3 对 rules/commands 走 Q3 确认覆盖
+/framework-init   # UPDATE；S2 init.task_decision 覆盖 rules/commands 漂移项 → S3 物化
 ```
 
 预期下发：`.claude/rules/confirmation-ux.md`、`.claude/rules/widget-options/*.md`、8 个 skill slash。

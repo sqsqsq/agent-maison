@@ -242,57 +242,29 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'applyInitMechanismSync：漂移 hooks 对齐模板（CHECK_INIT_SKIP_MECHANISM_SYNC 未设）',
+    name: 'applyInitMechanismSync：漂移 hooks 对齐模板',
     run: () =>
       withTmpProject(root => {
-        const prev = process.env.CHECK_INIT_SKIP_MECHANISM_SYNC;
-        delete process.env.CHECK_INIT_SKIP_MECHANISM_SYNC;
-        try {
-          materializeSyncedTemplatesExceptHook(root, '// __DRIFT_BEFORE_SYNC__\n');
-          const adapter = __testing.loadAdapter('claude');
-          const { syncedFiles, backupRelDir } = __testing.applyInitMechanismSync(root, adapter);
-          assert(syncedFiles >= 1, '应对至少一处 auto_overwrite 文件执行写入');
-          assert(backupRelDir !== null, '有内容漂移时应创建备份目录');
-          const tg = path.join(
-            root,
-            '.claude',
-            'hooks',
-            'check-phase-completion.mjs',
-          );
-          const tpl = fs.readFileSync(
-            path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'hooks', 'check-phase-completion.mjs'),
-          );
-          assertEq(fs.readFileSync(tg).toString('utf-8'), tpl.toString('utf-8'), '同步后应与模板字节一致');
-          const backupHook = path.join(root, backupRelDir!, '.claude/hooks/check-phase-completion.mjs');
-          assert(
-            fs.readFileSync(backupHook).toString('utf-8').includes('__DRIFT_BEFORE_SYNC__'),
-            '备份目录应保留漂移前内容',
-          );
-        } finally {
-          if (prev === undefined) delete process.env.CHECK_INIT_SKIP_MECHANISM_SYNC;
-          else process.env.CHECK_INIT_SKIP_MECHANISM_SYNC = prev;
-        }
-      }),
-  },
-  {
-    name: 'applyInitMechanismSync：CHECK_INIT_SKIP_MECHANISM_SYNC=1 跳过写盘',
-    run: () =>
-      withTmpProject(root => {
-        materializeSyncedTemplatesExceptHook(root, '// __NO_TOUCH__\n');
-        process.env.CHECK_INIT_SKIP_MECHANISM_SYNC = '1';
-        try {
-          const adapter = __testing.loadAdapter('claude');
-          const { syncedFiles, backupRelDir } = __testing.applyInitMechanismSync(root, adapter);
-          assertEq(syncedFiles, 0, '跳过时不应改写');
-          assertEq(backupRelDir, null, '跳过时不备份');
-          const tg = path.join(root, '.claude', 'hooks', 'check-phase-completion.mjs');
-          assert(
-            fs.readFileSync(tg).toString('utf-8').includes('__NO_TOUCH__'),
-            '跳过时应保留漂移内容',
-          );
-        } finally {
-          delete process.env.CHECK_INIT_SKIP_MECHANISM_SYNC;
-        }
+        materializeSyncedTemplatesExceptHook(root, '// __DRIFT_BEFORE_SYNC__\n');
+        const adapter = __testing.loadAdapter('claude');
+        const { syncedFiles, backupRelDir } = __testing.applyInitMechanismSync(root, adapter);
+        assert(syncedFiles >= 1, '应对至少一处 auto_overwrite 文件执行写入');
+        assert(backupRelDir !== null, '有内容漂移时应创建备份目录');
+        const tg = path.join(
+          root,
+          '.claude',
+          'hooks',
+          'check-phase-completion.mjs',
+        );
+        const tpl = fs.readFileSync(
+          path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'hooks', 'check-phase-completion.mjs'),
+        );
+        assertEq(fs.readFileSync(tg).toString('utf-8'), tpl.toString('utf-8'), '同步后应与模板字节一致');
+        const backupHook = path.join(root, backupRelDir!, '.claude/hooks/check-phase-completion.mjs');
+        assert(
+          fs.readFileSync(backupHook).toString('utf-8').includes('__DRIFT_BEFORE_SYNC__'),
+          '备份目录应保留漂移前内容',
+        );
       }),
   },
 ];

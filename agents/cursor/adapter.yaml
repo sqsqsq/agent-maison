@@ -31,5 +31,6 @@ post_install_hooks: []
 
 notes: |
   - Skill 跳板模板 SSOT：`framework/agents/shared/agent-bundle/templates/skills-bridge/`。
-  - 8 份内置 skill 跳板；`0-catalog-bootstrap` 的 Phase A/B 合用一份跳板。
-  - 跳板 `name` 必须与目录名一致（含 `00-`/`0-` 数字前缀）。
+  - 9 份内置 skill 跳板（含 `00-framework-init` 与 `00b-framework-setup`）；`0-catalog-bootstrap` 的 Phase A/B 合用一份跳板。
+  - 跳板 `name` 必须与目录名一致（含 `00-`/`0-`/`00b-` 数字前缀）。
+  - 个人 setup 无 slash 命令：通过 `.cursor/skills/00b-framework-setup/SKILL.md` 或自然语言触发（registry `setup.*`）。

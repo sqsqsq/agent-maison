@@ -20,7 +20,7 @@
 
 ### 示例（仅在 hmos-app 下）
 
-根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **DevEco / hvigor 路径、`framework.config.json` 工具链字段、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；执行 `/framework-init` 时结合 Step 0.3 体检结果与用户对 `installPath` 的显式确认。
+根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **宿主 IDE / hvigor 路径、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；**工具链路径改由 personal `/framework-setup` 写入 `framework.local.json`**（registry `setup.deveco_path`）。
 
 `/framework-init`：**整文件写入 `framework.config.json`（Step 3.5）须早于 adapter 拷贝与 `render-agents-md`** —— Step **3.5** 之后才满足「磁盘 JSON 可被 §4.1.1 读取」。模板侧仍须走 `render-agents-md.mjs`，使 partial 与生成的入口 Markdown 对齐。
 
@@ -34,7 +34,7 @@
 
 ### 5.6.1 幂等检测
 
-**按 Step 0.3 第 10 项体检结果执行**：
+**按 personal setup / planner `detect-deveco` 任务结果执行**（项目 init 不再写 installPath）：
 
 - `POPULATED`（已有 installPath 且文件系统存在）→ **跳过本节**，直接进入 Step 6。
 - `MISSING` / `EMPTY` → 继续 5.6.2。
@@ -68,27 +68,17 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 }
 ```
 
-### 5.6.3 用户确认（**BLOCKER** · registry `init.toolchain_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
+### 5.6.3 用户确认（**BLOCKER** · 个人 setup · registry `setup.deveco_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
 
-按探测结果分三种情况，**严禁未经用户显式回复就落盘 `installPath`**：
+> **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **`/framework-setup`（Skill 00b）** 写入 gitignored 的 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
 
-1. **recommended.status === 'ok'**：
-   把 `recommended.installPath` 作为**推荐值**展示给用户，并附 **编号菜单**：
+按 `detect-deveco.ts` 探测结果，在 **framework-setup S2** 使用 registry **`setup.deveco_path`**（**仅**「采用探测路径 / 跳过」枚举；**禁止**对话收自由路径字符串）：
 
-   ```text
-   1. 采用探测路径（y）
-   2. 自定义路径（请给出字符串）
-   3. 跳过
-   ```
+1. **recommended.status === 'ok'** → 展示推荐路径 + `setup.deveco_path` widget（采用探测 / 跳过）。
+2. **无 ok 候选** → 列出 `candidates` 状态供参考；提示用户修正本机安装或手工编辑 `framework.local.json` 后重跑 setup（**不在对话收路径字符串**）。
+3. **跳过** → 不写入 local；编码/UT phase 可能因缺 toolchain 而 FAIL，摘要须提示补跑 setup。
 
-   - 用户回 `1` / `y` → 写入 `framework.config.json > toolchain.devEcoStudio.installPath = <path>`。
-   - 用户回**自定义路径字符串** → 用 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<user-path>" --json`（或 harness 内 `npx ts-node scripts/detect-deveco.ts --path "..." --json`）验证，命中 `status === 'ok'` 才写入；`incomplete` / `not_found` 把 `missing[]` 列给用户重选。
-   - 用户回 `跳过` → 不写入；进入 5.6.4 警示。
-
-2. **recommended 不存在 / status !== 'ok'**：
-   把所有 `candidates` 的 `[status] installPath` 列给用户参考，提示：
-   > 未在常见路径找到完整的 DevEco Studio 安装。请提供 installPath（DevEco Studio 安装根目录，下面应当能看到 `tools/hvigor` / `sdk` / `jbr` 三个子目录），或回复 `跳过`。
-   收到自定义路径后走第 1 种的"自定义路径"分支验证。
+项目级 **`/framework-init` 不再执行本节**；hmos-app 工程在首次跑 feature phase 前须完成个人 setup。
 
 3. **不允许 AI 替用户臆测**：即便 IDE 环境变量里有 `DEVECO_STUDIO_HOME` 之类痕迹也只能作为**推荐值**亮给用户，不得直接当作用户决定。
 

@@ -39,6 +39,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { applyDefaults, loadProfileConfigDefaults } from './profile-loader';
 import { inferRepoLayout } from './repo-layout';
+import {
+  type AgentAdapterSource,
+  type FrameworkLocalConfig,
+  type FrameworkPersonalSetupStatus,
+  loadLocalConfig,
+  LOCAL_CONFIG_FILENAME,
+  mergeLocalIntoToolchain,
+  resolveAgentAdapterSource,
+  writeLocalConfig,
+} from './scripts/utils/framework-local-config';
+
+export type { AgentAdapterSource, FrameworkLocalConfig, FrameworkPersonalSetupStatus };
+export { LOCAL_CONFIG_FILENAME, loadLocalConfig, writeLocalConfig };
 
 // --------------------------------------------------------------------------
 // 架构 DSL 类型
@@ -351,6 +364,11 @@ export interface FrameworkConfig {
   project_profile: ProjectProfileConfig;
   /** 本阶段仅记录，不驱动行为；阶段 5 的 adapter 层会消费 */
   agent_adapter: 'generic' | 'claude' | 'cursor' | string;
+  /**
+   * 项目级：本仓库物化并提交的 adapter 产物清单（如 ["claude","cursor"]）。
+   * 个人 active adapter 见 framework.local.json。
+   */
+  materialized_adapters?: string[];
   architecture: ArchitectureDsl;
   paths: FrameworkPaths;
   /**
@@ -517,7 +535,135 @@ const DEPRECATED_PATH_FIELDS = ['feature_docs_dir', 'feature_specs_dir'] as cons
 
 const CONFIG_FILENAME = 'framework.config.json';
 
-let cachedConfig: { root: string; config: FrameworkConfig } | null = null;
+interface ConfigCacheEntry {
+  root: string;
+  projectMtime: number;
+  localMtime: number | null;
+  config: FrameworkConfig;
+  projectRaw: Record<string, unknown> | null;
+  local: FrameworkLocalConfig | null;
+  adapterStatus: FrameworkPersonalSetupStatus;
+}
+
+let cachedConfig: ConfigCacheEntry | null = null;
+
+function fileMtimeOrNull(filePath: string): number | null {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function readProjectConfigRaw(projectRoot: string): {
+  raw: Record<string, unknown> | null;
+  parsed: Partial<FrameworkConfig> | null;
+} {
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  if (!fs.existsSync(configPath)) {
+    return { raw: null, parsed: null };
+  }
+  const rawText = fs.readFileSync(configPath, 'utf-8');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    throw new Error(
+      `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
+    );
+  }
+  assertNoDeprecatedPaths(parsed);
+  return {
+    raw: parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null,
+    parsed: parsed as Partial<FrameworkConfig>,
+  };
+}
+
+function applyLocalMerge(
+  config: FrameworkConfig,
+  projectRaw: Record<string, unknown> | null,
+  local: FrameworkLocalConfig | null,
+): { config: FrameworkConfig; status: FrameworkPersonalSetupStatus } {
+  const status = resolveAgentAdapterSource(
+    '',
+    projectRaw,
+    local,
+    config.agent_adapter ?? 'generic',
+  );
+  const merged: FrameworkConfig = {
+    ...config,
+    agent_adapter: status.agent_adapter,
+    toolchain: mergeLocalIntoToolchain(config.toolchain, local),
+  };
+  return { config: merged, status };
+}
+
+export interface FrameworkConfigWithSources {
+  config: FrameworkConfig;
+  adapterStatus: FrameworkPersonalSetupStatus;
+  local: FrameworkLocalConfig | null;
+  projectRaw: Record<string, unknown> | null;
+}
+
+export function getFrameworkPersonalSetupStatus(projectRoot: string): FrameworkPersonalSetupStatus {
+  return loadFrameworkConfigWithSources(projectRoot).adapterStatus;
+}
+
+export function loadFrameworkConfigWithSources(projectRoot: string): FrameworkConfigWithSources {
+  const loaded = loadFrameworkConfigInternal(projectRoot);
+  return {
+    config: loaded.config,
+    adapterStatus: loaded.adapterStatus,
+    local: loaded.local,
+    projectRaw: loaded.projectRaw,
+  };
+}
+
+function loadFrameworkConfigInternal(projectRoot: string): ConfigCacheEntry {
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  const localPath = path.join(projectRoot, LOCAL_CONFIG_FILENAME);
+  const projectMtime = fileMtimeOrNull(configPath) ?? 0;
+  const localMtime = fileMtimeOrNull(localPath);
+
+  if (
+    cachedConfig &&
+    cachedConfig.root === projectRoot &&
+    cachedConfig.projectMtime === projectMtime &&
+    cachedConfig.localMtime === localMtime
+  ) {
+    return cachedConfig;
+  }
+
+  const { raw: projectRaw, parsed } = readProjectConfigRaw(projectRoot);
+  let config: FrameworkConfig;
+  if (parsed) {
+    config = normalizeConfig(parsed);
+  } else {
+    config = buildDefaultConfig();
+  }
+
+  const local = loadLocalConfig(projectRoot);
+  const { config: merged, status } = applyLocalMerge(config, projectRaw, local);
+
+  validateArchitectureDsl(merged.architecture);
+  if (merged.state_machine) {
+    validateStateMachine(merged.state_machine);
+  }
+  validateAgentBundleForConfig(merged);
+
+  cachedConfig = {
+    root: projectRoot,
+    projectMtime,
+    localMtime,
+    config: merged,
+    projectRaw,
+    local,
+    adapterStatus: status,
+  };
+  return cachedConfig;
+}
 
 /** `project_type` 弃用提示：每进程最多 stderr 一次，避免批量单测刷屏 */
 let warnedProjectTypeAliasMigration = false;
@@ -533,36 +679,7 @@ let warnedMissingProjectProfile = false;
  * `clearFrameworkConfigCache()` 显式失效。
  */
 export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
-  if (cachedConfig && cachedConfig.root === projectRoot) {
-    return cachedConfig.config;
-  }
-
-  const configPath = path.join(projectRoot, CONFIG_FILENAME);
-  let config: FrameworkConfig;
-  if (fs.existsSync(configPath)) {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      throw new Error(
-        `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
-      );
-    }
-    assertNoDeprecatedPaths(parsed);
-    config = normalizeConfig(parsed as Partial<FrameworkConfig>);
-  } else {
-    config = buildDefaultConfig();
-  }
-
-  validateArchitectureDsl(config.architecture);
-  if (config.state_machine) {
-    validateStateMachine(config.state_machine);
-  }
-  validateAgentBundleForConfig(config);
-
-  cachedConfig = { root: projectRoot, config };
-  return config;
+  return loadFrameworkConfigInternal(projectRoot).config;
 }
 
 /** 方便外层调用——多数 check-*.ts 只关心架构 DSL */
@@ -604,6 +721,7 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
       ...(projectProfileDefault.sub_variant ? { sub_variant: projectProfileDefault.sub_variant } : {}),
     },
     agent_adapter: agentAdapter,
+    materialized_adapters: [agentAdapter],
     architecture: architectureDefault,
     paths: mergeAgentBundlePathDefaults({ ...pathsDefault }, agentAdapter),
     state_machine: { ...DEFAULT_STATE_MACHINE },
@@ -712,6 +830,29 @@ function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfi
   };
 }
 
+function normalizeMaterializedAdapters(
+  raw: Partial<FrameworkConfig> & { materialized_adapters?: unknown },
+  fallback: FrameworkConfig,
+): string[] | undefined {
+  const fromRaw = raw.materialized_adapters;
+  if (Array.isArray(fromRaw) && fromRaw.length > 0) {
+    const names = fromRaw
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map(x => x.trim());
+    if (names.length > 0) return [...new Set(names)];
+  }
+  if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) {
+    return [raw.agent_adapter.trim()];
+  }
+  if (fallback.materialized_adapters?.length) {
+    return fallback.materialized_adapters;
+  }
+  if (fallback.agent_adapter) {
+    return [fallback.agent_adapter];
+  }
+  return ['generic'];
+}
+
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
   const project_profile = normalizeProjectProfile(raw.project_profile, raw.project_type);
   const fallback = buildDefaultConfig(project_profile.name);
@@ -730,6 +871,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     project_type,
     project_profile,
     agent_adapter: raw.agent_adapter ?? fallback.agent_adapter,
+    materialized_adapters: normalizeMaterializedAdapters(raw, fallback),
     architecture: raw.architecture
       ? normalizeArchitecture(raw.architecture, fallback.architecture)
       : fallback.architecture,
@@ -747,6 +889,21 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
     tools: normalizeTools(raw.tools),
   };
+}
+
+/**
+ * 写盘前硬校验 candidate config（normalize + architecture / state_machine / agent-bundle）。
+ * 与 `loadFrameworkConfigInternal` 校验层级一致（不含 local merge）。
+ * **返回值仅供校验链路使用**；ensure-config 落盘须用 `sanitizeProjectConfigForInitWrite(configWritePayload)`。
+ */
+export function validateFrameworkConfigWriteCandidate(raw: Partial<FrameworkConfig>): FrameworkConfig {
+  const config = normalizeConfig(raw);
+  validateArchitectureDsl(config.architecture);
+  if (config.state_machine) {
+    validateStateMachine(config.state_machine);
+  }
+  validateAgentBundleForConfig(config);
+  return config;
 }
 
 /**

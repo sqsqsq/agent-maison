@@ -61,8 +61,8 @@ deprecated_artifacts:
 post_install_hooks: []
 
 notes: |
-  - 提供 9 份 slash 路由模板：Skill 0（catalog-bootstrap / glossary-bootstrap）、
-    Skill 1~6、以及 Skill 00（framework-init.md）。
+  - 提供 10 份 slash 路由模板：Skill 0（catalog-bootstrap / glossary-bootstrap）、
+    Skill 1~6、Skill 00（framework-init.md）与 Skill 00b（framework-setup.md）。
   - 模板里的 `../../framework/skills/<n>/SKILL.md` 相对路径假设 .claude/commands/
     在实例工程根下（与 `commands.target_dir` 一致），且仓库内含 `framework/` 子目录布局；移植时以本 adapter.yaml 的
     `target_*` 为准，不因具体业务仓名而异。

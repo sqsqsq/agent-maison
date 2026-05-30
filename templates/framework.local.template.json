@@ -1,0 +1,16 @@
+{
+  "$schema_docs": {
+    "description": "Personal framework settings (gitignored). Written by framework-setup Skill.",
+    "fields": {
+      "agent_adapter": "This developer's active tool: claude | cursor | generic",
+      "toolchain.devEcoStudio.installPath": "DevEco Studio install root on this machine"
+    }
+  },
+  "schema_version": "1.0",
+  "agent_adapter": "claude",
+  "toolchain": {
+    "devEcoStudio": {
+      "installPath": ""
+    }
+  }
+}

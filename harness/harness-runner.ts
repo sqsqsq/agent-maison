@@ -55,6 +55,9 @@ import {
   featurePhaseReportsDir,
 } from './config';
 import {
+  evaluatePersonalSetupGate,
+} from './scripts/utils/personal-setup-gate';
+import {
   mergeAndWritePhaseState,
   tryValidateReceipt,
   runSyncClosure,
@@ -269,6 +272,18 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
+
+  const personalSetupExemptPhases = new Set<Phase>(['init', 'docs', 'catalog', 'glossary']);
+  if (!personalSetupExemptPhases.has(phase)) {
+    const gate = evaluatePersonalSetupGate(projectRoot);
+    if (!gate.ok) {
+      console.error(`   ✗ ${gate.message.replace(/\n/g, '\n     ')}`);
+      console.error(
+        '     请先在本工程根执行 framework-setup（Skill 00b），或修正 materialized_adapters / 物化产物后再跑 feature phase。',
+      );
+      process.exit(1);
+    }
+  }
 
   if (phase === 'testing' && feature === '_adhoc') {
     console.error(

@@ -8,6 +8,8 @@
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
+**Personal setup（BLOCKER）**：跑 feature harness 前须 [personal-setup-gate](../reference/personal-setup-gate.md) 通过；否则引导 `/framework-setup`。
+
 ### Feature 归档定位协议（本阶段是消费者）
 
 进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。

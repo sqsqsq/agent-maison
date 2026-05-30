@@ -1,8 +1,18 @@
-# Agent Adapter 选择（跳板）
+# Adapter 与物化清单（编排化 · Skill 00 S2）
 
-执行 **Skill 00 · Step 0.2.5 / §0.2.5.1** 时：
+> **项目 init** 使用 registry **`init.materialized_adapters`**（多选 checkbox），写入 `framework.config.json` → `materialized_adapters[]`。  
+> **个人 active adapter** 使用 **`/framework-setup`** + registry **`setup.adapter`**（只能从已物化项中选）。
 
-1. **推荐逻辑与路径速查**：[framework/agents/README.md](../../../agents/README.md)（含「Adapter 选定建议」「切换 adapter 安全提示」「落盘职责划分」与指纹启发）。
-2. **Widget 固定选项文案（BLOCKER 逐字引用）**：[confirmation-registry.yaml](../../reference/confirmation-registry.yaml) `init.adapter` options + [templates/adapter-widget-options.md](../templates/adapter-widget-options.md)（slash frontmatter 措辞对齐）。
+## 候选来源
 
-遵守 `SKILL.md` 同一 Step 的 BLOCKER（显式选定、`agent_adapter` 落盘时机、禁止自造路径等）。
+扫描 `framework/agents/*/adapter.yaml` 的 `adapter_name` + `description`；推荐逻辑见 [framework/agents/README.md](../../../agents/README.md)「materialized_adapters 多选建议」。
+
+## BLOCKER
+
+- S2 须 **`init.materialized_adapters`** widget / 编号菜单；**禁止**沿用 legacy `init.adapter` 单选作为项目 init 唯一入口。
+- **禁止**在 project init 写入 `framework.local.json` 或选择 personal active adapter。
+- `generic` 物化时同批收集 `paths.agent_bundle_root` + `agent_bundle_skill_mode`（写入 S2 `configWritePayload`）。
+
+## 决策复述
+
+用户选定后复述：`materialized_adapters=[...]` 及将物化的入口/目录（见 agents README 产物速查表）。

@@ -34,6 +34,10 @@ import {
   DEFAULT_REPORTS_DIR_PATTERN,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
+import {
+  LOCAL_SCHEMA_VERSION,
+  type FrameworkLocalConfig,
+} from './framework-local-config';
 
 /** 单条补缺规则。`path` 为点分路径（如 `paths.extension_dir`、`state_machine.ttl_hours`）。 */
 export interface BackfillField {
@@ -225,6 +229,48 @@ function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
  * UPDATE 模式可被自动 modernize 的迁移规则（SSOT）。
  * 与 BACKFILL 不同：会修改/删除已有 key。
  */
+function projectHasLegacyPersonalFields(raw: Record<string, unknown>): boolean {
+  if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) return true;
+  const tc = raw.toolchain;
+  if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return false;
+  const deveco = (tc as Record<string, unknown>).devEcoStudio;
+  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return false;
+  const installPath = (deveco as Record<string, unknown>).installPath;
+  return typeof installPath === 'string' && installPath.trim().length > 0;
+}
+
+/** 从项目级 legacy config 构造待写入 framework.local.json 的内容（不修改 raw）。 */
+export function buildLocalFromProjectLegacy(raw: unknown): FrameworkLocalConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const local: FrameworkLocalConfig = { schema_version: LOCAL_SCHEMA_VERSION };
+  let hasAny = false;
+  if (typeof obj.agent_adapter === 'string' && obj.agent_adapter.trim()) {
+    local.agent_adapter = obj.agent_adapter.trim();
+    hasAny = true;
+  }
+  const tc = obj.toolchain;
+  if (tc && typeof tc === 'object' && !Array.isArray(tc)) {
+    const deveco = (tc as Record<string, unknown>).devEcoStudio;
+    if (deveco && typeof deveco === 'object' && !Array.isArray(deveco)) {
+      const installPath = (deveco as Record<string, unknown>).installPath;
+      const hvigorBin = (deveco as Record<string, unknown>).hvigorBin;
+      const ip = typeof installPath === 'string' ? installPath.trim() : '';
+      const hb = typeof hvigorBin === 'string' ? hvigorBin.trim() : '';
+      if (ip || hb) {
+        local.toolchain = {
+          devEcoStudio: {
+            ...(ip ? { installPath: ip } : {}),
+            ...(hb ? { hvigorBin: hb } : {}),
+          },
+        };
+        hasAny = true;
+      }
+    }
+  }
+  return hasAny ? local : null;
+}
+
 export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
   {
     id: 'project_type_to_sub_variant',
@@ -268,6 +314,57 @@ export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
       }
       pp.sub_variant = 'app';
       return { applied: true, summary: '补全 project_profile.sub_variant=app' };
+    },
+  },
+  {
+    id: 'extract_personal_to_local',
+    note: '外迁 agent_adapter / DevEco installPath 到 framework.local.json；项目 config 保留 materialized_adapters',
+    detect: raw =>
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? projectHasLegacyPersonalFields(raw as Record<string, unknown>)
+        : false,
+    apply: base => {
+      let changed = false;
+      const adapter =
+        typeof base.agent_adapter === 'string' && base.agent_adapter.trim()
+          ? base.agent_adapter.trim()
+          : null;
+      const ma = base.materialized_adapters;
+      const hasMa = Array.isArray(ma) && ma.length > 0;
+      if (adapter && !hasMa) {
+        base.materialized_adapters = [adapter];
+        changed = true;
+      } else if (adapter && hasMa && !ma.includes(adapter)) {
+        base.materialized_adapters = [...ma, adapter];
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'agent_adapter')) {
+        delete base.agent_adapter;
+        changed = true;
+      }
+      const tc = base.toolchain;
+      if (tc && typeof tc === 'object' && !Array.isArray(tc)) {
+        const row = tc as Record<string, unknown>;
+        const deveco = row.devEcoStudio;
+        if (deveco && typeof deveco === 'object' && !Array.isArray(deveco)) {
+          const d = deveco as Record<string, unknown>;
+          const installPath = typeof d.installPath === 'string' ? d.installPath.trim() : '';
+          const hvigorBin = typeof d.hvigorBin === 'string' ? d.hvigorBin.trim() : '';
+          if (installPath || hvigorBin) {
+            if (installPath) delete d.installPath;
+            if (hvigorBin) delete d.hvigorBin;
+            if (Object.keys(d).length === 0) delete row.devEcoStudio;
+            if (Object.keys(row).length === 0) delete base.toolchain;
+            changed = true;
+          }
+        }
+      }
+      return {
+        applied: changed,
+        summary: changed
+          ? '已外迁 personal 字段（agent_adapter / DevEco）并写入 materialized_adapters'
+          : 'personal 字段已外迁',
+      };
     },
   },
 ];
@@ -558,4 +655,44 @@ function countLeafKeys(value: unknown): number {
     }
   }
   return n;
+}
+
+/** ensure-config 写盘禁止落盘的顶层 legacy / personal 键（与 MIGRATION_RULES / template SSOT 对齐） */
+export const PROJECT_CONFIG_INIT_WRITE_FORBIDDEN_TOP_KEYS = [
+  'agent_adapter',
+  'project_type',
+] as const;
+
+function stripPersonalDevEcoFromToolchain(obj: Record<string, unknown>): void {
+  const tc = obj.toolchain;
+  if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return;
+  const tcObj = tc as Record<string, unknown>;
+  const deveco = tcObj.devEcoStudio;
+  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return;
+  const devecoObj = { ...(deveco as Record<string, unknown>) };
+  delete devecoObj.installPath;
+  delete devecoObj.hvigorBin;
+  if (Object.keys(devecoObj).length === 0) {
+    delete tcObj.devEcoStudio;
+  } else {
+    tcObj.devEcoStudio = devecoObj;
+  }
+  if (Object.keys(tcObj).length === 0) {
+    delete obj.toolchain;
+  }
+}
+
+/**
+ * ensure-config 写盘专用：校验走 normalize/validate，落盘仅保留 Skill 提供的项目级字段。
+ * 禁止 normalize 回填 agent_adapter / legacy project_type / personal DevEco 路径。
+ */
+export function sanitizeProjectConfigForInitWrite(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  for (const key of PROJECT_CONFIG_INIT_WRITE_FORBIDDEN_TOP_KEYS) {
+    delete out[key];
+  }
+  stripPersonalDevEcoFromToolchain(out);
+  return out;
 }

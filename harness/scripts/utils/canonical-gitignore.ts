@@ -25,6 +25,7 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   '**/tmp_hypium/',
   '/doc/app-snapshot-cache/',
   '/doc/features/_adhoc/',
+  'framework.local.json',
 ];
 
 /** SKILL 5.4.5.2 等价覆盖映射 */
@@ -89,6 +90,7 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     '/doc/app-snapshot-cache/',
   ],
   '/doc/features/_adhoc/': ['doc/features/_adhoc/', 'doc/features/_adhoc', '/doc/features/_adhoc/'],
+  'framework.local.json': ['framework.local.json'],
 };
 
 interface CanonicalSection {
@@ -127,6 +129,10 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
   {
     header: '# Skill 6 device-testing local artifacts (profile-dependent; dirs may not exist yet)',
     patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
+  },
+  {
+    header: '# Personal framework settings (per developer, gitignored)',
+    patterns: ['framework.local.json'],
   },
 ];
 

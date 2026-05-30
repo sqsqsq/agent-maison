@@ -27,6 +27,7 @@ const CLAUDE_SLASH_COMMANDS = [
   'commands/catalog-bootstrap.md',
   'commands/glossary-bootstrap.md',
   'commands/framework-init.md',
+  'commands/framework-setup.md',
 ] as const;
 const ADAPTER_NAMES = ['claude', 'cursor', 'generic'] as const;
 
@@ -115,6 +116,8 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   }
 
   results.push(...lintRegistryOptionsSchema(registryText, registryRel));
+  results.push(...lintInitSetupNoFreeText(registryText, registryRel));
+  results.push(...lintInitSetupPromptsAndTemplates(layout));
   results.push(...lintSharedLayerNoToolNames(layout));
   results.push(...lintAdapterInteractionRenderers(layout));
   results.push(...lintClaudeInteractionTemplates(layout));
@@ -166,6 +169,230 @@ function lintSharedLayerNoToolNames(layout: RepoLayout): CheckResult[] {
           `${rel} 共享层不得出现 AskUserQuestion/AskQuestion`,
           [rel],
           '将工具名移至 adapter interaction-renderer 或 commands',
+        ));
+      }
+    }
+  }
+  return results;
+}
+
+const INIT_SETUP_REGISTRY_IDS = new Set([
+  'init.task_plan',
+  'init.task_decision',
+  'init.materialized_adapters',
+  'init.project_profile',
+  'init.architecture_preset',
+  'init.intra_layer_deps',
+  'init.intra_layer_deps.matrix',
+  'init.create_downgrade',
+  'setup.adapter',
+  'setup.deveco_path',
+]);
+
+const INIT_SETUP_PROMPT_TEMPLATE_FORBIDDEN: Array<{ id: string; re: RegExp; message: string }> = [
+  {
+    id: 'init_setup_fully_custom',
+    re: /完全自定义/,
+    message: 'init/setup 禁止「完全自定义」对话分支；改用手动编辑 framework.config.json',
+  },
+  {
+    id: 'init_setup_collect_fields',
+    re: /收集字段/,
+    message: 'init/setup 禁止对话「收集字段」',
+  },
+  {
+    id: 'init_setup_manual_assemble_json',
+    re: /手工拼装\s*JSON/,
+    message: 'init/setup 禁止对话手工拼装 JSON',
+  },
+  {
+    id: 'init_setup_item_by_item_confirm',
+    re: /逐项确认/,
+    message: 'init/setup 禁止 architecture 逐项确认问卷',
+  },
+  {
+    id: 'init_setup_append_questionnaire',
+    re: /追加问卷/,
+    message: 'init/setup 禁止追加问卷交互',
+  },
+  {
+    id: 'init_setup_followup_sublayer',
+    re: /继续追问/,
+    message: 'init/setup 禁止对话追问 sublayer 字段',
+  },
+  {
+    id: 'init_setup_sublayer_questionnaire',
+    re: /子层问卷/,
+    message: 'init/setup 禁止子层问卷；sublayer 须在 preset/磁盘 JSON 中预置',
+  },
+  {
+    id: 'init_setup_questionnaire_collect',
+    re: /问卷.*收集|收集.*问卷/,
+    message: 'init/setup 禁止问卷式收集 architecture 字段',
+  },
+];
+
+function initSetupPromptLineAllowed(line: string): boolean {
+  return /禁止|不得|STOP|反模式|❌|已下线|非对话/.test(line);
+}
+
+function listInitSetupPromptTemplateFiles(layout: RepoLayout): string[] {
+  const roots = [
+    frameworkAbs(layout, 'skills', '00-framework-init', 'prompts'),
+    frameworkAbs(layout, 'skills', '00-framework-init', 'templates'),
+  ];
+  const out: string[] = [];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    const walk = (dir: string) => {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, ent.name);
+        if (ent.isDirectory()) walk(abs);
+        else if (ent.name.endsWith('.md')) out.push(abs);
+      }
+    };
+    walk(root);
+  }
+  return out;
+}
+
+/** 对单文件逐行扫描 init/setup 禁止的自由文本问卷模式 */
+function lintInitSetupForbiddenPatternsInFile(projectRoot: string, abs: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const rel = path.relative(projectRoot, abs).replace(/\\/g, '/');
+  const lines = fs.readFileSync(abs, 'utf-8').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (initSetupPromptLineAllowed(line)) continue;
+    for (const rule of INIT_SETUP_PROMPT_TEMPLATE_FORBIDDEN) {
+      if (rule.re.test(line)) {
+        results.push(blocker(
+          rule.id,
+          `${rule.message}（${rel}:${i + 1}）`,
+          [rel],
+        ));
+        break;
+      }
+    }
+  }
+  return results;
+}
+
+/** 扫描 00-framework-init prompts/templates 与 user-confirmation-ux SSOT，阻断 architecture 自由文本问卷后门 */
+function lintInitSetupPromptsAndTemplates(layout: RepoLayout): CheckResult[] {
+  const results: CheckResult[] = [];
+  for (const abs of listInitSetupPromptTemplateFiles(layout)) {
+    results.push(...lintInitSetupForbiddenPatternsInFile(layout.projectRoot, abs));
+  }
+  const ssotAbs = frameworkAbs(layout, 'skills', 'reference', 'user-confirmation-ux.md');
+  if (fs.existsSync(ssotAbs)) {
+    results.push(...lintInitSetupForbiddenPatternsInFile(layout.projectRoot, ssotAbs));
+  }
+  return results;
+}
+
+/** init/setup registry 禁止 custom / 自由路径 / legacy Q1=y 通道 */
+function lintInitSetupNoFreeText(registryText: string, registryRel: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  if (/\n  - id: init\.populated_diff\b/.test(registryText)) {
+    results.push(blocker(
+      'registry_init_populated_diff_removed',
+      'registry 不得保留 init.populated_diff（已下线，改用 init.task_decision）',
+      [registryRel],
+    ));
+  }
+  if (/\n  - id: init\.adapter\b/.test(registryText)) {
+    results.push(blocker(
+      'registry_init_adapter_removed',
+      'registry 不得保留 init.adapter（已下线，改用 init.materialized_adapters + setup.adapter）',
+      [registryRel],
+    ));
+  }
+  for (const block of registryText.split(/\n  - id:/).slice(1)) {
+    const skillMatch = block.match(/\n    skill: "(00-framework-init|00b-framework-setup)"/);
+    if (!skillMatch) continue;
+    const idMatch = block.match(/^ ([a-z0-9_.]+)/);
+    const id = idMatch?.[1] ?? '?';
+    for (const labelMatch of block.matchAll(/\n        label: "(.+)"/g)) {
+      const label = labelMatch[1] ?? '';
+      if (/子层问卷|追加问卷/.test(label)) {
+        results.push(blocker(
+          'registry_init_setup_no_questionnaire_label',
+          `registry ${id} (${skillMatch[1]}) label 仍含问卷交互：${label}`,
+          [registryRel],
+        ));
+        break;
+      }
+      if (/复述|重复.*名|须在本轮/.test(label)) {
+        results.push(blocker(
+          'registry_init_setup_no_repeat_name_label',
+          `registry ${id} (${skillMatch[1]}) label 暗示自由复述：${label}`,
+          [registryRel],
+        ));
+        break;
+      }
+    }
+    for (const portableMatch of block.matchAll(/\n        portable: "(.+)"/g)) {
+      const portable = portableMatch[1] ?? '';
+      if (/复述|重复.*名|须在本轮/.test(portable)) {
+        results.push(blocker(
+          'registry_init_setup_no_repeat_name_portable',
+          `registry ${id} (${skillMatch[1]}) portable 暗示自由复述：${portable}`,
+          [registryRel],
+        ));
+        break;
+      }
+    }
+  }
+  const entryBlocks = registryText.split(/\n  - id:/).slice(1);
+  for (const block of entryBlocks) {
+    const idMatch = block.match(/^ ([a-z0-9_.]+)/);
+    if (!idMatch || !INIT_SETUP_REGISTRY_IDS.has(idMatch[1]!)) continue;
+    const id = idMatch[1]!;
+    if (/\n      - value: custom\b/.test(block)) {
+      results.push(blocker(
+        'registry_init_setup_no_custom_value',
+        `registry ${id} 禁止 value: custom（init/setup 须 select-only）`,
+        [registryRel],
+      ));
+    }
+    const legacyQ = block.match(/\n    portable_menu: "(.+)"/);
+    if (legacyQ && /Q1=|all=y|all=n|\by=|\bN=/.test(legacyQ[1] ?? '')) {
+      results.push(blocker(
+        'registry_init_setup_legacy_q_portable_menu',
+        `registry ${id} portable_menu 仍含 Q1/y/N 通道：${legacyQ[1]}`,
+        [registryRel],
+      ));
+    }
+    for (const portableMatch of block.matchAll(/\n        portable: "(.+)"/g)) {
+      const portable = portableMatch[1] ?? '';
+      if (/^y=|^N=|Q1=|all=y|all=n/.test(portable)) {
+        results.push(blocker(
+          'registry_init_setup_legacy_q_portable',
+          `registry ${id} option portable 仍含 Q1/y/N 通道：${portable}`,
+          [registryRel],
+        ));
+        break;
+      }
+    }
+    for (const labelMatch of block.matchAll(/\n        label: (.+)/g)) {
+      const label = labelMatch[1] ?? '';
+      if (/字符串|自定义路径|自由/.test(label)) {
+        results.push(blocker(
+          'registry_init_setup_no_freeform_label',
+          `registry ${id} option label 暗示自由输入：${label}`,
+          [registryRel],
+        ));
+        break;
+      }
+    }
+    for (const notesMatch of block.matchAll(/\n    notes: "(.+)"/g)) {
+      const notes = notesMatch[1] ?? '';
+      if (/自由路径|自由文本|自定义 name/.test(notes) && !/禁止/.test(notes)) {
+        results.push(blocker(
+          'registry_init_setup_freeform_notes',
+          `registry ${id} notes 仍允许自由输入：${notes}`,
+          [registryRel],
         ));
       }
     }

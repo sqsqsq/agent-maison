@@ -31,11 +31,11 @@ framework/agents/
 1. **adapter 不承担任何 skill 逻辑**——skill 本身是纯 Markdown，adapter 只负责
    把 skill 入口按该 agent 的约定暴露出来（slash / 跳板 / rules）。
 2. **adapter 不修改 framework 自身**——它只产出**实例工程根**的文件。
-3. **adapter 之间互斥**——一个实例工程 `framework.config.json.agent_adapter`
-   只允许选一个 adapter；切换时需由初始化 Skill 清理旧产物。
-4. **模板共享优先**：各 adapter 的 `agent_entry_file` 共用渲染源
-   `framework/templates/AGENTS.md.template`；`target_path`（实例根写入的文件名）由各自
-   `adapter.yaml` 声明。
+3. **双 adapter 模型（编排化重构）**：
+   - **`materialized_adapters: string[]`**（项目级，写入 `framework.config.json`）：本仓库要生成/维护哪些 adapter 产物。
+   - **`agent_adapter`**（个人级，`framework.local.json`，gitignored）：开发者当前使用的 adapter；由 **`/framework-setup`** 写入，**不在项目 init 中选择**。
+   - 物化时 render-env 用**正在物化的 adapter**，不把 personal active adapter 写进提交产物。
+4. **模板共享优先**：各 adapter 的 `agent_entry_file` 共用 `framework/templates/AGENTS.md.template`。
 
 ## Skill 跳板：禁止「双源分叉」（适用生成跳板的 adapter）
 
@@ -46,13 +46,24 @@ framework/agents/
 - **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（Skill 00）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
 
-## Init Skill：`adapter.yaml` 产物速查（与 Step 4 对齐）
+## Init Skill：编排流（Skill 00 · S1–S4）
+
+项目级 **`/framework-init`** 不再逐步 Q1=y；流程为：
+
+1. **S1** — `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`
+2. **S2** — `init.task_plan` + `init.materialized_adapters` + `init.task_decision`（手动）
+3. **S3** — `--execute --decision-file` + `context.json`（含 `configWritePayload`）
+4. **S4** — `buildRunSummary(run-log)`
+
+个人 **`/framework-setup`**（Skill 00b）写 `framework.local.json`；feature phase 前须完成（harness-runner 在 `agent_adapter` 来源为 `fallback` 时阻断）。
+
+## Init Skill：`adapter.yaml` 产物速查（与物化任务对齐）
 
 | `adapter_name`（目录名） | 入口文件（`agent_entry_file.target_path`） | 典型额外产物 |
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
-| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`、`.cursor/rules/framework.mdc` |
+| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（含 `00-framework-init` / `00b-framework-setup`）、`.cursor/rules/framework.mdc` |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
 
@@ -67,30 +78,35 @@ framework/agents/
 | `settings_file`（可选）| **原样复制**（模板内仅允许使用该客户端定义的 `${…}` 变量） | `templates/settings.json` → `.claude/settings.json` |
 | `hooks`（可选）| **整目录原样复制** | `templates/hooks/*.mjs` → `.claude/hooks/*.mjs` |
 
-Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `target_path` / `target_dir`（含 `settings_file` / `hooks`）；对 **claude** adapter 而言即 `.claude/commands/**`、`.claude/agents/**`、`.claude/settings.json`、`.claude/hooks/**` 等——**宁可对照本 adapter 的 `adapter.yaml` 列全路径，也不要凭印象漏扫**。
+Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `target_path` / `target_dir`（含 `settings_file` / `hooks`）；对 **claude** adapter 而言即 `.claude/commands/**`、`.claude/agents/**`、`.claude/settings.json`、`.claude/hooks/**` 等——**宁可对照本 adapter 的 `adapter.yaml` 列全路径，也不要凭印象漏扫**（planner 任务 `materialize-adapter-file:*` / `materialize-adapter:<name>` 驱动执行）。
 
-## Adapter 选定建议（承接 Skill 00 Step 0.2.5）
+## `materialized_adapters` 多选建议
 
-扫描 `framework/agents/` 下含 `adapter.yaml` 的一级子目录即候选 adapter；对每个候选展示 YAML 内的 `adapter_name` 与 `description`（多行描述取首段）。
+| 团队情况 | 建议 `materialized_adapters` |
+|----------|------------------------------|
+| 全员 Claude Code | `["claude"]` |
+| 全员 Cursor | `["cursor"]` |
+| 混合 IDE | `["claude","cursor"]` |
+| Chrys / 自定义 bundle | `["generic"]`（并配置 `paths.agent_bundle_root`） |
 
-**默认建议逻辑（可被用户覆盖）**：
+切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
-| 用户环境线索 | 建议 adapter |
-|--------------|--------------|
-| 已大量使用 **Claude Code** 的 slash 命令流程 | `claude` |
-| 已大量使用 **Cursor** 的技能跳板 / workspace rules | `cursor` |
-| 使用 Chrys / `.agents/skills/` 等 strict 加载器，或需自定义 agent 目录名 | `generic`（配置 `paths.agent_bundle_root` + 默认 `inline` 物化） |
+## Adapter 选定建议（personal setup · Skill 00b）
 
-切换 adapter 时：旧入口与其它产物路径可能与新 adapter **不一致**（例如 `.claude/` 与 `.cursor/` 可能在仓库中并存）；须列出「建议删除或手工处理的遗留目录」请用户确认，**不要自动 `rm -rf`**。
+**项目 init 不再选 active adapter。** 个人 setup（`setup.adapter`）只能从 **`materialized_adapters` 已物化** 的目录名中选；未物化则引导回项目 init。
 
-**UPDATE 模式每轮 init**：即使 `framework.config.json` 里已有 `agent_adapter`，仍须用户在**本轮对话**给出具体 `adapter_name` 或 `保持 <name>`——不得仅凭 config 或 harness 回落即进入体检。详见 [framework/skills/00-framework-init/SKILL.md](../skills/00-framework-init/SKILL.md) Step **0.2.5.1**。Claude Code 下可通过 `/framework-init` slash **frontmatter choice** 前置注入 adapter，跳过 adapter 表格。
+| 用户环境线索 | setup 建议 |
+|--------------|------------|
+| 日常用 Claude Code slash | personal `claude` |
+| 日常用 Cursor skills/rules | personal `cursor` |
+| 使用 `.agents` / `.codex` inline 加载 | personal `generic` |
 
 ## Claude Code 确认 Widget（interaction-renderer）
 
 - **工具名**：`AskUserQuestion`（Claude adapter 专属；见 `.claude/rules/interaction-renderer.md`）。
 - **会话规则**：`.claude/rules/interaction-renderer.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**BLOCKER**：所有用户选择须 AskUserQuestion + portable 脚注；选项文案 SSOT 在 [confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml)。
 - **slash 强约束**：各 `.claude/commands/*.md` 含一句 AskUserQuestion BLOCKER，链 interaction-renderer。
-- **init BLOCKER**：Skill 00 §0.2.5.1 / Step 3.x / §0.3.4 + registry `init.*` options；`/framework-init` slash frontmatter。
+- **init BLOCKER**：Skill 00 S2 — `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal — Skill 00b `setup.*`。
 - **实例下发**：vendor 升级后用户自行 `/framework-init` UPDATE；check-init UPDATE 会自动 `backup_delete` 废弃的 `confirmation-ux.md` / `widget-options/`。
 - **Cursor 对称**：`.cursor/rules/interaction-renderer.mdc`（AskQuestion）。
 

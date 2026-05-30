@@ -58,7 +58,7 @@
     "name": "hmos-app",
     "sub_variant": "app"
   },
-  "agent_adapter": "generic",
+  "materialized_adapters": ["claude", "cursor"],
 
   "architecture": {
     "outer_layers": [

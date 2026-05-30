@@ -4,7 +4,7 @@
   "title": "framework.config.json",
   "description": "实例工程根目录 framework.config.json 的结构化描述（project_name 为实例名）；权威解析与默认合并逻辑见 framework/harness/config.ts",
   "type": "object",
-  "required": ["schema_version", "project_name", "agent_adapter", "architecture", "paths"],
+  "required": ["schema_version", "project_name", "architecture", "paths"],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -25,7 +25,15 @@
       },
       "additionalProperties": false
     },
-    "agent_adapter": { "type": "string" },
+    "agent_adapter": {
+      "type": "string",
+      "description": "Deprecated in project config: use framework.local.json. Kept for legacy migration."
+    },
+    "materialized_adapters": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Project-level list of adapter artifacts to materialize (claude, cursor, generic)"
+    },
     "architecture": { "type": "object" },
     "paths": {
       "type": "object",

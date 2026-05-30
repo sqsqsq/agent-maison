@@ -14,6 +14,8 @@
 //                     AI 仅原样搬运）
 //   - 由 PhaseChecker 接口对齐 harness-runner.ts 调度（与 catalog/glossary/
 //     docs 三个全局阶段同型），不单独跑 main()。
+//   - **只读 probe**：本脚本体检阶段零项目根写盘；gitignore / mechanism sync /
+//     deprecated cleanup 等副作用仅由 init-orchestrate S3 任务执行。
 //
 // 元阶段三件套**刻意不对称**：
 //   - 不接 verify-init.md（init 阶段 AI 语义审无可审）
@@ -55,7 +57,6 @@ import {
   listMissingCanonicalPatterns,
   parseGitignoreLines,
   patternIsCovered,
-  type GitignoreEnsureResult,
 } from './utils/canonical-gitignore';
 
 // --------------------------------------------------------------------------
@@ -456,7 +457,7 @@ export function applyDeprecatedArtifactsCleanup(
   mode: InitMode,
 ): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
-  if (mode !== 'update' || process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
+  if (mode !== 'update') {
     return { cleaned, backupRelDir: null };
   }
   const entries = adapter.deprecatedArtifacts;
@@ -796,9 +797,6 @@ function applyAgentBundleInlineSync(
   projectRoot: string,
   bundle: ResolvedAgentBundlePaths,
 ): { syncedFiles: number } {
-  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
-    return { syncedFiles: 0 };
-  }
   const outcome = materializeAgentBundleSkills({
     projectRoot,
     frameworkDir: FRAMEWORK_ROOT,
@@ -807,6 +805,8 @@ function applyAgentBundleInlineSync(
   });
   return { syncedFiles: outcome.filesWritten.length };
 }
+
+export { applyAgentBundleInlineSync };
 
 // --------------------------------------------------------------------------
 // 占位符渲染
@@ -963,25 +963,25 @@ interface InspectorEnv {
 }
 
 function strategyText(line: number, status: InspectionStatus): string {
-  // 与 SKILL 0.3.2 策略矩阵一一对应；保持简短便于 stdout 表显示。
+  // 与 init-orchestrate S3 任务名对齐；stdout 表「计划动作」列仅供人读。
   const m: Record<number, Record<InspectionStatus, string>> = {
     1: {
-      MISSING: 'Step 3.5 直接写',
-      EMPTY: '等同 MISSING（直接写）',
-      POPULATED: 'Step 3.5 前 diff + 用户 y（或与 Q1 决策一致的动作）',
+      MISSING: 'S3 ensure-config（Skill 提供 JSON）',
+      EMPTY: '等同 MISSING',
+      POPULATED: 'S2 init.task_decision → S3 ensure-config / merge',
     },
     2: {
-      MISSING: 'Step 4.1 直接写',
+      MISSING: 'S3 materialize-entry-file',
       EMPTY: '保留现有文件（不重写）',
-      POPULATED: 'Step 4.1 前 diff + 用户 y',
+      POPULATED: 'S2 init.task_decision → S3 materialize-entry-file',
     },
     3: {
-      MISSING: '直接拷贝',
+      MISSING: 'S3 materialize-adapter-file / 拷贝',
       EMPTY: '保留现有文件（不重写）',
-      POPULATED: '逐文件 diff + 用户 y（自建文件保留）',
+      POPULATED: 'S2 init.task_decision → S3 materialize-adapter-file',
     },
     4: {
-      MISSING: 'Step 5.2 写骨架',
+      MISSING: 'S3 write-architecture（Skill 骨架）',
       EMPTY: '保留现有文件（不重写）',
       POPULATED: '默认跳过（不重置用户已迭代文档）',
     },
@@ -1006,19 +1006,19 @@ function strategyText(line: number, status: InspectionStatus): string {
       POPULATED: '不进入、不扫描、不比对',
     },
     9: {
-      MISSING: 'Step 5.5 npm install',
+      MISSING: 'S3 harness-install',
       EMPTY: '不适用',
-      POPULATED: 'Step 5.5 幂等跳过',
+      POPULATED: 'S3 harness-install 幂等跳过',
     },
     10: {
-      MISSING: 'Step 5.6 探测并写入 installPath',
+      MISSING: 'personal /framework-setup（setup.deveco_path）',
       EMPTY: '等同 MISSING',
-      POPULATED: 'Step 5.6 跳过',
+      POPULATED: 'framework.local.json 已配置，跳过',
     },
     11: {
-      MISSING: 'check-init 体检前已 ensureCanonicalGitignore（见 stderr / check-init.json）',
-      EMPTY: '等同 MISSING（体检前已 ensure）',
-      POPULATED: 'canonical 已齐备，跳过追加',
+      MISSING: 'init-orchestrate S3：ensure-gitignore 任务',
+      EMPTY: '等同 MISSING',
+      POPULATED: 'canonical 已齐备',
     },
   };
   return m[line][status];
@@ -1029,7 +1029,7 @@ function strategyText3Template(status: InspectionStatus, policy: AdapterUpdatePo
   if (status === 'MISSING') return strategyText(3, 'MISSING');
   if (status === 'EMPTY') return strategyText(3, 'EMPTY');
   if (policy === 'auto_overwrite') {
-    return 'check-init PASS：自动备份至 .framework-backup/<ts>/ 后对齐模板';
+    return 'init-orchestrate S3：sync-auto-overwrite 任务（备份后对齐模板）';
   }
   return strategyText(3, 'POPULATED');
 }
@@ -1847,7 +1847,7 @@ function inspect11(env: InspectorEnv): Inspection {
     diff_summary: `缺少 patterns:\n${missingPatterns.map(p => `  - ${p}`).join('\n')}`,
     planned_strategy: strategyText(11, 'MISSING'),
     diagnosis:
-      `ensure 已执行仍缺 ${missingPatterns.length} 条 canonical（请检查写权限或只读 .gitignore）` +
+      `缺 ${missingPatterns.length} 条 canonical patterns（S3 ensure-gitignore 任务补齐）` +
       advisoryNote,
   };
 }
@@ -1860,10 +1860,6 @@ function applyInitMechanismSync(
   projectRoot: string,
   adapter: AdapterDescriptor,
 ): { syncedFiles: number; backupRelDir: string | null } {
-  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
-    return { syncedFiles: 0, backupRelDir: null };
-  }
-
   let syncedFiles = 0;
   let backupRelDir: string | null = null;
 
@@ -1923,15 +1919,81 @@ export function inspectionsForInit034Prompt(inspections: Inspection[]): Inspecti
 // 主流程
 // --------------------------------------------------------------------------
 
+function resolveAdapterPick(
+  cfg: RawFrameworkConfig,
+  adapterHint?: string | null,
+): { name: string | null; source: string } {
+  const cli = (adapterHint ?? '').trim();
+  if (cli) return { name: cli, source: 'cli_flag:--adapter' };
+  if (cfg.agentAdapter) return { name: cfg.agentAdapter, source: 'framework.config.json:agent_adapter' };
+  return { name: null, source: '' };
+}
+
 function resolveAdapterName(ctx: CheckContext, cfg: RawFrameworkConfig): {
   name: string | null;
   source: string;
 } {
-  // 优先 CLI --adapter；UPDATE 模式回落到 framework.config.json.agent_adapter
-  const cli = (ctx.adapter ?? '').trim();
-  if (cli) return { name: cli, source: 'cli_flag:--adapter' };
-  if (cfg.agentAdapter) return { name: cfg.agentAdapter, source: 'framework.config.json:agent_adapter' };
-  return { name: null, source: '' };
+  return resolveAdapterPick(cfg, ctx.adapter);
+}
+
+export interface InitProbeOptions {
+  projectRoot: string;
+  /** harness --adapter 或 planner adapter override */
+  adapterHint?: string | null;
+}
+
+export interface InitProbeResult {
+  mode: InitMode;
+  adapterPick: { name: string | null; source: string };
+  adapter: AdapterDescriptor | null;
+  cfg: RawFrameworkConfig;
+  renderEnv: RenderEnv | null;
+  inspections: Inspection[];
+}
+
+function prepareAdapterForProbe(
+  adapterPick: { name: string | null; source: string },
+  cfg: RawFrameworkConfig,
+  projectRoot: string,
+): AdapterDescriptor | null {
+  if (!adapterPick.name) return null;
+  const adapter = loadAdapter(adapterPick.name);
+  if (adapter.yamlParseable && adapter.name === 'generic') {
+    const bundle = resolveBundleForInitInspect(adapterPick.name, cfg, projectRoot);
+    if (bundle) {
+      applyGenericAdapterBundle(adapter, bundle);
+    }
+  }
+  return adapter;
+}
+
+/** 纯只读 init 探测：11 项 inspection，零项目根写盘（副作用仅 init-orchestrate S3 任务） */
+export function runInitProbe(options: InitProbeOptions): InitProbeResult {
+  const cfg = loadRawFrameworkConfig(options.projectRoot);
+  const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
+  const adapterPick = resolveAdapterPick(cfg, options.adapterHint);
+  const adapter = prepareAdapterForProbe(adapterPick, cfg, options.projectRoot);
+  const renderEnv = buildRenderEnv(cfg, adapter);
+  const inspectorEnv: InspectorEnv = {
+    projectRoot: options.projectRoot,
+    cfg,
+    adapter,
+    renderEnv,
+  };
+  const inspections: Inspection[] = [
+    inspect01(inspectorEnv),
+    inspect02(inspectorEnv),
+    ...inspect03(inspectorEnv),
+    inspect04(inspectorEnv),
+    inspect05(inspectorEnv),
+    inspect06(inspectorEnv),
+    inspect07(inspectorEnv),
+    inspect08(inspectorEnv),
+    inspect09(inspectorEnv),
+    inspect10(inspectorEnv),
+    inspect11(inspectorEnv),
+  ];
+  return { mode, adapterPick, adapter, cfg, renderEnv, inspections };
 }
 
 function buildStdoutTable(report: CheckInitReport): string {
@@ -2021,14 +2083,11 @@ const checker: PhaseChecker = {
   phase: 'init',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
-    const cfg = loadRawFrameworkConfig(ctx.projectRoot);
-    const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
-
-    const adapterPick = resolveAdapterName(ctx, cfg);
+    const probe = runInitProbe({ projectRoot: ctx.projectRoot, adapterHint: ctx.adapter });
+    const { mode, adapterPick, adapter, cfg, inspections } = probe;
     const blockers: string[] = [];
 
     // 1. adapter_yaml_resolvable
-    let adapter: AdapterDescriptor | null = null;
     let adapterCheckResult: CheckResult;
     if (!adapterPick.name) {
       adapterCheckResult = {
@@ -2041,20 +2100,23 @@ const checker: PhaseChecker = {
         suggestion: '在命令行追加 --adapter <实例所选 adapter 目录名>，或检查 framework.config.json 的 agent_adapter 字段（须与 framework/agents/* 对齐）',
       };
       blockers.push('adapter_yaml_resolvable: adapter 未指定');
+    } else if (!adapter) {
+      adapterCheckResult = {
+        id: 'adapter_yaml_resolvable',
+        category: 'structure',
+        description: '选定 adapter 的 adapter.yaml 必须可解析',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: 'adapter 装载失败',
+      };
+      blockers.push('adapter_yaml_resolvable: adapter 装载失败');
     } else {
-      adapter = loadAdapter(adapterPick.name);
-      if (adapter.yamlParseable && adapter.name === 'generic') {
-        const bundle = resolveBundleForInitInspect(adapterPick.name, cfg, ctx.projectRoot);
-        if (bundle) {
-          applyGenericAdapterBundle(adapter, bundle);
-        }
-        if (cfg.exists && cfg.parseable) {
-          const root = cfg.raw?.paths?.agent_bundle_root;
-          if (!root || String(root).trim() === '') {
-            blockers.push(
-              'generic_adapter_bundle: agent_adapter=generic 时必须在 framework.config.json 中配置 paths.agent_bundle_root',
-            );
-          }
+      if (adapter.yamlParseable && adapter.name === 'generic' && cfg.exists && cfg.parseable) {
+        const root = cfg.raw?.paths?.agent_bundle_root;
+        if (!root || String(root).trim() === '') {
+          blockers.push(
+            'generic_adapter_bundle: agent_adapter=generic 时必须在 framework.config.json 中配置 paths.agent_bundle_root',
+          );
         }
       }
       if (!adapter.yamlExists) {
@@ -2130,41 +2192,7 @@ const checker: PhaseChecker = {
       };
     }
 
-    // 2b. init canonical .gitignore（体检 #11 之前幂等补齐）
-    let gitignoreEnsure: GitignoreEnsureResult | null = null;
-    if (process.env.CHECK_INIT_SKIP_GITIGNORE_SYNC !== '1') {
-      gitignoreEnsure = ensureCanonicalGitignore(ctx.projectRoot);
-      if (gitignoreEnsure.added.length > 0 && !process.env.CHECK_INIT_QUIET) {
-        process.stderr.write(
-          `[check-init] .gitignore: appended ${gitignoreEnsure.added.length} pattern(s): ` +
-            `${gitignoreEnsure.added.join(', ')}\n`,
-        );
-      }
-    }
-
-    // 3. 跑 11 项体检
-    const renderEnv = buildRenderEnv(cfg, adapter);
-    const inspectorEnv: InspectorEnv = {
-      projectRoot: ctx.projectRoot,
-      cfg,
-      adapter,
-      renderEnv,
-    };
-    const inspections: Inspection[] = [
-      inspect01(inspectorEnv),
-      inspect02(inspectorEnv),
-      ...inspect03(inspectorEnv),
-      inspect04(inspectorEnv),
-      inspect05(inspectorEnv),
-      inspect06(inspectorEnv),
-      inspect07(inspectorEnv),
-      inspect08(inspectorEnv),
-      inspect09(inspectorEnv),
-      inspect10(inspectorEnv),
-      inspect11(inspectorEnv),
-    ];
-
-    // 4. inspection_table_complete
+    // 3. 11 项体检（只读 probe，副作用见 init-orchestrate S3 任务）
     const incomplete = inspections.filter(i =>
       !['MISSING', 'EMPTY', 'POPULATED'].includes(i.status));
     const shapeOk = validateInspectionShape(inspections);
@@ -2231,31 +2259,7 @@ const checker: PhaseChecker = {
     // 6. 装配 check-init.json + stdout 体检表（#3 可展开多行；check-init.json schema_version 1.1）
     const verdict: 'PASS' | 'FAIL' = blockers.length > 0 ? 'FAIL' : 'PASS';
 
-    let mechanism_backup_rel_dir: string | null = null;
-    let mechanism_synced_files = 0;
-    let deprecated_artifacts_cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
-    if (verdict === 'PASS' && adapter) {
-      const depOutcome = applyDeprecatedArtifactsCleanup(ctx.projectRoot, adapter, mode);
-      deprecated_artifacts_cleaned = depOutcome.cleaned;
-      if (depOutcome.backupRelDir && !mechanism_backup_rel_dir) {
-        mechanism_backup_rel_dir = depOutcome.backupRelDir;
-      }
-      const syncOutcome = applyInitMechanismSync(ctx.projectRoot, adapter);
-      mechanism_backup_rel_dir = syncOutcome.backupRelDir ?? mechanism_backup_rel_dir;
-      mechanism_synced_files = syncOutcome.syncedFiles;
-      if (adapter.name === 'generic') {
-        const bundle = resolveBundleForInitInspect('generic', cfg, ctx.projectRoot);
-        if (bundle?.skillMode === 'inline') {
-          const inlineSync = applyAgentBundleInlineSync(ctx.projectRoot, bundle);
-          mechanism_synced_files += inlineSync.syncedFiles;
-        }
-      }
-    }
-
-    const reportBase: Omit<CheckInitReport, keyof {
-      mechanism_backup_rel_dir?: string | null;
-      mechanism_synced_files?: number;
-    }> = {
+    const report: CheckInitReport = {
       schema_version: '1.1',
       mode,
       adapter: adapterPick.name,
@@ -2263,22 +2267,8 @@ const checker: PhaseChecker = {
       blockers,
       verdict,
       generated_at: new Date().toISOString(),
+      gitignore_sync: null,
     };
-    const gitignore_sync =
-      gitignoreEnsure && !gitignoreEnsure.skipped
-        ? { created: gitignoreEnsure.created, added: gitignoreEnsure.added }
-        : null;
-
-    const report: CheckInitReport =
-      verdict === 'PASS'
-        ? {
-            ...reportBase,
-            mechanism_backup_rel_dir,
-            mechanism_synced_files,
-            deprecated_artifacts_cleaned,
-            gitignore_sync,
-          }
-        : { ...reportBase, gitignore_sync };
 
     let writtenPath: string | null = null;
     try {
@@ -2374,7 +2364,10 @@ export const __testing = {
   ensureCanonicalGitignore,
   parseUpdatePolicy,
   inspectionsForInit034Prompt,
+  applyDeprecatedArtifactsCleanup,
   applyInitMechanismSync,
+  applyAgentBundleInlineSync,
   applyGenericAdapterBundle,
   resolveBundleForInitInspect,
+  runInitProbe,
 };

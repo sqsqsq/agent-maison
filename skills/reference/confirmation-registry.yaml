@@ -4,57 +4,120 @@ schema_version: "2.0"
 
 entries:
   # --- Skill 00 init ---
-  - id: init.adapter
+  - id: init.materialized_adapters
     skill: "00-framework-init"
-    class: enum
-    ssot_anchor: "user-confirmation-ux.md §3.2"
-    skill_step: "§0.2.5 / §0.2.5.1"
-    portable_menu: "1=claude 2=cursor 3=generic 4=保持当前"
+    class: artifact_checkbox
+    ssot_anchor: "user-confirmation-ux.md §3.4"
+    skill_step: "S2 计划批准"
+    portable_menu: "多选 adapter 目录名（claude/cursor/generic）；须至少 1 项"
+    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]"
     options:
       - value: claude
-        label: "claude — Claude Code（CLAUDE.md + .claude/commands + .claude/agents + .claude/hooks；Skill 正文在 framework/skills/）"
-        portable: "1=claude"
+        label: "claude — 物化 Claude Code 入口与 .claude/ 产物"
+        portable: "claude"
       - value: cursor
-        label: "cursor — Cursor（AGENTS.md + .cursor/skills 跳板 + .cursor/rules）"
-        portable: "2=cursor"
+        label: "cursor — 物化 Cursor AGENTS.md 与 .cursor/ 产物"
+        portable: "cursor"
       - value: generic
-        label: "generic — 通用（AGENTS.md + {agent_bundle_root}/skills inline 或 bridge）"
-        portable: "3=generic"
-      - value: keep_current
-        label: "保持当前 — 沿用 framework.config.json 的 agent_adapter（须在本轮复述目录名）"
-        portable: "4=保持当前 config 中的 adapter（须复述目录名）"
+        label: "generic — 物化 generic bundle 入口与 skills"
+        portable: "generic"
 
-  - id: init.populated_diff
+  - id: init.task_plan
     skill: "00-framework-init"
     class: gate
     ssot_anchor: "user-confirmation-ux.md §3.1"
-    skill_step: "§0.3.4"
-    portable_menu: "1=all=y 2=all=n 3=逐项指定(Q1=y …)"
-    notes: "保留 Q1=y 严谨性；gate 1/2 映射 all=y/all=n"
+    skill_step: "S2 计划批准"
+    portable_menu: "1=智能模式全部执行 2=手动模式逐项 3=全部跳过可跳过项"
+    notes: "决策 JSON 须通过 init-orchestrate validateDecisionJson；不可跳过非 skippable 任务"
     options:
-      - value: all_y
-        label: "全部覆盖 — 等价 all=y"
-        portable: "1=all=y"
-      - value: all_n
-        label: "全部跳过 — 等价 all=n"
-        portable: "2=all=n"
-      - value: per_item
-        label: "逐项指定 — 使用 Q1=y … 格式"
-        portable: "3=逐项指定(Q1=y …)"
+      - value: smart_run
+        label: "智能模式 — 无漂移跳过，有漂移自动覆盖，一次性批准"
+        portable: "1=智能模式"
+      - value: manual_review
+        label: "手动模式 — 漂移任务逐项 init.task_decision（覆盖/保留）"
+        portable: "2=手动模式"
+      - value: skip_skippable
+        label: "跳过可跳过项 — 仅执行不可跳过任务（依赖闭包校验）"
+        portable: "3=跳过可跳过项"
+
+  - id: init.task_decision
+    skill: "00-framework-init"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S2 手动模式 / S3 执行"
+    parent: init.task_plan
+    portable_menu: "1=覆盖 2=保留"
+    notes: "纯枚举；禁止 Q1=y 自由文本逐项"
+    options:
+      - value: overwrite
+        label: "覆盖 — 按 harness 任务执行写入/同步"
+        portable: "1=覆盖"
+      - value: keep
+        label: "保留 — 保持磁盘当前内容，跳过本任务"
+        portable: "2=保留"
+
+  - id: setup.adapter
+    skill: "00b-framework-setup"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S1 选 adapter"
+    portable_menu: "从 materialized_adapters 已物化列表编号选择"
+    notes: "仅可选项目已物化 adapter；未物化须引导 framework-init"
+    options:
+      - value: from_materialized
+        label: "从已物化列表选择 — 编号对应 materialized_adapters 条目"
+        portable: "1=从已物化列表选"
+
+  - id: setup.deveco_path
+    skill: "00b-framework-setup"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S2 记录路径"
+    portable_menu: "1=采用探测路径 2=跳过"
+    notes: "写入 framework.local.json；禁止对话收自由路径字符串"
+    options:
+      - value: detected
+        label: "采用探测路径 — 使用 detect-deveco 候选列表中的路径"
+        portable: "1=采用探测路径"
+      - value: skip
+        label: "跳过 — 本轮不写入 DevEco 安装路径"
+        portable: "2=跳过"
 
   - id: init.project_profile
     skill: "00-framework-init"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
-    skill_step: "§1.6"
-    portable_menu: "用户给出 project_profile.name 字符串或编号选 preset"
+    skill_step: "S2 项目元数据"
+    portable_menu: "1=generic 2=hmos-app"
+    notes: "仅从已发布 profile 编号选择；禁止对话收自定义 name 字符串"
     options:
-      - value: preset
-        label: "选择 preset — 从 profile 列表编号选择"
-        portable: "1=选择 preset"
-      - value: custom
-        label: "自定义 — 给出 project_profile.name 字符串"
-        portable: "2=自定义 name 字符串"
+      - value: generic
+        label: "generic — 通用宿主 profile"
+        portable: "1=generic"
+      - value: hmos-app
+        label: "hmos-app — HarmonyOS 应用 profile"
+        portable: "2=hmos-app"
+
+  - id: init.architecture_preset
+    skill: "00-framework-init"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S2 架构 preset"
+    portable_menu: "1=preset_5 2=preset_3 3=keep 4=manual_stop"
+    notes: "禁止对话收集 architecture DSL；manual_edit_stop 须 STOP 写盘并指引编辑 framework.config.json"
+    options:
+      - value: preset_5_layer
+        label: "选项 A — 5 外层 + 子层 preset"
+        portable: "1=preset_5_layer"
+      - value: preset_minimal_3
+        label: "选项 B — 极简三外层"
+        portable: "2=preset_minimal_3"
+      - value: keep_existing
+        label: "选项 C — 沿用磁盘已有 architecture"
+        portable: "3=keep_existing"
+      - value: manual_edit_stop
+        label: "选项 D — STOP，手动编辑 config 后重跑"
+        portable: "4=manual_edit_stop"
 
   - id: init.intra_layer_deps
     skill: "00-framework-init"
@@ -91,39 +154,22 @@ entries:
         label: "forbid"
         portable: "3=forbid"
       - value: sublayer
-        label: "sublayer（+ 子层问卷）"
+        label: "sublayer（须 preset/磁盘已含 sublayers[]）"
         portable: "4=sublayer"
-
-  - id: init.toolchain_path
-    skill: "00-framework-init"
-    class: enum
-    ssot_anchor: "user-confirmation-ux.md §3.2"
-    skill_step: "Step 5.6 / profile-addendum §5.6.3"
-    portable_menu: "1=采用探测路径 2=自定义路径 3=跳过"
-    options:
-      - value: detected
-        label: "采用探测路径 — 使用 check-init 探测到的工具链路径"
-        portable: "1=采用探测路径"
-      - value: custom
-        label: "自定义路径 — 我要指定工具链安装路径"
-        portable: "2=自定义路径"
-      - value: skip
-        label: "跳过 — 本轮不写入工具链路径"
-        portable: "3=跳过"
 
   - id: init.create_downgrade
     skill: "00-framework-init"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "CREATE→UPDATE 降级"
-    portable_menu: "y=继续 UPDATE / N=保持 CREATE"
+    portable_menu: "1=继续 UPDATE 2=保持 CREATE"
     options:
       - value: continue_update
         label: "继续 UPDATE — 已有 config，走升级模式"
-        portable: "y=继续 UPDATE"
+        portable: "1=继续 UPDATE"
       - value: keep_create
         label: "保持 CREATE — 仍按首次落地处理"
-        portable: "N=保持 CREATE"
+        portable: "2=保持 CREATE"
 
   # --- Skill 0 catalog ---
   - id: catalog.staging_module

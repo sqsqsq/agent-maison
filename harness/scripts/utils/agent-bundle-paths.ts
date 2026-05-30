@@ -29,6 +29,8 @@ export interface ResolvedAgentBundlePaths {
 export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
   '00-framework-init':
     '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/00-framework-init/SKILL.md）',
+  '00b-framework-setup':
+    '个人 Framework 设置（agent_adapter + DevEco 路径 → framework.local.json；完整流程见 framework/skills/00b-framework-setup/SKILL.md）',
   '0-catalog-bootstrap':
     '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/0-catalog-bootstrap/SKILL.md）',
   '1-prd-design': 'PRD 撰写（完整流程见仓库 framework/skills/1-prd-design/SKILL.md）',

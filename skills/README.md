@@ -66,6 +66,7 @@ profile-skill-asset:<skill-id>/<asset_key>
 | 顺序 | Skill | 路径 | 摘要 |
 |------|--------|------|------|
 | ★ | Framework 初始化 / 升级 | [00-framework-init/SKILL.md](00-framework-init/SKILL.md) | 接入 submodule、生成/更新 config、agent 产物与 `doc/` 骨架 |
+| ★b | Framework 个人 Setup | [00b-framework-setup/SKILL.md](00b-framework-setup/SKILL.md) | 写入 `framework.local.json`（personal `agent_adapter`、DevEco 路径） |
 | 0 | 模块画像 + 术语表自举 | [0-catalog-bootstrap/SKILL.md](0-catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | 1 | PRD | [1-prd-design/SKILL.md](1-prd-design/SKILL.md) | PRD.md、术语映射与 Scope |
 | 2 | 技术设计 | [2-requirement-design/SKILL.md](2-requirement-design/SKILL.md) | design.md、contracts |

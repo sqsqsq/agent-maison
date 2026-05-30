@@ -1,32 +1,27 @@
-# 自定义架构 DSL — 问卷（逐项确认）
+# 架构 DSL — 手动编辑指引（非对话问卷）
 
-对每一个 **外层层级** `L`（从下往上或从上往下皆可，但整个会话中要固定顺序），询问并记录：
+> **BLOCKER**：init/setup **禁止**在对话中收集 `architecture` 字段（外层 id、`can_depend_on`、子层列表、模块名字符串等）。
+> 预设 A/B 不满足时，**STOP** init 写盘，由维护者**手工编辑** `framework.config.json` 后重跑 `/framework-init`（UPDATE）。
 
-## 外层
+## 允许路径（四选一）
 
-1. **id**（字符串）：目录或逻辑层名，如 `01-Product` / `App`。
-2. **can_depend_on**（id 数组）：该层模块默认允许 **import** 哪些**其它外层**的模块（不含同层，同层规则见下）。
-3. **intra_layer_deps**：
-   - `forbid` — 同层模块互不可 import；
-   - `dag` — 同层允许依赖，但须无环（由 harness 扫代码）；
-   - `sublayer` — 同层再分子层（须继续答子层问卷）。
+1. **预设 A/B** — registry `init.architecture_preset` → `preset_5_layer` / `preset_minimal_3`（见 [architecture-presets.md](../prompts/architecture-presets.md)）。
+2. **探测快照** — S1 扫描 + 已有磁盘 `architecture`（UPDATE / recovered config），经 `init.intra_layer_deps` gate/matrix 确认同层策略。
+3. **跳过本轮 architecture 变更** — S2 决策 skip 相关 config 任务（仅当磁盘已有合法 DSL）。
+4. **手动编辑** — 本指引；编辑完成后重跑 init，**不得**在 chat 里逐字段问答。
 
-### 当 intra_layer_deps = sublayer 时
+## 编辑步骤
 
-对每个 **子层** `S`：
+1. 复制参考 JSON：
+   - [preset-minimal-3-layer.sample.json](./preset-minimal-3-layer.sample.json)
+   - 或 profile 资产 `` `profile-skill-asset:00-framework-init/preset_5_layer_sample` ``
+   - 或 [framework.config.template.json](../../../templates/framework.config.template.json) 中的 `architecture` 段
+2. 在实例根编辑 `framework.config.json` 的 `architecture` 对象（含 `outer_layers`、`module_inner_layers` 等）。
+3. 本地校验：`cd framework/harness && npx ts-node -e "const {loadFrameworkConfig}=require('./config'); loadFrameworkConfig('<repo-root>');"`（须无 `validateArchitectureDsl` 抛错）。
+4. 重跑 `/framework-init`（UPDATE）；S2 用 `init.architecture_preset=keep_existing` + `init.intra_layer_deps` 确认同层策略。
 
-1. **id**
-2. **members_pattern_or_list**：模块名列表（精确字符串列表；与未来 catalog 中模块名对齐）。
-3. **can_depend_on_sublayers**：允许依赖的子层 id 列表（不能含自身）。
+## 禁止（反模式）
 
-## 全局（外层结束后）
-
-1. **module_inner_layers**：字符串数组，**从底到顶**列出模块内部分层名（如 `shared, data, domain, presentation`）。顺序决定 `upward` 依赖方向。
-2. **inner_dependency_direction**：固定填 `"upward"`（当前框架仅支持此值）。
-3. **cross_module_exports_file**：如 `Index.ets`。
-
-## 自检（生成 JSON 前口算）
-
-- 所有 `can_depend_on` 中的 id 均出现在 `outer_layers[].id` 中。
-- 外层依赖图无环。
-- 若有 sublayer，每个子层依赖图无环。
+- ❌ 对话「问卷」收集 `id` / `members_pattern_or_list` / 字符串数组
+- ❌ 「完全自定义」分支在 chat 里拼装 JSON
+- ❌ 选 `sublayer` 后在对话追问子层 id 列表（须在 JSON 中写好 `sublayers[]` 后再 init）

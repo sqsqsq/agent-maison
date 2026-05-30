@@ -15,6 +15,7 @@ import {
   isBackfillablePath,
   mergeBackfillFields,
   mergeFrameworkConfig,
+  sanitizeProjectConfigForInitWrite,
 } from '../../scripts/utils/config-field-merger';
 
 export interface UnitCaseResult {
@@ -382,6 +383,24 @@ const cases: Array<{ name: string; run: () => void }> = [
       const { merged } = mergeBackfillFields(null);
       assert.strictEqual((merged as { schema_version: string }).schema_version, '1.1');
       assert.strictEqual((merged as { active_workflow: string }).active_workflow, 'spec-driven');
+    },
+  },
+  {
+    name: 'sanitizeProjectConfigForInitWrite：剥离 agent_adapter / project_type / DevEco installPath',
+    run: () => {
+      const out = sanitizeProjectConfigForInitWrite({
+        schema_version: '1.1',
+        project_name: 't',
+        agent_adapter: 'claude',
+        project_type: 'app',
+        materialized_adapters: ['cursor'],
+        toolchain: { devEcoStudio: { installPath: 'C:/DevEco/Studio', daemon: true } },
+      });
+      assert.strictEqual(out.agent_adapter, undefined);
+      assert.strictEqual(out.project_type, undefined);
+      assert(Array.isArray(out.materialized_adapters));
+      const tc = out.toolchain as Record<string, unknown> | undefined;
+      assert(!tc?.devEcoStudio || !(tc.devEcoStudio as Record<string, unknown>).installPath);
     },
   },
 ];

@@ -29,6 +29,6 @@ post_install_hooks: []
 notes: |
   - `paths.agent_bundle_root`（必填）与 `paths.agent_bundle_skill_mode`（`inline`|`bridge`，默认 inline）
     在 init Step 0.2.5 由用户选定并写入 framework.config.json。
-  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline。
-  - bridge：与 cursor 相同，拷贝 shared/skills-bridge。
+  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline（含 `00b-framework-setup`）。
+  - bridge：与 cursor 相同，拷贝 shared/skills-bridge（含 `00b-framework-setup`）。
   - 模板 SSOT：framework/agents/shared/agent-bundle/templates/

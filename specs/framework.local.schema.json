@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://framework.local/schemas/framework.local.json",
+  "title": "framework.local.json",
+  "description": "Personal (gitignored) settings per developer machine; merged at runtime by harness/config.ts",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "agent_adapter": {
+      "type": "string",
+      "description": "Active adapter for this developer (must be in project materialized_adapters when set)"
+    },
+    "toolchain": {
+      "type": "object",
+      "properties": {
+        "devEcoStudio": {
+          "type": "object",
+          "properties": {
+            "installPath": { "type": "string" },
+            "hvigorBin": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

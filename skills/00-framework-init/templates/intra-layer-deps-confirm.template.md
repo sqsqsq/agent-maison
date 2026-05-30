@@ -1,31 +1,32 @@
 # 同层策略（`intra_layer_deps`）逐层确认表
 
-> 本模板供 Skill `00-framework-init` 的 Step 3.x 使用。AI 在写入 `framework.config.json.architecture` **之前**，按下表展示并获取用户显式回复。**交互 SSOT**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · registry `init.intra_layer_deps`。
+> 供 Skill `00-framework-init` S2 使用。写入 `framework.config.json.architecture` **之前**按下表 + registry **`init.intra_layer_deps`** gate/matrix 确认。
+> **交互 SSOT**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · **禁止**对话问卷收集外层 id / 子层列表。
 
 ---
 
-## 语义参考（来自 `framework/harness/config.ts` → `IntraLayerDepsMode`）
+## 语义参考（`framework/harness/config.ts` → `IntraLayerDepsMode`）
 
 | 取值 | 同层模块间依赖 |
 |------|----------------|
-| `forbid` | **完全禁止**：同层模块之间不得 `import`。适合用来「逼横向协作下沉到下面对应层」。 |
-| `dag` | **允许但需无环**：同层模块可互相 `import`，但必须形成 DAG；由 `check-coding` 等按模块扫描。 |
-| `sublayer` | **拆子层**：同层内部再分子层，按 `sublayers[*].can_depend_on_sublayers` 判定；需要同时填 `sublayers` 数组。 |
+| `forbid` | 同层模块之间不得 `import` |
+| `dag` | 同层可 `import`，须无环（harness 扫描） |
+| `sublayer` | 同层拆子层；**完整 `sublayers[]` 须在 preset 或手动编辑的 JSON 中**，init 不在对话补全 |
 
-> **重要**：参考实例 preset 里各层的默认同层策略组合（例如典型的 `01/02/04 = forbid、03 = dag、05 = sublayer`）是**有意的设计选择**，不是「唯一正确答案」。务必先把选择权交还用户。
+> preset 默认同层策略是**设计示例**，不是唯一答案；须 gate/matrix 显式确认。
 
 ---
 
-## 确认表（AI 渲染时填充「当前值」列；交互以 Step 3.x.0 gate 为主）
+## 确认表（AI 渲染时填充「当前值」列）
 
-| 外层 id | `can_depend_on` | 当前值（preset / 问卷 / 快照） | 备注 |
-|--------|-----------------|-------------------------------|------|
+| 外层 id | `can_depend_on` | 当前值（preset / 磁盘快照） | 备注 |
+|--------|-----------------|---------------------------|------|
 | `<layer-id-1>` | `<layer-id-2>, …` | `<forbid \| dag \| sublayer>` |  |
 | `...` | `...` | `...` |  |
 
 ---
 
-## AI 展示此表时必须附带的 gate（模板）
+## Gate（registry `init.intra_layer_deps`）
 
 ```text
 请选择（回复编号；须先呈现确认菜单，同轮仍附下列编号）：
@@ -34,16 +35,17 @@
 3. 先讨论 forbid / dag / sublayer 语义
 ```
 
-- 用户选 **1** → 视为每层已显式「按默认」；**不得**再要求逐行打字。
-- 用户选 **2** → 对需改层使用 `1=按默认 2=dag 3=forbid 4=sublayer` 子菜单。
-- 笼统的「好」「继续」**不构成**确认。
+- 选 **1** → 每层视为「按默认」；**不得**要求逐行打字。
+- 选 **2** → 对需改层用 registry matrix：`1=按默认 2=dag 3=forbid 4=sublayer`。
+- 裸「好 / 继续」**不构成**确认。
 
-## 用户选择 `sublayer` 时的追加问卷
+---
 
-若任一行选择 `sublayer`，必须继续追问该层的 `sublayers`：
+## `sublayer` 与手动编辑（BLOCKER）
 
-- 每个子层 `id`；
-- `members_pattern_or_list`（模块名列表，与 catalog 对齐）；
-- `can_depend_on_sublayers`（允许依赖的兄弟子层 id，不得自引用，整图无环）。
+若 matrix 对某层选 **`sublayer`**：
 
-完成上述追问后，回到生成前强制自检（见 `SKILL.md` Step 3），确认通过后才能写入 `framework.config.json`。
+1. **preset / 磁盘 JSON 已含**该层完整 `sublayers[]`（id、`members_pattern_or_list`、`can_depend_on_sublayers`）→ 可继续 init。
+2. **否则** → **STOP**（`init.architecture_preset=manual_edit_stop`）；指引 [手动编辑指引](./custom-architecture-questionnaire.md)；**禁止**在对话追问子层 id 或模块名列表。
+
+完成 gate/matrix 且 DSL 校验通过后，方可写入 `configWritePayload.architecture`。

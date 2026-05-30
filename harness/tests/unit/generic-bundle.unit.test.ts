@@ -65,7 +65,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         skillMode: 'inline',
       });
       const inline = adapter.templateFiles.filter(f => f.kind === 'materialized');
-      assert(inline.length >= 8);
+      assert(inline.length >= 9);
+      assert(inline.some(f => f.targetRel === '.agents/skills/00b-framework-setup/SKILL.md'));
       assert(inline.some(f => f.targetRel === '.agents/skills/00-framework-init/SKILL.md'));
     },
   },
@@ -82,6 +83,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(
         adapter.templateFiles.some(
           f => f.targetRel === '.codex/skills/00-framework-init/SKILL.md' && f.kind === 'verbatim',
+        ),
+      );
+      assert(
+        adapter.templateFiles.some(
+          f => f.targetRel === '.codex/skills/00b-framework-setup/SKILL.md' && f.kind === 'verbatim',
         ),
       );
     },
@@ -156,7 +162,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           skillMode: 'inline',
         },
       });
-      assert(outcome.filesWritten.length >= 8);
+      assert(outcome.filesWritten.length >= 9);
       const p = path.join(dir, '.agents/skills/00-framework-init/SKILL.md');
       assert(fs.existsSync(p));
       const txt = fs.readFileSync(p, 'utf8');
@@ -168,6 +174,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const ids = loadReservedBridgeIds(FRAMEWORK_DIR);
       assert(ids.has('00-framework-init'));
+      assert(ids.has('00b-framework-setup'));
       assert(ids.has('6-device-testing'));
     },
   },

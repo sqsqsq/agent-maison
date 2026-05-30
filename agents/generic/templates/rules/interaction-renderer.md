@@ -19,6 +19,16 @@
 
 临时交互也须构造至少 2 个编号选项。
 
+## Init / Setup 编排特例
+
+项目 init / 个人 setup **禁止自由输入**（无 Q1=y、无自定义路径字符串）：
+
+- S1 只读 planner → 渲染任务计划 JSON
+- S2 用 registry：`init.task_plan`、`init.materialized_adapters`、`init.task_decision`（手动）
+- S3 枚举 decision JSON 交 `executeInitPlan`
+- S4 用 harness `buildRunSummary`
+- setup 用 `setup.adapter` / `setup.deveco_path`，只写 `framework.local.json`
+
 ## 决策复述
 
 写入或进入下一步前须结构化复述决策（user-confirmation-ux §3.6）。
