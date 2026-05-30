@@ -31,7 +31,7 @@ alwaysApply: true
 
 ## Init / Setup 编排特例（BLOCKER）
 
-项目级 **framework-init** 与个人级 **framework-setup** 须用 AskQuestion + registry 枚举；**禁止** Q1=y 自由文本或对话收安装路径字符串。
+项目级 **framework-init** 与个人级 **setup**（阶段 `--ensure` 内联）须用 AskQuestion + registry 枚举；**禁止** Q1=y 自由文本或对话收安装路径字符串。
 
 - S1：只读 planner → 渲染 `InitTaskPlan` JSON
 - S2：`init.task_plan` + `init.materialized_adapters`；手动模式用 `init.task_decision`

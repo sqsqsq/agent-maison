@@ -3,7 +3,7 @@ name: 5-business-ut
 description: 业务级 UT / DAG（完整流程见 framework/skills/5-business-ut/SKILL.md）
 ---
 
-> **BLOCKER — Personal setup**：跑 feature harness 前先 `check-personal-setup.ts`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
+> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

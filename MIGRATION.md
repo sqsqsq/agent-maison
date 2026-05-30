@@ -18,7 +18,7 @@
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——每位开发者跑 [`00b-framework-setup`](skills/00b-framework-setup/SKILL.md)（`/framework-setup`）写入 gitignored 的 `framework.local.json`。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/prd 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入 gitignored 的 `framework.local.json`（多 adapter 见 [`00b-framework-setup`](skills/00b-framework-setup/SKILL.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
@@ -64,7 +64,7 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 | **S1** | 只读 `InitTaskPlan`（`init-orchestrate.ts --scope project`） |
 | **S2** | 确认元数据 / 架构 DSL / **`materialized_adapters` 多选**；生成 decision + context JSON |
 | **S3** | executor：config merge/写入、adapter 物化、gitignore、harness-install、全局 phase 等 |
-| **S4** | 结构化摘要 + 提醒团队成员跑 **`/framework-setup`** |
+| **S4** | 结构化摘要 + 提醒团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`** |
 
 **严禁**：
 
@@ -127,7 +127,7 @@ git submodule update --remote framework
 |----|-----|
 | 项目 init 选单个 `agent_adapter` | 项目 init 选 **`materialized_adapters[]`**（可多选 claude/cursor/generic） |
 | `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（gitignored） |
-| project config 写 `toolchain.devEcoStudio.installPath` | 外迁到 **local**；hmos-app 走 **`/framework-setup`** + `setup.deveco_path` |
+| project config 写 `toolchain.devEcoStudio.installPath` | 外迁到 **local**；hmos-app 走 **`check-personal-setup --json --ensure（阶段前置门控）`** + `setup.deveco_path` |
 | Step 0.3.4 **Q1=y** 文本 | **`init.task_plan` + `init.task_decision`** widget |
 | `check-init` 探测时写 gitignore | S1 **只读**；S3 任务 `ensure-gitignore` 写盘 |
 
@@ -136,7 +136,7 @@ git submodule update --remote framework
 1. **Vendor / submodule 更新** framework 到含编排器的版本。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4）；S2 确认 `materialized_adapters` 覆盖团队使用的 IDE。
 3. S3 应执行 **`migrate-config`**（若 planner 挂载）：自动把 legacy `agent_adapter` / DevEco 路径外迁，并在 project config 写入 `materialized_adapters`。
-4. **每位开发者**跑一次 **`/framework-setup`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
+4. **每位开发者**跑一次 **`check-personal-setup --json --ensure（阶段前置门控）`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
 5. 确认 `.gitignore` 含 **`framework.local.json`**（canonical 第 19 条；S3 `ensure-gitignore` 可补齐）。
 6. 跑 feature phase 前：`getFrameworkPersonalSetupStatus().source !== 'fallback'`（harness-runner 否则 exit 1）。
 
@@ -328,7 +328,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 1. **DevEco 路径改走 personal setup（编排化重构后）**
    - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（gitignored），**不在** project `framework.config.json`。
-   - 推荐：团队成员跑 **`/framework-setup`**（Skill 00b）；hmos-app 用 registry **`setup.deveco_path`** 确认探测候选。
+   - 推荐：团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`**（Skill 00b）；hmos-app 用 registry **`setup.deveco_path`** 确认探测候选。
    - 也可手工编辑 `framework.local.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
 
 2. **`coding_hvigor_build` 改为项目级 `assembleApp`**：v2.2 是按 `contracts.modules` 逐个 `assembleHap`，遇到 HAR/HSP 库模块（无 `assembleHap` task）会假阳性。v2.3 改为一次跑 `hvigor assembleApp`（项目级 hook task），覆盖所有产物。**对实例无破坏**，行为更严格而已。
@@ -344,7 +344,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 7. **三个文档默认动作的同步**（v2.2 的 hvigor 命令样例已过时）：
    - Skill 3 Step 6.5：编码阶段编译闭环改为「跑 harness `--phase coding` 触发 `coding_hvigor_build`」，不再让 agent 手敲 `hvigorw ...`。
    - Skill 5 Step 7.5 / 7.6：UT 编译 / 装机闭环同样改为「跑 harness `--phase ut`」，避免 agent 拼错 `hvigor test` 命令。
-   - Skill 00 S3：`harness-install` + `run-global-phases` 含全局 phase；DevEco 路径见 **`/framework-setup`**（00b）。
+   - Skill 00 S3：`harness-install` + `run-global-phases` 含全局 phase；DevEco 路径见 **`check-personal-setup --json --ensure（阶段前置门控）`**（00b）。
 
 **回归方法**：
 - 全套：`cd framework/harness && npm test`（条数以 `tests/run-unit.ts` + `tests/run-tests.ts` 为准）。
@@ -415,7 +415,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 逐条 checklist。
 
 **严禁纳入 BACKFILL**（须 Skill 交互或 confirm pass）：`project_name` / `agent_adapter` /
-`architecture.*`（必填）、personal DevEco 路径（**`/framework-setup`** → `framework.local.json`）、
+`architecture.*`（必填）、personal DevEco 路径（**`check-personal-setup --json --ensure（阶段前置门控）`** → `framework.local.json`）、
 `prd.*`（opt-in，需手工选 strict/warn/reachable/off 档位）、`atomic_service.*`（预留位）、
 `paths.reports_dir_pattern`（行为级变更，经 S2 **`confirm-fields`** / registry 写入）。
 legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-config 时 modernize。
@@ -597,13 +597,13 @@ adapter 可选字段 `user_confirmation`（见 [agents/adapter-schema.yaml](agen
 1. [agents/claude/adapter.yaml](agents/claude/adapter.yaml)：`widget_tool_hint: AskUserQuestion`；启用 `rules` → `.claude/rules/`。
 2. 新建 [agents/claude/templates/rules/confirmation-ux.md](agents/claude/templates/rules/confirmation-ux.md)（SHOULD 级会话规则）。
 3. [agents/claude/templates/commands/framework-init.md](agents/claude/templates/commands/framework-init.md)：`prompts` choice 前置 adapter；正文跳过 Step 0.2.5.1 表格。
-4. Skill 00 **编排化后**：S2 用 registry `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal setup 用 **`/framework-setup`** + `setup.*`（**已取代** legacy Step 0.3.4 / Q1=y）。
+4. Skill 00 **编排化后**：S2 用 registry `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal setup 用 **`check-personal-setup --json --ensure（阶段前置门控）`** + `setup.*`（**已取代** legacy Step 0.3.4 / Q1=y）。
 
 **实例维护者**（真实工程移植后）：
 
 ```text
 /framework-init   # UPDATE；S1 只读体检 → S2 批准 → S3 物化/对齐 adapter 产物
-/framework-setup  # 每位开发者一次；写入 framework.local.json
+check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者一次；写入 framework.local.json
 ```
 
 **版本依赖**：slash `prompts` frontmatter 需较新 Claude Code CLI（约 2026-02+）；旧 CLI 忽略 frontmatter 时仍靠 `.claude/rules` + Skill 00 BLOCKER + portable 编号。

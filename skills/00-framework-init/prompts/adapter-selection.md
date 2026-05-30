@@ -1,7 +1,7 @@
 # Adapter 与物化清单（编排化 · Skill 00 S2）
 
 > **项目 init** 使用 registry **`init.materialized_adapters`**（多选 checkbox），写入 `framework.config.json` → `materialized_adapters[]`。  
-> **个人 active adapter** 使用 **`/framework-setup`** + registry **`setup.adapter`**（只能从已物化项中选）。
+> **个人 active adapter** 由阶段入口 **`check-personal-setup.ts --json --ensure`** 内联；多 adapter 时用 registry **`setup.adapter`**（只能从已物化项中选）。
 
 ## 候选来源
 

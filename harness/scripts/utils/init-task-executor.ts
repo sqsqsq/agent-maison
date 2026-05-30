@@ -203,7 +203,12 @@ function runGlobalPhases(harnessRoot: string, projectRoot: string): string {
     const r = spawnSync(
       'npx',
       ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', '_global'],
-      { cwd: harnessRoot, shell: true, encoding: 'utf-8' },
+      {
+        cwd: harnessRoot,
+        shell: true,
+        encoding: 'utf-8',
+        env: { ...process.env, HARNESS_INIT_INTERNAL_GLOBAL_RUN: '1' },
+      },
     );
     if (r.status !== 0) {
       throw new Error(`全局 phase ${phase} 失败（exit ${r.status}）`);

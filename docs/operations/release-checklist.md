@@ -71,8 +71,8 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 2. **个人 setup**（每位开发者一次）
 
    ```bash
-   # 对话走 /framework-setup；或 CLI：
-   cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <实例根>
+   cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <实例根>
+   # 多 adapter 或 DevEco：再按 00b-framework-setup 走 personal orchestrate
    ```
 
    确认生成 `framework.local.json`（gitignored）且 **未** 修改 `materialized_adapters` 以外的项目提交文件。
@@ -83,7 +83,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature smoke-feature
    ```
 
-   无 local setup 时应 exit 1 并提示 framework-setup。
+   无 local setup 时 feature phase 应 exit 1；`--ensure` 在单一物化 adapter 时应自动写 local。
 
 4. **legacy config 迁移**（UPDATE）：`agent_adapter` / DevEco installPath 外迁到 local + `materialized_adapters` 写入项目 config（`migrate-config` 任务）。
 

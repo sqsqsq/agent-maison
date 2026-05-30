@@ -1,16 +1,19 @@
-# Framework 个人 Setup Skill (`00b-framework-setup`)
+# Framework 个人 Setup（内部过程 · `00b-framework-setup`）
+
+> **不对用户暴露 slash / skills-bridge 跳板**。各阶段入口先跑 [personal-setup-gate](../reference/personal-setup-gate.md) 的 `--json --ensure`；仅当 JSON `code=needs_adapter_choice` 或需配置宿主 IDE 工具链路径时，按本文 S1–S3 内联执行。
 
 ## 前置声明
 
-- **本 Skill 是个人级、一次性（可重复校准）配置**：写入 `<repo-root>/framework.local.json`（gitignored），**不修改** `framework.config.json`、`.claude/`、`.cursor/` 或任何项目级 adapter 产物。
+- **本过程是个人级、一次性（可重复校准）配置**：写入 `<repo-root>/framework.local.json`（gitignored），**不修改** `framework.config.json`、`.claude/`、`.cursor/` 或任何项目级 adapter 产物。
 - **前置**：工程根已有 `framework/`；项目级 init 已物化至少一个 adapter（见 `framework.config.json` → `materialized_adapters`）。
-- 若用户想要的 adapter **不在** `materialized_adapters` 或磁盘产物缺失 → **停下**，引导执行 `/framework-init` 更新物化清单并物化，**不得**在本 Skill 内写项目文件。
+- 若用户想要的 adapter **不在** `materialized_adapters` 或磁盘产物缺失 → **停下**，引导执行 `/framework-init` 更新物化清单并物化，**不得**在本过程内写项目文件。
+- **单一物化 adapter**：由 `check-personal-setup.ts --ensure` 确定性自写 local，**无需**进入本文交互。
 
-## 触发条件
+## 触发条件（内联）
 
-- Slash：`/framework-setup`
-- 自然语言：「配置我用的 agent / 个人 framework 设置 / 宿主 IDE 路径」
-- **Bootstrap**：`getFrameworkPersonalSetupStatus().source === 'fallback'` 时，须引导本 Skill。探测 CLI 见 [personal-setup-gate.md](../reference/personal-setup-gate.md)（与 harness-runner 门控一致）。
+- 阶段前置门控 JSON 为 `needs_adapter_choice`（多 adapter 须选 active adapter）
+- 须校准宿主 IDE 路径（registry `setup.deveco_path`；见 profile addendum）
+- 自然语言明确要求个人 framework 设置（仍先跑 `--ensure`）
 
 ## 用户确认 UX
 
@@ -39,19 +42,9 @@ BLOCKER 确认须 progressive enhancement：[reference/user-confirmation-ux.md](
 
 ## S2. 批准与记录
 
-1. 对 `detect-deveco` 任务：展示 harness 探测到的候选路径（若有）；用 registry **`setup.deveco_path`**（采用探测 / 跳过）。**禁止**在对话中收自由路径字符串；若候选均不对，提示用户在本机安装/修正后重跑 setup。
+1. 对 `detect-deveco` 任务：展示 harness 探测到的候选路径（若有）；用 registry **`setup.deveco_path`**（采用探测 / 跳过）。**禁止**在对话中收自由路径字符串；若候选均不对，提示用户在本机安装/修正后重跑 `--ensure`。
 2. 将 S1–S2 选择序列化为 personal scope **decision JSON**（schema 同 `init-orchestrate.ts` 的 `InitRunDecision`）。
-3. 执行：
-
-   ```bash
-   cd framework/harness && npx ts-node -e "
-   const o=require('./scripts/init-orchestrate');
-   /* 由 AI 注入 plan + decision + projectRoot */
-   "
-   ```
-
-   或后续专用 `--execute --decision-file` 入口；当前可调用 `executeInitPlan` + `writeLocalConfig`（`record-adapter` / `record-deveco-path` 任务负责写 local）。
-
+3. 执行 `executeInitPlan`（`record-adapter` / `record-deveco-path` 任务负责写 local；**禁止** agent 手写 `framework.local.json` 全文）。
 4. **`assert-active-adapter-materialized` 只读通过**后，`record-adapter` 才写入 `framework.local.json`（DAG 顺序由 planner 保证）。
 
 ---

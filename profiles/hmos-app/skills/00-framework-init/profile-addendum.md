@@ -20,7 +20,7 @@
 
 ### 示例（仅在 hmos-app 下）
 
-根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **宿主 IDE / hvigor 路径、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；**工具链路径改由 personal `/framework-setup` 写入 `framework.local.json`**（registry `setup.deveco_path`）。
+根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **宿主 IDE / hvigor 路径、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；**工具链路径改由阶段 `--ensure` 内联 personal setup 写入 `framework.local.json`**（registry `setup.deveco_path`）。
 
 `/framework-init`：**整文件写入 `framework.config.json`（Step 3.5）须早于 adapter 拷贝与 `render-agents-md`** —— Step **3.5** 之后才满足「磁盘 JSON 可被 §4.1.1 读取」。模板侧仍须走 `render-agents-md.mjs`，使 partial 与生成的入口 Markdown 对齐。
 
@@ -70,9 +70,9 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 
 ### 5.6.3 用户确认（**BLOCKER** · 个人 setup · registry `setup.deveco_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
 
-> **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **`/framework-setup`（Skill 00b）** 写入 gitignored 的 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
+> **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **阶段 `--ensure` 内联（Skill 00b 过程）** 写入 gitignored 的 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
 
-按 `detect-deveco.ts` 探测结果，在 **framework-setup S2** 使用 registry **`setup.deveco_path`**（**仅**「采用探测路径 / 跳过」枚举；**禁止**对话收自由路径字符串）：
+按 `detect-deveco.ts` 探测结果，在 **personal setup 内联 S2** 使用 registry **`setup.deveco_path`**（**仅**「采用探测路径 / 跳过」枚举；**禁止**对话收自由路径字符串）：
 
 1. **recommended.status === 'ok'** → 展示推荐路径 + `setup.deveco_path` widget（采用探测 / 跳过）。
 2. **无 ok 候选** → 列出 `candidates` 状态供参考；提示用户修正本机安装或手工编辑 `framework.local.json` 后重跑 setup（**不在对话收路径字符串**）。

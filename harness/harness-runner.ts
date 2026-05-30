@@ -273,13 +273,19 @@ async function main(): Promise<void> {
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
 
-  const personalSetupExemptPhases = new Set<Phase>(['init', 'docs', 'catalog', 'glossary']);
-  if (!personalSetupExemptPhases.has(phase)) {
+  const personalSetupExemptPhases = new Set<Phase>(['init', 'docs']);
+  const initInternalGlobalRun = process.env.HARNESS_INIT_INTERNAL_GLOBAL_RUN === '1';
+  const skipPersonalGateForInitInternal =
+    initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
+  if (!personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
     const gate = evaluatePersonalSetupGate(projectRoot);
     if (!gate.ok) {
       console.error(`   ✗ ${gate.message.replace(/\n/g, '\n     ')}`);
       console.error(
-        '     请先在本工程根执行 framework-setup（Skill 00b），或修正 materialized_adapters / 物化产物后再跑 feature phase。',
+        '     请在本工程根执行：cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>',
+      );
+      console.error(
+        '     或修正 materialized_adapters / 物化产物；详见 framework/skills/reference/personal-setup-gate.md',
       );
       process.exit(1);
     }

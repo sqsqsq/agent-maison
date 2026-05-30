@@ -1011,7 +1011,7 @@ function strategyText(line: number, status: InspectionStatus): string {
       POPULATED: 'S3 harness-install 幂等跳过',
     },
     10: {
-      MISSING: 'personal /framework-setup（setup.deveco_path）',
+      MISSING: '阶段入口 --ensure 内联 personal setup（含 setup.deveco_path）',
       EMPTY: '等同 MISSING',
       POPULATED: 'framework.local.json 已配置，跳过',
     },

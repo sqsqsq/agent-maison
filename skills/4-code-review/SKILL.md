@@ -8,7 +8,7 @@
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
-**Personal setup（BLOCKER）**：跑 feature harness 前须 [personal-setup-gate](../reference/personal-setup-gate.md) 通过；否则引导 `/framework-setup`。
+**Personal setup（BLOCKER）**：跑 harness 前须 [personal-setup-gate](../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。
 
 ### Feature 归档定位协议（本阶段是消费者）
 

@@ -1,7 +1,7 @@
 # init.materialized_adapters / setup.adapter — Widget 文案（SSOT）
 
 > **用途**：registry **`init.materialized_adapters`**（项目 init 多选物化）与 **`setup.adapter`**（个人 setup 从已物化列表单选）的 options 文案 SSOT；与 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 逐字对齐。
-> **消费方**：Skill 00 S2、`/framework-init` slash（`init.materialized_adapters`）；Skill 00b、`/framework-setup`（`setup.adapter`）。
+> **消费方**：Skill 00 S2、`/framework-init` slash（`init.materialized_adapters`）；内联 personal setup（`setup.adapter`，见 personal-setup-gate.md）。
 > **路径权威**：与 [framework/agents/README.md](../../../agents/README.md)「产物速查」对齐；**禁止** agent 自造 description 或要求用户「复述目录名」。
 
 ---

@@ -3,7 +3,7 @@ name: 1-prd-design
 description: PRD 撰写（完整流程见仓库 framework/skills/1-prd-design/SKILL.md）
 ---
 
-> **BLOCKER — Personal setup**：跑 feature harness 前先 `check-personal-setup.ts`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
+> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

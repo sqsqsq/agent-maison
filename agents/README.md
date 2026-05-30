@@ -33,7 +33,7 @@ framework/agents/
 2. **adapter 不修改 framework 自身**——它只产出**实例工程根**的文件。
 3. **双 adapter 模型（编排化重构）**：
    - **`materialized_adapters: string[]`**（项目级，写入 `framework.config.json`）：本仓库要生成/维护哪些 adapter 产物。
-   - **`agent_adapter`**（个人级，`framework.local.json`，gitignored）：开发者当前使用的 adapter；由 **`/framework-setup`** 写入，**不在项目 init 中选择**。
+   - **`agent_adapter`**（个人级，`framework.local.json`，gitignored）：开发者当前使用的 adapter；由阶段入口 **`check-personal-setup.ts --json --ensure`** 内联写入，**不在项目 init 中选择**。
    - 物化时 render-env 用**正在物化的 adapter**，不把 personal active adapter 写进提交产物。
 4. **模板共享优先**：各 adapter 的 `agent_entry_file` 共用 `framework/templates/AGENTS.md.template`。
 
@@ -55,7 +55,7 @@ framework/agents/
 3. **S3** — `--execute --decision-file` + `context.json`（含 `configWritePayload`）
 4. **S4** — `buildRunSummary(run-log)`
 
-个人 **`/framework-setup`**（Skill 00b）写 `framework.local.json`；feature phase 前须完成（harness-runner 在 `agent_adapter` 来源为 `fallback` 时阻断）。
+个人 setup 无独立 slash：各阶段入口 `--ensure` 写 `framework.local.json`（多 adapter 时 `setup.adapter`）；feature/catalog/glossary phase 前须完成（harness-runner 在 `fallback` 时阻断）。
 
 ## Init Skill：`adapter.yaml` 产物速查（与物化任务对齐）
 
@@ -63,7 +63,7 @@ framework/agents/
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
-| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（含 `00-framework-init` / `00b-framework-setup`）、`.cursor/rules/framework.mdc` |
+| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
 

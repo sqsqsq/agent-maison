@@ -3,7 +3,7 @@
 ## 前置声明
 
 - **项目级 init**：在实例工程根生成/升级 `framework.config.json`、`materialized_adapters[]` 物化产物、架构与 catalog/glossary 骨架；**不写** personal `framework.local.json`。
-- **个人选用哪个 agent** → [00b-framework-setup](../00b-framework-setup/SKILL.md)（`/framework-setup`）。
+- **个人 active adapter** 由各阶段入口 `check-personal-setup.ts --json --ensure` 内联完成（过程见 [00b-framework-setup](../00b-framework-setup/SKILL.md) · [personal-setup-gate](../reference/personal-setup-gate.md)）。
 - 执行前 **`<repo-root>/framework/harness/harness-runner.ts` 必须存在**；否则 S1 只读探测后停下，提示 submodule / 拷贝。
 - 架构 DSL 契约见 [framework/harness/config.ts](../../harness/config.ts)（`validateArchitectureDsl`）。
 
@@ -101,7 +101,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 使用 CLI 输出的 **`buildRunSummary(run-log)`** + `harness/reports/_global/init-orchestrate/*/summary.md`。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **下一步（须用户确认，禁止自动开下游 Skill）**：
-  1. 提醒团队成员跑 `/framework-setup`（personal active adapter）。
+  1. 提醒团队成员：首次跑 catalog/prd 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
   2. `/catalog-bootstrap`、`/glossary-bootstrap`。
   3. `/prd-design` 及后续 phase。
 - UPDATE 且改了 `paths.reports_dir_pattern` 时：advisory 扫描 legacy receipt 路径（`reconcile-receipt-paths.ts` dry-run）。

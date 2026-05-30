@@ -6,6 +6,8 @@
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` 前，须满足 [Host harness readiness · Tier_1](../reference/host-harness-readiness.md)。
 
+**Personal setup（BLOCKER）**：跑 harness 前须 [personal-setup-gate](../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。
+
 **用户确认 UX**：[user-confirmation-ux.md](../reference/user-confirmation-ux.md) · `catalog.staging_module` / `catalog.staging_glossary`。
 
 ## 概述

@@ -12,7 +12,7 @@ argument-hint: <feature-name-or-description>
 > `prd.terminology` 对话 widget 后须写回 PRD `[x]`；不替代 Step 2.5 Research Sub-Phase（v2.9+）。
 > 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
 
-> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --project-root <repo-root>`；exit 1 → 引导 `/framework-setup`（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
+> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 
