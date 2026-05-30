@@ -1,6 +1,6 @@
 # Delta: Harness Gates — Init probe purity
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: check-init probe phase is read-only
 
