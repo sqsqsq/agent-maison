@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: ensure-helper
     content: check-personal-setup.ts 增 --ensure 确定性入口（单一 adapter 自写 local；多 adapter needs_adapter_choice；零 adapter no_materialized_adapter；--json 稳定字段；复用 writeLocalConfig/record-adapter）
-    status: pending
+    status: completed
   - id: internalize-00b
     content: skills/00b-framework-setup/SKILL.md 去 Slash 触发改为内联过程；升级 skills/reference/personal-setup-gate.md 为 SSOT 门控过程（--ensure 分支）
     status: completed
@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: residual-refs
     content: 清理残留 /framework-setup 引用（check-init.ts 策略矩阵、framework-init.md、三 adapter interaction-renderer、init prompts/templates）
-    status: pending
+    status: completed
   - id: docs-verify
     content: 同步 MIGRATION/README/release-checklist/skills README/profile-addendum 措辞；补 ensure/豁免单测；cd harness && npm test 全 PASS
     status: completed
