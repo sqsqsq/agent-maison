@@ -16,6 +16,20 @@ any change to publishable content is considered complete.
 
 > **Enforced by:** `AGENTS.md`, `harness/package.json`, `harness/tests/`
 
+### Requirement: Consumer release npm test uses check global phases
+
+In the release zip, `harness/tests/` is excluded from the artifact. The consumer
+`npm test` script MUST be redefined to `check:global` (catalog + glossary + docs),
+matching S3 `run-global-phases` behavior. Source repo `npm test` (unit + fixtures)
+remains the developer gate unchanged.
+
+#### Scenario: Release harness package has consumer test semantics
+- **WHEN** `npm run release:verify` inspects the staged or extracted release artifact
+- **THEN** `harness/package.json` MUST NOT contain `test:unit` or `test:fixtures`,
+  MUST contain `check:global`, and `scripts.test` MUST equal `npm run check:global`
+
+> **Enforced by:** `scripts/release-pack-rules.mjs`, `scripts/verify-release-pack.mjs`
+
 ### Requirement: Phase check scripts enforce phase-rules
 
 The system SHALL enforce each harness phase using a dedicated check script paired

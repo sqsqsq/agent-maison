@@ -130,6 +130,22 @@ function assertZipContents(frameworkRoot) {
   if (!pkg.scripts?.test || !pkg.scripts?.['harness:install']) {
     fail('sanitized package.json missing consumer scripts');
   }
+
+  const harnessPkgPath = path.join(frameworkRoot, 'harness/package.json');
+  if (!fs.existsSync(harnessPkgPath)) fail('harness/package.json missing');
+  const harnessPkg = JSON.parse(fs.readFileSync(harnessPkgPath, 'utf8'));
+  if (harnessPkg.scripts?.['test:unit']) {
+    fail('sanitized harness/package.json still has test:unit');
+  }
+  if (harnessPkg.scripts?.['test:fixtures']) {
+    fail('sanitized harness/package.json still has test:fixtures');
+  }
+  if (!harnessPkg.scripts?.['check:global']) {
+    fail('sanitized harness/package.json missing check:global');
+  }
+  if (harnessPkg.scripts?.test !== 'npm run check:global') {
+    fail(`sanitized harness/package.json test must be "npm run check:global", got: ${harnessPkg.scripts?.test}`);
+  }
 }
 
 export async function verifyReleasePack() {

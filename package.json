@@ -9,7 +9,8 @@
     "openspec": "openspec",
     "openspec:validate": "openspec validate --all --strict",
     "release:pack": "node scripts/pack-release.mjs",
-    "release:verify": "node scripts/verify-release-pack.mjs"
+    "release:verify": "node scripts/verify-release-pack.mjs",
+    "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.3.1",

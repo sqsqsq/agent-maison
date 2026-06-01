@@ -1,6 +1,6 @@
 # Framework Harness Regression Tests
 
-> 验证 framework 自身 harness 规则的回归测试套件。**随 framework 一起发布到宿主工程**，作为升级回归保险——宿主工程跑 `/framework-init`（Skill 00 Step 5.5.4）时由 Skill 内部触发自检，确认本次 vendor 过来的 framework 文件完整且行为正常。**不参与业务流水线**，宿主工程只在初始化 / 升级时跑一次。
+> 验证 framework 自身 harness 规则的回归测试套件。**仅存在于 AgentMaison 源仓，不随 zip 发布**；发布件中消费者 `npm test` 已重定义为 `check:global`（catalog + glossary + docs）。宿主工程 init S3 的 `run-global-phases` 任务会跑相同三全局 phase；**不参与业务流水线**。
 
 ## 设计原则
 

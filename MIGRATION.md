@@ -31,7 +31,7 @@
 
 适用场景：framework 不作为独立 git 仓库管理，作为**目标工程仓库的一部分**跟随提交；典型如「壳子工程训练 framework，定期同步到一个或多个真实业务工程」。
 
-> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、`npm test` 自检、配 `framework.config.json`、配 `toolchain.devEcoStudio.installPath`、harness 验收）**全部由 Skill 00 内部完成**。绝不要让用户在 vendor 之后再手工跑额外命令。
+> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、S3 `run-global-phases`、配 `framework.config.json`、配 `toolchain.devEcoStudio.installPath`、harness 验收）**全部由 Skill 00 内部完成**。绝不要让用户在 vendor 之后再手工跑额外命令。
 
 #### 首次部署 / 升级（同一组命令）
 
@@ -71,7 +71,7 @@ robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports 
 - 在 S1 探测阶段写 `.gitignore` / adapter 产物 / config（副作用仅在 S3）。
 - 在项目 init 里配置 personal `agent_adapter` 或 DevEco 路径（走 setup → `framework.local.json`）。
 - 用 legacy **Q1=y / Step 0.3.4** 文本协议代替 registry widget（已废弃）。
-- 把 Step 5.5.4 自检失败解释为「环境问题」跳过——framework 自带套件不依赖外部工具链，失败说明 vendor 漏文件或 framework bug。
+- 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明 vendor 漏文件、init 未完成或 framework bug。
 
 ### 模式 B：Submodule（framework 独立 git 仓库）
 
@@ -93,7 +93,7 @@ git submodule update --remote framework
 # 或进入 framework 目录按你们托管方式 pull / checkout 指定 tag
 ```
 
-子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明，并触发 Step 5.5.4 自检确认 submodule 拉得完整。
+子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明，并触发 S3 `run-global-phases` 确认 submodule 拉得完整。
 
 ---
 

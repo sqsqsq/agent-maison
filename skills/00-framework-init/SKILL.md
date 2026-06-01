@@ -133,7 +133,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 未经 S2 批准执行 S3 → 严禁。
 - 覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / 用户迭代的 `doc/architecture.md` → 除非 S2 显式 overwrite。
 - CREATE 命中大量 POPULATED 且用户拒绝降级 → 终止 init。
-- S3 后 `npm test`（若执行 `harness-install`）失败 → 不得宣称 init 完成。
+- S3 `harness-install` 的 `npm install` 失败 → 不得宣称 init 完成。
+- S3 `run-global-phases` 失败（catalog/glossary/docs 任一 FAIL）→ 不得宣称 init 完成。
+- 消费者完成 init 后可 `cd framework/harness && npm test`（= `check:global`）验证元数据完整性。
 - **禁止** Q1=y、裸 `y/好/继续` 作为多任务批准。
 - **禁止** init/setup 对话收集 architecture DSL / 自定义 paths / 模块名字符串数组；仅 preset、磁盘快照、`init.intra_layer_deps` enum/matrix，或 STOP 后手动编辑 config（见 [templates/custom-architecture-questionnaire.md](templates/custom-architecture-questionnaire.md)）。
 

@@ -141,10 +141,24 @@ export function sanitizePackageJson(pkg) {
       if (key.startsWith('release:')) {
         delete scripts[key];
       }
+      if (key === 'openspec' || key === 'openspec:validate') {
+        delete scripts[key];
+      }
     }
     out.scripts = scripts;
   }
   delete out.devDependencies;
+  return out;
+}
+
+/** @param {object} pkg */
+export function sanitizeHarnessPackageJson(pkg) {
+  const out = JSON.parse(JSON.stringify(pkg));
+  if (out.scripts && typeof out.scripts === 'object') {
+    delete out.scripts['test:unit'];
+    delete out.scripts['test:fixtures'];
+    out.scripts.test = 'npm run check:global';
+  }
   return out;
 }
 
@@ -279,6 +293,29 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if (sanitized.scripts['release:pack']) errors.push('sanitize: release:pack still present');
   if (sanitized.devDependencies) errors.push('sanitize: devDependencies still present');
   if (!sanitized.scripts.test) errors.push('sanitize: test script removed');
+  if (sanitized.scripts.openspec) errors.push('sanitize: openspec script still present');
+
+  const harnessPkg = {
+    name: 'harness',
+    scripts: {
+      test: 'npm run test:unit && npm run test:fixtures',
+      'test:unit': 'ts-node tests/run-unit.ts',
+      'test:fixtures': 'ts-node tests/run-tests.ts',
+      'check:catalog': 'ts-node harness-runner.ts --phase catalog',
+      'check:glossary': 'ts-node harness-runner.ts --phase glossary',
+      'check:docs': 'ts-node harness-runner.ts --phase docs',
+      'check:global': 'npm run check:catalog && npm run check:glossary && npm run check:docs',
+    },
+  };
+  const sanitizedHarness = sanitizeHarnessPackageJson(harnessPkg);
+  if (sanitizedHarness.scripts['test:unit']) errors.push('sanitizeHarness: test:unit still present');
+  if (sanitizedHarness.scripts['test:fixtures']) errors.push('sanitizeHarness: test:fixtures still present');
+  if (sanitizedHarness.scripts.test !== 'npm run check:global') {
+    errors.push('sanitizeHarness: test must be npm run check:global');
+  }
+  if (!sanitizedHarness.scripts['check:global']) {
+    errors.push('sanitizeHarness: check:global missing');
+  }
 
   const eolCases = [
     ['a\r\nb\r\nc', 'a\nb\nc'],

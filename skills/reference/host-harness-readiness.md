@@ -5,7 +5,7 @@
 - **Tier_1**：与 `project_profile` 无关——只要跑 framework harness，就必须满足。
 - **Tier_2**：与具体宿主（IDE / 编译 / 设备）有关——**不在本文展开**，只指向 profile addendum 与各阶段 Skill。
 
-与 [`00-framework-init`](../00-framework-init/SKILL.md) **Step 5.5** 中 Tier_1 部分 **等价**；init 流程仍须在 Step 5.5 **执行** `npm install` 与 `npm test` 自检，本文是日常克隆与独立拉起某 Skill 时的交叉引用锚点。
+与 [`00-framework-init`](../00-framework-init/SKILL.md) **S3 `harness-install`** 中 Tier_1 部分 **等价**；init 流程在 S3 **执行** `npm install`（`harness-install` 任务），全局 phase 由 `run-global-phases` 任务完成。本文是日常克隆与独立拉起某 Skill 时的交叉引用锚点。
 
 ---
 

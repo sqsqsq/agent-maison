@@ -10,6 +10,7 @@ import {
   collectReleaseFiles,
   loadReleaseExcludes,
   normalizeReleaseTextEol,
+  sanitizeHarnessPackageJson,
   sanitizePackageJson,
   stageReleaseFile,
   toPosixPath,
@@ -63,6 +64,17 @@ function writeStaging(stagingRoot, included) {
     const sanitized = sanitizePackageJson(raw);
     fs.writeFileSync(
       path.join(stagingRoot, 'package.json'),
+      normalizeReleaseTextEol(`${JSON.stringify(sanitized, null, 2)}\n`),
+      'utf8',
+    );
+  }
+
+  const harnessPkgSrc = path.join(REPO_ROOT, 'harness/package.json');
+  if (fs.existsSync(harnessPkgSrc)) {
+    const raw = JSON.parse(fs.readFileSync(harnessPkgSrc, 'utf8'));
+    const sanitized = sanitizeHarnessPackageJson(raw);
+    fs.writeFileSync(
+      path.join(stagingRoot, 'harness/package.json'),
       normalizeReleaseTextEol(`${JSON.stringify(sanitized, null, 2)}\n`),
       'utf8',
     );

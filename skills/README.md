@@ -28,7 +28,7 @@
 | [reference/host-harness-readiness.md](reference/host-harness-readiness.md) | harness npm 前置 |
 | [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例禁止改 `framework/` submodule |
 
-**贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`）。
+**贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`；**源仓回归**；消费者侧 `npm test` = `check:global`）。
 
 进入阶段 Skill 时还必须读取当前 `project_profile` 的 addendum：
 

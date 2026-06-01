@@ -141,7 +141,7 @@ npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 
 初始化时由 Skill 00 Step 5.5 自动完成 `npm install`，此处仅作手动说明。
 
-**Framework 自身回归**：在同一目录执行 `npm test`，会跑 **单元 + fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+**Framework 自身回归**（**仅源仓**；发布件 `npm test` 已重定义为 `check:global`）：在同一目录执行 `npm test`，会跑 **单元 + fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
 
 Skill 0 的全局 phase（无 `--feature`）示例：
 
