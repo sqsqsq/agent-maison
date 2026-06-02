@@ -5,9 +5,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { clearFrameworkConfigCache } from '../../config';
 import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import type { InitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
+
+function minimalArchitecture(): Record<string, unknown> {
+  return {
+    outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+    module_inner_layers: ['shared'],
+    inner_dependency_direction: 'upward',
+    cross_module_exports_file: 'index.ets',
+  };
+}
 
 export interface UnitCaseResult {
   name: string;
@@ -220,6 +230,62 @@ const cases: Array<{ name: string; run: () => void }> = [
         /docWritePayload\.architecture_md 缺失/,
       );
       fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:generic 无 agent_bundle_root 且 local active claude 物化 .agents/skills',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'dual-materialized',
+            materialized_adapters: ['claude', 'generic'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude' }, null, 2),
+      );
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['claude', 'generic'],
+      };
+      const task = {
+        id: 'materialize-adapter:generic',
+        title: '物化 adapter: generic',
+        category: 'adapter-bundle',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: false,
+        allowed_actions: ['run' as const],
+        params: { adapter: 'generic' },
+      };
+      const msg = executeInitTask(task, 'run', ctx);
+      const skillPath = path.join(root, '.agents', 'skills', '00-framework-init', 'SKILL.md');
+      assert(fs.existsSync(skillPath), `${msg}; expected ${skillPath}`);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
     },
   },
 ];

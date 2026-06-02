@@ -924,6 +924,64 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  {
+    name: 'prepareInitExecutionPlan claude+generic 无 agent_bundle_root 含 materialize-adapter:generic',
+    run: () => {
+      const root = mkTmp();
+      const plan = prepareInitExecutionPlan(
+        { projectRoot: root, scope: 'project' },
+        {
+          materializedAdapters: ['claude', 'generic'],
+          configWritePayload: {
+            schema_version: '1.1',
+            project_name: 'dual-adapter',
+            materialized_adapters: ['claude', 'generic'],
+            architecture: {
+              outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ets',
+            },
+            paths: { features_dir: 'doc/features' },
+          },
+        },
+      );
+      assert(plan.tasks.some(t => t.id === 'materialize-adapter:claude'));
+      assert(plan.tasks.some(t => t.id === 'materialize-adapter:generic'));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'prepareInitExecutionPlanWithStaleIds claude+generic 与 local active claude 不剔除 generic',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude' }, null, 2),
+      );
+      const prepared = prepareInitExecutionPlanWithStaleIds(
+        { projectRoot: root, scope: 'project' },
+        {
+          materializedAdapters: ['claude', 'generic'],
+          configWritePayload: {
+            schema_version: '1.1',
+            project_name: 'dual-adapter',
+            materialized_adapters: ['claude', 'generic'],
+            architecture: {
+              outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ets',
+            },
+            paths: { features_dir: 'doc/features' },
+          },
+        },
+      );
+      assert(prepared.plan.tasks.some(t => t.id === 'materialize-adapter:generic'));
+      assert(!prepared.staleMaterializeTaskIds.includes('materialize-adapter:generic'));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

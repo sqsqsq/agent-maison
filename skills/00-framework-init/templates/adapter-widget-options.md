@@ -14,6 +14,8 @@
 | `cursor` | `cursor — 物化 Cursor AGENTS.md 与 .cursor/ 产物` |
 | `generic` | `generic — 物化 generic bundle 入口与 skills` |
 
+**generic 默认说明**（与 registry `init.materialized_adapters` notes 对齐；label 表逐字不动）：无额外配置时 harness 使用 `.agents`/inline 默认物化；仅非标 bundle 根须手动编辑 `framework.config.json` 后重跑 init。
+
 Portable 辅助（同轮仍须附编号/多选说明）：
 
 ```text

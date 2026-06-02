@@ -11,7 +11,7 @@
 
 - S2 须 **`init.materialized_adapters`** widget / 编号菜单；**禁止**沿用 legacy `init.adapter` 单选作为项目 init 唯一入口。
 - **禁止**在 project init 写入 `framework.local.json` 或选择 personal active adapter。
-- `generic` 物化时同批收集 `paths.agent_bundle_root` + `agent_bundle_skill_mode`（写入 S2 `configWritePayload`）。
+- `generic` 物化：无自定义需求时**直接用** template 默认 `.agents` / `inline` 写入 S2 `configWritePayload`，**不得 STOP** 或剔除 `generic`；仅用户**显式要求**非标 `agent_bundle_root` 时 STOP → 手动编辑 `framework.config.json` 后重跑。
 
 ## 决策复述
 

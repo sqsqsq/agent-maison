@@ -59,7 +59,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | 架构 DSL | `init.architecture_preset` + `init.intra_layer_deps` + [prompts/architecture-presets.md](prompts/architecture-presets.md) | `architecture` 段 |
 | 物化 adapter 清单 | `init.materialized_adapters`（多选 checkbox） | `materialized_adapters[]` |
 
-**`generic` adapter**：`paths.agent_bundle_root` / `agent_bundle_skill_mode` 仅用探测默认值或 template；非标路径 **STOP → 手动编辑 `framework.config.json` 后重跑**（禁止对话收路径字符串）。
+**`generic` adapter**（两段式，**禁止**因缺省 bundle 路径而 STOP 或从 `materialized_adapters` 剔除）：
+- **默认**：无自定义需求时，将 template 默认 `paths.agent_bundle_root: ".agents"`、`agent_bundle_skill_mode: "inline"` 写入 `configWritePayload`，并继续物化 `generic`（harness 探测亦回退 `.agents`/inline）。
+- **例外**：仅当用户**显式要求**非标 `agent_bundle_root` 时，**STOP → 手动编辑 `framework.config.json` 后重跑**（禁止对话收路径字符串）。
 
 读 `framework/profiles/<profile>/skills/00-framework-init/profile-addendum.md`（若存在）；**工具链 installPath 不在本 Skill 写**——走 personal setup。
 
@@ -146,6 +148,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 消费者完成 init 后可 `cd framework/harness && npm test`（= `check:global`）验证元数据完整性。
 - **禁止** Q1=y、裸 `y/好/继续` 作为多任务批准。
 - **禁止** init/setup 对话收集 architecture DSL / 自定义 paths / 模块名字符串数组；仅 preset、磁盘快照、`init.intra_layer_deps` enum/matrix，或 STOP 后手动编辑 config（见 [templates/custom-architecture-questionnaire.md](templates/custom-architecture-questionnaire.md)）。
+- **禁止**因 harness 已提供默认值的可选字段（如 generic 的 `paths.agent_bundle_root`）缺失，而将用户已在 `init.materialized_adapters` 中选中的 adapter STOP 或剔除；personal active adapter 与项目物化清单无关。
 
 ---
 

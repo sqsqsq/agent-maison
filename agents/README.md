@@ -87,7 +87,7 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 | 全员 Claude Code | `["claude"]` |
 | 全员 Cursor | `["cursor"]` |
 | 混合 IDE | `["claude","cursor"]` |
-| Chrys / 自定义 bundle | `["generic"]`（并配置 `paths.agent_bundle_root`） |
+| Chrys / 自定义 bundle | `["generic"]`（默认 `.agents`/inline 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
@@ -112,7 +112,7 @@ Step 0.3 体检第 3 项必须 **逐文件** 覆盖上表涉及到的全部 `tar
 
 ## 内部 agent（Chrys / Codemate 等）
 
-不单独建 adapter 时：实例使用 **`generic`** + `paths.agent_bundle_root`（如 `.agents`）+ 默认 **`inline`** 物化。
+不单独建 adapter 时：实例使用 **`generic`**；默认零配置物化到 `.agents`/inline（template 与 harness 回退）。仅非标 bundle 根须在 `framework.config.json` 显式配置 `paths.agent_bundle_root`。
 
 - `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
 - 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
