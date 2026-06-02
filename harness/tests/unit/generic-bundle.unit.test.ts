@@ -34,14 +34,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'readAgentBundlePathsFromConfig：generic 必填 root',
+    name: 'readAgentBundlePathsFromConfig：generic 缺省 root 使用 .agents/bridge',
     run: () => {
-      assert.throws(() =>
-        readAgentBundlePathsFromConfig({
-          agent_adapter: 'generic',
-          paths: { features_dir: 'doc/features' } as never,
-        }),
-      );
+      const defaultBundle = readAgentBundlePathsFromConfig({
+        agent_adapter: 'generic',
+        paths: { features_dir: 'doc/features' } as never,
+      });
+      assert.strictEqual(defaultBundle?.root, '.agents');
+      assert.strictEqual(defaultBundle?.skillMode, 'bridge');
       const b = readAgentBundlePathsFromConfig({
         agent_adapter: 'generic',
         paths: {

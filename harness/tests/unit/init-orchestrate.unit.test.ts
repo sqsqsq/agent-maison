@@ -8,6 +8,7 @@ import * as path from 'path';
 import { clearFrameworkConfigCache } from '../../config';
 import {
   assertDecisionStructure,
+  buildInitStagingTemplate,
   buildRunSummary,
   executeInitPlan,
   preflightExecute,
@@ -221,6 +222,23 @@ const cases: Array<{ name: string; run: () => void }> = [
             plan_generated_at: new Date().toISOString(),
           }),
         /tasks 缺失或非数组/,
+      );
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects legacy staging shape with guidance',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            mode: 'smart_run',
+            task_decisions: {},
+            materialized_adapters: ['claude'],
+          }),
+        (e: Error) =>
+          e.message.includes('旧 staging 结构') &&
+          e.message.includes('schema_version/scope/decision_mode/plan_generated_at/tasks[]') &&
+          e.message.includes('--emit-staging-template'),
       );
     },
   },
@@ -450,6 +468,54 @@ const cases: Array<{ name: string; run: () => void }> = [
       };
       const r = validateDecisionJson(plan, decision);
       assert.strictEqual(r.ok, false);
+    },
+  },
+  {
+    name: 'validateDecisionJson keep dependency satisfies downstream closure',
+    run: () => {
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'ensure-config',
+            title: 'config',
+            category: 'config',
+            scope: 'project',
+            deps: [],
+            status: 'drift',
+            default_action: 'prompt',
+            skippable: true,
+            allowed_actions: ['overwrite', 'keep'],
+            decision_class: 'init.task_decision',
+          },
+          {
+            id: 'materialize-adapter:generic',
+            title: 'generic',
+            category: 'adapter-bundle',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'manual',
+        plan_generated_at: plan.generated_at,
+        tasks: [
+          { task_id: 'ensure-config', action: 'keep' },
+          { task_id: 'materialize-adapter:generic', action: 'run' },
+        ],
+      };
+      const r = validateDecisionJson(plan, decision);
+      assert.strictEqual(r.ok, true);
     },
   },
   {
@@ -980,6 +1046,87 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(prepared.plan.tasks.some(t => t.id === 'materialize-adapter:generic'));
       assert(!prepared.staleMaterializeTaskIds.includes('materialize-adapter:generic'));
       fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'buildInitStagingTemplate smart claude+generic 无 root 默认 .agents/bridge 且 preflight 通过',
+    run: () => {
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'ensure-config',
+            title: 'config',
+            category: 'config',
+            scope: 'project',
+            deps: [],
+            status: 'drift',
+            default_action: 'prompt',
+            skippable: true,
+            allowed_actions: ['overwrite', 'keep'],
+            decision_class: 'init.task_decision',
+          },
+          {
+            id: 'materialize-adapter:claude',
+            title: 'claude',
+            category: 'adapter-bundle',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+          {
+            id: 'materialize-adapter:generic',
+            title: 'generic',
+            category: 'adapter-bundle',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+          {
+            id: 'write-architecture',
+            title: 'doc/architecture.md',
+            category: 'docs',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'drift',
+            default_action: 'skip',
+            skippable: true,
+            allowed_actions: ['run', 'skip'],
+          },
+        ],
+      };
+      const context = {
+        materializedAdapters: ['claude', 'generic'],
+        configWritePayload: {
+          schema_version: '1.1',
+          project_name: 'smart-update',
+          project_profile: { name: 'generic' },
+          materialized_adapters: ['claude', 'generic'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        },
+      };
+      const staging = buildInitStagingTemplate(plan, context);
+      const paths = staging.context.configWritePayload?.paths as Record<string, unknown>;
+      assert.strictEqual(paths.agent_bundle_root, '.agents');
+      assert.strictEqual(paths.agent_bundle_skill_mode, 'bridge');
+      assert(staging.decision.tasks.some(t => t.task_id === 'write-architecture' && t.action === 'skip'));
+      const r = preflightExecute(plan, staging.decision, staging.context);
+      assert.strictEqual(r.ok, true);
     },
   },
 ];

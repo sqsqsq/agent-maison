@@ -87,7 +87,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 全员 Claude Code | `["claude"]` |
 | 全员 Cursor | `["cursor"]` |
 | 混合 IDE | `["claude","cursor"]` |
-| Chrys / 自定义 bundle | `["generic"]`（默认 `.agents`/inline 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
+| Chrys / 自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
@@ -99,7 +99,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 |--------------|------------|
 | 日常用 Claude Code slash | personal `claude` |
 | 日常用 Cursor skills/rules | personal `cursor` |
-| 使用 `.agents` / `.codex` inline 加载 | personal `generic` |
+| 使用 `.agents` / `.codex` bundle 加载 | personal `generic` |
 
 ## Claude Code 确认 Widget（interaction-renderer）
 
@@ -112,7 +112,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 ## 内部 agent（Chrys / Codemate 等）
 
-不单独建 adapter 时：实例使用 **`generic`**；默认零配置物化到 `.agents`/inline（template 与 harness 回退）。仅非标 bundle 根须在 `framework.config.json` 显式配置 `paths.agent_bundle_root`。
+不单独建 adapter 时：实例使用 **`generic`**；默认零配置物化到 `.agents`/bridge（template 与 harness 回退）。仅非标 bundle 根须在 `framework.config.json` 显式配置 `paths.agent_bundle_root`。
 
 - `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
 - 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）

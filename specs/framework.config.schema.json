@@ -57,7 +57,7 @@
         "agent_bundle_skill_mode": {
           "type": "string",
           "enum": ["bridge", "inline"],
-          "description": "generic adapter：bundle 内 skills 物化方式；默认 inline。"
+          "description": "generic adapter：bundle 内 skills 物化方式；默认 bridge。"
         }
       },
       "additionalProperties": true

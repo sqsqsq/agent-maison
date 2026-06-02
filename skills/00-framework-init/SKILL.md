@@ -60,7 +60,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | 物化 adapter 清单 | `init.materialized_adapters`（多选 checkbox） | `materialized_adapters[]` |
 
 **`generic` adapter**（两段式，**禁止**因缺省 bundle 路径而 STOP 或从 `materialized_adapters` 剔除）：
-- **默认**：无自定义需求时，将 template 默认 `paths.agent_bundle_root: ".agents"`、`agent_bundle_skill_mode: "inline"` 写入 `configWritePayload`，并继续物化 `generic`（harness 探测亦回退 `.agents`/inline）。
+- **默认**：无自定义需求时，将 template 默认 `paths.agent_bundle_root: ".agents"`、`agent_bundle_skill_mode: "bridge"` 写入 `configWritePayload`，并继续物化 `generic`（harness 探测亦回退 `.agents`/bridge）。
 - **例外**：仅当用户**显式要求**非标 `agent_bundle_root` 时，**STOP → 手动编辑 `framework.config.json` 后重跑**（禁止对话收路径字符串）。
 
 读 `framework/profiles/<profile>/skills/00-framework-init/profile-addendum.md`（若存在）；**工具链 installPath 不在本 Skill 写**——走 personal setup。
@@ -74,6 +74,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
    - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`（`<stamp>` 建议 ISO 时间戳去冒号，如 `20260602T091500Z`）
    - Windows：`%TEMP%\framework-init-<stamp>\decision.json` 与 `context.json`
    - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
+   - 可用 `init-orchestrate.ts --emit-staging-template --context-file <abs-temp-dir>/context.json` 生成合法 `{ decision, context }` 骨架；禁止沿用旧结构 `mode/task_decisions/materialized_adapters`
 
 `auto_overwrite` 机制段由 planner 标为 `sync-auto-overwrite:*`，智能模式下自动执行，不进手动逐项菜单。
 

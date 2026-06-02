@@ -467,7 +467,7 @@ function mergeAgentBundlePathDefaults(paths: FrameworkPaths, agentAdapter: strin
     next.agent_bundle_root = '.agents';
   }
   if (next.agent_bundle_skill_mode === undefined || next.agent_bundle_skill_mode === null) {
-    next.agent_bundle_skill_mode = 'inline';
+    next.agent_bundle_skill_mode = 'bridge';
   }
   return next;
 }
@@ -476,16 +476,17 @@ function validateAgentBundleForConfig(cfg: FrameworkConfig): void {
   if (cfg.agent_adapter !== 'generic') {
     return;
   }
-  const root = typeof cfg.paths.agent_bundle_root === 'string' ? cfg.paths.agent_bundle_root.trim() : '';
+  const normalizedPaths = mergeAgentBundlePathDefaults(cfg.paths, cfg.agent_adapter);
+  const root = typeof normalizedPaths.agent_bundle_root === 'string' ? normalizedPaths.agent_bundle_root.trim() : '';
   if (!root) {
     throw new Error(
-      '[agent-bundle] agent_adapter=generic 时必须配置 paths.agent_bundle_root（如 ".agents"）',
+      '[agent-bundle] agent_adapter=generic 时 paths.agent_bundle_root 为空；默认应回退为 ".agents"',
     );
   }
   if (root.includes('..') || path.isAbsolute(root) || /^[a-zA-Z]:/.test(root)) {
     throw new Error('[agent-bundle] paths.agent_bundle_root 必须是相对实例工程根的安全路径');
   }
-  const mode = cfg.paths.agent_bundle_skill_mode;
+  const mode = normalizedPaths.agent_bundle_skill_mode;
   if (mode !== undefined && mode !== 'bridge' && mode !== 'inline') {
     throw new Error('[agent-bundle] paths.agent_bundle_skill_mode 必须是 bridge 或 inline');
   }

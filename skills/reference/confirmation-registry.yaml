@@ -10,7 +10,7 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "S2 计划批准"
     portable_menu: "多选 adapter 目录名（claude/cursor/generic）；须至少 1 项"
-    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic 默认物化到 .agents/inline，无需额外配置；仅非标 bundle 根须手动编辑 framework.config.json 后重跑"
+    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic 默认物化到 .agents/bridge，无需额外配置；仅非标 bundle 根须手动编辑 framework.config.json 后重跑"
     options:
       - value: claude
         label: "claude — 物化 Claude Code 入口与 .claude/ 产物"

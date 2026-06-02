@@ -675,7 +675,7 @@ function resolveBundleForInitInspect(
     root: '.agents',
     skillsDir: '.agents/skills',
     rulesDir: '.agents/rules',
-    skillMode: 'inline',
+    skillMode: 'bridge',
   };
 }
 
@@ -2111,14 +2111,6 @@ const checker: PhaseChecker = {
       };
       blockers.push('adapter_yaml_resolvable: adapter 装载失败');
     } else {
-      if (adapter.yamlParseable && adapter.name === 'generic' && cfg.exists && cfg.parseable) {
-        const root = cfg.raw?.paths?.agent_bundle_root;
-        if (!root || String(root).trim() === '') {
-          blockers.push(
-            'generic_adapter_bundle: agent_adapter=generic 时必须在 framework.config.json 中配置 paths.agent_bundle_root',
-          );
-        }
-      }
       if (!adapter.yamlExists) {
         adapterCheckResult = {
           id: 'adapter_yaml_resolvable',

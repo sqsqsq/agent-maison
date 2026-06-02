@@ -44,10 +44,10 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
 const RESERVED_ROOT_PREFIXES = ['framework', 'doc/features'];
 
 export function normalizeAgentBundleSkillMode(raw: unknown): AgentBundleSkillMode {
-  if (typeof raw === 'string' && raw.trim() === 'bridge') {
-    return 'bridge';
+  if (typeof raw === 'string' && raw.trim() === 'inline') {
+    return 'inline';
   }
-  return 'inline';
+  return 'bridge';
 }
 
 export function validateAgentBundleRoot(root: string): void {
@@ -81,12 +81,10 @@ export function readAgentBundlePathsFromConfig(
   if (cfg.agent_adapter !== 'generic') {
     return null;
   }
-  const root = typeof cfg.paths.agent_bundle_root === 'string' ? cfg.paths.agent_bundle_root.trim() : '';
-  if (!root) {
-    throw new Error(
-      '[agent-bundle] agent_adapter=generic 时必须配置 paths.agent_bundle_root（如 ".agents"）',
-    );
-  }
+  const root =
+    typeof cfg.paths.agent_bundle_root === 'string' && cfg.paths.agent_bundle_root.trim()
+      ? cfg.paths.agent_bundle_root.trim()
+      : '.agents';
   validateAgentBundleRoot(root);
   const skillMode = normalizeAgentBundleSkillMode(cfg.paths.agent_bundle_skill_mode);
   const posixRoot = root.replace(/\\/g, '/');

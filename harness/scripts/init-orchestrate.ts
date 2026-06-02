@@ -50,10 +50,16 @@ export interface InitRunLog {
   entries: InitRunLogEntry[];
 }
 
+export interface InitStagingTemplate {
+  decision: InitRunDecision;
+  context: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>;
+}
 
 const VALID_ACTIONS = new Set(['run', 'skip', 'overwrite', 'keep']);
 const VALID_SCOPES = new Set<TaskScope>(['project', 'personal']);
 const VALID_DECISION_MODES = new Set<DecisionMode>(['smart', 'manual']);
+const DEFAULT_GENERIC_BUNDLE_ROOT = '.agents';
+const DEFAULT_GENERIC_BUNDLE_SKILL_MODE = 'bridge';
 
 const DOC_PAYLOAD_KEY_BY_TASK: Record<
   string,
@@ -65,12 +71,102 @@ const DOC_PAYLOAD_KEY_BY_TASK: Record<
   'ensure-glossary-seed': 'glossary_seed',
 };
 
+function collectMaterializedAdapters(
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): string[] {
+  const fromCtx = (context?.materializedAdapters ?? []).filter(
+    (x): x is string => typeof x === 'string' && x.trim().length > 0,
+  );
+  if (fromCtx.length > 0) return [...new Set(fromCtx.map(x => x.trim()))];
+  const payloadAdapters = context?.configWritePayload?.materialized_adapters;
+  if (Array.isArray(payloadAdapters)) {
+    return [
+      ...new Set(
+        payloadAdapters.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+          .map(x => x.trim()),
+      ),
+    ];
+  }
+  return [];
+}
+
+function withInitContextDefaults(
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> {
+  const cloned = context
+    ? (JSON.parse(JSON.stringify(context)) as Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>)
+    : {};
+  const adapters = collectMaterializedAdapters(cloned);
+  if (adapters.includes('generic') && cloned.configWritePayload) {
+    const payload = cloned.configWritePayload;
+    const paths =
+      payload.paths && typeof payload.paths === 'object' && !Array.isArray(payload.paths)
+        ? { ...(payload.paths as Record<string, unknown>) }
+        : {};
+    if (typeof paths.agent_bundle_root !== 'string' || !paths.agent_bundle_root.trim()) {
+      paths.agent_bundle_root = DEFAULT_GENERIC_BUNDLE_ROOT;
+    }
+    if (
+      typeof paths.agent_bundle_skill_mode !== 'string' ||
+      !['bridge', 'inline'].includes(paths.agent_bundle_skill_mode)
+    ) {
+      paths.agent_bundle_skill_mode = DEFAULT_GENERIC_BUNDLE_SKILL_MODE;
+    }
+    payload.paths = paths;
+  }
+  return cloned;
+}
+
+function resolveTemplateAction(task: InitTask): TaskDecision['action'] {
+  if (task.status === 'satisfied' && task.allowed_actions.includes('skip')) return 'skip';
+  if (task.status === 'drift') {
+    if (task.allowed_actions.includes('overwrite')) return 'overwrite';
+    if (task.allowed_actions.includes('keep')) return 'keep';
+    if (task.allowed_actions.includes('skip')) return 'skip';
+  }
+  if (task.default_action === 'skip' && task.allowed_actions.includes('skip')) return 'skip';
+  if (task.allowed_actions.includes('run')) return 'run';
+  if (task.allowed_actions.includes('overwrite')) return 'overwrite';
+  if (task.allowed_actions.includes('keep')) return 'keep';
+  if (task.allowed_actions.includes('skip')) return 'skip';
+  throw new Error(`[init-orchestrate] 无法为任务生成 staging action: ${task.id}`);
+}
+
+export function buildInitStagingTemplate(
+  plan: InitTaskPlan,
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+  decisionMode: DecisionMode = 'smart',
+): InitStagingTemplate {
+  const normalizedContext = withInitContextDefaults(context);
+  return {
+    decision: {
+      schema_version: '1.0',
+      scope: plan.scope,
+      decision_mode: decisionMode,
+      plan_generated_at: plan.generated_at,
+      tasks: plan.tasks.map(task => ({
+        task_id: task.id,
+        action: resolveTemplateAction(task),
+      })),
+    },
+    context: normalizedContext,
+  };
+}
+
 /** 决策 JSON 结构 + 枚举守卫（JSON.parse 成功后立即调用） */
 export function assertDecisionStructure(raw: unknown): InitRunDecision {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[init-orchestrate] 决策 JSON 非法：根须为对象');
   }
   const o = raw as Record<string, unknown>;
+  if (
+    o.schema_version === undefined &&
+    (o.mode !== undefined || o.task_decisions !== undefined || o.materialized_adapters !== undefined)
+  ) {
+    throw new Error(
+      '[init-orchestrate] 决策 JSON 非法：检测到旧 staging 结构（mode/task_decisions/materialized_adapters）。请使用 schema_version/scope/decision_mode/plan_generated_at/tasks[]，或运行 --emit-staging-template 生成骨架。',
+    );
+  }
   if (o.schema_version !== '1.0') {
     throw new Error(
       `[init-orchestrate] 决策 JSON 非法：schema_version 须为 "1.0"，当前=${String(o.schema_version ?? '<missing>')}`,
@@ -223,6 +319,7 @@ export function preflightExecute(
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
 ): { ok: true } | { ok: false; blocked: InitRunLog } {
   const started = new Date().toISOString();
+  const normalizedContext = withInitContextDefaults(context);
   const validation = validateDecisionJson(plan, decision);
   if (!validation.ok) {
     const unknownId = extractUnknownTaskId(validation.error);
@@ -258,7 +355,7 @@ export function preflightExecute(
       continue;
     }
     if (action === 'skip' || action === 'keep') continue;
-    const msg = checkWriteTaskPayload(task, action, context);
+    const msg = checkWriteTaskPayload(task, action, normalizedContext);
     if (msg) {
       violations.push({ task_id: task.id, action, message: msg });
     }
@@ -314,7 +411,7 @@ export function validateDecisionJson(
   }
 
   const skipIds = new Set(
-    decision.tasks.filter(d => d.action === 'skip' || d.action === 'keep').map(d => d.task_id),
+    decision.tasks.filter(d => d.action === 'skip').map(d => d.task_id),
   );
   for (const task of plan.tasks) {
     if (skipIds.has(task.id)) continue;
@@ -415,7 +512,7 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
     projectRoot: options.projectRoot,
     harnessRoot: options.harnessRoot,
     plan: options.plan,
-    ...(options.executionContext ?? {}),
+    ...withInitContextDefaults(options.executionContext),
   };
 
   const started = new Date().toISOString();
@@ -493,6 +590,8 @@ function parseArgs(argv: string[]): {
   scope: TaskScope;
   adapter?: string;
   execute: boolean;
+  emitStagingTemplate: boolean;
+  decisionMode: DecisionMode;
   decisionFile?: string;
   contextFile?: string;
 } {
@@ -501,6 +600,8 @@ function parseArgs(argv: string[]): {
   let scope: TaskScope = 'project';
   let adapter: string | undefined;
   let execute = false;
+  let emitStagingTemplate = false;
+  let decisionMode: DecisionMode = 'smart';
   let decisionFile: string | undefined;
   let contextFile: string | undefined;
   for (let i = 2; i < argv.length; i++) {
@@ -515,13 +616,28 @@ function parseArgs(argv: string[]): {
       adapter = argv[++i];
     } else if (a === '--execute') {
       execute = true;
+    } else if (a === '--emit-staging-template') {
+      emitStagingTemplate = true;
+    } else if (a === '--decision-mode' && argv[i + 1]) {
+      const mode = argv[++i];
+      if (mode === 'smart' || mode === 'manual') decisionMode = mode;
     } else if (a === '--decision-file' && argv[i + 1]) {
       decisionFile = path.resolve(argv[++i]);
     } else if (a === '--context-file' && argv[i + 1]) {
       contextFile = path.resolve(argv[++i]);
     }
   }
-  return { projectRoot, harnessRoot, scope, adapter, execute, decisionFile, contextFile };
+  return {
+    projectRoot,
+    harnessRoot,
+    scope,
+    adapter,
+    execute,
+    emitStagingTemplate,
+    decisionMode,
+    decisionFile,
+    contextFile,
+  };
 }
 
 function stripUtf8Bom(raw: string): string {
@@ -554,12 +670,38 @@ function failCli(message: string): never {
 if (require.main === module) {
   const opts = parseArgs(process.argv);
   if (!opts.execute) {
-    const plan = probeInitTaskPlan({
-      projectRoot: opts.projectRoot,
-      scope: opts.scope,
-      adapter: opts.adapter,
-    });
-    console.log(JSON.stringify(plan, null, 2));
+    const executionContext = opts.contextFile
+      ? withInitContextDefaults(
+          readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
+            opts.contextFile,
+            '上下文',
+          ),
+        )
+      : undefined;
+    if (opts.emitStagingTemplate) {
+      const planResult = prepareInitExecutionPlanWithStaleIds(
+        {
+          projectRoot: opts.projectRoot,
+          scope: opts.scope,
+          adapter: opts.adapter,
+        },
+        executionContext,
+      );
+      console.log(
+        JSON.stringify(
+          buildInitStagingTemplate(planResult.plan, executionContext, opts.decisionMode),
+          null,
+          2,
+        ),
+      );
+    } else {
+      const plan = probeInitTaskPlan({
+        projectRoot: opts.projectRoot,
+        scope: opts.scope,
+        adapter: opts.adapter,
+      });
+      console.log(JSON.stringify(plan, null, 2));
+    }
     process.exit(0);
   }
   if (!opts.decisionFile) {
@@ -568,12 +710,14 @@ if (require.main === module) {
   }
   try {
     const decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile, '决策'));
-    const executionContext = opts.contextFile
-      ? readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
-          opts.contextFile,
-          '上下文',
-        )
-      : undefined;
+    const executionContext = withInitContextDefaults(
+      opts.contextFile
+        ? readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
+            opts.contextFile,
+            '上下文',
+          )
+        : undefined,
+    );
     const planResult = prepareInitExecutionPlanWithStaleIds(
       {
         projectRoot: opts.projectRoot,

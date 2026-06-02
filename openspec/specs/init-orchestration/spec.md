@@ -68,7 +68,7 @@ unchanged when no context is supplied.
 
 When `materialized_adapters` includes `generic` and project `paths` omits
 `agent_bundle_root`, the orchestrator and executor MUST still materialize
-`generic` using harness defaults (`.agents` / `inline`). Personal/local
+`generic` using harness defaults (`.agents` / `bridge`). Personal/local
 `agent_adapter` MUST NOT cause generic to be dropped from the S3 plan or
 blocked solely because bundle root is unset on disk.
 
@@ -90,7 +90,7 @@ blocked solely because bundle root is unset on disk.
 - **THEN** `prepareInitExecutionPlanWithStaleIds` MUST include
   `materialize-adapter:generic` and MUST NOT list it in `staleMaterializeTaskIds`
 - **AND** executing `materialize-adapter:generic` MUST write bundle skills under
-  `.agents/skills/` (default inline layout)
+  `.agents/skills/` (default bridge layout)
 
 #### Scenario: Unknown decision task_id is rejected after reconcile
 - **WHEN** `--execute` runs with a decision containing `totally-unknown-task`
@@ -224,4 +224,3 @@ It MUST NOT default such tasks to `keep` or `skip`.
 
 > **Enforced by:** `harness/scripts/init-orchestrate.ts`,
 > `harness/tests/unit/init-orchestrate.unit.test.ts`
-
