@@ -66,3 +66,18 @@ npm run openspec:validate      # openspec validate --all --strict
 ```
 
 Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（连字符，与 `.cursor/commands/opsx-*.md` 一致）。
+
+## Plan 执行（开发仓，非发布件）
+
+本仓用 [`.cursor/plans/`](.cursor/plans/) 记录大型重构/演进蓝本；与 OpenSpec 提案可并存（plan 偏实施清单，OpenSpec 偏规格归档）。
+
+**按用户已定稿 plan 实施时**（含 Cursor Plan 模式「Do NOT edit the plan file」类系统提示）：
+
+| 允许 | 禁止（除非用户明确要求改 plan 本身） |
+|------|--------------------------------------|
+| 更新 plan frontmatter 中 todo 的 `status`（`completed` / `in_progress` / `cancelled`） | 改写目标、背景、设计、改造点、验收标准等**正文** |
+| 用户要求时，在文末追加 **「实施记录」**（日期、验收命令、偏离说明） | 用实施中新发现**替换**原 scope（应新开变更或先与用户确认） |
+
+细则见 Cursor 规则 [`.cursor/rules/plan-execution.mdc`](.cursor/rules/plan-execution.mdc)（`alwaysApply: true`）。
+
+**含义澄清**：「不要改 plan 文件」= **不要改计划内容**；勾选 todo 完成状态**不算**改 plan。
