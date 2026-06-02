@@ -30,6 +30,29 @@ const CLAUDE_SLASH_COMMANDS = [
 ] as const;
 const ADAPTER_NAMES = ['claude', 'cursor', 'generic'] as const;
 
+/** registry `skill` 无物理 SKILL.md 的虚拟命名空间（须与 confirmation-registry 同步登记） */
+export const VIRTUAL_REGISTRY_SKILLS = new Set(['_cross_phase']);
+
+export function lintRegistrySkillPaths(
+  registryText: string,
+  layout: RepoLayout,
+  registryRel: string,
+): CheckResult[] {
+  const results: CheckResult[] = [];
+  const skillDirs = new Set<string>();
+  for (const m of registryText.matchAll(/skill:\s+"([^"]+)"/g)) {
+    skillDirs.add(m[1]);
+  }
+  for (const skill of skillDirs) {
+    if (VIRTUAL_REGISTRY_SKILLS.has(skill)) continue;
+    const dir = frameworkAbs(layout, 'skills', skill, 'SKILL.md');
+    if (!fs.existsSync(dir)) {
+      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但目录不存在`, [registryRel]));
+    }
+  }
+  return results;
+}
+
 function listMarkdownFiles(root: string, sub: string): string[] {
   const base = path.join(root, sub);
   if (!fs.existsSync(base)) return [];
@@ -98,17 +121,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
     results.push(...lintOneFile(rel, content));
   }
 
-  // registry skill folders exist
-  const skillDirs = new Set<string>();
-  for (const m of registryText.matchAll(/skill:\s+"([^"]+)"/g)) {
-    skillDirs.add(m[1]);
-  }
-  for (const skill of skillDirs) {
-    const dir = frameworkAbs(layout, 'skills', skill, 'SKILL.md');
-    if (!fs.existsSync(dir)) {
-      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但目录不存在`, [registryRel]));
-    }
-  }
+  results.push(...lintRegistrySkillPaths(registryText, layout, registryRel));
 
   if (registryIds.length < 20) {
     results.push(warn('registry_size', `confirmation-registry 仅 ${registryIds.length} 条，预期 ≥20`, [registryRel]));

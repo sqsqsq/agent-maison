@@ -3,7 +3,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { lintConfirmationUx } from '../../scripts/check-skills-confirmation-ux';
+import { lintConfirmationUx, lintRegistrySkillPaths } from '../../scripts/check-skills-confirmation-ux';
 import { detectRepoLayout } from '../../repo-layout';
 import { externalStandaloneLayout } from '../utils/layout-test-helper';
 import type { UnitCaseResult } from '../run-unit';
@@ -47,6 +47,32 @@ const cases: Array<{ name: string; run: () => void }> = [
       const out = lintConfirmationUx({ projectRoot: tmp, layout });
       const ssotFail = out.find(r => r.status === 'FAIL' && r.id === 'ssot_exists');
       assert(!ssotFail, `should resolve SSOT via layout: ${ssotFail?.details ?? ''}`);
+    },
+  },
+  {
+    name: 'lintConfirmationUx: allowlisted _cross_phase has no registry_skill_path WARN',
+    run: () => {
+      const out = lintConfirmationUx({ projectRoot: REPO_ROOT });
+      const crossWarn = out.filter(
+        r => r.id === 'registry_skill_path' && r.details?.includes('_cross_phase'),
+      );
+      assert(crossWarn.length === 0, 'allowlisted _cross_phase must not warn');
+    },
+  },
+  {
+    name: 'lintRegistrySkillPaths: non-allowlist _typo still WARN',
+    run: () => {
+      const layout = detectRepoLayout(__dirname);
+      const snippet = '- id: x\n  skill: "_typo"\n  class: enum\n';
+      const pathWarns = lintRegistrySkillPaths(
+        snippet,
+        layout,
+        'skills/reference/confirmation-registry.yaml',
+      );
+      assert(
+        pathWarns.some(r => r.id === 'registry_skill_path' && r.details?.includes('_typo')),
+        'non-allowlist _typo must still warn',
+      );
     },
   },
 ];

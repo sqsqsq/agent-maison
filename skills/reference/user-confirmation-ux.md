@@ -16,6 +16,7 @@
 3. **禁止仅要求用户打字**：不得把「请逐行回复…」「请按以下格式打字…」作为**唯一**交互；须先有 gate/enum/matrix 或 artifact 路径。
 4. **禁止 oral OK**：裸 `好` / `继续` / `ok` / 单字 `y`（多题并存时）不构成确认——各 Skill 原有 BLOCKER 不变。
 5. **新增确认点**：先登记 `confirmation-registry.yaml` → SKILL 只链本文 + registry `id`（≤10 行）→ 跑 lint。
+6. **虚拟 registry `skill`**：无物理 `skills/<skill>/SKILL.md` 时，`skill` 字段表示分组/追溯用命名空间，须在 `check-skills-confirmation-ux.ts` 的 `VIRTUAL_REGISTRY_SKILLS` 显式登记（**禁止**用 `skill.startsWith('_')` 笼统跳过目录检查）。当前：`_cross_phase`（`phase.next_step` 跨阶段闭环菜单）。
 
 ---
 
