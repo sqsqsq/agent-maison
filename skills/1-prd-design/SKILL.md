@@ -16,7 +16,7 @@
 
 **跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：若 receipt 可能已存在，须**先**自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）。exit 0 → 该 phase 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state/summary 判未闭环或重跑本阶段。
 
-- 若 `doc/features/<feature>/` 已存在且是目录：在该目录内续写/更新 `PRD.md` 与 `acceptance.yaml`，不要扫描同级同名前缀条目来替代它。
+- 若 `doc/features/<feature>/` 已存在且是目录：在该目录的 **`prd/PRD.md`**（canonical）与根目录 **`acceptance.yaml`** 续写/更新，不要扫描同级同名前缀条目来替代它。
 - 若该目录不存在：可以创建该目录作为本 feature 的正式归档目录。
 - 若同级存在 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 等归档，或 `<feature>-old/`、`<feature>.md` 等同名前缀条目：仅作为旁证展示给用户，不得自动解压、不得把它们当正式 feature、不得优先读取其内容。
 - 若精确路径 `doc/features/<feature>` 已存在但不是目录：必须停下来请用户确认 feature 名称或清理/恢复路径，不能覆盖该文件。**交互**（`prd.feature_path`）：`1=换 feature 名` / `2=清理或恢复路径`。
@@ -246,7 +246,7 @@ Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动
 
 1. 将 PRD 保存（或更新）至：
    ```
-   doc/features/{module-name}/PRD.md
+   doc/features/{module-name}/prd/PRD.md
    ```
 2. 在对话中输出变更摘要，便于人工审阅；用户若有修改意见，回到 Step 4（及前置 Step）迭代后再回到本 Step。
 3. **冻结 / 下游授权**（`prd.freeze`）：`1=冻结 PRD，可进 Skill 2` / `2=继续改 PRD`（口头 OK 无效）。
@@ -401,7 +401,7 @@ PRD 阶段宣布"完成"前必须**同时**满足：
 
 | 产出 | 路径 |
 |------|------|
-| PRD 文档 | `doc/features/{module-name}/PRD.md` |
+| PRD 文档 | `doc/features/{module-name}/prd/PRD.md` |
 | 验收标准 Spec | `doc/features/{module-name}/acceptance.yaml` |
 
 ### 文档格式

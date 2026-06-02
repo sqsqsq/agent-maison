@@ -32,10 +32,12 @@ import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
-  featureFilePath,
+  resolveFeatureArtifact,
+  relFeatureArtifact,
   relFeatureFile,
 } from '../config';
 import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID } from '../capability-registry';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
 // --------------------------------------------------------------------------
@@ -214,17 +216,17 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
 }
 
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
-  const designPath = featureFilePath(ctx.projectRoot, ctx.feature, 'design.md');
-  if (!fs.existsSync(designPath)) {
+  const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md');
+  if (!designResolved.exists) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'SKIP',
-      details: `design.md 不存在（${designPath}），无法确定 in_scope_modules。`,
+      details: `design.md 不存在（${designResolved.canonicalPath}），无法确定 in_scope_modules。`,
     }];
   }
 
-  const design = fs.readFileSync(designPath, 'utf-8');
+  const design = fs.readFileSync(designResolved.actualPath, 'utf-8');
   const { scope, error } = parseScope(design);
   if (error || !scope) {
     return [{
@@ -233,7 +235,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER', status: 'FAIL',
       details: `无法从 design.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
       suggestion: '请先通过 check-design.ts 的 scope_declaration 检查。',
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md')],
+      affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md')],
     }];
   }
 
@@ -536,7 +538,9 @@ const checker: PhaseChecker = {
     const analyzer = new AstAnalyzer(ctx.projectRoot);
     const analyses = sourceFiles.length > 0 ? analyzer.analyzeFiles(sourceFiles) : [];
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['design.md']),
+    ];
 
     results.push(
       ...safeRun(

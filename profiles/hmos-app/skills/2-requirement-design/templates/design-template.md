@@ -3,7 +3,7 @@
 > **模板说明**：本模板以宿主应用常见模块占位名（例如 `demo_home` / `FeatureDemoShell` / `SampleItemDto`）演示字段填法；实际工程请替换为你方 `catalog` / `framework.config.json` / `architecture.md` 中的真实模块标识。
 >
 > **模块标识**: `{module-name}`
-> **对应 PRD**: `doc/features/{module-name}/PRD.md`
+> **对应 PRD**: `doc/features/{module-name}/prd/PRD.md`
 > **版本**: v1.0
 > **创建日期**: {YYYY-MM-DD}
 > **最后更新**: {YYYY-MM-DD}

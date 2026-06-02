@@ -18,7 +18,7 @@
 
 - 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
 - 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
-- 若目录存在但本阶段输入缺失（至少 `design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
+- 若目录存在但本阶段输入缺失（至少 `design/design.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`design.md` / `contracts.yaml` / `acceptance.yaml` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
 
 ## Step 0. 载入 `project_profile` addendum（强制）
@@ -79,7 +79,7 @@
 
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
-| design.md | ✅ | 对应功能的技术设计文档（Skill 2 输出），路径通常为 `doc/features/{module}/design.md` |
+| design.md | ✅ | 对应功能的技术设计文档（Skill 2 输出），路径通常为 `doc/features/{module}/design/design.md` |
 | contracts.yaml | ✅ | 接口契约 Spec（Skill 2 产出），路径为 `doc/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
 | acceptance.yaml | ✅ | 验收标准 Spec（Skill 1 产出），路径为 `doc/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
 | use-cases.yaml | ⚠️ | 业务流程 UseCase Spec（Skill 2 产出；**仅**多 UI 共享状态 / 多步云调用 / 含回滚分支的复杂 feature 才会有该文件），路径为 `doc/features/{module}/use-cases.yaml`，定义了每个 UseCase 的 coordinator / ui_bindings / data_boundaries / state_model / branches |
@@ -177,7 +177,7 @@
 1. **开文件前的自检（针对弱模型尤为重要）**
    - 重读 profile addendum 声明的宿主语言易错手册中与当前文件类型相关的 2-3 条。
    - 声明当前上下文：哪个 Module、哪个层、依赖了哪些已完成的代码。
-   - **Scope 守门**：确认当前要写的文件路径是否在 `doc/features/{feature}/design.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
+   - **Scope 守门**：确认当前要写的文件路径是否在 `doc/features/{feature}/design/design.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
 
 2. **生成代码**：严格按照 `contracts.yaml` 的强契约（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 Key 一致），并覆盖 `acceptance.yaml > boundaries` 定义的异常处理。
 
@@ -513,7 +513,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 ## 关联文件
 
 - 上游输入:
-  - `doc/features/{module}/design.md`（Skill 2 输出）
+  - `doc/features/{module}/design/design.md`（Skill 2 输出）
   - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
   - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/coding-rules.yaml`

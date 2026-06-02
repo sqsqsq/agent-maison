@@ -4,7 +4,7 @@
 > **审查日期**: {date}
 > **审查版本**: v1.0
 > **审查人**: AI Code Reviewer
-> **对应设计文档**: `doc/features/{module-name}/design.md`
+> **对应设计文档**: `doc/features/{module-name}/design/design.md`
 
 ---
 

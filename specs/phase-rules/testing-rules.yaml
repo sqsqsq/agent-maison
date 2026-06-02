@@ -12,8 +12,8 @@
 phase: testing
 version: "1.0"
 applies_to:
-  test_plan: "doc/features/{module}/test-plan.md"
-  test_report: "doc/features/{module}/test-report.md"
+  test_plan: "doc/features/{module}/testing/test-plan.md"
+  test_report: "doc/features/{module}/testing/test-report.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测
@@ -108,7 +108,7 @@ structure_checks:
     description: >
       当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时，
       harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace；
-      脚本以顶层 doc/features/<feature>/test-plan.md「测试用例」表为 SSOT：派生 hylyre
+      脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：派生 hylyre
       表须覆盖全部 TC，或由派生文件 YAML frontmatter / 同目录 derive-manifest.json 登记
       explicit_skip_tc_ids；烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
       选取最新有效计划。

@@ -6,7 +6,7 @@
 # Design 阶段规约 (Phase Rules)
 # ============================================================================
 # 定义技术设计文档（Skill 2 产出）必须满足的通用规则。
-# 适用于所有功能模块的 doc/features/{module}/design.md。
+# 适用于所有功能模块的 doc/features/{module}/design/design.md。
 #
 # 消费者:
 #   - framework/harness/scripts/check-design.ts  (脚本 Harness, 确定性检查)
@@ -15,7 +15,7 @@
 
 phase: design
 version: "1.0"
-applies_to: "doc/features/{module}/design.md"
+applies_to: "doc/features/{module}/design/design.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测
@@ -66,8 +66,8 @@ structure_checks:
       这是阻止 AI 自行扩大需求范围的核心 Scope 守门规则。
     severity: BLOCKER
     rule:
-      source: "doc/features/{module}/PRD.md > Scope 声明 > yaml"
-      target: "doc/features/{module}/design.md > Scope 声明与继承 > yaml"
+      source: "doc/features/{module}/prd/PRD.md > Scope 声明 > yaml"
+      target: "doc/features/{module}/design/design.md > Scope 声明与继承 > yaml"
       assertions:
         - "design.in_scope_modules ⊆ (prd.in_scope_modules ∪ design.expansions_with_user_approval.modules)"
         - "design.in_scope_modules ∩ prd.out_of_scope_modules ⊆ design.expansions_with_user_approval.modules"

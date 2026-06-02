@@ -3,7 +3,7 @@
 > **模板说明**：以下 `{module-name}`、`{ModuleA}` 等均为占位；模块名 / 外层 id **必须**与 `doc/architecture.md`、`framework.config.json > architecture` 一致。
 >
 > **模块标识**: `{module-name}`
-> **对应 PRD**: `doc/features/{module-name}/PRD.md`
+> **对应 PRD**: `doc/features/{module-name}/prd/PRD.md`
 > **版本**: v1.0
 > **创建日期**: {YYYY-MM-DD}
 > **最后更新**: {YYYY-MM-DD}

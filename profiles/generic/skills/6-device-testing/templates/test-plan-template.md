@@ -4,8 +4,8 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试负责人**: {tester}
-> **对应 PRD**: `doc/features/{module-name}/PRD.md`
-> **对应设计**: `doc/features/{module-name}/design.md`
+> **对应 PRD**: `doc/features/{module-name}/prd/PRD.md`
+> **对应设计**: `doc/features/{module-name}/design/design.md`
 
 ---
 

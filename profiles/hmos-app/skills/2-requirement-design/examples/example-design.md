@@ -1,7 +1,7 @@
 # TaskDemo 模块 — 技术设计文档（示例 · 中性业务域）
 
 > **模块标识**: `task-console-home`
-> **对应 PRD**: `doc/features/task-console-home/PRD.md`
+> **对应 PRD**: `doc/features/task-console-home/prd/PRD.md`
 > **版本**: v1.0
 > **创建日期**: 2026-05-12
 > **状态**: 示例文档（演示章节结构与契约字段）

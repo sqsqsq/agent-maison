@@ -578,7 +578,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase glossary
 ### catalog 阶段检查项（完整列表见 `framework/specs/phase-rules/catalog-rules.yaml`）
 
 - **Structure**：schema_version 存在；每条 module 必填字段完整；layer 值合法；format 属于当前 profile 声明的合法集合；name 不重复
-- **Traceability**：`easily_confused_with.module` 指向的模块必须在本文件内存在；`entry_file` 路径在磁盘上真实存在（WARN）；`key_exports` 与该模块 profile 导出入口的 top-level export 保持同步（漂移即 WARN）；**feature 反向完整性**（`feature_scope_integrity` WARN）：扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope 声明，提示哪些 feature 引用了本 catalog 未建档的模块——这些 feature 在跑 `--phase prd/design` 时会 BLOCKER on `scope_matches_catalog`，catalog 阶段提前告警。
+- **Traceability**：`easily_confused_with.module` 指向的模块必须在本文件内存在；`entry_file` 路径在磁盘上真实存在（WARN）；`key_exports` 与该模块 profile 导出入口的 top-level export 保持同步（漂移即 WARN）；**feature 反向完整性**（`feature_scope_integrity` WARN）：扫描各 feature 的 `prd/PRD.md` 与 `design/design.md`（兼容旧扁平路径）的 Scope 声明，提示哪些 feature 引用了本 catalog 未建档的模块——这些 feature 在跑 `--phase prd/design` 时会 BLOCKER on `scope_matches_catalog`，catalog 阶段提前告警。
 
 ### glossary 阶段检查项（完整列表见 `framework/specs/phase-rules/glossary-rules.yaml`）
 

@@ -29,7 +29,8 @@ import {
   tableHasColumns,
   getColumnValues,
 } from './utils/markdown-parser';
-import { relFeatureFile } from '../config';
+import { relFeatureArtifact, relFeatureFile } from '../config';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
 
 // --------------------------------------------------------------------------
@@ -727,7 +728,7 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const report = loadReviewReport(ctx);
     if (!report) {
-      const reportRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'review-report.md');
+      const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
       return [{
         id: 'review_report_exists', category: 'structure',
         description: `${reportRel} 不存在`,
@@ -740,7 +741,12 @@ const checker: PhaseChecker = {
       }];
     }
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, [
+        'design.md',
+        'review-report.md',
+      ]),
+    ];
     results.push(...checkReviewContext(ctx));
     results.push(
       ...safeRun(

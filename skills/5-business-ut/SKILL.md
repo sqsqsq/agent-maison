@@ -96,8 +96,8 @@
 | `doc/features/{feature}/acceptance.yaml` | ✅ | 验收标准 Spec，含 `ut_layer`；简单 feature 时是主规划来源 |
 | `doc/features/{feature}/ut/testability-audit.md` | ✅ | Step 1.5 可测性预检（覆盖全部 unit/both AC/BD） |
 | `doc/features/{feature}/ut/mock-plan.yaml` | ⚠️ | Step 1.6 Test Double Plan；存在 L0/L1/L2 可测项时 **必填** |
-| `doc/features/{feature}/design.md` | ✅ | 状态机 Mermaid、UseCase 清单章节（若有） |
-| `doc/features/{feature}/PRD.md` | ✅ | 业务流程图和异常场景 |
+| `doc/features/{feature}/design/design.md` | ✅ | 状态机 Mermaid、UseCase 清单章节（若有） |
+| `doc/features/{feature}/prd/PRD.md` | ✅ | 业务流程图和异常场景 |
 | `doc/architecture.md` | ✅ | 模块架构全貌 |
 | `review-report.md` | ❌ | 可选，用于确认代码已通过 Review |
 
@@ -158,7 +158,7 @@ Lite 时：
 
 - `doc/features/{feature}/use-cases.yaml`（**若存在**）
 - `doc/features/{feature}/acceptance.yaml`（只关注 `ut_layer in [unit, both]` 的 AC/BD）
-- `doc/features/{feature}/PRD.md` / `design.md`
+- `doc/features/{feature}/prd/PRD.md` / `design/design.md`
 - `doc/features/{feature}/contracts.yaml`（data_boundary type 必须在 `interfaces[].class` 中）
 - 业务编排源代码（Skill 3 自选了 Page 方法 / `Flow` 类 / 导出函数）
 
@@ -731,7 +731,7 @@ UT 阶段宣布"完成"前必须**同时**满足：
   - `doc/features/{feature}/use-cases.yaml`（Skill 2 v2.1 产出，仅复杂 feature）
   - 业务编排源代码（Skill 3 v2.1 产出，代码形态由 Skill 3 自选：Page 命名方法 / `Flow`/`Coordinator` 普通类 / 导出函数，**不强制** `domain/usecase/` 目录）
   - data 层源代码（`data/repository/*.<ext>` / `shared/client/*.<ext>` 等）
-  - `doc/features/{feature}/design.md` / `PRD.md` / `contracts.yaml` / `acceptance.yaml`
+  - `doc/features/{feature}/design/design.md` / `prd/PRD.md` / `contracts.yaml` / `acceptance.yaml`
 - 阶段级规约: `framework/specs/phase-rules/ut-rules.yaml`
 - UseCase Schema: `` `profile-skill-asset:5-business-ut/use_cases_schema` ``
 - DAG Schema: `` `profile-skill-asset:5-business-ut/dag_schema` ``

@@ -25,7 +25,13 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { featureFilePath, relFeatureFile, featurePhaseReportsDir, resolveHylyreToolConfig } from '../config';
+import {
+  resolveFeatureArtifact,
+  relFeatureArtifact,
+  relFeatureFile,
+  featurePhaseReportsDir,
+  resolveHylyreToolConfig,
+} from '../config';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
 import {
   extractTcIdsFromPlanTable,
@@ -68,6 +74,7 @@ import {
   formatRootPollutionWarnDetails,
   loadTestingRootPollutionMeta,
 } from './utils/hylyre-root-pollution-warn';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -108,9 +115,9 @@ function loadTestEnvironmentKeywordGroups(ctx: CheckContext): string[][] {
 }
 
 function loadDoc(ctx: CheckContext, docName: string): string | null {
-  const docPath = featureFilePath(ctx.projectRoot, ctx.feature, docName);
-  if (!fs.existsSync(docPath)) return null;
-  return fs.readFileSync(docPath, 'utf-8');
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, docName);
+  if (!resolved.exists) return null;
+  return fs.readFileSync(resolved.actualPath, 'utf-8');
 }
 
 function headingExists(content: string, keywords: string[]): boolean {
@@ -917,7 +924,18 @@ function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): Chec
 function checkTestPlanFreshnessVsAcceptance(ctx: CheckContext): CheckResult[] {
   const id = 'test_plan_freshness_vs_acceptance';
   const accPath = acceptanceYamlPath(ctx.projectRoot, ctx.feature);
-  const planPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  const planResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  if (!planResolved.exists) {
+    return [{
+      id,
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-plan.md 不存在。',
+    }];
+  }
+  const planPath = planResolved.actualPath;
   if (!fs.existsSync(accPath)) {
     return [{
       id,
@@ -1619,9 +1637,10 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     const base = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     fs.mkdirSync(base, { recursive: true });
     const hintPath = path.join(base, 'derive-hint-from-plan.json');
-    const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const topResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const topPath = topResolved.actualPath;
     let test_cases = [] as ReturnType<typeof attachNavigationHints>;
-    let source_relative = relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    let source_relative = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
     let source_plan_mtime_iso: string | undefined;
     let defaultTopIds: string[] = [];
 
@@ -1712,7 +1731,8 @@ function checkDeviceTestRunGate(
 
     const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const expectedDir = path.join(reportsBase, '<timestamp>', 'hylyre');
-    const topPath = featureFilePath(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const topResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const topPath = topResolved.actualPath;
     const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
     const topIds = extractTcIdsFromPlanTable(topRaw);
     const topStat = fs.existsSync(topPath) ? fs.statSync(topPath) : null;
@@ -2046,13 +2066,20 @@ const checker: PhaseChecker = {
         description: '测试计划和测试报告都不存在',
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: `未找到 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
+        details: `未找到 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
         suggestion: '请先运行 Skill 6 生成测试计划。',
       };
       return [missingDocs, buildTestingRunStatusResult(plan, report, [missingDocs])];
     }
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, [
+        'PRD.md',
+        'design.md',
+        'test-plan.md',
+        'test-report.md',
+      ]),
+    ];
 
     const deviceTestHapHolder: DeviceTestPipelineHolder = {
       hapPath: null,

@@ -139,6 +139,27 @@ const cases: Case[] = [
     }),
   },
   {
+    name: 'feature artifacts: featuresDir 构造覆盖 → inspect/load 走自定义目录',
+    run: () => withTmpProject(root => {
+      const feature = 'alt-feature';
+      const altFeatures = path.join(root, 'alt', 'features');
+      writeFile(path.join(altFeatures, feature, 'prd', 'PRD.md'), 'prd\n');
+      writeFile(path.join(altFeatures, feature, 'acceptance.yaml'), 'criteria: []\n');
+
+      const loader = new SpecLoader(root, undefined, altFeatures);
+      assertEq(loader.listAvailableFeatures(), [feature], '自定义 featuresDir 下列出 feature');
+
+      const inspection = loader.inspectFeatureArtifacts(feature, 'prd');
+      assertEq(inspection.verdict, 'ok', 'canonical PRD 在 alt/features 下应识别为存在');
+      assertEq(inspection.missingRequiredFiles, [], '不应缺 PRD/acceptance');
+
+      const prd = loader.loadFeatureDoc(root, feature, 'PRD.md');
+      if (prd !== 'prd\n') {
+        throw new Error(`loadFeatureDoc 应从 alt/features 读取 PRD，got: ${JSON.stringify(prd)}`);
+      }
+    }),
+  },
+  {
     name: 'feature artifacts: 目录存在但缺上游文件 → 报缺文件，不建议归档补洞',
     run: () => withTmpProject(root => {
       const feature = 'HWP-PaymentButton';

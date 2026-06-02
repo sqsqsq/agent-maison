@@ -181,6 +181,7 @@ docs:
     audience: framework 维护者 / CI 集成 / 排查脚本 harness 失败的开发者
     sources:
       - framework/harness/harness-runner.ts
+      - framework/harness/config.ts
       - framework/workflows/spec-driven.workflow.yaml
       - framework/agents/claude/templates/hooks/check-phase-completion.mjs
       - framework/harness/scripts/check-extensions.ts

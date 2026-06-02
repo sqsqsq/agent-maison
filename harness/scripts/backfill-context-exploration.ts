@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import * as YAML from 'yaml';
-import { loadFrameworkConfig, receiptDirPath } from '../config';
+import { loadFrameworkConfig, receiptDirPath, resolveFeatureArtifact } from '../config';
 import {
   CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS,
   ContextExplorationPhase,
@@ -78,10 +78,11 @@ function buildKeyInputs(projectRoot: string, featureAbs: string, phase: ContextE
 
   const featureDirRel = path.relative(projectRoot, featAbs).replace(/\\/g, '/');
 
+  const featureName = path.basename(featAbs);
   for (const rel of ARTIFACT_REL) {
-    const abs = path.join(featAbs, rel);
-    if (fs.existsSync(abs)) {
-      push(`${path.relative(projectRoot, abs).replace(/\\/g, '/')} — 已扫描存在`);
+    const resolved = resolveFeatureArtifact(projectRoot, featureName, rel);
+    if (resolved.exists) {
+      push(`${path.relative(projectRoot, resolved.actualPath).replace(/\\/g, '/')} — 已扫描存在`);
     }
   }
 

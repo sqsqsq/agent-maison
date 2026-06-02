@@ -26,12 +26,12 @@ tools: Read, Glob, Grep
 1. **读取规则**：`framework/specs/phase-rules/<phase>-rules.yaml`
 2. **读取 prompt 模板**：`framework/harness/prompts/verify-<phase>.md`
 3. **读取待审产物**（按 phase）：
-   - prd → `doc/features/<feature>/PRD.md`
-   - design → `doc/features/<feature>/design.md` + `contracts.yaml` + `acceptance.yaml`
+   - prd → `doc/features/<feature>/prd/PRD.md`
+   - design → `doc/features/<feature>/design/design.md` + `contracts.yaml` + `acceptance.yaml`
    - coding → 代码变更（用 `Glob` / `Read`，不执行 `git`，差异信息从 `script_report_path` 获取）
-   - review → `doc/features/<feature>/review-report.md`
+   - review → `doc/features/<feature>/review/review-report.md`
    - ut → UT 代码及 `acceptance.yaml`
-   - testing → `doc/features/<feature>/test-plan.md` + `test-report.md`
+   - testing → `doc/features/<feature>/testing/test-plan.md` + `testing/test-report.md`
 4. **读取脚本 Harness 报告**（若有 `script_report_path`），**不重复做**脚本已经覆盖的确定性检查。
 5. **逐项按 verify-<phase>.md 的"语义检查项"评估**：
    - 给出 PASS / WARN / FAIL

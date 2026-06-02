@@ -179,7 +179,7 @@ verification_result:
         - 异常路径: N/M 覆盖
         - 遗漏场景: <列表或"无">
       affected_files:
-        - "doc/features/{feature}/test-plan.md"
+        - "doc/features/{feature}/testing/test-plan.md"
       suggestion: |
         <补充建议，若 PASS 可省略>
 

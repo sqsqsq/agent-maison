@@ -97,6 +97,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
   { id: 'phase-state', modulePath: './unit/phase-state.unit.test' },
   { id: 'receipt-path-reconcile', modulePath: './unit/receipt-path-reconcile.unit.test' },
+  { id: 'feature-artifact-resolver', modulePath: './unit/feature-artifact-resolver.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
 ];
 

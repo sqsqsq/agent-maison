@@ -43,6 +43,8 @@ import {
   featureFilePath,
   featureDir,
   relFeatureFile,
+  relFeatureArtifact,
+  resolveFeatureArtifact,
   catalogPath,
   glossaryPath,
   architectureMdPath,
@@ -319,7 +321,7 @@ async function main(): Promise<void> {
 
   const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase);
   if (artifactInspection) {
-    printFeatureArtifactInspection(artifactInspection, featuresRel);
+    printFeatureArtifactInspection(projectRoot, artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
       const blocker = featureArtifactBlocker(projectRoot, artifactInspection, paths.frameworkRoot);
       const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker], resolvedFrameworkRoot);
@@ -952,7 +954,11 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
   }
 }
 
-function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, featuresRel: string): void {
+function printFeatureArtifactInspection(
+  projectRoot: string,
+  inspection: FeatureArtifactInspection,
+  featuresRel: string,
+): void {
   console.log(`   Feature 目录: ${featuresRel}/${inspection.feature}/ (${inspection.pathKind})`);
   if (inspection.sameNameArchives.length > 0) {
     console.log(`   同名归档旁证: ${inspection.sameNameArchives.join(', ')}（已忽略，正式 feature 只认目录）`);
@@ -962,9 +968,38 @@ function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, f
   }
   if (inspection.requiredFiles.length > 0) {
     if (inspection.missingRequiredFiles.length === 0) {
-      console.log(`   阶段必需文件: ${inspection.requiredFiles.join(', ')} 均存在`);
+      const present = inspection.requiredFiles.filter(
+        (f) => !inspection.missingRequiredFiles.includes(f),
+      );
+      if (present.length > 0 && inspection.pathKind === 'directory') {
+        console.log(`   阶段必需文件均已解析到：`);
+        for (const file of present) {
+          const r = resolveFeatureArtifact(projectRoot, inspection.feature, file);
+          const relActual = path.relative(projectRoot, r.actualPath).replace(/\\/g, '/');
+          const relCanon = relFeatureArtifact(projectRoot, inspection.feature, file);
+          if (r.legacyDuplicate) {
+            console.log(`     - ${file}: ⚠ canonical 与 legacy 双份（读 ${relActual}）`);
+          } else if (r.usedLegacy) {
+            console.log(`     - ${file}: 兼容旧路径 ${relActual}（建议迁至 ${relCanon}）`);
+          } else {
+            console.log(`     - ${file}: ${relActual}`);
+          }
+        }
+      } else {
+        console.log(`   阶段必需文件: ${inspection.requiredFiles.join(', ')} 均存在`);
+      }
     } else {
       console.log(`   阶段必需文件缺失: ${inspection.missingRequiredFiles.join(', ')}`);
+      const found = inspection.requiredFiles.filter((f) => !inspection.missingRequiredFiles.includes(f));
+      if (found.length > 0 && inspection.pathKind === 'directory') {
+        for (const file of found) {
+          const r = resolveFeatureArtifact(projectRoot, inspection.feature, file);
+          if (!r.exists) continue;
+          const relActual = path.relative(projectRoot, r.actualPath).replace(/\\/g, '/');
+          const suffix = r.usedLegacy ? '（兼容旧路径）' : r.legacyDuplicate ? '（双份并存）' : '';
+          console.log(`     已命中: ${file} → ${relActual}${suffix}`);
+        }
+      }
     }
   }
 }
@@ -1122,13 +1157,13 @@ function collectContextFiles(
 
   const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
   if (prd) {
-    files.push({ label: relFeatureFile(projectRoot, feature, 'PRD.md'), content: prd });
+    files.push({ label: relFeatureArtifact(projectRoot, feature, 'PRD.md'), content: prd });
   }
 
   if (['design', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
     const design = specLoader.loadFeatureDoc(projectRoot, feature, 'design.md');
     if (design) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'design.md'), content: design });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'design.md'), content: design });
     }
   }
 
@@ -1158,7 +1193,7 @@ function collectContextFiles(
   if (phase === 'review') {
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'review-report.md'), content: reviewReport });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });
     }
 
     const specDir = featureDir(projectRoot, feature);
@@ -1219,12 +1254,12 @@ function collectContextFiles(
 
     const testPlan = specLoader.loadFeatureDoc(projectRoot, feature, 'test-plan.md');
     if (testPlan) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'test-plan.md'), content: testPlan });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-plan.md'), content: testPlan });
     }
 
     const testReport = specLoader.loadFeatureDoc(projectRoot, feature, 'test-report.md');
     if (testReport) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'test-report.md'), content: testReport });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-report.md'), content: testReport });
     }
   }
 

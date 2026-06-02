@@ -13,7 +13,7 @@ import {
 import { createRequire } from 'module';
 import * as path from 'path';
 import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
-import { relFeatureFile, VisualHandoffEnforcementMode } from '../../../harness/config';
+import { relFeatureArtifact, VisualHandoffEnforcementMode } from '../../../harness/config';
 import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
 
 /** `yaml` 安装于 `framework/harness/node_modules`；本文件在 profile 树内，须从 harness 根解析依赖 */
@@ -297,7 +297,7 @@ function structureFailOrWarn(enforcement: VisualHandoffEnforcementMode | undefin
 export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[] {
   const enforcement = ctx.visualHandoffEnforcement;
   const desc = ruleDesc(ctx, 'structure_checks', 'visual_handoff');
-  const prdRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md');
+  const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md');
 
   if (ctx.skipVisualHandoff) {
     const audit = process.env.HARNESS_SKIP_VISUAL_HANDOFF_REASON || '（未设置 HARNESS_SKIP_VISUAL_HANDOFF_REASON）';

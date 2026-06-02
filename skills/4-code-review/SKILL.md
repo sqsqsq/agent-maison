@@ -70,7 +70,7 @@
 | 命名规范 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 硬编码字符串 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 异常处理 | `doc/features/{module}/acceptance.yaml` | MAJOR |
-| 业务逻辑正确性 | `doc/features/{module}/design.md` | MAJOR |
+| 业务逻辑正确性 | `doc/features/{module}/design/design.md` | MAJOR |
 | 数据所有权 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 模拟数据隔离 | `framework/specs/phase-rules/coding-rules.yaml` | MINOR |
 
@@ -79,7 +79,7 @@
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | 功能模块名 | ✅ | 待审查的功能模块名（如 `home-page`），用于定位文件 |
-| design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design.md` |
+| design.md | ✅ | 技术设计文档，路径 `doc/features/{module}/design/design.md` |
 | contracts.yaml | ✅ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml` |
 | acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml` |
 | coding-rules.yaml | ✅ | 编码阶段规约，路径 `framework/specs/phase-rules/coding-rules.yaml` |
@@ -103,8 +103,8 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 1. 向用户确认待审查的功能模块名 `{module-name}`（`review.module_name`：`1=确认` / `2=修改`）
 2. 读取以下文件：
-   - `doc/features/{module}/design.md` — 技术设计基准
-   - `doc/features/{module}/PRD.md` — 需求基准（若存在）
+   - `doc/features/{module}/design/design.md` — 技术设计基准
+   - `doc/features/{module}/prd/PRD.md` — 需求基准（若存在）
    - `doc/architecture.md` — 架构全貌
    - `framework/specs/phase-rules/coding-rules.yaml` — 编码阶段规约
    - `doc/features/{module}/contracts.yaml` — 接口契约
@@ -240,7 +240,7 @@ framework/skills/4-code-review/templates/review-report-template.md
 1. 将审查报告展示给用户确认（`review.report_save`：`1=确认落盘` / `2=修改后再落盘`）
 2. 用户确认后，将报告保存到项目文档目录：
    ```
-   doc/features/{module-name}/review-report.md
+   doc/features/{module-name}/review/review-report.md
    ```
 3. 若用户要求修改，根据反馈调整后重新走 Step 4 自检
 
@@ -330,7 +330,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 
 | 产出 | 路径 |
 |------|------|
-| 审查报告 | `doc/features/{module-name}/review-report.md` |
+| 审查报告 | `doc/features/{module-name}/review/review-report.md` |
 
 ### 文档格式
 - 使用 Markdown 格式
@@ -343,7 +343,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 ## 关联文件
 
 - 上游输入:
-  - `doc/features/{module}/design.md`（Skill 2 输出）
+  - `doc/features/{module}/design/design.md`（Skill 2 输出）
   - 源代码（Skill 3 输出）
   - `doc/features/{module}/contracts.yaml`（Skill 2 产出的接口契约 Spec）
   - `doc/features/{module}/acceptance.yaml`（Skill 1 产出的验收标准 Spec）

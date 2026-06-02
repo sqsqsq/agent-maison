@@ -4,7 +4,7 @@
 
 phase: prd
 version: "1.0"
-applies_to: "doc/features/{module}/PRD.md"
+applies_to: "doc/features/{module}/prd/PRD.md"
 
 semantic_checks:
   ui_component_terminology:

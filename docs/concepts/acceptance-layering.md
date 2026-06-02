@@ -10,13 +10,13 @@
 | 层 | 文件 | 写入者 | 消费者 |
 |----|------|--------|--------|
 | **验收定义** | `doc/features/<feature>/acceptance.yaml`（`ut_layer`、`ut_focus`、`device_focus`） | Skill 1 + 用户确认 | Skill 3/5/6、harness 追溯 |
-| **执行计划** | `doc/features/<feature>/test-plan.md` | Skill 6（从 acceptance **按 device 层过滤**派生） | 人审、derive-hint、Hylyre |
+| **执行计划** | `doc/features/<feature>/testing/test-plan.md` | Skill 6（从 acceptance **按 device 层过滤**派生） | 人审、derive-hint、Hylyre |
 | **自动化派生** | `testing/reports/<ts>/hylyre/test-plan.hylyre.md` | Skill 6 Step 4.5 | `device_test.run`（**已有 BLOCKER SSOT**） |
 | **过程回执** | `ut/reports/ac-coverage.json`、`testing/reports/**/trace.json`、`device-test-timing.json` | harness / Hylyre | 可选引用，**非 SSOT** |
 
 **禁止**：与 `acceptance.yaml` 同语义的平行清单 `device-testing-todo.md`。
 
-**保留**：`test-plan.md` 不是多余文件——它是带 TC 编号、优先级、Hylyre JSON 映射的**执行层**；要少的是 **todo**，不是 **test-plan**。
+**保留**：`testing/test-plan.md`（canonical；读侧兼容 feature 根下旧 `test-plan.md`）不是多余文件——它是带 TC 编号、优先级、Hylyre JSON 映射的**执行层**；要少的是 **todo**，不是 **test-plan**。
 
 ```mermaid
 flowchart LR

@@ -21,7 +21,12 @@ import {
   FeatureSpec,
   UseCasesSpec,
 } from './types';
-import { resolvePaths, featureFilePath } from '../../config';
+import {
+  resolvePaths,
+  featuresDirPath,
+  resolveFeatureArtifact,
+  type FeaturePathOptions,
+} from '../../config';
 
 export type FeatureArtifactVerdict =
   | 'ok'
@@ -83,6 +88,7 @@ const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
 };
 
 export class SpecLoader {
+  private projectRoot: string;
   private phaseRulesDir: string;
   private featuresDir: string;
 
@@ -90,8 +96,18 @@ export class SpecLoader {
     // 阶段 3：默认值来自 framework.config.json（经 resolvePaths 归一化）；
     //        调用方可以用构造参数覆盖（单测/自定义 layout / 外部 frameworkRoot）。
     const resolved = resolvePaths(projectRoot, frameworkRoot);
+    this.projectRoot = resolved.projectRoot;
     this.phaseRulesDir = phaseRulesDir ?? resolved.phaseRulesDir;
     this.featuresDir = featuresDir ?? resolved.featuresDir;
+  }
+
+  /** 当构造参数覆盖 `features_dir` 时，传给 resolver 的选项 */
+  private featurePathOpts(projectRoot: string): FeaturePathOptions | undefined {
+    const configured = featuresDirPath(projectRoot);
+    if (path.resolve(this.featuresDir) === path.resolve(configured)) {
+      return undefined;
+    }
+    return { featuresDirAbs: this.featuresDir };
   }
 
   // --------------------------------------------------------------------------
@@ -169,12 +185,15 @@ export class SpecLoader {
       }
     }
 
-    const missingRequiredFiles = pathKind === 'directory'
-      ? requiredFiles.filter(file => !fs.existsSync(path.join(featureDir, file)))
-      : requiredFiles.slice();
-    const presentOptionalFiles = pathKind === 'directory'
-      ? optionalFiles.filter(file => fs.existsSync(path.join(featureDir, file)))
-      : [];
+    const pathOpts = this.featurePathOpts(this.projectRoot);
+    const missingRequiredFiles =
+      pathKind === 'directory'
+        ? requiredFiles.filter((file) => !resolveFeatureArtifact(this.projectRoot, feature, file, pathOpts).exists)
+        : requiredFiles.slice();
+    const presentOptionalFiles =
+      pathKind === 'directory'
+        ? optionalFiles.filter((file) => resolveFeatureArtifact(this.projectRoot, feature, file, pathOpts).exists)
+        : [];
 
     const sameNameArchives: string[] = [];
     const relatedSiblingEntries: string[] = [];
@@ -234,9 +253,9 @@ export class SpecLoader {
    * @param docName 文档名 (如 'PRD.md', 'design.md')
    */
   loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
-    const docPath = featureFilePath(projectRoot, feature, docName);
-    if (!fs.existsSync(docPath)) return null;
-    return fs.readFileSync(docPath, 'utf-8');
+    const resolved = resolveFeatureArtifact(projectRoot, feature, docName, this.featurePathOpts(projectRoot));
+    if (!resolved.exists) return null;
+    return fs.readFileSync(resolved.actualPath, 'utf-8');
   }
 
   /**

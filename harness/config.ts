@@ -244,10 +244,10 @@ export interface FrameworkToolsConfig {
 
 export interface FrameworkPaths {
   /**
-   * 功能级需求目录：每个 feature 一个子目录，扁平归档所有产物
-   * （PRD.md / design.md / contracts.yaml / contracts.planned.yaml /
-   *   acceptance.yaml / boundaries.yaml / review-report.md /
-   *   test-plan.md / test-report.md 等）。
+   * 功能级需求目录：每个 feature 一个子目录。跨阶段契约（contracts.yaml、
+   *   acceptance.yaml 等）在 feature 根；阶段主产物在 `<phase>/` 子目录
+   *   （prd/PRD.md、design/design.md、review/review-report.md、
+   *   testing/test-plan.md 等），由 artifact resolver 统一解析。
    *
    * 阶段 9 前曾存在 `feature_docs_dir` + `feature_specs_dir` 两个字段；
    * 现已合并为本字段，老字段会在加载时被检测并抛错。
@@ -1444,9 +1444,16 @@ export function featuresDirPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir);
 }
 
+function featureDirResolved(projectRoot: string, feature: string, opts?: FeaturePathOptions): string {
+  if (opts?.featuresDirAbs) {
+    return path.join(path.resolve(opts.featuresDirAbs), feature);
+  }
+  return path.join(featuresDirPath(projectRoot), feature);
+}
+
 /** 某 feature 的完整目录（<features_dir>/<feature>） */
 export function featureDir(projectRoot: string, feature: string): string {
-  return path.join(featuresDirPath(projectRoot), feature);
+  return featureDirResolved(projectRoot, feature);
 }
 
 /** feature 局部的框架升级 compat 约定路径（<features_dir>/<feature>/compat.yaml） */
@@ -1459,8 +1466,191 @@ export function featureCompatPath(projectRoot: string, feature: string): string 
  * acceptance.yaml / review-report.md / test-plan.md / test-report.md 等。
  * 阶段 9 合并前的 `featureDocPath` 与 `featureSpecPath` 现均由本函数承担。
  */
-export function featureFilePath(projectRoot: string, feature: string, fileName: string): string {
-  return path.join(featureDir(projectRoot, feature), fileName);
+export function featureFilePath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  return path.join(featureDirResolved(projectRoot, feature, opts), fileName);
+}
+
+// --------------------------------------------------------------------------
+// Feature 阶段产物路径 SSOT（phase-scoped archival）
+// --------------------------------------------------------------------------
+
+/** 阶段主产物：basename → workflow phase id */
+export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
+  'PRD.md': 'prd',
+  'design.md': 'design',
+  'review-report.md': 'review',
+  'test-plan.md': 'testing',
+  'test-report.md': 'testing',
+  'testability-audit.md': 'ut',
+  'mock-plan.yaml': 'ut',
+};
+
+/** 从未有扁平 legacy 形态的阶段产物（canonical 即 ut/...） */
+export const ALREADY_PHASED_ARTIFACTS: ReadonlySet<string> = new Set([
+  'testability-audit.md',
+  'mock-plan.yaml',
+]);
+
+/** 覆盖 `paths.features_dir` 的绝对路径（SpecLoader 构造参数、单测自定义 layout） */
+export interface FeaturePathOptions {
+  featuresDirAbs?: string;
+}
+
+export interface ResolvedFeatureArtifact {
+  /** 实际用于读取的绝对路径 */
+  actualPath: string;
+  /** 规范写入路径（绝对） */
+  canonicalPath: string;
+  /** 扁平 legacy 路径（绝对）；无 legacy 时与 canonical 相同 */
+  legacyPath: string;
+  usedLegacy: boolean;
+  legacyDuplicate: boolean;
+  exists: boolean;
+}
+
+/**
+ * 归一化产物键：去掉已带的 `<phase>/` 前缀，返回 basename。
+ * `ut/mock-plan.yaml` 与 `mock-plan.yaml` 均归一为 `mock-plan.yaml`。
+ */
+export function normalizeArtifactFileName(fileName: string): string {
+  const trimmed = fileName.replace(/\\/g, '/').trim();
+  if (!trimmed) return trimmed;
+  const slash = trimmed.indexOf('/');
+  if (slash <= 0) return trimmed;
+  const prefix = trimmed.slice(0, slash);
+  const rest = trimmed.slice(slash + 1);
+  const phase = PHASE_SCOPED_ARTIFACTS[rest];
+  if (phase && phase === prefix) {
+    return rest;
+  }
+  return trimmed;
+}
+
+/** 返回产物归属阶段；全局契约返回 null */
+export function featureArtifactPhaseOf(fileName: string): string | null {
+  const base = normalizeArtifactFileName(fileName);
+  return PHASE_SCOPED_ARTIFACTS[base] ?? null;
+}
+
+/** 规范写入绝对路径（阶段产物 → `receiptDirPath` 同目录 + basename，与 context-exploration/receipt 对齐） */
+function receiptDirPathResolved(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  opts?: FeaturePathOptions,
+): string {
+  if (!opts?.featuresDirAbs) {
+    return receiptDirPath(projectRoot, feature, phase);
+  }
+  const cfg = loadFrameworkConfig(projectRoot);
+  const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
+  const configuredRel = toPosix(cfg.paths.features_dir ?? DEFAULT_PATHS.features_dir!);
+  const overrideRel = toPosix(path.relative(projectRoot, path.resolve(opts.featuresDirAbs)));
+  let rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+  if (overrideRel !== configuredRel) {
+    if (rel.startsWith(`${configuredRel}/`)) {
+      rel = `${overrideRel}${rel.slice(configuredRel.length)}`;
+    } else {
+      rel = `${overrideRel}/${feature}/${phase}`;
+    }
+  }
+  return path.resolve(projectRoot, rel);
+}
+
+export function featureArtifactPath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  const phase = PHASE_SCOPED_ARTIFACTS[base];
+  if (phase) {
+    return path.join(receiptDirPathResolved(projectRoot, feature, phase, opts), base);
+  }
+  return featureFilePath(projectRoot, feature, base, opts);
+}
+
+/** 扁平 legacy 绝对路径（仅对有 legacy 的阶段主产物；ut 类与 canonical 相同） */
+export function featureArtifactLegacyPath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  if (ALREADY_PHASED_ARTIFACTS.has(base)) {
+    return featureArtifactPath(projectRoot, feature, base, opts);
+  }
+  return featureFilePath(projectRoot, feature, base, opts);
+}
+
+/**
+ * 读解析：优先 canonical，回退 legacy；新旧并存时 legacyDuplicate=true。
+ */
+export function resolveFeatureArtifact(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): ResolvedFeatureArtifact {
+  const base = normalizeArtifactFileName(fileName);
+  const canonicalPath = featureArtifactPath(projectRoot, feature, base, opts);
+  const legacyPath = featureArtifactLegacyPath(projectRoot, feature, base, opts);
+  const hasCanonical = fs.existsSync(canonicalPath);
+  const hasLegacy =
+    !ALREADY_PHASED_ARTIFACTS.has(base) &&
+    legacyPath !== canonicalPath &&
+    fs.existsSync(legacyPath);
+  const legacyDuplicate = hasCanonical && hasLegacy;
+
+  if (hasCanonical) {
+    return {
+      actualPath: canonicalPath,
+      canonicalPath,
+      legacyPath,
+      usedLegacy: false,
+      legacyDuplicate,
+      exists: true,
+    };
+  }
+  if (hasLegacy) {
+    return {
+      actualPath: legacyPath,
+      canonicalPath,
+      legacyPath,
+      usedLegacy: true,
+      legacyDuplicate: false,
+      exists: true,
+    };
+  }
+  return {
+    actualPath: canonicalPath,
+    canonicalPath,
+    legacyPath,
+    usedLegacy: false,
+    legacyDuplicate: false,
+    exists: false,
+  };
+}
+
+/** canonical 相对路径（POSIX），用于错误消息 / affected_files / verifier label */
+export function relFeatureArtifact(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  if (!PHASE_SCOPED_ARTIFACTS[base]) {
+    return toPosix(path.relative(projectRoot, featureFilePath(projectRoot, feature, base, opts)));
+  }
+  return toPosix(path.relative(projectRoot, featureArtifactPath(projectRoot, feature, base, opts)));
 }
 
 /** 阶段状态机文件绝对路径（agent 工作流强制门用） */

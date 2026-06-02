@@ -42,7 +42,12 @@ import {
   CANONICAL_UT_RUN_ID,
   LEGACY_UT_RUN_ID,
 } from '../capability-registry';
-import { loadFrameworkConfig, featuresDirPath } from '../config';
+import {
+  loadFrameworkConfig,
+  featuresDirPath,
+  resolveFeatureArtifact,
+  featureArtifactPath,
+} from '../config';
 import {
   tryLoadUtHostImpl,
   tryLoadDiffExcludeTestPathRegexes,
@@ -66,6 +71,7 @@ import {
 } from './utils/ut-artifact-parse';
 import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
 import { buildAcCoverageReport, writeAcCoverageReport } from './utils/ac-coverage-report';
 import {
@@ -255,10 +261,10 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
 }
 
 function loadDesignMd(ctx: CheckContext): string | null {
-  const p = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'design.md');
-  if (!fs.existsSync(p)) return null;
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md');
+  if (!resolved.exists) return null;
   try {
-    return fs.readFileSync(p, 'utf-8');
+    return fs.readFileSync(resolved.actualPath, 'utf-8');
   } catch {
     return null;
   }
@@ -2288,11 +2294,11 @@ function collectUnitScopeAcceptanceIds(ctx: CheckContext): string[] {
 }
 
 function testabilityAuditPath(ctx: CheckContext): string {
-  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'ut/testability-audit.md');
+  return featureArtifactPath(ctx.projectRoot, ctx.feature, 'testability-audit.md');
 }
 
 function mockPlanPath(ctx: CheckContext): string {
-  return path.join(ctx.projectRoot, 'doc/features', ctx.feature, 'ut/mock-plan.yaml');
+  return featureArtifactPath(ctx.projectRoot, ctx.feature, 'mock-plan.yaml');
 }
 
 function auditLevelNorm(level?: string): string {
@@ -3026,7 +3032,9 @@ const checker: PhaseChecker = {
     const mockPlanDoc = parseMockPlanFile(mockPlanPath(ctx));
     const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['PRD.md', 'design.md']),
+    ];
 
     results.push(
       ...safeRun(

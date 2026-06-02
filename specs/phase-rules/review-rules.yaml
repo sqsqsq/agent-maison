@@ -11,7 +11,7 @@
 
 phase: review
 version: "1.0"
-applies_to: "doc/features/{module}/review-report.md"
+applies_to: "doc/features/{module}/review/review-report.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测

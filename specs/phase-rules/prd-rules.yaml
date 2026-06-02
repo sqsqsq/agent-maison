@@ -2,7 +2,7 @@
 # PRD 阶段规约 (Phase Rules)
 # ============================================================================
 # 定义 PRD 文档（Skill 1 产出）必须满足的通用规则。
-# 适用于所有功能模块的 doc/features/{module}/PRD.md。
+# 适用于所有功能模块的 doc/features/{module}/prd/PRD.md。
 #
 # 消费者:
 #   - framework/harness/scripts/check-prd.ts  (脚本 Harness, 确定性检查)
@@ -11,7 +11,7 @@
 
 phase: prd
 version: "1.0"
-applies_to: "doc/features/{module}/PRD.md"
+applies_to: "doc/features/{module}/prd/PRD.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测

@@ -11,7 +11,7 @@
 
 phase: design
 version: "1.0"
-applies_to: "doc/features/{module}/design.md"
+applies_to: "doc/features/{module}/design/design.md"
 
 structure_checks: {}
 

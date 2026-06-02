@@ -45,10 +45,10 @@
 
 | Phase       | 对象                     | `--feature` | `requires`（前置） |
 | ----------- | ------------------------ | ----------- | ------------------ |
-| `prd`       | `doc/features/<feature>/PRD.md` | **必填** | `catalog`, `glossary` |
-| `design`    | `design.md` 等           | **必填** | `prd` |
-| `coding`    | 代码 + contracts       | **必填** | `design` |
-| `review`    | `review-report.md`     | **必填** | `coding` |
+| `prd`       | `doc/features/<feature>/prd/PRD.md` | **必填** | `catalog`, `glossary` |
+| `design`    | `design/design.md` 等    | **必填** | `prd` |
+| `coding`    | 代码 + 根目录 `contracts.yaml` | **必填** | `design` |
+| `review`    | `review/review-report.md` | **必填** | `coding` |
 | `ut`        | DAG / `*.test.ets` 等  | **必填** | `coding` |
 | `testing`   | 真机计划 / 报告        | **必填** | `ut` |
 
@@ -195,7 +195,7 @@ doc/features/<feature>/
 - **结构**：schema、`modules[]` 必填字段、layer/format、唯一性等
 - **追溯**：`easily_confused_with` 指向存在、无自引用 / 空 module（BLOCKER）、对称性（MAJOR，可 `unidirectional` 豁免）、`entry_file` 在磁盘、`layer_matches_path`
 - **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR/HSP 库模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
-- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
+- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描各 feature 的 `prd/PRD.md` 与 `design/design.md`（读侧兼容旧扁平路径）的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
 
 ### 5.2 glossary（`check-glossary.ts`）
 
@@ -213,11 +213,11 @@ doc/features/<feature>/
 
 ### 5.4 design / coding / review / testing
 
-行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致；feature 级规约与文档同目录扁平归档在实例工程根的 `doc/features/<feature>/`，`framework.config.json` 仅保留单字段 `paths.features_dir`，默认 `doc/features`。
+行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致。`doc/features/<feature>/` 下：**跨阶段契约**（`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml` 等）在 feature **根目录**；**阶段主产物**在 `<phase>/` 子目录（如 `prd/PRD.md`、`design/design.md`、`testing/test-plan.md`），与 `context-exploration.md`、`phase-completion-receipt.md`、`reports/` 同树。路径由 `harness/config.ts` 的 artifact resolver（`PHASE_SCOPED_ARTIFACTS`）统一解析；读侧 dual-read 兼容旧扁平路径。
 
 #### Feature Artifact Resolution Protocol
 
-所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
+所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature；阶段主产物的 canonical 路径见 `featureArtifactPath` / `relFeatureArtifact`。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
 
 - PRD 阶段是创建者：目录不存在时可以创建；若精确路径已存在但不是目录，或仅存在同名归档，应先让用户确认 feature 名称或恢复动作。
 - design / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
@@ -533,7 +533,7 @@ cat framework/harness/state/.current-phase.json
 | 2 | **contracts 快照**：`doc/features/<feature>/contracts.yaml` 与当前工程对齐（实例路径，不进 `framework/`）                                    |
 | 3 | **测试计划 AC 编号**：`check-testing.ts` 中关联 AC 的正则支持 `AC-G1` 等形式                                                                  |
 | 4 | **Hypium 入口**：`check-ut.ts` 跳过仅导出 `testsuite()`、无 `describe` 的入口 shim                                                            |
-| 5 | **真机测试文档**：`doc/features/<feature>/test-plan.md`、`test-report.md` 必须覆盖 acceptance 中 P0 / P1 的 AC 追溯                          |
+| 5 | **真机测试文档**：`doc/features/<feature>/testing/test-plan.md`、`testing/test-report.md` 必须覆盖 acceptance 中 P0 / P1 的 AC 追溯                          |
 | 6 | **技能跳板**：部分 adapter 在实例根生成轻量入口，指向 `framework/skills/` 正文，**不复制内容**                                                  |
 
 ---

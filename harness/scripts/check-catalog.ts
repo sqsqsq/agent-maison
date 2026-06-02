@@ -37,6 +37,8 @@ import {
   featuresDirPath,
   relFeaturesDir,
   relCatalog,
+  resolveFeatureArtifact,
+  relFeatureArtifact,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
 
@@ -669,9 +671,9 @@ function checkFeatureScopeIntegrity(
   for (const dirent of dirents) {
     if (!dirent.isDirectory()) continue;
     for (const fileName of ['PRD.md', 'design.md']) {
-      const fullPath = path.join(featuresDir, dirent.name, fileName);
-      if (!fs.existsSync(fullPath)) continue;
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const resolved = resolveFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      if (!resolved.exists) continue;
+      const content = fs.readFileSync(resolved.actualPath, 'utf-8');
       const { scope } = parseScope(content);
       if (!scope) continue;
       scannedCount++;
@@ -685,7 +687,7 @@ function checkFeatureScopeIntegrity(
       if (inMissing.length > 0) where.push(`in_scope_modules:[${inMissing.join(', ')}]`);
       if (outMissing.length > 0) where.push(`out_of_scope_modules:[${outMissing.join(', ')}]`);
 
-      const rel = `${featuresRel}/${dirent.name}/${fileName}`;
+      const rel = relFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
       broken.push({ file: rel, missing: allMissing, in_or_out: where });
       affected.add(rel);
     }
