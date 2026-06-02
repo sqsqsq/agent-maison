@@ -12,7 +12,7 @@
 |----|------|
 | **S1 探测** | `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`（**零写盘**） |
 | **S2 计划批准** | `init.task_plan` + `init.materialized_adapters` 多选；手动模式用 `init.task_decision`（**禁止 Q1=y**） |
-| **S3 执行** | `--execute --decision-file` + `context.json` → harness 按 DAG 写盘 |
+| **S3 执行** | 枚举 decision JSON + context JSON（OS 临时目录绝对路径）→ `init-orchestrate --execute` → preflight + `executeInitPlan` |
 | **S4 摘要** | `buildRunSummary(run-log)` |
 
 要点：
@@ -146,9 +146,9 @@ git submodule update --remote framework
 # S1 探测（只读）
 cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>
 
-# S3 执行（decision/context 由 Skill S2 生成）
+# S3 执行（decision/context 由 Skill S2 写入 OS 临时目录，须绝对路径）
 cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root> \
-  --execute --decision-file /path/to/decision.json --context-file /path/to/context.json
+  --execute --decision-file "$TMPDIR/framework-init-<stamp>/decision.json" --context-file "$TMPDIR/framework-init-<stamp>/context.json"
 
 # 个人 setup 探测
 cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <repo-root>

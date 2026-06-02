@@ -7,8 +7,11 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache } from '../../config';
 import {
+  assertDecisionStructure,
   buildRunSummary,
   executeInitPlan,
+  preflightExecute,
+  readJsonFile,
   reconcileInitRunDecisionForPlan,
   type InitRunDecision,
   validateDecisionJson,
@@ -37,6 +40,21 @@ function illegalConfigWritePayload(): Record<string, unknown> {
     materialized_adapters: ['generic'],
     architecture: {
       outer_layers: [{ id: 'L1', can_depend_on: ['MISSING'], intra_layer_deps: 'forbid' }],
+      module_inner_layers: ['shared'],
+      inner_dependency_direction: 'upward',
+      cross_module_exports_file: 'index.ets',
+    },
+    paths: { features_dir: 'doc/features', agent_bundle_root: '.agents' },
+  };
+}
+
+function validConfigWritePayload(): Record<string, unknown> {
+  return {
+    schema_version: '1.1',
+    project_name: 'valid-init',
+    materialized_adapters: ['generic'],
+    architecture: {
+      outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
       module_inner_layers: ['shared'],
       inner_dependency_direction: 'upward',
       cross_module_exports_file: 'index.ets',
@@ -89,7 +107,303 @@ function minimalPlan(): InitTaskPlan {
   };
 }
 
+function planWithDocTask(): InitTaskPlan {
+  const base = minimalPlan();
+  return {
+    ...base,
+    tasks: [
+      ...base.tasks,
+      {
+        id: 'write-architecture',
+        title: 'doc/architecture.md',
+        category: 'docs',
+        scope: 'project',
+        deps: ['ensure-config'],
+        status: 'needed',
+        default_action: 'run',
+        skippable: true,
+        allowed_actions: ['run', 'skip'],
+        target_path: 'doc/architecture.md',
+      },
+    ],
+  };
+}
+
+function docOnlyPlan(): InitTaskPlan {
+  return {
+    schema_version: '1.0',
+    scope: 'project',
+    mode: 'create',
+    generated_at: new Date().toISOString(),
+    tasks: [
+      {
+        id: 'write-architecture',
+        title: 'doc/architecture.md',
+        category: 'docs',
+        scope: 'project',
+        deps: [],
+        status: 'needed',
+        default_action: 'run',
+        skippable: true,
+        allowed_actions: ['run', 'skip'],
+        target_path: 'doc/architecture.md',
+      },
+    ],
+  };
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'readJsonFile parses UTF-8 BOM decision.json',
+    run: () => {
+      const root = mkTmp();
+      const file = path.join(root, 'decision.json');
+      const payload = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: new Date().toISOString(),
+        tasks: [],
+      };
+      fs.writeFileSync(file, `\uFEFF${JSON.stringify(payload)}`, 'utf-8');
+      const parsed = readJsonFile<typeof payload>(file, '决策');
+      assert.strictEqual(parsed.schema_version, '1.0');
+      assert.strictEqual(parsed.scope, 'project');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'readJsonFile invalid decision JSON uses 决策 label',
+    run: () => {
+      const root = mkTmp();
+      const file = path.join(root, 'decision.json');
+      fs.writeFileSync(file, '{not-json', 'utf-8');
+      assert.throws(
+        () => readJsonFile(file, '决策'),
+        (e: Error) => e.message.includes('决策 JSON 非法') && e.message.includes('无法解析 JSON'),
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'readJsonFile invalid context JSON uses 上下文 label',
+    run: () => {
+      const root = mkTmp();
+      const file = path.join(root, 'context.json');
+      fs.writeFileSync(file, '{not-json', 'utf-8');
+      assert.throws(
+        () => readJsonFile(file, '上下文'),
+        (e: Error) => e.message.includes('上下文 JSON 非法') && e.message.includes('无法解析 JSON'),
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'readJsonFile parses UTF-8 BOM context.json',
+    run: () => {
+      const root = mkTmp();
+      const file = path.join(root, 'context.json');
+      fs.writeFileSync(file, `\uFEFF${JSON.stringify({ configWritePayload: { project_name: 'x' } })}`, 'utf-8');
+      const parsed = readJsonFile<{ configWritePayload: { project_name: string } }>(file, '上下文');
+      assert.strictEqual(parsed.configWritePayload.project_name, 'x');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects missing tasks',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            schema_version: '1.0',
+            scope: 'project',
+            decision_mode: 'smart',
+            plan_generated_at: new Date().toISOString(),
+          }),
+        /tasks 缺失或非数组/,
+      );
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects bad schema_version',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            schema_version: '2.0',
+            scope: 'project',
+            decision_mode: 'smart',
+            plan_generated_at: new Date().toISOString(),
+            tasks: [],
+          }),
+        /schema_version 须为 "1.0"/,
+      );
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects bad scope',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            schema_version: '1.0',
+            scope: 'evil',
+            decision_mode: 'smart',
+            plan_generated_at: new Date().toISOString(),
+            tasks: [],
+          }),
+        /scope 须为 project\|personal/,
+      );
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects bad decision_mode',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            schema_version: '1.0',
+            scope: 'project',
+            decision_mode: 'manul',
+            plan_generated_at: new Date().toISOString(),
+            tasks: [],
+          }),
+        /decision_mode 须为 smart\|manual/,
+      );
+    },
+  },
+  {
+    name: 'assertDecisionStructure rejects task missing task_id',
+    run: () => {
+      assert.throws(
+        () =>
+          assertDecisionStructure({
+            schema_version: '1.0',
+            scope: 'project',
+            decision_mode: 'smart',
+            plan_generated_at: new Date().toISOString(),
+            tasks: [{ action: 'run' }],
+          }),
+        /task_id 缺失或非字符串/,
+      );
+    },
+  },
+  {
+    name: 'preflightExecute unknown task_id blocked with all plan tasks skipped',
+    run: () => {
+      const plan = minimalPlan();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: [{ task_id: 'no-such-task', action: 'run' }],
+      };
+      const r = preflightExecute(plan, decision);
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        const blocked = r.blocked;
+        assert(blocked.entries.some(e => e.task_id === 'no-such-task' && e.status === 'failed'));
+        for (const task of plan.tasks) {
+          const entry = blocked.entries.find(e => e.task_id === task.id);
+          assert(entry);
+          assert.strictEqual(entry!.status, 'skipped');
+        }
+      }
+    },
+  },
+  {
+    name: 'preflightExecute doc run without docWritePayload blocks zero project writes',
+    run: () => {
+      const root = mkTmp();
+      const plan = planWithDocTask();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
+      };
+      const r = preflightExecute(plan, decision, {
+        configWritePayload: validConfigWritePayload(),
+      });
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        const arch = r.blocked.entries.find(e => e.task_id === 'write-architecture');
+        assert.strictEqual(arch?.status, 'failed');
+      }
+      assert(!fs.existsSync(path.join(root, '.gitignore')));
+      assert(!fs.existsSync(path.join(root, 'framework.config.json')));
+      assert(!fs.existsSync(path.join(root, 'doc/architecture.md')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'preflightExecute doc skip passes without docWritePayload',
+    run: () => {
+      const plan = docOnlyPlan();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: [{ task_id: 'write-architecture', action: 'skip' }],
+      };
+      const r = preflightExecute(plan, decision);
+      assert.strictEqual(r.ok, true);
+    },
+  },
+  {
+    name: 'preflightExecute ensure-config run without configWritePayload blocks atomically',
+    run: () => {
+      const root = mkTmp();
+      const plan = minimalPlan();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
+      };
+      const r = preflightExecute(plan, decision);
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        const cfg = r.blocked.entries.find(e => e.task_id === 'ensure-config');
+        assert.strictEqual(cfg?.status, 'failed');
+        assert(cfg?.message.includes('configWritePayload 缺失'));
+      }
+      assert(!fs.existsSync(path.join(root, '.gitignore')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'preflightExecute illegal architecture blocks ensure-config and zero gitignore write',
+    run: () => {
+      const root = mkTmp();
+      const plan = minimalPlan();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
+      };
+      const r = preflightExecute(plan, decision, {
+        configWritePayload: illegalConfigWritePayload(),
+      });
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        const cfg = r.blocked.entries.find(e => e.task_id === 'ensure-config');
+        assert.strictEqual(cfg?.status, 'failed');
+        assert(cfg?.message.includes('config 校验失败'));
+        const gitignore = r.blocked.entries.find(e => e.task_id === 'ensure-gitignore');
+        assert.strictEqual(gitignore?.status, 'skipped');
+      }
+      assert(!fs.existsSync(path.join(root, '.gitignore')));
+      assert(!fs.existsSync(path.join(root, 'framework.config.json')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
   {
     name: 'validateDecisionJson rejects unknown task',
     run: () => {

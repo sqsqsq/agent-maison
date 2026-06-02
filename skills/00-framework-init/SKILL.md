@@ -68,7 +68,10 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
 2. **`init.materialized_adapters`**：至少 1 项（`claude` / `cursor` / `generic`）。
 3. **手动模式**：对每个 `drift` 任务用 **`init.task_decision`**（覆盖 / 保留），**禁止** Q1=y 逐项打字。
-4. 序列化为 **`InitRunDecision` JSON** + **`context.json`**（含 `configWritePayload`、`materializedAdapters`、`confirmAnswers` 等）。
+4. 序列化为 **`InitRunDecision` JSON** + **`context.json`**（含 `configWritePayload`、`materializedAdapters`、`confirmAnswers` 等），写入 **OS 临时目录**（一次性 staging，非项目资产）：
+   - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`（`<stamp>` 建议 ISO 时间戳去冒号，如 `20260602T091500Z`）
+   - Windows：`%TEMP%\framework-init-<stamp>\decision.json` 与 `context.json`
+   - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
 
 `auto_overwrite` 机制段由 planner 标为 `sync-auto-overwrite:*`，智能模式下自动执行，不进手动逐项菜单。
 
@@ -85,13 +88,16 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
   --scope project \
   --project-root <repo-root> \
   --execute \
-  --decision-file decision.json \
-  --context-file context.json
+  --decision-file <abs-temp-dir>/decision.json \
+  --context-file <abs-temp-dir>/context.json
 ```
 
+> `<abs-temp-dir>` = S2 写入的 OS 临时目录绝对路径（见 S2.2 第 4 步）。须用绝对路径，因 shell cwd 在 `framework/harness`。
+
 - S3 执行器：`executeInitPlan` → `init-task-executor.ts`（gitignore、config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
-- **`configWritePayload` / `docWritePayload`** 须在 S2 收集并写入 `context.json`；S3 缺失则对应任务 **failed**（非假 executed）。
-- doc 骨架（`write-architecture` / catalog / glossary）若 planner 标记为 needed 且 context 未带内容 → 按 [profiles/.../doc-skeletons/](../../profiles/) 或用户确认稿本写入后再重跑 S3，或登记为 skipped 并在 S4 说明。
+- S3 **preflight**：`init-orchestrate.ts` 在写盘前校验 decision 结构与 config/doc payload；违规时**除 harness 审计 run-log 外零项目写盘**，写 blocked run-log 后 `exit 1`。
+- **`configWritePayload` / `docWritePayload`** 须在 S2 收集并写入 `context.json`；写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
+- doc 骨架（`write-architecture` / catalog / glossary）若 planner 标记为 needed 且 context 未带内容 → 按 [profiles/.../doc-skeletons/](../../profiles/) 或用户确认稿本写入后再重跑 S3，或在 S2 决策 **skip** 并在 S4 说明。
 - **失败任务**：摘要中列出；不静默吞掉 `failed` 条目。
 
 ---
@@ -99,6 +105,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ## S4. 摘要（harness 生成）
 
 - 使用 CLI 输出的 **`buildRunSummary(run-log)`** + `harness/reports/_global/init-orchestrate/*/summary.md`。
+- **清理 staging**：无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`）；仅调试需要时在 S4 向用户上报其绝对路径后再删。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **下一步（须用户确认，禁止自动开下游 Skill）**：
   1. 提醒团队成员：首次跑 catalog/prd 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
@@ -128,7 +135,8 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 ## 阻塞与上报（BLOCKER）
 
-- 无法通过 `validateArchitectureDsl` → 不得写入 config。
+- 无法通过 `validateArchitectureDsl` → 不得写入 config（S3 preflight 会原子阻断）。
+- 写类 doc/config 任务缺对应 `docWritePayload` / `configWritePayload` → S3 preflight **原子阻断、零项目写盘**；须注入内容或在 S2 决策 skip。
 - S1 写盘 / 口头编造体检结果 → 严禁。
 - 未经 S2 批准执行 S3 → 严禁。
 - 覆盖 POPULATED 的 `doc/module-catalog.yaml` / `doc/glossary.yaml` / `doc/glossary-seed.txt` / 用户迭代的 `doc/architecture.md` → 除非 S2 显式 overwrite。

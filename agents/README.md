@@ -52,7 +52,7 @@ framework/agents/
 
 1. **S1** — `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`
 2. **S2** — `init.task_plan` + `init.materialized_adapters` + `init.task_decision`（手动）
-3. **S3** — `--execute --decision-file` + `context.json`（含 `configWritePayload`）
+3. **S3** — `--execute --decision-file` + `context.json`（OS 临时目录绝对路径；含 `configWritePayload`）→ preflight + `executeInitPlan`
 4. **S4** — `buildRunSummary(run-log)`
 
 个人 setup 无独立 slash：各阶段入口 `--ensure` 写 `framework.local.json`（多 adapter 时 `setup.adapter`）；feature/catalog/glossary phase 前须完成（harness-runner 在 `fallback` 时阻断）。

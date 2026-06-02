@@ -5,6 +5,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { validateFrameworkConfigWriteCandidate, type FrameworkConfig } from '../config';
+import { sanitizeProjectConfigForInitWrite } from './utils/config-field-merger';
 import {
   executeInitTask,
   type InitExecutionContext,
@@ -50,6 +52,227 @@ export interface InitRunLog {
 
 
 const VALID_ACTIONS = new Set(['run', 'skip', 'overwrite', 'keep']);
+const VALID_SCOPES = new Set<TaskScope>(['project', 'personal']);
+const VALID_DECISION_MODES = new Set<DecisionMode>(['smart', 'manual']);
+
+const DOC_PAYLOAD_KEY_BY_TASK: Record<
+  string,
+  keyof NonNullable<InitExecutionContext['docWritePayload']>
+> = {
+  'write-architecture': 'architecture_md',
+  'ensure-catalog': 'module_catalog',
+  'ensure-glossary': 'glossary_yaml',
+  'ensure-glossary-seed': 'glossary_seed',
+};
+
+/** 决策 JSON 结构 + 枚举守卫（JSON.parse 成功后立即调用） */
+export function assertDecisionStructure(raw: unknown): InitRunDecision {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[init-orchestrate] 决策 JSON 非法：根须为对象');
+  }
+  const o = raw as Record<string, unknown>;
+  if (o.schema_version !== '1.0') {
+    throw new Error(
+      `[init-orchestrate] 决策 JSON 非法：schema_version 须为 "1.0"，当前=${String(o.schema_version ?? '<missing>')}`,
+    );
+  }
+  if (typeof o.scope !== 'string' || !VALID_SCOPES.has(o.scope as TaskScope)) {
+    throw new Error(
+      `[init-orchestrate] 决策 JSON 非法：scope 须为 project|personal，当前=${String(o.scope ?? '<missing>')}`,
+    );
+  }
+  if (
+    typeof o.decision_mode !== 'string' ||
+    !VALID_DECISION_MODES.has(o.decision_mode as DecisionMode)
+  ) {
+    throw new Error(
+      `[init-orchestrate] 决策 JSON 非法：decision_mode 须为 smart|manual，当前=${String(o.decision_mode ?? '<missing>')}`,
+    );
+  }
+  if (typeof o.plan_generated_at !== 'string' || !o.plan_generated_at.trim()) {
+    throw new Error('[init-orchestrate] 决策 JSON 非法：plan_generated_at 缺失或非字符串');
+  }
+  if (!Array.isArray(o.tasks)) {
+    throw new Error('[init-orchestrate] 决策 JSON 非法：tasks 缺失或非数组');
+  }
+  const tasks: TaskDecision[] = [];
+  for (let i = 0; i < o.tasks.length; i++) {
+    const item = o.tasks[i];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`[init-orchestrate] 决策 JSON 非法：tasks[${i}] 须为对象`);
+    }
+    const t = item as Record<string, unknown>;
+    if (typeof t.task_id !== 'string' || !t.task_id.trim()) {
+      throw new Error(`[init-orchestrate] 决策 JSON 非法：tasks[${i}].task_id 缺失或非字符串`);
+    }
+    if (typeof t.action !== 'string' || !VALID_ACTIONS.has(t.action)) {
+      throw new Error(
+        `[init-orchestrate] 决策 JSON 非法：tasks[${i}].action 非法（允许: run,skip,overwrite,keep）`,
+      );
+    }
+    tasks.push({ task_id: t.task_id, action: t.action as TaskDecision['action'] });
+  }
+  return {
+    schema_version: '1.0',
+    scope: o.scope as TaskScope,
+    decision_mode: o.decision_mode as DecisionMode,
+    plan_generated_at: o.plan_generated_at,
+    tasks,
+  };
+}
+
+function checkWriteTaskPayload(
+  task: InitTask,
+  action: TaskDecision['action'],
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): string | null {
+  if (action === 'skip' || action === 'keep') return null;
+
+  if (task.id === 'ensure-config') {
+    if (!context?.configWritePayload) {
+      return 'ensure-config：context.configWritePayload 缺失；须由 Skill S2 注入 JSON，或在 S2 决策 skip';
+    }
+    try {
+      validateFrameworkConfigWriteCandidate(
+        context.configWritePayload as Partial<FrameworkConfig>,
+      );
+      sanitizeProjectConfigForInitWrite(context.configWritePayload);
+    } catch (e) {
+      return `ensure-config：config 校验失败：${(e as Error).message}`;
+    }
+    return null;
+  }
+
+  const docKey = DOC_PAYLOAD_KEY_BY_TASK[task.id];
+  if (docKey) {
+    const content = context?.docWritePayload?.[docKey]?.trim();
+    if (!content) {
+      return `${task.id}：context.docWritePayload.${docKey} 缺失；须由 Skill S2 注入内容，或在 S2 决策 skip`;
+    }
+  }
+  return null;
+}
+
+function extractUnknownTaskId(error: string): string | undefined {
+  const m = error.match(/未知 task_id:\s*(\S+)/);
+  return m?.[1];
+}
+
+function buildPreflightBlockedLog(
+  plan: InitTaskPlan,
+  decision: InitRunDecision,
+  startedAt: string,
+  violations: Array<{ task_id: string; action: string; message: string }>,
+  decisionValidationFailed: boolean,
+): InitRunLog {
+  const entries: InitRunLogEntry[] = [];
+  const violationByTask = new Map(violations.map(v => [v.task_id, v]));
+
+  if (decisionValidationFailed) {
+    for (const v of violations) {
+      entries.push({
+        task_id: v.task_id,
+        action: v.action,
+        status: 'failed',
+        message: v.message,
+      });
+    }
+    for (const task of plan.tasks) {
+      entries.push({
+        task_id: task.id,
+        action: 'skip',
+        status: 'skipped',
+        message: 'preflight 决策校验失败，未执行',
+      });
+    }
+  } else {
+    for (const task of plan.tasks) {
+      const v = violationByTask.get(task.id);
+      if (v) {
+        entries.push({
+          task_id: task.id,
+          action: v.action,
+          status: 'failed',
+          message: v.message,
+        });
+      } else {
+        entries.push({
+          task_id: task.id,
+          action: 'skip',
+          status: 'skipped',
+          message: 'preflight 阻断，未执行',
+        });
+      }
+    }
+  }
+
+  return {
+    schema_version: '1.0',
+    scope: plan.scope,
+    started_at: startedAt,
+    finished_at: new Date().toISOString(),
+    decision_mode: decision.decision_mode,
+    entries,
+  };
+}
+
+/** S3 执行前无副作用 preflight；失败返回 blocked run-log（零项目业务/机制写盘） */
+export function preflightExecute(
+  plan: InitTaskPlan,
+  decision: InitRunDecision,
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): { ok: true } | { ok: false; blocked: InitRunLog } {
+  const started = new Date().toISOString();
+  const validation = validateDecisionJson(plan, decision);
+  if (!validation.ok) {
+    const unknownId = extractUnknownTaskId(validation.error);
+    return {
+      ok: false,
+      blocked: buildPreflightBlockedLog(
+        plan,
+        decision,
+        started,
+        [
+          {
+            task_id: unknownId ?? '<decision-validation>',
+            action: 'validate',
+            message: validation.error,
+          },
+        ],
+        true,
+      ),
+    };
+  }
+
+  const violations: Array<{ task_id: string; action: string; message: string }> = [];
+  for (const task of plan.tasks) {
+    let action: TaskDecision['action'];
+    try {
+      action = resolveTaskAction(task, decision);
+    } catch (e) {
+      violations.push({
+        task_id: task.id,
+        action: 'validate',
+        message: (e as Error).message,
+      });
+      continue;
+    }
+    if (action === 'skip' || action === 'keep') continue;
+    const msg = checkWriteTaskPayload(task, action, context);
+    if (msg) {
+      violations.push({ task_id: task.id, action, message: msg });
+    }
+  }
+
+  if (violations.length > 0) {
+    return {
+      ok: false,
+      blocked: buildPreflightBlockedLog(plan, decision, started, violations, false),
+    };
+  }
+
+  return { ok: true };
+}
 
 function taskRequiresExplicitManualDecision(task: InitTask): boolean {
   return Boolean(task.decision_class) || task.default_action === 'prompt';
@@ -301,6 +524,33 @@ function parseArgs(argv: string[]): {
   return { projectRoot, harnessRoot, scope, adapter, execute, decisionFile, contextFile };
 }
 
+function stripUtf8Bom(raw: string): string {
+  return raw.replace(/^\uFEFF/, '');
+}
+
+export function readJsonFile<T>(filePath: string, label: '决策' | '上下文'): T {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, 'utf-8');
+  } catch (e) {
+    throw new Error(
+      `[init-orchestrate] ${label} JSON 非法：无法读取文件（${filePath}）：${(e as Error).message}`,
+    );
+  }
+  try {
+    return JSON.parse(stripUtf8Bom(raw)) as T;
+  } catch (e) {
+    throw new Error(
+      `[init-orchestrate] ${label} JSON 非法：无法解析 JSON（${filePath}）：${(e as Error).message}`,
+    );
+  }
+}
+
+function failCli(message: string): never {
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+}
+
 if (require.main === module) {
   const opts = parseArgs(process.argv);
   if (!opts.execute) {
@@ -316,33 +566,44 @@ if (require.main === module) {
     process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file\n');
     process.exit(1);
   }
-  const decision = JSON.parse(fs.readFileSync(opts.decisionFile, 'utf-8')) as InitRunDecision;
-  const executionContext = opts.contextFile
-    ? (JSON.parse(fs.readFileSync(opts.contextFile, 'utf-8')) as Omit<
-        InitExecutionContext,
-        'projectRoot' | 'harnessRoot' | 'plan'
-      >)
-    : undefined;
-  const planResult = prepareInitExecutionPlanWithStaleIds(
-    {
+  try {
+    const decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile, '决策'));
+    const executionContext = opts.contextFile
+      ? readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
+          opts.contextFile,
+          '上下文',
+        )
+      : undefined;
+    const planResult = prepareInitExecutionPlanWithStaleIds(
+      {
+        projectRoot: opts.projectRoot,
+        scope: opts.scope,
+        adapter: opts.adapter,
+      },
+      executionContext,
+    );
+    const reconciledDecision = reconcileInitRunDecisionForPlan(planResult.plan, decision, {
+      staleMaterializeTaskIds: planResult.staleMaterializeTaskIds,
+    });
+    const preflight = preflightExecute(planResult.plan, reconciledDecision, executionContext);
+    if (!preflight.ok) {
+      const logPath = writeRunLog(opts.harnessRoot, preflight.blocked);
+      process.stdout.write(`${buildRunSummary(preflight.blocked)}\n`);
+      process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+      process.exit(1);
+    }
+    const log = executeInitPlan({
       projectRoot: opts.projectRoot,
-      scope: opts.scope,
-      adapter: opts.adapter,
-    },
-    executionContext,
-  );
-  const reconciledDecision = reconcileInitRunDecisionForPlan(planResult.plan, decision, {
-    staleMaterializeTaskIds: planResult.staleMaterializeTaskIds,
-  });
-  const log = executeInitPlan({
-    projectRoot: opts.projectRoot,
-    harnessRoot: opts.harnessRoot,
-    plan: planResult.plan,
-    decision: reconciledDecision,
-    executionContext,
-  });
-  const logPath = writeRunLog(opts.harnessRoot, log);
-  process.stdout.write(`${buildRunSummary(log)}\n`);
-  process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
-  process.exit(log.entries.some(e => e.status === 'failed') ? 1 : 0);
+      harnessRoot: opts.harnessRoot,
+      plan: planResult.plan,
+      decision: reconciledDecision,
+      executionContext,
+    });
+    const logPath = writeRunLog(opts.harnessRoot, log);
+    process.stdout.write(`${buildRunSummary(log)}\n`);
+    process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+    process.exit(log.entries.some(e => e.status === 'failed') ? 1 : 0);
+  } catch (e) {
+    failCli((e as Error).message);
+  }
 }

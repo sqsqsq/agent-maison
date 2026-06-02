@@ -18,7 +18,7 @@ argument-hint: <optional-notes>
 |----|------|
 | **S1 探测** | `cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>` → 只读 `InitTaskPlan` JSON |
 | **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选 |
-| **S3 执行** | 枚举 decision JSON → `executeInitPlan` |
+| **S3 执行** | 枚举 decision/context JSON（OS 临时目录）→ `init-orchestrate --execute` → preflight + `executeInitPlan` |
 | **S4 摘要** | `buildRunSummary(run-log)` → 用户确认 |
 
 # 跳板文件
