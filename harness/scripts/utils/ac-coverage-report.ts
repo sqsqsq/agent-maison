@@ -102,6 +102,38 @@ export function buildAcCoverageReport(
   };
 }
 
+export function acCoverageReportPath(projectRoot: string, feature: string): string {
+  return path.join(projectRoot, 'doc/features', feature, 'ut/reports/ac-coverage.json');
+}
+
+export function loadAcCoverageReport(
+  projectRoot: string,
+  feature: string,
+): AcCoverageReport | null {
+  const abs = acCoverageReportPath(projectRoot, feature);
+  if (!fs.existsSync(abs)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(abs, 'utf-8').replace(/^\uFEFF/, '')) as AcCoverageReport;
+  } catch {
+    return null;
+  }
+}
+
+/** True when ac-coverage.json lists the scope id with ut_covered: true. */
+export function acCoverageCoversScope(
+  projectRoot: string,
+  feature: string,
+  scopeId: string,
+  reportOverride?: AcCoverageReport | null,
+): boolean {
+  const report = reportOverride ?? loadAcCoverageReport(projectRoot, feature);
+  if (!report) return false;
+  const hit = [...(report.criteria ?? []), ...(report.boundaries ?? [])].find(
+    e => e.id === scopeId,
+  );
+  return hit?.ut_covered === true;
+}
+
 export function writeAcCoverageReport(
   projectRoot: string,
   feature: string,

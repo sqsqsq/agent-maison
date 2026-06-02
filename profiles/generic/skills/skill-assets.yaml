@@ -43,6 +43,9 @@ assets:
     mock_strategy: templates/mock-strategy.md
     testability_audit_template: templates/testability-audit-template.md
     mock_plan_schema: templates/mock-plan-schema.md
+    coverage_evidence_schema: templates/coverage-evidence-schema.md
+    module_seam_registry_schema: templates/module-seam-mock-registry-schema.md
+    characterization_template: templates/characterization-template.md
     format_contract: templates/format-contract.md
     quick_plan_template: templates/quick-plan-template.yaml
     context_extraction_protocol: templates/context-extraction-protocol.md

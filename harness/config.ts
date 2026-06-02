@@ -296,6 +296,12 @@ export interface FrameworkPaths {
    */
   extension_dir?: string;
   /**
+   * 模块级 Code Graph 落盘路径模式（相对实例工程根）。
+   * 占位符：`<module>` 替换为 module-catalog 中的模块目录名。
+   * 默认 `doc/modules/<module>/code-graph.yaml`。
+   */
+  module_graphs_dir?: string;
+  /**
    * Feature 阶段 harness 报告目录（相对实例工程根）的占位符模式。
    *
    * 占位符：`<feature>`、`<phase>`（与 `receipt_dir_pattern` 一致）。
@@ -495,7 +501,11 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
   docs_committed: false,
   extension_dir: 'doc/extensions',
+  module_graphs_dir: 'doc/modules/<module>/code-graph.yaml',
 };
+
+/** 默认 Code Graph 路径模式（与 `DEFAULT_PATHS.module_graphs_dir` 一致）。 */
+export const DEFAULT_MODULE_GRAPHS_DIR = 'doc/modules/<module>/code-graph.yaml';
 
 /**
  * CONFIRM_FIELDS 写入 `paths.reports_dir_pattern` 时使用的推荐默认值。
@@ -1425,6 +1435,14 @@ export function resolvePathsForInit(
 
 export function catalogPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.module_catalog);
+}
+
+/** 某模块的 Code Graph 文件路径（`<module>` 占位符替换）。 */
+export function moduleGraphPath(projectRoot: string, moduleName: string): string {
+  const pattern =
+    loadFrameworkConfig(projectRoot).paths.module_graphs_dir ?? DEFAULT_MODULE_GRAPHS_DIR;
+  const rel = pattern.replace(/<module>/g, moduleName);
+  return path.join(projectRoot, rel);
 }
 
 export function glossaryPath(projectRoot: string): string {

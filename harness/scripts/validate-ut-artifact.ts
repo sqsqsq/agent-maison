@@ -12,6 +12,7 @@
 import minimist from 'minimist';
 import {
   resolveUtArtifactFilePath,
+  validateCoverageEvidenceFile,
   validateMockPlanFile,
   validateTestabilityAuditFile,
   type ArtifactValidationResult,
@@ -28,7 +29,7 @@ function main(): void {
 
   if (!type || !fileArg) {
     console.error(
-      '用法: validate-ut-artifact.ts --type testability-audit|mock-plan --file <path> [--project-root <dir>]',
+      '用法: validate-ut-artifact.ts --type testability-audit|mock-plan|coverage-evidence --file <path> [--project-root <dir>]',
     );
     process.exit(2);
   }
@@ -40,6 +41,8 @@ function main(): void {
     result = validateTestabilityAuditFile(file);
   } else if (type === 'mock-plan') {
     result = validateMockPlanFile(file);
+  } else if (type === 'coverage-evidence') {
+    result = validateCoverageEvidenceFile(file);
   } else {
     console.error(JSON.stringify({ ok: false, errors: [{ field: 'type', message: `未知 type: ${type}` }], warnings: [] }));
     process.exit(2);

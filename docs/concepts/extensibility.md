@@ -2,6 +2,8 @@
 
 本文描述 framework **三层叠加扩展模型**：在不引入物理 `framework/core/` 目录的前提下，如何用声明式 workflow、宿主 profile、IDE adapter 与实例侧 extension 接入业务知识与门禁。
 
+模块级 **Code Graph** / 需求级 **flow DAG** 术语见 [code-graph.md](code-graph.md)。
+
 ---
 
 ## 合并顺序（overlay precedence）

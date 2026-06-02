@@ -561,6 +561,35 @@ semantic_checks:
 # --------------------------------------------------------------------------
 traceability_checks:
 
+  ut_coverage_evidence_present:
+    description: >
+      当 feature 存在 in-scope unit/both P0/P1 时，须产出
+      doc/features/{feature}/ut/reports/coverage-evidence.json（Skill 5 写入，harness 不自造 mapping）。
+      缺失时 BLOCKER/FAIL。
+    severity: BLOCKER
+
+  ut_coverage_evidence_resolves:
+    description: >
+      in-scope unit/both P0/P1 的每条 AC/BD 须在 coverage-evidence 映射、
+      UT 标签、DAG linked（含 nodes[]）或 ac-coverage.json 中可解析；否则 FAIL。
+    severity: BLOCKER
+
+  ut_coverage_evidence_mappings_complete:
+    description: >
+      当 coverage-evidence.json 存在且存在 unit/both P0/P1 范围时，mappings[]
+      须覆盖每条 P0/P1 scope_id，且每条 mapping 须有可解析依据（非空壳行）。
+    severity: BLOCKER
+
+  origin_tag_required:
+    description: >
+      flow_type=characterization 时，非 assertion 节点须带 origin 元数据。
+    severity: BLOCKER
+
+  characterization_trace_matches:
+    description: >
+      characterization 路径下 UT 须含 [CHAR-*] 标签；DAG trace 与 UT 序列由 verifier 复核。
+    severity: MAJOR
+
   branch_coverage_full:
     description: >
       use-cases.yaml 中每个 UseCase 的所有 branches，UT 中必须至少有

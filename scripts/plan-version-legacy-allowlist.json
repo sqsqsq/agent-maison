@@ -3,7 +3,6 @@
   "note": "有 frontmatter、todos 非空且全 completed/cancelled、无 version/deferred_to；已分版或顺延者走正常校验",
   "files": [
     "adapter-update-policy_3b2e370d.plan.md",
-    "code-graph-ut-evolution_f8fa08ee.plan.md",
     "dynamic_profile_skill_assets_e22d8049.plan.md",
     "explore-threshold-overhaul_d65155bc.plan.md",
     "feature_artifact_archival_4615ef3e.plan.md",

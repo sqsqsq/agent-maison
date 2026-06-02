@@ -86,6 +86,11 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     note: 'paths.module_catalog 缺失：回填 doc/module-catalog.yaml',
   },
   {
+    path: 'paths.module_graphs_dir',
+    defaultValue: DEFAULT_PATHS.module_graphs_dir,
+    note: 'paths.module_graphs_dir 缺失：回填 doc/modules/<module>/code-graph.yaml',
+  },
+  {
     path: 'paths.glossary',
     defaultValue: DEFAULT_PATHS.glossary,
     note: 'paths.glossary 缺失：回填 doc/glossary.yaml',

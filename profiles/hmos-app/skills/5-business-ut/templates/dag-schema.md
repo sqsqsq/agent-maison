@@ -31,6 +31,8 @@ flow_name: string                  # 人类可读名称（中文）
 module: string                     # feature 模块名，如 "task-demo"
 version: string                    # 版本号，如 "2.0"
 
+flow_type: usecase_driven | spec_driven | characterization  # 默认 usecase_driven
+
 # use_case 仅当产出了 use-cases.yaml 时填；简单 feature 省略
 use_case: string | null            # 对应 use-cases.yaml > use_cases[].id
 
@@ -58,6 +60,7 @@ nodes:
   - id: string                     # DAG 内唯一，如 "n1"
     type: enum                     # 见下方节点类型枚举
     description: string            # 业务含义（中文）
+    origin: log_observed | static_inferred | human_confirmed  # path-c 必填
 
     source:                        # 源码引用（除 user_trigger / state_transition 外推荐）
       file: string

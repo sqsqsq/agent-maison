@@ -11,6 +11,8 @@ import {
   parseMockPlanFile,
   parseTestabilityAuditFromText,
 } from './ut-artifact-parse';
+import type { CoverageEvidenceFile } from './coverage-evidence';
+import { highestEvidenceSource } from './coverage-evidence';
 
 export interface ArtifactValidationIssue {
   field: string;
@@ -128,6 +130,70 @@ export function validateMockPlanContent(text: string, filePath?: string): Artifa
   }
 
   return { ok: errors.length === 0, errors, warnings };
+}
+
+const EVIDENCE_SOURCES = new Set(['dag_archived', 'dag_ephemeral', 'ac_coverage', 'ut_tags']);
+
+export function validateCoverageEvidenceContent(
+  text: string,
+  filePath?: string,
+): ArtifactValidationResult {
+  const errors: ArtifactValidationIssue[] = [];
+  const warnings: ArtifactValidationIssue[] = [];
+  const label = filePath ?? 'coverage-evidence.json';
+
+  let doc: CoverageEvidenceFile | null = null;
+  try {
+    doc = JSON.parse(text.replace(/^\uFEFF/, '')) as CoverageEvidenceFile;
+  } catch (e) {
+    errors.push(err('json', `JSON 解析失败：${(e as Error).message}`));
+    return { ok: false, errors, warnings };
+  }
+
+  if (!doc?.schema_version) {
+    errors.push(err('schema_version', `${label} 缺少 schema_version`));
+  }
+  if (!doc?.feature?.trim()) {
+    errors.push(err('feature', `${label} 缺少 feature`));
+  }
+  if (doc?.primary_evidence_source && !EVIDENCE_SOURCES.has(doc.primary_evidence_source)) {
+    errors.push(err('primary_evidence_source', `未知 evidence_source: ${doc.primary_evidence_source}`));
+  }
+  for (const m of doc?.mappings ?? []) {
+    if (!m.scope_id?.trim()) errors.push(err('mappings.scope_id', '存在空的 scope_id'));
+    if (!EVIDENCE_SOURCES.has(m.evidence_source)) {
+      errors.push(err('mappings.evidence_source', `未知 evidence_source: ${m.evidence_source}`));
+    }
+  }
+
+  const available = new Set(
+    Object.entries(doc?.sources ?? {})
+      .filter(([, v]) => Array.isArray(v) && v.length > 0)
+      .map(([k]) => k),
+  ) as Set<import('./coverage-evidence').EvidenceSourceKind>;
+  const highest = highestEvidenceSource(available);
+  if (doc?.primary_evidence_source && highest && doc.primary_evidence_source !== highest) {
+    warnings.push(
+      err(
+        'primary_evidence_source',
+        `primary_evidence_source=${doc.primary_evidence_source} 与可用源最高优先级 ${highest} 不一致`,
+      ),
+    );
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+export function validateCoverageEvidenceFile(filePath: string): ArtifactValidationResult {
+  if (!fs.existsSync(filePath)) {
+    return {
+      ok: false,
+      errors: [err('file', `文件不存在：${filePath}`)],
+      warnings: [],
+    };
+  }
+  const text = fs.readFileSync(filePath, 'utf-8');
+  return validateCoverageEvidenceContent(text, filePath);
 }
 
 export function validateMockPlanFile(filePath: string): ArtifactValidationResult {

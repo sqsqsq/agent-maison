@@ -31,6 +31,9 @@ flow_name: string                  # 人类可读名称（中文）
 module: string                     # feature 模块目录名或与 contracts 对齐的模块名，如 "sample-flow"
 version: string                    # 版本号，如 "2.0"
 
+# 流程类型（默认 usecase_driven，向后兼容）
+flow_type: usecase_driven | spec_driven | characterization
+
 # use_case 仅当产出了 use-cases.yaml 时填；简单 feature 省略
 use_case: string | null            # 对应 use-cases.yaml > use_cases[].id
 
@@ -55,6 +58,8 @@ nodes:
   - id: string
     type: enum
     description: string
+    # path-c（flow_type=characterization）必填；A/B 可选
+    origin: log_observed | static_inferred | human_confirmed
 
     source:
       file: string

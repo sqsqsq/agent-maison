@@ -138,6 +138,20 @@ docs:
   # --------------------------------------------------------------------------
   # 跨 Skill 概念
   # --------------------------------------------------------------------------
+  - path: framework/docs/concepts/code-graph.md
+    role: Code Graph / flow DAG / Repo Map 三层术语与索引-only 原则 SSOT
+    audience: framework 维护者 / UT 与多阶段 Skill 接入图谱导航的开发者
+    sources:
+      - framework/skills/5-business-ut/SKILL.md
+      - framework/profiles/hmos-app/skills/5-business-ut/templates/dag-schema.md
+      - framework/harness/scripts/check-ut.ts
+      - framework/specs/phase-rules/ut-rules.yaml
+      - framework/harness/config.ts
+    update_triggers:
+      - Code Graph schema / GraphExtractor contract / drift 分级变更
+      - flow DAG ephemeral 或 coverage-evidence 契约变更
+      - 「dag」三重含义澄清或索引-only 原则调整
+
   - path: framework/docs/concepts/terminology-guarding.md
     role: 术语守门设计与演进路线图（catalog + glossary + 三道 BLOCKER）
     audience: 想了解 framework 如何对抗"卡中心 → CardManager"类术语误映射的人

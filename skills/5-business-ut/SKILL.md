@@ -49,6 +49,18 @@
 - "生成 UT"、"生成单元测试"、"写 UT"、"业务级 UT"
 - "端到端测试"、"UseCase 测试"、"分支覆盖 UT"
 - "生成 SpyPort / 生成打桩类"
+- "存量 UT"、"回归网"、"characterization 测试"、"基于日志生成 UT"、"给现有流程补测试"
+
+### 三路径路由（同触发词「生成 UT」）
+
+| 条件 | 路径 | 细则 |
+|------|------|------|
+| 有 `use-cases.yaml` | path-a | 本文 Step 1~3（UseCase 驱动） |
+| 无 use-cases，有 `acceptance.yaml` | path-b | 按 AC/BD + DAG |
+| 均无且提供脱敏日志切片 | path-c | [`paths/path-c-characterization.md`](paths/path-c-characterization.md) |
+| 否则 | — | 提示先运行 Skill 1/2 |
+
+**模块级 seam/mock**：feature 级 audit/mock-plan 优先引用 `doc/modules/<module>/ut-registry/`（见 `` `profile-skill-asset:5-business-ut/module_seam_registry_schema` ``）。
 
 ## 核心理念（v2.1）
 
@@ -275,9 +287,19 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 
 > 无 L0/L1/L2 可测项（例如全部为 L3 且选 option_a）时，mock-plan 由 harness `ut_mock_plan_present` SKIP；**一旦出现可测等级为 L0/L1/L2 的 AC/BD，mock-plan 强制**。
 
-### Step 2：生成 DAG 文件
+### Step 2：生成 DAG 文件（flow DAG · 默认 ephemeral）
 
 对每个 branch 生成一份 DAG（或合并成同一个 use_case 的多分支 DAG，只要 branches[] 交集为空、并集覆盖即可）：
+
+**默认写入 ephemeral 位置**（不归档进模块 `test/dag/`，除非用户明确要求归档，或触及 Code Graph `core` 节点——见 `code-graph-core-closure-gate`）：
+
+- `doc/features/{feature}/ut/reports/flow-dag/{flow_id}.dag.yaml`
+
+**显式归档**（可选）才写入：
+
+- `{module}/test/dag/{flow_id}.dag.yaml`
+
+完成 UT 阶段前，当存在 **ut_layer ∈ {unit, both} 且 priority ∈ {P0, P1}** 的 AC/BD 时，须由 Skill 5 产出机器可读 **`doc/features/{feature}/ut/reports/coverage-evidence.json`**，且 **`mappings[]` 须覆盖每条上述 P0/P1 scope**（见 `` `profile-skill-asset:5-business-ut/coverage_evidence_schema` ``）。harness 只校验、不自造 mapping。
 
 1. **必填顶层字段**（由 harness `dag_schema_compliance` BLOCKER 强制）：
    - `flow_id` / `flow_name` / `module` / `version`
@@ -293,7 +315,7 @@ device-only AC: （在 acceptance.yaml 填写 device_focus）
 3. **UI 副作用不进 UT 断言**：`NavPathStack.push` / `showToast` 只能作为 `ui_subscription` 节点记录，或在 Skill 1 的 `acceptance.yaml` > `device_focus` 中声明，不要画成 `port_call_*` 或 `assertion` 节点
 4. **验证 DAG**：无环、source 存在、`boundary` 名回到 `use-cases.yaml > data_boundaries[].name`（若存在 use-cases.yaml）
 5. **展示 Mermaid** 给用户确认（`ut.dag_confirm`：`1=确认DAG` / `2=修改DAG`；按节点类型着色）
-6. **写入** `{module}/test/dag/{flow_id}.dag.yaml`
+6. **写入** 默认 `doc/features/{feature}/ut/reports/flow-dag/{flow_id}.dag.yaml`（仅用户要求归档或触及 core 节点时写 `{module}/test/dag/`）
 
 ### Step 3.0 写入路径 Gate（BLOCKER）
 
@@ -685,6 +707,14 @@ UT 阶段状态：
 | boundary_coverage | 每条 unit/both 的 BD 都有覆盖 | MAJOR |
 
 **若报告中存在 BLOCKER**：必须修正（回到 Step 2 / 3），直到零 BLOCKER。
+
+### Step 8.0：Core 节点闭环闸门（需求收尾）
+
+在 harness 全绿后，评估本次改动是否触及模块 **Code Graph** 中 `core: true` 节点（路径 `paths.module_graphs_dir`，默认 `doc/modules/<module>/code-graph.yaml`）：
+
+1. 读取相关模块 Code Graph；对比 `contracts.yaml` / diff 触及的源码文件与 `core` 节点 anchor。
+2. **触及 core** → 启动可行性探测；更新/增删图谱节点；同步 characterization 或 spec-driven UT；**flow DAG 可归档**至 `{module}/test/dag/`。
+3. **未触及 core** → flow DAG 保持 ephemeral（`ut/reports/flow-dag/`），用完即弃。
 
 #### 8.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 
