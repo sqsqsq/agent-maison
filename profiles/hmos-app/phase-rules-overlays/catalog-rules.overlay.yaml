@@ -81,7 +81,8 @@ structure_checks:
 
   format_value_valid:
     description: >
-      format 字段必须是 HAP / HAR / AtomicService 之一。
+      format 字段必须是 HAP / HAR / HSP / AtomicService 之一。
+      HSP 为动态共享库，与 HAR 同为 library format（导出入口与新鲜度检查等价）。
       AtomicService 为元服务扩展位（阶段 7 预留）：值合法、不触发额外检查；
       差异化规则（首包大小、分包策略、免安装入口等）见
       framework/docs/atomic-service-roadmap.md，作为后续独立议题推进。
@@ -91,6 +92,7 @@ structure_checks:
       allowed_values:
         - "HAP"
         - "HAR"
+        - "HSP"
         - "AtomicService"
 
   name_unique:
@@ -227,18 +229,18 @@ traceability_checks:
 
   entry_file_matches_oh_package_main:
     description: >
-      每个 HAR 模块 catalog.entry_file 应与 oh-package.json5 main 解析出的
+      每个 HAR/HSP 库模块 catalog.entry_file 应与 oh-package.json5 main 解析出的
       导出入口路径一致（路径归一化后比较）。漂移 → WARN，建议跑
       `/catalog-bootstrap <M>` UPDATE 刷新 entry_file。
     severity: MAJOR
     rule:
       field: "modules[].entry_file"
       check_against: "oh-package.json5 main via resolveHarExportEntryPath"
-      applies_to_format: "HAR"
+      applies_to_format: "HAR/HSP"
 
   key_exports_fresh_vs_index:
     description: >
-      每个 HAR 模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
+      每个 HAR/HSP 库模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
       top-level export 保持同步。以下两类漂移 → WARN（建议跑
       `/catalog-bootstrap <M>` 进 UPDATE 模式刷新画像）：
         a) stale_removed：catalog.key_exports[i] 在 entry_file 入口中找不到对应的
@@ -248,14 +250,14 @@ traceability_checks:
            10 条上限，说明不是主动裁剪而是漏记录）。
       HAP 模块的 entry_file 指向 EntryAbility.ets 而非 HAR index 入口时，此 check 跳过。
 
-      仅扫 HAR entry_file 中的 top-level export 声明（含 `export class/function/
+      仅扫 HAR/HSP 库模块 entry_file 中的 top-level export 声明（含 `export class/function/
       const/let/var/interface/type/enum` 与 `export { ... }` 两种形态）。
       `export * from 'xxx'` 通配再导出不纳入比对（递归读取成本高、信号弱）。
     severity: MAJOR
     rule:
       field: "modules[].key_exports"
       check_against: "modules[].entry_file"
-      applies_to_format: "HAR"
+      applies_to_format: "HAR/HSP"
       max_catalog_cap: 10
       scan_patterns:
         - "^\\s*export\\s+(?:default\\s+)?(?:class|function|const|let|var|interface|type|enum)\\s+(\\w+)"

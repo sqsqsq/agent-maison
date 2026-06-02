@@ -4,7 +4,7 @@
 
 ### hmos-app 设计约定
 
-- 常见模块格式为 `HAP` / `HAR`，模块配置通常涉及 `build-profile.json5`、`oh-package.json5`、`module.json5`。
+- 常见模块格式为 `HAP` / `HAR` / `HSP`，模块配置通常涉及 `build-profile.json5`、`oh-package.json5`、`module.json5`。
 - 实现文件通常为 `.ets`，数据模型与接口签名必须使用 ArkTS 合法类型。
 - 模块内部常见目录为 `shared/`、`data/`、`domain/`、`presentation/`，跨模块导出入口文件名以 `framework.config.json > architecture.cross_module_exports_file` 为准。
 - UI 设计可使用 ArkUI 组件术语（如 `Column`、`Row`、`List`、`Tabs`、`Navigation`），但 design 的 scope、contracts 与 architecture 仍以实例 SSOT 为准。

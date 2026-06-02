@@ -113,7 +113,7 @@ structure_checks:
   module_change_table:
     description: >
       必须包含模块变更摘要表，列明每个涉及模块的所属层、物理路径、
-      格式（HAP/HAR）、变更类型（新增/修改/迁移）
+      格式（HAP/HAR/HSP）、变更类型（新增/修改/迁移）
     severity: BLOCKER
     rule:
       expect: "markdown_table"

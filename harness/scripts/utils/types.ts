@@ -480,7 +480,7 @@ export interface ProfileCapabilitySpec {
 export interface ProfileYamlStub {
   name: string;
   display_name?: string;
-  /** Catalog：module card `format` 合法枚举（由 profile 声明；缺省 HAP/HAR/AtomicService） */
+  /** Catalog：module card `format` 合法枚举（由 profile 声明；缺省为 generic 默认 application/library/service/document；hmos-app 典型值 HAP/HAR/HSP/AtomicService） */
   catalog_allowed_module_formats?: string[];
   phases_disabled?: string[];
   capabilities?: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;

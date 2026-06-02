@@ -22,7 +22,7 @@ module:
   name: "<ModuleName>"
   layer: "01-Product | 02-Feature | 03-CommonBusiness | 04-BusinessBase | 05-SystemBase"
   sub_layer: null
-  format: "HAR"
+  format: "HAR"  # HAP | HAR | HSP | AtomicService
   one_liner: "<一句话描述该模块的对外核心价值>"
   responsibilities:
     - "<responsibility 1>"

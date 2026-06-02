@@ -147,7 +147,7 @@ Text($r('app.string.demo_row_title'))
 
 ---
 
-## 7. HAR 模块必须通过 `Index.ets` 导出
+## 7. HAR/HSP 库模块必须通过 `Index.ets` 导出
 
 **症状**：其他模块 `import { Foo } from '@hw/LedgerDemo'` 找不到符号。
 
@@ -171,7 +171,7 @@ import { EntryRepo, LedgerRow } from '@hw/LedgerDemo'
 
 ## 8. `oh-package.json5` 的依赖路径格式
 
-**症状**：编译报找不到 HAR 模块。
+**症状**：编译报找不到 HAR/HSP 库模块。
 
 ```json5
 // ❌ 错：用 npm 风格版本号

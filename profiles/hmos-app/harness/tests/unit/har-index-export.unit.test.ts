@@ -125,7 +125,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         source: 'oh-package.json5 main',
         error:
           'FinancialCard: oh-package.json5 main 指向 src/main/ets/Main.ets，' +
-          '但架构约定 HAR 导出入口文件名 stem 须与 index.ets 一致（大小写不敏感）',
+          '但架构约定 HAR/HSP 库模块导出入口文件名 stem 须与 index.ets 一致（大小写不敏感）',
       }, '非 index.ets 入口应被标为架构违规');
     }),
   },

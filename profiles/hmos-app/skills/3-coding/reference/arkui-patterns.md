@@ -268,7 +268,7 @@ struct Index {
   build() {
     Tabs({ barPosition: BarPosition.End }) {
       TabContent() {
-        // 来自 task_shell HAR 模块
+        // 来自 task_shell 库模块
         homePageBuilder()
       }
       .tabBar(this.TabBarItem(
@@ -277,7 +277,7 @@ struct Index {
         $r('app.media.ic_home_active'), 0))
 
       TabContent() {
-        // 来自 card_management HAR 模块
+        // 来自 card_management 库模块
         cardsPageBuilder()
       }
       .tabBar(this.TabBarItem(

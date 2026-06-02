@@ -1,0 +1,17 @@
+schema_version: "1.0"
+modules:
+  - name: "DynamicLib"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "HSP"
+    one_liner: "动态共享库 fixture"
+    responsibilities:
+      - "提供共享能力"
+    NOT_responsible_for:
+      - "页面 UI"
+    typical_business_terms:
+      - "动态库"
+    easily_confused_with: []
+    key_exports:
+      - "SharedUtil"
+    entry_file: "02-Feature/DynamicLib/index.ets"

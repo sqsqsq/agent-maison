@@ -49,7 +49,7 @@ shared_platform (HAR)
 ```
 
 - **HAP 模块**（entry_app）：应用入口，聚合各功能模块，只有它可以使用 `@Entry`
-- **HAR 模块**（其余）：功能/公共模块，通过 `Index.ets` 导出对外 API
+- **HAR/HSP 库模块**（其余）：功能/公共模块，通过 `Index.ets` 导出对外 API
 - 功能模块之间**尽量不互相依赖**，共享内容下沉到 `shared_platform`
 - 检测到循环依赖视为 **BLOCKER**
 
@@ -90,7 +90,7 @@ shared_platform (HAR)
 │   └── pages/                      # 页面（NavDestination）
 │       └── DashboardPage.ets       #   宿主壳页
 │
-└── Index.ets                       # HAR 模块导出入口
+└── Index.ets                       # HAR/HSP 库模块导出入口
 ```
 
 ### 层间依赖规则（绝对禁令）
@@ -491,9 +491,9 @@ struct DashboardPage {
 
 ---
 
-## 5. HAR 模块导出规范
+## 5. HAR/HSP 库模块导出规范
 
-每个 HAR 模块的根目录有一个 `Index.ets`，控制对外暴露的 API：
+每个 HAR/HSP 库模块的根目录有一个 `Index.ets`，控制对外暴露的 API：
 
 ```typescript
 // feature_demo/src/main/ets/Index.ets
@@ -596,7 +596,7 @@ private async loadData(): Promise<void> {
 import { router } from '@kit.ArkUI'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
-// 2. 跨模块引用（通过 HAR 的 Index.ets 导出）
+// 2. 跨模块引用（通过 HAR/HSP 库模块的 Index.ets 导出）
 import { ItemInfo, ItemKind } from '@feature_demo'
 
 // 3. 模块内引用（使用相对路径，遵循层间依赖方向）

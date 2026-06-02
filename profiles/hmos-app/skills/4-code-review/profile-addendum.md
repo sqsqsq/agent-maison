@@ -1,6 +1,6 @@
 # `hmos-app` · Skill `4-code-review` profile addendum
 
-审查 **`*.ets`/ArkUI/资源 `$r`/HAR 导出/分层 import** 时，默认以 **宿主 ArkTS** 语义与 **`coding-rules` + overlay** 为 BLOCKER 依据。
+审查 **`*.ets`/ArkUI/资源 `$r`/HAR-HSP 导出/分层 import** 时，默认以 **宿主 ArkTS** 语义与 **`coding-rules` + overlay** 为 BLOCKER 依据。
 
 ## 权威资产清单
 
@@ -19,4 +19,4 @@
 
 ## Context Exploration Gate（profile 补充）
 
-审查前除读全 `contracts.yaml > files` 外，建议对 **HAR `Index.ets` 导出**、**`$r()` 资源 key` 定义文件** 与 **`route_map.json` / 页面注册** 做抽查，以验证「问题清单」是否遗漏宿主特有 BLOCKER。
+审查前除读全 `contracts.yaml > files` 外，建议对 **HAR/HSP 库模块 `Index.ets` 导出**、**`$r()` 资源 key` 定义文件** 与 **`route_map.json` / 页面注册** 做抽查，以验证「问题清单」是否遗漏宿主特有 BLOCKER。

@@ -44,7 +44,34 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 提取：
 - `name` 字段 → 用来校验 `<ModuleName>` 拼写
 - `dependencies` 字段 → 推断该模块依赖哪些下层模块（辅助判断它属于哪一层）
-- 模块类型（若有 `module.type`，`entry` → HAP，`har` → HAR；否则看根目录 `build-profile.json5` 里该模块条目）
+
+**不要**从 `oh-package.json5` 推断 `format`；`format` 见 Step 3.5 / Step 3.6 兜底。
+
+### 3.5 module.json5（判定 `format` 时必读，若存在）
+
+```
+Read <LAYER_DIR>/<ModuleName>/src/main/module.json5
+```
+
+若文件存在，读取 `module.type`，按下表映射 `format`（**优先于** build-profile 兜底）：
+
+| `module.type` | `format` |
+|---------------|----------|
+| `entry` / `feature` | `HAP` |
+| `har` | `HAR` |
+| `shared` | `HSP` |
+
+若 `module.type` 不在上表 → **停下来问用户**，不要臆造。
+
+若文件不存在 → 本步跳过，改走 Step 3.6 build-profile 兜底（见 `### format`）。
+
+### 3.6 build-profile.json5 兜底（仅当 Step 3.5 无结果时）
+
+```
+Read 工程根 build-profile.json5
+```
+
+在 `modules[]` 中找到 `<ModuleName>` 对应条目，读取其 `type` 字段，映射规则与 Step 3.5 相同（`entry`/`feature` → HAP，`har` → HAR，`shared` → HSP）。
 
 ### 4. 导出入口文件（必读）
 
@@ -52,7 +79,7 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 ```
 
-- 读取 `main` 字段确定 HAR 导出入口相对路径（常见 `index.ets` 在模块根，或 `src/main/ets/index.ets`）
+- 读取 `main` 字段确定 HAR/HSP 库模块导出入口相对路径（常见 `index.ets` 在模块根，或 `src/main/ets/index.ets`）
 - 再 Read `<LAYER_DIR>/<ModuleName>/{main}` 指向的文件（若存在）
 
 提取所有 `export { ... }` / `export class X` / `export function y` / `export interface Z`：
@@ -60,13 +87,13 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 - 写到 `key_exports` 数组
 - 这些符号本身就是"对外核心能力"的强提示，可以反推 `responsibilities`
 
-**HAP 模块（01-Product）通常没有 HAR 导出入口**，改读 `EntryAbility.ets`，`key_exports` 填 `[]`。
+**HAP 模块（01-Product）通常没有库模块导出入口**，改读 `EntryAbility.ets`，`key_exports` 填 `[]`。**HSP 与 HAR 一样**有 Index.ets 导出入口。
 
 ### 5. 目录树（必读，只看结构不看内容）
 
 用 `Glob` / `ls` 列出 `<LAYER_DIR>/<ModuleName>/src/main/ets/` 下**深度 ≤ 3** 的目录结构，识别：
 
-- 有 `shared/` `data/` `domain/` `presentation/` 四层 → 是业务 HAR 模块
+- 有 `shared/` `data/` `domain/` `presentation/` 四层 → 是业务库模块（HAR/HSP，`format` 以 `module.json5` / `build-profile` 推断结果为准）
 - 有 `pages/` `components/` → Feature 层的 UI 承载模块
 - 有 `repository/` `service/` → 有业务能力的公共模块
 - 有 `util/` `helper/` → 工具性质模块
@@ -115,9 +142,16 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 
 ### `format`
 
-- `01-Product` 下的模块几乎总是 `HAP`
-- 其他层几乎总是 `HAR`
-- 以 `oh-package.json5.module.type` 或 `build-profile.json5` 里该模块的条目为准
+**推断顺序（强制，不可跳步）：**
+
+1. **Step 3.5**：Read `<LAYER_DIR>/<ModuleName>/src/main/module.json5`（若存在）→ 取 `module.type` 映射：
+   - `entry` / `feature` → `HAP`
+   - `har` → `HAR`
+   - `shared` → `HSP`
+2. **Step 3.6 兜底**：Step 3.5 无文件或无可用 `type` 时，Read 工程根 `build-profile.json5`，在 `modules[]` 找该模块条目，按相同映射取 `type`。
+3. **层级弱提示（仅辅助，不可单独决定 format）**：`01-Product` 下多为 `HAP`；其他层多为 `HAR` 或 `HSP` 库模块。
+
+**禁止**：仅凭目录结构（如四层 shared/data/domain/presentation）或 oh-package.json5 直接写 `format`。
 
 ### `one_liner`
 
@@ -218,7 +252,7 @@ for each term in typical_business_terms:
 ### `entry_file`
 
 - HAP → `01-Product/<ModuleName>/src/main/ets/entryability/EntryAbility.ets`（或该工程实际路径）
-- HAR → `<LAYER_DIR>/<ModuleName>/{oh-package.json5 main}`；无 `main` 时 fallback `<LAYER_DIR>/<ModuleName>/{cross_module_exports_file}`（通常 `index.ets`）
+- HAR / HSP → `<LAYER_DIR>/<ModuleName>/{oh-package.json5 main}`；无 `main` 时 fallback `<LAYER_DIR>/<ModuleName>/{cross_module_exports_file}`（通常 `index.ets`）
 
 ---
 

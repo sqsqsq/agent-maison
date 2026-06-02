@@ -15,6 +15,7 @@ import {
 } from '../../../harness/capability-registry';
 import {
   isCrossModuleExportFileStem,
+  isLibraryFormat,
   readOhPackageField,
   normalizeRelativePath,
 } from './har-export-resolve';
@@ -277,8 +278,8 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const harModules = contracts.modules.filter(m => m.format === 'HAR');
-  if (harModules.length === 0) {
+  const libraryModules = contracts.modules.filter(m => isLibraryFormat(m.format));
+  if (libraryModules.length === 0) {
     return [
       {
         id: 'har_index_export',
@@ -286,7 +287,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'structure_checks', 'har_index_export'),
         severity: 'BLOCKER',
         status: 'SKIP',
-        details: '无 HAR 格式模块。',
+        details: '无 HAR/HSP 库模块。',
       },
     ];
   }
@@ -298,7 +299,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
   const warnings: string[] = [];
   const invalidEntries: string[] = [];
   let ohPackageMainCount = 0;
-  for (const mod of harModules) {
+  for (const mod of libraryModules) {
     const entry = resolveHarExportEntryPath(ctx.projectRoot, mod, indexFileName);
     if (entry.source === 'oh-package.json5 main') ohPackageMainCount += 1;
     if (entry.warning) warnings.push(entry.warning);
@@ -318,7 +319,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'structure_checks', 'har_index_export'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `全部 ${harModules.length} 个 HAR 模块均有导出入口。${sourceDetails}${
+        details: `全部 ${libraryModules.length} 个 HAR/HSP 库模块均有导出入口。${sourceDetails}${
           warnings.length > 0 ? `\n${warnings.join('\n')}` : ''
         }`,
       },
@@ -334,17 +335,17 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details: [
         missing.length > 0
-          ? `${missing.length}/${harModules.length} 个 HAR 模块缺少导出入口：\n${truncateList(missing, 15)}`
+          ? `${missing.length}/${libraryModules.length} 个 HAR/HSP 库模块缺少导出入口：\n${truncateList(missing, 15)}`
           : '',
         invalidEntries.length > 0
-          ? `${invalidEntries.length}/${harModules.length} 个 HAR 模块入口文件名不符合架构约定：\n${truncateList(invalidEntries, 15)}`
+          ? `${invalidEntries.length}/${libraryModules.length} 个 HAR/HSP 库模块入口文件名不符合架构约定：\n${truncateList(invalidEntries, 15)}`
           : '',
         warnings.length > 0 ? warnings.join('\n') : '',
       ]
         .filter(Boolean)
         .join('\n\n'),
       affected_files: [...missing, ...invalidEntries],
-      suggestion: `HAR 模块入口文件名必须是 ${indexFileName}。oh-package.json5 的 main 可以指向模块根目录或 src/main/ets 下的 ${indexFileName}；未声明 main 时，默认检查 src/main/ets/${indexFileName}。`,
+      suggestion: `HAR/HSP 库模块入口文件名必须是 ${indexFileName}。oh-package.json5 的 main 可以指向模块根目录或 src/main/ets 下的 ${indexFileName}；未声明 main 时，默认检查 src/main/ets/${indexFileName}。`,
     },
   ];
 }

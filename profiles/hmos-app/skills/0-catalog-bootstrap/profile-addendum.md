@@ -18,7 +18,7 @@
 - 所有字段都必填（即便值为 `[]` 也要显式写出）。
 - 不要臆造 `NOT_responsible_for` / `easily_confused_with`；无依据则 `[]`。
 - `confirmed_by_user` 默认为 `false`；仅当用户审阅后手改为 `true` 才允许合并进 `doc/module-catalog.yaml`。
-- `signals_used` 须反映真实读过的输入（architecture / README / `oh-package.json5` / 导出入口等）。
+- `signals_used` 须反映真实读过的输入（architecture / README / `module.json5` / `oh-package.json5` / 导出入口等）。
 
 ### skill-assets.yaml 键
 
@@ -35,6 +35,7 @@
 
 - `HAP`
 - `HAR`
+- `HSP`
 - `AtomicService`
 
 在非 hmos-app profile 若要扩展枚举，请先改对应 `framework/profiles/<profile>/profile.yaml`，再回填 `infer-module-card`/`module-card-template` 提示以避免双源分叉。
@@ -45,9 +46,11 @@
 
 1. `doc/architecture.md` 中对应模块小节：强锚点，作为职责定义主来源。
 2. `<module_path>/README.md`：辅助锚点。
-3. `<module_path>/oh-package.json5`：读取 `main`（导出入口路径）、`dependencies`、`module.type`，判定模块关系与 `HAP`/`HAR`。
-4. `<module_path>/{oh-package main}` 或 DSL 声明的导出入口：提取 top-level export，形成 `key_exports`。
-5. `<module_path>/src/main/ets/` 目录树：只列目录结构，深度不超过 3。
-6. 最多 3 个关键文件头部 60 行：仅用于确认职责，不通读全部源码。
+3. `<module_path>/src/main/module.json5`（若存在）：读取 `module.type` 映射 `format`——`entry`/`feature` → HAP、`har` → HAR、`shared` → HSP。
+4. `<module_path>/oh-package.json5`：读取 `main`（导出入口路径）、`dependencies`（**不**用于推断 `format`）。
+5. 工程根 `build-profile.json5`（兜底）：无 `module.json5` 时，从 `modules[]` 条目 `type` 按相同映射推断 `format`。
+6. `<module_path>/{oh-package main}` 或 DSL 声明的导出入口：提取 top-level export，形成 `key_exports`。
+7. `<module_path>/src/main/ets/` 目录树：只列目录结构，深度不超过 3。
+8. 最多 3 个关键文件头部 60 行：仅用于确认职责，不通读全部源码。
 
-`module-card` 字段填写时，`format` 由 `oh-package.json5` 的 `module.type` 映射，`entry_file` 对 HAP 通常指向 Ability 入口、对 HAR 通常指向导出入口文件。`key_exports` 来自导出入口，保留不超过 10 个代表性符号。
+`module-card` 字段填写时，`format` 优先由 `src/main/module.json5 > module.type` 映射（`entry`/`feature`→HAP、`har`→HAR、`shared`→HSP），无文件时 fallback `build-profile.json5`；`entry_file` 对 HAP 通常指向 Ability 入口、对 HAR/HSP 通常指向导出入口文件。`key_exports` 来自导出入口，保留不超过 10 个代表性符号。

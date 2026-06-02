@@ -1,6 +1,6 @@
 # 鸿蒙 API 用法速查
 
-> 常用 HarmonyOS API 的用法示例，适配多模块（HAR/HAP）架构。
+> 常用 HarmonyOS API 的用法示例，适配多模块（HAR/HSP/HAP）架构。
 >
 > **示例说明**：以下代码片段使用演示用模块命名（`@demoapp/*`、`task_shell`、`feature_grid` 等）；实际使用请按你自己工程的模块名替换。
 
@@ -8,7 +8,7 @@
 
 ## 1. 模块管理
 
-### HAR 模块的 oh-package.json5
+### HAR/HSP 库模块的 oh-package.json5
 
 ```json5
 {
@@ -24,7 +24,7 @@
 }
 ```
 
-### HAP 模块引用 HAR
+### HAP 模块引用 HAR/HSP 库模块
 
 在 phone 模块的 `oh-package.json5` 中：
 
@@ -38,7 +38,7 @@
 }
 ```
 
-代码中引用 HAR 导出的内容：
+代码中引用 HAR/HSP 库模块导出的内容：
 
 ```typescript
 import { homePageBuilder, ItemSummary } from '@demoapp/task_shell'
@@ -502,4 +502,4 @@ $r('app.boolean.bool_name')         // 布尔
 $r('app.string.greeting', this.userName)  // "Hello, %s" → "Hello, 张三"
 ```
 
-**注意**：HAR 模块内的资源引用同样使用 `$r('app.xxx.yyy')` 格式，系统会自动在当前模块的 resources 中查找。
+**注意**：HAR/HSP 库模块内的资源引用同样使用 `$r('app.xxx.yyy')` 格式，系统会自动在当前模块的 resources 中查找。

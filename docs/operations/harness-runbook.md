@@ -194,7 +194,7 @@ doc/features/<feature>/
 
 - **结构**：schema、`modules[]` 必填字段、layer/format、唯一性等
 - **追溯**：`easily_confused_with` 指向存在、无自引用 / 空 module（BLOCKER）、对称性（MAJOR，可 `unidirectional` 豁免）、`entry_file` 在磁盘、`layer_matches_path`
-- **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR 模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
+- **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR/HSP 库模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
 - **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
 
 ### 5.2 glossary（`check-glossary.ts`）

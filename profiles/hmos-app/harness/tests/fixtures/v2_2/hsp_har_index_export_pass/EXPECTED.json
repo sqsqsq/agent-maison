@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "har_index_export",
+      "status": "PASS",
+      "severity": "BLOCKER",
+      "details_includes": "HAR/HSP"
+    }
+  ]
+}

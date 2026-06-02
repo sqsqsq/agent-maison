@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    {
+      "id": "format_value_valid",
+      "status": "PASS"
+    },
+    {
+      "id": "entry_file_matches_oh_package_main",
+      "status": "PASS"
+    },
+    {
+      "id": "key_exports_fresh_vs_index",
+      "status": "PASS"
+    }
+  ]
+}

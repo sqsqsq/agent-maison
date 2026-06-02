@@ -4,6 +4,7 @@ display_name: HarmonyOS 端侧应用（含元服务子型）
 catalog_allowed_module_formats:
   - HAP
   - HAR
+  - HSP
   - AtomicService
 
 detect:

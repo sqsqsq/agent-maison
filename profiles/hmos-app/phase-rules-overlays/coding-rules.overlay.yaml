@@ -84,7 +84,7 @@ structure_checks:
 
   har_index_export:
     description: >
-      每个 HAR 模块必须存在由 framework.config.json 的
+      每个 HAR / HSP 库模块必须存在由 framework.config.json 的
       architecture.cross_module_exports_file 声明的跨模块导出入口文件
       （实例默认通常为 index.ets）。入口物理路径以各模块 oh-package.json5 的
       main 字段为准（可为模块根 index.ets 或 src/main/ets/index.ets 等）；

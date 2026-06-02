@@ -1,12 +1,12 @@
 # 模块脚手架规范
 
-> 定义新模块（HAR/HAP）的标准文件结构和各层的样板代码模板。
+> 定义新模块（HAR/HSP/HAP）的标准文件结构和各层的样板代码模板。
 >
 > **模板说明**：本模板以示例命名空间（`@demoapp/{module_name}`、`@demoapp/common`、`@demoapp/task_shell` 等）演示填法；实际使用请按你自己工程的 npm scope 和模块名替换。
 
 ---
 
-## 1. 新建 HAR 模块的完整文件结构
+## 1. 新建 HAR/HSP 库模块的完整文件结构
 
 ```
 {module_name}/

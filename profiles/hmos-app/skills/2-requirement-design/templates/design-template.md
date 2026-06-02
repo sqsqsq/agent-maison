@@ -76,8 +76,8 @@ architecture_impact:
 
 ```mermaid
 graph TD
-    phone["phone - HAP 主入口"] --> feature_module["module_name - HAR 功能模块"]
-    phone --> common["common - HAR 公共模块"]
+    phone["phone - HAP 主入口"] --> feature_module["module_name - HAR/HSP 功能模块"]
+    phone --> common["common - HAR/HSP 公共模块"]
     feature_module --> common
 ```
 
@@ -87,19 +87,19 @@ graph TD
 
 | Module | 格式 | 变更类型 | 说明 |
 |--------|------|----------|------|
-| {module_name} | HAR | 新增 | {功能模块说明} |
-| common | HAR | 新增/修改 | {公共模块变更说明} |
+| {module_name} | HAR/HSP | 新增 | {功能模块说明} |
+| common | HAR/HSP | 新增/修改 | {公共模块变更说明} |
 | phone | HAP | 修改 | {主入口模块变更说明} |
 
 ### 1.2 模块间依赖关系
 
 ```
 phone (HAP)
-  ├── 依赖 → {module_name} (HAR)
-  └── 依赖 → common (HAR)
+  ├── 依赖 → {module_name} (HAR/HSP)
+  └── 依赖 → common (HAR/HSP)
 
-{module_name} (HAR)
-  └── 依赖 → common (HAR)
+{module_name} (HAR/HSP)
+  └── 依赖 → common (HAR/HSP)
 ```
 
 ---
@@ -108,7 +108,7 @@ phone (HAP)
 
 精确列出每个新增或修改的文件，含完整路径和职责说明。
 
-### 2.1 Module: common (HAR)
+### 2.1 Module: common (HAR/HSP)
 
 ```
 common/
@@ -120,14 +120,14 @@ common/
         {文件名}.ets          — {职责说明}
       components/
         {文件名}.ets          — {职责说明}
-    Index.ets                 — HAR 模块导出入口
+    Index.ets                 — HAR/HSP 库模块导出入口
   src/main/resources/
     base/element/
       string.json             — 文本资源
       color.json              — 颜色资源
 ```
 
-### 2.2 Module: {module_name} (HAR)
+### 2.2 Module: {module_name} (HAR/HSP)
 
 ```
 {module_name}/
@@ -154,7 +154,7 @@ common/
         {复杂组件文件}.ets     — {职责说明}
       pages/
         {页面文件}.ets         — {职责说明}
-    Index.ets                 — HAR 模块导出入口
+    Index.ets                 — HAR/HSP 库模块导出入口
   src/main/resources/
     base/
       element/

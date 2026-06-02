@@ -12,7 +12,7 @@
 | 扩展位 | 位置 | 现状 |
 |--------|------|------|
 | 项目类型 | `framework.config.json → project_type` | 合法值 `app` / `atomic_service`，仅记录，不驱动行为 |
-| 模块形态 | `doc/module-catalog.yaml → modules[].format` | 合法值 `HAP` / `HAR` / `AtomicService`；AtomicService 通过 `format_value_valid` 检查，但不触发差异化校验 |
+| 模块形态 | `doc/module-catalog.yaml → modules[].format` | 合法值 `HAP` / `HAR` / `HSP` / `AtomicService`；HSP 与 HAR 同为 library format；AtomicService 通过 `format_value_valid` 检查，但不触发差异化校验 |
 | agent 入口 | `framework/templates/AGENTS.md.template` | 标题支持 `{{PROJECT_TYPE_LABEL}}` 占位符，由初始化 Skill 按 `project_type` 选择「应用工程 / 元服务工程」 |
 | 架构 DSL | `framework.config.json → architecture` | 与 `project_type` 解耦——元服务 / 应用共用同一套外层 / 内层模型 |
 

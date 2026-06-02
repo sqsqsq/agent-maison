@@ -5,7 +5,7 @@
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import type { ModuleCatalog } from '../../../harness/scripts/utils/catalog-parser';
 import { loadFrameworkConfig, relCatalog } from '../../../harness/config';
-import { normalizeRelativePath, resolveHarExportEntryPath } from './har-export-resolve';
+import { normalizeRelativePath, resolveHarExportEntryPath, isLibraryFormat } from './har-export-resolve';
 
 function ruleDesc(ctx: CheckContext, id: string): string {
   const checks = ctx.phaseRule.traceability_checks as Record<string, { description?: string }> | undefined;
@@ -22,7 +22,7 @@ export function checkEntryFileMatchesOhPackageMain(
   const affected = new Set<string>([relCatalog(ctx.projectRoot)]);
 
   for (const m of catalog.modules) {
-    if (m.format !== 'HAR') continue;
+    if (!isLibraryFormat(m.format)) continue;
     if (!m.entry_file) continue;
 
     const packagePath = `${m.layer}/${m.name}`;
@@ -46,7 +46,7 @@ export function checkEntryFileMatchesOhPackageMain(
       description: ruleDesc(ctx, 'entry_file_matches_oh_package_main'),
       severity: 'MAJOR',
       status: 'PASS',
-      details: '所有 HAR 模块 entry_file 与 oh-package.json5 main 解析路径一致。',
+      details: '所有 HAR/HSP 库模块 entry_file 与 oh-package.json5 main 解析路径一致。',
     }];
   }
 

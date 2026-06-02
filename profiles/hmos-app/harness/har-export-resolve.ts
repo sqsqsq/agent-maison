@@ -20,6 +20,13 @@ function parseJson5(content: string): unknown {
   return JSON.parse(stripped);
 }
 
+/** hmos-app library format：HAR（静态）与 HSP（动态）在 harness 语义下等价。 */
+export function isLibraryFormat(format?: string): boolean {
+  if (!format) return false;
+  const normalized = format.trim().toUpperCase();
+  return normalized === 'HAR' || normalized === 'HSP';
+}
+
 export function normalizeRelativePath(relPath: string): string {
   return relPath
     .replace(/\\/g, '/')
@@ -103,7 +110,7 @@ export function resolveHarExportEntryPath(
             source: 'oh-package.json5 main',
             error:
               `${mod.name}: oh-package.json5 main 指向 ${normalizedMain}，` +
-              `但架构约定 HAR 导出入口文件名 stem 须与 ${indexFileName} 一致（大小写不敏感）`,
+              `但架构约定 HAR/HSP 库模块导出入口文件名 stem 须与 ${indexFileName} 一致（大小写不敏感）`,
           };
         }
         return {
