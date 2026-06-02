@@ -3,6 +3,7 @@
   "excludeGlobs": [
     "AGENTS.md",
     "RELEASE-NOTES-v*.md",
+    "MAINTAINER-CHANGELOG.md",
     ".editorconfig",
     ".gitattributes",
     ".gitignore",

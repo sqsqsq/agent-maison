@@ -24,13 +24,13 @@ todos:
     status: completed
   - id: lint-start-app-json
     content: lint-adhoc-steps / validatePlannedStepsArray 与 contract 对齐禁止 steps 内 start_app（STEP-003 等价）
-    status: pending
+    status: cancelled
   - id: adhoc-plan-nav-blocker
     content: 决策并实现：即席 --plan 时 NAV 违规是否 BLOCKER（当前仅 STEP BLOCKER 阻断 run）
-    status: pending
+    status: cancelled
   - id: lint-wait-gone-idle-toast
     content: 可选：wait_gone/wait_idle/assert_toast 必填字段写前 lint（catalog 已有，lint 未深校验）
-    status: pending
+    status: cancelled
 isProject: false
 ---
 

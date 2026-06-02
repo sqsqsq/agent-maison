@@ -49,10 +49,10 @@ todos:
     status: completed
   - id: future_session_daemon_optimization
     content: 「后续演进 · 不在本期实施」性能优化预留：Skill 6 派生阶段如需多次 hylyre dump-ui / app find / collect-list 可启动 session daemon（hylyre session start + --session 复用 Hypium 连接）；本期 hylyre run --plan 内部自管 connect/disconnect，不主动套 session。
-    status: pending
+    status: cancelled
   - id: future_hypium_vendor_fallback
     content: 「后续演进 · 优先级低 · 不在本期实施」hypium fallback：实测华为内部源可拉到 hypium-6.0.7.210（2026-05-18），本期不预先 vendor；仅当首批用户反馈无任何可达 pip 源时再考虑 vendor/hypium/ 目录。注意 hypium 传递依赖含 opencv-python ~40 MB，vendor 整套会让目录从 <1 MB 膨胀到 ~50 MB。
-    status: pending
+    status: cancelled
 isProject: false
 ---
 

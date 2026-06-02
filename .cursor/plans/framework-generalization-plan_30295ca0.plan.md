@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: phase7-atomic-slot
     content: "阶段 7：元服务扩展位预留（catalog format 枚举加 AtomicService、framework.config.json 支持 project_type: atomic_service；不写差异化规则，留 roadmap 文档）"
-    status: pending
+    status: cancelled
   - id: phase8-docs-binding
     content: 阶段 8：framework/README.md（静态使用说明）+ framework/MIGRATION.md（模板由初始化 Skill 按当前状态生成到实例工程）；归档旧自检报告；改写仓库根 README 明确双重身份；Skill 0 / Skill 1~6 的 SKILL.md 描述文件增加「依赖初始化 Skill 产物」的前置声明
     status: completed

@@ -10,14 +10,23 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    cd harness && npm test
    ```
 
-2. **发布包规则 + 内容验收**
+2. **Plan 版本门禁 + 维护者 CHANGELOG（dev-only）**
+
+   ```bash
+   npm run release:check-plans    # --release：当前窗口 plan 须全完成或已顺延
+   npm run release:changelog      # 生成 MAINTAINER-CHANGELOG.md
+   ```
+
+   开发期轻量校验（非发布阻断）：`node scripts/check-plan-version.mjs`
+
+3. **发布包规则 + 内容验收**
 
    ```bash
    npm install          # 根目录，拉取 archiver / extract-zip（仅 maison 发版用）
    npm run release:verify
    ```
 
-3. **产出正式 zip**
+4. **产出正式 zip**
 
    ```bash
    npm run release:pack
@@ -28,16 +37,24 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    - `dist/framework-<version>.zip`
    - `dist/framework-<version>.manifest.json`（sidecar，不进 zip）
 
-4. **dry-run 抽查（可选）**
+5. **dry-run 抽查（可选）**
 
    ```bash
    npm run release:pack -- --dry-run
    ```
 
-5. **layout 烟测（已纳入 `harness` unit：`runner-layout-smoke`）**
+6. **layout 烟测（已纳入 `harness` unit：`runner-layout-smoke`）**
 
    - standalone：`--phase docs` 报告写入 `harness/reports/`，不得出现 `framework/harness/reports/`
    - consumer：可用 `npm run release:pack -- --stage-only` 产出 `dist/release-staging/framework/` 作 fixture 来源
+
+7. **版本窗口切换（发布后）**
+
+   ```bash
+   npm run release:version -- bump --patch   # 或 --minor / --major
+   ```
+
+   bump 前须已通过 `release:check-plans`；随后补 `RELEASE-NOTES-v<上一版本>.md`。
 
 ## 人工（可选）
 
@@ -127,4 +144,8 @@ npx ts-node framework/harness/scripts/smoke-interaction-renderer.ts --project-ro
 | `npm run release:pack` | 产出 zip + manifest |
 | `npm run release:pack -- --dry-run` | 只统计 include/exclude |
 | `npm run release:pack -- --out D:/releases` | 指定输出目录 |
-| `npm run release:verify` | 规则单测 + 临时目录打包/解压/断言 |
+| `npm run release:check-plans` | plan 版本发布门禁（`--release`） |
+| `npm run release:changelog` | 生成 `MAINTAINER-CHANGELOG.md` |
+| `npm run release:version -- status` | 当前版本窗口与 plan 统计 |
+| `npm run release:version -- bump --patch` | 推进 patch（minor/major 同理） |
+| `npm run release:verify` | 规则单测 + plan 版本 + 临时目录打包/解压/断言 |

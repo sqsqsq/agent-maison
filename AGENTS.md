@@ -81,3 +81,50 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 细则见 Cursor 规则 [`.cursor/rules/plan-execution.mdc`](.cursor/rules/plan-execution.mdc)（`alwaysApply: true`）。
 
 **含义澄清**：「不要改 plan 文件」= **不要改计划内容**；勾选 todo 完成状态**不算**改 plan。
+
+## 回复语言（BLOCKER）
+
+面向用户的自然语言回复默认使用 **中文**。
+
+代码、命令、文件路径、配置键、API 名称、错误码、包名、英文专有名词、日志/diff/终端原文可保留英文；解释、结论、review、计划、状态更新仍用中文。
+
+## 版本演进策略（dev-only）
+
+当前在研版本 SSOT = 根 `package.json` 的 `version`（打包产出 `framework-<semver>.zip`）。`.cursor/plans/*.plan.md` 用 frontmatter `version` 绑定窗口；可选 `deferred_to`（**必须等于** `version`）表示顺延到未来窗口。
+
+### Semver 语义（窗口级）
+
+| 级别 | 典型内容 | 示例 |
+|------|----------|------|
+| **patch** | 小 bugfix、小型 plan 修补；多项可合并 | `2.1.0` → `2.1.1` |
+| **minor** | 中/大型 plan 及后续小演进、bugfix | `2.1.0` → `2.2.0` |
+| **major** | 超大型框架重构、架构变更 | `2.1.0` → `3.0.0` |
+
+### 窗口生命周期
+
+1. **打开**：`package.json.version` = N；新建 plan 写 `version: N`。
+2. **开发**：多个 plan 可共享 N；未完成且不进本版发布 → `version` + `deferred_to` 置未来目标（如 `2.2.0`），立即移出当前窗口。
+3. **发布**：`npm run release:check-plans`（`--release`）→ `npm run release:changelog` → `cd harness && npm test` → `npm run release:verify` → `npm run release:pack`。
+4. **归档**：撰写 `RELEASE-NOTES-vN.md`（消费者向）。
+5. **切换**：`npm run release:version -- bump --patch|--minor|--major`（先过 release 门禁，再改 `package.json.version`）。
+
+### 文档分工
+
+| 文档 | 受众 | 说明 |
+|------|------|------|
+| `RELEASE-NOTES-vN.md` | 消费者 | 人工撰写；`MIGRATION.md` 所称「framework 的 CHANGELOG / 发布说明」指此类 |
+| `MIGRATION.md` | 消费者（发布件） | 破坏性变更与迁移步骤 |
+| `MAINTAINER-CHANGELOG.md` | 维护者（dev-only） | 由 plan 自动生成，速查与 RELEASE-NOTES 草稿来源 |
+
+### 命令
+
+| 命令 | 说明 |
+|------|------|
+| `node scripts/check-plan-version.mjs` | 开发期轻量校验（默认模式） |
+| `npm run release:check-plans` | 发布门禁（`--release`） |
+| `npm run release:changelog` | 生成 `MAINTAINER-CHANGELOG.md` |
+| `npm run release:changelog -- --from A --to B` | 两版本间 plan 变更摘要 |
+| `npm run release:version -- status` | 当前窗口与 plan 统计 |
+| `npm run release:version -- bump --patch` | 推进 patch（`--minor` / `--major` 同理） |
+
+legacy 历史 plan（**有 frontmatter**、todos 非空且全 completed/cancelled、**且无** `version`/`deferred_to`）列入 `scripts/plan-version-legacy-allowlist.json`。无 frontmatter 的史前 plan 列入 `scripts/plan-version-pre-frontmatter-allowlist.json`（显式登记，避免空 todos 误判）。已打版本或顺延的 plan **不得**在 legacy allowlist 中。在研 plan 数量以脚本扫描为准，不写死。

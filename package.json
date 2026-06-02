@@ -1,6 +1,6 @@
 {
   "name": "agent-maison",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "AgentMaison — spec-driven agentic workflow framework with harness gates",
   "scripts": {
@@ -10,7 +10,10 @@
     "openspec:validate": "openspec validate --all --strict",
     "release:pack": "node scripts/pack-release.mjs",
     "release:verify": "node scripts/verify-release-pack.mjs",
-    "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs"
+    "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs",
+    "release:version": "node scripts/version-evolve.mjs",
+    "release:check-plans": "node scripts/check-plan-version.mjs --release",
+    "release:changelog": "node scripts/gen-changelog.mjs"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.3.1",

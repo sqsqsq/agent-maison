@@ -4,31 +4,31 @@ overview: 修复 framework/harness/state/.current-phase.json 跨会话粘滞、S
 todos:
   - id: config
     content: "S0: framework.config.json 新增 state_machine 段（grace_period_minutes / ttl_hours）+ config.ts 加载与校验 + hook 端轻量解析"
-    status: pending
+    status: cancelled
   - id: schema
     content: "S1: 升级 .current-phase.json schema：新增 session_id / session_id_recorded_at / last_seen_session_id / last_seen_at"
-    status: pending
+    status: cancelled
   - id: hook-check
     content: "S2: 改造 .claude/hooks/check-phase-completion.mjs：会话边界判定 + 文案中性化 + 老 state 自动盖章 + 时间常量从 config 读"
-    status: pending
+    status: cancelled
   - id: hook-record
     content: "S3: 同步改造 .claude/hooks/record-verifier-report.mjs：写 last_verifier_report 时也带上 session_id"
-    status: pending
+    status: cancelled
   - id: harness-runner
     content: "S4: harness-runner.ts 新增 --clear-state 子命令；schema_version 升级为 1.1"
-    status: pending
+    status: cancelled
   - id: check-receipt
     content: "S5: check-receipt.ts 不读 session_id（保持纯回执校验语义）；只确认 schema 升级不破坏它"
-    status: pending
+    status: cancelled
   - id: claude-md
     content: "S6: CLAUDE.md §5.1 增补：跨会话遗留处理流程 + --clear-state 出口；§6.5 文案保留但补一句'本条只对同会话生效'"
-    status: pending
+    status: cancelled
   - id: docs
     content: "S7: framework/docs/operations/harness-runbook.md 加'中断 / 切换会话 / 放弃阶段'章节 + state_machine 配置说明"
-    status: pending
+    status: cancelled
   - id: regression
     content: "S8: 加 e2e 测试 framework/harness/test/hook-stale-state.spec.ts 覆盖各种场景，含自定义配置覆盖默认值"
-    status: pending
+    status: cancelled
 isProject: false
 ---
 

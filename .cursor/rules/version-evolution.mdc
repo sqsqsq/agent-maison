@@ -1,0 +1,31 @@
+---
+description: Plan 与 semver 版本窗口绑定；新建 plan 须打 version 标签
+alwaysApply: true
+---
+
+# 版本演进（plan ↔ semver）
+
+SSOT：根 [`AGENTS.md`](../../AGENTS.md)「版本演进策略」节。
+
+## 新建 plan（BLOCKER）
+
+在 `.cursor/plans/*.plan.md` frontmatter 中**必须**包含：
+
+```yaml
+version: <读取 package.json 的 version 字段，如 2.1.0>
+```
+
+紧随 `name` / `overview` 之后。
+
+## 顺延到未来窗口
+
+本窗口未做完、不进当前发布时：
+
+- 将 `version` 与 `deferred_to` **同时**设为未来目标版本（二者必须相等）。
+- 不要用 `deferred_to` 记录来源；来源用可选 `deferred_from`。
+
+## bump 速查
+
+- 小修补 → `--patch`；中大型演进 → `--minor`；架构大改 → `--major`。
+- 发布前：`release:check-plans`（当前窗口 plan 须全完成或已顺延）。
+- 发布后：`release:version -- bump --<level>`。

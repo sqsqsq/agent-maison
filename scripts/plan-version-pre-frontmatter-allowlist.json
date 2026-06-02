@@ -1,0 +1,7 @@
+{
+  "generatedAt": "2026-06-02T08:10:44.925Z",
+  "note": "无 YAML frontmatter 的史前 plan；显式登记以免空 todos 被误判为终态",
+  "files": [
+    "merge-feature-specs-into-doc_phase9.plan.md"
+  ]
+}

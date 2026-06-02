@@ -7,19 +7,19 @@ overview: |
 todos:
   - id: create-github-repo
     content: 在 GitHub 创建空仓库 sqsqsq/agent-maison（不初始化 README/LICENSE）
-    status: in_progress
+    status: cancelled
   - id: filter-repo-split
     content: mirror 克隆 + git filter-repo 抽出 framework/ 历史（含 main、Br_release_1.0、Br_release_2.0 共 3 分支），推到新仓
-    status: pending
+    status: cancelled
   - id: new-repo-bootstrap
     content: 新仓补 .gitignore + AGENTS.md + .npmignore + 开发工具目录骨架 + 根 package.json；LICENSE 后续单独处理
-    status: pending
+    status: cancelled
   - id: app-submodule
     content: App 仓清理 ignored 残留 → git rm → submodule add 到本地路径 framework/
-    status: pending
+    status: cancelled
   - id: harness-verify
     content: 验收：npm test + harness-runner（--adapter claude）+ 干净 clone --recurse-submodules 验证
-    status: pending
+    status: cancelled
 isProject: true
 ---
 

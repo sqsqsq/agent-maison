@@ -13,46 +13,46 @@ overview: |
 todos:
   - id: audit-current-skill5
     content: 盘点当前 framework/skills/5-business-ut/SKILL.md 的章节与 path-A/path-B 分叉位置，产出一份内部迁移清单（哪些段落搬到 paths/path-a-usecase.md、哪些搬到 paths/path-b-simple.md、哪些留在主 SKILL.md 作为共同约束），确定语义零变化的搬迁边界
-    status: pending
+    status: cancelled
   - id: extract-path-a-and-b
     content: 新建 framework/skills/5-business-ut/paths/ 目录，产出 path-a-usecase.md 与 path-b-simple.md；把当前 SKILL.md 的"路径 A（有 use-cases.yaml）"与"路径 B（无 use-cases.yaml）"相关的 Step 1~3 细节章节完整搬迁（骨架代码、打桩示例、每 it() 必备断言等），保持行为/产物/门禁完全一致；主 SKILL.md 对应位置改为一句话指向 + 链接
-    status: pending
+    status: cancelled
   - id: slim-main-skill-md
     content: 重写 framework/skills/5-business-ut/SKILL.md 为薄层主文（目标 ≤ 220 行），只保留：触发条件、核心理念、三路径决策树（见 §三）、共同门禁（ut_import_whitelist / boundaries_all_stubbed / it() 命名前缀）、通用产物（device-testing-todo / 交付摘要 / trace.json）、Harness 调用入口；Step 编号改为"路由 → 分路径执行 → 共同收尾"三段式
-    status: pending
+    status: cancelled
   - id: phase1-regression
     content: 对 Phase 1 的重构做回归 —— 在 home-page / WalletMain 现有 UT 上跑 harness-runner.ts --phase ut --feature home-page，确认门禁报告与重构前逐项一致（零 BLOCKER / 零新增 WARN）；人工对比 paths/path-b-simple.md 与原 SKILL.md 路径 B 章节，确认语义零漂移
-    status: pending
+    status: cancelled
   - id: path-c-skeleton
     content: 新建 framework/skills/5-business-ut/paths/path-c-characterization.md，按 §四 定义的 Step 结构落地 —— Step C1 读取输入（源码 + 日志切片 + 业务描述）/ Step C2 抽取观测序列 / Step C3 生成 DAG 节点（每节点 origin 必填）/ Step C4 入口可测性盘点与 harvest-notes 产出 / Step C5 生成 characterization UT（[CHAR-*] 命名）/ Step C6 共同收尾；流程中任何需要改源码的点一律落到 harvest-notes，不直接改代码
-    status: pending
+    status: cancelled
   - id: characterization-template
     content: 新建 framework/skills/5-business-ut/templates/characterization-template.md，包含：log-slice 约定格式（已脱敏、单次执行）、characterization UT 骨架（[CHAR-<flowName>] 命名、边界调用序列断言、状态迁移断言、返回 shape 断言）、harvest-notes.md 模板（重构提案条目格式：file + location + issue + proposed_refactor + impact + 用户决策框）
-    status: pending
+    status: cancelled
   - id: dag-schema-extend-origin
     content: 扩展 framework/specs/dag-schema.md —— 新增顶层字段 flow_type: usecase_driven | spec_driven | characterization（默认 usecase_driven，向后兼容）；节点层新增 origin: log_observed | static_inferred | human_confirmed（path-C 产物必填，A/B 保持可选）；文档说明 origin 的追溯语义
-    status: pending
+    status: cancelled
   - id: harness-rule-origin-required
     content: 在 framework/specs/phase-rules/ut-rules.yaml 新增 origin_tag_required 规则（BLOCKER，precondition flow_type == 'characterization'），同步改造 framework/harness/scripts/check-ut.ts 增加对应 checker；确认 path-A/B（flow_type != characterization）走 SKIP 不影响现状
-    status: pending
+    status: cancelled
   - id: harness-rule-relax-for-c
     content: 在 ut-rules.yaml 的 branch_coverage_full / ut_case_per_unit_ac / acceptance_coverage / linked_acceptance 等"需求侧"规则上加 precondition "flow_type != characterization"，让这些规则在 path-C 自动 SKIP；补充新规则 characterization_trace_matches（MAJOR） —— UT 断言的边界调用序列必须与 DAG 节点序列一致（DAG 即日志还原的 trace）
-    status: pending
+    status: cancelled
   - id: verify-ut-prompt-align
     content: 改写 framework/harness/prompts/verify-ut.md —— 在现有语义检查项前加一段 flow_type 判定引导；path-C 专属检查：(1) origin 标注一致性（DAG 节点 origin 是否合理）(2) harvest-notes 完整性（入口不可测点是否全部列入）(3) no_business_judgment_in_spy（Spy 里不许写业务判断，沿用共同约束）；path-A/B 语义检查保持不变
-    status: pending
+    status: cancelled
   - id: skill5-trigger-wording
     content: 在重构后的主 SKILL.md 触发条件章节补入 path-C 的触发词 —— "存量 UT"、"回归网"、"基于日志生成 UT"、"characterization 测试"、"给现有流程补测试"；同时在决策树小节说明三路径在同一触发词"生成 UT"下按上游产物自动路由的规则（有 use-cases.yaml → A；有 acceptance.yaml 无 use-cases.yaml → B；均无且提供日志切片 → C；否则提示用户先运行 Skill 1/2）
-    status: pending
+    status: cancelled
   - id: bankcard-pilot-todo
     content: 在本 plan 的 §六 留下 bankcard 对照实验的占位 TODO —— 明确时间窗（bankcard 过正常 Skill 1→5 + ≥2 次联调日志后启动）、验收标准（path-C 产物的边界调用序列与 path-A/B 产物差异在可解释范围内）、产物路径；本 plan 不展开执行，仅固化约定
-    status: pending
+    status: cancelled
   - id: cross-reference-check
     content: 全局引用检查 —— 搜索 framework 下所有引用 "framework/skills/5-business-ut/SKILL.md" 的地方（特别是 harness prompts、其他 Skill 的 "下游消费者" 表、CLAUDE.md / AGENTS.md.template），若有指向被外抽章节的细节锚点需改为 paths/path-*.md 锚点；对外入口 SKILL.md 路径保持不变
-    status: pending
+    status: cancelled
   - id: regression-final
     content: 跑最终回归 —— (1) harness-runner.ts --phase ut --feature home-page 确认 path-B 分支零差异 (2) 在一个临时 feature 上构造最小 path-C 输入（几行假日志 + 现有 HomeRepository）dry-run，确认 origin_tag_required / characterization_trace_matches 正确触发、A/B 规则正确 SKIP (3) 提交 commit，消息："feat(skill5): 融合 characterization 路径 + 主 SKILL.md 结构化重构"
-    status: pending
+    status: cancelled
 isProject: false
 ---
 

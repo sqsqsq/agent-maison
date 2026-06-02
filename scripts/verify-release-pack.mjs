@@ -6,6 +6,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { packRelease } from './pack-release.mjs';
 import { checkStaleInitRefs, formatStaleInitRefHits } from './check-stale-init-refs.mjs';
+import { checkPlanVersions, formatPlanVersionHits } from './check-plan-version.mjs';
 import {
   isProbablyBinaryBuffer,
   isReleaseBinaryRelPath,
@@ -74,6 +75,7 @@ function assertZipContents(frameworkRoot) {
     'harness/tests',
     'RELEASE-NOTES-v1.0.md',
     'RELEASE-NOTES-v2.0.md',
+    'MAINTAINER-CHANGELOG.md',
   ];
   for (const rel of mustNotExist) {
     if (exists(frameworkRoot, rel)) {
@@ -167,6 +169,14 @@ export async function verifyReleasePack() {
     fail(`stale init refs: ${stale.hits.length} hit(s) in release content`);
   }
   console.log('[release:verify] stale init refs PASS');
+
+  console.log('[release:verify] plan version (--release)...');
+  const planVer = checkPlanVersions({ mode: 'release' });
+  if (!planVer.ok) {
+    console.error('[release:verify] plan version FAIL:\n' + formatPlanVersionHits(planVer.hits));
+    fail(`plan version: ${planVer.hits.length} hit(s)`);
+  }
+  console.log('[release:verify] plan version PASS');
 
   const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
   try {

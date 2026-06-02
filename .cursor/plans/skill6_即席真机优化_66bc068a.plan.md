@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: plan-format-canonical
     content: 修正 test-plan-hylyre-template.md 去掉全部反引号；统一 canonical JSON 形态；Skill 补充 Hylyre 误导性报错解读
-    status: pending
+    status: cancelled
   - id: derive-adhoc-hint
     content: 新增 derive-adhoc-hylyre-hint.ts + 标准 derive-hint 的 snapshot_cache_empty/selector_hints
     status: completed
