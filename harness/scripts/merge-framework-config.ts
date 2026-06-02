@@ -5,7 +5,7 @@
 //
 // Pass 1 — BACKFILL：只补缺、不覆盖（BACKFILL_FIELDS）
 // Pass 2 — MIGRATION：modernize 已有 key（MIGRATION_RULES，如 project_type → sub_variant）
-// Pass 3 — CONFIRM：行为级变更，须 Skill 00 Q1.C 等显式 y 后才写入（CONFIRM_FIELDS）
+// Pass 3 — CONFIRM：行为级变更，须 S2 CONFIRM pass（`--confirm-*` flag）后才写入（CONFIRM_FIELDS）
 //
 // 用法：
 //   node framework/harness/scripts/merge-framework-config.mjs [--dry-run] [--apply] [--config <path>]
@@ -93,7 +93,7 @@ const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <p
   --dry-run                         打印三 pass 诊断与合并预览，不写盘（默认）
   --apply                           先备份到 <repo>/.framework-backup/<UTC>/，再写回
   --config <path>                   指定 framework.config.json 路径
-  --confirm-reports-dir-pattern=y|n Skill 00 Q1.C 答复；y 写入 paths.reports_dir_pattern`;
+  --confirm-reports-dir-pattern=y|n S2 CONFIRM pass 答复；y 写入 paths.reports_dir_pattern`;
 
 function readConfig(p: string): { raw: unknown; text: string } {
   if (!fs.existsSync(p)) fail(`找不到 framework.config.json：${p}`);
@@ -209,7 +209,7 @@ function main(): void {
   process.stdout.write(formatMissingTable(missing) + '\n\n');
   process.stdout.write('【Pass 2 · MIGRATION】待迁移规则：\n');
   process.stdout.write(formatMigrationTable(pendingMigrations) + '\n\n');
-  process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 Q1.C 等显式 y 才写入）：\n');
+  process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 CONFIRM pass 显式 y 才写入）：\n');
   process.stdout.write(formatConfirmTable(pendingConfirm) + '\n\n');
 
   if (

@@ -498,11 +498,11 @@ export const DEFAULT_PATHS: FrameworkPaths = {
 };
 
 /**
- * Q1.C / CONFIRM_FIELDS 写入 `paths.reports_dir_pattern` 时使用的推荐默认值。
+ * CONFIRM_FIELDS 写入 `paths.reports_dir_pattern` 时使用的推荐默认值。
  *
  * **故意不在 `DEFAULT_PATHS` 中**：若放进 DEFAULT_PATHS，`normalizeConfig` 会把该字段
  * 合并进所有实例 runtime config，导致磁盘未配置时也走 doc/features/.../reports，
- * 绕过 Skill 00 Q1.C（Q1.C=n 须保持 legacy 回退）。
+ * 绕过 S2 CONFIRM pass（n 须保持 legacy 回退）。
  */
 export const DEFAULT_REPORTS_DIR_PATTERN = 'doc/features/<feature>/<phase>/reports';
 

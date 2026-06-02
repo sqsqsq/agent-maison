@@ -1,7 +1,7 @@
 // ============================================================================
 // Init 阶段脚本 Harness — check-init.ts
 // ============================================================================
-// 作用对象: framework-init Skill 0.3 体检表 11 项产物。
+// 作用对象: framework-init S1 探测体检（check-init 11 项）产物。
 //
 // 设计要点（v2.6 弱模型工作流强制门 · L2+）:
 //   - 11 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于模板感知比对
@@ -9,8 +9,8 @@
 //   - 文本模板项使用 EOL-aware 比对：仅 CRLF/LF 不同不算用户漂移；
 //   - 双输出：
 //       (a) JSON   → framework/harness/reports/_global/init/<timestamp>/
-//                    check-init.json （机器读，给 SKILL 0.3.2 推策略）
-//       (b) stdout → SKILL 0.3.3 体检表（含 `update_policy` 列；#3 可按文件展开，总行数≥基线；
+//                    check-init.json （机器读，供 S1 探测推策略）
+//       (b) stdout → check-init 体检表（含 `update_policy` 列；#3 可按文件展开，总行数≥基线；
 //                     AI 仅原样搬运）
 //   - 由 PhaseChecker 接口对齐 harness-runner.ts 调度（与 catalog/glossary/
 //     docs 三个全局阶段同型），不单独跑 main()。
@@ -75,14 +75,14 @@ export interface Inspection {
   hash_template: string | null;        // sha256；非比对项为 null
   hash_target: string | null;
   diff_summary: string | null;         // POPULATED 项给前 50 行 unified-style diff
-  planned_strategy: string;            // 命中 SKILL 0.3.2 哪一行的策略文案
+  planned_strategy: string;            // check-init 策略矩阵文案
   diagnosis: string;                   // 本行的诊断短句（写进 stdout 表）
   /** 体检第 3 项逐文件展开时：该模板文件所属 adapter 段的 update_policy；其余行为 null */
   update_policy?: AdapterUpdatePolicy | null;
   /**
    * 第 1 项专用：UPDATE 模式下 framework.config.json 缺失的白名单字段（点分路径）。
    * 来源：scripts/utils/config-field-merger.ts BACKFILL_FIELDS。
-   * 当本字段非空时，Skill 00 §5.1 应触发 Q1.A「字段补缺合并」子问题；
+   * 当本字段非空时，S2/S3 应挂 `backfill-config` 任务并调用 merge-framework-config。
    * 推荐执行：`cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply`（cwd 契约见 framework/skills/reference/harness-cli-cwd.md）。
    * CREATE 模式（cfg 不存在）或非 POPULATED 状态下为 null / 不设置。
    */
@@ -93,7 +93,7 @@ export interface Inspection {
    */
   migration_keys?: string[] | null;
   /**
-   * 第 1 项专用：UPDATE 模式下待 Q1.C 等确认的 CONFIRM_FIELDS confirmKey 列表。
+   * 第 1 项专用：UPDATE 模式下待 CONFIRM pass 的 CONFIRM_FIELDS confirmKey 列表。
    * 来源：scripts/utils/config-field-merger.ts detectMissingConfirmFields。
    */
   confirm_keys?: string[] | null;
@@ -878,7 +878,7 @@ function projectProfileNameFromRaw(raw: unknown): string {
   return 'hmos-app';
 }
 
-/** 与 Skill 00 Step 5.2 / init 体检第 4 项一致：profile doc-skeletons → generic → Skill 模板 */
+/** 与 S3 doc 骨架任务 / init 体检第 4 项一致：profile doc-skeletons → generic → Skill 模板 */
 function resolveArchitectureSkeletonSource(profileName: string): { tplRel: string; tplAbs: string } {
   const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
   const orderedAbs = [
@@ -1098,7 +1098,7 @@ function inspect01(env: InspectorEnv): Inspection {
     };
   }
   // POPULATED：进一步识别 UPDATE 模式下的「白名单字段缺失」，
-  // 供 Skill 00 §5.1 Q1.A 触发 merge-framework-config.mjs --apply。
+  // 供 S3 backfill-config 任务调用 merge-framework-config.mjs --apply。
   const missingPaths = env.cfg.missingBackfillFields.map(f => f.path);
   const migrationIds = env.cfg.pendingMigrations.map(m => m.id);
   const confirmKeys = env.cfg.missingConfirmFields.map(c => c.confirmKey);
@@ -1116,7 +1116,7 @@ function inspect01(env: InspectorEnv): Inspection {
   }
   if (confirmKeys.length > 0) {
     parts.push(
-      `待确认 ${confirmKeys.length} 项（${confirmKeys.join(', ')}；Skill 00 Q1.C 推荐 y）`,
+      `待确认 ${confirmKeys.length} 项（${confirmKeys.join(', ')}；S2 CONFIRM pass 推荐 y）`,
     );
   }
   return {
@@ -1188,7 +1188,7 @@ function inspect02(env: InspectorEnv): Inspection {
   }
   if (env.renderEnv === null) {
     // CREATE 模式：framework.config.json 还没有，渲染不出来。
-    // 与 SKILL 0.3.2 第 2 行 MISSING 动作一致——按 POPULATED 处理（已有内容但
+    // 与 check-init 策略矩阵第 2 行 MISSING 动作一致——按 POPULATED 处理（已有内容但
     // 无法证明等同于默认渲染骨架），交给用户决策是否覆盖。
     return {
       index: 2,
@@ -1737,7 +1737,7 @@ function inspect09(_env: InspectorEnv): Inspection {
       hash_target: null,
       diff_summary: null,
       planned_strategy: strategyText(9, 'MISSING'),
-      diagnosis: 'ts-node 未安装（Step 5.5 将 npm install）',
+      diagnosis: 'ts-node 未安装（S3 harness-install 将 npm install）',
     };
   }
   return {
@@ -1903,7 +1903,7 @@ function applyInitMechanismSync(
 }
 
 /**
- * 与 SKILL 00 · §0.3.4.1 对齐：`auto_overwrite` 的 adapter 机制段已由 check-init 在 PASS 后自动对齐，
+ * S2 智能模式下 `auto_overwrite` 的 adapter 机制段已由 check-init 在 PASS 后自动对齐，
  * 不进入结构化 Q 收集；此处返回「实际需要用户在 0.3.4 收 y/n」的 inspection 行。
  */
 export function inspectionsForInit034Prompt(inspections: Inspection[]): Inspection[] {
@@ -1997,7 +1997,7 @@ export function runInitProbe(options: InitProbeOptions): InitProbeResult {
 }
 
 function buildStdoutTable(report: CheckInitReport): string {
-  // SKILL 0.3.3 体检表（6 列；#3 可展开）
+  // check-init 体检表（6 列；#3 可展开）
   const header = [
     `Init 体检报告 [mode=${report.mode}, adapter=${report.adapter ?? 'N/A'}]`,
     `生成时间: ${report.generated_at}`,
@@ -2278,10 +2278,10 @@ const checker: PhaseChecker = {
       console.error(`[check-init] 写 check-init.json 失败：${(e as Error).message}`);
     }
 
-    // stdout 体检表（被 SKILL 0.3.3 原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
+    // stdout 体检表（供 S1 探测原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
     // 抑制（fixture 单测使用，避免污染 jest 输出）。
     if (!process.env.CHECK_INIT_QUIET) {
-      console.log('\n========== check-init: SKILL 0.3.3 体检表（脚本生成，AI 仅搬运） ==========');
+      console.log('\n========== check-init: 体检表（脚本生成，AI 仅搬运） ==========');
       console.log(buildStdoutTable(report));
       if (writtenPath) {
         console.log(`\nJSON 报告: ${path.relative(ctx.projectRoot, writtenPath).replace(/\\/g, '/')}`);

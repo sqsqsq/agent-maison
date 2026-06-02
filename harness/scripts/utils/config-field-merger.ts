@@ -2,7 +2,7 @@
 // config-field-merger — framework.config.json 字段级"只补缺、不覆盖"合并器
 // ============================================================================
 //
-// 背景：Skill 00 UPDATE 模式历史上只有「整文件替换 / 跳过」两档（见 SKILL.md §5.1），
+// 背景：Skill 00 UPDATE 模式历史上只有「整文件替换 / 跳过」两档（编排化前），
 // 当 framework 引入新字段（如 paths.extension_dir / paths.state_file /
 // state_machine.* / active_workflow / lifecycle_hooks_enabled 等）后，老工程
 // 重新跑 /framework-init 无法机器化补齐，常见现象是「重新 init 后只新增了几个
@@ -14,7 +14,7 @@
 //
 //   Pass 1 — BACKFILL_FIELDS：只补缺失 key，静默安全默认值
 //   Pass 2 — MIGRATION_RULES：modernize 已有 key（如 project_type → sub_variant）
-//   Pass 3 — CONFIRM_FIELDS：行为级变更，须 Skill 00 Q1.C 等显式 y/n 后才写入
+//   Pass 3 — CONFIRM_FIELDS：行为级变更，须 S2 CONFIRM pass（`--confirm-*` flag）后才写入
 //
 // 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
@@ -25,7 +25,7 @@
 // 新增字段 checklist：
 //   - 静默安全默认 → BACKFILL_FIELDS + config.ts DEFAULT_*
 //   - 弃用/重命名 → MIGRATION_RULES
-//   - 行为变更 → CONFIRM_FIELDS + Skill 00 Q*.C
+//   - 行为变更 → CONFIRM_FIELDS + S2 CONFIRM pass
 // ============================================================================
 
 import {
@@ -115,7 +115,7 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: DEFAULT_PATHS.receipt_dir_pattern,
     note: 'paths.receipt_dir_pattern 缺失：回填 doc/features/<feature>/<phase>（完成回执目录模式）',
   },
-  // paths.reports_dir_pattern 不在 BACKFILL —— 见 CONFIRM_FIELDS + Skill 00 Q1.C。
+  // paths.reports_dir_pattern 不在 BACKFILL —— 见 CONFIRM_FIELDS + S2 CONFIRM pass。
   {
     path: 'paths.docs_committed',
     defaultValue: DEFAULT_PATHS.docs_committed,
@@ -411,7 +411,7 @@ export function applyMigrations(raw: unknown): {
 }
 
 // --------------------------------------------------------------------------
-// Pass 3 — CONFIRM_FIELDS（行为级变更，须 Q1.C 等显式 y 后才写入）
+// Pass 3 — CONFIRM_FIELDS（行为级变更，须 CONFIRM pass 后才写入）
 // --------------------------------------------------------------------------
 
 export interface ConfirmField {

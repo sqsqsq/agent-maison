@@ -1,7 +1,7 @@
 # ============================================================================
-# Init 阶段规约 (Phase Rules) — framework-init Skill 0.3 产物体检
+# Init 阶段规约 (Phase Rules) — framework-init S1 探测体检
 # ============================================================================
-# 校验对象: framework-init Skill 0.3 体检表 11 项产物（agent 入口文件 +
+# 校验对象: framework-init S1 探测体检（check-init 11 项）产物（agent 入口文件 +
 # adapter templates + 架构/数据/工具链/.gitignore 等）。
 #
 # 与 docs 类似，init 是"全局阶段"：不归属任何 feature。校验形态：
@@ -23,7 +23,7 @@
 
 phase: init
 version: "1.0"
-applies_to: "framework-init Skill 0.3 体检表：11 个逻辑索引（#3 可按文件展开多行）的产物"
+applies_to: "framework-init S1 探测体检（check-init）：11 个逻辑索引（#3 可按文件展开多行）的产物"
 
 # --------------------------------------------------------------------------
 # 结构约束

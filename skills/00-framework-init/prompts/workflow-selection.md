@@ -1,6 +1,6 @@
 # active_workflow 与实例扩展路径（Skill 00 选型备忘）
 
-本文供初始化 Skill 在 Step 2～5 与用户对齐配置时引用；**非强制单独执行**的阅读材料。
+本文供初始化 Skill 在 S2 与用户对齐配置时引用；**非强制单独执行**的阅读材料。
 
 ## `active_workflow`
 
@@ -10,7 +10,7 @@
 ## 实例扩展目录
 
 - `paths.extension_dir` 默认 **`doc/extensions`**（与 [instance-extension-manifest.schema.yaml](../../../specs/instance-extension-manifest.schema.yaml) 一致）。
-- 目录骨架与 `manifest.yaml` 占位见 Skill 00 **Step 5.4.6**。
+- 目录骨架与 `manifest.yaml` 占位见 Skill 00 **S3 执行**（扩展目录骨架任务）。
 
 ## 与 adapter 的关系
 

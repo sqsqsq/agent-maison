@@ -84,7 +84,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'prd',
         'prd.visual_handoff_enforcement',
         'atomic_service',
-        // reports_dir_pattern 走 CONFIRM_FIELDS + Q1.C，不进 silent BACKFILL
+        // reports_dir_pattern 走 CONFIRM_FIELDS + S2 CONFIRM pass，不进 silent BACKFILL
         'paths.reports_dir_pattern',
       ];
       for (const p of forbidden) {
@@ -319,7 +319,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'applyConfirmFields：Q1.C=y 写入 reports_dir_pattern',
+    name: 'applyConfirmFields：CONFIRM pass=y 写入 reports_dir_pattern',
     run: () => {
       const { merged } = applyConfirmFields(
         { paths: { features_dir: 'doc/features' } },
@@ -332,7 +332,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'applyConfirmFields：Q1.C=n 不写入 reports_dir_pattern',
+    name: 'applyConfirmFields：CONFIRM pass=n 不写入 reports_dir_pattern',
     run: () => {
       const { merged, report } = applyConfirmFields(
         { paths: { features_dir: 'doc/features' } },

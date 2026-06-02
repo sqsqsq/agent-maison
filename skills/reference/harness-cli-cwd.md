@@ -19,7 +19,7 @@
 
 ## 2. BLOCKER — cwd 泄漏（高危序列）
 
-若上一条命令是 **类型 B**（例如 Step 0.3.0）：
+若上一条命令是 **类型 B**（例如 S3 `harness-runner --phase init`）：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter <adapter>
@@ -73,13 +73,13 @@ cd <repo-root>
 
 ## 3. 常见类型 A 脚本
 
-| 脚本 | 典型 Skill 步骤 |
-|------|-----------------|
-| `render-agents-md.mjs` | Skill 00 §4.1.1 |
-| `merge-framework-config.mjs` | Skill 00 §5.1 / MIGRATION |
-| `show-last-committed-framework-config.mjs` | Skill 00 Step 1（Git 快照） |
+| 脚本 | 典型 init 阶段 |
+|------|----------------|
+| `render-agents-md.mjs` | S3 adapter 物化 |
+| `merge-framework-config.mjs` | S3 config merge / MIGRATION |
+| `show-last-committed-framework-config.mjs` | S1.1 Git 快照 |
 | `check-receipt.ts` | Skill 1～6 阶段闭环 |
-| `detect-deveco.ts`（shim） | Skill 00 Step 5.6 / hmos profile-addendum |
+| `detect-deveco.ts`（shim） | personal setup（`setup.deveco_path`）/ hmos profile-addendum |
 
 **不经 shell 拼路径、无 cwd 问题**：`harness-runner.ts` 进程内调用各 `check-*.ts`；`hook-runner.mjs`（参数为绝对路径）。
 

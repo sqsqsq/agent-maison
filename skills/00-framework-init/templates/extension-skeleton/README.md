@@ -1,6 +1,6 @@
 # 实例扩展骨架（extension-skeleton）
 
-本目录是 **Skill 00 · Step 5.4.6** 在实例尚无可扩展目录时，向 `paths.extension_dir`（默认 `doc/extensions/`）补全内容的**模板来源**之一。
+本目录是 **Skill 00 · S3 执行** 在实例尚无可扩展目录时，向 `paths.extension_dir`（默认 `doc/extensions/`）补全内容的**模板来源**之一。
 
 ## 文件与子目录
 

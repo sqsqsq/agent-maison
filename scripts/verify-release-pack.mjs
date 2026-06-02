@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { packRelease } from './pack-release.mjs';
+import { checkStaleInitRefs, formatStaleInitRefHits } from './check-stale-init-refs.mjs';
 import {
   isProbablyBinaryBuffer,
   isReleaseBinaryRelPath,
@@ -158,6 +159,14 @@ export async function verifyReleasePack() {
     fail(`synthetic rule tests: ${synthErrors.length} error(s)`);
   }
   console.log('[release:verify] synthetic rule tests PASS');
+
+  console.log('[release:verify] stale init refs scan...');
+  const stale = checkStaleInitRefs(REPO_ROOT);
+  if (!stale.ok) {
+    console.error('[release:verify] stale init refs FAIL:\n' + formatStaleInitRefHits(stale.hits));
+    fail(`stale init refs: ${stale.hits.length} hit(s) in release content`);
+  }
+  console.log('[release:verify] stale init refs PASS');
 
   const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
   try {

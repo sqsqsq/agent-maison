@@ -20,26 +20,26 @@
 
 ### 示例（仅在 hmos-app 下）
 
-根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **宿主 IDE / hvigor 路径、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「工具链路径配置（Step 5.6，hmos-app）」** 与上表 **权威资产清单** 为准；**工具链路径改由阶段 `--ensure` 内联 personal setup 写入 `framework.local.json`**（registry `setup.deveco_path`）。
+根 `framework/skills/00-framework-init/SKILL.md` 为保持 profile-neutral 已不在正文展开的 **宿主 IDE / hvigor 路径、`preset-5-layer` 宿主 shaped 示例** 等，均以本 addendum **「Personal setup · DevEco 路径（hmos-app）」** 与上表 **权威资产清单** 为准；**工具链路径改由阶段 `--ensure` 内联 personal setup 写入 `framework.local.json`**（registry `setup.deveco_path`）。
 
-`/framework-init`：**整文件写入 `framework.config.json`（Step 3.5）须早于 adapter 拷贝与 `render-agents-md`** —— Step **3.5** 之后才满足「磁盘 JSON 可被 §4.1.1 读取」。模板侧仍须走 `render-agents-md.mjs`，使 partial 与生成的入口 Markdown 对齐。
+`/framework-init`：**S3 写入 `framework.config.json` 须早于 adapter 拷贝与 `render-agents-md`** —— config 落盘后 `render-agents-md.mjs` 才能读取磁盘 JSON 与 partial 对齐。模板侧仍须走 `render-agents-md.mjs`，使 partial 与生成的入口 Markdown 对齐。
 
 ---
 
-## 工具链路径配置（Step 5.6，hmos-app）
+## Personal setup · DevEco 路径（hmos-app）
 
 > **背景**：自 framework v2.3 起，编码阶段真实编译门禁（canonical：`coding_compile`，历史别名 `coding_hvigor_build`）与业务级 UT 阶段（`ut_compile` / `ut_run` 及历史别名 `ut_hvigor_build` / `ut_hvigor_test`）引入 BLOCKER 规则，**强依赖** DevEco Studio 自带的 hvigor / sdk / jbr 工具链。**现代 DevEco Studio (≥ 5.0) 不再在工程根生成 `hvigorw.bat` 包装脚本**，统一从安装目录调用，因此 framework 必须知道 DevEco 装在哪里。
 >
-> 本步骤的目标：在 `framework.config.json` 写入合法的 `toolchain.devEcoStudio.installPath`，使上述 harness 规则不会因"找不到 hvigor"而 BLOCKER FAIL。
+> 本段目标：在 **`framework.local.json`** 写入合法的 `toolchain.devEcoStudio.installPath`，使上述 harness 规则不会因"找不到 hvigor"而 BLOCKER FAIL。
 
-### 5.6.1 幂等检测
+### 幂等检测
 
 **按 personal setup / planner `detect-deveco` 任务结果执行**（项目 init 不再写 installPath）：
 
-- `POPULATED`（已有 installPath 且文件系统存在）→ **跳过本节**，直接进入 Step 6。
-- `MISSING` / `EMPTY` → 继续 5.6.2。
+- `POPULATED`（local 已有 installPath 且文件系统存在）→ **跳过本节**，直接进入后续 phase。
+- `MISSING` / `EMPTY` → 继续自动探测。
 
-### 5.6.2 自动探测候选路径
+### 自动探测候选路径
 
 执行：
 
@@ -47,7 +47,7 @@
 cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 ```
 
-（若 shell cwd 仍在 `framework/harness/`（例如刚跑完 init 体检），可改用：`npx ts-node scripts/detect-deveco.ts --json`。详见 [harness-cli-cwd.md](../../../../skills/reference/harness-cli-cwd.md)。）
+（若 shell cwd 仍在 `framework/harness/`（例如刚跑完 init），可改用：`npx ts-node scripts/detect-deveco.ts --json`。详见 [harness-cli-cwd.md](../../../../skills/reference/harness-cli-cwd.md)。）
 
 `detect-deveco.ts` 会按平台扫描常见安装位置（Windows：`D:/Program Files/Huawei/DevEco Studio` 等 7 个；macOS：`/Applications/DevEco-Studio.app/Contents` 等；Linux：`/opt/deveco-studio` 等），对每个候选验证 `tools/hvigor/bin/hvigorw[.bat]` / `sdk/` / `jbr/bin/java[.exe]` 三个关键子目录是否齐全。
 
@@ -68,7 +68,7 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 }
 ```
 
-### 5.6.3 用户确认（**BLOCKER** · 个人 setup · registry `setup.deveco_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
+### 用户确认（**BLOCKER** · 个人 setup · registry `setup.deveco_path` · [user-confirmation-ux.md](../../../../skills/reference/user-confirmation-ux.md)）
 
 > **职责变更（编排化重构）**：宿主 IDE 安装路径**不再**写入 `framework.config.json`；改由 **阶段 `--ensure` 内联（Skill 00b 过程）** 写入 gitignored 的 `framework.local.json` → `toolchain.devEcoStudio.installPath`。
 
@@ -80,22 +80,22 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 
 项目级 **`/framework-init` 不再执行本节**；hmos-app 工程在首次跑 feature phase 前须完成个人 setup。
 
-3. **不允许 AI 替用户臆测**：即便 IDE 环境变量里有 `DEVECO_STUDIO_HOME` 之类痕迹也只能作为**推荐值**亮给用户，不得直接当作用户决定。
+**不允许 AI 替用户臆测**：即便 IDE 环境变量里有 `DEVECO_STUDIO_HOME` 之类痕迹也只能作为**推荐值**亮给用户，不得直接当作用户决定。
 
-### 5.6.4 用户选择"跳过"时的警示
+### 用户选择"跳过"时的警示
 
-若用户明确不想配置（多见于：仅做 PRD/design/glossary 阶段，不准备跑需 hvigor 的阶段），**允许跳过**，但必须打印以下警示到 Step 7 收尾的"被跳过项汇报"中：
+若用户明确不想配置（多见于：仅做 PRD/design/glossary 阶段，不准备跑需 hvigor 的阶段），**允许跳过**，但必须打印以下警示到 S4 摘要的"被跳过项汇报"中：
 
 ```text
 toolchain.devEcoStudio.installPath（用户跳过，未配置）
-  影响：以下三条 v2.3 BLOCKER 规则将无法通过：
-    - coding_hvigor_build（编码阶段必跑 hvigor assembleApp）
-    - ut_hvigor_build    （UT 阶段必跑 hvigor genOnDeviceTestHap）
-    - ut_hvigor_test     （UT 阶段必跑 hdc install + aa test，需要 DevEco SDK 提供 hdc）
-  跑这些阶段前请手工编辑 framework.config.json 补齐 toolchain.devEcoStudio.installPath。
+  影响：以下 v2.3 BLOCKER 规则将无法通过：
+    - coding_compile（编码阶段必跑 hvigor assembleApp）
+    - ut_compile    （UT 阶段必跑 hvigor genOnDeviceTestHap）
+    - ut_run        （UT 阶段必跑 hdc install + aa test，需要 DevEco SDK 提供 hdc）
+  跑这些阶段前请补跑 personal setup 或手工编辑 framework.local.json 补齐 toolchain.devEcoStudio.installPath。
 ```
 
-### 5.6.5 写入 `framework.config.json` 的 `toolchain` 段
+### 写入 `framework.local.json` 的 `toolchain` 段
 
 最终落盘形态（与 [`framework/harness/config.ts`](../../../../harness/config.ts) `ToolchainConfig` 对齐）：
 
@@ -132,7 +132,7 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 
 ## 实例 `.gitignore` 可选追加（非 framework canonical）
 
-全局 canonical 由 `check-init` → `ensureCanonicalGitignore` 自动维护（见根 SKILL §5.4.5）。**hmos-app** 工程在真机自动化 / 本机差异较大时，可在用户确认后**额外**追加（脚本不会自动写入、也不会删除）：
+全局 canonical 由 `check-init` → `ensureCanonicalGitignore` 自动维护（S3 `ensure-gitignore` 任务）。**hmos-app** 工程在真机自动化 / 本机差异较大时，可在用户确认后**额外**追加（脚本不会自动写入、也不会删除）：
 
 | pattern | 说明 |
 | --- | --- |

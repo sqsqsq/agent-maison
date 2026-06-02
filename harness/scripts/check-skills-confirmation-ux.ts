@@ -565,16 +565,7 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
     /(?:确认|停下来|等待用户|显式回复|须.*用户)/.test(content);
 
   if (needsConfirmUx && !hasSsot && !rel.includes('reference/')) {
-    // Skill 00 §0.3.4 legacy: must also link SSOT after migration
-    if (rel === 'framework/skills/00-framework-init/SKILL.md' && content.includes('§0.3.4')) {
-      if (!content.includes('user-confirmation-ux.md')) {
-        results.push(blocker(
-          'confirm_requires_ssot_link',
-          `${rel} 含 §0.3.4 确认流但未链 user-confirmation-ux.md`,
-          [rel],
-        ));
-      }
-    } else if (rel.endsWith('SKILL.md') || rel.endsWith('profile-addendum.md')) {
+    if (rel.endsWith('SKILL.md') || rel.endsWith('profile-addendum.md')) {
       results.push(blocker(
         'confirm_requires_ssot_link',
         `${rel} 含 BLOCKER/HARD STOP 确认描述但未链 SSOT 或 registry id`,

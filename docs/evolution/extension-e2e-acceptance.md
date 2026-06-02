@@ -38,7 +38,7 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 去掉 `--no-instance-bridge` 时：在 **claude** adapter 下应生成或更新 `.claude/commands/<bridgeId>.md`；在 **cursor** adapter 下应生成 `.cursor/skills/<bridgeId>/SKILL.md`。与内置 slash/跳板同名时 **`ext-` 前缀** + stderr 告警。
 
-**弱模型路径（v2.8.3+）**：大文件渲染应优先 `render-agents-md.mjs`（Node 进程内落盘），避免 Write tool-call 传 200+ 行 content 失败；见 Skill 00 Step 4.1 `tool-call retry-loop Ban`。
+**弱模型路径（v2.8.3+）**：大文件渲染应优先 `render-agents-md.mjs`（Node 进程内落盘），避免 Write tool-call 传 200+ 行 content 失败；见 Skill 00 S3 adapter 物化 `tool-call retry-loop Ban`。
 
 ## 4. 确认 UX（Claude adapter）
 
@@ -55,7 +55,7 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **`render-agents-md`**：Step 3.5 先落盘 `framework.config.json`；`render-agents-md.mjs` 为弱模型首选渲染路径。
+- **`render-agents-md`**：S3 先落盘 `framework.config.json`；`render-agents-md.mjs` 为弱模型首选渲染路径。
 - **Claude adapter**：通过 `user_confirmation.interaction_renderer_rule` 下发 `.claude/rules/interaction-renderer.md`；扩展 Skill 确认点须登记 registry。
 - **Cursor adapter**：`instance_skill_bridge` 写入 `.cursor/skills/` 跳板；正文 SSOT 仍在 `framework/skills/`。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件一致。

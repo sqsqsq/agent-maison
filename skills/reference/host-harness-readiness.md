@@ -35,7 +35,7 @@ cd framework/harness && npm install
 
 ### `npm install` 失败时（三点排查）
 
-细节与话术见 **Skill 00 · Step 5.5.3**。摘要：
+细节与话术见 **Skill 00 S3 `harness-install`**。摘要：
 
 1. `npm config get registry` 在当前网络是否可达。
 2. 代理环境变量 `HTTP_PROXY` / `HTTPS_PROXY` 是否正确。
@@ -56,7 +56,7 @@ cd framework/harness && npm install
 
 以下内容 **因 `project_profile` 而异**，本文仅列出入口：
 
-- **初始化期工具链路径**（如 IDE 安装路径）：[`00-framework-init`](../00-framework-init/SKILL.md) Step 5.6 与 `framework/profiles/<project_profile.name>/skills/00-framework-init/profile-addendum.md`。
+- **初始化期工具链路径**（如 IDE 安装路径）：personal setup（[`00b-framework-setup`](../00b-framework-setup/SKILL.md) / registry `setup.deveco_path`）与 `framework/profiles/<project_profile.name>/skills/00-framework-init/profile-addendum.md`。
 - **编码 / UT / 真机**：对应 Skill 的 `profile-addendum.md`（Skill 3、5、6 等）及 `framework/profiles/<profile>/harness/` 下脚本。
 
 ---

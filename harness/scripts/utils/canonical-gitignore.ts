@@ -1,11 +1,11 @@
 // ============================================================================
-// canonical-gitignore.ts — init 约定 .gitignore SSOT（与 SKILL 00 §5.4.5 对齐）
+// canonical-gitignore.ts — init 约定 .gitignore SSOT（与 S3 ensure-gitignore 对齐）
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-/** SKILL 5.4.5.1 canonical patterns（路径相对实例工程根，POSIX 斜杠） */
+/** canonical .gitignore patterns（路径相对实例工程根，POSIX 斜杠） */
 export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework/harness/node_modules/',
   'framework/harness/dist/',
@@ -28,7 +28,7 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework.local.json',
 ];
 
-/** SKILL 5.4.5.2 等价覆盖映射 */
+/** 等价覆盖映射（宽规则覆盖 canonical pattern） */
 export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
   'framework/harness/node_modules/': [
     '**/node_modules',

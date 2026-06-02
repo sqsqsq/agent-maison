@@ -2,7 +2,7 @@
 // detect-deveco.ts — DevEco Studio 安装路径探测
 // ============================================================================
 //
-// 用途：framework-init Skill 在写 framework.config.json > toolchain.devEcoStudio
+// 用途：personal setup / planner `detect-deveco` 任务在写 `framework.local.json > toolchain.devEcoStudio`
 //      之前调用本脚本，给用户一个推荐 installPath 候选 +「为什么是它」的解释。
 //      非交互（纯输出 JSON 或文本），决定权仍在用户手里——我们不替用户落盘。
 //

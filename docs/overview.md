@@ -394,7 +394,7 @@ robocopy path\to\framework-source\framework .\framework /E ^
          /XF reports
 ```
 
-之后**所有**初始化工作（宿主 `.gitignore` 补齐 / `npm install` / S3 `run-global-phases` / DevEco 路径配置 / harness 验证）由 `/framework-init` Skill 自动完成。详见 [`../MIGRATION.md`](../MIGRATION.md)。
+之后**所有**初始化工作（宿主 `.gitignore` 补齐 / `npm install` / S3 `run-global-phases` / harness 验证）由 `/framework-init` Skill 自动完成；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
 
 #### 模式 B · Submodule
 
@@ -642,7 +642,7 @@ git submodule update --init --recursive
 - **确认 UX**：[`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter **interaction-renderer** 统一注入。
 - **reports 外置**：`paths.reports_dir_pattern` 默认 `doc/features/<feature>/<phase>/reports/`。
 - **升级工具**：`merge-framework-config.mjs` 字段级补缺；`compat.yaml` + `npm run backfill:context` 过渡存量 feature。
-- **Framework-init**：`framework.config.json` 在 SKILL **Step 3.5** 整文件落盘，须早于 `render-agents-md`；`render-agents-md.mjs` 为弱模型首选渲染路径。
+- **Framework-init**：`framework.config.json` 在 **S3 执行** 落盘，须早于 `render-agents-md`；`render-agents-md.mjs` 为弱模型首选渲染路径。
 - **acceptance 分层 SSOT**：`acceptance.yaml` 的 `ut_layer` + `device_focus`；`device-testing-todo.md` 已废弃。
 
 ---

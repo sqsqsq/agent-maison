@@ -27,7 +27,7 @@
 
 `framework/profiles/<project_profile.name>/skills/1-prd-design/profile-addendum.md`
 
-其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill Step 1.5）。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
+其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../reference/agent-behavioral-principles.md)（Karpathy 四原则 · Research First / Minimum Viable / Surgical / Verify Before Proceed）。**Research Sub-Phase 完成前禁止写入 PRD 正文。**
 

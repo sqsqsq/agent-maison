@@ -31,7 +31,7 @@
 
 适用场景：framework 不作为独立 git 仓库管理，作为**目标工程仓库的一部分**跟随提交；典型如「壳子工程训练 framework，定期同步到一个或多个真实业务工程」。
 
-> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、S3 `run-global-phases`、配 `framework.config.json`、配 `toolchain.devEcoStudio.installPath`、harness 验收）**全部由 Skill 00 内部完成**。绝不要让用户在 vendor 之后再手工跑额外命令。
+> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、S3 `run-global-phases`、配 `framework.config.json`、harness 验收）**全部由 Skill 00 S3 内部完成**；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。绝不要让用户在 vendor 之后再手工跑额外命令。
 
 #### 首次部署 / 升级（同一组命令）
 
@@ -363,10 +363,10 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 | `lifecycle_hooks_enabled` | 默认 `true`；`false` 时 harness 跳过 lifecycle hook 派发 |
 | `paths.extension_dir` | 默认 `"doc/extensions"` |
 
-**升级后动作**：Skill 00 Step 5.4.6 补缺扩展目录骨架；在 **`<repo-root>`** 重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash（勿在 `framework/harness/` cwd 下写 `framework/harness/scripts/...` 前缀）；`cd framework/harness && npm test`。
+**升级后动作**：S3 执行补缺扩展目录骨架；在 **`<repo-root>`** 重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash（勿在 `framework/harness/` cwd 下写 `framework/harness/scripts/...` 前缀）；`cd framework/harness && npm test`。
 
 > v3.1 起这些字段（含 `state_machine.*`、`paths.state_file` / `receipt_dir_pattern` / `docs_committed`、
-> `toolchain.hvigor.*` 等）由 Skill 00 §5.1.A **机器化补缺合并**——见 §v3.1。
+> `toolchain.hvigor.*` 等）由 S3 `backfill-config` / merge-framework-config **机器化补缺合并**——见 §v3.1。
 
 详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md) 与 [docs/evolution/extension-e2e-acceptance.md](docs/evolution/extension-e2e-acceptance.md)。
 

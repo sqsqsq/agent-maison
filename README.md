@@ -85,19 +85,19 @@ git submodule update --init --recursive
 此时 agent 往往**没有**实例根全局指令，必须用**完整路径**显式引导到 Skill 00：
 
 ```text
-请完整读一遍 framework/skills/00-framework-init/SKILL.md，然后按里面的 Step 0 → Step 7 严格执行，把这个工程的 framework 初始化跑完。不要省略任何步骤，遇到需要我确认的事情停下来问我。
+请完整读一遍 framework/skills/00-framework-init/SKILL.md，然后按里面的 S1 → S4 严格执行，把这个工程的 framework 初始化跑完。不要省略任何步骤，遇到需要我确认的事情停下来问我。
 ```
 
 要点：
 - **必须给完整路径**，不要让 agent 自己猜。
 - 强调「完整读一遍」+「严格按步骤」，防止弱模型只扫开头就动手。
-- 强调「需要确认就停下来」，契合 Skill 00 的对话式确认设计（Step 0.2.5 的 adapter 选定是 BLOCKER，必须由用户显式选字符串）。
+- 强调「需要确认就停下来」，契合 Skill 00 S2 的 registry 确认设计（`init.materialized_adapters` 多选是 BLOCKER；generic 默认 bundle 由 template 写入，非标 bundle 根须手动编辑 config 后重跑）。
 
-跑完 Step 0 ～ 7 后，实例根会生成由**所选 adapter** 约定的入口与路由文件（路径见 [agents/README.md](agents/README.md)），以后再进这个工程就回到**场景一**。
+跑完 S1～S4 后，实例根会生成由**物化 adapter 清单** 约定的入口与路由文件（路径见 [agents/README.md](agents/README.md)），以后再进这个工程就回到**场景一**。
 
 ### 场景三：连 `framework/` 子目录都没有
 
-按 Skill 00 Step 0.1 的规定，先在工程根执行：
+按 Skill 00 S1.1 的规定，先在工程根执行：
 
 ```bash
 git submodule add <your-framework-repo-url> framework
@@ -112,7 +112,7 @@ git submodule update --init --recursive
 
 ```text
 这个工程已经把 framework/ 作为 git submodule 引入（如果没有，请先 git submodule add <framework-repo-url> framework 再继续）。
-请完整阅读 framework/skills/00-framework-init/SKILL.md，按里面的 Step 0 → Step 7 严格执行，
+请完整阅读 framework/skills/00-framework-init/SKILL.md，按里面的 S1 → S4 严格执行，
 完成 framework 在本工程的初始化或升级。涉及架构 DSL、adapter 选择、产物路径等关键决策，
 必须停下来让我确认，不要静默写入。
 ```
@@ -139,7 +139,7 @@ npm install                   # 仅首次或 package.json 变更后执行（Tier
 npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 ```
 
-初始化时由 Skill 00 Step 5.5 自动完成 `npm install`，此处仅作手动说明。
+初始化时由 Skill 00 S3（`harness-install` 任务）自动完成 `npm install`，此处仅作手动说明。
 
 **Framework 自身回归**（**仅源仓**；发布件 `npm test` 已重定义为 `check:global`）：在同一目录执行 `npm test`，会跑 **单元 + fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
 
