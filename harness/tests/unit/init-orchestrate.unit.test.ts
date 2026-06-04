@@ -1,6 +1,7 @@
 // init-orchestrate.unit.test.ts
 
 import assert from 'assert';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -11,12 +12,16 @@ import {
   buildInitStagingTemplate,
   buildRunSummary,
   executeInitPlan,
+  normalizeDecisionMaterializedAdapters,
   preflightExecute,
   readJsonFile,
   reconcileInitRunDecisionForPlan,
+  stripContextReservedFields,
+  syncDecisionAdaptersIntoContext,
   type InitRunDecision,
   validateDecisionJson,
 } from '../../scripts/init-orchestrate';
+import type { InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import {
   prepareInitExecutionPlan,
   prepareInitExecutionPlanWithStaleIds,
@@ -24,8 +29,37 @@ import {
   type InitTaskPlan,
 } from '../../scripts/utils/init-task-planner';
 
+const HARNESS_ROOT = path.join(__dirname, '../..');
+
 function mkTmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'init-orch-'));
+}
+
+/** spawn 真实 CLI（读 decision/context 文件），与函数级单测互补 */
+function runInitOrchestrateCli(
+  args: string[],
+): { status: number | null; stdout: string; stderr: string } {
+  const scriptRel = 'scripts/init-orchestrate.ts';
+  const localTsNode = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'dist', 'bin.js');
+  const cwd = HARNESS_ROOT;
+  const r = fs.existsSync(localTsNode)
+    ? spawnSync(process.execPath, [localTsNode, scriptRel, ...args], {
+        cwd,
+        encoding: 'utf-8',
+        shell: false,
+        timeout: 120_000,
+      })
+    : spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['ts-node', scriptRel, ...args], {
+        cwd,
+        encoding: 'utf-8',
+        shell: process.platform === 'win32',
+        timeout: 120_000,
+      });
+  return {
+    status: r.status,
+    stdout: (r.stdout ?? '').toString(),
+    stderr: (r.stderr ?? '').toString(),
+  };
 }
 
 export interface UnitCaseResult {
@@ -61,6 +95,22 @@ function validConfigWritePayload(): Record<string, unknown> {
       cross_module_exports_file: 'index.ets',
     },
     paths: { features_dir: 'doc/features', agent_bundle_root: '.agents' },
+  };
+}
+
+function projectDecision(
+  plan: InitTaskPlan,
+  tasks: InitRunDecision['tasks'],
+  materialized_adapters: string[] = ['generic'],
+  decision_mode: InitRunDecision['decision_mode'] = 'smart',
+): InitRunDecision {
+  return {
+    schema_version: '1.0',
+    scope: 'project',
+    decision_mode,
+    plan_generated_at: plan.generated_at,
+    tasks,
+    materialized_adapters,
   };
 }
 
@@ -315,6 +365,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: [{ task_id: 'no-such-task', action: 'run' }],
       };
       const r = preflightExecute(plan, decision);
@@ -340,6 +391,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
       };
       const r = preflightExecute(plan, decision, {
@@ -365,6 +417,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: [{ task_id: 'write-architecture', action: 'skip' }],
       };
       const r = preflightExecute(plan, decision);
@@ -381,6 +434,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
       };
       const r = preflightExecute(plan, decision);
@@ -404,6 +458,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
       };
       const r = preflightExecute(plan, decision, {
@@ -431,6 +486,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: [{ task_id: 'no-such-task', action: 'run' }],
       };
       const r = validateDecisionJson(plan, decision);
@@ -509,6 +565,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'manual',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: [
           { task_id: 'ensure-config', action: 'keep' },
           { task_id: 'materialize-adapter:generic', action: 'run' },
@@ -546,6 +603,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'manual',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: [],
       };
       const r = validateDecisionJson(plan, decision);
@@ -725,6 +783,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['generic'],
         tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
       };
       const log = executeInitPlan({
@@ -787,6 +846,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: prepared.plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [
           { task_id: 'ensure-config', action: 'run' },
           { task_id: 'materialize-adapter:generic', action: 'run' },
@@ -815,6 +875,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: prepared.plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [{ task_id: 'materialize-adapter:evil', action: 'run' }],
       };
       const reconciled = reconcileInitRunDecisionForPlan(prepared.plan, decision, {
@@ -842,6 +903,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [{ task_id: 'totally-unknown-task', action: 'run' }],
       };
       const reconciled = reconcileInitRunDecisionForPlan(plan, decision);
@@ -880,6 +942,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [{ task_id: 'totally-unknown-task', action: 'run' }],
       };
       assert.throws(
@@ -925,6 +988,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: prepared.plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [{ task_id: 'materialize-adapter:generic', action: 'run' }],
       };
       const log = executeInitPlan({
@@ -972,6 +1036,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         scope: 'project',
         decision_mode: 'smart',
         plan_generated_at: prepared.plan.generated_at,
+        materialized_adapters: ['cursor'],
         tasks: [{ task_id: 'materialize-adapter:evil', action: 'run' }],
       };
       assert.throws(
@@ -1121,12 +1186,266 @@ const cases: Array<{ name: string; run: () => void }> = [
         },
       };
       const staging = buildInitStagingTemplate(plan, context);
+      assert.deepStrictEqual(staging.decision.materialized_adapters, []);
+      staging.decision.materialized_adapters = ['claude', 'generic'];
       const paths = staging.context.configWritePayload?.paths as Record<string, unknown>;
       assert.strictEqual(paths.agent_bundle_root, '.agents');
       assert.strictEqual(paths.agent_bundle_skill_mode, 'bridge');
       assert(staging.decision.tasks.some(t => t.task_id === 'write-architecture' && t.action === 'skip'));
       const r = preflightExecute(plan, staging.decision, staging.context);
       assert.strictEqual(r.ok, true);
+    },
+  },
+  {
+    name: 'buildInitStagingTemplate 待补全 materialized_adapters 为空数组',
+    run: () => {
+      const plan = minimalPlan();
+      const staging = buildInitStagingTemplate(plan);
+      assert.deepStrictEqual(staging.decision.materialized_adapters, []);
+    },
+  },
+  {
+    name: 'preflightExecute project 缺 materialized_adapters 产出 blocked run-log',
+    run: () => {
+      const plan = docOnlyPlan();
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        tasks: [{ task_id: 'write-architecture', action: 'skip' }],
+      };
+      const r = preflightExecute(plan, decision);
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        assert(
+          r.blocked.entries.some(
+            e =>
+              e.status === 'failed' &&
+              e.message.includes('materialized_adapters'),
+          ),
+        );
+      }
+    },
+  },
+  {
+    name: 'preflightExecute project decision 与 context adapter 不一致阻断',
+    run: () => {
+      const plan = docOnlyPlan();
+      const decision = projectDecision(
+        plan,
+        [{ task_id: 'write-architecture', action: 'skip' }],
+        ['claude'],
+      );
+      const r = preflightExecute(plan, decision, { materializedAdapters: ['cursor'] });
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        assert(r.blocked.entries.some(e => e.message.includes('不一致')));
+      }
+    },
+  },
+  {
+    name: 'validateDecisionJson satisfied 依赖显式 skip 不违反闭包',
+    run: () => {
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'harness-install',
+            title: 'npm',
+            category: 'mechanism',
+            scope: 'project',
+            deps: [],
+            status: 'satisfied',
+            default_action: 'run',
+            skippable: true,
+            allowed_actions: ['run', 'skip'],
+          },
+          {
+            id: 'run-global-phases',
+            title: 'phases',
+            category: 'mechanism',
+            scope: 'project',
+            deps: ['harness-install'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+      const decision = projectDecision(
+        plan,
+        [
+          { task_id: 'harness-install', action: 'skip' },
+          { task_id: 'run-global-phases', action: 'run' },
+        ],
+        ['generic'],
+      );
+      const r = validateDecisionJson(plan, decision);
+      assert.strictEqual(r.ok, true);
+    },
+  },
+  {
+    name: 'stripContextReservedFields 移除 root 字段',
+    run: () => {
+      const stripped = stripContextReservedFields(
+        JSON.parse(
+          JSON.stringify({
+            projectRoot: '/evil',
+            harnessRoot: '/evil-h',
+            plan: {},
+            materializedAdapters: ['claude'],
+          }),
+        ),
+      );
+      assert(stripped);
+      assert.strictEqual((stripped as Record<string, unknown>).projectRoot, undefined);
+      assert.strictEqual((stripped as Record<string, unknown>).harnessRoot, undefined);
+      assert.strictEqual((stripped as Record<string, unknown>).plan, undefined);
+      assert.deepStrictEqual(stripped!.materializedAdapters, ['claude']);
+    },
+  },
+  {
+    name: 'executeInitPlan context projectRoot 不覆盖 CLI root',
+    run: () => {
+      const root = mkTmp();
+      const plan = minimalPlan();
+      const decision = projectDecision(
+        plan,
+        plan.tasks.map(t => ({
+          task_id: t.id,
+          action: (t.skippable ? 'skip' : 'run') as 'skip' | 'run',
+        })),
+        ['generic'],
+      );
+      const log = executeInitPlan({
+        projectRoot: root,
+        harnessRoot: path.join(__dirname, '../..'),
+        plan,
+        decision,
+        executionContext: JSON.parse(
+          JSON.stringify({
+            projectRoot: path.join(root, 'WRONG'),
+            materializedAdapters: ['generic'],
+          }),
+        ),
+      });
+      assert(log.entries.some(e => e.task_id === 'ensure-gitignore' && e.status === 'executed'));
+      assert(fs.existsSync(path.join(root, '.gitignore')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI 等价：preflight 须在 sync 前用原始 context 阻断 adapter 冲突',
+    run: () => {
+      const plan = docOnlyPlan();
+      const decision = projectDecision(
+        plan,
+        [{ task_id: 'write-architecture', action: 'skip' }],
+        ['claude'],
+      );
+      const stripped = { materializedAdapters: ['cursor'] };
+      const synced = syncDecisionAdaptersIntoContext(decision, {
+        materializedAdapters: ['cursor'],
+      });
+      assert.strictEqual(preflightExecute(plan, decision, synced).ok, true);
+      const r = preflightExecute(plan, decision, stripped);
+      assert.strictEqual(r.ok, false);
+      if (!r.ok) {
+        assert(r.blocked.entries.some(e => e.message.includes('不一致')));
+      }
+    },
+  },
+  {
+    name: 'syncDecisionAdaptersIntoContext 以 decision 为准覆盖 context',
+    run: () => {
+      const plan = minimalPlan();
+      const decision = projectDecision(plan, [], ['cursor']);
+      const synced = syncDecisionAdaptersIntoContext(decision, {
+        materializedAdapters: ['claude'],
+        configWritePayload: { materialized_adapters: ['claude'] },
+      });
+      assert.deepStrictEqual(synced.materializedAdapters, ['cursor']);
+      assert.deepStrictEqual(
+        (synced.configWritePayload as { materialized_adapters?: string[] })?.materialized_adapters,
+        ['cursor'],
+      );
+    },
+  },
+  {
+    name: 'CLI --emit-staging-template 缺 context 文件可输出待补全模板',
+    run: () => {
+      const root = mkTmp();
+      const missingCtx = path.join(root, 'no-context-yet.json');
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--emit-staging-template',
+        '--context-file',
+        missingCtx,
+      ]);
+      assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+      const parsed = JSON.parse(r.stdout) as {
+        decision: { materialized_adapters: string[] };
+      };
+      assert.deepStrictEqual(parsed.decision.materialized_adapters, []);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI --execute 读 decision/context 文件 adapter 冲突 exit 1 且零写盘',
+    run: () => {
+      const root = mkTmp();
+      const staging = path.join(root, 'staging');
+      fs.mkdirSync(staging, { recursive: true });
+      const plan = probeInitTaskPlan({ projectRoot: root, scope: 'project' });
+      const decisionPath = path.join(staging, 'decision.json');
+      const contextPath = path.join(staging, 'context.json');
+      fs.writeFileSync(
+        decisionPath,
+        JSON.stringify(
+          {
+            schema_version: '1.0',
+            scope: 'project',
+            decision_mode: 'smart',
+            plan_generated_at: plan.generated_at,
+            materialized_adapters: ['claude'],
+            tasks: plan.tasks
+              .filter(t => t.id === 'write-architecture' || t.skippable)
+              .slice(0, 3)
+              .map(t => ({ task_id: t.id, action: 'skip' as const })),
+          },
+          null,
+          2,
+        ),
+      );
+      fs.writeFileSync(
+        contextPath,
+        JSON.stringify({ materializedAdapters: ['cursor'] }, null, 2),
+      );
+      const gitignore = path.join(root, '.gitignore');
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--decision-file',
+        decisionPath,
+        '--context-file',
+        contextPath,
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stdout.includes('不一致') || r.stderr.includes('不一致'));
+      assert(!fs.existsSync(gitignore));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
     },
   },
 ];

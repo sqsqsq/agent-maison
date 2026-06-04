@@ -32,6 +32,8 @@ export interface InitRunDecision {
   decision_mode: DecisionMode;
   plan_generated_at: string;
   tasks: TaskDecision[];
+  /** project 作用域：S2 init.materialized_adapters 本轮选定（preflight 必填）；personal 可省略 */
+  materialized_adapters?: string[];
 }
 
 export interface InitRunLogEntry {
@@ -61,6 +63,8 @@ const VALID_DECISION_MODES = new Set<DecisionMode>(['smart', 'manual']);
 const DEFAULT_GENERIC_BUNDLE_ROOT = '.agents';
 const DEFAULT_GENERIC_BUNDLE_SKILL_MODE = 'bridge';
 
+const CONTEXT_RESERVED_KEYS = ['projectRoot', 'harnessRoot', 'plan'] as const;
+
 const DOC_PAYLOAD_KEY_BY_TASK: Record<
   string,
   keyof NonNullable<InitExecutionContext['docWritePayload']>
@@ -70,6 +74,49 @@ const DOC_PAYLOAD_KEY_BY_TASK: Record<
   'ensure-glossary': 'glossary_yaml',
   'ensure-glossary-seed': 'glossary_seed',
 };
+
+/** 剥离 staging context 中不得出现的 CLI/plan 字段（防覆盖 execute 路径） */
+export function stripContextReservedFields(
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined {
+  if (!context) return undefined;
+  const cloned = { ...(context as Record<string, unknown>) };
+  for (const k of CONTEXT_RESERVED_KEYS) {
+    delete cloned[k];
+  }
+  return cloned as Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>;
+}
+
+export function normalizeDecisionMaterializedAdapters(decision: InitRunDecision): string[] {
+  const raw = decision.materialized_adapters ?? [];
+  return [
+    ...new Set(
+      raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim()),
+    ),
+  ];
+}
+
+/** S3：以 decision 清单为准同步进 execution context（再交给 planner） */
+export function syncDecisionAdaptersIntoContext(
+  decision: InitRunDecision,
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> {
+  const base = stripContextReservedFields(context) ?? {};
+  if (decision.scope !== 'project') return base;
+  const adapters = normalizeDecisionMaterializedAdapters(decision);
+  if (!adapters.length) return base;
+  const out: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> = {
+    ...base,
+    materializedAdapters: adapters,
+  };
+  if (out.configWritePayload && typeof out.configWritePayload === 'object') {
+    out.configWritePayload = {
+      ...out.configWritePayload,
+      materialized_adapters: adapters,
+    };
+  }
+  return out;
+}
 
 function collectMaterializedAdapters(
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
@@ -148,6 +195,8 @@ export function buildInitStagingTemplate(
         task_id: task.id,
         action: resolveTemplateAction(task),
       })),
+      /** 待补全模板：须由 S2 init.materialized_adapters 替换为非空数组，否则 preflight 阻断 */
+      materialized_adapters: [],
     },
     context: normalizedContext,
   };
@@ -159,12 +208,9 @@ export function assertDecisionStructure(raw: unknown): InitRunDecision {
     throw new Error('[init-orchestrate] 决策 JSON 非法：根须为对象');
   }
   const o = raw as Record<string, unknown>;
-  if (
-    o.schema_version === undefined &&
-    (o.mode !== undefined || o.task_decisions !== undefined || o.materialized_adapters !== undefined)
-  ) {
+  if (o.schema_version === undefined && (o.mode !== undefined || o.task_decisions !== undefined)) {
     throw new Error(
-      '[init-orchestrate] 决策 JSON 非法：检测到旧 staging 结构（mode/task_decisions/materialized_adapters）。请使用 schema_version/scope/decision_mode/plan_generated_at/tasks[]，或运行 --emit-staging-template 生成骨架。',
+      '[init-orchestrate] 决策 JSON 非法：检测到旧 staging 结构（mode/task_decisions）。请使用 schema_version/scope/decision_mode/plan_generated_at/tasks[]/materialized_adapters，或运行 --emit-staging-template 生成骨架。',
     );
   }
   if (o.schema_version !== '1.0') {
@@ -208,12 +254,29 @@ export function assertDecisionStructure(raw: unknown): InitRunDecision {
     }
     tasks.push({ task_id: t.task_id, action: t.action as TaskDecision['action'] });
   }
+  let materialized_adapters: string[] | undefined;
+  if (o.materialized_adapters !== undefined) {
+    if (!Array.isArray(o.materialized_adapters)) {
+      throw new Error('[init-orchestrate] 决策 JSON 非法：materialized_adapters 须为数组');
+    }
+    materialized_adapters = [];
+    for (let i = 0; i < o.materialized_adapters.length; i++) {
+      const el = o.materialized_adapters[i];
+      if (typeof el !== 'string' || !el.trim()) {
+        throw new Error(
+          `[init-orchestrate] 决策 JSON 非法：materialized_adapters[${i}] 须为非空 string`,
+        );
+      }
+      materialized_adapters.push(el.trim());
+    }
+  }
   return {
     schema_version: '1.0',
     scope: o.scope as TaskScope,
     decision_mode: o.decision_mode as DecisionMode,
     plan_generated_at: o.plan_generated_at,
     tasks,
+    ...(materialized_adapters !== undefined ? { materialized_adapters } : {}),
   };
 }
 
@@ -252,6 +315,22 @@ function checkWriteTaskPayload(
 function extractUnknownTaskId(error: string): string | undefined {
   const m = error.match(/未知 task_id:\s*(\S+)/);
   return m?.[1];
+}
+
+function validateMaterializedAdaptersCrossCheck(
+  decision: InitRunDecision,
+  context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): string | null {
+  if (decision.scope !== 'project') return null;
+  const fromDecision = normalizeDecisionMaterializedAdapters(decision);
+  const fromCtx = collectMaterializedAdapters(stripContextReservedFields(context));
+  if (!fromCtx.length) return null;
+  const a = new Set(fromDecision);
+  const b = new Set(fromCtx);
+  if (a.size !== b.size || [...a].some(x => !b.has(x))) {
+    return 'materialized_adapters 不一致：decision 与 context 清单不匹配';
+  }
+  return null;
 }
 
 function buildPreflightBlockedLog(
@@ -341,6 +420,26 @@ export function preflightExecute(
     };
   }
 
+  const adapterMismatch = validateMaterializedAdaptersCrossCheck(decision, normalizedContext);
+  if (adapterMismatch) {
+    return {
+      ok: false,
+      blocked: buildPreflightBlockedLog(
+        plan,
+        decision,
+        started,
+        [
+          {
+            task_id: '<materialized-adapters>',
+            action: 'validate',
+            message: adapterMismatch,
+          },
+        ],
+        true,
+      ),
+    };
+  }
+
   const violations: Array<{ task_id: string; action: string; message: string }> = [];
   for (const task of plan.tasks) {
     let action: TaskDecision['action'];
@@ -416,9 +515,21 @@ export function validateDecisionJson(
   for (const task of plan.tasks) {
     if (skipIds.has(task.id)) continue;
     for (const dep of task.deps) {
-      if (skipIds.has(dep)) {
-        return { ok: false, error: `依赖闭包违反：${task.id} 依赖 ${dep} 但 ${dep} 被跳过` };
-      }
+      if (!skipIds.has(dep)) continue;
+      const depTask = taskById.get(dep);
+      if (depTask?.status === 'satisfied') continue;
+      return { ok: false, error: `依赖闭包违反：${task.id} 依赖 ${dep} 但 ${dep} 被跳过` };
+    }
+  }
+
+  if (decision.scope === 'project') {
+    const adapters = normalizeDecisionMaterializedAdapters(decision);
+    if (!adapters.length) {
+      return {
+        ok: false,
+        error:
+          'project 作用域 decision.materialized_adapters 缺失或为空；须经 init.materialized_adapters 多选收集本轮清单',
+      };
     }
   }
 
@@ -509,10 +620,10 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
   }
 
   const ctx: InitExecutionContext = {
+    ...withInitContextDefaults(stripContextReservedFields(options.executionContext)),
     projectRoot: options.projectRoot,
     harnessRoot: options.harnessRoot,
     plan: options.plan,
-    ...withInitContextDefaults(options.executionContext),
   };
 
   const started = new Date().toISOString();
@@ -667,17 +778,24 @@ function failCli(message: string): never {
   process.exit(1);
 }
 
+function readContextFileOptional(
+  filePath: string | undefined,
+  options: { allowMissing: boolean },
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined {
+  if (!filePath) return undefined;
+  if (options.allowMissing && !fs.existsSync(filePath)) return undefined;
+  const raw = readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
+    filePath,
+    '上下文',
+  );
+  return stripContextReservedFields(raw) ?? undefined;
+}
+
 if (require.main === module) {
   const opts = parseArgs(process.argv);
   if (!opts.execute) {
-    const executionContext = opts.contextFile
-      ? withInitContextDefaults(
-          readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
-            opts.contextFile,
-            '上下文',
-          ),
-        )
-      : undefined;
+    const rawContext = readContextFileOptional(opts.contextFile, { allowMissing: true });
+    const executionContext = rawContext ? withInitContextDefaults(rawContext) : undefined;
     if (opts.emitStagingTemplate) {
       const planResult = prepareInitExecutionPlanWithStaleIds(
         {
@@ -710,13 +828,12 @@ if (require.main === module) {
   }
   try {
     const decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile, '决策'));
+    const rawContext = readContextFileOptional(opts.contextFile, { allowMissing: false });
+    const strippedContext = rawContext
+      ? withInitContextDefaults(stripContextReservedFields(rawContext) ?? {})
+      : undefined;
     const executionContext = withInitContextDefaults(
-      opts.contextFile
-        ? readJsonFile<Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>>(
-            opts.contextFile,
-            '上下文',
-          )
-        : undefined,
+      syncDecisionAdaptersIntoContext(decision, stripContextReservedFields(rawContext)),
     );
     const planResult = prepareInitExecutionPlanWithStaleIds(
       {
@@ -729,7 +846,7 @@ if (require.main === module) {
     const reconciledDecision = reconcileInitRunDecisionForPlan(planResult.plan, decision, {
       staleMaterializeTaskIds: planResult.staleMaterializeTaskIds,
     });
-    const preflight = preflightExecute(planResult.plan, reconciledDecision, executionContext);
+    const preflight = preflightExecute(planResult.plan, reconciledDecision, strippedContext);
     if (!preflight.ok) {
       const logPath = writeRunLog(opts.harnessRoot, preflight.blocked);
       process.stdout.write(`${buildRunSummary(preflight.blocked)}\n`);

@@ -21,6 +21,16 @@
 
 ---
 
+## 进入 S1 前：Tier_1 readiness（BLOCKER）
+
+> `npm install` 会写 `framework/harness/node_modules`，**不属于** S1 只读探测；见 [host-harness-readiness.md](../reference/host-harness-readiness.md) Tier_1。
+
+- 确认 `<repo-root>/framework/harness/node_modules/ts-node/package.json` **存在**。
+- 若不存在：在 `<repo-root>/framework/harness` 执行 `npm install`，成功后再进入 S1。
+- 后续所有 harness CLI 须在 `framework/harness` 下用 `npx ts-node scripts/...`（禁止未安装依赖时依赖全局 `npx` 回落）。
+
+---
+
 ## S1. 探测（只读 · BLOCKER）
 
 > Shell 调用 harness 须遵守 [reference/harness-cli-cwd.md](../reference/harness-cli-cwd.md)。
@@ -68,13 +78,16 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ### S2.2 决策模式与任务批准
 
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
-2. **`init.materialized_adapters`**：至少 1 项（`claude` / `cursor` / `generic`）。
+2. **`init.materialized_adapters`**（**BLOCKER · 每轮必问**）：至少 1 项（`claude` / `cursor` / `generic`）。**即使** `framework.config.json` 已有 `materialized_adapters`，UPDATE / 跨会话仍须在本轮经 registry **`init.materialized_adapters`** 多选收到本轮清单；**禁止**「当前已物化 X，无需新增」后跳过。
 3. **手动模式**：对每个 `drift` 任务用 **`init.task_decision`**（覆盖 / 保留），**禁止** Q1=y 逐项打字。
-4. 序列化为 **`InitRunDecision` JSON** + **`context.json`**（含 `configWritePayload`、`materializedAdapters`、`confirmAnswers` 等），写入 **OS 临时目录**（一次性 staging，非项目资产）：
-   - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`（`<stamp>` 建议 ISO 时间戳去冒号，如 `20260602T091500Z`）
+4. 序列化为 **`InitRunDecision` JSON** + **`context.json`**，写入 **OS 临时目录**（一次性 staging，非项目资产）：
+   - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`
    - Windows：`%TEMP%\framework-init-<stamp>\decision.json` 与 `context.json`
    - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
-   - 可用 `init-orchestrate.ts --emit-staging-template --context-file <abs-temp-dir>/context.json` 生成合法 `{ decision, context }` 骨架；禁止沿用旧结构 `mode/task_decisions/materialized_adapters`
+   - `decision.json` **必须**含非空 `materialized_adapters`（机器门禁；与 context 清单集合一致）
+   - `context.json` **禁止**含 `projectRoot` / `harnessRoot` / `plan`；示例见 [templates/staging-schema-example.md](templates/staging-schema-example.md)
+   - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root>`（**不带** `--context-file`）；stdout 拆分写两文件后替换 `materialized_adapters`
+   - 禁止沿用旧结构 `mode` / `task_decisions` / 根级无 `schema_version` 的 staging
 
 `auto_overwrite` 机制段由 planner 标为 `sync-auto-overwrite:*`，智能模式下自动执行，不进手动逐项菜单。
 
@@ -131,8 +144,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ## UPDATE 模式要点
 
 1. **改 DSL**：S2 重新确认 `init.intra_layer_deps`；提醒 harness 行为变化。
-2. **增删 materialized adapter**：S2 多选更新清单；旧 adapter 遗留目录**列给用户**，不自动删除。
+2. **增删 materialized adapter**：S2 **每轮**经 `init.materialized_adapters` 多选确认清单（与 profile-addendum §5.6.3 installPath 同等纪律）；旧 adapter 遗留目录**列给用户**，不自动删除。
 3. **config 升级**：planner 自动挂 `backfill-config` / `migrate-config`（含 personal 外迁 migration）。
+4. **显式 skip satisfied 依赖**：对已 `status: satisfied` 的依赖任务（如 `harness-install`）可标 `skip`，preflight 不因依赖闭包误阻。
 
 ---
 
@@ -162,6 +176,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | Adapter 协议 | [framework/agents/adapter-schema.yaml](../../agents/adapter-schema.yaml) |
 | Config 模板 | [framework/templates/framework.config.template.json](../../templates/framework.config.template.json) |
 | 扫描 / 架构 | [prompts/scan-project.md](prompts/scan-project.md)、[prompts/architecture-presets.md](prompts/architecture-presets.md) |
+| Staging 示例 | [templates/staging-schema-example.md](templates/staging-schema-example.md) |
 | Personal setup | [00b-framework-setup/SKILL.md](../00b-framework-setup/SKILL.md) |
 
 ---
