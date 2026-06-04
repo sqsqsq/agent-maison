@@ -27,11 +27,11 @@ entries:
     class: gate
     ssot_anchor: "user-confirmation-ux.md §3.1"
     skill_step: "S2 计划批准"
-    portable_menu: "1=智能模式全部执行 2=手动模式逐项 3=全部跳过可跳过项"
+    portable_menu: "1=智能模式按默认动作 2=手动模式逐项 3=全部跳过可跳过项"
     notes: "决策 JSON 须通过 init-orchestrate validateDecisionJson；不可跳过非 skippable 任务"
     options:
       - value: smart_run
-        label: "智能模式 — 无漂移跳过，有漂移自动覆盖，一次性批准"
+        label: "智能模式 — 按任务默认动作执行；机制项自动同步，doc drift 默认保留，一次性批准"
         portable: "1=智能模式"
       - value: manual_review
         label: "手动模式 — 漂移任务逐项 init.task_decision（覆盖/保留）"

@@ -19,10 +19,15 @@
 
 **禁止**仅用默认跳过 `.gitignore` 的 IDE 列举判断是否已安装。
 
-权威探测（与 [`framework/harness/scripts/check-init.ts`](../../harness/scripts/check-init.ts) 第 9 项一致）：
+权威探测（与 [`framework/harness/scripts/check-init.ts`](../../harness/scripts/check-init.ts) 第 9 项一致；init 入口可用机器脚本）：
 
-- 若 `<repo-root>/framework/harness/node_modules/ts-node/package.json` **存在** → Tier_1 已满足（除非后续报错表明损坏，见故障分流）。
-- 若 **不存在** → 必须在 `<repo-root>/framework/harness/` 执行一次 `npm install`。
+```bash
+cd framework/harness && node scripts/init-readiness.mjs
+```
+
+- 脚本检查 `ts-node`、`@types/node`、`package.json` 与 cwd；输出 `{ ok, missing, recommended_command }`（**不**自动 `npm install`）。
+- 若 `ok=true` → Tier_1 已满足（除非后续报错表明损坏，见故障分流）。
+- 若 `ok=false` → 必须在 `<repo-root>/framework/harness/` 执行 `recommended_command`（`npm install`）后再跑 harness CLI。
 
 ### 安装命令
 

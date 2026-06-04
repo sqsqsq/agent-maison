@@ -3,6 +3,8 @@
 > **待补全模板**：`--emit-staging-template` 输出的 `decision.materialized_adapters` 默认为 `[]`，须用 S2 `init.materialized_adapters` 多选结果替换为非空数组，否则 preflight 阻断。
 >
 > **context 禁止**包含 `projectRoot`、`harnessRoot`、`plan`（由 CLI `--project-root` / harness 目录注入）。
+>
+> **可选 staging 元数据**：`schema_version`、`scope` 可写在 `context.json` 便于人工审计；`normalizeStagingContext` 会在 S3 前剥离，**不**进入执行上下文。
 
 ## decision.json（project · schema 1.0）
 

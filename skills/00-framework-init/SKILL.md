@@ -25,9 +25,17 @@
 
 > `npm install` 会写 `framework/harness/node_modules`，**不属于** S1 只读探测；见 [host-harness-readiness.md](../reference/host-harness-readiness.md) Tier_1。
 
-- 确认 `<repo-root>/framework/harness/node_modules/ts-node/package.json` **存在**。
-- 若不存在：在 `<repo-root>/framework/harness` 执行 `npm install`，成功后再进入 S1。
-- 后续所有 harness CLI 须在 `framework/harness` 下用 `npx ts-node scripts/...`（禁止未安装依赖时依赖全局 `npx` 回落）。
+在 `framework/harness` 下运行机器探测（**不**自动安装）：
+
+```bash
+cd framework/harness && node scripts/init-readiness.mjs
+```
+
+- 解析 stdout JSON：`ok` / `missing` / `recommended_command`。
+- 须同时满足：`node_modules/ts-node/package.json`、`node_modules/@types/node/package.json`、`package.json` 存在，且 cwd 为 `framework/harness`。
+- 若 `ok=false`：先执行 `recommended_command`（`cd framework/harness && npm install`），成功后再进入 S1。
+- **`ok=false` 之前禁止**裸跑 `npx ts-node scripts/init-orchestrate.ts`（`npx` cache 回落会掩盖未安装，导致 TypeScript 编译失败）。
+- `ok=true` 后，所有 harness CLI 须在 `framework/harness` 下用 `npx ts-node scripts/...`。
 
 ---
 
@@ -93,7 +101,14 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 ### S2.3 决策复述
 
-写入或进入 S3 前须结构化复述（user-confirmation-ux §3.6）：mode、materialized_adapters、决策模式、将被覆盖的 drift 任务列表。
+写入或进入 S3 前须结构化复述（user-confirmation-ux §3.6）：mode、materialized_adapters、决策模式，并按**任务类别**说明动作（**禁止**写「drift 全部 overwrite」）：
+
+| 类别 | 智能模式动作说明 |
+|------|------------------|
+| config / adapter 机制项（drift） | overwrite 或 run |
+| doc drift（POPULATED 且 default skip） | skip（保留磁盘） |
+| satisfied | skip |
+| required mechanism | run |
 
 ---
 
@@ -123,10 +138,10 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 使用 CLI 输出的 **`buildRunSummary(run-log)`** + `harness/reports/_global/init-orchestrate/*/summary.md`。
 - **清理 staging**：无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`）；仅调试需要时在 S4 向用户上报其绝对路径后再删。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
-- **下一步（须用户确认，禁止自动开下游 Skill）**：
+- **可选下一步（仅列出，禁止诱导式 yes/no 或默认进入下游 Skill）**：
   1. 提醒团队成员：首次跑 catalog/prd 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
-  2. `/catalog-bootstrap`、`/glossary-bootstrap`。
-  3. `/prd-design` 及后续 phase。
+  2. 需要时可自行执行：`/catalog-bootstrap`、`/glossary-bootstrap`、`/prd-design` 及后续 phase。
+  3. **禁止**在 init 摘要末尾询问「是否现在进入 catalog-bootstrap / prd-design」等默认推进话术；须等待用户明确选择下一阶段。
 - UPDATE 且改了 `paths.reports_dir_pattern` 时：advisory 扫描 legacy receipt 路径（`reconcile-receipt-paths.ts` dry-run）。
 
 ---

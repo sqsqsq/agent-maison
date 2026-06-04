@@ -36,14 +36,30 @@ export interface InitRunDecision {
   materialized_adapters?: string[];
 }
 
+export type InitRunLogSkipReason =
+  | 'satisfied'
+  | 'drift_default_keep'
+  | 'decision_skip'
+  | 'keep'
+  | 'preflight_blocked'
+  | 'dependency_blocked';
+
 export interface InitRunLogEntry {
   task_id: string;
   action: string;
   status: 'executed' | 'skipped' | 'failed';
   message: string;
+  reason?: InitRunLogSkipReason;
 }
 
-export interface InitRunLog {
+export interface InitRunLogAuditMeta {
+  mode?: 'create' | 'update';
+  plan_generated_at?: string;
+  project_root?: string;
+  materialized_adapters?: string[];
+}
+
+export interface InitRunLog extends InitRunLogAuditMeta {
   schema_version: '1.0';
   scope: TaskScope;
   started_at: string;
@@ -64,6 +80,7 @@ const DEFAULT_GENERIC_BUNDLE_ROOT = '.agents';
 const DEFAULT_GENERIC_BUNDLE_SKILL_MODE = 'bridge';
 
 const CONTEXT_RESERVED_KEYS = ['projectRoot', 'harnessRoot', 'plan'] as const;
+const CONTEXT_STAGING_META_KEYS = ['schema_version', 'scope'] as const;
 
 const DOC_PAYLOAD_KEY_BY_TASK: Record<
   string,
@@ -75,16 +92,74 @@ const DOC_PAYLOAD_KEY_BY_TASK: Record<
   'ensure-glossary-seed': 'glossary_seed',
 };
 
+/** 统一 staging context：保留 payload，剥离 CLI/plan 与 staging 元数据 */
+export function normalizeStagingContext(
+  raw?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined {
+  if (!raw) return undefined;
+  const cloned = { ...(raw as Record<string, unknown>) };
+  for (const k of [...CONTEXT_RESERVED_KEYS, ...CONTEXT_STAGING_META_KEYS]) {
+    delete cloned[k];
+  }
+  return cloned as Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>;
+}
+
 /** 剥离 staging context 中不得出现的 CLI/plan 字段（防覆盖 execute 路径） */
 export function stripContextReservedFields(
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
 ): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined {
-  if (!context) return undefined;
-  const cloned = { ...(context as Record<string, unknown>) };
-  for (const k of CONTEXT_RESERVED_KEYS) {
-    delete cloned[k];
+  return normalizeStagingContext(context);
+}
+
+function pickFirstAllowedAction(
+  task: InitTask,
+  candidates: TaskDecision['action'][],
+): TaskDecision['action'] {
+  for (const action of candidates) {
+    if (task.allowed_actions.includes(action)) return action;
   }
-  return cloned as Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>;
+  throw new Error(
+    `[init-orchestrate] 无法为任务 ${task.id} 解析 action（允许: ${task.allowed_actions.join(',')}）`,
+  );
+}
+
+function resolveSmartImplicitAction(task: InitTask): TaskDecision['action'] {
+  if (task.status === 'satisfied' && task.allowed_actions.includes('skip')) return 'skip';
+  if (task.status === 'drift') {
+    return pickFirstAllowedAction(task, ['overwrite', 'keep', 'skip']);
+  }
+  if (task.default_action === 'skip' && task.allowed_actions.includes('skip')) return 'skip';
+  return pickFirstAllowedAction(task, ['run', 'overwrite', 'keep', 'skip']);
+}
+
+function buildSkippedEntry(
+  task: InitTask,
+  action: TaskDecision['action'],
+): Pick<InitRunLogEntry, 'message' | 'reason'> {
+  if (action === 'keep') {
+    return { message: '保留当前磁盘内容', reason: 'keep' };
+  }
+  if (task.status === 'satisfied') {
+    return { message: '已满足，跳过', reason: 'satisfied' };
+  }
+  if (task.status === 'drift' && task.default_action === 'skip' && action === 'skip') {
+    return { message: 'drift 默认保留，跳过', reason: 'drift_default_keep' };
+  }
+  return { message: '决策 skip，未执行', reason: 'decision_skip' };
+}
+
+export function buildRunLogAuditMeta(options: {
+  plan: InitTaskPlan;
+  decision: InitRunDecision;
+  projectRoot?: string;
+}): InitRunLogAuditMeta {
+  const adapters = normalizeDecisionMaterializedAdapters(options.decision);
+  return {
+    mode: options.plan.mode,
+    plan_generated_at: options.decision.plan_generated_at,
+    ...(options.projectRoot ? { project_root: options.projectRoot } : {}),
+    ...(adapters.length ? { materialized_adapters: adapters } : {}),
+  };
 }
 
 export function normalizeDecisionMaterializedAdapters(decision: InitRunDecision): string[] {
@@ -339,6 +414,7 @@ function buildPreflightBlockedLog(
   startedAt: string,
   violations: Array<{ task_id: string; action: string; message: string }>,
   decisionValidationFailed: boolean,
+  audit?: InitRunLogAuditMeta,
 ): InitRunLog {
   const entries: InitRunLogEntry[] = [];
   const violationByTask = new Map(violations.map(v => [v.task_id, v]));
@@ -358,6 +434,7 @@ function buildPreflightBlockedLog(
         action: 'skip',
         status: 'skipped',
         message: 'preflight 决策校验失败，未执行',
+        reason: 'preflight_blocked',
       });
     }
   } else {
@@ -376,6 +453,7 @@ function buildPreflightBlockedLog(
           action: 'skip',
           status: 'skipped',
           message: 'preflight 阻断，未执行',
+          reason: 'preflight_blocked',
         });
       }
     }
@@ -388,6 +466,7 @@ function buildPreflightBlockedLog(
     finished_at: new Date().toISOString(),
     decision_mode: decision.decision_mode,
     entries,
+    ...audit,
   };
 }
 
@@ -396,6 +475,7 @@ export function preflightExecute(
   plan: InitTaskPlan,
   decision: InitRunDecision,
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+  audit?: InitRunLogAuditMeta,
 ): { ok: true } | { ok: false; blocked: InitRunLog } {
   const started = new Date().toISOString();
   const normalizedContext = withInitContextDefaults(context);
@@ -416,6 +496,7 @@ export function preflightExecute(
           },
         ],
         true,
+        audit,
       ),
     };
   }
@@ -436,6 +517,7 @@ export function preflightExecute(
           },
         ],
         true,
+        audit,
       ),
     };
   }
@@ -463,7 +545,7 @@ export function preflightExecute(
   if (violations.length > 0) {
     return {
       ok: false,
-      blocked: buildPreflightBlockedLog(plan, decision, started, violations, false),
+      blocked: buildPreflightBlockedLog(plan, decision, started, violations, false, audit),
     };
   }
 
@@ -570,9 +652,7 @@ export function resolveTaskAction(
   const explicit = decision.tasks.find(d => d.task_id === task.id);
   if (explicit) return explicit.action;
   if (decision.decision_mode === 'smart') {
-    if (task.status === 'satisfied') return 'skip';
-    if (task.status === 'drift') return 'overwrite';
-    return 'run';
+    return resolveSmartImplicitAction(task);
   }
   if (task.default_action === 'skip') return 'skip';
   if (taskRequiresExplicitManualDecision(task)) {
@@ -589,10 +669,17 @@ export function buildRunSummary(log: InitRunLog): string {
     `- decision_mode: ${log.decision_mode}`,
     `- started: ${log.started_at}`,
     `- finished: ${log.finished_at}`,
+  ];
+  if (log.mode) lines.push(`- mode: ${log.mode}`);
+  if (log.project_root) lines.push(`- project_root: ${log.project_root}`);
+  if (log.materialized_adapters?.length) {
+    lines.push(`- materialized_adapters: ${JSON.stringify(log.materialized_adapters)}`);
+  }
+  lines.push(
     ``,
     `| task_id | action | status | message |`,
     `|---------|--------|--------|---------|`,
-  ];
+  );
   for (const e of log.entries) {
     lines.push(`| ${e.task_id} | ${e.action} | ${e.status} | ${e.message.replace(/\|/g, '\\|')} |`);
   }
@@ -641,16 +728,19 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
         action: 'skip',
         status: 'skipped',
         message: '依赖任务失败或未执行，跳过',
+        reason: 'dependency_blocked',
       });
       continue;
     }
 
     if (action === 'skip' || action === 'keep') {
+      const skipped = buildSkippedEntry(task, action);
       entries.push({
         task_id: task.id,
         action,
         status: 'skipped',
-        message: action === 'keep' ? '保留当前磁盘内容' : '用户/智能模式跳过',
+        message: skipped.message,
+        reason: skipped.reason,
       });
       continue;
     }
@@ -681,6 +771,11 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
     finished_at: new Date().toISOString(),
     decision_mode: options.decision.decision_mode,
     entries,
+    ...buildRunLogAuditMeta({
+      plan: options.plan,
+      decision: options.decision,
+      projectRoot: options.projectRoot,
+    }),
   };
 }
 
@@ -846,7 +941,17 @@ if (require.main === module) {
     const reconciledDecision = reconcileInitRunDecisionForPlan(planResult.plan, decision, {
       staleMaterializeTaskIds: planResult.staleMaterializeTaskIds,
     });
-    const preflight = preflightExecute(planResult.plan, reconciledDecision, strippedContext);
+    const auditMeta = buildRunLogAuditMeta({
+      plan: planResult.plan,
+      decision: reconciledDecision,
+      projectRoot: opts.projectRoot,
+    });
+    const preflight = preflightExecute(
+      planResult.plan,
+      reconciledDecision,
+      strippedContext,
+      auditMeta,
+    );
     if (!preflight.ok) {
       const logPath = writeRunLog(opts.harnessRoot, preflight.blocked);
       process.stdout.write(`${buildRunSummary(preflight.blocked)}\n`);

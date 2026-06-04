@@ -10,17 +10,21 @@ import { clearFrameworkConfigCache } from '../../config';
 import {
   assertDecisionStructure,
   buildInitStagingTemplate,
+  buildRunLogAuditMeta,
   buildRunSummary,
   executeInitPlan,
   normalizeDecisionMaterializedAdapters,
+  normalizeStagingContext,
   preflightExecute,
   readJsonFile,
   reconcileInitRunDecisionForPlan,
+  resolveTaskAction,
   stripContextReservedFields,
   syncDecisionAdaptersIntoContext,
   type InitRunDecision,
   validateDecisionJson,
 } from '../../scripts/init-orchestrate';
+import type { InitTask } from '../../scripts/utils/init-task-planner';
 import type { InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import {
   prepareInitExecutionPlan,
@@ -771,6 +775,125 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(recordEntry?.status === 'failed');
       assert(devecoEntry?.status === 'skipped');
       assert(devecoEntry?.message.includes('依赖'));
+      assert.strictEqual(devecoEntry?.reason, 'dependency_blocked');
+    },
+  },
+  {
+    name: 'resolveTaskAction smart doc drift without explicit entry resolves skip',
+    run: () => {
+      const task: InitTask = {
+        id: 'write-architecture',
+        title: 'arch',
+        category: 'docs',
+        scope: 'project',
+        deps: [],
+        status: 'drift',
+        default_action: 'skip',
+        skippable: true,
+        allowed_actions: ['run', 'skip'],
+      };
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: new Date().toISOString(),
+        tasks: [],
+      };
+      assert.strictEqual(resolveTaskAction(task, decision), 'skip');
+    },
+  },
+  {
+    name: 'executeInitPlan satisfied skip has reason satisfied',
+    run: () => {
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'materialize-entry-file',
+            title: 'CLAUDE.md',
+            category: 'adapter-entry',
+            scope: 'project',
+            deps: [],
+            status: 'satisfied',
+            default_action: 'skip',
+            skippable: true,
+            allowed_actions: ['run', 'skip'],
+          },
+        ],
+      };
+      const decision = projectDecision(plan, [{ task_id: 'materialize-entry-file', action: 'skip' }]);
+      const log = executeInitPlan({
+        projectRoot: mkTmp(),
+        harnessRoot: HARNESS_ROOT,
+        plan,
+        decision,
+      });
+      const entry = log.entries.find(e => e.task_id === 'materialize-entry-file');
+      assert.strictEqual(entry?.status, 'skipped');
+      assert.strictEqual(entry?.reason, 'satisfied');
+      assert.strictEqual(entry?.message, '已满足，跳过');
+      assert.strictEqual(log.mode, 'update');
+    },
+  },
+  {
+    name: 'preflightExecute blocked entries have preflight_blocked reason and audit meta',
+    run: () => {
+      const plan = minimalPlan();
+      const decision = projectDecision(plan, [{ task_id: 'totally-unknown', action: 'skip' }]);
+      const audit = buildRunLogAuditMeta({
+        plan,
+        decision,
+        projectRoot: '/tmp/proj',
+      });
+      const r = preflightExecute(plan, decision, undefined, audit);
+      assert.strictEqual(r.ok, false);
+      if (r.ok) return;
+      assert.strictEqual(r.blocked.mode, plan.mode);
+      assert.strictEqual(r.blocked.project_root, '/tmp/proj');
+      const skipped = r.blocked.entries.filter(e => e.status === 'skipped');
+      assert(skipped.length > 0);
+      assert(skipped.every(e => e.reason === 'preflight_blocked'));
+    },
+  },
+  {
+    name: 'normalizeStagingContext strips schema_version scope and reserved keys',
+    run: () => {
+      const out = normalizeStagingContext({
+        schema_version: '1.0',
+        scope: 'project',
+        projectRoot: '/bad',
+        harnessRoot: '/bad',
+        plan: {} as InitTaskPlan,
+        materializedAdapters: ['claude'],
+        configWritePayload: { project_name: 'x' },
+      } as never);
+      assert(out);
+      assert.strictEqual((out as Record<string, unknown>).schema_version, undefined);
+      assert.strictEqual((out as Record<string, unknown>).scope, undefined);
+      assert.strictEqual((out as Record<string, unknown>).projectRoot, undefined);
+      assert.deepStrictEqual(out.materializedAdapters, ['claude']);
+    },
+  },
+  {
+    name: 'buildRunSummary includes audit metadata when present',
+    run: () => {
+      const s = buildRunSummary({
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        project_root: 'D:/proj',
+        materialized_adapters: ['claude', 'generic'],
+        started_at: '2026-01-01T00:00:00Z',
+        finished_at: '2026-01-01T00:01:00Z',
+        decision_mode: 'smart',
+        entries: [],
+      });
+      assert(s.includes('mode: update'));
+      assert(s.includes('project_root: D:/proj'));
+      assert(s.includes('materialized_adapters'));
     },
   },
   {
