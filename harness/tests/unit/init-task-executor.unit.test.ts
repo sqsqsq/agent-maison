@@ -46,7 +46,6 @@ function illegalConfigWritePayload(): Record<string, unknown> {
 
 function legalCursorConfigWritePayload(): Record<string, unknown> {
   return {
-    schema_version: '1.1',
     project_name: 'cursor-only',
     project_profile: { name: 'generic' },
     materialized_adapters: ['cursor'],
@@ -199,7 +198,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       ) as Record<string, unknown>;
       assert.strictEqual(written.agent_adapter, undefined);
       assert.strictEqual(written.project_type, undefined);
+      assert.strictEqual(written.schema_version, '1.1');
       assert.deepStrictEqual(written.materialized_adapters, ['cursor']);
+      assert.strictEqual(written.tools, undefined);
       fs.rmSync(root, { recursive: true, force: true });
     },
   },

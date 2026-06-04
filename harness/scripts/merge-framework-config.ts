@@ -21,13 +21,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
-  BACKFILL_FIELDS,
   CONFIRM_FIELDS,
   MIGRATION_RULES,
   detectMissingBackfillFields,
   detectMissingConfirmFields,
   detectPendingMigrations,
+  getEffectiveBackfillFields,
   mergeFrameworkConfig,
+  resolveProfileNameFromRaw,
   MissingFieldEntry,
   PendingConfirmEntry,
   PendingMigrationEntry,
@@ -180,14 +181,17 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const { raw, text: originalText } = readConfig(args.configPath);
 
-  const missing = detectMissingBackfillFields(raw);
+  const profileName = resolveProfileNameFromRaw(raw);
+  const effectiveBackfill = getEffectiveBackfillFields(profileName);
+  const missing = detectMissingBackfillFields(raw, profileName);
   const pendingMigrations = detectPendingMigrations(raw);
   const pendingConfirm = detectMissingConfirmFields(raw);
 
   process.stdout.write(`\n=== merge-framework-config ===\n`);
   process.stdout.write(`config: ${args.configPath}\n`);
   process.stdout.write(`mode: ${args.apply ? 'apply' : 'dry-run'}\n`);
-  process.stdout.write(`backfill whitelist size: ${BACKFILL_FIELDS.length}\n`);
+  process.stdout.write(`profile: ${profileName}\n`);
+  process.stdout.write(`backfill whitelist size: ${effectiveBackfill.length}\n`);
   process.stdout.write(`migration rules: ${MIGRATION_RULES.length}\n`);
   process.stdout.write(`confirm fields: ${CONFIRM_FIELDS.length}\n`);
   process.stdout.write(`missing backfill fields: ${missing.length}\n`);
@@ -225,6 +229,7 @@ function main(): void {
   const { merged, backfillReport, migrationReport, confirmReport } = mergeFrameworkConfig(
     raw,
     args.confirmAnswers,
+    profileName,
   );
   const mergedText = formatJson(merged);
 

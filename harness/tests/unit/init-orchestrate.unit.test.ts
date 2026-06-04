@@ -465,9 +465,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         materialized_adapters: ['generic'],
         tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
       };
-      const r = preflightExecute(plan, decision, {
-        configWritePayload: illegalConfigWritePayload(),
-      });
+      const r = preflightExecute(
+        plan,
+        decision,
+        { configWritePayload: illegalConfigWritePayload() },
+        buildRunLogAuditMeta({ plan, decision, projectRoot: root }),
+      );
       assert.strictEqual(r.ok, false);
       if (!r.ok) {
         const cfg = r.blocked.entries.find(e => e.task_id === 'ensure-config');
@@ -1315,8 +1318,15 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(paths.agent_bundle_root, '.agents');
       assert.strictEqual(paths.agent_bundle_skill_mode, 'bridge');
       assert(staging.decision.tasks.some(t => t.task_id === 'write-architecture' && t.action === 'skip'));
-      const r = preflightExecute(plan, staging.decision, staging.context);
+      const root = mkTmp();
+      const r = preflightExecute(
+        plan,
+        staging.decision,
+        staging.context,
+        buildRunLogAuditMeta({ plan, decision: staging.decision, projectRoot: root }),
+      );
       assert.strictEqual(r.ok, true);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

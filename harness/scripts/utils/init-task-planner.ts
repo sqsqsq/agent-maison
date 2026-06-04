@@ -46,8 +46,31 @@ export interface InitTaskPlan {
 
 function inspectionToStatus(ins: Inspection): TaskStatus {
   if (ins.status === 'MISSING') return 'needed';
+  if (ins.index === 1 && ins.config_user_required_gap) return 'needed';
   if (ins.status === 'EMPTY') return 'satisfied';
   return 'drift';
+}
+
+function ensureConfigTaskFields(ins: Inspection): Pick<
+  InitTask,
+  'status' | 'default_action' | 'skippable' | 'allowed_actions' | 'decision_class'
+> {
+  if (ins.config_user_required_gap) {
+    return {
+      status: 'needed',
+      default_action: 'prompt',
+      skippable: false,
+      allowed_actions: ['overwrite'],
+      decision_class: 'init.task_decision',
+    };
+  }
+  return {
+    status: ins.status === 'MISSING' ? 'needed' : ins.status === 'POPULATED' ? 'drift' : 'satisfied',
+    default_action: ins.status === 'MISSING' ? 'run' : ins.status === 'POPULATED' ? 'prompt' : 'skip',
+    skippable: ins.status !== 'MISSING',
+    allowed_actions: ins.status === 'POPULATED' ? ['overwrite', 'keep'] : ['run', 'skip'],
+    decision_class: ins.status === 'POPULATED' ? 'init.task_decision' : undefined,
+  };
 }
 
 function buildProjectTasks(
@@ -60,17 +83,14 @@ function buildProjectTasks(
 
   const ins1 = inspections.find(i => i.index === 1);
   if (ins1) {
+    const cfgFields = ensureConfigTaskFields(ins1);
     add({
       id: 'ensure-config',
       title: 'framework.config.json',
       category: 'config',
       scope: 'project',
       deps: [],
-      status: ins1.status === 'MISSING' ? 'needed' : ins1.status === 'POPULATED' ? 'drift' : 'satisfied',
-      default_action: ins1.status === 'MISSING' ? 'run' : ins1.status === 'POPULATED' ? 'prompt' : 'skip',
-      skippable: ins1.status !== 'MISSING',
-      allowed_actions: ins1.status === 'POPULATED' ? ['overwrite', 'keep'] : ['run', 'skip'],
-      decision_class: ins1.status === 'POPULATED' ? 'init.task_decision' : undefined,
+      ...cfgFields,
       inspection_index: 1,
       target_path: ins1.target_path,
     });

@@ -32,6 +32,7 @@ import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
 import {
   detectMissingBackfillFields,
+  resolveProfileNameFromRaw,
   detectMissingConfirmFields,
   detectPendingMigrations,
   MissingFieldEntry,
@@ -97,6 +98,11 @@ export interface Inspection {
    * 来源：scripts/utils/config-field-merger.ts detectMissingConfirmFields。
    */
   confirm_keys?: string[] | null;
+  /**
+   * 第 1 项专用：用户必填字段不完整（project_name / architecture），须 Skill 交互修复。
+   * 与「文件空壳」类 EMPTY 不同：不得被 planner 当作 satisfied/skip。
+   */
+  config_user_required_gap?: boolean;
 }
 
 export interface CheckInitReport {
@@ -317,7 +323,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     outerLayersLen: Array.isArray(outerLayers) ? outerLayers.length : 0,
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
-    missingBackfillFields: detectMissingBackfillFields(raw),
+    missingBackfillFields: detectMissingBackfillFields(raw, resolveProfileNameFromRaw(raw)),
     pendingMigrations: detectPendingMigrations(raw),
     missingConfirmFields: detectMissingConfirmFields(raw),
   };
@@ -1081,6 +1087,28 @@ function inspect01(env: InspectorEnv): Inspection {
       confirm_keys: null,
     };
   }
+  const projectName =
+    env.cfg.raw &&
+    typeof (env.cfg.raw as { project_name?: unknown }).project_name === 'string'
+      ? String((env.cfg.raw as { project_name: string }).project_name).trim()
+      : '';
+  if (!projectName) {
+    return {
+      index: 1,
+      target_path: target,
+      template_source: null,
+      status: 'EMPTY',
+      hash_template: null,
+      hash_target: null,
+      diff_summary: null,
+      planned_strategy: strategyText(1, 'EMPTY'),
+      diagnosis: 'project_name 缺失或为空（须 Skill 交互补全，backfill 不静默造数）',
+      missing_keys: null,
+      migration_keys: null,
+      confirm_keys: null,
+      config_user_required_gap: true,
+    };
+  }
   if (env.cfg.outerLayersLen === 0) {
     return {
       index: 1,
@@ -1095,6 +1123,7 @@ function inspect01(env: InspectorEnv): Inspection {
       missing_keys: null,
       migration_keys: null,
       confirm_keys: null,
+      config_user_required_gap: true,
     };
   }
   // POPULATED：进一步识别 UPDATE 模式下的「白名单字段缺失」，
@@ -2247,6 +2276,11 @@ const checker: PhaseChecker = {
               diffMissing.map(i => `  - #${i.index} ${i.target_path}`).join('\n'),
           };
         })();
+
+    const ins1UserGap = inspections.find(i => i.index === 1 && i.config_user_required_gap);
+    if (ins1UserGap) {
+      blockers.push(`framework.config.json: ${ins1UserGap.diagnosis}`);
+    }
 
     // 6. 装配 check-init.json + stdout 体检表（#3 可展开多行；check-init.json schema_version 1.1）
     const verdict: 'PASS' | 'FAIL' = blockers.length > 0 ? 'FAIL' : 'PASS';

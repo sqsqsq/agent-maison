@@ -68,14 +68,20 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 ### S2.1 收集项目元数据（写入 `configWritePayload`，供 S3）
 
-在批准计划前完成（registry 见下表）：
+在批准计划前完成（registry 见下表）。**S3 落盘**由 harness [`config-builder.ts`](../../harness/scripts/utils/config-builder.ts) 确定性合成完整 `framework.config.json`（`prepareConfigWriteForTask`）；AI **只提供结构化输入**，**不要**在 `configWritePayload` 里手写框架结构默认字段。
 
-| 主题 | Registry / 参考 | 写入 |
-|------|-----------------|------|
-| `project_profile` | `init.project_profile`（registry 编号选 preset） | `framework.config.json` |
-| 项目名 / paths / state_machine | S1 探测快照 + [framework.config.template.json](../../templates/framework.config.template.json) 默认值；非标字段 **STOP → 手动编辑 config 后重跑** | 同上 |
-| 架构 DSL | `init.architecture_preset` + `init.intra_layer_deps` + [prompts/architecture-presets.md](prompts/architecture-presets.md) | `architecture` 段 |
+| 主题 | Registry / 参考 | 写入 `configWritePayload` |
+|------|-----------------|---------------------------|
+| `project_profile` | `init.project_profile`（registry 编号选 preset） | `{ name, sub_variant? }` |
+| `project_name` | S1 探测 / 用户确认 | 字符串（**必填**） |
+| 架构 DSL | `init.architecture_preset` + `init.intra_layer_deps` + [prompts/architecture-presets.md](prompts/architecture-presets.md) | `architecture` 对象（**必填**） |
 | 物化 adapter 清单 | `init.materialized_adapters`（多选 checkbox） | `materialized_adapters[]` |
+| paths 覆盖（可选） | 仅当实例目录结构偏离默认 | `paths` 子集 |
+| `prd`（可选） | opt-in，见 prd-harness-options | `prd` 段 |
+
+**由 builder 自动注入（勿写入 payload）**：`schema_version`、`state_machine.*`、`toolchain.hvigor.*`、`active_workflow`、`lifecycle_hooks_enabled`、默认 `paths.*`（未覆盖项）、profile-owned `tools.*`（仅 hmos-app 等 profile 的 config-defaults）。参考 [framework.config.template.json](../../templates/framework.config.template.json) 作对照，非手写清单。
+
+非标架构 → **STOP → 手动编辑 config 后重跑**（见 architecture-presets 选项 D）。
 
 **`generic` adapter**（两段式，**禁止**因缺省 bundle 路径而 STOP 或从 `materialized_adapters` 剔除）：
 - **默认**：无自定义需求时，将 template 默认 `paths.agent_bundle_root: ".agents"`、`agent_bundle_skill_mode: "bridge"` 写入 `configWritePayload`，并继续物化 `generic`（harness 探测亦回退 `.agents`/bridge）。

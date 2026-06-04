@@ -6,15 +6,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
-import { clearFrameworkConfigCache, loadFrameworkConfigWithSources, validateFrameworkConfigWriteCandidate, type FrameworkConfig } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfigWithSources } from '../../config';
 import { __testing as checkInitTesting } from '../check-init';
 import { detectScan } from '../detect-deveco';
+import { prepareConfigWriteForTask } from './config-builder';
 import {
   mergeFrameworkConfig,
   detectMissingBackfillFields,
   detectPendingMigrations,
   buildLocalFromProjectLegacy,
-  sanitizeProjectConfigForInitWrite,
+  resolveProfileNameFromRaw,
 } from './config-field-merger';
 import { ensureCanonicalGitignore } from './canonical-gitignore';
 import {
@@ -165,9 +166,11 @@ function writeConfigMerge(
     throw new Error('framework.config.json 不存在，无法 merge');
   }
   const raw = JSON.parse(fs.readFileSync(cfgP, 'utf-8'));
+  const profileName = resolveProfileNameFromRaw(raw);
   const { merged, backfillReport, migrationReport, confirmReport } = mergeFrameworkConfig(
     raw,
     confirmAnswers,
+    profileName,
   );
   const mergedText = `${JSON.stringify(merged, null, 2)}\n`;
   const onDisk = fs.readFileSync(cfgP, 'utf-8');
@@ -283,16 +286,15 @@ export function executeInitTask(
       if (fs.existsSync(cfgP) && action !== 'overwrite') {
         return 'framework.config.json 已存在，未 overwrite';
       }
+      let toWrite: Record<string, unknown>;
       try {
-        validateFrameworkConfigWriteCandidate(
-          ctx.configWritePayload as Partial<FrameworkConfig>,
+        toWrite = prepareConfigWriteForTask(
+          { projectRoot: ctx.projectRoot, configWritePayload: ctx.configWritePayload },
+          action,
         );
       } catch (e) {
-        throw new Error(
-          `ensure-config：config 校验失败：${(e as Error).message}`,
-        );
+        throw new Error(`ensure-config：config 校验失败：${(e as Error).message}`);
       }
-      const toWrite = sanitizeProjectConfigForInitWrite(ctx.configWritePayload);
       if (fs.existsSync(cfgP)) backupConfig(ctx.projectRoot);
       fs.writeFileSync(cfgP, `${JSON.stringify(toWrite, null, 2)}\n`, 'utf-8');
       clearFrameworkConfigCache();
@@ -300,7 +302,10 @@ export function executeInitTask(
     }
     case 'backfill-config': {
       const raw = JSON.parse(fs.readFileSync(configPath(ctx.projectRoot), 'utf-8'));
-      if (detectMissingBackfillFields(raw).length === 0) return '无 backfill 字段缺失';
+      const profileName = resolveProfileNameFromRaw(raw);
+      if (detectMissingBackfillFields(raw, profileName).length === 0) {
+        return '无 backfill 字段缺失';
+      }
       return writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
         backfill: true,
         migration: false,

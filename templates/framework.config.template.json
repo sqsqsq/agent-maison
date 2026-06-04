@@ -1,13 +1,13 @@
 {
   "$schema_docs": {
-    "description": "framework.config.json 的空白模板。初始化 Skill (framework/skills/00-framework-init) 会基于本模板 + 用户交互答复生成实例工程根的 framework.config.json。本模板本身是合法 JSON（含 $schema_docs 说明键），生成最终 config 时务必整段删除 $schema_docs 键。",
+    "description": "framework.config.json 的人读对照模板。实例 init 落盘由 framework/harness/scripts/utils/config-builder.ts（prepareConfigWriteForTask）按 profile + 框架默认确定性合成；Skill S2 的 configWritePayload 只含结构化输入（project_name / project_profile / architecture / materialized_adapters 等），结构默认字段由 builder 注入。本文件含 $schema_docs 说明键，生成最终 config 时务必整段删除 $schema_docs。",
     "source": "framework/templates/framework.config.template.json",
     "consumed_by": [
       "framework/skills/00-framework-init/SKILL.md",
       "framework/harness/config.ts (loadFrameworkConfig / validateArchitectureDsl)"
     ],
     "field_notes": {
-      "schema_version": "模板顶层 schema_version；与 framework/specs/framework.config.schema.json 对齐，当前初始化写入 \"1.1\"。",
+      "schema_version": "模板顶层 schema_version；与 framework/specs/framework.config.schema.json 对齐，当前为 \"1.1\"；由 config-builder 写盘时注入，勿在 S2 configWritePayload 手写。",
       "active_workflow": "workflow id，指向 framework/workflows/<id>.workflow.yaml；默认 \"spec-driven\"。",
       "lifecycle_hooks_enabled": "布尔；false 时 harness-runner 跳过 lifecycle hook 派发（框架/profile/extension 三层均不执行）。",
       "project_name": "项目名；初始化 Skill 从 oh-package.json5 的 name 字段推断，缺失时回退到仓库目录名。",
@@ -43,7 +43,7 @@
       "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。"
     },
     "generation_rules": [
-      "生成时删除 $schema_docs 顶层键，其余键按用户答复填充。",
+      "生成时删除 $schema_docs 顶层键；S3 由 config-builder 合成完整 JSON，非 AI 逐键抄写本 skeleton。",
       "JSON 缩进固定 2 空格；末尾保留换行符。",
       "outer_layers / sublayers 的顺序保持用户确认的声明顺序，便于未来 diff 对比。",
       "未填的 optional 字段（例如 atomic_service.*）不要写成 null，直接省略该键。"

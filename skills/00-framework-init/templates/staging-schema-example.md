@@ -27,19 +27,26 @@
 }
 ```
 
-## context.json（仅 S2 收集的 payload）
+## context.json（仅 S2 收集的结构化输入；结构默认由 config-builder 注入）
 
 ```json
 {
   "materializedAdapters": ["claude"],
   "configWritePayload": {
-    "schema_version": "1.1",
     "project_name": "<实例工程名>",
     "materialized_adapters": ["claude"],
-    "project_profile": { "name": "hmos-app", "sub_variant": "app" }
+    "project_profile": { "name": "hmos-app", "sub_variant": "app" },
+    "architecture": {
+      "outer_layers": [{ "id": "01-Product", "can_depend_on": [], "intra_layer_deps": "forbid" }],
+      "module_inner_layers": ["shared", "data", "domain", "presentation"],
+      "inner_dependency_direction": "upward",
+      "cross_module_exports_file": "index.ets"
+    }
   }
 }
 ```
+
+勿在 payload 中写 `schema_version` / `state_machine` / `toolchain.hvigor` / 默认 `paths.*`；S3 `prepareConfigWriteForTask` 会按 profile 合成完整 `framework.config.json`。
 
 ## 生成骨架命令（emit）
 

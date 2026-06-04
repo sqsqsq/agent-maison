@@ -29,11 +29,11 @@
 // ============================================================================
 
 import {
-  DEFAULT_HYLYRE_TOOL_CONFIG,
   DEFAULT_PATHS,
   DEFAULT_REPORTS_DIR_PATTERN,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
+import { loadProfileConfigDefaults } from '../../profile-loader';
 import {
   LOCAL_SCHEMA_VERSION,
   type FrameworkLocalConfig,
@@ -50,14 +50,10 @@ export interface BackfillField {
 }
 
 /**
- * UPDATE 模式可被「字段级补缺合并」自动回填的字段白名单（SSOT）。
- *
- * 维护原则：
- *   - 这里**只**列允许在缺失时静默补默认值的字段；其它一律不能补。
- *   - 默认值取 framework/harness/config.ts 的 DEFAULT_PATHS / DEFAULT_STATE_MACHINE /
- *     DEFAULT_HYLYRE_TOOL_CONFIG 等常量；新增字段时先在 config.ts 里给真实默认值，再加到本表，避免双源漂移。
+ * 框架通用结构默认字段（所有 profile 共享；不含 profile-owned tools.*）。
+ * 不补 project_name / architecture —— 用户必填，走 probe 阻断或 builder inputs。
  */
-export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
+export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   {
     path: 'schema_version',
     defaultValue: '1.1',
@@ -166,44 +162,74 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: 'advanced',
     note: "toolchain.hvigor.analyze 缺失：回填 'advanced'",
   },
-
-  // tools.hylyre.* —— hmos-app Skill 6 真机自动化；与 DEFAULT_HYLYRE_TOOL_CONFIG / 模板对齐
-  {
-    path: 'tools.hylyre.vendor_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.vendor_dir,
-    note: 'tools.hylyre.vendor_dir 缺失：回填 hmos-app vendor/hylyre 目录',
-  },
-  {
-    path: 'tools.hylyre.venv_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.venv_dir,
-    note: 'tools.hylyre.venv_dir 缺失：回填 .hylyre/venv',
-  },
-  {
-    path: 'tools.hylyre.app_snapshot_cache_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.app_snapshot_cache_dir,
-    note: 'tools.hylyre.app_snapshot_cache_dir 缺失：回填 doc/app-snapshot-cache',
-  },
-  {
-    path: 'tools.hylyre.pypi_extra_index_url',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.pypi_extra_index_url,
-    note: 'tools.hylyre.pypi_extra_index_url 缺失：回填清华 PyPI 镜像（可改内网源）',
-  },
-  {
-    path: 'tools.hylyre.auto_install',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.auto_install,
-    note: 'tools.hylyre.auto_install 缺失：回填 true',
-  },
-  {
-    path: 'tools.hylyre.doctor_first_run',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.doctor_first_run,
-    note: 'tools.hylyre.doctor_first_run 缺失：回填 true',
-  },
-  {
-    path: 'tools.hylyre.hypium_page_name',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.hypium_page_name,
-    note: 'tools.hylyre.hypium_page_name 缺失：回填空串（由 device-test-run 扫描 entry mainElement）',
-  },
 ];
+
+/** profile-owned 结构默认顶层键（从 config-defaults.json 派生；排除 project_profile / architecture）。 */
+const PROFILE_OWNED_DEFAULT_ROOT_KEYS = ['tools'] as const;
+
+function flattenProfileOwnedDefaultsToBackfill(
+  obj: Record<string, unknown>,
+  prefix: string,
+  out: BackfillField[],
+): void {
+  for (const [key, value] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      flattenProfileOwnedDefaultsToBackfill(value as Record<string, unknown>, path, out);
+    } else {
+      out.push({
+        path,
+        defaultValue: value,
+        note: `${path} 缺失：按 profiles config-defaults.json 回填`,
+      });
+    }
+  }
+}
+
+function deriveProfileOwnedBackfillFields(profileName: string): BackfillField[] {
+  const defaults = loadProfileConfigDefaults(profileName);
+  const out: BackfillField[] = [];
+  for (const rootKey of PROFILE_OWNED_DEFAULT_ROOT_KEYS) {
+    const branch = defaults[rootKey];
+    if (branch && typeof branch === 'object' && !Array.isArray(branch)) {
+      flattenProfileOwnedDefaultsToBackfill(branch as Record<string, unknown>, rootKey, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * profile-aware 有效补缺白名单（SSOT）：框架通用 + profile-owned 结构默认（仅 tools.* 等）。
+ */
+export function getEffectiveBackfillFields(profileName: string): ReadonlyArray<BackfillField> {
+  const name = profileName.trim() || 'hmos-app';
+  const profileFields = deriveProfileOwnedBackfillFields(name);
+  const seen = new Set(FRAMEWORK_GENERIC_BACKFILL_FIELDS.map(f => f.path));
+  const merged: BackfillField[] = [...FRAMEWORK_GENERIC_BACKFILL_FIELDS];
+  for (const f of profileFields) {
+    if (!seen.has(f.path)) {
+      merged.push(f);
+      seen.add(f.path);
+    }
+  }
+  return merged;
+}
+
+/** 从 config 对象解析 project_profile.name；缺省 hmos-app。 */
+export function resolveProfileNameFromRaw(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'hmos-app';
+  const pp = (raw as Record<string, unknown>).project_profile;
+  if (pp && typeof pp === 'object' && !Array.isArray(pp)) {
+    const name = (pp as Record<string, unknown>).name;
+    if (typeof name === 'string' && name.trim().length > 0) return name.trim();
+  }
+  return 'hmos-app';
+}
+
+/**
+ * Legacy alias：hmos-app 有效补缺集。新代码请用 getEffectiveBackfillFields(profileName)。
+ */
+export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = getEffectiveBackfillFields('hmos-app');
 
 // --------------------------------------------------------------------------
 // Pass 2 — MIGRATION_RULES（modernize 已有 key，安全等价于 runtime normalize）
@@ -506,21 +532,22 @@ export function applyConfirmFields(
 export function mergeFrameworkConfig(
   raw: unknown,
   confirmAnswers: Record<string, boolean> = {},
+  profileName?: string,
 ): {
   merged: Record<string, unknown>;
   backfillReport: MergeReport;
   migrationReport: MigrationReport;
   confirmReport: ConfirmApplyReport;
 } {
-  const { merged: afterBackfill, report: backfillReport } = mergeBackfillFields(raw);
+  const { merged: afterBackfill, report: backfillReport } = mergeBackfillFields(raw, profileName);
   const { merged: afterMigration, report: migrationReport } = applyMigrations(afterBackfill);
   const { merged, report: confirmReport } = applyConfirmFields(afterMigration, confirmAnswers);
   return { merged, backfillReport, migrationReport, confirmReport };
 }
 
 /** 字段路径是否在白名单内（用于外部诊断/单测）。 */
-export function isBackfillablePath(p: string): boolean {
-  return BACKFILL_FIELDS.some(f => f.path === p);
+export function isBackfillablePath(p: string, profileName = 'hmos-app'): boolean {
+  return getEffectiveBackfillFields(profileName).some(f => f.path === p);
 }
 
 // --------------------------------------------------------------------------
@@ -587,17 +614,19 @@ export interface MissingFieldEntry {
  * 检测老 config 中缺失但属于白名单的字段。**纯函数**，不动 raw。
  * 返回顺序与 BACKFILL_FIELDS 一致，便于稳定 diff。
  */
-export function detectMissingBackfillFields(raw: unknown): MissingFieldEntry[] {
+export function detectMissingBackfillFields(raw: unknown, profileName?: string): MissingFieldEntry[] {
+  const effectiveProfile = profileName?.trim() || resolveProfileNameFromRaw(raw);
+  const fields = getEffectiveBackfillFields(effectiveProfile);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     // 无法识别为对象时退化为「全部缺失」语义；上层（CREATE 模式）通常不会走到这里。
-    return BACKFILL_FIELDS.map(f => ({
+    return fields.map(f => ({
       path: f.path,
       defaultValue: f.defaultValue,
       note: f.note,
     }));
   }
   const out: MissingFieldEntry[] = [];
-  for (const f of BACKFILL_FIELDS) {
+  for (const f of fields) {
     if (!hasDottedKey(raw, f.path)) {
       out.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });
     }
@@ -624,16 +653,18 @@ export interface MergeReport {
  *
  * 调用方负责把返回的对象格式化（2 空格缩进 + 末尾换行）后写盘。
  */
-export function mergeBackfillFields(raw: unknown): {
+export function mergeBackfillFields(raw: unknown, profileName?: string): {
   merged: Record<string, unknown>;
   report: MergeReport;
 } {
+  const effectiveProfile = profileName?.trim() || resolveProfileNameFromRaw(raw);
+  const fields = getEffectiveBackfillFields(effectiveProfile);
   const base: Record<string, unknown> =
     raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (deepClone(raw) as Record<string, unknown>)
       : {};
   const applied: MissingFieldEntry[] = [];
-  for (const f of BACKFILL_FIELDS) {
+  for (const f of fields) {
     if (!hasDottedKey(base, f.path)) {
       setDottedKey(base, f.path, f.defaultValue);
       applied.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });

@@ -12,6 +12,7 @@ import {
   detectMissingBackfillFields,
   detectMissingConfirmFields,
   detectPendingMigrations,
+  getEffectiveBackfillFields,
   isBackfillablePath,
   mergeBackfillFields,
   mergeFrameworkConfig,
@@ -66,8 +67,18 @@ const cases: Array<{ name: string; run: () => void }> = [
         'tools.hylyre.hypium_page_name',
       ];
       for (const p of must) {
-        assert(isBackfillablePath(p), `${p} 应在补缺白名单内`);
+        assert(isBackfillablePath(p, 'hmos-app'), `${p} 应在 hmos-app 补缺白名单内`);
       }
+      assert(!isBackfillablePath('tools.hylyre.vendor_dir', 'generic'));
+    },
+  },
+  {
+    name: 'getEffectiveBackfillFields generic 比 hmos-app 少 hylyre 字段',
+    run: () => {
+      const generic = getEffectiveBackfillFields('generic');
+      const hmos = getEffectiveBackfillFields('hmos-app');
+      assert(generic.length < hmos.length);
+      assert(!generic.some(f => f.path.startsWith('tools.hylyre')));
     },
   },
   {
@@ -88,7 +99,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'paths.reports_dir_pattern',
       ];
       for (const p of forbidden) {
-        assert(!isBackfillablePath(p), `${p} 不应该出现在补缺白名单中`);
+        assert(!isBackfillablePath(p, 'hmos-app'), `${p} 不应该出现在补缺白名单中`);
       }
     },
   },
@@ -115,6 +126,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const missing = detectMissingBackfillFields({});
       assert.strictEqual(missing.length, BACKFILL_FIELDS.length);
+    },
+  },
+  {
+    name: 'detectMissingBackfillFields：空对象 generic profile 不含 hylyre',
+    run: () => {
+      const missing = detectMissingBackfillFields({}, 'generic');
+      assert.strictEqual(missing.length, getEffectiveBackfillFields('generic').length);
+      assert(!missing.some(m => m.path.startsWith('tools.hylyre')));
     },
   },
   {

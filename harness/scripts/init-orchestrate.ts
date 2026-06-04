@@ -5,8 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { validateFrameworkConfigWriteCandidate, type FrameworkConfig } from '../config';
-import { sanitizeProjectConfigForInitWrite } from './utils/config-field-merger';
+import { prepareConfigWriteForTask } from './utils/config-builder';
 import {
   executeInitTask,
   type InitExecutionContext,
@@ -359,6 +358,7 @@ function checkWriteTaskPayload(
   task: InitTask,
   action: TaskDecision['action'],
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+  projectRoot?: string,
 ): string | null {
   if (action === 'skip' || action === 'keep') return null;
 
@@ -366,11 +366,14 @@ function checkWriteTaskPayload(
     if (!context?.configWritePayload) {
       return 'ensure-config：context.configWritePayload 缺失；须由 Skill S2 注入 JSON，或在 S2 决策 skip';
     }
+    if (!projectRoot?.trim()) {
+      return 'ensure-config：preflight 缺少 project_root（传 audit.project_root 或 preflightExecute options.projectRoot）';
+    }
     try {
-      validateFrameworkConfigWriteCandidate(
-        context.configWritePayload as Partial<FrameworkConfig>,
+      prepareConfigWriteForTask(
+        { projectRoot: projectRoot.trim(), configWritePayload: context.configWritePayload },
+        action,
       );
-      sanitizeProjectConfigForInitWrite(context.configWritePayload);
     } catch (e) {
       return `ensure-config：config 校验失败：${(e as Error).message}`;
     }
@@ -470,12 +473,27 @@ function buildPreflightBlockedLog(
   };
 }
 
+export interface PreflightExecuteOptions {
+  /** 实例工程根；优先于 audit.project_root（供程序化调用方显式传入） */
+  projectRoot?: string;
+}
+
+function resolvePreflightProjectRoot(
+  audit?: InitRunLogAuditMeta,
+  options?: PreflightExecuteOptions,
+): string | undefined {
+  const fromOpt = options?.projectRoot?.trim();
+  if (fromOpt) return fromOpt;
+  return audit?.project_root?.trim() || undefined;
+}
+
 /** S3 执行前无副作用 preflight；失败返回 blocked run-log（零项目业务/机制写盘） */
 export function preflightExecute(
   plan: InitTaskPlan,
   decision: InitRunDecision,
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
   audit?: InitRunLogAuditMeta,
+  options?: PreflightExecuteOptions,
 ): { ok: true } | { ok: false; blocked: InitRunLog } {
   const started = new Date().toISOString();
   const normalizedContext = withInitContextDefaults(context);
@@ -536,7 +554,12 @@ export function preflightExecute(
       continue;
     }
     if (action === 'skip' || action === 'keep') continue;
-    const msg = checkWriteTaskPayload(task, action, normalizedContext);
+    const msg = checkWriteTaskPayload(
+      task,
+      action,
+      normalizedContext,
+      resolvePreflightProjectRoot(audit, options),
+    );
     if (msg) {
       violations.push({ task_id: task.id, action, message: msg });
     }
