@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { prepareConfigWriteForTask } from './utils/config-builder';
+import { prepareConfigWriteForTask, readExistingConfigFromDisk } from './utils/config-builder';
 import {
   executeInitTask,
   type InitExecutionContext,
@@ -253,12 +253,96 @@ function resolveTemplateAction(task: InitTask): TaskDecision['action'] {
   throw new Error(`[init-orchestrate] 无法为任务生成 staging action: ${task.id}`);
 }
 
+/** UPDATE：从磁盘 config 提取最小语义 payload（不含 builder 自动注入项） */
+export function deriveUpdateConfigWritePayload(
+  projectRoot: string,
+  materializedAdapters: string[],
+): Record<string, unknown> | undefined {
+  const existing = readExistingConfigFromDisk(projectRoot);
+  if (!existing) return undefined;
+
+  const payload: Record<string, unknown> = {};
+  if (typeof existing.project_name === 'string' && existing.project_name.trim()) {
+    payload.project_name = existing.project_name.trim();
+  }
+  if (
+    existing.project_profile &&
+    typeof existing.project_profile === 'object' &&
+    !Array.isArray(existing.project_profile)
+  ) {
+    payload.project_profile = JSON.parse(JSON.stringify(existing.project_profile));
+  }
+  if (
+    existing.architecture &&
+    typeof existing.architecture === 'object' &&
+    !Array.isArray(existing.architecture)
+  ) {
+    payload.architecture = JSON.parse(JSON.stringify(existing.architecture));
+  }
+
+  // 仅当调用方显式传入 decision adapters（execute SSOT）时写入 payload；
+  // emit 预填不得从磁盘带入 materialized_adapters，否则会与 S2 decision 冲突触发 cross-check。
+  const adapters = materializedAdapters
+    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    .map(x => x.trim());
+  if (adapters.length) {
+    payload.materialized_adapters = [...new Set(adapters)];
+  }
+
+  if (!payload.project_name && !payload.architecture) return undefined;
+  return payload;
+}
+
+export interface DeriveBaseContextResult {
+  baseContext: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>;
+  crossCheckError: string | null;
+}
+
+/** Phase 1：strip → cross-check(pre-sync) → sync adapters → defaults */
+export function deriveBaseContextForPlanning(
+  rawContext: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined,
+  decision: InitRunDecision,
+): DeriveBaseContextResult {
+  const stripped = stripContextReservedFields(rawContext) ?? {};
+  const crossCheckError = validateMaterializedAdaptersCrossCheck(decision, stripped);
+  const synced = syncDecisionAdaptersIntoContext(decision, stripped);
+  return {
+    baseContext: withInitContextDefaults(synced),
+    crossCheckError,
+  };
+}
+
+/** Phase 2：plan 已知 mode 后补 configWritePayload（S2 显式优先） */
+export function deriveContextForExecution(
+  baseContext: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
+  plan: InitTaskPlan,
+  projectRoot: string,
+  decisionAdapters: string[],
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> {
+  if (plan.mode !== 'update') return baseContext;
+  if (baseContext.configWritePayload) return baseContext;
+  const derived = deriveUpdateConfigWritePayload(projectRoot, decisionAdapters);
+  if (!derived) return baseContext;
+  return { ...baseContext, configWritePayload: derived };
+}
+
 export function buildInitStagingTemplate(
   plan: InitTaskPlan,
   context?: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'>,
   decisionMode: DecisionMode = 'smart',
+  projectRoot?: string,
 ): InitStagingTemplate {
-  const normalizedContext = withInitContextDefaults(context);
+  let normalizedContext = withInitContextDefaults(context);
+  if (
+    plan.mode === 'update' &&
+    projectRoot?.trim() &&
+    !normalizedContext.configWritePayload
+  ) {
+    const derived = deriveUpdateConfigWritePayload(projectRoot.trim(), []);
+    if (derived) {
+      normalizedContext = { ...normalizedContext, configWritePayload: derived };
+    }
+  }
   return {
     decision: {
       schema_version: '1.0',
@@ -364,7 +448,11 @@ function checkWriteTaskPayload(
 
   if (task.id === 'ensure-config') {
     if (!context?.configWritePayload) {
-      return 'ensure-config：context.configWritePayload 缺失；须由 Skill S2 注入 JSON，或在 S2 决策 skip';
+      return (
+        'ensure-config：context.configWritePayload 缺失；须由 Skill S2 注入 JSON，或在 S2 决策 skip。' +
+        ' UPDATE 模式下可重跑：cd framework/harness && npx ts-node scripts/init-orchestrate.ts ' +
+        '--emit-staging-template --scope project --project-root <repo-root>（输出含磁盘 config 预填的 configWritePayload）'
+      );
     }
     if (!projectRoot?.trim()) {
       return 'ensure-config：preflight 缺少 project_root（传 audit.project_root 或 preflightExecute options.projectRoot）';
@@ -813,6 +901,17 @@ export function writeRunLog(harnessRoot: string, log: InitRunLog): string {
   return file;
 }
 
+function parseMaterializedAdaptersCsv(csv: string): string[] {
+  return [
+    ...new Set(
+      csv
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0),
+    ),
+  ];
+}
+
 function parseArgs(argv: string[]): {
   projectRoot: string;
   harnessRoot: string;
@@ -820,9 +919,11 @@ function parseArgs(argv: string[]): {
   adapter?: string;
   execute: boolean;
   emitStagingTemplate: boolean;
+  smartAuto: boolean;
   decisionMode: DecisionMode;
   decisionFile?: string;
   contextFile?: string;
+  materializedAdapters?: string[];
 } {
   let projectRoot = process.cwd();
   let harnessRoot = path.resolve(__dirname, '..');
@@ -830,9 +931,11 @@ function parseArgs(argv: string[]): {
   let adapter: string | undefined;
   let execute = false;
   let emitStagingTemplate = false;
+  let smartAuto = false;
   let decisionMode: DecisionMode = 'smart';
   let decisionFile: string | undefined;
   let contextFile: string | undefined;
+  let materializedAdapters: string[] | undefined;
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--scope' && argv[i + 1]) {
@@ -847,6 +950,11 @@ function parseArgs(argv: string[]): {
       execute = true;
     } else if (a === '--emit-staging-template') {
       emitStagingTemplate = true;
+    } else if (a === '--smart-auto') {
+      smartAuto = true;
+      execute = true;
+    } else if (a === '--materialized-adapters' && argv[i + 1]) {
+      materializedAdapters = parseMaterializedAdaptersCsv(argv[++i]);
     } else if (a === '--decision-mode' && argv[i + 1]) {
       const mode = argv[++i];
       if (mode === 'smart' || mode === 'manual') decisionMode = mode;
@@ -863,9 +971,11 @@ function parseArgs(argv: string[]): {
     adapter,
     execute,
     emitStagingTemplate,
+    smartAuto,
     decisionMode,
     decisionFile,
     contextFile,
+    materializedAdapters,
   };
 }
 
@@ -925,7 +1035,12 @@ if (require.main === module) {
       );
       console.log(
         JSON.stringify(
-          buildInitStagingTemplate(planResult.plan, executionContext, opts.decisionMode),
+          buildInitStagingTemplate(
+            planResult.plan,
+            executionContext,
+            opts.decisionMode,
+            opts.projectRoot,
+          ),
           null,
           2,
         ),
@@ -940,18 +1055,44 @@ if (require.main === module) {
     }
     process.exit(0);
   }
-  if (!opts.decisionFile) {
-    process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file\n');
+  if (!opts.decisionFile && !opts.smartAuto) {
+    process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file 或 --smart-auto\n');
     process.exit(1);
   }
   try {
-    const decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile, '决策'));
-    const rawContext = readContextFileOptional(opts.contextFile, { allowMissing: false });
-    const strippedContext = rawContext
-      ? withInitContextDefaults(stripContextReservedFields(rawContext) ?? {})
-      : undefined;
-    const executionContext = withInitContextDefaults(
-      syncDecisionAdaptersIntoContext(decision, stripContextReservedFields(rawContext)),
+    let decision: InitRunDecision;
+    let rawContext: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined;
+
+    if (opts.smartAuto) {
+      const adapters = opts.materializedAdapters ?? [];
+      if (opts.scope === 'project' && !adapters.length) {
+        failCli(
+          '[init-orchestrate] --smart-auto（project）须配合非空 --materialized-adapters（逗号分隔）',
+        );
+      }
+      const probePlan = probeInitTaskPlan({
+        projectRoot: opts.projectRoot,
+        scope: opts.scope,
+        adapter: opts.adapter,
+      });
+      const staging = buildInitStagingTemplate(
+        probePlan,
+        undefined,
+        opts.decisionMode,
+        opts.projectRoot,
+      );
+      decision = assertDecisionStructure({
+        ...staging.decision,
+        materialized_adapters: adapters.length ? adapters : staging.decision.materialized_adapters,
+      });
+      rawContext = staging.context;
+    } else {
+      decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile!, '决策'));
+      rawContext = readContextFileOptional(opts.contextFile, { allowMissing: false });
+    }
+    const { baseContext, crossCheckError } = deriveBaseContextForPlanning(
+      stripContextReservedFields(rawContext),
+      decision,
     );
     const planResult = prepareInitExecutionPlanWithStaleIds(
       {
@@ -959,7 +1100,7 @@ if (require.main === module) {
         scope: opts.scope,
         adapter: opts.adapter,
       },
-      executionContext,
+      baseContext,
     );
     const reconciledDecision = reconcileInitRunDecisionForPlan(planResult.plan, decision, {
       staleMaterializeTaskIds: planResult.staleMaterializeTaskIds,
@@ -969,11 +1110,39 @@ if (require.main === module) {
       decision: reconciledDecision,
       projectRoot: opts.projectRoot,
     });
+    if (crossCheckError) {
+      const started = new Date().toISOString();
+      const blocked = buildPreflightBlockedLog(
+        planResult.plan,
+        reconciledDecision,
+        started,
+        [
+          {
+            task_id: '<materialized-adapters>',
+            action: 'validate',
+            message: crossCheckError,
+          },
+        ],
+        true,
+        auditMeta,
+      );
+      const logPath = writeRunLog(opts.harnessRoot, blocked);
+      process.stdout.write(`${buildRunSummary(blocked)}\n`);
+      process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+      process.exit(1);
+    }
+    const finalContext = deriveContextForExecution(
+      baseContext,
+      planResult.plan,
+      opts.projectRoot,
+      normalizeDecisionMaterializedAdapters(reconciledDecision),
+    );
     const preflight = preflightExecute(
       planResult.plan,
       reconciledDecision,
-      strippedContext,
+      finalContext,
       auditMeta,
+      { projectRoot: opts.projectRoot },
     );
     if (!preflight.ok) {
       const logPath = writeRunLog(opts.harnessRoot, preflight.blocked);
@@ -986,7 +1155,7 @@ if (require.main === module) {
       harnessRoot: opts.harnessRoot,
       plan: planResult.plan,
       decision: reconciledDecision,
-      executionContext,
+      executionContext: finalContext,
     });
     const logPath = writeRunLog(opts.harnessRoot, log);
     process.stdout.write(`${buildRunSummary(log)}\n`);

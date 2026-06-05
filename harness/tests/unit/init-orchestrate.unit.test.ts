@@ -12,6 +12,9 @@ import {
   buildInitStagingTemplate,
   buildRunLogAuditMeta,
   buildRunSummary,
+  deriveBaseContextForPlanning,
+  deriveContextForExecution,
+  deriveUpdateConfigWritePayload,
   executeInitPlan,
   normalizeDecisionMaterializedAdapters,
   normalizeStagingContext,
@@ -1335,6 +1338,130 @@ const cases: Array<{ name: string; run: () => void }> = [
       const plan = minimalPlan();
       const staging = buildInitStagingTemplate(plan);
       assert.deepStrictEqual(staging.decision.materialized_adapters, []);
+    },
+  },
+  {
+    name: 'deriveUpdateConfigWritePayload 仅最小语义字段',
+    run: () => {
+      const root = mkTmp();
+      const cfg = {
+        project_name: 'Wallet',
+        project_profile: { name: 'hmos-app', sub_variant: 'app' },
+        materialized_adapters: ['claude', 'generic'],
+        architecture: {
+          outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'dag' }],
+          module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+          inner_dependency_direction: 'upward',
+          cross_module_exports_file: 'Index.ets',
+        },
+        state_machine: { schema_version: '1.1', ttl_hours: 12 },
+        toolchain: { hvigor: { daemon: true } },
+      };
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(cfg, null, 2),
+      );
+      const payload = deriveUpdateConfigWritePayload(root, ['generic']);
+      assert(payload);
+      assert.strictEqual(payload!.project_name, 'Wallet');
+      assert(payload!.architecture);
+      assert.deepStrictEqual(payload!.materialized_adapters, ['generic']);
+      assert.strictEqual((payload as Record<string, unknown>).state_machine, undefined);
+      assert.strictEqual((payload as Record<string, unknown>).toolchain, undefined);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'deriveUpdateConfigWritePayload emit 路径不含磁盘 materialized_adapters',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            project_name: 'Wallet',
+            materialized_adapters: ['claude', 'generic'],
+            architecture: {
+              outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'dag' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'Index.ets',
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      const payload = deriveUpdateConfigWritePayload(root, []);
+      assert(payload);
+      assert.strictEqual(
+        (payload as Record<string, unknown>).materialized_adapters,
+        undefined,
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'buildInitStagingTemplate UPDATE 预填 configWritePayload',
+    run: () => {
+      const root = mkTmp();
+      const cfg = {
+        project_name: 'Wallet',
+        project_profile: { name: 'hmos-app' },
+        materialized_adapters: ['claude'],
+        architecture: {
+          outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'dag' }],
+          module_inner_layers: ['shared'],
+          inner_dependency_direction: 'upward',
+          cross_module_exports_file: 'Index.ets',
+        },
+      };
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(cfg, null, 2),
+      );
+      const plan: InitTaskPlan = {
+        ...minimalPlan(),
+        mode: 'update',
+      };
+      const staging = buildInitStagingTemplate(plan, undefined, 'smart', root);
+      assert(staging.context.configWritePayload);
+      assert.strictEqual(
+        (staging.context.configWritePayload as Record<string, unknown>).project_name,
+        'Wallet',
+      );
+      assert.strictEqual(
+        (staging.context.configWritePayload as Record<string, unknown>).materialized_adapters,
+        undefined,
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'deriveContextForExecution UPDATE 缺 payload 从磁盘补全',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            project_name: 'P',
+            architecture: {
+              outer_layers: [{ id: 'L', can_depend_on: [], intra_layer_deps: 'dag' }],
+              module_inner_layers: ['a'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'i.ets',
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      const plan: InitTaskPlan = { ...minimalPlan(), mode: 'update' };
+      const base = { materializedAdapters: ['claude'] };
+      const final = deriveContextForExecution(base, plan, root, ['claude']);
+      assert(final.configWritePayload);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

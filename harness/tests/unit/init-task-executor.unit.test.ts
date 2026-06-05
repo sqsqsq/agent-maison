@@ -290,6 +290,68 @@ const cases: Array<{ name: string; run: () => void }> = [
       clearFrameworkConfigCache();
     },
   },
+  {
+    name: 'executeInitTask materialize-adapter:claude 用 projectRoot 渲染扩展 Skill 段',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const skillSlug = 'wallet-sdk-onboarding';
+      fs.mkdirSync(path.join(root, 'doc', 'extensions', 'skills', skillSlug), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'doc', 'extensions', 'skills', skillSlug, 'SKILL.md'),
+        '# Demo extension skill\n',
+      );
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'ext-skill-test',
+            materialized_adapters: ['claude'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features', extension_dir: 'doc/extensions' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['claude'],
+      };
+      const task = {
+        id: 'materialize-adapter:claude',
+        title: '物化 adapter: claude',
+        category: 'adapter-bundle',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: false,
+        allowed_actions: ['run' as const],
+        params: { adapter: 'claude' },
+      };
+      const msg = executeInitTask(task, 'run', ctx);
+      const claudePath = path.join(root, 'CLAUDE.md');
+      assert(fs.existsSync(claudePath), `${msg}; expected ${claudePath}`);
+      const body = fs.readFileSync(claudePath, 'utf-8');
+      assert(!body.includes('{{EXTENSION_SKILL_SECTION}}'), 'placeholder must be replaced');
+      assert(body.includes('实例扩展 Skill'), 'extension section must be rendered from projectRoot');
+      assert(body.includes(skillSlug), `expected extension skill slug in CLAUDE.md`);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

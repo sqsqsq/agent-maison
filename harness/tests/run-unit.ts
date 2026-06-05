@@ -84,6 +84,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'framework-local-config', modulePath: './unit/framework-local-config.unit.test' },
   { id: 'personal-setup-gate', modulePath: './unit/personal-setup-gate.unit.test' },
   { id: 'init-readiness', modulePath: './unit/init-readiness.unit.test' },
+  { id: 'template-renderer', modulePath: './unit/template-renderer.unit.test' },
   { id: 'init-orchestrate', modulePath: './unit/init-orchestrate.unit.test' },
   { id: 'init-task-executor', modulePath: './unit/init-task-executor.unit.test' },
   { id: 'init-orchestrate-smoke', modulePath: './unit/init-orchestrate-smoke.unit.test' },

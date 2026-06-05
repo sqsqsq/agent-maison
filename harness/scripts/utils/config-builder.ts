@@ -112,7 +112,7 @@ function buildFrameworkWriteDefaults(profileName: string): Record<string, unknow
   return nestedObjectFromBackfillFields(getEffectiveBackfillFields(profileName));
 }
 
-function readExistingConfigFromDisk(projectRoot: string): Record<string, unknown> | undefined {
+export function readExistingConfigFromDisk(projectRoot: string): Record<string, unknown> | undefined {
   const cfgPath = path.join(projectRoot, 'framework.config.json');
   if (!fs.existsSync(cfgPath)) return undefined;
   try {

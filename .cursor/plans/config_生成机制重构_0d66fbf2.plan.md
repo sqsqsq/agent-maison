@@ -1,5 +1,6 @@
 ---
 name: config 生成机制重构
+version: 2.2.0
 overview: 把 framework.config.json 的生成从「AI 自由拼整文件 payload」重构为「AI 只提供结构化值 + harness 确定性 builder 从 profile 默认合成完整文件」，使 CREATE / UPDATE(overwrite) / UPDATE(keep) 三路径都保证字段完整（含 schema_version），并按 project_profile.name 做 profile-aware 补缺（generic 工程不再被补 hylyre）。
 todos:
   - id: effective-fields-ssot

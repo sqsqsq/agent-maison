@@ -10,14 +10,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { detectRepoLayout } from '../repo-layout';
-import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
 import {
-  emitInstanceSkillBridge,
-  formatExtensionSkillSectionMarkdown,
-  loadReservedBridgeIds,
-  resolveBridgeTargets,
-  scanExtensionSkills,
-} from './utils/instance-skill-bridge';
+  assertNoUnreplacedPlaceholders,
+  buildAgentsTemplateVars,
+  renderAgentsTemplate,
+} from './utils/template-renderer';
 
 const SCRIPT_DIR = __dirname;
 const layout = detectRepoLayout(SCRIPT_DIR);
@@ -26,50 +24,9 @@ const FRAMEWORK_DIR = layout.frameworkRoot;
 const TEMPLATE_PATH = path.join(FRAMEWORK_DIR, 'templates/AGENTS.md.template');
 const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'framework.config.json');
 
-const KNOWN_PROJECT_TYPE_LABELS: Record<string, string> = {
-  app: '应用工程',
-  atomic_service: '元服务工程',
-};
-
 function fail(message: string, exitCode = 1): never {
   process.stderr.write(`[render-agents-md] ${message}\n`);
   process.exit(exitCode);
-}
-
-function loadProfileAgentsPartial(profileName: string, fileBase: string): string {
-  const name =
-    typeof profileName === 'string' && profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
-  const candidates = [
-    path.join(FRAMEWORK_DIR, 'profiles', name, 'templates', 'agents-md', `${fileBase}.partial.md`),
-    path.join(FRAMEWORK_DIR, 'profiles', 'generic', 'templates', 'agents-md', `${fileBase}.partial.md`),
-  ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) {
-      continue;
-    }
-    return fs.readFileSync(p, 'utf8').replace(/\s+$/, '');
-  }
-  return '';
-}
-
-/**
- * 与 framework/harness/config.ts normalizeFrameworkConfig 中 project_type 回退对齐：
- * 未显式写 project_type 时，由 project_profile.sub_variant 推导，避免占位符落空。
- */
-function effectiveProjectType(config: Record<string, unknown>): string {
-  if (typeof config.project_type === 'string' && config.project_type.trim() !== '') {
-    return config.project_type.trim();
-  }
-  const pp =
-    config.project_profile && typeof config.project_profile === 'object'
-      ? (config.project_profile as Record<string, unknown>)
-      : {};
-  const sub =
-    typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '' ? pp.sub_variant.trim() : '';
-  if (sub === 'element-service') {
-    return 'atomic_service';
-  }
-  return 'app';
 }
 
 function resolveConfigPath(cliPath: string | undefined): string {
@@ -96,67 +53,6 @@ function loadTemplate(): string {
     fail(`AGENTS.md.template 不存在：${TEMPLATE_PATH}`);
   }
   return fs.readFileSync(TEMPLATE_PATH, 'utf8');
-}
-
-function buildVars(
-  config: Record<string, unknown>,
-  opts: { entryFile: string; architectureSummary: string },
-): Record<string, string> {
-  const projectType = effectiveProjectType(config);
-  const projectTypeLabel =
-    KNOWN_PROJECT_TYPE_LABELS[projectType] ??
-    projectType;
-  const paths = (config.paths && typeof config.paths === 'object'
-    ? config.paths
-    : {}) as Record<string, unknown>;
-  const pp =
-    config.project_profile && typeof config.project_profile === 'object'
-      ? (config.project_profile as Record<string, unknown>)
-      : {};
-  const profileName =
-    typeof pp.name === 'string' && pp.name.trim() !== '' ? pp.name.trim() : 'hmos-app';
-  const extDir =
-    typeof paths.extension_dir === 'string' && paths.extension_dir.trim()
-      ? paths.extension_dir.trim()
-      : 'doc/extensions';
-
-  const rows = scanExtensionSkills(REPO_ROOT, extDir);
-  const reserved = loadReservedBridgeIds(FRAMEWORK_DIR);
-  const { targets } = resolveBridgeTargets(rows, reserved);
-
-  return {
-    AGENT_ENTRY_FILE: opts.entryFile,
-    PROJECT_NAME: String(config.project_name ?? ''),
-    PROJECT_TYPE: projectType,
-    PROJECT_TYPE_LABEL: projectTypeLabel ?? '',
-    AGENT_ADAPTER: String(config.agent_adapter ?? ''),
-    PROJECT_PROFILE_NAME: profileName,
-    PROJECT_PROFILE_SUB_VARIANT:
-      typeof pp.sub_variant === 'string' && pp.sub_variant.trim()
-        ? pp.sub_variant.trim()
-        : DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY,
-    ARCHITECTURE_SUMMARY: opts.architectureSummary,
-    PROFILE_AGENT_SSOT_ROWS: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
-    PROFILE_AGENT_GUARDRAILS: loadProfileAgentsPartial(profileName, 'agent-guardrails'),
-    ARCHITECTURE_MD_PATH: String(paths.architecture_md ?? 'doc/architecture.md'),
-    MODULE_CATALOG_PATH: String(paths.module_catalog ?? 'doc/module-catalog.yaml'),
-    GLOSSARY_PATH: String(paths.glossary ?? 'doc/glossary.yaml'),
-    FEATURES_DIR: String(paths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: formatExtensionSkillSectionMarkdown(targets),
-  };
-}
-
-function renderTemplate(tpl: string, vars: Record<string, string>): string {
-  let rendered = tpl;
-  for (const [key, value] of Object.entries(vars)) {
-    rendered = rendered.split(`{{${key}}}`).join(value);
-  }
-  return rendered;
-}
-
-function findUnreplacedPlaceholders(rendered: string): string[] {
-  const matches = rendered.match(/\{\{[A-Z_][A-Z0-9_]*\}\}/g);
-  return matches ? Array.from(new Set(matches)) : [];
 }
 
 function parseArgs(argv: string[]): {
@@ -204,8 +100,9 @@ function parseArgs(argv: string[]): {
 function printUsage(): void {
   process.stderr.write(
     'Usage: render-agents-md.ts --entry-file <EntryMarkdown.md> ' +
-      '--summary "<one-line>" --out <path-relative-to-repo-root> ' +
+      '[--summary "<one-line>"] --out <path-relative-to-repo-root> ' +
       '[--config <path>] [--no-instance-bridge]\n' +
+      '  --summary: 可选；未传时按 config.architecture 生成 DSL 风格架构摘要。\n' +
       '  --config: 默认读取仓库根下 framework.config.json；可指向其它 JSON（绝对路径或相对仓库根）。\n',
   );
 }
@@ -213,7 +110,7 @@ function printUsage(): void {
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
 
-  if (!args['--entry-file'] || !args['--summary'] || !args['--out']) {
+  if (!args['--entry-file'] || !args['--out']) {
     printUsage();
     process.exit(1);
   }
@@ -221,17 +118,18 @@ function main(): void {
   const configPath = resolveConfigPath(args['--config']);
   const config = loadConfig(configPath);
   const tpl = loadTemplate();
-  const vars = buildVars(config, {
+  const vars = buildAgentsTemplateVars(config, {
     entryFile: args['--entry-file'],
+    projectRoot: REPO_ROOT,
+    frameworkRoot: FRAMEWORK_DIR,
     architectureSummary: args['--summary'],
   });
-  const rendered = renderTemplate(tpl, vars);
+  const rendered = renderAgentsTemplate(tpl, vars);
 
-  const remaining = findUnreplacedPlaceholders(rendered);
-  if (remaining.length > 0) {
-    fail(
-      `渲染产物仍有未替换占位符：${remaining.join(', ')}\n` + `请检查模板与本脚本 vars 表是否同步。`,
-    );
+  try {
+    assertNoUnreplacedPlaceholders(rendered, 'render-agents-md CLI');
+  } catch (e) {
+    fail((e as Error).message);
   }
 
   const outPath = path.resolve(REPO_ROOT, args['--out']);

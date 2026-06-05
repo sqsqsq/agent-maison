@@ -103,7 +103,7 @@ function loadInspectorEnv(ctx: InitExecutionContext, adapterName: string) {
     const bundle = resolveBundleForInitInspect('generic', rawCfg, ctx.projectRoot);
     if (bundle) applyGenericAdapterBundle(adapter, bundle);
   }
-  const renderEnv = buildRenderEnv(rawCfg, adapter);
+  const renderEnv = buildRenderEnv(rawCfg, adapter, ctx.projectRoot);
   return { rawCfg, adapter, renderEnv };
 }
 

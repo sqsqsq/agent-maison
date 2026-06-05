@@ -31,6 +31,11 @@ import * as YAML from 'yaml';
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
 import {
+  buildAgentsTemplateVars,
+  type LegacyRenderEnv,
+  renderFromLegacyEnv,
+} from './utils/template-renderer';
+import {
   detectMissingBackfillFields,
   resolveProfileNameFromRaw,
   detectMissingConfirmFields,
@@ -818,58 +823,7 @@ export { applyAgentBundleInlineSync };
 // 占位符渲染
 // --------------------------------------------------------------------------
 
-interface RenderEnv {
-  agent_entry_file: string;
-  project_name: string;
-  project_type: string;
-  project_type_label: string;
-  agent_adapter: string;
-  project_profile_name: string;
-  project_profile_sub_variant: string;
-  architecture_summary: string;
-  architecture_md_path: string;
-  module_catalog_path: string;
-  glossary_path: string;
-  features_dir: string;
-  module_inner_layers_csv: string;
-  cross_module_exports_file: string;
-  profile_agent_ssot_rows: string;
-  profile_agent_guardrails: string;
-}
-
-function projectTypeLabel(kind: string): string {
-  if (kind === 'app') return '应用工程';
-  if (kind === 'atomic_service') return '元服务工程';
-  return kind;
-}
-
-function buildArchitectureSummary(arch: any): string {
-  if (!arch || typeof arch !== 'object') return '<待生成>';
-  const layers: any[] = Array.isArray(arch.outer_layers) ? arch.outer_layers : [];
-  const inner: any[] = Array.isArray(arch.module_inner_layers) ? arch.module_inner_layers : [];
-  const ids = layers.map(l => l?.id).filter(Boolean);
-  const exitFile = arch.cross_module_exports_file ?? 'index.ets';
-  const layerPart = ids.length === 0
-    ? '0 个外层'
-    : `${ids.length} 个外层（${ids[0]}…${ids[ids.length - 1]}）`;
-  const innerPart = inner.length === 0
-    ? '模块内 0 层'
-    : `模块内 ${inner.length} 层 ${inner.join('→')}`;
-  return `${layerPart}，${innerPart}，跨模块出口 ${exitFile}`;
-}
-
-function loadProfileAgentsPartial(profileName: string, fileBase: string): string {
-  const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
-  const candidates = [
-    path.join(FRAMEWORK_ROOT, 'profiles', name, 'templates', 'agents-md', `${fileBase}.partial.md`),
-    path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'templates', 'agents-md', `${fileBase}.partial.md`),
-  ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
-    return fs.readFileSync(p, 'utf8').replace(/\s+$/, '');
-  }
-  return '';
-}
+type RenderEnv = LegacyRenderEnv;
 
 function projectProfileNameFromRaw(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return 'hmos-app';
@@ -904,6 +858,7 @@ function resolveArchitectureSkeletonSource(profileName: string): { tplRel: strin
 function buildRenderEnv(
   cfg: RawFrameworkConfig,
   adapter: AdapterDescriptor | null,
+  projectRoot?: string,
 ): RenderEnv | null {
   if (!cfg.parseable || !cfg.raw || !adapter || !adapter.entryFile) return null;
   const raw = cfg.raw;
@@ -912,49 +867,50 @@ function buildRenderEnv(
       ? (raw.project_profile as Record<string, unknown>)
       : {};
   let profileName = 'hmos-app';
-  let subVariant = DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY;
   if (typeof pp.name === 'string' && pp.name.trim() !== '') profileName = pp.name.trim();
-  if (typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '') subVariant = pp.sub_variant.trim();
+
+  const vars = buildAgentsTemplateVars(raw, {
+    entryFile: adapter.entryFile.targetRel,
+    projectRoot: projectRoot ?? process.cwd(),
+    frameworkRoot: FRAMEWORK_ROOT,
+    agentAdapter: typeof raw.agent_adapter === 'string' ? raw.agent_adapter : adapter.name,
+    paths: {
+      architecture_md: cfg.paths.architecture_md,
+      module_catalog: cfg.paths.module_catalog,
+      glossary: cfg.paths.glossary,
+      features_dir: cfg.paths.features_dir,
+    },
+  });
+
+  const arch = raw.architecture as Record<string, unknown> | undefined;
   return {
-    agent_entry_file: adapter.entryFile.targetRel,
-    project_name: typeof raw.project_name === 'string' ? raw.project_name : '',
-    project_type: typeof raw.project_type === 'string' ? raw.project_type : 'app',
-    project_type_label: projectTypeLabel(raw.project_type ?? 'app'),
-    agent_adapter: typeof raw.agent_adapter === 'string' ? raw.agent_adapter : adapter.name,
-    project_profile_name: profileName,
-    project_profile_sub_variant: subVariant,
-    architecture_summary: buildArchitectureSummary(raw.architecture),
-    architecture_md_path: cfg.paths.architecture_md,
-    module_catalog_path: cfg.paths.module_catalog,
-    glossary_path: cfg.paths.glossary,
-    features_dir: cfg.paths.features_dir,
-    module_inner_layers_csv: Array.isArray(raw?.architecture?.module_inner_layers)
-      ? raw.architecture.module_inner_layers.join(' / ')
+    agent_entry_file: vars.AGENT_ENTRY_FILE,
+    project_name: vars.PROJECT_NAME,
+    project_type: vars.PROJECT_TYPE,
+    project_type_label: vars.PROJECT_TYPE_LABEL,
+    agent_adapter: vars.AGENT_ADAPTER,
+    project_profile_name: vars.PROJECT_PROFILE_NAME,
+    project_profile_sub_variant: vars.PROJECT_PROFILE_SUB_VARIANT,
+    architecture_summary: vars.ARCHITECTURE_SUMMARY,
+    architecture_md_path: vars.ARCHITECTURE_MD_PATH,
+    module_catalog_path: vars.MODULE_CATALOG_PATH,
+    glossary_path: vars.GLOSSARY_PATH,
+    features_dir: vars.FEATURES_DIR,
+    module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
+      ? (arch.module_inner_layers as string[]).join(' / ')
       : 'shared / data / domain / presentation',
-    cross_module_exports_file: raw?.architecture?.cross_module_exports_file ?? 'index.ets',
-    profile_agent_ssot_rows: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
-    profile_agent_guardrails: loadProfileAgentsPartial(profileName, 'agent-guardrails'),
+    cross_module_exports_file:
+      typeof arch?.cross_module_exports_file === 'string'
+        ? arch.cross_module_exports_file
+        : 'index.ets',
+    profile_agent_ssot_rows: vars.PROFILE_AGENT_SSOT_ROWS,
+    profile_agent_guardrails: vars.PROFILE_AGENT_GUARDRAILS,
+    extension_skill_section: vars.EXTENSION_SKILL_SECTION,
   };
 }
 
 function renderTemplate(text: string, env: RenderEnv): string {
-  return text
-    .replace(/\{\{AGENT_ENTRY_FILE\}\}/g, env.agent_entry_file)
-    .replace(/\{\{PROJECT_NAME\}\}/g, env.project_name)
-    .replace(/\{\{PROJECT_TYPE_LABEL\}\}/g, env.project_type_label)
-    .replace(/\{\{PROJECT_TYPE\}\}/g, env.project_type)
-    .replace(/\{\{AGENT_ADAPTER\}\}/g, env.agent_adapter)
-    .replace(/\{\{PROJECT_PROFILE_NAME\}\}/g, env.project_profile_name)
-    .replace(/\{\{PROJECT_PROFILE_SUB_VARIANT\}\}/g, env.project_profile_sub_variant)
-    .replace(/\{\{PROFILE_AGENT_SSOT_ROWS\}\}/g, env.profile_agent_ssot_rows)
-    .replace(/\{\{PROFILE_AGENT_GUARDRAILS\}\}/g, env.profile_agent_guardrails)
-    .replace(/\{\{ARCHITECTURE_SUMMARY\}\}/g, env.architecture_summary)
-    .replace(/\{\{ARCHITECTURE_MD_PATH\}\}/g, env.architecture_md_path)
-    .replace(/\{\{MODULE_CATALOG_PATH\}\}/g, env.module_catalog_path)
-    .replace(/\{\{GLOSSARY_PATH\}\}/g, env.glossary_path)
-    .replace(/\{\{FEATURES_DIR\}\}/g, env.features_dir)
-    .replace(/\{\{MODULE_INNER_LAYERS_CSV\}\}/g, env.module_inner_layers_csv)
-    .replace(/\{\{CROSS_MODULE_EXPORTS_FILE\}\}/g, env.cross_module_exports_file);
+  return renderFromLegacyEnv(text, env);
 }
 
 // --------------------------------------------------------------------------
@@ -2002,7 +1958,7 @@ export function runInitProbe(options: InitProbeOptions): InitProbeResult {
   const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
   const adapterPick = resolveAdapterPick(cfg, options.adapterHint);
   const adapter = prepareAdapterForProbe(adapterPick, cfg, options.projectRoot);
-  const renderEnv = buildRenderEnv(cfg, adapter);
+  const renderEnv = buildRenderEnv(cfg, adapter, options.projectRoot);
   const inspectorEnv: InspectorEnv = {
     projectRoot: options.projectRoot,
     cfg,

@@ -100,7 +100,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
    - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
    - `decision.json` **必须**含非空 `materialized_adapters`（机器门禁；与 context 清单集合一致）
    - `context.json` **禁止**含 `projectRoot` / `harnessRoot` / `plan`；示例见 [templates/staging-schema-example.md](templates/staging-schema-example.md)
-   - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root>`（**不带** `--context-file`）；stdout 拆分写两文件后替换 `materialized_adapters`
+   - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root>`（**不带** `--context-file`）；stdout 拆分写两文件后替换 `materialized_adapters`。**UPDATE** 时 stdout `context` 可能已含磁盘预填的最小 `configWritePayload`（仍须 S2 多选写入 `decision.materialized_adapters`）
    - 禁止沿用旧结构 `mode` / `task_decisions` / 根级无 `schema_version` 的 staging
 
 `auto_overwrite` 机制段由 planner 标为 `sync-auto-overwrite:*`，智能模式下自动执行，不进手动逐项菜单。
@@ -133,7 +133,8 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 - S3 执行器：`executeInitPlan` → `init-task-executor.ts`（gitignore、config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
 - S3 **preflight**：`init-orchestrate.ts` 在写盘前校验 decision 结构与 config/doc payload；违规时**除 harness 审计 run-log 外零项目写盘**，写 blocked run-log 后 `exit 1`。
-- **`configWritePayload` / `docWritePayload`** 须在 S2 收集并写入 `context.json`；写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
+- **`configWritePayload` / `docWritePayload`**：CREATE 须在 S2 写入 `context.json`；**UPDATE** 可依赖 emit 预填或 S2 显式 payload，execute 阶段 harness 亦会从磁盘派生最小 payload（S2 显式优先）。写类 doc 任务（`run`）缺 payload → preflight 原子阻断。
+- preflight 与 executor **共用**同一归一化 `finalContext`（先 cross-check raw adapter，再 sync decision SSOT）。
 - doc 骨架（`write-architecture` / catalog / glossary）若 planner 标记为 needed 且 context 未带内容 → 按 [profiles/.../doc-skeletons/](../../profiles/) 或用户确认稿本写入后再重跑 S3，或在 S2 决策 **skip** 并在 S4 说明。
 - **失败任务**：摘要中列出；不静默吞掉 `failed` 条目。
 
