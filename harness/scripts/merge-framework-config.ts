@@ -77,6 +77,9 @@ function parseArgs(argv: string[]): CliArgs {
         a.slice('--confirm-reports-dir-pattern='.length),
         '--confirm-reports-dir-pattern',
       );
+      process.stderr.write(
+        '[merge-framework-config] reports_dir_pattern 已自动 BACKFILL，--confirm-reports-dir-pattern 被忽略\n',
+      );
     } else if (a === '--help' || a === '-h') {
       process.stdout.write(USAGE + '\n');
       process.exit(0);
@@ -89,12 +92,12 @@ function parseArgs(argv: string[]): CliArgs {
   return { apply, dryRun, configPath, confirmAnswers };
 }
 
-const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>] [--confirm-reports-dir-pattern=y|n]
+const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>]
 
   --dry-run                         打印三 pass 诊断与合并预览，不写盘（默认）
   --apply                           先备份到 <repo>/.framework-backup/<UTC>/，再写回
   --config <path>                   指定 framework.config.json 路径
-  --confirm-reports-dir-pattern=y|n S2 CONFIRM pass 答复；y 写入 paths.reports_dir_pattern`;
+  --confirm-reports-dir-pattern=y|n （deprecated，no-op；reports_dir_pattern 已自动 BACKFILL）`;
 
 function readConfig(p: string): { raw: unknown; text: string } {
   if (!fs.existsSync(p)) fail(`找不到 framework.config.json：${p}`);
@@ -215,16 +218,6 @@ function main(): void {
   process.stdout.write(formatMigrationTable(pendingMigrations) + '\n\n');
   process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 CONFIRM pass 显式 y 才写入）：\n');
   process.stdout.write(formatConfirmTable(pendingConfirm) + '\n\n');
-
-  if (
-    pendingConfirm.length > 0 &&
-    args.confirmAnswers.reports_dir_pattern === undefined &&
-    args.apply
-  ) {
-    process.stdout.write(
-      '提示：paths.reports_dir_pattern 未通过 --confirm-reports-dir-pattern=y 确认，Pass 3 跳过写入。\n\n',
-    );
-  }
 
   const { merged, backfillReport, migrationReport, confirmReport } = mergeFrameworkConfig(
     raw,

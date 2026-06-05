@@ -7,7 +7,6 @@ import {
   BACKFILL_FIELDS,
   CONFIRM_FIELDS,
   MIGRATION_RULES,
-  applyConfirmFields,
   applyMigrations,
   detectMissingBackfillFields,
   detectMissingConfirmFields,
@@ -50,7 +49,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         'paths.extension_dir',
         'paths.state_file',
         'paths.receipt_dir_pattern',
+        'paths.reports_dir_pattern',
         'paths.docs_committed',
+        'paths.module_graphs_dir',
         'state_machine.grace_period_minutes',
         'state_machine.ttl_hours',
         'state_machine.schema_version',
@@ -95,8 +96,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         'prd',
         'prd.visual_handoff_enforcement',
         'atomic_service',
-        // reports_dir_pattern 走 CONFIRM_FIELDS + S2 CONFIRM pass，不进 silent BACKFILL
-        'paths.reports_dir_pattern',
       ];
       for (const p of forbidden) {
         assert(!isBackfillablePath(p, 'hmos-app'), `${p} 不应该出现在补缺白名单中`);
@@ -160,7 +159,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         'paths.extension_dir',
         'paths.state_file',
         'paths.receipt_dir_pattern',
+        'paths.reports_dir_pattern',
         'paths.docs_committed',
+        'paths.module_graphs_dir',
         'state_machine.grace_period_minutes',
         'state_machine.ttl_hours',
         'state_machine.schema_version',
@@ -331,19 +332,16 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'detectMissingConfirmFields：缺 reports_dir_pattern → 待确认',
+    name: 'detectMissingConfirmFields：CONFIRM_FIELDS 为空 → 无待确认',
     run: () => {
-      const pending = detectMissingConfirmFields({ paths: {} });
-      assert(pending.some(p => p.confirmKey === 'reports_dir_pattern'));
+      assert.strictEqual(CONFIRM_FIELDS.length, 0);
+      assert.strictEqual(detectMissingConfirmFields({ paths: {} }).length, 0);
     },
   },
   {
-    name: 'applyConfirmFields：CONFIRM pass=y 写入 reports_dir_pattern',
+    name: 'mergeBackfillFields：缺 reports_dir_pattern → BACKFILL 写入',
     run: () => {
-      const { merged } = applyConfirmFields(
-        { paths: { features_dir: 'doc/features' } },
-        { reports_dir_pattern: true },
-      );
+      const { merged } = mergeBackfillFields({ paths: { features_dir: 'doc/features' } });
       assert.strictEqual(
         (merged as { paths: { reports_dir_pattern: string } }).paths.reports_dir_pattern,
         'doc/features/<feature>/<phase>/reports',
@@ -351,21 +349,38 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'applyConfirmFields：CONFIRM pass=n 不写入 reports_dir_pattern',
+    name: 'module_graphs_dir_to_module_root：旧默认路径 → 迁移',
     run: () => {
-      const { merged, report } = applyConfirmFields(
-        { paths: { features_dir: 'doc/features' } },
-        { reports_dir_pattern: false },
-      );
+      const raw = { paths: { module_graphs_dir: 'doc/modules/<module>/code-graph.yaml' } };
+      assert(detectPendingMigrations(raw).some(p => p.id === 'module_graphs_dir_to_module_root'));
+      const { merged } = applyMigrations(raw);
       assert.strictEqual(
-        (merged as { paths: { reports_dir_pattern?: string } }).paths.reports_dir_pattern,
-        undefined,
+        (merged as { paths: { module_graphs_dir: string } }).paths.module_graphs_dir,
+        '<module>/code-graph.yaml',
       );
-      assert(report.rejectedKeys.includes('reports_dir_pattern'));
     },
   },
   {
-    name: 'mergeFrameworkConfig：老 config 含 project_type、缺 reports → migration + confirm(y)',
+    name: 'pypi_mirror_tsinghua_to_huawei：仅旧清华默认 URL 迁移',
+    run: () => {
+      const raw = {
+        tools: { hylyre: { pypi_extra_index_url: 'https://pypi.tuna.tsinghua.edu.cn/simple' } },
+      };
+      assert(detectPendingMigrations(raw).some(p => p.id === 'pypi_mirror_tsinghua_to_huawei'));
+      const { merged } = applyMigrations(raw);
+      assert.strictEqual(
+        (merged as { tools: { hylyre: { pypi_extra_index_url: string } } }).tools.hylyre
+          .pypi_extra_index_url,
+        'https://mirrors.tools.huawei.com/pypi/simple',
+      );
+      const custom = {
+        tools: { hylyre: { pypi_extra_index_url: 'https://pypi.internal.corp/simple' } },
+      };
+      assert(!detectPendingMigrations(custom).some(p => p.id === 'pypi_mirror_tsinghua_to_huawei'));
+    },
+  },
+  {
+    name: 'mergeFrameworkConfig：老 config 含 project_type、缺 reports → migration + backfill',
     run: () => {
       const old = {
         schema_version: '1.0',
@@ -374,7 +389,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         project_profile: { name: 'hmos-app' },
         paths: { features_dir: 'doc/features' },
       };
-      const { merged } = mergeFrameworkConfig(old, { reports_dir_pattern: true });
+      const { merged } = mergeFrameworkConfig(old, {});
       assert.strictEqual((merged as { project_type?: string }).project_type, undefined);
       assert.strictEqual(
         (merged as { project_profile: { sub_variant: string } }).project_profile.sub_variant,

@@ -710,7 +710,7 @@ UT 阶段状态：
 
 ### Step 8.0：Core 节点闭环闸门（需求收尾）
 
-在 harness 全绿后，评估本次改动是否触及模块 **Code Graph** 中 `core: true` 节点（路径 `paths.module_graphs_dir`，默认 `doc/modules/<module>/code-graph.yaml`）：
+在 harness 全绿后，评估本次改动是否触及模块 **Code Graph** 中 `core: true` 节点（路径 `paths.module_graphs_dir`，默认 `<module>/code-graph.yaml`）：
 
 1. 读取相关模块 Code Graph；对比 `contracts.yaml` / diff 触及的源码文件与 `core` 节点 anchor。
 2. **触及 core** → 启动可行性探测；更新/增删图谱节点；同步 characterization 或 spec-driven UT；**flow DAG 可归档**至 `{module}/test/dag/`。

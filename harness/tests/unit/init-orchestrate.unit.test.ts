@@ -1341,7 +1341,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'deriveUpdateConfigWritePayload 仅最小语义字段',
+    name: 'deriveUpdateConfigWritePayload 保留 paths/tools 并 canonicalize cross_module_exports_file',
     run: () => {
       const root = mkTmp();
       const cfg = {
@@ -1354,6 +1354,13 @@ const cases: Array<{ name: string; run: () => void }> = [
           inner_dependency_direction: 'upward',
           cross_module_exports_file: 'Index.ets',
         },
+        paths: {
+          features_dir: 'custom/features',
+          module_graphs_dir: 'doc/modules/<module>/code-graph.yaml',
+        },
+        tools: {
+          hylyre: { pypi_extra_index_url: 'https://pypi.internal.corp/simple' },
+        },
         state_machine: { schema_version: '1.1', ttl_hours: 12 },
         toolchain: { hvigor: { daemon: true } },
       };
@@ -1365,9 +1372,49 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(payload);
       assert.strictEqual(payload!.project_name, 'Wallet');
       assert(payload!.architecture);
+      assert.strictEqual(
+        (payload!.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
+        'index.ets',
+      );
       assert.deepStrictEqual(payload!.materialized_adapters, ['generic']);
+      assert.strictEqual(
+        (payload!.paths as { features_dir: string }).features_dir,
+        'custom/features',
+      );
+      assert.strictEqual(
+        (payload!.tools as { hylyre: { pypi_extra_index_url: string } }).hylyre.pypi_extra_index_url,
+        'https://pypi.internal.corp/simple',
+      );
       assert.strictEqual((payload as Record<string, unknown>).state_machine, undefined);
       assert.strictEqual((payload as Record<string, unknown>).toolchain, undefined);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'deriveUpdateConfigWritePayload 自定义 cross_module_exports_file 不被重置',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            project_name: 'Wallet',
+            architecture: {
+              outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'dag' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'exports.ets',
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      const payload = deriveUpdateConfigWritePayload(root, []);
+      assert.strictEqual(
+        (payload!.architecture as { cross_module_exports_file: string }).cross_module_exports_file,
+        'exports.ets',
+      );
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -1706,6 +1753,88 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!fs.existsSync(gitignore));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'CLI --emit-staging-template --materialized-adapters 含 2 项 materialize-adapter 任务',
+    run: () => {
+      const root = mkTmp();
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--emit-staging-template',
+        '--materialized-adapters',
+        'claude,generic',
+      ]);
+      assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+      const parsed = JSON.parse(r.stdout) as {
+        decision: { materialized_adapters: string[]; tasks: Array<{ task_id: string }> };
+      };
+      assert.deepStrictEqual(parsed.decision.materialized_adapters, ['claude', 'generic']);
+      const materializeTasks = parsed.decision.tasks.filter(t =>
+        t.task_id.startsWith('materialize-adapter:'),
+      );
+      assert.strictEqual(materializeTasks.length, 2);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI emit context 与 --materialized-adapters 不一致 exit 1',
+    run: () => {
+      const root = mkTmp();
+      const contextPath = path.join(root, 'context.json');
+      fs.writeFileSync(
+        contextPath,
+        JSON.stringify({ materializedAdapters: ['cursor'] }, null, 2),
+      );
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--emit-staging-template',
+        '--context-file',
+        contextPath,
+        '--materialized-adapters',
+        'claude,generic',
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stderr.includes('不一致') || r.stdout.includes('不一致'));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI emit context 与 --materialized-adapters 一致时 CLI 为 SSOT',
+    run: () => {
+      const root = mkTmp();
+      const contextPath = path.join(root, 'context.json');
+      fs.writeFileSync(
+        contextPath,
+        JSON.stringify({ materializedAdapters: ['claude', 'generic'] }, null, 2),
+      );
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--emit-staging-template',
+        '--context-file',
+        contextPath,
+        '--materialized-adapters',
+        'claude,generic',
+      ]);
+      assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+      const parsed = JSON.parse(r.stdout) as {
+        decision: { materialized_adapters: string[]; tasks: Array<{ task_id: string }> };
+      };
+      assert.deepStrictEqual(parsed.decision.materialized_adapters, ['claude', 'generic']);
+      assert.strictEqual(
+        parsed.decision.tasks.filter(t => t.task_id.startsWith('materialize-adapter:')).length,
+        2,
+      );
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
 ];

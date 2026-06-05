@@ -167,6 +167,7 @@ const cases: Case[] = [
           'paths.extension_dir',
           'paths.state_file',
           'paths.receipt_dir_pattern',
+          'paths.reports_dir_pattern',
           'paths.docs_committed',
           'state_machine.grace_period_minutes',
           'state_machine.ttl_hours',
@@ -188,9 +189,13 @@ const cases: Case[] = [
           `migration_keys 应含 project_type_to_sub_variant；实际：${JSON.stringify(inspection.migration_keys)}`,
         );
         assert(
-          Array.isArray(inspection.confirm_keys) &&
-            (inspection.confirm_keys ?? []).includes('reports_dir_pattern'),
-          `confirm_keys 应含 reports_dir_pattern；实际：${JSON.stringify(inspection.confirm_keys)}`,
+          !Array.isArray(inspection.confirm_keys) ||
+            !(inspection.confirm_keys ?? []).includes('reports_dir_pattern'),
+          `confirm_keys 不应再含 reports_dir_pattern；实际：${JSON.stringify(inspection.confirm_keys)}`,
+        );
+        assert(
+          mk.includes('paths.reports_dir_pattern'),
+          `missing_keys 应含 paths.reports_dir_pattern（BACKFILL）；实际：${mk.join(',')}`,
         );
       }),
   },

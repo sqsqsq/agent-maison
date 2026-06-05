@@ -22,6 +22,7 @@ import { findModule, loadCatalog } from './utils/catalog-parser';
 import type { ModuleCard } from './utils/catalog-parser';
 import type { GraphExtractResult, GraphSymbolSignature } from '../graph-extractor/types';
 import { hmosGraphExtractor } from '../../profiles/hmos-app/harness/hmos-graph-extractor';
+import { validateProjectRelativePath } from './utils/project-relative-path';
 
 function usage(): void {
   console.error(`用法:
@@ -161,7 +162,17 @@ function main(): void {
     process.exit(1);
   }
 
-  const packagePath = resolvePackagePath(card, packagePathOverride);
+  let packagePath: string;
+  try {
+    packagePath = validateProjectRelativePath(
+      projectRoot,
+      resolvePackagePath(card, packagePathOverride),
+      '--package-path',
+    );
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
   const absPkg = path.join(projectRoot, packagePath);
   if (!fs.existsSync(absPkg)) {
     console.error(`[bootstrap-code-graph] 包目录不存在: ${absPkg}`);
@@ -169,7 +180,7 @@ function main(): void {
   }
 
   const extracted = hmosGraphExtractor.extractModule(projectRoot, packagePath, moduleName);
-  const outPath = moduleGraphPath(projectRoot, moduleName);
+  const outPath = moduleGraphPath(projectRoot, packagePath);
   const existing = loadExistingGraph(outPath, moduleName);
 
   let nodes = existing?.nodes ?? [];
@@ -221,4 +232,6 @@ function main(): void {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}

@@ -63,7 +63,7 @@ The framework docs SHALL disambiguate the three existing "dag" usages so they ar
 
 ### Requirement: Module graph path configuration
 
-The framework SHALL expose `paths.module_graphs_dir` on `FrameworkPaths` (default `doc/modules/<module>/code-graph.yaml`) and resolve per-module paths via `moduleGraphPath(projectRoot, moduleName)`.
+The framework SHALL expose `paths.module_graphs_dir` on `FrameworkPaths` (default `<module>/code-graph.yaml`) and resolve per-module paths via `moduleGraphPath(projectRoot, moduleRelPath)`.
 
 #### Scenario: Default path pattern
 - **WHEN** `framework.config.json` omits `paths.module_graphs_dir`

@@ -431,9 +431,9 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 |------|------|----------|-----------|
 | 1 BACKFILL | 只补缺失 key | `paths.state_file`、`state_machine.*`、`toolchain.hvigor.*` | S3 `backfill-config` |
 | 2 MIGRATION | modernize 已有 key | `project_type` → `project_profile.sub_variant`；personal 外迁 | S3 `migrate-config` |
-| 3 CONFIRM | 行为级变更 | `paths.reports_dir_pattern` | S2 `confirm-fields` → S3 merge |
+| 3 CONFIRM | 行为级变更 | （当前无；`paths.reports_dir_pattern` 已移入 BACKFILL） | — |
 
-**`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_REPORTS_DIR_PATTERN`（**故意不在** `DEFAULT_PATHS`，避免 `normalizeConfig` 在磁盘未配置时 runtime 偷偷切到新路径；拒绝 confirm 时须保持 legacy 回退）。
+**`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_PATHS.reports_dir_pattern`（`normalizeConfig` 与 BACKFILL 自动注入；极旧磁盘 config 未配置时 `featurePhaseReportsDir` 仍回退 legacy `framework/harness/reports/`）。
 
 1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE（S1→S4）。
 2. S1 planner / check-init 查看 `missing_keys` / `migration_keys` / `confirm_keys`。

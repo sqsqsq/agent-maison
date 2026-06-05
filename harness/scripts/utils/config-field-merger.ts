@@ -15,6 +15,7 @@
 //   Pass 1 — BACKFILL_FIELDS：只补缺失 key，静默安全默认值
 //   Pass 2 — MIGRATION_RULES：modernize 已有 key（如 project_type → sub_variant）
 //   Pass 3 — CONFIRM_FIELDS：行为级变更，须 S2 CONFIRM pass（`--confirm-*` flag）后才写入
+//   （当前为空；reports_dir_pattern 已移入 BACKFILL）
 //
 // 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
@@ -30,7 +31,6 @@
 
 import {
   DEFAULT_PATHS,
-  DEFAULT_REPORTS_DIR_PATTERN,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
 import { loadProfileConfigDefaults } from '../../profile-loader';
@@ -84,7 +84,7 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   {
     path: 'paths.module_graphs_dir',
     defaultValue: DEFAULT_PATHS.module_graphs_dir,
-    note: 'paths.module_graphs_dir 缺失：回填 doc/modules/<module>/code-graph.yaml',
+    note: 'paths.module_graphs_dir 缺失：回填 <module>/code-graph.yaml（模块根目录）',
   },
   {
     path: 'paths.glossary',
@@ -116,7 +116,11 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: DEFAULT_PATHS.receipt_dir_pattern,
     note: 'paths.receipt_dir_pattern 缺失：回填 doc/features/<feature>/<phase>（完成回执目录模式）',
   },
-  // paths.reports_dir_pattern 不在 BACKFILL —— 见 CONFIRM_FIELDS + S2 CONFIRM pass。
+  {
+    path: 'paths.reports_dir_pattern',
+    defaultValue: DEFAULT_PATHS.reports_dir_pattern,
+    note: 'paths.reports_dir_pattern 缺失：回填 doc/features/<feature>/<phase>/reports',
+  },
   {
     path: 'paths.docs_committed',
     defaultValue: DEFAULT_PATHS.docs_committed,
@@ -252,6 +256,19 @@ function ensureProjectProfileObject(base: Record<string, unknown>): Record<strin
   return created;
 }
 
+function ensureNestedObject(
+  base: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const existing = base[key];
+  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+    return existing as Record<string, unknown>;
+  }
+  const created: Record<string, unknown> = {};
+  base[key] = created;
+  return created;
+}
+
 function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
   return typeof pp.sub_variant === 'string' && pp.sub_variant.trim().length > 0;
 }
@@ -300,6 +317,27 @@ export function buildLocalFromProjectLegacy(raw: unknown): FrameworkLocalConfig 
     }
   }
   return hasAny ? local : null;
+}
+
+const LEGACY_MODULE_GRAPHS_DIR = 'doc/modules/<module>/code-graph.yaml';
+const LEGACY_PYPI_MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple';
+const HUAWEI_PYPI_MIRROR = 'https://mirrors.tools.huawei.com/pypi/simple';
+
+export function readRecord(obj: unknown): Record<string, unknown> | null {
+  return obj && typeof obj === 'object' && !Array.isArray(obj)
+    ? (obj as Record<string, unknown>)
+    : null;
+}
+
+export function readPathString(raw: Record<string, unknown>, dotPath: string): string | undefined {
+  const parts = dotPath.split('.');
+  let cur: unknown = raw;
+  for (const part of parts) {
+    const rec = readRecord(cur);
+    if (!rec || !Object.prototype.hasOwnProperty.call(rec, part)) return undefined;
+    cur = rec[part];
+  }
+  return typeof cur === 'string' ? cur : undefined;
 }
 
 export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
@@ -398,6 +436,39 @@ export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
       };
     },
   },
+  {
+    id: 'module_graphs_dir_to_module_root',
+    note: '迁移 paths.module_graphs_dir：doc/modules/<module>/code-graph.yaml → <module>/code-graph.yaml',
+    detect: raw => readPathString(raw, 'paths.module_graphs_dir') === LEGACY_MODULE_GRAPHS_DIR,
+    apply: base => {
+      const paths = ensureNestedObject(base, 'paths');
+      if (paths.module_graphs_dir === DEFAULT_PATHS.module_graphs_dir) {
+        return { applied: false, summary: 'paths.module_graphs_dir 已是新默认' };
+      }
+      paths.module_graphs_dir = DEFAULT_PATHS.module_graphs_dir;
+      return {
+        applied: true,
+        summary: `${LEGACY_MODULE_GRAPHS_DIR} → ${DEFAULT_PATHS.module_graphs_dir}`,
+      };
+    },
+  },
+  {
+    id: 'pypi_mirror_tsinghua_to_huawei',
+    note: '迁移 tools.hylyre.pypi_extra_index_url：清华源 → 华为源（仅旧框架默认 URL）',
+    detect: raw => readPathString(raw, 'tools.hylyre.pypi_extra_index_url') === LEGACY_PYPI_MIRROR,
+    apply: base => {
+      const tools = ensureNestedObject(base, 'tools');
+      const hylyre = ensureNestedObject(tools, 'hylyre');
+      if (hylyre.pypi_extra_index_url === HUAWEI_PYPI_MIRROR) {
+        return { applied: false, summary: 'pypi_extra_index_url 已是华为源' };
+      }
+      hylyre.pypi_extra_index_url = HUAWEI_PYPI_MIRROR;
+      return {
+        applied: true,
+        summary: `${LEGACY_PYPI_MIRROR} → ${HUAWEI_PYPI_MIRROR}`,
+      };
+    },
+  },
 ];
 
 export interface PendingMigrationEntry {
@@ -452,14 +523,7 @@ export interface ConfirmField {
   note: string;
 }
 
-export const CONFIRM_FIELDS: ReadonlyArray<ConfirmField> = [
-  {
-    path: 'paths.reports_dir_pattern',
-    confirmKey: 'reports_dir_pattern',
-    defaultValue: DEFAULT_REPORTS_DIR_PATTERN,
-    note: '启用 feature-phase 报告外置（doc/features/<feature>/<phase>/reports）；拒绝则保持 legacy framework/harness/reports/<feature>/<phase>/',
-  },
-];
+export const CONFIRM_FIELDS: ReadonlyArray<ConfirmField> = [];
 
 export interface PendingConfirmEntry {
   confirmKey: string;

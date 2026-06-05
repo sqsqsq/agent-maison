@@ -204,9 +204,9 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'config defaults: 磁盘未写 reports_dir_pattern → normalize 不注入，featurePhaseReportsDir 走 legacy',
+    name: 'config defaults: 磁盘未写 reports_dir_pattern → normalize 注入，featurePhaseReportsDir 走 doc/features',
     run: () => {
-      const root = mkTmp('profile-reports-legacy-');
+      const root = mkTmp('profile-reports-default-');
       writeFile(path.join(root, 'framework.config.json'), JSON.stringify({
         schema_version: '1.1',
         project_name: 'legacy-reports',
@@ -231,13 +231,13 @@ const cases: Case[] = [
         ensureConsumerFrameworkTree(root);
         const cfg = loadFrameworkConfig(root);
         assert(
-          cfg.paths.reports_dir_pattern === undefined,
-          `normalize 不应注入 reports_dir_pattern；实际：${String(cfg.paths.reports_dir_pattern)}`,
+          cfg.paths.reports_dir_pattern === 'doc/features/<feature>/<phase>/reports',
+          `normalize 应注入 reports_dir_pattern；实际：${String(cfg.paths.reports_dir_pattern)}`,
         );
-        const legacy = featurePhaseReportsDir(root, 'demo-feature', 'coding');
+        const reportsDir = featurePhaseReportsDir(root, 'demo-feature', 'coding');
         assert(
-          legacy.replace(/\\/g, '/').endsWith('framework/harness/reports/demo-feature/coding'),
-          `应回退 legacy 路径；实际：${legacy}`,
+          reportsDir.replace(/\\/g, '/').includes('doc/features/demo-feature/coding/reports'),
+          `应走 doc/features 外置路径；实际：${reportsDir}`,
         );
       } finally {
         clearFrameworkConfigCache();

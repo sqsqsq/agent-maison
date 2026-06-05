@@ -254,6 +254,34 @@ function resolveTemplateAction(task: InitTask): TaskDecision['action'] {
 }
 
 /** UPDATE：从磁盘 config 提取最小语义 payload（不含 builder 自动注入项） */
+const KNOWN_EXPORTS_CANONICAL: Record<string, string> = {
+  'Index.ets': 'index.ets',
+  'INDEX.ETS': 'index.ets',
+  Index: 'index',
+  INDEX: 'index',
+};
+
+export function validateMaterializedAdapterSetsCrossCheck(
+  primary: string[],
+  secondary: string[],
+  labelPrimary: string,
+  labelSecondary: string,
+): string | null {
+  const fromPrimary = [
+    ...new Set(primary.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())),
+  ];
+  const fromSecondary = [
+    ...new Set(secondary.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())),
+  ];
+  if (!fromSecondary.length) return null;
+  const a = new Set(fromPrimary);
+  const b = new Set(fromSecondary);
+  if (a.size !== b.size || [...a].some(x => !b.has(x))) {
+    return `materialized_adapters 不一致：${labelPrimary} 与 ${labelSecondary} 清单不匹配`;
+  }
+  return null;
+}
+
 export function deriveUpdateConfigWritePayload(
   projectRoot: string,
   materializedAdapters: string[],
@@ -277,7 +305,20 @@ export function deriveUpdateConfigWritePayload(
     typeof existing.architecture === 'object' &&
     !Array.isArray(existing.architecture)
   ) {
-    payload.architecture = JSON.parse(JSON.stringify(existing.architecture));
+    const archClone = JSON.parse(JSON.stringify(existing.architecture)) as Record<string, unknown>;
+    if (typeof archClone.cross_module_exports_file === 'string') {
+      const current = archClone.cross_module_exports_file;
+      if (KNOWN_EXPORTS_CANONICAL[current]) {
+        archClone.cross_module_exports_file = KNOWN_EXPORTS_CANONICAL[current];
+      }
+    }
+    payload.architecture = archClone;
+  }
+  if (existing.paths && typeof existing.paths === 'object' && !Array.isArray(existing.paths)) {
+    payload.paths = JSON.parse(JSON.stringify(existing.paths));
+  }
+  if (existing.tools && typeof existing.tools === 'object' && !Array.isArray(existing.tools)) {
+    payload.tools = JSON.parse(JSON.stringify(existing.tools));
   }
 
   // 仅当调用方显式传入 decision adapters（execute SSOT）时写入 payload；
@@ -490,13 +531,31 @@ function validateMaterializedAdaptersCrossCheck(
   if (decision.scope !== 'project') return null;
   const fromDecision = normalizeDecisionMaterializedAdapters(decision);
   const fromCtx = collectMaterializedAdapters(stripContextReservedFields(context));
-  if (!fromCtx.length) return null;
-  const a = new Set(fromDecision);
-  const b = new Set(fromCtx);
-  if (a.size !== b.size || [...a].some(x => !b.has(x))) {
-    return 'materialized_adapters 不一致：decision 与 context 清单不匹配';
+  return validateMaterializedAdapterSetsCrossCheck(
+    fromDecision,
+    fromCtx,
+    'decision',
+    'context',
+  );
+}
+
+function injectCliMaterializedAdaptersIntoContext(
+  context: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined,
+  cliAdapters: string[],
+): Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> | undefined {
+  if (!cliAdapters.length) return context;
+  const base = context ?? {};
+  const out: Omit<InitExecutionContext, 'projectRoot' | 'harnessRoot' | 'plan'> = {
+    ...base,
+    materializedAdapters: cliAdapters,
+  };
+  if (out.configWritePayload && typeof out.configWritePayload === 'object') {
+    out.configWritePayload = {
+      ...out.configWritePayload,
+      materialized_adapters: cliAdapters,
+    };
   }
-  return null;
+  return out;
 }
 
 function buildPreflightBlockedLog(
@@ -1023,7 +1082,21 @@ if (require.main === module) {
   const opts = parseArgs(process.argv);
   if (!opts.execute) {
     const rawContext = readContextFileOptional(opts.contextFile, { allowMissing: true });
-    const executionContext = rawContext ? withInitContextDefaults(rawContext) : undefined;
+    let executionContext = rawContext ? withInitContextDefaults(rawContext) : undefined;
+    const cliAdapters = opts.materializedAdapters ?? [];
+    if (cliAdapters.length) {
+      const ctxAdapters = collectMaterializedAdapters(executionContext);
+      const crossCheck = validateMaterializedAdapterSetsCrossCheck(
+        cliAdapters,
+        ctxAdapters,
+        '--materialized-adapters',
+        'context',
+      );
+      if (crossCheck) {
+        failCli(`[init-orchestrate] ${crossCheck}`);
+      }
+      executionContext = injectCliMaterializedAdaptersIntoContext(executionContext, cliAdapters);
+    }
     if (opts.emitStagingTemplate) {
       const planResult = prepareInitExecutionPlanWithStaleIds(
         {
@@ -1033,18 +1106,16 @@ if (require.main === module) {
         },
         executionContext,
       );
-      console.log(
-        JSON.stringify(
-          buildInitStagingTemplate(
-            planResult.plan,
-            executionContext,
-            opts.decisionMode,
-            opts.projectRoot,
-          ),
-          null,
-          2,
-        ),
+      const template = buildInitStagingTemplate(
+        planResult.plan,
+        executionContext,
+        opts.decisionMode,
+        opts.projectRoot,
       );
+      if (cliAdapters.length) {
+        template.decision.materialized_adapters = cliAdapters;
+      }
+      console.log(JSON.stringify(template, null, 2));
     } else {
       const plan = probeInitTaskPlan({
         projectRoot: opts.projectRoot,
@@ -1057,6 +1128,12 @@ if (require.main === module) {
   }
   if (!opts.decisionFile && !opts.smartAuto) {
     process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file 或 --smart-auto\n');
+    process.stderr.write(
+      '示例：npx ts-node scripts/init-orchestrate.ts --execute --smart-auto --scope project --project-root <repo-root> --materialized-adapters claude,generic\n',
+    );
+    process.stderr.write(
+      '示例：npx ts-node scripts/init-orchestrate.ts --execute --decision-file ./init-decision.json --context-file ./init-context.json --scope project --project-root <repo-root>\n',
+    );
     process.exit(1);
   }
   try {
@@ -1067,7 +1144,8 @@ if (require.main === module) {
       const adapters = opts.materializedAdapters ?? [];
       if (opts.scope === 'project' && !adapters.length) {
         failCli(
-          '[init-orchestrate] --smart-auto（project）须配合非空 --materialized-adapters（逗号分隔）',
+          '[init-orchestrate] --smart-auto（project）须配合非空 --materialized-adapters（逗号分隔）\n' +
+            '示例：npx ts-node scripts/init-orchestrate.ts --execute --smart-auto --scope project --project-root <repo-root> --materialized-adapters claude,generic',
         );
       }
       const probePlan = probeInitTaskPlan({

@@ -39,7 +39,7 @@ flowchart LR
   Curated --> Drift
 ```
 
-实现：`GraphExtractor` contract（framework）+ profile provider（如 hmos-app）；路径由 `paths.module_graphs_dir` 配置（默认 `doc/modules/<module>/code-graph.yaml`）。
+实现：`GraphExtractor` contract（framework）+ profile provider（如 hmos-app）；路径由 `paths.module_graphs_dir` 配置（默认 `<module>/code-graph.yaml`）。
 
 ---
 
@@ -86,7 +86,7 @@ cd framework/harness
 npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> --seed-from-catalog
 ```
 
-- 写入路径：`paths.module_graphs_dir`（默认 `doc/modules/<module>/code-graph.yaml`）。
+- 写入路径：`paths.module_graphs_dir`（默认 `<module>/code-graph.yaml`）。
 - 已存在 YAML 时：**只刷新 `derived`**，保留已有 `nodes[]`（避免覆盖策展层）。
 - `--seed-from-catalog`：仅在 `nodes` 为空时，用 catalog 的 `entry_file` / `key_exports` 生成**草稿**节点（`core: false`，须人工改 intent 并标 3–5 个 `core: true`）。
 - `--dry-run`：预览统计不写盘；包路径不对时用 `--package-path <layer>/<name>` 覆盖。

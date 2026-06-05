@@ -16,11 +16,11 @@ argument-hint: <optional-notes>
 
 | 步 | 动作 |
 |----|------|
-| **S0 Tier_1** | `cd framework/harness && node scripts/init-readiness.mjs`；`ok=false` 时先 `npm install`，**禁止**在 `ok=false` 前裸跑 `npx ts-node` |
+| **S0 Tier_1** | `cd framework/harness && node scripts/init-readiness.mjs`；`ok=false` 时先 `npm install`（timeout ≥5m，超时后重跑 readiness）；**禁止** npm install 后在同一 shell 再次 `cd framework/harness` |
 | **S1 探测** | readiness `ok=true` 后：`npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>` → 只读 `InitTaskPlan` JSON |
-| **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选 |
-| **S3 执行** | 枚举 decision/context JSON（OS 临时目录）→ `init-orchestrate --execute` → preflight + `executeInitPlan` |
-| **S4 摘要** | `buildRunSummary(run-log)` → 仅列可选下一步，**禁止**诱导进入 catalog/prd 等下游 Skill |
+| **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选；预览须 `--emit-staging-template --materialized-adapters <list>` |
+| **S3 执行** | 智能模式：`--smart-auto --materialized-adapters <list>`；通用：`--execute --decision-file ... --context-file ...` |
+| **S4 摘要** | S3 stdout 即 `buildRunSummary` 摘要（无需额外调用）→ 仅列可选下一步 |
 
 # 跳板文件
 

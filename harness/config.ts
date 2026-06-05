@@ -297,8 +297,8 @@ export interface FrameworkPaths {
   extension_dir?: string;
   /**
    * 模块级 Code Graph 落盘路径模式（相对实例工程根）。
-   * 占位符：`<module>` 替换为 module-catalog 中的模块目录名。
-   * 默认 `doc/modules/<module>/code-graph.yaml`。
+   * 占位符：`<module>` 替换为 module-catalog 模块相对路径（如 `02-Feature/WalletHome`）。
+   * 默认 `<module>/code-graph.yaml`（与模块根目录 `index.ets` 同级）。
    */
   module_graphs_dir?: string;
   /**
@@ -500,22 +500,17 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   architecture_md: 'doc/architecture.md',
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+  reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
   docs_committed: false,
   extension_dir: 'doc/extensions',
-  module_graphs_dir: 'doc/modules/<module>/code-graph.yaml',
+  module_graphs_dir: '<module>/code-graph.yaml',
 };
 
 /** 默认 Code Graph 路径模式（与 `DEFAULT_PATHS.module_graphs_dir` 一致）。 */
-export const DEFAULT_MODULE_GRAPHS_DIR = 'doc/modules/<module>/code-graph.yaml';
+export const DEFAULT_MODULE_GRAPHS_DIR = '<module>/code-graph.yaml';
 
-/**
- * CONFIRM_FIELDS 写入 `paths.reports_dir_pattern` 时使用的推荐默认值。
- *
- * **故意不在 `DEFAULT_PATHS` 中**：若放进 DEFAULT_PATHS，`normalizeConfig` 会把该字段
- * 合并进所有实例 runtime config，导致磁盘未配置时也走 doc/features/.../reports，
- * 绕过 S2 CONFIRM pass（n 须保持 legacy 回退）。
- */
-export const DEFAULT_REPORTS_DIR_PATTERN = 'doc/features/<feature>/<phase>/reports';
+/** @deprecated 使用 `DEFAULT_PATHS.reports_dir_pattern` */
+export const DEFAULT_REPORTS_DIR_PATTERN = DEFAULT_PATHS.reports_dir_pattern;
 
 /**
  * 阶段状态机时间常量默认值（v2.4）。
@@ -1438,11 +1433,11 @@ export function catalogPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.module_catalog);
 }
 
-/** 某模块的 Code Graph 文件路径（`<module>` 占位符替换）。 */
-export function moduleGraphPath(projectRoot: string, moduleName: string): string {
+/** 某模块的 Code Graph 文件路径（`<module>` 占位符替换为模块相对路径，如 `02-Feature/WalletHome`）。 */
+export function moduleGraphPath(projectRoot: string, moduleRelPath: string): string {
   const pattern =
     loadFrameworkConfig(projectRoot).paths.module_graphs_dir ?? DEFAULT_MODULE_GRAPHS_DIR;
-  const rel = pattern.replace(/<module>/g, moduleName);
+  const rel = pattern.replace(/<module>/g, moduleRelPath);
   return path.join(projectRoot, rel);
 }
 
@@ -1911,7 +1906,7 @@ export const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
   vendor_dir: 'framework/profiles/hmos-app/vendor/hylyre',
   venv_dir: '.hylyre/venv',
   app_snapshot_cache_dir: 'doc/app-snapshot-cache',
-  pypi_extra_index_url: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+  pypi_extra_index_url: 'https://mirrors.tools.huawei.com/pypi/simple',
   auto_install: true,
   doctor_first_run: true,
   hypium_page_name: '',
