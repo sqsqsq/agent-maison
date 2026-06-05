@@ -1127,14 +1127,25 @@ if (require.main === module) {
     process.exit(0);
   }
   if (!opts.decisionFile && !opts.smartAuto) {
-    process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file 或 --smart-auto\n');
-    process.stderr.write(
-      '示例：npx ts-node scripts/init-orchestrate.ts --execute --smart-auto --scope project --project-root <repo-root> --materialized-adapters claude,generic\n',
-    );
-    process.stderr.write(
-      '示例：npx ts-node scripts/init-orchestrate.ts --execute --decision-file ./init-decision.json --context-file ./init-context.json --scope project --project-root <repo-root>\n',
-    );
-    process.exit(1);
+    const canInferSmartAuto =
+      opts.materializedAdapters?.length &&
+      !opts.contextFile &&
+      opts.decisionMode === 'smart';
+    if (canInferSmartAuto) {
+      opts.smartAuto = true;
+      process.stderr.write(
+        '[init-orchestrate] --execute + --materialized-adapters 未指定 --smart-auto，自动启用 smart-auto 模式\n',
+      );
+    } else {
+      process.stderr.write('[init-orchestrate] --execute 须配合 --decision-file 或 --smart-auto\n');
+      process.stderr.write(
+        '示例：npx ts-node scripts/init-orchestrate.ts --execute --smart-auto --scope project --project-root <repo-root> --materialized-adapters claude,generic\n',
+      );
+      process.stderr.write(
+        '示例：npx ts-node scripts/init-orchestrate.ts --execute --decision-file ./init-decision.json --context-file ./init-context.json --scope project --project-root <repo-root>\n',
+      );
+      process.exit(1);
+    }
   }
   try {
     let decision: InitRunDecision;

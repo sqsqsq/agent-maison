@@ -1837,6 +1837,86 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  {
+    name: 'CLI --execute --materialized-adapters 无 --smart-auto 自动改道成功',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'auto-smart-test',
+            project_profile: { name: 'hmos-app', sub_variant: 'app' },
+            materialized_adapters: ['claude', 'generic'],
+            architecture: {
+              outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['shared'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ets',
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'architecture.md'), '# Arch\n');
+      fs.writeFileSync(path.join(root, 'doc', 'module-catalog.yaml'), 'modules: []\n');
+      fs.writeFileSync(path.join(root, 'doc', 'glossary.yaml'), 'terms: []\n');
+      fs.writeFileSync(path.join(root, 'doc', 'glossary-seed.txt'), 'seed\n');
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--materialized-adapters',
+        'claude,generic',
+      ]);
+      assert(
+        r.stderr.includes('自动启用 smart-auto'),
+        '应输出自动改道 advisory',
+      );
+      assert(
+        !r.stderr.includes('须配合 --decision-file 或 --smart-auto'),
+        '不应输出参数校验拒绝',
+      );
+      assert(
+        r.stdout.includes('executed') || r.stdout.includes('skipped'),
+        '应产出执行摘要（自动改道后实际进入 execute 路径）',
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'CLI --execute --materialized-adapters + --context-file 无 --smart-auto 仍报错 exit 1',
+    run: () => {
+      const root = mkTmp();
+      const staging = path.join(root, 'staging');
+      fs.mkdirSync(staging, { recursive: true });
+      const contextPath = path.join(staging, 'context.json');
+      fs.writeFileSync(contextPath, JSON.stringify({}, null, 2));
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--materialized-adapters',
+        'claude,generic',
+        '--context-file',
+        contextPath,
+      ]);
+      assert.notStrictEqual(r.status, 0, 'should exit 1 when --context-file present without --smart-auto');
+      assert(
+        r.stderr.includes('须配合 --decision-file 或 --smart-auto'),
+        '应输出标准报错提示',
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {
