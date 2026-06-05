@@ -100,14 +100,16 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
 2. **`init.materialized_adapters`**（**BLOCKER · 每轮必问**）：至少 1 项（`claude` / `cursor` / `generic`）。**即使** `framework.config.json` 已有 `materialized_adapters`，UPDATE / 跨会话仍须在本轮经 registry **`init.materialized_adapters`** 多选收到本轮清单；**禁止**「当前已物化 X，无需新增」后跳过。
 3. **手动模式**：对每个 `drift` 任务用 **`init.task_decision`**（覆盖 / 保留），**禁止** Q1=y 逐项打字。
-4. 序列化为 **`InitRunDecision` JSON** + **`context.json`**，写入 **OS 临时目录**（一次性 staging，非项目资产）：
+4. 选择 S3 路径：
+   - **智能 UPDATE 快捷路径（推荐）**：当 `plan.mode === "update"`、决策模式为 smart、且无需额外 `docWritePayload` 时，不写 OS staging 文件；S3 直接使用 `--smart-auto --materialized-adapters <S2 多选逗号分隔>`。推荐显式传 `--smart-auto`；CLI 对漏写 `--smart-auto` 的自动推断仅作兼容容错，Agent 不得长期依赖隐式改道。
+   - **通用 staging 路径**：CREATE、手动模式、或需要 `docWritePayload` 时，序列化为 **`InitRunDecision` JSON** + **`context.json`**，写入 **OS 临时目录**（一次性 staging，非项目资产）。
    - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`
    - Windows：`%TEMP%\framework-init-<stamp>\decision.json` 与 `context.json`
    - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
    - `decision.json` **必须**含非空 `materialized_adapters`（机器门禁；与 context 清单集合一致）
    - `context.json` **禁止**含 `projectRoot` / `harnessRoot` / `plan`；示例见 [templates/staging-schema-example.md](templates/staging-schema-example.md)
    - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root> --materialized-adapters <S2 多选逗号分隔>`（**不带** `--context-file`）；stdout 拆分写两文件。**UPDATE** 时 stdout `context` 可能已含磁盘预填的最小 `configWritePayload`（仍须 S2 多选写入 `decision.materialized_adapters`）
-   - **S2 预览 SSOT（BLOCKER）**：`init.materialized_adapters` 多选**之后**，须运行上述 `--emit-staging-template --materialized-adapters ...`；per-task action 必须来自 stdout `decision.tasks[].action`（harness `resolveTemplateAction`），**禁止** Agent 自行推导。类别级摘要（下表）仅作面向用户的结构化复述。
+   - **通用路径预览 SSOT（BLOCKER）**：若本轮走通用 staging 路径，`init.materialized_adapters` 多选**之后**，须运行上述 `--emit-staging-template --materialized-adapters ...`；per-task action 必须来自 stdout `decision.tasks[].action`（harness `resolveTemplateAction`），**禁止** Agent 自行推导。类别级摘要（下表）仅作面向用户的结构化复述。
    - 禁止沿用旧结构 `mode` / `task_decisions` / 根级无 `schema_version` 的 staging
 
 `auto_overwrite` 机制段由 planner 标为 `sync-auto-overwrite:*`，智能模式下自动执行，不进手动逐项菜单。
@@ -115,6 +117,8 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ### S2.3 决策复述
 
 写入或进入 S3 前须结构化复述（user-confirmation-ux §3.6）：mode、materialized_adapters、决策模式，并按**任务类别**说明动作（**禁止**写「drift 全部 overwrite」）：
+
+registry `init.task_plan` / `init.materialized_adapters` / `init.task_decision` 的选择即为 S2 批准记录；复述完成后直接进入 S3，**禁止**再追加「确认后进入 S3？」等二次 yes/no 确认。
 
 | 类别 | 智能模式动作说明 |
 |------|------------------|
@@ -148,9 +152,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
   --materialized-adapters <S2 多选结果逗号分隔>
 ```
 
-内部自动 probe → staging → preflight → `executeInitPlan`；**stdout 即 S4 摘要**（无需额外 CLI 调用）。
+内部自动 probe → 临时上下文 → preflight → `executeInitPlan`；**不创建外部 OS staging 目录**，stdout 即 S4 摘要（无需额外 CLI 调用）。
 
-> `<abs-temp-dir>` = S2 写入的 OS 临时目录绝对路径（见 S2.2 第 4 步）。须用绝对路径，因 shell cwd 在 `framework/harness`。
+> 通用方式中的 `<abs-temp-dir>` = S2 写入的 OS 临时目录绝对路径（见 S2.2 第 4 步）。须用绝对路径，因 shell cwd 在 `framework/harness`。
 
 - S3 执行器：`executeInitPlan` → `init-task-executor.ts`（gitignore、config merge、adapter 物化、deprecated cleanup、npm install、全局 phase 等）。
 - S3 **preflight**：`init-orchestrate.ts` 在写盘前校验 decision 结构与 config/doc payload；违规时**除 harness 审计 run-log 外零项目写盘**，写 blocked run-log 后 `exit 1`。
@@ -163,8 +167,8 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 ## S4. 摘要（harness 生成）
 
-- S3 执行命令的 **stdout** 即为 `buildRunSummary` 摘要（**无需额外 CLI 调用**）；同时 harness 写入 `harness/reports/_global/init-orchestrate/*/summary.md`。
-- **清理 staging**：无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`）；仅调试需要时在 S4 向用户上报其绝对路径后再删。
+- S3 执行命令的 **stdout** 即为 `buildRunSummary` 摘要（**无需额外 CLI 调用**）；摘要必须包含 `run_log` 与 `summary` 路径，同时 harness 写入 `harness/reports/_global/init-orchestrate/*/run-log.json` 与 `summary.md`。
+- **清理 staging**：通用 staging 路径无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`），并在 S4 汇报“已清理”；仅调试需要时可汇报“保留用于调试：<abs-temp-dir>”。`--smart-auto` 路径应汇报“未创建外部 staging 目录”。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **可选下一步（仅列出，禁止诱导式 yes/no 或默认进入下游 Skill）**：
   1. 提醒团队成员：首次跑 catalog/prd 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
@@ -220,6 +224,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 消费者完成 init 后可 `cd framework/harness && npm test`（= `check:global`）验证元数据完整性。
 - **禁止** Q1=y、裸 `y/好/继续` 作为多任务批准。
 - **禁止** init/setup 对话收集 architecture DSL / 自定义 paths / 模块名字符串数组；仅 preset、磁盘快照、`init.intra_layer_deps` enum/matrix，或 STOP 后手动编辑 config（见 [templates/custom-architecture-questionnaire.md](templates/custom-architecture-questionnaire.md)）。
+- **禁止**把 UPDATE 中保留的既有 `architecture` / `intra_layer_deps` 复述为 profile 默认 preset；应表述为“沿用已有 architecture DSL”。仅当 S2 明确选择预设时，才可使用 preset 说法。
 - **禁止**因 harness 已提供默认值的可选字段（如 generic 的 `paths.agent_bundle_root`）缺失，而将用户已在 `init.materialized_adapters` 中选中的 adapter STOP 或剔除；personal active adapter 与项目物化清单无关。
 
 ---

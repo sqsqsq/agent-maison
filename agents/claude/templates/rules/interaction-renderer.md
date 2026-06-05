@@ -45,7 +45,8 @@
 - **S1 探测**：只读运行 `init-orchestrate.ts`（或 planner）产出 `InitTaskPlan` JSON；AI **仅渲染**任务表，不得写盘。
 - **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox）；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
 - **S3 执行**：将用户选择序列化为 **枚举 decision JSON**，交 `init-orchestrate.ts executeInitPlan`；违反 `allowed_actions` 或依赖闭包时 harness 拒绝。
-- **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表。
+- **S2→S3**：registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认。
+- **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）。
 - **个人 setup**：`setup.adapter` 只能从 `materialized_adapters` 已物化项选；`setup.deveco_path` 仅探测候选或跳过；写入 `framework.local.json` 且**不写**项目产物。
 
 ## 与 slash 的关系

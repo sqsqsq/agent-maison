@@ -831,7 +831,13 @@ export function resolveTaskAction(
   return 'run';
 }
 
-export function buildRunSummary(log: InitRunLog): string {
+export interface RunSummaryOptions {
+  runLogPath?: string;
+  summaryPath?: string;
+  externalStaging?: string;
+}
+
+export function buildRunSummary(log: InitRunLog, options: RunSummaryOptions = {}): string {
   const lines: string[] = [
     `# Framework Init 执行摘要`,
     ``,
@@ -845,6 +851,9 @@ export function buildRunSummary(log: InitRunLog): string {
   if (log.materialized_adapters?.length) {
     lines.push(`- materialized_adapters: ${JSON.stringify(log.materialized_adapters)}`);
   }
+  if (options.runLogPath) lines.push(`- run_log: ${options.runLogPath}`);
+  if (options.summaryPath) lines.push(`- summary: ${options.summaryPath}`);
+  if (options.externalStaging) lines.push(`- external_staging: ${options.externalStaging}`);
   lines.push(
     ``,
     `| task_id | action | status | message |`,
@@ -859,6 +868,26 @@ export function buildRunSummary(log: InitRunLog): string {
   lines.push('');
   lines.push(`合计：executed=${executed} skipped=${skipped} failed=${failed}`);
   return lines.join('\n');
+}
+
+function summaryPathForRunLog(runLogPath: string): string {
+  return path.join(path.dirname(runLogPath), 'summary.md');
+}
+
+function summaryOptionsForCli(opts: ReturnType<typeof parseArgs>): Pick<RunSummaryOptions, 'externalStaging'> {
+  return opts.smartAuto ? { externalStaging: '未创建（smart-auto 内部生成临时上下文）' } : {};
+}
+
+function buildCliRunSummary(
+  log: InitRunLog,
+  logPath: string,
+  opts: ReturnType<typeof parseArgs>,
+): string {
+  return buildRunSummary(log, {
+    ...summaryOptionsForCli(opts),
+    runLogPath: logPath,
+    summaryPath: summaryPathForRunLog(logPath),
+  });
 }
 
 export interface ExecuteOptions {
@@ -949,14 +978,23 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
   };
 }
 
-export function writeRunLog(harnessRoot: string, log: InitRunLog): string {
+export function writeRunLog(
+  harnessRoot: string,
+  log: InitRunLog,
+  summaryOptions: Omit<RunSummaryOptions, 'runLogPath' | 'summaryPath'> = {},
+): string {
   const stamp = log.started_at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const dir = path.join(harnessRoot, 'reports', '_global', 'init-orchestrate', stamp);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'run-log.json');
+  const summaryPath = summaryPathForRunLog(file);
   fs.writeFileSync(file, JSON.stringify(log, null, 2), 'utf-8');
-  const summary = buildRunSummary(log);
-  fs.writeFileSync(path.join(dir, 'summary.md'), `${summary}\n`, 'utf-8');
+  const summary = buildRunSummary(log, {
+    ...summaryOptions,
+    runLogPath: file,
+    summaryPath,
+  });
+  fs.writeFileSync(summaryPath, `${summary}\n`, 'utf-8');
   return file;
 }
 
@@ -1215,8 +1253,8 @@ if (require.main === module) {
         true,
         auditMeta,
       );
-      const logPath = writeRunLog(opts.harnessRoot, blocked);
-      process.stdout.write(`${buildRunSummary(blocked)}\n`);
+      const logPath = writeRunLog(opts.harnessRoot, blocked, summaryOptionsForCli(opts));
+      process.stdout.write(`${buildCliRunSummary(blocked, logPath, opts)}\n`);
       process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
       process.exit(1);
     }
@@ -1234,8 +1272,8 @@ if (require.main === module) {
       { projectRoot: opts.projectRoot },
     );
     if (!preflight.ok) {
-      const logPath = writeRunLog(opts.harnessRoot, preflight.blocked);
-      process.stdout.write(`${buildRunSummary(preflight.blocked)}\n`);
+      const logPath = writeRunLog(opts.harnessRoot, preflight.blocked, summaryOptionsForCli(opts));
+      process.stdout.write(`${buildCliRunSummary(preflight.blocked, logPath, opts)}\n`);
       process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
       process.exit(1);
     }
@@ -1246,8 +1284,8 @@ if (require.main === module) {
       decision: reconciledDecision,
       executionContext: finalContext,
     });
-    const logPath = writeRunLog(opts.harnessRoot, log);
-    process.stdout.write(`${buildRunSummary(log)}\n`);
+    const logPath = writeRunLog(opts.harnessRoot, log, summaryOptionsForCli(opts));
+    process.stdout.write(`${buildCliRunSummary(log, logPath, opts)}\n`);
     process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
     process.exit(log.entries.some(e => e.status === 'failed') ? 1 : 0);
   } catch (e) {

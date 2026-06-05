@@ -25,8 +25,9 @@
 
 - S1 只读 planner → 渲染任务计划 JSON
 - S2 用 registry：`init.task_plan`、`init.materialized_adapters`、`init.task_decision`（手动）
+- S2 registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认
 - S3 枚举 decision JSON 交 `executeInitPlan`
-- S4 用 harness `buildRunSummary`
+- S4 用 harness `buildRunSummary`；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）
 - setup 用 `setup.adapter` / `setup.deveco_path`，只写 `framework.local.json`
 
 ## 决策复述

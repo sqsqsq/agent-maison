@@ -728,6 +728,29 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'buildRunSummary includes audit artifact paths and staging status when provided',
+    run: () => {
+      const s = buildRunSummary(
+        {
+          schema_version: '1.0',
+          scope: 'project',
+          started_at: '2026-01-01T00:00:00Z',
+          finished_at: '2026-01-01T00:01:00Z',
+          decision_mode: 'smart',
+          entries: [],
+        },
+        {
+          runLogPath: 'D:/tmp/run-log.json',
+          summaryPath: 'D:/tmp/summary.md',
+          externalStaging: '未创建（smart-auto 内部生成临时上下文）',
+        },
+      );
+      assert(s.includes('run_log: D:/tmp/run-log.json'));
+      assert(s.includes('summary: D:/tmp/summary.md'));
+      assert(s.includes('external_staging: 未创建'));
+    },
+  },
+  {
     name: 'executeInitPlan 依赖失败时跳过后续任务',
     run: () => {
       const plan: InitTaskPlan = {
@@ -1838,7 +1861,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'CLI --execute --materialized-adapters 无 --smart-auto 自动改道成功',
+    name: 'CLI --execute --materialized-adapters 无 --smart-auto 自动改道进入执行路径',
     run: () => {
       const root = mkTmp();
       fs.writeFileSync(
@@ -1874,6 +1897,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         '--materialized-adapters',
         'claude,generic',
       ]);
+      assert.notStrictEqual(r.status, null, r.stderr || r.stdout);
       assert(
         r.stderr.includes('自动启用 smart-auto'),
         '应输出自动改道 advisory',
@@ -1885,6 +1909,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(
         r.stdout.includes('executed') || r.stdout.includes('skipped'),
         '应产出执行摘要（自动改道后实际进入 execute 路径）',
+      );
+      assert(r.stdout.includes('run_log:'), 'stdout 摘要应包含 run_log 路径');
+      assert(r.stdout.includes('summary:'), 'stdout 摘要应包含 summary 路径');
+      assert(
+        r.stdout.includes('external_staging: 未创建'),
+        'smart-auto 摘要应说明未创建外部 staging',
       );
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
