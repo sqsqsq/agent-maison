@@ -31,9 +31,9 @@
 cd framework/harness && node scripts/init-readiness.mjs
 ```
 
-- 解析 stdout JSON：`ok` / `missing` / `recommended_command` / `harness_root`。
+- 解析 stdout JSON：`ok` / `missing` / `recommended_command` / `recommended_cwd` / `recommended_executable` / `recommended_args` / `harness_root`。
 - 须同时满足：`node_modules/ts-node/package.json`、`node_modules/@types/node/package.json`、`package.json` 存在，且 cwd 为 `framework/harness`。
-- 若 `ok=false`：先执行 `recommended_command`（`cd framework/harness && npm install`），成功后再进入 S1。
+- 若 `ok=false`：优先用 `recommended_cwd` + `recommended_executable` + `recommended_args` 构造安装命令（避免 cwd 已在 `framework/harness` 时再次 `cd framework/harness`）；亦可执行 `recommended_command`（`cd framework/harness && npm install`），成功后再进入 S1。
 - **`ok=false` 之前禁止**裸跑 `npx ts-node scripts/init-orchestrate.ts`（`npx` cache 回落会掩盖未安装，导致 TypeScript 编译失败）。
 - `ok=true` 后，所有 harness CLI 须在 `framework/harness` 下用 `npx ts-node scripts/...`。
 
@@ -99,6 +99,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
 2. **`init.materialized_adapters`**（**BLOCKER · 每轮必问**）：至少 1 项（`claude` / `cursor` / `generic`）。**即使** `framework.config.json` 已有 `materialized_adapters`，UPDATE / 跨会话仍须在本轮经 registry **`init.materialized_adapters`** 多选收到本轮清单；**禁止**「当前已物化 X，无需新增」后跳过。
+   - **同轮合并（推荐）**：当 `init.task_plan` 不改变 `init.materialized_adapters` 的选项列表（无前后依赖）时，可在**一次** registry 交互中同时发出两题；**两 registry 的 answer 仍须各自独立记录**（不得合并语义或只记一项）。
 3. **手动模式**：对每个 `drift` 任务用 **`init.task_decision`**（覆盖 / 保留），**禁止** Q1=y 逐项打字。
 4. 选择 S3 路径：
    - **智能 UPDATE 快捷路径（推荐）**：当 `plan.mode === "update"`、决策模式为 smart、且无需额外 `docWritePayload` 时，不写 OS staging 文件；S3 直接使用 `--smart-auto --materialized-adapters <S2 多选逗号分隔>`。推荐显式传 `--smart-auto`；CLI 对漏写 `--smart-auto` 的自动推断仅作兼容容错，Agent 不得长期依赖隐式改道。

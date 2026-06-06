@@ -15,6 +15,9 @@ interface ReadinessResult {
   ok: boolean;
   missing: string[];
   recommended_command: string;
+  recommended_cwd: string;
+  recommended_executable: string;
+  recommended_args: string[];
   harness_root: string;
 }
 
@@ -83,6 +86,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(r.ok, true);
         assert.deepStrictEqual(r.missing, []);
         assert.strictEqual(r.recommended_command, RECOMMENDED_COMMAND);
+        assert.strictEqual(r.recommended_cwd, root);
+        assert.strictEqual(r.recommended_executable, 'npm');
+        assert.deepStrictEqual(r.recommended_args, ['install']);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -172,6 +178,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert('ok' in json);
       assert(Array.isArray(json.missing));
       assert(typeof json.recommended_command === 'string');
+      assert(typeof json.recommended_cwd === 'string');
+      assert(typeof json.recommended_executable === 'string');
+      assert(Array.isArray(json.recommended_args));
       assert(typeof json.harness_root === 'string');
     },
   },

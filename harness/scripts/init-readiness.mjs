@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_HARNESS_ROOT = path.resolve(__dirname, '..');
 const RECOMMENDED_COMMAND = 'cd framework/harness && npm install';
+const RECOMMENDED_EXECUTABLE = 'npm';
+const RECOMMENDED_ARGS = ['install'];
 
 /**
  * @param {string} harnessRoot absolute path to framework/harness
@@ -44,6 +46,9 @@ export function checkInitReadiness(harnessRoot, cwd = harnessRoot) {
     ok: missing.length === 0,
     missing,
     recommended_command: RECOMMENDED_COMMAND,
+    recommended_cwd: harnessRoot,
+    recommended_executable: RECOMMENDED_EXECUTABLE,
+    recommended_args: RECOMMENDED_ARGS,
     harness_root: harnessRoot,
   };
 }
@@ -53,7 +58,12 @@ export function runReadiness() {
   return checkInitReadiness(DEFAULT_HARNESS_ROOT, process.cwd());
 }
 
-export { DEFAULT_HARNESS_ROOT as HARNESS_ROOT, RECOMMENDED_COMMAND };
+export {
+  DEFAULT_HARNESS_ROOT as HARNESS_ROOT,
+  RECOMMENDED_COMMAND,
+  RECOMMENDED_EXECUTABLE,
+  RECOMMENDED_ARGS,
+};
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {

@@ -711,20 +711,147 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'buildRunSummary is deterministic structure',
+    name: 'buildRunSummary includes category summary section',
     run: () => {
       const s = buildRunSummary({
         schema_version: '1.0',
         scope: 'project',
+        mode: 'update',
         started_at: '2026-01-01T00:00:00Z',
         finished_at: '2026-01-01T00:01:00Z',
         decision_mode: 'smart',
         entries: [
-          { task_id: 'ensure-gitignore', action: 'run', status: 'executed', message: 'ok' },
+          {
+            task_id: 'ensure-config',
+            action: 'overwrite',
+            status: 'executed',
+            message: 'ok',
+            category: 'config',
+          },
+          {
+            task_id: 'materialize-adapter:claude',
+            action: 'run',
+            status: 'executed',
+            message: 'sync',
+            category: 'adapter-bundle',
+            file_effects: { created: 1, updated: 2, unchanged: 3, delegated: 4 },
+          },
+          {
+            task_id: 'write-architecture',
+            action: 'skip',
+            status: 'skipped',
+            message: 'keep',
+            category: 'docs',
+            reason: 'drift_default_keep',
+          },
         ],
       });
-      assert(s.includes('ensure-gitignore'));
-      assert(s.includes('executed=1'));
+      assert(s.includes('## 类别摘要'));
+      assert(s.includes('config: ensure-config overwrite'));
+      assert(s.includes('claude（created 1 / updated 2 / unchanged 3 / delegated 4）'));
+      assert(s.includes('docs: 1 项保留磁盘（skip）'));
+    },
+  },
+  {
+    name: 'validateDecisionJson rejects skip on non-skippable run-global-phases',
+    run: () => {
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'run-global-phases',
+            title: 'catalog / glossary / docs 全局 phase',
+            category: 'verify',
+            scope: 'project',
+            deps: [],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+      const decision = projectDecision(plan, [{ task_id: 'run-global-phases', action: 'skip' }]);
+      const r = validateDecisionJson(plan, decision);
+      assert.strictEqual(r.ok, false);
+    },
+  },
+  {
+    name: 'executeInitPlan writes category and file_results on executed entries',
+    run: () => {
+      const root = mkTmp();
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'ensure-gitignore',
+            title: '.gitignore canonical patterns',
+            category: 'mechanism',
+            scope: 'project',
+            deps: [],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+      const decision = projectDecision(plan, [{ task_id: 'ensure-gitignore', action: 'run' }]);
+      const log = executeInitPlan({
+        projectRoot: root,
+        harnessRoot: HARNESS_ROOT,
+        plan,
+        decision,
+      });
+      const entry = log.entries.find(e => e.task_id === 'ensure-gitignore');
+      assert.strictEqual(entry?.category, 'mechanism');
+      assert.strictEqual(entry?.title, '.gitignore canonical patterns');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'executeInitPlan failed entry carries category title target_path',
+    run: () => {
+      const root = mkTmp();
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'create',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: 'write-architecture',
+            title: 'doc/architecture.md',
+            category: 'docs',
+            scope: 'project',
+            deps: [],
+            status: 'needed',
+            default_action: 'run',
+            skippable: true,
+            allowed_actions: ['run', 'skip'],
+            target_path: 'doc/architecture.md',
+          },
+        ],
+      };
+      const decision = projectDecision(plan, [{ task_id: 'write-architecture', action: 'run' }]);
+      const log = executeInitPlan({
+        projectRoot: root,
+        harnessRoot: HARNESS_ROOT,
+        plan,
+        decision,
+      });
+      const entry = log.entries.find(e => e.task_id === 'write-architecture');
+      assert.strictEqual(entry?.status, 'failed');
+      assert.strictEqual(entry?.category, 'docs');
+      assert.strictEqual(entry?.title, 'doc/architecture.md');
+      assert.strictEqual(entry?.target_path, 'doc/architecture.md');
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

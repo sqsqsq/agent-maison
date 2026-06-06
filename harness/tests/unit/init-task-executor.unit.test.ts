@@ -94,8 +94,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         skippable: false,
         allowed_actions: ['run' as const],
       };
-      const msg = executeInitTask(task, 'run', ctx);
-      assert(fs.existsSync(path.join(root, '.gitignore')), msg);
+      const result = executeInitTask(task, 'run', ctx);
+      assert(fs.existsSync(path.join(root, '.gitignore')), result.message);
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -282,9 +282,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         allowed_actions: ['run' as const],
         params: { adapter: 'generic' },
       };
-      const msg = executeInitTask(task, 'run', ctx);
+      const result = executeInitTask(task, 'run', ctx);
       const skillPath = path.join(root, '.agents', 'skills', '00-framework-init', 'SKILL.md');
-      assert(fs.existsSync(skillPath), `${msg}; expected ${skillPath}`);
+      assert(fs.existsSync(skillPath), `${result.message}; expected ${skillPath}`);
       assert(fs.readFileSync(skillPath, 'utf-8').includes('完整流程见 framework/skills/00-framework-init/SKILL.md'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -341,13 +341,311 @@ const cases: Array<{ name: string; run: () => void }> = [
         allowed_actions: ['run' as const],
         params: { adapter: 'claude' },
       };
-      const msg = executeInitTask(task, 'run', ctx);
+      const result = executeInitTask(task, 'run', ctx);
       const claudePath = path.join(root, 'CLAUDE.md');
-      assert(fs.existsSync(claudePath), `${msg}; expected ${claudePath}`);
+      assert(fs.existsSync(claudePath), `${result.message}; expected ${claudePath}`);
       const body = fs.readFileSync(claudePath, 'utf-8');
       assert(!body.includes('{{EXTENSION_SKILL_SECTION}}'), 'placeholder must be replaced');
       assert(body.includes('实例扩展 Skill'), 'extension section must be rendered from projectRoot');
       assert(body.includes(skillSlug), `expected extension skill slug in CLAUDE.md`);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:claude delegates owned per-file targets',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const targetRel = '.claude/rules/interaction-renderer.md';
+      const custom = '# custom keep content\n';
+      fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });
+      fs.writeFileSync(path.join(root, targetRel), custom, 'utf-8');
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'ownership-test',
+            materialized_adapters: ['claude'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: `materialize-adapter-file:${targetRel}`,
+            title: targetRel,
+            category: 'adapter-template',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'drift',
+            default_action: 'prompt',
+            skippable: true,
+            allowed_actions: ['overwrite', 'keep'],
+            target_path: targetRel,
+          },
+          {
+            id: 'materialize-adapter:claude',
+            title: '同步已选 adapter bundle: claude（幂等）',
+            category: 'adapter-bundle',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan,
+        materializedAdapters: ['claude'],
+      };
+      const result = executeInitTask(plan.tasks[1]!, 'run', ctx);
+      assert(result.file_results?.length, 'bundle should emit file_results');
+      const owned = result.file_results!.find(r => r.targetRel === targetRel);
+      assert(owned, `expected ${targetRel} in file_results`);
+      assert.strictEqual(owned!.effect, 'delegated');
+      assert.strictEqual(fs.readFileSync(path.join(root, targetRel), 'utf-8'), custom);
+      const rels = result.file_results!.map(r => r.targetRel);
+      assert.strictEqual(new Set(rels).size, rels.length, 'targetRel must be unique');
+      const sum =
+        (result.file_effects?.created ?? 0) +
+        (result.file_effects?.updated ?? 0) +
+        (result.file_effects?.unchanged ?? 0) +
+        (result.file_effects?.delegated ?? 0);
+      assert.strictEqual(sum, result.file_results!.length);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:generic inline 不重复计入 file_results',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'inline-telemetry',
+            materialized_adapters: ['generic'],
+            architecture: minimalArchitecture(),
+            paths: {
+              features_dir: 'doc/features',
+              agent_bundle_root: '.agents',
+              agent_bundle_skill_mode: 'inline',
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: new Date().toISOString(),
+          tasks: [],
+        },
+        materializedAdapters: ['generic'],
+      };
+      const result = executeInitTask(
+        {
+          id: 'materialize-adapter:generic',
+          title: '同步已选 adapter bundle: generic（幂等）',
+          category: 'adapter-bundle',
+          scope: 'project',
+          deps: ['ensure-config'],
+          status: 'needed',
+          default_action: 'run',
+          skippable: false,
+          allowed_actions: ['run'],
+        },
+        'run',
+        ctx,
+      );
+      assert(result.file_results?.length, 'inline bundle should emit file_results');
+      const rels = result.file_results!.map(r => r.targetRel);
+      assert.strictEqual(
+        new Set(rels).size,
+        rels.length,
+        `targetRel must be unique: ${rels.join(', ')}`,
+      );
+      assert(rels.some(r => r.startsWith('.agents/skills/') && r.endsWith('/SKILL.md')));
+      const sum =
+        (result.file_effects?.created ?? 0) +
+        (result.file_effects?.updated ?? 0) +
+        (result.file_effects?.unchanged ?? 0) +
+        (result.file_effects?.delegated ?? 0);
+      assert.strictEqual(sum, result.file_results!.length);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask sync-auto-overwrite 仅处理自身 target',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'mechanism-per-target',
+            materialized_adapters: ['claude'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: new Date().toISOString(),
+          tasks: [],
+        },
+        materializedAdapters: ['claude'],
+      };
+      const settingsTarget = '.claude/settings.json';
+      const hooksTarget = '.claude/hooks/check-phase-completion.mjs';
+
+      const settingsResult = executeInitTask(
+        {
+          id: `sync-auto-overwrite:${settingsTarget}`,
+          title: settingsTarget,
+          category: 'adapter-template-sync',
+          scope: 'project',
+          deps: ['ensure-config'],
+          status: 'needed',
+          default_action: 'run',
+          skippable: false,
+          allowed_actions: ['run'],
+          target_path: settingsTarget,
+        },
+        'run',
+        ctx,
+      );
+      assert.strictEqual(settingsResult.file_results?.length, 1);
+      assert.strictEqual(settingsResult.file_results![0]!.targetRel, settingsTarget);
+
+      const hooksResult = executeInitTask(
+        {
+          id: `sync-auto-overwrite:${hooksTarget}`,
+          title: hooksTarget,
+          category: 'adapter-template-sync',
+          scope: 'project',
+          deps: ['ensure-config'],
+          status: 'needed',
+          default_action: 'run',
+          skippable: false,
+          allowed_actions: ['run'],
+          target_path: hooksTarget,
+        },
+        'run',
+        ctx,
+      );
+      assert.strictEqual(hooksResult.file_results?.length, 1);
+      assert.strictEqual(hooksResult.file_results![0]!.targetRel, hooksTarget);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:claude auto_overwrite owned 目标 delegated 且不重复',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const autoTarget = '.claude/settings.json';
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'auto-overwrite-delegated',
+            materialized_adapters: ['claude'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      const plan: InitTaskPlan = {
+        schema_version: '1.0',
+        scope: 'project',
+        mode: 'update',
+        generated_at: new Date().toISOString(),
+        tasks: [
+          {
+            id: `sync-auto-overwrite:${autoTarget}`,
+            title: autoTarget,
+            category: 'adapter-template-sync',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+            target_path: autoTarget,
+          },
+          {
+            id: 'materialize-adapter:claude',
+            title: '同步已选 adapter bundle: claude（幂等）',
+            category: 'adapter-bundle',
+            scope: 'project',
+            deps: ['ensure-config'],
+            status: 'needed',
+            default_action: 'run',
+            skippable: false,
+            allowed_actions: ['run'],
+          },
+        ],
+      };
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan,
+        materializedAdapters: ['claude'],
+      };
+      const result = executeInitTask(plan.tasks[1]!, 'run', ctx);
+      const matches = result.file_results!.filter(r => r.targetRel === autoTarget);
+      assert.strictEqual(matches.length, 1, 'auto_overwrite target should appear once');
+      assert.strictEqual(matches[0]!.effect, 'delegated');
+      const rels = result.file_results!.map(r => r.targetRel);
+      assert.strictEqual(new Set(rels).size, rels.length);
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },

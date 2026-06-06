@@ -267,8 +267,8 @@ function buildProjectTasks(
     deps: ['harness-install', 'ensure-config'],
     status: 'needed',
     default_action: 'run',
-    skippable: true,
-    allowed_actions: ['run', 'skip'],
+    skippable: false,
+    allowed_actions: ['run'],
   });
 
   return tasks;
@@ -375,7 +375,7 @@ function buildMaterializeAdapterTasks(materializedAdapters: string[]): InitTask[
     seen.add(adapterName);
     out.push({
       id: `materialize-adapter:${adapterName}`,
-      title: `物化 adapter: ${adapterName}`,
+      title: `同步已选 adapter bundle: ${adapterName}（幂等）`,
       category: 'adapter-bundle',
       scope: 'project',
       deps: ['ensure-config'],

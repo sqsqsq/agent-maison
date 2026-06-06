@@ -10,6 +10,8 @@ import {
   executeInitTask,
   type InitExecutionContext,
 } from './utils/init-task-executor';
+import type { FileEffects, SyncTemplateResult } from './utils/init-sync-telemetry';
+import { formatFileEffectsCounts } from './utils/init-sync-telemetry';
 import {
   type InitTask,
   type InitTaskPlan,
@@ -49,6 +51,11 @@ export interface InitRunLogEntry {
   status: 'executed' | 'skipped' | 'failed';
   message: string;
   reason?: InitRunLogSkipReason;
+  category?: string;
+  title?: string;
+  target_path?: string;
+  file_effects?: FileEffects;
+  file_results?: SyncTemplateResult[];
 }
 
 export interface InitRunLogAuditMeta {
@@ -837,6 +844,92 @@ export interface RunSummaryOptions {
   externalStaging?: string;
 }
 
+const CATEGORY_SUMMARY_ORDER = ['config', 'adapter', 'docs', 'mechanism', 'verify', 'personal'] as const;
+
+const CATEGORY_SUMMARY_LABEL: Record<string, string> = {
+  config: 'config',
+  adapter: 'adapter',
+  docs: 'docs',
+  mechanism: 'mechanism',
+  verify: 'verify',
+  personal: 'personal',
+};
+
+function summaryCategoryKey(entry: InitRunLogEntry): string {
+  const cat = entry.category ?? '';
+  if (cat === 'config') return 'config';
+  if (
+    cat === 'adapter-bundle' ||
+    cat === 'adapter-entry' ||
+    cat === 'adapter-template' ||
+    cat === 'adapter-template-sync'
+  ) {
+    return 'adapter';
+  }
+  if (cat === 'docs') return 'docs';
+  if (cat === 'mechanism') return 'mechanism';
+  if (cat === 'verify') return 'verify';
+  if (cat === 'personal') return 'personal';
+  return cat || 'other';
+}
+
+function formatEntryCategoryLine(entry: InitRunLogEntry): string {
+  if (entry.file_effects) {
+    const adapterMatch = entry.task_id.match(/^materialize-adapter:(.+)$/);
+    if (adapterMatch) {
+      return `${adapterMatch[1]}（${formatFileEffectsCounts(entry.file_effects)}）`;
+    }
+    return `${entry.task_id}（${formatFileEffectsCounts(entry.file_effects)}）`;
+  }
+  return `${entry.task_id} ${entry.action}`;
+}
+
+function buildCategorySummaryLines(entries: InitRunLogEntry[]): string[] {
+  const grouped = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (entry.status === 'skipped') {
+      const key = summaryCategoryKey(entry);
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(`${entry.task_id} skip`);
+      grouped.set(key, bucket);
+      continue;
+    }
+    if (entry.status !== 'executed') continue;
+    const key = summaryCategoryKey(entry);
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(formatEntryCategoryLine(entry));
+    grouped.set(key, bucket);
+  }
+
+  const lines: string[] = ['## 类别摘要'];
+  let any = false;
+  for (const key of CATEGORY_SUMMARY_ORDER) {
+    const items = grouped.get(key);
+    if (!items?.length) continue;
+    any = true;
+    const label = CATEGORY_SUMMARY_LABEL[key] ?? key;
+    if (key === 'docs') {
+      const skipCount = items.filter(x => x.endsWith(' skip')).length;
+      if (skipCount === items.length) {
+        lines.push(`- ${label}: ${skipCount} 项保留磁盘（skip）`);
+      } else {
+        lines.push(`- ${label}: ${items.join(', ')}`);
+      }
+    } else {
+      lines.push(`- ${label}: ${items.join(', ')}`);
+    }
+    grouped.delete(key);
+  }
+  for (const [key, items] of grouped) {
+    any = true;
+    lines.push(`- ${key}: ${items.join(', ')}`);
+  }
+  if (!any) {
+    lines.push('- （无 executed/skipped 任务）');
+  }
+  return lines;
+}
+
 export function buildRunSummary(log: InitRunLog, options: RunSummaryOptions = {}): string {
   const lines: string[] = [
     `# Framework Init 执行摘要`,
@@ -854,8 +947,8 @@ export function buildRunSummary(log: InitRunLog, options: RunSummaryOptions = {}
   if (options.runLogPath) lines.push(`- run_log: ${options.runLogPath}`);
   if (options.summaryPath) lines.push(`- summary: ${options.summaryPath}`);
   if (options.externalStaging) lines.push(`- external_staging: ${options.externalStaging}`);
+  lines.push('', ...buildCategorySummaryLines(log.entries), '');
   lines.push(
-    ``,
     `| task_id | action | status | message |`,
     `|---------|--------|--------|---------|`,
   );
@@ -928,6 +1021,9 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
         status: 'skipped',
         message: '依赖任务失败或未执行，跳过',
         reason: 'dependency_blocked',
+        category: task.category,
+        title: task.title,
+        ...(task.target_path ? { target_path: task.target_path } : {}),
       });
       continue;
     }
@@ -940,17 +1036,25 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
         status: 'skipped',
         message: skipped.message,
         reason: skipped.reason,
+        category: task.category,
+        title: task.title,
+        ...(task.target_path ? { target_path: task.target_path } : {}),
       });
       continue;
     }
 
     try {
-      const message = executeInitTask(task, action, ctx);
+      const result = executeInitTask(task, action, ctx);
       entries.push({
         task_id: task.id,
         action,
         status: 'executed',
-        message,
+        message: result.message,
+        category: task.category,
+        title: task.title,
+        ...(task.target_path ? { target_path: task.target_path } : {}),
+        ...(result.file_effects ? { file_effects: result.file_effects } : {}),
+        ...(result.file_results?.length ? { file_results: result.file_results } : {}),
       });
     } catch (e) {
       failedIds.add(task.id);
@@ -959,6 +1063,9 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
         action,
         status: 'failed',
         message: (e as Error).message,
+        category: task.category,
+        title: task.title,
+        ...(task.target_path ? { target_path: task.target_path } : {}),
       });
     }
   }

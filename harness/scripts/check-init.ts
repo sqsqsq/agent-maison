@@ -807,14 +807,40 @@ export function applyGenericAdapterBundle(
 function applyAgentBundleInlineSync(
   projectRoot: string,
   bundle: ResolvedAgentBundlePaths,
-): { syncedFiles: number } {
-  const outcome = materializeAgentBundleSkills({
-    projectRoot,
-    frameworkDir: FRAMEWORK_ROOT,
-    bundle,
-    mode: 'inline',
-  });
-  return { syncedFiles: outcome.filesWritten.length };
+): {
+  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
+  syncedFiles: number;
+} {
+  const dirs = listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT);
+  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
+  let syncedFiles = 0;
+
+  for (const dir of dirs) {
+    const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`.replace(/\\/g, '/');
+    const tgAbs = path.join(projectRoot, ...targetRel.split('/'));
+    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir);
+    const payload = Buffer.from(body, 'utf-8');
+
+    if (!fs.existsSync(tgAbs)) {
+      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+      fs.writeFileSync(tgAbs, payload);
+      syncedFiles++;
+      results.push({ targetRel, effect: 'created' });
+      continue;
+    }
+
+    const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
+    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+      results.push({ targetRel, effect: 'unchanged' });
+      continue;
+    }
+
+    fs.writeFileSync(tgAbs, payload);
+    syncedFiles++;
+    results.push({ targetRel, effect: 'updated' });
+  }
+
+  return { results, syncedFiles };
 }
 
 export { applyAgentBundleInlineSync };
@@ -1844,12 +1870,27 @@ function inspect11(env: InspectorEnv): Inspection {
 function applyInitMechanismSync(
   projectRoot: string,
   adapter: AdapterDescriptor,
-): { syncedFiles: number; backupRelDir: string | null } {
+  options?: { ownedByTask?: Set<string>; includeTargets?: Set<string> },
+): {
+  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
+  syncedFiles: number;
+  backupRelDir: string | null;
+} {
   let syncedFiles = 0;
   let backupRelDir: string | null = null;
+  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
+  const owned = options?.ownedByTask;
+  const includeTargets = options?.includeTargets;
 
   for (const f of adapter.templateFiles) {
     if (f.update_policy !== 'auto_overwrite' || f.kind === 'materialized') continue;
+
+    const targetRel = f.targetRel.replace(/\\/g, '/');
+    if (includeTargets && !includeTargets.has(targetRel)) continue;
+    if (owned?.has(targetRel)) {
+      results.push({ targetRel, effect: 'delegated' });
+      continue;
+    }
 
     const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
     const tgAbs = path.join(projectRoot, f.targetRel);
@@ -1864,11 +1905,13 @@ function applyInitMechanismSync(
       fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
       fs.writeFileSync(tgAbs, tplBuf);
       syncedFiles++;
+      results.push({ targetRel, effect: 'created' });
       continue;
     }
 
     const cmp = compareTextArtifact(tplBuf, tgBuf);
     if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+      results.push({ targetRel, effect: 'unchanged' });
       continue;
     }
 
@@ -1882,9 +1925,10 @@ function applyInitMechanismSync(
     fs.copyFileSync(tgAbs, backupAbs);
     fs.writeFileSync(tgAbs, tplBuf);
     syncedFiles++;
+    results.push({ targetRel, effect: 'updated' });
   }
 
-  return { syncedFiles, backupRelDir };
+  return { results, syncedFiles, backupRelDir };
 }
 
 /**

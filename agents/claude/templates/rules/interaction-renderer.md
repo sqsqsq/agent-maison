@@ -43,7 +43,7 @@
 项目级 **framework-init** 与个人级 **setup**（内联过程）的编排决策**禁止自由输入**（无 Q1=y、无自定义路径字符串）：
 
 - **S1 探测**：只读运行 `init-orchestrate.ts`（或 planner）产出 `InitTaskPlan` JSON；AI **仅渲染**任务表，不得写盘。
-- **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox）；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
+- **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox）；当两 registry 无前后依赖时，推荐**一次** AskUserQuestion 同时发出，但**两 answer 仍须独立记录**；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
 - **S3 执行**：将用户选择序列化为 **枚举 decision JSON**，交 `init-orchestrate.ts executeInitPlan`；违反 `allowed_actions` 或依赖闭包时 harness 拒绝。
 - **S2→S3**：registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认。
 - **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）。

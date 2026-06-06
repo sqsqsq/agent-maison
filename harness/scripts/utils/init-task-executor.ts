@@ -26,6 +26,18 @@ import {
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
 import { detectRepoLayout } from '../../repo-layout';
+import {
+  aggregateFileEffects,
+  buildOwnedByTaskSet,
+  formatBundleSyncMessage,
+  normalizeTargetRel,
+  type FileEffects,
+  type InitTaskExecutionResult,
+  type SyncTemplateResult,
+} from './init-sync-telemetry';
+
+export type { FileEffects, InitTaskExecutionResult, SyncTemplateResult } from './init-sync-telemetry';
+export { buildOwnedByTaskSet } from './init-sync-telemetry';
 
 const {
   loadRawFrameworkConfig,
@@ -37,7 +49,6 @@ const {
   applyInitMechanismSync,
   applyGenericAdapterBundle,
   resolveBundleForInitInspect,
-  applyAgentBundleInlineSync,
 } = checkInitTesting;
 
 export interface InitExecutionContext {
@@ -111,16 +122,44 @@ function frameworkRootFromCtx(ctx: InitExecutionContext): string {
   return detectRepoLayout(ctx.harnessRoot).frameworkRoot;
 }
 
+function syncResultToMessage(result: SyncTemplateResult): string {
+  switch (result.effect) {
+    case 'created':
+    case 'updated':
+      return `已写入 ${result.targetRel}`;
+    case 'unchanged':
+      return `${result.targetRel} 已对齐，跳过`;
+    case 'delegated':
+      return `${result.targetRel} 由 per-file 任务管理，跳过`;
+    default:
+      return result.targetRel;
+  }
+}
+
+function executionFromSyncResult(result: SyncTemplateResult): InitTaskExecutionResult {
+  return {
+    message: syncResultToMessage(result),
+    file_results: [result],
+    file_effects: aggregateFileEffects([result]),
+  };
+}
+
 function syncTemplateTarget(
   ctx: InitExecutionContext,
   adapter: ReturnType<typeof loadAdapter>,
   renderEnv: ReturnType<typeof buildRenderEnv>,
   targetRel: string,
-  force: boolean,
-): string {
-  const norm = targetRel.replace(/\\/g, '/');
-  const file = adapter.templateFiles.find(f => f.targetRel.replace(/\\/g, '/') === norm)
-    ?? (adapter.entryFile?.targetRel.replace(/\\/g, '/') === norm ? adapter.entryFile : null);
+  options?: { ownedByTask?: Set<string> },
+): SyncTemplateResult {
+  const norm = normalizeTargetRel(targetRel);
+  if (options?.ownedByTask?.has(norm)) {
+    return { targetRel: norm, effect: 'delegated' };
+  }
+
+  const file = adapter.templateFiles.find(f => normalizeTargetRel(f.targetRel) === norm)
+    ?? (adapter.entryFile && normalizeTargetRel(adapter.entryFile.targetRel) === norm
+      ? adapter.entryFile
+      : null);
   if (!file) {
     throw new Error(`adapter 模板列表中未找到 target: ${targetRel}`);
   }
@@ -145,15 +184,21 @@ function syncTemplateTarget(
   } else {
     payload = tplBuf;
   }
-  if (!force && fs.existsSync(tgAbs)) {
-    const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
-    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
-      return `${targetRel} 已对齐，跳过`;
-    }
+
+  if (!fs.existsSync(tgAbs)) {
+    fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+    fs.writeFileSync(tgAbs, payload);
+    return { targetRel: norm, effect: 'created' };
   }
+
+  const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
+  if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+    return { targetRel: norm, effect: 'unchanged' };
+  }
+
   fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
   fs.writeFileSync(tgAbs, payload);
-  return `已写入 ${targetRel}`;
+  return { targetRel: norm, effect: 'updated' };
 }
 
 function writeConfigMerge(
@@ -264,17 +309,19 @@ export function executeInitTask(
   task: InitTask,
   action: TaskDecision['action'],
   ctx: InitExecutionContext,
-): string {
+): InitTaskExecutionResult {
   const adapterName = resolvePrimaryAdapter(ctx);
 
   switch (task.id) {
     case 'ensure-gitignore': {
       const r = ensureCanonicalGitignore(ctx.projectRoot);
-      return r.created
-        ? `创建 .gitignore，追加 ${r.added.length} 条`
-        : r.added.length
-          ? `追加 ${r.added.length} 条 patterns`
-          : 'canonical 已齐备';
+      return {
+        message: r.created
+          ? `创建 .gitignore，追加 ${r.added.length} 条`
+          : r.added.length
+            ? `追加 ${r.added.length} 条 patterns`
+            : 'canonical 已齐备',
+      };
     }
     case 'ensure-config': {
       if (!ctx.configWritePayload) {
@@ -284,7 +331,7 @@ export function executeInitTask(
       }
       const cfgP = configPath(ctx.projectRoot);
       if (fs.existsSync(cfgP) && action !== 'overwrite') {
-        return 'framework.config.json 已存在，未 overwrite';
+        return { message: 'framework.config.json 已存在，未 overwrite' };
       }
       let toWrite: Record<string, unknown>;
       try {
@@ -298,23 +345,27 @@ export function executeInitTask(
       if (fs.existsSync(cfgP)) backupConfig(ctx.projectRoot);
       fs.writeFileSync(cfgP, `${JSON.stringify(toWrite, null, 2)}\n`, 'utf-8');
       clearFrameworkConfigCache();
-      return '已写入 framework.config.json';
+      return { message: '已写入 framework.config.json' };
     }
     case 'backfill-config': {
       const raw = JSON.parse(fs.readFileSync(configPath(ctx.projectRoot), 'utf-8'));
       const profileName = resolveProfileNameFromRaw(raw);
       if (detectMissingBackfillFields(raw, profileName).length === 0) {
-        return '无 backfill 字段缺失';
+        return { message: '无 backfill 字段缺失' };
       }
-      return writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
-        backfill: true,
-        migration: false,
-        confirm: false,
-      });
+      return {
+        message: writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
+          backfill: true,
+          migration: false,
+          confirm: false,
+        }),
+      };
     }
     case 'migrate-config': {
       const raw = JSON.parse(fs.readFileSync(configPath(ctx.projectRoot), 'utf-8'));
-      if (detectPendingMigrations(raw).length === 0) return '无 pending migration';
+      if (detectPendingMigrations(raw).length === 0) {
+        return { message: '无 pending migration' };
+      }
       const legacyLocal = buildLocalFromProjectLegacy(raw);
       const mergeMsg = writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
         backfill: true,
@@ -324,16 +375,18 @@ export function executeInitTask(
       if (legacyLocal) {
         writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, legacyLocal));
         clearFrameworkConfigCache();
-        return `${mergeMsg}；已外迁 personal 字段到 framework.local.json`;
+        return { message: `${mergeMsg}；已外迁 personal 字段到 framework.local.json` };
       }
-      return mergeMsg;
+      return { message: mergeMsg };
     }
     case 'confirm-fields':
-      return writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
-        backfill: false,
-        migration: false,
-        confirm: true,
-      });
+      return {
+        message: writeConfigMerge(ctx.projectRoot, ctx.confirmAnswers ?? {}, {
+          backfill: false,
+          migration: false,
+          confirm: true,
+        }),
+      };
     case 'cleanup-deprecated': {
       const { rawCfg, adapter } = loadInspectorEnv(ctx, adapterName);
       const mode = rawCfg.exists && rawCfg.parseable ? 'update' : 'create';
@@ -342,23 +395,21 @@ export function executeInitTask(
         adapter,
         mode as 'create' | 'update',
       );
-      return cleaned.length
-        ? `deprecated cleanup ${cleaned.length} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
-        : '无 deprecated 产物需清理';
+      return {
+        message: cleaned.length
+          ? `deprecated cleanup ${cleaned.length} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
+          : '无 deprecated 产物需清理',
+      };
     }
     case 'harness-install':
-      return runHarnessInstall(ctx.harnessRoot);
+      return { message: runHarnessInstall(ctx.harnessRoot) };
     case 'run-global-phases':
-      return runGlobalPhases(ctx.harnessRoot, ctx.projectRoot);
+      return { message: runGlobalPhases(ctx.harnessRoot, ctx.projectRoot) };
     case 'materialize-entry-file': {
       const { adapter, renderEnv } = loadInspectorEnv(ctx, adapterName);
       if (!adapter.entryFile) throw new Error('无 entryFile');
-      return syncTemplateTarget(
-        ctx,
-        adapter,
-        renderEnv,
-        adapter.entryFile.targetRel,
-        action === 'overwrite' || action === 'run',
+      return executionFromSyncResult(
+        syncTemplateTarget(ctx, adapter, renderEnv, adapter.entryFile.targetRel),
       );
     }
     case 'assert-active-adapter-materialized': {
@@ -373,25 +424,29 @@ export function executeInitTask(
           `active adapter "${active}" 不在 materialized_adapters [${materialized.join(', ')}]`,
         );
       }
-      return assertAdapterMaterialized(ctx.projectRoot, active);
+      return { message: assertAdapterMaterialized(ctx.projectRoot, active) };
     }
     case 'record-adapter': {
       const active = ctx.activeAdapter?.trim();
       if (!active) throw new Error('record-adapter 需要 executionContext.activeAdapter');
       writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, { agent_adapter: active }));
       clearFrameworkConfigCache();
-      return `已写入 framework.local.json agent_adapter=${active}`;
+      return { message: `已写入 framework.local.json agent_adapter=${active}` };
     }
     case 'detect-deveco': {
       const report = detectScan();
       if (report.recommended?.status === 'ok' && report.recommended.installPath) {
-        return `探测候选 ok: ${report.recommended.installPath}（${report.candidates.length} 个候选）`;
+        return {
+          message: `探测候选 ok: ${report.recommended.installPath}（${report.candidates.length} 个候选）`,
+        };
       }
-      return `未找到完整安装（${report.candidates.length} 个候选）；setup 可选跳过或修正本机安装后重跑`;
+      return {
+        message: `未找到完整安装（${report.candidates.length} 个候选）；setup 可选跳过或修正本机安装后重跑`,
+      };
     }
     case 'record-deveco-path': {
       if (!ctx.devecoInstallPath?.trim()) {
-        return '未提供 devecoInstallPath，跳过写入 local';
+        return { message: '未提供 devecoInstallPath，跳过写入 local' };
       }
       writeLocalConfig(
         ctx.projectRoot,
@@ -400,54 +455,54 @@ export function executeInitTask(
         }),
       );
       clearFrameworkConfigCache();
-      return `已写入 framework.local.json toolchain.devEcoStudio.installPath`;
+      return { message: '已写入 framework.local.json toolchain.devEcoStudio.installPath' };
     }
     default:
       break;
   }
 
   if (task.id.startsWith('sync-auto-overwrite:')) {
+    const targetRel = normalizeTargetRel(task.id.slice('sync-auto-overwrite:'.length));
     const { adapter } = loadInspectorEnv(ctx, adapterName);
-    const { syncedFiles, backupRelDir } = applyInitMechanismSync(ctx.projectRoot, adapter);
-    return syncedFiles
-      ? `mechanism sync ${syncedFiles} 个 auto_overwrite 文件${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
-      : 'auto_overwrite 模板已对齐';
+    const { results, syncedFiles, backupRelDir } = applyInitMechanismSync(ctx.projectRoot, adapter, {
+      includeTargets: new Set([targetRel]),
+    });
+    return {
+      message: syncedFiles
+        ? `mechanism sync ${syncedFiles} 个 auto_overwrite 文件${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
+        : 'auto_overwrite 模板已对齐',
+      file_results: results,
+      file_effects: aggregateFileEffects(results),
+    };
   }
 
   if (task.id.startsWith('materialize-adapter-file:')) {
     const targetRel = task.id.slice('materialize-adapter-file:'.length);
     const { adapter, renderEnv } = loadInspectorEnv(ctx, adapterName);
-    return syncTemplateTarget(
-      ctx,
-      adapter,
-      renderEnv,
-      targetRel,
-      action === 'overwrite' || action === 'run',
-    );
+    return executionFromSyncResult(syncTemplateTarget(ctx, adapter, renderEnv, targetRel));
   }
 
   if (task.id.startsWith('materialize-adapter:')) {
     const name = task.id.slice('materialize-adapter:'.length);
-    const { adapter, renderEnv, rawCfg } = loadInspectorEnv(ctx, name);
-    let written = 0;
+    const { adapter, renderEnv } = loadInspectorEnv(ctx, name);
+    const ownedByTask = buildOwnedByTaskSet(ctx.plan);
+    const fileResults: SyncTemplateResult[] = [];
+
     if (adapter.entryFile) {
-      syncTemplateTarget(ctx, adapter, renderEnv, adapter.entryFile.targetRel, true);
-      written++;
+      fileResults.push(
+        syncTemplateTarget(ctx, adapter, renderEnv, adapter.entryFile.targetRel, { ownedByTask }),
+      );
     }
     for (const f of adapter.templateFiles) {
-      if (f.update_policy === 'auto_overwrite') continue;
-      syncTemplateTarget(ctx, adapter, renderEnv, f.targetRel, true);
-      written++;
+      fileResults.push(syncTemplateTarget(ctx, adapter, renderEnv, f.targetRel, { ownedByTask }));
     }
-    applyInitMechanismSync(ctx.projectRoot, adapter);
-    if (adapter.name === 'generic') {
-      const bundle = resolveBundleForInitInspect('generic', rawCfg, ctx.projectRoot);
-      if (bundle?.skillMode === 'inline') {
-        const { syncedFiles } = applyAgentBundleInlineSync(ctx.projectRoot, bundle);
-        written += syncedFiles;
-      }
-    }
-    return `物化 adapter ${name}：写入/对齐 ${written} 个模板文件`;
+
+    const fileEffects = aggregateFileEffects(fileResults);
+    return {
+      message: formatBundleSyncMessage(name, fileEffects),
+      file_effects: fileEffects,
+      file_results: fileResults,
+    };
   }
 
   if (
@@ -474,9 +529,9 @@ export function executeInitTask(
       const featuresAbs = path.join(ctx.projectRoot, featuresRel);
       if (!fs.existsSync(featuresAbs)) {
         fs.mkdirSync(featuresAbs, { recursive: true });
-        return `已创建 ${featuresRel}/`;
+        return { message: `已创建 ${featuresRel}/` };
       }
-      return `${featuresRel}/ 已存在，跳过`;
+      return { message: `${featuresRel}/ 已存在，跳过` };
     }
     const key = payloadKeyMap[task.id]!;
     const content = ctx.docWritePayload?.[key]?.trim();
@@ -497,8 +552,8 @@ export function executeInitTask(
     const abs = path.join(ctx.projectRoot, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content.endsWith('\n') ? content : `${content}\n`, 'utf-8');
-    return `已写入 ${rel}`;
+    return { message: `已写入 ${rel}` };
   }
 
-  return `任务已登记（无 executor 实现：${task.title}）`;
+  return { message: `任务已登记（无 executor 实现：${task.title}）` };
 }
