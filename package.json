@@ -1,6 +1,6 @@
 {
   "name": "agent-maison",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "AgentMaison — spec-driven agentic workflow framework with harness gates",
   "scripts": {
