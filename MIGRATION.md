@@ -151,7 +151,7 @@ git submodule update --remote framework
 
 1. Vendor / submodule 更新 framework 到含本重构的版本。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4），物化**新扁平跳板名**与 inline 链接。
-3. **手工清理**残留旧跳板目录（如 `.cursor/skills/3-coding/`）——init **不自动删除**。
+3. **UPDATE init 自动清理**残留编号跳板（如 `.cursor/skills/3-coding/`、`.agents/skills/3-coding/`、`.claude/commands/3-coding.md`）；删除前备份至 `.framework-backup/<timestamp>/`，可按需回滚。CREATE 模式不删除。
 4. profile `skill-assets.yaml` 与扩展 skill 引用改为扁平 slug。
 5. **profile 镜像路径保持扁平**：`profiles/<profile>/skills/<skill-id>/`（**不得**含 `project/` 或 `feature/` 嵌套）。
 

@@ -16,10 +16,24 @@ export interface FileEffects {
   delegated: number;
 }
 
+export interface CleanupResult {
+  path: string;
+  backup_path?: string;
+  kind: 'deprecated_artifact' | 'legacy_skill_bridge';
+  adapter?: string;
+  legacy_id?: string;
+}
+
+export interface CleanupEffects {
+  backup_deleted: number;
+}
+
 export interface InitTaskExecutionResult {
   message: string;
   file_effects?: FileEffects;
   file_results?: SyncTemplateResult[];
+  cleanup_results?: CleanupResult[];
+  cleanup_effects?: CleanupEffects;
 }
 
 export function normalizeTargetRel(targetRel: string): string {

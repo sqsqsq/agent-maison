@@ -463,10 +463,16 @@ function removePathRecursive(abs: string): void {
   fs.rmSync(abs, { recursive: true, force: true });
 }
 
+export interface DeprecatedCleanupBackupSession {
+  stamp: string;
+  backupRelDir?: string;
+}
+
 export function applyDeprecatedArtifactsCleanup(
   projectRoot: string,
   adapter: AdapterDescriptor,
   mode: InitMode,
+  options?: { backupSession?: DeprecatedCleanupBackupSession },
 ): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
   if (mode !== 'update') {
@@ -478,7 +484,8 @@ export function applyDeprecatedArtifactsCleanup(
   const root = resolveAdapterTargetRoot(adapter.rawConfig);
   if (!root) return { cleaned, backupRelDir: null };
 
-  let backupRelDir: string | null = null;
+  const session = options?.backupSession;
+  let backupRelDir: string | null = session?.backupRelDir ?? null;
   for (const entry of entries) {
     if (entry.action !== 'backup_delete') continue;
     const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -486,9 +493,10 @@ export function applyDeprecatedArtifactsCleanup(
     if (!fs.existsSync(absPath)) continue;
 
     if (!backupRelDir) {
-      const stamp = nowStamp();
+      const stamp = session?.stamp ?? nowStamp();
       backupRelDir = `.framework-backup/${stamp}`;
       fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
+      if (session) session.backupRelDir = backupRelDir;
     }
     const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
     copyPathRecursive(absPath, backupAbs);

@@ -15,6 +15,14 @@ import {
   inspectionsForInit034Prompt,
   type InitMode,
 } from '../check-init';
+import { detectLegacySkillBridgePresence } from './legacy-skill-bridge-cleanup';
+import {
+  resolveMaterializedAdaptersFromContext,
+  resolveProjectMaterializedAdapters,
+} from './materialized-adapters-resolve';
+
+export { resolveProjectMaterializedAdapters } from './materialized-adapters-resolve';
+export type { MaterializedAdaptersContext } from './materialized-adapters-resolve';
 
 export type TaskScope = 'project' | 'personal';
 export type TaskStatus = 'satisfied' | 'needed' | 'drift' | 'skippable';
@@ -353,19 +361,6 @@ export function resolveProjectInitAdapterHint(
   return 'generic';
 }
 
-/** 项目级 materialized_adapters（不含 local merge） */
-export function resolveProjectMaterializedAdapters(
-  sources: FrameworkConfigWithSources,
-  adapterHint: string,
-): string[] {
-  const raw = sources.projectRaw;
-  const fromProject = Array.isArray(raw?.materialized_adapters)
-    ? raw!.materialized_adapters.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
-    : [];
-  if (fromProject.length > 0) return fromProject.map(a => a.trim());
-  return [adapterHint];
-}
-
 function buildMaterializeAdapterTasks(materializedAdapters: string[]): InitTask[] {
   const seen = new Set<string>();
   const out: InitTask[] = [];
@@ -393,20 +388,7 @@ function buildMaterializeAdapterTasks(materializedAdapters: string[]): InitTask[
 export function resolveMaterializedAdaptersFromExecutionContext(
   ctx?: Partial<{ materializedAdapters?: string[]; configWritePayload?: Record<string, unknown> }>,
 ): string[] | undefined {
-  if (!ctx) return undefined;
-  const fromCtx = (ctx.materializedAdapters ?? []).filter(
-    (a): a is string => typeof a === 'string' && a.trim().length > 0,
-  );
-  if (fromCtx.length > 0) return fromCtx.map(a => a.trim());
-
-  const payload = ctx.configWritePayload?.materialized_adapters;
-  if (Array.isArray(payload)) {
-    const fromPayload = payload.filter(
-      (a): a is string => typeof a === 'string' && a.trim().length > 0,
-    );
-    if (fromPayload.length > 0) return fromPayload.map(a => a.trim());
-  }
-  return undefined;
+  return resolveMaterializedAdaptersFromContext(ctx);
 }
 
 /** 用 S2 选定的 adapter 清单替换 plan 中的 materialize-adapter:* 任务 */
@@ -511,10 +493,24 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
         : [adapterHint]
       : resolveProjectMaterializedAdapters(cfgSources, adapterHint);
 
-  const tasks =
+  let tasks =
     scope === 'personal'
       ? buildPersonalTasks(materialized)
       : buildProjectTasks(inspections, mode, materialized);
+
+  if (scope === 'project' && mode === 'update') {
+    const presence = detectLegacySkillBridgePresence(projectRoot, cfgSources.config, materialized);
+    if (presence.count > 0) {
+      tasks = tasks.map(t =>
+        t.id === 'cleanup-deprecated'
+          ? {
+              ...t,
+              title: `deprecated + 遗留编号跳板 cleanup（发现 ${presence.count} 处，S3 将 backup_delete）`,
+            }
+          : t,
+      );
+    }
+  }
 
   return {
     schema_version: '1.0',

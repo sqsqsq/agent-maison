@@ -10,7 +10,12 @@ import {
   executeInitTask,
   type InitExecutionContext,
 } from './utils/init-task-executor';
-import type { FileEffects, SyncTemplateResult } from './utils/init-sync-telemetry';
+import type {
+  CleanupEffects,
+  CleanupResult,
+  FileEffects,
+  SyncTemplateResult,
+} from './utils/init-sync-telemetry';
 import { formatFileEffectsCounts } from './utils/init-sync-telemetry';
 import {
   type InitTask,
@@ -56,6 +61,8 @@ export interface InitRunLogEntry {
   target_path?: string;
   file_effects?: FileEffects;
   file_results?: SyncTemplateResult[];
+  cleanup_results?: CleanupResult[];
+  cleanup_effects?: CleanupEffects;
 }
 
 export interface InitRunLogAuditMeta {
@@ -874,6 +881,14 @@ function summaryCategoryKey(entry: InitRunLogEntry): string {
 }
 
 function formatEntryCategoryLine(entry: InitRunLogEntry): string {
+  if (entry.cleanup_effects?.backup_deleted) {
+    const backupHint = entry.message.includes('.framework-backup/')
+      ? entry.message.match(/（备份 ([^）]+)）/)?.[1]
+      : undefined;
+    return backupHint
+      ? `backup_deleted ${entry.cleanup_effects.backup_deleted}（备份 ${backupHint}）`
+      : `backup_deleted ${entry.cleanup_effects.backup_deleted}`;
+  }
   if (entry.file_effects) {
     const adapterMatch = entry.task_id.match(/^materialize-adapter:(.+)$/);
     if (adapterMatch) {
@@ -1055,6 +1070,8 @@ export function executeInitPlan(options: ExecuteOptions): InitRunLog {
         ...(task.target_path ? { target_path: task.target_path } : {}),
         ...(result.file_effects ? { file_effects: result.file_effects } : {}),
         ...(result.file_results?.length ? { file_results: result.file_results } : {}),
+        ...(result.cleanup_results?.length ? { cleanup_results: result.cleanup_results } : {}),
+        ...(result.cleanup_effects ? { cleanup_effects: result.cleanup_effects } : {}),
       });
     } catch (e) {
       failedIds.add(task.id);

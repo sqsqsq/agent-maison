@@ -25,6 +25,9 @@ import {
 } from './framework-local-config';
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
+import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skill-bridge-cleanup';
+import { resolveMaterializedAdaptersForCleanup } from './materialized-adapters-resolve';
+import type { CleanupEffects, CleanupResult } from './init-sync-telemetry';
 import { detectRepoLayout } from '../../repo-layout';
 import {
   aggregateFileEffects,
@@ -398,17 +401,56 @@ export function executeInitTask(
         }),
       };
     case 'cleanup-deprecated': {
-      const { rawCfg, adapter } = loadInspectorEnv(ctx, adapterName);
-      const mode = rawCfg.exists && rawCfg.parseable ? 'update' : 'create';
-      const { cleaned, backupRelDir } = applyDeprecatedArtifactsCleanup(
-        ctx.projectRoot,
-        adapter,
-        mode as 'create' | 'update',
-      );
+      const mode = ctx.plan.mode;
+      if (mode !== 'update') {
+        return { message: 'CREATE 跳过遗留跳板清理' };
+      }
+
+      const sources = loadFrameworkConfigWithSources(ctx.projectRoot);
+      const config = sources.config;
+      const adapters = resolveMaterializedAdaptersForCleanup(ctx, config, sources);
+      const backupSession: BackupSession = {
+        stamp: new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'),
+      };
+
+      const cleanupResults: CleanupResult[] = [];
+
+      for (const name of adapters) {
+        const adapter = loadAdapter(name);
+        const { cleaned } = applyDeprecatedArtifactsCleanup(
+          ctx.projectRoot,
+          adapter,
+          mode,
+          { backupSession },
+        );
+        for (const item of cleaned) {
+          cleanupResults.push({
+            path: item.path,
+            backup_path: item.backup_path ?? undefined,
+            kind: 'deprecated_artifact',
+            adapter: name,
+          });
+        }
+      }
+
+      const legacy = applyLegacySkillBridgeCleanup({
+        projectRoot: ctx.projectRoot,
+        materializedAdapters: adapters,
+        mode,
+        config,
+        backupSession,
+      });
+      cleanupResults.push(...legacy.cleaned);
+
+      const backupRelDir = backupSession.backupRelDir ?? null;
+      const total = cleanupResults.length;
+      const cleanupEffects: CleanupEffects = { backup_deleted: total };
+
       return {
-        message: cleaned.length
-          ? `deprecated cleanup ${cleaned.length} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
-          : '无 deprecated 产物需清理',
+        message: total
+          ? `cleanup backup_delete ${total} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
+          : '无 deprecated / 遗留跳板需清理',
+        ...(total > 0 ? { cleanup_results: cleanupResults, cleanup_effects: cleanupEffects } : {}),
       };
     }
     case 'harness-install':

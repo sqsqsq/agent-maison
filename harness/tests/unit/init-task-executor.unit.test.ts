@@ -650,6 +650,209 @@ const cases: Array<{ name: string; run: () => void }> = [
       clearFrameworkConfigCache();
     },
   },
+  {
+    name: 'cleanup-deprecated CREATE：磁盘有 config + 遗留跳板仍 0 删除',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['cursor'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.mkdirSync(path.join(root, '.cursor', 'skills', '3-coding'), { recursive: true });
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'create',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['cursor'],
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const result = executeInitTask(task, 'run', ctx);
+      assert.match(result.message, /CREATE 跳过/);
+      assert(!result.cleanup_results?.length);
+      assert(fs.existsSync(path.join(root, '.cursor', 'skills', '3-coding')));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'cleanup-deprecated UPDATE cursor：删 3-coding 留 coding',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['cursor'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.mkdirSync(path.join(root, '.cursor', 'skills', '3-coding'), { recursive: true });
+      fs.mkdirSync(path.join(root, '.cursor', 'skills', 'coding'), { recursive: true });
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['cursor'],
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const result = executeInitTask(task, 'run', ctx);
+      assert(result.cleanup_effects?.backup_deleted);
+      assert(!fs.existsSync(path.join(root, '.cursor', 'skills', '3-coding')));
+      assert(fs.existsSync(path.join(root, '.cursor', 'skills', 'coding')));
+      assert(result.cleanup_results?.some(r => r.path.includes('3-coding')));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'cleanup-deprecated UPDATE generic+.codex：清 .codex/skills/3-coding',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['generic'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features', agent_bundle_root: '.codex' },
+        }, null, 2),
+      );
+      fs.mkdirSync(path.join(root, '.codex', 'skills', '3-coding'), { recursive: true });
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['generic'],
+        activeAdapter: 'cursor',
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const result = executeInitTask(task, 'run', ctx);
+      assert(result.cleanup_results?.some(r => r.path === '.codex/skills/3-coding/'));
+      assert(!fs.existsSync(path.join(root, '.codex', 'skills', '3-coding')));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'cleanup-deprecated UPDATE 幂等：第二次 0 cleaned',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['cursor'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.mkdirSync(path.join(root, '.cursor', 'skills', '3-coding'), { recursive: true });
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['cursor'],
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const first = executeInitTask(task, 'run', ctx);
+      assert(first.cleanup_effects?.backup_deleted);
+      const second = executeInitTask(task, 'run', ctx);
+      assert(!second.cleanup_effects?.backup_deleted);
+      assert.match(second.message, /无 deprecated/);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

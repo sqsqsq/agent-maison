@@ -90,6 +90,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'template-renderer', modulePath: './unit/template-renderer.unit.test' },
   { id: 'init-orchestrate', modulePath: './unit/init-orchestrate.unit.test' },
   { id: 'init-task-executor', modulePath: './unit/init-task-executor.unit.test' },
+  { id: 'materialized-adapters-resolve', modulePath: './unit/materialized-adapters-resolve.unit.test' },
+  { id: 'legacy-skill-bridge-cleanup', modulePath: './unit/legacy-skill-bridge-cleanup.unit.test' },
   { id: 'init-orchestrate-smoke', modulePath: './unit/init-orchestrate-smoke.unit.test' },
   { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
   { id: 'adhoc-nl-split', modulePath: './unit/adhoc-nl-split.unit.test' },
