@@ -62,8 +62,8 @@ const cases: Case[] = [
         '    role: 全景',
         '    sources:',
         '      - framework/README.md',
-        '      - framework/skills/3-coding/SKILL.md',
-        '  - path: framework/docs/skills/5-business-ut.md',
+        '      - framework/skills/feature/coding/SKILL.md',
+        '  - path: framework/docs/skills/business-ut.md',
         '    role: UT 讲解',
         '    sources: []',
       ].join('\n'));

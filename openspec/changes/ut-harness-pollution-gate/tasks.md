@@ -14,7 +14,7 @@
 
 ## 3. Docs & gitignore
 
-- [x] 3.1 harness-cli-cwd §2.5、Skill 5 Step 3.0、profile-addendum、framework-agent-execution、consumer-framework-boundary
+- [x] 3.1 harness-cli-cwd §2.5、business-ut Step 3.0、profile-addendum、framework-agent-execution、consumer-framework-boundary
 - [x] 3.2 `canonical-gitignore.ts` 追加 ohosTest/test/dag
 
 ## 4. Verify

@@ -156,10 +156,8 @@ const cases: Case[] = [
     name: 'init eol: rendered architecture skeleton 仅 CRLF/LF 不同 → EMPTY',
     run: () => withTmpProject(root => {
       const env = makeInspectorEnv(root);
-      const template = fs.readFileSync(
-        path.join(FRAMEWORK_ROOT, 'skills/00-framework-init/templates/architecture.md.skeleton.md'),
-        'utf-8',
-      );
+      const { tplAbs } = __testing.resolveArchitectureSkeletonSource('hmos-app');
+      const template = fs.readFileSync(tplAbs, 'utf-8');
       const rendered = __testing.renderTemplate(template, env.renderEnv!);
       writeFile(path.join(root, 'doc/architecture.md'), withOppositeEol(rendered));
 
@@ -172,7 +170,7 @@ const cases: Case[] = [
     name: 'init eol: glossary seed 仅 CRLF/LF 不同 → EMPTY',
     run: () => withTmpProject(root => {
       const template = fs.readFileSync(
-        path.join(FRAMEWORK_ROOT, 'skills/00-framework-init/templates/glossary-seed.skeleton.txt'),
+        path.join(FRAMEWORK_ROOT, 'skills/project/framework-init/templates/glossary-seed.skeleton.txt'),
         'utf-8',
       );
       writeFile(path.join(root, 'doc/glossary-seed.txt'), withOppositeEol(template));

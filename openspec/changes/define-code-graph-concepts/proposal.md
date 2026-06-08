@@ -1,6 +1,6 @@
 ## Why
 
-The framework has no module-level concept for "core function index", and the term "DAG" is overloaded three ways (Skill 5 UT flow DAG, Skill 3 module-dependency acyclicity, architecture DSL `intra_layer_deps: dag`). Before building module-level testing/navigation, we need a shared, normative vocabulary and an explicit guarantee that any derived graph stays an index — never a parallel source of truth competing with code.
+The framework has no module-level concept for "core function index", and the term "DAG" is overloaded three ways (business-ut UT flow DAG, coding module-dependency acyclicity, architecture DSL `intra_layer_deps: dag`). Before building module-level testing/navigation, we need a shared, normative vocabulary and an explicit guarantee that any derived graph stays an index — never a parallel source of truth competing with code.
 
 ## What Changes
 
@@ -11,7 +11,7 @@ The framework has no module-level concept for "core function index", and the ter
 - Establish the **index-only (non-SSOT) principle**: a Code Graph is a derived projection of code plus a thin curated intent layer; it is NEVER authoritative; any consumer (PRD/design/coding/UT/device-testing) MUST re-verify node anchors against source code before trusting graph content.
 - Establish the **derived-vs-curated layering** and **freshness/drift expectation** conceptually: facts that static analysis can produce are auto-derived; humans only add what code cannot express (intent, invariants, `core` marking); staleness must be detectable. The enforcement mechanism lands in later changes.
 - Disambiguate the three current "dag" usages in framework docs.
-- **Also ships (merged from Track A P2/P5):** `paths.module_graphs_dir`, `GraphExtractor` contract + hmos-app v1 provider, graded drift in `harness/code-graph/drift.ts`, Skill 5 core-node closure Step 8.0.
+- **Also ships (merged from Track A P2/P5):** `paths.module_graphs_dir`, `GraphExtractor` contract + hmos-app v1 provider, graded drift in `harness/code-graph/drift.ts`, business-ut core-node closure Step 8.0.
 - UT flow DAG / coverage-evidence / path-c / seam registry live in change `ut-flow-dag-evidence`.
 
 ## Capabilities

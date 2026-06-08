@@ -32,6 +32,8 @@ import {
 } from './utils/doc-freshness';
 import { validateProfileSkillAssetsForProject } from './utils/profile-skill-assets';
 import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
+import { runNoNumberedSkillPathsChecks } from './check-no-numbered-skill-paths';
+import { runNoNumberedSkillProseChecks } from './check-no-numbered-skill-prose';
 import {
   frameworkAbs,
   frameworkLogicalRelPath,
@@ -339,6 +341,8 @@ const checker: PhaseChecker = {
     results.push(...checkSourcePathsResolvable(ctx, docs));
     results.push(...checkProfileSkillAssetsResolvable(ctx));
     results.push(...runConfirmationUxChecks(ctx));
+    results.push(...runNoNumberedSkillPathsChecks(ctx));
+    results.push(...runNoNumberedSkillProseChecks(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

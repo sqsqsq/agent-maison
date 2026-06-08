@@ -20,7 +20,7 @@ run `npm install` automatically.
 
 > **Enforced by:** `harness/scripts/init-readiness.mjs`,
 > `harness/tests/unit/init-readiness.unit.test.ts`,
-> `skills/00-framework-init/SKILL.md`
+> `skills/project/framework-init/SKILL.md`
 
 ### Requirement: Run-log entries carry optional skip reason
 
@@ -101,7 +101,7 @@ is allowed (e.g. never return `overwrite` for doc drift tasks that only allow
 
 ### Requirement: S4 init summary lists optional next steps only
 
-Skill 00 and materialized `/framework-init` command templates MUST list optional
+framework-init and materialized `/framework-init` command templates MUST list optional
 downstream steps after init without prompting the user to immediately enter
 catalog-bootstrap, glossary-bootstrap, or prd-design (no default yes/no gate to
 the next Skill).
@@ -111,5 +111,5 @@ the next Skill).
 - **THEN** the agent summary MUST NOT ask「是否现在进入 catalog-bootstrap」or equivalent default yes/no gate
 - **AND** MUST only list optional next steps for the user to choose explicitly
 
-> **Enforced by:** `skills/00-framework-init/SKILL.md`,
+> **Enforced by:** `skills/project/framework-init/SKILL.md`,
 > `agents/claude/templates/commands/framework-init.md`

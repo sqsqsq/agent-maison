@@ -89,7 +89,7 @@ strings. Lint MUST fail such entries.
 
 ### Requirement: Init setup prompts forbid architecture free-text questionnaires
 
-`skills/00-framework-init/prompts/**` and `templates/**` MUST NOT instruct
+`skills/project/framework-init/prompts/**` and `templates/**` MUST NOT instruct
 agents to collect architecture DSL fields via conversational questionnaires
 (fully custom flows, field-by-field collection, sublayer follow-up prompts).
 
@@ -99,8 +99,8 @@ agents to collect architecture DSL fields via conversational questionnaires
   `完全自定义`, `收集字段`, `手工拼装 JSON`, `逐项确认`, `追加问卷`,
   or `继续追问` (except lines explicitly marked as forbidden anti-patterns)
 
-> **Enforced by:** `skills/00-framework-init/prompts/**`,
-> `skills/00-framework-init/templates/**`,
+> **Enforced by:** `skills/project/framework-init/prompts/**`,
+> `skills/project/framework-init/templates/**`,
 > `skills/reference/user-confirmation-ux.md`,
 > `harness/scripts/check-skills-confirmation-ux.ts`
 

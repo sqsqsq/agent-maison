@@ -210,23 +210,37 @@ export function scanMarkdownRelativeLinks(
  * 仅收集各阶段 SKILL.md 与 prompts/*.md。
  * 与 docs phase `profile_skill_assets_resolvable` 规则一致：不扫 templates/、reference/ 等示意骨架，避免误报。
  */
+const SKILL_SCOPE_DIRS = new Set(['project', 'feature']);
+
+function collectSkillMarkdownUnderDir(skillDir: string, out: string[]): void {
+  const skillMd = path.join(skillDir, 'SKILL.md');
+  if (fs.existsSync(skillMd)) {
+    out.push(skillMd);
+  }
+  const promptsDir = path.join(skillDir, 'prompts');
+  if (fs.existsSync(promptsDir)) {
+    for (const p of fs.readdirSync(promptsDir)) {
+      if (p.endsWith('.md')) {
+        out.push(path.join(promptsDir, p));
+      }
+    }
+  }
+}
+
 function walkSkillDocMarkdownFiles(skillsRoot: string, out: string[]): void {
   if (!fs.existsSync(skillsRoot)) return;
   for (const ent of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    const skillDir = path.join(skillsRoot, ent.name);
-    const skillMd = path.join(skillDir, 'SKILL.md');
-    if (fs.existsSync(skillMd)) {
-      out.push(skillMd);
-    }
-    const promptsDir = path.join(skillDir, 'prompts');
-    if (fs.existsSync(promptsDir)) {
-      for (const p of fs.readdirSync(promptsDir)) {
-        if (p.endsWith('.md')) {
-          out.push(path.join(promptsDir, p));
-        }
+    if (ent.name === 'reference') continue;
+    const top = path.join(skillsRoot, ent.name);
+    if (SKILL_SCOPE_DIRS.has(ent.name)) {
+      for (const sub of fs.readdirSync(top, { withFileTypes: true })) {
+        if (!sub.isDirectory()) continue;
+        collectSkillMarkdownUnderDir(path.join(top, sub.name), out);
       }
+      continue;
     }
+    collectSkillMarkdownUnderDir(top, out);
   }
 }
 

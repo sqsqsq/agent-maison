@@ -7,11 +7,11 @@
 # ============================================================================
 # v2.1 核心转变：
 #   - UT 仍然端到端驱动业务流，但业务编排的**代码形态不强制**：
-#     可以是 Page 命名方法 / 普通业务类 / 导出函数；由 Skill 3 按复杂度选择。
+#     可以是 Page 命名方法 / 普通业务类 / 导出函数；由 coding 按复杂度选择。
 #   - use-cases.yaml 是**规约文档**，不映射固定目录结构；其核心价值在 ui_bindings
 #     映射表（UI 事件 ↔ 命名函数），给 UT 提供机械化翻译的蓝图。
 #   - 外部依赖不再要求抽 Port 接口；直接指向现有 data 层类（data_boundaries）。
-#   - UI 副作用（Toast/Nav）不进 UT，由 Skill 6 按 acceptance.yaml > device_focus 真机覆盖。
+#   - UI 副作用（Toast/Nav）不进 UT，由 device-testing 按 acceptance.yaml > device_focus 真机覆盖。
 #   - 追溯：DAG/UT 用例必须追溯到 AC（ut_layer in unit/both）或 branch。
 #
 # 消费者:
@@ -265,7 +265,7 @@ structure_checks:
 
   ut_no_src_mutation:
     description: >
-      v2.2 新增（Skill 5 红线）：Skill 5（UT）阶段**禁止擅自修改业务源码**。
+      v2.2 新增（business-ut 红线）：business-ut（UT）阶段**禁止擅自修改业务源码**。
       对 02-Feature/**/src/main/**、01-Business/**/src/main/**、00-Common/**/src/main/**
       等非 ohosTest/test 目录下的任何变更，必须事先征得用户同意并登记到
       gap-notes.md > approved_src_mutations[] 清单。
@@ -291,7 +291,7 @@ structure_checks:
   ut_hvigor_test:
     description: >
       v2.2 新增（方案 C）：UT 必须在真机/模拟器上**实际运行**并全部通过，
-      作为 Skill 5 的必要出口条件（而非 SKIP）。该规则：
+      作为 business-ut 的必要出口条件（而非 SKIP）。该规则：
         (1) 先调用 hdc list targets 探测设备；
         (2) 无设备 → **FAIL BLOCKER**（不 SKIP；内网无设备的"软通过"是已知假 PASS 根因）；
         (3) 有设备 → hvigorw test 装机运行；
@@ -411,7 +411,7 @@ structure_checks:
     rule:
       path: "doc/features/{feature}/ut/testability-audit.md"
       records_root: "records[] YAML 或 fenced ```yaml 块"
-      template: "framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md"
+      template: "framework/profiles/hmos-app/skills/business-ut/templates/testability-audit-template.md"
 
   ut_unsupported_targets_handled:
     description: >
@@ -432,7 +432,7 @@ structure_checks:
     severity: BLOCKER
     rule:
       path: "doc/features/{feature}/ut/mock-plan.yaml"
-      template: "framework/profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md"
+      template: "framework/profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md"
 
   ut_mock_plan_typed:
     description: >
@@ -503,7 +503,7 @@ semantic_checks:
     description: >
       ui_bindings.user_actions.calls 指向的每个函数符号必须在代码中存在，
       且是命名方法 / 导出函数（不能只存在于 inline lambda）。
-      由 Skill 3 的 named_business_handler 规则兜底；此处做语义二次核对，
+      由 coding 的 named_business_handler 规则兜底；此处做语义二次核对，
       关注"虽然代码里有同名符号，但实际被 inline lambda 覆盖"的伪实现。
     severity: BLOCKER
     ai_prompt_hint: >
@@ -532,7 +532,7 @@ semantic_checks:
   device_ac_delegation:
     description: >
       acceptance.yaml 中 ut_layer in [device, both] 的 AC/BD 必须声明非空
-      device_focus；Skill 6 的 test-plan.md 应覆盖这些条目的 P0/P1（脚本
+      device_focus；device-testing 的 test-plan.md 应覆盖这些条目的 P0/P1（脚本
       acceptance_to_test_case 为 BLOCKER）。确保无 AC「两层都没人测」。
     severity: BLOCKER
     ai_prompt_hint: >
@@ -564,7 +564,7 @@ traceability_checks:
   ut_coverage_evidence_present:
     description: >
       当 feature 存在 in-scope unit/both P0/P1 时，须产出
-      doc/features/{feature}/ut/reports/coverage-evidence.json（Skill 5 写入，harness 不自造 mapping）。
+      doc/features/{feature}/ut/reports/coverage-evidence.json（business-ut 写入，harness 不自造 mapping）。
       缺失时 BLOCKER/FAIL。
     severity: BLOCKER
 
@@ -622,7 +622,7 @@ traceability_checks:
   acceptance_coverage:
     description: >
       P0/P1 验收标准的 UT 覆盖率（分母只计 ut_layer ∈ [unit, both] 的 AC；
-      ut_layer = device 的 AC 不纳入 UT 分母，交 Skill 6 负责）。
+      ut_layer = device 的 AC 不纳入 UT 分母，交 device-testing 负责）。
     severity: BLOCKER
     rule:
       source: "acceptance.yaml > criteria"

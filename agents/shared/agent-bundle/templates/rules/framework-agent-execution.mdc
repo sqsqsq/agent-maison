@@ -14,12 +14,12 @@ alwaysApply: true
 - `framework/harness/harness-runner.ts`（任意 `--phase` / `--feature`）
 - `framework/harness/scripts/check-receipt.ts`
 - 宿主打包/装机/真机自动化链（hvigor、hdc install、`device_test.*`、Hylyre `run --plan` 等由 harness 触发的步骤）
-- `pip install` / 删 `.hylyre/venv` / `hylyre doctor` 等 **Skill 6 Step 7 自跑 testing harness 时应由 ensure 覆盖** 的安装动作
-- **即席（ad-hoc）**场景下向用户提供「选项 A 手动真机 / 选项 B 你去安装 Hylyre」作为**唯一**出路（Hylyre 由 `npm run adhoc-device-test` 内 `ensureHylyreReady` 自动对齐，见 Skill 6 Step 4.B）
+- `pip install` / 删 `.hylyre/venv` / `hylyre doctor` 等 **device-testing Step 7 自跑 testing harness 时应由 ensure 覆盖** 的安装动作
+- **即席（ad-hoc）**场景下向用户提供「选项 A 手动真机 / 选项 B 你去安装 Hylyre」作为**唯一**出路（Hylyre 由 `npm run adhoc-device-test` 内 `ensureHylyreReady` 自动对齐，见 device-testing Step 4.B）
 - 即席场景下使用 `harness-runner --phase testing --feature _adhoc`（该入口会 exit 1 并提示正确 CLI）
 - 即席真机结果**只能**从 `adhoc-device-test` **执行模式**（`--plan` / `--steps-file`）stderr 的 `ADHOC_TRACE_FILE=` 读取 `trace.json`；derive 用 `ADHOC_DERIVE_FILE=`。**严禁** glob `doc/features/_adhoc/testing/reports/*/hylyre/` 当本次结果
 - **消费者工程禁止改 framework 源码**（含 `ts-compile.ts`、`package.json`、profile harness）：见 `framework/skills/reference/consumer-framework-boundary.md`；`Cannot find module 'yaml'` 仅在 `framework/harness` 执行 `npm install`。
-- 即席 **`--steps` 仅 derive hint**；agent 须读 `derive-adhoc-last.json` 的 **contract**，写 steps 到 **`doc/features/_adhoc/testing/staging/test-steps.json`** 后 **`npm run lint-adhoc-steps`** 通过，再 `adhoc-device-test --steps-file`（推荐；观察 NL 不进 steps）；`--plan` 可选。**禁止** agent 向 **`framework/harness/`** Write 即席 steps / trace / report / plan-lint **或宿主 UT 源码**（profile 测试源树、`test/dag/`、`{package_path}/` module 树；reports/state 除外）。Skill 5 Write 前须 `cd <repo-root>`（见 `framework/skills/reference/harness-cli-cwd.md` §2.5）。执行报告目录以 stderr **`ADHOC_HYLYRE_RUN_DIR=`** 为准（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）。观察汇总用 **`--dump-ui-only`** + **`summarize-adhoc-dump`**，**禁止** steps 内 `dump_ui`；固定等待用 **`{"wait":{"seconds":N}}`**（STEP-WAIT-SECONDS）。touch 用 **`{"touch":{"by_text":"…"}}`**（STEP-TOUCH 禁 `selector` 嵌套）；**禁止** steps 内 **`start_app`**。**禁止** agent Write `doc/app-snapshot-cache/<bundle>/` 根目录 page JSON（官方 layout **`pages/<slug>.json`**；stderr **`ADHOC_CACHE_LAYOUT_MISMATCH=1`** 时修 page save 或迁入 `pages/`）。**execute 默认冷重启**；保留 Nav 栈用 **`--continue-session`**；`--accept-cold-start` **仅** skip warmup。前次非 success 且 continue-session 时读 stderr **`ADHOC_UI_RESET_RECOMMENDED=1`**（来源：固定 **`device-test-run.meta.json`**）
+- 即席 **`--steps` 仅 derive hint**；agent 须读 `derive-adhoc-last.json` 的 **contract**，写 steps 到 **`doc/features/_adhoc/testing/staging/test-steps.json`** 后 **`npm run lint-adhoc-steps`** 通过，再 `adhoc-device-test --steps-file`（推荐；观察 NL 不进 steps）；`--plan` 可选。**禁止** agent 向 **`framework/harness/`** Write 即席 steps / trace / report / plan-lint **或宿主 UT 源码**（profile 测试源树、`test/dag/`、`{package_path}/` module 树；reports/state 除外）。business-ut Write 前须 `cd <repo-root>`（见 `framework/skills/reference/harness-cli-cwd.md` §2.5）。执行报告目录以 stderr **`ADHOC_HYLYRE_RUN_DIR=`** 为准（`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`）。观察汇总用 **`--dump-ui-only`** + **`summarize-adhoc-dump`**，**禁止** steps 内 `dump_ui`；固定等待用 **`{"wait":{"seconds":N}}`**（STEP-WAIT-SECONDS）。touch 用 **`{"touch":{"by_text":"…"}}`**（STEP-TOUCH 禁 `selector` 嵌套）；**禁止** steps 内 **`start_app`**。**禁止** agent Write `doc/app-snapshot-cache/<bundle>/` 根目录 page JSON（官方 layout **`pages/<slug>.json`**；stderr **`ADHOC_CACHE_LAYOUT_MISMATCH=1`** 时修 page save 或迁入 `pages/`）。**execute 默认冷重启**；保留 Nav 栈用 **`--continue-session`**；`--accept-cold-start` **仅** skip warmup。前次非 success 且 continue-session 时读 stderr **`ADHOC_UI_RESET_RECOMMENDED=1`**（来源：固定 **`device-test-run.meta.json`**）
 - 若 trace `outcome=aborted`，必须按 `error_kind` + `artifacts.warmup_meta` / `ensure_meta` / `run_meta` 给用户**结构化诊断**，**禁止**回退「需要 VLM / 步骤改 JSON」之类无依据话术
 
 **允许**向用户说明：需其完成的**物理/账号类**前置（连接真机、授权 USB、切换飞行模式、确认 product/buildMode 等），但：
@@ -28,9 +28,9 @@ alwaysApply: true
 
 ## 2. 自然语言 = 调起 Framework 的入口
 
-用户说「对 `<feature>` 做真机测试」「重跑 testing」「补齐 testing 闭环」「设备已连上继续」等，等价于进入 **Skill 6（device-testing）** 或继续该阶段未竟步骤：
+用户说「对 `<feature>` 做真机测试」「重跑 testing」「补齐 testing 闭环」「设备已连上继续」等，等价于进入 **device-testing（device-testing）** 或继续该阶段未竟步骤：
 
-1. 读 `framework/skills/6-device-testing/SKILL.md`（及 profile addendum）
+1. 读 `framework/skills/feature/device-testing/SKILL.md`（及 profile addendum）
 2. **主 agent 自己**跑结构级 harness、修 BLOCKER、更新产物
 3. **Task 触发 verifier**（`subagent_type: verifier`）
 4. 填写并通过 `check-receipt.ts`
@@ -45,17 +45,17 @@ alwaysApply: true
 |------|------|------|
 | harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
 | 缺 verifier | 「请启动 verifier」 | agent 用 Task 工具触发 `subagent_type: verifier` |
-| vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 Skill 6 协议自处理；不向用户抛 install 命令 |
+| vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 device-testing 协议自处理；不向用户抛 install 命令 |
 | 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
 | 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
-| 脚本 harness FAIL 仍问下一阶段 | 「是否继续 Skill 4？」「verifier PASS 了」 | **禁止**提议进入下一 Skill；首段汇报 FAIL + 首条编译错误 + `next_action` |
-| 为躲 Stop hook 清 state | 擅自 `--clear-state` 后进入 Skill 4 | **仅**当用户明示「放弃本阶段」才可 clear-state；否则继续修 BLOCKER 并重跑 harness |
-| harness PASS 后 autopilot | 闭环后直接 Read Skill 4 并写 review | 汇报闭环摘要 + **`phase.next_step` 停等**（manual 默认）；见 user-confirmation-ux §8 |
+| 脚本 harness FAIL 仍问下一阶段 | 「是否继续 code-review？」「verifier PASS 了」 | **禁止**提议进入下一 Skill；首段汇报 FAIL + 首条编译错误 + `next_action` |
+| 为躲 Stop hook 清 state | 擅自 `--clear-state` 后进入 code-review | **仅**当用户明示「放弃本阶段」才可 clear-state；否则继续修 BLOCKER 并重跑 harness |
+| harness PASS 后 autopilot | 闭环后直接 Read code-review 并写 review | 汇报闭环摘要 + **`phase.next_step` 停等**（manual 默认）；见 user-confirmation-ux §8 |
 | 误读 receipt / trace | 「回执齐全 → 下一步 review」 | 回执只证**当前 phase 完成**，不证下一阶段授权 |
 
 ## 4. 阶段推进与 clear-state（BLOCKER）
 
-- **脚本 harness 退出码非 0** 或 `can_claim_done=NO` 时：不得提议 Skill 4 / 5 / 6 等下一阶段；不得用 verifier PASS 覆盖脚本 FAIL。
+- **脚本 harness 退出码非 0** 或 `can_claim_done=NO` 时：不得提议 code-review / 5 / 6 等下一阶段；不得用 verifier PASS 覆盖脚本 FAIL。
 - **脚本 harness PASS 且四件套齐全时**：**不得**在同一 agent 执行流自动启动下一 Skill；须 `phase.next_step` 或用户/batch 明示（user-confirmation-ux §8）。
 - **coding**：须先同步跑 harness、Read `summary.json` 与编译日志，**再**触发 verifier（禁止并行）。
 - **`--clear-state`**：表示放弃当前 phase 的闭环判定，不是「解锁下一阶段」；仅用户明示放弃后可用。

@@ -5,7 +5,7 @@
 // 引用的业务函数，是否在工程源代码中以"命名方法 / 导出函数 / 类方法"形式存在。
 // v2.1 硬约束：不允许只存在于 `onClick = () => { ... }` 这类 inline lambda。
 //
-// 供 check-coding.ts（Skill 3 阶段）与 check-ut.ts（Skill 5 阶段）共享调用。
+// 供 check-coding.ts（coding 阶段）与 check-ut.ts（business-ut 阶段）共享调用。
 // ============================================================================
 
 import * as fs from 'fs';

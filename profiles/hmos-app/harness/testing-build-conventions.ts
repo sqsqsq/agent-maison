@@ -1,5 +1,5 @@
 /**
- * Skill 6 device-testing：主应用 HAP 打包维度的默认值与环境变量（hmos-app）。
+ * device-testing device-testing：主应用 HAP 打包维度的默认值与环境变量（hmos-app）。
  */
 import { detectProduct, listAvailableProducts } from './hvigor-runner';
 

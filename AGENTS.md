@@ -47,7 +47,7 @@ staging 时会对 zip 内 `package.json` **sanitize**：移除 `release:*` scrip
 
 改动发布内容后：`cd harness && npm test` 必须全 PASS。
 
-maison 自身不走 Skill 0–6；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
+maison 自身不走 feature phase skill 管线；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
 
 **依赖安装契约**：standalone 开发在仓根 `npm run harness:install` 或 `cd harness && npm install`；consumer 仅在 `cd framework/harness && npm install`，禁止在宿主工程根安装 framework runtime。
 

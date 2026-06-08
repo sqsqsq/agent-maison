@@ -1,6 +1,6 @@
 #!/usr/bin/env npx ts-node
 /**
- * Ad-hoc device test orchestration (Skill 6 Step 4.B).
+ * Ad-hoc device test orchestration (device-testing Step 4.B).
  *
  * Derive:     --bundle <id> --steps "打开->点击…"
  * Execute:    --bundle <id> --plan <path> | --steps-file <path>  (default cold-restart; --continue-session keeps Nav)

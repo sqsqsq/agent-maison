@@ -194,7 +194,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 3. 其它 — 我在对话中说明意图
 ```
 
-选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→Skill 2 design、coding→Skill 4 review）。
+选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→requirement-design design、coding→code-review review）。
 
 ---
 

@@ -10,7 +10,7 @@
 
 - **永久态（工程级）**：实例根 `framework.config.json` 描述架构 DSL、路径根、toolchain 等，装上即用，可版本对齐。它**不承载**任何具体 feature 名、豁免名单或「某需求做到哪一阶段」这类**过程态**。
 - **过程态（feature 级）**：`doc/features/<feature>/` 已统一收纳 PRD、design、contracts、acceptance 等。**当 framework 升级引入新的 BLOCKER**（例如 Context Exploration Gate），在途/已完成的 feature 需要一条**可审计、可过期**的过渡通道。
-- **决策时机**：不在 framework-init / Skill 00 阶段要用户批量决策；只在用户**主动**对某 `feature × phase` 跑 harness **撞墙**时，由报告与 suggestion 提示「正规化 vs 临时 compat」双路径。
+- **决策时机**：不在 framework-init / framework-init 阶段要用户批量决策；只在用户**主动**对某 `feature × phase` 跑 harness **撞墙**时，由报告与 suggestion 提示「正规化 vs 临时 compat」双路径。
 
 ---
 
@@ -68,7 +68,7 @@
 
 1. **避免污染全局档案**：compat 是「某个 feature 在特定升级窗口的临时状态」，与架构 DSL 生命周期不同；写入全局配置会导致：难审计、难随 feature 删除、易误配到错误环境。  
 2. **与 feature 生命周期一致**：删除/归档 `doc/features/<feature>/` 即删除 compat，无残留。  
-3. **Skill 00 零耦合**：升级者不需要在 init 阶段理解 compat；撞墙时由 harness 报告自解释。
+3. **framework-init 零耦合**：升级者不需要在 init 阶段理解 compat；撞墙时由 harness 报告自解释。
 
 ---
 

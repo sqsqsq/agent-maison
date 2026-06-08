@@ -1,0 +1,62 @@
+# Framework builtin skills index (machine-readable SSOT)
+# Consumed by resolveSkillPath() — do not duplicate id→path mapping elsewhere.
+# schema_version: "1.0"
+
+schema_version: "1.0"
+
+skills:
+  - id: framework-init
+    scope: project
+    source_rel: project/framework-init
+    order: 0
+    description: >
+      接入或升级 Framework 配置与 agent 产物（项目级 init）
+
+  - id: catalog-bootstrap
+    scope: project
+    source_rel: project/catalog-bootstrap
+    order: 1
+    description: >
+      模块画像 catalog 与业务术语表 glossary 自举
+
+  - id: prd-design
+    scope: feature
+    source_rel: feature/prd-design
+    order: 10
+    description: >
+      PRD 撰写
+
+  - id: requirement-design
+    scope: feature
+    source_rel: feature/requirement-design
+    order: 20
+    description: >
+      PRD → 技术设计 design.md
+
+  - id: coding
+    scope: feature
+    source_rel: feature/coding
+    order: 30
+    description: >
+      按 design / contracts 落地实现代码
+
+  - id: code-review
+    scope: feature
+    source_rel: feature/code-review
+    order: 40
+    description: >
+      代码审查报告
+
+  - id: business-ut
+    scope: feature
+    source_rel: feature/business-ut
+    order: 50
+    description: >
+      业务级 UT / DAG
+
+  - id: device-testing
+    scope: feature
+    source_rel: feature/device-testing
+    order: 60
+    description: >
+      真机测试计划与报告

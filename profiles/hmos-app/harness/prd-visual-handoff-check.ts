@@ -354,7 +354,7 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
       severity: 'MAJOR',
       status: 'WARN',
       details:
-        '未找到含根字段 `ui_change` 的 ```yaml``` 代码块。参见 framework/skills/1-prd-design/reference/visual-handoff.md',
+        '未找到含根字段 `ui_change` 的 ```yaml``` 代码块。参见 framework/skills/feature/prd-design/reference/visual-handoff.md',
       suggestion:
         '在 PRD 中增加 Visual Handoff 块；若本需求不动 UI，请显式声明 ui_change: none。',
       affected_files: [prdRel],

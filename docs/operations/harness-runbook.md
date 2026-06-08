@@ -22,7 +22,7 @@
 | 范围                                                                                                                                                     | 状态                                  |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | 在已有产物（catalog、glossary、PRD、design、代码、review、UT、测试计划/报告等）的前提下，按阶段运行**脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成报告 | ✅ 本文档覆盖                         |
-| "一键完成"Skill 0 → PRD → 设计 → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
+| "一键完成"catalog-bootstrap → PRD → 设计 → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
 | AI Harness 自动调模型                                                                                                                                    | ❌ 脚本只生成 `ai-prompt.md`，不会自动调用任何大模型；语义审查需自行把 prompt 发给所选模型 |
 
 ---
@@ -223,7 +223,7 @@ doc/features/<feature>/
 - design / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
 - `SpecLoader.listAvailableFeatures()` 只返回目录；`inspectFeatureArtifacts(feature, phase)` 只做只读诊断，不修改文件、不恢复归档、不依赖 `.current-phase.json` / reports / trace。
 
-**v2.2 / v2.3 起常见 BLOCKER**（是否注册取决于 **active profile**；UT 全流程叙事见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)）：
+**v2.2 / v2.3 起常见 BLOCKER**（是否注册取决于 **active profile**；UT 全流程叙事见 [`../skills/feature/business-ut.md`](../skills/feature/business-ut.md)）：
 
 | Phase   | 规则（hmos-app 示例） | 摘要 |
 | ------- | --------------------- | ---- |
@@ -237,14 +237,14 @@ doc/features/<feature>/
 
 ### 5.5 ut（`check-ut.ts`）
 
-- 详见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)
+- 详见 [`../skills/feature/business-ut.md`](../skills/feature/business-ut.md)
 - 简明清单：`ut_import_whitelist` / `it_drives_flow` / `branch_coverage_full` / `acceptance_coverage` / `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`
 - 调度：`capability-registry.ts` → profile `ut-host-impl` / `hvigor-runner` / `hdc-runner`
 
 ### 5.6 testing（`check-testing.ts`）
 
 - 标准 feature：`acceptance.yaml`（`device_focus`）→ 派生 / lint `test-plan.md` → **`device_test.build`** → **`install`** → **`run`**（Hylyre）
-- 即席 `_adhoc`：`npm run adhoc-device-test`（derive → `test-steps.json` → lint → 执行）；详见 [`../../skills/6-device-testing/SKILL.md`](../../skills/6-device-testing/SKILL.md)
+- 即席 `_adhoc`：`npm run adhoc-device-test`（derive → `test-steps.json` → lint → 执行）；详见 [`../../skills/feature/device-testing/SKILL.md`](../../skills/feature/device-testing/SKILL.md)
 - **`device-testing-todo.md` 已废弃**；SSOT 为 acceptance 分层，见 [`../concepts/acceptance-layering.md`](../concepts/acceptance-layering.md)
 
 ---
@@ -269,8 +269,8 @@ npx ts-node harness-runner.ts --phase docs
 ### 6.3 报告样例
 
 ```
-framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
-    ↳ framework/skills/5-business-ut/SKILL.md 更新于 2026-04-26T15:00:00+08:00
+framework/docs/skills/feature/business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
+    ↳ framework/skills/feature/business-ut/SKILL.md 更新于 2026-04-26T15:00:00+08:00
     ↳ framework/specs/phase-rules/ut-rules.yaml 更新于 2026-04-26T16:00:00+08:00
 ```
 
@@ -293,18 +293,18 @@ framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ## 7. 与 Slash / Skill 的对应关系
 
-全局 phase **`extensions`** / **`init`** / **`docs`** 一般由 CI 或维护者直接用 `--phase`；无统一 slash（adapter 而异时以 [`agents/README.md`](../../agents/README.md) 为准）。`init` 对应 Skill：**[`00-framework-init`](../../skills/00-framework-init/SKILL.md)**。
+全局 phase **`extensions`** / **`init`** / **`docs`** 一般由 CI 或维护者直接用 `--phase`；无统一 slash（adapter 而异时以 [`agents/README.md`](../../agents/README.md) 为准）。`init` 对应 Skill：**[`framework-init`](../../skills/project/framework-init/SKILL.md)**。
 
 | Phase       | Slash                                          | Skill                                                                            |
 | ----------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `catalog`   | `/catalog-bootstrap`                           | [`../../skills/0-catalog-bootstrap/SKILL.md`](../../skills/0-catalog-bootstrap/SKILL.md) |
-| `glossary`  | `/glossary-bootstrap`                          | [`../../skills/0-catalog-bootstrap/SKILL.md`](../../skills/0-catalog-bootstrap/SKILL.md) |
-| `prd`       | `/prd-design`                                  | [`../../skills/1-prd-design/SKILL.md`](../../skills/1-prd-design/SKILL.md)         |
-| `design`    | `/requirement-design`                          | [`../../skills/2-requirement-design/SKILL.md`](../../skills/2-requirement-design/SKILL.md) |
-| `coding`    | `/coding`                                      | [`../../skills/3-coding/SKILL.md`](../../skills/3-coding/SKILL.md)                |
-| `review`    | `/code-review`                                 | [`../../skills/4-code-review/SKILL.md`](../../skills/4-code-review/SKILL.md)      |
-| `ut`        | `/business-ut`                                 | [`../../skills/5-business-ut/SKILL.md`](../../skills/5-business-ut/SKILL.md)      |
-| `testing`   | `/device-testing`                              | [`../../skills/6-device-testing/SKILL.md`](../../skills/6-device-testing/SKILL.md) |
+| `catalog`   | `/catalog-bootstrap`                           | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
+| `glossary`  | `/glossary-bootstrap`                          | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
+| `prd`       | `/prd-design`                                  | [`../../skills/feature/prd-design/SKILL.md`](../../skills/feature/prd-design/SKILL.md)         |
+| `design`    | `/requirement-design`                          | [`../../skills/feature/requirement-design/SKILL.md`](../../skills/feature/requirement-design/SKILL.md) |
+| `coding`    | `/coding`                                      | [`../../skills/feature/coding/SKILL.md`](../../skills/feature/coding/SKILL.md)                |
+| `review`    | `/code-review`                                 | [`../../skills/feature/code-review/SKILL.md`](../../skills/feature/code-review/SKILL.md)      |
+| `ut`        | `/business-ut`                                 | [`../../skills/feature/business-ut/SKILL.md`](../../skills/feature/business-ut/SKILL.md)      |
+| `testing`   | `/device-testing`                              | [`../../skills/feature/device-testing/SKILL.md`](../../skills/feature/device-testing/SKILL.md) |
 | `docs`      | （无 slash，直接 `--phase docs`）               | —                                                                                |
 
 ---
@@ -543,7 +543,7 @@ cat framework/harness/state/.current-phase.json
 - **Profile 编排**：`check-coding` / `check-ut` / `check-testing` 经 **`capability-registry.ts`** 调度 profile provider。
 - **Context Gate**：schema **1.1.0** + `exploration-strategy.ts`；`backfill:context` / `compat.yaml` 过渡存量 feature。
 - **Hylyre 真机**：testing phase `device_test.*`；报告外置 `doc/features/<feature>/<phase>/reports/`。
-- **确认 UX**：docs phase 含 `confirmation_ux_lint` BLOCKER；Claude adapter AskUserQuestion 见 Skill 0–6 registry。
+- **确认 UX**：docs phase 含 `confirmation_ux_lint` BLOCKER；Claude adapter AskUserQuestion 见 catalog-bootstrap … device-testing phase skills registry。
 - **Agent 行为**：各 feature phase Research Sub-Phase 前读 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
 - workflow DAG 仍以 [`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 为 SSOT（**11** phase）。
 

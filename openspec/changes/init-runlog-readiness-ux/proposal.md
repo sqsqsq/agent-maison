@@ -10,11 +10,11 @@
 
 - 新增 `harness/scripts/init-readiness.mjs`（Node-only，不自动 `npm install`）
 - `init-orchestrate.ts`：run-log `reason` + 顶层审计字段；`normalizeStagingContext`；`resolveTaskAction` smart fallback 与 `allowed_actions` 对齐
-- `confirmation-registry.yaml` / Skill 00 / command 模板：S2 文案与 S0/S4 话术
+- `confirmation-registry.yaml` / framework-init / command 模板：S2 文案与 S0/S4 话术
 - 不改 task DAG、preflight 规则、adapter decision SSOT
 
 ## Impact
 
 - Affected specs: init-orchestration
-- Affected code: `harness/scripts/init-readiness.mjs`, `harness/scripts/init-orchestrate.ts`, `skills/00-framework-init/`, `skills/reference/confirmation-registry.yaml`, `agents/claude/templates/commands/framework-init.md`
+- Affected code: `harness/scripts/init-readiness.mjs`, `harness/scripts/init-orchestrate.ts`, `skills/project/framework-init/`, `skills/reference/confirmation-registry.yaml`, `agents/claude/templates/commands/framework-init.md`
 - Tests: `harness/tests/unit/init-readiness.unit.test.ts`, `init-orchestrate.unit.test.ts`

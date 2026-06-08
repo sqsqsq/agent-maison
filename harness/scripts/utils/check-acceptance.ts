@@ -39,7 +39,7 @@ export function checkAcceptanceYamlPresent(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `${rel} 不存在或无法解析。`,
-      suggestion: '按 Skill 1 §6 从 PRD 提取 acceptance.yaml（含 ut_layer / ut_focus / device_focus）。',
+      suggestion: '按 prd-design §6 从 PRD 提取 acceptance.yaml（含 ut_layer / ut_focus / device_focus）。',
     }];
   }
   if (!fs.existsSync(acceptanceYamlPath(ctx.projectRoot, ctx.feature))) {

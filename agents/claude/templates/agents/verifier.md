@@ -73,4 +73,4 @@ tools: Read, Glob, Grep
 3. **不重复脚本 Harness 已做的确定性检查**（结构 / 字段存在性 / 格式）。
 4. 报告必须可追溯到 `verify-<phase>.md` 的具体检查项 id。
 5. 若 feature / phase 无效，立即报错退出，不要尝试"猜"。
-6. **coding 阶段**：脚本 harness 未 PASS 时被误调用 → `coding_compile_gate` 必须 FAIL，整体 verdict 必须 FAIL；不得建议进入 Skill 4（Code Review）。
+6. **coding 阶段**：脚本 harness 未 PASS 时被误调用 → `coding_compile_gate` 必须 FAIL，整体 verdict 必须 FAIL；不得建议进入 code-review（Code Review）。

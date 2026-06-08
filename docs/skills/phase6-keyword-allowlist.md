@@ -10,8 +10,8 @@
 |------|-----------|
 | [`framework/profiles/generic/skills/skill-assets.yaml`](../../profiles/generic/skills/skill-assets.yaml) | `examples_wallet_domain`、`card_opening_*` 为历史外链/旧 SKILL 兼容别名，映射到 `examples-domain-mapping`、`sample-flow`。 |
 | [`framework/profiles/hmos-app/skills/skill-assets.yaml`](../../profiles/hmos-app/skills/skill-assets.yaml) | 同上。 |
-| [`framework/profiles/hmos-app/skills/0-catalog-bootstrap/profile-addendum.md`](../../profiles/hmos-app/skills/0-catalog-bootstrap/profile-addendum.md) | 表格说明别名键 `examples_wallet_domain`。 |
-| [`framework/profiles/hmos-app/skills/5-business-ut/profile-addendum.md`](../../profiles/hmos-app/skills/5-business-ut/profile-addendum.md) | 表格说明 `card_opening_*` 别名。 |
+| [`framework/profiles/hmos-app/skills/catalog-bootstrap/profile-addendum.md`](../../profiles/hmos-app/skills/catalog-bootstrap/profile-addendum.md) | 表格说明别名键 `examples_wallet_domain`。 |
+| [`framework/profiles/hmos-app/skills/business-ut/profile-addendum.md`](../../profiles/hmos-app/skills/business-ut/profile-addendum.md) | 表格说明 `card_opening_*` 别名。 |
 
 **验收**：除上述 YAML/表格键名外的**教程、模板、prompt、示例正文**不应再出现「计划词表」中的行业专有叙事；正文以中性占位模块（如 `TaskDemo`、`FeatureAlpha`）为准。
 
@@ -20,7 +20,7 @@
 以下内容命中「固定五层」词表属于**契约说明**，与行业专名叙事无关：
 
 - `framework/harness/config.ts` 中 `LEGACY_DEFAULT_DSL` 五外层 id、`CommUI`/`CommFunc` 子层占位。
-- `framework/skills/00-framework-init/**` 与 `architecture-presets`、`scan-project` 等：**引导**用户使用或识别 `01-Product`～`05-SystemBase` 式目录。
+- `framework/skills/project/framework-init/**` 与 `architecture-presets`、`scan-project` 等：**引导**用户使用或识别 `01-Product`～`05-SystemBase` 式目录。
 - `framework/harness/prompts/verify-design.md`、`verify-review.md` 等对「五层合规」检查的层级说明。
 - **`harness/tests/fixtures/**`**：`contracts.yaml`、`build-profile`、`02-Feature/Demo/**` 等**历史 fixture 快照**不改语义，保留层 id 字面。
 
@@ -49,5 +49,5 @@ rg -n -f framework/docs/skills/phase6-keyword-pattern.regex framework \
 ## 维护同步（2026-05-22）
 
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`check-testing.ts` 与 `testing-rules.yaml` 仍为 Phase 6 关键词分流 SSOT；本文 §1–§4 判定口径不变。
-- **Skill 6 / Hylyre**：testing phase 正文已中性化；legacy 键名 allowlist 仍适用于 profile YAML 别名，不适用于 Hylyre plan/steps 契约。
+- **device-testing / Hylyre**：testing phase 正文已中性化；legacy 键名 allowlist 仍适用于 profile YAML 别名，不适用于 Hylyre plan/steps 契约。
 - **`doc_freshness`**：当任一登记 `sources[]` 的 git 提交时间晚于本文时，需复核本节并与 [`phase6-keyword-pattern.regex`](phase6-keyword-pattern.regex) 对齐后再提交本文。

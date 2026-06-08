@@ -15,12 +15,12 @@
 
 | 文件                                                  | 状态     |
 | ----------------------------------------------------- | -------- |
-| [`5-business-ut.md`](./5-business-ut.md)              | ★ 已写   |
-| `1-prd-design.md`                                     | 待写     |
-| `2-requirement-design.md`                             | 待写     |
-| `3-coding.md`                                         | 待写     |
-| `4-code-review.md`                                    | 待写     |
-| `6-device-testing.md`                                 | 待写     |
+| [`business-ut.md`](./business-ut.md)              | ★ 已写   |
+| `prd-design.md`                                     | 待写     |
+| `requirement-design.md`                             | 待写     |
+| `coding.md`                                         | 待写     |
+| `code-review.md`                                    | 待写     |
+| `device-testing.md`                                 | 待写     |
 
 新增一份 Skill 文档时，**别忘了**在 `framework/docs/DOC_INVENTORY.yaml`
 中同步登记 `path` + `sources` + `update_triggers`。

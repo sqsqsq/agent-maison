@@ -278,7 +278,7 @@ export function loadAppBundleName(projectRoot: string): string {
   return name;
 }
 
-/** Skill 6 装机门禁：与「本次编译输入」对齐的版本信息（来源 AppScope/app.json5）。 */
+/** device-testing 装机门禁：与「本次编译输入」对齐的版本信息（来源 AppScope/app.json5）。 */
 export interface AppInstallCandidateMeta {
   bundleName: string;
   /** 缺失时为 null，仅跳过数值型降级预检，不阻断装机尝试 */

@@ -15,7 +15,7 @@ export interface TestabilityAuditRecord {
   selected?: string;
 }
 
-/** mock-plan 单条 test double 策略（Skill 5 Test Double Policy） */
+/** mock-plan 单条 test double 策略（business-ut Test Double Policy） */
 export type MockPlanStrategy = 'spy' | 'mockkit' | 'fake' | 'prototype_patch';
 
 export interface MockPlanEntry {

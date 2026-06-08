@@ -4,7 +4,7 @@
 >
 > 灵感来源：[Andrej Karpathy 对 LLM coding 的观察](https://x.com/karpathy/status/2015883857489522876)；工程化适配见 [andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)。
 >
-> **进入任意 Skill 0–6 前须完整阅读**；Context Exploration Gate（Research Sub-Phase）须按本规约执行。
+> **进入任意 catalog-bootstrap … device-testing phase skills 前须完整阅读**；Context Exploration Gate（Research Sub-Phase）须按本规约执行。
 
 ---
 

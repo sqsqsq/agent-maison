@@ -108,7 +108,7 @@ function checkSchemaVersionPresent(ctx: CheckContext, catalog: ModuleCatalog): C
 }
 
 function checkModulesIsList(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
-  // 空列表是合法的 bootstrap 中间状态（Skill 0 Phase A 刚建骨架、还没追加任何模块）
+  // 空列表是合法的 bootstrap 中间状态（catalog-bootstrap Phase A 刚建骨架、还没追加任何模块）
   // 所以只给 WARN 级别提示，不 BLOCKER 阻塞后续 check
   if (catalog.modules.length === 0) {
     return [{
@@ -159,7 +159,7 @@ function checkModuleRequiredFields(ctx: CheckContext, catalog: ModuleCatalog): C
     severity: 'BLOCKER', status: 'FAIL',
     details: `缺失必填字段 ${missing.length} 处：${missing.slice(0, 10).join('、')}${missing.length > 10 ? ' …' : ''}`,
     suggestion:
-        `对照模板 framework/profiles/${ctx.resolvedProfile.name}/skills/0-catalog-bootstrap/templates/module-card-template.yaml 补齐字段。`,
+        `对照模板 framework/profiles/${ctx.resolvedProfile.name}/skills/catalog-bootstrap/templates/module-card-template.yaml 补齐字段。`,
     affected_files: [relCatalog(ctx.projectRoot)],
   }];
 }

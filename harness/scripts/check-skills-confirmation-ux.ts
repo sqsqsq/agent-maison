@@ -12,6 +12,7 @@ import YAML from 'yaml';
 import type { CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
 import { frameworkAbs, frameworkLogicalRelPath, frameworkRelPath, inferRepoLayout, repoLayoutFromContext, type RepoLayout } from '../repo-layout';
+import { resolveSkillPathOrNull } from './utils/resolve-skill-path';
 
 const SHARED_LAYER_TOOL_NAME_FORBIDDEN = /\b(?:AskUserQuestion|AskQuestion)\b/;
 const TEXT_LIKE_EXTENSIONS = new Set([
@@ -31,7 +32,7 @@ const CLAUDE_SLASH_COMMANDS = [
 const ADAPTER_NAMES = ['claude', 'cursor', 'generic'] as const;
 
 /** registry `skill` 无物理 SKILL.md 的虚拟命名空间（须与 confirmation-registry 同步登记） */
-export const VIRTUAL_REGISTRY_SKILLS = new Set(['_cross_phase']);
+export const VIRTUAL_REGISTRY_SKILLS = new Set(['_cross_phase', '_personal_setup']);
 
 export function lintRegistrySkillPaths(
   registryText: string,
@@ -43,11 +44,15 @@ export function lintRegistrySkillPaths(
   for (const m of registryText.matchAll(/skill:\s+"([^"]+)"/g)) {
     skillDirs.add(m[1]);
   }
+  const frameworkDir = path.dirname(frameworkAbs(layout, 'skills'));
   for (const skill of skillDirs) {
     if (VIRTUAL_REGISTRY_SKILLS.has(skill)) continue;
-    const dir = frameworkAbs(layout, 'skills', skill, 'SKILL.md');
-    if (!fs.existsSync(dir)) {
-      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但目录不存在`, [registryRel]));
+    const resolved = resolveSkillPathOrNull(frameworkDir, skill);
+    const skillMdAbs = resolved
+      ? path.join(frameworkDir, resolved.skillMdFrameworkRel)
+      : frameworkAbs(layout, 'skills', skill, 'SKILL.md');
+    if (!fs.existsSync(skillMdAbs)) {
+      results.push(warn('registry_skill_path', `registry 引用 skill ${skill} 但 SKILL.md 不存在`, [registryRel]));
     }
   }
   return results;
@@ -249,9 +254,11 @@ function initSetupPromptLineAllowed(line: string): boolean {
 }
 
 function listInitSetupPromptTemplateFiles(layout: RepoLayout): string[] {
+  const frameworkDir = path.dirname(frameworkAbs(layout, 'skills'));
+  const initDir = path.join(frameworkDir, 'skills', 'project', 'framework-init');
   const roots = [
-    frameworkAbs(layout, 'skills', '00-framework-init', 'prompts'),
-    frameworkAbs(layout, 'skills', '00-framework-init', 'templates'),
+    path.join(initDir, 'prompts'),
+    path.join(initDir, 'templates'),
   ];
   const out: string[] = [];
   for (const root of roots) {
@@ -290,7 +297,7 @@ function lintInitSetupForbiddenPatternsInFile(projectRoot: string, abs: string):
   return results;
 }
 
-/** 扫描 00-framework-init prompts/templates 与 user-confirmation-ux SSOT，阻断 architecture 自由文本问卷后门 */
+/** 扫描 framework-init prompts/templates 与 user-confirmation-ux SSOT，阻断 architecture 自由文本问卷后门 */
 function lintInitSetupPromptsAndTemplates(layout: RepoLayout): CheckResult[] {
   const results: CheckResult[] = [];
   for (const abs of listInitSetupPromptTemplateFiles(layout)) {
@@ -321,7 +328,7 @@ function lintInitSetupNoFreeText(registryText: string, registryRel: string): Che
     ));
   }
   for (const block of registryText.split(/\n  - id:/).slice(1)) {
-    const skillMatch = block.match(/\n    skill: "(00-framework-init|00b-framework-setup)"/);
+    const skillMatch = block.match(/\n    skill: "(framework-init|_personal_setup)"/);
     if (!skillMatch) continue;
     const idMatch = block.match(/^ ([a-z0-9_.]+)/);
     const id = idMatch?.[1] ?? '?';
@@ -604,11 +611,11 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
     ));
   }
 
-  if (rel.includes('1-prd-design/SKILL.md') && needsConfirmUx) {
+  if (rel.includes('prd-design/SKILL.md') && needsConfirmUx) {
     if (!/\[x\]/.test(content) || !content.includes('术语映射')) {
       results.push(blocker(
         'artifact_checkbox_unchanged',
-        'Skill 1 须保留 PRD 术语表 [x] BLOCKER',
+        'prd-design 须保留 PRD 术语表 [x] BLOCKER',
         [rel],
       ));
     }
@@ -621,12 +628,12 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
 
 /** Feature phase SKILL.md must declare closure stop gates (user-confirmation-ux §8). */
 const PHASE_CLOSURE_LINT: Array<{ suffix: string; requiredIds: string[] }> = [
-  { suffix: '1-prd-design/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
-  { suffix: '2-requirement-design/SKILL.md', requiredIds: ['design.ok_to_code', 'phase.next_step', '闭环停等'] },
-  { suffix: '3-coding/SKILL.md', requiredIds: ['coding.ok_to_review', 'phase.next_step', '闭环停等'] },
-  { suffix: '4-code-review/SKILL.md', requiredIds: ['review.ok_to_ut', 'phase.next_step', '闭环停等'] },
-  { suffix: '5-business-ut/SKILL.md', requiredIds: ['ut.ok_to_testing', 'phase.next_step', '闭环停等'] },
-  { suffix: '6-device-testing/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
+  { suffix: 'feature/prd-design/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
+  { suffix: 'feature/requirement-design/SKILL.md', requiredIds: ['design.ok_to_code', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/coding/SKILL.md', requiredIds: ['coding.ok_to_review', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/code-review/SKILL.md', requiredIds: ['review.ok_to_ut', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/business-ut/SKILL.md', requiredIds: ['ut.ok_to_testing', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/device-testing/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
 ];
 
 function lintPhaseClosureGates(rel: string, content: string): CheckResult[] {

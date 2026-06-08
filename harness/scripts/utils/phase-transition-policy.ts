@@ -88,23 +88,23 @@ export function isPhaseWithinBatchRange(
   return toIdx === fromIdx + 1 && toIdx <= throughIdx;
 }
 
-/** Next Skill label for phase.next_step portable menu. */
+/** Next phase skill label for phase.next_step portable menu. */
 export function nextSkillLabelForPhase(phase: FeaturePhase): string {
   switch (phase) {
     case 'prd':
-      return 'Skill 2 技术设计';
+      return 'requirement-design 技术设计';
     case 'design':
-      return 'Skill 3 编码';
+      return 'coding 编码';
     case 'coding':
-      return 'Skill 4 Code Review';
+      return 'code-review Code Review';
     case 'review':
-      return 'Skill 5 业务级 UT';
+      return 'business-ut 业务级 UT';
     case 'ut':
-      return 'Skill 6 真机测试';
+      return 'device-testing 真机测试';
     case 'testing':
       return '结束交付 / 归档';
     default:
-      return '下一 Skill';
+      return '下一阶段 skill';
   }
 }
 

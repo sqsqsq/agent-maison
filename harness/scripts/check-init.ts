@@ -55,6 +55,7 @@ import {
   materializeAgentBundleSkills,
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
+import { resolveSkillPath } from './utils/resolve-skill-path';
 import {
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
@@ -762,9 +763,10 @@ function appendInlineSkillMaterializedTemplates(
   updatePolicy: AdapterUpdatePolicy,
 ): void {
   for (const skillDir of listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT)) {
+    const skillMdRel = resolveSkillPath(FRAMEWORK_ROOT, skillDir).skillMdFrameworkRel;
     desc.templateFiles.push({
       targetRel: `${bundle.skillsDir}/${skillDir}/SKILL.md`,
-      templateRel: toPosix(path.join('skills', skillDir, 'SKILL.md')),
+      templateRel: toPosix(skillMdRel),
       kind: 'materialized',
       skillDir,
       origin: `materialize:${skillDir}`,
@@ -818,7 +820,10 @@ function applyAgentBundleInlineSync(
   for (const dir of dirs) {
     const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`.replace(/\\/g, '/');
     const tgAbs = path.join(projectRoot, ...targetRel.split('/'));
-    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir);
+    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir, {
+      projectRoot,
+      stubTargetRelPosix: targetRel,
+    });
     const payload = Buffer.from(body, 'utf-8');
 
     if (!fs.existsSync(tgAbs)) {
@@ -870,7 +875,7 @@ function resolveArchitectureSkeletonSource(profileName: string): { tplRel: strin
   const orderedAbs = [
     path.join(FRAMEWORK_ROOT, 'profiles', name, 'doc-skeletons', 'architecture.md.skeleton.md'),
     path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'doc-skeletons', 'architecture.md.skeleton.md'),
-    path.join(FRAMEWORK_ROOT, 'skills', '00-framework-init', 'templates', 'architecture.md.skeleton.md'),
+    path.join(FRAMEWORK_ROOT, 'skills', 'project', 'framework-init', 'templates', 'architecture.md.skeleton.md'),
   ];
   for (const abs of orderedAbs) {
     if (fs.existsSync(abs)) {
@@ -878,7 +883,7 @@ function resolveArchitectureSkeletonSource(profileName: string): { tplRel: strin
     }
   }
   const fallbackAbs = orderedAbs[orderedAbs.length - 1]!;
-  return { tplRel: 'skills/00-framework-init/templates/architecture.md.skeleton.md', tplAbs: fallbackAbs };
+  return { tplRel: 'skills/project/framework-init/templates/architecture.md.skeleton.md', tplAbs: fallbackAbs };
 }
 
 function buildRenderEnv(
@@ -1292,7 +1297,13 @@ function inspect03(env: InspectorEnv): Inspection[] {
     if (f.kind === 'materialized' && f.skillDir) {
       let expectedBuf: Buffer;
       try {
-        expectedBuf = Buffer.from(materializeInlineSkillMarkdown(FRAMEWORK_ROOT, f.skillDir), 'utf8');
+        expectedBuf = Buffer.from(
+          materializeInlineSkillMarkdown(FRAMEWORK_ROOT, f.skillDir, {
+            projectRoot: env.projectRoot,
+            stubTargetRelPosix: f.targetRel.replace(/\\/g, '/'),
+          }),
+          'utf8',
+        );
       } catch (e) {
         fileRows.push({
           f,
@@ -1615,7 +1626,7 @@ function inspect06(env: InspectorEnv): Inspection {
 function inspect07(env: InspectorEnv): Inspection {
   const targetRel = env.cfg.paths.glossary_seed;
   const targetAbs = path.join(env.projectRoot, targetRel);
-  const tplRel = 'skills/00-framework-init/templates/glossary-seed.skeleton.txt';
+  const tplRel = 'skills/project/framework-init/templates/glossary-seed.skeleton.txt';
   const tplAbs = path.join(FRAMEWORK_ROOT, tplRel);
 
   const tgBuf = safeReadBuffer(targetAbs);
@@ -1808,7 +1819,7 @@ function inspect10(env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + Skill 0 staging）----
+// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + catalog-bootstrap staging）----
 function inspect11(env: InspectorEnv): Inspection {
   const targetRel = '.gitignore';
   const targetAbs = path.join(env.projectRoot, targetRel);
@@ -2380,6 +2391,7 @@ export const __testing = {
   buildStdoutTable,
   unifiedDiffSummary,
   normalizeEol,
+  resolveArchitectureSkeletonSource,
   compareTextArtifact,
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,

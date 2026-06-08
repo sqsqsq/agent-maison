@@ -2,7 +2,7 @@
 // config-field-merger — framework.config.json 字段级"只补缺、不覆盖"合并器
 // ============================================================================
 //
-// 背景：Skill 00 UPDATE 模式历史上只有「整文件替换 / 跳过」两档（编排化前），
+// 背景：framework-init UPDATE 模式历史上只有「整文件替换 / 跳过」两档（编排化前），
 // 当 framework 引入新字段（如 paths.extension_dir / paths.state_file /
 // state_machine.* / active_workflow / lifecycle_hooks_enabled 等）后，老工程
 // 重新跑 /framework-init 无法机器化补齐，常见现象是「重新 init 后只新增了几个
@@ -21,7 +21,7 @@
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
 //   2. 不动用户必填字段（project_name / architecture / agent_adapter）—— 走 Skill 交互。
 //   3. 不动 opt-in 字段（prd / atomic_service）—— 维护者手工选档。
-//   4. 不动 toolchain.devEcoStudio.installPath —— 由 Skill 5.6 detect-deveco 单独处理。
+//   4. 不动 toolchain.devEcoStudio.installPath —— 由 business-ut.6 detect-deveco 单独处理。
 //
 // 新增字段 checklist：
 //   - 静默安全默认 → BACKFILL_FIELDS + config.ts DEFAULT_*
@@ -145,7 +145,7 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   },
 
   // toolchain.hvigor.* —— 与模板 framework.config.template.json 默认值一致
-  // 不补 toolchain.devEcoStudio（Skill 5.6 detect-deveco 独立处理）。
+  // 不补 toolchain.devEcoStudio（business-ut.6 detect-deveco 独立处理）。
   {
     path: 'toolchain.hvigor.daemon',
     defaultValue: true,

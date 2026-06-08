@@ -34,7 +34,7 @@ optional_fields:
       具体键由 capability-registry.ts 的 CapabilityKey 枚举为准。
   catalog_allowed_module_formats:
     type: array
-    description: Skill 0 / catalog 阶段 module-card `format` 合法枚举（hmos-app 的典型值 HAP/HAR/HSP/AtomicService）
+    description: catalog-bootstrap / catalog 阶段 module-card `format` 合法枚举（hmos-app 的典型值 HAP/HAR/HSP/AtomicService）
   phase_rules_overlays_dir:
     type: string
     description: phase-rules overlay 相对本 profile 目录，默认 phase-rules-overlays

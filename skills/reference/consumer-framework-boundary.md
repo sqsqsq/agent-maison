@@ -14,7 +14,7 @@
 | 误改 | 正确做法 |
 |------|----------|
 | `framework/package.json` 增加 `dependencies.yaml` | `cd framework/harness && npm install`（Tier_1，见 [host-harness-readiness.md](./host-harness-readiness.md)） |
-| `framework/profiles/hmos-app/harness/ts-compile.ts` 补 `MockKit`/`when` ambient | 升级含 Test Double Policy 的 framework 发版；实例 UT 按 [mock-plan-schema.md](../../profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md) 声明 `strategy: mockkit` |
+| `framework/profiles/hmos-app/harness/ts-compile.ts` 补 `MockKit`/`when` ambient | 升级含 Test Double Policy 的 framework 发版；实例 UT 按 [mock-plan-schema.md](../../profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md) 声明 `strategy: mockkit` |
 | 在实例内「改门禁让 UT 变绿」 | 修 **宿主** `ohosTest` / `doc/features/<feature>/ut/` 产物 |
 | UT / Spy / DAG 误写在 `framework/harness/` | 迁回 `<repo-root>/{package_path}/...`；删 harness 下误写目录；见 [harness-cli-cwd.md §2.5](./harness-cli-cwd.md) |
 
@@ -50,7 +50,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <feat
 ## TS2614：`@ohos/hypium` 无 `MockKit` / `when`
 
 - **禁止**在消费者 submodule 改 `ts-compile.ts`。
-- 若 UT 使用 Hypium MockKit：mock-plan 须声明 `strategy: mockkit`（见 Skill 5 Step 1.6）；framework 版本须已支持该策略。
+- 若 UT 使用 Hypium MockKit：mock-plan 须声明 `strategy: mockkit`（见 business-ut Step 1.6）；framework 版本须已支持该策略。
 - 若尚未升级：临时用 Spy/`whenXxx` 过渡，或等待 framework 发版。
 
 ## 实例回滚命令（示例）

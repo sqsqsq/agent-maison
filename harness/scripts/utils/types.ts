@@ -250,7 +250,7 @@ export interface ContractsSpec {
 
 /** UT 分层（AC / BD 级别）：
  *  - unit   : 仅 Hypium 业务级 UT 覆盖
- *  - device : 仅真机 UI 自动化覆盖（Skill 6）
+ *  - device : 仅真机 UI 自动化覆盖（device-testing）
  *  - both   : UT + Device 共同覆盖
  */
 export type UtLayer = 'unit' | 'device' | 'both';
@@ -305,7 +305,7 @@ export interface AcceptanceSpec {
 }
 
 // --------------------------------------------------------------------------
-// use-cases.yaml Schema v2（Skill 2 产出、Skill 5 消费）
+// use-cases.yaml Schema v2（requirement-design 产出、business-ut 消费）
 // v2 定位：规约文档，不强制代码形态；核心字段是 ui_bindings 映射表
 // --------------------------------------------------------------------------
 

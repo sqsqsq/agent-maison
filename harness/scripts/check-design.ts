@@ -297,7 +297,7 @@ function checkScopeConsistencyWithPrd(
     severity: 'BLOCKER', status: 'FAIL',
     details: messages.join('；'),
     suggestion:
-      '要么把相关模块从 design.in_scope_modules 移除并改为就地实现，要么回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
+      '要么把相关模块从 design.in_scope_modules 移除并改为就地实现，要么回到 requirement-design 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
     affected_files: [
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md'),
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md'),
@@ -738,7 +738,7 @@ function checkDesignToArchitecture(ctx: CheckContext, design: string): CheckResu
       severity: 'MAJOR', status: 'FAIL',
       details: `architecture_impact = ${spec!.impact}，但 ${archRel} 不存在。架构级变更必须同步更新架构文档。`,
       affected_files: [archRel],
-      suggestion: `请按 Skill 2 Step 12 的 ${spec!.impact} 分支更新 ${archRel}，并追加一行架构级变更记录。`,
+      suggestion: `请按 requirement-design Step 12 的 ${spec!.impact} 分支更新 ${archRel}，并追加一行架构级变更记录。`,
     }];
   }
 

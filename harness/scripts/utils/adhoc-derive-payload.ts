@@ -26,9 +26,9 @@ import {
 } from './adhoc-derive-helpers';
 
 const HYLYRE_TEMPLATE_REF =
-  'framework/profiles/hmos-app/skills/6-device-testing/templates/test-plan-hylyre-template.md';
+  'framework/profiles/hmos-app/skills/device-testing/templates/test-plan-hylyre-template.md';
 const HYLYRE_PLANNED_STEP_FIELDS_REF =
-  'framework/profiles/hmos-app/skills/6-device-testing/reference/hylyre-planned-step-fields.md';
+  'framework/profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md';
 
 export function buildAdhocDerivePayload(
   projectRoot: string,

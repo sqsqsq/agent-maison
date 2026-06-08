@@ -119,13 +119,13 @@ function checkUtFileNaming(
 function getUtSuggestionPaths(): UtHostSuggestionPaths {
   return {
     useCasesSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/5-business-ut/templates/use-cases-schema.md',
+      'framework/profiles/hmos-app/skills/business-ut/templates/use-cases-schema.md',
     mockPlanSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/5-business-ut/templates/mock-plan-schema.md',
+      'framework/profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md',
     testabilityAuditTemplateRel:
-      'framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md',
+      'framework/profiles/hmos-app/skills/business-ut/templates/testability-audit-template.md',
     branchExampleTestRel:
-      'framework/profiles/hmos-app/skills/5-business-ut/examples/sample-flow/sample_flow.test.ets',
+      'framework/profiles/hmos-app/skills/business-ut/examples/sample-flow/sample_flow.test.ets',
     utHostImplRefRel: 'framework/profiles/hmos-app/harness/ut-host-impl.ts',
   };
 }
@@ -508,7 +508,7 @@ function classifyUtHvigorBuildFailure(
   if (touchesCurrentModuleMain) {
     return {
       kind: 'feature_code',
-      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 Skill 5 源码修改授权流程。',
+      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 business-ut 源码修改授权流程。',
       suggestion: '优先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时先向用户申请并登记 gap-notes。',
     };
   }

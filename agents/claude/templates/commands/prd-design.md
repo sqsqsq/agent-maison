@@ -1,5 +1,5 @@
 ---
-description: 进入 PRD 撰写阶段（Skill 1）
+description: 进入 PRD 撰写阶段（prd-design）
 argument-hint: <feature-name-or-description>
 ---
 
@@ -16,4 +16,4 @@ argument-hint: <feature-name-or-description>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/1-prd-design/SKILL.md](../../framework/skills/1-prd-design/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/feature/prd-design/SKILL.md](../../framework/skills/feature/prd-design/SKILL.md)**

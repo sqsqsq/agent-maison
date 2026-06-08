@@ -1,4 +1,4 @@
-/** stderr progress anchors for ad-hoc device test (Skill 6 Step 4.B). */
+/** stderr progress anchors for ad-hoc device test (device-testing Step 4.B). */
 export function logAdhocPhase(phase: string, extra?: Record<string, string | number | boolean | null>): void {
   const parts = [`ADHOC_PHASE=${phase}`, `started_at=${new Date().toISOString()}`];
   if (extra) {

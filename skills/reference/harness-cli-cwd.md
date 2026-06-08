@@ -55,7 +55,7 @@ npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>
 
 ---
 
-## 2.5 BLOCKER — Write 工具 cwd 泄漏（Skill 5 UT / DAG / Spy）
+## 2.5 BLOCKER — Write 工具 cwd 泄漏（business-ut UT / DAG / Spy）
 
 类型 B 命令（`cd framework/harness && harness-runner …`）之后，**同一 shell** 若用 Write 工具写宿主产物且使用**相对路径**，文件会落在 `framework/harness/...` 而非 `<repo-root>/...`。
 
@@ -78,7 +78,7 @@ cd <repo-root>
 | `render-agents-md.mjs` | S3 adapter 物化 |
 | `merge-framework-config.mjs` | S3 config merge / MIGRATION |
 | `show-last-committed-framework-config.mjs` | S1.1 Git 快照 |
-| `check-receipt.ts` | Skill 1～6 阶段闭环 |
+| `check-receipt.ts` | prd-design～6 阶段闭环 |
 | `detect-deveco.ts`（shim） | personal setup（`setup.deveco_path`）/ hmos profile-addendum |
 
 **不经 shell 拼路径、无 cwd 问题**：`harness-runner.ts` 进程内调用各 `check-*.ts`；`hook-runner.mjs`（参数为绝对路径）。
@@ -88,5 +88,5 @@ cd <repo-root>
 ## 4. 相关入口
 
 - Tier_1 npm：[host-harness-readiness.md](./host-harness-readiness.md)
-- Init 全流程：[../00-framework-init/SKILL.md](../00-framework-init/SKILL.md)
+- Init 全流程：[../framework-init/SKILL.md](../framework-init/SKILL.md)
 - Harness runbook：[../../docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md)

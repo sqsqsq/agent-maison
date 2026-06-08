@@ -56,7 +56,7 @@
   - [ ] 修改 `skills/<n>/SKILL.md` 的 Step <k>：
   - [ ] 修改 `framework/specs/phase-rules/<phase>-rules.yaml` 新增规则：
   - [ ] 修改 `framework/harness/scripts/check-<phase>.ts` 新增自动检查：
-  - [ ] 修改 `framework/skills/3-coding/reference/arkts-pitfalls.md` 增加错例：
+  - [ ] 修改 `framework/skills/feature/coding/reference/arkts-pitfalls.md` 增加错例：
   - [ ] 其他：
 
 ### 痛点 #2
@@ -69,7 +69,7 @@
 
 > 同样重要。记录本次跑动中哪些 skill / spec / harness 设计**确实起到了作用**，避免下次迭代时误伤。
 
-- 例：`framework/skills/3-coding/SKILL.md` 的"逐文件 Lint 门禁"在第 3 个文件出错时及时拦截，避免了级联错误。
+- 例：`framework/skills/feature/coding/SKILL.md` 的"逐文件 Lint 门禁"在第 3 个文件出错时及时拦截，避免了级联错误。
 - …
 
 ---
@@ -84,9 +84,9 @@
 
 ---
 
-## 5. 授权的源码变更清单（approved_src_mutations）— Skill 5 专用
+## 5. 授权的源码变更清单（approved_src_mutations）— business-ut 专用
 
-> 仅当 Skill 5（业务级 UT）阶段，agent 征得用户同意后对 `02-Feature/**/src/main/**`、
+> 仅当 business-ut（业务级 UT）阶段，agent 征得用户同意后对 `02-Feature/**/src/main/**`、
 > `01-Business/**/src/main/**`、`00-Common/**/src/main/**` 等**非 ohosTest/test 目录**下的文件做了
 > 变更时，**必须**填写本节。否则 harness 的 `ut_no_src_mutation` BLOCKER 会 FAIL。
 >
@@ -101,7 +101,7 @@ approved_src_mutations:
   #   approved_by: "user"
   #   approved_at: "2026-04-24T15:00:00+08:00"
   #   approved_quote: "同意抽成命名字段函数" # 摘录用户原话，便于审计
-  #   skill_step_linked: "Skill 5 / 约束 #12 HARD STOP"
+  #   skill_step_linked: "business-ut / 约束 #12 HARD STOP"
 ```
 
 > 填写约束：

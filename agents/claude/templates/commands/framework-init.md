@@ -26,4 +26,4 @@ argument-hint: <optional-notes>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/00-framework-init/SKILL.md](../../framework/skills/00-framework-init/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/project/framework-init/SKILL.md](../../framework/skills/project/framework-init/SKILL.md)**

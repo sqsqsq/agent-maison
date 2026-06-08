@@ -13,7 +13,7 @@
 //    (3) 注入 `@ohos/hypium` 等常用符号的 ambient 声明，避免把 describe/it/expect
 //        标为未定义。
 //  - 跨文件类型错误（如"调用了签名不匹配的被测函数"）不在本规则覆盖范围，
-//    由 Skill 3/5 的 `coding_hvigor_build` / `ut_hvigor_build` BLOCKER 兜底。
+//    由 coding/5 的 `coding_hvigor_build` / `ut_hvigor_build` BLOCKER 兜底。
 //  - 该工具只依赖 devDependencies.typescript，不写盘，性能足够（< 300 ms / 文件）。
 // ============================================================================
 

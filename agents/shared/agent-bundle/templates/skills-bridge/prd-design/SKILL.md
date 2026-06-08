@@ -1,0 +1,10 @@
+---
+name: prd-design
+description: PRD 撰写（完整流程见仓库 framework/skills/feature/prd-design/SKILL.md）
+---
+
+> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
+
+# 跳板文件
+
+完整 Skill 定义请阅读：**[framework/skills/feature/prd-design/SKILL.md](../../../framework/skills/feature/prd-design/SKILL.md)**

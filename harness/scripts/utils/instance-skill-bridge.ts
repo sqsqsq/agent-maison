@@ -12,6 +12,7 @@ import {
   posixRelativeFromSkillStubTo,
   renderBridgeSkillStubMarkdown,
 } from './materialize-agent-bundle-skills';
+import { resolveSkillPathOrNull } from './resolve-skill-path';
 
 export interface ExtensionSkillScanRow {
   sourceSlug: string;
@@ -212,12 +213,18 @@ export function renderExtensionSkillStubMarkdown(
   bridgeId: string,
   skillMdRepoRelPosix: string,
   stubTargetRelPosix: string,
-  options: { inline: boolean; frameworkDir: string },
+  options: { inline: boolean; frameworkDir: string; projectRoot: string },
 ): string {
   if (options.inline) {
-    const fwSkill = path.join(options.frameworkDir, 'skills', bridgeId, 'SKILL.md');
+    const resolved = resolveSkillPathOrNull(options.frameworkDir, bridgeId);
+    const fwSkill = resolved
+      ? path.join(options.frameworkDir, resolved.skillMdFrameworkRel)
+      : path.join(options.frameworkDir, 'skills', bridgeId, 'SKILL.md');
     if (fs.existsSync(fwSkill)) {
-      return materializeInlineSkillMarkdown(options.frameworkDir, bridgeId);
+      return materializeInlineSkillMarkdown(options.frameworkDir, bridgeId, {
+        projectRoot: options.projectRoot,
+        stubTargetRelPosix: stubTargetRelPosix,
+      });
     }
   }
   return renderBridgeSkillStubMarkdown(bridgeId, stubTargetRelPosix, skillMdRepoRelPosix);
@@ -313,6 +320,7 @@ export function emitInstanceSkillBridge(options: {
         renderExtensionSkillStubMarkdown(t.bridgeId, t.skillMdRepoRel, stubRel, {
           inline: useInline,
           frameworkDir,
+          projectRoot: repoRoot,
         }),
       );
     }

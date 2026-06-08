@@ -115,11 +115,11 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
     ],
   },
   {
-    header: '# Skill 0 staging: catalog / glossary drafts before merge into SSOT',
+    header: '# catalog-bootstrap staging: catalog / glossary drafts before merge into SSOT',
     patterns: ['doc/catalog-staging/', 'doc/glossary-staging/'],
   },
   {
-    header: '# Framework auto-overwrite backup (managed by check-init / Skill 00)',
+    header: '# Framework auto-overwrite backup (managed by check-init / framework-init)',
     patterns: ['.framework-backup/'],
   },
   {
@@ -127,7 +127,7 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
     patterns: ['doc/features/*/*/reports/*'],
   },
   {
-    header: '# Skill 6 device-testing local artifacts (profile-dependent; dirs may not exist yet)',
+    header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',
     patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
   },
   {

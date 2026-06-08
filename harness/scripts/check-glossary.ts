@@ -94,7 +94,7 @@ function checkSchemaVersionPresent(ctx: CheckContext, glossary: Glossary): Check
 }
 
 function checkTermsIsList(ctx: CheckContext, glossary: Glossary): CheckResult[] {
-  // 空列表是合法的 bootstrap 中间状态（Skill 0 Phase B 刚建骨架、还没追加术语）
+  // 空列表是合法的 bootstrap 中间状态（catalog-bootstrap Phase B 刚建骨架、还没追加术语）
   // 只给 WARN，不 BLOCKER
   if (glossary.terms.length === 0) {
     return [{
@@ -143,7 +143,7 @@ function checkTermRequiredFields(ctx: CheckContext, glossary: Glossary): CheckRe
     severity: 'BLOCKER', status: 'FAIL',
     details: `${missing.length} 处缺失：${missing.slice(0, 10).join('、')}${missing.length > 10 ? ' …' : ''}`,
     suggestion:
-        `对照 framework/profiles/${ctx.resolvedProfile.name}/skills/0-catalog-bootstrap/templates/glossary-term-template.yaml 补齐。`,
+        `对照 framework/profiles/${ctx.resolvedProfile.name}/skills/catalog-bootstrap/templates/glossary-term-template.yaml 补齐。`,
     affected_files: [relGlossary(ctx.projectRoot)],
   }];
 }
@@ -262,7 +262,7 @@ function checkSeedNoTechnicalWords(
       description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
       severity: 'BLOCKER', status: 'SKIP',
       details: `${seedRel} 不存在——bootstrap 流程尚未开启或已收尾。`,
-      suggestion: '若准备开启 /glossary-bootstrap，Skill 0 Phase B Step 1 会自动创建带注释的模板。',
+      suggestion: '若准备开启 /glossary-bootstrap，catalog-bootstrap Phase B Step 1 会自动创建带注释的模板。',
     }];
   }
 

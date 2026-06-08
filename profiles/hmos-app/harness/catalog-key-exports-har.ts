@@ -113,7 +113,7 @@ export function checkKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCa
     details: `${stale.length} 个模块的 key_exports 与导出入口漂移：\n  - ${stale.join('\n  - ')}`,
     suggestion:
       '对每个漂移模块 <M> 跑 `/catalog-bootstrap <M>` 进入 UPDATE 模式刷新画像；\n' +
-      'Skill 0 Step 5.1.B 会给出字段级 diff，确认后 `y` 替换旧画像。',
+      'catalog-bootstrap Step 5.1.B 会给出字段级 diff，确认后 `y` 替换旧画像。',
     affected_files: Array.from(affected),
   }];
 }

@@ -27,6 +27,6 @@ Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRA
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
 - 三套 schema 仍为 **1.0** 起点；`--phase extensions` 全局门禁不变。
-- **render-agents-md** + `instance_skill_bridge` 为扩展 Skill 下发首选路径（弱模型强制，见 Skill 00 S3 adapter 物化）。
+- **render-agents-md** + `instance_skill_bridge` 为扩展 Skill 下发首选路径（弱模型强制，见 framework-init S3 adapter 物化）。
 - **workflow 默认**：`spec-driven.workflow.yaml`（11 phase：5 全局 + 6 feature）。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 与 [`MIGRATION.md`](../../MIGRATION.md) 保持交叉索引一致。

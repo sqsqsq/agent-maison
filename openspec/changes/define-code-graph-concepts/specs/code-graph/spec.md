@@ -4,7 +4,7 @@
 
 The framework SHALL define and consistently use three distinct terms for code-structure artifacts, documented in `docs/concepts/code-graph.md`:
 - **Code Graph** — a module-level index of core function/capability nodes, iterated across requirements.
-- **flow DAG** — a requirement-level per-scenario test-flow graph (the existing Skill 5 artifact).
+- **flow DAG** — a requirement-level per-scenario test-flow graph (the existing business-ut artifact).
 - **Repo Map** — an optional global, cross-module derived navigation index.
 
 New module-level indexing artifacts SHALL NOT reuse the term "DAG".
@@ -55,7 +55,7 @@ Each Code Graph node SHALL carry a source anchor sufficient to detect drift betw
 
 ### Requirement: Disambiguation of overloaded "dag" usages
 
-The framework docs SHALL disambiguate the three existing "dag" usages so they are not conflated with Code Graph: the Skill 5 UT flow DAG, the Skill 3 module-dependency acyclicity check, and the architecture DSL `intra_layer_deps: dag` policy.
+The framework docs SHALL disambiguate the three existing "dag" usages so they are not conflated with Code Graph: the business-ut UT flow DAG, the coding module-dependency acyclicity check, and the architecture DSL `intra_layer_deps: dag` policy.
 
 #### Scenario: Disambiguation is documented
 - **WHEN** `docs/concepts/code-graph.md` is read
@@ -89,13 +89,13 @@ Drift evaluation SHALL classify: missing file/symbol as BLOCKER; `core: true` an
 - **WHEN** a non-core node's function body hash changes
 - **THEN** drift reports WARN with regenerate/review guidance
 
-### Requirement: Core-node closure (Skill 5)
+### Requirement: Core-node closure (business-ut)
 
-After UT harness passes, Skill 5 SHALL evaluate whether the requirement touched any `core: true` Code Graph node; if yes, update the graph and sync UT and MAY archive flow DAG; if not, ephemeral flow DAG MAY be discarded.
+After UT harness passes, business-ut SHALL evaluate whether the requirement touched any `core: true` Code Graph node; if yes, update the graph and sync UT and MAY archive flow DAG; if not, ephemeral flow DAG MAY be discarded.
 
 #### Scenario: Core touched triggers maintenance
 - **WHEN** changes intersect a `core: true` node anchor file
-- **THEN** Skill 5 Step 8.0 requires graph update and UT sync
+- **THEN** business-ut Step 8.0 requires graph update and UT sync
 
 #### Scenario: No core touch keeps ephemeral DAG
 - **WHEN** no `core: true` node is touched

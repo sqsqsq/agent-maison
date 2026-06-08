@@ -1,5 +1,5 @@
 /**
- * Canonical path helpers for ad-hoc device testing (Skill 6 Step 4.B).
+ * Canonical path helpers for ad-hoc device testing (device-testing Step 4.B).
  */
 import * as path from 'path';
 import { inferRepoLayout, harnessRootFromLayout } from '../../repo-layout';

@@ -1,7 +1,7 @@
 # ============================================================================
 # Testing（真机测试）阶段规约 (Phase Rules)
 # ============================================================================
-# 定义真机测试计划和测试报告（Skill 6 产出）必须满足的通用规则。
+# 定义真机测试计划和测试报告（device-testing 产出）必须满足的通用规则。
 # 适用于所有功能模块的测试计划和测试报告。
 #
 # 消费者:
@@ -282,7 +282,7 @@ traceability_checks:
 
   plan_references_unit_layer_ac:
     description: >
-      test-plan 关联了 ut_layer=unit 的 AC/BD 时 WARN（unit 由 Skill 5 UT 覆盖）
+      test-plan 关联了 ut_layer=unit 的 AC/BD 时 WARN（unit 由 business-ut UT 覆盖）
     severity: MINOR
     rule:
       source: "test-plan.md"

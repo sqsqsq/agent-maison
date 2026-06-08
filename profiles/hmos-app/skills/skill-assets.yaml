@@ -1,7 +1,7 @@
 # Profile-local Skill 资产清单（机器可读）
 # -----------------------------------------------------------------------------
-# 供根目录 framework/skills/**/SKILL.md 通过 `profile-skill-asset:<skill>/<key>` 动态解析。
-# 除下列「repo 根相对」键外，路径均相对 `framework/profiles/<profile>/skills/<skill>/`。
+# 供根目录 framework/skills/**/SKILL.md 通过 `profile-skill-asset:<skill-id>/<key>` 动态解析。
+# 除下列「repo 根相对」键外，路径均相对 `framework/profiles/<profile>/skills/<skill-id>/`。
 # schema_version: "1.0"
 # -----------------------------------------------------------------------------
 
@@ -9,38 +9,38 @@ schema_version: "1.0"
 profile: hmos-app
 
 assets:
-  00-framework-init:
+  framework-init:
     preset_5_layer_sample: templates/preset-5-layer.sample.json
 
-  0-catalog-bootstrap:
+  catalog-bootstrap:
     examples_domain_mapping: examples-domain-mapping.md
     # 兼容别名
     examples_wallet_domain: examples-domain-mapping.md
     module_card_template: templates/module-card-template.yaml
     glossary_term_template: templates/glossary-term-template.yaml
 
-  1-prd-design:
+  prd-design:
     prd_template: templates/prd-template.md
     example_prd: examples/example-prd.md
     examples_prd_mapping: examples-prd-mapping.md
 
-  2-requirement-design:
+  requirement-design:
     design_template: templates/design-template.md
     api_spec_template: templates/api-spec.md
     data_model_template: templates/data-model.md
     example_design: examples/example-design.md
 
-  3-coding:
+  coding:
     coding_standards: templates/coding-standards.md
     module_scaffold: templates/module-scaffold.md
     arkts_pitfalls: reference/arkts-pitfalls.md
     arkui_patterns: reference/arkui-patterns.md
     harmony_api_guide: reference/harmony-api-guide.md
 
-  4-code-review:
+  code-review:
     review_checklist: templates/review-checklist.md
 
-  5-business-ut:
+  business-ut:
     use_cases_schema: templates/use-cases-schema.md
     dag_schema: templates/dag-schema.md
     ut_template: templates/ut-template.md
@@ -59,7 +59,7 @@ assets:
     card_opening_dir: examples/sample-flow
     card_opening_use_cases: examples/sample-flow/use-cases.yaml
 
-  6-device-testing:
+  device-testing:
     test_plan_template: templates/test-plan-template.md
     test_plan_hylyre_template: templates/test-plan-hylyre-template.md
     test_report_template: templates/test-report-template.md

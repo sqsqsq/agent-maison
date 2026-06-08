@@ -66,6 +66,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
   { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
   { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
+  { id: 'resolve-skill-path', modulePath: './unit/resolve-skill-path.unit.test' },
+  { id: 'no-numbered-skill-scan', modulePath: './unit/no-numbered-skill-scan.unit.test' },
   { id: 'ut-business-src-scope', modulePath: './unit/ut-business-src-scope.unit.test' },
   { id: 'coding-failure-kinds', modulePath: './unit/coding-failure-kinds.unit.test' },
   { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },

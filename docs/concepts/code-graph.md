@@ -14,7 +14,7 @@
 | **flow DAG** | 需求（feature） | 单条业务流的 UT 场景拓扑（entry → port_call → state → assertion） | **默认 ephemeral**，不归档到 `{module}/test/dag/` |
 | **Repo Map** | 全局（可选） | 跨模块轻量派生导航（文件/符号/依赖边聚合） | 后置能力，见 §6 |
 
-**禁止**把模块级索引再称作「DAG」——避免与 Skill 5 的 flow DAG 混淆。
+**禁止**把模块级索引再称作「DAG」——避免与 business-ut 的 flow DAG 混淆。
 
 ---
 
@@ -47,8 +47,8 @@ flowchart LR
 
 | 语境 | 含义 | 与 Code Graph 关系 |
 |------|------|-------------------|
-| Skill 5 **flow DAG** | 需求级 UT 场景流 YAML | 不同对象；默认 ephemeral |
-| Skill 3 **DAG 合规性** | 模块依赖无环（架构 DSL） | 架构约束，非功能图谱 |
+| business-ut **flow DAG** | 需求级 UT 场景流 YAML | 不同对象；默认 ephemeral |
+| coding **DAG 合规性** | 模块依赖无环（架构 DSL） | 架构约束，非功能图谱 |
 | DSL **`intra_layer_deps: dag`** | 同层模块允许 DAG 型依赖策略 | 配置策略名，非 UT 产物 |
 
 ---
@@ -68,7 +68,7 @@ flowchart LR
 
 | change | 内容 |
 |--------|------|
-| `define-code-graph-concepts` | 术语 + Code Graph schema/GraphExtractor/drift 分级 + core 闭环（Skill 5 Step 8.0） |
+| `define-code-graph-concepts` | 术语 + Code Graph schema/GraphExtractor/drift 分级 + core 闭环（business-ut Step 8.0） |
 | `ut-flow-dag-evidence` | ephemeral DAG、coverage-evidence、seam/mock registry、path-c characterization |
 
 主蓝图（路线图/顺序）：`.cursor/plans/code-graph-ut-evolution_f8fa08ee.plan.md`（dev-only，非运行时 SSOT）。
@@ -95,7 +95,7 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 
 ### 6.1 仍后置的能力
 
-- **Skill 全量接入图谱作导航索引**（Skill 1/2/3/6）；每次使用须反查 anchor，不得当 PRD/design/coding 事实来源。
+- **Skill 全量接入图谱作导航索引**（prd-design/2/3/6）；每次使用须反查 anchor，不得当 PRD/design/coding 事实来源。
 - **全局 Repo Map**（跨模块聚合派生导航）。
 - **日常维护入口**（harness-runner `--phase module-graph`、专用 Skill、CI drift 阶段）。
 
@@ -105,4 +105,4 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 
 - [可演进性与扩展分层](extensibility.md)
 - [验收分层](acceptance-layering.md)
-- [Skill 5 业务级 UT](../skills/5-business-ut.md)
+- [business-ut 业务级 UT](../skills/feature/business-ut.md)

@@ -7,7 +7,7 @@
 
 ## 生成说明
 
-- 本文档由 **Skill `00-framework-init`** 基于 `framework` 模板首次生成。
+- 本文档由 **Skill `framework-init`** 基于 `framework` 模板首次生成。
 - **后续仅架构级变更才更新本文**，三类触发场景见下方「变更触发条件」；feature 级变更（既有模块内新增页面 / 接口 / 数据模型 / 修复）不写入本文，变更历史由 git 与 `doc/features/<feature>/` 承担。
 - 若调整了外层 / 内层 / 出口文件名，必须同步 `framework.config.json` 并通过 harness 相关检查。
 
@@ -61,7 +61,7 @@ graph TD
 
 > 本表仅作架构图的图例，**仅在 `module_set_change` 或 `responsibility_rewrite` 时更新**。
 > 模块职责 / 公共能力 / 易混点 / NOT_responsible_for 等详情以 [module-catalog.yaml](module-catalog.yaml) 为 SSOT，**不要**在此重复复制。
-> 下表由 **Skill 0**（`/catalog-bootstrap`）逐模块建档后补全；初始化阶段保持为空表即可。
+> 下表由 **catalog-bootstrap**（`/catalog-bootstrap`）逐模块建档后补全；初始化阶段保持为空表即可。
 
 | 模块名 | 所属外层 | 一句话职责 |
 |--------|----------|-----------|

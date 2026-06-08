@@ -215,7 +215,7 @@ export interface ToolchainConfig {
   preferredProduct?: string;
 }
 
-/** Skill 6 真机自动化（hmos-app profile · tools.hylyre） */
+/** device-testing 真机自动化（hmos-app profile · tools.hylyre） */
 export interface HylyreToolConfig {
   /** 相对 projectRoot：vendor wheel + release.manifest.json */
   vendor_dir: string;

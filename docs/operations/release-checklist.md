@@ -89,7 +89,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 
    ```bash
    cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <实例根>
-   # 多 adapter 或 DevEco：再按 00b-framework-setup 走 personal orchestrate
+   # 多 adapter 或 DevEco：再按 personal-setup-gate 走 personal orchestrate
    ```
 
    确认生成 `framework.local.json`（gitignored）且 **未** 修改 `materialized_adapters` 以外的项目提交文件。

@@ -966,7 +966,7 @@ function checkTestPlanFreshnessVsAcceptance(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        'acceptance.yaml 比 test-plan.md 更新：请按 Skill 6 从 acceptance（ut_layer∈{device,both}）重派生 test-plan 与 hylyre 计划。',
+        'acceptance.yaml 比 test-plan.md 更新：请按 device-testing 从 acceptance（ut_layer∈{device,both}）重派生 test-plan 与 hylyre 计划。',
       suggestion: '更新 test-plan.md 后重新派生 testing/reports/<timestamp>/hylyre/test-plan.hylyre.md。',
     }];
   }
@@ -1037,7 +1037,7 @@ function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null):
     severity: 'MINOR',
     status: 'WARN',
     details:
-      `test-plan 关联了 ${unique.length} 个 unit 层 AC/BD（应由 Skill 5 UT 覆盖）：\n${truncateList(unique, 10)}`,
+      `test-plan 关联了 ${unique.length} 个 unit 层 AC/BD（应由 business-ut UT 覆盖）：\n${truncateList(unique, 10)}`,
     suggestion: '从真机 test-plan 剔除 unit 层 AC，仅保留 ut_layer∈{device,both}。',
   }];
 }
@@ -1331,7 +1331,7 @@ function checkBoundaryCoverage(ctx: CheckContext, plan: string | null): CheckRes
 }
 
 // --------------------------------------------------------------------------
-// Skill 6 · device_test.build / device_test.install（profile capability 驱动）
+// device-testing · device_test.build / device_test.install（profile capability 驱动）
 // --------------------------------------------------------------------------
 
 const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
@@ -1756,7 +1756,7 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `未找到有效的 Hylyre 派生测试计划（已排除烟测占位；期望路径形如 ${expectedDir}）。请按 Skill 6 Step 4.5 落盘 test-plan.hylyre.md 后重试。\n${hintLine}`,
+          details: `未找到有效的 Hylyre 派生测试计划（已排除烟测占位；期望路径形如 ${expectedDir}）。请按 device-testing Step 4.5 落盘 test-plan.hylyre.md 后重试。\n${hintLine}`,
         },
       ];
     }
@@ -2067,7 +2067,7 @@ const checker: PhaseChecker = {
         severity: 'BLOCKER',
         status: 'FAIL',
         details: `未找到 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
-        suggestion: '请先运行 Skill 6 生成测试计划。',
+        suggestion: '请先运行 device-testing 生成测试计划。',
       };
       return [missingDocs, buildTestingRunStatusResult(plan, report, [missingDocs])];
     }

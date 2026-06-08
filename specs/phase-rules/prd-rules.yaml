@@ -1,7 +1,7 @@
 # ============================================================================
 # PRD 阶段规约 (Phase Rules)
 # ============================================================================
-# 定义 PRD 文档（Skill 1 产出）必须满足的通用规则。
+# 定义 PRD 文档（prd-design 产出）必须满足的通用规则。
 # 适用于所有功能模块的 doc/features/{module}/prd/PRD.md。
 #
 # 消费者:
@@ -40,7 +40,7 @@ structure_checks:
 
   terminology_mapping_table:
     description: >
-      「术语映射表」章节必须存在且为 Skill 1 Step 1.5 产出的标准格式：
+      「术语映射表」章节必须存在且为 prd-design Step 1.5 产出的标准格式：
       (1) 至少包含一行业务术语；
       (2) 每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认；
       (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用 auto-approve）；
@@ -80,7 +80,7 @@ structure_checks:
       或 `out_of_scope_modules` 之一。
       该 check 捕捉一类典型不一致：PRD 作者列了某术语的消歧归属
       （参考示例："卡中心 → CardManager"），却忘了把对应模块声明进 Scope。
-      未声明 → Skill 2 / Skill 3 不知道该模块究竟是"本需求要改"还是
+      未声明 → requirement-design / coding 不知道该模块究竟是"本需求要改"还是
       "只是消歧用"，后续极易跨模块改错或漏改。
       合法的修法有两种：
         (1) 把该模块加进 in_scope_modules（本需求确实要改它）
@@ -222,7 +222,7 @@ structure_checks:
 
   acceptance_yaml_present:
     description: >
-      doc/features/{feature}/acceptance.yaml 必须存在（Skill 1 从 PRD 提取的验收 SSOT）
+      doc/features/{feature}/acceptance.yaml 必须存在（prd-design 从 PRD 提取的验收 SSOT）
     severity: BLOCKER
     rule:
       path: "doc/features/{feature}/acceptance.yaml"
@@ -264,7 +264,7 @@ structure_checks:
       new_or_changed / copy_edits_only 必须提供 visual_handoff.kind 与 authoritative_refs；
       path 经由 resolveAuthoritativePath 解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级），
       支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。
-      详见 framework/skills/1-prd-design/reference/visual-handoff.md。
+      详见 framework/skills/feature/prd-design/reference/visual-handoff.md。
     severity: MAJOR
     rule:
       expect: "yaml_code_block_with_ui_change"
@@ -370,7 +370,7 @@ traceability_checks:
       （术语映射表章节之外的全部内容）出现，但**未**列在术语映射表里 →
       WARN（最后一道术语漏建档兜底网）。
       该 check 防止"PRD 作者把某业务词当作普通词写进正文，
-      实际它在 glossary 里有明确归属"导致 Skill 2 / 3 走偏。
+      实际它在 glossary 里有明确归属"导致 requirement-design / 3 走偏。
       处理方式：
         (1) 若确实是业务术语 → 把它加进术语映射表（推荐）；
         (2) 若只是在正文里偶然带过的非业务用词 → 可忽略本 WARN；

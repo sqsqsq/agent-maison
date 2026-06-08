@@ -25,20 +25,20 @@ export interface ResolvedAgentBundlePaths {
   skillMode: AgentBundleSkillMode;
 }
 
-/** 内置 Skill 跳板 description（与 shared/skills-bridge 对齐） */
+/** 内置 Skill 跳板 description（与 shared/skills-bridge 对齐；key = flat skill id） */
 export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
-  '00-framework-init':
-    '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/00-framework-init/SKILL.md）',
-  '0-catalog-bootstrap':
-    '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/0-catalog-bootstrap/SKILL.md）',
-  '1-prd-design': 'PRD 撰写（完整流程见仓库 framework/skills/1-prd-design/SKILL.md）',
-  '2-requirement-design':
-    'PRD → 技术设计 design.md（完整流程见 framework/skills/2-requirement-design/SKILL.md）',
-  '3-coding':
-    '按 design / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/3-coding/SKILL.md）',
-  '4-code-review': '代码审查报告（完整流程见 framework/skills/4-code-review/SKILL.md）',
-  '5-business-ut': '业务级 UT / DAG（完整流程见 framework/skills/5-business-ut/SKILL.md）',
-  '6-device-testing': '真机测试计划与报告（完整流程见 framework/skills/6-device-testing/SKILL.md）',
+  'framework-init':
+    '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/project/framework-init/SKILL.md）',
+  'catalog-bootstrap':
+    '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
+  'prd-design': 'PRD 撰写（完整流程见 framework/skills/feature/prd-design/SKILL.md）',
+  'requirement-design':
+    'PRD → 技术设计 design.md（完整流程见 framework/skills/feature/requirement-design/SKILL.md）',
+  'coding':
+    '按 design / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/feature/coding/SKILL.md）',
+  'code-review': '代码审查报告（完整流程见 framework/skills/feature/code-review/SKILL.md）',
+  'business-ut': '业务级 UT / DAG（完整流程见 framework/skills/feature/business-ut/SKILL.md）',
+  'device-testing': '真机测试计划与报告（完整流程见 framework/skills/feature/device-testing/SKILL.md）',
 };
 
 const RESERVED_ROOT_PREFIXES = ['framework', 'doc/features'];

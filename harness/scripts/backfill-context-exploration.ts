@@ -92,14 +92,14 @@ function buildKeyInputs(projectRoot: string, featureAbs: string, phase: ContextE
     'profiles',
     'hmos-app',
     'skills',
-    '3-coding',
+    'coding',
     'templates',
     'coding-standards.md',
   );
   if (fs.existsSync(codingStd)) {
     push(`${path.relative(projectRoot, codingStd).replace(/\\/g, '/')} — coding-rule`);
   } else {
-    push('framework/profiles/<project_profile>/skills/3-coding/templates/coding-standards.md — coding-rule（按 profile）');
+    push('framework/profiles/<project_profile.name>/skills/coding/templates/coding-standards.md — coding-rule（按 profile）');
   }
 
   const hay = uniq.join('\n').toLowerCase();
@@ -119,7 +119,7 @@ function buildKeyInputs(projectRoot: string, featureAbs: string, phase: ContextE
     else if (sub === 'framework.config') push(`framework.config.json — framework.config`);
     else if (sub === 'coding-rule')
       push(
-        'coding-rule — 见 framework/profiles/<project_profile>/skills/3-coding/templates/coding-standards.md',
+        'coding-rule — 见 framework/profiles/<project_profile.name>/skills/coding/templates/coding-standards.md',
       );
     else push(sub);
   }

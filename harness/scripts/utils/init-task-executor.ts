@@ -178,9 +178,19 @@ function syncTemplateTarget(
     payload = Buffer.from(renderTemplate(tplBuf.toString('utf-8'), renderEnv), 'utf-8');
   } else if (file.kind === 'materialized' && file.skillDir) {
     const { materializeInlineSkillMarkdown } = require('./materialize-agent-bundle-skills') as {
-      materializeInlineSkillMarkdown: (fw: string, skillDir: string) => string;
+      materializeInlineSkillMarkdown: (
+        fw: string,
+        skillDir: string,
+        ctx?: { projectRoot: string; stubTargetRelPosix: string },
+      ) => string;
     };
-    payload = Buffer.from(materializeInlineSkillMarkdown(fwRoot, file.skillDir), 'utf-8');
+    payload = Buffer.from(
+      materializeInlineSkillMarkdown(fwRoot, file.skillDir, {
+        projectRoot: ctx.projectRoot,
+        stubTargetRelPosix: norm,
+      }),
+      'utf-8',
+    );
   } else {
     payload = tplBuf;
   }

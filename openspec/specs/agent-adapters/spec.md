@@ -37,7 +37,7 @@ project root, not inside the framework submodule directory.
 - **WHEN** framework-init runs with a selected adapter
 - **THEN** the generated agent entry file (e.g. `AGENTS.md`) MUST appear at the instance project root as defined by `agent_entry_file.target_path` in the adapter config
 
-> **Enforced by:** `agents/*/adapter.yaml`, `skills/00-framework-init/SKILL.md`, `harness/scripts/check-init.ts`
+> **Enforced by:** `agents/*/adapter.yaml`, `skills/project/framework-init/SKILL.md`, `harness/scripts/check-init.ts`
 
 ### Requirement: Project init materializes multiple adapters
 
@@ -72,7 +72,7 @@ and direct the user to project init without writing local config.
 - **THEN** `assert-active-adapter-materialized` MUST fail, `record-adapter` MUST
   be skipped, and `framework.local.json` MUST NOT be created or updated
 
-> **Enforced by:** `skills/00b-framework-setup/SKILL.md`,
+> **Enforced by:** `skills/reference/personal-setup-gate.mdSKILL.md`,
 > `harness/scripts/init-orchestrate.ts`,
 > `harness/tests/unit/init-orchestrate-smoke.unit.test.ts`
 

@@ -13,5 +13,5 @@
 
 ## 3. 文档
 
-- [x] 3.1 Skill 00 + staging 示例 + framework-init 命令
+- [x] 3.1 framework-init + staging 示例 + framework-init 命令
 - [x] 3.2 `cd harness && npm test` 全 PASS

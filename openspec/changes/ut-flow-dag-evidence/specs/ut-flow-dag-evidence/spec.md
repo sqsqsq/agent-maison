@@ -2,21 +2,21 @@
 
 ### Requirement: flow DAG is ephemeral by default
 
-A requirement-level flow DAG SHALL default to ephemeral storage under the feature reports area (e.g. `doc/features/<feature>/ut/reports/.../dag/`) and SHALL NOT be archived into `{module}/test/dag/` unless archival is explicitly requested. (The "Code Graph core node touched → archive" trigger is defined in capability `code-graph` / Skill 5 Step 8.0.)
+A requirement-level flow DAG SHALL default to ephemeral storage under the feature reports area (e.g. `doc/features/<feature>/ut/reports/.../dag/`) and SHALL NOT be archived into `{module}/test/dag/` unless archival is explicitly requested. (The "Code Graph core node touched → archive" trigger is defined in capability `code-graph` / business-ut Step 8.0.)
 
 #### Scenario: Small requirement does not archive a DAG
-- **WHEN** Skill 5 generates a flow DAG for a requirement without an explicit archival request
+- **WHEN** business-ut generates a flow DAG for a requirement without an explicit archival request
 - **THEN** the DAG is written to the ephemeral reports location and no file is created under `{module}/test/dag/`
 
 #### Scenario: Explicit archival request still archives
 - **WHEN** the user explicitly requests that a flow DAG be archived
 - **THEN** the DAG is written under `{module}/test/dag/` as before
 
-> **Enforced by:** `skills/5-business-ut/SKILL.md`, `specs/phase-rules/ut-rules.yaml`, `harness/scripts/check-ut.ts`
+> **Enforced by:** `skills/feature/business-ut/SKILL.md`, `specs/phase-rules/ut-rules.yaml`, `harness/scripts/check-ut.ts`
 
 ### Requirement: Machine-readable coverage evidence
 
-When a feature has at least one `ut_layer ∈ {unit, both}` **P0 or P1** AC/BD, Skill 5 SHALL emit a machine-readable `doc/features/<feature>/ut/reports/coverage-evidence.json` that records the `evidence_source` (one of `dag_archived`, `dag_ephemeral`, `ac_coverage`, `ut_tags`), the path to the evidence file(s), and a mapping from each **covered** P0/P1 AC / branch to its supporting evidence. When a feature has only device-only AC, only P2+ unit/both items, or the active profile disables UT compile/run, the file MAY be omitted or emitted empty with a recorded reason.
+When a feature has at least one `ut_layer ∈ {unit, both}` **P0 or P1** AC/BD, business-ut SHALL emit a machine-readable `doc/features/<feature>/ut/reports/coverage-evidence.json` that records the `evidence_source` (one of `dag_archived`, `dag_ephemeral`, `ac_coverage`, `ut_tags`), the path to the evidence file(s), and a mapping from each **covered** P0/P1 AC / branch to its supporting evidence. When a feature has only device-only AC, only P2+ unit/both items, or the active profile disables UT compile/run, the file MAY be omitted or emitted empty with a recorded reason.
 
 #### Scenario: Evidence file is produced when P0/P1 unit/both coverage exists
 - **WHEN** the UT phase completes for a feature that has at least one `ut_layer ∈ {unit, both}` **P0 or P1** AC/BD
@@ -63,10 +63,10 @@ Resolvers SHALL treat DAG evidence as present when `linked_acceptance` / `linked
 
 ### Requirement: Harness must not fabricate coverage mappings
 
-`check-ut.ts` MUST NOT synthesize per-AC `mappings[]` rows in `coverage-evidence.json`. Only Skill 5 (or a human) MAY author mappings. Harness MAY validate mappings only when each row's `evidence_source` matches its backing (strict): `ut_tags` → UT tag present; `dag_*` → DAG link for that scope; `ac_coverage` → `ac-coverage.json` `ut_covered: true`. `ac-coverage.json` SHALL be written before evidence gates run (same UT pass, in-memory or on disk).
+`check-ut.ts` MUST NOT synthesize per-AC `mappings[]` rows in `coverage-evidence.json`. Only business-ut (or a human) MAY author mappings. Harness MAY validate mappings only when each row's `evidence_source` matches its backing (strict): `ut_tags` → UT tag present; `dag_*` → DAG link for that scope; `ac_coverage` → `ac-coverage.json` `ut_covered: true`. `ac-coverage.json` SHALL be written before evidence gates run (same UT pass, in-memory or on disk).
 
 #### Scenario: Second harness run does not self-pass via invented mappings
-- **WHEN** harness runs twice without Skill 5 updating `coverage-evidence.json`
+- **WHEN** harness runs twice without business-ut updating `coverage-evidence.json`
 - **THEN** the second run does not PASS solely because the first run wrote blanket mappings
 
 #### Scenario: Present gate fails when P0/P1 unit/both scope lacks file
@@ -81,13 +81,13 @@ Resolvers SHALL treat DAG evidence as present when `linked_acceptance` / `linked
 
 Module-level seam and reusable mock/fixture artifacts SHALL live under `doc/modules/<module>/ut-registry/` (schema in profile template `module-seam-mock-registry-schema`). Feature-level `testability-audit.md` and `mock-plan.yaml` SHALL derive from or reference the registry, not recreate seams per requirement.
 
-#### Scenario: Skill 5 references registry first
-- **WHEN** Skill 5 Step 1.5/1.6 runs for a module with an existing registry
+#### Scenario: business-ut references registry first
+- **WHEN** business-ut Step 1.5/1.6 runs for a module with an existing registry
 - **THEN** the skill consults `ut-registry/seams.yaml` before inventing new seams
 
 ### Requirement: Characterization path-c
 
-Skill 5 SHALL support `flow_type: characterization` with per-node `origin` metadata, `[CHAR-*]` UT naming, and harness rules `origin_tag_required` / `characterization_trace_matches`. Demand-side coverage rules (`ut_case_per_unit_ac`, `acceptance_coverage`, `branch_coverage_full`) SHALL SKIP only when **all** DAGs with a declared `flow_type` are `characterization` (mixed spec-driven + characterization MUST NOT disable spec-driven gates).
+business-ut SHALL support `flow_type: characterization` with per-node `origin` metadata, `[CHAR-*]` UT naming, and harness rules `origin_tag_required` / `characterization_trace_matches`. Demand-side coverage rules (`ut_case_per_unit_ac`, `acceptance_coverage`, `branch_coverage_full`) SHALL SKIP only when **all** DAGs with a declared `flow_type` are `characterization` (mixed spec-driven + characterization MUST NOT disable spec-driven gates).
 
 #### Scenario: Mixed DAG types keep AC gates
 - **WHEN** a feature has both characterization and non-characterization flow DAGs

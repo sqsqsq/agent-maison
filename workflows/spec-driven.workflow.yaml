@@ -22,21 +22,21 @@ artifacts:
     check: check-init.ts
     rule: phase-rules/init-rules.yaml
     requires: []
-    skill_doc: ../skills/00-framework-init/SKILL.md
+    skill_doc: ../skills/project/framework-init/SKILL.md
 
   - id: catalog
     scope: global
     check: check-catalog.ts
     rule: phase-rules/catalog-rules.yaml
     requires: []
-    skill_doc: ../skills/0-catalog-bootstrap/SKILL.md
+    skill_doc: ../skills/project/catalog-bootstrap/SKILL.md
 
   - id: glossary
     scope: global
     check: check-glossary.ts
     rule: phase-rules/glossary-rules.yaml
     requires: []
-    skill_doc: ../skills/0-catalog-bootstrap/SKILL.md
+    skill_doc: ../skills/project/catalog-bootstrap/SKILL.md
 
   - id: docs
     scope: global
@@ -50,7 +50,7 @@ artifacts:
     rule: phase-rules/prd-rules.yaml
     requires: [catalog, glossary]
     verifier_prompt: prompts/verify-prd.md
-    skill_doc: ../skills/1-prd-design/SKILL.md
+    skill_doc: ../skills/feature/prd-design/SKILL.md
 
   - id: design
     scope: feature
@@ -58,7 +58,7 @@ artifacts:
     rule: phase-rules/design-rules.yaml
     requires: [prd]
     verifier_prompt: prompts/verify-design.md
-    skill_doc: ../skills/2-requirement-design/SKILL.md
+    skill_doc: ../skills/feature/requirement-design/SKILL.md
 
   - id: coding
     scope: feature
@@ -66,7 +66,7 @@ artifacts:
     rule: phase-rules/coding-rules.yaml
     requires: [design]
     verifier_prompt: prompts/verify-coding.md
-    skill_doc: ../skills/3-coding/SKILL.md
+    skill_doc: ../skills/feature/coding/SKILL.md
 
   - id: review
     scope: feature
@@ -74,7 +74,7 @@ artifacts:
     rule: phase-rules/review-rules.yaml
     requires: [coding]
     verifier_prompt: prompts/verify-review.md
-    skill_doc: ../skills/4-code-review/SKILL.md
+    skill_doc: ../skills/feature/code-review/SKILL.md
 
   - id: ut
     scope: feature
@@ -82,7 +82,7 @@ artifacts:
     rule: phase-rules/ut-rules.yaml
     requires: [coding]
     verifier_prompt: prompts/verify-ut.md
-    skill_doc: ../skills/5-business-ut/SKILL.md
+    skill_doc: ../skills/feature/business-ut/SKILL.md
 
   - id: testing
     scope: feature
@@ -90,4 +90,4 @@ artifacts:
     rule: phase-rules/testing-rules.yaml
     requires: [ut]
     verifier_prompt: prompts/verify-testing.md
-    skill_doc: ../skills/6-device-testing/SKILL.md
+    skill_doc: ../skills/feature/device-testing/SKILL.md

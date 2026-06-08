@@ -1,5 +1,5 @@
 ---
-description: 进入代码审查阶段（Skill 4）
+description: 进入代码审查阶段（code-review）
 argument-hint: <feature-name>
 ---
 
@@ -15,4 +15,4 @@ argument-hint: <feature-name>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/4-code-review/SKILL.md](../../framework/skills/4-code-review/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/feature/code-review/SKILL.md](../../framework/skills/feature/code-review/SKILL.md)**

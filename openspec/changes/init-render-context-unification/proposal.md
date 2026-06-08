@@ -22,5 +22,5 @@ context 对象，且 `--emit-staging-template` 不预填 `configWritePayload`，
 
 - Affected specs: init-orchestration
 - Affected code: `template-renderer.ts`, `check-init.ts`, `render-agents-md.ts`,
-  `init-orchestrate.ts`, `config-builder.ts`, Skill 00 文档
+  `init-orchestrate.ts`, `config-builder.ts`, framework-init 文档
 - Tests: `template-renderer.unit.test.ts`, `init-orchestrate.unit.test.ts` 增补

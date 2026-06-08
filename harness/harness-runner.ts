@@ -299,7 +299,7 @@ async function main(): Promise<void> {
         '     请改用: derive-adhoc-hylyre-hint 或 adhoc-device-test --steps "…"（derive）；\n' +
         '     跑机: adhoc-device-test --bundle <id> --plan <agent写的 test-plan.hylyre.md>\n' +
         '     （CLI 内自动 ensureHylyreReady，不要求用户 pip install / 手删 .hylyre/venv）\n' +
-        '     详见 framework/skills/6-device-testing/SKILL.md Step 4.B',
+        '     详见 framework/skills/feature/device-testing/SKILL.md Step 4.B',
     );
     process.exit(1);
   }

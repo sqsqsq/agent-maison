@@ -15,8 +15,8 @@
 
 详见：
 
-- `framework/skills/00-framework-init/prompts/prd-harness-options.md`
-- `framework/skills/1-prd-design/reference/visual-handoff.md`
+- `framework/skills/project/framework-init/prompts/prd-harness-options.md`
+- `framework/skills/feature/prd-design/reference/visual-handoff.md`
 
 ## 已有工程如何保留旧习惯
 

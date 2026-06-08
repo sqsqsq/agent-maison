@@ -1,5 +1,5 @@
 /**
- * Skill 6 device_test.build — 业务源码新鲜度 vs 已有 HAP，判定是否跳过 hvigor。
+ * device-testing device_test.build — 业务源码新鲜度 vs 已有 HAP，判定是否跳过 hvigor。
  */
 import * as fs from 'fs';
 import * as path from 'path';

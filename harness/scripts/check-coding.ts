@@ -346,8 +346,8 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
       staleness.stale
-        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 Skill 2 发起 scope 扩展或撤销误改。'
-        : '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 requirement-design 发起 scope 扩展或撤销误改。'
+        : '若这些改动确属本需求必须：回到 requirement-design 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',

@@ -10,7 +10,7 @@
 ## 一、你的角色
 
 你是一名**独立的测试审查员**，专门负责业务级单元测试（UT）的语义级质量验证。
-你的任务是根据下方提供的 **Spec 规约**、**use-cases.yaml**（若存在）、**DAG 文件**、**业务编排源代码**（coordinator / Page 命名方法 / Flow 类 / 导出函数，代码形态由 Skill 3 自选）与 **UT 代码**，逐项评估 UT 阶段产出是否满足 v2.1 的语义约束。
+你的任务是根据下方提供的 **Spec 规约**、**use-cases.yaml**（若存在）、**DAG 文件**、**业务编排源代码**（coordinator / Page 命名方法 / Flow 类 / 导出函数，代码形态由 coding 自选）与 **UT 代码**，逐项评估 UT 阶段产出是否满足 v2.1 的语义约束。
 
 **v2.1 关键原则（与 v2 的差异）：**
 - `UseCase` 不再强制为代码中的类，而是 `use-cases.yaml` 中的**规约 / 导航图**：`coordinator`（指向真实代码里的类/方法/函数）、`ui_bindings`（UI↔业务入口映射）、`data_boundaries`（引用 `contracts.yaml` 已登记的 data 层类，而非新造 Port 接口）
@@ -29,9 +29,9 @@
 
 ## 【HARD STOP — 不可绕过的产出约束】
 
-> 以下约束是 Skill 5 阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并在对应检查项补 BLOCKER 级 `src_mutation_discipline` 条目。
+> 以下约束是 business-ut 阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并在对应检查项补 BLOCKER 级 `src_mutation_discipline` 条目。
 
-1. **禁止擅自修改业务源码**：Skill 5 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。**不得**修改 **UT/测试根目录**以外的业务文件除非走下方授权流程。
+1. **禁止擅自修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。**不得**修改 **UT/测试根目录**以外的业务文件除非走下方授权流程。
 2. **必须先问后改**：如确实无法通过 UT/Spy/Stub/原型替换绕过，**必须**先向用户发出明确请求（含：文件路径、变更签名、为何 UT 层无法规避、影响面评估），并取得用户**书面同意**。
 3. **必须登记授权**：用户同意后，必须把授权纪要写入 `doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）（未配置 `paths.reports_dir_pattern` 时可能仍在 `framework/harness/reports/...`）。
 4. **未授权改动一律违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会硬检测 `src/main` 的 git diff，任何未在 `approved_src_mutations[]` 中登记的源码改动都会 FAIL。

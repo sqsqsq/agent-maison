@@ -53,10 +53,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'resolveBridgeTargets：与预留名冲突 → ext- 前缀 + 告警 + 小节含原名',
     run: () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-bridge-'));
-      write(path.join(dir, 'doc/extensions/skills/3-coding/SKILL.md'), '# collide\n');
+      write(path.join(dir, 'doc/extensions/skills/coding/SKILL.md'), '# collide\n');
       const rows = scanExtensionSkills(dir, 'doc/extensions');
       const reserved = loadReservedBridgeIds(FRAMEWORK_DIR);
-      assert.strictEqual(reserved.has('3-coding'), true);
+      assert.strictEqual(reserved.has('coding'), true);
       const { targets, warnings } = resolveBridgeTargets(rows, reserved);
       assert.strictEqual(targets.length, 1);
       assert.strictEqual(targets[0].conflict, true);
@@ -64,7 +64,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(warnings.some(w => w.includes('冲突')));
       const md = formatExtensionSkillSectionMarkdown(targets);
       assert(md.includes('原名'));
-      assert(md.includes('3-coding'));
+      assert(md.includes('coding'));
     },
   },
 ];

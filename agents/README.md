@@ -43,10 +43,10 @@ framework/agents/
 跳转到 `framework/skills/<n>/SKILL.md` 的链接。
 
 - **禁止**在跳板里追加业务条款、选型表或多个次级文档链接；否则 agent 可能只读跳板、漏掉正文中的 BLOCKER、harness 与 verifier 要求。
-- **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（Skill 00）render 下发，**勿**仅在实例跳板内手补。
+- **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（framework-init）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
 
-## Init Skill：编排流（Skill 00 · S1–S4）
+## Init Skill：编排流（framework-init · S1–S4）
 
 项目级 **`/framework-init`** 不再逐步 Q1=y；流程为：
 
@@ -91,7 +91,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
-## Adapter 选定建议（personal setup · Skill 00b）
+## Adapter 选定建议（personal setup · framework-initb）
 
 **项目 init 不再选 active adapter。** 个人 setup（`setup.adapter`）只能从 **`materialized_adapters` 已物化** 的目录名中选；未物化则引导回项目 init。
 
@@ -106,7 +106,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 - **工具名**：`AskUserQuestion`（Claude adapter 专属；见 `.claude/rules/interaction-renderer.md`）。
 - **会话规则**：`.claude/rules/interaction-renderer.md`（claude adapter `rules` 段下发，与 CLAUDE.md 同优先级）——**BLOCKER**：所有用户选择须 AskUserQuestion + portable 脚注；选项文案 SSOT 在 [confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml)。
 - **slash 强约束**：各 `.claude/commands/*.md` 含一句 AskUserQuestion BLOCKER，链 interaction-renderer。
-- **init BLOCKER**：Skill 00 S2 — `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal — Skill 00b `setup.*`。
+- **init BLOCKER**：framework-init S2 — `init.task_plan` / `init.materialized_adapters` / `init.task_decision`；personal — framework-initb `setup.*`。
 - **实例下发**：vendor 升级后用户自行 `/framework-init` UPDATE；check-init UPDATE 会自动 `backup_delete` 废弃的 `confirmation-ux.md` / `widget-options/`。
 - **Cursor 对称**：`.cursor/rules/interaction-renderer.mdc`（AskQuestion）。
 
@@ -131,7 +131,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 1. 在本目录下新建 `<adapter_name>/` 子目录。
 2. 按 `adapter-schema.yaml` 的约束创建 `<adapter_name>/adapter.yaml`。
 3. 在 `<adapter_name>/templates/` 下放置 adapter 专属模板（slash / 跳板 / rules）。
-4. 跑 `framework/skills/00-framework-init` 的 UPDATE 模式自检，确保 adapter 被列入可选项。
+4. 跑 `framework/skills/project/framework-init` 的 UPDATE 模式自检，确保 adapter 被列入可选项。
 5. 更新 **本文件**「第一版 adapter 列表」一节（及 `framework/README.md` 中指向 `agents/` 的总览句，若有）。
 
 ## 占位符

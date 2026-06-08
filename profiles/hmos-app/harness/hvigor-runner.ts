@@ -892,7 +892,7 @@ export function detectProduct(projectRoot: string): string {
 }
 
 /**
- * 枚举 build-profile.json5 中声明的全部 product 名（供 Skill 6 真机打包前展示选项）。
+ * 枚举 build-profile.json5 中声明的全部 product 名（供 device-testing 真机打包前展示选项）。
  * 解析失败或为空时返回 `['default']`。
  */
 export function listAvailableProducts(projectRoot: string): string[] {
@@ -1485,7 +1485,7 @@ export function runHvigorAssembleApp(
     task?: string;
     /** 覆盖 / 合并 config 的 coding.extraArgs（此处传入即整段替换 config 的 extraArgs） */
     extraArgs?: string[];
-    /** 覆盖 `-p product=`（Skill 6 device-testing 等） */
+    /** 覆盖 `-p product=`（device-testing device-testing 等） */
     product?: string;
     /** 覆盖 `-p buildMode=` */
     buildMode?: 'debug' | 'release';

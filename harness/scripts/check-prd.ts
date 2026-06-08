@@ -340,7 +340,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       id: 'terminology_mapping_table', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '未找到「术语映射表」章节。Skill 1 Step 1.5 要求 PRD 必须以该章节起始。',
+      details: '未找到「术语映射表」章节。prd-design Step 1.5 要求 PRD 必须以该章节起始。',
       suggestion: '请在功能概述之前插入 "## 0. 术语映射表" 章节，按模板填写映射表。',
     }];
   }
@@ -353,7 +353,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       severity: 'BLOCKER', status: 'FAIL',
       details: '「术语映射表」章节未找到 Markdown 表格。',
       suggestion:
-        `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/1-prd-design/templates/prd-template.md 中的表格格式。`,
+        `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/prd-design/templates/prd-template.md 中的表格格式。`,
     }];
   }
 
@@ -735,7 +735,7 @@ function checkGlossaryTermsUsedInBody(ctx: CheckContext, prd: string): CheckResu
           : `${x.appeared_as}[→${x.canonical_term} → ${x.module}]`,
       ).join('、'),
     suggestion:
-      '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 Skill 2 / 3 阶段因术语歧义改错模块；\n' +
+      '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 requirement-design / 3 阶段因术语歧义改错模块；\n' +
       '若只是正文里偶然带过的非业务用词 → 可直接忽略本 WARN（不会升级为 BLOCKER）。',
     affected_files: [
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md'),

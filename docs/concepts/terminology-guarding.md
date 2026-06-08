@@ -104,7 +104,7 @@ surveyed 过的 5 个层级方案：
 | `doc/glossary.yaml`                           | 业务术语 ↔ 权威模块映射，含 `aliases` + `confidence_hint` + `easily_confused_with`     | ✅   |
 | `framework/harness/scripts/utils/catalog-parser.ts`  | 加载 / 查找 / 按术语反查                                                       | ✅   |
 | `framework/harness/scripts/utils/glossary-parser.ts` | 加载 / 精确查 + 别名查                                                          | ✅   |
-| Skill 1 (`prd-design`) Step 1.5               | 术语消歧工作流，**人工逐条确认**（no auto-approve）                                   | ✅   |
+| prd-design (`prd-design`) Step 1.5               | 术语消歧工作流，**人工逐条确认**（no auto-approve）                                   | ✅   |
 | PRD `## 0. 术语映射表`                         | PRD 模板新章节                                                                       | ✅   |
 | `prd-rules.yaml` 新 BLOCKER                   | `terminology_mapping_table` + `scope_matches_catalog`                                 | ✅   |
 | `check-prd.ts` 三道防线                       | 人工确认 / Catalog 对齐 / Glossary 交叉                                               | ✅   |
@@ -144,7 +144,7 @@ surveyed 过的 5 个层级方案：
 | ------- | --------------------------------------------------------------- | -------- | ------------------------------------------------------------- |
 | WP7.1   | `framework/harness/scripts/gen-repo-map.ts`                     | ~300     | 扫描所有 `Index.ets` + 公共接口，按层级输出树                |
 | WP7.2   | `doc/repo-map.md`（自动生成，不入 git）                          | -        | 每个模块 → 导出符号 → 签名 → 一句话 doc                       |
-| WP7.3   | Skill 2 Step 2.5 注入 Repo Map                                  | -        | design 阶段在选契约前先读 repo-map                            |
+| WP7.3   | requirement-design Step 2.5 注入 Repo Map                                  | -        | design 阶段在选契约前先读 repo-map                            |
 | WP7.4   | 分层加载策略                                                    | -        | 默认只给 1 层（本 feature 所在模块）+ 其依赖的 public API 签名 |
 | WP7.5   | 预算控制                                                        | -        | 整个 repo-map ≤ 20K token，超过则按调用频率/依赖度裁剪        |
 
@@ -229,7 +229,7 @@ surveyed 过的 5 个层级方案：
 
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **PRD 模板路径**：宿主模板在 `framework/profiles/hmos-app/skills/1-prd-design/templates/`，与根 SKILL 跳板分离。
+- **PRD 模板路径**：宿主模板在 `framework/profiles/hmos-app/skills/prd-design/templates/`，与根 SKILL 跳板分离。
 - **规约消费**：`check-prd.ts` 以合并 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
 - **Context Gate**：`context-exploration.ts` schema **1.1.0** + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` / `backfill:context` 过渡。
 - **确认 UX**：PRD 术语映射表须用户 `[x]` 确认；Claude adapter 关键步骤 **AskUserQuestion BLOCKER**。

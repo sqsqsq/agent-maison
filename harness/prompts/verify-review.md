@@ -173,7 +173,7 @@
 ### 检查 12: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
 
 - **严重等级**: MAJOR
-- **评估方法**: review 四件套 PASS 后 agent 在同一执行流自动开 Skill 5，且**无** `review.ok_to_ut` / `phase.next_step` / batch 授权 → FAIL
+- **评估方法**: review 四件套 PASS 后 agent 在同一执行流自动开 business-ut，且**无** `review.ok_to_ut` / `phase.next_step` / batch 授权 → FAIL
 
 ---
 
@@ -328,7 +328,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: MAJOR
       details: |
-        review 闭环后未授权即开 Skill 5: PASS/FAIL
+        review 闭环后未授权即开 business-ut: PASS/FAIL
       suggestion: |
         闭环后须 review.ok_to_ut / phase.next_step 停等（user-confirmation-ux §8）
 

@@ -11,10 +11,10 @@
 - context staging 禁止 `projectRoot`/`harnessRoot`/`plan`；execute 时 CLI root 不被 context 覆盖
 - `--emit-staging-template` 在 context 文件不存在时按空 context 生成待补全模板
 - 依赖闭包：显式 skip 的 `status=satisfied` 依赖不阻断下游
-- Skill 00：Tier_1 readiness 前置、emit 用法、staging 示例、UPDATE adapter 专段
+- framework-init：Tier_1 readiness 前置、emit 用法、staging 示例、UPDATE adapter 专段
 
 ## Impact
 
 - Affected specs: init-orchestration
-- Affected code: `harness/scripts/init-orchestrate.ts`, `skills/00-framework-init/`, `agents/claude/templates/commands/framework-init.md`
+- Affected code: `harness/scripts/init-orchestrate.ts`, `skills/project/framework-init/`, `agents/claude/templates/commands/framework-init.md`
 - Tests: `harness/tests/unit/init-orchestrate.unit.test.ts`

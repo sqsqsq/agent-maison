@@ -13,5 +13,5 @@
 ## 3. Docs & tests
 
 - [x] 3.1 OpenSpec change `init-render-context-unification`
-- [x] 3.2 Skill 00 + staging-schema-example
+- [x] 3.2 framework-init + staging-schema-example
 - [x] 3.3 Unit tests + `cd harness && npm test`

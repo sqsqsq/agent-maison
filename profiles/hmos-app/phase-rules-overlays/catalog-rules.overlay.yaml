@@ -170,7 +170,7 @@ traceability_checks:
   easily_confused_symmetric:
     description: >
       若 A.easily_confused_with 声明与 B 混淆，则 B.easily_confused_with 也应反向声明与 A 混淆。
-      消歧能力必须对称——任何一端漏声明都会让 Skill 1 Step 1.5 术语消歧在另一侧失盲。
+      消歧能力必须对称——任何一端漏声明都会让 prd-design Step 1.5 术语消歧在另一侧失盲。
       若业务上确认就是单向易混（罕见），可通过在 disambiguation 文本里加 "unidirectional"
       关键字显式豁免（当前沙盒未使用豁免）。
     severity: MAJOR

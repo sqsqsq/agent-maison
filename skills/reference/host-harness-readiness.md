@@ -1,11 +1,11 @@
 # Harness 运行时前置（Tier_1）与宿主工具链指针（Tier_2）
 
-本文是 **Skill 0～6** 及任意全局 harness phase 在调用 `harness-runner.ts` 之前的 **单一事实源（SSOT）**。
+本文是 **catalog-bootstrap … device-testing phase skills** 及任意全局 harness phase 在调用 `harness-runner.ts` 之前的 **单一事实源（SSOT）**。
 
 - **Tier_1**：与 `project_profile` 无关——只要跑 framework harness，就必须满足。
 - **Tier_2**：与具体宿主（IDE / 编译 / 设备）有关——**不在本文展开**，只指向 profile addendum 与各阶段 Skill。
 
-与 [`00-framework-init`](../00-framework-init/SKILL.md) **S3 `harness-install`** 中 Tier_1 部分 **等价**；init 流程在 S3 **执行** `npm install`（`harness-install` 任务），全局 phase 由 `run-global-phases` 任务完成。本文是日常克隆与独立拉起某 Skill 时的交叉引用锚点。
+与 [`framework-init`](../framework-init/SKILL.md) **S3 `harness-install`** 中 Tier_1 部分 **等价**；init 流程在 S3 **执行** `npm install`（`harness-install` 任务），全局 phase 由 `run-global-phases` 任务完成。本文是日常克隆与独立拉起某 Skill 时的交叉引用锚点。
 
 ---
 
@@ -40,16 +40,16 @@ cd framework/harness && npm install
 
 ### `npm install` 失败时（三点排查）
 
-细节与话术见 **Skill 00 S3 `harness-install`**。摘要：
+细节与话术见 **framework-init S3 `harness-install`**。摘要：
 
 1. `npm config get registry` 在当前网络是否可达。
 2. 代理环境变量 `HTTP_PROXY` / `HTTPS_PROXY` 是否正确。
-3. `node --version` 建议 **≥ 18**（与 Skill 00 / harness 维护约定一致）；`npm --version` 与 Node 匹配。
+3. `node --version` 建议 **≥ 18**（与 framework-init / harness 维护约定一致）；`npm --version` 与 Node 匹配。
 
 ### 故障分流：`Cannot find module` 仍出现时
 
 1. **先**确认 Tier_1：`node_modules/ts-node/package.json` 存在且已在 `framework/harness` 执行过 `npm install`。
-2. 若模块名指向 **宿主工程**（非 `framework/harness` 树内依赖）→ 属于 **Tier_2 / profile / 宿主包管理器** 范畴，按当前阶段的 [`profile-addendum`](../../profiles/README.md) 与各 Skill（如 Skill 3 / 5）中的 **宿主依赖缺失** 分支处理，不要与 Tier_1 混为一谈。
+2. 若模块名指向 **宿主工程**（非 `framework/harness` 树内依赖）→ 属于 **Tier_2 / profile / 宿主包管理器** 范畴，按当前阶段的 [`profile-addendum`](../../profiles/README.md) 与各 Skill（如 coding / 5）中的 **宿主依赖缺失** 分支处理，不要与 Tier_1 混为一谈。
 
 ### Shell cwd（类型 A 脚本，BLOCKER）
 
@@ -61,8 +61,8 @@ cd framework/harness && npm install
 
 以下内容 **因 `project_profile` 而异**，本文仅列出入口：
 
-- **初始化期工具链路径**（如 IDE 安装路径）：personal setup（[`00b-framework-setup`](../00b-framework-setup/SKILL.md) / registry `setup.deveco_path`）与 `framework/profiles/<project_profile.name>/skills/00-framework-init/profile-addendum.md`。
-- **编码 / UT / 真机**：对应 Skill 的 `profile-addendum.md`（Skill 3、5、6 等）及 `framework/profiles/<profile>/harness/` 下脚本。
+- **初始化期工具链路径**（如 IDE 安装路径）：personal setup（[`personal-setup-gate`](../personal-setup-gate/SKILL.md) / registry `setup.deveco_path`）与 `framework/profiles/<project_profile.name>/skills/framework-init/profile-addendum.md`。
+- **编码 / UT / 真机**：对应 Skill 的 `profile-addendum.md`（coding、5、6 等）及 `framework/profiles/<profile>/harness/` 下脚本。
 
 ---
 

@@ -1,12 +1,12 @@
 ## 1. Coverage-evidence contract
 
-- [x] 1.1 Define `coverage-evidence.json` schema (fields: `evidence_source` enum, evidence path(s), AC/branch → evidence mapping) and document it in a Skill 5 template
-- [x] 1.2 Make Skill 5 emit `doc/features/<feature>/ut/reports/coverage-evidence.json` when the feature has ≥1 `ut_layer ∈ {unit, both}` AC/BD; for device-only or profile-UT-disabled features, omit or emit empty with a recorded reason
+- [x] 1.1 Define `coverage-evidence.json` schema (fields: `evidence_source` enum, evidence path(s), AC/branch → evidence mapping) and document it in a business-ut template
+- [x] 1.2 Make business-ut emit `doc/features/<feature>/ut/reports/coverage-evidence.json` when the feature has ≥1 `ut_layer ∈ {unit, both}` AC/BD; for device-only or profile-UT-disabled features, omit or emit empty with a recorded reason
 - [x] 1.3 (If applicable) add `coverage-evidence` to `validate:ut-artifact` so the file is schema-validated
 
 ## 2. Ephemeral flow DAG default
 
-- [x] 2.1 Update `skills/5-business-ut/SKILL.md` Step 2 + path-c + registry references
+- [x] 2.1 Update `skills/feature/business-ut/SKILL.md` Step 2 + path-c + registry references
 - [x] 2.2 Harness must not fabricate coverage-evidence mappings; present gate FAIL when file missing (P0/P1 scope)
 - [x] 2.2 Update `specs/phase-rules/ut-rules.yaml` so DAG archival under `{module}/test/dag/` is no longer required by default
 

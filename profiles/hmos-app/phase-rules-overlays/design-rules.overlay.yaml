@@ -5,7 +5,7 @@
 # ============================================================================
 # Design 阶段规约 (Phase Rules)
 # ============================================================================
-# 定义技术设计文档（Skill 2 产出）必须满足的通用规则。
+# 定义技术设计文档（requirement-design 产出）必须满足的通用规则。
 # 适用于所有功能模块的 doc/features/{module}/design/design.md。
 #
 # 消费者:
@@ -78,7 +78,7 @@ structure_checks:
       包含合法的 impact 枚举与配套字段，作为后续 design_to_architecture /
       architecture_doc_consistency 规则的前置触发开关。
       impact 合法取值：none | dsl_change | module_set_change | responsibility_rewrite。
-      架构级变更的准确定义见 framework/skills/2-requirement-design/SKILL.md Step 12。
+      架构级变更的准确定义见 framework/skills/feature/requirement-design/SKILL.md Step 12。
     severity: BLOCKER
     rule:
       section: "架构影响声明"
@@ -349,7 +349,7 @@ traceability_checks:
       design.md 在「架构影响声明」中声明的 architecture_md_updates
       必须已在 doc/architecture.md 中落盘。
       feature 级变更（impact == 'none'）不触发本规则，check 返回 SKIP，
-      架构文档无需同步（对应 Skill 2 Step 12 的重写条款）。
+      架构文档无需同步（对应 requirement-design Step 12 的重写条款）。
     severity: MAJOR
     rule:
       precondition: "design.md > 架构影响声明 > impact != 'none'"

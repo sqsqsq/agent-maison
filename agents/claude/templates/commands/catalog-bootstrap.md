@@ -1,5 +1,5 @@
 ---
-description: 进入模块画像自举阶段（Skill 0 · Phase A）
+description: 进入模块画像自举阶段（catalog-bootstrap · Phase A）
 argument-hint: <ModuleName>
 ---
 
@@ -15,4 +15,4 @@ argument-hint: <ModuleName>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/0-catalog-bootstrap/SKILL.md](../../framework/skills/0-catalog-bootstrap/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/project/catalog-bootstrap/SKILL.md](../../framework/skills/project/catalog-bootstrap/SKILL.md)**

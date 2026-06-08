@@ -120,13 +120,13 @@ function utSuggestionPaths(ctx: CheckContext): UtHostSuggestionPaths {
   if (h) return h.getUtSuggestionPaths();
   return {
     useCasesSchemaTemplateRel:
-      '（当前 project_profile skills/5-business-ut/templates/use-cases-schema.md，见 profile addendum）',
+      '（当前 project_profile skills/feature/business-ut/templates/use-cases-schema.md，见 profile addendum）',
     mockPlanSchemaTemplateRel:
-      '（当前 project_profile skills/5-business-ut/templates/mock-plan-schema.md，见 profile addendum）',
+      '（当前 project_profile skills/feature/business-ut/templates/mock-plan-schema.md，见 profile addendum）',
     testabilityAuditTemplateRel:
-      '（当前 project_profile skills/5-business-ut/templates/testability-audit-template.md，见 profile addendum）',
+      '（当前 project_profile skills/feature/business-ut/templates/testability-audit-template.md，见 profile addendum）',
     branchExampleTestRel:
-      '（当前 project_profile skills/5-business-ut/examples/，见 profile addendum）',
+      '（当前 project_profile skills/feature/business-ut/examples/，见 profile addendum）',
     utHostImplRefRel: '（当前 project_profile harness/ut-host-impl.ts）',
   };
 }
@@ -652,7 +652,7 @@ function checkUtAssertionExists(
 }
 
 /**
- * v2.2 Skill 5 红线：检测未授权的业务源码变更。
+ * v2.2 business-ut 红线：检测未授权的业务源码变更。
  * 流程：
  *   (1) `HARNESS_DIFF_BASE_REF` 显式值；否则读 trace.start_commit；（再否则由 git-diff 默认 working）
  *   (2) git diff + 未提交/untracked，按受保护前缀筛；
@@ -844,7 +844,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     suggestion:
       staleness.stale
         ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
-        : '按 Skill 5 SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
+        : '按 business-ut SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
           'doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
           '禁止以"便利性"借口直接修改业务源码。',
   }];
@@ -1533,7 +1533,7 @@ function checkUtImportWhitelist(
     details: `${offences.length} 处禁止符号出现在 UT：\n${truncateList(offences, 20)}`,
     affected_files: [...new Set(affected)],
     suggestion:
-      'UT 允许 import：profile addendum 列出的测试框架包、被测模块的 data / domain / 业务编排类及其数据模型、同目录 spy/；禁止 UI 组件/导航/Toast/资源宏等（完整清单以 profile 的 `ut-ui-import-ban` 与 addendum 为准）。请将 UI 侧验证下沉到 Skill 6 真机测试。',
+      'UT 允许 import：profile addendum 列出的测试框架包、被测模块的 data / domain / 业务编排类及其数据模型、同目录 spy/；禁止 UI 组件/导航/Toast/资源宏等（完整清单以 profile 的 `ut-ui-import-ban` 与 addendum 为准）。请将 UI 侧验证下沉到 device-testing 真机测试。',
   }];
 }
 
@@ -1955,7 +1955,7 @@ function checkAcceptanceCoverage(
   details.push(`P0 覆盖率(UT 分母): ${p0Covered}/${p0Count}`);
   details.push(`P1 覆盖率(UT 分母): ${p1Covered}/${p1Count}`);
   details.push(`BD 覆盖率(UT 分母): ${allBoundaries.length - uncoveredBD.length}/${allBoundaries.length}`);
-  if (deviceOnly > 0) details.push(`（${deviceOnly} 条 ut_layer=device 的 AC 已从 UT 分母中排除，交 Skill 6 负责）`);
+  if (deviceOnly > 0) details.push(`（${deviceOnly} 条 ut_layer=device 的 AC 已从 UT 分母中排除，交 device-testing 负责）`);
 
   if (uncoveredP0P1.length > 0) {
     details.push(`未覆盖的 P0/P1 AC:`);
@@ -2294,7 +2294,7 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: `缺少 ${rel}；存在 in-scope unit/both P0/P1（${targetAcs.length} 条），须由 Skill 5 产出 coverage-evidence.json。`,
+        details: `缺少 ${rel}；存在 in-scope unit/both P0/P1（${targetAcs.length} 条），须由 business-ut 产出 coverage-evidence.json。`,
         suggestion: `写入 ${rel}，或为每条 AC/BD 提供可解析的 UT 标签 / DAG linked_acceptance（见 coverage-evidence-schema）。`,
       }];
     }
@@ -2304,7 +2304,7 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
       severity: 'MAJOR',
       status: 'WARN',
-      details: `缺少 ${rel}；无 P0/P1 unit/both 强制范围，建议 Skill 5 仍写入以便追溯。`,
+      details: `缺少 ${rel}；无 P0/P1 unit/both 强制范围，建议 business-ut 仍写入以便追溯。`,
     }];
   }
   return [{
@@ -2392,7 +2392,7 @@ function checkUtCoverageEvidenceMappingsComplete(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${gaps.length} 条 P0/P1 mapping 不完整或无依据：\n${truncateList(gaps, 12)}`,
-    suggestion: 'Skill 5 须为每条 in-scope P0/P1 AC/BD 写入 mappings[]（evidence_source + 可解析依据）。',
+    suggestion: 'business-ut 须为每条 in-scope P0/P1 AC/BD 写入 mappings[]（evidence_source + 可解析依据）。',
   }];
 }
 
@@ -2597,7 +2597,7 @@ function checkBoundaryCoverage(
       description: ruleDesc(ctx, 'traceability_checks', 'boundary_coverage'),
       severity: 'MAJOR',
       status: 'SKIP',
-      details: '无 ut_layer∈{unit,both} 的 boundary，全部交 Skill 6。',
+      details: '无 ut_layer∈{unit,both} 的 boundary，全部交 device-testing。',
     }];
   }
 
@@ -2854,7 +2854,7 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details: `${issues.length} 条 L3 处置不合规：\n${truncateList(issues, 15)}`,
       suggestion:
-        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 按 Skill 5 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
+        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 按 business-ut 约束 #12 登记 gap-notes approved_src_mutations 后再改 src/main。',
     }];
   }
 
@@ -3313,7 +3313,7 @@ function checkHarnessHostArtifactPollution(ctx: CheckContext, utHost: UtHostImpl
       severity: 'BLOCKER',
       status: 'FAIL',
       details: [
-        '检测到宿主产物误写入 framework harness 目录（常见于 Skill 5 agent cwd 泄漏）：',
+        '检测到宿主产物误写入 framework harness 目录（常见于 business-ut agent cwd 泄漏）：',
         ...violations.map(v => `  - ${v}`),
         '',
         '建议：迁移至 <repo-root>/{package_path}/... 后删除 harness 下误写目录；Write 前 cd <repo-root> 或使用绝对路径。',
@@ -3526,7 +3526,7 @@ const checker: PhaseChecker = {
     } else {
       results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx), 'ut_hvigor_test'));
     }
-    // v2.2 红线 5.2：Skill 5 不得擅改业务源码
+    // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
     results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, allUtFiles), 'mock_stub_for_async'));
     results.push(...safeRun(() => utHost.checkTestRegistration(ctx, allUtFiles), 'test_registration'));

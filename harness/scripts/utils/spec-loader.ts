@@ -367,7 +367,7 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
 // ---------------------------------------------------------------------------
 // 契约上 ContractsSpec.module_dependencies 是 Record<string, string[]>
 // （key = 源模块名，value = 依赖模块名数组）。
-// 但实际 YAML 里常见另一种更自然的写法，来自 Skill 2 从架构图依赖箭头提取：
+// 但实际 YAML 里常见另一种更自然的写法，来自 requirement-design 从架构图依赖箭头提取：
 //   module_dependencies:
 //     - from: "<FeatureModule>"
 //       to: "<SharedUIModule>"
@@ -430,7 +430,7 @@ function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: st
 // ---------------------------------------------------------------------------
 // prd_to_code_traceability 字段别名归一
 // ---------------------------------------------------------------------------
-// ContractsSpec 契约字段名是 key_files，但当前 Skill 2 规范和 home-page 样例
+// ContractsSpec 契约字段名是 key_files，但当前 requirement-design 规范和 home-page 样例
 // 写的是 files。如果两种写法都可以被接受，则需要在加载期把 files 别名为
 // key_files，否则下游 `for (const f of item.key_files)` 直接 TypeError。
 // 该规范化**只做别名回填**，不删除原字段，以免影响其他消费者。

@@ -38,7 +38,7 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 去掉 `--no-instance-bridge` 时：在 **claude** adapter 下应生成或更新 `.claude/commands/<bridgeId>.md`；在 **cursor** adapter 下应生成 `.cursor/skills/<bridgeId>/SKILL.md`。与内置 slash/跳板同名时 **`ext-` 前缀** + stderr 告警。
 
-**弱模型路径（v2.8.3+）**：大文件渲染应优先 `render-agents-md.mjs`（Node 进程内落盘），避免 Write tool-call 传 200+ 行 content 失败；见 Skill 00 S3 adapter 物化 `tool-call retry-loop Ban`。
+**弱模型路径（v2.8.3+）**：大文件渲染应优先 `render-agents-md.mjs`（Node 进程内落盘），避免 Write tool-call 传 200+ 行 content 失败；见 framework-init S3 adapter 物化 `tool-call retry-loop Ban`。
 
 ## 4. 确认 UX（Claude adapter）
 

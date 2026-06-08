@@ -11,14 +11,14 @@ feature phases 1–6, framework-init) and MUST NOT ship `commands/framework-setu
 - **WHEN** `check-skills-confirmation-ux.ts` validates Claude slash templates
 - **THEN** `commands/framework-setup.md` is not in `CLAUDE_SLASH_COMMANDS`
 
-### Requirement: Skills bridge excludes 00b-framework-setup
+### Requirement: Skills bridge excludes personal-setup-gate
 
-Generic/Cursor bridge materialization MUST NOT include `00b-framework-setup` stub;
+Generic/Cursor bridge materialization MUST NOT include `personal-setup-gate` stub;
 personal setup is reached only via phase pre-gate `--ensure`.
 
 #### Scenario: reserved bridge ids omit 00b
 - **WHEN** `loadReservedBridgeIds` scans `skills-bridge/`
-- **THEN** the set MUST NOT contain `00b-framework-setup`
+- **THEN** the set MUST NOT contain `personal-setup-gate`
 
 > **Enforced by:** `agents/shared/agent-bundle/templates/skills-bridge/`,
 > `harness/scripts/utils/agent-bundle-paths.ts`, `harness/tests/unit/generic-bundle.unit.test.ts`

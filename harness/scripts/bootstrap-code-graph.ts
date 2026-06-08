@@ -107,7 +107,7 @@ function seedNodesFromCatalog(
     nodes.push({
       id,
       core: false,
-      intent: '（TODO）补一句业务意图；若为 Skill 5 core 闭环锚点则设 core: true',
+      intent: '（TODO）补一句业务意图；若为 business-ut core 闭环锚点则设 core: true',
       anchor: { file: sig.file, symbol: sig.symbol, content_hash: hash },
     });
   }
@@ -228,7 +228,7 @@ function main(): void {
     for (const w of warnings) console.log(`    - ${w}`);
   }
   if (nodes.filter(n => n.core).length === 0) {
-    console.log('  下一步: 在 nodes 里为 3–5 个入口设 core: true 并写清 intent，再跑 Skill 5 Step 8.0 练闭环。');
+    console.log('  下一步: 在 nodes 里为 3–5 个入口设 core: true 并写清 intent，再跑 business-ut Step 8.0 练闭环。');
   }
 }
 

@@ -24,12 +24,12 @@ framework/docs/
 │
 ├── skills/                    ← 各 Skill 阶段的对外讲解（设计哲学 + 实现 + 常见坑）
 │   ├── README.md
-│   ├── 1-prd-design.md          (待写)
-│   ├── 2-requirement-design.md  (待写)
-│   ├── 3-coding.md              (待写)
-│   ├── 4-code-review.md         (待写)
-│   ├── 5-business-ut.md         ★ 已写
-│   ├── 6-device-testing.md      (待写)
+│   ├── prd-design.md          (待写)
+│   ├── requirement-design.md  (待写)
+│   ├── coding.md              (待写)
+│   ├── code-review.md         (待写)
+│   ├── business-ut.md         ★ 已写
+│   ├── device-testing.md      (待写)
 │   ├── phase6-keyword-allowlist.md   ← Phase 6 关键词验收：有意保留命中项（与脚本口径一致）
 │   └── phase6-keyword-pattern.regex ← 单行字面供 `rg -f`；勿手改，除非你同步改 allowlist §4
 │

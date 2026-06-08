@@ -2,7 +2,7 @@
 // git-diff.ts
 // ============================================================================
 // 轻量封装 `git diff --name-only <base>..HEAD` 用于：
-//   - check-ut.ts  ut_no_src_mutation BLOCKER（检测 Skill 5 阶段未授权的业务
+//   - check-ut.ts  ut_no_src_mutation BLOCKER（检测 business-ut 阶段未授权的业务
 //                  源码改动）。
 //
 // 设计要点：

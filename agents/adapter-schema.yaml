@@ -246,7 +246,7 @@ optional_fields:
 # ---------------------------------------------------------------------------
 # 占位符约定（模板文件里使用的变量）
 # ---------------------------------------------------------------------------
-# 以下占位符由初始化 Skill（framework/skills/00-framework-init/）根据
+# 以下占位符由初始化 Skill（framework/skills/project/framework-init/）根据
 # framework.config.json + 用户交互答复填充。adapter 模板里只可使用这组变量，
 # 不允许内嵌业务硬编码。
 # ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ placeholders:
       由初始化 Skill 根据 framework.config.json → project_type 映射成展示文案：
         - "app"             → "应用工程"
         - "atomic_service"  → "元服务工程"
-      新增 project_type 取值时在 framework/skills/00-framework-init/SKILL.md
+      新增 project_type 取值时在 framework/skills/project/framework-init/SKILL.md
       同步追加映射，保持与模板占位符一致。
   PROJECT_PROFILE_NAME:
     source: framework.config.json → project_profile.name；缺省或未配置时视同 hmos-app

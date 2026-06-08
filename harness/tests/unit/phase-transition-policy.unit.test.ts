@@ -61,7 +61,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'nextSkillLabelForPhase + dedicatedOkToRegistryId',
     run: () => {
-      assert(nextSkillLabelForPhase('coding').includes('Skill 4'), 'coding next label');
+      assert(nextSkillLabelForPhase('coding').includes('code-review'), 'coding next label');
       assert(dedicatedOkToRegistryId('coding') === 'coding.ok_to_review', 'coding ok id');
       assert(dedicatedOkToRegistryId('prd') === undefined, 'prd has no dedicated ok_to');
     },

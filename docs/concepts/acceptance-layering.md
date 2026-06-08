@@ -1,7 +1,7 @@
 # 验收分层 SSOT（acceptance-layering）
 
 > 本文定义 `acceptance.yaml`、`test-plan.md`、Hylyre 派生计划与 harness 过程回执之间的**权威边界**。
-> 自 Framework v2.9 起，**废弃** `device-testing-todo.md` 作为 Skill 5→6 交接物。
+> 自 Framework v2.9 起，**废弃** `device-testing-todo.md` 作为 business-ut→6 交接物。
 
 ---
 
@@ -9,9 +9,9 @@
 
 | 层 | 文件 | 写入者 | 消费者 |
 |----|------|--------|--------|
-| **验收定义** | `doc/features/<feature>/acceptance.yaml`（`ut_layer`、`ut_focus`、`device_focus`） | Skill 1 + 用户确认 | Skill 3/5/6、harness 追溯 |
-| **执行计划** | `doc/features/<feature>/testing/test-plan.md` | Skill 6（从 acceptance **按 device 层过滤**派生） | 人审、derive-hint、Hylyre |
-| **自动化派生** | `testing/reports/<ts>/hylyre/test-plan.hylyre.md` | Skill 6 Step 4.5 | `device_test.run`（**已有 BLOCKER SSOT**） |
+| **验收定义** | `doc/features/<feature>/acceptance.yaml`（`ut_layer`、`ut_focus`、`device_focus`） | prd-design + 用户确认 | coding/5/6、harness 追溯 |
+| **执行计划** | `doc/features/<feature>/testing/test-plan.md` | device-testing（从 acceptance **按 device 层过滤**派生） | 人审、derive-hint、Hylyre |
+| **自动化派生** | `testing/reports/<ts>/hylyre/test-plan.hylyre.md` | device-testing Step 4.5 | `device_test.run`（**已有 BLOCKER SSOT**） |
 | **过程回执** | `ut/reports/ac-coverage.json`、`testing/reports/**/trace.json`、`device-test-timing.json` | harness / Hylyre | 可选引用，**非 SSOT** |
 
 **禁止**：与 `acceptance.yaml` 同语义的平行清单 `device-testing-todo.md`。
@@ -48,7 +48,7 @@ flowchart LR
 
 ---
 
-## 3. Skill 6 输入档位
+## 3. device-testing 输入档位
 
 | 模式 | 最小输入 | harness |
 |------|----------|---------|
@@ -76,9 +76,9 @@ flowchart LR
 
 ---
 
-## 5. Skill 5 与 L3 处置
+## 5. business-ut 与 L3 处置
 
-- Skill 5 **不再**产出 `device-testing-todo.md`。
+- business-ut **不再**产出 `device-testing-todo.md`。
 - `testability-audit` 中 `selected: option_a`（不可测、交真机）→ 须在 **acceptance 对应条目的 `device_focus`** 中可追踪（含 `acceptance_id` 引用），由 `check-ut` 校验。
 - UT 结束后 harness 可写出 `ut/reports/ac-coverage.json`（机器回执，**非** acceptance 手改）。
 
@@ -88,7 +88,7 @@ flowchart LR
 
 1. 为每条 `ut_layer ∈ {device, both}` 的 AC/BD 补 `device_focus`（从旧 todo 搬迁要点）。
 2. `both` 项拆分 `ut_focus`（业务）与 `device_focus`（UI）。
-3. 按 Skill 6 从 acceptance 重派生 `test-plan.md` + hylyre（利用新鲜度门禁）。
+3. 按 device-testing 从 acceptance 重派生 `test-plan.md` + hylyre（利用新鲜度门禁）。
 4. 删除 `device-testing-todo.md`。
 
 存在旧 todo 且无 `device_focus` 时 harness **WARN**，不 BLOCKER 存量。
@@ -97,6 +97,6 @@ flowchart LR
 
 ## 7. 相关文档
 
-- [5-business-ut.md](../skills/5-business-ut.md)
-- [Skill 6 profile addendum](../../profiles/hmos-app/skills/6-device-testing/profile-addendum.md)
+- [business-ut.md](../skills/feature/business-ut.md)
+- [device-testing profile addendum](../../profiles/hmos-app/skills/device-testing/profile-addendum.md)
 - [compat-protocol-v1.md](../evolution/compat-protocol-v1.md)

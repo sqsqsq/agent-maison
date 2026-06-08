@@ -19,7 +19,7 @@
 
 ## 【HARD STOP — 不可绕过的产出约束】
 
-> 以下约束是 Skill 3 编码阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
+> 以下约束是 coding 编码阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
 
 1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取脚本 Harness 报告（`{script_report}`）及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
 2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
@@ -28,7 +28,7 @@
 
 > 典型误读（须避免）：
 > - 脚本 `coding_compile` FAIL 但 contracts/业务语义「看起来对」→ 仍 FAIL；
-> - 「pre-existing 工程问题」→ 须向用户报告阻塞与 `next_action`，**不得**建议进入 Skill 4（Code Review）。
+> - 「pre-existing 工程问题」→ 须向用户报告阻塞与 `next_action`，**不得**建议进入 code-review（Code Review）。
 
 ---
 
@@ -190,7 +190,7 @@
 ### 检查 13: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
 
 - **严重等级**: MAJOR
-- **评估方法**: 若对话/trace 显示 coding 四件套 PASS 后 agent **在同一执行流**自动 Read Skill 4 / 写 review，且**无** `coding.ok_to_review` / `phase.next_step` / batch 授权（user-confirmation-ux §8）→ FAIL；仅「可进入 Skill 4」资格表述不构成授权
+- **评估方法**: 若对话/trace 显示 coding 四件套 PASS 后 agent **在同一执行流**自动 Read code-review / 写 review，且**无** `coding.ok_to_review` / `phase.next_step` / batch 授权（user-confirmation-ux §8）→ FAIL；仅「可进入 code-review」资格表述不构成授权
 
 ---
 
@@ -225,7 +225,7 @@ verification_result:
         next_action: <summary.next_action 或脚本建议>
       affected_files: [...]
       suggestion: |
-        <按 Skill 3 Step 6.5.2 修复后重跑 harness；禁止提议进入 Skill 4>
+        <按 coding Step 6.5.2 修复后重跑 harness；禁止提议进入 code-review>
 
     # --- 检查 1: 业务逻辑正确性 ---
     - id: business_logic_correctness
@@ -362,7 +362,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: MAJOR
       details: |
-        coding 闭环后未授权即开 Skill 4: PASS/FAIL
+        coding 闭环后未授权即开 code-review: PASS/FAIL
       suggestion: |
         闭环后须 phase.next_step / coding.ok_to_review 停等（user-confirmation-ux §8）
 

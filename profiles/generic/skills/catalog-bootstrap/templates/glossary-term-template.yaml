@@ -1,0 +1,80 @@
+# ============================================================================
+# 术语条目草稿 — staging 文件
+# ============================================================================
+# 路径: doc/glossary-staging/<term>.yaml
+# 说明: 一条 glossary 条目的草稿，用户确认后才合并到 doc/glossary.yaml
+#
+# 模板说明: 下方注释示例使用虚构模块名（例如 TaskFeature / DashboardShell）
+#           演示字段填法；实际使用请按你自己工程的模块名替换。
+#
+# 关键约束:
+#   - canonical_module 必须存在于 doc/module-catalog.yaml
+#   - 置信度 medium/low 的条目必须等用户显式 [x] 确认
+#   - easily_confused_with 不能凭字面硬造；必须来自 catalog 中该模块的 easily_confused_with
+# ============================================================================
+
+confirmed_by_user: false
+
+# 生成元数据
+generated_by: "<model-id>"
+generated_at: "<YYYY-MM-DD HH:mm:ss>"
+match_info:
+  # AI 必须如实填写自己的匹配置信度与依据
+  confidence: "high | medium | low"
+  # match_kind 枚举（与 infer-glossary-term.md Step 1..Step 4.5 一一对应）：
+  #   exact_typical_term                           —— Step 1 精确命中，无冲突
+  #   fuzzy_typical_term                           —— Step 2 模糊命中 typical_business_terms
+  #   fuzzy_one_liner                              —— Step 2 命中 one_liner
+  #   fuzzy_responsibility                         —— Step 2 命中 responsibilities
+  #   negative_hint_pointer                        —— Step 2.5 从 NOT_responsible_for 反向指针
+  #                                                   抽到"属 X 模块"/"归 Y 模块"式提示（X/Y 可能
+  #                                                   尚未在 catalog 中，此时 canonical 仍填 TBD）
+  #   unmatched                                    —— Step 3 零命中
+  #   typical_term_with_not_responsible_for_conflict
+  #                                                —— Step 1.5 发现命中模块的 NOT_responsible_for
+  #                                                   文本同时包含本术语，catalog 自相矛盾
+  #   alias_merge_candidate                        —— Step 4.5 与已存在的某 term 同 canonical_module
+  #                                                   且字面相似，建议并入该 term 的 aliases 而非新建
+  match_kind: "exact_typical_term | fuzzy_typical_term | fuzzy_one_liner | fuzzy_responsibility | negative_hint_pointer | unmatched | typical_term_with_not_responsible_for_conflict | alias_merge_candidate"
+  matched_text: "<AI 在 catalog 里真正命中的那个字符串>"
+  # 若是 fuzzy / unmatched / conflict / alias_merge_candidate，给出 Top-3 候选让用户选
+  candidates_top3: []
+    # 示例:
+    # - module: "CardManager"
+    #   why: "one_liner 提到'卡片统一管理'，可能命中"
+    #   NOT_responsible_for_hint:
+    #     - "UI 页面（那是 DashboardShell 的事）"  # 冲突时逐字引用，不要总结
+
+# ----------------------------------------------------------------------------
+# 实际术语条目（与 doc/glossary.yaml 的 terms[].x 同构）
+# ----------------------------------------------------------------------------
+term:
+  # 业务自然语言中的原始名词
+  term: "<原始业务术语>"
+
+  # **必须**是 doc/module-catalog.yaml 中存在的模块名
+  canonical_module: "<ModuleName>"
+
+  # 必须与 catalog[canonical_module].layer 一致
+  owner_layer: "<outer_layer_id 与 catalog 模块一致>"
+
+  # 同义词 / 别名（如"卡中心"和"卡聚合页"）
+  aliases: []
+
+  # 用户在 PRD / 聊天里真实用这个词的例句，用于辅助 LLM 未来做消歧
+  sample_usage: "<一句话带上下文的使用示例>"
+
+  # 置信度提示（供未来 prd-design Step 1.5 复用时参考）
+  # 若用户给出修正理由，把理由记下来
+  confidence_hint: "<为什么选这个 canonical_module 的判定依据；或用户修正后的规则>"
+
+  # **强制**：若 catalog[canonical_module].easily_confused_with 有内容，
+  # 必须把对应条目（转换成 glossary 的 {term, module, disambiguation} 形态）复制过来
+  easily_confused_with: []
+    # 示例:
+    # - term: "卡管理"
+    #   module: "CardManager"
+    #   disambiguation: |
+    #     "卡中心"指用户可见的 UI 聚合入口页，不含后端逻辑。
+    #     "卡管理"指跨 Feature 的卡 CRUD / 订阅服务，不含 UI。
+    #     判定: PRD 若描述"用户打开、滚动、点击"的行为，就是 DashboardShell 的列表入口页。

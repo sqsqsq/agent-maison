@@ -9,31 +9,23 @@ import {
   type AgentBundleSkillMode,
   type ResolvedAgentBundlePaths,
 } from './agent-bundle-paths';
+import {
+  listBuiltinSkillIds,
+  resolveSkillPath,
+  skillMdAbs,
+} from './resolve-skill-path';
 
 export { BUILTIN_SKILL_BRIDGE_DESCRIPTIONS };
 
+/** @deprecated use listBuiltinSkillIds */
 export function listFrameworkBuiltinSkillDirs(frameworkDir: string): string[] {
-  const skillsRoot = path.join(frameworkDir, 'skills');
-  if (!fs.existsSync(skillsRoot)) {
-    return [];
-  }
-  const dirs: string[] = [];
-  for (const ent of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
-    if (!ent.isDirectory()) {
-      continue;
-    }
-    const skillMd = path.join(skillsRoot, ent.name, 'SKILL.md');
-    if (fs.existsSync(skillMd) && fs.statSync(skillMd).isFile()) {
-      dirs.push(ent.name);
-    }
-  }
-  return dirs.sort();
+  return listBuiltinSkillIds(frameworkDir);
 }
 
-export function skillDescriptionForDir(skillDir: string): string {
+export function skillDescriptionForDir(skillId: string): string {
   return (
-    BUILTIN_SKILL_BRIDGE_DESCRIPTIONS[skillDir] ??
-    `Framework Skill（完整流程见 framework/skills/${skillDir}/SKILL.md）`
+    BUILTIN_SKILL_BRIDGE_DESCRIPTIONS[skillId] ??
+    `Framework Skill（完整流程见 framework/skills/…/${skillId}/SKILL.md）`
   );
 }
 
@@ -48,15 +40,15 @@ export function posixRelativeFromSkillStubTo(
 }
 
 export function renderBridgeSkillStubMarkdown(
-  skillDir: string,
+  skillId: string,
   stubTargetRelPosix: string,
   skillMdRepoRelPosix: string,
 ): string {
   const relFromStub = posixRelativeFromSkillStubTo(stubTargetRelPosix, skillMdRepoRelPosix);
-  const description = skillDescriptionForDir(skillDir);
+  const description = skillDescriptionForDir(skillId);
   return [
     '---',
-    `name: ${skillDir}`,
+    `name: ${skillId}`,
     `description: ${description}`,
     '---',
     '',
@@ -67,19 +59,86 @@ export function renderBridgeSkillStubMarkdown(
   ].join('\n');
 }
 
+const INLINE_REL_LINK_RE = /\]\((\.\.\/[^)\s#]+(?:#[^)\s]*)?)\)/g;
+const INLINE_BACKTICK_REL_RE = /`(\.\.\/[^`\s]+)`/g;
+
+export interface InlineMaterializeLinkContext {
+  projectRoot: string;
+  stubTargetRelPosix: string;
+}
+
+/**
+ * inline 物化到 `.agents/skills/<id>/` 时改写相对链接：
+ * - framework 树内 → `framework/...` 逻辑路径
+ * - 宿主工程根（doc/、framework.config.json 等）→ 相对 stub 位置的路径
+ */
+export function rewriteRelativeLinksForInlineMaterialize(
+  body: string,
+  sourceSkillMdAbs: string,
+  frameworkDir: string,
+  ctx: InlineMaterializeLinkContext,
+): string {
+  const fwRoot = path.resolve(frameworkDir);
+  const projRoot = path.resolve(ctx.projectRoot);
+  const stubAbs = path.join(projRoot, ...ctx.stubTargetRelPosix.split('/'));
+  const stubDir = path.dirname(stubAbs);
+  const sourceDir = path.dirname(sourceSkillMdAbs);
+
+  const rewrite = (rel: string): string => {
+    const [pathPart, hash = ''] = rel.split('#');
+    if (!pathPart.startsWith('../')) {
+      return rel;
+    }
+    const targetAbs = path.resolve(sourceDir, pathPart);
+    const hashSuffix = hash ? `#${hash}` : '';
+    const fwPrefix = fwRoot + path.sep;
+    const projPrefix = projRoot + path.sep;
+
+    if (targetAbs.startsWith(fwPrefix) || targetAbs === fwRoot) {
+      const inside = path.relative(fwRoot, targetAbs).replace(/\\/g, '/');
+      return `framework/${inside}${hashSuffix}`;
+    }
+
+    if (targetAbs.startsWith(projPrefix) || targetAbs === projRoot) {
+      const relFromStub = path.relative(stubDir, targetAbs).replace(/\\/g, '/');
+      return `${relFromStub}${hashSuffix}`;
+    }
+
+    // consumer 布局下 feature/project skill 常以多一层 ../ 指向宿主 doc/ 或 framework.config.json
+    const hostTail = pathPart.match(/^((?:\.\.\/)+)(doc\/.+|framework\.config\.json)$/);
+    if (hostTail) {
+      const hostAbs = path.join(projRoot, hostTail[2]);
+      const relFromStub = path.relative(stubDir, hostAbs).replace(/\\/g, '/');
+      return `${relFromStub}${hashSuffix}`;
+    }
+
+    return rel;
+  };
+
+  let out = body.replace(INLINE_REL_LINK_RE, (_m, rel: string) => `](${rewrite(rel)})`);
+  out = out.replace(INLINE_BACKTICK_REL_RE, (_m, rel: string) => `\`${rewrite(rel)}\``);
+  return out;
+}
+
+/** @deprecated use rewriteRelativeLinksForInlineMaterialize */
+export const rewriteRelativeLinksToFrameworkLogical = rewriteRelativeLinksForInlineMaterialize;
+
 export function materializeInlineSkillMarkdown(
   frameworkDir: string,
-  skillDir: string,
+  skillId: string,
+  ctx?: InlineMaterializeLinkContext,
 ): string {
-  const src = path.join(frameworkDir, 'skills', skillDir, 'SKILL.md');
+  const src = skillMdAbs(frameworkDir, skillId);
   if (!fs.existsSync(src)) {
     throw new Error(`[materialize-agent-bundle] 源 SKILL 不存在：${src}`);
   }
-  const body = fs.readFileSync(src, 'utf8').replace(/^\uFEFF/, '');
-  const description = skillDescriptionForDir(skillDir);
-  return ['---', `name: ${skillDir}`, `description: ${description}`, '---', '', body.replace(/^\s+/, '')].join(
-    '\n',
-  );
+  const raw = fs.readFileSync(src, 'utf8').replace(/^\uFEFF/, '');
+  let body = raw.replace(/^\s+/, '');
+  if (ctx) {
+    body = rewriteRelativeLinksForInlineMaterialize(body, src, frameworkDir, ctx);
+  }
+  const description = skillDescriptionForDir(skillId);
+  return ['---', `name: ${skillId}`, `description: ${description}`, '---', '', body].join('\n');
 }
 
 export interface MaterializeAgentBundleOptions {
@@ -87,7 +146,7 @@ export interface MaterializeAgentBundleOptions {
   frameworkDir: string;
   bundle: ResolvedAgentBundlePaths;
   mode?: AgentBundleSkillMode;
-  skillDirs?: string[];
+  skillIds?: string[];
 }
 
 export interface MaterializeAgentBundleResult {
@@ -100,7 +159,7 @@ export function materializeAgentBundleSkills(
 ): MaterializeAgentBundleResult {
   const { projectRoot, frameworkDir, bundle } = options;
   const mode = options.mode ?? bundle.skillMode;
-  const dirs = options.skillDirs ?? listFrameworkBuiltinSkillDirs(frameworkDir);
+  const ids = options.skillIds ?? listBuiltinSkillIds(frameworkDir);
   const filesWritten: string[] = [];
   const warnings: string[] = [];
 
@@ -111,13 +170,20 @@ export function materializeAgentBundleSkills(
     filesWritten.push(relPosix);
   };
 
-  for (const dir of dirs) {
-    const skillMdRepoRel = `framework/skills/${dir}/SKILL.md`;
-    const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`;
+  for (const id of ids) {
+    const resolved = resolveSkillPath(frameworkDir, id);
+    const skillMdRepoRel = resolved.skillMdRepoRel;
+    const targetRel = `${bundle.skillsDir}/${id}/SKILL.md`;
     if (mode === 'inline') {
-      mkdirWrite(targetRel, materializeInlineSkillMarkdown(frameworkDir, dir));
+      mkdirWrite(
+        targetRel,
+        materializeInlineSkillMarkdown(frameworkDir, id, {
+          projectRoot,
+          stubTargetRelPosix: targetRel,
+        }),
+      );
     } else {
-      mkdirWrite(targetRel, renderBridgeSkillStubMarkdown(dir, targetRel, skillMdRepoRel));
+      mkdirWrite(targetRel, renderBridgeSkillStubMarkdown(id, targetRel, skillMdRepoRel));
     }
   }
 

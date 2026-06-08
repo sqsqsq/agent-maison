@@ -1,5 +1,5 @@
 ---
-description: 进入业务级 UT 阶段（Skill 5）
+description: 进入业务级 UT 阶段（business-ut）
 argument-hint: <feature-name>
 ---
 
@@ -15,4 +15,4 @@ argument-hint: <feature-name>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/5-business-ut/SKILL.md](../../framework/skills/5-business-ut/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/feature/business-ut/SKILL.md](../../framework/skills/feature/business-ut/SKILL.md)**

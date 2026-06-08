@@ -157,7 +157,7 @@ runHvigorAssembleApp({
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
 - **实现位置**：`hvigor-runner.ts` / `hdc-runner.ts` 在 `framework/profiles/hmos-app/harness/`；根 harness 经 **`capability-registry.ts`** 调度。
-- **Skill 6 / Hylyre**：`device_test.*` capability 与 UT 链独立；配置 SSOT `framework.config.json > tools.hylyre.*`；即席 `_adhoc` 见 Skill 6 / `npm run adhoc-device-test`。
+- **device-testing / Hylyre**：`device_test.*` capability 与 UT 链独立；配置 SSOT `framework.config.json > tools.hylyre.*`；即席 `_adhoc` 见 device-testing / `npm run adhoc-device-test`。
 - **失败归类**：coding 编译失败 kind 使用 `compile_timeout` / `compile_incomplete_output`。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 harness 源文件复核 argv / 产物路径 / 诊断档位。
 

@@ -2,7 +2,7 @@
 
 - [x] 1.1 Create `docs/concepts/code-graph.md` defining the three-tier vocabulary (Code Graph / flow DAG / Repo Map) with level and purpose for each
 - [x] 1.2 Add the index-only (non-SSOT) principle: derived-vs-curated layering, mandatory source anchors (file+symbol+hash), and the "consumers MUST re-verify anchors" rule
-- [x] 1.3 Add the "dag" disambiguation table: Skill 5 UT flow DAG vs Skill 3 module-dependency acyclicity vs DSL `intra_layer_deps: dag`, each contrasted with Code Graph
+- [x] 1.3 Add the "dag" disambiguation table: business-ut UT flow DAG vs coding module-dependency acyclicity vs DSL `intra_layer_deps: dag`, each contrasted with Code Graph
 - [x] 1.4 Add forward-pointers to `ut-flow-dag-evidence` and master plan (Track A implementation merged into this change + that change)
 
 ## 2. Wire docs discoverability

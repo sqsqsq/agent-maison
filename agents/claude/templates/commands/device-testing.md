@@ -1,5 +1,5 @@
 ---
-description: 进入真机测试阶段（Skill 6）
+description: 进入真机测试阶段（device-testing）
 argument-hint: <feature-name>
 ---
 
@@ -15,4 +15,4 @@ argument-hint: <feature-name>
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/6-device-testing/SKILL.md](../../framework/skills/6-device-testing/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/feature/device-testing/SKILL.md](../../framework/skills/feature/device-testing/SKILL.md)**

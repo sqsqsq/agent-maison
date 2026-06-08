@@ -66,7 +66,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       const inline = adapter.templateFiles.filter(f => f.kind === 'materialized');
       assert(inline.length >= 8);
-      assert(inline.some(f => f.targetRel === '.agents/skills/00-framework-init/SKILL.md'));
+      assert(inline.some(f => f.targetRel === '.agents/skills/framework-init/SKILL.md'));
     },
   },
   {
@@ -81,7 +81,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       assert(
         adapter.templateFiles.some(
-          f => f.targetRel === '.codex/skills/00-framework-init/SKILL.md' && f.kind === 'verbatim',
+          f => f.targetRel === '.codex/skills/framework-init/SKILL.md' && f.kind === 'verbatim',
         ),
       );
     },
@@ -115,31 +115,68 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'materializeInlineSkillMarkdown：name 与目录一致',
     run: () => {
-      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, '00-framework-init');
-      assert(md.includes('name: 00-framework-init'));
+      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'framework-init');
+      assert(md.includes('name: framework-init'));
       assert(md.includes('Framework 工程初始化'));
+    },
+  },
+  {
+    name: 'materializeInlineSkillMarkdown：相对链接改写为 framework/ 逻辑路径',
+    run: () => {
+      const stubRel = '.agents/skills/coding/SKILL.md';
+      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'coding', {
+        projectRoot: FRAMEWORK_DIR,
+        stubTargetRelPosix: stubRel,
+      });
+      assert(
+        md.includes('framework/skills/reference/') || md.includes('](framework/skills/'),
+        'inline 物化应把 ../../reference 类链接改为 framework/skills/...',
+      );
+      assert(!md.includes('](../../reference/'), '不得保留指向 .agents/reference 的相对链');
+    },
+  },
+  {
+    name: 'materializeInlineSkillMarkdown：宿主 doc/ 与 framework.config.json 链按 stub 深度改写',
+    run: () => {
+      const stubRel = '.agents/skills/prd-design/SKILL.md';
+      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'prd-design', {
+        projectRoot: FRAMEWORK_DIR,
+        stubTargetRelPosix: stubRel,
+      });
+      assert(
+        md.includes('](../../../doc/glossary.yaml)'),
+        'prd-design 源链 ../../../../doc/ 应改写为相对 stub 的 ../../../doc/',
+      );
+      assert(!md.includes('](../../../../doc/'), '不得保留逃出宿主根的 ../../../../doc/ 链');
+      const reqMd = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'requirement-design', {
+        projectRoot: FRAMEWORK_DIR,
+        stubTargetRelPosix: '.agents/skills/requirement-design/SKILL.md',
+      });
+      assert(
+        reqMd.includes('](../../../framework.config.json)'),
+        'requirement-design framework.config 应改写为 ../../../framework.config.json',
+      );
     },
   },
   {
     name: 'posixRelativeFromSkillStubTo：多段 bundle 根',
     run: () => {
       const rel = posixRelativeFromSkillStubTo(
-        'tools/my-agent/skills/3-coding/SKILL.md',
-        'framework/skills/3-coding/SKILL.md',
+        'tools/my-agent/skills/coding/SKILL.md',
+        'framework/skills/feature/coding/SKILL.md',
       );
-      assert.strictEqual(rel, '../../../../framework/skills/3-coding/SKILL.md');
+      assert.strictEqual(rel, '../../../../framework/skills/feature/coding/SKILL.md');
     },
   },
   {
     name: 'renderBridgeSkillStubMarkdown：name 等于 bridgeId',
     run: () => {
       const md = renderBridgeSkillStubMarkdown(
-        '0-catalog-bootstrap',
-        '.agents/skills/0-catalog-bootstrap/SKILL.md',
-        'framework/skills/0-catalog-bootstrap/SKILL.md',
+        'catalog-bootstrap',
+        '.agents/skills/catalog-bootstrap/SKILL.md',
+        'framework/skills/project/catalog-bootstrap/SKILL.md',
       );
-      assert(md.includes('name: 0-catalog-bootstrap'));
-      assert(!md.includes('name: catalog-bootstrap'));
+      assert(md.includes('name: catalog-bootstrap'));
     },
   },
   {
@@ -157,18 +194,18 @@ const cases: Array<{ name: string; run: () => void }> = [
         },
       });
       assert(outcome.filesWritten.length >= 8);
-      const p = path.join(dir, '.agents/skills/00-framework-init/SKILL.md');
+      const p = path.join(dir, '.agents/skills/framework-init/SKILL.md');
       assert(fs.existsSync(p));
       const txt = fs.readFileSync(p, 'utf8');
-      assert(txt.includes('name: 00-framework-init'));
+      assert(txt.includes('name: framework-init'));
     },
   },
   {
     name: 'loadReservedBridgeIds：扫描 shared/skills-bridge',
     run: () => {
       const ids = loadReservedBridgeIds(FRAMEWORK_DIR);
-      assert(ids.has('00-framework-init'));
-      assert(ids.has('6-device-testing'));
+      assert(ids.has('framework-init'));
+      assert(ids.has('device-testing'));
     },
   },
 ];
