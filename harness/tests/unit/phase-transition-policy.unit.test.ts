@@ -2,10 +2,12 @@
 
 import {
   DEFAULT_TRANSITION_POLICY,
+  classifyPhaseVerdict,
   dedicatedOkToRegistryId,
   isPhaseWithinBatchRange,
   nextSkillLabelForPhase,
   parseBatchAuthorization,
+  resolveGoalRunStatus,
 } from '../../scripts/utils/phase-transition-policy';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -64,6 +66,13 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(nextSkillLabelForPhase('coding').includes('code-review'), 'coding next label');
       assert(dedicatedOkToRegistryId('coding') === 'coding.ok_to_review', 'coding ok id');
       assert(dedicatedOkToRegistryId('prd') === undefined, 'prd has no dedicated ok_to');
+    },
+  },
+  {
+    name: 'classifyPhaseVerdict + resolveGoalRunStatus smoke',
+    run: () => {
+      assert(classifyPhaseVerdict({ verdict: 'PASS' }) === 'advance', 'advance');
+      assert(resolveGoalRunStatus([{ phase: 'ut', deferred: true }], true) === 'DEFERRED', 'DEFERRED');
     },
   },
 ];

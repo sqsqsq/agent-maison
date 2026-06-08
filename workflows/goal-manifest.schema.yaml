@@ -1,0 +1,59 @@
+schema_version: "1.0"
+description: >
+  Goal run manifest — consumed by harness/scripts/utils/goal-manifest.ts and goal-runner.ts.
+  SSOT for unattended full-chain automation parameters.
+
+fields:
+  start_phase:
+    type: string
+    default: prd
+    description: Inclusive start feature phase
+  end_phase:
+    type: string
+    default: testing
+    description: Inclusive end feature phase
+  feature:
+    type: string
+    required: true
+    description: Feature slug under doc/features/
+  requirement:
+    type: string
+    description: User requirement text or path to requirement file
+  adapter:
+    type: string
+    description: Active agent adapter name (must match framework.config.json agent_adapter)
+  chain_override:
+    type: array
+    items: string
+    description: Optional ordered phase list overriding workflow auto_chain
+  budget:
+    type: object
+    properties:
+      max_retries_per_phase: { type: integer, default: 2 }
+      max_total_turns: { type: integer, default: 30 }
+      wall_clock_minutes: { type: integer, default: 480 }
+  dependency_policy:
+    type: object
+    properties:
+      deferrable_blocking_classes:
+        type: array
+        default: [externalBlocked]
+      deferrable_failure_kinds:
+        type: array
+        default: [device_blocked]
+      propagate_to_downstream: { type: boolean, default: true }
+  unattended:
+    type: object
+    required_for_runner: true
+    properties:
+      write_mode: { type: string, enum: [workspace-write, accept-edits, full-access] }
+      approval_mode: { type: string, enum: [never, on-request, always] }
+      max_turns: { type: integer }
+      timeout_seconds: { type: integer }
+      allowed_tools: { type: array, items: string }
+  run_id:
+    type: string
+    description: UUID or timestamp slug; auto-generated if omitted
+  report_dir:
+    type: string
+    default: goal-runs/<run-id>

@@ -27,6 +27,15 @@ rules:
   target_dir: .cursor/rules
   template_dir: ../shared/agent-bundle/templates/rules
 
+goal_capability:
+  mode: external_runner
+  external_runner:
+    headless_invoke: 'cursor agent --print "{{PROMPT}}"'
+    unattended:
+      write_mode: workspace-write
+      approval_mode: on-request
+      timeout_seconds: 3600
+
 post_install_hooks: []
 
 notes: |

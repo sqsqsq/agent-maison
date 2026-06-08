@@ -156,7 +156,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 1. 用户消息含下一 Skill **触发意图**（各 SKILL「触发条件」关键词）；
 2. 用户消息含 **batch 多阶段意图**（§8.2）→ `transition_policy=batch_authorized`；
 3. 用户通过 **`phase.next_step`** 或对应 **`*.ok_to_*`** 闭环闸门确认（见 registry）；
-4. （预留）`workflow.auto_chain` / goal manifest 为 `enabled`（adapter 注入，本次未实现）。
+4. **`goal_mode`**：`goal-runner` manifest 显式启动全链路（见 [goal-orchestration/SKILL.md](../project/goal-orchestration/SKILL.md)）；裁决 SSOT 在 runner，非对话内自驱动。
 
 **禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
 
@@ -182,6 +182,13 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 - 「对 `<feature>` 做到 `<phase>` 为止」
 
 解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
+
+### 8.2b Goal 全链路（`goal_mode` / goal-runner）
+
+用户通过 `/goal-orchestration`、自然语言或 [goal-orchestration](../project/goal-orchestration/SKILL.md) 显式启动全链路时，`transition_policy=goal_mode`。主 agent **自跑** goal-runner（勿让用户手跑 harness）；跨 phase 推进由 **runner + harness verdict** 裁决，**不是**对话内自驱动。
+
+- DEFERRED（外部阻塞）≠ completed；最终报告仅 `COMPLETED` 表示无 DEFERRED。
+- 运行手册：`framework/docs/operations/goal-mode-runbook.md`
 
 ### 8.3 `phase.next_step` portable 模板
 

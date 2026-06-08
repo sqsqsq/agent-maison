@@ -1,11 +1,25 @@
 /**
- * Phase transition policy — manual default + batch_authorized heuristics.
- * SSOT for user-confirmation-ux.md §8.2; consumed by lint/tests (not runtime harness yet).
+ * Phase transition policy — manual default + batch_authorized heuristics + goal_mode helpers.
+ * SSOT for user-confirmation-ux.md §8.2; consumed by goal-runner and lint/tests.
  */
+
+import type { WorkflowSpec } from '../../workflow-loader';
+import { listWorkflowPhases } from '../../workflow-loader';
 
 export type TransitionPolicy = 'manual' | 'batch_authorized' | 'goal_mode';
 
 export type FeaturePhase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
+
+export type HarnessVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
+
+export type PhaseVerdictAction =
+  | 'advance'
+  | 'retry'
+  | 'halt'
+  | 'defer_external_and_continue_if_allowed'
+  | 'defer_external_and_halt';
+
+export type GoalRunStatus = 'COMPLETED' | 'PARTIAL' | 'DEFERRED' | 'HALTED';
 
 export const DEFAULT_TRANSITION_POLICY: TransitionPolicy = 'manual';
 
@@ -18,6 +32,29 @@ export const FEATURE_PHASE_ORDER: readonly FeaturePhase[] = [
   'ut',
   'testing',
 ] as const;
+
+const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
+
+export interface DependencyPolicy {
+  deferrable_blocking_classes?: string[];
+  deferrable_failure_kinds?: string[];
+  propagate_to_downstream?: boolean;
+}
+
+export const DEFAULT_DEPENDENCY_POLICY: DependencyPolicy = {
+  deferrable_blocking_classes: ['externalBlocked'],
+  deferrable_failure_kinds: ['device_blocked'],
+  propagate_to_downstream: true,
+};
+
+export interface ClassifyPhaseVerdictInput {
+  verdict: HarnessVerdict;
+  blocking_class?: string;
+  failure_kind?: string;
+  dependency_policy?: DependencyPolicy;
+  retries_used?: number;
+  max_retries_per_phase?: number;
+}
 
 export interface BatchAuthorizationResult {
   policy: TransitionPolicy;
@@ -49,6 +86,161 @@ const BATCH_PHRASES: Array<{ pattern: RegExp; through: FeaturePhase }> = [
   { pattern: /做到\s*design|到\s*设计\s*为止|prd\s*到\s*design/i, through: 'design' },
   { pattern: /做到\s*testing|到\s*真机|真机测试\s*闭环/i, through: 'testing' },
 ];
+
+function asFeaturePhase(phase: string): FeaturePhase | undefined {
+  if (FEATURE_PHASE_SET.has(phase)) return phase as FeaturePhase;
+  return PHASE_ALIASES[phase];
+}
+
+/**
+ * Validate feature-phase chain respects workflow DAG requires.
+ * Feature phases before startPhase are assumed satisfied (mid-chain entry).
+ */
+export function validateFeatureChainDag(
+  workflow: WorkflowSpec,
+  chain: FeaturePhase[],
+  startPhase: FeaturePhase,
+): void {
+  const startIdx = FEATURE_PHASE_ORDER.indexOf(startPhase);
+  for (let i = 0; i < chain.length; i++) {
+    const phase = chain[i];
+    const artifact = workflow.artifacts.find((a) => a.id === phase);
+    if (!artifact) continue;
+    for (const req of artifact.requires) {
+      if (!FEATURE_PHASE_SET.has(req)) continue;
+      const reqPhase = req as FeaturePhase;
+      const reqOrderIdx = FEATURE_PHASE_ORDER.indexOf(reqPhase);
+      if (reqOrderIdx >= 0 && reqOrderIdx < startIdx) continue;
+      const reqIdx = chain.indexOf(reqPhase);
+      if (reqIdx < 0) {
+        throw new Error(
+          `[resolveAutoChain] phase "${phase}" requires feature phase "${req}" but it is missing from chain`,
+        );
+      }
+      if (reqIdx >= i) {
+        throw new Error(
+          `[resolveAutoChain] phase "${phase}" requires "${req}" to precede it in chain`,
+        );
+      }
+    }
+  }
+}
+
+function featurePhasesFromWorkflow(spec: WorkflowSpec): FeaturePhase[] {
+  const ordered = listWorkflowPhases(spec);
+  const out: FeaturePhase[] = [];
+  for (const id of ordered) {
+    const a = spec.artifacts.find((x) => x.id === id);
+    if (a?.scope === 'feature' && FEATURE_PHASE_SET.has(id)) {
+      out.push(id as FeaturePhase);
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve ordered feature phase chain between start and end (inclusive).
+ * Uses workflow.auto_chain when set; otherwise derives from DAG topological order.
+ */
+export function resolveAutoChain(
+  workflow: WorkflowSpec,
+  startPhase: FeaturePhase,
+  endPhase: FeaturePhase,
+  overrideChain?: readonly string[],
+): FeaturePhase[] {
+  const startIdx = FEATURE_PHASE_ORDER.indexOf(startPhase);
+  const endIdx = FEATURE_PHASE_ORDER.indexOf(endPhase);
+  if (startIdx < 0 || endIdx < 0) {
+    throw new Error(`[resolveAutoChain] 非法 phase: start=${startPhase} end=${endPhase}`);
+  }
+  if (startIdx > endIdx) {
+    throw new Error(`[resolveAutoChain] start (${startPhase}) 不能晚于 end (${endPhase})`);
+  }
+
+  let base: FeaturePhase[];
+  if (overrideChain && overrideChain.length > 0) {
+    base = [];
+    for (const p of overrideChain) {
+      const fp = asFeaturePhase(p);
+      if (fp && !base.includes(fp)) base.push(fp);
+    }
+  } else if (workflow.auto_chain && workflow.auto_chain.length > 0) {
+    base = [];
+    for (const p of workflow.auto_chain) {
+      const fp = asFeaturePhase(p);
+      if (fp && !base.includes(fp)) base.push(fp);
+    }
+  } else {
+    base = featurePhasesFromWorkflow(workflow);
+  }
+
+  const filtered = base.filter((p) => {
+    const idx = FEATURE_PHASE_ORDER.indexOf(p);
+    return idx >= startIdx && idx <= endIdx;
+  });
+
+  if (filtered.length === 0) {
+    throw new Error('[resolveAutoChain] 解析结果为空');
+  }
+  validateFeatureChainDag(workflow, filtered, startPhase);
+  return filtered;
+}
+
+export function isDeferrableExternalBlock(
+  blocking_class?: string,
+  failure_kind?: string,
+  policy: DependencyPolicy = DEFAULT_DEPENDENCY_POLICY,
+): boolean {
+  const classes = policy.deferrable_blocking_classes ?? DEFAULT_DEPENDENCY_POLICY.deferrable_blocking_classes!;
+  const kinds = policy.deferrable_failure_kinds ?? DEFAULT_DEPENDENCY_POLICY.deferrable_failure_kinds!;
+  if (blocking_class && classes.includes(blocking_class)) return true;
+  if (failure_kind && kinds.includes(failure_kind)) return true;
+  return false;
+}
+
+/**
+ * Classify harness verdict into runner action. SSOT for goal-runner.
+ */
+export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVerdictAction {
+  const {
+    verdict,
+    blocking_class,
+    failure_kind,
+    dependency_policy = DEFAULT_DEPENDENCY_POLICY,
+    retries_used = 0,
+    max_retries_per_phase = 2,
+  } = input;
+
+  if (verdict === 'PASS') return 'advance';
+
+  if (verdict === 'INCOMPLETE') {
+    if (isDeferrableExternalBlock(blocking_class, failure_kind, dependency_policy)) {
+      if (dependency_policy.propagate_to_downstream === false) {
+        return 'defer_external_and_halt';
+      }
+      return 'defer_external_and_continue_if_allowed';
+    }
+    return 'halt';
+  }
+
+  if (retries_used < max_retries_per_phase) return 'retry';
+  return 'halt';
+}
+
+/**
+ * Compute final goal run status from per-phase outcomes.
+ * COMPLETED only when no DEFERRED and not halted early.
+ */
+export function resolveGoalRunStatus(
+  phases: Array<{ phase: FeaturePhase; deferred?: boolean; halted?: boolean }>,
+  reachedEnd: boolean,
+): GoalRunStatus {
+  const anyHalted = phases.some((p) => p.halted);
+  if (anyHalted) return 'HALTED';
+  const anyDeferred = phases.some((p) => p.deferred);
+  if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
+  return reachedEnd ? 'COMPLETED' : 'PARTIAL';
+}
 
 /**
  * Parse user message for batch multi-phase authorization.
@@ -120,4 +312,18 @@ export function dedicatedOkToRegistryId(phase: FeaturePhase): string | undefined
     default:
       return undefined;
   }
+}
+
+/** Build upstream DEFERRED notice for downstream phase prompts. */
+export function formatDeferredUpstreamNotice(
+  deferred: Array<{ phase: FeaturePhase; reason: string }>,
+): string {
+  if (deferred.length === 0) return '';
+  const lines = deferred.map((d) => `- ${d.phase}: ${d.reason}`);
+  return [
+    '## Upstream DEFERRED phases (未完成·待外部条件)',
+    '以下上游阶段因外部阻塞未闭环，下游须知晓依赖未真正满足：',
+    ...lines,
+    '',
+  ].join('\n');
 }

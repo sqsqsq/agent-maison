@@ -1,0 +1,1 @@
+Complete the goal for feature {{FEATURE}} from phase {{START_PHASE}} to {{END_PHASE}}. Each phase must show harness verdict in output. External blocks (device_blocked) are DEFERRED not PASS. Use codex exec evidence only; do not self-attest without harness summary.

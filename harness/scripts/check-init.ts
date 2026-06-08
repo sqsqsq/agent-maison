@@ -30,6 +30,7 @@ import * as YAML from 'yaml';
 
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
+import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   buildAgentsTemplateVars,
   type LegacyRenderEnv,
@@ -2334,12 +2335,56 @@ const checker: PhaseChecker = {
       console.log('========== end check-init ==========\n');
     }
 
+    // goal_capability — optional WARN only（goal-runner preflight 才 BLOCKER）
+    let goalCapResult: CheckResult;
+    if (adapter && adapter.yamlParseable) {
+      const gc = loadGoalCapability(ctx.frameworkRoot, adapter.name);
+      if (!gc.present) {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'WARN',
+          details: 'goal_capability 未声明；不使用 goal-runner 可忽略',
+        };
+      } else if (!gc.valid) {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'WARN',
+          details: gc.issues.join('; '),
+        };
+      } else {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'PASS',
+          details: `mode=${gc.capability?.mode ?? 'unknown'}`,
+        };
+      }
+    } else {
+      goalCapResult = {
+        id: 'goal_capability_declared',
+        category: 'structure',
+        description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+        severity: 'MINOR',
+        status: 'WARN',
+        details: 'adapter 未解析，跳过 goal_capability 检查',
+      };
+    }
+
     // 7. 返回 CheckResult[]：4 个聚合检查 + 11 个 inspection 详情（INFO 级别）
     const results: CheckResult[] = [
       adapterCheckResult,
       tplResolveResult,
       tableCompleteResult,
       diffResult,
+      goalCapResult,
     ];
     for (const ins of inspections) {
       const policyTag =

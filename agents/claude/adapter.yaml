@@ -58,6 +58,18 @@ deprecated_artifacts:
     action: backup_delete
     reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
 
+goal_capability:
+  mode: native_goal
+  native_goal:
+    goal_condition_template: templates/goal-condition.md
+    supports_resume: false
+  external_runner:
+    headless_invoke: 'claude -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
+    unattended:
+      write_mode: accept-edits
+      approval_mode: never
+      timeout_seconds: 3600
+
 post_install_hooks: []
 
 notes: |

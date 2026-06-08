@@ -1,0 +1,1 @@
+All feature phases from {{START_PHASE}} through {{END_PHASE}} for feature {{FEATURE}} have harness verdict PASS, or deferrable INCOMPLETE recorded as DEFERRED in goal-report. Stop after {{MAX_TURNS}} turns or when budget exhausted. Print harness summary paths in transcript.

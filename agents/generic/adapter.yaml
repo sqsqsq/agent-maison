@@ -24,6 +24,15 @@ user_confirmation:
   portable_required: true
   interaction_renderer_rule: templates/rules/interaction-renderer.md
 
+goal_capability:
+  mode: external_runner
+  external_runner:
+    headless_invoke: '{{PROMPT}} | agent-cli -'
+    unattended:
+      write_mode: workspace-write
+      approval_mode: on-request
+      timeout_seconds: 3600
+
 post_install_hooks: []
 
 notes: |

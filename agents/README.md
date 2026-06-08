@@ -19,12 +19,15 @@ framework/agents/
 │       ├── agents/              ← 子 agent 模板（如 verifier.md）
 │       ├── settings.json        ← 客户端配置（注册 Stop / SubagentStop 等 hook）
 │       └── hooks/               ← Claude Code hook 脚本（Layer 3 物理拦截）
-└── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
+├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
+│   ├── adapter.yaml
+│   └── templates/
+└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + goal_capability）
     ├── adapter.yaml
     └── templates/
-        ├── skills/<skill>/SKILL.md
-        └── rules/framework.mdc
 ```
+
+各 adapter 可选声明 `goal_capability`（goal-runner 全链路；check-init 仅 WARN，runner preflight BLOCKER）。见 `docs/operations/goal-mode-runbook.md`。
 
 ## 关键设计
 

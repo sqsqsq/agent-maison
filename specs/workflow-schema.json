@@ -18,6 +18,16 @@
     "description": {
       "type": "string"
     },
+    "transition_policy": {
+      "type": "string",
+      "enum": ["manual", "batch_authorized", "goal_mode"],
+      "description": "Phase boundary UX policy; default manual when omitted."
+    },
+    "auto_chain": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional ordered feature phase chain override for goal_mode; omit to derive from DAG."
+    },
     "artifacts": {
       "type": "array",
       "minItems": 1,

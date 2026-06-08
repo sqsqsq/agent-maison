@@ -198,6 +198,37 @@ optional_fields:
       可选。adapter 产物落地后需要执行的脚本列表（路径相对于 adapter 目录）。
       第一版保持为空，保留字段以便未来扩展（例如 adapter 切换时的清理、版本迁移等）。
 
+  goal_capability:
+    type: object | null
+    description: |
+      可选。声明 adapter 对 goal-runner 全链路无人值守的支持能力。
+      check-init 缺失/非法仅 WARN（不 BLOCKER）；goal-runner preflight 为 BLOCKER。
+      generic / chrys / codemate 典型为 external_runner；claude / codex 可声明 native_goal。
+    fields:
+      mode:
+        type: string
+        enum: ["native_goal", "external_runner", "hook_loop"]
+      native_goal:
+        type: object | null
+        fields:
+          goal_condition_template:
+            type: string
+            description: 相对于 adapter 目录的 /goal 条件模板路径（占位，第一版文档+metadata）
+          supports_resume:
+            type: boolean
+      external_runner:
+        type: object | null
+        fields:
+          headless_invoke:
+            type: string
+            description: |
+              命令模板（goal-runner 结构化 spawn，不经 shell）；占位符 {{PROMPT}}（内联 prompt 正文）、
+              {{PROMPT_FILE}} {{SKILL_PATH}} {{PROJECT_ROOT}} {{FRAMEWORK_ROOT}} {{FEATURE}} {{PHASE}}。
+              勿使用 $(cat …) 等 shell 语法。
+          unattended:
+            type: object
+            description: 默认 unattended 契约；manifest 可覆盖
+
   user_confirmation:
     type: object | null
     description: |

@@ -20,10 +20,14 @@ export interface WorkflowArtifact {
   skill_doc?: string;
 }
 
+export type WorkflowTransitionPolicy = 'manual' | 'batch_authorized' | 'goal_mode';
+
 export interface WorkflowSpec {
   schema_version: string;
   name: string;
   description?: string;
+  transition_policy?: WorkflowTransitionPolicy;
+  auto_chain?: string[];
   artifacts: WorkflowArtifact[];
 }
 
@@ -122,6 +126,21 @@ function validateWorkflow(raw: Partial<WorkflowSpec>, filePath: string): void {
   }
   if (!Array.isArray(raw.artifacts) || raw.artifacts.length === 0) {
     throw new Error(`[workflow-loader] artifacts 必须为非空数组（${filePath}）`);
+  }
+
+  if (raw.transition_policy !== undefined) {
+    const allowed = new Set(['manual', 'batch_authorized', 'goal_mode']);
+    if (!allowed.has(raw.transition_policy)) {
+      throw new Error(
+        `[workflow-loader] transition_policy 非法 "${String(raw.transition_policy)}"（${filePath}）`,
+      );
+    }
+  }
+
+  if (raw.auto_chain !== undefined) {
+    if (!Array.isArray(raw.auto_chain) || raw.auto_chain.some((p) => typeof p !== 'string')) {
+      throw new Error(`[workflow-loader] auto_chain 必须为字符串数组（${filePath}）`);
+    }
   }
 
   const ids = new Set<string>();
