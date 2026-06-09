@@ -17,7 +17,7 @@ import {
   loadFrameworkConfigWithSources,
   featurePhaseReportsDir,
 } from '../config';
-import { inferRepoLayout } from '../repo-layout';
+import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
   classifyPhaseVerdict,
@@ -185,8 +185,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
     process.exit(0);
   }
 
-  const cwd = process.cwd();
-  const layout = inferRepoLayout(cwd);
+  // detectRepoLayout 从 __dirname 或 cwd 向上查找工程根，
+  // 兼容从 framework/harness（SKILL 指示路径）和工程根两种 cwd 启动。
+  // inferRepoLayout 假设 cwd 即 projectRoot，从 framework/harness 启动会失败。
+  const layout = detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const frameworkRoot = layout.frameworkRoot;
   const cfg = loadFrameworkConfig(projectRoot);

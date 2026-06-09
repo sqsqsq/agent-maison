@@ -73,6 +73,36 @@ function resolveViaWhich(name: string): ResolvedHeadlessBinary | null {
   return { path: p, kind: 'bare' };
 }
 
+/**
+ * Windows well-known install dirs for headless CLIs not always on PATH.
+ * Cursor Agent CLI installs to %LOCALAPPDATA%\cursor-agent\ but the
+ * installer may not add it to the system/user PATH (Cursor desktop
+ * injects it into its own terminal profile, other shells may lack it).
+ */
+function resolveViaKnownDirs(name: string): ResolvedHeadlessBinary | null {
+  if (process.platform !== 'win32') return null;
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return null;
+
+  const knownDirs = [
+    path.join(localAppData, 'cursor-agent'),
+  ];
+  const pathext = (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM')
+    .split(';')
+    .map((e) => e.toLowerCase());
+
+  for (const dir of knownDirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const ext of pathext) {
+      const candidate = path.join(dir, name + ext);
+      if (!fs.existsSync(candidate)) continue;
+      if (ext === '.exe') return { path: candidate, kind: 'exe' };
+      if (ext === '.cmd' || ext === '.bat') return { path: candidate, kind: 'cmd' };
+    }
+  }
+  return null;
+}
+
 /** Try candidates in order; prefer .exe over .cmd on Windows. */
 export function resolveHeadlessBinary(candidates: string[]): ResolvedHeadlessBinary | null {
   for (const name of candidates) {
@@ -87,6 +117,8 @@ export function resolveHeadlessBinary(candidates: string[]): ResolvedHeadlessBin
     }
     const viaWalk = resolveViaPathWalk(n);
     if (viaWalk) return viaWalk;
+    const viaKnown = resolveViaKnownDirs(n);
+    if (viaKnown) return viaKnown;
   }
   return null;
 }
