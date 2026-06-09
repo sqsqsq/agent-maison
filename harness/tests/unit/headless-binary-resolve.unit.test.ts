@@ -1,6 +1,9 @@
 // headless-binary-resolve.unit.test.ts
 
 import assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
   cursorHeadlessPlan,
   defaultHeadlessInvokePlan,
@@ -10,7 +13,9 @@ import {
 } from '../../scripts/utils/agent-invoke';
 import {
   crossSpawnAvailable,
+  formatHeadlessBinaryIssue,
   headlessBinarySpawnable,
+  resolveHeadlessBinary,
   shouldUseCrossSpawn,
 } from '../../scripts/utils/headless-binary-resolve';
 import type { UnitCaseResult } from '../run-unit';
@@ -89,6 +94,45 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prompt = 'line1\nline2 `code` & |';
       const argv = injectPromptIntoArgv(['agent', '-p', PROMPT_ARGV_SENTINEL], prompt);
       assert.strictEqual(argv[2], prompt);
+    },
+  },
+  {
+    name: 'resolveHeadlessBinary: known-dir fallback finds cursor-agent on Windows',
+    run: () => {
+      if (process.platform !== 'win32') return;
+      const tmpLocal = fs.mkdtempSync(path.join(os.tmpdir(), 'knowndir-'));
+      const agentDir = path.join(tmpLocal, 'cursor-agent');
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(path.join(agentDir, 'cursor-agent.cmd'), '@echo off\n');
+      const origLocal = process.env.LOCALAPPDATA;
+      const origPath = process.env.PATH;
+      try {
+        process.env.LOCALAPPDATA = tmpLocal;
+        process.env.PATH = 'C:\\nonexistent';
+        const result = resolveHeadlessBinary(['cursor-agent']);
+        assert.ok(result, 'should resolve via known-dir');
+        assert.strictEqual(result!.kind, 'cmd');
+        assert.ok(result!.path.includes('cursor-agent.cmd'), result!.path);
+        assert.ok(!result!.inaccessible, 'should be accessible');
+      } finally {
+        if (origLocal === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = origLocal;
+        process.env.PATH = origPath;
+        fs.rmSync(tmpLocal, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'formatHeadlessBinaryIssue: inaccessible binary gives permission message',
+    run: () => {
+      const msg = formatHeadlessBinaryIssue('cursor', ['cursor-agent'], {
+        path: 'C:\\Users\\x\\AppData\\Local\\cursor-agent\\cursor-agent.cmd',
+        kind: 'cmd',
+        inaccessible: true,
+      });
+      assert.ok(msg.includes('无权访问'), msg);
+      assert.ok(msg.includes('EPERM'), msg);
+      assert.ok(msg.includes('非沙箱'), msg);
     },
   },
   {

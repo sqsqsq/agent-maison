@@ -12,6 +12,8 @@ export interface ResolvedHeadlessBinary {
   /** Executable path or bare command name when only bare resolution succeeded. */
   path: string;
   kind: HeadlessBinaryKind;
+  /** File exists at known path but access was denied (EPERM/EACCES, e.g. sandbox). */
+  inaccessible?: boolean;
 }
 
 function pickBestCandidate(lines: string[]): ResolvedHeadlessBinary | null {
@@ -79,6 +81,17 @@ function resolveViaWhich(name: string): ResolvedHeadlessBinary | null {
  * installer may not add it to the system/user PATH (Cursor desktop
  * injects it into its own terminal profile, other shells may lack it).
  */
+function probeFileAccess(filePath: string): 'ok' | 'missing' | 'inaccessible' {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return 'ok';
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') return 'missing';
+    return 'inaccessible';
+  }
+}
+
 function resolveViaKnownDirs(name: string): ResolvedHeadlessBinary | null {
   if (process.platform !== 'win32') return null;
   const localAppData = process.env.LOCALAPPDATA;
@@ -92,12 +105,21 @@ function resolveViaKnownDirs(name: string): ResolvedHeadlessBinary | null {
     .map((e) => e.toLowerCase());
 
   for (const dir of knownDirs) {
-    if (!fs.existsSync(dir)) continue;
+    const dirProbe = probeFileAccess(dir);
+    if (dirProbe === 'missing') continue;
+    if (dirProbe === 'inaccessible') {
+      return { path: path.join(dir, name), kind: 'bare', inaccessible: true };
+    }
     for (const ext of pathext) {
       const candidate = path.join(dir, name + ext);
-      if (!fs.existsSync(candidate)) continue;
-      if (ext === '.exe') return { path: candidate, kind: 'exe' };
-      if (ext === '.cmd' || ext === '.bat') return { path: candidate, kind: 'cmd' };
+      const probe = probeFileAccess(candidate);
+      if (probe === 'missing') continue;
+      const kind: HeadlessBinaryKind =
+        ext === '.exe' ? 'exe' : ext === '.cmd' || ext === '.bat' ? 'cmd' : 'bare';
+      if (probe === 'inaccessible') {
+        return { path: candidate, kind, inaccessible: true };
+      }
+      return { path: candidate, kind };
     }
   }
   return null;
@@ -153,6 +175,12 @@ export function formatHeadlessBinaryIssue(
     return (
       `[goal-runner] preflight BLOCKER: ${adapterLabel} 无头 CLI 未在 PATH 中找到` +
       `（已尝试: ${candidates.join(', ')}）。请安装对应 CLI 并确保在 PATH 中。`
+    );
+  }
+  if (binary.inaccessible) {
+    return (
+      `[goal-runner] preflight BLOCKER: 在 ${binary.path} 找到 ${adapterLabel} 无头 CLI` +
+      ` 但当前进程无权访问（EPERM，疑似沙箱/权限限制）——请从非沙箱 shell 运行。`
     );
   }
   if (!headlessBinarySpawnable(binary)) {

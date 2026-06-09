@@ -17,7 +17,7 @@ import {
   loadFrameworkConfigWithSources,
   featurePhaseReportsDir,
 } from '../config';
-import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
+import { detectRepoLayout } from '../repo-layout';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
   classifyPhaseVerdict,
