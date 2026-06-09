@@ -64,11 +64,25 @@ function loadWorkflowSpec(projectRoot: string, frameworkRoot?: string): Workflow
   return resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 }
 
+/** goal-runner harness spawn sets this; suppresses global .current-phase.json writes. */
+export const MAISON_GOAL_RUNNER_ENV = 'MAISON_GOAL_RUNNER';
+
+/** goal-runner headless agent trees inherit MAISON_GOAL_HEADLESS from agent-invoke. */
+export const MAISON_GOAL_HEADLESS_ENV = 'MAISON_GOAL_HEADLESS';
+
+export function isGoalOrchestrationEnv(): boolean {
+  return (
+    process.env[MAISON_GOAL_RUNNER_ENV] === '1' || process.env[MAISON_GOAL_HEADLESS_ENV] === '1'
+  );
+}
+
 export function mergeAndWritePhaseState(
   projectRoot: string,
   workflowSpec: WorkflowSpec,
   partial: CurrentPhaseStatePartial,
 ): void {
+  // goal 编排链下不写全局 state，避免污染 Stop hook 判定
+  if (isGoalOrchestrationEnv()) return;
   if (isPhaseGlobalInWorkflow(workflowSpec, partial.phase)) {
     return;
   }

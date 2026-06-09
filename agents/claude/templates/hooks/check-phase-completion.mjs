@@ -507,6 +507,13 @@ async function main() {
     return;
   }
 
+  // goal-runner 拉起的无头进程：闭环裁决由 goal-runner 外部管理，hook 不干预
+  // env 名 SSOT：framework/harness/scripts/utils/phase-state.ts → MAISON_GOAL_HEADLESS_ENV
+  if (process.env.MAISON_GOAL_HEADLESS === '1') {
+    process.exit(0);
+    return;
+  }
+
   const projectRoot = resolveProjectRoot(payload);
 
   // 默认状态文件路径；若 framework.config.json 自定义了 paths.state_file，hook 也读那个

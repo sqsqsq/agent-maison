@@ -14,6 +14,7 @@ import {
   shouldUseCrossSpawn,
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
+import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -299,6 +300,7 @@ function spawnHeadless(
   const opts = {
     cwd,
     encoding: 'utf-8' as const,
+    env: { ...process.env, [MAISON_GOAL_HEADLESS_ENV]: '1' },
     input: plan.useStdin ? plan.stdin : undefined,
     timeout: timeoutMs,
     maxBuffer: 10 * 1024 * 1024,

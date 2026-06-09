@@ -179,8 +179,12 @@ interface HookOutcome {
   stderr: string;
 }
 
-function runHook(payload: Record<string, unknown>, projectDir: string): HookOutcome {
-  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir };
+function runHook(
+  payload: Record<string, unknown>,
+  projectDir: string,
+  extraEnv?: NodeJS.ProcessEnv,
+): HookOutcome {
+  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir, ...extraEnv };
   const inputJson = JSON.stringify({ ...payload, cwd: projectDir });
   const r: SpawnSyncReturns<string> = spawnSync('node', [HOOK_PATH], {
     input: inputJson,
@@ -505,6 +509,24 @@ function testT14b_globalPhaseExtensionsBypassesClosure(): void {
   }
 }
 
+function testT16_goalHeadlessEnvBypassesStopHook(): void {
+  // goal-runner 无头子进程树携带 MAISON_GOAL_HEADLESS=1 → 即使同会话未闭环也 exit 0
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir, { MAISON_GOAL_HEADLESS: '1' });
+    assertEq(out.status, 0, 'T16 MAISON_GOAL_HEADLESS=1 + 未闭环 → exit 0（旁路）');
+    if (/未闭环|阶段完成回执|Stop Hook 提示/.test(out.stderr)) {
+      throw new Error(`T16 旁路时不应输出阻断文案：${out.stderr.slice(0, 200)}`);
+    }
+  } finally {
+    rmDir(dir);
+  }
+}
+
 function testT15_blockReasonIncludesSummaryNextAction(): void {
   const dir = makeFixture({
     closed: false,
@@ -546,6 +568,10 @@ const CASES: Array<{ name: string; fn: () => void }> = [
     fn: testT14b_globalPhaseExtensionsBypassesClosure,
   },
   { name: 'T15 未闭环阻断文案包含 summary.next_action', fn: testT15_blockReasonIncludesSummaryNextAction },
+  {
+    name: 'T16 MAISON_GOAL_HEADLESS=1 旁路 Stop hook（未闭环仍 exit 0）',
+    fn: testT16_goalHeadlessEnvBypassesStopHook,
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

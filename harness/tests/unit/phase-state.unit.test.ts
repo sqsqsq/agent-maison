@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  MAISON_GOAL_HEADLESS_ENV,
+  MAISON_GOAL_RUNNER_ENV,
   mergeAndWritePhaseState,
   patchSummaryClosureStatus,
   syncPhaseStateOnReceiptPass,
@@ -208,6 +210,54 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(state.verdict === 'PASS', `expected PASS verdict, got ${state.verdict}`);
       } finally {
         fs.rmSync(host, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'mergeAndWritePhaseState: MAISON_GOAL_RUNNER=1 跳过写入',
+    run: () => {
+      const root = mkProject();
+      const prev = process.env[MAISON_GOAL_RUNNER_ENV];
+      process.env[MAISON_GOAL_RUNNER_ENV] = '1';
+      try {
+        const workflow = resolveWorkflowSpec(root);
+        const stateAbs = statefilePath(root);
+        mergeAndWritePhaseState(root, workflow, {
+          phase: 'review',
+          feature: 'demo',
+          status: 'harness_finished',
+          verdict: 'PASS',
+          blocker_count: 0,
+          receipt: { status: 'missing', receipt_path: 'doc/features/demo/review/phase-completion-receipt.md' },
+        });
+        assert(!fs.existsSync(stateAbs), 'state file should not be created under MAISON_GOAL_RUNNER');
+      } finally {
+        if (prev === undefined) delete process.env[MAISON_GOAL_RUNNER_ENV];
+        else process.env[MAISON_GOAL_RUNNER_ENV] = prev;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'mergeAndWritePhaseState: MAISON_GOAL_HEADLESS=1 跳过写入',
+    run: () => {
+      const root = mkProject();
+      const prev = process.env[MAISON_GOAL_HEADLESS_ENV];
+      process.env[MAISON_GOAL_HEADLESS_ENV] = '1';
+      try {
+        const workflow = resolveWorkflowSpec(root);
+        const stateAbs = statefilePath(root);
+        mergeAndWritePhaseState(root, workflow, {
+          phase: 'coding',
+          feature: 'demo',
+          status: 'running',
+          started_at: new Date().toISOString(),
+        });
+        assert(!fs.existsSync(stateAbs), 'state file should not be created under MAISON_GOAL_HEADLESS');
+      } finally {
+        if (prev === undefined) delete process.env[MAISON_GOAL_HEADLESS_ENV];
+        else process.env[MAISON_GOAL_HEADLESS_ENV] = prev;
+        fs.rmSync(root, { recursive: true, force: true });
       }
     },
   },

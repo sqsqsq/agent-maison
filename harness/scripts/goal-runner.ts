@@ -53,6 +53,7 @@ import {
   resolveResumeFromEvents,
   resolveResumeState,
 } from './utils/goal-runner-phase';
+import { MAISON_GOAL_RUNNER_ENV } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   resolveAdapterProvenance,
@@ -131,7 +132,12 @@ function runHarnessPhase(
   const result = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
-    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32' },
+    {
+      cwd: harnessDir,
+      encoding: 'utf-8',
+      shell: process.platform === 'win32',
+      env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
+    },
   );
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
