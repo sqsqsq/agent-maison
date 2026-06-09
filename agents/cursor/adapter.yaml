@@ -40,6 +40,6 @@ post_install_hooks: []
 
 notes: |
   - Skill 跳板模板 SSOT：`framework/agents/shared/agent-bundle/templates/skills-bridge/`。
-  - 8 份内置 skill 跳板（含 `framework-init`）；`catalog-bootstrap` 的 Phase A/B 合用一份跳板。
+  - 9 份内置 skill 跳板（含 `framework-init`、`goal-mode`）；`catalog-bootstrap` 的 Phase A/B 合用一份跳板。
   - 跳板 `name` 必须与目录名一致（扁平 skill id，如 `framework-init`、`coding`）。
   - 个人 setup 无独立 skill 跳板：各阶段入口 `check-personal-setup.ts --json --ensure`（见 personal-setup-gate.md）。

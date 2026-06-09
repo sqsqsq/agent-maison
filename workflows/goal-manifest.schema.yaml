@@ -56,4 +56,4 @@ fields:
     description: UUID or timestamp slug; auto-generated if omitted
   report_dir:
     type: string
-    default: goal-runs/<run-id>
+    default: doc/features/<feature>/goal-runs/<run-id>

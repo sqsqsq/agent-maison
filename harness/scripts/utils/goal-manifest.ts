@@ -1,5 +1,6 @@
 /**
- * Goal manifest parser — SSOT for goal-runner CLI and goal-runs/<run-id>/manifest.json
+ * Goal manifest parser — SSOT for goal-runner CLI and
+ * {features_dir}/<feature>/goal-runs/<run-id>/manifest.json
  */
 
 import * as fs from 'fs';
@@ -44,7 +45,15 @@ export interface GoalManifest {
 export interface GoalManifestParseOptions {
   projectRoot: string;
   runId?: string;
+  featuresDir?: string;
 }
+
+export interface LoadGoalManifestFromRunOptions {
+  feature: string;
+  featuresDir?: string;
+}
+
+const DEFAULT_FEATURES_DIR = 'doc/features';
 
 const DEFAULT_BUDGET: Required<GoalBudget> = {
   max_retries_per_phase: 2,
@@ -102,14 +111,41 @@ export function validateUnattendedContract(u: Partial<UnattendedContract> | unde
   return issues;
 }
 
+export function resolveGoalReportDir(opts: {
+  featuresDir: string;
+  feature: string;
+  runId: string;
+}): string {
+  const feature = opts.feature.trim();
+  if (!feature) {
+    throw new Error('[goal-manifest] feature 必填');
+  }
+  return path
+    .join(opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', opts.runId)
+    .replace(/\\/g, '/');
+}
+
 export function buildGoalManifestFromInput(
   input: Record<string, unknown>,
   opts: GoalManifestParseOptions,
 ): GoalManifest {
   const runId = (typeof input.run_id === 'string' && input.run_id.trim()) || opts.runId || newRunId();
-  const reportDir =
-    (typeof input.report_dir === 'string' && input.report_dir.trim()) ||
-    path.join('goal-runs', runId).replace(/\\/g, '/');
+  const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
+  const feature = String(input.feature ?? '').trim();
+  if (!feature) {
+    throw new Error('[goal-manifest] feature 必填');
+  }
+  const canonicalReportDir = resolveGoalReportDir({ featuresDir, feature, runId });
+  const explicitReportDir =
+    typeof input.report_dir === 'string' && input.report_dir.trim()
+      ? input.report_dir.trim().replace(/\\/g, '/')
+      : undefined;
+  if (explicitReportDir && explicitReportDir !== canonicalReportDir) {
+    throw new Error(
+      `[goal-manifest] report_dir 必须为 feature 绑定路径: ${canonicalReportDir}（收到: ${explicitReportDir}）`,
+    );
+  }
+  const reportDir = canonicalReportDir;
 
   const chainOverride = Array.isArray(input.chain_override)
     ? (input.chain_override.filter((x) => typeof x === 'string') as FeaturePhase[])
@@ -132,10 +168,17 @@ export function buildGoalManifestFromInput(
   };
 }
 
-export function loadGoalManifestFile(filePath: string, projectRoot: string): GoalManifest {
+export function loadGoalManifestFile(
+  filePath: string,
+  projectRoot: string,
+  opts?: Pick<GoalManifestParseOptions, 'featuresDir'>,
+): GoalManifest {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
-  return buildGoalManifestFromInput(raw, { projectRoot });
+  return buildGoalManifestFromInput(raw, {
+    projectRoot,
+    featuresDir: opts?.featuresDir,
+  });
 }
 
 export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
@@ -145,10 +188,51 @@ export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): 
   return abs;
 }
 
-export function loadGoalManifestFromRun(projectRoot: string, runId: string): GoalManifest {
-  const abs = path.join(projectRoot, 'goal-runs', runId, 'manifest.json');
+/** Validate on-disk manifest matches canonical feature-bound evidence path (resume SSOT). */
+export function validateLoadedGoalManifest(
+  manifest: GoalManifest,
+  opts: { featuresDir: string; feature: string; runId: string },
+): void {
+  const feature = opts.feature.trim();
+  const runId = opts.runId.trim();
+  const canonical = resolveGoalReportDir({
+    featuresDir: opts.featuresDir,
+    feature,
+    runId,
+  });
+  if (manifest.feature?.trim() !== feature) {
+    throw new Error(
+      `[goal-manifest] manifest.feature 与请求不一致（期望 ${feature}，收到 ${manifest.feature ?? ''}）`,
+    );
+  }
+  if (manifest.run_id !== runId) {
+    throw new Error(
+      `[goal-manifest] manifest.run_id 与 --resume 不一致（期望 ${runId}，收到 ${manifest.run_id ?? ''}）`,
+    );
+  }
+  const reportDir = String(manifest.report_dir ?? '').replace(/\\/g, '/');
+  if (reportDir !== canonical) {
+    throw new Error(
+      `[goal-manifest] manifest.report_dir 必须为 feature 绑定路径: ${canonical}（收到: ${reportDir}）`,
+    );
+  }
+}
+
+export function loadGoalManifestFromRun(
+  projectRoot: string,
+  runId: string,
+  opts: LoadGoalManifestFromRunOptions,
+): GoalManifest {
+  const feature = opts.feature?.trim();
+  if (!feature) {
+    throw new Error('[goal-manifest] --resume 须配 --feature 或 --manifest');
+  }
+  const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
+  const abs = path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(abs)) {
     throw new Error(`[goal-manifest] 未找到 run manifest: ${abs}`);
   }
-  return JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
+  const manifest = JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
+  validateLoadedGoalManifest(manifest, { featuresDir, feature, runId });
+  return manifest;
 }

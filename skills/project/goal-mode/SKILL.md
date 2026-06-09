@@ -1,4 +1,4 @@
-# Goal 全链路编排（薄入口）
+# Goal 模式（薄入口）
 
 > **BLOCKER**：本 Skill 是 **goal-runner 的宿主入口**，不实现独立 phase 裁决循环。
 > 裁决 SSOT：`harness/scripts/utils/phase-transition-policy.ts` + `goal-runner.ts`。
@@ -6,17 +6,19 @@
 
 ## 何时使用
 
-用户要求「全链路 / 从 PRD 到真机 / 一个需求做到尾」且希望无人值守时，进入本 Skill 并由 **agent 自跑** goal-runner，不要手写多 phase 循环。
+用户要求进入 **目标模式 / 全自动（无人值守）**，对某个 **feature** 从指定 phase 推进到终点时，进入本 Skill 并由 **agent 自跑** goal-runner。
+
+「全链路 / 从 PRD 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
 
 ## 宿主怎么触发（用户侧）
 
 | 方式 | 示例 |
 |------|------|
-| Claude slash | `/goal-orchestration demo-feature 实现用户登录，从 PRD 做到真机` |
-| 自然语言 | 「对 `demo-feature` 全链路无人值守做到 testing」 |
-| Codex/Cursor Skill | 读跳板后进入本 Skill 正文 |
+| Claude slash | `/goal-mode demo-feature 全自动从 prd 做到 testing` |
+| 自然语言 | 「对 `demo-feature` 进入目标模式，无人值守全自动」 |
+| Codex/Cursor/generic Skill | 读跳板（skill id `goal-mode`）后进入本 Skill 正文 |
 
-解析用户输入得到：`feature`、`requirement`（可选 `start_phase` / `end_phase`）。
+解析用户输入得到：`feature`（**必填**）、`requirement`（可选 `start_phase` / `end_phase`）。
 
 ## Agent 必须执行（勿推给用户）
 
@@ -38,10 +40,11 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 ### 续跑
 
-用户说「继续 goal run `<run-id>`」→ agent 自跑：
+用户说「继续 goal run `<run-id>`」→ agent 自跑（**须带 feature**）：
 
 ```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts --resume <run-id>
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --resume <run-id> --feature <feature-slug>
 ```
 
 ### manifest（可选，agent 写入后自跑）
@@ -54,14 +57,15 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 
 ## manifest 关键字段
 
+- `feature`：feature slug（**必填**）
 - `start_phase` / `end_phase`：起止 phase（默认 prd→testing）
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
-- 运行证据：`goal-runs/<run-id>/`（manifest、events、每 phase prompt/输出、goal-report）
+- 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、每 phase prompt/输出、goal-report）
 
 ## 报告解读（汇报给用户）
 
-Read `goal-runs/<run-id>/goal-report.md`，用自然语言说明：
+Read `doc/features/<feature>/goal-runs/<run-id>/goal-report.md`，用自然语言说明：
 
 | 状态 | 含义 |
 |------|------|

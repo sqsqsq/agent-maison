@@ -156,7 +156,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 1. 用户消息含下一 Skill **触发意图**（各 SKILL「触发条件」关键词）；
 2. 用户消息含 **batch 多阶段意图**（§8.2）→ `transition_policy=batch_authorized`；
 3. 用户通过 **`phase.next_step`** 或对应 **`*.ok_to_*`** 闭环闸门确认（见 registry）；
-4. **`goal_mode`**：`goal-runner` manifest 显式启动全链路（见 [goal-orchestration/SKILL.md](../project/goal-orchestration/SKILL.md)）；裁决 SSOT 在 runner，非对话内自驱动。
+4. **`goal_mode`**：`goal-runner` manifest 显式启动（见 [goal-mode/SKILL.md](../project/goal-mode/SKILL.md)）；自然语言触发词为「目标模式 / 全自动」等；裁决 SSOT 在 runner，非对话内自驱动。
 
 **禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
 
@@ -183,9 +183,11 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
 
-### 8.2b Goal 全链路（`goal_mode` / goal-runner）
+### 8.2b Goal 模式（`goal_mode` / goal-runner）
 
-用户通过 `/goal-orchestration`、自然语言或 [goal-orchestration](../project/goal-orchestration/SKILL.md) 显式启动全链路时，`transition_policy=goal_mode`。主 agent **自跑** goal-runner（勿让用户手跑 harness）；跨 phase 推进由 **runner + harness verdict** 裁决，**不是**对话内自驱动。
+用户通过 `/goal-mode`、自然语言（**目标模式 / 全自动 / 无人值守全自动**）或 [goal-mode](../project/goal-mode/SKILL.md) 显式启动时，`transition_policy=goal_mode`。解析 SSOT：`resolveTransitionPolicy` — **goal_mode 优先于** §8.2 的 `batch_authorized`（同句同时命中时以 goal 为准）。
+
+主 agent **自跑** goal-runner（勿让用户手跑 harness）；跨 phase 推进由 **runner + harness verdict** 裁决，**不是**对话内自驱动。运行证据：`doc/features/<feature>/goal-runs/<run-id>/`。
 
 - DEFERRED（外部阻塞）≠ completed；最终报告仅 `COMPLETED` 表示无 DEFERRED。
 - 运行手册：`framework/docs/operations/goal-mode-runbook.md`

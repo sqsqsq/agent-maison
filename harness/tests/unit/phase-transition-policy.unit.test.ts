@@ -7,7 +7,9 @@ import {
   isPhaseWithinBatchRange,
   nextSkillLabelForPhase,
   parseBatchAuthorization,
+  parseGoalModeAuthorization,
   resolveGoalRunStatus,
+  resolveTransitionPolicy,
 } from '../../scripts/utils/phase-transition-policy';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -66,6 +68,27 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(nextSkillLabelForPhase('coding').includes('code-review'), 'coding next label');
       assert(dedicatedOkToRegistryId('coding') === 'coding.ok_to_review', 'coding ok id');
       assert(dedicatedOkToRegistryId('prd') === undefined, 'prd has no dedicated ok_to');
+    },
+  },
+  {
+    name: 'parseGoalModeAuthorization: 目标模式 → goal_mode',
+    run: () => {
+      const r = parseGoalModeAuthorization('进入目标模式 demo-feature');
+      assert(r.policy === 'goal_mode', `expected goal_mode, got ${r.policy}`);
+    },
+  },
+  {
+    name: 'resolveTransitionPolicy: 全自动做到 testing → goal_mode（优先于 batch）',
+    run: () => {
+      const p = resolveTransitionPolicy('全自动做到 testing');
+      assert(p === 'goal_mode', `expected goal_mode, got ${p}`);
+    },
+  },
+  {
+    name: 'resolveTransitionPolicy: 全链路交付 → batch_authorized',
+    run: () => {
+      const p = resolveTransitionPolicy('全链路交付 home-page');
+      assert(p === 'batch_authorized', `expected batch, got ${p}`);
     },
   },
   {

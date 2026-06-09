@@ -1,5 +1,6 @@
 // goal-runner-policy.unit.test.ts — resolveAutoChain, classifyPhaseVerdict, goal manifest, adapter preflight
 
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   classifyPhaseVerdict,
@@ -11,6 +12,9 @@ import {
 import { loadWorkflowSpec } from '../../workflow-loader';
 import {
   buildGoalManifestFromInput,
+  loadGoalManifestFile,
+  loadGoalManifestFromRun,
+  resolveGoalReportDir,
   validateUnattendedContract,
 } from '../../scripts/utils/goal-manifest';
 import {
@@ -194,11 +198,198 @@ const cases: Array<{ name: string; run: () => void }> = [
           adapter: 'claude',
           unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
         },
-        { projectRoot: REPO_ROOT },
+        { projectRoot: REPO_ROOT, featuresDir: 'doc/features' },
       );
       assert(m.feature === 'demo', 'feature');
       assert(m.start_phase === 'prd', 'start');
       assert(m.unattended.write_mode === 'workspace-write', 'unattended');
+      assert(
+        m.report_dir.startsWith('doc/features/demo/goal-runs/'),
+        `report_dir=${m.report_dir}`,
+      );
+    },
+  },
+  {
+    name: 'buildGoalManifestFromInput: missing feature throws',
+    run: () => {
+      let threw = false;
+      try {
+        buildGoalManifestFromInput(
+          {
+            adapter: 'claude',
+            unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+          },
+          { projectRoot: REPO_ROOT, featuresDir: 'doc/features' },
+        );
+      } catch (e) {
+        threw = true;
+        assert((e as Error).message.includes('feature 必填'), (e as Error).message);
+      }
+      assert(threw, 'expected throw');
+    },
+  },
+  {
+    name: 'buildGoalManifestFromInput: legacy report_dir rejected',
+    run: () => {
+      let threw = false;
+      try {
+        buildGoalManifestFromInput(
+          {
+            feature: 'demo',
+            run_id: 'legacy-run',
+            report_dir: 'goal-runs/legacy-run',
+            adapter: 'claude',
+            unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+          },
+          { projectRoot: REPO_ROOT, featuresDir: 'doc/features' },
+        );
+      } catch (e) {
+        threw = true;
+        assert((e as Error).message.includes('report_dir 必须为'), (e as Error).message);
+        assert((e as Error).message.includes('goal-runs/legacy-run'), (e as Error).message);
+      }
+      assert(threw, 'expected throw');
+    },
+  },
+  {
+    name: 'buildGoalManifestFromInput: canonical report_dir accepted',
+    run: () => {
+      const m = buildGoalManifestFromInput(
+        {
+          feature: 'demo',
+          run_id: 'run-canonical',
+          report_dir: 'doc/features/demo/goal-runs/run-canonical',
+          adapter: 'claude',
+          unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+        },
+        { projectRoot: REPO_ROOT, featuresDir: 'doc/features' },
+      );
+      assert(m.report_dir === 'doc/features/demo/goal-runs/run-canonical', m.report_dir);
+    },
+  },
+  {
+    name: 'loadGoalManifestFile: uses custom featuresDir for default report_dir',
+    run: () => {
+      const tmp = path.join(REPO_ROOT, 'harness', 'tests', 'tmp-goal-manifest-file');
+      const manifestPath = path.join(tmp, 'goal-manifest.yaml');
+      fs.mkdirSync(tmp, { recursive: true });
+      fs.writeFileSync(
+        manifestPath,
+        [
+          'feature: demo',
+          'adapter: claude',
+          'unattended:',
+          '  write_mode: workspace-write',
+          '  approval_mode: never',
+        ].join('\n'),
+        'utf-8',
+      );
+      try {
+        const m = loadGoalManifestFile(manifestPath, tmp, { featuresDir: 'custom/features' });
+        assert(m.report_dir.startsWith('custom/features/demo/goal-runs/'), m.report_dir);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'resolveGoalReportDir: feature-bound path',
+    run: () => {
+      const dir = resolveGoalReportDir({
+        featuresDir: 'doc/features',
+        feature: 'home-page',
+        runId: '20260608T120000Z',
+      });
+      assert(dir === 'doc/features/home-page/goal-runs/20260608T120000Z', dir);
+    },
+  },
+  {
+    name: 'loadGoalManifestFromRun: missing feature throws',
+    run: () => {
+      let threw = false;
+      try {
+        loadGoalManifestFromRun(REPO_ROOT, 'run1', { feature: '' });
+      } catch (e) {
+        threw = true;
+        assert((e as Error).message.includes('--resume'), (e as Error).message);
+      }
+      assert(threw, 'expected throw');
+    },
+  },
+  {
+    name: 'loadGoalManifestFromRun: specified feature loads manifest',
+    run: () => {
+      const tmp = path.join(REPO_ROOT, 'harness', 'tests', 'tmp-goal-manifest-resume');
+      const runId = 'test-run-goal-mode';
+      const manifestDir = path.join(tmp, 'doc', 'features', 'demo', 'goal-runs', runId);
+      fs.mkdirSync(manifestDir, { recursive: true });
+      const body = {
+        schema_version: '1.0',
+        start_phase: 'prd',
+        end_phase: 'testing',
+        feature: 'demo',
+        adapter: 'claude',
+        budget: { max_retries_per_phase: 2, max_total_turns: 30, wall_clock_minutes: 480 },
+        dependency_policy: {
+          deferrable_blocking_classes: ['externalBlocked'],
+          deferrable_failure_kinds: ['device_blocked'],
+          propagate_to_downstream: true,
+        },
+        unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+        run_id: runId,
+        report_dir: 'doc/features/demo/goal-runs/test-run-goal-mode',
+        created_at: new Date().toISOString(),
+      };
+      fs.writeFileSync(path.join(manifestDir, 'manifest.json'), JSON.stringify(body), 'utf-8');
+      try {
+        const loaded = loadGoalManifestFromRun(tmp, runId, {
+          feature: 'demo',
+          featuresDir: 'doc/features',
+        });
+        assert(loaded.feature === 'demo', 'feature');
+        assert(loaded.run_id === runId, 'run_id');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'loadGoalManifestFromRun: legacy report_dir in file rejected',
+    run: () => {
+      const tmp = path.join(REPO_ROOT, 'harness', 'tests', 'tmp-goal-manifest-resume-legacy');
+      const runId = 'legacy-run-id';
+      const manifestDir = path.join(tmp, 'doc', 'features', 'demo', 'goal-runs', runId);
+      fs.mkdirSync(manifestDir, { recursive: true });
+      const body = {
+        schema_version: '1.0',
+        start_phase: 'prd',
+        end_phase: 'testing',
+        feature: 'demo',
+        adapter: 'claude',
+        budget: { max_retries_per_phase: 2, max_total_turns: 30, wall_clock_minutes: 480 },
+        dependency_policy: {
+          deferrable_blocking_classes: ['externalBlocked'],
+          deferrable_failure_kinds: ['device_blocked'],
+          propagate_to_downstream: true,
+        },
+        unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+        run_id: runId,
+        report_dir: 'goal-runs/legacy-run-id',
+        created_at: new Date().toISOString(),
+      };
+      fs.writeFileSync(path.join(manifestDir, 'manifest.json'), JSON.stringify(body), 'utf-8');
+      let threw = false;
+      try {
+        try {
+          loadGoalManifestFromRun(tmp, runId, { feature: 'demo', featuresDir: 'doc/features' });
+        } catch (e) {
+          threw = true;
+          assert((e as Error).message.includes('report_dir 必须为'), (e as Error).message);
+        }
+        assert(threw, 'expected throw');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     },
   },
 ];

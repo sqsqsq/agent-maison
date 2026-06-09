@@ -70,15 +70,15 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'skills-bridge goal-orchestration 跳板链接含 framework 前缀',
+    name: 'skills-bridge goal-mode 跳板链接含 framework 前缀',
     run: () => {
       const bridge = path.join(
         FRAMEWORK_DIR,
-        'agents/shared/agent-bundle/templates/skills-bridge/goal-orchestration/SKILL.md',
+        'agents/shared/agent-bundle/templates/skills-bridge/goal-mode/SKILL.md',
       );
       const text = fs.readFileSync(bridge, 'utf8');
       assert(
-        text.includes('../../../framework/skills/project/goal-orchestration/SKILL.md'),
+        text.includes('../../../framework/skills/project/goal-mode/SKILL.md'),
         'bridge rel path',
       );
       assert(!text.includes('../../../../skills/'), 'must not escape repo without framework/');

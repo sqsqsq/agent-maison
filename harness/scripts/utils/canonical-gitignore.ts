@@ -21,6 +21,7 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'doc/glossary-staging/',
   '.framework-backup/',
   'doc/features/*/*/reports/*',
+  'doc/features/*/goal-runs/',
   '**/.hylyre/',
   '**/tmp_hypium/',
   '/doc/app-snapshot-cache/',
@@ -81,6 +82,11 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     'doc/features/*/*/reports',
     'doc/features/*/*/reports/',
   ],
+  'doc/features/*/goal-runs/': [
+    'doc/features/*/goal-runs/',
+    'doc/features/*/goal-runs',
+    'doc/features/**/goal-runs/',
+  ],
   '**/.hylyre/': ['.hylyre/', '/.hylyre/', '/**/.hylyre/', '**/.hylyre/'],
   '**/tmp_hypium/': ['tmp_hypium/', '/tmp_hypium/', '/**/tmp_hypium/', '**/tmp_hypium/'],
   '/doc/app-snapshot-cache/': [
@@ -124,7 +130,7 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
   },
   {
     header: '# Feature-phase harness reports (paths.reports_dir_pattern)',
-    patterns: ['doc/features/*/*/reports/*'],
+    patterns: ['doc/features/*/*/reports/*', 'doc/features/*/goal-runs/'],
   },
   {
     header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',

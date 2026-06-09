@@ -19,12 +19,12 @@ skills:
     description: >
       模块画像 catalog 与业务术语表 glossary 自举
 
-  - id: goal-orchestration
+  - id: goal-mode
     scope: project
-    source_rel: project/goal-orchestration
+    source_rel: project/goal-mode
     order: 5
     description: >
-      全链路 goal-runner 薄入口（调用确定性编排器，非自驱动裁决）
+      目标模式 goal-runner 薄入口（调用确定性编排器，非自驱动裁决）
 
   - id: prd-design
     scope: feature

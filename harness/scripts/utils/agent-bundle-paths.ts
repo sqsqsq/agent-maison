@@ -31,8 +31,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/project/framework-init/SKILL.md）',
   'catalog-bootstrap':
     '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
-  'goal-orchestration':
-    '全链路 goal-runner 薄入口（完整流程见 framework/skills/project/goal-orchestration/SKILL.md）',
+  'goal-mode':
+    '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
   'prd-design': 'PRD 撰写（完整流程见 framework/skills/feature/prd-design/SKILL.md）',
   'requirement-design':
     'PRD → 技术设计 design.md（完整流程见 framework/skills/feature/requirement-design/SKILL.md）',

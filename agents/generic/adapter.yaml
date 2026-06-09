@@ -38,6 +38,6 @@ post_install_hooks: []
 notes: |
   - `paths.agent_bundle_root`（默认 `.agents`）与 `paths.agent_bundle_skill_mode`（`inline`|`bridge`，默认 bridge）
     由 init 用 template/默认值写入 framework.config.json；仅非标 bundle 根须手动编辑 config 后重跑（禁止对话收路径字符串）。
-  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline（8 份内置 skill，不含个人 setup）。
-  - bridge：与 cursor 相同，拷贝 shared/skills-bridge（8 份；个人 setup 由阶段 `--ensure` 内联）。
+  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline（9 份内置 skill，不含个人 setup）。
+  - bridge：与 cursor 相同，拷贝 shared/skills-bridge（9 份；个人 setup 由阶段 `--ensure` 内联）。
   - 模板 SSOT：framework/agents/shared/agent-bundle/templates/

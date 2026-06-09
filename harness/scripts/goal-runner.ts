@@ -5,7 +5,7 @@
 // Usage (from repo root or instance root):
 //   cd framework/harness && npx ts-node scripts/goal-runner.ts \
 //     --feature <f> --requirement "..." --adapter claude \
-//     [--start prd] [--end testing] [--dry-run] [--resume <run-id>]
+//     [--start prd] [--end testing] [--dry-run] [--resume <run-id> --feature <f>]
 // ============================================================================
 
 import * as fs from 'fs';
@@ -182,7 +182,7 @@ function main(): void {
 Goal runner — tool-agnostic multi-phase orchestrator
 
   npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
-    [--start prd] [--end testing] [--dry-run] [--resume <run-id>] [--manifest <file>]
+    [--start prd] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
 `);
     process.exit(0);
   }
@@ -194,11 +194,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const cfg = loadFrameworkConfig(projectRoot);
   const workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 
+  const featuresDir = cfg.paths.features_dir ?? 'doc/features';
+
   let manifest: GoalManifest;
   if (argv.resume) {
-    manifest = loadGoalManifestFromRun(projectRoot, String(argv.resume));
+    if (!argv.manifest && !argv.feature) {
+      console.error('[goal-runner] BLOCKER: --resume 须配 --feature 或 --manifest');
+      process.exit(1);
+    }
+    if (argv.manifest) {
+      manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, { featuresDir });
+    } else {
+      manifest = loadGoalManifestFromRun(projectRoot, String(argv.resume), {
+        feature: String(argv.feature),
+        featuresDir,
+      });
+    }
   } else if (argv.manifest) {
-    manifest = loadGoalManifestFile(String(argv.manifest), projectRoot);
+    manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, { featuresDir });
   } else {
     manifest = buildGoalManifestFromInput(
       {
@@ -214,7 +227,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           timeout_seconds: 3600,
         },
       },
-      { projectRoot },
+      { projectRoot, featuresDir },
     );
   }
 

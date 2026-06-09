@@ -78,6 +78,14 @@ const PHASE_ALIASES: Record<string, FeaturePhase> = {
   真机: 'testing',
 };
 
+/** Goal mode NL triggers (goal_mode takes priority over batch_authorized). */
+const GOAL_MODE_PHRASES: RegExp[] = [/目标模式/, /全自动/];
+
+export interface GoalModeAuthorizationResult {
+  policy: TransitionPolicy;
+  matchedPhrase?: string;
+}
+
 /** Heuristic batch phrases → throughPhase (inclusive). */
 const BATCH_PHRASES: Array<{ pattern: RegExp; through: FeaturePhase }> = [
   { pattern: /全链路|端到端交付|从\s*prd\s*到\s*真机|pr\s*d\s*到\s*真机/i, through: 'testing' },
@@ -240,6 +248,34 @@ export function resolveGoalRunStatus(
   const anyDeferred = phases.some((p) => p.deferred);
   if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
   return reachedEnd ? 'COMPLETED' : 'PARTIAL';
+}
+
+/**
+ * Parse user message for goal_mode authorization (目标模式 / 全自动).
+ * Does not match batch-only phrases like「全链路」without goal keywords.
+ */
+export function parseGoalModeAuthorization(message: string): GoalModeAuthorizationResult {
+  const text = message.trim();
+  if (!text) {
+    return { policy: DEFAULT_TRANSITION_POLICY };
+  }
+  for (const pattern of GOAL_MODE_PHRASES) {
+    if (pattern.test(text)) {
+      return { policy: 'goal_mode', matchedPhrase: pattern.source };
+    }
+  }
+  return { policy: DEFAULT_TRANSITION_POLICY };
+}
+
+/**
+ * Resolve transition policy: goal_mode first, then batch_authorized, else manual.
+ */
+export function resolveTransitionPolicy(message: string): TransitionPolicy {
+  const goal = parseGoalModeAuthorization(message);
+  if (goal.policy === 'goal_mode') return 'goal_mode';
+  const batch = parseBatchAuthorization(message);
+  if (batch.policy === 'batch_authorized') return 'batch_authorized';
+  return DEFAULT_TRANSITION_POLICY;
 }
 
 /**

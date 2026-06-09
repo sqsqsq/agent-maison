@@ -74,15 +74,19 @@ export function runAll(): UnitCaseResult[] {
     }
   };
 
-  run('CANONICAL_IGNORE_PATTERNS 长度为 19', () => {
-    assert(CANONICAL_IGNORE_PATTERNS.length === 19, `expected 19, got ${CANONICAL_IGNORE_PATTERNS.length}`);
+  run('CANONICAL_IGNORE_PATTERNS 含 goal-runs 且保留 reports/_adhoc', () => {
+    assert(CANONICAL_IGNORE_PATTERNS.includes('doc/features/*/goal-runs/'), 'goal-runs');
+    assert(CANONICAL_IGNORE_PATTERNS.includes('doc/features/*/*/reports/*'), 'reports');
+    assert(CANONICAL_IGNORE_PATTERNS.includes('/doc/features/_adhoc/'), '_adhoc');
+    assert(!CANONICAL_IGNORE_PATTERNS.includes('doc/features/'), 'no whole features tree');
+    assert(!CANONICAL_IGNORE_PATTERNS.includes('doc/goal-runs/'), 'no doc/goal-runs');
   });
 
   run('空目录 ensure：创建文件且 added 含全部 canonical', () => {
     withTmpProject(root => {
       const r = ensureCanonicalGitignore(root);
       assert(r.created === true, 'created');
-      assert(r.added.length === 19, `added.length=${r.added.length}`);
+      assert(r.added.length === CANONICAL_IGNORE_PATTERNS.length, `added.length=${r.added.length}`);
       const txt = fs.readFileSync(path.join(root, '.gitignore'), 'utf-8');
       const missing = listMissingCanonicalPatterns(parseGitignoreLines(txt));
       assert(missing.length === 0, `still missing: ${missing.join(', ')}`);
