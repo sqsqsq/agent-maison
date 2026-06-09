@@ -1,10 +1,19 @@
 /**
- * Agent headless invoke — structured spawn for claude -p / codex exec (no shell cat).
+ * Agent headless invoke — structured spawn for claude -p / codex exec / cursor-agent -p.
  */
 
+import * as path from 'path';
 import { spawnSync } from 'child_process';
+import crossSpawn from 'cross-spawn';
 import type { UnattendedContract } from './goal-manifest';
 import type { GoalCapabilitySpec } from './goal-adapter-capability';
+import {
+  formatHeadlessBinaryIssue,
+  headlessBinarySpawnable,
+  resolveHeadlessBinary,
+  shouldUseCrossSpawn,
+  type ResolvedHeadlessBinary,
+} from './headless-binary-resolve';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -20,6 +29,17 @@ export interface InvokeTemplateVars {
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
 const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor']);
+
+/** Cursor headless CLI candidates (official name first). */
+export const CURSOR_HEADLESS_BINARY_CANDIDATES = ['cursor-agent', 'agent'] as const;
+export const CLAUDE_HEADLESS_BINARY_CANDIDATES = ['claude'] as const;
+export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
+
+const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
+  cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
+  claude: CLAUDE_HEADLESS_BINARY_CANDIDATES,
+  codex: CODEX_HEADLESS_BINARY_CANDIDATES,
+};
 
 export function renderInvokeTemplate(template: string, vars: InvokeTemplateVars): string {
   let out = template;
@@ -39,11 +59,31 @@ export function normalizeHeadlessTemplate(template: string): string {
 
 export interface HeadlessInvokePlan {
   argv: string[];
-  /** Pass prompt via stdin instead of argv (generic pipe adapters). */
+  /** Pass prompt via stdin (generic pipe adapters only). */
   useStdin?: boolean;
   stdin?: string;
+  /** Resolved binary metadata for preflight / spawn. */
+  resolvedBinary?: ResolvedHeadlessBinary | null;
+  /** Windows .cmd shim — use cross-spawn instead of spawnSync. */
+  useCrossSpawn?: boolean;
   /** Human-readable label for logs / dry-run. */
   label: string;
+}
+
+function attachResolvedBinary(
+  argv: string[],
+  candidates: readonly string[],
+  label: string,
+): HeadlessInvokePlan {
+  const resolved = resolveHeadlessBinary([...candidates]);
+  const cmd = resolved?.path ?? argv[0];
+  const finalArgv = [cmd, ...argv.slice(1)];
+  return {
+    argv: finalArgv,
+    resolvedBinary: resolved,
+    useCrossSpawn: shouldUseCrossSpawn(resolved),
+    label,
+  };
 }
 
 function claudeArgv(prompt: string, unattended: UnattendedContract): string[] {
@@ -73,8 +113,28 @@ function codexArgv(prompt: string, unattended: UnattendedContract): string[] {
   return argv;
 }
 
-function cursorArgv(prompt: string): string[] {
-  return ['cursor', 'agent', '--print', prompt];
+/**
+ * Cursor headless — positional prompt per CLI help; -p includes write/shell.
+ * approval_mode=never → --force --trust (unattended workspace trust).
+ */
+export function cursorHeadlessPlan(
+  unattended: UnattendedContract,
+  prompt: string,
+  resolved: ResolvedHeadlessBinary | null,
+): HeadlessInvokePlan {
+  const binary = resolved?.path ?? 'cursor-agent';
+  const argv = [binary, '-p'];
+  if (unattended.approval_mode === 'never') {
+    argv.push('--force', '--trust');
+  }
+  argv.push(prompt);
+  const base = path.basename(binary);
+  return {
+    argv,
+    resolvedBinary: resolved,
+    useCrossSpawn: shouldUseCrossSpawn(resolved),
+    label: `${base} -p …`,
+  };
 }
 
 function genericStdinPlan(prompt: string): HeadlessInvokePlan {
@@ -134,7 +194,11 @@ function planFromTemplate(
   });
   const argv = injectPromptIntoArgv(tokenizeInvokeCommand(tokenized), promptContent);
   const label =
-    argv[0] === 'claude' || argv[0] === 'codex' || argv[0] === 'cursor'
+    argv[0] === 'claude' ||
+    argv[0] === 'codex' ||
+    argv[0] === 'cursor' ||
+    argv[0] === 'cursor-agent' ||
+    argv[0] === 'agent'
       ? `${argv.slice(0, 3).join(' ')} …`
       : `${argv[0]} …`;
   return { argv, label };
@@ -148,15 +212,15 @@ export function defaultHeadlessInvokePlan(
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
     const argv = claudeArgv(promptContent, unattended);
-    return { argv, label: argv.slice(0, 3).join(' ') + ' …' };
+    return attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 3).join(' ') + ' …');
   }
   if (adapterName === 'codex') {
     const argv = codexArgv(promptContent, unattended);
-    return { argv, label: argv.slice(0, 2).join(' ') + ' …' };
+    return attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 2).join(' ') + ' …');
   }
   if (adapterName === 'cursor') {
-    const argv = cursorArgv(promptContent);
-    return { argv, label: argv.slice(0, 3).join(' ') + ' …' };
+    const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
+    return cursorHeadlessPlan(unattended, promptContent, resolved);
   }
   return genericStdinPlan(promptContent);
 }
@@ -185,6 +249,23 @@ export function resolveHeadlessInvokePlan(
   return defaultHeadlessInvokePlan(adapterName, unattended, promptContent);
 }
 
+/** Preflight: same resolution semantics as invokeAgentHeadless. */
+export function validateHeadlessBinaryForPlan(
+  adapterName: string,
+  plan: HeadlessInvokePlan,
+): { ok: true } | { ok: false; message: string } {
+  const candidates = STRUCTURED_BINARY_CANDIDATES[adapterName];
+  if (!candidates) return { ok: true };
+
+  const resolved = plan.resolvedBinary ?? resolveHeadlessBinary([...candidates]);
+  const issue = formatHeadlessBinaryIssue(adapterName, [...candidates], resolved);
+  if (issue) return { ok: false, message: issue };
+  if (!headlessBinarySpawnable(resolved)) {
+    return { ok: false, message: issue || `${adapterName} 无头 CLI 不可 spawn` };
+  }
+  return { ok: true };
+}
+
 /** @deprecated Use resolveHeadlessInvokePlan */
 export function resolveHeadlessCommand(
   adapterName: string,
@@ -210,6 +291,24 @@ export interface AgentInvokeResult {
   skipped?: boolean;
 }
 
+function spawnHeadless(
+  plan: HeadlessInvokePlan,
+  cwd: string,
+  timeoutMs?: number,
+): ReturnType<typeof spawnSync> {
+  const opts = {
+    cwd,
+    encoding: 'utf-8' as const,
+    input: plan.useStdin ? plan.stdin : undefined,
+    timeout: timeoutMs,
+    maxBuffer: 10 * 1024 * 1024,
+  };
+  if (plan.useCrossSpawn) {
+    return crossSpawn.sync(plan.argv[0], plan.argv.slice(1), opts);
+  }
+  return spawnSync(plan.argv[0], plan.argv.slice(1), { ...opts, shell: false });
+}
+
 export function invokeAgentHeadless(
   plan: HeadlessInvokePlan,
   cwd: string,
@@ -219,18 +318,26 @@ export function invokeAgentHeadless(
   if (opts?.dryRun) {
     return { exitCode: 0, stdout: '[dry-run] agent invoke skipped', stderr: '', command, skipped: true };
   }
-  const result = spawnSync(plan.argv[0], plan.argv.slice(1), {
-    cwd,
-    shell: false,
-    encoding: 'utf-8',
-    input: plan.useStdin ? plan.stdin : undefined,
-    timeout: opts?.timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+
+  if (plan.resolvedBinary && !headlessBinarySpawnable(plan.resolvedBinary)) {
+    const adapterGuess =
+      plan.argv[0]?.includes('claude') ? 'claude'
+      : plan.argv[0]?.includes('codex') ? 'codex'
+      : 'cursor';
+    const candidates = STRUCTURED_BINARY_CANDIDATES[adapterGuess] ?? [...CURSOR_HEADLESS_BINARY_CANDIDATES];
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: formatHeadlessBinaryIssue(adapterGuess, [...candidates], plan.resolvedBinary),
+      command,
+    };
+  }
+
+  const result = spawnHeadless(plan, cwd, opts?.timeoutMs);
   return {
     exitCode: result.status ?? 1,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    stdout: (result.stdout as string) ?? '',
+    stderr: (result.stderr as string) ?? '',
     command,
   };
 }

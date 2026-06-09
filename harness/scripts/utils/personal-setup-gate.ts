@@ -102,7 +102,7 @@ export function resolveProjectMaterializedForGate(
   return legacy ? [legacy] : [];
 }
 
-function adapterEntryExists(projectRoot: string, adapterName: string): boolean {
+export function adapterEntryExists(projectRoot: string, adapterName: string): boolean {
   const adapter = loadAdapter(adapterName);
   if (!adapter.entryFile) return false;
   return fs.existsSync(path.join(projectRoot, adapter.entryFile.targetRel));

@@ -18,13 +18,41 @@
 | 自然语言 | 「对 `demo-feature` 进入目标模式，无人值守全自动」 |
 | Codex/Cursor/generic Skill | 读跳板（skill id `goal-mode`）后进入本 Skill 正文 |
 
-解析用户输入得到：`feature`（**必填**）、`requirement`（可选 `start_phase` / `end_phase`）。
+解析用户输入得到：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `feature` | 是 | feature slug |
+| `requirement` | 否 | 需求描述 |
+| `start_phase` / `end_phase` | 否 | 默认 prd→testing |
+| `adapter` | 否 | 用户显式指定 agent（如「用 cursor 跑 goal」）→ 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `--adapter`；未物化 → **STOP** 引导 `/framework-init`（不在 goal 流程内写项目产物） |
 
 ## Agent 必须执行（勿推给用户）
 
 **BLOCKER**：主 agent 须通过 Shell **自己**启动 goal-runner，读取报告后用自然语言汇报；**不得**在回复里写「请用户执行以下命令」作为唯一出路。
 
-前置： [host-harness-readiness](../../reference/host-harness-readiness.md) Tier_1 + [harness-cli-cwd](../../reference/harness-cli-cwd.md)。
+前置：
+
+1. [host-harness-readiness](../../reference/host-harness-readiness.md) Tier_1 + [harness-cli-cwd](../../reference/harness-cli-cwd.md)。
+2. **Personal setup**（按是否显式指定 adapter 分流）：
+
+   **A. 用户已显式指定 `adapter` 且已物化**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 校验 ∈ `materialized_adapters` 且入口产物存在后，**可跳过** `--ensure`，直接 `--adapter <name>` 启动 goal-runner（goal-runner preflight 的 `argv_adapter` provenance 会放行，即使尚无 `framework.local.json`）。
+
+   **B. 用户未显式指定 adapter** → **BLOCKER**：启动 goal-runner **之前**须 [personal-setup-gate](../../reference/personal-setup-gate.md)：
+
+   ```bash
+   cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>
+   ```
+
+   **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`）。按 `code` 分流：
+
+   | `code` | 行为 |
+   |--------|------|
+   | `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 继续 |
+   | `needs_adapter_choice` | 多 adapter：registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘（**须经 `executionContext.activeAdapter`，禁 agent 手写 JSON**）；过程见 personal-setup-gate.md S1–S3 |
+   | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | **STOP**，引导 `/framework-init` |
+
+   **边界**：写 `framework.local.json`（个人、gitignored）由 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
 ### 首次启动
 
@@ -32,7 +60,7 @@
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
   --requirement "<需求描述>" \
-  --adapter <当前 framework.config.json agent_adapter> \
+  --adapter <显式指定或 personal setup 后的 active adapter> \
   [--start prd] [--end testing] [--dry-run]
 ```
 

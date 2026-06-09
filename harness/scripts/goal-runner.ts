@@ -12,7 +12,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
-import { loadFrameworkConfig, featurePhaseReportsDir } from '../config';
+import {
+  loadFrameworkConfig,
+  loadFrameworkConfigWithSources,
+  featurePhaseReportsDir,
+} from '../config';
 import { inferRepoLayout } from '../repo-layout';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
@@ -49,10 +53,11 @@ import {
   resolveResumeFromEvents,
   resolveResumeState,
 } from './utils/goal-runner-phase';
+import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
-  loadGoalCapability,
-  validateGoalCapabilityForRunner,
-} from './utils/goal-adapter-capability';
+  resolveAdapterProvenance,
+  runGoalPreflight,
+} from './utils/goal-preflight';
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
   prd: 'skills/feature/prd-design/SKILL.md',
@@ -156,19 +161,6 @@ function buildPhasePrompt(
   return parts.join('\n');
 }
 
-function preflight(manifest: GoalManifest, frameworkRoot: string): void {
-  const adapter = manifest.adapter;
-  if (!adapter?.trim()) {
-    throw new Error('[goal-runner] preflight BLOCKER: manifest.adapter 缺失');
-  }
-  const v = validateGoalCapabilityForRunner(frameworkRoot, adapter, manifest.unattended);
-  if (!v.ok) {
-    throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
-  }
-  if (!manifest.feature?.trim()) {
-    throw new Error('[goal-runner] preflight BLOCKER: manifest.feature 缺失');
-  }
-}
 
 function main(): void {
   const argv = minimist(process.argv.slice(2), {
@@ -232,7 +224,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const dryRun = Boolean(argv['dry-run']);
-  preflight(manifest, frameworkRoot);
+  const { adapterStatus } = loadFrameworkConfigWithSources(projectRoot);
+  const provenance = resolveAdapterProvenance(
+    {
+      adapter: argv.adapter ? String(argv.adapter) : undefined,
+      manifest: argv.manifest ? String(argv.manifest) : undefined,
+      resume: argv.resume ? String(argv.resume) : undefined,
+    },
+    adapterStatus,
+  );
+  runGoalPreflight({
+    projectRoot,
+    frameworkRoot,
+    manifest,
+    provenance,
+    dryRun,
+  });
   writeGoalManifest(manifest, projectRoot);
   appendEvent(manifest.report_dir, projectRoot, { type: 'run_start', dry_run: dryRun });
 

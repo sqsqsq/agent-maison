@@ -48,12 +48,22 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 
+## Adapter 选择与 personal setup（goal 入口）
+
+优先级：**显式 `--adapter` / 用户指定** > `framework.local.json`（`agent_adapter`）> 引导建立 local。
+
+1. goal-mode Skill 启动 runner **前**跑 `check-personal-setup.ts --json --ensure`（见 [personal-setup-gate.md](../../skills/reference/personal-setup-gate.md)）。
+2. 多 adapter → `needs_adapter_choice` → registry `setup.adapter` → `init-orchestrate --scope personal` → `record-adapter`（写 `framework.local.json`，非项目产物）。
+3. 用户显式指定 adapter 且已物化 → 可 `--adapter` 直启（goal-runner preflight 不因缺 local 误杀）。
+4. 未指定且 `source=fallback` → preflight BLOCKER，须先完成 personal setup。
+
 ## 两级校验
 
 - **check-init**：`goal_capability` 缺失仅 WARN
-- **goal-runner preflight**：`goal_capability` + `unattended` + `feature` 缺失为 BLOCKER
+- **goal-runner preflight**：`manifest.adapter` ∈ materialized + 入口产物 + `goal_capability`/`unattended` + **provenance**（仅 `fallback` 拦 personal setup）+ 无头 CLI 可解析（`--dry-run` 降级 WARN）
 
 ## Headless 路径（MVP 硬化）
 
 - Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
 - Codex：`codex exec --sandbox workspace-write --ask-for-approval never|on-request`
+- Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。

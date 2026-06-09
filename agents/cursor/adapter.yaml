@@ -30,7 +30,8 @@ rules:
 goal_capability:
   mode: external_runner
   external_runner:
-    headless_invoke: 'cursor agent --print "{{PROMPT}}"'
+    # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts cursorHeadlessPlan (cursor-agent|agent -p, stdin).
+    headless_invoke: 'cursor-agent -p --force --trust "{{PROMPT}}"'
     unattended:
       write_mode: workspace-write
       approval_mode: on-request

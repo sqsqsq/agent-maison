@@ -108,6 +108,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
   { id: 'goal-runner-policy', modulePath: './unit/goal-runner-policy.unit.test' },
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },
+  { id: 'goal-preflight', modulePath: './unit/goal-preflight.unit.test' },
+  { id: 'headless-binary-resolve', modulePath: './unit/headless-binary-resolve.unit.test' },
   { id: 'phase-state', modulePath: './unit/phase-state.unit.test' },
   { id: 'receipt-path-reconcile', modulePath: './unit/receipt-path-reconcile.unit.test' },
   { id: 'feature-artifact-resolver', modulePath: './unit/feature-artifact-resolver.unit.test' },

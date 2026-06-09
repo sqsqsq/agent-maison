@@ -179,9 +179,14 @@ const cases: Array<{ name: string; run: () => void }> = [
         { write_mode: 'workspace-write', approval_mode: 'never' },
         'hello',
       );
-      assert(plan.argv[0] === 'claude', plan.argv.join(' '));
+      assert(
+        plan.argv[0] === 'claude' || /claude(\.exe|\.cmd)?$/i.test(plan.argv[0]),
+        plan.argv.join(' '),
+      );
       assert(plan.argv.includes('hello'), plan.argv.join(' '));
+      assert(plan.argv.includes('-p'), plan.argv.join(' '));
       assert(!plan.argv.some((a) => a.includes('$(cat')), plan.argv.join(' '));
+      assert(!plan.useStdin, 'claude uses argv prompt');
     },
   },
   {
