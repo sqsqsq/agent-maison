@@ -78,6 +78,7 @@ import { snapshotPhaseHarness } from './utils/goal-phase-snapshot';
 import {
   applyManifestCliOverrides,
   validateManifestCliOverrides,
+  type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
@@ -105,6 +106,20 @@ let activeAgentKill: (() => Promise<void>) | null = null;
 let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
 let runLock: { path: string; ownerId: string } | null = null;
+
+/** minimist ParsedArgs → ManifestCliArgv（避免 TS2559 索引签名不兼容）。 */
+function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
+  return {
+    manifest: typeof argv.manifest === 'string' ? argv.manifest : undefined,
+    start: typeof argv.start === 'string' ? argv.start : undefined,
+    end: typeof argv.end === 'string' ? argv.end : undefined,
+    adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
+    requirement: typeof argv.requirement === 'string' ? argv.requirement : undefined,
+    'override-start': Boolean(argv['override-start']),
+    'override-end': Boolean(argv['override-end']),
+    'override-manifest': Boolean(argv['override-manifest']),
+  };
+}
 
 function guardNestedGoalRunner(): void {
   if (isGoalHeadlessEnv() && process.env.MAISON_GOAL_ALLOW_NESTED !== '1') {
@@ -327,7 +342,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     process.exit(0);
   }
 
-  const manifestCliCheck = validateManifestCliOverrides(argv);
+  const manifestArgv = toManifestCliArgv(argv);
+  const manifestCliCheck = validateManifestCliOverrides(manifestArgv);
   if (!manifestCliCheck.ok) {
     console.error(manifestCliCheck.message);
     process.exit(1);
@@ -377,7 +393,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   if (argv.manifest) {
-    applyManifestCliOverrides(manifest, argv);
+    applyManifestCliOverrides(manifest, manifestArgv);
   }
 
   const dryRun = Boolean(argv['dry-run']);
@@ -539,7 +555,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           timeoutMs: (manifest.unattended.timeout_seconds ?? 3600) * 1000,
           outputLogPath,
           onActiveChild: ({ kill }) => {
-            activeAgentKill = kill;
+            activeAgentKill = async () => {
+              await kill();
+            };
           },
           onChildExit: () => {
             activeAgentKill = null;
