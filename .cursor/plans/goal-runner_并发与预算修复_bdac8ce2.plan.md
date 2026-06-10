@@ -1,6 +1,7 @@
 ---
 name: goal-runner 并发与预算修复
 overview: 从根因（无头 agent 递归自起 goal-runner + 超时不杀进程树产生僵尸 + 锁粒度错误）切断 goal-runner 的 fork-bomb 式自繁殖，再叠加预算跨 resume 持久化、终态守卫、run-scoped 报告快照等纵深防御，杜绝重复并发与 token 失控。
+version: 2.3.0
 todos:
   - id: nested-guard
     content: "[P0] 递归防护：新增 isGoalHeadlessEnv()（仅 MAISON_GOAL_HEADLESS），goal-runner main() 入口 BLOCKER exit(1)；prompt 加两条禁令（禁起 goal-runner + 证据目录只读）"
