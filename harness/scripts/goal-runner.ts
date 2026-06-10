@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import minimist from 'minimist';
 import {
   loadFrameworkConfig,
@@ -42,6 +42,7 @@ import {
 } from './utils/goal-report-generator';
 import {
   invokeAgentHeadless,
+  killProcessTree,
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
@@ -100,6 +101,8 @@ interface SummaryJson {
 
 /** Active agent tree-kill registered for SIGINT/SIGTERM orphan cleanup. */
 let activeAgentKill: (() => Promise<void>) | null = null;
+/** Active harness-runner tree-kill (runHarnessPhase async spawn). */
+let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
 let runLock: { path: string; ownerId: string } | null = null;
 
@@ -119,6 +122,13 @@ function setupSignalHandlers(): void {
       if (activeAgentKill) {
         try {
           await activeAgentKill();
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (activeHarnessKill) {
+        try {
+          await activeHarnessKill();
         } catch {
           /* best-effort */
         }
@@ -183,28 +193,38 @@ function extractBlockingMeta(summary: SummaryJson | null): {
   return { blocking_class: b.blocking_class, failure_kind: b.classification };
 }
 
-function runHarnessPhase(
+async function runHarnessPhase(
   projectRoot: string,
   frameworkRoot: string,
   phase: FeaturePhase,
   feature: string,
   dryRun: boolean,
-): number {
+): Promise<number> {
   if (dryRun) return 0;
   const harnessDir = path.join(frameworkRoot, 'harness');
-  const result = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
-    {
-      cwd: harnessDir,
-      encoding: 'utf-8',
-      shell: process.platform === 'win32',
-      env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
-    },
-  );
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  return result.status ?? 1;
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.platform === 'win32' ? 'npx.cmd' : 'npx',
+      ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
+      {
+        cwd: harnessDir,
+        shell: process.platform === 'win32',
+        env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    activeHarnessKill = async () => {
+      if (child.pid) await killProcessTree(child.pid);
+    };
+    child.stdout?.on('data', (chunk: Buffer | string) => process.stdout.write(chunk));
+    child.stderr?.on('data', (chunk: Buffer | string) => process.stderr.write(chunk));
+    const finish = (code: number): void => {
+      activeHarnessKill = null;
+      resolve(code);
+    };
+    child.on('close', (code) => finish(code ?? 1));
+    child.on('error', () => finish(1));
+  });
 }
 
 function buildPhasePrompt(
@@ -541,7 +561,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           kill_error: invoke.kill_error,
         });
 
-        const harnessExit = runHarnessPhase(
+        const harnessExit = await runHarnessPhase(
           projectRoot,
           frameworkRoot,
           phase,
@@ -699,6 +719,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (status === 'DEFERRED' || status === 'PARTIAL') return 2;
     return 0;
   } finally {
+    if (activeHarnessKill) {
+      void activeHarnessKill().catch(() => {
+        /* best-effort — sync exit may not await */
+      });
+    }
     releaseAllLocks();
   }
 }

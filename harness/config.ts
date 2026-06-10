@@ -116,6 +116,12 @@ export interface DevEcoStudioConfig {
   installPath?: string;
   /** 显式指定 hvigor 可执行文件（绝对路径）；为空时从 installPath 推导。 */
   hvigorBin?: string;
+  /**
+   * harness/goal 设备 phase 收尾是否执行 `hdc kill` 回收 daemon。
+   * 未配置时：CI 默认 true，开发机默认 false（cwd 隔离后残留 daemon 不锁目录）。
+   * env `MAISON_KILL_HDC_ON_FINISH` 优先级更高。
+   */
+  killHdcServerOnFinish?: boolean;
 }
 
 export type HvigorAnalyzeMode = 'off' | 'normal' | 'advanced';
@@ -945,10 +951,13 @@ function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig |
   if (deveco && typeof deveco === 'object') {
     const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
     const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
-    if (installPath || hvigorBin) {
+    const killHdcServerOnFinish =
+      typeof deveco.killHdcServerOnFinish === 'boolean' ? deveco.killHdcServerOnFinish : undefined;
+    if (installPath || hvigorBin || killHdcServerOnFinish !== undefined) {
       normalizedDeveco = {
         ...(installPath ? { installPath } : {}),
         ...(hvigorBin ? { hvigorBin } : {}),
+        ...(killHdcServerOnFinish !== undefined ? { killHdcServerOnFinish } : {}),
       };
     }
   }

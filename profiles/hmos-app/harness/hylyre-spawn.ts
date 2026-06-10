@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir } from '../../../harness/config';
-import { mergeEnvWithHdcOnPath } from './hdc-runner';
+import { ensureHdcServerWarm, mergeEnvWithHdcOnPath } from './hdc-runner';
 import { ensureHypiumWorkDir } from './device-test-hypium-workdir';
 
 export interface HylyreRuntimeWorkDir {
@@ -77,12 +77,17 @@ export function buildHylyreSpawnInvocation(opts: SpawnHylyreOptions): {
 }
 
 export function spawnHylyre(opts: SpawnHylyreOptions): SpawnSyncReturns<string> {
+  const warm = ensureHdcServerWarm();
   const inv = buildHylyreSpawnInvocation(opts);
   const cmdLine = `${inv.pythonPath} ${inv.argv.join(' ')}`;
   appendLogLine(opts.logPath, `\n$ ${cmdLine}\n`);
   appendLogLine(
     opts.logPath,
     `hypium cwd: ${inv.cwd}（禁止工程根；tmp_hypium 应落在其下）\n`,
+  );
+  appendLogLine(
+    opts.logPath,
+    `hdc prewarm: exe=${warm.exe} isolated_cwd=${warm.isolatedCwd} prewarmed=${warm.prewarmed} warm_error=${warm.warm_error ?? '-'}\n`,
   );
 
   const run = spawnSync(inv.pythonPath, inv.argv, {

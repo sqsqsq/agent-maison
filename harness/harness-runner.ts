@@ -924,6 +924,15 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
   }
 
   try {
+    try {
+      const hdc = require('./scripts/utils/hdc-runner') as {
+        resetHdcUsed?: () => void;
+      };
+      hdc.resetHdcUsed?.();
+    } catch {
+      /* non-hmos profile — no hdc shim */
+    }
+
     const checkerModule = require(checkerPath);
     const checker: PhaseChecker = checkerModule.default || checkerModule.checker || checkerModule;
 
@@ -951,6 +960,51 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
       status: 'FAIL',
       details: (err as Error).message,
     }];
+  } finally {
+    try {
+      const hdc = require('./scripts/utils/hdc-runner') as {
+        killHdcServerIfUsed?: (projectRoot?: string) => {
+          used: boolean;
+          attempted: boolean;
+          ok: boolean;
+          exitCode: number | null;
+          error: string | null;
+          policy: { source: string; shouldKill: boolean };
+          skipped_reason?: string;
+        };
+        writeHdcCleanupArtifact?: (
+          reportsDir: string,
+          cleanup: {
+            used: boolean;
+            attempted: boolean;
+            ok: boolean;
+            exitCode: number | null;
+            error: string | null;
+            policy: { source: string; shouldKill: boolean };
+            skipped_reason?: string;
+          },
+        ) => string | null;
+      };
+      const cleanup = hdc.killHdcServerIfUsed?.(context.projectRoot);
+      if (cleanup && (cleanup.used || cleanup.attempted)) {
+        const reportsDir = featurePhaseReportsDir(
+          context.projectRoot,
+          context.feature,
+          context.phase,
+          context.frameworkRoot,
+        );
+        const artifact = hdc.writeHdcCleanupArtifact?.(reportsDir, cleanup);
+        const skip = cleanup.skipped_reason ? ` skipped=${cleanup.skipped_reason}` : '';
+        const artifactRel = artifact
+          ? path.relative(context.projectRoot, artifact).replace(/\\/g, '/')
+          : 'write_failed';
+        console.log(
+          `   hdc daemon cleanup: kill_attempted=${cleanup.attempted} ok=${cleanup.ok} policy_source=${cleanup.policy.source}${skip} artifact=${artifactRel}`,
+        );
+      }
+    } catch {
+      /* non-hmos profile */
+    }
   }
 }
 

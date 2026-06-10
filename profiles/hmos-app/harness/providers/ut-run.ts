@@ -9,4 +9,5 @@ export const provider: CapabilityProvider = {
   exports: ['runHvigorTest', 'probeDevices'],
 };
 
-export { runHvigorTest, probeDevices } from '../hvigor-runner';
+export { runHvigorTest } from '../hvigor-runner';
+export { probeDevices } from '../hdc-runner';

@@ -19,7 +19,12 @@ import {
   sha256FileHex,
   writeInstallFingerprint,
 } from '../hylyre-vendor-sync';
-import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync } from '../hdc-runner';
+import {
+  hdcTargetPrefix,
+  mergeEnvWithHdcOnPath,
+  resolveHdcExecutableSync,
+  runHdcRaw,
+} from '../hdc-runner';
 import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
 import { resolveMainAbilityForBundle } from '../resolve-main-ability';
 import {
@@ -429,13 +434,7 @@ export function runAaForceStop(
   const args = [...hdcTargetPrefix(), 'shell', 'aa', 'force-stop', '-b', bundle];
   appendLogSync(logPath, `$ hdc ${args.join(' ')}\n`);
   const hdcExe = resolveHdcExecutableSync();
-  const useShell = process.platform === 'win32' && hdcExe === 'hdc';
-  const r = spawnSync(hdcExe, args, {
-    encoding: 'utf-8',
-    shell: useShell,
-    timeout: 60_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+  const r = runHdcRaw(hdcExe, args, { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   appendLogSync(logPath, out);
   return { ok: r.status === 0, output: out, attempted: true };
@@ -450,13 +449,7 @@ function runAaStartPreflight(
   const args = [...hdcTargetPrefix(), 'shell', 'aa', 'start', '-a', pageName, '-b', bundle];
   appendLogSync(logPath, `$ hdc ${args.join(' ')}\n`);
   const hdcExe = resolveHdcExecutableSync();
-  const useShell = process.platform === 'win32' && hdcExe === 'hdc';
-  const r = spawnSync(hdcExe, args, {
-    encoding: 'utf-8',
-    shell: useShell,
-    timeout: 120_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+  const r = runHdcRaw(hdcExe, args, { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   appendLogSync(logPath, out);
   return { ok: r.status === 0, output: out };

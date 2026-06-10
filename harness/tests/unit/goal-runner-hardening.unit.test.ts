@@ -291,6 +291,17 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(manifest.end_phase === 'ut', 'end overridden with flag');
     },
   },
+  {
+    name: 'goal-runner: runHarnessPhase uses async spawn + activeHarnessKill',
+    run: () => {
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      assert(src.includes('activeHarnessKill'), 'activeHarnessKill variable');
+      assert(src.includes('async function runHarnessPhase'), 'async runHarnessPhase');
+      assert(src.includes('killProcessTree'), 'killProcessTree import');
+      assert(src.includes('spawn('), 'spawn for harness child');
+      assert(!/async function runHarnessPhase[\s\S]*?spawnSync/.test(src), 'no spawnSync in runHarnessPhase');
+    },
+  },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

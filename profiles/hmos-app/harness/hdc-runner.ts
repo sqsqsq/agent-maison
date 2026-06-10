@@ -20,15 +20,255 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { spawnSync, SpawnSyncReturns } from 'child_process';
+import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
 import { loadDevEcoConfig, featurePhaseReportsDir } from '../../../harness/config';
 import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
 
+/** hdc daemon 隔离 cwd — 防止 daemon 继承 framework/harness 锁住目录。 */
+export const HDC_ISOLATED_CWD = path.join(os.tmpdir(), 'maison-hdc');
+
+export const MAISON_KILL_HDC_ON_FINISH_ENV = 'MAISON_KILL_HDC_ON_FINISH';
+
 /** 解析结果缓存：同进程内 hdc 路径不变，避免重复探测。单测可 `resetHdcExecutableCache()`。 */
 let cachedHdcExecutable: string | null = null;
+
+/** 本进程是否走过 hdc（供 phase/check finally 决定是否 kill）。 */
+let usedHdc = false;
+
+/** 已为哪条 exe 预热过 daemon（`ensureHdcServerWarm` / probe 咽喉点）。 */
+let hdcServerWarmedExe: string | null = null;
+
+export function ensureHdcIsolatedCwd(): string {
+  fs.mkdirSync(HDC_ISOLATED_CWD, { recursive: true });
+  return HDC_ISOLATED_CWD;
+}
+
+export function markHdcUsed(): void {
+  usedHdc = true;
+}
+
+export function wasHdcUsed(): boolean {
+  return usedHdc;
+}
+
+/** 单测重置 used 标志。 */
+export function resetHdcUsed(): void {
+  usedHdc = false;
+}
+
+/** 单测重置 warm 状态。 */
+export function resetHdcServerWarmState(): void {
+  hdcServerWarmedExe = null;
+}
+
+export type HdcKillPolicySource = 'env' | 'config' | 'ci_default' | 'dev_default';
+
+export interface HdcKillPolicy {
+  shouldKill: boolean;
+  source: HdcKillPolicySource;
+}
+
+export interface HdcKillResult {
+  attempted: boolean;
+  ok: boolean;
+  exitCode: number | null;
+  error: string | null;
+}
+
+/** 纯函数：组装 hdc spawnSync 选项（统一隔离 cwd）。 */
+export function buildHdcSpawnOptions(
+  exe: string,
+  opts?: { timeout?: number; maxBuffer?: number },
+): SpawnSyncOptions & { encoding: 'utf-8' } {
+  const useShell = process.platform === 'win32' && exe === 'hdc';
+  return {
+    encoding: 'utf-8',
+    cwd: ensureHdcIsolatedCwd(),
+    shell: useShell,
+    ...(opts?.timeout !== undefined ? { timeout: opts.timeout } : {}),
+    maxBuffer: opts?.maxBuffer ?? 64 * 1024 * 1024,
+  };
+}
+
+/**
+ * 唯一底层 hdc spawn 入口（profile hmos harness 禁止绕过）。
+ * 每次调用登记 usedHdc，cwd 固定在 HDC_ISOLATED_CWD。
+ */
+export function runHdcRaw(
+  exe: string,
+  args: string[],
+  opts?: { timeout?: number; maxBuffer?: number },
+): SpawnSyncReturns<string> {
+  markHdcUsed();
+  return spawnSync(exe, args, buildHdcSpawnOptions(exe, opts));
+}
+
+/** 纯函数：`list targets` probe 是否视为 warm 成功（单测回归）。 */
+export function isHdcListTargetsProbeOk(
+  probe: Pick<SpawnSyncReturns<string>, 'error' | 'status'>,
+): boolean {
+  return !probe.error && probe.status === 0;
+}
+
+function warmHdcServerForExecutable(exe: string): { ok: boolean; error: string | null } {
+  if (hdcServerWarmedExe === exe) return { ok: true, error: null };
+  const probe = runHdcRaw(exe, [...hdcTargetPrefix(), 'list', 'targets'], {
+    timeout: 5000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  if (isHdcListTargetsProbeOk(probe)) {
+    hdcServerWarmedExe = exe;
+    return { ok: true, error: null };
+  }
+  const err =
+    probe.error?.message ??
+    (String(probe.stderr ?? probe.stdout ?? '').trim().slice(0, 500) || 'list targets failed');
+  return { ok: false, error: err };
+}
+
+export interface HdcServerWarmResult {
+  prewarmed: boolean;
+  exe: string;
+  isolatedCwd: string;
+  warm_error: string | null;
+}
+
+/** 显式预热 daemon（隔离 cwd）；spawnHylyre 前调用。 */
+export function ensureHdcServerWarm(): HdcServerWarmResult {
+  const exe = resolveHdcExecutableSync();
+  const warm = warmHdcServerForExecutable(exe);
+  return {
+    prewarmed: warm.ok,
+    exe,
+    isolatedCwd: ensureHdcIsolatedCwd(),
+    warm_error: warm.error,
+  };
+}
+
+export function resolveKillHdcServerPolicy(projectRoot?: string): HdcKillPolicy {
+  const envRaw = (process.env[MAISON_KILL_HDC_ON_FINISH_ENV] ?? '').trim().toLowerCase();
+  if (envRaw === '1' || envRaw === 'true' || envRaw === 'yes') {
+    return { shouldKill: true, source: 'env' };
+  }
+  if (envRaw === '0' || envRaw === 'false' || envRaw === 'no') {
+    return { shouldKill: false, source: 'env' };
+  }
+  if (projectRoot) {
+    const cfg = loadDevEcoConfig(projectRoot);
+    if (typeof cfg?.killHdcServerOnFinish === 'boolean') {
+      return { shouldKill: cfg.killHdcServerOnFinish, source: 'config' };
+    }
+  }
+  const isCi = Boolean(
+    process.env.CI ||
+      process.env.GITHUB_ACTIONS ||
+      process.env.GITLAB_CI ||
+      process.env.JENKINS_URL,
+  );
+  if (isCi) return { shouldKill: true, source: 'ci_default' };
+  return { shouldKill: false, source: 'dev_default' };
+}
+
+/** best-effort `hdc kill`（cwd 隔离）。 */
+export function killHdcServer(): HdcKillResult {
+  try {
+    const exe = resolveHdcExecutableSync();
+    const r = runHdcRaw(exe, ['kill'], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    const err =
+      r.error?.message ??
+      (r.status !== 0 ? String(r.stderr ?? r.stdout ?? '').trim().slice(0, 500) || null : null);
+    hdcServerWarmedExe = null;
+    return {
+      attempted: true,
+      ok: r.status === 0 && !r.error,
+      exitCode: r.status,
+      error: err,
+    };
+  } catch (e) {
+    return {
+      attempted: true,
+      ok: false,
+      exitCode: null,
+      error: (e as Error).message,
+    };
+  }
+}
+
+export interface HdcKillIfUsedResult extends HdcKillResult {
+  policy: HdcKillPolicy;
+  used: boolean;
+  skipped_reason?: 'hdc_not_used' | 'policy_disabled';
+}
+
+export interface HdcCleanupArtifact {
+  ts: string;
+  used: boolean;
+  attempted: boolean;
+  ok: boolean;
+  exit_code: number | null;
+  error: string | null;
+  policy: HdcKillPolicy;
+  skipped_reason: HdcKillIfUsedResult['skipped_reason'] | null;
+}
+
+/** 将 hdc cleanup 决策写入 phase reports（`hdc-cleanup.json`）。 */
+export function writeHdcCleanupArtifact(
+  reportsDir: string,
+  cleanup: HdcKillIfUsedResult,
+): string | null {
+  try {
+    fs.mkdirSync(reportsDir, { recursive: true });
+    const payload: HdcCleanupArtifact = {
+      ts: new Date().toISOString(),
+      used: cleanup.used,
+      attempted: cleanup.attempted,
+      ok: cleanup.ok,
+      exit_code: cleanup.exitCode,
+      error: cleanup.error,
+      policy: cleanup.policy,
+      skipped_reason: cleanup.skipped_reason ?? null,
+    };
+    const file = path.join(reportsDir, 'hdc-cleanup.json');
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf-8');
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/** phase/check 顶层 finally：仅当 usedHdc 且策略允许时 kill daemon。 */
+export function killHdcServerIfUsed(projectRoot?: string): HdcKillIfUsedResult {
+  const policy = resolveKillHdcServerPolicy(projectRoot);
+  const used = wasHdcUsed();
+  if (!used) {
+    return {
+      attempted: false,
+      ok: true,
+      exitCode: null,
+      error: null,
+      policy,
+      used: false,
+      skipped_reason: 'hdc_not_used',
+    };
+  }
+  if (!policy.shouldKill) {
+    return {
+      attempted: false,
+      ok: true,
+      exitCode: null,
+      error: null,
+      policy,
+      used: true,
+      skipped_reason: 'policy_disabled',
+    };
+  }
+  const kill = killHdcServer();
+  return { ...kill, policy, used: true };
+}
 
 function findFrameworkInstanceRoot(startDir: string, maxUp = 12): string | null {
   let d = path.resolve(startDir);
@@ -51,14 +291,15 @@ function defaultHdcPathUnderDevEco(installPath: string): string {
 }
 
 function hdcListTargetsProbe(executable: string): boolean {
-  const isWin = process.platform === 'win32';
-  const useShell = isWin && executable === 'hdc';
-  const probe = spawnSync(executable, [...hdcTargetPrefix(), 'list', 'targets'], {
-    encoding: 'utf-8',
-    shell: useShell,
+  const probe = runHdcRaw(executable, [...hdcTargetPrefix(), 'list', 'targets'], {
     timeout: 5000,
+    maxBuffer: 2 * 1024 * 1024,
   });
-  return !probe.error && probe.status === 0;
+  if (isHdcListTargetsProbeOk(probe)) {
+    hdcServerWarmedExe = executable;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -98,12 +339,14 @@ export function resolveHdcExecutableSync(): string {
       }
       if (fs.existsSync(candidate)) {
         cachedHdcExecutable = candidate;
+        warmHdcServerForExecutable(candidate);
         return candidate;
       }
     }
   }
 
   cachedHdcExecutable = 'hdc';
+  warmHdcServerForExecutable('hdc');
   return 'hdc';
 }
 
@@ -412,13 +655,10 @@ export function findOhosTestSignedHap(
 // ----------------------------------------------------------------------------
 
 export function probeDevices(): DeviceProbeResult {
-  const isWin = process.platform === 'win32';
   const exe = resolveHdcExecutableSync();
-  const useShell = isWin && exe === 'hdc';
-  const probe = spawnSync(exe, [...hdcTargetPrefix(), 'list', 'targets'], {
-    encoding: 'utf-8',
-    shell: useShell,
+  const probe = runHdcRaw(exe, [...hdcTargetPrefix(), 'list', 'targets'], {
     timeout: 5000,
+    maxBuffer: 2 * 1024 * 1024,
   });
   if (probe.error || probe.status !== 0) {
     return {
@@ -452,10 +692,7 @@ export function hdcTargetPrefix(): string[] {
 
 function runHdc(args: string[], timeoutMs = 60_000): SpawnSyncReturns<string> {
   const exe = resolveHdcExecutableSync();
-  const useShell = process.platform === 'win32' && exe === 'hdc';
-  return spawnSync(exe, [...hdcTargetPrefix(), ...args], {
-    encoding: 'utf-8',
-    shell: useShell,
+  return runHdcRaw(exe, [...hdcTargetPrefix(), ...args], {
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
   });

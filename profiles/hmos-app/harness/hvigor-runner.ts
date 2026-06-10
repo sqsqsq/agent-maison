@@ -37,7 +37,6 @@ import {
   HvigorCodingConfig,
   featurePhaseReportsDir,
 } from '../../../harness/config';
-import { resolveHdcExecutableSync } from './hdc-runner';
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 
@@ -1716,34 +1715,5 @@ export function runHvigorTest(
   return res;
 }
 
-/**
- * 探测是否存在可用设备 / 模拟器（hdc list targets）。
- * 用于 ut_hvigor_test：无设备时不跑 test，直接 BLOCKER FAIL。
- */
-export function probeDevices(): {
-  available: boolean;
-  hdcPresent: boolean;
-  targets: string[];
-  raw: string;
-} {
-  const isWin = process.platform === 'win32';
-  const exe = resolveHdcExecutableSync();
-  const useShell = isWin && exe === 'hdc';
-  const probe = spawnSync(exe, ['list', 'targets'], {
-    encoding: 'utf-8',
-    shell: useShell,
-    timeout: 5000,
-  });
-
-  if (probe.error || probe.status !== 0) {
-    return { available: false, hdcPresent: false, targets: [], raw: probe.stderr ?? probe.error?.message ?? '' };
-  }
-
-  const raw = (probe.stdout ?? '').trim();
-  // 典型无设备输出："[Empty]" 或空字符串
-  if (!raw || /^\[?Empty\]?$/i.test(raw)) {
-    return { available: false, hdcPresent: true, targets: [], raw };
-  }
-  const targets = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  return { available: targets.length > 0, hdcPresent: true, targets, raw };
-}
+/** @deprecated 使用 hdc-runner.probeDevices（统一隔离 cwd + hdcTargetPrefix）。 */
+export { probeDevices } from './hdc-runner';

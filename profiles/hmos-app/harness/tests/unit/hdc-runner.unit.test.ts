@@ -36,6 +36,13 @@ import {
   diagnoseHdcInstallFailure,
   mergeEnvWithHdcOnPath,
   resetHdcExecutableCache,
+  buildHdcSpawnOptions,
+  HDC_ISOLATED_CWD,
+  resolveKillHdcServerPolicy,
+  MAISON_KILL_HDC_ON_FINISH_ENV,
+  resetHdcUsed,
+  isHdcListTargetsProbeOk,
+  writeHdcCleanupArtifact,
 } from '../../../../../harness/scripts/utils/hdc-runner';
 
 export interface UnitCaseResult {
@@ -71,6 +78,9 @@ function assertIncludes(actual: string, expected: string, label: string): void {
   if (!actual.includes(expected)) {
     throw new Error(`${label}\n    expected to include: "${expected}"\n    actual: "${actual}"`);
   }
+}
+function assert(condition: boolean, label: string): void {
+  if (!condition) throw new Error(label);
 }
 
 // ---- 临时目录管理 ------------------------------------------------------------
@@ -484,6 +494,71 @@ const cases: Array<{ name: string; run: () => void }> = [
         resetHdcExecutableCache();
       }
     }),
+  },
+  {
+    name: 'buildHdcSpawnOptions: cwd is isolated (not framework/harness)',
+    run: () => {
+      const opts = buildHdcSpawnOptions('hdc', { timeout: 5000 });
+      assertEq(opts.cwd, HDC_ISOLATED_CWD, 'cwd');
+      assert(!String(opts.cwd).includes('framework'), 'cwd must not be under framework');
+      assertEq(opts.encoding, 'utf-8', 'encoding');
+    },
+  },
+  {
+    name: 'isHdcListTargetsProbeOk: requires exit 0 and no spawn error',
+    run: () => {
+      assert(isHdcListTargetsProbeOk({ status: 0, error: undefined }), 'ok probe');
+      assert(!isHdcListTargetsProbeOk({ status: 1, error: undefined }), 'nonzero');
+      assert(!isHdcListTargetsProbeOk({ status: 0, error: new Error('timeout') }), 'error');
+    },
+  },
+  {
+    name: 'writeHdcCleanupArtifact: writes hdc-cleanup.json with policy fields',
+    run: () => {
+      withTmpDir((dir) => {
+        const written = writeHdcCleanupArtifact(dir, {
+          attempted: false,
+          ok: true,
+          exitCode: null,
+          error: null,
+          policy: { shouldKill: false, source: 'dev_default' },
+          used: true,
+          skipped_reason: 'policy_disabled',
+        });
+        assert(written !== null, 'written path');
+        const payload = JSON.parse(fs.readFileSync(path.join(dir, 'hdc-cleanup.json'), 'utf-8')) as {
+          used: boolean;
+          policy: { source: string };
+          skipped_reason: string;
+        };
+        assertEq(payload.used, true, 'used');
+        assertEq(payload.policy.source, 'dev_default', 'policy');
+        assertEq(payload.skipped_reason, 'policy_disabled', 'skip');
+      });
+    },
+  },
+  {
+    name: 'resolveKillHdcServerPolicy: env override beats defaults',
+    run: () => {
+      const prev = process.env[MAISON_KILL_HDC_ON_FINISH_ENV];
+      const prevCi = process.env.CI;
+      try {
+        delete process.env.CI;
+        process.env[MAISON_KILL_HDC_ON_FINISH_ENV] = '1';
+        const on = resolveKillHdcServerPolicy();
+        assertEq(on.shouldKill, true, 'env on');
+        assertEq(on.source, 'env', 'env source');
+        process.env[MAISON_KILL_HDC_ON_FINISH_ENV] = '0';
+        const off = resolveKillHdcServerPolicy();
+        assertEq(off.shouldKill, false, 'env off');
+      } finally {
+        if (prev === undefined) delete process.env[MAISON_KILL_HDC_ON_FINISH_ENV];
+        else process.env[MAISON_KILL_HDC_ON_FINISH_ENV] = prev;
+        if (prevCi === undefined) delete process.env.CI;
+        else process.env.CI = prevCi;
+        resetHdcUsed();
+      }
+    },
   },
 ];
 

@@ -8,14 +8,13 @@ import * as fs from 'fs';
 
 import * as path from 'path';
 
-import { spawnSync } from 'child_process';
 import { spawnHylyre } from './hylyre-spawn';
 
 import { resolveHylyreToolConfig } from '../../../harness/config';
 
 import { buildHylyreAppPageSaveArgv } from './device-test-page-save';
 
-import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync } from './hdc-runner';
+import { hdcTargetPrefix, mergeEnvWithHdcOnPath, resolveHdcExecutableSync, runHdcRaw } from './hdc-runner';
 
 import {
 
@@ -181,19 +180,7 @@ export function runAaStartWithCapture(
 
   const hdcExe = resolveHdcExecutableSync();
 
-  const useShell = process.platform === 'win32' && hdcExe === 'hdc';
-
-  const r = spawnSync(hdcExe, args, {
-
-    encoding: 'utf-8',
-
-    shell: useShell,
-
-    timeout: 120_000,
-
-    maxBuffer: 2 * 1024 * 1024,
-
-  });
+  const r = runHdcRaw(hdcExe, args, { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
 
   const stdout = r.stdout ?? '';
 
