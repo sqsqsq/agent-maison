@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
+import type { PhaseSnapshotFiles } from './goal-phase-snapshot';
 
 export interface GoalPhaseOutcome {
   phase: FeaturePhase;
@@ -15,6 +16,11 @@ export interface GoalPhaseOutcome {
   summary_path?: string;
   report_dir?: string;
   retries?: number;
+  agent_exit_code?: number;
+  agent_timed_out?: boolean;
+  agent_silent_killed?: boolean;
+  agent_warn?: string;
+  snapshot_files?: PhaseSnapshotFiles;
 }
 
 export interface GoalReport {
@@ -53,17 +59,30 @@ export function generateGoalReportMarkdown(report: GoalReport): string {
     `- **Status**: ${report.status}`,
     `- **Generated**: ${report.generated_at}`,
     '',
+  ];
+
+  if (report.status !== 'COMPLETED') {
+    lines.push(
+      '> **注意**：本报告生成 ≠ 所有子进程已退出 / goal 全流程已完成。非 COMPLETED 终态请结合 events.jsonl 判断是否在跑。',
+      '',
+    );
+  }
+
+  lines.push(
     '## Phase outcomes',
     '',
     '| Phase | Verdict | DEFERRED | Reason | Summary |',
     '|-------|---------|----------|--------|---------|',
-  ];
+  );
 
   for (const p of report.phases) {
     const deferred = p.deferred ? 'YES（未完成·待外部条件）' : '—';
     const reason = p.deferred_reason ?? (p.halted ? 'halted' : '—');
     const summary = p.summary_path ?? '—';
     lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${reason} | ${summary} |`);
+    if (p.agent_warn) {
+      lines.push(`| ↳ agent | WARN | — | ${p.agent_warn} | — |`);
+    }
   }
 
   if (report.deferred_phases.length > 0) {

@@ -79,6 +79,21 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'resolvePhaseHarnessVerdict: fresh PASS + agent timeout exit still PASS',
+    run: () => {
+      const r = resolvePhaseHarnessVerdict({
+        dryRun: false,
+        agentExitCode: 1,
+        harnessExitCode: 0,
+        summaryBeforeMtime: 1000,
+        summaryAfterMtime: 2000,
+        summaryVerdict: 'PASS',
+      });
+      assert(r.verdict === 'PASS', r.verdict);
+      assert(r.agent_failed, 'observability');
+    },
+  },
+  {
     name: 'resolvePhaseHarnessVerdict: agent fail without summary → FAIL',
     run: () => {
       const r = resolvePhaseHarnessVerdict({

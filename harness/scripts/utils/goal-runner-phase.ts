@@ -54,6 +54,7 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
     return { verdict, stale_summary: false, agent_failed: false };
   }
 
+  // Gate on fresh summary artifact — agent exit/timeout is observability only (cursor adapter norm).
   if (fresh && input.summaryVerdict) {
     return { verdict: input.summaryVerdict, stale_summary: false, agent_failed: agentFailed };
   }
@@ -63,7 +64,7 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
   }
 
   const stale = input.summaryAfterMtime !== null && !fresh;
-  if (stale || agentFailed || input.harnessExitCode !== 0 || input.summaryAfterMtime === null) {
+  if (stale || input.harnessExitCode !== 0 || input.summaryAfterMtime === null) {
     return { verdict: 'FAIL', stale_summary: stale, agent_failed: agentFailed };
   }
 
@@ -71,11 +72,107 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  ts?: string;
   type?: string;
   phase?: string;
   action?: PhaseVerdictAction;
   verdict?: string;
   status?: string;
+  blocking_class?: string;
+  failure_kind?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  timed_out?: boolean;
+}
+
+export interface ResumedBudget {
+  totalTurns: number;
+  wallClockStartMs: number;
+}
+
+/** Count agent attempts from events (new start/end + legacy agent_invoke). */
+export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start') n++;
+    else if (e.type === 'agent_invoke') n++;
+  }
+  return n;
+}
+
+/** First run_start timestamp as wall-clock baseline (ms since epoch). */
+export function resolveWallClockStartMs(events: GoalRunEvent[]): number {
+  for (const e of events) {
+    if (e.type === 'run_start' && e.ts) {
+      const t = new Date(e.ts).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  return Date.now();
+}
+
+export function resolveResumedBudget(events: GoalRunEvent[]): ResumedBudget {
+  return {
+    totalTurns: countAgentInvokeStarts(events),
+    wallClockStartMs: resolveWallClockStartMs(events),
+  };
+}
+
+export interface ResumeGuardInput {
+  priorStatus?: string;
+  lastRunEndTs?: string;
+  forceResume?: boolean;
+  cooldownMinutes?: number;
+  /** Optional: summary mtime advanced after last run_end with changed blocking classification. */
+  blockingCleared?: boolean;
+}
+
+export interface ResumeGuardResult {
+  allowed: boolean;
+  reason?: string;
+}
+
+const TERMINAL_STATUSES = new Set(['HALTED', 'DEFERRED']);
+
+/**
+ * Conservative resume guard — default refuse HALTED/DEFERRED unless --force-resume
+ * or blocking classification demonstrably changed after last run_end.
+ */
+export function checkTerminalResumeGuard(input: ResumeGuardInput): ResumeGuardResult {
+  const status = input.priorStatus;
+
+  // Non-terminal prior runs (COMPLETED/PARTIAL/unknown) are not subject to terminal debounce.
+  if (!status || !TERMINAL_STATUSES.has(status)) return { allowed: true };
+
+  const cooldownMin = input.cooldownMinutes ?? 5;
+  if (input.lastRunEndTs) {
+    const endMs = new Date(input.lastRunEndTs).getTime();
+    if (!Number.isNaN(endMs)) {
+      const elapsed = Date.now() - endMs;
+      const cooldownMs = cooldownMin * 60 * 1000;
+      if (elapsed < cooldownMs) {
+        return {
+          allowed: false,
+          reason: `resume cooldown: wait ${Math.ceil((cooldownMs - elapsed) / 1000)}s after run_end (${status})`,
+        };
+      }
+    }
+  }
+
+  if (input.blockingCleared) return { allowed: true };
+  if (input.forceResume) return { allowed: true };
+
+  return {
+    allowed: false,
+    reason: `last run status ${status}; pass --force-resume to continue`,
+  };
+}
+
+export function findLastRunEnd(events: GoalRunEvent[]): GoalRunEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'run_end') return events[i];
+  }
+  return undefined;
 }
 
 /** Check run budget before each phase attempt (turns + wall clock). */

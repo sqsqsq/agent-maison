@@ -2,8 +2,9 @@
  * Agent headless invoke — structured spawn for claude -p / codex exec / cursor-agent -p.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import crossSpawn from 'cross-spawn';
 import type { UnattendedContract } from './goal-manifest';
 import type { GoalCapabilitySpec } from './goal-adapter-capability';
@@ -41,6 +42,12 @@ const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   claude: CLAUDE_HEADLESS_BINARY_CANDIDATES,
   codex: CODEX_HEADLESS_BINARY_CANDIDATES,
 };
+
+/** Disabled by default — cursor-agent often streams little until phase end. Opt-in via silentWatchdogMs. */
+export const DEFAULT_SILENT_WATCHDOG_MS = 0;
+
+/** When streaming to outputLogPath, retain at most this much in memory for invoke result. */
+export const INVOKE_OUTPUT_MEMORY_CAP = 64 * 1024;
 
 export function renderInvokeTemplate(template: string, vars: InvokeTemplateVars): string {
   let out = template;
@@ -284,38 +291,264 @@ export function resolveHeadlessCommand(
   return plan.label;
 }
 
+export interface KillTreeResult {
+  kill_attempted: boolean;
+  kill_exit_code: number | null;
+  kill_error: string | null;
+}
+
+/** Kill entire child process tree (Windows taskkill /T, POSIX process group). */
+export async function killProcessTree(pid: number): Promise<KillTreeResult> {
+  if (!pid || pid <= 0) {
+    return { kill_attempted: false, kill_exit_code: null, kill_error: null };
+  }
+
+  try {
+    if (process.platform === 'win32') {
+      const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        encoding: 'utf-8',
+        shell: true,
+      });
+      const err =
+        r.error?.message ??
+        (r.status !== 0 ? String(r.stderr ?? r.stdout ?? '').trim().slice(0, 500) || null : null);
+      return {
+        kill_attempted: true,
+        kill_exit_code: r.status,
+        kill_error: err,
+      };
+    }
+
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (e) {
+        return {
+          kill_attempted: true,
+          kill_exit_code: 1,
+          kill_error: (e as Error).message,
+        };
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      process.kill(-pid, 0);
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        process.kill(pid, 'SIGKILL');
+      }
+    } catch {
+      /* already dead */
+    }
+    return { kill_attempted: true, kill_exit_code: 0, kill_error: null };
+  } catch (e) {
+    return {
+      kill_attempted: true,
+      kill_exit_code: 1,
+      kill_error: (e as Error).message,
+    };
+  }
+}
+
 export interface AgentInvokeResult {
   exitCode: number;
   stdout: string;
   stderr: string;
   command: string;
   skipped?: boolean;
+  pid?: number;
+  duration_ms?: number;
+  timed_out?: boolean;
+  silent_killed?: boolean;
+  signal?: string | null;
+  kill_attempted?: boolean;
+  kill_exit_code?: number | null;
+  kill_error?: string | null;
 }
 
-function spawnHeadless(
+export interface AgentInvokeOptions {
+  dryRun?: boolean;
+  timeoutMs?: number;
+  silentWatchdogMs?: number;
+  outputLogPath?: string;
+  /** Called when child spawns — register tree-kill for signal handlers. */
+  onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
+  onChildExit?: () => void;
+}
+
+function spawnHeadlessChild(
   plan: HeadlessInvokePlan,
   cwd: string,
-  timeoutMs?: number,
-): ReturnType<typeof spawnSync> {
+): ChildProcess {
+  const isWin = process.platform === 'win32';
+  const stdio: ['pipe' | 'ignore', 'pipe', 'pipe'] = plan.useStdin
+    ? ['pipe', 'pipe', 'pipe']
+    : ['ignore', 'pipe', 'pipe'];
+
   const opts = {
     cwd,
-    encoding: 'utf-8' as const,
     env: { ...process.env, [MAISON_GOAL_HEADLESS_ENV]: '1' },
-    input: plan.useStdin ? plan.stdin : undefined,
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
+    stdio,
+    detached: !isWin,
+    shell: false as const,
   };
+
   if (plan.useCrossSpawn) {
-    return crossSpawn.sync(plan.argv[0], plan.argv.slice(1), opts);
+    return crossSpawn(plan.argv[0], plan.argv.slice(1), opts) as ChildProcess;
   }
-  return spawnSync(plan.argv[0], plan.argv.slice(1), { ...opts, shell: false });
+  return spawn(plan.argv[0], plan.argv.slice(1), opts);
 }
 
-export function invokeAgentHeadless(
+async function spawnHeadlessAsync(
   plan: HeadlessInvokePlan,
   cwd: string,
-  opts?: { dryRun?: boolean; timeoutMs?: number },
-): AgentInvokeResult {
+  opts: AgentInvokeOptions,
+): Promise<AgentInvokeResult> {
+  const started = Date.now();
+  const child = spawnHeadlessChild(plan, cwd);
+  const pid = child.pid ?? 0;
+
+  let stdout = '';
+  let stderr = '';
+  const retainInMemory = !opts.outputLogPath;
+  const appendCaptured = (target: 'stdout' | 'stderr', chunk: string): void => {
+    if (!retainInMemory) {
+      const cur = target === 'stdout' ? stdout : stderr;
+      const combined = cur + chunk;
+      const trimmed =
+        combined.length > INVOKE_OUTPUT_MEMORY_CAP
+          ? combined.slice(-INVOKE_OUTPUT_MEMORY_CAP)
+          : combined;
+      if (target === 'stdout') stdout = trimmed;
+      else stderr = trimmed;
+      return;
+    }
+    if (target === 'stdout') stdout += chunk;
+    else stderr += chunk;
+  };
+  let lastActivity = Date.now();
+  let timedOut = false;
+  let silentKilled = false;
+  let exitCode = 1;
+  let signal: string | null = null;
+  let killResult: KillTreeResult = {
+    kill_attempted: false,
+    kill_exit_code: null,
+    kill_error: null,
+  };
+
+  const outputStream = opts.outputLogPath
+    ? fs.createWriteStream(opts.outputLogPath, { flags: 'w', encoding: 'utf-8' })
+    : null;
+
+  const bumpActivity = (chunk: string): void => {
+    lastActivity = Date.now();
+    if (outputStream) outputStream.write(chunk);
+  };
+
+  child.stdout?.on('data', (buf: Buffer) => {
+    const s = buf.toString();
+    appendCaptured('stdout', s);
+    bumpActivity(s);
+  });
+  child.stderr?.on('data', (buf: Buffer) => {
+    const s = buf.toString();
+    appendCaptured('stderr', s);
+    bumpActivity(s);
+  });
+
+  if (plan.useStdin && plan.stdin && child.stdin) {
+    child.stdin.write(plan.stdin);
+    child.stdin.end();
+  }
+
+  let killInFlight: Promise<void> | null = null;
+  let killTriggered = false;
+
+  const killTree = (reason: 'timeout' | 'silent' | 'signal'): Promise<void> => {
+    if (killTriggered && killInFlight) return killInFlight;
+    killTriggered = true;
+    if (reason === 'timeout') timedOut = true;
+    if (reason === 'silent') silentKilled = true;
+    killInFlight = (async () => {
+      killResult = await killProcessTree(pid);
+    })();
+    return killInFlight;
+  };
+
+  if (pid > 0 && opts.onActiveChild) {
+    opts.onActiveChild({
+      pid,
+      kill: async () => {
+        await killTree('signal');
+        return killResult;
+      },
+    });
+  }
+
+  const timeoutMs = opts.timeoutMs;
+  const timeoutTimer =
+    timeoutMs && timeoutMs > 0
+      ? setTimeout(() => {
+          void killTree('timeout');
+        }, timeoutMs)
+      : null;
+
+  const silentMs = opts.silentWatchdogMs ?? DEFAULT_SILENT_WATCHDOG_MS;
+  const silentTimer =
+    silentMs != null && silentMs > 0
+      ? setInterval(() => {
+          if (Date.now() - lastActivity >= silentMs) {
+            void killTree('silent');
+          }
+        }, 30_000)
+      : null;
+
+  await new Promise<void>((resolve) => {
+    child.on('error', () => resolve());
+    child.on('close', (code, sig) => {
+      exitCode = code ?? 1;
+      signal = sig;
+      resolve();
+    });
+  });
+
+  if (killInFlight) await killInFlight;
+
+  if (timeoutTimer) clearTimeout(timeoutTimer);
+  if (silentTimer) clearInterval(silentTimer);
+  if (outputStream) {
+    await new Promise<void>((r) => outputStream.end(() => r()));
+  }
+  opts.onChildExit?.();
+
+  const duration_ms = Date.now() - started;
+
+  return {
+    exitCode: timedOut || silentKilled ? (exitCode === 0 ? 1 : exitCode) : exitCode,
+    stdout,
+    stderr,
+    command: plan.label,
+    pid: pid || undefined,
+    duration_ms,
+    timed_out: timedOut || undefined,
+    silent_killed: silentKilled || undefined,
+    signal,
+    kill_attempted: killResult.kill_attempted,
+    kill_exit_code: killResult.kill_exit_code,
+    kill_error: killResult.kill_error,
+  };
+}
+
+export async function invokeAgentHeadless(
+  plan: HeadlessInvokePlan,
+  cwd: string,
+  opts?: AgentInvokeOptions,
+): Promise<AgentInvokeResult> {
   const command = plan.label;
   if (opts?.dryRun) {
     return { exitCode: 0, stdout: '[dry-run] agent invoke skipped', stderr: '', command, skipped: true };
@@ -335,11 +568,5 @@ export function invokeAgentHeadless(
     };
   }
 
-  const result = spawnHeadless(plan, cwd, opts?.timeoutMs);
-  return {
-    exitCode: result.status ?? 1,
-    stdout: (result.stdout as string) ?? '',
-    stderr: (result.stderr as string) ?? '',
-    command,
-  };
+  return spawnHeadlessAsync(plan, cwd, opts ?? {});
 }

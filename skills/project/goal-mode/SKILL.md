@@ -75,6 +75,10 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --resume <run-id> --feature <feature-slug>
 ```
 
+**BLOCKER**：主 agent **读完 goal-report 后停下汇报**，不得自行循环 `--resume`。续跑必须由**用户**在对话中显式触发。
+
+若上次终态为 `HALTED` 或 `DEFERRED`，默认须加 `--force-resume`（冷却期内会被拒绝）；勿在无用户确认时自动续跑。
+
 ### manifest（可选，agent 写入后自跑）
 
 复杂参数可写 `goal-manifest.yaml`（schema：`framework/workflows/goal-manifest.schema.yaml`），再：

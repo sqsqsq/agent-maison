@@ -76,6 +76,11 @@ export function isGoalOrchestrationEnv(): boolean {
   );
 }
 
+/** True when spawned from goal-runner headless agent invoke (not harness-runner). */
+export function isGoalHeadlessEnv(): boolean {
+  return process.env[MAISON_GOAL_HEADLESS_ENV] === '1';
+}
+
 export function mergeAndWritePhaseState(
   projectRoot: string,
   workflowSpec: WorkflowSpec,
