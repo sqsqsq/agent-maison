@@ -5,11 +5,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
+import type * as TsModule from '../../../harness/node_modules/typescript';
 
 const harnessRequire = createRequire(
   path.resolve(__dirname, '..', '..', '..', 'harness', 'package.json'),
 );
-const ts = harnessRequire('typescript');
+const ts: typeof TsModule = harnessRequire('typescript');
 
 const AMBIENT_DTS = `
 declare module '*';
@@ -28,8 +29,8 @@ function toVirtualTsPath(etsPath: string): string {
 
 export function createGraphExtractorHost(
   virtualToReal: Map<string, string>,
-  options: ts.CompilerOptions,
-): ts.CompilerHost {
+  options: TsModule.CompilerOptions,
+): TsModule.CompilerHost {
   const base = ts.createCompilerHost(options, true);
   const ambientPath = toForwardSlash(path.resolve(VIRTUAL_AMBIENT));
 
@@ -56,7 +57,7 @@ export function createGraphExtractorHost(
     },
     getSourceFile: (
       fileName: string,
-      languageVersion: ts.ScriptTarget,
+      languageVersion: TsModule.ScriptTarget,
       onError?: (message: string) => void,
       shouldCreateNewSourceFile?: boolean,
     ) => {
@@ -78,7 +79,7 @@ export function collectIntraFileCallEdges(
   const virt = toForwardSlash(toVirtualTsPath(absEtsPath));
   virtualToReal.set(virt, absEtsPath);
 
-  const options: ts.CompilerOptions = {
+  const options: TsModule.CompilerOptions = {
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.CommonJS,
     moduleResolution: ts.ModuleResolutionKind.NodeJs,
@@ -99,7 +100,7 @@ export function collectIntraFileCallEdges(
   const edges: Array<{ caller_symbol: string; callee_symbol: string; line: number }> = [];
   let currentFn = '<module>';
 
-  const visit = (node: ts.Node): void => {
+  const visit = (node: TsModule.Node): void => {
     if (ts.isFunctionDeclaration(node) && node.name) {
       currentFn = node.name.getText(sf);
     } else if (ts.isMethodDeclaration(node) && node.name) {

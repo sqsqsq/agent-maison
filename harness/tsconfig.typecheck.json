@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["./**/*.ts", "../profiles/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/tests/**",
+    "../profiles/**/node_modules/**",
+    "../profiles/**/vendor/**"
+  ]
+}

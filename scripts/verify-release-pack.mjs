@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { packRelease } from './pack-release.mjs';
 import { checkStaleInitRefs, formatStaleInitRefHits } from './check-stale-init-refs.mjs';
@@ -100,6 +101,7 @@ function assertZipContents(frameworkRoot) {
   const mustExist = [
     'README.md',
     'MIGRATION.md',
+    'harness/tsconfig.typecheck.json',
     'harness/scripts/check-init.ts',
     'harness/reports/.gitkeep',
     'harness/state/.gitkeep',
@@ -149,10 +151,25 @@ function assertZipContents(frameworkRoot) {
   if (harnessPkg.scripts?.test !== 'npm run check:global') {
     fail(`sanitized harness/package.json test must be "npm run check:global", got: ${harnessPkg.scripts?.test}`);
   }
+  if (!harnessPkg.scripts?.typecheck) {
+    fail('sanitized harness/package.json must retain typecheck script for consumer self-diagnosis');
+  }
+  if (harnessPkg.scripts.typecheck !== 'tsc --noEmit -p tsconfig.typecheck.json') {
+    fail(`sanitized harness/package.json typecheck must point at tsconfig.typecheck.json, got: ${harnessPkg.scripts.typecheck}`);
+  }
 }
 
 export async function verifyReleasePack() {
   const rules = loadReleaseExcludes();
+
+  console.log('[release:verify] typecheck (tsc --noEmit)...');
+  const tc = spawnSync('npm', ['run', 'typecheck'], {
+    cwd: path.join(REPO_ROOT, 'harness'),
+    stdio: 'inherit',
+    shell: true,
+  });
+  if (tc.status !== 0) fail('typecheck (tsc --noEmit) failed');
+  console.log('[release:verify] typecheck PASS');
 
   console.log('[release:verify] synthetic rule tests...');
   const synthErrors = runSyntheticRuleTests(REPO_ROOT, rules);
