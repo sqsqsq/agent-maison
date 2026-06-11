@@ -3,6 +3,8 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
+import { featurePhaseReportsDir, receiptFilePath } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
   FeaturePhase,
@@ -83,6 +85,9 @@ export interface GoalRunEvent {
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;
+  recovered?: boolean;
+  invoke_id?: string;
+  invoke_start_ts?: string;
 }
 
 export interface ResumedBudget {
@@ -316,4 +321,169 @@ export function resolveResumeState(
   }
 
   return { priorOutcomes, startIndex, deferredUpstream };
+}
+
+export interface PhaseSummaryPassReceipt {
+  verdict: string;
+  receipt_status?: string;
+  closure_status?: string;
+  mtimeMs: number;
+}
+
+/** Read on-disk phase summary + receipt closure fields for half-phase recovery. */
+export function readPhaseSummaryPassReceipt(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+): PhaseSummaryPassReceipt | null {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+  const summaryPath = path.join(dir, 'summary.json');
+  if (!fs.existsSync(summaryPath)) return null;
+  try {
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
+      verdict?: string;
+      receipt_status?: string;
+      closure_status?: string;
+    };
+    return {
+      verdict: summary.verdict ?? '',
+      receipt_status: summary.receipt_status,
+      closure_status: summary.closure_status,
+      mtimeMs: fs.statSync(summaryPath).mtimeMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */
+export function findUnclosedAgentInvokeStart(events: GoalRunEvent[]): GoalRunEvent | null {
+  const openStarts: GoalRunEvent[] = [];
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase && FEATURE_PHASE_SET.has(e.phase)) {
+      openStarts.push(e);
+    } else if (e.type === 'agent_invoke_end' && e.phase && FEATURE_PHASE_SET.has(e.phase)) {
+      let matched = false;
+      if (e.invoke_id) {
+        for (let i = openStarts.length - 1; i >= 0; i--) {
+          if (openStarts[i].invoke_id === e.invoke_id) {
+            openStarts.splice(i, 1);
+            matched = true;
+            break;
+          }
+        }
+      }
+      if (!matched) {
+        for (let i = openStarts.length - 1; i >= 0; i--) {
+          if (openStarts[i].phase === e.phase) {
+            openStarts.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return openStarts.length > 0 ? openStarts[openStarts.length - 1]! : null;
+}
+
+/** Receipt on disk is from the same invoke window as summary (mtime + optional claimed_completion_at). */
+export function isReceiptFreshForInvokeStart(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+  invokeStartMs: number,
+): boolean {
+  if (Number.isNaN(invokeStartMs)) return false;
+  const receiptPath = receiptFilePath(projectRoot, feature, phase);
+  if (!fs.existsSync(receiptPath)) return false;
+
+  const mtimeMs = fs.statSync(receiptPath).mtimeMs;
+  if (mtimeMs <= invokeStartMs) return false;
+
+  try {
+    const raw = fs.readFileSync(receiptPath, 'utf-8');
+    const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw.replace(/^\uFEFF/, ''));
+    if (!fmMatch) return true;
+    const claimedLine = fmMatch[1]
+      .split(/\r?\n/)
+      .find((line) => /^\s*claimed_completion_at\s*:/.test(line));
+    if (!claimedLine) return true;
+    const value = claimedLine.replace(/^\s*claimed_completion_at\s*:\s*/, '').replace(/^["']|["']$/g, '').trim();
+    if (!value) return true;
+    const claimedMs = new Date(value).getTime();
+    if (Number.isNaN(claimedMs)) return false;
+    return claimedMs > invokeStartMs;
+  } catch {
+    return false;
+  }
+}
+
+function phaseHasTerminalVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
+  for (const e of events) {
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.action === 'retry') continue;
+    return true;
+  }
+  return false;
+}
+
+function phaseHasRecoveredVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
+  for (const e of events) {
+    if (e.type === 'phase_verdict' && e.phase === phase && e.recovered === true) return true;
+  }
+  return false;
+}
+
+/** Detect half-completed phase eligible for resume recovery (fresh PASS summary, unclosed invoke). */
+export function detectHalfCompletedPhaseRecovery(
+  events: GoalRunEvent[],
+  projectRoot: string,
+  feature: string,
+): { phase: FeaturePhase; invokeStartTs: string } | null {
+  const unclosed = findUnclosedAgentInvokeStart(events);
+  if (!unclosed?.phase || !unclosed.ts) return null;
+
+  const phase = unclosed.phase as FeaturePhase;
+  if (phaseHasTerminalVerdict(events, phase) || phaseHasRecoveredVerdict(events, phase)) {
+    return null;
+  }
+
+  const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
+  if (!summary || summary.verdict !== 'PASS') return null;
+  if (summary.receipt_status !== 'passed' || summary.closure_status !== 'closed') return null;
+
+  const startMs = new Date(unclosed.ts).getTime();
+  if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
+  if (!isReceiptFreshForInvokeStart(projectRoot, feature, phase, startMs)) return null;
+
+  return { phase, invokeStartTs: unclosed.ts };
+}
+
+export interface HalfPhaseRecoveryEvent {
+  type: string;
+  phase: FeaturePhase;
+  [key: string]: unknown;
+}
+
+/** Build compensation events for half-completed phase (orchestrator writes before rebuild). */
+export function buildHalfPhaseRecoveryEvents(
+  detected: { phase: FeaturePhase; invokeStartTs: string },
+): HalfPhaseRecoveryEvent[] {
+  const ts = new Date().toISOString();
+  return [
+    {
+      type: 'agent_invoke_recovered',
+      ts,
+      phase: detected.phase,
+      invoke_start_ts: detected.invokeStartTs,
+    },
+    {
+      type: 'phase_verdict',
+      ts,
+      phase: detected.phase,
+      verdict: 'PASS',
+      action: 'advance',
+      recovered: true,
+    },
+  ];
 }

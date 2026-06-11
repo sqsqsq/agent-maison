@@ -46,8 +46,17 @@ export function readLockRecord(lockPath: string): LockRecord | null {
 export function isLockStale(record: LockRecord, staleMs: number = STALE_LOCK_MS): boolean {
   const updated = new Date(record.updated_at).getTime();
   if (Number.isNaN(updated)) return true;
-  const age = Date.now() - updated;
-  return age > staleMs && !isPidAlive(record.pid);
+
+  const heartbeatStale = Date.now() - updated > staleMs;
+
+  // Same-host: dead pid → immediately stale; alive pid → heartbeat TTL fallback.
+  if (record.hostname === os.hostname()) {
+    if (!isPidAlive(record.pid)) return true;
+    return heartbeatStale;
+  }
+
+  // Cross-host: cannot trust local pid probe — TTL only.
+  return heartbeatStale;
 }
 
 function writeLockFile(lockPath: string, record: LockRecord): void {

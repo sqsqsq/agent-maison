@@ -46,8 +46,131 @@ const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
 /** Disabled by default — cursor-agent often streams little until phase end. Opt-in via silentWatchdogMs. */
 export const DEFAULT_SILENT_WATCHDOG_MS = 0;
 
+/** Grace after child `exit` before forcing resolve when `close` never arrives (lingering pipe). */
+export const DEFAULT_CHILD_SETTLE_GRACE_MS = 3_000;
+
+/** Hard deadline after kill requested when neither `exit` nor `close` arrives. */
+export const DEFAULT_FORCE_SETTLE_AFTER_KILL_MS = 5_000;
+
+/** Max wait for killProcessTree — kill is best-effort observability after this. */
+export const DEFAULT_KILL_PROCESS_TREE_WAIT_MS = 10_000;
+
+/** Max wait to drain in-flight kill after child settled — invoke must not hang here. */
+export const DEFAULT_KILL_INFLIGHT_DRAIN_MS = 1_000;
+
+/** Race promise against timeout; on timeout return fallback (kill path must never block settle). */
+export async function awaitPromiseWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** When streaming to outputLogPath, retain at most this much in memory for invoke result. */
 export const INVOKE_OUTPUT_MEMORY_CAP = 64 * 1024;
+
+export interface ChildSettledResult {
+  exitCode: number;
+  signal: string | null;
+  lingering_pipe: boolean;
+}
+
+export interface AwaitChildSettledOptions {
+  graceMs?: number;
+  forceSettleAfterKillMs?: number;
+  outputStream?: fs.WriteStream | null;
+}
+
+/** Normalize Node exit code — keep AgentInvokeResult.exitCode as number (null signal exit → 1). */
+export function normalizeChildExitCode(code: number | null, sig: NodeJS.Signals | null): number {
+  if (code === 0) return 0;
+  if (code !== null && code !== undefined) return code;
+  return 1;
+}
+
+export interface ChildSettleWaiter {
+  promise: Promise<ChildSettledResult>;
+  /** Arm hard deadline after timeout/silent kill when exit/close may never arrive. */
+  armForceSettleAfterKill: () => void;
+}
+
+/**
+ * Wait for child process settlement — exit is termination truth; close flushes stdio.
+ * When close never fires (inherited pipe held by detached helper), grace then destroy + resolve.
+ */
+export function createChildSettleWaiter(
+  child: ChildProcess,
+  opts: AwaitChildSettledOptions = {},
+): ChildSettleWaiter {
+  const graceMs = opts.graceMs ?? DEFAULT_CHILD_SETTLE_GRACE_MS;
+  const forceSettleAfterKillMs = opts.forceSettleAfterKillMs ?? DEFAULT_FORCE_SETTLE_AFTER_KILL_MS;
+
+  let settled = false;
+  let exitCode = 1;
+  let signal: string | null = null;
+  let graceTimer: ReturnType<typeof setTimeout> | null = null;
+  let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveFn!: (r: ChildSettledResult) => void;
+
+  const promise = new Promise<ChildSettledResult>((resolve) => {
+    resolveFn = resolve;
+  });
+
+  const finalize = async (lingering_pipe: boolean): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    if (graceTimer) clearTimeout(graceTimer);
+    if (forceKillTimer) clearTimeout(forceKillTimer);
+    if (opts.outputStream) {
+      await new Promise<void>((r) => opts.outputStream!.end(() => r()));
+    }
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    resolveFn({ exitCode, signal, lingering_pipe });
+  };
+
+  const armForceSettleAfterKill = (): void => {
+    if (settled || forceKillTimer) return;
+    forceKillTimer = setTimeout(() => {
+      void finalize(true);
+    }, forceSettleAfterKillMs);
+  };
+
+  child.on('error', () => {
+    exitCode = 1;
+    void finalize(false);
+  });
+
+  child.on('exit', (code, sig) => {
+    exitCode = normalizeChildExitCode(code, sig);
+    signal = sig;
+    if (settled) return;
+    graceTimer = setTimeout(() => {
+      void finalize(true);
+    }, graceMs);
+  });
+
+  child.on('close', (code, sig) => {
+    if (!settled && code !== null) {
+      exitCode = normalizeChildExitCode(code, sig);
+    }
+    if (sig) signal = sig;
+    void finalize(false);
+  });
+
+  return { promise, armForceSettleAfterKill };
+}
 
 export function renderInvokeTemplate(template: string, vars: InvokeTemplateVars): string {
   let out = template;
@@ -305,6 +428,7 @@ export async function killProcessTree(pid: number): Promise<KillTreeResult> {
 
   try {
     if (process.platform === 'win32') {
+      // spawnSync blocks the event loop — awaitPromiseWithTimeout cannot interrupt a hung taskkill.
       const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
         encoding: 'utf-8',
         shell: true,
@@ -365,6 +489,7 @@ export interface AgentInvokeResult {
   timed_out?: boolean;
   silent_killed?: boolean;
   signal?: string | null;
+  lingering_pipe?: boolean;
   kill_attempted?: boolean;
   kill_exit_code?: number | null;
   kill_error?: string | null;
@@ -469,13 +594,26 @@ async function spawnHeadlessAsync(
   let killInFlight: Promise<void> | null = null;
   let killTriggered = false;
 
+  const settleWaiter = createChildSettleWaiter(child, { outputStream });
+
   const killTree = (reason: 'timeout' | 'silent' | 'signal'): Promise<void> => {
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
     if (reason === 'timeout') timedOut = true;
     if (reason === 'silent') silentKilled = true;
+    settleWaiter.armForceSettleAfterKill();
     killInFlight = (async () => {
-      killResult = await killProcessTree(pid);
+      if (pid > 0) {
+        killResult = await awaitPromiseWithTimeout(
+          killProcessTree(pid),
+          DEFAULT_KILL_PROCESS_TREE_WAIT_MS,
+          {
+            kill_attempted: true,
+            kill_exit_code: null,
+            kill_error: 'kill_process_tree_timeout',
+          },
+        );
+      }
     })();
     return killInFlight;
   };
@@ -508,22 +646,18 @@ async function spawnHeadlessAsync(
         }, 30_000)
       : null;
 
-  await new Promise<void>((resolve) => {
-    child.on('error', () => resolve());
-    child.on('close', (code, sig) => {
-      exitCode = code ?? 1;
-      signal = sig;
-      resolve();
-    });
-  });
+  const settled = await settleWaiter.promise;
 
-  if (killInFlight) await killInFlight;
+  if (killInFlight) {
+    await awaitPromiseWithTimeout(killInFlight, DEFAULT_KILL_INFLIGHT_DRAIN_MS, undefined);
+  }
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (silentTimer) clearInterval(silentTimer);
-  if (outputStream) {
-    await new Promise<void>((r) => outputStream.end(() => r()));
-  }
+
+  exitCode = settled.exitCode;
+  signal = settled.signal;
+
   opts.onChildExit?.();
 
   const duration_ms = Date.now() - started;
@@ -538,6 +672,7 @@ async function spawnHeadlessAsync(
     timed_out: timedOut || undefined,
     silent_killed: silentKilled || undefined,
     signal,
+    lingering_pipe: settled.lingering_pipe || undefined,
     kill_attempted: killResult.kill_attempted,
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,

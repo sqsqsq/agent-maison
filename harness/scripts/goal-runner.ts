@@ -42,14 +42,17 @@ import {
 } from './utils/goal-report-generator';
 import {
   invokeAgentHeadless,
+  createChildSettleWaiter,
   killProcessTree,
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
 import {
+  buildHalfPhaseRecoveryEvents,
   checkRunBudget,
   checkTerminalResumeGuard,
   countAgentInvokeStarts,
+  detectHalfCompletedPhaseRecovery,
   findLastRunEnd,
   getSummaryMtime,
   loadEventsJsonl,
@@ -217,29 +220,33 @@ async function runHarnessPhase(
 ): Promise<number> {
   if (dryRun) return 0;
   const harnessDir = path.join(frameworkRoot, 'harness');
-  return new Promise((resolve) => {
-    const child = spawn(
-      process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
-      {
-        cwd: harnessDir,
-        shell: process.platform === 'win32',
-        env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
-    activeHarnessKill = async () => {
-      if (child.pid) await killProcessTree(child.pid);
-    };
-    child.stdout?.on('data', (chunk: Buffer | string) => process.stdout.write(chunk));
-    child.stderr?.on('data', (chunk: Buffer | string) => process.stderr.write(chunk));
-    const finish = (code: number): void => {
-      activeHarnessKill = null;
-      resolve(code);
-    };
-    child.on('close', (code) => finish(code ?? 1));
-    child.on('error', () => finish(1));
-  });
+  const child = spawn(
+    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
+    {
+      cwd: harnessDir,
+      shell: process.platform === 'win32',
+      env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  activeHarnessKill = async () => {
+    if (child.pid) {
+      await killProcessTree(child.pid);
+    }
+  };
+  child.stdout?.on('data', (chunk: Buffer | string) => process.stdout.write(chunk));
+  child.stderr?.on('data', (chunk: Buffer | string) => process.stderr.write(chunk));
+
+  const settleWaiter = createChildSettleWaiter(child, {});
+  try {
+    const settled = await settleWaiter.promise;
+    activeHarnessKill = null;
+    return settled.exitCode;
+  } catch {
+    activeHarnessKill = null;
+    return 1;
+  }
 }
 
 function buildPhasePrompt(
@@ -421,9 +428,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
-    const priorEvents = loadEventsJsonl(eventsPath);
+    let priorEvents = loadEventsJsonl(eventsPath);
 
     if (argv.resume) {
+      const halfRecovery = detectHalfCompletedPhaseRecovery(
+        priorEvents,
+        projectRoot,
+        manifest.feature,
+      );
+      if (halfRecovery) {
+        for (const ev of buildHalfPhaseRecoveryEvents(halfRecovery)) {
+          appendEvent(manifest.report_dir, projectRoot, ev);
+        }
+        priorEvents = loadEventsJsonl(eventsPath);
+      }
+
       const priorReport = loadGoalReportJson(projectRoot, manifest.report_dir);
       const lastRunEnd = findLastRunEnd(priorEvents);
       const guard = checkTerminalResumeGuard({
@@ -464,8 +483,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         deferredUpstream = [...resume.deferredUpstream];
         chainStartIndex = resume.startIndex;
       } else {
-        const events = loadEventsJsonl(eventsPath);
-        const resume = resolveResumeFromEvents(chain, events);
+        const resume = resolveResumeFromEvents(chain, priorEvents);
         outcomes = [...resume.priorOutcomes];
         deferredUpstream = [...resume.deferredUpstream];
         chainStartIndex = resume.startIndex;
@@ -574,6 +592,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           duration_ms: invoke.duration_ms,
           timed_out: invoke.timed_out,
           silent_killed: invoke.silent_killed,
+          lingering_pipe: invoke.lingering_pipe,
           kill_attempted: invoke.kill_attempted,
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,

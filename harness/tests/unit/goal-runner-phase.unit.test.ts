@@ -1,5 +1,7 @@
 // goal-runner-phase.unit.test.ts — summary freshness, resume, structured invoke
 
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   classifyPhaseVerdict,
@@ -24,6 +26,10 @@ import {
   resolveResumeFromEvents,
   rebuildOutcomesFromEvents,
   parseCompletedPhasesFromEvents,
+  detectHalfCompletedPhaseRecovery,
+  buildHalfPhaseRecoveryEvents,
+  findUnclosedAgentInvokeStart,
+  isReceiptFreshForInvokeStart,
 } from '../../scripts/utils/goal-runner-phase';
 import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
@@ -36,6 +42,56 @@ const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
+}
+
+function mkProjectWithReportsPattern(root: string): void {
+  const frameworkRoot = path.resolve(__dirname, '..', '..', '..');
+  fs.mkdirSync(path.join(root, 'framework', 'harness', 'state'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
+  fs.copyFileSync(
+    path.join(frameworkRoot, 'workflows', 'spec-driven.workflow.yaml'),
+    path.join(root, 'framework', 'workflows', 'spec-driven.workflow.yaml'),
+  );
+  fs.writeFileSync(
+    path.join(root, 'framework.config.json'),
+    JSON.stringify({
+      schema_version: '1.1',
+      project_name: 'half-phase-test',
+      project_profile: { name: 'generic' },
+      agent_adapter: 'generic',
+      architecture: {
+        outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+        module_inner_layers: ['content'],
+        inner_dependency_direction: 'upward',
+        cross_module_exports_file: 'index.ts',
+      },
+      paths: {
+        features_dir: 'doc/features',
+        reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
+      },
+      active_workflow: 'spec-driven',
+    }),
+    'utf-8',
+  );
+}
+
+function writeFreshReceipt(
+  root: string,
+  feature: string,
+  phase: string,
+  startMs: number,
+  claimedAtIso: string,
+): string {
+  const receiptDir = path.join(root, 'doc', 'features', feature, phase);
+  fs.mkdirSync(receiptDir, { recursive: true });
+  const receiptPath = path.join(receiptDir, 'phase-completion-receipt.md');
+  fs.writeFileSync(
+    receiptPath,
+    `---\nfeature: ${feature}\nphase: ${phase}\nclaimed_completion_at: "${claimedAtIso}"\n---\n`,
+    'utf-8',
+  );
+  fs.utimesSync(receiptPath, new Date(startMs + 60_000), new Date(startMs + 60_000));
+  return receiptPath;
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -165,6 +221,152 @@ const cases: Array<{ name: string; run: () => void }> = [
       ]);
       assert(r.startIndex === 1, `index ${r.startIndex}`);
       assert(r.priorOutcomes.length === 1, 'drop halted from prior');
+    },
+  },
+  {
+    name: 'findUnclosedAgentInvokeStart: invoke_id pairs end to correct start on retry',
+    run: () => {
+      const open = findUnclosedAgentInvokeStart([
+        { type: 'agent_invoke_start', phase: 'coding', ts: '2026-01-01T00:00:00Z', invoke_id: 'a1' },
+        { type: 'agent_invoke_end', phase: 'coding', ts: '2026-01-01T00:01:00Z', invoke_id: 'a1' },
+        { type: 'agent_invoke_start', phase: 'coding', ts: '2026-01-01T00:02:00Z', invoke_id: 'a2' },
+      ]);
+      assert(open?.invoke_id === 'a2', open?.invoke_id ?? 'none');
+    },
+  },
+  {
+    name: 'findUnclosedAgentInvokeStart: coding without end',
+    run: () => {
+      const open = findUnclosedAgentInvokeStart([
+        { type: 'agent_invoke_start', phase: 'coding', ts: '2026-01-01T00:00:00Z' },
+      ]);
+      assert(open?.phase === 'coding', open?.phase ?? 'none');
+    },
+  },
+  {
+    name: 'detectHalfCompletedPhaseRecovery: fresh PASS summary after unclosed start',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-'));
+      mkProjectWithReportsPattern(root);
+      const feature = 'demo';
+      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
+      fs.mkdirSync(phaseDir, { recursive: true });
+      const summaryPath = path.join(phaseDir, 'summary.json');
+      fs.writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          verdict: 'PASS',
+          receipt_status: 'passed',
+          closure_status: 'closed',
+        }),
+        'utf-8',
+      );
+      const startTs = '2026-01-01T00:00:00.000Z';
+      const startMs = new Date(startTs).getTime();
+      fs.utimesSync(summaryPath, new Date(startMs + 60_000), new Date(startMs + 60_000));
+      writeFreshReceipt(root, feature, 'coding', startMs, '2026-01-01T01:00:00.000Z');
+
+      const detected = detectHalfCompletedPhaseRecovery(
+        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }],
+        root,
+        feature,
+      );
+      assert(detected?.phase === 'coding', detected?.phase ?? 'none');
+
+      const events = buildHalfPhaseRecoveryEvents(detected!);
+      assert(events.length === 2, String(events.length));
+      assert(events[1].recovered === true, 'recovered verdict');
+
+      const resume = resolveResumeFromEvents(
+        ['prd', 'design', 'coding', 'review', 'ut', 'testing'],
+        [
+          { type: 'phase_verdict', phase: 'prd', action: 'advance', verdict: 'PASS' },
+          { type: 'phase_verdict', phase: 'design', action: 'advance', verdict: 'PASS' },
+          { type: 'agent_invoke_start', phase: 'coding', ts: startTs },
+          ...(events as Parameters<typeof resolveResumeFromEvents>[1]),
+        ],
+      );
+      assert(resume.startIndex === 3, `startIndex ${resume.startIndex} (review)`);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'detectHalfCompletedPhaseRecovery: fresh summary but stale receipt → null',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-stale-rcpt-'));
+      mkProjectWithReportsPattern(root);
+      const feature = 'demo';
+      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
+      fs.mkdirSync(phaseDir, { recursive: true });
+      const summaryPath = path.join(phaseDir, 'summary.json');
+      const startTs = '2026-06-01T00:00:00.000Z';
+      const startMs = new Date(startTs).getTime();
+      fs.writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          verdict: 'PASS',
+          receipt_status: 'passed',
+          closure_status: 'closed',
+        }),
+        'utf-8',
+      );
+      fs.utimesSync(summaryPath, new Date(startMs + 60_000), new Date(startMs + 60_000));
+      const receiptPath = writeFreshReceipt(root, feature, 'coding', startMs, '2026-01-01T01:00:00.000Z');
+      const oldMs = new Date('2020-01-01').getTime();
+      fs.utimesSync(receiptPath, new Date(oldMs), new Date(oldMs));
+
+      const detected = detectHalfCompletedPhaseRecovery(
+        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }],
+        root,
+        feature,
+      );
+      assert(detected === null, 'stale receipt rejected');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'isReceiptFreshForInvokeStart: claimed_completion_at before invoke start → false',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-old-claim-'));
+      mkProjectWithReportsPattern(root);
+      const feature = 'demo';
+      const startMs = new Date('2026-06-01T00:00:00.000Z').getTime();
+      writeFreshReceipt(root, feature, 'coding', startMs, '2026-01-01T00:00:00.000Z');
+      assert(
+        !isReceiptFreshForInvokeStart(root, feature, 'coding', startMs),
+        'old claimed_completion_at rejected',
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'detectHalfCompletedPhaseRecovery: stale summary before invoke start → null',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-stale-'));
+      mkProjectWithReportsPattern(root);
+      const feature = 'demo';
+      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
+      fs.mkdirSync(phaseDir, { recursive: true });
+      const summaryPath = path.join(phaseDir, 'summary.json');
+      fs.writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          verdict: 'PASS',
+          receipt_status: 'passed',
+          closure_status: 'closed',
+        }),
+        'utf-8',
+      );
+      const oldMs = new Date('2020-01-01').getTime();
+      fs.utimesSync(summaryPath, new Date(oldMs), new Date(oldMs));
+
+      const detected = detectHalfCompletedPhaseRecovery(
+        [{ type: 'agent_invoke_start', phase: 'coding', ts: '2026-06-01T00:00:00.000Z' }],
+        root,
+        feature,
+      );
+      assert(detected === null, 'stale summary rejected');
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

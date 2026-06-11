@@ -190,6 +190,45 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'isLockStale: same-host dead pid immediately stale',
+    run: () => {
+      const record = {
+        ownerId: 'x',
+        pid: 999999999,
+        hostname: os.hostname(),
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      assert(isLockStale(record, 90 * 60 * 1000), 'dead pid stale');
+    },
+  },
+  {
+    name: 'isLockStale: same-host alive pid + old heartbeat → stale',
+    run: () => {
+      const record = {
+        ownerId: 'x',
+        pid: process.pid,
+        hostname: os.hostname(),
+        started_at: '2020-01-01T00:00:00Z',
+        updated_at: '2020-01-01T00:00:00Z',
+      };
+      assert(isLockStale(record, 1000), 'heartbeat TTL stale even when pid alive');
+    },
+  },
+  {
+    name: 'isLockStale: cross-host fresh lock not stale until TTL',
+    run: () => {
+      const record = {
+        ownerId: 'x',
+        pid: 999999999,
+        hostname: 'remote-host-not-local',
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      assert(!isLockStale(record, 90 * 60 * 1000), 'cross-host fresh');
+    },
+  },
+  {
     name: 'isLockStale: dead pid + old heartbeat',
     run: () => {
       const record = {
@@ -298,6 +337,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(src.includes('activeHarnessKill'), 'activeHarnessKill variable');
       assert(src.includes('async function runHarnessPhase'), 'async runHarnessPhase');
       assert(src.includes('killProcessTree'), 'killProcessTree import');
+      assert(src.includes('createChildSettleWaiter'), 'createChildSettleWaiter import');
       assert(src.includes('spawn('), 'spawn for harness child');
       assert(!/async function runHarnessPhase[\s\S]*?spawnSync/.test(src), 'no spawnSync in runHarnessPhase');
     },

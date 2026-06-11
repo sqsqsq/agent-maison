@@ -616,8 +616,13 @@ function resolveHvigorOptions(projectRoot: string): ResolvedHvigorOptions {
     fromConfig = undefined;
   }
 
+  const goalOrchestrated =
+    process.env.MAISON_GOAL_RUNNER === '1' || process.env.MAISON_GOAL_HEADLESS === '1';
+
   return {
-    daemon: fromConfig?.daemon ?? DEFAULT_HVIGOR_OPTIONS.daemon,
+    daemon: goalOrchestrated
+      ? false
+      : (fromConfig?.daemon ?? DEFAULT_HVIGOR_OPTIONS.daemon),
     parallel: fromConfig?.parallel ?? DEFAULT_HVIGOR_OPTIONS.parallel,
     incremental: fromConfig?.incremental ?? DEFAULT_HVIGOR_OPTIONS.incremental,
     analyze: fromConfig?.analyze ?? DEFAULT_HVIGOR_OPTIONS.analyze,
