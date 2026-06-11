@@ -835,9 +835,9 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
   if (!contracts?.files?.length) {
     return [
       {
-        id: 'design_file_plan_to_code',
+        id: 'plan_file_to_code',
         category: 'traceability',
-        description: ruleDesc(ctx, 'traceability_checks', 'design_file_plan_to_code'),
+        description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
         severity: 'BLOCKER',
         status: 'SKIP',
         details: 'contracts.yaml 无 files 列表。',
@@ -854,9 +854,9 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
   if (missing.length === 0) {
     return [
       {
-        id: 'design_file_plan_to_code',
+        id: 'plan_file_to_code',
         category: 'traceability',
-        description: ruleDesc(ctx, 'traceability_checks', 'design_file_plan_to_code'),
+        description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
         severity: 'BLOCKER',
         status: 'PASS',
         details: `设计规划的全部 ${etsFiles.length} 个 .ets 文件均已实现。`,
@@ -866,14 +866,14 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
 
   return [
     {
-      id: 'design_file_plan_to_code',
+      id: 'plan_file_to_code',
       category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'design_file_plan_to_code'),
+      description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `${missing.length}/${etsFiles.length} 个规划 .ets 文件缺失：\n${truncateList(missing, 15)}`,
       affected_files: missing,
-      suggestion: '请按照 design.md 目录/文件结构规划补全缺失的 .ets 文件。',
+      suggestion: '请按照 plan.md 目录/文件结构规划补全缺失的 .ets 文件。',
     },
   ];
 }
@@ -883,9 +883,9 @@ function checkCodeToDesign(ctx: CheckContext): CheckResult[] {
   if (!contracts?.files?.length || !contracts?.modules?.length) {
     return [
       {
-        id: 'code_to_design',
+        id: 'code_to_plan',
         category: 'traceability',
-        description: ruleDesc(ctx, 'traceability_checks', 'code_to_design'),
+        description: ruleDesc(ctx, 'traceability_checks', 'code_to_plan'),
         severity: 'MAJOR',
         status: 'SKIP',
         details: 'contracts.yaml 无 files 或 modules 列表。',
@@ -923,9 +923,9 @@ function checkCodeToDesign(ctx: CheckContext): CheckResult[] {
   if (unexpected.length === 0) {
     return [
       {
-        id: 'code_to_design',
+        id: 'code_to_plan',
         category: 'traceability',
-        description: ruleDesc(ctx, 'traceability_checks', 'code_to_design'),
+        description: ruleDesc(ctx, 'traceability_checks', 'code_to_plan'),
         severity: 'MAJOR',
         status: 'PASS',
         details: '所有 .ets 文件均在 contracts.yaml 的规划中。',
@@ -935,14 +935,14 @@ function checkCodeToDesign(ctx: CheckContext): CheckResult[] {
 
   return [
     {
-      id: 'code_to_design',
+      id: 'code_to_plan',
       category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'code_to_design'),
+      description: ruleDesc(ctx, 'traceability_checks', 'code_to_plan'),
       severity: 'MAJOR',
       status: 'WARN',
       details: `${unexpected.length} 个 .ets 文件不在 contracts.yaml 的规划中：\n${truncateList(unexpected, 15)}`,
       affected_files: unexpected,
-      suggestion: '请确认这些文件是否应在 design.md / contracts.yaml 中补充规划。',
+      suggestion: '请确认这些文件是否应在 plan.md / contracts.yaml 中补充规划。',
     },
   ];
 }

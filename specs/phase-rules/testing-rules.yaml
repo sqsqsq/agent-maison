@@ -206,8 +206,8 @@ semantic_checks:
       测试用例应覆盖所有核心业务路径，包括正常流程和异常流程
     severity: MAJOR
     ai_prompt_hint: >
-      对比 PRD 业务流程图，检查测试用例是否覆盖了：
-      (1) 所有正常路径；(2) PRD 中定义的异常场景；
+      对比 spec 业务流程图，检查测试用例是否覆盖了：
+      (1) 所有正常路径；(2) spec 中定义的异常场景；
       (3) 关键的用户交互路径
 
   test_steps_reproducible:
@@ -230,11 +230,11 @@ semantic_checks:
 
   nfr_test_coverage:
     description: >
-      PRD 中的非功能性需求（性能指标、兼容性等）
+      spec 中的非功能性需求（性能指标、兼容性等）
       应有对应的测试用例或测试策略
     severity: MAJOR
     ai_prompt_hint: >
-      对照 PRD 非功能性需求章节，检查测试计划中是否有对应的验证方案：
+      对照 spec 非功能性需求章节，检查测试计划中是否有对应的验证方案：
       如首屏加载时间 ≤ 1.5s、Tab 切换 ≤ 300ms 等
 
   defect_severity_consistency:
@@ -299,10 +299,10 @@ traceability_checks:
 
   exception_scenario_coverage:
     description: >
-      PRD 异常场景表中的每个场景应有对应的测试用例
+      spec 异常场景表中的每个场景应有对应的测试用例
     severity: MAJOR
     rule:
-      source: "PRD.md > 异常/边界场景处理"
+      source: "spec.md > 异常/边界场景处理"
       target: "test-plan.md > 测试用例清单"
       match: "scenario_covered"
 

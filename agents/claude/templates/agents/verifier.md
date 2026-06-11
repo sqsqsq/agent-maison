@@ -16,7 +16,7 @@ tools: Read, Glob, Grep
 
 调用方应在 prompt 中提供：
 - `feature`: 功能名，如 `home-page` / `bank-card`
-- `phase`: `prd` | `design` | `coding` | `review` | `ut` | `testing`
+- `phase`: `spec` | `plan`（legacy：`prd`/`design` 仍接受） | `coding` | `review` | `ut` | `testing`
 - （可选）`script_report_path`: 脚本 Harness (`check-<phase>.ts`) 的报告路径
 - （可选）`trace_dir`: `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/`（未配置 `paths.reports_dir_pattern` 时 legacy：`framework/harness/reports/...`）
 
@@ -26,8 +26,8 @@ tools: Read, Glob, Grep
 1. **读取规则**：`framework/specs/phase-rules/<phase>-rules.yaml`
 2. **读取 prompt 模板**：`framework/harness/prompts/verify-<phase>.md`
 3. **读取待审产物**（按 phase）：
-   - prd → `doc/features/<feature>/prd/PRD.md`
-   - design → `doc/features/<feature>/design/design.md` + `contracts.yaml` + `acceptance.yaml`
+   - spec → `doc/features/<feature>/spec/spec.md`
+   - plan → `doc/features/<feature>/plan/plan.md` + `contracts.yaml` + `acceptance.yaml`
    - coding → 代码变更（用 `Glob` / `Read`，不执行 `git`，差异信息从 `script_report_path` 获取）
    - review → `doc/features/<feature>/review/review-report.md`
    - ut → UT 代码及 `acceptance.yaml`

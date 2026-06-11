@@ -92,8 +92,8 @@ structure_checks:
       豁免机制：`doc/glossary-seed-allowlist.txt`（可选）每行 = 一个豁免术语；
       若种子行出现在豁免清单里则放行（用于极少数行业通用英文缩写或宿主产物简称，如某 profile 的发行包类型 / SDK 缩写必要时）。
 
-      命中即 BLOCKER：glossary 是业务自然语言层，技术词污染会让 prd-design Step 1.5
-      误把 PRD 里的类名当成业务词去消歧，直接错分模块。
+      命中即 BLOCKER：glossary 是业务自然语言层，技术词污染会让 spec Step 1.5
+      误把 spec 里的类名当成业务词去消歧，直接错分模块。
     severity: BLOCKER
     rule:
       seed_file: "doc/glossary-seed.txt"

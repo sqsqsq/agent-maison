@@ -96,7 +96,7 @@ structure_checks:
   boundary_matches_contracts:
     description: >
       use-cases.yaml > data_boundaries[].type 必须能在 contracts.yaml >
-      interfaces[].class 中找到同名类（确保 UT 打桩的对象是 design
+      interfaces[].class 中找到同名类（确保 UT 打桩的对象是 plan
       阶段登记的真实 data 层类）。
     severity: MAJOR
     rule:
@@ -485,17 +485,17 @@ semantic_checks:
       expected_phase_seq 与 phases 集合是否一致。
     severity: MAJOR
     ai_prompt_hint: >
-      对照 PRD 流程图 / design.md 状态机 / use-cases.yaml > branches，
+      对照 spec 流程图 / plan.md 状态机 / use-cases.yaml > branches，
       判断 state_model 是否存在"多个分支共用一个过载态"或"缺必要中间态"。
 
   ui_bindings_completeness:
     description: >
-      use-cases.yaml > ui_bindings 是否完整覆盖了 design.md 里提到的所有
+      use-cases.yaml > ui_bindings 是否完整覆盖了 plan.md 里提到的所有
       页面/组件；每个用户可触发的交互是否都有对应的 user_actions.calls；
       role=progress/result 的展示页是否正确地归类为"不产生 user_actions"。
     severity: MAJOR
     ai_prompt_hint: >
-      核对 design.md 的 UI 清单与 ui_bindings：(1) 是否有遗漏的 UI 节点；
+      核对 plan.md 的 UI 清单与 ui_bindings：(1) 是否有遗漏的 UI 节点；
       (2) 每条 user_actions.trigger 是否有对应的 calls 指向命名函数；
       (3) role 分类是否正确。
 
@@ -523,11 +523,11 @@ semantic_checks:
 
   branch_coverage_semantic:
     description: >
-      use-cases.yaml > branches 是否涵盖 PRD 所有异常场景（network / validate
+      use-cases.yaml > branches 是否涵盖 spec 所有异常场景（network / validate
       fail / persist fail / user cancel 等），而不是只列 happy + 单一失败。
     severity: MAJOR
     ai_prompt_hint: >
-      对比 PRD 异常场景表 与 branches，列出未覆盖的异常路径。
+      对比 spec 异常场景表 与 branches，列出未覆盖的异常路径。
 
   device_ac_delegation:
     description: >

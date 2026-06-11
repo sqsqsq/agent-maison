@@ -3,12 +3,12 @@ name: spec-driven
 description: >
   Default harness workflow — mirrors legacy VALID_PHASES / phase DAG before optional
   instance extensions phase. Global phases have no deps; feature phases follow
-  catalog+glossary → PRD → design → coding → (review | UT parallel) → testing.
+  catalog+glossary → spec → plan → coding → (review | UT parallel) → testing.
 
 # Phase transition (agent UX; goal-runner may override to goal_mode at runtime):
 #   SSOT: framework/docs/concepts/phase-transition-policy.md
 transition_policy: manual
-auto_chain: [prd, design, coding, review, ut, testing]
+auto_chain: [spec, plan, coding, review, ut, testing]
 
 artifacts:
   - id: extensions
@@ -44,27 +44,27 @@ artifacts:
     rule: phase-rules/docs-rules.yaml
     requires: []
 
-  - id: prd
+  - id: spec
     scope: feature
-    check: check-prd.ts
-    rule: phase-rules/prd-rules.yaml
+    check: check-spec.ts
+    rule: phase-rules/spec-rules.yaml
     requires: [catalog, glossary]
-    verifier_prompt: prompts/verify-prd.md
-    skill_doc: ../skills/feature/prd-design/SKILL.md
+    verifier_prompt: prompts/verify-spec.md
+    skill_doc: ../skills/feature/spec/SKILL.md
 
-  - id: design
+  - id: plan
     scope: feature
-    check: check-design.ts
-    rule: phase-rules/design-rules.yaml
-    requires: [prd]
-    verifier_prompt: prompts/verify-design.md
-    skill_doc: ../skills/feature/requirement-design/SKILL.md
+    check: check-plan.ts
+    rule: phase-rules/plan-rules.yaml
+    requires: [spec]
+    verifier_prompt: prompts/verify-plan.md
+    skill_doc: ../skills/feature/plan/SKILL.md
 
   - id: coding
     scope: feature
     check: check-coding.ts
     rule: phase-rules/coding-rules.yaml
-    requires: [design]
+    requires: [plan]
     verifier_prompt: prompts/verify-coding.md
     skill_doc: ../skills/feature/coding/SKILL.md
 

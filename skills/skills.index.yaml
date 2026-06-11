@@ -26,26 +26,26 @@ skills:
     description: >
       目标模式 goal-runner 薄入口（调用确定性编排器，非自驱动裁决）
 
-  - id: prd-design
+  - id: spec
     scope: feature
-    source_rel: feature/prd-design
+    source_rel: feature/spec
     order: 10
     description: >
-      PRD 撰写
+      spec 撰写
 
-  - id: requirement-design
+  - id: plan
     scope: feature
-    source_rel: feature/requirement-design
+    source_rel: feature/plan
     order: 20
     description: >
-      PRD → 技术设计 design.md
+      spec → plan（plan.md）
 
   - id: coding
     scope: feature
     source_rel: feature/coding
     order: 30
     description: >
-      按 design / contracts 落地实现代码
+      按 plan / contracts 落地实现代码
 
   - id: code-review
     scope: feature

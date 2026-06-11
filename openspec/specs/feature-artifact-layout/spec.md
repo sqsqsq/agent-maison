@@ -14,8 +14,8 @@ Global cross-phase contracts (`acceptance.yaml`, `contracts.yaml`,
 root directory.
 
 #### Scenario: PRD written under prd subdirectory
-- **WHEN** an agent writes `PRD.md` for feature `demo`
-- **THEN** the canonical path SHALL be `doc/features/demo/prd/PRD.md`
+- **WHEN** an agent writes `spec.md` for feature `demo`
+- **THEN** the canonical path SHALL be `doc/features/demo/spec/spec.md`
 
 #### Scenario: Global contract stays at feature root
 - **WHEN** harness loads `contracts.yaml` for feature `demo`
@@ -28,7 +28,7 @@ When only a legacy flat path at the feature root exists, the framework SHALL
 return that path as `actualPath` with `usedLegacy=true`.
 
 #### Scenario: Legacy flat PRD still readable
-- **WHEN** `doc/features/demo/PRD.md` exists and `doc/features/demo/prd/PRD.md` does not
+- **WHEN** `doc/features/demo/spec.md` exists and `doc/features/demo/spec/spec.md` does not
 - **THEN** `resolveFeatureArtifact` SHALL set `exists=true`, `usedLegacy=true`, and `actualPath` to the legacy file
 
 ### Requirement: Legacy duplicate warning
@@ -38,7 +38,7 @@ paths exist for the same artifact, and harness checks SHALL emit a WARN
 suggesting removal of the legacy copy.
 
 #### Scenario: Both paths present triggers duplicate flag
-- **WHEN** both `doc/features/demo/prd/PRD.md` and `doc/features/demo/PRD.md` exist
+- **WHEN** both `doc/features/demo/spec/spec.md` and `doc/features/demo/spec.md` exist
 - **THEN** `legacyDuplicate` SHALL be true and `actualPath` SHALL be the canonical path
 
 ### Requirement: Artifact input normalization

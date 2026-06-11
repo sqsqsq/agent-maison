@@ -1,0 +1,13 @@
+schema_version: "1.0"
+modules:
+  - name: "CloudSvc"
+    layer: "01-Service"
+    sub_layer: null
+    format: "HAR"
+    one_liner: "fixture stub"
+    responsibilities: []
+    NOT_responsible_for: []
+    typical_business_terms: []
+    easily_confused_with: []
+    key_exports: []
+    entry_file: "stub.ets"

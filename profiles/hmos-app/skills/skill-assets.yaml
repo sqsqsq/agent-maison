@@ -19,16 +19,20 @@ assets:
     module_card_template: templates/module-card-template.yaml
     glossary_term_template: templates/glossary-term-template.yaml
 
-  prd-design:
-    prd_template: templates/prd-template.md
-    example_prd: examples/example-prd.md
-    examples_prd_mapping: examples-prd-mapping.md
+  spec:
+    spec_template: templates/spec-template.md
+    prd_template: templates/spec-template.md
+    example_spec: examples/example-spec.md
+    example_prd: examples/example-spec.md
+    examples_spec_mapping: examples-spec-mapping.md
 
-  requirement-design:
-    design_template: templates/design-template.md
+  plan:
+    plan_template: templates/plan-template.md
+    design_template: templates/plan-template.md
     api_spec_template: templates/api-spec.md
     data_model_template: templates/data-model.md
-    example_design: examples/example-design.md
+    example_plan: examples/example-plan.md
+    example_design: examples/example-plan.md
 
   coding:
     coding_standards: templates/coding-standards.md

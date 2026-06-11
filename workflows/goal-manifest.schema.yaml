@@ -6,7 +6,7 @@ description: >
 fields:
   start_phase:
     type: string
-    default: prd
+    default: spec
     description: Inclusive start feature phase
   end_phase:
     type: string

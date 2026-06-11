@@ -35,7 +35,7 @@
 ## 纪律
 
 - 裸「好 / 继续 / ok」不构成 BLOCKER 确认（init/setup 编排决策须 registry enum）
-- PRD 术语等 **artifact `[x]`** 仍须写回文件；对话 widget 不能替代
+- spec 术语等 **artifact `[x]`** 仍须写回文件；对话 widget 不能替代
 - **不替代** v2.9+ Research Sub-Phase / `context-exploration` harness
 
 ## Init / Setup 编排特例（BLOCKER）
@@ -58,5 +58,5 @@
 
 - widget 可用却仅给 Markdown 表 + 文本编号，未调 AskUserQuestion
 - option label 自造路径（含 `.claude/commands/skills/`）或 `(Recommended)` 标签
-- 跳过 Research Sub-Phase 直接写 PRD 正文大块（Step 2.5 仍 BLOCKER）
+- 跳过 Research Sub-Phase 直接写 spec 正文大块（Step 2.5 仍 BLOCKER）
 - 阶段四件套 PASS 后在同一执行流自动 Read 下一 Skill（须 `phase.next_step` 停等，见 user-confirmation-ux §8）

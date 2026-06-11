@@ -36,7 +36,7 @@ with a phase-rules YAML file under `specs/phase-rules/`.
 
 #### Scenario: PRD phase has check and rule pair
 - **WHEN** harness-runner executes the `prd` phase
-- **THEN** it MUST invoke `harness/scripts/check-prd.ts` against `specs/phase-rules/prd-rules.yaml`
+- **THEN** it MUST invoke `harness/scripts/check-spec.ts` against `specs/phase-rules/spec-rules.yaml`
 
 #### Scenario: Workflow DAG defines phase dependencies
 - **WHEN** harness resolves the active workflow

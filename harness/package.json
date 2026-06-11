@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "check": "ts-node harness-runner.ts",
+    "check:spec": "ts-node harness-runner.ts --phase spec",
+    "check:plan": "ts-node harness-runner.ts --phase plan",
     "check:prd": "ts-node harness-runner.ts --phase prd",
     "check:design": "ts-node harness-runner.ts --phase design",
     "check:coding": "ts-node harness-runner.ts --phase coding",

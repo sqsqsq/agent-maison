@@ -47,11 +47,11 @@
           },
           "check": {
             "type": "string",
-            "description": "Basename under framework/harness/scripts/ (e.g. check-prd.ts)."
+            "description": "Basename under framework/harness/scripts/ (e.g. check-spec.ts)."
           },
           "rule": {
             "type": "string",
-            "description": "Relative path under framework/specs/ (e.g. phase-rules/prd-rules.yaml)."
+            "description": "Relative path under framework/specs/ (e.g. phase-rules/spec-rules.yaml)."
           },
           "requires": {
             "type": "array",

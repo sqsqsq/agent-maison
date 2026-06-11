@@ -10,7 +10,7 @@ catalog_allowed_module_formats:
 detect:
   signature_files: []
 
-# 不参与 coding / ut / device 编译类门禁；仅跑 PRD/design/review/catalog/glossary 等文档向阶段
+# 不参与 coding / ut / device 编译类门禁；仅跑 spec/plan/review/catalog/glossary 等文档向阶段
 phases_disabled:
   - coding
   - ut
@@ -24,4 +24,4 @@ capabilities:
   device_test.run: { provider: none, severity: SKIP }
   device_test.build: { provider: none, severity: SKIP }
   device_test.install: { provider: none, severity: SKIP }
-  prd.visual_handoff: { provider: none, severity: SKIP }
+  spec.visual_handoff: { provider: none, severity: SKIP }

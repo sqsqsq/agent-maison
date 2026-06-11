@@ -22,7 +22,7 @@ capabilities:
   device_test.run: { provider: hylyre, severity: BLOCKER }
   device_test.build: { provider: hvigor_app, severity: BLOCKER }
   device_test.install: { provider: hdc_app, severity: BLOCKER }
-  prd.visual_handoff: { provider: script, severity: BLOCKER }
+  spec.visual_handoff: { provider: script, severity: BLOCKER }
 
 sub_variants:
   - name: element-service

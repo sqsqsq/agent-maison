@@ -96,7 +96,7 @@ function buildCodingCtx(root: string): CheckContext {
       feature: 'demo',
       contracts: {
         feature: 'demo',
-        source: 'design.md',
+        source: 'plan.md',
         version: '1',
         module_dependencies: {},
         files: [],

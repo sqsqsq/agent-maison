@@ -31,7 +31,7 @@
     },
     "phase": {
       "type": "string",
-      "enum": ["prd", "design", "coding", "review", "ut", "testing"],
+      "enum": ["spec", "plan", "coding", "review", "ut", "testing"],
       "description": "所处阶段"
     },
     "model_backend": {
@@ -139,7 +139,7 @@
         "properties": {
           "script": {
             "type": "string",
-            "description": "脚本名，如 check-design.ts"
+            "description": "脚本名，如 check-plan.ts"
           },
           "blockers": { "type": "integer", "minimum": 0 },
           "majors": { "type": "integer", "minimum": 0 },
@@ -270,8 +270,8 @@
           "kind": {
             "type": "string",
             "enum": [
-              "prd",
-              "design",
+              "spec",
+              "plan",
               "contracts",
               "acceptance",
               "code",

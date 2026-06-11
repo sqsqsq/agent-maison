@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "visual_handoff_ui_change",
+      "status": "FAIL",
+      "severity": "BLOCKER",
+      "details_includes": "已 opt-in spec.visual_handoff_enforcement=strict"
+    }
+  ]
+}

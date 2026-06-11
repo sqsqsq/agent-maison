@@ -127,12 +127,12 @@ semantic_checks:
       审查必须覆盖以下维度：
       架构层合规性（依据 framework.config.json > architecture.outer_layers）、
       模块内部分层（依据 architecture.module_inner_layers）、
-      接口一致性（vs design.md）、资源引用完整性、命名规范、异常处理、
-      PRD 功能覆盖
+      接口一致性（vs plan.md）、资源引用完整性、命名规范、异常处理、
+      spec 功能覆盖
     severity: MAJOR
     ai_prompt_hint: >
       检查审查报告是否涵盖了所有关键维度，
-      特别是架构分层和 design.md 一致性是否被审查
+      特别是架构分层和 plan.md 一致性是否被审查
 
   issue_accuracy:
     description: >
@@ -203,11 +203,11 @@ traceability_checks:
 
   review_scope_to_design:
     description: >
-      审查范围中声明的模块列表应与 design.md 的模块变更摘要一致
+      审查范围中声明的模块列表应与 plan.md 的模块变更摘要一致
     severity: MAJOR
     rule:
       source: "审查范围.模块列表"
-      target: "design.md > 模块变更摘要"
+      target: "plan.md > 模块变更摘要"
       coverage: "100%"
 
   blocker_fix_verification:

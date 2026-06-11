@@ -1,0 +1,438 @@
+# ============================================================================
+# spec 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 spec 文档（spec 产出）必须满足的通用规则。
+# 适用于所有功能模块的 doc/features/{module}/spec/spec.md。
+#
+# 消费者:
+#   - framework/harness/scripts/check-spec.ts  (脚本 Harness, 确定性检查)
+#   - framework/harness/prompts/verify-spec.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: spec
+version: "1.0"
+applies_to: "doc/features/{module}/spec/spec.md"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  required_chapters:
+    description: >
+      spec 必须包含以下 10 个一级或二级章节（按 Markdown heading 匹配）：
+      术语映射表、功能概述、Scope 声明、目标用户与使用场景、功能清单、
+      页面/界面描述、业务流程图、异常/边界场景处理、非功能性需求、验收标准
+    severity: BLOCKER
+    rule:
+      expected_headings:
+        - "术语映射表"
+        - "功能概述"
+        - "Scope 声明"
+        - "目标用户与使用场景"
+        - "功能清单"
+        - "页面/界面描述"
+        - "业务流程图"
+        - "异常/边界场景处理"
+        - "非功能性需求"
+        - "验收标准"
+      match: "heading_text_contains"
+
+  terminology_mapping_table:
+    description: >
+      「术语映射表」章节必须存在且为 spec Step 1.5 产出的标准格式：
+      (1) 至少包含一行业务术语；
+      (2) 每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认；
+      (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用 auto-approve）；
+      (4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内；
+      (5) 空映射表不被允许（即便只有一个术语也要显式列出）。
+    severity: BLOCKER
+    rule:
+      section: "术语映射表"
+      expect: "markdown_table"
+      required_columns:
+        - "原始术语"
+        - "权威模块"
+        - "所属层"
+        - "置信度"
+        - "易混项"
+        - "用户确认"
+      min_rows: 1
+      all_rows_confirmed: "[x]"
+      canonical_module_must_exist_in: "doc/module-catalog.yaml"
+
+  scope_matches_catalog:
+    description: >
+      「Scope 声明」章节的 `in_scope_modules` 和 `out_of_scope_modules`
+      列出的每一个模块名，都必须在 doc/module-catalog.yaml 里真实存在，
+      防止 AI 自造模块名或写错名称。
+    severity: BLOCKER
+    rule:
+      section: "Scope 声明"
+      validate_against: "doc/module-catalog.yaml"
+      fields:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+
+  terminology_modules_within_scope:
+    description: >
+      「术语映射表」里每一行的「权威模块」必须出现在 `in_scope_modules`
+      或 `out_of_scope_modules` 之一。
+      该 check 捕捉一类典型不一致：spec 作者列了某术语的消歧归属
+      （参考示例："卡中心 → CardManager"），却忘了把对应模块声明进 Scope。
+      未声明 → plan / coding 不知道该模块究竟是"本需求要改"还是
+      "只是消歧用"，后续极易跨模块改错或漏改。
+      合法的修法有两种：
+        (1) 把该模块加进 in_scope_modules（本需求确实要改它）
+            或 out_of_scope_modules（仅供消歧，不改）；
+        (2) 从术语映射表里删掉这一行（该术语本来就不在本需求语境里）。
+    severity: BLOCKER
+    rule:
+      source_section: "术语映射表"
+      source_column: "权威模块"
+      target_scope_fields:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+      coverage: "all_source_rows_must_match_scope"
+
+  scope_declaration:
+    description: >
+      「Scope 声明」章节必须包含一个 yaml 代码块，定义 in_scope_modules、
+      out_of_scope_modules、rationale 三个字段；in_scope_modules 至少一项。
+      这是 Scope 守门机制的起点：plan 阶段的模块范围必须是本字段的子集。
+    severity: BLOCKER
+    rule:
+      section: "Scope 声明"
+      expect: "yaml_code_block"
+      required_keys:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+        - "rationale"
+      min_items:
+        in_scope_modules: 1
+
+  feature_table_format:
+    description: >
+      「功能清单」章节必须包含一个 Markdown 表格，且表头至少包含
+      编号、功能名称、优先级、描述 四列
+    severity: BLOCKER
+    rule:
+      section: "功能清单"
+      expect: "markdown_table"
+      required_columns:
+        - "编号"
+        - "功能名称"
+        - "优先级"
+        - "描述"
+
+  priority_values:
+    description: >
+      功能清单表格中「优先级」列的值必须为 P0/P1/P2/P3 之一
+    severity: BLOCKER
+    rule:
+      section: "功能清单"
+      column: "优先级"
+      allowed_values: ["P0", "P1", "P2", "P3"]
+
+  at_least_one_p0:
+    description: >
+      功能清单中必须包含至少一个 P0 功能项
+    severity: BLOCKER
+    rule:
+      section: "功能清单"
+      column: "优先级"
+      min_count:
+        P0: 1
+
+  acceptance_criteria_format:
+    description: >
+      「验收标准」章节中每条标准必须包含唯一编号（如 AC-1、AC-2），
+      且编号需关联到功能清单中的功能编号
+    severity: BLOCKER
+    rule:
+      section: "验收标准"
+      expect_pattern_per_item: 'AC-\d+'
+      cross_ref: "功能清单.编号"
+
+  mermaid_flowchart:
+    description: >
+      「业务流程图」章节必须包含至少一个 Mermaid 代码块
+      （```mermaid ... ```），且使用 flowchart 语法
+    severity: BLOCKER
+    rule:
+      section: "业务流程图"
+      expect: "mermaid_block"
+      syntax: "flowchart"
+
+  exception_table_format:
+    description: >
+      「异常/边界场景处理」章节必须包含 Markdown 表格，且表头至少包含
+      编号、异常场景、处理方式 三列
+    severity: MAJOR
+    rule:
+      section: "异常/边界场景处理"
+      expect: "markdown_table"
+      required_columns:
+        - "编号"
+        - "异常场景"
+        - "处理方式"
+
+  minimum_exception_scenarios:
+    description: >
+      异常场景至少覆盖 3 种基本类型：网络异常、数据为空、功能暂不支持
+    severity: MAJOR
+    rule:
+      section: "异常/边界场景处理"
+      min_rows: 3
+
+  nfr_quantified:
+    description: >
+      「非功能性需求」章节中的性能指标必须包含量化数值
+      （如 ≤ 1.5 秒、≥ 54 FPS），不允许仅有定性描述
+    severity: MAJOR
+    rule:
+      section: "非功能性需求"
+      expect: "numeric_metrics"
+
+  page_description_completeness:
+    description: >
+      「页面/界面描述」章节中每个页面必须包含组件表格（至少含
+      组件、类型、交互行为 三列）
+    severity: MAJOR
+    rule:
+      section: "页面/界面描述"
+      per_subsection:
+        expect: "markdown_table"
+        required_columns:
+          - "组件"
+          - "类型"
+          - "交互行为"
+
+  metadata_header:
+    description: >
+      spec 文档顶部必须包含模块标识、版本、创建日期、状态等元数据
+    severity: MINOR
+    rule:
+      expect: "blockquote_metadata"
+      required_fields:
+        - "模块标识"
+        - "版本"
+        - "创建日期"
+        - "状态"
+
+  acceptance_yaml_present:
+    description: >
+      doc/features/{feature}/acceptance.yaml 必须存在（spec 从 spec 提取的验收 SSOT）
+    severity: BLOCKER
+    rule:
+      path: "doc/features/{feature}/acceptance.yaml"
+
+  acceptance_ut_layer_complete:
+    description: >
+      acceptance.yaml 中每条 criterion/boundary 必须声明合法 ut_layer（unit/device/both）
+    severity: BLOCKER
+    rule:
+      file: "acceptance.yaml"
+      field: "ut_layer"
+      allowed_values: ["unit", "device", "both"]
+
+  acceptance_device_focus_present:
+    description: >
+      ut_layer∈{device,both} 须填写 device_focus；both 须同时填写 ut_focus 与 device_focus
+    severity: BLOCKER
+    rule:
+      file: "acceptance.yaml"
+      fields:
+        device: ["device_focus"]
+        both: ["ut_focus", "device_focus"]
+
+  legacy_device_testing_todo_deprecated:
+    description: >
+      device-testing-todo.md 已废弃；若仍存在且缺 device_focus 则 WARN（过渡期）
+    severity: MINOR
+    rule:
+      deprecated_path: "doc/features/{feature}/device-testing-todo.md"
+
+  visual_handoff:
+    description: >
+      （spec 驱动 + opt-in：`spec` 段默认不在模板 skeleton；仅当配置了 spec.visual_handoff_enforcement
+      或对「缺 ui_change 整块」有特殊 FAIL/WARN 需求时参见 framework.config.json。
+      CLI --skip-visual-handoff 可跳过。）
+      若无含根字段 ui_change 的 ```yaml``` 代码块且无 spec.opt-in.strict/warn/reachable，
+      check-spec 不产生此项（静默）。存在块时 ui_change ∈
+      {none, reuse_only, impl_out_of_band, new_or_changed, copy_edits_only}；
+      new_or_changed / copy_edits_only 必须提供 visual_handoff.kind 与 authoritative_refs；
+      path 经由 resolveAuthoritativePath 解析后须在 agent 侧 existsSync（或按 enforcement reachable/warn 降级），
+      支持相对仓库根、${VAR}、获准的绝对路径/UNC；url 类 kind 校验 http(s) URL。
+      详见 framework/skills/feature/spec/reference/visual-handoff.md。
+    severity: MAJOR
+    rule:
+      expect: "yaml_code_block_with_ui_change"
+      enforcement_config: "framework.config.json#spec.visual_handoff_enforcement"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  overview_clarity:
+    description: >
+      「功能概述」必须是一句简洁明确的描述，说明模块的核心价值，
+      而非"xxx功能"这种空泛表述
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查「功能概述」是否满足：(1) 一句话概括核心价值；
+      (2) 包含目标用户或使用场景的暗示；(3) 不使用空泛词汇
+
+  user_scenario_specificity:
+    description: >
+      「目标用户与使用场景」必须明确用户角色和具体场景描述，
+      场景应包含前置条件和用户意图
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查每个使用场景是否包含：(1) 具体的用户角色；
+      (2) 明确的操作目标；(3) 前置条件
+
+  feature_description_actionable:
+    description: >
+      功能清单中每项的「描述」必须具体到可实现，不允许仅有抽象描述
+    severity: MAJOR
+    ai_prompt_hint: >
+      对功能清单中每一项，判断描述是否足够具体，
+      让开发人员无歧义地理解需要实现什么
+
+  acceptance_testable:
+    description: >
+      每条验收标准必须是可测试、可量化的，包含明确的预期结果
+    severity: BLOCKER
+    ai_prompt_hint: >
+      逐条审查验收标准，判断：(1) 是否包含明确的操作步骤或前置条件；
+      (2) 是否包含可观察的预期结果；(3) 是否可以通过手动或自动化方式验证
+
+  simulation_scope_awareness:
+    description: >
+      涉及真实后端（第三方结算网关、账务或金融类开放接口等）的功能点必须标注为"模拟数据"
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查功能清单和界面描述中，是否有依赖真实后端的功能未标注模拟策略
+
+  business_flow_branch_coverage:
+    description: >
+      业务流程图必须覆盖主路径和关键分支（至少包含正常路径和异常路径）
+    severity: MAJOR
+    ai_prompt_hint: >
+      审查 Mermaid 流程图：(1) 是否涵盖了主路径；
+      (2) 是否有至少一条异常/分支路径；(3) 节点是否与功能清单一致
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  feature_to_acceptance:
+    description: >
+      每个 P0/P1 功能（功能清单中的编号）必须在「验收标准」中
+      有至少一条对应的 AC 项（通过 AC 项中的功能编号引用关联）
+    severity: BLOCKER
+    rule:
+      source: "功能清单"
+      filter: 'priority in ["P0", "P1"]'
+      target: "验收标准"
+      link_field: "功能编号"
+      coverage: "100%"
+
+  acceptance_to_feature:
+    description: >
+      每条验收标准（AC 项）必须关联到至少一个功能编号
+    severity: BLOCKER
+    rule:
+      source: "验收标准"
+      require_reference_to: "功能清单.编号"
+
+  exception_to_feature:
+    description: >
+      异常场景表中的场景应能对应到功能清单中的某些功能点
+    severity: MAJOR
+    rule:
+      source: "异常/边界场景处理"
+      expect_relevance_to: "功能清单"
+
+  scenario_to_page:
+    description: >
+      使用场景中提到的操作应能在「页面/界面描述」中找到对应的交互组件
+    severity: MAJOR
+    ai_prompt_hint: >
+      交叉验证：使用场景表中描述的用户操作，是否都能在界面描述中找到承载的 UI 组件
+
+  glossary_terms_used_in_body:
+    description: >
+      若 doc/glossary.yaml 中的某术语（含 aliases）在 spec **正文**
+      （术语映射表章节之外的全部内容）出现，但**未**列在术语映射表里 →
+      WARN（最后一道术语漏建档兜底网）。
+      该 check 防止"spec 作者把某业务词当作普通词写进正文，
+      实际它在 glossary 里有明确归属"导致 plan / 3 走偏。
+      处理方式：
+        (1) 若确实是业务术语 → 把它加进术语映射表（推荐）；
+        (2) 若只是在正文里偶然带过的非业务用词 → 可忽略本 WARN；
+        (3) 若该词在不同语境下含义不同 → 在 glossary 里补 alias 或
+            明确 disambiguation，让 lookup 命中精确语境。
+      命中规则：对 glossary.terms[].term 与 .aliases[] 做朴素子串扫描。
+      为避免重复触发，已在术语映射表中显式列出该 term / 其 aliases / 同
+      一 glossary 条目其它 alias 的，本 check 视为已覆盖。
+    severity: MAJOR
+    rule:
+      source: "glossary.terms[].term + glossary.terms[].aliases[]"
+      target_section_excluded: "术语映射表"
+      coverage_via: "spec 术语映射表第 1 列（含 glossary 同义传递）"
+      severity_on_miss: "WARN"
+
+# --------------------------------------------------------------------------
+# Context Exploration Gate 量化阈值（schema 1.1.0）
+# --------------------------------------------------------------------------
+exploration_thresholds:
+  min_files_inspected: 4
+  min_source_code_paths: 2
+  min_searches: 3
+  min_code_facts: 2
+  require_subagent_when_scope_gte: 3
+  exploration_mode_allowed:
+    - subagent
+    - sequential
+    - minimal
+
+# --------------------------------------------------------------------------
+# Context Exploration 触发策略（v2.10 — 复合评分）
+# --------------------------------------------------------------------------
+exploration_strategy:
+  default_mode: sequential
+  scoring:
+    threshold: 60
+    dimensions:
+      - id: module_loc
+        weight: 25
+        tiers:
+          - { gte: 50000, score: 25 }
+          - { gte: 20000, score: 15 }
+          - { gte: 5000, score: 8 }
+      - id: scope_breadth
+        weight: 20
+        tiers:
+          - { gte: 3, score: 20 }
+          - { gte: 2, score: 12 }
+          - { gte: 1, score: 5 }
+      - id: cross_layer
+        weight: 20
+        signal: touches_multiple_outer_layers
+        score_if_true: 20
+      - id: new_api_surface
+        weight: 15
+        signal: adds_exports_or_public_api
+        score_if_true: 15
+      - id: dependency_fan_out
+        weight: 20
+        tiers:
+          - { gte: 10, score: 20 }
+          - { gte: 5, score: 12 }
+          - { gte: 2, score: 5 }
+  sequential_multiplier: 2.0
+  sequential_min_files_inspected_add: 5

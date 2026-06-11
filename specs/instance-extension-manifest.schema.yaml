@@ -62,3 +62,11 @@ root_object:
           type: object
           description: Map phase string -> relative path to overlay yaml under doc/extensions/.
           additionalProperties: { type: string }
+        skill_assets:
+          type: object
+          description: >
+            Map skill id -> map asset key -> relative path under doc/extensions/.
+            Merged over profile skill-assets.yaml (extension wins on key collision).
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string }

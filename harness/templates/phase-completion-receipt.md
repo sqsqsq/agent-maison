@@ -10,7 +10,7 @@
 # 模板路径：framework/harness/templates/phase-completion-receipt.md
 
 feature: "<feature-name>"
-phase: "<prd | design | coding | review | ut | testing>"
+phase: "<spec | plan | coding | review | ut | testing>"
 agent_model: "<实际模型 id，如 minimax-2.5 / gpt-5.5 / <vendor-model-id>"
 agent_runtime: "<cli-or-sdk-identifier | other>"
 claimed_completion_at: "<ISO 8601, 如 2026-04-27T10:00:00+08:00>"

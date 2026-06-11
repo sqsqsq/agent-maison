@@ -2,11 +2,11 @@
 # 加载：framework/harness/scripts/utils/context-exploration.ts → loadProfileExplorationSnippets
 schema_version: "1.0"
 phases:
-  prd:
+  spec:
     extra_snippets:
       - build-profile
       - ".ets"
-  design:
+  plan:
     extra_snippets:
       - build-profile
       - ".ets"

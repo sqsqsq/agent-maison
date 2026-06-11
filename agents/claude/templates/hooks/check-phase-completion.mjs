@@ -305,7 +305,7 @@ function formatDuration(ms) {
 
 // 全局阶段（与 workflow scope=global 对齐：extensions / init / catalog / glossary / docs）
 // 不参与"feature 维度阶段闭环判定"。它们没有完成回执模板，全局入口 §5.1 判据也只覆盖
-// PRD / design / coding / review / UT / device-testing 六个 feature 维度阶段。
+// spec / plan / coding / review / UT / device-testing 六个 feature 维度阶段。
 // runner 端（v2.8.1 起）已经对全局阶段不写 state，本兜底保护针对历史残留：
 // 若 state file 已存在且 phase 是全局阶段，hook 一律放行，不要去找 receipt。
 const GLOBAL_PHASES = new Set(['extensions', 'init', 'catalog', 'glossary', 'docs']);

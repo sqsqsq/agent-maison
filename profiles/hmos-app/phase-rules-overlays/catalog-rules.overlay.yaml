@@ -170,7 +170,7 @@ traceability_checks:
   easily_confused_symmetric:
     description: >
       若 A.easily_confused_with 声明与 B 混淆，则 B.easily_confused_with 也应反向声明与 A 混淆。
-      消歧能力必须对称——任何一端漏声明都会让 prd-design Step 1.5 术语消歧在另一侧失盲。
+      消歧能力必须对称——任何一端漏声明都会让 spec Step 1.5 术语消歧在另一侧失盲。
       若业务上确认就是单向易混（罕见），可通过在 disambiguation 文本里加 "unidirectional"
       关键字显式豁免（当前沙盒未使用豁免）。
     severity: MAJOR
@@ -201,28 +201,28 @@ traceability_checks:
 
   feature_scope_integrity:
     description: >
-      反向扫描 doc/features/*/prd/PRD.md 与 doc/features/*/design/design.md
+      反向扫描 doc/features/*/spec/spec.md 与 doc/features/*/plan/plan.md
       （harness 经 artifact resolver 同时兼容扁平 legacy 路径）的
       Scope 声明（in_scope_modules + out_of_scope_modules），验证每个模块
       名在当前 catalog.modules[].name 里真实存在。
       漂移 → WARN（建议立刻修复或显式接受）：
         a) catalog 里删掉 / 改名了某模块，但历史 feature 还在引用 →
-           后续对该 feature 跑 `--phase prd/design` 将 BLOCKER on
+           后续对该 feature 跑 `--phase spec/plan` 将 BLOCKER on
            `scope_matches_catalog`，提前在 catalog 阶段告知。
         b) 新加的 feature 引用了尚未建档的模块 → 等价于催促
            "先把该模块通过 /catalog-bootstrap <M> 补档"。
       解法（details 里会逐条列出）：
         (1) 补档：对缺失模块跑 /catalog-bootstrap <M>；
-        (2) 修 feature：改 prd/PRD.md / design/design.md 里的 scope，删除或改名过期模块；
+        (2) 修 feature：改 spec/spec.md / plan/plan.md 里的 scope，删除或改名过期模块；
         (3) 改名追溯：若本次是改名，在新模块 profile 备注
             merged_from: <旧名>，方便以后回查。
       HAP 里未出现 Scope 声明的 feature 目录（如仅有 README.md / litmus
-      sample）被自动跳过；只扫 PRD / design 两类正式文档（canonical 阶段路径）。
+      sample）被自动跳过；只扫 spec / plan 两类正式文档（canonical 阶段路径）。
     severity: MAJOR
     rule:
       scan_files:
-        - "doc/features/*/prd/PRD.md"
-        - "doc/features/*/design/design.md"
+        - "doc/features/*/spec/spec.md"
+        - "doc/features/*/plan/plan.md"
       extract_fields:
         - "in_scope_modules"
         - "out_of_scope_modules"

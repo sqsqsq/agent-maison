@@ -313,7 +313,7 @@ placeholders:
   FEATURES_DIR:
     source: framework.config.json → paths.features_dir
     # 阶段 9 合并：原 FEATURE_DOCS_DIR / FEATURE_SPECS_DIR 已收敛到本占位符。
-    # 功能需求的所有产物（PRD.md / design.md / contracts.yaml / acceptance.yaml /
+    # 功能需求的所有产物（spec.md / plan.md / contracts.yaml / acceptance.yaml /
     # boundaries.yaml / review-report.md / test-plan.md / test-report.md）均扁平
     # 归档在 <FEATURES_DIR>/<feature>/ 下。
   MODULE_CATALOG_PATH:

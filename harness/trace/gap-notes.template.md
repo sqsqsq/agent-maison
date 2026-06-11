@@ -78,7 +78,7 @@
 
 | 优先级 | 动作 | 预计影响 |
 |--------|------|----------|
-| P0 | 例：在 design-rules.yaml 增加 XXX 规则 | 拦截类似 scope_creep 痛点 |
+| P0 | 例：在 plan-rules.yaml 增加 XXX 规则 | 拦截类似 scope_creep 痛点 |
 | P1 |  |  |
 | P2 |  |  |
 

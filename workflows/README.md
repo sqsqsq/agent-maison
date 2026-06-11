@@ -8,7 +8,8 @@ to a file named `<active_workflow>.workflow.yaml` in this directory.
 
 - **`spec-driven.workflow.yaml`** — mirrors the historical linear product flow:
   global `init` / `catalog` / `glossary` / `docs`, then feature phases
-  `prd` → `design` → `coding` → `review` & `ut` (both depend on `coding`) → `testing` (depends on `ut`).
+  `spec` → `plan` → `coding` → `review` & `ut` (both depend on `coding`) → `testing` (depends on `ut`).
+  Legacy phase ids `prd` / `design` remain readable aliases (see [MIGRATION.md](../MIGRATION.md) §v2.3).
 
 ## Forking
 

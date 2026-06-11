@@ -7,7 +7,7 @@
 #
 schema_version: "1.1.0"
 feature: "<feature-name>"
-phase: "<prd | design | coding | review | ut>"
+phase: "<spec | plan | coding | review | ut>"
 ready_to_produce: false
 has_blocker_coverage_risk: false
 key_inputs_read:

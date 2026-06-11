@@ -37,4 +37,4 @@
 ## 反模式
 
 - 仅展示 Markdown 大表让用户逐行打字，无 gate/enum
-- 口头 OK 但未写回 artifact（PRD `[x]`、gap-notes）
+- 口头 OK 但未写回 artifact（spec `[x]`、gap-notes）

@@ -7,18 +7,22 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const SKILLS = path.join(ROOT, 'skills');
 
 const REPLACEMENTS = [
+  ['../00-framework-init/SKILL.md', '../../project/framework-init/SKILL.md'],
+  ['[`00-framework-init`](../00-framework-init/SKILL.md)', '[`framework-init`](../../project/framework-init/SKILL.md)'],
+  ['framework/skills/00-framework-init/', 'framework/skills/project/framework-init/'],
+  ['../0-catalog-bootstrap/SKILL.md', '../../project/catalog-bootstrap/SKILL.md'],
   ['../personal-setup-gate/SKILL.md', '../../reference/personal-setup-gate.md'],
   ['../personal-setup-gate.md', '../../reference/personal-setup-gate.md'],
   ['../framework-init/', '../../project/framework-init/'],
   ['../catalog-bootstrap/', '../../project/catalog-bootstrap/'],
-  ['../requirement-design/', '../../feature/requirement-design/'],
-  ['../prd-design/', '../../feature/prd-design/'],
+  ['../plan/', '../../feature/plan/'],
+  ['../spec/', '../../feature/spec/'],
   ['../coding/', '../../feature/coding/'],
   ['../code-review/', '../../feature/code-review/'],
   ['../business-ut/', '../../feature/business-ut/'],
   ['../device-testing/', '../../feature/device-testing/'],
-  ['../prd-design/', '../prd-design/'],
-  ['../requirement-design/', '../requirement-design/'],
+  ['../spec/', '../spec/'],
+  ['../plan/', '../plan/'],
   ['../coding/', '../coding/'],
   // reference/ 链接由 normalize-skill-reference-links.mjs 按深度幂等修正，此处不再替换
   ['../README.md', '../../README.md'],
@@ -38,7 +42,7 @@ const PROMPT_EXTRA = [
   ['../../../templates/', '../../../../templates/'],
   ['../../../workflows/', '../../../../workflows/'],
   ['../../../specs/', '../../../../specs/'],
-  ['../../prd-design/', '../../../feature/prd-design/'],
+  ['../../spec/', '../../../feature/spec/'],
 ];
 
 function walk(dir, out) {

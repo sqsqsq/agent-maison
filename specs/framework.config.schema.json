@@ -65,7 +65,10 @@
     "toolchain": { "type": "object" },
     "tools": { "type": "object" },
     "state_machine": { "type": "object" },
-    "prd": { "type": "object" },
+    "spec": {
+      "type": "object",
+      "description": "spec 阶段 opt-in 脚本行为（如 visual_handoff_enforcement / visual_sources）。"
+    },
     "active_workflow": {
       "type": "string",
       "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 spec-driven。"
