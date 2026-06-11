@@ -8,11 +8,12 @@ import * as YAML from 'yaml';
 import { featureCompatPath } from './config';
 import type { CheckResult, Phase } from './scripts/utils/types';
 import { GLOBAL_FEATURE_SENTINEL, isGlobalPhase } from './scripts/utils/types';
+import { normalizeCheckId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { fillCompatMessage, SUGGESTION_COMPAT_EXPIRED } from './compat-messages';
 
 const COMPAT_MARKER = '[compat_downgraded';
 
-const ALLOWED_COMPAT_PHASES = new Set(['prd', 'design', 'coding', 'review', 'ut']);
+const ALLOWED_COMPAT_PHASES = new Set(['spec', 'plan', 'coding', 'review', 'ut', 'prd', 'design']);
 
 export interface FeatureCompat {
   schema_version: '1.0';
@@ -68,10 +69,16 @@ function isValidExemptPattern(pat: string): boolean {
 }
 
 function exemptMatches(pattern: string, checkId: string): boolean {
+  const canonCheck = normalizeCheckId(checkId);
+  const canonPattern = normalizeCheckId(pattern.endsWith('*') ? pattern.slice(0, -1) : pattern);
   if (pattern.endsWith('*')) {
-    return checkId.startsWith(pattern.slice(0, -1));
+    return (
+      checkId.startsWith(pattern.slice(0, -1)) ||
+      canonCheck.startsWith(canonPattern) ||
+      canonCheck.startsWith(pattern.slice(0, -1))
+    );
   }
-  return checkId === pattern;
+  return checkId === pattern || canonCheck === canonPattern || canonCheck === pattern;
 }
 
 export function compatDowngradeMatchesExempt(pattern: string, checkId: string): boolean {
@@ -236,12 +243,12 @@ export function loadFeatureCompat(projectRoot: string, feature: string, nowMs: n
           enabled: false,
           parseAdvisory: advisory(
             'compat_invalid_phases',
-            `phases 每项须 ∈ {prd, design, coding, review, ut}，非法值=${String(p)}`,
+            `phases 每项须 ∈ {spec, plan, coding, review, ut}（alias: prd, design），非法值=${String(p)}`,
             compatRel,
           ),
         };
       }
-      phases.push(p);
+      phases.push(normalizePhaseId(p));
     }
   }
 

@@ -42,11 +42,11 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'workflowPhaseIdSet(spec-driven) 含 prd/design/coding',
+    name: 'workflowPhaseIdSet(spec-driven) 含 prd/plan/coding',
     run: () => {
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const ids = workflowPhaseIdSet(spec);
-      assert(ids.has('prd') && ids.has('coding') && ids.has('init') && ids.has('extensions'), 'missing ids');
+      assert(ids.has('spec') && ids.has('coding') && ids.has('init') && ids.has('extensions'), 'missing ids');
       assert(ids.size === 11, 'size');
     },
   },
@@ -57,7 +57,7 @@ const cases: Case[] = [
       assert(isPhaseGlobalInWorkflow(spec, 'init'), 'init global');
       assert(isPhaseGlobalInWorkflow(spec, 'docs'), 'docs global');
       assert(isPhaseGlobalInWorkflow(spec, 'extensions'), 'extensions global');
-      assert(!isPhaseGlobalInWorkflow(spec, 'prd'), 'prd not global');
+      assert(!isPhaseGlobalInWorkflow(spec, 'spec'), 'prd not global');
     },
   },
   {
@@ -69,7 +69,7 @@ const cases: Case[] = [
       assert(order[order.length - 1] === 'testing', 'testing must be last');
       const iCat = order.indexOf('catalog');
       const iGloss = order.indexOf('glossary');
-      const iPrd = order.indexOf('prd');
+      const iPrd = order.indexOf('spec');
       assert(iCat >= 0 && iGloss >= 0 && iPrd >= 0, 'indices');
       assert(iPrd > iCat && iPrd > iGloss, 'prd after catalog+glossary');
     },

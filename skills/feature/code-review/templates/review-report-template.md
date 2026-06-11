@@ -4,7 +4,7 @@
 > **审查日期**: {date}
 > **审查版本**: v1.0
 > **审查人**: AI Code Reviewer
-> **对应设计文档**: `doc/features/{module-name}/design/design.md`
+> **对应设计文档**: `doc/features/{module-name}/plan/plan.md`
 
 ---
 
@@ -33,7 +33,7 @@
 | 架构合规性 | coding-rules.yaml, architecture.md | 外层 DSL 依赖、模块内分层 |
 | 接口一致性 | contracts.yaml | 数据模型、方法签名、组件 Props |
 | 编码规范 | coding-rules.yaml | 命名、硬编码、any 类型、async 模式 |
-| 业务逻辑 | design.md, acceptance.yaml | 异常处理、流程正确性、AC 覆盖 |
+| 业务逻辑 | plan.md, acceptance.yaml | 异常处理、流程正确性、AC 覆盖 |
 | 数据层 | coding-rules.yaml | 数据所有权、模拟数据隔离 |
 
 ---

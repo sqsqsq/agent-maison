@@ -103,7 +103,7 @@ is allowed (e.g. never return `overwrite` for doc drift tasks that only allow
 
 framework-init and materialized `/framework-init` command templates MUST list optional
 downstream steps after init without prompting the user to immediately enter
-catalog-bootstrap, glossary-bootstrap, or prd-design (no default yes/no gate to
+catalog-bootstrap, glossary-bootstrap, or spec (no default yes/no gate to
 the next Skill).
 
 #### Scenario: S4 does not prompt immediate catalog-bootstrap

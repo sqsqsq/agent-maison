@@ -292,7 +292,7 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
 }
 
 function loadDesignMd(ctx: CheckContext): string | null {
-  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md');
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
   if (!resolved.exists) return null;
   try {
     return fs.readFileSync(resolved.actualPath, 'utf-8');
@@ -3421,7 +3421,7 @@ const checker: PhaseChecker = {
     const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
 
     const results: CheckResult[] = [
-      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['PRD.md', 'design.md']),
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
 
     results.push(

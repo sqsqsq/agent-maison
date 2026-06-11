@@ -1,5 +1,5 @@
 // ============================================================================
-// visual-handoff.unit.test.ts — check-prd Visual Handoff 白盒回归
+// visual-handoff.unit.test.ts — check-spec Visual Handoff 白盒回归
 // ============================================================================
 
 import * as fs from 'fs';
@@ -8,7 +8,7 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
-import { checkVisualHandoff } from '../../scripts/check-prd';
+import { checkVisualHandoff } from '../../scripts/check-spec';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { resolveAuthoritativePath } from '../../scripts/utils/visual-source-resolver';
 import { inferRepoLayout } from '../../repo-layout';
@@ -22,7 +22,7 @@ export interface UnitCaseResult {
 
 function stubPhaseRule(): PhaseRuleSpec {
   return {
-    phase: 'prd',
+    phase: 'spec',
     structure_checks: {
       visual_handoff: { description: 'Visual Handoff（脚本）' },
     },
@@ -34,7 +34,7 @@ function baseCtx(root: string, o: Partial<CheckContext> = {}): CheckContext {
   const fw = loadFrameworkConfig(root);
   const resolvedProfile = loadResolvedProfile(root, fw);
   return {
-    phase: 'prd',
+    phase: 'spec',
     feature: 'demo',
     projectRoot: root,
     frameworkRoot: DEFAULT_LAYOUT.frameworkRoot,
@@ -179,7 +179,7 @@ export function runAll(): UnitCaseResult[] {
       const prd = prdWithHandoff('screenshot_pack', '    - id: r\n      path: ${TEST_UX_ROOT}/pack/a.png');
       const r = checkVisualHandoff(baseCtx(root, {
         visualHandoffEnforcement: 'strict',
-        prdVisualSources: {},
+        specVisualSources: {},
       }), prd);
       const hit = r.find(x => x.id === 'visual_handoff' && x.status === 'PASS');
       if (!hit) throw new Error(`expected PASS, got ${JSON.stringify(r)}`);
@@ -216,7 +216,7 @@ export function runAll(): UnitCaseResult[] {
       const absQuoted = absFile.replace(/\\/g, '/');
       const prd = prdWithHandoff('repo_assets', `    - id: z\n      path: '${absQuoted}'`);
       const r = checkVisualHandoff(baseCtx(root, {
-        prdVisualSources: { allow_absolute_paths: true },
+        specVisualSources: { allow_absolute_paths: true },
       }), prd);
       const hit = r.find(x => x.id === 'visual_handoff' && x.status === 'PASS');
       if (!hit) throw new Error(`expected PASS allowed abs, got ${JSON.stringify(r)}`);

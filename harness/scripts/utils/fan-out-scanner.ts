@@ -20,7 +20,7 @@ interface CatalogFile {
 
 function readInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string): string[] {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
-  const prd = loader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
+  const prd = loader.loadFeatureDoc(projectRoot, feature, 'spec.md');
   if (!prd) return [];
   const { scope } = parseScope(prd);
   return scope?.in_scope_modules ?? [];

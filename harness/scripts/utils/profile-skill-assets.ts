@@ -22,6 +22,34 @@ function layoutOf(projectRoot: string, layout?: RepoLayout): RepoLayout {
 /** SKILL 正文中的占位引用：profile-skill-asset:<skill-id>/<asset_key> */
 export const PROFILE_SKILL_ASSET_RE = /profile-skill-asset:([0-9a-z-]+)\/([a-z][a-z0-9_]*)/gi;
 
+/** legacy skill-id / asset_key → canonical（≥2 minor 窗口，实例旧引用仍可解析） */
+const SKILL_ID_ALIASES: Readonly<Record<string, string>> = {
+  'prd-design': 'spec',
+  'requirement-design': 'plan',
+  '1-prd-design': 'spec',
+  '1-spec': 'spec',
+  '2-requirement-design': 'plan',
+  '2-plan': 'plan',
+};
+
+const ASSET_KEY_ALIASES: Readonly<Record<string, string>> = {
+  prd_template: 'spec_template',
+  example_prd: 'example_spec',
+  design_template: 'plan_template',
+  example_design: 'example_plan',
+  examples_prd_mapping: 'examples_spec_mapping',
+};
+
+export function normalizeSkillAssetRef(
+  skillId: string,
+  assetKey: string,
+): { skillId: string; assetKey: string } {
+  return {
+    skillId: SKILL_ID_ALIASES[skillId] ?? skillId,
+    assetKey: ASSET_KEY_ALIASES[assetKey] ?? assetKey,
+  };
+}
+
 export interface SkillAssetsManifest {
   schema_version: string;
   profile: string;
@@ -135,7 +163,16 @@ export function resolveSkillAssetPath(
   skillId: string,
   assetKey: string,
   layout?: RepoLayout,
+  extensionSkillAssetAbsPaths?: Record<string, Record<string, string>>,
 ): { ok: boolean; relRepo?: string; absPath?: string; error?: string } {
+  const normalized = normalizeSkillAssetRef(skillId, assetKey);
+  skillId = normalized.skillId;
+  assetKey = normalized.assetKey;
+  const extAbs = extensionSkillAssetAbsPaths?.[skillId]?.[assetKey];
+  if (extAbs) {
+    const relRepo = path.relative(projectRoot, extAbs).replace(/\\/g, '/');
+    return { ok: true, relRepo, absPath: extAbs };
+  }
   const bucket = manifest.assets[skillId];
   if (!bucket) {
     return { ok: false, error: `manifest 未声明 skill「${skillId}」` };
@@ -301,6 +338,7 @@ export interface ProfileSkillAssetsValidation {
 export function validateProfileSkillAssetsForProject(
   projectRoot: string,
   layout?: RepoLayout,
+  extensionSkillAssetAbsPaths?: Record<string, Record<string, string>>,
 ): ProfileSkillAssetsValidation {
   const errors: string[] = [];
   const L = layoutOf(projectRoot, layout);
@@ -331,7 +369,15 @@ export function validateProfileSkillAssetsForProject(
 
   for (const [skillId, keys] of seenRefs) {
     for (const assetKey of keys) {
-      const r = resolveSkillAssetPath(projectRoot, profileName, manifest, skillId, assetKey, L);
+      const r = resolveSkillAssetPath(
+        projectRoot,
+        profileName,
+        manifest,
+        skillId,
+        assetKey,
+        L,
+        extensionSkillAssetAbsPaths,
+      );
       if (!r.ok || !r.absPath) {
         errors.push(
           `profile-skill-asset:${skillId}/${assetKey} 无法解析：${r.error ?? 'unknown'}`,

@@ -1,6 +1,6 @@
 # Personal Setup 门控（阶段入口前置）
 
-Feature phase（catalog-bootstrap / prd-design … device-testing）与对应 adapter slash / skills-bridge 入口在跑 harness **之前**须完成个人 setup。
+Feature phase（catalog-bootstrap / spec … device-testing）与对应 adapter slash / skills-bridge 入口在跑 harness **之前**须完成个人 setup。
 
 ## 探测（BLOCKER）
 

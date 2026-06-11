@@ -153,7 +153,7 @@ export function buildGoalManifestFromInput(
 
   return {
     schema_version: '1.0',
-    start_phase: normalizePhase(input.start_phase, 'prd'),
+    start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
     feature: String(input.feature ?? '').trim(),
     requirement: typeof input.requirement === 'string' ? input.requirement : undefined,

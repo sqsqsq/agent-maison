@@ -78,8 +78,8 @@ profile-skill-asset:<skill-id>/<asset_key>
 
 | order | Skill id | 路径 | 摘要 |
 |-------|----------|------|------|
-| 10 | prd-design | [feature/prd-design/SKILL.md](feature/prd-design/SKILL.md) | PRD.md、术语映射与 Scope |
-| 20 | requirement-design | [feature/requirement-design/SKILL.md](feature/requirement-design/SKILL.md) | design.md、contracts |
+| 10 | spec | [feature/spec/SKILL.md](feature/spec/SKILL.md) | spec.md、术语映射与 Scope |
+| 20 | plan | [feature/plan/SKILL.md](feature/plan/SKILL.md) | plan.md、contracts |
 | 30 | coding | [feature/coding/SKILL.md](feature/coding/SKILL.md) | profile 宿主代码落地 |
 | 40 | code-review | [feature/code-review/SKILL.md](feature/code-review/SKILL.md) | 审查报告 |
 | 50 | business-ut | [feature/business-ut/SKILL.md](feature/business-ut/SKILL.md) | DAG + profile UT |

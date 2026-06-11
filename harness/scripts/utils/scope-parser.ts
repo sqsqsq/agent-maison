@@ -1,11 +1,11 @@
 // ============================================================================
 // Scope 解析工具
 // ============================================================================
-// 从 PRD.md / design.md 中提取「Scope 声明」章节内的 yaml 代码块，
+// 从 spec.md / plan.md 中提取「Scope 声明」章节内的 yaml 代码块，
 // 解析出 in_scope_modules / out_of_scope_modules / rationale /
 // inherited_from_prd / expansions_with_user_approval。
 //
-// 该工具被 check-prd.ts 和 check-design.ts 共享，
+// 该工具被 check-spec.ts 和 check-plan.ts 共享，
 // 避免 scope 守门规则的解析逻辑重复实现。
 // ============================================================================
 
@@ -27,9 +27,9 @@ export interface ScopeSpec {
   in_scope_modules: string[];
   out_of_scope_modules: string[];
   rationale: string;
-  /** 仅 design.md 使用 */
+  /** 仅 plan.md 使用 */
   inherited_from_prd?: boolean;
-  /** 仅 design.md 使用，记录用户已批准的 scope 扩展 */
+  /** 仅 plan.md 使用，记录用户已批准的 scope 扩展 */
   expansions_with_user_approval?: ScopeExpansion[];
 }
 
@@ -161,8 +161,8 @@ function parseExpansion(item: unknown): ScopeExpansion | null {
 
 /**
  * 计算 design scope 相对于 prd scope 的越界模块。
- * 越界 = design.in_scope_modules 中存在 prd.in_scope_modules 之外的模块，
- * 且未在 design.expansions_with_user_approval 中显式登记。
+ * 越界 = plan.in_scope_modules 中存在 spec.in_scope_modules 之外的模块，
+ * 且未在 plan.expansions_with_user_approval 中显式登记。
  */
 export function findScopeViolations(
   prdScope: ScopeSpec,

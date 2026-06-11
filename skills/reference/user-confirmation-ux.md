@@ -27,7 +27,7 @@
 | `gate` | 多行确认的第一步 | `1` 全部维持 / `2` 逐项调整 / `3` 讨论 | 不验对话 |
 | `enum` | 单行多选一 | `1`/`2`/… 或 widget | 不验对话 |
 | `matrix` | gate=2 后的逐行 | 每行编号子菜单或 widget | 不验对话 |
-| `artifact_checkbox` | 须落盘证据 | 改文件 `[x]`；对话编号辅助后 **agent 写回文件** | check-prd 等 |
+| `artifact_checkbox` | 须落盘证据 | 改文件 `[x]`；对话编号辅助后 **agent 写回文件** | check-spec 等 |
 | `freeform_approval` | Scope 扩展、改源码授权 | 先展示完整提议/变更描述 → `1=授权 2=拒绝 3=先看 diff` → **须保留用户原话** | check-ut gap-notes 等 |
 
 ---
@@ -64,19 +64,19 @@
 4. sublayer（须 preset/磁盘已含 sublayers[]；否则 STOP，手动编辑 config 后重跑）
 ```
 
-### 3.4 Artifact + portable（registry: `prd.terminology`）
+### 3.4 Artifact + portable（registry: `spec.terminology`）
 
-对话 gate 后 **必须写回** PRD `## 0. 术语映射表` 的 `[x]` 列；口头 OK 无效。
+对话 gate 后 **必须写回** spec `## 0. 术语映射表` 的 `[x]` 列；口头 OK 无效。
 
 ```text
-1. 全部确认 confidence=high 的行（写回 PRD [x]）
+1. 全部确认 confidence=high 的行（写回 spec [x]）
 2. 逐行确认
 3. 逐行修改映射
 ```
 
 逐行：`1=确认该行` / `2=改映射`。
 
-### 3.5 Freeform + portable（registry: `design.scope_expansion` / `ut.src_mutation`）
+### 3.5 Freeform + portable（registry: `plan.scope_expansion` / `ut.src_mutation`）
 
 **不得省略**提议正文 / 变更描述 / gap-notes 用户原话字段。
 
@@ -108,7 +108,7 @@
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
 | `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |
 | `catalog.staging` | y / e / s / q | `1`/`2`/`3`/`4` | 同左 |
-| `prd.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | PRD 表 `[x]` |
+| `spec.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | spec 表 `[x]` |
 
 完整列表见 [confirmation-registry.yaml](./confirmation-registry.yaml)。
 
@@ -135,7 +135,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 - ❌ 仅展示 Markdown 表让用户逐行打字，无 gate/enum
 - ❌ widget 可用却仅给表格
 - ❌ widget option 的 label/description **自造路径**或未逐字引用 registry `options`（如 `init.materialized_adapters` → [confirmation-registry.yaml](./confirmation-registry.yaml)）
-- ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
+- ❌ 聊天 OK 但未写回 artifact（spec `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
 - ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
@@ -164,8 +164,8 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 | 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
 |-------------------|--------------------------------------------------|
-| prd | `phase.next_step`（`prd.freeze` 只冻结 PRD 内容，不替代闭环停等，除非 batch 授权） |
-| design | `design.ok_to_code`（Step 13.1 PASS 后 **每次** MUST，含首遍 design） |
+| spec | `phase.next_step`（`spec.freeze` 只冻结 spec 内容，不替代闭环停等，除非 batch 授权） |
+| plan | `plan.ok_to_code`（Step 13.1 PASS 后 **每次** MUST，含首遍 plan） |
 | coding | `coding.ok_to_review` 或 `phase.next_step` |
 | review | `review.ok_to_ut` 或 `phase.next_step` |
 | ut | `ut.ok_to_testing` 或 `phase.next_step` |
@@ -178,7 +178,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 启发式示例（非穷举）：
 
 - 「做到 review / 做到 CR / coding 并 review」
-- 「PRD 到 UT / 全链路交付 / 从设计到真机测试」
+- 「spec 到 UT / 全链路交付 / 从 plan 到真机测试」
 - 「对 `<feature>` 做到 `<phase>` 为止」
 
 解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
@@ -203,7 +203,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 3. 其它 — 我在对话中说明意图
 ```
 
-选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→requirement-design design、coding→code-review review）。
+选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 spec→plan、coding→code-review review）。
 
 ---
 

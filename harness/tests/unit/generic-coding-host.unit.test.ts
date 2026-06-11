@@ -36,7 +36,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
             feature: 'probe',
             contracts: {
               feature: 'probe',
-              source: 'design.md',
+              source: 'plan.md',
               version: '1',
               module_dependencies: [],
               files: [],

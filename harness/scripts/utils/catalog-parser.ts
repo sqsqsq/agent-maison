@@ -9,8 +9,8 @@
 //   - hasModule(catalog, name): 快速存在性检查
 //
 // 消费者:
-//   - framework/harness/scripts/check-prd.ts (scope_matches_catalog / terminology_mapping_table)
-//   - framework/harness/scripts/check-design.ts (交叉校验 scope 一致性)
+//   - framework/harness/scripts/check-spec.ts (scope_matches_catalog / terminology_mapping_table)
+//   - framework/harness/scripts/check-plan.ts (交叉校验 scope 一致性)
 // ============================================================================
 
 import * as fs from 'fs';

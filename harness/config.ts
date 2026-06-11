@@ -252,7 +252,7 @@ export interface FrameworkPaths {
   /**
    * 功能级需求目录：每个 feature 一个子目录。跨阶段契约（contracts.yaml、
    *   acceptance.yaml 等）在 feature 根；阶段主产物在 `<phase>/` 子目录
-   *   （prd/PRD.md、design/design.md、review/review-report.md、
+   *   （spec/spec.md、plan/plan.md、review/review-report.md、
    *   testing/test-plan.md 等），由 artifact resolver 统一解析。
    *
    * 阶段 9 前曾存在 `feature_docs_dir` + `feature_specs_dir` 两个字段；
@@ -333,7 +333,7 @@ export interface FrameworkPaths {
 
 export type AgentBundleSkillMode = 'bridge' | 'inline';
 
-/** PRD harness Visual Handoff 守门档位（`prd` 段为 opt-in 时写入） */
+/** spec harness Visual Handoff 守门档位（`framework.config.json` 的 `spec` 段为 opt-in 时写入） */
 export type VisualHandoffEnforcementMode = 'strict' | 'warn' | 'reachable' | 'off';
 
 export interface VisualSourcesConfig {
@@ -342,15 +342,18 @@ export interface VisualSourcesConfig {
   allow_network_paths?: boolean;
 }
 
-export interface PrdHarnessConfig {
+export interface SpecHarnessConfig {
   /**
    * Visual Handoff（ui_change / kind / authoritative_refs）脚本守门强度；
-   * 未配置整个 `prd` 段时，check-prd 对「缺失 ui_change 块」**静默**，见 check-prd 文档。
+   * 未配置整个 `spec` 段时，check-spec 对「缺失 ui_change 块」**静默**，见 check-spec 文档。
    */
   visual_handoff_enforcement?: VisualHandoffEnforcementMode;
   /** 外部 UX 根目录与绝对路径 / UNC 安全开关 */
   visual_sources?: VisualSourcesConfig;
 }
+
+/** @deprecated v2.3 起改用 `SpecHarnessConfig` 与 `FrameworkConfig.spec` */
+export type PrdHarnessConfig = SpecHarnessConfig;
 
 export interface ProjectProfileConfig {
   /** 与 framework/profiles/<name>/ 对齐 */
@@ -394,8 +397,8 @@ export interface FrameworkConfig {
    * 给 Stop hook 的"陈旧 state"判定提供可调阈值，详见 [StateMachineConfig]。
    */
   state_machine?: StateMachineConfig;
-  /** PRD 脚本阶段行为（可选） */
-  prd?: PrdHarnessConfig;
+  /** spec 阶段脚本行为（opt-in；可选） */
+  spec?: SpecHarnessConfig;
   /**
    * Harness workflow 名称（无后缀），对应 `framework/workflows/<name>.workflow.yaml`。
    * 默认 `spec-driven`。
@@ -679,6 +682,7 @@ function loadFrameworkConfigInternal(projectRoot: string): ConfigCacheEntry {
 
 /** `project_type` 弃用提示：每进程最多 stderr 一次，避免批量单测刷屏 */
 let warnedProjectTypeAliasMigration = false;
+let warnedLegacyPrdConfigSegment = false;
 let warnedMissingProjectProfile = false;
 
 /**
@@ -706,6 +710,7 @@ export function clearFrameworkConfigCache(): void {
 
 export function resetFrameworkConfigWarningsForTest(): void {
   warnedProjectTypeAliasMigration = false;
+  warnedLegacyPrdConfigSegment = false;
   warnedMissingProjectProfile = false;
 }
 
@@ -803,7 +808,7 @@ function normalizeTools(raw: FrameworkToolsConfig | undefined): FrameworkToolsCo
   return { hylyre: { ...hy } };
 }
 
-function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfig | undefined {
+function normalizeSpecHarness(raw: SpecHarnessConfig | undefined): SpecHarnessConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
 
   let visual_handoff_enforcement: VisualHandoffEnforcementMode | undefined;
@@ -813,7 +818,7 @@ function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfi
     const allowed = new Set<VisualHandoffEnforcementMode>(['strict', 'warn', 'reachable', 'off']);
     if (!allowed.has(mode)) {
       throw new Error(
-        `[framework/config.ts] prd.visual_handoff_enforcement 必须是 "strict" | "warn" | "reachable" | "off"，收到 ${String(modeRaw)}`,
+        `[framework/config.ts] spec.visual_handoff_enforcement 必须是 "strict" | "warn" | "reachable" | "off"，收到 ${String(modeRaw)}`,
       );
     }
     visual_handoff_enforcement = mode;
@@ -840,6 +845,26 @@ function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfi
     ...(visual_handoff_enforcement !== undefined ? { visual_handoff_enforcement } : {}),
     ...(visual_sources !== undefined ? { visual_sources } : {}),
   };
+}
+
+function resolveSpecHarnessSegment(
+  raw: Partial<FrameworkConfig> & { prd?: SpecHarnessConfig },
+): SpecHarnessConfig | undefined {
+  const specRaw = raw.spec;
+  const prdRaw = raw.prd;
+  if (specRaw !== undefined && specRaw !== null) {
+    return normalizeSpecHarness(specRaw);
+  }
+  if (prdRaw !== undefined && prdRaw !== null) {
+    if (!warnedLegacyPrdConfigSegment) {
+      warnedLegacyPrdConfigSegment = true;
+      console.warn(
+        '[framework/config] Deprecated：framework.config.json 顶层 `prd` 段已改名为 `spec`；请更新配置或重跑 framework-init UPDATE。',
+      );
+    }
+    return normalizeSpecHarness(prdRaw);
+  }
+  return undefined;
 }
 
 function normalizeMaterializedAdapters(
@@ -893,7 +918,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     ),
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
-    prd: normalizePrdHarness(raw.prd),
+    spec: resolveSpecHarnessSegment(raw),
     active_workflow:
       typeof raw.active_workflow === 'string' && raw.active_workflow.trim().length > 0
         ? raw.active_workflow.trim()
@@ -1351,7 +1376,7 @@ export interface ResolvedPaths {
   promptsDir: string;
   /**
    * 实例工程的功能级需求目录（如 <root>/doc/features）：每个 feature 子目录
-   * 同时容纳文档（PRD/design/report）与契约（contracts/acceptance）。
+   * 同时容纳文档（spec/plan/report）与契约（contracts/acceptance）。
    */
   featuresDir: string;
   /** 模块画像 SSOT 绝对路径 */
@@ -1485,7 +1510,7 @@ export function featureCompatPath(projectRoot: string, feature: string): string 
 }
 
 /**
- * feature 目录下的某个文件的绝对路径，如 PRD.md / design.md / contracts.yaml /
+ * feature 目录下的某个文件的绝对路径，如 spec.md / plan.md / contracts.yaml /
  * acceptance.yaml / review-report.md / test-plan.md / test-report.md 等。
  * 阶段 9 合并前的 `featureDocPath` 与 `featureSpecPath` 现均由本函数承担。
  */
@@ -1504,8 +1529,8 @@ export function featureFilePath(
 
 /** 阶段主产物：basename → workflow phase id */
 export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
-  'PRD.md': 'prd',
-  'design.md': 'design',
+  'spec.md': 'spec',
+  'plan.md': 'plan',
   'review-report.md': 'review',
   'test-plan.md': 'testing',
   'test-report.md': 'testing',
@@ -1518,6 +1543,32 @@ export const ALREADY_PHASED_ARTIFACTS: ReadonlySet<string> = new Set([
   'testability-audit.md',
   'mock-plan.yaml',
 ]);
+
+/** 旧文件名 → canonical basename（读/写归一） */
+export const ARTIFACT_FILENAME_ALIASES: Readonly<Record<string, string>> = {
+  'PRD.md': 'spec.md',
+  'design.md': 'plan.md',
+};
+
+/** 扁平 legacy 候选（feature 根目录） */
+export const ARTIFACT_LEGACY_FLAT_FILENAMES: Readonly<Record<string, readonly string[]>> = {
+  'spec.md': ['PRD.md'],
+  'plan.md': ['design.md'],
+};
+
+/** 旧阶段目录 nested legacy 候选 */
+export const ARTIFACT_LEGACY_NESTED: Readonly<
+  Record<string, readonly { dir: string; file: string }[]>
+> = {
+  'spec.md': [
+    { dir: 'prd', file: 'PRD.md' },
+    { dir: 'prd', file: 'spec.md' },
+  ],
+  'plan.md': [
+    { dir: 'design', file: 'design.md' },
+    { dir: 'design', file: 'plan.md' },
+  ],
+};
 
 /** 覆盖 `paths.features_dir` 的绝对路径（SpecLoader 构造参数、单测自定义 layout） */
 export interface FeaturePathOptions {
@@ -1544,14 +1595,46 @@ export function normalizeArtifactFileName(fileName: string): string {
   const trimmed = fileName.replace(/\\/g, '/').trim();
   if (!trimmed) return trimmed;
   const slash = trimmed.indexOf('/');
-  if (slash <= 0) return trimmed;
+  if (slash <= 0) {
+    return ARTIFACT_FILENAME_ALIASES[trimmed] ?? trimmed;
+  }
   const prefix = trimmed.slice(0, slash);
   const rest = trimmed.slice(slash + 1);
-  const phase = PHASE_SCOPED_ARTIFACTS[rest];
-  if (phase && phase === prefix) {
-    return rest;
+  const canonicalRest = ARTIFACT_FILENAME_ALIASES[rest] ?? rest;
+  const phase = PHASE_SCOPED_ARTIFACTS[canonicalRest];
+  if (phase && (phase === prefix || prefix === 'prd' || prefix === 'design')) {
+    return canonicalRest;
   }
   return trimmed;
+}
+
+/** 读解析候选路径（优先级：canonical → nested legacy → flat legacy） */
+function artifactReadCandidatePaths(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string[] {
+  const base = normalizeArtifactFileName(fileName);
+  const out: string[] = [];
+  const push = (p: string) => {
+    if (!out.includes(p)) out.push(p);
+  };
+
+  push(featureArtifactPath(projectRoot, feature, base, opts));
+
+  const featDir = featureDirResolved(projectRoot, feature, opts);
+  for (const nested of ARTIFACT_LEGACY_NESTED[base] ?? []) {
+    push(path.join(featDir, nested.dir, nested.file));
+  }
+  for (const flat of ARTIFACT_LEGACY_FLAT_FILENAMES[base] ?? []) {
+    push(path.join(featDir, flat));
+  }
+  // 历史扁平同名（canonical basename 曾落 feature 根）
+  if (!ALREADY_PHASED_ARTIFACTS.has(base)) {
+    push(path.join(featDir, base));
+  }
+  return out;
 }
 
 /** 返回产物归属阶段；全局契约返回 null */
@@ -1607,10 +1690,12 @@ export function featureArtifactLegacyPath(
   opts?: FeaturePathOptions,
 ): string {
   const base = normalizeArtifactFileName(fileName);
-  if (ALREADY_PHASED_ARTIFACTS.has(base)) {
-    return featureArtifactPath(projectRoot, feature, base, opts);
+  const candidates = artifactReadCandidatePaths(projectRoot, feature, base, opts);
+  const canonicalPath = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    if (candidates[i] !== canonicalPath) return candidates[i];
   }
-  return featureFilePath(projectRoot, feature, base, opts);
+  return canonicalPath;
 }
 
 /**
@@ -1623,42 +1708,35 @@ export function resolveFeatureArtifact(
   opts?: FeaturePathOptions,
 ): ResolvedFeatureArtifact {
   const base = normalizeArtifactFileName(fileName);
-  const canonicalPath = featureArtifactPath(projectRoot, feature, base, opts);
-  const legacyPath = featureArtifactLegacyPath(projectRoot, feature, base, opts);
-  const hasCanonical = fs.existsSync(canonicalPath);
-  const hasLegacy =
-    !ALREADY_PHASED_ARTIFACTS.has(base) &&
-    legacyPath !== canonicalPath &&
-    fs.existsSync(legacyPath);
-  const legacyDuplicate = hasCanonical && hasLegacy;
+  const candidates = artifactReadCandidatePaths(projectRoot, feature, base, opts);
+  const canonicalPath = candidates[0];
+  const existing = candidates.filter((p) => fs.existsSync(p));
+  const primaryLegacy =
+    existing.find((p) => p !== canonicalPath) ??
+    candidates.find((p) => p !== canonicalPath) ??
+    canonicalPath;
+  const legacyDuplicate = existing.length > 1;
 
-  if (hasCanonical) {
+  if (existing.length === 0) {
     return {
       actualPath: canonicalPath,
       canonicalPath,
-      legacyPath,
+      legacyPath: primaryLegacy,
       usedLegacy: false,
-      legacyDuplicate,
-      exists: true,
-    };
-  }
-  if (hasLegacy) {
-    return {
-      actualPath: legacyPath,
-      canonicalPath,
-      legacyPath,
-      usedLegacy: true,
       legacyDuplicate: false,
-      exists: true,
+      exists: false,
     };
   }
+
+  const preferCanonical = existing.includes(canonicalPath);
+  const actualPath = preferCanonical ? canonicalPath : existing[0];
   return {
-    actualPath: canonicalPath,
+    actualPath,
     canonicalPath,
-    legacyPath,
-    usedLegacy: false,
-    legacyDuplicate: false,
-    exists: false,
+    legacyPath: primaryLegacy,
+    usedLegacy: actualPath !== canonicalPath,
+    legacyDuplicate: legacyDuplicate && preferCanonical,
+    exists: true,
   };
 }
 
@@ -1697,6 +1775,41 @@ export function receiptDirPath(projectRoot: string, feature: string, phase: stri
 /** 阶段完成回执文件绝对路径 = receiptDirPath / phase-completion-receipt.md */
 export function receiptFilePath(projectRoot: string, feature: string, phase: string): string {
   return path.join(receiptDirPath(projectRoot, feature, phase), 'phase-completion-receipt.md');
+}
+
+/** In-flight 续跑：canonical phase 目录缺失时回退 legacy prd/design 回执目录。 */
+const LEGACY_RECEIPT_PHASE_DIRS: Readonly<Record<string, string>> = {
+  spec: 'prd',
+  plan: 'design',
+};
+
+export interface ResolvedReceiptPath {
+  path: string;
+  /** 实际读取目录使用的 phase 段（可能与 canonical 不同） */
+  resolvedPhaseDir: string;
+  usedLegacyDir: boolean;
+}
+
+/**
+ * 解析回执路径：优先 canonical（spec/plan），存在则用之；否则尝试 legacy（prd/design）。
+ */
+export function resolveReceiptFilePath(
+  projectRoot: string,
+  feature: string,
+  canonicalPhase: string,
+): ResolvedReceiptPath {
+  const canonPath = receiptFilePath(projectRoot, feature, canonicalPhase);
+  if (fs.existsSync(canonPath)) {
+    return { path: canonPath, resolvedPhaseDir: canonicalPhase, usedLegacyDir: false };
+  }
+  const legacyDir = LEGACY_RECEIPT_PHASE_DIRS[canonicalPhase];
+  if (legacyDir) {
+    const legacyPath = receiptFilePath(projectRoot, feature, legacyDir);
+    if (fs.existsSync(legacyPath)) {
+      return { path: legacyPath, resolvedPhaseDir: legacyDir, usedLegacyDir: true };
+    }
+  }
+  return { path: canonPath, resolvedPhaseDir: canonicalPhase, usedLegacyDir: false };
 }
 
 /**

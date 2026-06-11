@@ -10,7 +10,7 @@
 //                  module_config_registered, oh_package_dependencies,
 //                  page_registration, naming_conventions, no_any_type,
 //                  async_await_pattern
-//   Traceability:  design_to_code, design_file_plan_to_code, code_to_design
+//   Traceability:  plan_to_code, plan_file_to_code, code_to_plan
 //
 // 语义级检查由 AI Harness (verify-coding.md) 完成，不在本脚本范围内。
 //
@@ -151,7 +151,7 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
 function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   const traceability = ctx.featureSpec.contracts?.prd_to_code_traceability;
   if (!traceability?.length) {
-    return [{ id: 'design_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'design_to_code'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 prd_to_code_traceability 映射。' }];
+    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 prd_to_code_traceability 映射。' }];
   }
 
   const allKeyFiles = new Set<string>();
@@ -165,7 +165,7 @@ function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   }
 
   if (missing.length === 0) {
-    return [{ id: 'design_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'design_to_code'), severity: 'BLOCKER', status: 'PASS', details: `PRD 映射的全部 ${allKeyFiles.size} 个关键文件均存在。` }];
+    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'PASS', details: `spec 映射的全部 ${allKeyFiles.size} 个关键文件均存在。` }];
   }
 
   const byPrd: Record<string, string[]> = {};
@@ -179,12 +179,12 @@ function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   }
 
   return [{
-    id: 'design_to_code', category: 'traceability',
-    description: ruleDesc(ctx, 'traceability_checks', 'design_to_code'),
+    id: 'plan_to_code', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${allKeyFiles.size} 个 PRD 关键文件缺失：\n${Object.entries(byPrd).map(([id, files]) => `  - ${id}: ${files.join(', ')}`).join('\n')}`,
+    details: `${missing.length}/${allKeyFiles.size} 个 spec 映射关键文件缺失：\n${Object.entries(byPrd).map(([id, files]) => `  - ${id}: ${files.join(', ')}`).join('\n')}`,
     affected_files: missing,
-    suggestion: '请补全缺失的关键文件以满足 PRD → 代码的追溯链。',
+    suggestion: '请补全缺失的关键文件以满足 spec → 代码的追溯链。',
   }];
 }
 
@@ -206,7 +206,7 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
   if (ctx.docsCommitted) {
     return (
       '\n\n（paths.docs_committed=true：工程约定将过程产物归档入仓时，请以团队规范为准；' +
-      '本项仍仅以「外层业务模块路径」判断是否越出 design 声明的 in_scope_modules。）'
+      '本项仍仅以「外层业务模块路径」判断是否越出 plan 声明的 in_scope_modules。）'
     );
   }
   return (
@@ -216,13 +216,13 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
 }
 
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
-  const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md');
+  const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
   if (!designResolved.exists) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'SKIP',
-      details: `design.md 不存在（${designResolved.canonicalPath}），无法确定 in_scope_modules。`,
+      details: `plan.md 不存在（${designResolved.canonicalPath}），无法确定 in_scope_modules。`,
     }];
   }
 
@@ -233,9 +233,9 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: `无法从 design.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
-      suggestion: '请先通过 check-design.ts 的 scope_declaration 检查。',
-      affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md')],
+      details: `无法从 plan.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
+      suggestion: '请先通过 check-plan.ts 的 scope_declaration 检查。',
+      affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md')],
     }];
   }
 
@@ -269,7 +269,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: `design.in_scope_modules 中以下模块在 contracts.yaml 中无 package_path：${missingPaths.join('、')}`,
+      details: `plan.in_scope_modules 中以下模块在 contracts.yaml 中无 package_path：${missingPaths.join('、')}`,
       suggestion: '请在 contracts.yaml 的 modules 列表中补充这些模块的 package_path。',
       affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
     }];
@@ -346,8 +346,8 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
       staleness.stale
-        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 requirement-design 发起 scope 扩展或撤销误改。'
-        : '若这些改动确属本需求必须：回到 requirement-design 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 plan 发起 scope 扩展或撤销误改。'
+        : '若这些改动确属本需求必须：回到 plan 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 plan.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',
@@ -440,8 +440,8 @@ const CODING_CRITICAL_SKIP_IDS = new Set([
   'file_completeness',
   'layer_compliance',
   'inter_module_dependency',
-  'design_to_code',
-  'design_file_plan_to_code',
+  'plan_to_code',
+  'plan_file_to_code',
   'diff_within_scope',
 ]);
 
@@ -484,7 +484,7 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
     details: lines.join('\n'),
     suggestion: canClaimDone
       ? '脚本门禁可进入 verifier + receipt 闭环；注意 BLOCKER/WARN 仍需人工确认风险。'
-      : '先修复 BLOCKER FAIL；若存在 critical_skip_ids，请补齐 contracts.yaml / design trace / diff baseline 后重跑。',
+      : '先修复 BLOCKER FAIL；若存在 critical_skip_ids，请补齐 contracts.yaml / plan trace / diff baseline 后重跑。',
   };
 }
 
@@ -539,7 +539,7 @@ const checker: PhaseChecker = {
     const analyses = sourceFiles.length > 0 ? analyzer.analyzeFiles(sourceFiles) : [];
 
     const results: CheckResult[] = [
-      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['design.md']),
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['plan.md']),
     ];
 
     results.push(
@@ -565,7 +565,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => host.checkCodingCompile(ctx), 'coding_compile'));
 
     // --- Traceability checks ---
-    results.push(...safeRun(() => checkDesignToCode(ctx), 'design_to_code'));
+    results.push(...safeRun(() => checkDesignToCode(ctx), 'plan_to_code'));
     results.push(
       ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );

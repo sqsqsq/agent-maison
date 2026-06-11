@@ -116,6 +116,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'phase-state', modulePath: './unit/phase-state.unit.test' },
   { id: 'receipt-path-reconcile', modulePath: './unit/receipt-path-reconcile.unit.test' },
   { id: 'feature-artifact-resolver', modulePath: './unit/feature-artifact-resolver.unit.test' },
+  { id: 'phase-alias', modulePath: './unit/phase-alias.unit.test' },
+  { id: 'capability-alias', modulePath: './unit/capability-alias.unit.test' },
+  { id: 'migrate-feature-phase-paths', modulePath: './unit/migrate-feature-phase-paths.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
 ];
 

@@ -138,23 +138,23 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'materializeInlineSkillMarkdown：宿主 doc/ 与 framework.config.json 链按 stub 深度改写',
     run: () => {
-      const stubRel = '.agents/skills/prd-design/SKILL.md';
-      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'prd-design', {
+      const stubRel = '.agents/skills/spec/SKILL.md';
+      const md = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'spec', {
         projectRoot: FRAMEWORK_DIR,
         stubTargetRelPosix: stubRel,
       });
       assert(
         md.includes('](../../../doc/glossary.yaml)'),
-        'prd-design 源链 ../../../../doc/ 应改写为相对 stub 的 ../../../doc/',
+        'spec 源链 ../../../../doc/ 应改写为相对 stub 的 ../../../doc/',
       );
       assert(!md.includes('](../../../../doc/'), '不得保留逃出宿主根的 ../../../../doc/ 链');
-      const reqMd = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'requirement-design', {
+      const reqMd = materializeInlineSkillMarkdown(FRAMEWORK_DIR, 'plan', {
         projectRoot: FRAMEWORK_DIR,
-        stubTargetRelPosix: '.agents/skills/requirement-design/SKILL.md',
+        stubTargetRelPosix: '.agents/skills/plan/SKILL.md',
       });
       assert(
         reqMd.includes('](../../../framework.config.json)'),
-        'requirement-design framework.config 应改写为 ../../../framework.config.json',
+        'plan framework.config 应改写为 ../../../framework.config.json',
       );
     },
   },

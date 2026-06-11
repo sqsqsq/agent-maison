@@ -65,15 +65,15 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'dual-read 仅 legacy 存在',
+    name: 'dual-read 仅 legacy 存在（扁平 PRD.md）',
     run: () => {
       const root = mkProject();
       try {
         const legacy = path.join(root, 'doc', 'features', 'demo', 'PRD.md');
-        fs.writeFileSync(legacy, '# prd\n');
-        const r = resolveFeatureArtifact(root, 'demo', 'PRD.md');
+        fs.writeFileSync(legacy, '# legacy prd\n');
+        const r = resolveFeatureArtifact(root, 'demo', 'spec.md');
         assert(r.exists && r.usedLegacy && !r.legacyDuplicate, JSON.stringify(r));
-        assert(r.actualPath === legacy, 'actual should be legacy');
+        assert(r.actualPath === legacy, 'actual should be legacy PRD.md');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -84,13 +84,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const root = mkProject();
       try {
-        const canonDir = path.join(root, 'doc', 'features', 'demo', 'prd');
+        const canonDir = path.join(root, 'doc', 'features', 'demo', 'spec');
         fs.mkdirSync(canonDir, { recursive: true });
-        fs.writeFileSync(path.join(canonDir, 'PRD.md'), '# new\n');
+        fs.writeFileSync(path.join(canonDir, 'spec.md'), '# new\n');
         fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'PRD.md'), '# old\n');
-        const r = resolveFeatureArtifact(root, 'demo', 'PRD.md');
+        const r = resolveFeatureArtifact(root, 'demo', 'spec.md');
         assert(r.exists && !r.usedLegacy && r.legacyDuplicate, JSON.stringify(r));
-        assert(r.actualPath.endsWith(path.join('prd', 'PRD.md')), 'canonical wins');
+        assert(r.actualPath.endsWith(path.join('spec', 'spec.md')), 'canonical wins');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -130,12 +130,12 @@ const cases: Array<{ name: string; run: () => void }> = [
           ),
         );
         clearFrameworkConfigCache();
-        const abs = featureArtifactPath(root, 'demo', 'PRD.md');
-        const expected = path.join(root, 'doc', 'features', 'demo', 'phases', 'prd', 'PRD.md');
+        const abs = featureArtifactPath(root, 'demo', 'spec.md');
+        const expected = path.join(root, 'doc', 'features', 'demo', 'phases', 'spec', 'spec.md');
         assert(abs === expected, `expected ${expected}, got ${abs}`);
         assert(
-          relFeatureArtifact(root, 'demo', 'PRD.md') === 'doc/features/demo/phases/prd/PRD.md',
-          relFeatureArtifact(root, 'demo', 'PRD.md'),
+          relFeatureArtifact(root, 'demo', 'spec.md') === 'doc/features/demo/phases/spec/spec.md',
+          relFeatureArtifact(root, 'demo', 'spec.md'),
         );
       } finally {
         clearFrameworkConfigCache();
@@ -161,16 +161,52 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'dual-read 仅 legacy 存在（design/design.md）',
+    run: () => {
+      const root = mkProject();
+      try {
+        const legacyDir = path.join(root, 'doc', 'features', 'demo', 'design');
+        fs.mkdirSync(legacyDir, { recursive: true });
+        const legacy = path.join(legacyDir, 'design.md');
+        fs.writeFileSync(legacy, '# legacy plan\n');
+        const r = resolveFeatureArtifact(root, 'demo', 'plan.md');
+        assert(r.exists && r.usedLegacy && !r.legacyDuplicate, JSON.stringify(r));
+        assert(r.actualPath === legacy, 'actual should be legacy design.md');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'dual-read plan canonical 优先 + legacyDuplicate（design/design.md）',
+    run: () => {
+      const root = mkProject();
+      try {
+        const canonDir = path.join(root, 'doc', 'features', 'demo', 'plan');
+        fs.mkdirSync(canonDir, { recursive: true });
+        fs.writeFileSync(path.join(canonDir, 'plan.md'), '# new\n');
+        const legacyDir = path.join(root, 'doc', 'features', 'demo', 'design');
+        fs.mkdirSync(legacyDir, { recursive: true });
+        fs.writeFileSync(path.join(legacyDir, 'design.md'), '# old\n');
+        const r = resolveFeatureArtifact(root, 'demo', 'plan.md');
+        assert(r.exists && !r.usedLegacy && r.legacyDuplicate, JSON.stringify(r));
+        assert(r.actualPath.endsWith(path.join('plan', 'plan.md')), 'canonical wins');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'exists=false 时 actualPath===canonicalPath',
     run: () => {
       const root = mkProject();
       try {
-        const r = resolveFeatureArtifact(root, 'demo', 'design.md');
+        const r = resolveFeatureArtifact(root, 'demo', 'plan.md');
         assert(!r.exists, 'should not exist');
         assert(r.actualPath === r.canonicalPath, 'actual equals canonical when missing');
         assert(
-          relFeatureArtifact(root, 'demo', 'design.md') === 'doc/features/demo/design/design.md',
-          relFeatureArtifact(root, 'demo', 'design.md'),
+          relFeatureArtifact(root, 'demo', 'plan.md') === 'doc/features/demo/plan/plan.md',
+          relFeatureArtifact(root, 'demo', 'plan.md'),
         );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });

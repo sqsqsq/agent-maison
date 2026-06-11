@@ -7,8 +7,8 @@ export type Phase = string;
 
 /** IDE / 校验脚本常用的已知 phase id（非穷尽） */
 export type KnownPhase =
-  | 'prd'
-  | 'design'
+  | 'spec'
+  | 'plan'
   | 'coding'
   | 'review'
   | 'ut'
@@ -113,7 +113,9 @@ export interface ScoringDimension {
 
 export interface TrivialExemptionCondition {
   intent?: string[];
+  /** @deprecated 使用 spec_loc_delta_lt；保留 alias 读取 */
   prd_loc_delta_lt?: number;
+  spec_loc_delta_lt?: number;
   single_function_scope?: boolean;
 }
 
@@ -305,7 +307,7 @@ export interface AcceptanceSpec {
 }
 
 // --------------------------------------------------------------------------
-// use-cases.yaml Schema v2（requirement-design 产出、business-ut 消费）
+// use-cases.yaml Schema v2（plan 产出、business-ut 消费）
 // v2 定位：规约文档，不强制代码形态；核心字段是 ui_bindings 映射表
 // --------------------------------------------------------------------------
 
@@ -406,7 +408,7 @@ export interface CheckResult {
   failure_kind?: string;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
-  /** PRD Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
+  /** spec Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
   visual_resolution_rows?: VisualHandoffResolutionRow[];
 }
 
@@ -469,7 +471,7 @@ export type CapabilityKey =
   | 'device_test.run'
   | 'device_test.build'
   | 'device_test.install'
-  | 'prd.visual_handoff';
+  | 'spec.visual_handoff';
 
 export interface ProfileCapabilitySpec {
   provider?: string;
@@ -505,6 +507,8 @@ export interface ExtensionBundle {
   hooks: Record<string, Record<string, string[]>>;
   extensionCapabilities: Record<string, ProfileCapabilitySpec>;
   phaseRuleOverlayPaths: Record<string, string>;
+  /** skillId → assetKey → 已校验的绝对路径（extension 覆盖/增补 profile skill-assets） */
+  skillAssetAbsPaths: Record<string, Record<string, string>>;
   errors: ExtensionValidationError[];
 }
 
@@ -540,12 +544,12 @@ export interface CheckContext {
   /** init 阶段专用：CLI --adapter 透传值（其他阶段为 undefined） */
   adapter?: string;
   /**
-   * PRD：Visual Handoff 脚本守门档位（framework.config.json → prd.visual_handoff_enforcement，**opt-in**）。
-   * 未设置（整个 `prd` 段缺失或未配置 enforcement）时 check-prd 对「缺失 ui_change 块」静默。
+   * spec：Visual Handoff 脚本守门档位（framework.config.json → spec.visual_handoff_enforcement，**opt-in**）。
+   * 未设置（整个 `spec` 段缺失或未配置 enforcement）时 check-spec 对「缺失 ui_change 块」静默。
    */
   visualHandoffEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
-  /** PRD：`prd.visual_sources`（opt-in）；未设置则为 undefined */
-  prdVisualSources?: {
+  /** spec：`spec.visual_sources`（opt-in）；未设置则为 undefined */
+  specVisualSources?: {
     external_roots?: Record<string, string>;
     allow_absolute_paths?: boolean;
     allow_network_paths?: boolean;

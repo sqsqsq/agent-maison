@@ -37,10 +37,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'extractProfileSkillAssetRefs: 解析多次出现与多种 skill id',
     run: () => {
       const s =
-        'x `profile-skill-asset:requirement-design/design_template` y profile-skill-asset:business-ut/use_cases_schema end';
+        'x `profile-skill-asset:plan/design_template` y profile-skill-asset:business-ut/use_cases_schema end';
       const refs = extractProfileSkillAssetRefs(s);
       assert(refs.length === 2, `len=${refs.length}`);
-      assert(refs[0].skill === 'requirement-design' && refs[0].key === 'design_template', 'first');
+      assert(refs[0].skill === 'plan' && refs[0].key === 'design_template', 'first');
       assert(refs[1].skill === 'business-ut' && refs[1].key === 'use_cases_schema', 'second');
     },
   },
@@ -50,7 +50,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const root = repoRoot();
       const r = loadSkillAssetsManifest(root, 'hmos-app');
       assert(r.ok && r.manifest !== undefined, r.errors.join('; '));
-      assert(r.manifest!.assets['prd-design']?.prd_template === 'templates/prd-template.md', 'prd_template');
+      assert(r.manifest!.assets['spec']?.prd_template === 'templates/spec-template.md', 'prd_template');
     },
   },
   {
@@ -58,9 +58,20 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const root = repoRoot();
       const m = loadSkillAssetsManifest(root, 'hmos-app').manifest!;
-      const res = resolveSkillAssetPath(root, 'hmos-app', m, 'prd-design', 'prd_template');
+      const res = resolveSkillAssetPath(root, 'hmos-app', m, 'spec', 'prd_template');
       assert(res.ok && res.absPath !== undefined, res.error ?? 'fail');
       assert(fs.existsSync(res.absPath!), res.absPath!);
+    },
+  },
+  {
+    name: 'resolveSkillAssetPath: legacy prd-design/prd_template alias',
+    run: () => {
+      const root = repoRoot();
+      const m = loadSkillAssetsManifest(root, 'hmos-app').manifest!;
+      const canon = resolveSkillAssetPath(root, 'hmos-app', m, 'spec', 'spec_template');
+      const legacy = resolveSkillAssetPath(root, 'hmos-app', m, 'prd-design', 'prd_template');
+      assert(canon.ok && legacy.ok, 'both resolve');
+      assert(canon.absPath === legacy.absPath, 'same file');
     },
   },
   {
@@ -68,7 +79,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const root = repoRoot();
       const m = loadSkillAssetsManifest(root, 'generic').manifest!;
-      const res = resolveSkillAssetPath(root, 'generic', m, 'prd-design', 'prd_template');
+      const res = resolveSkillAssetPath(root, 'generic', m, 'spec', 'prd_template');
       assert(
         Boolean(res.ok && res.relRepo?.includes('profiles/generic/')),
         res.relRepo ?? 'relRepo',
@@ -91,7 +102,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const root = repoRoot();
       const m = loadSkillAssetsManifest(root, 'hmos-app').manifest!;
-      const res = resolveSkillAssetPath(root, 'hmos-app', m, 'prd-design', 'not_a_declared_asset_key');
+      const res = resolveSkillAssetPath(root, 'hmos-app', m, 'spec', 'not_a_declared_asset_key');
       assert(res.ok === false, 'expected fail');
       assert(Boolean(res.error?.includes('未声明资产')), res.error ?? '');
     },
@@ -136,7 +147,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'utf-8',
       );
       const profSkills = path.join(tmp, 'framework', 'profiles', profile, 'skills');
-      const skill1 = path.join(profSkills, 'prd-design');
+      const skill1 = path.join(profSkills, 'spec');
       fs.mkdirSync(path.join(skill1, 'templates'), { recursive: true });
       fs.writeFileSync(path.join(skill1, 'templates', 'ok.md'), '# ok\n', 'utf-8');
       fs.writeFileSync(
@@ -145,17 +156,17 @@ const cases: Array<{ name: string; run: () => void }> = [
           'schema_version: "1.0"',
           `profile: ${profile}`,
           'assets:',
-          '  prd-design:',
+          '  spec:',
           '    prd_template: templates/ok.md',
           '',
         ].join('\n'),
         'utf-8',
       );
-      const rootSkillDir = path.join(tmp, 'framework', 'skills', 'feature', 'prd-design');
+      const rootSkillDir = path.join(tmp, 'framework', 'skills', 'feature', 'spec');
       fs.mkdirSync(rootSkillDir, { recursive: true });
       fs.writeFileSync(
         path.join(rootSkillDir, 'SKILL.md'),
-        'See `profile-skill-asset:prd-design/not_in_manifest`.\n',
+        'See `profile-skill-asset:spec/not_in_manifest`.\n',
         'utf-8',
       );
       const v = validateProfileSkillAssetsForProject(tmp);
@@ -181,7 +192,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'utf-8',
       );
       const profSkills = path.join(tmp, 'framework', 'profiles', profile, 'skills');
-      const skill1 = path.join(profSkills, 'prd-design');
+      const skill1 = path.join(profSkills, 'spec');
       fs.mkdirSync(path.join(skill1, 'templates'), { recursive: true });
       fs.writeFileSync(path.join(skill1, 'templates', 'ok.md'), '# ok\n', 'utf-8');
       fs.writeFileSync(
@@ -190,14 +201,14 @@ const cases: Array<{ name: string; run: () => void }> = [
           'schema_version: "1.0"',
           `profile: ${profile}`,
           'assets:',
-          '  prd-design:',
+          '  spec:',
           '    prd_template: templates/ok.md',
           '    ghost_asset: templates/this-file-is-missing.md',
           '',
         ].join('\n'),
         'utf-8',
       );
-      const rootSkillDir = path.join(tmp, 'framework', 'skills', 'feature', 'prd-design');
+      const rootSkillDir = path.join(tmp, 'framework', 'skills', 'feature', 'spec');
       fs.mkdirSync(rootSkillDir, { recursive: true });
       fs.writeFileSync(path.join(rootSkillDir, 'SKILL.md'), '# no refs\n', 'utf-8');
       const v = validateProfileSkillAssetsForProject(tmp);
@@ -234,7 +245,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const abs = resolveManifestEntryPath(
         tmp,
         'hmos-app',
-        'prd-design',
+        'spec',
         'framework/skills/reference/user-confirmation-ux.md',
         layout,
       );

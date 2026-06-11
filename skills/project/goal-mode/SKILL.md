@@ -8,7 +8,7 @@
 
 用户要求进入 **目标模式 / 全自动（无人值守）**，对某个 **feature** 从指定 phase 推进到终点时，进入本 Skill 并由 **agent 自跑** goal-runner。
 
-「全链路 / 从 PRD 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
+「全链路 / 从 spec 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
 
 ## 宿主怎么触发（用户侧）
 
@@ -61,7 +61,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
   --requirement "<需求描述>" \
   --adapter <显式指定或 personal setup 后的 active adapter> \
-  [--start prd] [--end testing] [--dry-run]
+  [--start spec] [--end testing] [--dry-run]
 ```
 
 `--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。

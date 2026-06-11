@@ -9,13 +9,15 @@ import type {
   ProfileCapabilitySpec,
   CheckResult,
 } from './scripts/utils/types';
+import { normalizeCapabilityKey } from './scripts/utils/capability-alias';
 import * as path from 'path';
 
 export function getCapability(
   resolved: HarnessResolvedProfile,
-  key: CapabilityKey,
+  key: CapabilityKey | string,
 ): ProfileCapabilitySpec | undefined {
-  return resolved.capabilities[key];
+  const canon = normalizeCapabilityKey(String(key));
+  return resolved.capabilities[canon];
 }
 
 /** generic 等 profile 声明 SKIP 时，脚本层应返回 SKIP 而非调用工具链 */
@@ -24,9 +26,12 @@ export function isCapabilitySkipped(resolved: HarnessResolvedProfile, key: Capab
   return c !== undefined && c.severity === 'SKIP';
 }
 
-export function isPrdVisualHandoffSkipped(resolved: HarnessResolvedProfile): boolean {
-  return isCapabilitySkipped(resolved, 'prd.visual_handoff');
+export function isSpecVisualHandoffSkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'spec.visual_handoff');
 }
+
+/** @deprecated v2.3 起改用 `isSpecVisualHandoffSkipped` */
+export const isPrdVisualHandoffSkipped = isSpecVisualHandoffSkipped;
 
 type ProviderModule = Record<string, unknown>;
 
@@ -51,7 +56,7 @@ const PROVIDER_MODULE_BY_ID: Record<string, string> = {
   hdc: 'device-test',
   hdc_app: 'device-test-install',
   hylyre: 'device-test-run',
-  script: 'prd-visual-handoff',
+  script: 'spec-visual-handoff',
 };
 
 function requireCapabilityProvider(
@@ -185,14 +190,17 @@ export function looksLikeUtCompileCommandMismatch(ctx: CheckContext, log: string
   return fn(log);
 }
 
-export function dispatchPrdVisualHandoff(ctx: CheckContext, prd: string): CheckResult[] {
+export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: string): CheckResult[] {
   const fn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
     ctx.resolvedProfile,
-    'prd.visual_handoff',
+    'spec.visual_handoff',
     'checkVisualHandoff',
   );
-  return fn(ctx, prd);
+  return fn(ctx, specMarkdown);
 }
+
+/** @deprecated v2.3 起改用 `dispatchSpecVisualHandoff` */
+export const dispatchPrdVisualHandoff = dispatchSpecVisualHandoff;
 
 export function dispatchDeviceTestBuild(
   ctx: CheckContext,

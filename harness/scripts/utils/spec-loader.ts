@@ -5,7 +5,7 @@
 // 支持两类 Spec：
 //   1. 阶段级规约 (framework/specs/phase-rules/*.yaml)  ← 框架通用
 //   2. 功能级规约 (<features_dir>/<feature>/{contracts,acceptance}.yaml) ← 实例工程
-//      阶段 9：contracts/acceptance 与 PRD/design 扁平同目录，无 specs/ 子层。
+//      阶段 9：contracts/acceptance 与 spec/plan 扁平同目录，无 specs/ 子层。
 // 阶段 3：路径默认值不再硬编码，全部从 `framework/harness/config.ts` 读取。
 //        调用方可通过构造参数显式覆盖（测试/特殊布局）。
 // ============================================================================
@@ -48,8 +48,8 @@ export interface FeatureArtifactInspection {
 }
 
 const PHASE_RULE_FILENAMES: Record<Phase, string> = {
-  prd: 'prd-rules.yaml',
-  design: 'design-rules.yaml',
+  spec: 'spec-rules.yaml',
+  plan: 'plan-rules.yaml',
   coding: 'coding-rules.yaml',
   review: 'review-rules.yaml',
   ut: 'ut-rules.yaml',
@@ -73,16 +73,16 @@ const ARCHIVE_EXTENSIONS = [
 ];
 
 const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
-  prd: ['PRD.md', 'acceptance.yaml'],
-  design: ['PRD.md', 'design.md', 'acceptance.yaml', 'contracts.yaml'],
-  coding: ['design.md', 'acceptance.yaml', 'contracts.yaml'],
-  review: ['design.md', 'acceptance.yaml', 'contracts.yaml'],
-  ut: ['PRD.md', 'design.md', 'acceptance.yaml', 'contracts.yaml'],
-  testing: ['PRD.md', 'design.md', 'acceptance.yaml'],
+  spec: ['spec.md', 'acceptance.yaml'],
+  plan: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
+  coding: ['plan.md', 'acceptance.yaml', 'contracts.yaml'],
+  review: ['plan.md', 'acceptance.yaml', 'contracts.yaml'],
+  ut: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
+  testing: ['spec.md', 'plan.md', 'acceptance.yaml'],
 };
 
 const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
-  review: ['PRD.md'],
+  review: ['spec.md'],
   ut: ['use-cases.yaml'],
   testing: ['contracts.yaml', 'use-cases.yaml', 'review-report.md'],
 };
@@ -248,9 +248,9 @@ export class SpecLoader {
   // --------------------------------------------------------------------------
 
   /**
-   * 加载功能模块的过程文档 (PRD.md, design.md 等)
+   * 加载功能模块的过程文档 (spec.md, plan.md 等)
    * @param feature 功能模块名 (如 'home-page')
-   * @param docName 文档名 (如 'PRD.md', 'design.md')
+   * @param docName 文档名 (如 'spec.md', 'plan.md')
    */
   loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
     const resolved = resolveFeatureArtifact(projectRoot, feature, docName, this.featurePathOpts(projectRoot));
@@ -367,7 +367,7 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
 // ---------------------------------------------------------------------------
 // 契约上 ContractsSpec.module_dependencies 是 Record<string, string[]>
 // （key = 源模块名，value = 依赖模块名数组）。
-// 但实际 YAML 里常见另一种更自然的写法，来自 requirement-design 从架构图依赖箭头提取：
+// 但实际 YAML 里常见另一种更自然的写法，来自 plan 从架构图依赖箭头提取：
 //   module_dependencies:
 //     - from: "<FeatureModule>"
 //       to: "<SharedUIModule>"
@@ -430,7 +430,7 @@ function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: st
 // ---------------------------------------------------------------------------
 // prd_to_code_traceability 字段别名归一
 // ---------------------------------------------------------------------------
-// ContractsSpec 契约字段名是 key_files，但当前 requirement-design 规范和 home-page 样例
+// ContractsSpec 契约字段名是 key_files，但当前 plan 规范和 home-page 样例
 // 写的是 files。如果两种写法都可以被接受，则需要在加载期把 files 别名为
 // key_files，否则下游 `for (const f of item.key_files)` 直接 TypeError。
 // 该规范化**只做别名回填**，不删除原字段，以免影响其他消费者。

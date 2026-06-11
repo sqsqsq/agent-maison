@@ -19,7 +19,7 @@ New module-level indexing artifacts SHALL NOT reuse the term "DAG".
 
 ### Requirement: Code Graph is index-only, never source of truth
 
-A Code Graph SHALL be treated as a derived projection of source code plus a thin curated intent layer, and MUST NOT be an authoritative source of truth. Any consumer (PRD/design/coding/UT/device-testing) MUST re-verify a node's source anchor against current code before relying on the node's content. Enforcement landing point: `docs/concepts/code-graph.md`; mechanical drift enforcement is defined by change `code-graph-extractor-drift`.
+A Code Graph SHALL be treated as a derived projection of source code plus a thin curated intent layer, and MUST NOT be an authoritative source of truth. Any consumer (PRD/plan/coding/UT/device-testing) MUST re-verify a node's source anchor against current code before relying on the node's content. Enforcement landing point: `docs/concepts/code-graph.md`; mechanical drift enforcement is defined by change `code-graph-extractor-drift`.
 
 #### Scenario: Consumer re-verifies before trusting
 - **WHEN** a skill consumes a Code Graph node to locate or reason about code

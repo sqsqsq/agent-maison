@@ -8,7 +8,7 @@ import { listWorkflowPhases } from '../../workflow-loader';
 
 export type TransitionPolicy = 'manual' | 'batch_authorized' | 'goal_mode';
 
-export type FeaturePhase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
+export type FeaturePhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
 
 export type HarnessVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
@@ -25,8 +25,7 @@ export const DEFAULT_TRANSITION_POLICY: TransitionPolicy = 'manual';
 
 /** Ordered feature phases for batch range parsing. */
 export const FEATURE_PHASE_ORDER: readonly FeaturePhase[] = [
-  'prd',
-  'design',
+  'spec', 'plan',
   'coding',
   'review',
   'ut',
@@ -65,9 +64,9 @@ export interface BatchAuthorizationResult {
 }
 
 const PHASE_ALIASES: Record<string, FeaturePhase> = {
-  prd: 'prd',
-  design: 'design',
-  设计: 'design',
+  prd: 'spec',
+  design: 'plan',
+  设计: 'plan',
   coding: 'coding',
   编码: 'coding',
   review: 'review',
@@ -91,7 +90,7 @@ const BATCH_PHRASES: Array<{ pattern: RegExp; through: FeaturePhase }> = [
   { pattern: /全链路|端到端交付|从\s*prd\s*到\s*真机|pr\s*d\s*到\s*真机/i, through: 'testing' },
   { pattern: /prd\s*到\s*ut|到\s*ut\s*为止|做到\s*ut/i, through: 'ut' },
   { pattern: /做到\s*review|做到\s*cr|coding\s*并\s*review|编码\s*并\s*审查|到\s*review\s*为止/i, through: 'review' },
-  { pattern: /做到\s*design|到\s*设计\s*为止|prd\s*到\s*design/i, through: 'design' },
+  { pattern: /做到\s*design|到\s*设计\s*为止|prd\s*到\s*design/i, through: 'plan' },
   { pattern: /做到\s*testing|到\s*真机|真机测试\s*闭环/i, through: 'testing' },
 ];
 
@@ -152,17 +151,22 @@ function featurePhasesFromWorkflow(spec: WorkflowSpec): FeaturePhase[] {
  */
 export function resolveAutoChain(
   workflow: WorkflowSpec,
-  startPhase: FeaturePhase,
-  endPhase: FeaturePhase,
+  startPhase: FeaturePhase | string,
+  endPhase: FeaturePhase | string,
   overrideChain?: readonly string[],
 ): FeaturePhase[] {
-  const startIdx = FEATURE_PHASE_ORDER.indexOf(startPhase);
-  const endIdx = FEATURE_PHASE_ORDER.indexOf(endPhase);
-  if (startIdx < 0 || endIdx < 0) {
+  const start = asFeaturePhase(startPhase) ?? (FEATURE_PHASE_SET.has(startPhase) ? (startPhase as FeaturePhase) : undefined);
+  const end = asFeaturePhase(endPhase) ?? (FEATURE_PHASE_SET.has(endPhase) ? (endPhase as FeaturePhase) : undefined);
+  if (!start || !end) {
     throw new Error(`[resolveAutoChain] 非法 phase: start=${startPhase} end=${endPhase}`);
   }
+  const startIdx = FEATURE_PHASE_ORDER.indexOf(start);
+  const endIdx = FEATURE_PHASE_ORDER.indexOf(end);
+  if (startIdx < 0 || endIdx < 0) {
+    throw new Error(`[resolveAutoChain] 非法 phase: start=${start} end=${end}`);
+  }
   if (startIdx > endIdx) {
-    throw new Error(`[resolveAutoChain] start (${startPhase}) 不能晚于 end (${endPhase})`);
+    throw new Error(`[resolveAutoChain] start (${start}) 不能晚于 end (${end})`);
   }
 
   let base: FeaturePhase[];
@@ -190,7 +194,7 @@ export function resolveAutoChain(
   if (filtered.length === 0) {
     throw new Error('[resolveAutoChain] 解析结果为空');
   }
-  validateFeatureChainDag(workflow, filtered, startPhase);
+  validateFeatureChainDag(workflow, filtered, start);
   return filtered;
 }
 
@@ -319,9 +323,9 @@ export function isPhaseWithinBatchRange(
 /** Next phase skill label for phase.next_step portable menu. */
 export function nextSkillLabelForPhase(phase: FeaturePhase): string {
   switch (phase) {
-    case 'prd':
-      return 'requirement-design 技术设计';
-    case 'design':
+    case 'spec':
+      return 'plan 技术设计';
+    case 'plan':
       return 'coding 编码';
     case 'coding':
       return 'code-review Code Review';

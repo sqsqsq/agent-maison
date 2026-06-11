@@ -11,8 +11,8 @@ import type { CleanupResult } from './init-sync-telemetry';
 export const LEGACY_NUMBERED_SKILL_BRIDGE_IDS = [
   '00-framework-init',
   '0-catalog-bootstrap',
-  '1-prd-design',
-  '2-requirement-design',
+  '1-spec',
+  '2-plan',
   '3-coding',
   '4-code-review',
   '5-business-ut',

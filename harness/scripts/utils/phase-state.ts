@@ -9,7 +9,7 @@ import { spawnSync } from 'child_process';
 import {
   featurePhaseReportsDir,
   loadFrameworkConfig,
-  receiptFilePath,
+  resolveReceiptFilePath,
   statefilePath,
 } from '../../config';
 import {
@@ -19,8 +19,8 @@ import {
 } from '../../workflow-loader';
 
 export type FeaturePhase =
-  | 'prd'
-  | 'design'
+  | 'spec'
+  | 'plan'
   | 'coding'
   | 'review'
   | 'ut'
@@ -166,7 +166,8 @@ export function tryValidateReceipt(
   phase: string,
   feature: string,
 ): ReceiptValidation {
-  const receiptAbs = receiptFilePath(projectRoot, feature, phase);
+  const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
+  const receiptAbs = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
 
   if (!fs.existsSync(receiptAbs)) {

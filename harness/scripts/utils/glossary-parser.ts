@@ -8,7 +8,7 @@
 //   - allKnownTerms(glossary): 返回所有 term + alias 的扁平列表
 //
 // 消费者:
-//   - framework/harness/scripts/check-prd.ts (terminology_mapping_table BLOCKER)
+//   - framework/harness/scripts/check-spec.ts (terminology_mapping_table BLOCKER)
 //   - 未来可用于 skills 的辅助脚本
 // ============================================================================
 

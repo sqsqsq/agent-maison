@@ -135,6 +135,7 @@ const cases: Case[] = [
         hooks: { catalog: { pre_phase: [absExt] } },
         extensionCapabilities: {},
         phaseRuleOverlayPaths: {},
+        skillAssetAbsPaths: {},
         errors: [],
       };
       const slots = collectHookSlots(harnessRoot, 'catalog', 'pre_phase', resolved(profDir, bundle));
@@ -184,6 +185,7 @@ const cases: Case[] = [
         hooks: { catalog: { pre_phase: [hookPath] } },
         extensionCapabilities: {},
         phaseRuleOverlayPaths: {},
+        skillAssetAbsPaths: {},
         errors: [],
       };
       const r = await dispatchLifecycleHooks(
@@ -271,6 +273,7 @@ const cases: Case[] = [
         hooks: { catalog: { pre_phase: [hookPath] } },
         extensionCapabilities: {},
         phaseRuleOverlayPaths: {},
+        skillAssetAbsPaths: {},
         errors: [],
       };
       const r = await dispatchLifecycleHooks(

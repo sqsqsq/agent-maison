@@ -10,10 +10,10 @@
 - [x] 2.1 spec-loader.inspectFeatureArtifacts + loadFeatureDoc
 - [x] 2.2 check-catalog feature_scope_integrity
 - [x] 2.3 check-coding, check-ut, check-testing, derive-hylyre-plan-hint
-- [x] 2.4 check-prd, check-design, check-review labels + legacy duplicate WARN helper
+- [x] 2.4 check-spec, check-plan, check-review labels + legacy duplicate WARN helper
 - [x] 2.5 harness-runner collectContextFiles + printFeatureArtifactInspection
 - [x] 2.6 backfill-context-exploration ARTIFACT_REL
-- [x] 2.7 prd-visual-handoff-check relFeatureArtifact
+- [x] 2.7 spec-visual-handoff-check relFeatureArtifact
 
 ## 3. Docs & skills
 

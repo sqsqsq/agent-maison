@@ -3,10 +3,10 @@
 // ============================================================================
 // 用法（在仓库根目录或任意位置执行均可）：
 //   npx ts-node framework/harness/scripts/check-receipt.ts \
-//     --feature <feature> --phase <prd|design|coding|review|ut|testing>
+//     --feature <feature> --phase <spec|plan|coding|review|ut|testing>
 //
 // 行为：
-//   1. 读取 doc/features/<feature>/<phase>/phase-completion-receipt.md
+//   1. 读取回执（canonical spec/plan 目录；legacy prd/design 目录可回退，见 resolveReceiptFilePath）
 //   2. 解析 YAML frontmatter
 //   3. 校验：
 //      - feature / phase 字段与 CLI 参数一致
@@ -35,7 +35,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
-import { loadFrameworkConfig, receiptFilePath } from '../config';
+import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
+import { normalizePhaseId } from './utils/phase-alias';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
@@ -44,9 +45,9 @@ import {
   type FeaturePhase,
 } from './utils/phase-state';
 
-type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
+type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
 
-const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing'];
+const VALID_PHASES: Phase[] = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 
 interface ReceiptFrontmatter {
   feature?: string;
@@ -120,7 +121,8 @@ function parseArgs() {
   }
 
   const feature = args.feature as string | undefined;
-  const phase = args.phase as Phase | undefined;
+  const rawPhase = args.phase as string | undefined;
+  const phase = rawPhase ? (normalizePhaseId(rawPhase) as Phase) : undefined;
   const projectRoot = path.resolve(
     (args['project-root'] as string | undefined) ??
       // 默认假设脚本位于 <root>/framework/harness/scripts/，向上 3 级
@@ -153,7 +155,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 用法：
   npx ts-node framework/harness/scripts/check-receipt.ts \\
     --feature <feature> \\
-    --phase <prd|design|coding|review|ut|testing>
+    --phase <spec|plan|coding|review|ut|testing>  （prd/design 仍接受为 alias）
 
 可选：
   --project-root <abs-path>   显式指定仓库根（默认从 __dirname 向上推导）
@@ -170,20 +172,27 @@ function main(): void {
   const frameworkRoot = path.resolve(__dirname, '..', '..');
 
   const fw = loadFrameworkConfig(projectRoot);
-  const resolved = loadResolvedProfile(projectRoot, fw);
-  if (isPhaseDisabledByProfile(phase, resolved)) {
+  const resolvedProfile = loadResolvedProfile(projectRoot, fw);
+  if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
     console.log(
       `\n🧾 check-receipt: feature=${feature}, phase=${phase}` +
-        `\n   project_profile=${resolved.name} 已禁用该阶段（phases_disabled），跳过回执强制校验 → exit 0\n`,
+        `\n   project_profile=${resolvedProfile.name} 已禁用该阶段（phases_disabled），跳过回执强制校验 → exit 0\n`,
     );
     process.exit(0);
   }
 
-  const receiptPath = receiptFilePath(projectRoot, feature, phase);
+  const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
+  const receiptPath = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptPath).replace(/\\/g, '/');
 
   console.log(`\n🧾 check-receipt: feature=${feature}, phase=${phase}`);
-  console.log(`   回执路径: ${receiptRel}\n`);
+  console.log(`   回执路径: ${receiptRel}`);
+  if (receiptResolved.usedLegacyDir) {
+    console.log(
+      `   ⚠ legacy 目录 phase=${receiptResolved.resolvedPhaseDir}（canonical=${phase}）；建议迁移至 spec/plan 目录`,
+    );
+  }
+  console.log('');
 
   if (!fs.existsSync(receiptPath)) {
     console.error('❌ FATAL: 回执文件不存在。');
@@ -223,11 +232,15 @@ function main(): void {
       message: `frontmatter.feature="${frontmatter.feature ?? ''}" 与 CLI --feature="${feature}" 不一致。`,
     });
   }
-  if (frontmatter.phase !== phase) {
+  const fmPhaseRaw = frontmatter.phase ?? '';
+  const fmPhaseNorm = fmPhaseRaw.trim()
+    ? (normalizePhaseId(fmPhaseRaw.trim()) as Phase)
+    : undefined;
+  if (fmPhaseNorm !== phase) {
     issues.push({
       id: 'phase_mismatch',
       severity: 'BLOCKER',
-      message: `frontmatter.phase="${frontmatter.phase ?? ''}" 与 CLI --phase="${phase}" 不一致。`,
+      message: `frontmatter.phase="${fmPhaseRaw}" 与 CLI --phase="${phase}" 不一致（legacy prd/design 请改用 spec/plan）。`,
     });
   }
 
@@ -387,7 +400,7 @@ function main(): void {
   }
 
   // 4.5 testing_run_artifacts（Hylyre 子产物；仅 phase=testing 且 device_test.run 非 SKIP）
-  if (phase === 'testing' && !isCapabilitySkipped(resolved, 'device_test.run')) {
+  if (phase === 'testing' && !isCapabilitySkipped(resolvedProfile, 'device_test.run')) {
     const tra = frontmatter.testing_run_artifacts ?? {};
     if (typeof tra.hylyre_run_exit_code !== 'number') {
       issues.push({

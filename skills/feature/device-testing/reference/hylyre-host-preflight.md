@@ -8,7 +8,7 @@
 | 场景 | 入口 | Hylyre ensure |
 |------|------|----------------|
 | 即席（外部 bundle + 自然语言步骤） | `cd framework/harness && npm run adhoc-device-test -- --bundle <id> --steps "…"` | CLI 内自动 |
-| 正式 feature（有 PRD/design/acceptance） | `npx ts-node harness-runner.ts --phase testing --feature <name>` | `device_test.run` 内自动 |
+| 正式 feature（有 spec/plan/acceptance） | `npx ts-node harness-runner.ts --phase testing --feature <name>` | `device_test.run` 内自动 |
 | **禁止** | `harness-runner --phase testing --feature _adhoc` | runner 会 **exit 1** 并提示 adhoc CLI |
 
 若 `check-testing.ts` 在加载阶段 TS 编译失败（如历史 `testing_checker_error`），**整段 testing 未运行**，ensure **从未执行**——不得据此对用户说「请安装 Hylyre」。
@@ -53,7 +53,7 @@ Windows PowerShell 临时取消：`Remove-Item Env:HYLYRE_PYTHON -ErrorAction Si
 ## 即席 vs 标准：勿用标准门禁测外部 App
 
 即席 **不** 对本仓库跑 `device_test.build` / `device_test.install`（测的是设备上**已存在**的 bundle）。  
-若误跑 `harness-runner --feature _adhoc`，会出现缺 PRD、hvigor `product=`、文档六章等**与 Hylyre 无关**的 BLOCKER，导致 agent 误降级为「手动测试」。
+若误跑 `harness-runner --feature _adhoc`，会出现缺 spec、hvigor `product=`、文档六章等**与 Hylyre 无关**的 BLOCKER，导致 agent 误降级为「手动测试」。
 
 ## 快速复跑（agent Shell）
 

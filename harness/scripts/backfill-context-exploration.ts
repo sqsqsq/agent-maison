@@ -8,6 +8,7 @@ import * as path from 'path';
 import minimist from 'minimist';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig, receiptDirPath, resolveFeatureArtifact } from '../config';
+import { normalizePhaseId } from './utils/phase-alias';
 import {
   CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS,
   ContextExplorationPhase,
@@ -22,8 +23,8 @@ type Args = {
 };
 
 const ARTIFACT_REL = [
-  'PRD.md',
-  'design.md',
+  'spec.md',
+  'plan.md',
   'contracts.yaml',
   'acceptance.yaml',
   'review-report.md',
@@ -36,7 +37,7 @@ const ARTIFACT_REL = [
 function usage(): string {
   return [
     '用法：',
-    '  ts-node scripts/backfill-context-exploration.ts --feature <name> --phases prd,design,...',
+    '  ts-node scripts/backfill-context-exploration.ts --feature <name> --phases spec,plan,...',
     '选项：',
     '  --project-root <path>   实例工程根（默认向上解析到绑定 framework.config.json）',
     '  --dry-run               不写盘，打印将写入的路径',
@@ -105,12 +106,12 @@ function buildKeyInputs(projectRoot: string, featureAbs: string, phase: ContextE
   const hay = uniq.join('\n').toLowerCase();
   for (const sub of CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS[phase]) {
     if (hay.includes(sub.toLowerCase())) continue;
-    if (sub === 'prd')
-      push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'PRD.md')} — prd（强制覆盖关键词）`);
+    if (sub === 'spec')
+      push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'spec.md')} — spec（强制覆盖关键词）`);
     else if (sub === 'acceptance')
       push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'acceptance.yaml')} — acceptance`);
-    else if (sub === 'design')
-      push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'design.md')} — design`);
+    else if (sub === 'plan')
+      push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'plan.md')} — plan`);
     else if (sub === 'contract')
       push(`${path.posix.join(featureDirRel.replace(/\\/g, '/'), 'contracts.yaml')} — contract`);
     else if (sub === 'module-catalog') push(`${cfg.paths.module_catalog} — module-catalog`);
@@ -157,15 +158,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const ALLOWED = new Set<ContextExplorationPhase>(['prd', 'design', 'coding', 'review', 'ut']);
+  const ALLOWED = new Set<ContextExplorationPhase>(['spec', 'plan', 'coding', 'review', 'ut']);
   const phases = phasesCsv
     .split(',')
-    .map(s => s.trim())
-    .filter(Boolean) as ContextExplorationPhase[];
+    .map(s => normalizePhaseId(s.trim()) as ContextExplorationPhase)
+    .filter(Boolean);
 
   for (const ph of phases) {
     if (!ALLOWED.has(ph)) {
-      console.error(`非法 phase：${ph}（只允许 prd/design/coding/review/ut）`);
+      console.error(`非法 phase：${ph}（只允许 spec/plan/coding/review/ut；prd/design 为 alias）`);
       process.exit(2);
     }
   }

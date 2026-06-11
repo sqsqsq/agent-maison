@@ -28,7 +28,7 @@ export function runNoNumberedSkillProseChecks(ctx: CheckContext): CheckResult[] 
     status: 'FAIL',
     details: `${h.file}:${h.line} — 匹配「${h.match}」`,
     affected_files: [h.file],
-    suggestion: '改用语义名（如 prd-design / business-ut / device-testing）',
+    suggestion: '改用语义名（如 spec / business-ut / device-testing）',
   }));
 }
 

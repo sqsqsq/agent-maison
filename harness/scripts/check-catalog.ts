@@ -670,7 +670,7 @@ function checkFeatureScopeIntegrity(
   const dirents = fs.readdirSync(featuresDir, { withFileTypes: true });
   for (const dirent of dirents) {
     if (!dirent.isDirectory()) continue;
-    for (const fileName of ['PRD.md', 'design.md']) {
+    for (const fileName of ['spec.md', 'plan.md']) {
       const resolved = resolveFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
       if (!resolved.exists) continue;
       const content = fs.readFileSync(resolved.actualPath, 'utf-8');
@@ -698,7 +698,7 @@ function checkFeatureScopeIntegrity(
       id: 'feature_scope_integrity', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'feature_scope_integrity'),
       severity: 'MAJOR', status: 'SKIP',
-      details: `${featuresRel}/*/PRD.md 与 design.md 中均未检测到 Scope 声明，本 check 跳过。`,
+      details: `${featuresRel}/*/spec.md 与 plan.md 中均未检测到 Scope 声明，本 check 跳过。`,
     }];
   }
 
@@ -724,10 +724,10 @@ function checkFeatureScopeIntegrity(
     suggestion:
       '每条漂移可任选 3 种修法之一：\n' +
       '  (1) 补档：对缺失模块跑 `/catalog-bootstrap <M>` 进入 CREATE 模式建档；\n' +
-      '  (2) 修 feature：改对应 PRD.md / design.md 的 scope，删除或改名过期模块；\n' +
+      '  (2) 修 feature：改对应 spec.md / plan.md 的 scope，删除或改名过期模块；\n' +
       '  (3) 改名追溯：若本次 catalog 是把旧模块改了名，请在新模块 profile 里\n' +
       '     添加 `merged_from: <旧名>` 备注，方便后续回查。\n' +
-      '不处理的话 → 对该 feature 跑 `--phase prd/design` 会 BLOCKER on scope_matches_catalog。',
+      '不处理的话 → 对该 feature 跑 `--phase spec/plan`（legacy prd/design 仍 alias） 会 BLOCKER on scope_matches_catalog。',
     affected_files: Array.from(affected),
   }];
 }

@@ -7,6 +7,20 @@ alwaysApply: true
 
 SSOT：根 [`AGENTS.md`](../../AGENTS.md)「版本演进策略」节。
 
+## Agent 禁止擅自改版本（BLOCKER）
+
+**未经用户明确通知，不得**改动任何版本号或版本窗口绑定，包括但不限于：
+
+- 根 `package.json` 的 `version`
+- `npm run release:version -- bump` 或等价 bump 操作
+- `.cursor/plans/*.plan.md` 的 `version` / `deferred_to` / `deferred_from`
+- `RELEASE-NOTES-v*.md` 所对应的发布版本叙事（勿擅自新建下一版说明）
+- 在回复中「建议现在 bump 到 x.y.z」并自行执行
+
+当前在研窗口以用户口头说明为准（例如「仍在 2.3.0 开发」）；**默认保持 `package.json.version` 不变**。
+
+若 `release:check-plans` 因未完成 plan 失败，只报告原因，**不要**用顺延 `deferred_to` 或 bump 替用户做决定；由用户选择完成 plan、取消 todo、或手动顺延。
+
 ## 新建 plan（BLOCKER）
 
 在 `.cursor/plans/*.plan.md` frontmatter 中**必须**包含：

@@ -38,6 +38,7 @@ import {
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
 } from './scripts/utils/types';
+import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import {
   resolvePaths,
   featureFilePath,
@@ -124,7 +125,7 @@ Harness — Spec/Harness 验证工具
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
-  --skip-visual-handoff     PRD 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
+  --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
   -h, --help                显示帮助
 
 示例:
@@ -230,14 +231,19 @@ async function main(): Promise<void> {
   }
 
   // 参数校验
-  const phase = args.phase as Phase | undefined;
+  const rawPhase = args.phase as Phase | undefined;
   let feature = args.feature as string | undefined;
 
-  if (!phase) {
+  if (!rawPhase) {
     console.error('错误: 必须指定 --phase 参数');
     printHelp();
     process.exit(1);
   }
+
+  const phase =
+    isLegacyPhaseId(rawPhase) || rawPhase === 'prd' || rawPhase === 'design'
+      ? normalizePhaseId(rawPhase)
+      : rawPhase;
 
   const fwConfigEarly = loadFrameworkConfig(projectRoot);
   let workflowSpec: WorkflowSpec;
@@ -353,7 +359,7 @@ async function main(): Promise<void> {
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = fwConfigEarly;
-  const vhMode = fwConfig.prd?.visual_handoff_enforcement as
+  const vhMode = fwConfig.spec?.visual_handoff_enforcement as
     | 'strict'
     | 'warn'
     | 'reachable'
@@ -367,7 +373,7 @@ async function main(): Promise<void> {
     featureSpec,
     adapter: typeof args.adapter === 'string' ? args.adapter : undefined,
     visualHandoffEnforcement: vhMode,
-    prdVisualSources: fwConfig.prd?.visual_sources,
+    specVisualSources: fwConfig.spec?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
     frameworkRoot: resolvedFrameworkRoot,
@@ -1160,7 +1166,7 @@ function collectContextFiles(
   const files: Array<{ label: string; content: string }> = [];
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
-  // 不读任何 feature 维度的 PRD.md / design.md / 源码。
+  // 不读任何 feature 维度的 spec.md / plan.md / 源码。
   if (phase === 'catalog' || phase === 'glossary') {
     const catPath = catalogPath(projectRoot);
     if (fs.existsSync(catPath)) {
@@ -1209,19 +1215,19 @@ function collectContextFiles(
     return files;
   }
 
-  const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
+  const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'spec.md');
   if (prd) {
-    files.push({ label: relFeatureArtifact(projectRoot, feature, 'PRD.md'), content: prd });
+    files.push({ label: relFeatureArtifact(projectRoot, feature, 'spec.md'), content: prd });
   }
 
-  if (['design', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
-    const design = specLoader.loadFeatureDoc(projectRoot, feature, 'design.md');
+  if (['plan', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
+    const design = specLoader.loadFeatureDoc(projectRoot, feature, 'plan.md');
     if (design) {
-      files.push({ label: relFeatureArtifact(projectRoot, feature, 'design.md'), content: design });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'plan.md'), content: design });
     }
   }
 
-  if (phase === 'design') {
+  if (phase === 'plan') {
     const archPath = architectureMdPath(projectRoot);
     if (fs.existsSync(archPath)) {
       files.push({ label: relArchitectureMd(projectRoot), content: fs.readFileSync(archPath, 'utf-8') });

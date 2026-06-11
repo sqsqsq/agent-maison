@@ -15,23 +15,29 @@ import {
   resolveExplorationStrategy,
 } from './exploration-strategy';
 
-export type ContextExplorationPhase = 'prd' | 'design' | 'coding' | 'review' | 'ut';
+export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut';
+
+/** legacy exploration-snippets.yaml phase keys（≥2 minor 窗口 fallback） */
+const LEGACY_EXPLORATION_SNIPPET_PHASE_KEYS: Partial<Record<ContextExplorationPhase, string>> = {
+  spec: 'prd',
+  plan: 'design',
+};
 
 export const CONTEXT_EXPLORATION_SCHEMA_VERSIONS = ['1.0.0', '1.1.0'] as const;
 export type ContextExplorationSchemaVersion = (typeof CONTEXT_EXPLORATION_SCHEMA_VERSIONS)[number];
 
 /** 各阶段 frontmatter.key_inputs_read 中须能覆盖到的子串（小写匹配，profile-neutral） */
 export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExplorationPhase, string[]> = {
-  prd: ['glossary', 'module-catalog', 'architecture'],
-  design: ['prd', 'acceptance', 'architecture', 'module-catalog', 'framework.config'],
-  coding: ['design', 'contract', 'acceptance'],
-  review: ['contract', 'acceptance', 'coding-rule', 'design'],
-  ut: ['acceptance', 'contract', 'prd', 'design'],
+  spec: ['glossary', 'module-catalog', 'architecture'],
+  plan: ['spec', 'acceptance', 'architecture', 'module-catalog', 'framework.config'],
+  coding: ['plan', 'contract', 'acceptance'],
+  review: ['contract', 'acceptance', 'coding-rule', 'plan'],
+  ut: ['acceptance', 'contract', 'spec', 'plan'],
 };
 
 /** schema 1.1.0 且 phase-rules 未声明时的 per-phase 默认阈值 */
 export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, ExplorationThresholds> = {
-  prd: {
+  spec: {
     min_files_inspected: 4,
     min_source_code_paths: 2,
     min_searches: 3,
@@ -39,7 +45,7 @@ export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, Exp
     require_subagent_when_scope_gte: 3,
     exploration_mode_allowed: ['subagent', 'sequential', 'minimal'],
   },
-  design: {
+  plan: {
     min_files_inspected: 8,
     min_source_code_paths: 5,
     min_searches: 5,
@@ -180,7 +186,15 @@ export function loadProfileExplorationSnippets(
   if (!fs.existsSync(filePath)) return [];
   try {
     const parsed = YAML.parse(fs.readFileSync(filePath, 'utf-8')) as ProfileExplorationSnippetsFile;
-    return (parsed.phases?.[phase]?.extra_snippets ?? []).map(s => String(s).trim()).filter(Boolean);
+    const phases = parsed.phases;
+    let snippets = phases?.[phase]?.extra_snippets;
+    if (!snippets?.length) {
+      const legacyKey = LEGACY_EXPLORATION_SNIPPET_PHASE_KEYS[phase];
+      if (legacyKey) {
+        snippets = phases?.[legacyKey as keyof typeof phases]?.extra_snippets;
+      }
+    }
+    return (snippets ?? []).map(s => String(s).trim()).filter(Boolean);
   } catch {
     return [];
   }

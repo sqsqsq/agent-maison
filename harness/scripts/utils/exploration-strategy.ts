@@ -18,7 +18,7 @@ import { parseScope } from './scope-parser';
 import { SpecLoader } from './spec-loader';
 import { computeMaxDependencyFanOut, computeMaxInScopeModuleLoc } from './fan-out-scanner';
 
-export type ContextExplorationPhase = 'prd' | 'design' | 'coding' | 'review' | 'ut';
+export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut';
 
 /** frontmatter 子集（避免与 context-exploration 循环依赖） */
 export interface ExplorationFrontmatterInput {
@@ -42,7 +42,7 @@ const TRIVIAL_INTENTS = new Set([
 export const DEFAULT_EXPLORATION_STRATEGY: Partial<
   Record<ContextExplorationPhase, ExplorationStrategy>
 > = {
-  design: {
+  plan: {
     default_mode: 'subagent',
     trivial_exemption: {
       enabled: true,
@@ -68,7 +68,7 @@ export const DEFAULT_EXPLORATION_STRATEGY: Partial<
     sequential_multiplier: 2.0,
     sequential_min_files_inspected_add: 5,
   },
-  prd: {
+  spec: {
     default_mode: 'sequential',
     scoring: {
       threshold: 60,
@@ -250,7 +250,7 @@ export function resolveExplorationStrategy(
 
 function countInScopeModules(projectRoot: string, feature: string, frameworkRoot?: string): number {
   const loader = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot);
-  const prd = loader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
+  const prd = loader.loadFeatureDoc(projectRoot, feature, 'spec.md');
   if (!prd) return 0;
   const { scope } = parseScope(prd);
   return scope?.in_scope_modules?.length ?? 0;
@@ -288,7 +288,7 @@ export function legacyRequiresSubagent(
   thresholds: ExplorationThresholds,
   frameworkRoot?: string,
 ): boolean {
-  if (phase === 'prd' || phase === 'design') {
+  if (phase === 'spec' || phase === 'plan') {
     const gte = thresholds.require_subagent_when_scope_gte;
     if (gte === undefined || gte <= 0) return false;
     return countInScopeModules(projectRoot, feature, frameworkRoot) >= gte;
@@ -421,11 +421,8 @@ function matchesTrivialExemption(
 
   for (const cond of conditions) {
     if (cond.intent?.some(i => intent === i.toLowerCase())) return true;
-    if (
-      cond.prd_loc_delta_lt !== undefined &&
-      loc !== undefined &&
-      loc < cond.prd_loc_delta_lt
-    ) {
+    const locLt = cond.spec_loc_delta_lt ?? cond.prd_loc_delta_lt;
+    if (locLt !== undefined && loc !== undefined && loc < locLt) {
       return true;
     }
     if (cond.single_function_scope === true && signals.single_function_scope === true) {

@@ -1,7 +1,7 @@
 // ============================================================================
 // Visual Handoff authoritative_ref path resolver
 // ============================================================================
-// 解析 PRD authoritative_refs[].path：
+// 解析 spec authoritative_refs[].path：
 // - 相对路径 → 锚定 projectRoot（与历史行为一致）
 // - ${VAR_NAME}/…  → external_roots[V] 优先，再退到 process.env
 // - ${env:NAME}/… → process.env.NAME
@@ -12,7 +12,7 @@ import * as path from 'path';
 
 export interface VisualSourcesResolveOpts {
   projectRoot: string;
-  /** framework.config.json → prd.visual_sources.external_roots 展开后用 */
+  /** framework.config.json → spec.visual_sources.external_roots 展开后用 */
   externalRoots?: Record<string, string>;
   allowAbsolutePaths?: boolean;
   allowNetworkPaths?: boolean;
@@ -118,7 +118,7 @@ export function resolveAuthoritativePath(
         declared: raw,
         agentReachable: false,
         resolutionKind: 'error',
-        error: 'UNC 路径未获准：请在 prd.visual_sources.allow_network_paths 置 true',
+        error: 'UNC 路径未获准：请在 spec.visual_sources.allow_network_paths 置 true',
       };
     }
     const norm = path.normalize(raw);
@@ -141,7 +141,7 @@ export function resolveAuthoritativePath(
         agentReachable: false,
         resolutionKind: 'error',
         error:
-          '绝对路径未获准：请在 prd.visual_sources.allow_absolute_paths（或 UNC 时用 allow_network_paths）置 true',
+          '绝对路径未获准：请在 spec.visual_sources.allow_absolute_paths（或 UNC 时用 allow_network_paths）置 true',
       };
     }
     const norm = path.normalize(raw);

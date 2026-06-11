@@ -44,6 +44,7 @@ import { loadResolvedProfile, loadPhaseRuleWithOverlays, isPhaseDisabledByProfil
 import { resolveWorkflowSpec, isPhaseGlobalInWorkflow } from '../../workflow-loader';
 import { finalizeChecksForScriptReport } from '../../scripts/utils/report-generator';
 import { inferRepoLayout } from '../../repo-layout';
+import { normalizePhaseId } from '../../scripts/utils/phase-alias';
 
 // 真实的 framework/harness 与 framework/ 根（脚本本身就在 framework/harness/tests/utils 里）
 const FIXTURE_HARNESS_ROOT = path.resolve(__dirname, '..', '..');
@@ -148,6 +149,7 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
   try {
     cmd = JSON.parse(fs.readFileSync(cmdPath, 'utf-8'));
     expected = JSON.parse(fs.readFileSync(expectedPath, 'utf-8'));
+    cmd.phase = normalizePhaseId(cmd.phase) as Phase;
   } catch (e) {
     return { name, ok: false, failures: [`CMD/EXPECTED JSON 解析失败：${(e as Error).message}`] };
   }
@@ -209,7 +211,7 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
     }
 
     const paths = resolvePaths(tmpdir, FIXTURE_FRAMEWORK_ROOT);
-    const vhMode = fwConfig.prd?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
+    const vhMode = fwConfig.spec?.visual_handoff_enforcement as CheckContext['visualHandoffEnforcement'];
 
     const specLoader = new SpecLoader(tmpdir, paths.phaseRulesDir, paths.featuresDir, FIXTURE_FRAMEWORK_ROOT);
     let phaseRule = specLoader.loadPhaseRule(phase);
@@ -227,7 +229,7 @@ export async function runFixture(fixtureDir: string): Promise<FixtureRunResult> 
       featureSpec,
       adapter: cmd.adapter,
       visualHandoffEnforcement: vhMode,
-      prdVisualSources: fwConfig.prd?.visual_sources,
+      specVisualSources: fwConfig.spec?.visual_sources,
       docsCommitted: fwConfig.paths.docs_committed ?? false,
       skipVisualHandoff: false,
       resolvedProfile,

@@ -93,7 +93,7 @@ const cases: Case[] = [
     name: 'feature artifacts: 精确目录 + 同名 rar → 选择目录并忽略归档',
     run: () => withTmpProject(root => {
       const feature = 'HWP-PaymentButton';
-      writeFeatureFiles(root, feature, ['PRD.md', 'design.md', 'acceptance.yaml', 'contracts.yaml']);
+      writeFeatureFiles(root, feature, ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml']);
       writeFile(path.join(root, 'doc', 'features', `${feature}.rar`), 'archive');
 
       const loader = new SpecLoader(root);
@@ -125,14 +125,14 @@ const cases: Case[] = [
     name: 'feature artifacts: 同名前缀条目 → 只作为旁证，不替代精确目录',
     run: () => withTmpProject(root => {
       const feature = 'HWP-PaymentButton';
-      writeFeatureFiles(root, feature, ['PRD.md', 'acceptance.yaml']);
+      writeFeatureFiles(root, feature, ['spec.md', 'acceptance.yaml']);
       fs.mkdirSync(path.join(root, 'doc', 'features', `${feature}-old`), { recursive: true });
       writeFile(path.join(root, 'doc', 'features', `${feature}.md`), 'notes');
 
       const loader = new SpecLoader(root);
       assertEq(loader.listAvailableFeatures().sort(), [feature, `${feature}-old`].sort(), '目录列表仍只包含目录');
 
-      const inspection = loader.inspectFeatureArtifacts(feature, 'prd');
+      const inspection = loader.inspectFeatureArtifacts(feature, 'spec');
       assertEq(inspection.verdict, 'ok', '精确目录满足 PRD 阶段必需文件');
       assertIncludes(inspection.relatedSiblingEntries, `${feature}-old`, '应记录同名前缀目录');
       assertIncludes(inspection.relatedSiblingEntries, `${feature}.md`, '应记录同名前缀文件');
@@ -143,17 +143,17 @@ const cases: Case[] = [
     run: () => withTmpProject(root => {
       const feature = 'alt-feature';
       const altFeatures = path.join(root, 'alt', 'features');
-      writeFile(path.join(altFeatures, feature, 'prd', 'PRD.md'), 'prd\n');
+      writeFile(path.join(altFeatures, feature, 'spec', 'spec.md'), 'prd\n');
       writeFile(path.join(altFeatures, feature, 'acceptance.yaml'), 'criteria: []\n');
 
       const loader = new SpecLoader(root, undefined, altFeatures);
       assertEq(loader.listAvailableFeatures(), [feature], '自定义 featuresDir 下列出 feature');
 
-      const inspection = loader.inspectFeatureArtifacts(feature, 'prd');
+      const inspection = loader.inspectFeatureArtifacts(feature, 'spec');
       assertEq(inspection.verdict, 'ok', 'canonical PRD 在 alt/features 下应识别为存在');
       assertEq(inspection.missingRequiredFiles, [], '不应缺 PRD/acceptance');
 
-      const prd = loader.loadFeatureDoc(root, feature, 'PRD.md');
+      const prd = loader.loadFeatureDoc(root, feature, 'spec.md');
       if (prd !== 'prd\n') {
         throw new Error(`loadFeatureDoc 应从 alt/features 读取 PRD，got: ${JSON.stringify(prd)}`);
       }
@@ -163,14 +163,14 @@ const cases: Case[] = [
     name: 'feature artifacts: 目录存在但缺上游文件 → 报缺文件，不建议归档补洞',
     run: () => withTmpProject(root => {
       const feature = 'HWP-PaymentButton';
-      writeFeatureFiles(root, feature, ['PRD.md']);
+      writeFeatureFiles(root, feature, ['spec.md']);
       writeFile(path.join(root, 'doc', 'features', `${feature}.zip`), 'archive');
 
       const loader = new SpecLoader(root);
       const inspection = loader.inspectFeatureArtifacts(feature, 'coding');
       assertEq(inspection.pathKind, 'directory', '精确目录存在');
       assertEq(inspection.verdict, 'missing_required_files', '应报告缺少阶段必需文件');
-      assertEq(inspection.missingRequiredFiles.sort(), ['acceptance.yaml', 'contracts.yaml', 'design.md'].sort(), '缺失文件集合');
+      assertEq(inspection.missingRequiredFiles.sort(), ['acceptance.yaml', 'contracts.yaml', 'plan.md'].sort(), '缺失文件集合');
       assertEq(inspection.sameNameArchives, [`${feature}.zip`], '同名归档仍只作为旁证');
     }),
   },

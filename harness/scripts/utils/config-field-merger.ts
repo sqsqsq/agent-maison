@@ -20,7 +20,7 @@
 // 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
 //   2. 不动用户必填字段（project_name / architecture / agent_adapter）—— 走 Skill 交互。
-//   3. 不动 opt-in 字段（prd / atomic_service）—— 维护者手工选档。
+//   3. 不动 opt-in 字段（spec / atomic_service）—— 维护者手工选档；legacy `prd` 段走 MIGRATION_RULES。
 //   4. 不动 toolchain.devEcoStudio.installPath —— 由 business-ut.6 detect-deveco 单独处理。
 //
 // 新增字段 checklist：
@@ -466,6 +466,30 @@ export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
       return {
         applied: true,
         summary: `${LEGACY_PYPI_MIRROR} → ${HUAWEI_PYPI_MIRROR}`,
+      };
+    },
+  },
+  {
+    id: 'prd_segment_to_spec',
+    note: '迁移 legacy 顶层 prd → spec（Visual Handoff opt-in 段）',
+    detect: raw => Object.prototype.hasOwnProperty.call(raw, 'prd'),
+    apply: base => {
+      if (!Object.prototype.hasOwnProperty.call(base, 'prd')) {
+        return { applied: false, summary: '无 legacy prd 段' };
+      }
+      const prd = base.prd;
+      let changed = false;
+      if (!Object.prototype.hasOwnProperty.call(base, 'spec')) {
+        if (prd && typeof prd === 'object' && !Array.isArray(prd)) {
+          base.spec = { ...(prd as Record<string, unknown>) };
+        }
+        changed = true;
+      }
+      delete base.prd;
+      changed = true;
+      return {
+        applied: changed,
+        summary: changed ? 'prd → spec（Visual Handoff 配置段），已删除 prd' : '已删除冗余 prd 段',
       };
     },
   },

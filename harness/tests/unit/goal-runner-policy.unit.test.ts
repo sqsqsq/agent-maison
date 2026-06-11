@@ -45,8 +45,8 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveAutoChain: prd→testing default',
     run: () => {
-      const chain = resolveAutoChain(workflow, 'prd', 'testing');
-      assert(chain[0] === 'prd', 'starts prd');
+      const chain = resolveAutoChain(workflow, 'spec', 'testing');
+      assert(chain[0] === 'spec', 'starts prd');
       assert(chain[chain.length - 1] === 'testing', 'ends testing');
       assert(chain.includes('ut'), 'includes ut');
     },
@@ -54,8 +54,8 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveAutoChain: design→ut mid-range',
     run: () => {
-      const chain = resolveAutoChain(workflow, 'design', 'ut');
-      assert(!chain.includes('prd'), 'excludes prd');
+      const chain = resolveAutoChain(workflow, 'plan', 'ut');
+      assert(!chain.includes('spec'), 'excludes prd');
       assert(chain.includes('coding'), 'includes coding');
       assert(chain[chain.length - 1] === 'ut', 'ends ut');
     },
@@ -98,7 +98,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'resolveGoalRunStatus: all pass → COMPLETED',
     run: () => {
       const s = resolveGoalRunStatus(
-        [{ phase: 'prd' }, { phase: 'design' }],
+        [{ phase: 'spec' }, { phase: 'plan' }],
         true,
       );
       assert(s === 'COMPLETED', s);
@@ -155,10 +155,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         PROJECT_ROOT: '/proj',
         FRAMEWORK_ROOT: '/fw',
         FEATURE: 'demo',
-        PHASE: 'prd',
+        PHASE: 'spec',
       });
       assert(cmd.includes('demo'), cmd);
-      assert(cmd.includes('prd'), cmd);
+      assert(cmd.includes('spec'), cmd);
     },
   },
   {
@@ -201,7 +201,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         { projectRoot: REPO_ROOT, featuresDir: 'doc/features' },
       );
       assert(m.feature === 'demo', 'feature');
-      assert(m.start_phase === 'prd', 'start');
+      assert(m.start_phase === 'spec', 'start');
       assert(m.unattended.write_mode === 'workspace-write', 'unattended');
       assert(
         m.report_dir.startsWith('doc/features/demo/goal-runs/'),
@@ -325,7 +325,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.mkdirSync(manifestDir, { recursive: true });
       const body = {
         schema_version: '1.0',
-        start_phase: 'prd',
+        start_phase: 'spec',
         end_phase: 'testing',
         feature: 'demo',
         adapter: 'claude',
@@ -362,7 +362,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.mkdirSync(manifestDir, { recursive: true });
       const body = {
         schema_version: '1.0',
-        start_phase: 'prd',
+        start_phase: 'spec',
         end_phase: 'testing',
         feature: 'demo',
         adapter: 'claude',

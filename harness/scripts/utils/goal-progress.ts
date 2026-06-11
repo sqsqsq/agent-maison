@@ -28,6 +28,7 @@ import {
   type FeaturePhase,
   type GoalRunStatus,
 } from './phase-transition-policy';
+import { normalizePhaseId } from './phase-alias';
 import type { WorkflowSpec } from '../../workflow-loader';
 
 export const PROGRESS_SCHEMA_VERSION = '1.0';
@@ -180,9 +181,11 @@ export function resolveChainFromEvents(
   for (const e of events) {
     if (e.type === 'run_start' && Array.isArray((e as { chain?: unknown }).chain)) {
       const raw = (e as { chain: string[] }).chain;
-      const filtered = raw.filter((p): p is FeaturePhase =>
-        (['prd', 'design', 'coding', 'review', 'ut', 'testing'] as string[]).includes(p),
-      );
+      const filtered = raw
+        .map((p) => normalizePhaseId(p, p as FeaturePhase))
+        .filter((p): p is FeaturePhase =>
+          (['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as string[]).includes(p),
+        );
       if (filtered.length > 0) return filtered;
     }
   }

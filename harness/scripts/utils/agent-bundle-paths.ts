@@ -33,11 +33,11 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
   'goal-mode':
     '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
-  'prd-design': 'PRD 撰写（完整流程见 framework/skills/feature/prd-design/SKILL.md）',
-  'requirement-design':
-    'PRD → 技术设计 design.md（完整流程见 framework/skills/feature/requirement-design/SKILL.md）',
+  'spec': 'spec 撰写（完整流程见 framework/skills/feature/spec/SKILL.md）',
+  'plan':
+    'spec → plan（plan.md）（完整流程见 framework/skills/feature/plan/SKILL.md）',
   'coding':
-    '按 design / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/feature/coding/SKILL.md）',
+    '按 plan / contracts 落地实现代码（宿主语言由 project_profile 决定；完整流程见 framework/skills/feature/coding/SKILL.md）',
   'code-review': '代码审查报告（完整流程见 framework/skills/feature/code-review/SKILL.md）',
   'business-ut': '业务级 UT / DAG（完整流程见 framework/skills/feature/business-ut/SKILL.md）',
   'device-testing': '真机测试计划与报告（完整流程见 framework/skills/feature/device-testing/SKILL.md）',

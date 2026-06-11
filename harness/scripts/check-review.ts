@@ -53,7 +53,7 @@ function loadReviewReport(ctx: CheckContext): string | null {
 
 function loadDesign(ctx: CheckContext): string | null {
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
-    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'design.md');
+    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md');
 }
 
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
@@ -67,7 +67,7 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')} 不存在，无法确定源码文件、接口契约和模块边界。`,
       affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
-      suggestion: '回到 design 阶段补齐 contracts.yaml 后重跑 review harness。',
+      suggestion: '回到 plan 阶段补齐 contracts.yaml 后重跑 review harness。',
       failure_kind: 'missing_contracts',
       blocking_class: 'review_context',
     });
@@ -81,7 +81,7 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
       status: 'FAIL',
       details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')} 不存在，无法审查需求验收覆盖和异常场景处理。`,
       affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')],
-      suggestion: '回到 PRD 阶段提取 acceptance.yaml 后重跑 review harness。',
+      suggestion: '回到 spec 阶段提取 acceptance.yaml 后重跑 review harness。',
       failure_kind: 'missing_acceptance',
       blocking_class: 'review_context',
     });
@@ -642,7 +642,7 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
       id: 'review_scope_to_design', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'review_scope_to_design'),
       severity: 'MAJOR', status: 'SKIP',
-      details: `design.md 不存在，无法验证审查范围与设计文档的一致性。`,
+      details: `plan.md 不存在，无法验证审查范围与plan 文档的一致性。`,
     }];
   }
 
@@ -668,7 +668,7 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
       id: 'review_scope_to_design', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'review_scope_to_design'),
       severity: 'MAJOR', status: 'SKIP',
-      details: 'design.md 中未找到模块变更摘要表。',
+      details: 'plan.md 中未找到模块变更摘要表。',
     }];
   }
 
@@ -686,7 +686,7 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
       id: 'review_scope_to_design', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'review_scope_to_design'),
       severity: 'MAJOR', status: 'PASS',
-      details: `审查范围覆盖了 design.md 中全部 ${designModules.length} 个模块。`,
+      details: `审查范围覆盖了 plan.md 中全部 ${designModules.length} 个模块。`,
     }];
   }
 
@@ -694,8 +694,8 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
     id: 'review_scope_to_design', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'review_scope_to_design'),
     severity: 'MAJOR', status: 'WARN',
-    details: `${uncovered.length}/${designModules.length} 个 design.md 模块未在审查范围中提及：${uncovered.join('、')}`,
-    suggestion: '请确认审查范围是否应覆盖 design.md 中的所有模块。',
+    details: `${uncovered.length}/${designModules.length} 个 plan.md 模块未在审查范围中提及：${uncovered.join('、')}`,
+    suggestion: '请确认审查范围是否应覆盖 plan.md 中的所有模块。',
   }];
 }
 
@@ -743,7 +743,7 @@ const checker: PhaseChecker = {
 
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, [
-        'design.md',
+        'plan.md',
         'review-report.md',
       ]),
     ];

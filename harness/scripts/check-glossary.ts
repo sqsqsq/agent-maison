@@ -195,7 +195,7 @@ function checkAliasUniqueAcrossTerms(ctx: CheckContext, glossary: Glossary): Che
     description: ruleDesc(ctx, 'structure_checks', 'alias_unique_across_terms'),
     severity: 'BLOCKER', status: 'FAIL',
     details: `${shared.length} 个 alias 出现在多个 term 中：${shared.map(([a, ts]) => `"${a}" → {${ts.join(', ')}}`).join('；')}`,
-    suggestion: '同一 alias 不能指向多个 term（否则 PRD 术语消歧会产生歧义）。',
+    suggestion: '同一 alias 不能指向多个 term（否则 spec 术语消歧会产生歧义）。',
     affected_files: [relGlossary(ctx.projectRoot)],
   }];
 }

@@ -93,8 +93,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         'architecture.outer_layers',
         'toolchain.devEcoStudio',
         'toolchain.devEcoStudio.installPath',
-        'prd',
-        'prd.visual_handoff_enforcement',
+        'spec',
+        'spec.visual_handoff_enforcement',
         'atomic_service',
       ];
       for (const p of forbidden) {
@@ -399,6 +399,20 @@ const cases: Array<{ name: string; run: () => void }> = [
         (merged as { paths: { reports_dir_pattern: string } }).paths.reports_dir_pattern,
         'doc/features/<feature>/<phase>/reports',
       );
+    },
+  },
+  {
+    name: 'applyMigrations：prd 段 → spec 段',
+    run: () => {
+      const { merged, report } = applyMigrations({
+        schema_version: '1.0',
+        prd: { visual_handoff_enforcement: 'warn' },
+      });
+      assert.strictEqual((merged as { prd?: unknown }).prd, undefined);
+      assert.deepStrictEqual((merged as { spec: { visual_handoff_enforcement: string } }).spec, {
+        visual_handoff_enforcement: 'warn',
+      });
+      assert(report.appliedMigrations.some(m => m.id === 'prd_segment_to_spec'));
     },
   },
   {

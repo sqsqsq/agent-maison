@@ -11,6 +11,7 @@ import {
   mergeAndWritePhaseState,
   patchSummaryClosureStatus,
   syncPhaseStateOnReceiptPass,
+  tryValidateReceipt,
 } from '../../scripts/utils/phase-state';
 import { statefilePath } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
@@ -234,6 +235,52 @@ const cases: Array<{ name: string; run: () => void }> = [
       } finally {
         if (prev === undefined) delete process.env[MAISON_GOAL_RUNNER_ENV];
         else process.env[MAISON_GOAL_RUNNER_ENV] = prev;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'tryValidateReceipt：legacy prd 目录回执不被判 missing',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-state-legacy-'));
+      const harnessRoot = path.resolve(__dirname, '..', '..');
+      try {
+        fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'prd'), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, 'framework.config.json'),
+          JSON.stringify(
+            {
+              schema_version: '1.1',
+              project_name: 'legacy-receipt',
+              project_profile: { name: 'generic' },
+              agent_adapter: 'generic',
+              architecture: {
+                outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+                module_inner_layers: ['content'],
+                inner_dependency_direction: 'upward',
+                cross_module_exports_file: 'index.ts',
+              },
+              paths: {
+                features_dir: 'doc/features',
+                module_catalog: 'doc/module-catalog.yaml',
+                glossary: 'doc/glossary.yaml',
+                glossary_seed: 'doc/glossary-seed.txt',
+                architecture_md: 'doc/architecture.md',
+                receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        fs.writeFileSync(
+          path.join(root, 'doc', 'features', 'demo', 'prd', 'phase-completion-receipt.md'),
+          '---\nfeature: demo\nphase: prd\n---\n',
+        );
+        const v = tryValidateReceipt(harnessRoot, root, 'spec', 'demo');
+        assert(v.status !== 'missing', `expected not missing, got ${v.status}`);
+        assert(v.receipt_path.replace(/\\/g, '/').includes('/prd/'), `legacy path: ${v.receipt_path}`);
+      } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },

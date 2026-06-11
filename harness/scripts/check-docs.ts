@@ -216,7 +216,11 @@ function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckR
 
 function checkProfileSkillAssetsResolvable(ctx: CheckContext): CheckResult[] {
   const layout = repoLayoutFromContext(ctx);
-  const v = validateProfileSkillAssetsForProject(ctx.projectRoot, layout);
+  const v = validateProfileSkillAssetsForProject(
+    ctx.projectRoot,
+    layout,
+    ctx.resolvedProfile.extensionBundle?.skillAssetAbsPaths,
+  );
   if (v.ok) {
     return [
       {

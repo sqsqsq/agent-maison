@@ -62,6 +62,24 @@ export function renderBridgeSkillStubMarkdown(
 const INLINE_REL_LINK_RE = /\]\((\.\.\/[^)\s#]+(?:#[^)\s]*)?)\)/g;
 const INLINE_BACKTICK_REL_RE = /`(\.\.\/[^`\s]+)`/g;
 
+const FRAMEWORK_ASSET_TOP_DIRS = new Set([
+  'skills',
+  'harness',
+  'profiles',
+  'workflows',
+  'specs',
+  'templates',
+  'agents',
+  'docs',
+]);
+
+function isFrameworkAssetAbsPath(targetAbs: string, fwRoot: string): boolean {
+  const rel = path.relative(fwRoot, targetAbs).replace(/\\/g, '/');
+  if (!rel || rel.startsWith('..')) return false;
+  const top = rel.split('/')[0];
+  return FRAMEWORK_ASSET_TOP_DIRS.has(top);
+}
+
 export interface InlineMaterializeLinkContext {
   projectRoot: string;
   stubTargetRelPosix: string;
@@ -94,7 +112,9 @@ export function rewriteRelativeLinksForInlineMaterialize(
     const fwPrefix = fwRoot + path.sep;
     const projPrefix = projRoot + path.sep;
 
-    if (targetAbs.startsWith(fwPrefix) || targetAbs === fwRoot) {
+    const underConsumerFramework =
+      fwRoot !== projRoot && (targetAbs.startsWith(fwPrefix) || targetAbs === fwRoot);
+    if (underConsumerFramework || isFrameworkAssetAbsPath(targetAbs, fwRoot)) {
       const inside = path.relative(fwRoot, targetAbs).replace(/\\/g, '/');
       return `framework/${inside}${hashSuffix}`;
     }

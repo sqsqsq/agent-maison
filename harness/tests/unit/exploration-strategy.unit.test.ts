@@ -12,6 +12,7 @@ import {
   determineExplorationMode,
   extractChangeSignals,
 } from '../../scripts/utils/exploration-strategy';
+import { loadProfileExplorationSnippets } from '../../scripts/utils/context-exploration';
 import { detectRepoLayout } from '../../repo-layout';
 import type { ExplorationThresholds, PhaseRuleSpec } from '../../scripts/utils/types';
 
@@ -82,16 +83,16 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'determineExplorationMode: design default-on requires subagent for feature',
     run: () => {
       const phaseRule: PhaseRuleSpec = {
-        phase: 'design',
+        phase: 'plan',
         version: '1',
-        applies_to: 'design',
+        applies_to: 'plan',
         structure_checks: {},
         semantic_checks: {},
         traceability_checks: {},
-        exploration_strategy: DEFAULT_EXPLORATION_STRATEGY.design,
+        exploration_strategy: DEFAULT_EXPLORATION_STRATEGY.plan,
       };
       const decision = determineExplorationMode(
-        'design',
+        'plan',
         REPO_ROOT,
         'home-page',
         {
@@ -112,16 +113,16 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'determineExplorationMode: design trivial rename exempts subagent',
     run: () => {
       const phaseRule: PhaseRuleSpec = {
-        phase: 'design',
+        phase: 'plan',
         version: '1',
-        applies_to: 'design',
+        applies_to: 'plan',
         structure_checks: {},
         semantic_checks: {},
         traceability_checks: {},
-        exploration_strategy: DEFAULT_EXPLORATION_STRATEGY.design,
+        exploration_strategy: DEFAULT_EXPLORATION_STRATEGY.plan,
       };
       const decision = determineExplorationMode(
-        'design',
+        'plan',
         REPO_ROOT,
         'home-page',
         {
@@ -141,7 +142,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'determineExplorationMode: no strategy falls back to legacy scope gte',
     run: () => {
       const decision = determineExplorationMode(
-        'prd',
+        'spec',
         REPO_ROOT,
         'home-page',
         { change_intent: 'feature', estimated_loc_delta: 10 },
@@ -155,7 +156,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'computeExplorationScore: cross_layer + api_surface signals',
     run: () => {
-      const scoring = DEFAULT_EXPLORATION_STRATEGY.prd!.scoring!;
+      const scoring = DEFAULT_EXPLORATION_STRATEGY.spec!.scoring!;
       const score = computeExplorationScore(
         scoring,
         REPO_ROOT,
@@ -168,6 +169,15 @@ const cases: Array<{ name: string; run: () => void }> = [
         },
       );
       assert.ok(score >= 35, `expected score >= 35, got ${score}`);
+    },
+  },
+  {
+    name: 'loadProfileExplorationSnippets: hmos-app spec/plan 键生效',
+    run: () => {
+      const specSnippets = loadProfileExplorationSnippets('hmos-app', 'spec');
+      const planSnippets = loadProfileExplorationSnippets('hmos-app', 'plan');
+      assert.ok(specSnippets.includes('build-profile'), 'spec has build-profile');
+      assert.ok(planSnippets.includes('module.json5'), 'plan has module.json5');
     },
   },
   {

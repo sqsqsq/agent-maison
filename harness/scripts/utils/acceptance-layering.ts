@@ -1,7 +1,7 @@
 // ============================================================================
 // acceptance-layering.ts — UT / Device 分层共享工具
 // ============================================================================
-// 供 check-prd / check-design / check-ut / check-testing 复用。
+// 供 check-spec / check-plan / check-ut / check-testing 复用。
 // SSOT 文档：framework/docs/concepts/acceptance-layering.md
 // ============================================================================
 

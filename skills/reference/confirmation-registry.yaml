@@ -229,9 +229,9 @@ entries:
         label: "allowlist — 保留为技术词并登记"
         portable: "3=allowlist"
 
-  # --- prd-design PRD ---
-  - id: prd.feature_path
-    skill: "prd-design"
+  # --- spec ---
+  - id: spec.feature_path
+    skill: "spec"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "前置路径检查"
@@ -244,19 +244,19 @@ entries:
         label: "清理或恢复路径 — 修复 doc/features 下冲突路径"
         portable: "2=清理/恢复路径"
 
-  - id: prd.terminology
-    skill: "prd-design"
+  - id: spec.terminology
+    skill: "spec"
     class: artifact_checkbox
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "Step 1.5"
     portable_menu: "1=全部确认high行 2=逐行确认 3=逐行修改"
-    artifact: "PRD.md ## 0. 术语映射表 [x]"
-    harness: check-prd terminology_mapping_table
+    artifact: "spec.md ## 0. 术语映射表 [x]"
+    harness: check-spec terminology_mapping_table
     options:
       - value: all_confirm
-        label: "全部确认 — 所有行写回 PRD [x]，进入后续 PRD 步骤"
+        label: "全部确认 — 所有行写回 spec [x]，进入后续 spec 步骤"
         portable: "1=全部确认 high 行"
-        side_effect: "写回 PRD 术语映射表 [x] 列"
+        side_effect: "写回 spec 术语映射表 [x] 列"
       - value: row_by_row
         label: "逐行确认 — 逐条确认，有问题可修改"
         portable: "2=逐行确认"
@@ -267,28 +267,28 @@ entries:
       - value: confirm_row
         label: "确认该行 — 写回本行 [x]"
         portable: "1=确认该行"
-        side_effect: "写回 PRD 术语映射表本行 [x]"
+        side_effect: "写回 spec 术语映射表本行 [x]"
       - value: edit_row
         label: "改映射 — 修改本行权威模块或消歧"
         portable: "2=改映射"
 
-  - id: prd.freeze
-    skill: "prd-design"
+  - id: spec.freeze
+    skill: "spec"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 5 输出与归档"
-    portable_menu: "1=冻结PRD可进requirement-design 2=继续改PRD"
+    portable_menu: "1=冻结spec可进plan 2=继续改spec"
     options:
       - value: freeze
-        label: "冻结 PRD — 可进入 requirement-design 技术设计"
-        portable: "1=冻结 PRD，可进 requirement-design"
+        label: "冻结 spec — 可进入 plan 阶段"
+        portable: "1=冻结 spec，可进 plan"
       - value: continue_edit
-        label: "继续改 PRD — 本轮不冻结"
-        portable: "2=继续改 PRD"
+        label: "继续改 spec — 本轮不冻结"
+        portable: "2=继续改 spec"
 
-  # --- requirement-design design ---
-  - id: design.scope_expansion
-    skill: "requirement-design"
+  # --- plan ---
+  - id: plan.scope_expansion
+    skill: "plan"
     class: freeform_approval
     ssot_anchor: "user-confirmation-ux.md §3.5"
     skill_step: "Step 2.5"
@@ -306,22 +306,22 @@ entries:
         label: "修改提议后再议"
         portable: "3=修改提议"
 
-  - id: design.ok_to_code
-    skill: "requirement-design"
+  - id: plan.ok_to_code
+    skill: "plan"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Step 13 / 产品闸门"
-    portable_menu: "1=design OK可编码 2=继续改design"
+    portable_menu: "1=plan OK可编码 2=继续改plan"
     options:
       - value: ok
-        label: "design OK — 可进入 coding 编码"
-        portable: "1=design OK，可编码"
+        label: "plan OK — 可进入 coding 编码"
+        portable: "1=plan OK，可编码"
       - value: continue_design
-        label: "继续改 design — 本轮不授权编码"
-        portable: "2=继续改 design"
+        label: "继续改 plan — 本轮不授权编码"
+        portable: "2=继续改 plan"
 
-  - id: design.arch_impact
-    skill: "requirement-design"
+  - id: plan.arch_impact
+    skill: "plan"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "架构影响声明"
@@ -337,8 +337,8 @@ entries:
         label: "其他 — 我在对话中说明 impact 类型"
         portable: "3=其他(说明)"
 
-  - id: design.split_table
-    skill: "requirement-design"
+  - id: plan.split_table
+    skill: "plan"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "功能拆分表"
@@ -357,11 +357,11 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "Scope 越界停步"
-    portable_menu: "1=回requirement-design走Scope扩展 2=收窄实现"
+    portable_menu: "1=回plan走Scope扩展 2=收窄实现"
     options:
       - value: back_design
-        label: "回 requirement-design — 走 Scope 扩展提议"
-        portable: "1=回 requirement-design 走 Scope 扩展"
+        label: "回 plan — 走 Scope 扩展提议"
+        portable: "1=回 plan 走 Scope 扩展"
       - value: narrow
         label: "收窄实现 — 只在当前 in_scope 内完成"
         portable: "2=收窄实现"
@@ -419,7 +419,7 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §8.3"
     skill_step: "任一 feature phase 四件套 PASS 后"
-    portable_menu: "1=进入下一requirement-design=暂停 3=其它"
+    portable_menu: "1=进入下一plan=暂停 3=其它"
     options:
       - value: enter_next
         label: "进入下一 Skill — {next_skill_label}"
@@ -427,7 +427,7 @@ entries:
         dynamic_label:
           placeholder: "{next_skill_label}"
           lookup: |
-            prd → requirement-design 技术设计
+            prd → plan 技术设计
             design → coding 编码
             coding → code-review Code Review
             review → business-ut 业务级 UT

@@ -201,6 +201,105 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'provides.skill_assets 解析为绝对路径并合并 skillId/assetKey',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      fs.mkdirSync(path.join(root, 'assets'), { recursive: true });
+      write(path.join(root, 'assets', 'extra.md'), '# extra\n');
+      write(
+        path.join(root, 'manifest.yaml'),
+        [
+          'schema_version: "1.0"',
+          'name: skill-assets-ext',
+          'provides:',
+          '  skill_assets:',
+          '    spec:',
+          '      prd_template: assets/extra.md',
+        ].join('\n'),
+      );
+      const b = loadInstanceExtensions(dir);
+      assert(b.errors.length === 0, JSON.stringify(b.errors));
+      const abs = b.skillAssetAbsPaths.spec?.prd_template;
+      assert(abs !== undefined && abs.endsWith(`${path.sep}extra.md`), 'skill asset abs');
+    },
+  },
+  {
+    name: 'legacy phase key prd/design：hooks 与 phase_rules_overlays 规范化为 spec/plan',
+    run: () => {
+      const dir = mkTmp();
+      const root = path.join(dir, 'doc', 'extensions');
+      fs.mkdirSync(path.join(root, 'hooks', 'spec'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'hooks', 'plan'), { recursive: true });
+      write(path.join(root, 'hooks', 'spec', 'pre.mjs'), 'export default async () => ({})');
+      write(path.join(root, 'hooks', 'plan', 'pre.mjs'), 'export default async () => ({})');
+      write(
+        path.join(root, 'overlay-spec.yaml'),
+        [
+          'phase: spec',
+          'version: "1"',
+          'applies_to: test',
+          'structure_checks: {}',
+          'semantic_checks: {}',
+          'traceability_checks: {}',
+        ].join('\n'),
+      );
+      write(
+        path.join(root, 'overlay-plan.yaml'),
+        [
+          'phase: plan',
+          'version: "1"',
+          'applies_to: test',
+          'structure_checks: {}',
+          'semantic_checks: {}',
+          'traceability_checks: {}',
+        ].join('\n'),
+      );
+      write(
+        path.join(root, 'manifest.yaml'),
+        [
+          'schema_version: "1.0"',
+          'name: legacy-phase-keys',
+          'provides:',
+          '  hooks:',
+          '    prd:',
+          '      pre_phase: [ hooks/spec/pre.mjs ]',
+          '    design:',
+          '      pre_phase: [ hooks/plan/pre.mjs ]',
+          '  phase_rules_overlays:',
+          '    prd: overlay-spec.yaml',
+          '    design: overlay-plan.yaml',
+        ].join('\n'),
+      );
+      const warnSpy = console.warn;
+      const warns: string[] = [];
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(' '));
+      };
+      try {
+        const b = loadInstanceExtensions(dir);
+        assert(b.errors.length === 0, JSON.stringify(b.errors));
+        assert(b.hooks.spec?.pre_phase?.length === 1, 'spec hook');
+        assert(b.hooks.plan?.pre_phase?.length === 1, 'plan hook');
+        assert(b.hooks.prd === undefined && b.hooks.design === undefined, 'no legacy hook keys');
+        assert(
+          b.phaseRuleOverlayPaths.spec?.includes('overlay-spec.yaml'),
+          'spec overlay',
+        );
+        assert(
+          b.phaseRuleOverlayPaths.plan?.includes('overlay-plan.yaml'),
+          'plan overlay',
+        );
+        assert(
+          warns.some((w) => w.includes('hooks') && w.includes('prd')),
+          'warn hooks prd',
+        );
+      } finally {
+        console.warn = warnSpy;
+      }
+    },
+  },
+  {
     name: '自定义 paths.extension_dir：相对实例根解析',
     run: () => {
       const dir = mkTmp();

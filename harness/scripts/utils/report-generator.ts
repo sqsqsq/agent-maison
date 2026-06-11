@@ -363,8 +363,8 @@ export function generateMergedReport(
     lines.push('');
   }
 
-  // Visual Handoff：结构化解析与可达性（仅 PRD 且 PRD 声明 handoff 并由脚本写出 visual_resolution_rows）
-  if (phase === 'prd') {
+  // Visual Handoff：结构化解析与可达性（仅 spec 且 spec 声明 handoff 并由脚本写出 visual_resolution_rows）
+  if (phase === 'spec') {
     const vRows = collectVisualResolutionRows(scriptReport);
     if (vRows.length > 0) {
       lines.push('### Resolved Visual Sources');

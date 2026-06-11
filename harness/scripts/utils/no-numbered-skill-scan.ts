@@ -63,7 +63,7 @@ const CONSUMER_SCAN_ROOTS = [
 ];
 
 const NUMBERED_SKILL_ID =
-  '(?:00-framework-init|00b-framework-setup|0-catalog-bootstrap|[1-6]-(?:prd-design|requirement-design|coding|code-review|business-ut|device-testing))';
+  '(?:00-framework-init|00b-framework-setup|0-catalog-bootstrap|[1-6]-(?:spec|plan|coding|code-review|business-ut|device-testing))';
 
 const NUMBERED_PATH_RE = new RegExp(`skills[/\\\\]${NUMBERED_SKILL_ID}(?:[/\\\\]|$)`);
 const NUMBERED_PROFILE_SKILL_RE = new RegExp(

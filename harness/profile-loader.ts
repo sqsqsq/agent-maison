@@ -15,6 +15,8 @@ import type {
   CapabilityKey,
 } from './scripts/utils/types';
 import { applyInstanceExtensions } from './extension-loader';
+import { normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
+import { normalizeCheckId, normalizePhaseId } from './scripts/utils/phase-alias';
 
 export type { CapabilityKey, ProfileCapabilitySpec } from './scripts/utils/types';
 
@@ -56,22 +58,40 @@ export function loadProfileConfigDefaults(profileName: string): Record<string, u
   }
 }
 
+function normalizeCheckIdMap<T extends Record<string, unknown>>(
+  map: T | undefined,
+): T | undefined {
+  if (!map) return map;
+  const out = {} as T;
+  for (const [key, value] of Object.entries(map)) {
+    (out as Record<string, unknown>)[normalizeCheckId(key)] = value;
+  }
+  return out;
+}
+
 export function mergePhaseRuleSpec(base: PhaseRuleSpec, overlay: Partial<PhaseRuleSpec>): PhaseRuleSpec {
-  return {
-    ...base,
+  const overlayNorm: Partial<PhaseRuleSpec> = {
     ...overlay,
+    structure_checks: normalizeCheckIdMap(overlay.structure_checks),
+    semantic_checks: normalizeCheckIdMap(overlay.semantic_checks),
+    traceability_checks: normalizeCheckIdMap(overlay.traceability_checks),
+  };
+  const merged: PhaseRuleSpec = {
+    ...base,
+    ...overlayNorm,
+    phase: normalizePhaseId(String(overlayNorm.phase ?? base.phase)),
     applies_to: overlay.applies_to !== undefined ? overlay.applies_to : base.applies_to,
     structure_checks: {
       ...(base.structure_checks ?? {}),
-      ...(overlay.structure_checks ?? {}),
+      ...(overlayNorm.structure_checks ?? {}),
     },
     semantic_checks: {
       ...(base.semantic_checks ?? {}),
-      ...(overlay.semantic_checks ?? {}),
+      ...(overlayNorm.semantic_checks ?? {}),
     },
     traceability_checks: {
       ...(base.traceability_checks ?? {}),
-      ...(overlay.traceability_checks ?? {}),
+      ...(overlayNorm.traceability_checks ?? {}),
     },
     exploration_thresholds: {
       ...(base.exploration_thresholds ?? {}),
@@ -79,6 +99,7 @@ export function mergePhaseRuleSpec(base: PhaseRuleSpec, overlay: Partial<PhaseRu
     },
     exploration_strategy: overlay.exploration_strategy ?? base.exploration_strategy,
   };
+  return merged;
 }
 
 function readProfileYaml(name: string): ProfileYamlStub {
@@ -98,8 +119,7 @@ function readProfileYaml(name: string): ProfileYamlStub {
 function normalizePhaseDisabled(raw: string[] | undefined): Set<Phase> {
   const set = new Set<Phase>();
   const allow = new Set<Phase>([
-    'prd',
-    'design',
+    'spec', 'plan',
     'coding',
     'review',
     'ut',
@@ -111,8 +131,9 @@ function normalizePhaseDisabled(raw: string[] | undefined): Set<Phase> {
     'extensions',
   ]);
   for (const p of raw ?? []) {
-    if (allow.has(p as Phase)) {
-      set.add(p as Phase);
+    const canon = normalizePhaseId(p) as Phase;
+    if (allow.has(canon)) {
+      set.add(canon);
     }
   }
   return set;
@@ -183,9 +204,9 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
 
   const profileDirPath = profileDir(yaml.name);
 
-  const capabilities: Partial<Record<CapabilityKey, ProfileCapabilitySpec>> = {
-    ...(yaml.capabilities as Partial<Record<CapabilityKey, ProfileCapabilitySpec>>),
-  };
+  const capabilities = normalizeCapabilitiesMap(
+    yaml.capabilities as Partial<Record<string, ProfileCapabilitySpec>>,
+  );
 
   const base: HarnessResolvedProfile = {
     name: yaml.name,

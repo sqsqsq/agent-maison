@@ -2,7 +2,7 @@
 
 ## Resolver contract
 
-- `PHASE_SCOPED_ARTIFACTS`: basename → phase (PRD.md→prd, design.md→design, review-report.md→review, test-plan.md|test-report.md→testing, testability-audit.md|mock-plan.yaml→ut)
+- `PHASE_SCOPED_ARTIFACTS`: basename → phase (spec.md→prd, design.md→design, review-report.md→review, test-plan.md|test-report.md→testing, testability-audit.md|mock-plan.yaml→ut)
 - `ALREADY_PHASED_ARTIFACTS`: no legacy flat path for ut artifacts
 - Input normalization: strip leading `<phase>/` if present before lookup (idempotent for `ut/mock-plan.yaml` vs `mock-plan.yaml`)
 - `featureArtifactPath`: canonical write path = `<features_dir>/<feature>/<phase>/<basename>` or feature root for global specs
@@ -15,7 +15,7 @@
 ```
 doc/features/<feature>/
   *.yaml (global contracts at root)
-  prd/PRD.md
+  prd/spec.md
   design/design.md
   review/review-report.md
   testing/test-plan.md, test-report.md

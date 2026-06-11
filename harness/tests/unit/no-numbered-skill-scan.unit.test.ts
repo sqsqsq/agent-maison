@@ -43,20 +43,20 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'consumer: framework/skills/1-prd-design 残留应命中',
+    name: 'consumer: framework/skills/1-spec 残留应命中',
     run: () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-c-hit-'));
       const fw = path.join(tmp, 'framework');
       writeText(
-        path.join(fw, 'skills', '1-prd-design', 'SKILL.md'),
-        'see framework/skills/1-prd-design/SKILL.md\n',
+        path.join(fw, 'skills', '1-spec', 'SKILL.md'),
+        'see framework/skills/1-spec/SKILL.md\n',
       );
       writeText(path.join(fw, 'workflows', '.gitkeep'), '');
       const layout = inferRepoLayout(tmp);
       const hits = scanNoNumberedSkillPaths(layout, 'consumer');
       assert(hits.length >= 1, `hits=${hits.length}`);
       assert(
-        hits.some(h => h.file.replace(/\\/g, '/').includes('framework/skills/1-prd-design')),
+        hits.some(h => h.file.replace(/\\/g, '/').includes('framework/skills/1-spec')),
         hits.map(h => h.file).join(';'),
       );
       fs.rmSync(tmp, { recursive: true, force: true });

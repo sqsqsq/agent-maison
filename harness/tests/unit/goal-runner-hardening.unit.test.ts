@@ -88,9 +88,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'countAgentInvokeStarts: legacy agent_invoke + new start/end',
     run: () => {
       const n = countAgentInvokeStarts([
-        { type: 'agent_invoke', phase: 'prd' },
-        { type: 'agent_invoke_start', phase: 'design' },
-        { type: 'agent_invoke_end', phase: 'design' },
+        { type: 'agent_invoke', phase: 'spec' },
+        { type: 'agent_invoke_start', phase: 'plan' },
+        { type: 'agent_invoke_end', phase: 'plan' },
         { type: 'agent_invoke_start', phase: 'coding' },
       ]);
       assert(n === 3, String(n));
@@ -101,7 +101,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     run: () => {
       const events = [
         { type: 'run_start', ts: '2026-06-09T13:12:25.820Z' },
-        { type: 'agent_invoke', phase: 'prd' },
+        { type: 'agent_invoke', phase: 'spec' },
         { type: 'run_start', ts: '2026-06-09T15:27:45.736Z' },
       ];
       const b = resolveResumedBudget(events);
@@ -318,7 +318,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'applyManifestCliOverrides: only applies when flag paired',
     run: () => {
       const manifest = {
-        start_phase: 'prd',
+        start_phase: 'spec',
         end_phase: 'testing',
       } as GoalManifest;
       applyManifestCliOverrides(manifest, {
@@ -326,7 +326,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         'override-end': true,
         end: 'ut',
       });
-      assert(manifest.start_phase === 'prd', 'start not overridden without flag');
+      assert(manifest.start_phase === 'spec', 'start not overridden without flag');
       assert(manifest.end_phase === 'ut', 'end overridden with flag');
     },
   },

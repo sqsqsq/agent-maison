@@ -2074,8 +2074,8 @@ const checker: PhaseChecker = {
 
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, [
-        'PRD.md',
-        'design.md',
+        'spec.md',
+        'plan.md',
         'test-plan.md',
         'test-report.md',
       ]),

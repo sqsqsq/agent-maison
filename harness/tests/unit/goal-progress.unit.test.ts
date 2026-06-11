@@ -63,7 +63,7 @@ function assert(condition: boolean, message: string): void {
 function mkManifest(overrides: Partial<GoalManifest> = {}): GoalManifest {
   return {
     schema_version: '1.0',
-    start_phase: 'prd',
+    start_phase: 'spec',
     end_phase: 'testing',
     feature: 'feat-a',
     adapter: 'generic',
@@ -86,18 +86,18 @@ function mkManifest(overrides: Partial<GoalManifest> = {}): GoalManifest {
 }
 
 function happyEvents(): GoalRunEvent[] {
-  const chain = ['prd', 'design', 'coding', 'review', 'ut', 'testing'];
+  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
   return [
     { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain },
-    { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'prd', attempt: 1 },
-    { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'prd', invoke_id: 'p1' },
-    { ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end', phase: 'prd', invoke_id: 'p1', exit_code: 0 },
-    { ts: '2026-06-10T12:05:01.000Z', type: 'harness_start', phase: 'prd' },
-    { ts: '2026-06-10T12:08:00.000Z', type: 'harness_end', phase: 'prd', exit_code: 0 },
+    { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'spec', attempt: 1 },
+    { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'spec', invoke_id: 'p1' },
+    { ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end', phase: 'spec', invoke_id: 'p1', exit_code: 0 },
+    { ts: '2026-06-10T12:05:01.000Z', type: 'harness_start', phase: 'spec' },
+    { ts: '2026-06-10T12:08:00.000Z', type: 'harness_end', phase: 'spec', exit_code: 0 },
     {
       ts: '2026-06-10T12:08:01.000Z',
       type: 'phase_verdict',
-      phase: 'prd',
+      phase: 'spec',
       verdict: 'PASS',
       action: 'advance',
     },
@@ -109,9 +109,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'resolveChainFromEvents: prefers run_start.chain',
     run: () => {
-      const events = [{ type: 'run_start', chain: ['prd', 'coding'] }] as GoalRunEvent[];
-      const chain = resolveChainFromEvents(events, ['prd', 'design', 'coding']);
-      assert(chain.join(',') === 'prd,coding', `got ${chain.join(',')}`);
+      const events = [{ type: 'run_start', chain: ['spec', 'coding'] }] as GoalRunEvent[];
+      const chain = resolveChainFromEvents(events, ['spec', 'plan', 'coding']);
+      assert(chain.join(',') === 'spec,coding', `got ${chain.join(',')}`);
     },
   },
   {
@@ -368,11 +368,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'WAITING_EXTERNAL when upstream phase deferred (ended)',
     run: () => {
       const events: GoalRunEvent[] = [
-        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['prd', 'coding'] },
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['spec', 'coding'] },
         {
           ts: '2026-06-10T12:10:00.000Z',
           type: 'phase_verdict',
-          phase: 'prd',
+          phase: 'spec',
           verdict: 'INCOMPLETE',
           action: 'defer_external_and_continue_if_allowed',
         },
@@ -380,7 +380,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       ];
       const snap = projectGoalProgress({
         projectRoot: '/tmp',
-        manifest: mkManifest({ start_phase: 'prd', end_phase: 'coding' }),
+        manifest: mkManifest({ start_phase: 'spec', end_phase: 'coding' }),
         events,
         workflow,
         nowMs: new Date('2026-06-10T12:15:00.000Z').getTime(),
@@ -628,7 +628,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(md.includes('## Phases'), 'phases section');
       assert(md.includes('| Duration |'), 'duration col');
       assert(md.includes('Budget:'), 'budget');
-      assert(md.includes('prd'), 'phase row');
+      assert(md.includes('spec'), 'phase row');
     },
   },
   {

@@ -179,7 +179,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       let threw = false;
       try {
-        validateFeatureChainDag(workflow, ['prd', 'testing'], 'prd');
+        validateFeatureChainDag(workflow, ['spec', 'testing'], 'spec');
       } catch (e) {
         threw = true;
         assert((e as Error).message.includes('ut'), (e as Error).message);
@@ -192,7 +192,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       let threw = false;
       try {
-        resolveAutoChain(workflow, 'prd', 'testing', ['prd', 'testing']);
+        resolveAutoChain(workflow, 'spec', 'testing', ['spec', 'testing']);
       } catch {
         threw = true;
       }
@@ -202,10 +202,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveResumeState: skip completed phases',
     run: () => {
-      const chain = ['prd', 'design', 'coding'] as const;
+      const chain = ['spec', 'plan', 'coding'] as const;
       const r = resolveResumeState([...chain], [
-        { phase: 'prd', verdict: 'PASS' },
-        { phase: 'design', verdict: 'PASS' },
+        { phase: 'spec', verdict: 'PASS' },
+        { phase: 'plan', verdict: 'PASS' },
       ]);
       assert(r.startIndex === 2, `index ${r.startIndex}`);
       assert(r.priorOutcomes.length === 2, 'prior');
@@ -214,10 +214,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveResumeState: halted retries same phase',
     run: () => {
-      const chain = ['prd', 'design', 'coding'] as const;
+      const chain = ['spec', 'plan', 'coding'] as const;
       const r = resolveResumeState([...chain], [
-        { phase: 'prd', verdict: 'PASS' },
-        { phase: 'design', verdict: 'FAIL', halted: true },
+        { phase: 'spec', verdict: 'PASS' },
+        { phase: 'plan', verdict: 'FAIL', halted: true },
       ]);
       assert(r.startIndex === 1, `index ${r.startIndex}`);
       assert(r.priorOutcomes.length === 1, 'drop halted from prior');
@@ -278,10 +278,10 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(events[1].recovered === true, 'recovered verdict');
 
       const resume = resolveResumeFromEvents(
-        ['prd', 'design', 'coding', 'review', 'ut', 'testing'],
+        ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
         [
-          { type: 'phase_verdict', phase: 'prd', action: 'advance', verdict: 'PASS' },
-          { type: 'phase_verdict', phase: 'design', action: 'advance', verdict: 'PASS' },
+          { type: 'phase_verdict', phase: 'spec', action: 'advance', verdict: 'PASS' },
+          { type: 'phase_verdict', phase: 'plan', action: 'advance', verdict: 'PASS' },
           { type: 'agent_invoke_start', phase: 'coding', ts: startTs },
           ...(events as Parameters<typeof resolveResumeFromEvents>[1]),
         ],
@@ -373,10 +373,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'parseCompletedPhasesFromEvents: advance + defer',
     run: () => {
       const done = parseCompletedPhasesFromEvents([
-        { type: 'phase_verdict', phase: 'prd', action: 'advance' },
+        { type: 'phase_verdict', phase: 'spec', action: 'advance' },
         { type: 'phase_verdict', phase: 'ut', action: 'defer_external_and_continue_if_allowed' },
       ]);
-      assert(done.has('prd'), 'prd');
+      assert(done.has('spec'), 'prd');
       assert(done.has('ut'), 'ut');
     },
   },
@@ -423,7 +423,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           PROJECT_ROOT: '/proj',
           FRAMEWORK_ROOT: '/fw',
           FEATURE: 'demo',
-          PHASE: 'prd',
+          PHASE: 'spec',
         },
       );
       const pIdx = plan.argv.indexOf('-p');
@@ -453,14 +453,14 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'rebuildOutcomesFromEvents: prd+design advance restores prior outcomes',
     run: () => {
-      const chain = resolveAutoChain(workflow, 'prd', 'testing');
+      const chain = resolveAutoChain(workflow, 'spec', 'testing');
       const events = [
-        { type: 'phase_verdict', phase: 'prd', action: 'advance' as const, verdict: 'PASS' },
-        { type: 'phase_verdict', phase: 'design', action: 'advance' as const, verdict: 'PASS' },
+        { type: 'phase_verdict', phase: 'spec', action: 'advance' as const, verdict: 'PASS' },
+        { type: 'phase_verdict', phase: 'plan', action: 'advance' as const, verdict: 'PASS' },
       ];
       const prior = rebuildOutcomesFromEvents(events, chain);
       assert(prior.length === 2, String(prior.length));
-      assert(prior[0].phase === 'prd' && prior[1].phase === 'design', 'order');
+      assert(prior[0].phase === 'spec' && prior[1].phase === 'plan', 'order');
       const resume = resolveResumeFromEvents(chain, events);
       assert(resume.startIndex === 2, `start ${resume.startIndex}`);
       assert(resume.priorOutcomes.length === 2, 'prior count');
@@ -469,10 +469,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveResumeFromEvents: merged outcomes allow COMPLETED after resume',
     run: () => {
-      const chain = resolveAutoChain(workflow, 'prd', 'testing');
+      const chain = resolveAutoChain(workflow, 'spec', 'testing');
       const events = [
-        { type: 'phase_verdict', phase: 'prd', action: 'advance' as const, verdict: 'PASS' },
-        { type: 'phase_verdict', phase: 'design', action: 'advance' as const, verdict: 'PASS' },
+        { type: 'phase_verdict', phase: 'spec', action: 'advance' as const, verdict: 'PASS' },
+        { type: 'phase_verdict', phase: 'plan', action: 'advance' as const, verdict: 'PASS' },
       ];
       const resume = resolveResumeFromEvents(chain, events);
       const newOutcomes: GoalPhaseOutcome[] = chain.slice(resume.startIndex).map((phase) => ({
@@ -505,10 +505,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'resolveGoalRunStatus: budget halt outcome → HALTED not PARTIAL',
     run: () => {
-      const chain = resolveAutoChain(workflow, 'prd', 'testing');
-      const prior: GoalPhaseOutcome[] = [{ phase: 'prd', verdict: 'PASS' }];
+      const chain = resolveAutoChain(workflow, 'spec', 'testing');
+      const prior: GoalPhaseOutcome[] = [{ phase: 'spec', verdict: 'PASS' }];
       const budgetHalt: GoalPhaseOutcome = {
-        phase: 'design',
+        phase: 'plan',
         verdict: 'FAIL',
         halted: true,
         retries: 1,

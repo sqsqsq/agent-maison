@@ -154,7 +154,7 @@ const cases: Case[] = [
         ].join('\n'),
       );
       const base = [blockerFail('ctx_gate')];
-      const { results, stats } = applyCompatDowngrade(base, { feature: 'f', phase: 'prd', projectRoot: root }, Date.UTC(2098, 0, 1));
+      const { results, stats } = applyCompatDowngrade(base, { feature: 'f', phase: 'spec', projectRoot: root }, Date.UTC(2098, 0, 1));
       assertEq(stats.appliedIds, ['ctx_gate'], 'appliedIds');
       const row = results.find(x => x.id === 'ctx_gate');
       assertTrue(!!row, 'row exists');
@@ -183,7 +183,7 @@ const cases: Case[] = [
         ].join('\n'),
       );
       const base = [blockerFail('context_exploration_a'), blockerFail('context_exploration_b')];
-      const { stats } = applyCompatDowngrade(base, { feature: 'g', phase: 'prd', projectRoot: root });
+      const { stats } = applyCompatDowngrade(base, { feature: 'g', phase: 'spec', projectRoot: root });
       assertEq(stats.appliedIds.length, 2, 'len');
       assertTrue(!stats.expiredFired, '未过期');
     },
@@ -205,7 +205,7 @@ const cases: Case[] = [
       );
       const base = [blockerFail('z_miss')];
       const now = Date.UTC(2030, 0, 1);
-      const { results, stats } = applyCompatDowngrade(base, { feature: 'exp', phase: 'prd', projectRoot: root }, now);
+      const { results, stats } = applyCompatDowngrade(base, { feature: 'exp', phase: 'spec', projectRoot: root }, now);
       assertTrue(stats.expiredFired, '应触发 expired');
       assertEq(stats.appliedIds.length, 0, 'no downgrade');
       const z = results.find(x => x.id === 'z_miss');
@@ -233,7 +233,7 @@ const cases: Case[] = [
         ].join('\n'),
       );
       const base = [blockerFail('a_x')];
-      const { stats, results } = applyCompatDowngrade(base, { feature: 'ph', phase: 'prd', projectRoot: root });
+      const { stats, results } = applyCompatDowngrade(base, { feature: 'ph', phase: 'spec', projectRoot: root });
       assertEq(stats.appliedIds.length, 0, 'prd 不应命中');
       const row = results.find(x => x.id === 'a_x');
       assertTrue(!!row && row.status === 'FAIL', '仍为 FAIL');
@@ -272,7 +272,7 @@ const cases: Case[] = [
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'compat-'));
       writeCompat(root, 'bad', '[ : x');
       const base = [blockerFail('keep_me')];
-      const { results, stats } = applyCompatDowngrade(base, { feature: 'bad', phase: 'prd', projectRoot: root });
+      const { results, stats } = applyCompatDowngrade(base, { feature: 'bad', phase: 'spec', projectRoot: root });
       assertEq(stats.appliedIds.length, 0, 'yaml fail: stats');
       assertTrue(results.some(r => r.id === 'compat_yaml_parse'), '应有 compat_yaml_parse');
       const k = results.find(r => r.id === 'keep_me');

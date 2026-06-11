@@ -53,7 +53,7 @@ function baseManifest(adapter: string): GoalManifest {
     feature: 'demo',
     requirement: 'test',
     adapter,
-    start_phase: 'prd',
+    start_phase: 'spec',
     end_phase: 'testing',
     report_dir: 'doc/features/demo/goal-runs/test-run',
     created_at: '2026-06-09T00:00:00Z',

@@ -83,7 +83,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | 架构 DSL | `init.architecture_preset` + `init.intra_layer_deps` + [prompts/architecture-presets.md](prompts/architecture-presets.md) | `architecture` 对象（**必填**） |
 | 物化 adapter 清单 | `init.materialized_adapters`（多选 checkbox） | `materialized_adapters[]` |
 | paths 覆盖（可选） | 仅当实例目录结构偏离默认 | `paths` 子集 |
-| `prd`（可选） | opt-in，见 prd-harness-options | `prd` 段 |
+| `spec`（可选） | opt-in，见 [spec-harness-options](prompts/spec-harness-options.md) | `spec` 段（Visual Handoff 等；legacy `prd` 段 init UPDATE 会自动迁移） |
 
 **由 builder 自动注入（勿写入 payload）**：`schema_version`、`state_machine.*`、`toolchain.hvigor.*`、`active_workflow`、`lifecycle_hooks_enabled`、默认 `paths.*`（未覆盖项）、profile-owned `tools.*`（仅 hmos-app 等 profile 的 config-defaults）。参考 [framework.config.template.json](../../../templates/framework.config.template.json) 作对照，非手写清单。
 
@@ -173,9 +173,9 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **UPDATE 遗留跳板清理**：若 S3 执行了 `cleanup-deprecated`，摘要须引用 run-log 中 `cleanup_effects.backup_deleted` 计数；有备份时注明 `.framework-backup/<timestamp>/` 路径（S1 probe 仅提示「将清理」，以 S3 run-log 为准）。
 - **可选下一步（仅列出，禁止诱导式 yes/no 或默认进入下游 Skill）**：
-  1. 提醒团队成员：首次跑 catalog/prd 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
-  2. 需要时可自行执行：`/catalog-bootstrap`、`/glossary-bootstrap`、`/prd-design` 及后续 phase。
-  3. **禁止**在 init 摘要末尾询问「是否现在进入 catalog-bootstrap / prd-design」等默认推进话术；须等待用户明确选择下一阶段。
+  1. 提醒团队成员：首次跑 catalog/spec 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
+  2. 需要时可自行执行：`/catalog-bootstrap`、`/glossary-bootstrap`、`/spec` 及后续 phase。
+  3. **禁止**在 init 摘要末尾询问「是否现在进入 catalog-bootstrap / spec」等默认推进话术；须等待用户明确选择下一阶段。
 - UPDATE 且改了 `paths.receipt_dir_pattern` 或 `paths.reports_dir_pattern` 时：advisory 扫描 legacy receipt / report 路径（`reconcile-receipt-paths.ts` dry-run）。
 
 ---

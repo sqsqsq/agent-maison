@@ -17,15 +17,15 @@
 1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘 `context-exploration.md`（`schema_version: "1.1.0"`）。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；harness 会验证磁盘存在。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
-4. **探索深度由 `exploration_strategy` 决定**（v2.10）：design/coding **默认 subagent**（仅 L1 trivial 可豁免）；prd/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
-5. **不确定时停下来问用户**，禁止静默猜测后继续写 PRD/design/code。
+4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding **默认 subagent**（仅 L1 trivial 可豁免）；spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
+5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
 
 ### 各阶段反例 / 正例
 
 | 阶段 | 反例 | 正例 |
 |------|------|------|
-| PRD | 只读 glossary/architecture，不读现有页面 `.ets`，臆造与实现冲突的需求 | Code Facts 引用 `HomeTabPage.ets` 现有交互，PRD 在事实基础上描述变更 |
-| Design | `key_inputs_read` 填关键词，不打开模块目录，design 中路径与仓库不符 | 读 `build-profile.json5` + 模块 `index.ets`，文件树与现有结构一致 |
+| spec | 只读 glossary/architecture，不读现有页面 `.ets`，臆造与实现冲突的需求 | Code Facts 引用 `HomeTabPage.ets` 现有交互，spec 在事实基础上描述变更 |
+| Plan | `key_inputs_read` 填关键词，不打开模块目录，plan 中路径与仓库不符 | 读 `build-profile.json5` + 模块 `index.ets`，文件树与现有结构一致 |
 | Coding | 不看 contracts 对应文件就开写，重复造轮子 | 先 Read 目标模块已有类，复用或扩展 |
 | Review | 只扫 diff 摘要，不读被审源文件 | 打开 contracts 列出的每个 `.ets` 再下结论 |
 | UT | 不看被测实现就写 mock 期望 | Code Facts 记录被测函数签名与边界 |
@@ -38,8 +38,8 @@
 
 ### Framework 约束
 
-1. **PRD**：只写用户/验收要求的功能；禁止「顺便加上」的 P2 投机需求进 P0。
-2. **Design**：只建 PRD 驱动的模块与文件；禁止为「架构美感」预建未引用模块。
+1. **spec**：只写用户/验收要求的功能；禁止「顺便加上」的 P2 投机需求进 P0。
+2. **plan**：只建 spec 驱动的模块与文件；禁止为「架构美感」预建未引用模块。
 3. **Coding**：只实现 `contracts.yaml` 声明的符号与文件；禁止「以后可能用」的抽象层。
 4. **UT**：只覆盖 `acceptance.yaml` / `use-cases.yaml` 声明的分支；禁止为覆盖率堆无意义用例。
 
@@ -47,9 +47,9 @@
 
 | 阶段 | 反例 | 正例 |
 |------|------|------|
-| PRD | 用户要首页改版，PRD 顺带写支付模块 | Scope 仅 `in_scope_modules: [WalletMain]` |
-| Design | 为单页功能新建 CommonBusiness 模块 | 功能落在已有 Feature 模块 presentation 层 |
-| Coding | 顺手加通用 Utils 类未在 design 中 | diff 仅含 contracts 列出的路径 |
+| spec | 用户要首页改版，spec 顺带写支付模块 | Scope 仅 `in_scope_modules: [WalletMain]` |
+| Plan | 为单页功能新建 CommonBusiness 模块 | 功能落在已有 Feature 模块 presentation 层 |
+| Coding | 顺手加通用 Utils 类未在 plan 中 | diff 仅含 contracts 列出的路径 |
 
 ---
 
@@ -59,7 +59,7 @@
 
 ### Framework 约束
 
-1. **Coding / Review**：git diff 须落在 design `in_scope_modules` 与 contracts 文件清单内。
+1. **Coding / Review**：git diff 须落在 plan `in_scope_modules` 与 contracts 文件清单内。
 2. **禁止 drive-by refactor**：不顺手改注释、格式、命名、未触及文件的「小优化」。
 3. **Review** 只评本次变更引入的问题；预存 dead code 仅 mention，不删（除非用户要求）。
 
@@ -81,13 +81,13 @@
 1. **Research Sub-Phase 完成后自检**：`source_code_paths` 存在？Code Facts ≥ 阈值？`decisions_unlocked` 非空？
 2. **逐文件闭环**（Coding）：写一个 `.ets` → `ReadLints` 零 error → 再写下一个。
 3. **阶段闭环四件套**：harness PASS → verifier PASS → completion receipt → trace.json；禁止口头「完成」。
-4. **每 Step 产出前**：对照上游 SSOT（PRD ↔ design ↔ contracts）确认无断链。
+4. **每 Step 产出前**：对照上游 SSOT（spec ↔ plan ↔ contracts）确认无断链。
 
 ### 各阶段反例 / 正例
 
 | 阶段 | 反例 | 正例 |
 |------|------|------|
-| Design | 一口气写 design + contracts，再补 context-exploration | 先 Research Sub-Phase PASS，再写 design.md |
+| Plan | 一口气写 plan + contracts，再补 context-exploration | 先 Research Sub-Phase PASS，再写 plan.md |
 | Coding | 批量生成 10 个文件后统一 lint | 单文件 lint 闭环 |
 | 任意 | harness FAIL 仍宣称阶段完成 | 修因 → 重跑 harness → 再触发 verifier |
 

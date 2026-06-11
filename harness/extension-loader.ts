@@ -16,6 +16,8 @@ import type {
   CapabilitySeverityKeyword,
   ExtensionBundle,
 } from './scripts/utils/types';
+import { normalizeCapabilityKey, normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
+import { normalizePhaseId } from './scripts/utils/phase-alias';
 
 export type { ExtensionBundle } from './scripts/utils/types';
 
@@ -30,6 +32,7 @@ function emptyBundle(rootDir: string | null): ExtensionBundle {
     hooks: {},
     extensionCapabilities: {},
     phaseRuleOverlayPaths: {},
+    skillAssetAbsPaths: {},
     errors: [],
   };
 }
@@ -59,6 +62,7 @@ function wipeProvides(b: ExtensionBundle): void {
   b.hooks = {};
   b.extensionCapabilities = {};
   b.phaseRuleOverlayPaths = {};
+  b.skillAssetAbsPaths = {};
 }
 
 function finalize(bundle: ExtensionBundle): ExtensionBundle {
@@ -208,7 +212,14 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
           }
         }
         if (Object.keys(byEvent).length > 0) {
-          bundle.hooks[ph] = byEvent;
+          const canon = normalizePhaseId(ph, ph as 'spec');
+          if (ph !== canon) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[extension-loader] hooks 已弃用 phase key "${ph}"，已规范化为 "${canon}"`,
+            );
+          }
+          bundle.hooks[canon] = { ...(bundle.hooks[canon] ?? {}), ...byEvent };
         }
       }
     }
@@ -246,12 +257,53 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
             pushError(bundle, 'capability_provider_missing', `provider 文件不存在：${prov.trim()}`, absProv);
             continue;
           }
-          bundle.extensionCapabilities[capKey.trim()] = {
+          const canonKey = normalizeCapabilityKey(capKey.trim());
+          bundle.extensionCapabilities[canonKey] = {
             provider: absProv,
             severity: sev as CapabilitySeverityKeyword,
           };
         } catch (e) {
           pushError(bundle, 'capability_resolve', (e as Error).message, manifestPath);
+        }
+      }
+    }
+  }
+
+  const skillAssetsRaw = provides.skill_assets;
+  if (skillAssetsRaw !== undefined) {
+    if (!isRecord(skillAssetsRaw)) {
+      pushError(bundle, 'provides_skill_assets', 'provides.skill_assets 必须是 object', manifestPath);
+    } else {
+      for (const [skillId, bucket] of Object.entries(skillAssetsRaw)) {
+        const sid = skillId.trim();
+        if (!sid) {
+          pushError(bundle, 'skill_assets_skill_id', 'skill_assets skill id 不能为空', manifestPath);
+          continue;
+        }
+        if (!isRecord(bucket)) {
+          pushError(bundle, 'skill_assets_bucket', `skill_assets.${sid} 必须是 assetKey→path 映射`, manifestPath);
+          continue;
+        }
+        const acc: Record<string, string> = {};
+        for (const [assetKey, rel] of Object.entries(bucket)) {
+          const key = assetKey.trim();
+          if (!key || typeof rel !== 'string' || !rel.trim()) {
+            pushError(bundle, 'skill_assets_entry', `skill_assets.${sid}.${assetKey} 非法`, manifestPath);
+            continue;
+          }
+          try {
+            const abs = safeResolve(extRoot, rel.trim());
+            if (!fs.existsSync(abs)) {
+              pushError(bundle, 'skill_assets_missing', `skill_assets 文件不存在：${rel.trim()}`, abs);
+            } else {
+              acc[key] = abs;
+            }
+          } catch (e) {
+            pushError(bundle, 'skill_assets_resolve', (e as Error).message, manifestPath);
+          }
+        }
+        if (Object.keys(acc).length > 0) {
+          bundle.skillAssetAbsPaths[sid] = { ...(bundle.skillAssetAbsPaths[sid] ?? {}), ...acc };
         }
       }
     }
@@ -272,7 +324,15 @@ export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: st
           if (!fs.existsSync(abs)) {
             pushError(bundle, 'overlay_missing', `phase_rules_overlay 文件不存在：${p.trim()}`, abs);
           } else {
-            bundle.phaseRuleOverlayPaths[ph.trim()] = abs;
+            const rawPh = ph.trim();
+            const canon = normalizePhaseId(rawPh, rawPh as 'spec');
+            if (rawPh !== canon) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[extension-loader] phase_rules_overlays 已弃用 phase key "${rawPh}"，已规范化为 "${canon}"`,
+              );
+            }
+            bundle.phaseRuleOverlayPaths[canon] = abs;
           }
         } catch (e) {
           pushError(bundle, 'overlay_resolve', (e as Error).message, manifestPath);
@@ -301,7 +361,7 @@ export function applyInstanceExtensions(
   }
   return {
     ...resolved,
-    capabilities: mergedCaps as HarnessResolvedProfile['capabilities'],
+    capabilities: normalizeCapabilitiesMap(mergedCaps),
     extensionBundle: bundle,
   };
 }

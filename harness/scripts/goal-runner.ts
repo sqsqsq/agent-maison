@@ -5,7 +5,7 @@
 // Usage (from repo root or instance root):
 //   cd framework/harness && npx ts-node scripts/goal-runner.ts \
 //     --feature <f> --requirement "..." --adapter claude \
-//     [--start prd] [--end testing] [--dry-run] [--resume <run-id> --feature <f>]
+//     [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>]
 // ============================================================================
 
 import * as fs from 'fs';
@@ -93,8 +93,8 @@ import {
 } from './utils/goal-progress';
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
-  prd: 'skills/feature/prd-design/SKILL.md',
-  design: 'skills/feature/requirement-design/SKILL.md',
+  spec: 'skills/feature/spec/SKILL.md',
+  plan: 'skills/feature/plan/SKILL.md',
   coding: 'skills/feature/coding/SKILL.md',
   review: 'skills/feature/code-review/SKILL.md',
   ut: 'skills/feature/business-ut/SKILL.md',
@@ -438,7 +438,7 @@ async function main(): Promise<number> {
 Goal runner — tool-agnostic multi-phase orchestrator
 
   npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
-    [--start prd] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
+    [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
 `);
     process.exit(0);
@@ -478,7 +478,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   } else {
     manifest = buildGoalManifestFromInput(
       {
-        start_phase: argv.start ?? 'prd',
+        start_phase: argv.start ?? 'spec',
         end_phase: argv.end ?? 'testing',
         feature: argv.feature,
         requirement: argv.requirement,

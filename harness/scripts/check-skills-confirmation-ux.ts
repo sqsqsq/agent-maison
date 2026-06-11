@@ -19,8 +19,8 @@ const TEXT_LIKE_EXTENSIONS = new Set([
   '.md', '.mdc', '.yaml', '.yml', '.template.md', '.md.template',
 ]);
 const CLAUDE_SLASH_COMMANDS = [
-  'commands/prd-design.md',
-  'commands/requirement-design.md',
+  'commands/spec.md',
+  'commands/plan.md',
   'commands/coding.md',
   'commands/code-review.md',
   'commands/business-ut.md',
@@ -611,11 +611,11 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
     ));
   }
 
-  if (rel.includes('prd-design/SKILL.md') && needsConfirmUx) {
+  if (rel.includes('spec/SKILL.md') && needsConfirmUx) {
     if (!/\[x\]/.test(content) || !content.includes('术语映射')) {
       results.push(blocker(
         'artifact_checkbox_unchanged',
-        'prd-design 须保留 PRD 术语表 [x] BLOCKER',
+        'spec 须保留术语映射表 [x] BLOCKER',
         [rel],
       ));
     }
@@ -628,8 +628,8 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
 
 /** Feature phase SKILL.md must declare closure stop gates (user-confirmation-ux §8). */
 const PHASE_CLOSURE_LINT: Array<{ suffix: string; requiredIds: string[] }> = [
-  { suffix: 'feature/prd-design/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
-  { suffix: 'feature/requirement-design/SKILL.md', requiredIds: ['design.ok_to_code', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/spec/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
+  { suffix: 'feature/plan/SKILL.md', requiredIds: ['plan.ok_to_code', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/coding/SKILL.md', requiredIds: ['coding.ok_to_review', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/code-review/SKILL.md', requiredIds: ['review.ok_to_ut', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/business-ut/SKILL.md', requiredIds: ['ut.ok_to_testing', 'phase.next_step', '闭环停等'] },
