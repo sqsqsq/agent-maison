@@ -20,7 +20,7 @@ Harness **不是**开发流水线；阶段四件套 PASS 只证明**当前 phase
 
 ```yaml
 transition_policy: manual
-auto_chain: [prd, design, coding, review, ut, testing]
+auto_chain: [spec, plan, coding, review, ut, testing]
 ```
 
 `auto_chain` 可省略；`goal-runner` 从 DAG 推导，manifest `chain_override` 可覆盖。
@@ -38,7 +38,7 @@ auto_chain: [prd, design, coding, review, ut, testing]
 | id | 边界 |
 |----|------|
 | `phase.next_step` | 任一 feature phase 闭环后（通用） |
-| `design.ok_to_code` | design → coding |
+| `plan.ok_to_code` | design → coding |
 | `coding.ok_to_review` | coding → review |
 | `review.ok_to_ut` | review → UT |
 | `ut.ok_to_testing` | UT → testing |
@@ -47,5 +47,5 @@ auto_chain: [prd, design, coding, review, ut, testing]
 
 - 读完 `phase-completion-receipt.md` 后在同一执行流自动 Read 下一 Skill
 - 把「可进入 Skill N」当成「现在就进入 Skill N」
-- `prd.freeze` / 上游闭环 alone 当作下游授权（除非 `batch_authorized` 或 `goal_mode` manifest）
+- `spec.freeze` / 上游闭环 alone 当作下游授权（除非 `batch_authorized` 或 `goal_mode` manifest）
 - 将 INCOMPLETE / DEFERRED 软通过为 PASS 或 completed

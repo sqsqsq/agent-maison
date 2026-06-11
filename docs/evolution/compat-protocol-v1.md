@@ -9,7 +9,7 @@
 ## 1. 设计原则：永久态 vs 过程态
 
 - **永久态（工程级）**：实例根 `framework.config.json` 描述架构 DSL、路径根、toolchain 等，装上即用，可版本对齐。它**不承载**任何具体 feature 名、豁免名单或「某需求做到哪一阶段」这类**过程态**。
-- **过程态（feature 级）**：`doc/features/<feature>/` 已统一收纳 PRD、design、contracts、acceptance 等。**当 framework 升级引入新的 BLOCKER**（例如 Context Exploration Gate），在途/已完成的 feature 需要一条**可审计、可过期**的过渡通道。
+- **过程态（feature 级）**：`doc/features/<feature>/` 已统一收纳 spec、plan、contracts、acceptance 等。**当 framework 升级引入新的 BLOCKER**（例如 Context Exploration Gate），在途/已完成的 feature 需要一条**可审计、可过期**的过渡通道。
 - **决策时机**：不在 framework-init / framework-init 阶段要用户批量决策；只在用户**主动**对某 `feature × phase` 跑 harness **撞墙**时，由报告与 suggestion 提示「正规化 vs 临时 compat」双路径。
 
 ---

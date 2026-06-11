@@ -4,8 +4,8 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试负责人**: {tester}
-> **对应 PRD**: `doc/features/{module-name}/prd/PRD.md`
-> **对应设计**: `doc/features/{module-name}/design/design.md`
+> **对应 spec**: `doc/features/{module-name}/spec/spec.md`
+> **对应设计**: `doc/features/{module-name}/plan/plan.md`
 
 ---
 
@@ -66,9 +66,9 @@
 ### 测试方法
 
 - **功能测试**: 基于验收标准逐条验证功能正确性
-- **异常场景测试**: 基于 PRD 异常场景表验证容错能力
+- **异常场景测试**: 基于 spec 异常场景表验证容错能力
 - **UI/交互测试**: 验证页面布局、组件交互符合设计文档
-- **性能测试**: 验证 PRD 中定义的性能指标（如首屏加载时间）
+- **性能测试**: 验证 spec 中定义的性能指标（如首屏加载时间）
 
 ### 执行顺序
 

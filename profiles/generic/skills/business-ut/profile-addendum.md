@@ -7,4 +7,4 @@
 
 ## Context Exploration Gate（profile 补充）
 
-未启用 Hypium 时，`context-exploration.md` 仍须覆盖 acceptance/PRD/design/contracts 与计划中的 device 待验项；自动化 UT 相关目录可标为 N/A。
+未启用 Hypium 时，`context-exploration.md` 仍须覆盖 acceptance/spec/plan/contracts 与计划中的 device 待验项；自动化 UT 相关目录可标为 N/A。

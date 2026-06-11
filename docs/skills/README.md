@@ -16,8 +16,8 @@
 | 文件                                                  | 状态     |
 | ----------------------------------------------------- | -------- |
 | [`business-ut.md`](./business-ut.md)              | ★ 已写   |
-| `prd-design.md`                                     | 待写     |
-| `requirement-design.md`                             | 待写     |
+| `spec.md`                                     | 待写     |
+| `plan.md`                             | 待写     |
 | `coding.md`                                         | 待写     |
 | `code-review.md`                                    | 待写     |
 | `device-testing.md`                                 | 待写     |

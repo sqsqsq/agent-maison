@@ -21,7 +21,7 @@
 
 - `framework/harness/config.ts` 中 `LEGACY_DEFAULT_DSL` 五外层 id、`CommUI`/`CommFunc` 子层占位。
 - `framework/skills/project/framework-init/**` 与 `architecture-presets`、`scan-project` 等：**引导**用户使用或识别 `01-Product`～`05-SystemBase` 式目录。
-- `framework/harness/prompts/verify-design.md`、`verify-review.md` 等对「五层合规」检查的层级说明。
+- `framework/harness/prompts/verify-plan.md`、`verify-review.md` 等对「五层合规」检查的层级说明。
 - **`harness/tests/fixtures/**`**：`contracts.yaml`、`build-profile`、`02-Feature/Demo/**` 等**历史 fixture 快照**不改语义，保留层 id 字面。
 
 ## 3. 工作区瞬时状态（**勿当 SSOT**，可选纳入扫描排除）

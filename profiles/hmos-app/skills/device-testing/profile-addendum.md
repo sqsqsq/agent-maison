@@ -101,7 +101,7 @@
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
   - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor wheel 内 `hylyre/api/planned_step_keys.py` 为 SSOT）
-- **selector 查找顺序**：`contracts.yaml` → `design.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
+- **selector 查找顺序**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
   - 点击（即席推荐）：`{"touch":{"by_text":"确认"}}`
@@ -119,7 +119,7 @@
 
 ### `hylyre dump-ui` 与快照缓存
 
-- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `design.md` / `contracts.yaml` 后再派生。
+- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `plan.md` / `contracts.yaml` 后再派生。
 - **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 成功返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`），默认 page slug **`home`**（可用 `HARNESS_HYLYRE_PAGE_SAVE_NAME` 覆盖），`--ability` 为 Hypium 主 Ability（如 `PhoneAbility`）。写入 **`doc/app-snapshot-cache/<bundle>/pages/<slug>.json`**（官方 layout）。该步骤**失败不会**把本次 `run` 判为失败；见 **`device-test-run.log`** / **`hylyre_page_save`** / stderr **`ADHOC_PAGE_SAVE_EXIT`**。
 - **Cache layout SSOT**：derive/warmup/selector_hints 扫描 **`pages/*.json`**，并 **兼容** bundle 根目录 legacy flat layout（排除 `app-meta.json`、`dump-ui-*`、`*summary*`）。官方 pipeline **只写** `pages/`；若 derive stderr **`ADHOC_CACHE_LAYOUT_MISMATCH=1`**，表示根目录有 page-like JSON 但 `pages/` 为空——**禁止 agent Write 根目录 JSON 替代 page save**；应修 page save 或手动迁入 `pages/`。
 - **超时**：环境变量 **`HARNESS_HYLYRE_PAGE_SAVE_TIMEOUT_MS`**（毫秒，仅数字；默认 **60000**）覆盖 `spawnSync` 对 `app page save` 的等待上限。
@@ -165,7 +165,7 @@
 - Hylyre 子目录产出 **`test-report.md`（5 章节）** 与 **`trace.json`（cases[]）**。
 - Harness 在 **`device_test.run` 成功后** 写入 **`reports/<feature>/testing/device-test-timing.json`**（流水线各阶段 ms + 各 TC 耗时）。
 - Agent 将 **cases[].status** 与顶层计划对齐合并到 **`doc/features/<feature>/testing/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；**必须**读取 `device-test-timing.json` 填充「真机流水线耗时」表与各用例 **耗时** 列；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
-- 未进入派生计划的 TC 在顶层报告中 **跳过**，备注示例：缺少稳定 selector，需补 design.md / contracts.yaml。
+- 未进入派生计划的 TC 在顶层报告中 **跳过**，备注示例：缺少稳定 selector，需补 plan.md / contracts.yaml。
 
 ### 环境变量（摘要）
 

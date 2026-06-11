@@ -10,7 +10,7 @@
 
 ## 候选议题（按需补）
 
-- `scope-guarding.md`：三阶段 Scope 守门（PRD 声明 → design 继承 → coding diff 比对）
+- `scope-guarding.md`：三阶段 Scope 守门（spec 声明 → plan 继承 → coding diff 比对）
 - `dual-harness.md`：脚本 Harness vs AI Harness 的分工 + 模型无关性的实现
 - `weak-model-defense.md`：弱模型吞字反转语义的防护策略（三分区纪律 / negation-diff verifier）
 - `vendoring-vs-submodule.md`：framework 在目标工程中的两种部署模式对比

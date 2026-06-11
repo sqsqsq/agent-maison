@@ -61,10 +61,10 @@ term:
   # 同义词 / 别名（如"工作台"和"首页入口壳"）
   aliases: []
 
-  # 用户在 PRD / 聊天里真实用这个词的例句，用于辅助 LLM 未来做消歧
+  # 用户在 spec / 聊天里真实用这个词的例句，用于辅助 LLM 未来做消歧
   sample_usage: "<一句话带上下文的使用示例>"
 
-  # 置信度提示（供未来 prd-design Step 1.5 复用时参考）
+  # 置信度提示（供未来 spec Step 1.5 复用时参考）
   # 若用户给出修正理由，把理由记下来
   confidence_hint: "<为什么选这个 canonical_module 的判定依据；或用户修正后的规则>"
 
@@ -77,4 +77,4 @@ term:
     #   disambiguation: |
     #     「订单中心」指用户可见的聚合入口页；
     #     「订单服务」指跨页面的下单/状态同步能力。
-    #     判定: PRD 若描述可见交互行为，优先归 TaskDemoShell。
+    #     判定: spec 若描述可见交互行为，优先归 TaskDemoShell。

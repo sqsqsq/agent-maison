@@ -84,7 +84,7 @@ cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --json
 
 ### 用户选择"跳过"时的警示
 
-若用户明确不想配置（多见于：仅做 PRD/design/glossary 阶段，不准备跑需 hvigor 的阶段），**允许跳过**，但必须打印以下警示到 S4 摘要的"被跳过项汇报"中：
+若用户明确不想配置（多见于：仅做 spec/plan/glossary 阶段，不准备跑需 hvigor 的阶段），**允许跳过**，但必须打印以下警示到 S4 摘要的"被跳过项汇报"中：
 
 ```text
 toolchain.devEcoStudio.installPath（用户跳过，未配置）

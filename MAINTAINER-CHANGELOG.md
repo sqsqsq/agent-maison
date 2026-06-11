@@ -12,10 +12,10 @@ Generated: 2026-06-02 · current window: `2.1.0`
 ## (legacy / 未分版)
 
 - **adapter-update-policy** — 在 adapter.yaml 引入 update_policy 字段，把 adapter templates 分成"机制代码自动覆盖（带备份）"和"用户入口需 y/n 确认"两类，解决 vendor 新 framework + UPDATE init 后实例侧 hook 等机制文件不同步导致的回归（如对方工程那次 npm test 报错）。
-- **code-graph-ut-evolution** — 拆成两条互相支撑、各自可验收的 change —— Track A「Code Graph 图谱索引」(仅作导航索引,用时反查 anchor,绝不作 PRD/design/coding 真源) 与 Track B「UT 可执行能力」(归档膨胀治理 + 模块级 seam/mock registry + characterization path-c + 触及 core 的需求闭环闸门)。机制主体在 framework 层,通过 GraphExtractor contract 抽象,hmos-app 仅作 profile provider;ArkTS/Hypium 特例归 hmos-app。
+- **code-graph-ut-evolution** — 拆成两条互相支撑、各自可验收的 change —— Track A「Code Graph 图谱索引」(仅作导航索引,用时反查 anchor,绝不作 PRD/plan/coding 真源) 与 Track B「UT 可执行能力」(归档膨胀治理 + 模块级 seam/mock registry + characterization path-c + 触及 core 的需求闭环闸门)。机制主体在 framework 层,通过 GraphExtractor contract 抽象,hmos-app 仅作 profile provider;ArkTS/Hypium 特例归 hmos-app。
 - **dynamic profile skill assets** — 将根 `framework/skills/**/SKILL.md` 中已失效的 `templates/` / `examples/` 相对链接改为 profile 动态资产引用；通过 profile manifest 和 docs harness 校验保证引用会按 `framework.config.json > project_profile.name` 解析到当前 profile 的真实文件。
 - **explore-threshold-overhaul** — 将 explore subagent 触发逻辑从「简单计数阈值」升级为「default-on + trivial 豁免 + 复合评分」混合模型，适配大型代码库（50-100 万行）场景，并为无子 agent 能力的 adapter 提供 sequential 等价路径。
-- **feature artifact archival** — 把 doc/features/<feature>/ 下的阶段主产物（PRD.md、design.md、review-report.md、test-plan.md、test-report.md）统一归档进各自的 <phase>/ 子目录，与已有的 context-exploration.md / phase-completion-receipt.md / reports/ 同住；跨阶段全局契约（acceptance.yaml、contracts.yaml 等）保持在 feature 根目录。通过在 config.ts 引入"产物→阶段"SSOT 映射 + 双读解析器实现，新布局为默认、旧扁平路径在读取侧回退兼容。
+- **feature artifact archival** — 把 doc/features/<feature>/ 下的阶段主产物（spec.md、design.md、review-report.md、test-plan.md、test-report.md）统一归档进各自的 <phase>/ 子目录，与已有的 context-exploration.md / phase-completion-receipt.md / reports/ 同住；跨阶段全局契约（acceptance.yaml、contracts.yaml 等）保持在 feature 根目录。通过在 config.ts 引入"产物→阶段"SSOT 映射 + 双读解析器实现，新布局为默认、旧扁平路径在读取侧回退兼容。
 - **framework-extensibility-refactor** — |
 - **framework-generalization-plan** — 把 skills/specs/harness 从钱包实例里解耦出来，在本仓库建立「framework/（通用 SSOT）+ 钱包实例」双层结构。framework 走最薄核心路线——不假设具体层级架构，只守元规则；所有配置由一个 AI 驱动的「Framework 初始化 Skill」在目标工程里交互式生成。Agent 绑定（Claude / Cursor / 通用）通过可插拔 adapter 支持，第一版覆盖 claude + cursor。元服务差异留作第二阶段增量。
 - **framework-init 体检脚本化** — 把 framework-init Skill 的 11 项产物体检从"AI 自由叙述 + 自由渲染汇报表"硬化为"check-init.ts 计算 + AI 仅搬运"，并把 init 接入 harness-runner 作为第四个全局阶段，消除弱模型在 UPDATE diff 步骤上的编造空间。
@@ -66,7 +66,7 @@ Generated: 2026-06-02 · current window: `2.1.0`
 - **UT 可测性预检 与 Mock 计划书** — 在 Skill 5 / DAG / harness 三层引入「可测性预检 + Test Double Plan + DAG 类型化 spy 引用」三套机制，从根因上解决「DAG 完整但 AI 写不出能编译的 UT」问题；分 P1/P2/P3 三阶段落地，避免一次性把存量 feature 卡死。
 - **UT 真实执行 + named_handler 放宽 + 改源码门禁** — 系统性补齐 Skill 3 / Skill 5 的"真实编译 + 真实运行"出口闭环，修正 named_business_handler 对 ArkTS 类字段函数的误杀，并在 Skill 5 阶段新增"禁止 agent 擅自改业务源码"的硬门禁。
 - **UT 能力深度提升** — 基于真实工程 UT 执行记录根因 + 外部审查反馈，针对弱模型（minimax 2.7）在大型 HarmonyOS 工程（60w 行 / 22 模块）中的 UT 生成可靠性做系统性提升。修订版吸收了 harness 代码验证和外部 AI 审查的 P0/P1 修正意见。
-- **UX 真源可达 + 工程外解耦** — 把 check-prd 的 visual_handoff 从「项目级强制」改为「PRD 驱动 + 项目级可选 override」；移除框架默认对"本项目有 UI"的隐含假设，使 framework 能自然适配云侧/库工程等无 UX 形态；同时把 UX 真源解耦出工程根（${UX_ROOT}/绝对/UNC 路径 + reachable 判定），并明确 doc/features/ 真实工程默认不入主仓。
+- **UX 真源可达 + 工程外解耦** — 把 check-spec 的 visual_handoff 从「项目级强制」改为「PRD 驱动 + 项目级可选 override」；移除框架默认对"本项目有 UI"的隐含假设，使 framework 能自然适配云侧/库工程等无 UX 形态；同时把 UX 真源解耦出工程根（${UX_ROOT}/绝对/UNC 路径 + reachable 判定），并明确 doc/features/ 真实工程默认不入主仓。
 - **交互层架构大重构** — 将 AgentMaison 框架中散落在 skills、commands、rules、widget-options 多层的平台特判（Claude Code AskUserQuestion / Cursor AskQuestion）收敛为一套平台无关的交互协议，由 adapter 统一注入渲染策略，确保 Claude Code 场景下所有用户交互都走键盘选择。
 - **全生命周期Skill体系** — 为模拟华为钱包应用设计三层架构：Skill（生成层）产出文档和代码，Spec（规约层）定义契约和验收标准，Harness（验证层）自动化检验产出是否符合规约。三层职责分离、独立演进。Spec/Harness 模型无关，可在任意大模型 + 任意 IDE 上运行。
 - **即席 NL 与缓存加速** — 删除 adhoc NL translate 全链路；即席与标准 feature 统一为 derive hint → agent 写 Hylyre JSON → harness lint/执行。已对照 2026-05-20 最新代码勘校。

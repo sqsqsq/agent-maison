@@ -130,7 +130,7 @@ nodes:
 | ~~`user_intervention`~~ | 已弃用 → `acceptance.yaml > device_focus` | — |
 | ~~`ui_navigation`~~ | 已弃用 → `acceptance.yaml > device_focus` | — |
 
-> 关于 `ui_subscription`：本节点类型**不是** UT 关心的对象，只是在 design 阶段为了把"state → UI 反应"的映射可视化而保留的占位节点，方便 device-testing 从 DAG + `use-cases.yaml > ui_bindings` 生成真机测试清单。UT 扫描时会跳过。
+> 关于 `ui_subscription`：本节点类型**不是** UT 关心的对象，只是在 plan 阶段为了把"state → UI 反应"的映射可视化而保留的占位节点，方便 device-testing 从 DAG + `use-cases.yaml > ui_bindings` 生成真机测试清单。UT 扫描时会跳过。
 
 ## 断言类型枚举
 

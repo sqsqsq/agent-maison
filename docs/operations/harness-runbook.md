@@ -21,8 +21,8 @@
 
 | 范围                                                                                                                                                     | 状态                                  |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| 在已有产物（catalog、glossary、PRD、design、代码、review、UT、测试计划/报告等）的前提下，按阶段运行**脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成报告 | ✅ 本文档覆盖                         |
-| "一键完成"catalog-bootstrap → PRD → 设计 → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
+| 在已有产物（catalog、glossary、spec、plan、代码、review、UT、测试计划/报告等）的前提下，按阶段运行**脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成报告 | ✅ 本文档覆盖                         |
+| "一键完成"catalog-bootstrap → spec → plan → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
 | AI Harness 自动调模型                                                                                                                                    | ❌ 脚本只生成 `ai-prompt.md`，不会自动调用任何大模型；语义审查需自行把 prompt 发给所选模型 |
 
 ---
@@ -45,9 +45,9 @@
 
 | Phase       | 对象                     | `--feature` | `requires`（前置） |
 | ----------- | ------------------------ | ----------- | ------------------ |
-| `prd`       | `doc/features/<feature>/prd/PRD.md` | **必填** | `catalog`, `glossary` |
-| `design`    | `design/design.md` 等    | **必填** | `prd` |
-| `coding`    | 代码 + 根目录 `contracts.yaml` | **必填** | `design` |
+| `spec`       | `doc/features/<feature>/spec/spec.md` | **必填** | `catalog`, `glossary` |
+| `plan`    | `doc/features/<feature>/plan/plan.md` 等 | **必填** | `spec` |
+| `coding`    | 代码 + 根目录 `contracts.yaml` | **必填** | `plan` |
 | `review`    | `review/review-report.md` | **必填** | `coding` |
 | `ut`        | DAG / `*.test.ets` 等  | **必填** | `coding` |
 | `testing`   | 真机计划 / 报告        | **必填** | `ut` |
@@ -56,7 +56,7 @@
 
 ### 2.3 `compat.yaml`（不是 phase）
 
-存量 feature 在 framework 升级后遇 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做 **可过期** 临时降级，仅作用于 **prd / design / coding / review / ut**（**不含 `testing`**；全局 phase **短路**）。协议见 [`../evolution/compat-protocol-v1.md`](../evolution/compat-protocol-v1.md)。
+存量 feature 在 framework 升级后遇 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做 **可过期** 临时降级，仅作用于 **spec / plan / coding / review / ut**（**不含 `testing`**；全局 phase **短路**）。协议见 [`../evolution/compat-protocol-v1.md`](../evolution/compat-protocol-v1.md)。
 
 全局阶段在 `harness-runner` 内使用哨兵 feature **`_global`**，报告目录形如：
 `framework/harness/reports/_global/<phase>/`。
@@ -79,9 +79,9 @@ npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase glossary
 npx ts-node harness-runner.ts --phase docs
 
-# ---------- 功能 phase（需 --feature；须满足 workflow requires，如 prd 前先跑过 catalog+glossary） ----------
+# ---------- 功能 phase（需 --feature；须满足 workflow requires，如 spec 前先跑过 catalog+glossary） ----------
 $feat = "home-page"
-foreach ($p in @('prd','design','coding','review','ut','testing')) {
+foreach ($p in @('spec', 'plan','coding','review','ut','testing')) {
   npx ts-node harness-runner.ts --phase $p --feature $feat
 }
 ```
@@ -98,7 +98,7 @@ npx ts-node harness-runner.ts --phase glossary
 npx ts-node harness-runner.ts --phase docs
 
 FEATURE=home-page
-for p in prd design coding review ut testing; do
+for p in spec plan coding review ut testing; do
   npx ts-node harness-runner.ts --phase "$p" --feature "$FEATURE"
 done
 ```
@@ -113,7 +113,7 @@ npx ts-node harness-runner.ts --phase catalog
 npx ts-node harness-runner.ts --phase docs
 
 # 功能
-npx ts-node harness-runner.ts --phase prd --feature home-page
+npx ts-node harness-runner.ts --phase spec --feature home-page
 npx ts-node harness-runner.ts --phase ut  --feature home-page
 
 # 适合 agent / CI 消费的稳定摘要输出（不要再 grep 完整日志）
@@ -146,12 +146,12 @@ framework/harness/reports/_global/
 └── docs/...
 ```
 
-**Feature 维度阶段**（prd / design / coding / review / ut / testing）的报告目录由 **`framework.config.json` → `paths.reports_dir_pattern`** 解析；推荐与默认实例一致：
+**Feature 维度阶段**（spec / plan / coding / review / ut / testing）的报告目录由 **`framework.config.json` → `paths.reports_dir_pattern`** 解析；推荐与默认实例一致：
 
 ```
 doc/features/<feature>/
-├── prd/reports/
-├── design/reports/
+├── spec/reports/
+├── plan/reports/
 ├── coding/reports/
 ├── review/reports/
 ├── ut/reports/
@@ -195,7 +195,7 @@ doc/features/<feature>/
 - **结构**：schema、`modules[]` 必填字段、layer/format、唯一性等
 - **追溯**：`easily_confused_with` 指向存在、无自引用 / 空 module（BLOCKER）、对称性（MAJOR，可 `unidirectional` 豁免）、`entry_file` 在磁盘、`layer_matches_path`
 - **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR/HSP 库模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
-- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描各 feature 的 `prd/PRD.md` 与 `design/design.md`（读侧兼容旧扁平路径）的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
+- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描各 feature 的 `spec/spec.md` 与 `plan/plan.md`（读侧兼容旧扁平路径）的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
 
 ### 5.2 glossary（`check-glossary.ts`）
 
@@ -203,24 +203,24 @@ doc/features/<feature>/
 - **P0-2** `seed_no_technical_words`（BLOCKER）：`glossary-seed.txt` 中 CamelCase 或与模块名重名等；`doc/glossary-seed-allowlist.txt` 可豁免
 - **追溯**：`canonical_module` 在 catalog 存在、`owner_layer` 与 catalog 一致等
 
-### 5.3 prd（`check-prd.ts`）
+### 5.3 spec（`check-spec.ts`）
 
 - **结构**：必需章节、`## 0. 术语映射表` 表格列与用户确认 `[x]`、`Scope 声明` 内 YAML 等
 - `terminology_mapping_table`：权威模块须在 catalog；与 `glossary.yaml` 无冲突
 - `scope_matches_catalog`：`in_scope_modules` / `out_of_scope_modules` 每项须在 catalog 建档
 - **C1a** `terminology_modules_within_scope`（BLOCKER）：术语映射表「权威模块」须出现在 in_scope 或 out_of_scope 之一
-- **C1b** `glossary_terms_used_in_body`（MAJOR / WARN）：glossary 术语（含 aliases）在 PRD **正文**（去掉术语映射表段落后）出现但未进映射表时告警
+- **C1b** `glossary_terms_used_in_body`（MAJOR / WARN）：glossary 术语（含 aliases）在 spec **正文**（去掉术语映射表段落后）出现但未进映射表时告警
 
-### 5.4 design / coding / review / testing
+### 5.4 plan / coding / review / testing
 
-行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致。`doc/features/<feature>/` 下：**跨阶段契约**（`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml` 等）在 feature **根目录**；**阶段主产物**在 `<phase>/` 子目录（如 `prd/PRD.md`、`design/design.md`、`testing/test-plan.md`），与 `context-exploration.md`、`phase-completion-receipt.md`、`reports/` 同树。路径由 `harness/config.ts` 的 artifact resolver（`PHASE_SCOPED_ARTIFACTS`）统一解析；读侧 dual-read 兼容旧扁平路径。
+行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致。`doc/features/<feature>/` 下：**跨阶段契约**（`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml` 等）在 feature **根目录**；**阶段主产物**在 `<phase>/` 子目录（如 `spec/spec.md`、`plan/plan.md`、`testing/test-plan.md`），与 `context-exploration.md`、`phase-completion-receipt.md`、`reports/` 同树。路径由 `harness/config.ts` 的 artifact resolver（`PHASE_SCOPED_ARTIFACTS`）统一解析；读侧 dual-read 兼容旧扁平路径。
 
 #### Feature Artifact Resolution Protocol
 
 所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature；阶段主产物的 canonical 路径见 `featureArtifactPath` / `relFeatureArtifact`。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
 
-- PRD 阶段是创建者：目录不存在时可以创建；若精确路径已存在但不是目录，或仅存在同名归档，应先让用户确认 feature 名称或恢复动作。
-- design / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
+- spec 阶段是创建者：目录不存在时可以创建；若精确路径已存在但不是目录，或仅存在同名归档，应先让用户确认 feature 名称或恢复动作。
+- plan / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
 - `SpecLoader.listAvailableFeatures()` 只返回目录；`inspectFeatureArtifacts(feature, phase)` 只做只读诊断，不修改文件、不恢复归档、不依赖 `.current-phase.json` / reports / trace。
 
 **v2.2 / v2.3 起常见 BLOCKER**（是否注册取决于 **active profile**；UT 全流程叙事见 [`../skills/feature/business-ut.md`](../skills/feature/business-ut.md)）：
@@ -231,7 +231,7 @@ doc/features/<feature>/
 | ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、harness 允许的源码变更登记 |
 | testing | `device_test.build` / `install` / `run` | Hylyre 真机链；`acceptance.yaml` > `device_focus` 派生 test-plan |
 
-**Context Exploration Gate（v2.9）**：prd / design / coding / review / ut 写主产物前须 `context-exploration.md`（schema **1.1.0**）；量化阈值见 phase-rules + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` 或 `npm run backfill:context`。
+**Context Exploration Gate（v2.9）**：spec / plan / coding / review / ut 写主产物前须 `context-exploration.md`（schema **1.1.0**）；量化阈值见 phase-rules + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` 或 `npm run backfill:context`。
 
 **命令装配、日志、`toolchain.hvigor` 调优与逐项排障**：见 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)。
 
@@ -299,8 +299,8 @@ framework/docs/skills/feature/business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 | ----------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
 | `catalog`   | `/catalog-bootstrap`                           | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
 | `glossary`  | `/glossary-bootstrap`                          | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
-| `prd`       | `/prd-design`                                  | [`../../skills/feature/prd-design/SKILL.md`](../../skills/feature/prd-design/SKILL.md)         |
-| `design`    | `/requirement-design`                          | [`../../skills/feature/requirement-design/SKILL.md`](../../skills/feature/requirement-design/SKILL.md) |
+| `spec`       | `/spec`                                  | [`../../skills/feature/spec/SKILL.md`](../../skills/feature/spec/SKILL.md)         |
+| `plan`    | `/plan`                          | [`../../skills/feature/plan/SKILL.md`](../../skills/feature/plan/SKILL.md) |
 | `coding`    | `/coding`                                      | [`../../skills/feature/coding/SKILL.md`](../../skills/feature/coding/SKILL.md)                |
 | `review`    | `/code-review`                                 | [`../../skills/feature/code-review/SKILL.md`](../../skills/feature/code-review/SKILL.md)      |
 | `ut`        | `/business-ut`                                 | [`../../skills/feature/business-ut/SKILL.md`](../../skills/feature/business-ut/SKILL.md)      |
@@ -331,7 +331,7 @@ npx ts-node harness-runner.ts --phase docs
 
 # 受影响的 feature（按变更文件路径筛选）
 for f in $(detect_affected_features); do
-  for p in prd design coding review ut testing; do
+  for p in spec plan coding review ut testing; do
     npx ts-node harness-runner.ts --phase "$p" --feature "$f" || exit 1
   done
 done
@@ -346,7 +346,7 @@ done
 ```bash
 # 全部已知 feature 都跑一遍 6 个功能 phase
 for f in $(ls doc/features); do
-  for p in prd design coding review ut testing; do
+  for p in spec plan coding review ut testing; do
     npx ts-node harness-runner.ts --phase "$p" --feature "$f"
   done
 done
@@ -407,7 +407,7 @@ Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 
 v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
 实例根**全局入口** §5.1.1（与 `AGENTS.md.template` 渲染结果一致）；下面只列日常操作动作。
 
-> **本节针对 feature 维度阶段**（PRD / design / coding / review / UT / testing）。
+> **本节针对 feature 维度阶段**（spec / plan / coding / review / UT / testing）。
 > 所有在 **当前 [`active_workflow`](../../workflows/spec-driven.workflow.yaml)** 中声明为 **`scope: global`** 的阶段（默认含 `extensions` / `init` / `catalog` / `glossary` / `docs`）：**不写** `.current-phase.json`（runner v2.8.1+），也没有 feature 维度完成回执模板。
 > 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1「四件套闭环」判定。
 
@@ -455,7 +455,7 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 - 想接着这个 feature/phase 干，按对应 SKILL.md 重新进入即可（state 会被 `harness-runner.ts` 重新写起来）。
 
 `--clear-state` 是"放弃已有进度"，不是"暂停"：
-- 它**不会**回滚已写到磁盘的 PRD / design / 代码 / receipt 等内容；
+- 它**不会**回滚已写到磁盘的 spec / plan / 代码 / receipt 等内容；
 - 它**只**删 state file 这个判定开关。
 
 #### C. 我刚问个无关问题，hook 却跳出"未闭环"提示

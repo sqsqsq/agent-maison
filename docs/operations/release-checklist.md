@@ -97,7 +97,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 3. **feature phase 门控**
 
    ```bash
-   cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature smoke-feature
+   cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature smoke-feature
    ```
 
    无 local setup 时 feature phase 应 exit 1；`--ensure` 在单一物化 adapter 时应自动写 local。
@@ -131,7 +131,7 @@ npx ts-node framework/harness/scripts/smoke-interaction-renderer.ts --project-ro
 
 1. **init** — `init.materialized_adapters` + `init.task_plan`（**非** legacy Q1=y）
 2. **setup** — `setup.adapter`（personal，仅已物化项）
-3. **PRD** — 术语映射 artifact gate（`prd.terminology`）
+3. **spec** — 术语映射 artifact gate（`spec.terminology`）
 4. **coding** — 逐模块交付（`coding.module_batch`）
 5. **UT** — DAG 确认（`ut.dag_confirm`）
 6. **phase.next_step** — 跨阶段动态 label

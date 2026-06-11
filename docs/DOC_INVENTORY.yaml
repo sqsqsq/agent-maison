@@ -34,8 +34,8 @@ docs:
       # 每个 Skill 的核心定位（overview 引用了它们的总览定位）
       - framework/skills/project/framework-init/SKILL.md
       - framework/skills/project/catalog-bootstrap/SKILL.md
-      - framework/skills/feature/prd-design/SKILL.md
-      - framework/skills/feature/requirement-design/SKILL.md
+      - framework/skills/feature/spec/SKILL.md
+      - framework/skills/feature/plan/SKILL.md
       - framework/skills/feature/coding/SKILL.md
       - framework/skills/feature/code-review/SKILL.md
       - framework/skills/feature/business-ut/SKILL.md
@@ -157,12 +157,12 @@ docs:
     audience: 想了解 framework 如何对抗"卡中心 → CardManager"类术语误映射的人
     sources:
       - framework/skills/project/catalog-bootstrap/SKILL.md
-      - framework/skills/feature/prd-design/SKILL.md
-      - framework/profiles/hmos-app/skills/prd-design/templates/prd-template.md
-      - framework/specs/phase-rules/prd-rules.yaml
+      - framework/skills/feature/spec/SKILL.md
+      - framework/profiles/hmos-app/skills/spec/templates/spec-template.md
+      - framework/specs/phase-rules/spec-rules.yaml
       - framework/specs/phase-rules/catalog-rules.yaml
       - framework/specs/phase-rules/glossary-rules.yaml
-      - framework/harness/scripts/check-prd.ts
+      - framework/harness/scripts/check-spec.ts
       - framework/harness/scripts/utils/catalog-parser.ts
       - framework/harness/scripts/utils/glossary-parser.ts
     update_triggers:
@@ -201,8 +201,8 @@ docs:
       - framework/harness/scripts/check-extensions.ts
       - framework/harness/scripts/check-catalog.ts
       - framework/harness/scripts/check-glossary.ts
-      - framework/harness/scripts/check-prd.ts
-      - framework/harness/scripts/check-design.ts
+      - framework/harness/scripts/check-spec.ts
+      - framework/harness/scripts/check-plan.ts
       - framework/harness/scripts/check-coding.ts
       - framework/harness/scripts/check-review.ts
       - framework/harness/scripts/check-ut.ts

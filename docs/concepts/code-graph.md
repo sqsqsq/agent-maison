@@ -10,7 +10,7 @@
 
 | 术语 | 层级 | 用途 | 默认生命周期 |
 |------|------|------|----------------|
-| **Code Graph**（功能图谱） | 模块 | 索引模块核心功能节点（入口、边界、分支意图），供 PRD/design/coding/UT/device-testing **导航** | 长期维护、可增删迭代 |
+| **Code Graph**（功能图谱） | 模块 | 索引模块核心功能节点（入口、边界、分支意图），供 spec/plan/coding/UT/device-testing **导航** | 长期维护、可增删迭代 |
 | **flow DAG** | 需求（feature） | 单条业务流的 UT 场景拓扑（entry → port_call → state → assertion） | **默认 ephemeral**，不归档到 `{module}/test/dag/` |
 | **Repo Map** | 全局（可选） | 跨模块轻量派生导航（文件/符号/依赖边聚合） | 后置能力，见 §6 |
 
@@ -95,7 +95,7 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 
 ### 6.1 仍后置的能力
 
-- **Skill 全量接入图谱作导航索引**（prd-design/2/3/6）；每次使用须反查 anchor，不得当 PRD/design/coding 事实来源。
+- **Skill 全量接入图谱作导航索引**（spec/2/3/6）；每次使用须反查 anchor，不得当 spec/plan/coding 事实来源。
 - **全局 Repo Map**（跨模块聚合派生导航）。
 - **日常维护入口**（harness-runner `--phase module-graph`、专用 Skill、CI drift 阶段）。
 

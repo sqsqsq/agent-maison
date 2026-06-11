@@ -9,7 +9,7 @@
 
 | 层 | 文件 | 写入者 | 消费者 |
 |----|------|--------|--------|
-| **验收定义** | `doc/features/<feature>/acceptance.yaml`（`ut_layer`、`ut_focus`、`device_focus`） | prd-design + 用户确认 | coding/5/6、harness 追溯 |
+| **验收定义** | `doc/features/<feature>/acceptance.yaml`（`ut_layer`、`ut_focus`、`device_focus`） | spec + 用户确认 | coding/5/6、harness 追溯 |
 | **执行计划** | `doc/features/<feature>/testing/test-plan.md` | device-testing（从 acceptance **按 device 层过滤**派生） | 人审、derive-hint、Hylyre |
 | **自动化派生** | `testing/reports/<ts>/hylyre/test-plan.hylyre.md` | device-testing Step 4.5 | `device_test.run`（**已有 BLOCKER SSOT**） |
 | **过程回执** | `ut/reports/ac-coverage.json`、`testing/reports/**/trace.json`、`device-test-timing.json` | harness / Hylyre | 可选引用，**非 SSOT** |
@@ -39,7 +39,7 @@ flowchart LR
 | `ut_focus` | `unit` 或 `both` | UT 可断言的业务关切；**both 禁止**把 UI 要点只写进 ut_focus |
 | `device_focus` | `device` 或 `both` | 真机可观察要点（导航、Toast、布局、性能等） |
 
-**脚本门禁**（`check-acceptance.ts`，prd / design / ut / testing 共用）：
+**脚本门禁**（`check-acceptance.ts`，spec / plan / ut / testing 共用）：
 
 - `acceptance_yaml_present`
 - `acceptance_ut_layer_complete`
@@ -52,8 +52,8 @@ flowchart LR
 
 | 模式 | 最小输入 | harness |
 |------|----------|---------|
-| **标准 feature** | `acceptance.yaml`（含 device/both + `device_focus`）、`PRD.md`、`design.md` | 全量 `testing` |
-| **降级** | `acceptance.yaml` + `PRD.md`（无 design） | 可 WARN，仍可派生粗 plan |
+| **标准 feature** | `acceptance.yaml`（含 device/both + `device_focus`）、`spec.md`、`plan.md` | 全量 `testing` |
+| **降级** | `acceptance.yaml` + `spec.md`（无 design） | 可 WARN，仍可派生粗 plan |
 | **即席 `_adhoc`** | bundle + 步骤 | **不跑** feature `testing` 全套门禁 |
 
 `compat.yaml` 仅覆盖 **prd～ut**，**不含** testing 阶段。

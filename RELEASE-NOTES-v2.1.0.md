@@ -19,7 +19,7 @@
 
 | | Framework 2.0.x | Framework 2.1.0 |
 |---|-----------------|-------------------|
-| **Feature 主产物** | 多在 `doc/features/<f>/` 根下扁平文件 | **默认** `doc/features/<f>/<phase>/`（如 `prd/PRD.md`）；读侧 **dual-read** 兼容旧路径 |
+| **Feature 主产物** | 多在 `doc/features/<f>/` 根下扁平文件 | **默认** `doc/features/<f>/<phase>/`（如 `prd/spec.md`）；读侧 **dual-read** 兼容旧路径 |
 | **Init** | 编排化 S1–S4 已落地 | 全仓 **旧 Step/§ 编号** 与 DevEco 归属文档对齐；`decision.json` / `context.json` **staging + 原子 preflight** |
 | **hmos-app** | HAR 为主 | **HSP** 提升为一等库模块形态（catalog / design / coding 贯通） |
 | **消费者 `npm test`** | 曾含 maison 侧 unit/fixtures 语义泄漏风险 | zip 内 **仅** `npm run check:global`（catalog + glossary + docs） |
@@ -36,7 +36,7 @@ PRD、design、review-report、test-plan 等与 `context-exploration.md`、`repo
 **2.1.0 做了什么**
 
 - 在 `harness/config.ts` 引入 **产物→阶段 SSOT**（`PHASE_SCOPED_ARTIFACTS` / `featureArtifactPath`）。
-- **默认新布局**：`doc/features/<feature>/<phase>/` 下放阶段主产物（如 `prd/PRD.md`、`design/design.md`、`testing/test-plan.md`）。
+- **默认新布局**：`doc/features/<feature>/<phase>/` 下放阶段主产物（如 `prd/spec.md`、`design/design.md`、`testing/test-plan.md`）。
 - **跨阶段契约**仍在 feature 根：`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml` 等。
 - **读侧 dual-read**：harness 与 check 脚本优先新路径，**回退**旧扁平路径，存量 feature 不必一夜搬迁即可继续跑门禁。
 

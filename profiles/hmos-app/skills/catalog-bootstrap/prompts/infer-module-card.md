@@ -219,7 +219,7 @@ for each term in typical_business_terms:
 
 ### `typical_business_terms`
 
-业务团队 / PM / 用户在口头或 PRD 里会怎么叫这个模块？例如：
+业务团队 / PM / 用户在口头或 spec 里会怎么叫这个模块？例如：
 
 - `FeatureDemoShell` 模块 → ["首页", "我的", "任务列表页", "设置页"]
 - `ItemCatalogService` 模块 → ["条目目录", "内容聚合", "本地缓存条目"]
@@ -241,7 +241,7 @@ for each term in typical_business_terms:
 
 每条必须包含：
 - `module`: 另一个模块的 name（必须存在于 catalog 中，或在本轮批量建中）
-- `disambiguation`: **判定规则**，格式推荐："如果 PRD 说 A → 本模块；如果说 B → 另一模块。判定：..."
+- `disambiguation`: **判定规则**，格式推荐："如果 spec 说 A → 本模块；如果说 B → 另一模块。判定：..."
 
 **禁止**：只因为两模块字面相似（如都叫 Card）就列为 easily_confused。要有语义歧义的实锤。
 

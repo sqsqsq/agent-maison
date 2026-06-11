@@ -2,7 +2,7 @@
 
 > 本文件定义 `doc/features/{module}/use-cases.yaml` 的 Schema。
 > **这是一份规约文档（spec），不是代码规格（code form spec）**。
-> 由 **requirement-design（需求设计）** 在设计阶段按需产出，是业务级 UT（business-ut）做端到端分支覆盖的蓝图。
+> 由 **plan（需求设计）** 在设计阶段按需产出，是业务级 UT（business-ut）做端到端分支覆盖的蓝图。
 
 ## 定位澄清（避免再次翻车）
 
@@ -137,15 +137,15 @@ use_cases:
 3. **`data_boundaries.type` 指向现有类**：禁止为了 UT 新增抽象 Port 接口；现有 Repository/Service/SDK 类已经是自然边界。
 4. **`phases` 首元素为 `Idle`**：`expected_phase_seq` 从 `Idle` 开始。
 5. **branches 覆盖分支爆炸**：happy path + 每种可预期失败路径（云侧失败、本地失败、回滚路径）都列入。
-6. **`linked_acceptance` 不能为空**：若某分支暂无对应 AC，prd-design/2 先补 AC。
-7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `acceptance.yaml` > `device_focus`（prd-design）。
+6. **`linked_acceptance` 不能为空**：若某分支暂无对应 AC，spec/2 先补 AC。
+7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `acceptance.yaml` > `device_focus`（spec）。
 
 ## 与其他 Spec 的追溯关系
 
 ```mermaid
 flowchart LR
-  PRD["PRD.md"] --> AC["acceptance.yaml<br>criteria / boundaries<br>ut_layer"]
-  DESIGN["design.md"] --> UC["use-cases.yaml<br>use_cases / branches<br>ui_bindings"]
+  SPEC["spec.md"] --> AC["acceptance.yaml<br>criteria / boundaries<br>ut_layer"]
+  DESIGN["plan.md"] --> UC["use-cases.yaml<br>use_cases / branches<br>ui_bindings"]
   CODE["现有业务代码<br>Page / Repository / Flow"] --> UC
   AC -. "ut_layer ∈ {unit, both}" .-> UC
   UC --> DAG["*.dag.yaml<br>use_case + branch"]

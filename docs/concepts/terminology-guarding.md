@@ -4,7 +4,7 @@
 >
 > 同时承担"演进路线图"职责：记录弱模型在大型代码仓上完成"自然语言需求 → 技术模块归属"这一核心问题的完整思考、方案对比和分阶段规划。
 >
-> **维护规则**：跨大版本节奏更新即可；细节决策放各 Skill 文档 / `MIGRATION.md`。与术语/PRD 守门直接相关的上游资产见 [`../DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 中本文件条目的 `sources[]`；任一源文件晚于本文 commit 时，`--phase docs` 的 `doc_freshness` 会标 MAJOR，提示人工核对后**再提交**本文（不要求改语义也可仅做勘误/注记刷新）。
+> **维护规则**：跨大版本节奏更新即可；细节决策放各 Skill 文档 / `MIGRATION.md`。与术语/spec 守门直接相关的上游资产见 [`../DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 中本文件条目的 `sources[]`；任一源文件晚于本文 commit 时，`--phase docs` 的 `doc_freshness` 会标 MAJOR，提示人工核对后**再提交**本文（不要求改语义也可仅做勘误/注记刷新）。
 
 ---
 
@@ -12,7 +12,7 @@
 
 | 时间段                | 核心目标                                       | 手段                                                              | 状态           |
 | --------------------- | ---------------------------------------------- | ----------------------------------------------------------------- | -------------- |
-| **短期（已落地）**    | 消除字面相似术语误映射类事故                    | 术语表 + 模块画像 + PRD Step 1.5 人工消歧 + 三道 BLOCKER          | ✅ WP6 已实现  |
+| **短期（已落地）**    | 消除字面相似术语误映射类事故                    | 术语表 + 模块画像 + spec Step 1.5 人工消歧 + 三道 BLOCKER          | ✅ WP6 已实现  |
 | **中期（3-6 周）**    | 给弱模型"看代码"但不让它读完整仓                | 分层 Repo Map + 模块边界提取 + 调用关系快照                       | ⏳ WP7 待启动  |
 | **长期（6+ 周）**     | 语义级检索 / 符号图                            | Local Embedding RAG / Symbol Graph，按成本 / 收益择一             | 🔭 WP8 观望    |
 | **兜底手段**          | 验证 framework 本身有效                        | 沙盒试金石 + trace.json + gap-notes 回传闭环                      | ✅ 已建（WP4/5/6.6） |
@@ -40,19 +40,19 @@
 用户需求"<某术语>改版"
   ↓ 自然语言转设计语言
   ↓ AI 字面相似 → 误选 <字面相近但归属不同的模块>
-PRD 的 Scope 声明 = { in_scope: [<错的模块>] }
+spec 的 Scope 声明 = { in_scope: [<错的模块>] }
   ↓ 继承
-design.md 的 Scope 声明 = { in_scope: [<错的模块>] }
+plan.md 的 Scope 声明 = { in_scope: [<错的模块>] }
   ↓ Scope 一致 ✅（但根儿上是错的）
-check-design / check-coding 全部 PASS
+check-plan / check-coding 全部 PASS
   ↓
 用户收到偏离的设计，代码也已经按错方向铺开
 ```
 
 **关键洞察**：
 
-> **第一波 Scope 守门是"输出后校验"——它只能保证"PRD 和 design 一致"，无法保证"PRD 的归属一开始就对"。
-> 必须把防线前置到 PRD 的输入端。**
+> **第一波 Scope 守门是"输出后校验"——它只能保证"spec 和 plan 一致"，无法保证"spec 的归属一开始就对"。
+> 必须把防线前置到 spec 的输入端。**
 
 ---
 
@@ -72,7 +72,7 @@ surveyed 过的 5 个层级方案：
 
 - L4/L5 对"字面相似但语义错位"的术语消歧**几乎无效** —— embedding 会把意思相反但字面相近的词算得很近，反而助长误映射
 - L1 + L2 才是**真正直打问题根本**的方案：显式枚举"这个术语属于哪个模块"和"这个模块 NOT_responsible_for 什么"
-- L3 在代码真的需要被模型看到时才有价值（例如 design 阶段需要确认某个接口签名），不解决术语归属问题
+- L3 在代码真的需要被模型看到时才有价值（例如 plan 阶段需要确认某个接口签名），不解决术语归属问题
 
 ---
 
@@ -104,13 +104,13 @@ surveyed 过的 5 个层级方案：
 | `doc/glossary.yaml`                           | 业务术语 ↔ 权威模块映射，含 `aliases` + `confidence_hint` + `easily_confused_with`     | ✅   |
 | `framework/harness/scripts/utils/catalog-parser.ts`  | 加载 / 查找 / 按术语反查                                                       | ✅   |
 | `framework/harness/scripts/utils/glossary-parser.ts` | 加载 / 精确查 + 别名查                                                          | ✅   |
-| prd-design (`prd-design`) Step 1.5               | 术语消歧工作流，**人工逐条确认**（no auto-approve）                                   | ✅   |
-| PRD `## 0. 术语映射表`                         | PRD 模板新章节                                                                       | ✅   |
-| `prd-rules.yaml` 新 BLOCKER                   | `terminology_mapping_table` + `scope_matches_catalog`                                 | ✅   |
-| `check-prd.ts` 三道防线                       | 人工确认 / Catalog 对齐 / Glossary 交叉                                               | ✅   |
+| spec (`spec`) Step 1.5               | 术语消歧工作流，**人工逐条确认**（no auto-approve）                                   | ✅   |
+| spec `## 0. 术语映射表`                         | spec 模板新章节                                                                       | ✅   |
+| `spec-rules.yaml` 新 BLOCKER                   | `terminology_mapping_table` + `scope_matches_catalog`                                 | ✅   |
+| `check-spec.ts` 三道防线                       | 人工确认 / Catalog 对齐 / Glossary 交叉                                               | ✅   |
 | 工程全局入口 §2.2 术语守门                 | 全局约束清单                                                                         | ✅   |
-| adapter 下发的 PRD slash 路由              | 强制读 glossary + catalog                                                             | ✅   |
-| `doc/features/<litmus>/`                      | 试金石三件套（README + PRD-request + 违规样例）                                       | ✅   |
+| adapter 下发的 spec slash 路由              | 强制读 glossary + catalog                                                             | ✅   |
+| `doc/features/<litmus>/`                      | 试金石三件套（README + spec-request + 违规样例）                                       | ✅   |
 
 ### 4.2 三道防线（全部经实测触发）
 
@@ -123,8 +123,8 @@ surveyed 过的 5 个层级方案：
 ### 4.3 短期里的"已知缺口"
 
 1. **Glossary 默认只有十几条**，真实工程估计需要 50-200 条，首轮接入后需要集中扩充
-2. **违规样例 PRD 需手工拷贝运行**，litmus 目前没有一键自动化
-3. **术语消歧只在 PRD 阶段拦截**，design / coding 阶段没有重复校验术语一致性（默认 Scope 守门兜底）
+2. **违规样例 spec 需手工拷贝运行**，litmus 目前没有一键自动化
+3. **术语消歧只在 spec 阶段拦截**，plan / coding 阶段没有重复校验术语一致性（默认 Scope 守门兜底）
 
 ---
 
@@ -134,8 +134,8 @@ surveyed 过的 5 个层级方案：
 
 以下**任一**情况成立时启动 WP7：
 
-1. 内网试运行 3 次及以上，出现了**术语映射正确但 design 阶段契约签名错误**的事故（说明模型需要"看到代码"）
-2. 真实工程接入后，design.md 的 `contracts.yaml` 错误率 > 20%（模型没 grep 到真实签名）
+1. 内网试运行 3 次及以上，出现了**术语映射正确但 plan 阶段契约签名错误**的事故（说明模型需要"看到代码"）
+2. 真实工程接入后，plan 阶段的 `contracts.yaml` 错误率 > 20%（模型没 grep 到真实签名）
 3. 某个需求涉及的"已有代码参考面"超过 5 个文件，用户明确要求 AI 主动整合而不是每次 grep
 
 ### 5.2 计划交付物
@@ -144,7 +144,7 @@ surveyed 过的 5 个层级方案：
 | ------- | --------------------------------------------------------------- | -------- | ------------------------------------------------------------- |
 | WP7.1   | `framework/harness/scripts/gen-repo-map.ts`                     | ~300     | 扫描所有 `Index.ets` + 公共接口，按层级输出树                |
 | WP7.2   | `doc/repo-map.md`（自动生成，不入 git）                          | -        | 每个模块 → 导出符号 → 签名 → 一句话 doc                       |
-| WP7.3   | requirement-design Step 2.5 注入 Repo Map                                  | -        | design 阶段在选契约前先读 repo-map                            |
+| WP7.3   | plan Step 2.5 注入 Repo Map                                  | -        | plan 阶段在选契约前先读 repo-map                            |
 | WP7.4   | 分层加载策略                                                    | -        | 默认只给 1 层（本 feature 所在模块）+ 其依赖的 public API 签名 |
 | WP7.5   | 预算控制                                                        | -        | 整个 repo-map ≤ 20K token，超过则按调用频率/依赖度裁剪        |
 
@@ -211,28 +211,28 @@ surveyed 过的 5 个层级方案：
 
 ---
 
-## 9. PRD harness：`check-prd.ts` 中的 Scope / 术语链路（细节）
+## 9. spec harness：`check-spec.ts` 中的 Scope / 术语链路（细节）
 
-详见 [`../../harness/scripts/check-prd.ts`](../../harness/scripts/check-prd.ts) 中与 Scope / 术语相关的检查（执行顺序上，`scope_declaration` 先于术语表解析）：
+详见 [`../../harness/scripts/check-spec.ts`](../../harness/scripts/check-spec.ts) 中与 Scope / 术语相关的检查（执行顺序上，`scope_declaration` 先于术语表解析）：
 
-- `checkScopeDeclaration` —— 解析 PRD 的 Scope 声明 `yaml` 代码块：必须含 `in_scope_modules`（≥1）、`out_of_scope_modules`、`rationale`；结构缺失为 BLOCKER，`rationale` 为空为 WARN
-- `checkTerminologyMappingTable` —— 解析 PRD 的 `## 0. 术语映射表` 章节，校验：
+- `checkScopeDeclaration` —— 解析 spec 的 Scope 声明 `yaml` 代码块：必须含 `in_scope_modules`（≥1）、`out_of_scope_modules`、`rationale`；结构缺失为 BLOCKER，`rationale` 为空为 WARN
+- `checkTerminologyMappingTable` —— 解析 spec 的 `## 0. 术语映射表` 章节，校验：
   - 表格列与必填字段（原始术语 / 权威模块 / 用户确认 / 置信度 / 来源）
   - 用户确认列必须每行 `[x]`（防"agent 自己点确认"）
   - 权威模块在 `module-catalog.yaml` 的 `modules[].name` 中存在
   - 与 `glossary.yaml` 的 `terms[].canonical_module` 无冲突
-- `checkScopeMatchesCatalog` —— 解析 PRD 的 Scope 声明 YAML 块，每个 in_scope / out_of_scope 模块必须建档
+- `checkScopeMatchesCatalog` —— 解析 spec 的 Scope 声明 YAML 块，每个 in_scope / out_of_scope 模块必须建档
 - `checkTerminologyModulesWithinScope` —— 术语映射表的"权威模块"必须出现在 in_scope 或 out_of_scope 之一
-- **Context Exploration Gate（v2.9）**：PRD 主产物前须 `context-exploration.md`（schema **1.1.0**）；与术语映射表正交——探索门确保「读过真实代码路径」，术语门确保「业务名词归属正确」。详见 [`../../skills/reference/agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
+- **Context Exploration Gate（v2.9）**：spec 主产物前须 `context-exploration.md`（schema **1.1.0**）；与术语映射表正交——探索门确保「读过真实代码路径」，术语门确保「业务名词归属正确」。详见 [`../../skills/reference/agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
 
 ---
 
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
-- **PRD 模板路径**：宿主模板在 `framework/profiles/hmos-app/skills/prd-design/templates/`，与根 SKILL 跳板分离。
-- **规约消费**：`check-prd.ts` 以合并 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
+- **spec 模板路径**：宿主模板在 `framework/profiles/hmos-app/skills/spec/templates/`，与根 SKILL 跳板分离。
+- **规约消费**：`check-spec.ts` 以合并 phase-rules（根 YAML + profile overlay）为准；术语三道 BLOCKER 语义未变。
 - **Context Gate**：`context-exploration.ts` schema **1.1.0** + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` / `backfill:context` 过渡。
-- **确认 UX**：PRD 术语映射表须用户 `[x]` 确认；Claude adapter 关键步骤 **AskUserQuestion BLOCKER**。
+- **确认 UX**：spec 术语映射表须用户 `[x]` 确认；Claude adapter 关键步骤 **AskUserQuestion BLOCKER**。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) `sources[]` 复核 Scope / 术语 / catalog+glossary 链路。
 
 ---
@@ -245,6 +245,6 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-22 (context-exploration 1.1.0, confirmation UX, check-prd)
+  last-synced: 2026-05-22 (context-exploration 1.1.0, confirmation UX, check-spec)
 -->
 

@@ -22,7 +22,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase extensions
 - `manifest.yaml`（`provides.skills` / `knowledge` / `hooks`）
 - `skills/wallet-sdk-onboarding/SKILL.md` 与 `reference/wallet-rpc-conventions.md`
 - `knowledge/naming-taboos.md`
-- `hooks/coding/pre_check.mjs` 与 `hooks/prd/on_context_load.md`
+- `hooks/coding/pre_check.mjs` 与 `hooks/spec/on_context_load.md`
 
 跑一次 **feature 链**上阶段（如 `prd` / `design` / `coding`）时，lifecycle hook 应**注入片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段）。
 

@@ -24,8 +24,8 @@ framework/docs/
 │
 ├── skills/                    ← 各 Skill 阶段的对外讲解（设计哲学 + 实现 + 常见坑）
 │   ├── README.md
-│   ├── prd-design.md          (待写)
-│   ├── requirement-design.md  (待写)
+│   ├── spec.md          (待写)
+│   ├── plan.md  (待写)
 │   ├── coding.md              (待写)
 │   ├── code-review.md         (待写)
 │   ├── business-ut.md         ★ 已写

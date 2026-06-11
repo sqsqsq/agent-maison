@@ -20,7 +20,7 @@
 
 - 不新增差异化的 phase-rules（首包大小、分包、免安装入口等规则暂缓）
 - 不改 `check-*.ts` 的行为分支（`project_type === 'atomic_service'` 不触发任何额外路径）
-- 不修改 catalog-bootstrap~6 的流程（元服务与应用走同一套 catalog / glossary / PRD / design / coding / review / UT / testing）
+- 不修改 catalog-bootstrap~6 的流程（元服务与应用走同一套 catalog / glossary / spec / plan / coding / review / UT / testing）
 
 ---
 

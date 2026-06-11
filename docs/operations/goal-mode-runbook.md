@@ -17,7 +17,7 @@
 | 自然语言 | 「目标模式 / 全自动 / 无人值守全自动」→ agent 读 goal-mode Skill |
 | Codex/Cursor/generic | skills-bridge 跳板（skill id `goal-mode`）→ 完整 Skill |
 
-「全链路 / 从 PRD 到真机」等属于 **batch_authorized**（对话内多 phase），不是 goal 模式触发词。
+「全链路 / 从 spec 到真机」等属于 **batch_authorized**（对话内多 phase），不是 goal 模式触发词。
 
 用户**不**直接执行 `goal-runner`；主 agent 按 Skill 内「Agent 必须执行」自跑。
 

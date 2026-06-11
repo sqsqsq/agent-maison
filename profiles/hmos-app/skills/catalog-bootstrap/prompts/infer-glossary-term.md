@@ -33,7 +33,7 @@ tech_word(T) := 以下任一：
   - "AccountManager"（与 catalog.modules[].name 重名——技术名而非业务词）
   - "HomeTabPage"（英文驼峰，疑似类名）
 
-glossary 是业务自然语言层，出现上述词会让 prd-design Step 1.5 把 PRD 里的类名当成业务词去消歧，直接错分模块。
+glossary 是业务自然语言层，出现上述词会让 spec Step 1.5 把 spec 里的类名当成业务词去消歧，直接错分模块。
 
 三选一修复：
   (a) 把这几行从 doc/glossary-seed.txt 删掉
@@ -88,7 +88,7 @@ m.typical_business_terms 中是否有某项 === <T>?
   | `match_kind` | `typical_term_with_not_responsible_for_conflict` |
   | `confidence` | 降一级（high→medium，medium→low，low 保持） |
   | `candidates_top3[]` | 把该 m 显式加进来，`NOT_responsible_for_hint` **逐字复制** m.NOT_responsible_for[i] 的原文片段（**不要**总结） |
-  | `confidence_hint` | 写："catalog 内部冲突——`<m.name>.typical_business_terms` 收录 `<T>`，但 `NOT_responsible_for[<i>]` 又排除了：<逐字原文>。建议 PRD 阶段对 `<T>` 的语义做分界说明。" |
+  | `confidence_hint` | 写："catalog 内部冲突——`<m.name>.typical_business_terms` 收录 `<T>`，但 `NOT_responsible_for[<i>]` 又排除了：<逐字原文>。建议 spec 阶段对 `<T>` 的语义做分界说明。" |
 
 - 若**未命中** → 不改动任何字段，正常进入 Step 2 / Step 4
 
@@ -108,7 +108,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 
 ### Step 2.5：反向指针扫描 NOT_responsible_for（**强制，只要 Step 1 和 Step 2 都零命中就跑**）
 
-> **为什么必须有这步**：catalog 作者经常在 `NOT_responsible_for` 里写"属 03-CommonBusiness 的 CardManager"、"归 SwipeCard 模块"这类**反向指针**——它是"本模块不负责 X，X 应该归 Y 模块"的自然语言标注。Step 1-3 只扫正向字段会**完全漏掉**这条信息，弱模型直接判 TBD，后续 PRD 阶段就等于没有任何线索可用。
+> **为什么必须有这步**：catalog 作者经常在 `NOT_responsible_for` 里写"属 03-CommonBusiness 的 CardManager"、"归 SwipeCard 模块"这类**反向指针**——它是"本模块不负责 X，X 应该归 Y 模块"的自然语言标注。Step 1-3 只扫正向字段会**完全漏掉**这条信息，弱模型直接判 TBD，后续 spec 阶段就等于没有任何线索可用。
 
 对 `doc/module-catalog.yaml` 每个模块 m 的 `NOT_responsible_for[]` 每条文本 nrf，执行以下**机械正则匹配**：
 
@@ -157,7 +157,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 
 ### Step 4.5：同 canonical_module 的 alias-merge 分支（**强制检查**）
 
-> **为什么必须有这步**：种子清单里"账号"和"账户"、"列表入口"和"列表详情页"这类同义对是常态。若为每个都新建独立 term，glossary 会被同义词撑爆，还会污染 prd-design Step 1.5 的消歧逻辑（同一模块出现多个几乎等价的 term，反而降低命中质量）。
+> **为什么必须有这步**：种子清单里"账号"和"账户"、"列表入口"和"列表详情页"这类同义对是常态。若为每个都新建独立 term，glossary 会被同义词撑爆，还会污染 spec Step 1.5 的消歧逻辑（同一模块出现多个几乎等价的 term，反而降低命中质量）。
 
 在写 staging **之前**，扫以下两处：
 1. `doc/glossary.yaml` 已入库的 `terms[]`
