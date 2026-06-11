@@ -400,7 +400,7 @@ spec 阶段宣布"完成"前必须**同时**满足：
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，spec 阶段完成，**具备**进入 plan 阶段 Skill的**资格**；**不授权**自动开 plan 阶段。
+四项全部通过后，spec 阶段完成，**具备**进入 plan 阶段 Skill 的**资格**；**不授权**自动开 plan 阶段。
 
 **闭环停等（BLOCKER，user-confirmation-ux §8）**：除非用户消息为 **batch 多阶段授权**（§8.2），否则须 **`phase.next_step`**（确认菜单 + portable 编号）停等。**`spec.freeze` 只冻结 spec 内容**，不等同于 harness 通过后可在同一执行流自动写 `plan.md`。物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 

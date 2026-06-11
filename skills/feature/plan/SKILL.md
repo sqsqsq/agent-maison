@@ -29,7 +29,7 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 [framework/harness/config.ts](../../../../harness/config.ts) 与 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
-> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止进入 Step 2.5（Scope 冻结）及后续plan 撰写。**
+> **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止进入 Step 2.5（Scope 冻结）及后续 plan 撰写。**
 
 > **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。
 
@@ -113,9 +113,9 @@ coding / review / UT / harness **一律优先读 `contracts.yaml`**，避免 pla
 
 1. **请求路由**：用户仅表达「修订 plan」「更新实现计划」「改 contracts / Spec」「修复设计段落」「对齐 spec 调整设计」等，而**未**在同一条或明确承接的指令中同时要求编码（见下条），则**只激活本 Skill**，本轮定性为 **plan 迭代**，不是流水线自动滑入 coding 阶段。
 2. **何谓同时要求编码（示例，非穷举）**：同一条消息里出现「开始编码」「按现行 plan 实现 / 落地」「写代码 / 开发」且指向当前 `doc/features/<feature>/`，可视为用户显式授权连续进入 coding 阶段。仅有「把 plan 改对」「补充 plan」**不算**编码授权。
-3. **plan 迭代回合内禁止默写实现层产物**：在未满足上一条「显式编码授权」时，**BLOCKER**：不得新增或修改实现层产物（定义见上）；允许改的仅限plan 侧 SSOT 与文档（如 `doc/features/...`、`doc/`、`framework/` 等按本实例约定允许的路径）。若用户需要「plan 与实现连续交付」，须在指令中**明示**两用意图。
-4. **落盘 → harness → 停等人审（产品闸门）**：每次 `plan.md` + Step 11 的 Spec 写入磁盘后，须**立即**进入 Step 13.1 跑 `harness-runner --phase plan`（见 Step 13），**禁止**「先改实现再补 plan.harness」。Step 13.1 通过后，向用户交付 harness 摘要与plan 变更要点；**每次**（含首遍 plan 与 plan 修订）须 **`plan.ok_to_code` 编号确认**：`1=plan OK，可编码` / `2=继续改 plan`——**不得**在同一轮 agent 执行流里「写完plan 侧 SSOT → 立刻改实现层产物」直连。
-5. **历史阶段不免除**：即使用户过去已跑通 coding / review / UT，只要**本轮改动了** `plan.md` 或 `contracts.yaml`（等plan 侧 SSOT），设计审阅与「明示编码」流程**重新适用**；不得以「以前实现过」为由跳过。
+3. **plan 迭代回合内禁止默写实现层产物**：在未满足上一条「显式编码授权」时，**BLOCKER**：不得新增或修改实现层产物（定义见上）；允许改的仅限 plan 侧 SSOT 与文档（如 `doc/features/...`、`doc/`、`framework/` 等按本实例约定允许的路径）。若用户需要「plan 与实现连续交付」，须在指令中**明示**两用意图。
+4. **落盘 → harness → 停等人审（产品闸门）**：每次 `plan.md` + Step 11 的 Spec 写入磁盘后，须**立即**进入 Step 13.1 跑 `harness-runner --phase plan`（见 Step 13），**禁止**「先改实现再补 plan.harness」。Step 13.1 通过后，向用户交付 harness 摘要与 plan 变更要点；**每次**（含首遍 plan 与 plan 修订）须 **`plan.ok_to_code` 编号确认**：`1=plan OK，可编码` / `2=继续改 plan`——**不得**在同一轮 agent 执行流里「写完 plan 侧 SSOT → 立刻改实现层产物」直连。
+5. **历史阶段不免除**：即使用户过去已跑通 coding / review / UT，只要**本轮改动了** `plan.md` 或 `contracts.yaml`（等 plan 侧 SSOT），设计审阅与「明示编码」流程**重新适用**；不得以「以前实现过」为由跳过。
 
 ### Step 1: 读取并分析 spec
 
@@ -235,7 +235,7 @@ expansions_with_user_approval:
 
 ### Step 3: 功能拆分到模块
 
-这是plan 文档的**核心决策步骤**。逐条分析 spec 功能清单，将每个功能点分配到 **`doc/architecture.md` 列出的模块 + 合法外层 id** 中。
+这是 plan 文档的**核心决策步骤**。逐条分析 spec 功能清单，将每个功能点分配到 **`doc/architecture.md` 列出的模块 + 合法外层 id** 中。
 
 > **前置约束（来自 Step 2.5）**：所有功能点的"分配模块"必须落在 Step 2.5 冻结的 `in_scope_modules` 集合内。若强行想分配到集合外模块，**必须**停下来回到 Step 2.5.3 发起扩展提议，不得直接在拆分表中写出集合外的模块名。
 
@@ -468,7 +468,7 @@ expansions_with_user_approval:
 
 #### 11.2 补充边界用例 Spec（若 spec 阶段 未产出）
 
-若 `doc/features/{module-name}/acceptance.yaml` 已由 spec 阶段 产出，检查并补充 plan阶段新增的边界场景（如从技术角度发现的新边界用例）。
+若 `doc/features/{module-name}/acceptance.yaml` 已由 spec 阶段 产出，检查并补充 plan 阶段新增的边界场景（如从技术角度发现的新边界用例）。
 
 若 spec 阶段 未产出 `acceptance.yaml`（历史原因），则从 spec.md 中提取并创建。
 
@@ -573,7 +573,7 @@ architecture_impact:
 > **全局入口 §4.1 明示授权**：本步骤的 harness 与 verifier 调用都由主 agent 自己执行，
 > **严禁**仅"告知用户可运行"然后结束对话——属软幻觉，由物理拦截层兜底。
 
-> **顺位（BLOCKER）**：Step 10 + Step 11 落盘结束后的**下一件正事就是本 Step 的 13.1**，不得在宣布plan 审阅就绪之前编写或修改**实现层产物**（定义见上文「plan 与编码的会话内硬边界」）；「实现改完再补 plan.harness」一律视为顺序错误。
+> **顺位（BLOCKER）**：Step 10 + Step 11 落盘结束后的**下一件正事就是本 Step 的 13.1**，不得在宣布 plan 审阅就绪之前编写或修改**实现层产物**（定义见上文「plan 与编码的会话内硬边界」）；「实现改完再补 plan.harness」一律视为顺序错误。
 
 所有产出归档后，agent **必须自己**完成下列验证，再宣布设计阶段完成。
 
@@ -592,7 +592,7 @@ agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重
 - `doc/features/{module-name}/contracts.yaml` — 功能级接口契约（文件清单、接口签名）
 - `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准(spec 追溯覆盖率)
 
-**若报告中存在 BLOCKER 级问题**：必须修正 plan文档并重新提取 Spec（回到 Step 9），直到零 BLOCKER。
+**若报告中存在 BLOCKER 级问题**：必须修正 plan 文档并重新提取 Spec（回到 Step 9），直到零 BLOCKER。
 
 #### 13.2 AI Harness（语义级检查，agent 主动通过 Task 工具触发 verifier 子 agent）
 

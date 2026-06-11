@@ -30,6 +30,7 @@ core 模板只收通用维度；宿主细则通过：
 1. `doc/extensions/knowledge/` 章节模板
 2. `hooks/spec/on_context_load.md` 叠加指令
 3. `phase_rules_overlays.spec` 结构检查
+4. `doc/extensions/manifest.yaml` 的 `provides.skill_assets` — extension 模板/示例覆盖或增补 profile `skill-assets.yaml`（同 `skill-id` + `asset_key` 冲突时 extension 赢）；SKILL 正文仍写 `` `profile-skill-asset:<skill>/<key>` ``，由 harness 合并解析
 
 模板末尾锚点：**「宿主扩展治理项」**（见 `profiles/*/skills/spec/templates/spec-template.md`）。
 
