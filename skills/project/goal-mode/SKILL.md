@@ -75,7 +75,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --resume <run-id> --feature <feature-slug>
 ```
 
-**BLOCKER**：主 agent **读完 goal-report 后停下汇报**，不得自行循环 `--resume`。续跑必须由**用户**在对话中显式触发。
+**BLOCKER**：主 agent **不得自行循环 `--resume`**；续跑必须由**用户**在对话中显式触发。长时间后台运行时，允许每隔约 5–10 分钟跑**一次性** `goal-status --markdown` 向用户汇报进度（这不是 `--resume` 续跑）。
 
 若上次终态为 `HALTED` 或 `DEFERRED`，默认须加 `--force-resume`（冷却期内会被拒绝）；勿在无用户确认时自动续跑。
 
@@ -93,11 +93,27 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 - `start_phase` / `end_phase`：起止 phase（默认 prd→testing）
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
-- 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、每 phase prompt/输出、goal-report）
+- 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）
+
+### 运行中进度汇报
+
+启动 runner 后（建议后台 `block_until_ms: 0`），立刻告诉用户 `run_id` 与 `progress.json` 路径。
+
+需要汇报「仍在跑什么」时，agent 自跑**一次性**（poll 一帧即退出，**不要**跑 `--watch` 常驻）：
+
+```bash
+cd framework/harness && npx ts-node scripts/goal-status.ts \
+  --feature <feature-slug> --run-id <run-id|latest> --markdown
+```
+
+- **主干**：低频（5–10min）定时 poll 上述命令，覆盖静默卡死。
+- **加速器（Cursor 等支持 `notify_on_output` 的宿主）**：匹配 runner stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN`，有进展时再 poll。
+- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status`（实时重算锁 pid）。
+- 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
 
 ## 报告解读（汇报给用户）
 
-Read `doc/features/<feature>/goal-runs/<run-id>/goal-report.md`，用自然语言说明：
+终态后 Read `doc/features/<feature>/goal-runs/<run-id>/goal-report.md` + `progress.md`，用自然语言说明：
 
 | 状态 | 含义 |
 |------|------|

@@ -60,6 +60,7 @@ import {
   resolveResumedBudget,
   resolveResumeFromEvents,
   resolveResumeState,
+  resolveWallClockStartMs,
 } from './utils/goal-runner-phase';
 import { isGoalHeadlessEnv, MAISON_GOAL_RUNNER_ENV } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
@@ -83,6 +84,13 @@ import {
   validateManifestCliOverrides,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
+import {
+  loadProgressContext,
+  projectGoalProgress,
+  shouldThrottleSnapshot,
+  writeProgressSnapshotAtomic,
+  type ProgressWriterState,
+} from './utils/goal-progress';
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
   prd: 'skills/feature/prd-design/SKILL.md',
@@ -109,6 +117,11 @@ let activeAgentKill: (() => Promise<void>) | null = null;
 let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
 let runLock: { path: string; ownerId: string } | null = null;
+
+/** Runtime substep for heartbeat / progress projection. */
+let progressSubstep: 'agent_invoke' | 'harness' | 'prompt' | 'verdict' | null = null;
+let progressPhase: FeaturePhase | null = null;
+let progressHeartbeatHook: (() => void) | null = null;
 
 /** minimist ParsedArgs → ManifestCliArgv（避免 TS2559 索引签名不兼容）。 */
 function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
@@ -308,9 +321,91 @@ function acquireGoalLocks(
   featureLock = {
     path: featureLockPath,
     ownerId: fRecord.ownerId,
-    interval: setInterval(() => touchLock(featureLockPath, fRecord.ownerId), LOCK_HEARTBEAT_MS),
+    interval: setInterval(() => {
+      touchLock(featureLockPath, fRecord.ownerId);
+      try {
+        progressHeartbeatHook?.();
+      } catch (err) {
+        console.warn(
+          `[goal-runner] progress heartbeat failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
+    }, LOCK_HEARTBEAT_MS),
   };
   runLock = { path: runLockPath, ownerId: rRecord.ownerId };
+}
+
+function emitMilestone(line: string): void {
+  console.log(line);
+}
+
+function setupProgressHooks(
+  manifest: GoalManifest,
+  projectRoot: string,
+  featuresDir: string,
+  workflow: ReturnType<typeof resolveWorkflowSpec>,
+  writerState: ProgressWriterState,
+): (force?: boolean, writeMd?: boolean) => void {
+  const flushProgress = (force = false, writeMd = false): void => {
+    try {
+      const now = Date.now();
+      if (!force && shouldThrottleSnapshot(writerState, now)) return;
+      const ctx = loadProgressContext(projectRoot, manifest, featuresDir);
+      const snapshot = projectGoalProgress({
+        projectRoot,
+        manifest,
+        events: ctx.events,
+        workflow,
+        featureLock: ctx.featureLock,
+        runnerLock: ctx.runnerLock,
+        nowMs: now,
+        liveProbe: false,
+      });
+      writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot, writeMd);
+      writerState.lastWriteMs = now;
+    } catch (err) {
+      console.warn(
+        `[goal-runner] progress snapshot failed (non-fatal): ${(err as Error).message}`,
+      );
+    }
+  };
+
+  const writeHeartbeat = (): void => {
+    if (!progressPhase) return;
+    try {
+      const phaseDir = path.join(projectRoot, manifest.report_dir, 'phases', progressPhase);
+      const outputLog = path.join(phaseDir, 'agent-output.log');
+      let agentOutputMtime: string | null = null;
+      let agentOutputBytes = 0;
+      if (fs.existsSync(outputLog)) {
+        const st = fs.statSync(outputLog);
+        agentOutputMtime = new Date(st.mtimeMs).toISOString();
+        agentOutputBytes = st.size;
+      }
+      const lockRec = featureLock ? readLockRecord(featureLock.path) : null;
+      const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+      const events = loadEventsJsonl(eventsPath);
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'heartbeat',
+        phase: progressPhase,
+        substep: progressSubstep,
+        elapsed_ms: Date.now() - resolveWallClockStartMs(events),
+        turns_used: countAgentInvokeStarts(events),
+        lock_updated_at: lockRec?.updated_at ?? null,
+        agent_output_mtime: agentOutputMtime,
+        agent_output_bytes: agentOutputBytes,
+      });
+      flushProgress();
+    } catch (err) {
+      console.warn(
+        `[goal-runner] progress heartbeat failed (non-fatal): ${(err as Error).message}`,
+      );
+    }
+  };
+
+  progressHeartbeatHook = writeHeartbeat;
+
+  return flushProgress;
 }
 
 function buildAgentWarn(invoke: {
@@ -457,14 +552,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
     }
 
-    appendEvent(manifest.report_dir, projectRoot, { type: 'run_start', dry_run: dryRun });
-
     const chain = resolveAutoChain(
       workflow,
       manifest.start_phase,
       manifest.end_phase,
       manifest.chain_override,
     );
+
+    const progressWriterState: ProgressWriterState = { lastWriteMs: 0 };
+    const flushProgress = setupProgressHooks(
+      manifest,
+      projectRoot,
+      featuresDir,
+      workflow,
+      progressWriterState,
+    );
+
+    appendEvent(manifest.report_dir, projectRoot, {
+      type: 'run_start',
+      dry_run: dryRun,
+      chain,
+    });
+    flushProgress(true);
 
     const cap = loadGoalCapability(frameworkRoot, manifest.adapter!);
     let outcomes: GoalPhaseOutcome[] = [];
@@ -503,6 +612,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
       let retries = 0;
       let phaseDone = false;
 
+      progressPhase = phase;
+      progressSubstep = null;
+
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'phase_start',
+        phase,
+        phase_index: phaseIdx,
+        phase_total: chain.length,
+        attempt: retries + 1,
+      });
+      emitMilestone(
+        `GOAL_PHASE phase=${phase} event=start index=${phaseIdx} total=${chain.length} attempt=${retries + 1}`,
+      );
+      flushProgress();
+
       if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
 
       while (!phaseDone) {
@@ -533,6 +657,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const promptPath = path.join(phaseDir, 'prompt.md');
         const prompt = buildPhasePrompt(manifest, phase, frameworkRoot, deferredUpstream);
         fs.writeFileSync(promptPath, prompt, 'utf-8');
+        progressSubstep = 'prompt';
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'prompt_written',
+          phase,
+          prompt_path: path.relative(projectRoot, promptPath).replace(/\\/g, '/'),
+        });
+        flushProgress();
 
         const { summaryAbsPath: summaryPathBefore } = readPhaseSummary(
           projectRoot,
@@ -561,12 +692,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const outputLogPath = path.join(phaseDir, 'agent-output.log');
         const invokeId = `${phase}-${Date.now()}`;
 
+        progressSubstep = 'agent_invoke';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'agent_invoke_start',
           phase,
           invoke_id: invokeId,
           command: invokePlan.label,
         });
+        flushProgress();
 
         const invoke = await invokeAgentHeadless(invokePlan, projectRoot, {
           dryRun,
@@ -597,6 +730,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,
         });
+        flushProgress();
+
+        progressSubstep = 'harness';
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'harness_start',
+          phase,
+        });
+        flushProgress();
 
         const harnessExit = await runHarnessPhase(
           projectRoot,
@@ -605,6 +746,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest.feature,
           dryRun,
         );
+
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'harness_end',
+          phase,
+          exit_code: harnessExit,
+        });
+        flushProgress();
+
+        progressSubstep = 'verdict';
         const { summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(
           projectRoot,
           manifest.feature,
@@ -643,6 +793,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
         });
+        emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
+        flushProgress();
 
         if (action === 'advance') {
           const snap = snapshotPhaseHarness(
@@ -743,7 +895,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
     writeGoalReport(projectRoot, manifest.report_dir, report);
     appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+    progressSubstep = null;
+    progressPhase = null;
+    progressHeartbeatHook = null;
+    flushProgress(true, true);
 
+    emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
     console.log('');
     console.log('GOAL_RUN_SUMMARY');
     console.log(`run_id=${manifest.run_id}`);

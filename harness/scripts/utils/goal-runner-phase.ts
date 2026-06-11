@@ -85,9 +85,16 @@ export interface GoalRunEvent {
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;
+  silent_killed?: boolean;
+  lingering_pipe?: boolean;
   recovered?: boolean;
   invoke_id?: string;
   invoke_start_ts?: string;
+  chain?: string[];
+  attempt?: number;
+  substep?: string;
+  start_index?: number;
+  start_phase?: string;
 }
 
 export interface ResumedBudget {
@@ -176,6 +183,18 @@ export function checkTerminalResumeGuard(input: ResumeGuardInput): ResumeGuardRe
 export function findLastRunEnd(events: GoalRunEvent[]): GoalRunEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     if (events[i].type === 'run_end') return events[i];
+  }
+  return undefined;
+}
+
+/** Last run_end not superseded by a later run_start or resume (projection SSOT). */
+export function resolveEffectiveRunEnd(events: GoalRunEvent[]): GoalRunEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type !== 'run_end') continue;
+    const superseded = events
+      .slice(i + 1)
+      .some((e) => e.type === 'run_start' || e.type === 'resume');
+    if (!superseded) return events[i];
   }
   return undefined;
 }

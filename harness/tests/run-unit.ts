@@ -110,6 +110,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
+  { id: 'goal-progress', modulePath: './unit/goal-progress.unit.test' },
   { id: 'goal-preflight', modulePath: './unit/goal-preflight.unit.test' },
   { id: 'headless-binary-resolve', modulePath: './unit/headless-binary-resolve.unit.test' },
   { id: 'phase-state', modulePath: './unit/phase-state.unit.test' },

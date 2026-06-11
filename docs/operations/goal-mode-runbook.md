@@ -67,3 +67,23 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 - Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
 - Codex：`codex exec --sandbox workspace-write --ask-for-approval never|on-request`
 - Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
+
+## 运行中进度（progress 契约）
+
+事实源：`events.jsonl`（append-only）。派生快照：`progress.json` / `progress.md`（可重建）。
+
+```bash
+cd framework/harness && npx ts-node scripts/goal-status.ts \
+  --feature <feature-slug> --run-id latest --json
+```
+
+| 入口 | 用途 |
+|------|------|
+| `progress.json` | IDE/插件/CI 文件 watch |
+| `goal-status --json` | 无法直接解析路径时的命令契约；**实时重算** liveness + `generated_at` 新鲜度降级 |
+| `goal-status --markdown` | agent 向用户汇报 |
+| `goal-status --watch` | **仅供人在终端**；agent 勿跑常驻 watch；可加 `--max-ticks N` 限制轮询次数（测试/脚本用） |
+
+**新鲜度降级**：非终态快照若 `generated_at` 超过 heartbeat 间隔 2–3 倍，不得信任 raw `status: RUNNING`（后台 terminal 随 IDE 会话回收会留下谎报）。终态快照（`COMPLETED`/`DEFERRED`/`PARTIAL`/`HALTED`）不降级。
+
+**不要**把 `agent-output.log` 正文或 runner stdout 日志当协议；stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 是受维护的轻契约（通知锚点）。

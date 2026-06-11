@@ -43,11 +43,15 @@ export function readLockRecord(lockPath: string): LockRecord | null {
   }
 }
 
-export function isLockStale(record: LockRecord, staleMs: number = STALE_LOCK_MS): boolean {
+export function isLockStale(
+  record: LockRecord,
+  staleMs: number = STALE_LOCK_MS,
+  referenceMs: number = Date.now(),
+): boolean {
   const updated = new Date(record.updated_at).getTime();
   if (Number.isNaN(updated)) return true;
 
-  const heartbeatStale = Date.now() - updated > staleMs;
+  const heartbeatStale = referenceMs - updated > staleMs;
 
   // Same-host: dead pid → immediately stale; alive pid → heartbeat TTL fallback.
   if (record.hostname === os.hostname()) {

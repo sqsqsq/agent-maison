@@ -96,6 +96,8 @@ export function generateGoalReportMarkdown(report: GoalReport): string {
     lines.push('', '> 总状态非 COMPLETED：存在 DEFERRED 或未完成阶段。');
   }
 
+  lines.push('', 'Progress snapshot: progress.md');
+
   return lines.join('\n') + '\n';
 }
 
