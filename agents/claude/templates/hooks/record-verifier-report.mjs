@@ -216,10 +216,10 @@ function writeFileAtomic(p, content) {
   fs.writeFileSync(p, content, 'utf-8');
 }
 
-function buildMarkdownReport({ feature, phase, transcriptPath, verdict, lastText, payload }) {
+function buildMarkdownReport({ feature, phase, transcriptPath, verdict, lastText, payload, goalHeadless }) {
   const ts = new Date().toISOString();
   const truncatedLast = (lastText ?? '').slice(0, 8000);
-  return [
+  const lines = [
     '# Verifier 子 agent 报告',
     '',
     `- feature: ${feature ?? 'unknown'}`,
@@ -228,6 +228,12 @@ function buildMarkdownReport({ feature, phase, transcriptPath, verdict, lastText
     `- generated_at: ${ts}`,
     `- session_id: ${payload?.session_id ?? '(n/a)'}`,
     `- transcript_path: ${transcriptPath ?? '(n/a)'}`,
+  ];
+  if (goalHeadless) {
+    lines.push('- goal_headless: true');
+  }
+  return [
+    ...lines,
     '',
     '## 子 agent 最后一条 assistant 消息（截至 8000 字符）',
     '',
@@ -254,6 +260,10 @@ async function main() {
     return;
   }
 
+  // goal-runner 拉起的无头进程树：不读 state 定位、不写回 state，避免跨 feature 串台
+  // env 名 SSOT：framework/harness/scripts/utils/phase-state.ts → MAISON_GOAL_HEADLESS_ENV
+  const goalHeadless = process.env.MAISON_GOAL_HEADLESS === '1';
+
   const projectRoot = resolveProjectRoot(payload);
   const stateRel =
     readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json';
@@ -266,24 +276,22 @@ async function main() {
   const { lastAssistantText, error } = readTranscriptJsonl(transcriptPath);
   const verdict = extractVerdict(lastAssistantText);
 
-  const feature = state?.feature ?? 'unknown';
-  const phase = state?.phase ?? 'unknown';
+  const feature = goalHeadless ? 'unknown' : (state?.feature ?? 'unknown');
+  const phase = goalHeadless ? 'unknown' : (state?.phase ?? 'unknown');
 
-  const resolved =
-    state && state.feature && state.phase
-      ? resolveFeaturePhaseReportDir(projectRoot, String(state.feature), String(state.phase))
-      : null;
+  const useStateDir = !goalHeadless && state && state.feature && state.phase;
+  const resolved = useStateDir
+    ? resolveFeaturePhaseReportDir(projectRoot, String(state.feature), String(state.phase))
+    : null;
   const reportDir =
     resolved ?? path.resolve(projectRoot, 'framework/harness/state');
 
-  const mdPath =
-    state && state.feature && state.phase
-      ? path.join(reportDir, 'verifier.report.md')
-      : path.join(reportDir, 'last-verifier-report.md');
-  const jsonPath =
-    state && state.feature && state.phase
-      ? path.join(reportDir, 'verifier.report.json')
-      : path.join(reportDir, 'last-verifier-report.json');
+  const mdPath = useStateDir
+    ? path.join(reportDir, 'verifier.report.md')
+    : path.join(reportDir, 'last-verifier-report.md');
+  const jsonPath = useStateDir
+    ? path.join(reportDir, 'verifier.report.json')
+    : path.join(reportDir, 'last-verifier-report.json');
 
   try {
     writeFileAtomic(
@@ -295,25 +303,23 @@ async function main() {
         verdict,
         lastText: lastAssistantText,
         payload,
+        goalHeadless,
       }),
     );
-    writeFileAtomic(
-      jsonPath,
-      JSON.stringify(
-        {
-          schema_version: '1.0',
-          feature,
-          phase,
-          verdict,
-          transcript_path: transcriptPath,
-          generated_at: new Date().toISOString(),
-          session_id: payload?.session_id ?? null,
-          read_error: error ?? null,
-        },
-        null,
-        2,
-      ) + '\n',
-    );
+    const jsonBody = {
+      schema_version: '1.0',
+      feature,
+      phase,
+      verdict,
+      transcript_path: transcriptPath,
+      generated_at: new Date().toISOString(),
+      session_id: payload?.session_id ?? null,
+      read_error: error ?? null,
+    };
+    if (goalHeadless) {
+      jsonBody.goal_headless = true;
+    }
+    writeFileAtomic(jsonPath, JSON.stringify(jsonBody, null, 2) + '\n');
   } catch (err) {
     process.stderr.write(
       `[record-verifier-report hook] write failed: ${err?.message ?? err}\n`,
@@ -328,7 +334,7 @@ async function main() {
   // 与 check-phase-completion.mjs 一致，避免 Stop hook 把刚跑过 verifier 的
   // 状态当成"陈旧"处理。
   try {
-    if (state && state.feature && state.phase) {
+    if (!goalHeadless && state && state.feature && state.phase) {
       const nowIso = new Date().toISOString();
       const sid =
         typeof payload?.session_id === 'string' && payload.session_id.trim()

@@ -184,7 +184,10 @@ function runHook(
   projectDir: string,
   extraEnv?: NodeJS.ProcessEnv,
 ): HookOutcome {
-  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir, ...extraEnv };
+  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir };
+  delete env.MAISON_GOAL_HEADLESS;
+  delete env.MAISON_GOAL_RUNNER;
+  if (extraEnv) Object.assign(env, extraEnv);
   const inputJson = JSON.stringify({ ...payload, cwd: projectDir });
   const r: SpawnSyncReturns<string> = spawnSync('node', [HOOK_PATH], {
     input: inputJson,
