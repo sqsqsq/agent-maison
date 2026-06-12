@@ -27,3 +27,6 @@ framework/harness/
 
 # 本地 IDE 密钥（.cursor/plans 等开发计划可入库）
 .cursor/mcp.json
+
+# Claude Code 个人配置（团队共享的 .claude/settings.json 等 adapter 产物仍可入库）
+**/.claude/settings.local.json

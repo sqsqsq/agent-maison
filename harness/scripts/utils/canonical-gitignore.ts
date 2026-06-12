@@ -27,6 +27,7 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   '/doc/app-snapshot-cache/',
   '/doc/features/_adhoc/',
   'framework.local.json',
+  '**/.claude/settings.local.json',
 ];
 
 /** 等价覆盖映射（宽规则覆盖 canonical pattern） */
@@ -97,6 +98,11 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
   ],
   '/doc/features/_adhoc/': ['doc/features/_adhoc/', 'doc/features/_adhoc', '/doc/features/_adhoc/'],
   'framework.local.json': ['framework.local.json'],
+  '**/.claude/settings.local.json': [
+    '.claude/settings.local.json',
+    '**/.claude/settings.local.json',
+    '/.claude/settings.local.json',
+  ],
 };
 
 interface CanonicalSection {
@@ -137,8 +143,8 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
     patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
   },
   {
-    header: '# Personal framework settings (per developer, gitignored)',
-    patterns: ['framework.local.json'],
+    header: '# Personal / local agent settings (per developer, gitignored)',
+    patterns: ['framework.local.json', '**/.claude/settings.local.json'],
   },
 ];
 

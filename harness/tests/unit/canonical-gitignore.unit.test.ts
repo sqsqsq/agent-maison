@@ -82,6 +82,21 @@ export function runAll(): UnitCaseResult[] {
     assert(!CANONICAL_IGNORE_PATTERNS.includes('doc/goal-runs/'), 'no doc/goal-runs');
   });
 
+  run('CANONICAL_IGNORE_PATTERNS 含 Claude Code 个人 settings.local.json', () => {
+    assert(
+      CANONICAL_IGNORE_PATTERNS.includes('**/.claude/settings.local.json'),
+      'settings.local.json',
+    );
+    assert(
+      patternIsCovered('**/.claude/settings.local.json', ['.claude/settings.local.json']),
+      'equiv .claude/settings.local.json',
+    );
+    assert(
+      patternIsCovered('**/.claude/settings.local.json', ['/.claude/settings.local.json']),
+      'equiv /.claude/settings.local.json',
+    );
+  });
+
   run('空目录 ensure：创建文件且 added 含全部 canonical', () => {
     withTmpProject(root => {
       const r = ensureCanonicalGitignore(root);
