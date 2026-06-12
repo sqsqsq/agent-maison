@@ -123,6 +123,8 @@
 | `supported` | 按 interaction-renderer 调结构化选择控件 + **同轮** portable 脚注 |
 | `unsupported` | **仅** portable 编号菜单（generic interaction-renderer） |
 
+**S4 已闭环例外（framework-init）**：`buildRunSummary` 汇报完成后 init 编排结束；**禁止**再附 S2 registry（`init.task_plan` / `init.materialized_adapters` 等）portable 脚注——即使用户未回复，也不得在摘要末尾挂「编号菜单 (portable)」速查表。
+
 选项文案 SSOT：[confirmation-registry.yaml](./confirmation-registry.yaml)。
 
 chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsupported`。

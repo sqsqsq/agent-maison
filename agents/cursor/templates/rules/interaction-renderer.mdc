@@ -38,6 +38,7 @@ alwaysApply: true
 - S2 registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认
 - S3：枚举 decision JSON → `executeInitPlan`
 - S4：`buildRunSummary` 结构化摘要；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）
+- **S4 已闭环**：`buildRunSummary` 汇报完成后 **禁止**再附 portable 编号菜单脚注（含 `init.task_plan` / `init.materialized_adapters`）；`portable_required` 仅适用于 S2 等同轮提问
 - setup：`setup.adapter` / `setup.deveco_path`；只写 `framework.local.json`
 
 ## 决策复述
@@ -50,3 +51,4 @@ alwaysApply: true
 - option label 自造路径
 - freeform 提议未展示正文只要用户回 1
 - 阶段四件套 PASS 后自动开下一阶段
+- framework-init S4 `buildRunSummary` 后再附 init registry portable 脚注

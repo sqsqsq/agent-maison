@@ -137,6 +137,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   results.push(...lintRegistryOptionsSchema(registryText, registryRel));
   results.push(...lintInitSetupNoFreeText(registryText, registryRel));
   results.push(...lintInitSetupPromptsAndTemplates(layout));
+  results.push(...lintInitS4ClosedNoPortableFooter(layout));
   results.push(...lintSharedLayerNoToolNames(layout));
   results.push(...lintAdapterInteractionRenderers(layout));
   results.push(...lintClaudeInteractionTemplates(layout));
@@ -480,6 +481,33 @@ function lintRegistryOptionsSchema(registryText: string, registryRel: string): C
   return results;
 }
 
+const INIT_S4_CLOSED_MARKER = 'S4 已闭环';
+
+function lintInitS4ClosedNoPortableFooter(layout: RepoLayout): CheckResult[] {
+  const results: CheckResult[] = [];
+  const requiredFiles: Array<{ parts: string[]; label: string }> = [
+    { parts: ['skills', 'project', 'framework-init', 'SKILL.md'], label: 'framework-init SKILL' },
+    { parts: ['skills', 'reference', 'user-confirmation-ux.md'], label: 'user-confirmation-ux' },
+  ];
+  for (const { parts, label } of requiredFiles) {
+    const abs = frameworkAbs(layout, ...parts);
+    const rel = frameworkRelPath(layout, abs);
+    if (!fs.existsSync(abs)) {
+      results.push(blocker('init_s4_closed_ssot_missing', `${label} 缺失`, [rel]));
+      continue;
+    }
+    const text = fs.readFileSync(abs, 'utf-8');
+    if (!text.includes(INIT_S4_CLOSED_MARKER)) {
+      results.push(blocker(
+        'init_s4_closed_ssot_missing_rule',
+        `${label} 须声明 ${INIT_S4_CLOSED_MARKER}（禁止 S4 摘要后附 init portable 脚注）`,
+        [rel],
+      ));
+    }
+  }
+  return results;
+}
+
 function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
   const results: CheckResult[] = [];
   for (const adapter of ADAPTER_NAMES) {
@@ -512,6 +540,15 @@ function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
         `${adapter} interaction_renderer_rule 指向的文件不存在: ${ruleRel}`,
         [rulePathRel],
       ));
+    } else {
+      const ruleText = fs.readFileSync(ruleAbs, 'utf-8');
+      if (!ruleText.includes(INIT_S4_CLOSED_MARKER)) {
+        results.push(blocker(
+          'adapter_interaction_renderer_init_s4_closed',
+          `${adapter} interaction-renderer 须声明 ${INIT_S4_CLOSED_MARKER}（禁止 S4 摘要后附 portable 脚注）`,
+          [rulePathRel],
+        ));
+      }
     }
     if (uc.widget_tool_hint !== undefined) {
       results.push(blocker(

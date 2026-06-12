@@ -28,6 +28,7 @@
 - S2 registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认
 - S3 枚举 decision JSON 交 `executeInitPlan`
 - S4 用 harness `buildRunSummary`；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）
+- **S4 已闭环**：`buildRunSummary` 汇报完成后 **禁止**再附 portable 编号菜单（含 `init.task_plan` / `init.materialized_adapters` 速查）
 - setup 用 `setup.adapter` / `setup.deveco_path`，只写 `framework.local.json`
 
 ## 决策复述
@@ -38,3 +39,4 @@
 
 - 仅展示 Markdown 大表让用户逐行打字，无 gate/enum
 - 口头 OK 但未写回 artifact（spec `[x]`、gap-notes）
+- framework-init S4 `buildRunSummary` 后再附 `init.task_plan` / `init.materialized_adapters` portable 速查

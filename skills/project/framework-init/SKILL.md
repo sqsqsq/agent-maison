@@ -172,6 +172,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - **清理 staging**：通用 staging 路径无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`），并在 S4 汇报“已清理”；仅调试需要时可汇报“保留用于调试：<abs-temp-dir>”。`--smart-auto` 路径应汇报“未创建外部 staging 目录”。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **UPDATE 遗留跳板清理**：若 S3 执行了 `cleanup-deprecated`，摘要须引用 run-log 中 `cleanup_effects.backup_deleted` 计数；有备份时注明 `.framework-backup/<timestamp>/` 路径（S1 probe 仅提示「将清理」，以 S3 run-log 为准）。
+- **S4 已闭环（BLOCKER）**：`buildRunSummary` 汇报完成后 init 编排结束；**禁止**在摘要或「可选下一步」之后另附 **编号菜单 (portable)**、`init.task_plan` / `init.materialized_adapters` 等 S2 registry 脚注（`portable_required` 仅适用于**同轮仍在提问**的交互，不适用于已执行完的 S4）。
 - **可选下一步（仅列出，禁止诱导式 yes/no 或默认进入下游 Skill）**：
   1. 提醒团队成员：首次跑 catalog/spec 等阶段时 `--ensure` 会自动写入 personal adapter（多 adapter 时选一次）。
   2. 需要时可自行执行：`/catalog-bootstrap`、`/glossary-bootstrap`、`/spec` 及后续 phase。
