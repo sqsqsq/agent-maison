@@ -38,7 +38,7 @@ const cases: Case[] = [
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       assert(spec.schema_version === '1.0', 'schema_version');
       assert(spec.name === 'spec-driven', 'name');
-      assert(spec.artifacts.length === 11, `artifacts len=${spec.artifacts.length}`);
+      assert(spec.artifacts.length === 12, `artifacts len=${spec.artifacts.length}`);
     },
   },
   {
@@ -47,7 +47,8 @@ const cases: Case[] = [
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const ids = workflowPhaseIdSet(spec);
       assert(ids.has('spec') && ids.has('coding') && ids.has('init') && ids.has('extensions'), 'missing ids');
-      assert(ids.size === 11, 'size');
+      assert(ids.size === 12, 'size');
+      assert(ids.has('module-graph'), 'module-graph');
     },
   },
   {
@@ -65,7 +66,7 @@ const cases: Case[] = [
     run: () => {
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const order = listWorkflowPhases(spec);
-      assert(order.length === 11, 'topo length');
+      assert(order.length === 12, 'topo length');
       assert(order[order.length - 1] === 'testing', 'testing must be last');
       const iCat = order.indexOf('catalog');
       const iGloss = order.indexOf('glossary');

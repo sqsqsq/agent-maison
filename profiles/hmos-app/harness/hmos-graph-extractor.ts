@@ -76,3 +76,6 @@ export const hmosGraphExtractor: GraphExtractor = {
     return { module: moduleName, signatures, import_edges, call_edges };
   },
 };
+
+/** loader 约定导出名（与 `hmosGraphExtractor` 同实例） */
+export const graphExtractor: GraphExtractor = hmosGraphExtractor;

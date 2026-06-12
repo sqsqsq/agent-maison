@@ -8,6 +8,10 @@ assets:
   framework-init:
     preset_5_layer_sample: templates/architecture-dsl-sample.json
 
+  code-graph:
+    code_graph_template: templates/code-graph-template.yaml
+    curate_core_prompt: prompts/curate-core-nodes.md
+
   catalog-bootstrap:
     examples_domain_mapping: examples-domain-mapping.md
     examples_wallet_domain: examples-domain-mapping.md

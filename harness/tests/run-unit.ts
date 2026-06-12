@@ -61,6 +61,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'code-graph-drift', modulePath: './unit/code-graph-drift.unit.test' },
   { id: 'code-graph-anchor-hash', modulePath: './unit/code-graph-anchor-hash.unit.test' },
   { id: 'bootstrap-code-graph', modulePath: './unit/bootstrap-code-graph.unit.test' },
+  { id: 'check-module-graph', modulePath: './unit/check-module-graph.unit.test' },
   { id: 'ut-verdict-incomplete', modulePath: './unit/ut-verdict-incomplete.unit.test' },
   { id: 'ut-file-scope', modulePath: './unit/ut-file-scope.unit.test' },
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },

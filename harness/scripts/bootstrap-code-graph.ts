@@ -18,10 +18,11 @@ import minimist from 'minimist';
 import { computeAnchorContentHash } from '../code-graph/anchor-hash';
 import type { CodeGraphDerived, CodeGraphFile, CodeGraphNode } from '../code-graph/types';
 import { loadFrameworkConfig, moduleGraphPath } from '../config';
+import { loadResolvedProfile } from '../profile-loader';
+import { tryLoadGraphExtractor } from '../profile-host-loader';
 import { findModule, loadCatalog } from './utils/catalog-parser';
 import type { ModuleCard } from './utils/catalog-parser';
 import type { GraphExtractResult, GraphSymbolSignature } from '../graph-extractor/types';
-import { hmosGraphExtractor } from '../../profiles/hmos-app/harness/hmos-graph-extractor';
 import { validateProjectRelativePath } from './utils/project-relative-path';
 
 function usage(): void {
@@ -145,8 +146,12 @@ function main(): void {
 
   const cfg = loadFrameworkConfig(projectRoot);
   const profileName = cfg.project_profile?.name ?? 'hmos-app';
-  if (profileName !== 'hmos-app') {
-    console.error(`[bootstrap-code-graph] 当前仅实现 hmos-app GraphExtractor；project_profile=${profileName}`);
+  const resolved = loadResolvedProfile(projectRoot, cfg);
+  const graphExtractor = tryLoadGraphExtractor(resolved.profileDir);
+  if (!graphExtractor) {
+    console.error(
+      `[bootstrap-code-graph] 当前 profile 未提供 GraphExtractor（无法生成 derived）；project_profile=${profileName}`,
+    );
     process.exit(1);
   }
 
@@ -179,7 +184,7 @@ function main(): void {
     process.exit(1);
   }
 
-  const extracted = hmosGraphExtractor.extractModule(projectRoot, packagePath, moduleName);
+  const extracted = graphExtractor.extractModule(projectRoot, packagePath, moduleName);
   const outPath = moduleGraphPath(projectRoot, packagePath);
   const existing = loadExistingGraph(outPath, moduleName);
 

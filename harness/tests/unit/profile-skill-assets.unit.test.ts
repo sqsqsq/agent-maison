@@ -238,6 +238,37 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'resolveSkillAssetPath: code-graph 资产 hmos-app 与 generic 均可解析',
+    run: () => {
+      const root = repoRoot();
+      for (const profile of ['hmos-app', 'generic'] as const) {
+        const m = loadSkillAssetsManifest(root, profile).manifest!;
+        for (const key of ['code_graph_template', 'curate_core_prompt'] as const) {
+          const res = resolveSkillAssetPath(root, profile, m, 'code-graph', key);
+          assert(res.ok && res.absPath !== undefined, `${profile}/${key}: ${res.error ?? 'fail'}`);
+          assert(fs.existsSync(res.absPath!), res.absPath!);
+        }
+      }
+    },
+  },
+  {
+    name: 'extractProfileSkillAssetRefs: code-graph SKILL 引用键可被清单覆盖',
+    run: () => {
+      const root = repoRoot();
+      const skillPath = path.join(root, 'skills', 'project', 'code-graph', 'SKILL.md');
+      const text = fs.readFileSync(skillPath, 'utf-8');
+      const refs = extractProfileSkillAssetRefs(text).filter(r => r.skill === 'code-graph');
+      assert(refs.length >= 2, `refs=${refs.length}`);
+      for (const profile of ['hmos-app', 'generic'] as const) {
+        const m = loadSkillAssetsManifest(root, profile).manifest!;
+        for (const ref of refs) {
+          const res = resolveSkillAssetPath(root, profile, m, ref.skill, ref.key);
+          assert(res.ok, `${profile} missing ${ref.skill}/${ref.key}: ${res.error}`);
+        }
+      }
+    },
+  },
+  {
     name: 'resolveManifestEntryPath: framework/ 前缀 + 外部 frameworkRoot',
     run: () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-fw-prefix-'));

@@ -2,7 +2,8 @@ schema_version: "1.0"
 name: spec-driven
 description: >
   Default harness workflow — mirrors legacy VALID_PHASES / phase DAG before optional
-  instance extensions phase. Global phases have no deps; feature phases follow
+  instance extensions phase. Global phases are mostly independent (module-graph
+  declares requires catalog for topology only); feature phases follow
   catalog+glossary → spec → plan → coding → (review | UT parallel) → testing.
 
 # Phase transition (agent UX; goal-runner may override to goal_mode at runtime):
@@ -37,6 +38,13 @@ artifacts:
     rule: phase-rules/glossary-rules.yaml
     requires: []
     skill_doc: ../skills/project/catalog-bootstrap/SKILL.md
+
+  - id: module-graph
+    scope: global
+    check: check-module-graph.ts
+    rule: phase-rules/module-graph-rules.yaml
+    requires: [catalog]
+    skill_doc: ../skills/project/code-graph/SKILL.md
 
   - id: docs
     scope: global

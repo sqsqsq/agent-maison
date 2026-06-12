@@ -1,0 +1,17 @@
+# hmos-app overlay — module-graph 提示文案（无额外 BLOCKER）
+phase: module-graph
+version: "1.0"
+
+structure_checks: {}
+
+semantic_checks: {}
+
+traceability_checks:
+  anchor_file_present:
+    description: >
+      hmos-app：锚定路径为相对工程根的 .ets 等业务源码；ohosTest/test 目录不应作为 core 锚点。
+    severity: BLOCKER
+  noncore_body_drift:
+    description: >
+      hmos-app：非 core 体变 [status=WARN]；可重跑 bootstrap:code-graph 刷新 derived 后人工复核 nodes。
+    severity: MINOR

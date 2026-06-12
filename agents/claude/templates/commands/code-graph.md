@@ -1,9 +1,9 @@
 ---
-description: 目标模式 goal-runner 薄入口
-argument-hint: <feature-name> [requirement]
+description: 进入 Code Graph 建图与维护（code-graph）
+argument-hint: <ModuleName>
 ---
 
-# /goal-mode
+# /code-graph — 模块功能图谱
 
 **用户输入**：$ARGUMENTS
 
@@ -13,6 +13,6 @@ argument-hint: <feature-name> [requirement]
 
 > **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
 
-按 [goal-mode Skill](../../framework/skills/project/goal-mode/SKILL.md) 执行：**agent 自跑** goal-runner，勿让用户手动执行 harness 命令。
+# 跳板文件
 
-完整 Skill：**[framework/skills/project/goal-mode/SKILL.md](../../framework/skills/project/goal-mode/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/project/code-graph/SKILL.md](../../framework/skills/project/code-graph/SKILL.md)**

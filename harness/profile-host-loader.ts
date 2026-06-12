@@ -7,6 +7,7 @@
 // ============================================================================
 
 import * as path from 'path';
+import type { GraphExtractor } from './graph-extractor/types';
 import type { CheckContext, CheckResult } from './scripts/utils/types';
 import type { FileAnalysis } from './scripts/utils/ast-analyzer';
 
@@ -112,6 +113,30 @@ export function tryLoadUtHostImpl(profileDir: string): UtHostImpl | null {
     if (typeof u[k] !== 'function') return null;
   }
   return u;
+}
+
+type GraphExtractorModule = {
+  graphExtractor?: GraphExtractor;
+  hmosGraphExtractor?: GraphExtractor;
+};
+
+function pickGraphExtractor(m: GraphExtractorModule | null): GraphExtractor | null {
+  const g = m?.graphExtractor ?? m?.hmosGraphExtractor;
+  if (!g || typeof g.extractModule !== 'function' || typeof g.profileId !== 'string') {
+    return null;
+  }
+  return g;
+}
+
+/** Code Graph 派生层抽取（profile host impl，不经 capability registry） */
+export function tryLoadGraphExtractor(profileDir: string): GraphExtractor | null {
+  for (const baseName of ['graph-extractor', 'hmos-graph-extractor'] as const) {
+    const g = pickGraphExtractor(
+      tryLoadProfileHarnessModule<GraphExtractorModule>(profileDir, baseName),
+    );
+    if (g) return g;
+  }
+  return null;
 }
 
 /** git diff 业务源码过滤：测试工作区路径排除（正则作用于正斜杠路径） */

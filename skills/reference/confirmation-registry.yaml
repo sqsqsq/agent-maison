@@ -212,6 +212,40 @@ entries:
         label: "作废 — 放弃本轮 staging"
         portable: "4=q作废"
 
+  - id: code-graph.derive_confirm
+    skill: "code-graph"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "Step 2 bootstrap"
+    portable_menu: "1=确认写盘 2=仅预览dry-run 3=取消"
+    options:
+      - value: write
+        label: "确认 — 按 bootstrap 摘要写入/刷新 code-graph.yaml 的 derived"
+        portable: "1=确认写盘"
+      - value: dry_run_only
+        label: "仅预览 — 保持 dry-run，本轮不写盘"
+        portable: "2=仅预览"
+      - value: cancel
+        label: "取消 — 放弃本轮派生层刷新"
+        portable: "3=取消"
+
+  - id: code-graph.curated_confirm
+    skill: "code-graph"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "Step 3 策展"
+    portable_menu: "1=确认nodes 2=继续修改 3=取消"
+    options:
+      - value: confirm_nodes
+        label: "确认 — 按展示的 core/intent 写入 nodes 策展层"
+        portable: "1=确认nodes"
+      - value: edit
+        label: "继续修改 — 调整 core 节点后再确认"
+        portable: "2=继续修改"
+      - value: cancel
+        label: "取消 — 不写入策展层"
+        portable: "3=取消"
+
   - id: catalog.seed_tech_word
     skill: "catalog-bootstrap"
     class: enum

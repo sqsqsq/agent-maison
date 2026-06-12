@@ -1,0 +1,33 @@
+# ============================================================================
+# Module-graph 阶段规约 — profile 中立骨架
+# ============================================================================
+# 校验各模块 code-graph.yaml 的 schema 与锚定漂移（derived 新鲜度不在 v1 强制）。
+# 消费者：framework/harness/scripts/check-module-graph.ts
+# ============================================================================
+
+phase: module-graph
+version: "1.0"
+applies_to: "<module>/code-graph.yaml（paths.module_graphs_dir 模式）"
+
+structure_checks:
+  code_graph_schema_valid:
+    description: >
+      每个已落盘的 Code Graph 文件须含 schema_version、module、nodes[]；
+      非空 nodes 须带 id 与 anchor.file + anchor.symbol + anchor.content_hash。
+    severity: BLOCKER
+
+traceability_checks:
+  anchor_file_present:
+    description: 锚定文件须存在于工程内（漂移 anchor_file_missing → BLOCKER）。
+    severity: BLOCKER
+  anchor_symbol_present:
+    description: 锚定符号须仍能在源文件中找到（漂移 anchor_symbol_missing → BLOCKER）。
+    severity: BLOCKER
+  core_anchor_drift:
+    description: core 节点 anchor hash 变化须更新图谱并同步 UT（core_anchor_changed → BLOCKER）。
+    severity: BLOCKER
+  noncore_body_drift:
+    description: 非 core 节点仅函数体 hash 变化时提示 regenerate/review（body_hash_changed → [status=WARN]）。
+    severity: MINOR
+
+semantic_checks: {}

@@ -1,0 +1,6 @@
+# generic profile — Code Graph 占位模板（仅 drift 检查场景）
+# 生成 derived 须使用提供 GraphExtractor 的 profile（如 hmos-app）。
+
+schema_version: "1.0"
+module: <ModuleName>
+nodes: []

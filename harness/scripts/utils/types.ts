@@ -17,7 +17,8 @@ export type KnownPhase =
   | 'glossary'
   | 'docs'
   | 'init'
-  | 'extensions';
+  | 'extensions'
+  | 'module-graph';
 
 /** catalog / glossary / docs / init / extensions 等全局 phase 使用本哨兵 feature */
 export const GLOBAL_FEATURE_SENTINEL = '_global';
@@ -32,7 +33,8 @@ export function isGlobalPhase(phase: Phase): boolean {
     phase === 'glossary' ||
     phase === 'docs' ||
     phase === 'init' ||
-    phase === 'extensions'
+    phase === 'extensions' ||
+    phase === 'module-graph'
   );
 }
 

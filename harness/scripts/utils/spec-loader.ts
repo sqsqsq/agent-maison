@@ -59,6 +59,7 @@ const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   docs: 'docs-rules.yaml',
   init: 'init-rules.yaml',
   extensions: 'extensions-rules.yaml',
+  'module-graph': 'module-graph-rules.yaml',
 };
 
 const ARCHIVE_EXTENSIONS = [

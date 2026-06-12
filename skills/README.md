@@ -73,6 +73,8 @@ profile-skill-asset:<skill-id>/<asset_key>
 |----------|------|------|
 | framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 接入 submodule、生成/更新 config、agent 产物与 `doc/` 骨架 |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
+| code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
+| goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |
 
 ### feature/ — 需求级（管线顺序由 workflow DAG 决定）
 

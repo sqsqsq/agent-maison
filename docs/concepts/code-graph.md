@@ -91,13 +91,19 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 - `--seed-from-catalog`：仅在 `nodes` 为空时，用 catalog 的 `entry_file` / `key_exports` 生成**草稿**节点（`core: false`，须人工改 intent 并标 3–5 个 `core: true`）。
 - `--dry-run`：预览统计不写盘；包路径不对时用 `--package-path <layer>/<name>` 覆盖。
 
-漂移评估仍用库函数 `evaluateCodeGraphDrift()`；日常 `module-graph` phase / `0-code-graph` Skill 仍属后置（见下）。
+漂移评估：`evaluateCodeGraphDrift()`；日常维护入口已落地——**`code-graph` Skill** + harness `--phase module-graph`（见 `openspec/changes/code-graph-entrypoints`）。
+
+```bash
+cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
+```
+
+用户主动建图：读 `framework/skills/project/code-graph/SKILL.md` 或 `/code-graph <ModuleName>`。
 
 ### 6.1 仍后置的能力
 
-- **Skill 全量接入图谱作导航索引**（spec/2/3/6）；每次使用须反查 anchor，不得当 spec/plan/coding 事实来源。
+- **Skill 全量接入图谱作导航索引**（spec / plan / coding / device-testing 等）；每次使用须反查 anchor，不得当 spec/plan/coding 事实来源。
 - **全局 Repo Map**（跨模块聚合派生导航）。
-- **日常维护入口**（harness-runner `--phase module-graph`、专用 Skill、CI drift 阶段）。
+- **CI 定时 drift 阶段**（可选；当前由 Skill 收尾或手动跑 `--phase module-graph`）。
 
 ---
 

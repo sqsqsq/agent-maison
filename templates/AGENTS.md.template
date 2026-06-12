@@ -99,14 +99,16 @@
 ## 四、工作流与 Skill 路由
 
 每个阶段都有对应 Skill 文档。具体触发方式由当前 adapter（`{{AGENT_ADAPTER}}`）决定——
-slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
-也可以直接让 agent 读对应 `framework/skills/<n>/SKILL.md` 进入。
+slash、技能跳板、或直链 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
+也可以直接让 agent 读对应 Skill 正文进入。
 
 | 阶段 | Skill 路径 |
 |------|-----------|
 | 0. Framework 初始化 / 升级 | [framework/skills/project/framework-init/SKILL.md](framework/skills/project/framework-init/SKILL.md) |
 | 0. 模块画像自举（Phase A） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. 术语表自举（Phase B） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
+| 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
+| 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
 | 1. Spec（需求规格） | [framework/skills/feature/spec/SKILL.md](framework/skills/feature/spec/SKILL.md) |
 | 2. Plan（实现计划） | [framework/skills/feature/plan/SKILL.md](framework/skills/feature/plan/SKILL.md) |
 | 3. 编码落地 | [framework/skills/feature/coding/SKILL.md](framework/skills/feature/coding/SKILL.md) |
@@ -266,7 +268,7 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 ## 七、快速索引
 
 - Framework 使用说明：[framework/README.md](framework/README.md)
-- 全链路验证说明：[framework/harness/harness-runner.ts](framework/harness/harness-runner.ts) 及各 `framework/skills/<n>/SKILL.md`
+- 全链路验证说明：[framework/harness/harness-runner.ts](framework/harness/harness-runner.ts) 及各 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md`
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
 - 功能需求产物目录（扁平归档 spec / plan / contracts / acceptance / review-report / test-plan 等）：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
 - catalog-bootstrap 全局阶段 harness 命令（**无 `--feature`**）：

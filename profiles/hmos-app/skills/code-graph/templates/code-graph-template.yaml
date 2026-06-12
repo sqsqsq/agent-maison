@@ -1,0 +1,18 @@
+# Code Graph 策展层样例（hmos-app）
+# 派生层 derived 由 bootstrap 自动生成，勿手写。
+
+schema_version: "1.0"
+module: <ModuleName>
+generated_at: "<ISO8601>"
+
+derived: {}  # bootstrap 填充：signatures / import_edges / call_edges
+
+nodes:
+  - id: core:EntryFlow
+    core: true
+    intent: "（一句业务意图）模块主入口编排"
+    invariant: "可选：代码无法表达的不变量"
+    anchor:
+      file: 02-Feature/<Module>/src/...
+      symbol: ClassName.methodName
+      content_hash: "<16-char hex>"

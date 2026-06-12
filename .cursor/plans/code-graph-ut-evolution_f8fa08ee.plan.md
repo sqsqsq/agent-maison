@@ -139,3 +139,11 @@ flowchart LR
   - `defer-skill-integration-repomap` / `defer-code-graph-entrypoints` → 后置,稳定后再开 change(如 `code-graph-skill-integration` / `repo-map` / `code-graph-entrypoints`)
 3. `**openspec/specs/**`（archive 后）—— 最终行为 SSOT。plan 不做运行时 SSOT;OpenSpec archive 后的 specs 才是长期规格,框架行为另沉到 `docs/` `skills/` `harness/`。
 
+## 实施记录
+
+### 2026-06-11 · defer-code-graph-entrypoints 由独立 plan 承接
+
+- **承接方**：`.cursor/plans/code-graph-skill-entrypoints_a2caa5a3.plan.md`（窗口 `2.3.0`）；OpenSpec change `code-graph-entrypoints`。
+- **范围**：用户入口 `code-graph` Skill、`--phase module-graph` 漂移门禁、`tryLoadGraphExtractor` 解耦 bootstrap；**不含** Repo Map 与各 Skill 图谱导航（`defer-skill-integration-repomap` 仍后置）。
+- **验收**：`cd harness && npm test`、`npm run release:verify`、`npm run openspec:validate`。
+

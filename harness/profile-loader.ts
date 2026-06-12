@@ -129,6 +129,7 @@ function normalizePhaseDisabled(raw: string[] | undefined): Set<Phase> {
     'docs',
     'init',
     'extensions',
+    'module-graph',
   ]);
   for (const p of raw ?? []) {
     const canon = normalizePhaseId(p) as Phase;

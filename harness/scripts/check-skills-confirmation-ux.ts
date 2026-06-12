@@ -28,6 +28,8 @@ const CLAUDE_SLASH_COMMANDS = [
   'commands/catalog-bootstrap.md',
   'commands/glossary-bootstrap.md',
   'commands/framework-init.md',
+  'commands/goal-mode.md',
+  'commands/code-graph.md',
 ] as const;
 const ADAPTER_NAMES = ['claude', 'cursor', 'generic'] as const;
 

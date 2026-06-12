@@ -28,6 +28,8 @@ const SLASH_COMMANDS = [
   'commands/framework-init.md',
   'commands/catalog-bootstrap.md',
   'commands/glossary-bootstrap.md',
+  'commands/goal-mode.md',
+  'commands/code-graph.md',
   'commands/spec.md',
   'commands/plan.md',
   'commands/coding.md',

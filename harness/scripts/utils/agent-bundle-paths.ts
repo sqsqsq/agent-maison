@@ -31,6 +31,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '接入或升级 Framework 配置与 agent 产物（完整流程见 framework/skills/project/framework-init/SKILL.md）',
   'catalog-bootstrap':
     '模块画像 catalog 与业务术语表 glossary 自举（完整流程见 framework/skills/project/catalog-bootstrap/SKILL.md）',
+  'code-graph':
+    '模块级 Code Graph 建图与漂移门禁（完整流程见 framework/skills/project/code-graph/SKILL.md）',
   'goal-mode':
     '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
   'spec': 'spec 撰写（完整流程见 framework/skills/feature/spec/SKILL.md）',

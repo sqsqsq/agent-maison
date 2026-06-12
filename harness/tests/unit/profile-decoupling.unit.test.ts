@@ -7,6 +7,7 @@ import assert from 'assert';
 import { filterBusinessSourceChanges } from '../../scripts/utils/git-diff';
 import {
   tryLoadDiffExcludeTestPathRegexes,
+  tryLoadGraphExtractor,
   tryLoadProfileCodingHost,
   tryLoadUtHostImpl,
 } from '../../profile-host-loader';
@@ -63,6 +64,21 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'tryLoadProfileCodingHost: generic 无 coding host 时返回 null',
     run: () => {
       assert.strictEqual(tryLoadProfileCodingHost(genericProfileDir), null);
+    },
+  },
+  {
+    name: 'tryLoadGraphExtractor: hmos-app 经 hmos-graph-extractor 加载',
+    run: () => {
+      const g = tryLoadGraphExtractor(hmosProfileDir);
+      assert.ok(g, '应加载 graphExtractor');
+      assert.strictEqual(typeof g!.extractModule, 'function');
+      assert.strictEqual(g!.profileId, 'hmos-app');
+    },
+  },
+  {
+    name: 'tryLoadGraphExtractor: generic 无 provider 时返回 null',
+    run: () => {
+      assert.strictEqual(tryLoadGraphExtractor(genericProfileDir), null);
     },
   },
   {

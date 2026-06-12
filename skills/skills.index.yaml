@@ -19,6 +19,13 @@ skills:
     description: >
       模块画像 catalog 与业务术语表 glossary 自举
 
+  - id: code-graph
+    scope: project
+    source_rel: project/code-graph
+    order: 2
+    description: >
+      模块级 Code Graph 建图、策展 core 节点与 module-graph 漂移门禁
+
   - id: goal-mode
     scope: project
     source_rel: project/goal-mode
