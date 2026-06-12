@@ -112,3 +112,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
 - [可演进性与扩展分层](extensibility.md)
 - [验收分层](acceptance-layering.md)
 - [business-ut 业务级 UT](../skills/feature/business-ut.md)
+
+---
+
+## 维护同步（2026-06-12 · 2.3.0）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`business-ut/SKILL.md` 本轮去除 Skill N 人读编号，正文仍引用 Code Graph / flow DAG 导航原则（索引-only，非 spec/plan/coding 真源）。
+- `module-graph` harness 与 `skills/project/code-graph/SKILL.md` 入口未变；仅同步 inventory source 时间戳。
