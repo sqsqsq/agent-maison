@@ -505,7 +505,7 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
         t.id === 'cleanup-deprecated'
           ? {
               ...t,
-              title: `deprecated + 遗留编号跳板 cleanup（发现 ${presence.count} 处，S3 将 backup_delete）`,
+              title: `deprecated + 遗留 skill 跳板 cleanup（发现 ${presence.count} 处，S3 将 backup_delete）`,
             }
           : t,
       );

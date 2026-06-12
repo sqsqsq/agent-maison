@@ -1,4 +1,4 @@
-// legacy-skill-bridge-cleanup.ts — v2.3 前编号 skill 跳板 SSOT 与 backup_delete
+// legacy-skill-bridge-cleanup.ts — 遗留 skill 跳板 SSOT 与 backup_delete
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,19 +8,27 @@ import type { InitMode } from '../check-init';
 import { validateAgentBundleRoot, type ResolvedAgentBundlePaths } from './agent-bundle-paths';
 import type { CleanupResult } from './init-sync-telemetry';
 
-export const LEGACY_NUMBERED_SKILL_BRIDGE_IDS = [
+export const LEGACY_SKILL_BRIDGE_IDS = [
+  // 00 / 0 前缀
   '00-framework-init',
   '0-catalog-bootstrap',
+  '00b-framework-setup',
+  // 1–6 编号（v2.3 扁平化前）
   '1-spec',
   '2-plan',
   '3-coding',
   '4-code-review',
   '5-business-ut',
   '6-device-testing',
-  '00b-framework-setup',
+  // 语义旧名（v2.3 前 prd/design 阶段）
+  'prd-design',
+  'requirement-design',
+  // 编号旧名（v2.3 前 prd/design 阶段）
+  '1-prd-design',
+  '2-requirement-design',
 ] as const;
 
-export type LegacyNumberedSkillBridgeId = (typeof LEGACY_NUMBERED_SKILL_BRIDGE_IDS)[number];
+export type LegacySkillBridgeId = (typeof LEGACY_SKILL_BRIDGE_IDS)[number];
 
 export interface BackupSession {
   stamp: string;
@@ -138,7 +146,7 @@ export function collectLegacySkillBridgePaths(
     const adapter = raw.trim();
     if (!adapter || seenAdapters.has(adapter)) continue;
     seenAdapters.add(adapter);
-    for (const legacyId of LEGACY_NUMBERED_SKILL_BRIDGE_IDS) {
+    for (const legacyId of LEGACY_SKILL_BRIDGE_IDS) {
       const relPosix = legacyRelPathForAdapter(adapter, legacyId, opts.config);
       if (!relPosix) continue;
       out.push({ adapter, relPosix: toPosix(relPosix), legacyId });

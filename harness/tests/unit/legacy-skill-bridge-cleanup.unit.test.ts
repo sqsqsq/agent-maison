@@ -123,6 +123,71 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'collectLegacySkillBridgePaths：cursor 含语义旧名 prd-design / requirement-design',
+    run: () => {
+      const config = baseConfig();
+      const paths = collectLegacySkillBridgePaths({
+        projectRoot: '/tmp',
+        materializedAdapters: ['cursor'],
+        mode: 'update',
+        config,
+      });
+      assert(paths.some(p => p.relPosix === '.cursor/skills/prd-design/'));
+      assert(paths.some(p => p.relPosix === '.cursor/skills/requirement-design/'));
+    },
+  },
+  {
+    name: 'collectLegacySkillBridgePaths：claude 含语义与编号旧名 .md',
+    run: () => {
+      const config = baseConfig();
+      const paths = collectLegacySkillBridgePaths({
+        projectRoot: '/tmp',
+        materializedAdapters: ['claude'],
+        mode: 'update',
+        config,
+      });
+      assert(paths.some(p => p.relPosix === '.claude/commands/prd-design.md'));
+      assert(paths.some(p => p.relPosix === '.claude/commands/requirement-design.md'));
+      assert(paths.some(p => p.relPosix === '.claude/commands/1-prd-design.md'));
+    },
+  },
+  {
+    name: 'applyLegacySkillBridgeCleanup UPDATE：删 prd-design 留 spec',
+    run: () => {
+      const root = mkTmp();
+      const legacyDir = path.join(root, '.cursor', 'skills', 'prd-design');
+      const canonicalDir = path.join(root, '.cursor', 'skills', 'spec');
+      fs.mkdirSync(legacyDir, { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, 'SKILL.md'), 'legacy');
+      fs.mkdirSync(canonicalDir, { recursive: true });
+      fs.writeFileSync(path.join(canonicalDir, 'SKILL.md'), 'canonical');
+
+      const config = baseConfig();
+      const { cleaned } = applyLegacySkillBridgeCleanup({
+        projectRoot: root,
+        materializedAdapters: ['cursor'],
+        mode: 'update',
+        config,
+      });
+      assert(cleaned.some(c => c.legacy_id === 'prd-design'));
+      assert(!fs.existsSync(legacyDir));
+      assert(fs.existsSync(canonicalDir));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'detectLegacySkillBridgePresence：cursor prd-design 计入 S1 sample',
+    run: () => {
+      const root = mkTmp();
+      fs.mkdirSync(path.join(root, '.cursor', 'skills', 'prd-design'), { recursive: true });
+      const config = baseConfig();
+      const presence = detectLegacySkillBridgePresence(root, config, ['cursor']);
+      assert(presence.count >= 1);
+      assert(presence.samples.some(s => s.includes('prd-design')));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
     name: '根目录安全：agent_bundle_root 含 .. 抛错',
     run: () => {
       const root = mkTmp();

@@ -753,6 +753,124 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'cleanup-deprecated UPDATE cursor：删 prd-design/requirement-design 留 spec/plan',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['cursor'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      for (const id of ['prd-design', 'requirement-design', 'spec', 'plan']) {
+        fs.mkdirSync(path.join(root, '.cursor', 'skills', id), { recursive: true });
+      }
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['cursor'],
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const result = executeInitTask(task, 'run', ctx);
+      assert(result.cleanup_effects?.backup_deleted);
+      assert(!fs.existsSync(path.join(root, '.cursor', 'skills', 'prd-design')));
+      assert(!fs.existsSync(path.join(root, '.cursor', 'skills', 'requirement-design')));
+      assert(fs.existsSync(path.join(root, '.cursor', 'skills', 'spec')));
+      assert(fs.existsSync(path.join(root, '.cursor', 'skills', 'plan')));
+      assert(result.cleanup_results?.some(r => r.path.includes('prd-design')));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'cleanup-deprecated UPDATE claude：删语义旧名 .md 留 spec/plan',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      const harnessRoot = harnessRootFromLayout(layout);
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['claude'],
+          architecture: minimalArchitecture(),
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      const commandsDir = path.join(root, '.claude', 'commands');
+      fs.mkdirSync(commandsDir, { recursive: true });
+      for (const file of [
+        'prd-design.md',
+        'requirement-design.md',
+        '1-prd-design.md',
+        'spec.md',
+        'plan.md',
+      ]) {
+        fs.writeFileSync(path.join(commandsDir, file), file);
+      }
+      clearFrameworkConfigCache();
+
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot,
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: '',
+          tasks: [],
+        },
+        materializedAdapters: ['claude'],
+      };
+      const task = {
+        id: 'cleanup-deprecated',
+        title: 'cleanup',
+        category: 'mechanism',
+        scope: 'project' as const,
+        deps: ['ensure-config'],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: true,
+        allowed_actions: ['run' as const],
+      };
+      const result = executeInitTask(task, 'run', ctx);
+      assert(result.cleanup_effects?.backup_deleted);
+      assert(!fs.existsSync(path.join(commandsDir, 'prd-design.md')));
+      assert(!fs.existsSync(path.join(commandsDir, 'requirement-design.md')));
+      assert(!fs.existsSync(path.join(commandsDir, '1-prd-design.md')));
+      assert(fs.existsSync(path.join(commandsDir, 'spec.md')));
+      assert(fs.existsSync(path.join(commandsDir, 'plan.md')));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
     name: 'cleanup-deprecated UPDATE generic+.codex：清 .codex/skills/3-coding',
     run: () => {
       const root = mkTmp();
