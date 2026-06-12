@@ -166,3 +166,10 @@ runHvigorAssembleApp({
 ## 5. false PASS：宿主编译输出未被识别
 
 若怀疑 harness 已 PASS 但 **hvigor 日志里仍有 ArkTS 错误** 未被脚本归类：可把 `framework.config.json > toolchain.devEcoStudio.aaTestTimeoutMs` 调大后重跑，并核对 `hvigor-build.log` 与 `script-report.json`。
+
+---
+
+## 维护同步（2026-06-12 · 2.3.0）
+
+- hvigor / hdc / coding-host-rules 源文件路径与 capability-registry 调度关系复核。
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 所列 harness 源文件保持 argv / 产物路径一致。

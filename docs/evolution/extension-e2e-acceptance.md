@@ -24,7 +24,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase extensions
 - `knowledge/naming-taboos.md`
 - `hooks/coding/pre_check.mjs` 与 `hooks/spec/on_context_load.md`
 
-跑一次 **feature 链**上阶段（如 `prd` / `design` / `coding`）时，lifecycle hook 应**注入片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段）。
+跑一次 **feature 链**上阶段（如 `spec` / `plan` / `coding`）时，lifecycle hook 应**注入片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段）。
 
 ## 3. `render-agents-md` 与桥接产物
 
@@ -53,9 +53,10 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 
 ---
 
-## 维护同步（2026-05-22 · 对齐 2.0）
+## 维护同步（2026-06-12 · 2.3.0）
 
 - **`render-agents-md`**：S3 先落盘 `framework.config.json`；`render-agents-md.mjs` 为弱模型首选渲染路径。
+- **feature 链示例**：lifecycle hook 烟测使用 canonical phase `spec` / `plan` / `coding`（非 legacy `prd` / `design`）。
 - **Claude adapter**：通过 `user_confirmation.interaction_renderer_rule` 下发 `.claude/rules/interaction-renderer.md`；扩展 Skill 确认点须登记 registry。
 - **Cursor adapter**：`instance_skill_bridge` 写入 `.cursor/skills/` 跳板；正文 SSOT 仍在 `framework/skills/`。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`instance_skill_bridge` / `extension-loader` / adapter manifest 与本文件一致。

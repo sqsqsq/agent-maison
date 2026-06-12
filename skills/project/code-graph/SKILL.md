@@ -30,7 +30,7 @@
 ## 核心设计原则
 
 1. **一次一个模块**：与 catalog-bootstrap 对齐，每轮只处理 1 个 catalog 模块。
-2. **图谱只作索引**：Code Graph 不是 PRD/plan/coding 真源；用时必须反查源码 anchor。
+2. **图谱只作索引**：Code Graph 不是 spec/plan/coding 真源；用时必须反查源码 anchor。
 3. **派生层可重建**：`derived` 由 `bootstrap:code-graph` 自动生成；`nodes` 策展层须用户确认后写入。
 4. **与 flow DAG 边界**：本 Skill **不**生成、不验证 business-ut 的 flow DAG 连续性；`module-graph` phase 只验锚点与漂移。
 5. **profile 能力分界**：`module-graph` 门禁 profile 中立（零图谱 PASS）；**生成/刷新 derived** 须当前 profile 提供 `GraphExtractor`（hmos-app 已提供；generic 等仅 drift 检查）。
@@ -136,7 +136,7 @@ framework/harness/reports/_global/module-graph/<timestamp>/<model>-module-graph/
 
 ## 约束
 
-1. **禁止**把 Code Graph 当 PRD/plan/coding/flow DAG 真源。
+1. **禁止**把 Code Graph 当 spec/plan/coding/flow DAG 真源。
 2. **禁止**一次批量处理多个模块。
 3. **禁止**未经用户确认覆盖已有 `nodes[]` 策展层（bootstrap 已保护 derived-only 刷新）。
 4. 中文输出。

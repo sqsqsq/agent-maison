@@ -2,7 +2,7 @@
 // ============================================================================
 // render-agents-md.mjs — 薄 shim：fork 到 ts-node 执行 render-agents-md.ts
 // ============================================================================
-// 保持 Skill 00 / 文档中的调用路径不变：`node framework/harness/scripts/render-agents-md.mjs ...`
+// 保持 framework-init / 文档中的调用路径不变：`node framework/harness/scripts/render-agents-md.mjs ...`
 // ============================================================================
 
 import { spawnSync } from 'node:child_process';

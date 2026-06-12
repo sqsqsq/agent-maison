@@ -9,6 +9,10 @@ import { packRelease } from './pack-release.mjs';
 import { checkStaleInitRefs, formatStaleInitRefHits } from './check-stale-init-refs.mjs';
 import { checkPlanVersions, formatPlanVersionHits } from './check-plan-version.mjs';
 import {
+  checkNoNumberedSkillRelease,
+  formatNoNumberedSkillHits,
+} from './check-no-numbered-skill-release.mjs';
+import {
   isProbablyBinaryBuffer,
   isReleaseBinaryRelPath,
   loadReleaseExcludes,
@@ -214,6 +218,17 @@ export async function verifyReleasePack() {
       const frameworkRoot = path.join(extractRoot, 'framework');
       assertZipContents(frameworkRoot);
       assertReleaseTextUsesLf(frameworkRoot);
+
+      console.log('[release:verify] numbered skill path/prose scan...');
+      const numbered = checkNoNumberedSkillRelease(frameworkRoot);
+      if (!numbered.ok) {
+        console.error(
+          '[release:verify] numbered skill FAIL:\n' + formatNoNumberedSkillHits(numbered.hits),
+        );
+        fail(`numbered skill path/prose: ${numbered.hits.length} hit(s) in release zip`);
+      }
+      console.log('[release:verify] numbered skill path/prose PASS');
+
       console.log('[release:verify] zip content assertions PASS');
     } finally {
       fs.rmSync(extractRoot, { recursive: true, force: true });

@@ -8,8 +8,10 @@ import * as path from 'path';
 
 import { inferRepoLayout } from '../../repo-layout';
 import {
+  NUMBERED_PROSE_RE,
   resolveNumberedSkillScanTarget,
   scanNoNumberedSkillPaths,
+  scanNoNumberedSkillProse,
 } from '../../scripts/utils/no-numbered-skill-scan';
 
 export interface UnitCaseResult {
@@ -39,6 +41,23 @@ const cases: Array<{ name: string; run: () => void }> = [
       const t = resolveNumberedSkillScanTarget(layout, 'consumer');
       assert(t.scanRoot === fw, t.scanRoot);
       assert(t.reportRelPrefix === 'framework/', t.reportRelPrefix);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'consumer: skills/1-spec 目录残留无正文引用也应命中',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-c-rel-'));
+      const fw = path.join(tmp, 'framework');
+      writeText(path.join(fw, 'skills', '1-spec', 'SKILL.md'), 'plain body without path refs\n');
+      writeText(path.join(fw, 'workflows', '.gitkeep'), '');
+      const layout = inferRepoLayout(tmp);
+      const hits = scanNoNumberedSkillPaths(layout, 'consumer');
+      assert(hits.length >= 1, `hits=${hits.length}`);
+      assert(
+        hits.some(h => h.line === 0 && h.file.replace(/\\/g, '/').includes('skills/1-spec')),
+        hits.map(h => `${h.file}:${h.line} ${h.match}`).join(';'),
+      );
       fs.rmSync(tmp, { recursive: true, force: true });
     },
   },
@@ -97,6 +116,42 @@ const cases: Array<{ name: string; run: () => void }> = [
       const layout = inferRepoLayout(path.resolve(__dirname, '../../..'));
       const hits = scanNoNumberedSkillPaths(layout, 'dev');
       assert(hits.length === 0, hits.slice(0, 3).map(h => `${h.file}:${h.line}`).join('\n'));
+    },
+  },
+  {
+    name: 'prose regex: Skill 00 命中且与 Skill 0 / Skill 007 区分',
+    run: () => {
+      const exec = (text: string) => {
+        NUMBERED_PROSE_RE.lastIndex = 0;
+        return NUMBERED_PROSE_RE.exec(text);
+      };
+      assert(exec('see Skill 00 framework-init')?.[0] === 'Skill 00', 'Skill 00');
+      assert(exec('see Skill 0 catalog-bootstrap')?.[0] === 'Skill 0', 'Skill 0');
+      assert(exec('Skill 007') === null, 'Skill 007 must not match');
+      assert(exec('经 framework-init Stop hook') === null, 'no Skill prefix');
+    },
+  },
+  {
+    name: 'prose scan: Skill 00 正文命中',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-prose-00-'));
+      const fw = path.join(tmp, 'framework');
+      writeText(path.join(fw, 'skills', 'feature', 'spec', 'SKILL.md'), '旧称 Skill 00 已废弃\n');
+      writeText(path.join(fw, 'workflows', '.gitkeep'), '');
+      const layout = inferRepoLayout(tmp);
+      const hits = scanNoNumberedSkillProse(layout, 'consumer');
+      assert(hits.some(h => h.match === 'Skill 00'), hits.map(h => h.match).join(';'));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'dev standalone: feature SKILL 无 Skill N 人读编号',
+    run: () => {
+      const layout = inferRepoLayout(path.resolve(__dirname, '../../..'));
+      const hits = scanNoNumberedSkillProse(layout, 'dev').filter(h =>
+        h.file.replace(/\\/g, '/').includes('skills/feature/'),
+      );
+      assert(hits.length === 0, hits.slice(0, 5).map(h => `${h.file}:${h.line} ${h.match}`).join('\n'));
     },
   },
 ];

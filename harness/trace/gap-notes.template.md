@@ -14,7 +14,7 @@
 | 字段 | 值 |
 |------|----|
 | feature | <功能名，如 bank-card> |
-| phase | prd / design / coding / review / ut / testing |
+| phase | spec / plan / coding / review / ut / testing |
 | model | <minimax-2.5 / glm-4.5 / ...> |
 | context_window | <200K / 128K / ...> |
 | runtime | claude-code-cli / cursor / other |

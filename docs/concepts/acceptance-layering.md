@@ -56,7 +56,7 @@ flowchart LR
 | **降级** | `acceptance.yaml` + `spec.md`（无 design） | 可 WARN，仍可派生粗 plan |
 | **即席 `_adhoc`** | bundle + 步骤 | **不跑** feature `testing` 全套门禁 |
 
-`compat.yaml` 仅覆盖 **prd～ut**，**不含** testing 阶段。
+`compat.yaml` 仅覆盖 **spec～ut**，**不含** testing 阶段。
 
 ---
 

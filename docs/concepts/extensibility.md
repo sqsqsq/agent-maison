@@ -23,7 +23,7 @@ framework 默认 → profile → workflow（active_workflow YAML）→ doc/exten
 ```mermaid
 flowchart TB
   subgraph FW[framework/ 核心]
-    coreSkills["skills/00..6 默认 SKILL.md"]
+    coreSkills["skills/feature/* 默认 SKILL.md"]
     coreRules["specs/phase-rules/*.yaml"]
     coreHarness["harness/check-*.ts"]
   end
@@ -104,9 +104,10 @@ flowchart TB
 
 ---
 
-## 维护同步（2026-05-22 · 对齐 2.0）
+## 维护同步（2026-06-12 · 2.3.0）
 
 - **四层模型**：framework → profile → workflow → `doc/extensions`；争权顺序不变。详见 [`../overview.md`](../overview.md) §1.3.2。
+- **核心 Skill 路径**：架构图与正文统一为 `skills/feature/*`（不再使用 `skills/00..6` 编号目录表述）。
 - **capability-registry**：宿主编译 / UT / 真机能力由 profile 注册，根 harness 只做编排；详见 [`../../profiles/README.md`](../../profiles/README.md)。
 - **adapter 桥接**：`render-agents-md` + `instance_skill_bridge` 下发扩展 Skill；确认 UX 见 adapter **interaction-renderer** 与 [`../../skills/reference/user-confirmation-ux.md`](../../skills/reference/user-confirmation-ux.md)。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`agents/README.md` / `profile-loader.ts` / workflow 与 schema 仍为本文 SSOT。

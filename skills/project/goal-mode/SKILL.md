@@ -14,7 +14,7 @@
 
 | 方式 | 示例 |
 |------|------|
-| Claude slash | `/goal-mode demo-feature 全自动从 prd 做到 testing` |
+| Claude slash | `/goal-mode demo-feature 全自动从 spec 做到 testing` |
 | 自然语言 | 「对 `demo-feature` 进入目标模式，无人值守全自动」 |
 | Codex/Cursor/generic Skill | 读跳板（skill id `goal-mode`）后进入本 Skill 正文 |
 
@@ -24,7 +24,7 @@
 |------|------|------|
 | `feature` | 是 | feature slug |
 | `requirement` | 否 | 需求描述 |
-| `start_phase` / `end_phase` | 否 | 默认 prd→testing |
+| `start_phase` / `end_phase` | 否 | 默认 spec→testing |
 | `adapter` | 否 | 用户显式指定 agent（如「用 cursor 跑 goal」）→ 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `--adapter`；未物化 → **STOP** 引导 `/framework-init`（不在 goal 流程内写项目产物） |
 
 ## Agent 必须执行（勿推给用户）
@@ -90,7 +90,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 ## manifest 关键字段
 
 - `feature`：feature slug（**必填**）
-- `start_phase` / `end_phase`：起止 phase（默认 prd→testing）
+- `start_phase` / `end_phase`：起止 phase（默认 spec→testing）
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
 - 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）

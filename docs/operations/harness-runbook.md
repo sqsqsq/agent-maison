@@ -556,7 +556,7 @@ cat framework/harness/state/.current-phase.json
 > 看到 FAIL 不要急着降 severity，先把环境/产物修对再回来 —— 任何一次降级都是埋一颗"假 PASS"地雷。**
 
 <!--
-  last-synced: 2026-05-22 (2.0: capability-registry, Hylyre, context-exploration, confirmation UX)
+  last-synced: 2026-06-12 (2.3.0: spec-driven workflow、phase-rules 目录与 check:spec/plan)
 
   v2.4 (2026-04-27) — Stop hook cross-session isolation:
     - 新增 §10「中断 / 切换会话 / 放弃阶段」章节：state_machine 配置、--clear-state 出口、

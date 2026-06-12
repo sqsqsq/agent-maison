@@ -134,7 +134,7 @@ tests/
 | 注释里伪造的命名入口（scanner 剥注释缺陷回归） | `named_handler_comment_only_fail` |
 | 用环境变量软跳 hvigor（UT 阶段） | `hvigor_env_skip_is_fail` |
 | 用环境变量软跳 hvigor（coding 阶段） | `coding_hvigor_build_skip_is_fail` |
-| Skill 5 阶段擅自改业务源码 | `ut_no_src_mutation_fail` |
+| business-ut 阶段擅自改业务源码 | `ut_no_src_mutation_fail` |
 | 登记 gap-notes 后允许改业务源码 | `ut_no_src_mutation_approved_pass` |
 
 ## 规则

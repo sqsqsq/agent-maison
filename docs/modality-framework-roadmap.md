@@ -18,6 +18,6 @@
 
 1. 将 **toolchain** 整段变为可选或按 `modality` profile 切换。
 2. 将 **跨模块出口文件名** 与 **内层名称** 交由 modality preset（或工程显式覆盖）生成，而非模板写死。
-3. 为「无 UI」工程提供 **check-spec** 之外更轻量的 phase 预设（当前已通过「无 `ui_change` 块 + 无 `prd` 段 = 静默」覆盖主路径）。
+3. 为「无 UI」工程提供 **check-spec** 之外更轻量的 phase 预设（当前已通过「无 `ui_change` 块 + 无 `spec` 段 = 静默」覆盖主路径）。
 
 维护者更新本文件时：**不要**把 feature 级细则写进来；细节仍在 `doc/features/<feature>/` 与对应 Skill。

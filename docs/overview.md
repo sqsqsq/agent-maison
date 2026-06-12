@@ -655,6 +655,6 @@ git submodule update --init --recursive
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-22 (2.0: profile/capability-registry, Hylyre, Karpathy/exploration, confirmation UX, acceptance device_focus, RELEASE-NOTES)
+  last-synced: 2026-06-12 (2.3.0: spec/plan phase id、workflow DAG、skill-assets、MIGRATION §v2.3)
   Skill 与中台文档路径变更后同步维护同步段落（doc_freshness）。
 -->

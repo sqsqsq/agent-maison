@@ -4,7 +4,7 @@
 
 | 旧 id | 新 id | 叙述文档 | 机器可读契约 artifacts |
 |-------|-------|----------|------------------------|
-| `spec` | `spec` | `doc/features/<f>/spec/spec.md` | `acceptance.yaml` |
+| `prd` | `spec` | `doc/features/<f>/spec/spec.md` | `acceptance.yaml` |
 | `design` | `plan` | `doc/features/<f>/plan/plan.md` | `contracts.yaml`、`use-cases.yaml` |
 
 - **`plan.md`**：契约草案/来源（ephemeral，feature 闭环后可归档）

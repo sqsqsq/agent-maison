@@ -39,7 +39,7 @@
 
 你是一位资深**宿主应用**开发工程师。具体技术栈、源码扩展名、模块格式、编译/测试工具链以 Step 0 加载的 `project_profile` addendum 与 profile capabilities 为准。你的任务是根据实现计划（plan.md）逐模块生成与 **design contracts** 对齐、且可通过本仓库 harness 的出口检查的实现代码。
 
-本 Skill 是项目全生命周期流水线的**第三环**。上游输入来自 plan 阶段 Skill的 `plan.md`，输出（源码）将流入 Skill 4（Code Review）。
+本 Skill 是项目全生命周期流水线的**第三环**。上游输入来自 plan 阶段的 `plan.md`，输出（源码）将流入 code-review（Code Review）。
 
 > **⚠️ 开工前必读（弱模型环境尤其重要）**
 >
@@ -217,7 +217,7 @@
 
 **关键约束（适用于 A / B / C 三种形态）**：
 
-1. `use-cases.yaml > ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名符号**，与代码中**完全一致**（Skill 5 Harness 的 `named_business_handler` BLOCKER 会严格校验）。合法形态包括：
+1. `use-cases.yaml > ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名符号**，与代码中**完全一致**（business-ut Harness 的 `named_business_handler` BLOCKER 会严格校验）。合法形态包括：
    - 传统 `function xxx() {}` / `async function xxx() {}`
    - 类/对象方法 `xxx() {}` / `async xxx() {}`
    - 顶层导出 `export function xxx` / `export const xxx = ...`
@@ -260,7 +260,7 @@ Select-String -Path "<path>/<Flow>.<ext>" -Pattern "<profile-ui-symbols>"
 2. 对每个 `ui_bindings[].user_actions[].calls`，在代码中 `grep` 该符号
 3. 确认：(a) 确实存在；(b) 是**命名符号**——传统函数/类方法/类字段函数（`handleClick = async () => {}`）/命名 `const` 赋值 的箭头函数 **都算合法**；仅**匿名直接挂载**在 UI 事件上（如 `.onClick(() => { 一堆业务 })`）的写法不合法
 
-Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本 Skill 内自检能节省回环成本。
+business-ut Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本 Skill 内自检能节省回环成本。
 
 ### Step 4: 模块配置与资源文件
 
@@ -325,12 +325,12 @@ Skill 5 Harness 会用 `named_business_handler` BLOCKER 严格校验该项，本
 - [x] 编译检查：通过（0 error）
 
 ### 下一步
-- 运行 Harness 验证（Step 7）；四件套 PASS 后 **`coding.ok_to_review` / `phase.next_step` 停等**（user-confirmation-ux §8），**禁止**同一执行流自动开 Skill 4
+- 运行 Harness 验证（Step 7）；四件套 PASS 后 **`coding.ok_to_review` / `phase.next_step` 停等**（user-confirmation-ux §8），**禁止**同一执行流自动开 code-review
 ```
 
 ### Step 6.5: 真实编译闭环（必要出口）
 
-> v2.2 新增：**编译/宿主静态检查是 Skill 3 的必要出口条件**，不是可选项。本步骤要求 agent **自己**执行当前 profile 声明的 `coding.compile` capability、读取日志、定位问题、修复并重跑，直到零 error。对应 BLOCKER 会在 Step 7 强制兜底；本 Step 是 Skill 3 自检的最后一道。
+> v2.2 新增：**编译/宿主静态检查是 coding 的必要出口条件**，不是可选项。本步骤要求 agent **自己**执行当前 profile 声明的 `coding.compile` capability、读取日志、定位问题、修复并重跑，直到零 error。对应 BLOCKER 会在 Step 7 强制兜底；本 Step 是 coding 自检的最后一道。
 
 #### 6.5.1 执行真实编译
 
@@ -401,7 +401,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 #### 7.1.1 脚本 / 编译 FAIL 时用户可见汇报（BLOCKER）
 
-harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done=false` 时，向用户的**首段**必须是脚本结论，**禁止**先问「是否进入 Skill 4（Code Review）」或并列展示「verifier PASS + 脚本 FAIL」暗示可推进。
+harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done=false` 时，向用户的**首段**必须是脚本结论，**禁止**先问「是否进入 code-review（Code Review）」或并列展示「verifier PASS + 脚本 FAIL」暗示可推进。
 
 **必须同步执行**（禁止后台 harness + 并行 verifier）：
 
@@ -418,10 +418,10 @@ harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done
 - **归因**: `<failure_kind>`（若错误不在本 feature contracts.modules，仍须写明「全工程编译未通过」）
 - **下一步**: `<summary.next_action>` → 按 Step 6.5.2 处理（A/B/C），agent 自跑修复与重试
 
-**禁止**：提议 Skill 4；用 verifier PASS 代替脚本 PASS；称「无法确认是否编译」而不读日志。
+**禁止**：提议 code-review；用 verifier PASS 代替脚本 PASS；称「无法确认是否编译」而不读日志。
 ```
 
-**`--clear-state`**：仅当用户**明示放弃**当前 feature 的 coding 阶段（如「放弃 coding」「不闭环了」）时可用；**禁止**为进入 Skill 4 或消除 Stop hook 而 clear-state。
+**`--clear-state`**：仅当用户**明示放弃**当前 feature 的 coding 阶段（如「放弃 coding」「不闭环了」）时可用；**禁止**为进入 code-review 或消除 Stop hook 而 clear-state。
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
@@ -466,7 +466,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 #### 7.3 阶段闭环判定（全局入口 §5.1 SSOT）
 
-> 下文「物理拦截层」：**部分 adapter** 经 Skill 00 在实例根下发 **Stop hook**，在消息结束前读取 state 并阻断「假完成」（Layer 3 行为与路径见 [framework/agents/README.md](../../../../agents/README.md)）。**未**配置该能力的 adapter 不设物理层豁免，仍须满足 Layer 1（全局入口 §6.5「反假设条款」）+ Layer 2（完成回执 + `check-receipt.ts`）——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
+> 下文「物理拦截层」：**部分 adapter** 经 framework-init 在实例根下发 **Stop hook**，在消息结束前读取 state 并阻断「假完成」（Layer 3 行为与路径见 [framework/agents/README.md](../../../../agents/README.md)）。**未**配置该能力的 adapter 不设物理层豁免，仍须满足 Layer 1（全局入口 §6.5「反假设条款」）+ Layer 2（完成回执 + `check-receipt.ts`）——**没有 Stop hook ≠ 豁免 BLOCKER**，少跑一项即任务失败。
 
 **编码阶段宣布"完成"前，必须同时满足以下四条**（物理拦截层会按此判据拦截"假完成"）：
 
@@ -484,9 +484,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 | 完成回执 | check-receipt.ts 退出码 0 |
 | trace.json | 文件存在且 schema 合法 |
 
-四项全部通过后，编码阶段完成，**具备**进入 Skill 4（Code Review）的**资格**；**不授权**自动开 Skill 4。
+四项全部通过后，编码阶段完成，**具备**进入 code-review（Code Review）的**资格**；**不授权**自动开 code-review。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（确认菜单 + portable 编号）停等，**禁止**读完 receipt/trace 后在同一执行流 Read Skill 4 并写 review（除非 batch 授权 §8.2）。
+**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（确认菜单 + portable 编号）停等，**禁止**读完 receipt/trace 后在同一执行流 Read code-review 并写 review（除非 batch 授权 §8.2）。
 
 ## 编码规范
 
@@ -523,8 +523,8 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 | 消费者 | 消费的产出 | 用途 |
 |--------|-----------|------|
-| **Skill 4 (Code Review)** | 源代码 + contracts.yaml | 审查代码与契约的一致性 |
-| **Skill 5 (业务级 UT)** | 源代码 + acceptance.yaml | 基于验收标准生成 UT |
+| **code-review (Code Review)** | 源代码 + contracts.yaml | 审查代码与契约的一致性 |
+| **business-ut (业务级 UT)** | 源代码 + acceptance.yaml | 基于验收标准生成 UT |
 | **Harness (验证层)** | 源代码 + contracts.yaml + acceptance.yaml | 脚本/AI 验证编码质量 |
 
 ## 约束与注意事项

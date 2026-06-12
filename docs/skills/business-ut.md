@@ -598,6 +598,6 @@ AI Harness 重点看脚本难以判断的内容：
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
 
 <!--
-  last-synced: 2026-05-22 (2.0: capability-registry, context-exploration 1.1.0, device_focus)
+  last-synced: 2026-06-12 (2.3.0: profile-host-loader / capability-registry 路径复核)
 -->
 

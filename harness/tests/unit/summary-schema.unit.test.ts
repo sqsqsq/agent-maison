@@ -128,6 +128,22 @@ function testValidSampleShape(): void {
   assertSummaryShape(validSample());
 }
 
+function testPhaseEnumIncludesCanonicalAndLegacy(): void {
+  const schema = loadSchema();
+  const props = schema.properties as Record<string, { enum?: string[] }>;
+  const phaseEnum = props.phase?.enum ?? [];
+  for (const id of ['spec', 'plan', 'prd', 'design', 'coding']) {
+    assert(phaseEnum.includes(id), `phase.enum 须含 ${id}`);
+  }
+}
+
+function testSpecPlanSamplesValidateShape(): void {
+  for (const phase of ['spec', 'plan'] as const) {
+    const sample = { ...validSample(), phase };
+    assertSummaryShape(sample);
+  }
+}
+
 function testInvalidSampleRejectedByUnitGuard(): void {
   const bad = validSample();
   delete bad.next_action;
@@ -152,6 +168,8 @@ export function runAll(): UnitCaseResult[] {
   return [
     runCase('summary schema: required 字段覆盖稳定消费字段', testSchemaRequiredFields),
     runCase('summary schema: 合法样例通过形状校验', testValidSampleShape),
+    runCase('summary schema: phase enum 含 spec/plan 与 legacy', testPhaseEnumIncludesCanonicalAndLegacy),
+    runCase('summary schema: spec/plan 样例通过形状校验', testSpecPlanSamplesValidateShape),
     runCase('summary schema: 缺少 next_action 会被拒绝', testInvalidSampleRejectedByUnitGuard),
   ];
 }

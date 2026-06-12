@@ -461,8 +461,8 @@ entries:
         dynamic_label:
           placeholder: "{next_skill_label}"
           lookup: |
-            prd → plan 技术设计
-            design → coding 编码
+            spec → plan 技术设计
+            plan → coding 编码
             coding → code-review Code Review
             review → business-ut 业务级 UT
             ut → device-testing 真机测试

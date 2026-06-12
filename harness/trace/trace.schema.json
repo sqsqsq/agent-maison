@@ -242,7 +242,7 @@
           },
           "description": {
             "type": "string",
-            "description": "具体描述（示例：'AI 在 design 阶段擅自在某 CommonBusiness 模块新增接口'）"
+            "description": "具体描述（示例：'AI 在 plan 阶段擅自在某 CommonBusiness 模块新增接口'）"
           },
           "related_file": {
             "type": "string",

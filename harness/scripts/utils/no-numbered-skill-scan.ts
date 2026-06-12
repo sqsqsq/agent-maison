@@ -71,7 +71,16 @@ const NUMBERED_PROFILE_SKILL_RE = new RegExp(
 );
 const NUMBERED_BRIDGE_SKILL_RE = new RegExp(`skills-bridge[/\\\\]${NUMBERED_SKILL_ID}(?:[/\\\\]|$)`);
 
-const NUMBERED_PROSE_RE = /Skill\s*[0-6](?:\s*[–—-]\s*[0-6])?/;
+/** Explicit branches: 00 before 0; (?!\d) avoids double-digit false prefix on framework-init vs catalog-bootstrap. */
+export const NUMBERED_PROSE_RE = /Skill\s*(?:00|0|[1-6])(?!\d)(?:\s*[–—-]\s*[0-6])?/;
+
+function matchNumberedSkillRelPath(rel: string): string | null {
+  const norm = rel.replace(/\\/g, '/');
+  if (NUMBERED_PATH_RE.test(norm)) return norm.match(NUMBERED_PATH_RE)?.[0] ?? norm;
+  if (NUMBERED_PROFILE_SKILL_RE.test(norm)) return norm.match(NUMBERED_PROFILE_SKILL_RE)?.[0] ?? norm;
+  if (NUMBERED_BRIDGE_SKILL_RE.test(norm)) return norm.match(NUMBERED_BRIDGE_SKILL_RE)?.[0] ?? norm;
+  return null;
+}
 
 const TEXT_EXTENSIONS =
   /\.(md|mdc|yaml|yml|ts|json|template\.md|md\.template)$/i;
@@ -151,9 +160,22 @@ function scanFile(
 ): ScanHit[] {
   const rel = reportRelPrefix + relPosix(scanRoot, abs);
   if (isExcluded(rel, kind === 'path' ? false : true)) return [];
+  const hits: ScanHit[] = [];
+  if (kind === 'path') {
+    const relMatch = matchNumberedSkillRelPath(rel);
+    if (relMatch) {
+      hits.push({
+        file: rel,
+        line: 0,
+        column: 0,
+        match: relMatch,
+        kind: 'path',
+      });
+      return hits;
+    }
+  }
   const text = fs.readFileSync(abs, 'utf8');
   const lines = text.split('\n');
-  const hits: ScanHit[] = [];
   const re = kind === 'path' ? null : NUMBERED_PROSE_RE;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';

@@ -17,7 +17,7 @@
 ## 2. compat.yaml 放哪、解决什么
 
 - **路径**：`doc/features/<feature>/compat.yaml`（feature 根目录，与 `acceptance.yaml` 同级；文件名固定为约定名）。
-- **作用域**：仅对 **feature 维度**阶段（`prd` / `design` / `coding` / `review` / `ut`）在 **脚本 harness 汇总报告前**生效；`init` / `catalog` / `glossary` / `docs` / `extensions` 等全局阶段**完全短路**（与 `_global` feature 一样不应用降级）。
+- **作用域**：仅对 **feature 维度**阶段（`spec` / `plan` / `coding` / `review` / `ut`；legacy alias `prd` / `design` 仍匹配）在 **脚本 harness 汇总报告前**生效；`init` / `catalog` / `glossary` / `docs` / `extensions` 等全局阶段**完全短路**（与 `_global` feature 一样不应用降级）。
 - **不做的事**：不改 phase-rules、不改业务契约；只是在最终 `CheckResult[]` 上做一次**尾过滤**式调整，并写入 `script-report.json` 的审计段。
 
 ---
@@ -95,7 +95,7 @@ scheduled_backfill_by: "2026-08-01"
 正规化命令（报告与 `context-exploration.ts` suggestion 同源）：
 
 ```bash
-cd framework/harness && npm run backfill:context -- --feature home-page --phases prd
+cd framework/harness && npm run backfill:context -- --feature home-page --phases spec
 ```
 
 ---

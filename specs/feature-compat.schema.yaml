@@ -12,7 +12,7 @@
 | `exempt_checks` | string[] | 是 | 至少 1 项；每项为完整 check `id`，或**仅后缀**带 `*` 的前缀模式（禁止中缀 `*`） |
 | `reason` | string | 是 | trim 后非空 |
 | `scheduled_backfill_by` | string | 是 | `YYYY-MM-DD` 或可 `Date.parse` 的 ISO 8601 |
-| `phases` | string[] | 否 | 缺省 = `prd`、`design`、`coding`、`review`、`ut` 全开；若有则每项须属于该集合 |
+| `phases` | string[] | 否 | 缺省 = `spec`、`plan`、`coding`、`review`、`ut` 全开（legacy alias `prd`/`design` 由 compat-loader normalize）；若有则每项须属于该集合 |
 
 ## 行为摘要
 

@@ -164,7 +164,7 @@
 - **严重等级**: BLOCKER
 - **评估方法**:
   1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
-  2. 对照 contracts、acceptance、design：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
+  2. 对照 contracts、acceptance、plan：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
   3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
 
 ### 检查 9: 行为合规 — 研究有据 (behavior_research_grounded)
@@ -185,7 +185,7 @@
 ### 检查 12: 行为合规 — Scope 精准 (behavior_scope_surgical)
 
 - **严重等级**: BLOCKER
-- **评估方法**: git diff / 变更是否超出 design scope 与 contracts 文件清单 → FAIL
+- **评估方法**: git diff / 变更是否超出 plan scope 与 contracts 文件清单 → FAIL
 
 ### 检查 13: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
 
@@ -354,7 +354,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: BLOCKER
       details: |
-        diff 超出 design scope/contracts: PASS/FAIL
+        diff 超出 plan scope/contracts: PASS/FAIL
       suggestion: |
         <修正建议>
 

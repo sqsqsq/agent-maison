@@ -21,7 +21,7 @@ framework/harness/
 # check-init / Skill 00 自动备份
 .framework-backup/
 
-# Skill 6 / Hylyre 本地产物
+# device-testing / Hylyre 本地产物
 **/.hylyre/
 **/tmp_hypium/
 

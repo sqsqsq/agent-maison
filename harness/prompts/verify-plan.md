@@ -168,7 +168,7 @@
 - **严重等级**: BLOCKER（与脚本 Harness 互补：量化阈值 + 本项语义审查）
 - **评估方法**:
   1. 读取 `doc/features/{feature_name}/plan/context-exploration.md`（schema 1.1.0）
-  2. 对照 spec、acceptance、architecture、`framework.config.json`、module-catalog 及 design 中的 contracts/导航/模块变更：摘要中的 `source_code_paths`、`Code Facts`、`decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
+  2. 对照 spec、acceptance、architecture、`framework.config.json`、module-catalog 及 plan 中的 contracts/导航/模块变更：摘要中的 `source_code_paths`、`Code Facts`、`decisions_unlocked` 是否覆盖**真正影响分层、依赖边、接口签名**的阅读证据
   3. 若设计涉及多模块或大量 contracts 但摘要无对应代码/文档检索痕迹，或 `coverage_risks` 与已知交叉影响矛盾 → FAIL
   4. subagent/并行探索与 SKILL 触发条件严重不符且复杂度已显然越阈 → FAIL
   5. 探索文件缺失且脚本已 FAIL → 本项 FAIL；证据不足 → WARN
@@ -178,7 +178,7 @@
 - **严重等级**: BLOCKER
 - **评估方法**:
   1. 对照 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md) 原则 1（Research First）
-  2. design 中的模块划分、文件路径、接口签名、复用决策是否均能在 Code Facts 或 `decisions_unlocked` 中找到代码/文档事实依据
+  2. plan 中的模块划分、文件路径、接口签名、复用决策是否均能在 Code Facts 或 `decisions_unlocked` 中找到代码/文档事实依据
   3. 存在明显「凭空臆断」的路径、类名、依赖边 → FAIL
 
 ### 检查 12: 行为合规 — 最小可行 (behavior_minimum_viable)

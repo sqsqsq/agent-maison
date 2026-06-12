@@ -245,6 +245,6 @@ surveyed 过的 5 个层级方案：
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-22 (context-exploration 1.1.0, confirmation UX, check-spec)
+  last-synced: 2026-06-12 (2.3.0: feature/spec SKILL 与 check-spec 对齐复核)
 -->
 
