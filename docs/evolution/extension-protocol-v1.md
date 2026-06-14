@@ -19,6 +19,7 @@ Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRA
 | Extension manifest schema | `framework/specs/instance-extension-manifest.schema.yaml` |
 | Lifecycle hooks schema | `framework/specs/lifecycle-hooks-schema.yaml` |
 | 实例升级备忘 | `framework/MIGRATION.md` |
+| 实例根遗留跳板清理（UPDATE 操作） | [`../../MIGRATION.md`](../../MIGRATION.md) §v2.3 实例根 adapter 跳板 |
 | 扩展概念 SSOT | [`../concepts/extensibility.md`](../concepts/extensibility.md) |
 | 端到端验收清单 | [`extension-e2e-acceptance.md`](extension-e2e-acceptance.md) |
 
@@ -29,4 +30,5 @@ Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRA
 - 三套 schema 仍为 **1.0** 起点；`--phase extensions` 全局门禁不变。
 - **render-agents-md** + `instance_skill_bridge` 为扩展 Skill 下发首选路径（弱模型强制，见 framework-init S3 adapter 物化）。
 - **workflow 默认**：`spec-driven.workflow.yaml`（canonical phase：`spec` / `plan` / …；legacy `prd` / `design` alias 见 MIGRATION §v2.3）。
+- **扩展 skill 安全性（UPDATE cleanup）**：`cleanup-deprecated` 仅删除框架历史 phase 约定名（含 `prd-design` 等），**不会**误删实例 extension skill（如 `wallet-sdk-onboarding`）。实例升级操作备忘见 [`../../MIGRATION.md`](../../MIGRATION.md) §v2.3 实例根 adapter 跳板；勿跳过 `cleanup-deprecated`。（本条为 inventory 时间戳连带同步，**不改变**上文三套 schema 的 `schema_version` 或字段语义。）
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml) 与 [`MIGRATION.md`](../../MIGRATION.md) 保持交叉索引一致。
