@@ -3,6 +3,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import { prepareConfigWriteForTask, readExistingConfigFromDisk } from './utils/config-builder';
@@ -1133,6 +1134,37 @@ function parseMaterializedAdaptersCsv(csv: string): string[] {
   ];
 }
 
+function isPathInsideRoot(root: string, target: string): boolean {
+  const rel = path.relative(path.resolve(root), path.resolve(target));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function assertStagingPathSafe(
+  label: '--decision-file' | '--context-file',
+  rawArg: string,
+  resolved: string,
+  harnessRoot: string,
+): void {
+  if (!path.isAbsolute(rawArg)) {
+    failCli(
+      `[init-orchestrate] ${label} 须为绝对路径（禁止相对路径，避免落入 framework/harness）。` +
+        ' 请删除 harness 内残留 staging 文件，改用 OS 临时目录（<tmpdir>/framework-init-<stamp>/）。',
+    );
+  }
+  if (isPathInsideRoot(harnessRoot, resolved)) {
+    failCli(
+      `[init-orchestrate] ${label} 不得落在 framework/harness 内（${resolved}）。` +
+        ' 请删除该残留文件并改用绝对临时目录（<tmpdir>/framework-init-<stamp>/）。',
+    );
+  }
+  if (!isPathInsideRoot(os.tmpdir(), resolved)) {
+    process.stderr.write(
+      `[init-orchestrate] warning: ${label} 不在系统临时目录（${resolved}）；` +
+        ' 推荐写入 <tmpdir>/framework-init-<stamp>/。\n',
+    );
+  }
+}
+
 function parseArgs(argv: string[]): {
   projectRoot: string;
   harnessRoot: string;
@@ -1156,6 +1188,8 @@ function parseArgs(argv: string[]): {
   let decisionMode: DecisionMode = 'smart';
   let decisionFile: string | undefined;
   let contextFile: string | undefined;
+  let decisionFileRaw: string | undefined;
+  let contextFileRaw: string | undefined;
   let materializedAdapters: string[] | undefined;
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -1180,10 +1214,18 @@ function parseArgs(argv: string[]): {
       const mode = argv[++i];
       if (mode === 'smart' || mode === 'manual') decisionMode = mode;
     } else if (a === '--decision-file' && argv[i + 1]) {
-      decisionFile = path.resolve(argv[++i]);
+      decisionFileRaw = argv[++i];
+      decisionFile = path.resolve(decisionFileRaw);
     } else if (a === '--context-file' && argv[i + 1]) {
-      contextFile = path.resolve(argv[++i]);
+      contextFileRaw = argv[++i];
+      contextFile = path.resolve(contextFileRaw);
     }
+  }
+  if (decisionFile && decisionFileRaw) {
+    assertStagingPathSafe('--decision-file', decisionFileRaw, decisionFile, harnessRoot);
+  }
+  if (contextFile && contextFileRaw) {
+    assertStagingPathSafe('--context-file', contextFileRaw, contextFile, harnessRoot);
   }
   return {
     projectRoot,
@@ -1304,7 +1346,7 @@ if (require.main === module) {
         '示例：npx ts-node scripts/init-orchestrate.ts --execute --smart-auto --scope project --project-root <repo-root> --materialized-adapters claude,generic\n',
       );
       process.stderr.write(
-        '示例：npx ts-node scripts/init-orchestrate.ts --execute --decision-file ./init-decision.json --context-file ./init-context.json --scope project --project-root <repo-root>\n',
+        '示例：npx ts-node scripts/init-orchestrate.ts --execute --decision-file <abs-temp-dir>/decision.json --context-file <abs-temp-dir>/context.json --scope project --project-root <repo-root>\n',
       );
       process.exit(1);
     }

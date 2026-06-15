@@ -107,6 +107,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
    - POSIX：`$TMPDIR/framework-init-<stamp>/decision.json` 与 `context.json`
    - Windows：`%TEMP%\framework-init-<stamp>\decision.json` 与 `context.json`
    - **禁止**落在 `framework/harness/` 或实例工程根内持久路径
+   - `--decision-file` / `--context-file` **须为绝对路径**（OS 临时目录）；CLI 会拒绝相对路径与 `framework/harness` 内路径
    - `decision.json` **必须**含非空 `materialized_adapters`（机器门禁；与 context 清单集合一致）
    - `context.json` **禁止**含 `projectRoot` / `harnessRoot` / `plan`；示例见 [templates/staging-schema-example.md](templates/staging-schema-example.md)
    - 生成待补全骨架：`cd framework/harness && npx ts-node scripts/init-orchestrate.ts --emit-staging-template --scope project --project-root <repo-root> --materialized-adapters <S2 多选逗号分隔>`（**不带** `--context-file`）；stdout 拆分写两文件。**UPDATE** 时 stdout `context` 可能已含磁盘预填的最小 `configWritePayload`（仍须 S2 多选写入 `decision.materialized_adapters`）
@@ -169,7 +170,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ## S4. 摘要（harness 生成）
 
 - S3 执行命令的 **stdout** 即为 `buildRunSummary` 摘要（**无需额外 CLI 调用**）；摘要必须包含 `run_log` 与 `summary` 路径，同时 harness 写入 `harness/reports/_global/init-orchestrate/*/run-log.json` 与 `summary.md`。
-- **清理 staging**：通用 staging 路径无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`），并在 S4 汇报“已清理”；仅调试需要时可汇报“保留用于调试：<abs-temp-dir>”。`--smart-auto` 路径应汇报“未创建外部 staging 目录”。
+- **清理 staging**：通用 staging 路径无论 S3 成功或 preflight/执行失败，**均删除** S2 的 OS 临时目录（`<abs-temp-dir>`），并在 S4 汇报“已清理”；顺带 sweep 并删除 `framework/harness/` 根下可能误落的残留 staging（`decision.json` / `context.json` / `init-decision.json` / `init-context.json`），并在摘要汇报；仅调试需要时可汇报“保留用于调试：<abs-temp-dir>”。`--smart-auto` 路径应汇报“未创建外部 staging 目录”。
 - 汇报：跳过项、migration/backfill 结果、物化 adapter 列表、全局 phase 结果。
 - **UPDATE 遗留跳板清理**：`cleanup-deprecated` 会 `backup_delete` 编号与语义旧跳板（如 `3-coding`、`prd-design`、`requirement-design`、`1-prd-design`、`2-requirement-design`），保留现行扁平名（`spec`、`plan`、`coding` 等）。若 S3 执行了该任务，摘要须引用 run-log 中 `cleanup_effects.backup_deleted` 计数；有备份时注明 `.framework-backup/<timestamp>/` 路径（S1 probe 仅提示「将清理」，以 S3 run-log 为准）。**跳过** `cleanup-deprecated` 则旧跳板仍留在实例根。
 - **S4 已闭环（BLOCKER）**：`buildRunSummary` 汇报完成后 init 编排结束；**禁止**在摘要或「可选下一步」之后另附 **编号菜单 (portable)**、`init.task_plan` / `init.materialized_adapters` 等 S2 registry 脚注（`portable_required` 仅适用于**同轮仍在提问**的交互，不适用于已执行完的 S4）。

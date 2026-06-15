@@ -64,6 +64,8 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 
 将 stdout 解析为 `{ "decision": {...}, "context": {...} }`，分别写入 OS 临时目录的 `decision.json` 与 `context.json`；**不要**在 emit 时附带不存在的 `--context-file`。
 
+`--decision-file` / `--context-file` 执行时**须为绝对路径**（推荐 `<tmpdir>/framework-init-<stamp>/`）；CLI 拒绝相对路径与 `framework/harness` 内路径。
+
 补全 `decision.materialized_adapters` 后，`context.materializedAdapters` / `configWritePayload.materialized_adapters` 须与 decision **集合一致**（cross-check 在 sync 前基于 raw context 检测冲突）。
 
 ## 推荐：CLI `--smart-auto`（智能 UPDATE 快捷路径）

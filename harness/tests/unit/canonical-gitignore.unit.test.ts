@@ -151,6 +151,22 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
+  run('CANONICAL_IGNORE_PATTERNS 含 harness 根 init staging json 且不误伤 package.json', () => {
+    const stagingPatterns = [
+      'framework/harness/decision.json',
+      'framework/harness/context.json',
+      'framework/harness/init-decision.json',
+      'framework/harness/init-context.json',
+    ];
+    for (const p of stagingPatterns) {
+      assert(CANONICAL_IGNORE_PATTERNS.includes(p), `missing ${p}`);
+      assert(patternIsCovered(p, [p]), `covered ${p}`);
+    }
+    const lines = [...CANONICAL_IGNORE_PATTERNS];
+    assert(!patternIsCovered('framework/harness/package.json', lines), 'package.json not ignored');
+    assert(!patternIsCovered('framework/harness/tsconfig.json', lines), 'tsconfig.json not ignored');
+  });
+
   run('ensure 后 inspect11 为 POPULATED', () => {
     withTmpProject(root => {
       ensureCanonicalGitignore(root);

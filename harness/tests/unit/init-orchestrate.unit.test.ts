@@ -2074,6 +2074,141 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  {
+    name: 'CLI --decision-file 相对路径 reject exit 1',
+    run: () => {
+      const root = mkTmp();
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--decision-file',
+        './relative-decision.json',
+        '--context-file',
+        path.join(root, 'context.json'),
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stderr.includes('须为绝对路径'), r.stderr);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI --context-file 相对路径 reject exit 1',
+    run: () => {
+      const root = mkTmp();
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--decision-file',
+        path.join(root, 'decision.json'),
+        '--context-file',
+        './relative-context.json',
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stderr.includes('须为绝对路径'), r.stderr);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI --decision-file harness 根内绝对路径 reject exit 1',
+    run: () => {
+      const root = mkTmp();
+      const badDecision = path.join(HARNESS_ROOT, 'decision.json');
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--decision-file',
+        badDecision,
+        '--context-file',
+        path.join(root, 'context.json'),
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stderr.includes('不得落在 framework/harness 内'), r.stderr);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI --context-file harness 根内绝对路径 reject exit 1',
+    run: () => {
+      const root = mkTmp();
+      const badContext = path.join(HARNESS_ROOT, 'context.json');
+      const r = runInitOrchestrateCli([
+        '--scope',
+        'project',
+        '--project-root',
+        root,
+        '--execute',
+        '--decision-file',
+        path.join(root, 'decision.json'),
+        '--context-file',
+        badContext,
+      ]);
+      assert.notStrictEqual(r.status, 0);
+      assert(r.stderr.includes('不得落在 framework/harness 内'), r.stderr);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'CLI --decision-file harness 兄弟目录绝对路径不误伤',
+    run: () => {
+      const root = mkTmp();
+      const siblingDir = path.join(path.dirname(HARNESS_ROOT), `${path.basename(HARNESS_ROOT)}-sibling-guard`);
+      fs.mkdirSync(siblingDir, { recursive: true });
+      const siblingDecision = path.join(siblingDir, 'decision.json');
+      fs.writeFileSync(siblingDecision, '{}');
+      try {
+        const r = runInitOrchestrateCli([
+          '--scope',
+          'project',
+          '--project-root',
+          root,
+          '--emit-staging-template',
+          '--decision-file',
+          siblingDecision,
+        ]);
+        assert(
+          !r.stderr.includes('不得落在 framework/harness 内'),
+          'sibling path must not be treated as inside harness',
+        );
+      } finally {
+        fs.rmSync(siblingDir, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'CLI --decision-file 非 tmpdir 绝对路径仅 warning 不阻断 emit',
+    run: () => {
+      const root = mkTmp();
+      const outsideTmp = path.join(path.dirname(HARNESS_ROOT), 'staging-guard-outside-tmp.json');
+      fs.writeFileSync(outsideTmp, '{}');
+      try {
+        const r = runInitOrchestrateCli([
+          '--scope',
+          'project',
+          '--project-root',
+          root,
+          '--emit-staging-template',
+          '--decision-file',
+          outsideTmp,
+        ]);
+        assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+        assert(r.stderr.includes('warning'), r.stderr);
+        assert(r.stderr.includes('不在系统临时目录'), r.stderr);
+      } finally {
+        fs.unlinkSync(outsideTmp);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {
