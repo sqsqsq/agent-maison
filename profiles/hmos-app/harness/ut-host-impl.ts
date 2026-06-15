@@ -424,7 +424,34 @@ type UtHvigorFailureKind =
   | 'feature_code'
   | 'project_dependency_missing'
   | 'external_project_build_blocker'
+  | 'build_config_invalid'
   | 'unknown';
+
+/**
+ * 纯函数：从 hvigor 合并日志识别「构建配置文件 schema 校验失败」（如 build-profile.json5
+ * 的 target 里塞了非法字段）。命中返回可操作诊断，否则 null。抽出以便单测直接喂日志字符串。
+ */
+export function classifyConfigSchemaError(
+  log: string,
+): { kind: 'build_config_invalid'; explanation: string; suggestion: string } | null {
+  const hasConfigSchemaError =
+    /Schema validate failed|must be equal to one of the allowed values|property name '[^']+' is invalid/i.test(
+      log,
+    );
+  if (!hasConfigSchemaError) return null;
+  const configRef =
+    /([^\s'"]*(?:build-profile|oh-package|module|app)\.json5(?::\d+(?::\d+)?)?)/i.exec(log);
+  const where = configRef ? configRef[1] : '构建配置文件（build-profile.json5 / module.json5 等）';
+  return {
+    kind: 'build_config_invalid',
+    explanation: `构建配置文件 schema 校验失败（${where}）：某字段非法或位置错误，hvigor 在编译前即拒绝，UT 未真实运行。`,
+    suggestion:
+      `定位 ${where} 的非法字段并修正；若该字段是本轮/前一轮为排障新增、反而把原本合法的配置改坏的，` +
+      '优先回退到 trace.json.start_commit 的版本，而不是继续叠加改动。' +
+      '提示：build-profile.json5 的 target 仅允许 name/config/source/resource/runtimeOS/output 字段。' +
+      '该文件受源码改动门禁约束，确需保留改动须经用户授权并登记 gap-notes approved_src_mutations。',
+  };
+}
 
 function classifyUtHvigorBuildFailure(
   res: any,
@@ -462,6 +489,11 @@ function classifyUtHvigorBuildFailure(
   }
 
   const log = mergedLog;
+
+  // 构建配置文件 schema 校验失败优先（hvigor 编译前即拒绝；常见为本轮/前一轮乱改配置导致）。
+  const configSchema = classifyConfigSchemaError(log);
+  if (configSchema) return configSchema;
+
   const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, res);
   const hasDependencyResolutionFailure =
     /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(

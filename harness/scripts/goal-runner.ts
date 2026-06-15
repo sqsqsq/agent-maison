@@ -104,11 +104,18 @@ const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
 const LOCK_HEARTBEAT_MS = 60_000;
 const RESUME_COOLDOWN_MINUTES = 5;
 
-interface SummaryJson {
+export interface SummaryJson {
   verdict?: HarnessVerdict;
   blocking_class?: string;
   failure_kind?: string;
-  blockers?: Array<{ blocking_class?: string; classification?: string }>;
+  blockers?: Array<{
+    id?: string;
+    blocking_class?: string;
+    classification?: string;
+    details_excerpt?: string;
+    affected_files?: string[];
+    suggestion?: string;
+  }>;
 }
 
 /** Active agent tree-kill registered for SIGINT/SIGTERM orphan cleanup. */
@@ -224,6 +231,41 @@ function extractBlockingMeta(summary: SummaryJson | null): {
   return { blocking_class: b.blocking_class, failure_kind: b.classification };
 }
 
+function truncateOneLine(s: string, max: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+}
+
+/**
+ * 把上一轮 harness summary 的 BLOCKER 证据压缩成可回喂给 fresh-context agent 的文本块。
+ * 让重试/续跑的 agent 看到「上轮失败在哪、动了哪些文件、harness 给了什么修复建议」，
+ * 避免在自己上一轮改坏的现场反复打补丁（goal 模式每轮 fresh context，否则跨轮失忆）。
+ */
+export function extractPriorFailureContext(summary: SummaryJson): string {
+  const verdict = summary.verdict ?? 'FAIL';
+  const blockers = (summary.blockers ?? []).slice(0, 4);
+  const lines: string[] = [];
+  for (const b of blockers) {
+    const id = b.id ?? '(unknown check)';
+    const kind = b.classification ?? '';
+    lines.push(kind ? `- ${id} [${kind}]` : `- ${id}`);
+    if (b.details_excerpt) {
+      lines.push(`  details: ${truncateOneLine(b.details_excerpt, 300)}`);
+    }
+    if (b.affected_files && b.affected_files.length > 0) {
+      lines.push(`  affected_files: ${b.affected_files.slice(0, 6).join(', ')}`);
+    }
+    if (b.suggestion) {
+      lines.push(`  suggestion: ${truncateOneLine(b.suggestion, 300)}`);
+    }
+  }
+  if (lines.length === 0) {
+    const meta = extractBlockingMeta(summary);
+    if (meta.failure_kind) lines.push(`- failure_kind: ${meta.failure_kind}`);
+  }
+  return [`Verdict: ${verdict}`, ...lines].join('\n');
+}
+
 async function runHarnessPhase(
   projectRoot: string,
   frameworkRoot: string,
@@ -262,11 +304,12 @@ async function runHarnessPhase(
   }
 }
 
-function buildPhasePrompt(
+export function buildPhasePrompt(
   manifest: GoalManifest,
   phase: FeaturePhase,
   frameworkRoot: string,
   deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>,
+  priorFailure?: string,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -290,6 +333,23 @@ function buildPhasePrompt(
       ? 'If coding artifacts are ready: report "coding phase complete — goal continues to review→ut→testing" (not "goal run finished").'
       : '',
   ].filter(Boolean);
+  if (priorFailure) {
+    parts.push(
+      '',
+      '## Prior attempt failure (retry context)',
+      '',
+      "Last attempt of this phase failed. The harness verdict and BLOCKER evidence:",
+      '',
+      '```',
+      priorFailure,
+      '```',
+      '',
+      '**These failures may have been introduced by a prior attempt in this same goal run.** Before making new changes:',
+      '1. Inspect the files changed relative to the goal-run start commit (trace.json.start_commit) and judge whether one of them is the actual root cause;',
+      '2. If a change a prior attempt made for troubleshooting itself broke things (e.g. turned a valid config into an invalid schema, deleted the wrong file), **revert that change first** rather than stacking new code on a broken state;',
+      '3. Only after confirming the root cause, apply a minimal fix and re-run this phase harness to verify.',
+    );
+  }
   return parts.join('\n');
 }
 
@@ -655,7 +715,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const phaseDir = path.join(projectRoot, manifest.report_dir, 'phases', phase);
         fs.mkdirSync(phaseDir, { recursive: true });
         const promptPath = path.join(phaseDir, 'prompt.md');
-        const prompt = buildPhasePrompt(manifest, phase, frameworkRoot, deferredUpstream);
+
+        // on-disk summary 同时服务两处：既有的 mtime 新鲜度判断，与跨轮失败上下文回喂。
+        const priorSummaryRead = readPhaseSummary(projectRoot, manifest.feature, phase);
+        const summaryMtimeBefore = getSummaryMtime(priorSummaryRead.summaryAbsPath);
+
+        // 重试（retries>0）或 resume 续跑本 phase 首轮时，把上轮 BLOCKER 证据回喂给 fresh-context agent。
+        // 保守门控：仅 FAIL/INCOMPLETE 才注入，避免干净首跑被残留旧 summary 污染。
+        const isPhaseContinuation = retries > 0 || (argv.resume && phaseIdx === chainStartIndex);
+        let priorFailure: string | undefined;
+        if (isPhaseContinuation && priorSummaryRead.summary) {
+          const v = priorSummaryRead.summary.verdict;
+          if (v === 'FAIL' || v === 'INCOMPLETE') {
+            priorFailure = extractPriorFailureContext(priorSummaryRead.summary);
+          }
+        }
+
+        const prompt = buildPhasePrompt(
+          manifest,
+          phase,
+          frameworkRoot,
+          deferredUpstream,
+          priorFailure,
+        );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
         appendEvent(manifest.report_dir, projectRoot, {
@@ -664,13 +746,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           prompt_path: path.relative(projectRoot, promptPath).replace(/\\/g, '/'),
         });
         flushProgress();
-
-        const { summaryAbsPath: summaryPathBefore } = readPhaseSummary(
-          projectRoot,
-          manifest.feature,
-          phase,
-        );
-        const summaryMtimeBefore = getSummaryMtime(summaryPathBefore);
 
         const vars: InvokeTemplateVars = {
           PROMPT_FILE: promptPath,
@@ -922,16 +997,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 }
 
-process.on('exit', () => {
-  releaseAllLocks();
-});
-
-void main()
-  .then((code) => {
-    process.exit(code);
-  })
-  .catch((err) => {
-    console.error((err as Error)?.message ?? err);
+// 仅作为 CLI 入口直接执行时自跑 main()；被单测 import（buildPhasePrompt /
+// extractPriorFailureContext）时不触发 CLI，避免解析 process.argv 与 process.exit。
+if (require.main === module) {
+  process.on('exit', () => {
     releaseAllLocks();
-    process.exit(1);
   });
+
+  void main()
+    .then((code) => {
+      process.exit(code);
+    })
+    .catch((err) => {
+      console.error((err as Error)?.message ?? err);
+      releaseAllLocks();
+      process.exit(1);
+    });
+}

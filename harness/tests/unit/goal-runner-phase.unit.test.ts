@@ -34,6 +34,12 @@ import {
 import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
+import {
+  buildPhasePrompt,
+  extractPriorFailureContext,
+  type SummaryJson,
+} from '../../scripts/goal-runner';
+import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -524,6 +530,59 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
 ];
+
+const PRIOR_FAILURE_SUMMARY: SummaryJson = {
+  verdict: 'FAIL',
+  blockers: [
+    {
+      id: 'ut_hvigor_build',
+      classification: 'build_config_invalid',
+      details_excerpt: "Schema validate failed: property name 'applyToProducts' is invalid",
+      affected_files: ['01-Product/Phone/build-profile.json5'],
+      suggestion: '定位 build-profile.json5 的非法字段并修正；优先回退到起始提交版本。',
+    },
+    {
+      id: 'ut_no_src_mutation',
+      classification: 'unauthorized_src_mutation',
+      affected_files: ['01-Product/Phone/build-profile.json5'],
+    },
+  ],
+};
+
+const MINIMAL_MANIFEST = {
+  feature: 'bc-openCard',
+  requirement: '开卡流程',
+} as unknown as GoalManifest;
+
+cases.push(
+  {
+    name: 'extractPriorFailureContext: 含 check id / 分类 / affected_files / suggestion',
+    run: () => {
+      const ctx = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
+      assert(ctx.includes('Verdict: FAIL'), 'verdict');
+      assert(ctx.includes('ut_hvigor_build [build_config_invalid]'), 'check id + 分类');
+      assert(ctx.includes('build-profile.json5'), 'affected_files 透传');
+      assert(ctx.includes('优先回退'), 'suggestion 透传');
+    },
+  },
+  {
+    name: 'buildPhasePrompt: 带 priorFailure 时注入「Prior attempt failure」+ 回退指令',
+    run: () => {
+      const prior = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
+      const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'ut', FRAMEWORK_ROOT, [], prior);
+      assert(prompt.includes('Prior attempt failure'), '注入失败小节');
+      assert(prompt.includes('build-profile.json5'), '携带上轮证据');
+      assert(prompt.includes('revert that change first'), '回退指令');
+    },
+  },
+  {
+    name: 'buildPhasePrompt: 无 priorFailure（首跑）不注入失败小节',
+    run: () => {
+      const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'ut', FRAMEWORK_ROOT, []);
+      assert(!prompt.includes('Prior attempt failure'), '首跑不回喂');
+    },
+  },
+);
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];

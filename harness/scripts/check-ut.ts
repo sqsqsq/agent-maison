@@ -733,6 +733,15 @@ function findTraceJsonFiles(projectRoot: string, feature: string): string[] {
   return hits;
 }
 
+/**
+ * 纯函数（profile 无关）：从未授权改动清单里挑出「非 src/ 下」的工程/构建配置文件。
+ * 业务源码落在 src/ 内，模块根的构建/工程配置则在 src/ 外；这类文件常被 agent 为排障触碰、
+ * 又受源码门禁约束，单列以便给针对性回退指引。具体宿主配置文件名属 profile 知识，根侧保持中性。
+ */
+export function pickNonSrcConfigChanges(files: string[]): string[] {
+  return files.filter(f => !/(?:^|\/)src\//.test(f.replace(/\\/g, '/')));
+}
+
 function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
   const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
@@ -826,6 +835,16 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     ? '\n\n诊断：stale_diff_base。你显式收窄/拉长了 diff 区间，committed 远大于当前 working 变更。若只想拦未提交的 UT 改动，请去掉 HARNESS_DIFF_BASE_REF 并确保无 trace.start_commit pinning；或调整后重跑。'
     : '';
 
+  // 未授权清单含「非 src/ 下」的工程/构建配置文件时，给出针对性指引：
+  // 这类文件常被 agent 为排障触碰，但同样受门禁约束，且常因排障被改坏，应优先回退而非叠加。
+  const configChanges = pickNonSrcConfigChanges(unauthorized);
+  const configHint =
+    configChanges.length > 0
+      ? ` 其中含 src/ 之外的改动（${configChanges.join(', ')}，通常是工程/构建配置文件）：这类文件同样受源码改动门禁约束——` +
+        '若是为排障临时改动、反而把原本合法的配置改坏的，优先回退到 trace.json.start_commit 的版本，' +
+        '而不是继续叠加改动；确需保留则同样经用户授权后登记 approved_src_mutations。'
+      : '';
+
   return [{
     id: 'ut_no_src_mutation',
     category: 'structure',
@@ -847,7 +866,8 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
         ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
         : '按 business-ut SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
           'doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
-          '禁止以"便利性"借口直接修改业务源码。',
+          '禁止以"便利性"借口直接修改业务源码。' +
+          configHint,
   }];
 }
 

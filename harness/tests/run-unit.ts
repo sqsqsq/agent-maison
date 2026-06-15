@@ -65,6 +65,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'check-module-graph', modulePath: './unit/check-module-graph.unit.test' },
   { id: 'ut-verdict-incomplete', modulePath: './unit/ut-verdict-incomplete.unit.test' },
   { id: 'ut-file-scope', modulePath: './unit/ut-file-scope.unit.test' },
+  { id: 'ut-build-config-files', modulePath: './unit/ut-build-config-files.unit.test' },
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
   { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
   { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
