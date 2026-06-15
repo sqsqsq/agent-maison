@@ -66,13 +66,24 @@ export type UtHostImpl = {
 
 /**
  * Best-effort 加载 `profiles/<profile>/harness/<baseName>`（无扩展名，与 Node 解析一致）。
- * 失败返回 null，不向 stderr 打点（由调用方决定 FAIL / SKIP 语义）。
+ * 失败返回 null；最近一次 require 错误可通过 getLastProfileHarnessLoadError 读取，
+ * 并向 stderr 输出一行诊断（由调用方决定 FAIL / SKIP 语义）。
  */
+let lastProfileHarnessLoadError: string | undefined;
+
+export function getLastProfileHarnessLoadError(): string | undefined {
+  return lastProfileHarnessLoadError;
+}
+
 export function tryLoadProfileHarnessModule<T>(profileDir: string, baseName: string): T | null {
   try {
+    lastProfileHarnessLoadError = undefined;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require(path.join(profileDir, 'harness', baseName)) as T;
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    lastProfileHarnessLoadError = message;
+    process.stderr.write(`[profile-host-loader] require failed: ${baseName}: ${message}\n`);
     return null;
   }
 }

@@ -51,6 +51,7 @@ import {
 } from '../config';
 import {
   tryLoadUtHostImpl,
+  getLastProfileHarnessLoadError,
   tryLoadDiffExcludeTestPathRegexes,
   type UtHostImpl,
   type UtHostSuggestionPaths,
@@ -3396,6 +3397,10 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const utHost = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
     if (!utHost) {
+      const loadError = getLastProfileHarnessLoadError();
+      const details =
+        `当前 project_profile 未提供可用的 utHostImpl（profileDir=${ctx.resolvedProfile.profileDir}）。` +
+        (loadError ? ` load_error: ${loadError}` : '');
       return [
         {
           id: 'ut_profile_host_missing',
@@ -3403,7 +3408,7 @@ const checker: PhaseChecker = {
           description: 'UT 宿主实现（profile harness/ut-host-impl）',
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `当前 project_profile 未提供可用的 utHostImpl（profileDir=${ctx.resolvedProfile.profileDir}）。`,
+          details,
           suggestion: '请为宿主 profile 实现并导出 harness/ut-host-impl.ts；参考 framework/profiles/hmos-app/harness/ut-host-impl.ts。',
         },
       ];

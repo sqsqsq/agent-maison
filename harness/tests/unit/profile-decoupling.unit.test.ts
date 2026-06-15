@@ -4,6 +4,7 @@
 
 import * as path from 'path';
 import assert from 'assert';
+import { createRequire } from 'module';
 import { filterBusinessSourceChanges } from '../../scripts/utils/git-diff';
 import {
   tryLoadDiffExcludeTestPathRegexes,
@@ -79,6 +80,17 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'tryLoadGraphExtractor: generic 无 provider 时返回 null',
     run: () => {
       assert.strictEqual(tryLoadGraphExtractor(genericProfileDir), null);
+    },
+  },
+  {
+    name: 'hmos-app profile harness: yaml 经 harness/node_modules 解析',
+    run: () => {
+      const harnessPkgPath = path.resolve(hmosProfileDir, '..', '..', 'harness', 'package.json');
+      const yamlResolved = createRequire(harnessPkgPath).resolve('yaml').replace(/\\/g, '/');
+      assert.ok(
+        yamlResolved.includes('harness/node_modules'),
+        `yaml must resolve via harness, got ${yamlResolved}`,
+      );
     },
   },
   {

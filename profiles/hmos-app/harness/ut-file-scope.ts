@@ -3,9 +3,14 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { createRequire } from 'module';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
+
+const harnessRequire = createRequire(
+  path.resolve(__dirname, '..', '..', '..', 'harness', 'package.json'),
+);
+const YAML = harnessRequire('yaml');
 
 export interface UtFileEntry {
   path: string;
