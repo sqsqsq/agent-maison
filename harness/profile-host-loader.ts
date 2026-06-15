@@ -52,8 +52,8 @@ export type UtHostImpl = {
     ctx: CheckContext,
     utFiles: Array<{ path: string; content: string }>,
   ): CheckResult[];
-  checkUtHvigorBuild(ctx: CheckContext): CheckResult[];
-  checkUtHvigorTest(ctx: CheckContext): CheckResult[];
+  checkUtHvigorBuild(ctx: CheckContext, scopedUtFiles?: Array<{ path: string }>): CheckResult[];
+  checkUtHvigorTest(ctx: CheckContext, scopedUtFiles?: Array<{ path: string }>): CheckResult[];
   checkTestRegistration(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,

@@ -77,7 +77,10 @@ function collectGitScopedTestPaths(projectRoot: string): string[] {
 }
 
 /**
- * 将全量 UT 文件分区为 all（编译/注册）与 scoped（追溯/命名）。
+ * 将全量 UT 文件分区为 all 与 scoped（依各检查的实际用法划分）：
+ *   - all   ：静态 lint（命名 / 框架导入 / tsc / 断言存在等），仓库里每个测试文件都须满足；
+ *   - scoped：本需求的执行与覆盖门禁（import 白名单 / 边界 stub / 覆盖 / 分支 / flow，
+ *             以及真机 hvigor build/run 的模块选择 selectUtModulesToCompile）。
  * 无 scope 线索时 scoped = all（向后兼容）。
  */
 export function partitionUtFiles(

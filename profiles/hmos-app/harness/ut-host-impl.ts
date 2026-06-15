@@ -278,7 +278,28 @@ function findModulesWithUt(ctx: CheckContext): Array<{ name: string; package_pat
   return out;
 }
 
-function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
+/**
+ * 在「发现的 ohosTest 模块」中，只保留拥有至少一个 *本需求 scoped* UT 文件的模块。
+ * 判据不依赖模块类型（entry/har 等都可能是合法被测目标）；唯一信号是「该模块下是否有
+ * 被 git 改动 / context-exploration 声明的 UT 文件」——即它是不是本需求的被测模块。
+ * 某模块 ohosTest 仅含与本需求无关的模板测试时不在 scoped 内，故被排除，避免 framework
+ * 去编译不属于本需求的模块、把整轮 UT 误判为失败。
+ * 注意：scoped 为空（partitionUtFiles 走 fallback:all）时退回全集，等同旧行为。
+ * 归属判断复用本文件 checkTestRegistration 的写法：f.path.includes(mod.package_path)。
+ */
+export function selectUtModulesToCompile(
+  mods: Array<{ name: string; package_path: string }>,
+  scopedUtFiles: Array<{ path: string }>,
+): Array<{ name: string; package_path: string }> {
+  if (scopedUtFiles.length === 0) return mods; // 无 scoped 信息 → 保持现状（不回归）
+  const owned = mods.filter(m => scopedUtFiles.some(f => f.path.includes(m.package_path)));
+  return owned.length > 0 ? owned : mods; // 兜底：筛空则退回全集
+}
+
+function checkUtHvigorBuild(
+  ctx: CheckContext,
+  scopedUtFiles: Array<{ path: string }> = [],
+): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
     const details =
@@ -303,7 +324,7 @@ function checkUtHvigorBuild(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const mods = findModulesWithUt(ctx);
+  const mods = selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles);
   if (mods.length === 0) {
     return [
       {
@@ -574,7 +595,10 @@ function formatDependencyIssue(issue: any): string {
   return lines.join('\n');
 }
 
-function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
+function checkUtHvigorTest(
+  ctx: CheckContext,
+  scopedUtFiles: Array<{ path: string }> = [],
+): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
     const details =
@@ -615,7 +639,7 @@ function checkUtHvigorTest(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const mods = findModulesWithUt(ctx);
+  const mods = selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles);
   if (mods.length === 0) {
     return [
       {

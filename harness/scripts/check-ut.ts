@@ -3509,7 +3509,10 @@ const checker: PhaseChecker = {
     // v2.2 方案 A：静态 tsc --noEmit 检查
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
-    const hvigorBuildResults = safeRun(() => utHost.checkUtHvigorBuild(ctx), 'ut_hvigor_build');
+    const hvigorBuildResults = safeRun(
+      () => utHost.checkUtHvigorBuild(ctx, scopedUtFiles),
+      'ut_hvigor_build',
+    );
     results.push(...hvigorBuildResults);
     const buildFailed = hvigorBuildResults.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL');
     const compileSkippedProfile = hvigorBuildResults.some(
@@ -3549,7 +3552,7 @@ const checker: PhaseChecker = {
         },
       );
     } else {
-      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx), 'ut_hvigor_test'));
+      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, scopedUtFiles), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
