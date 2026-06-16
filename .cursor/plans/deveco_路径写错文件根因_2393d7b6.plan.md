@@ -429,4 +429,4 @@ flowchart LR
 
 - **日期**：2026-06-16
 - **验收**：`cd harness && npm test`（856 passed）；`npm run release:verify`（ALL PASS）
-- **偏离**：`--ensure` 修复链由线性 if-else 改为循环，单次可完成 `auto_single_adapter_and_deveco`；P2 profile 契约顺延至 [`deveco_p2_profile契约_7c4e2a91.plan.md`](deveco_p2_profile契约_7c4e2a91.plan.md)（2.4.0）
+- **偏离**：`--ensure` 修复链由线性 if-else 改为循环，单次可完成 `auto_single_adapter_and_deveco`；P2 profile 契约见 [`deveco_p2_profile契约_7c4e2a91.plan.md`](deveco_p2_profile契约_7c4e2a91.plan.md)（同 2.3.0 窗口，未顺延版本）
