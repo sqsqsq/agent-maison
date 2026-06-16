@@ -45,6 +45,7 @@ import {
   PendingConfirmEntry,
   PendingMigrationEntry,
 } from './utils/config-field-merger';
+import { loadLocalConfig } from './utils/framework-local-config';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
 import {
@@ -273,6 +274,7 @@ interface RawFrameworkConfig {
   outerLayersLen: number;
   agentAdapter: string | null;
   toolchainInstallPath: string | null;
+  localDevecoInstallPath: string | null;
   /**
    * UPDATE 模式下：framework.config.json 中缺失的白名单字段（按 BACKFILL_FIELDS 顺序）。
    * CREATE 模式（exists=false / parseable=false）下为空数组。
@@ -294,6 +296,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      localDevecoInstallPath: null,
       missingBackfillFields: [],
       pendingMigrations: [],
       missingConfirmFields: [],
@@ -311,6 +314,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      localDevecoInstallPath: null,
       missingBackfillFields: [],
       pendingMigrations: [],
       missingConfirmFields: [],
@@ -322,6 +326,14 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
   };
   const outerLayers = raw?.architecture?.outer_layers;
   const installPath = raw?.toolchain?.devEcoStudio?.installPath;
+  let localDevecoInstallPath: string | null = null;
+  try {
+    const local = loadLocalConfig(projectRoot);
+    const lip = local?.toolchain?.devEcoStudio?.installPath;
+    localDevecoInstallPath = typeof lip === 'string' && lip.trim() ? lip.trim() : null;
+  } catch {
+    localDevecoInstallPath = null;
+  }
   return {
     exists: true,
     parseable: true,
@@ -330,6 +342,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     outerLayersLen: Array.isArray(outerLayers) ? outerLayers.length : 0,
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
+    localDevecoInstallPath,
     missingBackfillFields: detectMissingBackfillFields(raw, resolveProfileNameFromRaw(raw)),
     pendingMigrations: detectPendingMigrations(raw),
     missingConfirmFields: detectMissingConfirmFields(raw),
@@ -1784,10 +1797,10 @@ function inspect09(_env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 10 项: toolchain.devEcoStudio.installPath --------------------------
+// ---- 第 10 项: framework.local.json DevEco installPath -----------------------
 function inspect10(env: InspectorEnv): Inspection {
-  const targetRel = 'framework.config.json:toolchain.devEcoStudio.installPath';
-  const installPath = env.cfg.toolchainInstallPath;
+  const targetRel = 'framework.local.json:toolchain.devEcoStudio.installPath';
+  const installPath = env.cfg.localDevecoInstallPath;
   if (!installPath) {
     return {
       index: 10,
@@ -1798,7 +1811,7 @@ function inspect10(env: InspectorEnv): Inspection {
       hash_target: null,
       diff_summary: null,
       planned_strategy: strategyText(10, 'MISSING'),
-      diagnosis: '字段缺失或为空字符串',
+      diagnosis: 'framework.local.json 缺失或未配置 toolchain.devEcoStudio.installPath',
     };
   }
   const exists = existsAbs(installPath);

@@ -15,15 +15,15 @@
 //   bundleName       ← AppScope/app.json5 > app.bundleName
 //   ohosTestModule   ← <srcPath>/src/ohosTest/module.json5 > module.name
 //   testRunner       ← 默认 "/ets/testrunner/OpenHarmonyTestRunner"（hypium 标准），
-//                      可由 framework.config.json > toolchain.devEcoStudio.testRunner 覆盖
-//   timeoutMs        ← framework.config.json > toolchain.devEcoStudio.aaTestTimeoutMs，默认 60s
+//                      可由 framework.config.json > toolchain.hmosDevice.testRunner 覆盖
+//   timeoutMs        ← framework.config.json > toolchain.hmosDevice.aaTestTimeoutMs，默认 60s
 // ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
-import { loadDevEcoConfig, featurePhaseReportsDir } from '../../../harness/config';
+import { loadDevEcoConfig, loadHmosDeviceConfig, featurePhaseReportsDir } from '../../../harness/config';
 import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
@@ -158,7 +158,7 @@ export function resolveKillHdcServerPolicy(projectRoot?: string): HdcKillPolicy 
     return { shouldKill: false, source: 'env' };
   }
   if (projectRoot) {
-    const cfg = loadDevEcoConfig(projectRoot);
+    const cfg = loadHmosDeviceConfig(projectRoot);
     if (typeof cfg?.killHdcServerOnFinish === 'boolean') {
       return { shouldKill: cfg.killHdcServerOnFinish, source: 'config' };
     }
@@ -306,7 +306,7 @@ function hdcListTargetsProbe(executable: string): boolean {
  * 解析可执行的 hdc。
  *
  * 顺序：`HARNESS_HDC_EXE` / `HDC_EXE`（须为可执行文件路径）→ PATH 上的 `hdc` →
- * 自 `framework.config.json`（自 cwd 向上找到实例根）`toolchain.devEcoStudio.installPath` 推导
+ * 自 `framework.local.json`（自 cwd 向上找到实例根）`toolchain.devEcoStudio.installPath` 推导
  * `…/sdk/default/openharmony/toolchains/hdc(.exe)`。
  *
  * Cursor / CI 子进程常 **不继承** 用户图形会话里配的 PATH；本回退与 hvigor 已配置的 DevEco 路径对齐。
@@ -587,13 +587,13 @@ export function loadOhosTestModuleName(projectRoot: string, srcPath: string): st
 
 /**
  * 综合解析跑测试需要的全部元数据。
- * testRunner / timeoutMs 允许从 framework.config.json 覆盖；都不配置则走 hypium 默认。
+ * testRunner / timeoutMs 允许从 framework.config.json > toolchain.hmosDevice 覆盖；都不配置则走 hypium 默认。
  */
 export function loadOhosTestMetadata(projectRoot: string, srcPath: string): OhosTestMetadata {
   const bundleName = loadAppBundleName(projectRoot);
   const ohosTestModuleName = loadOhosTestModuleName(projectRoot, srcPath);
-  const cfg = (loadDevEcoConfig(projectRoot) ?? {}) as Record<string, unknown>;
-  const testRunner = (cfg.testRunner as string) || '/ets/testrunner/OpenHarmonyTestRunner';
+  const cfg = loadHmosDeviceConfig(projectRoot) ?? {};
+  const testRunner = cfg.testRunner || '/ets/testrunner/OpenHarmonyTestRunner';
   const testTimeoutMs = Number(cfg.aaTestTimeoutMs) || 60_000;
   return { bundleName, ohosTestModuleName, testRunner, testTimeoutMs };
 }
@@ -1027,7 +1027,7 @@ export function classifyAaTestFailure(
       kind: 'aa_test_timeout',
       summary: `aa test 超时或未在期限内返回 Hypium 结果（exit=${exitCode}）。`,
       suggestion:
-        '确认设备未息屏、应用测试 Ability 能启动；必要时调大 framework.config.json > toolchain.devEcoStudio.aaTestTimeoutMs 后重跑。',
+        '确认设备未息屏、应用测试 Ability 能启动；必要时调大 framework.config.json > toolchain.hmosDevice.aaTestTimeoutMs 后重跑。',
     };
   }
 

@@ -10,15 +10,18 @@ import * as path from 'path';
 import {
   clearFrameworkConfigCache,
   getFrameworkPersonalSetupStatus,
+  loadDevEcoConfig,
   loadFrameworkConfig,
 } from '../../config';
 import {
   buildLocalFromProjectLegacy,
   detectPendingMigrations,
 } from '../../scripts/utils/config-field-merger';
+import { evaluateConfigPlacementGate } from '../../scripts/utils/config-placement-gate';
 import {
   loadLocalConfig,
   LOCAL_CONFIG_FILENAME,
+  mergeLocalIntoToolchain,
   resolveAgentAdapterSource,
   writeLocalConfig,
 } from '../../scripts/utils/framework-local-config';
@@ -100,6 +103,125 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(local!.toolchain?.devEcoStudio?.installPath, 'C:/DevEco');
       const pending = detectPendingMigrations(raw);
       assert(pending.some(p => p.id === 'extract_personal_to_local'));
+    },
+  },
+  {
+    name: 'mergeLocalIntoToolchain fail-closed：忽略 project devEcoStudio',
+    run: () => {
+      const merged = mergeLocalIntoToolchain(
+        { devEcoStudio: { installPath: 'C:/wrong' }, hvigor: { daemon: true } },
+        null,
+      );
+      assert.strictEqual(merged?.devEcoStudio, undefined);
+      assert.strictEqual(merged?.hvigor?.daemon, true);
+    },
+  },
+  {
+    name: 'loadDevEcoConfig 不读 project config 错位 installPath',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          materialized_adapters: ['generic'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+          toolchain: { devEcoStudio: { installPath: 'C:/wrong-project' } },
+        }, null, 2),
+      );
+      clearFrameworkConfigCache();
+      assert.strictEqual(loadDevEcoConfig(root), undefined);
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'evaluateConfigPlacementGate：project devEcoStudio BLOCKER',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+          toolchain: { devEcoStudio: { installPath: 'C:/wrong' } },
+        }, null, 2),
+      );
+      clearFrameworkConfigCache();
+      const gate = evaluateConfigPlacementGate(root);
+      assert.strictEqual(gate.ok, false);
+      assert.strictEqual(gate.code, 'misconfigured_personal_fields');
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'loadLocalConfig strips legacy setup.adapter → agent_adapter',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', setup: { adapter: 'generic' } }),
+      );
+      const local = loadLocalConfig(root);
+      assert.strictEqual(local?.agent_adapter, 'generic');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'loadLocalConfig rejects unknown top-level key',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', foo: 'bar' }),
+      );
+      assert.throws(() => loadLocalConfig(root), /非法顶层键/);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'loadLocalConfig rejects nested devEcoStudio typo',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({
+          schema_version: '1.0',
+          toolchain: { devEcoStuido: { installPath: 'C:/x' } },
+        }),
+      );
+      assert.throws(() => loadLocalConfig(root), /toolchain 含非法键/);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'loadLocalConfig rejects nested installPath typo',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({
+          schema_version: '1.0',
+          toolchain: { devEcoStudio: { installPth: 'C:/x' } },
+        }),
+      );
+      assert.throws(() => loadLocalConfig(root), /devEcoStudio 含非法键/);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

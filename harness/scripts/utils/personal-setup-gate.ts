@@ -7,19 +7,40 @@ import * as path from 'path';
 
 import {
   clearFrameworkConfigCache,
+  deriveHvigorBinFromInstallPath,
   getFrameworkPersonalSetupStatus,
+  loadDevEcoConfig,
+  loadFrameworkConfig,
   loadFrameworkConfigWithSources,
   type FrameworkPersonalSetupStatus,
 } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import { __testing as checkInitTesting } from '../check-init';
+import { detectScan, type DetectScanReport } from '../detect-deveco';
+import {
+  evaluateConfigPlacementGate,
+  formatConfigPlacementGateStderr,
+} from './config-placement-gate';
 import {
   LOCAL_SCHEMA_VERSION,
   loadLocalConfig,
   writeLocalConfig,
   type FrameworkLocalConfig,
 } from './framework-local-config';
+import type { PersonalPrerequisiteId } from './phase-personal-prerequisites';
+import { resolvePhasePersonalPrerequisites } from './phase-personal-prerequisites';
 
 const { loadAdapter } = checkInitTesting;
+
+const MAX_ENSURE_REPAIR_STEPS = 4;
+
+type DetectScanFn = () => DetectScanReport;
+let detectScanForEnsure: DetectScanFn = detectScan;
+
+/** 单测注入 detect-deveco 结果，避免依赖本机 DevEco 安装 */
+export function __testing_setDetectScanForEnsure(fn: DetectScanFn | null): void {
+  detectScanForEnsure = fn ?? detectScan;
+}
 
 /** 与 init-task-executor mergeLocal 一致：保留既有 toolchain 等字段 */
 function mergeLocalPatch(
@@ -51,11 +72,92 @@ export type PersonalSetupGateFailureCode =
   | 'not_in_materialized'
   | 'entry_not_materialized'
   | 'needs_adapter_choice'
-  | 'no_materialized_adapter';
+  | 'no_materialized_adapter'
+  | 'misconfigured_personal_fields'
+  | 'deveco_toolchain_missing';
 
 export type PersonalSetupEnsureCode =
   | 'ok'
   | PersonalSetupGateFailureCode;
+
+export interface PersonalSetupGateOptions {
+  /** init / migrate-config / personal orchestrate 豁免错位检测 */
+  placementExempt?: boolean;
+  /** phase / goal chain 要求的 personal prerequisite 并集 */
+  requiredPrerequisites?: Set<PersonalPrerequisiteId>;
+}
+
+/** `--ensure` 用：有 --phase 时按 phase capability 并集；无 phase 时仅 agent_adapter（init 兼容） */
+export function resolveEnsurePrerequisites(
+  projectRoot: string,
+  phase?: string,
+): Set<PersonalPrerequisiteId> {
+  if (!phase?.trim()) {
+    return new Set<PersonalPrerequisiteId>(['agent_adapter']);
+  }
+  const cfg = loadFrameworkConfig(projectRoot);
+  const resolved = loadResolvedProfile(projectRoot, cfg);
+  return resolvePhasePersonalPrerequisites(phase.trim(), resolved);
+}
+
+function isDevecoToolchainReady(projectRoot: string): boolean {
+  const cfg = loadDevEcoConfig(projectRoot);
+  if (!cfg) return false;
+  if (cfg.hvigorBin) {
+    return fs.existsSync(cfg.hvigorBin);
+  }
+  if (cfg.installPath) {
+    const derived = deriveHvigorBinFromInstallPath(cfg.installPath);
+    return Boolean(derived && fs.existsSync(derived));
+  }
+  return false;
+}
+
+function ensureDevecoToolchain(projectRoot: string): { ok: boolean; message: string; ensured?: 'auto_detect_deveco' } {
+  if (isDevecoToolchainReady(projectRoot)) {
+    return { ok: true, message: 'deveco toolchain 已就绪' };
+  }
+  const report = detectScanForEnsure();
+  if (report.recommended?.status === 'ok' && report.recommended.installPath) {
+    writeLocalConfig(
+      projectRoot,
+      mergeLocalPatch(projectRoot, {
+        toolchain: { devEcoStudio: { installPath: report.recommended.installPath } },
+      }),
+    );
+    clearFrameworkConfigCache();
+    if (isDevecoToolchainReady(projectRoot)) {
+      return {
+        ok: true,
+        message: `已自动探测并写入 framework.local.json installPath=${report.recommended.installPath}`,
+        ensured: 'auto_detect_deveco',
+      };
+    }
+  }
+  return {
+    ok: false,
+    message:
+      'DevEco 工具链未就绪（framework.local.json > toolchain.devEcoStudio）。' +
+      '请执行 check-personal-setup --ensure 或 personal setup detect-deveco / record-deveco-path。',
+  };
+}
+
+function misconfiguredPlacementResult(
+  status: FrameworkPersonalSetupStatus,
+  activeAdapter: string,
+  materializedAdapters: string[],
+): Extract<PersonalSetupGateResult, { ok: false }> {
+  return {
+    ok: false,
+    code: 'misconfigured_personal_fields',
+    status,
+    activeAdapter,
+    materializedAdapters,
+    message:
+      'framework.config.json 含 personal 字段（agent_adapter 或 toolchain.devEcoStudio）。' +
+      '修复须两步串行：① init UPDATE / migrate-config 清场并外迁；② check-personal-setup --ensure 写 local。',
+  };
+}
 
 export type PersonalSetupGateResult =
   | {
@@ -80,10 +182,15 @@ export interface PersonalSetupEnsureJson {
   status: FrameworkPersonalSetupStatus;
   activeAdapter: string;
   materializedAdapters: string[];
-  ensured: 'auto_single_adapter' | null;
+  ensured: PersonalSetupEnsuredAction | null;
   candidates: string[];
   message: string;
 }
+
+export type PersonalSetupEnsuredAction =
+  | 'auto_single_adapter'
+  | 'auto_detect_deveco'
+  | 'auto_single_adapter_and_deveco';
 
 /** 项目级 materialized 列表（不含 local merge） */
 export function resolveProjectMaterializedForGate(
@@ -108,9 +215,39 @@ export function adapterEntryExists(projectRoot: string, adapterName: string): bo
   return fs.existsSync(path.join(projectRoot, adapter.entryFile.targetRel));
 }
 
+function combineEnsuredActions(
+  steps: Array<'auto_single_adapter' | 'auto_detect_deveco'>,
+): PersonalSetupEnsuredAction | null {
+  const hasAdapter = steps.includes('auto_single_adapter');
+  const hasDeveco = steps.includes('auto_detect_deveco');
+  if (hasAdapter && hasDeveco) return 'auto_single_adapter_and_deveco';
+  if (hasAdapter) return 'auto_single_adapter';
+  if (hasDeveco) return 'auto_detect_deveco';
+  return null;
+}
+
+function formatEnsuredOkMessage(
+  ensured: PersonalSetupEnsuredAction | null,
+  activeAdapter: string,
+): string {
+  if (ensured === 'auto_single_adapter') {
+    return `已自动写入 framework.local.json agent_adapter=${activeAdapter}`;
+  }
+  if (ensured === 'auto_detect_deveco') {
+    return '已自动探测并写入 framework.local.json toolchain.devEcoStudio.installPath';
+  }
+  if (ensured === 'auto_single_adapter_and_deveco') {
+    return (
+      `已自动写入 framework.local.json agent_adapter=${activeAdapter}，` +
+      '并探测写入 toolchain.devEcoStudio.installPath'
+    );
+  }
+  return 'personal setup 已就绪';
+}
+
 function gateResultToEnsureJson(
   result: PersonalSetupGateResult,
-  ensured: PersonalSetupEnsureJson['ensured'] = null,
+  ensured: PersonalSetupEnsuredAction | null = null,
   candidates: string[] = [],
 ): PersonalSetupEnsureJson {
   if (result.ok) {
@@ -122,9 +259,7 @@ function gateResultToEnsureJson(
       materializedAdapters: result.materializedAdapters,
       ensured,
       candidates,
-      message: ensured === 'auto_single_adapter'
-        ? `已自动写入 framework.local.json agent_adapter=${result.activeAdapter}`
-        : 'personal setup 已就绪',
+      message: formatEnsuredOkMessage(ensured, result.activeAdapter),
     };
   }
   return {
@@ -139,53 +274,77 @@ function gateResultToEnsureJson(
   };
 }
 
-/** feature phase / Skill bootstrap 用：fallback、membership、入口产物三重校验 */
-export function evaluatePersonalSetupGate(projectRoot: string): PersonalSetupGateResult {
+/** feature phase / Skill bootstrap 用：fallback、membership、入口产物、prerequisite 校验 */
+export function evaluatePersonalSetupGate(
+  projectRoot: string,
+  options: PersonalSetupGateOptions = {},
+): PersonalSetupGateResult {
   const status = getFrameworkPersonalSetupStatus(projectRoot);
   const activeAdapter = status.agent_adapter;
   const materializedAdapters = resolveProjectMaterializedForGate(projectRoot);
+  const required = options.requiredPrerequisites ?? new Set<PersonalPrerequisiteId>(['agent_adapter']);
 
-  if (status.source === 'fallback') {
-    return {
-      ok: false,
-      code: 'fallback',
-      status,
-      activeAdapter,
-      materializedAdapters,
-      message:
-        '未检测到个人 Framework 设置（framework.local.json 或 legacy agent_adapter）。' +
-        '请由阶段入口执行 check-personal-setup.ts --ensure 完成个人配置。',
-    };
+  const placement = evaluateConfigPlacementGate(projectRoot, { exempt: options.placementExempt });
+  if (!placement.ok) {
+    return misconfiguredPlacementResult(status, activeAdapter, materializedAdapters);
   }
 
-  if (
-    materializedAdapters.length > 0 &&
-    !materializedAdapters.includes(activeAdapter)
-  ) {
-    return {
-      ok: false,
-      code: 'not_in_materialized',
-      status,
-      activeAdapter,
-      materializedAdapters,
-      message:
-        `active adapter "${activeAdapter}" 不在项目 materialized_adapters` +
-        ` [${materializedAdapters.join(', ')}]；请改选已物化项或先跑 /framework-init 物化。`,
-    };
+  if (required.has('agent_adapter')) {
+    if (status.source === 'fallback') {
+      return {
+        ok: false,
+        code: 'fallback',
+        status,
+        activeAdapter,
+        materializedAdapters,
+        message:
+          '未检测到个人 Framework 设置（framework.local.json 或 legacy agent_adapter）。' +
+          '请由阶段入口执行 check-personal-setup.ts --ensure 完成个人配置。',
+      };
+    }
+
+    if (
+      materializedAdapters.length > 0 &&
+      !materializedAdapters.includes(activeAdapter)
+    ) {
+      return {
+        ok: false,
+        code: 'not_in_materialized',
+        status,
+        activeAdapter,
+        materializedAdapters,
+        message:
+          `active adapter "${activeAdapter}" 不在项目 materialized_adapters` +
+          ` [${materializedAdapters.join(', ')}]；请改选已物化项或先跑 /framework-init 物化。`,
+      };
+    }
+
+    if (!adapterEntryExists(projectRoot, activeAdapter)) {
+      const adapter = loadAdapter(activeAdapter);
+      const entryRel = adapter.entryFile?.targetRel ?? '<unknown>';
+      return {
+        ok: false,
+        code: 'entry_not_materialized',
+        status,
+        activeAdapter,
+        materializedAdapters,
+        message:
+          `adapter ${activeAdapter} 入口产物未物化（缺 ${entryRel}）；` +
+          '请先跑项目级 /framework-init。',
+      };
+    }
   }
 
-  if (!adapterEntryExists(projectRoot, activeAdapter)) {
-    const adapter = loadAdapter(activeAdapter);
-    const entryRel = adapter.entryFile?.targetRel ?? '<unknown>';
+  if (required.has('deveco_toolchain') && !isDevecoToolchainReady(projectRoot)) {
     return {
       ok: false,
-      code: 'entry_not_materialized',
+      code: 'deveco_toolchain_missing',
       status,
       activeAdapter,
       materializedAdapters,
       message:
-        `adapter ${activeAdapter} 入口产物未物化（缺 ${entryRel}）；` +
-        '请先跑项目级 /framework-init。',
+        '当前 phase 需要 DevEco 工具链，但 framework.local.json 未配置有效 installPath/hvigorBin。' +
+        '请执行 check-personal-setup --ensure --phase <当前 phase>（或 personal setup detect-deveco / record-deveco-path）。',
     };
   }
 
@@ -199,36 +358,38 @@ export function evaluatePersonalSetupGate(projectRoot: string): PersonalSetupGat
 
 /**
  * 确定性 ensure：单一物化 adapter 自动写 local；多 adapter 返回 needs_adapter_choice；
- * 零 adapter 返回 no_materialized_adapter。
+ * 零 adapter 返回 no_materialized_adapter。修复链可在一轮内串行 adapter → deveco。
  */
-export function ensurePersonalSetup(projectRoot: string): PersonalSetupEnsureJson {
-  const first = evaluatePersonalSetupGate(projectRoot);
-  if (first.ok) {
-    return gateResultToEnsureJson(first);
-  }
+function attemptEnsureAdapterFromFallback(
+  projectRoot: string,
+  gate: Extract<PersonalSetupGateResult, { ok: false }>,
+): RepairAttempt {
+  const { status, materializedAdapters, activeAdapter } = gate;
 
-  const { status, materializedAdapters } = first;
-
-  if (first.code === 'fallback') {
-    if (materializedAdapters.length === 0) {
-      return gateResultToEnsureJson({
+  if (materializedAdapters.length === 0) {
+    return {
+      repaired: false,
+      gate: {
         ok: false,
         code: 'no_materialized_adapter',
         status,
-        activeAdapter: first.activeAdapter,
+        activeAdapter,
         materializedAdapters,
         message:
           '项目尚未物化任何 adapter（materialized_adapters 为空）。' +
           '请先执行 /framework-init 物化至少一个 adapter。',
-      });
-    }
+      },
+    };
+  }
 
-    if (materializedAdapters.length === 1) {
-      const only = materializedAdapters[0]!;
-      if (!adapterEntryExists(projectRoot, only)) {
-        const adapter = loadAdapter(only);
-        const entryRel = adapter.entryFile?.targetRel ?? '<unknown>';
-        return gateResultToEnsureJson({
+  if (materializedAdapters.length === 1) {
+    const only = materializedAdapters[0]!;
+    if (!adapterEntryExists(projectRoot, only)) {
+      const adapter = loadAdapter(only);
+      const entryRel = adapter.entryFile?.targetRel ?? '<unknown>';
+      return {
+        repaired: false,
+        gate: {
           ok: false,
           code: 'entry_not_materialized',
           status,
@@ -236,58 +397,139 @@ export function ensurePersonalSetup(projectRoot: string): PersonalSetupEnsureJso
           materializedAdapters,
           message:
             `adapter ${only} 入口产物未物化（缺 ${entryRel}）；请先跑 /framework-init。`,
-        });
-      }
-      writeLocalConfig(
-        projectRoot,
-        mergeLocalPatch(projectRoot, { agent_adapter: only }),
-      );
-      clearFrameworkConfigCache();
-      const after = evaluatePersonalSetupGate(projectRoot);
-      if (!after.ok) {
-        return gateResultToEnsureJson(after);
-      }
-      return gateResultToEnsureJson(after, 'auto_single_adapter');
+        },
+      };
     }
+    writeLocalConfig(
+      projectRoot,
+      mergeLocalPatch(projectRoot, { agent_adapter: only }),
+    );
+    clearFrameworkConfigCache();
+    return { repaired: true, ensured: 'auto_single_adapter' };
+  }
 
-    const candidates = materializedAdapters.filter(a => adapterEntryExists(projectRoot, a));
-    if (candidates.length === 0) {
-      return gateResultToEnsureJson({
+  const candidates = materializedAdapters.filter(a => adapterEntryExists(projectRoot, a));
+  if (candidates.length === 0) {
+    return {
+      repaired: false,
+      gate: {
         ok: false,
         code: 'entry_not_materialized',
         status,
-        activeAdapter: first.activeAdapter,
+        activeAdapter,
         materializedAdapters,
         message:
           `materialized_adapters [${materializedAdapters.join(', ')}] 均无入口产物；` +
           '请先跑 /framework-init 物化 adapter 入口文件。',
-      });
-    }
-    return gateResultToEnsureJson(
-      {
-        ok: false,
-        code: 'needs_adapter_choice',
-        status,
-        activeAdapter: first.activeAdapter,
-        materializedAdapters,
-        message:
-          `检测到 ${candidates.length} 个可选 adapter，须选择 active adapter` +
-          `（registry setup.adapter）；选择后由 init-orchestrate record-adapter 写盘。`,
       },
-      null,
-      candidates,
+    };
+  }
+  return {
+    repaired: false,
+    gate: {
+      ok: false,
+      code: 'needs_adapter_choice',
+      status,
+      activeAdapter,
+      materializedAdapters,
+      message:
+        `检测到 ${candidates.length} 个可选 adapter，须选择 active adapter` +
+        '（registry setup.adapter）；选择后由 init-orchestrate record-adapter 写盘。',
+    },
+    candidates,
+  };
+}
+
+type RepairAttempt =
+  | { repaired: true; ensured: 'auto_single_adapter' | 'auto_detect_deveco' }
+  | {
+      repaired: false;
+      gate: Extract<PersonalSetupGateResult, { ok: false }>;
+      candidates?: string[];
+    };
+
+function attemptPersonalSetupRepair(
+  projectRoot: string,
+  gate: Extract<PersonalSetupGateResult, { ok: false }>,
+): RepairAttempt {
+  if (gate.code === 'deveco_toolchain_missing') {
+    const deveco = ensureDevecoToolchain(projectRoot);
+    if (!deveco.ok) {
+      return {
+        repaired: false,
+        gate: {
+          ok: false,
+          code: 'deveco_toolchain_missing',
+          status: gate.status,
+          activeAdapter: gate.activeAdapter,
+          materializedAdapters: gate.materializedAdapters,
+          message: deveco.message,
+        },
+      };
+    }
+    return { repaired: true, ensured: 'auto_detect_deveco' };
+  }
+  if (gate.code === 'fallback') {
+    return attemptEnsureAdapterFromFallback(projectRoot, gate);
+  }
+  return { repaired: false, gate };
+}
+
+export function ensurePersonalSetup(
+  projectRoot: string,
+  options: PersonalSetupGateOptions = {},
+): PersonalSetupEnsureJson {
+  const placement = evaluateConfigPlacementGate(projectRoot, { exempt: options.placementExempt });
+  if (!placement.ok) {
+    const status = getFrameworkPersonalSetupStatus(projectRoot);
+    return gateResultToEnsureJson(
+      misconfiguredPlacementResult(
+        status,
+        status.agent_adapter,
+        resolveProjectMaterializedForGate(projectRoot),
+      ),
     );
   }
 
-  return gateResultToEnsureJson(first);
+  const ensuredSteps: Array<'auto_single_adapter' | 'auto_detect_deveco'> = [];
+
+  for (let step = 0; step < MAX_ENSURE_REPAIR_STEPS; step++) {
+    const gate = evaluatePersonalSetupGate(projectRoot, options);
+    if (gate.ok) {
+      return gateResultToEnsureJson(gate, combineEnsuredActions(ensuredSteps));
+    }
+
+    const attempt = attemptPersonalSetupRepair(projectRoot, gate);
+    if (!attempt.repaired) {
+      return gateResultToEnsureJson(attempt.gate, null, attempt.candidates ?? []);
+    }
+    ensuredSteps.push(attempt.ensured);
+  }
+
+  const final = evaluatePersonalSetupGate(projectRoot, options);
+  return gateResultToEnsureJson(final, combineEnsuredActions(ensuredSteps));
 }
 
 export function formatPersonalSetupGateStderr(
   result: Extract<PersonalSetupGateResult, { ok: false }>,
 ): string {
   const lines = [
-    `[check-personal-setup] ${result.message}`,
+    result.code === 'misconfigured_personal_fields'
+      ? formatConfigPlacementGateStderr({
+          ok: false,
+          code: 'misconfigured_personal_fields',
+          message: result.message,
+        }).trimEnd()
+      : `[check-personal-setup] ${result.message}`,
     '  项目级 adapter 物化请用 /framework-init；个人配置由阶段入口 --ensure 内联完成（见 personal-setup-gate.md）。',
   ];
+  if (result.code === 'misconfigured_personal_fields') {
+    lines.splice(
+      1,
+      0,
+      '  Step1: init UPDATE / migrate-config 清场 project personal 字段；',
+      '  Step2: check-personal-setup --ensure 写 framework.local.json。',
+    );
+  }
   return `${lines.join('\n')}\n`;
 }

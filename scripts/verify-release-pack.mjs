@@ -13,6 +13,11 @@ import {
   formatNoNumberedSkillHits,
 } from './check-no-numbered-skill-release.mjs';
 import {
+  checkStaleDevecoProjectGuidance,
+  formatStaleDevecoProjectGuidanceHits,
+  runSyntheticDevecoGuidanceTests,
+} from './check-stale-deveco-project-guidance.mjs';
+import {
   isProbablyBinaryBuffer,
   isReleaseBinaryRelPath,
   loadReleaseExcludes,
@@ -190,6 +195,22 @@ export async function verifyReleasePack() {
     fail(`stale init refs: ${stale.hits.length} hit(s) in release content`);
   }
   console.log('[release:verify] stale init refs PASS');
+
+  console.log('[release:verify] stale deveco project-guidance scan...');
+  const devecoSynth = runSyntheticDevecoGuidanceTests();
+  if (devecoSynth.length > 0) {
+    for (const e of devecoSynth) console.error(`  FAIL: ${e}`);
+    fail(`stale deveco project-guidance synthetic: ${devecoSynth.length} error(s)`);
+  }
+  const devecoGuidance = checkStaleDevecoProjectGuidance(REPO_ROOT);
+  if (!devecoGuidance.ok) {
+    console.error(
+      '[release:verify] stale deveco project-guidance FAIL:\n' +
+        formatStaleDevecoProjectGuidanceHits(devecoGuidance.hits),
+    );
+    fail(`stale deveco project-guidance: ${devecoGuidance.hits.length} hit(s) in release content`);
+  }
+  console.log('[release:verify] stale deveco project-guidance PASS');
 
   console.log('[release:verify] plan version (--release)...');
   const planVer = checkPlanVersions({ mode: 'release' });

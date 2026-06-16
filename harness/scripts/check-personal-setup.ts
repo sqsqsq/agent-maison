@@ -8,6 +8,7 @@ import {
   ensurePersonalSetup,
   evaluatePersonalSetupGate,
   formatPersonalSetupGateStderr,
+  resolveEnsurePrerequisites,
   type PersonalSetupEnsureJson,
 } from './utils/personal-setup-gate';
 
@@ -15,12 +16,15 @@ export interface PersonalSetupCliOptions {
   projectRoot: string;
   json: boolean;
   ensure: boolean;
+  /** 与 harness-runner 当前 phase 对齐时，--ensure 会纳入 deveco_toolchain 等 prerequisite */
+  phase?: string;
 }
 
 function parseArgs(argv: string[]): PersonalSetupCliOptions {
   let projectRoot = process.cwd();
   let json = false;
   let ensure = false;
+  let phase: string | undefined;
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--project-root' && argv[i + 1]) {
@@ -29,9 +33,11 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
       json = true;
     } else if (a === '--ensure') {
       ensure = true;
+    } else if (a === '--phase' && argv[i + 1]) {
+      phase = String(argv[++i]).trim();
     }
   }
-  return { projectRoot, json, ensure };
+  return { projectRoot, json, ensure, phase };
 }
 
 function emitJson(payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>): void {
@@ -42,7 +48,8 @@ if (require.main === module) {
   const opts = parseArgs(process.argv);
 
   if (opts.ensure) {
-    const payload = ensurePersonalSetup(opts.projectRoot);
+    const prereqs = resolveEnsurePrerequisites(opts.projectRoot, opts.phase);
+    const payload = ensurePersonalSetup(opts.projectRoot, { requiredPrerequisites: prereqs });
     if (opts.json) {
       emitJson(payload);
     }
@@ -55,13 +62,17 @@ if (require.main === module) {
     if (!opts.json) {
       process.stdout.write(
         `personal setup ok: agent_adapter=${payload.activeAdapter}` +
-          `${payload.ensured ? ` ensured=${payload.ensured}` : ''}\n`,
+          `${payload.ensured ? ` ensured=${payload.ensured}` : ''}` +
+          `${opts.phase ? ` phase=${opts.phase}` : ''}\n`,
       );
     }
     process.exit(0);
   }
 
-  const result = evaluatePersonalSetupGate(opts.projectRoot);
+  const gateOpts = opts.phase
+    ? { requiredPrerequisites: resolveEnsurePrerequisites(opts.projectRoot, opts.phase) }
+    : {};
+  const result = evaluatePersonalSetupGate(opts.projectRoot, gateOpts);
   if (opts.json) {
     if (result.ok) {
       emitJson({
@@ -93,7 +104,8 @@ if (require.main === module) {
   }
   if (!opts.json) {
     process.stdout.write(
-      `personal setup ok: agent_adapter=${result.activeAdapter} source=${result.status.source}\n`,
+      `personal setup ok: agent_adapter=${result.activeAdapter} source=${result.status.source}` +
+        `${opts.phase ? ` phase=${opts.phase}` : ''}\n`,
     );
   }
   process.exit(0);
@@ -103,4 +115,5 @@ export {
   parseArgs as parsePersonalSetupArgs,
   evaluatePersonalSetupGate,
   ensurePersonalSetup,
+  resolveEnsurePrerequisites,
 };

@@ -14,7 +14,7 @@
 - **强制重编**：`HARNESS_DEVICE_TEST_FORCE_BUILD=1` 时始终执行 hvigor。
 - **真编译前停 daemon**：源码新于 HAP、需执行 hvigor 时，harness 会先 **`hvigor --stop-daemon`** 再 assemble，并注入 DevEco **JBR** 到子进程 `Path`（避免旧 daemon worker 在 PackageHap 阶段 `spawn java ENOENT`）。复用 HAP（`reused: true`）时不调 hvigor，亦不停 daemon。
 
-打包语义依赖宿主 **`toolchain.devEcoStudio`/`hvigor`** 配置（与 coding 门禁同源）；装机语义依赖 **`hdc` 可执行并在 PATH**。
+打包语义依赖宿主 **`framework.local.json > toolchain.devEcoStudio`** / **`toolchain.hvigor`** 配置（与 coding 门禁同源）；装机语义依赖 **`hdc` 可执行并在 PATH**。
 
 ### 装机：版本预检、降级与冲突（脚本 harness）
 
@@ -143,7 +143,7 @@
 - **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。**STEP-TOUCH** 拦截 `touch.selector` 嵌套；**STEP-002** 禁 `start_app` / `dump_ui`。
 - **Agent 纪律（BLOCKER）**：**禁止**向 `framework/harness/` Write 即席 steps / trace / report / plan-lint；steps 写到 **`doc/features/_adhoc/testing/staging/test-steps.json`**（`steps_file_contract.recommended_write_path`）。**禁止**向 `doc/app-snapshot-cache/<bundle>/` **根目录** Write page 结构 JSON；cache 仅由 **`hylyre app page save`** / warmup 写入 `pages/`。page save 失败时读 `ADHOC_PAGE_SAVE_EXIT` / `device-test-run.meta.json`，**勿**自行 Write 替代。
 - **执行协议（Step 4.B）**：derive（`adhoc-device-test --steps` 写 `derive-adhoc-last.json`）→ 读 contract → 手写 staging **`test-steps.json`**（观察 NL **不进** steps）→ **`lint-adhoc-steps`** → **`adhoc-device-test --steps-file`** → 成功后 **`--dump-ui-only`** + **`summarize-adhoc-dump`**。执行报告目录：**`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`**（stderr **`ADHOC_HYLYRE_RUN_DIR=`** / **`ADHOC_TRACE_FILE=`**）。
-- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.config.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
+- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.local.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
 - **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`（读固定 **`device-test-run.meta.json`** 的 `trace_summary.outcome`，非本次新 timestamp trace）；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。

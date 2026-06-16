@@ -485,7 +485,7 @@ function classifyUtHvigorBuildFailure(
       kind: 'toolchain',
       explanation: 'hvigor / DevEco 工具链不可用。',
       suggestion:
-        '按 framework.config.json > toolchain.devEcoStudio.installPath 配置 DevEco Studio 路径后重跑。',
+        '按 framework.local.json > toolchain.devEcoStudio.installPath 配置 DevEco Studio 路径后重跑。',
     };
   }
   if (res.skippedByEnv) {

@@ -8,6 +8,7 @@ import {
   CONFIRM_FIELDS,
   MIGRATION_RULES,
   applyMigrations,
+  buildLocalFromProjectLegacy,
   detectMissingBackfillFields,
   detectMissingConfirmFields,
   detectPendingMigrations,
@@ -415,6 +416,44 @@ const cases: Array<{ name: string; run: () => void }> = [
         visual_handoff_enforcement: 'warn',
       });
       assert(report.appliedMigrations.some(m => m.id === 'prd_segment_to_spec'));
+    },
+  },
+  {
+    name: 'deveco 混写 migrate：personal→local 语义 + 调优→hmosDevice + 删 devEcoStudio',
+    run: () => {
+      const raw = {
+        agent_adapter: 'cursor',
+        toolchain: {
+          devEcoStudio: {
+            installPath: 'D:/DevEco',
+            hvigorBin: 'D:/DevEco/tools/hvigor/bin/hvigorw.bat',
+            killHdcServerOnFinish: true,
+            aaTestTimeoutMs: 120000,
+            testRunner: '/custom/runner',
+          },
+        },
+      };
+      const { merged, report } = applyMigrations(raw);
+      const tc = (merged as { toolchain?: Record<string, unknown> }).toolchain ?? {};
+      assert.strictEqual(tc.devEcoStudio, undefined);
+      const hmos = tc.hmosDevice as Record<string, unknown>;
+      assert.strictEqual(hmos.killHdcServerOnFinish, true);
+      assert.strictEqual(hmos.aaTestTimeoutMs, 120000);
+      assert.strictEqual(hmos.testRunner, '/custom/runner');
+      assert(report.appliedMigrations.some(m => m.id === 'extract_personal_to_local'));
+      assert(report.appliedMigrations.some(m => m.id === 'deveco_tuning_to_hmos_device'));
+      const local = buildLocalFromProjectLegacy(raw);
+      assert(local?.toolchain?.devEcoStudio?.installPath, 'D:/DevEco');
+      assert(local?.toolchain?.devEcoStudio?.hvigorBin, 'D:/DevEco/tools/hvigor/bin/hvigorw.bat');
+    },
+  },
+  {
+    name: 'projectHasLegacyPersonalFields：仅 hvigorBin 也触发错位',
+    run: () => {
+      const { projectHasLegacyPersonalFields } = require('../../scripts/utils/config-field-ownership') as typeof import('../../scripts/utils/config-field-ownership');
+      assert(projectHasLegacyPersonalFields({
+        toolchain: { devEcoStudio: { hvigorBin: 'D:/hvigorw.bat' } },
+      }));
     },
   },
   {

@@ -5,13 +5,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { resolveWorkflowSpec } from '../../workflow-loader';
 import {
   resolveAdapterProvenance,
   runGoalPreflight,
 } from '../../scripts/utils/goal-preflight';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
-import { DEFAULT_DEPENDENCY_POLICY } from '../../scripts/utils/phase-transition-policy';
+import { DEFAULT_DEPENDENCY_POLICY, resolveAutoChain } from '../../scripts/utils/phase-transition-policy';
 import type { UnitCaseResult } from '../run-unit';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
@@ -46,7 +48,15 @@ function writeProjectConfig(root: string, materialized: string[]): void {
   );
 }
 
-function baseManifest(adapter: string): GoalManifest {
+function preflightCtx(root: string, manifest: GoalManifest) {
+  const cfg = loadFrameworkConfig(root);
+  const resolvedProfile = loadResolvedProfile(root, cfg);
+  const workflow = resolveWorkflowSpec(root, { config: cfg, frameworkRoot: FRAMEWORK_ROOT });
+  const chain = resolveAutoChain(workflow, manifest.start_phase, manifest.end_phase);
+  return { cfg, resolvedProfile, chain };
+}
+
+function baseManifest(adapter: string, endPhase: GoalManifest['end_phase'] = 'spec'): GoalManifest {
   return {
     schema_version: '1.0',
     run_id: 'test-run',
@@ -54,7 +64,7 @@ function baseManifest(adapter: string): GoalManifest {
     requirement: 'test',
     adapter,
     start_phase: 'spec',
-    end_phase: 'testing',
+    end_phase: endPhase,
     report_dir: 'doc/features/demo/goal-runs/test-run',
     created_at: '2026-06-09T00:00:00Z',
     unattended: {
@@ -104,14 +114,18 @@ const cases: Array<{ name: string; run: () => void }> = [
       writeProjectConfig(root, ['cursor']);
       fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
       clearFrameworkConfigCache();
+      const manifest = baseManifest('cursor');
+      const { resolvedProfile, chain } = preflightCtx(root, manifest);
       let threw = false;
       try {
         runGoalPreflight({
           projectRoot: root,
           frameworkRoot: FRAMEWORK_ROOT,
-          manifest: baseManifest('cursor'),
+          manifest,
           provenance: 'fallback',
           dryRun: false,
+          chain,
+          resolvedProfile,
         });
       } catch (e) {
         threw = true;
@@ -129,12 +143,16 @@ const cases: Array<{ name: string; run: () => void }> = [
       writeProjectConfig(root, ['cursor']);
       fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
       clearFrameworkConfigCache();
+      const manifest = baseManifest('cursor');
+      const { resolvedProfile, chain } = preflightCtx(root, manifest);
       runGoalPreflight({
         projectRoot: root,
         frameworkRoot: FRAMEWORK_ROOT,
-        manifest: baseManifest('cursor'),
+        manifest,
         provenance: 'argv_adapter',
         dryRun: true,
+        chain,
+        resolvedProfile,
       });
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -147,12 +165,16 @@ const cases: Array<{ name: string; run: () => void }> = [
       writeProjectConfig(root, ['cursor']);
       fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
       clearFrameworkConfigCache();
+      const manifest = baseManifest('cursor');
+      const { resolvedProfile, chain } = preflightCtx(root, manifest);
       runGoalPreflight({
         projectRoot: root,
         frameworkRoot: FRAMEWORK_ROOT,
-        manifest: baseManifest('cursor'),
+        manifest,
         provenance: 'manifest_adapter',
         dryRun: true,
+        chain,
+        resolvedProfile,
       });
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -165,14 +187,18 @@ const cases: Array<{ name: string; run: () => void }> = [
       writeProjectConfig(root, ['claude']);
       fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
       clearFrameworkConfigCache();
+      const manifest = baseManifest('cursor');
+      const { resolvedProfile, chain } = preflightCtx(root, manifest);
       let threw = false;
       try {
         runGoalPreflight({
           projectRoot: root,
           frameworkRoot: FRAMEWORK_ROOT,
-          manifest: baseManifest('cursor'),
+          manifest,
           provenance: 'argv_adapter',
           dryRun: false,
+          chain,
+          resolvedProfile,
         });
       } catch (e) {
         threw = true;

@@ -38,6 +38,11 @@ import {
   LOCAL_SCHEMA_VERSION,
   type FrameworkLocalConfig,
 } from './framework-local-config';
+import {
+  migrateDevecoTuningToHmosDevice,
+  projectHasLegacyPersonalFields,
+  projectNeedsDevecoTuningMigration,
+} from './config-field-ownership';
 
 /** 单条补缺规则。`path` 为点分路径（如 `paths.extension_dir`、`state_machine.ttl_hours`）。 */
 export interface BackfillField {
@@ -277,15 +282,7 @@ function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
  * UPDATE 模式可被自动 modernize 的迁移规则（SSOT）。
  * 与 BACKFILL 不同：会修改/删除已有 key。
  */
-function projectHasLegacyPersonalFields(raw: Record<string, unknown>): boolean {
-  if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) return true;
-  const tc = raw.toolchain;
-  if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return false;
-  const deveco = (tc as Record<string, unknown>).devEcoStudio;
-  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return false;
-  const installPath = (deveco as Record<string, unknown>).installPath;
-  return typeof installPath === 'string' && installPath.trim().length > 0;
-}
+export { projectHasLegacyPersonalFields } from './config-field-ownership';
 
 /** 从项目级 legacy config 构造待写入 framework.local.json 的内容（不修改 raw）。 */
 export function buildLocalFromProjectLegacy(raw: unknown): FrameworkLocalConfig | null {
@@ -433,6 +430,23 @@ export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
         summary: changed
           ? '已外迁 personal 字段（agent_adapter / DevEco）并写入 materialized_adapters'
           : 'personal 字段已外迁',
+      };
+    },
+  },
+  {
+    id: 'deveco_tuning_to_hmos_device',
+    note: '外迁 legacy toolchain.devEcoStudio 调优键到 toolchain.hmosDevice',
+    detect: raw =>
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? projectNeedsDevecoTuningMigration(raw as Record<string, unknown>)
+        : false,
+    apply: base => {
+      const changed = migrateDevecoTuningToHmosDevice(base);
+      return {
+        applied: changed,
+        summary: changed
+          ? '已外迁 DevEco 调优键到 toolchain.hmosDevice 并删除 project devEcoStudio'
+          : 'DevEco 调优键已外迁',
       };
     },
   },
@@ -791,16 +805,7 @@ function stripPersonalDevEcoFromToolchain(obj: Record<string, unknown>): void {
   const tc = obj.toolchain;
   if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return;
   const tcObj = tc as Record<string, unknown>;
-  const deveco = tcObj.devEcoStudio;
-  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return;
-  const devecoObj = { ...(deveco as Record<string, unknown>) };
-  delete devecoObj.installPath;
-  delete devecoObj.hvigorBin;
-  if (Object.keys(devecoObj).length === 0) {
-    delete tcObj.devEcoStudio;
-  } else {
-    tcObj.devEcoStudio = devecoObj;
-  }
+  delete tcObj.devEcoStudio;
   if (Object.keys(tcObj).length === 0) {
     delete obj.toolchain;
   }

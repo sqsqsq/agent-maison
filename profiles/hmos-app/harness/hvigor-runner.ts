@@ -10,8 +10,8 @@
 //  - 使用 `child_process.spawnSync`；coding/ut 构建 stdout+stderr **直写日志 fd**，
 //    避免 maxBuffer / 内存复制；超时由 spawnSync.timeout 杀死子进程。
 //  - v2.3 起查找顺序：
-//      ① framework.config.json > toolchain.devEcoStudio.hvigorBin（显式路径）
-//      ② framework.config.json > toolchain.devEcoStudio.installPath → 推导
+//      ① framework.local.json > toolchain.devEcoStudio.hvigorBin（显式路径）
+//      ② framework.local.json > toolchain.devEcoStudio.installPath → 推导
 //        {installPath}/tools/hvigor/bin/hvigorw{.bat}
 //      ③ 项目根 hvigorw.bat / hvigorw（向后兼容 Gradle-wrapper 风格工程）
 //      ④ 系统 PATH（全局安装的 hvigor / hvigorw）
@@ -416,8 +416,8 @@ function safeReadText(file: string): string {
 
 /**
  * 按 v2.3 查找顺序解析 hvigor 可执行命令：
- *   ① framework.config.json > toolchain.devEcoStudio.hvigorBin（显式）
- *   ② framework.config.json > toolchain.devEcoStudio.installPath → 推导
+ *   ① framework.local.json > toolchain.devEcoStudio.hvigorBin（显式）
+ *   ② framework.local.json > toolchain.devEcoStudio.installPath → 推导
  *   ③ 项目根 hvigorw.bat / hvigorw（老工程兼容）
  *   ④ 系统 PATH
  * 返回 `source` 便于诊断信息里告诉用户命中的是哪条路径。
@@ -536,7 +536,7 @@ function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
  */
 function buildToolMissingMessage(projectRoot: string): string {
   const header = '未找到 hvigor 可执行文件。';
-  const cfgPath = 'framework.config.json > toolchain.devEcoStudio';
+  const cfgPath = 'framework.local.json > toolchain.devEcoStudio';
   let configStatus: string;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -562,7 +562,7 @@ function buildToolMissingMessage(projectRoot: string): string {
     configStatus = `[读取配置失败] ${(err as Error).message}`;
   }
   const detector =
-    '自动探测：npx ts-node framework/harness/scripts/utils/detect-deveco.ts';
+    '自动探测：npx ts-node framework/harness/scripts/detect-deveco.ts';
   return `${header}\n${configStatus}\n${detector}`;
 }
 
@@ -765,7 +765,7 @@ export function buildHvigorDiagnostics(log: string): string[] {
     diagnostics.push(
       [
         '检测到 PackageHap/SignHap 阶段 spawn java ENOENT：签名链找不到 java 可执行文件（非 ArkTS 编译错误）。',
-        'Harness 已从 framework.config → toolchain.devEcoStudio.installPath 推导 DevEco JBR 并前插 Path/JAVA_HOME。',
+        'Harness 已从 framework.local.json → toolchain.devEcoStudio.installPath 推导 DevEco JBR 并前插 Path/JAVA_HOME。',
         '真机 testing 在「源码触发重编」前会自动执行 hvigor --stop-daemon，避免旧 daemon worker 沿用无 java 的环境。',
         '若仍失败：在 DevEco 内 Build Hap 一次，或确认系统 JAVA_HOME 未指向无效目录。',
       ].join(' '),

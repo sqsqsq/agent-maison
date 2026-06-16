@@ -3,11 +3,19 @@
  */
 
 import type { FrameworkPersonalSetupStatus } from '../../config';
+import type { HarnessResolvedProfile } from '../../scripts/utils/types';
 import type { GoalManifest } from './goal-manifest';
 import {
   adapterEntryExists,
+  evaluatePersonalSetupGate,
   resolveProjectMaterializedForGate,
 } from './personal-setup-gate';
+import { evaluateConfigPlacementGate } from './config-placement-gate';
+import {
+  unionPhasePersonalPrerequisites,
+  type PersonalPrerequisiteId,
+} from './phase-personal-prerequisites';
+import type { FeaturePhase } from './phase-transition-policy';
 import {
   loadGoalCapability,
   validateGoalCapabilityForRunner,
@@ -42,16 +50,27 @@ export interface GoalPreflightInput {
   manifest: GoalManifest;
   provenance: AdapterProvenance;
   dryRun: boolean;
+  chain: FeaturePhase[];
+  resolvedProfile: HarnessResolvedProfile;
 }
 
 export function runGoalPreflight(input: GoalPreflightInput): void {
-  const { projectRoot, frameworkRoot, manifest, provenance, dryRun } = input;
+  const { projectRoot, frameworkRoot, manifest, provenance, dryRun, chain, resolvedProfile } =
+    input;
   const adapter = manifest.adapter?.trim();
   if (!adapter) {
     throw new Error('[goal-runner] preflight BLOCKER: manifest.adapter 缺失');
   }
   if (!manifest.feature?.trim()) {
     throw new Error('[goal-runner] preflight BLOCKER: manifest.feature 缺失');
+  }
+
+  const placement = evaluateConfigPlacementGate(projectRoot);
+  if (!placement.ok) {
+    throw new Error(
+      `[goal-runner] preflight BLOCKER: ${placement.message}` +
+        ' Step1: migrate-config；Step2: check-personal-setup --ensure。',
+    );
   }
 
   const materialized = resolveProjectMaterializedForGate(projectRoot);
@@ -82,6 +101,20 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     );
   }
 
+  const prereqs = unionPhasePersonalPrerequisites(chain, resolvedProfile);
+  // argv/manifest 已显式声明 adapter；仅 deveco 等 toolchain prerequisite 不可豁免
+  if (provenance === 'argv_adapter' || provenance === 'manifest_adapter') {
+    prereqs.delete('agent_adapter');
+  }
+  const gate = evaluatePersonalSetupGate(projectRoot, {
+    requiredPrerequisites: prereqs,
+  });
+  if (!gate.ok) {
+    throw new Error(`[goal-runner] preflight BLOCKER: ${gate.message}`);
+  }
+
+  // argv_adapter 不豁免 deveco readiness（已在 evaluatePersonalSetupGate 校验）
+
   const vars: InvokeTemplateVars = {
     PROMPT_FILE: '',
     PROMPT: 'preflight-probe',
@@ -106,4 +139,11 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     }
     throw new Error(binaryCheck.message);
   }
+}
+
+export function goalRequiredPrerequisites(
+  chain: FeaturePhase[],
+  resolvedProfile: HarnessResolvedProfile,
+): Set<PersonalPrerequisiteId> {
+  return unionPhasePersonalPrerequisites(chain, resolvedProfile);
 }

@@ -974,7 +974,7 @@ export function classifyCodingCompileFailure(
       kind: 'toolchain',
       explanation: '宿主编译驱动（IDE 安装路径下的构建工具）不可用。',
       suggestion:
-        '在 framework.config.json > toolchain.devEcoStudio.installPath 配置 IDE 安装根目录后重跑 harness。',
+        '在 framework.local.json > toolchain.devEcoStudio.installPath 配置 IDE 安装根目录（或 check-personal-setup --ensure / detect-deveco）后重跑 harness。',
     };
   }
   if (res.skippedByEnv) {

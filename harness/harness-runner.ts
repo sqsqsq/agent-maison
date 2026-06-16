@@ -60,6 +60,8 @@ import {
 import {
   evaluatePersonalSetupGate,
 } from './scripts/utils/personal-setup-gate';
+import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
+import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import {
   mergeAndWritePhaseState,
   tryValidateReceipt,
@@ -286,11 +288,23 @@ async function main(): Promise<void> {
   const skipPersonalGateForInitInternal =
     initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
   if (!personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
-    const gate = evaluatePersonalSetupGate(projectRoot);
+    const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly);
+    const placement = evaluateConfigPlacementGate(projectRoot);
+    if (!placement.ok) {
+      console.error(`   ✗ ${placement.message.replace(/\n/g, '\n     ')}`);
+      console.error('     Step1: init UPDATE / migrate-config 清场 project personal 字段；');
+      console.error(
+        '     Step2: cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --phase ' +
+          `${phase} --project-root <repo-root>`,
+      );
+      process.exit(1);
+    }
+    const prereqs = resolvePhasePersonalPrerequisites(phase, resolvedForGate);
+    const gate = evaluatePersonalSetupGate(projectRoot, { requiredPrerequisites: prereqs });
     if (!gate.ok) {
       console.error(`   ✗ ${gate.message.replace(/\n/g, '\n     ')}`);
       console.error(
-        '     请在本工程根执行：cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>',
+        `     请在本工程根执行：cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --phase ${phase} --project-root <repo-root>`,
       );
       console.error(
         '     或修正 materialized_adapters / 物化产物；详见 framework/skills/reference/personal-setup-gate.md',

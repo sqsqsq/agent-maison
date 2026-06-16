@@ -18,6 +18,7 @@ import {
   featurePhaseReportsDir,
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
+import { loadResolvedProfile } from '../profile-loader';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
   classifyPhaseVerdict,
@@ -565,6 +566,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
   try {
     const { adapterStatus } = loadFrameworkConfigWithSources(projectRoot);
+    const resolvedProfile = loadResolvedProfile(projectRoot, cfg);
     const provenance = resolveAdapterProvenance(
       {
         adapter: argv.adapter ? String(argv.adapter) : undefined,
@@ -573,12 +575,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
       },
       adapterStatus,
     );
+    const chain = resolveAutoChain(
+      workflow,
+      manifest.start_phase,
+      manifest.end_phase,
+      manifest.chain_override,
+    );
     runGoalPreflight({
       projectRoot,
       frameworkRoot,
       manifest,
       provenance,
       dryRun,
+      chain,
+      resolvedProfile,
     });
     writeGoalManifest(manifest, projectRoot);
 
@@ -611,13 +621,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
         return 1;
       }
     }
-
-    const chain = resolveAutoChain(
-      workflow,
-      manifest.start_phase,
-      manifest.end_phase,
-      manifest.chain_override,
-    );
 
     const progressWriterState: ProgressWriterState = { lastWriteMs: 0 };
     const flushProgress = setupProgressHooks(

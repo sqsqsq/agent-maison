@@ -112,16 +112,27 @@ export interface ArchitectureDsl {
  * 只做"字段格式 / 必填"校验；存在性由 hvigor-runner 在真实执行时报告。
  */
 export interface DevEcoStudioConfig {
-  /** DevEco Studio 安装根目录（绝对路径）。Windows 可用正斜杠或反斜杠。 */
+  /** DevEco Studio 安装根目录（绝对路径）。仅 framework.local.json。 */
   installPath?: string;
   /** 显式指定 hvigor 可执行文件（绝对路径）；为空时从 installPath 推导。 */
   hvigorBin?: string;
+}
+
+/**
+ * 工程级设备/测试调优（framework.config.json > toolchain.hmosDevice）。
+ * personal 机器路径见 framework.local.json > toolchain.devEcoStudio。
+ */
+export interface HmosDeviceConfig {
   /**
    * harness/goal 设备 phase 收尾是否执行 `hdc kill` 回收 daemon。
-   * 未配置时：CI 默认 true，开发机默认 false（cwd 隔离后残留 daemon 不锁目录）。
+   * 未配置时：CI 默认 true，开发机默认 false。
    * env `MAISON_KILL_HDC_ON_FINISH` 优先级更高。
    */
   killHdcServerOnFinish?: boolean;
+  /** aa test 超时（毫秒）；默认 60s。 */
+  aaTestTimeoutMs?: number;
+  /** hypium testRunner 路径；默认 /ets/testrunner/OpenHarmonyTestRunner。 */
+  testRunner?: string;
 }
 
 export type HvigorAnalyzeMode = 'off' | 'normal' | 'advanced';
@@ -206,7 +217,10 @@ export interface StateMachineConfig {
 }
 
 export interface ToolchainConfig {
+  /** runtime merge：仅来自 framework.local.json（fail-closed，不读 project） */
   devEcoStudio?: DevEcoStudioConfig;
+  /** 工程级设备/测试调优（project config） */
+  hmosDevice?: HmosDeviceConfig;
   hvigor?: HvigorOptionsConfig;
   /**
    * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
@@ -973,32 +987,35 @@ function normalizeStateMachine(raw: StateMachineConfig | undefined): StateMachin
 function normalizeToolchain(raw: ToolchainConfig | undefined): ToolchainConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
 
-  const deveco = raw.devEcoStudio;
-  let normalizedDeveco: DevEcoStudioConfig | undefined;
-  if (deveco && typeof deveco === 'object') {
-    const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
-    const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
-    const killHdcServerOnFinish =
-      typeof deveco.killHdcServerOnFinish === 'boolean' ? deveco.killHdcServerOnFinish : undefined;
-    if (installPath || hvigorBin || killHdcServerOnFinish !== undefined) {
-      normalizedDeveco = {
-        ...(installPath ? { installPath } : {}),
-        ...(hvigorBin ? { hvigorBin } : {}),
-        ...(killHdcServerOnFinish !== undefined ? { killHdcServerOnFinish } : {}),
-      };
-    }
-  }
+  // project config 禁止 devEcoStudio；personal 路径由 applyLocalMerge 从 local 注入
+  const hmosDevice = normalizeHmosDevice(raw.hmosDevice);
 
   const preferredProduct = typeof raw.preferredProduct === 'string' ? raw.preferredProduct.trim() : '';
   const hvigor = normalizeHvigorOptions(raw.hvigor);
 
-  if (!normalizedDeveco && !preferredProduct && !hvigor) return undefined;
+  if (!hmosDevice && !preferredProduct && !hvigor) return undefined;
 
   return {
-    ...(normalizedDeveco ? { devEcoStudio: normalizedDeveco } : {}),
+    ...(hmosDevice ? { hmosDevice } : {}),
     ...(hvigor ? { hvigor } : {}),
     ...(preferredProduct ? { preferredProduct } : {}),
   };
+}
+
+function normalizeHmosDevice(raw: unknown): HmosDeviceConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: HmosDeviceConfig = {};
+  if (typeof r.killHdcServerOnFinish === 'boolean') {
+    out.killHdcServerOnFinish = r.killHdcServerOnFinish;
+  }
+  if (typeof r.aaTestTimeoutMs === 'number' && Number.isFinite(r.aaTestTimeoutMs) && r.aaTestTimeoutMs > 0) {
+    out.aaTestTimeoutMs = Math.floor(r.aaTestTimeoutMs);
+  }
+  if (typeof r.testRunner === 'string' && r.testRunner.trim()) {
+    out.testRunner = r.testRunner.trim();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function normalizeHvigorCoding(raw: unknown): HvigorCodingConfig | undefined {
@@ -2003,10 +2020,24 @@ export function deriveJbrHomeFromInstallPath(installPath: string | undefined): s
 }
 
 /**
- * 返回已归一化的 DevEco Studio 配置；未声明则返回 undefined。
+ * 返回 framework.local.json 中的 DevEco 路径配置；project config 错位字段不被读取。
  */
 export function loadDevEcoConfig(projectRoot: string): DevEcoStudioConfig | undefined {
-  return loadFrameworkConfig(projectRoot).toolchain?.devEcoStudio;
+  const local = loadLocalConfig(projectRoot);
+  const deveco = local?.toolchain?.devEcoStudio;
+  if (!deveco) return undefined;
+  const installPath = typeof deveco.installPath === 'string' ? deveco.installPath.trim() : '';
+  const hvigorBin = typeof deveco.hvigorBin === 'string' ? deveco.hvigorBin.trim() : '';
+  if (!installPath && !hvigorBin) return undefined;
+  return {
+    ...(installPath ? { installPath } : {}),
+    ...(hvigorBin ? { hvigorBin } : {}),
+  };
+}
+
+/** 工程级设备/测试调优（project config > toolchain.hmosDevice）。 */
+export function loadHmosDeviceConfig(projectRoot: string): HmosDeviceConfig | undefined {
+  return loadFrameworkConfig(projectRoot).toolchain?.hmosDevice;
 }
 
 /**

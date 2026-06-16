@@ -62,7 +62,23 @@
       },
       "additionalProperties": true
     },
-    "toolchain": { "type": "object" },
+    "toolchain": {
+      "type": "object",
+      "properties": {
+        "hmosDevice": {
+          "type": "object",
+          "properties": {
+            "killHdcServerOnFinish": { "type": "boolean" },
+            "aaTestTimeoutMs": { "type": "number", "minimum": 1 },
+            "testRunner": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "hvigor": { "type": "object" },
+        "preferredProduct": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
     "tools": { "type": "object" },
     "state_machine": { "type": "object" },
     "spec": {

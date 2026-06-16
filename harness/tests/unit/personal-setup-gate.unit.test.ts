@@ -9,7 +9,12 @@ import { clearFrameworkConfigCache } from '../../config';
 import {
   ensurePersonalSetup,
   evaluatePersonalSetupGate,
+  resolveEnsurePrerequisites,
+  __testing_setDetectScanForEnsure,
 } from '../../scripts/utils/personal-setup-gate';
+import { resolvePhasePersonalPrerequisites } from '../../scripts/utils/phase-personal-prerequisites';
+import { loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 
 export interface UnitCaseResult {
   name: string;
@@ -30,13 +35,14 @@ function minimalArchitecture(): Record<string, unknown> {
   };
 }
 
-function writeProjectConfig(root: string, materialized: string[]): void {
+function writeProjectConfig(root: string, materialized: string[], profileName = 'generic'): void {
   fs.writeFileSync(
     path.join(root, 'framework.config.json'),
     JSON.stringify(
       {
         schema_version: '1.1',
         project_name: 'gate',
+        project_profile: { name: profileName, sub_variant: 'app' },
         materialized_adapters: materialized,
         architecture: minimalArchitecture(),
         paths: { features_dir: 'doc/features' },
@@ -193,6 +199,111 @@ const cases: Array<{ name: string; run: () => void }> = [
 
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'resolveEnsurePrerequisites: 无 --phase 仅 agent_adapter',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude'], 'hmos-app');
+      clearFrameworkConfigCache();
+      const prereqs = resolveEnsurePrerequisites(root);
+      assert.strictEqual(prereqs.size, 1);
+      assert.ok(prereqs.has('agent_adapter'));
+      assert.ok(!prereqs.has('deveco_toolchain'));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'resolveEnsurePrerequisites: --phase coding 含 deveco_toolchain（hmos-app）',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude'], 'hmos-app');
+      clearFrameworkConfigCache();
+      const prereqs = resolveEnsurePrerequisites(root, 'coding');
+      assert.ok(prereqs.has('agent_adapter'));
+      assert.ok(prereqs.has('deveco_toolchain'));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: adapter 就绪但缺 deveco 时 --phase coding 不放行 adapter-only ok',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude'], 'hmos-app');
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude' }, null, 2),
+      );
+      clearFrameworkConfigCache();
+      const cfg = loadFrameworkConfig(root);
+      const resolved = loadResolvedProfile(root, cfg);
+      const prereqs = resolvePhasePersonalPrerequisites('coding', resolved);
+      const payload = ensurePersonalSetup(root, { requiredPrerequisites: prereqs });
+      if (payload.ok) {
+        assert.ok(
+          payload.ensured === 'auto_detect_deveco',
+          'ok 时必须由 auto_detect_deveco 补齐，不能 adapter-only 假成功',
+        );
+      } else {
+        assert.strictEqual(payload.code, 'deveco_toolchain_missing');
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: 干净宿主单次 ensure 修 adapter+deveco（--phase coding）',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude'], 'hmos-app');
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+
+      const fakeInstall = path.join(root, 'fake-deveco');
+      const hvigorBin = path.join(
+        fakeInstall,
+        'tools',
+        'hvigor',
+        'bin',
+        process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw',
+      );
+      fs.mkdirSync(path.dirname(hvigorBin), { recursive: true });
+      fs.writeFileSync(hvigorBin, '');
+
+      __testing_setDetectScanForEnsure(() => ({
+        candidates: [],
+        recommended: {
+          status: 'ok',
+          installPath: fakeInstall,
+          source: 'scan',
+          missing: [],
+        },
+      }));
+
+      try {
+        clearFrameworkConfigCache();
+        const prereqs = resolveEnsurePrerequisites(root, 'coding');
+        const payload = ensurePersonalSetup(root, { requiredPrerequisites: prereqs });
+        assert.strictEqual(payload.ok, true, payload.message);
+        assert.strictEqual(payload.ensured, 'auto_single_adapter_and_deveco');
+        assert.strictEqual(payload.activeAdapter, 'claude');
+
+        const local = JSON.parse(
+          fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+        ) as { agent_adapter?: string; toolchain?: { devEcoStudio?: { installPath?: string } } };
+        assert.strictEqual(local.agent_adapter, 'claude');
+        assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, fakeInstall);
+
+        const after = evaluatePersonalSetupGate(root, { requiredPrerequisites: prereqs });
+        assert.strictEqual(after.ok, true);
+      } finally {
+        __testing_setDetectScanForEnsure(null);
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
     },
   },
   {

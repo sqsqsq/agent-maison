@@ -87,6 +87,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
   { id: 'generic-bundle', modulePath: './unit/generic-bundle.unit.test' },
   { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
+  { id: 'config-placement-gate', modulePath: './unit/config-placement-gate.unit.test' },
   { id: 'config-builder', modulePath: './unit/config-builder.unit.test' },
   { id: 'framework-local-config', modulePath: './unit/framework-local-config.unit.test' },
   { id: 'personal-setup-gate', modulePath: './unit/personal-setup-gate.unit.test' },
