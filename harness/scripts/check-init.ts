@@ -52,6 +52,7 @@ import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
 } from './utils/agent-bundle-paths';
+import { readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
 import {
   listFrameworkBuiltinSkillDirs,
   materializeAgentBundleSkills,
@@ -687,29 +688,31 @@ function loadAdapter(adapter: string): AdapterDescriptor {
   return desc;
 }
 
+/** init 物化 generic bundle 时 skill 模式 SSOT：薄跳板 bridge（inline 仅显式 opt-in 测试/特例，init 禁止写全量） */
+const INIT_GENERIC_BUNDLE_SKILL_MODE = 'bridge' as const;
+
 function resolveBundleForInitInspect(
   adapterName: string,
   rawCfg: RawFrameworkConfig,
-  projectRoot: string,
+  _projectRoot: string,
 ): ResolvedAgentBundlePaths | null {
   if (adapterName !== 'generic') {
     return null;
   }
   if (rawCfg.exists && rawCfg.parseable && rawCfg.raw && typeof rawCfg.raw === 'object') {
-    try {
-      const cfg = loadFrameworkConfig(projectRoot);
-      if (cfg.agent_adapter === 'generic') {
-        return readAgentBundlePathsFromConfig(cfg);
-      }
-    } catch {
-      /* fall through to defaults */
+    const paths = (rawCfg.raw as Record<string, unknown>).paths;
+    if (paths && typeof paths === 'object' && !Array.isArray(paths)) {
+      const fromProject = readGenericBundlePathsFromConfigPaths(
+        paths as import('../config').FrameworkConfig['paths'],
+      );
+      return { ...fromProject, skillMode: INIT_GENERIC_BUNDLE_SKILL_MODE };
     }
   }
   return {
     root: '.agents',
     skillsDir: '.agents/skills',
     rulesDir: '.agents/rules',
-    skillMode: 'bridge',
+    skillMode: INIT_GENERIC_BUNDLE_SKILL_MODE,
   };
 }
 
@@ -828,49 +831,8 @@ export function applyGenericAdapterBundle(
   }
 }
 
-function applyAgentBundleInlineSync(
-  projectRoot: string,
-  bundle: ResolvedAgentBundlePaths,
-): {
-  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
-  syncedFiles: number;
-} {
-  const dirs = listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT);
-  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
-  let syncedFiles = 0;
-
-  for (const dir of dirs) {
-    const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`.replace(/\\/g, '/');
-    const tgAbs = path.join(projectRoot, ...targetRel.split('/'));
-    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir, {
-      projectRoot,
-      stubTargetRelPosix: targetRel,
-    });
-    const payload = Buffer.from(body, 'utf-8');
-
-    if (!fs.existsSync(tgAbs)) {
-      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
-      fs.writeFileSync(tgAbs, payload);
-      syncedFiles++;
-      results.push({ targetRel, effect: 'created' });
-      continue;
-    }
-
-    const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
-    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
-      results.push({ targetRel, effect: 'unchanged' });
-      continue;
-    }
-
-    fs.writeFileSync(tgAbs, payload);
-    syncedFiles++;
-    results.push({ targetRel, effect: 'updated' });
-  }
-
-  return { results, syncedFiles };
-}
-
-export { applyAgentBundleInlineSync };
+// 注：原 applyAgentBundleInlineSync（generic inline 全量物化的写盘入口）已随 inline 模式彻底废弃移除。
+// inline 不再经由 config / init 链路生效；内置与扩展 skill 一律 bridge 薄跳板。
 
 // --------------------------------------------------------------------------
 // 占位符渲染
@@ -2470,7 +2432,6 @@ export const __testing = {
   inspectionsForInit034Prompt,
   applyDeprecatedArtifactsCleanup,
   applyInitMechanismSync,
-  applyAgentBundleInlineSync,
   applyGenericAdapterBundle,
   resolveBundleForInitInspect,
   runInitProbe,

@@ -63,7 +63,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         agent_bundle_skill_mode: 'inline',
       } as FrameworkConfig['paths'] & { agent_bundle_root: string; agent_bundle_skill_mode: string });
       assert.strictEqual(bundle.skillsDir, '.codex/skills');
-      assert.strictEqual(bundle.skillMode, 'inline');
+      // inline 已彻底废弃：config 写 inline 也一律解析为 bridge
+      assert.strictEqual(bundle.skillMode, 'bridge');
     },
   },
   {

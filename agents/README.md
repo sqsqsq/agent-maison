@@ -149,7 +149,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 | adapter | 入口文件 | slash | skill 跳板 | rules | settings_file | hooks |
 |---------|---------|-------|-----------|-------|---------------|-------|
-| generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（inline 或 bridge） | `{agent_bundle_root}/rules/*.mdc` | — | — |
+| generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 

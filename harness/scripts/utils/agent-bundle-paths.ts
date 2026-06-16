@@ -47,10 +47,12 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
 
 const RESERVED_ROOT_PREFIXES = ['framework', 'doc/features'];
 
-export function normalizeAgentBundleSkillMode(raw: unknown): AgentBundleSkillMode {
-  if (typeof raw === 'string' && raw.trim() === 'inline') {
-    return 'inline';
-  }
+/**
+ * config 驱动的 skill 模式解析。
+ * inline 已彻底废弃（DEPRECATED）：无论 config 写了什么，一律解析为 `bridge` 薄跳板。
+ * inline 物化仅保留为测试直接构造 bundle 对象（`{ skillMode: 'inline' }`）注入的能力，不再经由 config。
+ */
+export function normalizeAgentBundleSkillMode(_raw: unknown): AgentBundleSkillMode {
   return 'bridge';
 }
 

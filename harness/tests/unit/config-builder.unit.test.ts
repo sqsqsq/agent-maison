@@ -105,6 +105,46 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // 落盘单点收口：inline 已彻底废弃，写盘时任何残留/显式 inline 一律归一为 bridge
+    name: 'buildProjectConfigForWrite 归一化 agent_bundle_skill_mode：inline → bridge',
+    run: () => {
+      const out = buildProjectConfigForWrite({
+        project_name: 'demo',
+        project_profile: { name: 'generic' },
+        agent_adapter: 'generic',
+        materialized_adapters: ['generic'],
+        architecture: minimalArch(),
+        paths: {
+          features_dir: 'doc/features',
+          agent_bundle_root: '.agents',
+          agent_bundle_skill_mode: 'inline',
+        },
+      });
+      const paths = out.paths as Record<string, unknown>;
+      assert.strictEqual(paths.agent_bundle_skill_mode, 'bridge');
+    },
+  },
+  {
+    // 多 adapter：active=claude 但 materialized 含 generic，残留 inline 同样归一为 bridge
+    name: 'buildProjectConfigForWrite 归一化 inline：active 非 generic 亦归一',
+    run: () => {
+      const out = buildProjectConfigForWrite({
+        project_name: 'demo',
+        project_profile: { name: 'generic' },
+        agent_adapter: 'claude',
+        materialized_adapters: ['claude', 'generic'],
+        architecture: minimalArch(),
+        paths: {
+          features_dir: 'doc/features',
+          agent_bundle_root: '.agents',
+          agent_bundle_skill_mode: 'inline',
+        },
+      });
+      const paths = out.paths as Record<string, unknown>;
+      assert.strictEqual(paths.agent_bundle_skill_mode, 'bridge');
+    },
+  },
+  {
     name: 'prepareConfigWriteForTask 剥离 agent_adapter 与 installPath',
     run: () => {
       const root = mkTmp();

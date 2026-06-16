@@ -22,7 +22,7 @@
       "paths": "各产物路径，均相对于实例工程根。初始化 Skill 不鼓励偏离默认值，除非实例已有既定目录结构。",
       "paths.extension_dir": "实例业务扩展根目录（manifest / skills / knowledge / hooks）；默认 \"doc/extensions\"。详见 framework/docs/concepts/extensibility.md。",
       "paths.agent_bundle_root": "generic adapter：agent bundle 根（如 .agents）；agent_adapter=generic 时必填。",
-      "paths.agent_bundle_skill_mode": "generic adapter：bridge（薄跳板，默认）| inline（完整 SKILL 正文）。",
+      "paths.agent_bundle_skill_mode": "generic adapter：恒为 bridge（薄跳板）。inline 已彻底废弃，写盘/读取时一律归一为 bridge（仅测试可直接注入 inline bundle 对象）。",
       "paths.state_file": "Stop hook 状态文件路径（相对实例工程根），默认 framework/harness/state/.current-phase.json（v2.4 新增）。",
       "paths.receipt_dir_pattern": "完成回执目录占位模式，默认 doc/features/<feature>/<phase>；harness/check-receipt 等运行时替换占位符，不是 glob。",
       "paths.reports_dir_pattern": "feature-phase harness 报告目录占位模式；BACKFILL / normalizeConfig 默认注入 doc/features/<feature>/<phase>/reports；仅当磁盘显式为空字符串或未走 normalize 的极旧读取路径时才回退 legacy framework/harness/reports/<feature>/<phase>/",

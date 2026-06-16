@@ -242,12 +242,8 @@ function withInitContextDefaults(
     if (typeof paths.agent_bundle_root !== 'string' || !paths.agent_bundle_root.trim()) {
       paths.agent_bundle_root = DEFAULT_GENERIC_BUNDLE_ROOT;
     }
-    if (
-      typeof paths.agent_bundle_skill_mode !== 'string' ||
-      !['bridge', 'inline'].includes(paths.agent_bundle_skill_mode)
-    ) {
-      paths.agent_bundle_skill_mode = DEFAULT_GENERIC_BUNDLE_SKILL_MODE;
-    }
+    // init 写盘 SSOT：generic bundle skills 恒为 bridge 薄跳板（勿回退 inline 全量物化）
+    paths.agent_bundle_skill_mode = DEFAULT_GENERIC_BUNDLE_SKILL_MODE;
     payload.paths = paths;
   }
   return cloned;
@@ -330,7 +326,16 @@ export function deriveUpdateConfigWritePayload(
     payload.architecture = archClone;
   }
   if (existing.paths && typeof existing.paths === 'object' && !Array.isArray(existing.paths)) {
-    payload.paths = JSON.parse(JSON.stringify(existing.paths));
+    const clonedPaths = JSON.parse(JSON.stringify(existing.paths)) as Record<string, unknown>;
+    // inline 已彻底废弃：从磁盘派生 payload 时把残留 inline 归一为 bridge，
+    // 避免 staging 模板 / 执行 payload 把历史污染再写回 config。
+    if (
+      clonedPaths.agent_bundle_skill_mode !== undefined &&
+      clonedPaths.agent_bundle_skill_mode !== 'bridge'
+    ) {
+      clonedPaths.agent_bundle_skill_mode = 'bridge';
+    }
+    payload.paths = clonedPaths;
   }
   if (existing.tools && typeof existing.tools === 'object' && !Array.isArray(existing.tools)) {
     payload.tools = JSON.parse(JSON.stringify(existing.tools));

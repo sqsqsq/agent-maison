@@ -57,7 +57,7 @@
         "agent_bundle_skill_mode": {
           "type": "string",
           "enum": ["bridge", "inline"],
-          "description": "generic adapter：bundle 内 skills 物化方式；默认 bridge。"
+          "description": "generic adapter：bundle 内 skills 物化方式。恒为 bridge 薄跳板；inline 已彻底废弃（DEPRECATED），load/写盘 normalize 时一律归一为 bridge（enum 保留 inline 仅为兼容历史磁盘 config，不再生效）。"
         }
       },
       "additionalProperties": true

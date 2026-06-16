@@ -484,10 +484,17 @@ export const LEGACY_DEFAULT_DSL: ArchitectureDsl = {
 };
 
 function mergeAgentBundlePathDefaults(paths: FrameworkPaths, agentAdapter: string): FrameworkPaths {
-  if (agentAdapter !== 'generic') {
-    return paths;
-  }
   const next = { ...paths };
+  // inline 已彻底废弃（DEPRECATED）：config 中任何残留/显式 `inline` 在 normalize（load + 写盘 candidate）
+  // 时一律归一为 `bridge` 薄跳板，无论 active adapter。这是 agent bundle skill 模式的落盘单点收口，
+  // 确保历史污染的 config 在下次 load/写盘时自愈。inline 物化仅保留为测试直接注入 bundle 对象的能力，
+  // 不再经由 config 生效。见 agents/shared/agent-bundle 与 .cursor/rules/agent-bundle-bridge.mdc。
+  if (next.agent_bundle_skill_mode !== undefined && next.agent_bundle_skill_mode !== 'bridge') {
+    next.agent_bundle_skill_mode = 'bridge';
+  }
+  if (agentAdapter !== 'generic') {
+    return next;
+  }
   if (!next.agent_bundle_root || !String(next.agent_bundle_root).trim()) {
     next.agent_bundle_root = '.agents';
   }

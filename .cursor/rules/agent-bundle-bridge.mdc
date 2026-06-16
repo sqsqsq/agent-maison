@@ -1,0 +1,38 @@
+---
+description: generic adapter bundle skills 必须物化为 bridge 薄跳板，禁止 init 默认 inline 全量 SKILL
+globs: harness/scripts/check-init.ts,harness/scripts/init-orchestrate.ts,harness/scripts/utils/materialize-agent-bundle-skills.ts,agents/generic/**,skills/project/framework-init/**
+alwaysApply: false
+---
+
+# Agent bundle：bridge 薄跳板（BLOCKER）
+
+## 契约
+
+- **消费者工程**（如 `.agents/skills/<id>/SKILL.md`）必须是 **bridge 薄跳板**，正文 SSOT 在 `framework/skills/**/SKILL.md`。扩展 skill（`doc/extensions/skills`）同样恒 bridge。
+- **`inline` 已彻底废弃（DEPRECATED）**：config 中任何残留/显式 `inline` 在 load 与写盘 normalize 时**一律归一为 `bridge`**，不再经由 config / init 链路生效。
+- `inline` 仅保留为**测试直接构造 bundle 对象**（`applyGenericAdapterBundle(adapter, { skillMode: 'inline' })` / `materializeAgentBundleSkills({ mode: 'inline' })`）的能力，**永不**来自 config。
+
+## 实现 SSOT（落盘单点收口 + 读取一律 bridge）
+
+| 位置 | 行为 |
+|------|------|
+| `config.ts` `mergeAgentBundlePathDefaults` | **落盘/load normalize 单点收口**：任何 `agent_bundle_skill_mode !== 'bridge'` → `bridge`（不分 active adapter） |
+| `agent-bundle-paths.ts` `normalizeAgentBundleSkillMode` | 恒返回 `bridge`（忽略 config 值） |
+| `legacy-skill-bridge-cleanup.ts` `readGenericBundlePathsFromConfigPaths` | `skillMode` 恒 `bridge` |
+| `init-orchestrate` `deriveUpdateConfigWritePayload` / `withInitContextDefaults` | 从磁盘派生 payload 时把残留 inline 归一 `bridge`；不回写 inline |
+| `check-init` `resolveBundleForInitInspect` | 读 project `paths` 定 root；`skillMode` 恒 `bridge` |
+| `instance-skill-bridge` `emitInstanceSkillBridge` | `useInline = false`（扩展 skill 恒 bridge） |
+| `applyGenericAdapterBundle` | `bridge` → `skills-bridge` verbatim；`inline` 分支仅测试直接注入 |
+
+## 回归
+
+- `generic-bundle.unit.test.ts`：active=generic + config inline → `resolveBundleForInitInspect` 恒 `bridge`、无 `materialized` 条目
+- `config-builder.unit.test.ts`：`buildProjectConfigForWrite` 把 config inline 归一为 bridge（含 active 非 generic）
+- `adapter-bridge.unit.test.ts`：config inline 下 `emitInstanceSkillBridge` 仍产出 bridge 薄跳板
+- `legacy-skill-bridge-cleanup.unit.test.ts`：`readGenericBundlePathsFromConfigPaths` 恒 `bridge`
+- 改 init/bundle 逻辑后：`cd harness && npm test`
+
+## 勿再犯
+
+- 勿把 Hylyre/联调临时 md、上游需求清单与 vendor 发布件混提
+- 勿在文档/registry 写「generic 默认 `.agents`/inline」——已统一为 **bridge**

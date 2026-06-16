@@ -99,8 +99,8 @@ optional_fields:
       framework/agents/shared/agent-bundle/templates/skills-bridge 后经 init/render 下发。
       若 agent 不需要跳板（例如 Claude Code 直接用 slash 加载），置为 null。
       **generic adapter**：`target_dir` 由 `framework.config.json` → `paths.agent_bundle_root`
-      + `/skills` 在 harness 运行时解析；`bridge` 模式拷贝 skills-bridge，`inline` 模式由
-      materialize-agent-bundle-skills 从 framework/skills 物化完整 SKILL。
+      + `/skills` 在 harness 运行时解析；恒为 `bridge` 模式拷贝 skills-bridge 薄跳板。
+      `inline` 全量物化模式已彻底废弃（config 中残留 inline 一律归一为 bridge）。
     fields:
       target_dir:
         type: string

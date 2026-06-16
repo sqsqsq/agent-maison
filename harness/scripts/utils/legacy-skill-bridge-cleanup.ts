@@ -106,9 +106,8 @@ export function readGenericBundlePathsFromConfigPaths(
       ? paths.agent_bundle_root.trim()
       : '.agents';
   validateAgentBundleRoot(root);
-  const skillModeRaw = paths.agent_bundle_skill_mode;
-  const skillMode =
-    skillModeRaw === 'inline' || skillModeRaw === 'bridge' ? skillModeRaw : 'bridge';
+  // inline 已彻底废弃：config 中的 agent_bundle_skill_mode 一律解析为 bridge（与 normalizeAgentBundleSkillMode 对齐）。
+  const skillMode = 'bridge' as const;
   const posixRoot = root.replace(/\\/g, '/');
   return {
     root: posixRoot,

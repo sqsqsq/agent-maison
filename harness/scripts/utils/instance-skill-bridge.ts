@@ -293,16 +293,9 @@ export function emitInstanceSkillBridge(options: {
   const { targets, warnings: rw } = resolveBridgeTargets(rows, reserved);
   warnings.push(...rw);
 
-  let useInline = false;
-  if (agentAdapter === 'generic') {
-    try {
-      const cfg = loadFrameworkConfig(repoRoot);
-      const bundle = readAgentBundlePathsFromConfig(cfg);
-      useInline = bundle?.skillMode === 'inline';
-    } catch {
-      useInline = false;
-    }
-  }
+  // inline 已彻底废弃：扩展 skill（doc/extensions）一律生成 bridge 薄跳板，与内置 skill 行为一致。
+  // config 不再驱动 inline 物化（inline 仅保留为测试直接注入 bundle 对象的能力）。
+  const useInline = false;
 
   const mkdirWrite = (absPath: string, body: string) => {
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
