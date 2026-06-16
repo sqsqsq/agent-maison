@@ -25,7 +25,7 @@ import {
   resolveHdcExecutableSync,
   runHdcRaw,
 } from '../hdc-runner';
-import { buildHylyreAppPageSaveArgv } from '../device-test-page-save';
+import { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveNames } from '../device-test-page-save';
 import { resolveMainAbilityForBundle } from '../resolve-main-ability';
 import {
   beginHylyrePhasePollutionGuard,
@@ -40,7 +40,7 @@ import {
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
 
-export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug } from '../device-test-page-save';
+export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug, resolveHylyrePageSaveNames } from '../device-test-page-save';
 
 export const provider: CapabilityProvider = {
   id: 'hylyre',
@@ -425,13 +425,20 @@ function resolveHypiumPageNameForRun(
  * hylyre 0.1.0 的 `run --plan` 路径不向 Hypium 传递 `--page-name`，故在拉起 hylyre 前用
  * `hdc shell aa start -a <ability> -b <bundle>` 显式冷启；成功后省略 hylyre 的 `--bundle`，避免再走错误的 start_app。
  */
+/** Prefer explicit deviceSn; fall back to HARNESS_HDC_TARGET via hdcTargetPrefix(). */
+function hdcTargetPrefixForDevice(deviceSn: string | undefined): string[] {
+  const sn = deviceSn?.trim();
+  if (sn) return ['-t', sn];
+  return hdcTargetPrefix();
+}
+
 /** Kill app process before aa start — clears Nav stack for idempotent adhoc reruns. */
 export function runAaForceStop(
   bundle: string,
   deviceSn: string | undefined,
   logPath: string,
 ): { ok: boolean; output: string; attempted: boolean } {
-  const args = [...hdcTargetPrefix(), 'shell', 'aa', 'force-stop', '-b', bundle];
+  const args = [...hdcTargetPrefixForDevice(deviceSn), 'shell', 'aa', 'force-stop', bundle];
   appendLogSync(logPath, `$ hdc ${args.join(' ')}\n`);
   const hdcExe = resolveHdcExecutableSync();
   const r = runHdcRaw(hdcExe, args, { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 });
@@ -446,7 +453,7 @@ function runAaStartPreflight(
   deviceSn: string | undefined,
   logPath: string,
 ): { ok: boolean; output: string } {
-  const args = [...hdcTargetPrefix(), 'shell', 'aa', 'start', '-a', pageName, '-b', bundle];
+  const args = [...hdcTargetPrefixForDevice(deviceSn), 'shell', 'aa', 'start', '-a', pageName, '-b', bundle];
   appendLogSync(logPath, `$ hdc ${args.join(' ')}\n`);
   const hdcExe = resolveHdcExecutableSync();
   const r = runHdcRaw(hdcExe, args, { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
@@ -1028,34 +1035,75 @@ function tryHylyreAppPageSaveAfterRun(args: {
   logPath: string;
   abilityName?: string | null;
   pageSlug?: string | null;
-}): { attempted: boolean; exitCode: number | null; durationMs: number } {
-  const pipArgs = buildHylyreAppPageSaveArgv({
-    bundleName: args.bundleName,
-    deviceSn: args.deviceSn,
-    abilityName: args.abilityName,
-    pageSlug: args.pageSlug,
-  });
-  const hylyreArgv = pipArgs[0] === '-m' && pipArgs[1] === 'hylyre' ? pipArgs.slice(2) : pipArgs;
-  const t0 = Date.now();
-  const r = spawnHylyre({
-    pythonPath: args.pythonPath,
-    hypiumWorkDir: args.hypiumWorkDir,
-    hylyreArgv,
-    appSnapshotCacheAbs: args.appSnapshotCacheAbs,
-    logPath: args.logPath,
-    maxBuffer: 2 * 1024 * 1024,
-    timeout: defaultPageSaveTimeoutMs(),
-    echoToStdout: false,
-  });
-  if (r.status !== 0) {
+}): {
+  attempted: boolean;
+  exitCode: number | null;
+  durationMs: number;
+  logPath: string | null;
+  names: Array<{ name: string; exit_code: number | null; duration_ms: number }>;
+} {
+  const pageNames = resolveHylyrePageSaveNames(args.pageSlug);
+  const pageSaveLogPath = path.join(path.dirname(args.logPath), 'hylyre-page-save.log');
+  fs.writeFileSync(
+    pageSaveLogPath,
+    `--- hylyre page save ${new Date().toISOString()} names=${pageNames.join(',')} ---\n`,
+    'utf-8',
+  );
+
+  const names: Array<{ name: string; exit_code: number | null; duration_ms: number }> = [];
+  let totalMs = 0;
+  let aggregateExit: number | null = 0;
+
+  for (const pageName of pageNames) {
+    const pipArgs = buildHylyreAppPageSaveArgv({
+      bundleName: args.bundleName,
+      deviceSn: args.deviceSn,
+      abilityName: args.abilityName,
+      pageSlug: pageName,
+    });
+    const hylyreArgv = pipArgs[0] === '-m' && pipArgs[1] === 'hylyre' ? pipArgs.slice(2) : pipArgs;
+    const t0 = Date.now();
+    const r = spawnHylyre({
+      pythonPath: args.pythonPath,
+      hypiumWorkDir: args.hypiumWorkDir,
+      hylyreArgv,
+      appSnapshotCacheAbs: args.appSnapshotCacheAbs,
+      logPath: args.logPath,
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: defaultPageSaveTimeoutMs(),
+      echoToStdout: false,
+    });
+    const durationMs = Date.now() - t0;
+    totalMs += durationMs;
+    const saveExit = r.status ?? 1;
+    const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+    const spawnDiag =
+      r.error?.message || r.signal
+        ? `\nspawn: error=${r.error?.message ?? ''} signal=${r.signal ?? ''}\n`
+        : '';
     appendLogSync(
-      args.logPath,
-      `hylyre app page save 结束 exit=${r.status}（WARN：非致命；缓存可能未更新）\n`,
+      pageSaveLogPath,
+      `\n--- save name=${pageName} exit=${saveExit} raw_status=${r.status} duration_ms=${durationMs} ---\n${out}${spawnDiag}`,
     );
-  } else {
-    appendLogSync(args.logPath, `hylyre app page save 成功\n`);
+    if (saveExit !== 0) {
+      if (aggregateExit === 0) aggregateExit = saveExit;
+      appendLogSync(
+        args.logPath,
+        `hylyre app page save name=${pageName} 结束 exit=${saveExit}（WARN：非致命；缓存可能未更新）\n`,
+      );
+    } else {
+      appendLogSync(args.logPath, `hylyre app page save name=${pageName} 成功\n`);
+    }
+    names.push({ name: pageName, exit_code: saveExit, duration_ms: durationMs });
   }
-  return { attempted: true, exitCode: r.status, durationMs: Date.now() - t0 };
+
+  return {
+    attempted: true,
+    exitCode: aggregateExit,
+    durationMs: totalMs,
+    logPath: pageSaveLogPath,
+    names,
+  };
 }
 
 /** Build minimal trace/report after `hylyre run --steps-file` (no native report contract). */
@@ -1277,6 +1325,9 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     hylyreArgv.push('--device-sn', opts.deviceSn.trim());
   }
 
+  const failureDir = path.join(path.dirname(path.resolve(opts.reportOutPath)), 'failures');
+  hylyreArgv.push('--failure-dir', failureDir);
+
   const command = `${opts.pythonPath} -m hylyre ${hylyreArgv.join(' ')}`;
 
   const runStartedAt = new Date().toISOString();
@@ -1379,7 +1430,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
   const skipped_count = cases.filter(c => c.status === '跳过').length;
 
   const pageSave = opts.skipPageSave
-    ? { attempted: false, exitCode: null, durationMs: 0 }
+    ? { attempted: false, exitCode: null, durationMs: 0, logPath: null, names: [] as Array<{ name: string; exit_code: number | null; duration_ms: number }> }
     : tryHylyreAppPageSaveAfterRun({
         pythonPath: opts.pythonPath,
         hypiumWorkDir,
@@ -1427,10 +1478,13 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         run_ended_at: runEndedAt,
         run_duration_ms: runDurationMs,
         ran_at: runEndedAt,
+        failure_dir: failureDir,
         hylyre_page_save: {
           attempted: pageSave.attempted,
           exit_code: pageSave.exitCode,
           duration_ms: pageSave.durationMs,
+          log_path: pageSave.logPath,
+          names: pageSave.names,
         },
         trace_summary: trace
           ? {

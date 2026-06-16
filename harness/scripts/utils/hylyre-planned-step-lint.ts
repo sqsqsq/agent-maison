@@ -12,6 +12,30 @@ export interface PlannedStepLintViolation {
   message: string;
 }
 
+const RICH_SELECTOR_FIELD_KEYS = [
+  'all',
+  'within',
+  'scope',
+  'below',
+  'above',
+  'after',
+  'before',
+  'index',
+] as const;
+
+/** True when block has a selector or Hylyre 0.2 rich-selector predicate field. */
+export function hasSelectorLikeFields(block: Record<string, unknown>): boolean {
+  if (block.selector != null) return true;
+  if (typeof block.by_text === 'string' && block.by_text.trim().length > 0) return true;
+  if (typeof block.by_id === 'string' && block.by_id.trim().length > 0) return true;
+  if (typeof block.by_key === 'string' && block.by_key.trim().length > 0) return true;
+  if (typeof block.by_type === 'string' && block.by_type.trim().length > 0) return true;
+  for (const k of RICH_SELECTOR_FIELD_KEYS) {
+    if (block[k] !== undefined && block[k] !== null) return true;
+  }
+  return false;
+}
+
 export function validatePlannedStepObject(step: unknown, index: number): PlannedStepLintViolation[] {
   const out: PlannedStepLintViolation[] = [];
   if (!step || typeof step !== 'object' || Array.isArray(step)) {
@@ -99,15 +123,12 @@ export function validatePlannedStepObject(step: unknown, index: number): Planned
       out.push({ index, rule_id: 'STEP-WAIT', message: 'wait_for 须为对象且含 selector 或 by_text/by_id' });
     } else {
       const w = wf as Record<string, unknown>;
-      const hasSelector =
-        w.selector != null ||
-        (typeof w.by_text === 'string' && w.by_text.trim().length > 0) ||
-        (typeof w.by_id === 'string' && w.by_id.trim().length > 0);
-      if (!hasSelector) {
+      if (!hasSelectorLikeFields(w)) {
         out.push({
           index,
           rule_id: 'STEP-WAIT',
-          message: 'wait_for 缺少 selector / by_text / by_id（禁止仅 duration/timeout）',
+          message:
+            'wait_for 缺少 selector / by_text / by_id / by_key / by_type / 富选择器字段（禁止仅 duration/timeout）',
         });
       }
     }

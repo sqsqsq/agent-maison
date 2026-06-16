@@ -235,6 +235,8 @@ export interface HylyreToolConfig {
   auto_install: boolean;
   /** true：首次 pip 安装成功后执行一次 doctor */
   doctor_first_run: boolean;
+  /** true：device_test.run 跑前 force-stop + aa start 冷重启（可被 HARNESS_DEVICE_TEST_COLD_RESTART 覆盖） */
+  cold_restart_before_run: boolean;
   /**
    * Hypium `start_app` 的 ability 名（与 hylyre `run --page-name` 一致，对应 entry 模块 `module.json5` 的 mainElement）。
    * 空字符串时由 device-test-run 自动扫描工程内首个 `"type": "entry"` 模块的 mainElement。
@@ -2031,6 +2033,7 @@ export const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
   pypi_extra_index_url: 'https://mirrors.tools.huawei.com/pypi/simple',
   auto_install: true,
   doctor_first_run: true,
+  cold_restart_before_run: true,
   hypium_page_name: '',
 };
 
@@ -2054,6 +2057,10 @@ export function resolveHylyreToolConfig(projectRoot: string): HylyreToolConfig {
     auto_install: typeof p.auto_install === 'boolean' ? p.auto_install : DEFAULT_HYLYRE_TOOL_CONFIG.auto_install,
     doctor_first_run:
       typeof p.doctor_first_run === 'boolean' ? p.doctor_first_run : DEFAULT_HYLYRE_TOOL_CONFIG.doctor_first_run,
+    cold_restart_before_run:
+      typeof p.cold_restart_before_run === 'boolean'
+        ? p.cold_restart_before_run
+        : DEFAULT_HYLYRE_TOOL_CONFIG.cold_restart_before_run,
     hypium_page_name:
       typeof p.hypium_page_name === 'string'
         ? p.hypium_page_name.trim()

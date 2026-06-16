@@ -9,6 +9,19 @@ export function resolveHylyrePageSaveSlug(explicit?: string | null): string {
   return 'home';
 }
 
+/** HARNESS_HYLYRE_PAGE_SAVE_NAMES (comma) > HARNESS_HYLYRE_PAGE_SAVE_NAME > home */
+export function resolveHylyrePageSaveNames(explicitSlug?: string | null): string[] {
+  const fromNames = process.env.HARNESS_HYLYRE_PAGE_SAVE_NAMES?.trim();
+  if (fromNames) {
+    const parts = fromNames
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (parts.length > 0) return parts;
+  }
+  return [resolveHylyrePageSaveSlug(explicitSlug)];
+}
+
 /** 返回 spawn 用的参数列表（含 `python -m` 前缀之后的 hylyre 子命令）。 */
 export function buildHylyreAppPageSaveArgv(args: {
   bundleName: string;

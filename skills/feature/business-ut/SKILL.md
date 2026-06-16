@@ -25,7 +25,7 @@
 
 继续下文前，完整阅读：
 
-`framework/profiles/<project_profile.name>/skills/feature/business-ut/profile-addendum.md`
+`framework/profiles/<project_profile.name>/skills/business-ut/profile-addendum.md`
 
 （未声明 `project_profile` 时由 harness 按仓库指纹回落默认 profile；若路径不存在则仅依赖本文与 profile 树下模板/示例。）
 

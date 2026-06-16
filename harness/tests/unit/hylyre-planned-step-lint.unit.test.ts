@@ -82,6 +82,45 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    name: 'validatePlannedStepsArray: scroll_to ok',
+    run: () => {
+      const r = validatePlannedStepsArray([{ scroll_to: { by_text: '招商银行', in: { by_type: 'List' } } }]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: touch rich selector scope ok',
+    run: () => {
+      const r = validatePlannedStepsArray([{ touch: { by_text: '下一步', scope: 'top_overlay' } }]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: wait_for all rich selector ok',
+    run: () => {
+      const r = validatePlannedStepsArray([
+        { wait_for: { all: [{ by_text: '下一步' }, { enabled: true }], timeout: 10 } },
+      ]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: wait_for by_key ok',
+    run: () => {
+      const r = validatePlannedStepsArray([{ wait_for: { by_key: 'submit_btn', timeout: 5 } }]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
+  {
+    name: 'validatePlannedStepsArray: wait_for scope top_overlay ok',
+    run: () => {
+      const r = validatePlannedStepsArray([
+        { wait_for: { by_text: '下一步', scope: 'top_overlay', timeout: 10 } },
+      ]);
+      if (!r.ok) throw new Error(JSON.stringify(r));
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

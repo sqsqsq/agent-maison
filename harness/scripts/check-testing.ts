@@ -1906,6 +1906,10 @@ function checkDeviceTestRunGate(
     const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
     fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
 
+    const coldRestartEnv = process.env.HARNESS_DEVICE_TEST_COLD_RESTART?.trim();
+    const coldRestart =
+      coldRestartEnv === '1' ? true : coldRestartEnv === '0' ? false : hylyreCfg.cold_restart_before_run;
+
     const run = dispatchDeviceTestRun(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
@@ -1919,6 +1923,7 @@ function checkDeviceTestRunGate(
       bundleName,
       deviceSn: process.env.HARNESS_HDC_TARGET,
       skipAssertExpected: true,
+      coldRestart,
       appSnapshotCacheAbs,
     }) as HylyreRunResult;
 

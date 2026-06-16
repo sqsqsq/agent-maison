@@ -42,6 +42,13 @@ const PROFILE_PATH_FIXES = [
   ['profiles/generic/skills/feature/', 'profiles/generic/skills/'],
   ['framework/profiles/hmos-app/skills/feature/', 'framework/profiles/hmos-app/skills/'],
   ['framework/profiles/generic/skills/feature/', 'framework/profiles/generic/skills/'],
+  // Placeholder forms used in root SKILL.md (not concrete profile names)
+  ['framework/profiles/<project_profile.name>/skills/feature/', 'framework/profiles/<project_profile.name>/skills/'],
+  ['framework/profiles/<project_profile>/skills/feature/', 'framework/profiles/<project_profile>/skills/'],
+  ['framework/profiles/<profile>/skills/feature/', 'framework/profiles/<profile>/skills/'],
+  ['profiles/<project_profile.name>/skills/feature/', 'profiles/<project_profile.name>/skills/'],
+  ['profiles/<project_profile>/skills/feature/', 'profiles/<project_profile>/skills/'],
+  ['profiles/<profile>/skills/feature/', 'profiles/<profile>/skills/'],
 ];
 
 function shouldSkip(rel) {

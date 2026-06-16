@@ -25,7 +25,7 @@
 
 继续下文前，完整阅读：
 
-`framework/profiles/<project_profile.name>/skills/feature/code-review/profile-addendum.md`
+`framework/profiles/<project_profile.name>/skills/code-review/profile-addendum.md`
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
@@ -130,7 +130,7 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 ### Step 2: 系统化审查
 
-按照审查检查清单逐维度执行审查。完整检查清单见 `framework/profiles/<project_profile.name>/skills/feature/code-review/templates/review-checklist.md`，以下为核心审查流程：
+按照审查检查清单逐维度执行审查。完整检查清单见 `framework/profiles/<project_profile.name>/skills/code-review/templates/review-checklist.md`，以下为核心审查流程：
 
 #### 2.1 架构合规性审查（BLOCKER 级）
 

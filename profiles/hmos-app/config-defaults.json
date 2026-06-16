@@ -54,6 +54,7 @@
       "pypi_extra_index_url": "https://mirrors.tools.huawei.com/pypi/simple",
       "auto_install": true,
       "doctor_first_run": true,
+      "cold_restart_before_run": true,
       "hypium_page_name": ""
     }
   }

@@ -1,5 +1,5 @@
 /**
- * Synced from Hylyre wheel `hylyre/api/planned_step_keys.py` (vendor 0.1.0).
+ * Synced from Hylyre wheel `hylyre/api/planned_step_keys.py` (vendor 0.2.0).
  * SSOT for STEP-001 lint; update when vendor wheel bumps.
  */
 export const PLANNED_STEP_ROOT_KEYS: readonly string[] = [
@@ -8,6 +8,7 @@ export const PLANNED_STEP_ROOT_KEYS: readonly string[] = [
   'input',
   'swipe',
   'scroll',
+  'scroll_to',
   'back',
   'home',
   'stop_app',

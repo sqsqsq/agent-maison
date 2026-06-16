@@ -65,6 +65,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'tools.hylyre.pypi_extra_index_url',
         'tools.hylyre.auto_install',
         'tools.hylyre.doctor_first_run',
+        'tools.hylyre.cold_restart_before_run',
         'tools.hylyre.hypium_page_name',
       ];
       for (const p of must) {
@@ -175,6 +176,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'tools.hylyre.pypi_extra_index_url',
         'tools.hylyre.auto_install',
         'tools.hylyre.doctor_first_run',
+        'tools.hylyre.cold_restart_before_run',
         'tools.hylyre.hypium_page_name',
       ];
       for (const p of expected) {

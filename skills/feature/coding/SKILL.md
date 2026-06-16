@@ -25,7 +25,7 @@
 
 继续下文前，完整阅读：
 
-`framework/profiles/<project_profile.name>/skills/feature/coding/profile-addendum.md`
+`framework/profiles/<project_profile.name>/skills/coding/profile-addendum.md`
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 [framework/harness/config.ts](../../../../harness/config.ts) 与 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下已迁移的模板/参考文件路径。
 
@@ -43,7 +43,7 @@
 
 > **⚠️ 开工前必读（弱模型环境尤其重要）**
 >
-> 1. **Profile 编码补充**：完整阅读 `framework/profiles/<project_profile.name>/skills/feature/coding/profile-addendum.md`。若 addendum 声明了宿主语言易错手册、资源规范或导出规则，写对应文件前必须先回顾相关条目，写完后对照自检。
+> 1. **Profile 编码补充**：完整阅读 `framework/profiles/<project_profile.name>/skills/coding/profile-addendum.md`。若 addendum 声明了宿主语言易错手册、资源规范或导出规则，写对应文件前必须先回顾相关条目，写完后对照自检。
 > 2. **Scope 守门（新）**：本次编码的 git diff 不得越界到 plan.md `in_scope_modules` 之外。Harness 的 `diff_within_scope` 规则会在 Step 7 阻断 BLOCKER。因此写代码时一旦发现要改 in_scope 之外的模块，**立刻停下来**（`coding.scope_stop`：`1=回 plan 阶段 走 Scope 扩展` / `2=收窄实现`），回到 plan 阶段 的 Step 2.5.3 走 scope 扩展提议。
 > 3. **逐文件 Lint 门禁（新）**：Step 3 已强化为"单文件 Lint 不过不得进入下一个文件"，**严禁批量生成多个文件后再统一 lint**。
 
@@ -231,7 +231,7 @@
 
 **宿主具体禁入符号清单**（声明式 UI 组件、资源宏、Toast 等）见：
 
-`framework/profiles/<project_profile>/skills/feature/coding/profile-addendum.md`
+`framework/profiles/<project_profile>/skills/coding/profile-addendum.md`
 
 以下为**中立约束**：形态 B / C 的源文件以及形态 A 中的命名方法体**内**，禁止 import **任何 UI / 导航 / 资源运行时** API（含仅为类型引用），除非 profile 明确豁免。
 
@@ -506,7 +506,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 ## 常用参考
 
-- Profile 编码 addendum: `framework/profiles/<profile>/skills/feature/coding/profile-addendum.md`
+- Profile 编码 addendum: `framework/profiles/<profile>/skills/coding/profile-addendum.md`
 - Profile 宿主语言/组件/API 参考：以 addendum 中列出的 `reference/` 与 `templates/` 为准
 - 编码规范完整版: `` `profile-skill-asset:coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol)）
 

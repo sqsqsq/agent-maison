@@ -25,7 +25,7 @@
 
 继续下文前，完整阅读：
 
-`framework/profiles/<project_profile.name>/skills/feature/device-testing/profile-addendum.md`
+`framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md`
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
@@ -122,7 +122,7 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 在进入生成测试计划（Step 2）之前，若当前 `project_profile`（见 `framework.config.json > project_profile`）将 **`device_test.build` / `device_test.install`** 声明为 **BLOCKER**，你必须与用户对齐「能在真机上跑的同一套包」：
 
 1. **读取宿主指南**：完整阅读  
-   `framework/profiles/<project_profile.name>/skills/feature/device-testing/profile-addendum.md`，其中的宿主 toolchain、环境与 harness 变量以 **单一宿主附录为 SSOT**；根 SKILL 不复述宿主专有名词。
+   `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md`，其中的宿主 toolchain、环境与 harness 变量以 **单一宿主附录为 SSOT**；根 SKILL 不复述宿主专有名词。
 2. **与用户确认打包维度（必选语义）**（`testing.packaging` · user-confirmation-ux §3.2）  
    展示 product / buildMode 推荐值后附：`1=确认` / `2=修改`。  
    - **product**：枚举宿主工程中可用的制品维度（附录列出如何用宿主 tooling 读取 **`products`** 清单）；默认应与宿主侧的 **`preferredProduct`/`detectProduct` 语义**一致（仍为宿主附录用语）。  
@@ -136,7 +136,7 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 读取测试计划模板：
 
 ```
-framework/profiles/<project_profile.name>/skills/feature/device-testing/templates/test-plan-template.md
+framework/profiles/<project_profile.name>/skills/device-testing/templates/test-plan-template.md
 ```
 
 按模板结构填充内容，**必须包含以下 6 个章节**：
@@ -300,7 +300,7 @@ doc/features/{module-name}/testing/test-plan.md
 **标准模式**下，在 **`testing` harness PASS** 且 Hylyre 已写出 `testing/reports/<timestamp>/hylyre/trace.json` 之后，读取测试报告模板：
 
 ```
-framework/profiles/<project_profile.name>/skills/feature/device-testing/templates/test-report-template.md
+framework/profiles/<project_profile.name>/skills/device-testing/templates/test-report-template.md
 ```
 
 #### Step 5.1 自 Hylyre trace 回填执行状态（必做）
