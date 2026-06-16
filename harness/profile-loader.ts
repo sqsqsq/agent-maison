@@ -16,6 +16,7 @@ import type {
 } from './scripts/utils/types';
 import { applyInstanceExtensions } from './extension-loader';
 import { normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
+import { normalizePersonalPrerequisitesMap } from './scripts/utils/personal-prerequisite-registry';
 import { normalizeCheckId, normalizePhaseId } from './scripts/utils/phase-alias';
 
 export type { CapabilityKey, ProfileCapabilitySpec } from './scripts/utils/types';
@@ -209,6 +210,11 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
     yaml.capabilities as Partial<Record<string, ProfileCapabilitySpec>>,
   );
 
+  const personalPrerequisites = normalizePersonalPrerequisitesMap(
+    yaml.personal_prerequisites,
+    yaml.name,
+  );
+
   const base: HarnessResolvedProfile = {
     name: yaml.name,
     subVariant: sub,
@@ -216,6 +222,7 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
     yaml,
     phasesDisabled: normalizePhaseDisabled(yaml.phases_disabled),
     capabilities,
+    personalPrerequisites,
   };
 
   return applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir);

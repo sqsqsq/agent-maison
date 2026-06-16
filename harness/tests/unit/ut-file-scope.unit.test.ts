@@ -38,7 +38,7 @@ function makeCtx(projectRoot: string, feature: string): CheckContext {
     frameworkRoot: projectRoot,
     phaseRule: {} as CheckContext['phaseRule'],
     featureSpec: {} as CheckContext['featureSpec'],
-    resolvedProfile: { name: 'hmos-app', profileDir: '', subVariant: undefined },
+    resolvedProfile: { name: 'hmos-app', profileDir: '', subVariant: undefined, personalPrerequisites: {} },
   } as CheckContext;
 }
 

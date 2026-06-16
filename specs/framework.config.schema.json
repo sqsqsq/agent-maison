@@ -77,7 +77,7 @@
         "hvigor": { "type": "object" },
         "preferredProduct": { "type": "string" }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "tools": { "type": "object" },
     "state_machine": { "type": "object" },

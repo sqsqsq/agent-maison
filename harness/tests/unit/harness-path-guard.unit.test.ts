@@ -35,7 +35,7 @@ function makeCtx(partial: Pick<CheckContext, 'projectRoot' | 'harnessRoot'> & {
       feature: 'demo',
       contracts: { modules },
     },
-    resolvedProfile: { name: 'hmos-app', profileDir: '' },
+    resolvedProfile: { name: 'hmos-app', profileDir: '', personalPrerequisites: {} },
     frameworkRoot: path.join(partial.projectRoot, 'framework'),
     frameworkRel: 'framework',
   } as CheckContext;

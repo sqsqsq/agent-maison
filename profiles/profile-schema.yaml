@@ -32,6 +32,14 @@ optional_fields:
     description: >
       能力键 → { severity: BLOCKER|SKIP|WARN|MAJOR, provider?: string }。
       具体键由 capability-registry.ts 的 CapabilityKey 枚举为准。
+  personal_prerequisites:
+    type: object
+    required: true
+    description: >
+      capability key → personal prerequisite id 列表（非 phase 名）。
+      合法 capability 见 CapabilityKey；合法 prerequisite 见 personal-prerequisite-registry.ts
+      （当前 profile 可声明 deveco_toolchain；agent_adapter 由框架隐式追加）。
+      generic 等无 DevEco 需求的 profile 须显式写 personal_prerequisites: {}。
   catalog_allowed_module_formats:
     type: array
     description: catalog-bootstrap / catalog 阶段 module-card `format` 合法枚举（hmos-app 的典型值 HAP/HAR/HSP/AtomicService）

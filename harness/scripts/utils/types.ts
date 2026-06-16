@@ -475,6 +475,8 @@ export type CapabilityKey =
   | 'device_test.install'
   | 'spec.visual_handoff';
 
+export type PersonalPrerequisiteId = 'agent_adapter' | 'deveco_toolchain';
+
 export interface ProfileCapabilitySpec {
   provider?: string;
   severity: CapabilitySeverityKeyword;
@@ -488,6 +490,8 @@ export interface ProfileYamlStub {
   catalog_allowed_module_formats?: string[];
   phases_disabled?: string[];
   capabilities?: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
+  /** capability key → personal prerequisite id 列表（agent_adapter 由框架隐式追加） */
+  personal_prerequisites?: Partial<Record<string, string[]>>;
   phase_rules_overlays_dir?: string;
   [key: string]: unknown;
 }
@@ -522,6 +526,8 @@ export interface HarnessResolvedProfile {
   yaml: ProfileYamlStub;
   phasesDisabled: Set<Phase>;
   capabilities: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
+  /** profile.yaml personal_prerequisites 解析结果（capability → prerequisite） */
+  personalPrerequisites: Partial<Record<CapabilityKey, PersonalPrerequisiteId[]>>;
   /** 实例扩展包；未扫描或无 manifest 时仍为对象（errors/slots 为空） */
   extensionBundle?: ExtensionBundle;
 }

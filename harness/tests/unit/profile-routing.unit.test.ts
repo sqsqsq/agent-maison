@@ -55,6 +55,7 @@ function resolvedProfile(
     yaml: { name: 'unit-profile', capabilities },
     phasesDisabled: new Set(),
     capabilities,
+    personalPrerequisites: {},
   };
 }
 

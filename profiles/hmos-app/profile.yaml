@@ -24,6 +24,14 @@ capabilities:
   device_test.install: { provider: hdc_app, severity: BLOCKER }
   spec.visual_handoff: { provider: script, severity: BLOCKER }
 
+personal_prerequisites:
+  coding.compile: [deveco_toolchain]
+  ut.compile: [deveco_toolchain]
+  ut.run: [deveco_toolchain]
+  device_test.build: [deveco_toolchain]
+  device_test.install: [deveco_toolchain]
+  device_test.run: [deveco_toolchain]
+
 sub_variants:
   - name: element-service
     overrides_dir: sub-variants/element-service

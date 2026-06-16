@@ -25,3 +25,5 @@ capabilities:
   device_test.build: { provider: none, severity: SKIP }
   device_test.install: { provider: none, severity: SKIP }
   spec.visual_handoff: { provider: none, severity: SKIP }
+
+personal_prerequisites: {}

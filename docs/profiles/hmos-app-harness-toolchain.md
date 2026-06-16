@@ -163,6 +163,25 @@ runHvigorAssembleApp({
 
 ---
 
+## 4. 配置分层：DevEco 路径 vs 真机调优
+
+| 归属 | 文件 | 典型键 |
+| ---- | ---- | ------ |
+| **personal**（本机 DevEco 安装） | `framework.local.json` | `toolchain.devEcoStudio.installPath` / `hvigorBin` |
+| **project 调优**（可提交、团队共享） | `framework.config.json` | `toolchain.hmosDevice.*`、`toolchain.hvigor.*` |
+
+`toolchain.hmosDevice` 可选键（见 `framework/specs/framework.config.schema.json`）：
+
+| 键 | 说明 |
+| -- | ---- |
+| `killHdcServerOnFinish` | testing 结束后是否 kill hdc server |
+| `aaTestTimeoutMs` | `aa test` 子进程超时（毫秒） |
+| `testRunner` | Hypium runner 标识 |
+
+init 模板含空对象 `"hmosDevice": {}` 作占位；**框架不 backfill** 具体默认值，仅 migrate 从 legacy `toolchain.devEcoStudio` 调优键外迁。personal 前置（`deveco_toolchain`）由 **profile `personal_prerequisites`**（capability key 粒度）声明，经 `check-personal-setup --ensure --phase <phase>` 写 local。
+
+---
+
 ## 5. false PASS：宿主编译输出未被识别
 
 若怀疑 harness 已 PASS 但 **hvigor 日志里仍有 ArkTS 错误** 未被脚本归类：可把 `framework.config.json > toolchain.hmosDevice.aaTestTimeoutMs` 调大后重跑，并核对 `hvigor-build.log` 与 `script-report.json`。

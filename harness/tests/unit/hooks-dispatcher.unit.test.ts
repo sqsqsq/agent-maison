@@ -37,6 +37,7 @@ function resolved(profileDir: string, bundle?: HarnessResolvedProfile['extension
     yaml: { name: 't-profile' },
     phasesDisabled: new Set(),
     capabilities: {},
+    personalPrerequisites: {},
     extensionBundle: bundle,
   };
 }

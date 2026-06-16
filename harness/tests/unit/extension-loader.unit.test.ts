@@ -39,6 +39,7 @@ function baseResolved(): HarnessResolvedProfile {
     capabilities: {
       'coding.compile': { provider: 'hvigor', severity: 'BLOCKER' },
     },
+    personalPrerequisites: {},
   };
 }
 

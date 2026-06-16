@@ -150,7 +150,8 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   },
 
   // toolchain.hvigor.* —— 与模板 framework.config.template.json 默认值一致
-  // 不补 toolchain.devEcoStudio（business-ut.6 detect-deveco 独立处理）。
+  // 不补 toolchain.devEcoStudio（personal setup / detect-deveco 独立处理）。
+  // 不补 toolchain.hmosDevice（仅 migrate 外迁或用户 opt-in；见 config-field-ownership HMOS_DEVICE_TUNING_KEYS）。
   {
     path: 'toolchain.hvigor.daemon',
     defaultValue: true,

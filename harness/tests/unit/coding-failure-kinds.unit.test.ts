@@ -46,6 +46,7 @@ function mkCtx(projectRoot: string): CheckContext {
       capabilities: {
         'coding.compile': { provider: 'hvigor', severity: 'BLOCKER' },
       },
+      personalPrerequisites: {},
     },
     ...layoutFields,
   };

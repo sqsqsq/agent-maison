@@ -3,24 +3,17 @@
 // ============================================================================
 
 import { isCapabilitySkipped } from '../../capability-registry';
-import type { HarnessResolvedProfile } from '../../scripts/utils/types';
+import type { HarnessResolvedProfile, CapabilityKey } from '../../scripts/utils/types';
+import type { PersonalPrerequisiteId } from './personal-prerequisite-registry';
 import type { FeaturePhase } from './phase-transition-policy';
 
-export type PersonalPrerequisiteId = 'agent_adapter' | 'deveco_toolchain';
+export type { PersonalPrerequisiteId } from './personal-prerequisite-registry';
 
-const PHASE_CAPABILITY_MAP: Partial<Record<FeaturePhase, string[]>> = {
+/** 框架级 phase → 候选 capability（profile yaml 不承载此映射） */
+const PHASE_CAPABILITY_MAP: Partial<Record<FeaturePhase, CapabilityKey[]>> = {
   coding: ['coding.compile'],
   ut: ['ut.compile', 'ut.run'],
   testing: ['device_test.build', 'device_test.install', 'device_test.run'],
-};
-
-const CAPABILITY_PREREQUISITES: Record<string, PersonalPrerequisiteId[]> = {
-  'coding.compile': ['deveco_toolchain'],
-  'ut.compile': ['deveco_toolchain'],
-  'ut.run': ['deveco_toolchain'],
-  'device_test.build': ['deveco_toolchain'],
-  'device_test.install': ['deveco_toolchain'],
-  'device_test.run': ['deveco_toolchain'],
 };
 
 export function resolvePhasePersonalPrerequisites(
@@ -29,9 +22,10 @@ export function resolvePhasePersonalPrerequisites(
 ): Set<PersonalPrerequisiteId> {
   const out = new Set<PersonalPrerequisiteId>(['agent_adapter']);
   const caps = PHASE_CAPABILITY_MAP[phase as FeaturePhase] ?? [];
+  const table = resolved.personalPrerequisites ?? {};
   for (const capKey of caps) {
-    if (isCapabilitySkipped(resolved, capKey as never)) continue;
-    const prereqs = CAPABILITY_PREREQUISITES[capKey] ?? [];
+    if (isCapabilitySkipped(resolved, capKey)) continue;
+    const prereqs = table[capKey] ?? [];
     for (const p of prereqs) out.add(p);
   }
   return out;

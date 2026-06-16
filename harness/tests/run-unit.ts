@@ -54,6 +54,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
   { id: 'record-verifier-report-hook', modulePath: './unit/record-verifier-report-hook.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
+  { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },
+  { id: 'framework-config-schema', modulePath: './unit/framework-config-schema.unit.test' },
   { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
   { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },

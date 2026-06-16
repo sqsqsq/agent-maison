@@ -49,6 +49,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
             yaml: {} as any,
             phasesDisabled: new Set(),
             capabilities: {},
+            personalPrerequisites: {},
           },
         });
         const results = await codingChecker.check(ctx);

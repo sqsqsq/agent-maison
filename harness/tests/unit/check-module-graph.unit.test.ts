@@ -93,6 +93,7 @@ function ctx(root: string): CheckContext {
       yaml: {} as CheckContext['resolvedProfile']['yaml'],
       phasesDisabled: new Set(),
       capabilities: {},
+      personalPrerequisites: {},
     },
   };
 }
