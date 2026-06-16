@@ -29,7 +29,7 @@ isProject: false
 
 ## Hylyre 0.2.0 适配（开发窗口 version: 2.3.0，不 bump）
 
-> 依据：直接读取 `hylyre-0.2.0-py3-none-any.whl` 内源码（CLI / `selector_resolve.py` / `hdc_cli.py`）核对，非仅凭 handoff 文档。SSOT 见 [`downstream-harness-requests.md`](profiles/hmos-app/vendor/hylyre/downstream-harness-requests.md) 与 [`hylyre-optimization-requests.md`](profiles/hmos-app/vendor/hylyre/hylyre-optimization-requests.md)。
+> 依据：直接读取 `hylyre-0.2.0-py3-none-any.whl` 内源码（CLI / `selector_resolve.py` / `hdc_cli.py`）核对。集成说明 SSOT 见 [`profiles/hmos-app/vendor/hylyre/README.md`](profiles/hmos-app/vendor/hylyre/README.md) §Framework 集成要点。
 
 ### 1. force-stop 语法修正 + 冷重启接通（#3）
 

@@ -12,13 +12,5 @@
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",
     "platform": "Windows-11-10.0.26200-SP0"
   },
-  "note": "Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. Framework harness integration (#3 cold-restart, #6 page save): see downstream-harness-requests.md in this directory.",
-  "integration_docs": [
-    {
-      "filename": "downstream-harness-requests.md",
-      "sha256": "68a1e1ef643f0e21342659a3c68161e2c41e22c3b069b217ddb66ee652a8c63a",
-      "size_bytes": 3900,
-      "purpose": "Framework harness integration (#3 cold-restart, #6 app page save)"
-    }
-  ]
+  "note": "Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. Framework harness integration notes: see README.md in this directory."
 }

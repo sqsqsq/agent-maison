@@ -6,6 +6,8 @@
 
 传递依赖（如设备侧 Hypium 栈）仍由首次 `ensure` 时通过 PyPI 镜像安装，不在本目录 vendor。
 
+**本目录仅保留发布件**：`hylyre-*.whl`、`release.manifest.json`、本 README。集成说明不再单独挂临时移交 md。
+
 ## 何时更新
 
 - Hylyre 仓库 `pyproject.toml` 版本号变更
@@ -23,13 +25,36 @@ python scripts/build_wheel.py --clean
 
 # ② cp 到本目录（覆盖旧 wheel）
 $src = "D:\1.code\Hylyre\dist\release"
-$dst = "D:\1.code\SimulatedWalletForHmos\framework\profiles\hmos-app\vendor\hylyre"
+$dst = "D:\1.code\agent-maison\profiles\hmos-app\vendor\hylyre"
 Remove-Item -Force "$dst\hylyre-*.whl", "$dst\release.manifest.json" -ErrorAction Ignore
 Copy-Item "$src\hylyre-*.whl", "$src\release.manifest.json" $dst
 
 # ③ 校验
 python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 ```
+
+同步后若 Hylyre 包内仍带 `integration_docs` 等移交文件，**不要**提交进 maison；只保留 wheel + manifest + 本 README，并把 harness 侧变更摘要补进下文「Framework 集成要点」。
+
+## Framework 集成要点（vendor 0.2.0）
+
+以下由 harness 已落地，消费者读 profile 文档即可，无需另附移交清单。
+
+### 冷重启与 force-stop（testing 阶段）
+
+- `device-test-run.ts` 使用 **positional** `hdc shell aa force-stop <bundle>`（勿用 `-b`，部分本机会失败）。
+- 默认 **冷重启**：`force-stop` 后再 `aa start`。配置 `framework.config.json > tools.hylyre.cold_restart_before_run`（hmos-app 默认 `true`）；环境变量 `HARNESS_DEVICE_TEST_COLD_RESTART=1/0` 优先。
+- meta 字段：`cold_restart` / `cold_restart_attempted` / `cold_restart_ok`。
+
+### `app page save`（快照缓存）
+
+- 跑后按访问页面名逐个 `hylyre app page save`；页面名与业务 slug 一致，落盘 `doc/app-snapshot-cache/<bundle>/pages/<name>.json`。
+- 可选 env：`HARNESS_HYLYRE_PAGE_SAVE_NAMES`（逗号分隔）；adhoc 可 `--skip-page-save`。
+- 失败时 stderr + exit 归档到 run 目录 `hylyre-page-save.log`（非 silent）。
+
+### Hylyre 0.2.0 CLI / 步骤能力
+
+- 富选择器、`scroll_to`、`--failure-dir` 失败诊断等见 [`../../skills/device-testing/reference/hylyre-planned-step-fields.md`](../../skills/device-testing/reference/hylyre-planned-step-fields.md) 与 device-testing profile addendum。
+- 上游能力需求与真机踩坑记录留在 **Hylyre 仓** 或开发 plan，不进本 vendor 目录。
 
 ## 升级原则
 
@@ -48,8 +73,10 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 | `verify_report` / 缺 `report-sections.yaml` | `ensureHylyreReady` 会探测 contracts，缺失时对默认 venv 执行 `pip --force-reinstall` vendor wheel |
 | vendor 已更新但 venv 仍旧版 | 用户重新发起 device-testing；agent Step 7 自跑 testing harness 时会自动对齐；仍失败则查 `hylyre-doctor.log`，必要时删 `.hylyre/venv` 后由 agent 再跑 Step 7 |
 | 设置了 `HYLYRE_PYTHON` 且版本与 manifest 不一致 | harness **BLOCKER**；在该环境手动升级 hylyre，或取消 `HYLYRE_PYTHON` 改用默认 venv |
+| 连续多轮 testing 状态污染 | 确认 `cold_restart_before_run` 为 true 或 `HARNESS_DEVICE_TEST_COLD_RESTART=1`；日志中 force-stop 勿出现 `-b` 语法 |
 
 ## 不要做
 
 - **不要**手改 wheel 或 `release.manifest.json`；仅允许从 Hylyre `dist/release` **覆盖拷贝**。
+- **不要**把 Hylyre 同步包里的临时 `integration_docs` / 移交 md 提交进本目录。
 - 设备栈等大体量传递依赖**不要**往本目录塞；走镜像与 pip 缓存。
