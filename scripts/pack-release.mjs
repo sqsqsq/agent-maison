@@ -12,6 +12,7 @@ import {
   normalizeReleaseTextEol,
   sanitizeHarnessPackageJson,
   sanitizePackageJson,
+  sanitizeVendorManifest,
   stageReleaseFile,
   toPosixPath,
 } from './release-pack-rules.mjs';
@@ -75,6 +76,18 @@ function writeStaging(stagingRoot, included) {
     const sanitized = sanitizeHarnessPackageJson(raw);
     fs.writeFileSync(
       path.join(stagingRoot, 'harness/package.json'),
+      normalizeReleaseTextEol(`${JSON.stringify(sanitized, null, 2)}\n`),
+      'utf8',
+    );
+  }
+
+  const vendorManifestRel = 'profiles/hmos-app/vendor/hylyre/release.manifest.json';
+  const vendorManifestDest = path.join(stagingRoot, vendorManifestRel);
+  if (fs.existsSync(vendorManifestDest)) {
+    const raw = JSON.parse(fs.readFileSync(vendorManifestDest, 'utf8'));
+    const sanitized = sanitizeVendorManifest(raw);
+    fs.writeFileSync(
+      vendorManifestDest,
       normalizeReleaseTextEol(`${JSON.stringify(sanitized, null, 2)}\n`),
       'utf8',
     );

@@ -105,6 +105,24 @@ function assertZipContents(frameworkRoot) {
     if (f.includes('node_modules/') || f.endsWith('package-lock.json')) {
       fail(`runtime artifact leaked: ${f}`);
     }
+    if (
+      f.startsWith('profiles/hmos-app/vendor/hylyre/')
+      && f.endsWith('.md')
+      && f !== 'profiles/hmos-app/vendor/hylyre/README.md'
+    ) {
+      fail(`vendor handover md leaked: ${f}`);
+    }
+  }
+
+  const vendorManifestPath = path.join(
+    frameworkRoot,
+    'profiles/hmos-app/vendor/hylyre/release.manifest.json',
+  );
+  if (fs.existsSync(vendorManifestPath)) {
+    const vendorManifest = JSON.parse(fs.readFileSync(vendorManifestPath, 'utf8'));
+    if (vendorManifest.integration_docs) {
+      fail('staging vendor manifest must not contain integration_docs');
+    }
   }
 
   const mustExist = [

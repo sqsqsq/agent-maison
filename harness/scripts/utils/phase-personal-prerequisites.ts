@@ -2,6 +2,8 @@
 // phase-personal-prerequisites.ts — phase → capability → personal prerequisite
 // ============================================================================
 
+import { loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import { isCapabilitySkipped } from '../../capability-registry';
 import type { HarnessResolvedProfile, CapabilityKey } from '../../scripts/utils/types';
 import type { PersonalPrerequisiteId } from './personal-prerequisite-registry';
@@ -43,4 +45,13 @@ export function unionPhasePersonalPrerequisites(
   }
   if (out.size === 0) out.add('agent_adapter');
   return out;
+}
+
+/** record-adapter / init 等无单一 phase 场景：coding+ut+testing 并集，显式含 agent_adapter */
+const ALL_PERSONAL_SETUP_PHASES: FeaturePhase[] = ['coding', 'ut', 'testing'];
+
+export function resolveAllPersonalPrerequisites(projectRoot: string): Set<PersonalPrerequisiteId> {
+  const cfg = loadFrameworkConfig(projectRoot);
+  const resolved = loadResolvedProfile(projectRoot, cfg);
+  return unionPhasePersonalPrerequisites(ALL_PERSONAL_SETUP_PHASES, resolved);
 }

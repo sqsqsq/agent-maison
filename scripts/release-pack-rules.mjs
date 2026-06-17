@@ -162,6 +162,19 @@ export function sanitizeHarnessPackageJson(pkg) {
   return out;
 }
 
+/** @param {object} manifest Hylyre vendor release.manifest.json */
+export function sanitizeVendorManifest(manifest) {
+  const out = JSON.parse(JSON.stringify(manifest));
+  delete out.integration_docs;
+  if (typeof out.note === 'string' && out.note.includes('downstream-harness-requests.md')) {
+    out.note =
+      'Pure-Python wheel (py3-none-any). Install with: pip install <wheel-path>; ' +
+      'pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. ' +
+      'Framework harness integration: see README.md in this directory.';
+  }
+  return out;
+}
+
 /**
  * @param {string} repoRoot
  * @param {ReturnType<typeof loadReleaseExcludes>} rules
@@ -332,6 +345,31 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   }
   if (isReleaseBinaryRelPath('README.md')) {
     errors.push('isReleaseBinaryRelPath must not treat README.md as binary');
+  }
+
+  const vendorHandoverMd = 'profiles/hmos-app/vendor/hylyre/downstream-harness-requests.md';
+  const vendorReadme = 'profiles/hmos-app/vendor/hylyre/README.md';
+  const { include: handoverIncluded } = classifyPath(vendorHandoverMd, rules);
+  if (handoverIncluded) {
+    errors.push('vendor handover md must be excluded by excludeGlobs');
+  }
+  const { include: readmeIncluded } = classifyPath(vendorReadme, rules);
+  if (!readmeIncluded) {
+    errors.push('vendor hylyre README must be included via includeOverride');
+  }
+
+  const sampleManifest = {
+    schema: 1,
+    hylyre_version: '0.3.0',
+    integration_docs: [{ filename: 'downstream-harness-requests.md' }],
+    note: 'Framework harness integration: see downstream-harness-requests.md in this directory.',
+  };
+  const sanitizedManifest = sanitizeVendorManifest(sampleManifest);
+  if (sanitizedManifest.integration_docs) {
+    errors.push('sanitizeVendorManifest must remove integration_docs');
+  }
+  if (sanitizedManifest.note.includes('downstream-harness-requests')) {
+    errors.push('sanitizeVendorManifest must rewrite note to README.md');
   }
 
   return errors;

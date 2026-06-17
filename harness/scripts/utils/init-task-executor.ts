@@ -9,6 +9,8 @@ import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache, loadFrameworkConfigWithSources } from '../../config';
 import { __testing as checkInitTesting } from '../check-init';
 import { detectScan } from '../detect-deveco';
+import { ensurePersonalSetup } from './personal-setup-gate';
+import { resolveAllPersonalPrerequisites } from './phase-personal-prerequisites';
 import { prepareConfigWriteForTask } from './config-builder';
 import {
   mergeFrameworkConfig,
@@ -483,7 +485,25 @@ export function executeInitTask(
       if (!active) throw new Error('record-adapter 需要 executionContext.activeAdapter');
       writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, { agent_adapter: active }));
       clearFrameworkConfigCache();
-      return { message: `已写入 framework.local.json agent_adapter=${active}` };
+
+      const prereqs = resolveAllPersonalPrerequisites(ctx.projectRoot);
+      const ensureResult = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites: prereqs });
+
+      let message = `已写入 framework.local.json agent_adapter=${active}`;
+      if (ensureResult.ok) {
+        if (
+          ensureResult.ensured === 'auto_detect_deveco'
+          || ensureResult.ensured === 'auto_single_adapter_and_deveco'
+        ) {
+          message += '；已自动补写 DevEco installPath';
+        }
+      } else if (ensureResult.code === 'deveco_toolchain_missing') {
+        message += '；DevEco 工具链未自动探测到（best-effort；阶段入口仍会校验 DevEco）';
+      } else {
+        throw new Error(`record-adapter 后 personal setup 未就绪：${ensureResult.message}`);
+      }
+
+      return { message };
     }
     case 'detect-deveco': {
       const report = detectScan();

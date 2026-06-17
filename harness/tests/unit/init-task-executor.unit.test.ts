@@ -7,6 +7,7 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache } from '../../config';
 import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/init-task-executor';
+import { __testing_setDetectScanForEnsure } from '../../scripts/utils/personal-setup-gate';
 import type { InitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
 
@@ -109,7 +110,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         JSON.stringify({
           schema_version: '1.1',
           project_name: 't',
-          materialized_adapters: ['claude', 'cursor'],
+          project_profile: { name: 'generic' },
+          materialized_adapters: ['claude'],
           architecture: {
             outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
             module_inner_layers: ['shared'],
@@ -119,12 +121,13 @@ const cases: Array<{ name: string; run: () => void }> = [
           paths: { features_dir: 'doc/features' },
         }, null, 2),
       );
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
       const ctx: InitExecutionContext = {
         projectRoot: root,
         harnessRoot: path.join(layout.frameworkRoot, 'harness'),
         plan: { schema_version: '1.0', scope: 'personal', mode: 'update', generated_at: '', tasks: [] },
-        activeAdapter: 'cursor',
-        materializedAdapters: ['claude', 'cursor'],
+        activeAdapter: 'claude',
+        materializedAdapters: ['claude'],
       };
       const task = {
         id: 'record-adapter',
@@ -139,8 +142,194 @@ const cases: Array<{ name: string; run: () => void }> = [
       };
       executeInitTask(task, 'run', ctx);
       const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
-      assert.strictEqual(local.agent_adapter, 'cursor');
+      assert.strictEqual(local.agent_adapter, 'claude');
       fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask record-adapter best-effort writes deveco installPath',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          project_profile: { name: 'hmos-app', sub_variant: 'app' },
+          materialized_adapters: ['claude'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+
+      const fakeInstall = path.join(root, 'fake-deveco');
+      const hvigorBin = path.join(
+        fakeInstall,
+        'tools',
+        'hvigor',
+        'bin',
+        process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw',
+      );
+      fs.mkdirSync(path.dirname(hvigorBin), { recursive: true });
+      fs.writeFileSync(hvigorBin, '');
+
+      __testing_setDetectScanForEnsure(() => ({
+        candidates: [],
+        recommended: {
+          status: 'ok',
+          installPath: fakeInstall,
+          source: 'scan',
+          missing: [],
+        },
+      }));
+      try {
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root,
+          harnessRoot: path.join(layout.frameworkRoot, 'harness'),
+          plan: { schema_version: '1.0', scope: 'personal', mode: 'update', generated_at: '', tasks: [] },
+          activeAdapter: 'claude',
+          materializedAdapters: ['claude'],
+        };
+        const task = {
+          id: 'record-adapter',
+          title: 'adapter',
+          category: 'personal',
+          scope: 'personal' as const,
+          deps: [],
+          status: 'needed' as const,
+          default_action: 'run' as const,
+          skippable: false,
+          allowed_actions: ['run' as const],
+        };
+        executeInitTask(task, 'run', ctx);
+        const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
+        assert.strictEqual(local.agent_adapter, 'claude');
+        assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, fakeInstall);
+      } finally {
+        __testing_setDetectScanForEnsure(null);
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'executeInitTask record-adapter no deveco candidate keeps agent_adapter only',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          project_profile: { name: 'hmos-app', sub_variant: 'app' },
+          materialized_adapters: ['claude'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      __testing_setDetectScanForEnsure(() => ({ candidates: [] }));
+      try {
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root,
+          harnessRoot: path.join(layout.frameworkRoot, 'harness'),
+          plan: { schema_version: '1.0', scope: 'personal', mode: 'update', generated_at: '', tasks: [] },
+          activeAdapter: 'claude',
+          materializedAdapters: ['claude'],
+        };
+        const task = {
+          id: 'record-adapter',
+          title: 'adapter',
+          category: 'personal',
+          scope: 'personal' as const,
+          deps: [],
+          status: 'needed' as const,
+          default_action: 'run' as const,
+          skippable: false,
+          allowed_actions: ['run' as const],
+        };
+        const result = executeInitTask(task, 'run', ctx);
+        assert.match(result.message, /agent_adapter=claude/);
+        assert.match(result.message, /DevEco 工具链未自动探测到/);
+        const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
+        assert.strictEqual(local.agent_adapter, 'claude');
+        assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, undefined);
+      } finally {
+        __testing_setDetectScanForEnsure(null);
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'executeInitTask record-adapter throws on non-DevEco ensure failure',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 't',
+          project_profile: { name: 'hmos-app', sub_variant: 'app' },
+          materialized_adapters: ['claude'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      __testing_setDetectScanForEnsure(() => ({ candidates: [] }));
+      try {
+        clearFrameworkConfigCache();
+        const ctx: InitExecutionContext = {
+          projectRoot: root,
+          harnessRoot: path.join(layout.frameworkRoot, 'harness'),
+          plan: { schema_version: '1.0', scope: 'personal', mode: 'update', generated_at: '', tasks: [] },
+          activeAdapter: 'claude',
+          materializedAdapters: ['claude'],
+        };
+        const task = {
+          id: 'record-adapter',
+          title: 'adapter',
+          category: 'personal',
+          scope: 'personal' as const,
+          deps: [],
+          status: 'needed' as const,
+          default_action: 'run' as const,
+          skippable: false,
+          allowed_actions: ['run' as const],
+        };
+        assert.throws(
+          () => executeInitTask(task, 'run', ctx),
+          /record-adapter 后 personal setup 未就绪/,
+        );
+        const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
+        assert.strictEqual(local.agent_adapter, 'claude');
+      } finally {
+        __testing_setDetectScanForEnsure(null);
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

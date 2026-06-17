@@ -1,6 +1,6 @@
 # Hylyre Planned Step 字段规则（vendored SSOT）
 
-> 从 [`hylyre-0.2.0-py3-none-any.whl`](../../../vendor/hylyre/hylyre-0.2.0-py3-none-any.whl) 内 `hylyre/api/planned_step_keys.py`、`selector_resolve.py` 等提取。
+> 从 [`hylyre-0.3.0-py3-none-any.whl`](../../../vendor/hylyre/hylyre-0.3.0-py3-none-any.whl) 内 `hylyre/api/planned_step_keys.py`、`selector_resolve.py` 等提取。
 > Framework 仓内 **不** 包含 Hylyre 工程的 `docs/agent-plan-a.md`；本文件供 agent / lint / derive 消费。
 
 ## 根键 SSOT
@@ -11,7 +11,7 @@
 
 **禁止作为步骤根键的 CLI 名**：`dump_ui` / `dump-ui` / `page_save` / `screenshot` 等（见 `FORBIDDEN_STEP_ROOT_KEYS`）。
 
-## 富选择器（Hylyre 0.2+ · touch / wait_for 块内）
+## 富选择器（Hylyre 0.2+ · touch / wait_for / input 块内）
 
 同名按钮 / 半模态叠层场景优先用富选择器，而非改被测应用源码加 id。
 
@@ -31,9 +31,9 @@
 {"wait_for":{"by_text":"加载完成","scope":"top_overlay","timeout":10}}
 ```
 
-## 滚动（Hylyre 0.2+）
+## 滚动（Hylyre 0.2+ · 0.3 先匹配）
 
-**`scroll_to` 根键**（长列表 / 虚拟化，自动滚到目标可见）：
+**`scroll_to` 根键**（长列表 / 虚拟化，自动滚到目标可见）。Hylyre 0.3+：**滚动前先**在容器子树/全树匹配，目标已在屏内时立即返回，避免空滚。
 
 ```json
 {"scroll_to":{"by_text":"招商银行","in":{"by_type":"List"}}}
@@ -57,12 +57,30 @@
 
 **常见误写**：`{"wait":{"timeout":3}}` — lint 规则 **STEP-WAIT-SECONDS** 会在写前拦截。
 
+## input（Hylyre 0.3+ · 定位 + 输入）
+
+`input` 支持与 `touch` 一致的选择器词汇（`by_text` / `by_id` / `by_type` / `by_key` + 富选择器），或一步式 `into` 定位后输入：
+
+```json
+{"input":{"by_type":"TextInput","scope":"top_overlay","text":"123456"}}
+{"input":{"into":{"by_type":"TextInput","scope":"top_overlay"},"text":"123456"}}
+```
+
+**无选择器**时 `input` 落到**当前聚焦框**（等价 `input_text_on_current_cursor`）；若无聚焦框则输入丢失且无报错——对只有 placeholder 的验证码框，**勿**裸 `{"input":{"text":"…"}}`，应带 `by_type`/`into` 或先 `touch` 聚焦。
+
+```json
+{"touch":{"by_type":"TextInput","scope":"top_overlay"}}
+{"wait":{"seconds":1}}
+{"input":{"text":"123456"}}
+```
+
 ## 各根键最小 JSON 形态
 
 ```json
 {"touch":{"by_text":"按钮"}}
 {"touch":{"by_id":"btn_id"}}
 {"input":{"by_id":"field","text":"100"}}
+{"input":{"by_type":"TextInput","scope":"top_overlay","text":"123456"}}
 {"swipe":{"direction":"UP","distance":50}}
 {"scroll":{"direction":"down","steps":6}}
 {"scroll_to":{"by_text":"招商银行","in":{"by_type":"List"}}}
@@ -99,5 +117,5 @@
 
 ## 版本
 
-- Hylyre wheel：`0.2.0`（`framework/profiles/hmos-app/vendor/hylyre/`）
+- Hylyre wheel：`0.3.0`（`framework/profiles/hmos-app/vendor/hylyre/`）
 - 字段变更时：同步更新 wheel、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`

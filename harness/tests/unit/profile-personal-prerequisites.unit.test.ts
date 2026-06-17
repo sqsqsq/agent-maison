@@ -13,6 +13,7 @@ import {
 } from '../../scripts/utils/personal-prerequisite-registry';
 import {
   resolvePhasePersonalPrerequisites,
+  resolveAllPersonalPrerequisites,
 } from '../../scripts/utils/phase-personal-prerequisites';
 import type { HarnessResolvedProfile } from '../../scripts/utils/types';
 
@@ -116,6 +117,19 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.deepStrictEqual(resolved.personalPrerequisites['coding.compile'], ['deveco_toolchain']);
       assert.deepStrictEqual(resolved.personalPrerequisites['device_test.run'], ['deveco_toolchain']);
       const prereqs = resolvePhasePersonalPrerequisites('coding', resolved);
+      assert.ok(prereqs.has('agent_adapter'));
+      assert.ok(prereqs.has('deveco_toolchain'));
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'resolveAllPersonalPrerequisites: hmos-app union includes agent_adapter and deveco',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, 'hmos-app');
+      clearFrameworkConfigCache();
+      const prereqs = resolveAllPersonalPrerequisites(root);
       assert.ok(prereqs.has('agent_adapter'));
       assert.ok(prereqs.has('deveco_toolchain'));
       fs.rmSync(root, { recursive: true, force: true });

@@ -58,7 +58,7 @@ import {
   featurePhaseReportsDir,
 } from './config';
 import {
-  evaluatePersonalSetupGate,
+  ensurePersonalSetup,
 } from './scripts/utils/personal-setup-gate';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
@@ -300,7 +300,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const prereqs = resolvePhasePersonalPrerequisites(phase, resolvedForGate);
-    const gate = evaluatePersonalSetupGate(projectRoot, { requiredPrerequisites: prereqs });
+    const gate = ensurePersonalSetup(projectRoot, { requiredPrerequisites: prereqs });
     if (!gate.ok) {
       console.error(`   ✗ ${gate.message.replace(/\n/g, '\n     ')}`);
       console.error(

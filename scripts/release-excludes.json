@@ -18,9 +18,11 @@
     "**/package-lock.json",
     "**/.hylyre/**",
     "**/tmp_hypium/**",
-    "**/oh_modules/**"
+    "**/oh_modules/**",
+    "profiles/*/vendor/**/*.md"
   ],
   "includeOverrides": [
+    "profiles/hmos-app/vendor/hylyre/README.md",
     "harness/reports/.gitkeep",
     "harness/state/.gitkeep",
     "harness/trace/trace.schema.json",

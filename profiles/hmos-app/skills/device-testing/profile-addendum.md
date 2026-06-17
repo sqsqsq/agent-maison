@@ -103,12 +103,13 @@
   - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`scroll_to`** / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor wheel 内 `hylyre/api/planned_step_keys.py` 为 SSOT）
 - **selector 查找顺序**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
 - **富选择器（Hylyre 0.2+）**：同名文案/同类型多组件（如 bindSheet 半模态「下一步」 vs 背后页面「下一步」）优先用 `scope:"top_overlay"`、`within`/`below`/`above`、`all`、`index`、`visible`/`enabled` 等（详见 [hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)）；勿仅写裸 `by_text` 碰运气。
-- **长列表**：屏外项用 **`scroll_to`** 或 touch 内 `scroll_into_view`，勿盲猜 `scroll` 步数。
+- **长列表**：屏外项用 **`scroll_to`** 或 touch 内 `scroll_into_view`，勿盲猜 `scroll` 步数。Hylyre 0.3+ `scroll_to` 对已在屏目标先匹配再滚。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
 - **示例**（仅形态示意，字段名以 Hylyre 版本为准）：
   - 点击（即席推荐）：`{"touch":{"by_text":"确认"}}`
   - 点击（派生 plan 表格，Hylyre agent-plan-a 形态）：以 vendor `hylyre-planned-step-fields.md` 为准
-  - 输入：`{"input":{"selector":{"type":"id","value":"username_field"},"text":"demo"}}`
+  - 输入（0.3+ 一步式，仅 placeholder 的验证码框）：`{"input":{"by_type":"TextInput","scope":"top_overlay","text":"123456"}}`
+  - 输入（legacy / by_id）：`{"input":{"by_id":"username_field","text":"demo"}}`
   - 返回：`{"back":{}}` 或 `{"action":{"type":"back"}}`
 
 ### 单会话导航纪律（`hylyre run --plan`）
