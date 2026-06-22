@@ -1,0 +1,41 @@
+adapter_name: opencode
+description: |
+  OpenCode CLI adapter——原生读 AGENTS.md + `.agents/skills`（skill 自动注册为 slash 命令），
+  headless = `opencode run`（stdin prompt，`--dangerously-skip-permissions`）。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+commands: null
+
+skill_bridge:
+  target_dir: .agents/skills
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
+
+rules:
+  target_dir: .agents/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+user_confirmation:
+  structured_widget: unsupported
+  portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.md
+
+goal_capability:
+  mode: external_runner
+  external_runner:
+    headless_invoke: 'opencode run --dangerously-skip-permissions --dir {{PROJECT_ROOT}}'
+    unattended:
+      write_mode: workspace-write
+      approval_mode: never
+      timeout_seconds: 3600
+
+post_install_hooks: []
+
+notes: |
+  - 独立 adapter；与 generic/chrys 同 `.agents` bundle 默认根下字节一致、可幂等共存。
+  - slash 命令来源②（技能自动注册）覆盖本 bundle；无需写 `.opencode/commands/`（显式命令才需 `.opencode/`）。
+  - 模型/凭据由 opencode 自身 config/auth（`~/.config/opencode`）提供；rules 引用可达。
+  - 运行时 headless stdin 灌 prompt，以 agent-invoke.ts 硬化为准。
+  - 口径 SSOT：agents/adapter-schema.yaml（bridge-only）。

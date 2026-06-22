@@ -67,6 +67,18 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 - Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
 - Codex：`codex exec --sandbox workspace-write --ask-for-approval never|on-request`
 - Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
+- Chrys：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`（文件传 prompt；preflight 空 `PROMPT_FILE` 时回退 positional）。前置：CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；`bootstrap_runtime` 需 provider 凭据（`~/.chrys` 或 `.env`）；先手跑 `chrys run "hi" --agent Code` 验证。无流式输出（`agent-output.log` phase 结束前可能为空）；退出码 0/1(stderr JSON)/124/130。
+- OpenCode：`opencode run --dangerously-skip-permissions --dir <PROJECT_ROOT>` + **stdin 灌 prompt**（**勿用 `-p`**，其为 `--password`）。前置：`npm i -g opencode-ai`，bin 名 `opencode`；模型/凭据由 opencode config/auth 提供，先手跑 `opencode run "hi"` 验证。`--dir` 须为 git worktree 根且 `.agents` 在其内。默认开关全开（勿设 `OPENCODE_DISABLE_PROJECT_CONFIG` 等禁用 bundle 的 env）。Windows `.cmd` 经 cross-spawn。
+
+```bash
+# Chrys dry-run 示例
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "需求" --adapter chrys --dry-run
+
+# OpenCode dry-run 示例
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "需求" --adapter opencode --dry-run
+```
 
 ## 运行中进度（progress 契约）
 

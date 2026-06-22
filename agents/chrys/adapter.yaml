@@ -1,0 +1,40 @@
+adapter_name: chrys
+description: |
+  Chrys agent adapter——openCode 风格 `.agents` bundle（AGENTS.md + skills/rules 跳板），
+  headless = `chrys run`（`--agent Code`，BYPASS 非交互）。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+commands: null
+
+skill_bridge:
+  target_dir: .agents/skills
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
+
+rules:
+  target_dir: .agents/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+user_confirmation:
+  structured_widget: unsupported
+  portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.md
+
+goal_capability:
+  mode: external_runner
+  external_runner:
+    headless_invoke: 'chrys run --task {{PROMPT_FILE}} -C {{PROJECT_ROOT}} --agent Code --json'
+    unattended:
+      write_mode: workspace-write
+      approval_mode: never
+      timeout_seconds: 3600
+
+post_install_hooks: []
+
+notes: |
+  - 独立 adapter；generic 恒 bridge（inline 已废弃），默认 `.agents` 根下 bundle 与 generic/chrys/opencode 字节一致、可幂等共存。
+  - 仅 generic 配非默认 `agent_bundle_root`（如 `.codex`）时落不同目录，是独立产物（不共享、不互为幂等）。
+  - rules 对 chrys 为「引用可达」非自动加载；运行时 headless 以 agent-invoke.ts 硬化为准。
+  - 口径 SSOT：agents/adapter-schema.yaml（bridge-only）。

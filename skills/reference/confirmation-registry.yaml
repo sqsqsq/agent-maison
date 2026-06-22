@@ -9,8 +9,8 @@ entries:
     class: artifact_checkbox
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "S2 计划批准"
-    portable_menu: "多选 adapter 目录名（claude/cursor/generic）；须至少 1 项"
-    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic 默认物化到 .agents/bridge，无需额外配置；仅非标 bundle 根须手动编辑 framework.config.json 后重跑"
+    portable_menu: "多选 adapter 目录名（claude/cursor/generic/chrys/opencode）；须至少 1 项"
+    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys/opencode 默认 `.agents` bridge bundle 字节一致、可幂等共存（差异仅在 headless 运行器）；仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
     options:
       - value: claude
         label: "claude — 物化 Claude Code 入口与 .claude/ 产物"
@@ -21,6 +21,12 @@ entries:
       - value: generic
         label: "generic — 物化 generic bundle 入口与 skills"
         portable: "generic"
+      - value: chrys
+        label: "chrys — 物化 AGENTS.md + .agents/ bundle（headless = chrys run）"
+        portable: "chrys"
+      - value: opencode
+        label: "opencode — 物化 AGENTS.md + .agents/ bundle（headless = opencode run）"
+        portable: "opencode"
 
   - id: init.task_plan
     skill: "framework-init"

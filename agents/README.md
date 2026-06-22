@@ -25,6 +25,12 @@ framework/agents/
 └── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + goal_capability）
     ├── adapter.yaml
     └── templates/
+├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
+│   ├── adapter.yaml
+│   └── templates/
+└── opencode/                    ← OpenCode CLI adapter（AGENTS.md + .agents/ bundle + opencode run headless）
+    ├── adapter.yaml
+    └── templates/
 ```
 
 各 adapter 可选声明 `goal_capability`（goal-runner 全链路；check-init 仅 WARN，runner preflight BLOCKER）。见 `docs/operations/goal-mode-runbook.md`。
@@ -69,6 +75,8 @@ framework/agents/
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
+| `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
+| `opencode` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板；技能自动注册为 slash）、`.agents/rules/interaction-renderer.md` |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
 
@@ -92,7 +100,8 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 全员 Claude Code | `["claude"]` |
 | 全员 Cursor | `["cursor"]` |
 | 混合 IDE | `["claude","cursor"]` |
-| Chrys / 自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
+| Chrys / OpenCode 实例 | `["chrys"]` 或 `["opencode"]`（与 generic 默认 `.agents` bridge 字节一致、可幂等共存） |
+| 其它自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
@@ -104,7 +113,9 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 |--------------|------------|
 | 日常用 Claude Code slash | personal `claude` |
 | 日常用 Cursor skills/rules | personal `cursor` |
-| 使用 `.agents` / `.codex` bundle 加载 | personal `generic` |
+| 日常用 Chrys headless | personal `chrys` |
+| 日常用 OpenCode CLI | personal `opencode` |
+| 使用 `.agents` / `.codex` bundle 加载（其它自定义 agent） | personal `generic` |
 
 ## Claude Code 确认 Widget（interaction-renderer）
 
@@ -115,13 +126,14 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 - **实例下发**：vendor 升级后用户自行 `/framework-init` UPDATE；check-init UPDATE 会自动 `backup_delete` 废弃的 `confirmation-ux.md` / `widget-options/`。
 - **Cursor 对称**：`.cursor/rules/interaction-renderer.mdc`（AskQuestion）。
 
-## 内部 agent（Chrys / Codemate 等）
+## 内部 agent（Chrys / OpenCode / Codemate 等）
 
-不单独建 adapter 时：实例使用 **`generic`**；默认零配置物化到 `.agents`/bridge（template 与 harness 回退）。仅非标 bundle 根须在 `framework.config.json` 显式配置 `paths.agent_bundle_root`。
+**chrys** 与 **opencode** 为独立 adapter（`structured_widget: unsupported`，portable 编号菜单）。实例分别选 personal `chrys` / `opencode`；与 generic 默认 `.agents` bridge bundle 字节一致、可幂等共存（差异仅在 headless 运行器）。**codemate** 等尚无专用 adapter 时仍可用 **`generic`**。
 
 - `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
 - 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
 - 禁止假设结构化 widget 可用
+- **opencode 额外说明**：原生还支持 `.opencode/` 与 `~/.config/opencode`；maison bundle 仅用 `AGENTS.md` + `.agents/skills`（技能自动注册为 slash 命令）。与 claude 同时物化时 opencode 可能扫到 `.claude/skills` 同名 skill 并 logWarning（无害）。
 
 ## 工程指纹与 adapter 推测（承接 scan-project）
 
@@ -152,6 +164,8 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
+| chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
+| opencode | AGENTS.md | —（技能自动注册 slash） | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
 

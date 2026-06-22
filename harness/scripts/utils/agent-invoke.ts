@@ -30,17 +30,21 @@ export interface InvokeTemplateVars {
 /** Tokenize templates with this sentinel, then swap for real prompt as a single argv element. */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
-const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor']);
+const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor', 'chrys', 'opencode']);
 
 /** Cursor headless CLI candidates (official name first). */
 export const CURSOR_HEADLESS_BINARY_CANDIDATES = ['cursor-agent', 'agent'] as const;
 export const CLAUDE_HEADLESS_BINARY_CANDIDATES = ['claude'] as const;
 export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
+export const CHRYS_HEADLESS_BINARY_CANDIDATES = ['chrys'] as const;
+export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
 
 const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
   claude: CLAUDE_HEADLESS_BINARY_CANDIDATES,
   codex: CODEX_HEADLESS_BINARY_CANDIDATES,
+  chrys: CHRYS_HEADLESS_BINARY_CANDIDATES,
+  opencode: OPENCODE_HEADLESS_BINARY_CANDIDATES,
 };
 
 /** Disabled by default — cursor-agent often streams little until phase end. Opt-in via silentWatchdogMs. */
@@ -277,6 +281,44 @@ function genericStdinPlan(prompt: string): HeadlessInvokePlan {
   };
 }
 
+/** Chrys headless — file prompt when PROMPT_FILE set; positional fallback for preflight. */
+function chrysArgv(vars: InvokeTemplateVars, promptContent: string): string[] {
+  const argv = ['chrys', 'run'];
+  if (vars.PROMPT_FILE?.trim()) {
+    argv.push('--task', vars.PROMPT_FILE);
+  } else {
+    argv.push(promptContent);
+  }
+  argv.push('-C', vars.PROJECT_ROOT, '--agent', 'Code', '--json');
+  return argv;
+}
+
+function chrysHeadlessPlan(vars: InvokeTemplateVars, promptContent: string): HeadlessInvokePlan {
+  const argv = chrysArgv(vars, promptContent);
+  return attachResolvedBinary(argv, CHRYS_HEADLESS_BINARY_CANDIDATES, 'chrys run …');
+}
+
+/**
+ * OpenCode headless — stdin prompt; must not use attachResolvedBinary (drops useStdin/stdin).
+ */
+export function opencodeHeadlessPlan(
+  vars: InvokeTemplateVars,
+  promptContent: string,
+): HeadlessInvokePlan {
+  const resolved = resolveHeadlessBinary([...OPENCODE_HEADLESS_BINARY_CANDIDATES]);
+  const binary = resolved?.path ?? 'opencode';
+  const argv = [binary, 'run', '--dangerously-skip-permissions', '--dir', vars.PROJECT_ROOT];
+  const base = path.basename(binary);
+  return {
+    argv,
+    useStdin: true,
+    stdin: promptContent,
+    resolvedBinary: resolved,
+    useCrossSpawn: shouldUseCrossSpawn(resolved),
+    label: `${base} run --dangerously-skip-permissions --dir … (stdin)`,
+  };
+}
+
 /** Tokenize a simple command line; respects double-quoted segments. */
 export function tokenizeInvokeCommand(command: string): string[] {
   const args: string[] = [];
@@ -353,6 +395,34 @@ export function defaultHeadlessInvokePlan(
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
     return cursorHeadlessPlan(unattended, promptContent, resolved);
   }
+  if (adapterName === 'chrys') {
+    return chrysHeadlessPlan(
+      {
+        PROMPT_FILE: '',
+        PROMPT: promptContent,
+        SKILL_PATH: '',
+        PROJECT_ROOT: '.',
+        FRAMEWORK_ROOT: '',
+        FEATURE: '',
+        PHASE: '',
+      },
+      promptContent,
+    );
+  }
+  if (adapterName === 'opencode') {
+    return opencodeHeadlessPlan(
+      {
+        PROMPT_FILE: '',
+        PROMPT: promptContent,
+        SKILL_PATH: '',
+        PROJECT_ROOT: '.',
+        FRAMEWORK_ROOT: '',
+        FEATURE: '',
+        PHASE: '',
+      },
+      promptContent,
+    );
+  }
   return genericStdinPlan(promptContent);
 }
 
@@ -369,6 +439,12 @@ export function resolveHeadlessInvokePlan(
   promptContent: string,
   vars: InvokeTemplateVars,
 ): HeadlessInvokePlan {
+  if (adapterName === 'chrys') {
+    return chrysHeadlessPlan(vars, promptContent);
+  }
+  if (adapterName === 'opencode') {
+    return opencodeHeadlessPlan(vars, promptContent);
+  }
   if (KNOWN_STRUCTURED_ADAPTERS.has(adapterName)) {
     return defaultHeadlessInvokePlan(adapterName, unattended, promptContent);
   }
@@ -693,6 +769,8 @@ export async function invokeAgentHeadless(
     const adapterGuess =
       plan.argv[0]?.includes('claude') ? 'claude'
       : plan.argv[0]?.includes('codex') ? 'codex'
+      : plan.argv[0]?.includes('chrys') ? 'chrys'
+      : plan.argv[0]?.includes('opencode') ? 'opencode'
       : 'cursor';
     const candidates = STRUCTURED_BINARY_CANDIDATES[adapterGuess] ?? [...CURSOR_HEADLESS_BINARY_CANDIDATES];
     return {

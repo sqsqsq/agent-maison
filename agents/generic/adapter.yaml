@@ -1,9 +1,8 @@
 adapter_name: generic
 description: |
   通用 adapter——产出 AGENTS.md，并在 bundle 根目录（默认 `.agents`；非标如 `.codex`
-  须手动编辑 config）下生成 `skills/` 与 `rules/`。skills 默认 **bridge** 薄跳板；
-  可选 **inline** 物化完整 SKILL 正文（适用于 strict 加载器）。
-  bundle 根目录与物化模式由 `framework.config.json` → `paths.agent_bundle_*` 配置。
+  须手动编辑 config）下生成 `skills/` 与 `rules/`。**恒 bridge** 薄跳板（inline 已废弃）。
+  bundle 根目录由 `framework.config.json` → `paths.agent_bundle_*` 配置。
 
 agent_entry_file:
   template_path: templates/AGENTS.md.template
@@ -36,8 +35,8 @@ goal_capability:
 post_install_hooks: []
 
 notes: |
-  - `paths.agent_bundle_root`（默认 `.agents`）与 `paths.agent_bundle_skill_mode`（`inline`|`bridge`，默认 bridge）
-    由 init 用 template/默认值写入 framework.config.json；仅非标 bundle 根须手动编辑 config 后重跑（禁止对话收路径字符串）。
-  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline（10 份内置 skill，不含个人 setup）。
-  - bridge：与 cursor 相同，拷贝 shared/skills-bridge（10 份；个人 setup 由阶段 `--ensure` 内联）。
+  - `paths.agent_bundle_root`（默认 `.agents`）由 init 用 template/默认值写入 framework.config.json；
+    仅非标 bundle 根须手动编辑 config 后重跑（禁止对话收路径字符串）。
+  - **恒 bridge**：`agent_bundle_skill_mode` 经 normalize 一律归一为 bridge（inline 已废弃）。
+  - bridge：拷贝 shared/skills-bridge（10 份；个人 setup 由阶段 `--ensure` 内联）。
   - 模板 SSOT：framework/agents/shared/agent-bundle/templates/

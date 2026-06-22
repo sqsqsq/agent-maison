@@ -99,6 +99,7 @@ function resolveViaKnownDirs(name: string): ResolvedHeadlessBinary | null {
 
   const knownDirs = [
     path.join(localAppData, 'cursor-agent'),
+    path.join(localAppData, 'chrys', 'bin'),
   ];
   const pathext = (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM')
     .split(';')

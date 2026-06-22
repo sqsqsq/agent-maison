@@ -1,6 +1,6 @@
 ---
 description: generic adapter bundle skills 必须物化为 bridge 薄跳板，禁止 init 默认 inline 全量 SKILL
-globs: harness/scripts/check-init.ts,harness/scripts/init-orchestrate.ts,harness/scripts/utils/materialize-agent-bundle-skills.ts,agents/generic/**,skills/project/framework-init/**
+globs: harness/scripts/check-init.ts,harness/scripts/init-orchestrate.ts,harness/scripts/utils/materialize-agent-bundle-skills.ts,agents/generic/**,agents/chrys/**,agents/opencode/**,skills/project/framework-init/**
 alwaysApply: false
 ---
 
