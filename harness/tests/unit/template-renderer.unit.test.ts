@@ -92,6 +92,47 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    name: 'shared AGENTS.md template rendering is independent of active adapter',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const template = fs.readFileSync(
+          path.join(FRAMEWORK_ROOT, 'templates', 'AGENTS.md.template'),
+          'utf-8',
+        );
+        const config = {
+          project_name: 'SharedEntry',
+          project_profile: { name: 'hmos-app', sub_variant: 'app' },
+          materialized_adapters: ['cursor', 'codex', 'opencode'],
+          architecture: {
+            outer_layers: [{ id: 'L1' }],
+            module_inner_layers: ['shared'],
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { extension_dir: 'doc/extensions' },
+        };
+        const renderFor = (agentAdapter: string) => {
+          const vars = buildAgentsTemplateVars(config, {
+            entryFile: 'AGENTS.md',
+            projectRoot: root,
+            frameworkRoot: FRAMEWORK_ROOT,
+            agentAdapter,
+          });
+          const rendered = renderAgentsTemplate(template, vars);
+          assertNoUnreplacedPlaceholders(rendered);
+          return rendered;
+        };
+
+        const cursor = renderFor('cursor');
+        const opencode = renderFor('opencode');
+        assert.strictEqual(cursor, opencode, '共享 AGENTS.md 不得因 active adapter 不同而变化');
+        assert(!cursor.includes('激活的 agent adapter'), '共享 AGENTS.md 不应声明个人 active adapter');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

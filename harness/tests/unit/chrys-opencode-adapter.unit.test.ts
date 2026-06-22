@@ -307,6 +307,50 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'materialize: shared AGENTS.md is byte-identical across adapters and order',
+    run: () => {
+      const root = mkTmp();
+      const adapters = ['generic', 'cursor', 'codex', 'chrys', 'opencode'];
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'shared-entry',
+            materialized_adapters: adapters,
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+
+      let expected: Buffer | null = null;
+      for (const adapter of adapters) {
+        materializeAdapter(root, adapter, adapters);
+        const agentsPath = path.join(root, 'AGENTS.md');
+        assert(fs.existsSync(agentsPath), `${adapter}: AGENTS.md missing`);
+        const current = fs.readFileSync(agentsPath);
+        if (expected === null) {
+          expected = current;
+        } else {
+          assert(
+            current.equals(expected),
+            `${adapter}: shared AGENTS.md changed after materialization`,
+          );
+        }
+      }
+
+      const text = expected!.toString('utf-8');
+      assert(!text.includes('激活的 agent adapter'), text);
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
     name: 'materialize: generic .codex root + chrys fixed .agents are independent',
     run: () => {
       const root = mkTmp();
