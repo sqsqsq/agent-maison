@@ -103,7 +103,7 @@
 
 | registry id | widget 选项（示意） | portable | canonical |
 |-------------|---------------------|----------|-----------|
-| `init.materialized_adapters` | claude / cursor / generic / chrys / opencode 多选 | checkbox / 编号 | materialized_adapters[] |
+| `init.materialized_adapters` | claude / cursor / generic / codex / chrys / opencode 多选 | checkbox / 编号 | materialized_adapters[] |
 | `setup.adapter` | 从已物化列表选 | `1` | from_materialized |
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
 | `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |

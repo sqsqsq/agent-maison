@@ -31,7 +31,7 @@ const CLAUDE_SLASH_COMMANDS = [
   'commands/goal-mode.md',
   'commands/code-graph.md',
 ] as const;
-const ADAPTER_NAMES = ['claude', 'cursor', 'generic', 'chrys', 'opencode'] as const;
+const ADAPTER_NAMES = ['claude', 'cursor', 'generic', 'codex', 'chrys', 'opencode'] as const;
 
 /** registry `skill` 无物理 SKILL.md 的虚拟命名空间（须与 confirmation-registry 同步登记） */
 export const VIRTUAL_REGISTRY_SKILLS = new Set(['_cross_phase', '_personal_setup']);

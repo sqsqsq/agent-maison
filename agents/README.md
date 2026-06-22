@@ -75,6 +75,7 @@ framework/agents/
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
+| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
 | `opencode` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板；技能自动注册为 slash）、`.agents/rules/interaction-renderer.md` |
 
@@ -164,6 +165,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
+| codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 

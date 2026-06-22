@@ -4,6 +4,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import YAML from 'yaml';
 
 import { clearFrameworkConfigCache } from '../../config';
 import { detectRepoLayout, harnessRootFromLayout } from '../../repo-layout';
@@ -484,6 +485,46 @@ const cases: Array<{ name: string; run: () => void }> = [
           `${name} interaction-renderer`,
         );
       }
+    },
+  },
+  {
+    name: 'codex: interaction-renderer contains S4 closed marker',
+    run: () => {
+      const rulePath = path.join(FRAMEWORK_ROOT, 'agents/codex/templates/rules/interaction-renderer.md');
+      const text = fs.readFileSync(rulePath, 'utf-8');
+      assert(text.includes('S4 已闭环'), 'codex interaction-renderer must declare S4 closed');
+      assert(text.includes('confirmation-registry.yaml'), text);
+    },
+  },
+  {
+    name: 'codex: registry init.materialized_adapters includes codex option',
+    run: () => {
+      const registryPath = path.join(FRAMEWORK_ROOT, 'skills/reference/confirmation-registry.yaml');
+      const registry = YAML.parse(fs.readFileSync(registryPath, 'utf-8')) as {
+        entries?: Array<{ id?: string; options?: Array<{ value?: string }> }>;
+      };
+      const entry = registry.entries?.find(e => e.id === 'init.materialized_adapters');
+      assert(entry, 'init.materialized_adapters entry missing');
+      assert(
+        entry!.options?.some(o => o.value === 'codex'),
+        'codex option missing from registry',
+      );
+    },
+  },
+  {
+    name: 'loadAdapter: codex declares .codex skill_bridge and AGENTS.md entry',
+    run: () => {
+      const adapter = checkInitTesting.loadAdapter('codex');
+      assert(adapter.yamlParseable, 'codex yaml');
+      assert.strictEqual(adapter.entryFile?.targetRel, 'AGENTS.md', 'codex entry');
+      const skillBridge = adapter.templateFiles.filter(f =>
+        f.targetRel.startsWith('.codex/skills/'),
+      );
+      assert(skillBridge.length > 0, 'codex skills bridge');
+      assert(
+        adapter.templateFiles.some(f => f.targetRel === '.codex/rules/interaction-renderer.md'),
+        'codex interaction-renderer',
+      );
     },
   },
 ];
