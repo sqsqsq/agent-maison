@@ -1,6 +1,7 @@
 ---
 name: chrys + opencode adapter 接入
 overview: 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，物化复用同一 shared .agents bundle（AGENTS.md + .agents/skills bridge + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），唯一差异是 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。
+version: 2.4.0
 todos:
   - id: adapter-yaml-chrys
     content: "新建 agents/chrys/adapter.yaml（入口 AGENTS.md + .agents/skills/.agents/rules 固定显式声明 + goal_capability external_runner: chrys run --task）"
