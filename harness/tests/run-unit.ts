@@ -112,6 +112,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
+  { id: 'adapter-catalog-consistency', modulePath: './unit/adapter-catalog-consistency.unit.test' },
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
   { id: 'goal-runner-policy', modulePath: './unit/goal-runner-policy.unit.test' },
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },

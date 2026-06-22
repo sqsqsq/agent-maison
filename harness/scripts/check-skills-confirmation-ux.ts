@@ -13,6 +13,7 @@ import type { CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
 import { frameworkAbs, frameworkLogicalRelPath, frameworkRelPath, inferRepoLayout, repoLayoutFromContext, type RepoLayout } from '../repo-layout';
 import { resolveSkillPathOrNull } from './utils/resolve-skill-path';
+import { checkAdapterCatalogConsistency, listAvailableAdapters } from './utils/adapter-catalog';
 
 const SHARED_LAYER_TOOL_NAME_FORBIDDEN = /\b(?:AskUserQuestion|AskQuestion)\b/;
 const TEXT_LIKE_EXTENSIONS = new Set([
@@ -31,8 +32,6 @@ const CLAUDE_SLASH_COMMANDS = [
   'commands/goal-mode.md',
   'commands/code-graph.md',
 ] as const;
-const ADAPTER_NAMES = ['claude', 'cursor', 'generic', 'codex', 'chrys', 'opencode'] as const;
-
 /** registry `skill` 无物理 SKILL.md 的虚拟命名空间（须与 confirmation-registry 同步登记） */
 export const VIRTUAL_REGISTRY_SKILLS = new Set(['_cross_phase', '_personal_setup']);
 
@@ -141,6 +140,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   results.push(...lintSharedLayerNoToolNames(layout));
   results.push(...lintAdapterInteractionRenderers(layout));
   results.push(...lintClaudeInteractionTemplates(layout));
+  results.push(...checkAdapterCatalogConsistency(layout.frameworkRoot));
 
   return results;
 }
@@ -510,7 +510,15 @@ function lintInitS4ClosedNoPortableFooter(layout: RepoLayout): CheckResult[] {
 
 function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
   const results: CheckResult[] = [];
-  for (const adapter of ADAPTER_NAMES) {
+  const { names: adapterNames, issues } = listAvailableAdapters(layout.frameworkRoot);
+  for (const issue of issues) {
+    results.push(blocker(
+      'adapter_disk_issue',
+      issue.message,
+      [frameworkLogicalRelPath('agents', issue.adapter, 'adapter.yaml')],
+    ));
+  }
+  for (const adapter of adapterNames) {
     const yamlPath = frameworkAbs(layout, 'agents', adapter, 'adapter.yaml');
     const yamlRel = frameworkRelPath(layout, yamlPath);
     if (!fs.existsSync(yamlPath)) {

@@ -5,7 +5,11 @@
 
 ## 候选来源
 
-扫描 `framework/agents/*/adapter.yaml` 的 `adapter_name` + `description`；推荐逻辑见 [framework/agents/README.md](../../../../agents/README.md)「materialized_adapters 多选建议」。
+<!-- adapter-candidates:start -->
+（此段为候选菜单口径；成员来自 S1 `adapter_catalog`，门禁守护，禁止硬编码 adapter 名）
+
+S1 `init-orchestrate.ts --scope project` 输出的 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源（磁盘 `agents/*/adapter.yaml` + registry options join）。S2 **`init.materialized_adapters`** 须原样渲染 catalog 每项的 `label` / `portable`；推荐逻辑见 [framework/agents/README.md](../../../../agents/README.md)「materialized_adapters 多选建议」（**参考表，非候选源**）。
+<!-- adapter-candidates:end -->
 
 ## BLOCKER
 

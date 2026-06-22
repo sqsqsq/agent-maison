@@ -98,7 +98,12 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 ### S2.2 决策模式与任务批准
 
 1. **`init.task_plan`**（gate）：智能模式 / 手动模式 / 跳过可跳过项。
-2. **`init.materialized_adapters`**（**BLOCKER · 每轮必问**）：至少 1 项（`claude` / `cursor` / `generic`）。**即使** `framework.config.json` 已有 `materialized_adapters`，UPDATE / 跨会话仍须在本轮经 registry **`init.materialized_adapters`** 多选收到本轮清单；**禁止**「当前已物化 X，无需新增」后跳过。
+
+<!-- adapter-candidates:start -->
+2. **`init.materialized_adapters`**（**BLOCKER · 每轮必问**）：至少 1 项。**选项 = S1 `InitTaskPlan.adapter_catalog[]` 原样渲染**（`value` / `label` / `portable`；禁止写死成员名）。**即使** `framework.config.json` 已有 `materialized_adapters`，UPDATE / 跨会话仍须在本轮经 registry **`init.materialized_adapters`** 多选收到本轮清单；**禁止**「当前已物化 X，无需新增」后跳过。
+- **Widget**：`adapter_catalog` 每项映射为 checkbox / 多选 option（label 逐字来自 catalog）；仅当 `adapter_catalog.length` ≤ `CURSOR_ASKQUESTION_MULTISELECT_MAX` 时单次 widget 承载全部项。
+- **Portable fallback（BLOCKER）**：当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`（SSOT：`harness/scripts/utils/adapter-catalog.ts`；见 user-confirmation-ux §4.1）时，**以编号多选为主**（`1..N` 对应 catalog 顺序，逗号分隔如 `1,3,5`）；同轮仍附完整编号菜单；widget **须分页**（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略 widget。
+<!-- adapter-candidates:end -->
    - **同轮合并（推荐）**：当 `init.task_plan` 不改变 `init.materialized_adapters` 的选项列表（无前后依赖）时，可在**一次** registry 交互中同时发出两题；**两 registry 的 answer 仍须各自独立记录**（不得合并语义或只记一项）。
 3. **手动模式**：对每个 `drift` 任务用 **`init.task_decision`**（覆盖 / 保留），**禁止** Q1=y 逐项打字。
 4. 选择 S3 路径：

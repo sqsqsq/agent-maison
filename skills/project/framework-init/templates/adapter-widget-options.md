@@ -8,22 +8,22 @@
 
 ## 项目 init — `init.materialized_adapters`（多选 checkbox，须 ≥1）
 
-| value | label（registry / widget 共用） |
-|-------|----------------------------------|
-| `claude` | `claude — 物化 Claude Code 入口与 .claude/ 产物` |
-| `cursor` | `cursor — 物化 Cursor AGENTS.md 与 .cursor/ 产物` |
-| `generic` | `generic — 物化 generic bundle 入口与 skills` |
+<!-- adapter-candidates:start -->
+（此段为候选菜单口径；成员来自 S1 `adapter_catalog`，门禁守护，禁止硬编码 adapter 名）
 
-**generic 默认说明**（与 registry `init.materialized_adapters` notes 对齐；label 表逐字不动）：无额外配置时 harness 使用 `.agents`/bridge 默认物化；仅非标 bundle 根须手动编辑 `framework.config.json` 后重跑 init。
+**选项 SSOT**：S1 `InitTaskPlan.adapter_catalog[]`（`[{ value, label, portable }]`）；S2 原样渲染，**禁止**在本文件或 Skill 正文写死 adapter 成员。registry [confirmation-registry.yaml](../../../reference/confirmation-registry.yaml) `options` 块保留 label/portable 文案真相（lint 排除区，非菜单候选副本）。
 
-Portable 辅助（同轮仍须附编号/多选说明）：
+**generic 默认说明**（与 registry notes 对齐）：无额外配置时 harness 使用 `.agents`/bridge 默认物化；仅非标 bundle 根须手动编辑 `framework.config.json` 后重跑 init。
+
+Portable 辅助（同轮仍须附编号/多选说明；catalog 每项一行）：
 
 ```text
-请选择要物化的 adapter（多选，至少 1 项；widget 可用时直接勾选）：
-- claude
-- cursor
-- generic
+请选择要物化的 adapter（多选，至少 1 项；widget 可用且 catalog.length ≤ `CURSOR_ASKQUESTION_MULTISELECT_MAX` 时直接勾选）：
+（按 adapter_catalog 顺序编号 1..N，每行「N. {portable} — {label 摘要}」）
 ```
+
+当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`：以编号多选为主（见 user-confirmation-ux §4.1）。
+<!-- adapter-candidates:end -->
 
 ---
 

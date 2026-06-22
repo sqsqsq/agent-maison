@@ -1326,12 +1326,17 @@ if (require.main === module) {
       }
       console.log(JSON.stringify(template, null, 2));
     } else {
-      const plan = probeInitTaskPlan({
-        projectRoot: opts.projectRoot,
-        scope: opts.scope,
-        adapter: opts.adapter,
-      });
-      console.log(JSON.stringify(plan, null, 2));
+      try {
+        const plan = probeInitTaskPlan({
+          projectRoot: opts.projectRoot,
+          scope: opts.scope,
+          adapter: opts.adapter,
+        });
+        console.log(JSON.stringify(plan, null, 2));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        failCli(`[init-orchestrate] adapter catalog 损坏，S1 中止: ${msg}`);
+      }
     }
     process.exit(0);
   }

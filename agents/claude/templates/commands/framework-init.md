@@ -14,11 +14,15 @@ argument-hint: <optional-notes>
 
 ## 执行流（4 大步，无小数子步）
 
+<!-- adapter-candidates:start -->
+**S2 `init.materialized_adapters` 菜单口径（BLOCKER）**：选项 = S1 `InitTaskPlan.adapter_catalog[]` 原样渲染（`value` / `label` / `portable`；禁止写死成员名）。当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX` 时 portable 编号多选为主（见 user-confirmation-ux §4.1）；widget 须分页（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略。
+<!-- adapter-candidates:end -->
+
 | 步 | 动作 |
 |----|------|
 | **S0 Tier_1** | `cd framework/harness && node scripts/init-readiness.mjs`；`ok=false` 时先 `npm install`（timeout ≥5m，超时后重跑 readiness）；**禁止** npm install 后在同一 shell 再次 `cd framework/harness` |
 | **S1 探测** | readiness `ok=true` 后：`npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>` → 只读 `InitTaskPlan` JSON |
-| **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选；registry 答案即批准记录，不再二次询问“确认后进入 S3？”；仅 CREATE / 手动 / 需 doc payload 时预览 `--emit-staging-template --materialized-adapters <list>` |
+| **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选（**菜单口径见上 adapter-candidates 段**）；registry 答案即批准记录，不再二次询问“确认后进入 S3？”；仅 CREATE / 手动 / 需 doc payload 时预览 `--emit-staging-template --materialized-adapters <list>` |
 | **S3 执行** | 智能 UPDATE：显式使用 `--smart-auto --materialized-adapters <list>`（不创建外部 staging；CLI 隐式改道仅作兼容容错）；通用：`--execute --decision-file ... --context-file ...` |
 | **S4 摘要** | S3 stdout 即 `buildRunSummary` 摘要（含 `run_log` / `summary`）；通用 staging 路径须清理 OS 临时目录并汇报结果；仅列可选下一步；**S4 已闭环**——禁止再附 `init.task_plan` / `init.materialized_adapters` portable 脚注 |
 

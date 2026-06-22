@@ -20,6 +20,11 @@ import {
   resolveMaterializedAdaptersFromContext,
   resolveProjectMaterializedAdapters,
 } from './materialized-adapters-resolve';
+import {
+  buildAdapterCatalogOrThrow,
+  type AdapterCatalogEntry,
+} from './adapter-catalog';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 
 export { resolveProjectMaterializedAdapters } from './materialized-adapters-resolve';
 export type { MaterializedAdaptersContext } from './materialized-adapters-resolve';
@@ -44,12 +49,16 @@ export interface InitTask {
   target_path?: string;
 }
 
+export type { AdapterCatalogEntry } from './adapter-catalog';
+
 export interface InitTaskPlan {
   schema_version: '1.0';
   scope: TaskScope;
   mode: InitMode;
   generated_at: string;
   tasks: InitTask[];
+  /** project scope 运行时由 probe 填充；type 可选避免破坏手写 plan fixture */
+  adapter_catalog?: AdapterCatalogEntry[];
 }
 
 function inspectionToStatus(ins: Inspection): TaskStatus {
@@ -512,13 +521,20 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
     }
   }
 
-  return {
+  const plan: InitTaskPlan = {
     schema_version: '1.0',
     scope,
     mode,
     generated_at: new Date().toISOString(),
     tasks,
   };
+
+  if (scope === 'project') {
+    const frameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
+    plan.adapter_catalog = buildAdapterCatalogOrThrow(frameworkRoot);
+  }
+
+  return plan;
 }
 
 export function planTasksNeedingPrompt(plan: InitTaskPlan): InitTask[] {

@@ -7,6 +7,8 @@
 
 任何需要用户做选择的场合——无论是 registry 已登记的确认点还是 ad-hoc 临时交互——**必须先调 `AskUserQuestion`**，禁止仅展示 Markdown 表或文本编号作为唯一交互。
 
+**例外（`init.materialized_adapters` · catalog 超限）**：当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`（SSOT：`harness/scripts/utils/adapter-catalog.ts`）时，不强制单次 AskUserQuestion 承载全部 checkbox；**须**分页 AskUserQuestion（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）**或** portable 编号多选为主（同轮完整编号菜单）。仍禁止「仅 Markdown 表、无 AskUserQuestion 也无 portable」。
+
 ## 已登记确认点
 
 - 读取 `framework/skills/reference/confirmation-registry.yaml`
@@ -42,8 +44,9 @@
 
 项目级 **framework-init** 与个人级 **setup**（内联过程）的编排决策**禁止自由输入**（无 Q1=y、无自定义路径字符串）：
 
-- **S1 探测**：只读运行 `init-orchestrate.ts`（或 planner）产出 `InitTaskPlan` JSON；AI **仅渲染**任务表，不得写盘。
-- **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox）；当两 registry 无前后依赖时，推荐**一次** AskUserQuestion 同时发出，但**两 answer 仍须独立记录**；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
+- **S1 探测**：只读运行 `init-orchestrate.ts`（或 planner）产出 `InitTaskPlan` JSON（含 **`adapter_catalog[]`** 候选）；AI **仅渲染**任务表，不得写盘。
+- **S2 计划批准**：`init.task_plan`（gate + 决策模式）+ 项目级 `init.materialized_adapters`（多选 checkbox；**选项 = S1 `adapter_catalog[]` 原样渲染**）；当两 registry 无前后依赖时，推荐**一次** AskUserQuestion 同时发出，但**两 answer 仍须独立记录**；手动模式下漂移任务用 `init.task_decision`（覆盖/保留 enum）。
+- **`init.materialized_adapters` widget 上限（BLOCKER）**：当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`（见 user-confirmation-ux §4.1）时，**以 portable 编号多选为主**（`1..N` 逗号分隔）；同轮附完整编号菜单；widget **须分页**（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略。
 - **S3 执行**：将用户选择序列化为 **枚举 decision JSON**，交 `init-orchestrate.ts executeInitPlan`；违反 `allowed_actions` 或依赖闭包时 harness 拒绝。
 - **S2→S3**：registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认。
 - **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）。

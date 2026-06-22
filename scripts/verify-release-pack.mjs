@@ -198,6 +198,15 @@ export async function verifyReleasePack() {
   if (tc.status !== 0) fail('typecheck (tsc --noEmit) failed');
   console.log('[release:verify] typecheck PASS');
 
+  console.log('[release:verify] adapter catalog consistency (source root)...');
+  const catalogSrc = spawnSync(
+    'npx',
+    ['ts-node', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', REPO_ROOT],
+    { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
+  );
+  if (catalogSrc.status !== 0) fail('adapter catalog consistency (source root) failed');
+  console.log('[release:verify] adapter catalog consistency (source root) PASS');
+
   console.log('[release:verify] synthetic rule tests...');
   const synthErrors = runSyntheticRuleTests(REPO_ROOT, rules);
   if (synthErrors.length > 0) {
@@ -267,6 +276,15 @@ export async function verifyReleasePack() {
         fail(`numbered skill path/prose: ${numbered.hits.length} hit(s) in release zip`);
       }
       console.log('[release:verify] numbered skill path/prose PASS');
+
+      console.log('[release:verify] adapter catalog consistency (extracted framework root)...');
+      const catalogZip = spawnSync(
+        'npx',
+        ['ts-node', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', frameworkRoot],
+        { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
+      );
+      if (catalogZip.status !== 0) fail('adapter catalog consistency (extracted framework root) failed');
+      console.log('[release:verify] adapter catalog consistency (extracted framework root) PASS');
 
       console.log('[release:verify] zip content assertions PASS');
     } finally {

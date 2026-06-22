@@ -146,11 +146,14 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 ## 新增 adapter 步骤
 
-1. 在本目录下新建 `<adapter_name>/` 子目录。
-2. 按 `adapter-schema.yaml` 的约束创建 `<adapter_name>/adapter.yaml`。
-3. 在 `<adapter_name>/templates/` 下放置 adapter 专属模板（slash / 跳板 / rules）。
-4. 跑 `framework/skills/project/framework-init` 的 UPDATE 模式自检，确保 adapter 被列入可选项。
-5. 更新 **本文件**「第一版 adapter 列表」一节（及 `framework/README.md` 中指向 `agents/` 的总览句，若有）。
+1. 在本目录下新建 `<adapter_name>/` 子目录，按 `adapter-schema.yaml` 创建 `adapter.yaml` 与 `templates/`。
+2. 在 [confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml) `init.materialized_adapters.options` 补 **`value` / `label` / `portable`**（文案 SSOT）。
+3. 跑 `cd harness && npm test`；候选将经 S1 **`InitTaskPlan.adapter_catalog[]`** 自动进入 init 菜单（磁盘成员 + registry join）；锚点门禁拦菜单口径段硬编码遗漏。
+
+> **候选 vs 参考**：带 `<!-- adapter-candidates:start/end -->` 的 Skill/ucux 段为**候选菜单口径**（禁止写死 adapter 名）；本文件「产物速查」「多选建议」「第一版 adapter 列表」等为**参考表**（保留列全、非候选源）。
+
+4. 跑 `framework/skills/project/framework-init` UPDATE 自检物化任务覆盖新 adapter 产物路径。
+5. 更新本文件「第一版 adapter 列表」及 `framework/README.md` 总览句（若有）。
 
 ## 占位符
 

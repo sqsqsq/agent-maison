@@ -9,7 +9,7 @@ entries:
     class: artifact_checkbox
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "S2 计划批准"
-    portable_menu: "多选 adapter 目录名（claude/cursor/generic/codex/chrys/opencode）；须至少 1 项"
+    portable_menu: "多选 adapter 目录名（候选见 S1 InitTaskPlan.adapter_catalog）；须至少 1 项"
     notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys/opencode 默认 `.agents` bridge bundle 字节一致、可幂等共存（差异仅在 headless 运行器）；codex 默认 `.codex` bundle（独立产物）；仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
     options:
       - value: claude

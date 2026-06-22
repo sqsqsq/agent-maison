@@ -101,9 +101,25 @@
 
 ## 4. Widget ↔ Portable 映射（示例）
 
+### 4.1 `init.materialized_adapters` widget 承载 gate（BLOCKER · 实施前置）
+
+<!-- adapter-candidates:start -->
+Cursor **结构化 widget 多选**上限以 `CURSOR_ASKQUESTION_MULTISELECT_MAX` 为准（SSOT：`harness/scripts/utils/adapter-catalog.ts`；reviewer 估计约 2–4 项、**待本机 Cursor 实测确认**；随 IDE 版本可能变化）；当前磁盘 adapter 候选通常 **>`CURSOR_ASKQUESTION_MULTISELECT_MAX`**。因此：
+
+| 条件 | Agent 行为 |
+|------|------------|
+| `adapter_catalog.length` ≤ `CURSOR_ASKQUESTION_MULTISELECT_MAX` | Widget 多选 + 同轮 portable 编号菜单 |
+| `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX` | **Portable 编号多选为主**（`1..N` 对应 S1 catalog 顺序，逗号分隔）；同轮附完整编号菜单；widget **须分页**（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略 |
+
+S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `options` 为 label/portable 文案 SSOT（lint 排除区）。
+
 | registry id | widget 选项（示意） | portable | canonical |
 |-------------|---------------------|----------|-----------|
-| `init.materialized_adapters` | claude / cursor / generic / codex / chrys / opencode 多选 | checkbox / 编号 | materialized_adapters[] |
+| `init.materialized_adapters` | S1 `adapter_catalog[]` 每项 → checkbox / 多选 option | 编号 `1..N` 多选 | materialized_adapters[] |
+<!-- adapter-candidates:end -->
+
+| registry id | widget 选项（示意） | portable | canonical |
+|-------------|---------------------|----------|-----------|
 | `setup.adapter` | 从已物化列表选 | `1` | from_materialized |
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
 | `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |

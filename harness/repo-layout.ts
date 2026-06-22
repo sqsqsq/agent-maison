@@ -76,6 +76,17 @@ export function detectRepoLayout(startDir?: string): RepoLayout {
   return inferRepoLayout(parent);
 }
 
+/**
+ * 只读 probe/plan：优先宿主 projectRoot 下的 framework/；无树时回退 harness checkout（与 check-init FRAMEWORK_ROOT 一致）。
+ */
+export function resolveProbeFrameworkRoot(projectRoot: string, harnessStartDir?: string): string {
+  try {
+    return inferRepoLayout(projectRoot).frameworkRoot;
+  } catch {
+    return detectRepoLayout(harnessStartDir).frameworkRoot;
+  }
+}
+
 export function frameworkAbs(layout: RepoLayout, ...segments: string[]): string {
   return path.join(layout.frameworkRoot, ...segments);
 }

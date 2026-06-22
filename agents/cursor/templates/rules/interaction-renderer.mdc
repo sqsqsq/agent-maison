@@ -12,6 +12,8 @@ alwaysApply: true
 
 任何需要用户做选择的场合——无论是 registry 已登记的确认点还是 ad-hoc 临时交互——**必须先调 `AskQuestion`**，禁止仅展示 Markdown 表或文本编号作为唯一交互。
 
+**例外（`init.materialized_adapters` · catalog 超限）**：当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`（SSOT：`harness/scripts/utils/adapter-catalog.ts`）时，不强制单次 AskQuestion 承载全部 checkbox；**须**分页 AskQuestion（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）**或** portable 编号多选为主（同轮完整编号菜单）。仍禁止「仅 Markdown 表、无 AskQuestion 也无 portable」。
+
 ## 已登记确认点
 
 - 读取 `framework/skills/reference/confirmation-registry.yaml`
@@ -33,8 +35,9 @@ alwaysApply: true
 
 项目级 **framework-init** 与个人级 **setup**（阶段 `--ensure` 内联）须用 AskQuestion + registry 枚举；**禁止** Q1=y 自由文本或对话收安装路径字符串。
 
-- S1：只读 planner → 渲染 `InitTaskPlan` JSON
+- S1：只读 planner → 渲染 `InitTaskPlan` JSON（含 **`adapter_catalog[]`** 候选）
 - S2：`init.task_plan` + `init.materialized_adapters`；手动模式用 `init.task_decision`
+- **`init.materialized_adapters` widget 上限（BLOCKER）**：当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX`（见 user-confirmation-ux §4.1）时，**以 portable 编号多选为主**（`1..N` 逗号分隔）；同轮附完整编号菜单；widget **须分页**（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略
 - S2 registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认
 - S3：枚举 decision JSON → `executeInitPlan`
 - S4：`buildRunSummary` 结构化摘要；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）
