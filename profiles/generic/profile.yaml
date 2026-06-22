@@ -18,6 +18,7 @@ phases_disabled:
 
 capabilities:
   coding.compile: { provider: none, severity: SKIP }
+  coding.deps_install: { provider: none, severity: SKIP }
   coding.lint: { provider: none, severity: SKIP }
   ut.compile: { provider: none, severity: SKIP }
   ut.run: { provider: none, severity: SKIP }

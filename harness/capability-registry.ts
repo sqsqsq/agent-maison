@@ -26,6 +26,14 @@ export function isCapabilitySkipped(resolved: HarnessResolvedProfile, key: Capab
   return c !== undefined && c.severity === 'SKIP';
 }
 
+/** coding.deps_install 是否可执行（profile 声明 provider 且非 SKIP） */
+export function isDepsInstallExecutable(resolved: HarnessResolvedProfile): boolean {
+  const c = getCapability(resolved, 'coding.deps_install');
+  if (!c || c.severity === 'SKIP') return false;
+  const provider = c.provider?.trim();
+  return Boolean(provider && provider !== 'none');
+}
+
 export function isSpecVisualHandoffSkipped(resolved: HarnessResolvedProfile): boolean {
   return isCapabilitySkipped(resolved, 'spec.visual_handoff');
 }
@@ -49,6 +57,7 @@ interface ProviderMetadata {
  * 不经本表的 capability provider 路径。
  */
 const PROVIDER_MODULE_BY_ID: Record<string, string> = {
+  ohpm: 'deps-install',
   hvigor: 'coding-compile',
   hvigor_ohostest: 'ut-compile',
   hvigor_hypium: 'ut-run',
@@ -124,6 +133,14 @@ export function dispatchCodingCompile(
   options: Record<string, unknown>,
 ): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.compile', 'runHvigorAssembleApp');
+  return fn(options);
+}
+
+export function dispatchDepsInstall(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): any {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.deps_install', 'installProjectDeps');
   return fn(options);
 }
 

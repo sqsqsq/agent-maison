@@ -203,7 +203,7 @@ function quoteCmdArgWin(s: string): string {
 /**
  * 解析 DevEco 安装根：环境变量优先，其次 framework.config.json。
  */
-function resolveDevEcoInstallRoot(projectRoot: string): string | null {
+export function resolveDevEcoInstallRoot(projectRoot: string): string | null {
   const tryRoot = (raw: string | undefined): string | null => {
     if (!raw || typeof raw !== 'string') return null;
     const trimmed = raw.trim().replace(/[/\\]+$/, '');
@@ -474,7 +474,7 @@ function resolveHvigorCommand(
  * `Invalid value of 'DEVECO_SDK_HOME' in the system environment path`。
  * IDE 内部跑时 DevEco 会注入，但 harness 命令行跑不会。
  */
-function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
+export function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   let installPath: string | undefined;
   try {
@@ -629,8 +629,11 @@ function resolveHvigorOptions(projectRoot: string): ResolvedHvigorOptions {
   };
 }
 
-function buildHvigorTuningArgs(projectRoot: string): string[] {
-  const opts = resolveHvigorOptions(projectRoot);
+function buildHvigorTuningArgs(
+  projectRoot: string,
+  override?: Partial<ResolvedHvigorOptions>,
+): string[] {
+  const opts = { ...resolveHvigorOptions(projectRoot), ...override };
   const args: string[] = [opts.daemon ? '--daemon' : '--no-daemon'];
 
   if (opts.parallel) args.push('--parallel');
@@ -1046,6 +1049,8 @@ export function buildCodingHvigorArgs(
     product?: string;
     /** 显式 buildMode；不设时沿用 config.passBuildModeDebug（默认追 debug） */
     buildMode?: 'debug' | 'release';
+    /** 装依赖后重编译：强制 --no-daemon */
+    forceNoDaemon?: boolean;
   },
 ): string[] {
   const c = loadResolvedCodingConfig(projectRoot);
@@ -1065,7 +1070,12 @@ export function buildCodingHvigorArgs(
   } else if (c.passBuildModeDebug) {
     args.push('-p', 'buildMode=debug');
   }
-  args.push(...buildHvigorTuningArgs(projectRoot));
+  args.push(
+    ...buildHvigorTuningArgs(
+      projectRoot,
+      overrides?.forceNoDaemon ? { daemon: false, incremental: false } : undefined,
+    ),
+  );
   args.push(...extraArgs);
   args.push(task);
   return args;
@@ -1493,11 +1503,13 @@ export function runHvigorAssembleApp(
     product?: string;
     /** 覆盖 `-p buildMode=` */
     buildMode?: 'debug' | 'release';
+    /** 装依赖后重编译：强制 --no-daemon，避免 daemon 缓存漏读新 oh_modules */
+    forceNoDaemon?: boolean;
     /** 自定义日志基名（默认 hvigor-build.log） */
     logBasename?: string;
   },
 ): HvigorRunResult {
-  const { task, extraArgs, product, buildMode, logBasename, ...rest } = opts;
+  const { task, extraArgs, product, buildMode, forceNoDaemon, logBasename, ...rest } = opts;
   if (rest.skipEnvVar && process.env[rest.skipEnvVar]) {
     return {
       executed: false,
@@ -1508,7 +1520,13 @@ export function runHvigorAssembleApp(
     };
   }
 
-  const hvigorArgs = buildCodingHvigorArgs(opts.projectRoot, { task, extraArgs, product, buildMode });
+  const hvigorArgs = buildCodingHvigorArgs(opts.projectRoot, {
+    task,
+    extraArgs,
+    product,
+    buildMode,
+    forceNoDaemon,
+  });
   const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, hvigorArgs);
   if ('toolMissing' in resolved) {
     return {

@@ -143,6 +143,24 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 
   {
+    name: 'buildCodingHvigorArgs: forceNoDaemon → --no-daemon 且无 --incremental',
+    run: () => withTmpDir(root => {
+      writeFile(
+        path.join(root, 'build-profile.json5'),
+        JSON.stringify({ app: { products: [{ name: 'phone' }] } }),
+      );
+      const args = buildCodingHvigorArgs(root, { forceNoDaemon: true });
+      assertContains(args, '--no-daemon', '应 --no-daemon');
+      if (args.includes('--daemon')) {
+        throw new Error('不应含 --daemon');
+      }
+      if (args.includes('--incremental')) {
+        throw new Error('装依赖后重编译不应 incremental');
+      }
+    }),
+  },
+
+  {
     name: 'buildCodingHvigorArgs: driver=assemble_app_project → --mode project assembleApp',
     run: () => withTmpDir(root => {
       writeFile(

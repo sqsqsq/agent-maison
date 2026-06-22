@@ -467,6 +467,7 @@ export type CapabilitySeverityKeyword = 'BLOCKER' | 'SKIP' | 'WARN' | 'MAJOR' | 
 
 export type CapabilityKey =
   | 'coding.compile'
+  | 'coding.deps_install'
   | 'coding.lint'
   | 'ut.compile'
   | 'ut.run'

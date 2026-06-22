@@ -9,6 +9,7 @@
 import type { CapabilityKey } from '../../../../harness/scripts/utils/types';
 
 export type CapabilityProviderId =
+  | 'ohpm'
   | 'hvigor'
   | 'hvigor_ohostest'
   | 'hvigor_hypium'

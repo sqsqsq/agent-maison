@@ -16,6 +16,7 @@ phases_disabled: []
 
 capabilities:
   coding.compile: { provider: hvigor, severity: BLOCKER }
+  coding.deps_install: { provider: ohpm, severity: BLOCKER }
   coding.lint: { provider: arkts_lint, severity: BLOCKER }
   ut.compile: { provider: hvigor_ohostest, severity: BLOCKER }
   ut.run: { provider: hvigor_hypium, severity: BLOCKER }

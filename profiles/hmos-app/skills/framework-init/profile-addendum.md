@@ -126,7 +126,7 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 
 ### 宿主包管理备注（ohpm）
 
-实例工程侧 `ohpm install`（`oh_modules/`）是 ArkTS 源码依赖，由 DevEco / coding 编码阶段负责触发，**不在 framework-init 代管**。
+实例工程侧 `oh_modules/` 由 coding harness 在编译失败且判定为「声明齐全、仅未安装」时，经 profile `coding.deps_install`（ohpm provider）**自动**执行 `ohpm install` 并重编译；**不在 framework-init 代管**，也**不应**交给用户手工安装（除非 ohpm 安装本身因 registry/鉴权/网络失败）。
 
 ---
 

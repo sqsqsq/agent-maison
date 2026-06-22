@@ -85,7 +85,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'classify: 依赖解析失败日志 → project_dependency_missing',
+    name: 'classify: 依赖解析失败日志 → project_dependency_missing 且含 depIssue',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-dep-'));
       try {
@@ -105,6 +105,8 @@ const cases: Array<{ name: string; run: () => void }> = [
           mkCtx(root),
         );
         assert.strictEqual(r.kind, 'project_dependency_missing');
+        assert.ok(r.depIssue?.found, '应附带 depIssue');
+        assert.ok(r.suggestion.includes('harness 将自动尝试 ohpm install'), '建议应指向自动安装');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -138,9 +140,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         'compile_timeout',
         'compile_incomplete_output',
         'project_dependency_missing',
+        'project_dependency_undeclared',
+        'project_dependency_install_failed',
         'project_build',
       ];
-      assert.strictEqual(all.length, 6);
+      assert.strictEqual(all.length, 8);
     },
   },
 ];

@@ -773,6 +773,12 @@ function decideNextAction(
   if (blockers.some(b => b.classification === 'stale_diff_base' || b.details_excerpt.includes('stale_diff_base'))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }
+  if (blockers.some(b => b.classification === 'project_dependency_install_failed')) {
+    return 'resolve_dependency_install_blocker_then_rerun';
+  }
+  if (blockers.some(b => b.classification === 'project_dependency_undeclared')) {
+    return 'declare_dependencies_then_rerun';
+  }
   if (blockers.some(b => b.classification === 'project_dependency_missing')) {
     return 'resolve_project_dependencies_then_rerun';
   }

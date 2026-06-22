@@ -8,11 +8,14 @@ import type { ProfileCodingHost } from '../../../harness/profile-host-loader';
 import { loadFrameworkConfig } from '../../../harness/config';
 import {
   isCapabilitySkipped,
+  isDepsInstallExecutable,
   CANONICAL_CODING_COMPILE_ID,
   LEGACY_CODING_COMPILE_ID,
   dispatchCodingCompile,
+  dispatchDepsInstall,
   analyzeCodingDependencyIssueViaProfile,
 } from '../../../harness/capability-registry';
+import type { ProjectDependencyIssue } from './hvigor-runner';
 import {
   isCrossModuleExportFileStem,
   isLibraryFormat,
@@ -953,7 +956,16 @@ export type CodingCompileFailureKind =
   | 'compile_timeout'
   | 'compile_incomplete_output'
   | 'project_dependency_missing'
+  | 'project_dependency_undeclared'
+  | 'project_dependency_install_failed'
   | 'project_build';
+
+export interface CodingCompileFailureClassification {
+  kind: CodingCompileFailureKind;
+  explanation: string;
+  suggestion: string;
+  depIssue?: ProjectDependencyIssue;
+}
 
 /** 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。 */
 export function classifyCodingCompileFailure(
@@ -967,7 +979,7 @@ export function classifyCodingCompileFailure(
     successMarkerFound?: boolean;
   },
   ctx: CheckContext,
-): { kind: CodingCompileFailureKind; explanation: string; suggestion: string } {
+): CodingCompileFailureClassification {
   const errs = res.errors ?? [];
   if (res.toolMissing) {
     return {
@@ -1007,13 +1019,15 @@ export function classifyCodingCompileFailure(
   if (depIssue.found) {
     return {
       kind: 'project_dependency_missing',
+      depIssue,
       explanation:
         '构建日志显示工程依赖解析失败，当前失败更可能来自依赖安装 / 依赖声明或内网 registry，而不是本轮编码实现本身。\n' +
         formatDependencyIssue(depIssue) +
         '\n这不表示可跳过 coding 出口或进入 code-review（Code Review）；须修复工程依赖或取得用户对放弃本阶段的明示后再执行 --clear-state。',
       suggestion:
-        '不要把该问题交给用户手工猜。先向用户展示方案：A) 确认后在工程根执行包管理器安装并重跑；' +
-        'B) 读取依赖清单文件输出缺失声明；C) registry/权限不确定时先确认内网源。' +
+        'harness 将自动尝试 ohpm install 并重编译（声明齐全且 profile 支持时）；' +
+        '若依赖未在 oh-package.json5 声明，agent 须自行补声明后重跑；' +
+        '仅在 ohpm 安装本身失败（registry/鉴权/网络）时按日志原因向用户求助。' +
         '须向用户报告首条编译错误与 summary.next_action，禁止提议进入下一阶段。' +
         (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
     };
@@ -1059,7 +1073,103 @@ function duplicateCompileResults(base: Omit<CheckResult, 'id'>): CheckResult[] {
   ];
 }
 
-/** profile 侧：真实编译闭环 + 失败归因（原根目录 checkCodingHvigorBuild）。 */
+type CompileRunResult = {
+  executed?: boolean;
+  timedOut?: boolean;
+  exitCode?: number;
+  errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
+  successMarkerFound?: boolean;
+  toolMissing?: boolean;
+  skippedByEnv?: boolean;
+  durationMs?: number;
+  command?: string;
+  metaPath?: string;
+  logPath?: string;
+  logExcerpt?: string;
+  diagnostics?: string[];
+};
+
+function isCompilePass(res: CompileRunResult): boolean {
+  const errs = res.errors ?? [];
+  return Boolean(
+    res.executed &&
+      !res.timedOut &&
+      res.exitCode === 0 &&
+      errs.length === 0 &&
+      res.successMarkerFound !== false,
+  );
+}
+
+function resolveCompileBlockingClass(kind: CodingCompileFailureKind): string {
+  if (
+    kind === 'compile_timeout' ||
+    kind === 'compile_incomplete_output' ||
+    kind === 'project_build'
+  ) {
+    return CANONICAL_CODING_COMPILE_ID;
+  }
+  return kind;
+}
+
+function buildCompilePassDetails(res: CompileRunResult, modulesCount: number, extraNote?: string): string {
+  return [
+    extraNote ? `${extraNote}\n` : '',
+    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+    `命令：${res.command ?? '(unknown)'}`,
+    `元数据：${res.metaPath ?? '(无)'}`,
+    `完整日志：${res.logPath ?? '(无)'}`,
+    ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map((d: string) => `  - ${d}`)] : []),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildCompileFailDetails(
+  res: CompileRunResult,
+  failure: CodingCompileFailureClassification,
+  extraLines: string[] = [],
+): string {
+  const errs = res.errors ?? [];
+  const detailsLines: string[] = [];
+  detailsLines.push('coding_compile（真实编译）失败：');
+  if (res.toolMissing) {
+    detailsLines.push('原因：未找到编译驱动可执行文件（需在 framework.config.json 声明 IDE 安装路径）。');
+    (res.logExcerpt ?? '').split(/\r?\n/).forEach((l: string) => detailsLines.push(l));
+    detailsLines.push('本规则不接受 SKIP —— 真实编译是出口条件。');
+  } else if (res.skippedByEnv) {
+    detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
+    detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
+  } else {
+    detailsLines.push(
+      `exit_code=${res.exitCode}, durationMs=${res.durationMs}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
+    );
+    detailsLines.push(`失败归因：${failure.kind}`);
+    detailsLines.push(`归因说明：${failure.explanation}`);
+    detailsLines.push(`命令：${res.command ?? '(unknown)'}`);
+    detailsLines.push(`日志落盘：${res.logPath ?? '(未落盘)'}`);
+    detailsLines.push(`元数据：${res.metaPath ?? '(无)'}`);
+    if (res.diagnostics?.length) {
+      detailsLines.push('诊断提示：');
+      res.diagnostics.forEach((d: string) => detailsLines.push(`  - ${d}`));
+    }
+    if (errs.length > 0) {
+      detailsLines.push(`解析出 ${errs.length} 条 error（前 10 条）：`);
+      errs.slice(0, 10).forEach((e) =>
+        detailsLines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`),
+      );
+    }
+    detailsLines.push('');
+    detailsLines.push('日志尾部（最多 8 KB）：');
+    detailsLines.push(res.logExcerpt ?? '');
+  }
+  if (extraLines.length > 0) {
+    detailsLines.push('');
+    extraLines.forEach((l) => detailsLines.push(l));
+  }
+  return detailsLines.join('\n');
+}
+
+/** profile 侧：真实编译闭环 + 失败归因 + 依赖自动安装（原根目录 checkCodingHvigorBuild）。 */
 function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
     const desc =
@@ -1091,94 +1201,104 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     });
   }
 
-  const res = dispatchCodingCompile(ctx, {
+  const desc =
+    ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
+    ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
+
+  const compileBaseOpts = {
     projectRoot: ctx.projectRoot,
     harnessRoot: HARNESS_ROOT,
     feature: ctx.feature,
     phase: 'coding',
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
-  });
+    frameworkRoot: ctx.frameworkRoot,
+  };
 
-  const errs = res.errors ?? [];
-  const passCompile =
-    res.executed &&
-    !res.timedOut &&
-    res.exitCode === 0 &&
-    errs.length === 0 &&
-    res.successMarkerFound !== false;
-  const isBad = res.toolMissing || res.skippedByEnv || !passCompile;
+  let res: CompileRunResult = dispatchCodingCompile(ctx, compileBaseOpts);
+  let depsAutoFixNote: string | undefined;
+  let overrideFailure: CodingCompileFailureClassification | undefined;
+  let installExtraLines: string[] = [];
 
-  const desc =
-    ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
-    ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
+  if (res.toolMissing || res.skippedByEnv || !isCompilePass(res)) {
+    const firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    const canAutoInstall =
+      firstFailure.kind === 'project_dependency_missing' &&
+      firstFailure.depIssue &&
+      isDepsInstallExecutable(ctx.resolvedProfile) &&
+      !process.env.HARNESS_SKIP_DEPS_INSTALL;
 
-  if (!isBad) {
+    if (canAutoInstall && firstFailure.depIssue!.missingDeclarations.length > 0) {
+      overrideFailure = {
+        kind: 'project_dependency_undeclared',
+        depIssue: firstFailure.depIssue,
+        explanation:
+          `以下依赖未在已扫描 oh-package.json5 中声明：${firstFailure.depIssue!.missingDeclarations.join(', ')}。\n` +
+          formatDependencyIssue(firstFailure.depIssue!),
+        suggestion:
+          'agent 须在对应模块 oh-package.json5 补全依赖声明后重跑 harness；不要空跑 ohpm install，也不要要求用户手工安装。',
+      };
+    } else if (canAutoInstall) {
+      const installRes = dispatchDepsInstall(ctx, compileBaseOpts);
+      installExtraLines = [
+        '--- 自动依赖安装 ---',
+        `ohpm 命令：${installRes.command ?? '(未执行)'}`,
+        `安装结果：executed=${installRes.executed}, ok=${installRes.ok}, classification=${installRes.classification}`,
+        `ohpm 日志：${installRes.logPath ?? '(无)'}`,
+        `ohpm 元数据：${installRes.metaPath ?? '(无)'}`,
+      ];
+      if (installRes.logExcerpt) {
+        installExtraLines.push('ohpm 日志尾部：');
+        installExtraLines.push(installRes.logExcerpt);
+      }
+
+      if (!installRes.executed) {
+        overrideFailure = {
+          kind: 'toolchain',
+          explanation:
+            'DevEco 已配置或环境可用，但无法定位/执行 ohpm 可执行文件。\n' + (installRes.logExcerpt ?? ''),
+          suggestion:
+            '在 framework.local.json > toolchain.devEcoStudio.installPath 配置 IDE 安装根目录（或 check-personal-setup --ensure / detect-deveco）后重跑 harness。',
+        };
+      } else if (!installRes.ok) {
+        overrideFailure = {
+          kind: 'project_dependency_install_failed',
+          depIssue: firstFailure.depIssue,
+          explanation:
+            `ohpm install 执行失败（classification=${installRes.classification}，exit_code=${installRes.exitCode ?? 'n/a'}）。\n` +
+            (installRes.logExcerpt ?? ''),
+          suggestion:
+            '读取 ohpm-install.log，按 registry/鉴权/网络原因处理；仅在此类安装失败时向用户求助并重跑 harness。',
+        };
+      } else {
+        depsAutoFixNote = '已自动 ohpm install 修复工程依赖，以下为重编译结果（--no-daemon）。';
+        res = dispatchCodingCompile(ctx, { ...compileBaseOpts, forceNoDaemon: true });
+      }
+    }
+  }
+
+  if (isCompilePass(res)) {
     return duplicateCompileResults({
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: [
-        `编译通过（涉及 ${modules.length} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
-        `命令：${res.command ?? '(unknown)'}`,
-        `元数据：${res.metaPath ?? '(无)'}`,
-        `完整日志：${res.logPath ?? '(无)'}`,
-        ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map((d: string) => `  - ${d}`)] : []),
-      ].join('\n'),
+      details: buildCompilePassDetails(res, modules.length, depsAutoFixNote),
     });
   }
 
-  const failure = classifyCodingCompileFailure(
-    { ...res, errors: errs },
-    ctx,
-  );
-  const detailsLines: string[] = [];
-  detailsLines.push('coding_compile（真实编译）失败：');
-  if (res.toolMissing) {
-    detailsLines.push('原因：未找到编译驱动可执行文件（需在 framework.config.json 声明 IDE 安装路径）。');
-    (res.logExcerpt ?? '').split(/\r?\n/).forEach((l: string) => detailsLines.push(l));
-    detailsLines.push('本规则不接受 SKIP —— 真实编译是出口条件。');
-  } else if (res.skippedByEnv) {
-    detailsLines.push('原因：HARNESS_SKIP_HVIGOR=1 已设置。');
-    detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
-  } else {
-    detailsLines.push(
-      `exit_code=${res.exitCode}, durationMs=${res.durationMs}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
-    );
-    detailsLines.push(`失败归因：${failure.kind}`);
-    detailsLines.push(`归因说明：${failure.explanation}`);
-    detailsLines.push(`命令：${res.command ?? '(unknown)'}`);
-    detailsLines.push(`日志落盘：${res.logPath ?? '(未落盘)'}`);
-    detailsLines.push(`元数据：${res.metaPath ?? '(无)'}`);
-    if (res.diagnostics?.length) {
-      detailsLines.push('诊断提示：');
-      res.diagnostics.forEach((d: string) => detailsLines.push(`  - ${d}`));
-    }
-    if (errs.length > 0) {
-      detailsLines.push(`解析出 ${errs.length} 条 error（前 10 条）：`);
-      errs.slice(0, 10).forEach((e: { file?: string; line?: number; code?: string; message: string }) =>
-        detailsLines.push(`  - ${e.file ?? ''}${e.line ? ':' + e.line : ''}  ${e.code ?? ''}  ${e.message}`),
-      );
-    }
-    detailsLines.push('');
-    detailsLines.push('日志尾部（最多 8 KB）：');
-    detailsLines.push(res.logExcerpt ?? '');
-  }
+  const failure =
+    overrideFailure ??
+    classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
 
   return duplicateCompileResults({
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: detailsLines.join('\n'),
+    details: buildCompileFailDetails(res, failure, installExtraLines),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
-    blocking_class:
-      failure.kind === 'compile_timeout' ||
-      failure.kind === 'compile_incomplete_output' ||
-      failure.kind === 'project_build'
-        ? CANONICAL_CODING_COMPILE_ID
-        : failure.kind,
+    blocking_class: resolveCompileBlockingClass(failure.kind),
     suggestion: failure.suggestion,
   });
 }

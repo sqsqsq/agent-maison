@@ -353,7 +353,7 @@ profile 专属命令形态、超时与性能调优说明放在对应 `framework/
 2. **读完整日志**：harness 把日志写到 `doc/features/<feature>/coding/reports/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
-   - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → **先**按 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 核对 harness 自身 `npm install` / `node_modules/ts-node`（Tier_1 细节以该 SSOT 为准）。若 Tier_1 已满足仍判定为宿主工程依赖问题，不要让用户手工猜，展示方案：A) 用户确认后执行 profile 声明的依赖安装命令并重跑；B) 仅读取依赖清单输出缺失项；C) registry/权限不确定时先确认内网源；
+   - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → **先**按 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 核对 harness 自身 `npm install` / `node_modules/ts-node`（Tier_1 细节以该 SSOT 为准）。若 Tier_1 已满足，harness 会在同一次 run 内自动 `ohpm install` 并重编译（profile 声明 `coding.deps_install` 时）；agent **不得**要求用户手工安装。仅当 `project_dependency_install_failed`（registry/鉴权/网络）时按 ohpm 日志向用户求助；`project_dependency_undeclared` 时 agent **自补** oh-package.json5 声明后重跑。
    - profile 包描述 / 模块依赖错误 → 回到依赖章节补依赖；
    - 资源引用（**宿主资源 API**，见 profile）缺失 → 回到资源声明章节补声明。
 4. **修完 → 再跑**：重复 6.5.1，直到 profile compile capability PASS。
@@ -396,7 +396,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
 4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
    - 若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `diff_within_scope` 报 `stale_diff_base`：必须自动重跑一次 `HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>`。重跑后若仍有越界文件，才进入 scope 扩展提议或撤销误改流程。
-   - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 compile capability 报 `project_dependency_missing`：按 Step 6.5.2 的依赖缺失分支处理，不得只要求用户手工操作。
+   - 若 `summary.next_action = resolve_project_dependencies_then_rerun` 或 compile capability 报 `project_dependency_missing`：harness 应已自动安装；若仍 FAIL，读 `ohpm-install.log` 与 `failure_kind` 按 Step 6.5.2 处理，**不得**只要求用户手工 `ohpm install`。
+   - 若 `summary.next_action = declare_dependencies_then_rerun` 或 `failure_kind = project_dependency_undeclared`：agent 自补 oh-package.json5 依赖声明后重跑。
+   - 若 `summary.next_action = resolve_dependency_install_blocker_then_rerun` 或 `failure_kind = project_dependency_install_failed`：按 ohpm 日志 registry/鉴权/网络原因处理，必要时向用户求助。
 5. **不得**让用户"自行运行验证"；用户运行只是**额外**的复核渠道，不是 agent 的退出条件。
 
 #### 7.1.1 脚本 / 编译 FAIL 时用户可见汇报（BLOCKER）
@@ -416,7 +418,7 @@ harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done
 - **编译** (`coding_compile`): FAIL
 - **首条错误**: `<path>:<line> — <message>`
 - **归因**: `<failure_kind>`（若错误不在本 feature contracts.modules，仍须写明「全工程编译未通过」）
-- **下一步**: `<summary.next_action>` → 按 Step 6.5.2 处理（A/B/C），agent 自跑修复与重试
+- **下一步**: `<summary.next_action>` → 按 Step 6.5.2 处理（harness 自动安装 / agent 补声明 / 安装失败才求助用户）
 
 **禁止**：提议 code-review；用 verifier PASS 代替脚本 PASS；称「无法确认是否编译」而不读日志。
 ```

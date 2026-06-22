@@ -23,7 +23,7 @@
 
 1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取脚本 Harness 报告（`{script_report}`）及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
 2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
-3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
+3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing` / `project_dependency_undeclared` / `project_dependency_install_failed`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
 4. **禁止用 verifier PASS 代替脚本 harness**：父 agent 在脚本 harness 退出码非 0 或 `can_claim_done=NO` 时**不得**调用本子 agent；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
 
 > 典型误读（须避免）：
@@ -221,7 +221,7 @@ verification_result:
         can_claim_done: YES/NO
         coding_compile: PASS/FAIL/...
         第一条编译错误: <file>:<line> — <message>
-        failure_kind: <project_dependency_missing|project_build|...>
+        failure_kind: <project_dependency_missing|project_dependency_undeclared|project_dependency_install_failed|project_build|...>
         next_action: <summary.next_action 或脚本建议>
       affected_files: [...]
       suggestion: |

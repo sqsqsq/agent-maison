@@ -14,7 +14,9 @@ import {
 } from '../../config';
 import {
   dispatchCodingCompile,
+  dispatchDepsInstall,
   isCapabilitySkipped,
+  isDepsInstallExecutable,
 } from '../../capability-registry';
 import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 import type { CheckContext, HarnessResolvedProfile } from '../../scripts/utils/types';
@@ -73,6 +75,35 @@ function ctxFor(profile: HarnessResolvedProfile): CheckContext {
 interface Case { name: string; run: () => void; }
 
 const cases: Case[] = [
+  {
+    name: 'capability registry: deps_install provider dispatch',
+    run: () => {
+      const dir = mkTmp('profile-deps-install-');
+      writeFile(
+        path.join(dir, 'harness', 'providers', 'deps-install.js'),
+        `exports.provider = { id: 'ohpm', capability: 'coding.deps_install', exports: ['installProjectDeps'] };\nexports.installProjectDeps = (options) => ({ executed: true, ok: true, feature: options.feature });\n`,
+      );
+      const profile = resolvedProfile(dir, {
+        'coding.deps_install': { provider: 'ohpm', severity: 'BLOCKER' },
+      });
+      assert(isDepsInstallExecutable(profile), 'deps_install should be executable');
+      const result = dispatchDepsInstall(ctxFor(profile), { feature: 'demo' });
+      assert(result.executed === true, 'installProjectDeps should run');
+      assert(result.ok === true, 'mock install ok');
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'capability registry: isDepsInstallExecutable false when SKIP',
+    run: () => {
+      const dir = mkTmp('profile-deps-skip-');
+      const profile = resolvedProfile(dir, {
+        'coding.deps_install': { provider: 'none', severity: 'SKIP' },
+      });
+      assert(!isDepsInstallExecutable(profile), 'SKIP should not be executable');
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  },
   {
     name: 'capability registry: provider module is dynamically required',
     run: () => {
