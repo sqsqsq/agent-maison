@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "hylyre_version": "0.3.0",
+  "hylyre_version": "0.3.1",
   "wheel": {
-    "filename": "hylyre-0.3.0-py3-none-any.whl",
-    "sha256": "cc5a9dc4c38b0d4652be874fb4c47a17f715ea212c46413e84471608e9384792",
-    "size_bytes": 119776
+    "filename": "hylyre-0.3.1-py3-none-any.whl",
+    "sha256": "65621014219220cf2300467f8beb2bd93383b8c2e9a98aa5c127e8e4d1576609",
+    "size_bytes": 121710
   },
-  "generated_at": "2026-06-17T14:24:13Z",
+  "generated_at": "2026-06-22T08:14:31Z",
   "generator": {
     "python": "3.14.5",
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",

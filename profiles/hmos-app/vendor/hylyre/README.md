@@ -35,7 +35,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 同步后若 Hylyre 包内仍带 `integration_docs` 等移交文件，**不要**提交进 maison；只保留 wheel + manifest + 本 README，并把 harness 侧变更摘要补进下文「Framework 集成要点」。
 
-## Framework 集成要点（vendor 0.3.0）
+## Framework 集成要点（vendor 0.3.1）
 
 以下由 harness 已落地，消费者读 profile 文档即可，无需另附移交清单。
 
