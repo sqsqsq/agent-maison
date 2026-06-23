@@ -25,6 +25,13 @@ import {
   probeInitTaskPlan,
   type TaskScope,
 } from './utils/init-task-planner';
+import type { InitNextStep } from './utils/init-next-steps';
+import { isBlockerInitLog, renderNextStepsMarkdown } from './utils/init-next-steps';
+import {
+  buildInitNextStepsMinContext,
+  buildInitNextStepsPhase1Context,
+  writeRunArtifacts,
+} from './utils/finalize-init-run-log';
 
 export type DecisionMode = 'smart' | 'manual';
 
@@ -80,6 +87,7 @@ export interface InitRunLog extends InitRunLogAuditMeta {
   finished_at: string;
   decision_mode: DecisionMode;
   entries: InitRunLogEntry[];
+  next_steps?: InitNextStep[];
 }
 
 export interface InitStagingTemplate {
@@ -981,6 +989,15 @@ export function buildRunSummary(log: InitRunLog, options: RunSummaryOptions = {}
   const failed = log.entries.filter(e => e.status === 'failed').length;
   lines.push('');
   lines.push(`合计：executed=${executed} skipped=${skipped} failed=${failed}`);
+  if (log.next_steps !== undefined) {
+    lines.push('');
+    lines.push(
+      renderNextStepsMarkdown(log.next_steps, {
+        materializedAdapters: log.materialized_adapters,
+        projectRoot: log.project_root,
+      }),
+    );
+  }
   return lines.join('\n');
 }
 
@@ -992,16 +1009,45 @@ function summaryOptionsForCli(opts: ReturnType<typeof parseArgs>): Pick<RunSumma
   return opts.smartAuto ? { externalStaging: '未创建（smart-auto 内部生成临时上下文）' } : {};
 }
 
-function buildCliRunSummary(
+function writeInitRunAndPrint(
   log: InitRunLog,
-  logPath: string,
   opts: ReturnType<typeof parseArgs>,
+  finalize: {
+    projectRoot: string;
+    scope: TaskScope;
+    plan?: InitTaskPlan;
+    includePhase1: boolean;
+  },
 ): string {
-  return buildRunSummary(log, {
-    ...summaryOptionsForCli(opts),
-    runLogPath: logPath,
-    summaryPath: summaryPathForRunLog(logPath),
+  const minCtx = buildInitNextStepsMinContext({
+    projectRoot: finalize.projectRoot,
+    harnessRoot: opts.harnessRoot,
+    scope: finalize.scope,
+    log,
   });
+  const phase1Ctx =
+    finalize.includePhase1 &&
+    !isBlockerInitLog(log) &&
+    finalize.scope === 'project'
+      ? buildInitNextStepsPhase1Context(minCtx, {
+          projectRoot: finalize.projectRoot,
+          harnessRoot: opts.harnessRoot,
+          plan: finalize.plan,
+        })
+      : undefined;
+  const artifacts = writeRunArtifacts(opts.harnessRoot, log, buildRunSummary, {
+    minCtx,
+    phase1Ctx: phase1Ctx
+      ? {
+          frameworkRoot: phase1Ctx.frameworkRoot,
+          plan: phase1Ctx.plan,
+        }
+      : undefined,
+    summaryOptions: summaryOptionsForCli(opts),
+  });
+  process.stdout.write(`${artifacts.summary}\n`);
+  process.stderr.write(`[init-orchestrate] run-log: ${artifacts.runLogPath}\n`);
+  return artifacts.runLogPath;
 }
 
 export interface ExecuteOptions {
@@ -1112,20 +1158,44 @@ export function writeRunLog(
   harnessRoot: string,
   log: InitRunLog,
   summaryOptions: Omit<RunSummaryOptions, 'runLogPath' | 'summaryPath'> = {},
+  finalizeOpts?: {
+    projectRoot: string;
+    scope: TaskScope;
+    plan?: InitTaskPlan;
+    frameworkRoot?: string;
+    includePhase1?: boolean;
+  },
 ): string {
-  const stamp = log.started_at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const dir = path.join(harnessRoot, 'reports', '_global', 'init-orchestrate', stamp);
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'run-log.json');
-  const summaryPath = summaryPathForRunLog(file);
-  fs.writeFileSync(file, JSON.stringify(log, null, 2), 'utf-8');
-  const summary = buildRunSummary(log, {
-    ...summaryOptions,
-    runLogPath: file,
-    summaryPath,
+  const minCtx = buildInitNextStepsMinContext({
+    projectRoot: finalizeOpts?.projectRoot ?? log.project_root ?? harnessRoot,
+    harnessRoot,
+    scope: finalizeOpts?.scope ?? log.scope,
+    log,
   });
-  fs.writeFileSync(summaryPath, `${summary}\n`, 'utf-8');
-  return file;
+  const scope = finalizeOpts?.scope ?? log.scope;
+  const phase1Ctx =
+    finalizeOpts?.includePhase1 !== false &&
+    !isBlockerInitLog(log) &&
+    scope === 'project' &&
+    finalizeOpts?.projectRoot
+      ? buildInitNextStepsPhase1Context(minCtx, {
+          projectRoot: finalizeOpts.projectRoot,
+          harnessRoot,
+          frameworkRoot: finalizeOpts.frameworkRoot,
+          plan: finalizeOpts.plan,
+        })
+      : undefined;
+  const artifacts = writeRunArtifacts(harnessRoot, log, buildRunSummary, {
+    minCtx,
+    phase1Ctx: phase1Ctx
+      ? {
+          frameworkRoot: phase1Ctx.frameworkRoot,
+          plan: phase1Ctx.plan,
+        }
+      : undefined,
+    summaryOptions,
+  });
+  return artifacts.runLogPath;
 }
 
 function parseMaterializedAdaptersCsv(csv: string): string[] {
@@ -1429,9 +1499,12 @@ if (require.main === module) {
         true,
         auditMeta,
       );
-      const logPath = writeRunLog(opts.harnessRoot, blocked, summaryOptionsForCli(opts));
-      process.stdout.write(`${buildCliRunSummary(blocked, logPath, opts)}\n`);
-      process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+      writeInitRunAndPrint(blocked, opts, {
+        projectRoot: opts.projectRoot,
+        scope: opts.scope,
+        plan: planResult.plan,
+        includePhase1: false,
+      });
       process.exit(1);
     }
     const finalContext = deriveContextForExecution(
@@ -1448,9 +1521,12 @@ if (require.main === module) {
       { projectRoot: opts.projectRoot },
     );
     if (!preflight.ok) {
-      const logPath = writeRunLog(opts.harnessRoot, preflight.blocked, summaryOptionsForCli(opts));
-      process.stdout.write(`${buildCliRunSummary(preflight.blocked, logPath, opts)}\n`);
-      process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+      writeInitRunAndPrint(preflight.blocked, opts, {
+        projectRoot: opts.projectRoot,
+        scope: opts.scope,
+        plan: planResult.plan,
+        includePhase1: false,
+      });
       process.exit(1);
     }
     const log = executeInitPlan({
@@ -1460,9 +1536,12 @@ if (require.main === module) {
       decision: reconciledDecision,
       executionContext: finalContext,
     });
-    const logPath = writeRunLog(opts.harnessRoot, log, summaryOptionsForCli(opts));
-    process.stdout.write(`${buildCliRunSummary(log, logPath, opts)}\n`);
-    process.stderr.write(`[init-orchestrate] run-log: ${logPath}\n`);
+    writeInitRunAndPrint(log, opts, {
+      projectRoot: opts.projectRoot,
+      scope: opts.scope,
+      plan: planResult.plan,
+      includePhase1: opts.scope === 'project',
+    });
     process.exit(log.entries.some(e => e.status === 'failed') ? 1 : 0);
   } catch (e) {
     failCli((e as Error).message);

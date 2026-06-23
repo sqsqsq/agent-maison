@@ -7,7 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import assert from 'assert';
 import { __testing as checkInitTesting } from '../../scripts/check-init';
-import { validateAgentBundleRoot, readAgentBundlePathsFromConfig } from '../../scripts/utils/agent-bundle-paths';
+import { validateAgentBundleRoot, readAgentBundlePathsFromConfig, resolveGenericBundlePathsFromPaths } from '../../scripts/utils/agent-bundle-paths';
 import {
   materializeInlineSkillMarkdown,
   materializeAgentBundleSkills,
@@ -31,6 +31,17 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       assert.throws(() => validateAgentBundleRoot('../evil'));
       assert.throws(() => validateAgentBundleRoot('C:/abs'));
+    },
+  },
+  {
+    name: 'resolveGenericBundlePathsFromPaths：不依赖 agent_adapter',
+    run: () => {
+      const bundle = resolveGenericBundlePathsFromPaths({
+        agent_bundle_root: '.custom-agents',
+        features_dir: 'doc/features',
+      } as never);
+      assert.strictEqual(bundle.skillsDir, '.custom-agents/skills');
+      assert.strictEqual(bundle.root, '.custom-agents');
     },
   },
   {

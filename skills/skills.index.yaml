@@ -18,6 +18,23 @@ skills:
     order: 1
     description: >
       模块画像 catalog 与业务术语表 glossary 自举
+    init_next_steps:
+      - step_id: catalog-phase-a
+        when: catalog_empty
+        kind: optional
+        priority: 10
+        workflow_artifact: catalog
+        invoke:
+          neutral: "模块画像自举（Phase A）"
+          command_id: catalog-bootstrap
+      - step_id: glossary-phase-b
+        when: glossary_empty
+        kind: optional
+        priority: 20
+        workflow_artifact: glossary
+        invoke:
+          neutral: "术语表自举（Phase B）"
+          command_id: glossary-bootstrap
 
   - id: code-graph
     scope: project
@@ -25,6 +42,16 @@ skills:
     order: 2
     description: >
       模块级 Code Graph 建图、策展 core 节点与 module-graph 漂移门禁
+    init_next_steps:
+      - step_id: graph-first-gap
+        when: graph_gap
+        kind: optional
+        priority: 30
+        workflow_artifact: module-graph
+        invoke:
+          neutral: "Code Graph 建图"
+          command_id: code-graph
+          param_hint: "<ModuleName>"
 
   - id: goal-mode
     scope: project
@@ -32,6 +59,16 @@ skills:
     order: 5
     description: >
       目标模式 goal-runner 薄入口（调用确定性编排器，非自驱动裁决）
+    init_next_steps:
+      - step_id: goal-optional
+        when: always_optional
+        kind: optional
+        priority: 90
+        invoke:
+          neutral: "目标模式（goal-runner）"
+          command_id: goal-mode
+          param_hint: "<feature>"
+          availability_note: "有明确 feature 目标时可使用"
 
   - id: spec
     scope: feature
@@ -39,6 +76,15 @@ skills:
     order: 10
     description: >
       spec 撰写
+    init_next_steps:
+      - step_id: feature-first-phase
+        when: feature_ready
+        kind: optional
+        priority: 40
+        workflow_artifact: spec
+        invoke:
+          neutral: "Feature Spec"
+          command_id: spec
 
   - id: plan
     scope: feature
@@ -46,6 +92,15 @@ skills:
     order: 20
     description: >
       spec → plan（plan.md）
+    init_next_steps:
+      - step_id: feature-plan-phase
+        when: feature_ready
+        kind: optional
+        priority: 35
+        workflow_artifact: plan
+        invoke:
+          neutral: "Feature Plan"
+          command_id: plan
 
   - id: coding
     scope: feature

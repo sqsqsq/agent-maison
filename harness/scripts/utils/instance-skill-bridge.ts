@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig } from '../../config';
-import { readAgentBundlePathsFromConfig } from './agent-bundle-paths';
+import { resolveGenericBundlePathsFromPaths } from './agent-bundle-paths';
 import {
   materializeInlineSkillMarkdown,
   posixRelativeFromSkillStubTo,
@@ -158,7 +158,7 @@ export function parseInstanceSkillBridgeFromAdapter(adapterYamlText: string): Ad
   const doc = YAML.parse(adapterYamlText) as Record<string, unknown>;
   const raw = doc?.instance_skill_bridge;
   if (raw === undefined || raw === null) {
-    return null;
+    return parseCommandsOnlyBridge(doc);
   }
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     return null;
@@ -169,9 +169,45 @@ export function parseInstanceSkillBridgeFromAdapter(adapterYamlText: string): Ad
   const commands_target_dir =
     typeof o.commands_target_dir === 'string' ? o.commands_target_dir.trim() : undefined;
   if (!skill_stub_target_dir && !commands_target_dir) {
-    return null;
+    return parseCommandsOnlyBridge(doc);
   }
   return { skill_stub_target_dir, commands_target_dir };
+}
+
+function parseCommandsOnlyBridge(doc: Record<string, unknown>): AdapterInstanceBridgeYaml | null {
+  const commands = doc?.commands;
+  if (!commands || typeof commands !== 'object' || Array.isArray(commands)) {
+    return null;
+  }
+  const commands_target_dir =
+    typeof (commands as Record<string, unknown>).target_dir === 'string'
+      ? ((commands as Record<string, unknown>).target_dir as string).trim()
+      : undefined;
+  return commands_target_dir ? { commands_target_dir } : null;
+}
+
+export function parseSkillBridgeTargetDir(adapterYamlText: string): string | undefined {
+  const doc = YAML.parse(adapterYamlText) as Record<string, unknown>;
+  const raw = doc?.skill_bridge;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const td = (raw as Record<string, unknown>).target_dir;
+  return typeof td === 'string' && td.trim() ? td.trim() : undefined;
+}
+
+export function parseCommandsTargetDir(adapterYamlText: string): string | undefined {
+  const inst = parseInstanceSkillBridgeFromAdapter(adapterYamlText);
+  if (inst?.commands_target_dir) {
+    return inst.commands_target_dir;
+  }
+  const doc = YAML.parse(adapterYamlText) as Record<string, unknown>;
+  const commands = doc?.commands;
+  if (!commands || typeof commands !== 'object' || Array.isArray(commands)) {
+    return undefined;
+  }
+  const td = (commands as Record<string, unknown>).target_dir;
+  return typeof td === 'string' && td.trim() ? td.trim() : undefined;
 }
 
 /** @deprecated 使用 posixRelativeFromSkillStubTo */
@@ -193,20 +229,53 @@ export function resolveSkillStubTargetDir(
   if (!fs.existsSync(adapterPath)) {
     return undefined;
   }
-  const bridgeCfg = parseInstanceSkillBridgeFromAdapter(fs.readFileSync(adapterPath, 'utf8'));
+  const adapterText = fs.readFileSync(adapterPath, 'utf8');
+  const bridgeCfg = parseInstanceSkillBridgeFromAdapter(adapterText);
   if (bridgeCfg?.skill_stub_target_dir) {
     return bridgeCfg.skill_stub_target_dir;
+  }
+  const skillBridgeDir = parseSkillBridgeTargetDir(adapterText);
+  if (skillBridgeDir) {
+    return skillBridgeDir;
   }
   if (agentAdapter === 'generic') {
     try {
       const cfg = loadFrameworkConfig(repoRoot);
-      const bundle = readAgentBundlePathsFromConfig(cfg);
-      return bundle?.skillsDir;
+      return resolveGenericBundlePathsFromPaths(cfg.paths).skillsDir;
     } catch {
       return undefined;
     }
   }
   return undefined;
+}
+
+/** 物化后的内置 skill 入口（相对 projectRoot）；不存在则 exists=false */
+export function resolveMaterializedBuiltinSkillEntryRel(
+  projectRoot: string,
+  frameworkDir: string,
+  adapter: string,
+  skillId: string,
+  commandId: string,
+): { rel: string; exists: boolean } | null {
+  const name = adapter.trim().toLowerCase();
+  if (name === 'claude') {
+    const adapterPath = path.join(frameworkDir, 'agents', 'claude', 'adapter.yaml');
+    if (!fs.existsSync(adapterPath)) {
+      return null;
+    }
+    const commandsDir =
+      parseCommandsTargetDir(fs.readFileSync(adapterPath, 'utf8')) ?? '.claude/commands';
+    const rel = path.posix.join(commandsDir.replace(/\\/g, '/'), `${commandId}.md`);
+    const abs = path.join(projectRoot, ...rel.split('/'));
+    return { rel, exists: fs.existsSync(abs) };
+  }
+  const stubDir = resolveSkillStubTargetDir(projectRoot, frameworkDir, name);
+  if (!stubDir) {
+    return null;
+  }
+  const rel = path.posix.join(stubDir.replace(/\\/g, '/'), skillId, 'SKILL.md');
+  const abs = path.join(projectRoot, ...rel.split('/'));
+  return { rel, exists: fs.existsSync(abs) };
 }
 
 export function renderExtensionSkillStubMarkdown(

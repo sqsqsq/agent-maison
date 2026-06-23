@@ -7,10 +7,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
 
 import { evaluateCodeGraphDrift, type DriftFinding } from '../code-graph/drift';
-import type { CodeGraphFile, CodeGraphNode } from '../code-graph/types';
+import { parseCodeGraphFile, validateCodeGraphFileSchema } from '../code-graph/file-schema';
 import { moduleGraphPath, relCatalog } from '../config';
 import {
   PhaseChecker,
@@ -30,52 +29,6 @@ function ruleDesc(
 
 function resolvePackagePath(layer: string, name: string): string {
   return `${layer}/${name}`.replace(/\\/g, '/');
-}
-
-function parseGraphFile(absPath: string, relPath: string): { graph: CodeGraphFile | null; error?: string } {
-  try {
-    const raw = fs.readFileSync(absPath, 'utf-8');
-    const parsed = YAML.parse(raw) as CodeGraphFile;
-    if (!parsed || typeof parsed !== 'object') {
-      return { graph: null, error: `${relPath} 不是有效 YAML 对象` };
-    }
-    return { graph: parsed };
-  } catch (e) {
-    return { graph: null, error: `${relPath} 解析失败：${(e as Error).message}` };
-  }
-}
-
-function validateSchema(graph: CodeGraphFile): string[] {
-  const errors: string[] = [];
-  if (typeof graph.schema_version !== 'string' || !graph.schema_version.trim()) {
-    errors.push('缺少 schema_version 字符串');
-  }
-  if (typeof graph.module !== 'string' || !graph.module.trim()) {
-    errors.push('缺少 module 字符串');
-  }
-  if (!Array.isArray(graph.nodes)) {
-    errors.push('nodes 须为数组');
-    return errors;
-  }
-  for (const node of graph.nodes) {
-    validateNode(node, errors);
-  }
-  return errors;
-}
-
-function validateNode(node: CodeGraphNode, errors: string[]): void {
-  if (!node?.id || typeof node.id !== 'string') {
-    errors.push('nodes[] 条目缺少 id');
-    return;
-  }
-  const anchor = node.anchor;
-  if (!anchor?.file || !anchor?.symbol) {
-    errors.push(`节点 ${node.id} 缺少 anchor.file 或 anchor.symbol`);
-    return;
-  }
-  if (typeof anchor.content_hash !== 'string' || !anchor.content_hash.trim()) {
-    errors.push(`节点 ${node.id} 缺少 anchor.content_hash（漂移检测必需）`);
-  }
 }
 
 function driftToCheckResults(
@@ -175,7 +128,7 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [];
 
     for (const { rel, abs, moduleName } of graphPaths) {
-      const { graph, error } = parseGraphFile(abs, rel);
+      const { graph, error } = parseCodeGraphFile(abs, rel);
       if (!graph) {
         results.push({
           id: 'code_graph_schema_valid',
@@ -189,7 +142,7 @@ const checker: PhaseChecker = {
         continue;
       }
 
-      const schemaErrors = validateSchema(graph);
+      const schemaErrors = validateCodeGraphFileSchema(graph);
       if (schemaErrors.length > 0) {
         results.push({
           id: 'code_graph_schema_valid',

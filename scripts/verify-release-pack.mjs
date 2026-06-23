@@ -207,6 +207,15 @@ export async function verifyReleasePack() {
   if (catalogSrc.status !== 0) fail('adapter catalog consistency (source root) failed');
   console.log('[release:verify] adapter catalog consistency (source root) PASS');
 
+  console.log('[release:verify] skills.index init_next_steps lint (source root)...');
+  const skillsIndexLint = spawnSync(
+    'npx',
+    ['ts-node', 'scripts/check-skills-index-init-steps.ts', '--framework-root', REPO_ROOT],
+    { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
+  );
+  if (skillsIndexLint.status !== 0) fail('skills.index init_next_steps lint (source root) failed');
+  console.log('[release:verify] skills.index init_next_steps lint (source root) PASS');
+
   console.log('[release:verify] synthetic rule tests...');
   const synthErrors = runSyntheticRuleTests(REPO_ROOT, rules);
   if (synthErrors.length > 0) {
@@ -285,6 +294,17 @@ export async function verifyReleasePack() {
       );
       if (catalogZip.status !== 0) fail('adapter catalog consistency (extracted framework root) failed');
       console.log('[release:verify] adapter catalog consistency (extracted framework root) PASS');
+
+      console.log('[release:verify] skills.index init_next_steps lint (extracted framework root)...');
+      const skillsIndexZip = spawnSync(
+        'npx',
+        ['ts-node', 'scripts/check-skills-index-init-steps.ts', '--framework-root', frameworkRoot],
+        { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
+      );
+      if (skillsIndexZip.status !== 0) {
+        fail('skills.index init_next_steps lint (extracted framework root) failed');
+      }
+      console.log('[release:verify] skills.index init_next_steps lint (extracted framework root) PASS');
 
       console.log('[release:verify] zip content assertions PASS');
     } finally {

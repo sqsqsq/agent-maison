@@ -87,12 +87,19 @@ export function readAgentBundlePathsFromConfig(
   if (cfg.agent_adapter !== 'generic') {
     return null;
   }
+  return resolveGenericBundlePathsFromPaths(cfg.paths);
+}
+
+/** 解析 generic bundle 路径；不依赖 cfg.agent_adapter（供物化入口探测） */
+export function resolveGenericBundlePathsFromPaths(
+  paths: AgentBundlePathsSlice,
+): ResolvedAgentBundlePaths {
   const root =
-    typeof cfg.paths.agent_bundle_root === 'string' && cfg.paths.agent_bundle_root.trim()
-      ? cfg.paths.agent_bundle_root.trim()
+    typeof paths.agent_bundle_root === 'string' && paths.agent_bundle_root.trim()
+      ? paths.agent_bundle_root.trim()
       : '.agents';
   validateAgentBundleRoot(root);
-  const skillMode = normalizeAgentBundleSkillMode(cfg.paths.agent_bundle_skill_mode);
+  const skillMode = normalizeAgentBundleSkillMode(paths.agent_bundle_skill_mode);
   const posixRoot = root.replace(/\\/g, '/');
   return {
     root: posixRoot,
