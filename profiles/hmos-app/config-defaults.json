@@ -57,5 +57,12 @@
       "cold_restart_before_run": true,
       "hypium_page_name": ""
     }
+  },
+  "spec": {
+    "visual_handoff_enforcement": "reachable",
+    "ui_spec_enforcement": "reachable"
+  },
+  "coding": {
+    "visual_parity_enforcement": "warn"
   }
 }

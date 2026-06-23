@@ -38,6 +38,26 @@ export function isSpecVisualHandoffSkipped(resolved: HarnessResolvedProfile): bo
   return isCapabilitySkipped(resolved, 'spec.visual_handoff');
 }
 
+export function isSpecUiSpecSkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'spec.ui_spec');
+}
+
+export function isSpecAssetAcquisitionSkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'spec.asset_acquisition');
+}
+
+export function isCodingVisualParitySkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'coding.visual_parity');
+}
+
+export function isPlanVisualParitySkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'plan.visual_parity');
+}
+
+export function isDeviceVisualDiffSkipped(resolved: HarnessResolvedProfile): boolean {
+  return isCapabilitySkipped(resolved, 'device_test.visual_diff');
+}
+
 /** @deprecated v2.3 起改用 `isSpecVisualHandoffSkipped` */
 export const isPrdVisualHandoffSkipped = isSpecVisualHandoffSkipped;
 
@@ -66,6 +86,11 @@ const PROVIDER_MODULE_BY_ID: Record<string, string> = {
   hdc_app: 'device-test-install',
   hylyre: 'device-test-run',
   script: 'spec-visual-handoff',
+  script_ui_spec: 'spec-ui-spec',
+  script_visual_parity: 'coding-visual-parity',
+  script_visual_parity_plan: 'plan-visual-parity',
+  script_asset_acquisition: 'spec-asset-acquisition',
+  hylyre_visual_diff: 'device-test-visual-diff',
 };
 
 function requireCapabilityProvider(
@@ -214,6 +239,56 @@ export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: strin
     'checkVisualHandoff',
   );
   return fn(ctx, specMarkdown);
+}
+
+export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkUiSpecStructure',
+  );
+  const gateFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkUiSpecFidelityGate',
+  );
+  return [...fn(ctx, specMarkdown), ...gateFn(ctx, specMarkdown)];
+}
+
+export function dispatchSpecAssetAcquisition(ctx: CheckContext): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.asset_acquisition',
+    'checkAssetAcquisition',
+  );
+  return fn(ctx);
+}
+
+export function dispatchCodingVisualParity(ctx: CheckContext): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'coding.visual_parity',
+    'checkVisualParity',
+  );
+  return fn(ctx);
+}
+
+export function dispatchPlanVisualParity(ctx: CheckContext): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'plan.visual_parity',
+    'checkVisualParityCoverage',
+  );
+  return fn(ctx);
+}
+
+export function dispatchDeviceVisualDiff(ctx: CheckContext): CheckResult[] {
+  const fn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'device_test.visual_diff',
+    'checkVisualDiff',
+  );
+  return fn(ctx);
 }
 
 /** @deprecated v2.3 起改用 `dispatchSpecVisualHandoff` */

@@ -52,6 +52,12 @@ required_fields:
 
 optional_fields:
 
+  multimodal:
+    type: boolean
+    description: |
+      adapter / 模型是否支持图片输入。true 时 harness-runner 为 spec/coding/verify
+      注入 authoritative_refs 图片；false 时降级到文本 ui-spec + 确定性 parity。
+
   commands:
     type: object | null
     description: |

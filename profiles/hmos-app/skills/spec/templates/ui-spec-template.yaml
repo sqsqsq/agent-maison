@@ -1,0 +1,39 @@
+# UI-Spec 模板 — 复制到 doc/features/<feature>/spec/ui-spec.yaml 并按截图填写
+# 规范：framework/skills/feature/spec/reference/ui-spec.md
+schema_version: "1.0"
+verified: unverified
+verified_method: none
+
+screens:
+  - id: screen_id_example
+    priority: P0
+    ref_id: authoritative_ref_id_from_visual_handoff
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      children:
+        - type: content_display
+          order: 0
+          text: "逐字文案，禁止泛化"
+          style_ref: text.body
+        - type: action_button
+          order: 1
+          text: "主操作"
+          style_ref: brand.primary
+
+tokens:
+  brand.primary:
+    kind: color
+    value: "#000000"
+    # source_bbox: [0.0, 0.0, 0.1, 0.05]
+    # sampled: true
+
+assets:
+  - key: example_logo
+    acquisition: crop
+    source_ref: screen_id_example
+    # source_bbox: [0.0, 0.0, 0.1, 0.1]
+    resolved_path: doc/features/<feature>/spec/assets/example_logo.png
+    # 若暂缺：placeholder: true
+    # rationale: "品牌矢量待设计提供"

@@ -1,0 +1,8 @@
+schema_version: "1.0"
+verified: human_confirmed
+screens:
+  - id: home
+    priority: P0
+    ref_id: home
+tokens: {}
+assets: []

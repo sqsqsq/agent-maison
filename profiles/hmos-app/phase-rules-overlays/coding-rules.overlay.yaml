@@ -250,6 +250,25 @@ structure_checks:
       source: "doc/features/{feature}/use-cases.yaml > use_cases[].coordinator_file"
       validate: "file_exists_on_disk"
 
+  visual_parity:
+    description: >
+      确定性 visual parity（coding.visual_parity）：ui-spec asset/token/文案/组件树
+      vs 代码资源与 contracts 的「在不在」核对。
+      【边界】必要不充分——查在不在非对不对；unverified ui-spec 只报结构 presence。
+      详见 ui-spec.md 与 check-visual-parity 报告。
+    severity: MAJOR
+    rule:
+      provider: coding.visual_parity
+      enforcement_config: "framework.config.json#coding.visual_parity_enforcement"
+
+  static_fidelity_score:
+    description: >
+      静态保真分：ΔE（CIEDE2000）/ 文案 exact-match % / 资产覆盖 % / 组件树结构顺序。
+      剔除静态 bbox 几何 IoU（归 device visual_diff）。unverified 基线标 WARN。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

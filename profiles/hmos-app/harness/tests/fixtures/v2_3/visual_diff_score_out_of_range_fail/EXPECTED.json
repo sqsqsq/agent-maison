@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "visual_diff",
+      "status": "FAIL",
+      "details_includes": "fidelity_score 须在 [0,1]"
+    }
+  ]
+}

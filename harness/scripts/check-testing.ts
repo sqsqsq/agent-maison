@@ -56,6 +56,8 @@ import {
   dispatchDeviceTestInstall,
   dispatchDeviceTestEnsureReady,
   dispatchDeviceTestRun,
+  isDeviceVisualDiffSkipped,
+  dispatchDeviceVisualDiff,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
@@ -2124,6 +2126,19 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
     results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
     results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+
+    if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
+      results.push({
+        id: 'visual_diff',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'visual_diff'),
+        severity: 'MINOR',
+        status: 'SKIP',
+        details: `project_profile=${ctx.resolvedProfile.name} 未启用 device_test.visual_diff`,
+      });
+    } else {
+      results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+    }
 
     results.push(buildTestingRunStatusResult(plan, report, results));
 

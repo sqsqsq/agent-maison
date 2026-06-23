@@ -10,6 +10,8 @@
 |------|------|
 | 阶段规则（中立骨架 + 合并） | `framework/specs/phase-rules/spec-rules.yaml`；profile 专属补充以 `framework/profiles/hmos-app/profile.yaml` → `phase-rules-overlays` 为准（若存在与本 stage 对齐的条目） |
 | Visual Handoff / `ui_change`（若启用） | `framework/skills/feature/spec/` 正文与 `prompts/` |
+| UI-Spec（ui-spec.yaml） | `framework/skills/feature/spec/reference/ui-spec.md` |
+| ui-spec 模板 | `` `profile-skill-asset:spec/ui_spec_template` `` |
 
 ### skill-assets.yaml 键
 

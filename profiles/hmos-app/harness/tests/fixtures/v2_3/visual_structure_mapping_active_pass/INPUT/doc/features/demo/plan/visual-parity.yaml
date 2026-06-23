@@ -1,0 +1,6 @@
+mappings:
+  components:
+    - ui_spec_node_id: home
+      contract_component: BankCardPage
+    - ui_spec_node_id: btn_add
+      contract_component: AddCardButton

@@ -20,7 +20,7 @@
 // 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
 //   2. 不动用户必填字段（project_name / architecture / agent_adapter）—— 走 Skill 交互。
-//   3. 不动 opt-in 字段（spec / atomic_service）—— 维护者手工选档；legacy `prd` 段走 MIGRATION_RULES。
+//   3. profile 结构默认（tools / spec / coding 等）由 config-defaults.json + BACKFILL 自动补缺；legacy `prd` 段走 MIGRATION_RULES。
 //   4. 不动 toolchain.devEcoStudio.installPath —— 由 business-ut.6 detect-deveco 单独处理。
 //
 // 新增字段 checklist：
@@ -175,7 +175,7 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
 ];
 
 /** profile-owned 结构默认顶层键（从 config-defaults.json 派生；排除 project_profile / architecture）。 */
-const PROFILE_OWNED_DEFAULT_ROOT_KEYS = ['tools'] as const;
+const PROFILE_OWNED_DEFAULT_ROOT_KEYS = ['tools', 'spec', 'coding'] as const;
 
 function flattenProfileOwnedDefaultsToBackfill(
   obj: Record<string, unknown>,

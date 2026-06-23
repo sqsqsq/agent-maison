@@ -1,9 +1,9 @@
 # Spec Harness：`spec` 段与 Visual Handoff（**opt-in** 高级文档）
 
 > **受众**：本文件面向 **含 UI 形态、且希望脚本级约束 Visual Handoff** 的工程维护者。  
-> **云侧 / 库 / 纯后端**工程可**整段跳过**——默认模板**不写** `spec` 段；spec 不出现 `ui_change` yaml 块时 `check-spec` **不产生** Visual Handoff 噪声。
+> **云侧 / 库 / 纯后端**（`generic` profile）工程可**整段跳过**——init 不写 `spec` 段；spec 不出现 `ui_change` yaml 块时 `check-spec` **不产生** Visual Handoff 噪声。
 
-配置位置：实例根 **`framework.config.json`**（**手工追加** `"spec": { ... }`，见 [framework/templates/framework.config.template.json](../../../../templates/framework.config.template.json) 的 `$schema_docs.field_notes.spec_opt_in_note`）。
+配置位置：实例根 **`framework.config.json`**（**hmos-app 由 init 自动写入/补缺**；见 [framework/templates/framework.config.template.json](../../../../templates/framework.config.template.json) 的 `$schema_docs.field_notes.spec_opt_in_note`）。
 
 ---
 
@@ -61,5 +61,10 @@
 
 ## framework-init 对齐说明
 
-**CREATE**：不再在 Step 2 追问 `spec.visual_handoff_enforcement`；按模板生成 config 后，由维护者按需手工追加 `spec`。  
-**UPDATE**：老工程已含 legacy `prd` 段 → **MIGRATION_RULES** 自动迁至 `spec`；档位枚举如上（含 **`reachable`**）。
+**CREATE（hmos-app）**：`config-builder` 按 `framework/profiles/<project_profile.name>/config-defaults.json` 自动写入 `spec` / `coding` 视觉守门默认档（`reachable` / `warn`，非 `strict`）。**generic** 等 profile 不含视觉段。
+
+**UPDATE keep**：`backfill-config` 对缺失的 `spec.ui_spec_enforcement`、`coding.visual_parity_enforcement` 等子键自动补缺，**不覆盖**已有档位。
+
+**UPDATE overwrite**：`deriveUpdateConfigWritePayload` 保留磁盘已有 `spec` / `coding` 整段，再与 profile 默认 deep-merge 补缺缺失子键。
+
+**legacy `prd` 段**：**MIGRATION_RULES** 自动迁至 `spec`。

@@ -295,6 +295,18 @@ doc/features/{module-name}/testing/test-plan.md
 11. **重跑 / UI 复位**：execute **默认冷重启**（清 Nav 栈）；前次 run 非全 pass 后**禁止**在未复位时假设仍在首页 Tab。`--continue-session` 显式保留 Nav 栈；若见 `ADHOC_UI_RESET_RECOMMENDED=1` 须去掉 `--continue-session` 或确认已冷重启。`--accept-cold-start` **只**跳过 snapshot warmup，**不能**代替冷重启。
 12. **warmup 软失败**：仍继续 run（`[WARN]`）。
 
+### Step 4.6: 视觉 diff 回环（visual_diff · ui_change=new_or_changed 时）
+
+> **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。
+
+1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
+2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → 多模态对照 **authoritative_refs 原图** + ui-spec → 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/`
+   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数，含几何 IoU）
+4. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
+5. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
+
 ### Step 5: 生成测试报告（测试执行后）
 
 **标准模式**下，在 **`testing` harness PASS** 且 Hylyre 已写出 `testing/reports/<timestamp>/hylyre/trace.json` 之后，读取测试报告模板：

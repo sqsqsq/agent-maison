@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-maison.dev/schemas/ui-spec.schema.json",
+  "title": "UI-Spec (UI-DSL)",
+  "description": "Structured visual IR produced by spec Step 2; consumed by plan/coding parity gates.",
+  "type": "object",
+  "required": ["schema_version", "screens", "tokens", "assets"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "verified": {
+      "type": "string",
+      "enum": ["verified", "unverified", "human_confirmed"],
+      "description": "DSL↔原图校验 gate 状态；unverified 时下游 parity 只报结构不报保真。"
+    },
+    "verified_method": {
+      "type": "string",
+      "enum": ["vl_multimodal", "human_gate", "none"]
+    },
+    "screens": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/screen" }
+    },
+    "tokens": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/token" }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/asset" }
+    }
+  },
+  "definitions": {
+    "bbox": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "number", "minimum": 0, "maximum": 1 },
+      "description": "归一化 [x, y, w, h] 相对原图 ground truth"
+    },
+    "componentNode": {
+      "type": "object",
+      "required": ["type", "order"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "input",
+            "action_button",
+            "overlay_panel",
+            "navigation_frame",
+            "content_display",
+            "list_selection",
+            "logic_condition"
+          ]
+        },
+        "layout": { "type": "string" },
+        "order": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" },
+        "data_binding": { "type": "string" },
+        "style_ref": { "type": "string" },
+        "asset_ref": { "type": "string" },
+        "bbox": { "$ref": "#/definitions/bbox" },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/componentNode" }
+        }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "required": ["id", "priority"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+        "ref_id": { "type": "string" },
+        "root": { "$ref": "#/definitions/componentNode" },
+        "lightweight": {
+          "type": "boolean",
+          "description": "P2/P3 轻量版：可省略细粒度组件树与 bbox"
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["color", "spacing", "font_size", "radius", "divider"] },
+        "value": { "type": "string" },
+        "source_bbox": { "$ref": "#/definitions/bbox" },
+        "sampled": {
+          "type": "boolean",
+          "description": "true 表示 value 由脚本像素采样（半确定性）"
+        }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["key", "acquisition"],
+      "properties": {
+        "key": { "type": "string" },
+        "acquisition": { "type": "string", "enum": ["crop", "svg_grab", "repo_ref"] },
+        "source_ref": { "type": "string" },
+        "source_bbox": { "$ref": "#/definitions/bbox" },
+        "resolved_path": { "type": "string" },
+        "placeholder": { "type": "boolean" },
+        "rationale": { "type": "string" },
+        "human_crop_confirmed": { "type": "boolean" }
+      }
+    }
+  }
+}

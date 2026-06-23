@@ -95,8 +95,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         'architecture.outer_layers',
         'toolchain.devEcoStudio',
         'toolchain.devEcoStudio.installPath',
-        'spec',
-        'spec.visual_handoff_enforcement',
         'atomic_service',
       ];
       for (const p of forbidden) {
@@ -179,6 +177,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         'tools.hylyre.doctor_first_run',
         'tools.hylyre.cold_restart_before_run',
         'tools.hylyre.hypium_page_name',
+        'spec.visual_handoff_enforcement',
+        'spec.ui_spec_enforcement',
+        'coding.visual_parity_enforcement',
       ];
       for (const p of expected) {
         assert(missing.includes(p), `应识别为缺失：${p}（实际缺失：${missing.join(',')}）`);

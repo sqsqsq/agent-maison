@@ -50,6 +50,10 @@ import {
   describeScopeError,
   findScopeViolations,
 } from './utils/scope-parser';
+import {
+  isPlanVisualParitySkipped,
+  dispatchPlanVisualParity,
+} from '../capability-registry';
 
 // --------------------------------------------------------------------------
 // 架构影响声明 (architecture_impact) 解析
@@ -944,6 +948,19 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
     results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
+
+    if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
+      results.push({
+        id: 'visual_parity_coverage',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'visual_parity_coverage'),
+        severity: 'MINOR',
+        status: 'SKIP',
+        details: `project_profile=${ctx.resolvedProfile.name} 未启用 plan.visual_parity`,
+      });
+    } else {
+      results.push(...safeRun(() => dispatchPlanVisualParity(ctx), 'visual_parity_coverage'));
+    }
 
     results.push(
       ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "screens": [
+    {
+      "screen_id": "home",
+      "verdict": "pass",
+      "screenshot_path": "doc/features/demo/device-testing/device-screenshots/shot-home.png",
+      "ref_id": "home",
+      "fidelity_score": 999,
+      "geometric_iou": -3
+    }
+  ]
+}

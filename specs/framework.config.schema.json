@@ -83,7 +83,11 @@
     "state_machine": { "type": "object" },
     "spec": {
       "type": "object",
-      "description": "spec 阶段 opt-in 脚本行为（如 visual_handoff_enforcement / visual_sources）。"
+      "description": "spec 阶段 opt-in 脚本行为（visual_handoff_enforcement / ui_spec_enforcement / visual_sources）。"
+    },
+    "coding": {
+      "type": "object",
+      "description": "coding 阶段 opt-in 脚本行为（visual_parity_enforcement）。"
     },
     "active_workflow": {
       "type": "string",

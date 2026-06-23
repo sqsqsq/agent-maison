@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "static_fidelity_score",
+      "status": "PASS",
+      "details_includes": "结构屏匹配：100%"
+    }
+  ]
+}

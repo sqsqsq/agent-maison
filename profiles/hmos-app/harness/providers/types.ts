@@ -18,6 +18,11 @@ export type CapabilityProviderId =
   | 'hdc_app'
   | 'hylyre'
   | 'script'
+  | 'script_ui_spec'
+  | 'script_visual_parity'
+  | 'script_visual_parity_plan'
+  | 'script_asset_acquisition'
+  | 'hylyre_visual_diff'
   | 'none';
 
 export interface CapabilityProvider {

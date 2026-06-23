@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "cross-spawn": "^7.0.6",
+    "jimp": "^0.22.12",
     "yaml": "^2.7.0",
     "chalk": "^4.1.2",
     "minimist": "^1.2.8"

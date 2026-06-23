@@ -1511,6 +1511,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         tools: {
           hylyre: { pypi_extra_index_url: 'https://pypi.internal.corp/simple' },
         },
+        spec: { ui_spec_enforcement: 'strict', visual_handoff_enforcement: 'reachable' },
+        coding: { visual_parity_enforcement: 'warn' },
         state_machine: { schema_version: '1.1', ttl_hours: 12 },
         toolchain: { hvigor: { daemon: true } },
       };
@@ -1535,8 +1537,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         (payload!.tools as { hylyre: { pypi_extra_index_url: string } }).hylyre.pypi_extra_index_url,
         'https://pypi.internal.corp/simple',
       );
-      assert.strictEqual((payload as Record<string, unknown>).state_machine, undefined);
-      assert.strictEqual((payload as Record<string, unknown>).toolchain, undefined);
+      assert.deepStrictEqual(payload!.spec, { ui_spec_enforcement: 'strict', visual_handoff_enforcement: 'reachable' });
+      assert.deepStrictEqual(payload!.coding, { visual_parity_enforcement: 'warn' });
+      assert.strictEqual((payload!.state_machine as { ttl_hours: number }).ttl_hours, 12);
+      assert.strictEqual((payload!.toolchain as { hvigor: { daemon: boolean } }).hvigor.daemon, true);
       fs.rmSync(root, { recursive: true, force: true });
     },
   },

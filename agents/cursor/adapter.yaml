@@ -5,6 +5,9 @@ description: |
   `.cursor/rules/framework.mdc` 总规则索引。跳板只做 metadata 声明 + **一条**
   跳转，不复述 skill 逻辑；不得在跳板内追加业务条款 / 选型表 / 次级链接（免双源分叉）。
 
+# 多模态：Cursor Composer 原生支持 Read 图片；harness collectContextFiles 注入 authoritative_refs 图片字节
+multimodal: true
+
 agent_entry_file:
   template_path: templates/AGENTS.md.template   # 共享模板（相对于 framework/ 根）
   target_path: AGENTS.md

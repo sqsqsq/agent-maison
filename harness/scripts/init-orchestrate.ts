@@ -348,6 +348,22 @@ export function deriveUpdateConfigWritePayload(
   if (existing.tools && typeof existing.tools === 'object' && !Array.isArray(existing.tools)) {
     payload.tools = JSON.parse(JSON.stringify(existing.tools));
   }
+  if (existing.spec && typeof existing.spec === 'object' && !Array.isArray(existing.spec)) {
+    payload.spec = JSON.parse(JSON.stringify(existing.spec));
+  }
+  if (existing.coding && typeof existing.coding === 'object' && !Array.isArray(existing.coding)) {
+    payload.coding = JSON.parse(JSON.stringify(existing.coding));
+  }
+  if (
+    existing.state_machine &&
+    typeof existing.state_machine === 'object' &&
+    !Array.isArray(existing.state_machine)
+  ) {
+    payload.state_machine = JSON.parse(JSON.stringify(existing.state_machine));
+  }
+  if (existing.toolchain && typeof existing.toolchain === 'object' && !Array.isArray(existing.toolchain)) {
+    payload.toolchain = JSON.parse(JSON.stringify(existing.toolchain));
+  }
 
   // 仅当调用方显式传入 decision adapters（execute SSOT）时写入 payload；
   // emit 预填不得从磁盘带入 materialized_adapters，否则会与 S2 decision 冲突触发 cross-check。

@@ -71,6 +71,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ut-module-selection', modulePath: './unit/ut-module-selection.unit.test' },
   { id: 'ut-build-config-files', modulePath: './unit/ut-build-config-files.unit.test' },
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
+  { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test' },
+  { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
   { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
   { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
   { id: 'resolve-skill-path', modulePath: './unit/resolve-skill-path.unit.test' },

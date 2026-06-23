@@ -364,8 +364,15 @@ export interface SpecHarnessConfig {
    * 未配置整个 `spec` 段时，check-spec 对「缺失 ui_change 块」**静默**，见 check-spec 文档。
    */
   visual_handoff_enforcement?: VisualHandoffEnforcementMode;
+  /** ui-spec.yaml 结构守门强度（默认 warn/reachable，非 strict） */
+  ui_spec_enforcement?: VisualHandoffEnforcementMode;
   /** 外部 UX 根目录与绝对路径 / UNC 安全开关 */
   visual_sources?: VisualSourcesConfig;
+}
+
+export interface CodingHarnessConfig {
+  /** check-visual-parity 守门强度（默认 warn/reachable） */
+  visual_parity_enforcement?: VisualHandoffEnforcementMode;
 }
 
 /** @deprecated v2.3 起改用 `SpecHarnessConfig` 与 `FrameworkConfig.spec` */
@@ -415,6 +422,8 @@ export interface FrameworkConfig {
   state_machine?: StateMachineConfig;
   /** spec 阶段脚本行为（opt-in；可选） */
   spec?: SpecHarnessConfig;
+  /** coding 阶段视觉 parity 脚本行为（opt-in；可选） */
+  coding?: CodingHarnessConfig;
   /**
    * Harness workflow 名称（无后缀），对应 `framework/workflows/<name>.workflow.yaml`。
    * 默认 `spec-driven`。
@@ -831,21 +840,32 @@ function normalizeTools(raw: FrameworkToolsConfig | undefined): FrameworkToolsCo
   return { hylyre: { ...hy } };
 }
 
+function parseEnforcementMode(
+  modeRaw: unknown,
+  fieldName: string,
+): VisualHandoffEnforcementMode | undefined {
+  if (modeRaw === undefined || modeRaw === null) return undefined;
+  const mode = String(modeRaw).trim() as VisualHandoffEnforcementMode;
+  const allowed = new Set<VisualHandoffEnforcementMode>(['strict', 'warn', 'reachable', 'off']);
+  if (!allowed.has(mode)) {
+    throw new Error(
+      `[framework/config.ts] ${fieldName} 必须是 "strict" | "warn" | "reachable" | "off"，收到 ${String(modeRaw)}`,
+    );
+  }
+  return mode;
+}
+
 function normalizeSpecHarness(raw: SpecHarnessConfig | undefined): SpecHarnessConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
 
-  let visual_handoff_enforcement: VisualHandoffEnforcementMode | undefined;
-  const modeRaw = raw.visual_handoff_enforcement;
-  if (modeRaw !== undefined && modeRaw !== null) {
-    const mode = String(modeRaw).trim() as VisualHandoffEnforcementMode;
-    const allowed = new Set<VisualHandoffEnforcementMode>(['strict', 'warn', 'reachable', 'off']);
-    if (!allowed.has(mode)) {
-      throw new Error(
-        `[framework/config.ts] spec.visual_handoff_enforcement 必须是 "strict" | "warn" | "reachable" | "off"，收到 ${String(modeRaw)}`,
-      );
-    }
-    visual_handoff_enforcement = mode;
-  }
+  const visual_handoff_enforcement = parseEnforcementMode(
+    raw.visual_handoff_enforcement,
+    'spec.visual_handoff_enforcement',
+  );
+  const ui_spec_enforcement = parseEnforcementMode(
+    raw.ui_spec_enforcement,
+    'spec.ui_spec_enforcement',
+  );
 
   let visual_sources: VisualSourcesConfig | undefined;
   const vsRaw = raw.visual_sources;
@@ -861,13 +881,26 @@ function normalizeSpecHarness(raw: SpecHarnessConfig | undefined): SpecHarnessCo
   }
 
   const hasAny =
-    visual_handoff_enforcement !== undefined || (visual_sources !== undefined && Object.keys(visual_sources).length > 0);
+    visual_handoff_enforcement !== undefined ||
+    ui_spec_enforcement !== undefined ||
+    (visual_sources !== undefined && Object.keys(visual_sources).length > 0);
   if (!hasAny) return undefined;
 
   return {
     ...(visual_handoff_enforcement !== undefined ? { visual_handoff_enforcement } : {}),
+    ...(ui_spec_enforcement !== undefined ? { ui_spec_enforcement } : {}),
     ...(visual_sources !== undefined ? { visual_sources } : {}),
   };
+}
+
+function normalizeCodingHarness(raw: CodingHarnessConfig | undefined): CodingHarnessConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const visual_parity_enforcement = parseEnforcementMode(
+    raw.visual_parity_enforcement,
+    'coding.visual_parity_enforcement',
+  );
+  if (visual_parity_enforcement === undefined) return undefined;
+  return { visual_parity_enforcement };
 }
 
 function resolveSpecHarnessSegment(
@@ -942,6 +975,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     toolchain: normalizeToolchain(raw.toolchain),
     state_machine: normalizeStateMachine(raw.state_machine),
     spec: resolveSpecHarnessSegment(raw),
+    coding: normalizeCodingHarness(raw.coding as CodingHarnessConfig | undefined),
     active_workflow:
       typeof raw.active_workflow === 'string' && raw.active_workflow.trim().length > 0
         ? raw.active_workflow.trim()

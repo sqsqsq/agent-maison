@@ -26,6 +26,7 @@ assets:
   spec:
     spec_template: templates/spec-template.md
     prd_template: templates/spec-template.md
+    ui_spec_template: templates/ui-spec-template.yaml
     example_spec: examples/example-spec.md
     example_prd: examples/example-spec.md
     examples_spec_mapping: examples-spec-mapping.md

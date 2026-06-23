@@ -378,6 +378,25 @@ verification_result:
 
 ---
 
+## 七-b、多模态视觉对照（ui_change=new_or_changed 时 · MAJOR）
+
+> **Verifier 必须是多模态模型**（强 VL：Composer / Claude 等）。纯文本 verifier 对本节标 SKIP 并在 summary 注明降级。
+
+当 spec 声明 `ui_change: new_or_changed` 且上下文含 **原图 + ui-spec.yaml** 时，额外执行：
+
+### 检查 N: 视觉多模态 parity (visual_multimodal_parity)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. 打开 authoritative_refs 原图与 ui-spec.yaml
+  2. 对照实现代码与资源，逐区域报告：版面结构 / 品牌主题色 / 真实资产 vs 占位 / 文案逐字保真
+  3. ui-spec `verified=unverified` 时：仅报告明显冲突，不宣称整体保真 PASS
+- **证据**: 按屏列出 must-fix 项（若有）
+
+若 adapter 未声明 `multimodal: true` 或上下文无图片注入：本检查 **SKIP**，details 写「视觉多模态层已降级」。
+
+---
+
 ## 八、注意事项
 
 1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 时不得给出整体 PASS

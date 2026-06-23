@@ -214,6 +214,15 @@ structure_checks:
         - "版本"
         - "状态"
 
+  visual_parity_coverage:
+    description: >
+      ui_change 要求 UI 时 plan 须产出 plan/visual-parity.yaml，映射 ui-spec 每个
+      asset key / token key 到 contracts.resource_keys 与 components。
+    severity: MAJOR
+    rule:
+      expect: "visual_parity_yaml"
+      enforcement_config: "framework.config.json#coding.visual_parity_enforcement"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

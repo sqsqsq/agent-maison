@@ -270,6 +270,35 @@ structure_checks:
       expect: "yaml_code_block_with_ui_change"
       enforcement_config: "framework.config.json#spec.visual_handoff_enforcement"
 
+  ui_spec_structure:
+    description: >
+      ui_change=new_or_changed / copy_edits_only 时须产出 doc/features/{feature}/spec/ui-spec.yaml：
+      schema_version、非空 screens/tokens/assets；P0 屏须 root 组件树；每个 asset 须 resolved_path
+      或 placeholder+rationale；verified 字段驱动 DSL gate 与下游降级。
+      只查结构完整，非对图保真（保真由 fidelity gate + static_fidelity_score + visual_diff 承担）。
+      profile 分态：hmos-app 启用 / generic SKIP。详见 ui-spec.md。
+    severity: MAJOR
+    rule:
+      expect: "ui_spec_yaml"
+      enforcement_config: "framework.config.json#spec.ui_spec_enforcement"
+
+  ui_spec_fidelity_gate:
+    description: >
+      ui-spec verified 须为 verified 或 human_confirmed 方可作为保真基线进 plan；
+      unverified 时 WARN/FAIL（按 ui_spec_enforcement 档位）并触发 D/K 降级语义。
+    severity: MAJOR
+    rule:
+      expect: "ui_spec_verified_or_gate"
+      enforcement_config: "framework.config.json#spec.ui_spec_enforcement"
+
+  asset_acquisition:
+    description: >
+      crop 类 assets 须 human_crop_confirmed 后脚本裁图；依赖 jimp（见 image-tool-spike.md）。
+      jimp 未安装时 SKIP。
+    severity: MAJOR
+    rule:
+      provider: spec.asset_acquisition
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

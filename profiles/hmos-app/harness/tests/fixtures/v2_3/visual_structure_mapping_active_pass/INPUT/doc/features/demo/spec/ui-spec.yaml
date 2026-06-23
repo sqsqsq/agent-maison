@@ -1,0 +1,15 @@
+schema_version: "1.0"
+verified: human_confirmed
+verified_method: human_gate
+screens:
+  - id: home
+    priority: P0
+    root:
+      type: navigation_frame
+      order: 0
+      children:
+        - id: btn_add
+          type: action_button
+          order: 0
+tokens: {}
+assets: []

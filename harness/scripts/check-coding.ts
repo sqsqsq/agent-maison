@@ -36,7 +36,7 @@ import {
   relFeatureArtifact,
   relFeatureFile,
 } from '../config';
-import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID } from '../capability-registry';
+import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, isCodingVisualParitySkipped, dispatchCodingVisualParity } from '../capability-registry';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
@@ -563,6 +563,19 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
     results.push(...safeRun(() => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
     results.push(...safeRun(() => host.checkCodingCompile(ctx), 'coding_compile'));
+
+    if (isCodingVisualParitySkipped(ctx.resolvedProfile)) {
+      results.push({
+        id: 'visual_parity',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'visual_parity'),
+        severity: 'MINOR',
+        status: 'SKIP',
+        details: `project_profile=${ctx.resolvedProfile.name} 未启用 coding.visual_parity`,
+      });
+    } else {
+      results.push(...safeRun(() => dispatchCodingVisualParity(ctx), 'visual_parity'));
+    }
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkDesignToCode(ctx), 'plan_to_code'));

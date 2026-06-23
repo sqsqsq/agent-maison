@@ -24,6 +24,11 @@ capabilities:
   device_test.build: { provider: hvigor_app, severity: BLOCKER }
   device_test.install: { provider: hdc_app, severity: BLOCKER }
   spec.visual_handoff: { provider: script, severity: BLOCKER }
+  spec.ui_spec: { provider: script_ui_spec, severity: BLOCKER }
+  spec.asset_acquisition: { provider: script_asset_acquisition, severity: MAJOR }
+  plan.visual_parity: { provider: script_visual_parity_plan, severity: MAJOR }
+  coding.visual_parity: { provider: script_visual_parity, severity: MAJOR }
+  device_test.visual_diff: { provider: hylyre_visual_diff, severity: MAJOR }
 
 personal_prerequisites:
   coding.compile: [deveco_toolchain]

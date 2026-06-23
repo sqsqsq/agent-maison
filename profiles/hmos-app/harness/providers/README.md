@@ -11,5 +11,10 @@
 | device_test.build | hvigor_app | [device-test-build.ts](./device-test-build.ts) |
 | device_test.install | hdc_app | [device-test-install.ts](./device-test-install.ts) |
 | spec.visual_handoff | script | [spec-visual-handoff.ts](./spec-visual-handoff.ts) |
+| spec.ui_spec | script_ui_spec | [spec-ui-spec.ts](./spec-ui-spec.ts) |
+| spec.asset_acquisition | script_asset_acquisition | [spec-asset-acquisition.ts](./spec-asset-acquisition.ts) |
+| plan.visual_parity | script_visual_parity_plan | [plan-visual-parity.ts](./plan-visual-parity.ts) |
+| coding.visual_parity | script_visual_parity | [coding-visual-parity.ts](./coding-visual-parity.ts) |
+| device_test.visual_diff | hylyre_visual_diff | [device-test-visual-diff.ts](./device-test-visual-diff.ts) |
 
 统一接口占位见 [types.ts](./types.ts)；聚合导出入口：[index.ts](./index.ts)。

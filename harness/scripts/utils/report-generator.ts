@@ -24,6 +24,7 @@ import {
   HarnessResolvedProfile,
   ScriptReportCompatApplied,
   ScriptReportCompatExpired,
+  ContextFileEntry,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
@@ -170,7 +171,7 @@ export function assembleAIPrompt(
   projectRoot: string,
   phase: Phase,
   feature: string,
-  contextFiles: Array<{ label: string; content: string }>,
+  contextFiles: ContextFileEntry[],
   scriptReportJson: string,
   specContent: string,
   resolvedProfile?: HarnessResolvedProfile,
@@ -208,8 +209,35 @@ export function assembleAIPrompt(
   assembled = assembled.replace(/\{phase\}/g, phase);
   assembled = assembled.replace(/\{timestamp\}/g, new Date().toISOString());
 
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
+  const contextImageDir = path.join(dir, 'context-images');
+  let imageIdx = 0;
+
   const contextSection = contextFiles
-    .map(cf => `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``)
+    .map(cf => {
+      if (cf.kind === 'image' && cf.imagePath && fs.existsSync(cf.imagePath)) {
+        fs.mkdirSync(contextImageDir, { recursive: true });
+        const base = path.basename(cf.imagePath).replace(/[^\w.-]+/g, '_');
+        const sidecarName = `${String(imageIdx).padStart(2, '0')}-${base}`;
+        imageIdx++;
+        const sidecarAbs = path.join(contextImageDir, sidecarName);
+        fs.copyFileSync(cf.imagePath, sidecarAbs);
+        const sidecarRel = path.join('context-images', sidecarName).replace(/\\/g, '/');
+        const mime = cf.mime ?? 'image/png';
+        return [
+          `### ${cf.label}`,
+          '',
+          `> 多模态上下文图片（sidecar）：\`${sidecarRel}\` · ${mime}`,
+          '',
+          `![${cf.label}](${sidecarRel})`,
+          '',
+          cf.content.trim()
+            ? cf.content
+            : 'VL verifier 须读取 sidecar 像素文件对照 ui-spec（禁止把 data URI 当保真注入）。',
+        ].join('\n');
+      }
+      return `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``;
+    })
     .join('\n\n');
   assembled = assembled.replace(/\{context_files\}/g, contextSection);
 
@@ -219,7 +247,6 @@ export function assembleAIPrompt(
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
 
-  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
 

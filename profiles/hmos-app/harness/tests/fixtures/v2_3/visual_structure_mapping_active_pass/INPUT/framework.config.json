@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "project_name": "vf-structure-fixture",
+  "project_type": "app",
+  "project_profile": { "name": "hmos-app" },
+  "agent_adapter": "cursor",
+  "architecture": {
+    "outer_layers": [{ "id": "01-Product", "can_depend_on": [], "intra_layer_deps": "forbid" }],
+    "module_inner_layers": ["shared", "data", "domain", "presentation"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index.ets"
+  },
+  "paths": { "features_dir": "doc/features" },
+  "spec": {
+    "visual_handoff_enforcement": "reachable",
+    "ui_spec_enforcement": "reachable"
+  },
+  "coding": { "visual_parity_enforcement": "warn" }
+}

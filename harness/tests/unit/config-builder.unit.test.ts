@@ -8,7 +8,9 @@ import * as path from 'path';
 import {
   buildProjectConfigForWrite,
   prepareConfigWriteForTask,
+  readExistingConfigFromDisk,
 } from '../../scripts/utils/config-builder';
+import { deriveUpdateConfigWritePayload } from '../../scripts/init-orchestrate';
 import { getEffectiveBackfillFields } from '../../scripts/utils/config-field-merger';
 import { preflightExecute, buildRunLogAuditMeta } from '../../scripts/init-orchestrate';
 import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
@@ -48,6 +50,64 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const fields = getEffectiveBackfillFields('hmos-app');
       assert(fields.some(f => f.path === 'tools.hylyre.vendor_dir'));
+    },
+  },
+  {
+    name: 'getEffectiveBackfillFields hmos-app 含视觉保真 spec/coding 默认',
+    run: () => {
+      const fields = getEffectiveBackfillFields('hmos-app');
+      assert(fields.some(f => f.path === 'spec.ui_spec_enforcement'));
+      assert(fields.some(f => f.path === 'spec.visual_handoff_enforcement'));
+      assert(fields.some(f => f.path === 'coding.visual_parity_enforcement'));
+      const uiSpec = fields.find(f => f.path === 'spec.ui_spec_enforcement');
+      assert.strictEqual(uiSpec?.defaultValue, 'reachable');
+    },
+  },
+  {
+    name: 'getEffectiveBackfillFields generic 不含 spec/coding 视觉字段',
+    run: () => {
+      const fields = getEffectiveBackfillFields('generic');
+      assert(!fields.some(f => f.path.startsWith('spec.')));
+      assert(!fields.some(f => f.path.startsWith('coding.')));
+    },
+  },
+  {
+    name: 'buildProjectConfigForWrite hmos-app CREATE 写入 spec/coding 默认',
+    run: () => {
+      const out = buildProjectConfigForWrite({
+        project_name: 'demo',
+        project_profile: { name: 'hmos-app' },
+        materialized_adapters: ['cursor'],
+        architecture: minimalArch(),
+      });
+      const spec = out.spec as Record<string, unknown>;
+      const coding = out.coding as Record<string, unknown>;
+      assert.strictEqual(spec.ui_spec_enforcement, 'reachable');
+      assert.strictEqual(spec.visual_handoff_enforcement, 'reachable');
+      assert.strictEqual(coding.visual_parity_enforcement, 'warn');
+    },
+  },
+  {
+    name: 'buildProjectConfigForWrite UPDATE overwrite 保留 spec 并补缺 ui_spec_enforcement',
+    run: () => {
+      const root = mkTmp();
+      const existing = {
+        project_name: 'demo',
+        architecture: minimalArch(),
+        project_profile: { name: 'hmos-app' },
+        spec: { visual_handoff_enforcement: 'strict' },
+      };
+      fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify(existing));
+      const payload = deriveUpdateConfigWritePayload(root, ['cursor']);
+      assert(payload);
+      const out = buildProjectConfigForWrite(payload!, {
+        existingConfig: readExistingConfigFromDisk(root),
+        profileName: 'hmos-app',
+      });
+      const spec = out.spec as Record<string, unknown>;
+      assert.strictEqual(spec.visual_handoff_enforcement, 'strict');
+      assert.strictEqual(spec.ui_spec_enforcement, 'reachable');
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
   {

@@ -42,12 +42,13 @@ import {
   describeGlossaryError,
   lookupTerm,
 } from './utils/glossary-parser';
-import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff } from '../capability-registry';
+import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
 import { relCatalog, relGlossary, relFeatureArtifact } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
+export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -878,6 +879,21 @@ const checker: PhaseChecker = {
       });
     } else {
       results.push(...safeRun(() => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
+    }
+    if (isSpecUiSpecSkipped(ctx.resolvedProfile)) {
+      results.push({
+        id: 'ui_spec_structure',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ui_spec_structure'),
+        severity: 'MINOR',
+        status: 'SKIP',
+        details: `project_profile=${ctx.resolvedProfile.name} 未启用 spec.ui_spec 脚本守门`,
+      });
+    } else {
+      results.push(...safeRun(() => dispatchSpecUiSpec(ctx, prd), 'ui_spec_structure'));
+    }
+    if (!isSpecAssetAcquisitionSkipped(ctx.resolvedProfile)) {
+      results.push(...safeRun(() => dispatchSpecAssetAcquisition(ctx), 'asset_acquisition'));
     }
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
     results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));
