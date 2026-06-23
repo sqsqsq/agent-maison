@@ -66,6 +66,20 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 `--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。
 
+#### 启动方式（按宿主 shell 能力分流 · BLOCKER）
+
+goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟）。**绝不能**把它当一条普通阻塞命令塞进有超时的 shell 工具里——否则 shell 工具秒级超时，runner 变孤儿进程后台续跑、agent 误判超时又重复起 run，互相杀子进程（chrys 实测坑）。按宿主 shell 能力二选一：
+
+- **宿主 shell 支持后台启动**（Cursor `is_background` / Claude Code `run_in_background` 等）→ 用宿主的后台模式启动上面的命令，立即拿到控制权。
+- **宿主 shell 仅阻塞、无后台、有超时上限**（chrys / opencode 等 TUI 的内置 shell）→ **必须加 `--detach`**：
+
+  ```bash
+  cd framework/harness && npx ts-node scripts/goal-runner.ts \
+    --feature <feature-slug> --requirement "<需求>" --adapter <adapter> --detach
+  ```
+
+  `--detach` 让 goal-runner **秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0**——宿主 shell 拿到干净的 0 退出码就返回（不会触发超时杀树），真正的 run 在后台独立跑、逐 phase 拉 headless agent。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`，不占用宿主 shell 的管道。**解析该 JSON 取 `run_id`**，随后按下文轮询 `goal-status`。
+
 ### 续跑
 
 用户说「继续 goal run `<run-id>`」→ agent 自跑（**须带 feature**）：
@@ -97,7 +111,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 
 ### 运行中进度汇报
 
-启动 runner 后（建议后台 `block_until_ms: 0`），立刻告诉用户 `run_id` 与 `progress.json` 路径。
+启动 runner（后台模式或 `--detach`，见上「启动方式」）后，立刻告诉用户 `run_id` 与 `progress.json` 路径。
 
 需要汇报「仍在跑什么」时，agent 自跑**一次性**（poll 一帧即退出，**不要**跑 `--watch` 常驻）：
 
@@ -110,6 +124,8 @@ cd framework/harness && npx ts-node scripts/goal-status.ts \
 - **加速器（Cursor 等支持 `notify_on_output` 的宿主）**：匹配 runner stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN`，有进展时再 poll。
 - 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status`（实时重算锁 pid）。
 - 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
+- **活性信号唯一权威 = `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍）；判断「是否卡死」只看这些。**
+- **BLOCKER（chrys / opencode 等无流式 headless adapter）**：`phases/<phase>/agent-output.log` 在该 phase **结束前恒为空**（chrys 结束才一次性写 stdout、opencode 流式但中途可长时间静默）——**禁止** tail 该日志判断进度或卡死；看到它空 ≠ runner 卡住。误把空日志当卡死会触发错误的 `--resume` / 重复起 run（chrys 实测坑）。
 
 ## 报告解读（汇报给用户）
 

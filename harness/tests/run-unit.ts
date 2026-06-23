@@ -121,6 +121,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
   { id: 'goal-runner-policy', modulePath: './unit/goal-runner-policy.unit.test' },
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },
+  { id: 'goal-runner-detach', modulePath: './unit/goal-runner-detach.unit.test' },
   { id: 'chrys-opencode-adapter', modulePath: './unit/chrys-opencode-adapter.unit.test' },
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },

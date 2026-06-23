@@ -32,6 +32,7 @@ import {
   buildGoalManifestFromInput,
   loadGoalManifestFile,
   loadGoalManifestFromRun,
+  newRunId,
   writeGoalManifest,
   type GoalManifest,
 } from './utils/goal-manifest';
@@ -57,6 +58,7 @@ import {
   findLastRunEnd,
   getSummaryMtime,
   loadEventsJsonl,
+  resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
   resolveResumeFromEvents,
@@ -73,6 +75,8 @@ import {
   FEATURE_LOCK_NAME,
   RUN_LOCK_NAME,
   formatLockBlocker,
+  isLockStale,
+  isPidAlive,
   readLockRecord,
   releaseLock,
   touchLock,
@@ -354,6 +358,52 @@ export function buildPhasePrompt(
   return parts.join('\n');
 }
 
+/**
+ * Detect an orphaned-but-incomplete prior run for a feature: feature.lock is stale
+ * (dead owner pid / heartbeat TTL) AND its run never reached a COMPLETED terminal
+ * status. Returns the run to resume, or null when starting fresh is safe (no lock /
+ * live runner / prior run already COMPLETED / run unidentifiable).
+ */
+export function resolveOrphanedIncompleteRun(
+  featureRunsDirAbs: string,
+): { runId: string; reason: string } | null {
+  const featureLockPath = path.join(featureRunsDirAbs, FEATURE_LOCK_NAME);
+  const existing = readLockRecord(featureLockPath);
+  if (!existing) return null; // clean
+  if (!isLockStale(existing)) return null; // live runner → acquireGoalLocks will BLOCK
+  const runId = existing.run_id;
+  if (!runId) return null; // unidentifiable owner → fall through (steal stale lock)
+  const events = loadEventsJsonl(path.join(featureRunsDirAbs, runId, 'events.jsonl'));
+  const end = resolveEffectiveRunEnd(events);
+  if (end?.status === 'COMPLETED') return null; // prior run finished; only a leftover lock
+  const reason = isPidAlive(existing.pid) ? 'lock 心跳超时（owner 未释放）' : 'owner 进程已退出';
+  return { runId, reason };
+}
+
+/**
+ * Fresh-start guard: refuse to spin up a brand-new run_id when an orphaned-but-
+ * incomplete run already exists for this feature; guide `--resume` instead.
+ * `--force` overrides (steal + fresh). No-op for `--resume`.
+ */
+function guardOrphanedFeatureRun(
+  projectRoot: string,
+  featuresDir: string,
+  feature: string,
+  force: boolean,
+): void {
+  if (force) return;
+  const featureRunsDirAbs = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs);
+  if (!orphan) return;
+  console.error(
+    `[goal-runner] BLOCKER: feature "${feature}" 有未完成的 goal-run "${orphan.runId}"` +
+      `（疑似孤儿：${orphan.reason}）。\n` +
+      `  续跑既有 run（推荐）: --resume ${orphan.runId} --feature ${feature} [--force-resume]\n` +
+      `  确认放弃该 run 改起全新 run: 本次命令加 --force`,
+  );
+  process.exit(1);
+}
+
 function acquireGoalLocks(
   projectRoot: string,
   featuresDir: string,
@@ -484,15 +534,118 @@ function buildAgentWarn(invoke: {
   return `agent observability: ${parts.join(', ')} (harness gate used fresh summary)`;
 }
 
+/**
+ * Build the argv for the detached child: strip `--detach`, add `--detached-child`,
+ * and (for a fresh run) thread the pre-generated `--run-id` so the child's manifest
+ * matches the run_id the launcher already printed. Resume already carries its id.
+ */
+export function buildDetachedChildArgv(
+  rawArgs: string[],
+  runId: string,
+  opts: { resume: boolean },
+): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < rawArgs.length; i++) {
+    const a = rawArgs[i];
+    if (a === '--detach') continue;
+    if (a === '--run-id') {
+      i++; // drop any pre-existing --run-id + its value; we re-add canonically
+      continue;
+    }
+    out.push(a);
+  }
+  out.push('--detached-child');
+  if (!opts.resume) out.push('--run-id', runId);
+  return out;
+}
+
+/**
+ * `--detach` launcher: spawn the real run as an independent background process and
+ * return immediately. Critical Windows semantics (see chrys shell-tool host):
+ *  - child stdio → log file, NEVER the parent's inherited stdout/stderr pipe, so a
+ *    blocking host (chrys `communicate()`) sees EOF and the launcher "completes";
+ *  - launcher exits 0 fast → host's clean-exit path does not tree-kill the child.
+ */
+function runDetachLauncher(argv: minimist.ParsedArgs): number {
+  const layout = detectRepoLayout(__dirname);
+  const projectRoot = layout.projectRoot;
+  const cfg = loadFrameworkConfig(projectRoot);
+  const featuresDir = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
+
+  const feature = typeof argv.feature === 'string' ? argv.feature.trim() : '';
+  const isResume = Boolean(argv.resume);
+  if (!feature) {
+    console.error('[goal-runner] BLOCKER: --detach 须配 --feature（用于定位 run 日志目录）');
+    return 1;
+  }
+
+  // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
+  // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
+  if (!isResume) {
+    guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
+  }
+
+  const runId = isResume
+    ? String(argv.resume)
+    : typeof argv['run-id'] === 'string' && argv['run-id'].trim()
+      ? String(argv['run-id']).trim()
+      : newRunId();
+
+  const reportDirRel = path.posix.join(featuresDir, feature, 'goal-runs', runId);
+  const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
+  fs.mkdirSync(reportDirAbs, { recursive: true });
+  const logPathAbs = path.join(reportDirAbs, 'detach.log');
+  const logFd = fs.openSync(logPathAbs, 'a');
+
+  const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
+  const child = spawn(
+    process.execPath,
+    ['-r', 'ts-node/register/transpile-only', __filename, ...childArgs],
+    {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      windowsHide: true,
+      cwd: process.cwd(),
+      env: process.env,
+    },
+  );
+  // Parent must release the fd and the child reference: keeps no handle on the log
+  // (so the host's pipe wait can't be extended) and lets the parent exit cleanly.
+  child.unref();
+  fs.closeSync(logFd);
+
+  console.log(
+    JSON.stringify({
+      detached: true,
+      run_id: runId,
+      feature,
+      report_dir: reportDirRel,
+      log: path.relative(projectRoot, logPathAbs).replace(/\\/g, '/'),
+      pid: child.pid ?? null,
+    }),
+  );
+  return 0;
+}
+
 async function main(): Promise<number> {
   guardNestedGoalRunner();
   setupSignalHandlers();
 
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'requirement', 'adapter', 'start', 'end', 'resume', 'manifest'],
-    boolean: ['help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest'],
+    string: ['feature', 'requirement', 'adapter', 'start', 'end', 'resume', 'manifest', 'run-id'],
+    boolean: [
+      'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
+      'detach', 'detached-child', 'force',
+    ],
     alias: { f: 'feature', h: 'help' },
   });
+
+  // `--detach`: fork the real run into the background and return immediately so a
+  // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
+  // The spawned child carries `--detached-child` and runs this same main() normally.
+  if (argv.detach && !argv['detached-child']) {
+    return runDetachLauncher(argv);
+  }
 
   if (argv.help) {
     console.log(`
@@ -501,6 +654,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
   npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
     [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
+    [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
+                 (for hosts whose shell tool blocks / can't background a long task)
 `);
     process.exit(0);
   }
@@ -544,6 +699,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         feature: argv.feature,
         requirement: argv.requirement,
         adapter: argv.adapter ?? cfg.agent_adapter,
+        // Detached child reuses the run_id the launcher already printed to the host.
+        run_id:
+          typeof argv['run-id'] === 'string' && argv['run-id'].trim()
+            ? String(argv['run-id']).trim()
+            : undefined,
         unattended: {
           write_mode: 'workspace-write',
           approval_mode: 'never',
@@ -561,6 +721,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
   const dryRun = Boolean(argv['dry-run']);
   const forceResume = Boolean(argv['force-resume']);
+
+  // Fresh start (not --resume): if an orphaned-but-incomplete run exists for this
+  // feature, refuse a brand-new run_id and guide --resume (--force overrides).
+  if (!argv.resume) {
+    guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
+  }
 
   acquireGoalLocks(projectRoot, featuresDir, manifest.feature, manifest.run_id);
 

@@ -80,6 +80,22 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> --requirement "需求" --adapter opencode --dry-run
 ```
 
+### 从无后台能力的宿主 shell 启动（chrys / opencode TUI 等）→ 必须 `--detach`
+
+当**编排 agent 自己**（如 chrys TUI 的内置 shell 工具）去启动 goal-runner，而该 shell **仅阻塞、有超时上限、无后台模式**时：直接跑会秒级超时 → runner 变孤儿后台续跑 → agent 误判超时又重复起 run → 子进程互杀（chrys 实测）。**加 `--detach`**：
+
+```bash
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "需求" --adapter chrys --detach
+```
+
+- launcher **秒级 fork 后台 child 并打印一行 JSON**（`{detached, run_id, report_dir, log, pid}`）后 `exit 0`；宿主 shell 拿到干净 0 退出码立即返回，**不触发超时杀树**。
+- child 的 stdio 重定向到 `report_dir/detach.log`，**不继承宿主 shell 的管道**（否则宿主 `communicate()`/阻塞读会一直等到 child 关 pipe，反而拖到超时杀树）。
+- 解析 launcher JSON 取 `run_id`，随后按下文 `goal-status` 轮询；`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
+- 适用前提（实测，chrys `foundation/platform/process.py`）：宿主 shell 用 `CREATE_NEW_CONSOLE` 而非 kill-on-close Job Object，且**仅在超时/取消时杀树**——故 launcher 干净退出即可让 detach 存活。
+
+**监控口径（chrys/opencode 无流式）**：`phases/<phase>/agent-output.log` 在 phase 结束前**恒为空**——活性**只**看 `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍），**禁止** tail `agent-output.log` 判断卡死。
+
 ## 运行中进度（progress 契约）
 
 事实源：`events.jsonl`（append-only）。派生快照：`progress.json` / `progress.md`（可重建）。

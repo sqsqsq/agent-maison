@@ -61,7 +61,7 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
   wall_clock_minutes: 480,
 };
 
-function newRunId(): string {
+export function newRunId(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
