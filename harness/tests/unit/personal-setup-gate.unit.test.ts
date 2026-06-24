@@ -316,10 +316,115 @@ const cases: Array<{ name: string; run: () => void }> = [
       const payload = ensurePersonalSetup(root);
       assert.strictEqual(payload.ok, false);
       assert.strictEqual(payload.code, 'no_materialized_adapter');
+      assert.ok(payload.message.includes('--project-root'));
       assert.ok(!fs.existsSync(path.join(root, 'framework.local.json')));
 
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: 多 adapter + selectAdapter ∈ candidates 写 local',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root, { selectAdapter: 'cursor' });
+      assert.strictEqual(payload.ok, true);
+      assert.strictEqual(payload.code, 'ok');
+      assert.strictEqual(payload.ensured, 'auto_selected_adapter');
+      assert.strictEqual(payload.activeAdapter, 'cursor');
+      const local = JSON.parse(
+        fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+      ) as { agent_adapter?: string };
+      assert.strictEqual(local.agent_adapter, 'cursor');
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: 多 adapter + selectAdapter ∉ candidates 不写盘',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root, { selectAdapter: 'codex' });
+      assert.strictEqual(payload.ok, false);
+      assert.strictEqual(payload.code, 'needs_adapter_choice');
+      assert.ok(payload.message.includes('codex'));
+      assert.ok(!fs.existsSync(path.join(root, 'framework.local.json')));
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: 单 adapter + selectAdapter 仍 auto_single_adapter',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root, { selectAdapter: 'claude' });
+      assert.strictEqual(payload.ok, true);
+      assert.strictEqual(payload.ensured, 'auto_single_adapter');
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: selectAdapter + deveco 同轮 → auto_selected_adapter_and_deveco',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor'], 'hmos-app');
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+
+      const fakeInstall = path.join(root, 'fake-deveco');
+      const hvigorBin = path.join(
+        fakeInstall,
+        'tools',
+        'hvigor',
+        'bin',
+        process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw',
+      );
+      fs.mkdirSync(path.dirname(hvigorBin), { recursive: true });
+      fs.writeFileSync(hvigorBin, '');
+
+      __testing_setDetectScanForEnsure(() => ({
+        candidates: [],
+        recommended: {
+          status: 'ok',
+          installPath: fakeInstall,
+          source: 'scan',
+          missing: [],
+        },
+      }));
+
+      try {
+        clearFrameworkConfigCache();
+        const prereqs = resolveEnsurePrerequisites(root, 'coding');
+        const payload = ensurePersonalSetup(root, {
+          requiredPrerequisites: prereqs,
+          selectAdapter: 'cursor',
+        });
+        assert.strictEqual(payload.ok, true, payload.message);
+        assert.strictEqual(payload.ensured, 'auto_selected_adapter_and_deveco');
+        assert.strictEqual(payload.activeAdapter, 'cursor');
+      } finally {
+        __testing_setDetectScanForEnsure(null);
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
     },
   },
 ];

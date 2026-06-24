@@ -31,6 +31,8 @@ import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skil
 import { resolveMaterializedAdaptersForCleanup } from './materialized-adapters-resolve';
 import type { CleanupEffects, CleanupResult } from './init-sync-telemetry';
 import { detectRepoLayout } from '../../repo-layout';
+import { renderBridgeSkillStubMarkdown } from './materialize-agent-bundle-skills';
+import { resolveSkillPath } from './resolve-skill-path';
 import {
   aggregateFileEffects,
   buildOwnedByTaskSet,
@@ -194,6 +196,20 @@ function syncTemplateTarget(
         projectRoot: ctx.projectRoot,
         stubTargetRelPosix: norm,
       }),
+      'utf-8',
+    );
+  } else if (
+    file.origin.includes('skill_bridge') &&
+    norm.replace(/\\/g, '/').endsWith('goal-mode/SKILL.md')
+  ) {
+    const resolved = resolveSkillPath(fwRoot, 'goal-mode');
+    payload = Buffer.from(
+      renderBridgeSkillStubMarkdown(
+        'goal-mode',
+        norm,
+        resolved.skillMdRepoRel,
+        adapter.name,
+      ),
       'utf-8',
     );
   } else {

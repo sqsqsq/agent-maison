@@ -8,14 +8,18 @@ Feature phase（catalog-bootstrap / spec … device-testing）与对应 adapter 
 cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>
 ```
 
+goal-mode 等多 adapter 工程须加 `--select-adapter <RESOLVED_ADAPTER>`（解析方式见 [goal-mode SKILL](../project/goal-mode/SKILL.md) §运行身份）。
+
 **仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`）。勿依赖人读 stderr/stdout 散文。
 
 | `code` | 行为 |
 |--------|------|
 | `ok` | 已就绪（或 `--ensure` 已自动写入 local）→ 继续本阶段 |
-| `needs_adapter_choice` | 多 adapter：用 registry **`setup.adapter`** 选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘（agent 不手写 JSON） |
-| `no_materialized_adapter` | 项目未物化 adapter → **STOP**，引导 `/framework-init` |
+| `needs_adapter_choice` | 多 adapter 且未传有效 `--select-adapter`：用 registry **`setup.adapter`** 选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘（agent 不手写 JSON）；goal-mode 下 `--select-adapter` ∈ candidates 时 CLI 确定性自写（`ensured: auto_selected_adapter`） |
+| `no_materialized_adapter` | 项目未物化 adapter → 先复核 `--project-root` → **STOP**，引导 `/framework-init` |
 | `not_in_materialized` / `entry_not_materialized` | 项目级缺口 → **STOP**，引导 `/framework-init` |
+
+`ensured` 枚举含：`auto_single_adapter`、`auto_selected_adapter`、`auto_detect_deveco`、`auto_single_adapter_and_deveco`、`auto_selected_adapter_and_deveco`。
 
 与 [`harness-runner.ts`](../../harness/harness-runner.ts) pre-phase 门控语义一致；`init` / `docs` 全局 phase 豁免。`init` 内部 `run-global-phases` 使用 `HARNESS_INIT_INTERNAL_GLOBAL_RUN=1`（集成者自验，非普通入口）。
 
@@ -84,6 +88,7 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 | 只选已物化 adapter | `agent_adapter` ∈ `materialized_adapters` 且磁盘产物存在 |
 | 禁自由输入 | 编排决策仅 enum/gate/checkbox；路径仅探测候选或跳过 |
 | 探测只读 | S1 planner 运行前后磁盘 hash 不变（副作用仅在 S2 批准后） |
+| 门控失败即 STOP | personal-setup / preflight 失败或有歧义 → **STOP** 交回用户；**严禁**绕过 harness / **严禁**自由改码 |
 
 ## 相关
 

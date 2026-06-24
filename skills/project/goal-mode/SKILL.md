@@ -25,34 +25,45 @@
 | `feature` | 是 | feature slug |
 | `requirement` | 否 | 需求描述 |
 | `start_phase` / `end_phase` | 否 | 默认 spec→testing |
-| `adapter` | 否 | 用户显式指定 agent（如「用 cursor 跑 goal」）→ 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `--adapter`；未物化 → **STOP** 引导 `/framework-init`（不在 goal 流程内写项目产物） |
+| `adapter` | 否 | 用户显式指定 agent（如「用 cursor 跑 goal」）→ 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `RESOLVED_ADAPTER`；未物化 → **STOP** 引导 `/framework-init`（不在 goal 流程内写项目产物） |
+
+## 运行身份（RESOLVED_ADAPTER）
+
+本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。`RESOLVED_ADAPTER` 按下列阶梯解析（优先级从高到低）：
+
+1. **用户显式指定**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 直接用该值。
+2. **入口 / 跳板声明**：刚读过的 slash 或 skills-bridge 跳板内 `> 运行身份（RESOLVED_ADAPTER）：<name>` 行（Claude slash、Cursor/Codex/generic bridge 物化时注入）。
+3. **回退**：无法从入口确定身份 → registry **`setup.adapter`** 交互选择（见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)）；**永不硬猜**。
+
+若未经跳板直调本 Skill（无身份声明）→ 走阶梯 3。
 
 ## Agent 必须执行（勿推给用户）
 
 **BLOCKER**：主 agent 须通过 Shell **自己**启动 goal-runner，读取报告后用自然语言汇报；**不得**在回复里写「请用户执行以下命令」作为唯一出路。
 
-前置：
+前置（**严格顺序**）：
 
-1. [host-harness-readiness](../../reference/host-harness-readiness.md) Tier_1 + [harness-cli-cwd](../../reference/harness-cli-cwd.md)。
-2. **Personal setup**（按是否显式指定 adapter 分流）：
+1. [host-harness-readiness](../../reference/host-harness-readiness.md) Tier_1（`init-readiness.mjs` → 必要时 `npm install`）+ [harness-cli-cwd](../../reference/harness-cli-cwd.md)。**Tier_1 未就绪前禁止**调用任何 harness ts-node 脚本（避免 `@types/node` 缺失型 TSError）。
+2. **Personal setup + 确定性写盘**（Case A/B **合并为一条流程**；多 adapter 工程**必须**写出 `framework.local.json`，内层 phase 门控不豁免 `agent_adapter`）：
 
-   **A. 用户已显式指定 `adapter` 且已物化**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 校验 ∈ `materialized_adapters` 且入口产物存在后，**可跳过** `--ensure`，直接 `--adapter <name>` 启动 goal-runner（goal-runner preflight 的 `argv_adapter` provenance 会放行，即使尚无 `framework.local.json`）。
-
-   **B. 用户未显式指定 adapter** → **BLOCKER**：启动 goal-runner **之前**须 [personal-setup-gate](../../reference/personal-setup-gate.md)：
+   1. 按上节阶梯解析 `RESOLVED_ADAPTER`。
+   2. 执行 [personal-setup-gate](../../reference/personal-setup-gate.md)：
 
    ```bash
-   cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>
+   cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --select-adapter <RESOLVED_ADAPTER> --project-root <repo-root>
    ```
 
-   **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`）。按 `code` 分流：
+   3. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
 
    | `code` | 行为 |
    |--------|------|
    | `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 继续 |
-   | `needs_adapter_choice` | 多 adapter：registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘（**须经 `executionContext.activeAdapter`，禁 agent 手写 JSON**）；过程见 personal-setup-gate.md S1–S3 |
-   | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | **STOP**，引导 `/framework-init` |
+   | `needs_adapter_choice` | `RESOLVED_ADAPTER` ∉ candidates → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；或 **STOP**→`/framework-init` |
+   | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
-   **边界**：写 `framework.local.json`（个人、gitignored）由 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
+   4. 若阶梯 2 自动写入了 local.json（`ensured` 含 `auto_selected_adapter`），须在汇报中说明：「我按当前运行宿主选了 `<X>`（个人级 `framework.local.json`，gitignored）；要换别的 adapter 请讲」。
+
+   **边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
 ### 首次启动
 
@@ -60,7 +71,7 @@
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
   --requirement "<需求描述>" \
-  --adapter <显式指定或 personal setup 后的 active adapter> \
+  --adapter <RESOLVED_ADAPTER> \
   [--start spec] [--end testing] [--dry-run]
 ```
 
@@ -159,3 +170,5 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 - 在本 Skill 内复刻 `classifyPhaseVerdict` / `resolveAutoChain` 逻辑
 - 将 INCOMPLETE 软通过为 PASS 或 completed
 - 把 `npx ts-node scripts/goal-runner.ts` 贴给用户让其手动执行
+- personal-setup / preflight 门控失败、`no_materialized_adapter`、或任何歧义 → **STOP**，把结论与建议（`/framework-init` 或选 adapter）交回用户；**严禁**自行绕过 goal-runner、**严禁**转入自由改码、**严禁**据单次失败探测自下「项目未物化」结论而不复核 `--project-root`
+- 探测失败时须先核对 `--project-root` 指向含 `framework/` 与 `framework.config.json` 的工程根，再下结论

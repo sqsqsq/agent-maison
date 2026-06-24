@@ -239,6 +239,68 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'renderBridgeSkillStubMarkdown：goal-mode 注入运行身份',
+    run: () => {
+      const md = renderBridgeSkillStubMarkdown(
+        'goal-mode',
+        '.cursor/skills/goal-mode/SKILL.md',
+        'framework/skills/project/goal-mode/SKILL.md',
+        'codex',
+      );
+      assert(md.includes('RESOLVED_ADAPTER'));
+      assert(md.includes('codex'));
+    },
+  },
+  {
+    name: 'renderBridgeSkillStubMarkdown：非 goal-mode 不注入身份',
+    run: () => {
+      const md = renderBridgeSkillStubMarkdown(
+        'coding',
+        '.cursor/skills/coding/SKILL.md',
+        'framework/skills/feature/coding/SKILL.md',
+        'cursor',
+      );
+      assert(!md.includes('RESOLVED_ADAPTER'));
+    },
+  },
+  {
+    name: 'materializeAgentBundleSkills：goal-mode bridge 注入 adapterName',
+    run: () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-bundle-goal-'));
+      materializeAgentBundleSkills({
+        projectRoot: dir,
+        frameworkDir: FRAMEWORK_DIR,
+        bundle: {
+          root: '.agents',
+          skillsDir: '.agents/skills',
+          rulesDir: '.agents/rules',
+          skillMode: 'bridge',
+        },
+        skillIds: ['goal-mode'],
+        adapterName: 'cursor',
+      });
+      const p = path.join(dir, '.agents/skills/goal-mode/SKILL.md');
+      assert(fs.existsSync(p));
+      const txt = fs.readFileSync(p, 'utf8');
+      assert(txt.includes('RESOLVED_ADAPTER'));
+      assert(txt.includes('cursor'));
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'Claude goal-mode 静态模板含 RESOLVED_ADAPTER',
+    run: () => {
+      const tpl = path.join(
+        FRAMEWORK_DIR,
+        'agents/claude/templates/commands/goal-mode.md',
+      );
+      assert(fs.existsSync(tpl));
+      const txt = fs.readFileSync(tpl, 'utf8');
+      assert(txt.includes('RESOLVED_ADAPTER'));
+      assert(txt.includes('claude'));
+    },
+  },
+  {
     name: 'materializeAgentBundleSkills：写入临时目录',
     run: () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-bundle-'));

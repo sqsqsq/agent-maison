@@ -85,6 +85,8 @@ export interface PersonalSetupGateOptions {
   placementExempt?: boolean;
   /** phase / goal chain 要求的 personal prerequisite 并集 */
   requiredPrerequisites?: Set<PersonalPrerequisiteId>;
+  /** goal-mode / CLI --select-adapter：多 adapter 时确定性写入 active adapter */
+  selectAdapter?: string;
 }
 
 /** `--ensure` 用：有 --phase 时按 phase capability 并集；无 phase 时仅 agent_adapter（init 兼容） */
@@ -189,8 +191,15 @@ export interface PersonalSetupEnsureJson {
 
 export type PersonalSetupEnsuredAction =
   | 'auto_single_adapter'
+  | 'auto_selected_adapter'
   | 'auto_detect_deveco'
-  | 'auto_single_adapter_and_deveco';
+  | 'auto_single_adapter_and_deveco'
+  | 'auto_selected_adapter_and_deveco';
+
+type EnsureRepairStep =
+  | 'auto_single_adapter'
+  | 'auto_selected_adapter'
+  | 'auto_detect_deveco';
 
 /** 项目级 materialized 列表（不含 local merge） */
 export function resolveProjectMaterializedForGate(
@@ -215,13 +224,14 @@ export function adapterEntryExists(projectRoot: string, adapterName: string): bo
   return fs.existsSync(path.join(projectRoot, adapter.entryFile.targetRel));
 }
 
-function combineEnsuredActions(
-  steps: Array<'auto_single_adapter' | 'auto_detect_deveco'>,
-): PersonalSetupEnsuredAction | null {
-  const hasAdapter = steps.includes('auto_single_adapter');
+function combineEnsuredActions(steps: EnsureRepairStep[]): PersonalSetupEnsuredAction | null {
+  const hasSelected = steps.includes('auto_selected_adapter');
+  const hasSingle = steps.includes('auto_single_adapter');
   const hasDeveco = steps.includes('auto_detect_deveco');
-  if (hasAdapter && hasDeveco) return 'auto_single_adapter_and_deveco';
-  if (hasAdapter) return 'auto_single_adapter';
+  if (hasSelected && hasDeveco) return 'auto_selected_adapter_and_deveco';
+  if (hasSingle && hasDeveco) return 'auto_single_adapter_and_deveco';
+  if (hasSelected) return 'auto_selected_adapter';
+  if (hasSingle) return 'auto_single_adapter';
   if (hasDeveco) return 'auto_detect_deveco';
   return null;
 }
@@ -233,12 +243,21 @@ function formatEnsuredOkMessage(
   if (ensured === 'auto_single_adapter') {
     return `已自动写入 framework.local.json agent_adapter=${activeAdapter}`;
   }
+  if (ensured === 'auto_selected_adapter') {
+    return `已按 --select-adapter 写入 framework.local.json agent_adapter=${activeAdapter}`;
+  }
   if (ensured === 'auto_detect_deveco') {
     return '已自动探测并写入 framework.local.json toolchain.devEcoStudio.installPath';
   }
   if (ensured === 'auto_single_adapter_and_deveco') {
     return (
       `已自动写入 framework.local.json agent_adapter=${activeAdapter}，` +
+      '并探测写入 toolchain.devEcoStudio.installPath'
+    );
+  }
+  if (ensured === 'auto_selected_adapter_and_deveco') {
+    return (
+      `已按 --select-adapter 写入 framework.local.json agent_adapter=${activeAdapter}，` +
       '并探测写入 toolchain.devEcoStudio.installPath'
     );
   }
@@ -363,6 +382,7 @@ export function evaluatePersonalSetupGate(
 function attemptEnsureAdapterFromFallback(
   projectRoot: string,
   gate: Extract<PersonalSetupGateResult, { ok: false }>,
+  selectAdapter?: string,
 ): RepairAttempt {
   const { status, materializedAdapters, activeAdapter } = gate;
 
@@ -377,7 +397,8 @@ function attemptEnsureAdapterFromFallback(
         materializedAdapters,
         message:
           '项目尚未物化任何 adapter（materialized_adapters 为空）。' +
-          '请先执行 /framework-init 物化至少一个 adapter。',
+          '请先执行 /framework-init 物化至少一个 adapter。' +
+          '若已 init，请确认 --project-root 指向含 framework.config.json 的工程根。',
       },
     };
   }
@@ -424,6 +445,33 @@ function attemptEnsureAdapterFromFallback(
       },
     };
   }
+
+  const selected = selectAdapter?.trim();
+  if (selected) {
+    if (candidates.includes(selected)) {
+      writeLocalConfig(
+        projectRoot,
+        mergeLocalPatch(projectRoot, { agent_adapter: selected }),
+      );
+      clearFrameworkConfigCache();
+      return { repaired: true, ensured: 'auto_selected_adapter' };
+    }
+    return {
+      repaired: false,
+      gate: {
+        ok: false,
+        code: 'needs_adapter_choice',
+        status,
+        activeAdapter,
+        materializedAdapters,
+        message:
+          `目标 adapter "${selected}" 不在已物化候选 [${candidates.join(', ')}]；` +
+          '请改选已物化项或先跑 /framework-init。',
+      },
+      candidates,
+    };
+  }
+
   return {
     repaired: false,
     gate: {
@@ -441,7 +489,7 @@ function attemptEnsureAdapterFromFallback(
 }
 
 type RepairAttempt =
-  | { repaired: true; ensured: 'auto_single_adapter' | 'auto_detect_deveco' }
+  | { repaired: true; ensured: EnsureRepairStep }
   | {
       repaired: false;
       gate: Extract<PersonalSetupGateResult, { ok: false }>;
@@ -451,6 +499,7 @@ type RepairAttempt =
 function attemptPersonalSetupRepair(
   projectRoot: string,
   gate: Extract<PersonalSetupGateResult, { ok: false }>,
+  options: PersonalSetupGateOptions = {},
 ): RepairAttempt {
   if (gate.code === 'deveco_toolchain_missing') {
     const deveco = ensureDevecoToolchain(projectRoot);
@@ -470,7 +519,7 @@ function attemptPersonalSetupRepair(
     return { repaired: true, ensured: 'auto_detect_deveco' };
   }
   if (gate.code === 'fallback') {
-    return attemptEnsureAdapterFromFallback(projectRoot, gate);
+    return attemptEnsureAdapterFromFallback(projectRoot, gate, options.selectAdapter);
   }
   return { repaired: false, gate };
 }
@@ -491,7 +540,7 @@ export function ensurePersonalSetup(
     );
   }
 
-  const ensuredSteps: Array<'auto_single_adapter' | 'auto_detect_deveco'> = [];
+  const ensuredSteps: EnsureRepairStep[] = [];
 
   for (let step = 0; step < MAX_ENSURE_REPAIR_STEPS; step++) {
     const gate = evaluatePersonalSetupGate(projectRoot, options);
@@ -499,7 +548,7 @@ export function ensurePersonalSetup(
       return gateResultToEnsureJson(gate, combineEnsuredActions(ensuredSteps));
     }
 
-    const attempt = attemptPersonalSetupRepair(projectRoot, gate);
+    const attempt = attemptPersonalSetupRepair(projectRoot, gate, options);
     if (!attempt.repaired) {
       return gateResultToEnsureJson(attempt.gate, null, attempt.candidates ?? []);
     }

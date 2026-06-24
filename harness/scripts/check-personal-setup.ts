@@ -18,6 +18,8 @@ export interface PersonalSetupCliOptions {
   ensure: boolean;
   /** 与 harness-runner 当前 phase 对齐时，--ensure 会纳入 deveco_toolchain 等 prerequisite */
   phase?: string;
+  /** goal-mode：多 adapter 时确定性写入 active adapter */
+  selectAdapter?: string;
 }
 
 function parseArgs(argv: string[]): PersonalSetupCliOptions {
@@ -25,6 +27,7 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
   let json = false;
   let ensure = false;
   let phase: string | undefined;
+  let selectAdapter: string | undefined;
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--project-root' && argv[i + 1]) {
@@ -35,9 +38,11 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
       ensure = true;
     } else if (a === '--phase' && argv[i + 1]) {
       phase = String(argv[++i]).trim();
+    } else if (a === '--select-adapter' && argv[i + 1]) {
+      selectAdapter = String(argv[++i]).trim();
     }
   }
-  return { projectRoot, json, ensure, phase };
+  return { projectRoot, json, ensure, phase, selectAdapter };
 }
 
 function emitJson(payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>): void {
@@ -49,7 +54,10 @@ if (require.main === module) {
 
   if (opts.ensure) {
     const prereqs = resolveEnsurePrerequisites(opts.projectRoot, opts.phase);
-    const payload = ensurePersonalSetup(opts.projectRoot, { requiredPrerequisites: prereqs });
+    const payload = ensurePersonalSetup(opts.projectRoot, {
+      requiredPrerequisites: prereqs,
+      selectAdapter: opts.selectAdapter,
+    });
     if (opts.json) {
       emitJson(payload);
     }
