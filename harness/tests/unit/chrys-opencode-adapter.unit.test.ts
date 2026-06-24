@@ -261,7 +261,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'materialize: generic + chrys + opencode .agents bundle idempotent coexistence',
+    name: 'materialize: generic+chrys share .agents bundle; opencode uses own .opencode/skill',
     run: () => {
       const root = mkTmp();
       fs.writeFileSync(
@@ -281,18 +281,24 @@ const cases: Array<{ name: string; run: () => void }> = [
       clearFrameworkConfigCache();
 
       const adapters = ['generic', 'chrys', 'opencode'];
-      const skillRel = '.agents/skills/coding/SKILL.md';
-      let prevContent: string | null = null;
+      const agentsSkillRel = '.agents/skills/coding/SKILL.md';
+      const opencodeSkillRel = '.opencode/skill/coding/SKILL.md';
+      let agentsContent: string | null = null;
 
       for (const adapter of adapters) {
         const result = materializeAdapter(root, adapter, adapters);
-        const skillPath = path.join(root, skillRel);
+        if (adapter === 'opencode') {
+          // opencode writes its own .opencode/skill, NOT the shared .agents bundle.
+          assert(fs.existsSync(path.join(root, opencodeSkillRel)), `opencode .opencode/skill missing: ${result.message}`);
+          continue;
+        }
+        const skillPath = path.join(root, agentsSkillRel);
         assert(fs.existsSync(skillPath), `${adapter}: ${result.message}`);
         const content = fs.readFileSync(skillPath, 'utf-8');
-        if (prevContent !== null) {
-          assert.strictEqual(content, prevContent, `${adapter} changed bridge content`);
+        if (agentsContent !== null) {
+          assert.strictEqual(content, agentsContent, `${adapter} changed .agents bridge content`);
         }
-        prevContent = content;
+        agentsContent = content;
         if (adapter !== 'generic') {
           const effects = result.file_results?.map(r => r.effect) ?? [];
           assert(
@@ -301,6 +307,11 @@ const cases: Array<{ name: string; run: () => void }> = [
           );
         }
       }
+
+      // Same shared skills-bridge template → opencode's .opencode/skill bridge is byte-identical
+      // to generic/chrys's .agents/skills bridge (different dir, same content, no conflict).
+      const ocContent = fs.readFileSync(path.join(root, opencodeSkillRel), 'utf-8');
+      assert.strictEqual(ocContent, agentsContent, 'opencode bridge content must equal shared .agents bridge');
 
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -514,21 +525,30 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'loadAdapter: chrys and opencode declare .agents skill_bridge',
+    name: 'loadAdapter: chrys → .agents bundle, opencode → own .opencode bundle (AGENTS.md shared)',
     run: () => {
+      const expectations: Record<string, { skillDir: string; rule: string }> = {
+        chrys: { skillDir: '.agents/skills/', rule: '.agents/rules/interaction-renderer.md' },
+        opencode: { skillDir: '.opencode/skill/', rule: '.opencode/rules/interaction-renderer.md' },
+      };
       for (const name of ['chrys', 'opencode'] as const) {
         const adapter = checkInitTesting.loadAdapter(name);
         assert(adapter.yamlParseable, `${name} yaml`);
         assert(adapter.entryFile?.targetRel === 'AGENTS.md', `${name} entry`);
-        const skillBridge = adapter.templateFiles.filter(f =>
-          f.targetRel.startsWith('.agents/skills/'),
-        );
-        assert(skillBridge.length > 0, `${name} skills bridge`);
+        const exp = expectations[name]!;
+        const skillBridge = adapter.templateFiles.filter(f => f.targetRel.startsWith(exp.skillDir));
+        assert(skillBridge.length > 0, `${name} skills bridge under ${exp.skillDir}`);
         assert(
-          adapter.templateFiles.some(f => f.targetRel === '.agents/rules/interaction-renderer.md'),
-          `${name} interaction-renderer`,
+          adapter.templateFiles.some(f => f.targetRel === exp.rule),
+          `${name} interaction-renderer at ${exp.rule}`,
         );
       }
+      // opencode must NOT materialize into the shared .agents bundle.
+      const oc = checkInitTesting.loadAdapter('opencode');
+      assert(
+        !oc.templateFiles.some(f => f.targetRel.startsWith('.agents/')),
+        'opencode must not write .agents/* (uses its own .opencode/)',
+      );
     },
   },
   {

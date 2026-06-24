@@ -28,7 +28,7 @@ framework/agents/
 ├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
 │   ├── adapter.yaml
 │   └── templates/
-└── opencode/                    ← OpenCode CLI adapter（AGENTS.md + .agents/ bundle + opencode run headless）
+└── opencode/                    ← OpenCode CLI adapter（AGENTS.md 共享 + 自有 .opencode/ bundle + opencode run headless）
     ├── adapter.yaml
     └── templates/
 ```
@@ -77,7 +77,7 @@ framework/agents/
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
 | `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
-| `opencode` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板；技能自动注册为 slash）、`.agents/rules/interaction-renderer.md` |
+| `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
 
@@ -101,7 +101,8 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 全员 Claude Code | `["claude"]` |
 | 全员 Cursor | `["cursor"]` |
 | 混合 IDE | `["claude","cursor"]` |
-| Chrys / OpenCode 实例 | `["chrys"]` 或 `["opencode"]`（与 generic 默认 `.agents` bridge 字节一致、可幂等共存） |
+| Chrys 实例 | `["chrys"]`（与 generic 默认 `.agents` bridge 字节一致、可幂等共存） |
+| OpenCode 实例 | `["opencode"]`（自有 `.opencode/skill` bundle，AGENTS.md 共享；像 cursor 各用各目录） |
 | 其它自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
@@ -129,12 +130,12 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 ## 内部 agent（Chrys / OpenCode / Codemate 等）
 
-**chrys** 与 **opencode** 为独立 adapter（`structured_widget: unsupported`，portable 编号菜单）。实例分别选 personal `chrys` / `opencode`；与 generic 默认 `.agents` bridge bundle 字节一致、可幂等共存（差异仅在 headless 运行器）。**codemate** 等尚无专用 adapter 时仍可用 **`generic`**。
+**chrys** 与 **opencode** 为独立 adapter（`structured_widget: unsupported`，portable 编号菜单）。实例分别选 personal `chrys` / `opencode`。**chrys** 与 generic 默认 `.agents` bridge bundle 字节一致、可幂等共存；**opencode** 用自有原生 `.opencode/skill` bundle（AGENTS.md 仍共享，像 cursor 各用各 skill 目录、互不冲突）。差异仅在 headless 运行器与 skill 落盘目录。**codemate** 等尚无专用 adapter 时仍可用 **`generic`**。
 
 - `adapter.yaml` → `user_confirmation.structured_widget: unsupported`
 - 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
 - 禁止假设结构化 widget 可用
-- **opencode 额外说明**：原生还支持 `.opencode/` 与 `~/.config/opencode`；maison bundle 仅用 `AGENTS.md` + `.agents/skills`（技能自动注册为 slash 命令）。与 claude 同时物化时 opencode 可能扫到 `.claude/skills` 同名 skill 并 logWarning（无害）。
+- **opencode 额外说明**：maison opencode adapter 物化到其**原生主目录** `.opencode/skill/<id>/SKILL.md` + `.opencode/rules/`（`AGENTS.md` 共享，技能自动注册为 slash 命令）。选 `.opencode/skill` 而非 `.agents/skills` 的原因：`.opencode/skill` 是 opencode 长期稳定的主 skill 目录（兼容当前版本及传统原生目录）；`.agents` 外部 skill 发现是较新特性，旧版 `opencode-ai` 读不到。**`.opencode/rules/*` 不被 opencode 自动加载**（`*.mdc` 为 Cursor 格式，对 opencode 惰性），是「引用可达」被动文档（同 chrys `.agents/rules`），非有效规则入口；maison **不**为此创建/覆盖用户的 `.opencode/opencode.json`。与 claude/generic/chrys 同时物化时各写各目录（`.opencode/skill` vs `.claude/skills` vs `.agents/skills`），如扫到同名 skill 仅 logWarning（无害）。
 
 ## 工程指纹与 adapter 推测（承接 scan-project）
 
@@ -170,7 +171,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 | codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
-| opencode | AGENTS.md | —（技能自动注册 slash） | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
+| opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
 

@@ -6,7 +6,7 @@ Generated: 2026-06-22 · current window: `2.4.0`
 
 ## 2.4.0
 
-- **chrys + opencode adapter 接入** — 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，物化复用同一 shared .agents bundle（AGENTS.md + .agents/skills bridge + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），唯一差异是 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。 [8/8 completed]
+- **chrys + opencode adapter 接入** — 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，共享根目录 AGENTS.md；skill/rules 落盘目录不同：chrys 复用 shared `.agents` bridge bundle（.agents/skills + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），opencode 用自有原生 `.opencode/skill` + `.opencode/rules`（opencode 长期稳定的主 skill 目录，兼容旧版、不依赖较新的 .agents 外部 skill 发现）。差异在 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。 [8/8 completed]
   - `chrys_adapter_接入_91f6f0c8.plan.md`
 
 ## 2.3.0
