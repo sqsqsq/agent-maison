@@ -287,6 +287,13 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if ((excludedCountsByRule['excludeRootDirs:.cursor'] ?? 0) < 1) {
     errors.push('collect: excludeRootDirs:.cursor count missing');
   }
+  if (fs.existsSync(path.join(repoRoot, 'temp'))) {
+    const { include } = classifyPath('temp/.gitkeep', rules);
+    if (include) errors.push('temp/ must be excluded from release (dev-only scratch)');
+    if ((excludedCountsByRule['excludeRootDirs:temp'] ?? 0) < 1) {
+      errors.push('collect: excludeRootDirs:temp count missing');
+    }
+  }
 
   const winPath = toPosixPath('harness\\scripts\\check-init.ts');
   const { include: winInclude } = classifyPath(winPath, rules);

@@ -96,6 +96,9 @@ function assertZipContents(frameworkRoot) {
   if (exists(frameworkRoot, '.cursor')) {
     fail('must not exist in zip: .cursor/');
   }
+  if (exists(frameworkRoot, 'temp')) {
+    fail('must not exist in zip: temp/');
+  }
 
   const allFiles = listAllFiles(frameworkRoot);
   for (const f of allFiles) {
