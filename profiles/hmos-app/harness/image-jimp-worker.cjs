@@ -124,6 +124,49 @@ async function runSample(imagePath, bbox, padding) {
   return { sampled: true, hex: best, samples: total };
 }
 
+async function runHistSim(pathA, pathB) {
+  if (!pathA || !pathB) {
+    return { ok: false, error: 'hist-sim requires two image paths' };
+  }
+  const imgA = await Jimp.read(pathA);
+  const imgB = await Jimp.read(pathB);
+  const size = 64;
+  imgA.resize(size, size);
+  imgB.resize(size, size);
+  const bins = 8;
+  const nBins = bins * bins * bins;
+  const histA = new Float64Array(nBins);
+  const histB = new Float64Array(nBins);
+  const push = (img, hist) => {
+    const { width: w, height: h, data } = img.bitmap;
+    for (let i = 0; i < w * h; i++) {
+      const idx = i << 2;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const bi = Math.min(bins - 1, (b * bins) >> 8);
+      const gi = Math.min(bins - 1, (g * bins) >> 8);
+      const ri = Math.min(bins - 1, (r * bins) >> 8);
+      hist[ri * bins * bins + gi * bins + bi] += 1;
+    }
+  };
+  push(imgA, histA);
+  push(imgB, histB);
+  let normA = 0;
+  let normB = 0;
+  let dot = 0;
+  for (let i = 0; i < nBins; i++) {
+    normA += histA[i] * histA[i];
+    normB += histB[i] * histB[i];
+    dot += histA[i] * histB[i];
+  }
+  if (normA === 0 || normB === 0) {
+    return { ok: false, error: 'empty histogram' };
+  }
+  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return { ok: true, similarity: Math.max(0, Math.min(1, similarity)) };
+}
+
 async function main() {
   const [cmd, imagePath, ...rest] = process.argv.slice(2);
   if (cmd === 'crop') {
@@ -137,6 +180,12 @@ async function main() {
     const [x, y, w, h, paddingStr] = rest;
     const padding = parseFloat(paddingStr);
     const result = await runSample(imagePath, [x, y, w, h], padding);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'hist-sim') {
+    const [pathB] = rest;
+    const result = await runHistSim(imagePath, pathB);
     process.stdout.write(JSON.stringify(result));
     return;
   }

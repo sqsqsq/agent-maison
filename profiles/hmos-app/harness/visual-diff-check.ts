@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { relFeatureArtifact } from '../../../harness/config';
 import {
@@ -26,6 +27,8 @@ const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
  */
 const PASS_MIN_FIDELITY = 0.6;
 const PASS_MIN_IOU = 0.5;
+/** VL fidelity 显著高于 score_floor 时触发复核 WARN */
+const SCORE_FLOOR_SENTINEL_GAP = 0.35;
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -40,13 +43,19 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
 
 export interface VisualDiffScreenEntry {
   screen_id: string;
-  verdict: 'pass' | 'warn' | 'fail' | 'skipped';
+  verdict: 'pass' | 'warn' | 'fail' | 'skipped' | 'pending';
   screenshot_path?: string;
   ref_path?: string;
   ref_id?: string;
   fidelity_score?: number;
   geometric_iou?: number;
+  /** jimp 半定量客观下限/哨兵（不参与 PASS 阈值） */
+  score_floor?: number;
   must_fix?: string[];
+  /** 当前 screenshot_path 对应 PNG 的 sha256 前缀（16 hex） */
+  screenshot_hash?: string;
+  /** VL/agent 判定 verdict 时所依据的截图 hash；须与当前文件 hash 一致 */
+  evaluated_screenshot_hash?: string;
 }
 
 export interface VisualDiffReport {
@@ -58,6 +67,40 @@ export interface VisualDiffReport {
 
 function resolveShotPath(projectRoot: string, shot: string): string {
   return path.isAbsolute(shot) ? shot : path.resolve(projectRoot, shot);
+}
+
+/** PNG 文件 sha256 前 16 hex，用于截图变更检测 */
+export function hashScreenshotFile(absPath: string): string | null {
+  if (!fs.existsSync(absPath)) return null;
+  try {
+    return createHash('sha256').update(fs.readFileSync(absPath)).digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+/** pending/skipped 可被采集覆盖；pass/warn/fail 须 hash 一致才保留 */
+export function isCaptureMutableVerdict(verdict: VisualDiffScreenEntry['verdict'] | undefined): boolean {
+  return verdict === undefined || verdict === 'pending' || verdict === 'skipped';
+}
+
+/** pass/warn/fail 须显式写入 evaluated_screenshot_hash（不得仅靠 screenshot_hash 充数） */
+export function isMissingEvaluatedScreenshotHash(screen: VisualDiffScreenEntry): boolean {
+  if (isCaptureMutableVerdict(screen.verdict)) return false;
+  return typeof screen.evaluated_screenshot_hash !== 'string' || !screen.evaluated_screenshot_hash.trim();
+}
+
+/** finalized verdict 的 evaluated_screenshot_hash 是否与当前截图文件不一致 */
+export function isStaleVisualDiffVerdict(
+  screen: VisualDiffScreenEntry,
+  projectRoot: string,
+): boolean {
+  if (isCaptureMutableVerdict(screen.verdict) || isMissingEvaluatedScreenshotHash(screen)) return false;
+  const shot = screen.screenshot_path;
+  if (typeof shot !== 'string' || !shot.trim()) return false;
+  const currentHash = hashScreenshotFile(resolveShotPath(projectRoot, shot));
+  if (!currentHash) return true;
+  return currentHash !== screen.evaluated_screenshot_hash!.trim();
 }
 
 /** ui-spec 中 P0 且非 lightweight 的屏 id（visual_diff 必须覆盖的最小集合） */
@@ -116,7 +159,13 @@ export function validateVisualDiffJson(
         errors.push(`screens[${i}].screen_id 必填`);
       }
       const verdict = row.verdict;
-      if (verdict !== 'pass' && verdict !== 'warn' && verdict !== 'fail' && verdict !== 'skipped') {
+      if (
+        verdict !== 'pass' &&
+        verdict !== 'warn' &&
+        verdict !== 'fail' &&
+        verdict !== 'skipped' &&
+        verdict !== 'pending'
+      ) {
         errors.push(`screens[${i}].verdict 非法：${String(verdict)}`);
       }
       const shot = row.screenshot_path;
@@ -156,6 +205,14 @@ export function validateVisualDiffJson(
         const mf = row.must_fix;
         if (!Array.isArray(mf) || mf.length === 0 || !mf.every(x => typeof x === 'string' && x.trim())) {
           errors.push(`screens[${i}] verdict=fail 时 must_fix 须为非空字符串数组`);
+        }
+      }
+      const scoreFloor = row.score_floor;
+      if (scoreFloor !== undefined && scoreFloor !== null) {
+        if (typeof scoreFloor !== 'number' || Number.isNaN(scoreFloor)) {
+          errors.push(`screens[${i}] score_floor 须为 number`);
+        } else if (scoreFloor < 0 || scoreFloor > 1) {
+          errors.push(`screens[${i}] score_floor 须在 [0,1]，收到 ${scoreFloor}`);
         }
       }
     }
@@ -284,13 +341,14 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
   const passScreens = rep.screens.filter(s => s.verdict === 'pass');
   const skippedScreens = rep.screens.filter(s => s.verdict === 'skipped');
+  const pendingScreens = rep.screens.filter(s => s.verdict === 'pending');
   const byScreenId = new Map(rep.screens.map(s => [s.screen_id, s] as const));
 
-  // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped ---
+  // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped/pending ---
   const p0Ids = collectP0ScreenIds(uiDoc);
   const p0Uncovered = p0Ids.filter(id => {
     const entry = byScreenId.get(id);
-    return !entry || entry.verdict === 'skipped';
+    return !entry || entry.verdict === 'skipped' || entry.verdict === 'pending';
   });
 
   // --- pass 屏的分数必须达最低阈值（堵「自报 0 分仍 pass」假 PASS）---
@@ -300,12 +358,18 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       (typeof s.geometric_iou === 'number' && s.geometric_iou < PASS_MIN_IOU),
   );
 
+  const scoreFloorSentinel = rep.screens.filter(s => {
+    if (typeof s.score_floor !== 'number' || typeof s.fidelity_score !== 'number') return false;
+    return s.fidelity_score - s.score_floor >= SCORE_FLOOR_SENTINEL_GAP;
+  });
+
   const details = [
     `screens=${rep.screens.length}`,
     `pass=${passScreens.length}`,
     `warn=${warnScreens.length}`,
     `fail=${failScreens.length}`,
     `skipped=${skippedScreens.length}`,
+    `pending=${pendingScreens.length}`,
     `must_fix=${mustFix.length}`,
     `p0=${p0Ids.length}`,
     rep.degraded ? 'degraded' : '',
@@ -314,13 +378,17 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // --- 防全 skipped / 零有效屏充数 PASS：必须至少有一屏给出真实 verdict ---
   const effectiveScreens = passScreens.length + warnScreens.length + failScreens.length;
   if (effectiveScreens === 0) {
+    const pendingHint =
+      pendingScreens.length > 0
+        ? '所有屏 verdict=pending（VL 未完成判定），无有效视觉对照'
+        : '所有屏 verdict=skipped，无有效视觉对照';
     return [{
       id: 'visual_diff',
       category: 'structure',
       description: desc,
       severity: 'MAJOR',
       status: 'WARN',
-      details: `${details}\n所有屏 verdict=skipped，无有效视觉对照；不得作为视觉保真 PASS。若设备不可用应显式 degraded SKIP。`,
+      details: `${details}\n${pendingHint}；不得作为视觉保真 PASS。若设备不可用应显式 degraded SKIP。`,
       affected_files: [reportRel],
     }];
   }
@@ -348,6 +416,52 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         `${details}\n以下屏 verdict=pass 但分数低于阈值（fidelity<${PASS_MIN_FIDELITY} 或 iou<${PASS_MIN_IOU}）：` +
         lowScorePass
           .map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`)
+          .join(', '),
+      affected_files: [reportRel],
+    }];
+  }
+
+  const missingEvalHashScreens = rep.screens.filter(s => isMissingEvaluatedScreenshotHash(s));
+  if (missingEvalHashScreens.length > 0) {
+    return [{
+      id: 'visual_diff',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details:
+        `${details}\nfinalized verdict 缺少 evaluated_screenshot_hash（须与当前 screenshot_hash 一致）：` +
+        missingEvalHashScreens.map(s => s.screen_id).join(', '),
+      affected_files: [reportRel],
+    }];
+  }
+
+  const staleScreens = rep.screens.filter(s => isStaleVisualDiffVerdict(s, ctx.projectRoot));
+  if (staleScreens.length > 0) {
+    return [{
+      id: 'visual_diff',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details:
+        `${details}\nverdict 所依据截图已变更（evaluated_screenshot_hash 不匹配），须 VL 重判：` +
+        staleScreens.map(s => s.screen_id).join(', '),
+      affected_files: [reportRel],
+    }];
+  }
+
+  if (scoreFloorSentinel.length > 0) {
+    return [{
+      id: 'visual_diff',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details:
+        `${details}\nVL 高分但客观相似度低（fidelity-score_floor>=${SCORE_FLOOR_SENTINEL_GAP}），人工复核：` +
+        scoreFloorSentinel
+          .map(s => `${s.screen_id}(f=${s.fidelity_score},floor=${s.score_floor})`)
           .join(', '),
       affected_files: [reportRel],
     }];

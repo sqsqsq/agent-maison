@@ -181,6 +181,30 @@ export function cropAssetFromBbox(
   };
 }
 
+/** 尺寸归一后 RGB 直方图余弦相似度 ∈ [0,1]（半定量 score_floor 用） */
+export function computeHistogramSimilarity(
+  imagePathA: string,
+  imagePathB: string,
+): { ok: boolean; similarity?: number; error?: string } {
+  if (!isJimpAvailable()) {
+    return { ok: false, error: 'jimp not installed' };
+  }
+  if (!fs.existsSync(imagePathA)) {
+    return { ok: false, error: `image A not found: ${imagePathA}` };
+  }
+  if (!fs.existsSync(imagePathB)) {
+    return { ok: false, error: `image B not found: ${imagePathB}` };
+  }
+  const out = runJimpWorker(['hist-sim', imagePathA, imagePathB]);
+  if (out.ok === true && typeof out.similarity === 'number') {
+    return { ok: true, similarity: out.similarity };
+  }
+  return {
+    ok: false,
+    error: typeof out.error === 'string' ? out.error : 'hist-sim failed',
+  };
+}
+
 export function isJimpAvailable(): boolean {
   try {
     require.resolve('jimp', { paths: [HARNESS_ROOT] });

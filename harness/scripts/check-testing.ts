@@ -77,6 +77,10 @@ import {
   loadTestingRootPollutionMeta,
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
+import { buildHylyreVisualDiffScreenshotFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
+import { parseUiChangeFromSpecMarkdown } from './utils/ui-spec-shared';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1971,6 +1975,71 @@ function checkDeviceTestRunGate(
           '失败 / 阻塞 / 跳过用例的具体分类由顶层 test-report.md 合成步骤承载；本检查只确认自动化执行未崩溃。',
       },
     ];
+
+    if (run.ok && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
+      const specMdPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+      if (fs.existsSync(specMdPath)) {
+        const specMd = fs.readFileSync(specMdPath, 'utf-8');
+        const uiChange = parseUiChangeFromSpecMarkdown(specMd);
+        if (uiChange === 'new_or_changed') {
+          const { hypiumWorkDir } = resolveHylyreRuntimeWorkDir(
+            ctx.projectRoot,
+            ctx.feature,
+            ctx.phase,
+            ctx.frameworkRoot,
+          );
+          const cap = captureVisualDiff({
+            projectRoot: ctx.projectRoot,
+            feature: ctx.feature,
+            specMd,
+            ctx,
+            computeScoreFloor: true,
+            bundleName,
+            deviceSn: process.env.HARNESS_HDC_TARGET,
+            screenshotFn: buildHylyreVisualDiffScreenshotFn({
+              pythonPath: ready.pythonPath,
+              hypiumWorkDir,
+              deviceSn: process.env.HARNESS_HDC_TARGET,
+              logPath: run.logPath,
+            }),
+          });
+          if (cap.ok) {
+            out.push({
+              id: 'visual_diff_capture',
+              category: 'structure',
+              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+              severity: 'MAJOR',
+              status: 'PASS',
+              details: [
+                `screens=${cap.screensWritten}`,
+                ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
+                  ? [`preserved=${cap.screensPreserved}`]
+                  : []),
+                ...(typeof cap.screensInvalidated === 'number' && cap.screensInvalidated > 0
+                  ? [`invalidated=${cap.screensInvalidated}`]
+                  : []),
+                'json=device-testing/device-screenshots/visual-diff.json',
+                ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
+              ].join('\n'),
+            });
+          } else if (cap.skippedReason !== 'no_p0_targets') {
+            out.push({
+              id: 'visual_diff_capture',
+              category: 'structure',
+              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+              severity: 'MAJOR',
+              status: 'WARN',
+              details: [
+                `采集未完成：${cap.skippedReason ?? 'unknown'}`,
+                ...cap.errors,
+              ].join('\n'),
+              suggestion: '确认 Hylyre 可 `screenshot`；非顶层屏须 device-testing 导航后重跑采集。',
+            });
+          }
+        }
+      }
+    }
+
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const pollutionHit = loadTestingRootPollutionMeta(reportsDir);
     if (pollutionHit) {

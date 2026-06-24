@@ -37,6 +37,7 @@ import {
   PhaseChecker,
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
+  HarnessRunSummary,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import {
@@ -87,7 +88,7 @@ import {
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
-import { resolveAdapterMultimodal, collectAuthoritativeImagePaths } from './scripts/utils/multimodal-probe';
+import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath } from './scripts/utils/ui-spec-shared';
 
@@ -384,6 +385,7 @@ async function main(): Promise<void> {
     | undefined;
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
+  const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
   const context: CheckContext = {
     phase,
     feature,
@@ -399,7 +401,8 @@ async function main(): Promise<void> {
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
-    adapterMultimodal: resolveAdapterMultimodal(projectRoot, fwConfig.agent_adapter),
+    adapterMultimodal: mmProbe.supported,
+    adapterImageInput: mmProbe.imageInput,
     frameworkRoot: resolvedFrameworkRoot,
     frameworkRel,
     harnessRoot,
@@ -510,6 +513,7 @@ async function main(): Promise<void> {
     }
     const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
       adapterMultimodal: context.adapterMultimodal,
+      adapterImageInput: context.adapterImageInput,
       specVisualSources: context.specVisualSources,
     });
     const specContent = YAML.stringify(phaseRule);
@@ -525,6 +529,7 @@ async function main(): Promise<void> {
       resolvedProfile,
       lifecycleFragments,
       resolvedFrameworkRoot,
+      { imageInput: context.adapterImageInput },
     );
     console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
@@ -597,64 +602,6 @@ async function main(): Promise<void> {
   console.log('='.repeat(60) + '\n');
 
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
-}
-
-interface HarnessRunSummary {
-  schema_version: '1.0';
-  phase: Phase;
-  feature: string;
-  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
-  blocker_count: number;
-  fail_count: number;
-  warn_count: number;
-  script_report: string;
-  merged_report: string;
-  ai_prompt: string;
-  summary_json: string;
-  run_statuses: Array<{
-    id: string;
-    status: string;
-    can_claim_done?: boolean;
-    details: string;
-  }>;
-  ut_run_status?: string;
-  readiness_signals: Array<{
-    id: string;
-    status: 'ready' | 'incomplete' | 'unknown';
-    message: string;
-    source_check?: string;
-  }>;
-  blocking_warnings: Array<{
-    id: string;
-    blocking_class?: string;
-    details_excerpt: string;
-    suggestion?: string;
-  }>;
-  blocking_skips: Array<{
-    id: string;
-    blocking_class?: string;
-    details_excerpt: string;
-    suggestion?: string;
-  }>;
-  blockers: Array<{
-    id: string;
-    severity: string;
-    status: string;
-    classification?: string;
-    details_excerpt: string;
-    affected_files?: string[];
-    suggestion?: string;
-  }>;
-  next_action: string;
-  receipt_status?: string;
-  closure_status?: 'open' | 'closed';
-  /** coding 阶段：从 coding_compile / coding_hvigor_build 报告解析的首条编译错误，供 agent 无需通读日志即可汇报 */
-  compile_first_error?: {
-    file?: string;
-    line?: number;
-    message: string;
-    kind?: string;
-  };
 }
 
 function writeRunSummary(
@@ -1194,7 +1141,11 @@ function collectContextFiles(
   phase: Phase,
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
-  opts?: { adapterMultimodal?: boolean; specVisualSources?: CheckContext['specVisualSources'] },
+  opts?: {
+    adapterMultimodal?: boolean;
+    adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
+    specVisualSources?: CheckContext['specVisualSources'];
+  },
 ): import('./scripts/utils/types').ContextFileEntry[] {
   const { projectRoot } = layout;
   const files: import('./scripts/utils/types').ContextFileEntry[] = [];
@@ -1269,12 +1220,13 @@ function collectContextFiles(
     UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
 
   if (wantsVisualContext) {
-    if (opts?.adapterMultimodal === false) {
+    const imageInput = opts?.adapterImageInput ?? (opts?.adapterMultimodal === false ? 'none' : 'tool_read');
+    if (imageInput === 'none') {
       files.push({
         label: '(multimodal-degraded)',
         kind: 'text',
         content:
-          '视觉多模态层已降级：adapter 未声明 multimodal；仅文本 ui-spec + 确定性 parity 生效。',
+          '视觉多模态层已降级：adapter image_input=none；仅文本 ui-spec + 确定性 parity 生效。',
       });
     } else if (prd) {
       const imgPaths = collectAuthoritativeImagePaths(projectRoot, prd, (p) => {

@@ -74,6 +74,9 @@ const NUMBERED_BRIDGE_SKILL_RE = new RegExp(`skills-bridge[/\\\\]${NUMBERED_SKIL
 /** Explicit branches: 00 before 0; (?!\d) avoids double-digit false prefix on framework-init vs catalog-bootstrap. */
 export const NUMBERED_PROSE_RE = /Skill\s*(?:00|0|[1-6])(?!\d)(?:\s*[–—-]\s*[0-6])?/;
 
+/** 反引号 id 形，如 (`4-code-review`) */
+export const NUMBERED_BACKTICK_ID_RE = new RegExp(`\\(\`${NUMBERED_SKILL_ID}\`\\)`);
+
 function matchNumberedSkillRelPath(rel: string): string | null {
   const norm = rel.replace(/\\/g, '/');
   if (NUMBERED_PATH_RE.test(norm)) return norm.match(NUMBERED_PATH_RE)?.[0] ?? norm;
@@ -90,7 +93,7 @@ export interface ScanHit {
   line: number;
   column: number;
   match: string;
-  kind: 'path' | 'prose';
+  kind: 'path' | 'prose' | 'backtick';
 }
 
 function relPosix(root: string, abs: string): string {
@@ -203,6 +206,17 @@ function scanFile(
         column: (m.index ?? 0) + 1,
         match: m[0],
         kind: 'prose',
+      });
+    }
+    NUMBERED_BACKTICK_ID_RE.lastIndex = 0;
+    const bt = NUMBERED_BACKTICK_ID_RE.exec(line);
+    if (bt) {
+      hits.push({
+        file: rel,
+        line: i + 1,
+        column: (bt.index ?? 0) + 1,
+        match: bt[0],
+        kind: 'backtick',
       });
     }
   }

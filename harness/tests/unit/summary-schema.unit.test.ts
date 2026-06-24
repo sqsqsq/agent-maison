@@ -119,9 +119,30 @@ function testSchemaRequiredFields(): void {
   const schema = loadSchema();
   const required = schema.required as string[];
   for (const key of Object.keys(validSample())) {
-    if (key === 'receipt_status' || key === 'closure_status' || key === 'compile_first_error') continue;
+    if (key === 'receipt_status' || key === 'closure_status' || key === 'compile_first_error' || key === 'soft_advisories') continue;
     assert(required.includes(key), `schema.required 未声明 ${key}`);
   }
+}
+
+function testSchemaAllowsSoftAdvisories(): void {
+  const schema = loadSchema();
+  const props = schema.properties as Record<string, unknown>;
+  assert(Object.prototype.hasOwnProperty.call(props, 'soft_advisories'), 'properties 须含 soft_advisories');
+  const defs = schema.$defs as Record<string, unknown>;
+  assert(Object.prototype.hasOwnProperty.call(defs, 'soft_advisory'), '$defs 须含 soft_advisory');
+  const withAdvisory = {
+    ...validSample(),
+    soft_advisories: [{
+      id: 'visual_multimodal_parity',
+      status: 'WARN',
+      details: '未取得读图证据',
+      effective_image_input: 'tool_read',
+      source: 'check-receipt',
+    }],
+  };
+  assertSummaryShape(withAdvisory);
+  const adv = (withAdvisory.soft_advisories as Array<Record<string, unknown>>)[0];
+  assert(adv.status === 'WARN', 'soft_advisory.status');
 }
 
 function testValidSampleShape(): void {
@@ -171,5 +192,6 @@ export function runAll(): UnitCaseResult[] {
     runCase('summary schema: phase enum 含 spec/plan 与 legacy', testPhaseEnumIncludesCanonicalAndLegacy),
     runCase('summary schema: spec/plan 样例通过形状校验', testSpecPlanSamplesValidateShape),
     runCase('summary schema: 缺少 next_action 会被拒绝', testInvalidSampleRejectedByUnitGuard),
+    runCase('summary schema: soft_advisories 可选且形状合法', testSchemaAllowsSoftAdvisories),
   ];
 }

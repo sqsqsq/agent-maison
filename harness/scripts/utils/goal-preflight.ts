@@ -20,6 +20,7 @@ import {
   loadGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
+import { resolveGoalEffectiveImageInput } from './multimodal-probe';
 import {
   resolveHeadlessInvokePlan,
   validateHeadlessBinaryForPlan,
@@ -138,6 +139,22 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
       return;
     }
     throw new Error(binaryCheck.message);
+  }
+
+  const effectiveMm = resolveGoalEffectiveImageInput(
+    projectRoot,
+    frameworkRoot,
+    adapter,
+    manifest.unattended,
+  );
+  if (
+    effectiveMm.imageInput === 'none' &&
+    effectiveMm.reason.includes('缺 Read')
+  ) {
+    console.warn(
+      `[goal-runner] preflight WARN: image_input 声明 tool_read 但 goal allowed_tools 缺 Read；` +
+        `运行时视觉多模态将诚实降级为 none（${effectiveMm.reason}）`,
+    );
   }
 }
 

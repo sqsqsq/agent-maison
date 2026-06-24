@@ -23,6 +23,9 @@ user_confirmation:
   portable_required: true
   interaction_renderer_rule: templates/rules/interaction-renderer.md
 
+# codex exec 读图能力待实测；默认定档 none
+image_input: none
+
 goal_capability:
   mode: native_goal
   native_goal:

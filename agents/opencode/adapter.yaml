@@ -22,6 +22,9 @@ user_confirmation:
   portable_required: true
   interaction_renderer_rule: templates/rules/interaction-renderer.md
 
+# opencode run stdin headless 无确认读图能力（按实测定档 none）
+image_input: none
+
 goal_capability:
   mode: external_runner
   external_runner:

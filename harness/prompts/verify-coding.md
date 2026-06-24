@@ -388,12 +388,15 @@ verification_result:
 
 - **严重等级**: MAJOR
 - **评估方法**:
-  1. 打开 authoritative_refs 原图与 ui-spec.yaml
-  2. 对照实现代码与资源，逐区域报告：版面结构 / 品牌主题色 / 真实资产 vs 占位 / 文案逐字保真
+  1. **用读图工具**逐个读取上下文 `context-images/` 下 sidecar 像素文件（禁止把 markdown 链接当已看图）
+  2. 打开 ui-spec.yaml，对照实现代码与资源，逐区域报告：版面结构 / 品牌主题色 / 真实资产 vs 占位 / 文案逐字保真
   3. ui-spec `verified=unverified` 时：仅报告明显冲突，不宣称整体保真 PASS
+- **读图证据块（必填，可机读）**：结论中须含 fenced `read-image-evidence` 块，每条 `- file: <sidecar文件名>` + `observation: <关键观察>`（与 sidecar 清单一一对应）
 - **证据**: 按屏列出 must-fix 项（若有）
 
-若 adapter 未声明 `multimodal: true` 或上下文无图片注入：本检查 **SKIP**，details 写「视觉多模态层已降级」。
+若 adapter `image_input=none` 或上下文无图片注入：本检查 **SKIP**，details 写「视觉多模态层已降级（adapter 不支持图像）」。
+
+若 adapter 为 `tool_read` 但未输出合规读图证据块：本检查 **WARN**，details 写「未取得读图证据，多模态降级（区别于 adapter 不支持）」。
 
 ---
 

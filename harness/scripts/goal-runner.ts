@@ -65,7 +65,7 @@ import {
   resolveResumeState,
   resolveWallClockStartMs,
 } from './utils/goal-runner-phase';
-import { isGoalHeadlessEnv, MAISON_GOAL_RUNNER_ENV } from './utils/phase-state';
+import { isGoalHeadlessEnv, MAISON_GOAL_RUNNER_ENV, MAISON_GOAL_ALLOWED_TOOLS_ENV } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   resolveAdapterProvenance,
@@ -277,16 +277,25 @@ async function runHarnessPhase(
   phase: FeaturePhase,
   feature: string,
   dryRun: boolean,
+  manifest?: GoalManifest,
 ): Promise<number> {
   if (dryRun) return 0;
   const harnessDir = path.join(frameworkRoot, 'harness');
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    [MAISON_GOAL_RUNNER_ENV]: '1',
+  };
+  const allowedTools = manifest?.unattended?.allowed_tools;
+  if (allowedTools?.length) {
+    childEnv[MAISON_GOAL_ALLOWED_TOOLS_ENV] = allowedTools.join(',');
+  }
   const child = spawn(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', feature, '--summary'],
     {
       cwd: harnessDir,
       shell: process.platform === 'win32',
-      env: { ...process.env, [MAISON_GOAL_RUNNER_ENV]: '1' },
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -989,6 +998,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase,
           manifest.feature,
           dryRun,
+          manifest,
         );
 
         appendEvent(manifest.report_dir, projectRoot, {

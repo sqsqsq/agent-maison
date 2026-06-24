@@ -23,6 +23,9 @@ user_confirmation:
   portable_required: true
   interaction_renderer_rule: templates/rules/interaction-renderer.md
 
+# headless 管道接内网盲模型，无读图工具
+image_input: none
+
 goal_capability:
   mode: external_runner
   external_runner:

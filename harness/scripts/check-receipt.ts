@@ -44,6 +44,13 @@ import {
   syncPhaseStateOnReceiptPass,
   type FeaturePhase,
 } from './utils/phase-state';
+import {
+  evaluateMultimodalEvidenceGate,
+  readVerifierReportFile,
+  type MultimodalEvidenceGateResult,
+} from './utils/multimodal-evidence-gate';
+import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
 
 type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
 
@@ -584,6 +591,24 @@ function main(): void {
   // --------------------------------------------------------------------
 
   if (issues.length === 0) {
+    const mmAdvisory = collectMultimodalEvidenceAdvisory(
+      projectRoot,
+      frameworkRoot,
+      phase,
+      frontmatter,
+      fw,
+    );
+    if (mmAdvisory) {
+      patchSummarySoftAdvisory(projectRoot, sh.report_dir, mmAdvisory);
+      if (mmAdvisory.status === 'WARN') {
+        console.warn(`\n⚠️  [MAJOR/WARN] ${mmAdvisory.id}: ${mmAdvisory.details}\n`);
+      } else if (mmAdvisory.status === 'SKIP') {
+        console.warn(`\nℹ️  [SKIP] ${mmAdvisory.id}: ${mmAdvisory.details}\n`);
+      }
+      console.log(
+        `HARNESS_ADVISORY id=${mmAdvisory.id} status=${mmAdvisory.status} effective_image_input=${mmAdvisory.effective_image_input ?? 'n/a'}`,
+      );
+    }
     console.log('✅ PASS — 完成回执校验通过。');
     console.log('   - script_harness: exit_code=0, blocker_count=0');
     console.log(`   - verifier_subagent: verdict=${vs.verdict}`);
@@ -649,6 +674,65 @@ function parseFrontmatterAndBody(raw: string): {
     throw new Error('frontmatter 必须是对象类型。');
   }
   return { frontmatter: data, body };
+}
+
+// --------------------------------------------------------------------------
+// M3 读图证据软门禁（claude-scoped 强制；非 Claude 仅 advisory SKIP 文案）
+// --------------------------------------------------------------------------
+
+function collectMultimodalEvidenceAdvisory(
+  projectRoot: string,
+  frameworkRoot: string,
+  phase: Phase,
+  frontmatter: ReceiptFrontmatter,
+  fw: ReturnType<typeof loadFrameworkConfig>,
+): (MultimodalEvidenceGateResult & { effective_image_input?: string }) | null {
+  if (phase !== 'coding') return null;
+  const adapter = (fw.agent_adapter ?? 'generic').trim() || 'generic';
+  const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, adapter);
+  const vs = frontmatter.verifier_subagent ?? {};
+  let reportText: string | undefined;
+  if (vs.report_path) {
+    const abs = path.resolve(projectRoot, vs.report_path);
+    reportText = readVerifierReportFile(abs) ?? undefined;
+  }
+  const gate = evaluateMultimodalEvidenceGate({
+    adapter,
+    imageInput: probe.imageInput,
+    verifierReportText: reportText,
+    forceParse: adapter === 'claude',
+  });
+  if (!gate) return null;
+  if (gate.status === 'PASS') return null;
+  return { ...gate, effective_image_input: probe.imageInput };
+}
+
+function patchSummarySoftAdvisory(
+  projectRoot: string,
+  reportDirRel: string | undefined,
+  advisory: MultimodalEvidenceGateResult & { effective_image_input?: string },
+): void {
+  if (!reportDirRel?.trim()) return;
+  const summaryPath = path.join(projectRoot, reportDirRel.trim(), 'summary.json');
+  if (!fs.existsSync(summaryPath)) return;
+  try {
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
+    const existing = Array.isArray(summary.soft_advisories) ? summary.soft_advisories : [];
+    const entry: SoftAdvisory = {
+      id: advisory.id,
+      status: advisory.status === 'SKIP' ? 'SKIP' : 'WARN',
+      details: advisory.details,
+      effective_image_input: advisory.effective_image_input,
+      source: 'check-receipt',
+    };
+    summary.soft_advisories = [
+      ...existing.filter(a => a?.id !== advisory.id),
+      entry,
+    ];
+    fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf-8');
+  } catch {
+    /* best-effort */
+  }
 }
 
 // --------------------------------------------------------------------------

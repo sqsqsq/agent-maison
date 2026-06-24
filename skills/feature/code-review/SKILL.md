@@ -1,10 +1,10 @@
-# Code Review Skill (`4-code-review`)
+# Code Review Skill (`code-review`)
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save` / `review.ok_to_ut` / `phase.next_step`。
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 

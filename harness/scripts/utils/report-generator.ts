@@ -9,6 +9,8 @@
 // 报告目录由 config.featurePhaseReportsDir() 解析（默认可走 doc/features/.../reports）。
 // ============================================================================
 
+import type { ImageInputMode } from './multimodal-probe';
+import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
 import { featurePhaseReportsDir } from '../../config';
@@ -177,6 +179,7 @@ export function assembleAIPrompt(
   resolvedProfile?: HarnessResolvedProfile,
   lifecycleHookFragments?: string[],
   frameworkRoot?: string,
+  options?: { imageInput?: ImageInputMode },
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -240,6 +243,20 @@ export function assembleAIPrompt(
     })
     .join('\n\n');
   assembled = assembled.replace(/\{context_files\}/g, contextSection);
+
+  const sidecarNames: string[] = [];
+  if (fs.existsSync(contextImageDir)) {
+    for (const f of fs.readdirSync(contextImageDir).sort()) {
+      if (/\.(png|jpe?g|webp|gif)$/i.test(f)) sidecarNames.push(f);
+    }
+  }
+
+  if (phase === 'coding' && options?.imageInput === 'tool_read') {
+    assembled +=
+      '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +
+      formatReadImageEvidenceInstructions(sidecarNames) +
+      '\n';
+  }
 
   if (lifecycleHookFragments && lifecycleHookFragments.length > 0) {
     assembled +=

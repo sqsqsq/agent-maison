@@ -10,8 +10,9 @@ import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
-import { checkVisualDiff, validateVisualDiffJson } from '../../../profiles/hmos-app/harness/visual-diff-check';
-import { cropAssetFromBbox, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
+import { checkVisualDiff, validateVisualDiffJson, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { captureVisualDiff, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
+import { cropAssetFromBbox, computeHistogramSimilarity, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
 import { collectUiSpecGateConfirmedScreens } from '../../../profiles/hmos-app/harness/ui-spec-gate';
 import {
   loadVisualParityMappings,
@@ -309,6 +310,278 @@ export function runAll(): UnitCaseResult[] {
       const r = checkVisualDiff(baseCtx(root));
       const hit = r.find((x: { id: string; status: string }) => x.id === 'visual_diff');
       if (!hit || hit.status === 'PASS') throw new Error(`low-score pass should not PASS: ${JSON.stringify(hit)}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_pending_validates_without_scores', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const v = validateVisualDiffJson({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'pending',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+        }],
+      }, root, { authoritativeRefIds: new Set(['home']) });
+      if (!v.ok) throw new Error(JSON.stringify(v));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_all_pending_not_pass', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'pending',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+        }],
+      }));
+      const r = checkVisualDiff(baseCtx(root));
+      const hit = r.find((x: { id: string; status: string; details?: string }) => x.id === 'visual_diff');
+      if (!hit || hit.status === 'PASS') throw new Error(`all pending should WARN: ${JSON.stringify(hit)}`);
+      if (!/pending/.test(hit.details ?? '')) throw new Error(`expected pending hint: ${hit.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_score_floor_sentinel_warn', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const evalHash = hashScreenshotFile(shot);
+      if (!evalHash) throw new Error('hash required');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'pass',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+          fidelity_score: 0.85,
+          geometric_iou: 0.7,
+          score_floor: 0.3,
+          screenshot_hash: evalHash,
+          evaluated_screenshot_hash: evalHash,
+        }],
+      }));
+      const r = checkVisualDiff(baseCtx(root));
+      const hit = r.find((x: { id: string; status: string; details?: string }) => x.id === 'visual_diff');
+      if (!hit || hit.status !== 'WARN' || !/score_floor|客观相似度/.test(hit.details ?? '')) {
+        throw new Error(`sentinel should WARN: ${JSON.stringify(hit)}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_finalized_verdict_without_evaluated_hash_warns', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const shotHash = hashScreenshotFile(shot);
+      if (!shotHash) throw new Error('hash required');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'pass',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+          fidelity_score: 0.85,
+          geometric_iou: 0.7,
+          screenshot_hash: shotHash,
+        }],
+      }));
+      const r = checkVisualDiff(baseCtx(root));
+      const hit = r.find((x: { id: string; status: string; details?: string }) => x.id === 'visual_diff');
+      if (!hit || hit.status !== 'WARN' || !/evaluated_screenshot_hash/.test(hit.details ?? '')) {
+        throw new Error(`missing eval hash should WARN: ${JSON.stringify(hit)}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_capture_merge_preserves_verdict', () => {
+    const hash = 'abc123def4567890';
+    const existing = {
+      screen_id: 'home',
+      verdict: 'pass' as const,
+      screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+      ref_id: 'home',
+      fidelity_score: 0.82,
+      geometric_iou: 0.71,
+      screenshot_hash: hash,
+      evaluated_screenshot_hash: hash,
+    };
+    const captured = {
+      screen_id: 'home',
+      verdict: 'pending' as const,
+      screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home-new.png',
+      ref_id: 'home',
+      score_floor: 0.4,
+    };
+    const merged = mergeCapturedScreenEntry(existing, captured, hash);
+    if (merged.verdict !== 'pass') throw new Error('verdict must be preserved when hash unchanged');
+    if (merged.fidelity_score !== 0.82 || merged.geometric_iou !== 0.71) {
+      throw new Error('scores must be preserved');
+    }
+    if (merged.screenshot_path !== captured.screenshot_path) throw new Error('shot path should refresh');
+    if (merged.score_floor !== 0.4) throw new Error('score_floor should refresh');
+    const { preserved } = mergeVisualDiffReports(
+      { schema_version: '1.0', screens: [existing] },
+      [{ entry: captured, hash }],
+    );
+    if (preserved !== 1) throw new Error(`expected preserved=1 got ${preserved}`);
+  });
+
+  run('visual_diff_capture_merge_invalidates_on_hash_change', () => {
+    const oldHash = 'abc123def4567890';
+    const newHash = 'fedcba9876543210';
+    const existing = {
+      screen_id: 'home',
+      verdict: 'pass' as const,
+      screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+      ref_id: 'home',
+      fidelity_score: 0.82,
+      geometric_iou: 0.71,
+      screenshot_hash: oldHash,
+      evaluated_screenshot_hash: oldHash,
+    };
+    const captured = {
+      screen_id: 'home',
+      verdict: 'pending' as const,
+      screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+      ref_id: 'home',
+      score_floor: 0.4,
+    };
+    const merged = mergeCapturedScreenEntry(existing, captured, newHash);
+    if (merged.verdict !== 'pending') throw new Error('verdict must reset to pending on hash change');
+    if (merged.fidelity_score !== undefined || merged.geometric_iou !== undefined) {
+      throw new Error('scores must be cleared on invalidation');
+    }
+    const { preserved, invalidated } = mergeVisualDiffReports(
+      { schema_version: '1.0', screens: [existing] },
+      [{ entry: captured, hash: newHash }],
+    );
+    if (preserved !== 0 || invalidated !== 1) {
+      throw new Error(`expected preserved=0 invalidated=1 got ${preserved}/${invalidated}`);
+    }
+  });
+
+  run('visual_diff_screen_slug_safe_paths', () => {
+    const root = mkProject();
+    try {
+      if (sanitizeVisualDiffScreenSlug('') !== null) throw new Error('empty should fail');
+      if (sanitizeVisualDiffScreenSlug('home') !== 'home') throw new Error('home slug');
+      const paths = resolveShotPaths(root, 'bank-card', 'home');
+      if (!paths || !paths.abs.endsWith(`${path.sep}shot-home.png`)) {
+        throw new Error(JSON.stringify(paths));
+      }
+      const shotsDir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      const outside = resolveShotPaths(root, 'bank-card', 'x'.repeat(300));
+      if (!outside) throw new Error('long slug should still resolve in dir');
+      if (!path.resolve(outside.abs).startsWith(path.resolve(shotsDir) + path.sep)) {
+        throw new Error('path escape');
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_capture_mock_skeleton', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        screenshotFn: ({ destAbs }) => {
+          writeMinimalRedPng(destAbs, 12, 12);
+          return { ok: true };
+        },
+      });
+      if (!cap.ok || cap.screensWritten !== 1) throw new Error(JSON.stringify(cap));
+      const raw = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8'));
+      const v = validateVisualDiffJson(raw, root, { authoritativeRefIds: new Set(['home']) });
+      if (!v.ok) throw new Error(JSON.stringify(v));
+      if (v.report.screens[0]?.verdict !== 'pending') throw new Error('expected pending skeleton');
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

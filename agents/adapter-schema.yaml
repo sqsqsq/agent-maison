@@ -52,11 +52,19 @@ required_fields:
 
 optional_fields:
 
+  image_input:
+    type: string
+    description: |
+      adapter 图片输入能力分级（M3）。`none`=纯文本降级；`tool_read`=agent 可用读图工具读取
+      sidecar 文件（Cursor Read / Claude Read）；`native_attach`=通过 CLI/SDK 原生附件喂图（预留，
+      goal headless 未来路径）。与 `goal_capability` 对齐：交互态与 headless 态能力可能不同。
+    enum: ["none", "tool_read", "native_attach"]
+
   multimodal:
     type: boolean
     description: |
-      adapter / 模型是否支持图片输入。true 时 harness-runner 为 spec/coding/verify
-      注入 authoritative_refs 图片；false 时降级到文本 ui-spec + 确定性 parity。
+      [已弃用，请改用 image_input] adapter / 模型是否支持图片输入。true 映射 tool_read / false 映射 none。
+      运行时仍接受并 stderr 一次性弃用提示。
 
   commands:
     type: object | null

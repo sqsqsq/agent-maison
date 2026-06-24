@@ -70,6 +70,9 @@ export const MAISON_GOAL_RUNNER_ENV = 'MAISON_GOAL_RUNNER';
 /** goal-runner headless agent trees inherit MAISON_GOAL_HEADLESS from agent-invoke. */
 export const MAISON_GOAL_HEADLESS_ENV = 'MAISON_GOAL_HEADLESS';
 
+/** Comma-separated goal manifest `unattended.allowed_tools` for harness-runner image_input 降级。 */
+export const MAISON_GOAL_ALLOWED_TOOLS_ENV = 'MAISON_GOAL_ALLOWED_TOOLS';
+
 export function isGoalOrchestrationEnv(): boolean {
   return (
     process.env[MAISON_GOAL_RUNNER_ENV] === '1' || process.env[MAISON_GOAL_HEADLESS_ENV] === '1'

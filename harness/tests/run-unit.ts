@@ -73,6 +73,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
   { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test' },
   { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
+  { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
+  { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },
   { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
   { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
   { id: 'resolve-skill-path', modulePath: './unit/resolve-skill-path.unit.test' },

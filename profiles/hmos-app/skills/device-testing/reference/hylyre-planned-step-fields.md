@@ -11,6 +11,8 @@
 
 **禁止作为步骤根键的 CLI 名**：`dump_ui` / `dump-ui` / `page_save` / `screenshot` 等（见 `FORBIDDEN_STEP_ROOT_KEYS`）。
 
+**与 visual_diff QA 的区分**：`device_test.visual_diff` 截图采集是 **device-testing 阶段级 QA/门禁动作**（harness 在 `device_test.run` 层通过 `captureVisualDiff` 直接发起），**不是** test-plan 派生步骤的根键。禁止在派生 `test-plan.md` 步骤 JSON 里写 `"screenshot": …` 根键；visual_diff 须走 SKILL Step 4.6 + harness 采集入口，不与 `FORBIDDEN_STEP_ROOT_KEYS` 冲突。
+
 ## 富选择器（Hylyre 0.2+ · touch / wait_for / input 块内）
 
 同名按钮 / 半模态叠层场景优先用富选择器，而非改被测应用源码加 id。

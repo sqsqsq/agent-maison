@@ -424,7 +424,75 @@ export interface CheckResult {
   visual_resolution_rows?: VisualHandoffResolutionRow[];
 }
 
-/** 报告摘要 */
+/** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
+export interface SoftAdvisory {
+  id: string;
+  status: 'WARN' | 'SKIP';
+  details: string;
+  effective_image_input?: string;
+  source?: string;
+}
+
+/** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐） */
+export interface HarnessRunSummary {
+  schema_version: '1.0';
+  phase: Phase;
+  feature: string;
+  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  blocker_count: number;
+  fail_count: number;
+  warn_count: number;
+  script_report: string;
+  merged_report: string;
+  ai_prompt: string;
+  summary_json: string;
+  run_statuses: Array<{
+    id: string;
+    status: string;
+    can_claim_done?: boolean;
+    details: string;
+  }>;
+  ut_run_status?: string;
+  readiness_signals: Array<{
+    id: string;
+    status: 'ready' | 'incomplete' | 'unknown';
+    message: string;
+    source_check?: string;
+  }>;
+  blocking_warnings: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blocking_skips: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blockers: Array<{
+    id: string;
+    severity: string;
+    status: string;
+    classification?: string;
+    details_excerpt: string;
+    affected_files?: string[];
+    suggestion?: string;
+  }>;
+  next_action: string;
+  receipt_status?: string;
+  closure_status?: 'open' | 'closed';
+  compile_first_error?: {
+    file?: string;
+    line?: number;
+    message: string;
+    kind?: string;
+  };
+  soft_advisories?: SoftAdvisory[];
+}
+
+/** script-report.json checks 计数摘要 */
 export interface ReportSummary {
   total: number;
   pass: number;
@@ -592,6 +660,8 @@ export interface CheckContext {
   skipVisualParity?: boolean;
   /** adapter 是否声明 multimodal（M3）；不支持则上下文注入降级 */
   adapterMultimodal?: boolean;
+  /** adapter 图片输入能力分级（M3）；none | tool_read | native_attach */
+  adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
   /** project profile（framework/profiles）。缺配置时由 config 归一为 hmos-app */
   resolvedProfile: HarnessResolvedProfile;
   /** framework 资产根（standalone = projectRoot；consumer = projectRoot/framework） */

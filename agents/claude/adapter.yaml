@@ -50,6 +50,9 @@ user_confirmation:
   portable_required: true
   interaction_renderer_rule: templates/rules/interaction-renderer.md
 
+# 多模态：Claude Read 工具可读 sidecar；交互 composer 与 claude -p headless 两态均 tool_read
+image_input: tool_read
+
 deprecated_artifacts:
   - path: rules/confirmation-ux.md
     action: backup_delete
