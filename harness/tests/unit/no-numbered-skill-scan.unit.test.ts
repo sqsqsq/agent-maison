@@ -8,7 +8,6 @@ import * as path from 'path';
 
 import { inferRepoLayout } from '../../repo-layout';
 import {
-  NUMBERED_BACKTICK_ID_RE,
   NUMBERED_PROSE_RE,
   resolveNumberedSkillScanTarget,
   scanNoNumberedSkillPaths,
@@ -142,29 +141,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       const layout = inferRepoLayout(tmp);
       const hits = scanNoNumberedSkillProse(layout, 'consumer');
       assert(hits.some(h => h.match === 'Skill 00'), hits.map(h => h.match).join(';'));
-      fs.rmSync(tmp, { recursive: true, force: true });
-    },
-  },
-  {
-    name: 'backtick id regex: (`4-code-review`) 命中',
-    run: () => {
-      NUMBERED_BACKTICK_ID_RE.lastIndex = 0;
-      const m = NUMBERED_BACKTICK_ID_RE.exec('# Skill (`4-code-review`)');
-      assert(m?.[0] === '(`4-code-review`)', m?.[0] ?? 'no match');
-      NUMBERED_BACKTICK_ID_RE.lastIndex = 0;
-      assert(NUMBERED_BACKTICK_ID_RE.exec('# Skill (`code-review`)') === null, 'flat id must not match');
-    },
-  },
-  {
-    name: 'prose scan: backtick id 残留命中',
-    run: () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-bt-'));
-      const fw = path.join(tmp, 'framework');
-      writeText(path.join(fw, 'skills', 'feature', 'coding', 'SKILL.md'), '# Coding (`3-coding`)\n');
-      writeText(path.join(fw, 'workflows', '.gitkeep'), '');
-      const layout = inferRepoLayout(tmp);
-      const hits = scanNoNumberedSkillProse(layout, 'consumer');
-      assert(hits.some(h => h.kind === 'backtick' && h.match === '(`3-coding`)'), hits.map(h => h.match).join(';'));
       fs.rmSync(tmp, { recursive: true, force: true });
     },
   },

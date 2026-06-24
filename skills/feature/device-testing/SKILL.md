@@ -4,7 +4,7 @@
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。宿主打包/装机/设备工具链仍以本 Skill 的 profile addendum（Tier_2）为 SSOT。
 
@@ -297,18 +297,15 @@ doc/features/{module-name}/testing/test-plan.md
 
 ### Step 4.6: 视觉 diff 回环（visual_diff · ui_change=new_or_changed 时）
 
-> **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。harness **`captureVisualDiff`** 在 `device_test.run` 层发起截图，**不得**在 check-testing 校验期执行。
+> **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
-2. **MVP 范围**：先覆盖 ui-spec **P0 且可直达顶层屏**（`navigation_frame` @ order 0）；深层屏复用既有导航到达后再截，或暂缺 shot 由门禁 WARN。
-3. **执行（新协议）**：
-   - harness **自动**导航 + 截图 → `doc/features/<feature>/device-testing/device-screenshots/shot-<screen>.png`
-   - 写入 **`visual-diff.json` 骨架**（`verdict: pending`，可选 jimp `score_floor` 半定量下限）
-   - agent/VL **只补** `verdict` / `fidelity_score` / `geometric_iou` / `must-fix`；**`pending` 不得视为闭环完成**
-   - 同步维护 `doc/features/<feature>/device-testing/visual-diff.md` 人类可读摘要
-4. **字段分工**：`fidelity_score` / `geometric_iou` = VL 自填；`score_floor` = jimp 客观下限/哨兵（不参与 PASS 阈值）；二者显著背离 → harness WARN 人工复核。
-5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
-6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
+2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → 多模态对照 **authoritative_refs 原图** + ui-spec → 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/`
+   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数，含几何 IoU）
+4. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
+5. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
 
 ### Step 5: 生成测试报告（测试执行后）
 
