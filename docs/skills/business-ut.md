@@ -129,7 +129,7 @@ flowchart LR
   S5 --> COV["ut/reports/ac-coverage.json<br/>（可选机器回执）"]
 ```
 
-**怎么读这张**：从左到右是需求在流水线里走的**阶段顺序**（不是代码 import 关系）。spec～4 为 business-ut 提供「验收、契约、实现、审阅」；business-ut 为 device-testing 交「能跑通的业务流 UT + 追溯材料 + 真机待办」。
+**怎么读这张**：从左到右是需求在流水线里走的**阶段顺序**（不是代码 import 关系）。spec / plan / coding / code-review 为 business-ut 提供「验收、契约、实现、审阅」；business-ut 为 device-testing 交「能跑通的业务流 UT + 追溯材料 + 真机待办」。
 
 - **S1** — spec 与 `acceptance.yaml`：谁进 UT、谁进真机，由 `ut_layer` 定。
 - **S2** — `plan.md`、`contracts.yaml`；复杂 feature 才额外有 `use-cases.yaml`（规划用例与分支的规约）。

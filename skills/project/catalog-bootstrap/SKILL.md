@@ -18,7 +18,7 @@
 - `doc/module-catalog.yaml` — 每个模块的画像卡（职责 / `NOT_responsible_for` / `easily_confused_with` / 业务术语）
 - `doc/glossary.yaml` — 业务自然语言 ↔ 权威模块映射表
 
-本 Skill 是所有后续 Skill（1~6）的**前置**，只有这两个文件建好，spec 阶段的「术语消歧」和「Scope 声明」才有可校验的基准。
+本 Skill 是所有后续六篇 feature 阶段 Skill（spec / plan / coding / code-review / business-ut / device-testing）的**前置**，只有这两个文件建好，spec 阶段的「术语消歧」和「Scope 声明」才有可校验的基准。
 
 ## Step 0. 载入 `project_profile` addendum（强制）
 

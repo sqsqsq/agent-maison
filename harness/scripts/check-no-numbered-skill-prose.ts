@@ -14,16 +14,16 @@ export function runNoNumberedSkillProseChecks(ctx: CheckContext): CheckResult[] 
     return [{
       id: 'no_numbered_skill_prose',
       category: 'structure',
-      description: '无 Skill N 人读编号文案残留',
+      description: '无编号 skill 文案残留（Skill N / backtick / bare / range）',
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `扫描模式=${mode}，未发现 Skill N 编号文案`,
+      details: `扫描模式=${mode}，未发现编号 skill 文案（prose/backtick/bare/range）`,
     }];
   }
   return hits.map((h, idx) => ({
     id: `no_numbered_skill_prose_${idx}`,
     category: 'structure',
-    description: 'Skill N 人读编号文案残留',
+    description: `编号 skill 文案残留 [${h.kind}]`,
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${h.file}:${h.line} — 匹配「${h.match}」`,

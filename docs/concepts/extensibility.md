@@ -110,5 +110,5 @@ flowchart TB
 - **核心 Skill 路径**：架构图与正文统一为 `skills/feature/*`（不再使用 `skills/00..6` 编号目录表述）。
 - **capability-registry**：宿主编译 / UT / 真机能力由 profile 注册，根 harness 只做编排；详见 [`../../profiles/README.md`](../../profiles/README.md)。
 - **adapter 桥接**：`render-agents-md` + `instance_skill_bridge` 下发扩展 Skill；确认 UX 见 adapter **interaction-renderer** 与 [`../../skills/reference/user-confirmation-ux.md`](../../skills/reference/user-confirmation-ux.md)。
-- **adapter 实例根清理（UPDATE）**：`framework-init` 的 `cleanup-deprecated` 会 `backup_delete` 遗留 skill 跳板（编号如 `3-coding`；语义旧名如 `prd-design` / `requirement-design` / `1-prd-design` / `2-requirement-design`），保留现行扁平跳板（`spec` / `plan` / `coding`）。详见 [`../../agents/README.md`](../../agents/README.md)「v2.3+ 扁平 skill-id」与 [`../../MIGRATION.md`](../../MIGRATION.md) §v2.3；**勿跳过** `cleanup-deprecated`。
+- **adapter 实例根清理（UPDATE）**：`framework-init` 的 `cleanup-deprecated` 会 `backup_delete` 遗留 skill 跳板（语义旧名如 `prd-design` / `requirement-design`），保留现行扁平跳板（`spec` / `plan` / `coding`）。详见 [`../../agents/README.md`](../../agents/README.md)「v2.3+ 扁平 skill-id」与 [`../../MIGRATION.md`](../../MIGRATION.md) §v2.3；**勿跳过** `cleanup-deprecated`。
 - 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`agents/README.md` / `profile-loader.ts` / workflow 与 schema 仍为本文 SSOT。

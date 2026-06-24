@@ -78,7 +78,7 @@ cd <repo-root>
 | `render-agents-md.mjs` | S3 adapter 物化 |
 | `merge-framework-config.mjs` | S3 config merge / MIGRATION |
 | `show-last-committed-framework-config.mjs` | S1.1 Git 快照 |
-| `check-receipt.ts` | spec～6 阶段闭环 |
+| `check-receipt.ts` | spec→device-testing 六阶段闭环 |
 | `detect-deveco.ts`（shim） | personal setup（`setup.deveco_path`）/ hmos profile-addendum |
 
 **不经 shell 拼路径、无 cwd 问题**：`harness-runner.ts` 进程内调用各 `check-*.ts`；`hook-runner.mjs`（参数为绝对路径）。

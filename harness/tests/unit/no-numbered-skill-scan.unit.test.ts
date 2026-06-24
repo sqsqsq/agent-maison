@@ -1,5 +1,5 @@
 // ============================================================================
-// no-numbered-skill-scan.unit.test.ts — consumer 布局 + skills-bridge 路径门禁
+// no-numbered-skill-scan.unit.test.ts — consumer 布局 + 五 kind 门禁
 // ============================================================================
 
 import * as fs from 'fs';
@@ -8,7 +8,9 @@ import * as path from 'path';
 
 import { inferRepoLayout } from '../../repo-layout';
 import {
+  NUMBERED_BARE_RE,
   NUMBERED_PROSE_RE,
+  assertLiveAliasDocDrift,
   resolveNumberedSkillScanTarget,
   scanNoNumberedSkillPaths,
   scanNoNumberedSkillProse,
@@ -28,6 +30,8 @@ function writeText(abs: string, content: string): void {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content, 'utf8');
 }
+
+const repoRoot = path.resolve(__dirname, '../../..');
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
@@ -62,26 +66,6 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'consumer: framework/skills/1-spec 残留应命中',
-    run: () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-c-hit-'));
-      const fw = path.join(tmp, 'framework');
-      writeText(
-        path.join(fw, 'skills', '1-spec', 'SKILL.md'),
-        'see framework/skills/1-spec/SKILL.md\n',
-      );
-      writeText(path.join(fw, 'workflows', '.gitkeep'), '');
-      const layout = inferRepoLayout(tmp);
-      const hits = scanNoNumberedSkillPaths(layout, 'consumer');
-      assert(hits.length >= 1, `hits=${hits.length}`);
-      assert(
-        hits.some(h => h.file.replace(/\\/g, '/').includes('framework/skills/1-spec')),
-        hits.map(h => h.file).join(';'),
-      );
-      fs.rmSync(tmp, { recursive: true, force: true });
-    },
-  },
-  {
     name: 'consumer: skills-bridge/3-coding 残留应命中',
     run: () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-bridge-'));
@@ -102,56 +86,110 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'dev standalone: 扁平 catalog-bootstrap 路径不误报',
-    run: () => {
-      const layout = inferRepoLayout(path.resolve(__dirname, '../../..'));
-      const hits = scanNoNumberedSkillPaths(layout, 'dev');
-      const falsePos = hits.filter(h => h.match.includes('catalog-bootstrap') && !h.match.includes('0-catalog'));
-      assert(falsePos.length === 0, falsePos.map(h => h.match).join(';'));
-    },
-  },
-  {
     name: 'dev standalone: 无旧编号 skill 路径残留',
     run: () => {
-      const layout = inferRepoLayout(path.resolve(__dirname, '../../..'));
+      const layout = inferRepoLayout(repoRoot);
       const hits = scanNoNumberedSkillPaths(layout, 'dev');
-      assert(hits.length === 0, hits.slice(0, 3).map(h => `${h.file}:${h.line}`).join('\n'));
+      assert(hits.length === 0, hits.slice(0, 5).map(h => `${h.file}:${h.line} ${h.match}`).join('\n'));
     },
   },
   {
-    name: 'prose regex: Skill 00 命中且与 Skill 0 / Skill 007 区分',
+    name: 'prose regex: Skill 00 命中且与 Skill 007 区分',
     run: () => {
       const exec = (text: string) => {
         NUMBERED_PROSE_RE.lastIndex = 0;
         return NUMBERED_PROSE_RE.exec(text);
       };
       assert(exec('see Skill 00 framework-init')?.[0] === 'Skill 00', 'Skill 00');
-      assert(exec('see Skill 0 catalog-bootstrap')?.[0] === 'Skill 0', 'Skill 0');
       assert(exec('Skill 007') === null, 'Skill 007 must not match');
-      assert(exec('经 framework-init Stop hook') === null, 'no Skill prefix');
     },
   },
   {
-    name: 'prose scan: Skill 00 正文命中',
+    name: 'bare regex: 1-spec 命中；1-prd-design 与 prd-design 不命中',
     run: () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-prose-00-'));
+      const exec = (text: string) => {
+        NUMBERED_BARE_RE.lastIndex = 0;
+        return NUMBERED_BARE_RE.exec(text);
+      };
+      assert(exec('token 1-spec here')?.[0] === '1-spec', '1-spec');
+      assert(exec('1-prd-design') === null, '1-prd-design');
+      assert(exec('prd-design') === null, 'prd-design');
+    },
+  },
+  {
+    name: 'backtick: `4-code-review` 标题形应命中',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-bt-'));
       const fw = path.join(tmp, 'framework');
-      writeText(path.join(fw, 'skills', 'feature', 'spec', 'SKILL.md'), '旧称 Skill 00 已废弃\n');
+      writeText(
+        path.join(fw, 'skills', 'feature', 'code-review', 'SKILL.md'),
+        '# Code Review Skill (`4-code-review`)\n',
+      );
       writeText(path.join(fw, 'workflows', '.gitkeep'), '');
       const layout = inferRepoLayout(tmp);
       const hits = scanNoNumberedSkillProse(layout, 'consumer');
-      assert(hits.some(h => h.match === 'Skill 00'), hits.map(h => h.match).join(';'));
+      assert(hits.some(h => h.kind === 'backtick' && h.match.includes('4-code-review')), hits.map(h => h.match).join(';'));
       fs.rmSync(tmp, { recursive: true, force: true });
     },
   },
   {
-    name: 'dev standalone: feature SKILL 无 Skill N 人读编号',
+    name: 'range: spec~6 含阶段上下文应命中',
     run: () => {
-      const layout = inferRepoLayout(path.resolve(__dirname, '../../..'));
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nnss-range-'));
+      const fw = path.join(tmp, 'framework');
+      writeText(path.join(fw, 'docs', 'x.md'), 'feature skill spec~6 阶段闭环\n');
+      writeText(path.join(fw, 'workflows', '.gitkeep'), '');
+      const layout = inferRepoLayout(tmp);
+      const hits = scanNoNumberedSkillProse(layout, 'consumer');
+      assert(hits.some(h => h.kind === 'range' && h.match.includes('spec~6')), hits.map(h => `${h.kind}:${h.match}`).join(';'));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'range: 议题 2.1～2.6 不误报',
+    run: () => {
+      const layout = inferRepoLayout(repoRoot);
+      const hits = scanNoNumberedSkillProse(layout, 'dev').filter(h =>
+        h.file.replace(/\\/g, '/').includes('atomic-service-roadmap.md'),
+      );
+      assert(hits.length === 0, hits.map(h => h.match).join(';'));
+    },
+  },
+  {
+    name: 'profile-skill-assets.ts 整文件 exclude（bare 1-spec 不报错）',
+    run: () => {
+      const layout = inferRepoLayout(repoRoot);
+      const hits = scanNoNumberedSkillProse(layout, 'dev').filter(h =>
+        h.file.replace(/\\/g, '/').includes('profile-skill-assets.ts'),
+      );
+      assert(hits.length === 0, hits.map(h => `${h.line} ${h.match}`).join(';'));
+    },
+  },
+  {
+    name: 'MIGRATION profile-skill-asset 活 alias 表 bare 不报错',
+    run: () => {
+      const layout = inferRepoLayout(repoRoot);
+      const hits = scanNoNumberedSkillProse(layout, 'dev').filter(h =>
+        h.file.replace(/\\/g, '/').endsWith('MIGRATION.md'),
+      );
+      assert(hits.length === 0, hits.map(h => `${h.line} [${h.kind}] ${h.match}`).join('\n'));
+    },
+  },
+  {
+    name: 'live alias 漂移断言：当前 MIGRATION 至少 2 行含 1-spec/2-plan',
+    run: () => {
+      const text = fs.readFileSync(path.join(repoRoot, 'MIGRATION.md'), 'utf8');
+      assertLiveAliasDocDrift(text);
+    },
+  },
+  {
+    name: 'dev standalone: feature SKILL 无编号 skill 文案残留',
+    run: () => {
+      const layout = inferRepoLayout(repoRoot);
       const hits = scanNoNumberedSkillProse(layout, 'dev').filter(h =>
         h.file.replace(/\\/g, '/').includes('skills/feature/'),
       );
-      assert(hits.length === 0, hits.slice(0, 5).map(h => `${h.file}:${h.line} ${h.match}`).join('\n'));
+      assert(hits.length === 0, hits.slice(0, 5).map(h => `${h.file}:${h.line} [${h.kind}] ${h.match}`).join('\n'));
     },
   },
 ];

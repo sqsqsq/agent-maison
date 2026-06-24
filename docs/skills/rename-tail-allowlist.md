@@ -15,7 +15,7 @@ node scripts/rename-tail-inventory.mjs --fail-on-non-allowlisted
 
 - `\bprd\b` 词边界
 - design-phase 残留（`--phase design`、`check:design`、`design 阶段`、`phase: design` 等）；**不**抓普通英文 `design`（如 UI design、`design.md` 文件名、OpenSpec `design.md`）
-- numbered skill 路径与 `Skill N` prose
+- numbered skill 路径与 `Skill N` prose；以及 backtick / bare / range 五 kind（见 [`harness/scripts/utils/no-numbered-skill-scan.ts`](../../harness/scripts/utils/no-numbered-skill-scan.ts)）
 
 验收：**非 allowlist 命中 = 0**（非裸扫 after=0）。
 
@@ -32,6 +32,7 @@ node scripts/rename-tail-inventory.mjs --fail-on-non-allowlisted
 | 7 | OpenSpec `design.md` | `openspec/**`（dev-only） |
 | 8 | 历史 plan | `.cursor/plans/**`（dev-only） |
 | 9 | check 脚本内部标识 | `check-spec.ts` / `check-plan.ts` 内 `prd` 变量名、legacy 错误文案；`spec-visual-handoff-check.ts` 参数名 `prd` |
+| 10 | 活编号 skill-id alias（运行时 + MIGRATION 镜像） | `harness/scripts/utils/profile-skill-assets.ts`（整文件 exclude）；`MIGRATION.md` 内 `profile-skill-asset` 对照表行（`LIVE_ALIAS_DOC_RULE` 内容匹配，非行号） |
 
 额外固定放行：
 
@@ -40,10 +41,11 @@ node scripts/rename-tail-inventory.mjs --fail-on-non-allowlisted
 - `docs/visual-handoff-config-migration.md`、`docs/overview.md` 中的 alias 说明
 - `skills/reference/confirmation-registry.yaml` 中 `prd.*` / `design.*` 确认点 id（兼容窗口内保留）
 - `skills/project/framework-init/**` 中 legacy `prd` 段迁移说明
+- **numbered-skill 扫描器 SSOT**：`no-numbered-skill-scan.ts`、`legacy-skill-bridge-cleanup.ts` 内 legacy 词表常量（自排除）
 
 ## P0 Option B 权衡（release 硬门禁）
 
-- `release:verify` **硬门禁仅 MJS numbered-skill scan**（[`check-no-numbered-skill-release.mjs`](../../scripts/check-no-numbered-skill-release.mjs)）
+- `release:verify` **硬门禁**含 MJS numbered-skill 五 kind scan（[`check-no-numbered-skill-release.mjs`](../../scripts/check-no-numbered-skill-release.mjs)）；与 harness `check:docs` 的 `no_numbered_skill_*` 口径对齐（prose/backtick/bare/range + path）
 - consumer 侧 `check:docs` e2e 降为推荐烟测：`npm run release:smoke-consumer`
 - **风险**：仅能在 consumer layout `check:docs` 触发的 BLOCKER，发版时可能不被 `release:verify` 自动拦住
 - **缓解**：发版前跑 `release:smoke-consumer`；后续可评估扩 MJS gate 或把特定 check 子集纳入 verify
