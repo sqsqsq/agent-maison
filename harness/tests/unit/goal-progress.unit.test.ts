@@ -33,7 +33,19 @@ const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
 function runGoalStatusCli(
   args: string[],
 ): { status: number | null; stdout: string; stderr: string } {
-  const scriptRel = 'scripts/goal-status.ts';
+  return runGoalCli('scripts/goal-status.ts', args);
+}
+
+function runGoalMonitorCli(
+  args: string[],
+): { status: number | null; stdout: string; stderr: string } {
+  return runGoalCli('scripts/goal-monitor.ts', args);
+}
+
+function runGoalCli(
+  scriptRel: string,
+  args: string[],
+): { status: number | null; stdout: string; stderr: string } {
   const localTsNode = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'dist', 'bin.js');
   const cwd = HARNESS_ROOT;
   const r = fs.existsSync(localTsNode)
@@ -127,6 +139,43 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       });
       assert(snap.status === 'COMPLETED', `status ${snap.status}`);
       assert(snap.chain.phases.length === 6, 'chain len');
+    },
+  },
+  {
+    name: 'projectGoalProgress: completed phase duration stops at phase_verdict',
+    run: () => {
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest(),
+        events: happyEvents(),
+        workflow,
+        nowMs: new Date('2026-06-10T13:00:00.000Z').getTime(),
+      });
+      const specRow = snap.phases_summary.find((p) => p.phase === 'spec');
+      if (!specRow) throw new Error('spec row');
+      assert(specRow.status === 'PASSED', `spec status ${specRow.status}`);
+      assert(specRow.duration_ms === 480_000, `duration ${specRow.duration_ms}`);
+    },
+  },
+  {
+    name: 'projectGoalProgress: running phase duration still grows with now',
+    run: () => {
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['coding'] },
+        { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'coding', attempt: 1 },
+        { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'coding' },
+      ];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest({ start_phase: 'coding', end_phase: 'coding' }),
+        events,
+        workflow,
+        nowMs: new Date('2026-06-10T12:05:01.000Z').getTime(),
+      });
+      const codingRow = snap.phases_summary.find((p) => p.phase === 'coding');
+      if (!codingRow) throw new Error('coding row');
+      assert(codingRow.status === 'AGENT_RUNNING', `coding status ${codingRow.status}`);
+      assert(codingRow.duration_ms === 300_000, `duration ${codingRow.duration_ms}`);
     },
   },
   {
@@ -927,6 +976,288 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const parsed = JSON.parse(r.stdout.trim()) as { status: string; schema_version: string };
         assert(parsed.schema_version === '1.0', 'schema');
         assert(parsed.status === 'COMPLETED', `status ${parsed.status}`);
+      } finally {
+        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'goal-monitor CLI: phase_verdict edge notification',
+    run: () => {
+      const feature = `goal-monitor-verdict-${process.pid}`;
+      const runId = '20260610T120000Z';
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const manifest = mkManifest({ feature, report_dir: reportRel });
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        happyEvents().map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      try {
+        const r = runGoalMonitorCli([
+          '--feature',
+          feature,
+          '--run-id',
+          runId,
+          '--since-event',
+          '5',
+          '--max-seconds',
+          '0',
+          '--json',
+        ]);
+        assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
+        const parsed = JSON.parse(r.stdout.trim()) as {
+          notification_kind: string;
+          event_index: number;
+          phase_verdict: string;
+        };
+        assert(parsed.notification_kind === 'phase_verdict', `kind ${parsed.notification_kind}`);
+        assert(parsed.event_index === 6, `event_index ${parsed.event_index}`);
+        assert(parsed.phase_verdict === 'PASS', `verdict ${parsed.phase_verdict}`);
+      } finally {
+        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'goal-monitor CLI: no-op timeout when no new edge',
+    run: () => {
+      const feature = `goal-monitor-noop-${process.pid}`;
+      const runId = '20260610T120000Z';
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const manifest = mkManifest({ feature, report_dir: reportRel });
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        happyEvents().map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      try {
+        const r = runGoalMonitorCli([
+          '--feature',
+          feature,
+          '--run-id',
+          runId,
+          '--since-event',
+          '7',
+          '--max-seconds',
+          '0',
+          '--json',
+        ]);
+        assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
+        const parsed = JSON.parse(r.stdout.trim()) as {
+          notification_kind: string;
+          no_op_reason?: string;
+        };
+        assert(parsed.notification_kind === 'none', `kind ${parsed.notification_kind}`);
+        assert(parsed.no_op_reason === 'timeout_no_notification', `reason ${parsed.no_op_reason}`);
+      } finally {
+        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'goal-monitor CLI: heartbeat uses 10m event-time threshold and dedupe',
+    run: () => {
+      const feature = `goal-monitor-heartbeat-${process.pid}`;
+      const runId = '20260610T120000Z';
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const manifest = mkManifest({
+        feature,
+        report_dir: reportRel,
+        start_phase: 'coding',
+        end_phase: 'coding',
+      });
+      const baseMs = Date.now() - 11 * 60_000;
+      const iso = (offsetMs: number): string => new Date(baseMs + offsetMs).toISOString();
+      const events: GoalRunEvent[] = [
+        { ts: iso(0), type: 'run_start', chain: ['coding'] },
+        { ts: iso(1_000), type: 'phase_start', phase: 'coding', attempt: 1 },
+        { ts: iso(2_000), type: 'agent_invoke_start', phase: 'coding' },
+        { ts: iso(9 * 60_000 + 59_000), type: 'heartbeat', phase: 'coding' },
+        { ts: iso(10 * 60_000 + 1_000), type: 'heartbeat', phase: 'coding' },
+        { ts: iso(11 * 60_000), type: 'heartbeat', phase: 'coding' },
+      ];
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        events.map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      const lock = {
+        ownerId: 'test',
+        pid: process.pid,
+        hostname: os.hostname(),
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        run_id: runId,
+      };
+      fs.writeFileSync(
+        path.join(FRAMEWORK_ROOT, 'doc/features', feature, 'goal-runs', '.feature.lock'),
+        JSON.stringify(lock, null, 2) + '\n',
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(reportDir, '.runner.lock'),
+        JSON.stringify(lock, null, 2) + '\n',
+        'utf-8',
+      );
+      try {
+        const early = runGoalMonitorCli([
+          '--feature',
+          feature,
+          '--run-id',
+          runId,
+          '--since-event',
+          '2',
+          '--max-seconds',
+          '0',
+          '--json',
+        ]);
+        assert(early.status === 0, `exit ${early.status} stderr=${early.stderr}`);
+        const earlyParsed = JSON.parse(early.stdout.trim()) as {
+          notification_kind: string;
+          event_index: number;
+        };
+        assert(earlyParsed.notification_kind === 'heartbeat', `kind ${earlyParsed.notification_kind}`);
+        assert(earlyParsed.event_index === 4, `event_index ${earlyParsed.event_index}`);
+
+        const deduped = runGoalMonitorCli([
+          '--feature',
+          feature,
+          '--run-id',
+          runId,
+          '--since-event',
+          '4',
+          '--max-seconds',
+          '0',
+          '--json',
+        ]);
+        assert(deduped.status === 0, `exit ${deduped.status} stderr=${deduped.stderr}`);
+        const dedupedParsed = JSON.parse(deduped.stdout.trim()) as { notification_kind: string };
+        assert(dedupedParsed.notification_kind === 'none', `kind ${dedupedParsed.notification_kind}`);
+      } finally {
+        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'goal-monitor CLI: latest run resolves from feature directory',
+    run: () => {
+      const feature = `goal-monitor-latest-${process.pid}`;
+      const oldId = '20260609T120000Z';
+      const runId = '20260610T120000Z';
+      const oldRel = `doc/features/${feature}/goal-runs/${oldId}`;
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const oldDir = path.join(FRAMEWORK_ROOT, oldRel);
+      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const oldManifest = mkManifest({
+        feature,
+        run_id: oldId,
+        report_dir: oldRel,
+        created_at: '2026-06-09T12:00:00.000Z',
+      });
+      const manifest = mkManifest({ feature, run_id: runId, report_dir: reportRel });
+      fs.mkdirSync(oldDir, { recursive: true });
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(path.join(oldDir, 'manifest.json'), JSON.stringify(oldManifest, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(oldDir, 'events.jsonl'), '', 'utf-8');
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        happyEvents().map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      try {
+        const r = runGoalMonitorCli([
+          '--feature',
+          feature,
+          '--run-id',
+          'latest',
+          '--since-event',
+          '5',
+          '--max-seconds',
+          '0',
+          '--json',
+        ]);
+        assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
+        const parsed = JSON.parse(r.stdout.trim()) as { run_id: string; notification_kind: string };
+        assert(parsed.run_id === runId, `run_id ${parsed.run_id}`);
+        assert(parsed.notification_kind === 'phase_verdict', `kind ${parsed.notification_kind}`);
+      } finally {
+        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'goal-monitor CLI: hard liveness anomaly edge-notifies once then dedupes',
+    run: () => {
+      const feature = `goal-monitor-liveness-${process.pid}`;
+      const runId = '20260610T120000Z';
+      const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const manifest = mkManifest({
+        feature,
+        report_dir: reportRel,
+        start_phase: 'coding',
+        end_phase: 'coding',
+      });
+      // Unclosed agent_invoke older than phase timeout (3600s) → hard STALLED,
+      // with no run_end and a frozen event stream (no lock, no heartbeats).
+      const stale = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+      const events: GoalRunEvent[] = [
+        { ts: stale, type: 'run_start', chain: ['coding'] },
+        { ts: stale, type: 'phase_start', phase: 'coding', attempt: 1 },
+        { ts: stale, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'p1' },
+      ] as GoalRunEvent[];
+      fs.mkdirSync(reportDir, { recursive: true });
+      fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(reportDir, 'events.jsonl'),
+        events.map((e) => JSON.stringify(e)).join('\n') + '\n',
+        'utf-8',
+      );
+      try {
+        // First call: anomaly is new relative to the default cursor → fires once.
+        const first = runGoalMonitorCli([
+          '--feature', feature, '--run-id', runId,
+          '--since-event', '-1', '--max-seconds', '0', '--json',
+        ]);
+        assert(first.status === 0, `exit ${first.status} stderr=${first.stderr}`);
+        const firstParsed = JSON.parse(first.stdout.trim()) as {
+          notification_kind: string;
+          status: string;
+          liveness_state: string;
+          event_index: number;
+        };
+        assert(firstParsed.notification_kind === 'liveness', `kind ${firstParsed.notification_kind}`);
+        assert(firstParsed.status === 'STALLED', `status ${firstParsed.status}`);
+        assert(firstParsed.liveness_state === 'STALLED', `liveness ${firstParsed.liveness_state}`);
+        assert(firstParsed.event_index === 2, `event_index ${firstParsed.event_index}`);
+
+        // Second call passing the returned cursor back, no newer events →
+        // edge-trigger gate suppresses the repeat, bounded no-op instead of busy-spin.
+        const second = runGoalMonitorCli([
+          '--feature', feature, '--run-id', runId,
+          '--since-event', String(firstParsed.event_index), '--max-seconds', '0', '--json',
+        ]);
+        assert(second.status === 0, `exit ${second.status} stderr=${second.stderr}`);
+        const secondParsed = JSON.parse(second.stdout.trim()) as {
+          notification_kind: string;
+          no_op_reason?: string;
+        };
+        assert(secondParsed.notification_kind === 'none', `kind ${secondParsed.notification_kind}`);
+        assert(
+          secondParsed.no_op_reason === 'timeout_no_notification',
+          `reason ${secondParsed.no_op_reason}`,
+        );
       } finally {
         fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
       }

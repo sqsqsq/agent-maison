@@ -155,6 +155,7 @@ interface PhaseSpan {
   phase: FeaturePhase;
   attempt: number;
   started_at: string | null;
+  ended_at: string | null;
   status: ProgressPhaseStatus;
   substep: GoalProgressSnapshot['phase']['substep'];
   recovered: boolean;
@@ -205,6 +206,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     phase,
     attempt: 0,
     started_at: null,
+    ended_at: null,
     status: 'NOT_STARTED' as ProgressPhaseStatus,
     substep: null,
     recovered: false,
@@ -225,6 +227,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
           phase: chain[j],
           attempt: 0,
           started_at: null,
+          ended_at: null,
           status: 'NOT_STARTED',
           substep: null,
           recovered: false,
@@ -275,6 +278,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
         e.action === 'defer_external_and_halt'
       ) {
         span.ended = true;
+        span.ended_at = e.ts ?? span.ended_at;
         if (e.action === 'advance') {
           span.status = 'PASSED';
         } else {
@@ -287,6 +291,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
         span.substep = null;
       } else if (e.action === 'halt') {
         span.ended = true;
+        span.ended_at = e.ts ?? span.ended_at;
         span.status = 'HALTED';
         span.halted = true;
         span.substep = 'verdict';
@@ -309,7 +314,15 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
   for (let i = 0; i < lastActive; i++) {
     if (!spans[i].ended && spans[i].status !== 'HALTED') {
       spans[i].ended = true;
+      spans[i].ended_at = spans[i].ended_at ?? spans[i + 1]?.started_at ?? null;
       spans[i].status = spans[i].deferred ? 'DEFERRED' : 'PASSED';
+    }
+  }
+
+  const effectiveRunEnd = resolveEffectiveRunEnd(events);
+  if (effectiveRunEnd?.ts) {
+    for (const span of spans) {
+      if (span.ended && !span.ended_at) span.ended_at = effectiveRunEnd.ts;
     }
   }
 
@@ -399,10 +412,11 @@ function buildPhasesSummary(
   nowMs: number,
 ): GoalProgressSnapshot['phases_summary'] {
   return spans.map((s) => {
-    const duration =
-      s.started_at != null
-        ? nowMs - new Date(s.started_at).getTime()
-        : null;
+    const startedMs = s.started_at != null ? new Date(s.started_at).getTime() : NaN;
+    const endedMs = s.ended_at != null ? new Date(s.ended_at).getTime() : NaN;
+    const duration = !Number.isNaN(startedMs)
+      ? (s.ended && !Number.isNaN(endedMs) ? endedMs : nowMs) - startedMs
+      : null;
     return {
       phase: s.phase,
       status: s.status,

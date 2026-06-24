@@ -78,7 +78,7 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
     --feature <feature-slug> --requirement "<需求>" --adapter <adapter> --detach
   ```
 
-  `--detach` 让 goal-runner **秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0**——宿主 shell 拿到干净的 0 退出码就返回（不会触发超时杀树），真正的 run 在后台独立跑、逐 phase 拉 headless agent。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`，不占用宿主 shell 的管道。**解析该 JSON 取 `run_id`**，随后按下文轮询 `goal-status`。
+  `--detach` 让 goal-runner **秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0**——宿主 shell 拿到干净的 0 退出码就返回（不会触发超时杀树），真正的 run 在后台独立跑、逐 phase 拉 headless agent。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`，不占用宿主 shell 的管道。**解析该 JSON 取 `run_id`**，随后按下文进入 bounded monitor。
 
 ### 续跑
 
@@ -89,7 +89,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --resume <run-id> --feature <feature-slug>
 ```
 
-**BLOCKER**：主 agent **不得自行循环 `--resume`**；续跑必须由**用户**在对话中显式触发。长时间后台运行时，允许每隔约 5–10 分钟跑**一次性** `goal-status --markdown` 向用户汇报进度（这不是 `--resume` 续跑）。
+**BLOCKER**：主 agent **不得自行循环 `--resume`**；续跑必须由**用户**在对话中显式触发。续跑启动后仍按「运行中进度汇报」进入 bounded monitor；这不是 `--resume` 续跑。
 
 若上次终态为 `HALTED` 或 `DEFERRED`，默认须加 `--force-resume`（冷却期内会被拒绝）；勿在无用户确认时自动续跑。
 
@@ -113,19 +113,31 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 
 启动 runner（后台模式或 `--detach`，见上「启动方式」）后，立刻告诉用户 `run_id` 与 `progress.json` 路径。
 
-需要汇报「仍在跑什么」时，agent 自跑**一次性**（poll 一帧即退出，**不要**跑 `--watch` 常驻）：
+除非用户明确要求 **fire-and-forget / 后台跑不用汇报**，主 agent 在当前活跃对话轮次内 **必须**进入 bounded monitor。bounded monitor 是只读等待器：它只读 `events.jsonl` / live progress，不启动、不续跑、不杀掉 goal-runner；如果宿主超时杀掉 monitor，本次 goal run 不受影响，下一轮可重新调用。
+
+默认调用：
 
 ```bash
-cd framework/harness && npx ts-node scripts/goal-status.ts \
-  --feature <feature-slug> --run-id <run-id|latest> --markdown
+cd framework/harness && npx ts-node scripts/goal-monitor.ts \
+  --feature <feature-slug> --run-id <run-id|latest> \
+  --since-event <last-seen-event-index> \
+  --max-seconds 240 --markdown
 ```
 
-- **主干**：低频（5–10min）定时 poll 上述命令，覆盖静默卡死。
-- **加速器（Cursor 等支持 `notify_on_output` 的宿主）**：匹配 runner stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN`，有进展时再 poll。
-- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status`（实时重算锁 pid）。
+- **宿主工具 timeout 耦合（BLOCKER）**：调用 `goal-monitor --max-seconds N` 时，shell/tool 的 timeout 必须显式设置为 `> N`（建议 `N + 60s`；例如 `--max-seconds 240` 对应工具 timeout ≥300s）。如果宿主默认 timeout 更短（如 120s），必须显式提升；无法提升时把 `N` 降到安全值并循环。
+- **循环方式**：monitor 有输出后，向用户汇报并把返回的 `event_index` 记为 `last_seen`；未终态且当前轮次仍活跃时，再启动下一段 bounded monitor。**不要**跑 `goal-status --watch` 常驻。
+- **no-op**：若到 `--max-seconds` 仍无通知事件，monitor 会 no-op 退出；agent 可继续下一段 bounded monitor，不得误判 runner 卡死。
+- **heartbeat**：低频运行中摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断，并去重；不是每个 240s monitor 都汇报一次。
+- **硬 liveness 异常**：monitor 返回 `notification_kind=liveness`（`STALLED` / `ORPHAN_SUSPECTED`）时，向用户汇报一次并**停止** bounded monitor loop，升级让用户决策（查 `detach.log`、决定是否 `--force-resume` 或停 run）；**不要**继续轮询。monitor 已对同一异常去重（无新事件不复报），硬卡死/孤儿继续 loop 没有意义。
+- **跨轮次接管**：如果当前轮次被中断或上下文切换，新轮 agent 必须从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。
+- **fire-and-forget**：仅当用户明确要求后台跑不用汇报时，agent 可只给 `run_id`、`progress.json` 和一次性 status 命令，不进入 monitor loop。
+- **加速器（Cursor 等支持 `notify_on_output` 的宿主）**：匹配 runner stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 可更快触发一次 monitor；它只是加速器，通知 SSOT 仍是 `events.jsonl` / `goal-monitor`。
+- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` / `goal-monitor`（实时重算锁 pid）。
 - 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
 - **活性信号唯一权威 = `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍）；判断「是否卡死」只看这些。**
 - **BLOCKER（chrys / opencode 等无流式 headless adapter）**：`phases/<phase>/agent-output.log` 在该 phase **结束前恒为空**（chrys 结束才一次性写 stdout、opencode 流式但中途可长时间静默）——**禁止** tail 该日志判断进度或卡死；看到它空 ≠ runner 卡住。误把空日志当卡死会触发错误的 `--resume` / 重复起 run（chrys 实测坑）。
+
+**边界**：bounded monitor 不是跨轮次唤醒能力。它只能在主 agent 当前轮次仍活着时尽力汇报；若主对话已经结束，真正的推送/唤醒属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 定时唤醒、Cursor `notify_on_output`）。
 
 ## 报告解读（汇报给用户）
 
