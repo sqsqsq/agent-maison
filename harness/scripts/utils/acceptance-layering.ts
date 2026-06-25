@@ -81,6 +81,18 @@ export function collectUnitScopeIds(acceptance: AcceptanceSpec): string[] {
   return ids;
 }
 
+/** AC/BD id（大写）→ priority，供 ui_entry_coverage 等从 linked_acceptance 解析 P0。 */
+export function buildAcceptanceIdPriorityMap(acceptance: AcceptanceSpec): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const c of acceptance.criteria ?? []) {
+    if (c.id && c.priority) map.set(c.id.toUpperCase(), c.priority);
+  }
+  for (const b of acceptance.boundaries ?? []) {
+    if (b.id && b.priority) map.set(b.id.toUpperCase(), b.priority);
+  }
+  return map;
+}
+
 export function collectDeviceScopeIds(acceptance: AcceptanceSpec): string[] {
   const ids: string[] = [];
   for (const c of acceptance.criteria ?? []) {

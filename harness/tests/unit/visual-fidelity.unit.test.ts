@@ -596,6 +596,17 @@ export function runAll(): UnitCaseResult[] {
       fs.mkdirSync(ddir, { recursive: true });
       const shot = path.join(ddir, 'shot-home.png');
       writeMinimalRedPng(shot, 10, 10);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
       fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
         '```yaml\nui_change: new_or_changed\n```\n');
       fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
@@ -609,8 +620,10 @@ export function runAll(): UnitCaseResult[] {
         }],
       }));
       const r = checkVisualDiff(baseCtx(root));
-      const hit = r.find((x: { id: string; status: string }) => x.id === 'visual_diff');
-      if (!hit || hit.status === 'PASS') throw new Error(`all skipped should not PASS: ${JSON.stringify(hit)}`);
+      const hit = r.find((x: { id: string; status: string; severity?: string }) => x.id === 'visual_diff');
+      if (!hit || hit.status !== 'FAIL' || hit.severity !== 'BLOCKER') {
+        throw new Error(`P0 all skipped on new_or_changed must BLOCKER FAIL: ${JSON.stringify(hit)}`);
+      }
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

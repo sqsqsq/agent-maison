@@ -23,6 +23,8 @@ import {
   normalizeRelativePath,
 } from './har-export-resolve';
 
+import { runArkuiStaticRules } from './arkui-static-rules';
+
 export { isCrossModuleExportFileStem } from './har-export-resolve';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../..', 'harness');
@@ -1314,6 +1316,7 @@ function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckR
   out.push(...checkNamingConventions(ctx, analyses));
   out.push(...checkNoAnyType(ctx));
   out.push(...checkAsyncAwaitPattern(ctx));
+  out.push(...runArkuiStaticRules(ctx, analyses));
   return out;
 }
 

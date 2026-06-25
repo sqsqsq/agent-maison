@@ -35,12 +35,42 @@ export interface PhaseVerdictResolveInput {
   summaryBeforeMtime: number | null;
   summaryAfterMtime: number | null;
   summaryVerdict?: HarnessVerdict;
+  /** When false (global/disabled phase), closure gate is skipped. Default true. */
+  receiptRequired?: boolean;
+  closureStatus?: string;
+  receiptStatus?: string;
+  agentTimedOut?: boolean;
 }
 
 export interface PhaseVerdictResolveResult {
   verdict: HarnessVerdict;
   stale_summary: boolean;
   agent_failed: boolean;
+  /** True when harness PASS but phase must not advance (open closure / timeout). */
+  advance_blocked?: boolean;
+  advance_block_reason?: 'closure_open' | 'receipt_missing' | 'agent_timeout_unclosed';
+}
+
+export type ClosureAdvanceBlockReason = 'closure_open' | 'receipt_missing' | 'agent_timeout_unclosed';
+
+/** Block goal advance when script PASS but receipt/closure incomplete or agent timed out unclosed. */
+export function resolveClosureAdvanceBlock(input: {
+  verdict: HarnessVerdict;
+  receiptRequired?: boolean;
+  closureStatus?: string;
+  receiptStatus?: string;
+  agentTimedOut?: boolean;
+}): { blocked: boolean; reason?: ClosureAdvanceBlockReason } {
+  if (input.verdict !== 'PASS') return { blocked: false };
+  if (input.receiptRequired === false) return { blocked: false };
+  if (input.closureStatus === 'closed') return { blocked: false };
+  if (input.agentTimedOut) {
+    return { blocked: true, reason: 'agent_timeout_unclosed' };
+  }
+  if (input.receiptStatus === 'missing') {
+    return { blocked: true, reason: 'receipt_missing' };
+  }
+  return { blocked: true, reason: 'closure_open' };
 }
 
 /**
@@ -58,7 +88,20 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 
   // Gate on fresh summary artifact — agent exit/timeout is observability only (cursor adapter norm).
   if (fresh && input.summaryVerdict) {
-    return { verdict: input.summaryVerdict, stale_summary: false, agent_failed: agentFailed };
+    const closureBlock = resolveClosureAdvanceBlock({
+      verdict: input.summaryVerdict,
+      receiptRequired: input.receiptRequired,
+      closureStatus: input.closureStatus,
+      receiptStatus: input.receiptStatus,
+      agentTimedOut: input.agentTimedOut,
+    });
+    return {
+      verdict: input.summaryVerdict,
+      stale_summary: false,
+      agent_failed: agentFailed,
+      advance_blocked: closureBlock.blocked,
+      advance_block_reason: closureBlock.reason,
+    };
   }
 
   if (fresh && !input.summaryVerdict) {

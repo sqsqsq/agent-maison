@@ -245,6 +245,7 @@ doc/features/{module-name}/testing/test-plan.md
 
 - 创建目录：`doc/features/<feature>/testing/reports/<timestamp>/hylyre/`（`<timestamp>` 建议本地 sort 友序，如 `20260519-143000`）。
 - 写入 **`test-plan.hylyre.md`**：锚点 **`## 测试用例清单`** + **7 列表头**（顺序固定），自 profile 模板拷贝表头行。
+- **多 UI 入口（`use-cases.yaml > ui_bindings`）**：若同一 `user_actions.calls`（如 `flow.selectBank`）有多个 `ui` 入口（如 `BankCardAddPage` 与 `AllBanksPage`），须**每个入口各派生一条** Hylyre 用例，并在派生表或 frontmatter `derived_cases[]` 中携带结构化字段 **`entry_ui`**（= `ui_bindings[].ui`）、**`linked_flow`**、**`calls`**。脚本 `ui_entry_coverage` 据此校验；P0 缺任一入口 → BLOCKER FAIL。
 - 随后由你（agent）触发 **`harness-runner --phase testing --feature <feature>`**（见 Step 7）；宿主顺序为 **build → install → ensure Hylyre → run plan**（profile 未 SKIP 时）。
 
 **profile 为 generic / `device_test.run` 为 SKIP**：跳过 §4.5 与 Hylyre，按该 profile 的人工或其它自动化约定执行。

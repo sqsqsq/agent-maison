@@ -244,11 +244,19 @@ export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVer
  * COMPLETED only when no DEFERRED and not halted early.
  */
 export function resolveGoalRunStatus(
-  phases: Array<{ phase: FeaturePhase; deferred?: boolean; halted?: boolean }>,
+  phases: Array<{
+    phase: FeaturePhase;
+    deferred?: boolean;
+    halted?: boolean;
+    agent_timed_out?: boolean;
+    advance_blocked?: boolean;
+  }>,
   reachedEnd: boolean,
 ): GoalRunStatus {
   const anyHalted = phases.some((p) => p.halted);
   if (anyHalted) return 'HALTED';
+  const anyUnclosedTimeout = phases.some((p) => p.agent_timed_out && p.advance_blocked);
+  if (anyUnclosedTimeout && reachedEnd) return 'PARTIAL';
   const anyDeferred = phases.some((p) => p.deferred);
   if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
   return reachedEnd ? 'COMPLETED' : 'PARTIAL';

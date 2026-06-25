@@ -57,6 +57,7 @@ import {
   detectHalfCompletedPhaseRecovery,
   findLastRunEnd,
   getSummaryMtime,
+  isSummaryFresh,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
@@ -65,7 +66,13 @@ import {
   resolveResumeState,
   resolveWallClockStartMs,
 } from './utils/goal-runner-phase';
-import { isGoalHeadlessEnv, MAISON_GOAL_RUNNER_ENV, MAISON_GOAL_ALLOWED_TOOLS_ENV } from './utils/phase-state';
+import {
+  applyClosurePatchFromReceiptValidation,
+  isGoalHeadlessEnv,
+  MAISON_GOAL_RUNNER_ENV,
+  MAISON_GOAL_ALLOWED_TOOLS_ENV,
+  tryValidateReceipt,
+} from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   resolveAdapterProvenance,
@@ -123,6 +130,9 @@ export interface SummaryJson {
   verdict?: HarnessVerdict;
   blocking_class?: string;
   failure_kind?: string;
+  receipt_status?: string;
+  closure_status?: string;
+  next_action?: string;
   blockers?: Array<{
     id?: string;
     blocking_class?: string;
@@ -1081,12 +1091,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
         flushProgress();
 
         progressSubstep = 'verdict';
-        const { summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(
+        let { summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(
           projectRoot,
           manifest.feature,
           phase,
         );
         const summaryMtimeAfter = getSummaryMtime(summaryAbsPath);
+        const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
+
+        if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
+          const harnessRoot = path.join(frameworkRoot, 'harness');
+          const receiptValidation = tryValidateReceipt(
+            harnessRoot,
+            projectRoot,
+            phase,
+            manifest.feature,
+          );
+          applyClosurePatchFromReceiptValidation(
+            projectRoot,
+            manifest.feature,
+            phase,
+            receiptValidation,
+            frameworkRoot,
+          );
+          ({ summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(
+            projectRoot,
+            manifest.feature,
+            phase,
+          ));
+        }
+
         const resolved = resolvePhaseHarnessVerdict({
           dryRun,
           agentExitCode: invoke.exitCode,
@@ -1095,6 +1129,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           summaryBeforeMtime: summaryMtimeBefore,
           summaryAfterMtime: summaryMtimeAfter,
           summaryVerdict: summary?.verdict as HarnessVerdict | undefined,
+          receiptRequired: true,
+          closureStatus: summary?.closure_status,
+          receiptStatus: summary?.receipt_status,
+          agentTimedOut: invoke.timed_out,
         });
         const verdict = resolved.verdict;
         const meta = extractBlockingMeta(summary);
@@ -1129,6 +1167,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ) {
           action = 'halt';
           haltReason = 'no_progress_guard';
+        } else if (resolved.advance_blocked) {
+          if (retries < manifest.budget.max_retries_per_phase) {
+            action = 'retry';
+          } else {
+            action = 'halt';
+            haltReason = resolved.advance_block_reason ?? 'closure_open';
+          }
         }
 
         const agentWarn = buildAgentWarn(invoke);
@@ -1171,6 +1216,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             agent_silent_killed: invoke.silent_killed,
             agent_warn: agentWarn,
             snapshot_files: snap.snapshot_files,
+            advance_blocked: resolved.advance_blocked,
           });
           phaseDone = true;
           if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
@@ -1252,6 +1298,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       phase: o.phase,
       deferred: o.deferred,
       halted: o.halted,
+      agent_timed_out: o.agent_timed_out,
+      advance_blocked: o.advance_blocked,
     }));
     const status = resolveGoalRunStatus(phaseRecords, reachedEnd);
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);

@@ -176,6 +176,24 @@ structure_checks:
         - "Promise.all"
         - "Promise.race"
 
+  arkui_bindsheet_double_close:
+    description: >
+      bindSheet builder 内自定义 sys.symbol.xmark/自绘关闭按钮时，options 须显式 showClose: false，
+      否则与系统关闭按钮重叠（双 X）。豁免：// arkui-lint:allow arkui_bindsheet_double_close
+    severity: BLOCKER
+
+  arkui_push_without_guard:
+    description: >
+      onChange/@Watch/syncFromFlow 回调内直接 pushPath 须有一次性消费 guard，避免重复拉起 Sheet/页面。
+      豁免：// arkui-lint:allow arkui_push_without_guard
+    severity: MAJOR
+
+  arkui_singleton_flow_multi_subscriber:
+    description: >
+      多个 NavDestination/组件不得订阅同一 singleton Flow 的 showXSheet 状态重复展示 Sheet。
+      豁免：// arkui-lint:allow arkui_singleton_flow_multi_subscriber
+    severity: MAJOR
+
   # ==========================================================================
   # 业务编排命名入口约束（v2.1）
   # ------------------------------------------------------------------------

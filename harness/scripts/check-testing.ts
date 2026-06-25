@@ -68,6 +68,7 @@ import {
 } from '../../profiles/hmos-app/harness/device-test-timings';
 import {
   acceptanceYamlPath,
+  buildAcceptanceIdPriorityMap,
   collectDeviceScopeP0P1,
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
@@ -81,6 +82,14 @@ import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-c
 import { buildHylyreVisualDiffScreenshotFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown } from './utils/ui-spec-shared';
+import {
+  evaluateHylyreRunOutcome,
+  reconcileReportWithHylyreTrace,
+  resolveAuthoritativeHylyreTracePath,
+  evaluateUiEntryCoverage,
+  buildEntryUiPriorityMap,
+} from './utils/testing-trace-gates';
+import type { UseCasesSpec } from './utils/types';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1347,6 +1356,9 @@ interface DeviceTestPipelineHolder {
   hapPath: string | null;
   installPassed: boolean;
   buildReused: boolean;
+  /** Set after device_test_run when hylyre trace is available */
+  hylyreTracePath: string | null;
+  deviceTestRunExecuted: boolean;
 }
 
 function checkDeviceTestBuildGate(
@@ -1963,16 +1975,33 @@ function checkDeviceTestRunGate(
       /* timing 汇总失败不阻断 run 门禁 */
     }
 
+    hapHolder.hylyreTracePath = run.tracePath;
+    hapHolder.deviceTestRunExecuted = true;
+
+    const outcomeEval = evaluateHylyreRunOutcome(run.trace);
+    const runGatePass = outcomeEval.verdict === 'pass';
+
     const out: CheckResult[] = [
       {
         id,
         category: 'structure',
         description: desc,
         severity: 'BLOCKER',
-        status: 'PASS',
-        details: [`真机自动化执行完成：exit=${run.exitCode}, ${summary}`, `报告：${run.reportPath}`, `trace：${run.tracePath}`].join('\n'),
-        suggestion:
-          '失败 / 阻塞 / 跳过用例的具体分类由顶层 test-report.md 合成步骤承载；本检查只确认自动化执行未崩溃。',
+        status: runGatePass ? 'PASS' : 'FAIL',
+        details: [
+          `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
+          `报告：${run.reportPath}`,
+          `trace：${run.tracePath}`,
+          ...(runGatePass
+            ? []
+            : [
+                '自动化产物未达标（run.ok 仅表示 runner 未崩溃）：',
+                ...outcomeEval.reasonLines.map(l => `  - ${l}`),
+              ]),
+        ].join('\n'),
+        suggestion: runGatePass
+          ? '顶层 test-report.md 须与 hylyre trace 对账一致；失败用例须在报告与缺陷清单中如实登记。'
+          : '修复失败/阻塞用例或 trace.outcome 非 success 后重跑 device_test.run；勿在顶层报告谎报通过。',
       },
     ];
 
@@ -2069,6 +2098,179 @@ function checkDeviceTestRunGate(
   }
 }
 
+function checkReportTraceReconciliation(
+  ctx: CheckContext,
+  report: string | null,
+  pipeline: DeviceTestPipelineHolder,
+): CheckResult[] {
+  const id = 'report_trace_reconciliation';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'device_test.run')) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'device_test.run 已 SKIP，跳过 report↔trace 对账。',
+    }];
+  }
+
+  if (!report) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'test-report.md 不存在，跳过 report↔trace 对账。',
+    }];
+  }
+
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const tracePath =
+    pipeline.hylyreTracePath ?? resolveAuthoritativeHylyreTracePath(reportsBase);
+
+  const topLevelBackfill = path.join(reportsBase, 'trace.json');
+  if (tracePath && fs.existsSync(topLevelBackfill) && path.resolve(topLevelBackfill) !== path.resolve(tracePath)) {
+    /* explicit: never use top-level backfill as SSOT */
+  }
+
+  const recon = reconcileReportWithHylyreTrace(report, tracePath);
+
+  if (!recon.ok) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: [
+        `顶层 test-report.md 与 Hylyre trace 不一致（SSOT trace：${recon.tracePath ?? '未找到'}）`,
+        ...recon.mismatches.map(m => `  - ${m}`),
+        ...(recon.warnings.length ? [`notes:\n${recon.warnings.map(w => `  - ${w}`).join('\n')}`] : []),
+      ].join('\n'),
+      suggestion:
+        '按 device-testing Step 5.1 从 hylyre/trace.json 回填执行状态；禁止谎报通过或结论=达标当 trace.outcome≠success。',
+    }];
+  }
+
+  return [{
+    id,
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: [
+      `顶层报告与 Hylyre trace 全量对账一致`,
+      `trace 来源：${recon.tracePath}`,
+      ...(recon.warnings.length ? recon.warnings.map(w => `note: ${w}`) : []),
+    ].join('\n'),
+  }];
+}
+
+function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'use-cases.yaml');
+  if (!fs.existsSync(resolved.actualPath)) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const yaml = require('yaml') as { parse: (s: string) => unknown };
+    return yaml.parse(fs.readFileSync(resolved.actualPath, 'utf-8')) as UseCasesSpec;
+  } catch {
+    return null;
+  }
+}
+
+function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
+  const id = 'ui_entry_coverage';
+  const desc = ruleDesc(ctx, 'structure_checks', id);
+
+  const spec = loadUseCaseSpec(ctx);
+  if (!spec?.use_cases?.length) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: 'use-cases.yaml 不存在或无 use_cases，跳过 UI 入口覆盖检查。',
+    }];
+  }
+
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
+  if (!pick.selected) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'SKIP',
+      details: '无有效派生 Hylyre 计划，跳过 UI 入口覆盖检查。',
+    }];
+  }
+
+  const acceptance = ctx.featureSpec.acceptance;
+  const acPriorityMap = acceptance
+    ? buildAcceptanceIdPriorityMap(acceptance)
+    : new Map<string, string>();
+  const entryPriorities = buildEntryUiPriorityMap(spec, acPriorityMap);
+  const cov = evaluateUiEntryCoverage(spec, pick.selected.content, entryPriorities);
+
+  const results: CheckResult[] = [];
+
+  if (cov.warnings.length > 0) {
+    results.push({
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: cov.warnings.join('\n'),
+      suggestion: '派生 test-plan.hylyre.md 须为每个多入口业务调用携带 entry_ui / linked_flow / calls 结构化字段。',
+    });
+  }
+
+  if (cov.blockers.length > 0) {
+    results.push({
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `P0 多 UI 入口缺派生覆盖：\n${truncateList(cov.blockers, 20)}`,
+      suggestion:
+        '按 ui_bindings 为每个 UI 入口各派生一条 Hylyre 用例（entry_ui 字段），确保同一业务调用（如 flow.selectBank）的每个入口至少执行一次。',
+    });
+  }
+
+  if (cov.majors.length > 0) {
+    results.push({
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'FAIL',
+      details: `非 P0 多 UI 入口缺派生覆盖：\n${truncateList(cov.majors, 20)}`,
+      suggestion: '补派生 Hylyre 用例覆盖缺失入口。',
+    });
+  }
+
+  if (results.length === 0) {
+    results.push({
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: '多 UI 入口业务调用均在派生 Hylyre 计划中有结构化覆盖。',
+    });
+  }
+
+  return results;
+}
+
 // --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
@@ -2161,10 +2363,19 @@ const checker: PhaseChecker = {
       hapPath: null,
       installPassed: false,
       buildReused: false,
+      hylyreTracePath: null,
+      deviceTestRunExecuted: false,
     };
     results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
+    results.push(
+      ...safeRun(
+        () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
+        'report_trace_reconciliation',
+      ),
+    );
+    results.push(...safeRun(() => checkUiEntryCoverage(ctx), 'ui_entry_coverage'));
 
     // --- Structure checks: Test Plan ---
     results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));

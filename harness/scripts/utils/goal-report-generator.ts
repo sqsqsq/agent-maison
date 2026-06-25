@@ -32,6 +32,8 @@ export interface GoalPhaseOutcome {
   agent_warn?: string;
   halt_reason?: string;
   interaction_question?: string;
+  /** Set when closure gate blocked advance (open receipt / timeout). */
+  advance_blocked?: boolean;
   snapshot_files?: PhaseSnapshotFiles;
 }
 

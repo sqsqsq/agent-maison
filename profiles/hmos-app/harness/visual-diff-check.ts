@@ -15,6 +15,7 @@ import {
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
+import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { createRequire } from 'module';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
@@ -101,15 +102,6 @@ export function isStaleVisualDiffVerdict(
   const currentHash = hashScreenshotFile(resolveShotPath(projectRoot, shot));
   if (!currentHash) return true;
   return currentHash !== screen.evaluated_screenshot_hash!.trim();
-}
-
-/** ui-spec 中 P0 且非 lightweight 的屏 id（visual_diff 必须覆盖的最小集合） */
-function collectP0ScreenIds(uiDoc: UiSpecDoc | null): string[] {
-  const ids: string[] = [];
-  for (const s of uiDoc?.screens ?? []) {
-    if (s.priority === 'P0' && !s.lightweight) ids.push(s.id);
-  }
-  return [...new Set(ids)];
 }
 
 function collectAuthoritativeRefIds(specMd: string, uiDoc: ReturnType<typeof loadUiSpecFile>): Set<string> {
@@ -345,7 +337,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const byScreenId = new Map(rep.screens.map(s => [s.screen_id, s] as const));
 
   // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped/pending ---
-  const p0Ids = collectP0ScreenIds(uiDoc);
+  const p0Ids = collectP0VisualTargetIds(uiDoc);
   const p0Uncovered = p0Ids.filter(id => {
     const entry = byScreenId.get(id);
     return !entry || entry.verdict === 'skipped' || entry.verdict === 'pending';
@@ -375,6 +367,20 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     rep.degraded ? 'degraded' : '',
   ].filter(Boolean).join('；');
 
+  // --- P0 覆盖须先于「零有效屏」早退，避免 new_or_changed 下全 skipped 降成 MAJOR WARN ---
+  if (p0Uncovered.length > 0) {
+    const uiChangeGate = uiChange === 'new_or_changed';
+    return [{
+      id: 'visual_diff',
+      category: 'structure',
+      description: desc,
+      severity: uiChangeGate ? 'BLOCKER' : 'MAJOR',
+      status: uiChangeGate ? 'FAIL' : 'WARN',
+      details: `${details}\nP0 屏/overlay 未覆盖或被 skipped/pending：${p0Uncovered.join(', ')}（visual_diff 须覆盖全部可直达 P0 屏与 overlay）`,
+      affected_files: [reportRel],
+    }];
+  }
+
   // --- 防全 skipped / 零有效屏充数 PASS：必须至少有一屏给出真实 verdict ---
   const effectiveScreens = passScreens.length + warnScreens.length + failScreens.length;
   if (effectiveScreens === 0) {
@@ -382,26 +388,18 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       pendingScreens.length > 0
         ? '所有屏 verdict=pending（VL 未完成判定），无有效视觉对照'
         : '所有屏 verdict=skipped，无有效视觉对照';
+    const uiChangeGate = uiChange === 'new_or_changed' && p0Ids.length > 0 && pendingScreens.length > 0;
     return [{
       id: 'visual_diff',
       category: 'structure',
       description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
+      severity: uiChangeGate ? 'BLOCKER' : 'MAJOR',
+      status: uiChangeGate ? 'FAIL' : 'WARN',
       details: `${details}\n${pendingHint}；不得作为视觉保真 PASS。若设备不可用应显式 degraded SKIP。`,
       affected_files: [reportRel],
-    }];
-  }
-
-  if (p0Uncovered.length > 0) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: `${details}\nP0 屏未覆盖或被 skipped：${p0Uncovered.join(', ')}（visual_diff 须覆盖全部可直达 P0 屏）`,
-      affected_files: [reportRel],
+      suggestion: uiChangeGate
+        ? 'UI 有新增/变更时 P0 屏 visual verdict 不得全 pending；完成 VL 判定或导航 overlay 后重采截图。'
+        : undefined,
     }];
   }
 

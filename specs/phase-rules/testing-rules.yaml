@@ -112,14 +112,31 @@ structure_checks:
       表须覆盖全部 TC，或由派生文件 YAML frontmatter / 同目录 derive-manifest.json 登记
       explicit_skip_tc_ids；烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
       选取最新有效计划。
+      **门禁语义**：run.ok 仅表示 runner 未崩溃；本检查还须 trace.outcome=success 且无失败/阻塞 case，
+      否则 BLOCKER FAIL（partial/failed/aborted 不得 PASS）。
       声明 SKIP 或上游 device_test.install SKIP 时本检查 SKIP。
     severity: BLOCKER
+
+  report_trace_reconciliation:
+    description: >
+      顶层 test-report.md「测试执行结果」须与 device_test_run 本轮选中的
+      testing/reports/<ts>/hylyre/trace.json 全量对账（禁止以顶层 reports/trace.json 回填件为 SSOT）。
+      报告写通过但 trace 失败/阻塞、结论达标但 trace.outcome≠success → BLOCKER FAIL。
+    severity: BLOCKER
+
+  ui_entry_coverage:
+    description: >
+      当 use-cases.yaml 中同一 user_actions.calls 存在多个 ui_bindings.ui 入口时，
+      派生 Hylyre 计划须以 entry_ui / linked_flow / calls 结构化字段覆盖每个入口；
+      P0 多入口缺派生覆盖 → BLOCKER FAIL；非 P0 → MAJOR FAIL；缺结构化字段 → MAJOR WARN。
+    severity: MAJOR
 
   visual_diff:
     description: >
       设备渲染视觉回环（device_test.visual_diff）：Hylyre 截图 vs authoritative_refs 原图，
       产出 visual-diff.md / must-fix 清单与保真分（含几何 IoU）。QA 阶段级动作，非 test-plan
-      派生步骤根键。warmup/无设备 → SKIP。MVP 档位 MAJOR/WARN。
+      派生步骤根键。warmup/无设备 → SKIP。
+      当 spec UI change=new_or_changed 且 P0 目标屏 visual verdict 全 pending 或未覆盖 → BLOCKER FAIL。
     severity: MAJOR
     rule:
       provider: device_test.visual_diff

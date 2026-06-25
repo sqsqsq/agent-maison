@@ -128,6 +128,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
   { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },
+  { id: 'goal-closure-gate', modulePath: './unit/goal-closure-gate.unit.test' },
+  { id: 'testing-trace-gates', modulePath: './unit/testing-trace-gates.unit.test' },
   { id: 'goal-progress', modulePath: './unit/goal-progress.unit.test' },
   { id: 'goal-preflight', modulePath: './unit/goal-preflight.unit.test' },
   { id: 'headless-binary-resolve', modulePath: './unit/headless-binary-resolve.unit.test' },
