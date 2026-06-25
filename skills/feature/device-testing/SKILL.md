@@ -299,6 +299,7 @@ doc/features/{module-name}/testing/test-plan.md
 ### Step 4.6: 视觉 diff 回环（visual_diff · ui_change=new_or_changed 时）
 
 > **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。
+> **唯一直接像素对图阶段**：参考图来自 spec `authoritative_refs` 或 **`fidelity.lock.yaml` 快照**（`buildAuthoritativeRefImageIndex` byId 联结 ui-spec `source_ref`）。
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
 2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。

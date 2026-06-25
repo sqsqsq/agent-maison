@@ -351,8 +351,9 @@ expansions_with_user_approval:
    - 页面间跳转关系、栈/路由 API、路由参数定义（**宿主路由栈与容器 API** 见 profile addendum）
 
 5. **Visual parity（与 spec Visual Handoff + ui-spec 对齐，有界面时）**：
-   - 对照 `spec.md` 中含 `ui_change` 的 yaml 块中的 `authoritative_refs`（路径或设计稿 URL），在 `plan.md` 用一小节说明：**各区域 UI 以何真源为准**、相对真源允许的偏差（如占位图、模拟数据）、哪些项落入 `contracts.yaml`（间距档位、资源 key、字号等可测项）。
+   - 对照 `spec.md` 中含 `ui_change` 的 yaml 块中的真源（`authoritative_refs` 路径/URL，或 **`fidelity_snapshot` 的 `_fidelity-cache/fidelity.lock.yaml`**），在 `plan.md` 用一小节说明：**各区域 UI 以何真源为准**、相对真源允许的偏差（如占位图、模拟数据）、哪些项落入 `contracts.yaml`（间距档位、资源 key、字号等可测项）。
    - **产出** `doc/features/<feature>/plan/visual-parity.yaml`：映射 ui-spec 每个 asset key / token key / 关键组件节点 → `contracts.yaml` 的 `resource_keys` / `components`（允许偏差标注）。
+   - plan harness **只读 lock 清单做覆盖规划**，不联网、不对图；像素对图仅在 device-testing。
    - 若 spec 声明 `ui_change: none` / `reuse_only` / `impl_out_of_band`，本节可写「无新版面，无新增视觉对齐项」。
 
 ### Step 8: 构建 spec 功能映射表

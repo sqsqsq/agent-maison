@@ -7,8 +7,8 @@ import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/t
 import { relFeatureArtifact } from '../../../harness/config';
 import {
   fidelityRatchetFailOrWarn,
-  loadRefElementsFile,
   refElementsAbsPath,
+  resolveRefElementsDenominator,
   type RefElementEntry,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import {
@@ -56,34 +56,39 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
   const desc = ruleDesc(ctx);
 
-  if (ctx.fidelityTarget !== 'pixel_1to1') {
-    if (!fs.existsSync(refAbs)) {
+  const denomResolved = resolveRefElementsDenominator(ctx, ctx.projectRoot, ctx.feature);
+  const hasMemoryManifest = denomResolved.source === 'memory_manifest';
+
+  if (!hasMemoryManifest) {
+    if (ctx.fidelityTarget !== 'pixel_1to1') {
+      if (!fs.existsSync(refAbs)) {
+        return [{
+          id: 'capture_completeness',
+          category: 'structure',
+          description: desc,
+          severity: 'MINOR',
+          status: 'SKIP',
+          details: 'semantic_layout 下 ref-elements.yaml 可选；pixel_1to1 下必填',
+          affected_files: [refRel, uiSpecRel],
+        }];
+      }
+    } else if (!fs.existsSync(refAbs)) {
+      const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);
       return [{
         id: 'capture_completeness',
         category: 'structure',
         description: desc,
-        severity: 'MINOR',
-        status: 'SKIP',
-        details: 'semantic_layout 下 ref-elements.yaml 可选；pixel_1to1 下必填',
+        severity,
+        status,
+        details: `pixel_1to1 须产出参考图侧独立枚举 ${refRel}（分母不得取自 ui-spec 自身）`,
+        suggestion: 'spec 分区扫描模板逐元素 implement|defer，落 spec/ref-elements.yaml；或 lock.structured_bundle 经 structured_ref_elements 注入内存 manifest',
         affected_files: [refRel, uiSpecRel],
       }];
     }
-  } else if (!fs.existsSync(refAbs)) {
-    const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);
-    return [{
-      id: 'capture_completeness',
-      category: 'structure',
-      description: desc,
-      severity,
-      status,
-      details: `pixel_1to1 须产出参考图侧独立枚举 ${refRel}（分母不得取自 ui-spec 自身）`,
-      suggestion: 'spec 分区扫描模板逐元素 implement|defer，落 spec/ref-elements.yaml',
-      affected_files: [refRel, uiSpecRel],
-    }];
   }
 
-  const refDoc = loadRefElementsFile(refAbs);
-  if (!refDoc) {
+  const refElements = denomResolved.elements;
+  if (!refElements) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, ctx.fidelityTarget !== 'pixel_1to1');
     return [{
       id: 'capture_completeness',
@@ -91,7 +96,9 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
       description: desc,
       severity,
       status,
-      details: `${refRel} 存在但 YAML 解析失败或缺少 elements[]`,
+      details: hasMemoryManifest
+        ? '内存 manifest 为空'
+        : `${refRel} 存在但 YAML 解析失败或缺少 elements[]`,
       affected_files: [refRel],
     }];
   }
@@ -107,7 +114,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
     (uiDoc.screens ?? []).flatMap(s => s.must_have_elements ?? []),
   );
 
-  const denom = denominatorElements(refDoc.elements);
+  const denom = denominatorElements(refElements);
   if (denom.length === 0) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
     return [{
@@ -116,7 +123,9 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
       description: desc,
       severity,
       status,
-      details: `${refRel} elements 为空；参考图侧枚举不得为空`,
+      details: hasMemoryManifest
+        ? '内存 manifest elements 为空；参考图侧枚举不得为空'
+        : `${refRel} elements 为空；参考图侧枚举不得为空`,
       affected_files: [refRel],
     }];
   }
@@ -132,6 +141,9 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
   const covered = denom.length - missing.length;
   const ratio = covered / denom.length;
   const ratioPct = (ratio * 100).toFixed(0);
+  const sourceNote = hasMemoryManifest
+    ? `分母=内存 manifest（${denomResolved.detail ?? 'structured 派生'}）`
+    : `分母=${refRel}`;
 
   if (missing.length > 0) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, ratio >= 0.85);
@@ -142,6 +154,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
       severity,
       status,
       details: [
+        sourceNote,
         `参考图枚举覆盖 ${covered}/${denom.length}（${ratioPct}%）`,
         `ui-spec/must_have 未覆盖：${missing.slice(0, 12).join(', ')}${missing.length > 12 ? '…' : ''}`,
         '【边界】依赖 VL 视觉枚举，非 100% 上限；被动漏看由 testing 双向 diff 兜底。',
@@ -156,7 +169,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
     description: desc,
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `参考图枚举 ${denom.length} 项均已映射到 ui-spec/must_have（${ratioPct}%）`,
+    details: `${sourceNote}；参考图枚举 ${denom.length} 项均已映射到 ui-spec/must_have（${ratioPct}%）`,
     affected_files: [refRel, uiSpecRel],
   }];
 }

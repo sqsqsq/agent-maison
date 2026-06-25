@@ -30,6 +30,7 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   '**/tmp_hypium/',
   '/doc/app-snapshot-cache/',
   '/doc/features/_adhoc/',
+  'doc/features/*/ux-reference/_fidelity-cache/',
   'framework.local.json',
   '**/.claude/settings.local.json',
 ];
@@ -148,7 +149,11 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
   },
   {
     header: '# Feature-phase harness reports (paths.reports_dir_pattern)',
-    patterns: ['doc/features/*/*/reports/*', 'doc/features/*/goal-runs/'],
+    patterns: [
+      'doc/features/*/*/reports/*',
+      'doc/features/*/goal-runs/',
+      'doc/features/*/ux-reference/_fidelity-cache/',
+    ],
   },
   {
     header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',

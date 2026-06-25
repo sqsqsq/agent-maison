@@ -37,6 +37,8 @@ export interface RefElementEntry {
   icon_kind?: string;
   badge?: string;
   disposition: 'implement' | 'defer';
+  /** structured | vl — 第二刀双写优先级 */
+  provenance?: 'structured' | 'vl';
 }
 
 export interface RefElementsDoc {
@@ -177,6 +179,33 @@ export function loadRefElementsFile(absPath: string): RefElementsDoc | null {
   } catch {
     return null;
   }
+}
+
+export type RefElementsDenominatorSource = 'memory_manifest' | 'disk';
+
+/** capture-completeness 分母：同 run 内存 manifest 优先，否则只读磁盘 ref-elements.yaml */
+export function resolveRefElementsDenominator(
+  ctx: CheckContext,
+  projectRoot: string,
+  feature: string,
+): {
+  elements: RefElementEntry[] | null;
+  source: RefElementsDenominatorSource | null;
+  detail?: string;
+} {
+  if (ctx.refElementsManifest && ctx.refElementsManifest.length > 0) {
+    return {
+      elements: ctx.refElementsManifest,
+      source: 'memory_manifest',
+      detail: ctx.refElementsManifestDetail,
+    };
+  }
+  const refAbs = refElementsAbsPath(projectRoot, feature);
+  const doc = loadRefElementsFile(refAbs);
+  if (!doc?.elements?.length) {
+    return { elements: doc?.elements ?? null, source: doc ? 'disk' : null };
+  }
+  return { elements: doc.elements, source: 'disk' };
 }
 
 /** pixel_1to1：ref-elements disposition=defer 须对应 fidelity_deferrals 且 human_signed */

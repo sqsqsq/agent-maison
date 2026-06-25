@@ -1,0 +1,74 @@
+# fidelity.lock.yaml — 在线高保真快照溯源格式（SSOT）
+# schema_version 独立于 workflow / extension manifest。
+schema_version: "1.0"
+description: >
+  doc/features/<feature>/ux-reference/_fidelity-cache/fidelity.lock.yaml
+  由宿主 MCP fetch_fidelity 写入；harness 只读本地、离线校验与消费。
+
+root_object:
+  type: object
+  required:
+    - schema_version
+    - screens
+  properties:
+    schema_version:
+      type: string
+      const: "1.0"
+    source_link:
+      type: string
+      description: 在线高保真源链接（http/https）；lock 不嵌令牌。
+    delivery_code:
+      type: string
+      description: 非密传送码标识；敏感传送码须用 ${env:...} 写在 spec.md，不得落 lock。
+    fetched_at:
+      type: string
+      description: ISO-8601 抓取时间。
+    version_id:
+      type: string
+      description: 上游版本 API 返回值；廉价 refresh 先比此字段。
+    content_hash:
+      type: string
+      description: 无 version API 时的内容 hash 兜底；refresh 须全量重取才能计算。
+    viewport:
+      type: object
+      required: [w, h]
+      properties:
+        w: { type: number }
+        h: { type: number }
+        dpr: { type: number }
+    structured_bundle:
+      type: string
+      description: 相对 cache 目录的结构化源包路径（第二刀 ref-elements 派生）。
+    screens:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required: [id, png]
+        properties:
+          id:
+            type: string
+            description: maison 逻辑 id（= ui-spec ref_id / source_ref / authoritative_refs[].id）。
+          png:
+            type: string
+            description: 相对 cache 目录或绝对路径的参考 PNG。
+          state:
+            type: string
+            description: 可选 UI 状态；默认态可省略。
+          node_ref:
+            type: string
+            description: 宿主上游帧选择器（Figma node / 门户屏 key），与 id 命名空间分离。
+
+mcp_contract:
+  tool: fetch_fidelity
+  signature: fetch_fidelity(source_link, feature, out_dir, screens[])
+  screens_item:
+    id: string
+    node_ref: string
+    state: string
+  output:
+    - out_dir/<id>.<state>.png 或 out_dir/<id>.png
+    - out_dir/fidelity.lock.yaml
+  notes:
+    - maison 不内置 headless 浏览器；渲染由宿主导出时完成。
+    - 完整契约见 docs/operations/fidelity-fetch-mcp-contract.md

@@ -2,6 +2,8 @@
 // Harness 公共类型定义
 // ============================================================================
 
+import type { RefElementEntry } from './fidelity-shared';
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 
@@ -672,6 +674,14 @@ export interface CheckContext {
     signed_by?: string;
     signed_at?: string;
   }>;
+  /**
+   * capture-completeness 分母（同 run 内存 manifest）。
+   * structured 派生与磁盘 VL 条目合并后由 checkStructuredRefElements 注入；
+   * 优先于只读 ref-elements.yaml，避免 verify 路径写盘。
+   */
+  refElementsManifest?: RefElementEntry[];
+  /** refElementsManifest 溯源说明（报告/details 用） */
+  refElementsManifestDetail?: string;
   /** adapter 是否声明 multimodal（M3）；不支持则上下文注入降级 */
   adapterMultimodal?: boolean;
   /** adapter 图片输入能力分级（M3）；none | tool_read | native_attach */

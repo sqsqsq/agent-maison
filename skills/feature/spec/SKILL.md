@@ -229,7 +229,8 @@
 - UI 形态：写完 Scope 后，按 [reference/visual-handoff.md](reference/visual-handoff.md) 增加**单独**的 ` ```yaml ` 块，根字段含 `ui_change`。
 - 不动 UI 或 UI 已外落成：在同一独立块中使用 `none` / `reuse_only` / `impl_out_of_band`（**勿**在无依据时写 `new_or_changed`）。
 - 有界面改版或新屏：`new_or_changed`（或 `copy_edits_only`）+ `visual_handoff`；`path` 可为**仓内相对**、**`${UX_ROOT}/...`** 或通过配置允许的绝对路径/UNC；`url` 类 kind 写明 http(s)。
-- spec 内嵌缩略图仅辅助；**像素权威以 handoff 声明的路径/URL 为准**。
+- **在线高保真**（内网 Figma / 门户）：`visual_handoff.kind: fidelity_snapshot` + `source_link`；spec 阶段 **显式调用宿主 MCP `fetch_fidelity`** 落盘 `ux-reference/_fidelity-cache/`（PNG + `fidelity.lock.yaml`）；`screens[].id` **必须等于** ui-spec 各屏 `ref_id`/`source_ref`。详见 [reference/visual-handoff.md](reference/visual-handoff.md) 与 [fidelity-fetch-mcp-contract.md](../../../docs/operations/fidelity-fetch-mcp-contract.md)。
+- spec 内嵌缩略图仅辅助；**像素权威以 handoff 声明的路径/URL 或 lock 快照为准**。
 
 #### Step 3.1 Scope 声明填写规则（必读）
 

@@ -13,6 +13,7 @@ import {
 import { createRequire } from 'module';
 import * as path from 'path';
 import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
+import { FIDELITY_SNAPSHOT_KIND, parseOnlineVisualHandoff } from '../../../harness/scripts/utils/fidelity-lock-shared';
 import { relFeatureArtifact, VisualHandoffEnforcementMode } from '../../../harness/config';
 import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
 
@@ -47,8 +48,9 @@ const PATH_KINDS = new Set(['repo_assets', 'screenshot_pack', 'asset_pack']);
 const URL_KINDS = new Set(['design_tool_link', 'design_system_doc', 'portal_only']);
 /** 每条 ref 允许 path 或 url 至少其一 */
 const HYBRID_KINDS = new Set(['figma_export_bundle']);
+const ONLINE_SNAPSHOT_KINDS = new Set([FIDELITY_SNAPSHOT_KIND]);
 
-const ALL_KINDS = new Set([...PATH_KINDS, ...URL_KINDS, ...HYBRID_KINDS]);
+const ALL_KINDS = new Set([...PATH_KINDS, ...URL_KINDS, ...HYBRID_KINDS, ...ONLINE_SNAPSHOT_KINDS]);
 
 function buildVisualResolveOpts(ctx: CheckContext) {
   const vs = ctx.specVisualSources;
@@ -428,6 +430,61 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
       status,
       details:
         `visual_handoff.kind 非法或缺失：${JSON.stringify(vhObj.kind)}。允许：${[...ALL_KINDS].join('、')}`,
+      affected_files: [prdRel],
+    }];
+  }
+
+  if (ONLINE_SNAPSHOT_KINDS.has(kind)) {
+    const online = parseOnlineVisualHandoff(vhObj);
+    if (!online) {
+      const { severity, status } = structureFailOrWarn(enforcement);
+      return [{
+        id: 'visual_handoff_refs',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: `kind=${kind} 须声明非空 source_link（http/https）`,
+        affected_files: [prdRel],
+      }];
+    }
+    try {
+      const parsed = new URL(online.source_link);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        const { severity, status } = structureFailOrWarn(enforcement);
+        return [{
+          id: 'visual_handoff_refs',
+          category: 'structure',
+          description: desc,
+          severity,
+          status,
+          details: 'source_link 仅允许 http/https',
+          affected_files: [prdRel],
+        }];
+      }
+    } catch {
+      const { severity, status } = structureFailOrWarn(enforcement);
+      return [{
+        id: 'visual_handoff_refs',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: `source_link 不是合法 URL：${online.source_link}`,
+        affected_files: [prdRel],
+      }];
+    }
+    const extras = [
+      online.delivery_code ? `delivery_code=${online.delivery_code}` : '',
+      online.snapshot ? `snapshot=${online.snapshot}` : '',
+    ].filter(Boolean).join('；');
+    return [{
+      id: 'visual_handoff',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `ui_change=${uiChange}，kind=${kind}；source_link 格式合法${extras ? `；${extras}` : ''}（快照物化由 fetch_fidelity + fidelity_snapshot_promise 校验）`,
       affected_files: [prdRel],
     }];
   }

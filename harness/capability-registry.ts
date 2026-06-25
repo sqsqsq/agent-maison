@@ -243,7 +243,30 @@ export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: strin
     'spec.visual_handoff',
     'checkFidelityGovernance',
   );
-  return [...fn(ctx, specMarkdown), ...govFn(ctx, specMarkdown)];
+  const snapFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.visual_handoff',
+    'checkFidelitySnapshotPromise',
+  );
+  const structFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.visual_handoff',
+    'checkStructuredRefElements',
+  );
+  const lockConflictFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.visual_handoff',
+    'checkAuthoritativeRefLockConflicts',
+  );
+  // checkStructuredRefElements 注入 ctx.refElementsManifest；须在本 dispatch 完成后再跑 dispatchSpecUiSpec
+  // （capture-completeness 同 run 优先读内存 manifest，调序则退化为只读磁盘 ref-elements.yaml）。
+  return [
+    ...fn(ctx, specMarkdown),
+    ...govFn(ctx, specMarkdown),
+    ...snapFn(ctx, specMarkdown),
+    ...structFn(ctx, specMarkdown),
+    ...lockConflictFn(ctx, specMarkdown),
+  ];
 }
 
 export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): CheckResult[] {
@@ -262,6 +285,7 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     'spec.ui_spec',
     'checkCaptureCompleteness',
   );
+  // 消费 dispatchSpecVisualHandoff 注入的 ctx.refElementsManifest（structured 第二刀）；须在其之后派发。
   return [...fn(ctx, specMarkdown), ...gateFn(ctx, specMarkdown), ...captureFn(ctx, specMarkdown)];
 }
 

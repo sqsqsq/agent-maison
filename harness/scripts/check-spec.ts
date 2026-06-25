@@ -951,6 +951,8 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 spec.visual_handoff 脚本守门`,
       });
     } else {
+      // visual_handoff 先于 ui_spec：structured_ref_elements 注入 ctx.refElementsManifest，
+      // capture-completeness 同 run 优先读内存 manifest（见 capability-registry dispatchSpec*）。
       results.push(...safeRun(() => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
     }
     if (isSpecUiSpecSkipped(ctx.resolvedProfile)) {

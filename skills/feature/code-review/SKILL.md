@@ -73,8 +73,9 @@
 | 业务逻辑正确性 | `doc/features/{module}/plan/plan.md` | MAJOR |
 | 数据所有权 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 模拟数据隔离 | `framework/specs/phase-rules/coding-rules.yaml` | MINOR |
+| 视觉保真治理 | spec `fidelity_target` / `fidelity_deferrals` + harness `fidelity_governance` | BLOCKER（`pixel_1to1` defer 须人类签字） |
 
-## 输入
+> **在线高保真**：review harness 消费 lock/快照做 **fidelity 治理签字**（ratchet / deferrals），不对图、不联网；像素对图仅在 device-testing。
 
 | 输入项 | 必需 | 说明 |
 |--------|------|------|

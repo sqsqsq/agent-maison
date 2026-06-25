@@ -78,6 +78,7 @@ export function runAll(): UnitCaseResult[] {
     assert(CANONICAL_IGNORE_PATTERNS.includes('doc/features/*/goal-runs/'), 'goal-runs');
     assert(CANONICAL_IGNORE_PATTERNS.includes('doc/features/*/*/reports/*'), 'reports');
     assert(CANONICAL_IGNORE_PATTERNS.includes('/doc/features/_adhoc/'), '_adhoc');
+    assert(CANONICAL_IGNORE_PATTERNS.includes('doc/features/*/ux-reference/_fidelity-cache/'), 'fidelity-cache');
     assert(!CANONICAL_IGNORE_PATTERNS.includes('doc/features/'), 'no whole features tree');
     assert(!CANONICAL_IGNORE_PATTERNS.includes('doc/goal-runs/'), 'no doc/goal-runs');
   });

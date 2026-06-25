@@ -337,6 +337,31 @@ structure_checks:
     rule:
       expect: "asset_manifest_yaml"
 
+  fidelity_snapshot_promise:
+    description: >
+      visual_handoff 含 source_link 且 ui_change∈{new_or_changed,copy_edits_only} 时视为在线高保真承诺；
+      纯离线校验 _fidelity-cache/fidelity.lock.yaml + 声明屏 PNG 齐；缺/不齐按 fidelity_target ratchet。
+      详见 specs/fidelity-lock.schema.yaml 与 docs/operations/fidelity-fetch-mcp-contract.md。
+    severity: BLOCKER
+    rule:
+      expect: "fidelity_snapshot_offline_promise"
+
+  structured_ref_elements:
+    description: >
+      第二刀（可选）：lock.structured_bundle 存在时程序化推导 ref-elements 分母并注入 CheckContext 内存 manifest
+      （capture-completeness 同 run 消费，verify 路径不写盘）；element_id 须归一化到 ui-spec 语义 id；VL 只增补不覆盖 structured 基线。
+    severity: MAJOR
+    rule:
+      expect: "structured_ref_elements_derive"
+
+  authoritative_ref_lock_conflict:
+    description: >
+      在线高保真 fidelity.lock 与 spec authoritative_refs 同 id 但路径不同时 WARN（lock 已胜出）；
+      提示移除重复 authoritative_refs 或改用不同 id，避免静默双 SSOT。
+    severity: MAJOR
+    rule:
+      expect: "authoritative_ref_lock_id_conflict"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------
