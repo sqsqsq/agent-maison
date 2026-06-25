@@ -84,6 +84,16 @@ traceability_checks:
       （不扫描各 skill 下 templates/、reference/ 等示意骨架，以免误报）；
       亦不应在上述 SKILL/prompts 中硬编码 `profiles/hmos-app/`、`framework/profiles/hmos-app/` 等 **hmos-app** 物理路径
       （应使用 profile-skill-asset 占位符或 <project_profile.name> 说明）。
+      此外（防"散文 vs 机器清单"漂移，机制级根治）：
+      - G1：SKILL/prompts 内 `](....README.md#anchor)` 链接的目标 README 须存在且 anchor 对应标题须存在
+        （拦"Profile skill asset protocol 协议链接指错 README 或锚点缺失"）。
+      - G2：各 profile 的 skills/<skill>/profile-addendum.md 纳入门禁——其 profile-skill-asset 引用须按该
+        profile 清单解析，残留的字面 framework/skills|profiles 路径须落盘；且**不得出现不带 framework/ 前缀的
+        根 skill 树裸路径 skills/feature|project/<x>/**（这是历史"相对 skills/feature/<x>/"误导基准表头的形态，
+        即便恰好指向真实目录也拦——根 skill 树资产用 framework/skills/ 逻辑路径，profile 资产用占位符）。
+      - G3：profile 命令式产物（prompts/、templates/）不得硬编码他 profile（Q≠P）物理路径，
+        亦不得硬编码本 profile 资产物理路径 profiles/<P>/skills/<x>/{templates,examples,reference}/...
+        （均应改用 profile-skill-asset 占位符；addendum 解释性散文豁免）。
     severity: MAJOR
     rule:
       check_kind: "profile_skill_assets"

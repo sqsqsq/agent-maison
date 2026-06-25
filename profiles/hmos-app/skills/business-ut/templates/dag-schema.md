@@ -167,7 +167,7 @@ nodes:
 
 ## 示例：二次校验失败回滚（节选）
 
-> 完整文件形态见 `framework/profiles/hmos-app/skills/business-ut/examples/sample-flow/sample_flow.dag.yaml`。
+> 完整文件形态见 `` `profile-skill-asset:business-ut/sample_flow_dir` `` 下的 `sample_flow.dag.yaml`。
 
 ```yaml
 flow_id: task_demo_otp_fail

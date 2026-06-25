@@ -264,7 +264,7 @@ for each term in typical_business_terms:
 doc/catalog-staging/<ModuleName>.yaml
 ```
 
-严格遵守 `framework/profiles/hmos-app/skills/catalog-bootstrap/templates/module-card-template.yaml` 的结构。
+严格遵守 `` `profile-skill-asset:catalog-bootstrap/module_card_template` `` 的结构（占位符解析见 `framework/skills/README.md` 的 “Profile skill asset protocol”；勿写死某 profile 的物理路径）。
 
 **必填写入：**
 - `confirmed_by_user: false`（不要擅自改 true）

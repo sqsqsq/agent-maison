@@ -11,9 +11,7 @@
 
 ### skill-assets.yaml 键
 
-| 键 | 相对 `skills/feature/code-review/` |
-|----|------------------------------|
-| `review_checklist` | `templates/review-checklist.md` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.code-review` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:code-review/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 若宿主含 **非 `.ets`** 源码形态，仍以 `contracts.yaml` 与实例 `architecture` 为准，避免套错语言规则。
 

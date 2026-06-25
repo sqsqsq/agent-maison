@@ -215,7 +215,7 @@ m.typical_business_terms 中是否有某项 === <T>?
 doc/glossary-staging/<term>.yaml
 ```
 
-严格遵循 `framework/profiles/hmos-app/skills/catalog-bootstrap/templates/glossary-term-template.yaml`。
+严格遵循 `profile-skill-asset:catalog-bootstrap/glossary_term_template` 的结构（占位符解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol” 一节；勿写死某个 profile 的物理路径）。
 
 ---
 

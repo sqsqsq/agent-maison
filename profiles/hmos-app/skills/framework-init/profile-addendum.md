@@ -14,9 +14,7 @@
 
 ### skill-assets.yaml 键
 
-| 键 | 相对 `skills/project/framework-init/` |
-|----|-------------------------------------|
-| `preset_5_layer_sample` | `templates/preset-5-layer.sample.json` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.framework-init` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:framework-init/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 ### 示例（仅在 hmos-app 下）
 

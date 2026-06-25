@@ -5,7 +5,7 @@
 | 维度 | 说明 |
 |------|------|
 | Hypium 与目录 | UT 运行于 `**/src/ohosTest/ets/test/**/*.test.ets`；`List.test.ets` 常作套件注册入口 |
-| 模板与样例 | `skills/feature/business-ut/templates/`、`examples/sample-flow/`（与 `` `profile-skill-asset:business-ut/...` `` 一致） |
+| 模板与样例 | 键见机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml` 的 `business-ut` 段（如 `ut_template`、`sample_flow_dir`）；根 SKILL 用 `` `profile-skill-asset:business-ut/<键>` `` 引用 |
 | Harness | `ut.compile` / `ut.run` 驱动 hvigor + hdc；可被 profile **SKIP**（如 `generic`） |
 | 依赖 | `oh-package.json5` 声明 `@ohos/hypium` 等 |
 
@@ -27,21 +27,7 @@ UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/
 
 ### skill-assets.yaml 键
 
-| 键 | 相对 `skills/feature/business-ut/` |
-|----|------------------------------|
-| `use_cases_schema` | `templates/use-cases-schema.md` |
-| `dag_schema` | `templates/dag-schema.md` |
-| `ut_template` | `templates/ut-template.md` |
-| `mock_strategy` | `templates/mock-strategy.md` |
-| `testability_audit_template` | `templates/testability-audit-template.md` |
-| `mock_plan_schema` | `templates/mock-plan-schema.md` |
-| `format_contract` | `templates/format-contract.md` |
-| `quick_plan_template` | `templates/quick-plan-template.yaml` |
-| `context_extraction_protocol` | `templates/context-extraction-protocol.md` |
-| `sample_flow_dir` | `examples/sample-flow` |
-| `sample_flow_use_cases` | `examples/sample-flow/use-cases.yaml` |
-| `card_opening_dir` | `examples/sample-flow`（别名，兼容旧键名） |
-| `card_opening_use_cases` | `examples/sample-flow/use-cases.yaml` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.business-ut` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:business-ut/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 ### 示例（仅在 hmos-app 下）
 

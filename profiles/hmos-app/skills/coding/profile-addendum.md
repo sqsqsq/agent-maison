@@ -4,25 +4,17 @@
 
 ## 权威资产清单
 
-| 用途 | 路径 |
+| 用途 | 资产引用（解析见 `framework/skills/README.md` 的 “Profile skill asset protocol”） |
 |------|------|
-| ArkTS 弱模型易错点 | `skills/feature/coding/reference/arkts-pitfalls.md`（相对本 profile 根：`framework/profiles/hmos-app/`） |
-| ArkUI 模式速查 | `skills/feature/coding/reference/arkui-patterns.md` |
-| API 指引 | `skills/feature/coding/reference/harmony-api-guide.md` |
-| 编码规范全文 | `skills/feature/coding/templates/coding-standards.md` |
-| 模块脚手架 | `skills/feature/coding/templates/module-scaffold.md` |
+| ArkTS 弱模型易错点 | `` `profile-skill-asset:coding/arkts_pitfalls` `` |
+| ArkUI 模式速查 | `` `profile-skill-asset:coding/arkui_patterns` `` |
+| API 指引 | `` `profile-skill-asset:coding/harmony_api_guide` `` |
+| 编码规范全文 | `` `profile-skill-asset:coding/coding_standards` `` |
+| 模块脚手架 | `` `profile-skill-asset:coding/module_scaffold` `` |
 
 ### skill-assets.yaml 键
 
-根 `SKILL.md` 使用 `` `profile-skill-asset:coding/<键>` `` 时，与机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml` 对应如下：
-
-| 键 | 相对 `skills/feature/coding/` |
-|----|-------------------------|
-| `coding_standards` | `templates/coding-standards.md` |
-| `module_scaffold` | `templates/module-scaffold.md` |
-| `arkts_pitfalls` | `reference/arkts-pitfalls.md` |
-| `arkui_patterns` | `reference/arkui-patterns.md` |
-| `harmony_api_guide` | `reference/harmony-api-guide.md` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.coding` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:coding/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 `framework/skills/feature/coding/` 下同名路径为**跳板**（仅指针），勿在跳板内追加条款。
 

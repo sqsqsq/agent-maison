@@ -15,15 +15,7 @@
 
 ### skill-assets.yaml 键
 
-机器清单：`framework/profiles/hmos-app/skills/skill-assets.yaml`。根 `SKILL.md` 使用 `` `profile-skill-asset:spec/<键>` `` 指向下列文件：
-
-| 键 | 相对 `skills/feature/spec/` |
-|----|------------------------------|
-| `spec_template` | `templates/spec-template.md` |
-| `prd_template` | `templates/spec-template.md`（legacy 别名） |
-| `example_spec` | `examples/example-spec.md` |
-| `example_prd` | `examples/example-spec.md`（legacy 别名） |
-| `examples_spec_mapping` | `examples-spec-mapping.md` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.spec` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:spec/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 ## `generic` / 中立工程提醒
 

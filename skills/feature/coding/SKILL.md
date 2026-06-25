@@ -31,7 +31,7 @@
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)（原则 3 Surgical · 原则 4 Verify）。**Research Sub-Phase 完成前禁止写入第一个实现层源文件。**
 
-> **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
+> **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
 
 ---
 
@@ -523,7 +523,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 - Profile 编码 addendum: `framework/profiles/<profile>/skills/coding/profile-addendum.md`
 - Profile 宿主语言/组件/API 参考：以 addendum 中列出的 `reference/` 与 `templates/` 为准
-- 编码规范完整版: `` `profile-skill-asset:coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol)）
+- 编码规范完整版: `` `profile-skill-asset:coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol)；profile 资产在 `framework/profiles/<project_profile.name>/skills/coding/templates/coding-standards.md`，**勿**在根 skill 树 `templates/` 找）
 
 ## 关联文件
 

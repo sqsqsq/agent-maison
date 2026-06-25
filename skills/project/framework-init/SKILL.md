@@ -205,7 +205,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 2. **双 adapter 概念**：`materialized_adapters[]`（项目，提交） vs personal `agent_adapter`（local，setup）。
 3. **提交产物隔离**：物化每个 adapter 时 render-env 用**该 adapter**，不用 local active adapter。
 4. **`.gitignore`**：由 executor `ensure-gitignore` 维护 canonical patterns（含 `framework.local.json`）。
-5. **`profile-skill-asset:`** 占位符按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。
+5. **`profile-skill-asset:`** 占位符按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 

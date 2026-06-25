@@ -61,6 +61,10 @@ profile-skill-asset:<skill-id>/<asset_key>
    - 否则 → 相对 `framework/profiles/<project_profile.name>/skills/<skill-id>/`。
 4. 目标可以是文件或目录；打开前应用 `fs` / IDE 在该路径上解析。
 
+> **解析失败兜底（弱模型 / 工具读超时必读）**：若无法按上述步骤解析（例如读 `skill-assets.yaml` 超时或工具报错），直接手算：`framework/profiles/<project_profile.name>/skills/<skill-id>/<清单声明的相对路径>`，典型如 `framework/profiles/<profile>/skills/spec/templates/spec-template.md`。
+>
+> **反模式（禁止）**：**不要**因为根 skill 树里恰好有同名 `templates/` 目录（如 `framework/skills/feature/spec/templates/` 下只有通用 `feature-card.md`），就去那里找 profile 资产——profile 模板/示例**只在** `framework/profiles/<profile>/skills/<skill-id>/` 下；根 skill 树的 `templates/` 仅放与 profile 无关的通用骨架（部分目录留有 `_PROFILE-ASSETS-NOT-HERE.md` 面包屑提示）。
+
 脚本门禁：`framework/harness/scripts/check-docs.ts` 的 `profile_skill_assets_resolvable` 会校验 **清单存在**、**清单条目落盘**、**各 `profile-skill-asset:` 引用可在清单中解析且目标落盘**，以及 **各 `framework/skills/**/SKILL.md` 与 `prompts/*.md` 内不存在指向 `framework/skills` 树内缺失目标的相对 Markdown 链接**（不扫描 `templates/`、`reference/` 等示意文件，规则说明见 [`docs-rules.yaml`](../specs/phase-rules/docs-rules.yaml)）。
 
 ---

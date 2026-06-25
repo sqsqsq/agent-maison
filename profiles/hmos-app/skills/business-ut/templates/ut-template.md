@@ -5,7 +5,7 @@
 > 一条 `it()` 完整驱动一个 branch：命名入口 → `data_boundaries` → state 迁移 → 最终结果。
 > UT 中 **绝对禁止** 出现任何 UI / 导航 / Toast / AppStorage / 资源访问依赖（由 `ut_import_whitelist` BLOCKER 强制，UI 侧交 device-testing 真机测试）。
 >
-> 参考样例：`framework/profiles/hmos-app/skills/business-ut/examples/sample-flow/`
+> 参考样例：`` `profile-skill-asset:business-ut/sample_flow_dir` ``（解析见 `framework/skills/README.md` 的 “Profile skill asset protocol”）
 
 ## 概述
 

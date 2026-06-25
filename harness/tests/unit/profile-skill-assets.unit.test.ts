@@ -8,12 +8,19 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache } from '../../config';
 import {
+  extractMarkdownAnchors,
   extractProfileSkillAssetRefs,
   loadSkillAssetsManifest,
   resolveManifestEntryPath,
   resolveSkillAssetPath,
+  scanAddendumAssetRefs,
+  scanCrossProfileHardcodedPaths,
   scanMarkdownRelativeLinks,
+  scanReadmeAnchorLinks,
+  scanSameProfileAssetHardcodes,
+  slugifyHeading,
   validateProfileSkillAssetsForProject,
+  type SkillAssetsManifest,
 } from '../../scripts/utils/profile-skill-assets';
 import { detectRepoLayout } from '../../repo-layout';
 import { DEFAULT_LAYOUT, externalStandaloneLayout } from '../utils/layout-test-helper';
@@ -284,6 +291,128 @@ const cases: Array<{ name: string; run: () => void }> = [
         abs === path.join(DEFAULT_LAYOUT.frameworkRoot, 'skills', 'reference', 'user-confirmation-ux.md'),
         abs,
       );
+    },
+  },
+  // ---- G1：README anchor 链接完整性 ----
+  {
+    name: 'slugifyHeading: 协议标题 slug 与链接锚点一致',
+    run: () => {
+      assert(slugifyHeading('Profile skill asset protocol') === 'profile-skill-asset-protocol', 'slug');
+      const anchors = extractMarkdownAnchors('# T\n\n## Profile skill asset protocol\n\nbody\n');
+      assert(anchors.has('profile-skill-asset-protocol'), [...anchors].join(','));
+    },
+  },
+  {
+    name: 'scanReadmeAnchorLinks: 锚点缺失报错、存在则放行',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-anchor-'));
+      fs.mkdirSync(path.join(tmp, 'sub'), { recursive: true });
+      const md = path.join(tmp, 'sub', 'SKILL.md');
+      fs.writeFileSync(md, '见 [协议](../README.md#profile-skill-asset-protocol)。\n', 'utf-8');
+      // README 缺该小节 → 报错
+      fs.writeFileSync(path.join(tmp, 'README.md'), '# 标题\n\n没有协议小节\n', 'utf-8');
+      const bad = scanReadmeAnchorLinks(tmp, md, fs.readFileSync(md, 'utf-8'));
+      assert(bad.length === 1 && bad[0].includes('profile-skill-asset-protocol'), bad.join(';'));
+      // README 含该小节 → 放行
+      fs.writeFileSync(path.join(tmp, 'README.md'), '## Profile skill asset protocol\n\nok\n', 'utf-8');
+      const good = scanReadmeAnchorLinks(tmp, md, fs.readFileSync(md, 'utf-8'));
+      assert(good.length === 0, good.join(';'));
+    },
+  },
+  {
+    name: 'scanReadmeAnchorLinks: 链接目标 README 不存在（深度写错）报错',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-anchor2-'));
+      fs.mkdirSync(path.join(tmp, 'a', 'b'), { recursive: true });
+      const md = path.join(tmp, 'a', 'b', 'SKILL.md');
+      // 写成多上一层 → 指到不存在的 README
+      fs.writeFileSync(md, '见 [协议](../../../README.md#profile-skill-asset-protocol)。\n', 'utf-8');
+      const issues = scanReadmeAnchorLinks(tmp, md, fs.readFileSync(md, 'utf-8'));
+      assert(issues.length === 1 && issues[0].includes('不存在'), issues.join(';'));
+    },
+  },
+  // ---- G2：addendum 字面 framework 路径落盘 ----
+  {
+    name: 'scanAddendumAssetRefs: addendum 字面 framework 资产路径不落盘应报错',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-addendum-'));
+      fs.mkdirSync(path.join(tmp, 'framework', 'skills'), { recursive: true });
+      const addDir = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'spec');
+      fs.mkdirSync(addDir, { recursive: true });
+      const add = path.join(addDir, 'profile-addendum.md');
+      fs.writeFileSync(add, '模板见 `framework/skills/feature/spec/templates/ghost-template.md`。\n', 'utf-8');
+      const manifest: SkillAssetsManifest = { schema_version: '1.0', profile: 'pa', assets: {} };
+      const issues = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
+      assert(issues.length === 1 && issues[0].includes('ghost-template.md'), issues.join(';'));
+    },
+  },
+  {
+    name: 'scanAddendumAssetRefs: 原始误导形态（相对 `skills/feature/<x>/` 表头）应报错、相对链接放行',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-addendum-bare-'));
+      fs.mkdirSync(path.join(tmp, 'framework', 'skills'), { recursive: true });
+      const addDir = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'spec');
+      fs.mkdirSync(addDir, { recursive: true });
+      const add = path.join(addDir, 'profile-addendum.md');
+      const manifest: SkillAssetsManifest = { schema_version: '1.0', profile: 'pa', assets: {} };
+      // 还原历史 bug 表头：表头声明"相对 skills/feature/spec/"+ 表格 templates/spec-template.md
+      fs.writeFileSync(
+        add,
+        ['### skill-assets.yaml 键', '', '| 键 | 相对 `skills/feature/spec/` |', '|----|----|', '| `spec_template` | `templates/spec-template.md` |', ''].join('\n'),
+        'utf-8',
+      );
+      const bad = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
+      assert(bad.some((e) => e.includes('skills/feature/spec')), 'expected bare-skills flag: ' + bad.join(';'));
+      // 相对链接 ../../../../skills/feature/spec/... 不应误报
+      fs.writeFileSync(add, '诊断见 [x](../../../../skills/feature/spec/reference/ui-spec.md)。\n', 'utf-8');
+      const good = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
+      assert(good.length === 0, 'relative link must not be flagged: ' + good.join(';'));
+    },
+  },
+  // ---- G3：命令式产物跨 profile 硬编码 ----
+  {
+    name: 'scanCrossProfileHardcodedPaths: prompt 硬编码他 profile 报错、addendum 豁免',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-xprofile-'));
+      fs.mkdirSync(path.join(tmp, 'framework', 'skills'), { recursive: true });
+      const paPrompts = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'coding', 'prompts');
+      const paSpec = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'coding');
+      fs.mkdirSync(paPrompts, { recursive: true });
+      // pb 也要作为真实 profile 存在
+      fs.mkdirSync(path.join(tmp, 'framework', 'profiles', 'pb', 'skills', 'coding'), { recursive: true });
+      // 命令式 prompt 硬编码 pb → 报错
+      fs.writeFileSync(
+        path.join(paPrompts, 'do.md'),
+        '严格遵守 `framework/profiles/pb/skills/coding/templates/x.yaml`。\n',
+        'utf-8',
+      );
+      // addendum 解释性引用 pb → 豁免（不报）
+      fs.writeFileSync(
+        path.join(paSpec, 'profile-addendum.md'),
+        '需要时切到 `profiles/pb/skills/coding/` 读其资产。\n',
+        'utf-8',
+      );
+      const issues = scanCrossProfileHardcodedPaths(tmp);
+      assert(issues.length === 1, 'expected exactly 1: ' + issues.join(';'));
+      assert(issues[0].includes('do.md') && issues[0].includes('pb'), issues[0]);
+    },
+  },
+  {
+    name: 'scanSameProfileAssetHardcodes: 本 profile 资产物理硬编码报错、占位符放行',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-same-'));
+      fs.mkdirSync(path.join(tmp, 'framework', 'skills'), { recursive: true });
+      const prompts = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'catalog-bootstrap', 'prompts');
+      fs.mkdirSync(prompts, { recursive: true });
+      const md = path.join(prompts, 'p.md');
+      // 本 profile 资产物理路径 → 报错
+      fs.writeFileSync(md, '严格遵守 `framework/profiles/pa/skills/catalog-bootstrap/templates/x.yaml`。\n', 'utf-8');
+      const bad = scanSameProfileAssetHardcodes(tmp);
+      assert(bad.length === 1 && bad[0].includes('p.md'), bad.join(';'));
+      // 占位符 → 放行；harness/ 等非资产路径不在扫描面
+      fs.writeFileSync(md, '严格遵守 `profile-skill-asset:catalog-bootstrap/module_card_template`。\n', 'utf-8');
+      const good = scanSameProfileAssetHardcodes(tmp);
+      assert(good.length === 0, good.join(';'));
     },
   },
 ];

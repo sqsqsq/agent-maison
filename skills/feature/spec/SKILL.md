@@ -31,7 +31,7 @@
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)（Karpathy 四原则 · Research First / Minimum Viable / Surgical / Verify Before Proceed）。**Research Sub-Phase 完成前禁止写入 spec 正文。**
 
-> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
 
 ---
 
@@ -204,7 +204,7 @@
 
 ### Step 3: 生成 spec 初稿
 
-读取 spec 文档模板：`` `profile-skill-asset:spec/spec_template` ``（解析规则见 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol)）。
+读取 spec 文档模板：`` `profile-skill-asset:spec/spec_template` ``（解析规则见 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol)）。**勿**在 `framework/skills/feature/spec/templates/` 找它（那里只有通用 `feature-card.md`）——它在 `framework/profiles/<project_profile.name>/skills/spec/templates/spec-template.md`。
 
 按模板结构填充内容，**必须包含以下 10 个章节**。  
 **Visual Handoff**：仅当需求为 **UI 形态**（新屏 / 改版 / 需对齐设计真源）时，须在 Scope 附近增加 **独立** `yaml` 块（根字段含 `ui_change`），写法见 [reference/visual-handoff.md](reference/visual-handoff.md)；**后端 / 库 / 云侧无界面**需求且团队未 opt-in `framework.config.json` 的 `spec.visual_handoff_enforcement: strict` 时，**不写**该块不产生脚本噪声。**doc/features/** 是否提交主仓由实例 **`paths.docs_committed`** 决定，harness 不隐含「必须入库」。

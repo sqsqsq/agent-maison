@@ -36,6 +36,14 @@
 
 ---
 
+## Profile skill asset protocol
+
+根 `framework/skills/**/SKILL.md` 中的占位引用 `profile-skill-asset:<skill-id>/<asset_key>` 的**权威解析规则**见 **[`skills/README.md` 同名小节](skills/README.md#profile-skill-asset-protocol)**（单一真相，勿在本文件重复声明路径）。要点：清单 `framework/profiles/<project_profile.name>/skills/skill-assets.yaml` 是 asset 键与相对路径的**唯一声明**；**不要**在根 SKILL 写死 `framework/profiles/<固定 profile>/...`，也**不要**去 `framework/skills/feature/<skill>/templates/` 找 profile 资产——它们在 `framework/profiles/<profile>/skills/<skill>/templates/`。
+
+> 本锚点存在仅为容错：历史上部分 SKILL 把协议链接误写成指向本文件，保留此小节可让这些链接落到真实锚点；新链接请一律指向 `skills/README.md#profile-skill-asset-protocol`。
+
+---
+
 ## 如何引入到其它工程
 
 本 framework 通过 **`project_profile`** 区分宿主能力（默认多为 `hmos-app`）；具体 profile 含义见 [文档：profiles](profiles/README.md)。
