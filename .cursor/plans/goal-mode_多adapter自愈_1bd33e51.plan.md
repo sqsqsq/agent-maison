@@ -1,6 +1,7 @@
 ---
 name: goal-mode 多adapter自愈
 overview: 修复 goal 模式在「已物化多个 adapter、但新 clone 缺 framework.local.json」工程下的缺陷。统一 Case A/B 走一条确定性写盘路径（neutral 命名 --select-adapter），补齐「运行身份」可靠 wiring，并在 SKILL 加「门控失败即 STOP 交回用户、严禁绕过 goal-runner / 严禁自由改码」硬约束。目标在研版本 2.4.0，不动版本号。
+version: 2.4.0
 todos:
   - id: harness-select-adapter
     content: check-personal-setup.ts 增加中性 --select-adapter；写盘逻辑下沉到 attemptEnsureAdapterFromFallback 的 candidates 短路；combineEnsuredActions 改逻辑+枚举（识别 auto_selected_adapter、补 auto_selected_adapter_and_deveco）+ PersonalSetupEnsuredAction + RepairAttempt.ensured + formatEnsuredOkMessage 同步；no_materialized_adapter 消息补 project-root 提示

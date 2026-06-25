@@ -1,6 +1,7 @@
 ---
 name: goal-mode headless 闸门自解析
 overview: 修复 goal-mode（无人值守）在 spec 等阶段被「人工逐行确认」闸门卡死的根因：为所有阶段内人工确认闸门定义 headless 自动解析+分级留痕策略（high 自动确认 / medium·low 标 DEFERRED-review），主防御用 adapter 无关的「无进展守卫」杜绝盲目重试空耗（chrys sentinel 仅作加速器），并顺带纠正 chrys invoke 的 unattended parity 背离。在研窗口 2.4.0，不动版本号。
+version: 2.4.0
 todos:
   - id: headless-prompt-signal
     content: buildPhasePrompt 注入 Unattended(headless goal-mode) 块，thread approval_mode/feature/phase；指向 user-confirmation-ux.md §9

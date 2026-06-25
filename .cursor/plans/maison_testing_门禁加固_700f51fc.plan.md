@@ -1,6 +1,7 @@
 ---
 name: maison testing 门禁加固
 overview: 基于 bc-openCard 实践案例，加固 AgentMaison（在研窗口 2.4.0）的 testing 阶段门禁、goal-runner 完成裁决与 ArkUI 静态规则，杜绝「真机 trace 失败/超时但 goal-report 仍 COMPLETED」的假完成，并补齐 UI 入口覆盖与 visual 回环阻断。
+version: 2.4.0
 todos:
   - id: p1-device-run-gate
     content: check-testing.ts device_test_run 成功分支：读 trace.outcome/failed/blocked，partial/failed 或有失败阻塞 case → BLOCKER FAIL

@@ -1,6 +1,7 @@
 ---
 name: 视觉保真结构化加固
 overview: 在 agent-maison 2.4.0 窗口内，按"五环短板"重排优先级——把投入从 coding 门禁（第二强环）转向真正的根因：①捕获完整性（参考图→ui-spec 逐元素强制表态、以参考图侧枚举为分母的覆盖校验）与⑤反降级治理（fidelity_target 全链路 ratchet、P0 视觉元素 defer 须人类签字）。再补④验证闭环（双向 diff 残差达标、放水点收紧）与③素材供给（三级策略 + 素材需求清单，拒绝 AI 山寨）。coding 门禁瘦身为背板。命门是严重度：pixel_1to1 下关键视觉项必须 FAIL/BLOCKER，不得做成又一堆 WARN。全程 framework-only、不 bump 版本，并用 A/B/C 三分法诚实管理预期。
+version: 2.4.0
 todos:
   - id: p01-governance
     content: 治理层（⑤）——visual_handoff 新增 fidelity_target(pixel_1to1|semantic_layout)，复用现有 visual_handoff_enforcement 档位把全链路 spec/coding/testing 视觉门禁 WARN→FAIL/BLOCKER ratchet；P0 视觉元素 defer 须登记 fidelity_deferrals 且人工签字（goal-runner 暂停确认，headless 无批准即 BLOCKER），判据=有无人类签字而非有无登记；消灭 spec 自我 defer + 自我 verified
