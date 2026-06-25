@@ -299,6 +299,44 @@ structure_checks:
     rule:
       provider: spec.asset_acquisition
 
+  fidelity_target:
+    description: >
+      Visual Handoff yaml 块可选 fidelity_target（pixel_1to1|semantic_layout，默认 semantic_layout）
+      与 asset_acquisition_mode；pixel_1to1 联动抬升 effective user_dir 并贯穿 spec/coding/testing ratchet。
+    severity: MAJOR
+    rule:
+      expect: "visual_handoff_fidelity_target"
+
+  fidelity_deferrals:
+    description: >
+      pixel_1to1 下 P0 视觉元素 defer 须登记 fidelity_deferrals 且 human_signed: true；
+      判据为有无人类签字而非有无登记；headless 无批准即 BLOCKER。
+    severity: BLOCKER
+    rule:
+      expect: "fidelity_deferrals_human_signed"
+
+  fidelity_no_self_defer_verified:
+    description: >
+      禁止 ui-spec verified=verified 与未签字 defer 并存（spec 自我 defer + 自我 verified）。
+    severity: BLOCKER
+    rule:
+      expect: "no_self_defer_verified"
+
+  capture_completeness:
+    description: >
+      ref-elements.yaml 为参考图侧独立枚举（分母不得取自 ui-spec/countMappableNodes）；
+      pixel_1to1 覆盖不足 → BLOCKER。
+    severity: BLOCKER
+    rule:
+      expect: "ref_elements_coverage"
+
+  asset_manifest:
+    description: >
+      pixel_1to1 联动 user_dir 须产出 spec/asset-manifest.yaml；占位资产须显式清单（拒绝 AI 山寨）。
+    severity: MAJOR
+    rule:
+      expect: "asset_manifest_yaml"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------

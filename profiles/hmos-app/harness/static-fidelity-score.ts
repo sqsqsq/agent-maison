@@ -16,6 +16,8 @@ import {
 import { deltaE2000, hexToLab } from './image-toolkit';
 import { resourceKeyToRef, scanFeatureSourceTree } from './source-ref-scan';
 import { computeStructureSequenceScore, loadVisualParityMappings } from './visual-structure-parity';
+import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { collectSemanticColorBindingIssues } from './visual-parity-backstop';
 
 const COPY_MATCH_THRESHOLD = 0.85;
 const ASSET_COVER_THRESHOLD = 0.8;
@@ -114,8 +116,10 @@ export function computeStaticFidelityScore(
   const assets = doc.assets ?? [];
   let assetResolved = 0;
   let assetReferenced = 0;
+  const pixel1to1 = isPixel1to1(ctx);
   for (const a of assets) {
-    if (a.placeholder) continue;
+    const countsInDenom = !a.placeholder || pixel1to1;
+    if (!countsInDenom) continue;
     const hasFile = Boolean(a.resolved_path && fs.existsSync(path.resolve(ctx.projectRoot, a.resolved_path)));
     if (hasFile) assetResolved++;
     if (sourceScan) {
@@ -126,9 +130,9 @@ export function computeStaticFidelityScore(
       }
     }
   }
-  const nonPlaceholderAssets = assets.filter(a => !a.placeholder);
-  const assetPct = nonPlaceholderAssets.length > 0
-    ? (sourceScan ? assetReferenced / nonPlaceholderAssets.length : assetResolved / nonPlaceholderAssets.length)
+  const denomAssets = assets.filter(a => !a.placeholder || pixel1to1);
+  const assetPct = denomAssets.length > 0
+    ? (sourceScan ? assetReferenced / denomAssets.length : assetResolved / denomAssets.length)
     : 1;
 
   // structure order match（经 visual-parity.yaml components 映射 vs 源码 struct，禁止 taxonomy 直比）
@@ -148,29 +152,39 @@ export function computeStaticFidelityScore(
     structPct = 0;
   }
 
+  const semanticIssues = collectSemanticColorBindingIssues(ctx, doc, baselineUnverified);
+
   const overallWarn =
     copyPct < COPY_MATCH_THRESHOLD ||
     assetPct < ASSET_COVER_THRESHOLD ||
     (colorTotal > 0 && colorPass / colorTotal < 0.8) ||
-    structPct < STRUCT_MATCH_THRESHOLD;
+    structPct < STRUCT_MATCH_THRESHOLD ||
+    semanticIssues.length > 0;
 
   const summary = [
     `色差 ΔE≤${COLOR_DE_THRESHOLD}：${colorPass}/${colorTotal}`,
     `文案 exact-match：${(copyPct * 100).toFixed(0)}%`,
-    `资产覆盖：${(assetPct * 100).toFixed(0)}%（${sourceScan ? `源码引用 ${assetReferenced}/${nonPlaceholderAssets.length}` : `文件 ${assetResolved}/${nonPlaceholderAssets.length}`}）`,
+    `资产覆盖：${(assetPct * 100).toFixed(0)}%（${sourceScan ? `源码引用 ${assetReferenced}/${denomAssets.length}` : `文件 ${assetResolved}/${denomAssets.length}`}）${pixel1to1 ? '；pixel_1to1 含 placeholder 计入分母' : ''}`,
     `结构屏匹配：${(structPct * 100).toFixed(0)}%`,
+    semanticIssues.length > 0
+      ? `语义色绑定缺失：${semanticIssues.map(i => i.detail).join('；')}`
+      : '语义色绑定：通过',
     '【边界】结构分仅基于源码 struct 声明名 presence + 映射顺序近似（LCS+覆盖率），' +
       '不分析组件调用/嵌套/页面归属——空 struct 或未挂载组件可能仍被计入。真·结构与几何对齐归 M4 设备 visual_diff，' +
       '本分仅作 MAJOR/WARN 参考，不得据此宣称"结构已保真"。',
     ...scores,
   ].join('\n');
 
+  const ratchet = pixel1to1 && overallWarn
+    ? fidelityRatchetFailOrWarn(ctx, false)
+    : { severity: 'MAJOR' as const, status: (overallWarn ? 'WARN' : 'PASS') as 'WARN' | 'PASS' };
+
   return [{
     id: 'static_fidelity_score',
     category: 'structure',
     description: desc,
-    severity: 'MAJOR',
-    status: overallWarn ? 'WARN' : 'PASS',
+    severity: ratchet.severity,
+    status: ratchet.status,
     details: summary,
     affected_files: [uiSpecRel],
   }];

@@ -167,6 +167,42 @@ async function runHistSim(pathA, pathB) {
   return { ok: true, similarity: Math.max(0, Math.min(1, similarity)) };
 }
 
+/** N×N 分块直方图相似度，返回最小块（破全局白底稀释） */
+async function runTileMinSim(pathA, pathB, gridStr) {
+  if (!pathA || !pathB) {
+    return { ok: false, error: 'tile-min requires two image paths' };
+  }
+  const grid = Math.max(2, Math.min(8, parseInt(gridStr, 10) || 4));
+  const imgA = await Jimp.read(pathA);
+  const imgB = await Jimp.read(pathB);
+  const size = 128;
+  imgA.resize(size, size);
+  imgB.resize(size, size);
+  const tile = Math.floor(size / grid);
+  let minSim = 1;
+  for (let gy = 0; gy < grid; gy++) {
+    for (let gx = 0; gx < grid; gx++) {
+      const x = gx * tile;
+      const y = gy * tile;
+      const w = gx === grid - 1 ? size - x : tile;
+      const h = gy === grid - 1 ? size - y : tile;
+      const cropA = imgA.clone().crop(x, y, w, h);
+      const cropB = imgB.clone().crop(x, y, w, h);
+      const tmpA = path.join(require('os').tmpdir(), `tile-a-${gx}-${gy}.png`);
+      const tmpB = path.join(require('os').tmpdir(), `tile-b-${gx}-${gy}.png`);
+      await cropA.writeAsync(tmpA);
+      await cropB.writeAsync(tmpB);
+      const part = await runHistSim(tmpA, tmpB);
+      try { require('fs').unlinkSync(tmpA); } catch { /* ignore */ }
+      try { require('fs').unlinkSync(tmpB); } catch { /* ignore */ }
+      if (part.ok && typeof part.similarity === 'number') {
+        minSim = Math.min(minSim, part.similarity);
+      }
+    }
+  }
+  return { ok: true, similarity: minSim, grid };
+}
+
 async function main() {
   const [cmd, imagePath, ...rest] = process.argv.slice(2);
   if (cmd === 'crop') {
@@ -186,6 +222,12 @@ async function main() {
   if (cmd === 'hist-sim') {
     const [pathB] = rest;
     const result = await runHistSim(imagePath, pathB);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'tile-min') {
+    const [pathB, gridStr] = rest;
+    const result = await runTileMinSim(imagePath, pathB, gridStr);
     process.stdout.write(JSON.stringify(result));
     return;
   }

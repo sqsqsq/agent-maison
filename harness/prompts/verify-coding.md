@@ -192,6 +192,14 @@
 - **严重等级**: MAJOR
 - **评估方法**: 若对话/trace 显示 coding 四件套 PASS 后 agent **在同一执行流**自动 Read code-review / 写 review，且**无** `coding.ok_to_review` / `phase.next_step` / batch 授权（user-confirmation-ux §8）→ FAIL；仅「可进入 code-review」资格表述不构成授权
 
+### 检查 14: 视觉背板语义 (visual_parity_backstop)
+
+- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）/ MAJOR
+- **评估方法**:
+  1. ui-spec 带 `color_ref`/`semantic_role` 的节点是否在 **visual-parity.yaml 有 ui_spec_node_id→contract_component 映射**
+  2. 映射 struct 源码是否引用对应 `$r('app.color.*')`（组件级，非 feature 全局有一处即可）
+  3. `must_have_elements` 是否在组件树或 string/源码可见；脚本 `visual_parity` FAIL → 本项 FAIL
+
 ---
 
 ## 六、上下文文件

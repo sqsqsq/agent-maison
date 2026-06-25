@@ -205,6 +205,28 @@ export function computeHistogramSimilarity(
   };
 }
 
+/** N×N 分块最小直方图相似度（score_floor 哨兵用） */
+export function computeTileMinSimilarity(
+  imagePathA: string,
+  imagePathB: string,
+  grid = 4,
+): { ok: boolean; similarity?: number; error?: string } {
+  if (!isJimpAvailable()) {
+    return { ok: false, error: 'jimp not installed' };
+  }
+  if (!fs.existsSync(imagePathA) || !fs.existsSync(imagePathB)) {
+    return { ok: false, error: 'image not found' };
+  }
+  const out = runJimpWorker(['tile-min', imagePathA, imagePathB, String(grid)]);
+  if (out.ok === true && typeof out.similarity === 'number') {
+    return { ok: true, similarity: out.similarity };
+  }
+  return {
+    ok: false,
+    error: typeof out.error === 'string' ? out.error : 'tile-min failed',
+  };
+}
+
 export function isJimpAvailable(): boolean {
   try {
     require.resolve('jimp', { paths: [HARNESS_ROOT] });

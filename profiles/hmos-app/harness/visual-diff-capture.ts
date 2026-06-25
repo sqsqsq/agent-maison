@@ -16,7 +16,7 @@ import {
   buildAuthoritativeRefImageIndex,
   resolveRefSourceImage,
 } from './authoritative-ref-images';
-import { computeHistogramSimilarity, isJimpAvailable } from './image-toolkit';
+import { computeHistogramSimilarity, computeTileMinSimilarity, isJimpAvailable } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
 import { collectP0OverlayTargetIds } from './visual-diff-targets';
@@ -150,8 +150,13 @@ function resolveScoreFloor(
 ): number | undefined {
   if (!enabled || !refAbs || !isJimpAvailable()) return undefined;
   const sim = computeHistogramSimilarity(shotAbs, refAbs);
-  if (!sim.ok || typeof sim.similarity !== 'number') return undefined;
-  return sim.similarity;
+  const tile = computeTileMinSimilarity(shotAbs, refAbs, 4);
+  const globalSim = sim.ok && typeof sim.similarity === 'number' ? sim.similarity : undefined;
+  const tileSim = tile.ok && typeof tile.similarity === 'number' ? tile.similarity : undefined;
+  if (globalSim === undefined && tileSim === undefined) return undefined;
+  if (globalSim === undefined) return tileSim;
+  if (tileSim === undefined) return globalSim;
+  return Math.min(globalSim, tileSim);
 }
 
 /** pending/skipped 可被采集覆盖；pass/warn/fail 仅在截图 hash 未变时保留 */

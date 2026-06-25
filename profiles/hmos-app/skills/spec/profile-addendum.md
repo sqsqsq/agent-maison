@@ -25,3 +25,10 @@
 
 - 可选旁证：`oh-package.json5`（包名）、`build-profile.json5`（模块 `srcPath`），用于核对 Scope 与物理模块路径。
 - **UI 真源**以 spec Visual Handoff / 用户截图为准；`context-exploration.md` 须能指向像素权威（`authoritative_refs` 或等价路径）。
+
+## 视觉保真捕获（v2.4+ · pixel_1to1）
+
+- Step 2 须按**分区扫描**产出 `spec/ref-elements.yaml`（参考图侧独立枚举；`implement | defer` 二选一）。
+- `ref-elements` 中 `disposition: defer` 须在 spec Visual Handoff 块登记 `fidelity_deferrals` 且 **`human_signed: true`**。
+- ui-spec 须写 `must_have_elements` / `semantic_role` / `color_ref` / `icon` / `badge`；plan 阶段补 `visual-parity.yaml` 组件映射供 coding **组件级** token 绑定校验。
+- `pixel_1to1` 联动产出 `spec/asset-manifest.yaml`（素材需求清单，拒绝 AI 山寨资产）。

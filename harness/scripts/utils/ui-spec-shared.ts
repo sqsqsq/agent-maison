@@ -24,6 +24,13 @@ export const UI_CHANGE_REQUIRES_UI_SPEC = new Set<UiChangeValue>([
 
 export type UiSpecVerified = 'verified' | 'unverified' | 'human_confirmed';
 
+export type UiSpecSemanticRole = 'success' | 'brand_primary' | 'danger' | 'promo' | 'neutral';
+
+export interface UiSpecIconRef {
+  kind?: 'brand_logo' | 'system_symbol' | 'illustration';
+  ref?: string;
+}
+
 export interface UiSpecComponentNode {
   id?: string;
   type: string;
@@ -34,6 +41,10 @@ export interface UiSpecComponentNode {
   style_ref?: string;
   asset_ref?: string;
   bbox?: number[];
+  semantic_role?: UiSpecSemanticRole;
+  color_ref?: string;
+  icon?: UiSpecIconRef;
+  badge?: string;
   children?: UiSpecComponentNode[];
 }
 
@@ -43,6 +54,8 @@ export interface UiSpecScreen {
   ref_id?: string;
   root?: UiSpecComponentNode;
   lightweight?: boolean;
+  /** 屏级必备元素 id（search_bar / letter_index / promo_badge 等） */
+  must_have_elements?: string[];
 }
 
 export interface UiSpecToken {

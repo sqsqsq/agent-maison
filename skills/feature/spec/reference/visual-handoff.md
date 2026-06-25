@@ -85,6 +85,22 @@
 
 - 详细场景表与 checklist：`framework/skills/project/framework-init/prompts/spec-harness-options.md`。
 
+## 保真档位与素材供给（v2.4+）
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
+| `asset_acquisition_mode` | `approximate`（默认） / `auto_crop` / `user_dir` | `pixel_1to1` 联动默认抬升为 `user_dir` |
+| `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须 `human_signed: true`（判据=人类签字） |
+
+`authoritative_refs` 新增 kind：**`asset_pack`**（用户素材目录，与 `repo_assets` 同样要求 `path`）。
+
+须同步产出：
+- `spec/ref-elements.yaml` — 参考图侧独立枚举（捕获完整性分母）
+- `spec/asset-manifest.yaml` — 美术资产需求清单（`pixel_1to1` / `user_dir` 时必填）
+
+**A/B/C 预期边界**：A 结构样式可逼近 1:1；B 美术资产取决于素材供给；C 动态交互不在静态参考图承诺内。
+
 ## CLI 逃生
 
 ```bash

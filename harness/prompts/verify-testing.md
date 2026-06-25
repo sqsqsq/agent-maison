@@ -139,6 +139,15 @@
      - **须与 Hylyre trace 一致**：若 `trace.outcome !== success` 或 trace 含失败/阻塞 case，结论不得为「达标」
   4. 若测试报告尚未生成，标为 WARN
 
+### 检查 8: 视觉 diff 双向残差 (visual_diff_bidirectional)
+
+- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）/ MAJOR
+- **评估方法**:
+  1. 读取 `device-testing/device-screenshots/visual-diff.json`：每屏须含 `reverse_missing[]`（逐元素枚举，可为 `[]`）
+  2. 对照 `spec/ref-elements.yaml`：`disposition: implement` 的元素须在 ui-spec 覆盖，或出现在某屏 `reverse_missing`
+  3. `must_fix` / `verdict=fail` 须逐元素说明；脚本 FAIL/BLOCKER 时本项 FAIL
+  4. A/B/C 边界：C 类动态交互不在静态参考图承诺内
+
 ---
 
 ## 六、上下文文件

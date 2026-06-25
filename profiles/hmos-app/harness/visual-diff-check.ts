@@ -12,10 +12,13 @@ import {
   loadUiSpecFile,
   parseUiChangeFromSpecMarkdown,
   uiSpecAbsPath,
+  collectAllComponentNodes,
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
+import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { createRequire } from 'module';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
@@ -57,6 +60,8 @@ export interface VisualDiffScreenEntry {
   screenshot_hash?: string;
   /** VL/agent 判定 verdict 时所依据的截图 hash；须与当前文件 hash 一致 */
   evaluated_screenshot_hash?: string;
+  /** 反向 diff：参考图有、实现无的元素 id 清单 */
+  reverse_missing?: string[];
 }
 
 export interface VisualDiffReport {
@@ -199,6 +204,12 @@ export function validateVisualDiffJson(
           errors.push(`screens[${i}] verdict=fail 时 must_fix 须为非空字符串数组`);
         }
       }
+      const reverseMissing = row.reverse_missing;
+      if (reverseMissing !== undefined && reverseMissing !== null) {
+        if (!Array.isArray(reverseMissing) || !reverseMissing.every(x => typeof x === 'string')) {
+          errors.push(`screens[${i}] reverse_missing 须为字符串数组`);
+        }
+      }
       const scoreFloor = row.score_floor;
       if (scoreFloor !== undefined && scoreFloor !== null) {
         if (typeof scoreFloor !== 'number' || Number.isNaN(scoreFloor)) {
@@ -211,6 +222,69 @@ export function validateVisualDiffJson(
   }
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, report: rep as unknown as VisualDiffReport };
+}
+
+interface VisualDiffHit {
+  id: string;
+  severity: 'BLOCKER' | 'MAJOR';
+  status: 'FAIL' | 'WARN';
+  line: string;
+  rank: number;
+}
+
+function visualDiffHitRank(severity: 'BLOCKER' | 'MAJOR', status: 'FAIL' | 'WARN'): number {
+  return severity === 'BLOCKER' || status === 'FAIL' ? 3 : 2;
+}
+
+function pushVisualDiffHit(hits: VisualDiffHit[], hit: Omit<VisualDiffHit, 'rank'>): void {
+  hits.push({ ...hit, rank: visualDiffHitRank(hit.severity, hit.status) });
+}
+
+function uiSpecCoversElementId(
+  elementId: string,
+  nodeIds: Set<string>,
+  mustHave: Set<string>,
+): boolean {
+  if (nodeIds.has(elementId) || mustHave.has(elementId)) return true;
+  const lower = elementId.toLowerCase();
+  for (const id of nodeIds) {
+    if (id.toLowerCase() === lower) return true;
+  }
+  for (const id of mustHave) {
+    if (id.toLowerCase() === lower) return true;
+  }
+  return false;
+}
+
+function finalizeVisualDiffHits(
+  desc: string,
+  reportRel: string,
+  baseDetails: string,
+  hits: VisualDiffHit[],
+): CheckResult {
+  if (hits.length === 0) {
+    return {
+      id: 'visual_diff',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'PASS',
+      details: baseDetails,
+      affected_files: [reportRel],
+    };
+  }
+  hits.sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id));
+  const top = hits[0];
+  const resultId = hits.some(h => h.rank >= 3) ? 'visual_diff' : top.id;
+  return {
+    id: resultId,
+    category: 'structure',
+    description: desc,
+    severity: top.severity,
+    status: top.status,
+    details: `${baseDetails}\n${hits.map(h => h.line).join('\n')}`,
+    affected_files: [reportRel],
+  };
 }
 
 /** device-testing 渲染回环报告校验 */
@@ -355,6 +429,32 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     return s.fidelity_score - s.score_floor >= SCORE_FLOOR_SENTINEL_GAP;
   });
 
+  const reverseMissingAll = rep.screens.flatMap(s => s.reverse_missing ?? []);
+
+  const missingEvalHashScreens = rep.screens.filter(s => isMissingEvaluatedScreenshotHash(s));
+  const staleScreens = rep.screens.filter(s => isStaleVisualDiffVerdict(s, ctx.projectRoot));
+
+  const hashGroups = new Map<string, string[]>();
+  for (const s of rep.screens) {
+    const h = s.screenshot_hash?.trim();
+    if (!h) continue;
+    const list = hashGroups.get(h) ?? [];
+    list.push(s.screen_id);
+    hashGroups.set(h, list);
+  }
+  const duplicateHashScreens = [...hashGroups.entries()]
+    .filter(([, ids]) => ids.length >= 2)
+    .map(([h, ids]) => `${h}:${ids.join('+')}`);
+
+  const pixel1to1 = isPixel1to1(ctx);
+  const refElementsPath = refElementsAbsPath(ctx.projectRoot, ctx.feature);
+  const refElementsDoc = fs.existsSync(refElementsPath)
+    ? loadRefElementsFile(refElementsPath)
+    : null;
+  const screensMissingReverseEnum = pixel1to1
+    ? rep.screens.filter(s => !isCaptureMutableVerdict(s.verdict) && s.reverse_missing === undefined)
+    : [];
+
   const details = [
     `screens=${rep.screens.length}`,
     `pass=${passScreens.length}`,
@@ -367,21 +467,18 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     rep.degraded ? 'degraded' : '',
   ].filter(Boolean).join('；');
 
-  // --- P0 覆盖须先于「零有效屏」早退，避免 new_or_changed 下全 skipped 降成 MAJOR WARN ---
+  const hits: VisualDiffHit[] = [];
+
   if (p0Uncovered.length > 0) {
     const uiChangeGate = uiChange === 'new_or_changed';
-    return [{
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
       severity: uiChangeGate ? 'BLOCKER' : 'MAJOR',
       status: uiChangeGate ? 'FAIL' : 'WARN',
-      details: `${details}\nP0 屏/overlay 未覆盖或被 skipped/pending：${p0Uncovered.join(', ')}（visual_diff 须覆盖全部可直达 P0 屏与 overlay）`,
-      affected_files: [reportRel],
-    }];
+      line: `P0 屏/overlay 未覆盖或被 skipped/pending：${p0Uncovered.join(', ')}`,
+    });
   }
 
-  // --- 防全 skipped / 零有效屏充数 PASS：必须至少有一屏给出真实 verdict ---
   const effectiveScreens = passScreens.length + warnScreens.length + failScreens.length;
   if (effectiveScreens === 0) {
     const pendingHint =
@@ -389,101 +486,138 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         ? '所有屏 verdict=pending（VL 未完成判定），无有效视觉对照'
         : '所有屏 verdict=skipped，无有效视觉对照';
     const uiChangeGate = uiChange === 'new_or_changed' && p0Ids.length > 0 && pendingScreens.length > 0;
-    return [{
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
       severity: uiChangeGate ? 'BLOCKER' : 'MAJOR',
       status: uiChangeGate ? 'FAIL' : 'WARN',
-      details: `${details}\n${pendingHint}；不得作为视觉保真 PASS。若设备不可用应显式 degraded SKIP。`,
-      affected_files: [reportRel],
-      suggestion: uiChangeGate
-        ? 'UI 有新增/变更时 P0 屏 visual verdict 不得全 pending；完成 VL 判定或导航 overlay 后重采截图。'
-        : undefined,
-    }];
+      line: `${pendingHint}；不得作为视觉保真 PASS`,
+    });
   }
 
   if (lowScorePass.length > 0) {
-    return [{
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        `${details}\n以下屏 verdict=pass 但分数低于阈值（fidelity<${PASS_MIN_FIDELITY} 或 iou<${PASS_MIN_IOU}）：` +
-        lowScorePass
-          .map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`)
-          .join(', '),
-      affected_files: [reportRel],
-    }];
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `verdict=pass 但分数低于阈值（fidelity<${PASS_MIN_FIDELITY} 或 iou<${PASS_MIN_IOU}）：` +
+        lowScorePass.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`).join(', '),
+    });
   }
 
-  const missingEvalHashScreens = rep.screens.filter(s => isMissingEvaluatedScreenshotHash(s));
   if (missingEvalHashScreens.length > 0) {
-    return [{
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        `${details}\nfinalized verdict 缺少 evaluated_screenshot_hash（须与当前 screenshot_hash 一致）：` +
+      severity: pixel1to1 ? 'BLOCKER' : 'MAJOR',
+      status: pixel1to1 ? 'FAIL' : 'WARN',
+      line:
+        `finalized verdict 缺少 evaluated_screenshot_hash：` +
         missingEvalHashScreens.map(s => s.screen_id).join(', '),
-      affected_files: [reportRel],
-    }];
+    });
   }
 
-  const staleScreens = rep.screens.filter(s => isStaleVisualDiffVerdict(s, ctx.projectRoot));
   if (staleScreens.length > 0) {
-    return [{
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        `${details}\nverdict 所依据截图已变更（evaluated_screenshot_hash 不匹配），须 VL 重判：` +
+      severity: pixel1to1 ? 'BLOCKER' : 'MAJOR',
+      status: pixel1to1 ? 'FAIL' : 'WARN',
+      line:
+        `verdict 所依据截图已变更，须 VL 重判：` +
         staleScreens.map(s => s.screen_id).join(', '),
-      affected_files: [reportRel],
-    }];
+    });
   }
 
   if (scoreFloorSentinel.length > 0) {
-    return [{
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `VL 高分但客观相似度低（fidelity-score_floor>=${SCORE_FLOOR_SENTINEL_GAP}）：` +
+        scoreFloorSentinel.map(s => `${s.screen_id}(f=${s.fidelity_score},floor=${s.score_floor})`).join(', '),
+    });
+  }
+
+  if (duplicateHashScreens.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_screenshot_dedup',
       severity: 'MAJOR',
       status: 'WARN',
-      details:
-        `${details}\nVL 高分但客观相似度低（fidelity-score_floor>=${SCORE_FLOOR_SENTINEL_GAP}），人工复核：` +
-        scoreFloorSentinel
-          .map(s => `${s.screen_id}(f=${s.fidelity_score},floor=${s.score_floor})`)
-          .join(', '),
-      affected_files: [reportRel],
-    }];
+      line: `≥2 屏共享 screenshot_hash（疑似重复采集）：${duplicateHashScreens.join('; ')}`,
+    });
+  }
+
+  if (screensMissingReverseEnum.length > 0) {
+    const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_reverse_enum',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `pixel_1to1 须逐屏填写 reverse_missing（可为 []）：` +
+        screensMissingReverseEnum.map(s => s.screen_id).join(', '),
+    });
+  }
+
+  if (reverseMissingAll.length > 0) {
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_reverse_missing',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line: `反向 diff 残差（参考图有、实现无）：${reverseMissingAll.slice(0, 12).join(', ')}${reverseMissingAll.length > 12 ? '…' : ''}`,
+    });
+  }
+
+  if (refElementsDoc && pixel1to1 && uiDoc && passScreens.length > 0) {
+    const nodes = collectAllComponentNodes(uiDoc);
+    const nodeIds = new Set(nodes.map(n => n.id).filter((id): id is string => Boolean(id)));
+    const mustHave = new Set((uiDoc.screens ?? []).flatMap(s => s.must_have_elements ?? []));
+    const reverseLower = new Set(reverseMissingAll.map(r => r.toLowerCase()));
+    const implementIds = refElementsDoc.elements
+      .filter(e => e.disposition !== 'defer')
+      .map(e => e.element_id);
+    const unaccounted = implementIds.filter(id => {
+      if (uiSpecCoversElementId(id, nodeIds, mustHave)) return false;
+      const lower = id.toLowerCase();
+      if (reverseLower.has(lower)) return false;
+      for (const r of reverseLower) {
+        if (r.includes(lower) || lower.includes(r)) return false;
+      }
+      return true;
+    });
+    if (unaccounted.length > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_bidirectional_residual',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `ref-elements implement 未进 ui-spec 也未写入 reverse_missing：` +
+          `${unaccounted.slice(0, 12).join(', ')}${unaccounted.length > 12 ? '…' : ''}`,
+      });
+    }
   }
 
   if (failScreens.length > 0 || mustFix.length > 0) {
-    return [{
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
       id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: `${details}\nmust-fix：${mustFix.slice(0, 5).join('；')}`,
-      affected_files: [reportRel],
-    }];
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line: `must-fix：${mustFix.slice(0, 5).join('；')}${failScreens.length > 0 ? `；fail 屏：${failScreens.map(s => s.screen_id).join(', ')}` : ''}`,
+    });
   }
 
-  return [{
-    id: 'visual_diff',
-    category: 'structure',
-    description: desc,
-    severity: 'MAJOR',
-    status: 'PASS',
-    details,
-    affected_files: [reportRel],
-  }];
+  return [finalizeVisualDiffHits(desc, reportRel, details, hits)];
 }

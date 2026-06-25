@@ -270,10 +270,8 @@ structure_checks:
 
   visual_parity:
     description: >
-      确定性 visual parity（coding.visual_parity）：ui-spec asset/token/文案/组件树
-      vs 代码资源与 contracts 的「在不在」核对。
-      【边界】必要不充分——查在不在非对不对；unverified ui-spec 只报结构 presence。
-      详见 ui-spec.md 与 check-visual-parity 报告。
+      coding 背板（v2.4+）：仅 C2 节点→token 语义色绑定 + C3 must_have_elements presence。
+      pixel_1to1 下未命中 → BLOCKER/FAIL。保真主信号见 static_fidelity_score 与 device visual_diff。
     severity: MAJOR
     rule:
       provider: coding.visual_parity
@@ -281,8 +279,8 @@ structure_checks:
 
   static_fidelity_score:
     description: >
-      静态保真分：ΔE（CIEDE2000）/ 文案 exact-match % / 资产覆盖 % / 组件树结构顺序。
-      剔除静态 bbox 几何 IoU（归 device visual_diff）。unverified 基线标 WARN。
+      静态保真分：语义色绑定 / 文案 / 资产覆盖（pixel_1to1 含 placeholder 计入分母）/ 结构序。
+      pixel_1to1 下 WARN 升 BLOCKER。几何 IoU 归 device visual_diff。
     severity: MAJOR
     rule:
       bundled_with: visual_parity

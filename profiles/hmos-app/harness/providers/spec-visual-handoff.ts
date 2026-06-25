@@ -6,7 +6,8 @@ import type { CapabilityProvider } from './types';
 export const provider: CapabilityProvider = {
   id: 'script',
   capability: 'spec.visual_handoff',
-  exports: ['checkVisualHandoff'],
+  exports: ['checkVisualHandoff', 'checkFidelityGovernance'],
 };
 
 export { checkVisualHandoff } from '../spec-visual-handoff-check';
+export { checkFidelityGovernance } from '../fidelity-governance-check';

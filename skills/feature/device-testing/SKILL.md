@@ -302,11 +302,12 @@ doc/features/{module-name}/testing/test-plan.md
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
 2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
-3. **执行**：对每屏 Hylyre 导航 + `screenshot` → 多模态对照 **authoritative_refs 原图** + ui-spec → 产出：
-   - `doc/features/<feature>/device-testing/device-screenshots/`
-   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数，含几何 IoU）
-4. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
-5. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无）→ 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举；`score_floor` 含 N×N 分块最小相似度）
+   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数）
+4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
+5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
+6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing → **BLOCKER**。
 
 ### Step 5: 生成测试报告（测试执行后）
 

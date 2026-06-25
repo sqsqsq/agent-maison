@@ -54,10 +54,33 @@ JSON Schema：`framework/harness/schemas/ui-spec.schema.json`。
 | `id` | 屏标识，如 `home`、`card_select_modal` |
 | `priority` | P0–P3，对齐功能清单 |
 | `ref_id` | 对应 Visual Handoff `authoritative_refs[].id` |
+| `must_have_elements` | 屏级必备元素 id 列表（`search_bar` / `promo_badge` / `letter_index` 等）；coding 背板 C3 presence 校验 |
 | `root` | 组件树根节点（P0/P1 必填；P2/P3 轻量可省略） |
 | `lightweight` | `true` 表示 P2/P3 轻量版 |
 
-组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`children[]`。
+组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`children[]`。
+
+## 捕获完整性：`ref-elements.yaml`（v2.4+）
+
+与 ui-spec 并列产出 **`doc/features/<feature>/spec/ref-elements.yaml`**：参考图侧**独立枚举**（分母不得取自 ui-spec 自身）。
+
+```yaml
+schema_version: "1.0"
+elements:
+  - element_id: search_bar
+    zone: top_nav
+    type: search_field
+    disposition: implement   # implement | defer
+  - element_id: nfc_entry
+    disposition: defer       # defer 须登记 spec.md fidelity_deferrals 且 human_signed
+```
+
+- `pixel_1to1` 下 `disposition: defer` **必须**在 spec Visual Handoff 块有 `fidelity_deferrals` + `human_signed: true`
+- `disposition: implement` 须被 ui-spec 节点 id 或 `must_have_elements` 覆盖
+
+## 素材清单：`asset-manifest.yaml`（v2.4+）
+
+`fidelity_target: pixel_1to1` 联动 `asset_acquisition_mode: user_dir` 时须产出，向用户索要素材；framework **不** AI 生成缺失 logo/插画。
 
 > **静态门禁边界**：bbox 供 F 阶段渲染 diff 的几何 IoU 与人工核对；**ArkUI 运行时几何不可静态 IoU**，静态侧只用 `type`/`order`/`layout` 做结构顺序匹配（见 check-visual-parity / 静态保真分）。
 

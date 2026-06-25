@@ -8,19 +8,35 @@ screens:
   - id: screen_id_example
     priority: P0
     ref_id: authoritative_ref_id_from_visual_handoff
+    must_have_elements:
+      - search_bar
+      - promo_badge
     root:
       type: navigation_frame
       layout: column
       order: 0
       children:
-        - type: content_display
+        - id: search_bar
+          type: search_field
           order: 0
+          semantic_role: neutral
+          color_ref: text.primary
+        - type: content_display
+          order: 1
           text: "逐字文案，禁止泛化"
           style_ref: text.body
+          semantic_role: success
+          color_ref: status.success
         - type: action_button
-          order: 1
+          order: 2
           text: "主操作"
           style_ref: brand.primary
+          semantic_role: brand_primary
+          color_ref: brand.cmb
+          icon:
+            kind: brand_logo
+            ref: example_logo
+          badge: "HOT"
 
 tokens:
   brand.primary:

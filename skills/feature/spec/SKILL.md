@@ -168,11 +168,13 @@
 
 仔细分析用户提供的界面截图，产出 **`doc/features/<feature>/spec/ui-spec.yaml`**（规范见 [reference/ui-spec.md](reference/ui-spec.md)）：
 
-1. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]` 记录（P0/P1 完整树 + bbox + 逐字文案；P2/P3 可 `lightweight: true`）
-2. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
-3. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
-4. **资产清单**：logo/图标 → `acquisition`（crop / svg_grab / repo_ref）+ `resolved_path` 或显式 `placeholder`
-5. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，不 stop 问人。
+1. **分区扫描（捕获完整性）**：按顶部导航 / 内容主体 / 底部 / 浮层逐区枚举元素；每元素强制 `implement | defer`，落 **`spec/ref-elements.yaml`**（分母独立于 ui-spec，供 capture_completeness 校验）
+2. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]`（含 `must_have_elements[]`、`semantic_role` / `color_ref` / `icon` / `badge`；P0/P1 完整树 + bbox + 逐字文案）
+3. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
+4. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
+5. **资产清单**：logo/图标 → `acquisition` + `resolved_path` 或显式 `placeholder`；`pixel_1to1` 时联动产出 **`spec/asset-manifest.yaml`**
+6. **保真档位**：Visual Handoff 块声明 `fidelity_target`（`pixel_1to1` 时 defer 须 `fidelity_deferrals` + **人类签字**）；见 [reference/visual-handoff.md](reference/visual-handoff.md)
+7. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，未签字 defer → BLOCKER。
 
 **模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
 

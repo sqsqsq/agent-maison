@@ -25,6 +25,12 @@ import {
   resolveRefSourceImage,
 } from '../../../profiles/hmos-app/harness/authoritative-ref-images';
 import { checkAssetAcquisition } from '../../../profiles/hmos-app/harness/asset-acquisition';
+import { checkFidelityGovernance } from '../../../profiles/hmos-app/harness/fidelity-governance-check';
+import { checkCaptureCompleteness } from '../../../profiles/hmos-app/harness/capture-completeness-check';
+import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-manifest-check';
+import { collectSemanticColorBindingIssues } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
+import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
+import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
@@ -760,6 +766,384 @@ export function runAll(): UnitCaseResult[] {
     );
     if (cov.mapped !== 2 || cov.mappable !== 2) {
       throw new Error(`duplicate id coverage inflated: ${JSON.stringify(cov)}`);
+    }
+  });
+
+  run('fidelity_deferrals_unsigned_blocker', () => {
+    const root = mkProject();
+    try {
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    reason: defer test',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL');
+      if (!hit || hit.severity !== 'BLOCKER') throw new Error(JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('capture_completeness_missing_ref_elements_blocker', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n';
+      const r = checkCaptureCompleteness(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'capture_completeness' && x.status === 'FAIL');
+      if (!hit) throw new Error(JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('capture_completeness_covers_ref_elements', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ref-elements.yaml'), [
+        'schema_version: "1.0"',
+        'elements:',
+        '  - element_id: search_bar',
+        '    disposition: implement',
+        '  - element_id: promo_badge',
+        '    disposition: implement',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    must_have_elements: [search_bar, promo_badge]',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: search_bar',
+        '          type: search_field',
+        '          order: 0',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n';
+      const r = checkCaptureCompleteness(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'capture_completeness' && x.status === 'PASS');
+      if (!hit) throw new Error(JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('asset_manifest_pixel1to1_placeholder_warn', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets:',
+        '  - key: bank_logo',
+        '    placeholder: true',
+        '    rationale: pending',
+      ].join('\n'));
+      const r = checkAssetManifest(baseCtx(root, {
+        fidelityTarget: 'pixel_1to1',
+        effectiveAssetAcquisitionMode: 'user_dir',
+      }));
+      const hit = r.find(x => x.id === 'asset_placeholder_manifest');
+      if (!hit || hit.status !== 'FAIL' || hit.severity !== 'BLOCKER') {
+        throw new Error(JSON.stringify(r));
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('ref_elements_defer_unsigned_blocker', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ref-elements.yaml'), [
+        'schema_version: "1.0"',
+        'elements:',
+        '  - element_id: search_bar',
+        '    disposition: defer',
+      ].join('\n'));
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'ref_elements_defer_human_sign' && x.status === 'FAIL');
+      if (!hit || hit.severity !== 'BLOCKER') throw new Error(JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_dedup_does_not_mask_fail', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const hash = hashScreenshotFile(shot);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [
+          {
+            screen_id: 'home',
+            verdict: 'fail',
+            screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+            ref_id: 'home',
+            must_fix: ['missing search bar'],
+            screenshot_hash: hash,
+            evaluated_screenshot_hash: hash,
+            reverse_missing: ['search_bar'],
+          },
+          {
+            screen_id: 'dup',
+            verdict: 'pass',
+            screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+            ref_id: 'home',
+            fidelity_score: 0.9,
+            geometric_iou: 0.8,
+            screenshot_hash: hash,
+            evaluated_screenshot_hash: hash,
+            reverse_missing: [],
+          },
+        ],
+      }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find(x => x.id === 'visual_diff');
+      if (!hit || hit.status !== 'FAIL' || hit.severity !== 'BLOCKER') {
+        throw new Error(`fail must win over dedup WARN: ${JSON.stringify(hit)}`);
+      }
+      if (!/must-fix|reverse diff|screenshot_hash/.test(hit.details ?? '')) {
+        throw new Error(`expected aggregated details: ${hit.details}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('scan_struct_resource_refs_scoped_to_struct_body', () => {
+    const root = mkProject();
+    try {
+      const modDir = path.join(root, 'entry', 'src', 'main', 'ets', 'pages');
+      fs.mkdirSync(modDir, { recursive: true });
+      fs.writeFileSync(path.join(modDir, 'BankPage.ets'), [
+        '@Component',
+        'struct OtherRow {',
+        '  build() {',
+        "    Text().fontColor($r('app.color.brand_cmb'))",
+        '  }',
+        '}',
+        '',
+        '@Component',
+        'struct BankLogoRow {',
+        '  build() {',
+        "    Text('logo')",
+        '  }',
+        '}',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'contracts.yaml'), [
+        'modules:',
+        '  - module_id: entry',
+        '    package_path: entry',
+      ].join('\n'));
+      const body = extractStructBody(fs.readFileSync(path.join(modDir, 'BankPage.ets'), 'utf-8'), 'BankLogoRow');
+      if (!body || /brand_cmb/.test(body)) throw new Error(`BankLogoRow body leaked: ${body}`);
+      const otherBody = extractStructBody(fs.readFileSync(path.join(modDir, 'BankPage.ets'), 'utf-8'), 'OtherRow');
+      if (!otherBody || !/brand_cmb/.test(otherBody)) throw new Error('OtherRow should contain brand_cmb');
+
+      const contracts = {
+        modules: [{ name: 'entry', layer: 'presentation', format: 'HAP', change_type: 'modify', package_path: 'entry' }],
+      } as NonNullable<CheckContext['featureSpec']['contracts']>;
+      const logoRefs = scanStructResourceRefs(root, contracts, 'BankLogoRow');
+      const otherRefs = scanStructResourceRefs(root, contracts, 'OtherRow');
+      if (logoRefs.has('app.color.brand_cmb')) throw new Error(`BankLogoRow should not inherit OtherRow ref: ${[...logoRefs]}`);
+      if (!otherRefs.has('app.color.brand_cmb')) throw new Error(`OtherRow missing ref: ${[...otherRefs]}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('extract_struct_body_ignores_braces_in_strings', () => {
+    const src = [
+      '@Component',
+      'struct BankLogoRow {',
+      "  private hint: string = 'brace in copy: { not a block }';",
+      '  build() {',
+      "    Text('logo').fontColor($r('app.color.brand_cmb'))",
+      '  }',
+      '}',
+    ].join('\n');
+    const body = extractStructBody(src, 'BankLogoRow');
+    if (!body) throw new Error('body not extracted');
+    if (!body.includes('app.color.brand_cmb')) throw new Error(`missing color ref in body: ${body}`);
+    if (!body.includes('brace in copy')) throw new Error('string content lost');
+    const other = extractStructBody(src + '\n@Component struct Tail { build() { Text("x") } }', 'Tail');
+    if (!other || body.includes('struct Tail')) throw new Error('body swallowed tail struct');
+  });
+
+  run('collect_resource_refs_ignores_comment_and_string', () => {
+    const src = [
+      'struct BankLogoRow {',
+      '  build() {',
+      "    // TODO: Text().fontColor($r('app.color.brand_cmb'))",
+      "    const note = \"fake $r('app.color.brand_dce')\";",
+      "    Text('logo').fontColor($r('app.color.brand_cmb'))",
+      '  }',
+      '}',
+    ].join('\n');
+    const body = extractStructBody(src, 'BankLogoRow');
+    if (!body) throw new Error('no body');
+    const refs = collectResourceRefsInActiveCode(body);
+    if (!refs.has('app.color.brand_cmb')) throw new Error(`missing real ref: ${[...refs]}`);
+    if (refs.has('app.color.brand_dce')) throw new Error(`comment/string ref leaked: ${[...refs]}`);
+    if (refs.size !== 1) throw new Error(`expected 1 ref got ${refs.size}: ${[...refs]}`);
+  });
+
+  run('extract_struct_body_ignores_commented_struct_declaration', () => {
+    const src = [
+      '/* legacy struct BankLogoRow {',
+      "  build() { Text().fontColor($r('app.color.brand_cmb')) }",
+      '} */',
+      '@Component',
+      'struct BankLogoRow {',
+      '  build() {',
+      "    Text('logo')",
+      '  }',
+      '}',
+    ].join('\n');
+    const body = extractStructBody(src, 'BankLogoRow');
+    if (!body || /brand_cmb/.test(body)) {
+      throw new Error(`commented struct leaked into body: ${body}`);
+    }
+    const contracts = {
+      modules: [{ name: 'entry', layer: 'presentation', format: 'HAP', change_type: 'modify', package_path: 'entry' }],
+    } as NonNullable<CheckContext['featureSpec']['contracts']>;
+    const root = mkProject();
+    try {
+      const modDir = path.join(root, 'entry', 'src', 'main', 'ets');
+      fs.mkdirSync(modDir, { recursive: true });
+      fs.writeFileSync(path.join(modDir, 'Page.ets'), src);
+      const refs = scanStructResourceRefs(root, contracts, 'BankLogoRow');
+      if (refs.size > 0) throw new Error(`comment-only struct must not bind: ${[...refs]}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('extract_struct_body_only_commented_struct_returns_null', () => {
+    const src = [
+      '// struct BankLogoRow {',
+      "//   build() { Text().fontColor($r('app.color.brand_cmb')) }",
+      '// }',
+    ].join('\n');
+    if (extractStructBody(src, 'BankLogoRow') !== null) {
+      throw new Error('commented-only struct should not extract');
+    }
+  });
+
+  run('semantic_color_binding_fails_without_struct_level_ref', () => {
+    const root = mkProject();
+    try {
+      const modDir = path.join(root, 'entry', 'src', 'main', 'ets', 'pages');
+      const resDir = path.join(root, 'entry', 'src', 'main', 'resources', 'base', 'element');
+      fs.mkdirSync(modDir, { recursive: true });
+      fs.mkdirSync(resDir, { recursive: true });
+      fs.writeFileSync(path.join(resDir, 'color.json'), JSON.stringify({ color: { brand_cmb: '#C7000B' } }));
+      fs.writeFileSync(path.join(modDir, 'BankPage.ets'), [
+        '@Component struct OtherRow { build() { Text().fontColor($r(\'app.color.brand_cmb\')) } }',
+        '@Component struct BankLogoRow { build() { Text(\'logo\') } }',
+      ].join('\n'));
+      const vpDir = path.join(root, 'doc', 'features', 'bank-card', 'plan');
+      fs.mkdirSync(vpDir, { recursive: true });
+      fs.writeFileSync(path.join(vpDir, 'visual-parity.yaml'), [
+        'mappings:',
+        '  components:',
+        '    - ui_spec_node_id: bank_logo',
+        '      contract_component: BankLogoRow',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: bank_logo',
+        '          type: content_display',
+        '          order: 0',
+        '          color_ref: brand.cmb',
+        '          semantic_role: brand_primary',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const ctx = baseCtx(root, {
+        fidelityTarget: 'pixel_1to1',
+        featureSpec: {
+          feature: 'bank-card',
+          contracts: {
+            modules: [{ name: 'entry', layer: 'presentation', format: 'HAP', change_type: 'modify', package_path: 'entry' }],
+          } as NonNullable<CheckContext['featureSpec']['contracts']>,
+        },
+      });
+      const doc = loadUiSpecFile(uiSpecAbsPath(root, 'bank-card'));
+      if (!doc) throw new Error('ui-spec load failed');
+      const issues = collectSemanticColorBindingIssues(ctx, doc, false);
+      const hit = issues.find(i => i.id === 'bank_logo' || i.detail.includes('BankLogoRow'));
+      if (!hit) throw new Error(`expected struct-level binding fail: ${JSON.stringify(issues)}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

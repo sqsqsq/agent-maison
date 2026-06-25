@@ -40,6 +40,7 @@ import {
   HarnessRunSummary,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
+import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
   featureFilePath,
@@ -386,6 +387,14 @@ async function main(): Promise<void> {
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
   const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
+  const fidelityCtx = phaseIsGlobal
+    ? {
+        fidelityTarget: 'semantic_layout' as const,
+        assetAcquisitionMode: 'approximate' as const,
+        effectiveAssetAcquisitionMode: 'approximate' as const,
+        fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
+      }
+    : resolveFidelityContextFromFeature(projectRoot, feature);
   const context: CheckContext = {
     phase,
     feature,
@@ -401,6 +410,10 @@ async function main(): Promise<void> {
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
+    fidelityTarget: fidelityCtx.fidelityTarget,
+    assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
+    effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
+    fidelityDeferrals: fidelityCtx.fidelityDeferrals,
     adapterMultimodal: mmProbe.supported,
     adapterImageInput: mmProbe.imageInput,
     frameworkRoot: resolvedFrameworkRoot,

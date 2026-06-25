@@ -173,6 +173,15 @@
 - **严重等级**: MAJOR
 - **评估方法**: in_scope/out_of_scope 是否与 catalog 一致；静默扩 scope → FAIL
 
+### 检查 15: 保真档位与捕获完整性 (fidelity_capture_governance)
+
+- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）
+- **评估方法**:
+  1. Visual Handoff yaml 是否声明 `fidelity_target` / `asset_acquisition_mode` / `fidelity_deferrals`（defer 须 `human_signed: true`）？
+  2. 是否产出 `spec/ref-elements.yaml`（参考图侧独立枚举）？`disposition: defer` 是否与 `fidelity_deferrals` 交叉一致？
+  3. 是否产出 `spec/asset-manifest.yaml`（`pixel_1to1` 联动 user_dir）？占位资产是否向用户显式说明？
+  4. ui-spec 是否含 `must_have_elements` / `semantic_role` / `color_ref` 等新字段？脚本 `capture_completeness` / `fidelity_deferrals` 若 FAIL → 本项 FAIL
+
 ---
 
 ## 六、上下文文件

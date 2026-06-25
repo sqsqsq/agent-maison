@@ -6,7 +6,8 @@ import type { CapabilityProvider } from './types';
 export const provider: CapabilityProvider = {
   id: 'script_asset_acquisition',
   capability: 'spec.asset_acquisition',
-  exports: ['checkAssetAcquisition'],
+  exports: ['checkAssetAcquisition', 'checkAssetManifest'],
 };
 
 export { checkAssetAcquisition } from '../asset-acquisition';
+export { checkAssetManifest } from '../asset-manifest-check';

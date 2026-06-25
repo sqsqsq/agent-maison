@@ -43,7 +43,7 @@ const UI_CHANGE_ALLOWED = new Set([
 
 const UI_CHANGE_NO_REFS = new Set(['none', 'reuse_only', 'impl_out_of_band']);
 
-const PATH_KINDS = new Set(['repo_assets', 'screenshot_pack']);
+const PATH_KINDS = new Set(['repo_assets', 'screenshot_pack', 'asset_pack']);
 const URL_KINDS = new Set(['design_tool_link', 'design_system_doc', 'portal_only']);
 /** 每条 ref 允许 path 或 url 至少其一 */
 const HYBRID_KINDS = new Set(['figma_export_bundle']);

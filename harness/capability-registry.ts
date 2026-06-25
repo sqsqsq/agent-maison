@@ -238,7 +238,12 @@ export function dispatchSpecVisualHandoff(ctx: CheckContext, specMarkdown: strin
     'spec.visual_handoff',
     'checkVisualHandoff',
   );
-  return fn(ctx, specMarkdown);
+  const govFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.visual_handoff',
+    'checkFidelityGovernance',
+  );
+  return [...fn(ctx, specMarkdown), ...govFn(ctx, specMarkdown)];
 }
 
 export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): CheckResult[] {
@@ -252,7 +257,12 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     'spec.ui_spec',
     'checkUiSpecFidelityGate',
   );
-  return [...fn(ctx, specMarkdown), ...gateFn(ctx, specMarkdown)];
+  const captureFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkCaptureCompleteness',
+  );
+  return [...fn(ctx, specMarkdown), ...gateFn(ctx, specMarkdown), ...captureFn(ctx, specMarkdown)];
 }
 
 export function dispatchSpecAssetAcquisition(ctx: CheckContext): CheckResult[] {
@@ -261,7 +271,12 @@ export function dispatchSpecAssetAcquisition(ctx: CheckContext): CheckResult[] {
     'spec.asset_acquisition',
     'checkAssetAcquisition',
   );
-  return fn(ctx);
+  const manifestFn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.asset_acquisition',
+    'checkAssetManifest',
+  );
+  return [...fn(ctx), ...manifestFn(ctx)];
 }
 
 export function dispatchCodingVisualParity(ctx: CheckContext): CheckResult[] {
