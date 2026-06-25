@@ -793,6 +793,8 @@ UT 阶段宣布"完成"前必须**同时**满足：
 11. **Harness 验证闭环**：UT 完成后 agent **必须自己运行** Harness 验证（Step 8），并主动通过 Task 工具触发 `subagent_type: verifier`；确保零 BLOCKER + verifier PASS + 完成回执通过校验后才进入下一阶段（物理拦截层兜底）
     - 若 `ut_no_src_mutation` 报告 committed 历史变更多、working tree 变更少，优先怀疑 diff 基线过旧；可设置 `HARNESS_DIFF_BASE_REF=working` 只检查当前工作区。**禁止**要求用户"批量授权所有历史变更"。
 12. **【HARD STOP — 不可绕过】禁止擅自修改业务源码**：business-ut 阶段 agent 对 **受保护业务源码前缀**（定义见 `check-ut.ts` 与 profile，不再写死 `02-Feature` 等目录名）下、且**非 profile 声明的测试/夹具源目录**内任何文件的修改，**必须**满足以下全部条件：
+
+    > **headless / goal-mode**：无交互用户 → **保守默认 = 拒绝改源码**；记录被推迟的 `ut.src_mutation` 请求到 `headless-assumptions.md`，不登记 `approved_src_mutations`。
     1. **动手前**显式向用户提出请求（`ut.src_mutation` · freeform + portable；**须先展示完整变更描述**）：
 
        ```text

@@ -566,10 +566,17 @@ cases.push(
     },
   },
   {
-    name: 'buildPhasePrompt: 带 priorFailure 时注入「Prior attempt failure」+ 回退指令',
+    name: 'buildPhasePrompt: 带 priorFailure (code_regression) 时注入回退指令',
     run: () => {
       const prior = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
-      const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'ut', FRAMEWORK_ROOT, [], prior);
+      const prompt = buildPhasePrompt(
+        MINIMAL_MANIFEST,
+        'ut',
+        FRAMEWORK_ROOT,
+        [],
+        prior,
+        'code_regression',
+      );
       assert(prompt.includes('Prior attempt failure'), '注入失败小节');
       assert(prompt.includes('build-profile.json5'), '携带上轮证据');
       assert(prompt.includes('revert that change first'), '回退指令');

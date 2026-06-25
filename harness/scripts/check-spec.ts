@@ -14,6 +14,8 @@
 // 语义级检查由 AI Harness (verify-spec.md) 完成，不在本脚本范围内。
 // ============================================================================
 
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   PhaseChecker,
   CheckContext,
@@ -334,7 +336,12 @@ const TERMINOLOGY_REQUIRED_COLUMNS = [
   '用户确认',
 ];
 
+function specMdAffected(ctx: CheckContext): string[] {
+  return [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md')];
+}
+
 function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResult[] {
+  const specAffected = specMdAffected(ctx);
   const section = getSectionContent(prd, '术语映射表');
   if (!section) {
     return [{
@@ -343,6 +350,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       severity: 'BLOCKER', status: 'FAIL',
       details: '未找到「术语映射表」章节。spec Step 1.5 要求 spec 必须以该章节起始。',
       suggestion: '请在功能概述之前插入 "## 0. 术语映射表" 章节，按模板填写映射表。',
+      affected_files: specAffected,
     }];
   }
 
@@ -355,6 +363,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       details: '「术语映射表」章节未找到 Markdown 表格。',
       suggestion:
         `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/spec/templates/spec-template.md 中的表格格式。`,
+      affected_files: specAffected,
     }];
   }
 
@@ -366,6 +375,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: `术语映射表缺少列：${missing.join('、')}。实际表头：${table.headers.join('、')}`,
+      affected_files: specAffected,
     }];
   }
 
@@ -375,6 +385,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: '术语映射表为空。至少列出需求中出现的主要业务名词（即便是极简需求也不可省略）。',
+      affected_files: specAffected,
     }];
   }
 
@@ -389,6 +400,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: '术语映射表仅包含模板占位行（形如 `{术语1}`），未填写真实业务术语。',
+      affected_files: specAffected,
     }];
   }
 
@@ -410,8 +422,35 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       severity: 'BLOCKER', status: 'FAIL',
       details: `${unconfirmed.length} 条术语映射未获得用户确认（用户确认列不是 [x]）：${unconfirmed.join('、')}`,
       suggestion:
-        '本项目不启用 auto-approve。AI 必须停下来等用户对每一条映射逐个回复确认，再把 [ ] 改为 [x]。',
+        '交互态：须等用户逐条确认后写回 [x]。goal-mode headless：按 user-confirmation-ux.md §9 自动写回 [x] 并留痕 headless-assumptions.md。',
+      affected_files: specAffected,
     }];
+  }
+
+  const confidenceIdx = table.headers.findIndex(h => h.includes('置信度'));
+  const fakeHighWarnings: CheckResult[] = [];
+  if (confidenceIdx >= 0) {
+    const glossaryForHigh = loadGlossary(ctx.projectRoot);
+    if (glossaryForHigh.ok) {
+      for (const row of realRows) {
+        const term = (row[termIdx] || '').trim();
+        const conf = (row[confidenceIdx] || '').trim().toLowerCase();
+        if (!term || conf !== 'high') continue;
+        const hit = lookupTerm(glossaryForHigh.glossary, term);
+        if (!hit) {
+          fakeHighWarnings.push({
+            id: 'terminology_high_without_glossary',
+            category: 'structure',
+            description: '术语映射表 high 置信度须 glossary 背书',
+            severity: 'MINOR',
+            status: 'WARN',
+            details: `「${term}」标为 high 但不在 ${relGlossary(ctx.projectRoot)}（含 aliases）中；新术语应标 medium/low 并入 must-review。`,
+            suggestion: '将置信度降为 medium/low，或先把术语写入 glossary 后再标 high。',
+            affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md')],
+          });
+        }
+      }
+    }
   }
 
   // 校验 canonical_module 必须存在于 module-catalog.yaml
@@ -422,6 +461,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: `模块画像加载失败：${describeCatalogError(catalogResult.error)}`,
+      affected_files: specAffected,
     }];
   }
 
@@ -439,13 +479,17 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
   });
 
   if (unknown.length > 0) {
-    return [{
-      id: 'terminology_mapping_table', category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `${unknown.length} 条术语的权威模块不在 ${relCatalog(ctx.projectRoot)} 内：${unknown.map(u => `${u.term}→${u.module}`).join('、')}`,
-      suggestion: `请检查模块名拼写，或先把真实存在的新模块补充到 ${relCatalog(ctx.projectRoot)} 再写 spec。`,
-    }];
+    return [
+      ...fakeHighWarnings,
+      {
+        id: 'terminology_mapping_table', category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+        severity: 'BLOCKER', status: 'FAIL',
+        details: `${unknown.length} 条术语的权威模块不在 ${relCatalog(ctx.projectRoot)} 内：${unknown.map(u => `${u.term}→${u.module}`).join('、')}`,
+        suggestion: `请检查模块名拼写，或先把真实存在的新模块补充到 ${relCatalog(ctx.projectRoot)} 再写 spec。`,
+        affected_files: specAffected,
+      },
+    ];
   }
 
   // 校验已确认映射是否与 glossary 矛盾（防"用户漫不经心勾 [x]"路径）
@@ -481,17 +525,22 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
     const parts = conflicts.map(
       c => `「${c.term}」用户确认了 ${c.picked}，但 glossary 权威映射是 ${c.canonical}`,
     );
-    return [{
+    return [
+      ...fakeHighWarnings,
+      {
       id: 'terminology_mapping_table', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
       details: `${conflicts.length} 条用户已确认的映射与 ${relGlossary(ctx.projectRoot)} 冲突：${parts.join('；')}`,
       suggestion:
         `两种合法处理：(1) 按 glossary 修正 spec 映射；(2) 若确认要覆盖 glossary，先显式修改 ${relGlossary(ctx.projectRoot)} 中该术语的 canonical_module 并注明 user-approved 日期，再跑 check。`,
+      affected_files: specAffected,
     }];
   }
 
-  return [{
+  return [
+    ...fakeHighWarnings,
+    {
     id: 'terminology_mapping_table', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
     severity: 'BLOCKER', status: 'PASS',
@@ -821,6 +870,29 @@ function checkAcceptanceToFeature(ctx: CheckContext, prd: string): CheckResult[]
 }
 
 // --------------------------------------------------------------------------
+// Headless assumptions trace (goal-mode review hint)
+// --------------------------------------------------------------------------
+
+function checkHeadlessAssumptionsTrace(ctx: CheckContext): CheckResult[] {
+  const specRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
+  const assumptionsRel = specRel.replace(/\/spec\.md$/, '/headless-assumptions.md');
+  const assumptionsAbs = path.join(ctx.projectRoot, assumptionsRel);
+  if (!fs.existsSync(assumptionsAbs)) return [];
+  const content = fs.readFileSync(assumptionsAbs, 'utf-8');
+  const autoCount = (content.match(/auto-approved \(goal-mode\)/gi) || []).length;
+  if (autoCount === 0) return [];
+  return [{
+    id: 'headless_assumptions_review',
+    category: 'structure',
+    description: 'goal-mode 自动确认留痕待复核',
+    severity: 'MINOR',
+    status: 'WARN',
+    details: `${autoCount} 条术语/闸门为 goal-mode 自动确认，待人工复核（见 ${assumptionsRel}）。`,
+    affected_files: [assumptionsRel],
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -865,6 +937,7 @@ const checker: PhaseChecker = {
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
     results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
+    results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
     results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));

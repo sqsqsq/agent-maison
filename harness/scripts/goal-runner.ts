@@ -96,6 +96,16 @@ import {
   writeProgressSnapshotAtomic,
   type ProgressWriterState,
 } from './utils/goal-progress';
+import {
+  classifyFailureKind,
+  extractBlockerSignature,
+  extractDeterministicAffectedFiles,
+  shouldHaltNoProgress,
+  snapshotArtifacts,
+  type ArtifactSnapshot,
+  type FailureKind,
+} from './utils/goal-failure-classifier';
+import { parseHeadlessInteractionSentinel } from './utils/goal-headless-sentinel';
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
   spec: 'skills/feature/spec/SKILL.md',
@@ -318,12 +328,37 @@ async function runHarnessPhase(
   }
 }
 
+function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePhase): string[] {
+  const approval = manifest.unattended?.approval_mode ?? 'never';
+  const assumptionsRel = `doc/features/${manifest.feature}/${phase}/headless-assumptions.md`;
+  return [
+    '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
+    '',
+    'This run is **headless / unattended**. There is **no interactive user** in this session.',
+    `- approval_mode: **${approval}**`,
+    '',
+    '**BLOCKER**: You MUST NOT stop to ask the user for confirmation, clarification, or approval.',
+    'Stopping to ask the user in headless mode = **task failure** (runner will halt the goal run).',
+    '',
+    'This block **overrides** every phase SKILL instruction that says "停下来等用户确认",',
+    '"不启用 auto-approve", "must wait for user", or equivalent — **including spec Step 1.5**.',
+    '',
+    'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
+    '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
+    `- Record **every** auto-decision in \`${assumptionsRel}\` with provenance \`auto-approved (goal-mode), pending human review\`.`,
+    '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log deferred request in headless-assumptions.md.',
+    '',
+    'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
+  ];
+}
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   phase: FeaturePhase,
   frameworkRoot: string,
   deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>,
   priorFailure?: string,
+  priorFailureKind?: FailureKind,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -333,6 +368,8 @@ export function buildPhasePrompt(
     manifest.requirement ? `Requirement:\n${manifest.requirement}` : '',
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
+    ...buildUnattendedExecutionBlock(manifest, phase),
+    '',
     '## Orchestrator constraints (BLOCKER)',
     '',
     '- Do NOT invoke goal-runner, --resume, or --manifest; the orchestrator is already running this goal run.',
@@ -352,17 +389,32 @@ export function buildPhasePrompt(
       '',
       '## Prior attempt failure (retry context)',
       '',
-      "Last attempt of this phase failed. The harness verdict and BLOCKER evidence:",
+      'Last attempt of this phase failed. The harness verdict and BLOCKER evidence:',
       '',
       '```',
       priorFailure,
       '```',
-      '',
-      '**These failures may have been introduced by a prior attempt in this same goal run.** Before making new changes:',
-      '1. Inspect the files changed relative to the goal-run start commit (trace.json.start_commit) and judge whether one of them is the actual root cause;',
-      '2. If a change a prior attempt made for troubleshooting itself broke things (e.g. turned a valid config into an invalid schema, deleted the wrong file), **revert that change first** rather than stacking new code on a broken state;',
-      '3. Only after confirming the root cause, apply a minimal fix and re-run this phase harness to verify.',
     );
+    if (priorFailureKind === 'code_regression') {
+      parts.push(
+        '',
+        '**These failures may have been introduced by a prior attempt in this same goal run.** Before making new changes:',
+        '1. Inspect the files changed relative to the goal-run start commit (trace.json.start_commit) and judge whether one of them is the actual root cause;',
+        '2. If a change a prior attempt made for troubleshooting itself broke things (e.g. turned a valid config into an invalid schema, deleted the wrong file), **revert that change first** rather than stacking new code on a broken state;',
+        '3. Only after confirming the root cause, apply a minimal fix and re-run this phase harness to verify.',
+      );
+    } else if (priorFailureKind === 'deterministic_gate_or_artifact_missing') {
+      parts.push(
+        '',
+        '**This failure is a missing artifact / confirmation gate — not a broken codebase.**',
+        'Do NOT revert unrelated files. Apply §9 headless auto-resolution, write missing artifacts, and complete the phase.',
+      );
+    } else {
+      parts.push(
+        '',
+        'Address the BLOCKER evidence above, then re-run harness for this phase.',
+      );
+    }
   }
   return parts.join('\n');
 }
@@ -849,6 +901,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const phase = chain[phaseIdx];
       let retries = 0;
       let phaseDone = false;
+      let priorBlockerSignature: string | null = null;
+      let priorArtifactSnapshot: ArtifactSnapshot | null = null;
 
       progressPhase = phase;
       progressSubstep = null;
@@ -902,10 +956,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 保守门控：仅 FAIL/INCOMPLETE 才注入，避免干净首跑被残留旧 summary 污染。
         const isPhaseContinuation = retries > 0 || (argv.resume && phaseIdx === chainStartIndex);
         let priorFailure: string | undefined;
+        let priorFailureKind: FailureKind | undefined;
         if (isPhaseContinuation && priorSummaryRead.summary) {
           const v = priorSummaryRead.summary.verdict;
           if (v === 'FAIL' || v === 'INCOMPLETE') {
             priorFailure = extractPriorFailureContext(priorSummaryRead.summary);
+            priorFailureKind = classifyFailureKind(
+              priorSummaryRead.summary,
+              manifest.dependency_policy,
+            );
           }
         }
 
@@ -915,6 +974,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           frameworkRoot,
           deferredUpstream,
           priorFailure,
+          priorFailureKind,
         );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -985,6 +1045,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
         });
         flushProgress();
 
+        const interactionSentinel = parseHeadlessInteractionSentinel(outputLogPath);
+        if (interactionSentinel) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'agent_interaction_required',
+            phase,
+            invoke_id: invokeId,
+            code: interactionSentinel.code,
+            question: interactionSentinel.error,
+            line_index: interactionSentinel.lineIndex,
+          });
+        }
+
         progressSubstep = 'harness';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_start',
@@ -1026,13 +1098,38 @@ Goal runner — tool-agnostic multi-phase orchestrator
         });
         const verdict = resolved.verdict;
         const meta = extractBlockingMeta(summary);
-        const action = classifyPhaseVerdict({
+        const failureKind = classifyFailureKind(summary, manifest.dependency_policy);
+        const currentBlockerSignature = extractBlockerSignature(summary);
+        const affectedFiles = extractDeterministicAffectedFiles(summary);
+        const currentArtifactSnapshot =
+          affectedFiles.length > 0
+            ? snapshotArtifacts(projectRoot, affectedFiles)
+            : {};
+
+        let action = classifyPhaseVerdict({
           verdict,
           ...meta,
           dependency_policy: manifest.dependency_policy,
           retries_used: retries,
           max_retries_per_phase: manifest.budget.max_retries_per_phase,
         });
+
+        let haltReason: string | undefined;
+        if (interactionSentinel && verdict !== 'PASS') {
+          action = 'halt';
+          haltReason = 'headless_interaction_required';
+        } else if (
+          shouldHaltNoProgress({
+            failureKind,
+            priorBlockerSignature,
+            currentBlockerSignature,
+            priorArtifactSnapshot,
+            currentArtifactSnapshot,
+          })
+        ) {
+          action = 'halt';
+          haltReason = 'no_progress_guard';
+        }
 
         const agentWarn = buildAgentWarn(invoke);
 
@@ -1046,6 +1143,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_failed: resolved.agent_failed,
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
+          failure_kind_classified: failureKind,
+          blocker_signature: currentBlockerSignature || undefined,
+          halt_reason: haltReason,
+          interaction_question: interactionSentinel?.error,
         });
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();
@@ -1112,6 +1213,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         if (action === 'retry') {
+          priorBlockerSignature = currentBlockerSignature || priorBlockerSignature;
+          priorArtifactSnapshot =
+            Object.keys(currentArtifactSnapshot).length > 0
+              ? currentArtifactSnapshot
+              : priorArtifactSnapshot;
           retries++;
           continue;
         }
@@ -1127,6 +1233,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_timed_out: invoke.timed_out,
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
+          halt_reason: haltReason,
+          interaction_question: interactionSentinel?.error,
         });
         halted = true;
         phaseDone = true;

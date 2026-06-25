@@ -135,7 +135,8 @@
 
    - **所有行的「用户确认」必须为 `[x]` 才允许生成 spec 正文**（这是 BLOCKER）。
    - 即使置信度是 `high` 也必须人工确认（按项目约定，不启用 auto-approve）。
-   - 用户如对某条映射不满意，要求修正 → AI 把修正后的映射写入本表并再次等用户确认。
+   - **headless / goal-mode 下例外（就地中和）**：无交互用户时，按 [user-confirmation-ux.md §9](../../reference/user-confirmation-ux.md) 自动写回 `[x]`（glossary 命中 → high 直确认；新术语 → medium/low + DEFERRED-review）并**继续写完 spec 正文**；**禁止**停下问人。本例外**覆盖**上两条停步要求。
+   - 用户如对某条映射不满意，要求修正 → AI 把修正后的映射写入本表并再次等用户确认（**仅交互态**）。
 
 6. **回写 glossary（用户批准后）**
    所有用户确认过的**新术语**或**被修正过的术语映射**，必须在 spec 归档前追加或更新到 `doc/glossary.yaml`（带 `confidence_hint: "user-approved on YYYY-MM-DD"`），作为下一次复用的种子。
@@ -171,7 +172,7 @@
 2. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
 3. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
 4. **资产清单**：logo/图标 → `acquisition`（crop / svg_grab / repo_ref）+ `resolved_path` 或显式 `placeholder`
-5. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）
+5. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，不 stop 问人。
 
 **模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
 

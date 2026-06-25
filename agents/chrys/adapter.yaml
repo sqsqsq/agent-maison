@@ -1,7 +1,7 @@
 adapter_name: chrys
 description: |
   Chrys agent adapter——shared `.agents` bridge bundle（AGENTS.md + .agents/skills/.agents/rules 跳板），
-  headless = `chrys run`（`--agent Code`，BYPASS 非交互）。
+  headless = `chrys run`（`--agent Code --json`；非交互 bypass flag 待宿主侧 `chrys run --help` 核实后对齐 agent-invoke.ts）。
 
 agent_entry_file:
   template_path: templates/AGENTS.md.template

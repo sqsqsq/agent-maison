@@ -205,6 +205,8 @@ coding / review / UT / harness **一律优先读 `contracts.yaml`**，避免 pla
 
 **请用户明确回复**（`plan.scope_expansion` · freeform + portable，**须先展示上列完整提议**）：
 
+> **headless / goal-mode**：无交互用户 → **保守默认 = 拒绝扩展**（不写入 `expansions_with_user_approval`）；记录被推迟请求到 `headless-assumptions.md`，必要时 goal-run DEFERRED。
+
 ```text
 1. 已读并同意扩展（须记录用户原话到 expansions_with_user_approval）
 2. 拒绝扩展

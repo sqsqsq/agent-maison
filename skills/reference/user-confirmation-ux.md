@@ -158,6 +158,41 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
 - ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
+- ❌ **headless / goal-mode** 下仍 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
+
+---
+
+## 9. Goal / headless 无人值守闸门解析（BLOCKER）
+
+当 **goal-runner** 以 headless 方式拉起 phase agent 时（`buildPhasePrompt` 注入 Unattended 块），阶段内确认闸门须按本节自动解析，**禁止** stop 问人。
+
+### 9.1 按 interaction class 默认解析
+
+| class | headless 默认 | 留痕 |
+|-------|---------------|------|
+| `gate` / `enum` / `matrix` | 取「确认 / 继续 / 全部维持」类默认选项 | `headless-assumptions.md` |
+| `artifact_checkbox` | 自动写回 artifact（如 spec `[x]`），继续产出正文 | 见 §9.2 |
+| `freeform_approval` | **保守默认**：`plan.scope_expansion` → 拒绝扩展；`ut.src_mutation` → 拒绝改源码 | 记录被推迟请求 |
+
+阶段**间**闸门（`*.ok_to_*` / `phase.next_step` / `spec.freeze`）由 `goal_mode` transition policy 裁决，本节不重复。
+
+### 9.2 `artifact_checkbox`（`spec.terminology` 等）置信度分级
+
+- **glossary 命中**（含 aliases）：**逐字采用** glossary 的 `canonical_module`，**不许自行改判** → 标 `high`、自动 `[x]`、**不入** must-review。
+- **新术语（非 glossary 命中）**：强制 `medium`/`low` → 自动 `[x]` 但 **必入 must-review**；标 `high` 须有 glossary 背书（`check-spec` 对假 high 出 WARN）。
+- **medium / low**：自动放行，标 `DEFERRED-review`；goal-report **顶部** must-review 清单逐条列出（术语、模块、置信度、易混项）。
+
+### 9.3 留痕契约
+
+路径：`doc/features/<feature>/<phase>/headless-assumptions.md`（与 phase 目录同级，如 spec → `.../spec/headless-assumptions.md`）。
+
+每条记录含：registry `id` / class / 自动选择 / provenance `auto-approved (goal-mode), pending human review` / 是否 must-review。
+
+goal-report 须高亮 must-review 与 `agent_interaction_required` 抛回问题。
+
+### 9.4 与交互态关系
+
+本节 **仅** 在 goal-runner headless prompt 生效。用户对话内直接跑 spec/plan 等 Skill **不**注入 Unattended 块，仍走 §3 交互流程。
 
 ---
 

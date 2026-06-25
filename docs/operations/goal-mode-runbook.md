@@ -131,3 +131,51 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 跨轮次接管：若主 agent 轮次中断，新轮 agent 应从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。第一版 framework 脚本不提供跨轮次聊天唤醒；真正 push/wakeup 属于宿主或 adapter 增强（Claude `ScheduleWakeup` / cron、Cursor `notify_on_output` 等）。
 
 **不要**把 `agent-output.log` 正文或 runner stdout 日志当协议；stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 是受维护的轻契约和可选加速器，不是通知 SSOT。
+
+## Headless 阶段内闸门（§9）
+
+goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[user-confirmation-ux.md §9](../../skills/reference/user-confirmation-ux.md)）：
+
+- 阶段内确认闸门（术语 `[x]`、ui-spec verified、enum/gate 等）**自动解析 + 留痕** `doc/features/<feature>/<phase>/headless-assumptions.md`。
+- glossary 命中 → high 自动确认；新术语 → medium/low + **must-review**（goal-report 顶部清单）。
+- `freeform_approval`（scope 扩展、改源码）→ **保守默认**（不扩 / 不改），记录推迟请求。
+
+### 防御纵深（盲目重试）
+
+| 机制 | 行为 |
+|------|------|
+| **无进展守卫** | 同一 phase 连续 attempt：`deterministic_gate_or_artifact_missing` + 相同 blocker 签名 + 产物 delta 零（存在性/内容 hash，**非 mtime**）→ 立即 HALT |
+| **chrys sentinel** | `agent-output.log` 逐行 JSON 命中 `code=headless_interaction_required` → 立即 HALT + `agent_interaction_required` 事件 |
+| **重试上下文** | 产物缺失类失败不注入「先 revert」话术；仅 `code_regression` 保留 revert-first |
+
+events 字段：`failure_kind_classified`、`blocker_signature`、`halt_reason`、`interaction_question`。
+
+## 宿主侧实机冒烟（chrys，跨机器）
+
+本仓开发机可能无 chrys；以下步骤须在 **真 chrys 宿主**（如 HarmonyOSDemo + framework）执行，结果回填 plan 实施记录。
+
+```bash
+# 0. Tier_1 + personal setup（goal-mode Skill 前置）
+cd framework/harness && node ../scripts/init-readiness.mjs
+npx ts-node scripts/check-personal-setup.ts --json --ensure --select-adapter chrys --project-root <repo-root>
+
+# 1. 核实 chrys 非交互 flag（Layer C）
+chrys run --help   # 记录是否有 bypass/非交互 flag，反馈维护者
+
+# 2. 仅 spec 单 phase 冒烟
+npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> \
+  --requirement "<需求摘要>" \
+  --adapter chrys \
+  --start spec --end spec \
+  --detach
+
+# 3. 验收（run 结束后）
+# - agent-output.log 无 headless_interaction_required
+# - doc/features/<f>/spec/spec.md 存在且含 section 0 [x] + 正文
+# - spec/reports/summary.json verdict=PASS
+# - doc/features/<f>/spec/headless-assumptions.md 含 must-review 清单（如有 medium/low 术语）
+npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
+```
+
+失败时查 `goal-runs/<run-id>/goal-report.md` 的「需人工介入」段与 `events.jsonl` 的 `agent_interaction_required`。
