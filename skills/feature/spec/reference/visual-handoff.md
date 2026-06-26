@@ -108,6 +108,8 @@
 
 **A/B/C 预期边界**：A 结构样式可逼近 1:1；B 美术资产取决于素材供给；C 动态交互不在静态参考图承诺内。
 
+**供给路径定位（G5）**：**screenshot-only 为主路径**——保证 A 环（结构/颜色/布局关系/按钮变体）「一眼同页、非像素级」+ B 环缺口诚实拦截（asset-manifest / 占位不静默 / 禁通用图标冒充 logo / crop halt-confirm）。**在线高保真对照（`fetch_fidelity` + `fidelity.lock.yaml` + 结构化派生 ref-elements）为可选增强**——有 Figma/高保真源时把 B 环美术与精确像素也拉到 1:1，但 screenshot-only 路径**不依赖、不强制**它（详见 `docs/operations/fidelity-fetch-mcp-contract.md`）。
+
 ## CLI 逃生
 
 ```bash
