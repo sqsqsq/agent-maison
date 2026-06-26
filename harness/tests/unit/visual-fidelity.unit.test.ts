@@ -1378,6 +1378,85 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // G4b 残留闭合：headless 下 human_crop_confirmed=true 但无 crop_confirmed_by = 自报 → 仍挡 BLOCKER
+  run('crop_confirm_headless_auto_forge_blocked', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const refPng = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference', 'home.png');
+      fs.mkdirSync(path.dirname(refPng), { recursive: true });
+      writeMinimalRedPng(refPng, 40, 40);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        ['```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', 'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:', '    - id: home', '      path: doc/features/bank-card/ux-reference/home.png', '```'].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets:',
+        '  - key: bank_logo',
+        '    acquisition: crop',
+        '    source_ref: home',
+        '    source_bbox: [0, 0, 0.5, 0.5]',
+        '    human_crop_confirmed: true',
+      ].join('\n'));
+      const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (!r.find(x => x.id === 'asset_crop_confirm_required' && x.severity === 'BLOCKER')) {
+        throw new Error('headless 自报 human_crop_confirmed 未被门禁挡：' + JSON.stringify(r));
+      }
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G4b 防误挡：headless 下真人 crop_confirmed_by（前置确认）→ 放行裁剪，不进确认门禁
+  run('crop_confirm_headless_explicit_confirmer_ok', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const refPng = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference', 'home.png');
+      fs.mkdirSync(path.dirname(refPng), { recursive: true });
+      writeMinimalRedPng(refPng, 40, 40);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        ['```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', 'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:', '    - id: home', '      path: doc/features/bank-card/ux-reference/home.png', '```'].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets:',
+        '  - key: bank_logo',
+        '    acquisition: crop',
+        '    source_ref: home',
+        '    source_bbox: [0, 0, 0.5, 0.5]',
+        '    human_crop_confirmed: true',
+        '    crop_confirmed_by: alice',
+      ].join('\n'));
+      const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (r.find(x => x.id === 'asset_crop_confirm_required')) {
+        throw new Error('真人 crop_confirmed_by 被误挡：' + JSON.stringify(r));
+      }
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('capture_completeness_missing_ref_elements_blocker', () => {
     const root = mkProject();
     try {

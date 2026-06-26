@@ -122,7 +122,7 @@ assets:
 
 | acquisition | 含义 |
 |-------------|------|
-| `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`） |
+| `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份——堵 agent 自报，对齐 deferral `signed_by`） |
 | `svg_grab` | 抓取品牌矢量 |
 | `repo_ref` | 复用仓内已有资源 |
 

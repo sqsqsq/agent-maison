@@ -19,7 +19,22 @@ import {
   resolveRefSourceImage,
 } from './authoritative-ref-images';
 import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner } from '../../../harness/scripts/utils/fidelity-shared';
+import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
+
+/** G4b：crop 人工确认判据——human_crop_confirmed:true 且（headless 下）crop_confirmed_by 为非自动化身份。 */
+function isCropHumanConfirmed(
+  a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string },
+  headless: boolean,
+): boolean {
+  if (a.human_crop_confirmed !== true) return false;
+  if (isAutomationSigner(a.crop_confirmed_by)) return false;
+  // headless：无 signer 的"已确认"视为自报（真人会留名）；交互态缺省仍算人工。
+  if (headless) {
+    return typeof a.crop_confirmed_by === 'string' && a.crop_confirmed_by.trim().length > 0;
+  }
+  return true;
+}
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -65,6 +80,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
 
   const notes: string[] = [];
   const cropPendingConfirm: string[] = [];
+  const headless = isGoalHeadlessEnv();
   let uiSpecDirty = false;
   const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
 
@@ -86,10 +102,10 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       notes.push(`${a.key}：缺 source_bbox`);
       continue;
     }
-    if (!a.human_crop_confirmed) {
-      // G4b：有 bbox 但未人工确认 → 进确认门禁（goal 模式经 halt-confirm 携带裁剪能力）
+    if (!isCropHumanConfirmed(a, headless)) {
+      // G4b：未人工确认（headless 下还须非自动化 crop_confirmed_by，堵自报）→ 确认门禁
       cropPendingConfirm.push(a.key);
-      notes.push(`${a.key}：待人工确认裁剪框（human_crop_confirmed）后自动裁图`);
+      notes.push(`${a.key}：待人工确认裁剪框（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份' : ''}）后自动裁图`);
       continue;
     }
     const srcPick = resolveRefSourceImage(refIndex, a.source_ref);

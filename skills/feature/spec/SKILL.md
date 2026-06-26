@@ -180,7 +180,7 @@
 
 #### Step 2.1 资产落地（review#2）
 
-对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。**G4b goal 模式裁剪**：VL 提案 `acquisition: crop` + `source_bbox`（精确元素区域）后，crop 待确认门禁触发——goal-runner **暂停求人确认/微调 bbox**，确认后置 `human_crop_confirmed` 自动裁剪；headless 无确认即 BLOCKER（**不自动伪造确认**）。用户也可在需求入口**前置**给 bbox/素材目录（`user_dir`/`asset_pack`）→ 免 mid-run halt 直接裁。这让"无高保真时用原始截图搞定资源"在 goal 模式从休眠转可用。
+对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。**G4b goal 模式裁剪**：VL 提案 `acquisition: crop` + `source_bbox`（精确元素区域）后，crop 待确认门禁触发——goal-runner **暂停求人确认/微调 bbox**，确认后置 `human_crop_confirmed`（**headless 须连同 `crop_confirmed_by` 真人署名**）自动裁剪；headless 无真人确认即 BLOCKER（**自报不算**）。用户也可在需求入口**前置**给 bbox/素材目录（`user_dir`/`asset_pack`）→ 免 mid-run halt 直接裁。这让"无高保真时用原始截图搞定资源"在 goal 模式从休眠转可用。
 
 仍可在 spec.md「页面/界面描述」保留散文补充，但 **ui-spec.yaml 为 coding parity 的结构化 SSOT**。
 

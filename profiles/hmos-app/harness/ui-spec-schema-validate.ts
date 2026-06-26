@@ -30,7 +30,7 @@ export const ALIGN_ENUM = ['start', 'center', 'end', 'space_between', 'stretch']
 const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref', 'sampled']);
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
-  'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed',
+  'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets']);
 
@@ -225,7 +225,7 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (as.source_bbox !== undefined && !isBbox(as.source_bbox)) {
         errors.push(`assets[${i}].source_bbox 须为 4 元归一化 [x,y,w,h]`);
       }
-      for (const k of ['source_ref', 'resolved_path', 'rationale'] as const) {
+      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'string') {
           errors.push(`assets[${i}].${k} 须为字符串`);
         }
