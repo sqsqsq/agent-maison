@@ -19,19 +19,21 @@ import {
   resolveRefSourceImage,
 } from './authoritative-ref-images';
 import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
-import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../../harness/scripts/utils/fidelity-shared';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 
-/** G4b：crop 人工确认判据——human_crop_confirmed:true 且（headless 下）crop_confirmed_by 为非自动化身份。 */
+/** G4b：crop 确认判据——human_crop_confirmed:true 且（headless 下）crop_confirmed_by 为非自动化身份或 user_requirement。 */
 function isCropHumanConfirmed(
   a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string },
   headless: boolean,
 ): boolean {
   if (a.human_crop_confirmed !== true) return false;
   if (isAutomationSigner(a.crop_confirmed_by)) return false;
-  // headless：无 signer 的"已确认"视为自报（真人会留名）；交互态缺省仍算人工。
+  // headless：须有前置授权者——user_requirement(用户 NL 前置授权) 或真人署名；缺/自动化=自报。
   if (headless) {
-    return typeof a.crop_confirmed_by === 'string' && a.crop_confirmed_by.trim().length > 0;
+    const by = typeof a.crop_confirmed_by === 'string' ? a.crop_confirmed_by.trim() : '';
+    if (by === USER_REQUIREMENT_CONFIRMER) return true; // 显式认可：即便通用规则收紧也恒通过
+    return by.length > 0;
   }
   return true;
 }
@@ -103,9 +105,9 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       continue;
     }
     if (!isCropHumanConfirmed(a, headless)) {
-      // G4b：未人工确认（headless 下还须非自动化 crop_confirmed_by，堵自报）→ 确认门禁
+      // G4b：未确认（headless 下还须非自动化/user_requirement crop_confirmed_by，堵自报）→ 确认门禁
       cropPendingConfirm.push(a.key);
-      notes.push(`${a.key}：待人工确认裁剪框（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份' : ''}）后自动裁图`);
+      notes.push(`${a.key}：待确认裁剪框（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份或 user_requirement' : ''}）后自动裁图`);
       continue;
     }
     const srcPick = resolveRefSourceImage(refIndex, a.source_ref);
@@ -163,7 +165,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details: `crop 资产待人工确认裁剪框（human_crop_confirmed）：${cropPendingConfirm.join(', ')}`,
-      suggestion: 'goal-runner 暂停求人工确认/微调 bbox，确认后置 human_crop_confirmed 自动裁剪；headless 无确认即 BLOCKER（不自动伪造确认）。',
+      suggestion: 'goal-runner 暂停求人工确认/微调 bbox；或在需求中自然授权从原图/截图裁剪资源并记录 crop_confirmed_by=user_requirement。确认后置 human_crop_confirmed 自动裁剪；headless 无确认即 BLOCKER（不自动伪造确认）。',
       affected_files: [uiSpecRel],
     });
   }

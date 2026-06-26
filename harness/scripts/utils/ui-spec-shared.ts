@@ -90,7 +90,7 @@ export interface UiSpecAsset {
   placeholder?: boolean;
   rationale?: string;
   human_crop_confirmed?: boolean;
-  /** G4b：crop 人工确认者；headless 下须为非自动化身份（堵自报，对齐 deferral signed_by） */
+  /** G4b：crop 确认来源；headless 下须为非自动化身份或 user_requirement（堵自报，对齐 deferral signed_by） */
   crop_confirmed_by?: string;
 }
 

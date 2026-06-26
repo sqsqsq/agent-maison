@@ -31,7 +31,7 @@ import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-man
 import { collectSemanticColorBindingIssues, collectVariantParityIssues, hasSolidButtonBackground } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
 import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { detectPixel1to1Intent } from '../../scripts/utils/fidelity-shared';
+import { detectPixel1to1Intent, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../scripts/utils/fidelity-shared';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
@@ -1417,7 +1417,7 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  // G4b 防误挡：headless 下真人 crop_confirmed_by（前置确认）→ 放行裁剪，不进确认门禁
+  // G4b 防误挡：headless 下用户自然语言授权 crop_confirmed_by=user_requirement → 放行裁剪，不进确认门禁
   run('crop_confirm_headless_explicit_confirmer_ok', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();
@@ -1443,11 +1443,65 @@ export function runAll(): UnitCaseResult[] {
         '    source_ref: home',
         '    source_bbox: [0, 0, 0.5, 0.5]',
         '    human_crop_confirmed: true',
-        '    crop_confirmed_by: alice',
+        '    crop_confirmed_by: user_requirement',
       ].join('\n'));
       const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       if (r.find(x => x.id === 'asset_crop_confirm_required')) {
-        throw new Error('真人 crop_confirmed_by 被误挡：' + JSON.stringify(r));
+        throw new Error('用户需求授权 crop_confirmed_by=user_requirement 被误挡：' + JSON.stringify(r));
+      }
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G4b 守卫：user_requirement 是合法前置授权 sentinel，绝不可入自动化名单（否则焊死截图裁素材工作流）
+  run('user_requirement_confirmer_is_valid_sentinel', () => {
+    if (USER_REQUIREMENT_CONFIRMER !== 'user_requirement') {
+      throw new Error('USER_REQUIREMENT_CONFIRMER 值变更，需同步 ui-spec.md/SKILL 约定');
+    }
+    if (isAutomationSigner(USER_REQUIREMENT_CONFIRMER)) {
+      throw new Error('user_requirement 误入自动化身份名单，会焊死 NL 授权裁素材路径');
+    }
+  });
+
+  // G4b 端到端：headless + crop_confirmed_by=user_requirement（用户 NL 授权）→ 闸门放行、进裁剪路径
+  run('crop_user_requirement_headless_enters_crop', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const refPng = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference', 'home.png');
+      fs.mkdirSync(path.dirname(refPng), { recursive: true });
+      writeMinimalRedPng(refPng, 60, 60);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        ['```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', 'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:', '    - id: home', '      path: doc/features/bank-card/ux-reference/home.png', '```'].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets:',
+        '  - key: bank_logo',
+        '    acquisition: crop',
+        '    source_ref: home',
+        '    source_bbox: [0, 0, 0.5, 0.5]',
+        '    human_crop_confirmed: true',
+        '    crop_confirmed_by: user_requirement',
+      ].join('\n'));
+      const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (r.find(x => x.id === 'asset_crop_confirm_required')) {
+        throw new Error('user_requirement 前置授权被误挡进确认门禁：' + JSON.stringify(r));
+      }
+      const acq = r.find(x => x.id === 'asset_acquisition');
+      if (!acq || !/裁图/.test(acq.details ?? '')) {
+        throw new Error('user_requirement 授权下未进入裁剪路径：' + JSON.stringify(r));
       }
     } finally {
       if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;

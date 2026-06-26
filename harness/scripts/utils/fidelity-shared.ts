@@ -109,6 +109,13 @@ export function isAutomationSigner(signedBy: string | undefined): boolean {
 }
 
 /**
+ * G4b：用户在需求文本中的自然语言裁剪授权 sentinel（"资源可从原图/截图裁剪获取"）。
+ * 属**合法的前置确认者**（用户即真人、需求文本即授权），**绝不可加入 AUTOMATION_SIGNER_IDS**。
+ * headless 下 crop_confirmed_by=此值 视为有效前置确认，免 mid-run halt 直接裁。
+ */
+export const USER_REQUIREMENT_CONFIRMER = 'user_requirement';
+
+/**
  * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
  * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
  */

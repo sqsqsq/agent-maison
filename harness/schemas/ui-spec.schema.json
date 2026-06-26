@@ -138,7 +138,7 @@
         "placeholder": { "type": "boolean" },
         "rationale": { "type": "string" },
         "human_crop_confirmed": { "type": "boolean" },
-        "crop_confirmed_by": { "type": "string", "description": "G4b：crop 人工确认者；headless 下须为非自动化身份（堵自报）" }
+        "crop_confirmed_by": { "type": "string", "description": "G4b：crop 确认来源；headless 下须为非自动化身份或 user_requirement（堵自报）" }
       }
     }
   }

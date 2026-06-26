@@ -118,11 +118,12 @@ assets:
     source_bbox: [0.04, 0.08, 0.12, 0.10]
     resolved_path: doc/features/bank-card/spec/assets/bank_logo_cmb.png
     human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
 ```
 
 | acquisition | 含义 |
 |-------------|------|
-| `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份——堵 agent 自报，对齐 deferral `signed_by`） |
+| `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份或 `user_requirement`——表示用户在需求中自然语言授权“可从原图/截图裁剪资源”，堵 agent 自报，对齐 deferral `signed_by`） |
 | `svg_grab` | 抓取品牌矢量 |
 | `repo_ref` | 复用仓内已有资源 |
 
