@@ -589,11 +589,16 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   }
 
   if (duplicateHashScreens.length > 0) {
+    // x-capture-bug：≥2 个不同屏共享 hash = Tab 未切换/重复采集，至少一屏是错图，
+    // VL 在错图上闭环（homepage：home 与 mine 同 d3bea384…）。pixel_1to1 下升 BLOCKER。
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
     pushVisualDiffHit(hits, {
       id: 'visual_diff_screenshot_dedup',
-      severity: 'MAJOR',
-      status: 'WARN',
-      line: `≥2 屏共享 screenshot_hash（疑似重复采集）：${duplicateHashScreens.join('; ')}`,
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line: `≥2 屏共享 screenshot_hash（疑似 Tab 未切换/重复采集，至少一屏为错图）：${duplicateHashScreens.join('; ')}`,
     });
   }
 

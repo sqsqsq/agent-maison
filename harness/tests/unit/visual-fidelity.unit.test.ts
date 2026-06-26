@@ -1288,6 +1288,54 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // x-capture-bug：两屏撞 screenshot_hash（Tab 未切换/截同一屏）→ pixel_1to1 BLOCKER
+  run('visual_diff_hash_collision_pixel1to1_blocker', () => {
+    const root = mkProject();
+    try {
+      const dtDir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing');
+      const shotDir = path.join(dtDir, 'device-screenshots');
+      fs.mkdirSync(shotDir, { recursive: true });
+      // 两屏写入相同字节 → 相同真实 hash（复刻 home/mine 撞 d3bea384…）
+      fs.writeFileSync(path.join(shotDir, 'shot-home.png'), 'identical-bytes');
+      fs.writeFileSync(path.join(shotDir, 'shot-page2.png'), 'identical-bytes');
+      const h = hashScreenshotFile(path.join(shotDir, 'shot-home.png'));
+      if (!h) throw new Error('hash 计算失败');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        '  - id: page2',
+        '    priority: P0',
+        '    ref_id: page2',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n');
+      fs.writeFileSync(path.join(dtDir, 'visual-diff.md'), '# diff');
+      const shotRel = 'doc/features/bank-card/device-testing/device-screenshots';
+      const mk = (id: string) => ({
+        screen_id: id, verdict: 'pass', ref_id: id,
+        screenshot_path: `${shotRel}/shot-${id}.png`,
+        fidelity_score: 0.9, geometric_iou: 0.9,
+        screenshot_hash: h, evaluated_screenshot_hash: h, reverse_missing: [],
+      });
+      fs.writeFileSync(path.join(shotDir, 'visual-diff.json'),
+        JSON.stringify({ schema_version: '1.0', screens: [mk('home'), mk('page2')] }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const blocker = r.find((x: { severity?: string; status: string; details?: string }) =>
+        x.severity === 'BLOCKER' && x.status === 'FAIL' && /screenshot_hash|未切换/.test(x.details ?? ''));
+      if (!blocker) throw new Error('撞 hash 在 pixel_1to1 未升 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('capture_completeness_missing_ref_elements_blocker', () => {
     const root = mkProject();
     try {
