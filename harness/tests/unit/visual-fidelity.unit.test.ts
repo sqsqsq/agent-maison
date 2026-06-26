@@ -26,7 +26,7 @@ import {
 } from '../../../profiles/hmos-app/harness/authoritative-ref-images';
 import { checkAssetAcquisition } from '../../../profiles/hmos-app/harness/asset-acquisition';
 import { checkFidelityGovernance } from '../../../profiles/hmos-app/harness/fidelity-governance-check';
-import { checkCaptureCompleteness } from '../../../profiles/hmos-app/harness/capture-completeness-check';
+import { checkCaptureCompleteness, checkCaptureStyleFields } from '../../../profiles/hmos-app/harness/capture-completeness-check';
 import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-manifest-check';
 import { collectSemanticColorBindingIssues } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
 import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
@@ -1069,6 +1069,92 @@ export function runAll(): UnitCaseResult[] {
     }
     for (const k of ['layout_group', 'bg_color']) {
       if (props[k]?.type !== 'string') throw new Error(`schema 缺 ${k}: string`);
+    }
+  });
+
+  // G3 Slice 2：pixel_1to1 下 P0 action_button 缺 variant → BLOCKER（捕获强制）
+  run('capture_style_fields_pixel1to1_missing_variant_blocker', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: cta',
+        '          type: action_button',
+        '          order: 0',
+        '          text: 添加管理卡片',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n';
+      const r = checkCaptureStyleFields(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'capture_style_fields' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      if (!hit) throw new Error('缺 variant 未判 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G3 Slice 2 防误拒：声明 variant → PASS
+  run('capture_style_fields_variant_declared_pass', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: cta',
+        '          type: action_button',
+        '          order: 0',
+        '          variant: ghost',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n';
+      const r = checkCaptureStyleFields(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      if (r.find(x => x.id === 'capture_style_fields' && x.status === 'FAIL')) {
+        throw new Error('声明了 variant 仍 FAIL：' + JSON.stringify(r));
+      }
+      if (!r.find(x => x.id === 'capture_style_fields' && x.status === 'PASS')) {
+        throw new Error('声明 variant 未 PASS：' + JSON.stringify(r));
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G3 Slice 2：semantic_layout 零噪声（不强制 variant）
+  run('capture_style_fields_semantic_layout_skipped', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root: { type: action_button, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: semantic_layout\n```\n';
+      const r = checkCaptureStyleFields(baseCtx(root), specMd);
+      if (r.length !== 0) throw new Error('semantic_layout 不应产出（零噪声）：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -285,8 +285,18 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     'spec.ui_spec',
     'checkCaptureCompleteness',
   );
+  const styleFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkCaptureStyleFields',
+  );
   // 消费 dispatchSpecVisualHandoff 注入的 ctx.refElementsManifest（structured 第二刀）；须在其之后派发。
-  return [...fn(ctx, specMarkdown), ...gateFn(ctx, specMarkdown), ...captureFn(ctx, specMarkdown)];
+  return [
+    ...fn(ctx, specMarkdown),
+    ...gateFn(ctx, specMarkdown),
+    ...captureFn(ctx, specMarkdown),
+    ...styleFn(ctx, specMarkdown),
+  ];
 }
 
 export function dispatchSpecAssetAcquisition(ctx: CheckContext): CheckResult[] {

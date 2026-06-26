@@ -18,6 +18,7 @@ import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   uiSpecAbsPath,
   uiSpecRelPath,
+  type UiSpecComponentNode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 
 function ruleDesc(ctx: CheckContext): string {
@@ -171,5 +172,65 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
     status: 'PASS',
     details: `${sourceNote}；参考图枚举 ${denom.length} 项均已映射到 ui-spec/must_have（${ratioPct}%）`,
     affected_files: [refRel, uiSpecRel],
+  }];
+}
+
+function collectButtonsInNode(node: UiSpecComponentNode | undefined, out: UiSpecComponentNode[]): void {
+  if (!node) return;
+  if (node.type === 'action_button') out.push(node);
+  for (const c of node.children ?? []) collectButtonsInNode(c, out);
+}
+
+/**
+ * G3 Slice 2 捕获强制：pixel_1to1 下 P0 屏的 action_button 必须声明 variant（捕获保真）。
+ * homepage 失败案例：按钮仅标 semantic_role: brand_primary（隐含实心），未捕获其实是浅灰药丸/幽灵，
+ * coding 据此填了满屏实心蓝。强制捕获 variant，逼 VL 对照参考图看清按钮填充形态。
+ * 布局关系（同行/对齐/占宽）由提示词驱动捕获 + coding parity 校验，不在此处硬造（哪些按钮该同行本身需布局信息）。
+ */
+export function checkCaptureStyleFields(ctx: CheckContext, specMarkdown: string): CheckResult[] {
+  const uiChange = parseUiChangeFromSpecMarkdown(specMarkdown);
+  if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) return [];
+  if (ctx.fidelityTarget !== 'pixel_1to1') return []; // 仅 1:1 下强制；semantic_layout 零噪声
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  if (!uiDoc) return [];
+
+  const checks = ctx.phaseRule.structure_checks as Record<string, { description?: string }>;
+  const desc = checks?.capture_style_fields?.description?.trim() ?? 'capture_style_fields';
+  const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
+
+  const missingVariant: string[] = [];
+  for (const screen of uiDoc.screens ?? []) {
+    if (screen.priority !== 'P0') continue;
+    const buttons: UiSpecComponentNode[] = [];
+    collectButtonsInNode(screen.root, buttons);
+    for (const b of buttons) {
+      if (!b.variant) missingVariant.push(`${screen.id}:${b.id ?? b.text ?? '?'}`);
+    }
+  }
+
+  if (missingVariant.length > 0) {
+    const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);
+    return [{
+      id: 'capture_style_fields',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details:
+        `pixel_1to1 下 P0 action_button 须声明 variant（治"实心蓝 vs 浅灰药丸/幽灵按钮"）；` +
+        `未声明：${missingVariant.slice(0, 12).join(', ')}${missingVariant.length > 12 ? '…' : ''}`,
+      suggestion: '逐按钮对照参考图标 variant: filled/tonal/outlined/ghost/text。',
+      affected_files: [uiSpecRel],
+    }];
+  }
+
+  return [{
+    id: 'capture_style_fields',
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: 'P0 action_button 的 variant 均已声明（按钮变体捕获保真）。',
+    affected_files: [uiSpecRel],
   }];
 }

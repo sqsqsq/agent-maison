@@ -331,6 +331,14 @@ structure_checks:
     rule:
       expect: "ref_elements_coverage"
 
+  capture_style_fields:
+    description: >
+      G3 捕获保真（pixel_1to1）：P0 action_button 须声明 variant（治"实心蓝 vs 浅灰药丸/幽灵按钮"）；
+      未声明 → BLOCKER。布局关系（layout_group/align/width_ratio）由提示词驱动捕获 + coding parity 校验。
+    severity: BLOCKER
+    rule:
+      expect: "capture_style_fields"
+
   asset_manifest:
     description: >
       pixel_1to1 联动 user_dir 须产出 spec/asset-manifest.yaml；占位资产须显式清单（拒绝 AI 山寨）。
