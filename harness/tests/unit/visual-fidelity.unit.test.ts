@@ -1336,6 +1336,48 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // G4b：未确认的 crop 资产在 pixel_1to1 → asset_crop_confirm_required BLOCKER（goal 模式 halt-confirm 门禁）
+  run('asset_crop_confirm_required_pixel1to1_blocker', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const refPng = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference', 'home.png');
+      fs.mkdirSync(path.dirname(refPng), { recursive: true });
+      writeMinimalRedPng(refPng, 40, 40);
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'visual_handoff:',
+        '  kind: screenshot_pack',
+        '  authoritative_refs:',
+        '    - id: home',
+        '      path: doc/features/bank-card/ux-reference/home.png',
+        '```',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets:',
+        '  - key: bank_logo',
+        '    acquisition: crop',
+        '    source_ref: home',
+        '    source_bbox: [0, 0, 0.5, 0.5]',
+      ].join('\n'));
+      const r = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find(x => x.id === 'asset_crop_confirm_required' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      if (!hit) throw new Error('未确认 crop 在 pixel_1to1 未升 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('capture_completeness_missing_ref_elements_blocker', () => {
     const root = mkProject();
     try {

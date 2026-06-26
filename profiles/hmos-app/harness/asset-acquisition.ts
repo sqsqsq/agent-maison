@@ -19,6 +19,7 @@ import {
   resolveRefSourceImage,
 } from './authoritative-ref-images';
 import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
+import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -63,6 +64,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
   }
 
   const notes: string[] = [];
+  const cropPendingConfirm: string[] = [];
   let uiSpecDirty = false;
   const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
 
@@ -85,7 +87,9 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       continue;
     }
     if (!a.human_crop_confirmed) {
-      notes.push(`${a.key}：关键资产须 human_crop_confirmed 后才自动裁图`);
+      // G4b：有 bbox 但未人工确认 → 进确认门禁（goal 模式经 halt-confirm 携带裁剪能力）
+      cropPendingConfirm.push(a.key);
+      notes.push(`${a.key}：待人工确认裁剪框（human_crop_confirmed）后自动裁图`);
       continue;
     }
     const srcPick = resolveRefSourceImage(refIndex, a.source_ref);
@@ -129,7 +133,26 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
     writeUiSpecYaml(uiSpecAbs, doc);
   }
 
-  return [{
+  const results: CheckResult[] = [];
+
+  // G4b：crop 资产待人工确认 → 门禁（解耦 G1 自签：不自动置 confirmed，改走 goal-runner halt-confirm）。
+  // pixel_1to1 → BLOCKER（headless 无确认即挡；交互/goal 经既有确认 UX 暂停求人确认 bbox 后裁）；否则 WARN。
+  // 这让"从截图裁素材"在 goal 模式从休眠转可用，而非静默退占位。
+  if (cropPendingConfirm.length > 0) {
+    const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
+    results.push({
+      id: 'asset_crop_confirm_required',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: `crop 资产待人工确认裁剪框（human_crop_confirmed）：${cropPendingConfirm.join(', ')}`,
+      suggestion: 'goal-runner 暂停求人工确认/微调 bbox，确认后置 human_crop_confirmed 自动裁剪；headless 无确认即 BLOCKER（不自动伪造确认）。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  results.push({
     id: 'asset_acquisition',
     category: 'structure',
     description: desc,
@@ -137,5 +160,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
     status: notes.some(n => /失败|逃逸|已跳过/.test(n)) ? 'WARN' : 'PASS',
     details: notes.length ? notes.join('；') : '无 crop 资产待处理',
     affected_files: [uiSpecRel],
-  }];
+  });
+
+  return results;
 }
