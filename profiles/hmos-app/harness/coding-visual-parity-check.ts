@@ -19,7 +19,7 @@ import {
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { computeStaticFidelityScore } from './static-fidelity-score';
-import { runVisualParityBackstop } from './visual-parity-backstop';
+import { runVisualParityBackstop, collectVariantParityIssues } from './visual-parity-backstop';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 function ruleDesc(
@@ -124,6 +124,21 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'PASS',
       details: [baselineNote, boundaryNote, 'C2 语义色绑定 + C3 must_have 均已通过'].filter(Boolean).join('\n'),
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // G3 Slice 3：variant 静态轻启发式（WARN/低置信，仅早警；可靠核对走 device visual-diff）
+  const variantIssues = collectVariantParityIssues(ctx, doc, baselineUnverified);
+  if (variantIssues.length > 0) {
+    results.push({
+      id: 'visual_parity_variant',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: ['【启发式·低置信，以 device visual-diff 为准】', ...variantIssues.map(i => i.detail)].join('\n'),
+      suggestion: '核对按钮填充与 variant 是否一致；最终以真机 visual-diff 像素核对为准。',
       affected_files: [uiSpecRel],
     });
   }

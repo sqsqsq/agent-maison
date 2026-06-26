@@ -12,6 +12,7 @@ import {
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import {
+  extractStructBody,
   resourceKeyToRef,
   scanFeatureSourceTree,
   scanStructResourceRefs,
@@ -19,7 +20,7 @@ import {
 import { loadVisualParityMappings } from './visual-structure-parity';
 
 export interface BackstopIssue {
-  kind: 'semantic_color' | 'must_have';
+  kind: 'semantic_color' | 'must_have' | 'variant';
   id: string;
   detail: string;
 }
@@ -253,4 +254,63 @@ export function runVisualParityBackstop(
     ...collectSemanticColorBindingIssues(ctx, doc, baselineUnverified),
     ...collectMustHavePresenceIssues(ctx, doc, baselineUnverified),
   ];
+}
+
+const NON_FILL_VARIANTS = new Set(['ghost', 'text', 'outlined']);
+
+/** Button 体内是否含显式非透明 backgroundColor（实心填充） */
+export function hasSolidButtonBackground(structBody: string): boolean {
+  const re = /\.backgroundColor\s*\(([^)]*)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(structBody))) {
+    const arg = m[1].trim();
+    if (!arg) continue;
+    if (/transparent/i.test(arg)) continue; // Color.Transparent / 'transparent'
+    if (/0x00[0-9a-fA-F]{6}\b/.test(arg)) continue; // 全透明 alpha
+    return true;
+  }
+  return false;
+}
+
+/**
+ * G3 Slice 3 静态轻启发式（保守 WARN，低置信，以 device visual-diff 为准）：
+ * 非填充 variant（ghost/text/outlined）的按钮，若映射 struct 仅含单个 Button 且该 Button 有
+ * 显式非透明 backgroundColor → 疑似被实心化（homepage：声明药丸/幽灵却填实心蓝）。
+ * 仅单 Button struct 才判（多 Button 无法定位本节点），最大限度压假阳性。
+ */
+export function collectVariantParityIssues(
+  ctx: CheckContext,
+  doc: UiSpecDoc,
+  baselineUnverified: boolean,
+): BackstopIssue[] {
+  if (baselineUnverified) return [];
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const mappings = loadVisualParityMappings(ctx.projectRoot, ctx.feature);
+  const scan = scanFeatureSourceTree(ctx.projectRoot, contracts);
+  const issues: BackstopIssue[] = [];
+
+  for (const n of collectAllComponentNodes(doc)) {
+    if (n.type !== 'action_button') continue;
+    const variant = n.variant?.trim();
+    if (!variant || !NON_FILL_VARIANTS.has(variant)) continue;
+    const structName = resolveMappedStruct(n.id, mappings);
+    if (!structName) continue;
+    let body: string | null = null;
+    for (const file of scan.etsFiles) {
+      body = extractStructBody(fs.readFileSync(file, 'utf-8'), structName);
+      if (body) break;
+    }
+    if (!body) continue;
+    const buttonCount = (body.match(/\bButton\s*\(/g) ?? []).length;
+    if (buttonCount !== 1) continue; // 保守：仅单 Button struct 可定位
+    if (hasSolidButtonBackground(body)) {
+      issues.push({
+        kind: 'variant',
+        id: n.id ?? n.type,
+        detail: `节点 ${n.id ?? n.type} 声明 variant=${variant}（非填充）但 ${structName} 的 Button 含实心 backgroundColor（疑似实心化，以 device visual-diff 为准）`,
+      });
+    }
+  }
+  return issues;
 }

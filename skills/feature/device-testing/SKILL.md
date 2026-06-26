@@ -303,7 +303,7 @@ doc/features/{module-name}/testing/test-plan.md
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
 2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
-3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无）→ 产出：
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无；**G3 样式/布局核对**：ui-spec 声明的 `variant`/`layout_group`/`align`/`width_ratio`/`bg_color` 须逐一对真机截图核对——按钮填充形态/同行分组/对齐占宽/区域底色，不符进 must_fix）→ 产出：
    - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举；`score_floor` 含 N×N 分块最小相似度）
    - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数）
 4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。

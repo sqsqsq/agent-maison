@@ -146,7 +146,8 @@
   1. 读取 `device-testing/device-screenshots/visual-diff.json`：每屏须含 `reverse_missing[]`（逐元素枚举，可为 `[]`）
   2. 对照 `spec/ref-elements.yaml`：`disposition: implement` 的元素须在 ui-spec 覆盖，或出现在某屏 `reverse_missing`
   3. `must_fix` / `verdict=fail` 须逐元素说明；脚本 FAIL/BLOCKER 时本项 FAIL
-  4. A/B/C 边界：C 类动态交互不在静态参考图承诺内
+  4. **G3 样式/布局逐项核对（pixel_1to1）**：对 ui-spec 声明了 `variant` / `layout_group` / `align` / `width_ratio` / `bg_color` 的节点，逐一在真机截图上核对——按钮填充形态是否匹配 `variant`（实心/tonal/描边/幽灵/纯文字）、同 `layout_group` 元素是否真同行、`align`/`width_ratio` 是否一致（治"全宽 vs 右侧药丸"）、区域 `bg_color` 是否匹配（治灰底 vs 蓝底）；不符须写入对应屏 `must_fix`，pixel_1to1 下视为保真残差
+  5. A/B/C 边界：C 类动态交互不在静态参考图承诺内
 
 ---
 

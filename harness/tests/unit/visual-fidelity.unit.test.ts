@@ -28,7 +28,7 @@ import { checkAssetAcquisition } from '../../../profiles/hmos-app/harness/asset-
 import { checkFidelityGovernance } from '../../../profiles/hmos-app/harness/fidelity-governance-check';
 import { checkCaptureCompleteness, checkCaptureStyleFields } from '../../../profiles/hmos-app/harness/capture-completeness-check';
 import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-manifest-check';
-import { collectSemanticColorBindingIssues } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
+import { collectSemanticColorBindingIssues, collectVariantParityIssues, hasSolidButtonBackground } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
 import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { detectPixel1to1Intent } from '../../scripts/utils/fidelity-shared';
@@ -1152,6 +1152,69 @@ export function runAll(): UnitCaseResult[] {
       const specMd = '```yaml\nui_change: new_or_changed\nfidelity_target: semantic_layout\n```\n';
       const r = checkCaptureStyleFields(baseCtx(root), specMd);
       if (r.length !== 0) throw new Error('semantic_layout 不应产出（零噪声）：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G3 Slice 3：按钮填充分类纯函数（实心/透明/无）
+  run('has_solid_button_background', () => {
+    if (!hasSolidButtonBackground("Button('x').backgroundColor($r('app.color.brand_primary'))")) {
+      throw new Error('实心 backgroundColor 应判 true');
+    }
+    if (hasSolidButtonBackground("Button('x').backgroundColor(Color.Transparent)")) {
+      throw new Error('Color.Transparent 不应判 true');
+    }
+    if (hasSolidButtonBackground("Button('x').fontSize(16)")) {
+      throw new Error('无 backgroundColor 不应判 true');
+    }
+  });
+
+  // G3 Slice 3：声明 variant=ghost 但单 Button struct 被实心填充 → WARN（静态早警）
+  run('variant_parity_ghost_but_solid_fill_warn', () => {
+    const root = mkProject();
+    try {
+      fs.mkdirSync(path.join(root, 'doc', 'features', 'bank-card', 'plan'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'plan', 'visual-parity.yaml'),
+        ['components:', '  - ui_spec_node_id: cta', '    contract_component: CtaButton'].join('\n'),
+      );
+      const etsDir = path.join(root, 'features', 'wallet', 'src', 'main', 'ets');
+      fs.mkdirSync(etsDir, { recursive: true });
+      fs.writeFileSync(path.join(etsDir, 'Cta.ets'), [
+        '@Component',
+        'struct CtaButton {',
+        '  build() {',
+        "    Button('添加管理卡片').backgroundColor($r('app.color.brand_primary'))",
+        '  }',
+        '}',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: cta',
+        '          type: action_button',
+        '          order: 0',
+        '          variant: ghost',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const doc = loadUiSpecFile(uiSpecAbsPath(root, 'bank-card'))!;
+      const ctx = baseCtx(root, {
+        featureSpec: { feature: 'bank-card', contracts: { modules: [{ package_path: 'features/wallet' }] } },
+      } as unknown as Partial<CheckContext>);
+      const issues = collectVariantParityIssues(ctx, doc, false);
+      if (!issues.some(i => i.kind === 'variant' && i.id === 'cta')) {
+        throw new Error('ghost 按钮实心填充未告警：' + JSON.stringify(issues));
+      }
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
