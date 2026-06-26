@@ -309,8 +309,9 @@ structure_checks:
 
   fidelity_deferrals:
     description: >
-      pixel_1to1 下 P0 视觉元素 defer 须登记 fidelity_deferrals 且 human_signed: true；
-      判据为有无人类签字而非有无登记；headless 无批准即 BLOCKER。
+      pixel_1to1 下 P0 视觉元素 defer 须登记 fidelity_deferrals 且**真人**签字（human_signed: true
+      且 signed_by 非自动化身份，goal-mode-auto 等自签不算；headless 缺 signed_by 亦不算）；
+      判据为有无真人签字而非有无登记；headless 无真人批准即 BLOCKER。
     severity: BLOCKER
     rule:
       expect: "fidelity_deferrals_human_signed"

@@ -60,6 +60,16 @@ JSON Schema：`framework/harness/schemas/ui-spec.schema.json`。
 
 组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`children[]`。
 
+**G3 捕获保真字段**（pixel_1to1 下务必逐项捕获，否则 coding 易默认错误样式/布局）：
+
+| 字段 | 取值 | 治什么 |
+|------|------|--------|
+| `variant` | `filled` / `tonal` / `outlined` / `ghost` / `text` | 按钮"实心蓝 vs 浅灰药丸/幽灵按钮"错绑 |
+| `layout_group` | 字符串 id | 同一 id 的元素在**同一行/容器**内（同行分组） |
+| `align` | `start` / `center` / `end` / `space_between` / `stretch` | 左对齐 vs 居中、靠右 |
+| `width_ratio` | 0–1 | "全宽按钮 vs 右侧药丸"（如 0.4≈占 40% 宽） |
+| `bg_color` | token 名 | 区域/容器底色（卡包区灰底 vs 实现蓝底） |
+
 ## 捕获完整性：`ref-elements.yaml`（v2.4+）
 
 与 ui-spec 并列产出 **`doc/features/<feature>/spec/ref-elements.yaml`**：参考图侧**独立枚举**（分母不得取自 ui-spec 自身）。

@@ -68,6 +68,30 @@
         "style_ref": { "type": "string" },
         "asset_ref": { "type": "string" },
         "bbox": { "$ref": "#/definitions/bbox" },
+        "variant": {
+          "type": "string",
+          "enum": ["filled", "tonal", "outlined", "ghost", "text"],
+          "description": "G3：按钮视觉变体（治实心蓝 vs 浅灰药丸/幽灵按钮）"
+        },
+        "layout_group": {
+          "type": "string",
+          "description": "G3：同行/同容器布局分组 id（同一 id 元素在同一行）"
+        },
+        "align": {
+          "type": "string",
+          "enum": ["start", "center", "end", "space_between", "stretch"],
+          "description": "G3：主轴对齐"
+        },
+        "width_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "G3：宽度占比 0–1（治全宽 vs 右侧药丸）"
+        },
+        "bg_color": {
+          "type": "string",
+          "description": "G3：区域/容器背景色 token（治灰底 vs 蓝底）"
+        },
         "children": {
           "type": "array",
           "items": { "$ref": "#/definitions/componentNode" }

@@ -29,6 +29,6 @@
 ## 视觉保真捕获（v2.4+ · pixel_1to1）
 
 - Step 2 须按**分区扫描**产出 `spec/ref-elements.yaml`（参考图侧独立枚举；`implement | defer` 二选一）。
-- `ref-elements` 中 `disposition: defer` 须在 spec Visual Handoff 块登记 `fidelity_deferrals` 且 **`human_signed: true`**。
+- `ref-elements` 中 `disposition: defer` 须在 spec Visual Handoff 块登记 `fidelity_deferrals` 且 **真人签字**（`human_signed: true` 且 `signed_by` 非自动化身份；`goal-mode-auto` 等自签不算）。
 - ui-spec 须写 `must_have_elements` / `semantic_role` / `color_ref` / `icon` / `badge`；plan 阶段补 `visual-parity.yaml` 组件映射供 coding **组件级** token 绑定校验。
 - `pixel_1to1` 联动产出 `spec/asset-manifest.yaml`（素材需求清单，拒绝 AI 山寨资产）。

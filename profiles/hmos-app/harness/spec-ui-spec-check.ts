@@ -18,6 +18,7 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { missingUiSpecGateScreens } from './ui-spec-gate';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
+import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -290,6 +291,23 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
     }];
   }
   if (verified === 'human_confirmed') {
+    // G1：headless goal-mode 无交互真人，verified: human_confirmed 必为自我认证人工
+    // （homepage「headless auto · 待人工复核」却标 human_confirmed 即此）。**任何档位**下都
+    // 不得在 headless 自签人工 gate；须改 vl_multimodal（诚实标 VL 核对）或留待真人逐屏 [x] 确认。
+    if (isGoalHeadlessEnv()) {
+      return [{
+        id: 'ui_spec_fidelity_gate',
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          'headless goal-mode 无交互真人，verified: human_confirmed 系自我认证人工；pixel_1to1 下不允许自签人工 gate。',
+        suggestion:
+          '改 verified: verified + verified_method: vl_multimodal（VL 多模态核对，不冒称人工）；或留待真人逐屏 [x] 确认后再标 human_confirmed。',
+        affected_files: [uiSpecRel],
+      }];
+    }
     const missing = missingUiSpecGateScreens(doc, specMarkdown);
     if (missing.length > 0) {
       const soft = ctx.uiSpecEnforcement === 'warn' || ctx.uiSpecEnforcement === 'reachable';

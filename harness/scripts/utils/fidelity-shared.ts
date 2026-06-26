@@ -89,6 +89,58 @@ export function parseFidelityDeferrals(doc: Record<string, unknown> | null): Fid
   return out;
 }
 
+/**
+ * G1 headless 自签伪造防线：goal-mode 等自动化身份不得冒充人类签字。
+ * homepage 失败案例：fidelity_deferrals 全 signed_by=goal-mode-auto 却 human_signed:true。
+ */
+export const AUTOMATION_SIGNER_IDS = new Set<string>([
+  'goal-mode-auto',
+  'goal-mode',
+  'goal-runner',
+  'headless',
+  'headless-auto',
+  'auto',
+  'system',
+]);
+
+export function isAutomationSigner(signedBy: string | undefined): boolean {
+  if (typeof signedBy !== 'string') return false;
+  return AUTOMATION_SIGNER_IDS.has(signedBy.trim().toLowerCase());
+}
+
+/**
+ * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
+ * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
+ */
+export function isHumanSignedDeferral(
+  d: FidelityDeferralEntry,
+  opts?: { requireExplicitSigner?: boolean },
+): boolean {
+  if (d.human_signed !== true) return false;
+  if (isAutomationSigner(d.signed_by)) return false;
+  // headless：缺 signed_by 视为可疑自签（真人会留名）→ 不算人签；交互态缺省仍算人工。
+  if (opts?.requireExplicitSigner) {
+    return typeof d.signed_by === 'string' && d.signed_by.trim().length > 0;
+  }
+  return true;
+}
+
+/**
+ * G2：从需求/spec 文本识别强 1:1 还原意图。命中即应置 fidelity_target: pixel_1to1。
+ * homepage 失败案例：原始需求 6× "完全参考 X.jpg" 却被自动降级为 semantic_layout。
+ * 注：强信号常在原始需求文档，spec.md 未必转述——故 TS 侧仅作弱兜底 nudge，主力在 spec 生成提示词。
+ */
+const PIXEL_1TO1_INTENT_PATTERNS: readonly RegExp[] = [
+  /完全参考/, /完全按照/, /完全还原/, /精确还原/, /严格按/, /严格参照/, /照(着|图)/,
+  /像素级/, /逐像素/, /100\s*%\s*还原/, /1\s*[:：比]\s*1/, /一比一/,
+  /pixel[\s-]?perfect/i, /\b1\s*to\s*1\b/i,
+];
+
+export function detectPixel1to1Intent(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !text.trim()) return false;
+  return PIXEL_1TO1_INTENT_PATTERNS.some(re => re.test(text));
+}
+
 /** pixel_1to1 联动：默认抬升 user_dir */
 export function effectiveAssetAcquisitionMode(
   fidelityTarget: FidelityTarget,
@@ -212,9 +264,10 @@ export function resolveRefElementsDenominator(
 export function findUnsignedRefElementDefers(
   refDoc: RefElementsDoc,
   deferrals: FidelityDeferralEntry[],
+  opts?: { requireExplicitSigner?: boolean },
 ): string[] {
   const signedIds = new Set(
-    deferrals.filter(d => d.human_signed).map(d => d.element_id.toLowerCase()),
+    deferrals.filter(d => isHumanSignedDeferral(d, opts)).map(d => d.element_id.toLowerCase()),
   );
   const declaredIds = new Set(deferrals.map(d => d.element_id.toLowerCase()));
   const violations: string[] = [];

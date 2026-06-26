@@ -31,6 +31,8 @@ import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-man
 import { collectSemanticColorBindingIssues } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
 import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
+import { detectPixel1to1Intent } from '../../scripts/utils/fidelity-shared';
+import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
@@ -143,6 +145,38 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // G1：headless + pixel_1to1 下 verified: human_confirmed 系自报人工（即便 spec 有 [x]）→ BLOCKER
+  run('ui_spec_human_confirmed_headless_self_cert_blocker', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'verified_method: human_gate',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      // spec.md 含逐屏 [x]（普通态会 PASS）；headless + pixel_1to1 下应判 BLOCKER
+      const specMd = ['```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1', '```', '', '- [x] home'].join('\n');
+      const r = checkUiSpecFidelityGate(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find((x: { id: string; severity?: string; status: string }) =>
+        x.id === 'ui_spec_fidelity_gate' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      if (!hit) throw new Error('headless 自报 human_confirmed 未判 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_invalid_json_fail', () => {
     const root = mkProject();
     try {
@@ -163,6 +197,57 @@ export function runAll(): UnitCaseResult[] {
   run('visual_diff_schema_rejects_empty_screens', () => {
     const v = validateVisualDiffJson({ schema_version: '1', screens: [] }, '/tmp');
     if (v.ok) throw new Error('expected fail');
+  });
+
+  // G0 回归：复刻 homepage —— 一处 schema 错（overlay 缺图 + 非法 ref_id）不得早退出掩盖
+  // 「P0 屏全 pending → BLOCKER」。修复前 testing 假 PASS，修复后须判 BLOCKER。
+  run('visual_diff_schema_error_not_mask_p0_pending_blocker', () => {
+    const root = mkProject();
+    try {
+      const dtDir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing');
+      const shotDir = path.join(dtDir, 'device-screenshots');
+      fs.mkdirSync(shotDir, { recursive: true });
+      fs.writeFileSync(path.join(shotDir, 'shot-home.png'), 'x');
+      fs.writeFileSync(path.join(shotDir, 'shot-page2.png'), 'x');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'verified: human_confirmed',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        '  - id: page2',
+        '    priority: P0',
+        '    ref_id: page2',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n',
+      );
+      fs.writeFileSync(path.join(dtDir, 'visual-diff.md'), '# diff');
+      const shotRel = 'doc/features/bank-card/device-testing/device-screenshots';
+      fs.writeFileSync(path.join(shotDir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [
+          { screen_id: 'home', verdict: 'pending', ref_id: 'home', screenshot_path: `${shotRel}/shot-home.png`, screenshot_hash: 'aaaaaaaaaaaaaaaa' },
+          { screen_id: 'page2', verdict: 'pending', ref_id: 'page2', screenshot_path: `${shotRel}/shot-page2.png`, screenshot_hash: 'aaaaaaaaaaaaaaaa' },
+          { screen_id: 'overlay', verdict: 'pending', ref_id: 'ghost-ref', screenshot_path: `${shotRel}/shot-missing.png` },
+        ],
+      }));
+      const r = checkVisualDiff(baseCtx(root));
+      const blocker = r.find((x: { severity?: string; status: string }) => x.severity === 'BLOCKER' && x.status === 'FAIL');
+      if (!blocker) throw new Error('schema 错误掩盖了 P0-pending BLOCKER：' + JSON.stringify(r));
+      if (!/结构问题|ghost-ref|不存在/.test(blocker.details ?? '')) {
+        throw new Error('schema 问题未在 details 体现（应追加而非掩盖）：' + (blocker.details ?? ''));
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   run('visual_diff_fake_pass_rejected', () => {
@@ -787,6 +872,203 @@ export function runAll(): UnitCaseResult[] {
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G1：goal-mode-auto 自签伪造人类章 → 不算人签 → pixel_1to1 下 BLOCKER（复刻 homepage）
+  run('fidelity_deferrals_goal_mode_auto_self_sign_blocker', () => {
+    const root = mkProject();
+    try {
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    reason: defer test',
+        '    human_signed: true',
+        '    signed_by: goal-mode-auto',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL');
+      if (!hit || hit.severity !== 'BLOCKER') throw new Error('goal-mode-auto 自签被当成了人签：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G1 防误拒：真人 signed_by 仍算人签 → 不 BLOCKER
+  run('fidelity_deferrals_real_human_sign_pass', () => {
+    const root = mkProject();
+    try {
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    reason: defer test',
+        '    human_signed: true',
+        '    signed_by: alice',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      if (r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL')) {
+        throw new Error('真人签字被误拒：' + JSON.stringify(r));
+      }
+      if (!r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'PASS')) {
+        throw new Error('真人签字未通过：' + JSON.stringify(r));
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G2：1:1 意图识别 helper（正负样本）
+  run('detect_pixel_1to1_intent', () => {
+    const pos = ['页面布局完全参考 1.首页.jpg', '像素级还原', '严格按设计图', '1比1还原', 'pixel-perfect', '完全按照原图'];
+    for (const t of pos) {
+      if (!detectPixel1to1Intent(t)) throw new Error('应识别为 1:1 意图：' + t);
+    }
+    const neg = ['普通需求，结构对齐即可', '参考一下整体风格', ''];
+    for (const t of neg) {
+      if (detectPixel1to1Intent(t)) throw new Error('误判为 1:1 意图：' + t);
+    }
+  });
+
+  // G2 弱兜底 nudge：semantic_layout 但 spec 文本含 1:1 措辞 → WARN
+  run('fidelity_target_intent_nudge_warn', () => {
+    const root = mkProject();
+    try {
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: semantic_layout',
+        '```',
+        '',
+        '本需求页面布局完全参考 1.首页-无卡.jpg。',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root), specMd);
+      const hit = r.find(x => x.id === 'fidelity_target_intent_nudge' && x.status === 'WARN');
+      if (!hit) throw new Error('未对 semantic_layout + 1:1 措辞发 nudge：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // P2 真实 homepage 组合回归：headless + 原始需求含"完全参考" + spec 降 semantic_layout → BLOCKER
+  run('homepage_combo_headless_1to1_requirement_semantic_layout_blocker', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const reqDir = path.join(root, 'doc', 'features', '原始需求');
+      fs.mkdirSync(reqDir, { recursive: true });
+      fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: semantic_layout',
+        'visual_handoff:',
+        '  kind: screenshot_pack',
+        '  authoritative_refs:',
+        '    - id: home',
+        '      path: doc/features/原始需求/1.png',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    human_signed: true',
+        '    signed_by: goal-mode-auto',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root), specMd);
+      const blocker = r.find(x => x.id === 'fidelity_target_intent_nudge' && x.severity === 'BLOCKER' && x.status === 'FAIL');
+      if (!blocker) throw new Error('homepage 组合（原始需求 1:1 + spec 降档 + headless）未判 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // P1-G1：headless 下 human_signed:true 但缺 signed_by → 视为自签 → BLOCKER（不可绕过）
+  run('fidelity_deferrals_headless_missing_signer_blocker', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    human_signed: true',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd);
+      const hit = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      if (!hit) throw new Error('headless 缺 signed_by 被当人签：' + JSON.stringify(r));
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G3 地基：ui-spec 捕获保真字段（variant/align/width_ratio/layout_group/bg_color）schema 校验
+  run('ui_spec_schema_g3_capture_fields', () => {
+    const okErrors = validateUiSpecSchema({
+      schema_version: '1.0',
+      verified: 'human_confirmed',
+      screens: [{
+        id: 'home', priority: 'P0', ref_id: 'home',
+        root: {
+          type: 'navigation_frame', order: 0, bg_color: 'wallet.page_bg', children: [
+            { id: 'cta', type: 'action_button', order: 0, variant: 'ghost', align: 'end', width_ratio: 0.4, layout_group: 'card_pack_row' },
+          ],
+        },
+      }],
+      tokens: {}, assets: [],
+    } as unknown as Parameters<typeof validateUiSpecSchema>[0]);
+    if (okErrors.length) throw new Error('合法 G3 字段被误拒：' + JSON.stringify(okErrors));
+
+    const badErrors = validateUiSpecSchema({
+      schema_version: '1.0',
+      screens: [{
+        id: 'home', priority: 'P0',
+        root: { type: 'action_button', order: 0, variant: 'solid', width_ratio: 2 },
+      }],
+      tokens: {}, assets: [],
+    } as unknown as Parameters<typeof validateUiSpecSchema>[0]);
+    if (!badErrors.some(e => /variant/.test(e)) || !badErrors.some(e => /width_ratio/.test(e))) {
+      throw new Error('非法 variant/width_ratio 未被拒：' + JSON.stringify(badErrors));
+    }
+  });
+
+  // G3 drift 守卫：ui-spec.schema.json（SSOT）的 G3 字段须与 runtime validator 的 enum/约束一致
+  run('ui_spec_schema_json_g3_fields_synced', () => {
+    const schemaPath = path.resolve(__dirname, '../../schemas/ui-spec.schema.json');
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
+    const props = schema?.definitions?.componentNode?.properties ?? {};
+    const variantEnum = props.variant?.enum;
+    if (!Array.isArray(variantEnum) || variantEnum.join(',') !== [...BUTTON_VARIANT_ENUM].join(',')) {
+      throw new Error('schema variant enum 与 validator 漂移：' + JSON.stringify(variantEnum));
+    }
+    const alignEnum = props.align?.enum;
+    if (!Array.isArray(alignEnum) || alignEnum.join(',') !== [...ALIGN_ENUM].join(',')) {
+      throw new Error('schema align enum 与 validator 漂移：' + JSON.stringify(alignEnum));
+    }
+    if (props.width_ratio?.type !== 'number' || props.width_ratio?.minimum !== 0 || props.width_ratio?.maximum !== 1) {
+      throw new Error('schema width_ratio 约束缺失/漂移：' + JSON.stringify(props.width_ratio));
+    }
+    for (const k of ['layout_group', 'bg_color']) {
+      if (props[k]?.type !== 'string') throw new Error(`schema 缺 ${k}: string`);
     }
   });
 

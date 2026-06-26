@@ -98,7 +98,7 @@
 |------|------|------|
 | `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
 | `asset_acquisition_mode` | `approximate`（默认） / `auto_crop` / `user_dir` | `pixel_1to1` 联动默认抬升为 `user_dir` |
-| `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须 `human_signed: true`（判据=人类签字） |
+| `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须**真人**签字：`human_signed: true` 且 `signed_by` 非自动化身份（`goal-mode-auto` 等自签不算；headless 缺 `signed_by` 亦不算） |
 
 `authoritative_refs` 新增 kind：**`asset_pack`**（用户素材目录，与 `repo_assets` 同样要求 `path`）。
 

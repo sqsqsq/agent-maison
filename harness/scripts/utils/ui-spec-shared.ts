@@ -26,6 +26,11 @@ export type UiSpecVerified = 'verified' | 'unverified' | 'human_confirmed';
 
 export type UiSpecSemanticRole = 'success' | 'brand_primary' | 'danger' | 'promo' | 'neutral';
 
+/** G3：按钮视觉变体——治"brand_primary 实心蓝 vs 浅灰药丸/幽灵按钮"错绑 */
+export type UiSpecButtonVariant = 'filled' | 'tonal' | 'outlined' | 'ghost' | 'text';
+/** G3：主轴对齐（同行内 / 容器内） */
+export type UiSpecAlign = 'start' | 'center' | 'end' | 'space_between' | 'stretch';
+
 export interface UiSpecIconRef {
   kind?: 'brand_logo' | 'system_symbol' | 'illustration';
   ref?: string;
@@ -45,6 +50,16 @@ export interface UiSpecComponentNode {
   color_ref?: string;
   icon?: UiSpecIconRef;
   badge?: string;
+  /** G3：按钮视觉变体（filled/tonal/outlined/ghost/text） */
+  variant?: UiSpecButtonVariant;
+  /** G3：同行/同容器布局分组 id（同一 layout_group 的元素在同一行/容器内） */
+  layout_group?: string;
+  /** G3：主轴对齐 */
+  align?: UiSpecAlign;
+  /** G3：宽度占比 0–1（治"全宽按钮 vs 右侧药丸"） */
+  width_ratio?: number;
+  /** G3：区域/容器背景色 token（卡包区灰底 vs 实现蓝底） */
+  bg_color?: string;
   children?: UiSpecComponentNode[];
 }
 

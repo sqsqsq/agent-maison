@@ -134,35 +134,48 @@ export function validateVisualDiffJson(
   raw: unknown,
   projectRoot: string,
   opts?: { authoritativeRefIds?: Set<string> },
-): { ok: true; report: VisualDiffReport } | { ok: false; errors: string[] } {
+):
+  | { ok: true; report: VisualDiffReport; errors: string[]; fatal: false }
+  | { ok: false; report: VisualDiffReport | null; errors: string[]; fatal: boolean } {
   const errors: string[] = [];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { ok: false, errors: ['root must be object'] };
+    return { ok: false, report: null, errors: ['root must be object'], fatal: true };
   }
   const rep = raw as Record<string, unknown>;
-  if (typeof rep.schema_version !== 'string' || !rep.schema_version.trim()) {
+  const schemaVersion =
+    typeof rep.schema_version === 'string' && rep.schema_version.trim() ? rep.schema_version.trim() : '';
+  if (!schemaVersion) {
     errors.push('schema_version 必填');
   }
   if (!Array.isArray(rep.screens) || rep.screens.length === 0) {
+    // 无 screens 数组 = 无可门禁对象（fatal）；其余 schema 问题走 best-effort 部分 report。
     errors.push('screens 须为非空数组');
-  } else {
+    return { ok: false, report: null, errors, fatal: true };
+  }
+
+  // G0：凡有合法 screen_id + verdict 的屏都进 best-effort report，让下游 P0-pending /
+  // 撞-hash / 缺屏 / score-floor 等实质门禁仍可计算；缺图、非法 ref_id 等 schema 问题
+  // 记入 errors 由调用方「追加一条 finding」，不再因一处 schema 错就早退出掩盖真 BLOCKER。
+  const bestEffortScreens: VisualDiffScreenEntry[] = [];
+  {
     for (const [i, s] of (rep.screens as unknown[]).entries()) {
       if (!s || typeof s !== 'object') {
         errors.push(`screens[${i}] 须为 object`);
         continue;
       }
       const row = s as Record<string, unknown>;
-      if (typeof row.screen_id !== 'string' || !row.screen_id.trim()) {
+      const screenIdValid = typeof row.screen_id === 'string' && Boolean(row.screen_id.trim());
+      if (!screenIdValid) {
         errors.push(`screens[${i}].screen_id 必填`);
       }
       const verdict = row.verdict;
-      if (
-        verdict !== 'pass' &&
-        verdict !== 'warn' &&
-        verdict !== 'fail' &&
-        verdict !== 'skipped' &&
-        verdict !== 'pending'
-      ) {
+      const verdictValid =
+        verdict === 'pass' ||
+        verdict === 'warn' ||
+        verdict === 'fail' ||
+        verdict === 'skipped' ||
+        verdict === 'pending';
+      if (!verdictValid) {
         errors.push(`screens[${i}].verdict 非法：${String(verdict)}`);
       }
       const shot = row.screenshot_path;
@@ -218,10 +231,23 @@ export function validateVisualDiffJson(
           errors.push(`screens[${i}] score_floor 须在 [0,1]，收到 ${scoreFloor}`);
         }
       }
+
+      if (screenIdValid && verdictValid) {
+        bestEffortScreens.push(row as unknown as VisualDiffScreenEntry);
+      }
     }
   }
-  if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, report: rep as unknown as VisualDiffReport };
+
+  const report: VisualDiffReport = {
+    schema_version: schemaVersion || '0',
+    screens: bestEffortScreens,
+    ...(typeof rep.degraded === 'boolean' ? { degraded: rep.degraded } : {}),
+    ...(typeof rep.degrade_reason === 'string' ? { degrade_reason: rep.degrade_reason } : {}),
+  };
+  if (errors.length > 0) {
+    return { ok: false, report, errors, fatal: false };
+  }
+  return { ok: true, report, errors: [], fatal: false };
 }
 
 interface VisualDiffHit {
@@ -389,19 +415,26 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
   const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
-  if (!validated.ok) {
+  const bestEffortReport = validated.report;
+  if (validated.fatal || !bestEffortReport) {
+    // root 非法 / screens 数组缺失：无可门禁对象。UI change=new_or_changed 且有 P0 目标屏时
+    // 不得静默放行（视为「无有效视觉证据」），升 BLOCKER。
+    const p0Targets = collectP0VisualTargetIds(uiDoc);
+    const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
     return [{
       id: 'visual_diff',
       category: 'structure',
       description: desc,
-      severity: 'MAJOR',
+      severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
       status: 'FAIL',
-      details: `visual-diff.json schema 无效：${validated.errors.join('；')}`,
+      details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
       affected_files: [reportRel],
     }];
   }
 
-  const rep = validated.report;
+  // G0：非 fatal 的 schema 问题（缺图 / 非法 ref_id 等）转 finding 追加，绝不掩盖下方实质门禁。
+  const rep = bestEffortReport;
+  const schemaErrors = validated.errors;
   const mustFix = rep.screens.flatMap(s => s.must_fix ?? []);
   const failScreens = rep.screens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
@@ -468,6 +501,17 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   ].filter(Boolean).join('；');
 
   const hits: VisualDiffHit[] = [];
+
+  if (schemaErrors.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_schema',
+      severity: 'MAJOR',
+      status: 'FAIL',
+      line:
+        `visual-diff.json 结构问题（已继续计算实质门禁、未掩盖）：` +
+        `${schemaErrors.slice(0, 6).join('；')}${schemaErrors.length > 6 ? '…' : ''}`,
+    });
+  }
 
   if (p0Uncovered.length > 0) {
     const uiChangeGate = uiChange === 'new_or_changed';
