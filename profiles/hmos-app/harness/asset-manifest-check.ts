@@ -107,6 +107,36 @@ export function checkAssetManifest(ctx: CheckContext): CheckResult[] {
     });
   }
 
+  // G4：禁止通用图标冒充品牌 logo —— pixel_1to1 下 brand_logo/illustration 节点须有真实素材
+  // (asset_ref) 或显式 placeholder；二者皆无 = 会渲染成通用图标冒充（比纯占位更误导）。
+  if (isPixel1to1(ctx)) {
+    const placeholderKeys = new Set((uiDoc.assets ?? []).filter(a => a.placeholder).map(a => a.key));
+    const impersonationRisk = collectAllComponentNodes(uiDoc).filter(n => {
+      const kind = n.icon?.kind;
+      if (kind !== 'brand_logo' && kind !== 'illustration') return false;
+      const hasRealSource = Boolean(n.asset_ref);
+      const key = n.icon?.ref ?? n.asset_ref ?? n.id ?? '';
+      const honestPlaceholder = Boolean(key) && placeholderKeys.has(key);
+      return !hasRealSource && !honestPlaceholder;
+    });
+    if (impersonationRisk.length > 0) {
+      const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
+      results.push({
+        id: 'brand_asset_honesty',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: [
+          `pixel_1to1 下 ${impersonationRisk.length} 个 brand_logo/illustration 既无真实素材(asset_ref)也未显式 placeholder`,
+          impersonationRisk.slice(0, 8).map(n => n.icon?.ref ?? n.id ?? n.type).join(', '),
+          '禁止用通用线框图标冒充品牌 logo（比纯占位更误导）；须提供 user_dir 素材或显式标 placeholder。',
+        ].join('\n'),
+        affected_files: [uiSpecRel],
+      });
+    }
+  }
+
   const effectiveMode = ctx.effectiveAssetAcquisitionMode ?? 'approximate';
   if (effectiveMode === 'user_dir' && !fs.existsSync(manifestAbs)) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isPixel1to1(ctx));

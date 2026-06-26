@@ -1221,6 +1221,73 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // G4：brand_logo 既无真实素材也未显式占位（会被通用图标冒充）→ pixel_1to1 BLOCKER
+  run('brand_asset_honesty_impersonation_blocker', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: huawei_card',
+        '          type: content_display',
+        '          order: 0',
+        '          icon: { kind: brand_logo, ref: huawei_card_logo }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const r = checkAssetManifest(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find(x => x.id === 'brand_asset_honesty' && x.status === 'FAIL' && x.severity === 'BLOCKER');
+      if (!hit) throw new Error('brand_logo 无素材无占位未判 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // G4 防误判：brand_logo 显式标 placeholder → 走占位诚实路径，不判 impersonation
+  run('brand_asset_honesty_placeholder_not_impersonation', () => {
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    root:',
+        '      type: navigation_frame',
+        '      order: 0',
+        '      children:',
+        '        - id: huawei_card',
+        '          type: content_display',
+        '          order: 0',
+        '          icon: { kind: brand_logo, ref: huawei_card_logo }',
+        'tokens: {}',
+        'assets:',
+        '  - key: huawei_card_logo',
+        '    acquisition: repo_ref',
+        '    placeholder: true',
+        '    rationale: 无真实素材',
+      ].join('\n'));
+      const r = checkAssetManifest(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (r.find(x => x.id === 'brand_asset_honesty')) {
+        throw new Error('显式占位被误判为 impersonation：' + JSON.stringify(r));
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('capture_completeness_missing_ref_elements_blocker', () => {
     const root = mkProject();
     try {
