@@ -77,19 +77,24 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 `--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。
 
-#### 启动方式（按宿主 shell 能力分流 · BLOCKER）
+#### 启动方式（survival-first · BLOCKER）
 
-goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟）。**绝不能**把它当一条普通阻塞命令塞进有超时的 shell 工具里——否则 shell 工具秒级超时，runner 变孤儿进程后台续跑、agent 误判超时又重复起 run，互相杀子进程（chrys 实测坑）。按宿主 shell 能力二选一：
+goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟），goal 模式的承诺是**无人值守过夜跑完**。这里有一个**必须纠正的概念错误**：宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让你**立即拿回控制权**，但进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾时会被宿主回收（实测：用 `is_background` 直挂的 run 在轮次收尾即被杀，留下"显示运行中的尸体"）。**"拿回控制权" ≠ "进程能活过我的会话"。**
 
-- **宿主 shell 支持后台启动**（Cursor `is_background` / Claude Code `run_in_background` 等）→ 用宿主的后台模式启动上面的命令，立即拿到控制权。
-- **宿主 shell 仅阻塞、无后台、有超时上限**（chrys / opencode 等 TUI 的内置 shell）→ **必须加 `--detach`**：
+因此**无人值守一律用真 `--detach`**（不是只靠 `is_background`）：
 
-  ```bash
-  cd framework/harness && npx ts-node scripts/goal-runner.ts \
-    --feature <feature-slug> --requirement "<需求>" --adapter <adapter> --detach
-  ```
+```bash
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "<需求>" --adapter <adapter> --detach
+```
 
-  `--detach` 让 goal-runner **秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0**——宿主 shell 拿到干净的 0 退出码就返回（不会触发超时杀树），真正的 run 在后台独立跑、逐 phase 拉 headless agent。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`，不占用宿主 shell 的管道。**解析该 JSON 取 `run_id`**，随后按下文进入 bounded monitor。
+`--detach` 是**真正的 OS 脱离**（`detached:true` + `unref()` + stdio 落 `report_dir/detach.log`）：launcher 秒级 fork 到后台、打印 `{run_id, report_dir, log, pid}` JSON 后 exit 0，真正的 run 在后台独立跑、**活过宿主会话 / 轮次空闲**（实测：Cursor 完全关闭再重开，`--detach` 的 run 毫发无损）。宿主若支持后台模式，可再叠加它让 launcher 那一下也不阻塞，但**存活由 `--detach` 保证，不靠 `is_background`**。launcher 的 stdout 只有那行 JSON；后台进程输出全部进 `report_dir/detach.log`。**解析 JSON 取 `run_id`**。
+
+> **机制级护栏**：`goal-runner` 现在会**阻断**前台启动的无人值守真跑（`approval_mode=never` 且无 `--detach`，非 dry-run/detached-child）→ BLOCKER 退出，提示改用 `--detach`。确为人工前台 / 短任务时，显式加 `--foreground-ok` 放行（降为警告）。这把"一律 `--detach`"从文档约定升为代码约束。
+
+**启动后存活自校验（BLOCKER）**：拿到 `run_id` 后必须确认它**真的起来了**——`report_dir/detach.log` 在增长、`goal-status` 活性正常。若 launcher 返回但 run 没起（detach.log 不长 / 立刻判 STALLED/INTERRUPTED），如实报"启动未存活"，**不要**回报"已在后台跑"。随后按下文进入 bounded monitor。
+
+> **存活是环境属性**：对 Cursor / 本机已实测 `--detach` 可活过会话。若换到会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI），`--detach` 也可能保不住——那种环境须由宿主调度任务（cron / Windows Task Scheduler）托管 run，不能只靠 `--detach`。
 
 ### 续跑
 

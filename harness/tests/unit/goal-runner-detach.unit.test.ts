@@ -3,7 +3,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildDetachedChildArgv, resolveOrphanedIncompleteRun } from '../../scripts/goal-runner';
+import {
+  buildDetachedChildArgv,
+  evaluateForegroundSurvival,
+  resolveOrphanedIncompleteRun,
+} from '../../scripts/goal-runner';
 import { newRunId } from '../../scripts/utils/goal-manifest';
 import { FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import type { UnitCaseResult } from '../run-unit';
@@ -150,6 +154,22 @@ const cases: Array<{ name: string; run: () => void }> = [
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    },
+  },
+  {
+    name: 'evaluateForegroundSurvival: blocks foreground unattended run without --detach',
+    run: () => {
+      const ev = evaluateForegroundSurvival;
+      // OS-detached child and dry-run are always fine
+      assert(ev({ detachedChild: true, dryRun: false, foregroundOk: false, approvalMode: 'never' }) === 'ok', 'detached child → ok');
+      assert(ev({ detachedChild: false, dryRun: true, foregroundOk: false, approvalMode: 'never' }) === 'ok', 'dry-run → ok');
+      // real unattended (approval_mode=never) foreground without --detach → block
+      assert(ev({ detachedChild: false, dryRun: false, foregroundOk: false, approvalMode: 'never' }) === 'block', 'foreground never → block');
+      // --foreground-ok downgrades the block to a warning
+      assert(ev({ detachedChild: false, dryRun: false, foregroundOk: true, approvalMode: 'never' }) === 'warn', 'foreground-ok → warn');
+      // non-never (interactive) foreground is not blocked
+      assert(ev({ detachedChild: false, dryRun: false, foregroundOk: false, approvalMode: 'on-request' }) === 'ok', 'on-request → ok');
+      assert(ev({ detachedChild: false, dryRun: false, foregroundOk: false, approvalMode: undefined }) === 'ok', 'undefined approval → ok');
     },
   },
 ];

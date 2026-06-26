@@ -155,6 +155,11 @@ let progressSubstep: 'agent_invoke' | 'harness' | 'prompt' | 'verdict' | null = 
 let progressPhase: FeaturePhase | null = null;
 let progressHeartbeatHook: (() => void) | null = null;
 
+/** Set once the manifest is loaded; lets signal/exit handlers locate events.jsonl. */
+let terminalEventCtx: { reportDir: string; projectRoot: string } | null = null;
+/** True once any run_end (normal or interrupted) is written — keeps terminal event idempotent. */
+let runConcluded = false;
+
 /** minimist ParsedArgs → ManifestCliArgv（避免 TS2559 索引签名不兼容）。 */
 function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
   return {
@@ -179,8 +184,30 @@ function guardNestedGoalRunner(): void {
   }
 }
 
+/**
+ * Decide how to treat the launch's survival posture. A real (non-dry-run) unattended run
+ * (`approval_mode=never`) started in the FOREGROUND — no `--detach`, and not the OS-detached
+ * child — is session-bound: the host reaps it when the agent turn/session ends (the 2026-06
+ * incident, where `is_background` left a "running" corpse). Block it unless `--foreground-ok`
+ * is given (manual / short / deliberately-foreground run). The OS-detached child and dry-runs
+ * are always fine.
+ */
+export function evaluateForegroundSurvival(opts: {
+  detachedChild: boolean;
+  dryRun: boolean;
+  foregroundOk: boolean;
+  approvalMode: string | undefined;
+}): 'ok' | 'warn' | 'block' {
+  if (opts.detachedChild || opts.dryRun) return 'ok';
+  if (opts.approvalMode !== 'never') return 'ok';
+  return opts.foregroundOk ? 'warn' : 'block';
+}
+
 function setupSignalHandlers(): void {
-  const handler = (): void => {
+  const handler = (signal: NodeJS.Signals): void => {
+    // Synchronous + first: a host kill may not grant async time, so the terminal event
+    // must land (appendFileSync) before the async tree-kills below.
+    writeTerminalEvent(`signal:${signal}`);
     void (async () => {
       if (activeAgentKill) {
         try {
@@ -202,6 +229,9 @@ function setupSignalHandlers(): void {
   };
   process.on('SIGINT', handler);
   process.on('SIGTERM', handler);
+  // Windows: SIGTERM is delivered as an uncatchable terminate; SIGBREAK (Ctrl-Break /
+  // console close) is the catchable signal that actually fires there.
+  process.on('SIGBREAK', handler);
 }
 
 function releaseAllLocks(): void {
@@ -216,6 +246,27 @@ function appendEvent(reportDir: string, projectRoot: string, event: Record<strin
   const abs = path.join(projectRoot, reportDir, 'events.jsonl');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.appendFileSync(abs, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n', 'utf-8');
+}
+
+/**
+ * Write a terminal `run_end{status:INTERRUPTED}` on any abnormal exit (catchable signal /
+ * crash / process exit) so an interrupted run is never silent — projection then shows
+ * INTERRUPTED instead of a frozen RUNNING. Idempotent: a normal run_end sets `runConcluded`
+ * and suppresses this; multiple exit hooks firing only write once. Best-effort and never
+ * throws (exit paths must not blow up).
+ */
+function writeTerminalEvent(reason: string): void {
+  if (runConcluded || !terminalEventCtx) return;
+  runConcluded = true;
+  try {
+    appendEvent(terminalEventCtx.reportDir, terminalEventCtx.projectRoot, {
+      type: 'run_end',
+      status: 'INTERRUPTED',
+      reason,
+    });
+  } catch {
+    /* best-effort */
+  }
 }
 
 function readPhaseSummary(
@@ -706,7 +757,7 @@ async function main(): Promise<number> {
     string: ['feature', 'requirement', 'adapter', 'start', 'end', 'resume', 'manifest', 'run-id'],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
-      'detach', 'detached-child', 'force',
+      'detach', 'detached-child', 'force', 'foreground-ok',
     ],
     alias: { f: 'feature', h: 'help' },
   });
@@ -793,6 +844,31 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const dryRun = Boolean(argv['dry-run']);
   const forceResume = Boolean(argv['force-resume']);
 
+  // Survival guard (code-level enforcement of the launch contract): block a real unattended
+  // run started in the foreground without --detach — it would be reaped when the host
+  // session/turn ends (the 2026-06 incident). --foreground-ok downgrades it to a warning.
+  const survivalPosture = evaluateForegroundSurvival({
+    detachedChild: Boolean(argv['detached-child']),
+    dryRun,
+    foregroundOk: Boolean(argv['foreground-ok']),
+    approvalMode: manifest.unattended?.approval_mode,
+  });
+  if (survivalPosture === 'block') {
+    console.error(
+      '[goal-runner] BLOCKER: unattended run (approval_mode=never) started in the FOREGROUND ' +
+        'without --detach. It will be reaped when the host session/turn ends (2026-06 incident: ' +
+        'is_background left a "running" corpse). Relaunch with --detach for unattended survival, ' +
+        'or pass --foreground-ok to override (manual / short / deliberate foreground run).',
+    );
+    process.exit(1);
+  }
+  if (survivalPosture === 'warn') {
+    console.error(
+      '[goal-runner] ⚠ foreground unattended run (--foreground-ok): it will be reaped when the ' +
+        'host session/turn ends; use --detach for real unattended survival.',
+    );
+  }
+
   // Fresh start (not --resume): if an orphaned-but-incomplete run exists for this
   // feature, refuse a brand-new run_id and guide --resume (--force overrides).
   if (!argv.resume) {
@@ -867,6 +943,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       workflow,
       progressWriterState,
     );
+
+    // Arm the terminal-event safety net now that report_dir is known: any abnormal exit
+    // from here on writes run_end{INTERRUPTED} instead of dying silently.
+    terminalEventCtx = { reportDir: manifest.report_dir, projectRoot };
 
     appendEvent(manifest.report_dir, projectRoot, {
       type: 'run_start',
@@ -1305,6 +1385,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
     writeGoalReport(projectRoot, manifest.report_dir, report);
     appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+    runConcluded = true; // normal terminal written → suppress the INTERRUPTED safety net
     progressSubstep = null;
     progressPhase = null;
     progressHeartbeatHook = null;
@@ -1336,6 +1417,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 // extractPriorFailureContext）时不触发 CLI，避免解析 process.argv 与 process.exit。
 if (require.main === module) {
   process.on('exit', () => {
+    // Backstop for any JS-observable exit (crash, process.exit) that didn't already
+    // conclude — no-op once a run_end (normal or interrupted) was written.
+    writeTerminalEvent('process_exit');
     releaseAllLocks();
   });
 
@@ -1345,6 +1429,7 @@ if (require.main === module) {
     })
     .catch((err) => {
       console.error((err as Error)?.message ?? err);
+      writeTerminalEvent('uncaught_exception');
       releaseAllLocks();
       process.exit(1);
     });

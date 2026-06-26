@@ -650,6 +650,119 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'incident replay (detection): dangling harness_start + lock cleaned 11h → STALLED not RUNNING',
+    run: () => {
+      // 2026-06-25 homepage run: plan agent_invoke_end → harness_start, runner died, locks
+      // released on graceful exit, 11h silence. Must NOT project as RUNNING (the user bug).
+      const now = new Date('2026-06-25T13:53:03.091Z').getTime() + 11 * 3600 * 1000;
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-25T13:37:06.329Z', type: 'run_start', chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] },
+        { ts: '2026-06-25T13:37:06.332Z', type: 'phase_start', phase: 'spec', attempt: 1 },
+        { ts: '2026-06-25T13:43:58.626Z', type: 'phase_verdict', phase: 'spec', verdict: 'PASS', action: 'advance' },
+        { ts: '2026-06-25T13:43:58.632Z', type: 'phase_start', phase: 'plan', attempt: 1 },
+        { ts: '2026-06-25T13:43:58.662Z', type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-1' },
+        { ts: '2026-06-25T13:53:03.089Z', type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-1', exit_code: 0 },
+        { ts: '2026-06-25T13:53:03.091Z', type: 'harness_start', phase: 'plan' },
+      ];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest({ feature: 'homepage' }),
+        events,
+        workflow,
+        nowMs: now,
+        liveProbe: true,
+        // featureLock omitted: released on graceful exit — the lock-cleaned signature.
+      });
+      assert(snap.status !== 'RUNNING', `must not be RUNNING, got ${snap.status}`);
+      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
+      assert(snap.liveness.state === 'STALLED', `liveness ${snap.liveness.state}`);
+    },
+  },
+  {
+    name: 'unclosed harness past phase_timeout (before dead-man) → STALLED',
+    run: () => {
+      // 70min after harness_start: > 60min phase timeout but < 90min dead-man.
+      // Isolates the unclosed-harness path from the absolute dead-man.
+      const now = new Date('2026-06-10T12:05:01.000Z').getTime() + 70 * 60 * 1000;
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['coding'] },
+        { ts: '2026-06-10T12:00:01.000Z', type: 'agent_invoke_start', phase: 'coding' },
+        { ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end', phase: 'coding', exit_code: 0 },
+        { ts: '2026-06-10T12:05:01.000Z', type: 'harness_start', phase: 'coding' },
+      ];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest({ start_phase: 'coding', end_phase: 'coding' }),
+        events,
+        workflow,
+        nowMs: now,
+        liveProbe: true,
+      });
+      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
+    },
+  },
+  {
+    name: 'absolute dead-man: all events closed but 2h silence + no lock → STALLED not RUNNING',
+    run: () => {
+      // Phase advanced but next phase_start never arrived (runner died between phases),
+      // locks cleaned, 2h silence. No unclosed invoke/harness — only the dead-man catches it.
+      const now = new Date('2026-06-10T14:08:01.000Z').getTime(); // 2h after the verdict
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['spec', 'plan'] },
+        { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'spec', attempt: 1 },
+        { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'spec', invoke_id: 'p1' },
+        { ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end', phase: 'spec', invoke_id: 'p1', exit_code: 0 },
+        { ts: '2026-06-10T12:05:01.000Z', type: 'harness_start', phase: 'spec' },
+        { ts: '2026-06-10T12:08:00.000Z', type: 'harness_end', phase: 'spec', exit_code: 0 },
+        { ts: '2026-06-10T12:08:01.000Z', type: 'phase_verdict', phase: 'spec', verdict: 'PASS', action: 'advance' },
+      ];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest({ start_phase: 'spec', end_phase: 'plan' }),
+        events,
+        workflow,
+        nowMs: now,
+        liveProbe: true,
+      });
+      assert(snap.status !== 'RUNNING', `must not be RUNNING, got ${snap.status}`);
+      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
+    },
+  },
+  {
+    name: 'terminal event: run_end INTERRUPTED → INTERRUPTED status, liveness DONE, not degraded',
+    run: () => {
+      // writeTerminalEvent path: a graceful kill (signal/.catch) writes run_end{INTERRUPTED}
+      // mid-harness. Projection must treat it as terminal, never RUNNING, never degraded.
+      const now = new Date('2026-06-10T20:00:00.000Z').getTime();
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['spec', 'plan'] },
+        { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'spec', attempt: 1 },
+        { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'spec', invoke_id: 'p1' },
+        { ts: '2026-06-10T12:05:00.000Z', type: 'agent_invoke_end', phase: 'spec', invoke_id: 'p1', exit_code: 0 },
+        { ts: '2026-06-10T12:05:01.000Z', type: 'harness_start', phase: 'spec' },
+        { ts: '2026-06-10T12:05:02.000Z', type: 'run_end', status: 'INTERRUPTED' },
+      ];
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp',
+        manifest: mkManifest({ start_phase: 'spec', end_phase: 'plan' }),
+        events,
+        workflow,
+        nowMs: now,
+        liveProbe: true,
+      });
+      assert(snap.status === 'INTERRUPTED', `expected INTERRUPTED, got ${snap.status}`);
+      assert(snap.liveness.state === 'DONE', `expected liveness DONE, got ${snap.liveness.state}`);
+      // INTERRUPTED writes no goal-report.json → must not point the user at a missing file.
+      assert(snap.artifacts.goal_report_path === null, `goal_report_path ${snap.artifacts.goal_report_path}`);
+      assert(
+        snap.next_action === 'inspect_events_or_resume',
+        `next_action ${snap.next_action} (must not be read_goal_report)`,
+      );
+      const degraded = applyFreshnessDegradation(snap, { liveProbe: true, nowMs: now });
+      assert(degraded.status === 'INTERRUPTED', `terminal must not degrade, got ${degraded.status}`);
+    },
+  },
+  {
     name: 'formatGoalStatusJson: valid JSON with schema_version',
     run: () => {
       const snap = projectGoalProgress({

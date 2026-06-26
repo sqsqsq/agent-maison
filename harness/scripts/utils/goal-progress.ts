@@ -37,6 +37,13 @@ export const LOCK_HEARTBEAT_MS = 60_000;
 export const FRESHNESS_STALE_MS = LOCK_HEARTBEAT_MS * 3;
 /** Soft stall window — quiet but lock fresh. */
 export const SOFT_STALL_MS = 10 * 60 * 1000;
+
+/**
+ * Absolute dead-man factor. A live runner heartbeats every ~60s (LOCK_HEARTBEAT_MS),
+ * so silence beyond DEAD_MAN_FACTOR×phaseTimeout means the runner is gone, not slow.
+ * Lock-independent backstop so a killed-and-lock-cleaned run never projects as RUNNING.
+ */
+export const DEAD_MAN_FACTOR = 1.5;
 export const SNAPSHOT_THROTTLE_MS = 4_000;
 
 export type ProgressRunStatus =
@@ -48,6 +55,7 @@ export type ProgressRunStatus =
   | 'DEFERRED'
   | 'PARTIAL'
   | 'HALTED'
+  | 'INTERRUPTED'
   | 'UNKNOWN';
 
 export type ProgressPhaseStatus =
@@ -169,6 +177,7 @@ const TERMINAL_RUN_STATUSES = new Set<ProgressRunStatus>([
   'DEFERRED',
   'PARTIAL',
   'HALTED',
+  'INTERRUPTED',
 ]);
 
 function relPath(projectRoot: string, abs: string): string {
@@ -450,6 +459,29 @@ function findUnclosedInvoke(
   return open;
 }
 
+/**
+ * A `harness_start` with no matching `harness_end`/`phase_verdict` after it: the
+ * orchestrator died mid-verification. `findUnclosedInvoke` cannot see this because the
+ * `agent_invoke` was already closed (the 2026-06-25 incident signature).
+ */
+function findUnclosedHarness(
+  events: GoalRunEvent[],
+): { event: GoalRunEvent; idx: number } | null {
+  let open: { event: GoalRunEvent; idx: number } | null = null;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'harness_start') {
+      open = { event: e, idx: i };
+    }
+    // harness_end closes it; phase_verdict implies the harness completed and was judged;
+    // resume supersedes a dangling start from a prior crash.
+    if (e.type === 'harness_end' || e.type === 'phase_verdict' || e.type === 'resume') {
+      open = null;
+    }
+  }
+  return open;
+}
+
 function lastEventOfTypes(events: GoalRunEvent[], types: Set<string>): GoalRunEvent | null {
   for (let i = events.length - 1; i >= 0; i--) {
     if (events[i].type && types.has(events[i].type!)) return events[i];
@@ -579,6 +611,24 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     break;
   }
 
+  // harness_start with no harness_end/phase_verdict past the phase timeout → orchestrator
+  // died mid-verification (incident: agent_invoke already closed, so findUnclosedInvoke
+  // misses it; the dangling harness_start is the only stall signal).
+  const unclosedHarness = findUnclosedHarness(events);
+  if (unclosedHarness?.event.ts) {
+    const hsMs = new Date(unclosedHarness.event.ts).getTime();
+    if (!Number.isNaN(hsMs) && nowMs - hsMs > input.phaseTimeoutMs) {
+      hardStall = true;
+    }
+  }
+
+  // Absolute dead-man (lock-independent backstop). A live runner heartbeats ~every 60s, so
+  // silence beyond DEAD_MAN_FACTOR×phaseTimeout means the runner is gone — never a slow
+  // phase. Guarantees a killed-and-lock-cleaned run cannot project as RUNNING.
+  if (secondsSince != null && secondsSince * 1000 > input.phaseTimeoutMs * DEAD_MAN_FACTOR) {
+    hardStall = true;
+  }
+
   const outputSignal =
     input.agentOutputMtimeMs == null
       ? 'missing'
@@ -706,15 +756,18 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     phase: e.phase,
   }));
 
+  const goalReportRel = path.join(reportDir, 'goal-report.json').replace(/\\/g, '/');
+  // A terminal run_end only implies a goal-report.json on the *normal* completion path.
+  // An INTERRUPTED / abnormal exit writes no report — never point the user at a missing file.
+  const goalReportExists = fs.existsSync(path.join(projectRoot, reportDir, 'goal-report.json'));
+
   let nextAction = 'wait';
   if (status === 'PENDING') nextAction = 'await_run_start';
-  else if (lastRunEnd) nextAction = 'read_goal_report';
+  else if (lastRunEnd) nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_or_resume';
   else if (currentSpan?.substep === 'agent_invoke') nextAction = 'wait_for_agent_invoke_end';
   else if (currentSpan?.substep === 'harness') nextAction = 'wait_for_harness_end';
   else if (currentSpan?.status === 'RETRYING') nextAction = 'wait_for_retry';
   else nextAction = 'wait_for_phase_verdict';
-
-  const goalReportRel = path.join(reportDir, 'goal-report.json').replace(/\\/g, '/');
   const progressRel = path.join(reportDir, 'progress.json').replace(/\\/g, '/');
 
   const phaseStartedAt = currentSpan?.started_at ?? null;
@@ -764,7 +817,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     artifacts: {
       agent_output_log: outputStat.rel,
       summary_path: null,
-      goal_report_path: lastRunEnd ? goalReportRel : null,
+      goal_report_path: goalReportExists ? goalReportRel : null,
       progress_path: progressRel,
     },
     recent_events: recentEvents,
