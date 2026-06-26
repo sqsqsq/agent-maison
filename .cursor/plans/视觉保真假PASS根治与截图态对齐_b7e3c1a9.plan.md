@@ -17,7 +17,7 @@ todos:
       (2) ui_change=new_or_changed 下 P0 视觉关键失败在 **check 层**定成 BLOCKER；
       (3) **不动全局 resolveVerdictFromChecks**（report-generator，跨阶段共用、爆炸半径大；已核实仅 BLOCKER 挂阶段）——靠 check 层 BLOCKER 达成挂阶段，全局裁定语义保持不变。
       触点：profiles/hmos-app/harness/visual-diff-check.ts:392-402 + 472-495 校验重构/严重度；**不碰 report-generator.ts resolveVerdictFromChecks**。
-    status: pending
+    status: completed
   - id: g1-headless-honesty
     content: >
       G1 headless 闭环诚实：headless goal-mode 下 P0 视觉屏仍 verdict=pending（VL 未闭环）→ HALT 求人填 verdict 或 BLOCKER，不得 PASS；
@@ -25,14 +25,14 @@ todos:
       **与 crop 闸门解耦**：`human_crop_confirmed` 不套用本条「自签即 BLOCKER」，改走 G4b 的 halt-confirm（见 g4b-crop-color-goal），避免把「从截图裁素材」在 goal 模式焊死。
       病灶证据：spec.md fidelity_deferrals 全 signed_by=goal-mode-auto；ui-spec verified=human_confirmed 亦 auto；visual-diff.json 5 屏全 pending 仍 COMPLETED。
       触点：定位 goal-mode 自动产 spec/defer/verified 签名处 + fidelity-shared 人签判据 + 前序 deferrals gate；**开工前核实自签字串来源行号**（harness/scripts/goal-runner.ts 及 spec 生成链路）。
-    status: pending
+    status: completed
   - id: g2-fidelity-intent
     content: >
       G2 1:1 意图捕获（激活全链 ratchet 的总开关）：spec 生成识别强 1:1 信号（完全参考/像素级/严格按图/1比1）→ 置 fidelity_target=pixel_1to1；
       识别不到也不静默选最弱档（headless 留 must-review，交互态问人）。
       病灶证据：原始需求 6 次「页面布局完全参考 X.jpg」，headless auto-spec 仍置 semantic_layout → ratchet 全程不升级。
       触点：skills/feature/spec/SKILL.md + spec 生成 prompt + visual-handoff 意图解析（parseVisualHandoffYamlRoot / fidelity-shared）。
-    status: pending
+    status: completed
   - id: g3-capture-fidelity
     content: >
       G3 捕获保真（A 环，screenshot-only 主战场；结构+颜色+**布局关系**一致的核心）：
@@ -42,7 +42,7 @@ todos:
       (c) **主色采样而非编造**：接 asset-acquisition.ts 既有采色，**排在 (e) 区域 bbox 之后**（采色须有可靠区域框，否则采错区/退整屏均值——Cursor P4），按区采真实主色填 token，禁止凭空 #2563EB；
       (d) **复杂区强制拆解**：宫格 N 图标 / 轮播 N 项不得压成 1 节点（service_grid/promo_swiper），分区扫描模板逐项，capture-completeness 分母按真实子项数。
       触点：harness/scripts/utils/ui-spec-shared.ts 扩字段（含 layout_group/align/width_ratio）+ profiles/hmos-app/harness/static-fidelity-score.ts / capture-completeness-check.ts + spec 分区扫描模板 + asset-acquisition.ts 采色接线。
-    status: pending
+    status: completed
   - id: g4-asset-honesty
     content: >
       G4 资产缺口诚实化（B 环，screenshot-only 物理不可达 → 不静默/不山寨）：
@@ -50,24 +50,24 @@ todos:
       **硬规则**：占位必须标「非 1:1 占位」；**禁止用通用线框图标冒充品牌 logo**（homepage 把 Huawei Card/云闪付/加油站做成通用蓝图标，比纯占位更误导）。
       病灶证据：asset_acquisition_mode=approximate、两资产全 placeholder:true、无 asset-manifest.yaml。
       触点：asset-manifest gate + static-fidelity 占位计分（前序已有骨架，收紧 severity + 加「品牌资产不得通用图标替身」校验）。
-    status: pending
+    status: completed
   - id: g4b-crop-color-goal
     content: >
       G4b 保护「从截图裁素材/采色」路径，并让 **goal 模式主动携带**该特性（用户补充诉求）。**裁图与采色分开对待（Cursor 二轮 #1/#3，二者休眠根因不同）**：
       现状：crop（asset-acquisition.ts:69-108，**有** human_crop_confirmed 人类闸门，headless 无法满足→休眠；homepage assets 全 repo_ref+placeholder 被 :70 跳过）；sampleColorFromBbox（:110-126，**无**人类闸门，休眠纯因 token 缺 source_bbox——homepage tokens 无 bbox）。
       改造：
-      ▶ **裁图 crop（有人类闸门）**：(a) 与 G1 解耦——human_crop_confirmed 不走「自签即 BLOCKER」，改走 **goal-runner halt-confirm**：VL 提案 crop bbox（**bbox 与 G3(c) 采色框同源 G3(e) 区域捕获、同属 VL 派生几何，由 halt-confirm 人工兜底**）+ 预览裁图 → 暂停求确认/微调 → 确认后置 confirmed 并确定性裁剪。
+      ▶ **裁图 crop（有人类闸门）· 已实现为门禁**：(a) 与 G1 解耦——human_crop_confirmed 不走「自签即 BLOCKER」，改为**门禁 asset_crop_confirm_required**（未确认即 ratchet：pixel_1to1→BLOCKER，否则 WARN）。**机制澄清（Cursor 二轮 P1.2）**：所谓 halt-confirm = **复用既有 BLOCKER/halt + §9 保守默认流（与 deferrals 完全同模式，goal-runner 无任何 fidelity/deferral 专属机制，故无新 goal-runner 代码）**——交互态 agent stop-and-ask 求人确认/微调 bbox → 人置 human_crop_confirmed 后重跑即确定性裁剪；headless §9 保守默认=不自动确认→BLOCKER。**残留（honest，未闭）**：headless 下 human_crop_confirmed 无 signer 字段、理论上仍可被 agent 自报（同 deferral 缺签名类残留），列为后续 `crop_confirmed_by` 字段精化，不阻塞本刀。
       (b) **休眠→BLOCKER 须条件化（Cursor #2）**：触发谓词 = `pixel_1to1` ∨ 显式 `crop/auto_crop/user_dir` 意图；**否则**（semantic_layout 默认、用户没要裁图）占位是合法 B 环，**不拦、不 BLOCKER**。
       ▶ **采色 color（无人类闸门，不需 halt-confirm/不防 G1，Cursor #3）**：(c) 只需把 G3(e) 产出的区域 bbox 写进 token.source_bbox 即按区采真实主色——挂在 G3(e) 上，G1 对它无风险。
       ▶ **前置通道**：(d) 用户在需求入口直接给 asset bbox / 素材目录（user_dir/asset_pack）→ goal 模式免 mid-run halt 直接裁/采；auto_crop 意图在 goal 模式不再静默落 approximate（接 G2/G4）。
-      触点：profiles/hmos-app/harness/asset-acquisition.ts（裁/采色逻辑保持）+ harness/scripts/goal-runner.ts halt 复用 + skills/feature/spec/SKILL.md「goal crop 触发与确认」+ visual-handoff/ui-spec 文档。
-    status: pending
+      触点：profiles/hmos-app/harness/asset-acquisition.ts（crop 确认门禁 + 裁/采色逻辑）+ **复用既有 BLOCKER/halt + §9 流（无新 goal-runner 代码）** + skills/feature/spec/SKILL.md「goal crop 触发与确认」+ visual-handoff/ui-spec 文档。
+    status: completed
   - id: g5-hifi-optional
     content: >
       G5 高保真供给通道（**可选增强，主路径不依赖**）：用户提供 Figma/高保真源时复用已落地的「在线高保真对照」——结构化派生喂 ref-elements + 导出真实素材，把 B 环也拉到 1:1。
       明确标注 optional：screenshot-only 路径下本刀不触发、不作为达标前提。
       触点：复用 fidelity-lock / structured-ref-elements / fetch_fidelity 契约，文档说明「截图态够用，高保真为加分项」。
-    status: pending
+    status: completed
   - id: x-capture-bug
     content: >
       横切 采集 bug 修复（比初稿更糟，Cursor P5）：
@@ -75,13 +75,13 @@ todos:
       (2) overlay 屏 ref_id=non_local_modal__overlay__0 与 ui-spec screen_non_local_sheet **对不上**（采集自造 id）= 第二个 schema 错；要求采集产出 screen_id/ref_id **必须联结回 ui-spec**，否则 G0 修完早退出，此噪声仍以新形态触发。
       (3) overlay 截图缺失本身（Sheet 采集）。缺屏/撞 hash/id 不联结 严重度归 G0（升 BLOCKER）。
       触点：profiles/hmos-app/harness/visual-diff-capture.ts 采集流程（Tab 实切 / Sheet 采集 / id 联结）+ device-testing SKILL Step。
-    status: pending
+    status: completed
   - id: exit-tests-docs
     content: >
       出口：用 homepage 真实归档造**回归夹具**——缺 overlay + 5 屏 pending + 两屏撞 hash + semantic_layout-but-1:1-intent → **必须 BLOCKER**（现状 PASS，可证伪）。
       A 环新字段/门禁补 harness 单测，注册 harness/tests/run-unit.ts，`cd harness && npm test` 全 PASS（BLOCKER）。
       g4b：goal 模式 crop halt-confirm 流程补单测（确认→裁剪落地；**headless 无审批且 pixel_1to1/显式 crop 意图→BLOCKER，semantic_layout 无 crop 意图→占位合法不拦**；前置 bbox/素材目录→免 halt 直裁；采色仅凭 G3(e) bbox 落地）。A/B/C 诚实天花板写入 spec/coding/device-testing SKILL；不 bump 版本、不新建发布说明、不改 simulatedWallet 业务码。
-    status: pending
+    status: completed
 isProject: false
 ---
 
