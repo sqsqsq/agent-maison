@@ -234,6 +234,66 @@ export function computeTileMinSimilarity(
   };
 }
 
+/**
+ * 边缘密度 tile 网格（v2 哨兵）。采集层与 check 层共享此网格做坐标对账：
+ * over_threshold_tiles 的 [row,col] ∈ [0,ROWS)×[0,COLS)。
+ */
+export const EDGE_TILE_ROWS = 8;
+export const EDGE_TILE_COLS = 6;
+/** 单 tile z-MAD 超阈判定（worker 内逐 tile）；经验拉伸 FP 地板下的结构差异分界，可调 */
+export const EDGE_STRUCT_THRESHOLD = 0.55;
+/**
+ * 触发边缘哨兵 WARN 的最小「未被 defect.bbox 覆盖」tile 数（check 层）。
+ * 经合成 FP 探针：忠实设备图（同内容 + 设备比例 + 状态栏偏移）拉伸对齐后约 3 个 tile 为纯 FP 地板；
+ * 真缺陷屏 ≥6（add_card 6 / mine 8 / home 10）。取 5 落在 3 与 6 之间——吸收 FP 地板，仅在
+ * ≥5 个未登记 tile 时 WARN（仍低置信、永不 gate）。三常量均为 FP 校准旋钮，集中于此便于调。
+ * 注：5 为当前约束下**暂定值**——唯一干净 FP 样本是合成探针(3)，真·忠实真机渲染样本尚不存在
+ * （这正是 round2 的起因）；待门禁逼宿主修好 home 后，应拿**修好的 home** 重跑 edge-tile，
+ * 若掉到 <5 静默，才终验「忠实渲染不误报、坏渲染命中」并据此定稿地板。
+ */
+export const EDGE_SENTINEL_MIN_UNCOVERED = 5;
+
+/**
+ * 参考图 vs 实现截图的结构散度分块（半定量、布局敏感，补直方图盲区）。
+ * worker 两图灰度拉伸到统一 TW×TH（整页对整页对齐）→ 逐 tile z-归一像素 MAD（结构差异，亮度不变）。
+ * 返回 max 散度 ∈ [0,1] 与超阈 tile 的 [row,col] 列表（worker 内按阈值判定）。
+ * 注：mockup≠device 像素本就不对齐、整屏基线偏高 → 仅作 WARN 低置信兜底，永不单独 gate。
+ */
+export function computeEdgeDensityTileDivergence(
+  refPath: string,
+  shotPath: string,
+): { ok: boolean; divergence?: number; tiles?: number[][]; error?: string } {
+  if (!isJimpAvailable()) {
+    return { ok: false, error: 'jimp not installed' };
+  }
+  if (!fs.existsSync(refPath)) {
+    return { ok: false, error: `ref not found: ${refPath}` };
+  }
+  if (!fs.existsSync(shotPath)) {
+    return { ok: false, error: `shot not found: ${shotPath}` };
+  }
+  const out = runJimpWorker([
+    'edge-tile',
+    refPath,
+    shotPath,
+    String(EDGE_TILE_ROWS),
+    String(EDGE_TILE_COLS),
+    String(EDGE_STRUCT_THRESHOLD),
+  ]);
+  if (out.ok === true && typeof out.divergence === 'number') {
+    const tiles = Array.isArray(out.tiles)
+      ? (out.tiles as unknown[]).filter(
+          (t): t is number[] => Array.isArray(t) && t.length === 2 && t.every(n => typeof n === 'number'),
+        )
+      : [];
+    return { ok: true, divergence: Math.max(0, Math.min(1, out.divergence)), tiles };
+  }
+  return {
+    ok: false,
+    error: typeof out.error === 'string' ? out.error : 'edge-tile failed',
+  };
+}
+
 export function isJimpAvailable(): boolean {
   try {
     require.resolve('jimp', { paths: [HARNESS_ROOT] });

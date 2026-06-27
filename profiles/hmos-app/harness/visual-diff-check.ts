@@ -17,6 +17,7 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
+import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { createRequire } from 'module';
@@ -33,6 +34,9 @@ const PASS_MIN_FIDELITY = 0.6;
 const PASS_MIN_IOU = 0.5;
 /** VL fidelity 显著高于 score_floor 时触发复核 WARN */
 const SCORE_FLOOR_SENTINEL_GAP = 0.35;
+/** defects[] 枚举合法取值（v1 渲染缺陷枚举契约） */
+const VALID_DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'other']);
+const VALID_DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -43,6 +47,18 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   const p = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
+}
+
+export type VisualDiffDefectClass = 'clipping' | 'overlap' | 'shape_mismatch' | 'missing_render' | 'other';
+export type VisualDiffDefectSeverity = 'blocker' | 'major' | 'minor';
+
+/** 正向渲染缺陷（实现有但渲染错）。bbox 为归一化 [x,y,w,h] ∈ [0,1] */
+export interface VisualDiffDefect {
+  class: VisualDiffDefectClass;
+  element?: string;
+  bbox?: number[];
+  severity: VisualDiffDefectSeverity;
+  note: string;
 }
 
 export interface VisualDiffScreenEntry {
@@ -62,6 +78,12 @@ export interface VisualDiffScreenEntry {
   evaluated_screenshot_hash?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
   reverse_missing?: string[];
+  /** 正向缺陷枚举：实现有但渲染错（裁切/重叠/形态/缺渲染）。pixel_1to1 下 verdict=pass 须为空数组 */
+  defects?: VisualDiffDefect[];
+  /** v2 采集层边缘哨兵：超阈 tile 网格坐标 [row,col]（grid=GRID_ROWS×GRID_COLS） */
+  edge_over_threshold_tiles?: number[][];
+  /** v2 边缘密度 tile 最大散度（[0,1]，越大越疑似局部渲染差异） */
+  edge_tile_divergence?: number;
 }
 
 export interface VisualDiffReport {
@@ -223,6 +245,52 @@ export function validateVisualDiffJson(
           errors.push(`screens[${i}] reverse_missing 须为字符串数组`);
         }
       }
+      const defects = row.defects;
+      if (defects !== undefined && defects !== null) {
+        if (!Array.isArray(defects)) {
+          errors.push(`screens[${i}] defects 须为数组`);
+        } else {
+          for (const [j, d] of defects.entries()) {
+            if (!d || typeof d !== 'object') {
+              errors.push(`screens[${i}].defects[${j}] 须为 object`);
+              continue;
+            }
+            const dd = d as Record<string, unknown>;
+            if (typeof dd.class !== 'string' || !VALID_DEFECT_CLASSES.has(dd.class)) {
+              errors.push(`screens[${i}].defects[${j}].class 非法：${String(dd.class)}`);
+            }
+            if (typeof dd.severity !== 'string' || !VALID_DEFECT_SEVERITIES.has(dd.severity)) {
+              errors.push(`screens[${i}].defects[${j}].severity 非法：${String(dd.severity)}`);
+            }
+            if (typeof dd.note !== 'string' || !dd.note.trim()) {
+              errors.push(`screens[${i}].defects[${j}].note 必填`);
+            }
+            if (dd.bbox !== undefined && dd.bbox !== null) {
+              const bb = dd.bbox;
+              if (!Array.isArray(bb) || bb.length !== 4 || !bb.every(n => typeof n === 'number' && n >= 0 && n <= 1)) {
+                errors.push(`screens[${i}].defects[${j}].bbox 须为 4 个 [0,1] 数`);
+              }
+            }
+          }
+        }
+      }
+      const edgeTiles = row.edge_over_threshold_tiles;
+      if (edgeTiles !== undefined && edgeTiles !== null) {
+        if (
+          !Array.isArray(edgeTiles) ||
+          !edgeTiles.every(
+            t => Array.isArray(t) && t.length === 2 && t.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0),
+          )
+        ) {
+          errors.push(`screens[${i}] edge_over_threshold_tiles 须为 [row,col] 非负整数对数组`);
+        }
+      }
+      const edgeDiv = row.edge_tile_divergence;
+      if (edgeDiv !== undefined && edgeDiv !== null) {
+        if (typeof edgeDiv !== 'number' || Number.isNaN(edgeDiv) || edgeDiv < 0 || edgeDiv > 1) {
+          errors.push(`screens[${i}] edge_tile_divergence 须在 [0,1]，收到 ${String(edgeDiv)}`);
+        }
+      }
       const scoreFloor = row.score_floor;
       if (scoreFloor !== undefined && scoreFloor !== null) {
         if (typeof scoreFloor !== 'number' || Number.isNaN(scoreFloor)) {
@@ -248,6 +316,52 @@ export function validateVisualDiffJson(
     return { ok: false, report, errors, fatal: false };
   }
   return { ok: true, report, errors: [], fatal: false };
+}
+
+/** tile [row,col] 的归一化矩形 [x,y,w,h]（与采集层 EDGE_TILE 网格一致） */
+function tileToNormRect(row: number, col: number): [number, number, number, number] {
+  return [col / EDGE_TILE_COLS, row / EDGE_TILE_ROWS, 1 / EDGE_TILE_COLS, 1 / EDGE_TILE_ROWS];
+}
+
+/** 两归一化矩形 [x,y,w,h] 是否相交 */
+function normRectsOverlap(a: number[], b: number[]): boolean {
+  if (a.length !== 4 || b.length !== 4) return false;
+  const [ax, ay, aw, ah] = a;
+  const [bx, by, bw, bh] = b;
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+export interface EdgeSentinelUncovered {
+  screen_id: string;
+  tiles: number[][];
+}
+
+/**
+ * v2 边缘哨兵兜底：超阈 tile（结构差异）未被任一 defect.bbox 几何覆盖、且数量达地板的屏 → 疑似漏登记。
+ * reverse_missing 是元素 id 清单、无 bbox，不参与几何覆盖（须用 class=missing_render 的 defect.bbox 定位）。
+ * 坐标对账：edge_over_threshold_tiles 为 [row,col]，经 EDGE_TILE 网格换算成归一化矩形再与 defect.bbox 求交。
+ * 最小未覆盖数（minUncovered）：经合成 FP 探针，忠实设备图拉伸对齐后约 3 个 tile 为纯 FP 地板，
+ * 真缺陷屏 ≥6；仅当未覆盖 tile ≥minUncovered(默认 5) 才 WARN，吸收 FP 地板（仍低置信、不 gate）。
+ */
+export function collectEdgeSentinelUncovered(
+  screens: VisualDiffScreenEntry[],
+  minUncovered: number = EDGE_SENTINEL_MIN_UNCOVERED,
+): EdgeSentinelUncovered[] {
+  const out: EdgeSentinelUncovered[] = [];
+  for (const s of screens) {
+    const tiles = s.edge_over_threshold_tiles;
+    if (!Array.isArray(tiles) || tiles.length === 0) continue;
+    const defectBoxes = (s.defects ?? [])
+      .map(d => d.bbox)
+      .filter((b): b is number[] => Array.isArray(b) && b.length === 4);
+    const uncovered = tiles.filter(t => {
+      if (!Array.isArray(t) || t.length !== 2) return false;
+      const rect = tileToNormRect(t[0], t[1]);
+      return !defectBoxes.some(b => normRectsOverlap(rect, b));
+    });
+    if (uncovered.length >= minUncovered) out.push({ screen_id: s.screen_id, tiles: uncovered });
+  }
+  return out;
 }
 
 interface VisualDiffHit {
@@ -470,6 +584,11 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       (typeof s.geometric_iou === 'number' && s.geometric_iou < PASS_MIN_IOU),
   );
 
+  // --- pass 屏不得登记 blocker/major 渲染缺陷（裁切/重叠/形态/缺渲染）---
+  const blockingDefectPass = passScreens.filter(s =>
+    (s.defects ?? []).some(d => d.severity === 'blocker' || d.severity === 'major'),
+  );
+
   const scoreFloorSentinel = rep.screens.filter(s => {
     if (typeof s.score_floor !== 'number' || typeof s.fidelity_score !== 'number') return false;
     return s.fidelity_score - s.score_floor >= SCORE_FLOOR_SENTINEL_GAP;
@@ -500,6 +619,14 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const screensMissingReverseEnum = pixel1to1
     ? rep.screens.filter(s => !isCaptureMutableVerdict(s.verdict) && s.reverse_missing === undefined)
     : [];
+  // D11：pixel_1to1 下 finalized verdict 须逐屏枚举 defects（可为 []），与 reverse_missing 对齐
+  const screensMissingDefectsEnum = pixel1to1
+    ? rep.screens.filter(s => !isCaptureMutableVerdict(s.verdict) && s.defects === undefined)
+    : [];
+
+  // 采集层边缘哨兵：超阈 tile 未被任何 defect.bbox 覆盖、且数量达地板 → 疑似漏登记（v2；
+  // reverse_missing 无 bbox 不参与几何覆盖，须用 class=missing_render 的 defect.bbox 定位）
+  const edgeUncoveredScreens = collectEdgeSentinelUncovered(rep.screens);
 
   const details = [
     `screens=${rep.screens.length}`,
@@ -510,6 +637,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     `pending=${pendingScreens.length}`,
     `must_fix=${mustFix.length}`,
     `p0=${p0Ids.length}`,
+    `defects=${rep.screens.reduce((n, s) => n + (s.defects?.length ?? 0), 0)}`,
     rep.degraded ? 'degraded' : '',
   ].filter(Boolean).join('；');
 
@@ -562,6 +690,22 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       line:
         `verdict=pass 但分数低于阈值（fidelity<${PASS_MIN_FIDELITY} 或 iou<${PASS_MIN_IOU}）：` +
         lowScorePass.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`).join(', '),
+    });
+  }
+
+  if (blockingDefectPass.length > 0) {
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `verdict=pass 但登记了 blocker/major 渲染缺陷（裁切/重叠/形态/缺渲染）：` +
+        blockingDefectPass
+          .map(s => `${s.screen_id}(${(s.defects ?? []).filter(d => d.severity !== 'minor').map(d => d.class).join(',')})`)
+          .join(', '),
     });
   }
 
@@ -624,6 +768,32 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       line:
         `pixel_1to1 须逐屏填写 reverse_missing（可为 []）：` +
         screensMissingReverseEnum.map(s => s.screen_id).join(', '),
+    });
+  }
+
+  if (screensMissingDefectsEnum.length > 0) {
+    const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_defects_enum',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `pixel_1to1 须逐屏填写 defects（可为 []）：` +
+        screensMissingDefectsEnum.map(s => s.screen_id).join(', '),
+    });
+  }
+
+  // 边缘哨兵兜底：只发 WARN、永不单独 FAIL（容忍对齐误差；以 VL 复核为准）
+  if (edgeUncoveredScreens.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_edge_sentinel',
+      severity: 'MAJOR',
+      status: 'WARN',
+      line:
+        `边缘哨兵：超阈 tile 有结构差异但未被 defect.bbox 登记，VL 须复核区域：` +
+        edgeUncoveredScreens
+          .map(e => `${e.screen_id}[${e.tiles.map(t => `${t[0]},${t[1]}`).join(' ')}]`)
+          .join('; '),
     });
   }
 

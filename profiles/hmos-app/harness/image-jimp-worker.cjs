@@ -13,6 +13,7 @@ const Jimp = require(require.resolve('jimp', { paths: [harnessRoot] }));
 
 const NEAR_WHITE = 240;
 const NEAR_BLACK = 20;
+const EDGE_STRUCT_THRESHOLD = 0.55;
 
 function isNearWhiteOrBlack(r, g, b) {
   if (r >= NEAR_WHITE && g >= NEAR_WHITE && b >= NEAR_WHITE) return true;
@@ -203,6 +204,73 @@ async function runTileMinSim(pathA, pathB, gridStr) {
   return { ok: true, similarity: minSim, grid };
 }
 
+/**
+ * 结构散度分块（整页设计稿 vs 整屏设备图）。两图灰度**拉伸到统一 TW×TH**（整页对整页，按内容行占比对齐）
+ * → 逐 tile 对像素做 z-归一（减均值/除标准差，亮度/对比不变）后求 MAD，归一到 [0,1]。
+ * 度量「结构差异」而非「边缘能量」：结构不同的 tile（裁切/叠帧/形态）拉开，干净自比为 0。
+ * 对齐策略（实测定，非 plan 初版 F4 的 letterbox）：两图均整页捕获但宽高比差大（稿 0.349 vs 机 0.623），
+ * 合成 FP 探针显示**拉伸（3 FP）显著优于 letterbox（8 FP）**——letterbox 因不同比例占不同子区反而错位；
+ * 纯比例差拉伸后 0 FP，残留 ~3 FP 来自状态栏偏移，由 check 层「最小未覆盖 tile 数」吸收。
+ * mockup≠device 本就不像素对齐 → 仅作 WARN 低置信兜底 + 高阈值，永不单独 gate。
+ * threshStr：单 tile z-MAD 超阈（由 toolkit EDGE_STRUCT_THRESHOLD 传入，缺省 0.55）。
+ */
+async function runEdgeTile(refPath, shotPath, rowsStr, colsStr, threshStr) {
+  if (!refPath || !shotPath) {
+    return { ok: false, error: 'edge-tile requires ref and shot paths' };
+  }
+  const rows = Math.max(2, Math.min(16, parseInt(rowsStr, 10) || 8));
+  const cols = Math.max(2, Math.min(16, parseInt(colsStr, 10) || 6));
+  const thresh = parseFloat(threshStr) || EDGE_STRUCT_THRESHOLD;
+  const TW = 180;
+  const TH = 360;
+  const toGray = (img) => {
+    const g = img.clone().greyscale().resize(TW, TH);
+    const { data } = g.bitmap;
+    const a = new Float64Array(TW * TH);
+    for (let i = 0; i < TW * TH; i++) a[i] = data[i << 2];
+    return a;
+  };
+  const aRef = toGray(await Jimp.read(refPath));
+  const aShot = toGray(await Jimp.read(shotPath));
+  const tileH = TH / rows;
+  const tileW = TW / cols;
+  const zMad = (r, c) => {
+    const x0 = Math.floor(c * tileW);
+    const x1 = Math.floor((c + 1) * tileW);
+    const y0 = Math.floor(r * tileH);
+    const y1 = Math.floor((r + 1) * tileH);
+    const va = [];
+    const vb = [];
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        va.push(aRef[y * TW + x]);
+        vb.push(aShot[y * TW + x]);
+      }
+    }
+    const n = va.length;
+    if (n === 0) return 0;
+    const mean = (v) => v.reduce((s, x) => s + x, 0) / n;
+    const ma = mean(va);
+    const mb = mean(vb);
+    const std = (v, m) => Math.sqrt(v.reduce((s, x) => s + (x - m) * (x - m), 0) / n) || 1;
+    const sa = std(va, ma);
+    const sb = std(vb, mb);
+    let s = 0;
+    for (let i = 0; i < n; i++) s += Math.abs((va[i] - ma) / sa - (vb[i] - mb) / sb);
+    return Math.min(1, s / n / 2);
+  };
+  let maxDiv = 0;
+  const tiles = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const div = zMad(r, c);
+      if (div > maxDiv) maxDiv = div;
+      if (div >= thresh) tiles.push([r, c]);
+    }
+  }
+  return { ok: true, divergence: Math.max(0, Math.min(1, maxDiv)), tiles, grid: { rows, cols } };
+}
+
 async function main() {
   const [cmd, imagePath, ...rest] = process.argv.slice(2);
   if (cmd === 'crop') {
@@ -228,6 +296,12 @@ async function main() {
   if (cmd === 'tile-min') {
     const [pathB, gridStr] = rest;
     const result = await runTileMinSim(imagePath, pathB, gridStr);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'edge-tile') {
+    const [shotPath, rowsStr, colsStr, threshStr] = rest;
+    const result = await runEdgeTile(imagePath, shotPath, rowsStr, colsStr, threshStr);
     process.stdout.write(JSON.stringify(result));
     return;
   }

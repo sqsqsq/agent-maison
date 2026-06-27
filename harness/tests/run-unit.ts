@@ -75,6 +75,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test' },
   { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
   { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
+  { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test' },
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
   { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },

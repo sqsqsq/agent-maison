@@ -303,12 +303,12 @@ doc/features/{module-name}/testing/test-plan.md
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
 2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
-3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无；**G3 样式/布局核对**：ui-spec 声明的 `variant`/`layout_group`/`align`/`width_ratio`/`bg_color` 须逐一对真机截图核对——按钮填充形态/同行分组/对齐占宽/区域底色，不符进 must_fix）→ 产出：
-   - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举；`score_floor` 含 N×N 分块最小相似度）
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无；**G3 样式/布局核对**：ui-spec 声明的 `variant`/`layout_group`/`align`/`width_ratio`/`bg_color` 须逐一对真机截图核对——按钮填充形态/同行分组/对齐占宽/区域底色，不符进 must_fix；**渲染缺陷枚举**：逐屏登记 `defects[]`——裁切(clipping)/重叠重复(overlap)/形态版式不符(shape_mismatch，如声明 width_ratio 0.35 却全宽、tonal 却实心)/声明 asset 未渲染(missing_render，如 tab 仅文字)，每条带 `bbox`+`severity`(blocker|major|minor)+`note`；**verdict=pass 须 defects 为空且无 reverse_missing 残留**）→ 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举 + `defects[]` 渲染缺陷枚举；`score_floor` 含 N×N 分块最小相似度；`edge_tile_divergence`/`edge_over_threshold_tiles` 由采集层自动写入——超阈 tile 未被任一 defect.bbox 覆盖会触发边缘哨兵 WARN，须补对应 defect 或复核该区域）
    - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数）
 4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
 5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
-6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing → **BLOCKER**。
+6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing / **defects(blocker\|major) / 缺 defects 逐屏枚举** → **BLOCKER**；边缘哨兵超阈 tile 未登记 → **WARN**（低置信、须复核，非 gate）。
 
 ### Step 5: 生成测试报告（测试执行后）
 

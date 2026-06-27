@@ -16,7 +16,12 @@ import {
   buildAuthoritativeRefImageIndex,
   resolveRefSourceImage,
 } from './authoritative-ref-images';
-import { computeHistogramSimilarity, computeTileMinSimilarity, isJimpAvailable } from './image-toolkit';
+import {
+  computeHistogramSimilarity,
+  computeTileMinSimilarity,
+  computeEdgeDensityTileDivergence,
+  isJimpAvailable,
+} from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
 import { collectP0OverlayTargetIds } from './visual-diff-targets';
@@ -159,6 +164,18 @@ function resolveScoreFloor(
   return Math.min(globalSim, tileSim);
 }
 
+/** 采集层边缘哨兵：算 ref vs shot 的边缘密度 tile 散度 + 超阈 tile（与 score_floor 同一开关/同层） */
+function resolveEdgeSentinel(
+  shotAbs: string,
+  refAbs: string | null,
+  enabled: boolean,
+): { divergence: number; tiles: number[][] } | undefined {
+  if (!enabled || !refAbs || !isJimpAvailable()) return undefined;
+  const res = computeEdgeDensityTileDivergence(refAbs, shotAbs);
+  if (!res.ok || typeof res.divergence !== 'number') return undefined;
+  return { divergence: res.divergence, tiles: res.tiles ?? [] };
+}
+
 /** pending/skipped 可被采集覆盖；pass/warn/fail 仅在截图 hash 未变时保留 */
 export function mergeCapturedScreenEntry(
   existing: VisualDiffScreenEntry | undefined,
@@ -181,6 +198,12 @@ export function mergeCapturedScreenEntry(
   merged.screenshot_hash = capturedHash;
   if (typeof captured.score_floor === 'number') {
     merged.score_floor = captured.score_floor;
+  }
+  if (typeof captured.edge_tile_divergence === 'number') {
+    merged.edge_tile_divergence = captured.edge_tile_divergence;
+  }
+  if (Array.isArray(captured.edge_over_threshold_tiles)) {
+    merged.edge_over_threshold_tiles = captured.edge_over_threshold_tiles;
   }
   return merged;
 }
@@ -337,6 +360,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       refAbs = resolveRefSourceImage(refIndex, refId).path;
     }
     const floor = resolveScoreFloor(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
+    const edge = resolveEdgeSentinel(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
     const screenshotHash = hashScreenshotFile(paths.abs);
     if (!screenshotHash) {
       errors.push(`${screen.id}: 截图 hash 计算失败`);
@@ -346,6 +370,10 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (!row) {
       errors.push(`${screen.id}: 骨架条目生成失败（路径校验）`);
       continue;
+    }
+    if (edge) {
+      row.edge_tile_divergence = edge.divergence;
+      row.edge_over_threshold_tiles = edge.tiles;
     }
     capturedScreens.push({ entry: row, hash: screenshotHash });
   }
