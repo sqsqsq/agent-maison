@@ -40,6 +40,7 @@ import {
   HarnessRunSummary,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
+import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
@@ -467,6 +468,8 @@ async function main(): Promise<void> {
   }
 
   let checks: CheckResult[] = [];
+  // 防漂移 preflight（c2）：全局框架自检，全模式入口直调，不经 capability-registry / profile。
+  checks.push(...runFrameworkIntegrityPreflight({ frameworkRoot: resolvedFrameworkRoot, projectRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));
   checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
 
@@ -735,7 +738,7 @@ function decideNextAction(
   readinessSignals: HarnessRunSummary['readiness_signals'],
 ): string {
   if (report.summary.verdict === 'INCOMPLETE') {
-    return 'device_ready_then_rerun_ut';
+    return report.phase === 'testing' ? 'device_ready_then_rerun_testing' : 'device_ready_then_rerun_ut';
   }
   if (blockers.some(b => b.classification === 'install_downgrade_self_healable' || b.details_excerpt.includes('selfHealable'))) {
     return 'set_HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL_then_rerun';
@@ -896,6 +899,24 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
         source_check: 'ut_hvigor_test',
         message:
           '宿主测试模块编译已通过，但真机/模拟器不可用；summary.verdict=INCOMPLETE，不视为 UT 阶段完成。',
+      });
+    }
+  }
+
+  if (report.phase === 'testing') {
+    const install = report.checks.find(c => c.id === 'device_test_install');
+    const build = report.checks.find(c => c.id === 'device_test_build');
+    if (
+      build?.status === 'PASS' &&
+      install?.status === 'FAIL' &&
+      (install.blocking_class === 'externalBlocked' || install.failure_kind === 'device_blocked')
+    ) {
+      signals.push({
+        id: 'compile_passed_device_blocked',
+        status: 'incomplete',
+        source_check: 'device_test_install',
+        message:
+          '主应用 HAP 已就绪，但真机/模拟器不可用；summary.verdict=INCOMPLETE，不视为 testing 阶段完成。',
       });
     }
   }

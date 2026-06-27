@@ -44,6 +44,7 @@
       "state_machine.grace_period_minutes": "新建 .current-phase.json 时的「无 session_id 缓冲期」分钟数（>=1）。期内 hook 把无 session_id 的 state 视作当前会话产物并自动回填 session_id；超过则视作跨会话 / legacy 遗留 advisory 不阻断。默认 5；多任务并发频繁切换的工程可调短到 2~3。",
       "state_machine.ttl_hours": "无 session_id 的 state 文件 TTL 小时数（>=1）。超过 grace 且早于 ttl 仍按 advisory 提示存在；超过 ttl 一律按已废弃处理仅出 advisory。默认 12；CI / 跑批跑得久的工程可加长到 24~48。",
       "state_machine.schema_version": "状态文件 schema 版本号字符串。当前 \"1.1\"（v2.8 引入 session_id / session_id_recorded_at / last_seen_session_id / last_seen_at 四字段）。下一次 schema 升级会同步在 framework/harness/harness-runner.ts 的 CurrentPhaseState 与本字段一并 bump。",
+      "integrity": "防漂移门禁 framework_integrity 的 opt-out（v2.4 起；可选，默认不声明）。缺省即默认 enforce——harness 启动时以包内 framework/RELEASE-MANIFEST.json 逐文件比对 framework/，发现源码漂移判 BLOCKER。仅在确需本地 fork 时声明：`allow_local_drift: true` 把漂移降为 WARN；`drift_allowlist: [\"<framework 内相对路径>\"]` 精确放行个别文件。优先把修复回灌上游而非本地漂移；详见 framework/MIGRATION.md「防漂移完整性门禁」。与 atomic_service 一样，本字段只在此 field_notes 说明、不进 live skeleton。",
       "atomic_service": "预留字段（阶段 7 不落地）：未来差异化阈值（max_first_hap_bytes、entry_modules[] 等）在此声明。当前不出现在最终 config 里。"
     },
     "generation_rules": [

@@ -55,9 +55,15 @@ function walkColorJson(dir: string, tokenKey: string): boolean {
     } else if (ent.name === 'color.json') {
       try {
         const data = JSON.parse(fs.readFileSync(full, 'utf-8')) as Record<string, unknown>;
-        const colors = (data.color ?? data) as Record<string, unknown>;
         const snake = tokenKey.replace(/\./g, '_');
-        if (colors[snake] || colors[tokenKey]) return true;
+        if (Array.isArray(data.color)) {
+          for (const item of data.color as Array<{ name?: string }>) {
+            if (item.name === snake || item.name === tokenKey) return true;
+          }
+        } else {
+          const colors = (data.color ?? data) as Record<string, unknown>;
+          if (colors[snake] || colors[tokenKey]) return true;
+        }
       } catch { /* skip */ }
     }
   }

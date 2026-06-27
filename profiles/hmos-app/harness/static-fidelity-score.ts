@@ -31,24 +31,66 @@ function ruleDesc(ctx: CheckContext): string {
 
 function readColorHexFromResources(projectRoot: string, tokenKey: string, contracts: CheckContext['featureSpec']['contracts']): string | null {
   const rkList = flattenResourceKeyEntries(contracts?.resource_keys);
-  const rk = rkList.find(r => r.key?.includes(tokenKey.replace(/\./g, '_')));
+  const snake = tokenKey.replace(/\./g, '_');
+  const rk = rkList.find(r => r.key === snake || r.key?.includes(snake));
   const pathVal = (rk as { path?: string; value?: string } | undefined)?.path ?? rk?.value;
-  if (!pathVal || !pathVal.includes('/')) {
-    return typeof rk?.value === 'string' && rk.value.startsWith('#') ? rk.value : null;
-  }
-  const abs = path.resolve(projectRoot, pathVal);
-  if (!fs.existsSync(abs)) return null;
-  try {
-    const data = JSON.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
-    const colors = (data.color ?? data) as Record<string, unknown>;
-    const snake = tokenKey.replace(/\./g, '_');
-    const entry = colors[snake] ?? colors[tokenKey];
-    if (typeof entry === 'string') return entry;
-    if (entry && typeof entry === 'object' && 'value' in (entry as object)) {
-      return String((entry as { value: string }).value);
+  if (pathVal && pathVal.includes('/')) {
+    const abs = path.resolve(projectRoot, pathVal);
+    if (fs.existsSync(abs)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
+        if (Array.isArray(data.color)) {
+          const hit = (data.color as Array<{ name?: string; value?: string }>).find(
+            c => c.name === snake || c.name === rk?.key,
+          );
+          if (hit?.value && String(hit.value).startsWith('#')) return String(hit.value);
+        } else {
+          // 旧对象格式兼容：{ color: { token: "#..." | { value } } } 或根对象 map
+          const colors = (data.color ?? data) as Record<string, unknown>;
+          const entry = colors[snake] ?? colors[tokenKey];
+          if (typeof entry === 'string' && entry.startsWith('#')) return entry;
+          if (entry && typeof entry === 'object' && 'value' in (entry as object)) {
+            const v = String((entry as { value: unknown }).value);
+            if (v.startsWith('#')) return v;
+          }
+        }
+      } catch { /* skip */ }
     }
-  } catch {
-    /* skip */
+  }
+  if (typeof rk?.value === 'string' && rk.value.startsWith('#')) return rk.value;
+  for (const mod of contracts?.modules ?? []) {
+    const base = path.join(projectRoot, mod.package_path, 'src', 'main', 'resources');
+    const hex = readColorHexFromDir(base, snake);
+    if (hex) return hex;
+  }
+  return null;
+}
+
+function readColorHexFromDir(dir: string, snake: string): string | null {
+  if (!fs.existsSync(dir)) return null;
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      const nested = readColorHexFromDir(full, snake);
+      if (nested) return nested;
+    } else if (ent.name === 'color.json') {
+      try {
+        const data = JSON.parse(fs.readFileSync(full, 'utf-8')) as Record<string, unknown>;
+        if (Array.isArray(data.color)) {
+          const hit = (data.color as Array<{ name?: string; value?: string }>).find(c => c.name === snake);
+          if (hit?.value && String(hit.value).startsWith('#')) return String(hit.value);
+        } else {
+          // 旧对象格式兼容（与 visual-parity-backstop 一致）
+          const colors = (data.color ?? data) as Record<string, unknown>;
+          const entry = colors[snake];
+          if (typeof entry === 'string' && entry.startsWith('#')) return entry;
+          if (entry && typeof entry === 'object' && 'value' in (entry as object)) {
+            const v = String((entry as { value: unknown }).value);
+            if (v.startsWith('#')) return v;
+          }
+        }
+      } catch { /* skip */ }
+    }
   }
   return null;
 }
@@ -138,7 +180,7 @@ export function computeStaticFidelityScore(
   // structure order match（经 visual-parity.yaml components 映射 vs 源码 struct，禁止 taxonomy 直比）
   const vpMappings = loadVisualParityMappings(ctx.projectRoot, ctx.feature);
   const structScore = sourceScan
-    ? computeStructureSequenceScore(doc, vpMappings, sourceScan.structNames)
+    ? computeStructureSequenceScore(doc, vpMappings, sourceScan.structNames, sourceScan.structNamesOrdered)
     : null;
   let structPct = 1;
   if (structScore) {
@@ -198,9 +240,15 @@ function walkStringJson(dir: string, out: Set<string>): void {
     else if (ent.name === 'string.json') {
       try {
         const data = JSON.parse(fs.readFileSync(full, 'utf-8')) as Record<string, unknown>;
-        const inner = (data.string ?? data) as Record<string, unknown>;
-        for (const v of Object.values(inner)) {
-          if (typeof v === 'string') out.add(v);
+        if (Array.isArray(data.string)) {
+          for (const item of data.string as Array<{ value?: string }>) {
+            if (typeof item.value === 'string') out.add(item.value);
+          }
+        } else {
+          const inner = (data.string ?? data) as Record<string, unknown>;
+          for (const v of Object.values(inner)) {
+            if (typeof v === 'string') out.add(v);
+          }
         }
       } catch { /* skip */ }
     }

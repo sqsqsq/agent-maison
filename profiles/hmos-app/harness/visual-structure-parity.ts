@@ -131,31 +131,53 @@ export function computeStructureSequenceScore(
   doc: UiSpecDoc,
   mappings: VisualParityMappings | null,
   sourceStructNames: Set<string>,
+  sourceStructNamesOrdered?: string[],
 ): { ratio: number; screens: number; detail: string[] } | null {
   if (!mappings?.components?.length) return null;
-  const structList = [...sourceStructNames];
+  const structList =
+    sourceStructNamesOrdered && sourceStructNamesOrdered.length > 0
+      ? sourceStructNamesOrdered
+      : [...sourceStructNames];
   const details: string[] = [];
   let total = 0;
   let pass = 0;
   for (const s of doc.screens ?? []) {
     if (!s.root || s.lightweight) continue;
     total++;
-    const mapped = mappedComponentSequenceForScreen(s, mappings);
-    if (mapped.length === 0) {
+    const mappedRaw = mappedComponentSequenceForScreen(s, mappings);
+    if (mappedRaw.length === 0) {
       details.push(`screen ${s.id}：无 components 映射，结构分记 0`);
       continue;
     }
-    const lcs = sequenceMatchRatio(
-      mapped.map(x => x.toLowerCase()),
-      structList.map(x => x.toLowerCase()),
-    );
+    const mapped: string[] = [];
+    for (const name of mappedRaw) {
+      if (mapped.length === 0 || mapped[mapped.length - 1] !== name) {
+        mapped.push(name);
+      }
+    }
+    const lcsAgainstMapped = mapped.length > 0
+      ? (() => {
+          const dp: number[][] = Array.from({ length: mapped.length + 1 }, () =>
+            Array(structList.length + 1).fill(0),
+          );
+          for (let i = 1; i <= mapped.length; i++) {
+            for (let j = 1; j <= structList.length; j++) {
+              dp[i][j] =
+                mapped[i - 1].toLowerCase() === structList[j - 1].toLowerCase()
+                  ? dp[i - 1][j - 1] + 1
+                  : Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+          }
+          return dp[mapped.length][structList.length] / mapped.length;
+        })()
+      : 0;
     const cov = mappingCoverageForScreen(s, mappings);
     const coverage = cov.mappable > 0 ? cov.mapped / cov.mappable : 0;
-    if (lcs >= STRUCT_LCS_THRESHOLD && coverage >= STRUCT_COVERAGE_THRESHOLD) {
+    if (lcsAgainstMapped >= STRUCT_LCS_THRESHOLD && coverage >= STRUCT_COVERAGE_THRESHOLD) {
       pass++;
     } else {
       details.push(
-        `screen ${s.id} LCS=${(lcs * 100).toFixed(0)}% 覆盖=${cov.mapped}/${cov.mappable}` +
+        `screen ${s.id} LCS=${(lcsAgainstMapped * 100).toFixed(0)}% 覆盖=${cov.mapped}/${cov.mappable}` +
           `（阈值 LCS≥${STRUCT_LCS_THRESHOLD * 100}% 且 覆盖≥${STRUCT_COVERAGE_THRESHOLD * 100}%）(${mapped.join('>')})`,
       );
     }

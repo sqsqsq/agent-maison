@@ -25,6 +25,17 @@
 
 ---
 
+## 防漂移完整性门禁（framework_integrity）
+
+发布件随包下发 `framework/RELEASE-MANIFEST.json`（每文件 sha256）。harness 启动时（普通模式与 goal 模式一致）跑全局 `framework_integrity` preflight：以 manifest 为准逐文件比对 `framework/`，**发现源码漂移默认判 BLOCKER**。
+
+- **目的**：杜绝在消费者侧（尤其 goal-mode 无人值守代理）静默改 framework 源码——发现即拦，逼其走上游回灌而非本地漂移。
+- **升级即生效**：解压新发布件覆盖 `framework/` 后首次跑 harness 即启用。**若你此前对 `framework/` 有本地改动，会立即判 BLOCKER**。
+- **两条出路**：(1) 把本地修复回灌 agent-maison 上游、重新发布（推荐）；(2) 确需本地 fork：在 `framework.config.json` 增 `"integrity": { "allow_local_drift": true }` 把漂移降为 WARN，或按路径精确放行 `"integrity": { "drift_allowlist": ["harness/scripts/check-testing.ts"] }`。
+- **dev/source layout**（framework 自身仓，无包内 manifest）自动 no-op，不影响其 `npm test`。
+
+---
+
 ## 把 framework 部署到目标工程：两种模式
 
 ### 模式 A：Vendor（直接拷源码，无独立 git 仓库）

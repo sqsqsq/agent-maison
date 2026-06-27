@@ -80,6 +80,15 @@
       "additionalProperties": false
     },
     "tools": { "type": "object" },
+    "integrity": {
+      "type": "object",
+      "description": "防漂移门禁 framework_integrity 的 opt-out（v2.4 起）；缺省即默认 enforce（漂移 BLOCKER）。",
+      "properties": {
+        "allow_local_drift": { "type": "boolean", "description": "true → framework 源码漂移仅 WARN 不阻断（显式本地 fork）" },
+        "drift_allowlist": { "type": "array", "items": { "type": "string" }, "description": "按 framework 内相对路径精确放行的漂移白名单" }
+      },
+      "additionalProperties": false
+    },
     "state_machine": { "type": "object" },
     "spec": {
       "type": "object",

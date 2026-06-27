@@ -90,6 +90,12 @@ import {
   buildEntryUiPriorityMap,
 } from './utils/testing-trace-gates';
 import type { UseCasesSpec } from './utils/types';
+import {
+  diagnoseInstallBlocking,
+  mapInstallBlockingToTestingCheckFields,
+  buildInstallBlockingCheckDetails,
+  writeInstallDiagJson,
+} from '../../profiles/hmos-app/harness/device-install-diag';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1355,10 +1361,60 @@ const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
 interface DeviceTestPipelineHolder {
   hapPath: string | null;
   installPassed: boolean;
+  installExternallyBlocked: boolean;
   buildReused: boolean;
   /** Set after device_test_run when hylyre trace is available */
   hylyreTracePath: string | null;
   deviceTestRunExecuted: boolean;
+}
+
+function buildDeviceInstallFailResults(
+  ctx: CheckContext,
+  holder: DeviceTestPipelineHolder,
+  id: string,
+  desc: string,
+  fallbackDetails: string,
+): CheckResult[] {
+  const diag = diagnoseInstallBlocking(ctx.projectRoot);
+  if (diag.kind === 'externalBlocked') {
+    holder.installExternallyBlocked = true;
+    const testingDiag = {
+      ...diag,
+      nextAction: 'device_ready_then_rerun_testing',
+    };
+    writeInstallDiagJson(
+      ctx.projectRoot,
+      ctx.feature,
+      ctx.phase,
+      ctx.frameworkRoot,
+      testingDiag,
+      'testing-install-diag.json',
+    );
+    const fields = mapInstallBlockingToTestingCheckFields(testingDiag);
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: buildInstallBlockingCheckDetails(testingDiag, 'testing-install-diag.json'),
+        suggestion: fields.suggestion,
+        failure_kind: fields.failure_kind,
+        blocking_class: fields.blocking_class,
+      },
+    ];
+  }
+  return [
+    {
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: fallbackDetails,
+    },
+  ];
 }
 
 function checkDeviceTestBuildGate(
@@ -1557,31 +1613,25 @@ function checkDeviceTestInstallGate(
     }) as DeviceTestInstallResult;
 
     if (res.skippedByEnv) {
-      return [
-        {
-          id,
-          category: 'structure',
-          description: desc,
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          details: res.errors.map(e => e.message).join('\n'),
-        },
-      ];
+      return buildDeviceInstallFailResults(
+        ctx,
+        holder,
+        id,
+        desc,
+        res.errors.map(e => e.message).join('\n'),
+      );
     }
 
     if (!res.ok) {
-      return [
-        {
-          id,
-          category: 'structure',
-          description: desc,
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          details: [...res.errors.map(e => e.message), res.logPath ? `装机日志: ${res.logPath}` : '']
-            .filter(Boolean)
-            .join('\n'),
-        },
-      ];
+      return buildDeviceInstallFailResults(
+        ctx,
+        holder,
+        id,
+        desc,
+        [...res.errors.map(e => e.message), res.logPath ? `装机日志: ${res.logPath}` : '']
+          .filter(Boolean)
+          .join('\n'),
+      );
     }
 
     holder.installPassed = true;
@@ -2128,6 +2178,17 @@ function checkReportTraceReconciliation(
     }];
   }
 
+  if (!pipeline.installPassed) {
+    return [{
+      id,
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'device_test.install 未 PASS，跳过 report↔trace 对账（无 Hylyre trace SSOT）。',
+    }];
+  }
+
   const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
   const tracePath =
     pipeline.hylyreTracePath ?? resolveAuthoritativeHylyreTracePath(reportsBase);
@@ -2295,18 +2356,36 @@ function buildTestingRunStatusResult(
   report: string | null,
   results: CheckResult[],
 ): CheckResult {
+  const build = results.find(r => r.id === 'device_test_build');
+  const install = results.find(r => r.id === 'device_test_install');
+  const deviceExternalBlocked =
+    install?.status === 'FAIL' &&
+    (install.blocking_class === 'externalBlocked' || install.failure_kind === 'device_blocked');
+  const compilePassed = build?.status === 'PASS';
   const blockerFails = results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
   const blockerSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER');
   const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
+  const staticBlockerFails = blockerFails.filter(
+    r => r.id !== 'device_test_build' && r.id !== 'device_test_install' && r.id !== 'device_test_run',
+  );
   const canClaimDone = Boolean(plan && report) && blockerFails.length === 0 && blockerSkips.length === 0;
 
-  const lines: string[] = [];
-  lines.push(`can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`);
-  lines.push(`test_plan: ${plan ? 'PRESENT' : 'MISSING'}`);
-  lines.push(`test_report: ${report ? 'PRESENT' : 'MISSING'}`);
-  lines.push(`blocker_fail_count: ${blockerFails.length}`);
-  lines.push(`blocker_skip_count: ${blockerSkips.length}`);
-  lines.push(`blocking_warn_count: ${blockingWarnings.length}`);
+  const lines: string[] = [
+    'Testing 阶段状态面板：',
+    `- 文档结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
+    `- 主应用打包：${build?.status ?? '未产生结果'}`,
+    `- 真机装机：${install?.status ?? '未产生结果'}`,
+    `- 当前是否可以宣称 testing 完成：${canClaimDone ? '是' : '否'}`,
+    `can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`,
+    `test_plan: ${plan ? 'PRESENT' : 'MISSING'}`,
+    `test_report: ${report ? 'PRESENT' : 'MISSING'}`,
+    `blocker_fail_count: ${blockerFails.length}`,
+    `blocker_skip_count: ${blockerSkips.length}`,
+    `blocking_warn_count: ${blockingWarnings.length}`,
+  ];
+  if (deviceExternalBlocked && compilePassed) {
+    lines.push('- partial_readiness: compile_passed_device_blocked（harness verdict 应为 INCOMPLETE，非 PASS）');
+  }
   if (blockerFails.length > 0) {
     lines.push(`blocker_fail_ids: ${blockerFails.map(r => r.id).join(', ')}`);
   }
@@ -2316,17 +2395,22 @@ function buildTestingRunStatusResult(
   if (blockingWarnings.length > 0) {
     lines.push(`blocking_warn_ids: ${blockingWarnings.map(r => r.id).join(', ')}`);
   }
+  if (!canClaimDone) {
+    lines.push(`- 阻塞项：${blockerFails.map(r => r.id).join(', ') || '无 BLOCKER FAIL，但真机流水线未完成'}`);
+  }
 
   return {
     id: 'testing_run_status',
     category: 'structure',
     description: 'Testing 阶段脚本门禁总体状态',
-    severity: 'BLOCKER',
-    status: canClaimDone ? 'PASS' : 'FAIL',
+    severity: deviceExternalBlocked && compilePassed ? 'MINOR' : 'BLOCKER',
+    status: canClaimDone ? 'PASS' : deviceExternalBlocked && compilePassed ? 'WARN' : 'FAIL',
     details: lines.join('\n'),
     suggestion: canClaimDone
       ? '脚本门禁可进入 verifier + receipt 闭环；仍需确认真机测试证据与报告语义质量。'
-      : '补齐 test-plan.md / test-report.md，并修复 BLOCKER FAIL/SKIP 后重跑 testing harness。',
+      : deviceExternalBlocked && compilePassed
+        ? '接入真机/模拟器后重跑；summary.next_action=device_ready_then_rerun_testing；不允许宣称 testing 阶段完成。'
+        : '补齐 test-plan.md / test-report.md，并修复 BLOCKER FAIL/SKIP 后重跑 testing harness。',
   };
 }
 
@@ -2362,6 +2446,7 @@ const checker: PhaseChecker = {
     const deviceTestHapHolder: DeviceTestPipelineHolder = {
       hapPath: null,
       installPassed: false,
+      installExternallyBlocked: false,
       buildReused: false,
       hylyreTracePath: null,
       deviceTestRunExecuted: false,

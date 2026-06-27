@@ -208,6 +208,8 @@ export function reconcileReportWithHylyreTrace(
   for (const [tcId, reportStatus] of reportStatuses) {
     const traceCase = traceCases.find(c => c.id.toUpperCase() === tcId);
     if (!traceCase) {
+      // explicit_skip / 未进 Hylyre 派生表的 TC 在报告中标「跳过」，不要求 trace.cases 登记
+      if (normalizeExecStatus(reportStatus) === '跳过') continue;
       mismatches.push(`${tcId}：报告=${reportStatus}，trace 无该用例记录`);
     }
   }

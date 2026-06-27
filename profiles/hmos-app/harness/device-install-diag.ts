@@ -129,6 +129,26 @@ export function diagnoseInstallBlocking(projectRoot: string): InstallBlockingDia
   };
 }
 
+export function writeInstallDiagJson(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot: string | undefined,
+  diag: InstallBlockingDiagnosis,
+  fileName: 'ut-install-diag.json' | 'testing-install-diag.json' = 'ut-install-diag.json',
+): string | null {
+  try {
+    const reportDir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+    fs.mkdirSync(reportDir, { recursive: true });
+    const outPath = path.join(reportDir, fileName);
+    fs.writeFileSync(outPath, JSON.stringify(diag, null, 2), 'utf-8');
+    return outPath;
+  } catch {
+    return null;
+  }
+}
+
+/** @deprecated use writeInstallDiagJson */
 export function writeUtInstallDiagJson(
   projectRoot: string,
   feature: string,
@@ -136,15 +156,7 @@ export function writeUtInstallDiagJson(
   frameworkRoot: string | undefined,
   diag: InstallBlockingDiagnosis,
 ): string | null {
-  try {
-    const reportDir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
-    fs.mkdirSync(reportDir, { recursive: true });
-    const outPath = path.join(reportDir, 'ut-install-diag.json');
-    fs.writeFileSync(outPath, JSON.stringify(diag, null, 2), 'utf-8');
-    return outPath;
-  } catch {
-    return null;
-  }
+  return writeInstallDiagJson(projectRoot, feature, phase, frameworkRoot, diag, 'ut-install-diag.json');
 }
 
 /** 将 diagnoseInstallBlocking 结果映射为 ut_hvigor_test CheckResult 机器可读字段 */
@@ -186,7 +198,10 @@ export function mapInstallBlockingToUtCheckFields(diag: InstallBlockingDiagnosis
   }
 }
 
-export function buildUtInstallBlockingCheckDetails(diag: InstallBlockingDiagnosis): string {
+export function buildInstallBlockingCheckDetails(
+  diag: InstallBlockingDiagnosis,
+  diagFileName: 'ut-install-diag.json' | 'testing-install-diag.json',
+): string {
   const lines = [
     `装机预检阻塞（blockingKind=${diag.kind}）`,
     diag.details,
@@ -200,6 +215,27 @@ export function buildUtInstallBlockingCheckDetails(diag: InstallBlockingDiagnosi
   if (diag.bundleName) {
     lines.push(`bundleName=${diag.bundleName} deviceVc=${diag.deviceVersionCode} candidateVc=${diag.candidateVersionCode}`);
   }
-  lines.push('详见 doc/features/<feature>/ut/reports/ut-install-diag.json');
+  lines.push(`详见 doc/features/<feature>/*/reports/${diagFileName}`);
   return lines.join('\n');
+}
+
+/** @deprecated use buildInstallBlockingCheckDetails */
+export function buildUtInstallBlockingCheckDetails(diag: InstallBlockingDiagnosis): string {
+  return buildInstallBlockingCheckDetails(diag, 'ut-install-diag.json');
+}
+
+export function mapInstallBlockingToTestingCheckFields(diag: InstallBlockingDiagnosis): {
+  failure_kind: string;
+  blocking_class: string;
+  suggestion: string;
+} {
+  const base = mapInstallBlockingToUtCheckFields(diag);
+  if (diag.kind === 'externalBlocked') {
+    return {
+      ...base,
+      suggestion:
+        '接入真机/模拟器后重跑；summary.next_action=device_ready_then_rerun_testing；不允许宣称 testing 阶段完成。',
+    };
+  }
+  return base;
 }

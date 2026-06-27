@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { packRelease } from './pack-release.mjs';
@@ -189,6 +190,52 @@ function assertZipContents(frameworkRoot) {
   }
 }
 
+/** @param {string} filePath */
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+/**
+ * c1: 校验包内 RELEASE-MANIFEST.json —— 存在性 + 逐文件哈希自洽 + 覆盖完整 + sidecar 链式引用。
+ * @param {string} frameworkRoot 解包后的 framework/ 根
+ * @param {string} sidecarManifestPath dist sidecar manifest 绝对路径
+ */
+function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
+  const manifestRel = 'RELEASE-MANIFEST.json';
+  const manifestAbs = path.join(frameworkRoot, manifestRel);
+  if (!fs.existsSync(manifestAbs)) fail('in-zip RELEASE-MANIFEST.json missing');
+  const manifest = JSON.parse(fs.readFileSync(manifestAbs, 'utf8'));
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
+    fail('in-zip manifest has no files[]');
+  }
+
+  // per-file 哈希自洽：每个 files[] 与解包文件字节一致（防漂移门禁的 SSOT）
+  const mismatches = [];
+  for (const entry of manifest.files) {
+    const abs = path.join(frameworkRoot, entry.path);
+    if (!fs.existsSync(abs)) { mismatches.push(`missing: ${entry.path}`); continue; }
+    if (sha256File(abs) !== entry.sha256) mismatches.push(`hash-mismatch: ${entry.path}`);
+  }
+  if (mismatches.length > 0) {
+    fail(`in-zip manifest integrity: ${mismatches.length} issue(s): ${mismatches.slice(0, 10).join(', ')}`);
+  }
+
+  // 覆盖完整：manifest.files 恰好 == 解包全部文件 \ {RELEASE-MANIFEST.json 自身}
+  const shipped = new Set(listAllFiles(frameworkRoot).filter(f => f !== manifestRel));
+  const covered = new Set(manifest.files.map(f => f.path));
+  const uncovered = [...shipped].filter(f => !covered.has(f));
+  const extra = [...covered].filter(f => !shipped.has(f));
+  if (uncovered.length > 0) fail(`in-zip manifest missing coverage: ${uncovered.slice(0, 10).join(', ')}`);
+  if (extra.length > 0) fail(`in-zip manifest lists non-shipped: ${extra.slice(0, 10).join(', ')}`);
+
+  // sidecar 链式引用：dist manifest.inZipManifest.sha256 == 包内 manifest 自身 hash
+  const sidecar = JSON.parse(fs.readFileSync(sidecarManifestPath, 'utf8'));
+  if (!sidecar.inZipManifest || sidecar.inZipManifest.sha256 !== sha256File(manifestAbs)) {
+    fail('dist sidecar inZipManifest.sha256 mismatch with in-zip RELEASE-MANIFEST.json');
+  }
+  console.log(`[release:verify] in-zip manifest integrity PASS (${manifest.files.length} files)`);
+}
+
 export async function verifyReleasePack() {
   const rules = loadReleaseExcludes();
 
@@ -262,7 +309,7 @@ export async function verifyReleasePack() {
   const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
   try {
     console.log(`[release:verify] packing to ${tmpOut}...`);
-    const { zipPath } = await packRelease({ dryRun: false, outDir: tmpOut });
+    const { zipPath, manifestPath } = await packRelease({ dryRun: false, outDir: tmpOut });
     if (!zipPath || !fs.existsSync(zipPath)) fail('pack did not produce zip');
 
     const extractRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-extract-'));
@@ -278,6 +325,7 @@ export async function verifyReleasePack() {
       const frameworkRoot = path.join(extractRoot, 'framework');
       assertZipContents(frameworkRoot);
       assertReleaseTextUsesLf(frameworkRoot);
+      assertInZipManifest(frameworkRoot, manifestPath);
 
       console.log('[release:verify] numbered skill path/prose scan...');
       const numbered = checkNoNumberedSkillRelease(frameworkRoot);

@@ -437,6 +437,19 @@ export interface FrameworkConfig {
    * 可选宿主工具配置（如 hmos-app 真机自动化）；未声明时由 resolve* 辅助函数回退默认值。
    */
   tools?: FrameworkToolsConfig;
+  /**
+   * 防漂移门禁（framework_integrity）opt-out（v2.4 起；opt-in 可选）。
+   * 未声明时默认 enforce（检测到 framework 源码漂移判 BLOCKER）。
+   */
+  integrity?: FrameworkIntegrityConfig;
+}
+
+/** 防漂移完整性门禁（framework_integrity）的 opt-out 配置（opt-in；可选） */
+export interface FrameworkIntegrityConfig {
+  /** true → framework 源码漂移仅 WARN 不阻断（显式本地 fork） */
+  allow_local_drift?: boolean;
+  /** 按 framework 内相对路径精确放行的漂移白名单 */
+  drift_allowlist?: string[];
 }
 
 // --------------------------------------------------------------------------
@@ -946,7 +959,20 @@ function normalizeMaterializedAdapters(
   return ['generic'];
 }
 
-function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
+/** 透传 integrity opt-out（不丢用户 framework.config.json 的防漂移配置；供 init UPDATE 重写时保留）。 */
+function normalizeIntegrity(
+  raw: FrameworkIntegrityConfig | undefined,
+): FrameworkIntegrityConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: FrameworkIntegrityConfig = {};
+  if (typeof raw.allow_local_drift === 'boolean') out.allow_local_drift = raw.allow_local_drift;
+  if (Array.isArray(raw.drift_allowlist)) {
+    out.drift_allowlist = raw.drift_allowlist.filter((p): p is string => typeof p === 'string');
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
   const project_profile = normalizeProjectProfile(raw.project_profile, raw.project_type);
   const fallback = buildDefaultConfig(project_profile.name);
   const project_type =
@@ -982,6 +1008,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
         : fallback.active_workflow ?? 'spec-driven',
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
     tools: normalizeTools(raw.tools),
+    integrity: normalizeIntegrity(raw.integrity),
   };
 }
 

@@ -100,6 +100,29 @@ function collectResourceKeys(projectRoot: string, contracts: ContractsSpec): Map
       /* skip malformed */
     }
   }
+
+  // HarmonyOS media：PNG 在 base/media/，无 element JSON；从 contracts.resource_keys 路径注册
+  const rk = contracts.resource_keys as
+    | Record<string, Record<string, Array<{ key: string; path?: string }>>>
+    | undefined;
+  if (rk) {
+    for (const mod of Object.values(rk)) {
+      const mediaEntries = mod.media;
+      if (!Array.isArray(mediaEntries)) continue;
+      if (!keys.has('media')) keys.set('media', new Set());
+      const set = keys.get('media')!;
+      for (const entry of mediaEntries) {
+        if (!entry.key) continue;
+        const mediaPath = entry.path
+          ? path.join(projectRoot, entry.path)
+          : null;
+        if (mediaPath && fs.existsSync(mediaPath)) {
+          set.add(entry.key);
+        }
+      }
+    }
+  }
+
   return keys;
 }
 

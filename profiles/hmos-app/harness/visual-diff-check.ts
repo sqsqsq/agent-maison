@@ -443,10 +443,23 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const pendingScreens = rep.screens.filter(s => s.verdict === 'pending');
   const byScreenId = new Map(rep.screens.map(s => [s.screen_id, s] as const));
 
+  const resolveP0Entry = (targetId: string): VisualDiffScreenEntry | undefined => {
+    const direct = byScreenId.get(targetId);
+    if (direct) return direct;
+    // 兼容回落仅允许 overlay id → 其 parent/base entry（采集把 overlay 并入主屏 entry 的旧形态）；
+    // 绝不允许 base 屏 id 被 overlay entry 反向覆盖——否则只采到 X__overlay__* 时，主屏 X 缺截图会被假覆盖、P0 漏采被放过。
+    const sep = targetId.indexOf('__overlay__');
+    if (sep > 0) {
+      const baseEntry = byScreenId.get(targetId.slice(0, sep));
+      if (baseEntry) return baseEntry;
+    }
+    return undefined;
+  };
+
   // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped/pending ---
   const p0Ids = collectP0VisualTargetIds(uiDoc);
   const p0Uncovered = p0Ids.filter(id => {
-    const entry = byScreenId.get(id);
+    const entry = resolveP0Entry(id);
     return !entry || entry.verdict === 'skipped' || entry.verdict === 'pending';
   });
 

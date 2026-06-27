@@ -13,6 +13,8 @@ const STRUCT_NAME_RE = /\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)/g;
 export interface SourceScanResult {
   resourceRefs: Set<string>;
   structNames: Set<string>;
+  /** 按 pages → components → 其余目录的文件顺序收集 struct 名（用于结构序 LCS） */
+  structNamesOrdered: string[];
   etsFiles: string[];
 }
 
@@ -22,23 +24,57 @@ export function scanFeatureSourceTree(
 ): SourceScanResult {
   const resourceRefs = new Set<string>();
   const structNames = new Set<string>();
+  const structNamesOrdered: string[] = [];
   const etsFiles: string[] = [];
 
   for (const mod of contracts.modules ?? []) {
-    const srcRoot = path.join(projectRoot, mod.package_path, 'src', 'main', 'ets');
-    walkEts(srcRoot, (file) => {
-      etsFiles.push(file);
-      const text = fs.readFileSync(file, 'utf-8');
-      for (const m of text.matchAll(RESOURCE_REF_RE)) {
-        resourceRefs.add(m[1]);
-      }
-      for (const m of text.matchAll(STRUCT_NAME_RE)) {
-        structNames.add(m[1]);
-      }
-    });
+    const etsRoot = path.join(projectRoot, mod.package_path, 'src', 'main', 'ets');
+    const scanDirs = [
+      path.join(etsRoot, 'presentation', 'pages'),
+      path.join(etsRoot, 'presentation', 'components'),
+      path.join(etsRoot, 'shared'),
+      path.join(etsRoot, 'data'),
+      etsRoot,
+    ];
+    const seenFiles = new Set<string>();
+    for (const dir of scanDirs) {
+      walkEtsSorted(dir, (file) => {
+        if (seenFiles.has(file)) return;
+        seenFiles.add(file);
+        scanEtsFile(file, resourceRefs, structNames, structNamesOrdered, etsFiles);
+      });
+    }
   }
 
-  return { resourceRefs, structNames, etsFiles };
+  return { resourceRefs, structNames, structNamesOrdered, etsFiles };
+}
+
+function walkEtsSorted(dir: string, fn: (file: string) => void): void {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) walkEtsSorted(full, fn);
+    else if (ent.name.endsWith('.ets')) fn(full);
+  }
+}
+
+function scanEtsFile(
+  file: string,
+  resourceRefs: Set<string>,
+  structNames: Set<string>,
+  structNamesOrdered: string[],
+  etsFiles: string[],
+): void {
+  etsFiles.push(file);
+  const text = fs.readFileSync(file, 'utf-8');
+  for (const m of text.matchAll(RESOURCE_REF_RE)) {
+    resourceRefs.add(m[1]);
+  }
+  for (const m of text.matchAll(STRUCT_NAME_RE)) {
+    structNames.add(m[1]);
+    structNamesOrdered.push(m[1]);
+  }
 }
 
 function walkEts(dir: string, fn: (file: string) => void): void {

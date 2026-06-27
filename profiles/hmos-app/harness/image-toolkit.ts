@@ -35,6 +35,13 @@ function runJimpWorker(args: string[]): Record<string, unknown> {
 export function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace(/^#/, '').trim();
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  if (full.length === 8) {
+    return {
+      r: parseInt(full.slice(2, 4), 16),
+      g: parseInt(full.slice(4, 6), 16),
+      b: parseInt(full.slice(6, 8), 16),
+    };
+  }
   if (full.length !== 6) throw new Error(`invalid hex: ${hex}`);
   return {
     r: parseInt(full.slice(0, 2), 16),

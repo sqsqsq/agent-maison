@@ -555,6 +555,23 @@ function areBlockersOnlyUtDeviceExternal(checks: CheckResult[]): boolean {
   );
 }
 
+function isTestingDeviceExternalBlocked(checks: CheckResult[]): boolean {
+  const build = checks.find(c => c.id === 'device_test_build');
+  const install = checks.find(c => c.id === 'device_test_install');
+  if (build?.status !== 'PASS' || install?.status !== 'FAIL') return false;
+  return install.blocking_class === 'externalBlocked' || install.failure_kind === 'device_blocked';
+}
+
+function areBlockersOnlyTestingDeviceExternal(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c =>
+      c.id === 'device_test_install' &&
+      (c.blocking_class === 'externalBlocked' || c.failure_kind === 'device_blocked'),
+  );
+}
+
 /** 供 unit test 与 report 生成复用 */
 export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   let blockers = 0;
@@ -565,6 +582,9 @@ export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   }
   if (blockers === 0) return 'PASS';
   if (areBlockersOnlyUtDeviceExternal(checks) && isUtDeviceExternalBlocked(checks)) {
+    return 'INCOMPLETE';
+  }
+  if (areBlockersOnlyTestingDeviceExternal(checks) && isTestingDeviceExternalBlocked(checks)) {
     return 'INCOMPLETE';
   }
   return 'FAIL';

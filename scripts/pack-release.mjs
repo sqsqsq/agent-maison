@@ -109,11 +109,31 @@ function zipDirectory(stagingRoot, zipPath, archiveDirName) {
   });
 }
 
-/** @param {string} zipPath */
-function sha256File(zipPath) {
+/** @param {string} filePath 任意文件（zip 或 staged 源文件），按原始字节算 sha256 */
+function sha256File(filePath) {
   const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(zipPath));
+  hash.update(fs.readFileSync(filePath));
   return hash.digest('hex');
+}
+
+const RELEASE_MANIFEST_NAME = 'RELEASE-MANIFEST.json';
+
+/**
+ * C-review P1a/P1b：写「包内 per-file 哈希 manifest」（**不含 zip sha**，避免 zip 自指循环）。
+ * hash 基于 staging 后字节（sanitize + LF 归一），供 consumer 防漂移门禁逐文件校验。
+ * 须在 writeStaging 之后、zipDirectory 之前调用，使本文件随包进 zip。
+ * @param {string} stagingRoot @param {string} version @param {string[]} included repo 相对路径（= framework 内相对路径）
+ * @returns {string} 包内 manifest 自身 sha256（写进 dist sidecar 做链式校验）
+ */
+function writeInZipManifest(stagingRoot, version, included) {
+  const files = included.map(rel => ({
+    path: rel,
+    sha256: sha256File(path.join(stagingRoot, rel)),
+  }));
+  const manifest = { schema_version: '1.0', version, files };
+  const out = path.join(stagingRoot, RELEASE_MANIFEST_NAME);
+  fs.writeFileSync(out, normalizeReleaseTextEol(`${JSON.stringify(manifest, null, 2)}\n`), 'utf8');
+  return sha256File(out);
 }
 
 /**
@@ -143,6 +163,8 @@ export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
   const stagingRoot = path.join(stagingParent, FRAMEWORK_DIR_NAME);
   fs.rmSync(stagingParent, { recursive: true, force: true });
   writeStaging(stagingRoot, included);
+  // c1: 包内 per-file 哈希 manifest（须在 zip 前写进 stagingRoot）
+  const inZipManifestSha = writeInZipManifest(stagingRoot, version, included);
 
   if (stageOnly) {
     console.log(`[release:pack] staged ${stagingRoot} (no zip)`);
@@ -163,6 +185,10 @@ export async function packRelease(opts = parseArgs(process.argv.slice(2))) {
     zipName,
     zipPath: toPosixPath(path.relative(REPO_ROOT, zipPath)),
     sha256,
+    inZipManifest: {
+      path: `${FRAMEWORK_DIR_NAME}/${RELEASE_MANIFEST_NAME}`,
+      sha256: inZipManifestSha,
+    },
     createdAt: new Date().toISOString(),
     includedFileCount: included.length,
     excludedFileCount: excluded.length,
