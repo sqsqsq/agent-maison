@@ -36,6 +36,16 @@
 
 ---
 
+## device visual-diff 缺陷枚举契约（round2）
+
+`visual-diff.json` 每屏新增可选 `defects[]`（正向渲染缺陷枚举：`clipping`|`overlap`|`shape_mismatch`|`missing_render`|`other` + `bbox` + `severity` + `note`）与采集层自动写入的 `edge_tile_divergence`/`edge_over_threshold_tiles`。
+
+- **pass 契约**：`verdict=pass` 屏不得含 blocker/major defect（含则 pixel_1to1 FAIL、否则 WARN）。
+- **pixel_1to1 须逐屏枚举**：finalized verdict 的 `defects` 缺失（`undefined`）会 WARN 逼填（可为 `[]`），与既有 `reverse_missing` 对称——**消费者旧 `visual-diff.json` 在 pixel_1to1 下首次跑 device-testing 会被要求补 `defects[]`**（确无缺陷时写 `[]` 即可）。非 pixel_1to1 不受影响。
+- **边缘哨兵**：采集层对 ref/shot 算结构散度，超阈 tile 未被 `defect.bbox` 覆盖且达地板 → WARN（低置信、永不 gate）；若属误报可补对应 `missing_render` defect 的 bbox 或复核该区域。
+
+---
+
 ## 把 framework 部署到目标工程：两种模式
 
 ### 模式 A：Vendor（直接拷源码，无独立 git 仓库）

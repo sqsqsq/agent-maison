@@ -33,34 +33,41 @@ todos:
       病灶（F1 修正）：#4 真相＝spec 已声明 `variant: tonal` + `width_ratio: 0.35` + `align: end`(浅灰 tonal 内联约占 35%)，但渲染成**全宽实心 brand 蓝**。原 v3 想放宽 collectVariantParityIssues 的 buttonCount，但 tonal∉NON_FILL_VARIANTS={ghost,text,outlined} → 该按钮在 buttonCount 前就 continue 跳过；且 hasSolidButtonBackground 对 tonal 浅底也返 true，无法区分「对的浅 tonal / 错的实心 brand」。**width_ratio 至今无任何门禁读取**——这是最干净的新抓手。
       改造：(1) 新增「声明约束渲染忠实度」校验——主信号 **width_ratio/align**（声明内联 0.35 却渲染全宽 → 命中；从源码区分 `.width('100%')`/`layoutWeight`/缺省撑满 易误漏，故低置信）；辅信号 **填充色 token 比对**（**coding 期无截图，非图像采样**：解析源码 `backgroundColor` 的 `$r` token/hex → `hexToLab`/`deltaE2000` 比 brand.primary，声明 tonal 浅调却解析到高饱和 brand 蓝 → 命中）。(2) 校验集纳入 tonal/filled（不止 NON_FILL）；多 Button struct 用按钮 copy/string key 定位对应 Button。(3) 定位不到 / token 不可解析 → 保守跳过。**定位：v3 为低置信静态早警，#4 主牙在 v1 shape_mismatch rubric + v2 采集层哨兵；v3 命中加分、不命中不背锅，以 device visual-diff 为准**。范围 P0 屏先行(D7)。
       触点：profiles/hmos-app/harness/visual-parity-backstop.ts、（采色复用）image-toolkit.ts、harness/tests/unit。
-    status: pending
+      落地：visual-parity-backstop.ts 加 collectRenderFaithfulnessIssues（P0 屏先行，walkComponentNodes 逐屏）+ 导出 isExplicitFullWidth/locateButtonBody/resolveButtonBgHex/isSaturatedSolidFill。主信号 width_ratio≤0.6 **或 align start/end**（isInlineGeometry，含 align 信号）声明内联却源码 .width('100%')/layoutWeight 全宽 → 命中；辅信号 variant=tonal 却 backgroundColor 解析为高色度+偏暗实心(C≥30,L≤75) → 命中（coding 期源码 token/几何解析，**非图像采样**）；多 Button 按 copy 定位、定位不到保守跳过。接入 coding-visual-parity-check 产 visual_parity_render 低置信 WARN（以 device visual-diff 为准）。
+      **P1 修复（reviewer 抓）**：resolveButtonBgHex 外层正则曾用 `[^)]*` 在 `$r(` 首个 `)` 截断，使 `$r('app.color.x')`（ArkUI/C2 标准写法）token 路径恒返 null、tonal 实心辅信号哑火；已抽 parseButtonBgArg 修正正则 + 补 token 路径&端到端 color.json 单测（堵原测试盲点）。
+      **P2 诚实标注**：v3 为低置信早警——isExplicitFullWidth 只认显式 `.width('100%')`/`layoutWeight`，**抓不到隐式全宽**（Button 在 Column 不设 width 即撑满父容器）；故 #4 若是「token 设色 + 隐式全宽」则 v3 两信号仍静默。**#4 兜底是 v1 shape_mismatch rubric + v2 哨兵，v3 仅锦上添花**。单测 visual-render-faithfulness 26 例；npm test 1185+35 全绿。
+    status: completed
   - id: a1-arkui-anti-clip-rules
     content: >
       主题A · ArkUI 防裁切/防叠帧静态规则（生成侧防患 #1/#2/#3）。
       病灶：宫格(ServiceGridSwiper)图标被裁上半、更多服务(PromoSwiper)同屏叠两帧、卡包插图压标题——ArkUI 常见布局陷阱：Swiper 固定高度不足裁切 Image / Swiper 未设 displayCount 致多项可见或未吸附 / Image 覆盖 Text 未 clip。
       改造：[arkui-static-rules.ts](profiles/hmos-app/harness/arkui-static-rules.ts)（现仅 bindsheet/push/sheet-subscriber 三条 nav 规则）追加低置信 WARN（以 device visual-diff 为准）：(1) Swiper/Grid 含 Image 子项且容器固定高度偏小(< 子项声明尺寸+label) → 裁切风险；(2) 单 banner 语义 Swiper 未显式 .displayCount(1) 或含多项可见配置 → 叠帧风险；(3) Stack/绝对定位中 Image 覆盖 Text 区且父未 .clip(true) → 重叠风险。阈值/匹配数据驱动便于调。
       触点：profiles/hmos-app/harness/arkui-static-rules.ts、harness/tests/unit。
-    status: pending
+      落地：arkui-static-rules.ts 加 detectClipOverlapRisks（纯函数）+ checkArkuiClipOverlapRisk（接入 runArkuiStaticRules）：R1 Swiper/Grid 含 Image+容器矮高度(≤100vp，已排除小图标自身高度避免误报) / R2 Swiper displayCount≥2 或 prev/nextMargin 叠帧 / R3 Stack Image+Text 绝对定位未 clip(true)。低置信 WARN + allow 豁免。单测 arkui-clip-overlap 8 例（含"小图标高度不误报"回归）。
+    status: completed
   - id: a2-generic-spec-variant
     content: >
       主题A · 通用 spec 质量增强：pixel_1to1 下 action_button 须声明 variant（**与本案解耦、低优先**）。【D9】
       说明（F2 修正）：homepage 的 spec **已**忠实声明 variant/width_ratio/asset_ref，「强制声明」对本案冗余、**不是 homepage 6 缺陷的修复路径**（#4 修复走 v3 渲染忠实度）。本 todo 仅为防「别的 feature 的 agent 偷懒不填 variant」留通用门禁：pixel_1to1、P0 屏先行(D7) 的 action_button 缺 variant → WARN/FAIL(ratchet)。
       枚举对齐（F2）：严格用 [UiSpecButtonVariant](harness/scripts/utils/ui-spec-shared.ts:30)=filled|tonal|outlined|ghost|text，**不引入 pill/fill**，避免类型冲突。
       触点：harness/scripts/utils/ui-spec-shared.ts（schema 校验）或对应 spec-phase check、profiles/hmos-app/skills/{spec,coding}/profile-addendum.md、harness/tests/unit。
-    status: pending
+      落地：visual-parity-backstop.ts 加 isDeclaredButtonVariant（枚举对齐 UiSpecButtonVariant=filled|tonal|outlined|ghost|text、拦 pill/fill）+ collectActionButtonVariantDeclIssues（pixel_1to1 P0 屏 action_button 缺/非法 variant → visual_parity_variant_decl WARN）。引入期取 WARN（ratchet 渐进，观察后可收紧 FAIL）；homepage 已声明 → 对本案 no-op。单测 isDeclaredButtonVariant 合法/pill·fill·缺失。
+    status: completed
   - id: s1-asset-render-check
     content: >
       主题S · asset 真渲染校验 + 复用 icon.kind（覆盖 #6 tab 图标漏渲染；**不推 symbol/矢量**）。【D10】
       病灶（F5/F6 修正）：#6 真缺口＝bottom_tab_home/mine 已在 must_have 且带 `asset_ref: tab_icon_*`，但只渲染了文字；[collectMustHavePresenceIssues](profiles/hmos-app/harness/visual-parity-backstop.ts) 只查 id presence(容器在就过)，**不验 asset_ref 的图是否真渲染**。
       改造：(1) 新增独立校验——节点声明了 asset_ref → 映射 struct 是否真 $r('media.<key>') 引用该 media（区别于 presence）；声明却未引用 → 反向缺失/WARN(命中 #6)。(2) 素材分型**复用既有** [UiSpecIconRef.kind](harness/scripts/utils/ui-spec-shared.ts:35)=brand_logo|system_symbol|illustration 做覆盖统计，**不另起 bbox 分类**；tab 等缺 kind 者可提示补 system_symbol(仅提示)。(3) **尊重 crop 授权**：crop_confirmed_by:user_requirement 的裁切**不报「建议改 symbol/矢量」噪声**；#5 小图标糊为「裁 JPEG 小图」的已确认取舍，本轮不强推替换。
       触点：profiles/hmos-app/harness/{visual-parity-backstop,static-fidelity-score,source-ref-scan}.ts、harness/tests/unit。
-    status: pending
+      落地：visual-parity-backstop.ts 加 assetRenderedInRefs + collectAssetRenderIssues——节点声明 asset_ref/icon.ref → 映射 struct(scanStructResourceRefs) 或源码是否真 $r media 引用，声明却未引用 → visual_parity_asset_render WARN（catches #6 tab 仅文字）。复用既有 resourceKeyToRef，不另起分类；按 D10 不推 symbol/矢量、不对已确认 crop 报噪。**补全 icon.kind**：isUnclassifiedIcon 对「声明 icon 却缺 kind」提示补分类（不强制 symbol）。单测 assetRenderedInRefs + isUnclassifiedIcon。
+    status: completed
   - id: specs-docs
     content: >
       登记与文档：新增/调整 check（defect 枚举门禁、edge_tile 哨兵、渲染忠实度、asset 真渲染、通用 variant、ArkUI 防裁切）在对应 *-rules.yaml 登记 check id + 严重度；更新 device-testing/spec/coding SKILL 与 verify prompt 说明缺陷枚举 rubric、edge 哨兵语义、渲染忠实度判别(width_ratio/tonal 采色)、asset 真渲染。
       openspec change：缺陷枚举 + edge_tile 字段使 visual-diff.json schema 与 pass 契约变化 → 建 openspec/changes/ 一条（defects[] + edge_tile_divergence schema 扩展 + MIGRATION：旧 json 无新字段的兼容、及 **pixel_1to1 下 defects===undefined→WARN 逼填的契约语义(D11)**）；渲染忠实度/asset/ArkUI 属既有门禁增强，rules.yaml + docs 即足。
       触点：specs/、profiles/hmos-app/**/rules.yaml、docs/、openspec/changes/、MIGRATION.md。
-    status: pending
+      落地：coding-rules.overlay.yaml 登记 4 个新 check id（arkui_clip_overlap_risk + visual_parity_{render,asset_render,variant_decl}，bundled_with visual_parity）；device-testing SKILL rubric 已接 defects 枚举（v1）；建 openspec/changes/visual-diff-defect-enumeration（proposal/spec/tasks/.openspec.yaml）记 defects[]+edge 字段契约与 D11 语义；MIGRATION.md 加消费者条目（旧 json pixel_1to1 须补 defects[]）。
+    status: completed
   - id: tests-acceptance
     content: >
       出口（BLOCKER）：用 round1 真实坏图做回归夹具（拷宿主 device-screenshots/shot-*.png 进 fixtures）——
@@ -72,7 +79,8 @@ todos:
       (a1) Swiper 矮高度含 Image / 未 displayCount(1) → WARN；正确写法 → 不命中。
       各项补 harness 单测并注册 [run-unit.ts](harness/tests/run-unit.ts)，cd harness && npm test 全 PASS。不 bump 版本(package.json=2.4.0)、不改 SimulatedWallet 业务码。
       触点：harness/tests/、harness/tests/fixtures/。
-    status: pending
+      落地：每条 todo 配出口单测——visual-defect-enum 15（schema / 坐标对账含覆盖夹具 / FP-safe 合成端到端）、visual-render-faithfulness 18（全宽/定位/采色/实心/asset/variant 枚举）、arkui-clip-overlap 8（R1/R2/R3 含小图标不误报回归）；均注册 run-unit。npm test 1177 unit + 35 fixtures 全绿。注：round1 真实坏图以实测 FP 探针验证 + FP-safe 合成端到端落为可复现单测；committed 真机 PNG 夹具 + 地板=5 终校待「修好的 home」回灌（见 v2/D12 暂定）。
+    status: completed
 isProject: false
 ---
 

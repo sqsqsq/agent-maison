@@ -76,6 +76,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
   { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
   { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test' },
+  { id: 'visual-render-faithfulness', modulePath: './unit/visual-render-faithfulness.unit.test' },
+  { id: 'arkui-clip-overlap', modulePath: './unit/arkui-clip-overlap.unit.test' },
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
   { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },

@@ -19,7 +19,13 @@ import {
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { computeStaticFidelityScore } from './static-fidelity-score';
-import { runVisualParityBackstop, collectVariantParityIssues } from './visual-parity-backstop';
+import {
+  runVisualParityBackstop,
+  collectVariantParityIssues,
+  collectRenderFaithfulnessIssues,
+  collectAssetRenderIssues,
+  collectActionButtonVariantDeclIssues,
+} from './visual-parity-backstop';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 function ruleDesc(
@@ -139,6 +145,51 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       status: 'WARN',
       details: ['【启发式·低置信，以 device visual-diff 为准】', ...variantIssues.map(i => i.detail)].join('\n'),
       suggestion: '核对按钮填充与 variant 是否一致；最终以真机 visual-diff 像素核对为准。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // v3 渲染忠实度：声明 width_ratio/align 几何 + tonal 填充 vs 源码渲染（P0 屏先行，低置信 WARN）
+  const renderIssues = collectRenderFaithfulnessIssues(ctx, doc, baselineUnverified);
+  if (renderIssues.length > 0) {
+    results.push({
+      id: 'visual_parity_render',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: ['【渲染忠实度·低置信，以 device visual-diff 为准】', ...renderIssues.map(i => i.detail)].join('\n'),
+      suggestion: '核对按钮占宽(width_ratio)与填充(tonal/实心)是否按 spec 渲染；最终以真机 visual-diff 像素核对为准。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // s1 asset 真渲染：声明 asset_ref 却未 $r 引用 media（catches #6 tab 仅文字）
+  const assetIssues = collectAssetRenderIssues(ctx, doc, baselineUnverified);
+  if (assetIssues.length > 0) {
+    results.push({
+      id: 'visual_parity_asset_render',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: ['【asset 真渲染·低置信，以 device visual-diff 为准】', ...assetIssues.map(i => i.detail)].join('\n'),
+      suggestion: '声明 asset_ref 的元素须在对应组件 $r 引用并渲染该 media（如 tab 图标）；动态渲染可豁免。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // a2 通用 spec 质量：pixel_1to1 P0 action_button 须声明 variant（低优先 WARN，非本案修复路径）
+  const variantDeclIssues = collectActionButtonVariantDeclIssues(ctx, doc, baselineUnverified);
+  if (variantDeclIssues.length > 0) {
+    results.push({
+      id: 'visual_parity_variant_decl',
+      category: 'structure',
+      description: desc,
+      severity: 'MAJOR',
+      status: 'WARN',
+      details: ['【通用 spec 质量·低置信】', ...variantDeclIssues.map(i => i.detail)].join('\n'),
+      suggestion: 'pixel_1to1 P0 屏 action_button 须声明 variant（filled|tonal|outlined|ghost|text）以承载形态保真。',
       affected_files: [uiSpecRel],
     });
   }

@@ -194,6 +194,13 @@ structure_checks:
       豁免：// arkui-lint:allow arkui_singleton_flow_multi_subscriber
     severity: MAJOR
 
+  arkui_clip_overlap_risk:
+    description: >
+      a1 渲染陷阱低置信启发式：Swiper/Grid 含 Image 且固定矮高度(≤100vp) → 裁切；Swiper displayCount≥2 /
+      prev·nextMargin → 单 banner 叠帧；Stack 内 Image+Text 绝对定位未 .clip(true) → 重叠/溢出。
+      WARN（以 device visual_diff 为准）。豁免：// arkui-lint:allow arkui_clip_overlap_risk
+    severity: MAJOR
+
   # ==========================================================================
   # 业务编排命名入口约束（v2.1）
   # ------------------------------------------------------------------------
@@ -281,6 +288,30 @@ structure_checks:
     description: >
       静态保真分：语义色绑定 / 文案 / 资产覆盖（pixel_1to1 含 placeholder 计入分母）/ 结构序。
       pixel_1to1 下 WARN 升 BLOCKER。几何 IoU 归 device visual_diff。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_render:
+    description: >
+      v3 渲染忠实度（低置信，coding 源码静态）：P0 屏 action_button 声明 width_ratio(内联) 却源码全宽，
+      或 variant=tonal 却 backgroundColor 高饱和实心 → WARN。形态保真主牙在 device visual_diff（#4）。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_asset_render:
+    description: >
+      s1 asset 真渲染（低置信）：节点声明 asset_ref/icon.ref 但映射 struct/源码未 $r 引用对应 media →
+      WARN（如 #6：tab 声明图标却仅渲染文字）。动态渲染可漏判，以 device visual_diff 为准。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_variant_decl:
+    description: >
+      a2 通用 spec 质量（低优先）：pixel_1to1 P0 屏 action_button 须声明合法 variant
+      （filled|tonal|outlined|ghost|text）→ 缺/非法时 WARN。非 homepage 修复路径，引入期 WARN。
     severity: MAJOR
     rule:
       bundled_with: visual_parity
