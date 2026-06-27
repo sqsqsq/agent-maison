@@ -557,6 +557,56 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // F1：缺 defects 枚举在 pixel_1to1 下是 BLOCKER/FAIL（反绕过，与 reverse_missing 对称），补 [] 解除
+  run('visual_diff_missing_defects_enum_pixel1to1_blocks', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const shotHash = hashScreenshotFile(shot);
+      if (!shotHash) throw new Error('hash required');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed', 'screens:',
+        '  - id: home', '    priority: P0', '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }', 'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      const baseScreen = {
+        screen_id: 'home',
+        verdict: 'pass',
+        screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+        ref_id: 'home',
+        fidelity_score: 0.9,
+        geometric_iou: 0.9,
+        screenshot_hash: shotHash,
+        evaluated_screenshot_hash: shotHash,
+        reverse_missing: [] as string[],
+      };
+      // defects 缺失 → BLOCKER/FAIL
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.0', screens: [baseScreen] }));
+      const r1 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r1.find((x: { id: string; status: string; severity: string; details?: string }) =>
+        x.id === 'visual_diff_defects_enum' || /逐屏填写 defects/.test(x.details ?? ''));
+      if (!hit || hit.status !== 'FAIL' || hit.severity !== 'BLOCKER') {
+        throw new Error(`missing defects should BLOCKER/FAIL; got ids=${JSON.stringify(r1.map(x => ({ id: x.id, s: x.status, sev: x.severity })))}`);
+      }
+      // 补 defects:[] → 解除
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.0', screens: [{ ...baseScreen, defects: [] }] }));
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (r2.some((x: { id: string; details?: string }) => x.id === 'visual_diff_defects_enum' || /逐屏填写 defects/.test(x.details ?? ''))) {
+        throw new Error('defects:[] should clear the enum requirement');
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_capture_merge_preserves_verdict', () => {
     const hash = 'abc123def4567890';
     const existing = {

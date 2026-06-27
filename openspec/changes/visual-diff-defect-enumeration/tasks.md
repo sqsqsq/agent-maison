@@ -2,7 +2,7 @@
 
 - [x] 1.1 `VisualDiffDefect` 类型 + schema 校验（class/severity/note/bbox(4 数∈[0,1])）
 - [x] 1.2 门禁：pass 屏 blocker/major defect → ratchet FAIL/WARN（与 lowScorePass 同级）
-- [x] 1.3 D11：pixel_1to1 `defects===undefined` → WARN 逼填（与 reverse_missing 对称；非 pixel_1to1 旧 json 不受影响）
+- [x] 1.3 D11：pixel_1to1 `defects===undefined` → **BLOCKER/FAIL**（ratchet，补 `[]` 解除；与 reverse_missing 对称；非 pixel_1to1 旧 json 不受影响）
 - [x] 1.4 device-testing SKILL rubric 接 defects 枚举（4 类 + pass 须空 + 边缘哨兵说明）
 
 ## 2. 采集层边缘哨兵

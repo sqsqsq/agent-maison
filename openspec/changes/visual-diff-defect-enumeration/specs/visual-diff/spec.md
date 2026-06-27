@@ -18,14 +18,14 @@ Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
 
 ### Requirement: defects enumeration is mandatory under pixel_1to1 (backward-compatible)
 
-Under pixel_1to1, a finalized verdict (pass/warn/fail) with `defects === undefined` SHALL trigger a ratchet WARN requiring per-screen enumeration (may be `[]`), symmetric with `reverse_missing`. Non-pixel_1to1 consumer json without the field SHALL be unaffected.
+Under pixel_1to1, a finalized verdict (pass/warn/fail) with `defects === undefined` SHALL be a **BLOCKER/FAIL** (ratchet) requiring per-screen enumeration (add `defects[]`, may be `[]`, to clear), symmetric with `reverse_missing`. Non-pixel_1to1 consumer json without the field SHALL be unaffected.
 
 Enforcement: `profiles/hmos-app/harness/visual-diff-check.ts`
 
 #### Scenario: omitting defects cannot bypass the empty-pass contract
 
 - **WHEN** a pixel_1to1 finalized screen omits the `defects` field
-- **THEN** the gate SHALL WARN (screensMissingDefectsEnum), so the agent cannot dodge「pass 须 defects 为空」by leaving the field out
+- **THEN** the gate SHALL FAIL (BLOCKER, screensMissingDefectsEnum) under pixel_1to1, so the agent cannot dodge「pass 须 defects 为空」by leaving the field out
 
 ### Requirement: Capture-layer edge sentinel cross-checks unenumerated structural divergence
 
