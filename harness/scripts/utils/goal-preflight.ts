@@ -10,6 +10,7 @@ import {
   evaluatePersonalSetupGate,
   resolveProjectMaterializedForGate,
 } from './personal-setup-gate';
+import { loadLocalConfig } from './framework-local-config';
 import { evaluateConfigPlacementGate } from './config-placement-gate';
 import {
   unionPhasePersonalPrerequisites,
@@ -43,6 +44,95 @@ export function resolveAdapterProvenance(
   if (adapterStatus.source === 'local') return 'config_local';
   if (adapterStatus.source === 'project_legacy') return 'config_legacy';
   return 'fallback';
+}
+
+/** 运行身份语义来源（写入 manifest.adapter_provenance，供回溯）。 */
+export type RunAdapterProvenance =
+  | 'user_explicit'
+  | 'entry_declared'
+  | 'local_config'
+  | 'registry'
+  | 'override';
+
+export interface RunAdapterDecision {
+  effectiveAdapter: string;
+  provenance: RunAdapterProvenance;
+  /** override 时须把 requested 回写 framework.local.json（goal 流程内唯一写盘例外） */
+  writeLocal: boolean;
+}
+
+/**
+ * 运行身份对账（纯函数·只读）：framework.local.json agent_adapter 为权威 SSOT。
+ *   - requested 非法（不在 materialized / 入口缺）→ STOP；
+ *   - --override-adapter：唯一写盘例外，须有合法 requested，否则 STOP；
+ *   - requested 与合法 local 冲突且无 override → STOP（调用方据此在写 manifest 前阻断）；
+ *   - 有合法 local（requested 缺省或相等）→ effective=local（local_config）；
+ *   - 首启（无合法 local）且有合法 requested → effective=requested（按 adapterSource 标 provenance）；
+ *   - requested 与 local 皆缺 → STOP（永不默认 claude/cursor）。
+ * 阶梯（用户显式/跳板/registry）只产 requested；local 不是阶梯一级，而是 effective 权威。
+ */
+export function reconcileRunAdapter(opts: {
+  projectRoot: string;
+  /** 原始 argv.adapter 或 manifest.adapter，不先归一 */
+  requestedAdapter?: string;
+  override: boolean;
+  /** agent 阶梯 rung：user_explicit|entry_declared|registry（仅首启 argv 生效时用于标 provenance） */
+  adapterSource?: string;
+}): RunAdapterDecision {
+  const { projectRoot, override } = opts;
+  const requested = opts.requestedAdapter?.trim() || undefined;
+  const materialized = resolveProjectMaterializedForGate(projectRoot);
+  const isValid = (a: string | undefined): a is string =>
+    Boolean(a && materialized.includes(a) && adapterEntryExists(projectRoot, a));
+  const localRaw = loadLocalConfig(projectRoot)?.agent_adapter?.trim() || undefined;
+  const localValid = isValid(localRaw);
+
+  if (requested && !isValid(requested)) {
+    throw new Error(
+      `[goal-runner] adapter BLOCKER: 请求的 adapter "${requested}" 不在已物化候选 [${materialized.join(', ')}] 或入口未物化；` +
+        '改选已物化项或先跑 /framework-init。',
+    );
+  }
+
+  if (override) {
+    if (!requested) {
+      throw new Error(
+        '[goal-runner] adapter BLOCKER: --override-adapter 须配合 --adapter <已物化 adapter>（无目标可回写）。',
+      );
+    }
+    return { effectiveAdapter: requested, provenance: 'override', writeLocal: true };
+  }
+
+  // 损坏/过期 SSOT 不静默忽略：local 有记录却非法（不在 materialized / 入口缺）→ STOP（override 上面已放行）。
+  if (localRaw && !localValid) {
+    throw new Error(
+      `[goal-runner] adapter BLOCKER: framework.local.json 记录的 agent_adapter "${localRaw}" 非法/未物化（不在 [${materialized.join(', ')}] 或入口缺）。` +
+        '请修 framework.local.json（或重跑 record-adapter），或显式 --override-adapter 切换；不静默忽略损坏的 SSOT。',
+    );
+  }
+
+  if (requested && localValid && requested !== localRaw) {
+    throw new Error(
+      `[goal-runner] adapter BLOCKER: framework.local.json 记录运行身份 "${localRaw}"，本次却请求 "${requested}"。` +
+        '请改 framework.local.json（或重选 record-adapter）保持一致，或显式加 --override-adapter 临时切换；不静默用猜测覆盖你记录的身份。',
+    );
+  }
+
+  if (localValid) {
+    return { effectiveAdapter: localRaw!, provenance: 'local_config', writeLocal: false };
+  }
+
+  if (requested) {
+    const src = opts.adapterSource?.trim();
+    const provenance: RunAdapterProvenance =
+      src === 'user_explicit' || src === 'registry' ? src : 'entry_declared';
+    return { effectiveAdapter: requested, provenance, writeLocal: false };
+  }
+
+  throw new Error(
+    '[goal-runner] adapter BLOCKER: 未解析到运行身份（无 --adapter，framework.local.json 也无合法 agent_adapter）。' +
+      '请由 goal-mode 入口完成 check-personal-setup（或加 --adapter <已物化 adapter>）；永不默认 claude/cursor。',
+  );
 }
 
 export interface GoalPreflightInput {

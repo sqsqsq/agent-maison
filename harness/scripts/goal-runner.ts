@@ -77,7 +77,9 @@ import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   resolveAdapterProvenance,
   runGoalPreflight,
+  reconcileRunAdapter,
 } from './utils/goal-preflight';
+import { recordAdapterToLocal } from './utils/personal-setup-gate';
 import {
   FEATURE_LOCK_NAME,
   RUN_LOCK_NAME,
@@ -754,9 +756,10 @@ async function main(): Promise<number> {
   setupSignalHandlers();
 
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'requirement', 'adapter', 'start', 'end', 'resume', 'manifest', 'run-id'],
+    string: ['feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest', 'run-id'],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
+      'override-adapter',
       'detach', 'detached-child', 'force', 'foreground-ok',
     ],
     alias: { f: 'feature', h: 'help' },
@@ -841,6 +844,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
     applyManifestCliOverrides(manifest, manifestArgv);
   }
 
+  // 运行身份对账（G1）：framework.local.json agent_adapter 为权威 SSOT。用 raw argv.adapter（不归一）
+  // 与 local 对账——冲突 / 双缺 / override-无requested / local 损坏 → reconcile 抛 BLOCKER，在写 manifest 到盘 +
+  // 加锁之前 STOP，不让 agent 的 --adapter 猜测覆盖你记录的运行身份。决策在此（纯计算，无副作用），
+  // 但 override 回写 local 是副作用 → 延后到所有启动前置 gate + preflight 通过、写 manifest 之前（见下），
+  // 避免"run 因 --detach 缺失 / 孤儿 run / capability 校验失败等 BLOCKER 退出却已把 local 切走"。
+  let pendingAdapterWriteback: string | null = null;
+  {
+    const rawRequestedAdapter = argv.adapter
+      ? String(argv.adapter).trim()
+      : argv.manifest || argv.resume
+        ? manifest.adapter
+        : undefined;
+    const adapterDecision = reconcileRunAdapter({
+      projectRoot,
+      requestedAdapter: rawRequestedAdapter,
+      override: Boolean(argv['override-adapter']),
+      adapterSource: argv['adapter-source'] ? String(argv['adapter-source']).trim() : undefined,
+    });
+    manifest.adapter = adapterDecision.effectiveAdapter;
+    manifest.adapter_provenance = adapterDecision.provenance;
+    if (adapterDecision.writeLocal) pendingAdapterWriteback = adapterDecision.effectiveAdapter;
+  }
+
   const dryRun = Boolean(argv['dry-run']);
   const forceResume = Boolean(argv['force-resume']);
 
@@ -903,6 +929,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain,
       resolvedProfile,
     });
+    // override 回写延后至此：survival guard / orphan guard / lock / preflight 全过，run 即将 commit 才切 local，
+    // 避免任一启动前置 BLOCKER 退出却已把 framework.local.json 切走（run 没真启动 local 却变了）。
+    if (pendingAdapterWriteback) {
+      recordAdapterToLocal(projectRoot, pendingAdapterWriteback);
+      console.error(
+        `[goal-runner] 按 --override-adapter 切到 adapter=${pendingAdapterWriteback}，` +
+          '已回写 framework.local.json（个人级、gitignored）。',
+      );
+    }
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');

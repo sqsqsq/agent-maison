@@ -67,6 +67,15 @@ function mergeLocalPatch(
   return next;
 }
 
+/**
+ * 确定性把运行身份写入 framework.local.json（与 fallback 修复 / record-adapter 同一机制）。
+ * goal-mode `--override-adapter` 的唯一合法写盘路径走此处。
+ */
+export function recordAdapterToLocal(projectRoot: string, adapter: string): void {
+  writeLocalConfig(projectRoot, mergeLocalPatch(projectRoot, { agent_adapter: adapter }));
+  clearFrameworkConfigCache();
+}
+
 export type PersonalSetupGateFailureCode =
   | 'fallback'
   | 'not_in_materialized'
@@ -78,6 +87,7 @@ export type PersonalSetupGateFailureCode =
 
 export type PersonalSetupEnsureCode =
   | 'ok'
+  | 'adapter_conflict'
   | PersonalSetupGateFailureCode;
 
 export interface PersonalSetupGateOptions {
@@ -545,6 +555,23 @@ export function ensurePersonalSetup(
   for (let step = 0; step < MAX_ENSURE_REPAIR_STEPS; step++) {
     const gate = evaluatePersonalSetupGate(projectRoot, options);
     if (gate.ok) {
+      // G2：local 已有合法 agent_adapter，但本次 --select-adapter 与之不同 → 不静默吞，显式报冲突。
+      // （静默 ok=既有 正是宿主"cursor 记录却跑成 claude"时 agent 收不到信号的洞。）
+      const requested = options.selectAdapter?.trim();
+      if (requested && requested !== gate.activeAdapter) {
+        return {
+          ok: false,
+          code: 'adapter_conflict',
+          status: gate.status,
+          activeAdapter: gate.activeAdapter,
+          materializedAdapters: gate.materializedAdapters,
+          ensured: null,
+          candidates: [],
+          message:
+            `framework.local.json 已记录运行身份 agent_adapter=${gate.activeAdapter}，本次却请求 ${requested}。` +
+            'goal 流程不静默改写：永久换 → init record-adapter（registry setup.adapter）；本次即时换 → goal-runner --override-adapter。',
+        };
+      }
       return gateResultToEnsureJson(gate, combineEnsuredActions(ensuredSteps));
     }
 

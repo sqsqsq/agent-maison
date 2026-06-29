@@ -13,6 +13,7 @@ import {
   listAvailableAdapters,
 } from '../../scripts/utils/adapter-catalog';
 import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
+import { parseCommandsTargetDir } from '../../scripts/utils/instance-skill-bridge';
 import { detectRepoLayout } from '../../repo-layout';
 import { externalStandaloneLayout } from '../utils/layout-test-helper';
 import type { UnitCaseResult } from '../run-unit';
@@ -186,6 +187,36 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(falsePos.length === 0, falsePos.map(f => f.details).join('; '));
       const readme = fs.readFileSync(path.join(REPO_FRAMEWORK_ROOT, 'agents', 'README.md'), 'utf-8');
       assert(readme.includes('claude') && readme.includes('cursor'), 'README reference table should list adapters');
+    },
+  },
+  {
+    name: 'G6 cursor command 产物：commands.target_dir=.cursor/commands + goal-mode 模板带 RESOLVED_ADAPTER：cursor',
+    run: () => {
+      const adapterYaml = fs.readFileSync(
+        path.join(REPO_FRAMEWORK_ROOT, 'agents', 'cursor', 'adapter.yaml'),
+        'utf-8',
+      );
+      assert(
+        parseCommandsTargetDir(adapterYaml) === '.cursor/commands',
+        'cursor adapter 应声明 commands.target_dir=.cursor/commands',
+      );
+      const tpl = path.join(
+        REPO_FRAMEWORK_ROOT,
+        'agents',
+        'cursor',
+        'templates',
+        'commands',
+        'goal-mode.md',
+      );
+      assert(fs.existsSync(tpl), 'cursor goal-mode command 模板应存在');
+      const body = fs.readFileSync(tpl, 'utf-8');
+      assert(/RESOLVED_ADAPTER）\*{0,2}[：:]\s*cursor/.test(body), 'cursor goal-mode command 须声明 RESOLVED_ADAPTER：cursor');
+      assert(!/RESOLVED_ADAPTER）\*{0,2}[：:]\s*claude/.test(body), 'cursor command 不得声明 claude 身份');
+      // 须为独立 cursor 产物，不得逐字复用 Claude 模板正文（否则会带回 claude 身份）
+      const claudeTpl = path.join(REPO_FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'commands', 'goal-mode.md');
+      if (fs.existsSync(claudeTpl)) {
+        assert(fs.readFileSync(claudeTpl, 'utf-8') !== body, 'cursor command 不得逐字复用 Claude 模板正文');
+      }
     },
   },
   {

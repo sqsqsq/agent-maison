@@ -29,13 +29,17 @@
 
 ## 运行身份（RESOLVED_ADAPTER）
 
-本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。`RESOLVED_ADAPTER` 按下列阶梯解析（优先级从高到低）：
+本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。
 
-1. **用户显式指定**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 直接用该值。
-2. **入口 / 跳板声明**：刚读过的 slash 或 skills-bridge 跳板内 `> 运行身份（RESOLVED_ADAPTER）：<name>` 行（Claude slash、Cursor/Codex/generic bridge 物化时注入）。
-3. **回退**：无法从入口确定身份 → registry **`setup.adapter`** 交互选择（见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)）；**永不硬猜**。
+**关键区分（避免误传 `--adapter`）**：解析阶梯只产出 **`requestedAdapter`（请求身份）**；**真正生效的运行身份以 `framework.local.json agent_adapter`（SSOT 权威）为准**——已有合法记录时一律用它，`requestedAdapter` 仅在「首启无 local」或「`--override-adapter` 显式覆盖」时才成为 effective。**local 不是阶梯的一级**，而是阶梯产物之上的权威。
 
-若未经跳板直调本 Skill（无身份声明）→ 走阶梯 3。
+`requestedAdapter` 解析阶梯（优先级从高到低，**永不硬猜 / 永不默认 claude·cursor**）：
+
+1. **用户显式指定**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 来源 `user_explicit`。
+2. **入口 / 跳板声明**：刚读过的 slash 或 skills-bridge 跳板内 `> 运行身份（RESOLVED_ADAPTER）：<name>` 行（Claude slash、Cursor/Codex/generic bridge 物化时注入）→ 来源 `entry_declared`。
+3. **回退**：入口无身份声明 → registry **`setup.adapter`** 交互选择（见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)）→ 来源 `registry`；**绝不默认**。
+
+启动 goal-runner 时：**`--adapter` 传 check-personal-setup 返回的 `activeAdapter`（即 SSOT），并用 `--adapter-source` 传上面来源**（写入 manifest `adapter_provenance` 供回溯）；**不得**把未经对账的 `requestedAdapter` 猜测直接当 `--adapter`。goal-runner 会以 local 为权威对账：冲突即 STOP（除非 `--override-adapter`）。
 
 ## Agent 必须执行（勿推给用户）
 
@@ -57,8 +61,9 @@
 
    | `code` | 行为 |
    |--------|------|
-   | `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 继续 |
-   | `needs_adapter_choice` | `RESOLVED_ADAPTER` ∉ candidates → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；或 **STOP**→`/framework-init` |
+   | `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 用返回的 `activeAdapter` 作为 `--adapter` 继续 |
+   | `adapter_conflict` | local 已记录 X 但本次请求 Y≠X → **默认尊重 local（X）**；用户确要换 Y → 永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
+   | `needs_adapter_choice` | `requestedAdapter` ∉ candidates → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；或 **STOP**→`/framework-init` |
    | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
    4. 若阶梯 2 自动写入了 local.json（`ensured` 含 `auto_selected_adapter`），须在汇报中说明：「我按当前运行宿主选了 `<X>`（个人级 `framework.local.json`，gitignored）；要换别的 adapter 请讲」。
@@ -71,11 +76,13 @@
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
   --requirement "<需求描述>" \
-  --adapter <RESOLVED_ADAPTER> \
+  --adapter <activeAdapter（check-personal-setup 返回的 SSOT）> \
+  [--adapter-source <user_explicit|entry_declared|registry>] \
   [--start spec] [--end testing] [--dry-run]
 ```
 
 `--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。
+`--adapter` 须为 check-personal-setup 的 `activeAdapter`（SSOT），goal-runner 会以 `framework.local.json` 对账：与记录冲突即 STOP。**仅当用户明确要本次临时换 adapter** 才加 `--override-adapter`（会按请求回写 local 并留痕）；永久换走 registry `record-adapter`。
 
 #### 启动方式（survival-first · BLOCKER）
 

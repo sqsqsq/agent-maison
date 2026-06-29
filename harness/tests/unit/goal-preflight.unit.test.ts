@@ -11,6 +11,7 @@ import { resolveWorkflowSpec } from '../../workflow-loader';
 import {
   resolveAdapterProvenance,
   runGoalPreflight,
+  reconcileRunAdapter,
 } from '../../scripts/utils/goal-preflight';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { DEFAULT_DEPENDENCY_POLICY, resolveAutoChain } from '../../scripts/utils/phase-transition-policy';
@@ -46,6 +47,30 @@ function writeProjectConfig(root: string, materialized: string[]): void {
       2,
     ),
   );
+}
+
+/** 搭 temp 工程：materialized + 入口产物（cursor→AGENTS.md / claude→CLAUDE.md）+ 可选 local agent_adapter */
+function setupAdapters(root: string, materialized: string[], localAdapter?: string): void {
+  writeProjectConfig(root, materialized);
+  if (materialized.includes('cursor')) fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+  if (materialized.includes('claude')) fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+  if (localAdapter) {
+    fs.writeFileSync(
+      path.join(root, 'framework.local.json'),
+      JSON.stringify({ schema_version: '1.0', agent_adapter: localAdapter }, null, 2),
+    );
+  }
+  clearFrameworkConfigCache();
+}
+
+function withTmp(fn: (root: string) => void): void {
+  const root = mkTmp();
+  try {
+    fn(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    clearFrameworkConfigCache();
+  }
 }
 
 function preflightCtx(root: string, manifest: GoalManifest) {
@@ -208,6 +233,129 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },
+  },
+  {
+    name: 'reconcileRunAdapter: local=cursor + requested=claude（无 override）→ 冲突 STOP',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude'], 'cursor');
+        assert.throws(
+          () => reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'claude', override: false }),
+          /记录运行身份 "cursor"/,
+        );
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: local=cursor + requested=claude + override → effective=claude/override/writeLocal',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude'], 'cursor');
+        const d = reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'claude', override: true });
+        assert.strictEqual(d.effectiveAdapter, 'claude');
+        assert.strictEqual(d.provenance, 'override');
+        assert.strictEqual(d.writeLocal, true);
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: local=cursor + requested=cursor → local_config（不冲突）',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude'], 'cursor');
+        const d = reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'cursor', override: false });
+        assert.strictEqual(d.effectiveAdapter, 'cursor');
+        assert.strictEqual(d.provenance, 'local_config');
+        assert.strictEqual(d.writeLocal, false);
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: local=cursor + 无 requested → effective=local（权威）',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude'], 'cursor');
+        const d = reconcileRunAdapter({ projectRoot: root, override: false });
+        assert.strictEqual(d.effectiveAdapter, 'cursor');
+        assert.strictEqual(d.provenance, 'local_config');
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: 首启无 local + requested=claude → entry_declared（默认中性）',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude']);
+        const d = reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'claude', override: false });
+        assert.strictEqual(d.effectiveAdapter, 'claude');
+        assert.strictEqual(d.provenance, 'entry_declared');
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: 首启无 local + requested=claude + adapterSource=user_explicit → user_explicit',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude']);
+        const d = reconcileRunAdapter({
+          projectRoot: root,
+          requestedAdapter: 'claude',
+          override: false,
+          adapterSource: 'user_explicit',
+        });
+        assert.strictEqual(d.provenance, 'user_explicit');
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: 双缺（无 requested + 无 local）→ STOP，永不默认',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude']);
+        assert.throws(
+          () => reconcileRunAdapter({ projectRoot: root, override: false }),
+          /未解析到运行身份/,
+        );
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: --override 但无 requested → STOP（无回写目标）',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor', 'claude'], 'cursor');
+        assert.throws(
+          () => reconcileRunAdapter({ projectRoot: root, override: true }),
+          /--override-adapter 须配合/,
+        );
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: requested 不在 materialized → STOP',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor'], 'cursor');
+        assert.throws(
+          () => reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'claude', override: false }),
+          /不在已物化候选/,
+        );
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: local 损坏（记录非物化 adapter）+ 无 override → STOP，不静默忽略 SSOT',
+    run: () =>
+      withTmp((root) => {
+        // materialized 只有 cursor，但 local 记录 claude（非法）
+        setupAdapters(root, ['cursor'], 'claude');
+        assert.throws(
+          () => reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'cursor', override: false }),
+          /非法\/未物化/,
+        );
+      }),
+  },
+  {
+    name: 'reconcileRunAdapter: local 损坏 + --override-adapter → 放行（override 逃生）',
+    run: () =>
+      withTmp((root) => {
+        setupAdapters(root, ['cursor'], 'claude');
+        const d = reconcileRunAdapter({ projectRoot: root, requestedAdapter: 'cursor', override: true });
+        assert.strictEqual(d.effectiveAdapter, 'cursor');
+        assert.strictEqual(d.provenance, 'override');
+        assert.strictEqual(d.writeLocal, true);
+      }),
   },
 ];
 

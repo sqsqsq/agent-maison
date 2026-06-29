@@ -21,7 +21,16 @@ fields:
     description: User requirement text or path to requirement file
   adapter:
     type: string
-    description: Active agent adapter name (must match framework.config.json agent_adapter)
+    description: >
+      Effective agent adapter (运行身份). 权威 SSOT 为 framework.local.json agent_adapter；
+      与之冲突的 --adapter 会被 goal-runner 阻断（除非 --override-adapter）。
+  adapter_provenance:
+    type: string
+    enum: [user_explicit, entry_declared, local_config, registry, override]
+    description: >
+      运行身份来源（诚实化回溯）：local_config=取自 framework.local.json SSOT；
+      override=经 --override-adapter 显式切换并回写 local；user_explicit/entry_declared/registry=
+      首启无 local 时由解析阶梯（用户显式 / 跳板入口声明 / registry 交互）产出的 requested。旧 manifest 可缺省。
   chain_override:
     type: array
     items: string

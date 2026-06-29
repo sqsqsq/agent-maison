@@ -347,6 +347,55 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'ensurePersonalSetup: 既有 local=cursor + selectAdapter=claude → adapter_conflict 不静默吞',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'cursor' }, null, 2),
+      );
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root, { selectAdapter: 'claude' });
+      assert.strictEqual(payload.ok, false);
+      assert.strictEqual(payload.code, 'adapter_conflict');
+      assert.strictEqual(payload.activeAdapter, 'cursor');
+      // 不静默改写 local（仍是 cursor）
+      const local = JSON.parse(
+        fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+      ) as { agent_adapter?: string };
+      assert.strictEqual(local.agent_adapter, 'cursor');
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'ensurePersonalSetup: 既有 local=cursor + selectAdapter=cursor → ok（不冲突）',
+    run: () => {
+      const root = mkTmp();
+      writeProjectConfig(root, ['claude', 'cursor']);
+      fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(path.join(root, 'AGENTS.md'), '# stub\n');
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'cursor' }, null, 2),
+      );
+      clearFrameworkConfigCache();
+
+      const payload = ensurePersonalSetup(root, { selectAdapter: 'cursor' });
+      assert.strictEqual(payload.ok, true);
+      assert.strictEqual(payload.code, 'ok');
+      assert.strictEqual(payload.activeAdapter, 'cursor');
+
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
     name: 'ensurePersonalSetup: 多 adapter + selectAdapter ∉ candidates 不写盘',
     run: () => {
       const root = mkTmp();

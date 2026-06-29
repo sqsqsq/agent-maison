@@ -33,6 +33,8 @@ export interface GoalManifest {
   feature: string;
   requirement?: string;
   adapter?: string;
+  /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
+  adapter_provenance?: string;
   chain_override?: FeaturePhase[];
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
@@ -158,6 +160,10 @@ export function buildGoalManifestFromInput(
     feature: String(input.feature ?? '').trim(),
     requirement: typeof input.requirement === 'string' ? input.requirement : undefined,
     adapter: typeof input.adapter === 'string' ? input.adapter.trim() : undefined,
+    adapter_provenance:
+      typeof input.adapter_provenance === 'string' && input.adapter_provenance.trim()
+        ? input.adapter_provenance.trim()
+        : undefined,
     chain_override: chainOverride,
     budget: mergeBudget(input.budget as GoalBudget | undefined),
     dependency_policy: mergeDependencyPolicy(input.dependency_policy as DependencyPolicy | undefined),
