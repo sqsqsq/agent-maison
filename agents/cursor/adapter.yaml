@@ -12,9 +12,10 @@ agent_entry_file:
   template_path: templates/AGENTS.md.template   # 共享模板（相对于 framework/ 根）
   target_path: AGENTS.md
 
-# G6：为 Cursor 生成 slash Command 产物（.cursor/commands/<slash>.md），消除"Cursor 误读同名
-# .claude/commands/goal-mode.md（写死 claude）"的触发面。当前只放需要承载运行身份的 goal-mode；
-# 其它 slash skill 走 .cursor/skills 跳板即可（不携带 RESOLVED_ADAPTER、无误路由风险）。
+# G6：为 Cursor 生成与 claude 对等的整套 slash Command 产物（.cursor/commands/<slash>.md），
+# 既给 Cursor 用户能力对等（/spec /plan /coding 等原生命令），又消除"Cursor 误读同名
+# .claude/commands/*.md 当 /<cmd>"的触发面。模板为薄入口（路由到 framework SKILL、不复述逻辑、
+# 不带 claude 身份）；唯 goal-mode 额外内嵌 RESOLVED_ADAPTER: cursor（唯一携带运行身份的 slash）。
 commands:
   target_dir: .cursor/commands                  # 相对于实例工程根
   template_dir: templates/commands              # 相对于 adapter 目录

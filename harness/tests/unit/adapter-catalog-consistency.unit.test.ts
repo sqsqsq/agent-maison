@@ -190,7 +190,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'G6 cursor command 产物：commands.target_dir=.cursor/commands + goal-mode 模板带 RESOLVED_ADAPTER：cursor',
+    name: 'G6 cursor command 整套：与 claude slash 集对等 + 薄入口(非 claude 正文) + goal-mode 带 RESOLVED_ADAPTER：cursor',
     run: () => {
       const adapterYaml = fs.readFileSync(
         path.join(REPO_FRAMEWORK_ROOT, 'agents', 'cursor', 'adapter.yaml'),
@@ -200,23 +200,25 @@ const cases: Array<{ name: string; run: () => void }> = [
         parseCommandsTargetDir(adapterYaml) === '.cursor/commands',
         'cursor adapter 应声明 commands.target_dir=.cursor/commands',
       );
-      const tpl = path.join(
-        REPO_FRAMEWORK_ROOT,
-        'agents',
-        'cursor',
-        'templates',
-        'commands',
-        'goal-mode.md',
+      const cursorDir = path.join(REPO_FRAMEWORK_ROOT, 'agents', 'cursor', 'templates', 'commands');
+      const claudeDir = path.join(REPO_FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'commands');
+      const listMd = (d: string) => fs.readdirSync(d).filter(f => f.endsWith('.md')).sort();
+      const claudeCmds = listMd(claudeDir);
+      const cursorCmds = listMd(cursorDir);
+      // 能力对等：cursor 的 slash command 集须与 claude 一致（否则 Cursor 用户缺 /spec /plan 等原生命令）
+      assert(
+        JSON.stringify(cursorCmds) === JSON.stringify(claudeCmds),
+        `cursor command 集应与 claude 对等：cursor=${cursorCmds.join(',')} claude=${claudeCmds.join(',')}`,
       );
-      assert(fs.existsSync(tpl), 'cursor goal-mode command 模板应存在');
-      const body = fs.readFileSync(tpl, 'utf-8');
-      assert(/RESOLVED_ADAPTER）\*{0,2}[：:]\s*cursor/.test(body), 'cursor goal-mode command 须声明 RESOLVED_ADAPTER：cursor');
-      assert(!/RESOLVED_ADAPTER）\*{0,2}[：:]\s*claude/.test(body), 'cursor command 不得声明 claude 身份');
-      // 须为独立 cursor 产物，不得逐字复用 Claude 模板正文（否则会带回 claude 身份）
-      const claudeTpl = path.join(REPO_FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'commands', 'goal-mode.md');
-      if (fs.existsSync(claudeTpl)) {
-        assert(fs.readFileSync(claudeTpl, 'utf-8') !== body, 'cursor command 不得逐字复用 Claude 模板正文');
+      for (const f of cursorCmds) {
+        const body = fs.readFileSync(path.join(cursorDir, f), 'utf-8');
+        assert(!/RESOLVED_ADAPTER）\*{0,2}[：:]\s*claude/.test(body), `${f} 不得声明 claude 身份`);
+        // 薄入口：不得逐字复用 claude 模板正文（避免双源分叉/带回 claude 身份）
+        assert(fs.readFileSync(path.join(claudeDir, f), 'utf-8') !== body, `${f} 不得逐字复用 claude 模板正文`);
       }
+      // 只有 goal-mode 须显式声明 cursor 运行身份（唯一携带 RESOLVED_ADAPTER 的 slash）
+      const gm = fs.readFileSync(path.join(cursorDir, 'goal-mode.md'), 'utf-8');
+      assert(/RESOLVED_ADAPTER）\*{0,2}[：:]\s*cursor/.test(gm), 'goal-mode 须声明 RESOLVED_ADAPTER：cursor');
     },
   },
   {
