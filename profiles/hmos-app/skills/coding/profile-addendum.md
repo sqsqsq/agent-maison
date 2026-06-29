@@ -29,7 +29,7 @@
 ## ArkUI 视觉 parity（ui-spec → 资源）
 
 - **色值 token**：ui-spec `tokens.*.value` → `$r('app.color.<snake_key>')`（`brand.cmb` → `brand_cmb`）
-- **媒体资产**：ui-spec `assets[].key` → `$r('app.media.<key>')` 或 `app.string` 旁路引用路径
+- **媒体资产**：ui-spec `assets[].key` → `$r('app.media.<key>')`。**物理落地**：`acquisition: crop` 非 placeholder 的资产，须把 `resolved_path`（`doc/.../spec/assets/<key>.<ext>` 真裁图）**复制**进引用模块 `<module>/src/main/resources/base/media/<key>.<ext>`；**禁** 1×1/纯色占位冒充、**禁** 工程根 `media/` 目录。`contracts.resource_keys[].path` 仅作契约记录、**不是** ArkUI 渲染解析路径（解析恒为模块 `resources/base/media`）。门禁：`visual_parity_asset_materialized`（pixel_1to1→BLOCKER 校验真图）+ `resource_integrity`（以模块目录实际文件判 key 可用性）。
 - **文案**：ui-spec 节点 `text` 逐字落入 `resources/base/element/string.json`
 - 脚本守门：`coding.visual_parity` + `static_fidelity_score`（ΔE / 文案 / 资产 / 结构）
 

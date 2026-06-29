@@ -28,10 +28,16 @@ const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 /**
  * verdict=pass 时 fidelity_score / geometric_iou 的最低阈值。
  * 低于此值视为「自报 0 分却宣称 pass」的假 PASS，降级 WARN。
- * warn verdict 不设下限（warn 本就表示有残差）。
  */
 const PASS_MIN_FIDELITY = 0.6;
 const PASS_MIN_IOU = 0.5;
+/**
+ * C：finalized 屏（尤其 warn）的「灾难地板」。warn 本表示有残差，但低到灾难级（全色块 fidelity~0.1）
+ * 仍放行是无底洞（宿主 homepage 6 屏全 warn+0.08~0.12 曾整体 PASS）——低于此地板即便 warn 也 ratchet
+ * （pixel_1to1 → FAIL）。取值低于 PASS_MIN，只抓崩坏（~0.1），不误伤正常残差 warn（~0.5）。
+ */
+const FINALIZED_MIN_FIDELITY = 0.45;
+const FINALIZED_MIN_IOU = 0.4;
 /** VL fidelity 显著高于 score_floor 时触发复核 WARN */
 const SCORE_FLOOR_SENTINEL_GAP = 0.35;
 /** defects[] 枚举合法取值（v1 渲染缺陷枚举契约） */
@@ -691,6 +697,41 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         `verdict=pass 但分数低于阈值（fidelity<${PASS_MIN_FIDELITY} 或 iou<${PASS_MIN_IOU}）：` +
         lowScorePass.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`).join(', '),
     });
+  }
+
+  // C：warn 屏灾难地板——warn 允许有残差，但 fidelity/iou 低到灾难级（全色块 ~0.1）仍放行是无底洞。
+  // pass 屏由上方 lowScorePass(0.6) 覆盖；此处补 warn 屏（0.45/0.40），只抓崩坏不误伤正常残差。
+  const lowFidelityWarn = warnScreens.filter(
+    s =>
+      (typeof s.fidelity_score === 'number' && s.fidelity_score < FINALIZED_MIN_FIDELITY) ||
+      (typeof s.geometric_iou === 'number' && s.geometric_iou < FINALIZED_MIN_IOU),
+  );
+  if (lowFidelityWarn.length > 0) {
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_low_fidelity_floor',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `verdict=warn 但分数低于灾难地板（fidelity<${FINALIZED_MIN_FIDELITY} 或 iou<${FINALIZED_MIN_IOU}）：` +
+        lowFidelityWarn.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'},iou=${s.geometric_iou ?? 'n/a'})`).join(', '),
+    });
+    // 诚实性交叉校验：低于地板却 defects:[] 且 reverse_missing:[] = 低分无依据（注水/不诚实）→ 同级 ratchet。
+    const dishonest = lowFidelityWarn.filter(
+      s => (s.defects?.length ?? 0) === 0 && (s.reverse_missing?.length ?? 0) === 0,
+    );
+    if (dishonest.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_low_fidelity_floor',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `低于地板却未登记任何 defects/reverse_missing（低分无依据，须 VL 补缺陷或修分）：` +
+          dishonest.map(s => s.screen_id).join(', '),
+      });
+    }
   }
 
   if (blockingDefectPass.length > 0) {

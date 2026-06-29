@@ -14,10 +14,10 @@ import {
   uiSpecRelPath,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { deltaE2000, hexToLab } from './image-toolkit';
-import { resourceKeyToRef, scanFeatureSourceTree } from './source-ref-scan';
+import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 import { computeStructureSequenceScore, loadVisualParityMappings } from './visual-structure-parity';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
-import { collectSemanticColorBindingIssues } from './visual-parity-backstop';
+import { collectSemanticColorBindingIssues, moduleMediaRealnessForKey } from './visual-parity-backstop';
 
 const COPY_MATCH_THRESHOLD = 0.85;
 const ASSET_COVER_THRESHOLD = 0.8;
@@ -155,6 +155,7 @@ export function computeStaticFidelityScore(
 
   // asset coverage %（文件存在 + 源码 $r 引用）
   const sourceScan = contracts ? scanFeatureSourceTree(ctx.projectRoot, contracts) : null;
+  const refModules = sourceScan && contracts ? scanResourceRefModules(ctx.projectRoot, contracts) : null;
   const assets = doc.assets ?? [];
   let assetResolved = 0;
   let assetReferenced = 0;
@@ -164,10 +165,17 @@ export function computeStaticFidelityScore(
     if (!countsInDenom) continue;
     const hasFile = Boolean(a.resolved_path && fs.existsSync(path.resolve(ctx.projectRoot, a.resolved_path)));
     if (hasFile) assetResolved++;
-    if (sourceScan) {
+    if (sourceScan && contracts) {
       const mediaRef = resourceKeyToRef(a.key, 'media');
       const altSnake = resourceKeyToRef(a.key.replace(/\./g, '_'), 'media');
-      if (sourceScan.resourceRefs.has(mediaRef) || sourceScan.resourceRefs.has(altSnake)) {
+      const referenced = sourceScan.resourceRefs.has(mediaRef) || sourceScan.resourceRefs.has(altSnake);
+      // B：引用计入分子还须【每个引用模块】各自有真图（消"占位/跨模块同名也算覆盖"假信号）；显式 placeholder 豁免。
+      const pkgs = new Set<string>([...(refModules?.get(mediaRef) ?? []), ...(refModules?.get(altSnake) ?? [])]);
+      const realOk = a.placeholder
+        || (pkgs.size > 0
+          ? [...pkgs].every(p => moduleMediaRealnessForKey(ctx.projectRoot, contracts, a.key, a.resolved_path, new Set([p])).real)
+          : moduleMediaRealnessForKey(ctx.projectRoot, contracts, a.key, a.resolved_path).real);
+      if (referenced && realOk) {
         assetReferenced++;
       }
     }

@@ -69,6 +69,8 @@ export interface VisualDiffCaptureResult {
   /** 截图 hash 变更导致 verdict 回退 pending 的屏数 */
   screensInvalidated?: number;
   errors: string[];
+  /** E1：P0 顶层屏尝试采集却失败（截图失败/hash 失败/骨架失败）的 screen_id；非顶层屏跳过不计入 */
+  p0CaptureFailures?: string[];
   skippedReason?: string;
 }
 
@@ -333,6 +335,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       : null;
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
+  const p0CaptureFailures: string[] = [];
   for (const screen of targets) {
     if (!isLikelyTopLevelScreen(screen)) {
       errors.push(`${screen.id}: 非可直达顶层屏，跳过自动截图（须 device-testing 导航后补 shot）`);
@@ -352,6 +355,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     });
     if (!shot.ok || !fs.existsSync(paths.abs)) {
       errors.push(`${screen.id}: 截图失败${shot.error ? ` — ${shot.error}` : ''}`);
+      p0CaptureFailures.push(screen.id);
       continue;
     }
     const refId = (screen.ref_id ?? screen.id).trim();
@@ -364,11 +368,13 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     const screenshotHash = hashScreenshotFile(paths.abs);
     if (!screenshotHash) {
       errors.push(`${screen.id}: 截图 hash 计算失败`);
+      p0CaptureFailures.push(screen.id);
       continue;
     }
     const row = buildVisualDiffSkeletonEntry(opts.projectRoot, opts.feature, screen, floor, screenshotHash);
     if (!row) {
       errors.push(`${screen.id}: 骨架条目生成失败（路径校验）`);
+      p0CaptureFailures.push(screen.id);
       continue;
     }
     if (edge) {
@@ -404,6 +410,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       mdPath,
       screensWritten: 0,
       errors: errors.length ? errors : ['无成功截图，未写入 visual-diff.json'],
+      p0CaptureFailures,
       skippedReason: 'no_captures',
     };
   }
@@ -425,5 +432,6 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     screensPreserved: preserved,
     screensInvalidated: invalidated,
     errors,
+    p0CaptureFailures,
   };
 }

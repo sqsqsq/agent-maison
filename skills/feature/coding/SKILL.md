@@ -173,8 +173,9 @@
 1. **必须 `Read`**：`authoritative_refs` 指向的**每一张原图** + `ui-spec.yaml` 全文。
 2. UI 实现以 **原图 + ui-spec 的 token / 组件树 / 逐字文案 / 资产 key** 为准；禁止占位图标、全局主题色、泛化文案 silently 替代。
 3. 资产缺失须按 ui-spec `assets[]` 显式 `placeholder`，不得静默替换。
-4. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
-5. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
+4. **资产物化（crop 真图落地 · 禁占位冒充 · BLOCKER）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（`doc/features/<feature>/spec/assets/<key>.<ext>` 的真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`（模块＝写 `$r('app.media.<key>')` 的那个模块）。**严禁**：① 生成 1×1/纯色/空 PNG 占位冒充真图；② 在工程根建 `media/` 目录冒充资源。缺真图时按第 3 条显式 `placeholder` 并停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图；`resource_integrity` 以模块资源目录实际文件判可用性，工程根/契约路径占位不被采信。
+5. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
+6. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
 
 #### Step 2.5b Context Exploration（与原流程衔接）
 

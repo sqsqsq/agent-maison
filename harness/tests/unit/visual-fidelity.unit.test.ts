@@ -510,6 +510,79 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // C：warn 屏灾难地板（fidelity<0.45 或 iou<0.40）pixel_1to1 → FAIL；正常残差 warn(~0.7) 不误伤。
+  const writeFloorCase = (root: string, fidelity: number, iou: number, scoreFloor: number): void => {
+    const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(ddir, { recursive: true });
+    const shot = path.join(ddir, 'shot-home.png');
+    writeMinimalRedPng(shot, 10, 10);
+    const evalHash = hashScreenshotFile(shot);
+    if (!evalHash) throw new Error('hash required');
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+      '```yaml\nui_change: new_or_changed\n```\n');
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+      'schema_version: "1.0"',
+      'verified: human_confirmed',
+      'screens:',
+      '  - id: home',
+      '    priority: P0',
+      '    ref_id: home',
+      '    root: { type: navigation_frame, order: 0 }',
+      'tokens: {}',
+      'assets: []',
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+    fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+      schema_version: '1.0',
+      screens: [{
+        screen_id: 'home',
+        verdict: 'warn',
+        screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+        ref_id: 'home',
+        fidelity_score: fidelity,
+        geometric_iou: iou,
+        score_floor: scoreFloor,
+        screenshot_hash: evalHash,
+        evaluated_screenshot_hash: evalHash,
+        reverse_missing: [],
+        defects: [],
+      }],
+    }));
+  };
+
+  run('visual_diff_warn_low_fidelity_floor_pixel1to1_fail', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeFloorCase(root, 0.1, 0.12, 0);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
+      if (!hit || hit.status !== 'FAIL' || !/灾难地板|低于地板/.test(hit.details ?? '')) {
+        throw new Error(`warn 0.1 应经灾难地板 FAIL：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('visual_diff_warn_normal_residual_no_floor_pass', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeFloorCase(root, 0.7, 0.62, 0.5);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
+      if (!hit || hit.status !== 'PASS') {
+        throw new Error(`正常残差 warn 0.7 不应触发地板：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      }
+      if (/灾难地板|低于地板/.test(hit.details ?? '')) throw new Error('误报灾难地板');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_finalized_verdict_without_evaluated_hash_warns', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();

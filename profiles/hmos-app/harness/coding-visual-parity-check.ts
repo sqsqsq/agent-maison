@@ -24,6 +24,7 @@ import {
   collectVariantParityIssues,
   collectRenderFaithfulnessIssues,
   collectAssetRenderIssues,
+  collectPlaceholderAssetIssues,
   collectActionButtonVariantDeclIssues,
 } from './visual-parity-backstop';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
@@ -165,16 +166,46 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // s1 asset 真渲染：声明 asset_ref 却未 $r 引用 media（catches #6 tab 仅文字）
+  // review#4：pixel_1to1 下「声明却未真实渲染」(not_rendered) 升 BLOCKER；显式 placeholder 豁免仍 WARN。
   const assetIssues = collectAssetRenderIssues(ctx, doc, baselineUnverified);
   if (assetIssues.length > 0) {
+    const hardNotRendered = isPixel1to1(ctx) && assetIssues.some(i => i.assetRole === 'not_rendered');
+    const { severity, status } = hardNotRendered
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({
       id: 'visual_parity_asset_render',
       category: 'structure',
       description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: ['【asset 真渲染·低置信，以 device visual-diff 为准】', ...assetIssues.map(i => i.detail)].join('\n'),
-      suggestion: '声明 asset_ref 的元素须在对应组件 $r 引用并渲染该 media（如 tab 图标）；动态渲染可豁免。',
+      severity,
+      status,
+      details: [
+        hardNotRendered ? '【asset 真渲染·pixel_1to1 阻断：声明 asset_ref 却未渲染】' : '【asset 真渲染·低置信，以 device visual-diff 为准】',
+        ...assetIssues.map(i => i.detail),
+      ].join('\n'),
+      suggestion: '声明 asset_ref 的元素须在对应组件 $r 引用并渲染该 media（如 tab 图标）；动态渲染/显式 placeholder 可豁免。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // B s1.5 asset 物化真图校验：被 $r('app.media.*') 引用的【模块实际】media 必须是真图，禁 1×1/退化占位冒充。
+  // 以模块 resources/base/media 为准（不信 contracts/根 media path，那归 F）；pixel_1to1 → BLOCKER。
+  const materializeIssues = collectPlaceholderAssetIssues(ctx, doc, baselineUnverified);
+  if (materializeIssues.length > 0) {
+    const { severity, status } = isPixel1to1(ctx)
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    results.push({
+      id: 'visual_parity_asset_materialized',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: [
+        '【asset 物化真图校验】被 $r 引用的模块 media 须为真图（非 1×1/退化占位）；以 <module>/src/main/resources/base/media 为准，不信 contracts/根 media path。',
+        ...materializeIssues.map(i => i.detail),
+      ].join('\n'),
+      suggestion: '把 ui-spec assets[].resolved_path 的真裁图复制进引用模块 <module>/src/main/resources/base/media/<key>.<ext>；缺真图须显式 placeholder + 用户知情，禁占位冒充。',
       affected_files: [uiSpecRel],
     });
   }

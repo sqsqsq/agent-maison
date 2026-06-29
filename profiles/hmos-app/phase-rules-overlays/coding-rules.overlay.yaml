@@ -304,6 +304,17 @@ structure_checks:
     description: >
       s1 asset 真渲染（低置信）：节点声明 asset_ref/icon.ref 但映射 struct/源码未 $r 引用对应 media →
       WARN（如 #6：tab 声明图标却仅渲染文字）。动态渲染可漏判，以 device visual_diff 为准。
+      review#4：pixel_1to1 下「声明 asset_ref 却未真实渲染」(not_rendered) 升 BLOCKER；显式 placeholder 豁免仍 WARN。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_asset_materialized:
+    description: >
+      B 承重门禁：被 $r('app.media.<key>') 引用的【模块实际】media（<module>/src/main/resources/base/media）
+      必须是真图，禁 1×1/退化占位冒充（Q2 三信号取或：尺寸 w/h≤2 ｜ 字节<256B ｜ 面积比<5% 相对 resolved_path 真裁图）。
+      绝不信 contracts.resource_keys.path / 工程根 media/（已知绕过点，归 F）。退化判定走无 jimp 路径——
+      pixel_1to1 下 jimp 不可用也判、不 SKIP（Q4）。pixel_1to1 → BLOCKER/FAIL；否则 MAJOR/WARN。
     severity: MAJOR
     rule:
       bundled_with: visual_parity

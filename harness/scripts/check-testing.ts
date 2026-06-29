@@ -25,6 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
+import { fidelityRatchetFailOrWarn } from './utils/fidelity-shared';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -2082,7 +2083,32 @@ function checkDeviceTestRunGate(
               logPath: run.logPath,
             }),
           });
-          if (cap.ok) {
+          const p0Failed = cap.p0CaptureFailures ?? [];
+          const stalePreserved = cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
+          if (cap.ok && (p0Failed.length > 0 || stalePreserved)) {
+            // E1/E2：P0 截图失败 / 全靠 preserved 旧证据充数 → 不得静默 PASS（pixel_1to1 FAIL，否则 blocking WARN）。
+            // 宿主 homepage 实测：6 屏全 Permission denied、screens=0+preserved=1 仍 PASS，等于在陈旧/错图上闭环。
+            const ratchet = fidelityRatchetFailOrWarn(ctx, true);
+            out.push({
+              id: 'visual_diff_capture',
+              category: 'structure',
+              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+              severity: ratchet.severity,
+              status: ratchet.status,
+              details: [
+                p0Failed.length > 0
+                  ? `P0 屏截图失败（采集证据未刷新）：${p0Failed.join(', ')}`
+                  : 'screensWritten=0：未刷新任何截图，沿用 preserved 旧 visual-diff 判定（证据陈旧）',
+                `screens=${cap.screensWritten}`,
+                ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
+                  ? [`preserved=${cap.screensPreserved}`]
+                  : []),
+                'pixel_1to1 下不得以陈旧/缺失证据通过；沿用旧 shot/旧 verdict 闭环＝假证据。',
+                ...(cap.errors.length ? [`notes:\n${cap.errors.map(e => `  - ${e}`).join('\n')}`] : []),
+              ].join('\n'),
+              suggestion: '修复截图采集（Permission denied/锁屏/设备占用）后重采 P0 屏；不得沿用旧 shot/旧 verdict。',
+            });
+          } else if (cap.ok) {
             out.push({
               id: 'visual_diff_capture',
               category: 'structure',
@@ -2102,17 +2128,27 @@ function checkDeviceTestRunGate(
               ].join('\n'),
             });
           } else if (cap.skippedReason !== 'no_p0_targets') {
+            // E1：no_captures（全失败）或有 P0 截图失败 → pixel_1to1 FAIL，否则 WARN；
+            // 纯环境缺失（如 no_screenshot_fn）维持 WARN（与 degraded 同档）。
+            const captureFailed =
+              cap.skippedReason === 'no_captures' || (cap.p0CaptureFailures?.length ?? 0) > 0;
+            const ratchet = captureFailed
+              ? fidelityRatchetFailOrWarn(ctx, true)
+              : { severity: 'MAJOR' as const, status: 'WARN' as const };
             out.push({
               id: 'visual_diff_capture',
               category: 'structure',
               description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: 'MAJOR',
-              status: 'WARN',
+              severity: ratchet.severity,
+              status: ratchet.status,
               details: [
                 `采集未完成：${cap.skippedReason ?? 'unknown'}`,
+                ...((cap.p0CaptureFailures?.length ?? 0) > 0
+                  ? [`P0 屏截图失败：${cap.p0CaptureFailures!.join(', ')}`]
+                  : []),
                 ...cap.errors,
               ].join('\n'),
-              suggestion: '确认 Hylyre 可 `screenshot`；非顶层屏须 device-testing 导航后重跑采集。',
+              suggestion: '确认 Hylyre 可 `screenshot`（排查 Permission denied/锁屏/占用）；非顶层屏须 device-testing 导航后重跑采集。',
             });
           }
         }

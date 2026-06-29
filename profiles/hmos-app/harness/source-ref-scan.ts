@@ -49,6 +49,33 @@ export function scanFeatureSourceTree(
   return { resourceRefs, structNames, structNamesOrdered, etsFiles };
 }
 
+/**
+ * ref（如 `app.media.x`）→ 引用它的模块 package_path 集合。
+ * 用于按"写 $r 的源码文件所属模块"定位资源（堵跨模块同名 media 误放行）。
+ */
+export function scanResourceRefModules(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const mod of contracts.modules ?? []) {
+    const etsRoot = path.join(projectRoot, mod.package_path, 'src', 'main', 'ets');
+    walkEts(etsRoot, (file) => {
+      const text = fs.readFileSync(file, 'utf-8');
+      for (const m of text.matchAll(new RegExp(RESOURCE_REF_RE.source, 'g'))) {
+        const ref = m[1];
+        let set = map.get(ref);
+        if (!set) {
+          set = new Set<string>();
+          map.set(ref, set);
+        }
+        set.add(mod.package_path);
+      }
+    });
+  }
+  return map;
+}
+
 function walkEtsSorted(dir: string, fn: (file: string) => void): void {
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));

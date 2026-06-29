@@ -468,6 +468,8 @@ expansions_with_user_approval:
 
 **`resource_keys` 章节**（从设计文档中涉及的宿主资源引用（如 UI 资源函数调用）提取资源 key 契约；具体语法见本实例 `project_profile` 编码规范）
 
+> **媒体资源 path 约定（防占位绕过）**：`resource_keys` 中 **media 类资源的 `path` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），**不得**写工程根相对路径（如 `media/<key>.png`）。媒体 key 的"可用性"由门禁以**模块资源目录的真实文件**判定（非 `path` 字段存在性）——工程根/契约路径下的占位文件**不被采信**，曾导致 1×1 占位绕过 `resource_integrity` 假 PASS。
+
 **`prd_to_code_traceability` 章节**（从「spec 功能映射表」提取追溯映射）
 
 #### 11.2 补充边界用例 Spec（若 spec 阶段 未产出）

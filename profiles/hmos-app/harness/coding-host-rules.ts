@@ -101,22 +101,40 @@ function collectResourceKeys(projectRoot: string, contracts: ContractsSpec): Map
     }
   }
 
-  // HarmonyOS media：PNG 在 base/media/，无 element JSON；从 contracts.resource_keys 路径注册
+  // HarmonyOS media：PNG/JPG/SVG 在 <module>/src/main/resources/base/media/，无 element JSON。
+  // F：以【模块实际资源目录】为准注册 key（ArkUI $r('app.media.<key>') 的真实解析路径），
+  // 绝不信 contracts.resource_keys[].path 的根相对路径——根/contracts 路径放 70B 占位曾绕过
+  // resource_integrity（宿主 homepage 实测：./media/*.png + contracts path 指根目录）。
+  const MEDIA_EXT_RE = /\.(png|jpg|jpeg|webp|svg|gif|bmp)$/i;
+  const registerMediaDir = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    if (!keys.has('media')) keys.set('media', new Set());
+    const set = keys.get('media')!;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isFile() && MEDIA_EXT_RE.test(ent.name)) {
+        set.add(ent.name.replace(MEDIA_EXT_RE, ''));
+      }
+    }
+  };
+  for (const mod of contracts.modules ?? []) {
+    registerMediaDir(path.join(projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media'));
+  }
+  // 兼容：仅当 contracts entry.path 指向【模块 resources/base/media 内】的真实文件时才补登记，
+  // 杜绝工程根 media/ 等模块外路径冒充（与 visual_parity_asset_materialized 同口径）。
   const rk = contracts.resource_keys as
     | Record<string, Record<string, Array<{ key: string; path?: string }>>>
     | undefined;
   if (rk) {
+    const normMediaSeg = `${path.sep}src${path.sep}main${path.sep}resources${path.sep}base${path.sep}media${path.sep}`;
     for (const mod of Object.values(rk)) {
       const mediaEntries = mod.media;
       if (!Array.isArray(mediaEntries)) continue;
       if (!keys.has('media')) keys.set('media', new Set());
       const set = keys.get('media')!;
       for (const entry of mediaEntries) {
-        if (!entry.key) continue;
-        const mediaPath = entry.path
-          ? path.join(projectRoot, entry.path)
-          : null;
-        if (mediaPath && fs.existsSync(mediaPath)) {
+        if (!entry.key || !entry.path) continue;
+        const abs = path.resolve(projectRoot, entry.path);
+        if (abs.includes(normMediaSeg) && fs.existsSync(abs)) {
           set.add(entry.key);
         }
       }

@@ -17,16 +17,25 @@ import {
   extractStructBody,
   resourceKeyToRef,
   scanFeatureSourceTree,
+  scanResourceRefModules,
   scanStructResourceRefs,
 } from './source-ref-scan';
 import { loadVisualParityMappings } from './visual-structure-parity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
-import { hexToLab } from './image-toolkit';
+import { hexToLab, readImageDimensions } from './image-toolkit';
 
 export interface BackstopIssue {
   kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset';
   id: string;
   detail: string;
+  /**
+   * asset 子角色（供调用方分级 ratchet）：
+   * not_rendered=声明 asset_ref 却未真实 $r 渲染（pixel_1to1 可升 BLOCKER）；
+   * not_rendered_placeholder=同上但显式 placeholder（豁免、仍 WARN）；
+   * icon_kind=icon 未标 kind（仅补全建议）；
+   * placeholder_file=已 $r 引用但模块 media 为退化占位（B 承重门禁）。
+   */
+  assetRole?: 'not_rendered' | 'not_rendered_placeholder' | 'icon_kind' | 'placeholder_file';
 }
 
 function colorTokenDefined(
@@ -541,6 +550,8 @@ export function collectAssetRenderIssues(
   const contracts = ctx.featureSpec.contracts;
   if (!contracts) return [];
   const mappings = loadVisualParityMappings(ctx.projectRoot, ctx.feature);
+  // 显式 placeholder 资产豁免硬 ratchet（review#4：除非显式 placeholder/defer+签字）。
+  const placeholderKeys = new Set((doc.assets ?? []).filter(a => a.placeholder).map(a => a.key));
   let featureRefs: Set<string> | null = null;
   const issues: BackstopIssue[] = [];
   for (const n of collectAllComponentNodes(doc)) {
@@ -558,6 +569,7 @@ export function collectAssetRenderIssues(
       issues.push({
         kind: 'asset',
         id: n.id ?? n.type,
+        assetRole: placeholderKeys.has(key) ? 'not_rendered_placeholder' : 'not_rendered',
         detail: `节点 ${n.id ?? n.type} 声明 asset_ref=${key} 但${structName ? ` ${structName}` : '源码'}未 $r 引用对应 media — 疑似声明却未渲染（如 tab 仅文字）`,
       });
     }
@@ -565,12 +577,140 @@ export function collectAssetRenderIssues(
       issues.push({
         kind: 'asset',
         id: n.id ?? n.type,
+        assetRole: 'icon_kind',
         detail: `节点 ${n.id ?? n.type} 声明 icon 但未标 icon.kind（brand_logo|system_symbol|illustration）— 建议补全分类`,
       });
     }
   }
   return issues;
 }
+
+// ============================================================================
+// B s1.5 asset 物化真图校验：被 $r('app.media.<key>') 引用的【模块实际】media 必须是真图，
+// 禁 1×1/退化占位冒充。绝不信 contracts.resource_keys.path / 工程根 media/（已知绕过点，归 F）。
+// 退化判定走 readImageDimensions 无 jimp 路径——pixel_1to1 下 jimp 不可用也能判（Q4）。
+// ============================================================================
+
+/** B 占位判据阈值（Q2 决策：三信号取或） */
+const ASSET_PLACEHOLDER_MIN_BYTES = 256;
+const ASSET_PLACEHOLDER_MIN_AREA_RATIO = 0.05;
+const MODULE_MEDIA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'svg'] as const;
+
+/** 在指定模块（restrictPkgPaths，缺省=全部 in_scope 模块）的 resources/base/media 下定位 <key> 真实文件 */
+export function findModuleMediaFile(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+  key: string,
+  restrictPkgPaths?: ReadonlySet<string>,
+): string | null {
+  const snake = key.replace(/\./g, '_');
+  for (const mod of contracts.modules ?? []) {
+    if (restrictPkgPaths && !restrictPkgPaths.has(mod.package_path)) continue;
+    const dir = path.join(projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media');
+    for (const stem of new Set([key, snake])) {
+      for (const ext of MODULE_MEDIA_EXTS) {
+        const p = path.join(dir, `${stem}.${ext}`);
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 判断 <key> 对应的【引用模块】实际 media 是否为真图（非退化占位）。
+ * restrictPkgPaths＝写 $r 的模块（plan 决策：模块＝写 $r 的那个模块；缺省=全部 in_scope，兜底）。
+ * Q2 三信号取或：尺寸 w/h≤2 ｜ 字节<256B ｜ 面积比<5%(相对 resolved_path 真裁图)。
+ * svg 仅当资产本身为矢量（resolved_path 非 raster 或缺省）才豁免；resolved_path 为 PNG/JPG 真裁图却
+ * 模块侧仅 svg＝未物化真裁图 → not real（review#2）。读不出尺寸/字节视为退化（pixel_1to1 不 SKIP）。
+ */
+export function moduleMediaRealnessForKey(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+  key: string,
+  resolvedPath?: string,
+  restrictPkgPaths?: ReadonlySet<string>,
+): { file: string | null; real: boolean; reason?: string } {
+  const file = findModuleMediaFile(projectRoot, contracts, key, restrictPkgPaths);
+  if (!file) return { file: null, real: false, reason: '引用它的模块 resources/base/media 下无对应文件（疑似仅工程根/其它模块/contracts 路径放占位）' };
+  const resolvedIsRaster = !!resolvedPath && /\.(png|jpe?g|webp)$/i.test(resolvedPath);
+  if (file.toLowerCase().endsWith('.svg')) {
+    // 矢量豁免仅限矢量资产：resolved_path 是 raster 真裁图却只放 svg = 未物化真裁图。
+    if (resolvedIsRaster) {
+      return { file, real: false, reason: 'resolved_path 为 raster 真裁图却模块侧仅 svg，未物化真裁图（矢量豁免仅限矢量资产）' };
+    }
+    return { file, real: true };
+  }
+  const dims = readImageDimensions(file);
+  if (!dims) return { file, real: false, reason: '模块 media 无法读取尺寸/字节（疑似无效图）' };
+  const tinyDim = (dims.w !== null && dims.w <= 2) || (dims.h !== null && dims.h <= 2);
+  const tinyBytes = dims.bytes < ASSET_PLACEHOLDER_MIN_BYTES;
+  let tinyArea = false;
+  if (resolvedPath) {
+    const cropAbs = path.resolve(projectRoot, resolvedPath);
+    const cropDims = fs.existsSync(cropAbs) ? readImageDimensions(cropAbs) : null;
+    if (cropDims?.w && cropDims?.h && dims.w && dims.h) {
+      const cropArea = cropDims.w * cropDims.h;
+      if (cropArea > 0 && (dims.w * dims.h) / cropArea < ASSET_PLACEHOLDER_MIN_AREA_RATIO) tinyArea = true;
+    }
+  }
+  if (tinyDim || tinyBytes || tinyArea) {
+    const reasons = [
+      tinyDim && `尺寸${dims.w}×${dims.h}`,
+      tinyBytes && `${dims.bytes}B`,
+      tinyArea && '面积<5%真图',
+    ].filter(Boolean).join('/');
+    return { file, real: false, reason: `退化占位(${reasons})` };
+  }
+  return { file, real: true };
+}
+
+/**
+ * B：对每个非 placeholder 资产，定位【源码 $r 引用它的模块】，校验那些模块的实际 media 为真图；
+ * 退化占位/缺文件/跨模块同名误植 → issue（调用方 pixel_1to1 升 BLOCKER）。
+ * 按"写 $r 的模块"作用域，不用 feature 级全局 key set（review#1）。
+ */
+export function collectPlaceholderAssetIssues(
+  ctx: CheckContext,
+  doc: UiSpecDoc,
+  baselineUnverified: boolean,
+): BackstopIssue[] {
+  if (baselineUnverified) return [];
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const refModules = scanResourceRefModules(ctx.projectRoot, contracts);
+  const issues: BackstopIssue[] = [];
+  for (const a of doc.assets ?? []) {
+    if (a.placeholder) continue;
+    const key = a.key?.trim();
+    if (!key) continue;
+    const mediaRef = resourceKeyToRef(key, 'media');
+    const altRef = resourceKeyToRef(key.replace(/\./g, '_'), 'media');
+    const pkgs = new Set<string>([...(refModules.get(mediaRef) ?? []), ...(refModules.get(altRef) ?? [])]);
+    if (pkgs.size === 0) continue; // 未被任何模块源码 $r 引用
+    // 逐引用模块校验：每个写 $r 的模块都必须有【自己的】真图（A 物化要求把裁图复制进引用模块；
+    // 不许靠他模块同名真图救场——own 资源优先解析，他模块有真图也不改变本模块渲染占位的事实）。
+    const failing: string[] = [];
+    for (const pkg of pkgs) {
+      const r = moduleMediaRealnessForKey(ctx.projectRoot, contracts, key, a.resolved_path, new Set([pkg]));
+      if (!r.real) failing.push(`${pkg}（${r.reason}）`);
+    }
+    if (failing.length > 0) {
+      issues.push({
+        kind: 'asset',
+        id: key,
+        assetRole: 'placeholder_file',
+        detail: `资产 ${key}：源码 $r('${mediaRef}') 引用，但引用模块 media 非真图 — ${failing.join('；')}（未物化 resolved_path 真图）`,
+      });
+    }
+  }
+  return issues;
+}
+
+// ============================================================================
+// a2 通用 spec 质量：pixel_1to1 下 P0 屏 action_button 须声明合法 variant（与本案解耦、低优先）。
+// homepage 已声明 → 对本案 no-op；仅防别的 feature 漏填 variant。枚举对齐 UiSpecButtonVariant。
+// ============================================================================
 
 // ============================================================================
 // a2 通用 spec 质量：pixel_1to1 P0 屏 action_button 须声明 variant（与本案解耦、低优先）。

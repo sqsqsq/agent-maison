@@ -180,7 +180,7 @@
 
 #### Step 2.1 资产落地（review#2）
 
-对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。**自然语言授权识别**：用户只需说“资源可以从原始图片/截图/素材图中裁剪获取”“从图里截元素/截图取资源”等自然话，即视为授权 Maison 使用截图裁剪路径；agent 必须自行翻译为 `acquisition: crop`、精确 `source_ref/source_bbox`、确定性 `resolved_path`，并记录 `human_crop_confirmed: true` + `crop_confirmed_by: user_requirement`（授权来自用户需求文本，不是 agent 自签）。**G4b goal 模式裁剪**：若缺少上述用户授权或 bbox 仍不确定，crop 待确认门禁触发——goal-runner **暂停求人确认/微调 bbox**，确认后置 `human_crop_confirmed`（**headless 须连同 `crop_confirmed_by` 真人/用户授权来源**）自动裁剪；headless 无真人/用户授权确认即 BLOCKER（**自报不算**）。用户也可在需求入口**前置**给 bbox/素材目录（`user_dir`/`asset_pack`）→ 免 mid-run halt 直接裁。这让"无高保真时用原始截图搞定资源"在 goal 模式从休眠转可用。
+对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。**自然语言授权识别**：用户只需说“资源可以从原始图片/截图/素材图中裁剪获取”“从图里截元素/截图取资源”等自然话，即视为授权 Maison 使用截图裁剪路径；agent 必须自行翻译为 `acquisition: crop`、精确 `source_ref/source_bbox`、确定性 `resolved_path`，并记录 `human_crop_confirmed: true` + `crop_confirmed_by: user_requirement`（授权来自用户需求文本，不是 agent 自签）。**G4b goal 模式裁剪**：若缺少上述用户授权或 bbox 仍不确定，crop 待确认门禁触发——goal-runner **暂停求人确认/微调 bbox**，确认后置 `human_crop_confirmed`（**headless 须连同 `crop_confirmed_by` 真人/用户授权来源**）自动裁剪；headless 无真人/用户授权确认即 BLOCKER（**自报不算**）。用户也可在需求入口**前置**给 bbox/素材目录（`user_dir`/`asset_pack`）→ 免 mid-run halt 直接裁。这让"无高保真时用原始截图搞定资源"在 goal 模式从休眠转可用。**下游契约（物化 SSOT）**：`resolved_path` 是 coding 阶段把真裁图**物化进模块 `resources/base/media/`** 的唯一来源——coding 须从此路径复制真图，不得另造 1×1/纯色占位；门禁 `visual_parity_asset_materialized` 会校验模块 media 为真图。
 
 仍可在 spec.md「页面/界面描述」保留散文补充，但 **ui-spec.yaml 为 coding parity 的结构化 SSOT**。
 

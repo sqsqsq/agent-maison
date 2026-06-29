@@ -302,3 +302,66 @@ export function isJimpAvailable(): boolean {
     return false;
   }
 }
+
+export interface ImageDims {
+  /** 像素宽（无法解析则 null） */
+  w: number | null;
+  /** 像素高（无法解析则 null） */
+  h: number | null;
+  /** 文件字节数 */
+  bytes: number;
+  /** 'png' | 'jpeg' | null（未识别格式） */
+  format: 'png' | 'jpeg' | null;
+}
+
+/**
+ * 读图尺寸/字节——**不依赖 jimp**，纯解析 PNG/JPEG 文件头。
+ * 供 B 占位退化判定：pixel_1to1 下即便 jimp 不可用，也能判 1×1 / 过小 / 非法 PNG（Q4 决策：不 SKIP）。
+ * PNG：8B 签名 + IHDR，W/H 为 offset 16/20 的 big-endian uint32。
+ * JPEG：扫 SOF0–SOF15（除 DHT 0xC4 / JPG 0xC8 / DAC 0xCC）取 H/W。
+ * 其它格式（webp 等）：仅返回 bytes，w/h=null（占位判定回落到字节/面积信号）。
+ */
+export function readImageDimensions(absPath: string): ImageDims | null {
+  if (!fs.existsSync(absPath)) return null;
+  let bytes: number;
+  let buf: Buffer;
+  try {
+    bytes = fs.statSync(absPath).size;
+    const fd = fs.openSync(absPath, 'r');
+    try {
+      const cap = Math.min(bytes, 65536);
+      buf = Buffer.alloc(cap);
+      fs.readSync(fd, buf, 0, cap, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  // PNG
+  if (
+    buf.length >= 24 &&
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+  ) {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20), bytes, format: 'png' };
+  }
+  // JPEG
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let off = 2;
+    while (off + 9 < buf.length) {
+      if (buf[off] !== 0xff) {
+        off++;
+        continue;
+      }
+      const marker = buf[off + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { w: buf.readUInt16BE(off + 7), h: buf.readUInt16BE(off + 5), bytes, format: 'jpeg' };
+      }
+      const segLen = buf.readUInt16BE(off + 2);
+      if (segLen < 2) break;
+      off += 2 + segLen;
+    }
+    return { w: null, h: null, bytes, format: 'jpeg' };
+  }
+  return { w: null, h: null, bytes, format: null };
+}
