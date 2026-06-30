@@ -704,6 +704,87 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // ── 出口·可证伪回归（homepage 真实坏态 → BLOCKER；忠实+人确认 → PASS）──
+  const OCR_FIX = path.resolve(__dirname, '../../../profiles/hmos-app/harness/tests/fixtures/ocr');
+
+  // Exit-1（A1）：card_pack 真实坏态（pass+0.98+defects:[]+无 confirmed_by，真图底部泄漏 首页/我的）→ BLOCKER。
+  // 复现 2026-06-29 那次"全 PASS"假象：加固后须判 BLOCKER（T2 无人确认 + T5 越界）。
+  run('exit_homepage_bad_state_card_pack_blocker', () => {
+    if (!isJimpAvailable()) return;
+    const shotAbs = path.join(OCR_FIX, 'card_pack.png').replace(/\\/g, '/');
+    const evalHash = hashScreenshotFile(shotAbs);
+    if (!evalHash) throw new Error('fixture hash required');
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed',
+        'screens:', '  - id: card_pack', '    priority: P0', '    ref_id: card_pack',
+        '    root: { type: navigation_frame, order: 0 }',
+        'global_elements:',
+        '  - id: bottom_tab', "    texts: ['首页', '我的']", "    owner_screen_ids: ['home_no_card', 'mine']",
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.mkdirSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json'),
+        JSON.stringify({
+          schema_version: '1.0',
+          screens: [{
+            screen_id: 'card_pack', verdict: 'pass', screenshot_path: shotAbs, ref_id: 'card_pack',
+            fidelity_score: 0.98, geometric_iou: 0.94, score_floor: 0.999,
+            screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+            reverse_missing: [], defects: [], // 即"VL 假高分零缺陷"——加固后不再放行
+          }],
+        }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const blocked = r.some((x: { severity: string; status: string }) => x.severity === 'BLOCKER' && x.status === 'FAIL');
+      if (!blocked) {
+        throw new Error(`homepage 坏态(card_pack 假 pass)加固后须 BLOCKER（现状全 PASS 可证伪）：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // Exit-2（FP 校准·承重）：忠实 mine（属主屏底部 tab 合法）+ 真人 confirmed_by + 干净分数 → 不 BLOCKER。
+  // "宁可漏报不可恒误报"：加固门禁绝不能把忠实渲染也判挂，否则等于噪声门禁。
+  run('exit_faithful_mine_confirmed_passes', () => {
+    if (!isJimpAvailable()) return;
+    const shotAbs = path.join(OCR_FIX, 'mine.png').replace(/\\/g, '/');
+    const evalHash = hashScreenshotFile(shotAbs);
+    if (!evalHash) throw new Error('fixture hash required');
+    const root = mkProject();
+    try {
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed',
+        'screens:', '  - id: mine', '    priority: P0', '    ref_id: mine',
+        '    root: { type: navigation_frame, order: 0 }', // 无 children → 无 T1 锚点
+        'global_elements:',
+        '  - id: bottom_tab', "    texts: ['首页', '我的']", "    owner_screen_ids: ['mine']", // mine 是属主 → 不越界
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.mkdirSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots', 'visual-diff.json'),
+        JSON.stringify({
+          schema_version: '1.0',
+          screens: [{
+            screen_id: 'mine', verdict: 'pass', screenshot_path: shotAbs, ref_id: 'mine',
+            fidelity_score: 0.97, geometric_iou: 0.93, score_floor: 0.99,
+            screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+            reverse_missing: [], defects: [], confirmed_by: 'reviewer-alice',
+          }],
+        }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const blocked = r.filter((x: { severity: string; status: string }) => x.severity === 'BLOCKER' && x.status === 'FAIL');
+      if (blocked.length > 0) {
+        throw new Error(`忠实 mine+人确认 不应被任何门禁误判（FP 校准承重）：${JSON.stringify(blocked.map((x: { id: string; details?: string }) => ({ id: x.id, d: x.details })))}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   run('visual_diff_finalized_verdict_without_evaluated_hash_warns', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();

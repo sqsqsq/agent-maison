@@ -74,9 +74,8 @@ todos:
         (2) 屏身份断言固化（接 b4e9d1c7 的 E3，补确定性侧）：截图须命中该屏 must_have_elements 锚点，不符=captured wrong screen / fail。
       边界：元素归属以 ui-spec 新字段为 SSOT；ui-spec 未声明归属时降 WARN 提示补声明（不得静默放行越界）。两模式统一。**硬门禁=pixel_1to1 BLOCKER，非温和提醒。**
       【已完成 2026-06-29】ui-spec-shared.ts 新增 `UiSpecGlobalElement`{id,texts[],owner_screen_ids[],band?} + UiSpecDoc.global_elements；ui-spec.schema.json + ui-spec-schema-validate.ts 放行并校验该字段。新增 visual-diff-ocr-gates.ts `collectOutOfBoundsGlobalElements`（OCR 注入可测、按屏缓存、texts 须全部命中于 band、OCR 失败不误报）；visual-diff-check.ts 接入为 `visual_diff_out_of_bounds_element`（pixel_1to1 BLOCKER/否则 WARN，仅 global_elements 声明+OCR 可用时实跑）。SKILL：device-testing step6 BLOCKER 清单 + spec/reference/ui-spec.md 新增 global_elements 字段文档+示例。单测 visual-diff-ocr-gates 8（逻辑7 注入 OCR + 1 真 OCR 集成：真实 card_pack fixture 经真 OCR 判越界端到端）。**review 补漏**：OCR 不可用/失败原会静默放过（违背"降 WARN 不 SKIP"设计意图）→ 改 collectOutOfBoundsGlobalElements 返回 `{violations, ocrUnavailable}`，非属主屏 OCR 失败进 ocrUnavailable，check 层出 `visual_diff_out_of_bounds_degraded` WARN（不静默）；测试相应改"失败有降级信号"。unit 1256 / fixtures 35 / typecheck 全绿。**判据靠声明式归属，不靠 root 类型（实测子页 root 也是 navigation_frame@0）。**
-    status: completed
       触点：visual-diff-check.ts（越界判据，复用 collectAllComponentNodes / must_have_elements）、ui-spec-shared.ts（元素归属/全局元素标注若缺）、device-testing SKILL、harness/tests/unit。
-    status: pending
+    status: completed
   - id: T6-goalmode-circuit-breaker-and-budget-split
     content: >
       【P1 · 决策③ 回应"testing 3 次 / 177 分钟空转"】goal-mode 视觉无改善即熔断求人 + 工具链/视觉预算分流。
@@ -100,7 +99,8 @@ todos:
         (3) （可选增强）VL 产出标注 overlay 图归档，供人/回归审计。
       边界：P2 在 P1 止血落地并经 homepage 回归验证后启动；依赖 T1(2) 的区域散度坐标网格。
       触点：device-testing SKILL（逐元素 bbox rubric）、visual-diff-check.ts（逐区交叉 + 证据完整性）、visual-diff schema（defects/evidence 字段若需扩）、harness/tests/unit。
-    status: pending
+      【已完成 2026-06-29 · 诚实 descope 为轻量 rubric】(2) 逐区交叉**作废**——T1(2) 客观区域散度被两次实测证伪（不存在可自动比对的客观信号）。(1) 逐元素证据 + T2 人确认大幅重叠（T2 已要求真人逐屏过目）。故 T7 不再做重 schema 硬门禁（避免与 T2 冗余 + 重负担），降为 device-testing SKILL step3 的**轻量证据 rubric**：pixel_1to1 P0 pass 屏判 pass 前逐关键元素简记核对证据，供 T2 人确认复核与审计；并明写"客观度量分不开忠实vs崩坏、图标/颜色/样式只能靠 VL 证据+T2 人确认、不得宣称自动验真"的诚实边界。无新代码门禁。
+    status: completed
   - id: exit-regression-and-tests
     content: >
       【出口 · 可证伪 + FP 校准 + 全单测】
@@ -113,7 +113,13 @@ todos:
         A2. **T5 必须靠声明式 `screen_scope`/`allowed_global_elements` 抓住底部 Tab 泄漏**——fixture 断言 card_pack/add_card 出现 tab_home/tab_mine 即越界 BLOCKER；不得依赖 root 类型启发式（已证伪：两屏皆 navigation_frame@0）。
         A3. **T6 失败分类回归**——单测断言 timeout / `visual_diff_capture` / `visual_diff_layout_divergence` / 工具链失败落入**互斥 bucket**（不再一律 code_regression），并验证"工具链反复失败不吃视觉预算 + 视觉无改善 N 轮 HALT"。
       触点：harness/tests/fixtures、harness/tests/unit、run-unit.ts、相关 SKILL.md。
-    status: pending
+      【已完成 2026-06-29】出口端到端验收（visual-fidelity.unit.test.ts，用真实 fixtures profiles/.../tests/fixtures/ocr/）：
+        · **Exit-1 可证伪**（A1）：card_pack 真实坏态（pass+0.98+defects:[]+无 confirmed_by + 真图底部泄漏 首页/我的）经 checkVisualDiff(pixel_1to1) → **BLOCKER**（T2 无人确认 + T5 越界）。复现并证伪 2026-06-29 那次"全 PASS"。
+        · **Exit-2 FP 校准承重**：忠实 mine（属主屏 tab 合法）+ 真人 confirmed_by + 干净分 → **不 BLOCKER（PASS）**。证明加固门禁不误伤忠实渲染（宁可漏报不可恒误报）。
+        · A2 已由 T5 单测（含真 OCR 集成 card_pack 判越界）+ Exit-1 覆盖；A3 由 goal-headless-guard 失败分类回归（toolchain/capture/visual_gap 互斥 bucket + 链路保真）覆盖。
+        · 全程注册既有 run-unit.ts 套件，harness 全绿：typecheck / unit / fixtures 35。
+        **诚实修正**：(1)(2) 原设想的 layout_divergence 硬门禁/T1 阈值校准均因客观度量被实测证伪而作废——坏态拦截改由 T2(人确认)+T5(越界)+T1(缺失文本) 达成，已被 Exit-1 证明有效。
+    status: completed
 isProject: false
 ---
 
