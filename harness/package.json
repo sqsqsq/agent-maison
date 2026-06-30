@@ -31,17 +31,18 @@
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts"
   },
   "dependencies": {
+    "chalk": "^4.1.2",
     "cross-spawn": "^7.0.6",
     "jimp": "^0.22.12",
-    "yaml": "^2.7.0",
-    "chalk": "^4.1.2",
-    "minimist": "^1.2.8"
+    "minimist": "^1.2.8",
+    "tesseract.js": "^5.1.1",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "ts-node": "^10.9.2",
-    "@types/node": "^22.0.0",
+    "@types/cross-spawn": "^6.0.6",
     "@types/minimist": "^1.2.5",
-    "@types/cross-spawn": "^6.0.6"
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
   }
 }

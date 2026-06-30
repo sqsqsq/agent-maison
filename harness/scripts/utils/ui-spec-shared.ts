@@ -94,6 +94,20 @@ export interface UiSpecAsset {
   crop_confirmed_by?: string;
 }
 
+/**
+ * T5：全局元素（如底部「首页/我的」Tab）——声明文本锚点 + 所属屏，供 OCR 越界检测。
+ * 判据靠**声明式归属**，不靠 root 类型猜（实测 card_pack/add_card 的 root 也是 navigation_frame@0、与 home 同型）。
+ */
+export interface UiSpecGlobalElement {
+  id: string;
+  /** 文本锚点（OCR 模糊匹配，如 ['首页','我的']）——全部命中于 band 才算该元素出现 */
+  texts: string[];
+  /** 所属屏 id 集合——仅这些屏可渲染该全局元素；其它屏出现 = 越界 */
+  owner_screen_ids: string[];
+  /** 纵向 band [start,end] 归一化（默认底部 [0.85,1]）——限定在该区域内检测，避免误命中正文同名字 */
+  band?: { start: number; end?: number };
+}
+
 export interface UiSpecDoc {
   schema_version?: string;
   verified?: UiSpecVerified;
@@ -101,6 +115,8 @@ export interface UiSpecDoc {
   screens: UiSpecScreen[];
   tokens: Record<string, UiSpecToken>;
   assets: UiSpecAsset[];
+  /** T5：全局元素归属声明（可选；声明后才启用 OCR 越界门禁） */
+  global_elements?: UiSpecGlobalElement[];
 }
 
 export type VisualEnforcementMode = 'strict' | 'warn' | 'reachable' | 'off';

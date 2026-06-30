@@ -2,6 +2,7 @@
 * text=auto eol=lf
 
 *.whl binary
+*.traineddata binary
 *.png binary
 *.jpg binary
 *.jpeg binary

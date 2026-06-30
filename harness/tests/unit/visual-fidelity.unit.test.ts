@@ -1184,6 +1184,36 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // T5：global_elements schema 校验（合法放行 + 坏配置拒，避免门禁误判/失效）
+  run('ui_spec_schema_global_elements', () => {
+    const base = (ge: unknown) => ({
+      schema_version: '1.0',
+      screens: [{ id: 'home', priority: 'P0', root: { type: 'navigation_frame', order: 0 } }],
+      tokens: {}, assets: [], global_elements: ge,
+    } as unknown as Parameters<typeof validateUiSpecSchema>[0]);
+
+    const ok = validateUiSpecSchema(base([
+      { id: 'bottom_tab', texts: ['首页', '我的'], owner_screen_ids: ['home', 'mine'], band: { start: 0.85 } },
+    ]));
+    if (ok.some(e => /global_elements/.test(e))) throw new Error('合法 global_elements 被误拒：' + JSON.stringify(ok));
+
+    // owner_screen_ids 空数组 → 拒（否则全屏误判越界）
+    const emptyOwner = validateUiSpecSchema(base([{ id: 'g', texts: ['x'], owner_screen_ids: [] }]));
+    if (!emptyOwner.some(e => /owner_screen_ids/.test(e))) throw new Error('owner_screen_ids:[] 未被拒');
+
+    // owner_screen_ids 含空串 → 拒
+    const blankOwner = validateUiSpecSchema(base([{ id: 'g', texts: ['x'], owner_screen_ids: [''] }]));
+    if (!blankOwner.some(e => /owner_screen_ids/.test(e))) throw new Error("owner_screen_ids:[''] 未被拒");
+
+    // texts 空 → 拒
+    const emptyTexts = validateUiSpecSchema(base([{ id: 'g', texts: [], owner_screen_ids: ['home'] }]));
+    if (!emptyTexts.some(e => /texts/.test(e))) throw new Error('texts:[] 未被拒');
+
+    // band.end < start → 拒（band 永不命中）
+    const badBand = validateUiSpecSchema(base([{ id: 'g', texts: ['x'], owner_screen_ids: ['home'], band: { start: 0.85, end: 0.5 } }]));
+    if (!badBand.some(e => /band\.end/.test(e))) throw new Error('band.end<start 未被拒：' + JSON.stringify(badBand));
+  });
+
   // G3 drift 守卫：ui-spec.schema.json（SSOT）的 G3 字段须与 runtime validator 的 enum/约束一致
   run('ui_spec_schema_json_g3_fields_synced', () => {
     const schemaPath = path.resolve(__dirname, '../../schemas/ui-spec.schema.json');

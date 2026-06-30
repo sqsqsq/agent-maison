@@ -33,9 +33,33 @@
     "assets": {
       "type": "array",
       "items": { "$ref": "#/definitions/asset" }
+    },
+    "global_elements": {
+      "type": "array",
+      "description": "T5：全局元素归属声明（如底部 Tab）；声明后启用 OCR 越界门禁",
+      "items": { "$ref": "#/definitions/global_element" }
     }
   },
   "definitions": {
+    "global_element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "texts", "owner_screen_ids"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "texts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "owner_screen_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "band": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start"],
+          "properties": {
+            "start": { "type": "number", "minimum": 0, "maximum": 1 },
+            "end": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
     "bbox": {
       "type": "array",
       "minItems": 4,

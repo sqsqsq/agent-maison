@@ -46,6 +46,26 @@ JSON Schema：`framework/harness/schemas/ui-spec.schema.json`。
 | `screens[]` | ✅ | 每屏一条 |
 | `tokens` | ✅ | 全局 + 品牌变体 token 表 |
 | `assets[]` | ✅ | logo / 图标 / 插图清单 |
+| `global_elements[]` | 推荐(T5) | 全局元素归属声明，启用 OCR 越界门禁 |
+
+### `global_elements[]`（T5 · 治"全局元素泄漏到子页"）
+
+当某元素**只应出现在部分屏**（典型：底部「首页/我的」Tab 仅属首页/我的两个 sheet，**不应**出现在卡包/添加卡片等子页），声明其归属，device-testing 阶段会用 OCR 确定性检测越界（非属主屏的指定 band 内出现该元素文本 → `pixel_1to1` BLOCKER）。判据靠**声明式归属**，不靠 root 类型猜（子页 root 常与首页同为 `navigation_frame@0`，猜不出来）。
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | ✅ | 元素 id，如 `bottom_tab` |
+| `texts` | ✅ | 文本锚点数组（OCR 模糊匹配），**全部**命中于 band 才算出现，如 `['首页','我的']` |
+| `owner_screen_ids` | ✅ | 仅这些屏可渲染该元素；其它屏出现=越界 |
+| `band` | ⬜ | 纵向检测区 `{start, end?}` 归一化，默认底部 `{start: 0.85}`；可设顶部标题区等 |
+
+```yaml
+global_elements:
+  - id: bottom_tab
+    texts: ['首页', '我的']
+    owner_screen_ids: ['home_no_card', 'home_with_card', 'mine']
+    # band 省略 → 默认底部 [0.85, 1]
+```
 
 ### `screens[]`
 

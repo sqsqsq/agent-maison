@@ -32,7 +32,7 @@ const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
   'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
 ]);
-const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets']);
+const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets', 'global_elements']);
 
 function isBbox(v: unknown): boolean {
   return (
@@ -236,6 +236,48 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
         }
       }
     });
+  }
+
+  // T5：global_elements（可选）——{ id, texts[], owner_screen_ids[], band?{start,end?} }
+  if (root.global_elements !== undefined) {
+    if (!Array.isArray(root.global_elements)) {
+      errors.push('global_elements 须为数组');
+    } else {
+      root.global_elements.forEach((g, i) => {
+        if (!g || typeof g !== 'object' || Array.isArray(g)) {
+          errors.push(`global_elements[${i}] 须为对象`);
+          return;
+        }
+        const ge = g as Record<string, unknown>;
+        if (typeof ge.id !== 'string' || !ge.id.trim()) {
+          errors.push(`global_elements[${i}].id 必填字符串`);
+        }
+        if (!Array.isArray(ge.texts) || ge.texts.length === 0 || !ge.texts.every(t => typeof t === 'string' && t.trim())) {
+          errors.push(`global_elements[${i}].texts 须为非空字符串数组`);
+        }
+        if (
+          !Array.isArray(ge.owner_screen_ids) ||
+          ge.owner_screen_ids.length === 0 ||
+          !ge.owner_screen_ids.every(s => typeof s === 'string' && s.trim())
+        ) {
+          // 空数组/空串=所有屏都被当非属主（全屏误判越界），属配置写错 → 拒（至少 1 个真实属主屏）
+          errors.push(`global_elements[${i}].owner_screen_ids 须为非空字符串数组（至少 1 个属主屏；空数组/空串会致全屏误判越界）`);
+        }
+        if (ge.band !== undefined) {
+          const b = ge.band as Record<string, unknown>;
+          if (!b || typeof b !== 'object' || typeof b.start !== 'number' || b.start < 0 || b.start > 1) {
+            errors.push(`global_elements[${i}].band.start 须为 [0,1] 数`);
+          } else if (b.end !== undefined) {
+            if (typeof b.end !== 'number' || b.end < 0 || b.end > 1) {
+              errors.push(`global_elements[${i}].band.end 须为 [0,1] 数`);
+            } else if (b.end < (b.start as number)) {
+              // end < start → band 永远命不中，属配置写错 → 拒
+              errors.push(`global_elements[${i}].band.end (${b.end}) 须 >= start (${b.start})（否则 band 永不命中）`);
+            }
+          }
+        }
+      });
+    }
   }
 
   return errors;

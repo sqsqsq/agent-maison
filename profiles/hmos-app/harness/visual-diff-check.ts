@@ -17,6 +17,7 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
+import { collectOutOfBoundsGlobalElements } from './visual-diff-ocr-gates';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
@@ -768,6 +769,39 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         `pixel_1to1 P0 屏 verdict=warn 却无可执行回修指令（must_fix 空，loop 无法精准回修；defects/reverse_missing 是证据非指令、不替代）：` +
         warnP0NoActionable.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'})`).join(', ') +
         `；warn 须给 coding 可执行 must_fix（残差可接受则判 pass+minor defect 记录）`,
+    });
+  }
+
+  // T5：声明式全局元素越界（如底部「首页/我的」Tab 泄漏到 card_pack/add_card 子页）——OCR 确定性检测，
+  // 不靠 root 类型猜（实测子页 root 也是 navigation_frame@0）。仅 global_elements 声明 + OCR 可用时实际跑 OCR。
+  const oob = collectOutOfBoundsGlobalElements(
+    uiDoc?.global_elements,
+    rep.screens,
+    rel => resolveShotPath(ctx.projectRoot, rel),
+  );
+  if (oob.violations.length > 0) {
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_out_of_bounds_element',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `全局元素越界（仅属主屏可渲染该元素，却现于其它屏指定 band）：` +
+        oob.violations.map(v => `${v.element_id}@${v.screen_id}[${v.texts.join('+')}]`).join(', '),
+    });
+  }
+  // 降级信号：声明了 global_elements 须检测、却因 OCR 不可用/失败无法确认的屏——降 WARN 复核，不静默放过
+  // （OCR 不可用 ≠ 没泄漏；对齐"降 WARN 不 SKIP 整门禁"设计意图）。
+  if (oob.ocrUnavailable.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_out_of_bounds_degraded',
+      severity: 'MAJOR',
+      status: 'WARN',
+      line:
+        `越界门禁降级：以下屏声明了 global_elements 但 OCR 不可用/失败、无法确认是否越界，须复核（装 tesseract.js/物化 chi_sim 后重采）：` +
+        oob.ocrUnavailable.join(', '),
     });
   }
 
