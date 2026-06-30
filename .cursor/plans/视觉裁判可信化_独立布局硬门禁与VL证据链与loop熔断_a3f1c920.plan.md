@@ -29,7 +29,8 @@ todos:
         (3) 阈值校准：用真实样本（mine 忠实须 PASS、card_pack/add_card 崩坏须 BLOCKER）+ 出口②"修好的 home"反向验证不恒误报。位置容差要吸收 mockup≠device 的整体缩放（用归一化坐标 + 同行/区段分组，非绝对像素）。
       边界/FP：OCR 信号为承重；OCR 不可用→降 WARN 不 SKIP 整体。非 pixel_1to1 一律降 WARN。**硬门禁=pixel_1to1 BLOCKER，绝不做成 WARN-only 温和提醒（评审核心警告）。** 两模式统一。
       触点（实现期重新核行号）：新增 ocr-toolkit（tesseract.js 封装 + chi_sim 物化）、image-toolkit.ts、visual-diff-capture.ts（采集层写 OCR 文本框）、visual-diff-check.ts（背离硬门禁）、harness package.json 加 tesseract.js、specs/phase-rules + profile overlay 注册新 check id、harness/tests/unit + fixtures。
-    status: pending
+      【已完成 2026-06-29 · 第二次实测后缩窄】**T1 文本-位置背离硬门禁也被实测证伪**（在真实 ref+shot 跑：忠实 mine 纵序倒置 0.20/最大Δy 0.36 反而>崩坏 card_pack 0.00/0.11——device≠mockup 使忠实屏文字位置也大偏移，位置/顺序信号同被污染）。**根本规律**：这套 UI 可区分错误压倒性是非文本的（图标/颜色/图片/相对图像挪位），像素与 OCR 位置都看不见；唯一对 device≠mockup 鲁棒的 OCR 信号是**文本存在性**。故 T1 缩为**窄门禁 `visual_diff_text_missing`**：pixel_1to1 P0 pass 屏声明锚点文本（ui-spec text 节点，≥2字、≥3个）**整块缺失**（缺失比例≥50%）→ missing-render BLOCKER，吸收 OCR 掉字 FP。位置/样式/图标类假 PASS 改由 T2 兜。实现于 visual-diff-ocr-gates.ts `collectGrossMissingAnchorText` + visual-diff-check 接入（含 ocrUnavailable 降级 WARN）。单测 6。unit 1264/fixtures 35/typecheck 绿。用户 2026-06-29 拍板：T1 缩窄 + T2 升主背靠。
+    status: completed
   - id: T2-pixel1to1-p0-human-confirm-backstop
     content: >
       【P1 · 决策①第一阶段兜底】pixel_1to1 的 P0 屏在 headless 下不得仅凭 VL 自报 pass 闭环——须真人确认或 HALT。
@@ -37,7 +38,8 @@ todos:
       改造：**复用既有 halt-confirm / §9 保守默认流**（与 deferrals / crop 同模式，无新 goal-runner 机制）：pixel_1to1 P0 屏 verdict=pass 且无真人署名确认 → headless 触发 HALT 求人确认（交互态 stop-and-ask），保守默认=不自动确认→该屏不得作为视觉 PASS 闭环。署名判据复用 [fidelity-shared `requireExplicitSigner` / isCropHumanConfirmed](../../harness/scripts/utils/fidelity-shared.ts) 同款，禁 goal-mode-auto 自签充人签。**与 T1 互补**：T1 能确定性抓住的崩坏直接 BLOCKER 不必等人；T2 兜住 T1 阈值之下、肉眼仍可疑的灰区。
       边界：仅 pixel_1to1 ∧ P0；非 pixel_1to1 不强制人确认（占位/语义档合法）。两模式统一（交互态可当场确认，headless 走 HALT）。
       触点：fidelity-governance-check.ts / fidelity-shared.ts（署名判据）、visual-diff-check.ts（pass 屏人确认门）、device-testing SKILL「pixel_1to1 P0 人确认」、harness/tests/unit。
-    status: pending
+      【已完成 2026-06-29 · 升为主背靠】两次实测证伪客观度量后，T2 从"灰区兜底"升为 fake-pass 主背靠（用户拍板）。fidelity-shared 新增 `isHumanConfirmed(confirmedBy)`（非空且非 AUTOMATION_SIGNER_IDS，复用 isAutomationSigner）；VisualDiffScreenEntry 加 `confirmed_by`（+ validateVisualDiffJson 校验须字符串）；visual-diff-check：**pixel_1to1 下每个 P0 pass 屏须 confirmed_by 真人署名**，缺/自签 → `visual_diff_human_confirm_required` BLOCKER（headless 经 goal-runner HALT 求人，交互态 agent 当场 stop-and-ask 置 confirmed_by 重判；goal-mode-auto 等不算）。device-testing SKILL step6 写入 T2 主背靠规则。集成单测 visual_diff_t2_human_confirm_required（缺/自签→FAIL、真人→放行 三态）。**即 pixel_1to1 屏无法全自动闭环、必须有人过目——最严档应有之义。** unit 1264/fixtures 35/typecheck 绿。
+    status: completed
   - id: T3-lightweight-p0-not-exempt
     content: >
       【P1 · 决策②靶屏直接受益】P0 屏即使 lightweight 也不得被排除采集/静默 skipped 放行。

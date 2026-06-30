@@ -17,9 +17,9 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
-import { collectOutOfBoundsGlobalElements } from './visual-diff-ocr-gates';
+import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText } from './visual-diff-ocr-gates';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { createRequire } from 'module';
 
@@ -83,6 +83,8 @@ export interface VisualDiffScreenEntry {
   screenshot_hash?: string;
   /** VL/agent 判定 verdict 时所依据的截图 hash；须与当前文件 hash 一致 */
   evaluated_screenshot_hash?: string;
+  /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
+  confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
   reverse_missing?: string[];
   /** 正向缺陷枚举：实现有但渲染错（裁切/重叠/形态/缺渲染）。pixel_1to1 下 verdict=pass 须为空数组 */
@@ -297,6 +299,10 @@ export function validateVisualDiffJson(
         if (typeof edgeDiv !== 'number' || Number.isNaN(edgeDiv) || edgeDiv < 0 || edgeDiv > 1) {
           errors.push(`screens[${i}] edge_tile_divergence 须在 [0,1]，收到 ${String(edgeDiv)}`);
         }
+      }
+      const confirmedBy = row.confirmed_by;
+      if (confirmedBy !== undefined && confirmedBy !== null && typeof confirmedBy !== 'string') {
+        errors.push(`screens[${i}] confirmed_by 须为字符串`);
       }
       const scoreFloor = row.score_floor;
       if (scoreFloor !== undefined && scoreFloor !== null) {
@@ -803,6 +809,66 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         `越界门禁降级：以下屏声明了 global_elements 但 OCR 不可用/失败、无法确认是否越界，须复核（装 tesseract.js/物化 chi_sim 后重采）：` +
         oob.ocrUnavailable.join(', '),
     });
+  }
+
+  // T1（窄）：pixel_1to1 P0 pass 屏声明锚点文本整块缺失 = 疑似 missing-render（高置信窄门禁，对 device≠mockup 鲁棒）。
+  // 两次实测证伪了像素/文本-位置度量；唯一鲁棒的 OCR 信号是文本存在性，故 T1 仅做"整块缺失"。位置/样式/图标类
+  // 假 PASS 不靠 T1，靠 T2（pixel_1to1 P0 人确认）+ T7（VL 证据）。
+  if (pixel1to1 && uiDoc) {
+    const passScreenIds = new Set(passScreens.map(s => s.screen_id));
+    const p0Set = new Set(p0Ids);
+    const screenAnchors = new Map<string, string[]>();
+    for (const sc of uiDoc.screens ?? []) {
+      if (!p0Set.has(sc.id) || !passScreenIds.has(sc.id)) continue;
+      const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
+      const texts = nodes.map(n => n.text).filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+      if (texts.length > 0) screenAnchors.set(sc.id, texts);
+    }
+    const missingRes = collectGrossMissingAnchorText(
+      screenAnchors,
+      rep.screens,
+      rel => resolveShotPath(ctx.projectRoot, rel),
+    );
+    if (missingRes.violations.length > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_missing',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `pixel_1to1 P0 pass 屏声明锚点文本整块缺失（疑似该区域 missing-render；VL 不应判 pass）：` +
+          missingRes.violations.map(v => `${v.screen_id}(缺 ${v.missing.length}/${v.declared}: ${v.missing.slice(0, 4).join(',')})`).join('; '),
+      });
+    }
+    if (missingRes.ocrUnavailable.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_missing_degraded',
+        severity: 'MAJOR',
+        status: 'WARN',
+        line: `锚点缺失检测降级（OCR 不可用，须复核）：${missingRes.ocrUnavailable.join(', ')}`,
+      });
+    }
+  }
+
+  // T2（主背靠）：pixel_1to1 P0 屏判 pass 须真人过目确认（confirmed_by 非空且非自动化身份）。
+  // 两次实测证伪了像素/文本-位置度量（忠实屏误报）——图标/颜色/样式类假 PASS 不可约地需 VL/人判，
+  // 故 pixel_1to1 最严档下 P0 pass 屏不得仅凭 VL 自报闭环。headless 缺确认 → BLOCKER（goal-runner 据此 HALT 求人）；
+  // 交互态 → BLOCKER（agent 当场 stop-and-ask 用户确认、置 confirmed_by 后重判）。goal-mode-auto 等自签不算。
+  if (pixel1to1) {
+    const p0Set = new Set(p0Ids);
+    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanConfirmed(s.confirmed_by));
+    if (unconfirmed.length > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_human_confirm_required',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份）——客观度量无法判图标/颜色/样式，须人兜底：` +
+          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/无效)` : '(缺 confirmed_by)'}`).join(', ') +
+          `；headless 走 HALT 求人，交互态当场确认后置 confirmed_by 重判。`,
+      });
+    }
   }
 
   if (blockingDefectPass.length > 0) {

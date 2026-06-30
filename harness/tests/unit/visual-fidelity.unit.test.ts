@@ -593,6 +593,117 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // T2（主背靠）：pixel_1to1 P0 pass 屏须真人确认（confirmed_by 非自动化）。
+  run('visual_diff_t2_human_confirm_required', () => {
+    if (!isJimpAvailable()) return;
+    const writePassCase = (root: string, confirmedBy?: string): void => {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const evalHash = hashScreenshotFile(shot);
+      if (!evalHash) throw new Error('hash required');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed',
+        'screens:', '  - id: home', '    priority: P0', '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }', // 无 children → 不触发 T1 锚点缺失
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home', verdict: 'pass',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home', fidelity_score: 0.92, geometric_iou: 0.85,
+          screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+          reverse_missing: [], defects: [],
+          ...(confirmedBy ? { confirmed_by: confirmedBy } : {}),
+        }],
+      }));
+    };
+    const t2Hit = (root: string) => {
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      return r.find((x: { id: string }) => x.id === 'visual_diff' || x.id === 'visual_diff_human_confirm_required') as { status: string; details?: string } | undefined;
+    };
+    // (a) 缺 confirmed_by → BLOCKER（须真人确认）
+    let root = mkProject();
+    try {
+      writePassCase(root);
+      const hit = t2Hit(root);
+      if (!hit || hit.status !== 'FAIL' || !/真人确认|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`缺 confirmed_by 应经 T2 FAIL：${JSON.stringify(hit)}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (b) goal-mode-auto 自签 → 仍 BLOCKER
+    root = mkProject();
+    try {
+      writePassCase(root, 'goal-mode-auto');
+      const hit = t2Hit(root);
+      if (!hit || hit.status !== 'FAIL' || !/自动化|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`goal-mode-auto 自签应仍 FAIL：${JSON.stringify(hit)}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (c) 真人署名 → 无 T2 门禁（pass 放行）
+    root = mkProject();
+    try {
+      writePassCase(root, 'alice');
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      if (r.some((x: { id: string; details?: string }) => /真人确认/.test(x.details ?? ''))) {
+        throw new Error(`真人 confirmed_by 不应再触发 T2：${JSON.stringify(r.map(x => x.id))}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // T1（窄）端到端：pixel_1to1 P0 pass 屏声明 3+ 文本锚点、但截图 OCR 找不到（整块缺失）→ visual_diff_text_missing。
+  // 罩住 collectAllComponentNodes → screenAnchors → collectGrossMissingAnchorText → pushVisualDiffHit 全接线。
+  run('visual_diff_t1_text_missing_required', () => {
+    const { isOcrAvailable } = require('../../../profiles/hmos-app/harness/ocr-toolkit');
+    if (!isJimpAvailable() || !isOcrAvailable()) return; // 用真 OCR，无则跳过
+    const root = mkProject();
+    try {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      const shot = path.join(ddir, 'shot-home.png');
+      writeMinimalRedPng(shot, 12, 12); // 纯色小图：OCR 找不到任何声明文本 → 整块缺失
+      const evalHash = hashScreenshotFile(shot);
+      if (!evalHash) throw new Error('hash required');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed',
+        'screens:', '  - id: home', '    priority: P0', '    ref_id: home',
+        '    root:', '      type: navigation_frame', '      order: 0', '      children:',
+        '        - { type: content_display, order: 0, text: "卡包集中管理" }',
+        '        - { type: list_selection, order: 1, text: "添加管理卡片" }',
+        '        - { type: content_display, order: 2, text: "更多服务广告" }',
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.0',
+        screens: [{
+          screen_id: 'home', verdict: 'pass',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home', fidelity_score: 0.92, geometric_iou: 0.85,
+          screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+          reverse_missing: [], defects: [],
+          confirmed_by: 'alice', // 隔离掉 T2，只留 T1
+        }],
+      }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find((x: { id: string }) => x.id === 'visual_diff' || x.id === 'visual_diff_text_missing') as { status: string; details?: string } | undefined;
+      if (!hit || hit.status !== 'FAIL' || !/锚点文本整块缺失|missing-render/.test(hit.details ?? '')) {
+        throw new Error(`声明 3 锚点全缺应经 T1 visual_diff_text_missing FAIL：${JSON.stringify(r.map((x: { id: string; status: string; details?: string }) => ({ id: x.id, status: x.status })))}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_finalized_verdict_without_evaluated_hash_warns', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();

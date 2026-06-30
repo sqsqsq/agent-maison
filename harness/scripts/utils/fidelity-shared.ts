@@ -116,6 +116,15 @@ export function isAutomationSigner(signedBy: string | undefined): boolean {
 export const USER_REQUIREMENT_CONFIRMER = 'user_requirement';
 
 /**
+ * T2：pixel_1to1 P0 pass 屏的真人确认判据——`confirmed_by` 非空且非自动化身份。
+ * 视觉裁判可信化主背靠：像素/文本-位置度量均被实测证伪（忠实屏误报），图标/颜色/样式类假 PASS
+ * 不可约地需 VL/人判 → pixel_1to1 P0 屏判 pass 须真人过目确认，goal-mode-auto 等自签不算（headless 走 HALT）。
+ */
+export function isHumanConfirmed(confirmedBy: string | undefined): boolean {
+  return typeof confirmedBy === 'string' && confirmedBy.trim().length > 0 && !isAutomationSigner(confirmedBy);
+}
+
+/**
  * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
  * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
  */

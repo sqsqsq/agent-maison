@@ -7,7 +7,7 @@
 
 import type { UiSpecGlobalElement } from '../../../harness/scripts/utils/ui-spec-shared';
 import type { VisualDiffScreenEntry } from './visual-diff-check';
-import { ocrImageWords, fuzzyTextInBand, type OcrResult } from './ocr-toolkit';
+import { ocrImageWords, fuzzyTextInBand, fuzzyTextPresent, type OcrResult } from './ocr-toolkit';
 
 export type OcrFn = (shotAbs: string) => OcrResult;
 
@@ -72,6 +72,59 @@ export function collectOutOfBoundsGlobalElements(
       if (allInBand) {
         violations.push({ screen_id: s.screen_id, element_id: ge.id, texts: ge.texts });
       }
+    }
+  }
+  return { violations, ocrUnavailable: [...ocrUnavailable] };
+}
+
+// ---- T1（窄）：声明的关键锚点文本整块缺失 = missing-render ----
+// 经两次真机实测：像素统计 与 OCR 文本-位置 都分不开"忠实 vs 崩坏"（device≠mockup 使忠实屏位置也大偏移）。
+// 唯一对 device≠mockup 鲁棒的 OCR 信号是**文本存在性**。故 T1 只保留高置信窄门禁：屏声明的关键锚点文本
+// **整块缺失**（OCR 全文都找不到）= 该区域没渲染出文字。**只在缺失比例高（gross）时触发**，吸收 OCR 掉字噪声、不误伤。
+
+export interface GrossMissingViolation {
+  screen_id: string;
+  declared: number;
+  missing: string[];
+}
+export interface GrossMissingResult {
+  violations: GrossMissingViolation[];
+  ocrUnavailable: string[];
+}
+
+/** 锚点文本最短长度（单字易与正文/OCR 噪声混淆，只取 ≥2 字的稳定锚点） */
+const MIN_ANCHOR_LEN = 2;
+/** 触发 gross-missing 的最少声明锚点数（太少不足以判"整块缺失" vs OCR 偶失） */
+const MIN_ANCHORS_FOR_GATE = 3;
+/** 缺失比例阈值——只在过半锚点缺失（整区域没渲染文字）才判，吸收 OCR 掉字 FP */
+const DEFAULT_MISSING_FRACTION = 0.5;
+
+/**
+ * T1（窄）：声明锚点文本整块缺失。screenAnchors：screen_id → 该屏 ui-spec 声明的关键文本（调用方从 text 节点收集）。
+ * 仅当该屏声明锚点 ≥MIN_ANCHORS_FOR_GATE 且缺失比例 ≥missingFraction 才判 violation（gross missing-render）。
+ * OCR 不可用/失败 → 不误判、进 ocrUnavailable 降级。
+ */
+export function collectGrossMissingAnchorText(
+  screenAnchors: Map<string, string[]>,
+  screens: VisualDiffScreenEntry[],
+  resolveShotAbs: (rel: string) => string,
+  ocrFn: OcrFn = ocrImageWords,
+  missingFraction: number = DEFAULT_MISSING_FRACTION,
+): GrossMissingResult {
+  const violations: GrossMissingViolation[] = [];
+  const ocrUnavailable = new Set<string>();
+  for (const s of screens) {
+    const anchorsRaw = screenAnchors.get(s.screen_id);
+    if (!anchorsRaw) continue;
+    const anchors = [...new Set(anchorsRaw.map(a => a.trim()).filter(a => a.length >= MIN_ANCHOR_LEN))];
+    if (anchors.length < MIN_ANCHORS_FOR_GATE) continue; // 锚点太少，不足以判整块缺失
+    const shot = s.screenshot_path;
+    if (typeof shot !== 'string' || !shot.trim()) continue;
+    const res = ocrFn(resolveShotAbs(shot));
+    if (!res.ok || !Array.isArray(res.words)) { ocrUnavailable.add(s.screen_id); continue; }
+    const missing = anchors.filter(a => !fuzzyTextPresent(res.words!, a));
+    if (missing.length / anchors.length >= missingFraction) {
+      violations.push({ screen_id: s.screen_id, declared: anchors.length, missing });
     }
   }
   return { violations, ocrUnavailable: [...ocrUnavailable] };
