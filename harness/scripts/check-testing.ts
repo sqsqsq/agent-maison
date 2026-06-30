@@ -2004,6 +2004,9 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
+          // review#2：runner 崩溃（!run.ok）= 真机环境/工具链问题，非 UI/业务代码 → 标 device_toolchain，
+          // 让 goal 失败分类归 toolchain（早 halt 修环境、勿误导改码）。下方"用例失败"路径不打此标 → code_regression。
+          blocking_class: 'device_toolchain',
           details: [`真机自动化执行失败：exit=${run.exitCode}`, `命令：${run.command}`, `日志：${run.logPath}`, ...run.errors.map(e => `  - ${e.message}`)].join('\n'),
         },
       ];

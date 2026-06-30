@@ -24,7 +24,7 @@ import {
 } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
-import { collectP0OverlayTargetIds } from './visual-diff-targets';
+import { collectP0OverlayTargetIds, isP0VisualTargetScreen } from './visual-diff-targets';
 
 export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
@@ -120,7 +120,7 @@ export function isLikelyTopLevelScreen(screen: UiSpecScreen): boolean {
 export function collectP0CaptureTargets(uiDoc: UiSpecDoc | null): UiSpecScreen[] {
   const out: UiSpecScreen[] = [];
   for (const s of uiDoc?.screens ?? []) {
-    if (s.priority === 'P0' && !s.lightweight) out.push(s);
+    if (isP0VisualTargetScreen(s)) out.push(s);
   }
   return out;
 }
@@ -324,7 +324,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       reportDir,
       mdPath,
       screensWritten: 0,
-      errors: ['ui-spec 无 P0 非 lightweight 屏，跳过 visual_diff 采集'],
+      errors: ['ui-spec 无 P0 屏，跳过 visual_diff 采集'],
       skippedReason: 'no_p0_targets',
     };
   }

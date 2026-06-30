@@ -111,6 +111,7 @@
         "severity": { "type": "string" },
         "status": { "type": "string" },
         "classification": { "type": "string" },
+        "blocking_class": { "type": "string" },
         "details_excerpt": { "type": "string" },
         "affected_files": {
           "type": "array",

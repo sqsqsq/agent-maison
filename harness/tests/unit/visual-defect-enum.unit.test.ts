@@ -11,6 +11,7 @@ import * as path from 'path';
 import {
   validateVisualDiffJson,
   collectEdgeSentinelUncovered,
+  collectWarnP0NoActionable,
   type VisualDiffScreenEntry,
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { computeEdgeDensityTileDivergence, isJimpAvailable } from '../../../profiles/hmos-app/harness/image-toolkit';
@@ -155,6 +156,49 @@ test('v2 对账: 覆盖至余 4(<5) → 不再登记', () => {
 test('v2 哨兵: 无 edge tile → 不登记', () => {
   const screens: VisualDiffScreenEntry[] = [{ screen_id: 'home', verdict: 'pass', defects: [] }];
   assert.strictEqual(collectEdgeSentinelUncovered(screens).length, 0);
+});
+
+// ---- T4：P0 warn 屏零可执行信号（collectWarnP0NoActionable） ----
+
+const T4_P0 = ['home_with_card', 'manage_non_local', 'card_pack'];
+
+test('T4: P0 warn + must_fix 空 → 命中（home_with_card/manage_non_local 压线逃逸）', () => {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'home_with_card', verdict: 'warn', fidelity_score: 0.52, defects: [], reverse_missing: [] },
+    { screen_id: 'manage_non_local', verdict: 'warn', fidelity_score: 0.48, defects: [], reverse_missing: [] },
+  ];
+  const hit = collectWarnP0NoActionable(screens, T4_P0).map(s => s.screen_id);
+  assert.deepStrictEqual(hit.sort(), ['home_with_card', 'manage_non_local']);
+});
+
+test('T4: P0 warn 但带非空 must_fix → 不命中（已说清改哪）', () => {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'home_with_card', verdict: 'warn', must_fix: ['卡包描述应在卡夹插画下方'], defects: [], reverse_missing: [] },
+  ];
+  assert.strictEqual(collectWarnP0NoActionable(screens, T4_P0).length, 0);
+});
+
+test('T4 (review#1): P0 warn 仅带 defects/reverse_missing 但 must_fix 空 → 仍命中（证据不替代回修指令）', () => {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'home_with_card', verdict: 'warn', defects: [{ class: 'shape_mismatch', severity: 'minor', note: 'x' }], reverse_missing: [] },
+    { screen_id: 'manage_non_local', verdict: 'warn', defects: [], reverse_missing: ['non_local_title'] },
+  ];
+  const hit = collectWarnP0NoActionable(screens, T4_P0).map(s => s.screen_id);
+  assert.deepStrictEqual(hit.sort(), ['home_with_card', 'manage_non_local']);
+});
+
+test('T4: 非 P0 warn 零信号 → 不命中（只收紧 P0）', () => {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'some_p2_screen', verdict: 'warn', defects: [], reverse_missing: [] },
+  ];
+  assert.strictEqual(collectWarnP0NoActionable(screens, T4_P0).length, 0);
+});
+
+test('T4: pass 屏不计入（只针对 warn）', () => {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'card_pack', verdict: 'pass', fidelity_score: 0.98, defects: [], reverse_missing: [] },
+  ];
+  assert.strictEqual(collectWarnP0NoActionable(screens, T4_P0).length, 0);
 });
 
 // ---- v2 FP-safe（端到端 worker，jimp 不可用则跳过）：同内容仅设备比例缩放，拉伸应抵消 ----

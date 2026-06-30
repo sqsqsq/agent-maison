@@ -11,6 +11,8 @@ import {
   shouldHaltNoProgress,
   snapshotArtifacts,
 } from '../../scripts/utils/goal-failure-classifier';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
+import type { CheckResult } from '../../scripts/utils/types';
 import { parseHeadlessInteractionSentinel } from '../../scripts/utils/goal-headless-sentinel';
 import { buildPhasePrompt } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -99,6 +101,114 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'T6 classifyFailureKind: device_test_build → toolchain（不再 code_regression）',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'device_test_build' }] });
+        assert(k === 'toolchain', k);
+      },
+    },
+    {
+      name: 'T6 classifyFailureKind: visual_diff_capture → capture',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff_capture' }] });
+        assert(k === 'capture', k);
+      },
+    },
+    {
+      name: 'T6 classifyFailureKind: visual_diff / layout_divergence / 越界 → visual_gap',
+      run: () => {
+        assert(classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff' }] }) === 'visual_gap', 'visual_diff');
+        assert(
+          classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff_layout_divergence' }] }) === 'visual_gap',
+          'layout_divergence',
+        );
+        assert(
+          classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff_out_of_bounds_element' }] }) === 'visual_gap',
+          'out_of_bounds',
+        );
+      },
+    },
+    {
+      name: 'T6 classifyFailureKind: 互斥优先级——toolchain 与 visual 共存时 toolchain 胜（下游全废）',
+      run: () => {
+        const k = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'visual_diff' }, { id: 'device_test_build' }],
+        });
+        assert(k === 'toolchain', k);
+      },
+    },
+    {
+      name: 'T6 (review#2): device_test_run 用例失败（无 device_toolchain 标）→ code_regression（须改码可重试）',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'device_test_run' }] });
+        assert(k === 'code_regression', k);
+      },
+    },
+    {
+      name: 'T6 (review#2): device_test_run 崩溃（blocking_class=device_toolchain）→ toolchain（早 halt 修环境）',
+      run: () => {
+        const k = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'device_test_run', blocking_class: 'device_toolchain' }],
+        });
+        assert(k === 'toolchain', k);
+      },
+    },
+    {
+      name: 'T6 (review#2): device_test_run 崩溃 + visual 共存 → toolchain 胜',
+      run: () => {
+        const k = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'visual_diff' }, { id: 'device_test_run', blocking_class: 'device_toolchain' }],
+        });
+        assert(k === 'toolchain', k);
+      },
+    },
+    {
+      // review#3 端到端链路：check 层 blocking_class 必须经 buildSummaryBlockers 保真进 summary.blockers[]，
+      // 再被 classifyFailureKind 读到。修复前 mapping 丢字段 → 真实运行 device_test_run 崩溃误落 code_regression。
+      name: 'T6 (review#3): CheckResult.blocking_class → summary.blockers[] → classifyFailureKind=toolchain（链路保真）',
+      run: () => {
+        const checks: CheckResult[] = [
+          {
+            id: 'device_test_run',
+            category: 'structure',
+            description: '真机自动化',
+            severity: 'BLOCKER',
+            status: 'FAIL',
+            blocking_class: 'device_toolchain',
+            details: '真机自动化执行失败：exit=1（runner 崩溃）',
+          },
+        ];
+        const blockers = buildSummaryBlockers(checks, t => t, () => undefined);
+        assert(blockers.length === 1, 'should produce 1 blocker');
+        assert(blockers[0].blocking_class === 'device_toolchain', `blocking_class 丢失：${JSON.stringify(blockers[0])}`);
+        // 把映射出的 summary blocker 直接喂分类器（与 goal-runner 读 summary.json 后同形）
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers });
+        assert(k === 'toolchain', `链路末端应 toolchain，实得 ${k}`);
+      },
+    },
+    {
+      name: 'T6 (review#3): 无 blocking_class 的 device_test_run 用例失败 → 链路末端 code_regression',
+      run: () => {
+        const checks: CheckResult[] = [
+          {
+            id: 'device_test_run',
+            category: 'structure',
+            description: '真机自动化',
+            severity: 'BLOCKER',
+            status: 'FAIL',
+            details: '自动化产物未达标（用例失败）',
+          },
+        ];
+        const blockers = buildSummaryBlockers(checks, t => t, () => undefined);
+        assert(blockers[0].blocking_class === undefined, 'should not invent blocking_class');
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers });
+        assert(k === 'code_regression', `用例失败应 code_regression，实得 ${k}`);
+      },
+    },
+    {
       name: 'shouldHaltNoProgress: terminology + spec.md content change → no halt',
       run: () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-term-'));
@@ -152,6 +262,66 @@ export function runAll(): UnitCaseResult[] {
             currentArtifactSnapshot: {},
           }),
           'code_regression should not guard-halt',
+        );
+      },
+    },
+    {
+      name: 'T6 shouldHaltNoProgress: toolchain 同 signature 重复 → halt（不吃视觉预算）',
+      run: () => {
+        assert(
+          shouldHaltNoProgress({
+            failureKind: 'toolchain',
+            priorBlockerSignature: 'device_test_build',
+            currentBlockerSignature: 'device_test_build',
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+          }),
+          'toolchain 反复应 halt',
+        );
+      },
+    },
+    {
+      name: 'T6 shouldHaltNoProgress: capture 同 signature 重复 → halt',
+      run: () => {
+        assert(
+          shouldHaltNoProgress({
+            failureKind: 'capture',
+            priorBlockerSignature: 'visual_diff_capture',
+            currentBlockerSignature: 'visual_diff_capture',
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+          }),
+          'capture 反复应 halt',
+        );
+      },
+    },
+    {
+      name: 'T6 shouldHaltNoProgress: visual_gap 同门禁 signature 重复（无改善）→ 熔断 halt',
+      run: () => {
+        assert(
+          shouldHaltNoProgress({
+            failureKind: 'visual_gap',
+            priorBlockerSignature: 'visual_diff|visual_diff_layout_divergence',
+            currentBlockerSignature: 'visual_diff|visual_diff_layout_divergence',
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+          }),
+          'visual_gap 同门禁无改善应熔断',
+        );
+      },
+    },
+    {
+      name: 'T6 shouldHaltNoProgress: visual_gap signature 变化（移除一项门禁=有改善）→ 不 halt',
+      run: () => {
+        assert(
+          !shouldHaltNoProgress({
+            failureKind: 'visual_gap',
+            priorBlockerSignature: 'visual_diff|visual_diff_layout_divergence',
+            currentBlockerSignature: 'visual_diff',
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+          }),
+          'visual 门禁减少=有进展，应继续重试',
         );
       },
     },

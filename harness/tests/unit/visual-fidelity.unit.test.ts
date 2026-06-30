@@ -511,7 +511,13 @@ export function runAll(): UnitCaseResult[] {
   });
 
   // C：warn 屏灾难地板（fidelity<0.45 或 iou<0.40）pixel_1to1 → FAIL；正常残差 warn(~0.7) 不误伤。
-  const writeFloorCase = (root: string, fidelity: number, iou: number, scoreFloor: number): void => {
+  const writeFloorCase = (
+    root: string,
+    fidelity: number,
+    iou: number,
+    scoreFloor: number,
+    defects: Array<Record<string, unknown>> = [],
+  ): void => {
     const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
     fs.mkdirSync(ddir, { recursive: true });
     const shot = path.join(ddir, 'shot-home.png');
@@ -545,7 +551,7 @@ export function runAll(): UnitCaseResult[] {
         screenshot_hash: evalHash,
         evaluated_screenshot_hash: evalHash,
         reverse_missing: [],
-        defects: [],
+        defects,
       }],
     }));
   };
@@ -566,17 +572,21 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('visual_diff_warn_normal_residual_no_floor_pass', () => {
+  run('visual_diff_warn_0p7_no_disaster_floor_but_blocks_via_mustfix', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();
     try {
+      // T4 收紧（review#1）：pixel_1to1 P0 warn 须带 must_fix（可执行指令），defects/reverse_missing 不替代。
+      // 0.7 在灾难地板(0.45)之上 → 不应触发"灾难地板"；但 must_fix 空 → 应经 T4 零指令门禁 BLOCKER。
+      // 验证两机制相互独立：地板未误报、回修指令缺失被正确钉死。
       writeFloorCase(root, 0.7, 0.62, 0.5);
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const hit = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
-      if (!hit || hit.status !== 'PASS') {
-        throw new Error(`正常残差 warn 0.7 不应触发地板：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      if (!hit || hit.status !== 'FAIL') {
+        throw new Error(`0.7 P0 warn 无 must_fix 应经 T4 零指令门禁 FAIL：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
       }
-      if (/灾难地板|低于地板/.test(hit.details ?? '')) throw new Error('误报灾难地板');
+      if (/灾难地板|低于地板/.test(hit.details ?? '')) throw new Error('0.7>0.45 不应触发灾难地板');
+      if (!/无可执行回修指令/.test(hit.details ?? '')) throw new Error('应经 T4 零指令门禁，而非其它路径');
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

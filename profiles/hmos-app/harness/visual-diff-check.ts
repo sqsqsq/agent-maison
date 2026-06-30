@@ -370,6 +370,25 @@ export function collectEdgeSentinelUncovered(
   return out;
 }
 
+/**
+ * T4：pixel_1to1 P0 warn 屏「无可执行回修指令」——verdict=warn 却 **must_fix 空**。
+ * 语义：pixel_1to1 P0 下 warn = "有残差、需再修一轮"；coding 真正消费的回修通道是 **must_fix**（可执行可定位的指令），
+ * 而 defects/reverse_missing 只是**证据**、不是指令（单纯 `defects:[{note}]` 不能告诉 coding 改哪 → loop 仍瞎猜，
+ * 正是 homepage 把卡包描述从卡夹下瞎挪到上的根源）。故 **defects/reverse_missing 不替代 must_fix**：要么把它们结构化成
+ * must_fix（warn，须修），要么残差可接受就判 **pass + minor defect** 记录（无需修）。与灾难地板(0.45)互补：地板抓崩坏分，
+ * 本条抓"压线 warn 却无 must_fix"（home_with_card 0.52 / manage_non_local 0.48 即此类）。
+ * 注：reverse_missing/major defects 另有各自 ratchet（本条不依赖它们兜底，只钉死 must_fix 通道）。
+ */
+export function collectWarnP0NoActionable(
+  screens: VisualDiffScreenEntry[],
+  p0Ids: string[],
+): VisualDiffScreenEntry[] {
+  const p0IdSet = new Set(p0Ids);
+  return screens.filter(
+    s => s.verdict === 'warn' && p0IdSet.has(s.screen_id) && (s.must_fix?.length ?? 0) === 0,
+  );
+}
+
 interface VisualDiffHit {
   id: string;
   severity: 'BLOCKER' | 'MAJOR';
@@ -732,6 +751,24 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
           dishonest.map(s => s.screen_id).join(', '),
       });
     }
+  }
+
+  // T4：pixel_1to1 P0 warn 屏必须带**非空 must_fix**（coding 消费的回修指令通道；defects/reverse_missing 只是证据、不替代——
+  // 详见 collectWarnP0NoActionable 文档）。否则 = "知道不完美却不告诉 loop 改哪" → loop 饿死瞎猜（homepage 把卡包描述从卡夹下
+  // 瞎挪到上的根源）。与上方灾难地板(0.45)互补：地板抓"崩坏分"，本条抓"压线 warn 却无 must_fix"（home_with_card 0.52 /
+  // manage_non_local 0.48 即此类）。残差可接受就判 pass(+minor defect)；判 warn 就必须用 must_fix 说清改哪。
+  const warnP0NoActionable = collectWarnP0NoActionable(rep.screens, p0Ids);
+  if (pixel1to1 && warnP0NoActionable.length > 0) {
+    const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_warn_no_actionable',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `pixel_1to1 P0 屏 verdict=warn 却无可执行回修指令（must_fix 空，loop 无法精准回修；defects/reverse_missing 是证据非指令、不替代）：` +
+        warnP0NoActionable.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'})`).join(', ') +
+        `；warn 须给 coding 可执行 must_fix（残差可接受则判 pass+minor defect 记录）`,
+    });
   }
 
   if (blockingDefectPass.length > 0) {

@@ -302,13 +302,13 @@ doc/features/{module-name}/testing/test-plan.md
 > **唯一直接像素对图阶段**：参考图来自 spec `authoritative_refs` 或 **`fidelity.lock.yaml` 快照**（`buildAuthoritativeRefImageIndex` byId 联结 ui-spec `source_ref`）。
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
-2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
+2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。**P0 屏无论是否 `lightweight` 都必须被采集与评估**（lightweight 只对 P2/P3 轻量 spec 生效，不豁免 P0 视觉门禁；曾有 P0+lightweight 屏被整个跳过、verdict=skipped 无人评估）。**某 P0 状态不可达（如 mock 预填数据导致"无卡态"到不了）是缺陷、不是豁免理由**：须产出 `must_fix`「P0 状态 X 不可达，须可导航到该态后重采」，禁止以 skipped 放行。
 3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **先断言屏身份**（E3 防截错屏：确认截图呈现的就是目标屏——锚点＝该屏 `must_have_elements`/标题文案/导航态；不符即 `verdict=fail` + must_fix「captured wrong screen」，**禁止在错图上做 diff**；宿主曾把 home_nocard 截成弹窗陈图仍闭环）→ **双向 diff**（正向=spec 声明元素；反向=参考图有实现无；**G3 样式/布局核对**：ui-spec 声明的 `variant`/`layout_group`/`align`/`width_ratio`/`bg_color` 须逐一对真机截图核对——按钮填充形态/同行分组/对齐占宽/区域底色，不符进 must_fix；**渲染缺陷枚举**：逐屏登记 `defects[]`——裁切(clipping)/重叠重复(overlap)/形态版式不符(shape_mismatch，如声明 width_ratio 0.35 却全宽、tonal 却实心)/声明 asset 未渲染(missing_render，如 tab 仅文字)，每条带 `bbox`+`severity`(blocker|major|minor)+`note`；**verdict=pass 须 defects 为空且无 reverse_missing 残留**）→ 产出：
    - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举 + `defects[]` 渲染缺陷枚举；`score_floor` 含 N×N 分块最小相似度；`edge_tile_divergence`/`edge_over_threshold_tiles` 由采集层自动写入——超阈 tile 未被任一 defect.bbox 覆盖会触发边缘哨兵 WARN，须补对应 defect 或复核该区域）
    - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数）
 4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
-5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
-6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing / **defects(blocker\|major) / 缺 defects 逐屏枚举 / finalized(含 warn) 屏 fidelity<0.45 或 iou<0.40 灾难地板** → **BLOCKER**；边缘哨兵超阈 tile 未登记 → **WARN**（低置信、须复核，非 gate）。
+5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。**must_fix 必须可执行可定位**——写「卡包描述应在卡夹插画下方而非上方」「+按钮应在标题同行右侧圆形灰底而非独立蓝色」这种带元素/区域+期望态的指令，关联具体 element_id 或区域 bbox；**禁止**「整体差异大/不够还原」这类无法回修的空话（coding 无从下手就会瞎挪布局，反而更糟）。
+6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing / **defects(blocker\|major) / 缺 defects 逐屏枚举 / finalized(含 warn) 屏 fidelity<0.45 或 iou<0.40 灾难地板 / P0 warn 屏 must_fix 空（T4）** → **BLOCKER**；边缘哨兵超阈 tile 未登记 → **WARN**（低置信、须复核，非 gate）。**verdict=warn 的语义＝"有残差、需再修一轮"**：P0 pixel_1to1 warn 屏**必须带非空 must_fix**（coding 消费的回修指令通道）；**defects/reverse_missing 只是证据、不替代 must_fix**（单纯 `defects:[{note}]` 不能告诉 coding 改哪）。残差可接受就判 **pass + minor defect** 记录；与参考图一致就判 pass。别用无 must_fix 的 warn 蒙混。
 7. **采集新鲜度（E1/E2）**：P0 屏截图失败（如 Permission denied/锁屏/设备占用）或 `screensWritten=0` 全靠 `preserved` 旧 json 充数时，`visual_diff_capture` 在 `pixel_1to1` 下 **FAIL**（否则 blocking WARN）——**不得**沿用陈旧/错图证据闭环；须修复采集后重采 P0 屏。
 
 ### Step 5: 生成测试报告（测试执行后）

@@ -472,6 +472,21 @@ export function buildPhasePrompt(
         '**This failure is a missing artifact / confirmation gate — not a broken codebase.**',
         'Do NOT revert unrelated files. Apply §9 headless auto-resolution, write missing artifacts, and complete the phase.',
       );
+    } else if (priorFailureKind === 'toolchain' || priorFailureKind === 'capture') {
+      parts.push(
+        '',
+        '**This is a device toolchain / screenshot-capture (infrastructure) failure — NOT a code defect.**',
+        'Do NOT revert or rewrite application code to "fix" it. Diagnose the environment: device connection / hdc / build toolchain / screenshot permissions.',
+        'If the same infrastructure failure repeats, the run will HALT for you to fix the environment — blind retries waste the budget and do not improve the UI.',
+      );
+    } else if (priorFailureKind === 'visual_gap') {
+      parts.push(
+        '',
+        '**This is a visual-fidelity gap (the rendered UI does not match the reference).** To make real progress:',
+        '1. Read the SPECIFIC must_fix / layout-divergence regions / out-of-bounds elements in the BLOCKER evidence and fix exactly those;',
+        '2. Do NOT blindly move or restructure unrelated blocks hoping the score improves — a prior attempt did that (moved the card-pack description) and made it worse;',
+        '3. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
+      );
     } else {
       parts.push(
         '',
@@ -1281,7 +1296,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           })
         ) {
           action = 'halt';
-          haltReason = 'no_progress_guard';
+          // T6：分流 halt 原因——基建(toolchain/capture)求人修环境 vs 视觉(visual_gap)同门禁无改善熔断求复核。
+          haltReason =
+            failureKind === 'visual_gap'
+              ? 'no_progress_visual_gap'
+              : failureKind === 'toolchain' || failureKind === 'capture'
+                ? `no_progress_${failureKind}`
+                : 'no_progress_guard';
         } else if (resolved.advance_blocked) {
           if (retries < manifest.budget.max_retries_per_phase) {
             action = 'retry';

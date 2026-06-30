@@ -40,6 +40,7 @@ import {
   HarnessRunSummary,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
+import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
 import {
@@ -628,17 +629,8 @@ function writeRunSummary(
 ): HarnessRunSummary {
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
-  const blockers = report.checks
-    .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
-    .map(c => ({
-      id: c.id,
-      severity: c.severity,
-      status: c.status,
-      classification: c.failure_kind ?? extractFailureClassification(c.details),
-      details_excerpt: excerpt(c.details, 800),
-      affected_files: c.affected_files,
-      suggestion: c.suggestion,
-    }));
+  // review#3：blocker 映射抽至 buildSummaryBlockers（可测纯函数），保真传 c.blocking_class（如 device_toolchain）。
+  const blockers = buildSummaryBlockers(report.checks, excerpt, extractFailureClassification);
   const runStatuses = report.checks
     .filter(c => c.id.endsWith('_run_status'))
     .map(c => ({

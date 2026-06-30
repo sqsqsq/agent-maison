@@ -478,6 +478,8 @@ export interface HarnessRunSummary {
     severity: string;
     status: string;
     classification?: string;
+    /** check 层 blocking_class（如 device_toolchain）——须保真传到 goal-runner 的失败分类（T6/review#3） */
+    blocking_class?: string;
     details_excerpt: string;
     affected_files?: string[];
     suggestion?: string;

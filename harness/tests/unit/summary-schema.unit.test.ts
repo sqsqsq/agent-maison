@@ -66,6 +66,13 @@ function validSample(): Record<string, unknown> {
       details_excerpt: '项目级 assembleApp 失败',
       affected_files: ['entry (module)'],
       suggestion: '读取完整日志',
+    }, {
+      // review#3：blocker 须允许 blocking_class（device_test_run 崩溃标 device_toolchain，保真传 goal-runner 失败分类）
+      id: 'device_test_run',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      blocking_class: 'device_toolchain',
+      details_excerpt: '真机自动化执行失败（runner 崩溃）',
     }],
     next_action: 'fix_run_status_blockers_then_rerun',
     receipt_status: 'missing',

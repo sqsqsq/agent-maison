@@ -14,8 +14,57 @@ import {
 
 export type FailureKind =
   | 'deterministic_gate_or_artifact_missing'
+  | 'toolchain'
+  | 'capture'
+  | 'visual_gap'
   | 'code_regression'
   | 'external_block';
+
+/**
+ * T6：失败按互斥 bucket 归因，使 goal-mode 不再把 testing 的工具链/采集/视觉差距一律塞 code_regression
+ * （实测病灶：homepage testing 3 次/177 分钟空转，两次 timeout/FAIL 全归 code_regression 盲重试）。
+ * 分流后：toolchain/capture 属环境/基建失败、盲重试无益 → 与 deterministic 一样 signature 重复即 halt（不吃视觉迭代预算）；
+ * visual_gap 属 UI 差距、coding 回修可改善，但同一组视觉门禁连续重复（无改善）→ 熔断求人。
+ */
+// review#2：**不**用 `device_test_` 前缀整体归类——device_test_run 覆盖派生计划缺失/真机崩溃/用例失败/trace blocked
+// 等多因，其中只有"环境启动/runner 崩溃"才是 toolchain，用例失败更接近 code_regression（须改码、可重试）。
+// 故 toolchain id 仅取确切的 build/install + hylyre/hvigor；device_test_run 的 toolchain 子类由 check 层
+// 显式打 `blocking_class: 'device_toolchain'`（仅 `!run.ok` 崩溃路径），见下方 hasToolchainBlockingClass。
+const TOOLCHAIN_BLOCKER_PREFIXES = ['device_test_build', 'device_test_install', 'hylyre_', 'hvigor_'];
+/** check 层显式标注的 toolchain 子类（device_test_run 崩溃等）；用例失败不打此标 → 归 code_regression */
+const TOOLCHAIN_BLOCKING_CLASSES: ReadonlySet<string> = new Set(['device_toolchain']);
+
+/** 采集失败（截图 IO/Permission denied/screensWritten=0）；属基建 → 早 halt */
+export function isCaptureBlockerId(id: string): boolean {
+  return id === 'visual_diff_capture' || id.startsWith('visual_diff_capture');
+}
+
+/** 真机工具链失败（build/install/hylyre/hvigor）；盲重试无益 → 早 halt。device_test_run 不在此（见 blocking_class 路径） */
+export function isToolchainBlockerId(id: string): boolean {
+  return TOOLCHAIN_BLOCKER_PREFIXES.some((p) => id.startsWith(p));
+}
+
+/** check 层把 device_test_run 崩溃等显式标 blocking_class='device_toolchain' → 归 toolchain；用例失败无此标 */
+export function hasToolchainBlockingClass(summary: GoalSummaryLike | null | undefined): boolean {
+  if (!summary) return false;
+  if (summary.blocking_class && TOOLCHAIN_BLOCKING_CLASSES.has(summary.blocking_class)) return true;
+  return (summary.blockers ?? []).some(
+    (b) => typeof b.blocking_class === 'string' && TOOLCHAIN_BLOCKING_CLASSES.has(b.blocking_class),
+  );
+}
+
+/** 视觉差距门禁（visual_diff* 除 capture，含 layout_divergence / out_of_bounds_element / must_fix） */
+export function isVisualGapBlockerId(id: string): boolean {
+  return id.startsWith('visual_diff') && !isCaptureBlockerId(id);
+}
+
+/** signature 重复即 halt 的 kind（基建类 + 视觉无改善——盲重试都无益） */
+export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
+  'deterministic_gate_or_artifact_missing',
+  'toolchain',
+  'capture',
+  'visual_gap',
+]);
 
 /**
  * Blocker ids where retry without user input is structurally pointless.
@@ -108,6 +157,11 @@ export function classifyFailureKind(
   if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {
     return 'deterministic_gate_or_artifact_missing';
   }
+  // T6：基建/视觉分流。toolchain（build/install/hylyre 或 check 层标注的 device_test_run 崩溃）优先于 capture，再于 visual_gap。
+  // device_test_run 的"用例失败"不带 device_toolchain 标 → 落到 code_regression（须改码、可重试），不误导成"先查环境"。
+  if (ids.some(isToolchainBlockerId) || hasToolchainBlockingClass(summary)) return 'toolchain';
+  if (ids.some(isCaptureBlockerId)) return 'capture';
+  if (ids.some(isVisualGapBlockerId)) return 'visual_gap';
   return 'code_regression';
 }
 
@@ -180,9 +234,18 @@ export interface NoProgressGuardInput {
   currentArtifactSnapshot: ArtifactSnapshot;
 }
 
-/** Halt when deterministic gate repeats with zero artifact delta (2nd+ identical failure). */
+/**
+ * Halt when a signature-halt kind repeats with zero progress (2nd+ identical failure).
+ * T6 起覆盖 {deterministic_gate, toolchain, capture, visual_gap}：
+ *   - deterministic/toolchain/capture：基建/缺件类，盲重试无益 → identical signature 即 halt
+ *     （toolchain/capture 无 watched artifact，artifactsProgressed 恒 false，纯靠 signature 重复判定，
+ *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
+ *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
+ *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
+ *   - code_regression：仍永不 guard-halt（偏好重试，可能是自引入回归）。
+ */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
-  if (input.failureKind !== 'deterministic_gate_or_artifact_missing') return false;
+  if (!SIGNATURE_HALT_KINDS.has(input.failureKind)) return false;
   if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
   if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;
   return !artifactsProgressed(input.priorArtifactSnapshot, input.currentArtifactSnapshot);
