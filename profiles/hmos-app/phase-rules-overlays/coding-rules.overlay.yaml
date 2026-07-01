@@ -319,6 +319,34 @@ structure_checks:
     rule:
       bundled_with: visual_parity
 
+  visual_parity_asset_baked_text:
+    description: >
+      round5 P0-A 承重门禁：被 $r 引用的非 placeholder 素材图不得烤入该屏 ui-spec 声明文本节点
+      （=整段界面当背景大图，致 coding 贴大图又搭真组件的双渲染/烤字）。OCR 素材真图、模糊比对声明文本，
+      命中 ≥2 个 → BLOCKER（pixel_1to1）/WARN（否则）。FP 校准：单品牌 logo 仅 1 个品牌名(<2)→PASS；
+      装饰/艺术文本不进 ui-spec text 节点。逃生口：asset.baked_text_defer + 真人署名（isHumanConfirmed）。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_ocr_unavailable:
+    description: >
+      round5 P0-A/X4：OCR 是烤字门禁唯一承重探测；pixel_1to1 下不可用/失败（tesseract.js 未装/chi_sim 未物化/
+      素材图 OCR 失败）→ 不得 WARN 放行，升 BLOCKER 且归 toolchain（goal-failure-classifier，指向"修 OCR 环境"、
+      signature 重复即 halt，不吃视觉预算）。非 pixel_1to1 → WARN。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
+  visual_parity_icon_substitution:
+    description: >
+      round5 P0-B（Q5 已采纳）：ui-spec 显式声明 required 图标 asset 的元素、源码却用 sys.symbol.*/$r('sys.*')
+      静默替代 → pixel_1to1 BLOCKER（除非显式 placeholder/defer + human_signed）；非 pixel_1to1 或仅风格偏差 → WARN。
+      覆盖全局/跨屏元素（底部 tab 图标）。命门＝spec/plan 须把参考图彩色/品牌图标声明为 required asset（漏声明=漏报，可接受）。
+    severity: MAJOR
+    rule:
+      bundled_with: visual_parity
+
   visual_parity_variant_decl:
     description: >
       a2 通用 spec 质量（低优先）：pixel_1to1 P0 屏 action_button 须声明合法 variant

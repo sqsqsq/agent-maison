@@ -33,15 +33,27 @@ export type FailureKind =
 const TOOLCHAIN_BLOCKER_PREFIXES = ['device_test_build', 'device_test_install', 'hylyre_', 'hvigor_'];
 /** check 层显式标注的 toolchain 子类（device_test_run 崩溃等）；用例失败不打此标 → 归 code_regression */
 const TOOLCHAIN_BLOCKING_CLASSES: ReadonlySet<string> = new Set(['device_toolchain']);
+/**
+ * round5 P0-A/X4：精确 id（非前缀）也归 toolchain。`visual_parity_ocr_unavailable`——pixel_1to1 下
+ * OCR（烤字门禁唯一承重探测）不可用属工具依赖缺失，须归 toolchain（signature 重复即 halt、指向"修 OCR 环境"），
+ * 否则其 `visual_parity_*` 前缀会掉进 code_regression 被盲重试。
+ */
+const TOOLCHAIN_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['visual_parity_ocr_unavailable']);
+/**
+ * round5 P1-B：采集/导航身份类精确 id 归 capture。`visual_diff_screenshot_dedup`（≥2 屏共享 hash=Tab
+ * 未切换/重复采集）本质是采集导航 bug（非 UI 差距），归 capture 而非 visual_gap——halt 原因/重试指导才
+ * 指向"修采集导航"而非"改 UI"（isVisualGapBlockerId 已 `&& !isCaptureBlockerId` 自动排除之）。
+ */
+const CAPTURE_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['visual_diff_screenshot_dedup']);
 
-/** 采集失败（截图 IO/Permission denied/screensWritten=0）；属基建 → 早 halt */
+/** 采集失败（截图 IO/Permission denied/screensWritten=0 / 撞 hash 未切屏）；属基建 → 早 halt */
 export function isCaptureBlockerId(id: string): boolean {
-  return id === 'visual_diff_capture' || id.startsWith('visual_diff_capture');
+  return id.startsWith('visual_diff_capture') || CAPTURE_BLOCKER_IDS.has(id);
 }
 
-/** 真机工具链失败（build/install/hylyre/hvigor）；盲重试无益 → 早 halt。device_test_run 不在此（见 blocking_class 路径） */
+/** 真机工具链失败（build/install/hylyre/hvigor + OCR 依赖缺失）；盲重试无益 → 早 halt。device_test_run 不在此（见 blocking_class 路径） */
 export function isToolchainBlockerId(id: string): boolean {
-  return TOOLCHAIN_BLOCKER_PREFIXES.some((p) => id.startsWith(p));
+  return TOOLCHAIN_BLOCKER_PREFIXES.some((p) => id.startsWith(p)) || TOOLCHAIN_BLOCKER_IDS.has(id);
 }
 
 /** check 层把 device_test_run 崩溃等显式标 blocking_class='device_toolchain' → 归 toolchain；用例失败无此标 */

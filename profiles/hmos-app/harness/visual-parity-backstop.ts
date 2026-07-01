@@ -23,6 +23,8 @@ import {
 import { loadVisualParityMappings } from './visual-structure-parity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { hexToLab, readImageDimensions } from './image-toolkit';
+import { isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
+import { ocrImageWords, isOcrAvailable, fuzzyTextPresent } from './ocr-toolkit';
 
 export interface BackstopIssue {
   kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset';
@@ -33,9 +35,17 @@ export interface BackstopIssue {
    * not_rendered=声明 asset_ref 却未真实 $r 渲染（pixel_1to1 可升 BLOCKER）；
    * not_rendered_placeholder=同上但显式 placeholder（豁免、仍 WARN）；
    * icon_kind=icon 未标 kind（仅补全建议）；
-   * placeholder_file=已 $r 引用但模块 media 为退化占位（B 承重门禁）。
+   * placeholder_file=已 $r 引用但模块 media 为退化占位（B 承重门禁）；
+   * baked_text=素材图烤入 ui-spec 声明文本（整段大图，round5 P0-A，pixel_1to1 BLOCKER）；
+   * icon_substitution=声明 required 图标 asset 却用 sys.symbol 替代（round5 P0-B，pixel_1to1 BLOCKER）。
    */
-  assetRole?: 'not_rendered' | 'not_rendered_placeholder' | 'icon_kind' | 'placeholder_file';
+  assetRole?:
+    | 'not_rendered'
+    | 'not_rendered_placeholder'
+    | 'icon_kind'
+    | 'placeholder_file'
+    | 'baked_text'
+    | 'icon_substitution';
 }
 
 function colorTokenDefined(
@@ -701,6 +711,172 @@ export function collectPlaceholderAssetIssues(
         id: key,
         assetRole: 'placeholder_file',
         detail: `资产 ${key}：源码 $r('${mediaRef}') 引用，但引用模块 media 非真图 — ${failing.join('；')}（未物化 resolved_path 真图）`,
+      });
+    }
+  }
+  return issues;
+}
+
+// ============================================================================
+// round5 P0-A：素材原子化硬门禁——被 $r 引用的非 placeholder 素材图不得烤入该屏 ui-spec 声明文本节点
+// （=整段界面当背景大图，致 coding 贴大图又搭真组件的双渲染/烤字）。OCR 素材真图、模糊比对声明文本。
+// 复用 a3f1c920 唯一被实测证明鲁棒的 OCR 信号「文本存在性」，反向用于素材（非新增脆弱度量）。
+// FP 校准：单品牌 logo 仅含 1 个品牌名(<K)→PASS；装饰/艺术文本不进 ui-spec text 节点(spec 约定)。
+// ============================================================================
+
+export interface BakedTextAssetResult {
+  issues: BackstopIssue[];
+  /** OCR 是本门禁唯一承重探测；须检素材因 OCR 不可用/失败而无法核验 → true（调用方 pixel_1to1 归 toolchain BLOCKER） */
+  ocrUnavailable: boolean;
+}
+
+/** 逐屏收集 text 节点（≥2 字锚点）+ 该屏 asset_ref/icon.ref 集合（把素材定位到所属屏） */
+export function screenTextAndAssetRefs(
+  doc: UiSpecDoc,
+): Array<{ screenId: string; texts: string[]; assetRefs: Set<string> }> {
+  return (doc.screens ?? []).map(sc => {
+    const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
+    const texts = nodes
+      .map(n => n.text)
+      .filter((t): t is string => typeof t === 'string' && t.trim().length >= 2);
+    const assetRefs = new Set<string>();
+    for (const n of nodes) {
+      const ref = (n.asset_ref ?? n.icon?.ref)?.trim();
+      if (ref) {
+        assetRefs.add(ref);
+        assetRefs.add(ref.replace(/\./g, '_'));
+      }
+    }
+    return { screenId: sc.id, texts, assetRefs };
+  });
+}
+
+/** 该素材 key 应比对的声明文本：优先"引用它的组件所属屏"，无则回退全 ui-spec（catches 未经 asset_ref 接线的 slab）。去重、≥2 字。 */
+export function declaredTextTargetsForAsset(
+  perScreen: Array<{ screenId: string; texts: string[]; assetRefs: Set<string> }>,
+  key: string,
+): string[] {
+  const snake = key.replace(/\./g, '_');
+  const owning = perScreen.filter(s => s.assetRefs.has(key) || s.assetRefs.has(snake));
+  const scope = owning.length > 0 ? owning : perScreen;
+  const set = new Set<string>();
+  for (const s of scope) for (const t of s.texts) set.add(t.trim());
+  return [...set].filter(t => t.length >= 2);
+}
+
+export function collectBakedTextAssetIssues(
+  ctx: CheckContext,
+  doc: UiSpecDoc,
+  baselineUnverified: boolean,
+  minMatches = 2,
+): BakedTextAssetResult {
+  if (baselineUnverified) return { issues: [], ocrUnavailable: false };
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return { issues: [], ocrUnavailable: false };
+  const assets = (doc.assets ?? []).filter(
+    a => !a.placeholder && (a.acquisition ?? '') !== 'placeholder' && Boolean(a.key?.trim()),
+  );
+  if (assets.length === 0) return { issues: [], ocrUnavailable: false };
+  const perScreen = screenTextAndAssetRefs(doc);
+
+  const issues: BackstopIssue[] = [];
+  let needOcr = false;
+  let ocrFailed = false;
+  const ocrOk = isOcrAvailable();
+
+  for (const a of assets) {
+    const key = a.key.trim();
+    // human_signed 显式放行（营销/装饰插画确需含字）
+    if (a.baked_text_defer === true && isHumanConfirmed(a.baked_text_defer_by)) continue;
+    // 定位模块真图（缺图/退化占位由 B 门管，本门只核真图是否烤字）
+    const r = moduleMediaRealnessForKey(ctx.projectRoot, contracts, key, a.resolved_path);
+    if (!r.file || !r.real) continue;
+    if (r.file.toLowerCase().endsWith('.svg')) continue; // 矢量无栅格 OCR 意义
+    const targets = declaredTextTargetsForAsset(perScreen, key);
+    if (targets.length < minMatches) continue; // 声明文本本就 <K，不可能构成"多文本 slab"
+    needOcr = true;
+    if (!ocrOk) { ocrFailed = true; continue; }
+    const ocr = ocrImageWords(r.file);
+    if (!ocr.ok || !ocr.words) { ocrFailed = true; continue; }
+    const words = ocr.words;
+    const hits = targets.filter(t => fuzzyTextPresent(words, t, 0.7));
+    if (hits.length >= minMatches) {
+      issues.push({
+        kind: 'asset',
+        id: key,
+        assetRole: 'baked_text',
+        detail:
+          `素材 ${key} 图内烤入 ${hits.length} 个该屏声明文本（${hits.slice(0, 4).join('/')}${hits.length > 4 ? '…' : ''}）` +
+          ` — 疑似整段界面当背景大图，会与真实组件双渲染/烤字冲突；须裁为原子插画（仅图形、无声明文本），` +
+          `标题/副标题/按钮/空态文案/底部 tab 等一律真实组件渲染。若确为营销插画需含字，设 baked_text_defer + 真人署名放行。`,
+      });
+    }
+  }
+
+  return { issues, ocrUnavailable: needOcr && ocrFailed };
+}
+
+// ============================================================================
+// round5 P0-B（Q5 已采纳）：声明 required 品牌图标 asset 的元素、源码却用 sys.symbol 系统单色图标静默替代 →
+// pixel_1to1 BLOCKER。与既有 not_rendered 互补：本门精确指认"被 sys.symbol 替代"（更可执行的回修信号）。
+// 注：错图标的 $r('sys.symbol.*') 常在数据层(repository)而非组件 struct，故 sys.symbol 探测走 feature 全树。
+// ============================================================================
+
+const BRANDED_ICON_KINDS = new Set(['brand_logo', 'illustration']);
+
+/** feature 源码全树（含 data/repository）是否使用系统符号图标（$r('sys.symbol.*') 或 SymbolGlyph）。 */
+export function featureUsesSystemSymbolIcon(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+): boolean {
+  const { etsFiles } = scanFeatureSourceTree(projectRoot, contracts);
+  const re = /\$r\s*\(\s*['"]sys\.symbol\.|SymbolGlyph\s*\(/;
+  for (const f of etsFiles) {
+    try {
+      if (re.test(fs.readFileSync(f, 'utf-8'))) return true;
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  return false;
+}
+
+export function collectIconSubstitutionIssues(
+  ctx: CheckContext,
+  doc: UiSpecDoc,
+  baselineUnverified: boolean,
+): BackstopIssue[] {
+  if (baselineUnverified) return [];
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const placeholderKeys = new Set((doc.assets ?? []).filter(a => a.placeholder).map(a => a.key));
+  const mappings = loadVisualParityMappings(ctx.projectRoot, ctx.feature);
+  const usesSysSymbol = featureUsesSystemSymbolIcon(ctx.projectRoot, contracts);
+  if (!usesSysSymbol) return []; // 源码未用系统图标 → 无"替代"可言
+  let featureRefs: Set<string> | null = null;
+  const issues: BackstopIssue[] = [];
+  for (const n of collectAllComponentNodes(doc)) {
+    const kind = n.icon?.kind?.trim();
+    if (!kind || !BRANDED_ICON_KINDS.has(kind)) continue; // 只管声明为品牌/插画图标的元素（system_symbol 用系统图标合法）
+    const key = (n.icon?.ref ?? n.asset_ref)?.trim();
+    if (!key || placeholderKeys.has(key)) continue; // 显式 placeholder 豁免
+    const structName = resolveMappedStruct(n.id, mappings);
+    let rendered: boolean;
+    if (structName) {
+      rendered = assetRenderedInRefs(key, scanStructResourceRefs(ctx.projectRoot, contracts, structName));
+    } else {
+      featureRefs = featureRefs ?? scanFeatureSourceTree(ctx.projectRoot, contracts).resourceRefs;
+      rendered = assetRenderedInRefs(key, featureRefs);
+    }
+    if (!rendered) {
+      issues.push({
+        kind: 'asset',
+        id: n.id ?? n.type ?? key,
+        assetRole: 'icon_substitution',
+        detail:
+          `节点 ${n.id ?? n.type} 声明 required 品牌图标（icon.kind=${kind}, ref=${key}）却未 $r('app.media.${key.replace(/\./g, '_')}') 渲染，` +
+          `且源码用 sys.symbol 系统单色图标替代 — 须裁原子品牌图标并 $r 渲染（如交通卡应为公交彩色图标而非 sys.symbol.map）；` +
+          `确需系统图标则把 icon.kind 改为 system_symbol，或显式 placeholder + 真人署名。`,
       });
     }
   }

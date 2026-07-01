@@ -82,9 +82,11 @@ import {
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
-import { buildHylyreVisualDiffScreenshotFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
+import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
-import { parseUiChangeFromSpecMarkdown } from './utils/ui-spec-shared';
+import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import {
   evaluateHylyreRunOutcome,
   reconcileReportWithHylyreTrace,
@@ -2103,6 +2105,31 @@ function checkDeviceTestRunGate(
             ctx.phase,
             ctx.frameworkRoot,
           );
+          // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
+          const navConfig = loadVisualDiffNavConfig(ctx.projectRoot, ctx.feature);
+          // P1-A fail-fast（消费 validateNavConfig，不静默裸采）：≥2 P0 屏须导航区分；缺配置/配置不一致=明确失败，不进 capture（防误导 PASS）。
+          const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+          const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
+          const navValidation = navConfig ? validateNavConfig(navConfig, navP0TargetIds) : null;
+          const navGateError = navConfig
+            ? (navValidation && !navValidation.ok
+                ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
+                : null)
+            : (navP0TargetIds.length >= 2
+                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航区分，否则多屏截同一帧（曾致 5 屏同 hash）`
+                : null);
+          if (navGateError) {
+            const navRatchet = fidelityRatchetFailOrWarn(ctx, true);
+            out.push({
+              id: 'visual_diff_capture',
+              category: 'structure',
+              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+              severity: navRatchet.severity,
+              status: navRatchet.status,
+              details: `【nav 配置门禁·P1-A】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。`,
+              suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
+            });
+          } else {
           const cap = captureVisualDiff({
             projectRoot: ctx.projectRoot,
             feature: ctx.feature,
@@ -2117,6 +2144,18 @@ function checkDeviceTestRunGate(
               deviceSn: process.env.HARNESS_HDC_TARGET,
               logPath: run.logPath,
             }),
+            ...(navConfig
+              ? {
+                  navConfig,
+                  navExecutorFn: buildHylyreNavExecutorFn({
+                    pythonPath: ready.pythonPath,
+                    hypiumWorkDir,
+                    deviceSn: process.env.HARNESS_HDC_TARGET,
+                    bundleName,
+                    logPath: run.logPath,
+                  }),
+                }
+              : {}),
           });
           const p0Failed = cap.p0CaptureFailures ?? [];
           const stalePreserved = cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
@@ -2185,6 +2224,7 @@ function checkDeviceTestRunGate(
               ].join('\n'),
               suggestion: '确认 Hylyre 可 `screenshot`（排查 Permission denied/锁屏/占用）；非顶层屏须 device-testing 导航后重跑采集。',
             });
+          }
           }
         }
       }

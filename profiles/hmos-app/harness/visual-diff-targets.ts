@@ -14,14 +14,29 @@ export function isP0VisualTargetScreen(s: Pick<UiSpecScreen, 'priority'>): boole
   return s.priority === 'P0';
 }
 
+/** 节点 type 是否为 overlay 类（overlay_panel / *sheet* / dialog） */
+function isOverlayNodeType(type: string | undefined): boolean {
+  const t = (type ?? '').toLowerCase();
+  return t === 'overlay_panel' || t.includes('sheet') || t === 'dialog';
+}
+
+/**
+ * 屏的 **root 本身**是否即 overlay（如 manage_non_local root=overlay_panel）——这类屏"就是那个半模态"，
+ * 由其同基 overlay id 代表；base 屏 id 不应与 overlay id 重复计入 target（否则 base 永远找不到对应
+ * 采集条目/nav 键 → 误判"未覆盖"/"缺 nav 配置"。overlay 作为**子节点**（如普通页里的 dialog）不算——
+ * 那种 base 屏有独立可采集态，须各自覆盖。
+ */
+export function isOverlayRootScreen(s: Pick<UiSpecScreen, 'root'>): boolean {
+  return isOverlayNodeType(s.root?.type);
+}
+
 function walkP0OverlayNodes(
   node: UiSpecComponentNode | undefined,
   screenId: string,
   out: Array<{ id: string; parentScreenId: string }>,
 ): void {
   if (!node) return;
-  const t = (node.type ?? '').toLowerCase();
-  if (t === 'overlay_panel' || t.includes('sheet') || t === 'dialog') {
+  if (isOverlayNodeType(node.type)) {
     const oid = node.id ? `${screenId}__overlay__${node.id}` : `${screenId}__overlay__${node.order}`;
     out.push({ id: oid, parentScreenId: screenId });
   }
@@ -46,9 +61,19 @@ export function collectP0ScreenIds(uiDoc: UiSpecDoc | null): string[] {
   return [...new Set(ids)];
 }
 
-/** P0 屏 + P0 overlay target（visual_diff 必须覆盖的最小集合） */
+/**
+ * P0 屏 + P0 overlay target（visual_diff 必须覆盖的最小集合）。
+ * root 即 overlay 的 base 屏（manage_non_local）由其同基 overlay id 代表、不重复计入——否则 base 屏
+ * 永远找不到采集条目/nav 键 → 误判"未覆盖"/"缺 nav 配置"（本轮 review 四轮实测 FP 根治点）。
+ */
 export function collectP0VisualTargetIds(uiDoc: UiSpecDoc | null): string[] {
-  const screenIds = collectP0ScreenIds(uiDoc);
-  const overlayIds = collectP0OverlayTargetIds(uiDoc).map(o => o.id);
+  const overlays = collectP0OverlayTargetIds(uiDoc);
+  const overlayBaseSet = new Set(overlays.map(o => o.parentScreenId));
+  const screenById = new Map((uiDoc?.screens ?? []).map(s => [s.id, s] as const));
+  const screenIds = collectP0ScreenIds(uiDoc).filter(id => {
+    const s = screenById.get(id);
+    return !(s && isOverlayRootScreen(s) && overlayBaseSet.has(id));
+  });
+  const overlayIds = overlays.map(o => o.id);
   return [...new Set([...screenIds, ...overlayIds])];
 }

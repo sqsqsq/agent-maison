@@ -30,8 +30,9 @@
 
 - **色值 token**：ui-spec `tokens.*.value` → `$r('app.color.<snake_key>')`（`brand.cmb` → `brand_cmb`）
 - **媒体资产**：ui-spec `assets[].key` → `$r('app.media.<key>')`。**物理落地**：`acquisition: crop` 非 placeholder 的资产，须把 `resolved_path`（`doc/.../spec/assets/<key>.<ext>` 真裁图）**复制**进引用模块 `<module>/src/main/resources/base/media/<key>.<ext>`；**禁** 1×1/纯色占位冒充、**禁** 工程根 `media/` 目录。`contracts.resource_keys[].path` 仅作契约记录、**不是** ArkUI 渲染解析路径（解析恒为模块 `resources/base/media`）。门禁：`visual_parity_asset_materialized`（pixel_1to1→BLOCKER 校验真图）+ `resource_integrity`（以模块目录实际文件判 key 可用性）。
+- **素材=原子叶子视觉，禁双渲染（round5 P0-A/P0-C 承重）**：`assets` 的图**只作原子插画/单图标的叶子 `Image`**。**绝不**把"整段界面"裁成一张背景大图再贴——卡包区标题/副标题/「添加管理卡片」按钮、空态"暂无非本机卡片"文案、更多服务标题/副标题、底部 tab（首页·我的，含图标）一律**真实 ArkUI 组件**渲染，**不得依赖大图里烤的那份**。若发现某 asset 图内含标题/按钮/文案/tab（整段），说明它是坏的大图：停下按 P0-A 回退重裁成原子插画，**不得**"贴大图 + 又搭真实组件"（会双渲染/烤字，正是 CardGuideSection 卡包区两遍、ManageNonLocalSheet 空态文字两遍、PromoSwiper 灰盒+叠字的根因）。品牌/彩色图标（银行卡/交通卡/门禁/证件/宫格/tab）用 `$r('app.media.<icon_key>')` 真图，**禁** `sys.symbol.*` 冒充（门禁 `visual_parity_icon_substitution` BLOCKER；确需系统单色图标才用 `sys.symbol`）。
 - **文案**：ui-spec 节点 `text` 逐字落入 `resources/base/element/string.json`
-- 脚本守门：`coding.visual_parity` + `static_fidelity_score`（ΔE / 文案 / 资产 / 结构）
+- 脚本守门：`coding.visual_parity`（含 `visual_parity_asset_baked_text` 烤字门禁 / `visual_parity_icon_substitution` 图标替代门禁）+ `static_fidelity_score`（ΔE / 文案 / 资产 / 结构）
 
 
 编码前探索须覆盖：**`build-profile.json5` / `oh-package.json5` / 涉及模块的 `module.json5`**；**页面注册**（`main_pages.json`、`route_map.json` 等，以工程实际为准）、**资源目录**（`src/main/resources`）与 **各 HAR/HSP 库模块 oh-package `main` 指向的导出入口文件**（或 DSL 声明的 `cross_module_exports_file`）中与本轮改动相关的条目。真实工程 layout 以 oh-package main 为准；虚拟工程示例中的 `src/main/ets/` 仅为一种合法布局。

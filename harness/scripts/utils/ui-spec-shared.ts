@@ -92,6 +92,10 @@ export interface UiSpecAsset {
   human_crop_confirmed?: boolean;
   /** G4b：crop 确认来源；headless 下须为非自动化身份或 user_requirement（堵自报，对齐 deferral signed_by） */
   crop_confirmed_by?: string;
+  /** round5 P0-A：显式放行"素材图内含 ui-spec 声明文本"（营销/装饰插画确需含字时）；须配 human_signed 署名 */
+  baked_text_defer?: boolean;
+  /** round5 P0-A：baked_text_defer 的真人署名（非自动化身份，经 isHumanConfirmed 校验）；缺则 defer 无效 */
+  baked_text_defer_by?: string;
 }
 
 /**

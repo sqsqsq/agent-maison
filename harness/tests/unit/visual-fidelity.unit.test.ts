@@ -11,7 +11,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
 import { checkVisualDiff, validateVisualDiffJson, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
-import { captureVisualDiff, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
+import { buildVisualDiffMdBody, captureVisualDiff, collectDuplicateHashGroups, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
 import { cropAssetFromBbox, computeHistogramSimilarity, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
 import { collectUiSpecGateConfirmedScreens } from '../../../profiles/hmos-app/harness/ui-spec-gate';
 import {
@@ -949,6 +949,43 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  run('round5_P1C_md_projection_reports_duplicate_hashes', () => {
+    const dupHash = 'a2feda2fa5caca02';
+    const report = {
+      schema_version: '1.0',
+      screens: [
+        { screen_id: 'home_no_card', verdict: 'pending' as const, ref_id: 'home_no_card', screenshot_hash: dupHash, score_floor: 0.86 },
+        { screen_id: 'mine', verdict: 'pending' as const, ref_id: 'mine', screenshot_hash: dupHash, score_floor: 0.98 },
+        { screen_id: 'manage_non_local__overlay__0', verdict: 'warn' as const, ref_id: 'manage_non_local', screenshot_hash: 'f9c7e5f37c0a03f6', must_fix: ['半模态空态插画居中'] },
+      ],
+    };
+    const groups = collectDuplicateHashGroups(report);
+    if (groups.length !== 1 || !groups[0].includes('home_no_card') || !groups[0].includes('mine')) {
+      throw new Error(`dup groups wrong: ${JSON.stringify(groups)}`);
+    }
+    const md = buildVisualDiffMdBody(report, { p0CaptureFailures: ['card_pack'] });
+    if (!md.includes('screenshot_hash 非唯一')) throw new Error('md must flag non-unique hash');
+    if (md.includes('各屏 screenshot_hash 唯一')) throw new Error('md must NOT claim unique when duplicates exist');
+    if (!md.includes('半模态空态插画居中')) throw new Error('md must project must_fix from JSON');
+    if (!md.includes('P0 采集失败：card_pack')) throw new Error('md must list p0CaptureFailures');
+    if (!md.includes('自动生成，请勿手改')) throw new Error('md must carry do-not-edit banner');
+  });
+
+  run('round5_P1C_md_projection_unique_hashes_ok', () => {
+    const report = {
+      schema_version: '1.0',
+      screens: [
+        { screen_id: 'home_no_card', verdict: 'pass' as const, ref_id: 'home_no_card', screenshot_hash: 'aaaa000000000001', score_floor: 0.9 },
+        { screen_id: 'mine', verdict: 'pass' as const, ref_id: 'mine', screenshot_hash: 'bbbb000000000002', score_floor: 0.95 },
+      ],
+    };
+    if (collectDuplicateHashGroups(report).length !== 0) throw new Error('no dups expected');
+    const md = buildVisualDiffMdBody(report);
+    if (!md.includes('各屏 screenshot_hash 唯一')) throw new Error('md must affirm uniqueness');
+    if (md.includes('screenshot_hash 非唯一')) throw new Error('md must not flag when unique');
+    if (!md.includes('P0 采集失败：无')) throw new Error('md must say none when no p0 failures');
+  });
+
   run('visual_diff_screen_slug_safe_paths', () => {
     const root = mkProject();
     try {
@@ -998,6 +1035,144 @@ export function runAll(): UnitCaseResult[] {
       const v = validateVisualDiffJson(raw, root, { authoritativeRefIds: new Set(['home']) });
       if (!v.ok) throw new Error(JSON.stringify(v));
       if (v.report.screens[0]?.verdict !== 'pending') throw new Error('expected pending skeleton');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  const twoScreenUiSpec = (root: string) => fs.writeFileSync(
+    path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'),
+    [
+      'schema_version: "1.0"', 'verified: human_confirmed', 'screens:',
+      '  - id: home', '    priority: P0', '    ref_id: home', '    root: { type: navigation_frame, order: 0 }',
+      '  - id: card_pack', '    priority: P0', '    ref_id: card_pack', '    root: { type: page, order: 0 }',
+      'tokens: {}', 'assets: []',
+    ].join('\n'),
+  );
+
+  run('round5_P1A_navigated_capture_reaches_non_toplevel', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      twoScreenUiSpec(root);
+      const events: string[] = [];
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        navConfig: { home: [], card_pack: [{ touch: { by_id: 'btn' } }, { wait_for: { by_text: '添加卡片' } }] },
+        navExecutorFn: ({ screenId }) => { events.push(`nav:${screenId}`); return { ok: true }; },
+        screenshotFn: ({ screenId, destAbs }) => { events.push(`shot:${screenId}`); writeMinimalRedPng(destAbs, 12, 12); return { ok: true }; },
+      });
+      if (!cap.ok) throw new Error(JSON.stringify(cap));
+      const raw = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8')) as { screens: Array<{ screen_id: string }> };
+      const ids = raw.screens.map(s => s.screen_id);
+      if (!ids.includes('home') || !ids.includes('card_pack')) throw new Error(`两屏都应采集（含非顶层 card_pack）：${ids}`);
+      // 每屏 nav 在其 shot 之前
+      if (events.indexOf('nav:card_pack') < 0 || events.indexOf('nav:card_pack') > events.indexOf('shot:card_pack')) {
+        throw new Error(`nav 应在 shot 前：${events.join(',')}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('round5_P1A_nav_failure_records_capture_failure_no_shot', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      twoScreenUiSpec(root);
+      const shotIds: string[] = [];
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        navConfig: { home: [], card_pack: [{ touch: { by_id: 'btn' } }] },
+        navExecutorFn: ({ screenId }) => (screenId === 'card_pack' ? { ok: false, error: 'element not found' } : { ok: true }),
+        screenshotFn: ({ screenId, destAbs }) => { shotIds.push(screenId); writeMinimalRedPng(destAbs, 12, 12); return { ok: true }; },
+      });
+      if (shotIds.includes('card_pack')) throw new Error('导航失败的屏不应截图（避免截错屏）');
+      if (!(cap.p0CaptureFailures ?? []).includes('card_pack')) throw new Error('导航失败应记 p0CaptureFailures');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('round5_P1A_navEnabled_missing_screen_no_bare_capture', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      twoScreenUiSpec(root);
+      const shotIds: string[] = [];
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        navConfig: { home: [] }, // card_pack 缺条目
+        navExecutorFn: () => ({ ok: true }),
+        screenshotFn: ({ screenId, destAbs }) => { shotIds.push(screenId); writeMinimalRedPng(destAbs, 12, 12); return { ok: true }; },
+      });
+      if (shotIds.includes('card_pack')) throw new Error('缺 nav 条目的屏不应裸采（防多屏截同一帧）');
+      if (!(cap.p0CaptureFailures ?? []).includes('card_pack')) throw new Error('缺 nav 条目应记 p0CaptureFailures');
+      if (!shotIds.includes('home')) throw new Error('有条目（空步骤直达）的 home 应正常采集');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('round5_P1A_overlay_navigated_capture_X1', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'),
+        [
+          'schema_version: "1.0"', 'verified: human_confirmed', 'screens:',
+          '  - id: home', '    priority: P0', '    ref_id: home', '    root: { type: navigation_frame, order: 0 }',
+          '  - id: manage_non_local', '    priority: P0', '    ref_id: manage_non_local',
+          '    root: { type: overlay_panel, order: 0 }',
+          'tokens: {}', 'assets: []',
+        ].join('\n'),
+      );
+      const events: string[] = [];
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        // X1：nav key 后缀(__manage_non_local_root)与采集 overlay id(__overlay__0)不同、同基 → 须归一化命中
+        navConfig: { home: [], manage_non_local__overlay__manage_non_local_root: [{ touch: { by_text: '管理非本机卡片' } }] },
+        navExecutorFn: ({ screenId }) => { events.push(`nav:${screenId}`); return { ok: true }; },
+        screenshotFn: ({ screenId, destAbs }) => { events.push(`shot:${screenId}`); writeMinimalRedPng(destAbs, 12, 12); return { ok: true }; },
+      });
+      const raw = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8')) as { screens: Array<{ screen_id: string; ref_id?: string }> };
+      const overlayEntry = raw.screens.find(s => s.screen_id.startsWith('manage_non_local__overlay__'));
+      if (!overlayEntry) throw new Error(`overlay 应被导航采集（X1 归一化）：${raw.screens.map(s => s.screen_id)}`);
+      if (overlayEntry.ref_id !== 'manage_non_local') throw new Error(`overlay ref_id 应为基屏：${overlayEntry.ref_id}`);
+      if (!events.some(e => e.startsWith('nav:manage_non_local__overlay__'))) throw new Error(`overlay 应被导航：${events.join(',')}`);
+      if (!events.some(e => e.startsWith('shot:manage_non_local__overlay__'))) throw new Error(`overlay 应被截图：${events.join(',')}`);
+      // review4 FP 根治：root=overlay 的 base 屏由 overlay 循环采集，主循环不得把它记为 p0 失败
+      if ((cap.p0CaptureFailures ?? []).includes('manage_non_local')) throw new Error('base overlay 屏不应记 p0CaptureFailures');
+      if (events.some(e => e === 'nav:manage_non_local' || e === 'shot:manage_non_local')) throw new Error('base overlay 屏不应在主循环重复导航/截图');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('round5_P1A_no_nav_skips_non_toplevel_backcompat', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      twoScreenUiSpec(root);
+      const cap = captureVisualDiff({
+        projectRoot: root,
+        feature: 'bank-card',
+        screenshotFn: ({ destAbs }) => { writeMinimalRedPng(destAbs, 12, 12); return { ok: true }; },
+      });
+      const raw = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8')) as { screens: Array<{ screen_id: string }> };
+      const ids = raw.screens.map(s => s.screen_id);
+      if (!ids.includes('home')) throw new Error('顶层 home 应采集');
+      if (ids.includes('card_pack')) throw new Error('无 nav 时非顶层屏应跳过（向后兼容）');
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

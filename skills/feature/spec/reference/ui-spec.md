@@ -80,6 +80,10 @@ global_elements:
 
 组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`children[]`。
 
+**round5 P0-A/P0-B 素材声明约定（pixel_1to1 承重，务必遵守）**：
+- **图标分型（P0-B·命门）**：参考图中为**彩色/品牌图标**的元素（如银行卡红卡/交通卡公交/门禁卡蓝屋/证件黄证/宫格 app 图标/底部 tab 首页·我的图标）须声明 `icon: { kind: brand_logo|illustration, ref: <atomic_icon_key> }` 并在 assets 里为该 key 备原子图标裁图——**门禁 `visual_parity_icon_substitution` 会拦"声明品牌图标却用 sys.symbol 系统单色图标替代"（pixel_1to1 BLOCKER）**。只有确与参考一致的**单色语义图标**才可声明 `kind: system_symbol`（合法用 sys.symbol）。**底部 tab 等全局元素的图标同样须声明**（否则真实 tab 易被搭成纯文字无图标）。漏声明=漏报（可接受），不会误伤未声明的语义单色 glyph。
+- **素材原子化（P0-A·承重）**：`assets` 里 `acquisition: crop` 的素材图**只能是原子插画/单图标**（仅图形），**绝不能把"整段界面"裁成一张背景大图**——若素材图内烤入了本 ui-spec 声明的**文本节点**（≥2 个，如卡包区大图烤入"卡包/集中管理/添加管理卡片"、promo 大图烤入"数字金融生活新方式/首页/我的"、空态图烤入"暂无非本机卡片"），门禁 `visual_parity_asset_baked_text` 判 BLOCKER（pixel_1to1）。标题/副标题/按钮/空态文案/底部 tab 一律**真实组件**渲染，大图只做叶子插画。营销/装饰插画确需含字（如 promo 样机气泡"东方财富 Lite"）→ 该文本**不要**登记为 ui-spec text 节点；仍被判则给该 asset 设 `baked_text_defer: true` + `baked_text_defer_by: <真人标识>` 放行。
+
 **G3 捕获保真字段**（pixel_1to1 下务必逐项捕获，否则 coding 易默认错误样式/布局）：
 
 | 字段 | 取值 | 治什么 |

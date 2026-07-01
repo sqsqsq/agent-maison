@@ -115,6 +115,33 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'round5 P1-B classifyFailureKind: visual_diff_screenshot_dedup → capture（非 visual_gap）',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff_screenshot_dedup' }] });
+        assert(k === 'capture', k);
+      },
+    },
+    {
+      name: 'round5 P0-A/X4 classifyFailureKind: visual_parity_ocr_unavailable → toolchain（非 code_regression）',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_parity_ocr_unavailable' }] });
+        assert(k === 'toolchain', k);
+      },
+    },
+    {
+      name: 'round5 反向断言：baked_text / icon_substitution 仍 code_regression（coding 可修，非环境类）',
+      run: () => {
+        assert(
+          classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_parity_asset_baked_text' }] }) === 'code_regression',
+          'baked_text',
+        );
+        assert(
+          classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_parity_icon_substitution' }] }) === 'code_regression',
+          'icon_substitution',
+        );
+      },
+    },
+    {
       name: 'T6 classifyFailureKind: visual_diff / layout_divergence / 越界 → visual_gap',
       run: () => {
         assert(classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff' }] }) === 'visual_gap', 'visual_diff');

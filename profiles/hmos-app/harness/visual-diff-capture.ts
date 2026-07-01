@@ -24,7 +24,8 @@ import {
 } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
-import { collectP0OverlayTargetIds, isP0VisualTargetScreen } from './visual-diff-targets';
+import { collectP0OverlayTargetIds, isP0VisualTargetScreen, isOverlayRootScreen } from './visual-diff-targets';
+import { resolveNavForTargets, type NavConfig, type NavScreenSteps } from './visual-diff-nav';
 
 export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
@@ -44,6 +45,17 @@ export type VisualDiffScreenshotFn = (
   args: VisualDiffScreenshotFnArgs,
 ) => VisualDiffScreenshotFnResult;
 
+/**
+ * round5 P1-A：到达某屏的导航执行器（真机侧驱动 Hylyre touch/wait/back）。
+ * 采集层在对每屏 screenshot 前调用之；返回 ok:false 则该屏视为采集失败（不截错屏）。
+ */
+export type VisualDiffNavExecutorFn = (args: {
+  screenId: string;
+  steps: NavScreenSteps;
+  deviceSn?: string;
+  bundleName?: string;
+}) => { ok: boolean; error?: string };
+
 export interface VisualDiffCaptureOptions {
   projectRoot: string;
   feature: string;
@@ -51,6 +63,10 @@ export interface VisualDiffCaptureOptions {
   specMd?: string | null;
   /** 注入 mock 或真实 Hylyre screenshot；缺省且无 Hylyre 时不写屏条目 */
   screenshotFn?: VisualDiffScreenshotFn;
+  /** round5 P1-A：每屏到达步骤的显式导航配置（key 经 X1 归一化匹配 P0 target）；缺省则不导航（沿用旧裸采行为） */
+  navConfig?: NavConfig;
+  /** round5 P1-A：导航执行器（真机 Hylyre）；缺省则不导航。与 navConfig 同时提供才生效 */
+  navExecutorFn?: VisualDiffNavExecutorFn;
   bundleName?: string;
   deviceSn?: string;
   /** 对 shot vs authoritative ref 写入 score_floor（jimp 不可用则跳过） */
@@ -260,24 +276,60 @@ export function loadExistingVisualDiffReport(jsonPath: string): VisualDiffReport
   }
 }
 
-function reportHasFinalizedVerdicts(report: VisualDiffReport | null): boolean {
-  return (report?.screens ?? []).some(s => !isCaptureMutableVerdict(s.verdict));
+/** 各屏 screenshot_hash 分组：返回 ≥2 屏共享 hash 的组（采集完整性/撞图检测，与 visual-diff-check dedup 同口径）。 */
+export function collectDuplicateHashGroups(report: VisualDiffReport): string[] {
+  const groups = new Map<string, string[]>();
+  for (const s of report.screens) {
+    const h = s.screenshot_hash?.trim();
+    if (!h) continue;
+    const list = groups.get(h) ?? [];
+    list.push(s.screen_id);
+    groups.set(h, list);
+  }
+  return [...groups.entries()]
+    .filter(([, ids]) => ids.length >= 2)
+    .map(([h, ids]) => `${h}: ${ids.join(' + ')}`);
 }
 
-function buildVisualDiffMdBody(report: VisualDiffReport): string {
+/**
+ * round5 P1-C：visual-diff.md 为 visual-diff.json 的**纯投影**，每次采集后无条件再生（不再"定型后不再生成"）。
+ * 含「采集完整性」节（hash 唯一性 / P0 采集失败 / 未判屏），根除手写散文与 JSON 背离（曾出现 md 手写
+ * "6 屏 hash 均已唯一"而 JSON 实为 5 屏同 hash 的谎言）。门禁结论始终以 JSON 为准。
+ */
+export function buildVisualDiffMdBody(
+  report: VisualDiffReport,
+  opts?: { p0CaptureFailures?: string[] },
+): string {
+  const dupGroups = collectDuplicateHashGroups(report);
+  const noHashScreens = report.screens.filter(s => !s.screenshot_hash?.trim()).map(s => s.screen_id);
+  const pendingScreens = report.screens.filter(s => s.verdict === 'pending').map(s => s.screen_id);
+  const p0Fail = (opts?.p0CaptureFailures ?? []).filter(f => typeof f === 'string' && f.trim());
   return [
     '# Visual diff（设备渲染回环）',
     '',
-    '> harness 自动采集骨架；agent/VL 须将每屏 `verdict` 从 `pending` 填为 pass/warn/fail，并补 fidelity_score / geometric_iou / must-fix；同时将 `evaluated_screenshot_hash` 设为当前 `screenshot_hash`。',
+    '> 本文件由 harness 从 `device-screenshots/visual-diff.json` **自动生成，请勿手改**——门禁结论始终以 JSON 为准。',
+    '> agent/VL 须在 **JSON**（结构化）填每屏 `verdict`（pass/warn/fail）+ `fidelity_score`/`geometric_iou`/`must_fix` + `evaluated_screenshot_hash`；勿在本 md 手写与 JSON 矛盾的结论。',
     '',
-    `screens=${report.screens.length}；json=\`device-screenshots/visual-diff.json\``,
+    `screens=${report.screens.length}；json=\`device-screenshots/visual-diff.json\`${report.degraded ? '；degraded' : ''}`,
     '',
     '## 屏清单',
     '',
-    ...report.screens.map(
-      s =>
-        `- **${s.screen_id}**: verdict=${s.verdict}, ref_id=${s.ref_id ?? '-'}${typeof s.score_floor === 'number' ? `, score_floor=${s.score_floor.toFixed(3)}` : ''}`,
-    ),
+    '| screen_id | verdict | score_floor | must_fix |',
+    '|-----------|---------|-------------|----------|',
+    ...report.screens.map(s => {
+      const floor = typeof s.score_floor === 'number' ? s.score_floor.toFixed(3) : '-';
+      const mf = (s.must_fix ?? []).join('；').replace(/\|/g, '\\|') || '-';
+      return `| ${s.screen_id} | ${s.verdict} | ${floor} | ${mf} |`;
+    }),
+    '',
+    '## 采集完整性',
+    '',
+    dupGroups.length > 0
+      ? `- ✗ **screenshot_hash 非唯一（疑似 Tab 未切换/重复采集，至少一屏为错图）**：${dupGroups.join('；')}`
+      : '- ✓ 各屏 screenshot_hash 唯一',
+    `- P0 采集失败：${p0Fail.length > 0 ? p0Fail.join(', ') : '无'}`,
+    `- 缺截图（无 hash）：${noHashScreens.length > 0 ? noHashScreens.join(', ') : '无'}`,
+    `- 未判定（verdict=pending）：${pendingScreens.length > 0 ? pendingScreens.join(', ') : '无'}`,
     '',
   ].join('\n');
 }
@@ -334,11 +386,32 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       ? buildAuthoritativeRefImageIndex(opts.ctx as CheckContext, opts.specMd)
       : null;
 
+  // round5 P1-A：有 nav 配置 + executor 时，按屏导航到位再截（含非顶层屏），根除"多屏截同一帧"。
+  // 屏 id 经 X1 归一化匹配（screen_id/ref_id/overlay_id/nav_key），overlay 亦纳入解析。
+  const navEnabled = Boolean(opts.navConfig && opts.navExecutorFn);
+  const navResolve = navEnabled
+    ? resolveNavForTargets(opts.navConfig as NavConfig, [
+        ...targets.map(t => t.id),
+        ...collectP0OverlayTargetIds(uiDoc).map(o => o.id),
+      ])
+    : null;
+
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
   for (const screen of targets) {
-    if (!isLikelyTopLevelScreen(screen)) {
-      errors.push(`${screen.id}: 非可直达顶层屏，跳过自动截图（须 device-testing 导航后补 shot）`);
+    // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
+    if (isOverlayRootScreen(screen)) continue;
+    const navSteps = navResolve?.resolved.get(screen.id);
+    // P1-A：启用 nav 后，每个 P0 屏都须在配置里有到达步骤条目——缺条目即**拒绝裸采**（防多屏截同一帧），记 p0 失败。
+    if (navEnabled && navSteps === undefined) {
+      errors.push(`${screen.id}: nav 配置未覆盖该 P0 屏（拒绝裸采以防多屏截同一帧，须补 visual-diff-nav 到达步骤）`);
+      p0CaptureFailures.push(screen.id);
+      continue;
+    }
+    const hasNav = navEnabled && navSteps !== undefined;
+    // 未启用 nav 时：非可直达顶层屏沿旧行为跳过（须补 nav 配置）。
+    if (!isLikelyTopLevelScreen(screen) && !hasNav) {
+      errors.push(`${screen.id}: 非可直达顶层屏且无 nav 配置，跳过自动截图（须补 device-testing/visual-diff-nav 到达步骤）`);
       continue;
     }
     const paths = resolveShotPaths(opts.projectRoot, opts.feature, screen.id);
@@ -347,6 +420,20 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       continue;
     }
     fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
+    // P1-A：截图前先导航到位（有 executor 时）；导航失败 → 记 P0 采集失败，绝不截错屏。
+    if (navEnabled) {
+      const nav = opts.navExecutorFn!({
+        screenId: screen.id,
+        steps: navSteps ?? [],
+        deviceSn: opts.deviceSn,
+        bundleName: opts.bundleName,
+      });
+      if (!nav.ok) {
+        errors.push(`${screen.id}: 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        p0CaptureFailures.push(screen.id);
+        continue;
+      }
+    }
     const shot = opts.screenshotFn({
       screenId: screen.id,
       destAbs: paths.abs,
@@ -391,11 +478,45 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       errors.push(`${ov.id}: overlay screen_id 非法`);
       continue;
     }
+    // P1-A：overlay 是子态（半模态），有 nav 到达步骤则导航拉起后再截；否则沿旧行为仅登记 pending 骨架。
+    const ovSteps = navResolve?.resolved.get(ov.id);
+    if (navEnabled && ovSteps !== undefined) {
+      fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
+      const nav = opts.navExecutorFn!({ screenId: ov.id, steps: ovSteps, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
+      if (!nav.ok) {
+        errors.push(`${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        p0CaptureFailures.push(ov.id);
+        continue;
+      }
+      const shot = opts.screenshotFn({ screenId: ov.id, destAbs: paths.abs, bundleName: opts.bundleName, deviceSn: opts.deviceSn });
+      if (!shot.ok || !fs.existsSync(paths.abs)) {
+        errors.push(`${ov.id}: overlay 截图失败${shot.error ? ` — ${shot.error}` : ''}`);
+        p0CaptureFailures.push(ov.id);
+        continue;
+      }
+      // overlay 的参考图取其基屏（parentScreenId）——与 visual-diff.json ref_id=基屏 一致。
+      const refId = ov.parentScreenId;
+      const refAbs = refIndex ? resolveRefSourceImage(refIndex, refId).path : null;
+      const floor = resolveScoreFloor(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
+      const edge = resolveEdgeSentinel(paths.abs, refAbs, Boolean(opts.computeScoreFloor));
+      const screenshotHash = hashScreenshotFile(paths.abs);
+      if (!screenshotHash) {
+        errors.push(`${ov.id}: overlay 截图 hash 计算失败`);
+        p0CaptureFailures.push(ov.id);
+        continue;
+      }
+      const row: VisualDiffScreenEntry = { screen_id: ov.id, screenshot_path: paths.rel, ref_id: refId, verdict: 'pending' };
+      if (typeof floor === 'number' && !Number.isNaN(floor)) row.score_floor = Math.max(0, Math.min(1, floor));
+      row.screenshot_hash = screenshotHash;
+      if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
+      capturedScreens.push({ entry: row, hash: screenshotHash });
+      continue;
+    }
     capturedScreens.push({
       entry: {
         screen_id: ov.id,
         screenshot_path: paths.rel,
-        ref_id: ov.id,
+        ref_id: ov.parentScreenId,
         verdict: 'pending',
       },
       hash: fs.existsSync(paths.abs) ? (hashScreenshotFile(paths.abs) ?? '') : '',
@@ -419,9 +540,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReport, capturedScreens);
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
-  if (!reportHasFinalizedVerdicts(existingReport)) {
-    fs.writeFileSync(mdPath, buildVisualDiffMdBody(report), 'utf-8');
-  }
+  // P1-C：md 为 JSON 纯投影，每次无条件再生（不再"定型后不再生成"，根除手写散文与 JSON 背离）。
+  fs.writeFileSync(mdPath, buildVisualDiffMdBody(report, { p0CaptureFailures }), 'utf-8');
 
   return {
     ok: true,

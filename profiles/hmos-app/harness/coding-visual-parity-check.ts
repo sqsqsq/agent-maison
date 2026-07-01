@@ -25,6 +25,8 @@ import {
   collectRenderFaithfulnessIssues,
   collectAssetRenderIssues,
   collectPlaceholderAssetIssues,
+  collectBakedTextAssetIssues,
+  collectIconSubstitutionIssues,
   collectActionButtonVariantDeclIssues,
 } from './visual-parity-backstop';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
@@ -206,6 +208,68 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...materializeIssues.map(i => i.detail),
       ].join('\n'),
       suggestion: '把 ui-spec assets[].resolved_path 的真裁图复制进引用模块 <module>/src/main/resources/base/media/<key>.<ext>；缺真图须显式 placeholder + 用户知情，禁占位冒充。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // round5 P0-A：素材原子化——被 $r 引用的非 placeholder 素材图不得烤入 ui-spec 声明文本（整段大图 → 双渲染/烤字）。
+  const bakedText = collectBakedTextAssetIssues(ctx, doc, baselineUnverified);
+  if (bakedText.issues.length > 0) {
+    const { severity, status } = isPixel1to1(ctx)
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    results.push({
+      id: 'visual_parity_asset_baked_text',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: [
+        '【素材原子化·P0-A】素材图内烤入 ui-spec 声明文本＝整段界面当背景大图，会与真实组件双渲染/烤字：',
+        ...bakedText.issues.map(i => i.detail),
+      ].join('\n'),
+      suggestion:
+        '把整段大图重裁为原子插画（仅图形、无声明文本）；文字/交互控件/底部 tab 用真实组件渲染。营销插画确需含字则设 baked_text_defer + 真人署名。',
+      affected_files: [uiSpecRel],
+    });
+  }
+  // round5 P0-A/X4：OCR 是烤字门禁唯一承重探测；pixel_1to1 下不可用不得 WARN 放行 → toolchain BLOCKER（指向"修 OCR 环境"，见 goal-failure-classifier）。
+  if (bakedText.ocrUnavailable) {
+    const { severity, status } = isPixel1to1(ctx)
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    results.push({
+      id: 'visual_parity_ocr_unavailable',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details:
+        '【P0-A OCR 不可用】烤字门禁的 OCR 承重探测不可用/失败（tesseract.js 未装或 chi_sim 未物化，或素材图 OCR 失败）——pixel_1to1 下无法核验素材是否烤字，不得放行。',
+      suggestion:
+        '修复 OCR 环境：确认 harness 已装 tesseract.js 且 profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 已物化；恢复后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  // round5 P0-B（Q5 采纳）：声明 required 品牌图标却用 sys.symbol 系统单色图标静默替代 → pixel_1to1 BLOCKER（含全局底 tab 图标）。
+  const iconSubIssues = collectIconSubstitutionIssues(ctx, doc, baselineUnverified);
+  if (iconSubIssues.length > 0) {
+    const { severity, status } = isPixel1to1(ctx)
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    results.push({
+      id: 'visual_parity_icon_substitution',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: [
+        '【图标替代·P0-B】ui-spec 声明 required 品牌图标(icon.kind=brand_logo/illustration)，源码却用 sys.symbol 系统单色图标替代：',
+        ...iconSubIssues.map(i => i.detail),
+      ].join('\n'),
+      suggestion:
+        '为参考图中的彩色/品牌图标裁原子图标素材并 $r(app.media.<key>) 渲染（含底部 tab 图标）；确需系统单色图标则声明 icon.kind=system_symbol，或显式 placeholder + 真人署名。',
       affected_files: [uiSpecRel],
     });
   }

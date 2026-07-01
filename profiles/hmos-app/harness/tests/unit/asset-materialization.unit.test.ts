@@ -9,7 +9,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { readImageDimensions } from '../../image-toolkit';
-import { findModuleMediaFile, moduleMediaRealnessForKey, collectPlaceholderAssetIssues } from '../../visual-parity-backstop';
+import { findModuleMediaFile, moduleMediaRealnessForKey, collectPlaceholderAssetIssues, collectBakedTextAssetIssues, declaredTextTargetsForAsset, collectIconSubstitutionIssues, featureUsesSystemSymbolIcon } from '../../visual-parity-backstop';
+import { isOcrAvailable } from '../../ocr-toolkit';
 import type { CheckContext } from '../../../../../harness/scripts/utils/types';
 import type { UiSpecDoc } from '../../../../../harness/scripts/utils/ui-spec-shared';
 import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
@@ -21,7 +22,7 @@ function writeEtsRef(root: string, pkg: string, key: string): void {
 }
 
 function placeholderCtx(root: string): CheckContext {
-  return { projectRoot: root, featureSpec: { contracts: contractsAB } } as unknown as CheckContext;
+  return { projectRoot: root, feature: 'homepage', featureSpec: { contracts: contractsAB } } as unknown as CheckContext;
 }
 
 function cropDoc(key: string): UiSpecDoc {
@@ -270,6 +271,175 @@ export function runAll(): UnitCaseResult[] {
       writePng(mediaPathIn(root, COMMON_PKG, 'logo'), 948, 324, 400);
       const issues = collectPlaceholderAssetIssues(placeholderCtx(root), cropDoc('logo'), false);
       if (issues.some(i => i.id === 'logo')) throw new Error('两模块都真图不应报 issue');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // -------- round5 P0-A：素材烤字门禁 --------
+
+  const OCR_FIXTURE = path.join(__dirname, '..', 'fixtures', 'ocr', 'card_pack.png');
+
+  function slabDoc(
+    key: string,
+    texts: string[],
+    opts?: { deferBy?: string },
+  ): UiSpecDoc {
+    const children: unknown[] = texts.map((t, i) => ({ id: `t${i}`, type: 'content_display', order: i, text: t }));
+    children.push({ id: 'hero', type: 'image', order: 99, asset_ref: key });
+    const asset: Record<string, unknown> = { key, acquisition: 'crop' };
+    if (opts?.deferBy) { asset.baked_text_defer = true; asset.baked_text_defer_by = opts.deferBy; }
+    return {
+      screens: [{ id: 'card_pack', priority: 'P0', ref_id: 'card_pack', root: { type: 'navigation_frame', order: 0, children } }],
+      tokens: {},
+      assets: [asset],
+    } as unknown as UiSpecDoc;
+  }
+
+  function copyFixtureAsMedia(root: string, key: string): void {
+    const dest = moduleMedia(root, key);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(OCR_FIXTURE, dest);
+  }
+
+  run('P0-A declaredTextTargetsForAsset: 所属屏优先 / 回退全集 / ≥2字去重', () => {
+    const perScreen = [
+      { screenId: 'A', texts: ['卡包', '添加管理卡片', 'x', '卡包'], assetRefs: new Set(['hero_a']) },
+      { screenId: 'B', texts: ['我的', '设置'], assetRefs: new Set(['hero_b']) },
+    ];
+    const owning = declaredTextTargetsForAsset(perScreen, 'hero_a');
+    if (!owning.includes('卡包') || !owning.includes('添加管理卡片')) throw new Error(`所属屏文本缺失：${JSON.stringify(owning)}`);
+    if (owning.includes('我的')) throw new Error('所属屏 A 不应含 B 的文本');
+    if (owning.includes('x')) throw new Error('1 字文本应被 ≥2 过滤');
+    if (owning.filter(t => t === '卡包').length !== 1) throw new Error('应去重');
+    const fallback = declaredTextTargetsForAsset(perScreen, 'unknown_key');
+    if (!fallback.includes('卡包') || !fallback.includes('我的')) throw new Error(`未接线 key 应回退全集：${JSON.stringify(fallback)}`);
+  });
+
+  run('P0-A collectBakedTextAssetIssues: 真实设备图(含"管理非本机卡片/银行卡")→ baked_text', () => {
+    if (!isOcrAvailable()) return; // OCR 不可用则跳过（graceful，仿 ocr-toolkit 测试）
+    const root = mkRoot();
+    try {
+      copyFixtureAsMedia(root, 'test_slab');
+      const doc = slabDoc('test_slab', ['管理非本机卡片', '银行卡']);
+      const res = collectBakedTextAssetIssues(placeholderCtx(root), doc, false);
+      if (res.ocrUnavailable) throw new Error('OCR 可用时不应报 ocrUnavailable');
+      const hit = res.issues.find(i => i.id === 'test_slab' && i.assetRole === 'baked_text');
+      if (!hit) throw new Error(`应判 baked_text（图内含 2 个声明文本）：${JSON.stringify(res.issues)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-A collectBakedTextAssetIssues: 声明文本不在图中 → 无 issue（原子插画正样本代理）', () => {
+    if (!isOcrAvailable()) return;
+    const root = mkRoot();
+    try {
+      copyFixtureAsMedia(root, 'atomic_ok');
+      const doc = slabDoc('atomic_ok', ['天气预报晴朗', '股票行情大涨']); // 均不在设备图中
+      const res = collectBakedTextAssetIssues(placeholderCtx(root), doc, false);
+      if (res.issues.some(i => i.id === 'atomic_ok')) throw new Error('声明文本不在图中不应判 baked_text');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-A collectBakedTextAssetIssues: baked_text_defer + 真人署名 → 放行', () => {
+    if (!isOcrAvailable()) return;
+    const root = mkRoot();
+    try {
+      copyFixtureAsMedia(root, 'promo_defer');
+      const doc = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'user_requirement' });
+      const res = collectBakedTextAssetIssues(placeholderCtx(root), doc, false);
+      if (res.issues.some(i => i.id === 'promo_defer')) throw new Error('human_signed defer 应放行');
+      // 自动化署名不算人签 → 仍拦
+      const doc2 = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'goal-mode-auto' });
+      const res2 = collectBakedTextAssetIssues(placeholderCtx(root), doc2, false);
+      if (!res2.issues.some(i => i.id === 'promo_defer')) throw new Error('自动化署名不应放行');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // -------- round5 P0-B：品牌图标被 sys.symbol 替代门禁 --------
+
+  function iconDoc(key: string, kind: string, placeholder = false): UiSpecDoc {
+    return {
+      screens: [{
+        id: 'add_card', priority: 'P0', ref_id: 'add_card',
+        root: { type: 'navigation_frame', order: 0, children: [
+          { id: 'add_card_transit', type: 'list_selection', order: 0, text: '交通卡', icon: { kind, ref: key } },
+        ] },
+      }],
+      tokens: {},
+      assets: [placeholder ? { key, acquisition: 'crop', placeholder: true } : { key, acquisition: 'crop' }],
+    } as unknown as UiSpecDoc;
+  }
+  function writeSysSymbolData(root: string): void {
+    const p = path.join(root, MODULE_PKG, 'src', 'main', 'ets', 'data', 'CardRepository.ets');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `export class R { list() { return [{ name: '交通卡', icon: $r('sys.symbol.map') }]; } }`);
+  }
+  function writeBrandedRender(root: string, key: string): void {
+    const p = path.join(root, MODULE_PKG, 'src', 'main', 'ets', 'presentation', 'components', 'Transit.ets');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `@Component struct Transit { build() { Image($r('app.media.${key}')) } }`);
+  }
+
+  run('P0-B featureUsesSystemSymbolIcon: 检出 $r(sys.symbol.*) / SymbolGlyph', () => {
+    const root = mkRoot();
+    try {
+      if (featureUsesSystemSymbolIcon(root, contractsAB)) throw new Error('空源码不应检出 sys.symbol');
+      writeSysSymbolData(root);
+      if (!featureUsesSystemSymbolIcon(root, contractsAB)) throw new Error('应检出 data 层 sys.symbol.map');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-B collectIconSubstitutionIssues: 声明品牌图标却用 sys.symbol 替代 → icon_substitution', () => {
+    const root = mkRoot();
+    try {
+      writeSysSymbolData(root); // 源码用 sys.symbol.map，且未 $r 品牌 media
+      const issues = collectIconSubstitutionIssues(placeholderCtx(root), iconDoc('card_icon_transit', 'brand_logo'), false);
+      const hit = issues.find(i => i.assetRole === 'icon_substitution' && i.id === 'add_card_transit');
+      if (!hit) throw new Error(`品牌图标被 sys.symbol 替代应判 icon_substitution：${JSON.stringify(issues)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-B collectIconSubstitutionIssues: 品牌 media 已 $r 渲染 → 放行', () => {
+    const root = mkRoot();
+    try {
+      writeSysSymbolData(root);
+      writeBrandedRender(root, 'card_icon_transit'); // 真图已渲染
+      const issues = collectIconSubstitutionIssues(placeholderCtx(root), iconDoc('card_icon_transit', 'brand_logo'), false);
+      if (issues.some(i => i.id === 'add_card_transit')) throw new Error('品牌 media 已渲染不应报替代');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-B collectIconSubstitutionIssues: icon.kind=system_symbol / placeholder / 无 sys.symbol → 放行', () => {
+    const root = mkRoot();
+    try {
+      writeSysSymbolData(root);
+      if (collectIconSubstitutionIssues(placeholderCtx(root), iconDoc('k', 'system_symbol'), false).length > 0) {
+        throw new Error('声明 system_symbol 用系统图标合法，不应拦');
+      }
+      if (collectIconSubstitutionIssues(placeholderCtx(root), iconDoc('k', 'brand_logo', true), false).length > 0) {
+        throw new Error('显式 placeholder 应豁免');
+      }
+      const root2 = mkRoot();
+      try {
+        // 无 sys.symbol 源码 → 无"替代"可言
+        if (collectIconSubstitutionIssues(placeholderCtx(root2), iconDoc('k', 'brand_logo'), false).length > 0) {
+          throw new Error('源码未用 sys.symbol 不应报替代');
+        }
+      } finally {
+        fs.rmSync(root2, { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
