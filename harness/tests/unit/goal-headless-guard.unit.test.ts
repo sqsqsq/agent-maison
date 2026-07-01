@@ -413,6 +413,30 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'buildPhasePrompt: P1-B 超时 partial 产物注入续作块',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          'review',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          ['doc/features/x/review/review-report.md', 'doc/features/x/review/context-exploration.md'],
+        );
+        assert(prompt.includes('TIMED OUT'), '缺超时续作标题');
+        assert(prompt.includes('do NOT redo exploration'), '缺"勿从零重做探索"指令');
+        assert(prompt.includes('review-report.md'), '缺 partial 产物清单');
+      },
+    },
+    {
+      name: 'buildPhasePrompt: 无 partial 产物时不注入续作块',
+      run: () => {
+        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'review', FRAMEWORK_ROOT, [], undefined, undefined, []);
+        assert(!prompt.includes('TIMED OUT'), '空清单不应注入续作块');
+      },
+    },
+    {
       name: 'extractDeterministicAffectedFiles: from blockers',
       run: () => {
         const files = extractDeterministicAffectedFiles({

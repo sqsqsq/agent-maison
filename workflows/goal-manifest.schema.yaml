@@ -40,6 +40,8 @@ fields:
     properties:
       max_retries_per_phase: { type: integer, default: 2 }
       max_total_turns: { type: integer, default: 30 }
+      # 实际生效 wall 由 utils/goal-timeout.resolveWallClockMinutes 派生：
+      # max(本值, ceil(Σ链路 per-phase 秒/60)+缓冲)，保证全链单次满预算能跑完。
       wall_clock_minutes: { type: integer, default: 480 }
   dependency_policy:
     type: object
@@ -58,7 +60,19 @@ fields:
       write_mode: { type: string, enum: [workspace-write, accept-edits, full-access] }
       approval_mode: { type: string, enum: [never, on-request, always] }
       max_turns: { type: integer }
+      # 扁平全局超时（秒）；per-phase 未命中时的兜底。
       timeout_seconds: { type: integer }
+      # 显式 per-phase 超时覆盖（秒），最高优先；缺省走 goal-timeout 内置默认表
+      # （spec 900 / plan 5400 / coding 5400 / review 7200 / ut 3600 / testing 7200）。
+      phase_timeout_seconds:
+        type: object
+        properties:
+          spec: { type: integer }
+          plan: { type: integer }
+          coding: { type: integer }
+          review: { type: integer }
+          ut: { type: integer }
+          testing: { type: integer }
       allowed_tools: { type: array, items: string }
   run_id:
     type: string

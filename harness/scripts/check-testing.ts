@@ -49,6 +49,7 @@ import {
   tableHasColumns,
   getColumnValues,
   extractMetadata,
+  extractDeclaredVerdict,
   MdTable,
 } from './utils/markdown-parser';
 import {
@@ -778,17 +779,19 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     }];
   }
 
-  const verdicts = ['达标', '有条件达标', '不达标'];
-  const hasVerdict = verdicts.some(v => section.includes(v));
+  // 声明式提取：锚定「测试结论:」声明行 + 最长优先，杜绝 '达标'⊂'不达标' 子串
+  // 与「下一步建议」枚举裁决词造成的整段污染。裁决-vs-trace 一致性由
+  // reconcileReportWithHylyreTrace 负责（消费同一 parseReportConclusionVerdict）。
+  const { verdict } = extractDeclaredVerdict(section, ['有条件达标', '不达标', '达标']);
 
-  if (hasVerdict) {
+  if (verdict) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '结论章节包含明确的判定。',
+      details: `结论章节包含可机读判定：${verdict}。`,
     }];
   }
 
@@ -798,8 +801,8 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     description: ruleDesc(ctx, 'structure_checks', id),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: '结论章节未包含明确的判定（达标/有条件达标/不达标）。',
-    suggestion: '报告结论必须包含明确判定：达标 / 有条件达标 / 不达标。',
+    details: '结论章节未找到可机读的判定声明行（达标/有条件达标/不达标）。',
+    suggestion: '请写出明确声明行，例如 `**测试结论**: 不达标`（裁决词须紧邻在"测试结论:"之后）。',
   }];
 }
 

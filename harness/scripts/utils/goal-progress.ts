@@ -29,6 +29,7 @@ import {
   type GoalRunStatus,
 } from './phase-transition-policy';
 import { normalizePhaseId } from './phase-alias';
+import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
 import type { WorkflowSpec } from '../../workflow-loader';
 
 export const PROGRESS_SCHEMA_VERSION = '1.0';
@@ -692,8 +693,10 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const turnsUsed = countAgentInvokeStarts(events);
   const wallStart = resolveWallClockStartMs(events);
   const wallElapsed = nowMs - wallStart;
-  const wallLimitMs = manifest.budget.wall_clock_minutes * 60 * 1000;
-  const phaseTimeoutMs = (manifest.unattended.timeout_seconds ?? 3600) * 1000;
+  // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
+  const wallLimitMs = resolveWallClockMs(manifest);
+  const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
+  const phaseTimeoutMs = resolvePhaseTimeoutMs(stallPhase, manifest);
 
   const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase);
 

@@ -11,7 +11,7 @@ import {
   selectBestNonPlaceholderDerivedPlan,
   tryParseYamlFrontmatter,
 } from './derived-hylyre-plan';
-import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
+import { getSectionContent, extractTables, extractDeclaredVerdict, type MdTable } from './markdown-parser';
 import type { UseCaseDef, UseCasesSpec } from './types';
 
 /** Normalize execution status labels for report↔trace comparison. */
@@ -139,14 +139,15 @@ export function parseReportExecutionResults(reportMd: string): Map<string, strin
   return out;
 }
 
-/** Extract conclusion verdict keyword from test-report.md. */
+/**
+ * 从 test-report.md「结论」段提取裁决。
+ * 声明式提取：锚定「测试结论:」声明行 + 最长优先，杜绝 '达标'⊂'不达标' 子串
+ * 与「下一步建议」枚举裁决词造成的整段污染（旧实现整段 includes 会被"若不达标"骗到）。
+ */
 export function parseReportConclusionVerdict(reportMd: string): string | null {
   const section = getSectionContent(reportMd, '结论') ?? getSectionContent(reportMd, '测试结论');
   if (!section) return null;
-  if (section.includes('不达标')) return '不达标';
-  if (section.includes('有条件达标')) return '有条件达标';
-  if (section.includes('达标')) return '达标';
-  return null;
+  return extractDeclaredVerdict(section, ['有条件达标', '不达标', '达标']).verdict;
 }
 
 export interface ReportTraceReconciliationResult {

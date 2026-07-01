@@ -28,6 +28,7 @@ import {
   extractMetadata,
   tableHasColumns,
   getColumnValues,
+  extractDeclaredVerdict,
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
@@ -430,16 +431,17 @@ function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckRes
     }];
   }
 
-  const verdicts = ['通过', '有条件通过', '不通过'];
-  const foundVerdict = verdicts.find(v => section.includes(v));
+  // 声明式提取：锚定「审查结论:」声明行 + 最长优先，杜绝 '通过'⊂'不通过' 子串误读
+  // 与「判定依据/下一步建议」枚举裁决词造成的整段污染。
+  const { verdict: foundVerdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
 
   if (!foundVerdict) {
     return [{
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '「结论」中未找到明确的审查结论（通过/有条件通过/不通过）。',
-      suggestion: '请在结论中明确写出"通过"、"有条件通过"或"不通过"。',
+      details: '「结论」中未找到可机读的审查结论声明行。',
+      suggestion: '请在结论中写出明确的声明行，例如 `**审查结论**: 不通过`（裁决词须紧邻在"审查结论:"之后）。',
     }];
   }
 

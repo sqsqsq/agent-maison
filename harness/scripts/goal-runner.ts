@@ -16,6 +16,8 @@ import {
   loadFrameworkConfig,
   loadFrameworkConfigWithSources,
   featurePhaseReportsDir,
+  featureArtifactPath,
+  receiptDirPath,
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { loadResolvedProfile } from '../profile-loader';
@@ -36,6 +38,7 @@ import {
   writeGoalManifest,
   type GoalManifest,
 } from './utils/goal-manifest';
+import { resolvePhaseTimeoutMs, resolveWallClockMs } from './utils/goal-timeout';
 import {
   generateGoalReportJson,
   loadGoalReportJson,
@@ -415,6 +418,54 @@ function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePha
   ];
 }
 
+/**
+ * P1-B：收集"超时可续作"的 partial 产物（项目相对路径）。
+ * 仅列已落盘者：各 phase 的主产物 + context-exploration.md（探索缓存，最值得复用）。
+ * coding 的源码在工作树天然持久，不在此列。
+ */
+const TIMEOUT_RESUMABLE_ARTIFACT_BY_PHASE: Record<FeaturePhase, string[]> = {
+  spec: ['spec.md'],
+  plan: ['plan.md'],
+  coding: [],
+  review: ['review-report.md'],
+  ut: [],
+  testing: ['test-report.md'],
+};
+
+export function collectTimeoutResumableArtifacts(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+  sinceMs = 0,
+): string[] {
+  const out: string[] = [];
+  const toRel = (abs: string): string => path.relative(projectRoot, abs).replace(/\\/g, '/');
+  // mtime 守卫：只复用本 run 起始之后产出的产物，过滤跨 run/feature 的陈旧报告，
+  // 避免把旧结论当作"本次 partial work"回喂（codex P2）。
+  const freshEnough = (abs: string): boolean => {
+    try {
+      return fs.statSync(abs).mtimeMs >= sinceMs;
+    } catch {
+      return false;
+    }
+  };
+  for (const fileName of TIMEOUT_RESUMABLE_ARTIFACT_BY_PHASE[phase] ?? []) {
+    try {
+      const abs = featureArtifactPath(projectRoot, feature, fileName);
+      if (fs.existsSync(abs) && freshEnough(abs)) out.push(toRel(abs));
+    } catch {
+      /* 路径解析失败不阻断主流程 */
+    }
+  }
+  try {
+    const ce = path.join(receiptDirPath(projectRoot, feature, phase), 'context-exploration.md');
+    if (fs.existsSync(ce) && freshEnough(ce)) out.push(toRel(ce));
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   phase: FeaturePhase,
@@ -422,6 +473,7 @@ export function buildPhasePrompt(
   deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>,
   priorFailure?: string,
   priorFailureKind?: FailureKind,
+  partialResumeArtifacts?: string[],
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -447,6 +499,18 @@ export function buildPhasePrompt(
       ? 'If coding artifacts are ready: report "coding phase complete — goal continues to review→ut→testing" (not "goal run finished").'
       : '',
   ].filter(Boolean);
+  if (partialResumeArtifacts && partialResumeArtifacts.length > 0) {
+    parts.push(
+      '',
+      '## Prior attempt TIMED OUT — resume from partial work (NOT a content failure)',
+      '',
+      'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. The following artifacts were already (partially) written to disk. **Re-read them first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch:**',
+      '',
+      ...partialResumeArtifacts.map(f => `- ${f}`),
+      '',
+      'Resume where the prior attempt left off, finish the remaining work, then re-run this phase harness.',
+    );
+  }
   if (priorFailure) {
     parts.push(
       '',
@@ -848,7 +912,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           write_mode: 'workspace-write',
           approval_mode: 'never',
           max_turns: 20,
-          timeout_seconds: 3600,
+          // 不再硬编码扁平 timeout_seconds：开箱走 goal-timeout 的 per-phase 默认表
+          // （spec 15m / plan·coding 90m / review·testing 120m / ut 60m），由 wall_clock 兜底。
+          // 如需统一覆盖，显式设 unattended.timeout_seconds 或 phase_timeout_seconds。
         },
       },
       { projectRoot, featuresDir },
@@ -1035,7 +1101,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
 
     let halted = false;
-    const wallMs = manifest.budget.wall_clock_minutes * 60 * 1000;
+    // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
+    // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
+    const wallMs = resolveWallClockMs(manifest);
 
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length; phaseIdx++) {
       const phase = chain[phaseIdx];
@@ -1043,6 +1111,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       let phaseDone = false;
       let priorBlockerSignature: string | null = null;
       let priorArtifactSnapshot: ArtifactSnapshot | null = null;
+      // P1-B：上一次 attempt 是否因超时被中断（非内容失败）——用于重试时复用 partial 产物。
+      let priorAttemptTimedOut = false;
 
       progressPhase = phase;
       progressSubstep = null;
@@ -1108,6 +1178,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // P1-B：上轮因超时中断（非内容失败）时，把已落盘的 partial 产物回喂，
+        // 让重试 fresh-context 续作而非从零重做探索。
+        const partialResumeArtifacts =
+          isPhaseContinuation && priorAttemptTimedOut
+            ? collectTimeoutResumableArtifacts(projectRoot, manifest.feature, phase, wallClockStartMs)
+            : [];
+
         const prompt = buildPhasePrompt(
           manifest,
           phase,
@@ -1115,6 +1192,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           deferredUpstream,
           priorFailure,
           priorFailureKind,
+          partialResumeArtifacts,
         );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -1156,7 +1234,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         const invoke = await invokeAgentHeadless(invokePlan, projectRoot, {
           dryRun,
-          timeoutMs: (manifest.unattended.timeout_seconds ?? 3600) * 1000,
+          timeoutMs: resolvePhaseTimeoutMs(phase, manifest),
           outputLogPath,
           onActiveChild: ({ kill }) => {
             activeAgentKill = async () => {
@@ -1400,6 +1478,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             Object.keys(currentArtifactSnapshot).length > 0
               ? currentArtifactSnapshot
               : priorArtifactSnapshot;
+          priorAttemptTimedOut = invoke.timed_out === true;
           retries++;
           continue;
         }

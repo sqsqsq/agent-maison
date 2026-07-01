@@ -73,15 +73,18 @@
 
 ## 六、结论
 
-**审查结论**: 通过 / 有条件通过 / 不通过
+> harness 只解析下方"审查结论"声明行，且须**恰好填一个**裁决词。可选值（三选一）：通过、有条件通过、不通过 —— 含 BLOCKER 必判不通过；无 BLOCKER 有 MAJOR 判有条件通过；均无判通过。声明行留多个或不填 = 歧义/缺失 → harness 判 FAIL。
+
+**审查结论**: <填写单一裁决，删除本占位>
 
 <结论说明：通过理由或不通过原因>
 
 **判定依据**:
-- BLOCKER 数量: N（> 0 则"不通过"）
-- MAJOR 数量: N（BLOCKER=0 时 > 0 则"有条件通过"）
+- BLOCKER 数量: N
+- MAJOR 数量: N
+- 判定规则：存在 BLOCKER → 必须判"不通过"；无 BLOCKER 但有 MAJOR → 判"有条件通过"；均无 → 判"通过"
 
-**下一步建议**:
-- 若"不通过"：修复所有 BLOCKER 后重新审查
-- 若"有条件通过"：修复 MAJOR 后建议重新审查，或经团队评审后可进入下一阶段
-- 若"通过"：若需 UT，请用户明示 business-ut 意图或确认 **`review.ok_to_ut` / `phase.next_step`**（user-confirmation-ux §8）；**禁止** agent 因报告结论自动开 business-ut
+**下一步建议**（按上方审查结论执行）:
+- 若结论为"不通过"：修复所有 BLOCKER 后重新审查
+- 若结论为"有条件通过"：修复 MAJOR 后建议重新审查，或经团队评审后可进入下一阶段
+- 若结论为"通过"：若需 UT，请用户明示 business-ut 意图或确认 **`review.ok_to_ut` / `phase.next_step`**（user-confirmation-ux §8）；**禁止** agent 因报告结论自动开 business-ut

@@ -8,6 +8,7 @@ import {
   reconcileReportWithHylyreTrace,
   evaluateUiEntryCoverage,
   parseReportExecutionResults,
+  parseReportConclusionVerdict,
   buildEntryUiPriorityMap,
 } from '../../scripts/utils/testing-trace-gates';
 import type { HylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
@@ -101,6 +102,59 @@ test('parseReportExecutionResults: extracts TC statuses', () => {
   ].join('\n');
   const m = parseReportExecutionResults(report);
   assert.strictEqual(m.get('TC-001'), '通过');
+});
+
+test('parseReportConclusionVerdict: 声明=达标 + 下一步建议含"若结论为不达标" → 达标（旧整段 includes 会误取不达标）', () => {
+  const report = [
+    '## 五、结论',
+    '',
+    '**测试结论**: 达标',
+    '',
+    '**下一步建议**（按上方测试结论执行）:',
+    '- 若结论为"不达标"：修复所有 BLOCKER 和 P0 失败用例后重新测试',
+    '- 若结论为"有条件达标"：修复 MAJOR 缺陷后回归测试',
+    '- 若结论为"达标"：功能模块验收完成，可发布',
+  ].join('\n');
+  assert.strictEqual(parseReportConclusionVerdict(report), '达标');
+});
+
+test('parseReportConclusionVerdict: 声明=不达标 → 不达标', () => {
+  const report = ['## 结论', '', '**测试结论**: 不达标', '存在 P0 失败用例。'].join('\n');
+  assert.strictEqual(parseReportConclusionVerdict(report), '不达标');
+});
+
+test('reconcileReportWithHylyreTrace: 报告声明达标 vs trace.outcome=partial → 命中 trace.outcome 矛盾', () => {
+  const fs = require('fs') as typeof import('fs');
+  const os = require('os') as typeof import('os');
+  const path = require('path') as typeof import('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trace-recon-verdict-'));
+  const hylyreDir = path.join(dir, '20260101-120000', 'hylyre');
+  fs.mkdirSync(hylyreDir, { recursive: true });
+  const tracePath = path.join(hylyreDir, 'trace.json');
+  fs.writeFileSync(
+    tracePath,
+    JSON.stringify({
+      schema_version: '0.2-p4',
+      feature: 'f',
+      phase: 'testing',
+      outcome: 'partial',
+      cases: [{ id: 'TC-001', status: '通过' }],
+    }),
+  );
+  const report = [
+    '## 测试执行结果',
+    '| 用例编号 | 执行状态 |',
+    '| --- | --- |',
+    '| TC-001 | 通过 |',
+    '## 五、结论',
+    '**测试结论**: 达标',
+    '**下一步建议**:',
+    '- 若结论为"不达标"：重测',
+  ].join('\n');
+  const recon = reconcileReportWithHylyreTrace(report, tracePath);
+  assert.strictEqual(recon.ok, false);
+  assert.ok(recon.mismatches.some(m => m.includes('trace.outcome')), '应命中 达标 vs trace.outcome 矛盾');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('evaluateUiEntryCoverage: AC-8 from acceptance.yaml → P0 blocker', () => {

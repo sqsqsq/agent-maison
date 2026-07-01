@@ -81,8 +81,29 @@ const validReport = [
   '## 修复建议',
   '无',
   '## 结论',
-  '通过',
+  '**审查结论**: 通过',
 ].join('\n');
+
+// 带 BLOCKER 计数的报告——用于裁决 vs BLOCKER 一致性回归。
+function reportWith(verdictLine: string, blockerCount: number): string {
+  const rows: string[] = [];
+  for (let i = 0; i < blockerCount; i++) {
+    rows.push(`| CR-00${i + 1} | BLOCKER | 逻辑错误 | 问题${i + 1} | src/a${i}.ets | 修复 |`);
+  }
+  return [
+    '---', 'feature: demo', 'phase: review', '---',
+    '# Review',
+    '## 审查范围', 'TaskDemo',
+    '## 审查方法', '按规则审查',
+    '## 问题清单',
+    '| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |',
+    '|------|---------|------|---------|---------|---------|',
+    ...rows,
+    '## 问题统计', `BLOCKER: ${blockerCount}`, 'MAJOR: 0', 'MINOR: 0',
+    '## 修复建议', '见上',
+    '## 结论', verdictLine,
+  ].join('\n');
+}
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
@@ -114,6 +135,30 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       }));
       assertTrue(results.some(r => r.failure_kind === 'missing_acceptance'), '应提示 missing_acceptance');
       assertTrue(results.some(r => r.failure_kind === 'missing_source_from_contracts'), '应提示缺源码');
+    }),
+  },
+  {
+    name: 'conclusion: 不通过 + 2 BLOCKER → 自洽 PASS（修复前因子串误读会误判 FAIL）',
+    run: async () => withTmpProject(async root => {
+      writeFile(
+        path.join(root, 'doc', 'features', 'demo', 'review-report.md'),
+        reportWith('**审查结论**: 不通过', 2),
+      );
+      const results = await checker.check(ctx(root, { feature: 'demo' }));
+      const hit = results.find(r => r.id === 'conclusion_with_verdict');
+      assertTrue(hit?.status === 'PASS', `应 PASS，实际 ${hit?.status}：${hit?.details}`);
+    }),
+  },
+  {
+    name: 'conclusion: 通过 + 1 BLOCKER → 真不一致 FAIL（不放过谎报通过）',
+    run: async () => withTmpProject(async root => {
+      writeFile(
+        path.join(root, 'doc', 'features', 'demo', 'review-report.md'),
+        reportWith('**审查结论**: 通过', 1),
+      );
+      const results = await checker.check(ctx(root, { feature: 'demo' }));
+      const hit = results.find(r => r.id === 'conclusion_with_verdict');
+      assertTrue(hit?.status === 'FAIL', `应 FAIL，实际 ${hit?.status}`);
     }),
   },
 ];

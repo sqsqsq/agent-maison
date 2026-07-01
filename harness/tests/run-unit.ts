@@ -57,6 +57,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },
   { id: 'framework-config-schema', modulePath: './unit/framework-config-schema.unit.test' },
   { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
+  { id: 'verdict-extraction', modulePath: './unit/verdict-extraction.unit.test' },
   { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
   { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },
   { id: 'ut-artifact-validate', modulePath: './unit/ut-artifact-validate.unit.test' },
@@ -148,6 +149,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'capability-alias', modulePath: './unit/capability-alias.unit.test' },
   { id: 'migrate-feature-phase-paths', modulePath: './unit/migrate-feature-phase-paths.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
+  { id: 'goal-timeout', modulePath: './unit/goal-timeout.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
