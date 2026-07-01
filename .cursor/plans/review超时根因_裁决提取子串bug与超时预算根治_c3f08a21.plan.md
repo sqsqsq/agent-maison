@@ -1,3 +1,26 @@
+---
+name: 全阶段门禁根治 — 裁决提取子串 bug + 跨阶段超时预算（P0+P1）
+version: 2.4.0
+overview: >
+  宿主 06-29 反馈 review 超时 6h+：裁决子串误判（review 特有）叠加全 6 阶段共用 3600 一刀切超时。
+  P0 声明式裁决提取 + 模板收敛 + 元门禁 + 歧义拒绝；P1 per-phase 超时 + wall 派生 + 历史 manifest
+  迁移 + 超时重试复用 partial。全绿并已提交（e371533f）。release-note（重 retry 调大 wall 提示）
+  与本轮延后项见正文。
+todos:
+  - id: p0-verdict-extraction
+    content: extractDeclaredVerdict 声明式提取（锚定+最长优先+诱饵排除+歧义拒绝），接入 check-review/testing-trace-gates/check-testing
+    status: completed
+  - id: p0-templates-metalint-regression
+    content: review+双 profile testing 模板收敛；元门禁禁两种裸子串裁决形态；不通过/达标回归补盲
+    status: completed
+  - id: p1a-per-phase-timeout
+    content: resolvePhaseTimeout 共享 util + 默认表 + wall 派生防脑裂 + 历史 manifest 迁移（仅 resume）
+    status: completed
+  - id: p1b-partial-reuse
+    content: 超时重试复用 partial 产物 + mtime 守卫
+    status: completed
+---
+
 # 全阶段门禁根治（本轮 P0 + P1）— 裁决提取子串 bug + 跨阶段超时预算
 
 > 来源：宿主工程 xuzhiqiang 06-29 反馈（2.3.0）。

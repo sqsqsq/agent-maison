@@ -1,3 +1,23 @@
+---
+name: P2 — Phase 内 checkpoint/resume：重阶段超时续跑而非整阶段重来
+version: 2.4.0
+overview: >
+  把 attempt 级原子性降到子任务级：超时重试时 runner 从可验证产物派生断点、注入续跑 skip-list。
+  四重阶段（review/coding/plan/ut）增量写 + 三重验真（真实存在∩审查范围内∩本run）+ 章节级断点
+  + 跨进程恢复。全绿并已提交（16a84cf / 25f14f18）。端到端实跑验收与 partial-chapter 打磨延后，
+  见正文"本轮不做"。
+todos:
+  - id: v1a-runner-checkpoint
+    content: goal-checkpoint.ts deriveResumeInspection/deriveReportSections/deriveAndWriteCheckpoint/跨进程回读 + runner 注入
+    status: completed
+  - id: v1a-skill-incremental-write
+    content: review/coding/plan/business-ut 四重阶段 context-exploration 增量写
+    status: completed
+  - id: round3-scope-verify-honesty
+    content: skip-list 补 contracts.files 范围验真（含格式不匹配兜底）+ 越界/兜底测试 + plan 表述诚实化
+    status: completed
+---
+
 # P2 — Phase 内 checkpoint / resume：重阶段超时续跑而非整阶段重来
 
 > 拆自 `review超时根因…c3f08a21.plan.md` 的 P2。P0+P1 已提交（commit e371533f）。
