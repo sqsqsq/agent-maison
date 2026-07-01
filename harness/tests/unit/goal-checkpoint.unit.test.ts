@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { clearFrameworkConfigCache, receiptDirPath } from '../../config';
+import { clearFrameworkConfigCache, receiptDirPath, relFeatureFile } from '../../config';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 import {
   deriveResumeInspection,
@@ -86,7 +86,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: '验真：声明了但盘上不存在的文件被剔除（防伪造 skip）',
+    name: '验真①：声明了但盘上不存在的文件被剔除（防伪造 skip）',
     run: () => withTmpProject(root => {
       writeContextExploration(root, 'demo', 'review', {
         ready: false,
@@ -96,6 +96,34 @@ const cases: Array<{ name: string; run: () => void }> = [
       const insp = deriveResumeInspection(root, 'demo', 'review', 0);
       assertEq(insp!.inspectedFiles.length, 1, '仅真实存在的计入');
       assertTrue(insp!.inspectedFiles[0].includes('a.ets'), '保留 a.ets');
+    }),
+  },
+  {
+    name: '验真②：越界文件（真实存在但不在 contracts.files）不进 skip-list',
+    run: () => withTmpProject(root => {
+      // contracts.yaml 只把 a.ets 纳入审查范围；out.ets 真实存在但越界。
+      const contractsAbs = path.join(root, relFeatureFile(root, 'demo', 'contracts.yaml'));
+      fs.mkdirSync(path.dirname(contractsAbs), { recursive: true });
+      fs.writeFileSync(contractsAbs, ['files:', '  - src/a.ets'].join('\n'), 'utf-8');
+      writeContextExploration(root, 'demo', 'review', {
+        ready: false,
+        sourcePaths: ['src/a.ets', 'src/out.ets'], // 两者都落盘
+      });
+      const insp = deriveResumeInspection(root, 'demo', 'review', 0);
+      assertEq(insp!.inspectedFiles.length, 1, '越界文件被剔除');
+      assertTrue(insp!.inspectedFiles[0].includes('a.ets'), '仅保留范围内 a.ets');
+    }),
+  },
+  {
+    name: '安全兜底：scope 与声明路径格式全不匹配 → 退回仅 existsSync（不清空 skip-list）',
+    run: () => withTmpProject(root => {
+      const contractsAbs = path.join(root, relFeatureFile(root, 'demo', 'contracts.yaml'));
+      fs.mkdirSync(path.dirname(contractsAbs), { recursive: true });
+      // contracts 用完全不同的路径基（模拟格式不一致），交集为空。
+      fs.writeFileSync(contractsAbs, ['files:', '  - other/x.ets'].join('\n'), 'utf-8');
+      writeContextExploration(root, 'demo', 'review', { ready: false, sourcePaths: ['src/a.ets'] });
+      const insp = deriveResumeInspection(root, 'demo', 'review', 0);
+      assertEq(insp!.inspectedFiles.length, 1, 'scope 全不匹配时不清空、退回 existsSync');
     }),
   },
   {

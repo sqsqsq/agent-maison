@@ -10,12 +10,37 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as YAML from 'yaml';
 import type { FeaturePhase } from './phase-transition-policy';
 import {
   isContextExplorationPhase,
   readContextExplorationInspection,
 } from './context-exploration';
 import { extractHeadings } from './markdown-parser';
+import { relFeatureFile } from '../../config';
+
+function normalizeRel(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\.\//, '').trim();
+}
+
+/**
+ * 加载 feature 的审查/契约范围（contracts.yaml > files，POSIX 归一）。
+ * 用于给 skip-list 加"审查范围内"这一重验真。contracts.yaml 不存在（如 plan 早期
+ * 尚未产出契约）→ undefined，调用方降级为仅 existsSync。
+ */
+export function loadContractsFileScope(projectRoot: string, feature: string): Set<string> | undefined {
+  try {
+    const abs = path.join(projectRoot, relFeatureFile(projectRoot, feature, 'contracts.yaml'));
+    if (!fs.existsSync(abs)) return undefined;
+    const doc = YAML.parse(fs.readFileSync(abs, 'utf-8')) as { files?: unknown } | null;
+    const files = Array.isArray(doc?.files)
+      ? doc!.files.map(x => normalizeRel(String(x))).filter(Boolean)
+      : [];
+    return files.length > 0 ? new Set(files) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type ResumeStage = 'exploring' | 'reporting';
 
@@ -41,13 +66,25 @@ export function deriveResumeInspection(
   const insp = readContextExplorationInspection(projectRoot, feature, phase);
   if (!insp) return null;
   if (insp.mtimeMs === null || insp.mtimeMs < sinceMs) return null; // 陈旧/非本 run
-  const inspectedFiles = insp.sourceCodePaths.filter(f => {
+
+  // 验真第 1 重：真实存在。
+  const existing = insp.sourceCodePaths.filter(f => {
     try {
       return fs.existsSync(path.resolve(projectRoot, f));
     } catch {
       return false;
     }
   });
+  // 验真第 2 重：审查/契约范围内（contracts.files 交集）。
+  // 安全兜底：若 scope 过滤会把 skip-list 清空（多为路径格式不一致），退回仅 existsSync，
+  // 避免 P2 静默失效（越界文件被 skip 无害，报告门禁仍强制范围内文件覆盖）。
+  const scope = loadContractsFileScope(projectRoot, feature);
+  let inspectedFiles = existing;
+  if (scope) {
+    const inScope = existing.filter(f => scope.has(normalizeRel(f)));
+    if (inScope.length > 0) inspectedFiles = inScope;
+  }
+
   if (inspectedFiles.length === 0) return null;
   return { stage: insp.readyToProduce ? 'reporting' : 'exploring', inspectedFiles };
 }
