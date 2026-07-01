@@ -53,12 +53,15 @@ import { fileURLToPath } from 'node:url';
 
 export const HOOK_DEFAULT_GRACE_MS = 5 * 60 * 1000; // 5 分钟
 export const HOOK_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000; // 12 小时
+export const HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS = 3; // 逃生阀阈值（与 config DEFAULT_STATE_MACHINE 同步）
 
 // 范围限制（与 STATE_MACHINE_RANGES 同步；hook 端碰到非法值就 fallback 到默认）
 const HOOK_GRACE_MIN_MS = 1; // 严格 > 0
 const HOOK_GRACE_MAX_MS = 60 * 60 * 1000; // 60 分钟
 const HOOK_TTL_MIN_MS = 1 * 60 * 60 * 1000; // 1 小时
 const HOOK_TTL_MAX_MS = 168 * 60 * 60 * 1000; // 7 天
+const HOOK_MAX_BLOCKS_MIN = 1; // 逃生阀阈值下限
+const HOOK_MAX_BLOCKS_MAX = 20; // 逃生阀阈值上限
 
 // --------------------------------------------------------------------------
 // 1. 读 stdin
@@ -141,7 +144,11 @@ function readStateFileRelFromConfig(projectRoot) {
  * 端兜底，不重复在 hook 端 fail-loud。
  */
 export function readStateMachineFromConfig(projectRoot) {
-  const fallback = { gracePeriodMs: HOOK_DEFAULT_GRACE_MS, ttlMs: HOOK_DEFAULT_TTL_MS };
+  const fallback = {
+    gracePeriodMs: HOOK_DEFAULT_GRACE_MS,
+    ttlMs: HOOK_DEFAULT_TTL_MS,
+    maxConsecutiveBlocks: HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS,
+  };
   try {
     const cfgPath = path.resolve(projectRoot, 'framework.config.json');
     if (!fs.existsSync(cfgPath)) return fallback;
@@ -161,7 +168,13 @@ export function readStateMachineFromConfig(projectRoot) {
       if (ms >= HOOK_TTL_MIN_MS && ms <= HOOK_TTL_MAX_MS) ttlMs = ms;
     }
 
-    return { gracePeriodMs, ttlMs };
+    let maxConsecutiveBlocks = fallback.maxConsecutiveBlocks;
+    if (typeof sm.max_consecutive_blocks === 'number' && Number.isInteger(sm.max_consecutive_blocks)) {
+      const n = sm.max_consecutive_blocks;
+      if (n >= HOOK_MAX_BLOCKS_MIN && n <= HOOK_MAX_BLOCKS_MAX) maxConsecutiveBlocks = n;
+    }
+
+    return { gracePeriodMs, ttlMs, maxConsecutiveBlocks };
   } catch {
     return fallback;
   }
@@ -367,17 +380,25 @@ export function evaluateState(state) {
 // 6. state 写回（盖章 + last_seen 更新；best-effort，写失败不影响判定）
 // --------------------------------------------------------------------------
 
-function maybeUpdateState(stateAbs, state, sid, stamp) {
+function maybeUpdateState(stateAbs, state, sid, stamp, extra) {
   try {
-    if (!sid) return;
     const nowIso = new Date().toISOString();
     const next = { ...state };
-    if (stamp) {
-      next.session_id = sid;
-      next.session_id_recorded_at = nowIso;
+    if (sid) {
+      if (stamp) {
+        next.session_id = sid;
+        next.session_id_recorded_at = nowIso;
+      }
+      next.last_seen_session_id = sid;
+      next.last_seen_at = nowIso;
     }
-    next.last_seen_session_id = sid;
-    next.last_seen_at = nowIso;
+    // 逃生阀计数（hook 自写字段；**不得**进 computeBlockSignature）
+    if (extra && typeof extra === 'object') {
+      if ('block_signature' in extra) next.block_signature = extra.block_signature;
+      if ('consecutive_block_count' in extra) next.consecutive_block_count = extra.consecutive_block_count;
+    }
+    // 无 sid 且无 extra 时不写盘（保持原 best-effort 语义）
+    if (!sid && !extra) return;
     fs.writeFileSync(stateAbs, JSON.stringify(next, null, 2) + '\n', 'utf-8');
   } catch {
     // best-effort：写失败也不影响 hook 判定结果
@@ -416,7 +437,7 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
   }
 }
 
-function readSummaryHint(projectRoot, state) {
+function readPhaseSummary(projectRoot, state) {
   try {
     const phase = typeof state?.phase === 'string' ? state.phase : '';
     const feature = typeof state?.feature === 'string' ? state.feature : '';
@@ -426,25 +447,61 @@ function readSummaryHint(projectRoot, state) {
     const summaryPath = path.join(reportsRoot, 'summary.json');
     const summary = readJSONSafe(summaryPath);
     if (!summary || typeof summary !== 'object') return null;
-    const nextAction = typeof summary.next_action === 'string' ? summary.next_action : '';
-    if (!nextAction) return null;
-    return {
-      path: path.relative(projectRoot, summaryPath).replace(/\\/g, '/'),
-      nextAction,
-    };
+    return { summary, summaryRel: path.relative(projectRoot, summaryPath).replace(/\\/g, '/') };
   } catch {
     return null;
   }
 }
 
-function buildBlockReason(state, missingItems, summaryHint = null) {
+function readSummaryHint(projectRoot, state) {
+  const read = readPhaseSummary(projectRoot, state);
+  if (!read) return null;
+  const nextAction = typeof read.summary.next_action === 'string' ? read.summary.next_action : '';
+  if (!nextAction) return null;
+  return { path: read.summaryRel, nextAction };
+}
+
+/**
+ * 零进展 signature（与 goal 模式 extractBlockerSignature 同语义：排序后的 blocker id 集合）
+ * **叠加 last_run_at**——它由 runner 在真跑 harness 时写入；未变 = 根本没重跑 = 零进展。
+ *
+ * **只用 harness 结果字段**（blocker ids + last_run_at）；**严禁纳入 hook 自写字段**
+ * （updated_at / last_seen_at / session_id_recorded_at / consecutive_block_count / block_signature），
+ * 否则每次 Stop hook 写回都会让 signature 变化 → 逃生阀永久失效。
+ */
+export function computeBlockSignature(state, summary) {
+  const blockers = Array.isArray(summary?.blockers) ? summary.blockers : [];
+  const ids = blockers
+    .map((b) => (b && typeof b.id === 'string' ? b.id : ''))
+    .filter(Boolean)
+    .sort();
+  const lastRun = typeof state?.last_run_at === 'string' ? state.last_run_at : '';
+  return `${ids.join('|')}@@${lastRun}`;
+}
+
+/**
+ * 逃生阀决策（纯函数，便于单测）：
+ *   - signature 与上次相同（零进展）→ 计数 +1；不同（有进展/重跑）→ 归 1。
+ *   - 计数达阈值 → release=true（hook 放行 exit 0，停止 nag）。
+ */
+export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveBlocks) {
+  const prior = typeof prevCount === 'number' && prevCount > 0 ? prevCount : 0;
+  const count = prevSig && prevSig === signature ? prior + 1 : 1;
+  const release = count >= maxConsecutiveBlocks;
+  return { count, release };
+}
+
+function buildBlockReason(state, missingItems, summaryHint = null, progress = null) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
+  const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
   const lines = [
-    `[Stop Hook 提示] 当前会话存在未闭环阶段：`,
-    `  feature = "${feature}"`,
-    `  phase   = "${phase}"`,
-    `  state file = framework/harness/state/.current-phase.json`,
+    // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
+    `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`,
+    `  → ${rerunCmd}`,
+    ...(progress && progress.max > 0
+      ? [`（第 ${progress.count}/${progress.max} 次拦截；连续零进展达 ${progress.max} 次将自动放行，交还你/用户决定。）`]
+      : []),
     '',
     '未满足的闭环条件（CLAUDE.md §5.1）：',
     ...missingItems.map((m) => `  - ${m}`),
@@ -475,6 +532,21 @@ function buildBlockReason(state, missingItems, summaryHint = null) {
     '提醒你做出选择，不是要求"必须立刻完成"。继续 / 放弃二选一即可。',
   ];
   return lines.join('\n');
+}
+
+/**
+ * 逃生阀文案：连续 N 次零进展后放行时给的极短二选一提示（≤6 行）。
+ * 弱模型在死局里空回复时，不再被 exit 2 反复拉回；控制权交还用户。
+ */
+function buildEscapeValveReason(state, count) {
+  const phase = state.phase ?? 'unknown';
+  const feature = state.feature ?? 'unknown';
+  return [
+    `[Stop Hook] 本阶段已连续 ${count} 次零进展（harness 未重跑、blocker 未减）。已停止重复拦截，控制权交还你/用户。二选一：`,
+    `  ① 真正修复后重跑： cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`,
+    `  ② 放弃本阶段：     cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
+    `（本次已放行；state 仍 verdict=FAIL / receipt=missing，下游阶段门禁照常拦截，未绕过闭环。）`,
+  ].join('\n');
 }
 
 function buildAdvisory(state, stale) {
@@ -535,8 +607,8 @@ async function main() {
       ? payload.session_id.trim()
       : null;
 
-  // 拿 grace / ttl 时间常量（从 framework.config.json）
-  const { gracePeriodMs, ttlMs } = readStateMachineFromConfig(projectRoot);
+  // 拿 grace / ttl / 逃生阀阈值（从 framework.config.json）
+  const { gracePeriodMs, ttlMs, maxConsecutiveBlocks } = readStateMachineFromConfig(projectRoot);
 
   // 算 staleness
   const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now());
@@ -548,20 +620,45 @@ async function main() {
     return;
   }
 
-  // 当前会话遗留：盖章（如需要） + 更新 last_seen
-  if (sid) {
-    maybeUpdateState(stateAbs, state, sid, stale.shouldStamp);
-  }
+  // 逃生阀计数的上一次值（hook 自写字段；不参与 signature）
+  const prevSig = typeof state.block_signature === 'string' ? state.block_signature : '';
+  const prevCount =
+    typeof state.consecutive_block_count === 'number' ? state.consecutive_block_count : 0;
 
   // 走闭环判定
   const result = evaluateState(state);
   if (result.allow) {
+    // 闭环放行：盖章/last_seen + 清零逃生阀计数（仅在有残留计数时才写）
+    const resetExtra =
+      prevCount > 0 || prevSig ? { block_signature: '', consecutive_block_count: 0 } : undefined;
+    maybeUpdateState(stateAbs, state, sid, stale.shouldStamp, resetExtra);
     process.exit(0);
     return;
   }
 
-  // 未闭环 → 中性文案 + exit 2
-  const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state));
+  // 未闭环：算零进展 signature（blocker id 集合 + last_run_at），更新连续计数
+  const read = readPhaseSummary(projectRoot, state);
+  const signature = computeBlockSignature(state, read ? read.summary : null);
+  const { count, release } = decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveBlocks);
+
+  // 盖章/last_seen + 持久化计数（**在 exit 之前**，单次写）
+  maybeUpdateState(stateAbs, state, sid, stale.shouldStamp, {
+    block_signature: signature,
+    consecutive_block_count: count,
+  });
+
+  // 逃生阀：连续零进展达阈值 → 停止 nag，放行(exit 0) + 极短二选一，交还用户
+  if (release) {
+    process.stderr.write(buildEscapeValveReason(state, count) + '\n');
+    process.exit(0);
+    return;
+  }
+
+  // 未达阈值 → 动作优先文案 + exit 2
+  const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
+    count,
+    max: maxConsecutiveBlocks,
+  });
   const decision = {
     decision: 'block',
     reason,

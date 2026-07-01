@@ -144,6 +144,11 @@ export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     note: 'state_machine.ttl_hours 缺失：回填 12 小时',
   },
   {
+    path: 'state_machine.max_consecutive_blocks',
+    defaultValue: DEFAULT_STATE_MACHINE.max_consecutive_blocks,
+    note: 'state_machine.max_consecutive_blocks 缺失：回填 3（Stop hook 逃生阀阈值）',
+  },
+  {
     path: 'state_machine.schema_version',
     defaultValue: DEFAULT_STATE_MACHINE.schema_version,
     note: 'state_machine.schema_version 缺失：回填 1.1',

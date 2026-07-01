@@ -171,6 +171,7 @@ const cases: Case[] = [
           'paths.docs_committed',
           'state_machine.grace_period_minutes',
           'state_machine.ttl_hours',
+          'state_machine.max_consecutive_blocks',
           'state_machine.schema_version',
           'toolchain.hvigor.daemon',
         ]) {

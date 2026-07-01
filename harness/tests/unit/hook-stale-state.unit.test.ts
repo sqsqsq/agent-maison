@@ -34,6 +34,7 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 
 import { DEFAULT_STATE_MACHINE } from '../../config';
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
+import { extractBlockerSignature } from '../../scripts/utils/goal-failure-classifier';
 
 export interface UnitCaseResult {
   name: string;
@@ -65,11 +66,21 @@ interface FixtureOptions {
   /** state file 是否写出（默认 true） */
   writeStateFile?: boolean;
   /** framework.config.json 的 state_machine 段；不传则不写本字段（走 hook 默认值） */
-  stateMachine?: { grace_period_minutes?: unknown; ttl_hours?: unknown } | null;
+  stateMachine?: {
+    grace_period_minutes?: unknown;
+    ttl_hours?: unknown;
+    max_consecutive_blocks?: unknown;
+  } | null;
   /** state.phase；默认 'coding'。全局阶段（extensions / init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
   phaseOverride?: string;
   /** 可选写入 reports/<feature>/<phase>/summary.json，供 hook 阻断文案读取 next_action。 */
   summaryNextAction?: string;
+  /** 写入 summary.json 的 blocker id 列表（逃生阀 signature 用）。提供即写 summary（无需 summaryNextAction）。 */
+  blockerIds?: string[];
+  /** state.last_run_at（runner 写入的"真跑 harness"时间戳；逃生阀 signature 的一部分）。 */
+  lastRunAt?: string;
+  /** 追加写入 state 的额外字段（如预置 consecutive_block_count / block_signature）。 */
+  stateExtra?: Record<string, unknown>;
 }
 
 function makeFixture(opts: FixtureOptions): string {
@@ -126,10 +137,17 @@ function makeFixture(opts: FixtureOptions): string {
     if (opts.stateSessionId !== undefined) {
       state.session_id = opts.stateSessionId;
     }
+    if (opts.lastRunAt !== undefined) {
+      state.last_run_at = opts.lastRunAt;
+    }
+    if (opts.stateExtra) {
+      Object.assign(state, opts.stateExtra);
+    }
     fs.writeFileSync(stateAbs, JSON.stringify(state, null, 2) + '\n', 'utf-8');
   }
-  if (opts.summaryNextAction) {
+  if (opts.summaryNextAction || opts.blockerIds) {
     const phase = opts.phaseOverride ?? 'coding';
+    const blockers = (opts.blockerIds ?? []).map((id) => ({ id }));
     const summaryAbs = path.join(dir, 'doc', 'features', 'demo-feature', phase, 'reports', 'summary.json');
     fs.mkdirSync(path.dirname(summaryAbs), { recursive: true });
     fs.writeFileSync(summaryAbs, JSON.stringify({
@@ -137,7 +155,7 @@ function makeFixture(opts: FixtureOptions): string {
       phase,
       feature: 'demo-feature',
       verdict: 'FAIL',
-      blocker_count: 1,
+      blocker_count: blockers.length || 1,
       fail_count: 1,
       warn_count: 0,
       script_report: `doc/features/demo-feature/${phase}/reports/script-report.json`,
@@ -148,8 +166,8 @@ function makeFixture(opts: FixtureOptions): string {
       readiness_signals: [],
       blocking_warnings: [],
       blocking_skips: [],
-      blockers: [],
-      next_action: opts.summaryNextAction,
+      blockers,
+      next_action: opts.summaryNextAction ?? 'declare_dependencies_then_rerun',
     }, null, 2), 'utf-8');
   }
   return dir;
@@ -252,7 +270,8 @@ function testT2_sameSessionUnclosed(): void {
   try {
     const out = runHook({ session_id: 'sid-A' }, dir);
     assertEq(out.status, 2, 'T2 同会话 + 未闭环 → exit 2');
-    assertStderrContains(out, '未闭环阶段', 'T2 stderr 应包含中性提示开头');
+    assertStderrContains(out, '未闭环', 'T2 stderr 应包含"未闭环"提示（动作优先文案）');
+    assertStderrContains(out, '下一步只做这一件事', 'T2 stderr 应动作优先给出单条命令');
     assertStderrContains(out, '继续这个阶段', 'T2 stderr 应给出继续路径');
     assertStderrContains(out, '--clear-state', 'T2 stderr 应给出放弃路径');
     assertStderrNotContains(out, '假完成', 'T2 不应再用旧版"假完成"措辞');
@@ -426,6 +445,16 @@ function testT11_configConsistency(): void {
     DEFAULT_STATE_MACHINE.ttl_hours,
     'T11 hook HOOK_DEFAULT_TTL_MS 与 DEFAULT_STATE_MACHINE.ttl_hours 不一致',
   );
+
+  const maxBlocksMatch = /HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS\s*=\s*(\d+)/.exec(hookSrc);
+  if (!maxBlocksMatch) {
+    throw new Error('T11 无法在 hook 文件提取 HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS 字面量。');
+  }
+  assertEq(
+    Number(maxBlocksMatch[1]),
+    DEFAULT_STATE_MACHINE.max_consecutive_blocks,
+    'T11 hook HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS 与 DEFAULT_STATE_MACHINE.max_consecutive_blocks 不一致',
+  );
 }
 
 function testT12_invalidConfigFallsBack(): void {
@@ -548,6 +577,80 @@ function testT15_blockReasonIncludesSummaryNextAction(): void {
 }
 
 // --------------------------------------------------------------------------
+// T17–T19：逃生阀（P1-C）——零进展连续计数 + 达阈值 exit 0 + 真重跑归零 + goal parity
+// --------------------------------------------------------------------------
+
+function testT17_escapeValveReleasesAtThreshold(): void {
+  // 同一 fixture 连续 runHook：signature 不变（未重跑）→ 计数递增；第 3 次达阈值 → exit 0 放行。
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    blockerIds: ['coding_compile', 'file_completeness'],
+    lastRunAt: '2026-06-30T00:00:00.000Z',
+    stateMachine: { max_consecutive_blocks: 3 },
+  });
+  try {
+    const c1 = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(c1.status, 2, 'T17 第1次未闭环 → exit 2');
+    assertEq(readState(dir)?.consecutive_block_count, 1, 'T17 count=1');
+
+    const c2 = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(c2.status, 2, 'T17 第2次零进展 → exit 2');
+    assertEq(readState(dir)?.consecutive_block_count, 2, 'T17 count=2');
+
+    const c3 = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(c3.status, 0, 'T17 第3次达阈值 → 逃生阀 exit 0');
+    assertEq(readState(dir)?.consecutive_block_count, 3, 'T17 count=3');
+    assertStderrContains(c3, '已停止重复拦截', 'T17 逃生阀文案');
+    assertStderrContains(c3, '未绕过闭环', 'T17 应声明未绕过闭环（给用户定心丸）');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT18_realRerunResetsCounter(): void {
+  // 预置 count=2（已两次零进展）。若 last_run_at 变了（真重跑 harness）→ signature 变 → 计数归 1。
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    blockerIds: ['coding_compile'],
+    lastRunAt: '2026-07-01T12:00:00.000Z', // 与预置 signature 里的时间戳不同
+    stateExtra: { consecutive_block_count: 2, block_signature: 'coding_compile@@2026-06-30T00:00:00.000Z' },
+    stateMachine: { max_consecutive_blocks: 3 },
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T18 真重跑后 signature 变 → 未达阈值 → exit 2');
+    assertEq(readState(dir)?.consecutive_block_count, 1, 'T18 计数归 1（识别到有进展）');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT19_signatureParityWithGoal(): void {
+  // hook 写入 state.block_signature 的 id 部分（@@ 前）必须与 goal 的 extractBlockerSignature 同语义。
+  const ids = ['file_completeness', 'coding_compile']; // 故意乱序，验证 hook 也排序
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    blockerIds: ids,
+    lastRunAt: '2026-06-30T00:00:00.000Z',
+  });
+  try {
+    runHook({ session_id: 'sid-A' }, dir);
+    const sig = String(readState(dir)?.block_signature ?? '');
+    const idPart = sig.split('@@')[0];
+    const goalSig = extractBlockerSignature({ blockers: ids.map((id) => ({ id })) } as any);
+    assertEq(idPart, goalSig, 'T19 hook signature id 部分应与 goal extractBlockerSignature 一致');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+// --------------------------------------------------------------------------
 // 注册
 // --------------------------------------------------------------------------
 
@@ -575,6 +678,9 @@ const CASES: Array<{ name: string; fn: () => void }> = [
     name: 'T16 MAISON_GOAL_HEADLESS=1 旁路 Stop hook（未闭环仍 exit 0）',
     fn: testT16_goalHeadlessEnvBypassesStopHook,
   },
+  { name: 'T17 逃生阀：连续零进展达阈值 → exit 0 放行', fn: testT17_escapeValveReleasesAtThreshold },
+  { name: 'T18 真重跑 harness（last_run_at 变）→ 逃生阀计数归零', fn: testT18_realRerunResetsCounter },
+  { name: 'T19 hook signature 与 goal extractBlockerSignature 同语义', fn: testT19_signatureParityWithGoal },
 ];
 
 export function runAll(): UnitCaseResult[] {

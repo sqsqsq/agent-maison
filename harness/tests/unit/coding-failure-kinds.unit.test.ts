@@ -123,6 +123,29 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // 根因 B 回归：rollup 首错 "Unexpected token"（真实代码/构建错误）+ 无解析失败信号
+    // → 必须 project_build（引导改 file:line），绝不再盖成 project_dependency_*。
+    name: 'classify(B): rollup Unexpected token 真错 → project_build 非依赖误判',
+    run: () => {
+      const r = classifyCodingCompileFailure(
+        {
+          executed: true,
+          exitCode: 1,
+          errors: [
+            {
+              file: 'CardLifecycle.ets',
+              line: 59,
+              message:
+                'Unexpected token (Note that you need plugins to import files that are not JavaScript)',
+            },
+          ],
+        },
+        mkCtx(DEFAULT_LAYOUT.projectRoot),
+      );
+      assert.strictEqual(r.kind, 'project_build');
+    },
+  },
+  {
     name: '禁止 failure_kind 历史字面 hvigor_timeout / hvigor_incomplete_output',
     run: () => {
       const srcPath = path.join(hmosProfileDir, 'harness', 'coding-host-rules.ts');

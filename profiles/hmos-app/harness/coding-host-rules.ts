@@ -1059,6 +1059,10 @@ export function classifyCodingCompileFailure(
   }
 
   const depIssue = analyzeCodingDependencyIssueViaProfile(ctx, res);
+  // 根因 B（真实代码/构建错误优先）：depIssue.found 已收敛为"命中真实解析失败信号"
+  // （hvigor-runner `hasDependencyResolutionFailure` 单一判据；见 P0-A 的 found 收紧）。
+  // 因此无解析失败信号时——哪怕日志里散落 @scope/name 或 oh_modules 路径、或首错是 rollup
+  // "Unexpected token" 语法错——都不再误判依赖，直接落 project_build 引导回 file:line 改代码。
   if (depIssue.found) {
     return {
       kind: 'project_dependency_missing',

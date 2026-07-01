@@ -30,6 +30,7 @@ import {
   writeUtInstallDiagJson,
 } from './device-install-diag';
 import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
+import { hasDependencyResolutionFailure as hasDepResolutionFailureSignal } from './hvigor-runner';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -516,10 +517,8 @@ function classifyUtHvigorBuildFailure(
   if (configSchema) return configSchema;
 
   const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, res);
-  const hasDependencyResolutionFailure =
-    /Failed to resolve OhmUrl|Could not resolve|Cannot resolve|Cannot find module|Unable to resolve|Module not found/i.test(
-      log,
-    );
+  // 依赖解析失败判据收敛到 hvigor-runner 单一实现（防 coding/ut 内联正则漂移，根因 B）。
+  const hasDependencyResolutionFailure = hasDepResolutionFailureSignal(log);
   const touchesOhosTest = /\/src\/ohosTest\/|\\src\\ohosTest\\/i.test(log);
   const touchesCurrentModuleMain = new RegExp(`${escapeRegExp(moduleName)}[/\\\\]src[/\\\\]main`, 'i').test(
     log,

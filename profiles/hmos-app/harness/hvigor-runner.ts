@@ -250,6 +250,9 @@ const DEFAULT_HVIGOR_OPTIONS: ResolvedHvigorOptions = {
   analyze: 'advanced',
 };
 
+// 真实"依赖解析失败"信号。**刻意不含** /oh_modules/ 或 /ohpm/——那两个是路径/工具名，
+// 几乎每条 Harmony 构建日志都提到，会让"依赖问题"判定近乎恒真、把真实代码错也盖成依赖未声明
+// （根因 B）。只保留会明确表达"某 specifier 解析不到"的信号。
 const PROJECT_DEPENDENCY_PATTERNS = [
   /Failed to resolve OhmUrl/i,
   /Cannot find module/i,
@@ -257,9 +260,26 @@ const PROJECT_DEPENDENCY_PATTERNS = [
   /Cannot resolve/i,
   /Unable to resolve/i,
   /Module not found/i,
-  /oh_modules/i,
-  /ohpm/i,
 ];
+
+// ohpm 物理上**无法声明**的点分 SDK / 系统命名空间（SDK 自带，不进 oh-package.json5）。
+// 只收窄到点分命名空间；@hms-* / @hw-* 等连字符 vendor scope 是真·第三方 ohpm 包，绝不在此过滤
+// （否则会把真实缺声明吞成漏报、并破坏现有单测）。
+const SDK_RESERVED_SCOPE = /^@(?:ohos|kit|system|arkts)(?:\.|$)/i;
+
+/** 版本目录碎片（如 @1.0.0-301/oh_modules）——非包名，来自 .ohpm 缓存路径，物理上不可声明。 */
+function isVersionFragmentDep(scope: string, name: string): boolean {
+  return /^@\d/.test(scope) || name === 'oh_modules';
+}
+
+/**
+ * "依赖解析失败"信号的**单一判据**（根因 B 收敛点）。
+ * coding / ut 两条归因链都用它作为"是否走依赖分支"的前置门，避免各自内联正则漂移。
+ * 与 `analyzeProjectDependencyIssue().found` 同源（后者即 `PROJECT_DEPENDENCY_PATTERNS.some` 命中）。
+ */
+export function hasDependencyResolutionFailure(log: string): boolean {
+  return PROJECT_DEPENDENCY_PATTERNS.some(re => re.test(log));
+}
 
 export function analyzeProjectDependencyIssue(
   projectRoot: string,
@@ -314,7 +334,9 @@ export function analyzeProjectDependencyIssue(
   }
 
   return {
-    found: indicators.length > 0 || dependencies.length > 0,
+    // 只有命中真实解析失败信号才算"依赖问题"（根因 A.4）。
+    // "仅提取到包名"不足以判定——那可能只是失败行里顺带出现的路径；已由 A.1 收窄，此处再兜一道。
+    found: indicators.length > 0,
     dependencies,
     indicators,
     harnessNodeModulesReady,
@@ -373,10 +395,21 @@ export function looksLikeUtHvigorCommandMismatch(log: string): boolean {
 function extractDependencyNames(log: string): string[] {
   const deps = new Set<string>();
   const scopedRe = /@[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._\-\/]+)?/g;
-  for (const match of log.matchAll(scopedRe)) {
-    const raw = match[0].replace(/\\/g, '/');
-    const parts = raw.split('/');
-    if (parts.length >= 2) deps.add(`${parts[0]}/${parts[1]}`);
+  for (const line of log.split(/\r?\n/)) {
+    // 根因 A.1：只从"真实解析失败行"抽 import specifier。
+    // 构建进度 / 路径列举 / .ohpm 缓存路径（含 @<版本>/oh_modules 碎片）都不在失败行里 →
+    // 不再被通配误抓。行过滤复用 PROJECT_DEPENDENCY_PATTERNS，天然与 indicators 一致、不漂移。
+    if (!PROJECT_DEPENDENCY_PATTERNS.some(re => re.test(line))) continue;
+    for (const match of line.matchAll(scopedRe)) {
+      const raw = match[0].replace(/\\/g, '/');
+      const parts = raw.split('/');
+      if (parts.length < 2) continue;
+      const scope = parts[0];
+      const name = parts[1];
+      if (isVersionFragmentDep(scope, name)) continue; // A.2：版本目录碎片
+      if (SDK_RESERVED_SCOPE.test(scope)) continue; // A.3：点分 SDK 命名空间（不碰连字符 vendor）
+      deps.add(`${scope}/${name}`);
+    }
   }
   return Array.from(deps).sort();
 }

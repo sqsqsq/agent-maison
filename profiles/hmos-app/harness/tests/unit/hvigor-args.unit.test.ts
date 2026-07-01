@@ -417,6 +417,40 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
+    // 根因 A 回归：路径碎片（.ohpm/@<版本>/oh_modules）只出现在构建进度行、不在解析失败行 →
+    // 不得被误抓成依赖；且无真实失败信号时 found=false（不误判依赖问题）。
+    name: 'analyzeProjectDependencyIssue(A): 路径碎片/版本目录不入 deps，无失败信号 found=false',
+    run: () => withTmpDir(root => {
+      const log = [
+        '> hvigor building module FinancialCard...',
+        'resolving oh_modules/.ohpm/@1.0.0-301/oh_modules/xxx/index.ets',
+        'copy node_modules/@14.18.3-302/oh_modules/foo',
+        'CardLifecycle.ets:59 Unexpected token (Note that you need plugins to import files that are not JavaScript)',
+      ].join('\n');
+      const issue = analyzeProjectDependencyIssue(root, log);
+      assertEq(issue.found, false, '仅提及 oh_modules 路径 + 真实语法错，不该判依赖问题');
+      assertEq(issue.dependencies, [], '路径碎片不得被当依赖名');
+      assertEq(issue.missingDeclarations, [], '不得产出垃圾未声明依赖');
+    }),
+  },
+  {
+    // 根因 A.2/A.3 回归：真实失败行里的版本碎片被丢、点分 SDK 命名空间被丢、
+    // 但连字符 vendor 包（@hms-*）保留为真实缺声明。
+    name: 'analyzeProjectDependencyIssue(A): 失败行内过滤版本碎片/点分SDK，保留 vendor 包',
+    run: () => withTmpDir(root => {
+      const log = [
+        'Failed to resolve OhmUrl @1.0.0-301/oh_modules/x',
+        'Failed to resolve OhmUrl @ohos.multimedia/image/index',
+        'Failed to resolve OhmUrl @kit.ArkUI/x/y',
+        'Failed to resolve OhmUrl @hms-security/agoh-crypto/src/main/ets',
+      ].join('\n');
+      const issue = analyzeProjectDependencyIssue(root, log);
+      assertEq(issue.found, true, '有真实解析失败信号');
+      assertEq(issue.dependencies, ['@hms-security/agoh-crypto'], '只保留可声明的 vendor 包');
+      assertEq(issue.missingDeclarations, ['@hms-security/agoh-crypto'], 'SDK/碎片不得进未声明清单');
+    }),
+  },
+  {
     name: 'analyzeProjectDependencyIssue: external frameworkRoot 不 infer projectRoot',
     run: () => {
       const host = fs.mkdtempSync(path.join(os.tmpdir(), 'dep-ext-'));

@@ -60,6 +60,7 @@ import {
   dispatchDeviceTestRun,
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
+  analyzeProjectDependencyIssueViaProfile,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
@@ -1488,6 +1489,33 @@ function checkDeviceTestBuildGate(
         hv.successMarkerFound !== false);
 
     if (!compileOk) {
+      // P2：复用与 coding/ut 同一套（已根治的）依赖归因器，给弱模型可执行指引，
+      // 而不是甩一段裸日志。depIssue.found 已收敛为"命中真实解析失败信号"（见 hvigor-runner P0-A）。
+      let attribution: string[] = [];
+      try {
+        const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, {
+          logExcerpt: hv.logExcerpt,
+          errors: hv.errors ?? [],
+          logAbsPath: hv.logAbsPath,
+        });
+        if (depIssue?.found) {
+          attribution = [
+            '── harness 归因：工程依赖解析失败（非本轮测试代码）──',
+            depIssue.missingDeclarations?.length
+              ? `未在 oh-package.json5 声明：${depIssue.missingDeclarations.join(', ')}；补声明后重跑。`
+              : `解析失败依赖：${(depIssue.dependencies ?? []).join(', ') || '(见日志)'}。`,
+          ];
+        } else {
+          const firstErr = (hv.errors ?? [])[0];
+          attribution = [
+            firstErr
+              ? `── harness 归因：真实编译错误，定位并修复后重跑 → ${firstErr.file ?? ''}${firstErr.line ? ':' + firstErr.line : ''} ${firstErr.message}`
+              : '── harness 归因：非依赖问题，按日志定位首个编译错误的 file:line 改代码后重跑 ──',
+          ];
+        }
+      } catch {
+        // 归因是增益，失败不影响 BLOCKER 判定
+      }
       return [
         {
           id,
@@ -1500,6 +1528,7 @@ function checkDeviceTestBuildGate(
             `命令：${hv.command ?? '(unknown)'}`,
             `日志：${hv.logPath ?? '(无)'}`,
             res.hapPath ? `解析 HAP：${res.hapPath}` : '未解析到 signed 主 HAP（编译失败或未产出）',
+            ...(attribution.length ? ['', ...attribution] : []),
             ...(hv.diagnostics?.length
               ? ['', '── harness 诊断 ──', ...hv.diagnostics.map(d => `• ${d}`)]
               : []),
