@@ -181,7 +181,9 @@
 
 1. **必读**：`plan.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、architecture DSL、跨模块出口；**打开 contracts 涉及的已有源码**（`source_code_paths` ≥ 3）。
 2. **默认 subagent**：coding 阶段**默认 MUST** explore 子 agent 分片阅读；**仅** L1 trivial 可豁免（见 `change_intent` / `estimated_loc_delta`）。无 subagent 时用 `sequential` + 倍率阈值。
-3. 落盘 `doc/features/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空。
+3. **增量落盘（断点续跑）**：`doc/features/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空——
+   - 探索**开始先落** `ready_to_produce: false`，之后**每读完一批（约 5 个）源文件就 flush**：追加已 Read 文件进 `source_code_paths`、更新 `files_inspected_count`；全部读完才置 `ready_to_produce: true`。
+   - 意义：探索**途中超时**也留断点，goal 重跑据此**跳过已登记文件、只补剩余**；若重跑 prompt 附带"已检视文件清单"，直接采信、从未登记文件继续。
 
 ### Step 3: 逐模块逐层生成代码（强制逐文件 Lint 门禁）
 

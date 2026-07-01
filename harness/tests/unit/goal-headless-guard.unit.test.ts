@@ -437,6 +437,23 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'buildPhasePrompt: P2 skip-lines 注入续作块（无 artifacts 也生效）',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          'review',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          [],
+          ['以下 3 个源文件上次已检视，勿重复 Read：', '  - src/a.ets'],
+        );
+        assert(prompt.includes('TIMED OUT'), '仅 skip-lines 也应注入续作块');
+        assert(prompt.includes('src/a.ets'), '缺 skip-list 文件');
+      },
+    },
+    {
       name: 'extractDeterministicAffectedFiles: from blockers',
       run: () => {
         const files = extractDeterministicAffectedFiles({

@@ -165,6 +165,7 @@ Lite 时：
 1. **必读**：`spec.md`、`plan.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、被测命名入口源码（`source_code_paths` ≥ 3，**签名级**摘取）。
 2. **复合评分触发**：填写 frontmatter 变更信号；评分 ≥ 60 或 L4 时 MUST explore 子 agent；无 subagent 时用 sequential + 倍率阈值。
 3. Code Facts 须覆盖 `data_boundaries` 与被测 handler/Flow。
+4. **增量落盘（断点续跑）**：探索**开始先落** `ready_to_produce: false`，之后**每摘取完一批被测入口就 flush** `source_code_paths`/`files_inspected_count`（仅追加路径元数据，不增读上下文、不违反 ≤300 行）；探索**途中超时**也留断点，goal 重跑据此**跳过已登记入口、只补剩余**（重跑 prompt 附"已检视文件清单"时直接采信）。全部摘取完才 `ready_to_produce: true`。
 
 先读取全部上游输入：
 

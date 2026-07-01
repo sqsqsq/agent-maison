@@ -127,7 +127,10 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 1. **必读**：Step 1 列出的**全部待审源文件**（须 Read 每个文件）；`plan.md`、`contracts.yaml`、`acceptance.yaml`、`coding-rules.yaml`。
 2. **复合评分触发**：填写 frontmatter 变更信号；harness 评分 ≥ 60 或 L4 架构级变更时 MUST explore 子 agent；否则 sequential 须满足量化阈值。
-3. 落盘 `doc/features/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**，`source_code_paths` 覆盖待审文件。
+3. **增量落盘（断点续跑）**：`doc/features/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**——
+   - 探索**开始时先落一版** `ready_to_produce: false`，之后**每读完一批（约 5 个）待审文件就 flush 一次**：把已 Read 文件追加进 `source_code_paths`、同步更新 `files_inspected_count`。
+   - 意义：即使探索**途中超时**，盘上也留有"已检视文件"断点；goal 重跑会据此**跳过已登记文件、只补剩余**（勿重读已登记文件）。若重跑 prompt 附带"已检视文件清单"，直接采信、从未登记文件继续。
+   - **全部待审文件读完**后才把 `ready_to_produce` 置 `true`；`source_code_paths` 须覆盖全部待审文件。
 
 ### Step 2: 系统化审查
 

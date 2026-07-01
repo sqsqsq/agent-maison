@@ -1,63 +1,92 @@
 # P2 — Phase 内 checkpoint / resume：重阶段超时续跑而非整阶段重来
 
-> 拆自 `review超时根因…c3f08a21.plan.md` 的 P2，按用户要求单独立项。
-> 范围：跨阶段，但价值集中在**重阶段**（coding / review / testing）。架构级改动，独立排期。
-> 前置：建议在本轮 P0+P1 落地、验证稳定后再启动（P1-B 的"重试复用 partial"是本计划的轻量前驱）。
+> 拆自 `review超时根因…c3f08a21.plan.md` 的 P2。P0+P1 已提交（commit e371533f）。
+> 范围：价值集中在**重阶段**（review / testing，首版），架构级、回归面大。
+> 状态：**v1a 已实现，待 review**（用户已批准 v1a）。全绿：typecheck + 1308 单测 + 35 fixtures。
 
 ---
 
-## 一、要解决的根问题
+## ✅ v1a 实现完成（待你 review）
 
-当前 goal-runner 的最小执行单元是**一次完整 attempt**：超时（[goal-runner.ts:1159](harness/scripts/goal-runner.ts) 默认 3600s）即 kill，已做的工作**全部作废**，重试以 fresh-context 从零重做。
+- **skill 增量写**（唯一 agent 侧改动，**已覆盖全部重阶段**）：边探索边 flush（每 ~5 文件更新 `source_code_paths`/`files_inspected_count`，`ready_to_produce` 完成才置 true）——[review](skills/feature/code-review/SKILL.md) + [coding](skills/feature/coding/SKILL.md) + [plan](skills/feature/plan/SKILL.md) + [business-ut](skills/feature/business-ut/SKILL.md)（ut，含 ≤300 行约束适配）。spec 轻量不纳入。
+- **探索进度读取器**：[context-exploration.ts](harness/scripts/utils/context-exploration.ts) 导出 `readContextExplorationInspection` + `isContextExplorationPhase`。
+- **runner 派生断点**：新增 [goal-checkpoint.ts](harness/scripts/utils/goal-checkpoint.ts)——`deriveResumeInspection`（已检视∩真实存在∩本run 的 skip-list，验真防伪造）、`deriveReportSections`（从 partial 报告取二级标题=已写章节，**章节级断点**）、`buildResumeSkipLines`、`deriveAndWriteCheckpoint`（runner 从产物派生 checkpoint.json + sha256/mtime + `report_sections_done`）、`readPhaseCheckpointTimedOut`（跨进程 resume 回读）。
+- **注入**：[goal-runner.ts](harness/scripts/goal-runner.ts) 超时重试时把 skip-list（探索段）/已写章节（报告段"只补未写章节"）拼进 P1-B 续作块；每次 attempt 落 checkpoint.json；resume 首轮从 checkpoint 回读上轮 timed_out（补 c3f08a21 跨进程缺口）。
+- **通用性**：runner 逻辑对所有有探索产物的 phase（review/coding/plan/ut）生效——报告段超时注入"探索已完成 + 已写章节"；**四个重阶段均含增量写**，探索途中超时也覆盖。testing 无探索产物 → 回落 P1-B。spec 轻量不纳入。
+- **测试**：[goal-checkpoint.unit.test.ts](harness/tests/unit/goal-checkpoint.unit.test.ts) 10 例（exploring/验真剔除/陈旧拒绝/非探索回落/reporting/文案/章节级/deriveReportSections/checkpoint 落盘回读含 report_sections_done/缺档案）+ buildPhasePrompt skip-lines 注入。全绿 1310 单测 + 35 fixtures。
 
-- 重 review：19 文件逐读 + contracts 一致性 + 21 文件 context-exploration + 8 条结构化报告，单次天然逼近/超过预算，**一旦超时几乎必然重做全部探索**。
-- P1-B 只做到"把 partial 报告回喂给下一次 fresh-context"，**减少**重复但仍是"重启一次完整 attempt"。
-- 真正的根治是把 phase 内部变成**可中断、可续跑**：超时时落盘进度与已完成子任务，重试从断点续，而非重头。
-
-这是"从根解决、非单点"的最后一块：把"attempt 级原子性"降到"子任务级原子性"。
-
----
-
-## 二、设计方向（待评审细化）
-
-### 方案 B：以"可验证产物"为断点证据（**首版主干，采纳 codex**）
-- **不新建弱自述文件**。复用已有可机器验证的产物作为断点证据：
-  - `context-exploration.md` —— 已有 [context-exploration.ts:443](harness/scripts/utils/context-exploration.ts) `checkContextExplorationArtifact` 校验存在性、frontmatter、`ready_to_produce`、最低输入覆盖、量化阈值。
-  - review-report.md / test-report.md / receipt / summary.json —— 已有结构门禁。
-- checkpoint **引用这些产物 + 记录文件 hash/mtime**，续跑时校验产物未被篡改、已覆盖文件可信，跳过已覆盖部分。
-- 优点：断点证据天然可证伪，复用既有门禁，落地成本低。
-- 缺点：探索段覆盖好，报告组装/对账段的细粒度断点仍需方案 A 兜。
-
-### 方案 A：声明式子任务清单 + 完成态落盘（补方案 B 未覆盖段）
-- 重阶段 skill 显式声明可分解子任务（review：探索/逐文件分析/contracts 对账/报告组装）。
-- 每完成子任务落 `checkpoint.json`（已完成子任务 + **指向方案 B 的可验证产物 + hash**，而非纯自述）。
-- 续跑时 runner 注入 checkpoint：「X 已完成并产出 <可验证产物>，从 Y 继续」。
-- **关键：checkpoint 必须机器可验证**——子任务"已完成"的声明必须能对应到方案 B 的真实产物，否则视为未完成（防"假断点"，参照 receipt/closure 既有可证伪思路）。
-
-### 方案 C（最重）：runner 级子步 checkpoint + 真分段调度
-- 把 phase 拆成可独立调度的 sub-invoke，每 sub-invoke 独立超时与续跑。
-- 优点：粒度最细、最鲁棒。
-- 缺点：动调度内核、改 manifest/进度模型，回归面大；建议仅当 A+B 仍不够时再上。
-
-**建议路线（采纳两份 review 收敛）**：**B（可验证产物为断点）为首版主干** + A（声明式子任务）补未覆盖段；**C 明确不进首版**（两位 reviewer 一致）。**首版只落 review/testing 两个重阶段验证**，不一上来全 6 阶段统一机制（见待决策点④倾向）。
+### ⏸ 本轮明确不做（记录在案，待宿主测试后再规划）
+- **端到端实跑验收（§五 e2e）**：只用单元测试锁住 derive/inject/验真/陈旧/跨进程逻辑；**未跑真实 goal 超时续跑 e2e**（需能真实触发超时的长跑环境，用户将发新版到宿主实测后再定）。这是 plan §五 描述的验收，本轮以单测替代，e2e 延后。
 
 ---
 
-## 三、待评审决策点
-- [ ] checkpoint 落盘格式与位置（`<report_dir>/phases/<phase>/checkpoint.json`？）
-- [ ] checkpoint 真实性门禁：如何防 agent 谎报"子任务已完成"（参照 receipt/closure 既有可证伪思路）
-- [ ] 续跑注入与 P1-B prior-failure 回喂的合并边界（避免重复/冲突）
-- [ ] 适用阶段范围：仅 coding/review/testing，还是全 6 阶段统一机制
-- [ ] 与 `max_total_turns` / `wall_clock` 预算的计费关系（续跑不应绕过总预算）
-- [ ] **探索预算前置**（两份 review 共识增量）：plan/coding 首次超时、重试反而过 → fresh-context **首跑探索发散**。可在重阶段 skill 显式声明探索预算/产物清单（与子任务清单同源），让首跑就聚焦。与本计划子任务清单合并设计。
-- [ ] **wall vs 重试预算**（c3f08a21 round-2 延后）：当前派生 wall 只保证"单次无重试满预算跑完"；重 retry（如 review 120min×2）长跑仍会撞 wall。checkpoint/resume 落地后，重试应只补差额而非整阶段重算，从根上解掉"重 retry 撞 wall"。
-- [ ] **--resume 跨进程 partial 复用**（c3f08a21 round-2 延后）：`priorAttemptTimedOut` 进程内初值 false，resume 续跑首轮拿不到上轮超时信号 → P1-B partial 提示不注入。补法=从 events.jsonl 回读上轮 `timed_out`，与本计划"以可验证产物为断点"天然同源，一并实现。
+## 一、根问题 + 核心设计发现（已核实代码）
 
-## 四、验收（首版目标，可证伪）
-- 构造一个会超时的重 review：第一次超时落 checkpoint（含已检视 N 文件）；续跑日志显示**跳过**已检视文件、仅补未完成子任务，总耗时显著 < 两次全量。
-- 断点真实性门禁：伪造未完成的 checkpoint 标"已完成" → 门禁 FAIL。
-- 不破坏既有 goal 单测与 P0/P1 行为。
+goal-runner 最小执行单元是**一次完整 attempt**：超时（per-phase，见 goal-timeout）即 kill，已做工作全废，重试 fresh-context 从零重做。P1-B 只把 partial 报告回喂，仍是"重启一次完整 attempt"。
 
-## 五、约束
-- 架构级改动，回归面大：必须有充分单测覆盖调度路径后才合入 main。
-- 不擅自 bump（[[version-bump-only-on-request]]）；落 main（[[no-branch-without-request]]）；与 P0/P1 解耦，可独立交付。
+**核实发现（决定设计的关键）**：review 的 context-exploration.md 是在
+[code-review/SKILL.md:124 Step 1.5](skills/feature/code-review/SKILL.md) **探索全部完成后一次性落盘**（Step 2 写报告之前）。于是超时分两种：
+
+| 超时发生点 | context-exploration.md | 现状可续跑性 |
+|-----------|----------------------|------------|
+| **探索途中**（读 19 文件，**最大耗时段**） | 尚未落盘 | ❌ 无任何断点，全部重读 |
+| 报告写作段（Step 2） | 已落盘（ready_to_produce=true） | ⚠️ P1-B 已回喂文件，但无"哪些已检视"结构化信息 |
+
+→ **首版必须让"探索途中超时"也有断点**，否则治不到最大耗时段。
+
+**关键门禁事实**：[context-exploration.ts:524](harness/scripts/utils/context-exploration.ts) 在 `ready_to_produce!==true` 时判 BLOCKER FAIL。这正好**利好**——partial（未完成）探索本应 FAIL→触发重试；runner 只需在重试时从盘上这份 partial 文件**挖出已检视文件清单**做续跑，**无需改门禁**。
+
+---
+
+## 二、首版设计（v1，推荐）：增量探索产物 + runner 派生 checkpoint + 结构化续跑注入
+
+核心原则（codex"以可验证产物为断点、不靠 agent 自报"推到极致）：
+**checkpoint 由 runner 从盘上真实产物"读现实"派生，agent 永不自报完成度** → 结构上杜绝假断点。
+
+三个改动：
+
+### (1) skill：context-exploration.md 增量写（唯一 agent 侧行为改动）
+- review/testing 的 Research Sub-Phase 改为**边探索边落盘**：每读完一批（如每 5 个）待审文件，flush 一次 frontmatter（更新 `source_code_paths` / `files_inspected_count`，`ready_to_produce` 保持 false），全部完成再置 true。
+- 已声明待审文件清单（Step 1 已有）→ 天然是"探索预算前置/子任务清单"，首跑就聚焦、不发散（吸收两份 review 的"探索发散"共识）。
+
+### (2) runner：超时重试时从产物派生 checkpoint + 注入结构化续跑
+- 在现有 [goal-runner.ts collectTimeoutResumableArtifacts](harness/scripts/goal-runner.ts)（P1-B）基础上扩展：解析盘上 context-exploration.md frontmatter，取**已检视且真实存在**的 `source_code_paths`（与 contracts.files 交集，验真），构造 skip-list。
+- 注入 prompt（扩展 P1-B 续作块）：
+  「上次超时中断。已检视并登记的 N 个文件：{list}，**勿重复 Read**；从**未登记文件**继续探索，补全 context-exploration.md 后再产出报告。」
+- 报告段：若 context-exploration.md 已 ready_to_produce=true 但报告 partial → 注入"探索已完成，续写报告剩余章节"（复用 P1-B partial 报告 + mtime 守卫）。
+
+### (3) checkpoint.json（runner 派生，仅观测/续跑态）
+- `<report_dir>/phases/<phase>/checkpoint.json`：runner 每次 attempt 后**从产物计算**写入
+  `{ stage: 'exploring'|'reporting', inspected_files: [...], report_sections_done: [...], evidence: { context_exploration: {path, sha256, files_inspected_count, mtime}, report: {path, sha256, mtime} } }`。
+- **agent 不写它**——它是 runner 对"盘上现实"的快照。防假断点=天然（读的就是真实产物 + hash + mtime 在本 run 内）。
+
+> 无需方案 C（分段调度内核）；无需改 context-exploration 门禁；agent 侧只加"增量写"一条。
+
+---
+
+## 三、决策点（已定/给建议，待你拍板）
+1. **落盘格式/位置**：`<report_dir>/phases/<phase>/checkpoint.json`，**runner 派生**（非 agent 自写）。✅ 建议采纳。
+2. **防假断点**：runner 从产物读现实 + hash + mtime∈本run + skip-list 仅取"已登记∩真实存在∩审查范围内"文件 → 结构上无法伪造。复用 checkContextExplorationArtifact 的路径存在校验。✅
+3. **与 P1-B 合并边界**：P2 = P1-B 的超集。P1-B 给"partial 文件清单"，P2 再叠加"哪些文件已检视"的**结构化 skip-list**。同一注入块，去重。✅
+4. **适用范围（已核实纠偏）**：context-exploration.md 仅 spec/plan/coding/review/ut 产出，**testing 无探索产物**（靠 trace）。故：
+   - **runner 派生/注入做成通用**——凡该 phase 盘上有 context-exploration.md 即挖 skip-list，天然覆盖 review/coding/plan/ut；无此产物者（testing）自动回落 P1-B 报告复用。
+   - **skill 增量写 v1 只做 review**（已核实主痛点）；coding/plan/ut 同法留 v2；testing 不适用本机制。
+5. **预算计费**：续跑仍按正常 turn 计入 `max_total_turns`/`wall`，**不绕过总预算**；收益来自"少做重复功"而非加预算。这也顺带缓解 c3f08a21 遗留的"重 retry 撞 wall"（每次 retry 做得更少→更易在剩余预算内收敛）。✅
+6. **--resume 跨进程**（c3f08a21 遗留）：checkpoint.json 落盘后，resume 新进程**直接读它**即可拿到上轮进度（含是否超时），补掉"priorAttemptTimedOut 进程内丢失"。✅ 与本设计天然同源。
+
+## 四、需你拍板的一个取舍
+- **v1a（推荐）**：含 skill"增量写"改动 → 覆盖**探索途中超时**（最大耗时段），但改了重阶段 agent 行为、需回归。
+- **v1b（最小）**：纯 runner 侧，只用探索**完成后**的产物 → 只覆盖报告段超时，不改 skill。落地更快但治不到最大耗时段。
+
+倾向 **v1a**：不解决探索途中超时，等于没治现场那 60min 的主要构成。
+
+## 五、验收（可证伪）
+- 构造会在**探索途中**超时的重 review：首次超时落 partial context-exploration.md（已登记 N 文件）+ checkpoint.json；续跑日志显示 skip 已登记文件、只读剩余，**总耗时显著 < 两次全量探索**。
+- 报告段超时：续跑复用 partial 报告 + 探索产物，不重探索。
+- 防假断点：手改 checkpoint.json 标记多余"已检视"文件（盘上不存在/超范围）→ skip-list 不采纳该文件（验真拦截）。
+- resume 跨进程：kill 后 --resume，新进程从 checkpoint.json 恢复 skip-list。
+- 既有 goal 单测 + P0/P1 行为不破。
+
+## 六、约束
+- 架构级、回归面大：调度路径充分单测后才合入 main。
+- 不擅自 bump（[[version-bump-only-on-request]]）；落 main（[[no-branch-without-request]]）；改进合并进既有文件（[[merge-not-new-files]]）；与 P0/P1 解耦可独立交付；goal/普通模式能力拉齐（[[goal-and-normal-mode-capability-parity]]）。

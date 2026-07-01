@@ -163,6 +163,7 @@ coding / review / UT / harness **一律优先读 `contracts.yaml`**，避免 pla
 
 - 路径：`doc/features/<feature>/plan/context-exploration.md`
 - **`schema_version: "1.1.0"`**；`decisions_unlocked` 列出即将在 plan 中冻结的决策
+- **增量落盘（断点续跑）**：探索**开始先落** `ready_to_produce: false`，之后**每读完一批（约 5 个）源文件就 flush** `source_code_paths`/`files_inspected_count`；探索**途中超时**也留断点，goal 重跑据此**跳过已登记文件、只补剩余**（重跑 prompt 附"已检视文件清单"时直接采信、从未登记文件继续）。
 - 自检通过后 `ready_to_produce: true`
 
 ### Step 2.5: Scope 继承与提议（Scope 守门机制核心）

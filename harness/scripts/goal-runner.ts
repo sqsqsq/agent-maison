@@ -40,6 +40,13 @@ import {
 } from './utils/goal-manifest';
 import { resolvePhaseTimeoutMs, resolveWallClockMs } from './utils/goal-timeout';
 import {
+  deriveResumeInspection,
+  buildResumeSkipLines,
+  deriveReportSections,
+  deriveAndWriteCheckpoint,
+  readPhaseCheckpointTimedOut,
+} from './utils/goal-checkpoint';
+import {
   generateGoalReportJson,
   loadGoalReportJson,
   writeGoalReport,
@@ -474,6 +481,7 @@ export function buildPhasePrompt(
   priorFailure?: string,
   priorFailureKind?: FailureKind,
   partialResumeArtifacts?: string[],
+  resumeSkipLines?: string[],
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -499,17 +507,22 @@ export function buildPhasePrompt(
       ? 'If coding artifacts are ready: report "coding phase complete — goal continues to review→ut→testing" (not "goal run finished").'
       : '',
   ].filter(Boolean);
-  if (partialResumeArtifacts && partialResumeArtifacts.length > 0) {
+  const hasArtifacts = !!partialResumeArtifacts && partialResumeArtifacts.length > 0;
+  const hasSkipLines = !!resumeSkipLines && resumeSkipLines.length > 0;
+  if (hasArtifacts || hasSkipLines) {
     parts.push(
       '',
       '## Prior attempt TIMED OUT — resume from partial work (NOT a content failure)',
       '',
-      'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. The following artifacts were already (partially) written to disk. **Re-read them first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch:**',
-      '',
-      ...partialResumeArtifacts.map(f => `- ${f}`),
-      '',
-      'Resume where the prior attempt left off, finish the remaining work, then re-run this phase harness.',
+      'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**',
     );
+    if (hasArtifacts) {
+      parts.push('', 'Already (partially) written to disk:', '', ...partialResumeArtifacts!.map(f => `- ${f}`));
+    }
+    if (hasSkipLines) {
+      parts.push(...resumeSkipLines!);
+    }
+    parts.push('', 'Resume where the prior attempt left off, finish the remaining work, then re-run this phase harness.');
   }
   if (priorFailure) {
     parts.push(
@@ -1178,12 +1191,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // P1-B：上轮因超时中断（非内容失败）时，把已落盘的 partial 产物回喂，
-        // 让重试 fresh-context 续作而非从零重做探索。
+        // P1-B/P2：上轮因超时中断（非内容失败）时，把已落盘 partial 产物 + 已检视文件 skip-list
+        // 回喂，让重试续作而非从零重做探索。跨进程 resume 首轮从 checkpoint.json 回读上轮 timed_out
+        // （补 in-process priorAttemptTimedOut 在新进程丢失的缺口）。
+        const isResumeFirstRound = Boolean(argv.resume) && phaseIdx === chainStartIndex && retries === 0;
+        const timedOutForResume =
+          priorAttemptTimedOut ||
+          (isResumeFirstRound &&
+            readPhaseCheckpointTimedOut(projectRoot, manifest.report_dir, phase));
         const partialResumeArtifacts =
-          isPhaseContinuation && priorAttemptTimedOut
+          isPhaseContinuation && timedOutForResume
             ? collectTimeoutResumableArtifacts(projectRoot, manifest.feature, phase, wallClockStartMs)
             : [];
+        const resumeInspection =
+          isPhaseContinuation && timedOutForResume
+            ? deriveResumeInspection(projectRoot, manifest.feature, phase, wallClockStartMs)
+            : null;
+        const resumeSkipLines = resumeInspection
+          ? buildResumeSkipLines(
+              resumeInspection,
+              deriveReportSections(projectRoot, partialResumeArtifacts),
+            )
+          : [];
 
         const prompt = buildPhasePrompt(
           manifest,
@@ -1193,6 +1222,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           priorFailure,
           priorFailureKind,
           partialResumeArtifacts,
+          resumeSkipLines,
         );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -1297,6 +1327,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
           exit_code: harnessExit,
         });
         flushProgress();
+
+        // P2：本次 attempt 结束后，runner 对"盘上现实"派生 checkpoint.json（观测 + 跨进程 resume）。
+        if (!dryRun) {
+          deriveAndWriteCheckpoint({
+            projectRoot,
+            reportDir: manifest.report_dir,
+            feature: manifest.feature,
+            phase,
+            sinceMs: wallClockStartMs,
+            timedOut: invoke.timed_out === true,
+            artifactRelPaths: collectTimeoutResumableArtifacts(
+              projectRoot,
+              manifest.feature,
+              phase,
+              wallClockStartMs,
+            ),
+          });
+        }
 
         progressSubstep = 'verdict';
         let { summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(

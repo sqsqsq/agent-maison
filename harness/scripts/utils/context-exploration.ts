@@ -159,6 +159,56 @@ function normalizeStringArray(v: unknown): string[] {
   return [];
 }
 
+/** 有 context-exploration.md 门禁的 phase（testing 无——靠 trace）。 */
+const CONTEXT_EXPLORATION_PHASES = new Set<string>(['spec', 'plan', 'coding', 'review', 'ut']);
+export function isContextExplorationPhase(phase: string): phase is ContextExplorationPhase {
+  return CONTEXT_EXPLORATION_PHASES.has(phase);
+}
+
+export interface ContextExplorationInspection {
+  /** 探索是否已完成（可进入主产出）。 */
+  readyToProduce: boolean;
+  /** frontmatter.source_code_paths（已检视源文件声明，规范化后）。 */
+  sourceCodePaths: string[];
+  filesInspectedCount: number | null;
+  /** context-exploration.md 自身的 mtime（用于判断是否本 run 产出）。 */
+  mtimeMs: number | null;
+  absPath: string;
+}
+
+/**
+ * 读取 context-exploration.md 的探索进度（P2 断点续跑派生 skip-list 用）。
+ * 文件不存在/解析失败 → null / 空。只读不校验（校验归 checkContextExplorationArtifact）。
+ */
+export function readContextExplorationInspection(
+  projectRoot: string,
+  feature: string,
+  phase: ContextExplorationPhase,
+): ContextExplorationInspection | null {
+  const abs = path.join(receiptDirPath(projectRoot, feature, phase), 'context-exploration.md');
+  if (!fs.existsSync(abs)) return null;
+  let raw: string;
+  let mtimeMs: number | null = null;
+  try {
+    raw = fs.readFileSync(abs, 'utf-8');
+    mtimeMs = fs.statSync(abs).mtimeMs;
+  } catch {
+    return null;
+  }
+  const { fm, error } = parseContextExploration(raw);
+  if (error) {
+    return { readyToProduce: false, sourceCodePaths: [], filesInspectedCount: null, mtimeMs, absPath: abs };
+  }
+  return {
+    readyToProduce: fm.ready_to_produce === true,
+    sourceCodePaths: normalizeStringArray(fm.source_code_paths),
+    filesInspectedCount:
+      typeof fm.files_inspected_count === 'number' ? fm.files_inspected_count : null,
+    mtimeMs,
+    absPath: abs,
+  };
+}
+
 function resolveThresholds(
   phase: ContextExplorationPhase,
   phaseRule?: PhaseRuleSpec,

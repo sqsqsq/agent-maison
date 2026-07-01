@@ -150,6 +150,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'migrate-feature-phase-paths', modulePath: './unit/migrate-feature-phase-paths.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
   { id: 'goal-timeout', modulePath: './unit/goal-timeout.unit.test' },
+  { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
