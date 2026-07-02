@@ -120,6 +120,15 @@
           "type": "string",
           "description": "P0-E：受控近似的显式承认（如「原图彩色线性图标，以 system_symbol+color_ref 着色近似」）"
         },
+        "subtitle": {
+          "type": "string",
+          "description": "P0-D：list_row 副标题文本（副标题建模在主节点上，禁独立平铺节点）"
+        },
+        "subtitle_position": {
+          "type": "string",
+          "enum": ["trailing", "below"],
+          "description": "P0-D：副标题位置——trailing=与主标题同行右置 / below=题下；pixel_1to1 P0 屏有 subtitle 必填（门禁 ui_spec_structure_lint）"
+        },
         "children": {
           "type": "array",
           "items": { "$ref": "#/definitions/componentNode" }

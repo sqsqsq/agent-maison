@@ -62,9 +62,14 @@
      - 命名规范
      - 异常处理（vs acceptance.yaml）
      - spec 功能覆盖
+     - 视觉保真（UI 需求，P1-B·f2d8c4a6：消费 spec/coding 落盘报告——asset-crop-validation/contact-sheet、
+       可见文案豁免表复核、结构声明对照、must_have 覆盖；pixel_1to1 全覆盖不许抽查）
   2. 问题清单中是否有来自上述各维度的检查结果
   3. 若某个关键维度完全未审查（未在方法中声明且问题清单无相关分类），标为 FAIL
   4. 特别关注：架构分层和 plan.md 一致性是否被充分审查
+  5. UI 需求特别关注：「视觉保真」维度引用的产物路径是否真实存在、结论是否与产物一致
+     （抽样打开 asset-crop-validation.json / 豁免表核对，防"声称看过"——脚本门禁 visual_fidelity_review
+     只核证据被引用，真实性靠本检查兜）
 
 ### 检查 2: 问题准确性 (issue_accuracy)
 

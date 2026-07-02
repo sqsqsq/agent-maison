@@ -117,6 +117,18 @@ structure_checks:
         - "审查日期"
         - "审查版本"
 
+  visual_fidelity_review:
+    description: >
+      P1-B（plan f2d8c4a6）：UI 需求（spec ui_change 需 ui-spec）的 review 报告必须包含「视觉保真」审查维度，
+      且引用执行证据——素材验真（asset-crop-validation/contact-sheet）、可见文案 diff（visible_text/豁免表复核）、
+      结构声明复核（subtitle_position/分组容器/layout_group）、must_have 覆盖。pixel_1to1 下四类证据**全覆盖**
+      （不许抽查）→ 缺任一 FAIL BLOCKER；非 pixel_1to1 至少一类。review 不重跑度量、消费 spec/coding 落盘报告。
+      round6 实证（RC6）：review 五维 checklist 无一条看图，废图+乱布局"有条件通过"。
+      诚实边界：本 check 只核"证据被引用"，引用真实性归 AI verifier issue_accuracy 抽样与人工复核。
+    severity: BLOCKER
+    rule:
+      expect: "visual_fidelity_dimension_with_evidence"
+
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------
@@ -128,11 +140,13 @@ semantic_checks:
       架构层合规性（依据 framework.config.json > architecture.outer_layers）、
       模块内部分层（依据 architecture.module_inner_layers）、
       接口一致性（vs plan.md）、资源引用完整性、命名规范、异常处理、
-      spec 功能覆盖
+      spec 功能覆盖、视觉保真（UI 需求，P1-B：消费 spec/coding 落盘报告，见 visual_fidelity_review）
     severity: MAJOR
     ai_prompt_hint: >
       检查审查报告是否涵盖了所有关键维度，
-      特别是架构分层和 plan.md 一致性是否被审查
+      特别是架构分层和 plan.md 一致性是否被审查；
+      UI 需求（有 ui-spec 的 feature）还须检查「视觉保真」维度是否真实执行——
+      报告引用的 asset-crop-validation/contact-sheet/文案豁免表是否真实存在且结论与产物一致（抽样核对，防"声称看过"）
 
   issue_accuracy:
     description: >

@@ -312,6 +312,29 @@ structure_checks:
     rule:
       provider: spec.ui_spec
 
+  capture_completeness_external:
+    description: >
+      P0-D（plan f2d8c4a6）：spec 完整性**外部对照**——真分母=参考原图 OCR 全文清单（状态栏 band 剔除、
+      单字符/纯符号去噪、金额样式保留），替换"分母是 agent 自己抽的清单"的 RC4 自循环（round6 实证：
+      右置副标题×5/优化横幅/¥119.40 连续两轮漏抽而 capture 100% PASS）。OCR 行未被 ui-spec/ref-elements
+      文本集覆盖 → 逐条 disposition（补 implement 建模 或 defer+真人签）才放行，pixel_1to1 BLOCKER。
+      反向 diff（spec 有而原图无=疑似幻觉）仅低置信注记。OCR 不可用 → pixel_1to1 不得 PASS（toolchain）。
+      诚实边界：只保证"文本进了分母"，不保证"建模位置/分组正确"。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+
+  ui_spec_structure_lint:
+    description: >
+      P0-D（plan f2d8c4a6）：pixel_1to1 P0 屏结构声明必填 lint——(1) 节点有 subtitle 必须显式
+      subtitle_position（trailing|below，副标题右置 vs 题下 coding 不得猜）；(2) 连续 ≥3 个 list_selection
+      平铺且无 layout_group/父容器 bg_color → 须建分组容器（round6：5 行卡种应同卡）；(3) global_elements
+      声明的浮动 tab 容器节点须有 bg_color（胶囊容器建模）。诚实边界：只保证"有声明"不保证"声明对"，
+      门禁绿≠结构对（正确性归 review 视觉维度 + device 回环）。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+
   asset_crop_validation:
     description: >
       P0-B（plan f2d8c4a6）：裁剪产物验真。对**全部** acquisition:crop 资产（新裁/历史已存在/已物化

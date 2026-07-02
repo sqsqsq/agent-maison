@@ -29,7 +29,10 @@ import {
   collectBakedTextAssetIssues,
   collectIconSubstitutionIssues,
   collectActionButtonVariantDeclIssues,
+  collectVisibleTextIssues,
 } from './visual-parity-backstop';
+import { collectSpecTextUniverse } from './capture-completeness-check';
+import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 function ruleDesc(
@@ -153,19 +156,61 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     });
   }
 
-  // v3 渲染忠实度：声明 width_ratio/align 几何 + tonal 填充 vs 源码渲染（P0 屏先行，低置信 WARN）
+  // v3 渲染忠实度：声明 width_ratio/align 几何 + tonal 填充 vs 源码渲染。
+  // P1-A（f2d8c4a6）升级：这些是**源码静态可判**项（定位不到 Button/色值时收集器已保守跳过，
+  // 产出的 issue 均为确定性命中）——pixel_1to1 P0 从"低置信 WARN 以 device 为准"升 BLOCKER。
+  // round6 实证：按钮声明 width_ratio=0.28 却源码 .width('100%')，本门禁抓到了却只 WARN，正确信号被降级丢失。
   const renderIssues = collectRenderFaithfulnessIssues(ctx, doc, baselineUnverified);
   if (renderIssues.length > 0) {
+    const { severity, status } = isPixel1to1(ctx)
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({
       id: 'visual_parity_render',
       category: 'structure',
       description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: ['【渲染忠实度·低置信，以 device visual-diff 为准】', ...renderIssues.map(i => i.detail)].join('\n'),
-      suggestion: '核对按钮占宽(width_ratio)与填充(tonal/实心)是否按 spec 渲染；最终以真机 visual-diff 像素核对为准。',
+      severity,
+      status,
+      details: [
+        isPixel1to1(ctx)
+          ? '【渲染忠实度·pixel_1to1 阻断：spec 声明的静态可判几何/填充未按声明渲染】'
+          : '【渲染忠实度·低置信，以 device visual-diff 为准】',
+        ...renderIssues.map(i => i.detail),
+      ].join('\n'),
+      suggestion:
+        '按 spec 声明渲染：width_ratio≤0.6/align=end 的按钮不得 .width(\'100%\')/layoutWeight(1)；' +
+        'variant=tonal 不得高饱和实心 backgroundColor。真正静态不可判的场景收集器已跳过、由 device 兜。',
       affected_files: [uiSpecRel],
     });
+  }
+
+  // P1-A（f2d8c4a6）：可见文案白名单——源码/string.json 渲染文本 ⊆ spec 文本集 ∪ 豁免表（须 rationale）。
+  {
+    const refDoc = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature));
+    const specTexts = collectSpecTextUniverse(doc, refDoc?.elements ?? null);
+    const visibleTextIssues = collectVisibleTextIssues(ctx, specTexts, baselineUnverified);
+    if (visibleTextIssues.length > 0) {
+      const { severity, status } = isPixel1to1(ctx)
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      results.push({
+        id: 'visible_text_whitelist',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: [
+          '【可见文案白名单·P1-A】源码渲染的用户可见文本不在 spec 文本集——原图没有的文案不得无中生有：',
+          ...visibleTextIssues.map(i => i.detail),
+          '【边界】动态拼接/变量文本静态不可判（漏报归 device 回环）；无 CJK 技术字符串不查。',
+        ].join('\n'),
+        suggestion:
+          '逐条处置：文本确在原图 → 回 spec 补 ref-elements/ui-spec（走 capture_completeness_external）；' +
+          '确属功能必需的非原图文案（toast/错误提示等）→ 登记 doc/features/<feature>/coding/visible-text-exemptions.yaml' +
+          '（entries[].text/rationale，无 rationale 不生效，review 视觉维度会复核）；纯脑补 → 删除。',
+        affected_files: [uiSpecRel],
+      });
+    }
   }
 
   // s1 asset 真渲染：声明 asset_ref 却未 $r 引用 media（catches #6 tab 仅文字）

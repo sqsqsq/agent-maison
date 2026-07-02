@@ -296,6 +296,17 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     'spec.ui_spec',
     'checkUiSpecBboxSemantic',
   );
+  // P0-D（plan f2d8c4a6）：外部完整性对照（真分母=原图 OCR 全文）+ 结构声明 lint。
+  const externalAuditFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkCaptureExternalAudit',
+  );
+  const structureLintFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkUiSpecStructureLint',
+  );
   // 消费 dispatchSpecVisualHandoff 注入的 ctx.refElementsManifest（structured 第二刀）；须在其之后派发。
   return [
     ...fn(ctx, specMarkdown),
@@ -303,6 +314,8 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     ...captureFn(ctx, specMarkdown),
     ...styleFn(ctx, specMarkdown),
     ...bboxSemanticFn(ctx, specMarkdown),
+    ...externalAuditFn(ctx, specMarkdown),
+    ...structureLintFn(ctx, specMarkdown),
   ];
 }
 

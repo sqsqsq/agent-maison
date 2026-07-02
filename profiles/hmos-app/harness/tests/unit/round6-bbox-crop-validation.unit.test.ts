@@ -519,6 +519,354 @@ test('materialize_gate_requires_full_binding', () => {
   assert.strictEqual(lines.length, 0, `完整绑定且一致应放行：${lines.join('|')}`);
 });
 
+// ============================================================
+// Phase 2（P0-D / P1-A / P1-B）：完整性外部对照、结构 lint、文案白名单、render 升级、review 视觉维度
+// ============================================================
+
+import {
+  checkCaptureExternalAudit,
+  checkUiSpecStructureLint,
+  collectSpecTextUniverse,
+  isLineCoveredBySpecTexts,
+} from '../../capture-completeness-check';
+import {
+  collectVisibleTextIssues,
+  collectRenderFaithfulnessIssues,
+} from '../../visual-parity-backstop';
+import { checkVisualFidelityReview } from '../../../../../harness/scripts/check-review';
+
+const MINE_ETS = path.join(FIXTURES, 'source', 'MineTabPage.ets.txt');
+const GUIDE_ETS = path.join(FIXTURES, 'source', 'CardGuideSection.ets.txt');
+const STRING_JSON = path.join(FIXTURES, 'source', 'string.json.txt');
+
+test('p0d_line_cover_units', () => {
+  const spec = ['集中管理您的卡证票券钥匙', '添加管理卡片', '卡包'];
+  // OCR 常把同 y 带两个元素聚成一行——联合覆盖须命中
+  assert.ok(isLineCoveredBySpecTexts('集中管理您的卡证票券钥匙添加管理卡片', spec), '聚合行应被联合覆盖');
+  assert.ok(isLineCoveredBySpecTexts('卡包', spec), '短行子串应覆盖');
+  assert.ok(!isLineCoveredBySpecTexts('金融信息', spec), '原图外文本不得被覆盖');
+  assert.ok(!isLineCoveredBySpecTexts('银行卡/交通卡/门禁卡等', spec), '漏抽副标题不得被覆盖');
+});
+
+test('p0d_external_audit_missed_text_fail_full_capture_pass', () => {
+  if (!isOcrAvailable()) return;
+  // 坏态：spec 文本集刻意缺失（只留 2 条）→ 原图 OCR 大量行未覆盖 → FAIL
+  const badDoc = subsetAddCard(axisFixDoc(loadTransposedDoc()), []);
+  for (const s of badDoc.screens ?? []) {
+    if (s.root?.children) s.root.children = s.root.children.filter(c => ['add_card_nav_title', 'add_card_bank'].includes(c.id ?? ''));
+  }
+  {
+    const { ctx } = mkProject(docToYaml(badDoc));
+    const r = checkCaptureExternalAudit(ctx, SPEC_MD);
+    const hit = r.find(x => x.id === 'capture_completeness_external');
+    assert.ok(hit && hit.status === 'FAIL' && hit.severity === 'BLOCKER',
+      `漏抽应 FAIL：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
+    assert.ok(/未被 spec 捕获/.test(hit!.details));
+  }
+  // 正样本：把原图 OCR 全部行文本塞进 ref-elements 当分母 → 全覆盖 PASS（FP 铁律）
+  {
+    const fullDoc = subsetAddCard(axisFixDoc(loadTransposedDoc()), []);
+    const { root, ctx } = mkProject(docToYaml(fullDoc));
+    const ocr = ocrImageWords(ADD_CARD_JPG);
+    assert.ok(ocr.ok && ocr.words);
+    const lines = clusterOcrLines(ocr.words!.filter(w => w.text.replace(/\s+/g, '').length > 0));
+    const refEls = lines.map((l, i) => ({ element_id: `ocr_line_${i}`, text: l.text, disposition: 'implement' }));
+    fs.writeFileSync(
+      path.join(root, 'doc', 'features', 'homepage', 'spec', 'ref-elements.yaml'),
+      YAML_LIB.stringify({ schema_version: '1.0', elements: refEls }),
+      'utf-8',
+    );
+    const r = checkCaptureExternalAudit(ctx, SPEC_MD);
+    const hit = r.find(x => x.id === 'capture_completeness_external');
+    assert.ok(hit && hit.status === 'PASS', `全捕获应 PASS（FP 铁律）：${hit?.details.slice(0, 300)}`);
+  }
+});
+
+test('p0d_structure_lint_flat_list_and_subtitle', () => {
+  const mkDoc = (mutate: (doc: UiSpecDoc) => void): UiSpecDoc => {
+    const doc: UiSpecDoc = {
+      schema_version: '1.0',
+      screens: [{
+        id: 's1', priority: 'P0', ref_id: 'add_card',
+        root: {
+          type: 'navigation_frame', order: 0,
+          children: [
+            { type: 'list_selection', order: 0, id: 'r1', text: '银行卡' },
+            { type: 'list_selection', order: 1, id: 'r2', text: '交通卡' },
+            { type: 'list_selection', order: 2, id: 'r3', text: '门禁卡' },
+            { type: 'list_selection', order: 3, id: 'r4', text: '车钥匙' },
+          ],
+        },
+      }],
+      tokens: {}, assets: [],
+    } as unknown as UiSpecDoc;
+    mutate(doc);
+    return doc;
+  };
+  const runLint = (doc: UiSpecDoc) => {
+    const { ctx } = mkProject(docToYaml(doc));
+    return checkUiSpecStructureLint(ctx, SPEC_MD);
+  };
+  // 坏态①：≥3 连续 list_selection 平铺在 root → FAIL
+  {
+    const r = runLint(mkDoc(() => { /* as-is */ }));
+    const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+    assert.ok(hit && hit.status === 'FAIL', `平铺应 FAIL：${hit?.details.slice(0, 200)}`);
+    assert.ok(/分组容器/.test(hit!.details));
+  }
+  // 正样本①：逐节点声明 layout_group → PASS
+  {
+    const r = runLint(mkDoc(doc => {
+      for (const c of doc.screens[0].root!.children!) (c as { layout_group?: string }).layout_group = 'card_categories';
+    }));
+    assert.strictEqual(r.find(x => x.id === 'ui_spec_structure_lint')?.status, 'PASS');
+  }
+  // 正样本②：包进 bg_color 分组容器 → PASS
+  {
+    const r = runLint(mkDoc(doc => {
+      const rows = doc.screens[0].root!.children!;
+      doc.screens[0].root!.children = [
+        { type: 'content_display', order: 0, id: 'group_card', bg_color: 'card.bg', children: rows } as never,
+      ];
+    }));
+    assert.strictEqual(r.find(x => x.id === 'ui_spec_structure_lint')?.status, 'PASS');
+  }
+  // 坏态②：subtitle 无 subtitle_position → FAIL；显式 trailing → PASS
+  {
+    const r = runLint(mkDoc(doc => {
+      const c = doc.screens[0].root!.children![0] as { subtitle?: string; layout_group?: string };
+      c.subtitle = '银行卡/交通卡/门禁卡等';
+      for (const n of doc.screens[0].root!.children!) (n as { layout_group?: string }).layout_group = 'g';
+    }));
+    const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+    assert.ok(hit && hit.status === 'FAIL' && /subtitle_position/.test(hit.details), 'subtitle 缺位置声明应 FAIL');
+  }
+  {
+    const r = runLint(mkDoc(doc => {
+      const c = doc.screens[0].root!.children![0] as { subtitle?: string; subtitle_position?: string };
+      c.subtitle = '银行卡/交通卡/门禁卡等';
+      c.subtitle_position = 'trailing';
+      for (const n of doc.screens[0].root!.children!) (n as { layout_group?: string }).layout_group = 'g';
+    }));
+    assert.strictEqual(r.find(x => x.id === 'ui_spec_structure_lint')?.status, 'PASS');
+  }
+  // 坏态③：global bottom_tab 容器无 bg_color → FAIL
+  {
+    const r = runLint(mkDoc(doc => {
+      for (const n of doc.screens[0].root!.children!) (n as { layout_group?: string }).layout_group = 'g';
+      (doc as { global_elements?: unknown[] }).global_elements = [
+        { id: 'bottom_tab', texts: ['首页', '我的'], owner_screen_ids: ['s1'] },
+      ];
+      doc.screens[0].root!.children!.push({ type: 'navigation_frame', order: 9, id: 'bottom_tab' } as never);
+    }));
+    const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+    assert.ok(hit && hit.status === 'FAIL' && /bottom_tab/.test(hit.details), '浮动 tab 无容器 bg 应 FAIL');
+  }
+});
+
+test('p1a_visible_text_whitelist_fabricated_titles', () => {
+  // 坏态=round6 真实脑补：MineTabPage 引用 string.json 的 finance_section_title/settings_section_title
+  const setup = (extraSpecTexts: string[], exemptions?: Array<{ text: string; rationale?: string }>) => {
+    const { root, ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+    const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'pages');
+    fs.mkdirSync(etsDir, { recursive: true });
+    fs.copyFileSync(MINE_ETS, path.join(etsDir, 'MineTabPage.ets'));
+    const resDir = path.join(root, 'mod', 'src', 'main', 'resources', 'base', 'element');
+    fs.mkdirSync(resDir, { recursive: true });
+    fs.copyFileSync(STRING_JSON, path.join(resDir, 'string.json'));
+    if (exemptions) {
+      const exDir = path.join(root, 'doc', 'features', 'homepage', 'coding');
+      fs.mkdirSync(exDir, { recursive: true });
+      fs.writeFileSync(path.join(exDir, 'visible-text-exemptions.yaml'), YAML_LIB.stringify({ entries: exemptions }), 'utf-8');
+    }
+    (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+    // spec 文本集 = string.json 全部值（模拟"原图有这些文案"）除脑补两条 + 额外
+    const all = JSON.parse(fs.readFileSync(STRING_JSON, 'utf-8')) as { string: Array<{ name: string; value: string }> };
+    const specTexts = all.string
+      .filter(s => !['finance_section_title', 'settings_section_title'].includes(s.name))
+      .map(s => s.value)
+      .concat(extraSpecTexts);
+    return { ctx, specTexts };
+  };
+  // 坏态：脑补两标题被拦，且不误伤其它合法文案
+  {
+    const { ctx, specTexts } = setup([]);
+    const issues = collectVisibleTextIssues(ctx, specTexts, false);
+    const texts = issues.map(i => i.detail).join('\n');
+    assert.ok(/金融信息/.test(texts) && /设置与帮助/.test(texts), `应拦脑补标题：${texts.slice(0, 300)}`);
+    assert.strictEqual(issues.length, 2, `不得误伤合法文案（实际 ${issues.length}）：${texts.slice(0, 400)}`);
+  }
+  // 正样本：文本进 spec 集 → 0 违规（FP 铁律）
+  {
+    const { ctx, specTexts } = setup(['金融信息', '设置与帮助']);
+    assert.strictEqual(collectVisibleTextIssues(ctx, specTexts, false).length, 0);
+  }
+  // 豁免表带 rationale → 放行；无 rationale → 不生效
+  {
+    const { ctx, specTexts } = setup([], [
+      { text: '金融信息', rationale: '产品确认的分组标题（非原图，功能必需）' },
+      { text: '设置与帮助', rationale: '同上' },
+    ]);
+    assert.strictEqual(collectVisibleTextIssues(ctx, specTexts, false).length, 0, '带理由豁免应放行');
+  }
+  {
+    const { ctx, specTexts } = setup([], [{ text: '金融信息' }, { text: '设置与帮助' }]);
+    assert.strictEqual(collectVisibleTextIssues(ctx, specTexts, false).length, 2, '无 rationale 豁免不生效（自报不算）');
+  }
+});
+
+test('p1a_render_fullwidth_detected_on_vendored_source', () => {
+  // round6 真实坏态源码：CardGuideSection Button .width('100%') vs spec 声明 width_ratio 0.28 + align end
+  const { root, ctx } = mkProject(docToYaml((() => {
+    const doc = subsetAddCard(axisFixDoc(loadTransposedDoc()), []);
+    doc.screens[0].root!.children = [{
+      type: 'action_button', order: 0, id: 'card_pack_add_btn',
+      text: '添加管理卡片', variant: 'tonal', width_ratio: 0.28, align: 'end',
+    } as never];
+    (doc as { verified?: string }).verified = 'verified';
+    return doc;
+  })()));
+  const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'components');
+  fs.mkdirSync(etsDir, { recursive: true });
+  fs.copyFileSync(GUIDE_ETS, path.join(etsDir, 'CardGuideSection.ets'));
+  const planDir = path.join(root, 'doc', 'features', 'homepage', 'plan');
+  fs.mkdirSync(planDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(planDir, 'visual-parity.yaml'),
+    YAML_LIB.stringify({ components: [{ ui_spec_node_id: 'card_pack_add_btn', contract_component: 'CardGuideSection' }] }),
+    'utf-8',
+  );
+  (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+  const doc = loadUiSpecFile(path.join(root, 'doc', 'features', 'homepage', 'spec', 'ui-spec.yaml'))!;
+  const issues = collectRenderFaithfulnessIssues(ctx, doc, false);
+  assert.ok(issues.length >= 1 && /全宽/.test(issues[0].detail),
+    `应检出按钮全宽违规（round6 坏态）：${JSON.stringify(issues.map(i => i.detail))}`);
+});
+
+test('p0d_external_audit_p0_screen_unaudited_blocks', () => {
+  if (!isOcrAvailable()) return;
+  // codex 二轮 P1：两屏一成一败仍阻断——未审计 P0 屏的外部分母完全没建立，不得被其它屏的通过豁免
+  const mkTwoScreens = (unauditedPriority: 'P0' | 'P1') => {
+    const doc = subsetAddCard(axisFixDoc(loadTransposedDoc()), []);
+    doc.screens.push({
+      id: 'ghost_screen', priority: unauditedPriority, ref_id: 'no_such_ref',
+      root: { type: 'navigation_frame', order: 0, children: [] },
+    } as never);
+    const { root, ctx } = mkProject(docToYaml(doc));
+    // add_card 屏全覆盖（OCR 行全塞进 ref-elements）——只剩 ghost_screen 无法审计
+    const ocr = ocrImageWords(ADD_CARD_JPG);
+    const lines = clusterOcrLines(ocr.words!.filter(w => w.text.replace(/\s+/g, '').length > 0));
+    fs.writeFileSync(
+      path.join(root, 'doc', 'features', 'homepage', 'spec', 'ref-elements.yaml'),
+      YAML_LIB.stringify({ schema_version: '1.0', elements: lines.map((l, i) => ({ element_id: `l${i}`, text: l.text, disposition: 'implement' })) }),
+      'utf-8',
+    );
+    return checkCaptureExternalAudit(ctx, SPEC_MD);
+  };
+  {
+    const r = mkTwoScreens('P0');
+    const hit = r.find(x => x.id === 'capture_completeness_external_ocr_unavailable');
+    assert.ok(hit && hit.status === 'FAIL' && /P0 屏外部分母缺失/.test(hit.details),
+      `P0 屏未审计应 FAIL：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
+  }
+  {
+    const r = mkTwoScreens('P1');
+    const hit = r.find(x => x.id === 'capture_completeness_external');
+    assert.ok(hit && hit.status === 'PASS', `P1 屏未审计应降为注记不阻断：${JSON.stringify(r.map(v => ({ id: v.id, status: v.status })))}`);
+    assert.ok(/部分屏未审计/.test(hit!.details));
+  }
+});
+
+test('p0d_structure_lint_missing_global_container_node', () => {
+  // codex 二轮 P1：global_elements 声明了 bottom_tab 但组件树无对应容器节点 → 必拦（round6 tab 崩坏形态）
+  const doc: UiSpecDoc = {
+    schema_version: '1.0',
+    global_elements: [{ id: 'bottom_tab', texts: ['首页', '我的'], owner_screen_ids: ['s1'] }],
+    screens: [{
+      id: 's1', priority: 'P0', ref_id: 'add_card',
+      root: { type: 'navigation_frame', order: 0, children: [{ type: 'content_display', order: 0, id: 'title', text: '钱包' }] },
+    }],
+    tokens: {}, assets: [],
+  } as unknown as UiSpecDoc;
+  const { ctx } = mkProject(docToYaml(doc));
+  const r = checkUiSpecStructureLint(ctx, SPEC_MD);
+  const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+  assert.ok(hit && hit.status === 'FAIL' && /无对应容器节点/.test(hit.details),
+    `缺容器节点应 FAIL：${hit?.details.slice(0, 200)}`);
+});
+
+test('p1a_exemption_asymmetric_no_umbrella', () => {
+  if (!fs.existsSync(MINE_ETS)) return;
+  // cursor 意见采纳：宽豁免（「设置」）不得连带掩盖脑补长标题（「设置与帮助」）
+  const { root, ctx } = (() => {
+    const { root, ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+    const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'pages');
+    fs.mkdirSync(etsDir, { recursive: true });
+    fs.copyFileSync(MINE_ETS, path.join(etsDir, 'MineTabPage.ets'));
+    const resDir = path.join(root, 'mod', 'src', 'main', 'resources', 'base', 'element');
+    fs.mkdirSync(resDir, { recursive: true });
+    fs.copyFileSync(STRING_JSON, path.join(resDir, 'string.json'));
+    const exDir = path.join(root, 'doc', 'features', 'homepage', 'coding');
+    fs.mkdirSync(exDir, { recursive: true });
+    fs.writeFileSync(path.join(exDir, 'visible-text-exemptions.yaml'),
+      YAML_LIB.stringify({ entries: [{ text: '设置', rationale: '宽豁免测试' }] }), 'utf-8');
+    (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+    return { root, ctx };
+  })();
+  void root;
+  const all = JSON.parse(fs.readFileSync(STRING_JSON, 'utf-8')) as { string: Array<{ name: string; value: string }> };
+  const specTexts = all.string
+    .filter(s => !['finance_section_title', 'settings_section_title'].includes(s.name))
+    .map(s => s.value);
+  const issues = collectVisibleTextIssues(ctx, specTexts, false);
+  assert.ok(issues.some(i => /设置与帮助/.test(i.detail)), `豁免「设置」不得掩盖「设置与帮助」：${issues.map(i => i.detail).join('|').slice(0, 300)}`);
+});
+
+test('p1b_visual_fidelity_review_evidence_gate', () => {
+  const { ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+  (ctx as { phaseRule: unknown }).phaseRule = {
+    phase: 'review',
+    structure_checks: { visual_fidelity_review: { description: 'visual fidelity review dimension' } },
+  };
+  // 坏态：round5 式五维报告（无视觉维度）→ pixel_1to1 FAIL
+  {
+    const report = '# review\n## 审查方法\n架构/分层/接口/资源/命名\n## 结论\n有条件通过';
+    const r = checkVisualFidelityReview(ctx, report);
+    const hit = r.find(x => x.id === 'visual_fidelity_review');
+    assert.ok(hit && hit.status === 'FAIL' && hit.severity === 'BLOCKER', `无视觉维度应 FAIL：${hit?.status}`);
+  }
+  // 有维度但证据不全（pixel_1to1 全覆盖不许抽查）→ FAIL
+  {
+    const report = '# review\n## 视觉保真\n核对了 asset-crop-validation.json 全部 verified。\n## 结论\n通过';
+    const r = checkVisualFidelityReview(ctx, report);
+    const hit = r.find(x => x.id === 'visual_fidelity_review');
+    assert.ok(hit && hit.status === 'FAIL' && /缺证据引用/.test(hit.details), '证据不全应 FAIL');
+  }
+  // 四类证据全引用 → PASS
+  {
+    const report = [
+      '# review', '## 视觉保真',
+      '- 素材：asset-crop-validation.json 8/8 verified，contact-sheet 逐张人核一致',
+      '- 可见文案：visible_text_whitelist 无违规，豁免表为空',
+      '- 结构：subtitle_position/layout_group 与原图对照一致，分组容器齐',
+      '- must_have 全部有真实承载（消费 visual_parity 结果）',
+      '## 结论\n通过',
+    ].join('\n');
+    const r = checkVisualFidelityReview(ctx, report);
+    assert.strictEqual(r.find(x => x.id === 'visual_fidelity_review')?.status, 'PASS');
+  }
+  // 非 UI 需求（ui_change: none）→ 不产生结果
+  {
+    const { root: r2, ctx: ctx2 } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+    fs.writeFileSync(
+      path.join(r2, 'doc', 'features', 'homepage', 'spec', 'spec.md'),
+      '# spec\n\n```yaml\nui_change: none\n```\n', 'utf-8',
+    );
+    (ctx2 as { phaseRule: unknown }).phaseRule = (ctx as { phaseRule: unknown }).phaseRule;
+    assert.strictEqual(checkVisualFidelityReview(ctx2, '# review').length, 0, '非 UI 需求不应产生视觉维度要求');
+  }
+});
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {

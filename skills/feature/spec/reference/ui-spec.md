@@ -80,6 +80,18 @@ global_elements:
 
 组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`fidelity_note`（受控近似的显式承认）、`children[]`。
 
+**结构声明（P0-D·round6 命门，门禁 `ui_spec_structure_lint` pixel_1to1 P0 屏强制）**：
+- **副标题**：list_row 的副标题（如"银行卡/交通卡/门禁卡等"）必须建模在**主节点**上：`subtitle: <逐字文本>` +
+  `subtitle_position: trailing|below`（trailing=与主标题同行右置，below=题下）——**禁止**把副标题拆成独立平铺
+  content_display 节点（round6 实证：不声明位置 coding 惯用题下排错，右置副标题全军覆没）。
+- **分组容器**：原图中同一张卡片/白底容器内的多行（如添加卡片页 5 行卡种），须建**分组容器节点**
+  （带 `bg_color`/圆角语义的父节点 + `children`）或逐行声明同一 `layout_group`——禁止 ≥3 行 list_selection
+  直接平铺在 root 下（coding 会全做独卡，边距/宽度对不上）。
+- **浮动容器**：底部悬浮胶囊 tab 等 global_elements，其容器节点必须声明 `bg_color`（否则 coding 易搭成裸文字行）。
+- **完整性外部对照（`capture_completeness_external`）**：门禁会用参考原图 OCR 全文当**真分母**逐行比对——
+  原图上任何 ≥2 字的文本（含金额如 ¥119.40）没进 ref-elements/ui-spec 就 BLOCKER；分区扫描时**逐字抄全**，
+  漏了要么补建模、要么 defer+真人签，删分母删不掉（分母是原图）。
+
 **bbox 坐标语义（P0-A·round6 命门，门禁 `ui_spec_bbox_semantic` 系统性拦截）**：顺序**严格 [横向x, 纵向y, 宽w, 高h]**，绝非 [y,x,h,w]。具体数字 few-shot——竖屏左上角标题「钱包」≈ `[0.04, 0.02, 0.30, 0.05]`（x 小、y 小、**w 明显大于 h**）；页面中部横向 hero 插画 ≈ `[0.08, 0.15, 0.84, 0.20]`；底部 tab 行 ≈ `[0.10, 0.93, 0.80, 0.05]`。**自检口诀：横排多字文本恒 w>h**——若你写出的文本节点 w<h，就是把 y/x 或 h/w 写反了（round6 事故：全文档转置 → 素材全裁成竖切废条+文字排到页首）。`tokens[].source_bbox` / `assets[].source_bbox` 同一语义。
 
 **round5 P0-A/P0-B 素材声明约定（pixel_1to1 承重，务必遵守）**：

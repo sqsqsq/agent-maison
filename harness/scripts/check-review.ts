@@ -702,6 +702,81 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
 }
 
 // --------------------------------------------------------------------------
+// P1-B（plan f2d8c4a6）：视觉保真审查维度——review 报告须有该维度的执行证据。
+// round6 实证（RC6）：review 只查架构/契约/规范/逻辑/数据五维，废图+乱布局下"有条件通过"。
+// review 不重跑度量，**消费** spec/coding 落盘的确定性报告；本 check 确定性核"证据被引用过"，
+// 引用内容的真实性归 AI verifier（issue_accuracy 抽样）与人工复核——诚实边界：报告声称≠真看过。
+// --------------------------------------------------------------------------
+
+/** pixel_1to1 P0 全覆盖证据类别（codex 意见：不许抽查）；非 pixel 至少命中 1 类 */
+const VISUAL_REVIEW_EVIDENCE: ReadonlyArray<{ label: string; re: RegExp }> = [
+  { label: '素材验真核验（asset-crop-validation / contact-sheet）', re: /asset-crop-validation|contact-sheet|裁剪验真|素材验真/i },
+  { label: '可见文案 diff 复核（visible_text / 豁免表）', re: /visible[-_]text|可见文案|文案(白名单|豁免|diff|比对)/i },
+  { label: '结构声明复核（subtitle_position / 分组容器 / layout_group）', re: /subtitle_position|分组容器|layout_group|结构声明/i },
+  { label: 'must_have_elements 覆盖', re: /must[-_]have/i },
+];
+
+/** 导出供白盒单测（round6 套件）；生产路径经 checker.check 调用 */
+export function checkVisualFidelityReview(ctx: CheckContext, report: string): CheckResult[] {
+  // 仅 UI 需求需要视觉维度：以 spec.md 的 ui_change 判定（与 spec/coding 视觉门禁同 gate）
+  const specPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  if (!fs.existsSync(specPath)) return [];
+  let requiresUiSpec = false;
+  try {
+    // 延迟 require 避免为非 UI 项目引入依赖面
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const shared = require('./utils/ui-spec-shared') as typeof import('./utils/ui-spec-shared');
+    const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
+    requiresUiSpec = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
+  } catch {
+    return [];
+  }
+  if (!requiresUiSpec) return [];
+
+  const desc = ruleDesc(ctx, 'structure_checks', 'visual_fidelity_review');
+  const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
+  const pixel = ctx.fidelityTarget === 'pixel_1to1';
+
+  const hasDimension = /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(report);
+  const missingEvidence = VISUAL_REVIEW_EVIDENCE.filter(e => !e.re.test(report));
+  const evidenceHit = VISUAL_REVIEW_EVIDENCE.length - missingEvidence.length;
+  const boundaryNote =
+    '【诚实边界】本 check 只确定性核"维度存在+证据被引用"；引用真实性由 AI verifier issue_accuracy 抽样与人工复核兜。';
+
+  const insufficient = !hasDimension || (pixel ? missingEvidence.length > 0 : evidenceHit === 0);
+  if (insufficient) {
+    return [{
+      id: 'visual_fidelity_review',
+      category: 'structure',
+      description: desc,
+      severity: pixel ? 'BLOCKER' : 'MAJOR',
+      status: pixel ? 'FAIL' : 'WARN',
+      details: [
+        `【P1-B 视觉保真维度缺失】UI 需求的 review 报告须包含「视觉保真」审查维度${pixel ? '，且 pixel_1to1 下证据类别全覆盖（不许抽查）' : ''}：`,
+        hasDimension ? null : '  缺「视觉保真」维度章节/表行',
+        ...missingEvidence.map(e => `  缺证据引用：${e.label}`),
+        boundaryNote,
+      ].filter(Boolean).join('\n'),
+      suggestion:
+        '按 review SKILL 第 6 维执行：逐项核对 spec/coding 落盘报告（asset-crop-validation.json + contact-sheet、' +
+        'visible_text_whitelist 结果与豁免表、结构声明 lint、must_have 覆盖），把核对结论与引用写进 review-report.md 的' +
+        '「视觉保真」维度——不重跑度量，消费既有产物。',
+      affected_files: [reportRel],
+    }];
+  }
+
+  return [{
+    id: 'visual_fidelity_review',
+    category: 'structure',
+    description: desc,
+    severity: 'MAJOR',
+    status: 'PASS',
+    details: `视觉保真维度存在，证据类别 ${evidenceHit}/${VISUAL_REVIEW_EVIDENCE.length} 命中${pixel ? '（pixel_1to1 全覆盖）' : ''}。\n${boundaryNote}`,
+    affected_files: [reportRel],
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -770,6 +845,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkScopeDeclaration(ctx, report), 'scope_declaration'));
     results.push(...safeRun(() => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, report), 'metadata_header'));
+    // P1-B（f2d8c4a6）：UI 需求须有视觉保真审查维度 + 证据引用（pixel_1to1 全覆盖）
+    results.push(...safeRun(() => checkVisualFidelityReview(ctx, report), 'visual_fidelity_review'));
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));

@@ -63,10 +63,13 @@ function validateComponentNode(
   if (typeof n.order !== 'number' || !Number.isInteger(n.order) || n.order < 0) {
     errors.push(`${pathLabel}.order 须为 ≥0 整数，收到 ${JSON.stringify(n.order)}`);
   }
-  for (const k of ['id', 'layout', 'text', 'data_binding', 'style_ref', 'asset_ref', 'fidelity_note'] as const) {
+  for (const k of ['id', 'layout', 'text', 'data_binding', 'style_ref', 'asset_ref', 'fidelity_note', 'subtitle'] as const) {
     if (n[k] !== undefined && typeof n[k] !== 'string') {
       errors.push(`${pathLabel}.${k} 须为字符串`);
     }
+  }
+  if (n.subtitle_position !== undefined && n.subtitle_position !== 'trailing' && n.subtitle_position !== 'below') {
+    errors.push(`${pathLabel}.subtitle_position 非法：${JSON.stringify(n.subtitle_position)}（须 trailing/below）`);
   }
   if (typeof n.id === 'string' && n.id.trim()) {
     if (seenNodeIds.has(n.id)) {

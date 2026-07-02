@@ -62,6 +62,10 @@ export interface UiSpecComponentNode {
   bg_color?: string;
   /** P0-E（f2d8c4a6）：受控近似的显式承认（如"原图彩色线性图标，以 system_symbol+着色近似"）——诚实记录保真妥协 */
   fidelity_note?: string;
+  /** P0-D（f2d8c4a6）：list_row 副标题文本——副标题必须建模在主节点上（禁独立平铺节点），配 subtitle_position */
+  subtitle?: string;
+  /** P0-D：副标题位置（trailing=与主标题同行右置 / below=题下）——round6 实证不声明则 coding 惯用题下排错 */
+  subtitle_position?: 'trailing' | 'below';
   children?: UiSpecComponentNode[];
 }
 

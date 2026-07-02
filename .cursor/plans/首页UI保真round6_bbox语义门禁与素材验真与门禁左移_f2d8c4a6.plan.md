@@ -80,7 +80,7 @@ todos:
     status: completed
   - id: p0-d-spec-completeness-external
     content: P0-D spec 完整性外部对照——原图 OCR 全文清单 ↔ ref-elements/ui-spec 文本集双向 diff，未覆盖文本逐条 disposition 才放行；capture_completeness 换真分母；pixel_1to1 P0 屏结构 lint（分组容器/同行 layout_group/subtitle 位置显式声明必填）；OCR 不可用/覆盖不足→不得 PASS（toolchain 归因）；诚实边界：结构 lint 只保"有声明"不保"声明对"（正确性归 P0-A 交叉校验/P1-B/device），门禁绿≠结构对
-    status: pending
+    status: completed
   - id: p0-e-icon-supply-hybrid
     content: >
       P0-E 图标混合供给（用户 2026-07-02 决策；机制已纠偏，见 overview 纠偏段）——**改的是 spec 侧分型规则，不动 coding 门禁**：
@@ -101,10 +101,10 @@ todos:
     status: completed
   - id: p1-a-coding-conformance
     content: P1-A coding 一致性硬化——可见文案白名单（源码+string.json 可见字符串 ⊆ spec 文本集，脑补标题→BLOCKER）；visual_parity_render 静态可判项（width_ratio/align/variant）从低置信 WARN 升为 pixel_1to1 P0 BLOCKER，不再"以 device 为准"
-    status: pending
+    status: completed
   - id: p1-b-review-visual-dimension
     content: P1-B review 阶段补视觉维度 checklist——素材产物核验（引用 P0-B 报告）、ui-spec↔代码结构复核（pixel_1to1 P0 全覆盖非抽查：全部 must_have_elements/变更屏/P0-B 失败资产/文案 diff/结构声明；非 pixel_1to1 或 P1 屏可抽查）、可见文案 diff 复核；verifier 增加对应 check id，未执行→FAIL
-    status: pending
+    status: completed
   - id: p1-c-pending-verdict-guard
     content: P1-C device 回环提效（纠偏：pending 阻断已存在且本轮已生效，不重复造）——API 断流快速归因即时 halt，不烧满 attempt/wall-clock（衔接 b8f36a12）；halt 必须附可执行回修信号：OCR 文本块二部匹配（存在+中心偏移+同行分组，Design2Code Text/Position 对齐）产 per-element must_fix 喂回 loop，判定不依赖 VL 会话成功；score_floor 降为 reference_only 注记
     status: pending
@@ -363,6 +363,50 @@ RC7 的 API 断流归因衔接 b8f36a12 P0-D；pixel_1to1 人确认兜底被 RC3
   本格式本轮引入、无真实存量，无兼容包袱。
 - 修复后全量：typecheck ✅ / 1379 单测 ✅ / 35 fixture ✅。
 
-**Checkpoint（下一步，用户触发）**：宿主 SimulatedWalletForHmos homepage 重出 spec——预期链条：
+**Checkpoint 结果（2026-07-02 · 宿主重跑 spec 通过）**：素材线全面达标——63 bbox 零 w<h 反常、
+`ui_spec_bbox_semantic` 有证据 PASS（decisive 5:0 原语义、覆盖 94%）、8/8 crop verified（独立复核 stats 健康）、
+gap-notes 实锤 P0-B sanity 拦废图标→agent 转 system_symbol（P0-E 链条真实发生）、VL 记录真实、无 FP 风暴。
+已知缺口如预期＝Phase 2 靶子：ref-elements 42 项仍自我分母（右置副标题/优化横幅/¥119.40 漏抽而 capture 100% 虚高）。
+watch items：bottom_tab 无 icon 声明、Huawei Card fidelity_note 方案与声明不一致、promo 两页字节同图——待 Phase 2 门禁上线后宿主重出 spec 一并处理。
+
+**Phase 2 实施记录（2026-07-02 · P0-D/P1-A/P1-B 完成，typecheck ✅ / 1385 单测 ✅ / 35 fixture ✅，round6 套件 23 用例）**：
+- P0-D：capture-completeness-check.ts 新增 `capture_completeness_external`（真分母=原图 OCR 行清单，状态栏 band
+  剔除+噪声过滤+金额保留；累计字符覆盖法防聚合行漏判；反向幻觉 diff 低置信注记；OCR 不可用 toolchain 硬策略）
+  与 `ui_spec_structure_lint`（subtitle_position 必填 / 连续≥3 list_selection 平铺须分组容器或 layout_group /
+  global tab 容器须 bg_color）；schema 新增 subtitle/subtitle_position 字段三处同步；reference/ui-spec.md「结构声明」节。
+- P1-A：backstop 新增 `collectVisibleTextIssues`（源码 Text()/Button() CJK 字面量 + 被引用 string.json value ⊆
+  spec 文本集∪豁免表）→ coding 新门禁 `visible_text_whitelist`；`visual_parity_render` pixel_1to1 升 BLOCKER；
+  coding SKILL 补第 5/6 条纪律。
+- P1-B：check-review.ts 新增 `visual_fidelity_review`（UI 需求须「视觉保真」维度 + 四类证据引用，pixel_1to1
+  全覆盖不许抽查）；review-rules.yaml/verify-review.md/code-review SKILL 三处同步（执行定义=消费落盘报告不重跑度量）。
+- 测试驱动抓出并修复一个真实匹配漏洞：「设置与帮助」因包含 spec 短文本「设置」被互含匹配误判覆盖——
+  收紧为"impl⊃spec 方向须 spec 占比 ≥80%"。
+- 与 plan 的偏离（诚实条款）：① 豁免机制落地为 `coding/visible-text-exemptions.yaml`（须非空 rationale，
+  review 视觉维度逐条人审），不走源码注释（不可审计）；② `visual_parity_render` 升级只覆盖确定性命中的
+  collectRenderFaithfulnessIssues（width_ratio/align/tonal），variant 启发式（collectVariantParityIssues）保持
+  低置信 WARN，subtitle_position 的源码 Row/Column 结构核对静态不可判——归 review 视觉维度 + device 兜（诚实边界）；
+  ③ 未覆盖文本的 disposition 复用既有机制（补 ref-elements implement 建模 或 defer+人签），不新建处置文件；
+  ④ 单字符角标（"5"）从外部分母剔除（pagination 点/OCR 噪声误报面>收益，known-miss 记录于门禁边界注记）；
+  ⑤ "verified 自报位降级"无需单独改动——P0-A/B/D 新门禁本就不消费 verified 位（确定性 check 独立于自报）。
+
+**Phase 2 代码 review 修复（2026-07-02·cursor/codex 双评审，逐条核实后采纳）**：
+- codex P1（属实）：外部对照"部分屏未审计仍 PASS"——某 P0 屏 OCR/原图失败时其外部分母完全没建立，
+  却被其余屏的通过豁免。修复：pixel_1to1 下任一 **P0 屏**未审计 → FAIL（一屏成一屏败仍阻断）；
+  P1+ 屏未审计降为注记（plan 覆盖定义：P0 全覆盖、P1 可宽）；用例 `p0d_external_audit_p0_screen_unaudited_blocks`。
+- codex P1（属实）：结构 lint 对 global_elements **无对应容器节点**的情况漏拦（只查了"有节点但无 bg_color"）——
+  恰好放过"只有首页/我的文本、无胶囊容器建模"的 round6 tab 崩坏形态。修复：`!node` 同判 FAIL；
+  用例 `p0d_structure_lint_missing_global_container_node`。
+- cursor 非阻断提示（采纳）：豁免表双向子串匹配偏松——豁免「设置」会连带掩盖「设置与帮助」。
+  收紧为与白名单同款非对称规则（impl⊃豁免须占比 ≥80%）；用例 `p1a_exemption_asymmetric_no_umbrella`。
+- cursor 另两条知悉不改：P1-B 正则核最弱属设计分工（真牙齿=AI verifier issue_accuracy 抽样）；
+  P0-D 外部对照与 P0-B 条状阈值为 Checkpoint-2 两大 FP 观察面（disposition/校准机制已备）。
+- 修复后全量：typecheck ✅ / 1388 单测 ✅ / 35 fixture ✅（round6 套件 26 用例）。
+
+**Checkpoint-2（下一步，用户触发）**：宿主升级 framework 后重出 spec——预期 `capture_completeness_external`
+拦下漏抽文本（副标题×N/优化横幅/¥119.40）→ agent 补建模（subtitle+subtitle_position/分组容器/tab bg）→
+coding 阶段 `visible_text_whitelist`/`visual_parity_render` 硬门禁生效 → review 须交视觉保真维度证据。
+之后 Phase 3（P1-C device 回环提效）收官。
+
+**原 Checkpoint 预期（已达成，留档）**：宿主 SimulatedWalletForHmos homepage 重出 spec——预期链条：
 `ui_spec_bbox_semantic` 拦转置 → agent 换轴修正 → 重裁 → `asset_crop_validation`（sanity+VL 落盘+contact-sheet）
 → 23 资产 verified → coding 物化放行。若 FP 风暴，按 §七先校准再进 Phase 2（P0-D/P1-A/P1-B）。

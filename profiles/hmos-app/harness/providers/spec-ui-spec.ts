@@ -12,9 +12,16 @@ export const provider: CapabilityProvider = {
     'checkCaptureCompleteness',
     'checkCaptureStyleFields',
     'checkUiSpecBboxSemantic',
+    'checkCaptureExternalAudit',
+    'checkUiSpecStructureLint',
   ],
 };
 
 export { checkUiSpecStructure, checkUiSpecFidelityGate } from '../spec-ui-spec-check';
-export { checkCaptureCompleteness, checkCaptureStyleFields } from '../capture-completeness-check';
+export {
+  checkCaptureCompleteness,
+  checkCaptureStyleFields,
+  checkCaptureExternalAudit,
+  checkUiSpecStructureLint,
+} from '../capture-completeness-check';
 export { checkUiSpecBboxSemantic } from '../ui-spec-bbox-semantic';

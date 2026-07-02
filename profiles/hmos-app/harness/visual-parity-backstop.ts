@@ -27,7 +27,7 @@ import { isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared
 import { ocrImageWords, isOcrAvailable, fuzzyTextPresent } from './ocr-toolkit';
 
 export interface BackstopIssue {
-  kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset';
+  kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset' | 'visible_text';
   id: string;
   detail: string;
   /**
@@ -899,6 +899,155 @@ const VALID_BUTTON_VARIANTS = new Set(['filled', 'tonal', 'outlined', 'ghost', '
 /** variant 是否为合法声明（用于 a2 强制声明 + 拦 pill/fill 等非法值） */
 export function isDeclaredButtonVariant(variant: string | undefined): boolean {
   return Boolean(variant && VALID_BUTTON_VARIANTS.has(variant.trim()));
+}
+
+// ============================================================================
+// P1-A（plan f2d8c4a6）：可见文案白名单——源码/string.json 渲染的用户可见 CJK 文本必须 ⊆ spec 文本集。
+// round6 实证：coding 把 ref-elements 的 zone 名 finance/settings 脑补成可见标题「金融信息/设置与帮助」，
+// 原图根本没有——上游无一道门禁能拦"无中生有"。豁免走 coding/visible-text-exemptions.yaml（须 rationale，
+// review 视觉维度复核），不走源码内注释（不可审计）。
+// ============================================================================
+
+const requireHarnessYaml = (() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createRequire } = require('module') as typeof import('module');
+  const req = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
+  return req('yaml') as { parse: (s: string) => unknown };
+})();
+
+const normText = (s: string): string => s.replace(/\s+/g, '');
+const hasCjk = (s: string): boolean => /[一-鿿]/.test(s);
+
+export interface VisibleTextExemption {
+  text: string;
+  rationale?: string;
+}
+
+export function visibleTextExemptionsAbsPath(projectRoot: string, feature: string): string {
+  return path.join(projectRoot, 'doc', 'features', feature, 'coding', 'visible-text-exemptions.yaml');
+}
+
+/** 豁免表：仅 rationale 非空的条目生效（无理由的豁免=自报，不算） */
+export function loadVisibleTextExemptions(projectRoot: string, feature: string): VisibleTextExemption[] {
+  const abs = visibleTextExemptionsAbsPath(projectRoot, feature);
+  if (!fs.existsSync(abs)) return [];
+  try {
+    const doc = requireHarnessYaml.parse(fs.readFileSync(abs, 'utf-8')) as { entries?: VisibleTextExemption[] } | null;
+    return (doc?.entries ?? []).filter(
+      e => e && typeof e.text === 'string' && normText(e.text).length > 0 &&
+        typeof e.rationale === 'string' && e.rationale.trim().length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 模块 resources 下 string.json 的 name→value 表（value 供可见性判定） */
+export function collectStringJsonEntries(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(full);
+      else if (ent.name === 'string.json') {
+        try {
+          const data = JSON.parse(fs.readFileSync(full, 'utf-8')) as { string?: Array<{ name?: string; value?: string }> };
+          for (const item of data.string ?? []) {
+            if (typeof item?.name === 'string' && typeof item?.value === 'string') out.set(item.name, item.value);
+          }
+        } catch { /* skip */ }
+      }
+    }
+  };
+  for (const mod of contracts.modules ?? []) {
+    walk(path.join(projectRoot, mod.package_path, 'src', 'main', 'resources'));
+  }
+  return out;
+}
+
+/**
+ * impl 文本是否被 spec 文本集覆盖。方向不对称：
+ * - spec 文本 ⊇ impl 文本（s.includes(t)）：impl 渲染了 spec 长句的片段——合法，直接覆盖；
+ * - impl 文本 ⊃ spec 文本（t.includes(s)）：须 s 占 t 的 ≥80%——否则脑补长标题只要含一个短合法词
+ *   就能溜过（实测坑：「设置与帮助」因包含 spec 的「设置」被误判覆盖）。
+ */
+function coveredBySpecTexts(text: string, specTextsNorm: string[]): boolean {
+  const t = normText(text);
+  if (!t) return true;
+  return specTextsNorm.some(s =>
+    s === t || s.includes(t) || (t.includes(s) && s.length >= t.length * 0.8),
+  );
+}
+
+const VISIBLE_TEXT_LITERAL_RE = /\b(?:Text|Button)\s*\(\s*(['"])((?:(?!\1)[^\n]){1,80})\1/g;
+const STRING_RES_REF_RE = /app\.string\.([A-Za-z0-9_]+)/g;
+
+/**
+ * P1-A 主收集器：源码 Text()/Button() CJK 字面量 + 被 $r('app.string.*') 引用的 string.json value，
+ * 不在 spec 文本集 ∪ 豁免表 → issue（调用方 pixel_1to1 升 BLOCKER）。
+ * 边界（诚实声明）：动态拼接/变量文本静态不可判（漏报可接受）；无 CJK 的技术字符串不查（误报面>收益）。
+ */
+export function collectVisibleTextIssues(
+  ctx: CheckContext,
+  specTexts: string[],
+  baselineUnverified: boolean,
+): BackstopIssue[] {
+  if (baselineUnverified) return [];
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const scan = scanFeatureSourceTree(ctx.projectRoot, contracts);
+  const specNorm = specTexts.map(normText).filter(Boolean);
+  const exemptNorm = loadVisibleTextExemptions(ctx.projectRoot, ctx.feature).map(e => normText(e.text));
+  // 豁免匹配与白名单同款非对称规则（cursor 意见采纳）：豁免文本 ⊇ 实现文本直接命中；
+  // 实现文本 ⊃ 豁免文本须豁免占比 ≥80%——否则一条宽豁免（如「设置」）会连带掩盖多个脑补长标题。
+  const isExempt = (t: string): boolean => {
+    const n = normText(t);
+    return exemptNorm.some(e => e === n || e.includes(n) || (n.includes(e) && e.length >= n.length * 0.8));
+  };
+  const issues: BackstopIssue[] = [];
+  const seen = new Set<string>();
+  const referencedStringKeys = new Set<string>();
+
+  for (const file of scan.etsFiles) {
+    let content: string;
+    try {
+      content = fs.readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const m of content.matchAll(STRING_RES_REF_RE)) referencedStringKeys.add(m[1]);
+    for (const m of content.matchAll(VISIBLE_TEXT_LITERAL_RE)) {
+      const text = m[2];
+      const key = normText(text);
+      if (!hasCjk(text) || key.length < 2 || seen.has(key)) continue;
+      if (coveredBySpecTexts(text, specNorm) || isExempt(text)) continue;
+      seen.add(key);
+      issues.push({
+        kind: 'visible_text',
+        id: path.basename(file),
+        detail: `源码字面量可见文本「${text.slice(0, 20)}」不在 ui-spec/ref-elements 文本集（${path.basename(file)}）——原图没有的文案不得无中生有`,
+      });
+    }
+  }
+
+  const stringEntries = collectStringJsonEntries(ctx.projectRoot, contracts);
+  for (const [name, value] of stringEntries) {
+    if (!referencedStringKeys.has(name)) continue; // 未被 $r 引用=不可见
+    const key = normText(value);
+    if (!hasCjk(value) || key.length < 2 || seen.has(key)) continue;
+    if (coveredBySpecTexts(value, specNorm) || isExempt(value)) continue;
+    seen.add(key);
+    issues.push({
+      kind: 'visible_text',
+      id: name,
+      detail: `string.json「${name}=${value.slice(0, 20)}」被 $r 引用渲染但不在 ui-spec/ref-elements 文本集——原图没有的文案不得无中生有（如 round6 脑补「金融信息/设置与帮助」）`,
+    });
+  }
+  return issues;
 }
 
 /**

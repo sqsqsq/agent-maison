@@ -74,8 +74,24 @@
 | 数据所有权 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 模拟数据隔离 | `framework/specs/phase-rules/coding-rules.yaml` | MINOR |
 | 视觉保真治理 | spec `fidelity_target` / `fidelity_deferrals` + harness `fidelity_governance` | BLOCKER（`pixel_1to1` defer 须人类签字） |
+| **视觉保真（P1-B·f2d8c4a6）** | spec/coding 落盘的确定性报告（执行定义见下） | BLOCKER（pixel_1to1 证据全覆盖，门禁 `visual_fidelity_review`） |
 
 > **在线高保真**：review harness 消费 lock/快照做 **fidelity 治理签字**（ratchet / deferrals），不对图、不联网；像素对图仅在 device-testing。
+
+### 视觉保真维度执行定义（UI 需求必做，门禁 `visual_fidelity_review` 校验证据引用）
+
+**不重跑度量，消费落盘产物**；pixel_1to1 P0 **全覆盖不许抽查**（非 pixel_1to1 或 P1 屏可抽查）：
+
+1. **素材验真核验**：打开 `spec/reports/asset-crop-validation.json` 确认全部 crop `verified`；对照
+   `spec/reports/asset-contact-sheet-*.png` 逐张人核裁图与红框对应（3 秒/张）；有 failed/pending/真人翻案留痕的逐条确认处置。
+2. **可见文案 diff 复核**：核对 coding 门禁 `visible_text_whitelist` 结果；若存在
+   `coding/visible-text-exemptions.yaml`，**逐条复核豁免 rationale 是否正当**（豁免是自报面，review 是唯一人审关口）。
+3. **结构声明复核**：ui-spec 的 `subtitle_position` / 分组容器 / `layout_group` / 浮动 tab `bg_color` 声明与**参考原图**
+   对照核实——P0-D 结构 lint 只保"有声明"，**声明对不对由本维度兜**（诚实边界的承接方）。
+4. **must_have_elements 覆盖**：全部 must_have 与变更屏在源码有真实承载（消费 `visual_parity` 结果，不重扫）。
+
+把各项核对结论 + 引用的报告路径写进 review-report.md 的「视觉保真」维度章节；pixel_1to1 下缺任一类证据引用，
+`visual_fidelity_review` 判 FAIL。
 
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
