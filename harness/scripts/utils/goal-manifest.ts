@@ -16,6 +16,12 @@ export interface GoalBudget {
   max_retries_per_phase?: number;
   max_total_turns?: number;
   wall_clock_minutes?: number;
+  /**
+   * P0-D（b8f36a12）：API 断流（transient_api_error）独立重试上限——与
+   * max_retries_per_phase **解耦**（一次断流不吃内容重试预算），仍受
+   * max_total_turns + wall_clock 兜底。计数从 events.jsonl 派生（跨 resume 不清零）。
+   */
+  max_transient_api_retries?: number;
 }
 
 export interface UnattendedContract {
@@ -64,6 +70,7 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
   max_retries_per_phase: 2,
   max_total_turns: 30,
   wall_clock_minutes: 480,
+  max_transient_api_retries: 3,
 };
 
 export function newRunId(): string {
@@ -96,6 +103,8 @@ function mergeBudget(raw?: GoalBudget): Required<GoalBudget> {
     max_retries_per_phase: raw?.max_retries_per_phase ?? DEFAULT_BUDGET.max_retries_per_phase,
     max_total_turns: raw?.max_total_turns ?? DEFAULT_BUDGET.max_total_turns,
     wall_clock_minutes: raw?.wall_clock_minutes ?? DEFAULT_BUDGET.wall_clock_minutes,
+    max_transient_api_retries:
+      raw?.max_transient_api_retries ?? DEFAULT_BUDGET.max_transient_api_retries,
   };
 }
 

@@ -25,16 +25,27 @@ export interface PhaseTimeoutManifestView {
 
 /**
  * 内置 per-phase 默认超时（秒）。依据反馈数据：plan/coding/review 实测单次 >60min。
- * spec 轻、plan/coding 中、review/testing 重、ut 中。全部由 wall_clock 兜底。
+ * P0-A（b8f36a12）：按 goal 闭环成本重定——goal 模式每个 feature 阶段都要 harness +
+ * verifier 子 agent（Task 工具、在阶段预算内跑）+ receipt 四条件闭环，"spec 轻"是普通
+ * 交互模式假设，漏进 goal 后 900s 实测被 tree-kill 砍断（bc-openCard 4×15m 空砍）。
+ * 全部由 wall_clock 兜底。
  */
 export const DEFAULT_PHASE_TIMEOUT_SECONDS: Record<FeaturePhase, number> = {
-  spec: 900, // 15m
+  spec: 2700, // 45m — verifier 子 agent 主导：主体工作轻但闭环重（实测 611–900s+ 零裕量）
   plan: 5400, // 90m
   coding: 5400, // 90m
   review: 7200, // 120m
-  ut: 3600, // 60m
+  ut: 5400, // 90m — compile + hypium + verifier，与 coding 同量级
   testing: 7200, // 120m
 };
+
+/**
+ * 任何 feature 阶段"默认表派生预算"的最小地板（30m）：须容纳一次 verifier 子 agent +
+ * receipt 闭环。**仅兜底默认表派生值**——用户显式 override（per-phase 或扁平
+ * timeout_seconds）豁免地板、尊重原值（低于地板只 WARN 不静默抬升，见
+ * collectPhaseTimeoutWarnings），否则破坏显式 override 契约（§七.2）。
+ */
+export const MIN_PHASE_TIMEOUT_SECONDS = 1800;
 
 /** 未知 phase / 全部回落用的最终兜底（= 旧全局值）。 */
 export const DEFAULT_GLOBAL_TIMEOUT_SECONDS = 3600;
@@ -57,15 +68,52 @@ export function resolvePhaseTimeoutSeconds(
   manifest: PhaseTimeoutManifestView,
 ): number {
   const u = manifest.unattended ?? {};
+  // 两条显式路径都豁免 MIN 地板（尊重显式 override 契约；低于地板由 WARN 提示，不静默抬升）
   const explicitPerPhase = u.phase_timeout_seconds?.[phase];
   if (typeof explicitPerPhase === 'number' && explicitPerPhase > 0) return explicitPerPhase;
 
   if (typeof u.timeout_seconds === 'number' && u.timeout_seconds > 0) return u.timeout_seconds;
 
+  // 默认表派生值：MIN 地板兜底，防未来某阶段再被设到地板以下
   const tableDefault = DEFAULT_PHASE_TIMEOUT_SECONDS[phase];
-  if (typeof tableDefault === 'number' && tableDefault > 0) return tableDefault;
+  if (typeof tableDefault === 'number' && tableDefault > 0) {
+    return Math.max(tableDefault, MIN_PHASE_TIMEOUT_SECONDS);
+  }
 
-  return DEFAULT_GLOBAL_TIMEOUT_SECONDS;
+  return Math.max(DEFAULT_GLOBAL_TIMEOUT_SECONDS, MIN_PHASE_TIMEOUT_SECONDS);
+}
+
+/**
+ * 显式 override 低于地板时的 WARN 文案（不抬升，仅提示；goal-runner 启动时打一次）。
+ * 纯函数：runner 打印、单测断言共用；扁平 timeout_seconds 只报一条避免 6 phase 重复。
+ */
+export function collectPhaseTimeoutWarnings(
+  manifest: PhaseTimeoutManifestView,
+  chain: readonly FeaturePhase[],
+): string[] {
+  const u = manifest.unattended ?? {};
+  const warnings: string[] = [];
+  for (const phase of chain) {
+    const v = u.phase_timeout_seconds?.[phase];
+    if (typeof v === 'number' && v > 0 && v < MIN_PHASE_TIMEOUT_SECONDS) {
+      warnings.push(
+        `[goal-runner] WARN: 显式 phase_timeout_seconds.${phase}=${v}s 低于建议地板 ` +
+          `${MIN_PHASE_TIMEOUT_SECONDS}s（goal 闭环含 verifier 子 agent + receipt，可能被砍断）；` +
+          `尊重显式值，不抬升。`,
+      );
+    }
+  }
+  if (
+    typeof u.timeout_seconds === 'number' &&
+    u.timeout_seconds > 0 &&
+    u.timeout_seconds < MIN_PHASE_TIMEOUT_SECONDS
+  ) {
+    warnings.push(
+      `[goal-runner] WARN: 显式扁平 timeout_seconds=${u.timeout_seconds}s 低于建议地板 ` +
+        `${MIN_PHASE_TIMEOUT_SECONDS}s（作用于无 per-phase 覆盖的所有 phase）；尊重显式值，不抬升。`,
+    );
+  }
+  return warnings;
 }
 
 export function resolvePhaseTimeoutMs(

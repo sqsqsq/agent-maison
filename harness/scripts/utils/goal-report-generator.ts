@@ -35,6 +35,13 @@ export interface GoalPhaseOutcome {
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
   snapshot_files?: PhaseSnapshotFiles;
+  // P0-B/P0-D（codex P3）诊断保真：只读 goal-report 的下游也能看到真因原文。
+  failure_kind_classified?: string;
+  /** API 断流哨兵命中的 CLI 错误信封行（transient_api_error 时）。 */
+  api_error_excerpt?: string;
+  agent_duration_ms?: number;
+  /** agent 非零退出时的 stderr 摘要（binary 不可 spawn 的 preflight 诊断在此）。 */
+  agent_stderr_excerpt?: string;
 }
 
 export interface GoalReport {
@@ -114,9 +121,15 @@ export function generateGoalReportMarkdown(
         ? '需人工输入（headless）'
         : p.halt_reason === 'no_progress_guard'
           ? '确定性闸门无进展'
-          : p.halted
-            ? 'halted'
-            : '—');
+          : p.halt_reason === 'transient_api_error_exhausted'
+            ? 'API 连接反复中断（非框架/需求/代码问题）——退避重试已达上限，请检查网络/代理稳定性或增大 max_transient_api_retries'
+            : p.halt_reason === 'agent_no_output'
+              ? 'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境'
+              : p.halt_reason === 'no_progress_agent_timeout'
+                ? '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）'
+                : p.halted
+                  ? 'halted'
+                  : '—');
     const summary = p.summary_path ?? '—';
     lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${reason} | ${summary} |`);
     if (p.interaction_question) {
@@ -124,6 +137,13 @@ export function generateGoalReportMarkdown(
     }
     if (p.agent_warn) {
       lines.push(`| ↳ agent | WARN | — | ${p.agent_warn} | — |`);
+    }
+    // P0-D（codex P3）：断流信封原文/agent stderr 直进报告——下游无需回读 events.jsonl。
+    if (p.api_error_excerpt) {
+      lines.push(`| ↳ API 断流信封 | — | — | ${p.api_error_excerpt.replace(/\|/g, '\\|')} | — |`);
+    }
+    if (p.agent_stderr_excerpt) {
+      lines.push(`| ↳ agent stderr | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
     }
   }
 

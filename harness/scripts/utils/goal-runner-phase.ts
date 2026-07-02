@@ -125,6 +125,7 @@ export interface GoalRunEvent {
   status?: string;
   blocking_class?: string;
   failure_kind?: string;
+  failure_kind_classified?: string;
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;
@@ -153,6 +154,64 @@ export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
     else if (e.type === 'agent_invoke') n++;
   }
   return n;
+}
+
+/**
+ * P0-D：本 phase 已消耗的 API 断流重试次数——从 events.jsonl 派生，**非内存变量**。
+ * 否则 continue/--resume 后计数清零，回到"每次续几秒又断又重试"的老坑；跨 resume
+ * 不清零是有意为之（断流反复出现=网络仍不稳，早 halt 让人查，上限可调）。
+ */
+export function countTransientApiRetries(events: GoalRunEvent[], phase: FeaturePhase): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type === 'transient_api_retry_scheduled' && e.phase === phase) n++;
+  }
+  return n;
+}
+
+/**
+ * P0-D（codex P1）：本 phase 最近一次 phase_verdict 是否 transient_api_error——跨进程
+ * --resume 首轮恢复"上轮断流"续作语义。内存变量 priorAttemptApiError 在新进程必然
+ * false，若不恢复：prompt 归因错向 deterministic（"修 blocker"）、partial 续作块打不开。
+ */
+export function lastPhaseVerdictTransientApiError(
+  events: GoalRunEvent[],
+  phase: FeaturePhase,
+): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    return e.failure_kind_classified === 'transient_api_error';
+  }
+  return false;
+}
+
+/**
+ * P0-D §六-8（codex P2）：0 字节空产出判定。`duration_ms != null` 是关键前置——
+ * invokeAgentHeadless 的 binary 不可 spawn 短路路径返回 {exitCode:1, stderr:诊断}
+ * 但**无 duration_ms 也不写 output log**，若不排除会被误吞成 agent_no_output、
+ * 真实 preflight 诊断（stderr）被丢。
+ */
+export function isAgentNoOutputSignal(
+  invoke: {
+    exitCode: number;
+    duration_ms?: number;
+    timed_out?: boolean;
+    silent_killed?: boolean;
+    skipped?: boolean;
+  },
+  outputLogBytes: number,
+  maxDurationMs: number,
+): boolean {
+  return (
+    !invoke.timed_out &&
+    !invoke.silent_killed &&
+    !invoke.skipped &&
+    invoke.duration_ms != null &&
+    invoke.duration_ms < maxDurationMs &&
+    outputLogBytes === 0 &&
+    invoke.exitCode !== 0
+  );
 }
 
 /** First run_start timestamp as wall-clock baseline (ms since epoch). */

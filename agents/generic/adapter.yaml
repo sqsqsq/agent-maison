@@ -33,7 +33,6 @@ goal_capability:
     unattended:
       write_mode: workspace-write
       approval_mode: on-request
-      timeout_seconds: 3600
 
 post_install_hooks: []
 

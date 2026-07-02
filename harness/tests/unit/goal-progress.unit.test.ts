@@ -79,7 +79,12 @@ function mkManifest(overrides: Partial<GoalManifest> = {}): GoalManifest {
     end_phase: 'testing',
     feature: 'feat-a',
     adapter: 'generic',
-    budget: { max_retries_per_phase: 2, max_total_turns: 20, wall_clock_minutes: 240 },
+    budget: {
+      max_retries_per_phase: 2,
+      max_total_turns: 20,
+      wall_clock_minutes: 240,
+      max_transient_api_retries: 3,
+    },
     dependency_policy: {
       deferrable_blocking_classes: ['externalBlocked'],
       deferrable_failure_kinds: ['device_blocked'],

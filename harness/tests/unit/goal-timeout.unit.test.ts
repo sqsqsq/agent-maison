@@ -14,7 +14,9 @@ import {
   resolvePhaseTimeoutMs,
   resolveWallClockMinutes,
   resolveChainPhasesForBudget,
+  collectPhaseTimeoutWarnings,
   DEFAULT_PHASE_TIMEOUT_SECONDS,
+  MIN_PHASE_TIMEOUT_SECONDS,
   WALL_CLOCK_BUFFER_MINUTES,
   type PhaseTimeoutManifestView,
 } from '../../scripts/utils/goal-timeout';
@@ -50,17 +52,60 @@ const FULL_CHAIN: PhaseTimeoutManifestView = {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'per-phase 默认差异化（spec 短 / review·testing 长，非一刀切 3600）',
+    name: 'per-phase 默认差异化（P0-A 重定：spec 2700 / ut 5400，goal 闭环成本入账）',
     run: () => {
-      assertEq(resolvePhaseTimeoutSeconds('spec', FULL_CHAIN), 900, 'spec');
+      assertEq(resolvePhaseTimeoutSeconds('spec', FULL_CHAIN), 2700, 'spec');
       assertEq(resolvePhaseTimeoutSeconds('plan', FULL_CHAIN), 5400, 'plan');
       assertEq(resolvePhaseTimeoutSeconds('coding', FULL_CHAIN), 5400, 'coding');
       assertEq(resolvePhaseTimeoutSeconds('review', FULL_CHAIN), 7200, 'review');
-      assertEq(resolvePhaseTimeoutSeconds('ut', FULL_CHAIN), 3600, 'ut');
+      assertEq(resolvePhaseTimeoutSeconds('ut', FULL_CHAIN), 5400, 'ut');
       assertEq(resolvePhaseTimeoutSeconds('testing', FULL_CHAIN), 7200, 'testing');
       // 至少存在两档不同值，证明非一刀切。
       const distinct = new Set(Object.values(DEFAULT_PHASE_TIMEOUT_SECONDS));
-      assertTrue(distinct.size >= 3, '默认表应有多档差异');
+      assertTrue(distinct.size >= 2, '默认表应有多档差异');
+    },
+  },
+  {
+    name: 'P0-A 全阶段地板回归：默认表派生值均 ≥ MIN_PHASE_TIMEOUT_SECONDS(1800)',
+    run: () => {
+      for (const p of FEATURE_PHASE_ORDER) {
+        const v = resolvePhaseTimeoutSeconds(p, FULL_CHAIN);
+        assertTrue(v >= MIN_PHASE_TIMEOUT_SECONDS, `${p}=${v}s 应 ≥ 地板 ${MIN_PHASE_TIMEOUT_SECONDS}s`);
+      }
+    },
+  },
+  {
+    name: 'P0-A §七.2 地板豁免显式 override（两条路径）：per-phase 600 与扁平 600 均保留原值',
+    run: () => {
+      const perPhase: PhaseTimeoutManifestView = {
+        ...FULL_CHAIN,
+        unattended: { phase_timeout_seconds: { spec: 600 } },
+      };
+      assertEq(resolvePhaseTimeoutSeconds('spec', perPhase), 600, '显式 per-phase 600 不被地板抬升');
+      const flat: PhaseTimeoutManifestView = { ...FULL_CHAIN, unattended: { timeout_seconds: 600 } };
+      assertEq(resolvePhaseTimeoutSeconds('spec', flat), 600, '显式扁平 600 不被地板抬升');
+    },
+  },
+  {
+    name: 'P0-A collectPhaseTimeoutWarnings：显式低于地板 → WARN 不抬升；不低/未显式 → 无 WARN',
+    run: () => {
+      const chain = resolveChainPhasesForBudget(FULL_CHAIN);
+      assertEq(collectPhaseTimeoutWarnings(FULL_CHAIN, chain).length, 0, '默认表无 WARN');
+      const perPhase: PhaseTimeoutManifestView = {
+        ...FULL_CHAIN,
+        unattended: { phase_timeout_seconds: { spec: 600 } },
+      };
+      const w1 = collectPhaseTimeoutWarnings(perPhase, chain);
+      assertEq(w1.length, 1, 'per-phase 低于地板应 1 条 WARN');
+      assertTrue(w1[0].includes('spec') && w1[0].includes('600'), 'WARN 应点名 phase 与值');
+      const flat: PhaseTimeoutManifestView = { ...FULL_CHAIN, unattended: { timeout_seconds: 900 } };
+      const w2 = collectPhaseTimeoutWarnings(flat, chain);
+      assertEq(w2.length, 1, '扁平低于地板只报 1 条（不按 phase 重复）');
+      const ok: PhaseTimeoutManifestView = {
+        ...FULL_CHAIN,
+        unattended: { phase_timeout_seconds: { spec: 3600 } },
+      };
+      assertEq(collectPhaseTimeoutWarnings(ok, chain).length, 0, '高于地板无 WARN');
     },
   },
   {
@@ -126,7 +171,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       };
       const phases = resolveChainPhasesForBudget(shortChain);
       assertEq(phases.join(','), 'spec,plan', 'override 生效');
-      const expected = Math.ceil((900 + 5400) / 60) + WALL_CLOCK_BUFFER_MINUTES;
+      const expected = Math.ceil((2700 + 5400) / 60) + WALL_CLOCK_BUFFER_MINUTES;
       assertEq(resolveWallClockMinutes(shortChain), expected, '短链 wall 底线');
     },
   },

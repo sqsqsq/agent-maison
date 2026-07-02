@@ -71,7 +71,6 @@ goal_capability:
     unattended:
       write_mode: accept-edits
       approval_mode: never
-      timeout_seconds: 3600
 
 post_install_hooks: []
 

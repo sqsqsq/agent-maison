@@ -102,6 +102,7 @@ function baseManifest(adapter: string, endPhase: GoalManifest['end_phase'] = 'sp
       max_total_turns: 10,
       max_retries_per_phase: 1,
       wall_clock_minutes: 60,
+      max_transient_api_retries: 3,
     },
     dependency_policy: {
       deferrable_blocking_classes: DEFAULT_DEPENDENCY_POLICY.deferrable_blocking_classes ?? [],

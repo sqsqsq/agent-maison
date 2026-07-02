@@ -5,16 +5,26 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   artifactsProgressed,
+  buildEffectiveBlockerSignature,
   classifyFailureKind,
   extractBlockerSignature,
   extractDeterministicAffectedFiles,
   shouldHaltNoProgress,
   snapshotArtifacts,
+  SIGNATURE_HALT_KINDS,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import type { CheckResult } from '../../scripts/utils/types';
-import { parseHeadlessInteractionSentinel } from '../../scripts/utils/goal-headless-sentinel';
-import { buildPhasePrompt } from '../../scripts/goal-runner';
+import {
+  parseHeadlessApiError,
+  parseHeadlessInteractionSentinel,
+} from '../../scripts/utils/goal-headless-sentinel';
+import {
+  countTransientApiRetries,
+  isAgentNoOutputSignal,
+  lastPhaseVerdictTransientApiError,
+} from '../../scripts/utils/goal-runner-phase';
+import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -31,7 +41,12 @@ const MINIMAL_MANIFEST: GoalManifest = {
   feature: 'demo-feature',
   requirement: 'test req',
   adapter: 'chrys',
-  budget: { max_retries_per_phase: 2, max_total_turns: 30, wall_clock_minutes: 480 },
+  budget: {
+    max_retries_per_phase: 2,
+    max_total_turns: 30,
+    wall_clock_minutes: 480,
+    max_transient_api_retries: 3,
+  },
   dependency_policy: {
     deferrable_blocking_classes: ['externalBlocked'],
     deferrable_failure_kinds: ['device_blocked'],
@@ -496,6 +511,311 @@ export function runAll(): UnitCaseResult[] {
           blockers: [{ id: 'b' }, { id: 'a' }],
         });
         assert(sig === 'a|b', sig);
+      },
+    },
+    // ======================================================================
+    // P0-D（b8f36a12）：API 断流哨兵——adapter 感知 + CLI 错误信封锚定
+    // ======================================================================
+    {
+      name: 'P0-D parseHeadlessApiError: claude 81 字节现场原文命中（exit code 无关）',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const logPath = path.join(tmp, 'agent-output.log');
+        fs.writeFileSync(
+          logPath,
+          'API Error: Connection closed mid-response. The response above may be incomplete.\n',
+          'utf-8',
+        );
+        const hit = parseHeadlessApiError(logPath, 'claude');
+        assert(hit !== null, 'expected hit');
+        assert(hit!.code === 'transient_api_error', hit!.code);
+        assert(hit!.matchedLine.includes('Connection closed'), hit!.matchedLine);
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'P0-D 反向断言（成败点）：银行卡 spec 正文含 HTTP 500/ECONNRESET/连接超时 → 不误吞',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const logPath = path.join(tmp, 'agent-output.log');
+        // 真实形态：agent result 正文讨论网络错误处理（E1 网络异常在验收场景里）
+        fs.writeFileSync(
+          logPath,
+          [
+            '已完成 spec.md 撰写，包含以下验收场景：',
+            '- E1 网络异常：请求超时（ETIMEDOUT）或连接被重置（ECONNRESET）时展示重试页',
+            '- E2 服务端异常：HTTP 500 / 502 / 503 返回统一错误页，支持 rate limit (429) 退避',
+            '- E3 验证码过期：terminated session 需重新发起',
+            'spec 文件已写入 doc/features/bc-openCard/spec/spec.md，harness 已通过。',
+          ].join('\n'),
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(logPath, 'claude') === null, '正常 result 正文不得误判断流');
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'P0-D 信封须尾部主导：行首 API Error 但其后仍有大量 result → 不命中（正文引用）',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const logPath = path.join(tmp, 'agent-output.log');
+        const lines = ['API Error: rate limit (429) handling strategy is documented below.'];
+        for (let i = 0; i < 10; i++) lines.push(`第 ${i + 1} 节：正常产出内容……`);
+        fs.writeFileSync(logPath, lines.join('\n'), 'utf-8');
+        assert(parseHeadlessApiError(logPath, 'claude') === null, '非尾部主导不得命中');
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'P0-D adapter 感知：claude 纯文本串喂 chrys 路径不命中；chrys JSON error 命中',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const claudeLog = path.join(tmp, 'claude.log');
+        fs.writeFileSync(
+          claudeLog,
+          'API Error: Connection closed mid-response. The response above may be incomplete.\n',
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(claudeLog, 'chrys') === null, 'chrys 走 JSON 解析，纯文本不命中');
+        const chrysLog = path.join(tmp, 'chrys.log');
+        fs.writeFileSync(
+          chrysLog,
+          ['noise', '{"code":"stream_error","error":"connection reset: ECONNRESET mid stream"}'].join('\n'),
+          'utf-8',
+        );
+        const hit = parseHeadlessApiError(chrysLog, 'chrys');
+        assert(hit !== null, 'chrys JSON error 带断流特征应命中');
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'P0-D 保守面：0 字节 → null（走 agent_no_output 兜底）；未知 adapter → null（不承诺）',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const emptyLog = path.join(tmp, 'empty.log');
+        fs.writeFileSync(emptyLog, '', 'utf-8');
+        assert(parseHeadlessApiError(emptyLog, 'claude') === null, '0 字节不冒充断流');
+        const codexLog = path.join(tmp, 'codex.log');
+        fs.writeFileSync(codexLog, 'stream error: connection closed mid-response\n', 'utf-8');
+        assert(parseHeadlessApiError(codexLog, 'codex') === null, 'codex 信封未实测，不承诺检测');
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    // ======================================================================
+    // P0-B/P0-D：classifier 信号优先级 + 专用 signature + halt kinds
+    // ======================================================================
+    {
+      name: 'P0-B classifyFailureKind: agentTimedOut 优先于 blocker（即便 spec_file_exists）',
+      run: () => {
+        const k = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'agent_timeout', k);
+      },
+    },
+    {
+      name: 'P0-D classifyFailureKind: agentApiError → transient_api_error（优先于 blocker）；B/D 并存 timeout 胜',
+      run: () => {
+        const kApi = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] },
+          undefined,
+          { agentApiError: true },
+        );
+        assert(kApi === 'transient_api_error', kApi);
+        const kBoth = classifyFailureKind({ verdict: 'FAIL' }, undefined, {
+          agentTimedOut: true,
+          agentApiError: true,
+        });
+        assert(kBoth === 'agent_timeout', `B/D 并存应 agent_timeout，实得 ${kBoth}`);
+      },
+    },
+    {
+      name: 'P0-D classifyFailureKind: agentNoOutput → agent_no_output；无信号走原 blocker 归因',
+      run: () => {
+        const k = classifyFailureKind({ verdict: 'FAIL' }, undefined, { agentNoOutput: true });
+        assert(k === 'agent_no_output', k);
+        const kPlain = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] },
+          undefined,
+          {},
+        );
+        assert(kPlain === 'deterministic_gate_or_artifact_missing', `无信号回落 blocker：${kPlain}`);
+      },
+    },
+    {
+      name: 'P0-B §七.3 buildEffectiveBlockerSignature: 无 blocker + agent_timeout → agent_timeout@<phase>',
+      run: () => {
+        const sig = buildEffectiveBlockerSignature({ verdict: 'PASS' }, 'agent_timeout', 'spec');
+        assert(sig === 'agent_timeout@spec', sig);
+        const withBlockers = buildEffectiveBlockerSignature(
+          { blockers: [{ id: 'b' }, { id: 'a' }] },
+          'agent_timeout',
+          'spec',
+        );
+        assert(withBlockers === 'a|b', `有 blocker 保留原 signature：${withBlockers}`);
+        const other = buildEffectiveBlockerSignature({ verdict: 'FAIL' }, 'code_regression', 'spec');
+        assert(other === '', `非 timeout 空 blocker 仍空：${other}`);
+      },
+    },
+    {
+      name: 'P0-B/P0-D SIGNATURE_HALT_KINDS: agent_timeout 在；transient_api_error / agent_no_output 不在',
+      run: () => {
+        assert(SIGNATURE_HALT_KINDS.has('agent_timeout'), 'agent_timeout 应可零进展熔断');
+        assert(!SIGNATURE_HALT_KINDS.has('transient_api_error'), 'transient 走独立 backoff，不熔断');
+        assert(!SIGNATURE_HALT_KINDS.has('agent_no_output'), 'no_output 第一次即 halt，无需 signature 熔断');
+      },
+    },
+    {
+      name: 'P0-B shouldHaltNoProgress: agent_timeout 同专用 signature + 产物零变化 → halt；产物变化 → 续作',
+      run: () => {
+        const sig = 'agent_timeout@spec';
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-timeout-prog-'));
+        const rel = 'doc/features/f/spec/spec.md';
+        const abs = path.join(tmp, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, 'partial-v1', 'utf-8');
+        const snap1 = snapshotArtifacts(tmp, [rel]);
+        assert(
+          shouldHaltNoProgress({
+            failureKind: 'agent_timeout',
+            priorBlockerSignature: sig,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: snap1,
+            currentArtifactSnapshot: snap1,
+          }),
+          '零进展连续超时应熔断（不再空 signature 逃逸）',
+        );
+        fs.writeFileSync(abs, 'partial-v2 更多章节', 'utf-8');
+        const snap2 = snapshotArtifacts(tmp, [rel]);
+        assert(
+          !shouldHaltNoProgress({
+            failureKind: 'agent_timeout',
+            priorBlockerSignature: sig,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: snap1,
+            currentArtifactSnapshot: snap2,
+          }),
+          '产物内容有进展应放行续作',
+        );
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    // ======================================================================
+    // P0-D：runner 配套（backoff 表 / 跨 resume 计数 / prompt 指导）
+    // ======================================================================
+    {
+      name: 'P0-D TRANSIENT_API_BACKOFF_MS = 5s→15s→45s（§六-5 拍板）',
+      run: () => {
+        assert(
+          JSON.stringify([...TRANSIENT_API_BACKOFF_MS]) === JSON.stringify([5000, 15000, 45000]),
+          TRANSIENT_API_BACKOFF_MS.join(','),
+        );
+      },
+    },
+    {
+      name: 'P0-D countTransientApiRetries: 按 phase 从 events 派生（跨 continue/--resume 不清零）',
+      run: () => {
+        const events = [
+          { type: 'run_start' },
+          { type: 'transient_api_retry_scheduled', phase: 'spec' },
+          { type: 'transient_api_retry_scheduled', phase: 'spec' },
+          { type: 'transient_api_retry_scheduled', phase: 'plan' },
+          { type: 'run_end' },
+          { type: 'run_start' }, // resume 后计数不清零——事件流即 SSOT
+        ];
+        assert(countTransientApiRetries(events, 'spec') === 2, 'spec 应派生 2');
+        assert(countTransientApiRetries(events, 'plan') === 1, 'plan 应派生 1');
+        assert(countTransientApiRetries(events, 'coding') === 0, 'coding 应 0');
+      },
+    },
+    {
+      name: 'P0-D buildPhasePrompt: transient_api_error 指导"断流续作"，不指导 revert/修 blocker',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          'Verdict: FAIL\n- spec_file_exists',
+          'transient_api_error',
+        );
+        assert(prompt.includes('CONNECTION DROP'), '缺断流定性');
+        assert(!prompt.includes('revert that change first'), '断流不应指导回滚');
+        assert(prompt.includes('do NOT redo exploration') || prompt.includes('partial work'), '缺续作指导');
+      },
+    },
+    {
+      name: 'P0-B buildPhasePrompt: agent_timeout 指导续作不回滚',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          'Verdict: FAIL\n- context_exploration_exists_false',
+          'agent_timeout',
+        );
+        assert(prompt.includes('agent_timeout'), '缺超时定性');
+        assert(!prompt.includes('revert that change first'), '超时不应指导回滚');
+      },
+    },
+    // ======================================================================
+    // P0-D round2（codex P1/P2）：跨 resume 断流语义恢复 + 空产出不吞 preflight 诊断
+    // ======================================================================
+    {
+      name: 'codex P1 lastPhaseVerdictTransientApiError: 最近 verdict=transient → true；他因/无 verdict → false',
+      run: () => {
+        const events = [
+          { type: 'phase_verdict', phase: 'spec', failure_kind_classified: 'code_regression' },
+          { type: 'phase_verdict', phase: 'spec', failure_kind_classified: 'transient_api_error' },
+        ];
+        assert(lastPhaseVerdictTransientApiError(events, 'spec'), '最近一次 transient 应 true');
+        const older = [
+          { type: 'phase_verdict', phase: 'spec', failure_kind_classified: 'transient_api_error' },
+          { type: 'phase_verdict', phase: 'spec', failure_kind_classified: 'deterministic_gate_or_artifact_missing' },
+        ];
+        assert(!lastPhaseVerdictTransientApiError(older, 'spec'), '仅取最近一次（旧 transient 不算）');
+        assert(!lastPhaseVerdictTransientApiError([], 'spec'), '无 verdict → false');
+        assert(
+          !lastPhaseVerdictTransientApiError(
+            [{ type: 'phase_verdict', phase: 'plan', failure_kind_classified: 'transient_api_error' }],
+            'spec',
+          ),
+          '他 phase 的 verdict 不串台',
+        );
+      },
+    },
+    {
+      name: 'codex P2 isAgentNoOutputSignal: binary 短路（无 duration）不吞；真空产出命中；正常时长/超时不命中',
+      run: () => {
+        // invokeAgentHeadless binary 不可 spawn 短路：exitCode=1、无 duration_ms、不写 log
+        assert(
+          !isAgentNoOutputSignal({ exitCode: 1 }, 0, 30_000),
+          'preflight 短路（duration 缺失）不得判 agent_no_output——stderr 诊断须保真',
+        );
+        // 真空产出：spawn 过（有 duration）、极短、0 字节、非零退出
+        assert(
+          isAgentNoOutputSignal({ exitCode: 1, duration_ms: 4_000 }, 0, 30_000),
+          '真空产出应命中',
+        );
+        assert(
+          !isAgentNoOutputSignal({ exitCode: 1, duration_ms: 120_000 }, 0, 30_000),
+          '正常时长不命中（agent 干过活）',
+        );
+        assert(
+          !isAgentNoOutputSignal({ exitCode: 1, duration_ms: 4_000, timed_out: true }, 0, 30_000),
+          '超时优先，不判空产出',
+        );
+        assert(
+          !isAgentNoOutputSignal({ exitCode: 0, duration_ms: 4_000 }, 0, 30_000),
+          'exit 0 不判空产出',
+        );
+        assert(
+          !isAgentNoOutputSignal({ exitCode: 1, duration_ms: 4_000 }, 81, 30_000),
+          '非空日志不判空产出（走断流哨兵）',
+        );
       },
     },
   ];
