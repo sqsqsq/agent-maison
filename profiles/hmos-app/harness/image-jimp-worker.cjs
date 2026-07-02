@@ -271,6 +271,116 @@ async function runEdgeTile(refPath, shotPath, rowsStr, colsStr, threshStr) {
   return { ok: true, divergence: Math.max(0, Math.min(1, maxDiv)), tiles, grid: { rows, cols } };
 }
 
+/**
+ * 图像内容统计（P0-B 裁剪产物验真的纯色/空白 sanity 用）。
+ * 下采样 ≤64×64 后统计：量化唯一色数（4bit/通道）、灰度标准差、非近白/近黑内容占比。
+ * 纯色块 uniqueColors≈1、stddev≈0；空白裁图 contentRatio≈0。
+ */
+async function runStats(imagePath) {
+  const img = await Jimp.read(imagePath);
+  const w0 = img.bitmap.width;
+  const h0 = img.bitmap.height;
+  const scale = Math.min(1, 64 / Math.max(w0, h0));
+  const s = scale < 1 ? img.clone().resize(Math.max(1, Math.round(w0 * scale)), Math.max(1, Math.round(h0 * scale))) : img;
+  const { width: w, height: h, data } = s.bitmap;
+  const colors = new Set();
+  let contentPx = 0;
+  let sumL = 0;
+  let sumL2 = 0;
+  const n = w * h;
+  for (let i = 0; i < n; i++) {
+    const idx = i << 2;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    colors.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
+    if (!isNearWhiteOrBlack(r, g, b)) contentPx++;
+    const l = 0.299 * r + 0.587 * g + 0.114 * b;
+    sumL += l;
+    sumL2 += l * l;
+  }
+  const meanL = sumL / n;
+  const stddev = Math.sqrt(Math.max(0, sumL2 / n - meanL * meanL));
+  return {
+    ok: true,
+    width: w0,
+    height: h0,
+    uniqueColors: colors.size,
+    lumaStddev: Number(stddev.toFixed(2)),
+    contentRatio: Number((contentPx / n).toFixed(4)),
+  };
+}
+
+/** 在图上画矩形边框（直接置像素，无依赖） */
+function drawRect(img, x, y, w, h, rgbaInt, thickness = 3) {
+  const { width: iw, height: ih, data } = img.bitmap;
+  const r = (rgbaInt >>> 24) & 0xff;
+  const g = (rgbaInt >>> 16) & 0xff;
+  const b = (rgbaInt >>> 8) & 0xff;
+  const set = (px, py) => {
+    if (px < 0 || py < 0 || px >= iw || py >= ih) return;
+    const idx = (py * iw + px) << 2;
+    data[idx] = r;
+    data[idx + 1] = g;
+    data[idx + 2] = b;
+    data[idx + 3] = 255;
+  };
+  for (let t = 0; t < thickness; t++) {
+    for (let px = x; px < x + w; px++) {
+      set(px, y + t);
+      set(px, y + h - 1 - t);
+    }
+    for (let py = y; py < y + h; py++) {
+      set(x + t, py);
+      set(x + w - 1 - t, py);
+    }
+  }
+}
+
+/**
+ * 贴回对照 contact-sheet（P0-B 证据落盘）：
+ * 左＝原图缩放 + 各资产 bbox 红框叠加；右＝各 crop 缩略图纵排。人 3 秒可判裁没裁对。
+ * argv: contact <argsJsonPath>；args={ source, outPath, entries:[{key, bbox:[x,y,w,h], cropPath}] }
+ */
+async function runContactSheet(argsJsonPath) {
+  const fs = require('fs');
+  const args = JSON.parse(fs.readFileSync(argsJsonPath, 'utf-8'));
+  const src = await Jimp.read(args.source);
+  const LEFT_W = 480;
+  const leftH = Math.max(1, Math.round((src.bitmap.height / src.bitmap.width) * LEFT_W));
+  const left = src.clone().resize(LEFT_W, leftH);
+  const RED = 0xff2020ff;
+  for (const e of args.entries || []) {
+    const [nx, ny, nw, nh] = (e.bbox || []).map(Number);
+    if ([nx, ny, nw, nh].some((v) => !Number.isFinite(v))) continue;
+    drawRect(left, Math.round(nx * LEFT_W), Math.round(ny * leftH), Math.max(2, Math.round(nw * LEFT_W)), Math.max(2, Math.round(nh * leftH)), RED);
+  }
+  const THUMB_W = 200;
+  const CELL_H = 84;
+  const entries = args.entries || [];
+  const rightH = Math.max(CELL_H, entries.length * CELL_H);
+  const totalH = Math.max(leftH, rightH);
+  const canvas = new Jimp(LEFT_W + 16 + THUMB_W, totalH, 0xffffffff);
+  canvas.composite(left, 0, 0);
+  let missing = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const cy = i * CELL_H;
+    try {
+      const crop = await Jimp.read(e.cropPath);
+      const scale = Math.min(THUMB_W / crop.bitmap.width, (CELL_H - 12) / crop.bitmap.height, 1);
+      const tw = Math.max(1, Math.round(crop.bitmap.width * scale));
+      const th = Math.max(1, Math.round(crop.bitmap.height * scale));
+      canvas.composite(crop.resize(tw, th), LEFT_W + 16, cy + 6);
+    } catch {
+      missing++;
+      drawRect(canvas, LEFT_W + 16, cy + 6, THUMB_W, CELL_H - 12, RED);
+    }
+  }
+  await canvas.writeAsync(args.outPath);
+  return { ok: true, entries: entries.length, missing };
+}
+
 async function main() {
   const [cmd, imagePath, ...rest] = process.argv.slice(2);
   if (cmd === 'crop') {
@@ -302,6 +412,17 @@ async function main() {
   if (cmd === 'edge-tile') {
     const [shotPath, rowsStr, colsStr, threshStr] = rest;
     const result = await runEdgeTile(imagePath, shotPath, rowsStr, colsStr, threshStr);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'stats') {
+    const result = await runStats(imagePath);
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  if (cmd === 'contact') {
+    // imagePath 位即 argsJsonPath
+    const result = await runContactSheet(imagePath);
     process.stdout.write(JSON.stringify(result));
     return;
   }

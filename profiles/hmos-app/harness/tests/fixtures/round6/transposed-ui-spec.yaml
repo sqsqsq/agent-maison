@@ -1,0 +1,756 @@
+schema_version: "1.0"
+verified: verified
+verified_method: vl_multimodal
+
+global_elements:
+  - id: bottom_tab
+    texts: ["首页", "我的"]
+    owner_screen_ids: ["home_no_card", "home_with_card", "mine"]
+
+tokens:
+  brand.primary:
+    kind: color
+    value: "#007DFF"
+    source_bbox: [0.42, 0.92, 0.04, 0.08]
+    sampled: true
+  page.bg:
+    kind: color
+    value: "#F1F3F5"
+    source_bbox: [0.0, 0.0, 0.12, 1.0]
+    sampled: true
+  card.bg:
+    kind: color
+    value: "#FFFFFF"
+    source_bbox: [0.14, 0.04, 0.22, 0.92]
+    sampled: true
+  text.primary:
+    kind: color
+    value: "#000000"
+    source_bbox: [0.05, 0.05, 0.04, 0.12]
+    sampled: true
+  text.secondary:
+    kind: color
+    value: "#666666"
+    source_bbox: [0.20, 0.20, 0.03, 0.30]
+    sampled: true
+  button.tonal.bg:
+    kind: color
+    value: "#E6F2FF"
+    source_bbox: [0.22, 0.72, 0.05, 0.22]
+    sampled: true
+
+assets:
+  - key: ill_card_pack_guide
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.12, 0.04, 0.18, 0.92]
+    resolved_path: doc/features/homepage/spec/assets/ill_card_pack_guide.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: ill_card_stack_mock
+    acquisition: crop
+    source_ref: home_with_card
+    source_bbox: [0.10, 0.04, 0.20, 0.92]
+    resolved_path: doc/features/homepage/spec/assets/ill_card_stack_mock.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_tab_home_active
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.90, 0.28, 0.05, 0.08]
+    resolved_path: doc/features/homepage/spec/assets/icon_tab_home_active.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_tab_mine_inactive
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.90, 0.62, 0.05, 0.08]
+    resolved_path: doc/features/homepage/spec/assets/icon_tab_mine_inactive.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_service_huawei_card
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.38, 0.08, 0.10, 0.18]
+    resolved_path: doc/features/homepage/spec/assets/icon_service_huawei_card.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_service_credit_repay
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.38, 0.38, 0.10, 0.18]
+    resolved_path: doc/features/homepage/spec/assets/icon_service_credit_repay.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_service_discount_fuel
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.38, 0.68, 0.10, 0.18]
+    resolved_path: doc/features/homepage/spec/assets/icon_service_discount_fuel.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_service_red_packet
+    acquisition: crop
+    source_ref: home_with_card
+    source_bbox: [0.38, 0.82, 0.10, 0.14]
+    resolved_path: doc/features/homepage/spec/assets/icon_service_red_packet.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_msg_bell
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.52, 0.06, 0.06, 0.06]
+    resolved_path: doc/features/homepage/spec/assets/icon_msg_bell.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: promo_ill_digital_finance
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.58, 0.06, 0.16, 0.40]
+    resolved_path: doc/features/homepage/spec/assets/promo_ill_digital_finance.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: promo_ill_member_campus
+    acquisition: crop
+    source_ref: home_with_card
+    source_bbox: [0.58, 0.06, 0.16, 0.40]
+    resolved_path: doc/features/homepage/spec/assets/promo_ill_member_campus.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_category_bank
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.28, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_category_bank.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_category_transit
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.38, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_category_transit.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_category_access
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.48, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_category_access.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_category_car_key
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.58, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_category_car_key.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_category_certificate
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.68, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_category_certificate.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_non_local_cards
+    acquisition: crop
+    source_ref: add_card
+    source_bbox: [0.18, 0.08, 0.08, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_non_local_cards.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_manage_non_local
+    acquisition: crop
+    source_ref: card_pack
+    source_bbox: [0.24, 0.08, 0.06, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_manage_non_local.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_add_card_plus_circle
+    acquisition: crop
+    source_ref: card_pack
+    source_bbox: [0.14, 0.08, 0.06, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_add_card_plus_circle.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: ill_empty_non_local
+    acquisition: crop
+    source_ref: manage_non_local
+    source_bbox: [0.42, 0.35, 0.18, 0.30]
+    resolved_path: doc/features/homepage/spec/assets/ill_empty_non_local.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_mine_avatar
+    acquisition: crop
+    source_ref: mine
+    source_bbox: [0.16, 0.06, 0.10, 0.10]
+    resolved_path: doc/features/homepage/spec/assets/icon_mine_avatar.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_header_watch
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.05, 0.72, 0.05, 0.08]
+    resolved_path: doc/features/homepage/spec/assets/icon_header_watch.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: icon_header_scan
+    acquisition: crop
+    source_ref: home_no_card
+    source_bbox: [0.05, 0.82, 0.05, 0.08]
+    resolved_path: doc/features/homepage/spec/assets/icon_header_scan.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+
+screens:
+  - id: home_no_card
+    priority: P0
+    ref_id: home_no_card
+    must_have_elements:
+      - home_no_card_header_title
+      - home_no_card_btn_add_manage_cards
+      - bottom_tab_home
+      - bottom_tab_mine
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: home_no_card_header_title
+          type: content_display
+          order: 0
+          text: "钱包"
+          style_ref: text.primary
+          color_ref: text.primary
+          bbox: [0.05, 0.05, 0.04, 0.12]
+        - id: home_no_card_header_icon_watch
+          type: action_button
+          order: 1
+          variant: ghost
+          icon:
+            kind: brand_logo
+            ref: icon_header_watch
+          asset_ref: icon_header_watch
+          bbox: [0.05, 0.72, 0.05, 0.08]
+        - id: home_no_card_header_icon_scan
+          type: action_button
+          order: 2
+          variant: ghost
+          icon:
+            kind: brand_logo
+            ref: icon_header_scan
+          asset_ref: icon_header_scan
+          bbox: [0.05, 0.82, 0.05, 0.08]
+        - id: home_no_card_header_btn_add
+          type: action_button
+          order: 3
+          text: "+"
+          variant: text
+          semantic_role: brand_primary
+          color_ref: brand.primary
+          bbox: [0.05, 0.92, 0.05, 0.06]
+        - id: home_no_card_card_pack_illustration
+          type: content_display
+          order: 4
+          asset_ref: ill_card_pack_guide
+          icon:
+            kind: illustration
+            ref: ill_card_pack_guide
+          bbox: [0.12, 0.04, 0.18, 0.92]
+        - id: home_no_card_card_pack_title
+          type: content_display
+          order: 5
+          text: "卡包"
+          style_ref: text.primary
+          bbox: [0.22, 0.08, 0.04, 0.10]
+        - id: home_no_card_card_pack_subtitle
+          type: content_display
+          order: 6
+          text: "集中管理您的卡证票券钥匙"
+          style_ref: text.secondary
+          bbox: [0.26, 0.08, 0.04, 0.55]
+        - id: home_no_card_btn_add_manage_cards
+          type: action_button
+          order: 7
+          text: "添加管理卡片"
+          variant: tonal
+          semantic_role: brand_primary
+          color_ref: brand.primary
+          bg_color: button.tonal.bg
+          width_ratio: 0.28
+          align: end
+          bbox: [0.22, 0.72, 0.06, 0.22]
+        - id: home_no_card_service_huawei_card
+          type: list_selection
+          order: 8
+          layout: column
+          text: "Huawei Card"
+          icon:
+            kind: brand_logo
+            ref: icon_service_huawei_card
+          asset_ref: icon_service_huawei_card
+          bbox: [0.38, 0.08, 0.10, 0.18]
+        - id: home_no_card_service_credit_repay
+          type: list_selection
+          order: 9
+          layout: column
+          text: "信用卡还款"
+          icon:
+            kind: brand_logo
+            ref: icon_service_credit_repay
+          asset_ref: icon_service_credit_repay
+          bbox: [0.38, 0.38, 0.10, 0.18]
+        - id: home_no_card_service_discount_fuel
+          type: list_selection
+          order: 10
+          layout: column
+          text: "优惠加油"
+          icon:
+            kind: brand_logo
+            ref: icon_service_discount_fuel
+          asset_ref: icon_service_discount_fuel
+          bbox: [0.38, 0.68, 0.10, 0.18]
+        - id: home_no_card_service_grid_pagination
+          type: content_display
+          order: 11
+          semantic_role: neutral
+          bbox: [0.48, 0.42, 0.02, 0.16]
+        - id: home_no_card_msg_center_bar
+          type: list_selection
+          order: 12
+          layout: row
+          text: "欢迎使用钱包消息中心！"
+          icon:
+            kind: brand_logo
+            ref: icon_msg_bell
+          asset_ref: icon_msg_bell
+          bbox: [0.52, 0.04, 0.06, 0.92]
+        - id: home_no_card_more_services_title
+          type: content_display
+          order: 13
+          text: "更多服务"
+          style_ref: text.primary
+          bbox: [0.56, 0.05, 0.04, 0.20]
+        - id: home_no_card_promo_digital_finance
+          type: content_display
+          order: 14
+          text: "数字金融生活新方式"
+          semantic_role: promo
+          asset_ref: promo_ill_digital_finance
+          icon:
+            kind: illustration
+            ref: promo_ill_digital_finance
+          bbox: [0.62, 0.06, 0.04, 0.55]
+        - id: home_no_card_promo_digital_finance_desc
+          type: content_display
+          order: 15
+          text: "这些金融元服务，承包你的全场景金融需求"
+          style_ref: text.secondary
+          bbox: [0.66, 0.06, 0.03, 0.70]
+        - id: home_no_card_promo_pagination
+          type: content_display
+          order: 16
+          semantic_role: neutral
+          bbox: [0.72, 0.42, 0.02, 0.16]
+        - id: bottom_tab_home
+          type: navigation_frame
+          order: 17
+          layout: row
+          text: "首页"
+          icon:
+            kind: brand_logo
+            ref: icon_tab_home_active
+          asset_ref: icon_tab_home_active
+          color_ref: brand.primary
+          bbox: [0.90, 0.28, 0.06, 0.16]
+        - id: bottom_tab_mine
+          type: navigation_frame
+          order: 18
+          layout: row
+          text: "我的"
+          icon:
+            kind: brand_logo
+            ref: icon_tab_mine_inactive
+          asset_ref: icon_tab_mine_inactive
+          color_ref: text.secondary
+          bbox: [0.90, 0.62, 0.06, 0.16]
+
+  - id: home_with_card
+    priority: P0
+    ref_id: home_with_card
+    must_have_elements:
+      - home_with_card_card_stack
+      - home_with_card_service_red_packet
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: home_with_card_header_title
+          type: content_display
+          order: 0
+          text: "钱包"
+          bbox: [0.05, 0.05, 0.04, 0.12]
+        - id: home_with_card_header_btn_add
+          type: action_button
+          order: 1
+          text: "+"
+          variant: text
+          semantic_role: brand_primary
+          color_ref: brand.primary
+          bbox: [0.05, 0.92, 0.05, 0.06]
+        - id: home_with_card_card_stack
+          type: content_display
+          order: 2
+          asset_ref: ill_card_stack_mock
+          icon:
+            kind: illustration
+            ref: ill_card_stack_mock
+          bbox: [0.10, 0.04, 0.20, 0.92]
+        - id: home_with_card_card_pack_title
+          type: content_display
+          order: 3
+          text: "卡包"
+          bbox: [0.24, 0.08, 0.04, 0.10]
+        - id: home_with_card_card_pack_subtitle
+          type: content_display
+          order: 4
+          text: "集中管理您的卡证票券钥匙"
+          style_ref: text.secondary
+          bbox: [0.28, 0.08, 0.04, 0.55]
+        - id: home_with_card_btn_add_manage_cards
+          type: action_button
+          order: 5
+          text: "添加管理卡片"
+          variant: tonal
+          semantic_role: brand_primary
+          bg_color: button.tonal.bg
+          bbox: [0.24, 0.72, 0.06, 0.22]
+        - id: home_with_card_service_huawei_card
+          type: list_selection
+          order: 6
+          text: "Huawei Card"
+          icon:
+            kind: brand_logo
+            ref: icon_service_huawei_card
+          asset_ref: icon_service_huawei_card
+          bbox: [0.38, 0.06, 0.10, 0.16]
+        - id: home_with_card_service_credit_repay
+          type: list_selection
+          order: 7
+          text: "信用卡还款"
+          icon:
+            kind: brand_logo
+            ref: icon_service_credit_repay
+          asset_ref: icon_service_credit_repay
+          bbox: [0.38, 0.28, 0.10, 0.16]
+        - id: home_with_card_service_discount_fuel
+          type: list_selection
+          order: 8
+          text: "优惠加油"
+          icon:
+            kind: brand_logo
+            ref: icon_service_discount_fuel
+          asset_ref: icon_service_discount_fuel
+          bbox: [0.38, 0.50, 0.10, 0.16]
+        - id: home_with_card_service_red_packet
+          type: list_selection
+          order: 9
+          text: "发红包"
+          icon:
+            kind: brand_logo
+            ref: icon_service_red_packet
+          asset_ref: icon_service_red_packet
+          bbox: [0.38, 0.72, 0.10, 0.16]
+        - id: home_with_card_notice_bar
+          type: list_selection
+          order: 10
+          layout: row
+          text: "畅行无忧卡·金陵通刷卡扣费成功"
+          icon:
+            kind: brand_logo
+            ref: icon_msg_bell
+          asset_ref: icon_msg_bell
+          bbox: [0.52, 0.04, 0.06, 0.70]
+        - id: home_with_card_notice_time
+          type: content_display
+          order: 11
+          text: "2 小时前"
+          style_ref: text.secondary
+          bbox: [0.52, 0.78, 0.04, 0.14]
+        - id: home_with_card_promo_member_campus
+          type: content_display
+          order: 12
+          text: "会员卡（酒店、航司）、校园卡上线"
+          semantic_role: promo
+          asset_ref: promo_ill_member_campus
+          icon:
+            kind: illustration
+            ref: promo_ill_member_campus
+          bbox: [0.62, 0.06, 0.04, 0.70]
+        - id: home_with_card_promo_member_campus_desc
+          type: content_display
+          order: 13
+          text: "钱包全管理，出行更从容"
+          style_ref: text.secondary
+          bbox: [0.66, 0.06, 0.03, 0.55]
+
+  - id: mine
+    priority: P0
+    ref_id: mine
+    must_have_elements:
+      - mine_account_email
+      - mine_finance_huawei_pay
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: mine_header_title
+          type: content_display
+          order: 0
+          text: "我的"
+          bbox: [0.05, 0.05, 0.04, 0.12]
+        - id: mine_header_msg_icon
+          type: action_button
+          order: 1
+          variant: ghost
+          icon:
+            kind: brand_logo
+            ref: icon_msg_bell
+          asset_ref: icon_msg_bell
+          bbox: [0.05, 0.88, 0.05, 0.08]
+        - id: mine_account_avatar
+          type: content_display
+          order: 2
+          icon:
+            kind: brand_logo
+            ref: icon_mine_avatar
+          asset_ref: icon_mine_avatar
+          bbox: [0.14, 0.06, 0.10, 0.10]
+        - id: mine_account_email
+          type: content_display
+          order: 3
+          text: "*****6790@**.com"
+          bbox: [0.16, 0.20, 0.04, 0.45]
+        - id: mine_optimize_banner
+          type: content_display
+          order: 4
+          text: "智闪刷卡设置待优化"
+          semantic_role: promo
+          bbox: [0.24, 0.05, 0.08, 0.90]
+        - id: mine_finance_huawei_pay
+          type: list_selection
+          order: 5
+          layout: row
+          text: "华为支付"
+          bbox: [0.36, 0.05, 0.06, 0.90]
+        - id: mine_finance_bank_account
+          type: list_selection
+          order: 6
+          layout: row
+          text: "银行电子账户"
+          bbox: [0.42, 0.05, 0.06, 0.90]
+        - id: mine_finance_bank_records
+          type: list_selection
+          order: 7
+          layout: row
+          text: "银行卡交易记录"
+          bbox: [0.48, 0.05, 0.06, 0.90]
+        - id: mine_finance_transit_refund
+          type: list_selection
+          order: 8
+          layout: row
+          text: "交通卡退款记录"
+          bbox: [0.54, 0.05, 0.06, 0.90]
+        - id: mine_settings_item
+          type: list_selection
+          order: 9
+          layout: row
+          text: "设置"
+          bbox: [0.64, 0.05, 0.06, 0.90]
+        - id: mine_help_feedback_item
+          type: list_selection
+          order: 10
+          layout: row
+          text: "帮助和反馈"
+          bbox: [0.70, 0.05, 0.06, 0.90]
+
+  - id: card_pack
+    priority: P0
+    ref_id: card_pack
+    must_have_elements:
+      - card_pack_nav_title
+      - card_pack_add_card_row
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: card_pack_nav_back
+          type: action_button
+          order: 0
+          variant: ghost
+          bbox: [0.05, 0.04, 0.06, 0.10]
+        - id: card_pack_nav_title
+          type: content_display
+          order: 1
+          text: "卡包"
+          bbox: [0.06, 0.35, 0.04, 0.30]
+        - id: card_pack_nav_add
+          type: action_button
+          order: 2
+          text: "+"
+          variant: ghost
+          bbox: [0.05, 0.86, 0.06, 0.10]
+        - id: card_pack_add_card_row
+          type: list_selection
+          order: 3
+          layout: row
+          text: "添加卡片"
+          icon:
+            kind: brand_logo
+            ref: icon_add_card_plus_circle
+          asset_ref: icon_add_card_plus_circle
+          bbox: [0.14, 0.04, 0.08, 0.92]
+        - id: card_pack_add_card_desc
+          type: content_display
+          order: 4
+          text: "银行卡/交通卡/门禁卡等"
+          style_ref: text.secondary
+          bbox: [0.16, 0.45, 0.03, 0.45]
+        - id: card_pack_manage_non_local_row
+          type: list_selection
+          order: 5
+          layout: row
+          text: "管理非本机卡片"
+          icon:
+            kind: brand_logo
+            ref: icon_manage_non_local
+          asset_ref: icon_manage_non_local
+          bbox: [0.24, 0.04, 0.08, 0.92]
+
+  - id: add_card
+    priority: P0
+    ref_id: add_card
+    must_have_elements:
+      - add_card_nav_title
+      - add_card_category_bank
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: add_card_nav_back
+          type: action_button
+          order: 0
+          variant: ghost
+          bbox: [0.05, 0.04, 0.08, 0.10]
+        - id: add_card_nav_title
+          type: content_display
+          order: 1
+          text: "添加卡片"
+          bbox: [0.06, 0.13, 0.04, 0.30]
+        - id: add_card_non_local_row
+          type: list_selection
+          order: 2
+          layout: row
+          text: "非本机卡片"
+          icon:
+            kind: brand_logo
+            ref: icon_non_local_cards
+          asset_ref: icon_non_local_cards
+          bbox: [0.14, 0.04, 0.08, 0.92]
+        - id: add_card_category_bank
+          type: list_selection
+          order: 3
+          layout: row
+          text: "银行卡"
+          icon:
+            kind: brand_logo
+            ref: icon_category_bank
+          asset_ref: icon_category_bank
+          bbox: [0.26, 0.04, 0.08, 0.92]
+        - id: add_card_category_transit
+          type: list_selection
+          order: 4
+          layout: row
+          text: "交通卡"
+          icon:
+            kind: brand_logo
+            ref: icon_category_transit
+          asset_ref: icon_category_transit
+          bbox: [0.34, 0.04, 0.08, 0.92]
+        - id: add_card_category_access
+          type: list_selection
+          order: 5
+          layout: row
+          text: "门禁卡"
+          icon:
+            kind: brand_logo
+            ref: icon_category_access
+          asset_ref: icon_category_access
+          bbox: [0.42, 0.04, 0.08, 0.92]
+        - id: add_card_category_car_key
+          type: list_selection
+          order: 6
+          layout: row
+          text: "车钥匙"
+          icon:
+            kind: brand_logo
+            ref: icon_category_car_key
+          asset_ref: icon_category_car_key
+          bbox: [0.50, 0.04, 0.08, 0.92]
+        - id: add_card_category_certificate
+          type: list_selection
+          order: 7
+          layout: row
+          text: "证件"
+          icon:
+            kind: brand_logo
+            ref: icon_category_certificate
+          asset_ref: icon_category_certificate
+          bbox: [0.58, 0.04, 0.08, 0.92]
+
+  - id: manage_non_local
+    priority: P0
+    ref_id: manage_non_local
+    must_have_elements:
+      - manage_non_local_modal_title
+      - manage_non_local_empty_text
+    root:
+      type: overlay_panel
+      layout: column
+      order: 0
+      bg_color: page.bg
+      children:
+        - id: manage_non_local_modal_title
+          type: content_display
+          order: 0
+          text: "管理非本机卡片"
+          bbox: [0.06, 0.05, 0.04, 0.45]
+        - id: manage_non_local_close_btn
+          type: action_button
+          order: 1
+          variant: ghost
+          bbox: [0.06, 0.88, 0.05, 0.08]
+        - id: manage_non_local_empty_illustration
+          type: content_display
+          order: 2
+          asset_ref: ill_empty_non_local
+          icon:
+            kind: illustration
+            ref: ill_empty_non_local
+          bbox: [0.42, 0.35, 0.18, 0.30]
+        - id: manage_non_local_empty_text
+          type: content_display
+          order: 3
+          text: "暂无非本机卡片"
+          style_ref: text.secondary
+          align: center
+          bbox: [0.60, 0.30, 0.04, 0.40]

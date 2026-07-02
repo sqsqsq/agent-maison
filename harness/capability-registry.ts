@@ -290,12 +290,19 @@ export function dispatchSpecUiSpec(ctx: CheckContext, specMarkdown: string): Che
     'spec.ui_spec',
     'checkCaptureStyleFields',
   );
+  // P0-A（plan f2d8c4a6）：bbox 坐标语义门禁——orientation 预检 + OCR 词框交叉校验，系统性转置 BLOCKER。
+  const bboxSemanticFn = requireProviderFunction<(c: CheckContext, p: string) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.ui_spec',
+    'checkUiSpecBboxSemantic',
+  );
   // 消费 dispatchSpecVisualHandoff 注入的 ctx.refElementsManifest（structured 第二刀）；须在其之后派发。
   return [
     ...fn(ctx, specMarkdown),
     ...gateFn(ctx, specMarkdown),
     ...captureFn(ctx, specMarkdown),
     ...styleFn(ctx, specMarkdown),
+    ...bboxSemanticFn(ctx, specMarkdown),
   ];
 }
 
@@ -310,7 +317,13 @@ export function dispatchSpecAssetAcquisition(ctx: CheckContext): CheckResult[] {
     'spec.asset_acquisition',
     'checkAssetManifest',
   );
-  return [...fn(ctx), ...manifestFn(ctx)];
+  // P0-B（plan f2d8c4a6）：裁剪产物验真——acquisition 裁完之后跑（新裁/已存在一律重验，无"已存在"豁免）。
+  const cropValidationFn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
+    ctx.resolvedProfile,
+    'spec.asset_acquisition',
+    'checkAssetCropValidation',
+  );
+  return [...fn(ctx), ...manifestFn(ctx), ...cropValidationFn(ctx)];
 }
 
 export function dispatchCodingVisualParity(ctx: CheckContext): CheckResult[] {

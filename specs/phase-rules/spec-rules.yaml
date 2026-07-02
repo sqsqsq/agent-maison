@@ -293,9 +293,34 @@ structure_checks:
 
   asset_acquisition:
     description: >
-      crop 类 assets 须 human_crop_confirmed 后脚本裁图；依赖 jimp（见 image-tool-spike.md）。
-      jimp 未安装时 SKIP。
+      crop 类 assets 须 human_crop_confirmed（裁剪**授权**，非产物验真——验真见 asset_crop_validation）
+      后脚本裁图；依赖 jimp（见 image-tool-spike.md）。jimp 未安装时 SKIP。
     severity: MAJOR
+    rule:
+      provider: spec.asset_acquisition
+
+  ui_spec_bbox_semantic:
+    description: >
+      P0-A（plan f2d8c4a6）：bbox 坐标语义确定性门禁。SSOT=[x,y,w,h] 归一化，VL 产出曾系统性转置为
+      [y,x,h,w]（round6 真凶，一个转置同时污染素材裁剪/token 采色/布局 ground truth）。
+      第 0 层零依赖 orientation 预检：横排多字文本节点 w<h 系统性出现（≥60% 且 ≥5 个）→ 疑似转置；
+      第 1 层 OCR 交叉校验：原图 OCR 词框行聚类 × 文本节点 bbox 双语义 IoU，decisive ≥5 且转置占比
+      ≥80% → 系统性转置 BLOCKER（阈值来自 2026-07-02 OCR spike 实测：坏态 22:0 判转置、修正态 22:0 判正确）。
+      OCR 不可用/覆盖不足时 pixel_1to1 不得 PASS（toolchain 归因，不静默 SKIP）。
+      门禁只判不改：修复=全文档 bbox/source_bbox 统一换轴后重跑，不自动回写、不自签。
+    severity: BLOCKER
+    rule:
+      provider: spec.ui_spec
+
+  asset_crop_validation:
+    description: >
+      P0-B（plan f2d8c4a6）：裁剪产物验真。对**全部** acquisition:crop 资产（新裁/历史已存在/已物化
+      一律重验，堵 existsSync→continue 的坏图复通过洞）：确定性 sanity（条状塌缩/icon 长宽比与面积占比/
+      纯色/空白，可一票否决）→ VL 隔离辨认（spec/reports/asset-crop-vl.yaml，sanity 只能否决不能证明语义对）
+      或真人 bbox_verified_by → 贴回对照 contact-sheet 证据落盘。裁剪授权（human_crop_confirmed/
+      user_requirement）绝不豁免验真（P0-C 拆位）。VL 缺失/失配/不可用 → pixel_1to1 不得静默 PASS。
+      机器裁决落 spec/reports/asset-crop-validation.json，coding 物化门禁消费（未 verified 不得进模块 media）。
+    severity: BLOCKER
     rule:
       provider: spec.asset_acquisition
 

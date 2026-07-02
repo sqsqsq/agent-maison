@@ -875,8 +875,8 @@ export function collectIconSubstitutionIssues(
         assetRole: 'icon_substitution',
         detail:
           `节点 ${n.id ?? n.type} 声明 required 品牌图标（icon.kind=${kind}, ref=${key}）却未 $r('app.media.${key.replace(/\./g, '_')}') 渲染，` +
-          `且源码用 sys.symbol 系统单色图标替代 — 须裁原子品牌图标并 $r 渲染（如交通卡应为公交彩色图标而非 sys.symbol.map）；` +
-          `确需系统图标则把 icon.kind 改为 system_symbol，或显式 placeholder + 真人署名。`,
+          `且源码用 sys.symbol 系统单色图标替代 — 有品牌识别度的图标（app logo/银行 logo/营销插画）须裁原子素材并 $r 渲染，不可用系统符号冒充；` +
+          `若该元素实为标准语义图标（tab/铃铛/加号/卡种线性图标），按 P0-E 分型规则把 icon.kind 改为 system_symbol + color_ref 着色 + fidelity_note（见 reference/ui-spec.md「图标分型」），或显式 placeholder + 真人署名。`,
       });
     }
   }

@@ -294,6 +294,64 @@ export function computeEdgeDensityTileDivergence(
   };
 }
 
+export interface ImageStats {
+  ok: boolean;
+  width?: number;
+  height?: number;
+  /** 4bit/通道量化后唯一色数（≤64×64 下采样统计） */
+  uniqueColors?: number;
+  /** 灰度标准差 0-255（纯色≈0） */
+  lumaStddev?: number;
+  /** 非近白/近黑像素占比（空白裁图≈0） */
+  contentRatio?: number;
+  error?: string;
+}
+
+/** 图像内容统计（P0-B 裁剪产物验真的纯色/空白 sanity 用，jimp worker 同步 spawn） */
+export function computeImageStats(imagePath: string): ImageStats {
+  if (!isJimpAvailable()) return { ok: false, error: 'jimp not installed' };
+  if (!fs.existsSync(imagePath)) return { ok: false, error: `image not found: ${imagePath}` };
+  const out = runJimpWorker(['stats', imagePath]);
+  if (out.ok === true && typeof out.uniqueColors === 'number') {
+    return out as unknown as ImageStats;
+  }
+  return { ok: false, error: typeof out.error === 'string' ? out.error : 'stats failed' };
+}
+
+export interface ContactSheetEntry {
+  key: string;
+  bbox: number[];
+  cropPath: string;
+}
+
+/**
+ * 贴回对照 contact-sheet（P0-B 证据落盘）：左＝原图+bbox 红框，右＝crop 缩略图纵排。
+ * args 经临时 JSON 文件传 worker（entries 可多、避免 argv 长度限制）。
+ */
+export function renderContactSheet(
+  sourceImagePath: string,
+  entries: ContactSheetEntry[],
+  outPath: string,
+): { ok: boolean; missing?: number; error?: string } {
+  if (!isJimpAvailable()) return { ok: false, error: 'jimp not installed' };
+  if (!fs.existsSync(sourceImagePath)) return { ok: false, error: `source not found: ${sourceImagePath}` };
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const argsPath = path.join(
+    require('os').tmpdir(),
+    `contact-args-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+  );
+  fs.writeFileSync(argsPath, JSON.stringify({ source: sourceImagePath, outPath, entries }), 'utf-8');
+  try {
+    const out = runJimpWorker(['contact', argsPath]);
+    if (out.ok === true && fs.existsSync(outPath)) {
+      return { ok: true, missing: typeof out.missing === 'number' ? out.missing : 0 };
+    }
+    return { ok: false, error: typeof out.error === 'string' ? out.error : 'contact sheet failed' };
+  } finally {
+    try { fs.unlinkSync(argsPath); } catch { /* ignore */ }
+  }
+}
+
 export function isJimpAvailable(): boolean {
   try {
     require.resolve('jimp', { paths: [HARNESS_ROOT] });

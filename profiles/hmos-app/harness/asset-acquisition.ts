@@ -22,8 +22,15 @@ import { validateProjectRelativePath } from '../../../harness/scripts/utils/proj
 import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../../harness/scripts/utils/fidelity-shared';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 
-/** G4b：crop 确认判据——human_crop_confirmed:true 且（headless 下）crop_confirmed_by 为非自动化身份或 user_requirement。 */
-function isCropHumanConfirmed(
+/**
+ * G4b + P0-C（plan f2d8c4a6 授权/验真拆位）：crop **授权**判据——human_crop_confirmed:true 且
+ * （headless 下）crop_confirmed_by 为非自动化身份或 user_requirement。
+ * 语义边界（round6 教训）：本判据只回答"允不允许走截图裁剪路径"（能不能裁），**绝不**回答
+ * "这个 bbox 裁出来的产物对不对"（裁没裁对）——后者由 asset_crop_validation（P0-B）独立验真：
+ * 确定性 sanity + VL 隔离辨认/真人 bbox_verified_by。user_requirement 是用户 NL 的**总体裁剪授权**，
+ * round6 事故即把它误当 23 个 bbox 的逐框验真，废图全免检——授权恒不豁免验真。
+ */
+function isCropAuthorized(
   a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string },
   headless: boolean,
 ): boolean {
@@ -32,7 +39,7 @@ function isCropHumanConfirmed(
   // headless：须有前置授权者——user_requirement(用户 NL 前置授权) 或真人署名；缺/自动化=自报。
   if (headless) {
     const by = typeof a.crop_confirmed_by === 'string' ? a.crop_confirmed_by.trim() : '';
-    if (by === USER_REQUIREMENT_CONFIRMER) return true; // 显式认可：即便通用规则收紧也恒通过
+    if (by === USER_REQUIREMENT_CONFIRMER) return true; // 授权路径显式认可（验真另走 P0-B，不在此豁免）
     return by.length > 0;
   }
   return true;
@@ -97,17 +104,18 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       continue;
     }
     if (fs.existsSync(path.resolve(ctx.projectRoot, safeRelForExists))) {
-      notes.push(`${a.key}：已存在`);
+      // 已存在只免"重复裁剪"，不免验真——asset_crop_validation（P0-B）对已存在产物一律重验
+      notes.push(`${a.key}：已存在（验真归 asset_crop_validation）`);
       continue;
     }
     if (!a.source_bbox || a.source_bbox.length !== 4) {
       notes.push(`${a.key}：缺 source_bbox`);
       continue;
     }
-    if (!isCropHumanConfirmed(a, headless)) {
-      // G4b：未确认（headless 下还须非自动化/user_requirement crop_confirmed_by，堵自报）→ 确认门禁
+    if (!isCropAuthorized(a, headless)) {
+      // G4b：未授权（headless 下还须非自动化/user_requirement crop_confirmed_by，堵自报）→ 授权门禁
       cropPendingConfirm.push(a.key);
-      notes.push(`${a.key}：待确认裁剪框（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份或 user_requirement' : ''}）后自动裁图`);
+      notes.push(`${a.key}：待授权裁剪（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份或 user_requirement' : ''}）后自动裁图`);
       continue;
     }
     const srcPick = resolveRefSourceImage(refIndex, a.source_ref);
@@ -153,9 +161,10 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
 
   const results: CheckResult[] = [];
 
-  // G4b：crop 资产待人工确认 → 门禁（解耦 G1 自签：不自动置 confirmed，改走 goal-runner halt-confirm）。
-  // pixel_1to1 → BLOCKER（headless 无确认即挡；交互/goal 经既有确认 UX 暂停求人确认 bbox 后裁）；否则 WARN。
-  // 这让"从截图裁素材"在 goal 模式从休眠转可用，而非静默退占位。
+  // G4b：crop 资产待授权 → 门禁（解耦 G1 自签：不自动置 confirmed，改走 goal-runner halt-confirm）。
+  // pixel_1to1 → BLOCKER（headless 无授权即挡；交互/goal 经既有确认 UX 暂停求人授权后裁）；否则 WARN。
+  // P0-C 语义拆位：此门只管**授权**（能不能裁）；产物**验真**（裁没裁对）由 asset_crop_validation 独立把关，
+  // 授权（含 user_requirement）绝不豁免验真。
   if (cropPendingConfirm.length > 0) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
     results.push({
@@ -164,8 +173,11 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity,
       status,
-      details: `crop 资产待人工确认裁剪框（human_crop_confirmed）：${cropPendingConfirm.join(', ')}`,
-      suggestion: 'goal-runner 暂停求人工确认/微调 bbox；或在需求中自然授权从原图/截图裁剪资源并记录 crop_confirmed_by=user_requirement。确认后置 human_crop_confirmed 自动裁剪；headless 无确认即 BLOCKER（不自动伪造确认）。',
+      details: `crop 资产待授权裁剪（human_crop_confirmed）：${cropPendingConfirm.join(', ')}`,
+      suggestion:
+        'goal-runner 暂停求人授权/微调 bbox；或在需求中自然授权从原图/截图裁剪资源并记录 crop_confirmed_by=user_requirement。' +
+        '授权后置 human_crop_confirmed 自动裁剪；headless 无授权即 BLOCKER（不自动伪造）。' +
+        '注意：授权只解锁裁剪路径，产物验真由 asset_crop_validation 把关（sanity+VL 辨认/真人 bbox_verified_by）。',
       affected_files: [uiSpecRel],
     });
   }

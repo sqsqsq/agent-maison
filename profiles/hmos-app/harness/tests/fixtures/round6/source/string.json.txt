@@ -1,0 +1,200 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "WalletMain"
+    },
+    {
+      "name": "tab_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_mine",
+      "value": "我的"
+    },
+    {
+      "name": "home_title",
+      "value": "钱包"
+    },
+    {
+      "name": "mine_title",
+      "value": "我的"
+    },
+    {
+      "name": "card_pack_title",
+      "value": "卡包"
+    },
+    {
+      "name": "add_card_title",
+      "value": "添加卡片"
+    },
+    {
+      "name": "card_guide_subtitle",
+      "value": "集中管理您的卡证票券钥匙"
+    },
+    {
+      "name": "add_manage_cards",
+      "value": "添加管理卡片"
+    },
+    {
+      "name": "more_services",
+      "value": "更多服务"
+    },
+    {
+      "name": "not_supported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "not_logged_in",
+      "value": "未登录"
+    },
+    {
+      "name": "add_card_desc",
+      "value": "银行卡/交通卡/门禁卡等"
+    },
+    {
+      "name": "manage_non_local",
+      "value": "管理非本机卡片"
+    },
+    {
+      "name": "non_local_cards",
+      "value": "非本机卡片"
+    },
+    {
+      "name": "msg_center_welcome",
+      "value": "欢迎使用钱包消息中心！"
+    },
+    {
+      "name": "home_header_msg_action",
+      "value": "消息"
+    },
+    {
+      "name": "home_title_add_action",
+      "value": "+"
+    },
+    {
+      "name": "home_promo_no_detail",
+      "value": "暂无详情"
+    },
+    {
+      "name": "home_data_unavailable",
+      "value": "数据暂不可用，请稍后再试"
+    },
+    {
+      "name": "home_mock_service_s1_name",
+      "value": "Huawei Card"
+    },
+    {
+      "name": "home_mock_service_s2_name",
+      "value": "信用卡还款"
+    },
+    {
+      "name": "home_mock_service_s3_name",
+      "value": "优惠加油"
+    },
+    {
+      "name": "home_mock_service_s4_name",
+      "value": "更多"
+    },
+    {
+      "name": "home_mock_service_s4_red_packet",
+      "value": "发红包"
+    },
+    {
+      "name": "home_mock_promo_p1_title",
+      "value": "数字金融生活新方式"
+    },
+    {
+      "name": "home_mock_promo_p1_desc",
+      "value": "这些金融元服务，承包你的全场景金融需求"
+    },
+    {
+      "name": "home_mock_promo_p2_title",
+      "value": "会员卡（酒店、航司）、校园卡上线"
+    },
+    {
+      "name": "home_mock_promo_p2_desc",
+      "value": "钱包全管理，出行更从容"
+    },
+    {
+      "name": "home_mock_promo_p3_title",
+      "value": "畅行无忧卡·金陵通刷卡扣费成功"
+    },
+    {
+      "name": "home_mock_promo_p3_desc",
+      "value": "2 小时前"
+    },
+    {
+      "name": "card_pack_section_title",
+      "value": "卡包"
+    },
+    {
+      "name": "empty_non_local_cards",
+      "value": "暂无非本机卡片"
+    },
+    {
+      "name": "finance_huawei_pay",
+      "value": "华为支付"
+    },
+    {
+      "name": "finance_bank_account",
+      "value": "银行电子账户"
+    },
+    {
+      "name": "finance_card_records",
+      "value": "银行卡交易记录"
+    },
+    {
+      "name": "finance_transit_refund",
+      "value": "交通卡退款记录"
+    },
+    {
+      "name": "settings_item",
+      "value": "设置"
+    },
+    {
+      "name": "help_and_feedback",
+      "value": "帮助和反馈"
+    },
+    {
+      "name": "logout_confirm_title",
+      "value": "确认登出"
+    },
+    {
+      "name": "logout_confirm_message",
+      "value": "确定要退出登录吗？"
+    },
+    {
+      "name": "confirm",
+      "value": "确定"
+    },
+    {
+      "name": "cancel",
+      "value": "取消"
+    },
+    {
+      "name": "home_mock_local_card_label",
+      "value": "模拟交通卡"
+    },
+    {
+      "name": "finance_section_title",
+      "value": "金融信息"
+    },
+    {
+      "name": "settings_section_title",
+      "value": "设置与帮助"
+    },
+    {
+      "name": "local_cards_section",
+      "value": "本设备卡片"
+    },
+    {
+      "name": "local_cards_empty",
+      "value": "暂无本机卡片"
+    },
+    {
+      "name": "wallet_login_hint",
+      "value": "点击登录华为账号"
+    }
+  ]
+}

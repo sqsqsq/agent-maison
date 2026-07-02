@@ -78,10 +78,16 @@ global_elements:
 | `root` | 组件树根节点（P0/P1 必填；P2/P3 轻量可省略） |
 | `lightweight` | `true` 表示 P2/P3 轻量版 |
 
-组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`children[]`。
+组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`fidelity_note`（受控近似的显式承认）、`children[]`。
+
+**bbox 坐标语义（P0-A·round6 命门，门禁 `ui_spec_bbox_semantic` 系统性拦截）**：顺序**严格 [横向x, 纵向y, 宽w, 高h]**，绝非 [y,x,h,w]。具体数字 few-shot——竖屏左上角标题「钱包」≈ `[0.04, 0.02, 0.30, 0.05]`（x 小、y 小、**w 明显大于 h**）；页面中部横向 hero 插画 ≈ `[0.08, 0.15, 0.84, 0.20]`；底部 tab 行 ≈ `[0.10, 0.93, 0.80, 0.05]`。**自检口诀：横排多字文本恒 w>h**——若你写出的文本节点 w<h，就是把 y/x 或 h/w 写反了（round6 事故：全文档转置 → 素材全裁成竖切废条+文字排到页首）。`tokens[].source_bbox` / `assets[].source_bbox` 同一语义。
 
 **round5 P0-A/P0-B 素材声明约定（pixel_1to1 承重，务必遵守）**：
-- **图标分型（P0-B·命门）**：参考图中为**彩色/品牌图标**的元素（如银行卡红卡/交通卡公交/门禁卡蓝屋/证件黄证/宫格 app 图标/底部 tab 首页·我的图标）须声明 `icon: { kind: brand_logo|illustration, ref: <atomic_icon_key> }` 并在 assets 里为该 key 备原子图标裁图——**门禁 `visual_parity_icon_substitution` 会拦"声明品牌图标却用 sys.symbol 系统单色图标替代"（pixel_1to1 BLOCKER）**。只有确与参考一致的**单色语义图标**才可声明 `kind: system_symbol`（合法用 sys.symbol）。**底部 tab 等全局元素的图标同样须声明**（否则真实 tab 易被搭成纯文字无图标）。漏声明=漏报（可接受），不会误伤未声明的语义单色 glyph。
+- **图标分型（P0-B/P0-E·命门，round6 收窄）**：分型按**品牌识别度**而非"有没有颜色"（旧规则"彩色即 brand_logo+裁图"把 23 个标准图标全推向裁剪，bbox 一错全军覆没）：
+  - **必须 `brand_logo`/`illustration` + crop 原子裁图（allowlist 硬边界，绝不可 system_symbol 替代）**：有品牌识别度的图标（Huawei Card / 云闪付 / 银行 logo / app 宫格图标）、营销图、卡片堆插画、空态插画。裁图须过 `ui_spec_bbox_semantic`（坐标语义）与 `asset_crop_validation`（产物验真）两道门禁。
+  - **首选 `kind: system_symbol` + `ref: sys.symbol.<name>` + `color_ref` 着色**：标准语义图标——铃铛/加号/返回/扫码/设置/箭头、底部 tab 首页·我的、银行卡/交通卡/门禁卡/车钥匙/证件等卡种线性图标。**即使参考图中它们有色**也优先系统符号：原图本就是单色调线性图标，着色矢量的近似度高于 JPG 裁图，且没有裁错风险。此为受控近似，须在节点记 `fidelity_note`（如"原图橙色线性银行卡图标，以 sys.symbol + brand.bank_orange 着色近似"）。
+  - 常用语义映射建议（仅提示不 gate；选对语义靠 review 视觉维度 + device 回环兜——交通卡该 bus 不该 map）：银行卡→`creditcard`、交通卡→`bus`、门禁卡→`house`/`lock`、车钥匙→`car`/`key`、证件→`person_2/idcard 类`、首页→`house_fill`、我的→`person_fill`、消息→`bell`、添加→`plus`、扫码→`qrcode/scan 类`、返回→`chevron_left`。
+  - **门禁 `visual_parity_icon_substitution` 保持原判**：声明 `brand_logo|illustration` 却用 sys.symbol 静默替代 → pixel_1to1 BLOCKER（round4"☎ 冒充"防线）；声明 `system_symbol` 的元素本就不触发。**底部 tab 等全局元素的图标同样须声明**。漏声明=漏报（可接受），不会误伤未声明的语义单色 glyph。
 - **素材原子化（P0-A·承重）**：`assets` 里 `acquisition: crop` 的素材图**只能是原子插画/单图标**（仅图形），**绝不能把"整段界面"裁成一张背景大图**——若素材图内烤入了本 ui-spec 声明的**文本节点**（≥2 个，如卡包区大图烤入"卡包/集中管理/添加管理卡片"、promo 大图烤入"数字金融生活新方式/首页/我的"、空态图烤入"暂无非本机卡片"），门禁 `visual_parity_asset_baked_text` 判 BLOCKER（pixel_1to1）。标题/副标题/按钮/空态文案/底部 tab 一律**真实组件**渲染，大图只做叶子插画。营销/装饰插画确需含字（如 promo 样机气泡"东方财富 Lite"）→ 该文本**不要**登记为 ui-spec text 节点；仍被判则给该 asset 设 `baked_text_defer: true` + `baked_text_defer_by: <真人标识>` 放行。
 
 **G3 捕获保真字段**（pixel_1to1 下务必逐项捕获，否则 coding 易默认错误样式/布局）：

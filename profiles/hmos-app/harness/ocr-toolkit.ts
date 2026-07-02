@@ -112,6 +112,65 @@ export function findFuzzyWords(words: OcrWord[], target: string): OcrWord[] {
   });
 }
 
+/**
+ * target 在 hay 中的按序字符命中率 ∈ [0,1]（吸收 OCR 掉字/乱码；包含子串=1）。
+ * fuzzyTextPresent 的返回比率版，供需要拿命中强度做排序/阈值的调用方（如 bbox 语义门禁的候选行匹配）。
+ */
+export function fuzzyMatchRatio(hay: string, target: string): number {
+  const t = normalizeForMatch(target);
+  const h = normalizeForMatch(hay);
+  if (!t) return 0;
+  if (h.includes(t)) return 1;
+  let i = 0;
+  let hit = 0;
+  for (const ch of t) {
+    const found = h.indexOf(ch, i);
+    if (found >= 0) { hit++; i = found + 1; }
+  }
+  return hit / t.length;
+}
+
+export interface OcrLine {
+  /** 行内 word 按 x 排序拼接的文本 */
+  text: string;
+  /** 行联合框 [x,y,w,h] 归一化 */
+  box: [number, number, number, number];
+  words: OcrWord[];
+}
+
+/**
+ * 词→行聚类：纵向重叠 ≥50%（相对较矮者）归同一行，行框取联合框。
+ * tesseract 把一句话拆成多词、每词一框——与 ui-spec 文本节点（整句一框）比对 IoU 前必须先聚成行，
+ * 否则单词框对整句框 IoU 被稀释（OCR spike 实测：联合框法 median IoU 被拉到 ~0.06，行聚类后判定 22:0 干净分离）。
+ */
+export function clusterOcrLines(words: OcrWord[]): OcrLine[] {
+  const lines: Array<{ words: OcrWord[]; box: [number, number, number, number] }> = [];
+  const sorted = [...words].sort((a, b) => a.bbox[1] - b.bbox[1]);
+  for (const w of sorted) {
+    let placed = false;
+    for (const line of lines) {
+      const [, ly, , lh] = line.box;
+      const overlap = Math.min(ly + lh, w.bbox[1] + w.bbox[3]) - Math.max(ly, w.bbox[1]);
+      if (overlap >= 0.5 * Math.min(lh, w.bbox[3])) {
+        line.words.push(w);
+        const x1 = Math.min(line.box[0], w.bbox[0]);
+        const y1 = Math.min(ly, w.bbox[1]);
+        const x2 = Math.max(line.box[0] + line.box[2], w.bbox[0] + w.bbox[2]);
+        const y2 = Math.max(ly + lh, w.bbox[1] + w.bbox[3]);
+        line.box = [x1, y1, x2 - x1, y2 - y1];
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) lines.push({ words: [w], box: [...w.bbox] as [number, number, number, number] });
+  }
+  return lines.map(l => ({
+    text: [...l.words].sort((a, b) => a.bbox[0] - b.bbox[0]).map(w => w.text).join(''),
+    box: l.box,
+    words: l.words,
+  }));
+}
+
 /** word 的 bbox 中心 y（归一化）；用于 band 判定（如底部 tab band > 0.85） */
 export function wordCenterY(w: OcrWord): number {
   return w.bbox[1] + w.bbox[3] / 2;

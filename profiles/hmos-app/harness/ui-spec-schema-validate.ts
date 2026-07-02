@@ -31,6 +31,10 @@ const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref'
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
   'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
+  // round5 P0-A 烤字 defer（TS 类型已有，validator 此前漏登记）
+  'baked_text_defer', 'baked_text_defer_by',
+  // P0-C（f2d8c4a6）：产物验真真人署名（与 crop_confirmed_by 授权语义正交）
+  'bbox_verified_by',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets', 'global_elements']);
 
@@ -59,7 +63,7 @@ function validateComponentNode(
   if (typeof n.order !== 'number' || !Number.isInteger(n.order) || n.order < 0) {
     errors.push(`${pathLabel}.order 须为 ≥0 整数，收到 ${JSON.stringify(n.order)}`);
   }
-  for (const k of ['id', 'layout', 'text', 'data_binding', 'style_ref', 'asset_ref'] as const) {
+  for (const k of ['id', 'layout', 'text', 'data_binding', 'style_ref', 'asset_ref', 'fidelity_note'] as const) {
     if (n[k] !== undefined && typeof n[k] !== 'string') {
       errors.push(`${pathLabel}.${k} 须为字符串`);
     }
@@ -225,12 +229,12 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (as.source_bbox !== undefined && !isBbox(as.source_bbox)) {
         errors.push(`assets[${i}].source_bbox 须为 4 元归一化 [x,y,w,h]`);
       }
-      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by'] as const) {
+      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by', 'baked_text_defer_by', 'bbox_verified_by'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'string') {
           errors.push(`assets[${i}].${k} 须为字符串`);
         }
       }
-      for (const k of ['placeholder', 'human_crop_confirmed'] as const) {
+      for (const k of ['placeholder', 'human_crop_confirmed', 'baked_text_defer'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'boolean') {
           errors.push(`assets[${i}].${k} 须为布尔`);
         }

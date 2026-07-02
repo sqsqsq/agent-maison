@@ -60,6 +60,8 @@ export interface UiSpecComponentNode {
   width_ratio?: number;
   /** G3：区域/容器背景色 token（卡包区灰底 vs 实现蓝底） */
   bg_color?: string;
+  /** P0-E（f2d8c4a6）：受控近似的显式承认（如"原图彩色线性图标，以 system_symbol+着色近似"）——诚实记录保真妥协 */
+  fidelity_note?: string;
   children?: UiSpecComponentNode[];
 }
 
@@ -96,6 +98,12 @@ export interface UiSpecAsset {
   baked_text_defer?: boolean;
   /** round5 P0-A：baked_text_defer 的真人署名（非自动化身份，经 isHumanConfirmed 校验）；缺则 defer 无效 */
   baked_text_defer_by?: string;
+  /**
+   * P0-C（f2d8c4a6 授权/验真拆位）：crop 产物**验真**的真人确认署名（对照 contact-sheet 确认"裁对了"）。
+   * 与 crop_confirmed_by（裁剪**授权**）语义正交：授权解锁裁剪路径，验真确认产物正确；
+   * asset_crop_validation 的 VL 隔离辨认不可用/失配时，此署名是唯一逃生阀（自动化身份不算）。
+   */
+  bbox_verified_by?: string;
 }
 
 /**

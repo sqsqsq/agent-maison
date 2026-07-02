@@ -65,7 +65,7 @@
       "minItems": 4,
       "maxItems": 4,
       "items": { "type": "number", "minimum": 0, "maximum": 1 },
-      "description": "归一化 [x, y, w, h] 相对原图 ground truth"
+      "description": "归一化 [x, y, w, h] 相对原图 ground truth。顺序严格为 [横向x, 纵向y, 宽w, 高h]，绝非 [y,x,h,w]。few-shot：竖屏左上角标题「钱包」≈ [0.04, 0.02, 0.30, 0.05]（x 小、y 小、w 明显大于 h——横排文本恒 w>h）；页面中部横向 hero 插画 ≈ [0.08, 0.15, 0.84, 0.20]。自检：横排多字文本若算出 w<h 即坐标顺序写反（门禁 ui_spec_bbox_semantic 会系统性拦截）"
     },
     "componentNode": {
       "type": "object",
@@ -116,6 +116,10 @@
           "type": "string",
           "description": "G3：区域/容器背景色 token（治灰底 vs 蓝底）"
         },
+        "fidelity_note": {
+          "type": "string",
+          "description": "P0-E：受控近似的显式承认（如「原图彩色线性图标，以 system_symbol+color_ref 着色近似」）"
+        },
         "children": {
           "type": "array",
           "items": { "$ref": "#/definitions/componentNode" }
@@ -162,7 +166,10 @@
         "placeholder": { "type": "boolean" },
         "rationale": { "type": "string" },
         "human_crop_confirmed": { "type": "boolean" },
-        "crop_confirmed_by": { "type": "string", "description": "G4b：crop 确认来源；headless 下须为非自动化身份或 user_requirement（堵自报）" }
+        "crop_confirmed_by": { "type": "string", "description": "G4b：crop 裁剪**授权**来源；headless 下须为非自动化身份或 user_requirement（堵自报）。授权≠验真：产物验真见 asset_crop_validation 与 bbox_verified_by" },
+        "baked_text_defer": { "type": "boolean", "description": "round5 P0-A：显式放行素材图内含声明文本（营销/装饰插画确需含字）" },
+        "baked_text_defer_by": { "type": "string", "description": "round5 P0-A：baked_text_defer 真人署名（非自动化身份）；缺则 defer 无效" },
+        "bbox_verified_by": { "type": "string", "description": "P0-C：crop 产物验真的真人确认署名（对照 contact-sheet）；与授权正交，是 VL 辨认不可用/失配时的唯一逃生阀（自动化身份不算）" }
       }
     }
   }

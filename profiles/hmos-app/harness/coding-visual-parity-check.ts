@@ -19,6 +19,7 @@ import {
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { computeStaticFidelityScore } from './static-fidelity-score';
+import { collectUnverifiedCropLines } from './asset-crop-validation';
 import {
   runVisualParityBackstop,
   collectVariantParityIssues,
@@ -212,6 +213,35 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     });
   }
 
+  // P0-B（f2d8c4a6）：物化前置依赖裁剪验真——spec 的 asset-crop-validation.json 里未 verified 的 crop
+  // 资产不得被源码消费/物化进模块 media（废图 204×2938 竖条正是这样进的 media）。报告缺失=spec 未跑新门禁。
+  {
+    const unverified = collectUnverifiedCropLines(ctx.projectRoot, ctx.feature, doc, {
+      contracts: ctx.featureSpec.contracts ?? undefined,
+    });
+    if (unverified.length > 0) {
+      const { severity, status } = isPixel1to1(ctx)
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      results.push({
+        id: 'visual_parity_unverified_crop',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: [
+          '【P0-B 物化前置】crop 资产须先过 spec 阶段 asset_crop_validation（sanity+VL 辨认/真人确认）才可物化进模块 media：',
+          ...unverified.map(l => `  ${l}`),
+        ].join('\n'),
+        suggestion:
+          '回 spec 阶段：修 bbox（过 ui_spec_bbox_semantic）→ 重裁 → 过 asset_crop_validation（verified）后再物化；' +
+          '不得绕过验真直接把 crop 复制进 resources/base/media。',
+        affected_files: [uiSpecRel],
+      });
+    }
+  }
+
+
   // round5 P0-A：素材原子化——被 $r 引用的非 placeholder 素材图不得烤入 ui-spec 声明文本（整段大图 → 双渲染/烤字）。
   const bakedText = collectBakedTextAssetIssues(ctx, doc, baselineUnverified);
   if (bakedText.issues.length > 0) {
@@ -269,7 +299,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...iconSubIssues.map(i => i.detail),
       ].join('\n'),
       suggestion:
-        '为参考图中的彩色/品牌图标裁原子图标素材并 $r(app.media.<key>) 渲染（含底部 tab 图标）；确需系统单色图标则声明 icon.kind=system_symbol，或显式 placeholder + 真人署名。',
+        '有品牌识别度的图标（app logo/银行 logo/营销图）裁原子素材并 $r(app.media.<key>) 渲染；标准语义图标（tab/铃铛/加号/卡种线性图标）按 P0-E 分型规则改声明 icon.kind=system_symbol + color_ref 着色 + fidelity_note；或显式 placeholder + 真人署名。',
       affected_files: [uiSpecRel],
     });
   }

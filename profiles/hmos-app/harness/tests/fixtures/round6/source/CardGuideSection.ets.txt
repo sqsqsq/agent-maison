@@ -1,0 +1,40 @@
+@Component
+export struct CardGuideSection {
+  onGoCardPack: () => void = () => {
+  };
+
+  build() {
+    Column({ space: 12 }) {
+      Text($r('app.string.card_pack_section_title'))
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.wallet_text_primary'))
+        .width('100%')
+
+      Text($r('app.string.card_guide_subtitle'))
+        .fontSize(14)
+        .fontColor($r('app.color.wallet_text_secondary'))
+        .width('100%')
+
+      Image($r('app.media.ill_card_pack_guide'))
+        .width('100%')
+        .height($r('app.float.guide_banner_height'))
+        .objectFit(ImageFit.Contain)
+        .borderRadius(16)
+        .onClick(() => {
+          this.onGoCardPack();
+        })
+
+      Button($r('app.string.add_manage_cards'), { type: ButtonType.Capsule })
+        .width('100%')
+        .id('add_manage_cards_btn')
+        .fontColor($r('app.color.brand_primary'))
+        .backgroundColor($r('app.color.wallet_button_tonal_bg'))
+        .onClick(() => {
+          this.onGoCardPack();
+        })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+}
