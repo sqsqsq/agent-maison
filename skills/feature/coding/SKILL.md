@@ -176,8 +176,13 @@
 4. **资产物化（crop 真图落地 · 禁占位冒充 · BLOCKER）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（`doc/features/<feature>/spec/assets/<key>.<ext>` 的真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`（模块＝写 `$r('app.media.<key>')` 的那个模块）。**严禁**：① 生成 1×1/纯色/空 PNG 占位冒充真图；② 在工程根建 `media/` 目录冒充资源。缺真图时按第 3 条显式 `placeholder` 并停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图；`resource_integrity` 以模块资源目录实际文件判可用性，工程根/契约路径占位不被采信。**物化前置（P0-B·f2d8c4a6）**：只有 spec 阶段 `asset_crop_validation` 判 `verified` 的 crop 才可物化——门禁 `visual_parity_unverified_crop` 会重算产物 sha256 与验真裁决绑定比对，物化须从 `resolved_path` **原样字节复制**（不得再加工/压缩/换图）。
 5. **可见文案白名单（P1-A·f2d8c4a6 · pixel_1to1 BLOCKER）**：源码 `Text()/Button()` 字面量与被 `$r('app.string.*')` 引用的 string.json value 中，用户可见 CJK 文本**必须来自 ui-spec/ref-elements 文本集**——原图没有的文案严禁无中生有（round6 事故：zone 名 finance/settings 被脑补成可见标题「金融信息/设置与帮助」）。想加分组标题？回 spec 补建模，不许 coding 自造。确属功能必需的非原图文案（toast/错误提示/空态兜底）→ 登记 `doc/features/<feature>/coding/visible-text-exemptions.yaml`（`entries[].text` + **非空 `rationale`**，无理由不生效；review 视觉维度逐条复核）。门禁 `visible_text_whitelist` 拦截。
 6. **按 spec 声明渲染几何/填充（P1-A 升级 · pixel_1to1 BLOCKER）**：声明 `width_ratio≤0.6`/`align: end` 的按钮**不得** `.width('100%')`/`layoutWeight(1)`；`variant: tonal` 不得高饱和实心 `backgroundColor`；`subtitle_position: trailing` 的副标题 Row 同行右置、`below` 才题下。门禁 `visual_parity_render` 已升 pixel_1to1 BLOCKER——它抓到的都是源码静态可判的确定性违规，不再"以 device 为准"缓期。
-7. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
-8. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
+7. **严禁透明占位冒充（2026-07-03 · pixel_1to1 BLOCKER）**：**绝不允许**把 spec 文本/资产/符号引用挂在
+   `opacity(0)`/`visibility(Visibility.None|Hidden)`/零尺寸/`fontSize(0)` 节点上"骗" presence 扫描
+   （实锤反例：`Text($r('app.string.X')).fontSize(1).opacity(0)`、`Image($r(...)).width(0).height(0).opacity(0)`）——
+   引用在、渲染无＝作弊，比缺失更恶劣（掩盖问题+污染结构/无障碍语义）。元素该渲染就真实可见渲染；
+   实现不了走 ui-spec 显式 placeholder / fidelity_deferrals + 真人签字。门禁 `visual_parity_invisible_presence` 拦截。
+8. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
+9. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
 
 #### Step 2.5b Context Exploration（与原流程衔接）
 

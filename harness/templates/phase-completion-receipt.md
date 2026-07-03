@@ -8,6 +8,10 @@
 #
 # 输出路径：doc/features/<feature>/<phase>/phase-completion-receipt.md
 # 模板路径：framework/harness/templates/phase-completion-receipt.md
+#
+# 回执 stale 治理（自动，无需填写）：harness 会把门禁集指纹机器写入 report_dir/summary.json；
+# framework 升级（phase-rules 变化）后 check-receipt 校验指纹失配 → 本回执自动失效
+# （gate_fingerprint_stale BLOCKER），必须重跑该阶段 harness 重验后才能再次闭环——旧回执不能豁免新门禁。
 
 feature: "<feature-name>"
 phase: "<spec | plan | coding | review | ut | testing>"

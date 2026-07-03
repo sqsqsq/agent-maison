@@ -13,7 +13,41 @@ phase: coding
 version: "1.0"
 applies_to: "**"
 
-structure_checks: {}
+structure_checks:
+  # ---- 视觉保真硬门禁声明面（f2d8c4a6 P1-A/P0-B；checker 按 id 硬编码实现，本表为声明性
+  # description SSOT + gate-fingerprint 指纹分量：门禁语义变化须同步本表，使存量回执正确失效）----
+  visible_text_whitelist:
+    description: >
+      P1-A（plan f2d8c4a6）：可见文案白名单——源码 Text()/Button() CJK 字面量与被 $r('app.string.*')
+      引用的 string.json value 必须 ⊆ ui-spec/ref-elements 文本集 ∪ 豁免表
+      （coding/visible-text-exemptions.yaml，须非空 rationale，review 视觉维度逐条人审）。
+      原图没有的文案不得无中生有（round6：zone 名脑补成「金融信息/设置与帮助」可见标题）。
+      pixel_1to1 → BLOCKER。非对称覆盖匹配（impl⊃spec 须占比 ≥80%，防短合法词漏放长脑补标题）。
+    severity: BLOCKER
+
+  visual_parity_unverified_crop:
+    description: >
+      P0-B 物化前置（plan f2d8c4a6）：crop 资产须 spec 阶段 asset_crop_validation 判 verified 且
+      裁决绑定齐全（sha256/resolved_path/source_bbox 快照与当前一致，模块 media 副本 hash 一致）
+      才可物化进 resources/base/media；报告缺失/旧格式/绑定漂移一律拦。pixel_1to1 → BLOCKER。
+    severity: BLOCKER
+
+  visual_parity_invisible_presence:
+    description: >
+      透明节点假 presence 拦截（2026-07-03，codex 发现的对抗模式）：spec 文本/资产/符号引用
+      （$r app.string/app.media/sys.symbol 或 CJK 字面量）挂在字面硬不可见节点
+      （opacity(0)/visibility None|Hidden/width(0)+height(0)/fontSize(0)）＝骗静态 presence/asset-render
+      扫描的作弊（round6 宿主实锤：bottomTabPresence 透明文本、三连零 Image、透明 SymbolGlyph）。
+      pixel_1to1 → BLOCKER。仅判字面值（变量/动画绑定不判防误伤），漏报归 device OCR 存在性观测兜。
+    severity: BLOCKER
+
+  visual_parity_render:
+    description: >
+      P1-A 升级（plan f2d8c4a6）：spec 声明的源码静态可判几何/填充须按声明渲染——width_ratio≤0.6/
+      align=end 不得 .width('100%')/layoutWeight(1)；variant=tonal 不得高饱和实心。
+      pixel_1to1 P0 从"低置信 WARN 以 device 为准"升 BLOCKER（round6 按钮全宽信号被降级丢失的通道关闭）；
+      收集器对定位不到的场景保守跳过，产出的命中均为确定性违规。
+    severity: BLOCKER
 
 semantic_checks: {}
 

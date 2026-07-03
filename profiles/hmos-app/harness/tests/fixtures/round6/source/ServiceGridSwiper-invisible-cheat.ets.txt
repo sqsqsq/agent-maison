@@ -1,0 +1,95 @@
+import { Context } from '@kit.AbilityKit';
+import { showToast } from '@aspect/CommUI';
+import { ServiceEntry } from '../../data/model/ServiceEntry';
+import { HomeConstants } from '../../shared/constant/HomeConstants';
+
+@Component
+export struct ServiceGridSwiper {
+  @Prop services: ServiceEntry[] = [];
+
+  private buildColumnsTemplate(): string {
+    const parts: string[] = [];
+    for (let i = 0; i < HomeConstants.SERVICE_GRID_COLUMNS; i++) {
+      parts.push('1fr');
+    }
+    return parts.join(' ');
+  }
+
+  private toastNotSupported(): void {
+    const ctx = this.getUIContext().getHostContext() as Context;
+    showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
+  }
+
+  @Builder
+  gridIcon(item: ServiceEntry) {
+    if (item.id === 's1') {
+      Column() {
+        Text(item.name)
+          .fontSize(10)
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+      }
+      .width(40)
+      .height(40)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.text_primary'))
+      .borderRadius(8)
+      SymbolGlyph($r('sys.symbol.creditcard'))
+        .fontSize(1)
+        .opacity(0)
+      Image($r('app.media.sys_symbol_creditcard'))
+        .width(0)
+        .height(0)
+        .opacity(0)
+    } else if (item.id === 's2') {
+      SymbolGlyph($r('sys.symbol.creditcard'))
+        .fontSize(32)
+        .fontColor([$r('app.color.brand_accent_pink')])
+      Image($r('app.media.sys_symbol_creditcard'))
+        .width(0)
+        .height(0)
+        .opacity(0)
+    } else if (item.id === 's3') {
+      SymbolGlyph($r('sys.symbol.fuelpump'))
+        .fontSize(32)
+        .fontColor([$r('app.color.brand_accent_green')])
+      Image($r('app.media.sys_symbol_fuelpump'))
+        .width(0)
+        .height(0)
+        .opacity(0)
+    } else {
+      SymbolGlyph($r('sys.symbol.gift'))
+        .fontSize(32)
+        .fontColor([$r('app.color.brand_accent_red')])
+      Image($r('app.media.sys_symbol_gift'))
+        .width(0)
+        .height(0)
+        .opacity(0)
+    }
+  }
+
+  build() {
+    Grid() {
+      ForEach(this.services, (item: ServiceEntry) => {
+        GridItem() {
+          Column({ space: 6 }) {
+            this.gridIcon(item)
+            Text(item.name)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+          }
+          .width('100%')
+          .padding(8)
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.toastNotSupported();
+          })
+        }
+      }, (item: ServiceEntry) => item.id)
+    }
+    .columnsTemplate(this.buildColumnsTemplate())
+    .rowsTemplate('1fr')
+    .width('100%')
+    .height(120)
+  }
+}

@@ -30,6 +30,7 @@ import {
   collectIconSubstitutionIssues,
   collectActionButtonVariantDeclIssues,
   collectVisibleTextIssues,
+  collectInvisiblePresenceIssues,
 } from './visual-parity-backstop';
 import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
@@ -286,6 +287,34 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     }
   }
 
+
+  // 透明节点假 presence 拦截（codex 发现的对抗模式，2026-07-03）：spec 文本/资产/符号引用挂在
+  // 字面硬不可见节点（opacity(0)/visibility None|Hidden/双零尺寸/fontSize(0)）＝骗静态 presence 扫描。
+  // 不 gate baselineUnverified（纯源码形态作弊，与 spec 校验状态无关）。
+  {
+    const invisibleIssues = collectInvisiblePresenceIssues(ctx);
+    if (invisibleIssues.length > 0) {
+      const { severity, status } = isPixel1to1(ctx)
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      results.push({
+        id: 'visual_parity_invisible_presence',
+        category: 'structure',
+        description: desc,
+        severity,
+        status,
+        details: [
+          '【透明节点假 presence】spec 语义引用挂在硬不可见节点上——引用在、渲染无，属对抗静态门禁的作弊：',
+          ...invisibleIssues.map(i => i.detail),
+          '【边界】仅判字面硬不可见（变量/动画绑定不判，漏报归 device OCR 存在性观测兜）。',
+        ].join('\n'),
+        suggestion:
+          '删除透明占位节点：元素该渲染就真实可见渲染（真图标/真文本）；实现不了就走 ui-spec 显式' +
+          ' placeholder / fidelity_deferrals + 真人签字——透明冒充比缺失更恶劣（掩盖问题且污染结构/无障碍语义）。',
+        affected_files: [uiSpecRel],
+      });
+    }
+  }
 
   // round5 P0-A：素材原子化——被 $r 引用的非 placeholder 素材图不得烤入 ui-spec 声明文本（整段大图 → 双渲染/烤字）。
   const bakedText = collectBakedTextAssetIssues(ctx, doc, baselineUnverified);

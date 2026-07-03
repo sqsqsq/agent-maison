@@ -13,6 +13,8 @@
 | `bad-crops/icon_category_transit.png` | 939B 近空白小图 | P0-B 纯色/低方差 sanity |
 | `source/CardGuideSection.ets.txt` | 按钮 `.width('100%')` 而 spec 声明 `width_ratio:0.28, align:end`（coding 门禁当时只 WARN） | P1-A `visual_parity_render` 升 BLOCKER（Phase 2） |
 | `source/MineTabPage.ets.txt` + `source/string.json.txt` | 「金融信息」「设置与帮助」不在 spec 文本集（zone 名脑补成可见标题） | P1-A `visible_text_whitelist`（Phase 2） |
+| `source/HomeTabPage-invisible-cheat.ets.txt` | Checkpoint-2 第二轮 run 实锤：`bottomTabPresence()` 透明 tab 文本×2 + 零尺寸 `sys_symbol_plus` 图——挂 spec 引用骗 presence 扫描 | `visual_parity_invisible_presence`（派生治理②） |
+| `source/ServiceGridSwiper-invisible-cheat.ets.txt` | 同上：一串透明 SymbolGlyph / 三连零 Image 假 presence | `visual_parity_invisible_presence` |
 
 ## 正样本（新门禁必须 PASS，FP 校准承重）
 

@@ -169,16 +169,74 @@ interface MatchedText {
   shotLineIdx: number;
 }
 
-function bestLineMatch(lines: OcrLine[], text: string): { idx: number; cy: number; h: number } | null {
+interface LineMatch {
+  idx: number;
+  cy: number;
+  h: number;
+}
+
+function bestLineMatch(
+  lines: OcrLine[],
+  text: string,
+  excludeIdx?: ReadonlySet<number>,
+): LineMatch | null {
   let best = -1;
   let bestRatio = 0;
   for (let i = 0; i < lines.length; i++) {
+    if (excludeIdx?.has(i)) continue;
     const r = fuzzyMatchRatio(lines[i].text, text);
     if (r > bestRatio) { bestRatio = r; best = i; }
   }
   if (best < 0 || bestRatio < PLACEMENT_MATCH_MIN_RATIO) return null;
   const b = lines[best].box;
   return { idx: best, cy: b[1] + b[3] / 2, h: b[3] };
+}
+
+const normPlacement = (s: string): string => s.replace(/\s+/g, '');
+
+/**
+ * 单侧（ref 或 shot）目标→行匹配 + **子串冲突消解**。
+ * Checkpoint-2 实测校准（宿主 20260703T040107Z 首战 FP）：顶栏加粗大字「钱包」设备 OCR 整行漏识别，
+ * 短目标「钱包」被子串匹配到「欢迎使用钱包消息中心!」行——而该行已被其**超串目标**（消息中心文本本身）
+ * 认领。规则：目标 A 的规整文本是目标 B 的真子串、且两者命中同一行 → 该行归 B（更长=更特异），
+ * A 排除该行重找次优；无次优 → A 该侧视为未识别（走存在性 advisory，不产假位置信号）。
+ * 注意不能用"行长/目标长比"判据替代——聚合行（同行两元素并成一行）会让短成员必然超长比，
+ * 误伤同行拆分检测本身（实测打红 split 用例后弃用）。
+ */
+function matchSideWithConflictResolution(
+  lines: OcrLine[],
+  texts: string[],
+): Map<string, LineMatch> {
+  const claims = new Map<string, LineMatch>();
+  for (const t of texts) {
+    const m = bestLineMatch(lines, t);
+    if (m) claims.set(t, m);
+  }
+  for (const t of texts) {
+    let m: LineMatch | null = claims.get(t) ?? null;
+    if (!m) continue;
+    const tn = normPlacement(t);
+    const excluded = new Set<number>();
+    let conflicted = true;
+    while (m && conflicted) {
+      conflicted = false;
+      for (const b of texts) {
+        if (b === t) continue;
+        const bn = normPlacement(b);
+        if (bn === tn || !bn.includes(tn)) continue; // 仅"t 是 b 的真子串"构成冲突
+        const mb = claims.get(b);
+        if (mb && mb.idx === m.idx) {
+          excluded.add(m.idx);
+          m = bestLineMatch(lines, t, excluded);
+          conflicted = true;
+          break;
+        }
+      }
+    }
+    if (m) claims.set(t, m);
+    else claims.delete(t);
+  }
+  return claims;
 }
 
 function sameLine(cyA: number, cyB: number, hA: number, hB: number, factor: number): boolean {
@@ -231,14 +289,16 @@ export function collectTextPlacementSignals(
     const mustFix: string[] = [];
     const failSignals: string[] = [];
     const matched: MatchedText[] = [];
+    const refClaims = matchSideWithConflictResolution(refLines, texts);
+    const shotClaims = matchSideWithConflictResolution(shotLines, texts);
 
     for (const t of texts) {
-      const ref = bestLineMatch(refLines, t);
+      const ref = refClaims.get(t);
       if (!ref) continue; // 参考图都读不到该文本——不构成对照，交给其它门禁
-      const shotHit = bestLineMatch(shotLines, t);
+      const shotHit = shotClaims.get(t);
       if (!shotHit) {
         // 存在性：唯一实测鲁棒的 OCR 信号（T1 gross 门禁管"整块缺失"FAIL，这里给 per-element 回修指令）
-        mustFix.push(`「${t.slice(0, 16)}」参考图可见、实测截图未识别到——检查是否缺渲染/被遮挡/文案改写`);
+        mustFix.push(`「${t.slice(0, 16)}」参考图可见、实测截图未识别到——检查是否缺渲染/被遮挡/文案改写（大字体行 OCR 漏识别亦可能，人核截图后再定）`);
         continue;
       }
       matched.push({

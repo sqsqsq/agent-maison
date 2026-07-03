@@ -37,6 +37,7 @@ import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
 import { normalizePhaseId } from './utils/phase-alias';
+import { assertGateFingerprintFresh } from './utils/gate-fingerprint';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
@@ -109,6 +110,11 @@ interface CheckIssue {
   id: string;
   severity: 'BLOCKER' | 'MAJOR' | 'INFO';
   message: string;
+}
+
+/** framework 根（repo 根或宿主 framework/ 目录）：本脚本恒位于 <frameworkRoot>/harness/scripts/ */
+function frameworkRootFromHere(): string {
+  return path.resolve(__dirname, '..', '..');
 }
 
 // --------------------------------------------------------------------------
@@ -280,13 +286,27 @@ function main(): void {
     const summaryPath = path.join(projectRoot, sh.report_dir, 'summary.json');
     if (fs.existsSync(summaryPath)) {
       try {
-        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as { verdict?: string };
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
+          verdict?: string;
+          gate_fingerprint?: unknown;
+        };
         if ((summary.verdict ?? '').toUpperCase() === 'INCOMPLETE') {
           issues.push({
             id: 'summary_verdict_incomplete',
             severity: 'BLOCKER',
             message:
               `summary.json verdict=INCOMPLETE（${path.relative(projectRoot, summaryPath).replace(/\\/g, '/')}）；UT 阶段未闭环。`,
+          });
+        }
+        // 回执 stale 治理（2026-07-03）：summary 的机器指纹须与当前门禁集一致——
+        // framework 升级（rules 变化）后旧回执不得继续豁免阶段（round6 Checkpoint-2：
+        // 旧 spec 回执"启动前已闭环"整体绕过 P0-D 新门禁的实锤洞）。goal/普通模式共用本校验点。
+        const staleReason = assertGateFingerprintFresh(summary, frameworkRootFromHere(), phase);
+        if (staleReason) {
+          issues.push({
+            id: 'gate_fingerprint_stale',
+            severity: 'BLOCKER',
+            message: `【回执 stale】${staleReason}`,
           });
         }
       } catch {

@@ -41,6 +41,7 @@ import {
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
+import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
 import {
@@ -658,6 +659,9 @@ function writeRunSummary(
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
   const closed = receiptValidation?.status === 'passed';
+  // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
+  // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
+  const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
   const summary: HarnessRunSummary = {
     schema_version: '1.0',
     phase: report.phase,
@@ -666,6 +670,7 @@ function writeRunSummary(
     blocker_count: report.summary.blockers,
     fail_count: report.summary.fail,
     warn_count: report.summary.warn,
+    ...(gateFingerprint ? { gate_fingerprint: gateFingerprint } : {}),
     script_report: rel('script-report.json'),
     merged_report: rel('merged-report.md'),
     ai_prompt: rel('ai-prompt.md'),

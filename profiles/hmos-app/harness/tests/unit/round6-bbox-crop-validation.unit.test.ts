@@ -532,6 +532,9 @@ import {
 import {
   collectVisibleTextIssues,
   collectRenderFaithfulnessIssues,
+  collectInvisiblePresenceIssues,
+  chainIsHardInvisible,
+  extractComponentChain,
 } from '../../visual-parity-backstop';
 import { checkVisualFidelityReview } from '../../../../../harness/scripts/check-review';
 
@@ -822,6 +825,64 @@ test('p1a_exemption_asymmetric_no_umbrella', () => {
   assert.ok(issues.some(i => /设置与帮助/.test(i.detail)), `豁免「设置」不得掩盖「设置与帮助」：${issues.map(i => i.detail).join('|').slice(0, 300)}`);
 });
 
+test('invisible_presence_chain_units', () => {
+  // 链判定单元：字面硬不可见三态 + 合法形态不误伤
+  assert.ok(chainIsHardInvisible('.fontSize(1).opacity(0)'), 'opacity(0) 必中');
+  assert.ok(chainIsHardInvisible('.width(0).height(0).opacity(0)'), '三连零必中');
+  assert.ok(chainIsHardInvisible('.visibility(Visibility.None)'), 'Visibility.None 必中');
+  assert.strictEqual(chainIsHardInvisible('.opacity(this.fade)'), null, '变量绑定不判（动画合法）');
+  assert.strictEqual(chainIsHardInvisible('.opacity(0.5)'), null, '半透明不判');
+  assert.strictEqual(chainIsHardInvisible('.width(0)'), null, '单维零不判（折叠布局合法）');
+  // 链提取：跨行链 + 字符串内括号不干扰
+  const src = `Image($r('app.media.x'))\n  .width(0)\n  .height(0)\n  .opacity(0)\nText('好的(备注)')`;
+  const { args, chain } = extractComponentChain(src, 0);
+  assert.ok(/app\.media\.x/.test(args) && chainIsHardInvisible(chain), `跨行链应完整提取：${chain}`);
+});
+
+test('invisible_presence_comment_and_string_aware', () => {
+  // codex P2 采纳：注释/字符串里的"假代码"不判；注释断链不能成为逃逸口；真实 CJK 字面量仍可判
+  const mkOne = (ets: string) => {
+    const { root, ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+    const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'pages');
+    fs.mkdirSync(etsDir, { recursive: true });
+    fs.writeFileSync(path.join(etsDir, 'X.ets'), ets, 'utf-8');
+    (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+    return collectInvisiblePresenceIssues(ctx);
+  };
+  // ① 行注释/块注释/字符串里的假代码 → 0（此前会误判 BLOCKER）
+  assert.strictEqual(mkOne([
+    "// Text($r('app.string.tab_home')).opacity(0)",
+    "/* Image($r('app.media.y')).width(0).height(0).opacity(0) */",
+    "const s = \"Text($r('app.string.x')).opacity(0)\";",
+  ].join('\n')).length, 0, '注释/字符串内假代码不得误报');
+  // ② 注释断链逃逸不了：链段之间夹注释仍完整提取
+  assert.strictEqual(mkOne([
+    "Text($r('app.string.tab_home')) // presence",
+    "  .fontSize(1) /* keep */",
+    "  .opacity(0)",
+  ].join('\n')).length, 1, '注释夹在链中不得断链逃逸');
+  // ③ 真实 CJK 字面量透明挂载仍可判（不因字符串感知而漏检——起点在代码区、参数原样切片）
+  assert.strictEqual(mkOne("Text('首页').opacity(0)").length, 1, 'CJK 字面量透明挂载仍须命中');
+});
+
+test('invisible_presence_host_cheat_fixtures_fail_clean_pass', () => {
+  // 坏态=宿主实锤作弊源码（bottomTabPresence 透明文本 / 三连零 Image / 透明 SymbolGlyph）；
+  // 正样本=干净组件（CardGuideSection，真实渲染）零误报（FP 铁律）
+  const { root, ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
+  const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'pages');
+  fs.mkdirSync(etsDir, { recursive: true });
+  fs.copyFileSync(path.join(FIXTURES, 'source', 'HomeTabPage-invisible-cheat.ets.txt'), path.join(etsDir, 'HomeTabPage.ets'));
+  fs.copyFileSync(path.join(FIXTURES, 'source', 'ServiceGridSwiper-invisible-cheat.ets.txt'), path.join(etsDir, 'ServiceGridSwiper.ets'));
+  fs.copyFileSync(GUIDE_ETS, path.join(etsDir, 'CardGuideSection.ets'));
+  (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+
+  const issues = collectInvisiblePresenceIssues(ctx);
+  const byFile = (f: string) => issues.filter(i => i.id === f).length;
+  assert.ok(byFile('HomeTabPage.ets') >= 3, `HomeTabPage 作弊应命中 ≥3（透明 tab 文本×2 + 零尺寸 plus 图）：${byFile('HomeTabPage.ets')}`);
+  assert.ok(byFile('ServiceGridSwiper.ets') >= 4, `Swiper 作弊应命中 ≥4（透明 Symbol/Image 一串）：${byFile('ServiceGridSwiper.ets')}`);
+  assert.strictEqual(byFile('CardGuideSection.ets'), 0, `干净组件零误报（FP 铁律）：${JSON.stringify(issues.filter(i => i.id === 'CardGuideSection.ets').map(i => i.detail))}`);
+});
+
 test('p1b_visual_fidelity_review_evidence_gate', () => {
   const { ctx } = mkProject(docToYaml(subsetAddCard(axisFixDoc(loadTransposedDoc()), [])));
   (ctx as { phaseRule: unknown }).phaseRule = {
@@ -1005,6 +1066,40 @@ test('p1c_t1_gross_missing_overlay_id_falls_back_to_base', () => {
   );
   assert.strictEqual(r.violations.length, 1, `overlay id 应回落基屏 anchors 并判整块缺失：${JSON.stringify(r)}`);
   assert.strictEqual(r.violations[0].screen_id, 'manage_non_local__overlay__0');
+});
+
+test('p1c_placement_short_text_substring_no_false_inversion', () => {
+  // Checkpoint-2 实测校准回归（宿主 20260703T040107Z home_no_card 实况复刻）：
+  // 顶栏加粗大字「钱包」设备 OCR 整行漏识别 → 短目标子串命中「欢迎使用钱包消息中心!」聚合长行
+  // → 曾产两条假乱序。校准=子串冲突消解：「钱包」⊂「欢迎使用钱包消息中心!」且撞同一行时，
+  // 行归更长目标，短目标重找次优/判未识别（注意：非"行长比"判据——那版会误伤同行聚合成员，已弃用）；
+  // 宫格 vs 消息中心的真颠倒（真机实锤）必须仍报。
+  const texts = ['钱包', 'Huawei Card', '信用卡还款', '欢迎使用钱包消息中心!'];
+  const ref = [
+    lineWord('钱包', 0.08, 0.05),                    // 参考图顶栏可识别
+    lineWord('Huawei Card', 0.42, 0.1),              // 原图：宫格在上
+    lineWord('信用卡还款', 0.42, 0.4),
+    lineWord('欢迎使用钱包消息中心!', 0.52, 0.1),      // 消息中心在下
+  ];
+  const shot = [
+    // 顶栏「钱包」漏识别（无该行）——真机实况
+    lineWord('欢迎使用钱包消息中心!', 0.44, 0.1, 0.026), // 实机：消息中心跑到宫格上方（真缺陷）
+    lineWord('Huawei Card', 0.55, 0.1, 0.026),
+    lineWord('信用卡还款', 0.55, 0.4, 0.026),
+  ];
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'home_no_card', verdict: 'pass', screenshot_path: 'shots/home.png' } as VisualDiffScreenEntry,
+  ];
+  const r = collectTextPlacementSignals(
+    new Map([['home_no_card', texts]]),
+    screens, rel => rel, () => 'refs/home.jpg',
+    cannedOcr({ 'shots/home.png': shot, 'refs/home.jpg': ref }),
+  );
+  assert.strictEqual(r.perScreen.length, 1);
+  const sig = r.perScreen[0];
+  const all = [...sig.fail_signals, ...sig.must_fix].join('\n');
+  assert.ok(!/「钱包」应在/.test(all), `「钱包」子串误配不得产乱序（FP 校准）：${all}`);
+  assert.ok(sig.fail_signals.some(x => /纵向乱序/.test(x)), `宫格 vs 消息中心真颠倒必须仍报：${JSON.stringify(sig)}`);
 });
 
 test('p1c_placement_degraded_not_silent', () => {

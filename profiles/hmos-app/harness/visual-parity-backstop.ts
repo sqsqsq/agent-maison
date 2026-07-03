@@ -27,7 +27,7 @@ import { isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared
 import { ocrImageWords, isOcrAvailable, fuzzyTextPresent } from './ocr-toolkit';
 
 export interface BackstopIssue {
-  kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset' | 'visible_text';
+  kind: 'semantic_color' | 'must_have' | 'variant' | 'render' | 'asset' | 'visible_text' | 'invisible_presence';
   id: string;
   detail: string;
   /**
@@ -1046,6 +1046,196 @@ export function collectVisibleTextIssues(
       id: name,
       detail: `string.json「${name}=${value.slice(0, 20)}」被 $r 引用渲染但不在 ui-spec/ref-elements 文本集——原图没有的文案不得无中生有（如 round6 脑补「金融信息/设置与帮助」）`,
     });
+  }
+  return issues;
+}
+
+// ============================================================================
+// 透明节点假 presence 拦截（codex 发现的对抗模式，用户 2026-07-03 拍板）——round6 Checkpoint-2 实锤：
+// 宿主 coding 用 `Text($r('app.string.X')).fontSize(1).opacity(0)`、
+// `Image($r('app.media.X')).width(0).height(0).opacity(0)`、透明 SymbolGlyph 等"挂"spec 文本/资产引用，
+// 骗过 must_have presence / asset-render 静态扫描（引用在、渲染无）。本门禁静态拦截：
+// 承载 spec 语义的组件（$r string/media/sys.symbol 或 CJK 字面量）链上带**字面硬不可见**修饰 → 作弊。
+// FP 收窄：只认字面值——opacity(0)/visibility(None|Hidden)/width(0)且height(0)/fontSize(0)；
+// 变量/绑定（.opacity(this.x)）与单维 0 不判（动画初始态/折叠布局合法形态，漏报归 device OCR 存在性兜）。
+// ============================================================================
+
+const INVISIBLE_COMPONENT_START_RE = /\b(Text|Image|SymbolGlyph)\s*\(/g;
+const SEMANTIC_ARG_RE = /\$r\s*\(\s*['"](?:app\.(?:string|media)|sys\.symbol)\.|[一-鿿]/;
+
+/**
+ * 注释/字符串掩码（codex 意见采纳）：标记每个字符是否处于 //…、/*…*​/、'…'、"…"、`…` 内——
+ * 组件起点必须落在真实代码区，否则注释里的"假代码"（// Text($r(...)).opacity(0)）会被误判 BLOCKER。
+ * 不全局删字符串：真实 Text('首页') 的参数内容仍须保留供语义检测（起点在代码区即可，参数原样切片）。
+ */
+export function computeNonCodeMask(source: string): Uint8Array {
+  const mask = new Uint8Array(source.length); // 1 = 注释/字符串内
+  let state: 'code' | 'line' | 'block' | 'sq' | 'dq' | 'tpl' = 'code';
+  for (let p = 0; p < source.length; p++) {
+    const ch = source[p];
+    const next = source[p + 1];
+    switch (state) {
+      case 'code':
+        if (ch === '/' && next === '/') { state = 'line'; mask[p] = 1; }
+        else if (ch === '/' && next === '*') { state = 'block'; mask[p] = 1; }
+        else if (ch === "'") { state = 'sq'; mask[p] = 1; }
+        else if (ch === '"') { state = 'dq'; mask[p] = 1; }
+        else if (ch === '`') { state = 'tpl'; mask[p] = 1; }
+        break;
+      case 'line':
+        mask[p] = 1;
+        if (ch === '\n') state = 'code';
+        break;
+      case 'block':
+        mask[p] = 1;
+        if (ch === '*' && next === '/') { mask[p + 1] = 1; p++; state = 'code'; }
+        break;
+      case 'sq':
+        mask[p] = 1;
+        if (ch === '\\') { if (p + 1 < source.length) { mask[p + 1] = 1; p++; } }
+        else if (ch === "'") state = 'code';
+        break;
+      case 'dq':
+        mask[p] = 1;
+        if (ch === '\\') { if (p + 1 < source.length) { mask[p + 1] = 1; p++; } }
+        else if (ch === '"') state = 'code';
+        break;
+      case 'tpl':
+        mask[p] = 1;
+        if (ch === '\\') { if (p + 1 < source.length) { mask[p + 1] = 1; p++; } }
+        else if (ch === '`') state = 'code';
+        break;
+    }
+  }
+  return mask;
+}
+
+/**
+ * 从组件起点提取完整修饰链（参数括号配对 + 连续 .mod(...) 段）。
+ * 引号内括号忽略；链段之间允许注释（否则 `.width(0) // x` 换行即断链＝作弊逃逸口，codex 意见采纳）。
+ */
+export function extractComponentChain(source: string, startIdx: number): { args: string; chain: string } {
+  let i = source.indexOf('(', startIdx);
+  if (i < 0) return { args: '', chain: '' };
+  const scanBalanced = (from: number): number => {
+    let depth = 0;
+    let quote: string | null = null;
+    for (let p = from; p < source.length; p++) {
+      const ch = source[p];
+      if (quote) {
+        if (ch === '\\') { p++; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      // 括号计数须跳过注释内容（参数里出现注释罕见但合法）
+      if (ch === '/' && source[p + 1] === '/') {
+        const nl = source.indexOf('\n', p);
+        if (nl < 0) return -1;
+        p = nl;
+        continue;
+      }
+      if (ch === '/' && source[p + 1] === '*') {
+        const end = source.indexOf('*/', p + 2);
+        if (end < 0) return -1;
+        p = end + 1;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        depth--;
+        if (depth === 0) return p;
+      }
+    }
+    return -1;
+  };
+  /** 跳过空白与注释（链段衔接处），返回新游标 */
+  const skipTrivia = (from: number): number => {
+    let p = from;
+    for (;;) {
+      while (p < source.length && /\s/.test(source[p])) p++;
+      if (source[p] === '/' && source[p + 1] === '/') {
+        const nl = source.indexOf('\n', p);
+        if (nl < 0) return source.length;
+        p = nl + 1;
+        continue;
+      }
+      if (source[p] === '/' && source[p + 1] === '*') {
+        const end = source.indexOf('*/', p + 2);
+        if (end < 0) return source.length;
+        p = end + 2;
+        continue;
+      }
+      return p;
+    }
+  };
+  const argsEnd = scanBalanced(i);
+  if (argsEnd < 0) return { args: '', chain: '' };
+  const args = source.slice(i + 1, argsEnd);
+  let chain = '';
+  let cursor = argsEnd + 1;
+  for (;;) {
+    const seg = skipTrivia(cursor);
+    const m = /^\.\s*\w+\s*\(/.exec(source.slice(seg));
+    if (!m) break;
+    const open = seg + m[0].length - 1;
+    const close = scanBalanced(open);
+    if (close < 0) break;
+    chain += source.slice(seg, close + 1);
+    cursor = close + 1;
+  }
+  return { args, chain };
+}
+
+const norm0 = (s: string): string => s.replace(/\s+/g, '');
+
+/** 链上字面硬不可见判定（变量绑定不判） */
+export function chainIsHardInvisible(chain: string): string | null {
+  const c = norm0(chain);
+  if (/\.opacity\(0(\.0+)?\)/.test(c)) return 'opacity(0)';
+  if (/\.visibility\(Visibility\.(None|Hidden)\)/.test(c)) return 'visibility(None/Hidden)';
+  if (/\.fontSize\(0\)/.test(c)) return 'fontSize(0)';
+  const zeroW = /\.width\(0\)|\.width\(['"]0(vp|px)?['"]\)/.test(c);
+  const zeroH = /\.height\(0\)|\.height\(['"]0(vp|px)?['"]\)/.test(c);
+  if (zeroW && zeroH) return 'width(0)+height(0)';
+  return null;
+}
+
+/**
+ * 主收集器：feature 源码里"spec 语义组件 + 字面硬不可见链"→ 作弊 issue（调用方 pixel_1to1 升 BLOCKER）。
+ * 不 gate baselineUnverified：作弊判定是纯源码形态问题，与 spec 校验状态无关。
+ */
+export function collectInvisiblePresenceIssues(ctx: CheckContext): BackstopIssue[] {
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const scan = scanFeatureSourceTree(ctx.projectRoot, contracts);
+  const issues: BackstopIssue[] = [];
+  for (const file of scan.etsFiles) {
+    let content: string;
+    try {
+      content = fs.readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    const nonCode = computeNonCodeMask(content);
+    INVISIBLE_COMPONENT_START_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = INVISIBLE_COMPONENT_START_RE.exec(content)) !== null) {
+      if (nonCode[m.index]) continue; // 注释/字符串里的"假代码"不判（codex P2）
+      const { args, chain } = extractComponentChain(content, m.index);
+      if (!args || !SEMANTIC_ARG_RE.test(args)) continue;
+      const invisible = chainIsHardInvisible(chain);
+      if (!invisible) continue;
+      const argExcerpt = args.replace(/\s+/g, ' ').slice(0, 48);
+      issues.push({
+        kind: 'invisible_presence',
+        id: path.basename(file),
+        detail:
+          `${path.basename(file)}: ${m[1]}(${argExcerpt}) 链上 ${invisible} —— spec 语义（文本/资产/符号引用）` +
+          `挂在硬不可见节点上＝假 presence 作弊（骗静态扫描、实际不渲染）；须真实可见渲染，` +
+          `或走显式 placeholder/defer + 人签，禁止透明占位冒充`,
+      });
+    }
   }
   return issues;
 }

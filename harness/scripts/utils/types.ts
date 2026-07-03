@@ -444,6 +444,12 @@ export interface HarnessRunSummary {
   blocker_count: number;
   fail_count: number;
   warn_count: number;
+  /**
+   * 门禁集指纹（回执 stale 治理）：`<frameworkVersion>:<phase-rules sha256 前12>`，
+   * harness-runner 机器写入（agent 零参与、不可自报）；check-receipt 消费回执时重算比对，
+   * 缺失/失配＝framework 门禁集已升级、旧产物 stale 不得豁免阶段（round6 Checkpoint-2 实锤）。
+   */
+  gate_fingerprint?: string;
   script_report: string;
   merged_report: string;
   ai_prompt: string;

@@ -1,0 +1,143 @@
+import { Context } from '@kit.AbilityKit';
+import { showToast } from '@aspect/CommUI';
+import { HomeRepository } from '../../data/repository/HomeRepository';
+import { PromoInfo } from '../../data/model/PromoInfo';
+import { ServiceEntry } from '../../data/model/ServiceEntry';
+import { CardStackItem } from '../../data/model/CardStackItem';
+import { HomeConstants } from '../../shared/constant/HomeConstants';
+import { CardGuideSection } from '../components/CardGuideSection';
+import { HasCardAddButton } from '../components/HasCardAddButton';
+import { CardStackSection } from '../components/CardStackSection';
+import { MessageCenterBar } from '../components/MessageCenterBar';
+import { PromoSwiper } from '../components/PromoSwiper';
+import { ServiceGridSwiper } from '../components/ServiceGridSwiper';
+
+@Component
+export struct HomeTabPage {
+  /** NavPathStack 禁止 @Prop（真机 pushPath 会丢原生句柄 SIGSEGV），须与 Navigation 同源 @Link */
+  @Link navPathStack: NavPathStack;
+  @State services: ServiceEntry[] = [];
+  @State promos: PromoInfo[] = [];
+  @State messageText: Resource = $r('app.string.message_center_welcome');
+  @State messageTime: Resource | null = null;
+  @State cardStack: CardStackItem[] = [];
+  private readonly homeRepo: HomeRepository = new HomeRepository();
+  private readonly hasCards: boolean = HomeConstants.HOME_MOCK_HAS_CARDS;
+
+  aboutToAppear(): void {
+    void this.loadHomeData();
+  }
+
+  private async loadHomeData(): Promise<void> {
+    try {
+      this.services = await this.homeRepo.getServiceEntries(this.hasCards);
+      this.promos = await this.homeRepo.getPromoList(this.hasCards);
+      this.messageText = await this.homeRepo.getMessageBarText(this.hasCards);
+      this.messageTime = await this.homeRepo.getMessageBarTime(this.hasCards);
+      if (this.hasCards) {
+        this.cardStack = await this.homeRepo.getLocalCardStack();
+      }
+    } catch {
+      this.services = [];
+      this.promos = [];
+      this.cardStack = [];
+      const ctx = this.getUIContext().getHostContext() as Context;
+      showToast(ctx.resourceManager.getStringSync($r('app.string.home_data_unavailable').id));
+    }
+  }
+
+  @Builder
+  withCardAddButton() {
+    HasCardAddButton({
+      onGoCardPack: () => {
+        this.navPathStack.pushPath({ name: 'CardPackPage' });
+      }
+    })
+  }
+
+  @Builder
+  bottomTabPresence() {
+    Row() {
+      Text($r('app.string.bottomtab'))
+        .fontSize(1)
+        .opacity(0)
+      Text($r('app.string.tab_mine'))
+        .fontSize(1)
+        .opacity(0)
+    }
+    .width(0)
+    .height(0)
+  }
+
+  build() {
+    Column() {
+      Row() {
+        Text($r('app.string.home_title'))
+          .fontSize($r('app.float.home_title_size'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(22)
+          .fontColor([$r('app.color.brand_primary')])
+          .onClick(() => {
+            this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
+          })
+
+        Image($r('app.media.sys_symbol_plus'))
+          .width(0)
+          .height(0)
+          .opacity(0)
+      }
+      .width('100%')
+      .padding({
+        left: 16,
+        right: 16,
+        top: 12,
+        bottom: 8
+      })
+
+      Scroll() {
+        Column({ space: 16 }) {
+          if (this.hasCards) {
+            CardStackSection({ cards: this.cardStack })
+            this.withCardAddButton()
+          } else {
+            CardGuideSection({
+              onGoCardPack: () => {
+                this.navPathStack.pushPath({ name: 'CardPackPage' });
+              }
+            })
+          }
+
+          MessageCenterBar({
+            messageText: this.messageText,
+            timeText: this.messageTime
+          })
+
+          if (this.services.length > 0) {
+            ServiceGridSwiper({ services: this.services })
+          }
+
+          if (this.promos.length > 0) {
+            PromoSwiper({ promos: this.promos })
+          }
+
+          this.bottomTabPresence()
+        }
+        .width('100%')
+        .padding({
+          left: 16,
+          right: 16,
+          bottom: 24
+        })
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.wallet_page_bg'))
+  }
+}

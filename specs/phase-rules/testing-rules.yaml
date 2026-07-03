@@ -137,7 +137,20 @@ structure_checks:
       产出 visual-diff.md / must-fix 清单与保真分（含几何 IoU）。QA 阶段级动作，非 test-plan
       派生步骤根键。warmup/无设备 → SKIP。
       当 spec UI change=new_or_changed 且 P0 目标屏 visual verdict 全 pending 或未覆盖 → BLOCKER FAIL。
+      score_floor 已降级 reference_only（P1-C·f2d8c4a6：像素直方图历史多次实测证伪，不参与任何判定）。
     severity: MAJOR
+    rule:
+      provider: device_test.visual_diff
+
+  visual_diff_text_placement:
+    description: >
+      P1-C（plan f2d8c4a6）：文本块二部匹配观测——参考图与设备截图各 OCR 行聚类后按 spec 文本
+      二部匹配（子串冲突消解防短文本误配聚合行）。FAIL 级相对信号（对 device≠mockup 缩放不变、
+      确定性证据 VL verdict=pass 不可推翻）：参考图同一行的文本对实测分居两行（副标题右置被排成题下）、
+      纵向顺序 ≥2 对颠倒（布局乱序）；pixel_1to1 P0 屏 → BLOCKER。存在性缺失/单对逆序为 advisory
+      观测素材（WARN 不阻断防设备 OCR 噪声 FP），VL 终判须折算进 screens[].must_fix。
+      overlay 屏 id（__overlay__*）归一化回落基屏。OCR/参考原图不可用 → degraded WARN 不静默。
+    severity: BLOCKER
     rule:
       provider: device_test.visual_diff
 

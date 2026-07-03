@@ -34,6 +34,11 @@
     "blocker_count": { "type": "integer", "minimum": 0 },
     "fail_count": { "type": "integer", "minimum": 0 },
     "warn_count": { "type": "integer", "minimum": 0 },
+    "gate_fingerprint": {
+      "type": "string",
+      "pattern": "^.+:[0-9a-f]{12}$",
+      "description": "门禁集指纹 <frameworkVersion>:<phase-rules sha256 前12>；harness 机器写入，check-receipt 重算比对——framework 升级后旧回执失效（回执 stale 治理）"
+    },
     "script_report": { "type": "string", "minLength": 1 },
     "merged_report": { "type": "string", "minLength": 1 },
     "ai_prompt": { "type": "string", "minLength": 1 },
