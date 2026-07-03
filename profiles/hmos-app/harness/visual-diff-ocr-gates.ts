@@ -7,7 +7,16 @@
 
 import type { UiSpecGlobalElement } from '../../../harness/scripts/utils/ui-spec-shared';
 import type { VisualDiffScreenEntry } from './visual-diff-check';
-import { ocrImageWords, fuzzyTextInBand, fuzzyTextPresent, type OcrResult } from './ocr-toolkit';
+import { canonicalOverlayBase } from './visual-diff-nav';
+import {
+  clusterOcrLines,
+  fuzzyMatchRatio,
+  fuzzyTextInBand,
+  fuzzyTextPresent,
+  ocrImageWords,
+  type OcrLine,
+  type OcrResult,
+} from './ocr-toolkit';
 
 export type OcrFn = (shotAbs: string) => OcrResult;
 
@@ -104,6 +113,189 @@ const DEFAULT_MISSING_FRACTION = 0.5;
  * 仅当该屏声明锚点 ≥MIN_ANCHORS_FOR_GATE 且缺失比例 ≥missingFraction 才判 violation（gross missing-render）。
  * OCR 不可用/失败 → 不误判、进 ocrUnavailable 降级。
  */
+// ============================================================================
+// P1-C（plan f2d8c4a6）：文本块二部匹配观测——参考图与设备截图各 OCR 行聚类后按 spec 文本配对，
+// 产 per-element 可执行 must_fix 喂回 loop（Design2Code Text/Block-Match 思路的鲁棒子集）。
+// ----------------------------------------------------------------------------
+// 度量选型（承接本文件 T1 的硬教训）：绝对位置/中心偏移已被两次真机实测证伪
+// （device≠mockup 使忠实屏位置也大偏移）——故**不做**绝对偏移（plan P1-C 原文含"中心偏移"，
+// 实现取鲁棒子集并在 plan §八 记录偏离）。本观测只用对整体缩放/平移不变的信号：
+//   1) 存在性（唯一实测鲁棒的 OCR 信号）→ per-element must_fix（advisory）；
+//   2) 同行分组（图内相对关系）：参考图同一行的文本对在截图中分居两行 = 副标题右置被排成题下
+//      （round6 卡包/添加卡片副标题的确定性信号）→ FAIL 级；
+//   3) 纵向顺序（缩放不变量）：匹配文本对在参考图与截图中的 y 序颠倒 ≥2 对 = 布局乱序
+//      （round6"卡包文字排到页首"式崩坏）→ FAIL 级。
+// FAIL 级信号是确定性证据，VL verdict=pass 不可推翻（a3f1c920"独立背靠可否决 VL"原则）。
+// ============================================================================
+
+/** 同行判定：两行中心 y 距 < 行高均值 × 此系数（吸收聚类边界抖动） */
+const SAME_LINE_CY_FACTOR = 0.8;
+/** 截图侧"明确分行"判定：中心 y 距 > 行高均值 × 此系数（介于两者之间不判，防误报） */
+const SPLIT_LINE_CY_FACTOR = 1.5;
+/** 参考图侧"明确不同行"（顺序比较的分母对）：y 距 > 行高均值 × 此系数 */
+const ORDER_GAP_FACTOR = 1.5;
+/** 触发乱序 FAIL 的最少逆序对数（1 对留作 advisory，吸收 OCR 行聚类偶发） */
+const ORDER_INVERSION_FAIL_MIN = 2;
+/**
+ * 文本→行匹配的模糊命中率下限。取 0.75 而非 toolkit 缺省 0.6：实测同后缀兄弟文本会交叉误命中
+ * （「暂无非本机卡片」的字符按序出现在「管理非本机卡片」行中，5/7≈0.71——0.6 阈值下缺失文本被判存在=漏报）；
+ * 0.75 仍容忍 OCR 掉 1-2 字（"添加卡片"→"添卡片" 3/4=0.75）。
+ */
+const PLACEMENT_MATCH_MIN_RATIO = 0.75;
+
+export interface TextPlacementScreenSignals {
+  screen_id: string;
+  /** 确定性结构违规（同行拆分/纵向乱序）——pixel_1to1 P0 FAIL 级，不可被 VL pass 推翻 */
+  fail_signals: string[];
+  /** per-element 可执行回修信号（存在性缺失/单对逆序 advisory）——喂 loop 的 must_fix */
+  must_fix: string[];
+}
+
+export interface TextPlacementResult {
+  perScreen: TextPlacementScreenSignals[];
+  /** 截图 OCR 不可用/失败的屏（降级复核，不静默） */
+  ocrUnavailable: string[];
+  /** 参考原图缺失/OCR 失败的屏（无 ground truth，可比性缺失） */
+  refUnavailable: string[];
+}
+
+interface MatchedText {
+  text: string;
+  refCy: number;
+  refH: number;
+  shotCy: number;
+  shotH: number;
+  refLineIdx: number;
+  shotLineIdx: number;
+}
+
+function bestLineMatch(lines: OcrLine[], text: string): { idx: number; cy: number; h: number } | null {
+  let best = -1;
+  let bestRatio = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const r = fuzzyMatchRatio(lines[i].text, text);
+    if (r > bestRatio) { bestRatio = r; best = i; }
+  }
+  if (best < 0 || bestRatio < PLACEMENT_MATCH_MIN_RATIO) return null;
+  const b = lines[best].box;
+  return { idx: best, cy: b[1] + b[3] / 2, h: b[3] };
+}
+
+function sameLine(cyA: number, cyB: number, hA: number, hB: number, factor: number): boolean {
+  return Math.abs(cyA - cyB) < ((hA + hB) / 2) * factor;
+}
+
+/**
+ * P1-C 主收集器。screenTexts：screen_id → 该屏 ui-spec 声明文本（text+subtitle，len≥2）。
+ * resolveRefAbs：屏 → 参考原图绝对路径（authoritative_refs 解析，缺→refUnavailable）。
+ */
+export function collectTextPlacementSignals(
+  screenTexts: Map<string, string[]>,
+  screens: VisualDiffScreenEntry[],
+  resolveShotAbs: (rel: string) => string,
+  resolveRefAbs: (screen: VisualDiffScreenEntry) => string | null,
+  ocrFn: OcrFn = ocrImageWords,
+): TextPlacementResult {
+  const perScreen: TextPlacementScreenSignals[] = [];
+  const ocrUnavailable = new Set<string>();
+  const refUnavailable = new Set<string>();
+  const refOcrCache = new Map<string, OcrResult>();
+
+  for (const s of screens) {
+    // codex 三轮 P1：overlay 屏 id（manage_non_local__overlay__0 等）须归一化回落到基屏文本——
+    // 裸 id 查不到就 continue 会让半模态/overlay 的同行拆分/乱序/缺失**静默漏检**（连 degraded 都不报）。
+    const textsRaw =
+      screenTexts.get(s.screen_id) ??
+      screenTexts.get(canonicalOverlayBase(s.screen_id)) ??
+      (s.ref_id ? screenTexts.get(s.ref_id) : undefined);
+    if (!textsRaw) continue;
+    const texts = [...new Set(textsRaw.map(t => t.trim()).filter(t => t.replace(/\s+/g, '').length >= MIN_ANCHOR_LEN))];
+    if (texts.length < 2) continue; // 相对信号至少需要两个文本
+    const shot = s.screenshot_path;
+    if (typeof shot !== 'string' || !shot.trim()) continue;
+
+    const refAbs = resolveRefAbs(s);
+    if (!refAbs) { refUnavailable.add(s.screen_id); continue; }
+    let refRes = refOcrCache.get(refAbs);
+    if (!refRes) {
+      refRes = ocrFn(refAbs);
+      refOcrCache.set(refAbs, refRes);
+    }
+    if (!refRes.ok || !Array.isArray(refRes.words)) { refUnavailable.add(s.screen_id); continue; }
+    const shotRes = ocrFn(resolveShotAbs(shot));
+    if (!shotRes.ok || !Array.isArray(shotRes.words)) { ocrUnavailable.add(s.screen_id); continue; }
+
+    const refLines = clusterOcrLines(refRes.words.filter(w => w.text.replace(/\s+/g, '').length > 0));
+    const shotLines = clusterOcrLines(shotRes.words.filter(w => w.text.replace(/\s+/g, '').length > 0));
+
+    const mustFix: string[] = [];
+    const failSignals: string[] = [];
+    const matched: MatchedText[] = [];
+
+    for (const t of texts) {
+      const ref = bestLineMatch(refLines, t);
+      if (!ref) continue; // 参考图都读不到该文本——不构成对照，交给其它门禁
+      const shotHit = bestLineMatch(shotLines, t);
+      if (!shotHit) {
+        // 存在性：唯一实测鲁棒的 OCR 信号（T1 gross 门禁管"整块缺失"FAIL，这里给 per-element 回修指令）
+        mustFix.push(`「${t.slice(0, 16)}」参考图可见、实测截图未识别到——检查是否缺渲染/被遮挡/文案改写`);
+        continue;
+      }
+      matched.push({
+        text: t,
+        refCy: ref.cy, refH: ref.h, refLineIdx: ref.idx,
+        shotCy: shotHit.cy, shotH: shotHit.h, shotLineIdx: shotHit.idx,
+      });
+    }
+
+    // 2) 同行分组：参考图同一行的文本对，截图中明确分居两行 → FAIL 级
+    for (let i = 0; i < matched.length; i++) {
+      for (let j = i + 1; j < matched.length; j++) {
+        const a = matched[i];
+        const b = matched[j];
+        const sameRef =
+          a.refLineIdx === b.refLineIdx || sameLine(a.refCy, b.refCy, a.refH, b.refH, SAME_LINE_CY_FACTOR);
+        if (!sameRef) continue;
+        const clearlySplitShot =
+          a.shotLineIdx !== b.shotLineIdx &&
+          !sameLine(a.shotCy, b.shotCy, a.shotH, b.shotH, SPLIT_LINE_CY_FACTOR);
+        if (clearlySplitShot) {
+          failSignals.push(
+            `「${a.text.slice(0, 12)}」与「${b.text.slice(0, 12)}」参考图同一行（右置/同行关系），实测分居两行` +
+            `（疑似题下堆叠）——按 spec subtitle_position/layout_group 恢复同行布局`,
+          );
+        }
+      }
+    }
+
+    // 3) 纵向顺序（缩放不变量）：参考图中明确分行的文本对，截图中 y 序颠倒
+    const inversions: string[] = [];
+    for (let i = 0; i < matched.length; i++) {
+      for (let j = 0; j < matched.length; j++) {
+        if (i === j) continue;
+        const upper = matched[i];
+        const lower = matched[j];
+        const clearlyOrderedRef = lower.refCy - upper.refCy > ((upper.refH + lower.refH) / 2) * ORDER_GAP_FACTOR;
+        if (!clearlyOrderedRef) continue;
+        const invertedShot = upper.shotCy - lower.shotCy > ((upper.shotH + lower.shotH) / 2) * 0.5;
+        if (invertedShot) {
+          inversions.push(`「${upper.text.slice(0, 12)}」应在「${lower.text.slice(0, 12)}」上方（参考图），实测顺序颠倒`);
+        }
+      }
+    }
+    if (inversions.length >= ORDER_INVERSION_FAIL_MIN) {
+      failSignals.push(`纵向乱序 ${inversions.length} 对（布局结构性错位）：${inversions.slice(0, 4).join('；')}`);
+    } else if (inversions.length === 1) {
+      mustFix.push(`${inversions[0]}（单对逆序，advisory——OCR 行聚类偶发的缓冲档）`);
+    }
+
+    if (mustFix.length > 0 || failSignals.length > 0) {
+      perScreen.push({ screen_id: s.screen_id, fail_signals: failSignals, must_fix: mustFix });
+    }
+  }
+  return { perScreen, ocrUnavailable: [...ocrUnavailable], refUnavailable: [...refUnavailable] };
+}
+
 export function collectGrossMissingAnchorText(
   screenAnchors: Map<string, string[]>,
   screens: VisualDiffScreenEntry[],
@@ -114,7 +306,9 @@ export function collectGrossMissingAnchorText(
   const violations: GrossMissingViolation[] = [];
   const ocrUnavailable = new Set<string>();
   for (const s of screens) {
-    const anchorsRaw = screenAnchors.get(s.screen_id);
+    // codex 四轮 P1：overlay 屏 id 归一化回落基屏 anchors（与 collectTextPlacementSignals 对称）——
+    // 否则半模态屏的整块文本缺失静默跳过。
+    const anchorsRaw = screenAnchors.get(s.screen_id) ?? screenAnchors.get(canonicalOverlayBase(s.screen_id));
     if (!anchorsRaw) continue;
     const anchors = [...new Set(anchorsRaw.map(a => a.trim()).filter(a => a.length >= MIN_ANCHOR_LEN))];
     if (anchors.length < MIN_ANCHORS_FOR_GATE) continue; // 锚点太少，不足以判整块缺失

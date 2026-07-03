@@ -461,7 +461,9 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('visual_diff_score_floor_sentinel_warn', () => {
+  // P1-C（f2d8c4a6）行为变更：score_floor 降级 reference_only——不再产生 WARN 判定，
+  // 仅 details 附参考注记（像素直方图度量历史多次实测证伪：UI 全错仍近满分/忠实屏反被压分）。
+  run('visual_diff_score_floor_reference_only_note', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();
     try {
@@ -501,8 +503,12 @@ export function runAll(): UnitCaseResult[] {
       }));
       const r = checkVisualDiff(baseCtx(root));
       const hit = r.find((x: { id: string; status: string; details?: string }) => x.id === 'visual_diff');
-      if (!hit || hit.status !== 'WARN' || !/score_floor|客观相似度/.test(hit.details ?? '')) {
-        throw new Error(`sentinel should WARN: ${JSON.stringify(hit)}`);
+      if (!hit) throw new Error('should produce visual_diff result');
+      if (!/reference_only/.test(hit.details ?? '')) {
+        throw new Error(`score_floor 分差应降为 reference_only 注记：${JSON.stringify(hit)}`);
+      }
+      if (hit.status === 'WARN' && /score_floor 与 VL 分差/.test(hit.details ?? '')) {
+        throw new Error('score_floor 不得再产生 WARN 判定（已降级 reference_only）');
       }
     } finally {
       clearFrameworkConfigCache();

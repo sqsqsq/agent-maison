@@ -17,7 +17,9 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
-import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText } from './visual-diff-ocr-gates';
+import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals } from './visual-diff-ocr-gates';
+import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
+import { canonicalOverlayBase } from './visual-diff-nav';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
 import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
@@ -77,6 +79,7 @@ export interface VisualDiffScreenEntry {
   fidelity_score?: number;
   geometric_iou?: number;
   /** jimp 半定量客观下限/哨兵（不参与 PASS 阈值） */
+  /** reference_only（P1-C）：像素直方图下限，历史多次实测证伪（UI 全错仍近满分），不参与任何判定 */
   score_floor?: number;
   must_fix?: string[];
   /** 当前 screenshot_path 对应 PNG 的 sha256 前缀（16 hex） */
@@ -672,6 +675,8 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     `defects=${rep.screens.reduce((n, s) => n + (s.defects?.length ?? 0), 0)}`,
     rep.degraded ? 'degraded' : '',
   ].filter(Boolean).join('；');
+  /** P1-C：不参与判定的参考注记（score_floor reference_only 等），只随 details 展示 */
+  const referenceNotes: string[] = [];
 
   const hits: VisualDiffHit[] = [];
 
@@ -815,18 +820,21 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // 两次实测证伪了像素/文本-位置度量；唯一鲁棒的 OCR 信号是文本存在性，故 T1 仅做"整块缺失"。位置/样式/图标类
   // 假 PASS 不靠 T1，靠 T2（pixel_1to1 P0 人确认）+ T7（VL 证据）。
   if (pixel1to1 && uiDoc) {
-    const passScreenIds = new Set(passScreens.map(s => s.screen_id));
-    const p0Set = new Set(p0Ids);
+    // codex 四轮 P1：pass/P0 过滤与 anchors 键全部按基屏归一化（吸收 __overlay__* 后缀），
+    // 否则 root-overlay 的 P0 pass 屏（manage_non_local__overlay__0）拿不到 anchors、T1 静默跳过；
+    // "仅 pass 屏受检"的语义改在 screens 入参处过滤（anchors 键已归一化，不能再靠键面隐含过滤）。
+    const passBaseIds = new Set(passScreens.map(s => canonicalOverlayBase(s.screen_id)));
+    const p0BaseIds = new Set(p0Ids.map(canonicalOverlayBase));
     const screenAnchors = new Map<string, string[]>();
     for (const sc of uiDoc.screens ?? []) {
-      if (!p0Set.has(sc.id) || !passScreenIds.has(sc.id)) continue;
+      if (!p0BaseIds.has(sc.id) || !passBaseIds.has(sc.id)) continue;
       const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
       const texts = nodes.map(n => n.text).filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
       if (texts.length > 0) screenAnchors.set(sc.id, texts);
     }
     const missingRes = collectGrossMissingAnchorText(
       screenAnchors,
-      rep.screens,
+      rep.screens.filter(s => s.verdict === 'pass'),
       rel => resolveShotPath(ctx.projectRoot, rel),
     );
     if (missingRes.violations.length > 0) {
@@ -846,6 +854,86 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         severity: 'MAJOR',
         status: 'WARN',
         line: `锚点缺失检测降级（OCR 不可用，须复核）：${missingRes.ocrUnavailable.join(', ')}`,
+      });
+    }
+  }
+
+  // P1-C（f2d8c4a6）：文本块二部匹配观测——参考图 vs 截图的相对信号（存在性/同行分组/纵向顺序，
+  // 对 device≠mockup 缩放不变；绝对偏移已两次实测证伪故不做）。fail 级信号是确定性证据，
+  // VL verdict=pass 不可推翻；per-element must_fix 喂回 loop（治"halt 了却说不出改哪"）。
+  if (uiDoc && specMd) {
+    const refIndex = buildAuthoritativeRefImageIndex(ctx, specMd);
+    const screenTextsMap = new Map<string, string[]>();
+    for (const sc of uiDoc.screens ?? []) {
+      const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
+      const texts: string[] = [];
+      for (const n of nodes) {
+        if (typeof n.text === 'string' && n.text.trim()) texts.push(n.text);
+        const sub = (n as { subtitle?: string }).subtitle;
+        if (typeof sub === 'string' && sub.trim()) texts.push(sub);
+      }
+      if (texts.length > 0) screenTextsMap.set(sc.id, texts);
+    }
+    const screenRefIds = new Map<string, string>();
+    for (const sc of uiDoc.screens ?? []) screenRefIds.set(sc.id, sc.ref_id ?? sc.id);
+    // overlay 屏 id 归一化回落基屏（codex 三轮 P1）：ref 解析与 P0 判定都吸收 __overlay__* 后缀
+    const refIdFor = (s: { screen_id: string; ref_id?: string }): string =>
+      screenRefIds.get(s.screen_id) ??
+      screenRefIds.get(canonicalOverlayBase(s.screen_id)) ??
+      s.ref_id ??
+      canonicalOverlayBase(s.screen_id);
+    const placement = collectTextPlacementSignals(
+      screenTextsMap,
+      rep.screens,
+      rel => resolveShotPath(ctx.projectRoot, rel),
+      s => resolveRefSourceImage(refIndex, refIdFor(s)).path,
+    );
+    const p0BaseSet = new Set(p0Ids.map(canonicalOverlayBase));
+    const failScreensPlacement = placement.perScreen.filter(
+      p => p.fail_signals.length > 0 && p0BaseSet.has(canonicalOverlayBase(p.screen_id)),
+    );
+    const warnScreensPlacement = placement.perScreen.filter(p => !failScreensPlacement.includes(p));
+    if (failScreensPlacement.length > 0) {
+      const ratchet = pixel1to1
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_placement',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `文本块结构背离（相对信号确定性证据，VL pass 不可推翻）：` +
+          failScreensPlacement
+            .map(p => `${p.screen_id}: ${[...p.fail_signals, ...p.must_fix].slice(0, 4).join('；')}`)
+            .join(' | '),
+      });
+    }
+    // advisory 语义（codex 三轮 P2 明确化）：存在性缺失/单对逆序是**观测素材**（WARN，不写回
+    // visual-diff.json、不进 pixel_1to1 阻断通道）——设备 OCR 噪声使其直接阻断=FP 风暴风险。
+    // 喂回 loop 的链路：VL/agent 终判时把这些观测折算进 screens[].must_fix（T4 强制 P0 warn 屏
+    // must_fix 非空，本 WARN 提供可直接引用的 per-element 素材）；fail_signals 才走上面的阻断通道。
+    if (warnScreensPlacement.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_placement_must_fix',
+        severity: 'MAJOR',
+        status: 'WARN',
+        line:
+          `文本块观测 per-element 素材（advisory，VL 终判须折算进 screens[].must_fix；不直接阻断）：` +
+          warnScreensPlacement
+            .map(p => `${p.screen_id}: ${[...p.fail_signals, ...p.must_fix].slice(0, 4).join('；')}`)
+            .join(' | '),
+      });
+    }
+    if (placement.ocrUnavailable.length > 0 || placement.refUnavailable.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_placement_degraded',
+        severity: 'MAJOR',
+        status: 'WARN',
+        line:
+          `文本块观测降级：` +
+          (placement.ocrUnavailable.length ? `截图 OCR 不可用（${placement.ocrUnavailable.join(', ')}）` : '') +
+          (placement.refUnavailable.length ? `${placement.ocrUnavailable.length ? '；' : ''}参考原图缺失/不可读（${placement.refUnavailable.join(', ')}）` : '') +
+          `——须复核，不静默放过`,
       });
     }
   }
@@ -909,18 +997,14 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     });
   }
 
+  // P1-C（f2d8c4a6）：score_floor 降级为 reference_only 注记——像素直方图度量已被历史多次实测证伪
+  // （round6 card_pack=0.999：UI 全错像素分近满分；round2/3：忠实屏被排在崩坏屏之下），
+  // 不再参与任何判定/权重；字段保留仅作参考注记，文本类观测（存在性/同行/顺序）才是确定性信号。
   if (scoreFloorSentinel.length > 0) {
-    const ratchet = pixel1to1
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
-    pushVisualDiffHit(hits, {
-      id: 'visual_diff',
-      severity: ratchet.severity,
-      status: ratchet.status,
-      line:
-        `VL 高分但客观相似度低（fidelity-score_floor>=${SCORE_FLOOR_SENTINEL_GAP}）：` +
-        scoreFloorSentinel.map(s => `${s.screen_id}(f=${s.fidelity_score},floor=${s.score_floor})`).join(', '),
-    });
+    referenceNotes.push(
+      `[reference_only] score_floor 与 VL 分差参考注记（不参与判定，像素度量已实测证伪）：` +
+      scoreFloorSentinel.map(s => `${s.screen_id}(f=${s.fidelity_score},floor=${s.score_floor})`).join(', '),
+    );
   }
 
   if (duplicateHashScreens.length > 0) {
@@ -1029,5 +1113,6 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     });
   }
 
-  return [finalizeVisualDiffHits(desc, reportRel, details, hits)];
+  const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
+  return [finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits)];
 }

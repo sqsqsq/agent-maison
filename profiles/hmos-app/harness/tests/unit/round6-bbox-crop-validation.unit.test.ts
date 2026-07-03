@@ -867,6 +867,155 @@ test('p1b_visual_fidelity_review_evidence_gate', () => {
   }
 });
 
+// ============================================================
+// Phase 3（P1-C）：文本块二部匹配观测——相对信号（同行/顺序/存在性），canned OCR 注入
+// ============================================================
+
+import { collectTextPlacementSignals, type OcrFn } from '../../visual-diff-ocr-gates';
+import type { OcrWord, OcrResult } from '../../ocr-toolkit';
+import type { VisualDiffScreenEntry } from '../../visual-diff-check';
+
+/** 一行文本 → 单 word（cy 中心、h 行高） */
+function lineWord(text: string, cy: number, x = 0.1, h = 0.02): OcrWord {
+  return { text, conf: 90, bbox: [x, cy - h / 2, 0.3, h] };
+}
+
+function cannedOcr(byPath: Record<string, OcrWord[] | null>): OcrFn {
+  return (abs: string): OcrResult => {
+    const key = Object.keys(byPath).find(k => abs.includes(k));
+    if (!key) return { ok: false, error: 'no canned' };
+    const words = byPath[key];
+    if (!words) return { ok: false, error: 'canned fail' };
+    return { ok: true, width: 1080, height: 2400, words };
+  };
+}
+
+const PLACEMENT_TEXTS = ['添加卡片', '银行卡/交通卡/门禁卡等', '管理非本机卡片', '暂无非本机卡片'];
+/** 参考图 ground truth：前两条同一行（副标题右置），后两条依次下行 */
+const REF_WORDS: OcrWord[] = [
+  lineWord('添加卡片', 0.20, 0.06),
+  lineWord('银行卡/交通卡/门禁卡等', 0.20, 0.5),
+  lineWord('管理非本机卡片', 0.30),
+  lineWord('暂无非本机卡片', 0.50),
+];
+
+function runPlacement(shotWords: OcrWord[] | null, refWords: OcrWord[] | null = REF_WORDS) {
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'card_pack', verdict: 'pass', ref_id: 'card_pack', screenshot_path: 'shots/card_pack.png' } as VisualDiffScreenEntry,
+  ];
+  return collectTextPlacementSignals(
+    new Map([['card_pack', PLACEMENT_TEXTS]]),
+    screens,
+    rel => rel,
+    () => 'refs/card_pack.jpg',
+    cannedOcr({ 'shots/card_pack.png': shotWords, 'refs/card_pack.jpg': refWords }),
+  );
+}
+
+test('p1c_placement_faithful_scaled_no_signal', () => {
+  // 忠实实现：y 整体 ×1.3、行高变化（device≠mockup 缩放）——相对信号必须零误报（FP 铁律，
+  // 这正是绝对偏移度量被证伪的场景：所有绝对位置都偏了，但同行/顺序关系保持）
+  const shot = [
+    lineWord('添加卡片', 0.26, 0.06, 0.026),
+    lineWord('银行卡/交通卡/门禁卡等', 0.26, 0.5, 0.026),
+    lineWord('管理非本机卡片', 0.39, 0.1, 0.026),
+    lineWord('暂无非本机卡片', 0.65, 0.1, 0.026),
+  ];
+  const r = runPlacement(shot);
+  assert.strictEqual(r.perScreen.length, 0, `忠实缩放实现不得有任何信号：${JSON.stringify(r.perScreen)}`);
+});
+
+test('p1c_placement_subtitle_split_fail', () => {
+  // round6 坏态：副标题从右置（与主标题同行）被排成题下（分居两行）→ FAIL 级确定性信号
+  const shot = [
+    lineWord('添加卡片', 0.26, 0.06, 0.026),
+    lineWord('银行卡/交通卡/门禁卡等', 0.34, 0.06, 0.026), // 掉到下一行（题下）
+    lineWord('管理非本机卡片', 0.45, 0.1, 0.026),
+    lineWord('暂无非本机卡片', 0.65, 0.1, 0.026),
+  ];
+  const r = runPlacement(shot);
+  assert.strictEqual(r.perScreen.length, 1);
+  const sig = r.perScreen[0];
+  assert.ok(sig.fail_signals.some(x => /同一行.*分居两行/.test(x)), `应产同行拆分 FAIL 信号：${JSON.stringify(sig)}`);
+});
+
+test('p1c_placement_order_inversion_fail', () => {
+  // round6 坏态："卡包文字排到页首"式纵向乱序（≥2 对逆序）→ FAIL 级
+  const shot = [
+    lineWord('添加卡片', 0.80, 0.06, 0.026), // 应在最上，实测掉到最下
+    lineWord('银行卡/交通卡/门禁卡等', 0.80, 0.5, 0.026),
+    lineWord('管理非本机卡片', 0.30, 0.1, 0.026),
+    lineWord('暂无非本机卡片', 0.50, 0.1, 0.026),
+  ];
+  const r = runPlacement(shot);
+  assert.strictEqual(r.perScreen.length, 1);
+  assert.ok(r.perScreen[0].fail_signals.some(x => /纵向乱序/.test(x)), `应产乱序 FAIL 信号：${JSON.stringify(r.perScreen[0])}`);
+});
+
+test('p1c_placement_missing_text_must_fix', () => {
+  // 存在性（唯一实测鲁棒信号）：参考图有、截图无 → per-element must_fix（advisory，喂 loop）
+  const shot = [
+    lineWord('添加卡片', 0.26, 0.06, 0.026),
+    lineWord('银行卡/交通卡/门禁卡等', 0.26, 0.5, 0.026),
+    lineWord('管理非本机卡片', 0.39, 0.1, 0.026),
+    // 暂无非本机卡片 缺失
+  ];
+  const r = runPlacement(shot);
+  assert.strictEqual(r.perScreen.length, 1);
+  const sig = r.perScreen[0];
+  assert.strictEqual(sig.fail_signals.length, 0, '单条缺失不应 FAIL 级（gross 门禁另管）');
+  assert.ok(sig.must_fix.some(x => /暂无非本机卡片.*未识别到/.test(x)), `应产存在性 must_fix：${JSON.stringify(sig)}`);
+});
+
+test('p1c_placement_overlay_id_falls_back_to_base', () => {
+  // codex 三轮 P1：overlay 屏 id（manage_non_local__overlay__0）须归一化回落基屏文本，
+  // 否则半模态屏的同行拆分/乱序/缺失静默漏检（连 degraded 都不报）
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'card_pack__overlay__0', verdict: 'pass', screenshot_path: 'shots/overlay.png' } as VisualDiffScreenEntry,
+  ];
+  const shot = [
+    lineWord('添加卡片', 0.26, 0.06, 0.026),
+    lineWord('银行卡/交通卡/门禁卡等', 0.34, 0.06, 0.026), // 题下（坏态）
+    lineWord('管理非本机卡片', 0.45, 0.1, 0.026),
+    lineWord('暂无非本机卡片', 0.65, 0.1, 0.026),
+  ];
+  const r = collectTextPlacementSignals(
+    new Map([['card_pack', PLACEMENT_TEXTS]]), // 只有基屏 key
+    screens,
+    rel => rel,
+    () => 'refs/card_pack.jpg',
+    cannedOcr({ 'shots/overlay.png': shot, 'refs/card_pack.jpg': REF_WORDS }),
+  );
+  assert.strictEqual(r.perScreen.length, 1, `overlay id 应回落基屏文本并产出信号：${JSON.stringify(r)}`);
+  assert.ok(r.perScreen[0].fail_signals.some(x => /同一行.*分居两行/.test(x)));
+});
+
+test('p1c_t1_gross_missing_overlay_id_falls_back_to_base', () => {
+  // codex 四轮 P1：T1 整块缺失门禁同款 overlay 归一化——anchors 键为基屏、screens 是 overlay id 时仍受检
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { collectGrossMissingAnchorText } = require('../../visual-diff-ocr-gates') as typeof import('../../visual-diff-ocr-gates');
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'manage_non_local__overlay__0', verdict: 'pass', screenshot_path: 'shots/mnl.png' } as VisualDiffScreenEntry,
+  ];
+  const anchors = new Map([['manage_non_local', ['管理非本机卡片', '暂无非本机卡片', '关闭', '返回']]]);
+  // 截图 OCR 全空（整块缺失）→ 应产 violation 而非静默跳过
+  const r = collectGrossMissingAnchorText(
+    anchors, screens, (rel: string) => rel,
+    cannedOcr({ 'shots/mnl.png': [] }),
+  );
+  assert.strictEqual(r.violations.length, 1, `overlay id 应回落基屏 anchors 并判整块缺失：${JSON.stringify(r)}`);
+  assert.strictEqual(r.violations[0].screen_id, 'manage_non_local__overlay__0');
+});
+
+test('p1c_placement_degraded_not_silent', () => {
+  // OCR 失败/参考图缺失 → 降级清单（不误报也不静默）
+  const rShotFail = runPlacement(null);
+  assert.deepStrictEqual(rShotFail.perScreen, []);
+  assert.deepStrictEqual(rShotFail.ocrUnavailable, ['card_pack']);
+  const rRefFail = runPlacement(REF_WORDS, null);
+  assert.deepStrictEqual(rRefFail.refUnavailable, ['card_pack']);
+});
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
