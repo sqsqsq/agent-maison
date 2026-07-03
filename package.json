@@ -8,6 +8,7 @@
     "harness:install": "npm --prefix harness install",
     "openspec": "openspec",
     "openspec:validate": "openspec validate --all --strict",
+    "release:all": "node scripts/release-all.mjs",
     "release:pack": "node scripts/pack-release.mjs",
     "release:verify": "node scripts/verify-release-pack.mjs",
     "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs",

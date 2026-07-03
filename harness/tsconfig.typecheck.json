@@ -1,4 +1,9 @@
 {
+  // 全量类型检查（noEmit）。覆盖源码 + 测试代码（run-unit/run-tests/*.unit.test.ts/tests/utils
+  // 及动态发现的 profile 单测）——test:unit/test:fixtures 走 transpile-only 后，类型把关全靠这里。
+  // exclude fixtures/**：fixture 是数据目录（INPUT 业务源码样本，可能含故意编译失败的用例，
+  // 如 ut_tsc_compiles_fail），非测试代码，不纳入类型检查。
+  // 实测：源码+测试单 program 仅 ~4s（分两个 tsconfig 反而 ~12s，因重复解析 import 链）。
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
@@ -10,7 +15,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "**/tests/**",
+    "**/fixtures/**",
     "../profiles/**/node_modules/**",
     "../profiles/**/vendor/**"
   ]

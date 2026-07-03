@@ -14,8 +14,10 @@
 // 退出码：0 全部通过；1 至少一个用例失败。
 // ============================================================================
 
+import './utils/transpile-only-env'; // 须为首个 import：本进程+子进程走 transpile-only（见 plan a7c3e1f9 P0）
 import * as path from 'path';
 import * as fs from 'fs';
+import { selectSuites } from './utils/select-suites';
 
 export interface UnitCaseResult {
   name: string;
@@ -151,6 +153,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
   { id: 'goal-timeout', modulePath: './unit/goal-timeout.unit.test' },
   { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
+  { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
@@ -162,13 +165,14 @@ interface SuiteSummary {
 async function main(): Promise<void> {
   const filterIdx = process.argv.indexOf('--filter');
   const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
+  const { toRun, caseNameFilter } = selectSuites(filter, SUITES);
 
   console.log('\nFramework Harness Unit Tests\n');
   console.log('='.repeat(72));
 
   const summaries: SuiteSummary[] = [];
 
-  for (const suite of SUITES) {
+  for (const suite of toRun) {
     const fullPath = path.resolve(__dirname, suite.modulePath + '.ts');
     if (!fs.existsSync(fullPath)) {
       console.log(`  [SKIP] suite ${suite.id} 不存在：${fullPath}`);
@@ -182,7 +186,7 @@ async function main(): Promise<void> {
       continue;
     }
     const all = await mod.runAll();
-    const filtered = filter ? all.filter(r => r.name.includes(filter)) : all;
+    const filtered = caseNameFilter ? all.filter(r => r.name.includes(caseNameFilter)) : all;
     summaries.push({ id: suite.id, results: filtered });
   }
 

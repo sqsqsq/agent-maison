@@ -35,9 +35,19 @@ git status   # 确认 diff 仅为 CRLF→LF 时可提交
 
 ## 发版打包
 
+**推荐：单命令前台跑完整链路**（typecheck 只跑一次、zip 只打一次、失败不留残留产物）：
+
 ```bash
 npm install              # 根目录，拉取 archiver / extract-zip
-npm run release:verify   # 规则 + 临时 zip 断言
+npm run release:all      # check-plans → typecheck → test:unit/fixtures → pack(staging) → verify(--zip) → promote 到 dist/
+```
+
+> ⚠️ 请**前台**跑 `release:all`（约 2–3 分钟）；勿丢后台再粗粒度轮询——轮询会把体感放大到十几分钟。任一步失败即中止、不产出 dist 产物。
+
+分步命令（调试/单跑时用）：
+
+```bash
+npm run release:verify   # 规则 + 临时 zip 断言（无参=自 pack；--skip-typecheck 跳重复 typecheck；--zip <path> --manifest <path> 校验已 pack 产物）
 npm run release:pack     # 产出 dist/framework-<semver>.zip
 ```
 
@@ -104,7 +114,7 @@ Cursor 命令：`/opsx-propose` `/opsx-apply` `/opsx-archive` `/opsx-explore`（
 
 1. **打开**：`package.json.version` = N；新建 plan 写 `version: N`。
 2. **开发**：多个 plan 可共享 N；未完成且不进本版发布 → `version` + `deferred_to` 置未来目标（如 `2.2.0`），立即移出当前窗口。
-3. **发布**：`npm run release:check-plans`（`--release`）→ `npm run release:changelog` → `cd harness && npm test` → `npm run release:verify` → `npm run release:pack`。
+3. **发布**：`npm run release:changelog`（生成维护者 changelog）后跑 `npm run release:all`（前台，内部串联 check-plans→typecheck→test→pack→verify→promote，见「发版打包」）。
 4. **归档**：撰写 `RELEASE-NOTES-vN.md`（消费者向）。
 5. **切换**：`npm run release:version -- bump --patch|--minor|--major`（先过 release 门禁，再改 `package.json.version`）。
 

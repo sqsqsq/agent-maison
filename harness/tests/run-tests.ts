@@ -16,6 +16,7 @@
 // 退出码：0 全部通过；1 至少一个 fixture 断言失败。
 // ============================================================================
 
+import './utils/transpile-only-env'; // 须为首个 import：本进程+子进程走 transpile-only（见 plan a7c3e1f9 P0）
 import * as fs from 'fs';
 import * as path from 'path';
 import { runFixture, FixtureRunResult, fixtureDisplayName } from './utils/fixture-runner';

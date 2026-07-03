@@ -236,22 +236,32 @@ function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
   console.log(`[release:verify] in-zip manifest integrity PASS (${manifest.files.length} files)`);
 }
 
-export async function verifyReleasePack() {
+/**
+ * @param {{ skipTypecheck?: boolean, externalZip?: string | null, externalManifest?: string | null }} [opts]
+ *   skipTypecheck：聚合链路（release:all）已单独跑 typecheck 时跳过，避免重复；
+ *   externalZip/externalManifest：校验「已 pack 的产物」而非自 pack→extract（pack→verify 只打一次 zip）。
+ */
+export async function verifyReleasePack(opts = {}) {
+  const { skipTypecheck = false, externalZip = null, externalManifest = null } = opts;
   const rules = loadReleaseExcludes();
 
-  console.log('[release:verify] typecheck (tsc --noEmit)...');
-  const tc = spawnSync('npm', ['run', 'typecheck'], {
-    cwd: path.join(REPO_ROOT, 'harness'),
-    stdio: 'inherit',
-    shell: true,
-  });
-  if (tc.status !== 0) fail('typecheck (tsc --noEmit) failed');
-  console.log('[release:verify] typecheck PASS');
+  if (skipTypecheck) {
+    console.log('[release:verify] typecheck SKIPPED (--skip-typecheck；聚合链路已单独跑)');
+  } else {
+    console.log('[release:verify] typecheck (tsc --noEmit)...');
+    const tc = spawnSync('npm', ['run', 'typecheck'], {
+      cwd: path.join(REPO_ROOT, 'harness'),
+      stdio: 'inherit',
+      shell: true,
+    });
+    if (tc.status !== 0) fail('typecheck (tsc --noEmit) failed');
+    console.log('[release:verify] typecheck PASS');
+  }
 
   console.log('[release:verify] adapter catalog consistency (source root)...');
   const catalogSrc = spawnSync(
     'npx',
-    ['ts-node', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', REPO_ROOT],
+    ['ts-node', '--transpile-only', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', REPO_ROOT],
     { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
   );
   if (catalogSrc.status !== 0) fail('adapter catalog consistency (source root) failed');
@@ -260,7 +270,7 @@ export async function verifyReleasePack() {
   console.log('[release:verify] skills.index init_next_steps lint (source root)...');
   const skillsIndexLint = spawnSync(
     'npx',
-    ['ts-node', 'scripts/check-skills-index-init-steps.ts', '--framework-root', REPO_ROOT],
+    ['ts-node', '--transpile-only', 'scripts/check-skills-index-init-steps.ts', '--framework-root', REPO_ROOT],
     { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
   );
   if (skillsIndexLint.status !== 0) fail('skills.index init_next_steps lint (source root) failed');
@@ -306,11 +316,29 @@ export async function verifyReleasePack() {
   }
   console.log('[release:verify] plan version PASS');
 
-  const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
+  // 复用「已 pack 的产物」（externalZip，聚合链路 pack→verify 只打一次 zip），或自 pack 到临时目录（默认自包含）
+  const tmpOut = externalZip ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
   try {
-    console.log(`[release:verify] packing to ${tmpOut}...`);
-    const { zipPath, manifestPath } = await packRelease({ dryRun: false, outDir: tmpOut });
-    if (!zipPath || !fs.existsSync(zipPath)) fail('pack did not produce zip');
+    let zipPath;
+    let manifestPath;
+    if (externalZip) {
+      zipPath = path.resolve(externalZip);
+      // sidecar manifest（assertInZipManifest 的链式校验需它）：--manifest 指定，或与 zip 同目录同名 .manifest.json
+      manifestPath = externalManifest
+        ? path.resolve(externalManifest)
+        : zipPath.replace(/\.zip$/, '.manifest.json');
+      if (!fs.existsSync(zipPath)) fail(`--zip 不存在：${zipPath}`);
+      if (!fs.existsSync(manifestPath)) {
+        fail(`sidecar manifest 不存在：${manifestPath}（用 --manifest 指定，或置于 zip 同目录同名 .manifest.json）`);
+      }
+      console.log(`[release:verify] verifying existing zip ${zipPath}`);
+    } else {
+      console.log(`[release:verify] packing to ${tmpOut}...`);
+      const packed = await packRelease({ dryRun: false, outDir: tmpOut });
+      zipPath = packed.zipPath;
+      manifestPath = packed.manifestPath;
+      if (!zipPath || !fs.existsSync(zipPath)) fail('pack did not produce zip');
+    }
 
     const extractRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-extract-'));
     try {
@@ -340,7 +368,7 @@ export async function verifyReleasePack() {
       console.log('[release:verify] adapter catalog consistency (extracted framework root)...');
       const catalogZip = spawnSync(
         'npx',
-        ['ts-node', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', frameworkRoot],
+        ['ts-node', '--transpile-only', 'scripts/check-adapter-catalog-consistency.ts', '--framework-root', frameworkRoot],
         { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
       );
       if (catalogZip.status !== 0) fail('adapter catalog consistency (extracted framework root) failed');
@@ -349,7 +377,7 @@ export async function verifyReleasePack() {
       console.log('[release:verify] skills.index init_next_steps lint (extracted framework root)...');
       const skillsIndexZip = spawnSync(
         'npx',
-        ['ts-node', 'scripts/check-skills-index-init-steps.ts', '--framework-root', frameworkRoot],
+        ['ts-node', '--transpile-only', 'scripts/check-skills-index-init-steps.ts', '--framework-root', frameworkRoot],
         { cwd: path.join(REPO_ROOT, 'harness'), stdio: 'inherit', shell: true },
       );
       if (skillsIndexZip.status !== 0) {
@@ -362,15 +390,45 @@ export async function verifyReleasePack() {
       fs.rmSync(extractRoot, { recursive: true, force: true });
     }
   } finally {
-    fs.rmSync(tmpOut, { recursive: true, force: true });
+    if (tmpOut) fs.rmSync(tmpOut, { recursive: true, force: true });
   }
 
   console.log('[release:verify] ALL PASS');
 }
 
+/** @param {string[]} argv */
+function parseVerifyArgs(argv) {
+  const opts = { skipTypecheck: false, externalZip: null, externalManifest: null };
+  /** 取 flag 的值参数；缺值或下一个又是 flag 时 fail-fast（避免 `--zip --manifest x` 把 `--manifest` 误当路径） */
+  const takeValue = (flag, i) => {
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) {
+      console.error(`[release:verify] ${flag} 需要一个路径参数`);
+      process.exit(2);
+    }
+    return v;
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--skip-typecheck') {
+      opts.skipTypecheck = true;
+    } else if (a === '--zip') {
+      opts.externalZip = takeValue('--zip', i);
+      i += 1;
+    } else if (a === '--manifest') {
+      opts.externalManifest = takeValue('--manifest', i);
+      i += 1;
+    } else {
+      console.error(`[release:verify] 未知参数：${a}`);
+      process.exit(2);
+    }
+  }
+  return opts;
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  verifyReleasePack().catch(err => {
+  verifyReleasePack(parseVerifyArgs(process.argv.slice(2))).catch(err => {
     console.error('[release:verify] FAIL:', err.message);
     process.exit(1);
   });
