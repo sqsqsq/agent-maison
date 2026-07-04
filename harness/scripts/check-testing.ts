@@ -82,7 +82,7 @@ import {
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
-import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
@@ -2153,6 +2153,8 @@ function checkDeviceTestRunGate(
                     deviceSn: process.env.HARNESS_HDC_TARGET,
                     bundleName,
                     logPath: run.logPath,
+                    // 与 device_test.run 的 app 启动方式对齐（宿主热修回收，round6 收尾批 P0-3）
+                    ...readDeviceTestRunHylyreNavOpts(run.logPath),
                   }),
                 }
               : {}),

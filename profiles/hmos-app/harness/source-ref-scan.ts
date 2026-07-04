@@ -7,7 +7,11 @@ import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import type { UiSpecComponentNode } from '../../../harness/scripts/utils/ui-spec-shared';
 
-const RESOURCE_REF_RE = /\$r\s*\(\s*['"](app\.(?:color|media|string|float|pattern)\.[^'"]+)['"]\s*\)/g;
+// P0-3(d)（round6 收尾批）：扩收 sys.symbol.*——system_symbol 图标经 SymbolGlyph($r('sys.symbol.X'))
+// 渲染，此前不进 refs 集合致 asset-render 检查对 P0-E system_symbol 节点恒误报"未渲染"
+// （宿主 agent 曾为此先造透明 Image 骗门禁、后一刀切 skip——正规修法=按具体 ref 判真渲染）。
+// 既有消费者按 app.color/app.media 前缀精确 has() 查询，多出的 sys.symbol 条目零碰撞。
+const RESOURCE_REF_RE = /\$r\s*\(\s*['"]((?:app\.(?:color|media|string|float|pattern)|sys\.symbol)\.[^'"]+)['"]\s*\)/g;
 const STRUCT_NAME_RE = /\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)/g;
 
 export interface SourceScanResult {

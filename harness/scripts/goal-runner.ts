@@ -523,6 +523,20 @@ export function collectTimeoutResumableArtifacts(
   return out;
 }
 
+/**
+ * visual_gap 重试指导文案（P0-2·round6 收尾批：抽常量供单测断言——纯文案 nudge 的效力靠
+ * 内容明确性，弃判禁令必须在场；硬 backstop 见 visual_diff_verdict_abandonment）。
+ * 实锤背景：终局 run agent 以"headless 无法闭环"为由把确定性 fail_signals 在手的屏
+ * 全留 pending，白烧 3 次 testing 重试而不回修。
+ */
+export const VISUAL_GAP_RETRY_GUIDANCE: readonly string[] = [
+  '**This is a visual-fidelity gap (the rendered UI does not match the reference).** To make real progress:',
+  '1. Read the SPECIFIC must_fix / layout-divergence regions / out-of-bounds elements in the BLOCKER evidence and fix exactly those;',
+  '2. Deterministic fail_signals (text-placement divergence) mean the screen IS decidable headlessly: you MUST set that screen verdict=fail, copy the signals into screens[].must_fix, fix the code in THIS retry, and re-capture — do NOT leave such screens pending ("unattended cannot close the loop" is only true for PASS candidates awaiting human confirmed_by);',
+  '3. Do NOT blindly move or restructure unrelated blocks hoping the score improves — a prior attempt did that (moved the card-pack description) and made it worse;',
+  '4. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
+];
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   phase: FeaturePhase,
@@ -607,13 +621,7 @@ export function buildPhasePrompt(
         'If the same infrastructure failure repeats, the run will HALT for you to fix the environment — blind retries waste the budget and do not improve the UI.',
       );
     } else if (priorFailureKind === 'visual_gap') {
-      parts.push(
-        '',
-        '**This is a visual-fidelity gap (the rendered UI does not match the reference).** To make real progress:',
-        '1. Read the SPECIFIC must_fix / layout-divergence regions / out-of-bounds elements in the BLOCKER evidence and fix exactly those;',
-        '2. Do NOT blindly move or restructure unrelated blocks hoping the score improves — a prior attempt did that (moved the card-pack description) and made it worse;',
-        '3. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
-      );
+      parts.push('', ...VISUAL_GAP_RETRY_GUIDANCE);
     } else if (priorFailureKind === 'transient_api_error') {
       // P0-D.5：断流≠内容失败——指导续作而非"修 blocker"，堵住"把缺产物当自己错误去修复现场"。
       parts.push(

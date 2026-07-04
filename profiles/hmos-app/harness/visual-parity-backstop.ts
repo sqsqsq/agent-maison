@@ -567,20 +567,25 @@ export function collectAssetRenderIssues(
   for (const n of collectAllComponentNodes(doc)) {
     const key = (n.asset_ref ?? n.icon?.ref)?.trim();
     if (!key) continue;
+    // P0-3(d)（round6 收尾批）：system_symbol 节点的真渲染判据＝源码含**该具体** sys.symbol 引用
+    // （RESOURCE_REF_RE 已扩收）。宿主 agent 曾一刀切 `continue` 跳过——那会漏"声明 system_symbol
+    // 却啥都不渲染"；按 ref 精确匹配既消 P0-E 误报又保检出。
+    const isSystemSymbol = n.icon?.kind === 'system_symbol' || key.startsWith('sys.symbol.');
     const structName = resolveMappedStruct(n.id, mappings);
-    let rendered: boolean;
-    if (structName) {
-      rendered = assetRenderedInRefs(key, scanStructResourceRefs(ctx.projectRoot, contracts, structName));
-    } else {
-      featureRefs = featureRefs ?? scanFeatureSourceTree(ctx.projectRoot, contracts).resourceRefs;
-      rendered = assetRenderedInRefs(key, featureRefs);
-    }
+    const refsForNode = structName
+      ? scanStructResourceRefs(ctx.projectRoot, contracts, structName)
+      : (featureRefs = featureRefs ?? scanFeatureSourceTree(ctx.projectRoot, contracts).resourceRefs);
+    const rendered = isSystemSymbol
+      ? refsForNode.has(key) || (key.startsWith('sys.symbol.') === false && refsForNode.has(`sys.symbol.${key}`))
+      : assetRenderedInRefs(key, refsForNode);
     if (!rendered) {
       issues.push({
         kind: 'asset',
         id: n.id ?? n.type,
         assetRole: placeholderKeys.has(key) ? 'not_rendered_placeholder' : 'not_rendered',
-        detail: `节点 ${n.id ?? n.type} 声明 asset_ref=${key} 但${structName ? ` ${structName}` : '源码'}未 $r 引用对应 media — 疑似声明却未渲染（如 tab 仅文字）`,
+        detail: isSystemSymbol
+          ? `节点 ${n.id ?? n.type} 声明 system_symbol（ref=${key}）但${structName ? ` ${structName}` : '源码'}无对应 $r('sys.symbol.…') 引用 — 声明却未渲染系统符号`
+          : `节点 ${n.id ?? n.type} 声明 asset_ref=${key} 但${structName ? ` ${structName}` : '源码'}未 $r 引用对应 media — 疑似声明却未渲染（如 tab 仅文字）`,
       });
     }
     if (isUnclassifiedIcon(n.icon)) {

@@ -17,7 +17,7 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
-import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals } from './visual-diff-ocr-gates';
+import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
@@ -921,6 +921,25 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
           `文本块观测 per-element 素材（advisory，VL 终判须折算进 screens[].must_fix；不直接阻断）：` +
           warnScreensPlacement
             .map(p => `${p.screen_id}: ${[...p.fail_signals, ...p.must_fix].slice(0, 4).join('；')}`)
+            .join(' | '),
+      });
+    }
+    // P0-2 弃判硬 backstop：fail_signals 在手的屏不许 pending——确定性 FAIL 可判即须判
+    // （verdict=fail + 信号转 must_fix + 重试轮内修码重测），弃判=浪费重试预算且 loop 饿死。
+    const abandonment = collectVerdictAbandonment(placement.perScreen, rep.screens);
+    if (abandonment.length > 0) {
+      const ratchet = pixel1to1
+        ? fidelityRatchetFailOrWarn(ctx, false)
+        : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_verdict_abandonment',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `【弃判】以下屏有确定性 FAIL 信号却 verdict=pending——headless 下必须判 fail 并把信号转 must_fix 后修码重测，` +
+          `不得以"无人值守不可闭环"弃判（真人确认只在 pass 候选时需要）：` +
+          abandonment
+            .map(a => `${a.screen_id}: ${a.lines.slice(0, 4).join('；')}${a.lines.length > 4 ? '…' : ''}`)
             .join(' | '),
       });
     }

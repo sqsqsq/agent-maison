@@ -24,7 +24,7 @@ import {
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS } from '../../scripts/goal-runner';
+import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -421,6 +421,18 @@ export function runAll(): UnitCaseResult[] {
         assert(prompt.includes('approval_mode: **never**'), 'missing approval_mode');
         assert(prompt.includes('overrides'), 'missing override language');
         assert(prompt.includes('§9'), 'missing §9 reference');
+      },
+    },
+    {
+      // P0-2（round6 收尾批·codex 意见）：visual_gap 重试指导必须含弃判禁令——
+      // fail_signals 非空不得 pending、须转 must_fix 并在本轮修码重测（终局 run 实锤 agent 弃判）。
+      name: 'VISUAL_GAP_RETRY_GUIDANCE: forbids verdict abandonment',
+      run: () => {
+        const text = VISUAL_GAP_RETRY_GUIDANCE.join('\n');
+        assert(/verdict=fail/.test(text), 'missing verdict=fail instruction');
+        assert(/must_fix/.test(text), 'missing must_fix conversion instruction');
+        assert(/do NOT leave such screens pending/i.test(text), 'missing pending prohibition');
+        assert(/confirmed_by/.test(text), 'missing PASS-candidate human-confirm boundary');
       },
     },
     {

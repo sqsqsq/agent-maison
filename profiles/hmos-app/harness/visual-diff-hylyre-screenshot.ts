@@ -46,6 +46,37 @@ export interface HylyreNavExecutorOptions {
   deviceSn?: string;
   bundleName?: string;
   logPath?: string;
+  /** 与 device_test.run 一致：aa start 预启动成功后省略 --bundle，避免 Hylyre 二次冷启缺 page_name（宿主热修回收，round6 收尾批 P0-3） */
+  omitBundle?: boolean;
+  hypiumPageName?: string;
+}
+
+/**
+ * 从 device_test.run 落盘的 device-test-run.meta.json 读取 nav 参数，使 visual_diff 导航与
+ * 主测试执行的 app 启动方式对齐（omit_bundle/page_name）。缺 meta/解析失败 → 保守缺省
+ * （不省略 bundle），行为等同回收前。
+ * 宿主热修回收（round6 收尾批 P0-3）：上轮 3 屏采集失败根因＝nav 传 --bundle 且缺 --page-name
+ * 触发 Hylyre 二次冷启；宿主 agent 现场修好（本轮 5/5 采集成功），原样语义上游。
+ */
+export function readDeviceTestRunHylyreNavOpts(logPath: string): {
+  omitBundle: boolean;
+  hypiumPageName?: string;
+} {
+  const metaPath = path.join(path.dirname(logPath), 'device-test-run.meta.json');
+  if (!fs.existsSync(metaPath)) return { omitBundle: false };
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+      omit_bundle_for_hylyre?: boolean;
+      hypium_page_name?: string;
+      aa_start_ok?: boolean | null;
+    };
+    const pageName = (meta.hypium_page_name ?? '').trim();
+    const omitBundle =
+      meta.omit_bundle_for_hylyre === true || (Boolean(pageName) && meta.aa_start_ok === true);
+    return { omitBundle, hypiumPageName: pageName || undefined };
+  } catch {
+    return { omitBundle: false };
+  }
 }
 
 /**
@@ -66,8 +97,11 @@ export function buildHylyreNavExecutorFn(opts: HylyreNavExecutorOptions): Visual
     }
     const sn = (deviceSn ?? opts.deviceSn ?? '').trim();
     const bundle = (bundleName ?? opts.bundleName ?? '').trim();
+    const pageName = (opts.hypiumPageName ?? '').trim();
+    const omitBundle = opts.omitBundle === true;
     const hylyreArgv = ['run', '--steps-file', stepsFile];
-    if (bundle) hylyreArgv.push('--bundle', bundle);
+    if (!omitBundle && bundle) hylyreArgv.push('--bundle', bundle);
+    if (pageName) hylyreArgv.push('--page-name', pageName);
     if (sn) hylyreArgv.push('--device-sn', sn);
     const r = spawnHylyre({
       pythonPath: opts.pythonPath,

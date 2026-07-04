@@ -1102,6 +1102,117 @@ test('p1c_placement_short_text_substring_no_false_inversion', () => {
   assert.ok(sig.fail_signals.some(x => /纵向乱序/.test(x)), `宫格 vs 消息中心真颠倒必须仍报：${JSON.stringify(sig)}`);
 });
 
+test('p1c_placement_unmodeled_line_no_fp', () => {
+  // 收尾批 P0-1（终局 run 20260703T181220Z mine 屏实况复刻）：参考图横幅拆三行，副文案行
+  // "刷卡设置存在优化空间，设置后可提升刷卡体验"含「设置」但整行未建模——「设置」被冲突消解
+  // 从标题行踢出后曾次优落进该行 → 4-5 对假乱序。残余覆盖判据后：该行不可被「设置」认领，
+  // 「设置」落真实设置行（y=0.60）→ 零假乱序；横幅缺渲染的存在性 must_fix（真阳性）仍报。
+  const texts = ['我的', '智闪刷卡设置待优化', '去优化', '华为支付', '银行电子账户', '设置'];
+  const ref = [
+    lineWord('我的', 0.08, 0.05),
+    lineWord('智闪刷卡设置待优化', 0.20, 0.1),
+    lineWord('刷卡设置存在优化空间，设置后可提升刷卡体验', 0.23, 0.1), // 未建模副文案行（FP 源）
+    lineWord('去优化', 0.26, 0.7),
+    lineWord('华为支付', 0.36, 0.1),
+    lineWord('银行电子账户', 0.44, 0.1),
+    lineWord('设置', 0.60, 0.1),
+  ];
+  const shot = [ // 实机：横幅整体未渲染（真缺陷），其余顺序正确
+    lineWord('我的', 0.10, 0.05, 0.026),
+    lineWord('华为支付', 0.30, 0.1, 0.026),
+    lineWord('银行电子账户', 0.38, 0.1, 0.026),
+    lineWord('设置', 0.55, 0.1, 0.026),
+  ];
+  const screens: VisualDiffScreenEntry[] = [
+    { screen_id: 'mine', verdict: 'pending', screenshot_path: 'shots/mine.png' } as VisualDiffScreenEntry,
+  ];
+  const r = collectTextPlacementSignals(
+    new Map([['mine', texts]]), screens, rel => rel, () => 'refs/mine.jpg',
+    cannedOcr({ 'shots/mine.png': shot, 'refs/mine.jpg': ref }),
+  );
+  assert.strictEqual(r.perScreen.length, 1);
+  const sig = r.perScreen[0];
+  assert.strictEqual(sig.fail_signals.length, 0, `未建模行不得产假乱序（FP 铁律）：${JSON.stringify(sig.fail_signals)}`);
+  assert.ok(sig.must_fix.some(x => /智闪刷卡设置待优化/.test(x)), `横幅缺渲染的存在性 must_fix 仍须报：${JSON.stringify(sig.must_fix)}`);
+});
+
+test('p0_2_verdict_abandonment_states', () => {
+  // 收尾批 P0-2：fail_signals 非空 + pending = 弃判必报；不以 must_fix 有无为条件（codex：塞 must_fix
+  // 仍 pending 也得报）；verdict 已判 fail 则不报
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { collectVerdictAbandonment } = require('../../visual-diff-ocr-gates') as typeof import('../../visual-diff-ocr-gates');
+  const perScreen = [
+    { screen_id: 'a', fail_signals: ['信号1'], must_fix: [] },
+    { screen_id: 'b', fail_signals: ['信号2'], must_fix: [] },
+    { screen_id: 'c', fail_signals: [], must_fix: ['仅advisory'] },
+  ];
+  const screens = [
+    { screen_id: 'a', verdict: 'pending' } as VisualDiffScreenEntry,
+    { screen_id: 'b', verdict: 'pending', must_fix: ['已有指令'] } as VisualDiffScreenEntry,
+    { screen_id: 'c', verdict: 'pending' } as VisualDiffScreenEntry,
+  ];
+  const r = collectVerdictAbandonment(perScreen, screens);
+  assert.strictEqual(r.length, 2, `a/b 均应判弃判（b 有 must_fix 也不豁免）：${JSON.stringify(r)}`);
+  const b = r.find(x => x.screen_id === 'b')!;
+  assert.ok(b.lines.includes('信号2') && b.lines.includes('已有指令'), 'details 应合并信号与既有 must_fix');
+  // verdict=fail 已判 → 不算弃判
+  const r2 = collectVerdictAbandonment(perScreen, [{ screen_id: 'a', verdict: 'fail' } as VisualDiffScreenEntry]);
+  assert.strictEqual(r2.length, 0);
+});
+
+test('p0_3_nav_meta_read', () => {
+  // 收尾批 P0-3(c)：device-test-run.meta.json 读取三态 + 坏 JSON 回退（宿主热修原样语义）
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { readDeviceTestRunHylyreNavOpts } = require('../../visual-diff-hylyre-screenshot') as typeof import('../../visual-diff-hylyre-screenshot');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-meta-'));
+  const logPath = path.join(dir, 'run.log');
+  // ① 缺 meta → 保守缺省
+  assert.deepStrictEqual(readDeviceTestRunHylyreNavOpts(logPath), { omitBundle: false });
+  // ② aa_start_ok + pageName → omit + 透传
+  fs.writeFileSync(path.join(dir, 'device-test-run.meta.json'),
+    JSON.stringify({ aa_start_ok: true, hypium_page_name: 'PhoneAbility', omit_bundle_for_hylyre: true }), 'utf-8');
+  assert.deepStrictEqual(readDeviceTestRunHylyreNavOpts(logPath), { omitBundle: true, hypiumPageName: 'PhoneAbility' });
+  // ③ 坏 JSON → 保守回退
+  fs.writeFileSync(path.join(dir, 'device-test-run.meta.json'), '{broken', 'utf-8');
+  assert.deepStrictEqual(readDeviceTestRunHylyreNavOpts(logPath), { omitBundle: false });
+});
+
+test('p0_3_system_symbol_render_judgement', () => {
+  // 收尾批 P0-3(d)：system_symbol 正规修法正反例——真渲染 SymbolGlyph($r('sys.symbol.plus')) 不误报；
+  // 声明却零渲染仍检出（宿主一刀切 continue 会漏的洞）
+  const mkCase = (etsBody: string) => {
+    const doc: UiSpecDoc = {
+      schema_version: '1.0',
+      verified: 'verified',
+      screens: [{
+        id: 's1', priority: 'P0', ref_id: 's1',
+        root: {
+          type: 'navigation_frame', order: 0,
+          children: [{
+            type: 'action_button', order: 0, id: 'btn_add',
+            icon: { kind: 'system_symbol', ref: 'sys.symbol.plus' },
+          } as never],
+        },
+      }],
+      tokens: {}, assets: [],
+    } as unknown as UiSpecDoc;
+    const { root, ctx } = mkProject(docToYaml(doc));
+    const etsDir = path.join(root, 'mod', 'src', 'main', 'ets', 'pages');
+    fs.mkdirSync(etsDir, { recursive: true });
+    fs.writeFileSync(path.join(etsDir, 'P.ets'), etsBody, 'utf-8');
+    (ctx as { featureSpec: { contracts?: unknown } }).featureSpec.contracts = { modules: [{ name: 'mod', package_path: 'mod' }] };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { collectAssetRenderIssues } = require('../../visual-parity-backstop') as typeof import('../../visual-parity-backstop');
+    return collectAssetRenderIssues(ctx, doc, false).filter(i => i.assetRole === 'not_rendered');
+  };
+  assert.strictEqual(
+    mkCase("struct P { build() { SymbolGlyph($r('sys.symbol.plus')).fontSize(22) } }").length, 0,
+    '真渲染 sys.symbol 不得误报（P0-E 误报根治）');
+  assert.strictEqual(
+    mkCase("struct P { build() { Text('添加') } }").length, 1,
+    '声明 system_symbol 却零渲染必须检出（一刀切 skip 会漏的洞）');
+});
+
 test('p1c_placement_degraded_not_silent', () => {
   // OCR 失败/参考图缺失 → 降级清单（不误报也不静默）
   const rShotFail = runPlacement(null);

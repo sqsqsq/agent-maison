@@ -311,6 +311,13 @@ doc/features/{module-name}/testing/test-plan.md
 5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。**must_fix 必须可执行可定位**——写「卡包描述应在卡夹插画下方而非上方」「+按钮应在标题同行右侧圆形灰底而非独立蓝色」这种带元素/区域+期望态的指令，关联具体 element_id 或区域 bbox；**禁止**「整体差异大/不够还原」这类无法回修的空话（coding 无从下手就会瞎挪布局，反而更糟）。
 6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / must_fix / reverse_missing / **defects(blocker\|major) / 缺 defects 逐屏枚举 / finalized(含 warn) 屏 fidelity<0.45 或 iou<0.40 灾难地板 / P0 warn 屏 must_fix 空（T4）/ 全局元素越界（T5：ui-spec `global_elements` 声明的全局元素如底部 Tab，出现在非属主屏的指定 band 内——OCR 确定性检测）/ P0 pass 屏声明锚点文本整块缺失（T1：missing-render，OCR 确定性）/ P0 pass 屏未经真人确认（T2：须填 `confirmed_by` 真人署名）/ **文本块结构背离（P1-C·f2d8c4a6：参考图与截图各 OCR 行聚类后按 spec 文本二部匹配——参考图同一行的文本对实测分居两行（副标题右置被排成题下）、或纵向顺序 ≥2 对颠倒（布局乱序）；相对信号对 device≠mockup 缩放不变，确定性证据 **VL verdict=pass 不可推翻**；per-element 缺失/单对逆序是 **advisory 观测素材**（harness WARN 呈现，不直接阻断——设备 OCR 噪声防 FP），**VL 终判时必须把命中的观测折算进该屏 `screens[].must_fix`**（T4 会强制 P0 warn 屏 must_fix 非空，观测即现成素材，别空手瞎写）；overlay 屏 id（`__overlay__*`）自动归一化回落基屏文本）** → **BLOCKER**。`score_floor` 已降级 **reference_only**（像素直方图历史多次实测证伪：UI 全错仍近满分——不参与任何判定，details 仅作参考注记）；
    > **T2 主背靠（视觉裁判可信化核心）**：像素统计 与 OCR 文本-位置度量经真机实测**都分不开忠实 vs 崩坏**（忠实屏因 device≠mockup 反而误报）——图标/颜色/样式类假 PASS **不可约地需 VL/人判**。故 `pixel_1to1` 最严档下 **P0 屏判 pass 须真人过目确认**：每屏填 `confirmed_by:<真人标识>`（goal-mode-auto 等自动化身份不算）。headless 缺确认 → BLOCKER 触发 HALT 求人；交互态 agent 当场 stop-and-ask 用户确认后置 `confirmed_by` 重判。OCR 不可用时 T1/T5 降 WARN 不静默。边缘哨兵超阈 tile 未登记 → **WARN**（低置信、须复核，非 gate）。**verdict=warn 的语义＝"有残差、需再修一轮"**：P0 pixel_1to1 warn 屏**必须带非空 must_fix**（coding 消费的回修指令通道）；**defects/reverse_missing 只是证据、不替代 must_fix**（单纯 `defects:[{note}]` 不能告诉 coding 改哪）。残差可接受就判 **pass + minor defect** 记录；与参考图一致就判 pass。别用无 must_fix 的 warn 蒙混。
+   > **禁止弃判（P0-2·round6 收尾批 · 门禁 `visual_diff_verdict_abandonment` 硬拦）**：harness 报出
+   > `visual_diff_text_placement` **fail_signals 的屏＝headless 可判**——你**必须** `verdict: fail` +
+   > 把信号逐条抄进该屏 `must_fix` + **在本 testing 重试轮内直接修码并重采重判**（这就是"must-fix 交
+   > coding 修一轮"的 headless 形态）。**严禁**以"无人值守不可闭环 / pixel_1to1 要真人签字"为由把
+   > 这类屏留 pending 弃判——真人确认（T2 `confirmed_by`）只在**判 pass** 时需要；确定性 FAIL 在手
+   > 还全屏 pending＝白烧重试预算 + loop 饿死（终局 run 实锤：5 屏 pending、must_fix=0、3 次重试作废）。
+   > 只有"确定性信号全绿、仅剩 pass 候选待真人确认"才 halt 求人。
 7. **采集新鲜度（E1/E2）**：P0 屏截图失败（如 Permission denied/锁屏/设备占用）或 `screensWritten=0` 全靠 `preserved` 旧 json 充数时，`visual_diff_capture` 在 `pixel_1to1` 下 **FAIL**（否则 blocking WARN）——**不得**沿用陈旧/错图证据闭环；须修复采集后重采 P0 屏。
 
 ### Step 5: 生成测试报告（测试执行后）

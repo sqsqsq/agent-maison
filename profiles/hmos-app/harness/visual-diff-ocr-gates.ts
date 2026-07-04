@@ -179,17 +179,53 @@ function bestLineMatch(
   lines: OcrLine[],
   text: string,
   excludeIdx?: ReadonlySet<number>,
+  admissible?: (line: OcrLine) => boolean,
 ): LineMatch | null {
   let best = -1;
   let bestRatio = 0;
   for (let i = 0; i < lines.length; i++) {
     if (excludeIdx?.has(i)) continue;
+    if (admissible && !admissible(lines[i])) continue;
     const r = fuzzyMatchRatio(lines[i].text, text);
     if (r > bestRatio) { bestRatio = r; best = i; }
   }
   if (best < 0 || bestRatio < PLACEMENT_MATCH_MIN_RATIO) return null;
   const b = lines[best].box;
   return { idx: best, cy: b[1] + b[3] / 2, h: b[3] };
+}
+
+/** 残余覆盖判据：行归属校验的"行主体是否可被 spec 世界解释"阈值 */
+const RESIDUAL_COVER_RATIO = 0.5;
+
+/**
+ * 第三 FP 模式（round6 终局 run 实锤复现）：**未建模小字行**——mine 参考图横幅副文案
+ * "刷卡设置存在优化空间，设置后可提升刷卡体验"含「设置」二字但整行未建模进 spec；
+ * 「设置」被子串冲突消解从横幅标题行踢出后，次优落进该行 → 4-5 对假乱序。
+ * 判据：行文本去掉目标命中字符后的**残余**若显著（> 目标长度）且不能被**其它 spec 文本**
+ * 累计覆盖 ≥50% → 行主体是未建模文本，该行不可归此目标（弃行找次优）。
+ * 不误伤：聚合行成员（残余=同行邻居 spec 文本，覆盖 100%）；「钱包」模式（残余被超串
+ * spec 文本覆盖——admissible 通过后仍由同行冲突消解让位，两层正交）。
+ * 前两模式回顾：碎行（超串目标 OCR 掉字致消解失灵→消解内已兜）、聚合行（长度比判据被弃用的原因）。
+ */
+export function lineAdmissibleForTarget(lineText: string, target: string, allTexts: string[]): boolean {
+  const line = normPlacement(lineText);
+  const t = normPlacement(target);
+  if (!line || !t) return false;
+  const hit = Math.round(fuzzyMatchRatio(line, t) * t.length);
+  const residual = line.length - hit;
+  if (residual <= t.length) return true; // 残余不显著：行主体就是目标（或近似）
+  let covered = 0;
+  for (const other of allTexts) {
+    const o = normPlacement(other);
+    if (!o || o === t) continue;
+    if (line.includes(o)) covered += o.length;
+    else {
+      const r = fuzzyMatchRatio(line, o);
+      if (r >= PLACEMENT_MATCH_MIN_RATIO) covered += Math.round(o.length * r);
+    }
+    if (covered >= residual * RESIDUAL_COVER_RATIO) return true;
+  }
+  return false;
 }
 
 const normPlacement = (s: string): string => s.replace(/\s+/g, '');
@@ -208,8 +244,11 @@ function matchSideWithConflictResolution(
   texts: string[],
 ): Map<string, LineMatch> {
   const claims = new Map<string, LineMatch>();
+  // 第三 FP 模式防线：行主体=未建模文本的行，任何目标都不可认领（残余覆盖判据，per-target 闭包）
+  const admissibleFor = (t: string) => (line: OcrLine): boolean =>
+    lineAdmissibleForTarget(line.text, t, texts);
   for (const t of texts) {
-    const m = bestLineMatch(lines, t);
+    const m = bestLineMatch(lines, t, undefined, admissibleFor(t));
     if (m) claims.set(t, m);
   }
   for (const t of texts) {
@@ -227,7 +266,7 @@ function matchSideWithConflictResolution(
         const mb = claims.get(b);
         if (mb && mb.idx === m.idx) {
           excluded.add(m.idx);
-          m = bestLineMatch(lines, t, excluded);
+          m = bestLineMatch(lines, t, excluded, admissibleFor(t));
           conflicted = true;
           break;
         }
@@ -354,6 +393,34 @@ export function collectTextPlacementSignals(
     }
   }
   return { perScreen, ocrUnavailable: [...ocrUnavailable], refUnavailable: [...refUnavailable] };
+}
+
+// ============================================================================
+// P0-2（round6 收尾批）：确定性 FAIL 弃判检测——终局 run 实锤：agent 以"headless 无法闭环"为由
+// 把 fail_signals 在手的屏也留 pending（must_fix=0），白烧 3 次 testing 重试。确定性 FAIL 在手
+// 就不许 pending：不以 must_fix 有无为附加条件（codex 意见：否则塞几条 must_fix 仍 pending 即绕过）。
+// ============================================================================
+
+export interface VerdictAbandonment {
+  screen_id: string;
+  /** 合并 fail_signals 与该屏既有 must_fix，直接作为回修指令输出 */
+  lines: string[];
+}
+
+export function collectVerdictAbandonment(
+  perScreen: TextPlacementScreenSignals[],
+  screens: VisualDiffScreenEntry[],
+): VerdictAbandonment[] {
+  const byId = new Map(screens.map(s => [s.screen_id, s]));
+  const out: VerdictAbandonment[] = [];
+  for (const p of perScreen) {
+    if (p.fail_signals.length === 0) continue;
+    const s = byId.get(p.screen_id);
+    if (!s || s.verdict !== 'pending') continue;
+    const mustFix = (s.must_fix ?? []).filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    out.push({ screen_id: p.screen_id, lines: [...p.fail_signals, ...mustFix] });
+  }
+  return out;
 }
 
 export function collectGrossMissingAnchorText(
