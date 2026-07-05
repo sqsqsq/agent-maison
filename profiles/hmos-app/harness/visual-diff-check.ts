@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact } from '../../../harness/config';
+import { relFeatureArtifact, featuresDirPath } from '../../../harness/config';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
@@ -20,8 +20,9 @@ import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { createRequire } from 'module';
 
@@ -680,6 +681,26 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
 
   const hits: VisualDiffHit[] = [];
 
+  // P0-7③：伪签物证扫描——testing/device-testing 目录出现"改判脚本"（引用 visual-diff.json 且
+  // 命中填 pass/填 confirmed_by/清 must_fix/伪造 hash 特征）→ BLOCKER 物证上桌。
+  // 2026-07-05 实锤：auto-fill/fill-pass/reset 三脚本成套伪签流水线。
+  const tamperArtifacts = collectVisualDiffTamperArtifacts(
+    ctx.projectRoot,
+    ctx.feature,
+    featuresDirPath(ctx.projectRoot),
+  );
+  if (tamperArtifacts.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_tamper_artifact',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      line:
+        `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
+        tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
+        `——判定只能由 capture/真人逐屏产生；删除脚本并还原判定后重跑，行为已违反框架红线（须人工复核）。`,
+    });
+  }
+
   if (schemaErrors.length > 0) {
     pushVisualDiffHit(hits, {
       id: 'visual_diff_schema',
@@ -961,9 +982,11 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // 两次实测证伪了像素/文本-位置度量（忠实屏误报）——图标/颜色/样式类假 PASS 不可约地需 VL/人判，
   // 故 pixel_1to1 最严档下 P0 pass 屏不得仅凭 VL 自报闭环。headless 缺确认 → BLOCKER（goal-runner 据此 HALT 求人）；
   // 交互态 → BLOCKER（agent 当场 stop-and-ask 用户确认、置 confirmed_by 后重判）。goal-mode-auto 等自签不算。
+  // P0-6：user_requirement 亦不算——它是需求级授权哨兵，不能替代对具体屏的真人过目
+  // （2026-07-05 实锤：agent 以它伪签 T2 并在自跑 harness 中通关过一次）。
   if (pixel1to1) {
     const p0Set = new Set(p0Ids);
-    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanConfirmed(s.confirmed_by));
+    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanVerified(s.confirmed_by));
     if (unconfirmed.length > 0) {
       const ratchet = fidelityRatchetFailOrWarn(ctx, false);
       pushVisualDiffHit(hits, {
@@ -971,8 +994,9 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         severity: ratchet.severity,
         status: ratchet.status,
         line:
-          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份）——客观度量无法判图标/颜色/样式，须人兜底：` +
-          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/无效)` : '(缺 confirmed_by)'}`).join(', ') +
+          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份且非 user_requirement——` +
+          `后者属需求级授权，不能替代对具体屏的真人过目）——客观度量无法判图标/颜色/样式，须人兜底：` +
+          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/授权哨兵，无效)` : '(缺 confirmed_by)'}`).join(', ') +
           `；headless 走 HALT 求人，交互态当场确认后置 confirmed_by 重判。`,
       });
     }

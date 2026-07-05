@@ -43,6 +43,7 @@ import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
+import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
 import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
@@ -472,6 +473,8 @@ async function main(): Promise<void> {
   let checks: CheckResult[] = [];
   // 防漂移 preflight（c2）：全局框架自检，全模式入口直调，不经 capability-registry / profile。
   checks.push(...runFrameworkIntegrityPreflight({ frameworkRoot: resolvedFrameworkRoot, projectRoot }));
+  // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
+  checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));
   checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
 

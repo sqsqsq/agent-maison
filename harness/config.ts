@@ -451,12 +451,25 @@ export interface FrameworkConfig {
   integrity?: FrameworkIntegrityConfig;
 }
 
+/** P1-5：drift 放行的结构化真人审批条目——rationale 与 approved_by（真人，非自动化/非 user_requirement）缺一无效 */
+export interface DriftApprovalEntry {
+  path?: string;
+  rationale?: string;
+  approved_by?: string;
+}
+
 /** 防漂移完整性门禁（framework_integrity）的 opt-out 配置（opt-in；可选） */
 export interface FrameworkIntegrityConfig {
-  /** true → framework 源码漂移仅 WARN 不阻断（显式本地 fork） */
-  allow_local_drift?: boolean;
-  /** 按 framework 内相对路径精确放行的漂移白名单 */
-  drift_allowlist?: string[];
+  /**
+   * 漂移仅告警的总开关。P1-5 起须结构化真人审批 `{enabled, rationale, approved_by}` 才生效；
+   * legacy 布尔 true 无效（照常 BLOCKER，说明进 details）。
+   */
+  allow_local_drift?: boolean | { enabled?: boolean; rationale?: string; approved_by?: string };
+  /**
+   * 按 framework 内相对路径精确放行的漂移白名单。P1-5 起条目须 `{path, rationale, approved_by}`
+   * 真人具名审批；legacy 字符串条目无效（照常报漂移）。
+   */
+  drift_allowlist?: Array<string | DriftApprovalEntry>;
 }
 
 // --------------------------------------------------------------------------
@@ -974,9 +987,15 @@ function normalizeIntegrity(
 ): FrameworkIntegrityConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const out: FrameworkIntegrityConfig = {};
-  if (typeof raw.allow_local_drift === 'boolean') out.allow_local_drift = raw.allow_local_drift;
+  // P1-5：legacy 布尔/字符串与结构化审批对象都透传保留（有效性由 framework-integrity 门禁裁决，
+  // normalize 不静默丢弃用户配置——legacy 形态由门禁报"无效"以引导迁移）。
+  if (typeof raw.allow_local_drift === 'boolean' || (raw.allow_local_drift !== null && typeof raw.allow_local_drift === 'object' && raw.allow_local_drift !== undefined)) {
+    out.allow_local_drift = raw.allow_local_drift;
+  }
   if (Array.isArray(raw.drift_allowlist)) {
-    out.drift_allowlist = raw.drift_allowlist.filter((p): p is string => typeof p === 'string');
+    out.drift_allowlist = raw.drift_allowlist.filter(
+      (p): p is string | DriftApprovalEntry => typeof p === 'string' || (p !== null && typeof p === 'object'),
+    );
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

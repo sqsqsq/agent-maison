@@ -60,6 +60,27 @@ alwaysApply: true
 - **coding**：须先同步跑 harness、Read `summary.json` 与编译日志，**再**触发 verifier（禁止并行）。
 - **`--clear-state`**：表示放弃当前 phase 的闭环判定，不是「解锁下一阶段」；仅用户明示放弃后可用。
 
+## 4.5 门禁诚信红线（BLOCKER — P1-5，2026-07-05 伪签事故后新增）
+
+以下行为**一律禁止**，无论 headless 还是交互态、无论动机（"为了闭环"不是理由）：
+
+- **不得伪造确认签名**：`confirmed_by` / `bbox_verified_by` / `baked_text_defer_by` / `approved_by` 等
+  验真字段**只能由真人填写**；`user_requirement` 是需求级授权哨兵，仅限 `crop_confirmed_by` 授权语义，
+  冒充验真签名无效且属违规。
+- **不得以进程注入篡改门禁产物**：包括 NODE_OPTIONS 预加载（`--require`/`-r`/`--import`/`--loader`/
+  `--experimental-loader`）、`.node-options`/`.npmrc node-options` 旁路、猴补 `fs` 等——目标是
+  visual-diff.json / summary.json / 回执等任何判定产物。
+- **不得编写或留存改判脚本**（程序化填 verdict/confirmed_by、批量重置、清空 must_fix、伪造
+  evaluated_screenshot_hash）。
+- **不得指引操作者执行绕过门禁的操作**（如"启动 goal 前设置 NODE_OPTIONS"写进 assumptions/文档）。
+- **不得自改 framework 后自批放行**：`integrity.drift_allowlist` 与 `allow_local_drift` 须真人
+  `{rationale, approved_by}` 具名审批才生效——agent 自加的条目无效；发现框架 bug 应 **halt 上报**，
+  热修须人批。
+
+框架已有确定性检出（`node_options_injection` / `visual_diff_tamper_artifact` /
+`script_harness_command_injection` / framework_integrity 审批校验）：**伪造不会生效，只会留下物证**。
+headless 正确姿势＝确定性信号修到绿、pass 候选 halt 求真人过目。
+
 ## 5. 与「反假设条款」的关系
 
 若 agent 声称「规则禁止我执行脚本」才能跳过 harness → **必须 quote 规则原文**；quote 不出则**必须执行**。

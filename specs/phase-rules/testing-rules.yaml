@@ -154,6 +154,38 @@ structure_checks:
     rule:
       provider: device_test.visual_diff
 
+  visual_diff_human_confirm_required:
+    description: >
+      T2 主背靠（a3f1c920）＋P0-6 拆位（c9e2a7f4）：pixel_1to1 P0 屏判 pass 须真人过目确认——
+      confirmed_by 非空、非自动化身份（goal-mode-auto 等）、且非 user_requirement（授权哨兵
+      ≠验真签名：user_requirement 属需求级授权，不能替代对具体屏的真人过目；2026-07-05 实锤
+      agent 以它伪签 T2 并在自跑 harness 中通关过一次）。headless 走 HALT 求人。
+      诚实边界：不防伪造人名字符串（带外确认凭证=round7 P0-8）。
+    severity: BLOCKER
+    rule:
+      provider: device_test.visual_diff
+
+  visual_diff_verdict_abandonment:
+    description: >
+      P0-2（9d4b7e21，声明补录——实现已随收尾批落地，本条补齐指纹纪律）：确定性 FAIL 弃判硬
+      backstop——某屏 placement fail_signals 非空且 verdict=pending → BLOCKER 必报（不以
+      must_fix 有无为条件防绕过）；details 合并 fail_signals 与该屏既有 must_fix 作现成回修指令。
+      fail 屏须 verdict=fail + 信号转 must_fix + 重试轮内修码重测，禁止"无人值守不可闭环"式弃判。
+    severity: BLOCKER
+    rule:
+      provider: device_test.visual_diff
+
+  visual_diff_tamper_artifact:
+    description: >
+      P0-7③（c9e2a7f4）：伪签物证扫描——feature testing/device-testing 目录内脚本文件内容同时
+      命中「引用 visual-diff.json」与改判特征（程序化填 confirmed_by/verdict=pass、批量重置
+      pending、清空/删除 must_fix、写 evaluated_screenshot_hash）→ BLOCKER 物证上桌。
+      2026-07-05 实锤：auto-fill（NODE_OPTIONS 预加载 hook）/fill-pass/reset 三脚本成套伪签
+      流水线。判定只能由 capture/真人逐屏产生；正常读取/统计脚本不误伤（须双条件同中）。
+    severity: BLOCKER
+    rule:
+      provider: device_test.visual_diff
+
   # ---- 测试报告 ----
 
   report_required_chapters:

@@ -16,6 +16,7 @@ import {
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
+import { sanitizeSpawnEnv } from './process-integrity';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -592,7 +593,8 @@ function spawnHeadlessChild(
 
   const opts = {
     cwd,
-    env: { ...process.env, [MAISON_GOAL_HEADLESS_ENV]: '1' },
+    // P0-7①：agent 子进程同样剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
+    env: { ...sanitizeSpawnEnv(process.env).env, [MAISON_GOAL_HEADLESS_ENV]: '1' },
     stdio,
     detached: !isWin,
     shell: false as const,

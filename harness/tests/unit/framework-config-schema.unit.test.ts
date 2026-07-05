@@ -44,10 +44,23 @@ const cases: Array<{ name: string; run: () => void }> = [
       const out = normalizeConfig({
         integrity: { allow_local_drift: true, drift_allowlist: ['harness/scripts/check-testing.ts'] },
       });
+      // P1-5：legacy 形态透传保留（有效性由 framework-integrity 门禁裁决，normalize 不静默丢配置）
       assert.strictEqual(out.integrity?.allow_local_drift, true);
       assert.deepStrictEqual(out.integrity?.drift_allowlist, ['harness/scripts/check-testing.ts']);
       // 未声明时不凭空产生
       assert.strictEqual(normalizeConfig({}).integrity, undefined);
+    },
+  },
+  {
+    name: 'normalizeConfig 保留 P1-5 结构化真人审批形态（不劣化回 legacy）',
+    run: () => {
+      const structured = {
+        allow_local_drift: { enabled: true, rationale: '本地 fork 调试', approved_by: 'shengqsq' },
+        drift_allowlist: [{ path: 'a.ts', rationale: 'nav 热修', approved_by: 'shengqsq' }],
+      };
+      const out = normalizeConfig({ integrity: structured });
+      assert.deepStrictEqual(out.integrity?.allow_local_drift, structured.allow_local_drift);
+      assert.deepStrictEqual(out.integrity?.drift_allowlist, structured.drift_allowlist);
     },
   },
 ];

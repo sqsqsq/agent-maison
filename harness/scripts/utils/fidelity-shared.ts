@@ -125,6 +125,20 @@ export function isHumanConfirmed(confirmedBy: string | undefined): boolean {
 }
 
 /**
+ * P0-6（plan c9e2a7f4）：验真签名判据——**授权哨兵 ≠ 验真签名**。
+ * user_requirement 是需求级授权（能不能做），不能替代对具体屏/资产的真人过目（有没有人看过）。
+ * 2026-07-05 实锤：宿主 agent 以 confirmed_by='user_requirement' 伪签 T2，在其 shell 的 harness
+ * 运行中实际通关（回执 blocker_count 0），仅因 goal-runner 干净环境重跑才被打回。
+ * 凡"验真/过目"语义的 signer（T2 confirmed_by / bbox_verified_by / baked_text_defer_by /
+ * deferral signed_by）一律用本判据；授权语义（crop_confirmed_by）保持既有判据不变。
+ * 诚实边界：堵不住伪造人名字符串（headless 自写 signer 本质不可信）；彻底解=带外确认凭证（round7 P0-8）。
+ */
+export function isHumanVerified(signer: string | undefined): boolean {
+  if (!isHumanConfirmed(signer)) return false;
+  return signer!.trim().toLowerCase() !== USER_REQUIREMENT_CONFIRMER;
+}
+
+/**
  * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
  * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
  */
@@ -134,6 +148,8 @@ export function isHumanSignedDeferral(
 ): boolean {
   if (d.human_signed !== true) return false;
   if (isAutomationSigner(d.signed_by)) return false;
+  // P0-6：user_requirement 属需求级授权哨兵，不算对具体豁免条目的真人签字。
+  if (typeof d.signed_by === 'string' && d.signed_by.trim().toLowerCase() === USER_REQUIREMENT_CONFIRMER) return false;
   // headless：缺 signed_by 视为可疑自签（真人会留名）→ 不算人签；交互态缺省仍算人工。
   if (opts?.requireExplicitSigner) {
     return typeof d.signed_by === 'string' && d.signed_by.trim().length > 0;

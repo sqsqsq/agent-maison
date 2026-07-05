@@ -23,7 +23,7 @@ import {
 import { loadVisualParityMappings } from './visual-structure-parity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { hexToLab, readImageDimensions } from './image-toolkit';
-import { isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { ocrImageWords, isOcrAvailable, fuzzyTextPresent } from './ocr-toolkit';
 
 export interface BackstopIssue {
@@ -791,8 +791,8 @@ export function collectBakedTextAssetIssues(
 
   for (const a of assets) {
     const key = a.key.trim();
-    // human_signed 显式放行（营销/装饰插画确需含字）
-    if (a.baked_text_defer === true && isHumanConfirmed(a.baked_text_defer_by)) continue;
+    // human_signed 显式放行（营销/装饰插画确需含字）。P0-6：验真语义，user_requirement 不算真人署名。
+    if (a.baked_text_defer === true && isHumanVerified(a.baked_text_defer_by)) continue;
     // 定位模块真图（缺图/退化占位由 B 门管，本门只核真图是否烤字）
     const r = moduleMediaRealnessForKey(ctx.projectRoot, contracts, key, a.resolved_path);
     if (!r.file || !r.real) continue;

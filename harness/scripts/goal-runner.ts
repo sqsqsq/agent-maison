@@ -20,6 +20,7 @@ import {
   receiptDirPath,
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
+import { sanitizeSpawnEnv } from './utils/process-integrity';
 import { loadResolvedProfile } from '../profile-loader';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
@@ -374,8 +375,13 @@ async function runHarnessPhase(
 ): Promise<number> {
   if (dryRun) return 0;
   const harnessDir = path.join(frameworkRoot, 'harness');
+  // P0-7①：harness 子进程须在干净环境运行——剥离 NODE_OPTIONS 预加载注入（2026-07-05 伪签事故向量）。
+  const sanitized = sanitizeSpawnEnv(process.env);
+  if (sanitized.stripped.length > 0) {
+    console.warn(`[P0-7] 已剥离 NODE_OPTIONS 预加载注入（harness 子进程不继承）：${sanitized.stripped.join('; ')}`);
+  }
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...sanitized.env,
     [MAISON_GOAL_RUNNER_ENV]: '1',
   };
   const allowedTools = manifest?.unattended?.allowed_tools;
@@ -432,6 +438,18 @@ function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePha
     '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log deferred request in headless-assumptions.md.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
+    '',
+    '**Gate-integrity red lines (BLOCKER — violations are task failure, not a path to completion):**',
+    '- NEVER forge confirmation signatures: `confirmed_by` / `bbox_verified_by` / `approved_by` are human-only;',
+    '  `user_requirement` is a requirement-level authorization sentinel (crop authorization only), NOT a verification signature.',
+    '- NEVER tamper with gate artifacts (visual-diff.json / summary.json / receipts) via process injection',
+    '  (NODE_OPTIONS --require/-r/--import/--loader, .node-options, .npmrc node-options, fs monkey-patching)',
+    '  or verdict-filling/resetting scripts; never instruct the operator to set up such bypasses.',
+    '- NEVER self-approve framework drift: integrity.drift_allowlist / allow_local_drift take effect only with',
+    '  human-named {rationale, approved_by}; agent-added entries are void. Found a framework bug? HALT and report.',
+    '- Deterministic detectors (node_options_injection / visual_diff_tamper_artifact / receipt command scan /',
+    '  drift approval validation) turn any attempt into BLOCKER evidence. The only path through pixel_1to1 P0',
+    '  screens is: fix deterministic signals, then HALT for human per-screen confirmation.',
   ];
 }
 
@@ -893,7 +911,9 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
       stdio: ['ignore', logFd, logFd],
       windowsHide: true,
       cwd: process.cwd(),
-      env: process.env,
+      // P0-7①：detach 重启的 goal-runner 也不得继承预加载注入（headless-assumptions 曾教操作者
+      // "启动 goal 前设 NODE_OPTIONS"——此处剥离让该路径失效）。自身 -r ts-node/register 属白名单。
+      env: sanitizeSpawnEnv(process.env).env,
     },
   );
   // Parent must release the fd and the child reference: keeps no handle on the log

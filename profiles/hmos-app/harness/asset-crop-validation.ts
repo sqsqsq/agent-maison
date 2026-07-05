@@ -35,7 +35,7 @@ import {
 import {
   isPixel1to1,
   fidelityRatchetFailOrWarn,
-  isHumanConfirmed,
+  isHumanVerified,
   isAutomationSigner,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import { findModuleMediaFile } from './visual-parity-backstop';
@@ -305,9 +305,12 @@ function ruleDesc(ctx: CheckContext): string {
   return checks?.asset_crop_validation?.description?.trim() ?? 'asset_crop_validation';
 }
 
-/** 人工验真逃生阀：真人署名（非自动化身份）即 verified（halt-confirm 回执/交互确认落 ui-spec） */
+/**
+ * 人工验真逃生阀：真人署名（非自动化身份）即 verified（halt-confirm 回执/交互确认落 ui-spec）。
+ * P0-6：bbox_verified_by 是**验真**语义——user_requirement（裁剪授权哨兵）不算，授权≠过目。
+ */
 function isHumanBboxVerified(a: UiSpecAsset & { bbox_verified_by?: string }): boolean {
-  return isHumanConfirmed(a.bbox_verified_by);
+  return isHumanVerified(a.bbox_verified_by);
 }
 
 /**

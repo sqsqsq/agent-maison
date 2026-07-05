@@ -38,6 +38,7 @@ import minimist from 'minimist';
 import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh } from './utils/gate-fingerprint';
+import { scanCommandForPreloadInjection } from './utils/process-integrity';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
@@ -280,6 +281,19 @@ function main(): void {
       severity: 'BLOCKER',
       message:
         'script_harness.verdict=INCOMPLETE：编译通过但设备不可用，不允许宣称 UT 阶段完成；请接入设备后重跑 harness。',
+    });
+  }
+
+  // P0-7④：回执 command 注入特征校验——2026-07-05 伪签事故中回执 script_harness.command 原样
+  // 自曝 `$env:NODE_OPTIONS='--require …auto-fill.cjs'` 且 blocker_count=0（伪造在该次自跑中通关）。
+  const injectionSignatures = scanCommandForPreloadInjection(sh.command);
+  if (injectionSignatures.length > 0) {
+    issues.push({
+      id: 'script_harness_command_injection',
+      severity: 'BLOCKER',
+      message:
+        `script_harness.command 含进程预加载注入特征（${injectionSignatures.join('; ')}）——` +
+        `harness 必须在干净环境运行，预加载 hook 可篡改门禁产物；清除注入后重跑 harness 并重填回执。`,
     });
   }
   if (sh.report_dir) {

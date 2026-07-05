@@ -652,6 +652,16 @@ export function runAll(): UnitCaseResult[] {
         throw new Error(`goal-mode-auto 自签应仍 FAIL：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (b2) P0-6 伪签复刻：confirmed_by=user_requirement（裁剪授权哨兵冒充过目）→ 仍 BLOCKER
+    //（2026-07-05 宿主实锤：agent 以此值伪签 T2 并在自跑 harness 中拿到 blocker_count 0）
+    root = mkProject();
+    try {
+      writePassCase(root, 'user_requirement');
+      const hit = t2Hit(root);
+      if (!hit || hit.status !== 'FAIL' || !/授权|user_requirement|confirmed_by/.test(hit.details ?? '')) {
+        throw new Error(`user_requirement 伪签应经 T2 FAIL（授权≠过目）：${JSON.stringify(hit)}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     // (c) 真人署名 → 无 T2 门禁（pass 放行）
     root = mkProject();
     try {
@@ -659,6 +669,25 @@ export function runAll(): UnitCaseResult[] {
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       if (r.some((x: { id: string; details?: string }) => /真人确认/.test(x.details ?? ''))) {
         throw new Error(`真人 confirmed_by 不应再触发 T2：${JSON.stringify(r.map(x => x.id))}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (d) P0-7③ 接线：testing 目录出现改判脚本 → visual_diff_tamper_artifact BLOCKER（即使判定本身干净）
+    root = mkProject();
+    try {
+      writePassCase(root, 'alice');
+      const tdir = path.join(root, 'doc', 'features', 'bank-card', 'testing');
+      fs.mkdirSync(tdir, { recursive: true });
+      fs.writeFileSync(path.join(tdir, 'auto-fill.cjs'), [
+        "const fs = require('node:fs');",
+        "const p = 'doc/features/bank-card/device-testing/device-screenshots/visual-diff.json';",
+        "const r = JSON.parse(fs.readFileSync(p, 'utf-8'));",
+        "for (const s of r.screens) { s.verdict = 'pass'; s.confirmed_by = 'user_requirement'; s.must_fix = []; }",
+        'fs.writeFileSync(p, JSON.stringify(r));',
+      ].join('\n'), 'utf-8');
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r.find((x: { id: string }) => x.id === 'visual_diff' || x.id === 'visual_diff_tamper_artifact') as { status: string; details?: string } | undefined;
+      if (!hit || hit.status !== 'FAIL' || !/改判脚本|证据篡改/.test(hit.details ?? '')) {
+        throw new Error(`改判脚本物证应 BLOCKER FAIL：${JSON.stringify(hit)}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -2000,6 +2029,27 @@ export function runAll(): UnitCaseResult[] {
     }
     if (isAutomationSigner(USER_REQUIREMENT_CONFIRMER)) {
       throw new Error('user_requirement 误入自动化身份名单，会焊死 NL 授权裁素材路径');
+    }
+  });
+
+  // P0-6 守卫：授权哨兵 ≠ 验真签名——isHumanVerified 拒 user_requirement（含大小写/空白变体）与自动化身份，
+  // 收真人名；isHumanConfirmed 语义保持不变（授权路径依赖它收 user_requirement，见上一个用例）。
+  run('p0_6_is_human_verified_rejects_authorization_sentinel', () => {
+    const { isHumanConfirmed, isHumanVerified, isHumanSignedDeferral } = require('../../scripts/utils/fidelity-shared');
+    if (!isHumanConfirmed('user_requirement')) throw new Error('isHumanConfirmed 语义不得变——授权路径依赖它收 user_requirement');
+    for (const forged of ['user_requirement', ' User_Requirement ', 'goal-mode-auto', '', undefined]) {
+      if (isHumanVerified(forged)) throw new Error(`isHumanVerified 应拒 ${JSON.stringify(forged)}`);
+    }
+    for (const human of ['alice', '张三', 'sheng qsq']) {
+      if (!isHumanVerified(human)) throw new Error(`isHumanVerified 应收真人名 ${human}`);
+    }
+    // deferral 人签同穴：signed_by=user_requirement 不算真人签字（交互态/headless 两口径都拒）
+    const d = { element_id: 'x', human_signed: true, signed_by: 'user_requirement' };
+    if (isHumanSignedDeferral(d) || isHumanSignedDeferral(d, { requireExplicitSigner: true })) {
+      throw new Error('deferral signed_by=user_requirement 不得算真人签字');
+    }
+    if (!isHumanSignedDeferral({ element_id: 'x', human_signed: true, signed_by: 'alice' })) {
+      throw new Error('deferral 真人签不得误伤');
     }
   });
 

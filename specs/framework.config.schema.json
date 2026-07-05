@@ -84,8 +84,40 @@
       "type": "object",
       "description": "防漂移门禁 framework_integrity 的 opt-out（v2.4 起）；缺省即默认 enforce（漂移 BLOCKER）。",
       "properties": {
-        "allow_local_drift": { "type": "boolean", "description": "true → framework 源码漂移仅 WARN 不阻断（显式本地 fork）" },
-        "drift_allowlist": { "type": "array", "items": { "type": "string" }, "description": "按 framework 内相对路径精确放行的漂移白名单" }
+        "allow_local_drift": {
+          "description": "漂移仅告警总开关。P1-5 起须结构化真人审批 {enabled, rationale, approved_by} 才生效；legacy 布尔 true 无效（照常 BLOCKER）。",
+          "oneOf": [
+            { "type": "boolean" },
+            {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "rationale": { "type": "string" },
+                "approved_by": { "type": "string", "description": "真人签名；自动化身份/user_requirement 无效" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "drift_allowlist": {
+          "type": "array",
+          "description": "漂移放行白名单。P1-5 起条目须 {path, rationale, approved_by} 真人具名审批；legacy 字符串条目无效（照常报漂移）。",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string" },
+                  "rationale": { "type": "string" },
+                  "approved_by": { "type": "string", "description": "真人签名；自动化身份/user_requirement 无效" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
       },
       "additionalProperties": false
     },

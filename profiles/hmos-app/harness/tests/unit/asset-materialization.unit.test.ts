@@ -349,13 +349,18 @@ export function runAll(): UnitCaseResult[] {
     const root = mkRoot();
     try {
       copyFixtureAsMedia(root, 'promo_defer');
-      const doc = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'user_requirement' });
+      const doc = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'alice' });
       const res = collectBakedTextAssetIssues(placeholderCtx(root), doc, false);
       if (res.issues.some(i => i.id === 'promo_defer')) throw new Error('human_signed defer 应放行');
       // 自动化署名不算人签 → 仍拦
       const doc2 = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'goal-mode-auto' });
       const res2 = collectBakedTextAssetIssues(placeholderCtx(root), doc2, false);
       if (!res2.issues.some(i => i.id === 'promo_defer')) throw new Error('自动化署名不应放行');
+      // P0-6（c9e2a7f4）：user_requirement 属授权哨兵，不算对具体资产的真人署名 → 仍拦
+      //（2026-07-05 伪签事故后语义收紧；此前本用例曾以它当正样本，属旧语义）
+      const doc3 = slabDoc('promo_defer', ['管理非本机卡片', '银行卡'], { deferBy: 'user_requirement' });
+      const res3 = collectBakedTextAssetIssues(placeholderCtx(root), doc3, false);
+      if (!res3.issues.some(i => i.id === 'promo_defer')) throw new Error('user_requirement 伪签不应放行（授权≠过目）');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
