@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
+import { featureDir } from '../../../harness/config';
 import {
   loadUiSpecFile,
   uiSpecAbsPath,
@@ -72,6 +73,12 @@ export interface VisualDiffCaptureOptions {
   /** 对 shot vs authoritative ref 写入 score_floor（jimp 不可用则跳过） */
   computeScoreFloor?: boolean;
   ctx?: Pick<CheckContext, 'projectRoot' | 'specVisualSources'>;
+  /**
+   * P0-9a：当前构建指纹（调用侧**现算自实际安装 hap**，见 build-fingerprint.ts）。
+   * 已定判定（pass/warn/fail）在「绑定截图文件未变 + 本指纹与其 evaluated_build_fingerprint
+   * 一致」时**跳过重采**（判定持久）；null/缺省 = 指纹不可用，一律不得跳采（codex 硬前提）。
+   */
+  currentBuildFingerprint?: string | null;
 }
 
 export interface VisualDiffCaptureResult {
@@ -80,22 +87,27 @@ export interface VisualDiffCaptureResult {
   reportDir: string;
   mdPath: string;
   screensWritten: number;
-  /** 本次采集后仍保留 VL/agent 判定的屏数 */
+  /** 本次采集后仍保留 VL/agent 判定的屏数（重采后像素恒等的退化路径，真机罕见） */
   screensPreserved?: number;
   /** 截图 hash 变更导致 verdict 回退 pending 的屏数 */
   screensInvalidated?: number;
+  /** P0-9a：build 指纹有效而**跳过重采**、判定持久保留的屏数（合法新鲜，非陈旧证据） */
+  screensPreservedBuildValid?: number;
   errors: string[];
   /** E1：P0 顶层屏尝试采集却失败（截图失败/hash 失败/骨架失败）的 screen_id；非顶层屏跳过不计入 */
   p0CaptureFailures?: string[];
   skippedReason?: string;
 }
 
+// P0-9 顺手项（codex）：feature artifact 路径统一走 featureDir（尊重 paths.features_dir 配置）。
 export function deviceScreenshotsDir(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'device-testing', 'device-screenshots');
+  return path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots');
 }
 
-export function shotRelPath(feature: string, screenSlug: string): string {
-  return `doc/features/${feature}/device-testing/device-screenshots/shot-${screenSlug}.png`;
+export function shotRelPath(projectRoot: string, feature: string, screenSlug: string): string {
+  return path
+    .relative(projectRoot, path.join(deviceScreenshotsDir(projectRoot, feature), `shot-${screenSlug}.png`))
+    .replace(/\\/g, '/');
 }
 
 /** screen_id → 安全文件名 slug（拒绝路径分隔与 ..） */
@@ -119,7 +131,7 @@ export function resolveShotPaths(
   const slug = sanitizeVisualDiffScreenSlug(screenId);
   if (!slug) return null;
   const reportDir = path.resolve(deviceScreenshotsDir(projectRoot, feature));
-  const rel = shotRelPath(feature, slug);
+  const rel = shotRelPath(projectRoot, feature, slug);
   const abs = path.resolve(projectRoot, rel);
   const prefix = reportDir + path.sep;
   if (abs !== reportDir && !abs.startsWith(prefix)) return null;
@@ -194,17 +206,50 @@ function resolveEdgeSentinel(
   return { divergence: res.divergence, tiles: res.tiles ?? [] };
 }
 
-/** pending/skipped 可被采集覆盖；pass/warn/fail 仅在截图 hash 未变时保留 */
+/**
+ * P0-9a：判定持久化——已定判定（pass/warn/fail）可跳过重采的判据。
+ * 硬前提（codex，缺一不可）：①当前构建指纹已成功现算（非 null）；②条目带
+ * evaluated_build_fingerprint 且与当前指纹一致（缺失=legacy → 不跳，照常重采失效）；
+ * ③evaluated_screenshot_hash 存在且与**盘上绑定截图文件**一致（文件未被替换/删除）。
+ * 满足则该屏判定（含真人 confirmed_by）跨 harness 轮持久；build 一变（改码重装）自动失效。
+ * 背景：像素恒等作新鲜度键被真机证伪（状态栏时钟/轮播必漂移，2026-07-05 回修轮实锤）。
+ */
+export function canSkipRecaptureForScreen(
+  prev: VisualDiffScreenEntry | undefined,
+  projectRoot: string,
+  currentBuildFingerprint: string | null | undefined,
+): boolean {
+  if (!prev || isCaptureMutableVerdict(prev.verdict)) return false;
+  if (typeof currentBuildFingerprint !== 'string' || !currentBuildFingerprint.trim()) return false;
+  const fp = prev.evaluated_build_fingerprint?.trim();
+  if (!fp || fp !== currentBuildFingerprint.trim()) return false;
+  const evalHash = prev.evaluated_screenshot_hash?.trim();
+  if (!evalHash) return false;
+  const shot = prev.screenshot_path;
+  if (typeof shot !== 'string' || !shot.trim()) return false;
+  const abs = path.isAbsolute(shot) ? shot : path.resolve(projectRoot, shot);
+  const fileHash = hashScreenshotFile(abs);
+  return fileHash !== null && fileHash === evalHash;
+}
+
+/**
+ * pending/skipped 可被采集覆盖；pass/warn/fail 仅在「截图 hash 未变 **且** build 指纹一致
+ * （当前指纹可算时，codex P1：换 build 后即便新截图字节恰好相同也必须重判——改码必重判）」时保留。
+ * currentBuildFingerprint 缺省/null = 指纹不可用 → 退回纯 hash 判据（静态夹具/交互态兼容）。
+ */
 export function mergeCapturedScreenEntry(
   existing: VisualDiffScreenEntry | undefined,
   captured: VisualDiffScreenEntry,
   capturedHash: string,
+  currentBuildFingerprint?: string | null,
 ): VisualDiffScreenEntry {
   if (!existing || isCaptureMutableVerdict(existing.verdict)) {
     return { ...captured, screenshot_hash: capturedHash };
   }
   const evalHash = existing.evaluated_screenshot_hash?.trim();
-  if (!evalHash || capturedHash !== evalHash) {
+  const currentFp = currentBuildFingerprint?.trim();
+  const fpOk = !currentFp || existing.evaluated_build_fingerprint?.trim() === currentFp;
+  if (!evalHash || capturedHash !== evalHash || !fpOk) {
     return {
       ...captured,
       screenshot_hash: capturedHash,
@@ -229,6 +274,7 @@ export function mergeCapturedScreenEntry(
 export function mergeVisualDiffReports(
   existing: VisualDiffReport | null,
   capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }>,
+  currentBuildFingerprint?: string | null,
 ): { report: VisualDiffReport; preserved: number; updated: number; invalidated: number } {
   const byId = new Map<string, VisualDiffScreenEntry>();
   for (const s of existing?.screens ?? []) {
@@ -241,7 +287,7 @@ export function mergeVisualDiffReports(
   let invalidated = 0;
   for (const { entry: captured, hash } of capturedScreens) {
     const prev = byId.get(captured.screen_id);
-    const merged = mergeCapturedScreenEntry(prev, captured, hash);
+    const merged = mergeCapturedScreenEntry(prev, captured, hash, currentBuildFingerprint);
     if (prev && !isCaptureMutableVerdict(prev.verdict)) {
       if (merged.verdict === 'pending' && !isCaptureMutableVerdict(prev.verdict)) invalidated++;
       else preserved++;
@@ -298,7 +344,7 @@ export function collectDuplicateHashGroups(report: VisualDiffReport): string[] {
  */
 export function buildVisualDiffMdBody(
   report: VisualDiffReport,
-  opts?: { p0CaptureFailures?: string[] },
+  opts?: { p0CaptureFailures?: string[]; preservedBuildValidIds?: string[] },
 ): string {
   const dupGroups = collectDuplicateHashGroups(report);
   const noHashScreens = report.screens.filter(s => !s.screenshot_hash?.trim()).map(s => s.screen_id);
@@ -330,6 +376,9 @@ export function buildVisualDiffMdBody(
     `- P0 采集失败：${p0Fail.length > 0 ? p0Fail.join(', ') : '无'}`,
     `- 缺截图（无 hash）：${noHashScreens.length > 0 ? noHashScreens.join(', ') : '无'}`,
     `- 未判定（verdict=pending）：${pendingScreens.length > 0 ? pendingScreens.join(', ') : '无'}`,
+    ...((opts?.preservedBuildValidIds?.length ?? 0) > 0
+      ? [`- build 指纹有效跳采（判定持久，P0-9a）：${opts!.preservedBuildValidIds!.join(', ')}`]
+      : []),
     '',
   ].join('\n');
 }
@@ -347,14 +396,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   const reportDir = deviceScreenshotsDir(opts.projectRoot, opts.feature);
   fs.mkdirSync(reportDir, { recursive: true });
   const jsonPath = path.join(reportDir, 'visual-diff.json');
-  const mdPath = path.join(
-    opts.projectRoot,
-    'doc',
-    'features',
-    opts.feature,
-    'device-testing',
-    'visual-diff.md',
-  );
+  const mdPath = path.join(featureDir(opts.projectRoot, opts.feature), 'device-testing', 'visual-diff.md');
 
   if (!opts.screenshotFn) {
     return {
@@ -396,11 +438,28 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       ])
     : null;
 
+  // P0-9a：判定持久化——先读既有报告，build 指纹有效的已定屏跳过重采（判定含真人签持久）。
+  const existingReportEarly = loadExistingVisualDiffReport(jsonPath);
+  const existingById = new Map<string, VisualDiffScreenEntry>(
+    (existingReportEarly?.screens ?? [])
+      .filter(s => typeof s.screen_id === 'string' && s.screen_id.trim())
+      .map(s => [s.screen_id, s]),
+  );
+  const currentFp =
+    typeof opts.currentBuildFingerprint === 'string' && opts.currentBuildFingerprint.trim()
+      ? opts.currentBuildFingerprint.trim()
+      : null;
+  const preservedBuildValidIds: string[] = [];
+
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
   for (const screen of targets) {
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
+    if (canSkipRecaptureForScreen(existingById.get(screen.id), opts.projectRoot, currentFp)) {
+      preservedBuildValidIds.push(screen.id);
+      continue;
+    }
     const navSteps = navResolve?.resolved.get(screen.id);
     // P1-A：启用 nav 后，每个 P0 屏都须在配置里有到达步骤条目——缺条目即**拒绝裸采**（防多屏截同一帧），记 p0 失败。
     if (navEnabled && navSteps === undefined) {
@@ -468,11 +527,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       row.edge_tile_divergence = edge.divergence;
       row.edge_over_threshold_tiles = edge.tiles;
     }
+    // P0-9a：机器盖构建指纹戳（agent 无须也不应手填）——后续判定即绑定本构建。
+    if (currentFp) row.evaluated_build_fingerprint = currentFp;
     capturedScreens.push({ entry: row, hash: screenshotHash });
   }
 
   for (const ov of collectP0OverlayTargetIds(uiDoc)) {
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
+    if (canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp)) {
+      preservedBuildValidIds.push(ov.id);
+      continue;
+    }
     const paths = resolveShotPaths(opts.projectRoot, opts.feature, ov.id);
     if (!paths) {
       errors.push(`${ov.id}: overlay screen_id 非法`);
@@ -508,6 +573,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       const row: VisualDiffScreenEntry = { screen_id: ov.id, screenshot_path: paths.rel, ref_id: refId, verdict: 'pending' };
       if (typeof floor === 'number' && !Number.isNaN(floor)) row.score_floor = Math.max(0, Math.min(1, floor));
       row.screenshot_hash = screenshotHash;
+      if (currentFp) row.evaluated_build_fingerprint = currentFp;
       if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
       capturedScreens.push({ entry: row, hash: screenshotHash });
       continue;
@@ -524,24 +590,46 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   }
 
   if (capturedScreens.length === 0) {
+    // P0-9a：全部屏均因 build 指纹有效而合法跳采（判定持久）→ 非"无采集"失败，md 照常再生。
+    if (preservedBuildValidIds.length > 0 && p0CaptureFailures.length === 0 && existingReportEarly) {
+      fs.writeFileSync(
+        mdPath,
+        buildVisualDiffMdBody(existingReportEarly, { p0CaptureFailures, preservedBuildValidIds }),
+        'utf-8',
+      );
+      return {
+        ok: true,
+        jsonPath,
+        reportDir,
+        mdPath,
+        screensWritten: 0,
+        screensPreserved: 0,
+        screensInvalidated: 0,
+        screensPreservedBuildValid: preservedBuildValidIds.length,
+        errors,
+        p0CaptureFailures,
+      };
+    }
     return {
       ok: false,
       jsonPath,
       reportDir,
       mdPath,
       screensWritten: 0,
+      ...(preservedBuildValidIds.length > 0
+        ? { screensPreservedBuildValid: preservedBuildValidIds.length }
+        : {}),
       errors: errors.length ? errors : ['无成功截图，未写入 visual-diff.json'],
       p0CaptureFailures,
       skippedReason: 'no_captures',
     };
   }
 
-  const existingReport = loadExistingVisualDiffReport(jsonPath);
-  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReport, capturedScreens);
+  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReportEarly, capturedScreens, currentFp);
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
   // P1-C：md 为 JSON 纯投影，每次无条件再生（不再"定型后不再生成"，根除手写散文与 JSON 背离）。
-  fs.writeFileSync(mdPath, buildVisualDiffMdBody(report, { p0CaptureFailures }), 'utf-8');
+  fs.writeFileSync(mdPath, buildVisualDiffMdBody(report, { p0CaptureFailures, preservedBuildValidIds }), 'utf-8');
 
   return {
     ok: true,
@@ -551,6 +639,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     screensWritten: updated + invalidated,
     screensPreserved: preserved,
     screensInvalidated: invalidated,
+    screensPreservedBuildValid: preservedBuildValidIds.length,
     errors,
     p0CaptureFailures,
   };

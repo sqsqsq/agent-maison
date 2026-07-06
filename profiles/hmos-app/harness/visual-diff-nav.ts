@@ -15,6 +15,7 @@ import {
   PLANNED_STEP_ROOT_KEY_SET,
   FORBIDDEN_STEP_ROOT_KEY_SET,
 } from '../../../harness/scripts/utils/hylyre-planned-step-keys';
+import { featureDir } from '../../../harness/config';
 
 /** 单条导航步：一个 planned-step 根键（touch/wait_for/back/…）+ 其参数。 */
 export type NavStep = Record<string, unknown>;
@@ -27,9 +28,9 @@ export type NavConfig = Record<string, NavScreenSteps>;
 
 export const OVERLAY_SEP = '__overlay__';
 
-/** 显式固化 nav 配置路径：doc/features/<feature>/device-testing/visual-diff-nav.json（Q2 唯一真源） */
+/** 显式固化 nav 配置路径：<features_dir>/<feature>/device-testing/visual-diff-nav.json（Q2 唯一真源；P0-9 顺手项走 featureDir 尊重 paths.features_dir） */
 export function visualDiffNavConfigPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'device-testing', 'visual-diff-nav.json');
+  return path.join(featureDir(projectRoot, feature), 'device-testing', 'visual-diff-nav.json');
 }
 
 /** 读固化 nav 配置；缺文件/非法 JSON → null（采集层据此不导航、走旧裸采并由一致性校验报缺配置）。 */

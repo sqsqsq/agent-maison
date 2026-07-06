@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { featurePhaseReportsDir } from '../../../../harness/config';
+import { computeHapBuildFingerprint } from '../build-fingerprint';
 import type { CapabilityProvider } from './types';
 import {
   installHap,
@@ -64,6 +65,8 @@ function hapFileFingerprint(hapPath: string): { mtimeMs: number; size: number } 
     return null;
   }
 }
+// P0-9a：meta 机器写入 hap 内容指纹（sha256 前 12 hex）。注意：消费侧"当前指纹"仍须现算
+// 实际 hap 文件（build-fingerprint.ts），本字段仅供人读/对账——mtime/size 不得作判定新鲜度键。
 
 function writeInstallArtifacts(
   opts: DeviceTestInstallOptions,
@@ -118,6 +121,7 @@ function writeInstallArtifacts(
           reused: Boolean(payload.reused),
           hapMtimeMs: payload.hapMtimeMs ?? null,
           hapSizeBytes: payload.hapSizeBytes ?? null,
+          hapSha256: computeHapBuildFingerprint(opts.hapPath),
           timestamp: new Date().toISOString(),
         },
         null,

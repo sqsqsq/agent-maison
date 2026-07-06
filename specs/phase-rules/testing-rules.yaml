@@ -138,6 +138,11 @@ structure_checks:
       派生步骤根键。warmup/无设备 → SKIP。
       当 spec UI change=new_or_changed 且 P0 目标屏 visual verdict 全 pending 或未覆盖 → BLOCKER FAIL。
       score_floor 已降级 reference_only（P1-C·f2d8c4a6：像素直方图历史多次实测证伪，不参与任何判定）。
+      P0-9（e7a91b3c）判定持久化：已定判定（pass/warn/fail，含真人 confirmed_by）绑定
+      「被评截图文件 hash + build 指纹（实际 hap sha256 前 12 hex，现算）」——同 build 下 capture
+      跳采、判定跨 harness 轮持久（像素恒等作新鲜度键已被真机时钟/轮播漂移证伪）；换 build/
+      文件被换/legacy 缺指纹 → stale 重置重判。唯一阻塞=T2 真人确认且指纹链完整时输出
+      failure_kind=await_human_confirm（goal halt 为 await_human_visual_confirm 并给逐屏签名指引）。
     severity: MAJOR
     rule:
       provider: device_test.visual_diff

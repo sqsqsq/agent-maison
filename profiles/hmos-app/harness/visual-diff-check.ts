@@ -6,7 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact, featuresDirPath } from '../../../harness/config';
+import { relFeatureArtifact, featuresDirPath, featureDir } from '../../../harness/config';
+import { resolveCurrentBuildFingerprint } from './build-fingerprint';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
@@ -54,7 +55,8 @@ function ruleDesc(ctx: CheckContext): string {
 }
 
 function loadSpecMarkdown(ctx: CheckContext): string | null {
-  const p = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  // P0-9 顺手项：走 featureDir 尊重 paths.features_dir 配置
+  const p = path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'spec.md');
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
 }
@@ -87,6 +89,12 @@ export interface VisualDiffScreenEntry {
   screenshot_hash?: string;
   /** VL/agent 判定 verdict 时所依据的截图 hash；须与当前文件 hash 一致 */
   evaluated_screenshot_hash?: string;
+  /**
+   * P0-9a：截图采集时的应用构建指纹（实际 hap sha256 前 12 hex，capture 机器盖戳）。
+   * 判定新鲜度键=「绑定截图文件未变 + 本指纹与现算当前构建一致」；build 一变判定自动失效。
+   * 已定判定缺本字段 = legacy stale（当前指纹可算时）。
+   */
+  evaluated_build_fingerprint?: string;
   /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
   confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
@@ -131,17 +139,30 @@ export function isMissingEvaluatedScreenshotHash(screen: VisualDiffScreenEntry):
   return typeof screen.evaluated_screenshot_hash !== 'string' || !screen.evaluated_screenshot_hash.trim();
 }
 
-/** finalized verdict 的 evaluated_screenshot_hash 是否与当前截图文件不一致 */
+/**
+ * finalized verdict 是否 stale。
+ * P0-9a 改键：①文件级——evaluated_screenshot_hash 须与**盘上绑定截图文件**一致（防换图；
+ * 像素恒等对新采图的要求已废除，真机时钟/轮播必漂移属证伪判据）；②构建级——当前构建指纹
+ * 可现算时（opts.currentBuildFingerprint 非空），evaluated_build_fingerprint 缺失（legacy）
+ * 或与当前不一致 → stale（改码重装必重判）。指纹不可算时退回文件级校验（持久化不启用）。
+ */
 export function isStaleVisualDiffVerdict(
   screen: VisualDiffScreenEntry,
   projectRoot: string,
+  opts?: { currentBuildFingerprint?: string | null },
 ): boolean {
   if (isCaptureMutableVerdict(screen.verdict) || isMissingEvaluatedScreenshotHash(screen)) return false;
   const shot = screen.screenshot_path;
   if (typeof shot !== 'string' || !shot.trim()) return false;
   const currentHash = hashScreenshotFile(resolveShotPath(projectRoot, shot));
   if (!currentHash) return true;
-  return currentHash !== screen.evaluated_screenshot_hash!.trim();
+  if (currentHash !== screen.evaluated_screenshot_hash!.trim()) return true;
+  const currentFp = opts?.currentBuildFingerprint?.trim();
+  if (currentFp) {
+    const fp = screen.evaluated_build_fingerprint?.trim();
+    if (!fp || fp !== currentFp) return true;
+  }
+  return false;
 }
 
 function collectAuthoritativeRefIds(specMd: string, uiDoc: ReturnType<typeof loadUiSpecFile>): Set<string> {
@@ -308,6 +329,10 @@ export function validateVisualDiffJson(
       if (confirmedBy !== undefined && confirmedBy !== null && typeof confirmedBy !== 'string') {
         errors.push(`screens[${i}] confirmed_by 须为字符串`);
       }
+      const buildFp = row.evaluated_build_fingerprint;
+      if (buildFp !== undefined && buildFp !== null && typeof buildFp !== 'string') {
+        errors.push(`screens[${i}] evaluated_build_fingerprint 须为字符串（capture 机器盖戳）`);
+      }
       const scoreFloor = row.score_floor;
       if (scoreFloor !== undefined && scoreFloor !== null) {
         if (typeof scoreFloor !== 'number' || Number.isNaN(scoreFloor)) {
@@ -467,14 +492,8 @@ function finalizeVisualDiffHits(
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'visual-diff.md');
-  const reportDir = path.join(
-    ctx.projectRoot,
-    'doc',
-    'features',
-    ctx.feature,
-    'device-testing',
-    'device-screenshots',
-  );
+  // P0-9 顺手项：走 featureDir 尊重 paths.features_dir 配置
+  const reportDir = path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'device-screenshots');
 
   const specMd = loadSpecMarkdown(ctx);
   const uiChange = specMd ? parseUiChangeFromSpecMarkdown(specMd) : null;
@@ -494,14 +513,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const mdPath = path.join(
-    ctx.projectRoot,
-    'doc',
-    'features',
-    ctx.feature,
-    'device-testing',
-    'visual-diff.md',
-  );
+  const mdPath = path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'visual-diff.md');
   const jsonPath = path.join(reportDir, 'visual-diff.json');
 
   const deviceUnavailable =
@@ -633,7 +645,11 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const reverseMissingAll = rep.screens.flatMap(s => s.reverse_missing ?? []);
 
   const missingEvalHashScreens = rep.screens.filter(s => isMissingEvaluatedScreenshotHash(s));
-  const staleScreens = rep.screens.filter(s => isStaleVisualDiffVerdict(s, ctx.projectRoot));
+  // P0-9a：当前构建指纹现算自实际安装 hap（不可算=null → 指纹校验不启用，退回文件级）。
+  const currentBuildFp = resolveCurrentBuildFingerprint(ctx.projectRoot, ctx.feature, ctx.phase);
+  const staleScreens = rep.screens.filter(s =>
+    isStaleVisualDiffVerdict(s, ctx.projectRoot, { currentBuildFingerprint: currentBuildFp }),
+  );
 
   const hashGroups = new Map<string, string[]>();
   for (const s of rep.screens) {
@@ -1035,7 +1051,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       severity: pixel1to1 ? 'BLOCKER' : 'MAJOR',
       status: pixel1to1 ? 'FAIL' : 'WARN',
       line:
-        `verdict 所依据截图已变更，须 VL 重判：` +
+        `verdict 证据已失效（绑定截图文件被改动，或构建已更换/缺 build 指纹——改码重装必重判）：` +
         staleScreens.map(s => s.screen_id).join(', '),
     });
   }
@@ -1157,5 +1173,38 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   }
 
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
-  return [finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits)];
+  const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
+
+  // P0-9b（codex 收窄）：唯一阻塞=T2 真人确认 → 机器可读 await_human_confirm（goal-runner 据此
+  // halt 为 await_human_visual_confirm 而非 no_progress）。条件缺一不可：全部 FAIL hit 均为
+  // T2、P0 全覆盖、全屏 finalized pass 且零 must_fix、零 stale/缺 hash——warn+must_fix 混杂
+  // ≠待签（不得教用户签过未裁决内容）。
+  const failHitsOnly = hits.filter(h => h.status === 'FAIL');
+  // codex P2：须当前指纹可算且全屏指纹一致——否则（如 install meta 缺失）下一轮 capture 无法
+  // 跳采，真人签仍会被重采清掉，不得诱导用户此刻签名。
+  const awaitHumanOnly =
+    pixel1to1 &&
+    typeof currentBuildFp === 'string' &&
+    currentBuildFp.length > 0 &&
+    failHitsOnly.length > 0 &&
+    failHitsOnly.every(h => h.id === 'visual_diff_human_confirm_required') &&
+    p0Uncovered.length === 0 &&
+    rep.screens.length > 0 &&
+    rep.screens.every(
+      s =>
+        s.verdict === 'pass' &&
+        (s.must_fix?.length ?? 0) === 0 &&
+        s.evaluated_build_fingerprint?.trim() === currentBuildFp,
+    ) &&
+    staleScreens.length === 0 &&
+    missingEvalHashScreens.length === 0;
+  if (awaitHumanOnly) {
+    finalResult.failure_kind = 'await_human_confirm';
+    finalResult.details +=
+      '\n【await_human_visual_confirm】唯一阻塞=真人过目确认（设计内求人时刻，非无进展）：' +
+      '逐屏审阅 device-screenshots/shot-*.png 对照参考原图，认可后在 visual-diff.json ' +
+      'screens[].confirmed_by 填真人署名（user_requirement/自动化身份无效）并重跑 harness；' +
+      '不认可的屏改 verdict=fail 并写 must_fix。';
+  }
+  return [finalResult];
 }

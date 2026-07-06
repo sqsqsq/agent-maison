@@ -471,6 +471,19 @@ const TIMEOUT_RESUMABLE_ARTIFACT_BY_PHASE: Record<FeaturePhase, string[]> = {
 export const TRANSIENT_API_BACKOFF_MS: readonly number[] = [5_000, 15_000, 45_000];
 
 /**
+ * P0-9b（plan e7a91b3c）：await_human_visual_confirm halt 的真人操作指引。
+ * 触发条件（visual-diff-check 收窄判定）＝全部 P0 屏 pass 候选、零 must_fix/defects/stale、
+ * 唯一 BLOCKER=T2 真人确认——这是 pixel_1to1 的设计内求人时刻，不是无进展故障。
+ */
+export const AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE: readonly string[] = [
+  '全部 P0 屏均为 pass 候选且确定性信号干净——唯一剩余步骤是【真人过目确认】（T2 设计，agent 不能替人签）。',
+  '① 逐屏审阅 device-testing/device-screenshots/shot-*.png，对照 spec 参考原图；',
+  '② 认可的屏：在 device-screenshots/visual-diff.json 对应 screens[].confirmed_by 填**真人署名**（user_requirement / goal-mode-auto 等自动化身份无效，P0-6）；',
+  '③ 不认可的屏：改 verdict=fail 并写 must_fix（具体差异）；',
+  '④ 完成后 goal-runner --resume 本 run 续跑收尾（判定与真人签按 build 指纹持久，不会被重采清空，P0-9a）。',
+];
+
+/**
  * P0-D §六-8：0 字节输出判 agent_no_output 的"极短时长"上限。正常 headless agent
  * 起步（加载 CLAUDE.md/skill）都远超 30s；即死型失败（认证/权限/CLI 参数）秒级退出。
  */
@@ -1573,6 +1586,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             action = 'halt';
             haltReason = 'transient_api_error_exhausted';
           }
+        } else if (failureKind === 'await_human_confirm' && verdict !== 'PASS') {
+          // P0-9b：设计内求人时刻——agent 不能替人签 confirmed_by，重试无意义，首触即 halt
+          // 并给逐步操作指引（区别于 no_progress_visual_gap 的"无进展"误伤）。
+          action = 'halt';
+          haltReason = 'await_human_visual_confirm';
         } else if (
           shouldHaltNoProgress({
             failureKind,
@@ -1752,6 +1770,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
+          ...(haltReason === 'await_human_visual_confirm'
+            ? { halt_guidance: AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE.join('\n') }
+            : {}),
           interaction_question: interactionSentinel?.error,
           // codex P3：诊断保真进最终报告——只读 goal-report 的下游也能看到真因原文。
           failure_kind_classified: failureKind,

@@ -82,6 +82,7 @@ import {
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
+import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
@@ -2130,12 +2131,16 @@ function checkDeviceTestRunGate(
               suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
             });
           } else {
+          // P0-9a：当前构建指纹现算自实际安装 hap（hapHolder.hapPath 即 build→install 的产物）；
+          // 算不出=null → capture 一律不跳采（codex 硬前提）。
+          const currentBuildFingerprint = computeHapBuildFingerprint(hapHolder.hapPath);
           const cap = captureVisualDiff({
             projectRoot: ctx.projectRoot,
             feature: ctx.feature,
             specMd,
             ctx,
             computeScoreFloor: true,
+            currentBuildFingerprint,
             bundleName,
             deviceSn: process.env.HARNESS_HDC_TARGET,
             screenshotFn: buildHylyreVisualDiffScreenshotFn({
@@ -2160,7 +2165,12 @@ function checkDeviceTestRunGate(
               : {}),
           });
           const p0Failed = cap.p0CaptureFailures ?? [];
-          const stalePreserved = cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
+          // P0-9c："新鲜"重定义——build 指纹有效的跳采（screensPreservedBuildValid）＝合法新鲜，
+          // 不算陈旧证据；stalePreserved 只拦"未刷新且非 build 有效"的 preserved（采集失败回退
+          // 旧 json / legacy 无指纹 preserved 照旧 FAIL，反陈旧证据语义不丢）。
+          const preservedBuildValid = cap.screensPreservedBuildValid ?? 0;
+          const stalePreserved =
+            cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
           if (cap.ok && (p0Failed.length > 0 || stalePreserved)) {
             // E1/E2：P0 截图失败 / 全靠 preserved 旧证据充数 → 不得静默 PASS（pixel_1to1 FAIL，否则 blocking WARN）。
             // 宿主 homepage 实测：6 屏全 Permission denied、screens=0+preserved=1 仍 PASS，等于在陈旧/错图上闭环。
@@ -2195,6 +2205,9 @@ function checkDeviceTestRunGate(
                 `screens=${cap.screensWritten}`,
                 ...(typeof cap.screensPreserved === 'number' && cap.screensPreserved > 0
                   ? [`preserved=${cap.screensPreserved}`]
+                  : []),
+                ...(preservedBuildValid > 0
+                  ? [`preserved_build_valid=${preservedBuildValid}（build 指纹有效跳采，判定持久·P0-9a）`]
                   : []),
                 ...(typeof cap.screensInvalidated === 'number' && cap.screensInvalidated > 0
                   ? [`invalidated=${cap.screensInvalidated}`]

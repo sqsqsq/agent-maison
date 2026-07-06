@@ -692,6 +692,84 @@ export function runAll(): UnitCaseResult[] {
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  // P0-9b（plan e7a91b3c，codex 收窄）：唯一阻塞=T2 真人确认 → failure_kind=await_human_confirm
+  //（goal-runner 据此 halt 为 await_human_visual_confirm 而非 no_progress）；warn+must_fix 混杂≠待签。
+  run('p0_9b_await_human_confirm_narrow_classification', () => {
+    if (!isJimpAvailable()) return;
+    const { featurePhaseReportsDir } = require('../../config');
+    const { computeHapBuildFingerprint } = require('../../../profiles/hmos-app/harness/build-fingerprint');
+    // codex P2：await 须当前指纹可算且全屏指纹一致——写 hap + install meta，返回指纹供屏条目盖戳
+    const writeBuildFingerprintChain = (root: string): string => {
+      const hap = path.join(root, 'app.hap');
+      fs.writeFileSync(hap, Buffer.from('hap-v1'));
+      fs.mkdirSync(path.join(root, 'skills'), { recursive: true }); // framework 树标记（供 frameworkRoot 解析）
+      const reportsDir = featurePhaseReportsDir(root, 'bank-card', 'testing');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, 'device-test-install.meta.json'), JSON.stringify({ hapPath: hap }));
+      return computeHapBuildFingerprint(hap) as string;
+    };
+    const writeScreens = (root: string, screens: Array<Record<string, unknown>>): void => {
+      const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(ddir, { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+        'schema_version: "1.0"', 'verified: human_confirmed',
+        'screens:', '  - id: home', '    priority: P0', '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}', 'assets: []',
+      ].join('\n'));
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      const rows = screens.map(s => {
+        const shot = path.join(ddir, `shot-${s.screen_id as string}.png`);
+        writeMinimalRedPng(shot, 10, 10);
+        const evalHash = hashScreenshotFile(shot);
+        return {
+          screenshot_path: `doc/features/bank-card/device-testing/device-screenshots/shot-${s.screen_id as string}.png`,
+          ref_id: 'home', fidelity_score: 0.92, geometric_iou: 0.85,
+          screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+          reverse_missing: [], defects: [],
+          ...s,
+        };
+      });
+      fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.0', screens: rows }));
+    };
+    // (a) 纯 pass 候选缺签 + 指纹链齐全 → FAIL 且 failure_kind=await_human_confirm + 操作指引
+    let root = mkProject();
+    try {
+      const fp = writeBuildFingerprintChain(root);
+      writeScreens(root, [{ screen_id: 'home', verdict: 'pass', must_fix: [], evaluated_build_fingerprint: fp }]);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; failure_kind?: string; details?: string };
+      if (hit.status !== 'FAIL') throw new Error(`缺签仍须 FAIL：${JSON.stringify(hit)}`);
+      if (hit.failure_kind !== 'await_human_confirm' || !/await_human_visual_confirm/.test(hit.details ?? '')) {
+        throw new Error(`纯 pass 候选缺签应归 await_human_confirm 并给指引：${JSON.stringify(hit)}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (b) warn+must_fix（本轮宿主实态）→ 仍 visual_gap 口径，不得标 await_human（防教用户签过未裁决内容）
+    root = mkProject();
+    try {
+      const fp = writeBuildFingerprintChain(root);
+      writeScreens(root, [{ screen_id: 'home', verdict: 'warn', must_fix: ['tab 缺胶囊图标'], evaluated_build_fingerprint: fp }]);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; failure_kind?: string };
+      if (hit.failure_kind === 'await_human_confirm') {
+        throw new Error('warn+must_fix 混杂不得归 await_human_confirm（codex 收窄）');
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (c) codex P2：当前指纹不可算（无 install meta）→ 不得 await_human（此刻签名会被下轮重采清掉）
+    root = mkProject();
+    try {
+      writeScreens(root, [{ screen_id: 'home', verdict: 'pass', must_fix: [] }]);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; failure_kind?: string };
+      if (hit.failure_kind === 'await_human_confirm') {
+        throw new Error('指纹不可算时不得归 await_human_confirm（真人签无法持久）');
+      }
+      if (hit.status !== 'FAIL') throw new Error('缺签仍须 FAIL（T2 不放行）');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   // T1（窄）端到端：pixel_1to1 P0 pass 屏声明 3+ 文本锚点、但截图 OCR 找不到（整块缺失）→ visual_diff_text_missing。
   // 罩住 collectAllComponentNodes → screenAnchors → collectGrossMissingAnchorText → pushVisualDiffHit 全接线。
   run('visual_diff_t1_text_missing_required', () => {

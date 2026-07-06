@@ -24,7 +24,7 @@ import {
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
+import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE, AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -433,6 +433,33 @@ export function runAll(): UnitCaseResult[] {
         assert(/must_fix/.test(text), 'missing must_fix conversion instruction');
         assert(/do NOT leave such screens pending/i.test(text), 'missing pending prohibition');
         assert(/confirmed_by/.test(text), 'missing PASS-candidate human-confirm boundary');
+      },
+    },
+    {
+      // P0-9b（plan e7a91b3c）：唯一阻塞=T2 真人确认 → 独立 kind（重试无意义，不入 no_progress 口径）
+      name: 'classifyFailureKind: await_human_confirm wins over visual_gap id bucket',
+      run: () => {
+        const summary = {
+          blockers: [
+            { id: 'visual_diff', classification: 'await_human_confirm' },
+            { id: 'testing_run_status' },
+          ],
+        } as never;
+        assert(classifyFailureKind(summary) === 'await_human_confirm', 'await classification must win');
+        // 无 await 标注的 visual_diff 仍归 visual_gap（回归保护）
+        const plain = { blockers: [{ id: 'visual_diff' }] } as never;
+        assert(classifyFailureKind(plain) === 'visual_gap', 'plain visual_diff stays visual_gap');
+      },
+    },
+    {
+      name: 'AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE: human-only signing + persistence promise',
+      run: () => {
+        const text = AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE.join('\n');
+        assert(/confirmed_by/.test(text), 'missing confirmed_by instruction');
+        assert(/user_requirement/.test(text), 'missing user_requirement-invalid warning (P0-6)');
+        assert(/真人署名/.test(text), 'missing human-signature requirement');
+        assert(/resume/i.test(text), 'missing resume instruction');
+        assert(/verdict=fail/.test(text), 'missing reject path (不认可的屏)');
       },
     },
     {

@@ -31,6 +31,8 @@ export interface GoalPhaseOutcome {
   agent_silent_killed?: boolean;
   agent_warn?: string;
   halt_reason?: string;
+  /** P0-9b：await_human_visual_confirm 等设计内求人 halt 的逐步操作指引（给真人读） */
+  halt_guidance?: string;
   interaction_question?: string;
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
