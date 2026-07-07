@@ -312,7 +312,7 @@ export function applyCompatDowngrade(
       description: 'compat.yaml 已过 scheduled_backfill_by，协议自动失效',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `doc/features/${ctx.feature}/compat.yaml: scheduled_backfill_by=${data.scheduled_backfill_by} 已过期`,
+      details: `${relCompat}: scheduled_backfill_by=${data.scheduled_backfill_by} 已过期`,
       suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, ctx.feature, ctx.phase),
       affected_files: [relCompat],
     });
@@ -340,7 +340,7 @@ export function applyCompatDowngrade(
       applied.push(r);
       continue;
     }
-    const suffix = `\n[compat_downgraded by doc/features/${ctx.feature}/compat.yaml]`;
+    const suffix = `\n[compat_downgraded by ${relCompat}]`;
     const nextDetails = `${r.details}${r.details.includes(COMPAT_MARKER) ? '' : suffix}`;
     applied.push({
       ...r,

@@ -32,6 +32,7 @@ import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   type UiSpecAsset,
 } from '../../../harness/scripts/utils/ui-spec-shared';
+import { featureFilePath, relFeatureFile } from '../../../harness/config';
 import {
   isPixel1to1,
   fidelityRatchetFailOrWarn,
@@ -166,7 +167,7 @@ export function sha256File(absPath: string): string | null {
 }
 
 export function cropVlReportAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'spec', 'reports', 'asset-crop-vl.yaml');
+  return featureFilePath(projectRoot, feature, path.join('spec', 'reports', 'asset-crop-vl.yaml'));
 }
 
 export function loadCropVlEntries(projectRoot: string, feature: string): Map<string, CropVlEntry> {
@@ -206,7 +207,7 @@ export interface CropValidationVerdicts {
 }
 
 export function cropValidationVerdictsAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'spec', 'reports', 'asset-crop-validation.json');
+  return featureFilePath(projectRoot, feature, path.join('spec', 'reports', 'asset-crop-validation.json'));
 }
 
 export function loadCropValidationVerdicts(
@@ -271,7 +272,7 @@ export function collectUnverifiedCropLines(
       out.push(`${a.key}：裁决缺绑定字段（sha256/resolved_path）——旧格式或非门禁产出的裁决，须重跑 spec asset_crop_validation`);
       continue;
     }
-    const rel = a.resolved_path ?? `doc/features/${feature}/spec/assets/${a.key}.png`;
+    const rel = a.resolved_path ?? relFeatureFile(projectRoot, feature, `spec/assets/${a.key}.png`);
     if (v.resolved_path !== rel) {
       out.push(`${a.key}：裁决绑定失效（验真时 resolved_path=${v.resolved_path}，当前=${rel}——spec 变更后未重验）`);
       continue;
@@ -319,7 +320,7 @@ function isHumanBboxVerified(a: UiSpecAsset & { bbox_verified_by?: string }): bo
 export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
-  const specPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specPath)) return [];
   const specMd = fs.readFileSync(specPath, 'utf-8');
   const uiChange = parseUiChangeFromSpecMarkdown(specMd);
@@ -366,7 +367,7 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   for (const a of cropAssets) {
     const key = a.key;
     const kind = classifyCropKind(key);
-    const rel = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${key}.png`;
+    const rel = a.resolved_path ?? relFeatureFile(ctx.projectRoot, ctx.feature, `spec/assets/${key}.png`);
     const abs = path.resolve(ctx.projectRoot, rel);
     if (!fs.existsSync(abs)) {
       // 未裁剪：授权/裁剪流转归 asset_acquisition；本 check 只验已存在产物
@@ -444,7 +445,7 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   // contact-sheet 证据落盘（尽力而为；失败不阻断、只记注）
   const sheetNotes: string[] = [];
   if (isJimpAvailable()) {
-    const reportsDir = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'reports');
+    const reportsDir = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'reports'));
     for (const [, group] of sheetsBySource) {
       const stem = path.basename(group.sourcePath).replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
       const out = path.join(reportsDir, `asset-contact-sheet-${stem}.png`);

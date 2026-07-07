@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
+import { featureFilePath } from '../../../harness/config';
 import {
   collectAllComponentNodes,
   flattenResourceKeyEntries,
@@ -929,7 +930,7 @@ export interface VisibleTextExemption {
 }
 
 export function visibleTextExemptionsAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'coding', 'visible-text-exemptions.yaml');
+  return featureFilePath(projectRoot, feature, path.join('coding', 'visible-text-exemptions.yaml'));
 }
 
 /** 豁免表：仅 rationale 非空的条目生效（无理由的豁免=自报，不算） */

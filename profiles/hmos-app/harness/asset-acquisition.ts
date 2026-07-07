@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact } from '../../../harness/config';
+import { relFeatureArtifact, featureFilePath, relFeatureFile } from '../../../harness/config';
 import {
   loadUiSpecFile,
   parseUiChangeFromSpecMarkdown,
@@ -53,7 +53,7 @@ function ruleDesc(ctx: CheckContext): string {
 export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
   const uiSpecRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'ui-spec.yaml');
-  const specPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specPath)) return [];
   const specMd = fs.readFileSync(specPath, 'utf-8');
   const uiChange = parseUiChangeFromSpecMarkdown(specMd);
@@ -95,7 +95,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
 
   for (const a of doc.assets ?? []) {
     if (a.acquisition !== 'crop' || a.placeholder) continue;
-    const outRelCandidate = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${a.key}.png`;
+    const outRelCandidate = a.resolved_path ?? relFeatureFile(ctx.projectRoot, ctx.feature, `spec/assets/${a.key}.png`);
     let safeRelForExists: string;
     try {
       safeRelForExists = validateProjectRelativePath(ctx.projectRoot, outRelCandidate, `asset ${a.key}.resolved_path`);

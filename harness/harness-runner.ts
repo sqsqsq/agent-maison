@@ -62,6 +62,7 @@ import {
   loadFrameworkConfig,
   relFeaturePhaseReportsDir,
   featurePhaseReportsDir,
+  relFeaturesDir,
 } from './config';
 import {
   ensurePersonalSetup,
@@ -95,7 +96,7 @@ import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
-import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath } from './scripts/utils/ui-spec-shared';
+import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
 
 // --------------------------------------------------------------------------
 // CLI 参数解析
@@ -1094,12 +1095,12 @@ function featureArtifactBlocker(
   return {
     id: 'feature_artifact_resolution',
     category: 'structure',
-    description: 'Feature 输入必须解析为 doc/features/<feature>/ 精确目录',
+    description: `Feature 输入必须解析为 ${featuresRel}/<feature>/ 精确目录`,
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `无法把 feature="${inspection.feature}" 解析为正式目录：${relPath}/，当前路径类型为 ${inspection.pathKind}。${archiveHint}${siblingHint}`,
     affected_files: [relPath],
-    suggestion: '请确认 feature 名称，或先把需求产物恢复为 doc/features/<feature>/ 目录后再运行 harness。',
+    suggestion: `请确认 feature 名称，或先把需求产物恢复为 ${featuresRel}/<feature>/ 目录后再运行 harness。`,
     failure_kind: 'feature_artifact_resolution_failed',
     blocking_class: 'feature_artifact_resolution',
   };
@@ -1239,7 +1240,7 @@ function collectContextFiles(
     files.push({ label: relFeatureArtifact(projectRoot, feature, 'spec.md'), content: prd });
   }
 
-  const uiSpecPath = path.join(projectRoot, 'doc', 'features', feature, 'spec', 'ui-spec.yaml');
+  const uiSpecPath = uiSpecAbsPath(projectRoot, feature);
   if (fs.existsSync(uiSpecPath)) {
     files.push({
       label: uiSpecRelPath(projectRoot, feature),
@@ -1465,7 +1466,7 @@ function handleClearState(projectRoot: string): void {
   }
   console.log('');
   console.log('提示：');
-  console.log('  - 历史 verdict / 报告通常在 doc/features/<feature>/<phase>/reports/（配置了 reports_dir_pattern 时），回执仍在 doc/features 下；');
+  console.log(`  - 历史 verdict / 报告通常在 ${relFeaturesDir(projectRoot)}/<feature>/<phase>/reports/（配置了 reports_dir_pattern 时），回执仍在 ${relFeaturesDir(projectRoot)} 下；`);
   console.log('  - 如需重新进入该阶段，按对应 SKILL.md 重新执行 harness-runner.ts；');
   console.log('  - --clear-state 表示"放弃已有进度"，与"暂停"不同。');
   console.log('  - --sync-closure 仅对齐闭环态（check-receipt + state），不重跑脚本 harness。');

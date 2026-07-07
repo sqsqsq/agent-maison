@@ -571,6 +571,7 @@ cases.push(
       const prior = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
       const prompt = buildPhasePrompt(
         MINIMAL_MANIFEST,
+        FRAMEWORK_ROOT,
         'ut',
         FRAMEWORK_ROOT,
         [],
@@ -585,7 +586,7 @@ cases.push(
   {
     name: 'buildPhasePrompt: 无 priorFailure（首跑）不注入失败小节',
     run: () => {
-      const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'ut', FRAMEWORK_ROOT, []);
+      const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'ut', FRAMEWORK_ROOT, []);
       assert(!prompt.includes('Prior attempt failure'), '首跑不回喂');
     },
   },

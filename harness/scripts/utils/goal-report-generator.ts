@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
 import type { PhaseSnapshotFiles } from './goal-phase-snapshot';
+import { relFeatureFile } from '../../config';
 
 export interface MustReviewItem {
   phase: FeaturePhase;
@@ -198,7 +199,7 @@ export function collectMustReviewFromAssumptions(
 ): MustReviewItem[] {
   const items: MustReviewItem[] = [];
   for (const phase of phases) {
-    const assumptionsRel = `doc/features/${feature}/${phase}/headless-assumptions.md`;
+    const assumptionsRel = relFeatureFile(projectRoot, feature, `${phase}/headless-assumptions.md`);
     const assumptionsAbs = path.join(projectRoot, assumptionsRel);
     if (!fs.existsSync(assumptionsAbs)) continue;
     const content = fs.readFileSync(assumptionsAbs, 'utf-8');

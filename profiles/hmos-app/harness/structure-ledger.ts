@@ -168,8 +168,8 @@ const HONESTY_NOTE =
  * implemented_by 真实存在。pixel_1to1 → BLOCKER FAIL；否则 MAJOR WARN。
  */
 export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[] {
-  // codex P1（子批B review）：路径全部走 featureDir（尊重 paths.features_dir）——uiSpecAbsPath
-  // 现存硬编码 doc/features，自定义 features 目录宿主会读不到 ui-spec、门禁静默失效。
+  // 路径走 featureDir（尊重 paths.features_dir）读 ui-spec。（子批B 起如此；round7 A① 已把
+  // uiSpecAbsPath 一并改走 featureFilePath，此处 featureDir 直拼与其等价。）
   const featRoot = featureDir(ctx.projectRoot, ctx.feature);
   const uiDoc = loadUiSpecFile(path.join(featRoot, 'spec', 'ui-spec.yaml'));
   const declarations = collectStructureDeclarations(uiDoc);

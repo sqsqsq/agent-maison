@@ -30,7 +30,7 @@ import {
   getColumnValues,
   extractDeclaredVerdict,
 } from './utils/markdown-parser';
-import { relFeatureArtifact, relFeatureFile } from '../config';
+import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
 
@@ -721,7 +721,7 @@ const VISUAL_REVIEW_EVIDENCE: ReadonlyArray<{ label: string; re: RegExp }> = [
 /** 导出供白盒单测（round6 套件）；生产路径经 checker.check 调用 */
 export function checkVisualFidelityReview(ctx: CheckContext, report: string): CheckResult[] {
   // 仅 UI 需求需要视觉维度：以 spec.md 的 ui_change 判定（与 spec/coding 视觉门禁同 gate）
-  const specPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specPath)) return [];
   let requiresUiSpec = false;
   try {

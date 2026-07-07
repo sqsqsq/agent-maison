@@ -417,7 +417,7 @@ export function runAll(): UnitCaseResult[] {
     {
       name: 'buildPhasePrompt: includes Unattended block + approval_mode',
       run: () => {
-        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'spec', FRAMEWORK_ROOT, []);
+        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, []);
         assert(prompt.includes('Unattended execution'), 'missing unattended section');
         assert(prompt.includes('approval_mode: **never**'), 'missing approval_mode');
         assert(prompt.includes('overrides'), 'missing override language');
@@ -488,6 +488,7 @@ export function runAll(): UnitCaseResult[] {
         const prior = 'Verdict: FAIL\n- spec_file_exists';
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'spec',
           FRAMEWORK_ROOT,
           [],
@@ -504,6 +505,7 @@ export function runAll(): UnitCaseResult[] {
         const prior = 'Verdict: FAIL\n- ut_compile';
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'spec',
           FRAMEWORK_ROOT,
           [],
@@ -518,6 +520,7 @@ export function runAll(): UnitCaseResult[] {
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'review',
           FRAMEWORK_ROOT,
           [],
@@ -533,7 +536,7 @@ export function runAll(): UnitCaseResult[] {
     {
       name: 'buildPhasePrompt: 无 partial 产物时不注入续作块',
       run: () => {
-        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, 'review', FRAMEWORK_ROOT, [], undefined, undefined, []);
+        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, [], undefined, undefined, []);
         assert(!prompt.includes('TIMED OUT'), '空清单不应注入续作块');
       },
     },
@@ -542,6 +545,7 @@ export function runAll(): UnitCaseResult[] {
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'review',
           FRAMEWORK_ROOT,
           [],
@@ -794,6 +798,7 @@ export function runAll(): UnitCaseResult[] {
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'spec',
           FRAMEWORK_ROOT,
           [],
@@ -810,6 +815,7 @@ export function runAll(): UnitCaseResult[] {
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
           'spec',
           FRAMEWORK_ROOT,
           [],

@@ -89,7 +89,7 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
         severity: 'BLOCKER',
         status: 'FAIL',
         details: 'ui_change=new_or_changed 但未找到 ui-spec.yaml；已 opt-in spec.ui_spec_enforcement=strict。',
-        suggestion: '产出 doc/features/<feature>/spec/ui-spec.yaml，见 ui-spec.md。',
+        suggestion: `产出 ${uiSpecRel}，见 ui-spec.md。`,
         affected_files: [prdRel, uiSpecRel],
       }];
     }

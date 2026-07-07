@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact, relFeatureFile } from '../../../harness/config';
+import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../../../harness/config';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
@@ -38,10 +38,9 @@ interface VisualParityDoc {
 export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
   const planRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
-  const vpRel = path.join('doc', 'features', ctx.feature, 'plan', 'visual-parity.yaml')
-    .replace(/\\/g, '/');
+  const vpRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'plan/visual-parity.yaml');
 
-  const specPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specPath)) return [];
   const specMd = fs.readFileSync(specPath, 'utf-8');
   const uiChange = parseUiChangeFromSpecMarkdown(specMd);

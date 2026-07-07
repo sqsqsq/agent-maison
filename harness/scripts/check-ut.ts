@@ -48,6 +48,7 @@ import {
   resolveFeatureArtifact,
   featureArtifactPath,
   featureDir,
+  relFeatureFile,
 } from '../config';
 import {
   tryLoadUtHostImpl,
@@ -997,7 +998,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
       severity: 'MINOR',
       status: 'PASS',
-      details: `doc/features/${ctx.feature}/use-cases.yaml 已存在。`,
+      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'use-cases.yaml')} 已存在。`,
     }];
   }
 
@@ -1018,7 +1019,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
     description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
     severity: 'MINOR',
     status: 'WARN',
-    details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 doc/features/${ctx.feature}/use-cases.yaml 以承载端到端分支。`,
+    details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'use-cases.yaml')} 以承载端到端分支。`,
     suggestion: `若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 ${utSuggestionPaths(ctx).useCasesSchemaTemplateRel} 产出；否则可忽略本告警。`,
   }];
 }
@@ -2303,7 +2304,7 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
       details: '无 unit/both UT 范围，跳过 coverage-evidence.json 强制。',
     }];
   }
-  const rel = coverageEvidenceRel(ctx.feature);
+  const rel = coverageEvidenceRel(ctx.projectRoot, ctx.feature);
   const acceptance = ctx.featureSpec.acceptance;
   const targetAcs = acceptance ? collectTargetUnitBothP0P1(acceptance) : [];
   const ev = loadCoverageEvidence(ctx.projectRoot, ctx.feature);

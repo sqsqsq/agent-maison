@@ -6,6 +6,7 @@ import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
+import { featureFilePath } from '../../../harness/config';
 
 const harnessRequire = createRequire(
   path.resolve(__dirname, '..', '..', '..', 'harness', 'package.json'),
@@ -36,8 +37,8 @@ function isUtTestPath(rel: string): boolean {
 
 function collectDeclaredTestPathsFromContextExploration(projectRoot: string, feature: string): string[] {
   const candidates = [
-    path.join(projectRoot, 'doc/features', feature, 'ut/context-exploration.md'),
-    path.join(projectRoot, 'doc/features', feature, 'context-exploration.md'),
+    featureFilePath(projectRoot, feature, path.join('ut', 'context-exploration.md')),
+    featureFilePath(projectRoot, feature, 'context-exploration.md'),
   ];
   const out = new Set<string>();
   for (const p of candidates) {

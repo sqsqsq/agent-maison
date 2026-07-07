@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact } from '../../../harness/config';
+import { relFeatureArtifact, featureFilePath } from '../../../harness/config';
 import {
   assetManifestAbsPath,
   fidelityRatchetFailOrWarn,
@@ -71,7 +71,7 @@ function collectRequiredArtAssets(uiDoc: ReturnType<typeof loadUiSpecFile>): Ass
 }
 
 export function checkAssetManifest(ctx: CheckContext): CheckResult[] {
-  const specMdPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  const specMdPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specMdPath)) return [];
   const specMd = fs.readFileSync(specMdPath, 'utf-8');
   const uiChange = parseUiChangeFromSpecMarkdown(specMd);

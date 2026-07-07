@@ -215,7 +215,7 @@ export function buildInstallBlockingCheckDetails(
   if (diag.bundleName) {
     lines.push(`bundleName=${diag.bundleName} deviceVc=${diag.deviceVersionCode} candidateVc=${diag.candidateVersionCode}`);
   }
-  lines.push(`详见 doc/features/<feature>/*/reports/${diagFileName}`);
+  lines.push(`详见 <features_dir>/<feature>/*/reports/${diagFileName}（features_dir 默认 doc/features，见 framework.config.json）`);
   return lines.join('\n');
 }
 

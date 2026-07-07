@@ -25,7 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn } from './utils/fidelity-shared';
+import { fidelityRatchetFailOrWarn, loadSpecMarkdown } from './utils/fidelity-shared';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -2095,9 +2095,8 @@ function checkDeviceTestRunGate(
     ];
 
     if (run.ok && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
-      const specMdPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
-      if (fs.existsSync(specMdPath)) {
-        const specMd = fs.readFileSync(specMdPath, 'utf-8');
+      const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
+      if (specMd !== null) {
         const uiChange = parseUiChangeFromSpecMarkdown(specMd);
         if (uiChange === 'new_or_changed') {
           const { hypiumWorkDir } = resolveHylyreRuntimeWorkDir(

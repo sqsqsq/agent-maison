@@ -7,6 +7,7 @@ import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext } from './types';
 import { parseVisualHandoffYamlRoot } from './ui-spec-shared';
+import { featureFilePath } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -214,7 +215,7 @@ export function fidelityRatchetFailOrWarn(
 }
 
 export function loadSpecMarkdown(projectRoot: string, feature: string): string | null {
-  const p = path.join(projectRoot, 'doc', 'features', feature, 'spec', 'spec.md');
+  const p = featureFilePath(projectRoot, feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
 }
@@ -247,11 +248,11 @@ export function resolveFidelityContextFromFeature(
 }
 
 export function refElementsAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'spec', 'ref-elements.yaml');
+  return featureFilePath(projectRoot, feature, path.join('spec', 'ref-elements.yaml'));
 }
 
 export function assetManifestAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'spec', 'asset-manifest.yaml');
+  return featureFilePath(projectRoot, feature, path.join('spec', 'asset-manifest.yaml'));
 }
 
 export function loadRefElementsFile(absPath: string): RefElementsDoc | null {

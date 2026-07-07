@@ -19,6 +19,7 @@ import {
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
   refElementsAbsPath,
+  assetManifestAbsPath,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import {
   loadUiSpecFile,
@@ -190,7 +191,7 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
 
   if (effectiveAsset === 'user_dir') {
     const manifestRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'asset-manifest.yaml');
-    const manifestPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'asset-manifest.yaml');
+    const manifestPath = assetManifestAbsPath(ctx.projectRoot, ctx.feature);
     if (!fs.existsSync(manifestPath)) {
       const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isPixel1to1(ctx));
       results.push({

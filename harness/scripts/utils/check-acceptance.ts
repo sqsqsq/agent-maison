@@ -30,7 +30,7 @@ export function checkAcceptanceYamlPresent(
   ruleDesc: RuleDescFn,
 ): CheckResult[] {
   const id = 'acceptance_yaml_present';
-  const rel = acceptanceYamlRel(ctx.feature);
+  const rel = acceptanceYamlRel(ctx.projectRoot, ctx.feature);
   if (!ctx.featureSpec.acceptance) {
     return [{
       id,

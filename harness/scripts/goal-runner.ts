@@ -18,6 +18,7 @@ import {
   featurePhaseReportsDir,
   featureArtifactPath,
   receiptDirPath,
+  relFeatureFile,
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
@@ -418,9 +419,9 @@ async function runHarnessPhase(
   }
 }
 
-function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePhase): string[] {
+function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePhase, projectRoot: string): string[] {
   const approval = manifest.unattended?.approval_mode ?? 'never';
-  const assumptionsRel = `doc/features/${manifest.feature}/${phase}/headless-assumptions.md`;
+  const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
   return [
     '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
     '',
@@ -561,6 +562,7 @@ export const VISUAL_GAP_RETRY_GUIDANCE: readonly string[] = [
 
 export function buildPhasePrompt(
   manifest: GoalManifest,
+  projectRoot: string,
   phase: FeaturePhase,
   frameworkRoot: string,
   deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>,
@@ -577,7 +579,7 @@ export function buildPhasePrompt(
     manifest.requirement ? `Requirement:\n${manifest.requirement}` : '',
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
-    ...buildUnattendedExecutionBlock(manifest, phase),
+    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot),
     '',
     '## Orchestrator constraints (BLOCKER)',
     '',
@@ -1334,6 +1336,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         const prompt = buildPhasePrompt(
           manifest,
+          projectRoot,
           phase,
           frameworkRoot,
           deferredUpstream,

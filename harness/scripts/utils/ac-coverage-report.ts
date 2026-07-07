@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { AcceptanceSpec } from './types';
 import { isUnitUtLayer } from './acceptance-layering';
+import { featureFilePath } from '../../config';
 
 export interface AcCoverageEntry {
   id: string;
@@ -103,7 +104,7 @@ export function buildAcCoverageReport(
 }
 
 export function acCoverageReportPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc/features', feature, 'ut/reports/ac-coverage.json');
+  return featureFilePath(projectRoot, feature, path.join('ut', 'reports', 'ac-coverage.json'));
 }
 
 export function loadAcCoverageReport(
@@ -139,7 +140,7 @@ export function writeAcCoverageReport(
   feature: string,
   report: AcCoverageReport,
 ): string {
-  const outDir = path.join(projectRoot, 'doc/features', feature, 'ut/reports');
+  const outDir = featureFilePath(projectRoot, feature, path.join('ut', 'reports'));
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, 'ac-coverage.json');
   fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');

@@ -115,8 +115,10 @@ test('tamper_scan_respects_custom_features_dir', () => {
     const hits = collectVisualDiffTamperArtifacts(root, 'homepage', featuresAbs);
     assert.strictEqual(hits.length, 1, JSON.stringify(hits));
     assert.ok(/requirements\/features\/homepage\/testing\/fill-visual-diff-pass\.cjs/.test(hits[0].file), hits[0].file);
-    // 用默认目录扫 → 漏（证明修复点真实存在，调用侧必须传配置目录）
-    assert.strictEqual(collectVisualDiffTamperArtifacts(root, 'homepage').length, 0);
+    // round7 路径治理（evidence-tamper-scan⑧）：默认参数改为函数体内 featuresDirPath(projectRoot)
+    // 解析（尊重 paths.features_dir），不再回退硬编码 doc/features——故省略第三参也吃配置、
+    // 在自定义 features_dir 一样命中（"调用方漏传即漏拦"的火药桶已拆）。
+    assert.strictEqual(collectVisualDiffTamperArtifacts(root, 'homepage').length, 1);
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });

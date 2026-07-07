@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import { extractCodeBlocks } from './markdown-parser';
+import { featureFilePath, relFeatureFile } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -166,15 +167,15 @@ export function parseVisualHandoffYamlRoot(prd: string): Record<string, unknown>
 }
 
 export function uiSpecAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'spec', 'ui-spec.yaml');
+  return featureFilePath(projectRoot, feature, path.join('spec', 'ui-spec.yaml'));
 }
 
 export function uiSpecRelPath(projectRoot: string, feature: string): string {
-  return path.join('doc', 'features', feature, 'spec', 'ui-spec.yaml').replace(/\\/g, '/');
+  return relFeatureFile(projectRoot, feature, 'spec/ui-spec.yaml');
 }
 
 export function visualParityAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, 'plan', 'visual-parity.yaml');
+  return featureFilePath(projectRoot, feature, path.join('plan', 'visual-parity.yaml'));
 }
 
 export function loadUiSpecFile(absPath: string): UiSpecDoc | null {

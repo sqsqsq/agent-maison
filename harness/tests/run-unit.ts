@@ -64,6 +64,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },
   { id: 'ut-artifact-validate', modulePath: './unit/ut-artifact-validate.unit.test' },
   { id: 'coverage-evidence', modulePath: './unit/coverage-evidence.unit.test' },
+  { id: 'path-governance', modulePath: './unit/path-governance.unit.test' },
   { id: 'code-graph-drift', modulePath: './unit/code-graph-drift.unit.test' },
   { id: 'code-graph-anchor-hash', modulePath: './unit/code-graph-anchor-hash.unit.test' },
   { id: 'bootstrap-code-graph', modulePath: './unit/bootstrap-code-graph.unit.test' },

@@ -2,6 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { acCoverageCoversScope, type AcCoverageReport } from './ac-coverage-report';
+import { featureFilePath, relFeatureFile } from '../../config';
 export type EvidenceSourceKind =
   | 'dag_archived'
   | 'dag_ephemeral'
@@ -32,21 +33,21 @@ const EVIDENCE_PRIORITY: EvidenceSourceKind[] = [
 ];
 
 /** Ephemeral flow DAG directory for a feature (relative to project root). */
-export function ephemeralFlowDagRel(feature: string): string {
-  return `doc/features/${feature}/ut/reports/flow-dag`;
+export function ephemeralFlowDagRel(projectRoot: string, feature: string): string {
+  return relFeatureFile(projectRoot, feature, 'ut/reports/flow-dag');
 }
 
-export function coverageEvidenceRel(feature: string): string {
-  return `doc/features/${feature}/ut/reports/coverage-evidence.json`;
+export function coverageEvidenceRel(projectRoot: string, feature: string): string {
+  return relFeatureFile(projectRoot, feature, 'ut/reports/coverage-evidence.json');
 }
 
 /** Absolute ephemeral flow-dag directory for a feature. */
 export function ephemeralFlowDagDir(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, ephemeralFlowDagRel(feature));
+  return featureFilePath(projectRoot, feature, path.join('ut', 'reports', 'flow-dag'));
 }
 
 export function resolveCoverageEvidencePath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, coverageEvidenceRel(feature));
+  return featureFilePath(projectRoot, feature, path.join('ut', 'reports', 'coverage-evidence.json'));
 }
 
 export function loadCoverageEvidence(

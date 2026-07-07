@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AcceptanceSpec, UtLayer } from './types';
+import { featureFilePath, relFeatureFile } from '../../config';
 
 export const VALID_UT_LAYERS: readonly UtLayer[] = ['unit', 'device', 'both'];
 
@@ -30,16 +31,16 @@ export function isP0P1Priority(priority: string): boolean {
   return priority === 'P0' || priority === 'P1';
 }
 
-export function acceptanceYamlRel(feature: string): string {
-  return `doc/features/${feature}/acceptance.yaml`;
+export function acceptanceYamlRel(projectRoot: string, feature: string): string {
+  return relFeatureFile(projectRoot, feature, 'acceptance.yaml');
 }
 
 export function acceptanceYamlPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, acceptanceYamlRel(feature));
+  return featureFilePath(projectRoot, feature, 'acceptance.yaml');
 }
 
 export function legacyDeviceTestingTodoPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc/features', feature, 'device-testing-todo.md');
+  return featureFilePath(projectRoot, feature, 'device-testing-todo.md');
 }
 
 export function hasNonEmptyFocus(value?: string): boolean {

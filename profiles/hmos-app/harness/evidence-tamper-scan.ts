@@ -11,6 +11,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { featuresDirPath } from '../../../harness/config';
 
 export interface TamperArtifact {
   /** 相对 projectRoot 的文件路径（正斜杠） */
@@ -58,10 +59,15 @@ function walkFiles(dir: string, depth: number, out: string[]): void {
 export function collectVisualDiffTamperArtifacts(
   projectRoot: string,
   feature: string,
-  featuresDir = 'doc/features',
+  featuresDir?: string,
 ): TamperArtifact[] {
   const out: TamperArtifact[] = [];
-  const featuresAbs = path.isAbsolute(featuresDir) ? featuresDir : path.join(projectRoot, featuresDir);
+  // 默认解析 featuresDirPath(projectRoot)（尊重 paths.features_dir）——不再回退硬编码
+  // 'doc/features'：调用方漏传第三参也不会在自定义 features_dir 宿主漏拦（子批A 定的
+  // 唯一生产调用方 visual-diff-check 已显式传值；此处收紧的是默认火药桶本身）。
+  const featuresAbs = featuresDir
+    ? (path.isAbsolute(featuresDir) ? featuresDir : path.join(projectRoot, featuresDir))
+    : featuresDirPath(projectRoot);
   for (const sub of ['testing', 'device-testing']) {
     const root = path.join(featuresAbs, feature, sub);
     const files: string[] = [];

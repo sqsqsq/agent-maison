@@ -12,6 +12,7 @@ import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   type UiChangeValue,
 } from './ui-spec-shared';
+import { featureFilePath } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown; stringify: (v: unknown) => string };
@@ -56,7 +57,7 @@ export function fidelityCacheRelDir(): string {
 }
 
 export function fidelityCacheAbsPath(projectRoot: string, feature: string): string {
-  return path.join(projectRoot, 'doc', 'features', feature, fidelityCacheRelDir());
+  return featureFilePath(projectRoot, feature, fidelityCacheRelDir());
 }
 
 export function fidelityLockAbsPath(projectRoot: string, feature: string): string {
