@@ -903,13 +903,27 @@ test('p1b_visual_fidelity_review_evidence_gate', () => {
     const hit = r.find(x => x.id === 'visual_fidelity_review');
     assert.ok(hit && hit.status === 'FAIL' && /缺证据引用/.test(hit.details), '证据不全应 FAIL');
   }
-  // 四类证据全引用 → PASS
+  // P1-4②（c9e2a7f4 子批B）：结构类证据升级为台账逐条复核——仅提声明字段名（旧口径）不再算数
   {
     const report = [
       '# review', '## 视觉保真',
       '- 素材：asset-crop-validation.json 8/8 verified，contact-sheet 逐张人核一致',
       '- 可见文案：visible_text_whitelist 无违规，豁免表为空',
-      '- 结构：subtitle_position/layout_group 与原图对照一致，分组容器齐',
+      '- 结构：subtitle_position/layout_group 与原图对照一致，分组容器齐', // 旧式泛引用，无台账
+      '- must_have 全部有真实承载（消费 visual_parity 结果）',
+      '## 结论\n通过',
+    ].join('\n');
+    const r = checkVisualFidelityReview(ctx, report);
+    const hit = r.find(x => x.id === 'visual_fidelity_review');
+    assert.ok(hit && hit.status === 'FAIL' && /structure-conformance|台账/.test(hit.details), '缺台账引用应 FAIL（P1-4②）');
+  }
+  // 四类证据全引用（含台账逐条复核）→ PASS
+  {
+    const report = [
+      '# review', '## 视觉保真',
+      '- 素材：asset-crop-validation.json 8/8 verified，contact-sheet 逐张人核一致',
+      '- 可见文案：visible_text_whitelist 无违规，豁免表为空',
+      '- 结构声明台账：structure-conformance.yaml 5/5 逐条打开 implemented_by 源码验证 how 属实，与原图一致',
       '- must_have 全部有真实承载（消费 visual_parity 结果）',
       '## 结论\n通过',
     ].join('\n');

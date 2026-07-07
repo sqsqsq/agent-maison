@@ -318,6 +318,10 @@ doc/features/{module-name}/testing/test-plan.md
    > 这类屏留 pending 弃判——真人确认（T2 `confirmed_by`）只在**判 pass** 时需要；确定性 FAIL 在手
    > 还全屏 pending＝白烧重试预算 + loop 饿死（终局 run 实锤：5 屏 pending、must_fix=0、3 次重试作废）。
    > 只有"确定性信号全绿、仅剩 pass 候选待真人确认"才 halt 求人。
+   > **结构声明验真分工（P1-4③·c9e2a7f4，诚实边界）**：spec 结构声明的"实现对不对"你只兜
+   > **文本类**（P1-C 同行拆分/乱序=确定性证据）；**非文本类**（tab 容器视觉/分组容器/独卡边距）
+   > device OCR 兜不住——它们由 coding 台账（表态）+ review 逐条人审 + 用户终审（T2）分工负责，
+   > **不要**因"OCR 看不见分组"就自行宣称结构已验真或已失败；拿不准的写进 defects note 留给人判。
    > **判定持久化（P0-9a·e7a91b3c）**：pass/warn/fail 判定（含 `confirmed_by`）绑定「被评截图文件
    > hash + build 指纹（实际 hap sha256）」——**同一构建下判定跨 harness 轮持久，不会被重采清空**；
    > 改码重装（hap 变）→ 全部判定自动失效重判（改码必重判）。故真人确认一次即持久（不再像素恒等键

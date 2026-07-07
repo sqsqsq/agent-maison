@@ -63,7 +63,8 @@
      - 异常处理（vs acceptance.yaml）
      - spec 功能覆盖
      - 视觉保真（UI 需求，P1-B·f2d8c4a6：消费 spec/coding 落盘报告——asset-crop-validation/contact-sheet、
-       可见文案豁免表复核、结构声明对照、must_have 覆盖；pixel_1to1 全覆盖不许抽查）
+       可见文案豁免表复核、结构声明台账逐条复核（P1-4②·c9e2a7f4：structure-conformance.yaml 的每条
+       implemented_by 须打开源码验证 how 属实）、must_have 覆盖；pixel_1to1 全覆盖不许抽查）
   2. 问题清单中是否有来自上述各维度的检查结果
   3. 若某个关键维度完全未审查（未在方法中声明且问题清单无相关分类），标为 FAIL
   4. 特别关注：架构分层和 plan.md 一致性是否被充分审查

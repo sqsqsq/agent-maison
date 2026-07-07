@@ -121,8 +121,10 @@ structure_checks:
     description: >
       P1-B（plan f2d8c4a6）：UI 需求（spec ui_change 需 ui-spec）的 review 报告必须包含「视觉保真」审查维度，
       且引用执行证据——素材验真（asset-crop-validation/contact-sheet）、可见文案 diff（visible_text/豁免表复核）、
-      结构声明复核（subtitle_position/分组容器/layout_group）、must_have 覆盖。pixel_1to1 下四类证据**全覆盖**
-      （不许抽查）→ 缺任一 FAIL BLOCKER；非 pixel_1to1 至少一类。review 不重跑度量、消费 spec/coding 落盘报告。
+      结构声明台账逐条复核（P1-4②·c9e2a7f4：引用 coding/structure-conformance.yaml，打开 implemented_by
+      对应 struct 源码验证 how 属实，pixel_1to1 P0 全条目不许抽查——台账自报面的唯一人审关口）、
+      must_have 覆盖。pixel_1to1 下四类证据**全覆盖**（不许抽查）→ 缺任一 FAIL BLOCKER；非 pixel_1to1
+      至少一类。review 不重跑度量、消费 spec/coding 落盘报告。
       round6 实证（RC6）：review 五维 checklist 无一条看图，废图+乱布局"有条件通过"。
       诚实边界：本 check 只核"证据被引用"，引用真实性归 AI verifier issue_accuracy 抽样与人工复核。
     severity: BLOCKER

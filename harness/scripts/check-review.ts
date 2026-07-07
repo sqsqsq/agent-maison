@@ -712,7 +712,9 @@ function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResul
 const VISUAL_REVIEW_EVIDENCE: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: '素材验真核验（asset-crop-validation / contact-sheet）', re: /asset-crop-validation|contact-sheet|裁剪验真|素材验真/i },
   { label: '可见文案 diff 复核（visible_text / 豁免表）', re: /visible[-_]text|可见文案|文案(白名单|豁免|diff|比对)/i },
-  { label: '结构声明复核（subtitle_position / 分组容器 / layout_group）', re: /subtitle_position|分组容器|layout_group|结构声明/i },
+  // P1-4②（c9e2a7f4 子批B）：结构声明复核升级为"逐条核对台账"——证据须引用 structure-conformance
+  // 台账（打开 implemented_by 对应 struct 源码验证 how 属实），不再接受仅提及声明字段名的泛引用。
+  { label: '结构声明台账逐条复核（structure-conformance.yaml，打开 implemented_by 源码验证）', re: /structure-conformance|结构(声明)?台账/i },
   { label: 'must_have_elements 覆盖', re: /must[-_]have/i },
 ];
 
@@ -759,7 +761,8 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
       ].filter(Boolean).join('\n'),
       suggestion:
         '按 review SKILL 第 6 维执行：逐项核对 spec/coding 落盘报告（asset-crop-validation.json + contact-sheet、' +
-        'visible_text_whitelist 结果与豁免表、结构声明 lint、must_have 覆盖），把核对结论与引用写进 review-report.md 的' +
+        'visible_text_whitelist 结果与豁免表、coding/structure-conformance.yaml 台账逐条复核（打开 implemented_by ' +
+        '源码验证 how 属实）、must_have 覆盖），把核对结论与引用写进 review-report.md 的' +
         '「视觉保真」维度——不重跑度量，消费既有产物。',
       affected_files: [reportRel],
     }];

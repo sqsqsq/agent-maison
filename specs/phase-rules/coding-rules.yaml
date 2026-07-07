@@ -49,6 +49,18 @@ structure_checks:
       收集器对定位不到的场景保守跳过，产出的命中均为确定性违规。
     severity: BLOCKER
 
+  structure_declaration_ledger:
+    description: >
+      P1-4（c9e2a7f4 子批B）：结构声明台账——spec 每条结构声明（subtitle_position/layout_group/
+      bg_color/global_element）须在 coding/structure-conformance.yaml 逐条登记
+      {node_id, declaration, implemented_by, how}；缺条目=声明被静默无视的显式证据（round6 实锤：
+      card_pack trailing/add_card 分组/tab 容器声明全被无视到真机才暴露）、implemented_by 的
+      struct 须真实存在于源码（防糊名）、how 非空。pixel_1to1 → BLOCKER。
+      诚实边界：台账自报不验真（ArkUI 结构静态判定不可行——组合爆炸必产 FP），只消灭静默；
+      内容真实性=review 逐条人审 + device P1-C 文本类确定性信号 + 用户终审；
+      非文本类结构静态验真列 round7。登记≠实现完成。
+    severity: BLOCKER
+
 semantic_checks: {}
 
 traceability_checks: {}

@@ -1,10 +1,10 @@
 ---
 name: round6 P1 批 — 结构声明台账+一致性抓手(P1-4) / drift_allowlist 权限收紧(P1-5)
-version: 2.5.0
-deferred_to: 2.5.0
-# 顺延说明（发版门禁形式标记，非范围变更）：子批A（P0-6/P0-7/P1-5）已完成并随 2.4.0 窗口
-# 提交（f9b390ca，进本次发布件）；子批B（P1-4①②③）按两段式拆批决议待宿主回修轮数据，
-# 为放行 release:check-plans 顺延 2.5.0——子批B 开工时按届时版本窗口回改（同收尾批先例）。
+version: 2.4.0
+# 版本说明：子批B 开工（2026-07-07，用户发令），顺延标记按承诺回收——版本回 2.4.0（用户控版本）；
+# 子批B todo 将在下次打包前全部 completed，不再触发 release:check-plans。
+# 回修轮数据已齐：must_fix 驱动下"spec 声明→coding 未实现"类缺陷（tab 胶囊/分组/有卡态/截断）
+# 全部修掉并经真人签名终审通过——台账的"消灭静默"定位获正证，判据按此校准。
 overview: >
   背景：round6 收尾批（dcf16b45，P0-1/2/3）已单独进当前发布件，宿主先集成它续跑
   goal 20260703T181220Z 的 testing 回修轮（本次回归只验证 P0 三项）。用户拍板 P1 两项
@@ -85,21 +85,21 @@ todos:
       被无视的显式证据 → BLOCKER 指认；implemented_by 的 struct 须真实存在于源码（scanFeatureSourceTree
       structNames 校验，防台账糊名）。台账为自报——验真分工见 ③，门禁 details 写明诚实边界。
       coding SKILL 增台账纪律（登记≠实现完成，糊弄台账=review 人审+device 信号双重打回）。
-    status: pending
+    status: completed
   - id: p1-4-review-ledger-audit
     content: >
       P1-4② review 视觉维度升级——visual_fidelity_review 的"结构声明复核"证据类从"与参考原图
       对照"升级为"**逐条**核对台账：entries 的 implemented_by 打开对应 struct 源码验证 how 属实"；
       review SKILL 执行定义同步（pixel_1to1 P0 台账全条目核对不许抽查）；check-review 的证据
       关键词正则扩 structure-conformance（缺台账引用 → 证据不全 FAIL）。
-    status: pending
+    status: completed
   - id: p1-4-honest-boundary
     content: >
       P1-4③ 验真分工诚实声明（文档，不造假门禁）——reference/ui-spec.md「结构声明」节与
       device-testing SKILL 补记：文本类结构由 P1-C 同行拆分信号确定性验真；非文本类（tab 胶囊
       容器/分组容器/独卡边距）当前验真=review 台账人审 + 用户终验；容器 bbox 区域采色、
       OmniParser 结构判定列 round7 候选（绝对位置已证伪，不在本批冒进）。
-    status: pending
+    status: completed
   - id: p1-5-allowlist-human-approval
     content: >
       P1-5 drift 放行通道全口径收紧——framework-integrity 的 allowlist 消费改为：条目须
@@ -127,12 +127,59 @@ todos:
       渲染/横幅/tab 胶囊/Huawei Card 截断/add_card 分组）。子批B（P1-4①②③）：待回修轮
       实测数据反哺校准后开做，独立 review/提交。P0 回修轮首跑（2026-07-05 HALTED）已出
       部分数据：card_pack 副标题被 agent 轮内真修 → "must_fix 驱动可修结构类"有初步正证。
-    status: pending
+    status: completed
 ---
 
 # round6 P1 批 — 结构声明台账 + drift 权限收紧
 
-## 子批A 实现记录（2026-07-05，含偏差披露）
+## 子批B 实现记录（2026-07-07，含偏差披露）
+
+**落地清单**：
+- `profiles/hmos-app/harness/structure-ledger.ts`（新）：collectStructureDeclarations（采集
+  subtitle_position/layout_group/bg_color/global_elements 四类确定性字段；无 id 节点用合成键
+  `screen:<sid>/<type>@<order>`，门禁报错键照抄即用）+ auditStructureLedger（缺条目/糊名/缺 how/
+  orphan 四类对账）+ checkStructureDeclarationLedger 门禁（pixel_1to1 BLOCKER，details 带
+  诚实边界注记）；接线于 checkVisualParity 末尾（provider 内组合，零新增 capability 管线）。
+- coding-rules.yaml 增 `structure_declaration_ledger` 声明（指纹纪律）；coding SKILL 增第 8 条
+  台账纪律（登记≠实现完成 + 合成键说明）。
+- P1-4②：check-review 证据正则第 3 类升级为 `/structure-conformance|结构(声明)?台账/`（旧式
+  仅提字段名的泛引用不再算数）；review SKILL 第 3 维改写为"逐条打开 implemented_by 源码验证
+  how 属实，pixel_1to1 P0 全条目不许抽查——台账自报面的唯一人审关口"；review-rules.yaml 同步。
+- P1-4③：reference/ui-spec.md 增「结构声明的验真分工」四层分工（台账表态/device 文本类确定性/
+  review 人审/用户终审 + round7 候选注记）；device-testing SKILL 增分工注记（OCR 只兜文本类，
+  非文本类不得自行宣称验真或失败）。
+
+**偏差/取舍披露**：
+1. plan 原文声明清单含"container children 分组"——实现收敛为 layout_group 承载（分组语义的
+   形式化字段即它；泛"容器 children"无确定性判据）；global_elements 每条记 `global_element`
+   表态（其 bg_color 由屏内节点遍历覆盖，UiSpecGlobalElement 类型本身无 bg_color 字段）。
+2. 台账缺失时门禁 details 直接列出全部待登记键值（照抄即用）——降低 agent 首次补台账成本。
+3. 新增单测：structure-ledger 套件 6（采集全字段含合成键/对账四类/缺台账 BLOCKER 带可抄键/
+   糊名 BLOCKER/齐全 PASS/无声明零回归）+ round6 套件 p1b 用例升级（旧式泛引用 FAIL +
+   台账引用 PASS 两场景）。
+4. 回修轮数据反哺：判据按"must_fix 驱动可修结构类"的正证校准——台账定位为消灭静默 +
+   给 review 定位清单，不做静态验真（维持两轮评审的"不可判"结论）。
+
+**代码 review 二轮采纳（2026-07-07）**：
+- **codex P1a（修复）**：structure-ledger 裸 `import 'yaml'` 改 harness 锚定 createRequire
+  （与 authoritative-ref-images 同模式）——消费者只在 framework/harness 装依赖，裸 import
+  在发布件宿主会炸（本文件曾是唯一直接 import yaml 的 profile 文件）。
+- **codex P1b（修复）**：门禁路径全走 featureDir——uiSpecAbsPath 现存 doc/features 硬编码，
+  自定义 paths.features_dir 宿主会读不到 ui-spec、门禁静默失效；affected_files/ledgerRel 同改；
+  补 `gate_respects_custom_features_dir` 单测（自定义目录缺台账 BLOCKER + 补台账 PASS，
+  affected_files 断言指向自定义目录）。uiSpecAbsPath 本体硬编码属既有共享债，随 round7
+  "路径硬编码统一治理"收（本批不扩散）。
+- **cursor low-1（修复）**：orphan 条目（spec 已无此声明的 stale 项）只提示清理、跳过
+  how/implemented_by 校验——与注释/plan"不阻断"口径一致；补 orphan-字段不全-不阻断单测。
+- **cursor low-2（修复）**：verify-review.md 与 check-review suggestion 的旧"结构声明对照/
+  结构声明 lint"口径同步升级为台账逐条复核。
+- cursor 已知残余风险表（台账糊弄 how/review regex 刷过/headless 伪人名/contracts 缺失全
+  phantom）与 plan 诚实边界一致，知悉不扩范围。
+- **codex 三轮 P1（修复）**：生产入口 checkVisualParity 自身前置读取（loadSpecMarkdown 的
+  spec.md、:91 的 uiSpecAbsPath）仍硬编码——自定义目录下入口提前退出，台账门禁永不触发，
+  上轮单测只证了直接调用路径。已改 featureDir/relFeatureFile 三处，补
+  `production_entry_check_visual_parity_reaches_ledger_in_custom_features_dir` 集成单测
+  （走完整 checkVisualParity 生产入口断言台账 FAIL 触达）。
 
 **落地范围**：P0-6/P0-7/P1-5 全部完成；typecheck 绿 + 全量单测 1427/1427 + fixture 35/35 绿
 （新增 13 用例：process-integrity 5 / antiforgery 3 / framework-integrity +3 / visual-fidelity +2；

@@ -8,14 +8,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureFile } from '../../../harness/config';
+import { relFeatureFile, featureDir } from '../../../harness/config';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
   parseUiChangeFromSpecMarkdown,
   structureFailOrWarn,
-  uiSpecAbsPath,
-  uiSpecRelPath,
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { computeStaticFidelityScore } from './static-fidelity-score';
@@ -34,6 +32,7 @@ import {
 } from './visual-parity-backstop';
 import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
+import { checkStructureDeclarationLedger } from './structure-ledger';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 function ruleDesc(
@@ -46,7 +45,9 @@ function ruleDesc(
 }
 
 function loadSpecMarkdown(ctx: CheckContext): string | null {
-  const p = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'spec', 'spec.md');
+  // codex 三轮 P1：生产入口路径走 featureDir（尊重 paths.features_dir）——否则自定义目录宿主
+  // 在这里读不到 spec.md 提前退出，checkVisualParity 全链（含台账门禁）静默失效。
+  const p = path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'spec.md');
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
 }
@@ -55,7 +56,7 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
 export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   const enforcement = ctx.visualParityEnforcement as VisualEnforcementMode | undefined;
   const desc = ruleDesc(ctx, 'structure_checks', 'visual_parity');
-  const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
+  const uiSpecRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'spec/ui-spec.yaml');
 
   if (ctx.skipVisualParity) {
     return [{
@@ -87,7 +88,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     return [];
   }
 
-  const doc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const doc = loadUiSpecFile(path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'ui-spec.yaml'));
   if (!doc) {
     const { severity, status } = structureFailOrWarn(enforcement);
     return [{
@@ -395,6 +396,9 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
 
   // static fidelity score (K)
   results.push(...computeStaticFidelityScore(ctx, doc, baselineUnverified));
+
+  // P1-4①（c9e2a7f4 子批B）：结构声明台账——消灭"spec 声明被 coding 静默无视"
+  results.push(...checkStructureDeclarationLedger(ctx));
 
   return results;
 }
