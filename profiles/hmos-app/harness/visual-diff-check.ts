@@ -165,6 +165,28 @@ export function isStaleVisualDiffVerdict(
   return false;
 }
 
+/**
+ * P0-10c（plan b6d3e9a2）：逐屏"可交由真人确认"资格谓词——checkVisualDiff 的 await 收窄判定
+ * 与 visual-confirm CLI 的"待确认屏"筛选**同源**（防 CLI 宽筛把 stale/带 must_fix/绑定不全的
+ * 屏签掉）。资格 = pixel_1to1 语境下该屏 verdict=pass、零 must_fix、指纹与当前构建一致、
+ * evaluated hash 齐、非 stale（绑定截图文件未变、指纹一致）。currentBuildFp 不可算 → 一律不合格
+ * （下轮无法跳采，签了也会被重采清）。confirmed_by 是否已填不在此判据内（由调用侧按用途叠加）。
+ */
+export function isScreenAwaitConfirmEligible(
+  screen: VisualDiffScreenEntry,
+  projectRoot: string,
+  currentBuildFingerprint: string | null | undefined,
+): boolean {
+  const fp = typeof currentBuildFingerprint === 'string' ? currentBuildFingerprint.trim() : '';
+  if (!fp) return false;
+  if (screen.verdict !== 'pass') return false;
+  if ((screen.must_fix?.length ?? 0) !== 0) return false;
+  if (screen.evaluated_build_fingerprint?.trim() !== fp) return false;
+  if (isMissingEvaluatedScreenshotHash(screen)) return false;
+  if (isStaleVisualDiffVerdict(screen, projectRoot, { currentBuildFingerprint: fp })) return false;
+  return true;
+}
+
 function collectAuthoritativeRefIds(specMd: string, uiDoc: ReturnType<typeof loadUiSpecFile>): Set<string> {
   const ids = new Set<string>();
   for (const s of uiDoc?.screens ?? []) {
@@ -1190,14 +1212,8 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     failHitsOnly.every(h => h.id === 'visual_diff_human_confirm_required') &&
     p0Uncovered.length === 0 &&
     rep.screens.length > 0 &&
-    rep.screens.every(
-      s =>
-        s.verdict === 'pass' &&
-        (s.must_fix?.length ?? 0) === 0 &&
-        s.evaluated_build_fingerprint?.trim() === currentBuildFp,
-    ) &&
-    staleScreens.length === 0 &&
-    missingEvalHashScreens.length === 0;
+    // 逐屏资格与 CLI 同源谓词（含 pass/零 must_fix/指纹一致/非 stale/hash 齐）
+    rep.screens.every(s => isScreenAwaitConfirmEligible(s, ctx.projectRoot, currentBuildFp));
   if (awaitHumanOnly) {
     finalResult.failure_kind = 'await_human_confirm';
     finalResult.details +=

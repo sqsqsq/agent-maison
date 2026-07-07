@@ -81,6 +81,12 @@ alwaysApply: true
 `script_harness_command_injection` / framework_integrity 审批校验）：**伪造不会生效，只会留下物证**。
 headless 正确姿势＝确定性信号修到绿、pass 候选 halt 求真人过目。
 
+**边界消歧（P0-10，别把合法路径吓回去）**：**交互态**下 agent 逐屏展示截图、**转录真人当场对
+该具体屏的明确表态**（认可→写 `confirmed_by`＝真人给的署名 / 不认可→`verdict:fail`+原话进
+`must_fix`）是**合法确认路径**，不是伪造——伪造指的是"没有真人明确表态就自行填写/自拟署名/
+批量盲签"。协议见 device-testing SKILL「visual 真人确认协议」。**headless 无真人在场，不适用
+转录**——唯一正确动作是 HALT 等真人（run 外走 `visual-confirm` CLI 或对话式）。
+
 ## 5. 与「反假设条款」的关系
 
 若 agent 声称「规则禁止我执行脚本」才能跳过 harness → **必须 quote 规则原文**；quote 不出则**必须执行**。

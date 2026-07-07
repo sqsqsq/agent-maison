@@ -318,6 +318,24 @@ doc/features/{module-name}/testing/test-plan.md
    > 这类屏留 pending 弃判——真人确认（T2 `confirmed_by`）只在**判 pass** 时需要；确定性 FAIL 在手
    > 还全屏 pending＝白烧重试预算 + loop 饿死（终局 run 实锤：5 屏 pending、must_fix=0、3 次重试作废）。
    > 只有"确定性信号全绿、仅剩 pass 候选待真人确认"才 halt 求人。
+   > **判定持久化（P0-9a·e7a91b3c）**：pass/warn/fail 判定（含 `confirmed_by`）绑定「被评截图文件
+   > hash + build 指纹（实际 hap sha256）」——**同一构建下判定跨 harness 轮持久，不会被重采清空**；
+   > 改码重装（hap 变）→ 全部判定自动失效重判（改码必重判）。故真人确认一次即持久（不再像素恒等键
+   > 那样被真机时钟/轮播漂移清掉）。别再手动 reset visual-diff.json 求"刷新"——那是被 P0-7 物证扫描
+   > 视为改判脚本的红线行为。
+   > **visual 真人确认协议（P0-10·b6d3e9a2 · 交互态 agent 收到确认请求时）**：
+   > 1. **逐屏展示**截图与其 spec 参考原图（附差异要点），一屏一屏等真人明确表态；展示方式按你的
+   >    能力三级降级——能内联显示图片就内联，不能则调系统查看器打开，再不能则给出**绝对路径**请
+   >    真人自行打开、等其回复看完再问表态（纯 CLI 型 agent 不得因"贴不了图"卡死或跳过展示直接问结论）；
+   > 2. **认可** → 转录 `confirmed_by`＝真人**当场提供**的署名（**转录≠伪造**：只能记录真人对该具体屏
+   >    的明确表态；**禁**批量盲签、**禁**未展示先问结论、**禁**代答、**禁**自拟或沿用历史署名；
+   >    `user_requirement`/自动化身份无效）；
+   > 3. **不认可** → `verdict: fail` + 真人原话进 `must_fix`；
+   > 4. 绑定字段（`evaluated_screenshot_hash`/`evaluated_build_fingerprint`/`screenshot_hash`）**不动**，
+   >    无 BOM 的 UTF-8 保存；
+   > 5. **headless goal-mode 不适用本协议**——无真人在场，agent 唯一正确动作是让 harness 判
+   >    `await_human_visual_confirm` 后 **HALT 等真人**（run 外用对话式/`visual-confirm` CLI/手改完成）；
+   >    高保真路径是 `visual-confirm` CLI（真人终端直签，无 agent 中介）。
 7. **采集新鲜度（E1/E2）**：P0 屏截图失败（如 Permission denied/锁屏/设备占用）或 `screensWritten=0` 全靠 `preserved` 旧 json 充数时，`visual_diff_capture` 在 `pixel_1to1` 下 **FAIL**（否则 blocking WARN）——**不得**沿用陈旧/错图证据闭环；须修复采集后重采 P0 屏。
 
 ### Step 5: 生成测试报告（测试执行后）

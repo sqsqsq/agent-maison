@@ -24,7 +24,8 @@ import {
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE, AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE } from '../../scripts/goal-runner';
+import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
+import { buildAwaitHumanConfirmGuidance } from '../../scripts/utils/await-confirm-guidance';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -452,14 +453,33 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE: human-only signing + persistence promise',
+      // P0-10a：引导话术机器生成——按 run 上下文注入、协议要素齐、零硬编码人名、含高保真 CLI
+      name: 'buildAwaitHumanConfirmGuidance: run-context injection + protocol + no hardcoded name',
       run: () => {
-        const text = AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE.join('\n');
+        const text = buildAwaitHumanConfirmGuidance({
+          feature: 'homepage',
+          runId: '20260703T181220Z',
+          phase: 'testing',
+          screenshotsDirRel: 'doc/features/homepage/device-testing/device-screenshots',
+          visualDiffJsonRel: 'doc/features/homepage/device-testing/device-screenshots/visual-diff.json',
+          harnessPrefixRel: 'framework/harness',
+        }).join('\n');
+        // run 上下文注入
+        assert(/homepage/.test(text), 'missing feature injection');
+        assert(/20260703T181220Z/.test(text), 'missing run_id injection');
+        // layout 完整命令 + resume 全参数（codex P2）
+        assert(/npm --prefix framework\/harness run visual-confirm -- --feature homepage/.test(text), 'missing prefixed CLI command');
+        assert(/--resume 20260703T181220Z --force-resume/.test(text), 'missing full resume command');
+        // 协议要素
         assert(/confirmed_by/.test(text), 'missing confirmed_by instruction');
         assert(/user_requirement/.test(text), 'missing user_requirement-invalid warning (P0-6)');
-        assert(/真人署名/.test(text), 'missing human-signature requirement');
-        assert(/resume/i.test(text), 'missing resume instruction');
-        assert(/verdict=fail/.test(text), 'missing reject path (不认可的屏)');
+        assert(/verdict.{0,4}fail|"fail"/.test(text), 'missing reject path');
+        assert(/evaluated_build_fingerprint/.test(text), 'missing bind-field protection');
+        // 信任层级（cursor 意见）
+        assert(/软契约/.test(text) && /高保真/.test(text), 'missing trust-tier note');
+        // 零硬编码人名（署名一律"当场提供"）
+        assert(/当场/.test(text), 'signature must be prompted, not templated');
+        assert(!/盛全|张三|alice|Alice/.test(text), 'must not embed a specific human name');
       },
     },
     {

@@ -21,6 +21,7 @@ import {
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
+import { buildAwaitHumanConfirmGuidance } from './utils/await-confirm-guidance';
 import { loadResolvedProfile } from '../profile-loader';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
@@ -470,18 +471,8 @@ const TIMEOUT_RESUMABLE_ARTIFACT_BY_PHASE: Record<FeaturePhase, string[]> = {
 /** P0-D：断流 backoff 退避表（指数 5s→15s→45s，§六-5 拍板）。 */
 export const TRANSIENT_API_BACKOFF_MS: readonly number[] = [5_000, 15_000, 45_000];
 
-/**
- * P0-9b（plan e7a91b3c）：await_human_visual_confirm halt 的真人操作指引。
- * 触发条件（visual-diff-check 收窄判定）＝全部 P0 屏 pass 候选、零 must_fix/defects/stale、
- * 唯一 BLOCKER=T2 真人确认——这是 pixel_1to1 的设计内求人时刻，不是无进展故障。
- */
-export const AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE: readonly string[] = [
-  '全部 P0 屏均为 pass 候选且确定性信号干净——唯一剩余步骤是【真人过目确认】（T2 设计，agent 不能替人签）。',
-  '① 逐屏审阅 device-testing/device-screenshots/shot-*.png，对照 spec 参考原图；',
-  '② 认可的屏：在 device-screenshots/visual-diff.json 对应 screens[].confirmed_by 填**真人署名**（user_requirement / goal-mode-auto 等自动化身份无效，P0-6）；',
-  '③ 不认可的屏：改 verdict=fail 并写 must_fix（具体差异）；',
-  '④ 完成后 goal-runner --resume 本 run 续跑收尾（判定与真人签按 build 指纹持久，不会被重采清空，P0-9a）。',
-];
+// P0-10a：await_human_visual_confirm 引导话术升级为按 run 上下文机器生成的 builder
+// （buildAwaitHumanConfirmGuidance），见 utils/await-confirm-guidance.ts。旧静态常量已废除。
 
 /**
  * P0-D §六-8：0 字节输出判 agent_no_output 的"极短时长"上限。正常 headless agent
@@ -1569,6 +1560,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         });
 
         let haltReason: string | undefined;
+        let awaitConfirmGuidance: string | undefined;
         // P0-D.3 哨兵优先级：agent_timeout > headless_interaction_required > transient_api_error > blocker。
         if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
           action = 'halt';
@@ -1587,10 +1579,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             haltReason = 'transient_api_error_exhausted';
           }
         } else if (failureKind === 'await_human_confirm' && verdict !== 'PASS') {
-          // P0-9b：设计内求人时刻——agent 不能替人签 confirmed_by，重试无意义，首触即 halt
-          // 并给逐步操作指引（区别于 no_progress_visual_gap 的"无进展"误伤）。
+          // P0-9b：设计内求人时刻——agent 不能替人签 confirmed_by，重试无意义，首触即 halt。
+          // P0-10a：引导话术按 run 上下文机器生成（feature/run_id/路径/layout 命令注入）。
           action = 'halt';
           haltReason = 'await_human_visual_confirm';
+          awaitConfirmGuidance = buildAwaitHumanConfirmGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phase,
+            screenshotsDirRel: path.posix.join(featuresDir.replace(/\\/g, '/'), manifest.feature, 'device-testing', 'device-screenshots'),
+            visualDiffJsonRel: path.posix.join(featuresDir.replace(/\\/g, '/'), manifest.feature, 'device-testing', 'device-screenshots', 'visual-diff.json'),
+            harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+          }).join('\n');
+          // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
+          console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
         } else if (
           shouldHaltNoProgress({
             failureKind,
@@ -1770,8 +1772,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...(haltReason === 'await_human_visual_confirm'
-            ? { halt_guidance: AWAIT_HUMAN_VISUAL_CONFIRM_GUIDANCE.join('\n') }
+          ...(haltReason === 'await_human_visual_confirm' && awaitConfirmGuidance
+            ? { halt_guidance: awaitConfirmGuidance }
             : {}),
           interaction_question: interactionSentinel?.error,
           // codex P3：诊断保真进最终报告——只读 goal-report 的下游也能看到真因原文。

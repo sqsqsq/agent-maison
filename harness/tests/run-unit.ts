@@ -156,6 +156,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
+  { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

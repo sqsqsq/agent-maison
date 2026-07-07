@@ -129,9 +129,11 @@ export function generateGoalReportMarkdown(
               ? 'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境'
               : p.halt_reason === 'no_progress_agent_timeout'
                 ? '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）'
-                : p.halted
-                  ? 'halted'
-                  : '—');
+                : p.halt_reason === 'await_human_visual_confirm'
+                  ? '待真人逐屏过目确认（设计内求人时刻，见下方引导）'
+                  : p.halted
+                    ? 'halted'
+                    : '—');
     const summary = p.summary_path ?? '—';
     lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${reason} | ${summary} |`);
     if (p.interaction_question) {
@@ -146,6 +148,17 @@ export function generateGoalReportMarkdown(
     }
     if (p.agent_stderr_excerpt) {
       lines.push(`| ↳ agent stderr | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
+    }
+  }
+
+  // P0-10a 补强②：await_human_visual_confirm 的机器生成引导渲染进 md（detach 用户看 md 亦撞见）。
+  const awaitConfirm = report.phases.filter(
+    (p) => p.halt_reason === 'await_human_visual_confirm' && p.halt_guidance,
+  );
+  if (awaitConfirm.length > 0) {
+    lines.push('', '## 需真人逐屏确认（await_human_visual_confirm）', '');
+    for (const p of awaitConfirm) {
+      lines.push(p.halt_guidance!.trim(), '');
     }
   }
 

@@ -27,6 +27,8 @@
     "lint-adhoc-steps": "ts-node scripts/lint-adhoc-steps.ts",
     "summarize-adhoc-dump": "ts-node scripts/summarize-adhoc-dump.ts",
     "adhoc-device-test": "ts-node scripts/adhoc-device-test.ts",
+    "visual-confirm": "ts-node scripts/visual-confirm.ts",
+    "goal": "ts-node scripts/goal-runner.ts",
     "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts"
   },
