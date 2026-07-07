@@ -14,13 +14,13 @@
 
 ## Step C3 — 生成 DAG
 
-- 写入 `doc/features/{feature}/ut/reports/flow-dag/{flow_id}.dag.yaml`
+- 写入 `<features_dir>/{feature}/ut/reports/flow-dag/{flow_id}.dag.yaml`
 - 顶层 `flow_type: characterization`
 - 每个非 assertion 节点 `origin` 必填（`log_observed` 优先）
 
 ## Step C4 — 入口可测性 + harvest-notes
 
-不可直调点写入 `doc/features/{feature}/ut/harvest-notes.md`；**不**改业务源码。
+不可直调点写入 `<features_dir>/{feature}/ut/harvest-notes.md`；**不**改业务源码。
 
 ## Step C5 — characterization UT
 

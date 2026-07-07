@@ -509,7 +509,7 @@ export function checkContextExplorationArtifact(
         severity: 'BLOCKER',
         status: 'FAIL',
         details: `缺失：${relFromRoot}`,
-        suggestion: fillCompatMessage(SUGGESTION_CONTEXT_EXPLORATION_MISSING, feature, phase),
+        suggestion: fillCompatMessage(SUGGESTION_CONTEXT_EXPLORATION_MISSING, projectRoot, feature, phase),
         affected_files: [relFromRoot],
       },
     ];

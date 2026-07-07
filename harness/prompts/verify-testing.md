@@ -55,7 +55,7 @@
 - **严重等级**: BLOCKER（profile 将 `device_test.run` 声明为 BLOCKER 时） / SKIP（profile 声明 SKIP 时）
 - **评估方法**:
   1. 若 profile **`device_test.run`** 为 SKIP → 整项 SKIP
-  2. 检查派生可执行计划是否存在：`doc/features/<feature>/testing/reports/<某子目录>/hylyre/test-plan.hylyre.md`（选取规则以脚本为准：排除烟测占位，按 mtime 优先；非「字典序最新目录名」）
+  2. 检查派生可执行计划是否存在：`{features_dir}/{feature_name}/testing/reports/<某子目录>/hylyre/test-plan.hylyre.md`（选取规则以脚本为准：排除烟测占位，按 mtime 优先；非「字典序最新目录名」）
   3. 检查派生计划是否含 **`## 测试用例清单`** 标题锚点 + 7 列表头固定顺序（与 Hylyre `plan_parse` / `agent-plan-a` 一致）
   4. 检查顶层 `test-report.md` 是否含 **5 必填章节**：测试概览 / 测试执行结果 / 缺陷清单 / 通过率统计 / 结论
   5. 检查「测试执行结果」表格的「执行状态」列只出现 **4 状态**：通过 / 失败 / 阻塞 / 跳过
@@ -192,7 +192,7 @@ verification_result:
         - 异常路径: N/M 覆盖
         - 遗漏场景: <列表或"无">
       affected_files:
-        - "doc/features/{feature}/testing/test-plan.md"
+        - "{features_dir}/{feature_name}/testing/test-plan.md"
       suggestion: |
         <补充建议，若 PASS 可省略>
 

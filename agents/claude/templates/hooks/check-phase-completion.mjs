@@ -137,6 +137,53 @@ function readStateFileRelFromConfig(projectRoot) {
 }
 
 /**
+ * 解析 paths.features_dir（round7 skills/文案批 plan a9c4e7f1）：
+ * 拦截提示里的回执目标路径须随实例配置，否则 custom features_dir 宿主的
+ * agent 会被引导到错误回执目录、阶段闭环持续失败。缺配置回退默认。
+ */
+function readFeaturesDirFromConfig(projectRoot) {
+  try {
+    const cfgPath = path.resolve(projectRoot, 'framework.config.json');
+    if (!fs.existsSync(cfgPath)) return 'doc/features';
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    const rel = cfg?.paths?.features_dir;
+    if (typeof rel === 'string' && rel.trim()) return rel.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    return 'doc/features';
+  } catch {
+    return 'doc/features';
+  }
+}
+
+/**
+ * 回执目标 rel 路径（codex review 采纳）：回执目录 SSOT 是 paths.receipt_dir_pattern
+ * （与 harness config.ts receiptDirPath 同语义：pattern 相对工程根、<feature>/<phase>
+ * 占位替换），仅拼 features_dir 默认结构会在自定义 pattern（如
+ * doc/features/<feature>/phases/<phase>）宿主下引导 agent 写错目录。
+ * 无 pattern 字段时回退 <features_dir>/<feature>/<phase>。
+ */
+function resolveReceiptRelFromConfig(projectRoot, feature, phase) {
+  try {
+    const cfgPath = path.resolve(projectRoot, 'framework.config.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      const pattern = cfg?.paths?.receipt_dir_pattern;
+      if (typeof pattern === 'string' && pattern.trim()) {
+        const dirRel = pattern
+          .trim()
+          .replace(/<feature>/g, feature)
+          .replace(/<phase>/g, phase)
+          .replace(/\\/g, '/')
+          .replace(/\/+$/, '');
+        return `${dirRel}/phase-completion-receipt.md`;
+      }
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return `${readFeaturesDirFromConfig(projectRoot)}/${feature}/${phase}/phase-completion-receipt.md`;
+}
+
+/**
  * 解析 state_machine.grace_period_minutes / ttl_hours 为毫秒。
  * 任何非法值（缺字段、超范围、非数字）都安静回退到 HOOK_DEFAULT_*——
  * hook 不能因为配置错误而崩溃 / 拒绝放行（用户体验比"严格校验"更重要）。
@@ -491,7 +538,7 @@ export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveB
   return { count, release };
 }
 
-function buildBlockReason(state, missingItems, summaryHint = null, progress = null) {
+function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features', receiptRel = null) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
@@ -520,13 +567,13 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
     `     传入 feature/phase/报告路径。`,
     `  3. 填写阶段完成回执：`,
     `       模板：framework/harness/templates/phase-completion-receipt.md`,
-    `       目标：doc/features/${feature}/${phase}/phase-completion-receipt.md`,
+    `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
     `  4. 重跑 harness-runner.ts，使其回填 receipt.status=passed 后再尝试 stop。`,
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',
     `       cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
     `  这会删除 state file。下一次结束消息时本 hook 不会再拦你；`,
-    `  历史 verdict / 报告 / 回执仍保留在 reports 与 doc/features 下。`,
+    `  历史 verdict / 报告 / 回执仍保留在 reports 与 ${featuresDir} 下。`,
     '',
     'CLAUDE.md §5.1 把"四份物理凭证齐全"作为闭环判据；本提示是物理拦截层在',
     '提醒你做出选择，不是要求"必须立刻完成"。继续 / 放弃二选一即可。',
@@ -658,7 +705,8 @@ async function main() {
   const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
     count,
     max: maxConsecutiveBlocks,
-  });
+  }, readFeaturesDirFromConfig(projectRoot),
+  resolveReceiptRelFromConfig(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown'));
   const decision = {
     decision: 'block',
     reason,

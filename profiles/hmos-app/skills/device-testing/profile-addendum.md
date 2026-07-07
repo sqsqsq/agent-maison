@@ -71,7 +71,7 @@
 - **ensure 触发点**：**非** device-testing 入口独立步骤；**agent 在 device-testing Step 7 自跑 `testing` harness** 时，在 **`device_test.run`** 前自动调用 **`ensureHylyreReady`**（build → install → ensure → run）。**用户不直接执行 harness 脚本**；重试亦用自然语言调起 device-testing，由 agent 自跑（见 `.cursor/rules/framework-agent-execution.mdc`）。
 - **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下 wheel + `release.manifest.json` 后，**用户只需用自然语言重新发起 device-testing 真机测试**；agent 自跑 testing harness 时，默认 venv 会按 manifest 版本与 wheel sha256 自动 **`pip install --upgrade`**（无 install fingerprint 或 sha256 变化时亦会重装），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**；**通常无需手删 `.hylyre/venv`**。
 - **首次安装 / 升级**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
-- **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `doc/features/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
+- **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `<features_dir>/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
 - **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需在该环境手动升级或取消该变量。
 - **即席入口**：`npm run adhoc-device-test`（device-testing Step 4.B）同样在 run 前 **`ensureHylyreReady`**；**勿**使用 `harness-runner --feature _adhoc`。
 - **单机 ensure 失败诊断**：[hylyre-host-preflight.md](../../../../skills/feature/device-testing/reference/hylyre-host-preflight.md)（agent 按日志处理宿主因素，不要求用户 pip）。
@@ -79,7 +79,7 @@
 ### hypium 临时目录（`tmp_hypium/`）
 
 - **来源**：Hylyre 传递依赖 **hypium** 在进程 **cwd** 下创建 `./tmp_hypium`（UI 树 `*_tmp_uitree.json`、截图等），非本仓库业务代码。
-- **Framework 行为**（`hylyre-spawn.ts` / `device-test-run.ts`）：所有 `python -m hylyre …` 子进程（含 `doctor` / `run` / `dump-ui` / `app page save` / `session start`）的 **cwd** 统一为 `doc/features/<feature>/testing/reports/.hypium-workdir`，故 `tmp_hypium` 落在 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `doc/features/*/*/reports/*` gitignore 内）；段首 **best-effort 清理** 工程根遗留 `<repo>/tmp_hypium/`。
+- **Framework 行为**（`hylyre-spawn.ts` / `device-test-run.ts`）：所有 `python -m hylyre …` 子进程（含 `doctor` / `run` / `dump-ui` / `app page save` / `session start`）的 **cwd** 统一为 `<features_dir>/<feature>/testing/reports/.hypium-workdir`，故 `tmp_hypium` 落在 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `<features_dir>/*/*/reports/*` gitignore 内）；段首 **best-effort 清理** 工程根遗留 `<repo>/tmp_hypium/`。
 - **污染检测**：ensure/run 结束写入 `hylyre-ready.meta.json` / `device-test-run.meta.json` 的 `root_pollution`；stderr/log 锚点 `ROOT_HYLYRE_POLLUTION=1`（非 BLOCKER，`check-testing` WARN）。
 - **cwd 隔离为主**；canonical `**/tmp_hypium/`（framework-init）仅作兜底，**勿**把工程根 `/reports/` 当作 harness 报告目录。
 
@@ -91,7 +91,7 @@
 
 ### 顶层 test-plan.md → 派生执行计划
 
-- **派生路径**：`doc/features/<feature>/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`
+- **派生路径**：`<features_dir>/<feature>/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`
 - **硬性约束**（与 Hylyre `agent-plan-a` 一致）：
   - 锚点标题：**`## 测试用例清单`**（或 `### …`）
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
@@ -127,7 +127,7 @@
 
 ### plan 派生缺失时的结构化提示
 
-- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 3）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，便于下一轮 Agent 派生。
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 3）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，便于下一轮 Agent 派生。
 - **SSOT 覆盖门禁（v2）**：顶层 **`test-plan.md`** 为唯一用例清单权威；**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）并上 **显式跳过登记** 必须完整覆盖顶层全部 `TC-xxx`。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。
 - **显式跳过登记**（无法写成可靠 Hylyre JSON 的用例）：在派生 **`test-plan.hylyre.md`** 的 **YAML frontmatter** 中写 `explicit_skip_tc_ids: [TC-010, …]`，或在同目录 **`derive-manifest.json`** 写 `{ "explicit_skip_tc_ids": ["TC-010"] }`（可两项合并去重）。须在 Step 5 **test-report.md** 对应用例标 **跳过** 并说明原因。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
@@ -165,7 +165,7 @@
 
 - Hylyre 子目录产出 **`test-report.md`（5 章节）** 与 **`trace.json`（cases[]）**。
 - Harness 在 **`device_test.run` 成功后** 写入 **`reports/<feature>/testing/device-test-timing.json`**（流水线各阶段 ms + 各 TC 耗时）。
-- Agent 将 **cases[].status** 与顶层计划对齐合并到 **`doc/features/<feature>/testing/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；**必须**读取 `device-test-timing.json` 填充「真机流水线耗时」表与各用例 **耗时** 列；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
+- Agent 将 **cases[].status** 与顶层计划对齐合并到 **`<features_dir>/<feature>/testing/test-report.md`**：状态枚举 **通过 / 失败 / 阻塞 / 跳过**；**必须**读取 `device-test-timing.json` 填充「真机流水线耗时」表与各用例 **耗时** 列；结论 **达标 / 有条件达标 / 不达标**（与现有模板一致）。
 - 未进入派生计划的 TC 在顶层报告中 **跳过**，备注示例：缺少稳定 selector，需补 plan.md / contracts.yaml。
 - **Toast 断言不可用**：若本机 `assert_toast` 因 HarmonyOS 版本/环境不支持而失败（非应用文案错误），在 **test-report.md** 标 **跳过** 并备注「环境不支持 toast 断言」，勿当作应用缺陷硬判 FAIL。
 

@@ -4,7 +4,7 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试执行人**: {tester}
-> **对应测试计划**: `doc/features/{module-name}/testing/test-plan.md`
+> **对应测试计划**: `<features_dir>/{module-name}/testing/test-plan.md`
 
 ---
 

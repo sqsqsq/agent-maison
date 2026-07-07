@@ -8,5 +8,5 @@
 ## 阅读顺序
 
 1. 读 `use-cases.yaml` 内的 `coordinator` / `ui_bindings` / `data_boundaries` / `branches`
-2. 在真实 feature 中把这些信息落到 `doc/features/<feature>/use-cases.yaml`
+2. 在真实 feature 中把这些信息落到 `<features_dir>/<feature>/use-cases.yaml`
 3. 按当前 profile 的工具链决定是否生成 DAG、mock-plan、自动化 UT

@@ -1,6 +1,6 @@
 # UI-Spec（UI-DSL）— 结构化视觉中间产物
 
-本文档约定 `doc/features/<feature>/spec/ui-spec.yaml` 的写法。它是 **spec → plan → coding** 贯穿的视觉 SSOT，与 [visual-handoff.md](./visual-handoff.md) 并存：**Handoff 声明真源路径，ui-spec 承载可机读的组件树 / token / 资产 / 逐字文案**。
+本文档约定 `<features_dir>/<feature>/spec/ui-spec.yaml` 的写法。它是 **spec → plan → coding** 贯穿的视觉 SSOT，与 [visual-handoff.md](./visual-handoff.md) 并存：**Handoff 声明真源路径，ui-spec 承载可机读的组件树 / token / 资产 / 逐字文案**。
 
 ## 何时必填
 
@@ -9,7 +9,7 @@
 ## 文件路径
 
 ```
-doc/features/<feature>/spec/ui-spec.yaml
+<features_dir>/<feature>/spec/ui-spec.yaml
 ```
 
 模板：`` `profile-skill-asset:spec/ui_spec_template` ``（hmos-app profile）。
@@ -127,7 +127,7 @@ global_elements:
 
 ## 捕获完整性：`ref-elements.yaml`（v2.4+）
 
-与 ui-spec 并列产出 **`doc/features/<feature>/spec/ref-elements.yaml`**：参考图侧**独立枚举**（分母不得取自 ui-spec 自身）。
+与 ui-spec 并列产出 **`<features_dir>/<feature>/spec/ref-elements.yaml`**：参考图侧**独立枚举**（分母不得取自 ui-spec 自身）。
 
 ```yaml
 schema_version: "1.0"
@@ -280,7 +280,7 @@ assets:
 ## 与 Visual Handoff 打通
 
 - `screens[].ref_id` 须能对应 `visual_handoff.authoritative_refs[].id`。
-- 资产 `resolved_path` 宜落在 `doc/features/<feature>/spec/assets/` 下。
+- 资产 `resolved_path` 宜落在 `<features_dir>/<feature>/spec/assets/` 下。
 
 ## 脚本守门
 

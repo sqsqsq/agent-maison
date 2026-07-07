@@ -4,8 +4,8 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试负责人**: {tester}
-> **对应 spec**: `doc/features/{module-name}/spec/spec.md`
-> **对应设计**: `doc/features/{module-name}/plan/plan.md`
+> **对应 spec**: `<features_dir>/{module-name}/spec/spec.md`
+> **对应设计**: `<features_dir>/{module-name}/plan/plan.md`
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### 测试功能点
 
-> 基于 `doc/features/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
+> 基于 `<features_dir>/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
 
 <列出 P0/P1 功能点摘要>
 
@@ -113,7 +113,7 @@
 ---
 
 > **派生提示**：本计划由 agent 在 device-testing Step 4.5 派生为可执行格式 **`test-plan.hylyre.md`**，
-> 落于 `doc/features/{module-name}/testing/reports/<timestamp>/hylyre/`。顶层计划是人审 SSOT，
+> 落于 `<features_dir>/{module-name}/testing/reports/<timestamp>/hylyre/`。顶层计划是人审 SSOT，
 > 派生文件由 agent 自动维护，请勿手工编辑后者。规则见 **hmos-app** 的
 > [`profile-addendum.md`](../profile-addendum.md)「真机自动化」章及模板
 > [`test-plan-hylyre-template.md`](test-plan-hylyre-template.md)。

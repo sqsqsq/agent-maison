@@ -6,7 +6,7 @@
 # Plan 阶段规约 (Phase Rules)
 # ============================================================================
 # 定义实现计划（plan）（plan 产出）必须满足的通用规则。
-# 适用于所有功能模块的 doc/features/{module}/plan/plan.md。
+# 适用于所有功能模块的 <features_dir>/{module}/plan/plan.md。
 #
 # 消费者:
 #   - framework/harness/scripts/check-plan.ts  (脚本 Harness, 确定性检查)
@@ -15,7 +15,7 @@
 
 phase: plan
 version: "1.0"
-applies_to: "doc/features/{module}/plan/plan.md"
+applies_to: "<features_dir>/{module}/plan/plan.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测
@@ -67,8 +67,8 @@ structure_checks:
       这是阻止 AI 自行扩大需求范围的核心 Scope 守门规则。
     severity: BLOCKER
     rule:
-      source: "doc/features/{module}/spec/spec.md > Scope 声明 > yaml"
-      target: "doc/features/{module}/plan/plan.md > Scope 声明与继承 > yaml"
+      source: "<features_dir>/{module}/spec/spec.md > Scope 声明 > yaml"
+      target: "<features_dir>/{module}/plan/plan.md > Scope 声明与继承 > yaml"
       assertions:
         - "plan.in_scope_modules ⊆ (spec.in_scope_modules ∪ plan.expansions_with_user_approval.modules)"
         - "plan.in_scope_modules ∩ spec.out_of_scope_modules ⊆ plan.expansions_with_user_approval.modules"

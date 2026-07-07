@@ -313,7 +313,7 @@ export function applyCompatDowngrade(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `${relCompat}: scheduled_backfill_by=${data.scheduled_backfill_by} 已过期`,
-      suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, ctx.feature, ctx.phase),
+      suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, ctx.projectRoot, ctx.feature, ctx.phase),
       affected_files: [relCompat],
     });
     return { results: out, stats };

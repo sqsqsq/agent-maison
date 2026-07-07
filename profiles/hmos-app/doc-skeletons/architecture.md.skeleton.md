@@ -8,7 +8,7 @@
 ## 生成说明
 
 - 本文档由 **Skill `framework-init`** 基于 `framework` 模板首次生成。
-- **后续仅架构级变更才更新本文**，三类触发场景见下方「变更触发条件」；feature 级变更（既有模块内新增页面 / 接口 / 数据模型 / 修复）不写入本文，变更历史由 git 与 `doc/features/<feature>/` 承担。
+- **后续仅架构级变更才更新本文**，三类触发场景见下方「变更触发条件」；feature 级变更（既有模块内新增页面 / 接口 / 数据模型 / 修复）不写入本文，变更历史由 git 与 `<features_dir>/<feature>/`（默认 `doc/features/<feature>/`） 承担。
 - 若调整了外层 / 内层 / 出口文件名，必须同步 `framework.config.json` 并通过 harness 相关检查。
 
 ### 变更触发条件（写入/修改本文前先对号入座）
@@ -72,7 +72,7 @@ graph TD
 ## 架构级变更记录
 
 > **准入条件**：仅记录 `dsl_change` / `module_set_change` / `responsibility_rewrite` 三类架构级事件。
-> **禁入内容**：feature 级变更（页面新增 / 接口新增 / 数据模型扩展 / bug 修复 / 样式调整等）一律不记录，由 git history 与 `doc/features/<feature>/` 承担。
+> **禁入内容**：feature 级变更（页面新增 / 接口新增 / 数据模型扩展 / bug 修复 / 样式调整等）一律不记录，由 git history 与 `<features_dir>/<feature>/`（默认 `doc/features/<feature>/`） 承担。
 
 | 日期 | 影响等级 | 说明 |
 |------|----------|------|

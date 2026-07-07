@@ -2255,7 +2255,7 @@ function checkDeviceTestRunGate(
         status: 'WARN',
         details: formatRootPollutionWarnDetails(pollutionHit, reportsDir),
         suggestion:
-          '确认 hylyre 子进程 cwd 为 doc/features/<feature>/testing/reports/.hypium-workdir；勿在工程根直跑 python -m hylyre。升级 framework 后重跑 /framework-init。',
+          `确认 hylyre 子进程 cwd 为 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'testing/reports/.hypium-workdir')}；勿在工程根直跑 python -m hylyre。升级 framework 后重跑 /framework-init。`,
       });
     }
     return out;

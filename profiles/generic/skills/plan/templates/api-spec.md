@@ -92,7 +92,7 @@ export class ItemRepository {
 | 多步云调用串行（≥2 次） | ✅ | 独立业务类 Flow/Coordinator |
 | 含回滚分支（失败需撤销持久化） | ✅ | 独立业务类 Flow/Coordinator |
 
-> 满足后三条任一时，同步产出 `doc/features/{feature}/use-cases.yaml` 作为规约文档；否则 `acceptance.yaml + dag.yaml` 足够。
+> 满足后三条任一时，同步产出 `<features_dir>/{feature}/use-cases.yaml` 作为规约文档；否则 `acceptance.yaml + dag.yaml` 足够。
 
 ### 定义格式（形态 B：独立业务类）
 

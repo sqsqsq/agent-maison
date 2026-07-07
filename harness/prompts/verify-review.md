@@ -152,7 +152,7 @@
 
 - **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/review/context-exploration.md`（schema 1.1.0）
+  1. 读取 `{features_dir}/{feature_name}/review/context-exploration.md`（schema 1.1.0）
   2. 对照审查范围与 contracts：`source_code_paths`、`Code Facts` 是否覆盖被审源码
   3. 探索与结论范围明显不匹配 → FAIL
 

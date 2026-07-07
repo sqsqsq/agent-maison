@@ -17,9 +17,9 @@
 
 相对工程根：
 
-1. `doc/features/<feature>/testing/reports/hylyre-doctor.log`
-2. `doc/features/<feature>/testing/reports/hylyre-ready.meta.json`
-3. `doc/features/<feature>/testing/reports/device-test-run.log`（run 阶段）
+1. `<features_dir>/<feature>/testing/reports/hylyre-doctor.log`
+2. `<features_dir>/<feature>/testing/reports/hylyre-ready.meta.json`
+3. `<features_dir>/<feature>/testing/reports/device-test-run.log`（run 阶段）
 
 即席 feature 目录名为 `_adhoc`。
 

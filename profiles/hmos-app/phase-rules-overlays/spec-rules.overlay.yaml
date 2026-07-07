@@ -4,7 +4,7 @@
 
 phase: spec
 version: "1.0"
-applies_to: "doc/features/{module}/spec/spec.md"
+applies_to: "<features_dir>/{module}/spec/spec.md"
 
 semantic_checks:
   ui_component_terminology:

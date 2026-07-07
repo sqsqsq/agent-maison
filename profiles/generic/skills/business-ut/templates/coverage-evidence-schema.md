@@ -1,6 +1,6 @@
 # coverage-evidence.json Schema（UT 覆盖证据）
 
-> 路径：`doc/features/<feature>/ut/reports/coverage-evidence.json`
+> 路径：`<features_dir>/<feature>/ut/reports/coverage-evidence.json`
 > **business-ut 在存在 `ut_layer ∈ {unit, both}` 范围时须产出**；harness **不会**自造 `mappings[]`（仅校验，避免自证绿洞）。
 
 ## 何时必填

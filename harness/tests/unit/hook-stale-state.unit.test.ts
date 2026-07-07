@@ -81,6 +81,8 @@ interface FixtureOptions {
   lastRunAt?: string;
   /** 追加写入 state 的额外字段（如预置 consecutive_block_count / block_signature）。 */
   stateExtra?: Record<string, unknown>;
+  /** 覆盖 framework.config.json 的 paths 字段（round7 路径治理：custom features_dir / receipt_dir_pattern 用例）。 */
+  pathsOverride?: Record<string, string>;
 }
 
 function makeFixture(opts: FixtureOptions): string {
@@ -106,6 +108,7 @@ function makeFixture(opts: FixtureOptions): string {
       state_file: 'framework/harness/state/.current-phase.json',
       receipt_dir_pattern: 'doc/features/<feature>/<phase>',
       reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
+      ...(opts.pathsOverride ?? {}),
     },
   };
   if (opts.stateMachine !== undefined && opts.stateMachine !== null) {
@@ -650,6 +653,37 @@ function testT19_signatureParityWithGoal(): void {
   }
 }
 
+function testT20_blockReasonRespectsReceiptDirPattern(): void {
+  // round7 skills/文案批（plan a9c4e7f1 review 闭环，codex 意见）：拦截文案的回执目标
+  // 须尊重回执目录 SSOT paths.receipt_dir_pattern（<feature>/<phase> 占位替换），而非
+  // 仅拼 features_dir 默认结构——自定义 pattern（…/phases/<phase>）宿主下否则 agent
+  // 被引导写错目录、闭环持续卡死。
+  const dir = makeFixture({
+    closed: false,
+    stateSessionId: 'sid-A',
+    pathsOverride: {
+      features_dir: 'requirements/features',
+      receipt_dir_pattern: 'requirements/features/<feature>/phases/<phase>',
+    },
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T20 同会话 + 未闭环 → exit 2');
+    assertStderrContains(
+      out,
+      'requirements/features/demo-feature/phases/coding/phase-completion-receipt.md',
+      'T20 回执目标须按 receipt_dir_pattern 解析',
+    );
+    assertStderrNotContains(
+      out,
+      'doc/features/demo-feature/coding/phase-completion-receipt.md',
+      'T20 不得引导默认布局回执路径',
+    );
+  } finally {
+    rmDir(dir);
+  }
+}
+
 // --------------------------------------------------------------------------
 // 注册
 // --------------------------------------------------------------------------
@@ -679,6 +713,10 @@ const CASES: Array<{ name: string; fn: () => void }> = [
     fn: testT16_goalHeadlessEnvBypassesStopHook,
   },
   { name: 'T17 逃生阀：连续零进展达阈值 → exit 0 放行', fn: testT17_escapeValveReleasesAtThreshold },
+  {
+    name: 'T20 拦截文案回执目标尊重 receipt_dir_pattern（custom 宿主）',
+    fn: testT20_blockReasonRespectsReceiptDirPattern,
+  },
   { name: 'T18 真重跑 harness（last_run_at 变）→ 逃生阀计数归零', fn: testT18_realRerunResetsCounter },
   { name: 'T19 hook signature 与 goal extractBlockerSignature 同语义', fn: testT19_signatureParityWithGoal },
 ];

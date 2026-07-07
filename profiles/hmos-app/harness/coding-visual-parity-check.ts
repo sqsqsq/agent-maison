@@ -208,7 +208,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ].join('\n'),
         suggestion:
           '逐条处置：文本确在原图 → 回 spec 补 ref-elements/ui-spec（走 capture_completeness_external）；' +
-          '确属功能必需的非原图文案（toast/错误提示等）→ 登记 doc/features/<feature>/coding/visible-text-exemptions.yaml' +
+          `确属功能必需的非原图文案（toast/错误提示等）→ 登记 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'coding/visible-text-exemptions.yaml')}` +
           '（entries[].text/rationale，无 rationale 不生效，review 视觉维度会复核）；纯脑补 → 删除。',
         affected_files: [uiSpecRel],
       });

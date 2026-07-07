@@ -54,7 +54,7 @@
 
 ## `paths.docs_committed`（与收据 Q3）
 
-- 默认 **`false`**：`doc/features/**` **不假定**入主仓；完成回执 Q3 不得保留模板占位，但**不要求**路径在磁盘必存在。
+- 默认 **`false`**：`<features_dir>/**`（默认 `doc/features/**`） **不假定**入主仓；完成回执 Q3 不得保留模板占位，但**不要求**路径在磁盘必存在。
 - **`true`**（演示仓）：Q3 填写的路径须在工程根解析后 **exists**。详见 `framework/docs/visual-handoff-config-migration.md`。
 
 ---

@@ -75,7 +75,7 @@ visual_handoff:
   kind: repo_assets
   authoritative_refs:
     - id: example_region
-      path: doc/features/{module-id}/ux-reference/README.md
+      path: <features_dir>/{module-id}/ux-reference/README.md
 ```
 
 <!--

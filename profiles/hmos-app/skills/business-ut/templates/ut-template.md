@@ -27,7 +27,7 @@
 ```typescript
 // ============================================================================
 // UseCase (规约): {useCaseId}
-// use-cases.yaml: doc/features/{feature}/use-cases.yaml > use_cases[{useCaseId}]
+// use-cases.yaml: <features_dir>/{feature}/use-cases.yaml > use_cases[{useCaseId}]
 // Coordinator:    {coordinator 符号名（类 / Page.method / 导出函数）}
 // DAG 文件:        {module}/test/dag/{flow_id}.dag.yaml
 // 覆盖的 branches: {branch_ids}

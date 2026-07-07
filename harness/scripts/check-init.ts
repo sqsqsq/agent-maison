@@ -47,7 +47,7 @@ import {
 } from './utils/config-field-merger';
 import { loadLocalConfig } from './utils/framework-local-config';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
-import { loadFrameworkConfig } from '../config';
+import { loadFrameworkConfig, relFeaturesDir } from '../config';
 import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
@@ -62,6 +62,7 @@ import { resolveSkillPath } from './utils/resolve-skill-path';
 import {
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
+  canonicalIgnorePatterns,
   collectGitignoreAdvisories,
   ensureCanonicalGitignore,
   listMissingCanonicalPatterns,
@@ -1822,7 +1823,9 @@ function inspect11(env: InspectorEnv): Inspection {
     };
   }
   const lines = parseGitignoreLines(txt);
-  const missingPatterns = listMissingCanonicalPatterns(lines);
+  // features_dir 派生 pattern 随实例配置（plan a9c4e7f1）：体检与 ensure 写入侧同口径
+  const featuresRel = relFeaturesDir(env.projectRoot);
+  const missingPatterns = listMissingCanonicalPatterns(lines, featuresRel);
   const advisories = collectGitignoreAdvisories(txt);
   const advisoryNote =
     advisories.length > 0
@@ -1839,7 +1842,7 @@ function inspect11(env: InspectorEnv): Inspection {
       diff_summary: null,
       planned_strategy: strategyText(11, 'POPULATED'),
       diagnosis:
-        `canonical-gitignore：${CANONICAL_IGNORE_PATTERNS.length} 条 patterns 已全部等价覆盖` +
+        `canonical-gitignore：${canonicalIgnorePatterns(featuresRel).length} 条 patterns 已全部等价覆盖` +
         advisoryNote,
     };
   }

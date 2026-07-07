@@ -9,6 +9,8 @@ import * as path from 'path';
 
 import {
   CANONICAL_IGNORE_PATTERNS,
+  canonicalIgnorePatterns,
+  ignoreEquivPatterns,
   collectGitignoreAdvisories,
   ensureCanonicalGitignore,
   listMissingCanonicalPatterns,
@@ -16,6 +18,7 @@ import {
   patternIsCovered,
 } from '../../scripts/utils/canonical-gitignore';
 import { __testing } from '../../scripts/check-init';
+import { clearFrameworkConfigCache } from '../../config';
 
 export interface UnitCaseResult {
   name: string;
@@ -106,6 +109,63 @@ export function runAll(): UnitCaseResult[] {
       const txt = fs.readFileSync(path.join(root, '.gitignore'), 'utf-8');
       const missing = listMissingCanonicalPatterns(parseGitignoreLines(txt));
       assert(missing.length === 0, `still missing: ${missing.join(', ')}`);
+    });
+  });
+
+  // ---- round7 skills/文案批（plan a9c4e7f1 E2）：features_dir 函数化 ----
+
+  run('E2 零回归锚点：canonicalIgnorePatterns() 默认与常量逐条相等', () => {
+    const fn = canonicalIgnorePatterns();
+    assert(fn.length === CANONICAL_IGNORE_PATTERNS.length, `length ${fn.length}`);
+    for (let i = 0; i < fn.length; i++) {
+      assert(fn[i] === CANONICAL_IGNORE_PATTERNS[i], `[${i}] ${fn[i]} !== ${CANONICAL_IGNORE_PATTERNS[i]}`);
+    }
+  });
+
+  run('E2 custom features_dir：三类动态化 + 无旧模式残留 + _adhoc 字面量保留', () => {
+    const custom = canonicalIgnorePatterns('requirements/features');
+    // 三类 features_dir 派生模式随配置生成
+    assert(custom.includes('requirements/features/*/*/reports/*'), 'custom reports');
+    assert(custom.includes('requirements/features/*/goal-runs/'), 'custom goal-runs');
+    assert(custom.includes('requirements/features/*/ux-reference/_fidelity-cache/'), 'custom fidelity-cache');
+    // 不残留对应 doc/features 旧模式（codex P2 双断言）
+    assert(!custom.includes('doc/features/*/*/reports/*'), 'no stale reports');
+    assert(!custom.includes('doc/features/*/goal-runs/'), 'no stale goal-runs');
+    assert(!custom.includes('doc/features/*/ux-reference/_fidelity-cache/'), 'no stale fidelity-cache');
+    // _adhoc 契约固定 doc/features/_adhoc（adhoc-canonical-paths SSOT，不随 features_dir 迁移）
+    assert(custom.includes('/doc/features/_adhoc/'), '_adhoc literal kept');
+    assert(!custom.includes('/requirements/features/_adhoc/'), '_adhoc must NOT follow features_dir');
+    // equiv map 键同步
+    const equiv = ignoreEquivPatterns('requirements/features');
+    assert(Array.isArray(equiv['requirements/features/*/goal-runs/']), 'equiv key follows');
+    assert(equiv['doc/features/*/goal-runs/'] === undefined, 'stale equiv key gone');
+  });
+
+  run('E2 ensure custom 宿主端到端：.gitignore 按配置生成且 _adhoc 保留', () => {
+    withTmpProject(root => {
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.0', project_name: 'x', project_type: 'app',
+          paths: { features_dir: 'requirements/features' },
+        }),
+        'utf-8',
+      );
+      clearFrameworkConfigCache();
+      try {
+        const r = ensureCanonicalGitignore(root);
+        assert(r.created === true, 'created');
+        const lines = parseGitignoreLines(fs.readFileSync(path.join(root, '.gitignore'), 'utf-8'));
+        assert(lines.includes('requirements/features/*/goal-runs/'), 'custom goal-runs written');
+        assert(lines.includes('requirements/features/*/*/reports/*'), 'custom reports written');
+        assert(lines.includes('/doc/features/_adhoc/'), '_adhoc literal written');
+        assert(!lines.includes('doc/features/*/goal-runs/'), 'no default goal-runs leaked');
+        // 幂等：再跑一次不再新增
+        const r2 = ensureCanonicalGitignore(root);
+        assert(r2.added.length === 0, `idempotent, added=${r2.added.join(',')}`);
+      } finally {
+        clearFrameworkConfigCache();
+      }
     });
   });
 

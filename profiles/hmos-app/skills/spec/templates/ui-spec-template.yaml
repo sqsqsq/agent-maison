@@ -1,4 +1,4 @@
-# UI-Spec 模板 — 复制到 doc/features/<feature>/spec/ui-spec.yaml 并按截图填写
+# UI-Spec 模板 — 复制到 <features_dir>/<feature>/spec/ui-spec.yaml 并按截图填写
 # 规范：framework/skills/feature/spec/reference/ui-spec.md
 schema_version: "1.0"
 verified: unverified
@@ -50,6 +50,6 @@ assets:
     acquisition: crop
     source_ref: screen_id_example
     # source_bbox: [0.0, 0.0, 0.1, 0.1]
-    resolved_path: doc/features/<feature>/spec/assets/example_logo.png
+    resolved_path: <features_dir>/<feature>/spec/assets/example_logo.png
     # 若暂缺：placeholder: true
     # rationale: "品牌矢量待设计提供"

@@ -1,6 +1,6 @@
 # `use-cases.yaml` Schema 规范
 
-> 本文件定义 `doc/features/{module}/use-cases.yaml` 的 Schema。
+> 本文件定义 `<features_dir>/{module}/use-cases.yaml` 的 Schema。
 > **这是一份规约文档（spec），不是代码规格（code form spec）**。
 > 由 **plan（需求设计）** 在设计阶段按需产出，是业务级 UT（business-ut）做端到端分支覆盖的蓝图。
 
@@ -138,7 +138,7 @@ use_cases:
 4. **`phases` 首元素为 `Idle`**：`expected_phase_seq` 从 `Idle` 开始。
 5. **branches 覆盖分支爆炸**：happy path + 每种可预期失败路径（云侧失败、本地失败、回滚路径）都列入。
 6. **`linked_acceptance` 不能为空**：若某分支暂无对应 AC，spec/2 先补 AC。
-7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `doc/features/{feature}/acceptance.yaml > device_focus`。
+7. **禁止 UI 副作用断言字段**（如 `expected_navigation` / `expected_toast`）：这类期望写到 `<features_dir>/{feature}/acceptance.yaml > device_focus`。
 
 ## 与其他 Spec 的追溯关系
 

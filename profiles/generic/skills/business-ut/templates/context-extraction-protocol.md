@@ -20,14 +20,14 @@
 
    ```bash
    # 只读 interfaces[] 部分
-   读取 doc/features/<feature>/contracts.yaml
+   读取 <features_dir>/<feature>/contracts.yaml
    ```
 
 4. **acceptance.yaml 的 unit/both 条目**：
 
    ```bash
    # 读取并过滤 ut_layer in {unit, both}
-   读取 doc/features/<feature>/acceptance.yaml
+   读取 <features_dir>/<feature>/acceptance.yaml
    ```
 
 ## 绝对禁止

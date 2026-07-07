@@ -18,7 +18,7 @@ tools: Read, Glob, Grep
 - `feature`: 功能名，如 `home-page` / `bank-card`
 - `phase`: `spec` | `plan`（legacy：`prd`/`design` 仍接受） | `coding` | `review` | `ut` | `testing`
 - （可选）`script_report_path`: 脚本 Harness (`check-<phase>.ts`) 的报告路径
-- （可选）`trace_dir`: `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/`（未配置 `paths.reports_dir_pattern` 时 legacy：`framework/harness/reports/...`）
+- （可选）`trace_dir`: `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/`（未配置 `paths.reports_dir_pattern` 时 legacy：`framework/harness/reports/...`）
 
 ## 工作流
 
@@ -26,12 +26,12 @@ tools: Read, Glob, Grep
 1. **读取规则**：`framework/specs/phase-rules/<phase>-rules.yaml`
 2. **读取 prompt 模板**：`framework/harness/prompts/verify-<phase>.md`
 3. **读取待审产物**（按 phase）：
-   - spec → `doc/features/<feature>/spec/spec.md`
-   - plan → `doc/features/<feature>/plan/plan.md` + `contracts.yaml` + `acceptance.yaml`
+   - spec → `<features_dir>/<feature>/spec/spec.md`
+   - plan → `<features_dir>/<feature>/plan/plan.md` + `contracts.yaml` + `acceptance.yaml`
    - coding → 代码变更（用 `Glob` / `Read`，不执行 `git`，差异信息从 `script_report_path` 获取）
-   - review → `doc/features/<feature>/review/review-report.md`
+   - review → `<features_dir>/<feature>/review/review-report.md`
    - ut → UT 代码及 `acceptance.yaml`
-   - testing → `doc/features/<feature>/testing/test-plan.md` + `testing/test-report.md`
+   - testing → `<features_dir>/<feature>/testing/test-plan.md` + `testing/test-report.md`
 4. **读取脚本 Harness 报告**（若有 `script_report_path`），**不重复做**脚本已经覆盖的确定性检查。
 5. **逐项按 verify-<phase>.md 的"语义检查项"评估**：
    - 给出 PASS / WARN / FAIL

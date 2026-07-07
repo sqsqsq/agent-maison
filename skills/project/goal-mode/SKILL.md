@@ -130,7 +130,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 - `start_phase` / `end_phase`：起止 phase（默认 spec→testing）
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
-- 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）
+- 运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）
 
 ### 运行中进度汇报
 
@@ -164,7 +164,7 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 
 ## 报告解读（汇报给用户）
 
-终态后 Read `doc/features/<feature>/goal-runs/<run-id>/goal-report.md` + `progress.md`，用自然语言说明：
+终态后 Read `<features_dir>/<feature>/goal-runs/<run-id>/goal-report.md` + `progress.md`，用自然语言说明：
 
 | 状态 | 含义 |
 |------|------|

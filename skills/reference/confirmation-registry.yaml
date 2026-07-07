@@ -284,7 +284,7 @@ entries:
         label: "换 feature 名 — 使用新的 feature 目录名"
         portable: "1=换 feature 名"
       - value: fix_path
-        label: "清理或恢复路径 — 修复 doc/features 下冲突路径"
+        label: "清理或恢复路径 — 修复 features 归档目录下冲突路径"
         portable: "2=清理/恢复路径"
 
   - id: spec.terminology

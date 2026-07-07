@@ -33,7 +33,7 @@
 
 1. **禁止擅自修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。**不得**修改 **UT/测试根目录**以外的业务文件除非走下方授权流程。
 2. **必须先问后改**：如确实无法通过 UT/Spy/Stub/原型替换绕过，**必须**先向用户发出明确请求（含：文件路径、变更签名、为何 UT 层无法规避、影响面评估），并取得用户**书面同意**。
-3. **必须登记授权**：用户同意后，必须把授权纪要写入 `doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）（未配置 `paths.reports_dir_pattern` 时可能仍在 `framework/harness/reports/...`）。
+3. **必须登记授权**：用户同意后，必须把授权纪要写入 `{features_dir}/{feature_name}/ut/reports/<timestamp>/<model>-ut/gap-notes.md > approved_src_mutations[]`（时间戳、文件、变更摘要、用户原话）（未配置 `paths.reports_dir_pattern` 时可能仍在 `framework/harness/reports/...`）。
 4. **未授权改动一律违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 会硬检测 `src/main` 的 git diff，任何未在 `approved_src_mutations[]` 中登记的源码改动都会 FAIL。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 plan.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 spec/plan 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
 6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
@@ -79,7 +79,7 @@
 ### 检查 1: state_model 完备性 (state_model_completeness)
 
 - **严重等级**: MAJOR
-- **前置**：若 `doc/features/{feature_name}/use-cases.yaml` 不存在，整项 SKIP（本 feature 不满足复杂度阈值即可豁免）
+- **前置**：若 `{features_dir}/{feature_name}/use-cases.yaml` 不存在，整项 SKIP（本 feature 不满足复杂度阈值即可豁免）
 - **评估方法**:
   1. 读取每个 UseCase 的 `state_model.phases` 与 `state_model.fields`
   2. 对比 spec.md / plan.md 中的流程图与状态机描述
@@ -158,7 +158,7 @@
 
 ### 检查 4C: mock-plan 与 DAG/UT 对齐（mock_plan_traceability）【v2.3】
 
-- **严重等级**: **BLOCKER**（当 `doc/features/{feature_name}/ut/mock-plan.yaml` 存在且 feature 含 L0/L1/L2 可测项时）
+- **严重等级**: **BLOCKER**（当 `{features_dir}/{feature_name}/ut/mock-plan.yaml` 存在且 feature 含 L0/L1/L2 可测项时）
 - **前置**：若 mock-plan 不存在且 harness 对 `ut_mock_plan_present` 为 SKIP，则本项 SKIP
 - **评估方法**:
   1. 阅读 `ut/mock-plan.yaml`：每个 `presets[].id` 是否在业务上有明确含义（success / 各类失败 / 边界值）
@@ -226,7 +226,7 @@
 
 - **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/ut/context-exploration.md`（schema 1.1.0）
+  1. 读取 `{features_dir}/{feature_name}/ut/context-exploration.md`（schema 1.1.0）
   2. 对照 use-cases、contracts、被测入口：`source_code_paths`、`Code Facts` 是否一致
   3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
 
@@ -279,7 +279,7 @@ verification_result:
         - <use_case_id>: PASS/FAIL — <具体发现>
         - 漏态: [...]
       affected_files:
-        - "doc/features/{feature_name}/use-cases.yaml"
+        - "{features_dir}/{feature_name}/use-cases.yaml"
       suggestion: |
         <修正建议，若 PASS 可省略>
 
@@ -349,7 +349,7 @@ verification_result:
         mock-plan ↔ DAG spy_preset ↔ UT preset 映射：
         - 缺 preset / 未引用 / 与 ts_expr 不一致: [...]
       affected_files:
-        - "doc/features/{feature_name}/ut/mock-plan.yaml"
+        - "{features_dir}/{feature_name}/ut/mock-plan.yaml"
       suggestion: |
         <修正建议>
 
@@ -377,7 +377,7 @@ verification_result:
         legacy device-testing-todo.md 是否存在（应删除）: YES/NO
         ui_subscription 与 device_focus 一致性: [...]
       affected_files:
-        - "doc/features/{feature_name}/acceptance.yaml"
+        - "{features_dir}/{feature_name}/acceptance.yaml"
       suggestion: |
         <为缺项补写 device_focus 片段；both 须拆分 ut_focus + device_focus>
 
@@ -413,7 +413,7 @@ verification_result:
         摘要与 use-cases/contracts/被测入口探索一致性: PASS/FAIL — <证据>
         source_code_paths / Code Facts: PASS/FAIL
       affected_files:
-        - "doc/features/{feature_name}/ut/context-exploration.md"
+        - "{features_dir}/{feature_name}/ut/context-exploration.md"
       suggestion: |
         <修正建议>
 

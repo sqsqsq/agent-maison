@@ -250,7 +250,7 @@ structure_checks:
       若 `use-cases.yaml` 不存在则 SKIP（简单 feature 由 acceptance.yaml + dag.yaml 主导）。
     severity: BLOCKER
     rule:
-      source: "doc/features/{feature}/use-cases.yaml > use_cases[].ui_bindings[].user_actions[].calls"
+      source: "<features_dir>/{feature}/use-cases.yaml > use_cases[].ui_bindings[].user_actions[].calls"
       for_each_call:
         extract_symbol: "split('.') 的最后一段"
         validate_any_of:
@@ -272,7 +272,7 @@ structure_checks:
       / `presentation/pages/`（仅当 coordinator 指向 Page 方法时可省略本字段）。
     severity: BLOCKER
     rule:
-      source: "doc/features/{feature}/use-cases.yaml > use_cases[].coordinator_file"
+      source: "<features_dir>/{feature}/use-cases.yaml > use_cases[].coordinator_file"
       validate: "file_exists_on_disk"
 
   visual_parity:

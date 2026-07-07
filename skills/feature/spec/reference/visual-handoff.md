@@ -49,7 +49,7 @@
 **在线高保真快照类**：`fidelity_snapshot`（v2.4+）
 
 - 用于内网在线高保真（Figma / 内部门户等）；**maison 不抓取网络**，由宿主 **MCP `fetch_fidelity`** 在 spec 阶段导出快照。
-- 必填 **`source_link`**（http/https）；可选 **`delivery_code`**（非密标识；敏感传送码须 `${env:NAME}`，勿 commit 明文）、**`snapshot`**（默认 `doc/features/<feature>/ux-reference/_fidelity-cache/`）。
+- 必填 **`source_link`**（http/https）；可选 **`delivery_code`**（非密标识；敏感传送码须 `${env:NAME}`，勿 commit 明文）、**`snapshot`**（默认 `<features_dir>/<feature>/ux-reference/_fidelity-cache/`）。
 - **不要**在 spec.md 写回 N 条 `authoritative_refs[].path` 指向 PNG（方案 a：id→png SSOT 在 `fidelity.lock.yaml`）。
 - harness **`fidelity_snapshot_promise`** 纯离线校验 lock + 声明屏 PNG 齐；详见 [`docs/operations/fidelity-fetch-mcp-contract.md`](../../../docs/operations/fidelity-fetch-mcp-contract.md) 与 [`specs/fidelity-lock.schema.yaml`](../../../specs/fidelity-lock.schema.yaml)。
 

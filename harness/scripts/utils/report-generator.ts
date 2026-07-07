@@ -13,7 +13,7 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
-import { featurePhaseReportsDir } from '../../config';
+import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
   Phase,
   CheckResult,
@@ -62,14 +62,14 @@ export function finalizeChecksForScriptReport(
     compat_applied = {
       count: stats.appliedIds.length,
       ids: [...stats.appliedIds],
-      suggestion: fillCompatMessage(SUGGESTION_COMPAT_APPLIED, feature, phase),
+      suggestion: fillCompatMessage(SUGGESTION_COMPAT_APPLIED, projectRoot, feature, phase),
     };
   }
   let compat_expired: ScriptReportCompatExpired | undefined;
   if (stats.expiredFired) {
     compat_expired = {
       feature,
-      suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, feature, phase),
+      suggestion: fillCompatMessage(SUGGESTION_COMPAT_EXPIRED, projectRoot, feature, phase),
     };
   }
   return { checks: results, compat_applied, compat_expired };
@@ -211,6 +211,9 @@ export function assembleAIPrompt(
   assembled = assembled.replace(/\{feature_name\}/g, feature);
   assembled = assembled.replace(/\{phase\}/g, phase);
   assembled = assembled.replace(/\{timestamp\}/g, new Date().toISOString());
+  // round7 skills/文案批（plan a9c4e7f1）：verify 模板路径占位符——解析实例配置的
+  // paths.features_dir，custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
+  assembled = assembled.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
 
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const contextImageDir = path.join(dir, 'context-images');

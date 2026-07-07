@@ -4,39 +4,60 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { relFeaturesDir } from '../../config';
 
-/** canonical .gitignore patterns（路径相对实例工程根，POSIX 斜杠） */
-export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
-  'framework/harness/node_modules/',
-  'framework/harness/dist/',
-  'framework/harness/reports/*',
-  '!framework/harness/reports/.gitkeep',
-  'framework/harness/trace/',
-  'framework/harness/package-lock.json',
-  'framework/harness/state/*',
-  '!framework/harness/state/.gitkeep',
-  'framework/harness/**/ohosTest/',
-  'framework/harness/**/test/dag/',
-  'framework/harness/decision.json',
-  'framework/harness/context.json',
-  'framework/harness/init-decision.json',
-  'framework/harness/init-context.json',
-  'doc/catalog-staging/',
-  'doc/glossary-staging/',
-  '.framework-backup/',
-  'doc/features/*/*/reports/*',
-  'doc/features/*/goal-runs/',
-  '**/.hylyre/',
-  '**/tmp_hypium/',
-  '/doc/app-snapshot-cache/',
-  '/doc/features/_adhoc/',
-  'doc/features/*/ux-reference/_fidelity-cache/',
-  'framework.local.json',
-  '**/.claude/settings.local.json',
-];
+const FEATURES_DIR_DEFAULT = 'doc/features';
 
-/** 等价覆盖映射（宽规则覆盖 canonical pattern） */
-export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
+function normFeaturesDir(featuresDir: string): string {
+  return featuresDir.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * canonical .gitignore patterns（路径相对实例工程根，POSIX 斜杠）。
+ * round7 skills/文案批（plan a9c4e7f1）：features_dir 派生的三条（reports/goal-runs/
+ * _fidelity-cache）按实例 paths.features_dir 生成；`/doc/features/_adhoc/` **保持字面量**——
+ * adhoc-canonical-paths.ts 契约固定 _adhoc 落 doc/features/_adhoc、不随 features_dir 迁移，
+ * gitignore 须 ignore 文件实际落点（若未来 adhoc 契约迁移，此处随迁）。
+ */
+export function canonicalIgnorePatterns(featuresDir: string = FEATURES_DIR_DEFAULT): string[] {
+  const d = normFeaturesDir(featuresDir);
+  return [
+    'framework/harness/node_modules/',
+    'framework/harness/dist/',
+    'framework/harness/reports/*',
+    '!framework/harness/reports/.gitkeep',
+    'framework/harness/trace/',
+    'framework/harness/package-lock.json',
+    'framework/harness/state/*',
+    '!framework/harness/state/.gitkeep',
+    'framework/harness/**/ohosTest/',
+    'framework/harness/**/test/dag/',
+    'framework/harness/decision.json',
+    'framework/harness/context.json',
+    'framework/harness/init-decision.json',
+    'framework/harness/init-context.json',
+    'doc/catalog-staging/',
+    'doc/glossary-staging/',
+    '.framework-backup/',
+    `${d}/*/*/reports/*`,
+    `${d}/*/goal-runs/`,
+    '**/.hylyre/',
+    '**/tmp_hypium/',
+    '/doc/app-snapshot-cache/',
+    '/doc/features/_adhoc/',
+    `${d}/*/ux-reference/_fidelity-cache/`,
+    'framework.local.json',
+    '**/.claude/settings.local.json',
+  ];
+}
+
+/** 默认布局常量导出（= canonicalIgnorePatterns() 结果；既有消费面/测试兼容） */
+export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = canonicalIgnorePatterns();
+
+/** 等价覆盖映射（宽规则覆盖 canonical pattern）；features_dir 派生键随配置生成 */
+export function ignoreEquivPatterns(featuresDir: string = FEATURES_DIR_DEFAULT): Record<string, string[]> {
+  const d = normFeaturesDir(featuresDir);
+  return {
   'framework/harness/node_modules/': [
     '**/node_modules',
     '**/node_modules/',
@@ -87,15 +108,15 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     '.framework-backup/',
     '**/.framework-backup/',
   ],
-  'doc/features/*/*/reports/*': [
-    'doc/features/*/*/reports/*',
-    'doc/features/*/*/reports',
-    'doc/features/*/*/reports/',
+  [`${d}/*/*/reports/*`]: [
+    `${d}/*/*/reports/*`,
+    `${d}/*/*/reports`,
+    `${d}/*/*/reports/`,
   ],
-  'doc/features/*/goal-runs/': [
-    'doc/features/*/goal-runs/',
-    'doc/features/*/goal-runs',
-    'doc/features/**/goal-runs/',
+  [`${d}/*/goal-runs/`]: [
+    `${d}/*/goal-runs/`,
+    `${d}/*/goal-runs`,
+    `${d}/**/goal-runs/`,
   ],
   '**/.hylyre/': ['.hylyre/', '/.hylyre/', '/**/.hylyre/', '**/.hylyre/'],
   '**/tmp_hypium/': ['tmp_hypium/', '/tmp_hypium/', '/**/tmp_hypium/', '**/tmp_hypium/'],
@@ -112,58 +133,65 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     '**/.claude/settings.local.json',
     '/.claude/settings.local.json',
   ],
-};
+  };
+}
+
+/** 默认布局常量导出（= ignoreEquivPatterns() 结果；既有消费面/测试兼容） */
+export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = ignoreEquivPatterns();
 
 interface CanonicalSection {
   header: string;
   patterns: readonly string[];
 }
 
-const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
-  {
-    header: '# Framework runtime artifacts (managed by /framework-init)',
-    patterns: [
-      'framework/harness/node_modules/',
-      'framework/harness/dist/',
-      'framework/harness/reports/*',
-      '!framework/harness/reports/.gitkeep',
-      'framework/harness/trace/',
-      'framework/harness/package-lock.json',
-      'framework/harness/state/*',
-      '!framework/harness/state/.gitkeep',
-      'framework/harness/**/ohosTest/',
-      'framework/harness/**/test/dag/',
-      'framework/harness/decision.json',
-      'framework/harness/context.json',
-      'framework/harness/init-decision.json',
-      'framework/harness/init-context.json',
-    ],
-  },
-  {
-    header: '# catalog-bootstrap staging: catalog / glossary drafts before merge into SSOT',
-    patterns: ['doc/catalog-staging/', 'doc/glossary-staging/'],
-  },
-  {
-    header: '# Framework auto-overwrite backup (managed by check-init / framework-init)',
-    patterns: ['.framework-backup/'],
-  },
-  {
-    header: '# Feature-phase harness reports (paths.reports_dir_pattern)',
-    patterns: [
-      'doc/features/*/*/reports/*',
-      'doc/features/*/goal-runs/',
-      'doc/features/*/ux-reference/_fidelity-cache/',
-    ],
-  },
-  {
-    header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',
-    patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
-  },
-  {
-    header: '# Personal / local agent settings (per developer, gitignored)',
-    patterns: ['framework.local.json', '**/.claude/settings.local.json'],
-  },
-];
+function canonicalSections(featuresDir: string = FEATURES_DIR_DEFAULT): readonly CanonicalSection[] {
+  const d = normFeaturesDir(featuresDir);
+  return [
+    {
+      header: '# Framework runtime artifacts (managed by /framework-init)',
+      patterns: [
+        'framework/harness/node_modules/',
+        'framework/harness/dist/',
+        'framework/harness/reports/*',
+        '!framework/harness/reports/.gitkeep',
+        'framework/harness/trace/',
+        'framework/harness/package-lock.json',
+        'framework/harness/state/*',
+        '!framework/harness/state/.gitkeep',
+        'framework/harness/**/ohosTest/',
+        'framework/harness/**/test/dag/',
+        'framework/harness/decision.json',
+        'framework/harness/context.json',
+        'framework/harness/init-decision.json',
+        'framework/harness/init-context.json',
+      ],
+    },
+    {
+      header: '# catalog-bootstrap staging: catalog / glossary drafts before merge into SSOT',
+      patterns: ['doc/catalog-staging/', 'doc/glossary-staging/'],
+    },
+    {
+      header: '# Framework auto-overwrite backup (managed by check-init / framework-init)',
+      patterns: ['.framework-backup/'],
+    },
+    {
+      header: '# Feature-phase harness reports (paths.reports_dir_pattern)',
+      patterns: [
+        `${d}/*/*/reports/*`,
+        `${d}/*/goal-runs/`,
+        `${d}/*/ux-reference/_fidelity-cache/`,
+      ],
+    },
+    {
+      header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',
+      patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
+    },
+    {
+      header: '# Personal / local agent settings (per developer, gitignored)',
+      patterns: ['framework.local.json', '**/.claude/settings.local.json'],
+    },
+  ];
+}
 
 export interface GitignoreEnsureResult {
   path: '.gitignore';
@@ -180,15 +208,23 @@ export function parseGitignoreLines(text: string): string[] {
     .filter(l => l.length > 0 && !l.startsWith('#'));
 }
 
-export function patternIsCovered(canonical: string, lines: string[]): boolean {
-  const equiv = IGNORE_EQUIV_PATTERNS[canonical] ?? [canonical];
+export function patternIsCovered(
+  canonical: string,
+  lines: string[],
+  equivMap: Record<string, string[]> = IGNORE_EQUIV_PATTERNS,
+): boolean {
+  const equiv = equivMap[canonical] ?? [canonical];
   return equiv.some(p => lines.includes(p));
 }
 
-export function listMissingCanonicalPatterns(lines: string[]): string[] {
+export function listMissingCanonicalPatterns(
+  lines: string[],
+  featuresDir: string = FEATURES_DIR_DEFAULT,
+): string[] {
   const missing: string[] = [];
-  for (const p of CANONICAL_IGNORE_PATTERNS) {
-    if (!patternIsCovered(p, lines)) {
+  const equivMap = ignoreEquivPatterns(featuresDir);
+  for (const p of canonicalIgnorePatterns(featuresDir)) {
+    if (!patternIsCovered(p, lines, equivMap)) {
       missing.push(p);
     }
   }
@@ -216,9 +252,9 @@ export function collectGitignoreAdvisories(text: string): string[] {
   return advisories;
 }
 
-function buildFullCanonicalBlock(): string {
+function buildFullCanonicalBlock(featuresDir: string = FEATURES_DIR_DEFAULT): string {
   const parts: string[] = [];
-  for (const section of CANONICAL_SECTIONS) {
+  for (const section of canonicalSections(featuresDir)) {
     parts.push(section.header);
     for (const p of section.patterns) {
       parts.push(p);
@@ -228,9 +264,9 @@ function buildFullCanonicalBlock(): string {
   return parts.join('\n').replace(/\n+$/, '\n');
 }
 
-function buildAppendBlock(missingSet: Set<string>): string {
+function buildAppendBlock(missingSet: Set<string>, featuresDir: string = FEATURES_DIR_DEFAULT): string {
   const parts: string[] = [];
-  for (const section of CANONICAL_SECTIONS) {
+  for (const section of canonicalSections(featuresDir)) {
     const toAdd = section.patterns.filter(p => missingSet.has(p));
     if (toAdd.length === 0) continue;
     parts.push(section.header);
@@ -259,9 +295,12 @@ export function ensureCanonicalGitignore(projectRoot: string): GitignoreEnsureRe
     return { path: rel, created: false, added: [], skipped: true };
   }
 
+  // features_dir 派生 pattern 随实例配置（framework.config.json 缺失时 config 回落默认
+  // doc/features——CREATE 模式行为不变）；调用方（init-task-executor / check-init）零改动。
+  const featuresDir = relFeaturesDir(projectRoot);
   const existing = fs.existsSync(targetAbs) ? fs.readFileSync(targetAbs, 'utf-8') : null;
   const lines = parseGitignoreLines(existing ?? '');
-  const missing = listMissingCanonicalPatterns(lines);
+  const missing = listMissingCanonicalPatterns(lines, featuresDir);
 
   if (missing.length === 0) {
     return { path: rel, created: false, added: [], skipped: false };
@@ -271,12 +310,12 @@ export function ensureCanonicalGitignore(projectRoot: string): GitignoreEnsureRe
   const added = [...missing];
 
   if (existing === null) {
-    fs.writeFileSync(targetAbs, buildFullCanonicalBlock(), 'utf-8');
+    fs.writeFileSync(targetAbs, buildFullCanonicalBlock(featuresDir), 'utf-8');
     return { path: rel, created: true, added, skipped: false };
   }
 
   const prefix = ensureTrailingNewline(existing);
-  const append = buildAppendBlock(missingSet);
+  const append = buildAppendBlock(missingSet, featuresDir);
   const separator = prefix.length > 0 && !prefix.endsWith('\n\n') ? '\n' : '';
   fs.writeFileSync(targetAbs, `${prefix}${separator}${append}`, 'utf-8');
   return { path: rel, created: false, added, skipped: false };

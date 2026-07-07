@@ -29,6 +29,7 @@ import { checkContextExplorationArtifact } from './utils/context-exploration';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
+import { relFeaturesDir } from '../config';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
@@ -210,7 +211,7 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
     );
   }
   return (
-    '\n\n（paths.docs_committed=false：`doc/features/**` 等不入主仓属正常；' +
+    `\n\n（paths.docs_committed=false：\`${relFeaturesDir(ctx.projectRoot)}/**\` 等不入主仓属正常；` +
     ' 出现在 diff 中且未计入 in_scope_hit 的路径通常归为框架性/neutral，不单独构成本条 FAIL。）'
   );
 }

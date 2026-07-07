@@ -1,6 +1,6 @@
 # 可测性预检（testability-audit）模板
 
-> **产出路径**：`doc/features/<feature>/ut/testability-audit.md`  
+> **产出路径**：`<features_dir>/<feature>/ut/testability-audit.md`
 > **时机**：business-ut · Step 1.5，**早于** DAG / mock-plan / `*.test.ets`。  
 > Harness 会静态校验：每条 `acceptance.yaml` 中 `ut_layer ∈ {unit, both}` 的 **AC/BD** 均有一条对应记录；**L3** 必须 `selected` 二选一并完成登记。
 

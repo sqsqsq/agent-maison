@@ -163,7 +163,7 @@
 
 - **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
+  1. 读取 `{features_dir}/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
   2. 对照 contracts、acceptance、plan：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
   3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
 
@@ -330,7 +330,7 @@ verification_result:
         摘要与 contracts/实现/跨模块导出的一致性: PASS/FAIL — <证据>
         source_code_paths / Code Facts: PASS/FAIL
       affected_files:
-        - "doc/features/{feature_name}/coding/context-exploration.md"
+        - "{features_dir}/{feature_name}/coding/context-exploration.md"
       suggestion: |
         <修正建议>
 

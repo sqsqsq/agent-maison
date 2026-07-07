@@ -3,7 +3,7 @@
 > **模板说明**：`{module-name}`、`{ModuleA}` 等占位须与 `doc/architecture.md`、`framework.config.json > architecture` 一致。
 >
 > **模块标识**: `{module-name}`
-> **对应 spec**: `doc/features/{module-name}/spec/spec.md`
+> **对应 spec**: `<features_dir>/{module-name}/spec/spec.md`
 > **版本**: v1.0
 > **创建日期**: {YYYY-MM-DD}
 > **最后更新**: {YYYY-MM-DD}

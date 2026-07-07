@@ -87,7 +87,7 @@ flowchart TD
 
 ## 3. contracts 目录占位（节选）
 
-设计落地时请在 `doc/features/<feature>/plan/contracts.yaml` 写入真实路径、导出符号与数据模型；此处仅示意：
+设计落地时请在 `<features_dir>/<feature>/plan/contracts.yaml` 写入真实路径、导出符号与数据模型；此处仅示意：
 
 - `WorkbenchPage` Props：<略>
 - `TaskSubmitFlow`：负责 `startSubmit` / 错误分支占位

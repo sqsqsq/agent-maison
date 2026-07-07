@@ -4,8 +4,8 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试负责人**: {tester}
-> **对应 spec**: `doc/features/{module-name}/spec/spec.md`
-> **对应设计**: `doc/features/{module-name}/plan/plan.md`
+> **对应 spec**: `<features_dir>/{module-name}/spec/spec.md`
+> **对应设计**: `<features_dir>/{module-name}/plan/plan.md`
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### 测试功能点
 
-> 基于 `doc/features/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
+> 基于 `<features_dir>/{module-name}/acceptance.yaml`，本次测试覆盖以下功能：
 
 <列出 P0/P1 功能点摘要>
 

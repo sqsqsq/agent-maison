@@ -22,7 +22,7 @@
 phase: ut
 version: "2.1"
 applies_to:
-  use_cases_spec: "doc/features/{feature}/use-cases.yaml"   # 按需产出，非必需
+  use_cases_spec: "<features_dir>/{feature}/use-cases.yaml"   # 按需产出，非必需
   dag_files: "{module}/test/dag/**/*.yaml"
   ut_files: "{module}/src/ohosTest/ets/test/**/*.test.ets"
   # device-testing-todo.md 已废弃
@@ -56,7 +56,7 @@ structure_checks:
       trigger_if:
         - "count(acceptance.yaml > criteria[ut_layer in [unit, both]]) >= 3"
       and_missing:
-        path: "doc/features/{feature}/use-cases.yaml"
+        path: "<features_dir>/{feature}/use-cases.yaml"
 
   usecase_spec_schema:
     description: >
@@ -66,7 +66,7 @@ structure_checks:
       state_model / branches。
     severity: BLOCKER
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_use_case:
         required_fields:
           - "id"
@@ -88,7 +88,7 @@ structure_checks:
       应直接用 dag.yaml 测 Repository 级函数，不应产出 use-cases.yaml）。
     severity: BLOCKER
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_use_case:
         ui_bindings_min_count: 1
         total_user_actions_min: 1
@@ -100,7 +100,7 @@ structure_checks:
       阶段登记的真实 data 层类）。
     severity: MAJOR
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_boundary:
         validate: "boundary.type in contracts.yaml > interfaces[].class"
 
@@ -173,7 +173,7 @@ structure_checks:
         DAG.branches[] 必须全部在该 UseCase 的 branches[].id 中存在。
     severity: BLOCKER
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_dag_file:
         - use_case_in_spec: true
         - branches_all_in_spec: true
@@ -185,7 +185,7 @@ structure_checks:
       中找到对应声明（仅当 use-cases.yaml 存在时适用）。
     severity: MAJOR
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_dag_node:
         filter: 'type in ["port_call_cloud", "port_call_local"]'
         validate: "boundary.name + boundary.type + boundary.method matches data_boundaries[]"
@@ -258,7 +258,7 @@ structure_checks:
       scope: "contracts.yaml > modules[].name （仅 ohosTest 目录下存在 UT 的模块）"
       command: "hvigorw --mode module -p module=<module>@ohosTest -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon"
       pass_if: "exit_code == 0 AND parsed_error_count == 0"
-      log_persist: "doc/features/<feature>/ut/reports/hvigor-ut-build.log"
+      log_persist: "<features_dir>/<feature>/ut/reports/hvigor-ut-build.log"
       on_tool_missing: "FAIL"
       on_env_skip: "FAIL"
       short_circuit: "若 ut_tsc_compiles 或 ut_hvigor_build FAIL，后续 ut_hvigor_test 直接短路"
@@ -302,7 +302,7 @@ structure_checks:
       device_probe: "hdc list targets"
       command: "hvigorw --mode module -p module=<module>@ohosTest -p buildMode=debug test --analyze=advanced --parallel --incremental --daemon"
       pass_if: "exit_code == 0 AND hypium.failed == 0 AND hypium.total > 0"
-      log_persist: "doc/features/<feature>/ut/reports/hvigor-test.log"
+      log_persist: "<features_dir>/<feature>/ut/reports/hvigor-test.log"
       fail_modes:
         - "no_device: hdc 探测不到可用目标 → FAIL (BLOCKER) 且提示用户启动模拟器/接入真机"
         - "tool_missing: 找不到 hvigorw → FAIL (BLOCKER)"
@@ -347,7 +347,7 @@ structure_checks:
       并注入业务编排对象（class 命名格式：Spy{type} / Fake{type} / Stub{type}）。
     severity: BLOCKER
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_use_case:
         for_each_boundary:
           expect_in_ut_file_any_of:
@@ -393,7 +393,7 @@ structure_checks:
       use-cases.yaml 中除标注 device_only 外的全部分支。
     severity: MAJOR
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_use_case:
         dag_group_by_use_case:
           branches_no_overlap: true
@@ -405,11 +405,11 @@ structure_checks:
 
   ut_testability_audit_present:
     description: >
-      doc/features/{feature}/ut/testability-audit.md 必须存在，且对 acceptance.yaml
+      <features_dir>/{feature}/ut/testability-audit.md 必须存在，且对 acceptance.yaml
       中每条 ut_layer ∈ {unit, both} 的 AC/BD 各有一条审计记录（acceptance_id 对齐）。
     severity: BLOCKER
     rule:
-      path: "doc/features/{feature}/ut/testability-audit.md"
+      path: "<features_dir>/{feature}/ut/testability-audit.md"
       records_root: "records[] YAML 或 fenced ```yaml 块"
       template: "framework/profiles/hmos-app/skills/business-ut/templates/testability-audit-template.md"
 
@@ -421,17 +421,17 @@ structure_checks:
       至少 1 条（与 ut_no_src_mutation 授权流一致）。
     severity: BLOCKER
     rule:
-      acceptance_device_focus: "doc/features/{feature}/acceptance.yaml > device_focus"
-      gap_notes_glob: "doc/features/{feature}/**/gap-notes.md"
+      acceptance_device_focus: "<features_dir>/{feature}/acceptance.yaml > device_focus"
+      gap_notes_glob: "<features_dir>/{feature}/**/gap-notes.md"
 
   ut_mock_plan_present:
     description: >
-      当 testability-audit 存在任一 L0/L1/L2 记录时，doc/features/{feature}/ut/mock-plan.yaml
+      当 testability-audit 存在任一 L0/L1/L2 记录时，<features_dir>/{feature}/ut/mock-plan.yaml
       必须存在且含 spies[] 或 doubles[]；非 pure dependencies[] 须在 mock-plan 中有
       target_class 条目。被测 entry_point（Flow/Coordinator 入口）不要求写入 mock-plan。
     severity: BLOCKER
     rule:
-      path: "doc/features/{feature}/ut/mock-plan.yaml"
+      path: "<features_dir>/{feature}/ut/mock-plan.yaml"
       template: "framework/profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md"
 
   ut_mock_plan_typed:
@@ -450,7 +450,7 @@ structure_checks:
       中对应类与方法表一致。
     severity: BLOCKER
     rule:
-      contracts: "doc/features/{feature}/contracts.yaml"
+      contracts: "<features_dir>/{feature}/contracts.yaml"
 
   dag_spy_preset_resolvable:
     description: >
@@ -458,7 +458,7 @@ structure_checks:
       则该 id 必须在 mock-plan 对应类与方法下存在；未声明 spy_preset 的旧 DAG 可仅靠 mock_data（deprecated）。
     severity: BLOCKER
     rule:
-      mock_plan: "doc/features/{feature}/ut/mock-plan.yaml"
+      mock_plan: "<features_dir>/{feature}/ut/mock-plan.yaml"
 
   ut_hypium_mockkit_policy:
     description: >
@@ -470,8 +470,8 @@ structure_checks:
       Spy 路线的 whenXxx 属性名不触发本规则；扫描全部 @ohos/hypium import 子句。
     severity: BLOCKER
     rule:
-      mock_plan: "doc/features/{feature}/ut/mock-plan.yaml"
-      contracts: "doc/features/{feature}/contracts.yaml"
+      mock_plan: "<features_dir>/{feature}/ut/mock-plan.yaml"
+      contracts: "<features_dir>/{feature}/contracts.yaml"
 
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
@@ -564,7 +564,7 @@ traceability_checks:
   ut_coverage_evidence_present:
     description: >
       当 feature 存在 in-scope unit/both P0/P1 时，须产出
-      doc/features/{feature}/ut/reports/coverage-evidence.json（business-ut 写入，harness 不自造 mapping）。
+      <features_dir>/{feature}/ut/reports/coverage-evidence.json（business-ut 写入，harness 不自造 mapping）。
       缺失时 BLOCKER/FAIL。
     severity: BLOCKER
 
@@ -596,7 +596,7 @@ traceability_checks:
       一个 it() 对应（通过 [BRANCH-<id>] 标签或 body 里引用 branch id 识别）。
     severity: BLOCKER
     rule:
-      only_if_exists: "doc/features/{feature}/use-cases.yaml"
+      only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
       for_each_use_case:
         for_each_branch:
           expect_test_case_any_of:

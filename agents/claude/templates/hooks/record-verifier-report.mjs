@@ -11,7 +11,7 @@
 //     hook_event_name / stop_hook_active 等。
 //   - 输出：本 hook 不阻断（exit 0）；只做"旁观记录"，把 verifier 子 agent
 //     的转录摘要写到（默认与 paths.reports_dir_pattern 对齐，未配置时为 framework/harness/reports/...）：
-//       doc/features/<feature>/<phase>/reports/verifier.report.md （推荐）
+//       <features_dir>/<feature>/<phase>/reports/verifier.report.md （推荐；features_dir 默认 doc/features）
 //     供 check-receipt.ts 在 verifier_subagent.report_path 字段中引用。
 //
 // 落地内容：

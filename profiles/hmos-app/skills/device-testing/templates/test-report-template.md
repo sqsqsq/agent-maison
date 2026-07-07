@@ -4,7 +4,7 @@
 > **版本**: v1.0
 > **日期**: {date}
 > **测试执行人**: {tester}
-> **对应测试计划**: `doc/features/{module-name}/testing/test-plan.md`
+> **对应测试计划**: `<features_dir>/{module-name}/testing/test-plan.md`
 
 ---
 
@@ -22,7 +22,7 @@
 
 ### 真机流水线耗时
 
-> 数据来源：`doc/features/{module-name}/testing/reports/device-test-timing.json`（harness 在 `device_test.run` 成功后写入）。
+> 数据来源：`<features_dir>/{module-name}/testing/reports/device-test-timing.json`（harness 在 `device_test.run` 成功后写入）。
 
 | 阶段 | 耗时 | 说明 |
 |------|------|------|

@@ -134,7 +134,7 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 
 | pattern | 说明 |
 | --- | --- |
-| `/reports/` | Hylyre/Hypium 曾以**工程根**为 cwd 时落盘的 task 日志；现代 harness 已将 hypium cwd 定向到 `doc/features/<feature>/testing/reports/.hypium-workdir/`（已落在 `doc/features/*/*/reports/*` 内），根目录 `/reports/` 多为历史遗留 |
+| `/reports/` | Hylyre/Hypium 曾以**工程根**为 cwd 时落盘的 task 日志；现代 harness 已将 hypium cwd 定向到 `<features_dir>/<feature>/testing/reports/.hypium-workdir/`（已落在 `<features_dir>/*/*/reports/*` 内），根目录 `/reports/` 多为历史遗留 |
 | `/build-profile.json5` | 本机 product/SDK 与 CI 不一致时的个人 build-profile；需单独提交时再移出 ignore |
 
 **勿**用 `/harness/reports/*` 代替 `framework/harness/reports/*`（路径错误，无法忽略 harness 全局报告）。

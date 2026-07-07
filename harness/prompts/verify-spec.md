@@ -148,7 +148,7 @@
 
 - **严重等级**: BLOCKER
 - **评估方法**:
-  1. 读取 `doc/features/{feature_name}/spec/context-exploration.md`（schema 1.1.0）
+  1. 读取 `{features_dir}/{feature_name}/spec/context-exploration.md`（schema 1.1.0）
   2. 对照 spec 正文与 Scope/术语映射：`source_code_paths`、`Code Facts`、`decisions_unlocked` 是否与 spec 中的模块选型、流程、验收要点可追溯对应
   3. 若 `coverage_risks` / `ready_to_produce` 与 spec 实际盲区矛盾 → FAIL
   4. 探索文件缺失且脚本已 FAIL → 本项 FAIL

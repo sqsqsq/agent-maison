@@ -21,7 +21,7 @@ alwaysApply: true
    - **bridge 薄跳板**（Cursor `.cursor/skills/`、generic `.agents/skills/` 等）：bundle 内 `SKILL.md` 仅为跳板，真实逻辑在 `framework/skills/<scope>/<skill-id>/SKILL.md`。`inline` 全量物化模式已彻底废弃，所有 bundle skill 一律为 bridge 薄跳板。
    - **禁止向跳板追加**业务条款、选型表或次级文档链接。扩写写在 `framework/skills/<scope>/<skill-id>/` 正文及其 `prompts/`、`templates/`、`reference/`；跳板形态改 `framework/agents/shared/agent-bundle/templates/`，经 init/render 下发。
 4. **BLOCKER 级守门**：架构依赖、术语映射、Scope、plan impact（architecture_impact）、宿主 lint/compile、Context Exploration 量化门禁（schema 1.1.0）、Agent 行为规约、Harness + verifier——见 `AGENTS.md` §3.6–§3.7。
-5. **架构文档门禁**：`doc/architecture.md` 只承载架构级契约；feature 级变更由 git 与 `doc/features/<feature>/` 承担。
+5. **架构文档门禁**：`doc/architecture.md` 只承载架构级契约；feature 级变更由 git 与 `<features_dir>/<feature>/` 承担。
 6. **产物即契约**：写完 spec / plan 即被后续阶段当 SSOT 用。
 7. **最小改动**：任何不在原始诉求内的修改先问再做。
 8. **Harness 校验**：每阶段完成后跑 `framework/harness/harness-runner.ts` 并由独立 verifier 审一轮。

@@ -4,7 +4,7 @@
 > **审查日期**: {date}
 > **审查版本**: v1.0
 > **审查人**: AI Code Reviewer
-> **对应设计文档**: `doc/features/{module-name}/plan/plan.md`
+> **对应设计文档**: `<features_dir>/{module-name}/plan/plan.md`
 
 ---
 
@@ -18,7 +18,7 @@
 
 ### 文件范围
 
-> 基于 `doc/features/{module-name}/contracts.yaml > files` 列表，共 N 个源代码文件。
+> 基于 `<features_dir>/{module-name}/contracts.yaml > files` 列表，共 N 个源代码文件。
 
 <详细文件列表或代码块>
 

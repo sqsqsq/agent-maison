@@ -1,6 +1,6 @@
 # Test Double Plan（mock-plan.yaml）Schema
 
-> **产出路径**：`doc/features/<feature>/ut/mock-plan.yaml`  
+> **产出路径**：`<features_dir>/<feature>/ut/mock-plan.yaml`
 > **时机**：business-ut · Step 1.6，在 DAG / UT 代码之前；**Spy 类必须与本文档 1:1 对齐**，禁止在 Spy 内自由编造字段/方法签名。
 
 ## 设计目的

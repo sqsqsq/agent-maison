@@ -10,9 +10,9 @@
 
 | 产物 | 路径 |
 |------|------|
-| flow DAG | `doc/features/<feature>/ut/reports/flow-dag/<flow_id>.dag.yaml` |
+| flow DAG | `<features_dir>/<feature>/ut/reports/flow-dag/<flow_id>.dag.yaml` |
 | characterization UT | `{module}/src/ohosTest/.../*_characterization.test.ets` |
-| harvest-notes | `doc/features/<feature>/ut/harvest-notes.md` |
+| harvest-notes | `<features_dir>/<feature>/ut/harvest-notes.md` |
 
 ## DAG 元数据（path-c 必填）
 

@@ -1,6 +1,6 @@
 # `use-cases.yaml` Schema 规范
 
-> 本文件定义 `doc/features/{module}/use-cases.yaml` 的 Schema。
+> 本文件定义 `<features_dir>/{module}/use-cases.yaml` 的 Schema。
 > **这是一份规约文档（spec），不是代码规格（code form spec）**。
 > 由 **plan（需求设计）** 在设计阶段按需产出，是业务级 UT（business-ut）做端到端分支覆盖的蓝图。
 
