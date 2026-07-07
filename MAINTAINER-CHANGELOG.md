@@ -2,12 +2,79 @@
 
 > 由 `npm run release:changelog` 从 `.cursor/plans/*.plan.md` 自动生成。消费者向变更见 `RELEASE-NOTES-v*.md` 与 `MIGRATION.md`。
 
-Generated: 2026-06-22 · current window: `2.4.0`
+Generated: 2026-07-07 · current window: `3.0.0`
+
+## 3.0.0
+
+- **android 工程适配** — 在 maison 3.0.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md（version/deferred_to 均为 3.0.0）+ 4 个 OpenSpec change。 [0/6 completed]
+  - `android_工程适配_5e3400c3.plan.md`
+- **framework 轻量化重构 — 分档工作流与验证收敛** — > [0/10 completed]
+  - `framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md`
 
 ## 2.4.0
 
-- **chrys + opencode adapter 接入** — 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，共享根目录 AGENTS.md；skill/rules 落盘目录不同：chrys 复用 shared `.agents` bridge bundle（.agents/skills + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），opencode 用自有原生 `.opencode/skill` + `.opencode/rules`（opencode 长期稳定的主 skill 目录，兼容旧版、不依赖较新的 .agents 外部 skill 发现）。差异在 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。 [8/8 completed]
+- **P0-10 — await_human_visual_confirm 确认 UX（通用引导话术机器生成 + visual-confirm CLI）** — > [4/4 completed]
+  - `P0-10_await确认UX_通用引导话术与visual-confirm-CLI_b6d3e9a2.plan.md`
+- **P0-9 — visual 判定持久化（build 指纹绑定）+ goal await_human_visual_confirm 分类** — > [4/4 completed]
+  - `P0-9_visual判定持久化_build指纹绑定与await-human分类_e7a91b3c.plan.md`
+- **adapter 候选自动化** — 把 adapter 候选清单收敛为"磁盘 agents/ 目录"单一真相：独立纯函数枚举(接 frameworkRoot)+harness 侧 join，probeInitTaskPlan 输出 adapter_catalog [{value,label,portable}] 供 agent 原样渲染；catalog 损坏即 fail-loud(OrThrow→S1 非零退出)；去掉所有写死候选与静态 ADAPTER_NAMES；门禁用稳定锚点(非行号)只扫菜单口径段；双根发布检查锁死永不漂移。 [8/8 completed]
+  - `adapter_候选自动化_48356d3e.plan.md`
+- **chrys + opencode adapter 接入** — 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，物化复用同一 shared .agents bundle（AGENTS.md + .agents/skills bridge + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），唯一差异是 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。 [8/8 completed]
   - `chrys_adapter_接入_91f6f0c8.plan.md`
+- **goal-mode-bounded-monitor** — 为 goal 模式新增 bounded monitor，把阶段进度从“用户问了才读状态”改成“主 agent 在当前活跃轮次内按统一事件流主动汇报 phase verdict / 终态 / 异常”，明确跨轮次唤醒属于宿主增强，并修正 progress 已完成阶段 duration 膨胀问题。 [6/6 completed]
+  - `goal-mode-bounded-monitor.plan.md`
+- **goal-mode-unattended-survival** — 根治 goal 模式"过夜任务静默死亡却显示运行中"的机制性缺陷。分四层补齐——真存活（宿主无关的存活语义 + 启动后存活自校验 + 实施前一次性"会话存活探针"背书 --detach 是否真活过 Cursor 会话）、诚实化（所有退出路径写终态事件 + liveness beacon + 绝对 dead-man 硬判，死了就是 DEAD 绝不粉饰成 RUNNING）、自愈看门狗（独立单例 supervisor，带防抖/限次/INTERRUPTED-vs-HALTED 区分的有界自动续跑；敌对宿主下退守 OS 调度任务）、跨轮通知（声明式拆成正交两条：会话内加速器 in_session_accelerator 与真·跨轮唤醒 cross_turn_wakeup，绝不依赖被 --detach 切走的 runner stdout；缺失即降级"回来时补报"，新增宿主零 bespoke 代码）。承接 goal-mode-bounded-monitor 明确划在范围外的"跨轮存活/唤醒"，并已纳入独立复核提出的裂缝 A–D 补强。 [7/13 completed]
+  - `goal-mode-unattended-survival.plan.md`
+- **goal-mode headless 闸门自解析** — 修复 goal-mode（无人值守）在 spec 等阶段被「人工逐行确认」闸门卡死的根因：为所有阶段内人工确认闸门定义 headless 自动解析+分级留痕策略（high 自动确认 / medium·low 标 DEFERRED-review），主防御用 adapter 无关的「无进展守卫」杜绝盲目重试空耗（chrys sentinel 仅作加速器），并顺带纠正 chrys invoke 的 unattended parity 背离。在研窗口 2.4.0，不动版本号。 [10/10 completed]
+  - `goal-mode_headless_闸门自解析_d27479c3.plan.md`
+- **goal-mode 多adapter自愈** — 修复 goal 模式在「已物化多个 adapter、但新 clone 缺 framework.local.json」工程下的缺陷。统一 Case A/B 走一条确定性写盘路径（neutral 命名 --select-adapter），补齐「运行身份」可靠 wiring，并在 SKILL 加「门控失败即 STOP 交回用户、严禁绕过 goal-runner / 严禁自由改码」硬约束。目标在研版本 2.4.0，不动版本号。 [5/5 completed]
+  - `goal-mode_多adapter自愈_1bd33e51.plan.md`
+- **goal-mode 超时预算 + API 断流 全盘根治 — spec 预算畸紧 + 超时误分类 + 超时丢弃将成阶段 + headless API 断流误分类** — > [6/6 completed]
+  - `goal超时预算全盘根治_spec预算畸紧与超时误分类与超时丢弃_b8f36a12.plan.md`
+- **宿主homepage漂移回灌 · testing设备门禁 / HMOS资源保真 / consumer防漂移门禁** — > [10/10 completed]
+  - `homepage漂移回灌_testing设备门禁与hmos资源保真_43de34da.plan.md`
+- **宿主homepage视觉保真round2 · 渲染缺陷枚举门禁 / 边缘哨兵(采集层) / 渲染忠实度校验 / asset真渲染** — > [8/8 completed]
+  - `homepage视觉保真round2_缺陷枚举门禁与素材分型_0694cb1e.plan.md`
+- **init S4 动态下一步** — S4 下一步 finalizeInitRunLog 统一落盘；deriveInitNextSteps(log,ctx?) Phase0 仅 failure_recovery；index=能力建议 SSOT；harness 合成 recovery；ctx 可空+MinContext。 [6/6 completed]
+  - `init_s4_动态下一步_0e149097.plan.md`
+- **maison testing 门禁加固** — 基于 bc-openCard 实践案例，加固 AgentMaison（在研窗口 2.4.0）的 testing 阶段门禁、goal-runner 完成裁决与 ArkUI 静态规则，杜绝「真机 trace 失败/超时但 goal-report 仍 COMPLETED」的假完成，并补齐 UI 入口覆盖与 visual 回环阻断。 [9/9 completed]
+  - `maison_testing_门禁加固_700f51fc.plan.md`
+- **P2 — Phase 内 checkpoint/resume：重阶段超时续跑而非整阶段重来** — > [3/3 completed]
+  - `phase内checkpoint_resume_重阶段续跑_d7b1e4f2.plan.md`
+- **全阶段门禁根治 — 裁决提取子串 bug + 跨阶段超时预算（P0+P1）** — > [4/4 completed]
+  - `review超时根因_裁决提取子串bug与超时预算根治_c3f08a21.plan.md`
+- **round6 P1 批 — 结构声明台账+一致性抓手(P1-4) / drift_allowlist 权限收紧(P1-5)** — > [7/7 completed]
+  - `round6-P1批_结构声明台账与drift权限收紧_c9e2a7f4.plan.md`
+- **round6 收尾批 — placement 第三 FP 模式修复(P0-1) / 确定性 FAIL 弃判治理(P0-2) / 宿主 nav 热修回收(P0-3)** — > [4/4 completed]
+  - `round6收尾_placement第三FP与弃判治理与nav热修回收_9d4b7e21.plan.md`
+- **round7 skills/文案批 — agent 写路径 features_dir 贯通（三通道分级）+ gitignore 动态化** — > [4/4 completed]
+  - `round7_skills文案与gitignore_features-dir贯通_a9c4e7f1.plan.md`
+- **round7 先行批 — 路径硬编码统一治理（harness 读写路径解析层；skills/gitignore 另批）** — > [4/4 completed]
+  - `round7先行_路径硬编码统一治理_7c4e9f2a.plan.md`
+- **全阶段卡死误判根治 — 依赖归因误报 + Stop hook 无逃生阀 + 弱模型空回复** — > [6/6 completed]
+  - `全阶段卡死误判根治_依赖归因误报与stop逃生阀与弱模型空回复_e7d2b9a4.plan.md`
+- **发布件提速 — ts-node 冗余类型检查根治 + 发布编排去重 + filter 短路（v2 已纳 review）** — > [7/8 completed]
+  - `发布件提速_tsnode全量类型检查冗余根治与发布编排去重_a7c3e1f9.plan.md`
+- **在线高保真对照** — 在 2.4.0 窗口（framework-only，不 bump 版本）为 maison 增加「在线高保真对照」能力。复用「视觉保真结构化加固」已落地的 source_ref/authoritative_refs/ref-elements/fidelity_target 地基。两刀切：第一刀（核心）定义宿主 MCP 获取契约 fetch_fidelity + fidelity.lock.yaml 快照格式 + 每屏物化本地参考图（接入点 authoritative-ref-images 读 lock 小改、下游真消费者 visual-diff-capture/asset-acquisition 零改动吃进）+ 离线校验/降级/版本号比对 refresh；第二刀（差异化）用结构化源（Figma 类 DOM/CSS）程序化推导 ref-elements.yaml 分母 + 语义色/文案比对，喂现有 capture-completeness。抓取是 spec 阶段 agent 显式动作（调宿主 MCP，令牌缓存在宿主侧），harness check 仍只读本地、离线确定。 [7/7 completed]
+  - `在线高保真对照_60d53da3.plan.md`
+- **编号 skill 彻底清扫** — 在 purge_everywhere 前提下清扫死编号路径/散文引用；保留运行时活 alias（profile-skill-assets.ts）；扫描器五 kind 含钉死的 bare/range 定义与误报排除；验收为护栏 + 广撒网 + 人工签收。 [4/4 completed]
+  - `编号_skill_彻底清扫_5cfd4d43.plan.md`
+- **视觉保真假PASS根治与截图态对齐** — > [9/9 completed]
+  - `视觉保真假PASS根治与截图态对齐_b7e3c1a9.plan.md`
+- **视觉保真管线升级** — 在 agent-maison 框架中插入一条结构化"视觉 IR / UI-DSL"中间产物，并补齐资产管线、coding 强制读图、确定性视觉 parity 门禁，把"截图→散文→盲写"的单向衰减链路，改造成"截图→可机读 UI-DSL→契约→对照实现→逐项核对"的工业级管线；并本期交付最小可用的"渲染→视觉 diff→回修"闭环（option A，复用 hmos-app 既有 Hylyre 截图能力，挂在 device-testing）。 [18/18 completed]
+  - `视觉保真管线升级_7e367678.plan.md`
+- **视觉保真结构化加固** — 在 agent-maison 2.4.0 窗口内，按"五环短板"重排优先级——把投入从 coding 门禁（第二强环）转向真正的根因：①捕获完整性（参考图→ui-spec 逐元素强制表态、以参考图侧枚举为分母的覆盖校验）与⑤反降级治理（fidelity_target 全链路 ratchet、P0 视觉元素 defer 须人类签字）。再补④验证闭环（双向 diff 残差达标、放水点收紧）与③素材供给（三级策略 + 素材需求清单，拒绝 AI 山寨）。coding 门禁瘦身为背板。命门是严重度：pixel_1to1 下关键视觉项必须 FAIL/BLOCKER，不得做成又一堆 WARN。全程 framework-only、不 bump 版本，并用 A/B/C 三分法诚实管理预期。 [6/6 completed]
+  - `视觉保真结构化加固_f4aaf66d.plan.md`
+- **视觉残差闭环（M3 多模态注入 + M4 设备渲染回环）** — 补齐「视觉保真管线升级」遗留的 M3/M4 两块真实执行能力——M3 把当前仅 sidecar+markdown 链接的图片注入升级为「按 adapter 能力分级的真多模态消费」（tool_read 读图取证 / native_attach 原生附件），杜绝把图当普通文本、并对 verifier 是否真看图留可核验证据；M4 把 device-testing Step 4.6 的「agent 手填 visual-diff.json」升级为「harness 复用 Hylyre 自动导航截图 + 生成报告骨架 + 可选半定量客观下限分」，让渲染→视觉 diff→回修闭环不再纯靠人工誊写。二者同属视觉残差闭合（生产侧渲染回环 + 消费侧多模态），合并为一个 plan、分两里程碑独立可交付。 [12/12 completed]
+  - `视觉残差闭环_M3多模态注入_M4设备回环_9c4f2e1a.plan.md`
+- **视觉裁判可信化 · 独立布局硬门禁(P1) / pixel_1to1 P0 人确认兜底(P1) / lightweight 不豁免(P1) / warn 收紧+可执行 must_fix(P1) / 屏身份越界门禁(P1) / goal-mode 熔断+预算分流(P1) / VL 逐元素 bbox 证据链(P2)** — > [8/8 completed]
+  - `视觉裁判可信化_独立布局硬门禁与VL证据链与loop熔断_a3f1c920.plan.md`
+- **首页UI保真 round5 · 素材整段化根治(P0-A 烤字门禁/P0-B 原子图标/P0-C 双渲染纪律) + 采集导航闭环(P1-A 导航采集/P1-B failureKind 分流补全/P1-C 报告诚实化)** — > [6/6 completed]
+  - `首页UI保真round5_素材整段化根治与采集导航闭环_e5b1c2a0.plan.md`
+- **首页UI保真round6 — bbox 坐标语义门禁(P0) / 裁剪产物验真(P0) / 授权≠验真拆分(P0) / spec 完整性外部对照(P0) / coding 文案白名单+parity 升门禁(P1) / review 视觉维度(P1) / device 回环断流归因+可执行must_fix(P1)** — > [10/10 completed]
+  - `首页UI保真round6_bbox语义门禁与素材验真与门禁左移_f2d8c4a6.plan.md`
+- **首页素材物化断桥根治 · 占位冒充门禁(B) / resource_integrity媒体绕过(F) / 采集新鲜度(E) / 物化桥(A) / visual_diff warn屏下限(C) / pixel_1to1兜底复核(D)** — > [7/7 completed]
+  - `首页素材物化断桥根治_占位冒充门禁与warn屏下限_b4e9d1c7.plan.md`
 
 ## 2.3.0
 
