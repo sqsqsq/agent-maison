@@ -1,0 +1,521 @@
+# ============================================================================
+# C3-task1 硬约束台账（skill-slim，plan d4a7c1e8）— 机器可读 SSOT
+# ============================================================================
+# 范围：10 个 SKILL.md + templates/AGENTS.md.template 的硬约束条目（BLOCKER/HARD
+# STOP 级），逐条四分类。行数基线 wc/node 口径（2026-07-08 扫描）。
+# class：A=脚本已执行（enforced_by 必填） B=纯文本纪律 C=事故补丁可原则化 D=过时/重复
+# disposition = task2 改写动作；new_home = 旧文→新落点映射（task2 主干模板节）。
+# 语义指纹不锚行号；task2 开工前须 refresh diff。
+# 注：change-lite SKILL（109 行）按主干模板新写，不入本台账。
+
+schema_version: "1.0"
+scanned_at: "2026-07-08"
+
+# 用户拍板（2026-07-08，task2 执行依据）：
+#   1. 主干预算 150/250 分档【批准】——150 基准；framework-init / business-ut /
+#      catalog-bootstrap ≤250。
+#   2. C 类处置【折中】——事故叙事**不删**，移 framework/skills/reference/
+#      （task2 建档，如 incident-rationales.md）；正文保留规则本体一句 + 链接。
+#      下列 C 类条目 disposition 中的"删叙事"表述一律按此折中执行。
+decisions:
+  budget_tiering: approved      # 150 基准 + 三复杂 skill ≤250
+  class_c_handling: move_to_reference   # 叙事移 reference，非删除
+  decided_at: "2026-07-08"
+line_baseline:              # wc -l 口径
+  framework-init: 257
+  catalog-bootstrap: 654
+  code-graph: 142
+  goal-mode: 186
+  spec: 517
+  plan: 772
+  coding: 609
+  code-review: 420
+  business-ut: 843
+  device-testing: 575
+  AGENTS.md.template: 306
+
+entries:
+  # ==========================================================================
+  # 跨 skill 公共约束（appears_in 列出出现点；task2 收敛为单点 + 主干一句）
+  # ==========================================================================
+  - id: common-personal-setup-01
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing, catalog-bootstrap, code-graph]
+    fingerprint: "跑 harness 前须 check-personal-setup --json --ensure，仅解析 JSON"
+    class: A
+    enforced_by: "check-personal-setup.ts + harness-runner personal-setup 前置闸（Step2 引导）"
+    disposition: "主干前置表格一行 + 链接 personal-setup-gate.md；删除各 skill 重复整段"
+    new_home: "SKILL.md#输入/前置 表格"
+
+  - id: common-harness-readiness-02
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing, framework-init]
+    fingerprint: "harness 命令前须满足 Tier_1 readiness 与 Shell cwd 契约"
+    class: A
+    enforced_by: "harness-runner ensureHarnessTier1DepsOrExit（确定性探测 + 自解释报错）"
+    disposition: "前置表格一行链接 host-harness-readiness.md / harness-cli-cwd.md；正文重复段删"
+    new_home: "SKILL.md#输入/前置 表格"
+
+  - id: common-resume-gate-03
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "receipt 可能已存在时须先 check-receipt / --sync-closure，exit 0 即已闭环停等，禁凭 stale state 重跑"
+    class: A
+    enforced_by: "check-receipt.ts + check-phase-completion.mjs stale-state 治理 + AGENTS §5.2"
+    disposition: "主干一句 + 指向 AGENTS §5.2（SSOT 唯一化，skill 内不复述细则）"
+    new_home: "SKILL.md#流程骨架 首步"
+
+  - id: common-behavior-principles-04
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut]
+    fingerprint: "完整阅读 agent-behavioral-principles.md（Karpathy 四原则）后方可产出"
+    class: B
+    enforced_by: "（部分背书）verifier behavior_* 检查项；无脚本强制完整阅读"
+    disposition: "「完整阅读 X（BLOCKER）」句式改条件加载索引（task2 政策：增必有出口）；四原则一句话内联"
+    new_home: "SKILL.md#条件加载索引"
+
+  - id: common-profile-addendum-05
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "Step 0 完整阅读 profiles/<profile>/skills/<skill>/profile-addendum.md"
+    class: B
+    enforced_by: "无脚本强制；profile-skill-asset 协议由 check-docs 部分校验"
+    disposition: "改条件加载：当 addendum 文件存在时读（一行）；删整段仪式文本"
+    new_home: "SKILL.md#条件加载索引"
+
+  - id: common-exploration-gate-06
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut]
+    fingerprint: "Research Sub-Phase / Context Exploration Gate 完成前禁止写正文产物"
+    class: A
+    enforced_by: "check-receipt context_exploration_* + checkContextExplorationArtifact（utils/context-exploration.ts）"
+    disposition: "主干一句 + 门禁清单表一行；探索预算细则留 spec-rules exploration_strategy"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: common-stop-hook-layer3-07
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "「物理拦截层：部分 adapter 下发 Stop hook 阻断假完成」整段说明"
+    class: D
+    enforced_by: "（说明性文本；机制本体在 check-phase-completion.mjs）"
+    disposition: "六处重复段删除；SSOT 唯一化到 agents/README.md Layer 3，主干不再复述"
+    new_home: "framework/agents/README.md#Layer3（既有）"
+
+  - id: common-four-piece-closure-08
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "四件套闭环判定（脚本零 BLOCKER + verifier PASS + trace + receipt）表格"
+    class: A
+    enforced_by: "check-receipt.ts 聚合（trace/receipt/verifier/gate 指纹）"
+    disposition: "缩为门禁清单表一行「闭环=check-receipt exit 0」；四件套矩阵表删重复"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: common-closure-wait-gate-09
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "闭环后停等 phase.next_step / *.ok_to_*，禁自动续接下游"
+    class: A
+    enforced_by: "check-skills-confirmation-ux phase_closure_gate_missing（文本在场强制）+ hard_hook 档 Stop hook"
+    disposition: "保留主干一句（lint 要求标记在场）；菜单文案指 confirmation-registry 不内联"
+    new_home: "SKILL.md#流程骨架 末步"
+
+  - id: common-verifier-duty-10
+    skill: _cross
+    appears_in: [spec, plan, coding, code-review, business-ut, device-testing]
+    fingerprint: "「数字纪律：agent 必须自跑 harness + Task 触发 verifier」逐 skill 重复条"
+    class: D
+    enforced_by: "AGENTS §4.1（SSOT 已有）+ check-receipt verifier_report 门禁"
+    disposition: "各 skill 数字纪律清单中的重复条删除，短链 AGENTS §4.1"
+    new_home: "AGENTS.md#4.1（既有）"
+
+  # ==========================================================================
+  # spec
+  # ==========================================================================
+  - id: spec-session-boundary-01
+    skill: feature/spec
+    fingerprint: "spec-only 回合不得新建/实质改写 plan 技术章节与 contracts 接口契约"
+    class: C
+    enforced_by: "无脚本；C5 correction.layer 分层 + C1 track 路由后可原则化"
+    disposition: "缩为「层边界」一句 + 违规处置指 correction.layer；防弱模型长段叙事移 reference（拍板：折中）"
+    new_home: "SKILL.md#流程骨架 + AGENTS §4.0 修正三问 + reference(事故叙事)"
+
+  - id: spec-terminology-freeze-02
+    skill: feature/spec
+    fingerprint: "术语映射表所有行 [x] 用户确认后才允许生成 spec 正文"
+    class: A
+    enforced_by: "check-spec.ts terminology_mapping_table"
+    disposition: "正文缩为一句 + 报错自解释；操作细则留 confirmation-registry spec.terminology"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: spec-terminology-scope-03
+    skill: feature/spec
+    fingerprint: "每行权威模块必须出现在 in/out scope 声明中"
+    class: A
+    enforced_by: "check-spec.ts terminology_modules_within_scope"
+    disposition: "并入门禁清单表一行"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: spec-visual-handoff-04
+    skill: feature/spec
+    fingerprint: "DSL↔原图人工逐屏 [x]（human_confirmed）；资产 crop 真实落地否则 placeholder+rationale；自然语言授权识别"
+    class: A
+    enforced_by: "check-spec.ts visual_handoff / ui-spec 校验链（spec.visual_handoff capability）"
+    disposition: "A 类缩句；headless 降级语义留 ui-spec.md（条件加载）"
+    new_home: "SKILL.md#门禁清单表 + 条件加载索引(ui-spec.md)"
+
+  - id: spec-harness-order-05
+    skill: feature/spec
+    fingerprint: "Step 6 后下一件正事必须是 7.1 harness（顺位），禁先进 plan"
+    class: C
+    enforced_by: "无脚本；与 AGENTS §3.8 阶段边界推进同源"
+    disposition: "原则化并入 §3.8 短链；skill 内一句"
+    new_home: "AGENTS.md#3.8（原则）"
+
+  - id: spec-ui-ac-device-06
+    skill: feature/spec
+    fingerprint: "纯 UI/交互 AC 必须落 device 层，业务 UT 禁依赖真实 UI 导航"
+    class: A
+    enforced_by: "ut-rules.yaml no_ui_dep_in_ut + acceptance ut_layer 校验"
+    disposition: "缩为 acceptance 提取规则一句"
+    new_home: "SKILL.md#产物契约"
+
+  # ==========================================================================
+  # plan
+  # ==========================================================================
+  - id: plan-session-boundary-01
+    skill: feature/plan
+    fingerprint: "plan 迭代回合内无显式编码授权不得动实现层产物"
+    class: C
+    enforced_by: "无脚本；C5 correction/coding diff_within_scope 部分兜底"
+    disposition: "同 spec-session-boundary：一句 + 指 correction.layer / §3.8"
+    new_home: "AGENTS.md#4.0/#3.8"
+
+  - id: plan-scope-inherit-02
+    skill: feature/plan
+    fingerprint: "plan in_scope_modules ⊆ spec.in_scope ∪ expansions_with_user_approval；不触碰 out_of_scope"
+    class: A
+    enforced_by: "check-plan.ts scope 继承校验（scope_declaration / 交叉校验）"
+    disposition: "A 类缩句进门禁清单表；扩 scope 流程留 plan.scope_expansion gate 文案"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: plan-step13-order-03
+    skill: feature/plan
+    fingerprint: "归档落盘后必须先跑 Step 13 harness（零 BLOCKER）再谈进入 coding"
+    class: C
+    enforced_by: "（部分）coding 前置闸门文本 + check-receipt 上游闭环"
+    disposition: "原则化：阶段边界推进 §3.8 + plan.ok_to_code gate 一句"
+    new_home: "AGENTS.md#3.8 + SKILL.md#流程骨架末步"
+
+  - id: plan-arch-matrix-04
+    skill: feature/plan
+    fingerprint: "外层依赖矩阵/模块内分层/数据类型/P0P1 无未决 等 verifier BLOCKER 清单"
+    class: A
+    enforced_by: "check-plan.ts + verify-plan.md（verifier 语义检查）"
+    disposition: "verifier 检查点列表缩为门禁清单表引用（verify-plan.md 为 SSOT）"
+    new_home: "SKILL.md#门禁清单表"
+
+  # ==========================================================================
+  # coding
+  # ==========================================================================
+  - id: coding-diff-scope-01
+    skill: feature/coding
+    fingerprint: "git diff 不得越出 plan in_scope_modules（写码时就自约束）"
+    class: A
+    enforced_by: "check-coding.ts diff_within_scope（分类核心 utils/diff-scope.ts，与 lite exit 共用）"
+    disposition: "A 类缩句；扩 scope/升档路径由报错 suggestion 承载"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: coding-entry-gate-02
+    skill: feature/coding
+    fingerprint: "进入闸门：plan 刚修订须先过 plan harness 顺位再动实现层"
+    class: C
+    enforced_by: "无脚本；§3.8 同源"
+    disposition: "原则化 §3.8；skill 内一句"
+    new_home: "AGENTS.md#3.8"
+
+  - id: coding-visual-fidelity-machine-03
+    skill: feature/coding
+    fingerprint: "pixel_1to1 机器门禁组：视觉真源 Read / 资产物化禁占位冒充 / 可见文案白名单 / 渲染几何按声明 / 结构声明台账"
+    class: A
+    enforced_by: "capability-registry dispatchCodingVisualParity + fidelity_governance / visual_parity_* 系门禁"
+    disposition: "A 类逐条缩句进门禁清单表（每条 check id + 一句失败处置）"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: coding-visual-fidelity-prose-04
+    skill: feature/coding
+    fingerprint: "上述视觉条目的事故溯源长文案（P1-A/P1-4/2026-07-03 日期标注段）"
+    class: C
+    enforced_by: "（同上机器门禁已在场）"
+    disposition: "事故补丁文本原则化：正文留规则本体一句，日期/plan 号叙事移 reference（拍板：折中）；报错文案增强承接细节"
+    new_home: "check 报错文案（错误消息即文档）+ reference(事故叙事)"
+
+  - id: coding-single-file-lint-05
+    skill: feature/coding
+    fingerprint: "每文件写完即过单文件 Lint，禁攒批"
+    class: B
+    enforced_by: "无脚本强制逐文件时序；coding.lint provider（checkCodingLint 派发点已备）事后兜底"
+    disposition: "缩为一句纪律；provider 接线后转 A"
+    new_home: "SKILL.md#流程骨架"
+
+  - id: coding-named-handler-06
+    skill: feature/coding
+    fingerprint: "ui_bindings.calls 必须是真实命名符号（自检省回环）+ 编排禁用 import 清单"
+    class: A
+    enforced_by: "business-ut harness named_business_handler + ut_import_whitelist / ut-ui-import-ban"
+    disposition: "A 类缩句 + 指 business-ut 门禁表（下游拦截点写明）"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: coding-compile-exit-07
+    skill: feature/coding
+    fingerprint: "coding.compile 是必要出口；跳过 capability 的环境变量会被转 FAIL；can_claim_done 面板裁决"
+    class: A
+    enforced_by: "profile coding-host checkCodingCompile + coding_run_status（critical skip 聚合）"
+    disposition: "A 类缩句；provider/日志细节留 profile addendum"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: coding-fail-report-08
+    skill: feature/coding
+    fingerprint: "脚本/编译 FAIL 时须用户可见汇报（7.1.1），禁静默重试"
+    class: B
+    enforced_by: "无脚本；行为规约背书"
+    disposition: "缩为一句纪律"
+    new_home: "SKILL.md#流程骨架"
+
+  # ==========================================================================
+  # code-review
+  # ==========================================================================
+  - id: review-no-auto-trigger-01
+    skill: feature/code-review
+    fingerprint: "上游 coding 闭环 alone 不触发本 skill；须用户显式意图"
+    class: C
+    enforced_by: "无脚本；phase.next_step 停等语义同源"
+    disposition: "原则化并入闭环停等语义（§8）；skill 内一句"
+    new_home: "SKILL.md#触发条件"
+
+  - id: review-read-only-02
+    skill: feature/code-review
+    fingerprint: "只审不改（默认）：无明示修改授权不得动代码"
+    class: B
+    enforced_by: "无脚本；C5 correction.layer/touched_layers 对账（C5-full）将部分背书"
+    disposition: "保留主干一句；C5-full 接管后转 A"
+    new_home: "SKILL.md#流程骨架"
+
+  - id: review-report-contract-03
+    skill: feature/code-review
+    fingerprint: "报告必需章节/四级严重度/结论与 BLOCKER 计数一致/引用文件存在"
+    class: A
+    enforced_by: "check-review.ts（章节/值域/结论一致性/文件存在性）"
+    disposition: "A 类缩句进门禁清单表；报告模板外移 templates"
+    new_home: "SKILL.md#门禁清单表 + 产物契约"
+
+  - id: review-visual-recheck-04
+    skill: feature/code-review
+    fingerprint: "pixel_1to1 证据全覆盖逐条复核（visual_fidelity_review）；defer 须人类签字"
+    class: A
+    enforced_by: "check-review.ts visual_fidelity_review + fidelity_governance"
+    disposition: "A 类缩句"
+    new_home: "SKILL.md#门禁清单表"
+
+  # ==========================================================================
+  # business-ut
+  # ==========================================================================
+  - id: ut-ui-ban-01
+    skill: feature/business-ut
+    fingerprint: "UI/资源/页面运行时符号绝对禁入 UT import"
+    class: A
+    enforced_by: "check-ut.ts ut_import_whitelist + profile ut-ui-import-ban"
+    disposition: "A 类缩句；白名单全表留 addendum（条件加载）"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: ut-context-extraction-02
+    skill: feature/business-ut
+    fingerprint: "禁通读大模块源文件；按 profile 摘取协议 rg 签名摘取，预算封顶"
+    class: B
+    enforced_by: "无脚本强制（context_exploration 计数部分反映）"
+    disposition: "缩为一句 + profile-skill-asset 链接"
+    new_home: "SKILL.md#条件加载索引"
+
+  - id: ut-write-path-gate-03
+    skill: feature/business-ut
+    fingerprint: "UT 产物写入路径 Gate：禁污染 harness 工作区/宿主测试目录"
+    class: A
+    enforced_by: "check-ut.ts harness_host_artifact_pollution + harness-path-guard"
+    disposition: "A 类缩句"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: ut-gate-table-04
+    skill: feature/business-ut
+    fingerprint: "dag schema/回指/节点类型/双打齐备/AC-BRANCH 标签/覆盖率分母 等 14+ 项门禁矩阵"
+    class: A
+    enforced_by: "check-ut.ts（正文 §门禁表逐项对应）"
+    disposition: "既有表即 task2 门禁清单表形态——保留表、删除表外重复叙述段"
+    new_home: "SKILL.md#门禁清单表（原位收敛）"
+
+  - id: ut-src-mutation-05
+    skill: feature/business-ut
+    fingerprint: "UT 阶段业务源码变更须 gap-notes approved_src_mutations 登记，未登记即违规"
+    class: A
+    enforced_by: "check-ut.ts ut_no_src_mutation"
+    disposition: "A 类缩句 + 登记流程一句"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: ut-real-run-06
+    skill: feature/business-ut
+    fingerprint: "UT 必须实跑（ut.run）；env 跳过会被转 FAIL"
+    class: A
+    enforced_by: "profile ut-host-impl checkUtHvigorTest + capability ut.run"
+    disposition: "A 类缩句"
+    new_home: "SKILL.md#门禁清单表"
+
+  # ==========================================================================
+  # device-testing
+  # ==========================================================================
+  - id: testing-toolchain-chain-01
+    skill: feature/device-testing
+    fingerprint: "build→install→run capability 顺序先于文档门禁；SKIP 语义按 profile 声明"
+    class: A
+    enforced_by: "check-testing.ts device_test.* capability 派发"
+    disposition: "A 类缩句"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: testing-hylyre-ssot-02
+    skill: feature/device-testing
+    fingerprint: "device_test.run 未 SKIP 时以顶层 test-plan.md 为 SSOT 校验派生覆盖（TC ∪ explicit_skip）"
+    class: A
+    enforced_by: "check-testing.ts + hylyre-planned-step-lint"
+    disposition: "A 类缩句；派生细则留 profile addendum"
+    new_home: "SKILL.md#门禁清单表"
+
+  - id: testing-visual-judge-03
+    skill: feature/device-testing
+    fingerprint: "视觉裁判 T2 真人确认主背靠；无设备降级 SKIP 只留静态分；pixel_1to1 下 defer/lowScorePass 须人签"
+    class: A
+    enforced_by: "visual-diff-check + visual-confirm.ts（await_human_confirm 分类）+ fidelity_governance"
+    disposition: "A 类缩句；实测证伪叙事（像素/OCR 不可背靠）移 reference 论证文档"
+    new_home: "SKILL.md#门禁清单表 + 条件加载索引"
+
+  - id: testing-doc-contract-04
+    skill: feature/device-testing
+    fingerprint: "计划/报告必需章节、用例表格、通过率与结论一致性、计划-报告编号一致"
+    class: A
+    enforced_by: "check-testing.ts 文档契约组"
+    disposition: "A 类缩句进门禁清单表；模板外移"
+    new_home: "SKILL.md#门禁清单表 + 产物契约"
+
+  # ==========================================================================
+  # framework-init / goal-mode / catalog-bootstrap / code-graph
+  # ==========================================================================
+  - id: init-s2-gates-01
+    skill: project/framework-init
+    fingerprint: "S2 enum gate 链（task_plan/materialized_adapters 每轮必问/portable fallback/staging 预览 SSOT）"
+    class: A
+    enforced_by: "init-orchestrate validateDecisionJson + check-skills-confirmation-ux（init 系 lint 组）"
+    disposition: "A 类缩句；菜单文案 SSOT 已在 registry，正文只留步骤一句"
+    new_home: "SKILL.md#流程骨架 + 门禁清单表"
+
+  - id: init-s4-closed-02
+    skill: project/framework-init
+    fingerprint: "S4 已闭环：摘要后禁附 portable 编号菜单"
+    class: A
+    enforced_by: "check-skills-confirmation-ux init_s4_closed 系"
+    disposition: "保留标记句（lint 要求在场）"
+    new_home: "SKILL.md#流程骨架末步"
+
+  - id: init-s1-readonly-03
+    skill: project/framework-init
+    fingerprint: "S1 探测只读；阻塞情形上报而非自作主张"
+    class: B
+    enforced_by: "无脚本"
+    disposition: "缩为一句纪律"
+    new_home: "SKILL.md#流程骨架"
+
+  - id: goal-runner-entry-01
+    skill: project/goal-mode
+    fingerprint: "本 skill 是 goal-runner 宿主入口，不实现独立裁决循环；主 agent 自己启动 runner"
+    class: B
+    enforced_by: "（部分）AGENTS §4.1 同源授权"
+    disposition: "保留主干两句；重复的 §4.1 论证删"
+    new_home: "SKILL.md#概述"
+
+  - id: goal-survival-first-02
+    skill: project/goal-mode
+    fingerprint: "survival-first 启动 + 前台无人值守真跑被 runner 机制阻断 + 启动后存活自校验"
+    class: A
+    enforced_by: "goal-runner 前台真跑阻断护栏（approval_mode=never 无 --detach → BLOCKER）"
+    disposition: "机制句保留一句；操作细节留 goal-runner --help/报错"
+    new_home: "SKILL.md#流程骨架"
+
+  - id: goal-no-self-resume-03
+    skill: project/goal-mode
+    fingerprint: "主 agent 不得自行循环 --resume；续跑须用户显式触发"
+    class: B
+    enforced_by: "无脚本（runner 侧 resume 需显式 run_id 部分抬门槛）"
+    disposition: "保留一句"
+    new_home: "SKILL.md#流程骨架"
+
+  - id: goal-monitor-timeout-04
+    skill: project/goal-mode
+    fingerprint: "goal-monitor --max-seconds N 时宿主工具 timeout 须 > N；无流式 adapter 的 phase log 结束前恒空"
+    class: C
+    enforced_by: "无脚本（事故补丁文本）"
+    disposition: "原则化为监控注意事项两句；事故叙事移 reference（拍板：折中）"
+    new_home: "SKILL.md#条件加载索引(goal 运维 reference) + reference(事故叙事)"
+
+  - id: catalog-seed-guard-01
+    skill: project/catalog-bootstrap
+    fingerprint: "种子技术词正则+去重守门（Step 1 前置强制）；easily_confused/entry_file 追溯"
+    class: A
+    enforced_by: "check-catalog.ts / check-glossary.ts（traceability 组；种子预检部分为 prompt 纪律）"
+    disposition: "A 类缩句；prompt 内联长模板外移 prompts/（catalog-bootstrap 654 行主因）"
+    new_home: "SKILL.md#门禁清单表 + prompts/ 外移"
+
+  - id: code-graph-drift-01
+    skill: project/code-graph
+    fingerprint: "符号消失/anchor hash 变更 → BLOCKER 漂移门禁"
+    class: A
+    enforced_by: "check-module-graph.ts + code-graph/drift.ts"
+    disposition: "已接近主干形态（142 行）；仅并入门禁清单表"
+    new_home: "SKILL.md#门禁清单表"
+
+  # ==========================================================================
+  # AGENTS.md.template（task3 入口瘦身对照）
+  # ==========================================================================
+  - id: agents-guard-sections-01
+    skill: templates/AGENTS.md.template
+    fingerprint: "§3.1 架构 / §3.2 术语 / §3.3 Scope / §3.4 toolchain / §3.6 exploration 五大守门"
+    class: A
+    enforced_by: "check-coding（层/依赖）/ check-spec（术语/scope）/ compile capabilities / context-exploration"
+    disposition: "task3：五节压缩为红线清单表（每条一行 + check id）；展开文本移 framework reference"
+    new_home: "AGENTS.md#红线清单 + framework/skills/reference/*"
+
+  - id: agents-behavior-07-02
+    skill: templates/AGENTS.md.template
+    fingerprint: "§3.7 行为规约 + §3.8 阶段边界推进"
+    class: B
+    enforced_by: "（部分）verifier behavior_*"
+    disposition: "task3：各缩为两行原则 + 短链"
+    new_home: "AGENTS.md#红线清单"
+
+  - id: agents-41-authorization-03
+    skill: templates/AGENTS.md.template
+    fingerprint: "§4.1 主 agent/verifier 职责切分反误读明示授权"
+    class: B
+    enforced_by: "无脚本（反误读文本）"
+    disposition: "task3：移 framework reference，正文留一行短链（弱模型误读史保留在 reference）"
+    new_home: "framework/skills/reference/（新 reference）"
+
+  - id: agents-closure-trace-04
+    skill: templates/AGENTS.md.template
+    fingerprint: "§5.1/§5.1.1/§5.2 闭环判定/会话边界/跨会话恢复"
+    class: A
+    enforced_by: "check-receipt.ts + check-phase-completion.mjs（session/stale 治理）"
+    disposition: "task3：判定细则移 reference；正文留判定入口一句 + 命令"
+    new_home: "framework/skills/reference/（closure reference）"
+
+  - id: agents-interaction-rules-05
+    skill: templates/AGENTS.md.template
+    fingerprint: "§六 交互硬规则（确认 UX / 反假设条款等）"
+    class: A
+    enforced_by: "check-skills-confirmation-ux（UX 组 lint）；反假设条款为 B 纪律"
+    disposition: "task3：UX 指 registry/SSOT 一句；反假设条款保留两行（高杠杆防幻觉文本）"
+    new_home: "AGENTS.md#红线清单"

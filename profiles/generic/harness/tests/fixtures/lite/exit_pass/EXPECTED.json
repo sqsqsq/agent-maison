@@ -1,0 +1,12 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    { "id": "exit_checkboxes_all_checked", "status": "PASS", "severity": "BLOCKER", "details_includes": "全部勾选" },
+    { "id": "exit_scope_declared", "status": "PASS", "details_includes": "ModA" },
+    { "id": "exit_compile", "status": "PASS", "severity": "MINOR", "details_includes": "capability SKIP" },
+    { "id": "exit_diff_within_scope", "status": "PASS", "severity": "BLOCKER", "details_includes": "0 个越界" },
+    { "id": "exit_diff_within_scope", "status": "PASS", "details_includes": "1 个在 in_scope 模块内" },
+    { "id": "exit_lint", "status": "PASS", "severity": "MINOR", "details_includes": "capability SKIP" },
+    { "id": "exit_ut", "status": "PASS", "severity": "MINOR", "details_includes": "不适用" }
+  ]
+}

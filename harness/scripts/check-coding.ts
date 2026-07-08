@@ -29,6 +29,7 @@ import { checkContextExplorationArtifact } from './utils/context-exploration';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
+import { classifyChangedFiles, layerDirPrefixes } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import {
   loadFrameworkConfig,
@@ -189,19 +190,6 @@ function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-/**
- * "架构层级目录前缀"由 framework.config.json 的 outer_layers[].id 推导，
- * 每个 layer id 被追加 "/" 作为顶层目录前缀。
- */
-function getLayerDirPrefixes(projectRoot: string): string[] {
-  return getOuterLayerIds(loadFrameworkConfig(projectRoot).architecture).map(id => `${id}/`);
-}
-
-function isUnderLayerDir(relPath: string, prefixes: string[]): boolean {
-  const normalized = relPath.replace(/\\/g, '/');
-  return prefixes.some(prefix => normalized.startsWith(prefix));
-}
-
 /** `paths.docs_committed` 与本检查关系说明（人读） */
 function diffWithinScopeDocsNote(ctx: CheckContext): string {
   if (ctx.docsCommitted) {
@@ -303,21 +291,12 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const violations: string[] = [];
-  const inScopeHits: string[] = [];
-  const neutralCount = { value: 0 };
-
-  const layerDirPrefixes = getLayerDirPrefixes(ctx.projectRoot);
-  for (const file of files) {
-    const normalized = file.replace(/\\/g, '/');
-    if (!isUnderLayerDir(normalized, layerDirPrefixes)) {
-      neutralCount.value++;
-      continue;
-    }
-    const hit = allowedPrefixes.find(p => normalized.startsWith(p));
-    if (hit) inScopeHits.push(normalized);
-    else violations.push(normalized);
-  }
+  const { violations, inScopeHits, neutralCount: neutral } = classifyChangedFiles(
+    files,
+    allowedPrefixes,
+    layerDirPrefixes(ctx.projectRoot),
+  );
+  const neutralCount = { value: neutral };
 
   if (violations.length === 0) {
     return [{

@@ -2,10 +2,10 @@
 
 ## 1. task1 — 硬约束台账（Phase 0，无行为变更）
 
-- [ ] 台账 schema + 扫描产出：10 个 SKILL.md + AGENTS.md.template 逐条四分类
-- [ ] 每条含语义指纹 / enforced_by / disposition / 旧文→新落点映射
-- [ ] 主干预算分级提案（150 基准 / 复杂 skill ≤250）随台账提交
-- [ ] **停等用户 review 放行**
+- [x] 台账 schema + 扫描产出：10 个 SKILL.md + AGENTS.md.template 逐条四分类（`ledger/hard-constraints.yaml`，56 条：跨 skill 公共 10 + per-skill 41 + 入口模板 5，A35/B11/C8/D2——初版 README 汇总误写 38/A24，经 grep 机器复核更正；行数基线 wc 口径随附）
+- [x] 每条含语义指纹 / enforced_by / disposition / 旧文→新落点映射
+- [x] 主干预算分级提案（150 基准 / framework-init·business-ut·catalog-bootstrap ≤250）随台账提交（`ledger/README.md` §三，含不获批时的回退方案）
+- [x] **停等用户 review 放行**（2026-07-08 拍板：① 预算 150/250 分档批准——framework-init/business-ut/catalog-bootstrap ≤250，其余 150；② C 类折中——事故叙事移 framework reference 不删除。台账放行；task2 动笔仍按 plan 时序等 Phase 0 gate）
 
 ## 2. task2 — 主干化改写（Phase 1，依赖台账放行 + C1 定稿）
 

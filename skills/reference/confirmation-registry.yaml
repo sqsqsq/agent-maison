@@ -329,6 +329,27 @@ entries:
         label: "继续改 spec — 本轮不冻结"
         portable: "2=继续改 spec"
 
+  # --- change-lite（lite 轨） ---
+  - id: feature.track
+    skill: "change-lite"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "S1 判档 / 中途升档"
+    portable_menu: "1=接受建议档 2=升 full 3=保持 lite"
+    notes: "agent 依 change-rules.yaml track_scoring 提议档位；一票升 full 项（pixel_1to1 / 跨模块 / goal 模式）命中时不得提议 lite。中途升档复用本 gate：确认后 feature.yaml history append，change.md 作 spec/plan 种子。"
+    options:
+      - value: accept_suggested
+        label: "接受建议档 — 按评分建议的 track 进入对应链"
+        portable: "1=接受建议档"
+        side_effect: "写 feature.yaml track/score_snapshot/confirmed_by"
+      - value: upgrade_full
+        label: "升 full — 走 spec→plan→coding→review→ut→testing 全链"
+        portable: "2=升 full"
+        side_effect: "feature.yaml track: full；升档时 history append + change.md 作种子"
+      - value: keep_lite
+        label: "保持 lite — 走 change→coding→exit 单文档链"
+        portable: "3=保持 lite"
+
   # --- plan ---
   - id: plan.scope_expansion
     skill: "plan"
@@ -482,6 +503,22 @@ entries:
       - value: other
         label: "其它 — 我在对话中说明意图"
         portable: "3=其它（说明）"
+
+  - id: correction.layer
+    skill: "_cross_phase"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "任一中途 NL 修正请求经修正三问分层后"
+    portable_menu: "1=同意按声明层实施 2=改层"
+    notes: "修正三问分层（需求变→spec / 契约变→plan / 纯实现→coding / 纯验证→ut·testing）后停等确认；禁止未分层直接动产物。strict 必确认，headless 低置信 halt-confirm（C5-min）。重验≠重做：只改根因层 SSOT，级联重跑下游脚本门禁。"
+    options:
+      - value: approve
+        label: "同意 — 按声明的 root_layer/touched_layers 实施并级联重验下游"
+        portable: "1=同意按声明层实施"
+        side_effect: "写 .current-correction.json（status: pending）后实施"
+      - value: relayer
+        label: "改层 — 用户指定正确落点层后重新分类"
+        portable: "2=改层"
 
   # --- code-review review ---
   - id: review.module_name

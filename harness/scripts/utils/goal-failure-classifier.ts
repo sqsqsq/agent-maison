@@ -23,7 +23,9 @@ export type FailureKind =
   | 'transient_api_error'
   | 'agent_no_output'
   /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
-  | 'await_human_confirm';
+  | 'await_human_confirm'
+  /** C5-min 验证转嫁禁令：修正触及验证层而宿主无 device 能力（evidence 缺口，与 await_human 系同构，不入 no_progress 口径） */
+  | 'verification_evidence_gap';
 
 /**
  * P0-B/P0-D（b8f36a12）：agent 级基建失败信号——由 goal-runner 从 invoke 结果 +
@@ -226,6 +228,11 @@ export function classifyFailureKind(
   // 候选且零 must_fix/stale，唯一 BLOCKER=真人确认。agent 不能替人签，重试无意义 → 独立 kind。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
     return 'await_human_confirm';
+  }
+  // C5-min：验证转嫁禁令的 evidence 缺口（check 层 failure_kind: verification_evidence_gap）——
+  // 设计内求人时刻，重试无意义，首触即 halt；不入 SIGNATURE_HALT_KINDS（不吃 no_progress 口径）。
+  if ((summary?.blockers ?? []).some((b) => b.classification === 'verification_evidence_gap')) {
+    return 'verification_evidence_gap';
   }
   // T6：基建/视觉分流。toolchain（build/install/hylyre 或 check 层标注的 device_test_run 崩溃）优先于 capture，再于 visual_gap。
   // device_test_run 的"用例失败"不带 device_toolchain 标 → 落到 code_regression（须改码、可重试），不误导成"先查环境"。

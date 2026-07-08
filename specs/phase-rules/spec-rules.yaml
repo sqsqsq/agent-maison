@@ -552,6 +552,8 @@ exploration_thresholds:
 # --------------------------------------------------------------------------
 # Context Exploration 触发策略（v2.10 — 复合评分）
 # --------------------------------------------------------------------------
+# 注：scoring.dimensions 已上抬复用为通用 track 判档评分
+# （change-rules.yaml > track_scoring，C1 feature-track）；两处维度须同步修改，勿单边漂移。
 exploration_strategy:
   default_mode: sequential
   scoring:

@@ -1,0 +1,17 @@
+schema_version: "1.0"
+modules:
+  - name: "ModA"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "library"
+    one_liner: "lite fixture 演示模块"
+    responsibilities:
+      - "展示文案"
+    NOT_responsible_for:
+      - "数据存储"
+    typical_business_terms:
+      - "文案"
+    easily_confused_with: []
+    key_exports:
+      - "ModA"
+    entry_file: "02-Feature/ModA/index.ets"

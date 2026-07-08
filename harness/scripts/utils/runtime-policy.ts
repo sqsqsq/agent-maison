@@ -225,6 +225,44 @@ export function resolveFeatureTrack(decl?: FeatureTrackDecl | null): FeatureTrac
   return 'full';
 }
 
+// ---------------------------------------------------------------------------
+// enforcement 分档（C5-min correction-routing；判定单点化归口本模块）
+// ---------------------------------------------------------------------------
+
+export type EnforcementTier = 'hard_hook' | 'headless_runner' | 'soft_rule_only';
+
+/** adapter.yaml 中与物理拦截能力相关的既有字段切片（不新增 schema 字段）。 */
+export interface AdapterEnforcementManifest {
+  settings_file?: unknown;
+  hooks?: unknown;
+}
+
+function manifestFieldPresent(v: unknown): boolean {
+  if (typeof v === 'string') return v.trim() !== '';
+  if (Array.isArray(v)) return v.length > 0;
+  if (v && typeof v === 'object') return Object.keys(v as object).length > 0;
+  return false;
+}
+
+/**
+ * enforcement 分档派生（纯函数；不按 adapter 名硬编码）。
+ * 优先级 **mode 先行**（codex 十轮 P1）：headless/goal 下即便 manifest 声明了 hooks，
+ * Claude Stop hook 在 MAISON_GOAL_HEADLESS=1 时直接旁路、无头进程物理拦截不在场，
+ * 误判 hard_hook 会夸大保证 → 恒 headless_runner。
+ * 其次 manifest 同时声明 settings_file + hooks（Stop/SubagentStop 注册链路在场）→ hard_hook；
+ * 否则 soft_rule_only（三问 + checklist + --correction-check；不得宣称 Stop hook 必拦）。
+ */
+export function resolveEnforcementTier(
+  manifest: AdapterEnforcementManifest | null | undefined,
+  ctx: Pick<RuntimeContext, 'mode'>,
+): EnforcementTier {
+  if (ctx.mode === 'headless' || ctx.mode === 'goal') return 'headless_runner';
+  if (manifestFieldPresent(manifest?.settings_file) && manifestFieldPresent(manifest?.hooks)) {
+    return 'hard_hook';
+  }
+  return 'soft_rule_only';
+}
+
 export interface EvidenceProfileConfig {
   /** framework.config.json 顶层 evidence_profile（C2 引入；缺省 strict）。 */
   evidence_profile?: string;

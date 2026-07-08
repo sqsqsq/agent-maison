@@ -3,7 +3,9 @@ version: "1.0"
 applies_to: "<features_dir>/<feature>/change.md"
 
 # lite track 的一次性出口门禁（C1 feature-track，plan d4a7c1e8）
-# 编译复用 profile coding host（与 coding 同源）；UT 条件项与 diff/lint 接线见 OpenSpec feature-track tasks。
+# 编译复用 profile coding host（与 coding 同源）；diff 分类核心与 full 轨共用
+# scripts/utils/diff-scope.ts；lint 派发 profile 可选 checkCodingLint；
+# 条件 UT 由验收清单 `[unit]` 标记条目触发（镜像 full 轨 acceptance ut_layer∈{unit,both}）。
 structure_checks:
   exit_change_doc_present:
     description: exit 以 change.md 为闭环判据，文件必须存在。
@@ -14,6 +16,9 @@ structure_checks:
   exit_compile:
     description: 编译检查——复用 profile coding-host-rules.checkCodingCompile（profile SKIP 声明时按 SKIP 语义）。
     severity: BLOCKER
+  exit_ut:
+    description: 条件 UT——验收清单含 [unit] 标记条目时强制经 ut-host-impl 运行（无标记不强制；profile 声明 SKIP ut.run 时按 SKIP 语义；不可执行态一律 fail-closed）。
+    severity: BLOCKER
 
 semantic_checks: {}
 
@@ -22,8 +27,8 @@ traceability_checks:
     description: Scope 的 in_scope_modules 须可解析（diff 越界防护判据来源）。
     severity: BLOCKER
   exit_diff_within_scope:
-    description: lite 的 diff 越界防护（红线，恒不豁免）；exit 侧接线待 C1 子批，接线前以显式 WARN 呈现缺项。
+    description: lite 的 diff 越界防护（红线，恒不豁免）——变更须落在 change.md 声明的 in_scope 模块内；scope 不可解析 / git 不可用等不可判状态一律 fail-closed FAIL。
     severity: BLOCKER
   exit_lint:
-    description: lint 检查；exit 侧接线待 C1 子批，接线前以显式 WARN 呈现缺项。
+    description: lint 检查——派发 profile coding host 可选 checkCodingLint；宿主无 provider 时为 MAJOR WARN 可见缺项（不阻断闭环）。
     severity: MAJOR

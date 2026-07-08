@@ -35,6 +35,8 @@ export const BUILTIN_SKILL_BRIDGE_DESCRIPTIONS: Record<string, string> = {
     '模块级 Code Graph 建图与漂移门禁（完整流程见 framework/skills/project/code-graph/SKILL.md）',
   'goal-mode':
     '目标模式 goal-runner 薄入口（完整流程见 framework/skills/project/goal-mode/SKILL.md）',
+  'change-lite':
+    'lite 轨单文档链 change → coding → exit（完整流程见 framework/skills/feature/change-lite/SKILL.md）',
   'spec': 'spec 撰写（完整流程见 framework/skills/feature/spec/SKILL.md）',
   'plan':
     'spec → plan（plan.md）（完整流程见 framework/skills/feature/plan/SKILL.md）',

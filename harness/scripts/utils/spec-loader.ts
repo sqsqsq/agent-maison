@@ -116,11 +116,14 @@ export class SpecLoader {
   // --------------------------------------------------------------------------
 
   loadPhaseRule(phase: Phase): PhaseRuleSpec {
-    const filename = PHASE_RULE_FILENAMES[phase];
-    if (!filename) {
-      throw new Error(`Unknown phase: ${phase}`);
-    }
+    // 已知 phase 用显式映射；其余按 `<phase>-rules.yaml` 约定派生（C0 判定单点化：
+    // workflow 1.1 起 phase 集由 workflow 声明，loader 不再持有封闭枚举——lite 的
+    // change/exit 与未来新 phase 一等公民）。约定文件不存在才视为未知 phase。
+    const filename = PHASE_RULE_FILENAMES[phase] ?? `${phase}-rules.yaml`;
     const filePath = path.join(this.phaseRulesDir, filename);
+    if (!PHASE_RULE_FILENAMES[phase] && !fs.existsSync(filePath)) {
+      throw new Error(`Unknown phase: ${phase}（约定规则文件 ${filename} 不存在于 ${this.phaseRulesDir}）`);
+    }
     return this.loadYaml<PhaseRuleSpec>(filePath);
   }
 
@@ -133,7 +136,15 @@ export class SpecLoader {
         phases.push(phase as Phase);
       }
     }
-    return phases;
+    // 约定派生 phase（与 loadPhaseRule 的 `<phase>-rules.yaml` 派生对齐——发现面不落
+    // 后于加载面；lite 的 change/exit 及未来新 phase 由此进 --list）
+    const known = new Set(Object.values(PHASE_RULE_FILENAMES));
+    const extras = fs
+      .readdirSync(this.phaseRulesDir)
+      .filter((f) => /^[a-z][a-z0-9_-]*-rules\.yaml$/.test(f) && !known.has(f))
+      .map((f) => f.replace(/-rules\.yaml$/, '') as Phase)
+      .sort();
+    return [...phases, ...extras];
   }
 
   // --------------------------------------------------------------------------

@@ -1,0 +1,7 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    { "id": "exit_checkboxes_all_checked", "status": "FAIL", "severity": "BLOCKER", "details_includes": "未勾选 1/2" },
+    { "id": "exit_diff_within_scope", "status": "PASS", "details_includes": "0 个越界" }
+  ]
+}

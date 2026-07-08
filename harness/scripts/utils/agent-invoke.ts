@@ -17,6 +17,7 @@ import {
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
 import { sanitizeSpawnEnv } from './process-integrity';
+import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -570,6 +571,8 @@ export interface AgentInvokeResult {
   kill_attempted?: boolean;
   kill_exit_code?: number | null;
   kill_error?: string | null;
+  /** C-ab-eval：按 adapter 声明采集的用量（采集失败/none → confidence: proxy，token 字段 null） */
+  usage?: AgentInvokeUsage;
 }
 
 export interface AgentInvokeOptions {
@@ -577,6 +580,8 @@ export interface AgentInvokeOptions {
   timeoutMs?: number;
   silentWatchdogMs?: number;
   outputLogPath?: string;
+  /** adapter goal_capability.usage_capture 声明（缺省 none）；结果回填 AgentInvokeResult.usage */
+  usageCapture?: UsageCaptureMethod;
   /** Called when child spawns — register tree-kill for signal handlers. */
   onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
   onChildExit?: () => void;
@@ -754,6 +759,8 @@ async function spawnHeadlessAsync(
     kill_attempted: killResult.kill_attempted,
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
+    // usage 是旁路事实：按声明采集，失败降 proxy，不影响主流程
+    usage: deriveInvokeUsage(opts.usageCapture, stdout, stderr),
   };
 }
 

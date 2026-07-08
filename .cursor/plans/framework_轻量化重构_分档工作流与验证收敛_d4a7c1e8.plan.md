@@ -29,25 +29,25 @@ todos:
     status: completed
   - id: c1-feature-track
     content: "C1 feature-track（Phase 0 最小闭环）：workflow-schema 增 tracks + requires_by_track + auto_chain_by_track（feature phase 缺省 [\"full\"]，lite 须显式；lite 含 lite-only phase 时链与依赖必须显式声明，无隐式推导）+ workflow schema_version 升 1.1（loader 兼容 1.0=full 单轨）+ spec-driven.workflow.yaml 标注 + 新增 change/exit phase 经 C0 注册进全部运行时（trace phase 校验改 workflow 合法集）；doc/features/<f>/feature.yaml 承载 track 声明与确认记录；判档评分复用 exploration_strategy 维度上抬（pixel_1to1/跨模块/goal 一票升 full）；feature.track gate 登记 confirmation-registry；L1 产物 change.md + check-change-lite.ts + exit 门禁；L0=入口路由不进管线但仍守项目原生 test/lint/build 与用户显式要求（拿不准默认进 lite）；入口路由表同时落「修正三问」文本（进行中 feature 的修正请求先根因分层：需求变→spec/契约变→plan/纯实现→coding/纯验证→ut·testing，禁止未分层直接动产物）+ correction gate 登记 confirmation-registry；lite 契约 fixture"
-    status: in_progress
+    status: completed
   - id: c3a-constraint-audit
     content: "C3-task1 硬约束普查台账（Phase 0，无行为变更）：范围=全部 10 个 SKILL.md（含 catalog-bootstrap 654 行等 project skill）+ templates/AGENTS.md.template 48 处；四分类（脚本已执行/纯文本纪律/事故补丁可原则化/过时重复）+ 旧文→新落点映射；停等用户 review 放行后才允许 C3-task2 动笔；台账同时按 skill 复杂度提交主干预算分级提案（150 基准，business-ut/plan 等是否放宽 ≤250）供用户拍板"
-    status: pending
+    status: completed
   - id: ab-eval-phase0
     content: "受控 A/B 基线（Phase 0 gate 输入；owner = OpenSpec change ab-eval）：前置任务=trace.schema.json 增可选 usage 段（input/output/tool tokens、requests、cost_estimate）+ 采集策略（goal-runner headless 直采 API usage；交互 adapter best-effort 自报+wall-time/tool_calls 代理指标）；然后取 4 类样本各 ≥1（简单 bugfix/单模块 feature/跨文件中等/进行中 feature 的 NL 修正——第 4 类对照 old flow vs C5 flow；某类不可复现须报告标注缺失且 gate 不得声称覆盖该类收益）× 同模型、各臂均以 headless goal-runner 跑（adapter goal capability 增 usage_capture: none|stdout_json|stderr_regex|sidecar|api 声明位，按声明采集、api/sidecar 优先；报告机器固化 resolved provider/model，拿不到 usage/model 身份只出代理指标、不得声称同模型 token 对照；交互态另验）、分开独立跑（不得顺序跑计时），产出对照报告；gate=方向性信号（继续/收窄），最终阈值不由单样本拍板"
-    status: pending
+    status: in_progress
   - id: c2-verification-matrix
     content: "C2 verification-matrix（Phase 1）：config 增 evidence_profile: strict|balanced（缺省 strict=现状零变化；minimal 为 lite track 的 resolved 档不可全局声明）；headless/goal 运行时强制 strict；证据矩阵经 C0 resolveEvidencePolicy 输出，收编 check-receipt.ts:333/:341/:365/:402/:551(self_check) 硬必需块与 phase-completion-receipt.md 模板为 policy 驱动，Stop hook / harness-runner closure(:664) / next_step(:776) 同源消费；receipt 与 .current-phase.json 增 evidence_policy_snapshot 机读契约（policy 档与 validation_status: provided|missing|skipped_by_policy|not_applicable 两层分离）；closure 来源按 policy 分派（full=receipt passed；lite=exit 报告 PASS，not_applicable 不映射为 passed，Resume Gate 三态显式）；lite 闭环态=change.md checkbox+exit 报告；红线清单落 specs 由单测锁死"
     status: pending
   - id: c3b-skill-slim
-    content: "C3-task2~4（Phase 1，依赖台账放行+C1 定稿）：按台账把 10 个 SKILL.md 重构为 ≤150 行主干+reference 条件加载（'完整阅读 X BLOCKER'→'场景触发才读'；脚本已执行细则缩为一句+报错自解释）；AGENTS.md.template 278→≤120 行（含 L0/L1/L2 分流路由与保守缺省）；check-docs 增主干行数上限+'强制全文阅读'句式黑名单 lint 防再膨胀；confirmation-registry 同步+check-skills-confirmation-ux 绿"
+    content: "C3-task2~4（Phase 1，台账已放行 2026-07-08 + C1 定稿）：按台账把 10 个 SKILL.md 重构为主干+reference 条件加载（预算按拍板分档：150 基准，framework-init/business-ut/catalog-bootstrap ≤250；'完整阅读 X BLOCKER'→'场景触发才读'；脚本已执行细则缩为一句+报错自解释；C 类事故叙事按拍板折中移 framework reference 不删除）；AGENTS.md.template →≤120 行（含 L0/L1/L2 分流路由与保守缺省）；check-docs 增主干行数上限（per-skill 覆写按分档）+'强制全文阅读'句式黑名单 lint 防再膨胀；confirmation-registry 同步+check-skills-confirmation-ux 绿"
     status: pending
   - id: c4-exploration-scale
     content: "C4 exploration-scale（Phase 1）：context-exploration 改 per-feature facts.md 且覆盖全部 feature phase（spec 建立、后续各阶段 phase_delta 增量节；receipt 的 context_exploration 凭证经 C2 policy 指向 facts.md#phase_delta）；backfill-context-exploration.ts 扩展兼容旧 per-phase 布局；小工程裁剪：catalog 模块数 ≤3 时术语消歧降为一次性对照确认、glossary 最小化、module-graph 按 scale 可禁（config.phases_disabled 与 profile 取并集，经 profile-loader:223/:231 + C0 统一裁剪）；framework-init 增 scale 判定写入 config"
     status: pending
   - id: c5-correction-routing
     content: "C5 correction-routing：**C5-min（Phase 0，只依赖 C0/C1、default strict）**=前置归属解析 resolveCorrectionTarget（任何编辑前解析，禁止先编辑后归属，diff 反查仅作收尾对账）+ classifyCorrection→{root_layer, touched_layers[], revalidate[]}（correction resolvers 扩展 C0 判定集合）+ 级联重验清单（脚本门禁为主）+ 修正确认 gate + 最小持久化 .current-correction.json（含 created_at/session_id/base_commit/request_fingerprint/enforcement_tier/expires_at，stale 拒绝）+ --correction-check 自检 + --adhoc-correction no-feature 入口（changed-files=git diff base_commit∪工作区；compile/lint/架构规则/受保护前缀；报告 reports/_adhoc；不建假 feature 目录）+ resolveEnforcementTier 派生判档（settings_file/hooks+mode 派生，不新增 schema 字段不硬编码 adapter 名）+ 验证转嫁禁令；**C5-full（Phase 1，接入 C2）**=touched_layers 对账并入 evidence_policy_snapshot（只拦未声明层，组合修正放行但必须重验 coding 及下游）+ hard_hook 深度集成 + balanced 减免语义 + feature.yaml 修正历史 + 全套坏态 fixtures（分类错误/声明 spec 却改代码/组合修正漏重验/无归属直改/soft 档 checklist 缺项/correction 状态缺失或过期）"
-    status: pending
+    status: in_progress
   - id: gates
     content: "每 change 与最终：cd harness && npm test 全绿 + npm run openspec:validate + npm run release:verify；hmos-app 默认路径（未声明 track/evidence_profile/scale）全回归零变化；Phase 0 gate 报告经用户 review 后才开 Phase 1（android plan 衔接已在定稿时写入 5e3400c3，无需重复动作）"
     status: pending
@@ -527,3 +527,52 @@ flowchart TD
 - **codex P2 回归钉（采纳）**：phase-state.unit.test 增「policy_snapshot 写入真实 track」case（feature.yaml lite→lite / 缺省→full）——该点刚发生过真实回归，钉死。
 - **codex P3 记录清账（采纳）**：tasks 与本记录中 8→9 case、1464 注记终值 1485、diff WARN→fail-closed BLOCKER 占位等过期表述全部更正。
 - **终态**：`npm test` 全绿（typecheck + **1485 单测 + 35 fixtures**）；openspec:validate 31/31；plan 门禁 PASS。
+
+### 2026-07-08 · 开工批次 2（C1 收口 + C5-min + ab-eval 基建 + C3a 台账）——全绿收口，待 review
+
+**C1 feature-track：完成（todo 已勾）**
+
+- exit 三项真实接线：`diff_within_scope` 分类核心抽 `utils/diff-scope.ts` 与 full 轨共用（check-coding 改消费、消息不变），lite 侧 scope 来自 change.md、模块→路径映射 contracts→catalog entry_file→layer 目录存在性三级回退，一切不可判状态 fail-closed FAIL；lint 派发 ProfileCodingHost 可选 `checkCodingLint`（无 provider = MAJOR WARN 终态语义）；条件 UT 由验收清单 **`[unit]` 标记**触发（新约定：镜像 full 轨 ut_layer∈{unit,both}，宽匹配偏 fail-closed），经 ut-host-impl 合成 contracts 视图执行。
+- **夹具逮到真 bug**：spec-loader `PHASE_RULE_FILENAMES` 硬编码枚举漏收编（C0 盲区）——真实 runner 跑 `--phase change/exit` 会在 loadPhaseRule 崩 "Unknown phase"。已改 `<phase>-rules.yaml` 约定派生（约定文件不存在才判未知）。
+- 判档评分上抬为 `change-rules.yaml > track_scoring`（维度与 exploration_strategy 同源，spec-rules 侧加防双改漂移注记）+ veto_full 三项；`feature.track`（change-lite）与 `correction.layer`（_cross_phase）登记 confirmation-registry，实跑 lint 0 FAIL。
+- change-lite SKILL（109 行 ≤150）+ skills.index（11 skills，resolve-skill-path 单测同步）+ 三端跳板（claude/cursor commands + shared skills-bridge + BUILTIN 描述表 + CLAUDE_SLASH_COMMANDS lint 白名单）；AGENTS.md.template 新增 §4.0 L0/L1/L2 分流表 + 拿不准进 lite + L0 最小纪律 + 修正三问（重验≠重做）。
+- lite 端到端夹具 5 个（generic 4 + hmos exit_unit_missing_fail）+ diff-scope suite 8 case（含 resolveChainFromEvents lite 专项）。
+
+**C5-min correction-routing：机器件完成（todo → in_progress，C5-full 属 Phase 1）**
+
+- 纯函数层 `utils/correction-routing.ts`（三问短路序 + track 投影：lite 的 spec/plan→change、verification→exit；revalidate=根因+下游已闭环 phase，closedPhases 注入）+ `utils/correction-state.ts`（.current-correction.json 全字段、TTL 24h、过期/串会话 stale 拒绝）。
+- runner 三命令：`--correction-init`（**plan 未列、实施补充**：归属+三问答案显式 y|n+state 写入的确定性入口，避免 agent 手写 JSON）/`--correction-check`（revalidate 逐项对照 script-report/adhoc 报告新鲜度与 verdict）/`--adhoc-correction`（no-feature：git diff base_commit∪工作区 + compile/lint + 架构规则 + catalog 反查 touched modules 记录回 state，层内不可归属 BLOCKER；报告 reports/_adhoc/<ts>/）。
+- `resolveEnforcementTier` 归口 runtime-policy.ts（mode 先行）；验证转嫁禁令：无 device 能力时 BLOCKER halt-confirm，goal 侧新增 FailureKind `verification_evidence_gap`（await_human 同构、不入 no_progress），halt_reason=await_human_verification_evidence。
+- correction-routing suite 9 case + CLI 冒烟（init→check 拒绝路径，state 文件已清理）。
+
+**ab-eval：采集基建完成（todo → in_progress，受控跑批与 gate 报告待真实样本）**
+
+- `utils/usage-capture.ts` 单点：stdout_json（claude 式信封）/stderr_regex 已实现，**sidecar/api 为声明位、无实现按采集失败降 proxy 且 capture_method 保真**（偏离说明：design 写"api/sidecar 优先"，真实 API 计量需宿主侧对接，本批不冒充）；trace.schema.json usage 段 + adapter-schema usage_capture 枚举 + AgentInvokeResult.usage + goal-runner 事件与 trace best-effort 合并；对照报告模板 `harness/templates/ab-eval-report.template.md`；usage-capture suite 7 case。
+
+**C3a 台账：产出完毕（todo 已勾），停等用户 review**
+
+- `openspec/changes/skill-slim/ledger/`：hard-constraints.yaml（**56 条**四分类：A 35/B 11/C 8/D 2；跨 skill 公共 10 条约占瘦身空间近半）+ README.md（行数基线 wc 口径 / 预算分级提案：150 基准 + framework-init/business-ut/catalog-bootstrap ≤250 / review 关注点清单）。**【我方验证疏漏，如实记录】**初版 README 汇总数字（38 条/A24/B8/C4）系凭印象手写、未对 YAML 机器复核，用户追问时 grep 坐实更正——台账类产物的汇总统计必须机器计数，不得手写。**C3-task2 未获放行不动笔。**
+
+**验收**：`npm test` 全绿（typecheck + **1509 单测 + 40 fixtures**）；openspec:validate 31/31；release:verify 技术项全 PASS（plan-version 发布门禁按设计 FAIL——3.0.0 窗口尚有 in_progress todo，属预期语义）。
+
+**下批入口**：① 用户 review 本批 + C3a 台账拍板；② ab-eval 受控跑批（需真实样本工程与 headless 环境，4 类样本按 tasks 执行）→ Phase 0 gate 报告；③ gate 放行后 Phase 1（C2 → C3-task2~4 → C4 → C5-full）。
+
+### 2026-07-08 · C3a 台账拍板（用户决策，写入 task2 执行依据）
+
+- **预算 150/250 分档：批准**——150 基准；framework-init / business-ut / catalog-bootstrap ≤250（task4 的 `skill_body_max_lines` per-skill 覆写按此配置）。
+- **C 类处置：折中**——8 条事故补丁叙事**不删**，task2 移 framework/skills/reference/（建档，正文规则本体一句 + 链接）；瘦身收益与事故可追溯双保。
+- 决策已落 ledger（YAML `decisions:` 块 + README 拍板标注 + 涉"删叙事"条目 disposition 更正）与 c3b todo 文案。**台账放行 ≠ task2 开工**：C3-task2 属 Phase 1，仍等 Phase 0 gate（ab-eval 对照报告）。
+- 附拍板过程中的更正：初版 README 汇总统计（38 条/A24/B8/C4）系手写未复核，grep 机器实数为 **56 条/A35/B11/C8/D2**，三处记录已更正并留痕（教训：台账类汇总必须机器计数）。
+
+### 2026-07-08 · 批次 2 review 修复（cursor/codex 双评审，机器件 GO）
+
+逐条 ground-truth 核实后处置：
+
+- **codex P1（采纳，最重要）**：`--correction-init` 未传 session_id → state 恒 null → `session_mismatch` 永不触发，只剩 TTL，违反 OpenSpec "session 不符 → stale 拒绝"契约。修复：新增 `resolveCurrentSessionSignal(projectRoot)` 复用 `.current-phase.json` 既有 session 治理（last_seen_session_id 优先、session_id 次选；换会话接管后 last_seen 变化即 mismatch），init 写入 + check/adhoc 校验双侧接线；无信号 → null 走 TTL 兜底。回归钉单测。
+- **codex P2（采纳）**：`--adhoc-correction` 在 coding.compile SKIP 分支会连带跳过 lint 与架构规则，违反"no-feature 必跑三项"契约。修复：host 加载上提，compile/lint/架构规则三段各自按 capability/provider 判定；host 缺失时架构规则 MINOR SKIP（代码工程的 fail-closed 已由 adhoc_compile BLOCKER FAIL 承担，纯文档工程合法）。
+- **codex P3（采纳）**：`listAvailablePhaseRules()` 仍只遍历硬编码映射，`--list` 发现面漏 change/exit。修复：目录扫描 `<phase>-rules.yaml` 约定派生补集，与 loadPhaseRule 加载面对齐。回归钉单测。
+- **cursor P1（采纳，实现优于其建议）**：`closedPhasesFor` 只认 receipt 而 lite 无 receipt 机器件 → lite 修正的 revalidate 可能漏 exit，且与 --correction-check 的 script-report 证据口径不对称。cursor 建议留到 C2 + 文本提示；实际直接做了 track-aware：lite 轨 receipt ∨ script-report verdict=PASS 即闭环（与 check 侧证据同源），C2 统一 policy 后收敛。回归钉单测。
+- **cursor P3 计数（采纳）**：两处 tasks 单测计数统一注记终值。
+- **cursor P3 头注释（驳回，有据）**：check-exit.ts 头注释现场已是终态表述（":12-13 无 provider → MAJOR WARN 可见缺项（终态语义）"），无"接线待 C1 子批"旧文——评审看的应是旧视图。
+- 另注：cursor 总评引用的台账分布 A24/B8/C4/D2 为更正前旧值（机器实数 56 条 A35/B11/C8/D2，见上节）。
+- **终态**：`npm test` 全绿（typecheck + **1512 单测 + 40 fixtures**，新增 3 枚回归钉均 `--filter` 实测计入）。

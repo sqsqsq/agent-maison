@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    { "id": "change_file_exists", "status": "PASS", "severity": "BLOCKER" },
+    { "id": "change_section_意图", "status": "PASS" },
+    { "id": "change_section_scope", "status": "PASS" },
+    { "id": "change_scope_yaml", "status": "PASS", "details_includes": "ModA" },
+    { "id": "change_scope_modules_known", "status": "PASS", "details_includes": "命中 catalog" },
+    { "id": "change_checkbox_syntax", "status": "PASS" }
+  ]
+}

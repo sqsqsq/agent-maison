@@ -70,6 +70,13 @@ skills:
           param_hint: "<feature>"
           availability_note: "有明确 feature 目标时可使用"
 
+  - id: change-lite
+    scope: feature
+    source_rel: feature/change-lite
+    order: 9
+    description: >
+      lite 轨单文档链（change → coding → exit；单模块小需求，判档经 feature.track gate）
+
   - id: spec
     scope: feature
     source_rel: feature/spec

@@ -20,6 +20,7 @@ const TEXT_LIKE_EXTENSIONS = new Set([
   '.md', '.mdc', '.yaml', '.yml', '.template.md', '.md.template',
 ]);
 const CLAUDE_SLASH_COMMANDS = [
+  'commands/change-lite.md',
   'commands/spec.md',
   'commands/plan.md',
   'commands/coding.md',

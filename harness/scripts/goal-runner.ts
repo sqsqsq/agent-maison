@@ -35,6 +35,7 @@ import {
 } from './utils/phase-transition-policy';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadFeatureTrackDecl } from './utils/feature-track';
+import { mergeUsageIntoTraceFile } from './utils/usage-capture';
 import {
   buildGoalManifestFromInput,
   loadGoalManifestFile,
@@ -1392,6 +1393,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           dryRun,
           timeoutMs: resolvePhaseTimeoutMs(phase, manifest),
           outputLogPath,
+          // C-ab-eval：按 adapter goal_capability.usage_capture 声明采集（缺省 none → proxy）
+          usageCapture: cap.capability?.usage_capture,
           onActiveChild: ({ kill }) => {
             activeAgentKill = async () => {
               await kill();
@@ -1416,8 +1419,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           kill_attempted: invoke.kill_attempted,
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,
+          usage: invoke.usage,
         });
         flushProgress();
+
+        // C-ab-eval：usage 落盘进本 phase trace（agent 产出后 best-effort 合并；已有 usage 不覆盖）
+        if (invoke.usage) {
+          mergeUsageIntoTraceFile(
+            path.join(featurePhaseReportsDir(projectRoot, manifest.feature, phase, frameworkRoot), 'trace.json'),
+            invoke.usage,
+          );
+        }
 
         const interactionSentinel = parseHeadlessInteractionSentinel(outputLogPath);
         if (interactionSentinel) {
@@ -1601,6 +1613,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
           console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'verification_evidence_gap' && verdict !== 'PASS') {
+          // C5-min 验证转嫁禁令：evidence 缺口属设计内求人时刻（与 await_human 系同构），
+          // agent 不得以"已自测"替代真人/device 验证，重试无意义 → 首触即 halt，不计 no_progress。
+          action = 'halt';
+          haltReason = 'await_human_verification_evidence';
         } else if (
           shouldHaltNoProgress({
             failureKind,

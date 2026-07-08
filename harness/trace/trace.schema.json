@@ -287,6 +287,39 @@
         }
       }
     },
+    "usage": {
+      "type": "object",
+      "description": "用量采集（C-ab-eval，可选）。capture_method=none / 采集失败 → confidence: proxy 且 token 字段为 null——不新增 proxy 专用字段，代理指标复用顶层 tool_calls 与 started_at/ended_at 推导 wall-time（schema 不因 proxy 分叉），报告只允许基于该口径表述。",
+      "required": ["capture_method", "confidence"],
+      "properties": {
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "tool_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "requests": { "type": ["integer", "null"], "minimum": 0 },
+        "cost_estimate": { "type": ["number", "null"], "minimum": 0 },
+        "capture_method": {
+          "type": "string",
+          "enum": ["none", "stdout_json", "stderr_regex", "sidecar", "api"],
+          "description": "与 adapter goal_capability.usage_capture 声明一致"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["measured", "proxy"]
+        },
+        "model_identity": {
+          "type": "object",
+          "description": "机器固化的 resolved provider/model（来自调用配置/响应元数据，非 agent 文本自报）",
+          "properties": {
+            "provider": { "type": "string" },
+            "model": { "type": "string" },
+            "source": {
+              "type": "string",
+              "enum": ["response_metadata", "cli_config", "invoke_args", "unknown"]
+            }
+          }
+        }
+      }
+    },
     "notes": {
       "type": "string",
       "description": "自由格式备注（可选）"

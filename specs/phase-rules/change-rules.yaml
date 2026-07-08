@@ -23,3 +23,46 @@ traceability_checks:
   change_scope_modules_known:
     description: in_scope_modules 须存在于 module-catalog（catalog 缺失/不可解析的小工程跳过比对）。
     severity: BLOCKER
+
+# --------------------------------------------------------------------------
+# track 判档评分（C1 feature-track：exploration_strategy 维度上抬为通用 track 评分）
+# --------------------------------------------------------------------------
+# 消费者：change-lite SKILL S1（agent 估分提议档位，经 feature.track gate 确认）。
+# 维度与 spec-rules.yaml > exploration_strategy.scoring 同源（上抬复用，勿双改漂移）。
+track_scoring:
+  threshold_full: 60          # score >= 60 → 建议 full；否则建议 lite
+  dimensions:
+    - id: module_loc          # 触及模块的规模（行数）
+      weight: 25
+      tiers:
+        - { gte: 50000, score: 25 }
+        - { gte: 20000, score: 15 }
+        - { gte: 5000, score: 8 }
+    - id: scope_breadth       # 预估触及模块数
+      weight: 20
+      tiers:
+        - { gte: 3, score: 20 }
+        - { gte: 2, score: 12 }
+        - { gte: 1, score: 5 }
+    - id: cross_layer
+      weight: 20
+      signal: touches_multiple_outer_layers
+      score_if_true: 20
+    - id: new_api_surface
+      weight: 15
+      signal: adds_exports_or_public_api
+      score_if_true: 15
+    - id: dependency_fan_out  # 触及模块的被依赖扇出
+      weight: 20
+      tiers:
+        - { gte: 10, score: 20 }
+        - { gte: 5, score: 12 }
+        - { gte: 2, score: 5 }
+  # 一票升 full（veto：命中任一，无视评分，不得提议 lite）
+  veto_full:
+    - id: pixel_1to1_intent
+      description: 需求含像素级 UI 保真 / 1:1 还原意图
+    - id: cross_module_signal
+      description: 明确跨模块改动信号（>=2 个 in_scope 模块）
+    - id: goal_mode_run
+      description: goal 模式运行的需求默认 full（headless 证据链要求）

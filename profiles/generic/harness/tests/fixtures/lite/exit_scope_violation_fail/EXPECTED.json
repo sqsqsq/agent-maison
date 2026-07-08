@@ -1,0 +1,8 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    { "id": "exit_checkboxes_all_checked", "status": "PASS" },
+    { "id": "exit_diff_within_scope", "status": "FAIL", "severity": "BLOCKER", "details_includes": "越界到 in_scope_modules 之外" },
+    { "id": "exit_diff_within_scope", "status": "FAIL", "details_includes": "02-Feature/ModB/other.ets" }
+  ]
+}

@@ -76,6 +76,11 @@ import {
   type ReceiptValidation,
 } from './scripts/utils/phase-state';
 import {
+  runAdhocCorrection,
+  runCorrectionCheck,
+  runCorrectionInit,
+} from './scripts/utils/correction-commands';
+import {
   loadResolvedProfile,
   loadPhaseRuleWithOverlays,
   isPhaseDisabledByProfile,
@@ -105,8 +110,8 @@ import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPat
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow'],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity'],
+  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -141,6 +146,15 @@ Harness — Spec/Harness 验证工具
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
   -h, --help                显示帮助
+
+修正闭环（C5-min correction-routing；修正三问先分层再动手，重验≠重做）:
+  --correction-init         归属 + 三问分层 → 写 .current-correction.json（pending）
+                            必带 --correction-request "<原始请求>" 与三问答案
+                            --q-requirement y|n --q-contract y|n --q-code y|n；
+                            可选 --feature <name> 显式点名归属（缺省取活跃 state，均无 = no-feature）
+  --correction-check        对照 revalidate 清单核查证据全绿 → status: closed（stale/缺 state 拒绝）
+  --adhoc-correction        no-feature 载体：compile + lint + 架构规则 + catalog 反查
+                            touched modules；报告落 framework/harness/reports/_adhoc/<ts>/
 
 示例:
   cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature home-page
@@ -242,6 +256,41 @@ async function main(): Promise<void> {
     }
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
     process.exit(exitCode);
+  }
+
+  // 修正闭环命令（C5-min correction-routing）
+  if (args['correction-init']) {
+    const requestText = String(args['correction-request'] ?? '').trim();
+    if (!requestText) {
+      console.error('错误: --correction-init 必须携带 --correction-request "<原始修正请求>"（fingerprint 防换题复用）');
+      process.exit(1);
+    }
+    for (const k of ['q-requirement', 'q-contract', 'q-code'] as const) {
+      const v = String(args[k] ?? '').trim().toLowerCase();
+      if (v !== 'y' && v !== 'n') {
+        console.error(`错误: --${k} 必须显式给 y|n（修正三问不许缺答，见 AGENTS §4.0 修正三问）`);
+        process.exit(1);
+      }
+    }
+    const yn = (k: string): boolean => String(args[k]).trim().toLowerCase() === 'y';
+    process.exit(
+      runCorrectionInit(projectRoot, {
+        requestedFeature: (args.feature as string | undefined) ?? undefined,
+        answers: {
+          requirement_changed: yn('q-requirement'),
+          contract_changed: yn('q-contract'),
+          code_change_needed: yn('q-code'),
+        },
+        requestText,
+        frameworkRoot: resolvedFrameworkRoot,
+      }),
+    );
+  }
+  if (args['correction-check']) {
+    process.exit(runCorrectionCheck(projectRoot, harnessRoot, resolvedFrameworkRoot));
+  }
+  if (args['adhoc-correction']) {
+    process.exit(await runAdhocCorrection(projectRoot, harnessRoot, resolvedFrameworkRoot));
   }
 
   // 参数校验

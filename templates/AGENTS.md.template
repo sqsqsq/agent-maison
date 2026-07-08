@@ -97,6 +97,33 @@
 
 ## 四、工作流与 Skill 路由
 
+### 4.0 需求分档路由（L0 / L1 lite / L2 full）
+
+任何新请求**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。**拿不准一律进 lite**（L0 无 gate 兜底，误降不对称）。
+
+| 档 | 触发 | 管线 | 门禁 |
+|---|---|---|---|
+| L0 direct | 小修小改 / 文案 / 单文件 bug | 不进管线，直接改 | 无框架门禁。**最小纪律**：仍须遵守用户显式要求与项目**原生**校验（相关 test / lint / build），且第三节全局约束照常适用 |
+| L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | exit 一次跑：编译 + lint + `diff_within_scope` 红线 + 验收 checkbox 全勾 + 条件 UT |
+| L2 full | 跨模块 / pixel_1to1 / goal 模式 | spec → plan → coding → review → ut → testing 全链 | 每阶段四重闭环 |
+
+**一票升 full**（命中任一，无视评分）：需求含 pixel_1to1 意图；明确跨模块信号；goal 模式运行。
+lite 实施中出现 scope 越界 / 跨模块信号 → **停下走升档确认**（`feature.track`），feature.yaml 记录事件，change.md 作 spec/plan 种子。
+
+#### 修正三问（中途 NL 修正必答 · `correction.layer`）
+
+对已有 feature 的修正请求，**先分层再动手**，禁止未分层直接改产物：
+
+| 问 | 是 → 落点层 |
+|---|---|
+| Q1 需求 / 验收本身变了？ | spec（spec.md / acceptance.yaml；lite = change.md 意图/验收清单） |
+| Q2 需求没变，接口 / 契约 / 设计要变？ | plan（plan.md / contracts.yaml；lite = change.md Scope/关键契约） |
+| Q3 上游都没错——要改产品代码？ | 是 → coding；否（纯补验证）→ ut / testing |
+
+模糊请求先诊断根因再分类。分层结论经 `correction.layer` 确认后实施：**只改根因层的 SSOT 产物**，再级联重跑落点层及下游已闭环 phase 的脚本门禁——**重验 ≠ 重做**，禁止把"改一处"扩大成重走全链，也禁止改了根因层却不重验下游。
+
+### 4.0.1 阶段 Skill 总表
+
 每个阶段都有对应 Skill 文档。具体触发方式由当前运行宿主及已物化入口决定——
 slash、技能跳板、或直链 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
 也可以直接让 agent 读对应 Skill 正文进入。
@@ -108,6 +135,7 @@ slash、技能跳板、或直链 `framework/skills/project/<skill>/SKILL.md` / `
 | 0. 术语表自举（Phase B） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
+| L1. Lite 轨（change→coding→exit 单文档链） | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
 | 1. Spec（需求规格） | [framework/skills/feature/spec/SKILL.md](framework/skills/feature/spec/SKILL.md) |
 | 2. Plan（实现计划） | [framework/skills/feature/plan/SKILL.md](framework/skills/feature/plan/SKILL.md) |
 | 3. 编码落地 | [framework/skills/feature/coding/SKILL.md](framework/skills/feature/coding/SKILL.md) |

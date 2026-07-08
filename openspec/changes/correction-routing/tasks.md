@@ -2,14 +2,14 @@
 
 ## 1. C5-min（Phase 0）
 
-- [ ] `resolveCorrectionTarget`（编辑前归属；不确定→确认或 no-feature 模式）
-- [ ] `classifyCorrection` → {root_layer, touched_layers[], revalidate[]}（级联重验清单：落点层及下游已闭环 phase 脚本门禁）
-- [ ] `.current-correction.json` 持久化（schema_version / feature? / root_layer / touched_layers / revalidate / status / created_at / session_id / base_commit / request_fingerprint / enforcement_tier / expires_at；session 不符或过期视 stale 拒绝）
-- [ ] 修正确认 gate 登记 confirmation-registry + check-skills-confirmation-ux 绿
-- [ ] `--correction-check` 自检命令（对照清单核查全绿 → closed；stale state 拒绝）
-- [ ] `--adhoc-correction` no-feature 入口（输入=含 base_commit 的 state；changed-files=git diff base_commit ∪ 工作区；检查=compile+lint+架构规则+受保护前缀；报告 reports/_adhoc/<ts>/；testing evidence=device 即席或 manual_confirm；不建假 feature 目录）
-- [ ] `resolveEnforcementTier` 派生纯函数（settings_file+hooks→hard_hook / mode=headless·goal→headless_runner / 否则 soft；不新增 schema 字段、不硬编码 adapter 名）
-- [ ] 验证转嫁禁令：evidence 缺口 halt-confirm；goal-runner 专用 halt 分类（不计 no_progress）
+- [x] `resolveCorrectionTarget`（编辑前归属；点名不存在→ask_user 禁止猜、无归属→no-feature 模式；`utils/correction-routing.ts`）
+- [x] `classifyCorrection` → {root_layer, touched_layers[], revalidate[]}（三问短路序 + track 投影：lite 的 spec/plan→change、verification→exit；revalidate=根因 + 下游**已闭环** phase，closedPhases 注入保持纯函数）
+- [x] `.current-correction.json` 持久化（`utils/correction-state.ts`：全字段 + touched_modules 回记；TTL 24h；过期/session 不符→stale 拒绝；落盘于 paths.state_file 兄弟位）
+- [x] 修正确认 gate 登记 confirmation-registry（`correction.layer`，_cross_phase：1=同意按声明层实施 / 2=改层）+ check-skills-confirmation-ux 绿（随 C1 入口路由批落地）
+- [x] `--correction-check` 自检命令（revalidate 逐项对照证据：feature phase 看 script-report.json verdict=PASS 且晚于修正起点，adhoc 看最新 correction-report.json；全绿→closed；缺 state/stale 拒绝并要求重建。另补 `--correction-init`：归属+三问分层+state 写入的确定性入口，答案须显式 y|n）
+- [x] `--adhoc-correction` no-feature 入口（输入=含 base_commit 的 state；changed-files=git diff base_commit ∪ 工作区；检查=compile+lint provider+架构规则（变更源码范围 AstAnalyzer 层依赖/跨模块）+catalog 反查 touched modules（层内不可归属→BLOCKER，越界防护不豁免）；报告 reports/_adhoc/<ts>/{correction-report.md,json}；不建假 feature 目录）
+- [x] `resolveEnforcementTier` 派生纯函数（归口 runtime-policy.ts；**mode 先行**：headless/goal 恒 headless_runner 即便 manifest 有 hooks；settings_file+hooks→hard_hook；否则 soft；不新增 schema 字段、不硬编码 adapter 名）
+- [x] 验证转嫁禁令：touched 含验证层且宿主无 device_test.run → BLOCKER FAIL halt-confirm（"需要人工验证"清单 + manual_confirm 指引）；goal 侧新增 FailureKind `verification_evidence_gap`（与 await_human 同构、首触即 halt、不入 SIGNATURE_HALT_KINDS/no_progress），halt_reason=await_human_verification_evidence
 
 ## 2. C5-full（Phase 1，接入 C2）
 
@@ -20,6 +20,6 @@
 
 ## 3. Fixtures 与 Verify
 
-- [ ] 坏态全套：分类错误 / 声明 spec 却改代码 / 组合修正漏重验 / 无归属直改 / soft 档 checklist 缺项 / correction 状态缺失或过期
-- [ ] `cd harness && npm test` 全绿
+- [ ] 坏态全套：分类错误 / 声明 spec 却改代码 / 组合修正漏重验 / 无归属直改 / soft 档 checklist 缺项 / correction 状态缺失或过期（单测已覆盖：state 缺失/过期/串会话拒绝、点名不存在 ask_user、组合修正 touched、级联清单；touched_layers 对账拦截属 C5-full）
+- [x] `cd harness && npm test` 全绿（当批 1502，批次 2 双评审修复后终值 **1512 单测 + 40 fixtures**；correction-routing suite 12 case（含 session 信号/lite 闭环判据/发现面三枚回归钉）+ CLI 冒烟 init→check 拒绝路径）
 - [ ] `npm run openspec:validate` + `npm run release:verify`

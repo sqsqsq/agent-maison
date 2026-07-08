@@ -222,6 +222,15 @@ optional_fields:
       mode:
         type: string
         enum: ["native_goal", "external_runner", "hook_loop"]
+      usage_capture:
+        type: string
+        enum: ["none", "stdout_json", "stderr_regex", "sidecar", "api"]
+        description: |
+          可选（缺省 none）。C-ab-eval：headless invoke 的用量采集方式声明。
+          agent-invoke 按此解析 AgentInvokeResult.usage 并由 goal-runner 落盘进
+          trace.usage；none / 采集失败 → confidence: proxy（token 字段 null，代理
+          指标复用 trace 顶层 tool_calls + wall-time）。model identity 同路径机器
+          固化（响应元数据 / 调用配置，非 agent 文本自报）。
       native_goal:
         type: object | null
         fields:

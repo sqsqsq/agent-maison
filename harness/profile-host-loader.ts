@@ -18,6 +18,11 @@ export type ProfileCodingHost = {
   runTraceabilityChecks(ctx: CheckContext): CheckResult[];
   /** 真实编译闭环（工具链与失败归因文案由 profile 承担；根 check-coding 仅编排） */
   checkCodingCompile(ctx: CheckContext): CheckResult[];
+  /**
+   * 可选 lint provider（C1 feature-track：lite exit 门禁派发点）。
+   * 未实现 = 宿主无 lint 工具链声明——exit 侧呈现 MAJOR WARN 可见缺项，不阻断闭环。
+   */
+  checkCodingLint?(ctx: CheckContext): CheckResult[] | Promise<CheckResult[]>;
 };
 
 export type UtHostSuggestionPaths = {

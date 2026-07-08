@@ -1,0 +1,8 @@
+{
+  "verdict": "FAIL",
+  "rules": [
+    { "id": "exit_checkboxes_all_checked", "status": "PASS" },
+    { "id": "exit_diff_within_scope", "status": "PASS", "details_includes": "0 个越界" },
+    { "id": "exit_ut", "status": "FAIL", "severity": "BLOCKER", "details_includes": "未找到任何 UT 文件" }
+  ]
+}
