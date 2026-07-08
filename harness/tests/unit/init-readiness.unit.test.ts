@@ -68,6 +68,49 @@ function mkHarnessFixture(options: {
   return root;
 }
 
+/**
+ * E5（多模态降级阶梯 plan d4a8f3c6）：standalone 布局全套夹具——
+ * projectRoot=frameworkRoot=<tmp>，harnessRoot=<tmp>/harness。
+ */
+function mkStandaloneProjectFixture(options: {
+  profileName?: string;
+  withProfileOcrToolkit?: boolean;
+  withTesseractJs?: boolean;
+  withTessdata?: boolean;
+}): { projectRoot: string; harnessRoot: string } {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'init-ready-e5-'));
+  const harnessRoot = path.join(projectRoot, 'harness');
+  fs.mkdirSync(harnessRoot, { recursive: true });
+  fs.writeFileSync(path.join(harnessRoot, 'package.json'), JSON.stringify({ name: 'h' }), 'utf-8');
+  fs.mkdirSync(path.join(harnessRoot, 'node_modules', 'ts-node'), { recursive: true });
+  fs.writeFileSync(path.join(harnessRoot, 'node_modules', 'ts-node', 'package.json'), '{}', 'utf-8');
+  fs.mkdirSync(path.join(harnessRoot, 'node_modules', '@types', 'node'), { recursive: true });
+  fs.writeFileSync(path.join(harnessRoot, 'node_modules', '@types', 'node', 'package.json'), '{}', 'utf-8');
+
+  const profileName = options.profileName ?? 'hmos-app';
+  fs.writeFileSync(
+    path.join(projectRoot, 'framework.config.json'),
+    JSON.stringify({ schema_version: '1.0', project_profile: { name: profileName } }),
+    'utf-8',
+  );
+  const profileHarnessDir = path.join(projectRoot, 'profiles', profileName, 'harness');
+  fs.mkdirSync(profileHarnessDir, { recursive: true });
+  if (options.withProfileOcrToolkit) {
+    fs.writeFileSync(path.join(profileHarnessDir, 'ocr-toolkit.ts'), '// stub\n', 'utf-8');
+  }
+  if (options.withTesseractJs) {
+    const p = path.join(harnessRoot, 'node_modules', 'tesseract.js', 'package.json');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{}', 'utf-8');
+  }
+  if (options.withTessdata) {
+    const tessDir = path.join(projectRoot, 'profiles', profileName, 'vendor', 'tessdata');
+    fs.mkdirSync(tessDir, { recursive: true });
+    fs.writeFileSync(path.join(tessDir, 'chi_sim.traineddata'), 'stub', 'utf-8');
+  }
+  return { projectRoot, harnessRoot };
+}
+
 export interface UnitCaseResult {
   name: string;
   ok: boolean;
@@ -182,6 +225,97 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(typeof json.recommended_executable === 'string');
       assert(Array.isArray(json.recommended_args));
       assert(typeof json.harness_root === 'string');
+    },
+  },
+  // ==========================================================================
+  // E5（多模态降级阶梯 plan d4a8f3c6）：Tier_1 探针补 OCR 就绪度
+  // ==========================================================================
+  {
+    name: 'E5 checkInitReadiness: profile 有 ocr-toolkit + tesseract.js/tessdata 齐全 → ok（不误报）',
+    run: () => {
+      const { projectRoot, harnessRoot } = mkStandaloneProjectFixture({
+        withProfileOcrToolkit: true,
+        withTesseractJs: true,
+        withTessdata: true,
+      });
+      try {
+        const r = checkInitReadiness(harnessRoot, harnessRoot);
+        assert.strictEqual(r.ok, true, JSON.stringify(r.missing));
+        assert.deepStrictEqual(r.missing, []);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E5 checkInitReadiness: profile 有 ocr-toolkit 但缺 tesseract.js → 命中，指向 npm install',
+    run: () => {
+      const { projectRoot, harnessRoot } = mkStandaloneProjectFixture({
+        withProfileOcrToolkit: true,
+        withTesseractJs: false,
+        withTessdata: true,
+      });
+      try {
+        const r = checkInitReadiness(harnessRoot, harnessRoot);
+        assert.strictEqual(r.ok, false);
+        const hit = r.missing.find((m) => m.includes('tesseract.js'));
+        assert(hit, `expected tesseract.js in missing: ${r.missing.join(' | ')}`);
+        assert(hit!.includes('npm install'), hit);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E5 checkInitReadiness: profile 有 ocr-toolkit 但缺 chi_sim.traineddata → 命中，指向 framework 完整性修复（非 npm install）',
+    run: () => {
+      const { projectRoot, harnessRoot } = mkStandaloneProjectFixture({
+        withProfileOcrToolkit: true,
+        withTesseractJs: true,
+        withTessdata: false,
+      });
+      try {
+        const r = checkInitReadiness(harnessRoot, harnessRoot);
+        assert.strictEqual(r.ok, false);
+        const hit = r.missing.find((m) => m.includes('chi_sim.traineddata'));
+        assert(hit, `expected chi_sim.traineddata in missing: ${r.missing.join(' | ')}`);
+        assert(hit!.includes('分发不完整'), hit);
+        assert(hit!.includes('非 npm 包'), 'tessdata 缺失应明说非 npm 包（区别于 npm install 修复）：' + hit);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E5 checkInitReadiness: profile 无 ocr-toolkit（如 generic）→ 完全跳过 OCR 检查，即便 tesseract.js/tessdata 都缺',
+    run: () => {
+      const { projectRoot, harnessRoot } = mkStandaloneProjectFixture({
+        profileName: 'generic',
+        withProfileOcrToolkit: false,
+        withTesseractJs: false,
+        withTessdata: false,
+      });
+      try {
+        const r = checkInitReadiness(harnessRoot, harnessRoot);
+        assert.strictEqual(r.ok, true, `非 OCR profile 不应因缺 OCR 资产被判 not-ok：${JSON.stringify(r.missing)}`);
+        assert.deepStrictEqual(r.missing, []);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E5 checkInitReadiness: 无 framework.config.json（未初始化）不阻断 Tier_1 探针本身（按默认 profile 回落，文件不存在则天然跳过 OCR 检查）',
+    run: () => {
+      const root = mkHarnessFixture({ withTsNode: true, withTypesNode: true });
+      try {
+        // mkHarnessFixture 不写 framework.config.json、不建 profiles/ —— 模拟"harness 依赖已装
+        // 但项目尚未跑过 framework-init"的边缘态；不应因 OCR 探测逻辑本身报错或误判。
+        const r = checkInitReadiness(root, root);
+        assert.strictEqual(r.ok, true, JSON.stringify(r.missing));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
 ];

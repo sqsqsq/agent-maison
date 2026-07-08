@@ -192,7 +192,7 @@ todos:
       （tesseract.js）/ framework 完整性修复（tessdata 属发布件内容，缺失=分发损坏非漏装）。
       skills/reference/host-harness-readiness.md 同步 Tier_1 清单。
       单测：探针命中/缺失分支、非 hmos-app profile 跳过。
-    status: pending
+    status: completed
   - id: e6-ocr-context-injection
     content: >
       E6（P1 批）「OCR 当眼睛」全管线提质（最小版已随 E0 入 P0；本项完成剩余）：
@@ -491,3 +491,34 @@ check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）
   的信号来源，不必等自动化）。
 - **验收**：typecheck 0 · unit 1525/0（+29 新用例：vision-canary 11 个 + multimodal-probe
   5 个 + framework-local-config 6 个 + goal-preflight 7 个）· fixtures 35/0。
+
+## E5 实施记录（2026-07-08）—— P0 主链（E4/E2/E0/E3/E1/E5）全部完成
+
+- **核心机制**：`init-readiness.mjs`（纯 Node.js，无 ts-node 依赖——Tier_1 在 ts-node
+  就绪确认之前跑，不能依赖它）新增 `activeProfileHasOcrToolkit`（**存在性判据**：探测
+  `profiles/<profile>/harness/ocr-toolkit.ts` 是否存在，非硬编码 'hmos-app'——其余
+  profile 若未来也带 ocr-toolkit 会同样被纳入）+ `detectActiveProfileName`（纯 JSON.parse
+  读 `framework.config.json > project_profile.name`，未初始化/解析失败回落默认 profile，
+  不阻断 Tier_1）+ `detectProjectRootFromHarnessRoot`（复刻 repo-layout.ts 的
+  standalone/consumer 判据，纯 fs+path，不 import TS 模块——避免 ts-node 循环依赖）。
+  仅当 active profile 具备 OCR 工具链时才追加检查 tesseract.js/chi_sim.traineddata，
+  两条缺失分别带**不同**修复指引（tesseract.js→`npm install`；tessdata→"framework
+  分发不完整，需重新拉取/更新子模块，非 npm 包"）——写在 `missing[]` 条目自身文本里，
+  保持返回值 shape 100% 向后兼容（未加新字段），既有 7 个测试与真实 CLI 消费方零改动。
+- **验证细节（发现值得记）**：既有测试 `mkHarnessFixture` 构造的 fixture 没有
+  `framework.config.json`/`profiles/`——追踪一遍确认：`detectActiveProfileName` 读不到
+  config 时回落 `'hmos-app'`，但 `activeProfileHasOcrToolkit` 用这个假 profile 名去查
+  一个本就不存在的路径（fixture 的 frameworkRoot 是系统临时目录），天然返回 false →
+  OCR 检查被跳过——设计对这个边缘情况**碰巧因为存在性判据本身而正确**，非侥幸巧合
+  （已补对应回归测试锁定该行为）。
+- **验收**：typecheck 0 · unit 1530/0（+5 新用例：命中/tesseract.js缺失/tessdata缺失/
+  非OCR-profile跳过/未初始化态不误判）· fixtures 35/0。
+
+## P0 主链完工小结（2026-07-08）
+
+多模态降级阶梯 plan 的 P0 六件套（E4 收口治理 → E2 档位钳制 → E0 能力感知 prompt →
+E3 门禁语义随档位 → E1 金丝雀实测 → E5 Tier_1 探针）**全部实施完毕**，累计 5 次提交
+（`9f65110` E4+E2、`acfdb0f` E0+E3、`b7682c2` E1、待提交 E5）。typecheck 全程 0；
+unit 从 1465（stdin 修复后基线）累计到 1530（+65 新用例）；fixtures 全程 35/0。
+剩余：**E6**（P1，OCR 全管线提质，plan 原文已标注可顺延）、**E7**（源仓门禁已随每批
+验证过，宿主 chrys/mx 实机复验需要真实 CLI/账号，只能由用户在宿主机执行）。
