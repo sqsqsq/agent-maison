@@ -668,8 +668,18 @@ export interface CheckContext {
   visualParityEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
   /** CLI `--skip-visual-parity`：跳过 visual parity 脚本检查 */
   skipVisualParity?: boolean;
-  /** 来自 spec Visual Handoff yaml 块；默认 semantic_layout */
-  fidelityTarget?: 'pixel_1to1' | 'semantic_layout';
+  /** 来自 spec Visual Handoff yaml 块，经能力钳制后的**有效**档位；默认 semantic_layout */
+  fidelityTarget?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
+  /**
+   * E2（多模态降级阶梯 plan d4a8f3c6）：钳制前的**原始声明**档位（未钳制，用户/spec 意图）；
+   * 未钳制时与 fidelityTarget 相同。供 ratchet 回升 + fidelity_target_intent_nudge 判"是否
+   * 合法钳制"（能力钳制的合法降级 vs agent 擅自降级）区分用。
+   */
+  declaredFidelityTarget?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
+  /** fidelityTarget 是否因能力钳制而偏离 declaredFidelityTarget */
+  fidelityClamped?: boolean;
+  /** 钳制原因（fidelityClamped=true 时有值） */
+  fidelityClampReason?: 'no_vision_ocr_available' | 'no_vision_no_ocr';
   /** 来自 spec Visual Handoff yaml 块；默认 approximate */
   assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
   /** pixel_1to1 联动后的有效素材模式 */

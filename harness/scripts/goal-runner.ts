@@ -22,7 +22,7 @@ import {
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
-import { buildAwaitHumanConfirmGuidance } from './utils/await-confirm-guidance';
+import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './utils/await-confirm-guidance';
 import { loadResolvedProfile } from '../profile-loader';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
@@ -85,6 +85,8 @@ import {
   resolveResumeFromEvents,
   resolveResumeState,
   resolveWallClockStartMs,
+  countCumulativeAdvanceBlocked,
+  countRepeatedSignatureInFamily,
 } from './utils/goal-runner-phase';
 import {
   applyClosurePatchFromReceiptValidation,
@@ -129,8 +131,12 @@ import {
   buildEffectiveBlockerSignature,
   classifyFailureKind,
   extractDeterministicAffectedFiles,
+  isOperatorInterruptSignal,
   shouldHaltNoProgress,
   snapshotArtifacts,
+  ADVANCE_BLOCKED_HALT_THRESHOLD,
+  CUMULATIVE_HALT_FAMILY,
+  CUMULATIVE_HALT_THRESHOLD,
   type ArtifactSnapshot,
   type FailureKind,
 } from './utils/goal-failure-classifier';
@@ -1530,10 +1536,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           outputLogBytes,
           AGENT_NO_OUTPUT_MAX_DURATION_MS,
         );
+        // E4（案B chrys 实录：exit=3221225786 两次被误判 code_regression/agent_no_output）：
+        // 用户手动 Ctrl+C，不是任何一种"失败"信号，最高优先单独识别。
+        const operatorInterrupt = isOperatorInterruptSignal(invoke.exitCode, invoke.signal);
         const failureKind = classifyFailureKind(summary, manifest.dependency_policy, {
           agentTimedOut: invoke.timed_out === true,
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
+          operatorInterrupt,
         });
         // P0-B §七.3：agent_timeout 无普通 blocker 时用专用 signature（agent_timeout@<phase>），
         // 否则空 signature 被 shouldHaltNoProgress 短路、零进展熔断恒不触发。
@@ -1564,8 +1574,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
-        // P0-D.3 哨兵优先级：agent_timeout > headless_interaction_required > transient_api_error > blocker。
-        if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
+        // P0-D.3 哨兵优先级：operator_interrupt > agent_timeout > headless_interaction_required >
+        // transient_api_error > blocker。E4：用户手动中断压过一切（含 verdict===PASS 的边缘情况——
+        // 中断就是中断，不因为脚本恰好跑完就当没发生）。
+        if (operatorInterrupt) {
+          action = 'halt';
+          haltReason = 'operator_interrupt';
+        } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
           action = 'halt';
           haltReason = 'headless_interaction_required';
         } else if (agentNoOutput && verdict !== 'PASS') {
@@ -1616,15 +1631,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   failureKind === 'agent_timeout'
                 ? `no_progress_${failureKind}`
                 : 'no_progress_guard';
+        } else if (
+          // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
+          // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
+          // （chrys 案实证：signature 因 verdict 摆动而不同，guard 被绕过）。这里改从 events.jsonl
+          // 回放**累计**同一 signature 在 CUMULATIVE_HALT_FAMILY 家族内出现次数，与紧邻性无关。
+          CUMULATIVE_HALT_FAMILY.has(failureKind) &&
+          currentBlockerSignature &&
+          countRepeatedSignatureInFamily(
+            loadEventsJsonl(eventsPath),
+            phase,
+            currentBlockerSignature,
+            CUMULATIVE_HALT_FAMILY,
+          ) +
+            1 >=
+            CUMULATIVE_HALT_THRESHOLD
+        ) {
+          action = 'halt';
+          haltReason = `no_progress_cumulative_${failureKind}`;
         } else if (failureKind === 'agent_timeout' && verdict !== 'PASS') {
           // P0-B.5：超时+有进展（guard 未熔断）→ resume 续作，不吃内容重试预算；
           // 全局仍受 wall_clock + max_total_turns 兜底（checkRunBudget 每轮重查）。
           action = 'retry';
         } else if (resolved.advance_blocked) {
-          if (resolved.advance_block_reason === 'agent_timeout_unclosed') {
-            // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的续跑不受 max_retries
-            // 闸控（原逻辑 attempt3 预算耗尽即 halt，须人工 resume 重置计数才熬过）；
-            // 零进展熔断由上方 guard 负责（agent_timeout@<phase> 专用 signature）。
+          // E4（案B chrys 实证：advance_blocked 两次分别以不同 reason 出现——closure_open 类走
+          // max_retries_per_phase 兜底但慢，agent_timeout_unclosed 类曾**无任何上限**、真无限
+          // 重试）。累计（含本次）达到 ADVANCE_BLOCKED_HALT_THRESHOLD 即 halt 求人，不看具体
+          // reason：script 门禁反复"PASS 却关不了环"本身就是这个 phase 结构性关不了环的信号——
+          // 给一次重试机会（也许只是没来得及关环），第二次即不再自证突破。
+          const cumulativeAdvanceBlocked =
+            countCumulativeAdvanceBlocked(loadEventsJsonl(eventsPath), phase) + 1;
+          if (cumulativeAdvanceBlocked >= ADVANCE_BLOCKED_HALT_THRESHOLD) {
+            action = 'halt';
+            haltReason = 'closure_wall_repeated';
+            awaitConfirmGuidance = buildClosureWallGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase,
+              receiptPathRel: relFeatureFile(projectRoot, manifest.feature, `${phase}/phase-completion-receipt.md`),
+              harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+              receiptStatus: summary?.receipt_status,
+              cumulativeBlockedCount: cumulativeAdvanceBlocked,
+            }).join('\n');
+            console.log(`\n===== closure_wall_repeated =====\n${awaitConfirmGuidance}\n`);
+          } else if (resolved.advance_block_reason === 'agent_timeout_unclosed') {
+            // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的首次续跑不受 max_retries
+            // 闸控（给一次机会补关环）；第二次即上面的累计分支接管，不再无限重试。
             action = 'retry';
           } else if (retries < manifest.budget.max_retries_per_phase) {
             action = 'retry';
@@ -1648,6 +1700,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           failure_kind: meta.failure_kind,
           failure_kind_classified: failureKind,
           blocker_signature: currentBlockerSignature || undefined,
+          // E4：持久化 advance_blocked 状态，供下一次 attempt 的 countCumulativeAdvanceBlocked
+          // 事件回放统计使用（events.jsonl 是唯一 SSOT，非内存计数，resume/detach 重启不丢）。
+          advance_blocked: resolved.advance_blocked || undefined,
+          advance_block_reason: resolved.advance_block_reason,
           halt_reason: haltReason,
           interaction_question: interactionSentinel?.error,
           // P0-B/P0-D 诚实归因：让下游排障者（人/AI）一眼见真因，不再有"缺 API key"式臆造空间。
@@ -1775,7 +1831,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...(haltReason === 'await_human_visual_confirm' && awaitConfirmGuidance
+          ...((haltReason === 'await_human_visual_confirm' || haltReason === 'closure_wall_repeated') &&
+          awaitConfirmGuidance
             ? { halt_guidance: awaitConfirmGuidance }
             : {}),
           interaction_question: interactionSentinel?.error,

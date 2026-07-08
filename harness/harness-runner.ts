@@ -44,7 +44,10 @@ import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
-import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
+import {
+  resolveFidelityContextFromFeature,
+  resolveEffectiveFidelityContext,
+} from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
   featureFilePath,
@@ -194,6 +197,25 @@ function ensureHarnessTier1DepsOrExit(): void {
       '  可选（自担 registry/联网策略）：HARNESS_AUTO_NPM_INSTALL=1 cd framework/harness && npx ts-node harness-runner.ts ...'
   );
   process.exit(1);
+}
+
+/**
+ * E2（多模态降级阶梯 plan d4a8f3c6）：OCR 就绪度探测——按 profileDir 通用路径尝试 require
+ * `<profileDir>/harness/ocr-toolkit` 的 isOcrAvailable()，不硬编码 'hmos-app'（generic 等无
+ * OCR 资产的 profile 会 require 失败，按设计返回 false，不是错误）。core 不直接依赖具体 profile
+ * 的 OCR 实现，只按 profile 声明的目录做泛化尝试——与 capability-registry.ts 的
+ * provider 动态 require（path.join(resolved.profileDir, 'harness', 'providers', moduleName)）
+ * 同构，只是这里探测的是"环境就绪度"而非"profile 是否声明该能力"，故不走 capability 表。
+ */
+function probeProfileOcrAvailable(profileDir: string): boolean {
+  try {
+    const mod = require(path.join(profileDir, 'harness', 'ocr-toolkit')) as {
+      isOcrAvailable?: () => boolean;
+    };
+    return typeof mod.isOcrAvailable === 'function' ? mod.isOcrAvailable() : false;
+  } catch {
+    return false; // profile 无 OCR 工具链（如 generic）——非错误，按"无 OCR"处理
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -392,14 +414,24 @@ async function main(): Promise<void> {
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
   const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
+  // E2：能力钳制——全局阶段（catalog/glossary/docs）不涉及 feature UI，固定 semantic_layout
+  // 不钳制；feature 阶段按 mmProbe.supported（视觉能力）+ profile OCR 就绪度钳制 desired→effective，
+  // 单点收口：全部 19 处 isPixel1to1/fidelityTarget 消费面只读 context.fidelityTarget（此处赋的
+  // 有效档位），零改动自动随能力降级（capture_completeness_external 等 pixel 分支天然降 WARN）。
   const fidelityCtx = phaseIsGlobal
     ? {
         fidelityTarget: 'semantic_layout' as const,
+        declaredFidelityTarget: 'semantic_layout' as const,
+        fidelityClamped: false,
+        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
         assetAcquisitionMode: 'approximate' as const,
         effectiveAssetAcquisitionMode: 'approximate' as const,
         fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
       }
-    : resolveFidelityContextFromFeature(projectRoot, feature);
+    : resolveEffectiveFidelityContext(resolveFidelityContextFromFeature(projectRoot, feature), {
+        hasVision: mmProbe.supported,
+        ocrAvailable: probeProfileOcrAvailable(resolvedProfile.profileDir),
+      });
   const context: CheckContext = {
     phase,
     feature,
@@ -416,6 +448,9 @@ async function main(): Promise<void> {
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
     fidelityTarget: fidelityCtx.fidelityTarget,
+    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
+    fidelityClamped: fidelityCtx.fidelityClamped,
+    fidelityClampReason: fidelityCtx.fidelityClampReason,
     assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
     effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
     fidelityDeferrals: fidelityCtx.fidelityDeferrals,
@@ -728,6 +763,14 @@ function printStableSummary(summary: HarnessRunSummary): void {
       console.log(`  - ${b.id}${b.classification ? ` (${b.classification})` : ''}`);
     }
   }
+  // codex P2：readiness_signals 此前只写 summary.json、从不打印——PASS 场景下的"值得单独提醒"
+  // 信号（如 fidelity_capability_clamped）用户永远看不到。通用打印，非仅本次改动的信号受益。
+  if (summary.readiness_signals.length > 0) {
+    console.log('readiness_signals:');
+    for (const s of summary.readiness_signals) {
+      console.log(`  - ${s.id} [${s.status}]: ${s.message}`);
+    }
+  }
   console.log('END_HARNESS_SUMMARY');
 }
 
@@ -884,6 +927,19 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
         message: terms.details,
       });
     }
+  }
+
+  // E2 P2（codex review）：钳制事实此前只落在 fidelity_target_declared 这个 PASS check 的
+  // details 里——summary.json 不收 PASS check，goal run 全绿时用户/runner 看不到降级发生过。
+  // readiness_signals 是本文件既有的"PASS 但值得单独提醒"通道，接进来即最小成本获得可见性。
+  const fidelityDeclared = report.checks.find(c => c.id === 'fidelity_target_declared');
+  if (fidelityDeclared?.status === 'PASS' && fidelityDeclared.details.includes('能力钳制')) {
+    signals.push({
+      id: 'fidelity_capability_clamped',
+      status: 'ready',
+      source_check: 'fidelity_target_declared',
+      message: fidelityDeclared.details,
+    });
   }
 
   if (report.phase === 'ut') {

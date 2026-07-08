@@ -23,14 +23,31 @@ export type FailureKind =
   | 'transient_api_error'
   | 'agent_no_output'
   /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
-  | 'await_human_confirm';
+  | 'await_human_confirm'
+  /** E4（案B chrys 银行卡实证）：用户主动 Ctrl+C（Windows STATUS_CONTROL_C_EXIT / POSIX
+   * SIGINT）——不是超时/断流/空产出/内容失败，重试是对用户意图的冒犯，须首触即 halt。 */
+  | 'operator_interrupt';
+
+/** Windows STATUS_CONTROL_C_EXIT，spawn/spawnSync 在 win32 上把 Ctrl+C 杀死的子进程 exit code 报成这个无符号 32 位值。 */
+export const WINDOWS_CTRL_C_EXIT_CODE = 3221225786;
+
+/** True when the invoke result indicates the OPERATOR (not our own tree-kill) interrupted the process. */
+export function isOperatorInterruptSignal(
+  exitCode: number,
+  signal: string | null | undefined,
+): boolean {
+  return exitCode === WINDOWS_CTRL_C_EXIT_CODE || signal === 'SIGINT';
+}
 
 /**
  * P0-B/P0-D（b8f36a12）：agent 级基建失败信号——由 goal-runner 从 invoke 结果 +
  * agent-output.log 哨兵采集后传入，**优先于 summary blocker 归因**（blocker 只是症状：
  * 超时/断流 attempt 的 spec_file_exists 是"没跑完"的派生物，不是内容失败）。
- * 优先级：agent_timeout（runner tree-kill 确定性事实）> transient_api_error（断流串
- * 可能是被杀连带产生，故 timed_out 时不判断流）> agent_no_output > blocker 归因。
+ * 优先级：operator_interrupt（人手动 Ctrl+C，压过一切）> agent_timeout（runner tree-kill
+ * 确定性事实，但若 summary blockers 全为 await_human 家族则让位于 await_human_confirm——
+ * E4：案B chrys 现场实证 agentTimedOut 会遮蔽"其实只差真人签字"的判定）>
+ * transient_api_error（断流串可能是被杀连带产生，故 timed_out 时不判断流）>
+ * agent_no_output > blocker 归因。
  */
 export interface AgentInvokeSignals {
   /** invoke.timed_out === true（maison 自己的预算 tree-kill） */
@@ -39,6 +56,8 @@ export interface AgentInvokeSignals {
   agentApiError?: boolean;
   /** 0 字节输出保守兜底（preflight 已过 + 无 spawn error + 极短时长 + exit≠0） */
   agentNoOutput?: boolean;
+  /** isOperatorInterruptSignal(exitCode, signal) 命中——用户手动中断，非任何一种"失败"。 */
+  operatorInterrupt?: boolean;
 }
 
 /**
@@ -105,6 +124,25 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
   'visual_gap',
   'agent_timeout',
 ]);
+
+/**
+ * E4（多模态降级阶梯 plan d4a8f3c6）：跨 attempt **累计**（非仅连续）重复同一 blocker_signature
+ * 即 halt/降档 的家族——基建类（toolchain）与求人类（await_human_confirm）反复出现却被其他
+ * 产物的变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
+ * 【扩展位，尚未启用】'blind_review'——盲档（effective_image_input=none）下
+ * capture_completeness_external 应归此家族（既非 toolchain 也非 await_human_confirm），
+ * 待 E3 落地门禁层显式打该 classification 后加入此集合；E3 前不强行分类（分类依据尚不存在）。
+ */
+export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
+  'toolchain',
+  'await_human_confirm',
+]);
+
+/** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
+export const CUMULATIVE_HALT_THRESHOLD = 3;
+
+/** advance_blocked（script PASS 但 closure 打不开）累计出现达到此次数（含本次）即 halt 求人，不再退化到无限重试。 */
+export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
 
 /**
  * Blocker ids where retry without user input is structurally pointless.
@@ -207,8 +245,20 @@ export function classifyFailureKind(
   dependencyPolicy: DependencyPolicy = DEFAULT_DEPENDENCY_POLICY,
   signals?: AgentInvokeSignals,
 ): FailureKind {
-  // agent 级基建失败优先（优先级见 AgentInvokeSignals 注释）
-  if (signals?.agentTimedOut) return 'agent_timeout';
+  // agent 级基建失败优先（优先级见 AgentInvokeSignals 注释）。operator_interrupt 压过一切——
+  // 用户手动 Ctrl+C 时无论是否也恰好超时/断流/空产出，都不是"失败"，重试是对用户意图的冒犯。
+  if (signals?.operatorInterrupt) return 'operator_interrupt';
+  if (signals?.agentTimedOut) {
+    // E4（cursor+codex 双 review 采纳）：agentTimedOut 最高优先没错，但若这轮 summary 的
+    // blockers 非空且**全部**已被 check 层判定为 await_human_confirm（真人签字家族），
+    // 说明超时只是"顺带杀死了一个本来就只差人签的 attempt"——归 agent_timeout 会让 runner
+    // 继续做免预算重试（P0-B.5 不吃 retries），而人签墙不会因重试消失，等同无限空转。
+    const blockers = summary?.blockers ?? [];
+    if (blockers.length > 0 && blockers.every((b) => b.classification === 'await_human_confirm')) {
+      return 'await_human_confirm';
+    }
+    return 'agent_timeout';
+  }
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
 

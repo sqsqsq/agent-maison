@@ -126,6 +126,11 @@ export interface GoalRunEvent {
   blocking_class?: string;
   failure_kind?: string;
   failure_kind_classified?: string;
+  /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
+  blocker_signature?: string;
+  halt_reason?: string;
+  advance_blocked?: boolean;
+  advance_block_reason?: string;
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;
@@ -184,6 +189,47 @@ export function lastPhaseVerdictTransientApiError(
     return e.failure_kind_classified === 'transient_api_error';
   }
   return false;
+}
+
+/**
+ * E4（案B chrys 银行卡实证：8 attempt/4h19m，advance_blocked 两次分别以不同 reason
+ * 出现——closure_open 类走 max_retries_per_phase 兜底但慢，agent_timeout_unclosed 类
+ * 曾**无任何上限**、真无限重试）。从 events.jsonl 回放统计本 phase 累计 advance_blocked
+ * 次数（跨 attempt，非内存计数——resume/detach 重启不丢），不看具体 reason：script 门禁
+ * 反复"PASS 却关不了环"本身就是这个 phase 结构性关不了环的信号，与具体原因无关。
+ */
+export function countCumulativeAdvanceBlocked(
+  events: GoalRunEvent[],
+  phase: FeaturePhase,
+): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.advance_blocked) n++;
+  }
+  return n;
+}
+
+/**
+ * E4：同一 blocker_signature 在给定 failure_kind 家族内跨 attempt **累计**（非仅连续）出现
+ * 次数——basis for CUMULATIVE_HALT_FAMILY（toolchain/await_human_confirm 等）反复出现却被
+ * 其他产物变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
+ */
+export function countRepeatedSignatureInFamily(
+  events: GoalRunEvent[],
+  phase: FeaturePhase,
+  signature: string,
+  family: ReadonlySet<string>,
+): number {
+  if (!signature) return 0;
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.blocker_signature !== signature) continue;
+    if (!e.failure_kind_classified || !family.has(e.failure_kind_classified)) continue;
+    n++;
+  }
+  return n;
 }
 
 /**

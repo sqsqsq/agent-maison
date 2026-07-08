@@ -12,6 +12,11 @@ import {
   shouldHaltNoProgress,
   snapshotArtifacts,
   SIGNATURE_HALT_KINDS,
+  isOperatorInterruptSignal,
+  WINDOWS_CTRL_C_EXIT_CODE,
+  CUMULATIVE_HALT_FAMILY,
+  CUMULATIVE_HALT_THRESHOLD,
+  ADVANCE_BLOCKED_HALT_THRESHOLD,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import type { CheckResult } from '../../scripts/utils/types';
@@ -21,11 +26,14 @@ import {
 } from '../../scripts/utils/goal-headless-sentinel';
 import {
   countTransientApiRetries,
+  countCumulativeAdvanceBlocked,
+  countRepeatedSignatureInFamily,
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
+  type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
 import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
-import { buildAwaitHumanConfirmGuidance } from '../../scripts/utils/await-confirm-guidance';
+import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -705,6 +713,126 @@ export function runAll(): UnitCaseResult[] {
           {},
         );
         assert(kPlain === 'deterministic_gate_or_artifact_missing', `无信号回落 blocker：${kPlain}`);
+      },
+    },
+    // ======================================================================
+    // E4（多模态降级阶梯 plan d4a8f3c6）：案B chrys 银行卡实证 —— agentTimedOut 遮蔽人签墙
+    // + operator_interrupt 误判 + 事件回放累计熔断
+    // ======================================================================
+    {
+      name: 'E4 classifyFailureKind: agentTimedOut + blockers 全为 await_human_confirm → await_human_confirm（不再 agent_timeout）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'visual_diff', classification: 'await_human_confirm' },
+              { id: 'visual_diff_2', classification: 'await_human_confirm' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'await_human_confirm', `全 await_human 时应让位，实得 ${k}`);
+      },
+    },
+    {
+      name: 'E4 classifyFailureKind: agentTimedOut + blockers 混合(非全 await_human) → 仍 agent_timeout',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'visual_diff', classification: 'await_human_confirm' },
+              { id: 'spec_file_exists' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'agent_timeout', `混合家族不应让位，实得 ${k}`);
+        const kEmpty = classifyFailureKind({ verdict: 'PASS' }, undefined, { agentTimedOut: true });
+        assert(kEmpty === 'agent_timeout', `无 blocker（PASS+超时）应仍 agent_timeout，实得 ${kEmpty}`);
+      },
+    },
+    {
+      name: 'E4 classifyFailureKind: operatorInterrupt 压过一切（含同时 agentTimedOut/agentApiError）',
+      run: () => {
+        const k = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] },
+          undefined,
+          { operatorInterrupt: true, agentTimedOut: true, agentApiError: true },
+        );
+        assert(k === 'operator_interrupt', `operator_interrupt 必须最高优先，实得 ${k}`);
+      },
+    },
+    {
+      name: 'E4 isOperatorInterruptSignal: Windows STATUS_CONTROL_C_EXIT / POSIX SIGINT / 均非',
+      run: () => {
+        assert(isOperatorInterruptSignal(WINDOWS_CTRL_C_EXIT_CODE, null) === true, 'win ctrl+c exit code');
+        assert(isOperatorInterruptSignal(3221225786, undefined) === true, 'raw literal must match constant');
+        assert(isOperatorInterruptSignal(1, 'SIGINT') === true, 'posix SIGINT');
+        assert(isOperatorInterruptSignal(1, 'SIGTERM') === false, 'SIGTERM 是我方 tree-kill，非用户中断');
+        assert(isOperatorInterruptSignal(1, null) === false, '普通失败不得误判');
+      },
+    },
+    {
+      name: 'E4 countCumulativeAdvanceBlocked: 跨 attempt 累计（不看具体 reason），忽略他 phase/非 phase_verdict',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: true, advance_block_reason: 'closure_open' },
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: false },
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: true, advance_block_reason: 'agent_timeout_unclosed' },
+          { type: 'phase_verdict', phase: 'plan', advance_blocked: true, advance_block_reason: 'closure_open' },
+          { type: 'agent_invoke_end', phase: 'spec' },
+        ];
+        assert(countCumulativeAdvanceBlocked(events, 'spec') === 2, `应数到 2，reason 不同也累计；实得 ${countCumulativeAdvanceBlocked(events, 'spec')}`);
+        assert(countCumulativeAdvanceBlocked(events, 'plan') === 1, '不同 phase 隔离统计');
+        assert(countCumulativeAdvanceBlocked(events, 'coding') === 0, '未出现的 phase 为 0');
+      },
+    },
+    {
+      name: 'E4 countRepeatedSignatureInFamily: 同 signature 在家族内累计，非家族/异 signature 不计',
+      run: () => {
+        const sig = 'visual_parity_ocr_unavailable';
+        const events: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'toolchain' },
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'code_regression' }, // 非家族，不计
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: 'other_sig', failure_kind_classified: 'toolchain' }, // 异 signature，不计
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'toolchain' },
+        ];
+        const n = countRepeatedSignatureInFamily(events, 'spec', sig, CUMULATIVE_HALT_FAMILY);
+        assert(n === 2, `应数到 2，实得 ${n}`);
+        assert(countRepeatedSignatureInFamily(events, 'spec', '', CUMULATIVE_HALT_FAMILY) === 0, '空 signature 恒 0');
+      },
+    },
+    {
+      name: 'E4 阈值常量：ADVANCE_BLOCKED_HALT_THRESHOLD=2（首次给机会/第二次即halt）、CUMULATIVE_HALT_THRESHOLD=3',
+      run: () => {
+        assert(ADVANCE_BLOCKED_HALT_THRESHOLD === 2, String(ADVANCE_BLOCKED_HALT_THRESHOLD));
+        assert(CUMULATIVE_HALT_THRESHOLD === 3, String(CUMULATIVE_HALT_THRESHOLD));
+        assert(CUMULATIVE_HALT_FAMILY.has('toolchain'), 'toolchain in family');
+        assert(CUMULATIVE_HALT_FAMILY.has('await_human_confirm'), 'await_human_confirm in family');
+      },
+    },
+    {
+      name: 'E4 buildClosureWallGuidance: 含 feature/run/receipt 路径/续跑命令，与 visual-confirm 引导独立',
+      run: () => {
+        const lines = buildClosureWallGuidance({
+          feature: 'bc-openCard',
+          runId: '20260708T023859Z',
+          phase: 'spec',
+          receiptPathRel: 'doc/features/bc-openCard/spec/phase-completion-receipt.md',
+          harnessPrefixRel: 'framework/harness',
+          receiptStatus: 'failed',
+          cumulativeBlockedCount: 2,
+        });
+        const text = lines.join('\n');
+        assert(text.includes('bc-openCard'), 'feature 名须出现');
+        assert(text.includes('第 2 次'), '须报告累计次数');
+        assert(text.includes('phase-completion-receipt.md'), '须指向 receipt 路径');
+        assert(text.includes('--resume 20260708T023859Z --force-resume'), '须给续跑命令');
+        assert(!text.includes('device-screenshots'), '不得混用 visual-confirm 的截图话术');
       },
     },
     {

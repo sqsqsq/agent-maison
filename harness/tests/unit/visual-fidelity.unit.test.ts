@@ -31,7 +31,15 @@ import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-man
 import { collectSemanticColorBindingIssues, collectVariantParityIssues, hasSolidButtonBackground } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
 import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveCode } from '../../../profiles/hmos-app/harness/source-ref-scan';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { detectPixel1to1Intent, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../scripts/utils/fidelity-shared';
+import {
+  detectPixel1to1Intent,
+  isAutomationSigner,
+  USER_REQUIREMENT_CONFIRMER,
+  clampFidelityByCapability,
+  resolveEffectiveFidelityContext,
+  isPixel1to1,
+  fidelityRatchetFailOrWarn,
+} from '../../scripts/utils/fidelity-shared';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
@@ -1600,6 +1608,148 @@ export function runAll(): UnitCaseResult[] {
       const r = checkFidelityGovernance(baseCtx(root), specMd);
       const blocker = r.find(x => x.id === 'fidelity_target_intent_nudge' && x.severity === 'BLOCKER' && x.status === 'FAIL');
       if (!blocker) throw new Error('homepage 组合（原始需求 1:1 + spec 降档 + headless）未判 BLOCKER：' + JSON.stringify(r));
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // ==========================================================================
+  // E2（多模态降级阶梯 plan d4a8f3c6）：能力钳制 clampFidelityByCapability / effective context
+  // ==========================================================================
+
+  run('E2 clampFidelityByCapability: hasVision → 从不钳制（三档皆保留）', () => {
+    for (const desired of ['pixel_1to1', 'semantic_layout', 'reference_only'] as const) {
+      const r = clampFidelityByCapability(desired, { hasVision: true, ocrAvailable: false });
+      if (r.effective !== desired || r.clamped) throw new Error(`hasVision 不应钳制 ${desired}：${JSON.stringify(r)}`);
+    }
+  });
+
+  run('E2 clampFidelityByCapability: 无视觉+OCR可用 → pixel_1to1 钳至 semantic_layout，其余不钳', () => {
+    const pixel = clampFidelityByCapability('pixel_1to1', { hasVision: false, ocrAvailable: true });
+    if (pixel.effective !== 'semantic_layout' || !pixel.clamped || pixel.reason !== 'no_vision_ocr_available') {
+      throw new Error('pixel_1to1 应钳至 semantic_layout：' + JSON.stringify(pixel));
+    }
+    const semantic = clampFidelityByCapability('semantic_layout', { hasVision: false, ocrAvailable: true });
+    if (semantic.effective !== 'semantic_layout' || semantic.clamped) throw new Error('semantic_layout 不应被钳：' + JSON.stringify(semantic));
+    const ref = clampFidelityByCapability('reference_only', { hasVision: false, ocrAvailable: true });
+    if (ref.effective !== 'reference_only' || ref.clamped) throw new Error('reference_only 不应被钳：' + JSON.stringify(ref));
+  });
+
+  run('E2 clampFidelityByCapability: 无视觉+无OCR → 一律钳至 reference_only 地板', () => {
+    const pixel = clampFidelityByCapability('pixel_1to1', { hasVision: false, ocrAvailable: false });
+    const semantic = clampFidelityByCapability('semantic_layout', { hasVision: false, ocrAvailable: false });
+    if (pixel.effective !== 'reference_only' || pixel.reason !== 'no_vision_no_ocr') throw new Error('pixel 应钳地板：' + JSON.stringify(pixel));
+    if (semantic.effective !== 'reference_only' || semantic.reason !== 'no_vision_no_ocr') throw new Error('semantic 应钳地板：' + JSON.stringify(semantic));
+    const ref = clampFidelityByCapability('reference_only', { hasVision: false, ocrAvailable: false });
+    if (ref.clamped) throw new Error('已在地板不应再报 clamped：' + JSON.stringify(ref));
+  });
+
+  run('E2 resolveEffectiveFidelityContext: 合成 effective + 保留 declared（不改写意图）', () => {
+    const raw = {
+      fidelityTarget: 'pixel_1to1' as const,
+      assetAcquisitionMode: 'user_dir' as const,
+      effectiveAssetAcquisitionMode: 'user_dir' as const,
+      fidelityDeferrals: [],
+    };
+    const out = resolveEffectiveFidelityContext(raw, { hasVision: false, ocrAvailable: true });
+    if (out.fidelityTarget !== 'semantic_layout') throw new Error('effective 应钳：' + JSON.stringify(out));
+    if (out.declaredFidelityTarget !== 'pixel_1to1') throw new Error('declared 须保留原始意图：' + JSON.stringify(out));
+    if (!out.fidelityClamped || out.fidelityClampReason !== 'no_vision_ocr_available') throw new Error(JSON.stringify(out));
+    // 素材模式字段透传不变
+    if (out.assetAcquisitionMode !== 'user_dir' || out.effectiveAssetAcquisitionMode !== 'user_dir') throw new Error(JSON.stringify(out));
+  });
+
+  run('E2 reference_only 新枚举：isPixel1to1=false，fidelityRatchetFailOrWarn 走非 pixel 路径（同 semantic_layout）', () => {
+    const ctx = baseCtx(mkProject(), { fidelityTarget: 'reference_only' });
+    try {
+      if (isPixel1to1(ctx)) throw new Error('reference_only 不应被判 pixel_1to1');
+      const soft = fidelityRatchetFailOrWarn(ctx, true);
+      if (soft.severity !== 'MAJOR' || soft.status !== 'WARN') throw new Error('reference_only 应走软路径：' + JSON.stringify(soft));
+    } finally {
+      fs.rmSync(ctx.projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  // 与 homepage_combo_headless_1to1_requirement_semantic_layout_blocker 同场景，唯一变量=能力钳制生效——
+  // cursor 硬冲突修正：这不再是"agent 擅自降级"BLOCKER，是合法的能力降级，不得阻断 headless 继续跑。
+  run('E2 fidelityGovernance: 能力钳制生效时 1:1 措辞 + 降档 → 不 BLOCKER，改报 capability_clamped PASS', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const reqDir = path.join(root, 'doc', 'features', '原始需求');
+      fs.mkdirSync(reqDir, { recursive: true });
+      fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'visual_handoff:',
+        '  kind: screenshot_pack',
+        '  authoritative_refs:',
+        '    - id: home',
+        '      path: doc/features/原始需求/1.png',
+        '```',
+      ].join('\n');
+      const ctx = baseCtx(root, {
+        fidelityTarget: 'semantic_layout',
+        declaredFidelityTarget: 'pixel_1to1',
+        fidelityClamped: true,
+        fidelityClampReason: 'no_vision_ocr_available',
+      });
+      const r = checkFidelityGovernance(ctx, specMd);
+      const blocker = r.find(x => x.id === 'fidelity_target_intent_nudge' && x.severity === 'BLOCKER');
+      if (blocker) throw new Error('能力钳制不应再走 intent_nudge BLOCKER：' + JSON.stringify(r));
+      const clampedNote = r.find(x => x.id === 'fidelity_target_capability_clamped' && x.status === 'PASS');
+      if (!clampedNote) throw new Error('应产出 capability_clamped PASS 说明：' + JSON.stringify(r));
+      const declared = r.find(x => x.id === 'fidelity_target_declared');
+      if (!declared || !String(declared.details).includes('能力钳制')) throw new Error('首屏声明须提示钳制事实：' + JSON.stringify(declared));
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // P1 修正回归（codex review）：declared=semantic_layout（agent 自己没如实声明 1:1，与能力
+  // 钳制无关的独立违规）——即便之后又被钳到 reference_only 地板，也不能被误判为"desired 已保留
+  // pixel_1to1"的合法降级；这种情况仍须走 intent_nudge 追责。
+  run('E2 P1 修正: declared≠pixel_1to1 时即便 capabilityClamped 也不得豁免 intent_nudge（不能谎称 desired 已保留）', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const reqDir = path.join(root, 'doc', 'features', '原始需求');
+      fs.mkdirSync(reqDir, { recursive: true });
+      fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: semantic_layout',
+        'visual_handoff:',
+        '  kind: screenshot_pack',
+        '  authoritative_refs:',
+        '    - id: home',
+        '      path: doc/features/原始需求/1.png',
+        '```',
+      ].join('\n');
+      // declared=semantic_layout（agent 自己没声明 1:1），能力又把它进一步钳到 reference_only 地板。
+      const ctx = baseCtx(root, {
+        fidelityTarget: 'reference_only',
+        declaredFidelityTarget: 'semantic_layout',
+        fidelityClamped: true,
+        fidelityClampReason: 'no_vision_no_ocr',
+      });
+      const r = checkFidelityGovernance(ctx, specMd);
+      const falseClampPass = r.find(x => x.id === 'fidelity_target_capability_clamped');
+      if (falseClampPass) throw new Error('declared≠pixel_1to1 不得豁免为合法钳制：' + JSON.stringify(r));
+      const blocker = r.find(x => x.id === 'fidelity_target_intent_nudge' && x.severity === 'BLOCKER' && x.status === 'FAIL');
+      if (!blocker) throw new Error('declared 本身未如实声明 1:1，仍须 intent_nudge BLOCKER：' + JSON.stringify(r));
+      if (!String(blocker.details).includes('reference_only')) throw new Error('details 应如实附注即便声明也会被钳到的档位：' + JSON.stringify(blocker));
     } finally {
       if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
       else process.env.MAISON_GOAL_HEADLESS = prevHeadless;

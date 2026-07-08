@@ -1,0 +1,379 @@
+---
+name: 多模态能力阶梯 — 盲模型自动降级、门禁语义随档位切换与收口治理
+version: 2.4.0
+# 版本说明：2.4.0 窗口不 bump（用户控版本）。中型演进：治「应降级时不降级、反而硬失败/死循环」。
+# v2（2026-07-08）：吸收 cursor + codex 双 review——叙事按两案拆分、E0 能力感知 prompt 提前 P0、
+# E1 金丝雀防 OCR 代答、E2 headless 禁降级硬冲突显式化、E4 分类收窄、实施顺序改止血优先。
+overview: >
+  【目标效果曲线（用户拍板）】UI 需求在任意宿主模型上：模型强（真视觉）→ pixel_1to1 效果好；
+  模型弱+OCR 可用 → semantic_layout 文案精确；最弱 → reference_only 跑通。任何档位**不允许
+  异常中断**——goal 模式要么带「待人工复核清单」跑完，要么干净 halt 求人（引导话术），
+  绝不长时间空转。修复后可 ratchet 回升（机制已有）。
+  【两案两套主链（cursor 纠偏：勿揉在一个叙事里）】
+  ▶ 案A mx 2.7 套 Claude Code 壳 —— 主断点=①探测层被 adapter 声明骗：
+  image_input 纯声明（agents/claude/adapter.yaml:54 tool_read；multimodal-probe.ts 只读
+  adapter.yaml，无模型实测）。盲模型「知道有图但看不见」，现场空转（自称无法 OCR、
+  幻觉 mcp_ocr 等不存在工具名）。治法=E1。
+  ▶ 案B chrys + 银行卡 goal run —— adapter 已正确声明 image_input:none，探测没被骗；
+  主断点=②③④叠加：8 次 invoke（5 次打满 45min 预算、attempt3 约 28min 正常结束、
+  attempt7/8 为用户 Ctrl+C 0xC000013A），总墙钟约 4h19m，spec 永不闭环。
+  【案B 断点细目（全部实证）】
+  ②档位钉死+双向死锁：需求「严格按参考图还原」→ intent_nudge 推 pixel_1to1；终态 spec.md
+  实录 fidelity_target: pixel_1to1。**双向围死**（cursor 实证）：agent 写 semantic_layout →
+  fidelity-governance-check.ts:100-117 headless 下判 BLOCKER「headless 下不得自动降级」；
+  写 pixel_1to1 → 盲档撞最重门禁。且 SKILL.md:179「本 Step 必须用强 VL 模型；内网弱模型
+  勿跑提取」与 goal headless「不得停下问人」构成规则级死锁——盲 agent 四面无路。
+  ③门禁语义不随档位 + phase prompt 降级信息断供（codex P1 纠偏）：capture_completeness_external
+  以原图 OCR 全文为「删不掉的分母」（99/123 行未覆盖、defer 须真人签字；OCR 噪声实录
+  「人《AA招商银行」——宿主 OCR 环境正常，抽出 123 行，「环境坏了」是此前误判；分发/安装链
+  无缺口：chi_sim.traineddata 在 564 发布文件内、tesseract.js 随 harness-install 装）。
+  capture-completeness-check.ts:352 `severity: pixel ? 'BLOCKER' : 'MAJOR'`——attempt4
+  detach.log 实证 semantic_layout 时同检查仅 MAJOR WARN，档位确实控制严重度（E2→E3 链成立）。
+  **收窄声明**：(multimodal-degraded) 降级注入只到达 verifier 的 ai-prompt.md，**未到达**
+  驱动 phase agent 写作的 goal-runs/.../phases/spec/prompt.md——phase prompt 里没有
+  effective 档位/OCR/盲档工作法任何信息，agent 按强视觉任务硬跑。此即 E0 的存在理由。
+  ④收口死循环（两种形态，cursor 细分）：(a) 超时+harness PASS+advance_blocked →
+  agent_timeout_unclosed retry（goal-runner.ts:1624，attempt5）；(b) 正常结束+PASS+closure
+  open → retry，failure_kind=code_regression（attempt3）。设计内 await_human 出口够不着：
+  classifyFailureKind agentTimedOut 最高优先遮蔽（goal-failure-classifier.ts:211）+ 只认
+  script summary blockers 的 classification、verifier/回执层盲区（:227）。兜底守卫
+  「signature 重复即 halt」被产物搅动绕过（spec.md 每轮在变=有进展）。终态用户中断
+  0xC000013A 被误判 code_regression/agent_no_output。
+  附：Tier_1 探针（init-readiness.mjs）不探 tesseract.js/chi_sim——非案B主因，同链补齐。
+  【方案：P0 六件套 + P1 提质】实施顺序（cursor+codex 一致）：
+  止血切片一 E4+E2（案B 4h retry 地狱 → 几十分钟内干净 halt 或降档跑通）→
+  切片二 E0+E3（盲档可解：phase prompt 能力感知 + 门禁清单化）→ E1（案A 治探测）→
+  E5（补强）→ P1 E6（OCR 全管线提质）。
+  【范围外（硬理由）】①stdin 传参修复已独立落库（plan b3f7c1a9 / commit a02703d），E7 同批复验。
+  ②specs/phase-rules/*.yaml 正文尽量不动（gate_fingerprint 令宿主存量回执 stale；行为变化
+  落 check 脚本 ts 层，yaml 仅语义真变不可避免时动并在实施记录声明）。③generic/其他 profile
+  的 OCR 资产供给（无 tessdata）——阶梯对无 OCR 环境已有 reference_only 地板，供给增强另立。
+  ④verifier prompt 全面改写——只加档位感知最小增量。⑤盲档下 context_exploration_* 等探索
+  深度门禁的减负（cursor 提示的 residual 超时源）——本 plan 只观察记录（E7），不动语义。
+  【验收诚实声明】E0-E5 有机器验收（新单测+全量绿）；「盲模型端到端跑通银行卡类需求」须
+  宿主实机复验（mx 2.7 + claude / chrys 两线，E7），本 plan 不以单测冒充端到端结论。
+  金丝雀防作弊边界：防「文件名/文档猜答案」与「OCR 工具代答文字题」（codex：非恶意的自然
+  求解路径也要防——故金丝雀含非 OCR 可答题）；不防宿主工具链恶意伪造读图——那属
+  gate-integrity 红线域，非本 plan。
+todos:
+  - id: e4-closure-halt-guard
+    content: >
+      E4 收口治理（止血切片一之1，先停案B的 retry 地狱；不依赖金丝雀即可落地）。
+      ①goal-runner.ts advance_blocked 两条 retry 路径**都**覆盖（cursor 细分）：
+      (a) closure_open/receipt 失败（attempt3 形态）与 (b) agent_timeout_unclosed
+      （attempt5 形态，:1624）——当失败原因为人签类（receipt 校验/verifier verdict/summary
+      blockers 含 fidelity_capture_governance、*_defer_human_sign、*_pending_confirm 家族）
+      → action=halt + haltReason=await_human_visual_confirm + buildAwaitHumanConfirmGuidance
+      引导话术（复用 await-confirm-guidance.ts），不吃 retry 预算。
+      ②classifyFailureKind（goal-failure-classifier.ts:211）遮蔽修正：agentTimedOut 仍最高
+      优先，但 summary blockers 非空且**全部**为 await_human/人签家族 → 归 await_human_confirm；
+      判定源扩展到 receipt 校验结果（新增输入位）。
+      ③守卫补漏（codex 收窄分类）：no-progress guard 增加「同一 blocker id 跨 attempt 累计
+      出现 ≥3 次即 halt/降档」，家族范围= toolchain、await_human、以及**盲档下的
+      capture_completeness_external**（E3 落地前它既非 toolchain 也非 await_human——
+      为其建 blind_review 家族归属，勿漏）；不被其他产物搅动掩盖。
+      【计数状态来源（codex 采纳：勿用易丢内存计数）】累计次数从 events.jsonl 的
+      phase_verdict.blocker_signature 回放统计（runner 已有 events 读链，resume/detach
+      重启天然不丢）；per-run 内存 state 仅作缓存。
+      ④用户中断诚实分类：exit 0xC000013A（STATUS_CONTROL_C_EXIT，案B终态实录）归
+      operator_interrupt，不再误判 code_regression/agent_no_output。
+      单测：两条 retry 路径→halt（回放案B attempt3/attempt5 时间线）、全人签+timeout 归类、
+      累计签名守卫（含 blind_review 家族）、0xC000013A 分类。
+    status: completed
+  - id: e2-fidelity-capability-clamp
+    content: >
+      E2 fidelity 档位自动合法化（止血切片一之2，案B主药）。
+      ①新 util（fidelity-shared.ts 内）：clampFidelityByCapability(desired, capability)——
+      capability = {effective_image_input（E1 前先用 adapter 声明+goal allowed_tools 现有
+      解析，E1 落地后换金丝雀实测）, ocr_available（isOcrAvailable）}；钳制表：
+      vision=tool_read/native → 不钳；vision=none & ocr=y → pixel_1to1 钳至 semantic_layout；
+      vision=none & ocr=n → 钳至 reference_only 地板。
+      【量级预警（codex 采纳）】reference_only 是**新枚举值**——现
+      FidelityTarget = 'pixel_1to1'|'semantic_layout'（fidelity-shared.ts:15/18），落地须
+      同步：类型与 FIDELITY_TARGETS 集合、parseFidelityTargetFromHandoffDoc、visual-handoff
+      文档（skills/feature/spec/reference/visual-handoff.md）、summary/schema 相关字段与
+      既有测试断言；此项**不可避免触及文档/schema 语义**，不属 ts 小改——若牵动
+      phase-rules yaml 则按范围外纪律在实施记录声明 fingerprint 影响后再动。
+      ②单点收口：isPixel1to1（fidelity-shared.ts:188）及 fidelity_target 全消费面改读
+      effective 档位（实施时全量 rg isPixel1to1/fidelity_target 核对无 raw 旁路）；spec 产物
+      侧落 effective_fidelity + provenance（auto-degraded: capability_ceiling），**不改写**
+      desired 声明（保留意图供 ratchet 回升）。
+      ③【硬冲突·必改（cursor 升级，非可选协调）】fidelity-governance-check.ts:100-117
+      「headless 下不得自动降级」BLOCKER 语义**删除/反转**：能力钳制生效时，
+      fidelity_target=semantic_layout + 1:1 措辞不再 BLOCKER，改为记录「能力钳制已生效，
+      desired=pixel_1to1 保留，更换视觉模型/修复环境后 ratchet 回升」；无钳制时保留原防降级
+      语义（防的是有能力却偷懒降档，不防没能力）。intent_nudge（:106）文案同步。
+      ④goal report / summary 首屏显著提示钳制事实与回升路径；goal headless 下自动生效
+      （§9 记 headless-assumptions），交互式下 enum 确认一次（默认=接受钳制）。
+      单测：三档钳制表、effective 单点一致性、headless 禁降级反转（钳制态放行/非钳制态拦截）、
+      nudge 文案切换、provenance 落盘。
+    status: completed
+  - id: e0-capability-aware-prompt
+    content: >
+      E0 能力感知 phase prompt + SKILL 盲档工作法（codex P1 提前：原 E6 最小版入 P0——
+      否则 P0 只是「更温和地失败」，第一轮 45min 盲跑照旧）。
+      ①goal-runner buildPhasePrompt：UI 需求 spec/coding phase 注入能力块——
+      effective_image_input / effective_fidelity（E2 产物）/ ocr_available + 盲档工作法指令
+      （「你无视觉能力：不要试图看图/描述截图；文案与文本位置以 OCR JSON 为准（若有）；
+      结构由需求文字+OCR 布局推断；图标/logo 走 placeholder+asset-manifest；不可辨项登记
+      blind-review-pending 清单，勿逐条求证」）。现场实证 phase prompt 此前零降级信息。
+      ②spec SKILL.md:179 强 VL 规则改写（codex：与 headless 不得问人构成死锁的规则级修复）：
+      「真视觉档（tool_read/native）必须强 VL 提取；盲档（none）走 OCR/结构化降级工作法
+      （见 reference/ui-spec.md 盲档节），禁止假装看图」；reference/ui-spec.md:203-213
+      模型档位表同步补盲档行。
+      ③OCR 上下文注入最小版（E6-min）：effective=none 且 ocr_available 时，goal-runner 在
+      spec invoke 前对参考图逐张跑 ocr-worker.cjs → spec/reports/ocr/<screen>.ocr.json，
+      phase prompt 附路径清单（agent 读文件，不内联大 JSON——prompt 体积纪律）；
+      交互式 SKILL 同步指引。全管线（布局聚类/与门禁同源匹配）留 E6。
+      【参考图发现规则（codex 采纳：首次 invoke 前 spec.md/authoritative_refs 尚不存在，
+      不能复用既有从 spec 收集图片的路径）】deterministic pre-scan 顺序：requirement 文本中
+      的显式目录/文件引用 → 该目录下图片文件（png/jpg/webp）→ feature 目录既有
+      ux-reference/；扫不到图源 → 跳过 OCR 预跑并在能力块声明「无参考图可 OCR」，
+      不阻塞（勿造假分母）。
+      【unattended 块档位感知（cursor 采纳：同 prompt 自相矛盾预防）】
+      buildUnattendedExecutionBlock（goal-runner.ts:453-454 硬编码「The only path through
+      pixel_1to1 P0 screens is …HALT for human per-screen confirmation」）按 effective_fidelity
+      分支措辞：盲档改为「走 blind-review-pending 清单收口；禁止假装看图/伪造视觉证据」，
+      真视觉档保留原文——E0 能力块与 unattended 块必须同源取值，勿两处各算一遍。
+      单测：能力块注入分支（三档）、盲档指令措辞锚点、ocr.json 生成与 prompt 引用、
+      参考图 pre-scan 三级顺序与无图源跳过、unattended 块档位分支与能力块同源、
+      OCR 不可用时不注入且工作法降 reference_only 措辞。
+    status: pending
+  - id: e3-gate-semantics-per-tier
+    content: >
+      E3 门禁语义随档位切换（止血切片二之2，治 OCR 噪声无解题）。
+      ①前提核对：E2 落地后 audit profiles/hmos-app/harness/*-check.ts 全部 isPixel1to1/
+      fidelity 分支消费 effective 而非 raw（attempt4 已实证 semantic_layout 下同检查自然
+      降 MAJOR WARN——天花板压下来后大半严重度自动对齐）。
+      ②盲档（effective_image_input=none）下 capture_completeness_external 未覆盖行处置
+      从「逐条 implement/defer+人签」改为「自动批量登记结构化待复核清单」：新 artifact
+      spec/reports/blind-review-pending.yaml（逐行：屏/OCR 文本/y 坐标/置信度/
+      auto_disposition: unverifiable_blind），check 降 MAJOR WARN + 指向清单；该 blocker 在
+      盲档归 blind_review 家族（E4 守卫与分类同口径，codex 收窄采纳）；收口由人一次终审
+      （配 visual-confirm CLI 或 checklist）。pixel_1to1（仅真视觉档可达）语义不变——
+      门禁强度没有全局放水，只与能力档位对齐。
+      ③OCR 噪声混合行容错（可选子项，做不完 defer 至 E6）：「噪声前缀+真文本」行
+      （实录「人《AA招商银行」）做真文本子串提取匹配，命中即计覆盖、前缀记低置信注记——
+      沿「单字符角标/纯符号已剔除”降噪先例。
+      ④phase-rules yaml 纪律：行为变化全在 ts 层；yaml 文案改动放实施记录评估，默认不动。
+      单测：盲档清单生成与家族归类、pixel 档语义不变、噪声子串匹配（若做）、
+      fixture 视需要补 blind-tier 契约样例。
+    status: pending
+  - id: e1-canary-probe-override
+    content: >
+      E1 金丝雀视觉实测 + 本地 override（治案A探测层；排在止血切片后——案B不依赖它）。
+      ①资产：framework/harness/assets/vision-canary-<contenthash>.png——**含非 OCR 可答题**
+      （codex 采纳：色块颜色/相对位置/形状关系类问题为主，文字词为辅），文件名不含答案，
+      答案存 harness 侧 json。判定分级：几何/颜色题答对 → tool_read 实锤；仅文字题对
+      （疑似 Bash+OCR 代答，自然求解路径非恶意）→ **不判 tool_read**，记 ocr_capable 信号
+      （供 E2 capability 用），vision 仍 none；全错/超时 → none。探测时记录 agent 是否调用
+      外部工具（输出转录扫描，尽力而为）。
+      ②framework.local.json 新字段 image_input_override: none|tool_read|native_attach
+      （framework-local-config.ts 读写；解析链最前）——国产模型套壳用户自知盲时的免探快路。
+      【strict schema 同步（codex 采纳：local config 拒绝未知顶层键——
+      config-field-ownership.ts:13 LOCAL_CANONICAL_TOP_KEYS 白名单 + framework-local-config.ts:57-61
+      遇未知键直接 throw，不同步则一落字段全消费方炸】：新键（含金丝雀缓存字段）纳入
+      LOCAL_CANONICAL_TOP_KEYS + FrameworkLocalConfig 类型 + validate/write roundtrip；
+      测试补：非法值拒绝、旧版 local.json（无新键）读取兼容、写回不丢既有个人配置字段。
+      ③接入：goal-preflight.ts 在 UI 需求 spec 前触发一次 headless 金丝雀问答；结果+
+      probed_at+adapter 缓存进 framework.local.json，adapter/override 变更即失效，
+      --refresh-vision-probe 强制重测。交互式 spec SKILL Step 0 轻量自答（落 trace）。
+      ④与现有 allowed_tools 缺 Read 降级（multimodal-probe.unit.test.ts:76 先例）同链合并
+      取最保守值；所有降级决策落 headless-assumptions + trace（provenance: canary_failed /
+      canary_ocr_only / local_override）。
+      单测：override 优先级、几何题/文字题分级判定、缓存失效、保守合并。
+    status: pending
+  - id: e5-readiness-ocr-probe
+    content: >
+      E5 Tier_1 探针补 OCR 就绪度（补强；非案B主因——OCR 环境实际正常，但内网 npm 局部
+      失败会漏到门禁运行时才炸）。init-readiness.mjs checks 增加（active profile 具备 OCR
+      资产时条件化）：profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 与
+      harness/node_modules/tesseract.js/package.json；缺失时 recommended 指向 npm install
+      （tesseract.js）/ framework 完整性修复（tessdata 属发布件内容，缺失=分发损坏非漏装）。
+      skills/reference/host-harness-readiness.md 同步 Tier_1 清单。
+      单测：探针命中/缺失分支、非 hmos-app profile 跳过。
+    status: pending
+  - id: e6-ocr-context-injection
+    content: >
+      E6（P1 批）「OCR 当眼睛」全管线提质（最小版已随 E0 入 P0；本项完成剩余）：
+      ①OCR 布局聚类（行/列分组）辅助结构推断，产物并入 ocr.json；②agent 组装与
+      capture_completeness_external 门禁匹配逻辑同源化（同一套文本归一/子串提取，避免两套
+      匹配各说各话）；③E3③噪声容错若彼时未做，在此合并实现；④blind-tier spec 端到端
+      fixture（ocr.json 注入→ui-spec 组装→门禁 PASS+blind-review-pending 生成）。
+      单测 + fixture。
+    status: pending
+  - id: e7-gates-green-and-host-replay
+    content: >
+      E7 门禁与复验。①源仓三命令逐条跑（codex 纠正可复制性）：
+      `cd harness` → `npm run typecheck` → `npm run test:unit` → `npm run test:fixtures`；
+      profiles 单测依赖解析：PowerShell 先
+      `$env:NODE_PATH='D:\1.code\agent-maison-br\harness\node_modules'`
+      （git-bash 为 NODE_PATH=.../harness/node_modules 前缀）。
+      ②宿主实机复验清单（发版前，人工执行）：案A线 mx 2.7 + claude adapter（金丝雀应降
+      none/ocr_capable、UI spec 走盲档跑通不中断）——【时序声明（cursor 采纳）】E1 落地前
+      案A 仅靠 adapter 声明仍会被骗，**E1 未落地则案A 不得计为 P0 完成**；案B线 chrys 重放
+      银行卡需求（应在 semantic_layout 档闭环或几十分钟内干净 await-human halt，不再 4h
+      retry）——案B 不依赖 E1，止血切片落地即可复验；stdin 修复（a02703d）同批复验。
+      ③观察记录（cursor 提示）：盲档下 context_exploration_* 等探索深度门禁是否仍构成
+      residual 超时压力——只记录不动语义；E0 OCR 预跑典型耗时（张数×单张）一并记录
+      （相对 45min 盲跑预期可忽略，用数据说话）。数据回填实施记录供后续 plan 立项。
+    status: pending
+---
+
+# 实施记录
+
+（实施后追加：日期、验收命令与结果、宿主复验结论、phase-rules yaml 是否动过及 fingerprint 影响、
+盲档探索深度压力观察数据。）
+
+## E4 实施记录（2026-07-08）
+
+- **诚实范围声明**：深入 goal-runner.ts 后发现一个比原计划更精确的根因——
+  chrys 案 attempt3(PASS+closure_open, failure_kind=code_regression) 与 attempt5
+  (PASS+timeout+agent_timeout_unclosed, failure_kind=agent_timeout) 的 blocker_signature
+  **不同**（前者走真实 blocker id 串，后者因 verdict=PASS 无 blocker 走合成 sentinel
+  `agent_timeout@phase`），导致 shouldHaltNoProgress 的"紧邻上一次比较"被 verdict 摆动
+  绕过。故 E4 未按原计划"同一 blocker id 严格重复"实现，改为**累计（不看具体 reason/
+  不要求紧邻）** 计数，更贴合实证时间线。capture_completeness_external 的 blind_review
+  家族分类**未实现**（如实说明：分类依据依赖 E2/E3 尚未落地的 effective_image_input 判定，
+  在 CUMULATIVE_HALT_FAMILY 留了扩展位注释，E3 落地时加入）。
+- **改动**：
+  - `goal-failure-classifier.ts`：新增 `operator_interrupt` FailureKind +
+    `isOperatorInterruptSignal`（Windows 3221225786 / POSIX SIGINT）；`classifyFailureKind`
+    加 operator_interrupt 顶级优先 + agentTimedOut 在 blockers 全为 await_human_confirm 时
+    让位；新增 `CUMULATIVE_HALT_FAMILY`/`CUMULATIVE_HALT_THRESHOLD`(3)/
+    `ADVANCE_BLOCKED_HALT_THRESHOLD`(2)。
+  - `goal-runner-phase.ts`：`GoalRunEvent` 补 `blocker_signature`/`halt_reason`/
+    `advance_blocked`/`advance_block_reason` 字段；新增
+    `countCumulativeAdvanceBlocked`/`countRepeatedSignatureInFamily`（均从 events.jsonl
+    回放，非内存计数）。
+  - `await-confirm-guidance.ts`：新增 `buildClosureWallGuidance`——**未复用**
+    `buildAwaitHumanConfirmGuidance`（那个硬编码 testing 阶段截图/visual-diff.json 路径，
+    对 spec 阶段闭环墙语义不对；发现这个偏差属计划外收获）。
+  - `goal-runner.ts`：接入 operator_interrupt 顶级分支；重写 `advance_blocked` 分支——
+    累计（含本次）达 `ADVANCE_BLOCKED_HALT_THRESHOLD` 即 halt+引导话术（不看具体
+    reason），未达阈值时保留原 `agent_timeout_unclosed` 首次让路语义；新增累计家族重复
+    分支（`CUMULATIVE_HALT_FAMILY` + `CUMULATIVE_HALT_THRESHOLD`）；`phase_verdict`
+    事件补写 `advance_blocked`/`advance_block_reason`；halt_guidance 输出条件扩展到
+    `closure_wall_repeated`。
+- **验收**：typecheck 0 · unit 1473/0（+8 新用例，baseline 1465）· fixtures 35/0。
+- **待办**：blind_review 家族分类 → 随 E3 落地；宿主 chrys 银行卡复验（E7）待 E2/E3
+  一并完成后统一跑。
+
+## E2 实施记录（2026-07-08）
+
+- **架构发现（比原计划更省事）**：全量 grep 19 处 isPixel1to1/fidelityTarget 消费点，
+  确认全部只做 `=== 'pixel_1to1'`/`!== 'pixel_1to1'` 比较，**从未**比较 `'semantic_layout'`
+  字面量——新增 `reference_only` 第三态对这 19 处零行为影响，**18/19 文件零改动**；
+  唯一需要行为改动的是 `fidelity-governance-check.ts`（它的职责就是"侦测非法降级"，
+  必须新增"合法钳制"分支）。单点收口验证：`ctx.fidelityTarget` 只在 harness-runner.ts
+  一处赋值（line ~402），钳制在该处生效后全消费面自动继承（capture_completeness_external
+  的 `pixel?BLOCKER:MAJOR` 等天然随档位降级，无需逐个 check 文件改）。
+- **core/profile 层级问题**（发现值得记录）：`isOcrAvailable()` 在
+  `profiles/hmos-app/harness/ocr-toolkit.ts`（profile-local），core 的
+  `fidelity-shared.ts`/`harness-runner.ts` 不能硬 import。参照既有
+  `capability-registry.ts` 的 `path.join(resolved.profileDir, 'harness', 'providers', ...)`
+  动态 require 先例，新增 `probeProfileOcrAvailable(profileDir)`（try/catch require，
+  找不到→false，非硬编码 'hmos-app'，generic 等无 OCR 资产 profile 安全降级）。
+- **改动**：
+  - `fidelity-shared.ts`：`FidelityTarget` 加 `reference_only`；新增
+    `FidelityCapability`/`clampFidelityByCapability`/`EffectiveFidelityContext`/
+    `resolveEffectiveFidelityContext`（纯函数，capability 由调用方注入，不做 I/O）。
+  - `types.ts`：`CheckContext.fidelityTarget` 类型加 `reference_only`；新增
+    `declaredFidelityTarget`/`fidelityClamped`/`fidelityClampReason`。
+  - `harness-runner.ts`：新增 `probeProfileOcrAvailable`；context 构造点改用
+    `resolveEffectiveFidelityContext(rawFidelityCtx, { hasVision: mmProbe.supported,
+    ocrAvailable: probeProfileOcrAvailable(resolvedProfile.profileDir) })`；global phase
+    分支补齐新字段安全默认值。
+  - `fidelity-governance-check.ts`：`fidelity_target_declared` 首屏报告钳制事实
+    （E2④"首屏显著提示"落在这里，未另建 side-artifact）；intent_nudge 分支按
+    `capabilityClamped` 拆两路——钳制态→新 `fidelity_target_capability_clamped` PASS，
+    非钳制态→原 BLOCKER 语义不变（防的仍是"有能力却偷懒降级"）。
+  - `skills/feature/spec/reference/visual-handoff.md`：表格补 `reference_only`；
+    新增"能力钳制"说明段（desired 不改写、更换模型/修复 OCR 后自动 ratchet）。
+- **验收**：typecheck 0 · unit 1479/0（+6 新用例，累计 1465→1479）· fixtures 35/0。
+- **诚实范围声明（未做，待用户确认是否需要）**：
+  ①"交互式下 enum 确认一次（默认接受钳制）"——这是新增 UX 交互闸（registry gate），
+  涉及 confirmation-registry.yaml/交互式 SKILL 流程，与"止血切片一"的机械修复性质不同，
+  本轮未做；当前交互式路径下钳制**静默生效**（无阻断，但也无主动告知——只能在
+  script-report 里看到 `fidelity_target_declared` 的钳制说明）。
+  ②spec 产物侧未新建独立 provenance 文件——钳制事实落在 check 结果 details 里
+  （script-report.json/summary.json 可读），未写入 spec.md 本体或新 yaml（spec.md 由
+  agent 写、非 harness 写盘对象，写入需走 E0 的 prompt 侧或 SKILL 侧，非本次 harness 改动范围）。
+
+## Review 复核·E4+E2 实施后（2026-07-08，cursor + codex 双独立复核）
+
+结论：两份 review 均判"实现与报告描述基本一致，无硬伤，可作止血切片一合入"；codex 额外抓到
+一个真实逻辑 bug（P1），已修复验证；P2 可见性缺口已补；cursor 的意见均为"记录/measurement"
+类，无需改代码，已在下方吸收记录。
+
+**codex P1（真实 bug，已修）**：`fidelity-governance-check.ts` 原判据只看
+`capabilityClamped`，未核对 `declaredFidelityTarget === 'pixel_1to1'`——若 agent 自己声明
+`semantic_layout`（未如实反映 1:1 意图，独立于能力钳制的违规）之后又被能力钳到
+`reference_only` 地板，会被误判为"desired 已保留 pixel_1to1 的合法降级"（事实上 desired 从未
+是 pixel_1to1，这句话是假的），放过了本该照旧 BLOCKER 的 intent_nudge。修复：豁免条件加
+`declaredFidelityTarget === 'pixel_1to1'`；非此情形仍走原 intent_nudge 严重度，且 details
+诚实附注"即便如实声明也会被钳到 X"。新增回归测试
+`E2 P1 修正: declared≠pixel_1to1 时即便 capabilityClamped 也不得豁免 intent_nudge`。
+
+**codex P2（可见性缺口，已补）**：钳制事实此前只落在 `fidelity_target_declared` 这个 PASS
+check 的 details 里；`summary.json` 只收 blockers/warnings/skips/readiness_signals，PASS
+check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）也从不打印
+`readiness_signals`。goal run PASS 收尾时用户/runner 实际看不到降级发生过。修复：①
+`buildReadinessSignals` 新增分支，`fidelity_target_declared` 含"能力钳制"字样时产出
+`fidelity_capability_clamped` readiness signal（`status: 'ready'`）；②`printStableSummary`
+新增 `readiness_signals` 通用打印块（非本次改动的既有信号如 `doc_freshness_effective` /
+`bootstrap_incomplete` 一并获得可见性，属善意副作用非范围蔓延）。诚实声明：
+`buildReadinessSignals`/`printStableSummary` 是 harness-runner.ts 模块私有函数，仓库现有
+惯例（`doc_freshness_effective` 等既有分支）均无独立单测、靠 fixture 端到端覆盖，本次遵循
+同一惯例未强造导出+单测基建。
+
+**cursor 记录类意见（无需改代码，如实记录）**：
+- E4 与 plan 原文两处简化偏差：①未把「receipt 校验结果」接入 classifyFailureKind 输入，
+  仅用 summary blockers[].classification；②未做"advance_blocked+人签类→首触 halt"的精确
+  分支，统一走 `closure_wall_repeated`（累计 2 次，不分原因）——更贴案B 实证（attempt3 是
+  PASS+closure_open，failure_kind 多为 code_regression 而非 await_human_confirm，原
+  plan 分支未必能触发），判定为更优的简化，非疏漏。
+- E4 单独不足以挡住 `capture_completeness_external` 反复 FAIL 的长时间 retry（该 id 不在
+  `CUMULATIVE_HALT_FAMILY`，`code_regression` 也不在家族内）——止血靠 **E4+E2 组合**：E2
+  把档位钳到 semantic_layout 后该检查从 BLOCKER 天然降 MAJOR/WARN（attempt4 detach.log
+  实证），E4 单飞挡不住这条线。E3 的 blind_review 家族落地前，这条线仍可能比"2 次
+  advance_blocked 即停"多烧几轮（但远好于原 4h19m）。
+- E7 时序提醒：案A（mx+claude）在 E1 金丝雀落地前不得提前宣称 P0 完成——`hasVision`
+  当前仍读 `mmProbe.supported`（adapter 声明），盲模型套壳仍会被判"有视觉"。
+
+**复核后验收**：typecheck 0 · unit 1480/0（+1 新回归用例）· fixtures 35/0。
+
+## Review 采纳记录（2026-07-08，实施前）
+
+- **cursor**：叙事按两案拆分（案A=断点①、案B=②③④，chrys 非探测被骗样本）；「8×45min」
+  修正为「8 次 invoke、5 次打满 45min、attempt3 28min 正常、7/8 用户中断」；E2 的
+  fidelity-governance-check「headless 下不得自动降级」标为硬冲突必改（发现双向死锁）；
+  E4 覆盖 closure_open + agent_timeout_unclosed 两条 retry 路径；实施顺序改止血优先
+  （E4+E2 为第一交付切片）；context_exploration 盲档压力入 E7 观察项。
+- **codex**：P1——phase prompt 降级信息断供实证（(multimodal-degraded) 只到 verifier
+  ai-prompt，未到 phases/spec/prompt.md）+ SKILL 强 VL 规则与 headless 不得问人死锁 →
+  新增 E0 提前 P0（能力感知 prompt + SKILL 盲档工作法 + OCR 注入最小版）；「降级注入生效」
+  表述收窄；E4 守卫分类收窄（盲档 capture_completeness_external 建 blind_review 家族，
+  非 toolchain/await_human）；E1 金丝雀防 OCR 工具代答（非 OCR 几何/颜色题 + OCR-only
+  判 ocr_capable 不判 tool_read）。
+
+## Review 采纳记录·第二轮（2026-07-08，实施级补刀）
+
+- **cursor**：①E0 补 buildUnattendedExecutionBlock 档位感知（goal-runner.ts:453-454 硬编码
+  「only path through pixel_1to1…HALT for human」与能力块同 prompt 自相矛盾——盲档改
+  blind-review-pending 措辞，与能力块同源取值）；②E7 补时序声明：E1 未落地案A 不得计
+  P0 完成（案B 不依赖 E1）；③E0 OCR 预跑典型耗时入 E7 观察记录。
+- **codex**：①E2 补量级预警：reference_only 为新枚举值（fidelity-shared.ts:15 现仅
+  pixel_1to1|semantic_layout），须同步类型/parse/visual-handoff 文档/schema/测试断言，
+  非 ts 小改；②E0 补参考图发现规则（首次 invoke 前 spec.md/authoritative_refs 不存在，
+  deterministic pre-scan：requirement 引用目录→目录图片→ux-reference/，无图源跳过不造假）；
+  ③E4 补计数状态来源：从 events.jsonl blocker_signature 回放统计，勿内存计数（resume/
+  detach 重启不丢）。
+
+## Review 采纳记录·第三轮（2026-07-08，codex 复看）
+
+- 结论「主因链和方案基本准确，可作实施依据」；两项实施级补充均采纳：
+  ①E1 local config strict schema 同步（LOCAL_CANONICAL_TOP_KEYS 白名单 +
+  framework-local-config.ts:57-61 未知键 throw——已验证，不同步则字段一落全消费方炸）：
+  新键纳入白名单/类型/roundtrip + 非法值/旧版兼容/写回不丢字段测试；
+  ②E7 验收命令改逐条可复制形式 + Windows PowerShell NODE_PATH 语法。

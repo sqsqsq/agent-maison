@@ -12,10 +12,17 @@ import { featureFilePath } from '../../config';
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 
-export type FidelityTarget = 'pixel_1to1' | 'semantic_layout';
+/**
+ * E2（多模态降级阶梯 plan d4a8f3c6）：`reference_only` 是能力地板（无视觉、无 OCR 时的钳制目标），
+ * 与 `pixel_1to1`/`semantic_layout` 并列可声明——spec 作者或钳制逻辑均可写入。已 grep 核对全部
+ * 19 处消费点（capture-completeness-check.ts / fidelity-governance-check.ts /
+ * structured-ref-elements.ts / check-review.ts 等）均只做 `=== 'pixel_1to1'`/`!== 'pixel_1to1'`
+ * 比较，从不比较 `'semantic_layout'` 字面量——新增第三态对既有消费面零行为影响，无需逐一改动。
+ */
+export type FidelityTarget = 'pixel_1to1' | 'semantic_layout' | 'reference_only';
 export type AssetAcquisitionMode = 'approximate' | 'auto_crop' | 'user_dir';
 
-const FIDELITY_TARGETS = new Set<FidelityTarget>(['pixel_1to1', 'semantic_layout']);
+const FIDELITY_TARGETS = new Set<FidelityTarget>(['pixel_1to1', 'semantic_layout', 'reference_only']);
 const ASSET_MODES = new Set<AssetAcquisitionMode>(['approximate', 'auto_crop', 'user_dir']);
 
 export interface FidelityDeferralEntry {
@@ -187,6 +194,86 @@ export function effectiveAssetAcquisitionMode(
 
 export function isPixel1to1(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1';
+}
+
+/**
+ * E2：能力钳制的输入——只取当前 goal-mode/adapter 实测的视觉能力与 OCR 环境就绪度，
+ * 不含具体 adapter 名/模型名（钳制只关心"能不能看图/能不能 OCR"两个布尔量）。
+ */
+export interface FidelityCapability {
+  /** adapter/模型是否具备图片输入能力（MultimodalProbeResult.supported 同型：tool_read|native_attach） */
+  hasVision: boolean;
+  /** isOcrAvailable()（profile 相关，由调用方探测传入——core 不硬依赖具体 profile 的 OCR 实现） */
+  ocrAvailable: boolean;
+}
+
+export type FidelityClampReason = 'no_vision_ocr_available' | 'no_vision_no_ocr';
+
+export interface FidelityClampResult {
+  /** 有效档位——供 isPixel1to1 等全部消费面读取 */
+  effective: FidelityTarget;
+  clamped: boolean;
+  reason?: FidelityClampReason;
+}
+
+/**
+ * E2（多模态降级阶梯 plan d4a8f3c6）：desired（用户/需求声明）× capability（当前 adapter+
+ * 环境实测）→ effective——**不改写** desired（保留意图供 ratchet 回升，只影响运行时有效档位）。
+ * 钳制表：hasVision → 不钳（强模型效果好）；无视觉+OCR 可用 → pixel_1to1 钳到 semantic_layout
+ * （案B chrys 银行卡实证：这正是让 OCR 全文覆盖门禁从无解题降为可跑通的关键）；
+ * 无视觉+无OCR → 钳到 reference_only 地板（最弱也要能跑通，不能异常中断）。
+ */
+export function clampFidelityByCapability(
+  desired: FidelityTarget,
+  capability: FidelityCapability,
+): FidelityClampResult {
+  if (capability.hasVision) return { effective: desired, clamped: false };
+  if (desired === 'reference_only') return { effective: desired, clamped: false };
+  if (capability.ocrAvailable) {
+    if (desired === 'pixel_1to1') {
+      return { effective: 'semantic_layout', clamped: true, reason: 'no_vision_ocr_available' };
+    }
+    return { effective: desired, clamped: false };
+  }
+  // 无视觉也无 OCR：不论 desired 是 pixel_1to1 还是 semantic_layout，都钳到地板。
+  return { effective: 'reference_only', clamped: true, reason: 'no_vision_no_ocr' };
+}
+
+export interface EffectiveFidelityContext {
+  /** 有效档位（已钳制）——CheckContext.fidelityTarget 的赋值来源，全消费面单点收口于此 */
+  fidelityTarget: FidelityTarget;
+  /** 原始声明档位（未钳制，供 ratchet 回升 + intent_nudge 判"是否合法钳制"用） */
+  declaredFidelityTarget: FidelityTarget;
+  fidelityClamped: boolean;
+  fidelityClampReason?: FidelityClampReason;
+  assetAcquisitionMode: AssetAcquisitionMode;
+  effectiveAssetAcquisitionMode: AssetAcquisitionMode;
+  fidelityDeferrals: FidelityDeferralEntry[];
+}
+
+/**
+ * 把 resolveFidelityContextFromFeature 的原始声明结果 × 能力钳制，合成 CheckContext 需要的
+ * 完整字段集——harness-runner.ts 的唯一调用点，纯函数、可单测（capability 由调用方探测传入）。
+ */
+export function resolveEffectiveFidelityContext(
+  raw: {
+    fidelityTarget: FidelityTarget;
+    assetAcquisitionMode: AssetAcquisitionMode;
+    effectiveAssetAcquisitionMode: AssetAcquisitionMode;
+    fidelityDeferrals: FidelityDeferralEntry[];
+  },
+  capability: FidelityCapability,
+): EffectiveFidelityContext {
+  const clamp = clampFidelityByCapability(raw.fidelityTarget, capability);
+  return {
+    fidelityTarget: clamp.effective,
+    declaredFidelityTarget: raw.fidelityTarget,
+    fidelityClamped: clamp.clamped,
+    fidelityClampReason: clamp.reason,
+    assetAcquisitionMode: raw.assetAcquisitionMode,
+    effectiveAssetAcquisitionMode: raw.effectiveAssetAcquisitionMode,
+    fidelityDeferrals: raw.fidelityDeferrals,
+  };
 }
 
 /** pixel_1to1 下关键视觉项 ratchet：WARN → FAIL/BLOCKER */
