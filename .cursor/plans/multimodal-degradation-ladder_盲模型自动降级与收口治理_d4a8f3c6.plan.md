@@ -577,6 +577,74 @@ check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）
   隔离验证：**排除该 1 个坏文件后，全量 unit 1498/0，typecheck 0，fixtures 35/0**——
   即本次 E6 改动本身零回归；坏文件已另行 spawn_task 跟踪修复，不在本次范围内处理。
 
+## Review 复核·E6 后（2026-07-08，cursor + codex 双独立复核）
+
+结论：两份 review 均判"大方向对，无直接破坏主流程的高优先级 blocker"；cursor 抓到 1 个
+中等严重度真实口径不一致（已修）+ 2 个低severity 项（已修）+ 2 个纯观察项（不改代码，
+留 E7）；codex 抓到 1 个真实 P2 缺口（已修，属"金丝雀被声明式套壳骗过"这条主线的同类
+风险，值得修）+ 1 个 P3 项（核实后判定是既有框架级设计、非本 plan 引入，不在本次范围）。
+
+**cursor 中（真实 bug，已修）**：`harness-runner.ts`（门禁钳制）与 `goal-runner.ts`
+（prompt 能力块）的 `ocrAvailable` 口径不一致——前者只看 `probeProfileOcrAvailable`
+（框架 OCR 环境），后者额外 OR 了金丝雀 `ocr_capable` 信号。场景：金丝雀判 `ocr_capable`
+但框架 OCR 环境未就绪时，agent 被告知 `effective=semantic_layout` 且可能收到 OCR JSON
+尝试，门禁却仍钳到 `reference_only`——多数情况非致命（都非 pixel_1to1）但排障时文案不
+一致易困惑。修复：`fidelity-shared.ts` 新增 `resolveOcrAvailableForRun(projectRoot,
+profileDir, adapterName)` 单一函数（`probeProfileOcrAvailable` OR
+`readCanaryOcrCapableSignal`），`harness-runner.ts`/`goal-runner.ts` 两处改为共用同一
+函数，不再各算一遍。
+
+**cursor 低①（已修）**：`goal-failure-classifier.ts` 的 `CUMULATIVE_HALT_FAMILY` 注释仍
+写"【扩展位，尚未启用】'blind_review'……待 E3 落地门禁层显式打该 classification 后加入
+此集合"——E3 早已落地，但走的是另一条路（`capture_completeness_external` 命中直接降
+WARN/MAJOR + 写 `blind-review-pending.yaml`，非新增 FailureKind），根本不会进入需要 halt
+的重试循环，故这个扩展位其实**已确认无需启用**，非"待办中"。已改注释如实说明。
+
+**cursor 低②（已修，最小化处理）**：plan 原文"降级决策落 headless-assumptions + trace"，
+实现只缓存到 `framework.local.json`（`canary.reason` 可查，非功能缺陷，cursor 原话）——
+但审计链确实少一块。`headless-assumptions.md` 按仓库既有惯例是**agent 写**的文件（headless
+自动决策留痕，见 `user-confirmation-ux.md §9`），不是 harness 该越俎代庖写的产物；采用
+最小修复：`buildCapabilityBlock`（goal-runner.ts）新增一条指令——`fidelityClamped` 为真时
+提示 agent 把这次能力降级也算一次 headless 自动决策，记入 `headless-assumptions.md`
+（复用 unattended 块已建立的路径/措辞格式，未新增 harness 写盘逻辑）。3 个既有
+`buildCapabilityBlock` 单测补充断言（未钳制不应提示；钳制两态——有 OCR/无 OCR——均应提示）。
+
+**cursor 环境项（无新动作，复核确认与本会话 E6 前一致）**：round6-bbox-crop-validation
+yaml 环境问题维持之前判定，已 spawn_task 单独跟踪；cursor 复核也独立确认"排除后 1498/0"
+与本 plan 实施记录一致。
+
+**cursor 观察项（无需改代码，如实记录，留 E7）**：①金丝雀分类只读 `invoke.stdout`——若
+adapter 把答案打到 stderr 可能误判 `none`，风险低，留待 E7 宿主实机观察是否真实发生；
+②E1 首次 UI goal 额外 ~120s 探测成本——有缓存/override/非 UI 需求可跳过，符合 plan 预期，
+E7 记录真实耗时数据即可，不需要提前优化。
+
+**codex P2（真实 bug，同案A 风险类别，已修）**：`decideVisionCanaryProbe`
+（goal-preflight.ts，先于任何 phase 跑，决定是否触发金丝雀）此前只用
+`detectUiRelevantRequirement(manifest.requirement)` 判 UI 相关性；但
+`resolvePhaseCapabilityAdvisory`（goal-runner.ts，每 phase 计算能力块）已经优先信
+spec.md 的 `ui_change` 字段（更权威）。resume/继续 coding 场景常见 requirement 文本很短
+（如"继续完成该需求"）而 spec.md 已声明 `ui_change: new_or_changed`——旧逻辑会把这种场景
+误判 `not_ui_relevant` 而跳过金丝雀，让案A（mx 2.7 套壳）"假视觉"风险在 resume 场景重新
+露头（探测决策与能力计算各算一遍，判据不同源）。修复：`fidelity-shared.ts` 新增
+`resolveUiRelevanceForRun(projectRoot, feature, requirement)`（spec.md 存在时读 `ui_change`，
+否则退回需求文本启发式——与 `resolvePhaseCapabilityAdvisory` 现有逻辑等价的独立可复用版
+本），`decideVisionCanaryProbe` 改用它。**范围声明**：`resolvePhaseCapabilityAdvisory` 自身
+的 if/else 未重构为调用这个新函数（它的 `desired` 计算与 `isUiRelevant` 判定共享同一次
+`loadSpecMarkdown` 调用，拆开重构价值不大且有回归风险）——两处 UI 相关性判据现在**逻辑
+等价**（同一新函数在别处的独立实现），但物理上仍是两份代码；如后续两者出现分岔，应回来
+把 `resolvePhaseCapabilityAdvisory` 也切到共享函数。新增回归测试锁定 resume 场景。
+
+**codex P3（复核后判定不在本次范围）**：`init-readiness.mjs` 的
+`detectProjectRootFromHarnessRoot` 用 grandparent 是否含 `framework/skills` 判断
+consumer/standalone，若 sibling 目录恰好存在同名结构可能误判——**核实后确认这不是
+init-readiness.mjs 独有的缺陷，而是逐行复刻了 `repo-layout.ts` 的 `detectRepoLayout`
+既有算法**（同一 grandparent + `framework/skills` 存在性判据，整个框架的路径解析全靠这
+一份逻辑，非本 plan 引入）。若要收紧判据需要改动框架级、影响面远超本 plan 范围的核心路径
+解析算法，故本次不动；如用户认为这是需要修的真实风险，应作为独立的框架级任务处理。
+
+**复核后验收**：typecheck 0 · unit 全量（排除 1 个 pre-existing 环境坏文件）1499/0
+（+1 新回归用例：codex P2 resume 场景）· fixtures 35/0。
+
 ## P0 主链完工小结（2026-07-08）
 
 多模态降级阶梯 plan 的 P0 六件套（E4 收口治理 → E2 档位钳制 → E0 能力感知 prompt →

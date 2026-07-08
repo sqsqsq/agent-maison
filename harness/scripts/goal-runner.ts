@@ -26,7 +26,7 @@ import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './util
 import { loadResolvedProfile } from '../profile-loader';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput, readCanaryOcrCapableSignal } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import {
   clampFidelityByCapability,
   detectPixel1to1Intent,
@@ -35,6 +35,7 @@ import {
   loadProfileOcrToolkit,
   loadSpecMarkdown,
   parseFidelityTargetFromHandoffDoc,
+  resolveOcrAvailableForRun,
   type FidelityTarget,
 } from './utils/fidelity-shared';
 import {
@@ -475,6 +476,14 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
         : ''),
     '',
   ];
+  if (advisory.fidelityClamped) {
+    lines.push(
+      'This capability-based fidelity downgrade is itself a headless auto-decision: record it in',
+      '`headless-assumptions.md` (see the Unattended execution block below for the exact path and provenance',
+      'format) so a human reviewer can see why fidelity was clamped, even though this run does not stop to ask.',
+      '',
+    );
+  }
   if (!advisory.hasVision) {
     lines.push(
       '**You do NOT have vision.** Do NOT pretend to look at reference images or describe their visual',
@@ -770,9 +779,8 @@ export function resolvePhaseCapabilityAdvisory(
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
   // 判定其无视觉）——OR 进 ocrAvailable，不替代框架自身 OCR 环境探测（后者更可靠/确定性）。
-  const ocrAvailable =
-    (toolkit ? toolkit.isOcrAvailable() : false) ||
-    readCanaryOcrCapableSignal(projectRoot, manifest.adapter);
+  // cursor review（E6 后）：与 harness-runner.ts 门禁钳制共用同一口径，不再各算一遍。
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter);
   const clamp = clampFidelityByCapability(desired, { hasVision: mmProbe.supported, ocrAvailable });
 
   const ocrJsonPaths =

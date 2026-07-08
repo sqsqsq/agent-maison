@@ -6,8 +6,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext } from './types';
-import { parseVisualHandoffYamlRoot } from './ui-spec-shared';
+import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
 import { featureFilePath, relFeaturesDir } from '../../config';
+import { readCanaryOcrCapableSignal } from './multimodal-probe';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -441,6 +442,26 @@ export function detectUiRelevantRequirement(text: string | null | undefined): bo
   return UI_RELEVANT_PATTERNS.some(re => re.test(text));
 }
 
+/**
+ * codex review（E6 后复核）发现的口径不一致：resolvePhaseCapabilityAdvisory（goal-runner.ts）
+ * 优先信 spec.md 的 ui_change 字段（更权威，spec.md 存在时 requirement 文本可能只是简短的
+ * "继续完成该需求"），但 decideVisionCanaryProbe（goal-preflight.ts，先于任何 phase 跑）
+ * 此前只看 requirement 文本——resume/继续 coding 场景下会被误判 not_ui_relevant 而跳过金丝雀，
+ * 让案A（mx 2.7 套壳）"假视觉"风险在 resume 场景重新露头。抽出单一函数两处共用，避免再次分岔。
+ */
+export function resolveUiRelevanceForRun(
+  projectRoot: string,
+  feature: string,
+  requirement: string | null | undefined,
+): boolean {
+  const specMd = loadSpecMarkdown(projectRoot, feature);
+  if (specMd) {
+    const uiChange = parseUiChangeFromSpecMarkdown(specMd);
+    return uiChange !== null && UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
+  }
+  return detectUiRelevantRequirement(requirement);
+}
+
 const OCR_PRESCAN_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
 function listImageFilesInDir(absDir: string): string[] {
@@ -582,4 +603,18 @@ export function loadProfileOcrToolkit(profileDir: string): ProfileOcrToolkit | n
 export function probeProfileOcrAvailable(profileDir: string): boolean {
   const toolkit = loadProfileOcrToolkit(profileDir);
   return toolkit ? toolkit.isOcrAvailable() : false;
+}
+
+/**
+ * cursor review（E6 后复核）发现：harness-runner（门禁钳制）此前只看 `probeProfileOcrAvailable`，
+ * goal-runner（prompt 能力块）额外 OR 了金丝雀 `ocr_capable` 信号——两处口径不一致，会出现
+ * "agent 被告知 semantic_layout 可尝试 OCR，门禁却钳到 reference_only" 的文案不一致。收口为
+ * 单一函数，两处共用同一口径。
+ */
+export function resolveOcrAvailableForRun(
+  projectRoot: string,
+  profileDir: string,
+  adapterName: string | undefined,
+): boolean {
+  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName);
 }

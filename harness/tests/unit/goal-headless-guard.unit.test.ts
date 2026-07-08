@@ -627,6 +627,7 @@ export function runAll(): UnitCaseResult[] {
         assert(/Vision.*YES/.test(text), 'should declare vision YES');
         assert(!/do NOT have vision/i.test(text), 'hasVision=true 不应出现盲档指令');
         assert(!/auto-clamped/.test(text), '未钳制不应提示 auto-clamped');
+        assert(!/headless-assumptions\.md/.test(text), '未钳制不应提示记录 headless-assumptions.md');
       },
     },
     {
@@ -646,6 +647,7 @@ export function runAll(): UnitCaseResult[] {
         assert(/blind-review pending/i.test(text), '应指示登记待复核清单而非反复猜测');
         assert(text.includes('doc/features/bc/spec/reports/ocr/home.ocr.json'), '应列出 OCR JSON 路径');
         assert(/auto-clamped/.test(text), '钳制生效应提示 auto-clamped');
+        assert(/headless-assumptions\.md/.test(text), 'cursor review：钳制决策应提示记录进 headless-assumptions.md（审计留痕）');
       },
     },
     {
@@ -662,6 +664,7 @@ export function runAll(): UnitCaseResult[] {
         assert(/reference_only/.test(text), '应声明有效档位 reference_only');
         assert(/No OCR JSON available/i.test(text), '应如实声明无 OCR JSON');
         assert(/requirement text only/i.test(text), '应指示仅凭需求文字工作');
+        assert(/headless-assumptions\.md/.test(text), '钳制生效应提示记录进 headless-assumptions.md（即便无 OCR）');
       },
     },
     {

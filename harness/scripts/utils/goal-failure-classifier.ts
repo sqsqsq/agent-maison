@@ -129,9 +129,10 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
  * E4（多模态降级阶梯 plan d4a8f3c6）：跨 attempt **累计**（非仅连续）重复同一 blocker_signature
  * 即 halt/降档 的家族——基建类（toolchain）与求人类（await_human_confirm）反复出现却被其他
  * 产物的变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
- * 【扩展位，尚未启用】'blind_review'——盲档（effective_image_input=none）下
- * capture_completeness_external 应归此家族（既非 toolchain 也非 await_human_confirm），
- * 待 E3 落地门禁层显式打该 classification 后加入此集合；E3 前不强行分类（分类依据尚不存在）。
+ * 【扩展位已废弃，E3 后确认无需启用】此处原计划给盲档（effective_image_input=none）下的
+ * capture_completeness_external 单开一个 'blind_review' FailureKind 归入本家族；E3 落地时
+ * 该 check 改走另一条路径——直接把命中降为 WARN/MAJOR + 落 blind-review-pending.yaml
+ * 结构化清单，不再产出 BLOCKER，本就不会进入需要 halt 的重试循环，无需新增分类/家族成员。
  */
 export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'toolchain',

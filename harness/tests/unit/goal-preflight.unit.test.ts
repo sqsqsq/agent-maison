@@ -403,6 +403,23 @@ const cases: Array<{ name: string; run: () => void }> = [
       }),
   },
   {
+    name: 'codex review：decideVisionCanaryProbe: requirement 文本非 UI 相关但 spec.md 已声明 ' +
+      'ui_change=new_or_changed（resume/继续 coding 场景常见）→ 仍应 probe，不误判 not_ui_relevant',
+    run: () =>
+      withTmp((root) => {
+        const specDir = path.join(root, 'doc', 'features', 'demo', 'spec');
+        fs.mkdirSync(specDir, { recursive: true });
+        fs.writeFileSync(path.join(specDir, 'spec.md'), '# spec\n\n```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '继续完成该需求' },
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'probe' });
+      }),
+  },
+  {
     name: 'E1 decideVisionCanaryProbe: UI 需求 + 无 local.json → probe',
     run: () =>
       withTmp((root) => {

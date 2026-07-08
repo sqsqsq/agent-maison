@@ -29,7 +29,7 @@ import {
   validateHeadlessBinaryForPlan,
   type InvokeTemplateVars,
 } from './agent-invoke';
-import { detectUiRelevantRequirement } from './fidelity-shared';
+import { resolveUiRelevanceForRun } from './fidelity-shared';
 import { ensureVisionCanaryAsset, buildCanaryPrompt, classifyCanaryResponse } from './vision-canary';
 
 export type AdapterProvenance =
@@ -282,7 +282,9 @@ export function decideVisionCanaryProbe(input: {
   if (!chain.includes('spec') && !chain.includes('coding')) {
     return { action: 'skip', reason: 'chain_has_no_ui_phase' };
   }
-  if (!detectUiRelevantRequirement(manifest.requirement)) {
+  // codex review（E6 后）：优先信已存在的 spec.md ui_change 声明（resume/继续 coding 场景
+  // requirement 文本常很短，不能只靠文本启发式——否则会漏判 UI 相关性，跳过金丝雀探测。
+  if (!resolveUiRelevanceForRun(projectRoot, manifest.feature, manifest.requirement)) {
     return { action: 'skip', reason: 'not_ui_relevant' };
   }
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';

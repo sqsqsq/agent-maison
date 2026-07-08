@@ -47,7 +47,7 @@ import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity'
 import {
   resolveFidelityContextFromFeature,
   resolveEffectiveFidelityContext,
-  probeProfileOcrAvailable,
+  resolveOcrAvailableForRun,
 } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
@@ -412,7 +412,7 @@ async function main(): Promise<void> {
       }
     : resolveEffectiveFidelityContext(resolveFidelityContextFromFeature(projectRoot, feature), {
         hasVision: mmProbe.supported,
-        ocrAvailable: probeProfileOcrAvailable(resolvedProfile.profileDir),
+        ocrAvailable: resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
       });
   const context: CheckContext = {
     phase,
