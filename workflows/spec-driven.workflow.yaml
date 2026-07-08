@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "1.1"
 name: spec-driven
 description: >
   Default harness workflow — mirrors legacy VALID_PHASES / phase DAG before optional
@@ -10,6 +10,9 @@ description: >
 #   SSOT: framework/docs/concepts/phase-transition-policy.md
 transition_policy: manual
 auto_chain: [spec, plan, coding, review, ut, testing]
+# C1 feature-track（plan d4a7c1e8）：lite 轨显式链——不做隐式推导（决策 19）
+auto_chain_by_track:
+  lite: [change, coding, exit]
 
 artifacts:
   - id: extensions
@@ -73,6 +76,10 @@ artifacts:
     check: check-coding.ts
     rule: phase-rules/coding-rules.yaml
     requires: [plan]
+    # lite 轨成员：依赖 change 而非 plan（requires_by_track 显式覆写，决策 19）
+    tracks: ["full", "lite"]
+    requires_by_track:
+      lite: [change]
     verifier_prompt: prompts/verify-coding.md
     skill_doc: ../skills/feature/coding/SKILL.md
 
@@ -99,3 +106,18 @@ artifacts:
     requires: [ut]
     verifier_prompt: prompts/verify-testing.md
     skill_doc: ../skills/feature/device-testing/SKILL.md
+
+  # ---- lite track（C1 feature-track，plan d4a7c1e8）：change → coding → exit ----
+  - id: change
+    scope: feature
+    check: check-change.ts
+    rule: phase-rules/change-rules.yaml
+    requires: []
+    tracks: ["lite"]
+
+  - id: exit
+    scope: feature
+    check: check-exit.ts
+    rule: phase-rules/exit-rules.yaml
+    requires: [coding]
+    tracks: ["lite"]

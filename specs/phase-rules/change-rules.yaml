@@ -1,0 +1,25 @@
+phase: change
+version: "1.0"
+applies_to: "<features_dir>/<feature>/change.md"
+
+# lite track 的叙述产物契约（C1 feature-track，plan d4a7c1e8）
+structure_checks:
+  change_file_exists:
+    description: lite track 叙述产物 change.md 必须存在（路径经 paths.features_dir 解析）。
+    severity: BLOCKER
+  change_sections:
+    description: change.md 必须含「意图 / Scope / 验收清单 / 任务」四节（术语快查、关键契约可选）。
+    severity: BLOCKER
+  change_scope_yaml:
+    description: Scope 节须含可解析 yaml 块，in_scope_modules 为非空字符串数组。
+    severity: BLOCKER
+  change_checkbox_syntax:
+    description: 验收清单与任务节须各含 ≥1 个 checkbox（- [ ] / - [x]）条目。
+    severity: BLOCKER
+
+semantic_checks: {}
+
+traceability_checks:
+  change_scope_modules_known:
+    description: in_scope_modules 须存在于 module-catalog（catalog 缺失/不可解析的小工程跳过比对）。
+    severity: BLOCKER

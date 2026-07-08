@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://framework.local/schemas/workflow-schema.json",
   "title": "FrameworkWorkflow",
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "name", "artifacts"],
@@ -26,7 +26,15 @@
     "auto_chain": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Optional ordered feature phase chain override for goal_mode; omit to derive from DAG."
+      "description": "Optional ordered feature phase chain override for goal_mode (full track); omit to derive from DAG."
+    },
+    "auto_chain_by_track": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "1.1: per-track ordered feature chain. MUST declare an entry for every non-full track that has track-only phases (no implicit derivation — plan d4a7c1e8 决策 19)."
     },
     "artifacts": {
       "type": "array",
@@ -56,6 +64,20 @@
           "requires": {
             "type": "array",
             "items": { "type": "string" }
+          },
+          "tracks": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["full", "lite"] },
+            "minItems": 1,
+            "description": "1.1: feature phase track membership. Feature scope defaults to [\"full\"] when omitted (lite membership MUST be explicit); MUST NOT be declared on global scope (globals apply to all tracks)."
+          },
+          "requires_by_track": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "description": "1.1: per-track requires override. A track member whose plain `requires` references a feature phase outside that track MUST declare this (no implicit drop — plan d4a7c1e8 决策 19)."
           },
           "optional_deps": {
             "type": "array",

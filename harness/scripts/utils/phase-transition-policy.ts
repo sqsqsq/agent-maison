@@ -4,11 +4,18 @@
  */
 
 import type { WorkflowSpec } from '../../workflow-loader';
-import { listWorkflowPhases } from '../../workflow-loader';
+import {
+  LEGACY_FEATURE_PHASE_ORDER,
+  effectiveRequires,
+  isWorkflowFeaturePhase,
+  workflowFeaturePhases,
+  type FeatureTrack,
+} from './runtime-policy';
 
 export type TransitionPolicy = 'manual' | 'batch_authorized' | 'goal_mode';
 
-export type FeaturePhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
+/** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
+export type FeaturePhase = string;
 
 export type HarnessVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
@@ -23,14 +30,8 @@ export type GoalRunStatus = 'COMPLETED' | 'PARTIAL' | 'DEFERRED' | 'HALTED';
 
 export const DEFAULT_TRANSITION_POLICY: TransitionPolicy = 'manual';
 
-/** Ordered feature phases for batch range parsing. */
-export const FEATURE_PHASE_ORDER: readonly FeaturePhase[] = [
-  'spec', 'plan',
-  'coding',
-  'review',
-  'ut',
-  'testing',
-] as const;
+/** 无 workflow 上下文时的顺序回退（SSOT = runtime-policy）；有 workflow 处一律用派生序。 */
+export const FEATURE_PHASE_ORDER: readonly FeaturePhase[] = LEGACY_FEATURE_PHASE_ORDER;
 
 const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
 
@@ -94,7 +95,8 @@ const BATCH_PHRASES: Array<{ pattern: RegExp; through: FeaturePhase }> = [
   { pattern: /做到\s*testing|到\s*真机|真机测试\s*闭环/i, through: 'testing' },
 ];
 
-function asFeaturePhase(phase: string): FeaturePhase | undefined {
+function asFeaturePhase(phase: string, workflow?: WorkflowSpec): FeaturePhase | undefined {
+  if (workflow && isWorkflowFeaturePhase(workflow, phase)) return phase;
   if (FEATURE_PHASE_SET.has(phase)) return phase as FeaturePhase;
   return PHASE_ALIASES[phase];
 }
@@ -107,16 +109,18 @@ export function validateFeatureChainDag(
   workflow: WorkflowSpec,
   chain: FeaturePhase[],
   startPhase: FeaturePhase,
+  track: FeatureTrack = 'full',
 ): void {
-  const startIdx = FEATURE_PHASE_ORDER.indexOf(startPhase);
+  const order = featurePhasesFromWorkflow(workflow, track);
+  const startIdx = order.indexOf(startPhase);
   for (let i = 0; i < chain.length; i++) {
     const phase = chain[i];
     const artifact = workflow.artifacts.find((a) => a.id === phase);
     if (!artifact) continue;
-    for (const req of artifact.requires) {
-      if (!FEATURE_PHASE_SET.has(req)) continue;
+    for (const req of effectiveRequires(workflow, artifact, track)) {
+      if (!isWorkflowFeaturePhase(workflow, req)) continue;
       const reqPhase = req as FeaturePhase;
-      const reqOrderIdx = FEATURE_PHASE_ORDER.indexOf(reqPhase);
+      const reqOrderIdx = order.indexOf(reqPhase);
       if (reqOrderIdx >= 0 && reqOrderIdx < startIdx) continue;
       const reqIdx = chain.indexOf(reqPhase);
       if (reqIdx < 0) {
@@ -133,16 +137,9 @@ export function validateFeatureChainDag(
   }
 }
 
-function featurePhasesFromWorkflow(spec: WorkflowSpec): FeaturePhase[] {
-  const ordered = listWorkflowPhases(spec);
-  const out: FeaturePhase[] = [];
-  for (const id of ordered) {
-    const a = spec.artifacts.find((x) => x.id === id);
-    if (a?.scope === 'feature' && FEATURE_PHASE_SET.has(id)) {
-      out.push(id as FeaturePhase);
-    }
-  }
-  return out;
+function featurePhasesFromWorkflow(spec: WorkflowSpec, track: FeatureTrack = 'full'): FeaturePhase[] {
+  // workflow feature-scope 集（按 track 过滤，拓扑序）；新 phase 一等公民（C0/C1 收编）。
+  return workflowFeaturePhases(spec, track);
 }
 
 /**
@@ -154,14 +151,16 @@ export function resolveAutoChain(
   startPhase: FeaturePhase | string,
   endPhase: FeaturePhase | string,
   overrideChain?: readonly string[],
+  track: FeatureTrack = 'full',
 ): FeaturePhase[] {
-  const start = asFeaturePhase(startPhase) ?? (FEATURE_PHASE_SET.has(startPhase) ? (startPhase as FeaturePhase) : undefined);
-  const end = asFeaturePhase(endPhase) ?? (FEATURE_PHASE_SET.has(endPhase) ? (endPhase as FeaturePhase) : undefined);
+  const start = asFeaturePhase(startPhase, workflow);
+  const end = asFeaturePhase(endPhase, workflow);
   if (!start || !end) {
     throw new Error(`[resolveAutoChain] 非法 phase: start=${startPhase} end=${endPhase}`);
   }
-  const startIdx = FEATURE_PHASE_ORDER.indexOf(start);
-  const endIdx = FEATURE_PHASE_ORDER.indexOf(end);
+  const order = featurePhasesFromWorkflow(workflow, track);
+  const startIdx = order.indexOf(start);
+  const endIdx = order.indexOf(end);
   if (startIdx < 0 || endIdx < 0) {
     throw new Error(`[resolveAutoChain] 非法 phase: start=${start} end=${end}`);
   }
@@ -173,28 +172,33 @@ export function resolveAutoChain(
   if (overrideChain && overrideChain.length > 0) {
     base = [];
     for (const p of overrideChain) {
-      const fp = asFeaturePhase(p);
-      if (fp && !base.includes(fp)) base.push(fp);
-    }
-  } else if (workflow.auto_chain && workflow.auto_chain.length > 0) {
-    base = [];
-    for (const p of workflow.auto_chain) {
-      const fp = asFeaturePhase(p);
+      const fp = asFeaturePhase(p, workflow);
       if (fp && !base.includes(fp)) base.push(fp);
     }
   } else {
-    base = featurePhasesFromWorkflow(workflow);
+    // 分轨显式链优先（C1：lite 用 auto_chain_by_track，不做隐式推导）
+    const declaredChain =
+      track === 'full' ? workflow.auto_chain : workflow.auto_chain_by_track?.[track];
+    if (declaredChain && declaredChain.length > 0) {
+      base = [];
+      for (const p of declaredChain) {
+        const fp = asFeaturePhase(p, workflow);
+        if (fp && !base.includes(fp)) base.push(fp);
+      }
+    } else {
+      base = featurePhasesFromWorkflow(workflow, track);
+    }
   }
 
   const filtered = base.filter((p) => {
-    const idx = FEATURE_PHASE_ORDER.indexOf(p);
+    const idx = order.indexOf(p);
     return idx >= startIdx && idx <= endIdx;
   });
 
   if (filtered.length === 0) {
     throw new Error('[resolveAutoChain] 解析结果为空');
   }
-  validateFeatureChainDag(workflow, filtered, start);
+  validateFeatureChainDag(workflow, filtered, start, track);
   return filtered;
 }
 

@@ -121,6 +121,28 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'policy_snapshot 写入真实 track（feature.yaml lite / 缺省 full）——review 回归钉',
+    run: () => {
+      const root = mkProject();
+      try {
+        const workflow = resolveWorkflowSpec(root);
+        const stateAbs = statefilePath(root);
+        mergeAndWritePhaseState(root, workflow, { phase: 'coding', feature: 'demo', status: 'running' });
+        let st = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as {
+          policy_snapshot?: { track?: string; policy_schema_version?: string };
+        };
+        assert(st.policy_snapshot?.track === 'full', `default track=${st.policy_snapshot?.track}`);
+        assert(st.policy_snapshot?.policy_schema_version === '1.0', 'snapshot version');
+        fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'feature.yaml'), 'track: lite\n');
+        mergeAndWritePhaseState(root, workflow, { phase: 'coding', feature: 'demo', status: 'running' });
+        st = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as typeof st;
+        assert(st.policy_snapshot?.track === 'lite', `lite track=${st.policy_snapshot?.track}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'mergeAndWritePhaseState 保留同 task 的 session_id',
     run: () => {
       const root = mkProject();

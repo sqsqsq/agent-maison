@@ -7,6 +7,12 @@ import * as os from 'os';
 import * as path from 'path';
 import type { GoalManifest } from './goal-manifest';
 import {
+  LEGACY_FEATURE_PHASE_ORDER,
+  resolveFeatureTrack,
+  workflowFeaturePhases,
+} from './runtime-policy';
+import { loadFeatureTrackDecl } from './feature-track';
+import {
   countAgentInvokeStarts,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
@@ -188,15 +194,14 @@ function relPath(projectRoot: string, abs: string): string {
 export function resolveChainFromEvents(
   events: GoalRunEvent[],
   fallbackChain: FeaturePhase[],
+  allowedPhases: readonly string[] = LEGACY_FEATURE_PHASE_ORDER,
 ): FeaturePhase[] {
   for (const e of events) {
     if (e.type === 'run_start' && Array.isArray((e as { chain?: unknown }).chain)) {
       const raw = (e as { chain: string[] }).chain;
       const filtered = raw
-        .map((p) => normalizePhaseId(p, p as FeaturePhase))
-        .filter((p): p is FeaturePhase =>
-          (['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as string[]).includes(p),
-        );
+        .map((p) => normalizePhaseId(p, p))
+        .filter((p): p is FeaturePhase => allowedPhases.includes(p));
       if (filtered.length > 0) return filtered;
     }
   }
@@ -673,13 +678,19 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const reportDir = manifest.report_dir;
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
+  // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
+  const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
   const fallbackChain = resolveAutoChain(
     workflow,
     manifest.start_phase,
     manifest.end_phase,
     manifest.chain_override,
+    progressTrack,
   );
-  const chain = resolveChainFromEvents(events, fallbackChain);
+  const allowedPhases = [
+    ...new Set([...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
+  ];
+  const chain = resolveChainFromEvents(events, fallbackChain, allowedPhases);
 
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);

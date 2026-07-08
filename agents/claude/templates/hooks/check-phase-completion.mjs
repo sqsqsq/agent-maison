@@ -370,6 +370,27 @@ function formatDuration(ms) {
 // 若 state file 已存在且 phase 是全局阶段，hook 一律放行，不要去找 receipt。
 const GLOBAL_PHASES = new Set(['extensions', 'init', 'catalog', 'glossary', 'docs']);
 
+// --------------------------------------------------------------------------
+// C0 policy 快照（runtime-policy-core）：hook 不 import harness，快照由 runner
+// 写入 .current-phase.json。读不到 / policy_schema_version 不符 → 一律 fail-safe
+// 按 full+strict（现状全凭证）判定，宁可多设防不可静默放行。
+// --------------------------------------------------------------------------
+const POLICY_SNAPSHOT_SCHEMA_VERSION = '1.0';
+
+export function readPolicySnapshot(state) {
+  const snap = state && typeof state === 'object' ? state.policy_snapshot : null;
+  if (!snap || typeof snap !== 'object') return null;
+  if (snap.policy_schema_version !== POLICY_SNAPSHOT_SCHEMA_VERSION) return null;
+  if (!snap.evidence || typeof snap.evidence !== 'object') return null;
+  return snap;
+}
+
+export function policyRequires(snapshot, item) {
+  if (!snapshot) return true; // fail-safe strict
+  const level = snapshot.evidence[item];
+  return level !== 'off' && level !== 'not_applicable';
+}
+
 export function evaluateState(state) {
   // 返回 { allow: boolean, reason: string, missing: string[] }
   if (!state || typeof state !== 'object') {
@@ -399,8 +420,12 @@ export function evaluateState(state) {
     missing.push(`harness blocker_count=${state.blocker_count}，必须为 0`);
   }
 
+  const policySnapshot = readPolicySnapshot(state);
   const receipt = state.receipt ?? null;
-  if (!receipt) {
+  if (!policyRequires(policySnapshot, 'receipt')) {
+    // evidence policy 声明本阶段 receipt 非必需（off / not_applicable）→ 不列缺项
+    // （C0 快照恒 strict，本分支在 C2 verification-matrix 接入前不会命中）
+  } else if (!receipt) {
     missing.push(
       'state.receipt=null，未跑 check-receipt.ts；阶段完成回执必须填写并通过校验',
     );

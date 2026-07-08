@@ -1,0 +1,29 @@
+phase: exit
+version: "1.0"
+applies_to: "<features_dir>/<feature>/change.md"
+
+# lite track 的一次性出口门禁（C1 feature-track，plan d4a7c1e8）
+# 编译复用 profile coding host（与 coding 同源）；UT 条件项与 diff/lint 接线见 OpenSpec feature-track tasks。
+structure_checks:
+  exit_change_doc_present:
+    description: exit 以 change.md 为闭环判据，文件必须存在。
+    severity: BLOCKER
+  exit_checkboxes_all_checked:
+    description: change.md 验收清单与任务 checkbox 必须全部为 [x]（lite 闭环态核心判据）。
+    severity: BLOCKER
+  exit_compile:
+    description: 编译检查——复用 profile coding-host-rules.checkCodingCompile（profile SKIP 声明时按 SKIP 语义）。
+    severity: BLOCKER
+
+semantic_checks: {}
+
+traceability_checks:
+  exit_scope_declared:
+    description: Scope 的 in_scope_modules 须可解析（diff 越界防护判据来源）。
+    severity: BLOCKER
+  exit_diff_within_scope:
+    description: lite 的 diff 越界防护（红线，恒不豁免）；exit 侧接线待 C1 子批，接线前以显式 WARN 呈现缺项。
+    severity: BLOCKER
+  exit_lint:
+    description: lint 检查；exit 侧接线待 C1 子批，接线前以显式 WARN 呈现缺项。
+    severity: MAJOR

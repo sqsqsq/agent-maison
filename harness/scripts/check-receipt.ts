@@ -36,6 +36,8 @@ import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
+import { resolveWorkflowSpec } from '../workflow-loader';
+import { assertWorkflowFeaturePhase } from './utils/runtime-policy';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh } from './utils/gate-fingerprint';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
@@ -54,9 +56,8 @@ import {
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
 
-type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
-
-const VALID_PHASES: Phase[] = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+/** Feature phase id（由 active workflow 定义；main() 内按 workflow 合法集校验——C0 收编）。 */
+type Phase = string;
 
 interface ReceiptFrontmatter {
   feature?: string;
@@ -148,8 +149,8 @@ function parseArgs() {
     printHelp();
     process.exit(2);
   }
-  if (!phase || !VALID_PHASES.includes(phase)) {
-    console.error(`错误：必须指定 --phase，且为 ${VALID_PHASES.join('|')} 之一`);
+  if (!phase) {
+    console.error('错误：必须指定 --phase <workflow feature phase>');
     printHelp();
     process.exit(2);
   }
@@ -186,6 +187,13 @@ function main(): void {
   const frameworkRoot = path.resolve(__dirname, '..', '..');
 
   const fw = loadFrameworkConfig(projectRoot);
+  // phase 合法性按 active workflow feature phase 集校验（C0 收编：不再持有硬编码枚举）
+  try {
+    assertWorkflowFeaturePhase(resolveWorkflowSpec(projectRoot, { config: fw }), phase);
+  } catch (err) {
+    console.error(`错误：${(err as Error).message}`);
+    process.exit(2);
+  }
   const resolvedProfile = loadResolvedProfile(projectRoot, fw);
   if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
     console.log(

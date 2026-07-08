@@ -36,9 +36,10 @@ const cases: Case[] = [
     name: 'loadWorkflowSpec(spec-driven): schema / name / artifact 数量',
     run: () => {
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
-      assert(spec.schema_version === '1.0', 'schema_version');
+      assert(spec.schema_version === '1.1', 'schema_version');
       assert(spec.name === 'spec-driven', 'name');
-      assert(spec.artifacts.length === 12, `artifacts len=${spec.artifacts.length}`);
+      // 12 经典 phase + lite 轨 change/exit（C1 feature-track）
+      assert(spec.artifacts.length === 14, `artifacts len=${spec.artifacts.length}`);
     },
   },
   {
@@ -47,8 +48,9 @@ const cases: Case[] = [
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const ids = workflowPhaseIdSet(spec);
       assert(ids.has('spec') && ids.has('coding') && ids.has('init') && ids.has('extensions'), 'missing ids');
-      assert(ids.size === 12, 'size');
+      assert(ids.size === 14, 'size');
       assert(ids.has('module-graph'), 'module-graph');
+      assert(ids.has('change') && ids.has('exit'), 'lite phases（C1）');
     },
   },
   {
@@ -66,7 +68,7 @@ const cases: Case[] = [
     run: () => {
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const order = listWorkflowPhases(spec);
-      assert(order.length === 12, 'topo length');
+      assert(order.length === 14, 'topo length');
       assert(order[order.length - 1] === 'testing', 'testing must be last');
       const iCat = order.indexOf('catalog');
       const iGloss = order.indexOf('glossary');

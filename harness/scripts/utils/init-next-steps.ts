@@ -11,6 +11,7 @@ import {
 } from '../../code-graph/module-graph-probe';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { listWorkflowPhases, resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
+import { resolvePhaseChain } from './runtime-policy';
 import type { InitTaskPlan, TaskScope } from './init-task-planner';
 import {
   describeCatalogError,
@@ -301,7 +302,8 @@ export function findFirstLaunchableFeatureArtifact(
   glossary: GlossaryReadiness,
   moduleGraph: ModuleGraphReadiness,
 ): string | undefined {
-  const order = listWorkflowPhases(spec);
+  // 默认入口建议只看 full 轨（lite-only phase 由 track 路由进入，不作 init 首步建议——C1）
+  const order = resolvePhaseChain(spec, 'full').ordered;
   for (const phaseId of order) {
     const artifact = spec.artifacts.find(a => a.id === phaseId);
     if (!artifact || artifact.scope !== 'feature') continue;

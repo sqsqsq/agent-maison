@@ -33,6 +33,8 @@ import {
   type FeaturePhase,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
+import { resolveFeatureTrack } from './utils/runtime-policy';
+import { loadFeatureTrackDecl } from './utils/feature-track';
 import {
   buildGoalManifestFromInput,
   loadGoalManifestFile,
@@ -1105,11 +1107,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
       },
       adapterStatus,
     );
+    // C1：按 feature 声明 track 解析链（lite 走 auto_chain_by_track.lite；缺省 full 零变化）
+    const goalTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
     const chain = resolveAutoChain(
       workflow,
       manifest.start_phase,
       manifest.end_phase,
       manifest.chain_override,
+      goalTrack,
     );
     runGoalPreflight({
       projectRoot,

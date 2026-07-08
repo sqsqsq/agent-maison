@@ -17,14 +17,11 @@ import {
   resolveWorkflowSpec,
   type WorkflowSpec,
 } from '../../workflow-loader';
+import { buildPolicySnapshot, resolveFeatureTrack, type PolicySnapshot } from './runtime-policy';
+import { loadFeatureTrackDecl } from './feature-track';
 
-export type FeaturePhase =
-  | 'spec'
-  | 'plan'
-  | 'coding'
-  | 'review'
-  | 'ut'
-  | 'testing';
+/** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
+export type FeaturePhase = string;
 
 export interface ReceiptValidation {
   status: 'passed' | 'failed' | 'missing' | 'error';
@@ -51,6 +48,8 @@ interface CurrentPhaseState extends CurrentPhaseStatePartial {
   session_id_recorded_at?: string | null;
   last_seen_session_id?: string | null;
   last_seen_at?: string | null;
+  /** C0 policy 快照（Stop hook 消费；缺失/版本不符 → hook fail-safe 按 full+strict）。 */
+  policy_snapshot?: PolicySnapshot | null;
 }
 
 export interface HarnessRunSummaryPatch {
@@ -134,6 +133,10 @@ export function mergeAndWritePhaseState(
       session_id_recorded_at: carrySessionRecordedAt,
       last_seen_session_id: carryLastSeenSid,
       last_seen_at: carryLastSeenAt,
+      policy_snapshot: buildPolicySnapshot(
+        // 快照须含真实 track（OpenSpec runtime-policy）；C2 lite closure 与 hook 对账依赖此事实
+        resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, partial.feature)),
+      ),
       updated_at: new Date().toISOString(),
     };
 

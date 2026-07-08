@@ -9,11 +9,12 @@ import { featureCompatPath } from './config';
 import type { CheckResult, Phase } from './scripts/utils/types';
 import { GLOBAL_FEATURE_SENTINEL, isGlobalPhase } from './scripts/utils/types';
 import { normalizeCheckId, normalizePhaseId } from './scripts/utils/phase-alias';
+import { compatAllowedPhases } from './scripts/utils/runtime-policy';
 import { fillCompatMessage, SUGGESTION_COMPAT_EXPIRED } from './compat-messages';
 
 const COMPAT_MARKER = '[compat_downgraded';
 
-const ALLOWED_COMPAT_PHASES = new Set(['spec', 'plan', 'coding', 'review', 'ut', 'prd', 'design']);
+const ALLOWED_COMPAT_PHASES = compatAllowedPhases();
 
 export interface FeatureCompat {
   schema_version: '1.0';

@@ -26,10 +26,10 @@ todos:
     status: completed
   - id: c0-policy-core
     content: "C0 runtime-policy-core（Phase 0）：新增 policy 模块——入口 classifyRequestRoute（direct|feature）+ resolveFeatureTrack（lite|full）+ resolveEvidencePolicy（policy 档 required|optional|off|not_applicable，纯函数不读文件）+ resolvePhaseChain；收编运行时枚举硬编码——check-receipt.ts:57 VALID_PHASES、phase-transition-policy.ts:11+:27、trace.schema.json:34 phase enum（改 workflow 合法集校验）、compat-loader / backfill-context-exploration / context-exploration / exploration-strategy / goal-progress / phase-alias 同型枚举、Stop hook 下发件（check-phase-completion.mjs / record-verifier-report.mjs）、goal-runner/monitor/status；C1/C2/C4 只消费 C0 不各自判断；resolveEvidencePolicy 的 runtimeContext 显式契约（mode/adapter/phase/workflow/can_prompt_user/can_collect_usage）；.current-phase.json policy 快照带 schema_version，hook 读不到/版本不符 fail-safe 回 strict 全凭证（降级夹具）；收编前后全 fixture 零变化"
-    status: pending
+    status: completed
   - id: c1-feature-track
     content: "C1 feature-track（Phase 0 最小闭环）：workflow-schema 增 tracks + requires_by_track + auto_chain_by_track（feature phase 缺省 [\"full\"]，lite 须显式；lite 含 lite-only phase 时链与依赖必须显式声明，无隐式推导）+ workflow schema_version 升 1.1（loader 兼容 1.0=full 单轨）+ spec-driven.workflow.yaml 标注 + 新增 change/exit phase 经 C0 注册进全部运行时（trace phase 校验改 workflow 合法集）；doc/features/<f>/feature.yaml 承载 track 声明与确认记录；判档评分复用 exploration_strategy 维度上抬（pixel_1to1/跨模块/goal 一票升 full）；feature.track gate 登记 confirmation-registry；L1 产物 change.md + check-change-lite.ts + exit 门禁；L0=入口路由不进管线但仍守项目原生 test/lint/build 与用户显式要求（拿不准默认进 lite）；入口路由表同时落「修正三问」文本（进行中 feature 的修正请求先根因分层：需求变→spec/契约变→plan/纯实现→coding/纯验证→ut·testing，禁止未分层直接动产物）+ correction gate 登记 confirmation-registry；lite 契约 fixture"
-    status: pending
+    status: in_progress
   - id: c3a-constraint-audit
     content: "C3-task1 硬约束普查台账（Phase 0，无行为变更）：范围=全部 10 个 SKILL.md（含 catalog-bootstrap 654 行等 project skill）+ templates/AGENTS.md.template 48 处；四分类（脚本已执行/纯文本纪律/事故补丁可原则化/过时重复）+ 旧文→新落点映射；停等用户 review 放行后才允许 C3-task2 动笔；台账同时按 skill 复杂度提交主干预算分级提案（150 基准，business-ut/plan 等是否放宽 ≤250）供用户拍板"
     status: pending
@@ -483,3 +483,47 @@ flowchart TD
 - **矩阵条件化引入 closure 判定回归** → not_applicable 显式语义 + 各象限夹具先行 + 旧 state 缺省按 full+strict 解释。
 - **C5 分类错误风险**（修正落点判错）→ 设计上不追求全对：确认 gate（strict 必确认）+ 回合收尾对账（declared touched_layers ↔ 实际 diff、重验完成度）两道保险；模糊请求先诊断后分类；坏态 fixtures 覆盖"声明 spec 却改代码"、"组合修正漏重验"等路径。**soft_rule_only 档（cursor/generic）残余风险最高**——无物理拦截，靠 checklist + 自检命令；该档脱缰率列入 A/B 修正样本观测项，若不可接受则触发 cursor hooks 适配评估（[agents/README.md](agents/README.md) 已预留 settings_file/hooks 扩展位）。
 - **窗口体量**：6 change + android 同窗 3.0.0 偏大 → Phase 0 为可独立发布最小增量，C2/C3b/C4/C5 任一可按 gate 结果单独顺延。
+
+## 实施记录
+
+### 2026-07-07 · 开工批次 1（scaffold + C0 全量 + C1 机器件核心）——全绿收口
+
+**已提交**：670d1989（plan 定稿 + 7 change scaffold）；版本窗口 3.0.0 由用户自行提交（30ee7ccd）。**以下开发内容均在工作区未提交，等用户 review。**
+
+**C0 runtime-policy-core：完成（todo 已勾）**
+- 新模块 `harness/scripts/utils/runtime-policy.ts`：四判定纯函数 + RuntimeContext/EvidencePolicy/PolicySnapshot 契约 + legacy 回退常量（SSOT=phase-alias CANONICAL_FEATURE_PHASES）+ buildPolicySnapshot/parsePolicySnapshot。
+- 枚举收编落位：check-receipt（VALID_PHASES→workflow 合法集，main 内 assertWorkflowFeaturePhase）、phase-transition-policy（FeaturePhase→string，validateFeatureChainDag/resolveAutoChain 全改 workflow 派生序）、phase-state（FeaturePhase→string + policy_snapshot 落盘）、trace.schema（enum→pattern）、compat-loader、goal-progress、context-exploration 运行时集、backfill、phase-alias（normalizePhaseId 放宽 string 透传）。
+- Stop hook：check-phase-completion.mjs 增 readPolicySnapshot/policyRequires，receipt 判定经 policy 分派；缺快照/版本不符 fail-safe strict（既有 T1~T13 hook 测试即降级回归）。
+- 契约单测 `runtime-policy.unit.test.ts` 11 case（含合成 lite workflow 新 phase 一等公民）。
+
+**C1 feature-track：机器件核心完成（todo in_progress）**
+- schema 1.1（workflow-schema.json + workflow-loader validateTrackDeclarations：1.0 拒分轨字段；lite 显式成员/链/依赖三违规 FAIL）；spec-driven.workflow.yaml 升 1.1 + lite 链 change→coding→exit（coding requires_by_track.lite=[change]）。
+- runtime-policy 分轨解析：artifactInTrack/effectiveRequires/trackOrderedPhases/resolvePhaseChain(track)+autoChain 投影。
+- runner track 过滤（lite feature 误跑 full-only phase 明确报错）；`scripts/utils/feature-track.ts` 读 feature.yaml（经 featureArtifactPath）。
+- 门禁：`check-change.ts` + change-rules.yaml（**命名偏离**：runner 按 `check-<phase>.ts` 约定派发，故弃 OpenSpec 原名 check-change-lite.ts）；`check-exit.ts` v1 + exit-rules.yaml（checkbox 全勾 BLOCKER + scope 声明 BLOCKER + 编译复用 profile coding host）。
+- 消费点修正：init-next-steps findFirstLaunchableFeatureArtifact 改 full 轨过滤（防 change 被建议为默认首步）。
+- 契约单测 `workflow-tracks.unit.test.ts`（初版 8 case，review 修复批增至 9——含 lite auto-chain）；workflow-loader 旧断言更新（12→14 artifacts，schema 1.1）。
+
+**验收**：`cd harness && npm test` 全绿（typecheck + 1464 单测 + 35 fixtures；**注**：该数当时未含新 suite——registration 疏漏见 review 修复记录，终值 **1485 + 35**）。
+
+**C1 未完成（下批续跑清单）**：exit 的 diff_within_scope 真实接线（当前 **fail-closed BLOCKER 占位**——review 修复，接线前 lite exit 不可闭环）与 lint 接线（WARN 占位）+ 条件 UT；track 判档评分（exploration_strategy 上抬）+ feature.track/correction gate 登记 confirmation-registry；change-lite SKILL + skills.index + adapter 跳板；入口模板 L0/L1/L2 分流 + 修正三问文本；lite 端到端目录夹具。
+
+**未启动**：C5-min（修正闭环机器件）、ab-eval（usage schema/采集）、C3-task1 台账（无行为变更，产出后停等用户 review）。C2/C3b/C4/C5-full 按 plan 属 Phase 1（gate 后）。
+
+**下批入口**：按本记录"C1 未完成"清单续跑 → C5-min → ab-eval 基建 → C3a 台账；每步 `cd harness && npm test` 全绿再前进。
+
+### 2026-07-07 · 批次 1 review 修复（codex/cursor 代码评审，双 GO）
+
+- **【我方验证疏漏，如实记录】** codex 坐实：新增两个单测 suite 未注册进 `run-unit.ts` CORE_SUITES，批次 1 宣称的"11+8 case 已验收"当时不成立（`--filter` 实测 0 case）。已注册并重跑：**1484 passed（含 20 个新 case 真实计入）+ 35 fixtures 全绿**。教训：新增 suite 后必须用 `--filter <id>` 确认非零计数，不能只看总数不变的全量绿。
+- **codex P1-2（采纳）**：exit 的 diff_within_scope 从 WARN 改 **BLOCKER FAIL（fail-closed）**——报告裁决只看 BLOCKER FAIL，WARN 会让 exit 在越界防护未接线时整体 PASS，违反红线（决策 4）。接线完成前 lite exit 不可闭环。
+- **codex/cursor P2（采纳）**：policy_snapshot 写入真实 track（phase-state 接 loadFeatureTrackDecl+resolveFeatureTrack），OpenSpec 快照契约对齐。
+- **cursor P1-2（采纳）**：resolveAutoChain/validateFeatureChainDag 增 track 参数，消费 auto_chain_by_track 与 effectiveRequires——lite feature 走 goal 批量授权的链解析前置打通（新增单测：spec-driven lite change→exit == 显式链，full 零变化）。
+- **cursor P3（采纳）**：check-change 的 require('path') 改统一 import。
+- cursor P3-2/P3-3（check-receipt 不区分 track 属边缘态待 C2 not_applicable 收口；isPhaseWithinBatchRange 保持 legacy 序=「lite 不走 batch 全链路」预期）：记录在案，不动。
+
+### 2026-07-07 · 批次 1 三轮 review 收尾（双评审确认前两轮修复到位）
+
+- **cursor「库层已通、调用层未接」（采纳）**：goal-runner（:1108）与 goal-progress 的 resolveAutoChain 补传 feature track；resolveChainFromEvents 事件链过滤放宽为 workflow 全部 feature phase（full∪lite）——lite+goal 的链解析全链打通。
+- **codex P2 回归钉（采纳）**：phase-state.unit.test 增「policy_snapshot 写入真实 track」case（feature.yaml lite→lite / 缺省→full）——该点刚发生过真实回归，钉死。
+- **codex P3 记录清账（采纳）**：tasks 与本记录中 8→9 case、1464 注记终值 1485、diff WARN→fail-closed BLOCKER 占位等过期表述全部更正。
+- **终态**：`npm test` 全绿（typecheck + **1485 单测 + 35 fixtures**）；openspec:validate 31/31；plan 门禁 PASS。

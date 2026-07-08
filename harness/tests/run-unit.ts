@@ -100,6 +100,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'runner-layout-smoke', modulePath: './unit/runner-layout-smoke.unit.test' },
   { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
+  { id: 'workflow-tracks', modulePath: './unit/workflow-tracks.unit.test' },
+  { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
   { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },
   { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
   { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test' },

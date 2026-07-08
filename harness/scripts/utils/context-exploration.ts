@@ -14,6 +14,7 @@ import {
   determineExplorationMode,
   resolveExplorationStrategy,
 } from './exploration-strategy';
+import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
 
 export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut';
 
@@ -159,8 +160,8 @@ function normalizeStringArray(v: unknown): string[] {
   return [];
 }
 
-/** 有 context-exploration.md 门禁的 phase（testing 无——靠 trace）。 */
-const CONTEXT_EXPLORATION_PHASES = new Set<string>(['spec', 'plan', 'coding', 'review', 'ut']);
+/** 有 context-exploration.md 门禁的 phase（testing 无——靠 trace；SSOT = runtime-policy，C0 收编）。 */
+const CONTEXT_EXPLORATION_PHASES = new Set<string>(LEGACY_EXPLORATION_PHASES);
 export function isContextExplorationPhase(phase: string): phase is ContextExplorationPhase {
   return CONTEXT_EXPLORATION_PHASES.has(phase);
 }

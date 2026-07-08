@@ -9,6 +9,7 @@ import minimist from 'minimist';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig, receiptDirPath, resolveFeatureArtifact } from '../config';
 import { normalizePhaseId } from './utils/phase-alias';
+import { LEGACY_EXPLORATION_PHASES } from './utils/runtime-policy';
 import {
   CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS,
   ContextExplorationPhase,
@@ -158,7 +159,9 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const ALLOWED = new Set<ContextExplorationPhase>(['spec', 'plan', 'coding', 'review', 'ut']);
+  const ALLOWED = new Set<ContextExplorationPhase>(
+    LEGACY_EXPLORATION_PHASES as readonly ContextExplorationPhase[],
+  );
   const phases = phasesCsv
     .split(',')
     .map(s => normalizePhaseId(s.trim()) as ContextExplorationPhase)

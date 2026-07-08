@@ -87,6 +87,8 @@ import {
   listWorkflowPhases,
   type WorkflowSpec,
 } from './workflow-loader';
+import { resolveFeatureTrack, resolvePhaseChain } from './scripts/utils/runtime-policy';
+import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import {
   dispatchLifecycleHooks,
   type HookDispatchPayload,
@@ -289,6 +291,20 @@ async function main(): Promise<void> {
     console.error('错误: 必须指定 --feature 参数');
     printHelp();
     process.exit(1);
+  }
+
+  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
+  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
+  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
+    const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+    const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
+    if (!trackChain.idSet.has(phase)) {
+      console.error(
+        `错误: phase "${phase}" 不在 feature "${feature}"（track=${featureTrack}）的合法集。` +
+          `该 track 合法 feature phase: ${trackChain.featureOrdered.join(', ')}`,
+      );
+      process.exit(1);
+    }
   }
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);

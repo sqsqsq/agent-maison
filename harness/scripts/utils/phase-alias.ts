@@ -42,15 +42,15 @@ export function isLegacyPhaseId(id: string): boolean {
   return id === 'prd' || id === 'design';
 }
 
-/** Normalize phase id; legacy prd/design emit WARN once per process per id. */
-export function normalizePhaseId(
-  id: string | undefined,
-  fallback: CanonicalFeaturePhase = 'spec',
-): CanonicalFeaturePhase {
+/**
+ * Normalize phase id; legacy prd/design emit WARN once per process per id.
+ * 未知 id 原样透传（phase 由 workflow 定义，不再限定 canonical 枚举——C0 收编）。
+ */
+export function normalizePhaseId(id: string | undefined, fallback: string = 'spec'): string {
   const raw = (id ?? '').trim();
   if (!raw) return fallback;
   const mapped = PHASE_ID_ALIASES[raw];
-  if (!mapped) return raw as CanonicalFeaturePhase;
+  if (!mapped) return raw;
   if (isLegacyPhaseId(raw) && !warnedPhaseIds.has(raw)) {
     warnedPhaseIds.add(raw);
     // eslint-disable-next-line no-console
