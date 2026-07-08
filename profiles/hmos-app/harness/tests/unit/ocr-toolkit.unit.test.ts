@@ -13,7 +13,12 @@ import {
   fuzzyTextPresent,
   fuzzyTextInBand,
   wordCenterY,
+  extractLikelyRealTextRun,
+  detectColumnGroups,
+  collectAuditableOcrLines,
+  clusterOcrLines,
   type OcrWord,
+  type OcrLine,
 } from '../../ocr-toolkit';
 import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
 
@@ -79,6 +84,95 @@ test('OCR: 优雅降级——不存在的图 → ok:false 不抛', () => {
   const r = ocrImageWords(path.join(__dirname, 'no-such-image-xyz.png'));
   assert.strictEqual(r.ok, false);
   assert.ok(typeof r.error === 'string' && r.error.length > 0);
+});
+
+// ==========================================================================
+// E6（多模态降级阶梯 plan d4a8f3c6）：噪声候选真文本提取 + 列分组 + 共享清洗函数
+// ==========================================================================
+
+test('E6 extractLikelyRealTextRun: 案B chrys 实录噪声前缀 → 提取出真实银行名', () => {
+  const r1 = extractLikelyRealTextRun('人《AA招商银行');
+  assert.ok(r1, 'should extract a candidate');
+  assert.strictEqual(r1!.candidate, '招商银行');
+  assert.strictEqual(r1!.noisePrefix, '人《AA');
+  assert.strictEqual(r1!.noiseSuffix, '');
+
+  const r2 = extractLikelyRealTextRun('人@)工商银行');
+  assert.ok(r2);
+  assert.strictEqual(r2!.candidate, '工商银行');
+});
+
+test('E6 extractLikelyRealTextRun: 纯噪声（无 CJK）→ null', () => {
+  assert.strictEqual(extractLikelyRealTextRun('@#$%123'), null);
+});
+
+test('E6 extractLikelyRealTextRun: 纯 CJK 无噪声 → candidate=全文，前后缀为空', () => {
+  const r = extractLikelyRealTextRun('立即添加');
+  assert.ok(r);
+  assert.strictEqual(r!.candidate, '立即添加');
+  assert.strictEqual(r!.noisePrefix, '');
+  assert.strictEqual(r!.noiseSuffix, '');
+});
+
+test('E6 extractLikelyRealTextRun: 单字 CJK 游程（<2 字）→ null（太短噪声概率高）', () => {
+  assert.strictEqual(extractLikelyRealTextRun('A卡B'), null);
+});
+
+test('E6 extractLikelyRealTextRun: 前后都有噪声——取最长游程作候选', () => {
+  const r = extractLikelyRealTextRun('##交通银行@@');
+  assert.ok(r);
+  assert.strictEqual(r!.candidate, '交通银行');
+  assert.strictEqual(r!.noisePrefix, '##');
+  assert.strictEqual(r!.noiseSuffix, '@@');
+});
+
+test('E6 detectColumnGroups: 大 gap 拆两组（标签+数值同行布局）', () => {
+  const line: OcrLine = {
+    text: '余额1000元',
+    box: [0, 0.5, 0.9, 0.03],
+    words: [
+      { text: '余额', conf: 90, bbox: [0.05, 0.5, 0.1, 0.03] },
+      // 大 gap：下一词起点远超"余额"平均宽度的 1.5 倍
+      { text: '1000元', conf: 90, bbox: [0.6, 0.5, 0.15, 0.03] },
+    ],
+  };
+  const groups = detectColumnGroups(line);
+  assert.strictEqual(groups.length, 2, JSON.stringify(groups));
+  assert.strictEqual(groups[0], '余额');
+  assert.strictEqual(groups[1], '1000元');
+});
+
+test('E6 detectColumnGroups: 紧邻词（无显著 gap）→ 单一分组', () => {
+  const line: OcrLine = {
+    text: '立即添加',
+    box: [0.1, 0.5, 0.2, 0.03],
+    words: [
+      { text: '立即', conf: 90, bbox: [0.1, 0.5, 0.1, 0.03] },
+      { text: '添加', conf: 90, bbox: [0.2, 0.5, 0.1, 0.03] },
+    ],
+  };
+  const groups = detectColumnGroups(line);
+  assert.strictEqual(groups.length, 1, JSON.stringify(groups));
+  assert.strictEqual(groups[0], '立即添加');
+});
+
+test('E6 detectColumnGroups: 单词行 → 返回整行文本', () => {
+  const line: OcrLine = { text: '单个', box: [0, 0, 0.1, 0.03], words: [{ text: '单个', conf: 90, bbox: [0, 0, 0.1, 0.03] }] };
+  assert.deepStrictEqual(detectColumnGroups(line), ['单个']);
+});
+
+test('E6 同源化：collectAuditableOcrLines（从 ocr-toolkit 导出）与既有噪声过滤行为一致', () => {
+  const words: OcrWord[] = [
+    { text: '12:34', conf: 90, bbox: [0.4, 0.02, 0.1, 0.02] }, // 状态栏时间，应剔除
+    { text: '首页', conf: 90, bbox: [0.4, 0.9, 0.1, 0.03] }, // 正常内容
+    { text: '@', conf: 90, bbox: [0.1, 0.5, 0.02, 0.02] }, // 纯符号噪声
+  ];
+  const lines = clusterOcrLines(words);
+  const audited = collectAuditableOcrLines(lines);
+  const texts = audited.map(l => l.text);
+  assert.ok(texts.includes('首页'), JSON.stringify(texts));
+  assert.ok(!texts.some(t => t.includes('12:34')), '状态栏时间应被剔除：' + JSON.stringify(texts));
+  assert.ok(!texts.includes('@'), '纯符号噪声应被剔除：' + JSON.stringify(texts));
 });
 
 export function runAll(): UnitCaseResult[] {

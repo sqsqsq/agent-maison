@@ -752,6 +752,44 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'E6 OCR 预扫描产出：真实图片 → ocr.json 含聚类后 lines（候选真文本/列分组，与门禁同源）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          // 复用既有真实 OCR fixture（ocr-toolkit.unit.test.ts 同款，含可读中文"首页/我的"）——
+          // 放进 ux-reference/ 回退发现路径（feature=demo-feature 匹配 MINIMAL_MANIFEST）。
+          const uxRefDir = path.join(root, 'doc', 'features', 'demo-feature', 'ux-reference');
+          fs.mkdirSync(uxRefDir, { recursive: true });
+          const fixtureImg = path.join(
+            FRAMEWORK_ROOT, 'profiles', 'hmos-app', 'harness', 'tests', 'fixtures', 'ocr', 'card_pack.png',
+          );
+          fs.copyFileSync(fixtureImg, path.join(uxRefDir, 'card_pack.png'));
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, JSON.stringify(advisory));
+          if (!advisory!.ocrAvailable) return; // 本机 OCR 环境不可用则跳过（仓库惯例：OCR 门禁自身已守卫）
+          assert(advisory!.ocrJsonPaths.length === 1, `应产出 1 份 ocr.json：${JSON.stringify(advisory!.ocrJsonPaths)}`);
+          const ocrJsonAbs = path.join(root, advisory!.ocrJsonPaths[0]);
+          const parsed = JSON.parse(fs.readFileSync(ocrJsonAbs, 'utf-8'));
+          assert(parsed.ok === true, `OCR 应成功：${JSON.stringify(parsed).slice(0, 200)}`);
+          assert(Array.isArray(parsed.words) && parsed.words.length > 0, '应保留原始 words（完整性/可回溯）');
+          assert(Array.isArray(parsed.lines) && parsed.lines.length > 0, `应产出聚类后 lines：${JSON.stringify(parsed).slice(0, 300)}`);
+          const line = parsed.lines[0];
+          assert(typeof line.text === 'string' && typeof line.y === 'number', JSON.stringify(line));
+          // 与门禁同源：至少应能读出"首页"或"我的"（card_pack fixture 的已知内容）
+          const hasKnownText = parsed.lines.some((l: { text: string }) => l.text.includes('首页') || l.text.includes('我的'));
+          assert(hasKnownText, `应读出已知内容：${JSON.stringify(parsed.lines.map((l: { text: string }) => l.text))}`);
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
       name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=false（chrys）+ generic profile（无 OCR）→ 钳到 reference_only 地板',
       run: () => {
         const root = mkCapabilityProject('generic');

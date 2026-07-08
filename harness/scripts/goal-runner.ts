@@ -707,7 +707,28 @@ function runOcrPrescanForSpec(
     }
     try {
       const result = toolkit.ocrImageWords(imgAbs);
-      fs.writeFileSync(outAbs, JSON.stringify(result, null, 2), 'utf-8');
+      // E6①②：若 profile 实现了聚类/噪声过滤/候选提取（同源于 capture_completeness_external
+      // 门禁的同一份函数），把 words 加工成聚类后的 lines 一并写入——agent 看到的是与门禁
+      // 判定同一套切分结果的结构化行（含候选真文本+列分组提示），不必自己从原始词框重新聚类，
+      // 也不会"agent 按一种方式分行、门禁按另一种方式判定"。profile 未实现这些扩展时
+      // （ProfileOcrToolkit 的 E6 字段均可选）优雅降级为只写原始 words，不阻断。
+      const rawWords = result.words ?? [];
+      const clustered = toolkit.clusterOcrLines?.(rawWords);
+      const audited = clustered && toolkit.collectAuditableOcrLines
+        ? toolkit.collectAuditableOcrLines(clustered)
+        : clustered;
+      const lines = audited?.map((line) => {
+        const candidate = toolkit.extractLikelyRealTextRun?.(line.text);
+        const columnGroups = toolkit.detectColumnGroups?.(line);
+        return {
+          text: line.text,
+          y: Number((line.box[1] + line.box[3] / 2).toFixed(4)),
+          ...(candidate ? { candidate_text: candidate.candidate } : {}),
+          ...(columnGroups && columnGroups.length > 1 ? { column_groups: columnGroups } : {}),
+        };
+      });
+      const enriched = { ...result, ...(lines ? { lines } : {}) };
+      fs.writeFileSync(outAbs, JSON.stringify(enriched, null, 2), 'utf-8');
       writtenRel.push(rel);
     } catch {
       /* 单图 OCR 失败不阻断其余——best-effort 上下文，非门禁产物 */

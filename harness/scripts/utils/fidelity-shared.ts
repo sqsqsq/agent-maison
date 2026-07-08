@@ -515,7 +515,20 @@ export function discoverReferenceImagesForOcrPrescan(
   return [...found].sort();
 }
 
-/** 与 ocr-toolkit.ts 的 isOcrAvailable/ocrImageWords 同型（profile 侧真实签名的最小子集）。 */
+/** ocr-toolkit.ts 的 OcrWord/OcrLine 同型（profile 侧真实签名——bbox 为 [x,y,w,h] 归一化，
+ * 非 x0/y0/x1/y1；此前误写过后者，E6 核对时改正，未曾被消费故属潜伏未爆的类型错配）。 */
+export interface ProfileOcrWordLike {
+  text: string;
+  conf: number;
+  bbox: [number, number, number, number];
+}
+export interface ProfileOcrLineLike {
+  text: string;
+  box: [number, number, number, number];
+  words: ProfileOcrWordLike[];
+}
+
+/** 与 ocr-toolkit.ts 的公开函数同型（profile 侧真实签名的子集，E6 扩展：聚类/噪声过滤/候选真文本/列分组）。 */
 export interface ProfileOcrToolkit {
   isOcrAvailable: () => boolean;
   ocrImageWords: (imagePath: string) => {
@@ -523,22 +536,44 @@ export interface ProfileOcrToolkit {
     error?: string;
     width?: number;
     height?: number;
-    words?: Array<{ text: string; conf: number; x0: number; y0: number; x1: number; y1: number }>;
+    words?: ProfileOcrWordLike[];
   };
+  /** E6①②：词→行聚类（与 capture_completeness_external 门禁同一份实现，"同源化"）。 */
+  clusterOcrLines?: (words: ProfileOcrWordLike[]) => ProfileOcrLineLike[];
+  /** E6①②：噪声过滤（状态栏/纯符号剔除）——与门禁侧同一份实现。 */
+  collectAuditableOcrLines?: (lines: ProfileOcrLineLike[]) => ProfileOcrLineLike[];
+  /** E6③：噪声前缀/后缀 + 最长 CJK 游程候选真文本提取。 */
+  extractLikelyRealTextRun?: (
+    lineText: string,
+  ) => { candidate: string; noisePrefix: string; noiseSuffix: string } | null;
+  /** E6①：行内按 x 显著 gap 列分组（辅助结构推断）。 */
+  detectColumnGroups?: (line: ProfileOcrLineLike) => string[];
 }
 
 /**
  * OCR 工具链按 profileDir 通用路径动态加载——不硬编码 'hmos-app'（generic 等无 OCR 资产的
  * profile require 会失败，按设计返回 null，不是错误）。与 capability-registry.ts 的
  * provider 动态 require（path.join(resolved.profileDir, 'harness', 'providers', ...)）
- * 同构，供 harness-runner.ts（钳制探测）与 goal-runner.ts（E0 OCR 预扫描）共用，避免重复实现。
+ * 同构，供 harness-runner.ts（钳制探测）与 goal-runner.ts（E0/E6 OCR 预扫描）共用，避免重复实现。
+ * E6①②新增函数为可选（非全 profile 都实现列分组/候选提取——降级为仅原始 words 可用）。
  */
 export function loadProfileOcrToolkit(profileDir: string): ProfileOcrToolkit | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const mod = require(path.join(profileDir, 'harness', 'ocr-toolkit')) as Partial<ProfileOcrToolkit>;
     if (typeof mod.isOcrAvailable !== 'function' || typeof mod.ocrImageWords !== 'function') return null;
-    return { isOcrAvailable: mod.isOcrAvailable, ocrImageWords: mod.ocrImageWords };
+    return {
+      isOcrAvailable: mod.isOcrAvailable,
+      ocrImageWords: mod.ocrImageWords,
+      ...(typeof mod.clusterOcrLines === 'function' ? { clusterOcrLines: mod.clusterOcrLines } : {}),
+      ...(typeof mod.collectAuditableOcrLines === 'function'
+        ? { collectAuditableOcrLines: mod.collectAuditableOcrLines }
+        : {}),
+      ...(typeof mod.extractLikelyRealTextRun === 'function'
+        ? { extractLikelyRealTextRun: mod.extractLikelyRealTextRun }
+        : {}),
+      ...(typeof mod.detectColumnGroups === 'function' ? { detectColumnGroups: mod.detectColumnGroups } : {}),
+    };
   } catch {
     return null; // profile 无 OCR 工具链（如 generic）——非错误，按"无 OCR"处理
   }

@@ -30,8 +30,11 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import {
   clusterOcrLines,
+  collectAuditableOcrLines as collectAuditableOcrLinesShared,
+  extractLikelyRealTextRun,
   fuzzyMatchRatio,
   isOcrAvailable,
+  norm,
   ocrImageWords,
   type OcrLine,
 } from './ocr-toolkit';
@@ -260,29 +263,12 @@ export function checkCaptureStyleFields(ctx: CheckContext, specMarkdown: string)
 // round6 实证：右置副标题×5、"智闪刷卡设置待优化"、¥119.40 连续两轮漏抽而 capture 100% PASS。
 // ============================================================================
 
-/** 状态栏 band：mockup 顶部时间/电量/信号区，OCR 行中心 y 低于此值剔除 */
-export const EXTERNAL_AUDIT_STATUS_BAR_BAND = 0.045;
 /** 行被 spec 文本集覆盖的累计字符覆盖率阈值 */
 export const EXTERNAL_AUDIT_LINE_COVER_RATIO = 0.5;
-/** 屏级外部覆盖率下限（未覆盖行数为 0 才 PASS，此值仅用于 details 呈现） */
-const norm = (s: string): string => s.replace(/\s+/g, '');
-const CJK_RE = /[一-鿿]/g;
-
-/** 采集屏 OCR 行清单（状态栏剔除 + 噪声过滤）。单字符默认剔除（pagination 点/角标误报面大，诚实边界记录）。 */
-export function collectAuditableOcrLines(lines: OcrLine[]): OcrLine[] {
-  return lines.filter(l => {
-    const t = norm(l.text);
-    if (t.length < 2) return false;
-    const cy = l.box[1] + l.box[3] / 2;
-    if (cy < EXTERNAL_AUDIT_STATUS_BAR_BAND) return false; // 状态栏
-    if (/^\d{1,2}:\d{2}$/.test(t)) return false; // 时间（状态栏兜底）
-    const cjk = (t.match(CJK_RE) ?? []).length;
-    const isMoneyLike = /[¥￥$]|\d+\.\d+/.test(t);
-    // 无 CJK 且非金额样式（纯符号/OCR 噪声）→ 剔除；金额（¥119.40）保留
-    if (cjk === 0 && !isMoneyLike) return false;
-    return true;
-  });
-}
+// E6②同源化：norm/CJK_RE/EXTERNAL_AUDIT_STATUS_BAR_BAND/collectAuditableOcrLines 已移至
+// ocr-toolkit.ts 统一导出——goal-runner 的 OCR 预扫描（agent 上下文）与本门禁现在跑同一份
+// 清洗/聚类逻辑。此处保留 collectAuditableOcrLines 的同名再导出，兼容既有调用点。
+export const collectAuditableOcrLines = collectAuditableOcrLinesShared;
 
 /** spec 文本集：ui-spec 全 text/subtitle/badge + global_elements texts + ref-elements texts */
 export function collectSpecTextUniverse(
@@ -342,6 +328,12 @@ export interface BlindReviewPendingEntry {
   /** OCR 置信度 0-100（多词取平均） */
   confidence: number;
   auto_disposition: 'unverifiable_blind';
+  /**
+   * E6③（案B chrys 实证"人《AA招商银行"类噪声前缀+真文本混合行）：从 text 提取的最长连续
+   * CJK 游程候选——**建议**而非确定正确，加速人工终审（一眼看出"招商银行"而非阅读整段乱码）。
+   * 无法提取候选（纯噪声/非 CJK）时省略此字段。
+   */
+  candidate_text?: string;
 }
 
 export interface BlindReviewPendingDoc {
@@ -454,12 +446,14 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
         uncovered.push(`${s.id}: "${line.text.slice(0, 24)}" @y≈${yCenter.toFixed(2)}`);
         const confs = line.words.map(w => w.conf).filter(c => typeof c === 'number');
         const avgConf = confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : 0;
+        const likelyReal = extractLikelyRealTextRun(line.text);
         uncoveredEntries.push({
           screen: s.id,
           text: line.text,
           y: Number(yCenter.toFixed(4)),
           confidence: Math.round(avgConf),
           auto_disposition: 'unverifiable_blind',
+          ...(likelyReal ? { candidate_text: likelyReal.candidate } : {}),
         });
       }
     }

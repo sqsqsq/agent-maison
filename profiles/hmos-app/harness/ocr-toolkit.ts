@@ -171,6 +171,105 @@ export function clusterOcrLines(words: OcrWord[]): OcrLine[] {
   }));
 }
 
+// ============================================================================
+// E6（多模态降级阶梯 plan d4a8f3c6）：噪声过滤 + 候选真文本提取 + 列分组
+// ----------------------------------------------------------------------------
+// ②"同源化"：以下与 capture-completeness-check.ts 门禁侧**同一份**函数（原本各自定义），
+// 移到本文件统一导出——E0 goal-runner 的 OCR 预扫描（agent 上下文）与 E3 门禁匹配
+// （capture_completeness_external）现在跑的是完全相同的清洗/聚类逻辑，不会"agent 看到
+// 一种切分结果、门禁按另一种切分结果判定"。
+// ============================================================================
+
+/** 去空白（轻规整，不做激进归一）——覆盖率匹配与噪声过滤共用同一份。 */
+export const norm = (s: string): string => s.replace(/\s+/g, '');
+export const CJK_RE = /[一-鿿]/g;
+/** 状态栏 band：mockup 顶部时间/电量/信号区，OCR 行中心 y 低于此值剔除 */
+export const EXTERNAL_AUDIT_STATUS_BAR_BAND = 0.045;
+
+/** 采集屏 OCR 行清单（状态栏剔除 + 噪声过滤）。单字符默认剔除（pagination 点/角标误报面大，诚实边界记录）。 */
+export function collectAuditableOcrLines(lines: OcrLine[]): OcrLine[] {
+  return lines.filter(l => {
+    const t = norm(l.text);
+    if (t.length < 2) return false;
+    const cy = l.box[1] + l.box[3] / 2;
+    if (cy < EXTERNAL_AUDIT_STATUS_BAR_BAND) return false; // 状态栏
+    if (/^\d{1,2}:\d{2}$/.test(t)) return false; // 时间（状态栏兜底）
+    const cjk = (t.match(CJK_RE) ?? []).length;
+    const isMoneyLike = /[¥￥$]|\d+\.\d+/.test(t);
+    // 无 CJK 且非金额样式（纯符号/OCR 噪声）→ 剔除；金额（¥119.40）保留
+    if (cjk === 0 && !isMoneyLike) return false;
+    return true;
+  });
+}
+
+export interface LikelyRealTextRun {
+  /** 提取出的最长连续 CJK 游程——大概率是真文案（logo/品牌名常被 OCR 误识别出乱码前后缀）。 */
+  candidate: string;
+  noisePrefix: string;
+  noiseSuffix: string;
+}
+
+/**
+ * E3③/E6①（案B chrys 银行卡实证："人《AA招商银行"这类噪声前缀+真文本混合行）：
+ * 提取行文本中**最长连续 CJK 游程**作为候选真文案，其余记为噪声前后缀——不是精确算法
+ * （OCR 噪声本身也可能是 CJK 形近误识别，如"(时农业银行"里的"时"会被并入候选），但比
+ * 把整行当不透明噪声块丢给人工核对好得多：诚实边界——本函数只降噪辅助阅读，不替代人工
+ * 判断，调用方仍须把 candidate 当"建议"而非"确定正确"。候选 <2 字（含空）返回 null
+ * （太短的 CJK 游程噪声概率高，不值得单独提取）。
+ */
+export function extractLikelyRealTextRun(lineText: string): LikelyRealTextRun | null {
+  const chars = [...lineText];
+  let bestStart = -1;
+  let bestLen = 0;
+  let curStart = -1;
+  let curLen = 0;
+  for (let i = 0; i <= chars.length; i++) {
+    const isCjk = i < chars.length && CJK_RE.test(chars[i]);
+    CJK_RE.lastIndex = 0; // test() 全局正则须手动复位 lastIndex，否则交替 true/false
+    if (isCjk) {
+      if (curStart < 0) curStart = i;
+      curLen++;
+    } else {
+      if (curLen > bestLen) {
+        bestStart = curStart;
+        bestLen = curLen;
+      }
+      curStart = -1;
+      curLen = 0;
+    }
+  }
+  if (bestLen < 2) return null;
+  return {
+    candidate: chars.slice(bestStart, bestStart + bestLen).join(''),
+    noisePrefix: chars.slice(0, bestStart).join(''),
+    noiseSuffix: chars.slice(bestStart + bestLen).join(''),
+  };
+}
+
+/**
+ * E6①：行内按 x 方向显著 gap 拆分列分组（辅助结构推断——"标签在左、数值在右"一类同行
+ * 双元素布局）。gap 阈值 = 该行内相邻词平均宽度的 1.5 倍（经验值，非精确布局分析）；
+ * 无显著 gap（单一视觉块）时返回单元素数组（原文本整体）。
+ */
+export function detectColumnGroups(line: OcrLine): string[] {
+  if (line.words.length < 2) return [line.text];
+  const sorted = [...line.words].sort((a, b) => a.bbox[0] - b.bbox[0]);
+  const avgWidth = sorted.reduce((sum, w) => sum + w.bbox[2], 0) / sorted.length;
+  const gapThreshold = avgWidth * 1.5;
+  const groups: string[][] = [[sorted[0].text]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+    const gap = cur.bbox[0] - (prev.bbox[0] + prev.bbox[2]);
+    if (gap > gapThreshold) {
+      groups.push([cur.text]);
+    } else {
+      groups[groups.length - 1].push(cur.text);
+    }
+  }
+  return groups.map(g => g.join(''));
+}
+
 /** word 的 bbox 中心 y（归一化）；用于 band 判定（如底部 tab band > 0.85） */
 export function wordCenterY(w: OcrWord): number {
   return w.bbox[1] + w.bbox[3] / 2;

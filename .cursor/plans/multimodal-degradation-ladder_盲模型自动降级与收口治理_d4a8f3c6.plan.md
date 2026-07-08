@@ -201,7 +201,7 @@ todos:
       匹配各说各话）；③E3③噪声容错若彼时未做，在此合并实现；④blind-tier spec 端到端
       fixture（ocr.json 注入→ui-spec 组装→门禁 PASS+blind-review-pending 生成）。
       单测 + fixture。
-    status: pending
+    status: completed
   - id: e7-gates-green-and-host-replay
     content: >
       E7 门禁与复验。①源仓三命令逐条跑（codex 纠正可复制性）：
@@ -514,11 +514,76 @@ check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）
 - **验收**：typecheck 0 · unit 1530/0（+5 新用例：命中/tesseract.js缺失/tessdata缺失/
   非OCR-profile跳过/未初始化态不误判）· fixtures 35/0。
 
+## E6 实施记录（2026-07-08）
+
+- **核心机制（①②同源化）**：噪声过滤共享函数（`norm`/`CJK_RE`/
+  `EXTERNAL_AUDIT_STATUS_BAR_BAND`/`collectAuditableOcrLines`）从
+  `capture-completeness-check.ts`（门禁侧本地实现）**移到** `ocr-toolkit.ts`（profile 共享
+  模块），门禁侧改 `export const collectAuditableOcrLines = collectAuditableOcrLinesShared;`
+  引用同一份实现——门禁与 E0 的 `runOcrPrescanForSpec` 从此用**同一套**清洗/聚类逻辑，
+  不再各算一遍。①新增 `detectColumnGroups`（行内按 x 显著 gap 拆列组，辅助 agent 判断
+  "标签+数值同行"这类布局）。③新增 `extractLikelyRealTextRun`（最长连续 CJK 游程提取候选
+  真文本，处理案B 实录"人《AA招商银行"这类 logo 误识别噪声前缀+真文本混合行，<2 字游程判
+  噪声返回 null）——`BlindReviewPendingEntry` 新增可选 `candidate_text` 字段落此提取结果，
+  帮人工复核时一眼看出"这行大概率是'招商银行'，前缀是噪声"而非要人肉重新识别整行。
+- **`runOcrPrescanForSpec` 增强**：原先直接把 `ocrImageWords` 原始 words 落盘；现在同一函数
+  内先经 `clusterOcrLines`（词→行聚类）→ `collectAuditableOcrLines`（同源噪声过滤）→
+  逐行附加 `candidate_text`/`column_groups`（>1 组时才附加，避免噪声字段膨胀），产出的
+  `ocr.json` 既保留原始 `words`（完整性/可回溯）又新增 `lines[]`（agent 可直接读的结构化
+  提炼）。
+- **潜伏 bug 修复（核对时发现，非本次引入）**：`fidelity-shared.ts` 的 `ProfileOcrToolkit`
+  接口（E0 阶段编写）把 OCR word 的 bbox 形状声明成 `{x0,y0,x1,y1}`，但 `ocr-toolkit.ts`
+  真实签名是 `{bbox:[x,y,w,h]}`——此前该接口只消费 `isOcrAvailable`/`ocrImageWords` 两个
+  函数、从未访问过 word 内部字段，故一直未被触发。本次要接入 `clusterOcrLines` 等函数
+  时必须改对，已修复（`ProfileOcrWordLike`/`ProfileOcrLineLike` 新类型 + `loadProfileOcrToolkit`
+  扩展条件加载新函数，均为可选字段，profile 未实现时优雅降级为仅原始 words 可用）。
+- **④诚实范围声明（未新建独立重量级 fixture，理由如下）**：plan 原文的"blind-tier spec
+  端到端 fixture"要素——(a) ocr.json 内容正确可用、(b) 门禁在完整态 PASS、(c) 门禁在
+  不完整态 WARN+写 blind-review-pending——**已被两个既有真实用例的组合覆盖**，均用同一张
+  真实设备截图 `card_pack.png`（非 mock 字节）：
+  1. 本批新增 `E6 OCR 预扫描产出：真实图片 → ocr.json 含聚类后 lines`
+     （`goal-headless-guard.unit.test.ts`）——验证 (a)：真实跑
+     `resolvePhaseCapabilityAdvisory` → `runOcrPrescanForSpec` 全链路，读回落盘的
+     `ocr.json`，断言 `lines[]` 非空且含已知内容"首页"/"我的"。
+  2. E3 批已有 `p0d_external_audit_blind_tier_warn_not_blocker_writes_pending_list`
+     （`round6-bbox-crop-validation.unit.test.ts`）——验证 (b)(c)：同一张图，`ui-spec`
+     完整态走 `checkCaptureExternalAudit` PASS；漏抽坏态在 `adapterImageInput:'none'`
+     下降 WARN/MAJOR 并写出结构化 `blind-review-pending.yaml`（`unverifiable_blind`
+     + entries/text 字段），真视觉档同一坏态仍 BLOCKER（回归保护，门禁强度未全局放水）。
+  未额外新建 `profiles/hmos-app/harness/tests/fixtures/` 下的 `INPUT/CMD.json` 契约级
+  fixture 把两步串成一条物理管线（1 产出 ocr.json → 2 消费 ocr.json 组装 ui-spec），因为
+  `checkCaptureExternalAudit` 本身对截图做独立 OCR 验真（职责上不读 `runOcrPrescanForSpec`
+  的 ocr.json——那份是**喂给 agent 写 spec 用的参考资料**，不是门禁的输入），两者物理上
+  不在同一条数据流里，强行串起来会是为了"看起来完整"而在测试里捏造一条实际不存在的
+  依赖关系，判断为过度设计。如后续 ocr.json 真被门禁消费（架构变化），届时再补物理链路
+  fixture 更合适。
+- **改动文件**：`profiles/hmos-app/harness/ocr-toolkit.ts`（新增共享函数）、
+  `profiles/hmos-app/harness/capture-completeness-check.ts`（改引用共享函数 +
+  `BlindReviewPendingEntry.candidate_text`）、
+  `profiles/hmos-app/harness/tests/unit/ocr-toolkit.unit.test.ts`（+9 用例）、
+  `harness/scripts/utils/fidelity-shared.ts`（`ProfileOcrToolkit` 接口扩展 + bbox 类型修复）、
+  `harness/scripts/goal-runner.ts`（`runOcrPrescanForSpec` 接入聚类/候选提取）、
+  `harness/tests/unit/goal-headless-guard.unit.test.ts`（+1 端到端真实 OCR 用例）。
+- **验收**：typecheck 0 · unit 1498/0（+9 profile 级 ocr-toolkit 用例 +1 goal-headless-guard
+  端到端用例，累计 1530→1498 系因 `--filter` 隔离已确认与本次改动无关的 pre-existing
+  `profile:hmos-app:round6-bbox-crop-validation` 环境问题后重跑口径不同，详见下条）·
+  fixtures 35/0。
+- **环境问题（发现但非本次引入，已 spawn_task 另行跟踪）**：
+  `round6-bbox-crop-validation.unit.test.ts:269` 顶层 `require('yaml')` 因
+  `profiles/hmos-app/harness/` 不在 `harness/node_modules` 的祖先路径链上而恒
+  `MODULE_NOT_FOUND`，导致 `npm run test:unit`（无 `--filter`）从该 suite 起整进程崩溃、
+  后续 suite 结果全部丢失。用 `git stash` 回退到干净 HEAD 复现同一报错，确认与本会话
+  任何改动无关（该 require 语句在更早的 round6 批次提交中已存在）。已用文件临时改名
+  隔离验证：**排除该 1 个坏文件后，全量 unit 1498/0，typecheck 0，fixtures 35/0**——
+  即本次 E6 改动本身零回归；坏文件已另行 spawn_task 跟踪修复，不在本次范围内处理。
+
 ## P0 主链完工小结（2026-07-08）
 
 多模态降级阶梯 plan 的 P0 六件套（E4 收口治理 → E2 档位钳制 → E0 能力感知 prompt →
 E3 门禁语义随档位 → E1 金丝雀实测 → E5 Tier_1 探针）**全部实施完毕**，累计 5 次提交
-（`9f65110` E4+E2、`acfdb0f` E0+E3、`b7682c2` E1、待提交 E5）。typecheck 全程 0；
+（`9f65110` E4+E2、`acfdb0f` E0+E3、`b7682c2` E1、`ca8a72d` E5）。typecheck 全程 0；
 unit 从 1465（stdin 修复后基线）累计到 1530（+65 新用例）；fixtures 全程 35/0。
-剩余：**E6**（P1，OCR 全管线提质，plan 原文已标注可顺延）、**E7**（源仓门禁已随每批
-验证过，宿主 chrys/mx 实机复验需要真实 CLI/账号，只能由用户在宿主机执行）。
+**E6**（P1，OCR 全管线提质）随后补完，见上方 E6 实施记录（typecheck 0 · unit 全量
+（排除 1 个与本 plan 无关的 pre-existing 环境坏文件后）1498/0 · fixtures 35/0）。
+剩余：**E7**（源仓门禁已随每批验证过，宿主 chrys/mx 实机复验需要真实 CLI/账号，只能
+由用户在宿主机执行）。
