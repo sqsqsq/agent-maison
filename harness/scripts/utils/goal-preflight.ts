@@ -10,7 +10,8 @@ import {
   evaluatePersonalSetupGate,
   resolveProjectMaterializedForGate,
 } from './personal-setup-gate';
-import { loadLocalConfig } from './framework-local-config';
+import * as path from 'path';
+import { loadLocalConfig, writeLocalConfig, LOCAL_SCHEMA_VERSION } from './framework-local-config';
 import { evaluateConfigPlacementGate } from './config-placement-gate';
 import {
   unionPhasePersonalPrerequisites,
@@ -23,10 +24,13 @@ import {
 } from './goal-adapter-capability';
 import { resolveGoalEffectiveImageInput } from './multimodal-probe';
 import {
+  invokeAgentHeadless,
   resolveHeadlessInvokePlan,
   validateHeadlessBinaryForPlan,
   type InvokeTemplateVars,
 } from './agent-invoke';
+import { detectUiRelevantRequirement } from './fidelity-shared';
+import { ensureVisionCanaryAsset, buildCanaryPrompt, classifyCanaryResponse } from './vision-canary';
 
 export type AdapterProvenance =
   | 'argv_adapter'
@@ -245,6 +249,110 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
       `[goal-runner] preflight WARN: image_input 声明 tool_read 但 goal allowed_tools 缺 Read；` +
         `运行时视觉多模态将诚实降级为 none（${effectiveMm.reason}）`,
     );
+  }
+}
+
+export type VisionCanaryProbeSkipReason =
+  | 'dry_run'
+  | 'chain_has_no_ui_phase'
+  | 'not_ui_relevant'
+  | 'local_override_present'
+  | 'fresh_cache_present'
+  | 'no_capability_declared';
+
+export type VisionCanaryProbeDecision =
+  | { action: 'skip'; reason: VisionCanaryProbeSkipReason }
+  | { action: 'probe' };
+
+/**
+ * E1：是否该触发金丝雀实测的**纯决策**（无 I/O 副作用之外——只读 framework.local.json，
+ * 不写、不 spawn agent），与实际执行（runVisionCanaryProbe）分离，便于独立单测。
+ * 触发条件：非 dry-run + chain 含 spec/coding + 需求 UI 相关 + 无 local override +
+ * （无缓存 或 缓存 adapter≠当前 或 --refresh-vision-probe 强制）。
+ */
+export function decideVisionCanaryProbe(input: {
+  projectRoot: string;
+  manifest: GoalManifest;
+  chain: FeaturePhase[];
+  dryRun: boolean;
+  forceRefresh?: boolean;
+}): VisionCanaryProbeDecision {
+  const { projectRoot, manifest, chain, dryRun, forceRefresh } = input;
+  if (dryRun) return { action: 'skip', reason: 'dry_run' };
+  if (!chain.includes('spec') && !chain.includes('coding')) {
+    return { action: 'skip', reason: 'chain_has_no_ui_phase' };
+  }
+  if (!detectUiRelevantRequirement(manifest.requirement)) {
+    return { action: 'skip', reason: 'not_ui_relevant' };
+  }
+  const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
+  let local: ReturnType<typeof loadLocalConfig>;
+  try {
+    local = loadLocalConfig(projectRoot);
+  } catch {
+    local = null; // 格式有误不阻断探测决策——回退当作"无缓存"
+  }
+  if (local?.vision?.image_input_override) {
+    return { action: 'skip', reason: 'local_override_present' };
+  }
+  const canary = local?.vision?.canary;
+  if (!forceRefresh && canary && canary.adapter === adapter) {
+    return { action: 'skip', reason: 'fresh_cache_present' };
+  }
+  return { action: 'probe' };
+}
+
+/**
+ * E1：实际执行金丝雀探测——生成资产、headless 问答、分类、写回 framework.local.json 缓存。
+ * 【诚实声明】本函数会真实 spawn 一次 headless agent 调用（真实成本，同 goal-runner 本身
+ * 每 phase 的调用性质一致，非额外风险类别）；单测只覆盖 decideVisionCanaryProbe 的纯决策
+ * 分支，不在自动化测试中触发真实 agent 调用（那需要真实 CLI/账号，超出单测范畴）。
+ * 失败降级：agent 调用/分类异常不抛出、不阻断 goal run——按 verdict='none' 保守处理，
+ * 让主流程用现有（adapter 声明）路径继续跑，探测失败不是 BLOCKER。
+ */
+export async function runVisionCanaryProbe(input: {
+  projectRoot: string;
+  frameworkRoot: string;
+  manifest: GoalManifest;
+}): Promise<{ ran: boolean; verdict?: 'tool_read' | 'ocr_capable' | 'none'; error?: string }> {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
+  try {
+    const assetsDir = path.join(frameworkRoot, 'harness', 'assets');
+    const { imagePath } = await ensureVisionCanaryAsset(assetsDir);
+    const prompt = buildCanaryPrompt(imagePath);
+    const cap = loadGoalCapability(frameworkRoot, adapter);
+    if (!cap.capability) {
+      return { ran: false, error: `adapter ${adapter} 无 goal_capability 声明，跳过金丝雀探测` };
+    }
+    const vars: InvokeTemplateVars = {
+      PROMPT_FILE: '',
+      PROMPT: prompt,
+      SKILL_PATH: '',
+      PROJECT_ROOT: projectRoot,
+      FRAMEWORK_ROOT: frameworkRoot,
+      FEATURE: manifest.feature,
+      PHASE: manifest.start_phase,
+    };
+    const plan = resolveHeadlessInvokePlan(adapter, cap.capability, manifest.unattended, prompt, vars);
+    const invoke = await invokeAgentHeadless(plan, projectRoot, { timeoutMs: 120_000 });
+    const classify = classifyCanaryResponse(invoke.stdout);
+    const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
+    writeLocalConfig(projectRoot, {
+      ...existing,
+      vision: {
+        ...(existing.vision ?? {}),
+        canary: {
+          adapter,
+          verdict: classify.verdict,
+          probed_at: new Date().toISOString(),
+          reason: classify.reason,
+        },
+      },
+    });
+    return { ran: true, verdict: classify.verdict };
+  } catch (e) {
+    return { ran: false, error: (e as Error).message };
   }
 }
 

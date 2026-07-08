@@ -26,7 +26,7 @@ import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './util
 import { loadResolvedProfile } from '../profile-loader';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput, readCanaryOcrCapableSignal } from './utils/multimodal-probe';
 import {
   clampFidelityByCapability,
   detectPixel1to1Intent,
@@ -117,6 +117,8 @@ import {
   resolveAdapterProvenance,
   runGoalPreflight,
   reconcileRunAdapter,
+  decideVisionCanaryProbe,
+  runVisionCanaryProbe,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
 import {
@@ -745,7 +747,11 @@ export function resolvePhaseCapabilityAdvisory(
 
   const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
-  const ocrAvailable = toolkit ? toolkit.isOcrAvailable() : false;
+  // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
+  // 判定其无视觉）——OR 进 ocrAvailable，不替代框架自身 OCR 环境探测（后者更可靠/确定性）。
+  const ocrAvailable =
+    (toolkit ? toolkit.isOcrAvailable() : false) ||
+    readCanaryOcrCapableSignal(projectRoot, manifest.adapter);
   const clamp = clampFidelityByCapability(desired, { hasVision: mmProbe.supported, ocrAvailable });
 
   const ocrJsonPaths =
@@ -1154,6 +1160,7 @@ async function main(): Promise<number> {
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
       'override-adapter',
       'detach', 'detached-child', 'force', 'foreground-ok',
+      'refresh-vision-probe',
     ],
     alias: { f: 'feature', h: 'help' },
   });
@@ -1324,6 +1331,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain,
       resolvedProfile,
     });
+
+    // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
+    // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
+    // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
+    // 探测失败/异常不阻断 run（保守：让主流程走既有 adapter 声明路径继续）。
+    const visionProbeDecision = decideVisionCanaryProbe({
+      projectRoot,
+      manifest,
+      chain,
+      dryRun,
+      forceRefresh: Boolean(argv['refresh-vision-probe']),
+    });
+    if (visionProbeDecision.action === 'probe') {
+      const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
+      if (probeResult.ran) {
+        console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
+      } else if (probeResult.error) {
+        console.warn(`[goal-runner] 视觉能力金丝雀实测跳过/失败（不阻断 run）：${probeResult.error}`);
+      }
+    }
+
     // override 回写延后至此：survival guard / orphan guard / lock / preflight 全过，run 即将 commit 才切 local，
     // 避免任一启动前置 BLOCKER 退出却已把 framework.local.json 切走（run 没真启动 local 却变了）。
     if (pendingAdapterWriteback) {

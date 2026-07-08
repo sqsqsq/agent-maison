@@ -10,7 +10,12 @@ export const HMOS_DEVICE_TUNING_KEYS = [
   'testRunner',
 ] as const;
 
-export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'toolchain']);
+export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'toolchain', 'vision']);
+
+/** E1（多模态降级阶梯 plan d4a8f3c6）：framework.local.json.vision 顶层允许键。 */
+export const LOCAL_VISION_KEYS = new Set(['image_input_override', 'canary']);
+/** framework.local.json.vision.canary 允许键。 */
+export const LOCAL_VISION_CANARY_KEYS = new Set(['adapter', 'verdict', 'probed_at', 'reason']);
 
 /** 唯一 known-legacy 顶层键（非 canonical，读盘时剥离） */
 export const LOCAL_LEGACY_TOP_KEY = 'setup';

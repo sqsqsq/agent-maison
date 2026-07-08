@@ -233,6 +233,110 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  // ==========================================================================
+  // E1（多模态降级阶梯 plan d4a8f3c6）：vision.image_input_override / vision.canary
+  // ==========================================================================
+  {
+    name: 'E1 writeLocalConfig/loadLocalConfig: vision.image_input_override 写回读取 roundtrip',
+    run: () => {
+      const root = mkTmp();
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        agent_adapter: 'chrys',
+        vision: { image_input_override: 'none' },
+      });
+      const local = loadLocalConfig(root);
+      assert.strictEqual(local?.vision?.image_input_override, 'none');
+      assert.strictEqual(local?.agent_adapter, 'chrys', '写回不应丢失既有个人配置字段');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'E1 loadLocalConfig rejects invalid image_input_override value',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { image_input_override: 'bogus' } }),
+      );
+      assert.throws(() => loadLocalConfig(root), /image_input_override/);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'E1 loadLocalConfig: vision.canary 合法值 roundtrip',
+    run: () => {
+      const root = mkTmp();
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        vision: {
+          canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: '2026-07-08T12:00:00.000Z', reason: 'test' },
+        },
+      });
+      const local = loadLocalConfig(root);
+      assert.strictEqual(local?.vision?.canary?.adapter, 'chrys');
+      assert.strictEqual(local?.vision?.canary?.verdict, 'ocr_capable');
+      assert.strictEqual(local?.vision?.canary?.reason, 'test');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'E1 loadLocalConfig rejects invalid canary.verdict / missing required fields',
+    run: () => {
+      const root1 = mkTmp();
+      fs.writeFileSync(
+        path.join(root1, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { canary: { adapter: 'chrys', verdict: 'bogus', probed_at: 'x' } } }),
+      );
+      assert.throws(() => loadLocalConfig(root1), /verdict/);
+      fs.rmSync(root1, { recursive: true, force: true });
+
+      const root2 = mkTmp();
+      fs.writeFileSync(
+        path.join(root2, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { canary: { verdict: 'none', probed_at: 'x' } } }),
+      );
+      assert.throws(() => loadLocalConfig(root2), /adapter/);
+      fs.rmSync(root2, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'E1 loadLocalConfig rejects unknown keys in vision / vision.canary',
+    run: () => {
+      const root1 = mkTmp();
+      fs.writeFileSync(
+        path.join(root1, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { bogus_key: 1 } }),
+      );
+      assert.throws(() => loadLocalConfig(root1), /vision 含非法键/);
+      fs.rmSync(root1, { recursive: true, force: true });
+
+      const root2 = mkTmp();
+      fs.writeFileSync(
+        path.join(root2, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: 'x', bogus: 1 } },
+        }),
+      );
+      assert.throws(() => loadLocalConfig(root2), /vision\.canary 含非法键/);
+      fs.rmSync(root2, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'E1 loadLocalConfig: 旧版 local.json（无 vision 键）仍正常读取（向后兼容）',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude' }),
+      );
+      const local = loadLocalConfig(root);
+      assert.strictEqual(local?.agent_adapter, 'claude');
+      assert.strictEqual(local?.vision, undefined, '未声明 vision 不应凭空产出');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

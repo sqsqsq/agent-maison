@@ -182,7 +182,7 @@ todos:
       取最保守值；所有降级决策落 headless-assumptions + trace（provenance: canary_failed /
       canary_ocr_only / local_override）。
       单测：override 优先级、几何题/文字题分级判定、缓存失效、保守合并。
-    status: pending
+    status: completed
   - id: e5-readiness-ocr-probe
     content: >
       E5 Tier_1 探针补 OCR 就绪度（补强；非案B主因——OCR 环境实际正常，但内网 npm 局部
@@ -445,3 +445,49 @@ check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）
   代码实现，未触及 `specs/phase-rules/*.yaml`，`gate_fingerprint` 零影响，宿主存量回执
   不会因本次改动被判 stale。
 - **验收**：typecheck 0 · unit 1496/0（+1 新用例，回归测试内含双 ctx 对照）· fixtures 35/0。
+
+## E1 实施记录（2026-07-08）
+
+- **金丝雀资产**：`vision-canary.ts`（新，core）——四色块（红/蓝/绿/黄象限）+ 中心文字
+  token（`MAISON7X3Q`）的 300×300 PNG，用 jimp 生成（harness 既有依赖，无需新增）。
+  文件名仅含内容哈希（`vision-canary-<hash>.png`），答案独立存
+  `<hash>.answer-key.json`——已用真实渲染 + 像素采样验证四象限颜色与坐标精确匹配。
+  判定分级（`classifyCanaryResponse`，纯函数）：**几何题全对**（4/4，严格无部分分——
+  防"蒙对 3/4"）→ `tool_read`；**几何题未全对但 TEXT_TOKEN 命中** → `ocr_capable`
+  （vision 仍 `none`，供 E2 capability 参考）；都不中/声明 `CANNOT_SEE_IMAGE`/空输出 →
+  `none`。`externalToolSuspected` 尽力而为扫描 tesseract/ocr/PIL/cv2 等关键词。
+- **本地 override + 缓存 schema**：`framework.local.json` 新增顶层键 `vision`
+  （`config-field-ownership.ts` 白名单同步）：`image_input_override` 三值枚举 +
+  `canary`（adapter/verdict/probed_at/reason，四字段全部严格校验）。旧版无 `vision`
+  键的文件按向后兼容处理（不强制迁移）。
+- **解析链接入**：`multimodal-probe.ts` 新增 `resolveBaseImageInput`（解析链最前：
+  override > 新鲜金丝雀缓存（**adapter 匹配才算新鲜**——adapter 变更即视为过期）>
+  原 adapter.yaml 声明/heuristic），`resolveGoalEffectiveImageInput`/
+  `resolveContextAdapterImageInput` 改调用它——单点收口，harness check 与
+  goal-runner 的 `resolvePhaseCapabilityAdvisory`（复用同一 `resolveContextAdapterImageInput`）
+  同时生效，无需分别改。`readCanaryOcrCapableSignal` 供 E2 capability 消费（OR 进
+  `ocrAvailable`，不替代框架自身 OCR 探测——canary 信号是补充非替代）。
+- **goal-preflight 接入**：`decideVisionCanaryProbe`（纯决策，可单测：dry-run/
+  非UI/无spec-coding phase/已有override/新鲜缓存 → skip；否则 → probe）与
+  `runVisionCanaryProbe`（impure，真实 spawn 一次 headless agent 问答 + 写回缓存）
+  分离——goal-runner.ts 在 `runGoalPreflight` 成功后调用，新增 `--refresh-vision-probe`
+  CLI 强制重测。**架构决策（避免大改动风险）**：未把探测逻辑塞进 `runGoalPreflight`
+  本体（那是纯同步、零 agent 调用、被广泛复用/测试的现有函数，强行改异步风险与
+  改动面不成比例）——新增独立函数在其调用点之后追加调用，`runGoalPreflight` 自身
+  签名/行为零改动。
+- **诚实边界（验证范围声明）**：`runVisionCanaryProbe`（真实 spawn agent 那部分）
+  **未在自动化测试中触发真实 agent 调用**——需要真实 CLI/账号，超出单测范畴且不应
+  在编码会话中自动消耗真实 API 调用；已验证的是：①决策分支 `decideVisionCanaryProbe`
+  纯函数全覆盖测试；②`classifyCanaryResponse` 判定逻辑（几何全对/部分对/仅文字对/
+  盲/外部工具嫌疑）全覆盖测试，用构造的合成 agent 响应文本，非真实调用；③资产生成
+  `ensureVisionCanaryAsset` 真实执行验证（写盘、幂等、像素级颜色/坐标核对）；
+  ④解析链 override/缓存优先级真实读写 `framework.local.json` 验证。`runVisionCanaryProbe`
+  函数体本身（agent invoke → 分类 → 写缓存的胶水代码）逻辑简单、复用既有
+  `invokeAgentHeadless`/`resolveHeadlessInvokePlan`（已在其他路径测试过的基础设施），
+  风险面小，但**发版前建议宿主实机跑一次真实探测**验证端到端胶水代码本身。
+- **交互式自答**：SKILL.md 模型档位段补一句——交互式会话无 goal-runner 自动注入能力块
+  时，agent 先用 Read 工具打开参考图具体描述内容自查，给不出具体描述即按盲档工作法；
+  未建独立 CLI 探测脚本供交互式用户手动触发（真人在场核对本身就是比自动金丝雀更可信
+  的信号来源，不必等自动化）。
+- **验收**：typecheck 0 · unit 1525/0（+29 新用例：vision-canary 11 个 + multimodal-probe
+  5 个 + framework-local-config 6 个 + goal-preflight 7 个）· fixtures 35/0。
