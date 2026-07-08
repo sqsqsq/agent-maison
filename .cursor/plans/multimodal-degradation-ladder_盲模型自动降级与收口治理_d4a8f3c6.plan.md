@@ -138,7 +138,7 @@ todos:
       单测：能力块注入分支（三档）、盲档指令措辞锚点、ocr.json 生成与 prompt 引用、
       参考图 pre-scan 三级顺序与无图源跳过、unattended 块档位分支与能力块同源、
       OCR 不可用时不注入且工作法降 reference_only 措辞。
-    status: pending
+    status: completed
   - id: e3-gate-semantics-per-tier
     content: >
       E3 门禁语义随档位切换（止血切片二之2，治 OCR 噪声无解题）。
@@ -158,7 +158,7 @@ todos:
       ④phase-rules yaml 纪律：行为变化全在 ts 层；yaml 文案改动放实施记录评估，默认不动。
       单测：盲档清单生成与家族归类、pixel 档语义不变、噪声子串匹配（若做）、
       fixture 视需要补 blind-tier 契约样例。
-    status: pending
+    status: completed
   - id: e1-canary-probe-override
     content: >
       E1 金丝雀视觉实测 + 本地 override（治案A探测层；排在止血切片后——案B不依赖它）。
@@ -377,3 +377,71 @@ check 不入内；`printStableSummary`（goal detach.log/console 唯一出口）
   framework-local-config.ts:57-61 未知键 throw——已验证，不同步则字段一落全消费方炸）：
   新键纳入白名单/类型/roundtrip + 非法值/旧版兼容/写回不丢字段测试；
   ②E7 验收命令改逐条可复制形式 + Windows PowerShell NODE_PATH 语法。
+
+## E0 实施记录（2026-07-08）
+
+- **核心机制**：`resolvePhaseCapabilityAdvisory`（新，goal-runner.ts，已导出供测试）——
+  spec/coding phase 且 UI 相关时计算 {hasVision, ocrAvailable, effectiveFidelity,
+  fidelityClamped, ocrJsonPaths}；非 UI 需求 / 其余 phase 返回 null（不打扰无关 prompt）。
+  UI 相关性判定：spec.md 已存在（coding 阶段必然存在；spec 重试也可能存在）→ 读真实
+  `ui_change`/`fidelity_target`（权威）；否则（spec 首次 invoke）退回需求文本启发式
+  （`detectUiRelevantRequirement` 宽松 UI 相关性 + `detectPixel1to1Intent` 1:1 强意图）。
+  `buildCapabilityBlock`（纯函数，新导出）渲染能力块文本；`buildUnattendedExecutionBlock`
+  加 capabilityAdvisory 可选参数，按 effectiveFidelity 分支"pixel_1to1 P0 唯一出路"那句话
+  （cursor 原始诉求：能力块与 unattended 块必须同源取值，不得各算一遍自相矛盾）——
+  两者共享同一个 advisory 对象，非分别计算。
+- **OCR 预扫描（E6-min）**：`runOcrPrescanForSpec` 落 `spec/reports/ocr/<screen>.ocr.json`，
+  幂等（已存在跳过，OCR 有耗时）。参考图发现 `discoverReferenceImagesForOcrPrescan`
+  （fidelity-shared.ts，供 goal-runner 与未来 E3/E6 复用）。
+- **踩坑记录（有价值，值得记）**：codex 提出的"参考图发现规则"实现时发现一个比预想更深的
+  障碍——中文需求文本无空格分隔，"参考图在doc/features/..."里"在"与路径无缝相连，naive
+  bidirectional token 正则会把中文动词一起吞进 token（resolve 到不存在的目录，测试实测
+  FAIL）；反过来贪婪向后延伸又会把"...目录下"这类中文尾缀（口语描述，非路径段）一起吞掉。
+  最终方案：**锚定 `relFeaturesDir()` 字面量起点**（不吃前缀 prose）+ **从最长到最短逐段
+  回缩找磁盘上真实存在的最长前缀**（天然跳过"目录下"类伪路径段，不必理解中文语法）——
+  比 codex 原始建议的正则方案更稳健，已用真实案例文本（bc-openCard/chrys 银行卡案的
+  requirement 原文）验证。
+- **core/profile 复用**：`loadProfileOcrToolkit`/`probeProfileOcrAvailable` 从 E2 阶段
+  harness-runner.ts 的本地实现**移到** fidelity-shared.ts 共享导出（避免 goal-runner.ts
+  重复实现同一 require-by-profileDir 逻辑），harness-runner.ts 改为 import 共享版本。
+- **规则文档同步**：`SKILL.md:179` 强 VL 死规则改为按 `Visual capability advisory` 块的
+  Vision YES/NO 分档；`reference/ui-spec.md` 新增"盲档工作法"小节 + 两处表格补盲档行
+  （DSL↔原图校验 gate 场景表 + 推荐模型档位 K2 表）。
+- **验收**：typecheck 0 · unit 1495/0（+15 新用例：fidelity-shared 5 个 + goal-headless-guard
+  10 个，均用真实 adapter 声明 claude=tool_read/chrys=none 与真实 profile OCR 环境验证，
+  非 mock）· fixtures 35/0。
+- **诚实范围声明**：OCR 预扫描仅覆盖 `spec` 阶段首次/重试 invoke（`coding` 阶段的能力块
+  会声明能力但不重新跑 OCR——coding 阶段应已能读 spec 阶段产出的 ui-spec.yaml 文本，
+  OCR JSON 主要服务 spec 阶段的提取工作，这是有意的范围收窄非遗漏）。
+
+## E3 实施记录（2026-07-08）
+
+- **核心机制**：`capture-completeness-check.ts` 的 `checkCaptureExternalAudit` 在
+  `uncovered.length > 0` 分支新增 `ctx.adapterImageInput === 'none'` 判据（盲档，与
+  pixel/semantic/reference_only 具体档位无关——是"看不看得见图"而非"追不追求像素级"）：
+  命中时不再走原"逐条 implement/defer+人签"BLOCKER/FAIL，改为 `writeBlindReviewPending`
+  写出结构化 `spec/reports/blind-review-pending.yaml`（逐行 screen/text/y/confidence/
+  `auto_disposition: unverifiable_blind`），check 本身降 `MAJOR`/`WARN`。真视觉档
+  （`adapterImageInput` 非 `none`）分支完全不变（回归测试锁定：同一坏态两种 ctx 对照，
+  真视觉档仍 `BLOCKER`/`FAIL`）——门禁强度没有全局放水，只与能力档位对齐。
+- **重要发现（比原计划推导更深一层，值得记）**：核对 `harness-runner.ts` 的
+  `summary.blockers[]` 构成（`buildSummaryBlockers` 只收 `status==='FAIL' &&
+  severity==='BLOCKER'` 的 check）后确认：本次降级为 `MAJOR`/`WARN` 意味着
+  `capture_completeness_external` 在盲档下**从此不再进入 `summary.blockers[]`**，
+  也就**不会再让 `summary.verdict` 变成 `FAIL`**——即"script harness 本身可以在盲档下
+  对这一项直接放行"，而不只是"重试更容易通过"。
+  **连带结论**：E4 里预留的 `blind_review` 累计熔断家族扩展位（"为 capture_completeness_
+  external 建 blind_review 家族归属"）**未启用，也不再需要**——既然该 check 在盲档下
+  根本不会成为 blocker，就没有"反复出现却被产物变化冲淡"的累计熔断场景可言（那是
+  BLOCKER 反复出现才有的问题）。`CUMULATIVE_HALT_FAMILY` 的注释保留原样作为文档
+  （若未来某检查仍需要"盲档降级但仍是 blocker + 需累计熔断"的场景，该扩展位仍可用），
+  但没有为了"用上它"而强造一个当前用不到的分类——避免过度设计。
+- **③OCR 噪声混合行容错——按 plan 允许的可选子项，本轮未做，推迟至 E6**：案B 实录
+  "人《AA招商银行"这类噪声前缀+真文本混合行的子串提取匹配未实现；当前盲档下这类行
+  仍会计入 `uncovered`（写入 blind-review-pending.yaml 交人终审），只是不再 BLOCKER——
+  对"止血"目标已经足够（不再空转/死锁），容错优化留给 E6 做（plan 原文已预先声明此为
+  可选项，非遗漏）。
+- **④phase-rules yaml 未动**：行为变化全部在 `capture-completeness-check.ts` 这层 ts
+  代码实现，未触及 `specs/phase-rules/*.yaml`，`gate_fingerprint` 零影响，宿主存量回执
+  不会因本次改动被判 stale。
+- **验收**：typecheck 0 · unit 1496/0（+1 新用例，回归测试内含双 ctx 对照）· fixtures 35/0。

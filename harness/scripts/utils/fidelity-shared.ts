@@ -7,7 +7,7 @@ import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext } from './types';
 import { parseVisualHandoffYamlRoot } from './ui-spec-shared';
-import { featureFilePath } from '../../config';
+import { featureFilePath, relFeaturesDir } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -419,4 +419,132 @@ export const P0_VISUAL_ELEMENT_HINTS = [
 export function isP0VisualElementId(elementId: string): boolean {
   const lower = elementId.toLowerCase();
   return P0_VISUAL_ELEMENT_HINTS.some(h => lower.includes(h));
+}
+
+// ============================================================================
+// E0（多模态降级阶梯 plan d4a8f3c6）：能力感知 phase prompt 支撑函数
+// ============================================================================
+
+/**
+ * 需求文本"涉及 UI"的宽松探测（比 detectPixel1to1Intent 的 1:1 强意图更宽泛——
+ * 这里只判"是不是 UI 类需求"，不判保真强度）。首次 spec invoke 前 spec.md 不存在，
+ * 无法读 ui_change 字段，只能退回需求文本启发式；spec.md 写出后应改用
+ * UI_CHANGE_REQUIRES_UI_SPEC.has(parseUiChangeFromSpecMarkdown(...))（更权威）。
+ */
+const UI_RELEVANT_PATTERNS: readonly RegExp[] = [
+  /页面/, /界面/, /截图/, /参考图/, /设计稿/, /视觉/, /还原/, /布局/, /组件/,
+  /交互稿/, /原型图/, /配色/, /样式/, /图标/, /\bUI\b/i, /\bUX\b/i, /figma/i, /icon/i,
+];
+
+export function detectUiRelevantRequirement(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !text.trim()) return false;
+  return UI_RELEVANT_PATTERNS.some(re => re.test(text));
+}
+
+const OCR_PRESCAN_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+
+function listImageFilesInDir(absDir: string): string[] {
+  try {
+    if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) return [];
+    return fs
+      .readdirSync(absDir)
+      .filter(f => OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(f).toLowerCase()))
+      .map(f => path.join(absDir, f))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * requirement 文本里锚定 features_dir（如 "doc/features"）起点的路径引用——CJK 文本没有
+ * 空格分隔，"参考图在doc/features/..."里"在"与路径无缝相连，纯 bidirectional token 正则
+ * 会把前缀中文动词一起吞进去（曾踩坑：把"参考图在doc"当一个 token，resolve 到不存在的
+ * 目录）；反过来贪婪向后延伸又会把"...目录下"这类中文尾缀（口语描述，非路径段）一起吞掉。
+ * 解法：只认**从 features_dir 字面量开始**的匹配（不吃前缀 prose），贪婪向后收集
+ * `/segment` 直到分隔符终止，再从最长到最短逐段回缩找**磁盘上真实存在**的最长前缀——
+ * 天然跳过"目录下"这类不存在的伪路径段，不必理解中文语法。
+ */
+function extractExistingRequirementPathRefs(requirement: string, projectRoot: string): string[] {
+  const anchor = relFeaturesDir(projectRoot).replace(/\\/g, '/');
+  if (!anchor) return [];
+  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escapedAnchor}(?:[\\\\/][\\w.\\u4e00-\\u9fa5-]+)*`, 'g');
+  const matches = requirement.match(re) ?? [];
+  const resolved: string[] = [];
+  for (const m of matches) {
+    const segments = m.split(/[\\/]/).filter(Boolean);
+    for (let end = segments.length; end >= 1; end--) {
+      const candidate = segments.slice(0, end).join('/');
+      const abs = path.resolve(projectRoot, candidate);
+      if (fs.existsSync(abs)) {
+        resolved.push(abs);
+        break; // 取最长存在前缀，命中即停，不再回缩更短的
+      }
+    }
+  }
+  return resolved;
+}
+
+/**
+ * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
+ * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
+ * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
+ * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
+ * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ */
+export function discoverReferenceImagesForOcrPrescan(
+  projectRoot: string,
+  feature: string,
+  requirement: string | undefined,
+): string[] {
+  const found = new Set<string>();
+  if (requirement) {
+    for (const abs of extractExistingRequirementPathRefs(requirement, projectRoot)) {
+      if (OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(abs).toLowerCase())) {
+        if (fs.statSync(abs).isFile()) found.add(abs);
+        continue;
+      }
+      for (const img of listImageFilesInDir(abs)) found.add(img);
+    }
+  }
+  if (found.size === 0) {
+    const uxRefDir = featureFilePath(projectRoot, feature, 'ux-reference');
+    for (const img of listImageFilesInDir(uxRefDir)) found.add(img);
+  }
+  return [...found].sort();
+}
+
+/** 与 ocr-toolkit.ts 的 isOcrAvailable/ocrImageWords 同型（profile 侧真实签名的最小子集）。 */
+export interface ProfileOcrToolkit {
+  isOcrAvailable: () => boolean;
+  ocrImageWords: (imagePath: string) => {
+    ok: boolean;
+    error?: string;
+    width?: number;
+    height?: number;
+    words?: Array<{ text: string; conf: number; x0: number; y0: number; x1: number; y1: number }>;
+  };
+}
+
+/**
+ * OCR 工具链按 profileDir 通用路径动态加载——不硬编码 'hmos-app'（generic 等无 OCR 资产的
+ * profile require 会失败，按设计返回 null，不是错误）。与 capability-registry.ts 的
+ * provider 动态 require（path.join(resolved.profileDir, 'harness', 'providers', ...)）
+ * 同构，供 harness-runner.ts（钳制探测）与 goal-runner.ts（E0 OCR 预扫描）共用，避免重复实现。
+ */
+export function loadProfileOcrToolkit(profileDir: string): ProfileOcrToolkit | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(path.join(profileDir, 'harness', 'ocr-toolkit')) as Partial<ProfileOcrToolkit>;
+    if (typeof mod.isOcrAvailable !== 'function' || typeof mod.ocrImageWords !== 'function') return null;
+    return { isOcrAvailable: mod.isOcrAvailable, ocrImageWords: mod.ocrImageWords };
+  } catch {
+    return null; // profile 无 OCR 工具链（如 generic）——非错误，按"无 OCR"处理
+  }
+}
+
+export function probeProfileOcrAvailable(profileDir: string): boolean {
+  const toolkit = loadProfileOcrToolkit(profileDir);
+  return toolkit ? toolkit.isOcrAvailable() : false;
 }

@@ -176,7 +176,7 @@
 6. **保真档位（先识别意图，再声明）**：从**原始需求/用户输入**识别强 1:1 信号——"完全参考 / 严格按图 / 像素级 / 1比1 / 逐像素 / 100% 还原 / 照着图做"——**命中即置 `fidelity_target: pixel_1to1`**。`semantic_layout`（默认）仅用于明确不追求逐屏还原的需求；**有截图 + "完全参考"类措辞却用 semantic_layout = 降级，禁止**。`pixel_1to1` 时 defer 须 `fidelity_deferrals` + **真人签字**（`signed_by: goal-mode-auto` 等自签不算人签）；见 [reference/visual-handoff.md](reference/visual-handoff.md)
 7. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，未签字 defer → BLOCKER。
 
-**模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
+**模型档位（K2，v2.5+ 按能力分档）**：goal-runner 会在 phase prompt 里注入「Visual capability advisory」块，声明本次 agent 是否具备视觉能力（`Vision: YES/NO`）。**有视觉能力（YES）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。**无视觉能力（NO，盲档）**：不得假装看图/凭空描述截图内容（幻觉）——改走 [reference/ui-spec.md「盲档工作法」](reference/ui-spec.md)：OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走 placeholder，无法判定项登记待复核清单；`fidelity_target` 会被能力自动钳制，无需手动改声明。交互式（非 headless）会话若模型本身具备视觉能力，仍按原「必须用强 VL」执行——本分档只影响**确认没有视觉能力**的场景，不是"可以偷懒降级"的许可。
 
 #### Step 2.1 资产落地（review#2）
 

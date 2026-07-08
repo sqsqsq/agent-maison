@@ -191,24 +191,36 @@ ui-spec 生成后、进 plan 前：
 1. **人工 gate**：逐屏 `[x]` 确认（类比术语映射表），设 `verified: human_confirmed` + `verified_method: human_gate`。
 2. **多模态 gate**（M3，条件具备）：VL 核对后设 `verified: verified` + `verified_method: vl_multimodal`。
 3. **无 VL + 无人工**：只能 `verified: unverified` → 连带降级 C/D/K（见下表）。
+4. **盲档 + OCR 辅助**（v2.5+，多模态降级阶梯）：无视觉能力时，`verified: unverified`（同 3，机读信号不变——OCR 辅助不等于视觉验真）；提取工作法见下方「盲档工作法」，**禁止假装完成了看图核对**。
 
 | 场景 | ui-spec 状态 | 视觉链行为 |
 |------|-------------|------------|
 | 有 VL | `verified` | 全链生效 |
 | 无 VL、有人工 | `human_confirmed` | A/C/D/K 生效；E/F 视设备/多模态 |
-| 无 VL、无人工 | `unverified` | C 尽力而为；**D 只报结构不报保真**；K 标基线未校验 |
+| 无 VL、无人工（含盲档+OCR） | `unverified` | C 尽力而为；**D 只报结构不报保真**；K 标基线未校验 |
 
 ## 提取模型 vs 编码模型解耦（J）
 
 - **提取（看图）**：强 VL / Composer / 人工校验。
 - **编码（写代码）**：内网弱模型**只消费** ui-spec 文本（树 + token + 资产 key + 文案），无需自己看图。
-- **反模式**：用看不到图的弱模型跑 Step 2 提取 → garbage in。
+- **反模式**：用看不到图的弱模型跑 Step 2 提取 → garbage in；**同样禁止的反模式**：无视觉能力时假装看了图、凭空描述截图内容（幻觉）——见下方「盲档工作法」。
+
+## 盲档工作法（v2.5+，effective_image_input=none 时的 Step 2 提取）
+
+goal-runner 会在 phase prompt 里注入能力探测结果（`Visual capability advisory` 块）；本 Step **必须**按其中声明的能力工作，不得假装拥有未探测到的能力：
+
+- **文案与文本位置**：若 prompt 附带 OCR JSON 路径（`spec/reports/ocr/<screen>.ocr.json`，逐词文本 + 置信度 + 归一化 bbox），**以其为准，不许自造**——文案照抄，位置按其 bbox 归一化坐标换算。
+- **结构与布局**：由需求文字描述 + OCR 文本的相对位置聚类（同一 y 区间的词多半同行/同组）推断，不依赖看图判断颜色/像素级样式。
+- **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"。
+- **无法判定的项**：不要逐条反复猜测或长时间空转——登记进结构化待复核清单（见 phase harness 提示的 blind-review-pending 产物），交由收口阶段真人一次性终审。
+- **没有 OCR JSON 可用**（无参考图 / OCR 环境不可用）：仅凭需求文字描述工作，`fidelity_target` 会被能力钳制到 `reference_only` 地板——这是预期行为，不是错误。
 
 ## 推荐模型档位（K2）
 
 | 步骤 | 推荐 |
 |------|------|
-| spec Step 2 提取 ui-spec | 强 VL（Composer 2.5 等） |
+| spec Step 2 提取 ui-spec（有视觉能力） | 强 VL（Composer 2.5 等） |
+| spec Step 2 提取 ui-spec（盲档，无视觉能力） | OCR JSON + 结构化推断（见上「盲档工作法」）；**禁止假装看图** |
 | coding Read 原图 | 强 VL；弱模型读 ui-spec 文本即可 |
 | verify-coding 多模态对照 | 强 VL verifier |
 

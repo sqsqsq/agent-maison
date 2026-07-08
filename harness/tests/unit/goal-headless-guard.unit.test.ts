@@ -32,8 +32,17 @@ import {
   lastPhaseVerdictTransientApiError,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
+import {
+  buildPhasePrompt,
+  buildCapabilityBlock,
+  resolvePhaseCapabilityAdvisory,
+  TRANSIENT_API_BACKOFF_MS,
+  VISUAL_GAP_RETRY_GUIDANCE,
+  type CapabilityAdvisory,
+} from '../../scripts/goal-runner';
 import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
+import { clearFrameworkConfigCache } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -70,6 +79,41 @@ const MINIMAL_MANIFEST: GoalManifest = {
   report_dir: 'doc/features/demo-feature/goal-runs/20260101T000000Z',
   created_at: '2026-01-01T00:00:00.000Z',
 };
+
+/**
+ * E0 测试夹具：独立临时 projectRoot（不用 FRAMEWORK_ROOT 自身，避免污染仓库根 doc/）+
+ * 真实 FRAMEWORK_ROOT 作 frameworkRoot（令 resolveContextAdapterImageInput 读到真实
+ * agents/<adapter>/adapter.yaml；loadResolvedProfile 的 profileDir 解析独立于 projectRoot，
+ * 恒指向真实仓库的 profiles/<name>，故可直接构造任意 profile 的 resolvedProfile）。
+ */
+function mkCapabilityProject(profileName: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e0-cap-'));
+  fs.writeFileSync(
+    path.join(root, 'framework.config.json'),
+    JSON.stringify({
+      schema_version: '1.0',
+      project_name: 'demo',
+      project_type: 'app',
+      project_profile: { name: profileName },
+      agent_adapter: 'chrys',
+      architecture: {
+        outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'forbid' }],
+        module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+        inner_dependency_direction: 'upward',
+        cross_module_exports_file: 'index.ets',
+      },
+      paths: { features_dir: 'doc/features' },
+    }),
+    'utf-8',
+  );
+  return root;
+}
+
+function loadTestResolvedProfile(root: string) {
+  clearFrameworkConfigCache();
+  const fw = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf-8'));
+  return loadResolvedProfile(root, fw);
+}
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
@@ -564,6 +608,230 @@ export function runAll(): UnitCaseResult[] {
         );
         assert(prompt.includes('TIMED OUT'), '仅 skip-lines 也应注入续作块');
         assert(prompt.includes('src/a.ets'), '缺 skip-list 文件');
+      },
+    },
+    // ==========================================================================
+    // E0（多模态降级阶梯 plan d4a8f3c6）：能力感知 phase prompt
+    // ==========================================================================
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=true → 不含盲档工作法指令',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: true,
+          ocrAvailable: false,
+          effectiveFidelity: 'pixel_1to1',
+          fidelityClamped: false,
+          ocrJsonPaths: [],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/Vision.*YES/.test(text), 'should declare vision YES');
+        assert(!/do NOT have vision/i.test(text), 'hasVision=true 不应出现盲档指令');
+        assert(!/auto-clamped/.test(text), '未钳制不应提示 auto-clamped');
+      },
+    },
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=false + ocrAvailable=true → 盲档工作法 + OCR JSON 列表',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: true,
+          effectiveFidelity: 'semantic_layout',
+          fidelityClamped: true,
+          ocrJsonPaths: ['doc/features/bc/spec/reports/ocr/home.ocr.json'],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/Vision.*NO/.test(text), 'should declare vision NO');
+        assert(/do NOT have vision/i.test(text), '盲档应含"不要假装看图"指令');
+        assert(/ground truth/i.test(text), '应指示 OCR JSON 为 ground truth');
+        assert(/blind-review pending/i.test(text), '应指示登记待复核清单而非反复猜测');
+        assert(text.includes('doc/features/bc/spec/reports/ocr/home.ocr.json'), '应列出 OCR JSON 路径');
+        assert(/auto-clamped/.test(text), '钳制生效应提示 auto-clamped');
+      },
+    },
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=false + ocrAvailable=false（reference_only 地板）→ 声明无 OCR JSON 可用',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: false,
+          effectiveFidelity: 'reference_only',
+          fidelityClamped: true,
+          ocrJsonPaths: [],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/reference_only/.test(text), '应声明有效档位 reference_only');
+        assert(/No OCR JSON available/i.test(text), '应如实声明无 OCR JSON');
+        assert(/requirement text only/i.test(text), '应指示仅凭需求文字工作');
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: 非 UI 需求 → null（不注入能力块）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '实现一个定时批量导出 CSV 到对象存储的后台任务，失败重试 3 次。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory === null, '非 UI 需求不应注入能力块：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: 非 spec/coding phase → null（即便 UI 需求）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'review');
+          assert(advisory === null, 'review phase 不应注入能力块：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=true（claude adapter）+ 1:1 意图 → 不钳制，effective=pixel_1to1',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'claude', // agents/claude/adapter.yaml 声明 image_input: tool_read
+            requirement: '银行卡开卡需求，含7个页面，严格按参考图还原结构、颜色、布局。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === true, 'claude adapter 应判 hasVision=true');
+          assert(advisory!.effectiveFidelity === 'pixel_1to1', 'hasVision=true 不应钳制：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === false, JSON.stringify(advisory));
+          assert(advisory!.ocrJsonPaths.length === 0, '有视觉时不应跑 OCR 预扫描：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=false（chrys）+ hmos-app profile（OCR 可用）→ 钳到 semantic_layout + OCR 预扫描产出 ocr.json',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const reqDir = path.join(root, 'doc', 'features', '原始需求', '1-银行卡');
+          fs.mkdirSync(reqDir, { recursive: true });
+          fs.writeFileSync(path.join(reqDir, 'home.png'), 'fake-png-bytes-not-real-image');
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys', // agents/chrys/adapter.yaml 声明 image_input: none
+            requirement: '银行卡开卡需求，含7个页面，参考图在doc/features/原始需求/1-银行卡/目录下，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === false, 'chrys adapter 应判 hasVision=false');
+          // hmos-app 在本仓库真实带 tesseract.js + chi_sim.traineddata（已验证随发布件），
+          // isOcrAvailable() 应为 true —— 断言与源仓真实环境一致。
+          assert(advisory!.ocrAvailable === true, 'hmos-app profile 应判 OCR 可用（本仓库真实 OCR 环境）');
+          assert(advisory!.effectiveFidelity === 'semantic_layout', '无视觉+OCR可用应钳至 semantic_layout：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === true, JSON.stringify(advisory));
+          // fake-png 内容非真图，jimp/tesseract 可能解析失败——但 OCR 预扫描本身应尝试并落盘
+          // （ocrImageWords 对损坏图片的失败处理属 ocr-toolkit 自身职责，非本函数断言范围）。
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=false（chrys）+ generic profile（无 OCR）→ 钳到 reference_only 地板',
+      run: () => {
+        const root = mkCapabilityProject('generic');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === false, JSON.stringify(advisory));
+          assert(advisory!.ocrAvailable === false, 'generic profile 无 OCR 工具链，应为 false');
+          assert(advisory!.effectiveFidelity === 'reference_only', '无视觉+无OCR应钳至地板：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === true, JSON.stringify(advisory));
+          assert(advisory!.ocrJsonPaths.length === 0, 'OCR 不可用不应产出 ocr.json：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 buildPhasePrompt: 注入能力块 + unattended 块档位分支同源（盲档不再声称 pixel_1to1 P0 唯一出路）',
+      run: () => {
+        const blindAdvisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: true,
+          effectiveFidelity: 'semantic_layout',
+          fidelityClamped: true,
+          ocrJsonPaths: [],
+        };
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          [],
+          [],
+          blindAdvisory,
+        );
+        assert(prompt.includes('Visual capability advisory'), '应注入能力块');
+        assert(prompt.includes('do NOT have vision'.toUpperCase()) || /do NOT have vision/i.test(prompt), '应含盲档指令');
+        // cursor 硬冲突修正核心断言：非 pixel_1to1 档不得再声称"唯一出路是 pixel_1to1 P0 屏人工确认"
+        assert(!/only path through pixel_1to1 P0/i.test(prompt), '盲档下不应再声称 pixel_1to1 P0 是唯一出路：' + prompt);
+        assert(/effective fidelity is \*\*semantic_layout\*\*/i.test(prompt), 'unattended 块应报告实际有效档位');
+        assert(/blind-review/i.test(prompt), 'unattended 块盲档分支应指向 blind-review 清单');
+
+        const pixelAdvisory: CapabilityAdvisory = {
+          hasVision: true,
+          ocrAvailable: false,
+          effectiveFidelity: 'pixel_1to1',
+          fidelityClamped: false,
+          ocrJsonPaths: [],
+        };
+        const pixelPrompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          [],
+          [],
+          pixelAdvisory,
+        );
+        // 真视觉档下原文原样保留（回归保护）
+        assert(/only path through pixel_1to1 P0/i.test(pixelPrompt), 'pixel_1to1 档应保留原 HALT for human 措辞');
+      },
+    },
+    {
+      name: 'E0 buildPhasePrompt: capabilityAdvisory 未传入（非 UI phase）时 unattended 块行为不变（回归保护）',
+      run: () => {
+        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, []);
+        assert(!prompt.includes('Visual capability advisory'), '未传 advisory 不应出现能力块');
+        assert(/only path through pixel_1to1 P0/i.test(prompt), '未传 advisory 时应保留原文（向后兼容）');
       },
     },
     {

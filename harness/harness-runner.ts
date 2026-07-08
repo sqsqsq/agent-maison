@@ -47,6 +47,7 @@ import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity'
 import {
   resolveFidelityContextFromFeature,
   resolveEffectiveFidelityContext,
+  probeProfileOcrAvailable,
 } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
@@ -197,25 +198,6 @@ function ensureHarnessTier1DepsOrExit(): void {
       '  可选（自担 registry/联网策略）：HARNESS_AUTO_NPM_INSTALL=1 cd framework/harness && npx ts-node harness-runner.ts ...'
   );
   process.exit(1);
-}
-
-/**
- * E2（多模态降级阶梯 plan d4a8f3c6）：OCR 就绪度探测——按 profileDir 通用路径尝试 require
- * `<profileDir>/harness/ocr-toolkit` 的 isOcrAvailable()，不硬编码 'hmos-app'（generic 等无
- * OCR 资产的 profile 会 require 失败，按设计返回 false，不是错误）。core 不直接依赖具体 profile
- * 的 OCR 实现，只按 profile 声明的目录做泛化尝试——与 capability-registry.ts 的
- * provider 动态 require（path.join(resolved.profileDir, 'harness', 'providers', moduleName)）
- * 同构，只是这里探测的是"环境就绪度"而非"profile 是否声明该能力"，故不走 capability 表。
- */
-function probeProfileOcrAvailable(profileDir: string): boolean {
-  try {
-    const mod = require(path.join(profileDir, 'harness', 'ocr-toolkit')) as {
-      isOcrAvailable?: () => boolean;
-    };
-    return typeof mod.isOcrAvailable === 'function' ? mod.isOcrAvailable() : false;
-  } catch {
-    return false; // profile 无 OCR 工具链（如 generic）——非错误，按"无 OCR"处理
-  }
 }
 
 // --------------------------------------------------------------------------

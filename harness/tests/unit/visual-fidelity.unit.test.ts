@@ -39,6 +39,10 @@ import {
   resolveEffectiveFidelityContext,
   isPixel1to1,
   fidelityRatchetFailOrWarn,
+  detectUiRelevantRequirement,
+  discoverReferenceImagesForOcrPrescan,
+  loadProfileOcrToolkit,
+  probeProfileOcrAvailable,
 } from '../../scripts/utils/fidelity-shared';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
@@ -1756,6 +1760,75 @@ export function runAll(): UnitCaseResult[] {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  // ==========================================================================
+  // E0（多模态降级阶梯 plan d4a8f3c6）：能力感知 phase prompt 支撑函数
+  // ==========================================================================
+
+  run('E0 detectUiRelevantRequirement: 真实需求文本命中；纯后端逻辑需求不命中', () => {
+    const uiText = '银行卡开卡需求，含7个页面：1)添加银行卡页面...参考图在doc/features/原始需求/1-银行卡/目录下，严格按参考图还原结构、颜色、布局。';
+    if (!detectUiRelevantRequirement(uiText)) throw new Error('真实银行卡需求文本应命中 UI 相关');
+    const backendText = '实现一个定时批量导出 CSV 到对象存储的后台任务，失败重试 3 次并记录审计日志。';
+    if (detectUiRelevantRequirement(backendText)) throw new Error('纯后端需求不应误判 UI 相关：' + backendText);
+    if (detectUiRelevantRequirement(undefined) || detectUiRelevantRequirement('')) throw new Error('空/undefined 应为 false');
+  });
+
+  run('E0 discoverReferenceImagesForOcrPrescan: 三级顺序——①需求文本目录引用优先', () => {
+    const root = mkProject();
+    try {
+      const reqDir = path.join(root, 'doc', 'features', '原始需求', '1-银行卡');
+      fs.mkdirSync(reqDir, { recursive: true });
+      fs.writeFileSync(path.join(reqDir, '1.首页.png'), 'fake-png-bytes');
+      fs.writeFileSync(path.join(reqDir, 'not-an-image.txt'), 'ignore me');
+      // 同时准备一个 ux-reference/ 干扰项——应优先命中①而非③
+      const uxRefDir = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference');
+      fs.mkdirSync(uxRefDir, { recursive: true });
+      fs.writeFileSync(path.join(uxRefDir, 'decoy.png'), 'decoy');
+      const requirement = '参考图在doc/features/原始需求/1-银行卡/目录下，严格按参考图还原。';
+      const found = discoverReferenceImagesForOcrPrescan(root, 'bank-card', requirement);
+      if (found.length !== 1) throw new Error('应只找到 1 张图（.txt 不算）：' + JSON.stringify(found));
+      if (!found[0].includes('1.首页.png')) throw new Error('应命中需求文本引用的目录：' + JSON.stringify(found));
+      if (found.some(f => f.includes('decoy'))) throw new Error('不应误采 ux-reference 干扰项（①优先于③）：' + JSON.stringify(found));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('E0 discoverReferenceImagesForOcrPrescan: 需求文本无路径引用 → 回退②ux-reference/', () => {
+    const root = mkProject();
+    try {
+      const uxRefDir = path.join(root, 'doc', 'features', 'bank-card', 'ux-reference');
+      fs.mkdirSync(uxRefDir, { recursive: true });
+      fs.writeFileSync(path.join(uxRefDir, 'home.jpg'), 'fake');
+      const found = discoverReferenceImagesForOcrPrescan(root, 'bank-card', '银行卡开卡需求，含7个页面，请参考截图设计。');
+      if (found.length !== 1 || !found[0].includes('home.jpg')) throw new Error('应回退到 ux-reference/：' + JSON.stringify(found));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('E0 discoverReferenceImagesForOcrPrescan: ③扫不到图源 → 空数组（不造假分母）', () => {
+    const root = mkProject();
+    try {
+      const found = discoverReferenceImagesForOcrPrescan(root, 'bank-card', '银行卡开卡需求，无参考图，纯文字描述。');
+      if (found.length !== 0) throw new Error('无图源应返回空数组：' + JSON.stringify(found));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('E0 loadProfileOcrToolkit/probeProfileOcrAvailable: hmos-app 有工具链；generic 无（优雅降级非报错）', () => {
+    const hmosDir = path.join(DEFAULT_LAYOUT.frameworkRoot, 'profiles', 'hmos-app');
+    const genericDir = path.join(DEFAULT_LAYOUT.frameworkRoot, 'profiles', 'generic');
+    const hmosToolkit = loadProfileOcrToolkit(hmosDir);
+    if (!hmosToolkit) throw new Error('hmos-app 应有 ocr-toolkit');
+    if (typeof hmosToolkit.isOcrAvailable !== 'function' || typeof hmosToolkit.ocrImageWords !== 'function') {
+      throw new Error('hmos-app toolkit 缺方法：' + JSON.stringify(Object.keys(hmosToolkit)));
+    }
+    const genericToolkit = loadProfileOcrToolkit(genericDir);
+    if (genericToolkit !== null) throw new Error('generic 无 OCR 资产，应返回 null（优雅降级）');
+    if (probeProfileOcrAvailable(genericDir) !== false) throw new Error('generic 的 probeProfileOcrAvailable 应为 false');
   });
 
   // P1-G1：headless 下 human_signed:true 但缺 signed_by → 视为自签 → BLOCKER（不可绕过）
