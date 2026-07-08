@@ -423,8 +423,11 @@ export function evaluateState(state) {
   const policySnapshot = readPolicySnapshot(state);
   const receipt = state.receipt ?? null;
   if (!policyRequires(policySnapshot, 'receipt')) {
-    // evidence policy 声明本阶段 receipt 非必需（off / not_applicable）→ 不列缺项
-    // （C0 快照恒 strict，本分支在 C2 verification-matrix 接入前不会命中）
+    // evidence policy 声明本阶段 receipt 非必需（off / not_applicable）→ 不列缺项。
+    // C2 verification-matrix 起真实命中：lite track 的 policy_snapshot.evidence.receipt
+    // 恒为 not_applicable（buildPolicySnapshot 按 track 求解，见 runtime-policy.ts）——
+    // 该阶段的闭环仍受上面 status/verdict/blocker_count 三项约束，只是不再额外要求
+    // check-receipt.ts 产出的 receipt.status='passed'（lite 架构性不产生这份凭证）。
   } else if (!receipt) {
     missing.push(
       'state.receipt=null，未跑 check-receipt.ts；阶段完成回执必须填写并通过校验',
@@ -621,6 +624,83 @@ function buildEscapeValveReason(state, count) {
   ].join('\n');
 }
 
+// --------------------------------------------------------------------------
+// 7.5 correction 状态联动（C5-full hard_hook 深度集成）
+// --------------------------------------------------------------------------
+// 设计（openspec/changes/correction-routing/design.md「enforcement 分档」）：
+//   hard_hook（claude 系）档位下，Stop/SubagentStop 物理拦截须与 correction 状态
+//   联动——存在**当前会话**的 pending 修正时，即便 .current-phase.json 已闭环
+//   （甚至根本不存在），也不应放行 stop，直到 --correction-check 收口。
+// 独立于阶段闭环判定：即使没有 .current-phase.json（修正发生在已交付 feature 上），
+// 只要 .current-correction.json 存在且 pending + 属于当前会话 + 未过期，就拦截。
+// TTL/session 治理刻意与 harness/scripts/utils/correction-state.ts 的
+// CORRECTION_STATE_TTL_MS（24h）保持同一常量语义——hook 端不 import TS，独立维护，
+// 若未来调整需求实两处同步（与本文件顶部 HOOK_DEFAULT_* 的既有跨语言同步模式一致）。
+
+const CORRECTION_TTL_MS = 24 * 60 * 60 * 1000; // 24 小时；须与 CORRECTION_STATE_TTL_MS 同步
+
+function correctionStatePathFrom(stateAbs) {
+  return path.join(path.dirname(stateAbs), '.current-correction.json');
+}
+
+/**
+ * 评估 correction state 是否应阻断本次 stop。
+ * 只在"当前会话遗留"（sid 一致或双方缺 sid 时用 expires_at 兜底）且未过期时阻断；
+ * 跨会话/过期一律放行（不阻断也不写 advisory——避免与主状态的 advisory 噪音叠加）。
+ */
+export function evaluateCorrectionGate(correctionState, currentSid, now) {
+  if (!correctionState || typeof correctionState !== 'object') return { blocking: false };
+  if (correctionState.status !== 'pending') return { blocking: false };
+
+  const stateSid =
+    typeof correctionState.session_id === 'string' && correctionState.session_id.trim()
+      ? correctionState.session_id.trim()
+      : null;
+  if (stateSid && currentSid && stateSid !== currentSid) {
+    return { blocking: false, reasonSkipped: 'cross-session' };
+  }
+
+  const expiresAtMs = parseTimestampMs(correctionState.expires_at);
+  if (expiresAtMs != null && now > expiresAtMs) {
+    return { blocking: false, reasonSkipped: 'expired' };
+  }
+  // expires_at 缺失/不可解析时兜底用 created_at + TTL 判断，避免字段缺失被误判为永久阻断
+  if (expiresAtMs == null) {
+    const createdAtMs = parseTimestampMs(correctionState.created_at);
+    if (createdAtMs != null && now - createdAtMs > CORRECTION_TTL_MS) {
+      return { blocking: false, reasonSkipped: 'expired-fallback' };
+    }
+  }
+
+  return { blocking: true };
+}
+
+function buildCorrectionBlockReason(correctionState) {
+  const feature = correctionState.feature ?? '(no-feature / adhoc)';
+  const rootLayer = correctionState.root_layer ?? 'unknown';
+  const pendingPhases = Array.isArray(correctionState.revalidate)
+    ? correctionState.revalidate.filter((r) => r && r.status !== 'done').map((r) => r.phase)
+    : [];
+  const lines = [
+    `[Stop Hook] 存在未收口的中途修正：feature="${feature}" root_layer="${rootLayer}"。`,
+    '下一步只做这一件事——补齐 revalidate 后跑：',
+    '  → cd framework/harness && npx ts-node harness-runner.ts --correction-check',
+    '',
+    pendingPhases.length > 0
+      ? `待重验 phase：${pendingPhases.join('、')}（逐项重跑其 harness-runner.ts --phase <phase>）`
+      : '（revalidate 清单为空或已全部标记，直接跑 --correction-check 收口即可）',
+    '',
+    '如果这次修正已经不需要了，或想改变分层判定，重新走：',
+    '  → cd framework/harness && npx ts-node harness-runner.ts --correction-init',
+    '如果要彻底放弃这次修正（不再重验）：',
+    '  → cd framework/harness && npx ts-node harness-runner.ts --clear-state（一并清理修正状态）',
+    '',
+    '本提示与阶段闭环判定（CLAUDE.md §5.1）相互独立——即便当前阶段已闭环，',
+    '未收口的修正仍会拦截 stop（防止"改完就跑、没验证"）。',
+  ];
+  return lines.join('\n');
+}
+
 function buildAdvisory(state, stale) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
@@ -665,6 +745,24 @@ async function main() {
     readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json';
   const stateAbs = path.resolve(projectRoot, stateRel);
 
+  // 拿当前会话 id（correction 联动检查也要用，故提到 state 判空之前）
+  const sid =
+    typeof payload?.session_id === 'string' && payload.session_id.trim()
+      ? payload.session_id.trim()
+      : null;
+
+  // correction 状态联动（C5-full）：独立于 .current-phase.json 是否存在/已闭环——
+  // 未收口的当前会话修正照样拦截 stop。
+  const correctionState = readJSONSafe(correctionStatePathFrom(stateAbs));
+  const correctionGate = evaluateCorrectionGate(correctionState, sid, Date.now());
+  if (correctionGate.blocking) {
+    const reason = buildCorrectionBlockReason(correctionState);
+    process.stdout.write(JSON.stringify({ decision: 'block', reason }));
+    process.stderr.write(reason + '\n');
+    process.exit(2);
+    return;
+  }
+
   const state = readJSONSafe(stateAbs);
 
   // 没有 state file → 不在阶段流程内，放行
@@ -672,12 +770,6 @@ async function main() {
     process.exit(0);
     return;
   }
-
-  // 拿当前会话 id
-  const sid =
-    typeof payload?.session_id === 'string' && payload.session_id.trim()
-      ? payload.session_id.trim()
-      : null;
 
   // 拿 grace / ttl / 逃生阀阈值（从 framework.config.json）
   const { gracePeriodMs, ttlMs, maxConsecutiveBlocks } = readStateMachineFromConfig(projectRoot);

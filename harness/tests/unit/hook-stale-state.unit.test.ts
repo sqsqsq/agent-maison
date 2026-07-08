@@ -283,6 +283,136 @@ function testT2_sameSessionUnclosed(): void {
   }
 }
 
+function testT21_liteNotApplicableReceiptStillClosed(): void {
+  // C2：lite track 的 policy_snapshot.evidence.receipt=not_applicable 时，Stop hook
+  // 不得再要求 receipt.status='passed'——闭环仍受 status/verdict/blocker_count 三项约束
+  // （由 exit 阶段自身的脚本 verdict 承载），receipt 字段本身可以是 null。
+  const dir = makeFixture({
+    closed: true,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    stateExtra: {
+      receipt: null,
+      policy_snapshot: {
+        policy_schema_version: '1.0',
+        track: 'lite',
+        evidence: { verifier: 'off', receipt: 'not_applicable', trace: 'optional', exploration: 'not_applicable' },
+      },
+    },
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 0, 'T21 lite track + receipt=null + policy not_applicable → exit 0（不误拦）');
+    assertStderrNotContains(out, '未闭环阶段', 'T21 不应给出阻断文案');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT22_fullTrackReceiptStillRequired(): void {
+  // 回归对照：full track（或无 snapshot）时，receipt=null 依旧必须拦——防止 T21 的
+  // 豁免逻辑被误用成"全局放过 receipt 检查"。
+  const dir = makeFixture({
+    closed: true,
+    stateSessionId: 'sid-A',
+    updatedAtOffsetMs: -1000,
+    stateExtra: { receipt: null },
+  });
+  try {
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T22 full track（无 lite snapshot）+ receipt=null → 仍 exit 2');
+    assertStderrContains(out, '未跑 check-receipt.ts', 'T22 应报 receipt 缺失');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+// --------------------------------------------------------------------------
+// C5-full：correction 状态联动（hard_hook 深度集成）
+// --------------------------------------------------------------------------
+
+function writeCorrectionState(dir: string, overrides: Record<string, unknown>): void {
+  const abs = path.join(dir, 'framework', 'harness', 'state', '.current-correction.json');
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const base = {
+    schema_version: '1.0',
+    feature: 'demo-feature',
+    root_layer: 'coding',
+    touched_layers: ['coding'],
+    revalidate: [{ phase: 'coding', status: 'pending' }],
+    status: 'pending',
+    created_at: new Date().toISOString(),
+    session_id: 'sid-A',
+    base_commit: 'deadbeef',
+    request_fingerprint: 'abc123',
+    enforcement_tier: 'hard_hook',
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  };
+  fs.writeFileSync(abs, JSON.stringify({ ...base, ...overrides }, null, 2) + '\n', 'utf-8');
+}
+
+function testT23_pendingCorrectionSameSessionBlocks(): void {
+  // 没有 .current-phase.json（阶段已交付后的修正场景）+ 当前会话 pending correction → 仍应拦截
+  const dir = makeFixture({ writeStateFile: false });
+  try {
+    writeCorrectionState(dir, { session_id: 'sid-A' });
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T23 pending correction 同会话 → exit 2');
+    assertStderrContains(out, 'correction-check', 'T23 stderr 应指引 --correction-check');
+    assertStderrContains(out, '未收口的中途修正', 'T23 stderr 应说明是 correction 拦截而非阶段拦截');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT24_pendingCorrectionCrossSessionDoesNotBlock(): void {
+  const dir = makeFixture({ writeStateFile: false });
+  try {
+    writeCorrectionState(dir, { session_id: 'sid-old' });
+    const out = runHook({ session_id: 'sid-new' }, dir);
+    assertEq(out.status, 0, 'T24 跨会话 pending correction → 不拦截，exit 0');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT25_closedCorrectionDoesNotBlock(): void {
+  const dir = makeFixture({ writeStateFile: false });
+  try {
+    writeCorrectionState(dir, { session_id: 'sid-A', status: 'closed' });
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 0, 'T25 已闭环 correction → 不拦截，exit 0');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT26_expiredCorrectionDoesNotBlock(): void {
+  const dir = makeFixture({ writeStateFile: false });
+  try {
+    writeCorrectionState(dir, {
+      session_id: 'sid-A',
+      expires_at: new Date(Date.now() - 1000).toISOString(),
+    });
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 0, 'T26 已过期 correction → 不拦截，exit 0');
+  } finally {
+    rmDir(dir);
+  }
+}
+
+function testT27_correctionBlocksEvenWhenPhaseClosed(): void {
+  // 阶段本身已闭环（会 exit 0），但仍有未收口的 correction → 仍应拦截（两个判据独立）
+  const dir = makeFixture({ closed: true, stateSessionId: 'sid-A', updatedAtOffsetMs: -1000 });
+  try {
+    writeCorrectionState(dir, { session_id: 'sid-A' });
+    const out = runHook({ session_id: 'sid-A' }, dir);
+    assertEq(out.status, 2, 'T27 阶段已闭环但 correction 未收口 → 仍 exit 2');
+  } finally {
+    rmDir(dir);
+  }
+}
+
 function testT3_crossSession(): void {
   // 跨会话遗留：state 写有 sid-old，本会话 sid-new；即便 state 未闭环也应放行
   const dir = makeFixture({
@@ -714,11 +844,24 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   },
   { name: 'T17 逃生阀：连续零进展达阈值 → exit 0 放行', fn: testT17_escapeValveReleasesAtThreshold },
   {
+    name: 'T21 lite track policy_snapshot.evidence.receipt=not_applicable → receipt=null 仍 exit 0（C2）',
+    fn: testT21_liteNotApplicableReceiptStillClosed,
+  },
+  {
+    name: 'T22 full track（无 lite snapshot）+ receipt=null → 仍 exit 2（防豁免逻辑误用回归钉）',
+    fn: testT22_fullTrackReceiptStillRequired,
+  },
+  {
     name: 'T20 拦截文案回执目标尊重 receipt_dir_pattern（custom 宿主）',
     fn: testT20_blockReasonRespectsReceiptDirPattern,
   },
   { name: 'T18 真重跑 harness（last_run_at 变）→ 逃生阀计数归零', fn: testT18_realRerunResetsCounter },
   { name: 'T19 hook signature 与 goal extractBlockerSignature 同语义', fn: testT19_signatureParityWithGoal },
+  { name: 'T23 pending correction 同会话（无 phase state）→ exit 2', fn: testT23_pendingCorrectionSameSessionBlocks },
+  { name: 'T24 pending correction 跨会话 → 不拦截 exit 0', fn: testT24_pendingCorrectionCrossSessionDoesNotBlock },
+  { name: 'T25 已闭环 correction → 不拦截 exit 0', fn: testT25_closedCorrectionDoesNotBlock },
+  { name: 'T26 已过期 correction → 不拦截 exit 0', fn: testT26_expiredCorrectionDoesNotBlock },
+  { name: 'T27 阶段已闭环但 correction 未收口 → 仍 exit 2（两判据独立）', fn: testT27_correctionBlocksEvenWhenPhaseClosed },
 ];
 
 export function runAll(): UnitCaseResult[] {

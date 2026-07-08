@@ -1,12 +1,7 @@
 # {{AGENT_ENTRY_FILE}} — {{PROJECT_NAME}}（{{PROJECT_TYPE_LABEL}}）全局指令
 
-> 本文件由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template`
-> 实例化生成。它是本工程所有 AI coding agent 的**全局系统指令**。
->
-> 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。
-> **这里只列清单，不复述细节**——细节以链接的文档为准，避免上下文漂移。
-
----
+> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。
+> 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
 
 ## 一、基础信息
 
@@ -18,289 +13,93 @@
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
 | 架构摘要 | {{ARCHITECTURE_SUMMARY}} |
 
-详细架构说明请阅读：[{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}})。
-
----
+详细架构说明：[{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}})。
 
 ## 二、SSOT（Single Source of Truth）
 
 | 维度 | SSOT 文件 | 说明 |
 |------|----------|------|
-| 架构与模块划分 | [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) | 层级划分 + 依赖矩阵。**任何与之冲突的设计一律以本文为准**。 |
-| 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 给 phase-rules / check-*.ts 读取的结构化定义。修改必过 `/framework-init`（UPDATE 模式） |
-| 模块画像（Catalog） | [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**Scope 防错源头**。建模与修改走 catalog-bootstrap · Phase A。 |
-| 业务术语表（Glossary） | [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) | 自然语言业务名词 ↔ 权威模块映射。spec 阶段术语消歧必读。建表走 catalog-bootstrap · Phase B。 |
+| 架构与模块划分 | [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) | 层级划分+依赖矩阵。任何冲突设计一律以本文为准 |
+| 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 修改必过 `/framework-init`（UPDATE 模式） |
+| 模块画像（Catalog） | [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) | 职责/`NOT_responsible_for`/`easily_confused_with`。Scope 防错源头 |
+| 业务术语表（Glossary） | [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) | 自然语言业务名词 ↔ 权威模块映射 |
 {{PROFILE_AGENT_SSOT_ROWS}}
-| 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | spec / plan / coding / review / ut / testing / catalog / glossary / **extensions** 等阶段 YAML 规则（以当前激活 workflow 为准） |
-| 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
-| Harness 运行时前置（Tier_1 · npm） | [framework/skills/reference/host-harness-readiness.md](framework/skills/reference/host-harness-readiness.md) | 克隆或独立拉起 Skill 跑 `harness-runner` 前须安装 `framework/harness` 依赖；与 framework-init S3 `harness-install` Tier_1 等价；宿主 IDE/hvigor 仍按 profile |
-| Agent 行为规约（Karpathy 四原则） | [framework/skills/reference/agent-behavioral-principles.md](framework/skills/reference/agent-behavioral-principles.md) | Research First / Minimum Viable / Surgical / Verify — 各 Skill Research Sub-Phase 强制前读；verifier 行为维度 BLOCKER 语义依据 |
+| 阶段规则/校验脚本 | [framework/specs/phase-rules/](framework/specs/phase-rules/) / [framework/harness/scripts/](framework/harness/scripts/) | BLOCKER 级门禁 |
 
----
+## 三、红线清单（无论在哪个阶段都必须遵守，BLOCKER 除标注外）
 
-## 三、核心全局约束（无论在哪个阶段都必须遵守）
-
-### 3.1 架构守门（BLOCKER）
-
-1. **层间依赖方向严格按 `framework.config.json` → `architecture.outer_layers` 声明**，任何反向依赖一律拒绝。
-2. **模块内依赖方向按 `architecture.module_inner_layers` + `inner_dependency_direction` 声明**，禁止反向依赖。
-3. **跨模块访问必须通过 `architecture.cross_module_exports_file` 声明的出口文件（实例配置为准），禁止深路径 import**。
-
-### 3.2 术语守门（BLOCKER）
-
-1. spec 必须以 **`## 0. 术语映射表`** 章节起始，列出原始术语 → 权威模块的映射（见 spec Step 1.5）。
-2. **所有映射必须逐条人工确认**（用户把 `[ ]` 改成 `[x]`），不启用 auto-approve。即便置信度 `high` 也必须确认。
-3. 每一条映射的 `权威模块` 必须存在于 [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})；否则 `terminology_mapping_table` BLOCKER 阻塞。
-4. 术语命中其他模块的 `easily_confused_with` 时，**必须显式亮给用户看**，不允许静默忽略。
-5. 用户批准的新术语 / 修正后的映射必须回写到 [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}})，作为下一次复用种子。
-
-### 3.3 Scope 守门（BLOCKER）
-
-1. spec 必须声明 `in_scope_modules` / `out_of_scope_modules` / `rationale`（见 spec SKILL）。
-2. `in_scope_modules` / `out_of_scope_modules` 的每个模块名都**必须在 `{{MODULE_CATALOG_PATH}}` 中存在**（`scope_matches_catalog` BLOCKER），禁止自造模块名。
-3. plan.md 必须**继承** spec 的 scope；如需扩展，**停下来**向用户发起「Scope 扩展提议」，获得用户明确批准后写入 `expansions_with_user_approval` 才可继续（见 plan Step 2.5）。
-4. 编码阶段 `git diff` 涉及的所有文件必须落在 plan 的 `in_scope_modules` 内（`doc/`、`specs/`、`framework/` 等框架/实例基础设施目录除外）。
-5. **严禁静默扩展**：任何"顺手改一下"都必须回到 plan 阶段走扩展提议流程。
-
-### 3.4 宿主 toolchain 正确性守门（BLOCKER）
-
-{{PROFILE_AGENT_GUARDRAILS}}
-
-### 3.5 文档与代码同步
-
-- plan.md 与 `contracts.yaml`（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 key）是编码阶段的强契约；**机器可读真源以 `contracts.yaml` / `use-cases.yaml` 为准**，实现必须与之一致。
-- **`doc/features/<feature>/`** 默认**不假定**提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 管控；脚本 harness 与工作区快照优先，completion receipt **不强求**未入库即失败（参见 `paths.docs_committed` 语义）。含 **UI** 形态的 spec **应当**声明 `ui_change`/Visual Handoff；非 UI / 后端类需求**不做**硬性要求。
-- **feature 需求交付不自动触发 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) 更新**——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `doc/features/<feature>/` 承担）。
-- 仅当 plan.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [plan · Step 12](framework/skills/feature/plan/SKILL.md) 分支更新 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
-- **[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})** 是模块职责 / 公共能力 / 易混点的唯一 SSOT；不要把这些细节复制到 architecture.md。
-
-### 3.6 Context Exploration Gate（BLOCKER）
-
-在 **spec / plan / coding / review / UT** 写入该阶段主产物前，按对应 `framework/skills/feature/<phase>/SKILL.md` 落盘 `doc/features/<feature>/<phase>/context-exploration.md`。契约与模板见 [framework/harness/templates/context-exploration.md](framework/harness/templates/context-exploration.md)；**本文件不展开探索清单**——阶段步骤与宿主侧补充路径以各 SKILL 及 `framework/profiles/<project_profile>/skills/*/profile-addendum.md`（若有）为准。
-
-**schema 1.1.0 起**（见 [MIGRATION.md v2.9](framework/MIGRATION.md)）：`source_code_paths` / `decisions_unlocked` / **Code Facts** 与 `phase-rules` → `exploration_thresholds` 由 harness **BLOCKER 量化校验**；`ready_to_produce: true` 须真实探索后手动设定，backfill 骨架不再自动放行。
-
-### 3.7 Agent 行为规约（BLOCKER）
-
-1. 进入任一 feature 阶段（spec / plan / coding / review / UT）的 **Research Sub-Phase** 前，须完整阅读 [agent-behavioral-principles.md](framework/skills/reference/agent-behavioral-principles.md)。
-2. **Research First**：不确定时停下来问；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
-3. **Minimum Viable**：产出不得超出用户诉求 / 上游契约（spec→plan→contracts→code）范围；禁止投机性抽象或"顺便加上"。
-4. **Surgical**：coding / review 仅触碰 scope 内变更；禁止顺手改相邻格式、注释或无关文件。
-5. **Verify Before Proceed**：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
-6. 语义级行为合规由 verifier `behavior_*` 检查项（BLOCKER / MAJOR）与 Layer 2 量化门禁交叉 enforcement。
-
-### 3.8 阶段边界推进（BLOCKER）
-
-**阶段四件套 PASS ≠ 授权下一 Skill。** 默认 `transition_policy=manual`：闭环后须 `phase.next_step` 或用户/batch 明示授权，**禁止**同一执行流自动开下一阶段。细则与 batch 白名单见 [user-confirmation-ux.md §8](framework/skills/reference/user-confirmation-ux.md)。
-
----
+| # | 红线 | 判据一句话 | enforced_by |
+|---|------|-----------|-------------|
+| 1 | 架构守门 | 层间/模块内依赖方向按 `architecture` DSL；跨模块经出口文件，禁深路径 import | check-coding |
+| 2 | 术语守门 | spec 起始 `## 0. 术语映射表`，逐条人工 `[x]` 确认，权威模块须在 Catalog 存在 | check-spec |
+| 3 | Scope 守门 | spec 声明 in/out_of_scope_modules（须在 Catalog 存在）；扩展须走用户批准的提议流程；diff 不得越界 | check-spec / diff_within_scope |
+| 4 | 宿主 toolchain 守门 | {{PROFILE_AGENT_GUARDRAILS}} | compile capabilities |
+| 5 | 文档与代码同步 | contracts.yaml/use-cases.yaml 为强契约真源；架构影响声明非 none 才更新架构文档 | plan Step 12 |
+| 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
+| 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | verifier behavior_* |
+| 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
 
 ## 四、工作流与 Skill 路由
 
 ### 4.0 需求分档路由（L0 / L1 lite / L2 full）
 
-任何新请求**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。**拿不准一律进 lite**（L0 无 gate 兜底，误降不对称）。
+任何新请求**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。拿不准一律进 lite。
 
 | 档 | 触发 | 管线 | 门禁 |
 |---|---|---|---|
-| L0 direct | 小修小改 / 文案 / 单文件 bug | 不进管线，直接改 | 无框架门禁。**最小纪律**：仍须遵守用户显式要求与项目**原生**校验（相关 test / lint / build），且第三节全局约束照常适用 |
-| L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | exit 一次跑：编译 + lint + `diff_within_scope` 红线 + 验收 checkbox 全勾 + 条件 UT |
-| L2 full | 跨模块 / pixel_1to1 / goal 模式 | spec → plan → coding → review → ut → testing 全链 | 每阶段四重闭环 |
+| L0 direct | 小修小改/文案/单文件 bug | 不进管线，直接改 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
+| L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
+| L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
 
-**一票升 full**（命中任一，无视评分）：需求含 pixel_1to1 意图；明确跨模块信号；goal 模式运行。
-lite 实施中出现 scope 越界 / 跨模块信号 → **停下走升档确认**（`feature.track`），feature.yaml 记录事件，change.md 作 spec/plan 种子。
+**一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
 
-#### 修正三问（中途 NL 修正必答 · `correction.layer`）
-
-对已有 feature 的修正请求，**先分层再动手**，禁止未分层直接改产物：
+**修正三问**（中途 NL 修正必答 · `correction.layer`，先分层再动手）：
 
 | 问 | 是 → 落点层 |
 |---|---|
-| Q1 需求 / 验收本身变了？ | spec（spec.md / acceptance.yaml；lite = change.md 意图/验收清单） |
-| Q2 需求没变，接口 / 契约 / 设计要变？ | plan（plan.md / contracts.yaml；lite = change.md Scope/关键契约） |
-| Q3 上游都没错——要改产品代码？ | 是 → coding；否（纯补验证）→ ut / testing |
+| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；lite=change.md 意图/验收清单） |
+| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
+| Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-模糊请求先诊断根因再分类。分层结论经 `correction.layer` 确认后实施：**只改根因层的 SSOT 产物**，再级联重跑落点层及下游已闭环 phase 的脚本门禁——**重验 ≠ 重做**，禁止把"改一处"扩大成重走全链，也禁止改了根因层却不重验下游。
+只改根因层 SSOT 产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做。
 
 ### 4.0.1 阶段 Skill 总表
 
-每个阶段都有对应 Skill 文档。具体触发方式由当前运行宿主及已物化入口决定——
-slash、技能跳板、或直链 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
-也可以直接让 agent 读对应 Skill 正文进入。
+具体触发方式（slash/技能跳板/直链）由当前运行宿主及已物化入口决定，见 [framework/agents/README.md](framework/agents/README.md)；也可直接让 agent 读对应 Skill 正文进入。
 
 | 阶段 | Skill 路径 |
 |------|-----------|
-| 0. Framework 初始化 / 升级 | [framework/skills/project/framework-init/SKILL.md](framework/skills/project/framework-init/SKILL.md) |
-| 0. 模块画像自举（Phase A） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
-| 0. 术语表自举（Phase B） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
+| 0. Framework 初始化/升级 | [framework/skills/project/framework-init/SKILL.md](framework/skills/project/framework-init/SKILL.md) |
+| 0. 模块画像/术语表自举 | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
-| L1. Lite 轨（change→coding→exit 单文档链） | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
-| 1. Spec（需求规格） | [framework/skills/feature/spec/SKILL.md](framework/skills/feature/spec/SKILL.md) |
-| 2. Plan（实现计划） | [framework/skills/feature/plan/SKILL.md](framework/skills/feature/plan/SKILL.md) |
-| 3. 编码落地 | [framework/skills/feature/coding/SKILL.md](framework/skills/feature/coding/SKILL.md) |
-| 4. 代码审查 | [framework/skills/feature/code-review/SKILL.md](framework/skills/feature/code-review/SKILL.md) |
-| 5. 业务级 UT | [framework/skills/feature/business-ut/SKILL.md](framework/skills/feature/business-ut/SKILL.md) |
-| 6. 真机测试 | [framework/skills/feature/device-testing/SKILL.md](framework/skills/feature/device-testing/SKILL.md) |
+| L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
+| 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 
 {{EXTENSION_SKILL_SECTION}}
-> **catalog-bootstrap（catalog + glossary）是所有其它 Skill 的前置**：只有 `{{MODULE_CATALOG_PATH}}` + `{{GLOSSARY_PATH}}`
-> 先建好，后续 spec 阶段的术语消歧与 Scope 守门才有可校验的基准。
-> 真实工程启动时，先按 catalog-bootstrap 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 catalog-bootstrap。
+> **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
-**执行规则**：
-- 进入某阶段前，**必须完整读一遍对应 SKILL.md**。
-- Skill 中引用到的 template / reference / checklist 也是强制阅读（弱模型尤其不要跳读）。
-- 每个阶段产物**必须通过** `framework/harness/harness-runner.ts --phase <phase> --feature <name>`（结构 + 规则级）
-  以及 `framework/harness/prompts/verify-*.md`（语义级，由独立 verifier 子 agent 执行）。
-  具体命令与路径以各 `SKILL.md` 为准。
+**执行规则**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
 
-### 4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，避免误读）
+**主 agent 与 verifier 子 agent 职责切分**（反误读明示授权，BLOCKER）：结构级 harness 必须由主 agent 自己执行（不得等 verifier/用户）；语义级 verify 在结构级 PASS 后由主 agent 主动通过 Task 工具触发 verifier 子 agent。完整反误读文本见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)。
 
-> 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。
-> 本节是**反误读的明示授权**，BLOCKER 级，必须遵守：
+**实例扩展与生命周期钩子**：允许在不改 `framework/` 前提下挂业务 Skill/知识/phase 钩子，落点 `doc/extensions/`（`paths.extension_dir` 可覆盖）。触发询问时机与协议 SSOT 见 reference。
 
-1. **结构级 harness**（`framework/harness/harness-runner.ts`）：**必须由主 agent 自己执行**。
-   它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。
-   主 agent 在阶段产物完成后，**第一时间**通过 Shell 工具运行该命令，读取退出码与报告文件。
-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，
-   由独立 verifier 子 agent 执行；**主 agent 必须主动通过 Task 工具触发 verifier**（`subagent_type: verifier`），
-   把 feature / phase / 报告路径完整传入；不得仅"提示用户去跑"或"等用户启动"。
-3. **{{AGENT_ENTRY_FILE}} 全文未禁止主 agent 调用 shell / 执行命令**；空白处一律按"允许"理解。
-   若你以为某条规则限制了你执行命令，请先翻到第六节第 5 条「反假设条款」核对。
+## 五、交付凭证与阶段闭环判定
 
-### 4.2 实例扩展与生命周期钩子（路由）
+每阶段完成须在 `{{FEATURES_DIR}}/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环四条件缺一不可**：trace.json 存在 + harness verdict=PASS + verifier verdict=PASS + 完成回执经 `check-receipt.ts` 校验通过；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
 
-允许在不改 `framework/` 的前提下挂载业务 Skill / knowledge / phase 前后钩子。
-
-- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 S3 执行自动从 `framework/skills/project/framework-init/templates/extension-skeleton/` 拷出；UPDATE 路径见 `framework/MIGRATION.md` v2.5。
-- **协议 SSOT**：[instance-extension-manifest.schema.yaml](framework/specs/instance-extension-manifest.schema.yaml) · [lifecycle-hooks-schema.yaml](framework/specs/lifecycle-hooks-schema.yaml) · [workflow-schema.json](framework/specs/workflow-schema.json)；三层叠加见 [docs/concepts/extensibility.md](framework/docs/concepts/extensibility.md)。
-
-**何时主动询问用户**（**仅询问**，不改 manifest、不给 y/n diff；本会话被 n 后不再就同一资料二次发问）：
-
-1. 强言语信号：「以后都…」「全工程都…」「我们家规矩…」；
-2. 稳定资料：SDK 约定 / 合规清单 / 命名禁忌 / 设计规范 / 第三方协议；
-3. 本会话反复 `Read` 同一资料 **≥ 3 次**，且不属于 `profile-addendum.md` / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) 覆盖范围；
-4. 用户希望「每次进某 phase 前/后做某件事」→ lifecycle hook 本职。
-
-**隔离**：业务名词/模块归属 → catalog/glossary（catalog-bootstrap）；带流程/钩子/校验 → `doc/extensions/`。
-
----
-
-## 五、交付凭证与 Trace
-
-每次完成某个阶段任务，**必须**在以下路径产出一份 `trace.json`：
-
-```
-{{FEATURES_DIR}}/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json
-```
-
-> 配置了 `paths.reports_dir_pattern` 时 harness 将该 phase 的报告落在 `reports/` 子目录（主 `trace.json` 通常与 `script-report.json` 同目录）；未配置的遗留实例仍为 `framework/harness/reports/<feature>/<phase>/`。以下闭环判据的路径以实例 `phase-completion-receipt.md` frontmatter 与磁盘真实路径为准。
-
-字段见 [framework/harness/trace/trace.schema.json](framework/harness/trace/trace.schema.json)；
-痛点回填结构见 [framework/harness/trace/gap-notes.template.md](framework/harness/trace/gap-notes.template.md)。
-**这是弱模型回传问题的唯一渠道**，不要省略。
-
-### 5.1 阶段闭环判定（trace.json 缺失 = 阶段未完成）
-
-> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层若存在，则由具备 hooks 能力的 adapter 在实例根下发的脚本读取本节定义的判据决定能否放行 stop（细节见 [framework/agents/README.md](framework/agents/README.md)）。
-
-任何 **feature 维度阶段**（spec / plan / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
-
-1. **`{{FEATURES_DIR}}/<feature>/<phase>/reports/trace.json`**（或 legacy：`framework/harness/reports/<feature>/<phase>/trace.json`）真实存在（**缺失即视为阶段未完成**）；
-2. 主 agent 已自跑 `harness-runner.ts`，verdict = `PASS`（或脚本退出码 0）；
-3. 主 agent 已通过 Task 工具调用 `subagent_type: verifier` 子 agent，且 verifier 报告 verdict = `PASS`；
-4. 主 agent 已填写 [framework/harness/templates/phase-completion-receipt.md](framework/harness/templates/phase-completion-receipt.md) 模板对应的回执
-   （路径：`{{FEATURES_DIR}}/<feature>/<phase>/phase-completion-receipt.md`），并通过 `framework/harness/scripts/check-receipt.ts` 校验。
-
-**严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。** 若物理拦截层（Stop hook）检测到任一项缺失，
-将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后**必须**立即补齐缺失项，
-而不是再次声称完成。
-
-> **全局阶段豁免**：`init` / `catalog` / `glossary` / `docs` 四个全局阶段（无 `--feature` 参数，
-> 哨兵值 `_global`）**不**在本节判据范围。这些阶段没有 feature 维度回执模板，
-> harness-runner 不为它们写 `.current-phase.json`，Stop hook 也对 `state.phase` 是这四值之一时一律放行。
-> 详见 [framework/harness/scripts/check-init.ts](framework/harness/scripts/check-init.ts) 头部"元阶段三件套刻意不对称"段落。
-
-> 具备 Stop hook / Subagent hook 下发能力的 adapter：**安装与配置路径**仅以 [framework/agents/README.md](framework/agents/README.md) 为准；未配置等价物理层的 adapter，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
-
-#### 5.1.1 会话边界与跨会话遗留（v2.8 起）
-
-`.current-phase.json` 是**全局单槽**，跨 cli 重启不会自动清理；为避免"上一会话写下的未闭环 state
-拦截下一会话的无关问答"，Stop hook 在判定前会先做**会话边界检查**：
-
-| state.session_id | 当前 cli session_id | 行为 |
-|-----------------|---------------------|------|
-| 与当前 sid 一致 | 存在               | 走闭环判定，未闭环 → exit 2 阻断（同会话遗留） |
-| 与当前 sid 不一致 | 存在               | advisory + exit 0（**不阻断**，跨会话遗留） |
-| 未盖章（null） + state 在 grace_period 内 | 存在 | 视为同会话刚跑完，hook 第一次回填 sid 后走闭环判定 |
-| 未盖章（null） + state 超 grace_period | 存在 | advisory + exit 0（视为前一会话遗留） |
-| state 已盖章 + payload 缺 sid + 在 ttl 内 | — | 保守视作同会话，走闭环判定 |
-| state 已盖章 + payload 缺 sid + 超 ttl | — | advisory + exit 0 |
-
-时间常量在 [framework.config.json](framework.config.json) 的 `state_machine` 段配置，默认值见
-[framework/harness/config.ts](framework/harness/config.ts) `DEFAULT_STATE_MACHINE`。
-
-**用户/agent 在哪个时机会看到什么文案：**
-
-- 同会话未闭环 → "继续 / 放弃二选一"中性提示，给出补齐 4 步与 `--clear-state` 出口；
-- 跨会话遗留 → 仅一条 stderr advisory（"检测到遗留状态文件，已放行；如需清理执行 --clear-state"），
-  **不**注入 prompt 也**不**阻断；
-- agent 见到此 advisory 时**不应**主动接管旧任务——继续做用户当前要求的事即可。
-
-**清理出口**：
-
-```
-cd framework/harness && npx ts-node harness-runner.ts --clear-state
-```
-
-无确认，直接删 `framework/harness/state/.current-phase.json`；历史 verdict / 脚本报告 / verifier 产出通常在同一 feature 阶段的 `reports/` 子目录（或 legacy：`framework/harness/reports/`），完成回执在 [{{FEATURES_DIR}}]({{FEATURES_DIR}}) 下。
-
-### 5.2 跨会话恢复（Resume · BLOCKER）
-
-新会话、framework 升级后、或用户说「继续 `<feature>` / 做下一阶段」时，**在进入 Skill 工作前**须先对齐闭环态：
-
-1. **若** `{{FEATURES_DIR}}/<feature>/<phase>/phase-completion-receipt.md` **可能存在** → **必须先**执行其一（agent 自跑，不得让用户手动跑）：
-   - `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>`
-   - `cd framework/harness && npx ts-node harness-runner.ts --sync-closure --feature <feature> --phase <phase>`
-2. **`check-receipt` exit 0** → 直接认定该 phase **已闭环**；汇报交付摘要后 **`phase.next_step` 停等**（user-confirmation-ux §8），**禁止**重跑该阶段 harness / verifier。
-3. **`check-receipt` exit 1/2** → 按 BLOCKER 列表补齐缺失项；**禁止**仅凭 `.current-phase.json` 的 `receipt.status=missing` 或 `summary.json` 的 `next_action=run_verifier_then_receipt` 宣告「未闭环」——二者可能滞后于 receipt 磁盘真相。
-4. **`summary.json.closure_status=closed`** 与 **`state.receipt.status=passed`** 可作为辅助信号；**SSOT 仍是 `check-receipt.ts` exit 码**。
-
----
+**跨会话恢复**：新会话/继续 feature 前须先 `check-receipt.ts --feature <feature> --phase <phase>`（或 `harness-runner.ts --sync-closure`）；exit 0 → 已闭环，停等 `phase.next_step`，禁止重跑。清理陈旧状态：`harness-runner.ts --clear-state`。会话边界表/resume 完整机制见 reference。
 
 ## 六、与用户交互的硬性规则
 
-1. **最小改动原则**：任何不在用户原始诉求内的修改，**先问再做**。
-2. **遇到 scope 越界、架构违规、lint 持续失败**：停下来报告，不要"硬着头皮继续"。
-3. **不确定 → 用工具验证**：不要凭记忆写 import / 资源 key / 模块路径，用 `Read` / `Grep` 主动查。
-4. **产物即契约**：写完 spec/plan 即被后续阶段当作 SSOT 使用，不允许"先写个草稿，后面再改"心态。
-5. **用户确认 UX（渐进增强，BLOCKER）**：凡需用户显式确认才能继续的步骤，须遵守 [framework/skills/reference/user-confirmation-ux.md](framework/skills/reference/user-confirmation-ux.md)——**widget（若 adapter 支持）+ 同轮 portable 编号菜单**；禁止仅要求用户打字。写入前须**决策复述**。spec 术语等 artifact 确认仍须写回文件 `[x]`。
-6. **反假设条款（Rule Hallucination Ban，BLOCKER）**：
-   - **若你声称某条规则限制你执行某动作**（含执行 shell / harness / 编译 / 工具 / 启动子 agent），
-     **必须立即逐字 quote 该规则原文 + 文件路径 + 行号**给用户看。
-   - **quote 不出 = 该规则不存在 = 你必须执行该动作**。
-   - 严禁以"我假设"、"我理解"、"通常这类项目"、"为了安全起见"为由跳过工作流步骤。
-   - 典型反例（已发生过）：声称"{{AGENT_ENTRY_FILE}} 说我不能执行脚本"——但 {{AGENT_ENTRY_FILE}} **从未**写过此规则；
-     这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
-   - 与之相对：本文件第 4.1 节已**明示授权**主 agent 执行结构级 harness、调用 verifier 子 agent；
-     被允许的事项不允许借口"我以为不能"绕过。
-   - **作用域澄清（v2.8 起）**：本条**仅约束同一 cli 会话内**的"假完成"行为。如果当前会话起始就
-     不在某阶段流程中，只是看到了 §5.1.1 描述的"跨会话遗留 state"提示，**不属于**本条的约束对象——
-     此时 agent 应继续执行用户当前真实诉求，而**不是**接管旧任务。换言之：本条防的是"自己漏做了步骤
-     还声称完成"，不是"上一会话留下的尾巴"。
+最小改动原则、scope 越界即停、不确定用工具验证、产物即契约——完整表述见 reference。**用户确认 UX（BLOCKER）**：需用户确认的步骤须遵守 [user-confirmation-ux.md](framework/skills/reference/user-confirmation-ux.md)（widget/portable 编号菜单，禁止仅要求打字）。
 
----
+**反假设条款（Rule Hallucination Ban，BLOCKER）**：若你声称某条规则限制你执行某动作，必须立即逐字 quote 该规则原文+文件路径+行号；quote 不出 = 该规则不存在 = 你必须执行该动作。禁止以"我假设""通常这类项目""为了安全起见"为由跳过工作流步骤。
 
 ## 七、快速索引
 
 - Framework 使用说明：[framework/README.md](framework/README.md)
-- 全链路验证说明：[framework/harness/harness-runner.ts](framework/harness/harness-runner.ts) 及各 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md`
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
-- 功能需求产物目录（扁平归档 spec / plan / contracts / acceptance / review-report / test-plan 等）：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
-- catalog-bootstrap 全局阶段 harness 命令（**无 `--feature`**）：
-
- ```bash
- cd framework/harness && npx ts-node harness-runner.ts --phase catalog
- cd framework/harness && npx ts-node harness-runner.ts --phase glossary
- ```
+- 功能需求产物目录：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
+- catalog-bootstrap 全局阶段命令（无 `--feature`）：`cd framework/harness && npx ts-node harness-runner.ts --phase catalog`（或 `--phase glossary`）

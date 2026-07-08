@@ -128,6 +128,21 @@ entries:
         label: "选项 D — STOP，手动编辑 config 后重跑"
         portable: "4=manual_edit_stop"
 
+  - id: init.project_scale
+    skill: "framework-init"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S2.1 项目元数据"
+    portable_menu: "1=small 2=standard"
+    notes: "C4 exploration-scale：catalog 模块数 ≤3 时建议 small（术语消歧降为一次性确认、module-graph 默认禁用）；红线（diff_within_scope/Scope 声明）不受影响。"
+    options:
+      - value: small
+        label: "small — 小工程裁剪（模块数 ≤3 或估算代码量小）"
+        portable: "1=small"
+      - value: standard
+        label: "standard — 保持现状（缺省）"
+        portable: "2=standard"
+
   - id: init.intra_layer_deps
     skill: "framework-init"
     class: gate

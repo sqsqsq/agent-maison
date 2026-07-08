@@ -16,7 +16,8 @@ import {
 } from './exploration-strategy';
 import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
 
-export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut';
+/** `change` = lite track 的建立阶段（C4 facts.md 契约，与 `spec` 同源角色）。 */
+export type ContextExplorationPhase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'change';
 
 /** legacy exploration-snippets.yaml phase keys（≥2 minor 窗口 fallback） */
 const LEGACY_EXPLORATION_SNIPPET_PHASE_KEYS: Partial<Record<ContextExplorationPhase, string>> = {
@@ -34,6 +35,8 @@ export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExploration
   coding: ['plan', 'contract', 'acceptance'],
   review: ['contract', 'acceptance', 'coding-rule', 'plan'],
   ut: ['acceptance', 'contract', 'spec', 'plan'],
+  /** lite track 建立阶段，与 spec 同源角色（C4 facts.md 契约）。 */
+  change: ['glossary', 'module-catalog', 'architecture'],
 };
 
 /** schema 1.1.0 且 phase-rules 未声明时的 per-phase 默认阈值 */
@@ -78,6 +81,18 @@ export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, Exp
     require_subagent_when_use_cases_gt: 2,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
+  /**
+   * lite track 建立阶段（C4 facts.md 契约）：单模块假设下比 spec 略轻，
+   * 且未在 legacyRequiresSubagent 的 phase 分支中特判 → 恒不强制 subagent
+   * （lite 轻量化本意；有需要时可在 change-rules.yaml > exploration_strategy 显式覆写）。
+   */
+  change: {
+    min_files_inspected: 3,
+    min_source_code_paths: 1,
+    min_searches: 2,
+    min_code_facts: 1,
+    exploration_mode_allowed: ['subagent', 'sequential', 'minimal'],
+  },
 };
 
 export interface ContextExplorationFrontmatter {
@@ -112,7 +127,8 @@ interface ProfileExplorationSnippetsFile {
   phases?: Record<string, { extra_snippets?: string[] }>;
 }
 
-function parseContextExploration(
+/** 导出供 context-facts.ts（C4）复用——facts.md frontmatter 形态与 per-phase 文件兼容子集。 */
+export function parseContextExploration(
   raw: string,
 ): { fm: ContextExplorationFrontmatter; body: string; error?: string } {
   const trimmed = raw.replace(/^\uFEFF/, '');
@@ -158,6 +174,25 @@ function normalizeStringArray(v: unknown): string[] {
     return t ? [t] : [];
   }
   return [];
+}
+
+/**
+ * 去重（路径分隔符归一 + `path.posix.normalize` 折叠 `a/../a`、`a//b`、`./` 等变体后按值
+ * 去重，保序）——防止把同一条 source_code_paths 重复写多遍（或写成路径变体）来凑
+ * min_source_code_paths 数量阈值（codex review 抓到的真实绕过口子：阈值原先直接用数组
+ * 长度，重复 5 次同一路径也能过 ">=5"；`path.posix.normalize` 折叠是同批 review 的
+ * 后续加固建议，一并做掉，防止只做字符串级归一漏掉 `a/../a` 这类变体）。
+ */
+function dedupeNormalizedPaths(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const key = path.posix.normalize(item.replace(/\\/g, '/'));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 /** 有 context-exploration.md 门禁的 phase（testing 无——靠 trace；SSOT = runtime-policy，C0 收编）。 */
@@ -210,7 +245,7 @@ export function readContextExplorationInspection(
   };
 }
 
-function resolveThresholds(
+export function resolveThresholds(
   phase: ContextExplorationPhase,
   phaseRule?: PhaseRuleSpec,
 ): ExplorationThresholds {
@@ -287,7 +322,8 @@ function countCodeFactsRows(body: string): number {
   return count;
 }
 
-function runQuantitativeChecks(
+/** 导出供 context-facts.ts（C4）复用于 facts.md 建立阶段全量检查（无需 fm.phase）。 */
+export function runQuantitativeChecks(
   projectRoot: string,
   feature: string,
   phase: ContextExplorationPhase,
@@ -317,7 +353,7 @@ function runQuantitativeChecks(
     thresholds = applySequentialMultiplier(thresholds, strategy);
   }
 
-  const sourcePaths = normalizeStringArray(fm.source_code_paths);
+  const sourcePaths = dedupeNormalizedPaths(normalizeStringArray(fm.source_code_paths));
   const decisions = normalizeStringArray(fm.decisions_unlocked);
   const subagents = String(fm.subagents_used ?? '').trim().toLowerCase();
   const filesInspected = Number(fm.files_inspected_count ?? 0);

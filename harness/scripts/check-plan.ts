@@ -32,7 +32,7 @@ import {
   relFeatureArtifact,
 } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
-import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 import {
   extractHeadings,
@@ -975,7 +975,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'plan', {
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

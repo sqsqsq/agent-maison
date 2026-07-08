@@ -45,9 +45,9 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, loadFrameworkConfig } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
-import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
@@ -416,15 +416,22 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
   });
 
   if (unconfirmed.length > 0) {
-    return [{
-      id: 'terminology_mapping_table', category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `${unconfirmed.length} 条术语映射未获得用户确认（用户确认列不是 [x]）：${unconfirmed.join('、')}`,
-      suggestion:
-        '交互态：须等用户逐条确认后写回 [x]。goal-mode headless：按 user-confirmation-ux.md §9 自动写回 [x] 并留痕 headless-assumptions.md。',
-      affected_files: specAffected,
-    }];
+    // C4 exploration-scale：project_scale=small 允许一次性对照 architecture.md 模块清单的
+    // 整体确认替代逐行 [x]（红线仍是"须有一次真人/headless 确认"，只是确认粒度从逐行降为一次性）。
+    const isSmallScale = loadFrameworkConfig(ctx.projectRoot).project_scale === 'small';
+    const onceConfirmed = isSmallScale && /-\s*\[[xX]\]\s*.*一次性确认/.test(section);
+    if (!onceConfirmed) {
+      return [{
+        id: 'terminology_mapping_table', category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+        severity: 'BLOCKER', status: 'FAIL',
+        details: `${unconfirmed.length} 条术语映射未获得用户确认（用户确认列不是 [x]）：${unconfirmed.join('、')}`,
+        suggestion: isSmallScale
+          ? '交互态：逐条确认写回 [x]；或在术语映射表节末追加一行 "- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射"（small 档专用，替代逐行确认）。goal-mode headless：按 user-confirmation-ux.md §9 自动写回并留痕 headless-assumptions.md。'
+          : '交互态：须等用户逐条确认后写回 [x]。goal-mode headless：按 user-confirmation-ux.md §9 自动写回 [x] 并留痕 headless-assumptions.md。',
+        affected_files: specAffected,
+      }];
+    }
   }
 
   const confidenceIdx = table.headers.findIndex(h => h.includes('置信度'));
@@ -994,7 +1001,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'spec', {
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

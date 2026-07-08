@@ -10,13 +10,10 @@
 
 **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `code-graph.derive_confirm` / `code-graph.curated_confirm`。
 
-## Step 0. 载入 `project_profile` addendum（强制）
+## 条件加载索引
 
-完整阅读：
-
-`framework/profiles/<project_profile.name>/skills/code-graph/profile-addendum.md`
-
-> **动态资产引用**：正文 `` `profile-skill-asset:code-graph/<asset_key>` `` 须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
+- 存在 `framework/profiles/<project_profile.name>/skills/code-graph/profile-addendum.md` 时先读（宿主专属细则）。
+- 正文 `` `profile-skill-asset:code-graph/<asset_key>` `` 按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 
@@ -73,15 +70,7 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <ModuleName>
 
 **停等 `code-graph.curated_confirm`**：展示 core 节点清单与 intent 后再合并写盘。
 
-### Step 4. 本地漂移自查（可选）
-
-在写盘前/后可用库逻辑自查（agent 读 YAML + 调 drift 语义）：
-
-- 符号消失 → BLOCKER
-- core anchor hash 变 → BLOCKER
-- 非 core 体 hash 变 → WARN
-
-### Step 5. Harness 验证门禁
+### Step 4. Harness 验证门禁
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
@@ -89,7 +78,17 @@ cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
 
 > **无需 `--feature`**（全局 phase）。零图谱时 PASS 并提示建图。
 
-### Step 6. 与 business-ut 的关系
+## 门禁清单表
+
+| 检查 | 判据 | 失败处置 |
+|---|---|---|
+| 符号消失 | anchor 引用的符号在源码中找不到 | BLOCKER：core 节点须先修正 anchor 或移除策展 |
+| core anchor hash 变 | core 节点绑定代码块 hash 不匹配 | BLOCKER：确认改动预期后刷新 hash，否则视为漂移 |
+| 非 core 体 hash 变 | 非 core 节点绑定代码块 hash 不匹配 | WARN：可见提示，不阻断 |
+
+> `framework/specs/phase-rules/module-graph-rules.yaml` + `check-module-graph.ts` 为 SSOT；上表为人读速查。
+
+## 与 business-ut 的关系
 
 - 本 Skill = **主动**建/维护模块级图谱。
 - business-ut Step 8.0 = 需求收尾时**被动**评估是否触及 `core` 节点；触及则更新图谱并同步 UT。

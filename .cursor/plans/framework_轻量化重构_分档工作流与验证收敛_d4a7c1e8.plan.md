@@ -34,22 +34,22 @@ todos:
     content: "C3-task1 硬约束普查台账（Phase 0，无行为变更）：范围=全部 10 个 SKILL.md（含 catalog-bootstrap 654 行等 project skill）+ templates/AGENTS.md.template 48 处；四分类（脚本已执行/纯文本纪律/事故补丁可原则化/过时重复）+ 旧文→新落点映射；停等用户 review 放行后才允许 C3-task2 动笔；台账同时按 skill 复杂度提交主干预算分级提案（150 基准，business-ut/plan 等是否放宽 ≤250）供用户拍板"
     status: completed
   - id: ab-eval-phase0
-    content: "受控 A/B 基线（Phase 0 gate 输入；owner = OpenSpec change ab-eval）：前置任务=trace.schema.json 增可选 usage 段（input/output/tool tokens、requests、cost_estimate）+ 采集策略（goal-runner headless 直采 API usage；交互 adapter best-effort 自报+wall-time/tool_calls 代理指标）；然后取 4 类样本各 ≥1（简单 bugfix/单模块 feature/跨文件中等/进行中 feature 的 NL 修正——第 4 类对照 old flow vs C5 flow；某类不可复现须报告标注缺失且 gate 不得声称覆盖该类收益）× 同模型、各臂均以 headless goal-runner 跑（adapter goal capability 增 usage_capture: none|stdout_json|stderr_regex|sidecar|api 声明位，按声明采集、api/sidecar 优先；报告机器固化 resolved provider/model，拿不到 usage/model 身份只出代理指标、不得声称同模型 token 对照；交互态另验）、分开独立跑（不得顺序跑计时），产出对照报告；gate=方向性信号（继续/收窄），最终阈值不由单样本拍板"
-    status: in_progress
+    content: "受控 A/B 基线（owner = OpenSpec change ab-eval）：采集基建已完成（trace.schema.json usage 段 + usage_capture 声明 + agent-invoke 采集 + goal-runner 落盘 + 对照报告模板，见批次 2）。**受控跑批本体（4 类样本对照实测）用户决策跳过（2026-07-08）**：不作为 Phase 1 开工前提，改为 Phase 1 全部完成后，用户在真实宿主工程用本框架实测对比，发现问题回来再改。"
+    status: completed
   - id: c2-verification-matrix
     content: "C2 verification-matrix（Phase 1）：config 增 evidence_profile: strict|balanced（缺省 strict=现状零变化；minimal 为 lite track 的 resolved 档不可全局声明）；headless/goal 运行时强制 strict；证据矩阵经 C0 resolveEvidencePolicy 输出，收编 check-receipt.ts:333/:341/:365/:402/:551(self_check) 硬必需块与 phase-completion-receipt.md 模板为 policy 驱动，Stop hook / harness-runner closure(:664) / next_step(:776) 同源消费；receipt 与 .current-phase.json 增 evidence_policy_snapshot 机读契约（policy 档与 validation_status: provided|missing|skipped_by_policy|not_applicable 两层分离）；closure 来源按 policy 分派（full=receipt passed；lite=exit 报告 PASS，not_applicable 不映射为 passed，Resume Gate 三态显式）；lite 闭环态=change.md checkbox+exit 报告；红线清单落 specs 由单测锁死"
-    status: pending
+    status: completed
   - id: c3b-skill-slim
     content: "C3-task2~4（Phase 1，台账已放行 2026-07-08 + C1 定稿）：按台账把 10 个 SKILL.md 重构为主干+reference 条件加载（预算按拍板分档：150 基准，framework-init/business-ut/catalog-bootstrap ≤250；'完整阅读 X BLOCKER'→'场景触发才读'；脚本已执行细则缩为一句+报错自解释；C 类事故叙事按拍板折中移 framework reference 不删除）；AGENTS.md.template →≤120 行（含 L0/L1/L2 分流路由与保守缺省）；check-docs 增主干行数上限（per-skill 覆写按分档）+'强制全文阅读'句式黑名单 lint 防再膨胀；confirmation-registry 同步+check-skills-confirmation-ux 绿"
-    status: pending
+    status: completed
   - id: c4-exploration-scale
     content: "C4 exploration-scale（Phase 1）：context-exploration 改 per-feature facts.md 且覆盖全部 feature phase（spec 建立、后续各阶段 phase_delta 增量节；receipt 的 context_exploration 凭证经 C2 policy 指向 facts.md#phase_delta）；backfill-context-exploration.ts 扩展兼容旧 per-phase 布局；小工程裁剪：catalog 模块数 ≤3 时术语消歧降为一次性对照确认、glossary 最小化、module-graph 按 scale 可禁（config.phases_disabled 与 profile 取并集，经 profile-loader:223/:231 + C0 统一裁剪）；framework-init 增 scale 判定写入 config"
-    status: pending
+    status: completed
   - id: c5-correction-routing
     content: "C5 correction-routing：**C5-min（Phase 0，只依赖 C0/C1、default strict）**=前置归属解析 resolveCorrectionTarget（任何编辑前解析，禁止先编辑后归属，diff 反查仅作收尾对账）+ classifyCorrection→{root_layer, touched_layers[], revalidate[]}（correction resolvers 扩展 C0 判定集合）+ 级联重验清单（脚本门禁为主）+ 修正确认 gate + 最小持久化 .current-correction.json（含 created_at/session_id/base_commit/request_fingerprint/enforcement_tier/expires_at，stale 拒绝）+ --correction-check 自检 + --adhoc-correction no-feature 入口（changed-files=git diff base_commit∪工作区；compile/lint/架构规则/受保护前缀；报告 reports/_adhoc；不建假 feature 目录）+ resolveEnforcementTier 派生判档（settings_file/hooks+mode 派生，不新增 schema 字段不硬编码 adapter 名）+ 验证转嫁禁令；**C5-full（Phase 1，接入 C2）**=touched_layers 对账并入 evidence_policy_snapshot（只拦未声明层，组合修正放行但必须重验 coding 及下游）+ hard_hook 深度集成 + balanced 减免语义 + feature.yaml 修正历史 + 全套坏态 fixtures（分类错误/声明 spec 却改代码/组合修正漏重验/无归属直改/soft 档 checklist 缺项/correction 状态缺失或过期）"
-    status: in_progress
+    status: completed
   - id: gates
-    content: "每 change 与最终：cd harness && npm test 全绿 + npm run openspec:validate + npm run release:verify；hmos-app 默认路径（未声明 track/evidence_profile/scale）全回归零变化；Phase 0 gate 报告经用户 review 后才开 Phase 1（android plan 衔接已在定稿时写入 5e3400c3，无需重复动作）"
+    content: "每 change 与最终：cd harness && npm test 全绿 + npm run openspec:validate + npm run release:verify；hmos-app 默认路径（未声明 track/evidence_profile/scale）全回归零变化；~~Phase 0 gate 报告经用户 review 后才开 Phase 1~~（用户 2026-07-08 决策：跳过 A/B 跑批门禁，直接开 Phase 1；宿主工程实测挪到 Phase 1 全部完成后）；android plan 衔接已在定稿时写入 5e3400c3，无需重复动作"
     status: pending
 isProject: false
 ---
@@ -576,3 +576,176 @@ flowchart TD
 - **cursor P3 头注释（驳回，有据）**：check-exit.ts 头注释现场已是终态表述（":12-13 无 provider → MAJOR WARN 可见缺项（终态语义）"），无"接线待 C1 子批"旧文——评审看的应是旧视图。
 - 另注：cursor 总评引用的台账分布 A24/B8/C4/D2 为更正前旧值（机器实数 56 条 A35/B11/C8/D2，见上节）。
 - **终态**：`npm test` 全绿（typecheck + **1512 单测 + 40 fixtures**，新增 3 枚回归钉均 `--filter` 实测计入）。
+
+### 2026-07-08 · 用户决策：跳过 A/B 跑批门禁，直接开 Phase 1
+
+**决策原文**："跳过A/B，直接开phase 1，全部开发完成后，我会一起去宿主工程跑任务来对比。即便到时候发现做的有问题，回来再改就是了。"
+
+- **偏离点**：plan 原定 Phase 0 gate = 受控 A/B 对照报告（4 类样本，owner=ab-eval change）经用户 review 后才开 Phase 1；用户作为 gate 拍板人直接决策跳过该前提。
+- **范围**：跳过的是"受控跑批本体"（真实样本工程 + headless 环境的实测数据收集与对照报告）。**采集基建不受影响**——trace usage schema / usage_capture 声明 / agent-invoke 采集 / goal-runner 落盘 / 报告模板已在批次 2 完成，留作 Phase 1 完成后用户在宿主工程实测时可直接用。
+- **风险知情**：Phase 1（C2 证据矩阵改写、C3 skill 主干化、C4 探索裁剪、C5-full）将在没有 A/B 数据背书的情况下推进；用户已明确接受"做完再去宿主工程验证，发现问题回来改"的顺序倒置。
+- **plan todos 更新**：`ab-eval-phase0` 标记 completed（基建完成，跑批本体按决策不再是 blocking 前提）；`gates` todo 的"Phase 0 gate 报告"前提划除，注明本决策。
+- **下一步**：Phase 1 顺序执行 C2 → C3-task2~4 → C4 → C5-full；每 change 完成后 `cd harness && npm test` 全绿 + `openspec:validate` + `release:verify`。
+
+### 2026-07-08 · Phase 1 批次 3（C2 verification-matrix 全量）——全绿收口
+
+**C2：完成（todo 已勾）**。实现顺序：矩阵求解 → check-receipt 接线 → closure/Stop hook 消费 → 红线锁+象限 fixture。
+
+- **矩阵求解**：`specs/framework.config.schema.json` + `harness/config.ts` 增 `evidence_profile: strict|balanced`（schema enum 硬拒 minimal）；`runtime-policy.ts` 重写 `resolveEvidencePolicy`——lite 恒返回 `{verifier:off, receipt:not_applicable, trace:optional, exploration:not_applicable}` 且**优先于 mode 判定**（架构性不适用，非"降档"，headless/goal 的 lite 依旧 not_applicable）；full track 下 headless/goal 强制 STRICT，interactive 下按 config.evidence_profile 求解，balanced 档 verifier 只在保留集 phase（缺省 {spec,coding}，config 可覆写）required，trace 降 optional，exploration 维持 required（矩阵表未降）。新增 `resolveProfileLabel`（人读档位）+ `buildEvidencePolicySnapshot`（两层契约组装：off/not_applicable 恒钉 validation_status，required/optional 项取调用方探测值）+ `resolvePhaseClosureSource`（closure 三态纯函数）。**default 等值不变式**：`buildPolicySnapshot(track)` 沿用单参签名（未破坏 C0/C1 调用方），内部改用安全 ctx 调 `resolveEvidencePolicy`——full track 下无论传何种 mode 恒 STRICT（receipt 项在 strict/balanced 两档皆 required，headless 强制 strict 也 required，三路径巧合收敛为同一常量），故快照简化不牺牲正确性。
+- **check-receipt.ts policy 化**：verifier/trace/exploration 三块按 policy 分派；trace 的"optional+缺失"降 WARN（新 warnings 数组，不进 issues 不影响 exit code），"optional+提供但损坏"仍 BLOCKER（豁免"不提供"不豁免"提供假的"）；script_harness/commit_sha/self_check/反假设条款四项恒 required（不参与矩阵，同属不可降档的诚实性校验但不在 design 红线清单内，单独澄清避免与红线概念混淆）。lite track 双重短路：`tryValidateReceipt`（phase-state.ts）在 spawn 子进程前先查 track，是 → 直接返回 `not_applicable` 零 subprocess（3 个真实调用点全覆盖：harness-runner/goal-runner/runSyncClosure）；check-receipt.ts 主流程也短路（防直接 CLI 误用的兜底）。
+- **closure 三态**：`ReceiptValidation.status` 新增 `'not_applicable'`；`runSyncClosure` 新增该分支——不写 state、不patch summary 为 open（避免"receipt 检查失败待补"的误导文案），改引导查 exit 阶段自身 script-report；`harness-runner.ts writeRunSummary` 的 `closed` 判定改用 `resolvePhaseClosureSource(track, verdict, receiptStatus)`，lite 看 script verdict、full 看 receipt 状态——**修复了一个真实的既有缺陷**：此前 lite 的 `exit` phase 每次跑都会因 `tryValidateReceipt` 找不到 receipt 文件而把 `closure_status` 误判为 `open`（即便 exit 脚本门禁全绿）。
+- **Stop hook**：C1 已备好 `policyRequires(snapshot,'receipt')` 机制但因 `buildPolicySnapshot` 恒返回 STRICT 而从未真正命中（注释明写"C2 接入前不会命中"）；C2 起 `buildPolicySnapshot('lite')` 真实返回 `not_applicable`，该分支首次激活——更新陈旧注释，补 T21（lite+receipt=null 仍 exit 0）/T22（full 无 snapshot+receipt=null 仍 exit 2，防豁免逻辑误用回归钉）两条端到端 case（真实 spawn hook 进程）。
+- **验证方式**：没有停在纯函数单测——`check-receipt-policy.unit.test.ts`（7 case）用 `tryValidateReceipt` 真 spawn `check-receipt.ts` 子进程跑通 5 个矩阵象限（含一条直接 spawn 断言 WARN 文本真的出现在 stdout，不只是"没 FAIL"）；过程中夹具首次用 `project_profile: generic` 撞见 `phases_disabled: [coding,ut,testing]` 导致门禁被短路在到达矩阵逻辑之前——换用 `spec`（保留集内）/`review`（保留集外，未禁用）两个 phase 后测通，这是本批唯一的调试弯路，如实记录。
+- **红线单测锁死**：两条新 case——① 6 种 track/mode/config 组合下 `resolveEvidencePolicy` 输出的 key 集合恒为 `{verifier,receipt,trace,exploration}` 四项（结构上不可能夹带红线开关）；② 源码扫描锁死 `framework-integrity.ts`/`process-integrity.ts`/`fidelity-shared.ts`/`diff-scope.ts`/`goal-failure-classifier.ts` 五个红线实现文件零引用 `evidence_profile`/`resolveEvidencePolicy` 等符号（当前即零耦合，锁死防未来漂移）。
+- **终态**：`npm test` 全绿（typecheck + **1530 单测 + 40 fixtures**）；`openspec:validate` 31/31；`release:verify` 技术项全 PASS（plan-version FAIL 为预期语义——3.0.0 窗口内 C3b/C4/C5-full/android 仍 pending）。
+
+**下批入口**：C3-task2~4（skill 主干化改写，台账已放行、预算分档已批准）→ C4 exploration-scale → C5-full。
+
+### 2026-07-08 · C4 exploration-scale 批次 1（facts.md 核心门禁全量接线）——收口
+
+按 design.md 落地 `<features_dir>/<feature>/context/facts.md` 契约：新增 `harness/scripts/utils/context-facts.ts`，接入全部 7 个 feature phase（spec/plan/coding/review/ut/testing/change/exit）。
+
+- **建立阶段 vs 增量阶段的判定简化**：design.md 原文承诺"lite 含 coding/exit 参与 delta"，实测发现 `coding` 脚本在 full/lite 两轨间是**同一份 check-coding.ts**（`workflows/spec-driven.workflow.yaml` 的 `coding` artifact `tracks:["full","lite"]`），且 `coding` 在两轨的拓扑序里都不可能是第一个 feature phase——由此推出一个比"按 track 分支"更简单的静态规则：只需两个全局常量 `FACTS_ESTABLISHING_PHASES = {spec, change}`，其余全部 phase（plan/coding/review/ut/testing/exit）统一按"轻量 delta 检查"处理，**完全不需要把 track 参数穿透进 CheckContext 或 8 个调用点**——这比原计划设想的改造面小得多。
+- **量化阈值只在建立阶段生效**：复用既有 `runQuantitativeChecks`（spec/plan/coding/review/ut 原有的量化门槛函数，未改动其内部逻辑，只是 export 出来给 facts.md 场景复用），委托给 `spec`/`change` 两个建立阶段；`change` 阶段新增一档比 spec 略轻的阈值（3 files/1 path/2 searches/1 fact，且不触发 subagent 强制——`legacyRequiresSubagent` 的 phase 分支未特判 `change`，刻意维持 lite 轻量化本意）。其余 delta 阶段只要求 `## phase_delta: <phase>` 小节存在且非空（允许显式写 "none"，禁止留空——留空无法区分"忘写"与"确实没有"）。
+- **向后兼容**：facts.md 不存在但旧版 per-phase `<phase>/context-exploration.md` 存在时，回落旧校验逻辑 + 追加一条 MINOR WARN 建议 backfill；两者都不存在才 FAIL。`ContextExplorationPhase` 类型（`context-exploration.ts` 与 `exploration-strategy.ts` 两处重复定义，非循环依赖各自维护）均加了 `'change'` 成员以让 `change` 阶段安全复用既有量化检查管线。
+- **一处真实的兼容性 bug（如实记录，已修复）**：初版把新增检查项 id 命名为 `context_facts_*`（如 `context_facts_present`），实测 3 个既有 spec fixture（`ext_compat_legacy_pass`/`legacy_duplicate_prd_warn`/`phase_alias_prd_pass`）全部由 PASS 变 FAIL——根因是仓库已有的 `compat.yaml` 豁免机制（`compat-loader.ts > exemptMatches`）用**前缀通配**匹配 `exempt_checks: [context_exploration_*]`，只有以 `context_exploration_` 开头的 check id 才会被该豁免命中；改名 id 后旧的豁免声明形同虚设，新查项以 BLOCKER 硬 FAIL 而非按声明降级 WARN。这个兼容面在 design.md 里完全没提到——如果没跑 fixture 大概率会漏掉，是这批唯一的真实设计盲点。**修复**：全部新增 id 统一改前缀 `context_exploration_facts_*`（如 `context_exploration_facts_present`），使已有消费者工程手上现存的 `compat.yaml`（`exempt_checks: [context_exploration_*]`）豁免声明无需改动即可继续对新契约生效——这是必须保持的向后兼容面，不是可选优化。3 个 fixture 的 `EXPECTED.json` 同步更新断言的具体 id 字面量（功能语义不变，只是 id 改名）。
+- **lite 端到端 fixture 补数据**：`lite/change_pass` 与 `lite/exit_pass` 两个 PASS 态 fixture 原本没有 facts.md（这两个 phase 此前从未有过探索门禁），新建门禁后从 PASS 变 FAIL；补齐两份 `INPUT/doc/features/lite-demo/context/facts.md`（`change_pass` 建立阶段全量，`exit_pass` 额外带 `phase_delta: exit` 节模拟"change 已建立、exit 消费"）后复绿。其余 3 个既有 lite FAIL 态 fixture（`exit_checkbox_unchecked_fail` 等）未受影响——fixture 断言只校验列出的具体 rule id，不做全量匹配，新增 BLOCKER 不会误伤已预期 FAIL 的用例。
+- **终态**：`cd harness && npm test` 全绿（**1541 单测 + 40 fixtures**，零净新增/回归，纯粹是替换+新增门禁后修复到原有绿态）；`npx tsc --noEmit` 全绿。
+
+### 2026-07-08 · C4 exploration-scale 批次 2（goal-checkpoint + backfill --to-facts）——收口
+
+- **goal-checkpoint.ts**：P2 断点续跑改为 facts.md 优先——新增 `readFactsOrLegacyInspection`，建立阶段（spec/change）存在 facts.md 时直接从其 frontmatter 派生 `ContextExplorationInspection`（字段形态与旧 per-phase 文件兼容，逻辑零改动地复用）；facts.md 不存在则原样回落 `readContextExplorationInspection`（legacy 契约零变化）。delta 阶段不产出 skip-list（该阶段本不做全量探索，断点续跑价值有限，直接走 legacy 判断更保守安全）。这是 goal-mode 无人值守恢复链路的一环，改动前后跑了该模块专属的 12 条既有单测（`Suite [goal-checkpoint]`）确认零回归。
+- **`backfill-context-exploration.ts --to-facts`**：新增归并模式——按 `spec→plan→coding→review→ut→testing` 序，取 `--phases` 里最早存在的 legacy per-phase context-exploration.md 作 `established_by` 全量来源（Code Facts 表逐字复制），其余各自的 Code Facts 表转成对应 `## phase_delta: <phase>` 节；量化计数（`files_inspected_count`/`searches_performed_estimate`）取全部归并 phase 的**最大值**而非仅建立阶段自身值（多个 legacy 文件各自独立做过全量探索，取 max 更贴近"这批工作量确实发生过"，避免 established_by 恰好落在探索最浅的 phase 上时把 facts.md 判过严）；幂等（facts.md 已存在且未 `--overwrite` 时 SKIP，exit 3）。手工 smoke 测试验证归并后的 facts.md 分别过 `checkFactsArtifact` 的建立阶段全量检查与 delta 阶段轻量检查（无既有单测覆盖 backfill 脚本本身，这是历史遗留缺口，未在本批新增，如实记录）。
+- **终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1541 单测 + 40 fixtures**，无回归）。
+
+**剩余 C4 工作**（下批）：`project_scale` 全链路（config schema/template、profile-loader 并集、framework-init 建议写入、spec Step 1.5 small 档降级分支）+ 6 个 SKILL.md（spec/plan/coding/code-review/business-ut/change-lite）Research Sub-Phase 步骤文档同步指向 facts.md + 对应新 fixture。
+
+### 2026-07-08 · C4 exploration-scale 批次 3（project_scale 全链路 + 全部 SKILL.md 文档同步）——C4 收口
+
+- **config schema/template**：`specs/framework.config.schema.json` 新增 `project_scale: small|standard`（缺省 standard）+ `phases_disabled: string[]`（实例级，与 profile 声明并集）；`harness/config.ts` 的 `FrameworkConfig` 接口与 `normalizeConfig()` 同步。**未改** `templates/framework.config.template.json`——遵循 `evidence_profile` 先例，opt-in 字段不预置默认值，只由 framework-init 在用户确认 small 档后显式写入。
+- **profile-loader.ts 并集**：`loadResolvedProfile` 里 `phasesDisabled` 从"只读 profile yaml 声明"改为"`yaml.phases_disabled ∪ cfg.phases_disabled` 合并后再 `normalizePhaseDisabled`"，任一侧禁用即禁用（`isPhaseDisabledByProfile` 消费方零改动）。
+- **framework-init SKILL.md**：S2.1 表新增 `project_scale` 行（catalog 模块数 ≤3 建议 small）；`confirmation-registry.yaml` 新增 `init.project_scale` enum gate（`1=small 2=standard`）。**预算刚好卡满 250 行**（既有台账批准的 ≤250 档三个 skill 之一），本次改动只挤进 1 行表格 row，未触碰任何既有段落。
+- **spec 小档降级——含实际门禁松绑，非纯文档**：`check-spec.ts` 的 `terminology_mapping_table` 检查原先无条件要求映射表**每一行**「用户确认」列 `[x]`；新增分支——`project_scale=small` 时，映射表节末若有一行 `- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射`，整体放行、不再挨行校验（`loadFrameworkConfig` 读取 `project_scale`）。`specs/phase-rules/spec-rules.yaml` 描述文本与 `spec/SKILL.md` Step 2 同步该分支；用正则单元验证过匹配/不匹配三种输入（勾选+关键词/未勾选/勾选但文案不对），红线（`scope_matches_catalog`/`diff_within_scope`）逻辑完全未碰，不受 small 档影响。
+- **6+1 个 SKILL.md 文档同步 facts.md**：spec（Step 4，标注"建立阶段"）、plan/coding/code-review/business-ut（Step 3 或等价步骤，标注"delta 阶段·追加 `## phase_delta: <phase>` 节"）、device-testing（Step 1 新增 testing 的 delta 节说明，此前 testing 从未有探索门禁）、change-lite（Step 2 标注"lite 建立阶段" + Step 4 新增 exit 的 delta 节说明）。全部替换旧表述"落盘 `<phase>/context-exploration.md`"为 facts.md 建立/追加语义，无一遗漏。
+- **未完成、留作后续**（如实记录，非阻塞项）：design.md 提到的"catalog 卡片 `NOT_responsible_for`/`easily_confused_with` 降为可选"字段精简未实现——涉及 catalog-bootstrap schema 改动，评估为低风险低优先级的补充打磨，本批未做。
+- **终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1541 单测 + 40 fixtures**，零回归）；confirmation-UX lint 零 FAIL；`docs` phase harness 对本仓真实状态 verdict=PASS（`skill_body_max_lines` 含 framework-init 卡边界 250 行仍 PASS）。
+
+**C4 exploration-scale 批次 1-3 全部完成**（facts.md 核心门禁 + goal-checkpoint + backfill --to-facts + project_scale 全链路 + 全部 SKILL.md 文档同步）。`openspec/changes/exploration-scale/tasks.md` 尚未逐项勾选（下次进入前先同步）。
+
+**下批入口**：C4 收尾（补 `openspec/changes/exploration-scale/tasks.md` 勾选 + 可选的 catalog 卡片字段精简）→ C5-full（touched_layers 对账并入 evidence_policy_snapshot + hard_hook 深度集成 + balanced 减免语义 + feature.yaml 修正历史 + 全套坏态 fixtures）。
+
+### 2026-07-08 · C5-full（touched_layers 对账 + hard_hook 深度集成 + feature.yaml 历史）——Phase 1 全部收口
+
+C4 收尾先行：`openspec/changes/exploration-scale/tasks.md` 补齐逐项勾选（此前如实标注"尚未同步"，本次一并处理，未新增行为）。随后直接推进 correction-routing 的 C5-full 四项。
+
+- **touched_layers 对账**：新增 `harness/scripts/utils/correction-layer-reconcile.ts`——启发式文件→层分类器（feature 产物目录内确定性映射 spec.md→spec / plan.md+contracts.yaml→plan / change.md→change / review、ut、testing 子目录同名映射；目录外源码按测试路径特征粗判 ut/coding；framework/doc/openspec 等基础设施路径中性豁免不计入任何层），接入 `runCorrectionCheck`（`--correction-check` 每次都 diff `base_commit..HEAD` 做对账，未声明层被真实改动命中则计入 pending 阻塞收口；声明覆盖的组合修正正常放行——精确对应 design.md「只拦未声明层」）。**一处对设计原文的实现层修正**：design.md 写"并入 C2 evidence_policy_snapshot"，但 C2 收口时特意用红线测试把该结构锁死为恒定 4 键（`{verifier,receipt,trace,exploration}`），塞入第 5 键会打破那条防漂移锁——改为把对账做成 `--correction-check` 自身的独立阻塞项，语义等价（"未声明层觉察即阻塞收口"）但不改动 C2 的锁定结构，如实记录这处偏离及理由。
+- **hard_hook 深度集成**：`check-phase-completion.mjs`（Stop hook）新增 `evaluateCorrectionGate`——**独立于**阶段闭环判定，只要 `.current-correction.json` 存在、`status=pending`、属当前会话（或双方缺 `session_id` 时按 `created_at`+24h TTL 兜底）、未过期，就拦截 stop，**即便当前阶段本身已闭环甚至根本没有活跃阶段**（覆盖"改完已交付 feature 却没收口"的场景）。这是本批唯一直接改动 Stop hook 的部分——按最高谨慎度处理：不改动任何既有判定分支，只在 `main()` 入口新增一段独立短路逻辑；`--clear-state` 同步扩展为一并清理 correction state（复用既有"明确放弃"逃生阀语义，不新增命令）。落地前后跑了该 hook 专属的端到端子进程 spawn 测试（新增 T23-T27 共 5 条，覆盖同会话拦截/跨会话放行/已闭环放行/已过期放行/阶段闭环但 correction 未收口仍拦截），叠加既有 23 条零回归。
+- **feature.yaml 修正历史**：`feature-track.ts` 新增 `appendFeatureCorrectionHistory`（复用既有 `history[]` 数组，与 C1 track 升档事件同源同构，文件缺失静默跳过不阻断闭环），接入 `runCorrectionCheck` 状态转 `closed` 的那一刻自动写入。
+- **balanced 减免语义——复核后判定"部分已满足、部分留白"**：`probePhaseEvidence`（revalidate 证据探测）自 C5-min 落地起就只读 `script-report.json` 的 verdict、从未独立校验 verifier 报告，故"verifier 可省"这半句在 correction-check 层面已是既有行为，无需新代码（补充说明性代码注释即可）；"高置信免确认"这半句因**设计文档未给出评分公式或阈值定义**，评估为需要用户拍板的开放设计问题（不是可自主推断的实现细节），本批未实现，如实记录。
+- **未做（同样如实记录）**：exploration-scale 的 catalog 卡片字段精简（低风险低优先级，非阻塞）；balanced 高置信免确认的评分机制（需用户输入）。
+- **终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1553 单测 + 40 fixtures**，较 C5-min 收口时净增 41，零回归）；`openspec:validate` 31/31（含 correction-routing、exploration-scale 两个 change 均 `--strict` 单独复核通过）。
+
+## Phase 1 全部完成（C2 + C3 + C4 + C5-full）
+
+按用户 2026-07-08 决策（跳过 A/B 受控跑批，Phase 1 全量开发完成后统一去宿主工程实测），C2 verification-matrix、C3 skill-slim、C4 exploration-scale、C5-full correction-routing 四个 openspec change 全部实现完成，`cd harness && npm test` 全绿（1553 单测 + 40 fixtures），`openspec:validate` 31/31。全程零 A/B 对照数据支撑，如实记录以下**已知需要宿主工程实测验证的点**（非阻塞性完成，但风险未经真实数据消解）：
+- C4 facts.md 契约的 established_by/phase_delta 机制未经真实多阶段连续 feature 走查（仅 fixture + 手工 smoke 验证）；
+- C5-full 的 touched_layers 文件分类器是启发式实现，未在真实宿主代码结构上验证过误判率；
+- hard_hook Stop hook 联动虽有端到端子进程测试，但未在真实 Claude Code CLI 环境下实测过 correction 场景的实际拦截体验。
+
+**下一步**：用户前往宿主工程（android/hmos）实测整条 Phase 1 链路，发现问题回来修。
+
+### 2026-07-08 · Phase 1 双 AI 审查（cursor + codex）response——3 处真实问题全修复
+
+用户拿 Phase 1 完整 diff 分别给 cursor 和 codex 做独立复核。逐条核实（不盲信不盲拒）后：cursor 的问题多为已知留白的确认性复述（可直接采信其结论）+ 2 处文档漂移；codex 额外抓到 1 个真实 fail-open bug + 1 处测试覆盖缺口。全部核实为真后修复，无一条是"旧视图"或"早熟建议"误报。
+
+**codex P1（真实 bug，correction-commands.ts 不是 fail-closed）**：`runCorrectionCheck`/`runAdhocCorrection` 的 touched_layers 对账原先只在 `diff.executed=true` 时才生效，git diff 失败或 base_commit 不可达时只打 WARN、仍可正常收口。核实过程中挖到一个更深的根因：`git-diff.ts` 判定 `baseIsFallback` 用的裸 `git rev-parse --verify <sha>` 对 40 位十六进制字符串**只校验格式不校验对象是否真实存在**（`git rev-parse --verify <随手编的sha>` 照样 exit 0，实测坐实）——意味着 base_commit 因 rebase/gc 失联这个 codex 担心的场景，原有代码根本探测不到。两处一起修：`git-diff.ts` 的 verify 调用加 `^{commit}` 后缀强制要求对象真实存在（对合法分支名/SHA/HEAD~N 均验证不受影响）；两个 correction 命令改为 `!diff.executed || diff.baseIsFallback` 时 fail-closed。新增 `correction-check-fail-closed.unit.test.ts`（真实 git 仓库端到端）钉死。
+
+**cursor P2 + codex P2（文档漂移，AGENTS.md.template 与 agents-entry-detail.md）**：①红线清单 #6「Context Exploration Gate」仍写 per-phase `context-exploration.md`，未跟上 C4 的 facts.md 契约——两处一并改。②入口"执行规则"原文「含引用的 template/reference/checklist 也是强制阅读」与 C3 条件加载设计正面冲突（codex 指出：这句话等于把移出去的深层细则用一句话拉回来）——改写为"仅在条件加载索引命中时读"。两处都是 C3/C4 各自改写时遗留的入口文档未同步，本身不是新代码回归，但会误导 agent 找错文件/重新养成全读习惯。
+
+**codex 补强（forced_full_read_blacklist lint 盲区）**：原 lint 只认「完整阅读 X（BLOCKER）」窄句式，抓不住上面第②处那种「引用材料也是强制阅读」的语义等价回退表述——这正是该文档漂移能悄悄存在的原因（就算未来有人试图改回去，旧 lint 也拦不住）。`forced-full-read-scan.ts` 新增第二条正则 `REFERENCE_MANDATORY_READ_RE`，补 2 个测试 case。
+
+**codex P3（context-facts.ts 缺直接单测）**：C4 核心入口此前只靠"7 个 check-<phase>.ts 接线 + fixture 通过"这种集成路径间接验证——证明"没炸"不等于"语义没被悄悄改错"。新增 `context-facts.unit.test.ts`（14 case，直接覆盖建立阶段量化 PASS/FAIL、delta 三态、legacy 回落、testing 无回落直接 FAIL、5 项 frontmatter 校验、lite 建立阶段阈值）。
+
+**cursor 其余意见**：核实为已知留白的准确复述（small 档缺独立 e2e fixture、balanced 高置信免确认未实现、行数统计口径差异），均已在此前记录中如实标注，无需重复处理；「Phase 1 机器件 GO」的整体结论予以采信。
+
+**终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1571 单测 + 40 fixtures**，较 review 前净增 30 case，零回归）；`docs` phase harness 实测 verdict=PASS；`openspec:validate` 31/31。correction-routing / skill-slim / exploration-scale 三个 change 的 tasks.md 同步补记本轮修复。
+
+**下一步不变**：用户前往宿主工程实测；本轮修复的都是机器可验证层面的问题，真实使用体验仍需宿主工程走一遍才能确认。
+
+### 2026-07-08 · 双 AI 审查第二轮（cursor 确认 + codex 追加 2 处真实 bug）——同样全修复
+
+cursor 复查上一轮修复全部确认闭环（逐项核对 5 项均 ✅，含"P3 小瑕疵"命名不一致的顺手指出，未处理——评估为纯命名一致性问题不影响行为，如实记录不作为已完成项）。codex 在此基础上又抓到 2 个新的真实 bug，均在 `context-facts.ts`/`context-exploration.ts` 核心校验逻辑里，且都属于"防绕过"红线级别，逐条核实为真后修复：
+
+**codex 发现 4（source_code_paths 可被重复路径凑数绕过）**：`runQuantitativeChecks` 判 `min_source_code_paths` 阈值时直接用数组长度，不去重——同一文件写 5 遍也能过 `>=5`。最讽刺的是 codex 直接指出我自己刚补的 `context-facts.unit.test.ts` 里那条 legacy-fallback 测试就无意间用了这个反模式（`framework.config.json` 连写 5 次充数）：测试当时是绿的，但绿得没有意义——它验证的不是"阈值逻辑正确"，而是"5 个重复项也能通过"，两者表面同分实则南辕北辙。这是本轮审查里最值得记的一课：**新写的测试本身也要反过来审视"它绿的原因是不是巧合掩盖了漏洞"，不能因为是自己刚写的就默认它验证的是对的东西**。修复：新增 `dedupeNormalizedPaths`（路径分隔符归一去重）；阈值改用去重后数量；改正原测试 fixture 为 5 个真实不同文件；新增专项回归钉死"重复路径去重后仍 FAIL"。
+
+**codex 发现 5（established_by 未与 feature 实际 track 交叉核对）**：`checkFactsFile` 原先只校验 `established_by ∈ {spec, change}`，不检查这个值是否与该 feature 实际声明的 track 一致。真实风险场景：一个 feature 从 lite 升档到 full 后，若沿用了升档前 change 阶段建立的 facts.md（`established_by: change`），后续 plan/coding 等 delta 阶段只查 `## phase_delta: <phase>` 节存在与否，永远不会发现"这份事实基线其实是按 lite 更轻的门槛建立的"——full track 的探索深度要求就这样被悄悄稀释了。修复：新增按 `feature.yaml` 声明 track（缺省 full）推导期望值（full→spec，lite→change）的交叉校验，不一致即新 BLOCKER `established_by_track_mismatch`；因为该校验在 `checkFactsFile` 里位于 establishing/delta 分支判断**之前**，delta 阶段（plan/coding/exit 等）现在也会被这条红线覆盖，不只是建立阶段——这正是修复 codex 担心的场景的关键。补 2 条回归。
+
+**终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1574 单测 + 40 fixtures**，较上一轮 review 后净增 3 case，零回归）；`openspec:validate` 31/31；`docs` phase harness verdict=PASS。exploration-scale 的 tasks.md 同步补记两处修复细节。
+
+**下一步仍不变**：机器层面的正确性问题已经过两轮独立 AI 审查 + 逐条核实修复收敛，下一步是宿主工程的真实使用体验验证，这一步无法用更多审查替代。
+
+### 2026-07-08 · 双 AI 审查第三轮（cursor 复查通过 + codex 无新增 blocker）——GO
+
+两份审查都复核了第二轮修复：cursor 逐项核对 5 个点（含此前批次 2 的 `listAvailablePhaseRules` 漏 change/exit 修复）全部 ✅；codex 明确"未发现新的 blocker/major 问题"，并验证了 `context-facts` 17/17、`lite` fixtures 5/5、全量 1574 单测+40 fixtures 全绿。
+
+两处收尾：
+
+1. **cursor 指出的 P3 命名不一致（顺手修，非阻塞）**：`agents-entry-detail.md:49` 的 `` `enforced_by`：context-exploration `` 与 AGENTS.md.template 红线表 #6 已改的 `context-facts` 不一致——上一轮改了正文段落但漏了紧跟着的这一行标签。一行改正为 `context-facts`。
+2. **codex 的可选加固（原话"不影响本轮验收"，仍顺手做了）**：`dedupeNormalizedPaths` 此前只做反斜杠归一+去空白，`a/../a/b.ts`、`a//b.ts`、`./a/b.ts` 这类路径变体理论上仍可绕过字符串级去重；改用 `path.posix.normalize` 折叠后再去重，补 1 条三种变体归一后仍 FAIL 的回归。
+
+**终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1575 单测 + 40 fixtures**，零回归）；`openspec:validate` 31/31；`docs` phase harness verdict=PASS。
+
+**三轮双 AI 审查到此收敛**：两份独立审查从"发现真实 fail-open bug + 文档 split-brain"到"复核确认闭环"到"无新增 blocker、只剩一个已顺手做掉的可选加固"，机器可验证层面没有更多能挖的了。下一步仍是用户去宿主工程做真实体验验证——这是唯一剩下的、审查替代不了的验证手段。
+
+### 2026-07-08 · 用户决策：全部开发完成后再去宿主工程实测对比
+
+**决策原文**："接着开发"（延续上条跳过 A/B 决策，授权持续无中断推进 Phase 1 剩余批次）。
+
+### 2026-07-08 · C3-task2 全 10 个 SKILL.md 主干化改写——收口
+
+按台账拍板预算（150 基准，framework-init/business-ut/catalog-bootstrap ≤250）逐个改写，统一模式：深度流程/事故派生判裁规则抽到 `skills/reference/<name>-workflow-detail.md`（"完整读 X（条件加载）"替代"完整阅读…（BLOCKER）"），主文档留骨架+门禁表+闭环判定+约束摘要；C 类事故叙事（视觉保真/verdict 弃判/HARD STOP 源码保护等事故补丁）逐字迁移不精简、不删除。
+
+**10/10 完成**（旧行数 → 新主干行数，均含新建 reference）：
+
+| Skill | 旧行数 | 新主干行数 | reference |
+|---|---|---|---|
+| code-graph | 142 | 141 | 沿用既有 |
+| goal-mode | 186 | 105 | 新增 69 行 |
+| framework-init | 257 | 249 | 微调 |
+| catalog-bootstrap | 654 | 101 | 新增 + templates 新文件（修复一处误引用未注册 profile-skill-asset） |
+| spec | 517 | 106 | 新增 83 行 |
+| plan | 772 | 139 | 新增 101 行（最大单次降幅） |
+| coding | 609 | 118 | 新增 70 行 |
+| code-review | 420 | 125 | 新增 30 行 |
+| business-ut | 843 | 176 | 新增 122 行 |
+| device-testing | 576 | 138 | 新增 90 行 |
+
+- **business-ut**（最复杂、843 行全仓最大）：reference 承载 Lite Mode 判定、Step 1.0 摘取协议、Step 1.5/1.6 两处 HARD STOP 完整机制、Step 2 DAG 字段、Step 3 两条路径全部代码示例+打桩三形式、Step 7.5/7.6 编译与装机运行闭环+设备失败分类决策树、Step 8.0 Core 节点闸门、约束#12 禁止擅自改业务源码完整协议；主干保留 6 个必需字面 token（`ut.plan_confirm`/`ut.mock_plan`/`ut.src_mutation`/`ut.dag_confirm`/`ut.ok_to_testing`/`phase.next_step`）与既有"v2.1 检查覆盖项"门禁表（原表本身即目标形态，直接复用未改写）。
+- **device-testing**（视觉保真治理最密集）：reference 逐字保留 Step 4.6 视觉 diff 回环全部确定性判裁规则——T1/T2/T4/T5/P1-C 多项 BLOCKER 信号、T2 真人确认协议五步、禁止弃判条款、判定持久化绑定 hash+build 指纹、结构声明验真分工——这些均是历史事故（[[visual-fidelity-vl-selfreport-rootcause]]、[[verdict-extraction-substring-bug-class]]）派生的根治条款，一字未改仅搬运位置。另承载 Step 4.5 Hylyre 派生计划全套 + Step 4.B 即席模式全套（含误导性报错对照表）。
+- **验证协议**（每个 skill 改写后执行，7/7 skill 一致跑过）：①`wc -l` 核对预算；②grep 核对该 skill 的 `PHASE_CLOSURE_LINT` 必需字面 token 全部存在；③grep 核对正文引用的 `profile-skill-asset:` key 均在 `profiles/{generic,hmos-app}/skills/skill-assets.yaml` 注册；④跑 `lintConfirmationUx({projectRoot})` 零 FAIL/WARN；⑤跑 `cd harness && npm test` 全绿。
+- **过程问题与修复**（如实记录，均已修复）：spec 改写初版把原版真实 Markdown 超链接（`doc/glossary.yaml`/`doc/module-catalog.yaml`）誊写成纯文本，被 `generic-bundle.unit.test.ts` 的链接深度改写测试捕获，恢复原链接后过；catalog-bootstrap 初版写了一个未注册的 `profile-skill-asset:catalog-bootstrap/glossary_seed_template` 幻觉引用（grep 核实原文本是内联内容非 profile 资产），改为落一个真实 templates 文件直接链接；plan 版 reference 文件的相对路径深度沿用了主文档的 3 级路径未按 reference 目录少一级调整，人工复算修正；business-ut 首次 Read 因文件 843 行触达单次 25000-token 截断，分两次 offset 读取补全。
+- **终态**：`npm test` 全绿（**1530 单测 + 40 fixtures**，与 C2 收口时数字一致，无新增/回归）；confirmation-UX lint 零 FAIL。
+
+**下批入口**：C3-task3（AGENTS.md.template →≤120 行）→ C3-task4（check-docs.ts 防再膨胀 lint）→ C4 exploration-scale → C5-full。
+
+### 2026-07-08 · C3-task3 AGENTS.md.template 入口瘦身——收口
+
+307 行 → **105 行**（≤120 行预算内），新增 [skills/reference/agents-entry-detail.md](../../skills/reference/agents-entry-detail.md)（144 行）承载展开文本。改写前先派 Explore agent 摸底四类硬约束（**未直接动手改**，先摸清依赖再落笔，避免像 spec/catalog-bootstrap 那样返工）：①渲染管线唯一 SSOT 是 `harness/scripts/utils/template-renderer.ts` 的 `buildAgentsTemplateVars()`，`check-init.ts`/`render-agents-md.ts` 均不对正文做字符串锚定；②14 个 `{{PLACEHOLDER}}` 全部有消费方，不可新增未注册 token；③`lintSharedLayerNoToolNames` 对 `templates/` 全树 BLOCKER 拦 `AskUserQuestion`/`AskQuestion` 字面量；④`template-renderer.unit.test.ts` 断言渲染结果不含字面量"激活的 agent adapter"且两种 adapter 取值渲染结果字节级相同。
+
+**拆分依据**：直接沿用 openspec `skill-authoring` spec 的「Entry template budget」需求（MUST ≤120 行、MUST 含 L0/L1/L2 分流路由表+修正三问+红线清单）与 `hard-constraints.yaml` 台账条目 `agents-guard-sections-01`/`agents-behavior-07-02`/`agents-41-authorization-03`/`agents-closure-trace-04`/`agents-interaction-rules-05` 已谈定的处置：§3.1-3.8 五大守门压成「红线清单」表（每条一行判据+`enforced_by`）；§4.1 主/verifier 职责切分反误读全文、§4.2 扩展生命周期、§5.1/5.1.1/5.2 闭环判定/会话边界/跨会话恢复、§六交互硬规则完整表述全部移 reference，正文各留一到两行入口+短链；反假设条款按台账"高杠杆防幻觉文本"要求保留两行原则不精简。
+
+**验证**：14 个 placeholder 齐全无遗漏、无新增未注册 token；反假设条款禁用短语与 `AskUserQuestion`/`AskQuestion` 均未引入；`cd harness && npm test` 全绿（**1530 单测 + 40 fixtures**，含 `template-renderer.unit.test.ts` 的字节级渲染一致性断言）；confirmation-UX lint 零 FAIL。
+
+**下批入口**：C3-task4（check-docs.ts 新增 `skill_body_max_lines`/`forced_full_read_blacklist`/entry-template-budget 三项防再膨胀 lint，10 个 SKILL.md + AGENTS.md.template 均已合规可安全上闸）→ C4 exploration-scale → C5-full。
+
+### 2026-07-08 · C3-task4 防再膨胀 lint 三连——C3 全量收口
+
+新增 `harness/scripts/utils/skill-body-budget.ts`（per-skill 预算，overrides 只认 docs-rules.yaml 显式声明，不读代码硬编码表）+ `forced-full-read-scan.ts`（收紧正则：动词+单一文件引用紧跟 BLOCKER 括注才命中，避免"BLOCKER 门禁清单描述文字"共现误报）+ `entry-template-budget.ts`（行数+骨架标记双检），三者接入 `check-docs.ts` 并在 `specs/phase-rules/docs-rules.yaml` 的 `structure_checks` 段声明阈值（`skill_body_max_lines` 含 framework-init/business-ut/catalog-bootstrap 三条 250 档理由；`entry_template_budget` 要求含 L0/L1/L2/修正三问/红线清单五个骨架标记）。
+
+- **一处真实调试弯路（如实记录）**：首次实测 `harness-runner --phase docs` 报 2 个 BLOCKER（business-ut/framework-init 都判超预算 150，实际应吃 250 档 override），排查发现是 YAML 编辑失误——新增的三个 check 块被插入到了 `traceability_checks:` 段而非 `structure_checks:` 段（用 `profile_skill_assets_resolvable:` 做插入锚点时未注意到它实际归属哪个顶层段），导致 `ctx.phaseRule.structure_checks` 读不到这三条声明、`rule` 全部回落空对象。移动到正确段落后复测：3 项检查全部 PASS，`docs` phase harness verdict=PASS（另有 1 条 `doc_freshness` MAJOR 属预置的既有陈旧提醒，与本批无关，不属本批范围未处理）。
+- **lint 自身验证**：新增 `harness/tests/unit/docs-authoring-lint.unit.test.ts`（12 case，覆盖 resolveSkillId/override 优先级/超预算命中/override 放行/本仓 11 个 SKILL.md 真实回归/forced-full-read 正例反例/allowlist 生效/本仓 skills+templates 树零命中回归/entry-template 超限+缺标记/本仓真实模板回归）；跑通中又抓到一处**自己测试脚本写的 bug**：allowlist 断言用的 file 路径少拼了 consumer 布局的 `framework/` 前缀，与实现产出的路径对不上导致误报——这是测试脚本的错不是实现的错，修正后过。
+- **终态**：`cd harness && npm test` 全绿（**1541 单测 + 40 fixtures**，较 C3-task2/3 收口时的 1530/1540 各 +1，即本批新增的 lint 自测套件）；`openspec:validate` 仍 31/31；`docs` phase 脚本 harness 对本仓真实状态 verdict=PASS，三项新 BLOCKER 检查全绿。
+
+**C3 skill-slim change 全量收口**：task1（台账，Phase 0）→ task2（10 个 SKILL.md 主干化，4939→1507 行）→ task3（AGENTS.md.template 307→105 行）→ task4（防再膨胀 lint 三连）全部完成；`openspec/changes/skill-slim/tasks.md` 全部勾选。
+
+**下批入口**：C4 exploration-scale（per-feature facts.md 覆盖全部 feature phase + backfill 兼容扩展 + 小工程裁剪）→ C5-full（touched_layers 对账并入 evidence_policy_snapshot + hard_hook 深度集成 + balanced 减免语义 + feature.yaml 修正历史 + 全套坏态 fixtures）。

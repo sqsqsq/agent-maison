@@ -28,6 +28,7 @@ import {
   type ModulePrefixResolution,
 } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
+import { checkFactsArtifact } from './utils/context-facts';
 
 // --------------------------------------------------------------------------
 // [unit] 条目约定
@@ -424,6 +425,15 @@ export const checker: PhaseChecker = {
 
     // 6) 条件 UT —— 验收清单含 [unit] 条目时强制
     results.push(...(await checkExitConditionalUt(ctx, doc)));
+
+    // 7) Context Facts Gate —— facts.md 本阶段 phase_delta 节（C4，delta 阶段，非建立阶段）
+    results.push(
+      ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'exit', {
+        phaseRule: ctx.phaseRule,
+        profileName: ctx.resolvedProfile.name,
+        frameworkRoot: ctx.frameworkRoot,
+      }),
+    );
 
     return results;
   },

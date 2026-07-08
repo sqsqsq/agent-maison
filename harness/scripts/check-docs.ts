@@ -35,6 +35,18 @@ import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
 import { runNoNumberedSkillPathsChecks } from './check-no-numbered-skill-paths';
 import { runNoNumberedSkillProseChecks } from './check-no-numbered-skill-prose';
 import {
+  scanSkillBodyBudget,
+  type SkillBodyBudgetRule,
+} from './utils/skill-body-budget';
+import {
+  scanForcedFullRead,
+  type ForcedFullReadRule,
+} from './utils/forced-full-read-scan';
+import {
+  checkEntryTemplateBudget,
+  type EntryTemplateBudgetRule,
+} from './utils/entry-template-budget';
+import {
   frameworkAbs,
   frameworkLogicalRelPath,
   frameworkRelPath,
@@ -326,6 +338,106 @@ function checkDocFreshness(
   }];
 }
 
+function checkSkillBodyMaxLines(ctx: CheckContext): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
+  const rule = (ctx.phaseRule.structure_checks?.skill_body_max_lines?.rule ?? {}) as SkillBodyBudgetRule;
+  const violations = scanSkillBodyBudget(layout, rule);
+  const description = ruleDesc(ctx, 'structure_checks', 'skill_body_max_lines');
+  if (violations.length === 0) {
+    return [{
+      id: 'skill_body_max_lines',
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '全部 skills/**/SKILL.md 主干行数在预算内。',
+    }];
+  }
+  return violations.map(v => ({
+    id: 'skill_body_max_lines',
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'FAIL' as const,
+    details: `${v.file}（skill=${v.skillId}）主干 ${v.lines} 行，超出预算 ${v.budget} 行。`,
+    affected_files: [v.file],
+    suggestion: '把深层流程/事故派生细则抽到 skills/reference/<name>-workflow-detail.md，或在 docs-rules.yaml 的 skill_body_max_lines.overrides 显式声明覆写预算并附理由。',
+  }));
+}
+
+function checkForcedFullReadBlacklist(ctx: CheckContext): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
+  const rule = (ctx.phaseRule.structure_checks?.forced_full_read_blacklist?.rule ?? {}) as ForcedFullReadRule;
+  const hits = scanForcedFullRead(layout, rule).filter(h => !h.allowlisted);
+  const description = ruleDesc(ctx, 'structure_checks', 'forced_full_read_blacklist');
+  if (hits.length === 0) {
+    return [{
+      id: 'forced_full_read_blacklist',
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '未发现新增的「完整阅读 <文件>（BLOCKER）」无条件强制全读句式。',
+    }];
+  }
+  return hits.map(h => ({
+    id: 'forced_full_read_blacklist',
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'FAIL' as const,
+    details: `${h.file}:${h.line} — 匹配「${h.match}」`,
+    affected_files: [h.file],
+    suggestion: '改为「当 <场景> 时读 <文件>」条件加载句式；确有必要保持无条件强制全读则在 docs-rules.yaml 的 forced_full_read_blacklist.allowlist 显式声明并附理由。',
+  }));
+}
+
+function checkEntryTemplateBudgetGate(ctx: CheckContext): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
+  const rule = (ctx.phaseRule.structure_checks?.entry_template_budget?.rule ?? {}) as EntryTemplateBudgetRule;
+  const report = checkEntryTemplateBudget(layout, rule);
+  const description = ruleDesc(ctx, 'structure_checks', 'entry_template_budget');
+  const rel = frameworkLogicalRelPath('templates', 'AGENTS.md.template');
+  if (!report.exists) {
+    return [{
+      id: 'entry_template_budget',
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `${rel} 不存在。`,
+      affected_files: [rel],
+    }];
+  }
+  const problems: string[] = [];
+  if (report.lines > report.maxLines) {
+    problems.push(`超出行数预算：${report.lines} 行 > ${report.maxLines} 行`);
+  }
+  if (report.missingMarkers.length > 0) {
+    problems.push(`缺少骨架内容标记：${report.missingMarkers.join('、')}`);
+  }
+  if (problems.length === 0) {
+    return [{
+      id: 'entry_template_budget',
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `${rel} 共 ${report.lines} 行，未超预算 ${report.maxLines} 行，骨架内容齐全。`,
+    }];
+  }
+  return [{
+    id: 'entry_template_budget',
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: `${rel}：${problems.join('；')}`,
+    affected_files: [rel],
+    suggestion: '把行为细则移到 skills/reference/ 承载，正文只留 L0/L1/L2 分流路由表、修正三问、红线清单与短链入口。',
+  }];
+}
+
 // --------------------------------------------------------------------------
 // 入口
 // --------------------------------------------------------------------------
@@ -347,6 +459,9 @@ const checker: PhaseChecker = {
     results.push(...runConfirmationUxChecks(ctx));
     results.push(...runNoNumberedSkillPathsChecks(ctx));
     results.push(...runNoNumberedSkillProseChecks(ctx));
+    results.push(...checkSkillBodyMaxLines(ctx));
+    results.push(...checkForcedFullReadBlacklist(ctx));
+    results.push(...checkEntryTemplateBudgetGate(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

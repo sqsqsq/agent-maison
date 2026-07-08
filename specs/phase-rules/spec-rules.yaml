@@ -44,6 +44,8 @@ structure_checks:
       (1) 至少包含一行业务术语；
       (2) 每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认；
       (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用 auto-approve）；
+          C4 exploration-scale：`project_scale=small` 时可用节末一行
+          "- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射" 整体替代逐行确认；
       (4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内；
       (5) 空映射表不被允许（即便只有一个术语也要显式列出）。
     severity: BLOCKER

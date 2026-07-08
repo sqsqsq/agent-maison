@@ -48,7 +48,8 @@ import {
   writeCorrectionState,
 } from './correction-state';
 import { inferRepoLayout } from '../../repo-layout';
-import { loadFeatureTrackDecl } from './feature-track';
+import { loadFeatureTrackDecl, appendFeatureCorrectionHistory } from './feature-track';
+import { reconcileTouchedLayers } from './correction-layer-reconcile';
 import {
   resolveEnforcementTier,
   resolveFeatureTrack,
@@ -328,6 +329,34 @@ export function runCorrectionCheck(
     return { phase: entry.phase, status: probe.ok ? 'done' : 'pending' };
   });
 
+  // C5-full touched_layers 对账：只拦"未声明层出现改动"（design.md「touched_layers 对账」）。
+  // fail-closed（codex review 采纳）：git diff 不可执行、或 base_commit 不可达导致
+  // baseIsFallback（静默退化为 HEAD..HEAD，会把已提交的越权改动从 changedFiles 中丢失）
+  // 均不得放行——否则对账形同虚设，"未声明层觉察即阻塞"这条红线可被悄悄绕过。
+  const diff = diffChangedFiles({ projectRoot, baseRef: state.base_commit });
+  if (!diff.executed) {
+    pending.push(
+      `  - touched_layers 对账: 无法执行 git diff（${diff.error ?? '未知原因'}），对账不可判（fail-closed，不放行）。`,
+    );
+  } else if (diff.baseIsFallback) {
+    pending.push(
+      `  - touched_layers 对账: base_commit="${state.base_commit}" 不可达，git diff 已静默退化为对比 HEAD 自身` +
+        `（会漏检已提交的越权改动，fail-closed，不放行）——请重建 correction（--correction-init）以刷新 base_commit。`,
+    );
+  } else {
+    const reconcile = reconcileTouchedLayers(projectRoot, state.feature, state.touched_layers, diff.changedFiles);
+    if (reconcile.undeclared.length > 0) {
+      pending.push(
+        `  - touched_layers 对账: 实际改动触及未声明层 ${reconcile.undeclared.join('、')}` +
+          `（已声明: ${state.touched_layers.join('、') || '(空)'}）——` +
+          `若确属组合修正，请重建 correction（--correction-init）把该层纳入声明；` +
+          `否则请检查是否有越界改动。`,
+      );
+    } else {
+      console.log(`   ✓ touched_layers 对账: 实际触及 ${reconcile.actualLayers.join('、') || '(无归属改动)'} 均在声明范围内`);
+    }
+  }
+
   if (pending.length > 0) {
     writeCorrectionState(projectRoot, { ...state, revalidate: nextRevalidate });
     console.error('❌ correction-check: revalidate 未全绿——');
@@ -336,6 +365,14 @@ export function runCorrectionCheck(
   }
 
   writeCorrectionState(projectRoot, { ...state, revalidate: nextRevalidate, status: 'closed' });
+  if (state.feature) {
+    appendFeatureCorrectionHistory(projectRoot, state.feature, {
+      at: new Date().toISOString(),
+      type: 'correction',
+      root_layer: state.root_layer,
+      touched_layers: state.touched_layers,
+    });
+  }
   console.log('✅ correction-check: revalidate 全绿，修正闭环（status: closed）');
   return 0;
 }
@@ -438,6 +475,18 @@ export async function runAdhocCorrection(
       status: 'FAIL',
       details: `无法执行 git diff：${diff.error ?? '未知错误'}（fail-closed）`,
     });
+  } else if (diff.baseIsFallback) {
+    // codex review 采纳：base_commit 不可达时 diffChangedFiles 静默退化为 HEAD..HEAD，
+    // 会漏检已提交的越权改动——no-feature 场景没有 scope 声明兜底，必须 fail-closed。
+    results.push({
+      id: 'adhoc_changed_files',
+      category: 'traceability',
+      description: '修正变更文件推导（git diff base_commit ∪ 工作区）',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `base_commit="${state.base_commit}" 不可达，git diff 已静默退化为对比 HEAD 自身` +
+        `（会漏检已提交的越权改动，fail-closed）——请重建 correction（--correction-init）以刷新 base_commit。`,
+    });
   } else {
     results.push({
       id: 'adhoc_changed_files',
@@ -448,7 +497,7 @@ export async function runAdhocCorrection(
       details: `base=${state.base_commit.slice(0, 12)}，共 ${diff.changedFiles.length} 个变更文件`,
     });
   }
-  const changedFiles = diff.executed ? diff.changedFiles : [];
+  const changedFiles = diff.executed && !diff.baseIsFallback ? diff.changedFiles : [];
 
   // 2) catalog 反查 touched modules（diff_within_scope 的 no-feature 替代——不豁免越界防护）
   const lookup = reverseLookupTouchedModules(projectRoot, changedFiles);

@@ -48,6 +48,91 @@ export interface PolicySnapshot {
 export const POLICY_SCHEMA_VERSION = '1.0';
 
 // ---------------------------------------------------------------------------
+// evidence_policy_snapshot（C2 两层机读契约：policy 档 × 实际 validation_status）
+// ---------------------------------------------------------------------------
+// 与上面的 PolicySnapshot（C0/C1，Stop hook 唯一消费 evidence.receipt 做粗粒度 gate）
+// 是不同的字段——本契约由 check-receipt.ts 逐项计算写入 .current-phase.json，
+// 承载 harness-runner closure 三态与 next_step 判定所需的细粒度信息。
+
+export type EvidenceValidationStatus = 'provided' | 'missing' | 'skipped_by_policy' | 'not_applicable';
+
+export interface EvidenceItemState {
+  policy: EvidenceLevel;
+  validation_status: EvidenceValidationStatus;
+}
+
+export const EVIDENCE_POLICY_SNAPSHOT_SCHEMA_VERSION = '1.0';
+
+export interface EvidencePolicySnapshot {
+  policy_schema_version: string;
+  profile_resolved: 'strict' | 'balanced' | 'minimal';
+  items: {
+    verifier: EvidenceItemState;
+    receipt: EvidenceItemState;
+    trace: EvidenceItemState;
+    exploration: EvidenceItemState;
+  };
+}
+
+/** 人读档位标签：lite→minimal（架构性，非"降档"）；full 按 mode/config 求解。 */
+export function resolveProfileLabel(
+  track: FeatureTrack,
+  ctx: RuntimeContext,
+  config?: EvidenceProfileConfig | null,
+): 'strict' | 'balanced' | 'minimal' {
+  if (track === 'lite') return 'minimal';
+  if (ctx.mode !== 'interactive') return 'strict';
+  return config?.evidence_profile === 'balanced' ? 'balanced' : 'strict';
+}
+
+export type ClosureSource = 'receipt_passed' | 'closed_by_exit_report' | 'open';
+
+/**
+ * closure 三态来源（C2 design.md）：full track 恒以 receipt 状态为准；lite track 的
+ * receipt 架构性 not_applicable，闭环判据改为该 phase 自身的脚本 verdict（exit 报告）。
+ * 供 harness-runner writeRunSummary 与 goal-runner 的 closed 判定复用，避免各自各判。
+ */
+export function resolvePhaseClosureSource(
+  track: FeatureTrack,
+  scriptVerdict: string | undefined,
+  receiptStatus: EvidenceValidationStatus | 'passed' | 'failed' | 'missing' | 'error' | undefined,
+): ClosureSource {
+  if (track === 'lite') {
+    return scriptVerdict === 'PASS' ? 'closed_by_exit_report' : 'open';
+  }
+  return receiptStatus === 'passed' ? 'receipt_passed' : 'open';
+}
+
+/**
+ * 由 policy 求解结果 + 调用方逐项探测的 validation_status 组装两层快照。
+ * 'off' 项的 validation_status 恒 'skipped_by_policy'；'not_applicable' 项恒
+ * 'not_applicable'——两者由本函数统一钉死，调用方（check-receipt.ts）只需为
+ * 'required'/'optional' 项传入探测结果。
+ */
+export function buildEvidencePolicySnapshot(
+  policy: EvidencePolicy,
+  profileResolved: 'strict' | 'balanced' | 'minimal',
+  observed: Partial<Record<keyof EvidencePolicy, EvidenceValidationStatus>>,
+): EvidencePolicySnapshot {
+  const item = (key: keyof EvidencePolicy): EvidenceItemState => {
+    const level = policy[key];
+    if (level === 'off') return { policy: level, validation_status: 'skipped_by_policy' };
+    if (level === 'not_applicable') return { policy: level, validation_status: 'not_applicable' };
+    return { policy: level, validation_status: observed[key] ?? 'missing' };
+  };
+  return {
+    policy_schema_version: EVIDENCE_POLICY_SNAPSHOT_SCHEMA_VERSION,
+    profile_resolved: profileResolved,
+    items: {
+      verifier: item('verifier'),
+      receipt: item('receipt'),
+      trace: item('trace'),
+      exploration: item('exploration'),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 回退常量（无 workflow 可用时的唯一合法来源；单一出处 = phase-alias）
 // ---------------------------------------------------------------------------
 
@@ -264,8 +349,10 @@ export function resolveEnforcementTier(
 }
 
 export interface EvidenceProfileConfig {
-  /** framework.config.json 顶层 evidence_profile（C2 引入；缺省 strict）。 */
+  /** framework.config.json 顶层 evidence_profile（C2 引入；缺省 strict）。`minimal` 非法值——lite 的求解结果不可全局声明。 */
   evidence_profile?: string;
+  /** balanced 档下 verifier 仍必需的 phase 集合；config 可覆写默认 {spec,coding}（design.md 矩阵表保留集）。 */
+  balanced_verifier_retained_phases?: readonly string[];
 }
 
 const STRICT_EVIDENCE: EvidencePolicy = {
@@ -276,29 +363,75 @@ const STRICT_EVIDENCE: EvidencePolicy = {
 };
 
 /**
- * 证据档位求解。
- * C0 阶段 config 尚无 evidence_profile 段 → 恒 strict（与现状逐一等值）；
- * headless/goal 一律强制 strict（无人值守自报无效——不吃任何降档）。
- * C2 verification-matrix 在此接入 balanced/minimal 矩阵。
+ * lite track 的证据矩阵（C2 design.md 表第三行 resolved=minimal）：receipt 机制
+ * 架构性不适用——C1 起 lite 闭环走 change.md checkbox + exit 报告，不经 check-receipt.ts；
+ * 与 mode/evidence_profile 无关，不是"降档决定"，是"这条轴对 lite 不存在"。故 lite 分支
+ * 在 resolveEvidencePolicy 中优先于 mode 判定（headless/goal 的 lite feature 依旧
+ * not_applicable，物理拦截/红线保证改由 exit 的脚本门禁承担，非本矩阵）。
+ */
+const LITE_EVIDENCE: EvidencePolicy = {
+  verifier: 'off',
+  receipt: 'not_applicable',
+  trace: 'optional',
+  exploration: 'not_applicable',
+};
+
+/** balanced 档下 verifier 仍必需的默认 phase 集合（config.balanced_verifier_retained_phases 可覆写）。 */
+export const DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES: readonly string[] = ['spec', 'coding'];
+
+/**
+ * 证据档位求解（C2 verification-matrix；design.md 矩阵表）：
+ *   - lite（任意 mode）→ LITE_EVIDENCE（架构性 not_applicable，见上）；
+ *   - full × 非 interactive（headless/goal）→ 强制 STRICT（config 不参与求解）；
+ *   - full × interactive × config.evidence_profile !== 'balanced' → STRICT（缺省零变化）；
+ *   - full × interactive × balanced → verifier 仅保留集 phase required 其余 off，
+ *     receipt 仍 required，trace 降 optional，exploration 维持 required（矩阵表未降）。
+ * default 等值不变式：无 config / mode≠interactive / track=full 时输出与 C0 逐一等值。
  */
 export function resolveEvidencePolicy(
-  _track: FeatureTrack,
+  track: FeatureTrack,
   ctx: RuntimeContext,
-  _config?: EvidenceProfileConfig | null,
+  config?: EvidenceProfileConfig | null,
 ): EvidencePolicy {
+  if (track === 'lite') {
+    return { ...LITE_EVIDENCE };
+  }
   if (ctx.mode !== 'interactive') {
     return { ...STRICT_EVIDENCE };
   }
-  // C0：交互态同样恒 strict（evidence_profile 未引入）；C2 起按矩阵求解。
-  return { ...STRICT_EVIDENCE };
+  if (config?.evidence_profile !== 'balanced') {
+    return { ...STRICT_EVIDENCE };
+  }
+  const retained = config.balanced_verifier_retained_phases ?? DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES;
+  return {
+    verifier: retained.includes(ctx.phase) ? 'required' : 'off',
+    receipt: 'required',
+    trace: 'optional',
+    exploration: 'required',
+  };
 }
 
-/** 构造当前（C0=恒 strict）policy 快照，随 .current-phase.json 落盘供 Stop hook 消费。 */
+/**
+ * 构造 policy 快照，随 .current-phase.json 落盘供 Stop hook 消费。
+ * 快照的唯一消费点（check-phase-completion.mjs policyRequires）只读 `evidence.receipt`
+ * 一项做 gate 判定；该项在 full track 下无论 strict/balanced/mode 恒为 'required'，
+ * 故此处以缺省安全上下文求解（不威胁 default 等值不变式，也不需在 phase-state.ts
+ * 内额外读 config/线程 mode——真正的逐项 policy 求解由 check-receipt.ts 的
+ * evidence_policy_snapshot 承担，见 C2 design.md 两层契约）。
+ */
 export function buildPolicySnapshot(track: FeatureTrack = 'full'): PolicySnapshot {
+  const safeCtx: RuntimeContext = {
+    mode: 'interactive',
+    adapter: 'unknown',
+    phase: 'unknown',
+    workflow: 'unknown',
+    can_prompt_user: true,
+    can_collect_usage: false,
+  };
   return {
     policy_schema_version: POLICY_SCHEMA_VERSION,
     track,
-    evidence: { ...STRICT_EVIDENCE },
+    evidence: resolveEvidencePolicy(track, safeCtx),
   };
 }
 

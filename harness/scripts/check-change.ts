@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import type { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { featureArtifactPath, loadFrameworkConfig } from '../config';
+import { checkFactsArtifact } from './utils/context-facts';
 
 export interface ChangeScope {
   in_scope_modules: string[];
@@ -207,6 +208,14 @@ export const checker: PhaseChecker = {
           ? `验收 ${doc.acceptance.length} 项 / 任务 ${doc.tasks.length} 项`
           : checkboxIssues.join('；'),
     });
+
+    results.push(
+      ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'change', {
+        phaseRule: ctx.phaseRule,
+        profileName: ctx.resolvedProfile.name,
+        frameworkRoot: ctx.frameworkRoot,
+      }),
+    );
 
     return results;
   },

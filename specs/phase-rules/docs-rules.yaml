@@ -49,6 +49,51 @@ structure_checks:
       check_kind: "file_existence"
       target: "doc.path"
 
+  skill_body_max_lines:
+    description: >
+      每个 skills/**/SKILL.md 主干（不含 skills/reference/ 下的条件加载 reference 文件）
+      不得超过预算行数。基准 150 行；per-skill 覆写须在本文件 overrides 显式声明并附理由。
+      C3-task2 台账拍板（2026-07-08）：framework-init / business-ut / catalog-bootstrap
+      三个 skill 因流程复杂度/事故派生规则密度显著高于其它 7 个，批准 ≤250 行档。
+    severity: BLOCKER
+    rule:
+      default_budget: 150
+      overrides:
+        - skill: framework-init
+          budget: 250
+          reason: "S0-S6 全流程 + adapter 物化矩阵 + portable fallback 规则密度高，C3a 台账批准"
+        - skill: business-ut
+          budget: 250
+          reason: "三路径路由 + 两处 HARD STOP + 两条代码路径示例，全仓最复杂 skill，C3a 台账批准"
+        - skill: catalog-bootstrap
+          budget: 250
+          reason: "Phase A/B 双阶段 + CREATE/UPDATE 双模式，C3a 台账批准（实际瘦身后已远低于预算）"
+
+  forced_full_read_blacklist:
+    description: >
+      skill 正文不得新增「完整阅读 <文件>（BLOCKER）」类无条件强制全读指令
+      （动词+单一文件引用后紧跟 BLOCKER 标记、不含任何条件触发语）；
+      深层细则须以「当 <场景> 时读 <文件>」的条件加载形式引用。
+      allowlist 内 file+reason 视为已知豁免，其余一律 FAIL。
+    severity: BLOCKER
+    rule:
+      allowlist: []
+
+  entry_template_budget:
+    description: >
+      templates/AGENTS.md.template（实例根入口模板）不得超过 120 行，
+      且须含 L0/L1/L2 分流路由表、修正三问、红线清单三项骨架内容；
+      行为细则须由 framework 内 skills/reference/ 承载。
+    severity: BLOCKER
+    rule:
+      max_lines: 120
+      required_markers:
+        - "L0"
+        - "L1"
+        - "L2"
+        - "修正三问"
+        - "红线清单"
+
 # --------------------------------------------------------------------------
 # 可追溯性约束（doc → source 关系）
 # --------------------------------------------------------------------------

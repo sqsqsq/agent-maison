@@ -14,10 +14,62 @@ import * as YAML from 'yaml';
 import type { FeaturePhase } from './phase-transition-policy';
 import {
   isContextExplorationPhase,
+  parseContextExploration,
   readContextExplorationInspection,
+  type ContextExplorationInspection,
 } from './context-exploration';
+import { isFactsEstablishingPhase, resolveFactsAbsPath } from './context-facts';
 import { extractHeadings } from './markdown-parser';
 import { relFeatureFile } from '../../config';
+
+function normalizeStringArrayLocal(v: unknown): string[] {
+  if (v === null || v === undefined) return [];
+  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return t ? [t] : [];
+  }
+  return [];
+}
+
+/**
+ * facts.md 优先的探索进度读取（C4）：存在 facts.md 时按其 frontmatter 派生
+ * ContextExplorationInspection（建立阶段字段形态与旧 per-phase 文件兼容）；
+ * facts.md 不存在则回落 readContextExplorationInspection（legacy 契约不变）。
+ * delta 阶段（非建立阶段）不产出 skip-list（该阶段本身不做全量探索，
+ * P2 断点续跑的价值有限，直接回落 legacy 判断更安全）。
+ */
+function readFactsOrLegacyInspection(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+): ContextExplorationInspection | null {
+  if (isFactsEstablishingPhase(phase)) {
+    const abs = resolveFactsAbsPath(projectRoot, feature);
+    if (fs.existsSync(abs)) {
+      try {
+        const raw = fs.readFileSync(abs, 'utf-8');
+        const mtimeMs = fs.statSync(abs).mtimeMs;
+        const { fm, error } = parseContextExploration(raw);
+        if (error) {
+          return { readyToProduce: false, sourceCodePaths: [], filesInspectedCount: null, mtimeMs, absPath: abs };
+        }
+        return {
+          readyToProduce: fm.ready_to_produce === true,
+          sourceCodePaths: normalizeStringArrayLocal(fm.source_code_paths),
+          filesInspectedCount:
+            typeof fm.files_inspected_count === 'number' ? fm.files_inspected_count : null,
+          mtimeMs,
+          absPath: abs,
+        };
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (!isContextExplorationPhase(phase)) return null;
+  return readContextExplorationInspection(projectRoot, feature, phase);
+}
 
 function normalizeRel(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.\//, '').trim();
@@ -62,8 +114,8 @@ export function deriveResumeInspection(
   phase: FeaturePhase,
   sinceMs: number,
 ): ResumeInspection | null {
-  if (!isContextExplorationPhase(phase)) return null;
-  const insp = readContextExplorationInspection(projectRoot, feature, phase);
+  if (!isContextExplorationPhase(phase) && !isFactsEstablishingPhase(phase)) return null;
+  const insp = readFactsOrLegacyInspection(projectRoot, feature, phase);
   if (!insp) return null;
   if (insp.mtimeMs === null || insp.mtimeMs < sinceMs) return null; // 陈旧/非本 run
 

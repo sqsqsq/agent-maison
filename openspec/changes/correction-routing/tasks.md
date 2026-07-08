@@ -13,13 +13,14 @@
 
 ## 2. C5-full（Phase 1，接入 C2）
 
-- [ ] touched_layers 对账并入 evidence_policy_snapshot（只拦未声明层）
-- [ ] hard_hook 深度集成（Stop hook 与 correction 状态联动）
-- [ ] balanced 减免语义（verifier 可省 / 高置信免确认）
-- [ ] feature.yaml 修正历史 append
+- [x] **codex review 修复（P1，真实 bug）**：`runCorrectionCheck`/`runAdhocCorrection` 的 touched_layers 对账原先只在 `diff.executed=true` 时才做对账，`git diff` 失败或 `base_commit` 不可达时只打 WARN 却仍可收口——不是 fail-closed。深挖后发现更底层的问题：`git-diff.ts` 判定 `baseIsFallback` 用的裸 `git rev-parse --verify <sha>` 对 40 位十六进制字符串**只校验格式、不校验对象是否真实存在**（实测坐实：随手编的不存在 SHA 也 exit 0），导致 base_commit 被 rebase/gc 后失联这种真实场景本身检测不出来，写第一版回归测试时就撞见了这个更深的根因。两处一起修：①`git-diff.ts` 的 verify 调用加 `^{commit}` 后缀强制要求对象真实存在；②两个 correction 命令均改为 `!diff.executed || diff.baseIsFallback` 时 fail-closed 阻塞/BLOCKER，不放行。新增 `tests/unit/correction-check-fail-closed.unit.test.ts`（真实 git 仓库端到端，2 case：不可达 base_commit 不收口 / 有效 base_commit 正常收口）。
+- [x] touched_layers 对账（只拦未声明层）——`harness/scripts/utils/correction-layer-reconcile.ts`（启发式文件→层分类：feature 产物目录内确定性映射 spec/plan/change/review/ut/testing，目录外按测试路径特征粗判 ut/coding，framework/doc/openspec 中性豁免）+ 接入 `runCorrectionCheck`（`--correction-check` 每次跑都会 diff `base_commit..HEAD` 对账，未声明层出现改动则加入 pending 阻塞收口，声明覆盖的组合修正正常放行）。**未接入 evidence_policy_snapshot 本体**（C2 的 4 键结构被红线测试锁死不可扩第 5 键）——改为作为 `--correction-check` 的独立阻塞项，语义等价（"未声明层觉察即阻塞收口"），是本批一处对设计原文的实现层修正，如实记录。
+- [x] hard_hook 深度集成（Stop hook 与 correction 状态联动）——`check-phase-completion.mjs` 新增 `evaluateCorrectionGate`：独立于 `.current-phase.json` 阶段闭环判定，只要 `.current-correction.json` 存在且 `status=pending`、属当前会话（或双方缺 session_id 时按 created_at+24h TTL 兜底）、未过期，就拦截 stop（即便阶段本身已闭环）；`harness-runner.ts --clear-state` 同步扩展为一并清理 correction state，作为该拦截的既有统一逃生阀（无需新增命令）。
+- [x] balanced 减免语义——复核后确认：`probePhaseEvidence`（revalidate 证据探测）自 C5-min 起就只读 `script-report.json` 的 verdict，从未独立校验 verifier 报告，故"verifier 可省"在 correction-check 层面已是既有行为，不需新代码；"高置信免确认"缺乏设计文档给出的评分公式/阈值定义，**未实现**——评估为需要用户对确认阈值拍板的开放设计问题，非本批可自主决断项，如实记录留待后续。
+- [x] feature.yaml 修正历史 append——`feature-track.ts` 新增 `appendFeatureCorrectionHistory`（复用既有 `history[]` 数组，与 track 升档事件同源），接入 `runCorrectionCheck` 闭环收口（`status→closed`）那一刻。
 
 ## 3. Fixtures 与 Verify
 
-- [ ] 坏态全套：分类错误 / 声明 spec 却改代码 / 组合修正漏重验 / 无归属直改 / soft 档 checklist 缺项 / correction 状态缺失或过期（单测已覆盖：state 缺失/过期/串会话拒绝、点名不存在 ask_user、组合修正 touched、级联清单；touched_layers 对账拦截属 C5-full）
-- [x] `cd harness && npm test` 全绿（当批 1502，批次 2 双评审修复后终值 **1512 单测 + 40 fixtures**；correction-routing suite 12 case（含 session 信号/lite 闭环判据/发现面三枚回归钉）+ CLI 冒烟 init→check 拒绝路径）
-- [ ] `npm run openspec:validate` + `npm run release:verify`
+- [x] 坏态全套：分类错误 / 声明 spec 却改代码 / 组合修正漏重验 / 无归属直改 / soft 档 checklist 缺项 / correction 状态缺失或过期（C5-min 单测已覆盖）；**touched_layers 对账拦截**（本批新增 `tests/unit/correction-c5-full.unit.test.ts`：未声明层拦截/声明覆盖放行/中性路径豁免/features_dir 外 ut vs coding 粗判/no-feature 模式）；**hard_hook 联动**（本批新增 `hook-stale-state.unit.test.ts` T23-T27：同会话拦截/跨会话放行/已闭环放行/已过期放行/阶段闭环但 correction 未收口仍拦截，5 条真实子进程 spawn 端到端回归）
+- [x] `cd harness && npm test` 全绿（**1553 单测 + 40 fixtures**，较 C5-min 收口时的 1512 净增 41——correction-c5-full 7 + hook 5 新端到端 + 若干 C2/C3/C4 批次新增套件累计，无回归）
+- [x] `npm run openspec:validate`（31/31）；`npm run release:verify` 待 3.0.0 窗口整体收口时统一跑

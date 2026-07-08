@@ -137,6 +137,21 @@
     "lifecycle_hooks_enabled": {
       "type": "boolean",
       "description": "是否运行 lifecycle hooks（framework/profile/extension）；默认 true。"
+    },
+    "evidence_profile": {
+      "type": "string",
+      "enum": ["strict", "balanced"],
+      "description": "C2 verification-matrix：full track 交互态的证据档位（缺省 strict=现状零变化）。headless/goal 运行时恒强制 strict，本字段不参与求解。`minimal` 不是合法配置值——它是 lite track 的求解结果，不可全局声明以逃避门禁。"
+    },
+    "project_scale": {
+      "type": "string",
+      "enum": ["small", "standard"],
+      "description": "C4 exploration-scale：小工程裁剪档位（缺省 standard=现状零变化）。small 档由 framework-init 按 catalog 模块数（≤3）等信号建议、经用户确认写入；仅影响术语消歧确认粒度/module-graph 默认开关/catalog 卡片字段精简，diff_within_scope 与 Scope 声明等红线在 small 档不豁免。"
+    },
+    "phases_disabled": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "C4 exploration-scale：实例级禁用 phase 列表，与 profile 声明的 phases_disabled 取并集（profile-loader 统一裁剪）。small 档 framework-init 默认建议写入 [\"module-graph\"]（用户可移除）；红线相关 phase 不受此字段影响。"
     }
   },
   "additionalProperties": true

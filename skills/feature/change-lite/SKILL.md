@@ -61,13 +61,15 @@ out_of_scope_modules: []
 
 **`[unit]` 标记约定**：验收条目文本含 `[unit]`（大小写不敏感）＝该条属 unit 层（镜像 full 轨 acceptance `ut_layer ∈ {unit, both}`）；exit 将强制经宿主 UT 工具链运行对应 UT。纯人工/设备可观察验收不打标记。
 
+**Context Facts Gate（BLOCKER，C4）**：change 是 lite track 的**建立阶段**（与 full 轨 spec 同源角色）——在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter `established_by: change` + `## Code Facts` 表，`ready_to_produce: true`）；比 spec 阈值略轻（单模块假设），不强制 subagent。后续 coding/exit 只追加 `## phase_delta: <phase>` 增量节。
+
 门禁（写完即跑）：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase change --feature <feature>
 ```
 
-校验章节存在性、Scope yaml 可解析且模块名命中 catalog（小工程无 catalog 时跳过比对）、checkbox 语法。
+校验章节存在性、Scope yaml 可解析且模块名命中 catalog（小工程无 catalog 时跳过比对）、checkbox 语法、facts.md 建立阶段全量检查。
 
 ## Step 3. 实施（coding）
 
@@ -87,7 +89,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase exit --feature <fe
 2. **编译**：复用宿主 profile coding host（与 full coding 同源）；
 3. **`diff_within_scope`（红线）**：变更须落在 in_scope 模块内；模块→路径映射走 contracts → catalog entry_file → 层目录三级回退，不可判状态一律 fail-closed；
 4. **lint**：宿主 provider 派发（无 provider 为可见缺项 WARN，不阻断）;
-5. **条件 UT**：验收清单存在 `[unit]` 条目时强制运行，UT 缺失即 FAIL。
+5. **条件 UT**：验收清单存在 `[unit]` 条目时强制运行，UT 缺失即 FAIL；
+6. **Context Facts Gate（C4）**：追加 facts.md 的 `## phase_delta: exit` 节（无新增事实写 "none"）。
 
 exit PASS 即 feature 闭环，**停等 `phase.next_step`**（1=结束交付 / 2=暂停 / 3=其它）。**闭环停等**：禁止未经确认自动续接其它 feature 或阶段。
 

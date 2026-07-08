@@ -88,6 +88,7 @@ import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
   reconcileReportWithHylyreTrace,
@@ -2567,6 +2568,17 @@ const checker: PhaseChecker = {
         'test-report.md',
       ]),
     ];
+
+    results.push(
+      ...safeRun(
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'testing', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
+        }),
+        'context_exploration_gate',
+      ),
+    );
 
     const deviceTestHapHolder: DeviceTestPipelineHolder = {
       hapPath: null,

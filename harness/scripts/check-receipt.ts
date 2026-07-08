@@ -37,7 +37,17 @@ import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { assertWorkflowFeaturePhase } from './utils/runtime-policy';
+import {
+  assertWorkflowFeaturePhase,
+  buildEvidencePolicySnapshot,
+  resolveEvidencePolicy,
+  resolveFeatureTrack,
+  resolveProfileLabel,
+  type EvidencePolicy,
+  type EvidenceValidationStatus,
+  type RuntimeContext,
+} from './utils/runtime-policy';
+import { loadFeatureTrackDecl } from './utils/feature-track';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh } from './utils/gate-fingerprint';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
@@ -45,6 +55,7 @@ import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
   applyClosurePatchFromReceiptValidation,
+  isGoalOrchestrationEnv,
   syncPhaseStateOnReceiptPass,
   type FeaturePhase,
 } from './utils/phase-state';
@@ -203,6 +214,31 @@ function main(): void {
     process.exit(0);
   }
 
+  // C2 verification-matrix：track/mode/config → evidence policy 求解。
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  const runtimeCtx: RuntimeContext = {
+    mode: isGoalOrchestrationEnv() ? 'goal' : 'interactive',
+    adapter: fw.agent_adapter ?? 'generic',
+    phase,
+    workflow: fw.active_workflow ?? 'spec-driven',
+    can_prompt_user: !isGoalOrchestrationEnv(),
+    can_collect_usage: isGoalOrchestrationEnv(),
+  };
+  const evidenceConfig = { evidence_profile: fw.evidence_profile };
+  const policy = resolveEvidencePolicy(track, runtimeCtx, evidenceConfig);
+  const profileResolved = resolveProfileLabel(track, runtimeCtx, evidenceConfig);
+
+  // lite track：receipt 机制架构性不适用（正常调用路径下 tryValidateReceipt 已在
+  // phase-state.ts 短路、不会走到本进程；本分支是直接 CLI 调用的防御性兜底）——
+  // 绝不当作 passed，也不触碰任何 state，交由 exit 阶段自身的 script-report 承载闭环。
+  if (policy.receipt === 'not_applicable') {
+    console.log(`\n🧾 check-receipt: feature=${feature}, phase=${phase}`);
+    console.log(`   track=lite：receipt 机制不适用（evidence_policy_snapshot.profile_resolved=${profileResolved}）`);
+    console.log('   闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。');
+    console.log('   本命令不会写入 .current-phase.json；请改查 exit 阶段的 script-report.json。\n');
+    process.exit(0);
+  }
+
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptPath = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptPath).replace(/\\/g, '/');
@@ -337,61 +373,84 @@ function main(): void {
     }
   }
 
-  // 3. verifier 必须 PASS
+  // C2：非 BLOCKER 的证据缺项（如 optional 档 trace 缺失）单独记录，不影响 pass/fail 判定。
+  const warnings: CheckIssue[] = [];
+  const observed: Partial<Record<keyof EvidencePolicy, EvidenceValidationStatus>> = {};
+
+  // 3. verifier（policy.verifier === 'off' 时整块不检——balanced 档非保留 phase / lite 已短路）
   const vs = frontmatter.verifier_subagent ?? {};
-  if ((vs.verdict ?? '').toUpperCase() !== 'PASS') {
-    issues.push({
-      id: 'verifier_not_pass',
-      severity: 'BLOCKER',
-      message: `verifier_subagent.verdict="${vs.verdict ?? '<missing>'}", 必须为 PASS。`,
-    });
-  }
-  if (!vs.invoked_via || !/Task|subagent/i.test(vs.invoked_via)) {
-    issues.push({
-      id: 'verifier_invocation_unspecified',
-      severity: 'BLOCKER',
-      message: `verifier_subagent.invoked_via="${vs.invoked_via ?? ''}"；必须明示通过 Task 工具触发 (subagent_type=verifier)，不允许"提示用户去跑"。`,
-    });
-  }
-  if (vs.report_path) {
-    const verifierReportAbs = path.resolve(projectRoot, vs.report_path);
-    if (!fs.existsSync(verifierReportAbs)) {
+  if (policy.verifier === 'off') {
+    observed.verifier = 'skipped_by_policy';
+  } else {
+    observed.verifier = vs.verdict ? 'provided' : 'missing';
+    if ((vs.verdict ?? '').toUpperCase() !== 'PASS') {
       issues.push({
-        id: 'verifier_report_missing',
+        id: 'verifier_not_pass',
         severity: 'BLOCKER',
-        message: `verifier_subagent.report_path="${vs.report_path}" 在文件系统中不存在。`,
+        message: `verifier_subagent.verdict="${vs.verdict ?? '<missing>'}", 必须为 PASS。`,
+      });
+    }
+    if (!vs.invoked_via || !/Task|subagent/i.test(vs.invoked_via)) {
+      issues.push({
+        id: 'verifier_invocation_unspecified',
+        severity: 'BLOCKER',
+        message: `verifier_subagent.invoked_via="${vs.invoked_via ?? ''}"；必须明示通过 Task 工具触发 (subagent_type=verifier)，不允许"提示用户去跑"。`,
+      });
+    }
+    if (vs.report_path) {
+      const verifierReportAbs = path.resolve(projectRoot, vs.report_path);
+      if (!fs.existsSync(verifierReportAbs)) {
+        issues.push({
+          id: 'verifier_report_missing',
+          severity: 'BLOCKER',
+          message: `verifier_subagent.report_path="${vs.report_path}" 在文件系统中不存在。`,
+        });
+      }
+    } else {
+      issues.push({
+        id: 'verifier_report_path_missing',
+        severity: 'BLOCKER',
+        message: 'verifier_subagent.report_path 未填写。',
+      });
+    }
+  }
+
+  // 4. trace.json 凭证（policy.trace === 'optional' 时"缺失"降 WARN；"提供但损坏"恒 BLOCKER——
+  //    劣质凭证比没凭证更危险，optional 只豁免"不提供"，不豁免"提供假的"）
+  const tj = frontmatter.trace_json ?? {};
+  const traceProvided = tj.exists === true && Boolean(tj.path);
+  observed.trace = traceProvided ? 'provided' : 'missing';
+  if (!traceProvided) {
+    const traceMissingDetail = `trace_json.exists=${tj.exists ?? '<missing>'}, trace_json.path=${tj.path ?? '<missing>'}`;
+    if (policy.trace === 'required') {
+      if (tj.exists !== true) {
+        issues.push({
+          id: 'trace_json_exists_false',
+          severity: 'BLOCKER',
+          message: `trace_json.exists=${tj.exists ?? '<missing>'}, 必须为 true。`,
+        });
+      }
+      if (!tj.path) {
+        issues.push({
+          id: 'trace_json_path_missing',
+          severity: 'BLOCKER',
+          message: 'trace_json.path 未填写。',
+        });
+      }
+    } else {
+      warnings.push({
+        id: 'trace_json_missing_optional',
+        severity: 'MAJOR',
+        message: `trace 为 optional 档，缺失不阻塞（${traceMissingDetail}）——建议仍尽量提供。`,
       });
     }
   } else {
-    issues.push({
-      id: 'verifier_report_path_missing',
-      severity: 'BLOCKER',
-      message: 'verifier_subagent.report_path 未填写。',
-    });
-  }
-
-  // 4. trace.json 凭证
-  const tj = frontmatter.trace_json ?? {};
-  if (tj.exists !== true) {
-    issues.push({
-      id: 'trace_json_exists_false',
-      severity: 'BLOCKER',
-      message: `trace_json.exists=${tj.exists ?? '<missing>'}, 必须为 true。`,
-    });
-  }
-  if (!tj.path) {
-    issues.push({
-      id: 'trace_json_path_missing',
-      severity: 'BLOCKER',
-      message: 'trace_json.path 未填写。',
-    });
-  } else {
-    const traceAbs = path.resolve(projectRoot, tj.path);
+    const traceAbs = path.resolve(projectRoot, tj.path!);
     if (!fs.existsSync(traceAbs)) {
       issues.push({
         id: 'trace_json_file_not_found',
         severity: 'BLOCKER',
-        message: `trace_json.path="${tj.path}" 在文件系统中不存在（缺失即视为阶段未完成，全局入口 §5.1）。`,
+        message: `trace_json.path="${tj.path}" 在文件系统中不存在（提供了却是假的，optional 不豁免——全局入口 §5.1）。`,
       });
     } else if (tj.schema_valid !== false) {
       // 尽可能解析一下
@@ -407,9 +466,12 @@ function main(): void {
     }
   }
 
-  // 3.5 context_exploration（与 Context Exploration Gate 对齐）
+  // 3.5 context_exploration（与 Context Exploration Gate 对齐；policy.exploration === 'off'/'not_applicable' 时不检）
   const ce = frontmatter.context_exploration ?? {};
-  if (ce.exists !== true) {
+  observed.exploration = ce.exists === true ? 'provided' : 'missing';
+  if (policy.exploration === 'off' || policy.exploration === 'not_applicable') {
+    // 矩阵当前所有 full 分支恒 required；此分支只在未来矩阵调整时生效，现状不可达。
+  } else if (ce.exists !== true) {
     issues.push({
       id: 'context_exploration_exists_false',
       severity: 'BLOCKER',
@@ -653,12 +715,24 @@ function main(): void {
     }
     console.log('✅ PASS — 完成回执校验通过。');
     console.log('   - script_harness: exit_code=0, blocker_count=0');
-    console.log(`   - verifier_subagent: verdict=${vs.verdict}`);
-    console.log(`   - trace_json: ${tj.path}（存在）`);
+    console.log(
+      `   - verifier_subagent: ${policy.verifier === 'off' ? 'skipped_by_policy（balanced 档非保留 phase）' : `verdict=${vs.verdict}`}`,
+    );
+    console.log(`   - trace_json: ${traceProvided ? `${tj.path}（存在）` : `未提供（${policy.trace} 档）`}`);
     console.log(`   - commit_sha: ${sha}`);
     console.log('   - 反假设条款 3/3 已勾选');
+    if (warnings.length > 0) {
+      console.log('');
+      console.log(`⚠️  ${warnings.length} 项非阻塞提示：`);
+      for (const w of warnings) console.log(`  [${w.severity}] ${w.id}: ${w.message}`);
+    }
     console.log('');
-    console.log('阶段闭环判定（全局入口 §5.1）四条件已满足，可放行。\n');
+    console.log(`阶段闭环判定（全局入口 §5.1）四条件已满足，可放行（evidence_profile=${profileResolved}）。\n`);
+
+    const evidencePolicySnapshot = buildEvidencePolicySnapshot(policy, profileResolved, observed);
+    console.log(
+      `HARNESS_EVIDENCE_POLICY profile_resolved=${profileResolved} verifier=${evidencePolicySnapshot.items.verifier.validation_status} trace=${evidencePolicySnapshot.items.trace.validation_status} exploration=${evidencePolicySnapshot.items.exploration.validation_status}`,
+    );
 
     if (!skipStateSync) {
       const receiptValidation = {
@@ -669,6 +743,7 @@ function main(): void {
       syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
         blocker_count: typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
         frameworkRoot,
+        evidence_policy_snapshot: evidencePolicySnapshot,
       });
       applyClosurePatchFromReceiptValidation(
         projectRoot,

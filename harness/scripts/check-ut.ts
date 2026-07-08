@@ -73,7 +73,7 @@ import {
   type TestabilityAuditRecord,
 } from './utils/ut-artifact-parse';
 import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
-import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { checkFactsArtifact } from './utils/context-facts';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
 import {
@@ -3452,7 +3452,7 @@ const checker: PhaseChecker = {
 
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'ut', {
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'ut', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

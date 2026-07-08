@@ -17,14 +17,23 @@ import {
   resolveWorkflowSpec,
   type WorkflowSpec,
 } from '../../workflow-loader';
-import { buildPolicySnapshot, resolveFeatureTrack, type PolicySnapshot } from './runtime-policy';
+import {
+  buildPolicySnapshot,
+  resolveFeatureTrack,
+  type EvidencePolicySnapshot,
+  type PolicySnapshot,
+} from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
 export type FeaturePhase = string;
 
 export interface ReceiptValidation {
-  status: 'passed' | 'failed' | 'missing' | 'error';
+  /**
+   * `not_applicable`（C2）：lite track 的 receipt 机制架构性不适用——闭环判据是
+   * change.md checkbox + exit script-report PASS，不经本文件。绝不映射为 passed。
+   */
+  status: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable';
   receipt_path: string;
   exit_code?: number;
   message?: string;
@@ -39,6 +48,8 @@ export interface CurrentPhaseStatePartial {
   verdict?: 'PASS' | 'FAIL' | string;
   blocker_count?: number;
   receipt?: ReceiptValidation | null;
+  /** C2 两层机读契约（check-receipt.ts 计算；仅 PASS 路径写入，非必填）。 */
+  evidence_policy_snapshot?: EvidencePolicySnapshot | null;
 }
 
 interface CurrentPhaseState extends CurrentPhaseStatePartial {
@@ -129,6 +140,8 @@ export function mergeAndWritePhaseState(
       verdict: partial.verdict,
       blocker_count: partial.blocker_count,
       receipt: partial.receipt ?? null,
+      evidence_policy_snapshot:
+        partial.evidence_policy_snapshot ?? (sameTask ? prev.evidence_policy_snapshot ?? null : null),
       session_id: carrySessionId,
       session_id_recorded_at: carrySessionRecordedAt,
       last_seen_session_id: carryLastSeenSid,
@@ -152,7 +165,11 @@ export function syncPhaseStateOnReceiptPass(
   feature: string,
   phase: string,
   receiptValidation: ReceiptValidation,
-  opts?: { blocker_count?: number; frameworkRoot?: string },
+  opts?: {
+    blocker_count?: number;
+    frameworkRoot?: string;
+    evidence_policy_snapshot?: EvidencePolicySnapshot | null;
+  },
 ): void {
   const workflowSpec = loadWorkflowSpec(projectRoot, opts?.frameworkRoot);
   mergeAndWritePhaseState(projectRoot, workflowSpec, {
@@ -163,6 +180,7 @@ export function syncPhaseStateOnReceiptPass(
     verdict: 'PASS',
     blocker_count: opts?.blocker_count ?? 0,
     receipt: receiptValidation,
+    evidence_policy_snapshot: opts?.evidence_policy_snapshot ?? null,
   });
 }
 
@@ -175,6 +193,19 @@ export function tryValidateReceipt(
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptAbs = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
+
+  // C2：lite track 的 receipt 机制架构性不适用——短路避免无谓 subprocess spawn，
+  // 且绝不能把「没有 receipt」误判为 status:'missing'（那会被上游当作待补齐的
+  // 未闭环凭证反复提示；lite 本就不产生这份凭证）。
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  if (track === 'lite') {
+    return {
+      status: 'not_applicable',
+      receipt_path: receiptRel,
+      message:
+        'lite track：receipt 机制不适用。闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。',
+    };
+  }
 
   if (!fs.existsSync(receiptAbs)) {
     return {
@@ -290,6 +321,17 @@ export function runSyncClosure(
 ): number {
   const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
+
+  if (receiptValidation.status === 'not_applicable') {
+    // lite track：receipt 不是本 phase 的闭环判据，不动 state / summary（避免误盖成
+    // 'open'——那会暗示"receipt 检查失败待补"，但 lite 根本不该被这样问）。
+    // 真实闭环态由 harness-runner 跑该 phase（如 exit）时自身写入的 verdict 承载。
+    console.log('');
+    console.log('ℹ️  sync-closure: receipt 机制对 lite track 不适用（not_applicable）');
+    console.log(`   ↳ ${receiptValidation.message}`);
+    console.log(`   请改查 harness-runner --phase ${phase} --feature ${feature} 的 script-report.json verdict。`);
+    return 0;
+  }
 
   if (receiptValidation.status === 'passed') {
     syncPhaseStateOnReceiptPass(projectRoot, feature, phase, receiptValidation, { frameworkRoot });

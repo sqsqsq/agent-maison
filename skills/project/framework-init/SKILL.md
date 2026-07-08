@@ -83,6 +83,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | 架构 DSL | `init.architecture_preset` + `init.intra_layer_deps` + [prompts/architecture-presets.md](prompts/architecture-presets.md) | `architecture` 对象（**必填**） |
 | 物化 adapter 清单 | `init.materialized_adapters`（多选 checkbox） | `materialized_adapters[]` |
 | paths 覆盖（可选） | 仅当实例目录结构偏离默认 | `paths` 子集 |
+| `project_scale`（可选） | `init.project_scale`——catalog 模块数 ≤3 时建议 `small`（术语消歧降为一次性确认、module-graph 默认禁用），用户确认后写入；红线不受影响 | `project_scale` / `phases_disabled` |
 | `spec`（可选） | opt-in，见 [spec-harness-options](prompts/spec-harness-options.md) | `spec` 段（Visual Handoff 等；legacy `prd` 段 init UPDATE 会自动迁移） |
 
 **由 builder 自动注入（勿写入 payload）**：`schema_version`、`state_machine.*`、`toolchain.hvigor.*`、`active_workflow`、`lifecycle_hooks_enabled`、默认 `paths.*`（未覆盖项）、profile-owned `tools.*`（仅 hmos-app 等 profile 的 config-defaults）。参考 [framework.config.template.json](../../../templates/framework.config.template.json) 作对照，非手写清单。
@@ -198,7 +199,6 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 - overwrite **不经过** merge-framework-config，但 overwrite 后 `backfill-config` / `migrate-config` 仍按 DAG 顺序执行。
 - **默认值变更不得覆盖显式配置**：derive payload 保留磁盘 `paths` / `tools`；框架默认值变更仅通过 BACKFILL（补缺）+ MIGRATION（modernize 已知旧默认）推进。
 
-
 ## 核心设计原则
 
 1. **探测 → 批准 → 执行 → 摘要**；Side effects 仅在 S3 批准后。
@@ -206,8 +206,6 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 3. **提交产物隔离**：物化每个 adapter 时 render-env 用**该 adapter**，不用 local active adapter。
 4. **`.gitignore`**：由 executor `ensure-gitignore` 维护 canonical patterns（含 `framework.local.json`）。
 5. **`profile-skill-asset:`** 占位符按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
-
----
 
 ## UPDATE 模式要点
 
@@ -247,11 +245,6 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts \
 | 扫描 / 架构 | [prompts/scan-project.md](prompts/scan-project.md)、[prompts/architecture-presets.md](prompts/architecture-presets.md) |
 | Staging 示例 | [templates/staging-schema-example.md](templates/staging-schema-example.md) |
 | Personal setup | [personal-setup-gate/SKILL.md](../../reference/personal-setup-gate.md) |
-
----
-
-## CLI / 自动化备注
-
-Trace 字段见 [framework/harness/trace/trace.schema.json](../../../harness/trace/trace.schema.json)；phase 可记 `framework-init`。
+| Trace schema | [framework/harness/trace/trace.schema.json](../../../harness/trace/trace.schema.json)（phase 可记 `framework-init`） |
 
 **中文输出。**

@@ -449,6 +449,22 @@ export interface FrameworkConfig {
    * 未声明时默认 enforce（检测到 framework 源码漂移判 BLOCKER）。
    */
   integrity?: FrameworkIntegrityConfig;
+  /**
+   * C2 verification-matrix：full track 交互态的证据档位（缺省 strict=现状零变化）。
+   * 只在 resolveEvidencePolicy 的 mode==='interactive' 分支参与求解；headless/goal
+   * 恒强制 strict，本字段不生效。`minimal` 非法值——它是 lite track 的求解结果。
+   */
+  evidence_profile?: 'strict' | 'balanced';
+  /**
+   * C4 exploration-scale：小工程裁剪档位（缺省 standard=现状零变化）。
+   * 由 framework-init 按 catalog 模块数等信号建议、经用户确认写入；
+   * 只影响术语消歧粒度/module-graph 默认开关/catalog 卡片精简，红线不豁免。
+   */
+  project_scale?: 'small' | 'standard';
+  /**
+   * C4 exploration-scale：实例级禁用 phase，与 profile.phases_disabled 取并集（profile-loader 统一裁剪）。
+   */
+  phases_disabled?: string[];
 }
 
 /** P1-5：drift 放行的结构化真人审批条目——rationale 与 approved_by（真人，非自动化/非 user_requirement）缺一无效 */
@@ -1035,6 +1051,11 @@ export function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig 
         ? raw.active_workflow.trim()
         : fallback.active_workflow ?? 'spec-driven',
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
+    evidence_profile: raw.evidence_profile === 'balanced' ? 'balanced' : undefined,
+    project_scale: raw.project_scale === 'small' ? 'small' : undefined,
+    phases_disabled: Array.isArray(raw.phases_disabled)
+      ? raw.phases_disabled.map(p => String(p).trim()).filter(Boolean)
+      : undefined,
     tools: normalizeTools(raw.tools),
     integrity: normalizeIntegrity(raw.integrity),
   };

@@ -32,7 +32,7 @@ import {
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
-import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { checkFactsArtifact } from './utils/context-facts';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -830,7 +830,7 @@ const checker: PhaseChecker = {
     results.push(...checkReviewContext(ctx));
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'review', {
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'review', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

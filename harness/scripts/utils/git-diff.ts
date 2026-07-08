@@ -127,11 +127,15 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     baseRef = 'HEAD';
   }
   if (!workingOnly) {
-    const verify = spawnSync('git', ['rev-parse', '--verify', baseRef], {
+    // `^{commit}` 后缀是关键（codex review 采纳）：裸 `git rev-parse --verify <40位hex>`
+    // 只校验字符串**格式**合法，即便对象在仓库里根本不存在也会 exit 0（实测坐实）——
+    // 用于 correction base_commit 这类"必须确认对象真实存在"的场景会被静默放过。
+    // 加上 `^{commit}` 强制要求解析到真实存在的 commit 对象，否则 fatal exit 128。
+    const verify = spawnSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], {
       cwd, encoding: 'utf-8', shell: false,
     });
     if (verify.status !== 0) {
-      // 比如全新初始化的仓库，HEAD~1 不存在 → 退到空树（相当于对比 HEAD）
+      // 比如全新初始化的仓库，HEAD~1 不存在；或 base_commit 因 rebase/gc 不可达 → 退到空树（相当于对比 HEAD）
       baseRef = 'HEAD';
       baseIsFallback = true;
     }

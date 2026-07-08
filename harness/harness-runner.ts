@@ -80,6 +80,7 @@ import {
   runCorrectionCheck,
   runCorrectionInit,
 } from './scripts/utils/correction-commands';
+import { correctionStatePath } from './scripts/utils/correction-state';
 import {
   loadResolvedProfile,
   loadPhaseRuleWithOverlays,
@@ -92,7 +93,7 @@ import {
   listWorkflowPhases,
   type WorkflowSpec,
 } from './workflow-loader';
-import { resolveFeatureTrack, resolvePhaseChain } from './scripts/utils/runtime-policy';
+import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import {
   dispatchLifecycleHooks,
@@ -140,7 +141,7 @@ Harness — Spec/Harness 验证工具
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
-  --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
+  --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）；一并清理未收口的 .current-correction.json（C5-full）
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
@@ -727,7 +728,11 @@ function writeRunSummary(
     }));
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
-  const closed = receiptValidation?.status === 'passed';
+  // C2：closure 来源按 track 分派——lite 的 receipt 恒 not_applicable，闭环判据改用
+  // 该 phase 自身脚本 verdict（如 exit 的 script-report PASS），不再被误判为"未闭环"。
+  const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, report.feature));
+  const closed =
+    resolvePhaseClosureSource(closureTrack, report.summary.verdict, receiptValidation?.status) !== 'open';
   // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
   // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
   const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
@@ -1528,6 +1533,19 @@ function handleClearState(projectRoot: string): void {
     }
   } else {
     console.log(`⊘ ${rel} 不存在，无需清理`);
+  }
+  // C5-full：Stop hook 的 correction 联动（hard_hook 深度集成）没有独立逃生阀，
+  // --clear-state 是既有"明确放弃"出口——一并清理未收口的 correction state，
+  // 避免用户已放弃阶段却仍被残留的 pending correction 拦截 stop。
+  const correctionAbs = correctionStatePath(projectRoot);
+  const correctionRel = path.relative(projectRoot, correctionAbs).replace(/\\/g, '/');
+  if (fs.existsSync(correctionAbs)) {
+    try {
+      fs.unlinkSync(correctionAbs);
+      console.log(`✓ 已删除修正状态文件 ${correctionRel}`);
+    } catch (err) {
+      console.error(`✗ 删除 ${correctionRel} 失败: ${(err as Error).message}`);
+    }
   }
   console.log('');
   console.log('提示：');

@@ -25,7 +25,7 @@ import {
   CheckResult,
 } from './utils/types';
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
-import { checkContextExplorationArtifact } from './utils/context-exploration';
+import { checkFactsArtifact } from './utils/context-facts';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
@@ -524,7 +524,7 @@ const checker: PhaseChecker = {
 
     results.push(
       ...safeRun(
-        () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'coding', {
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'coding', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,

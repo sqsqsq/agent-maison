@@ -215,12 +215,15 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig): 
     yaml.name,
   );
 
+  // C4 exploration-scale：实例级 config.phases_disabled 与 profile 声明取并集（任一侧禁用即禁用）。
+  const mergedPhasesDisabled = [...(yaml.phases_disabled ?? []), ...(cfg.phases_disabled ?? [])];
+
   const base: HarnessResolvedProfile = {
     name: yaml.name,
     subVariant: sub,
     profileDir: profileDirPath,
     yaml,
-    phasesDisabled: normalizePhaseDisabled(yaml.phases_disabled),
+    phasesDisabled: normalizePhaseDisabled(mergedPhasesDisabled),
     capabilities,
     personalPrerequisites,
   };
