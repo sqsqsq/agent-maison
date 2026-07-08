@@ -14,6 +14,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createRequire } from 'module';
 import {
   collectTextBboxNodes,
   assessBboxOrientation,
@@ -264,9 +265,15 @@ test('p0b_kind_classification', () => {
 // P0-B 端到端 + P0-C 拆位：授权在 ≠ 验真过
 // ============================================================
 
+// cursor/codex review：`profiles/hmos-app/harness/tests/unit/` 不在 `harness/node_modules`
+// 的祖先路径链上，裸 `require('yaml')` 恒 MODULE_NOT_FOUND，导致不设 NODE_PATH 时
+// `npm run test:unit` 从本 suite 起整进程崩溃、后续 suite 结果全部丢失（发版门禁若裸跑会炸）。
+// 改用 createRequire 锚定 harness 根（与 fidelity-shared.ts/ui-spec-shared.ts 加载 yaml
+// 的既有写法一致），不依赖调用方目录、不需要 NODE_PATH。
+const requireFromHarness = createRequire(path.resolve(__dirname, '../../../../../harness/harness-runner.ts'));
 const YAML_LIB = ((): { stringify: (v: unknown) => string } => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('yaml');
+  return requireFromHarness('yaml');
 })();
 
 test('p0bc_authorized_bad_crop_blocked_by_validation_not_acquisition', () => {

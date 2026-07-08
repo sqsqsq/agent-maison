@@ -15,13 +15,16 @@ const DEFAULT_PROFILE_FALLBACK = 'hmos-app';
 /**
  * E5（多模态降级阶梯 plan d4a8f3c6）：复刻 repo-layout.ts 的 standalone/consumer 判据
  * （纯 fs+path，不 import TS 模块——Tier_1 在 ts-node 就绪确认之前跑，不能依赖它）。
+ * codex review（2026-07-08）：与 repo-layout.ts 的 detectRepoLayout 同步修正——不能只检查
+ * grandparent/framework/skills「某处是否存在」（无关 sibling 同名目录会误判），须先确认
+ * harnessRoot 自身的 parent 目录名即为 'framework'（consumer 布局下恒成立）。
  * @param {string} harnessRoot
  * @returns {string} projectRoot
  */
 function detectProjectRootFromHarnessRoot(harnessRoot) {
   const parent = path.resolve(harnessRoot, '..');
   const grandparent = path.resolve(harnessRoot, '../..');
-  if (fs.existsSync(path.join(grandparent, 'framework', 'skills'))) {
+  if (path.basename(parent) === 'framework' && fs.existsSync(path.join(parent, 'skills'))) {
     return grandparent; // consumer：<projectRoot>/framework/harness
   }
   return parent; // standalone：<projectRoot>/harness

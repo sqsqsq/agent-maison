@@ -206,9 +206,9 @@ todos:
     content: >
       E7 门禁与复验。①源仓三命令逐条跑（codex 纠正可复制性）：
       `cd harness` → `npm run typecheck` → `npm run test:unit` → `npm run test:fixtures`；
-      profiles 单测依赖解析：PowerShell 先
-      `$env:NODE_PATH='D:\1.code\agent-maison-br\harness\node_modules'`
-      （git-bash 为 NODE_PATH=.../harness/node_modules 前缀）。
+      【2026-07-08 更新：此前这里要求先设 NODE_PATH 才能跑过 profiles 单测——round6 yaml
+      解析问题已在"第三轮 review 复核"批次修复（createRequire 锚定 harness 根），三条命令
+      现在裸跑（无需设置任何环境变量）即可全绿，此条 NODE_PATH 前置步骤已废弃】。
       ②宿主实机复验清单（发版前，人工执行）：案A线 mx 2.7 + claude adapter（金丝雀应降
       none/ocr_capable、UI spec 走盲档跑通不中断）——【时序声明（cursor 采纳）】E1 落地前
       案A 仅靠 adapter 声明仍会被骗，**E1 未落地则案A 不得计为 P0 完成**；案B线 chrys 重放
@@ -644,6 +644,52 @@ init-readiness.mjs 独有的缺陷，而是逐行复刻了 `repo-layout.ts` 的 
 
 **复核后验收**：typecheck 0 · unit 全量（排除 1 个 pre-existing 环境坏文件）1499/0
 （+1 新回归用例：codex P2 resume 场景）· fixtures 35/0。
+
+## Review 复核·第三轮（2026-07-08，用户明确要求"影响发版门禁的必须修"）
+
+上一轮把 round6 yaml 环境问题和 init-readiness.mjs 的 consumer/standalone 误判都判定为
+"非本次范围"；本轮用户明确要求「如果有影响发版本门禁的要改好」，逼着重新审视这两项是否
+真的不影响发版——结论：**round6 yaml 问题确实是真实的发版门禁阻断项**（codex 实测裸跑
+`npm run test:unit` 会崩溃，须手动设 `NODE_PATH` 才过），已直接修复，不再是"留给独立
+任务"的技术债；init-readiness.mjs 的误判点在这轮深挖后发现**比上轮判断更严重**——不是
+"良性复刻既有设计"，而是canonical 的 `repo-layout.ts::detectRepoLayout` 本身就有一个真实
+逻辑漏洞（判据只检查"grandparent 下是否存在 framework/skills"，从未验证 harnessRoot 自身
+的 parent 是否就是那个 framework 目录），只是触发条件极窄（需要一个无关 sibling 目录恰好
+同名）在正常 CI 发版环境里不会命中——**判定为不阻断发版**，但既然是框架级真实 bug 且修法
+低风险，顺手在源头一并修掉，而非留着继续被两轮 review 反复提同一件事。
+
+**修复①（发版门禁真实阻断，已修）**：`round6-bbox-crop-validation.unit.test.ts:269` 顶层
+`require('yaml')`——`profiles/hmos-app/harness/tests/unit/` 不在 `harness/node_modules`
+祖先路径链上，裸 require 恒 `MODULE_NOT_FOUND`。改用 `createRequire` 锚定
+`harness/harness-runner.ts`（与 `fidelity-shared.ts`/`ui-spec-shared.ts` 加载 yaml 的既有
+写法完全一致的既有先例，非新造模式），不依赖调用方目录、不需要 `NODE_PATH`。验证：裸跑
+`cd harness && npm run test:unit`（unset NODE_PATH）**从崩溃变为 1541/0 全绿**。
+
+**修复②（框架级真实 bug，触发面窄不阻断发版，顺手修掉源头而非留债）**：
+`repo-layout.ts::detectRepoLayout` 原判据 `fs.existsSync(path.join(grandparent, 'framework',
+'skills'))`——只问"某处是否存在"，未验证 harnessRoot 自身的 parent 就是那个 framework 目录。
+改为 `path.basename(parent) === 'framework' && hasFrameworkTree(parent)`——consumer 布局下
+harnessRoot 恒为 `<projectRoot>/framework/harness`，parent 目录名恒为 `'framework'`，这是
+比"某处存在同名目录"更强的判据，杜绝无关 sibling 目录误判。`init-readiness.mjs` 的
+`detectProjectRootFromHarnessRoot`（明确注释"复刻 repo-layout.ts"）同步应用相同修正，两处
+判据重新保持一致，不再是"表面复刻、实际两套算法各自可能出错"的状态。新增回归测试：
+`repo-layout.unit.test.ts`（canonical 版本）+ `init-readiness.unit.test.ts`（.mjs 镜像版本）
+各补 1 例——构造"harnessRoot 真实为 standalone，但 grandparent 下恰好存在无关的
+`framework/skills` 诱饵目录"场景，锁定不再误判。诱饵目录建在测试自建的隔离 wrapper 临时
+目录内（非直接建在共享的 `os.tmpdir()` 下），避免污染机器上其他并发/后续测试进程的固定
+路径。
+
+**顺带（cursor 建议的非 blocker 项，成本低顺手做）**：`resolveOcrAvailableForRun` 此前只被
+`harness-runner.ts`/`goal-runner.ts` 间接覆盖，无直连单测——补了 1 个直连用例（
+`visual-fidelity.unit.test.ts`），锁定"profile 环境 OR 金丝雀 ocr_capable 信号（adapter
+需匹配）"这个口径本身，不再只靠调用方间接兜底。
+
+**未再改动的（复核后确认仍是合理的既有决策，无新证据推翻）**：
+`resolvePhaseCapabilityAdvisory` 与 `resolveUiRelevanceForRun` 物理上仍是两份代码——cursor
+本轮复核也认为"仍可接受，不需挡发版"，维持上轮判断不重构。
+
+**验收**：typecheck 0 · unit **裸跑（unset NODE_PATH）1544/0**（不再需要排除 round6、不再
+需要设置 NODE_PATH——release gate 三条命令现在开箱即绿）· fixtures 35/0。
 
 ## P0 主链完工小结（2026-07-08）
 

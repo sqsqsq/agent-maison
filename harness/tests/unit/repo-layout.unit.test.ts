@@ -67,6 +67,27 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'codex review：standalone harnessRoot 不因 grandparent 恰好存在无关 sibling ' +
+      'framework/skills 误判为 consumer（原判据只检查该目录是否存在，未验证 harnessRoot ' +
+      '自身 parent 是否即为那个 framework 目录）',
+    run: () => {
+      const wrapper = mkTmp('layout-detect-sibling-decoy-');
+      const standaloneProjectRoot = path.join(wrapper, 'my-standalone-repo');
+      const harness = path.join(standaloneProjectRoot, 'harness');
+      writeHarnessRunner(harness);
+      fs.mkdirSync(path.join(standaloneProjectRoot, 'skills', 'a'), { recursive: true });
+      // 诱饵：与 standaloneProjectRoot 同级（即 grandparent(harness) 下）恰好存在一个
+      // 完全无关的 framework/skills 目录——旧判据会把 wrapper 误判为 projectRoot。
+      fs.mkdirSync(path.join(wrapper, 'framework', 'skills'), { recursive: true });
+      const layout = detectRepoLayout(harness);
+      assert(layout.kind === 'standalone', `诱饵 sibling 不应误判为 consumer：${JSON.stringify(layout)}`);
+      assert(
+        layout.projectRoot === path.resolve(standaloneProjectRoot),
+        `projectRoot 应为真实 standalone 仓根，不应误指向无关的 wrapper：${JSON.stringify(layout)}`,
+      );
+    },
+  },
+  {
     name: 'frameworkPhysicalRelPath vs frameworkLogicalRelPath',
     run: () => {
       const standalone = inferRepoLayout(DEFAULT_LAYOUT.projectRoot);

@@ -43,7 +43,9 @@ import {
   discoverReferenceImagesForOcrPrescan,
   loadProfileOcrToolkit,
   probeProfileOcrAvailable,
+  resolveOcrAvailableForRun,
 } from '../../scripts/utils/fidelity-shared';
+import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
@@ -1829,6 +1831,30 @@ export function runAll(): UnitCaseResult[] {
     const genericToolkit = loadProfileOcrToolkit(genericDir);
     if (genericToolkit !== null) throw new Error('generic 无 OCR 资产，应返回 null（优雅降级）');
     if (probeProfileOcrAvailable(genericDir) !== false) throw new Error('generic 的 probeProfileOcrAvailable 应为 false');
+  });
+
+  // cursor review（E6 后复核）：resolveOcrAvailableForRun 此前只被 harness-runner.ts/goal-runner.ts
+  // 间接覆盖，未有直连单测——补上，锁定"profile 环境 OR 金丝雀 ocr_capable 信号"的口径。
+  run('cursor review: resolveOcrAvailableForRun 直连单测——profile 环境 OR 金丝雀 ocr_capable 信号', () => {
+    const genericDir = path.join(DEFAULT_LAYOUT.frameworkRoot, 'profiles', 'generic');
+    const root = mkProject();
+    try {
+      if (resolveOcrAvailableForRun(root, genericDir, 'chrys') !== false) {
+        throw new Error('generic 无 OCR 工具链 + 无金丝雀缓存 → 应为 false');
+      }
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: '2026-07-08T00:00:00.000Z' } },
+      });
+      if (resolveOcrAvailableForRun(root, genericDir, 'chrys') !== true) {
+        throw new Error('generic 无 OCR 工具链，但金丝雀 verdict=ocr_capable 且 adapter 匹配 → 应 OR 为 true');
+      }
+      if (resolveOcrAvailableForRun(root, genericDir, 'claude') !== false) {
+        throw new Error('金丝雀缓存 adapter=chrys ≠ 查询 adapter=claude → 应视为不匹配，仍 false');
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   // P1-G1：headless 下 human_signed:true 但缺 signed_by → 视为自签 → BLOCKER（不可绕过）
