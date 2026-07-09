@@ -674,10 +674,37 @@ export const VISUAL_GAP_RETRY_GUIDANCE: readonly string[] = [
 ];
 
 /** 参考图 OCR 预扫描输出文件名 slug——core 不可 import profiles/hmos-app 的
- * sanitizeVisualDiffScreenSlug（层级边界），算法等价（同样 3 行），故本地重写而非跨层导入。 */
+ * sanitizeVisualDiffScreenSlug（层级边界），故本地重写。与 profile 版刻意不同：保留 CJK
+ * 字符（宿主复验实证：中文参考图名"1-银行卡添卡首页"被清成匿名的"1-"后，8 张图变成
+ * 1-/2-/…的编号盲盒，盲 agent 只能靠猜对应哪屏——ClaudeCode 案 7 条 authoritative_refs
+ * 里 5 条接线错误的直接诱因。CJK 在现代文件系统均合法，无需替换）。 */
 function sanitizeOcrPrescanSlug(name: string): string {
-  const slug = name.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  const slug = name.replace(/[^a-zA-Z0-9_一-鿿-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
   return slug || 'screen';
+}
+
+/**
+ * 宿主复验修复①：plan/coding 阶段不重跑 OCR（spec 是唯一生产者），但要把 spec 阶段已产出的
+ * ocr.json 列给 agent——此前 coding 阶段 ocrJsonPaths 恒为空数组，能力块落入 else 分支打出
+ * "no reference images were found"，8 份 ocr.json 明明在盘上却对 agent 说没有（宿主两环境
+ * coding prompt 均实测命中此假话文案）。
+ */
+function listExistingOcrPrescanOutputs(
+  projectRoot: string,
+  frameworkRoot: string,
+  feature: string,
+): string[] {
+  const ocrDirAbs = path.join(featurePhaseReportsDir(projectRoot, feature, 'spec', frameworkRoot), 'ocr');
+  try {
+    if (!fs.existsSync(ocrDirAbs)) return [];
+    return fs
+      .readdirSync(ocrDirAbs)
+      .filter((f) => f.endsWith('.ocr.json'))
+      .map((f) => path.relative(projectRoot, path.join(ocrDirAbs, f)).replace(/\\/g, '/'))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -736,7 +763,10 @@ function runOcrPrescanForSpec(
           ...(columnGroups && columnGroups.length > 1 ? { column_groups: columnGroups } : {}),
         };
       });
-      const enriched = { ...result, ...(lines ? { lines } : {}) };
+      // source_image：回指原参考图（project-relative）。宿主复验实证：没有这个字段时
+      // 盲 agent 无法确定性对应"哪个 ocr.json 是哪张图/哪个屏"，只能靠文件名猜。
+      const sourceImageRel = path.relative(projectRoot, imgAbs).replace(/\\/g, '/');
+      const enriched = { ...result, source_image: sourceImageRel, ...(lines ? { lines } : {}) };
       fs.writeFileSync(outAbs, JSON.stringify(enriched, null, 2), 'utf-8');
       writtenRel.push(rel);
     } catch {
@@ -747,9 +777,12 @@ function runOcrPrescanForSpec(
 }
 
 /**
- * E0：UI 需求 spec/coding phase 的能力感知计算——返回 null 表示非 UI 相关或非目标 phase，
+ * E0：UI 需求 spec/plan/coding phase 的能力感知计算——返回 null 表示非 UI 相关或非目标 phase，
  * 调用方不注入能力块。impure（探测 adapter/profile/spec.md、跑 OCR 预扫描）；
  * buildPhasePrompt/buildCapabilityBlock/buildUnattendedExecutionBlock 只读其结果，保持纯函数。
+ * 宿主复验修复②：原范围只有 spec/coding，plan phase advisory=null 导致 unattended 块落回
+ * 旧 pixel_1to1 人签措辞——盲档 run 的 plan prompt 里出现与实际档位自相矛盾的指令
+ * （Chrys 案 plan prompt 实测命中），故扩到 plan。
  */
 export function resolvePhaseCapabilityAdvisory(
   manifest: GoalManifest,
@@ -758,7 +791,7 @@ export function resolvePhaseCapabilityAdvisory(
   resolvedProfile: HarnessResolvedProfile,
   phase: FeaturePhase,
 ): CapabilityAdvisory | null {
-  if (phase !== 'spec' && phase !== 'coding') return null;
+  if (phase !== 'spec' && phase !== 'plan' && phase !== 'coding') return null;
 
   // spec.md 存在（coding 阶段必然存在；spec 阶段重试时也可能已存在）→ 读真实声明（更权威）；
   // 否则（spec 阶段首次 invoke）退回需求文本启发式（宽松 UI 相关性 + 1:1 强意图探测）。
@@ -783,10 +816,13 @@ export function resolvePhaseCapabilityAdvisory(
   const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter);
   const clamp = clampFidelityByCapability(desired, { hasVision: mmProbe.supported, ocrAvailable });
 
-  const ocrJsonPaths =
-    !mmProbe.supported && ocrAvailable && phase === 'spec' && toolkit
+  // spec 是 OCR 预扫描的唯一生产者（有真实 OCR 耗时）；plan/coding 只列出盘上已有的产物
+  // （宿主复验修复①——此前 plan/coding 恒为空数组，能力块对 agent 谎称"没找到参考图"）。
+  const ocrJsonPaths = !mmProbe.supported && ocrAvailable
+    ? phase === 'spec' && toolkit
       ? runOcrPrescanForSpec(projectRoot, frameworkRoot, resolvedProfile, manifest, toolkit)
-      : [];
+      : listExistingOcrPrescanOutputs(projectRoot, frameworkRoot, manifest.feature)
+    : [];
 
   return {
     hasVision: mmProbe.supported,
@@ -1595,7 +1631,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             )
           : [];
 
-        // E0：UI 需求 spec/coding phase 能力感知——非 UI 相关 / 其余 phase 返回 null，
+        // E0：UI 需求 spec/plan/coding phase 能力感知——非 UI 相关 / 其余 phase 返回 null，
         // 不注入能力块（不打扰无关 phase 的 prompt）。
         const capabilityAdvisory = resolvePhaseCapabilityAdvisory(
           manifest,

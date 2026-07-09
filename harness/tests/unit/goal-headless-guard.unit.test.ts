@@ -686,7 +686,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'E0 resolvePhaseCapabilityAdvisory: 非 spec/coding phase → null（即便 UI 需求）',
+      name: 'E0 resolvePhaseCapabilityAdvisory: 非 spec/plan/coding phase（review）→ null（即便 UI 需求）',
       run: () => {
         const root = mkCapabilityProject('hmos-app');
         try {
@@ -698,6 +698,44 @@ export function runAll(): UnitCaseResult[] {
           };
           const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'review');
           assert(advisory === null, 'review phase 不应注入能力块：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: '宿主复验修复①②: plan/coding phase → advisory 非 null 且列出 spec 已产出的 ocr.json（不重跑 OCR、不再谎称无参考图）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          // 模拟 spec 阶段已产出的 ocr.json（plan/coding 只列出、不生产）
+          const ocrDir = path.join(root, 'doc', 'features', 'demo-feature', 'spec', 'reports', 'ocr');
+          fs.mkdirSync(ocrDir, { recursive: true });
+          fs.writeFileSync(path.join(ocrDir, '1-首页.ocr.json'), '{"ok":true}', 'utf-8');
+          fs.writeFileSync(path.join(ocrDir, '2-卡包.ocr.json'), '{"ok":true}', 'utf-8');
+          // plan/coding 阶段 spec.md 必然已存在——写一份声明 UI 相关的 spec.md
+          const specDir = path.join(root, 'doc', 'features', 'demo-feature', 'spec');
+          fs.writeFileSync(path.join(specDir, 'spec.md'), '# spec\n\n```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+          const manifest: GoalManifest = { ...MINIMAL_MANIFEST, adapter: 'chrys' };
+          for (const phase of ['plan', 'coding'] as const) {
+            const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, phase);
+            assert(advisory !== null, `${phase} phase 应注入能力块（宿主复验修复②）`);
+            assert(advisory!.hasVision === false, JSON.stringify(advisory));
+            assert(
+              advisory!.ocrJsonPaths.length === 2,
+              `${phase} phase 应列出已存在的 2 份 ocr.json（宿主复验修复①）：${JSON.stringify(advisory!.ocrJsonPaths)}`,
+            );
+            assert(
+              advisory!.ocrJsonPaths.every(p => p.startsWith('doc/features/demo-feature/spec/reports/ocr/')),
+              JSON.stringify(advisory!.ocrJsonPaths),
+            );
+            // 措辞同源：unattended 块应走 blind-review pending 分支而非旧 pixel_1to1 人签死路
+            const prompt = buildPhasePrompt(manifest, root, phase, FRAMEWORK_ROOT, [], undefined, undefined, undefined, undefined, advisory);
+            assert(!prompt.includes('The only path through pixel_1to1 P0'), `${phase} prompt 不应出现旧 pixel_1to1 措辞`);
+            assert(prompt.includes('blind-review'), `${phase} prompt 应含 blind-review pending 指引`);
+            assert(prompt.includes('1-首页.ocr.json'), `${phase} prompt 应列出 ocr.json 清单`);
+          }
         } finally {
           fs.rmSync(root, { recursive: true, force: true });
         }
@@ -767,7 +805,8 @@ export function runAll(): UnitCaseResult[] {
           const fixtureImg = path.join(
             FRAMEWORK_ROOT, 'profiles', 'hmos-app', 'harness', 'tests', 'fixtures', 'ocr', 'card_pack.png',
           );
-          fs.copyFileSync(fixtureImg, path.join(uxRefDir, 'card_pack.png'));
+          // 宿主复验修复③：用含 CJK 的图名——slug 应保留中文（不再清成匿名"1-"式编号）
+          fs.copyFileSync(fixtureImg, path.join(uxRefDir, '1-卡包页.png'));
           const manifest: GoalManifest = {
             ...MINIMAL_MANIFEST,
             adapter: 'chrys',
@@ -777,9 +816,19 @@ export function runAll(): UnitCaseResult[] {
           assert(advisory !== null, JSON.stringify(advisory));
           if (!advisory!.ocrAvailable) return; // 本机 OCR 环境不可用则跳过（仓库惯例：OCR 门禁自身已守卫）
           assert(advisory!.ocrJsonPaths.length === 1, `应产出 1 份 ocr.json：${JSON.stringify(advisory!.ocrJsonPaths)}`);
+          // 宿主复验修复③：CJK 图名应保留在 slug 里（"1-卡包页"而非匿名"1-"）
+          assert(
+            advisory!.ocrJsonPaths[0].endsWith('/1-卡包页.ocr.json'),
+            `slug 应保留 CJK：${advisory!.ocrJsonPaths[0]}`,
+          );
           const ocrJsonAbs = path.join(root, advisory!.ocrJsonPaths[0]);
           const parsed = JSON.parse(fs.readFileSync(ocrJsonAbs, 'utf-8'));
           assert(parsed.ok === true, `OCR 应成功：${JSON.stringify(parsed).slice(0, 200)}`);
+          // 宿主复验修复③：source_image 回指原参考图，盲 agent 可确定性对应图↔ocr.json
+          assert(
+            parsed.source_image === 'doc/features/demo-feature/ux-reference/1-卡包页.png',
+            `应含 source_image 回指原图：${JSON.stringify(parsed.source_image)}`,
+          );
           assert(Array.isArray(parsed.words) && parsed.words.length > 0, '应保留原始 words（完整性/可回溯）');
           assert(Array.isArray(parsed.lines) && parsed.lines.length > 0, `应产出聚类后 lines：${JSON.stringify(parsed).slice(0, 300)}`);
           const line = parsed.lines[0];
