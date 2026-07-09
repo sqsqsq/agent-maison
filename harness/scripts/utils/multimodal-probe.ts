@@ -11,6 +11,7 @@ import {
   isGoalOrchestrationEnv,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
 } from './phase-state';
+import { loadLocalConfig } from './framework-local-config';
 
 export type ImageInputMode = 'none' | 'tool_read' | 'native_attach';
 
@@ -71,6 +72,63 @@ function toProbeResult(
     adapter,
     reason,
   };
+}
+
+/**
+ * E1（多模态降级阶梯 plan d4a8f3c6）：framework.local.json 读取失败（非法 schema）不阻断
+ * 探测——回退声明式路径，探测本身不该被一份格式有误的个人配置文件卡死。
+ */
+function tryLoadLocalConfig(projectRoot: string): ReturnType<typeof loadLocalConfig> {
+  try {
+    return loadLocalConfig(projectRoot);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * E1：解析链最前——本地 image_input_override（用户显式声明，跳过探测）> 新鲜金丝雀实测
+ * 缓存（adapter 与缓存一致才算新鲜——adapter 变更即失效）> 原 adapter.yaml 声明/heuristic。
+ * 治案A（mx 2.7 纯文本模型套 claude 壳）：声明式探测会被套壳骗过，此处插入实测/用户声明。
+ */
+function resolveBaseImageInput(
+  projectRoot: string,
+  frameworkRoot: string,
+  adapterName: string | undefined,
+): MultimodalProbeResult {
+  const adapter = (adapterName ?? 'generic').trim() || 'generic';
+  const local = tryLoadLocalConfig(projectRoot);
+  const override = local?.vision?.image_input_override;
+  if (override) {
+    return toProbeResult(
+      adapter,
+      override,
+      `framework.local.json vision.image_input_override=${override}（用户显式声明，跳过探测）`,
+    );
+  }
+  const canary = local?.vision?.canary;
+  if (canary && canary.adapter === adapter) {
+    const cachedImageInput: ImageInputMode = canary.verdict === 'tool_read' ? 'tool_read' : 'none';
+    return toProbeResult(
+      adapter,
+      cachedImageInput,
+      `金丝雀实测缓存（${canary.probed_at}，verdict=${canary.verdict}）${canary.reason ? '：' + canary.reason : ''}`,
+    );
+  }
+  return probeAdapterImageInput(projectRoot, frameworkRoot, adapterName);
+}
+
+/**
+ * E1：金丝雀 verdict=ocr_capable 信号——vision 仍 none，但供 E2 FidelityCapability.ocrAvailable
+ * 参考（agent 自身展示了从图片提取文字的能力，即便主探测判定其无视觉）。adapter 变更即失效。
+ */
+export function readCanaryOcrCapableSignal(
+  projectRoot: string,
+  adapterName: string | undefined,
+): boolean {
+  const adapter = (adapterName ?? 'generic').trim() || 'generic';
+  const canary = tryLoadLocalConfig(projectRoot)?.vision?.canary;
+  return Boolean(canary && canary.adapter === adapter && canary.verdict === 'ocr_capable');
 }
 
 /** 读取 agents/<adapter>/adapter.yaml 的 image_input / multimodal 声明 */
@@ -140,7 +198,7 @@ export function resolveGoalEffectiveImageInput(
   adapterName: string | undefined,
   unattended?: UnattendedContract,
 ): MultimodalProbeResult {
-  const base = probeAdapterImageInput(projectRoot, frameworkRoot, adapterName);
+  const base = resolveBaseImageInput(projectRoot, frameworkRoot, adapterName);
   if (base.imageInput !== 'tool_read') {
     return base;
   }
@@ -185,7 +243,7 @@ export function resolveContextAdapterImageInput(
       approval_mode: 'never',
     });
   }
-  return probeAdapterImageInput(projectRoot, frameworkRoot, adapterName);
+  return resolveBaseImageInput(projectRoot, frameworkRoot, adapterName);
 }
 
 /** 从 spec visual handoff 收集图片路径用于多模态注入 */

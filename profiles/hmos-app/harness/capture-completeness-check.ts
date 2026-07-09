@@ -3,8 +3,10 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as path from 'path';
+import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact } from '../../../harness/config';
+import { relFeatureArtifact, featureArtifactPath } from '../../../harness/config';
 import {
   fidelityRatchetFailOrWarn,
   isPixel1to1,
@@ -12,6 +14,9 @@ import {
   resolveRefElementsDenominator,
   type RefElementEntry,
 } from '../../../harness/scripts/utils/fidelity-shared';
+
+const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
+const YAML = requireHarness('yaml') as { stringify: (v: unknown) => string };
 import {
   collectAllComponentNodes,
   loadUiSpecFile,
@@ -25,8 +30,11 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import {
   clusterOcrLines,
+  collectAuditableOcrLines as collectAuditableOcrLinesShared,
+  extractLikelyRealTextRun,
   fuzzyMatchRatio,
   isOcrAvailable,
+  norm,
   ocrImageWords,
   type OcrLine,
 } from './ocr-toolkit';
@@ -255,29 +263,12 @@ export function checkCaptureStyleFields(ctx: CheckContext, specMarkdown: string)
 // round6 实证：右置副标题×5、"智闪刷卡设置待优化"、¥119.40 连续两轮漏抽而 capture 100% PASS。
 // ============================================================================
 
-/** 状态栏 band：mockup 顶部时间/电量/信号区，OCR 行中心 y 低于此值剔除 */
-export const EXTERNAL_AUDIT_STATUS_BAR_BAND = 0.045;
 /** 行被 spec 文本集覆盖的累计字符覆盖率阈值 */
 export const EXTERNAL_AUDIT_LINE_COVER_RATIO = 0.5;
-/** 屏级外部覆盖率下限（未覆盖行数为 0 才 PASS，此值仅用于 details 呈现） */
-const norm = (s: string): string => s.replace(/\s+/g, '');
-const CJK_RE = /[一-鿿]/g;
-
-/** 采集屏 OCR 行清单（状态栏剔除 + 噪声过滤）。单字符默认剔除（pagination 点/角标误报面大，诚实边界记录）。 */
-export function collectAuditableOcrLines(lines: OcrLine[]): OcrLine[] {
-  return lines.filter(l => {
-    const t = norm(l.text);
-    if (t.length < 2) return false;
-    const cy = l.box[1] + l.box[3] / 2;
-    if (cy < EXTERNAL_AUDIT_STATUS_BAR_BAND) return false; // 状态栏
-    if (/^\d{1,2}:\d{2}$/.test(t)) return false; // 时间（状态栏兜底）
-    const cjk = (t.match(CJK_RE) ?? []).length;
-    const isMoneyLike = /[¥￥$]|\d+\.\d+/.test(t);
-    // 无 CJK 且非金额样式（纯符号/OCR 噪声）→ 剔除；金额（¥119.40）保留
-    if (cjk === 0 && !isMoneyLike) return false;
-    return true;
-  });
-}
+// E6②同源化：norm/CJK_RE/EXTERNAL_AUDIT_STATUS_BAR_BAND/collectAuditableOcrLines 已移至
+// ocr-toolkit.ts 统一导出——goal-runner 的 OCR 预扫描（agent 上下文）与本门禁现在跑同一份
+// 清洗/聚类逻辑。此处保留 collectAuditableOcrLines 的同名再导出，兼容既有调用点。
+export const collectAuditableOcrLines = collectAuditableOcrLinesShared;
 
 /** spec 文本集：ui-spec 全 text/subtitle/badge + global_elements texts + ref-elements texts */
 export function collectSpecTextUniverse(
@@ -328,6 +319,61 @@ export function isLineCoveredBySpecTexts(lineText: string, specTexts: string[]):
   return false;
 }
 
+/** E3②：blind-review-pending.yaml 单条记录——盲档下无法辨认的 OCR 未覆盖行，交由人一次终审。 */
+export interface BlindReviewPendingEntry {
+  screen: string;
+  text: string;
+  /** 归一化 y 坐标（行中心） */
+  y: number;
+  /** OCR 置信度 0-100（多词取平均） */
+  confidence: number;
+  auto_disposition: 'unverifiable_blind';
+  /**
+   * E6③（案B chrys 实证"人《AA招商银行"类噪声前缀+真文本混合行）：从 text 提取的最长连续
+   * CJK 游程候选——**建议**而非确定正确，加速人工终审（一眼看出"招商银行"而非阅读整段乱码）。
+   * 无法提取候选（纯噪声/非 CJK）时省略此字段。
+   */
+  candidate_text?: string;
+}
+
+export interface BlindReviewPendingDoc {
+  schema_version: string;
+  feature: string;
+  generated_at: string;
+  note: string;
+  entries: BlindReviewPendingEntry[];
+}
+
+export function blindReviewPendingAbsPath(projectRoot: string, feature: string): string {
+  return featureArtifactPath(projectRoot, feature, 'spec/reports/blind-review-pending.yaml');
+}
+
+/**
+ * E3②（案B chrys 银行卡实证：OCR 噪声"人《AA招商银行"——logo 被 OCR 成乱码前缀，盲 agent
+ * 无法辨认哪段是噪声哪段是真文本，逐条 implement/defer+人签 对它是无解题）。改为自动批量
+ * 登记结构化待复核清单，check 本身降 MAJOR/WARN，收口交由人一次终审（非逐条求盲 agent judge）。
+ */
+export function writeBlindReviewPending(
+  projectRoot: string,
+  feature: string,
+  entries: BlindReviewPendingEntry[],
+): string {
+  const abs = blindReviewPendingAbsPath(projectRoot, feature);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const doc: BlindReviewPendingDoc = {
+    schema_version: '1.0',
+    feature,
+    generated_at: new Date().toISOString(),
+    note:
+      '盲档（无视觉能力）下自动登记的原图 OCR 未覆盖文本清单——agent 无法辨认其中哪些是' +
+      '噪声（如 logo 被 OCR 误识别的乱码前缀）哪些是需要建模的真文案，须真人逐条终审后' +
+      '手动处置（implement 建模 或 defer 签字），而非要求盲 agent 逐条判断。',
+    entries,
+  };
+  fs.writeFileSync(abs, YAML.stringify(doc), 'utf-8');
+  return abs;
+}
+
 /**
  * P0-D 主检查（新 check：capture_completeness_external）。
  * 诚实边界：本门禁只回答"原图上的文本是否都被 spec 收进分母"，不回答"收进去的建模对不对"
@@ -364,6 +410,9 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
   const specTexts = collectSpecTextUniverse(uiDoc, denomResolved.elements);
 
   const uncovered: string[] = [];
+  // E3②（多模态降级阶梯 plan d4a8f3c6）：盲档下 uncovered 改批量登记 blind-review-pending.yaml，
+  // 需要结构化字段（非仅展示用字符串）——screen/text/y/confidence。
+  const uncoveredEntries: BlindReviewPendingEntry[] = [];
   const ghostTexts: string[] = [];
   let totalLines = 0;
   let coveredLines = 0;
@@ -393,9 +442,19 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       totalLines++;
       if (isLineCoveredBySpecTexts(line.text, specTexts)) coveredLines++;
       else {
-        uncovered.push(
-          `${s.id}: "${line.text.slice(0, 24)}" @y≈${(line.box[1] + line.box[3] / 2).toFixed(2)}`,
-        );
+        const yCenter = line.box[1] + line.box[3] / 2;
+        uncovered.push(`${s.id}: "${line.text.slice(0, 24)}" @y≈${yCenter.toFixed(2)}`);
+        const confs = line.words.map(w => w.conf).filter(c => typeof c === 'number');
+        const avgConf = confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : 0;
+        const likelyReal = extractLikelyRealTextRun(line.text);
+        uncoveredEntries.push({
+          screen: s.id,
+          text: line.text,
+          y: Number(yCenter.toFixed(4)),
+          confidence: Math.round(avgConf),
+          auto_disposition: 'unverifiable_blind',
+          ...(likelyReal ? { candidate_text: likelyReal.candidate } : {}),
+        });
       }
     }
     // 反向 diff（幻觉文本，低置信注记）：该屏 spec 文本在 OCR 全文中几乎无踪影
@@ -446,6 +505,34 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
     '（归 structure lint / review 视觉维度 / device 回环）；单字符角标/纯符号行已剔除（误报面>收益，known-miss）。';
 
   if (uncovered.length > 0) {
+    // E3②：盲档（adapterImageInput=none，与 pixel/semantic/reference_only 具体档位无关——
+    // 是"看不看得见图"而非"追不追求像素级"）下，逐条 implement/defer+人签是对盲 agent 的
+    // 无解题（案B chrys 银行卡实证：OCR 噪声"人《AA招商银行"，agent 无法辨认哪段是 logo
+    // 误识别噪声哪段是真文案）。改为自动批量登记结构化清单，降 MAJOR/WARN，人一次终审。
+    // pixel_1to1（仅真视觉档可达——盲档已被 E2 钳到 semantic_layout/reference_only）语义
+    // 不变：门禁强度没有全局放水，只是与能力档位对齐。
+    if (ctx.adapterImageInput === 'none') {
+      writeBlindReviewPending(ctx.projectRoot, ctx.feature, uncoveredEntries);
+      const pendingRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec/reports/blind-review-pending.yaml');
+      return [{
+        id: 'capture_completeness_external',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'WARN',
+        details: [
+          `【P0-D 盲档降级】原图 OCR 文本 ${uncovered.length}/${totalLines} 行未被 spec 捕获（真分母覆盖率 ${coveragePct}%）——` +
+            `当前 adapter 无视觉能力（adapterImageInput=none），无法逐条辨认噪声/真文本，已自动登记待复核清单：`,
+          `  ${pendingRel}`,
+          boundaryNote,
+        ].join('\n'),
+        suggestion:
+          `已写入 ${pendingRel}（${uncoveredEntries.length} 条，auto_disposition: unverifiable_blind）；` +
+          '收口阶段真人一次终审：确需实现→补 ref-elements + ui-spec 建模；确不实现→ref-elements defer + 签字。' +
+          '盲档下不要求 agent 逐条判断（那是无解题），不得靠删分母放行——分母是原图 OCR，删不掉。',
+        affected_files: [pendingRel, refRel, uiSpecRel],
+      }];
+    }
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
     return [{
       id: 'capture_completeness_external',

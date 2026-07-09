@@ -6,16 +6,24 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext } from './types';
-import { parseVisualHandoffYamlRoot } from './ui-spec-shared';
-import { featureFilePath } from '../../config';
+import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
+import { featureFilePath, relFeaturesDir } from '../../config';
+import { readCanaryOcrCapableSignal } from './multimodal-probe';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 
-export type FidelityTarget = 'pixel_1to1' | 'semantic_layout';
+/**
+ * E2（多模态降级阶梯 plan d4a8f3c6）：`reference_only` 是能力地板（无视觉、无 OCR 时的钳制目标），
+ * 与 `pixel_1to1`/`semantic_layout` 并列可声明——spec 作者或钳制逻辑均可写入。已 grep 核对全部
+ * 19 处消费点（capture-completeness-check.ts / fidelity-governance-check.ts /
+ * structured-ref-elements.ts / check-review.ts 等）均只做 `=== 'pixel_1to1'`/`!== 'pixel_1to1'`
+ * 比较，从不比较 `'semantic_layout'` 字面量——新增第三态对既有消费面零行为影响，无需逐一改动。
+ */
+export type FidelityTarget = 'pixel_1to1' | 'semantic_layout' | 'reference_only';
 export type AssetAcquisitionMode = 'approximate' | 'auto_crop' | 'user_dir';
 
-const FIDELITY_TARGETS = new Set<FidelityTarget>(['pixel_1to1', 'semantic_layout']);
+const FIDELITY_TARGETS = new Set<FidelityTarget>(['pixel_1to1', 'semantic_layout', 'reference_only']);
 const ASSET_MODES = new Set<AssetAcquisitionMode>(['approximate', 'auto_crop', 'user_dir']);
 
 export interface FidelityDeferralEntry {
@@ -189,6 +197,86 @@ export function isPixel1to1(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1';
 }
 
+/**
+ * E2：能力钳制的输入——只取当前 goal-mode/adapter 实测的视觉能力与 OCR 环境就绪度，
+ * 不含具体 adapter 名/模型名（钳制只关心"能不能看图/能不能 OCR"两个布尔量）。
+ */
+export interface FidelityCapability {
+  /** adapter/模型是否具备图片输入能力（MultimodalProbeResult.supported 同型：tool_read|native_attach） */
+  hasVision: boolean;
+  /** isOcrAvailable()（profile 相关，由调用方探测传入——core 不硬依赖具体 profile 的 OCR 实现） */
+  ocrAvailable: boolean;
+}
+
+export type FidelityClampReason = 'no_vision_ocr_available' | 'no_vision_no_ocr';
+
+export interface FidelityClampResult {
+  /** 有效档位——供 isPixel1to1 等全部消费面读取 */
+  effective: FidelityTarget;
+  clamped: boolean;
+  reason?: FidelityClampReason;
+}
+
+/**
+ * E2（多模态降级阶梯 plan d4a8f3c6）：desired（用户/需求声明）× capability（当前 adapter+
+ * 环境实测）→ effective——**不改写** desired（保留意图供 ratchet 回升，只影响运行时有效档位）。
+ * 钳制表：hasVision → 不钳（强模型效果好）；无视觉+OCR 可用 → pixel_1to1 钳到 semantic_layout
+ * （案B chrys 银行卡实证：这正是让 OCR 全文覆盖门禁从无解题降为可跑通的关键）；
+ * 无视觉+无OCR → 钳到 reference_only 地板（最弱也要能跑通，不能异常中断）。
+ */
+export function clampFidelityByCapability(
+  desired: FidelityTarget,
+  capability: FidelityCapability,
+): FidelityClampResult {
+  if (capability.hasVision) return { effective: desired, clamped: false };
+  if (desired === 'reference_only') return { effective: desired, clamped: false };
+  if (capability.ocrAvailable) {
+    if (desired === 'pixel_1to1') {
+      return { effective: 'semantic_layout', clamped: true, reason: 'no_vision_ocr_available' };
+    }
+    return { effective: desired, clamped: false };
+  }
+  // 无视觉也无 OCR：不论 desired 是 pixel_1to1 还是 semantic_layout，都钳到地板。
+  return { effective: 'reference_only', clamped: true, reason: 'no_vision_no_ocr' };
+}
+
+export interface EffectiveFidelityContext {
+  /** 有效档位（已钳制）——CheckContext.fidelityTarget 的赋值来源，全消费面单点收口于此 */
+  fidelityTarget: FidelityTarget;
+  /** 原始声明档位（未钳制，供 ratchet 回升 + intent_nudge 判"是否合法钳制"用） */
+  declaredFidelityTarget: FidelityTarget;
+  fidelityClamped: boolean;
+  fidelityClampReason?: FidelityClampReason;
+  assetAcquisitionMode: AssetAcquisitionMode;
+  effectiveAssetAcquisitionMode: AssetAcquisitionMode;
+  fidelityDeferrals: FidelityDeferralEntry[];
+}
+
+/**
+ * 把 resolveFidelityContextFromFeature 的原始声明结果 × 能力钳制，合成 CheckContext 需要的
+ * 完整字段集——harness-runner.ts 的唯一调用点，纯函数、可单测（capability 由调用方探测传入）。
+ */
+export function resolveEffectiveFidelityContext(
+  raw: {
+    fidelityTarget: FidelityTarget;
+    assetAcquisitionMode: AssetAcquisitionMode;
+    effectiveAssetAcquisitionMode: AssetAcquisitionMode;
+    fidelityDeferrals: FidelityDeferralEntry[];
+  },
+  capability: FidelityCapability,
+): EffectiveFidelityContext {
+  const clamp = clampFidelityByCapability(raw.fidelityTarget, capability);
+  return {
+    fidelityTarget: clamp.effective,
+    declaredFidelityTarget: raw.fidelityTarget,
+    fidelityClamped: clamp.clamped,
+    fidelityClampReason: clamp.reason,
+    assetAcquisitionMode: raw.assetAcquisitionMode,
+    effectiveAssetAcquisitionMode: raw.effectiveAssetAcquisitionMode,
+    fidelityDeferrals: raw.fidelityDeferrals,
+  };
+}
+
 /** pixel_1to1 下关键视觉项 ratchet：WARN → FAIL/BLOCKER */
 export function fidelityRatchetSeverity(
   ctx: CheckContext,
@@ -332,4 +420,201 @@ export const P0_VISUAL_ELEMENT_HINTS = [
 export function isP0VisualElementId(elementId: string): boolean {
   const lower = elementId.toLowerCase();
   return P0_VISUAL_ELEMENT_HINTS.some(h => lower.includes(h));
+}
+
+// ============================================================================
+// E0（多模态降级阶梯 plan d4a8f3c6）：能力感知 phase prompt 支撑函数
+// ============================================================================
+
+/**
+ * 需求文本"涉及 UI"的宽松探测（比 detectPixel1to1Intent 的 1:1 强意图更宽泛——
+ * 这里只判"是不是 UI 类需求"，不判保真强度）。首次 spec invoke 前 spec.md 不存在，
+ * 无法读 ui_change 字段，只能退回需求文本启发式；spec.md 写出后应改用
+ * UI_CHANGE_REQUIRES_UI_SPEC.has(parseUiChangeFromSpecMarkdown(...))（更权威）。
+ */
+const UI_RELEVANT_PATTERNS: readonly RegExp[] = [
+  /页面/, /界面/, /截图/, /参考图/, /设计稿/, /视觉/, /还原/, /布局/, /组件/,
+  /交互稿/, /原型图/, /配色/, /样式/, /图标/, /\bUI\b/i, /\bUX\b/i, /figma/i, /icon/i,
+];
+
+export function detectUiRelevantRequirement(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !text.trim()) return false;
+  return UI_RELEVANT_PATTERNS.some(re => re.test(text));
+}
+
+/**
+ * codex review（E6 后复核）发现的口径不一致：resolvePhaseCapabilityAdvisory（goal-runner.ts）
+ * 优先信 spec.md 的 ui_change 字段（更权威，spec.md 存在时 requirement 文本可能只是简短的
+ * "继续完成该需求"），但 decideVisionCanaryProbe（goal-preflight.ts，先于任何 phase 跑）
+ * 此前只看 requirement 文本——resume/继续 coding 场景下会被误判 not_ui_relevant 而跳过金丝雀，
+ * 让案A（mx 2.7 套壳）"假视觉"风险在 resume 场景重新露头。抽出单一函数两处共用，避免再次分岔。
+ */
+export function resolveUiRelevanceForRun(
+  projectRoot: string,
+  feature: string,
+  requirement: string | null | undefined,
+): boolean {
+  const specMd = loadSpecMarkdown(projectRoot, feature);
+  if (specMd) {
+    const uiChange = parseUiChangeFromSpecMarkdown(specMd);
+    return uiChange !== null && UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
+  }
+  return detectUiRelevantRequirement(requirement);
+}
+
+const OCR_PRESCAN_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+
+function listImageFilesInDir(absDir: string): string[] {
+  try {
+    if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) return [];
+    return fs
+      .readdirSync(absDir)
+      .filter(f => OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(f).toLowerCase()))
+      .map(f => path.join(absDir, f))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * requirement 文本里锚定 features_dir（如 "doc/features"）起点的路径引用——CJK 文本没有
+ * 空格分隔，"参考图在doc/features/..."里"在"与路径无缝相连，纯 bidirectional token 正则
+ * 会把前缀中文动词一起吞进去（曾踩坑：把"参考图在doc"当一个 token，resolve 到不存在的
+ * 目录）；反过来贪婪向后延伸又会把"...目录下"这类中文尾缀（口语描述，非路径段）一起吞掉。
+ * 解法：只认**从 features_dir 字面量开始**的匹配（不吃前缀 prose），贪婪向后收集
+ * `/segment` 直到分隔符终止，再从最长到最短逐段回缩找**磁盘上真实存在**的最长前缀——
+ * 天然跳过"目录下"这类不存在的伪路径段，不必理解中文语法。
+ */
+function extractExistingRequirementPathRefs(requirement: string, projectRoot: string): string[] {
+  const anchor = relFeaturesDir(projectRoot).replace(/\\/g, '/');
+  if (!anchor) return [];
+  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escapedAnchor}(?:[\\\\/][\\w.\\u4e00-\\u9fa5-]+)*`, 'g');
+  const matches = requirement.match(re) ?? [];
+  const resolved: string[] = [];
+  for (const m of matches) {
+    const segments = m.split(/[\\/]/).filter(Boolean);
+    for (let end = segments.length; end >= 1; end--) {
+      const candidate = segments.slice(0, end).join('/');
+      const abs = path.resolve(projectRoot, candidate);
+      if (fs.existsSync(abs)) {
+        resolved.push(abs);
+        break; // 取最长存在前缀，命中即停，不再回缩更短的
+      }
+    }
+  }
+  return resolved;
+}
+
+/**
+ * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
+ * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
+ * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
+ * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
+ * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ */
+export function discoverReferenceImagesForOcrPrescan(
+  projectRoot: string,
+  feature: string,
+  requirement: string | undefined,
+): string[] {
+  const found = new Set<string>();
+  if (requirement) {
+    for (const abs of extractExistingRequirementPathRefs(requirement, projectRoot)) {
+      if (OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(abs).toLowerCase())) {
+        if (fs.statSync(abs).isFile()) found.add(abs);
+        continue;
+      }
+      for (const img of listImageFilesInDir(abs)) found.add(img);
+    }
+  }
+  if (found.size === 0) {
+    const uxRefDir = featureFilePath(projectRoot, feature, 'ux-reference');
+    for (const img of listImageFilesInDir(uxRefDir)) found.add(img);
+  }
+  return [...found].sort();
+}
+
+/** ocr-toolkit.ts 的 OcrWord/OcrLine 同型（profile 侧真实签名——bbox 为 [x,y,w,h] 归一化，
+ * 非 x0/y0/x1/y1；此前误写过后者，E6 核对时改正，未曾被消费故属潜伏未爆的类型错配）。 */
+export interface ProfileOcrWordLike {
+  text: string;
+  conf: number;
+  bbox: [number, number, number, number];
+}
+export interface ProfileOcrLineLike {
+  text: string;
+  box: [number, number, number, number];
+  words: ProfileOcrWordLike[];
+}
+
+/** 与 ocr-toolkit.ts 的公开函数同型（profile 侧真实签名的子集，E6 扩展：聚类/噪声过滤/候选真文本/列分组）。 */
+export interface ProfileOcrToolkit {
+  isOcrAvailable: () => boolean;
+  ocrImageWords: (imagePath: string) => {
+    ok: boolean;
+    error?: string;
+    width?: number;
+    height?: number;
+    words?: ProfileOcrWordLike[];
+  };
+  /** E6①②：词→行聚类（与 capture_completeness_external 门禁同一份实现，"同源化"）。 */
+  clusterOcrLines?: (words: ProfileOcrWordLike[]) => ProfileOcrLineLike[];
+  /** E6①②：噪声过滤（状态栏/纯符号剔除）——与门禁侧同一份实现。 */
+  collectAuditableOcrLines?: (lines: ProfileOcrLineLike[]) => ProfileOcrLineLike[];
+  /** E6③：噪声前缀/后缀 + 最长 CJK 游程候选真文本提取。 */
+  extractLikelyRealTextRun?: (
+    lineText: string,
+  ) => { candidate: string; noisePrefix: string; noiseSuffix: string } | null;
+  /** E6①：行内按 x 显著 gap 列分组（辅助结构推断）。 */
+  detectColumnGroups?: (line: ProfileOcrLineLike) => string[];
+}
+
+/**
+ * OCR 工具链按 profileDir 通用路径动态加载——不硬编码 'hmos-app'（generic 等无 OCR 资产的
+ * profile require 会失败，按设计返回 null，不是错误）。与 capability-registry.ts 的
+ * provider 动态 require（path.join(resolved.profileDir, 'harness', 'providers', ...)）
+ * 同构，供 harness-runner.ts（钳制探测）与 goal-runner.ts（E0/E6 OCR 预扫描）共用，避免重复实现。
+ * E6①②新增函数为可选（非全 profile 都实现列分组/候选提取——降级为仅原始 words 可用）。
+ */
+export function loadProfileOcrToolkit(profileDir: string): ProfileOcrToolkit | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(path.join(profileDir, 'harness', 'ocr-toolkit')) as Partial<ProfileOcrToolkit>;
+    if (typeof mod.isOcrAvailable !== 'function' || typeof mod.ocrImageWords !== 'function') return null;
+    return {
+      isOcrAvailable: mod.isOcrAvailable,
+      ocrImageWords: mod.ocrImageWords,
+      ...(typeof mod.clusterOcrLines === 'function' ? { clusterOcrLines: mod.clusterOcrLines } : {}),
+      ...(typeof mod.collectAuditableOcrLines === 'function'
+        ? { collectAuditableOcrLines: mod.collectAuditableOcrLines }
+        : {}),
+      ...(typeof mod.extractLikelyRealTextRun === 'function'
+        ? { extractLikelyRealTextRun: mod.extractLikelyRealTextRun }
+        : {}),
+      ...(typeof mod.detectColumnGroups === 'function' ? { detectColumnGroups: mod.detectColumnGroups } : {}),
+    };
+  } catch {
+    return null; // profile 无 OCR 工具链（如 generic）——非错误，按"无 OCR"处理
+  }
+}
+
+export function probeProfileOcrAvailable(profileDir: string): boolean {
+  const toolkit = loadProfileOcrToolkit(profileDir);
+  return toolkit ? toolkit.isOcrAvailable() : false;
+}
+
+/**
+ * cursor review（E6 后复核）发现：harness-runner（门禁钳制）此前只看 `probeProfileOcrAvailable`，
+ * goal-runner（prompt 能力块）额外 OR 了金丝雀 `ocr_capable` 信号——两处口径不一致，会出现
+ * "agent 被告知 semantic_layout 可尝试 OCR，门禁却钳到 reference_only" 的文案不一致。收口为
+ * 单一函数，两处共用同一口径。
+ */
+export function resolveOcrAvailableForRun(
+  projectRoot: string,
+  profileDir: string,
+  adapterName: string | undefined,
+): boolean {
+  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName);
 }

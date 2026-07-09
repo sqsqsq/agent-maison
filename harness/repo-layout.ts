@@ -70,7 +70,13 @@ export function detectRepoLayout(startDir?: string): RepoLayout {
   const harnessRoot = resolveHarnessRoot(startDir ?? __dirname);
   const parent = path.resolve(harnessRoot, '..');
   const grandparent = path.resolve(harnessRoot, '../..');
-  if (fs.existsSync(path.join(grandparent, 'framework', 'skills'))) {
+  // codex review（2026-07-08）：原判据只检查 grandparent/framework/skills「某处是否存在」，
+  // 未验证 harnessRoot 自身的 parent 就是那个 framework 目录——若 grandparent 下恰好有一个
+  // 无关的同名 sibling（如 standalone 仓根为 <X>/agent-maison-br/harness，同级还放着一个完全
+  // 无关的 <X>/framework/skills 项目），会把无关的 grandparent 误判为 projectRoot。consumer
+  // 布局下 harnessRoot 恒为 <projectRoot>/framework/harness——parent 的目录名恒为 'framework'，
+  // 这是比"某处存在同名目录"更强、更精确的判据，两者同时成立才判 consumer。
+  if (path.basename(parent) === 'framework' && hasFrameworkTree(parent)) {
     return inferRepoLayout(grandparent);
   }
   return inferRepoLayout(parent);

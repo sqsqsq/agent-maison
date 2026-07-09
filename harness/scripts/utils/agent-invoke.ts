@@ -29,7 +29,13 @@ export interface InvokeTemplateVars {
   PHASE: string;
 }
 
-/** Tokenize templates with this sentinel, then swap for real prompt as a single argv element. */
+/**
+ * Tokenize templates with this sentinel, then swap for real prompt as a single argv element.
+ * Argv-inline path is for CUSTOM external adapters only (planFromTemplate). Known structured
+ * adapters (claude/codex/cursor) deliver the prompt via stdin instead — a multi-line prompt as an
+ * argv element is truncated at the first newline by cmd.exe on Windows .cmd shims. A custom
+ * headless_invoke that embeds {{PROMPT}} and runs through a .cmd on Windows can still hit this.
+ */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
 const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor', 'chrys', 'opencode']);
@@ -223,11 +229,13 @@ function attachResolvedBinary(
   };
 }
 
-function claudeArgv(prompt: string, unattended: UnattendedContract): string[] {
+// Windows 铁律：prompt 不进 argv。claude 无 .exe 只有 claude.cmd → 必经 cmd.exe，
+// 命令行遇换行即截断（实测多行 prompt 只剩 2 字符），故 prompt 一律走 stdin（见 defaultHeadlessInvokePlan）。
+function claudeArgv(unattended: UnattendedContract): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
     : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
-  const argv = ['claude', '-p', prompt, '--allowedTools', tools.join(',')];
+  const argv = ['claude', '-p', '--allowedTools', tools.join(',')];
   if (unattended.approval_mode === 'never') {
     argv.push('--permission-mode', 'dontAsk');
   } else {
@@ -236,7 +244,7 @@ function claudeArgv(prompt: string, unattended: UnattendedContract): string[] {
   return argv;
 }
 
-function codexArgv(prompt: string, unattended: UnattendedContract): string[] {
+function codexArgv(unattended: UnattendedContract): string[] {
   const argv = ['codex', 'exec'];
   argv.push(
     '--sandbox',
@@ -246,12 +254,13 @@ function codexArgv(prompt: string, unattended: UnattendedContract): string[] {
     '--ask-for-approval',
     unattended.approval_mode === 'never' ? 'never' : 'on-request',
   );
-  argv.push(prompt);
+  // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
 
 /**
- * Cursor headless — positional prompt per CLI help; -p includes write/shell.
+ * Cursor headless — prompt via stdin (NOT argv: cursor-agent is a Windows .cmd shim,
+ * argv prompt gets truncated at the first newline by cmd.exe). -p includes write/shell.
  * approval_mode=never → --force --trust (unattended workspace trust).
  */
 export function cursorHeadlessPlan(
@@ -264,10 +273,11 @@ export function cursorHeadlessPlan(
   if (unattended.approval_mode === 'never') {
     argv.push('--force', '--trust');
   }
-  argv.push(prompt);
   const base = path.basename(binary);
   return {
     argv,
+    useStdin: true,
+    stdin: prompt,
     resolvedBinary: resolved,
     useCrossSpawn: shouldUseCrossSpawn(resolved),
     label: `${base} -p …`,
@@ -386,12 +396,14 @@ export function defaultHeadlessInvokePlan(
   promptContent: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(promptContent, unattended);
-    return attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 3).join(' ') + ' …');
+    const argv = claudeArgv(unattended);
+    const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
+    return { ...plan, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
-    const argv = codexArgv(promptContent, unattended);
-    return attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 2).join(' ') + ' …');
+    const argv = codexArgv(unattended);
+    const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
+    return { ...plan, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);

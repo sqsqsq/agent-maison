@@ -32,6 +32,8 @@ goal_capability:
     goal_condition_template: templates/goal-condition.md
     supports_resume: true
   external_runner:
+    # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
+    # (codex exec …, prompt via STDIN — NOT the {{PROMPT}} argv below).
     headless_invoke: 'codex exec --sandbox workspace-write --ask-for-approval never "{{PROMPT}}"'
     unattended:
       write_mode: workspace-write

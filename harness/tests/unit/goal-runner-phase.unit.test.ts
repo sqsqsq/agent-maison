@@ -406,10 +406,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         plan.argv[0] === 'claude' || /claude(\.exe|\.cmd)?$/i.test(plan.argv[0]),
         plan.argv.join(' '),
       );
-      assert(plan.argv.includes('hello'), plan.argv.join(' '));
+      assert(plan.stdin === 'hello', 'prompt via stdin, never argv (Windows .cmd safe)');
+      assert(!plan.argv.includes('hello'), plan.argv.join(' '));
       assert(plan.argv.includes('-p'), plan.argv.join(' '));
       assert(!plan.argv.some((a) => a.includes('$(cat')), plan.argv.join(' '));
-      assert(!plan.useStdin, 'claude uses argv prompt');
+      assert(plan.useStdin === true, 'claude uses stdin prompt');
     },
   },
   {
@@ -434,7 +435,32 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       const pIdx = plan.argv.indexOf('-p');
       assert(pIdx >= 0, plan.argv.join(' '));
-      assert(plan.argv[pIdx + 1] === multiline, 'prompt must be single argv after -p');
+      assert(plan.stdin === multiline, 'multiline prompt via stdin, not argv');
+      assert(plan.useStdin === true, 'claude uses stdin');
+      assert(!plan.argv.some((a) => a.includes('\n')), 'no argv element may contain a newline');
+    },
+  },
+  {
+    // Regression guard for the Windows .cmd truncation bug: a multi-line prompt passed as an
+    // argv element is silently truncated at the first newline by cmd.exe (claude/cursor are
+    // .cmd shims). All structured adapters must therefore deliver the prompt via stdin.
+    name: 'headless stdin: claude/codex/cursor pass multiline prompt via stdin, never argv',
+    run: () => {
+      const multiline = '# Goal phase: spec\nFeature: demo\nrequirement: say "hi" & do X\nFINAL line';
+      for (const adapter of ['claude', 'codex', 'cursor']) {
+        const plan = defaultHeadlessInvokePlan(
+          adapter,
+          { write_mode: 'workspace-write', approval_mode: 'never' },
+          multiline,
+        );
+        assert(plan.useStdin === true, `${adapter} must use stdin`);
+        assert(plan.stdin === multiline, `${adapter} stdin must be the full prompt`);
+        assert(!plan.argv.includes(multiline), `${adapter} prompt must not be an argv element`);
+        assert(
+          !plan.argv.some((a) => a.includes('\n')),
+          `${adapter} no argv element may contain a newline (cmd.exe truncates)`,
+        );
+      }
     },
   },
   {

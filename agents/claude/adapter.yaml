@@ -67,6 +67,9 @@ goal_capability:
     goal_condition_template: templates/goal-condition.md
     supports_resume: false
   external_runner:
+    # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
+    # (claude -p …, prompt via STDIN — NOT the {{PROMPT}} argv below; a multi-line prompt as an argv
+    # element is truncated at the first newline by cmd.exe on the Windows claude.cmd shim).
     headless_invoke: 'claude -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
     unattended:
       write_mode: accept-edits

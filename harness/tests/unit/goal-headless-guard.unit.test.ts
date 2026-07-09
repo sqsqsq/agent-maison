@@ -12,6 +12,11 @@ import {
   shouldHaltNoProgress,
   snapshotArtifacts,
   SIGNATURE_HALT_KINDS,
+  isOperatorInterruptSignal,
+  WINDOWS_CTRL_C_EXIT_CODE,
+  CUMULATIVE_HALT_FAMILY,
+  CUMULATIVE_HALT_THRESHOLD,
+  ADVANCE_BLOCKED_HALT_THRESHOLD,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import type { CheckResult } from '../../scripts/utils/types';
@@ -21,11 +26,23 @@ import {
 } from '../../scripts/utils/goal-headless-sentinel';
 import {
   countTransientApiRetries,
+  countCumulativeAdvanceBlocked,
+  countRepeatedSignatureInFamily,
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
+  type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildPhasePrompt, TRANSIENT_API_BACKOFF_MS, VISUAL_GAP_RETRY_GUIDANCE } from '../../scripts/goal-runner';
-import { buildAwaitHumanConfirmGuidance } from '../../scripts/utils/await-confirm-guidance';
+import {
+  buildPhasePrompt,
+  buildCapabilityBlock,
+  resolvePhaseCapabilityAdvisory,
+  TRANSIENT_API_BACKOFF_MS,
+  VISUAL_GAP_RETRY_GUIDANCE,
+  type CapabilityAdvisory,
+} from '../../scripts/goal-runner';
+import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
+import { clearFrameworkConfigCache } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -62,6 +79,41 @@ const MINIMAL_MANIFEST: GoalManifest = {
   report_dir: 'doc/features/demo-feature/goal-runs/20260101T000000Z',
   created_at: '2026-01-01T00:00:00.000Z',
 };
+
+/**
+ * E0 测试夹具：独立临时 projectRoot（不用 FRAMEWORK_ROOT 自身，避免污染仓库根 doc/）+
+ * 真实 FRAMEWORK_ROOT 作 frameworkRoot（令 resolveContextAdapterImageInput 读到真实
+ * agents/<adapter>/adapter.yaml；loadResolvedProfile 的 profileDir 解析独立于 projectRoot，
+ * 恒指向真实仓库的 profiles/<name>，故可直接构造任意 profile 的 resolvedProfile）。
+ */
+function mkCapabilityProject(profileName: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e0-cap-'));
+  fs.writeFileSync(
+    path.join(root, 'framework.config.json'),
+    JSON.stringify({
+      schema_version: '1.0',
+      project_name: 'demo',
+      project_type: 'app',
+      project_profile: { name: profileName },
+      agent_adapter: 'chrys',
+      architecture: {
+        outer_layers: [{ id: '01-Product', can_depend_on: [], intra_layer_deps: 'forbid' }],
+        module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
+        inner_dependency_direction: 'upward',
+        cross_module_exports_file: 'index.ets',
+      },
+      paths: { features_dir: 'doc/features' },
+    }),
+    'utf-8',
+  );
+  return root;
+}
+
+function loadTestResolvedProfile(root: string) {
+  clearFrameworkConfigCache();
+  const fw = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf-8'));
+  return loadResolvedProfile(root, fw);
+}
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
@@ -558,6 +610,320 @@ export function runAll(): UnitCaseResult[] {
         assert(prompt.includes('src/a.ets'), '缺 skip-list 文件');
       },
     },
+    // ==========================================================================
+    // E0（多模态降级阶梯 plan d4a8f3c6）：能力感知 phase prompt
+    // ==========================================================================
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=true → 不含盲档工作法指令',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: true,
+          ocrAvailable: false,
+          effectiveFidelity: 'pixel_1to1',
+          fidelityClamped: false,
+          ocrJsonPaths: [],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/Vision.*YES/.test(text), 'should declare vision YES');
+        assert(!/do NOT have vision/i.test(text), 'hasVision=true 不应出现盲档指令');
+        assert(!/auto-clamped/.test(text), '未钳制不应提示 auto-clamped');
+        assert(!/headless-assumptions\.md/.test(text), '未钳制不应提示记录 headless-assumptions.md');
+      },
+    },
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=false + ocrAvailable=true → 盲档工作法 + OCR JSON 列表',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: true,
+          effectiveFidelity: 'semantic_layout',
+          fidelityClamped: true,
+          ocrJsonPaths: ['doc/features/bc/spec/reports/ocr/home.ocr.json'],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/Vision.*NO/.test(text), 'should declare vision NO');
+        assert(/do NOT have vision/i.test(text), '盲档应含"不要假装看图"指令');
+        assert(/ground truth/i.test(text), '应指示 OCR JSON 为 ground truth');
+        assert(/blind-review pending/i.test(text), '应指示登记待复核清单而非反复猜测');
+        assert(text.includes('doc/features/bc/spec/reports/ocr/home.ocr.json'), '应列出 OCR JSON 路径');
+        assert(/auto-clamped/.test(text), '钳制生效应提示 auto-clamped');
+        assert(/headless-assumptions\.md/.test(text), 'cursor review：钳制决策应提示记录进 headless-assumptions.md（审计留痕）');
+      },
+    },
+    {
+      name: 'E0 buildCapabilityBlock: hasVision=false + ocrAvailable=false（reference_only 地板）→ 声明无 OCR JSON 可用',
+      run: () => {
+        const advisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: false,
+          effectiveFidelity: 'reference_only',
+          fidelityClamped: true,
+          ocrJsonPaths: [],
+        };
+        const text = buildCapabilityBlock(advisory).join('\n');
+        assert(/reference_only/.test(text), '应声明有效档位 reference_only');
+        assert(/No OCR JSON available/i.test(text), '应如实声明无 OCR JSON');
+        assert(/requirement text only/i.test(text), '应指示仅凭需求文字工作');
+        assert(/headless-assumptions\.md/.test(text), '钳制生效应提示记录进 headless-assumptions.md（即便无 OCR）');
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: 非 UI 需求 → null（不注入能力块）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '实现一个定时批量导出 CSV 到对象存储的后台任务，失败重试 3 次。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory === null, '非 UI 需求不应注入能力块：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: 非 spec/plan/coding phase（review）→ null（即便 UI 需求）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'review');
+          assert(advisory === null, 'review phase 不应注入能力块：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: '宿主复验修复①②: plan/coding phase → advisory 非 null 且列出 spec 已产出的 ocr.json（不重跑 OCR、不再谎称无参考图）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          // 模拟 spec 阶段已产出的 ocr.json（plan/coding 只列出、不生产）
+          const ocrDir = path.join(root, 'doc', 'features', 'demo-feature', 'spec', 'reports', 'ocr');
+          fs.mkdirSync(ocrDir, { recursive: true });
+          fs.writeFileSync(path.join(ocrDir, '1-首页.ocr.json'), '{"ok":true}', 'utf-8');
+          fs.writeFileSync(path.join(ocrDir, '2-卡包.ocr.json'), '{"ok":true}', 'utf-8');
+          // plan/coding 阶段 spec.md 必然已存在——写一份声明 UI 相关的 spec.md
+          const specDir = path.join(root, 'doc', 'features', 'demo-feature', 'spec');
+          fs.writeFileSync(path.join(specDir, 'spec.md'), '# spec\n\n```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+          const manifest: GoalManifest = { ...MINIMAL_MANIFEST, adapter: 'chrys' };
+          for (const phase of ['plan', 'coding'] as const) {
+            const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, phase);
+            assert(advisory !== null, `${phase} phase 应注入能力块（宿主复验修复②）`);
+            assert(advisory!.hasVision === false, JSON.stringify(advisory));
+            assert(
+              advisory!.ocrJsonPaths.length === 2,
+              `${phase} phase 应列出已存在的 2 份 ocr.json（宿主复验修复①）：${JSON.stringify(advisory!.ocrJsonPaths)}`,
+            );
+            assert(
+              advisory!.ocrJsonPaths.every(p => p.startsWith('doc/features/demo-feature/spec/reports/ocr/')),
+              JSON.stringify(advisory!.ocrJsonPaths),
+            );
+            // 措辞同源：unattended 块应走 blind-review pending 分支而非旧 pixel_1to1 人签死路
+            const prompt = buildPhasePrompt(manifest, root, phase, FRAMEWORK_ROOT, [], undefined, undefined, undefined, undefined, advisory);
+            assert(!prompt.includes('The only path through pixel_1to1 P0'), `${phase} prompt 不应出现旧 pixel_1to1 措辞`);
+            assert(prompt.includes('blind-review'), `${phase} prompt 应含 blind-review pending 指引`);
+            assert(prompt.includes('1-首页.ocr.json'), `${phase} prompt 应列出 ocr.json 清单`);
+          }
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=true（claude adapter）+ 1:1 意图 → 不钳制，effective=pixel_1to1',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'claude', // agents/claude/adapter.yaml 声明 image_input: tool_read
+            requirement: '银行卡开卡需求，含7个页面，严格按参考图还原结构、颜色、布局。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === true, 'claude adapter 应判 hasVision=true');
+          assert(advisory!.effectiveFidelity === 'pixel_1to1', 'hasVision=true 不应钳制：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === false, JSON.stringify(advisory));
+          assert(advisory!.ocrJsonPaths.length === 0, '有视觉时不应跑 OCR 预扫描：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=false（chrys）+ hmos-app profile（OCR 可用）→ 钳到 semantic_layout + OCR 预扫描产出 ocr.json',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const reqDir = path.join(root, 'doc', 'features', '原始需求', '1-银行卡');
+          fs.mkdirSync(reqDir, { recursive: true });
+          fs.writeFileSync(path.join(reqDir, 'home.png'), 'fake-png-bytes-not-real-image');
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys', // agents/chrys/adapter.yaml 声明 image_input: none
+            requirement: '银行卡开卡需求，含7个页面，参考图在doc/features/原始需求/1-银行卡/目录下，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === false, 'chrys adapter 应判 hasVision=false');
+          // hmos-app 在本仓库真实带 tesseract.js + chi_sim.traineddata（已验证随发布件），
+          // isOcrAvailable() 应为 true —— 断言与源仓真实环境一致。
+          assert(advisory!.ocrAvailable === true, 'hmos-app profile 应判 OCR 可用（本仓库真实 OCR 环境）');
+          assert(advisory!.effectiveFidelity === 'semantic_layout', '无视觉+OCR可用应钳至 semantic_layout：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === true, JSON.stringify(advisory));
+          // fake-png 内容非真图，jimp/tesseract 可能解析失败——但 OCR 预扫描本身应尝试并落盘
+          // （ocrImageWords 对损坏图片的失败处理属 ocr-toolkit 自身职责，非本函数断言范围）。
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E6 OCR 预扫描产出：真实图片 → ocr.json 含聚类后 lines（候选真文本/列分组，与门禁同源）',
+      run: () => {
+        const root = mkCapabilityProject('hmos-app');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          // 复用既有真实 OCR fixture（ocr-toolkit.unit.test.ts 同款，含可读中文"首页/我的"）——
+          // 放进 ux-reference/ 回退发现路径（feature=demo-feature 匹配 MINIMAL_MANIFEST）。
+          const uxRefDir = path.join(root, 'doc', 'features', 'demo-feature', 'ux-reference');
+          fs.mkdirSync(uxRefDir, { recursive: true });
+          const fixtureImg = path.join(
+            FRAMEWORK_ROOT, 'profiles', 'hmos-app', 'harness', 'tests', 'fixtures', 'ocr', 'card_pack.png',
+          );
+          // 宿主复验修复③：用含 CJK 的图名——slug 应保留中文（不再清成匿名"1-"式编号）
+          fs.copyFileSync(fixtureImg, path.join(uxRefDir, '1-卡包页.png'));
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, JSON.stringify(advisory));
+          if (!advisory!.ocrAvailable) return; // 本机 OCR 环境不可用则跳过（仓库惯例：OCR 门禁自身已守卫）
+          assert(advisory!.ocrJsonPaths.length === 1, `应产出 1 份 ocr.json：${JSON.stringify(advisory!.ocrJsonPaths)}`);
+          // 宿主复验修复③：CJK 图名应保留在 slug 里（"1-卡包页"而非匿名"1-"）
+          assert(
+            advisory!.ocrJsonPaths[0].endsWith('/1-卡包页.ocr.json'),
+            `slug 应保留 CJK：${advisory!.ocrJsonPaths[0]}`,
+          );
+          const ocrJsonAbs = path.join(root, advisory!.ocrJsonPaths[0]);
+          const parsed = JSON.parse(fs.readFileSync(ocrJsonAbs, 'utf-8'));
+          assert(parsed.ok === true, `OCR 应成功：${JSON.stringify(parsed).slice(0, 200)}`);
+          // 宿主复验修复③：source_image 回指原参考图，盲 agent 可确定性对应图↔ocr.json
+          assert(
+            parsed.source_image === 'doc/features/demo-feature/ux-reference/1-卡包页.png',
+            `应含 source_image 回指原图：${JSON.stringify(parsed.source_image)}`,
+          );
+          assert(Array.isArray(parsed.words) && parsed.words.length > 0, '应保留原始 words（完整性/可回溯）');
+          assert(Array.isArray(parsed.lines) && parsed.lines.length > 0, `应产出聚类后 lines：${JSON.stringify(parsed).slice(0, 300)}`);
+          const line = parsed.lines[0];
+          assert(typeof line.text === 'string' && typeof line.y === 'number', JSON.stringify(line));
+          // 与门禁同源：至少应能读出"首页"或"我的"（card_pack fixture 的已知内容）
+          const hasKnownText = parsed.lines.some((l: { text: string }) => l.text.includes('首页') || l.text.includes('我的'));
+          assert(hasKnownText, `应读出已知内容：${JSON.stringify(parsed.lines.map((l: { text: string }) => l.text))}`);
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=false（chrys）+ generic profile（无 OCR）→ 钳到 reference_only 地板',
+      run: () => {
+        const root = mkCapabilityProject('generic');
+        try {
+          const resolvedProfile = loadTestResolvedProfile(root);
+          const manifest: GoalManifest = {
+            ...MINIMAL_MANIFEST,
+            adapter: 'chrys',
+            requirement: '银行卡开卡需求，含7个页面，参考图截图设计，严格按参考图还原。',
+          };
+          const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
+          assert(advisory !== null, '真实 UI 需求应注入能力块');
+          assert(advisory!.hasVision === false, JSON.stringify(advisory));
+          assert(advisory!.ocrAvailable === false, 'generic profile 无 OCR 工具链，应为 false');
+          assert(advisory!.effectiveFidelity === 'reference_only', '无视觉+无OCR应钳至地板：' + JSON.stringify(advisory));
+          assert(advisory!.fidelityClamped === true, JSON.stringify(advisory));
+          assert(advisory!.ocrJsonPaths.length === 0, 'OCR 不可用不应产出 ocr.json：' + JSON.stringify(advisory));
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: 'E0 buildPhasePrompt: 注入能力块 + unattended 块档位分支同源（盲档不再声称 pixel_1to1 P0 唯一出路）',
+      run: () => {
+        const blindAdvisory: CapabilityAdvisory = {
+          hasVision: false,
+          ocrAvailable: true,
+          effectiveFidelity: 'semantic_layout',
+          fidelityClamped: true,
+          ocrJsonPaths: [],
+        };
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          [],
+          [],
+          blindAdvisory,
+        );
+        assert(prompt.includes('Visual capability advisory'), '应注入能力块');
+        assert(prompt.includes('do NOT have vision'.toUpperCase()) || /do NOT have vision/i.test(prompt), '应含盲档指令');
+        // cursor 硬冲突修正核心断言：非 pixel_1to1 档不得再声称"唯一出路是 pixel_1to1 P0 屏人工确认"
+        assert(!/only path through pixel_1to1 P0/i.test(prompt), '盲档下不应再声称 pixel_1to1 P0 是唯一出路：' + prompt);
+        assert(/effective fidelity is \*\*semantic_layout\*\*/i.test(prompt), 'unattended 块应报告实际有效档位');
+        assert(/blind-review/i.test(prompt), 'unattended 块盲档分支应指向 blind-review 清单');
+
+        const pixelAdvisory: CapabilityAdvisory = {
+          hasVision: true,
+          ocrAvailable: false,
+          effectiveFidelity: 'pixel_1to1',
+          fidelityClamped: false,
+          ocrJsonPaths: [],
+        };
+        const pixelPrompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'spec',
+          FRAMEWORK_ROOT,
+          [],
+          undefined,
+          undefined,
+          [],
+          [],
+          pixelAdvisory,
+        );
+        // 真视觉档下原文原样保留（回归保护）
+        assert(/only path through pixel_1to1 P0/i.test(pixelPrompt), 'pixel_1to1 档应保留原 HALT for human 措辞');
+      },
+    },
+    {
+      name: 'E0 buildPhasePrompt: capabilityAdvisory 未传入（非 UI phase）时 unattended 块行为不变（回归保护）',
+      run: () => {
+        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, []);
+        assert(!prompt.includes('Visual capability advisory'), '未传 advisory 不应出现能力块');
+        assert(/only path through pixel_1to1 P0/i.test(prompt), '未传 advisory 时应保留原文（向后兼容）');
+      },
+    },
     {
       name: 'extractDeterministicAffectedFiles: from blockers',
       run: () => {
@@ -705,6 +1071,126 @@ export function runAll(): UnitCaseResult[] {
           {},
         );
         assert(kPlain === 'deterministic_gate_or_artifact_missing', `无信号回落 blocker：${kPlain}`);
+      },
+    },
+    // ======================================================================
+    // E4（多模态降级阶梯 plan d4a8f3c6）：案B chrys 银行卡实证 —— agentTimedOut 遮蔽人签墙
+    // + operator_interrupt 误判 + 事件回放累计熔断
+    // ======================================================================
+    {
+      name: 'E4 classifyFailureKind: agentTimedOut + blockers 全为 await_human_confirm → await_human_confirm（不再 agent_timeout）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'visual_diff', classification: 'await_human_confirm' },
+              { id: 'visual_diff_2', classification: 'await_human_confirm' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'await_human_confirm', `全 await_human 时应让位，实得 ${k}`);
+      },
+    },
+    {
+      name: 'E4 classifyFailureKind: agentTimedOut + blockers 混合(非全 await_human) → 仍 agent_timeout',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'visual_diff', classification: 'await_human_confirm' },
+              { id: 'spec_file_exists' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'agent_timeout', `混合家族不应让位，实得 ${k}`);
+        const kEmpty = classifyFailureKind({ verdict: 'PASS' }, undefined, { agentTimedOut: true });
+        assert(kEmpty === 'agent_timeout', `无 blocker（PASS+超时）应仍 agent_timeout，实得 ${kEmpty}`);
+      },
+    },
+    {
+      name: 'E4 classifyFailureKind: operatorInterrupt 压过一切（含同时 agentTimedOut/agentApiError）',
+      run: () => {
+        const k = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] },
+          undefined,
+          { operatorInterrupt: true, agentTimedOut: true, agentApiError: true },
+        );
+        assert(k === 'operator_interrupt', `operator_interrupt 必须最高优先，实得 ${k}`);
+      },
+    },
+    {
+      name: 'E4 isOperatorInterruptSignal: Windows STATUS_CONTROL_C_EXIT / POSIX SIGINT / 均非',
+      run: () => {
+        assert(isOperatorInterruptSignal(WINDOWS_CTRL_C_EXIT_CODE, null) === true, 'win ctrl+c exit code');
+        assert(isOperatorInterruptSignal(3221225786, undefined) === true, 'raw literal must match constant');
+        assert(isOperatorInterruptSignal(1, 'SIGINT') === true, 'posix SIGINT');
+        assert(isOperatorInterruptSignal(1, 'SIGTERM') === false, 'SIGTERM 是我方 tree-kill，非用户中断');
+        assert(isOperatorInterruptSignal(1, null) === false, '普通失败不得误判');
+      },
+    },
+    {
+      name: 'E4 countCumulativeAdvanceBlocked: 跨 attempt 累计（不看具体 reason），忽略他 phase/非 phase_verdict',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: true, advance_block_reason: 'closure_open' },
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: false },
+          { type: 'phase_verdict', phase: 'spec', advance_blocked: true, advance_block_reason: 'agent_timeout_unclosed' },
+          { type: 'phase_verdict', phase: 'plan', advance_blocked: true, advance_block_reason: 'closure_open' },
+          { type: 'agent_invoke_end', phase: 'spec' },
+        ];
+        assert(countCumulativeAdvanceBlocked(events, 'spec') === 2, `应数到 2，reason 不同也累计；实得 ${countCumulativeAdvanceBlocked(events, 'spec')}`);
+        assert(countCumulativeAdvanceBlocked(events, 'plan') === 1, '不同 phase 隔离统计');
+        assert(countCumulativeAdvanceBlocked(events, 'coding') === 0, '未出现的 phase 为 0');
+      },
+    },
+    {
+      name: 'E4 countRepeatedSignatureInFamily: 同 signature 在家族内累计，非家族/异 signature 不计',
+      run: () => {
+        const sig = 'visual_parity_ocr_unavailable';
+        const events: GoalRunEvent[] = [
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'toolchain' },
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'code_regression' }, // 非家族，不计
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: 'other_sig', failure_kind_classified: 'toolchain' }, // 异 signature，不计
+          { type: 'phase_verdict', phase: 'spec', blocker_signature: sig, failure_kind_classified: 'toolchain' },
+        ];
+        const n = countRepeatedSignatureInFamily(events, 'spec', sig, CUMULATIVE_HALT_FAMILY);
+        assert(n === 2, `应数到 2，实得 ${n}`);
+        assert(countRepeatedSignatureInFamily(events, 'spec', '', CUMULATIVE_HALT_FAMILY) === 0, '空 signature 恒 0');
+      },
+    },
+    {
+      name: 'E4 阈值常量：ADVANCE_BLOCKED_HALT_THRESHOLD=2（首次给机会/第二次即halt）、CUMULATIVE_HALT_THRESHOLD=3',
+      run: () => {
+        assert(ADVANCE_BLOCKED_HALT_THRESHOLD === 2, String(ADVANCE_BLOCKED_HALT_THRESHOLD));
+        assert(CUMULATIVE_HALT_THRESHOLD === 3, String(CUMULATIVE_HALT_THRESHOLD));
+        assert(CUMULATIVE_HALT_FAMILY.has('toolchain'), 'toolchain in family');
+        assert(CUMULATIVE_HALT_FAMILY.has('await_human_confirm'), 'await_human_confirm in family');
+      },
+    },
+    {
+      name: 'E4 buildClosureWallGuidance: 含 feature/run/receipt 路径/续跑命令，与 visual-confirm 引导独立',
+      run: () => {
+        const lines = buildClosureWallGuidance({
+          feature: 'bc-openCard',
+          runId: '20260708T023859Z',
+          phase: 'spec',
+          receiptPathRel: 'doc/features/bc-openCard/spec/phase-completion-receipt.md',
+          harnessPrefixRel: 'framework/harness',
+          receiptStatus: 'failed',
+          cumulativeBlockedCount: 2,
+        });
+        const text = lines.join('\n');
+        assert(text.includes('bc-openCard'), 'feature 名须出现');
+        assert(text.includes('第 2 次'), '须报告累计次数');
+        assert(text.includes('phase-completion-receipt.md'), '须指向 receipt 路径');
+        assert(text.includes('--resume 20260708T023859Z --force-resume'), '须给续跑命令');
+        assert(!text.includes('device-screenshots'), '不得混用 visual-confirm 的截图话术');
       },
     },
     {

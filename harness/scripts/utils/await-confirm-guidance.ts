@@ -63,3 +63,43 @@ export function buildAwaitHumanConfirmGuidance(opts: AwaitConfirmGuidanceOpts): 
     '注：方式 A 经 agent 转录属软契约（agent 理论上仍可编造署名）；要最稳走方式 B（真人在终端直签）。你的签名与判定按 build 指纹持久，同一构建下不会被重采清掉。',
   ];
 }
+
+export interface ClosureWallGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  /** phase-completion-receipt.md（projectRoot 相对，POSIX） */
+  receiptPathRel: string;
+  /** consumer='framework/harness'、standalone='harness' */
+  harnessPrefixRel: string;
+  /** tryValidateReceipt 的最近一次结果（可能为空——只是 script harness 一直 PASS 但没跑过 receipt 校验）。 */
+  receiptStatus?: string;
+  /** 累计 advance_blocked 次数（含本次），写进话术让人一眼看出"不是第一次了"。 */
+  cumulativeBlockedCount: number;
+}
+
+/**
+ * E4（案B chrys 银行卡实证：8 attempt/4h19m，script 门禁反复 PASS 却关不了环——非视觉确认场景，
+ * 不可复用 buildAwaitHumanConfirmGuidance，那个是 testing 阶段截图/visual-diff.json 专用）。
+ * 累计出现即 halt：脚本门禁已多次 PASS 但闭环/回执一直未完成，agent 重试无法自证突破——
+ * 要么是只能人签的确认项（headless 无人可签），要么每轮又做了新探索/修改反复横跳，
+ * 都需要人看一眼再决定，盲重试只会继续空转。
+ */
+export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[] {
+  const { feature, runId, phase, receiptPathRel, harnessPrefixRel, receiptStatus, cumulativeBlockedCount } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  return [
+    `【${feature} · run ${runId} · ${phase}】脚本门禁已第 ${cumulativeBlockedCount} 次达到 PASS，但闭环/回执一直未完成` +
+      (receiptStatus ? `（receipt_status=${receiptStatus}）` : '') +
+      '——agent 无法自证突破，继续重试只是空转，需要你看一眼再决定。',
+    '',
+    '请检查：',
+    `  1. ${receiptPathRel} 的 verifier_subagent.verdict 与具体原因（多为某项只能真人签署的确认，`,
+    '     如视觉保真/裁剪授权类——headless 下没有人可签，agent 每次都会诚实报告 FAIL，重试不会变）；',
+    '  2. 若确认是"只差人签"：人工审阅相应产物后手动补全该签名字段，再续跑；',
+    '  3. 若怀疑是"预算不够、每轮都在做新探索但没收尾"：可提高该 phase 的 phase_timeout_ms 后续跑；',
+    '  4. 若怀疑是环境/工具链问题（如 OCR 不可用）：先修复环境，问题若随之消失即证实。',
+    '',
+    `处理完后续跑：${resumeCmd}`,
+  ];
+}

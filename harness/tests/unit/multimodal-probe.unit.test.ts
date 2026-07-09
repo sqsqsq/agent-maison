@@ -10,7 +10,9 @@ import {
   probeAdapterImageInput,
   resolveContextAdapterImageInput,
   resolveGoalEffectiveImageInput,
+  readCanaryOcrCapableSignal,
 } from '../../scripts/utils/multimodal-probe';
+import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import {
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
   MAISON_GOAL_RUNNER_ENV,
@@ -104,6 +106,98 @@ const cases: Array<{ name: string; run: () => void }> = [
         if (prevTools === undefined) delete process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV];
         else process.env[MAISON_GOAL_ALLOWED_TOOLS_ENV] = prevTools;
       }
+    },
+  },
+  // ==========================================================================
+  // E1（多模态降级阶梯 plan d4a8f3c6）：本地 override / 金丝雀缓存解析链最前
+  // ==========================================================================
+  {
+    name: 'E1 resolveContextAdapterImageInput: local image_input_override 优先于 adapter 声明',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-override-'));
+      try {
+        // chrys 真实声明是 none，override 应压过它判 tool_read。
+        writeLocalConfig(tmp, { schema_version: '1.0', vision: { image_input_override: 'tool_read' } });
+        const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
+        assert(r.imageInput === 'tool_read', r.reason);
+        assert(r.reason.includes('image_input_override'), r.reason);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E1 resolveContextAdapterImageInput: 金丝雀缓存（adapter 匹配）优先于 adapter 声明',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-canary-'));
+      try {
+        writeLocalConfig(tmp, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
+        assert(r.imageInput === 'tool_read', r.reason);
+        assert(r.reason.includes('金丝雀实测缓存'), r.reason);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E1 resolveContextAdapterImageInput: 缓存 adapter≠当前查询 adapter → 视为过期，回退真实声明',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-stale-'));
+      try {
+        // 缓存记的是 claude 的探测结果，但当前查询的是 chrys —— adapter 变更即失效。
+        writeLocalConfig(tmp, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'claude', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
+        assert(r.imageInput === 'none', `应回退 chrys 真实声明 none，实得 ${r.imageInput}：${r.reason}`);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E1 resolveContextAdapterImageInput: 无 local.json → 行为不变（回归保护）',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-none-'));
+      try {
+        const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
+        assert(r.imageInput === 'none', r.reason);
+        assert(!r.reason.includes('override') && !r.reason.includes('金丝雀'), r.reason);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'E1 readCanaryOcrCapableSignal: verdict=ocr_capable 且 adapter 匹配 → true；其余 → false',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-ocrcap-'));
+      try {
+        writeLocalConfig(tmp, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        assert(readCanaryOcrCapableSignal(tmp, 'chrys') === true, '匹配 adapter + ocr_capable 应为 true');
+        assert(readCanaryOcrCapableSignal(tmp, 'claude') === false, 'adapter 不匹配应为 false');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+      const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-ocrcap2-'));
+      try {
+        writeLocalConfig(tmp2, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        assert(readCanaryOcrCapableSignal(tmp2, 'chrys') === false, 'verdict=tool_read 不应报 ocr_capable');
+      } finally {
+        fs.rmSync(tmp2, { recursive: true, force: true });
+      }
+      assert(readCanaryOcrCapableSignal(fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-nolocal-')), 'chrys') === false, '无 local.json 应为 false');
     },
   },
 ];
