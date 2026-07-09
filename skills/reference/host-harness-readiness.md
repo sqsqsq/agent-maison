@@ -2,7 +2,7 @@
 
 本文是 **catalog-bootstrap … device-testing phase skills** 及任意全局 harness phase 在调用 `harness-runner.ts` 之前的 **单一事实源（SSOT）**。
 
-- **Tier_1**：与 `project_profile` 无关——只要跑 framework harness，就必须满足。
+- **Tier_1**：核心部分（`ts-node`/`@types/node`/`package.json`）与 `project_profile` 无关——只要跑 framework harness，就必须满足；v2.5+ 新增 OCR 就绪度子项按 **active profile 是否具备 OCR 工具链**条件化（见下）。
 - **Tier_2**：与具体宿主（IDE / 编译 / 设备）有关——**不在本文展开**，只指向 profile addendum 与各阶段 Skill。
 
 与 [`framework-init`](../framework-init/SKILL.md) **S3 `harness-install`** 中 Tier_1 部分 **等价**；init 流程在 S3 **执行** `npm install`（`harness-install` 任务），全局 phase 由 `run-global-phases` 任务完成。本文是日常克隆与独立拉起某 Skill 时的交叉引用锚点。
@@ -25,9 +25,17 @@
 cd framework/harness && node scripts/init-readiness.mjs
 ```
 
-- 脚本检查 `ts-node`、`@types/node`、`package.json` 与 cwd；输出 `{ ok, missing, recommended_command }`（**不**自动 `npm install`）。
+- 脚本检查 `ts-node`、`@types/node`、`package.json` 与 cwd；**active profile 具备 OCR 工具链时**
+  （探测 `framework/profiles/<profile>/harness/ocr-toolkit.ts` 是否存在，非硬编码 hmos-app）
+  额外检查 `framework/harness/node_modules/tesseract.js/package.json` 与
+  `framework/profiles/<profile>/vendor/tessdata/chi_sim.traineddata`（v2.5+，多模态降级阶梯
+  E5：防内网 npm install 局部失败漏到门禁运行时才炸）——输出 `{ ok, missing, recommended_command }`（**不**自动 `npm install`）。
 - 若 `ok=true` → Tier_1 已满足（除非后续报错表明损坏，见故障分流）。
-- 若 `ok=false` → 必须在 `<repo-root>/framework/harness/` 执行 `recommended_command`（`npm install`）后再跑 harness CLI。
+- 若 `ok=false`：`missing[]` 里 `tesseract.js` 缺失仍走 `recommended_command`（`npm install`）；
+  **`chi_sim.traineddata` 缺失不是 npm 依赖问题**——tessdata 随 framework 发布件分发，
+  缺失代表 framework 拉取/更新不完整，需重新拉取/更新 `framework/` 子模块而非 `npm install`
+  （对应 `missing[]` 条目自带此区分说明）。其余情形（ts-node/@types/node/package.json 缺失）
+  必须在 `<repo-root>/framework/harness/` 执行 `recommended_command`（`npm install`）后再跑 harness CLI。
 
 ### 安装命令
 

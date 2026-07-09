@@ -29,16 +29,16 @@ const unattended = {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'cursorHeadlessPlan: positional prompt + --force --trust',
+    name: 'cursorHeadlessPlan: stdin prompt + --force --trust',
     run: () => {
       const prompt = 'hello\nworld "quoted"';
       const plan = cursorHeadlessPlan(unattended, prompt, {
         path: 'C:\\bin\\cursor-agent.exe',
         kind: 'exe',
       });
-      assert.strictEqual(plan.useStdin, undefined);
-      assert.strictEqual(plan.argv[plan.argv.length - 1], prompt);
-      assert.deepStrictEqual(plan.argv.slice(0, -1), [
+      assert.strictEqual(plan.useStdin, true);
+      assert.strictEqual(plan.stdin, prompt);
+      assert.deepStrictEqual(plan.argv, [
         'C:\\bin\\cursor-agent.exe',
         '-p',
         '--force',
@@ -54,7 +54,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         'x',
         { path: '/usr/bin/agent', kind: 'bare' },
       );
-      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p', 'x']);
+      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p']);
+      assert.strictEqual(plan.stdin, 'x');
     },
   },
   {
@@ -70,11 +71,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'defaultHeadlessInvokePlan: cursor positional not cursor agent --print',
+    name: 'defaultHeadlessInvokePlan: cursor stdin prompt not --print',
     run: () => {
       const plan = defaultHeadlessInvokePlan('cursor', unattended, 'prompt body');
-      assert.ok(!plan.useStdin, 'no stdin');
-      assert.strictEqual(plan.argv[plan.argv.length - 1], 'prompt body');
+      assert.ok(plan.useStdin, 'stdin');
+      assert.strictEqual(plan.stdin, 'prompt body');
+      assert.ok(!plan.argv.includes('prompt body'), plan.argv.join(' '));
       assert.ok(!plan.argv.includes('--print'), plan.argv.join(' '));
       assert.ok(
         plan.argv[0] === 'cursor-agent' || plan.argv.includes('-p'),

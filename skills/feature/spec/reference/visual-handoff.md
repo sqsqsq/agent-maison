@@ -96,11 +96,17 @@
 
 | 字段 | 取值 | 说明 |
 |------|------|------|
-| `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
+| `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` / `reference_only`（v2.5+） | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
 | `asset_acquisition_mode` | `approximate`（默认） / `auto_crop` / `user_dir` | `pixel_1to1` 联动默认抬升为 `user_dir` |
 | `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须**真人**签字：`human_signed: true` 且 `signed_by` 非自动化身份（`goal-mode-auto` 等自签不算；headless 缺 `signed_by` 亦不算） |
 
 `authoritative_refs` 新增 kind：**`asset_pack`**（用户素材目录，与 `repo_assets` 同样要求 `path`）。
+
+**能力钳制（v2.5+，多模态降级阶梯）**：以上声明的是**意图**（desired）；harness 会按当前
+adapter/模型的实际视觉能力 + OCR 环境就绪度钳制出**有效档位**（effective，`isPixel1to1` 等全部
+门禁消费面读的是这个）——无视觉但 OCR 可用时 `pixel_1to1` 钳到 `semantic_layout`；无视觉也无
+OCR 时钳到 `reference_only` 地板。声明的 `fidelity_target` 本身**不会被改写**，只是运行时可能
+不生效；更换视觉模型或修复 OCR 环境后自动 ratchet 回升，无需手动改声明。
 
 须同步产出：
 - `spec/ref-elements.yaml` — 参考图侧独立枚举（捕获完整性分母）

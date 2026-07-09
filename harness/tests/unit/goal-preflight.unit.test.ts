@@ -12,7 +12,9 @@ import {
   resolveAdapterProvenance,
   runGoalPreflight,
   reconcileRunAdapter,
+  decideVisionCanaryProbe,
 } from '../../scripts/utils/goal-preflight';
+import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { DEFAULT_DEPENDENCY_POLICY, resolveAutoChain } from '../../scripts/utils/phase-transition-policy';
 import type { UnitCaseResult } from '../run-unit';
@@ -356,6 +358,127 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(d.effectiveAdapter, 'cursor');
         assert.strictEqual(d.provenance, 'override');
         assert.strictEqual(d.writeLocal, true);
+      }),
+  },
+  // ==========================================================================
+  // E1（多模态降级阶梯 plan d4a8f3c6）：decideVisionCanaryProbe 纯决策分支
+  // ==========================================================================
+  {
+    name: 'E1 decideVisionCanaryProbe: dry-run → skip',
+    run: () =>
+      withTmp((root) => {
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: baseManifest('chrys'),
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: true,
+        });
+        assert.deepStrictEqual(d, { action: 'skip', reason: 'dry_run' });
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: chain 不含 spec/coding → skip',
+    run: () =>
+      withTmp((root) => {
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['review', 'ut'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'skip', reason: 'chain_has_no_ui_phase' });
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: 非 UI 需求 → skip',
+    run: () =>
+      withTmp((root) => {
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '实现批量导出 CSV 的后台任务，失败重试 3 次。' },
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'skip', reason: 'not_ui_relevant' });
+      }),
+  },
+  {
+    name: 'codex review：decideVisionCanaryProbe: requirement 文本非 UI 相关但 spec.md 已声明 ' +
+      'ui_change=new_or_changed（resume/继续 coding 场景常见）→ 仍应 probe，不误判 not_ui_relevant',
+    run: () =>
+      withTmp((root) => {
+        const specDir = path.join(root, 'doc', 'features', 'demo', 'spec');
+        fs.mkdirSync(specDir, { recursive: true });
+        fs.writeFileSync(path.join(specDir, 'spec.md'), '# spec\n\n```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '继续完成该需求' },
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'probe' });
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: UI 需求 + 无 local.json → probe',
+    run: () =>
+      withTmp((root) => {
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'probe' });
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: 已有 image_input_override → skip（用户显式声明免探）',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, { schema_version: '1.0', vision: { image_input_override: 'none' } });
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['spec', 'plan', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'skip', reason: 'local_override_present' });
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: 新鲜缓存（adapter 匹配）→ skip；adapter 变更 → probe',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        const manifestChrys = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
+        const d1 = decideVisionCanaryProbe({ projectRoot: root, manifest: manifestChrys, chain: ['spec'], dryRun: false });
+        assert.deepStrictEqual(d1, { action: 'skip', reason: 'fresh_cache_present' });
+
+        const manifestClaude = { ...baseManifest('claude'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
+        const d2 = decideVisionCanaryProbe({ projectRoot: root, manifest: manifestClaude, chain: ['spec'], dryRun: false });
+        assert.deepStrictEqual(d2, { action: 'probe' }, 'adapter 变更应视为缓存过期');
+      }),
+  },
+  {
+    name: 'E1 decideVisionCanaryProbe: forceRefresh 忽略新鲜缓存 → probe',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: '2026-07-08T00:00:00.000Z' } },
+        });
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['spec'],
+          dryRun: false,
+          forceRefresh: true,
+        });
+        assert.deepStrictEqual(d, { action: 'probe' });
       }),
   },
 ];

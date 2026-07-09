@@ -14,6 +14,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createRequire } from 'module';
 import {
   collectTextBboxNodes,
   assessBboxOrientation,
@@ -264,9 +265,15 @@ test('p0b_kind_classification', () => {
 // P0-B 端到端 + P0-C 拆位：授权在 ≠ 验真过
 // ============================================================
 
+// cursor/codex review：`profiles/hmos-app/harness/tests/unit/` 不在 `harness/node_modules`
+// 的祖先路径链上，裸 `require('yaml')` 恒 MODULE_NOT_FOUND，导致不设 NODE_PATH 时
+// `npm run test:unit` 从本 suite 起整进程崩溃、后续 suite 结果全部丢失（发版门禁若裸跑会炸）。
+// 改用 createRequire 锚定 harness 根（与 fidelity-shared.ts/ui-spec-shared.ts 加载 yaml
+// 的既有写法一致），不依赖调用方目录、不需要 NODE_PATH。
+const requireFromHarness = createRequire(path.resolve(__dirname, '../../../../../harness/harness-runner.ts'));
 const YAML_LIB = ((): { stringify: (v: unknown) => string } => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('yaml');
+  return requireFromHarness('yaml');
 })();
 
 test('p0bc_authorized_bad_crop_blocked_by_validation_not_acquisition', () => {
@@ -528,6 +535,7 @@ import {
   checkUiSpecStructureLint,
   collectSpecTextUniverse,
   isLineCoveredBySpecTexts,
+  blindReviewPendingAbsPath,
 } from '../../capture-completeness-check';
 import {
   collectVisibleTextIssues,
@@ -583,6 +591,38 @@ test('p0d_external_audit_missed_text_fail_full_capture_pass', () => {
     const hit = r.find(x => x.id === 'capture_completeness_external');
     assert.ok(hit && hit.status === 'PASS', `全捕获应 PASS（FP 铁律）：${hit?.details.slice(0, 300)}`);
   }
+});
+
+// E3（多模态降级阶梯 plan d4a8f3c6）：同一"漏抽"坏态，adapterImageInput=none（盲档）下
+// 不应再是 agent 无解的逐条 implement/defer+人签 BLOCKER，改为批量登记 blind-review-pending.yaml
+// 降 MAJOR/WARN；真视觉档（本文件其余用例，无 adapterImageInput 覆盖）语义不变——门禁强度
+// 没有全局放水，只与能力档位对齐。
+test('p0d_external_audit_blind_tier_warn_not_blocker_writes_pending_list', () => {
+  if (!isOcrAvailable()) return;
+  const badDoc = subsetAddCard(axisFixDoc(loadTransposedDoc()), []);
+  for (const s of badDoc.screens ?? []) {
+    if (s.root?.children) s.root.children = s.root.children.filter(c => ['add_card_nav_title', 'add_card_bank'].includes(c.id ?? ''));
+  }
+  const { root, ctx } = mkProject(docToYaml(badDoc));
+  const blindCtx = { ...ctx, adapterImageInput: 'none' } as CheckContext;
+  const r = checkCaptureExternalAudit(blindCtx, SPEC_MD);
+  const hit = r.find(x => x.id === 'capture_completeness_external');
+  assert.ok(hit, '应产出 capture_completeness_external 结果');
+  assert.strictEqual(hit!.status, 'WARN', `盲档下应降 WARN（非 agent 无解的 BLOCKER），实际 ${hit!.status}：${hit!.details.slice(0, 200)}`);
+  assert.strictEqual(hit!.severity, 'MAJOR', `盲档下应降 MAJOR，实际 ${hit!.severity}`);
+  assert.ok(/待复核清单|盲档降级/.test(hit!.details), `details 应说明盲档降级：${hit!.details.slice(0, 200)}`);
+  const pendingAbs = blindReviewPendingAbsPath(root, 'homepage');
+  assert.ok(fs.existsSync(pendingAbs), `应写出 blind-review-pending.yaml：${pendingAbs}`);
+  const pendingText = fs.readFileSync(pendingAbs, 'utf-8');
+  assert.ok(/unverifiable_blind/.test(pendingText), 'pending 清单应含 auto_disposition: unverifiable_blind');
+  assert.ok(/entries:/.test(pendingText) && /text:/.test(pendingText), 'pending 清单应含结构化 entries（text 字段）');
+  // 同一坏态在真视觉档（ctx 不覆盖 adapterImageInput）仍应是原 BLOCKER 语义（回归保护，
+  // 门禁强度没有全局放水）——用另一份独立临时目录验证，避免复用同一 root 的写盘副作用。
+  const { ctx: sightedCtx } = mkProject(docToYaml(badDoc));
+  const sightedR = checkCaptureExternalAudit(sightedCtx, SPEC_MD);
+  const sightedHit = sightedR.find(x => x.id === 'capture_completeness_external');
+  assert.ok(sightedHit && sightedHit.status === 'FAIL' && sightedHit.severity === 'BLOCKER',
+    `真视觉档同一坏态仍应 BLOCKER（回归保护）：${JSON.stringify(sightedR.map(v => ({ id: v.id, status: v.status })))}`);
 });
 
 test('p0d_structure_lint_flat_list_and_subtitle', () => {

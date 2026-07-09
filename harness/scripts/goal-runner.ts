@@ -22,9 +22,27 @@ import {
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
-import { buildAwaitHumanConfirmGuidance } from './utils/await-confirm-guidance';
+import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './utils/await-confirm-guidance';
 import { loadResolvedProfile } from '../profile-loader';
+import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
+import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import {
+  clampFidelityByCapability,
+  detectPixel1to1Intent,
+  detectUiRelevantRequirement,
+  discoverReferenceImagesForOcrPrescan,
+  loadProfileOcrToolkit,
+  loadSpecMarkdown,
+  parseFidelityTargetFromHandoffDoc,
+  resolveOcrAvailableForRun,
+  type FidelityTarget,
+} from './utils/fidelity-shared';
+import {
+  parseUiChangeFromSpecMarkdown,
+  parseVisualHandoffYamlRoot,
+  UI_CHANGE_REQUIRES_UI_SPEC,
+} from './utils/ui-spec-shared';
 import {
   classifyPhaseVerdict,
   formatDeferredUpstreamNotice,
@@ -88,6 +106,8 @@ import {
   resolveResumeFromEvents,
   resolveResumeState,
   resolveWallClockStartMs,
+  countCumulativeAdvanceBlocked,
+  countRepeatedSignatureInFamily,
 } from './utils/goal-runner-phase';
 import {
   applyClosurePatchFromReceiptValidation,
@@ -101,6 +121,8 @@ import {
   resolveAdapterProvenance,
   runGoalPreflight,
   reconcileRunAdapter,
+  decideVisionCanaryProbe,
+  runVisionCanaryProbe,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
 import {
@@ -132,8 +154,12 @@ import {
   buildEffectiveBlockerSignature,
   classifyFailureKind,
   extractDeterministicAffectedFiles,
+  isOperatorInterruptSignal,
   shouldHaltNoProgress,
   snapshotArtifacts,
+  ADVANCE_BLOCKED_HALT_THRESHOLD,
+  CUMULATIVE_HALT_FAMILY,
+  CUMULATIVE_HALT_THRESHOLD,
   type ArtifactSnapshot,
   type FailureKind,
 } from './utils/goal-failure-classifier';
@@ -422,9 +448,98 @@ async function runHarnessPhase(
   }
 }
 
-function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePhase, projectRoot: string): string[] {
+/**
+ * E0（多模态降级阶梯 plan d4a8f3c6）：能力探测结果——由 resolvePhaseCapabilityAdvisory 计算，
+ * buildCapabilityBlock/buildUnattendedExecutionBlock 都只读这一份数据（同源取值，cursor 采纳：
+ * 防止能力块与 unattended 块各算一遍、互相矛盾）。null 表示本 phase 非 UI 相关，不注入任何能力信息。
+ */
+export interface CapabilityAdvisory {
+  hasVision: boolean;
+  ocrAvailable: boolean;
+  effectiveFidelity: FidelityTarget;
+  fidelityClamped: boolean;
+  /** OCR 预扫描产出的 project-relative .ocr.json 路径（无参考图/OCR 不可用/有视觉时为空数组） */
+  ocrJsonPaths: string[];
+}
+
+/**
+ * E0：能力感知 phase prompt 块——案B chrys 实证：agent 收到的 phase prompt 里此前零降级
+ * 信息，SKILL 又写死"必须用强 VL 模型"，盲 agent 会硬闯任务而非按能力工作法收口。
+ * 本块把探测结果摆在 agent 面前，明确告诉它该走哪条工作法。
+ */
+export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
+  const lines = [
+    '## Visual capability advisory (auto-detected — trust this over assumptions or phase SKILL defaults)',
+    '',
+    `- Vision (can read images): **${advisory.hasVision ? 'YES' : 'NO'}**`,
+    `- OCR assistance available: **${advisory.ocrAvailable ? 'YES' : 'NO'}**`,
+    `- Effective fidelity target for this run: **${advisory.effectiveFidelity}**` +
+      (advisory.fidelityClamped
+        ? ' (auto-clamped down from a higher desired target by the capability above — this is expected, not a mistake; do not try to "fix" it by editing fidelity_target)'
+        : ''),
+    '',
+  ];
+  if (advisory.fidelityClamped) {
+    lines.push(
+      'This capability-based fidelity downgrade is itself a headless auto-decision: record it in',
+      '`headless-assumptions.md` (see the Unattended execution block below for the exact path and provenance',
+      'format) so a human reviewer can see why fidelity was clamped, even though this run does not stop to ask.',
+      '',
+    );
+  }
+  if (!advisory.hasVision) {
+    lines.push(
+      '**You do NOT have vision.** Do NOT pretend to look at reference images or describe their visual',
+      'content from imagination — that is fabrication and will be caught by verification. Work like this instead:',
+      '- Structure and screen layout: infer from the requirement text and any structured hints available.',
+      '- Text copy and text positions: if OCR JSON files are listed below, treat them as ground truth — copy',
+      '  text verbatim from there, do NOT invent wording.',
+      '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
+      '  claim to have visually verified their appearance.',
+      '- Anything you genuinely cannot determine without seeing the image: register it in the structured',
+      '  blind-review pending list (see phase SKILL reference/ui-spec.md「盲档工作法」) instead of guessing',
+      '  or endlessly re-attempting — that is the correct way to close this out at your capability level.',
+    );
+    if (advisory.ocrJsonPaths.length > 0) {
+      lines.push('', 'OCR JSON for reference images (text + confidence + normalized bbox per word):', '');
+      for (const p of advisory.ocrJsonPaths) lines.push(`- ${p}`);
+    } else {
+      lines.push(
+        '',
+        '(No OCR JSON available for this run — no reference images were found, or OCR is not set up. Work',
+        'from the requirement text only; the effective fidelity above already reflects this.)',
+      );
+    }
+  }
+  lines.push('');
+  return lines;
+}
+
+function buildUnattendedExecutionBlock(
+  manifest: GoalManifest,
+  phase: FeaturePhase,
+  projectRoot: string,
+  capabilityAdvisory?: CapabilityAdvisory,
+): string[] {
   const approval = manifest.unattended?.approval_mode ?? 'never';
   const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
+  // E0（cursor 采纳：同 prompt 自相矛盾预防）——原文硬编码「唯一出路是 pixel_1to1 P0 屏人工
+  // 确认」；盲档下 effective fidelity 根本到不了 pixel_1to1，这句话与能力块（若同时注入）自相
+  // 矛盾。按 capabilityAdvisory（与能力块同源取值）分支措辞；未传入（非 UI phase）时保留原文。
+  const pixelReachable = !capabilityAdvisory || capabilityAdvisory.effectiveFidelity === 'pixel_1to1';
+  const deterministicDetectorLines = pixelReachable
+    ? [
+        '- Deterministic detectors (node_options_injection / visual_diff_tamper_artifact / receipt command scan /',
+        '  drift approval validation) turn any attempt into BLOCKER evidence. The only path through pixel_1to1 P0',
+        '  screens is: fix deterministic signals, then HALT for human per-screen confirmation.',
+      ]
+    : [
+        '- Deterministic detectors (node_options_injection / visual_diff_tamper_artifact / receipt command scan /',
+        '  drift approval validation) turn any attempt into BLOCKER evidence — this applies regardless of fidelity tier.',
+        `  This run's effective fidelity is **${capabilityAdvisory!.effectiveFidelity}** (not pixel_1to1): there is no`,
+        '  per-screen human pixel-confirmation path here. Register genuinely undecidable items in the blind-review',
+        '  pending list (see phase SKILL) instead of fabricating a verdict or endlessly re-attempting.',
+      ];
   return [
     '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
     '',
@@ -452,9 +567,7 @@ function buildUnattendedExecutionBlock(manifest: GoalManifest, phase: FeaturePha
     '  or verdict-filling/resetting scripts; never instruct the operator to set up such bypasses.',
     '- NEVER self-approve framework drift: integrity.drift_allowlist / allow_local_drift take effect only with',
     '  human-named {rationale, approved_by}; agent-added entries are void. Found a framework bug? HALT and report.',
-    '- Deterministic detectors (node_options_injection / visual_diff_tamper_artifact / receipt command scan /',
-    '  drift approval validation) turn any attempt into BLOCKER evidence. The only path through pixel_1to1 P0',
-    '  screens is: fix deterministic signals, then HALT for human per-screen confirmation.',
+    ...deterministicDetectorLines,
   ];
 }
 
@@ -563,6 +676,166 @@ export const VISUAL_GAP_RETRY_GUIDANCE: readonly string[] = [
   '4. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
 ];
 
+/** 参考图 OCR 预扫描输出文件名 slug——core 不可 import profiles/hmos-app 的
+ * sanitizeVisualDiffScreenSlug（层级边界），故本地重写。与 profile 版刻意不同：保留 CJK
+ * 字符（宿主复验实证：中文参考图名"1-银行卡添卡首页"被清成匿名的"1-"后，8 张图变成
+ * 1-/2-/…的编号盲盒，盲 agent 只能靠猜对应哪屏——ClaudeCode 案 7 条 authoritative_refs
+ * 里 5 条接线错误的直接诱因。CJK 在现代文件系统均合法，无需替换）。 */
+function sanitizeOcrPrescanSlug(name: string): string {
+  const slug = name.replace(/[^a-zA-Z0-9_一-鿿-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return slug || 'screen';
+}
+
+/**
+ * 宿主复验修复①：plan/coding 阶段不重跑 OCR（spec 是唯一生产者），但要把 spec 阶段已产出的
+ * ocr.json 列给 agent——此前 coding 阶段 ocrJsonPaths 恒为空数组，能力块落入 else 分支打出
+ * "no reference images were found"，8 份 ocr.json 明明在盘上却对 agent 说没有（宿主两环境
+ * coding prompt 均实测命中此假话文案）。
+ */
+function listExistingOcrPrescanOutputs(
+  projectRoot: string,
+  frameworkRoot: string,
+  feature: string,
+): string[] {
+  const ocrDirAbs = path.join(featurePhaseReportsDir(projectRoot, feature, 'spec', frameworkRoot), 'ocr');
+  try {
+    if (!fs.existsSync(ocrDirAbs)) return [];
+    return fs
+      .readdirSync(ocrDirAbs)
+      .filter((f) => f.endsWith('.ocr.json'))
+      .map((f) => path.relative(projectRoot, path.join(ocrDirAbs, f)).replace(/\\/g, '/'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * E0③（E6-min）：无视觉能力且 OCR 可用时，对 discoverReferenceImagesForOcrPrescan 找到的
+ * 参考图逐张跑 OCR，落 `spec/reports/ocr/<screen>.ocr.json`（幂等——已存在则跳过，OCR 有
+ * 耗时，重试不重复扫）。返回写入的 project-relative 路径，供 phase prompt 引用；
+ * 无图源/OCR 不可用返回空数组（不阻塞、不造假分母）。
+ */
+function runOcrPrescanForSpec(
+  projectRoot: string,
+  frameworkRoot: string,
+  resolvedProfile: HarnessResolvedProfile,
+  manifest: GoalManifest,
+  toolkit: NonNullable<ReturnType<typeof loadProfileOcrToolkit>>,
+): string[] {
+  const images = discoverReferenceImagesForOcrPrescan(projectRoot, manifest.feature, manifest.requirement);
+  if (images.length === 0) return [];
+  const ocrDirAbs = path.join(
+    featurePhaseReportsDir(projectRoot, manifest.feature, 'spec', frameworkRoot),
+    'ocr',
+  );
+  fs.mkdirSync(ocrDirAbs, { recursive: true });
+  const usedSlugs = new Set<string>();
+  const writtenRel: string[] = [];
+  for (const imgAbs of images) {
+    const base = sanitizeOcrPrescanSlug(path.basename(imgAbs, path.extname(imgAbs)));
+    let slug = base;
+    let n = 2;
+    while (usedSlugs.has(slug)) slug = `${base}_${n++}`;
+    usedSlugs.add(slug);
+    const outAbs = path.join(ocrDirAbs, `${slug}.ocr.json`);
+    const rel = path.relative(projectRoot, outAbs).replace(/\\/g, '/');
+    if (fs.existsSync(outAbs)) {
+      writtenRel.push(rel);
+      continue;
+    }
+    try {
+      const result = toolkit.ocrImageWords(imgAbs);
+      // E6①②：若 profile 实现了聚类/噪声过滤/候选提取（同源于 capture_completeness_external
+      // 门禁的同一份函数），把 words 加工成聚类后的 lines 一并写入——agent 看到的是与门禁
+      // 判定同一套切分结果的结构化行（含候选真文本+列分组提示），不必自己从原始词框重新聚类，
+      // 也不会"agent 按一种方式分行、门禁按另一种方式判定"。profile 未实现这些扩展时
+      // （ProfileOcrToolkit 的 E6 字段均可选）优雅降级为只写原始 words，不阻断。
+      const rawWords = result.words ?? [];
+      const clustered = toolkit.clusterOcrLines?.(rawWords);
+      const audited = clustered && toolkit.collectAuditableOcrLines
+        ? toolkit.collectAuditableOcrLines(clustered)
+        : clustered;
+      const lines = audited?.map((line) => {
+        const candidate = toolkit.extractLikelyRealTextRun?.(line.text);
+        const columnGroups = toolkit.detectColumnGroups?.(line);
+        return {
+          text: line.text,
+          y: Number((line.box[1] + line.box[3] / 2).toFixed(4)),
+          ...(candidate ? { candidate_text: candidate.candidate } : {}),
+          ...(columnGroups && columnGroups.length > 1 ? { column_groups: columnGroups } : {}),
+        };
+      });
+      // source_image：回指原参考图（project-relative）。宿主复验实证：没有这个字段时
+      // 盲 agent 无法确定性对应"哪个 ocr.json 是哪张图/哪个屏"，只能靠文件名猜。
+      const sourceImageRel = path.relative(projectRoot, imgAbs).replace(/\\/g, '/');
+      const enriched = { ...result, source_image: sourceImageRel, ...(lines ? { lines } : {}) };
+      fs.writeFileSync(outAbs, JSON.stringify(enriched, null, 2), 'utf-8');
+      writtenRel.push(rel);
+    } catch {
+      /* 单图 OCR 失败不阻断其余——best-effort 上下文，非门禁产物 */
+    }
+  }
+  return writtenRel;
+}
+
+/**
+ * E0：UI 需求 spec/plan/coding phase 的能力感知计算——返回 null 表示非 UI 相关或非目标 phase，
+ * 调用方不注入能力块。impure（探测 adapter/profile/spec.md、跑 OCR 预扫描）；
+ * buildPhasePrompt/buildCapabilityBlock/buildUnattendedExecutionBlock 只读其结果，保持纯函数。
+ * 宿主复验修复②：原范围只有 spec/coding，plan phase advisory=null 导致 unattended 块落回
+ * 旧 pixel_1to1 人签措辞——盲档 run 的 plan prompt 里出现与实际档位自相矛盾的指令
+ * （Chrys 案 plan prompt 实测命中），故扩到 plan。
+ */
+export function resolvePhaseCapabilityAdvisory(
+  manifest: GoalManifest,
+  projectRoot: string,
+  frameworkRoot: string,
+  resolvedProfile: HarnessResolvedProfile,
+  phase: FeaturePhase,
+): CapabilityAdvisory | null {
+  if (phase !== 'spec' && phase !== 'plan' && phase !== 'coding') return null;
+
+  // spec.md 存在（coding 阶段必然存在；spec 阶段重试时也可能已存在）→ 读真实声明（更权威）；
+  // 否则（spec 阶段首次 invoke）退回需求文本启发式（宽松 UI 相关性 + 1:1 强意图探测）。
+  const specMd = loadSpecMarkdown(projectRoot, manifest.feature);
+  let isUiRelevant: boolean;
+  let desired: FidelityTarget;
+  if (specMd) {
+    const uiChange = parseUiChangeFromSpecMarkdown(specMd);
+    isUiRelevant = uiChange !== null && UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
+    desired = parseFidelityTargetFromHandoffDoc(parseVisualHandoffYamlRoot(specMd));
+  } else {
+    isUiRelevant = detectUiRelevantRequirement(manifest.requirement);
+    desired = detectPixel1to1Intent(manifest.requirement) ? 'pixel_1to1' : 'semantic_layout';
+  }
+  if (!isUiRelevant) return null;
+
+  const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
+  const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
+  // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
+  // 判定其无视觉）——OR 进 ocrAvailable，不替代框架自身 OCR 环境探测（后者更可靠/确定性）。
+  // cursor review（E6 后）：与 harness-runner.ts 门禁钳制共用同一口径，不再各算一遍。
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter);
+  const clamp = clampFidelityByCapability(desired, { hasVision: mmProbe.supported, ocrAvailable });
+
+  // spec 是 OCR 预扫描的唯一生产者（有真实 OCR 耗时）；plan/coding 只列出盘上已有的产物
+  // （宿主复验修复①——此前 plan/coding 恒为空数组，能力块对 agent 谎称"没找到参考图"）。
+  const ocrJsonPaths = !mmProbe.supported && ocrAvailable
+    ? phase === 'spec' && toolkit
+      ? runOcrPrescanForSpec(projectRoot, frameworkRoot, resolvedProfile, manifest, toolkit)
+      : listExistingOcrPrescanOutputs(projectRoot, frameworkRoot, manifest.feature)
+    : [];
+
+  return {
+    hasVision: mmProbe.supported,
+    ocrAvailable,
+    effectiveFidelity: clamp.effective,
+    fidelityClamped: clamp.clamped,
+    ocrJsonPaths,
+  };
+}
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   projectRoot: string,
@@ -573,6 +846,7 @@ export function buildPhasePrompt(
   priorFailureKind?: FailureKind,
   partialResumeArtifacts?: string[],
   resumeSkipLines?: string[],
+  capabilityAdvisory?: CapabilityAdvisory | null,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -582,7 +856,8 @@ export function buildPhasePrompt(
     manifest.requirement ? `Requirement:\n${manifest.requirement}` : '',
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
-    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot),
+    ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
+    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined),
     '',
     '## Orchestrator constraints (BLOCKER)',
     '',
@@ -953,6 +1228,7 @@ async function main(): Promise<number> {
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
       'override-adapter',
       'detach', 'detached-child', 'force', 'foreground-ok',
+      'refresh-vision-probe',
     ],
     alias: { f: 'feature', h: 'help' },
   });
@@ -1126,6 +1402,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain,
       resolvedProfile,
     });
+
+    // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
+    // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
+    // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
+    // 探测失败/异常不阻断 run（保守：让主流程走既有 adapter 声明路径继续）。
+    const visionProbeDecision = decideVisionCanaryProbe({
+      projectRoot,
+      manifest,
+      chain,
+      dryRun,
+      forceRefresh: Boolean(argv['refresh-vision-probe']),
+    });
+    if (visionProbeDecision.action === 'probe') {
+      const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
+      if (probeResult.ran) {
+        console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
+      } else if (probeResult.error) {
+        console.warn(`[goal-runner] 视觉能力金丝雀实测跳过/失败（不阻断 run）：${probeResult.error}`);
+      }
+    }
+
     // override 回写延后至此：survival guard / orphan guard / lock / preflight 全过，run 即将 commit 才切 local，
     // 避免任一启动前置 BLOCKER 退出却已把 framework.local.json 切走（run 没真启动 local 却变了）。
     if (pendingAdapterWriteback) {
@@ -1340,6 +1637,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
             )
           : [];
 
+        // E0：UI 需求 spec/plan/coding phase 能力感知——非 UI 相关 / 其余 phase 返回 null，
+        // 不注入能力块（不打扰无关 phase 的 prompt）。
+        const capabilityAdvisory = resolvePhaseCapabilityAdvisory(
+          manifest,
+          projectRoot,
+          frameworkRoot,
+          resolvedProfile,
+          phase,
+        );
+
         const prompt = buildPhasePrompt(
           manifest,
           projectRoot,
@@ -1350,6 +1657,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           priorFailureKind,
           partialResumeArtifacts,
           resumeSkipLines,
+          capabilityAdvisory,
         );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -1547,10 +1855,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           outputLogBytes,
           AGENT_NO_OUTPUT_MAX_DURATION_MS,
         );
+        // E4（案B chrys 实录：exit=3221225786 两次被误判 code_regression/agent_no_output）：
+        // 用户手动 Ctrl+C，不是任何一种"失败"信号，最高优先单独识别。
+        const operatorInterrupt = isOperatorInterruptSignal(invoke.exitCode, invoke.signal);
         const failureKind = classifyFailureKind(summary, manifest.dependency_policy, {
           agentTimedOut: invoke.timed_out === true,
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
+          operatorInterrupt,
         });
         // P0-B §七.3：agent_timeout 无普通 blocker 时用专用 signature（agent_timeout@<phase>），
         // 否则空 signature 被 shouldHaltNoProgress 短路、零进展熔断恒不触发。
@@ -1581,8 +1893,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
-        // P0-D.3 哨兵优先级：agent_timeout > headless_interaction_required > transient_api_error > blocker。
-        if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
+        // P0-D.3 哨兵优先级：operator_interrupt > agent_timeout > headless_interaction_required >
+        // transient_api_error > blocker。E4：用户手动中断压过一切（含 verdict===PASS 的边缘情况——
+        // 中断就是中断，不因为脚本恰好跑完就当没发生）。
+        if (operatorInterrupt) {
+          action = 'halt';
+          haltReason = 'operator_interrupt';
+        } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
           action = 'halt';
           haltReason = 'headless_interaction_required';
         } else if (agentNoOutput && verdict !== 'PASS') {
@@ -1638,15 +1955,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   failureKind === 'agent_timeout'
                 ? `no_progress_${failureKind}`
                 : 'no_progress_guard';
+        } else if (
+          // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
+          // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
+          // （chrys 案实证：signature 因 verdict 摆动而不同，guard 被绕过）。这里改从 events.jsonl
+          // 回放**累计**同一 signature 在 CUMULATIVE_HALT_FAMILY 家族内出现次数，与紧邻性无关。
+          CUMULATIVE_HALT_FAMILY.has(failureKind) &&
+          currentBlockerSignature &&
+          countRepeatedSignatureInFamily(
+            loadEventsJsonl(eventsPath),
+            phase,
+            currentBlockerSignature,
+            CUMULATIVE_HALT_FAMILY,
+          ) +
+            1 >=
+            CUMULATIVE_HALT_THRESHOLD
+        ) {
+          action = 'halt';
+          haltReason = `no_progress_cumulative_${failureKind}`;
         } else if (failureKind === 'agent_timeout' && verdict !== 'PASS') {
           // P0-B.5：超时+有进展（guard 未熔断）→ resume 续作，不吃内容重试预算；
           // 全局仍受 wall_clock + max_total_turns 兜底（checkRunBudget 每轮重查）。
           action = 'retry';
         } else if (resolved.advance_blocked) {
-          if (resolved.advance_block_reason === 'agent_timeout_unclosed') {
-            // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的续跑不受 max_retries
-            // 闸控（原逻辑 attempt3 预算耗尽即 halt，须人工 resume 重置计数才熬过）；
-            // 零进展熔断由上方 guard 负责（agent_timeout@<phase> 专用 signature）。
+          // E4（案B chrys 实证：advance_blocked 两次分别以不同 reason 出现——closure_open 类走
+          // max_retries_per_phase 兜底但慢，agent_timeout_unclosed 类曾**无任何上限**、真无限
+          // 重试）。累计（含本次）达到 ADVANCE_BLOCKED_HALT_THRESHOLD 即 halt 求人，不看具体
+          // reason：script 门禁反复"PASS 却关不了环"本身就是这个 phase 结构性关不了环的信号——
+          // 给一次重试机会（也许只是没来得及关环），第二次即不再自证突破。
+          const cumulativeAdvanceBlocked =
+            countCumulativeAdvanceBlocked(loadEventsJsonl(eventsPath), phase) + 1;
+          if (cumulativeAdvanceBlocked >= ADVANCE_BLOCKED_HALT_THRESHOLD) {
+            action = 'halt';
+            haltReason = 'closure_wall_repeated';
+            awaitConfirmGuidance = buildClosureWallGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase,
+              receiptPathRel: relFeatureFile(projectRoot, manifest.feature, `${phase}/phase-completion-receipt.md`),
+              harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+              receiptStatus: summary?.receipt_status,
+              cumulativeBlockedCount: cumulativeAdvanceBlocked,
+            }).join('\n');
+            console.log(`\n===== closure_wall_repeated =====\n${awaitConfirmGuidance}\n`);
+          } else if (resolved.advance_block_reason === 'agent_timeout_unclosed') {
+            // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的首次续跑不受 max_retries
+            // 闸控（给一次机会补关环）；第二次即上面的累计分支接管，不再无限重试。
             action = 'retry';
           } else if (retries < manifest.budget.max_retries_per_phase) {
             action = 'retry';
@@ -1670,6 +2024,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           failure_kind: meta.failure_kind,
           failure_kind_classified: failureKind,
           blocker_signature: currentBlockerSignature || undefined,
+          // E4：持久化 advance_blocked 状态，供下一次 attempt 的 countCumulativeAdvanceBlocked
+          // 事件回放统计使用（events.jsonl 是唯一 SSOT，非内存计数，resume/detach 重启不丢）。
+          advance_blocked: resolved.advance_blocked || undefined,
+          advance_block_reason: resolved.advance_block_reason,
           halt_reason: haltReason,
           interaction_question: interactionSentinel?.error,
           // P0-B/P0-D 诚实归因：让下游排障者（人/AI）一眼见真因，不再有"缺 API key"式臆造空间。
@@ -1797,7 +2155,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...(haltReason === 'await_human_visual_confirm' && awaitConfirmGuidance
+          ...((haltReason === 'await_human_visual_confirm' || haltReason === 'closure_wall_repeated') &&
+          awaitConfirmGuidance
             ? { halt_guidance: awaitConfirmGuidance }
             : {}),
           interaction_question: interactionSentinel?.error,
