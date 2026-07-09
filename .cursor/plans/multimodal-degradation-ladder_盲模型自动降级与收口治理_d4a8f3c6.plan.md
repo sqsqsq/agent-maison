@@ -711,6 +711,110 @@ codex 复核指出：代码侧门禁已全绿，但 `npm run release:check-plans
 - 复验结果建议回填本文件（新增一节记录结论），供后续 plan 立项参考；不强制在回填前完成，
   因为该清单已不再是 `release:check-plans` 的阻断项。
 
+## 宿主实机复验结果（2026-07-09，用户在真实宿主执行，数据归档 D:\97.log\问题反馈\07-09\宿主反馈）
+
+宿主集成最新 framework 后，用原始 bc-openCard 银行卡需求（7 页面 + 8 张参考图）在两个
+agent 环境各重跑一次完整 goal run：Chrys（chrys adapter，run 20260709T030831Z，链
+spec→plan→coding）与 ClaudeCode（claude adapter，实际后端为 mx 2.7 纯文本模型套壳，run
+20260709T031657Z，链 spec→testing）。分析方法：events.jsonl/detach.log/phases prompt/
+产物/dialogue.txt 八切片并行深读 + 源码交叉核对。
+
+### 两案主线判定：均修复 ✅
+
+- **案A（假视觉戳穿）修复确认**：两环境 detach.log 首行均为
+  「[goal-runner] 视觉能力金丝雀实测完成：verdict=none（已缓存至 framework.local.json）」——
+  包括声明 tool_read 的 "claude" 壳（真 Claude 应判 tool_read，实测 none = 壳后是纯文本模型，
+  金丝雀击穿了声明式伪装）。两环境 spec prompt 均注入完整能力块（Vision NO / OCR YES /
+  effective=semantic_layout + 盲档工作法四条 + 8 个 OCR JSON 路径清单），unattended 块走
+  blind-review pending 措辞（非 pixel_1to1 人签死路）。ClaudeCode 侧 agent 严格执行盲档
+  工作法：spec 文案逐字实抄 OCR（"185****3841"/"55秒后重试"/"南京优芙得餐饮管理有限公司"
+  等全部命中 OCR 原文），自写 spec/blind-review-pending.md 显式挂起 6 项盲区 + 5 条人工
+  复核项，零假装看图。E6 增强确认在产物里：全部 8 个 ocr.json 含 lines[]（text/y/
+  candidate_text/column_groups），案B 实录噪声"人《AA招商银行"被正确提取 candidate_text
+  "招商银行"。
+- **案B（spec 死循环）修复确认**：Chrys spec 3 次尝试收敛（45min 超时→45min 超时+
+  advance_blocked=agent_timeout_unclosed 首次让路→27.5min 干净闭环 advance），对比原始
+  8 invoke/4h19m 永不闭环；plan 一次过（48.5min，90min 预算内）。E4 的
+  agent_timeout_unclosed 首次 retry 让路逻辑按设计运转。ClaudeCode spec 2 次过。
+- **operator_interrupt 分类确认**：ClaudeCode coding 第 3 次尝试中用户 Ctrl+C
+  （harness_exit=3221225786=0xC000013A），正确归类 operator_interrupt、干净
+  halt + run_end status=HALTED + goal-report.json 完整落盘——不再是原来的中断残局。
+- **stdin 修复确认**：events.jsonl 里 command 均为 `claude -p …`/`chrys run …`（prompt 不在
+  argv），6+5 次 invoke 全部产出真实产物（原始 bug 下 claude 收到 2 字符截断 prompt 零产出）。
+- **「不能出异常中断」目标曲线**：两 run 要么前进要么干净收口，无一次异常中断。产物均达
+  可用水平（门禁 PASS、closure closed）。质量差异非干净阶梯而是互补型缺陷（见下）。
+
+### 观察项数据回填（cursor E7 观察清单）
+
+- **chrys residual 超时压力：确认存在**。spec 3 invoke 中 2 次打满 45min 预算（2700722ms/
+  2701201ms）；coding invoke 归档时已跑 45min 零 stdout（chrys 是退出时一次性落盘，
+  plan 阶段对照组证明 heartbeat agent_output_bytes=0 是 chrys 常态非挂死；归档前 3 分钟
+  agent 还在会话内自跑 hvigor 构建+harness 自检，属正常修复循环；coding 预算 90min，
+  归档时还有 45min 余量，run 终态在归档快照之外，未知）。缓解入口已有：
+  unattended.phase_timeout_seconds 可 per-phase 调大。
+- **金丝雀耗时：未记录**。detach.log 只有一行"实测完成"，无开始行/耗时字段；从 run_id 时间戳
+  到 run_start 事件推算约 25s（ClaudeCode）。E7 想要的耗时数据本次拿不到——探测执行有据、
+  时长无据（见新发现⑤）。
+- **stdout/stderr 误判风险：本次未发生**（两环境均正常判定），维持观察。
+- **OCR 预跑耗时：无日志**（detach.log 零条 OCR 预扫描记录），仅能从产物存在性证明执行过。
+
+### 新问题与额外发现（按优先级）
+
+- **P1① coding 阶段 OCR 断供 + 误导文案**：resolvePhaseCapabilityAdvisory 只在
+  phase==='spec' 时产出 ocrJsonPaths，coding 时为 []，buildCapabilityBlock 落入 else 分支
+  打出「(No OCR JSON available for this run — no reference images were found...)」——8 个
+  ocr.json 明明在盘上，coding prompt 却对 agent 说"没找到参考图"。E0 实施记录当时声明这是
+  有意收窄，但没预料到 else 文案会变成假话。两环境 coding prompt 均实测命中。
+- **P1② plan 阶段 unattended 块旧 pixel_1to1 措辞复活**：能力块只注入 spec/coding，plan
+  phase advisory=null → buildUnattendedExecutionBlock 走 pixelReachable=true 旧分支，打出
+  「The only path through pixel_1to1 P0 screens is...HALT for human per-screen
+  confirmation」——盲档 run 的 plan prompt 里出现了与实际档位（semantic_layout）自相矛盾的
+  指令（Chrys plan prompt 实测命中）。cursor 最初抓的自相矛盾问题在 plan phase 还有残留。
+- **P1③ OCR slug 吞 CJK → 参考图匿名化 → 接线错误**：sanitizeOcrPrescanSlug 把
+  "1-银行卡添卡首页.jpg" 清洗成 "1-.ocr.json"（CJK 全部替换为 _ 后被 trim），8 个文件变成
+  1-/1-2-/2-/.../7 的匿名编号；且 ocr.json 内容里没有 source_image 字段回指原图。直接后果
+  实测：ClaudeCode spec 的 authoritative_refs 7 条里 5 条指错 OCR 文件（已逐一用 OCR 内容
+  核对），blind-review-pending.md 复现同样错误映射——静默污染下游 plan/coding 的视觉对齐。
+- **P2④ 盲档字段级假溯源（新失败模式）**：Chrys ui-spec.yaml 给 brand.cmb/brand.icbc 颜色
+  token 标 sampled:true + 编造 source_bbox（声称采样了 #C7000B，而其自身 notes 承认无视觉
+  能力）；另有编造交易日期 2024-01-15（OCR 原文 2026年3月13日）、OCR 乱码"FRR AS RN"直接
+  泄漏进 card_brand 字段。门禁提案：adapterImageInput=none 时 ui-spec 出现
+  sampled:true/measured 类溯源声明 → BLOCKER（盲档不可能采样）。
+- **P2⑤ authoritative_refs 锚文本一致性无校验**：P1③ 的 5/7 接线错误全部静默过门禁。
+  门禁提案：refs 指向的 OCR 文件内容与 spec 该屏声明文案做锚文本交叉校验，对不上 → WARN。
+- **P2⑥ 金丝雀 verdict 对编排端不可见**：verdict 只写 detach.log 第 1 行 + framework.local.json，
+  events.jsonl 无 canary 事件、goal-report/progress 无体现。实测后果：宿主编排 agent 全程
+  不知道 verdict=none，按普通 run 无限轮询强视觉需求，预期管理失效。提案：canary 结果写
+  events.jsonl 事件 + goal-report 首屏。
+- **P3⑦** PASS 的 phase_verdict 上 failure_kind_classified 仍写 code_regression（语义噪声）；
+  重试 attempt 无 phase_start 事件（重试只能从 verdict 反推）；operator_interrupt halt 无
+  引导话术（closure_wall/visual_confirm 有，此路径没有）；DEP0190 DeprecationWarning
+  （shell:true 未转义 args）。
+- **宿主侧问题（非本框架代码，记录供宿主改进）**：宿主编排 agent goal-monitor
+  --since-event 游标误用导致状态误读（把 PASS 报成 FAIL、把 coding retry 报成 advance to
+  review）；把 claude adapter 空输出误套 chrys 经验；ClaudeCode coding 卡死在
+  resource_integrity（165 处 $r() 引用两次尝试零收敛——盲模型编造资源 token 无法自愈，
+  重试预算兜底住了上限但每轮 20min 仍是浪费，可考虑同 signature 零收敛的 code_regression
+  注入更强修复指导或纳入累计 halt 观察）；Chrys dialogue 里宿主 agent 把监控"委托给后台子
+  agent"（SKILL 明确警告过会被宿主回收的场景）。
+- **E2 钳制端到端：本次未被行使（如实声明）**。需求原文"尽量一致"未触发 1:1 强意图，
+  agent 又如实声明 semantic_layout → desired==effective，无输入可钳，
+  fidelity_target_capability_clamped/readiness_signal 不出现是正确行为（初步分析曾误判为
+  "宿主门禁版本旧"，经源码核对纠正）。E2 的钳制分支要等真实 pixel_1to1 需求才能在宿主
+  上验证。同理 blind-review-pending.yaml（capture 审计产物）本次未产出属预期——两 run 都
+  没跑到有设备截图可审的阶段，ClaudeCode 的 spec/blind-review-pending.md 是 SKILL 层
+  agent 自写产物，与门禁 yaml 是两条线（暴露改进点：SKILL 层 spec 阶段盲档待复核清单
+  没有钦定路径/格式，两个 agent 各自发挥——ClaudeCode 写了 .md，Chrys 写进
+  ui-spec fidelity_deferrals + headless-assumptions，下游无法确定性定位）。
+
+### 结论
+
+多模态降级阶梯 plan 的全部预期目标在真实宿主上验证通过：金丝雀击穿套壳、盲档降级生效、
+OCR 管线端到端工作、spec 死循环根治、干净收口、无异常中断。新发现按 P1×3 + P2×3 + P3×1 +
+宿主侧若干记录在案，均为改进项而非回归——原始两案没有任何一个特征复现。P1①②③ 建议下一个
+plan 窗口处理（①②是同一根因：能力块注入范围与 unattended 措辞分支的 phase 覆盖不齐；
+③是 slug 清洗与 ocr.json 自描述缺失的组合拳）。
+
 ## P0 主链完工小结（2026-07-08）
 
 多模态降级阶梯 plan 的 P0 六件套（E4 收口治理 → E2 档位钳制 → E0 能力感知 prompt →
