@@ -42,7 +42,12 @@ export function __testing_setDetectScanForEnsure(fn: DetectScanFn | null): void 
   detectScanForEnsure = fn ?? detectScan;
 }
 
-/** 与 init-task-executor mergeLocal 一致：保留既有 toolchain 等字段 */
+/**
+ * 与 init-task-executor mergeLocal 一致：保留既有 toolchain 等字段。
+ * vision 无感保留（I1 修复 plan b7e42d19）：原实现只 spread agent_adapter/toolchain，
+ * --ensure 一跑就把 goal/交互式金丝雀写入的 vision.canary 整段抹掉——探测缓存本应无感
+ * 持久，此处按 patch 优先、否则保留 base 的既有 vision。
+ */
 function mergeLocalPatch(
   projectRoot: string,
   patch: Partial<FrameworkLocalConfig>,
@@ -53,6 +58,7 @@ function mergeLocalPatch(
     schema_version: LOCAL_SCHEMA_VERSION,
     ...(base.agent_adapter ? { agent_adapter: base.agent_adapter } : {}),
     ...(base.toolchain ? { toolchain: { ...base.toolchain } } : {}),
+    ...(base.vision ? { vision: { ...base.vision } } : {}),
   };
   if (patch.agent_adapter) next.agent_adapter = patch.agent_adapter;
   if (patch.toolchain?.devEcoStudio) {
@@ -63,6 +69,9 @@ function mergeLocalPatch(
         ...patch.toolchain.devEcoStudio,
       },
     };
+  }
+  if (patch.vision) {
+    next.vision = { ...(next.vision ?? {}), ...patch.vision };
   }
   return next;
 }

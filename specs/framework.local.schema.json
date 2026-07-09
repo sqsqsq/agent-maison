@@ -27,6 +27,38 @@
         }
       },
       "additionalProperties": false
+    },
+    "vision": {
+      "type": "object",
+      "description": "Multimodal capability descent ladder (plan d4a8f3c6 / b7e42d19); written silently by the canary probe, never hand-edited",
+      "properties": {
+        "image_input_override": {
+          "type": "string",
+          "enum": ["none", "tool_read", "native_attach"],
+          "description": "User explicit override; skips capability probe entirely"
+        },
+        "canary": {
+          "type": "object",
+          "description": "Visual-capability canary probe result cache",
+          "required": ["adapter", "verdict", "probed_at"],
+          "properties": {
+            "adapter": { "type": "string" },
+            "verdict": {
+              "type": "string",
+              "enum": ["tool_read", "ocr_capable", "none"]
+            },
+            "probed_at": { "type": "string" },
+            "reason": { "type": "string" },
+            "probed_via": {
+              "type": "string",
+              "enum": ["goal", "interactive"],
+              "description": "Probe origin; absent treated as 'goal' (backward compat)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

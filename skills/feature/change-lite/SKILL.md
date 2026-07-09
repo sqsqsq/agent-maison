@@ -7,6 +7,7 @@
 - 工程已完成 [`framework-init`](../../project/framework-init/SKILL.md)（`framework.config.json` 有效，`paths` / `architecture` 已写入）。
 - 跑 harness 前须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。
 - **Personal setup（BLOCKER）**：`cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure`；仅解析 JSON（[personal-setup-gate](../../reference/personal-setup-gate.md)）。
+- **视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 - **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)。
 
 ## 概述

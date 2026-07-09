@@ -86,6 +86,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
   { id: 'vision-canary', modulePath: './unit/vision-canary.unit.test' },
+  { id: 'vision-canary-interactive', modulePath: './unit/vision-canary-interactive.unit.test' },
   { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },
   { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
   { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },

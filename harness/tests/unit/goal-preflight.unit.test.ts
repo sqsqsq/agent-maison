@@ -481,6 +481,32 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.deepStrictEqual(d, { action: 'probe' });
       }),
   },
+  {
+    name: 'I2 decideVisionCanaryProbe: 超龄 interactive 缓存 → probe（重探）；同龄 goal 缓存 → skip（不受 TTL）',
+    run: () =>
+      withTmp((root) => {
+        const staleAt = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+        const manifest = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'interactive' } },
+        });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
+          { action: 'probe' },
+          '超龄 interactive 应重探',
+        );
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'goal' } },
+        });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
+          { action: 'skip', reason: 'fresh_cache_present' },
+          'goal 来源超龄仍 skip',
+        );
+      }),
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

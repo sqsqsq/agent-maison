@@ -9,9 +9,11 @@ import { clearFrameworkConfigCache } from '../../config';
 import {
   ensurePersonalSetup,
   evaluatePersonalSetupGate,
+  recordAdapterToLocal,
   resolveEnsurePrerequisites,
   __testing_setDetectScanForEnsure,
 } from '../../scripts/utils/personal-setup-gate';
+import { loadLocalConfig, writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { resolvePhasePersonalPrerequisites } from '../../scripts/utils/phase-personal-prerequisites';
 import { loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -54,6 +56,30 @@ function writeProjectConfig(root: string, materialized: string[], profileName = 
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'mergeLocalPatch 无感保留 vision（I1 修复 plan b7e42d19）：写 agent_adapter 不抹掉已有 vision.canary',
+    run: () => {
+      const root = mkTmp();
+      // 既有 local：vision.canary（交互式金丝雀写入）+ image_input_override
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        agent_adapter: 'cursor',
+        vision: {
+          image_input_override: 'tool_read',
+          canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: '2026-07-09T00:00:00.000Z', probed_via: 'interactive' },
+        },
+      });
+      // recordAdapterToLocal → mergeLocalPatch：修复前会把整段 vision 抹掉
+      recordAdapterToLocal(root, 'cursor');
+      const after = loadLocalConfig(root);
+      assert.strictEqual(after?.agent_adapter, 'cursor');
+      assert.strictEqual(after?.vision?.image_input_override, 'tool_read', 'image_input_override 应保留');
+      assert.strictEqual(after?.vision?.canary?.verdict, 'tool_read', 'vision.canary 应保留（修复前被抹掉）');
+      assert.strictEqual(after?.vision?.canary?.probed_via, 'interactive');
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
   {
     name: 'evaluatePersonalSetupGate: fallback 拒绝',
     run: () => {

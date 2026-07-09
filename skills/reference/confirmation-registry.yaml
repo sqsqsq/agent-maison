@@ -535,6 +535,21 @@ entries:
         label: "改层 — 用户指定正确落点层后重新分类"
         portable: "2=改层"
 
+  - id: vision.blind_tier
+    skill: "_cross_phase"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "交互式视觉能力自测判卷为 none/ocr_capable 后（UI 相关阶段）"
+    portable_menu: "1=接受降级继续 2=拒绝（换模型/override）"
+    notes: "交互式视觉能力自测（I1 plan b7e42d19）判定当前模型无视觉（none）或仅 OCR（ocr_capable）时，一次性告知用户判定结果 + 本 feature 将生效的 effective fidelity 档位 + OCR 辅助可用性，enum 确认一次。默认=接受按 semantic_layout/reference_only 降级档继续；拒绝→指引设 vision.image_input_override 或换有视觉能力的模型后重测。留痕沿 headless-assumptions/user-confirmation-ux 惯例，不新造确认基建。仅交互式（headless 走 §9 保守默认，不问人）。"
+    options:
+      - value: accept
+        label: "接受降级 — 按钳制后的 fidelity 档位（semantic_layout/reference_only）继续，OCR 辅助按判定"
+        portable: "1=接受降级继续"
+      - value: reject
+        label: "拒绝 — 换有视觉能力的模型或设 vision.image_input_override 后重测，不在盲档下继续"
+        portable: "2=拒绝"
+
   # --- code-review review ---
   - id: review.module_name
     skill: "code-review"

@@ -22,7 +22,7 @@ import {
   loadGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
-import { resolveGoalEffectiveImageInput } from './multimodal-probe';
+import { resolveGoalEffectiveImageInput, isVisionCanaryFresh } from './multimodal-probe';
 import {
   invokeAgentHeadless,
   resolveHeadlessInvokePlan,
@@ -297,8 +297,9 @@ export function decideVisionCanaryProbe(input: {
   if (local?.vision?.image_input_override) {
     return { action: 'skip', reason: 'local_override_present' };
   }
+  // I2：新鲜度单点判据（超龄 interactive 缓存不算新鲜 → 重探；goal 缓存不受 TTL 影响）。
   const canary = local?.vision?.canary;
-  if (!forceRefresh && canary && canary.adapter === adapter) {
+  if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
     return { action: 'skip', reason: 'fresh_cache_present' };
   }
   return { action: 'probe' };
@@ -349,6 +350,7 @@ export async function runVisionCanaryProbe(input: {
           verdict: classify.verdict,
           probed_at: new Date().toISOString(),
           reason: classify.reason,
+          probed_via: 'goal',
         },
       },
     });

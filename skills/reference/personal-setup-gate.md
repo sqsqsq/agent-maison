@@ -94,3 +94,4 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 
 - Tier_1 npm：[host-harness-readiness.md](./host-harness-readiness.md)
 - 项目 vs personal：[framework-init](../project/framework-init/SKILL.md)
+- 视觉能力实测（personal-setup 后置，UI 相关阶段·交互式）：[interactive-vision-canary](./interactive-vision-canary.md)——自测卷判卷无感写 `framework.local.json` 的 `vision.canary`，盲档确认走 registry `vision.blind_tier`

@@ -20,12 +20,16 @@ export const LOCAL_SCHEMA_VERSION = '1.0';
  * （framework-local-config.ts 是纯 config 层，不反向 import multimodal-probe，避免循环）。 */
 const LOCAL_IMAGE_INPUT_VALUES = new Set(['none', 'tool_read', 'native_attach']);
 const LOCAL_CANARY_VERDICT_VALUES = new Set(['tool_read', 'ocr_capable', 'none']);
+/** I1（交互式金丝雀 plan b7e42d19）：探测来源——goal preflight 写 'goal'，交互式判卷写 'interactive'。 */
+const LOCAL_CANARY_PROBED_VIA_VALUES = new Set(['goal', 'interactive']);
 
 export interface FrameworkLocalConfigVisionCanary {
   adapter: string;
   verdict: 'tool_read' | 'ocr_capable' | 'none';
   probed_at: string;
   reason?: string;
+  /** I1：探测来源；缺省视作 'goal'（向后兼容 E1 已写的无该字段缓存）。 */
+  probed_via?: 'goal' | 'interactive';
 }
 
 export interface FrameworkLocalConfigVision {
@@ -159,12 +163,24 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
       if (typeof probedAt !== 'string' || !probedAt.trim()) {
         throw new Error('[framework-local-config] vision.canary.probed_at 必须是非空字符串（ISO 时间戳）');
       }
+      const probedVia = canaryObj.probed_via;
+      if (
+        probedVia !== undefined &&
+        (typeof probedVia !== 'string' || !LOCAL_CANARY_PROBED_VIA_VALUES.has(probedVia))
+      ) {
+        throw new Error(
+          `[framework-local-config] vision.canary.probed_via 必须是 goal|interactive，收到 ${String(probedVia)}`,
+        );
+      }
       outVision.canary = {
         adapter: adapter.trim(),
         verdict: verdict as FrameworkLocalConfigVisionCanary['verdict'],
         probed_at: probedAt.trim(),
         ...(typeof canaryObj.reason === 'string' && canaryObj.reason.trim()
           ? { reason: canaryObj.reason.trim() }
+          : {}),
+        ...(typeof probedVia === 'string' && LOCAL_CANARY_PROBED_VIA_VALUES.has(probedVia)
+          ? { probed_via: probedVia as FrameworkLocalConfigVisionCanary['probed_via'] }
           : {}),
       };
     }

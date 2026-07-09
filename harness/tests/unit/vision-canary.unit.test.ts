@@ -6,6 +6,7 @@ import * as path from 'path';
 import {
   canaryAssetPaths,
   classifyCanaryResponse,
+  isCanaryAnswerComplete,
   buildCanaryPrompt,
   ensureVisionCanaryAsset,
   CANARY_ANSWER_KEY,
@@ -97,6 +98,24 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q',
       );
       assert(withoutTool.externalToolSuspected === false, JSON.stringify(withoutTool));
+    },
+  },
+  {
+    name: 'isCanaryAnswerComplete（codex P2 二轮）：半写入不完整 → false；全键齐/CANNOT_SEE_IMAGE → true；空 → false',
+    run: () => {
+      // 半写入：只落了第一行（codex 给的原例）→ 不完整，收卷器应继续等
+      assert(isCanaryAnswerComplete('TOP_LEFT_COLOR=red\n') === false, '半写入非空内容不应算完整');
+      assert(isCanaryAnswerComplete('TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\n') === false, '缺 BL/BR/TEXT_TOKEN 键不完整');
+      // 全部 4 几何键 + TEXT_TOKEN → 完整（值不论）
+      assert(
+        isCanaryAnswerComplete('TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=ABC') === true,
+        '五键齐应完整',
+      );
+      // CANNOT_SEE_IMAGE 单独一行 → 完整
+      assert(isCanaryAnswerComplete('CANNOT_SEE_IMAGE') === true, 'CANNOT_SEE_IMAGE 应完整');
+      // 空/空白 → 不完整
+      assert(isCanaryAnswerComplete('') === false, '空应不完整');
+      assert(isCanaryAnswerComplete('   \n') === false, '纯空白应不完整');
     },
   },
   {

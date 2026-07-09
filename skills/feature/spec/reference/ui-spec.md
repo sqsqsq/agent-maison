@@ -207,7 +207,9 @@ ui-spec 生成后、进 plan 前：
 
 ## 盲档工作法（v2.5+，effective_image_input=none 时的 Step 2 提取）
 
-goal-runner 会在 phase prompt 里注入能力探测结果（`Visual capability advisory` 块）；本 Step **必须**按其中声明的能力工作，不得假装拥有未探测到的能力：
+**能力来源**：goal 模式由 goal-runner 在 phase prompt 注入 `Visual capability advisory` 块；**交互式**（IDE，无 goal-runner 注入）由 [interactive-vision-canary](../../../reference/interactive-vision-canary.md) 自测卷判卷写入 `framework.local.json` 的 `vision.canary`，harness 据此钳制 `fidelity_target`。本 Step **必须**按探测/判卷出的能力工作，不得假装拥有未探测到的能力：
+
+**交互式盲档告知与确认（I1 plan b7e42d19）**：交互式会话判卷为 `none`（无视觉）或 `ocr_capable`（仅 OCR）时，**一次性**告知用户——用一段话说明：①当前模型视觉判定结果；②本 feature 将生效的 effective fidelity 档位（`semantic_layout` / `reference_only`）；③OCR 辅助是否可用——再走 registry **`vision.blind_tier`** 确认一次（`1=接受降级继续`（默认）/ `2=拒绝`→指引设 `vision.image_input_override` 或换有视觉能力的模型后重测）。留痕沿 `user-confirmation-ux` 惯例。headless/goal 模式按 [user-confirmation-ux §9](../../../reference/user-confirmation-ux.md) 保守默认（不问人），本告知仅交互式生效。
 
 - **文案与文本位置**：若 prompt 附带 OCR JSON 路径（`spec/reports/ocr/<screen>.ocr.json`，逐词文本 + 置信度 + 归一化 bbox），**以其为准，不许自造**——文案照抄，位置按其 bbox 归一化坐标换算。
 - **结构与布局**：由需求文字描述 + OCR 文本的相对位置聚类（同一 y 区间的词多半同行/同组）推断，不依赖看图判断颜色/像素级样式。

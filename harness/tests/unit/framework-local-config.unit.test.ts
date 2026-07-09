@@ -281,6 +281,34 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'I1 loadLocalConfig: vision.canary.probed_via roundtrip + 缺省缺该字段仍合法（向后兼容）',
+    run: () => {
+      const root = mkTmp();
+      writeLocalConfig(root, {
+        schema_version: '1.0',
+        vision: {
+          canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: '2026-07-09T00:00:00.000Z', probed_via: 'interactive' },
+        },
+      });
+      assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.probed_via, 'interactive');
+      // 无 probed_via 的旧缓存仍读取成功（E1 已写盘的向后兼容）
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { canary: { adapter: 'cursor', verdict: 'none', probed_at: 'x' } } }),
+      );
+      const legacy = loadLocalConfig(root);
+      assert.strictEqual(legacy?.vision?.canary?.verdict, 'none');
+      assert.strictEqual(legacy?.vision?.canary?.probed_via, undefined);
+      // 非法 probed_via 值被拒
+      fs.writeFileSync(
+        path.join(root, LOCAL_CONFIG_FILENAME),
+        JSON.stringify({ schema_version: '1.0', vision: { canary: { adapter: 'cursor', verdict: 'none', probed_at: 'x', probed_via: 'bogus' } } }),
+      );
+      assert.throws(() => loadLocalConfig(root), /probed_via/);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
     name: 'E1 loadLocalConfig rejects invalid canary.verdict / missing required fields',
     run: () => {
       const root1 = mkTmp();
