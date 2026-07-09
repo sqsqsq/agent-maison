@@ -40,7 +40,9 @@ import {
 } from './utils/skill-body-budget';
 import {
   scanForcedFullRead,
+  scanUnconditionalCorrectionConfirm,
   type ForcedFullReadRule,
+  type CorrectionConfirmRule,
 } from './utils/forced-full-read-scan';
 import {
   checkEntryTemplateBudget,
@@ -392,6 +394,33 @@ function checkForcedFullReadBlacklist(ctx: CheckContext): CheckResult[] {
   }));
 }
 
+function checkCorrectionLayerConditionalConfirm(ctx: CheckContext): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
+  const rule = (ctx.phaseRule.structure_checks?.correction_layer_unconditional_confirm?.rule ?? {}) as CorrectionConfirmRule;
+  const hits = scanUnconditionalCorrectionConfirm(layout, rule).filter(h => !h.allowlisted);
+  const description = ruleDesc(ctx, 'structure_checks', 'correction_layer_unconditional_confirm');
+  if (hits.length === 0) {
+    return [{
+      id: 'correction_layer_unconditional_confirm',
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: '未发现提及 correction.layer 确认却未同时说明 auto_confirm_eligible 免确认分支的 skill 正文。',
+    }];
+  }
+  return hits.map(h => ({
+    id: 'correction_layer_unconditional_confirm',
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'FAIL' as const,
+    details: `${h.file}:${h.line} — 匹配「${h.match}」，但全文未提及 auto_confirm_eligible（balanced 高置信免确认分支）。`,
+    affected_files: [h.file],
+    suggestion: '改为条件表述："先跑 --correction-init；若 .current-correction.json.auto_confirm_eligible=true 可直接实施，否则须经 correction.layer 1/2 确认"；确有必要保持无条件表述则在 docs-rules.yaml 的 correction_layer_unconditional_confirm.allowlist 显式声明并附理由。',
+  }));
+}
+
 function checkEntryTemplateBudgetGate(ctx: CheckContext): CheckResult[] {
   const layout = repoLayoutFromContext(ctx);
   const rule = (ctx.phaseRule.structure_checks?.entry_template_budget?.rule ?? {}) as EntryTemplateBudgetRule;
@@ -461,6 +490,7 @@ const checker: PhaseChecker = {
     results.push(...runNoNumberedSkillProseChecks(ctx));
     results.push(...checkSkillBodyMaxLines(ctx));
     results.push(...checkForcedFullReadBlacklist(ctx));
+    results.push(...checkCorrectionLayerConditionalConfirm(ctx));
     results.push(...checkEntryTemplateBudgetGate(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);

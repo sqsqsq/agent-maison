@@ -39,6 +39,7 @@ import {
   relCatalog,
   resolveFeatureArtifact,
   relFeatureArtifact,
+  loadFrameworkConfig,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
 
@@ -238,7 +239,25 @@ function checkNameUnique(ctx: CheckContext, catalog: ModuleCatalog): CheckResult
   }];
 }
 
+/** C4 exploration-scale：project_scale=small 时 NOT_responsible_for/easily_confused_with 降为可选。 */
+function isSmallProjectScale(projectRoot: string): boolean {
+  try {
+    return loadFrameworkConfig(projectRoot).project_scale === 'small';
+  } catch {
+    return false;
+  }
+}
+
 function checkNotResponsibleForMinCount(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
+  if (isSmallProjectScale(ctx.projectRoot)) {
+    return [{
+      id: 'not_responsible_for_min_count', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'not_responsible_for_min_count'),
+      severity: 'MAJOR', status: 'PASS',
+      details: 'project_scale=small：NOT_responsible_for 降为可选（C4 小工程裁剪），跳过最小条数校验。',
+    }];
+  }
+
   const offenders = catalog.modules
     .filter(m => m.NOT_responsible_for.length < 1)
     .map(m => m.name);

@@ -79,6 +79,18 @@ structure_checks:
     rule:
       allowlist: []
 
+  correction_layer_unconditional_confirm:
+    description: >
+      skill 正文若提及 "correction.layer ... 确认"，同一文件内必须同时提及
+      auto_confirm_eligible（balanced 高置信免确认分支，C5-full）——否则视为
+      把 correction.layer 用户确认写成无条件停等，与 --correction-init 落盘的
+      .current-correction.json.auto_confirm_eligible 机读依据脱节（codex review
+      发现：弱模型按 skill 正文执行时会无视该字段直接停等）。
+      allowlist 内 file+reason 视为已知豁免，其余一律 FAIL。
+    severity: BLOCKER
+    rule:
+      allowlist: []
+
   entry_template_budget:
     description: >
       templates/AGENTS.md.template（实例根入口模板）不得超过 120 行，

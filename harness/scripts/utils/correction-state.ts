@@ -39,6 +39,11 @@ export interface CurrentCorrectionState {
   expires_at: string;
   /** --adhoc-correction 经 catalog 反查记录的触及模块（no-feature 越界防护替代证据） */
   touched_modules?: string[];
+  /**
+   * balanced 高置信免确认是否成立（C5-full）：true 时 agent 可跳过 `correction.layer`
+   * 用户确认闸门直接实施。缺省 false（no-feature / 非 balanced / 非纯验证一律停等）。
+   */
+  auto_confirm_eligible?: boolean;
 }
 
 export function correctionStatePath(projectRoot: string): string {
@@ -70,6 +75,7 @@ export function buildCorrectionState(input: {
   base_commit: string;
   request_text: string;
   enforcement_tier: EnforcementTier;
+  auto_confirm_eligible?: boolean;
   now?: Date;
 }): CurrentCorrectionState {
   const now = input.now ?? new Date();
@@ -86,6 +92,7 @@ export function buildCorrectionState(input: {
     request_fingerprint: requestFingerprint(input.request_text),
     enforcement_tier: input.enforcement_tier,
     expires_at: new Date(now.getTime() + CORRECTION_STATE_TTL_MS).toISOString(),
+    auto_confirm_eligible: input.auto_confirm_eligible ?? false,
   };
 }
 

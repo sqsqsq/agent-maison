@@ -9,12 +9,14 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { loadWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import {
   classifyCorrection,
   mapCategoryToPhase,
   resolveCorrectionCategory,
   resolveCorrectionTarget,
+  shouldAutoConfirmCorrectionLayer,
   touchedCategories,
 } from '../../scripts/utils/correction-routing';
 import {
@@ -25,7 +27,7 @@ import {
   resolveCurrentSessionSignal,
   writeCorrectionState,
 } from '../../scripts/utils/correction-state';
-import { closedPhasesFor } from '../../scripts/utils/correction-commands';
+import { closedPhasesFor, runCorrectionInit } from '../../scripts/utils/correction-commands';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import {
   featurePhaseReportsDir,
@@ -54,6 +56,40 @@ function eq(actual: unknown, expected: unknown, label: string): void {
   const a = JSON.stringify(actual);
   const b = JSON.stringify(expected);
   if (a !== b) throw new Error(`${label}: expected ${b}, got ${a}`);
+}
+
+function git(cwd: string, args: string[]): void {
+  const r = spawnSync('git', args, { cwd, shell: false });
+  if (r.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${r.stderr?.toString() ?? r.error?.message ?? 'unknown'}`);
+  }
+}
+
+/** 真实 git 工程 + demo-feat feature 目录（未声明 feature.yaml → 默认 full track）。 */
+function mkGitFeatureProject(evidenceProfile?: 'balanced'): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'correction-autoconfirm-'));
+  fs.mkdirSync(path.join(dir, 'workflows'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'doc', 'features', 'demo-feat'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({
+    schema_version: '1.0',
+    project_name: 'correction-autoconfirm-fixture',
+    project_profile: { name: 'generic' },
+    ...(evidenceProfile ? { evidence_profile: evidenceProfile } : {}),
+    architecture: {
+      outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'forbid' }],
+      module_inner_layers: ['shared'],
+      inner_dependency_direction: 'upward',
+      cross_module_exports_file: 'index.ets',
+    },
+    paths: { features_dir: 'doc/features' },
+  }, null, 2), 'utf-8');
+  fs.writeFileSync(path.join(dir, 'baseline.txt'), 'baseline\n', 'utf-8');
+  git(dir, ['init', '-q', '-b', 'main']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '-m', 'baseline']);
+  return dir;
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -278,6 +314,109 @@ const cases: Array<{ name: string; run: () => void }> = [
         eq(listed.includes('not-a-rule' as never), false, '非规则文件不进');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'shouldAutoConfirmCorrectionLayer：balanced+纯验证+未触及 coding → true（窄范围免确认）',
+    run: () => {
+      eq(
+        shouldAutoConfirmCorrectionLayer({
+          profileLabel: 'balanced',
+          category: 'verification',
+          touchedLayers: ['ut'],
+        }),
+        true, 'balanced 纯验证不触 coding 应免确认',
+      );
+    },
+  },
+  {
+    name: 'shouldAutoConfirmCorrectionLayer：即便纯验证，touched 含 coding → false（组合修正仍须确认）',
+    run: () => {
+      eq(
+        shouldAutoConfirmCorrectionLayer({
+          profileLabel: 'balanced',
+          category: 'verification',
+          touchedLayers: ['ut', 'coding'],
+        }),
+        false, 'touched 含 coding 不得免确认',
+      );
+    },
+  },
+  {
+    name: 'shouldAutoConfirmCorrectionLayer：category 非 verification（改代码/改契约/改需求）→ false',
+    run: () => {
+      for (const category of ['coding', 'plan', 'spec'] as const) {
+        eq(
+          shouldAutoConfirmCorrectionLayer({ profileLabel: 'balanced', category, touchedLayers: [category] }),
+          false, `category=${category} 不得免确认`,
+        );
+      }
+    },
+  },
+  {
+    name: 'shouldAutoConfirmCorrectionLayer：profileLabel 非 balanced（strict/minimal）→ false，即便纯验证不触 coding',
+    run: () => {
+      for (const profileLabel of ['strict', 'minimal'] as const) {
+        eq(
+          shouldAutoConfirmCorrectionLayer({ profileLabel, category: 'verification', touchedLayers: ['ut'] }),
+          false, `profileLabel=${profileLabel} 不得免确认`,
+        );
+      }
+    },
+  },
+  {
+    name: 'runCorrectionInit 端到端：evidence_profile=balanced + 纯验证修正 → state.auto_confirm_eligible=true',
+    run: () => {
+      const dir = mkGitFeatureProject('balanced');
+      try {
+        const code = runCorrectionInit(dir, {
+          requestedFeature: 'demo-feat',
+          answers: { requirement_changed: false, contract_changed: false, code_change_needed: false },
+          requestText: '补一个遗漏的验证用例',
+          frameworkRoot: FRAMEWORK_ROOT,
+        });
+        eq(code, 0, 'correction-init 应成功');
+        const state = readCorrectionState(dir);
+        eq(state?.auto_confirm_eligible, true, 'balanced+纯验证+未触及 coding 应免确认');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'runCorrectionInit 端到端：evidence_profile=balanced 但要改产品代码 → state.auto_confirm_eligible=false',
+    run: () => {
+      const dir = mkGitFeatureProject('balanced');
+      try {
+        runCorrectionInit(dir, {
+          requestedFeature: 'demo-feat',
+          answers: { requirement_changed: false, contract_changed: false, code_change_needed: true },
+          requestText: '按钮颜色改一下',
+          frameworkRoot: FRAMEWORK_ROOT,
+        });
+        const state = readCorrectionState(dir);
+        eq(state?.auto_confirm_eligible, false, '改产品代码（root_layer=coding）不得免确认');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'runCorrectionInit 端到端：未配置 evidence_profile（strict）+ 纯验证修正 → state.auto_confirm_eligible=false',
+    run: () => {
+      const dir = mkGitFeatureProject();
+      try {
+        runCorrectionInit(dir, {
+          requestedFeature: 'demo-feat',
+          answers: { requirement_changed: false, contract_changed: false, code_change_needed: false },
+          requestText: '补一个遗漏的验证用例',
+          frameworkRoot: FRAMEWORK_ROOT,
+        });
+        const state = readCorrectionState(dir);
+        eq(state?.auto_confirm_eligible, false, 'strict 档纯验证仍须停等确认');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },

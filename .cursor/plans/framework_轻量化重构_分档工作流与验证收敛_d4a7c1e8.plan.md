@@ -749,3 +749,46 @@ cursor 复查上一轮修复全部确认闭环（逐项核对 5 项均 ✅，含
 **C3 skill-slim change 全量收口**：task1（台账，Phase 0）→ task2（10 个 SKILL.md 主干化，4939→1507 行）→ task3（AGENTS.md.template 307→105 行）→ task4（防再膨胀 lint 三连）全部完成；`openspec/changes/skill-slim/tasks.md` 全部勾选。
 
 **下批入口**：C4 exploration-scale（per-feature facts.md 覆盖全部 feature phase + backfill 兼容扩展 + 小工程裁剪）→ C5-full（touched_layers 对账并入 evidence_policy_snapshot + hard_hook 深度集成 + balanced 减免语义 + feature.yaml 修正历史 + 全套坏态 fixtures）。
+
+### 2026-07-09 · Phase 1 遗留低优先级打磨项收尾
+
+b7bd2939（批次 3）落盘后，用户对三轮双 AI 审查后剩余的开放项选择"3"（先处理 Phase 1 已知遗留低优先级项，而非直接去宿主工程实测）。逐项收口：
+
+1. **catalog 卡片可选字段（exploration-scale 遗留"未做"项）**：`easily_confused_with` 结构上本就是可选字段，无需改动。`NOT_responsible_for` 最小条数校验——`check-catalog.ts` 新增 `isSmallProjectScale(projectRoot)`，`checkNotResponsibleForMinCount` 在 small 档下直接 PASS（`details` 注明 `project_scale=small`），跳过最小条数门槛。新增端到端 fixture `profiles/generic/harness/tests/fixtures/catalog/small_scale_not_responsible_for_optional_pass/`。
+2. **spec small 档一次性确认分支缺直接单测**：新增 `harness/tests/unit/check-spec-small-scale.unit.test.ts`（5 case：standard 档逐行未确认仍 FAIL、small 档缺一次性确认行仍 FAIL、small 档有效一次性确认行 PASS、一次性确认行存在但未勾选仍 FAIL、standard 档零回归）。成本考量：不构造完整 10 章节 spec.md 端到端夹具（那是与本检查无关的一堆其它 BLOCKER 的组合测试，成本不成比例）——改为 `export` `checkTerminologyMappingTable`（`check-spec.ts`）后直接调用，只喂最小必需上下文。过程中发现 `SpecLoader` 3 参构造在临时目录下找不到真实 `spec-rules.yaml`，补 `frameworkRoot` 第 4 参修复（`loadResolvedProfile` 无需同样修复——`profile-loader.ts` 内部按源文件自身 `__dirname` 解析 `profiles/`，与 `projectRoot` 无关）。
+3. **balanced「高置信免确认」拍板与落地**（design.md 占位语义、correction-routing 遗留任务第 19 条明确记为"需要用户对确认阈值拍板的开放设计问题"）：主动向用户复述风险（"这是跳过 `correction.layer` 用户确认闸门的设计，风险敏感，不代自己猜"），给出三选项（不做保持现状 / 窄范围自动跳过 / 用户另有想法）。**用户拍板窄范围**：仅 `root_layer=verification`（纯补验证，Q1/Q2/Q3 三问全否）且 `touched_layers` 不含 `coding` 时才免确认；改需求/改契约/改代码、或组合修正同轮触及 coding，一律仍须 `correction.layer` 1/2 确认。
+
+**落地实现**：
+- `correction-routing.ts` 新增纯函数 `shouldAutoConfirmCorrectionLayer({profileLabel, category, touchedLayers})`——复用既有单点判定 `resolveProfileLabel`（C0）取得 `profileLabel`，故 lite track（minimal）/非 interactive 模式（strict）/未配置 `evidence_profile: balanced`（strict）均自动被排除，不重复分支判断。
+- `runCorrectionInit`（`correction-commands.ts`）feature 分支求解 `classifyCorrection` 后，装配最小 `RuntimeContext`（`phase` 字段填占位值 `'correction'`，不影响判定——`resolveProfileLabel` 只读 `ctx.mode`）调 `resolveProfileLabel` 取 profileLabel，再调 `shouldAutoConfirmCorrectionLayer` 得 `autoConfirmEligible`；no-feature（adhoc）分支无 track/evidence_profile 语境，恒 false，不适用免确认。
+- `.current-correction.json` 新增字段 `auto_confirm_eligible`（`correction-state.ts` 的 `CurrentCorrectionState`/`buildCorrectionState`），落盘留痕供审计——不是只在 console 文案里一带而过。
+- console 输出按 `autoConfirmEligible` 分支：true 时打印"✅ 高置信自动放行……可直接实施，无需停等"，false 时保留原"下一步：经 `correction.layer` gate 用户确认后实施"文案。
+- `confirmation-registry.yaml` 的 `correction.layer` notes 补充窄范围条件的完整文字说明（供 agent 运行时对照）。
+
+**验证**：`correction-routing.unit.test.ts` 新增 4 例纯函数真值表（balanced+纯验证+未触及 coding→true；纯验证但 touched 含 coding→false；category≠verification→false；profileLabel≠balanced→false）+ 3 例 `runCorrectionInit` 端到端（真实 git 仓库 + spawnSync：balanced+纯验证→state.auto_confirm_eligible=true；balanced+改代码→false；未配置 evidence_profile（strict）+纯验证→false）。
+
+**终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1587 单测 + 41 fixtures**，较批次 3 收口时的 1580/41 净增 7 单测）；`npm run openspec:validate`（31/31）。`openspec/changes/exploration-scale/tasks.md` 与 `openspec/changes/correction-routing/tasks.md` 对应遗留项已改勾并记录实现细节。commit 未提交——按既有规则等用户明确指示后再提交。
+
+### 2026-07-09 · 补最后一个已知缺口：small 档 spec phase 端到端 fixture
+
+用户问"还有哪些没改的"，逐个 change 的 tasks.md 扫了一遍 `[ ]`/"已知缺口"类标注，找出唯一还没做的机器可验证项：`openspec/changes/exploration-scale/tasks.md` 第 23 条明确记着"未新增独立 fixture 覆盖 small 档端到端场景，是本批已知缺口"——此前只证明过 small 档一次性确认分支代码上不碰 `scope_matches_catalog` 等其它检查（走查结论 + 单点单测），没有一个真实 spec phase 跑把两者放在同一次运行里实测过。用户确认要补。
+
+新增 `profiles/generic/harness/tests/fixtures/spec/small_scale_scope_and_terminology_pass/`：`project_scale: small` + spec.md 术语映射表逐行未确认（`[ ]`）但节末有一次性确认行 + Scope 声明 `in_scope_modules: [ModA]` 与 module-catalog 匹配。EXPECTED.json 断言 `terminology_mapping_table`/`scope_matches_catalog` 两条 BLOCKER 在同一次真实 phase 跑中都 PASS（不带顶层 `verdict`，对齐 `visual_handoff_repo_assets_reachable_pass` 等既有 fixture 的"只断言关心的规则子集"写法，避免为凑 `verdict: PASS` 被迫连带解决与本缺口无关的 facts.md 契约等其它 BLOCKER）。
+
+**负控验证**（防"巧合通过"）：临时去掉 config 里的 `project_scale: small` 复跑该 fixture，`terminology_mapping_table` 如预期变 FAIL（"1 条术语映射未获得用户确认"），坐实 fixture 确实在验证 small 档分支本身，不是碰巧配置对了就绿。验完立即改回。
+
+**终态**：`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1587 单测 + 42 fixtures**，较上一批净增 1 fixture）；`npm run openspec:validate`（31/31）。`openspec/changes/exploration-scale/tasks.md` 第 23 条与测试计数行同步更新。至此，扫描 correction-routing / exploration-scale / skill-slim / verification-matrix / feature-track / runtime-policy-core 六个 Phase 1 change 的 tasks.md，除两处刻意留到 3.0.0 发布窗口统一跑的 `release:verify`、以及用户自己拍板留给宿主工程实测的三条真实使用体验验证点外，机器可验证层面已无遗留项。commit 未提交——按既有规则等用户明确指示后再提交。
+
+### 2026-07-09 · codex 第四轮 review：balanced 免确认文档未接线（P2，已修复）+ 补防再犯 lint
+
+codex 对上一批 balanced 高置信免确认改动复核，指出：`.current-correction.json.auto_confirm_eligible` 与 `confirmation-registry.yaml` notes 都已正确落地机制，但 `skills/feature/change-lite/SKILL.md:112`、`skills/feature/spec/SKILL.md:35` 两处 Skill 正文仍写死"经 `correction.layer` 确认"，弱模型按正文执行会无视该字段直接停等，导致 balanced 免确认实际不稳定。
+
+逐条核实（不盲信不盲改）：
+- **spec.md**：属真实可复现问题——spec 阶段是 full track 场景，balanced+纯验证时确实会被这句无条件文案误导多问一次用户。**确认为真，需要修**。
+- **change-lite/SKILL.md**：复核 `resolveProfileLabel` 发现这条对 change-lite **架构性不可达**——`track==='lite'` 恒返回 `profileLabel='minimal'`，`shouldAutoConfirmCorrectionLayer` 的 `profileLabel!=='balanced'` 检查恒短路为 false，lite 修正的 `auto_confirm_eligible` 永远是 false，change-lite 场景下这句原文案本身没有说错。**codex 这条对 change-lite 的适用性有误差**（lite 修正不存在"应免确认却被文档拦下"的真实场景）——但改动本身零风险、免费，且能保持四个修正相关 Skill（change-lite/spec/plan/coding）文案口径一致，避免以后有人参照 change-lite 写出新的无条件确认句式，一并改了。
+
+**落地**：两处均改为条件表述——"先跑 `--correction-init`；`.current-correction.json.auto_confirm_eligible=true` 时可直接实施，否则须经 `correction.layer` 1/2 确认"。两文件行数不变（各一行内编辑），仍在 150 行预算内。
+
+**防再犯 lint（codex 建议，采纳）**：`forced-full-read-scan.ts` 新增 `scanUnconditionalCorrectionConfirm`——复用既有 `collectMarkdownFiles` 扫 `skills/`+`templates/` 下 markdown，命中"correction.layer...确认"字样但全文未提及 `auto_confirm_eligible` 则判违规（文件级共现豁免，不要求逐行邻近）；与 `forced_full_read_blacklist` 同源手法但语义独立，故给独立 check id `correction_layer_unconditional_confirm`，`docs-rules.yaml` `structure_checks` 新增声明，`check-docs.ts` 接线。`docs` phase 对本仓实测：该检查 PASS（零命中），整体 verdict=PASS（唯一 FAIL 是与本批无关的既有 `doc_freshness` MAJOR 提醒）。
+
+**验证**：`docs-authoring-lint.unit.test.ts` 新增 5 case（无条件句式命中/同文件 auto_confirm_eligible 共现放行/allowlist/不相关确认句式不误报/本仓真实树零命中回归）；`npx tsc --noEmit` 全绿；`cd harness && npm test` 全绿（**1592 单测 + 42 fixtures**，净增 5 单测）；`npm run openspec:validate`（31/31）。`openspec/changes/correction-routing/tasks.md` balanced 减免语义条目下补记本轮修复。commit 未提交——按既有规则等用户明确指示后再提交。

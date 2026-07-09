@@ -82,3 +82,53 @@ export function scanForcedFullRead(layout: RepoLayout, rule: ForcedFullReadRule)
   }
   return hits;
 }
+
+// --------------------------------------------------------------------------
+// correction.layer 无条件停等确认 句式黑名单（codex review 补强，plan d4a7c1e8）
+// --------------------------------------------------------------------------
+// balanced 高置信免确认（C5-full）落地后，`.current-correction.json.auto_confirm_eligible`
+// 已是判断是否需要停等 `correction.layer` 用户确认的机读依据；skill 正文若仍写死
+// "经 `correction.layer` 确认" 这类无条件表述，会让弱模型无视该字段直接停等——
+// 与运行时机制脱节。同一份文件里只要同时提到 auto_confirm_eligible，就视为已正确
+// 描述条件分支（不要求逐行邻近，文件级共现即可）。
+
+export interface CorrectionConfirmRule {
+  allowlist?: ForcedFullReadAllowlistEntry[];
+}
+
+export interface CorrectionConfirmHit {
+  file: string;
+  line: number;
+  match: string;
+  allowlisted: boolean;
+}
+
+const UNCONDITIONAL_CORRECTION_CONFIRM_RE = /correction\.layer[^\n]{0,12}确认/;
+const AUTO_CONFIRM_ESCAPE_HATCH = 'auto_confirm_eligible';
+
+export function scanUnconditionalCorrectionConfirm(
+  layout: RepoLayout,
+  rule: CorrectionConfirmRule,
+): CorrectionConfirmHit[] {
+  const allowlist = new Set((rule.allowlist ?? []).map(e => e.file));
+  const roots = [
+    frameworkAbs(layout, 'skills'),
+    frameworkAbs(layout, 'templates'),
+  ];
+  const hits: CorrectionConfirmHit[] = [];
+  for (const root of roots) {
+    for (const abs of collectMarkdownFiles(root)) {
+      const rel = frameworkPhysicalRelPath(layout, path.relative(layout.frameworkRoot, abs));
+      const text = fs.readFileSync(abs, 'utf-8');
+      if (text.includes(AUTO_CONFIRM_ESCAPE_HATCH)) continue; // 文件级已正确描述条件分支
+      const lines = text.replace(/\r\n?/g, '\n').split('\n');
+      for (let i = 0; i < lines.length; i += 1) {
+        const m = UNCONDITIONAL_CORRECTION_CONFIRM_RE.exec(lines[i]);
+        if (m) {
+          hits.push({ file: rel, line: i + 1, match: m[0], allowlisted: allowlist.has(rel) });
+        }
+      }
+    }
+  }
+  return hits;
+}

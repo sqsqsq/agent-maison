@@ -94,6 +94,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'correction-c5-full', modulePath: './unit/correction-c5-full.unit.test' },
   { id: 'correction-check-fail-closed', modulePath: './unit/correction-check-fail-closed.unit.test' },
   { id: 'context-facts', modulePath: './unit/context-facts.unit.test' },
+  { id: 'check-spec-small-scale', modulePath: './unit/check-spec-small-scale.unit.test' },
   { id: 'ut-business-src-scope', modulePath: './unit/ut-business-src-scope.unit.test' },
   { id: 'coding-failure-kinds', modulePath: './unit/coding-failure-kinds.unit.test' },
   { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },

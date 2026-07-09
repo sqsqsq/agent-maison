@@ -35,6 +35,7 @@ import {
   classifyCorrection,
   resolveCorrectionCategory,
   resolveCorrectionTarget,
+  shouldAutoConfirmCorrectionLayer,
   touchedCategories,
   type CorrectionAnswers,
   type RevalidateEntry,
@@ -53,8 +54,10 @@ import { reconcileTouchedLayers } from './correction-layer-reconcile';
 import {
   resolveEnforcementTier,
   resolveFeatureTrack,
+  resolveProfileLabel,
   workflowFeaturePhases,
   type AdapterEnforcementManifest,
+  type RuntimeContext,
 } from './runtime-policy';
 import { isGoalOrchestrationEnv } from './phase-state';
 
@@ -155,15 +158,17 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
 
   const fw = loadFrameworkConfig(projectRoot);
   const adapter = typeof fw.agent_adapter === 'string' ? fw.agent_adapter : '';
+  const mode = isGoalOrchestrationEnv() ? 'goal' : 'interactive';
   const tier = resolveEnforcementTier(
     adapter ? readAdapterManifest(opts.frameworkRoot, adapter) : null,
-    { mode: isGoalOrchestrationEnv() ? 'goal' : 'interactive' },
+    { mode },
   );
 
   let feature: string | null = null;
   let rootLayer: string;
   let touched: string[];
   let revalidate: RevalidateEntry[];
+  let autoConfirmEligible = false;
 
   if (target.kind === 'feature') {
     feature = target.feature;
@@ -180,8 +185,27 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     rootLayer = cls.root_layer;
     touched = cls.touched_layers;
     revalidate = cls.revalidate;
+
+    // balanced 高置信免确认（C5-full，用户 2026-07-09 拍板窄范围）：仅 full×interactive×
+    // config.evidence_profile=balanced（resolveProfileLabel 单点判定）且纯验证修正未触及
+    // coding 才成立；phase 字段不影响该判定，仅为满足 RuntimeContext 形状占位。
+    const runtimeCtx: RuntimeContext = {
+      mode,
+      adapter: adapter || 'generic',
+      phase: 'correction',
+      workflow: fw.active_workflow ?? 'spec-driven',
+      can_prompt_user: mode === 'interactive',
+      can_collect_usage: mode !== 'interactive',
+    };
+    const profileLabel = resolveProfileLabel(track, runtimeCtx, { evidence_profile: fw.evidence_profile });
+    autoConfirmEligible = shouldAutoConfirmCorrectionLayer({
+      profileLabel,
+      category: resolveCorrectionCategory(opts.answers),
+      touchedLayers: touched,
+    });
   } else {
-    // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction 单项清单
+    // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction 单项清单，
+    // 无 track/evidence_profile 语境——一律停等确认，不适用 balanced 免确认。
     rootLayer = resolveCorrectionCategory(opts.answers);
     touched = touchedCategories(opts.answers);
     revalidate = [{ phase: 'adhoc', status: 'pending' }];
@@ -198,6 +222,7 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     base_commit: baseCommit,
     request_text: opts.requestText,
     enforcement_tier: tier,
+    auto_confirm_eligible: autoConfirmEligible,
   });
   const abs = writeCorrectionState(projectRoot, state);
 
@@ -206,7 +231,13 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
   console.log(`   归属: ${feature ?? '(no-feature → --adhoc-correction)'}`);
   console.log(`   root_layer: ${rootLayer} | touched: ${touched.join(', ')}`);
   console.log(`   revalidate: ${revalidate.map((r) => r.phase).join(' → ')}`);
-  console.log('   下一步: 经 `correction.layer` gate 用户确认后实施（只动声明层）；');
+  if (autoConfirmEligible) {
+    console.log(
+      '   ✅ 高置信自动放行（balanced + 纯验证 + 未触及 coding）：可直接实施，无需停等 `correction.layer` 用户确认。',
+    );
+  } else {
+    console.log('   下一步: 经 `correction.layer` gate 用户确认后实施（只动声明层）；');
+  }
   console.log(
     feature
       ? '   实施后逐项重跑 revalidate phase 的 harness，再 --correction-check 收口。'

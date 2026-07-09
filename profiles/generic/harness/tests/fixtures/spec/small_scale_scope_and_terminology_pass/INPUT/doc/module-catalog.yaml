@@ -1,0 +1,13 @@
+schema_version: "1.0"
+modules:
+  - name: "ModA"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "library"
+    one_liner: "fixture stub"
+    responsibilities: []
+    NOT_responsible_for: []
+    typical_business_terms: []
+    easily_confused_with: []
+    key_exports: []
+    entry_file: "02-Feature/ModA/index.ets"

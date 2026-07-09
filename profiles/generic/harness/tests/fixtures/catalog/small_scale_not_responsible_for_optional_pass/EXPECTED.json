@@ -1,0 +1,10 @@
+{
+  "verdict": "PASS",
+  "rules": [
+    {
+      "id": "not_responsible_for_min_count",
+      "status": "PASS",
+      "details_includes": "project_scale=small"
+    }
+  ]
+}

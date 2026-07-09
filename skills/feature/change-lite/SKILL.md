@@ -109,4 +109,4 @@ exit PASS 即 feature 闭环，**停等 `phase.next_step`**（1=结束交付 / 2
 
 ## 修正路由（中途 NL 修正）
 
-对本 feature 的修正请求，先按**修正三问**分层（需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证），经 `correction.layer` 确认后只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。分层表与禁令见工程入口 AGENTS 指令第四节。
+对本 feature 的修正请求，先跑 `harness-runner.ts --correction-init`（内部按**修正三问**分层：需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证）。`.current-correction.json` 的 `auto_confirm_eligible: true` 时可直接按声明层实施；否则须经 `correction.layer` 1/2 用户确认后才动手。只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。分层表与禁令见工程入口 AGENTS 指令第四节。

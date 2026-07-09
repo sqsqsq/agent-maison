@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "terminology_mapping_table",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    },
+    {
+      "id": "scope_matches_catalog",
+      "status": "PASS",
+      "severity": "BLOCKER"
+    }
+  ]
+}

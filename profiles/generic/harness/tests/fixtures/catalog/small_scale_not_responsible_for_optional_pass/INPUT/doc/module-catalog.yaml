@@ -1,0 +1,16 @@
+schema_version: "1.0"
+modules:
+  - name: "ModA"
+    layer: "02-Feature"
+    sub_layer: null
+    format: "library"
+    one_liner: "小工程唯一模块 fixture"
+    responsibilities:
+      - "承载全部业务逻辑"
+    NOT_responsible_for: []
+    typical_business_terms:
+      - "ModA"
+    easily_confused_with: []
+    key_exports:
+      - "ModAEntry"
+    entry_file: "02-Feature/ModA/index.ets"

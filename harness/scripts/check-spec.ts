@@ -340,7 +340,8 @@ function specMdAffected(ctx: CheckContext): string[] {
   return [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md')];
 }
 
-function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResult[] {
+/** 导出供单测直接调用（project_scale=small 一次性确认分支，C4 exploration-scale）。 */
+export function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResult[] {
   const specAffected = specMdAffected(ctx);
   const section = getSectionContent(prd, '术语映射表');
   if (!section) {

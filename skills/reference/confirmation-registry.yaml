@@ -525,7 +525,7 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.1"
     skill_step: "任一中途 NL 修正请求经修正三问分层后"
     portable_menu: "1=同意按声明层实施 2=改层"
-    notes: "修正三问分层（需求变→spec / 契约变→plan / 纯实现→coding / 纯验证→ut·testing）后停等确认；禁止未分层直接动产物。strict 必确认，headless 低置信 halt-confirm（C5-min）。重验≠重做：只改根因层 SSOT，级联重跑下游脚本门禁。"
+    notes: "修正三问分层（需求变→spec / 契约变→plan / 纯实现→coding / 纯验证→ut·testing）后停等确认；禁止未分层直接动产物。strict 必确认，headless 低置信 halt-confirm（C5-min）。balanced 档窄范围高置信免确认（C5-full）：root_layer=纯验证 且 touched_layers 不含 coding 时，`--correction-init` 判定 `auto_confirm_eligible: true` 并落盘 .current-correction.json，agent 可直接实施、无需停等本 gate；其余一切组合（含改需求/改契约/改代码、或即便声明纯验证但同轮触及 coding）仍须走 1/2 确认。重验≠重做：只改根因层 SSOT，级联重跑下游脚本门禁。"
     options:
       - value: approve
         label: "同意 — 按声明的 root_layer/touched_layers 实施并级联重验下游"

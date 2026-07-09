@@ -93,6 +93,24 @@ export interface CorrectionClassification {
 }
 
 /**
+ * balanced 高置信免确认（C5-full，design.md 占位语义落地，用户 2026-07-09 拍板窄范围）：
+ * 仅当 profileLabel=balanced（即 resolveProfileLabel 已判 full×interactive×config balanced）
+ * 且根因类别=verification 且未触及 coding 层时，跳过 `correction.layer` 用户确认闸门直接
+ * 实施——纯补验证、不动任何产物层的修正无需停等。改需求/改契约/改代码（含组合修正触及
+ * coding）一律仍须停等确认，不因 balanced 档而放松。
+ */
+export function shouldAutoConfirmCorrectionLayer(input: {
+  profileLabel: 'strict' | 'balanced' | 'minimal';
+  category: CorrectionCategory;
+  touchedLayers: readonly string[];
+}): boolean {
+  if (input.profileLabel !== 'balanced') return false;
+  if (input.category !== 'verification') return false;
+  if (input.touchedLayers.includes('coding')) return false;
+  return true;
+}
+
+/**
  * classifyCorrection：三问答案 + workflow/track + 已闭环 phase 集 → 分层与重验清单。
  * `closedPhases` 由调用方注入（receipt / script-report 存在性）——保持纯函数可测。
  * 根因 phase 恒在 revalidate 内（无论是否闭环过：修正后该层门禁必须绿）。

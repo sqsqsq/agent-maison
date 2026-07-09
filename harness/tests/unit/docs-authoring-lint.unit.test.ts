@@ -9,7 +9,7 @@ import * as path from 'path';
 
 import { inferRepoLayout } from '../../repo-layout';
 import { scanSkillBodyBudget, resolveSkillIdFromSkillMdRel, resolveSkillBudget } from '../../scripts/utils/skill-body-budget';
-import { scanForcedFullRead } from '../../scripts/utils/forced-full-read-scan';
+import { scanForcedFullRead, scanUnconditionalCorrectionConfirm } from '../../scripts/utils/forced-full-read-scan';
 import { checkEntryTemplateBudget } from '../../scripts/utils/entry-template-budget';
 
 export interface UnitCaseResult {
@@ -188,6 +188,74 @@ const cases: Array<{ name: string; run: () => void }> = [
       const hits = scanForcedFullRead(layout, {});
       assert(hits.length === 0, hits.map(h => h.match).join(';'));
       fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'scanUnconditionalCorrectionConfirm: 无条件「经 correction.layer 确认」且全文未提 auto_confirm_eligible → 命中',
+    run: () => {
+      const { tmp, fw } = mkConsumerProject('cc-hit-');
+      writeText(
+        path.join(fw, 'skills', 'feature', 'demo', 'SKILL.md'),
+        '# demo\n\n中途修正按三问分层，经 `correction.layer` 确认后只改根因层。\n',
+      );
+      const layout = inferRepoLayout(tmp);
+      const hits = scanUnconditionalCorrectionConfirm(layout, {});
+      assert(hits.length === 1, `hits=${hits.length}`);
+      assert(hits[0].allowlisted === false, 'should not be allowlisted');
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'scanUnconditionalCorrectionConfirm: 同文件已提及 auto_confirm_eligible → 不误报',
+    run: () => {
+      const { tmp, fw } = mkConsumerProject('cc-safe-');
+      writeText(
+        path.join(fw, 'skills', 'feature', 'demo', 'SKILL.md'),
+        '# demo\n\n先跑 --correction-init；auto_confirm_eligible=true 可直接实施，否则须经 `correction.layer` 1/2 确认。\n',
+      );
+      const layout = inferRepoLayout(tmp);
+      const hits = scanUnconditionalCorrectionConfirm(layout, {});
+      assert(hits.length === 0, hits.map(h => h.match).join(';'));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'scanUnconditionalCorrectionConfirm: allowlist 命中项标记 allowlisted 不算违规',
+    run: () => {
+      const { tmp, fw } = mkConsumerProject('cc-allow-');
+      const relInFramework = 'skills/feature/demo/SKILL.md';
+      writeText(
+        path.join(fw, relInFramework),
+        '# demo\n\n经 `correction.layer` 确认后只改根因层。\n',
+      );
+      const layout = inferRepoLayout(tmp);
+      const rel = `framework/${relInFramework}`;
+      const hits = scanUnconditionalCorrectionConfirm(layout, { allowlist: [{ file: rel, reason: 'x' }] });
+      assert(hits.length === 1, `hits=${hits.length}`);
+      assert(hits[0].allowlisted === true, 'should be allowlisted');
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'scanUnconditionalCorrectionConfirm: 不提 correction.layer 的普通确认句式不误报',
+    run: () => {
+      const { tmp, fw } = mkConsumerProject('cc-unrelated-');
+      writeText(
+        path.join(fw, 'skills', 'feature', 'demo', 'SKILL.md'),
+        '# demo\n\nplan.ok_to_code 编号确认（1=OK 可编码 2=继续改 plan）才能进 coding。\n',
+      );
+      const layout = inferRepoLayout(tmp);
+      const hits = scanUnconditionalCorrectionConfirm(layout, {});
+      assert(hits.length === 0, hits.map(h => h.match).join(';'));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'scanUnconditionalCorrectionConfirm: 本仓真实 skills/+templates/ 树零命中（codex review 修复后回归）',
+    run: () => {
+      const layout = inferRepoLayout(repoRoot);
+      const hits = scanUnconditionalCorrectionConfirm(layout, {}).filter(h => !h.allowlisted);
+      assert(hits.length === 0, hits.map(h => `${h.file}:${h.line} ${h.match}`).join('\n'));
     },
   },
   {
