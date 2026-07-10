@@ -2,7 +2,7 @@
 
 import type { InitTaskPlan } from './init-task-planner';
 
-export type SyncTemplateEffect = 'created' | 'updated' | 'unchanged' | 'delegated';
+export type SyncTemplateEffect = 'created' | 'updated' | 'unchanged' | 'delegated' | 'blocked';
 
 export interface SyncTemplateResult {
   targetRel: string;
@@ -14,6 +14,8 @@ export interface FileEffects {
   updated: number;
   unchanged: number;
   delegated: number;
+  /** structured_upsert 目标非法（JSON/schema）拒绝改写（plan e8f5a2c7 G1b 第七轮 P1-2） */
+  blocked: number;
 }
 
 export interface CleanupResult {
@@ -57,7 +59,7 @@ export function buildOwnedByTaskSet(plan: InitTaskPlan): Set<string> {
 }
 
 export function aggregateFileEffects(results: readonly SyncTemplateResult[]): FileEffects {
-  const effects: FileEffects = { created: 0, updated: 0, unchanged: 0, delegated: 0 };
+  const effects: FileEffects = { created: 0, updated: 0, unchanged: 0, delegated: 0, blocked: 0 };
   for (const r of results) {
     effects[r.effect]++;
   }
@@ -70,11 +72,14 @@ export function mergeFileEffects(a: FileEffects, b: FileEffects): FileEffects {
     updated: a.updated + b.updated,
     unchanged: a.unchanged + b.unchanged,
     delegated: a.delegated + b.delegated,
+    blocked: (a.blocked ?? 0) + (b.blocked ?? 0),
   };
 }
 
 export function formatFileEffectsCounts(effects: FileEffects): string {
-  return `created ${effects.created} / updated ${effects.updated} / unchanged ${effects.unchanged} / delegated ${effects.delegated}`;
+  const base = `created ${effects.created} / updated ${effects.updated} / unchanged ${effects.unchanged} / delegated ${effects.delegated}`;
+  // 第八轮 codex P1-1：blocked 必须可见（structured_upsert 目标非法拒绝改写）
+  return (effects.blocked ?? 0) > 0 ? `${base} / blocked ${effects.blocked}` : base;
 }
 
 export function formatBundleSyncMessage(adapterName: string, effects: FileEffects): string {

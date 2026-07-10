@@ -4,10 +4,13 @@
 
 ## 禁止
 
-除以下情形外，**不得**修改 `framework/` 下任何已跟踪文件（含 `profiles/`、`harness/`、`skills/`、`package.json`）：
+除以下情形外，**不得**在 `framework/` 下修改或新建**任何文件**——含 `profiles/`、`harness/`、`skills/`、`package.json` 等已跟踪文件，也含**新建的 untracked 临时脚本**（2026-07-09 宿主事故实锤：agent 往 `framework/harness/scripts/` 写 `tmp-ocr-audit.mjs` 做 introspect——untracked 同样禁止，`framework_foreign_file` 门禁会 BLOCKER）：
 
-- 用户明确要求升级 framework 版本（submodule bump / rsync / 发版 zip 覆盖）；
-- agent-maison 维护者在 **framework 源仓库** 内开发并发版。
+- 用户明确要求升级 framework 版本（submodule bump / rsync / 发版 zip 覆盖，或 framework-init UPDATE）；
+- agent-maison 维护者在 **framework 源仓库** 内开发并发版；
+- 运行时产物白名单（`specs/runtime-artifact-policy.json`：reports/state/node_modules/vision-canary 产物等）由 harness 自动写入，非 agent 手写范围。
+
+**绝不允许**：修改 `framework/RELEASE-MANIFEST.json` 去迁就本地漂移（"重算 manifest 让完整性检查变绿"——`framework_manifest_selfcheck` 会 BLOCKER）；发现框架自身问题应 halt 上报，不得就地修改后自批放行。
 
 典型错误（须回滚）：
 
@@ -17,6 +20,19 @@
 | `framework/profiles/hmos-app/harness/ts-compile.ts` 补 `MockKit`/`when` ambient | 升级含 Test Double Policy 的 framework 发版；实例 UT 按 [mock-plan-schema.md](../../profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md) 声明 `strategy: mockkit` |
 | 在实例内「改门禁让 UT 变绿」 | 修 **宿主** `ohosTest` / `<features_dir>/<feature>/ut/` 产物 |
 | UT / Spy / DAG 误写在 `framework/harness/` | 迁回 `<repo-root>/{package_path}/...`；删 harness 下误写目录；见 [harness-cli-cwd.md §2.5](./harness-cli-cwd.md) |
+| 临时诊断脚本写进 `framework/harness/scripts/` 或 repo 根 `scripts/tmp-*.js` | 放 `<repo-root>/scratch/`（见下节）或系统临时目录，用完即清 |
+| 重算 `RELEASE-MANIFEST.json` 迁就本地改动 | 还原文件重跑；确需 fork 由真人在 `integrity.drift_allowlist` 具名审批 |
+
+## 临时诊断脚本去处（scratch 约定）
+
+调试/取证需要写一次性脚本时（dump 数据、introspect 门禁、批量改产物草稿）：
+
+- **放 `<repo-root>/scratch/`**（init canonical gitignore 已含 `/scratch/`，不进版本管理），或系统临时目录（`os.tmpdir()`）；
+- **不放**：`framework/` 任何位置（`framework_foreign_file` BLOCKER）、repo 根、宿主 `scripts/`（`workspace_tmp_hygiene` 会 MAJOR WARN 提醒 `tmp-*` 命名的脚本）；
+- 需要调用 framework 内部函数做 introspect：从 scratch/ 以相对/绝对路径 import `framework/harness/...`，不要把脚本挪进 framework 换取短 import 路径；
+- 用完即删——scratch/ 不是长期存放地，正式脚本请命名规范并纳入版本管理。
+
+**两条运维提示**：①`framework/specs/runtime-artifact-policy.json` 是三方共读的运行时产物白名单——**勿删**（缺失时完整性扫描按"宁严勿松"不放行任何运行时目录，node_modules 等会被当外来文件 BLOCKER 刷屏，属预期防御行为，经 framework-init UPDATE 重铺恢复）。②写时守卫只认**逐路径**的 `integrity.drift_allowlist` 真人审批，不认 `allow_local_drift` 总开关（总开关仅把查时结果降 WARN，写入时仍会被拦）——比查时更严是有意设计，需要写某个 fork 文件请逐路径审批。
 
 ## framework 资产树不承载宿主产物
 

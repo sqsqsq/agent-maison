@@ -46,6 +46,7 @@ import {
   PendingMigrationEntry,
 } from './utils/config-field-merger';
 import { loadLocalConfig } from './utils/framework-local-config';
+import { computeHooksConfigUpsert } from './utils/hooks-config-upsert';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig, relFeaturesDir } from '../config';
 import {
@@ -360,8 +361,9 @@ interface AdapterTemplateFile {
   targetRel: string;
   /** 相对 framework/ 根 */
   templateRel: string;
-  /** 落地方式：rendered（占位符替换）/ verbatim（字节相等比对）/ materialized（inline 物化） */
-  kind: 'rendered' | 'verbatim' | 'materialized';
+  /** 落地方式：rendered（占位符替换）/ verbatim（字节相等比对）/ materialized（inline 物化）/
+   *  structured_upsert（结构化合并——宿主共享 JSON 只增改 framework 自有条目，plan e8f5a2c7 G1b） */
+  kind: 'rendered' | 'verbatim' | 'materialized' | 'structured_upsert';
   /** materialized：framework/skills/<skillDir> */
   skillDir?: string;
   /** 映射来源字段名（用于诊断） */
@@ -681,6 +683,28 @@ function loadAdapter(adapter: string): AdapterDescriptor {
       kind: 'verbatim',
       origin: 'settings_file',
       update_policy: parseUpdatePolicy(cfg.settings_file.update_policy),
+    });
+  }
+
+  // G1b（plan e8f5a2c7）：hooks_config——宿主共享 JSON（如 .cursor/hooks.json）的结构化
+  // upsert 物化；与 settings_file 的 verbatim 整文件覆盖本质不同，绝不吞宿主自有条目。
+  const hooksConfig = (cfg as Record<string, unknown>).hooks_config as
+    | { template_path?: string; target_path?: string; update_policy?: string }
+    | undefined;
+  if (hooksConfig && typeof hooksConfig === 'object'
+    && hooksConfig.template_path && hooksConfig.target_path) {
+    const tplAbs = path.join(adapterDir, hooksConfig.template_path);
+    desc.declaredTemplatePaths.push({
+      field: 'hooks_config.template_path',
+      abs: tplAbs,
+      exists: existsAbs(tplAbs),
+    });
+    desc.templateFiles.push({
+      targetRel: hooksConfig.target_path,
+      templateRel: toPosix(path.join('agents', adapter, hooksConfig.template_path)),
+      kind: 'structured_upsert',
+      origin: 'hooks_config',
+      update_policy: parseUpdatePolicy(hooksConfig.update_policy),
     });
   }
 
@@ -1346,6 +1370,46 @@ function inspect03(env: InspectorEnv): Inspection[] {
       });
       continue;
     }
+
+    // G1b structured_upsert：目标是宿主共享 JSON（含第三方条目），与模板字节比对永远
+    // "不一致"——判据改为「upsert(现状) 是否已收敛」：unchanged=同步（EMPTY）；
+    // created/updated=待 reconcile（MISSING/POPULATED）；invalid_json=宿主文件损坏（照报）。
+    if (f.kind === 'structured_upsert') {
+      const upsert = computeHooksConfigUpsert(
+        tgBuf === null ? null : tgBuf.toString('utf-8'),
+        tplBuf.toString('utf-8'),
+      );
+      if (upsert.status === 'unchanged') {
+        fileRows.push({
+          f,
+          status: 'EMPTY',
+          hash_template: sha256(tplBuf),
+          hash_target: sha256(tgBuf!),
+          diff_summary: 'no diff（自有条目已收敛，宿主其余条目不参与比对）',
+          diagnosis: `hooks_config 自有条目与模板一致：${f.targetRel}`,
+        });
+      } else if (upsert.status === 'invalid_json') {
+        fileRows.push({
+          f,
+          status: 'POPULATED',
+          hash_template: sha256(tplBuf),
+          hash_target: tgBuf !== null ? sha256(tgBuf) : null,
+          diff_summary: `宿主 hooks 配置 JSON 非法（不覆盖）：${upsert.note ?? ''}`,
+          diagnosis: `${f.targetRel} 非法 JSON——请人工修复，framework 不整文件重写宿主共享配置`,
+        });
+      } else {
+        fileRows.push({
+          f,
+          status: tgBuf === null ? 'MISSING' : 'POPULATED',
+          hash_template: sha256(tplBuf),
+          hash_target: tgBuf !== null ? sha256(tgBuf) : null,
+          diff_summary: `hooks_config 自有条目待 reconcile（${upsert.status}）`,
+          diagnosis: `${f.targetRel} 的 framework 自有 hook 条目缺失/过期（结构化 upsert 将只增改自有条目）`,
+        });
+      }
+      continue;
+    }
+
     if (tgBuf === null) {
       fileRows.push({
         f,
@@ -1898,6 +1962,35 @@ function applyInitMechanismSync(
       continue;
     }
 
+    // G1b（plan e8f5a2c7）：structured_upsert——宿主共享 JSON 只 reconcile framework 自有
+    // 条目（ownership key=command），第三方条目/顶层/未知字段保留；目标 JSON 非法阻断提示、
+    // 绝不整文件覆盖（也不备份重写——那等于覆盖）。
+    if (f.kind === 'structured_upsert') {
+      const existingBuf = safeReadBuffer(tgAbs);
+      const upsert = computeHooksConfigUpsert(
+        existingBuf === null ? null : existingBuf.toString('utf-8'),
+        tplBuf.toString('utf-8'),
+      );
+      if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
+        // 第七轮 codex P1-2：blocked 须可见传播（不再记 unchanged 静默）——effect: 'blocked'
+        // 进 telemetry，checker 侧 hooks_config_target_compatible 检查同判据产 BLOCKER。
+        process.stderr.write(
+          `[check-init] hooks_config sync BLOCKED（不覆盖宿主文件）：${targetRel} —— ${upsert.note ?? '目标非法'}\n`,
+        );
+        results.push({ targetRel, effect: 'blocked' });
+        continue;
+      }
+      if (upsert.status === 'unchanged') {
+        results.push({ targetRel, effect: 'unchanged' });
+        continue;
+      }
+      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+      fs.writeFileSync(tgAbs, upsert.nextText!, 'utf-8');
+      syncedFiles++;
+      results.push({ targetRel, effect: upsert.status === 'created' ? 'created' : 'updated' });
+      continue;
+    }
+
     const tgBuf = safeReadBuffer(tgAbs);
     if (tgBuf === null) {
       fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
@@ -2211,6 +2304,73 @@ const checker: PhaseChecker = {
       };
     }
 
+    // 2b. hooks_config 目标兼容性（G1b 第七轮 codex P1-2：非法 JSON/schema 不兼容须
+    // BLOCKER 传播，不得靠 stderr 打印 + effect unchanged 静默过检）
+    // 第十轮 codex P1 同根因：只查选定 adapter 会漏 secondary（materialize-adapter:<name>
+    // 会以各自 adapter 写盘）——巡检覆盖全部 materialized adapters 的 structured_upsert 目标。
+    let hooksConfigResult: CheckResult | null = null;
+    if (adapter && adapter.yamlParseable) {
+      const structuredFiles = adapter.templateFiles.filter(f => f.kind === 'structured_upsert');
+      const seenTargets = new Set(structuredFiles.map(f => f.targetRel));
+      const declared = Array.isArray(cfg.raw?.materialized_adapters)
+        ? (cfg.raw.materialized_adapters as unknown[]).filter(
+            (n): n is string => typeof n === 'string' && n.trim().length > 0,
+          )
+        : [];
+      for (const name of declared) {
+        if (name.trim() === adapter.name) continue;
+        try {
+          const secondary = loadAdapter(name.trim());
+          if (!secondary.yamlParseable) continue; // 装载问题归 adapter_yaml_resolvable 口径
+          for (const f of secondary.templateFiles) {
+            if (f.kind !== 'structured_upsert' || seenTargets.has(f.targetRel)) continue;
+            seenTargets.add(f.targetRel);
+            structuredFiles.push(f);
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (structuredFiles.length > 0) {
+        const problems: string[] = [];
+        for (const f of structuredFiles) {
+          const tplBuf = safeReadBuffer(path.join(FRAMEWORK_ROOT, f.templateRel));
+          if (tplBuf === null) continue; // 模板缺失归 template_files_resolvable
+          const tgBuf = safeReadBuffer(path.join(ctx.projectRoot, f.targetRel));
+          const upsert = computeHooksConfigUpsert(
+            tgBuf === null ? null : tgBuf.toString('utf-8'),
+            tplBuf.toString('utf-8'),
+          );
+          if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
+            problems.push(`${f.targetRel}: ${upsert.note ?? upsert.status}`);
+          }
+        }
+        if (problems.length > 0) {
+          hooksConfigResult = {
+            id: 'hooks_config_target_compatible',
+            category: 'structure',
+            description: 'hooks_config 目标文件（宿主共享 hook 注册表）必须是合法 JSON 且 schema 兼容，方可结构化 upsert',
+            severity: 'BLOCKER',
+            status: 'FAIL',
+            details: `hooks_config 目标不可安全合并（framework 不整文件覆盖宿主共享配置）：\n` +
+              problems.map(p => `  - ${p}`).join('\n'),
+            suggestion: '请人工修复目标文件（hooks 须为对象、受管 event 须为数组、JSON 须合法）后重跑 init；framework 无权替换宿主自有 hook 配置。',
+            affected_files: structuredFiles.map(f => f.targetRel),
+          };
+          blockers.push(`hooks_config_target_compatible: ${problems.length} 个目标不可安全合并`);
+        } else {
+          hooksConfigResult = {
+            id: 'hooks_config_target_compatible',
+            category: 'structure',
+            description: 'hooks_config 目标文件（宿主共享 hook 注册表）必须是合法 JSON 且 schema 兼容，方可结构化 upsert',
+            severity: 'BLOCKER',
+            status: 'PASS',
+            details: `${structuredFiles.length} 个 hooks_config 目标可安全结构化合并（或待创建）`,
+          };
+        }
+      }
+    }
+
     // 3. 11 项体检（只读 probe，副作用见 init-orchestrate S3 任务）
     const incomplete = inspections.filter(i =>
       !['MISSING', 'EMPTY', 'POPULATED'].includes(i.status));
@@ -2356,10 +2516,11 @@ const checker: PhaseChecker = {
       };
     }
 
-    // 7. 返回 CheckResult[]：4 个聚合检查 + 11 个 inspection 详情（INFO 级别）
+    // 7. 返回 CheckResult[]：聚合检查 + 11 个 inspection 详情（INFO 级别）
     const results: CheckResult[] = [
       adapterCheckResult,
       tplResolveResult,
+      ...(hooksConfigResult ? [hooksConfigResult] : []),
       tableCompleteResult,
       diffResult,
       goalCapResult,

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "matcher": "Write|Delete",
+        "command": "node framework/agents/cursor/hooks/guard-framework-write.mjs"
+      }
+    ]
+  }
+}

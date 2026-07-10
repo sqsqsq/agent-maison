@@ -1,0 +1,7 @@
+{
+  "phase": "init",
+  "adapter": "cursor",
+  "env": {
+    "CHECK_INIT_QUIET": "1"
+  }
+}

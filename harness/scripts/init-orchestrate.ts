@@ -9,6 +9,7 @@ import * as path from 'path';
 import { prepareConfigWriteForTask, readExistingConfigFromDisk } from './utils/config-builder';
 import {
   executeInitTask,
+  preflightValidateHooksConfigTargets,
   type InitExecutionContext,
 } from './utils/init-task-executor';
 import type {
@@ -753,6 +754,32 @@ export function preflightExecute(
     );
     if (msg) {
       violations.push({ task_id: task.id, action, message: msg });
+    }
+  }
+
+  // 第九轮 codex P1：hooks_config 目标兼容性须在 preflight（零写盘阶段）拦下——executor
+  // throw 只能保证 hooks 任务自身失败，完整 plan 里 commands/rules 等前置任务可能已先写盘
+  // 造成部分写盘。只读 dry-run（helper 内部纯读），executor throw 保留为第二道防线。
+  const preflightRoot = resolvePreflightProjectRoot(audit, options);
+  if (
+    preflightRoot &&
+    plan.tasks.some(t => t.id.startsWith('sync-auto-overwrite:') || t.id.startsWith('materialize-adapter'))
+  ) {
+    for (const p of preflightValidateHooksConfigTargets(preflightRoot, {
+      adapterName: normalizedContext?.adapterName,
+      materializedAdapters: normalizedContext?.materializedAdapters,
+    })) {
+      // 归到 plan 内对应写盘任务（blocked log 只收录 plan task_id）；plan 未含时用哨兵 id
+      const owningTask = plan.tasks.find(t =>
+        t.id === `sync-auto-overwrite:${p.targetRel}` ||
+        t.id === `materialize-adapter-file:${p.targetRel}` ||
+        t.id === `materialize-adapter:${p.adapterName}`,
+      );
+      violations.push({
+        task_id: owningTask?.id ?? '<hooks-config-target>',
+        action: 'validate',
+        message: `hooks_config 目标不可安全合并（preflight 阻断，防前置任务部分写盘）：${p.targetRel}: ${p.note}`,
+      });
     }
   }
 

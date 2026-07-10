@@ -117,11 +117,16 @@ function sha256File(filePath) {
 }
 
 const RELEASE_MANIFEST_NAME = 'RELEASE-MANIFEST.json';
+const RELEASE_MANIFEST_SIDECAR_NAME = 'RELEASE-MANIFEST.sha256';
 
 /**
  * C-review P1a/P1b：写「包内 per-file 哈希 manifest」（**不含 zip sha**，避免 zip 自指循环）。
  * hash 基于 staging 后字节（sanitize + LF 归一），供 consumer 防漂移门禁逐文件校验。
  * 须在 writeStaging 之后、zipDirectory 之前调用，使本文件随包进 zip。
+ * G3b（plan e8f5a2c7）：同时写包内 sidecar RELEASE-MANIFEST.sha256（一行 64 位小写 hex +
+ * 末尾 LF = manifest 原始字节 sha256；**不入 manifest.files[]**——manifest hash ↔ sidecar
+ * hash 循环依赖）。consumer preflight 的 framework_manifest_selfcheck 据此发现"manifest
+ * 被本地重算迁就漂移"（2026-07-09 宿主事故实锤路径）。
  * @param {string} stagingRoot @param {string} version @param {string[]} included repo 相对路径（= framework 内相对路径）
  * @returns {string} 包内 manifest 自身 sha256（写进 dist sidecar 做链式校验）
  */
@@ -133,7 +138,9 @@ function writeInZipManifest(stagingRoot, version, included) {
   const manifest = { schema_version: '1.0', version, files };
   const out = path.join(stagingRoot, RELEASE_MANIFEST_NAME);
   fs.writeFileSync(out, normalizeReleaseTextEol(`${JSON.stringify(manifest, null, 2)}\n`), 'utf8');
-  return sha256File(out);
+  const manifestSha = sha256File(out);
+  fs.writeFileSync(path.join(stagingRoot, RELEASE_MANIFEST_SIDECAR_NAME), `${manifestSha}\n`, 'utf8');
+  return manifestSha;
 }
 
 /**

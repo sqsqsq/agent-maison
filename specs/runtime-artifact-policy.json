@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema#comment-only",
+  "schema_version": "1.0",
+  "_comment": "consumer framework/ 运行时产物策略 SSOT（plan e8f5a2c7 G1/G2 第六轮 P1）。三方共读：canonical-gitignore.ts 派生 gitignore framework 段、framework-integrity.ts extra-file 扫描白名单、agents/shared/guard-framework-write-core.mjs 写时守卫放行。路径一律相对 framework 根、POSIX 斜杠；尾 '/' 表示目录及其下所有内容；'**' 匹配任意层段；'*' 段内通配。禁止任何一方另行维护第二份列表（三方一致性单测钉死）。",
+  "ignored_runtime_patterns": [
+    "harness/node_modules/",
+    "harness/dist/",
+    "harness/reports/",
+    "harness/trace/",
+    "harness/package-lock.json",
+    "harness/state/",
+    "harness/**/ohosTest/",
+    "harness/**/test/dag/",
+    "harness/decision.json",
+    "harness/context.json",
+    "harness/init-decision.json",
+    "harness/init-context.json"
+  ],
+  "_comment_generated": "运行时按需生成的合法文件（按文件名模式收窄——不放行整个目录，防藏任意脚本；与 vision-canary.ts canaryAssetPaths 产物精确对齐）",
+  "generated_file_patterns": [
+    "harness/assets/vision-canary-*.png",
+    "harness/assets/vision-canary-*.answer-key.json"
+  ],
+  "_comment_reserved": "framework 根部保留元数据（G3b sidecar：不入 RELEASE-MANIFEST.json files[]（循环依赖），extra-file 扫描亦不得判 foreign）",
+  "reserved_metadata_files": [
+    "RELEASE-MANIFEST.sha256"
+  ]
+}

@@ -54,6 +54,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'canonical-gitignore', modulePath: './unit/canonical-gitignore.unit.test' },
   { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },
   { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
+  { id: 'guard-framework-write', modulePath: './unit/guard-framework-write.unit.test' },
+  { id: 'hooks-config-upsert', modulePath: './unit/hooks-config-upsert.unit.test' },
   { id: 'record-verifier-report-hook', modulePath: './unit/record-verifier-report-hook.unit.test' },
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
   { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },

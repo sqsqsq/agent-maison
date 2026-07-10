@@ -770,6 +770,220 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'executeInitTask sync-auto-overwrite：hooks_config 目标非法 → 任务 throw（第八轮 codex P1-1：init 不得假宣成功）',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'hooks-config-blocked',
+            materialized_adapters: ['cursor'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+      fs.mkdirSync(path.join(root, '.cursor'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.cursor', 'hooks.json'), '{ not valid json', 'utf-8');
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: new Date().toISOString(),
+          tasks: [],
+        },
+        materializedAdapters: ['cursor'],
+      };
+      const target = '.cursor/hooks.json';
+      assert.throws(
+        () =>
+          executeInitTask(
+            {
+              id: `sync-auto-overwrite:${target}`,
+              title: target,
+              category: 'adapter-template-sync',
+              scope: 'project',
+              deps: ['ensure-config'],
+              status: 'needed',
+              default_action: 'run',
+              skippable: false,
+              allowed_actions: ['run'],
+              target_path: target,
+            },
+            'run',
+            ctx,
+          ),
+        /不可安全合并|守卫未安装/,
+        'blocked 必须让任务失败而非返回"已对齐"',
+      );
+      // 宿主文件未被覆盖（拒绝改写的另一半承诺）
+      assert.strictEqual(fs.readFileSync(path.join(root, '.cursor', 'hooks.json'), 'utf-8'), '{ not valid json');
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:cursor（secondary adapter）：合法第三方 hooks 结构化合并不整文件覆盖（第十轮 codex P1）',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'secondary-adapter-merge',
+            materialized_adapters: ['claude', 'cursor'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+      fs.mkdirSync(path.join(root, '.cursor'), { recursive: true });
+      const thirdParty = {
+        team_meta: { owner: 'host' },
+        hooks: { preToolUse: [{ matcher: 'Shell', command: 'node scripts/team-hook.js' }] },
+      };
+      fs.writeFileSync(
+        path.join(root, '.cursor', 'hooks.json'),
+        JSON.stringify(thirdParty, null, 2),
+        'utf-8',
+      );
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: new Date().toISOString(),
+          tasks: [],
+        },
+        materializedAdapters: ['claude', 'cursor'],
+      };
+      const result = executeInitTask(
+        {
+          id: 'materialize-adapter:cursor',
+          title: '物化 adapter: cursor',
+          category: 'adapter-bundle',
+          scope: 'project',
+          deps: ['ensure-config'],
+          status: 'needed',
+          default_action: 'run',
+          skippable: false,
+          allowed_actions: ['run'],
+          params: { adapter: 'cursor' },
+        },
+        'run',
+        ctx,
+      );
+      const merged = JSON.parse(fs.readFileSync(path.join(root, '.cursor', 'hooks.json'), 'utf-8'));
+      assert.deepStrictEqual(merged.team_meta, { owner: 'host' }, `第三方顶层字段必须保留；${result.message}`);
+      const pre = merged.hooks?.preToolUse;
+      assert(Array.isArray(pre), 'preToolUse 应为数组');
+      assert(
+        pre.some((e: any) => e?.command === 'node scripts/team-hook.js'),
+        '第三方 hook 条目必须保留',
+      );
+      assert(
+        pre.some((e: any) => typeof e?.command === 'string' && e.command.includes('guard-framework-write.mjs')),
+        'framework 守卫条目必须合并进来',
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
+    name: 'executeInitTask materialize-adapter:cursor（secondary adapter）：hooks 非法 → throw 且宿主文件原样（第十轮 codex P1 复现路径钉死）',
+    run: () => {
+      const root = mkTmp();
+      const layout = detectRepoLayout(path.join(__dirname, '../..'));
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.1',
+            project_name: 'secondary-adapter-blocked',
+            materialized_adapters: ['claude', 'cursor'],
+            architecture: minimalArchitecture(),
+            paths: { features_dir: 'doc/features' },
+          },
+          null,
+          2,
+        ),
+      );
+      clearFrameworkConfigCache();
+      fs.mkdirSync(path.join(root, '.cursor'), { recursive: true });
+      // codex 复现用的宿主原始内容：hooks 非对象 → invalid_schema
+      const hostContent = JSON.stringify({ team_meta: { owner: 'host' }, hooks: 'team-owned' }, null, 2);
+      fs.writeFileSync(path.join(root, '.cursor', 'hooks.json'), hostContent, 'utf-8');
+      const ctx: InitExecutionContext = {
+        projectRoot: root,
+        harnessRoot: harnessRootFromLayout(layout),
+        plan: {
+          schema_version: '1.0',
+          scope: 'project',
+          mode: 'update',
+          generated_at: new Date().toISOString(),
+          tasks: [],
+        },
+        materializedAdapters: ['claude', 'cursor'],
+      };
+      assert.throws(
+        () =>
+          executeInitTask(
+            {
+              id: 'materialize-adapter:cursor',
+              title: '物化 adapter: cursor',
+              category: 'adapter-bundle',
+              scope: 'project',
+              deps: ['ensure-config'],
+              status: 'needed',
+              default_action: 'run',
+              skippable: false,
+              allowed_actions: ['run'],
+              params: { adapter: 'cursor' },
+            },
+            'run',
+            ctx,
+          ),
+        /不可安全合并|守卫未安装/,
+        'materialize 路径 blocked 也必须让任务失败',
+      );
+      assert.strictEqual(
+        fs.readFileSync(path.join(root, '.cursor', 'hooks.json'), 'utf-8'),
+        hostContent,
+        '宿主 hooks.json 必须逐字节原样（不整文件覆盖）',
+      );
+      // 第十一轮 codex P2：第二道防线整任务零写盘——同任务内 commands/rules 等
+      // 其他 adapter 文件也不得先落盘（批量物化前 dry-run 拦截）
+      assert.deepStrictEqual(
+        fs.readdirSync(root).sort(),
+        ['.cursor', 'framework.config.json'],
+        'blocked 时不得产生任何其他写盘',
+      );
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(root, '.cursor')).sort(),
+        ['hooks.json'],
+        '.cursor 下不得出现 commands/rules 等物化产物',
+      );
+      fs.rmSync(root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    },
+  },
+  {
     name: 'executeInitTask materialize-adapter:claude auto_overwrite owned 目标 delegated 且不重复',
     run: () => {
       const root = mkTmp();

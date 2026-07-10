@@ -1,7 +1,18 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment_top": "弱模型工作流强制门 / Layer 3 物理拦截。Stop hook 在主 agent 即将结束消息时执行，校验当前阶段是否闭环（CLAUDE.md §5.1 四条件）；SubagentStop hook 在 verifier 子 agent 结束时落地报告，供 check-receipt.ts 引用。",
+  "_comment_top": "弱模型工作流强制门 / Layer 3 物理拦截。Stop hook 在主 agent 即将结束消息时执行，校验当前阶段是否闭环（CLAUDE.md §5.1 四条件）；SubagentStop hook 在 verifier 子 agent 结束时落地报告，供 check-receipt.ts 引用；PreToolUse hook 拦截对只读 vendored framework/ 的编辑类写入（plan e8f5a2c7 G1a——只拦 Write/Edit/MultiEdit/NotebookEdit，Bash 写文件不在射程，查时 framework_integrity 扫描兜底）。",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-framework-write.mjs\""
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "*",

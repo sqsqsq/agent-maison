@@ -197,10 +197,12 @@ function sha256File(filePath) {
 
 /**
  * c1: 校验包内 RELEASE-MANIFEST.json —— 存在性 + 逐文件哈希自洽 + 覆盖完整 + sidecar 链式引用。
+ * （导出供 G3b 单测直接驱动——release:verify 主流程的 plan 门禁在本断言之前，源仓有 open plan
+ * 时走不到这里，测试需要独立入口。）
  * @param {string} frameworkRoot 解包后的 framework/ 根
  * @param {string} sidecarManifestPath dist sidecar manifest 绝对路径
  */
-function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
+export function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
   const manifestRel = 'RELEASE-MANIFEST.json';
   const manifestAbs = path.join(frameworkRoot, manifestRel);
   if (!fs.existsSync(manifestAbs)) fail('in-zip RELEASE-MANIFEST.json missing');
@@ -220,20 +222,35 @@ function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
     fail(`in-zip manifest integrity: ${mismatches.length} issue(s): ${mismatches.slice(0, 10).join(', ')}`);
   }
 
-  // 覆盖完整：manifest.files 恰好 == 解包全部文件 \ {RELEASE-MANIFEST.json 自身}
-  const shipped = new Set(listAllFiles(frameworkRoot).filter(f => f !== manifestRel));
+  // 覆盖完整（G3b 排除集扩为双元素——包内 sidecar 不入 files[]，防 manifest↔sidecar 循环依赖）：
+  // manifest.files 恰好 == 解包全部文件 \ {RELEASE-MANIFEST.json, RELEASE-MANIFEST.sha256}
+  const inZipSidecarRel = 'RELEASE-MANIFEST.sha256';
+  const shipped = new Set(
+    listAllFiles(frameworkRoot).filter(f => f !== manifestRel && f !== inZipSidecarRel),
+  );
   const covered = new Set(manifest.files.map(f => f.path));
   const uncovered = [...shipped].filter(f => !covered.has(f));
   const extra = [...covered].filter(f => !shipped.has(f));
   if (uncovered.length > 0) fail(`in-zip manifest missing coverage: ${uncovered.slice(0, 10).join(', ')}`);
   if (extra.length > 0) fail(`in-zip manifest lists non-shipped: ${extra.slice(0, 10).join(', ')}`);
 
+  // G3b 包内 sidecar：存在 + 格式（一行 64 位小写 hex + 末尾 LF）+ 内容 = manifest 原始字节 sha256
+  const inZipSidecarAbs = path.join(frameworkRoot, inZipSidecarRel);
+  if (!fs.existsSync(inZipSidecarAbs)) fail('in-zip RELEASE-MANIFEST.sha256 sidecar missing');
+  const sidecarText = fs.readFileSync(inZipSidecarAbs, 'utf8');
+  if (!/^[0-9a-f]{64}\n$/.test(sidecarText)) {
+    fail(`in-zip sidecar malformed (expect single 64-hex line + LF): ${JSON.stringify(sidecarText.slice(0, 80))}`);
+  }
+  if (sidecarText.trim() !== sha256File(manifestAbs)) {
+    fail('in-zip RELEASE-MANIFEST.sha256 does not match manifest bytes');
+  }
+
   // sidecar 链式引用：dist manifest.inZipManifest.sha256 == 包内 manifest 自身 hash
   const sidecar = JSON.parse(fs.readFileSync(sidecarManifestPath, 'utf8'));
   if (!sidecar.inZipManifest || sidecar.inZipManifest.sha256 !== sha256File(manifestAbs)) {
     fail('dist sidecar inZipManifest.sha256 mismatch with in-zip RELEASE-MANIFEST.json');
   }
-  console.log(`[release:verify] in-zip manifest integrity PASS (${manifest.files.length} files)`);
+  console.log(`[release:verify] in-zip manifest integrity PASS (${manifest.files.length} files, sidecar ok)`);
 }
 
 /**

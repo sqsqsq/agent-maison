@@ -36,6 +36,20 @@ rules:
   target_dir: .cursor/rules
   template_dir: ../shared/agent-bundle/templates/rules
 
+# G1b（plan e8f5a2c7）：framework 写保护 preToolUse 守卫的结构化物化。
+# **刻意不用 settings_file/hooks 字段**：①settings_file 是 verbatim 整文件覆盖——
+# .cursor/hooks.json 是宿主原生共享配置（团队可能已有自己的 hooks），整文件覆盖会吞宿主
+# 资产，hooks_config 走结构化 upsert（仅增改 framework 自有条目，ownership key=command
+# 路径，第三方条目/顶层/未知字段一律保留，JSON 非法绝不覆盖）；②settings_file+hooks 双
+# 字段会被 resolveEnforcementTier 判为 hard_hook（=Stop/correction 链路语义），cursor 仅
+# 有写守卫不够格——hooks_config 是独立字段，tier 保持 soft_rule_only（回归测试钉死）。
+# hook 脚本不物化：hooks.json command 直接调发布件内
+# framework/agents/cursor/hooks/guard-framework-write.mjs。
+hooks_config:
+  template_path: templates/hooks.json           # 相对于 adapter 目录（仅含 framework 自有条目）
+  target_path: .cursor/hooks.json               # 相对于实例工程根（宿主共享文件，结构化合并）
+  update_policy: auto_overwrite                 # 语义=每次 UPDATE 自动 reconcile 自有条目（非整文件覆盖）
+
 goal_capability:
   mode: external_runner
   external_runner:

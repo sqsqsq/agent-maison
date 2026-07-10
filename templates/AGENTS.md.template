@@ -38,6 +38,7 @@
 | 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
 | 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | verifier behavior_* |
 | 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
+| 9 | framework 只读 | `framework/` 是 vendored 发布件，不改不新建任何文件（含 untracked 临时脚本）；升级唯一途径 framework-init UPDATE；临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | framework_integrity / framework_foreign_file / PreToolUse hook |
 
 ## 四、工作流与 Skill 路由
 

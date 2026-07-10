@@ -37,6 +37,8 @@ settings_file:
 # 关键脚本：
 #   - check-phase-completion.mjs（Stop hook，按 CLAUDE.md §5.1 四条件物理拦截"假完成"）
 #   - record-verifier-report.mjs（SubagentStop hook，落地 verifier 子 agent 报告）
+#   - guard-framework-write.mjs（PreToolUse hook，拦编辑类工具写只读 vendored framework/；
+#     判定核心在发布件 framework/agents/shared/，plan e8f5a2c7 G1a）
 hooks:
   target_dir: .claude/hooks                     # 相对于实例工程根
   template_dir: templates/hooks                 # 相对于 adapter 目录

@@ -188,6 +188,32 @@ optional_fields:
           UPDATE 模式下 POPULATED 时 hooks 是否与 framework 模板自动对齐；
           Claude Code 等对 hook 协议敏感时应声明 auto_overwrite。
 
+  hooks_config:
+    type: object | null
+    description: |
+      结构化 hook 注册配置（Cursor 的 .cursor/hooks.json 是典型用例；plan e8f5a2c7 G1b）。
+      与 settings_file 的本质区别：**目标文件是宿主原生共享配置**（团队可能已有自己的
+      hooks），落地方式为**结构化 upsert 而非 verbatim 整文件覆盖**——仅增改 framework
+      自有条目（ownership key = 条目的 command 路径；matcher 等为受管可变字段原位更新；
+      同 command 去重保一；command 变更走 LEGACY_OWNED_COMMANDS 迁移），保留一切第三方
+      条目/顶层/未知字段；目标 JSON 非法时阻断提示、**绝不整文件覆盖**；卸载只删自有条目。
+      模板文件（template_path）只声明 framework 自有条目的 hooks.json 形状。
+      注意：本字段**不参与** resolveEnforcementTier 的 hard_hook 判定（那需要
+      settings_file+hooks 双字段 = Stop/correction 链路语义）。
+    fields:
+      template_path:
+        type: string
+        description: 相对 adapter 目录的模板路径（仅含 framework 自有条目的 hooks.json）
+      target_path:
+        type: string
+        description: 相对实例工程根的目标路径（宿主共享文件，结构化合并）
+      update_policy:
+        type: string | optional
+        enum: ["auto_overwrite", "prompt_if_changed"]
+        description: >
+          auto_overwrite 语义 = 每次 UPDATE 自动 reconcile framework 自有条目
+          （结构化合并，非整文件覆盖）。
+
   instance_skill_bridge:
     type: object | null
     description: |

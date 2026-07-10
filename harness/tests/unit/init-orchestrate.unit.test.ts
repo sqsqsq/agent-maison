@@ -416,6 +416,157 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'preflightExecute：非法 .cursor/hooks.json → preflight 阻断且全工程零写盘（第九轮 codex P1：防前置任务部分写盘）',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 'hooks-preflight-block',
+          materialized_adapters: ['cursor'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+        'utf-8',
+      );
+      fs.mkdirSync(path.join(root, '.cursor'), { recursive: true });
+      const invalidHooks = '{ not valid json';
+      fs.writeFileSync(path.join(root, '.cursor', 'hooks.json'), invalidHooks, 'utf-8');
+
+      const mkSyncTask = (target: string) => ({
+        id: `sync-auto-overwrite:${target}`,
+        title: target,
+        category: 'adapter-template-sync' as const,
+        scope: 'project' as const,
+        deps: [],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: false,
+        allowed_actions: ['run' as const],
+        target_path: target,
+      });
+      const plan = {
+        schema_version: '1.0' as const,
+        scope: 'project' as const,
+        mode: 'update' as const,
+        generated_at: new Date().toISOString(),
+        // 前置写任务（commands）在 hooks 任务之前——若 preflight 不拦，执行到 hooks 才 fail 时它已写盘
+        tasks: [mkSyncTask('.cursor/commands/spec.md'), mkSyncTask('.cursor/hooks.json')],
+      };
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        materialized_adapters: ['cursor'],
+        tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
+      };
+      const r = preflightExecute(
+        plan,
+        decision,
+        { adapterName: 'cursor', materializedAdapters: ['cursor'] },
+        undefined,
+        { projectRoot: root },
+      );
+      assert.strictEqual(r.ok, false, 'preflight 必须阻断');
+      if (!r.ok) {
+        const hooksEntry = r.blocked.entries.find(e => e.task_id === 'sync-auto-overwrite:.cursor/hooks.json');
+        assert(hooksEntry, 'blocked log 应含 hooks 任务条目');
+        assert.strictEqual(hooksEntry?.status, 'failed');
+        assert(
+          String(hooksEntry?.message).includes('hooks_config 目标不可安全合并'),
+          `hooks 任务条目应携带违规原因：${hooksEntry?.message}`,
+        );
+      }
+      // 零写盘：前置 commands 任务未执行、hooks.json 原样
+      assert(!fs.existsSync(path.join(root, '.cursor', 'commands')), '前置写任务不得已写盘');
+      assert.strictEqual(fs.readFileSync(path.join(root, '.cursor', 'hooks.json'), 'utf-8'), invalidHooks, '宿主文件原样');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'preflightExecute：secondary adapter（primary=claude）的非法 hooks 也须 preflight 阻断零写盘（第十轮 codex P1）',
+    run: () => {
+      const root = mkTmp();
+      fs.writeFileSync(
+        path.join(root, 'framework.config.json'),
+        JSON.stringify({
+          schema_version: '1.1',
+          project_name: 'secondary-hooks-preflight',
+          materialized_adapters: ['claude', 'cursor'],
+          architecture: {
+            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
+            module_inner_layers: ['shared'],
+            inner_dependency_direction: 'upward',
+            cross_module_exports_file: 'index.ets',
+          },
+          paths: { features_dir: 'doc/features' },
+        }, null, 2),
+        'utf-8',
+      );
+      fs.mkdirSync(path.join(root, '.cursor'), { recursive: true });
+      const invalidHooks = '{ not valid json';
+      fs.writeFileSync(path.join(root, '.cursor', 'hooks.json'), invalidHooks, 'utf-8');
+
+      const mkTask = (id: string) => ({
+        id,
+        title: id,
+        category: 'adapter-bundle' as const,
+        scope: 'project' as const,
+        deps: [],
+        status: 'needed' as const,
+        default_action: 'run' as const,
+        skippable: false,
+        allowed_actions: ['run' as const],
+      });
+      const plan = {
+        schema_version: '1.0' as const,
+        scope: 'project' as const,
+        mode: 'update' as const,
+        generated_at: new Date().toISOString(),
+        // 前置 claude 物化任务在 cursor 之前——不拦则 claude 全套文件先落盘
+        tasks: [mkTask('materialize-adapter:claude'), mkTask('materialize-adapter:cursor')],
+      };
+      const decision: InitRunDecision = {
+        schema_version: '1.0',
+        scope: 'project',
+        decision_mode: 'smart',
+        plan_generated_at: plan.generated_at,
+        materialized_adapters: ['claude', 'cursor'],
+        tasks: plan.tasks.map(t => ({ task_id: t.id, action: 'run' as const })),
+      };
+      // 只给 primary=claude 上下文——secondary cursor 的目标必须仍被发现（并集校验）
+      const r = preflightExecute(
+        plan,
+        decision,
+        { adapterName: 'claude', materializedAdapters: ['claude', 'cursor'] },
+        undefined,
+        { projectRoot: root },
+      );
+      assert.strictEqual(r.ok, false, 'secondary adapter 的非法 hooks 必须在 preflight 阻断');
+      if (!r.ok) {
+        const cursorEntry = r.blocked.entries.find(e => e.task_id === 'materialize-adapter:cursor');
+        assert(cursorEntry, 'blocked log 应含 materialize-adapter:cursor 条目');
+        assert(
+          String(cursorEntry?.message).includes('hooks_config 目标不可安全合并'),
+          `违规应归到 cursor 物化任务：${cursorEntry?.message}`,
+        );
+      }
+      // 零写盘：前置 claude 物化未执行、宿主 hooks.json 原样
+      assert(!fs.existsSync(path.join(root, 'CLAUDE.md')), '前置 claude 物化任务不得已写盘');
+      assert(!fs.existsSync(path.join(root, '.claude')), '.claude 不得被创建');
+      assert(!fs.existsSync(path.join(root, '.cursor', 'commands')), '.cursor/commands 不得被创建');
+      assert.strictEqual(fs.readFileSync(path.join(root, '.cursor', 'hooks.json'), 'utf-8'), invalidHooks, '宿主文件原样');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
     name: 'preflightExecute doc skip passes without docWritePayload',
     run: () => {
       const plan = docOnlyPlan();
@@ -734,7 +885,7 @@ const cases: Array<{ name: string; run: () => void }> = [
             status: 'executed',
             message: 'sync',
             category: 'adapter-bundle',
-            file_effects: { created: 1, updated: 2, unchanged: 3, delegated: 4 },
+            file_effects: { created: 1, updated: 2, unchanged: 3, delegated: 4, blocked: 0 },
           },
           {
             task_id: 'write-architecture',

@@ -28,6 +28,7 @@ import {
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
 import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skill-bridge-cleanup';
+import { computeHooksConfigUpsert } from './hooks-config-upsert';
 import { resolveMaterializedAdaptersForCleanup } from './materialized-adapters-resolve';
 import type { CleanupEffects, CleanupResult } from './init-sync-telemetry';
 import { detectRepoLayout } from '../../repo-layout';
@@ -114,6 +115,77 @@ function resolvePrimaryAdapter(ctx: InitExecutionContext): string {
   return sources.config.agent_adapter ?? 'generic';
 }
 
+/**
+ * S3 preflight 用只读校验（第九轮 codex P1：executor throw 只能保证"hooks 任务自身失败"，
+ * 完整 plan 里 commands/rules 等前置任务可能已先写盘——不兼容必须在 preflight 拦下，
+ * 保证整个工程零写盘；executor throw 保留为第二道防线）。
+ * 纯读：加载 adapter 描述符 + 对每个 structured_upsert 目标 dry-run upsert；返回问题清单
+ * （空=可安全执行）。adapter/配置解析失败按"无问题"返回——preflight 保持宽容，缺上下文
+ * 时由执行器兜底，不额外造阻断面。
+ */
+export function preflightValidateHooksConfigTargets(
+  projectRoot: string,
+  ctxLike?: { adapterName?: string; materializedAdapters?: string[] },
+): Array<{ adapterName: string; targetRel: string; note: string }> {
+  try {
+    const pseudoCtx = {
+      projectRoot,
+      harnessRoot: '',
+      plan: { schema_version: '1.0', scope: 'project', mode: 'update', generated_at: '', tasks: [] },
+      adapterName: ctxLike?.adapterName,
+      materializedAdapters: ctxLike?.materializedAdapters,
+    } as InitExecutionContext;
+    // 第十轮 codex P1：只查 primary 会漏 secondary adapter（如 ["claude","cursor"] 时
+    // materialize-adapter:cursor 仍会写 cursor 的 hooks_config 目标）——取
+    // 上下文 + config materialized_adapters 的并集，全部 dry-run。
+    const names = new Set<string>();
+    const add = (n?: string | null) => {
+      const t = (n ?? '').trim();
+      if (t) names.add(t);
+    };
+    add(ctxLike?.adapterName);
+    for (const n of ctxLike?.materializedAdapters ?? []) add(n);
+    const sources = loadFrameworkConfigWithSources(projectRoot);
+    if (Array.isArray(sources.projectRaw?.materialized_adapters)) {
+      for (const n of sources.projectRaw!.materialized_adapters) {
+        if (typeof n === 'string') add(n);
+      }
+    }
+    if (names.size === 0) add(resolvePrimaryAdapter(pseudoCtx));
+
+    const problems: Array<{ adapterName: string; targetRel: string; note: string }> = [];
+    const seenTargets = new Set<string>();
+    const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    for (const adapterName of names) {
+      let adapter: ReturnType<typeof loadAdapter>;
+      try {
+        ({ adapter } = loadInspectorEnv(pseudoCtx, adapterName));
+      } catch {
+        continue; // 单个 adapter 装载失败不影响其余 adapter 的校验（宽容口径不变）
+      }
+      for (const f of adapter.templateFiles) {
+        if (f.kind !== 'structured_upsert') continue;
+        const tplAbs = path.join(frameworkRoot, f.templateRel);
+        if (!fs.existsSync(tplAbs)) continue; // 模板缺失归 template_files_resolvable
+        const targetRel = f.targetRel.replace(/\\/g, '/');
+        if (seenTargets.has(targetRel)) continue;
+        const tgAbs = path.join(projectRoot, f.targetRel);
+        const upsert = computeHooksConfigUpsert(
+          fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
+          fs.readFileSync(tplAbs, 'utf-8'),
+        );
+        if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
+          seenTargets.add(targetRel);
+          problems.push({ adapterName, targetRel, note: upsert.note ?? upsert.status });
+        }
+      }
+    }
+    return problems;
+  } catch {
+    return [];
+  }
+}
+
 function loadInspectorEnv(ctx: InitExecutionContext, adapterName: string) {
   const rawCfg = loadRawFrameworkConfig(ctx.projectRoot);
   const adapter = loadAdapter(adapterName);
@@ -129,6 +201,45 @@ function frameworkRootFromCtx(ctx: InitExecutionContext): string {
   return detectRepoLayout(ctx.harnessRoot).frameworkRoot;
 }
 
+/** structured_upsert 目标非法时任务必须 failed（第八轮 P1-1），三条写盘路径共用同一防线 */
+function throwIfBlocked(results: SyncTemplateResult[]): void {
+  const blocked = results.filter(r => r.effect === 'blocked');
+  if (blocked.length > 0) {
+    throw new Error(
+      `hooks_config 目标不可安全合并（framework 不整文件覆盖宿主共享配置），守卫未安装：` +
+      blocked.map(b => b.targetRel).join('、') +
+      '——请人工修复目标文件（JSON 合法、hooks 为对象、受管 event 为数组）后重跑 init。',
+    );
+  }
+}
+
+/**
+ * 第十一轮 codex P2：第二道防线也须整任务零写盘——materialize 批量写盘前先只读
+ * dry-run 全部 structured_upsert 目标，有 blocked 直接 fail，不让同任务内 commands/
+ * rules 等文件先落盘（preflight 被绕过/直调 executeInitTask 时的兜底）。
+ */
+function assertStructuredUpsertTargetsMergeable(
+  ctx: InitExecutionContext,
+  adapter: ReturnType<typeof loadAdapter>,
+): void {
+  const fwRoot = frameworkRootFromCtx(ctx);
+  const blocked: SyncTemplateResult[] = [];
+  for (const f of adapter.templateFiles) {
+    if (f.kind !== 'structured_upsert') continue;
+    const tplAbs = path.join(fwRoot, f.templateRel);
+    if (!fs.existsSync(tplAbs)) continue; // 模板缺失由 syncTemplateTarget 报错口径处理
+    const tgAbs = path.join(ctx.projectRoot, f.targetRel);
+    const upsert = computeHooksConfigUpsert(
+      fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
+      fs.readFileSync(tplAbs, 'utf-8'),
+    );
+    if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
+      blocked.push({ targetRel: normalizeTargetRel(f.targetRel), effect: 'blocked' });
+    }
+  }
+  throwIfBlocked(blocked);
+}
+
 function syncResultToMessage(result: SyncTemplateResult): string {
   switch (result.effect) {
     case 'created':
@@ -138,6 +249,8 @@ function syncResultToMessage(result: SyncTemplateResult): string {
       return `${result.targetRel} 已对齐，跳过`;
     case 'delegated':
       return `${result.targetRel} 由 per-file 任务管理，跳过`;
+    case 'blocked':
+      return `${result.targetRel} 目标不可安全合并，已拒绝改写`;
     default:
       return result.targetRel;
   }
@@ -177,6 +290,26 @@ function syncTemplateTarget(
     throw new Error(`模板缺失: ${file.templateRel}`);
   }
   const tplBuf = fs.readFileSync(tplAbs);
+
+  // 第十轮 codex P1：materialize-adapter(-file) 任务也经本函数写盘——structured_upsert
+  // 目标必须走结构化合并（与 applyInitMechanismSync 同语义），否则 secondary adapter
+  // 物化时宿主共享 hooks.json 会被当普通字节整文件覆盖。
+  if (file.kind === 'structured_upsert') {
+    const upsert = computeHooksConfigUpsert(
+      fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
+      tplBuf.toString('utf-8'),
+    );
+    if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
+      return { targetRel: norm, effect: 'blocked' };
+    }
+    if (upsert.status === 'unchanged') {
+      return { targetRel: norm, effect: 'unchanged' };
+    }
+    fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+    fs.writeFileSync(tgAbs, upsert.nextText!, 'utf-8');
+    return { targetRel: norm, effect: upsert.status === 'created' ? 'created' : 'updated' };
+  }
+
   let payload: Buffer;
   if (file.kind === 'rendered') {
     if (!renderEnv) {
@@ -555,6 +688,9 @@ export function executeInitTask(
     const { results, syncedFiles, backupRelDir } = applyInitMechanismSync(ctx.projectRoot, adapter, {
       includeTargets: new Set([targetRel]),
     });
+    // 第八轮 codex P1-1：blocked（structured_upsert 目标非法，拒绝改写）必须让任务 failed
+    // ——原实现返回"已对齐"成功文案，init 假宣成功而守卫实际未安装。
+    throwIfBlocked(results);
     return {
       message: syncedFiles
         ? `mechanism sync ${syncedFiles} 个 auto_overwrite 文件${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
@@ -567,12 +703,16 @@ export function executeInitTask(
   if (task.id.startsWith('materialize-adapter-file:')) {
     const targetRel = task.id.slice('materialize-adapter-file:'.length);
     const { adapter, renderEnv } = loadInspectorEnv(ctx, adapterName);
-    return executionFromSyncResult(syncTemplateTarget(ctx, adapter, renderEnv, targetRel));
+    const result = syncTemplateTarget(ctx, adapter, renderEnv, targetRel);
+    throwIfBlocked([result]);
+    return executionFromSyncResult(result);
   }
 
   if (task.id.startsWith('materialize-adapter:')) {
     const name = task.id.slice('materialize-adapter:'.length);
     const { adapter, renderEnv } = loadInspectorEnv(ctx, name);
+    // 批量写盘前先验 structured_upsert 目标可合并——blocked 时整任务零写盘（第十一轮 P2）
+    assertStructuredUpsertTargetsMergeable(ctx, adapter);
     const ownedByTask = buildOwnedByTaskSet(ctx.plan);
     const fileResults: SyncTemplateResult[] = [];
 
@@ -584,6 +724,7 @@ export function executeInitTask(
     for (const f of adapter.templateFiles) {
       fileResults.push(syncTemplateTarget(ctx, adapter, renderEnv, f.targetRel, { ownedByTask }));
     }
+    throwIfBlocked(fileResults);
 
     const fileEffects = aggregateFileEffects(fileResults);
     return {
