@@ -7,7 +7,7 @@
 与 **`coding.compile`** 类似，`testing` 阶段可由脚本 harness 触发 **`device_test.build`**（hvigor，产出 **`reports/<feature>/testing/hvigor-app-build.log`**）及 **`device_test.install`**（`hdc install -r`，日志 **`hdc-app-install.log`**）。能力与 **`profile.yaml > capabilities`** 对齐：`hvigor_app` / `hdc_app`。
 
 - **产物指纹**：成功时在 **`reports/<feature>/testing/device-test-build.result.json`** 写入 `resolvedProduct`、`resolvedBuildMode`、`hapPath`、`hapBuiltAt`、`reused` 等字段。
-- **HAP 落盘路径**：hvigor 产出在 **`<模块 srcPath>/build/<product>/outputs/default/*-signed.hap`**（如 `01-Product/Phone/build/default/outputs/default/Phone-default-signed.hap`），**不会**复制到 `reports/`；`device-test-build.result.json` 的 `hapPath` 为绝对路径索引。
+- **HAP 落盘路径**：hvigor 产出在 **`<模块 srcPath>/build/<segment>/outputs/<outputsDir>/*-signed.hap`**——`segment`/`outputsDir` **不保证等于 `default`**，实测常见与 `product` 名相同（如 `01-Product/Phone/build/product/outputs/product/Phone-product-signed.hap`）。产物发现（`discoverAppHapArtifacts`）会枚举全部 `build/*/outputs/*` 目录并按四级确定性排序键（segment → modules 声明序 → outputs 子目录 → 文件名）选出首选候选，不再硬编码 `outputs/default`。**不会**复制到 `reports/`；`device-test-build.result.json` 的 `hapPath` 为绝对路径索引，`scannedDirs`/`candidateCount` 记录本轮实际扫描/命中情况。
 - **构建复用**：当 **业务源码 mtime ≤ 已有 HAP mtime** 且 product/buildMode 一致时，**跳过 hvigor**（`reused: true`，门禁仍 PASS）。`timestamp` 为本次跑门禁时刻，**不是** HAP 生成时间——以资源管理器中 HAP 修改时间或 `hapBuiltAt` 为准。
 - **交互默认值**：见 **`framework/profiles/hmos-app/harness/testing-build-conventions.ts`**（导出 **`listAvailableProducts`**、**`describeDeviceTestHarnessEnvHints`** 等）。
 - **可选构建矩阵**：通过环境变量覆盖：`HARNESS_DEVICE_TEST_PRODUCT`、`HARNESS_DEVICE_TEST_BUILD_MODE`（`debug`|`release`）。不要用 **`HARNESS_SKIP_DEVICE_TEST_BUILD` / `HARNESS_SKIP_DEVICE_TEST_INSTALL`** 作为出口——testing harness 会判 **FAIL**。

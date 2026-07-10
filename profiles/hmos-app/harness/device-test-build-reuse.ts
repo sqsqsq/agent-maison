@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadFrameworkConfig } from '../../../harness/config';
-import { findAppSignedHap } from './hvigor-runner';
+import { discoverAppHapArtifacts, detectStaleSignedSuspect, type HapDiscoveryCandidate } from './hvigor-runner';
 import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from './testing-build-conventions';
 
 const SOURCE_FILE_RE = /\.(ets|ts|json5)$/i;
@@ -33,6 +33,18 @@ export interface DeviceTestBuildReuseDecision {
   inputsMaxMtimeMs: number;
   resolvedProduct: string;
   resolvedBuildMode: 'debug' | 'release';
+  /** signed 是否可能基于上一轮 unsigned（plan d7e4b2a9 t2；纯观测，不影响 reuse 判定） */
+  staleSuspect?: boolean;
+  staleSuspectUnsignedPath?: string | null;
+  staleSuspectNote?: string;
+  /**
+   * 产物发现过程（plan d7e4b2a9 review P2）：复用路径此前只调薄包装 findAppSignedHap，
+   * scannedDirs/candidates 被丢弃，导致复用命中时歧义 WARN 静默。现改用
+   * discoverAppHapArtifacts 并透传，使 check-testing.ts 的候选歧义提示在复用/
+   * 非复用两条路径下行为一致。
+   */
+  scannedDirs?: string[];
+  candidates?: HapDiscoveryCandidate[];
 }
 
 function envForceBuild(): boolean {
@@ -113,10 +125,14 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
   const resolvedProduct = resolveDeviceTestProduct(opts.projectRoot, opts.product);
   const resolvedBuildMode = resolveDeviceTestBuildMode(opts.buildMode);
   const inputsMaxMtimeMs = computeDeviceTestInputsMaxMtimeMs(opts.projectRoot);
-  const hapPath = findAppSignedHap(opts.projectRoot, resolvedProduct);
+  const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
+  const hapPath = discovery.signedPath;
 
   let hapMtimeMs: number | null = null;
   let hapBuiltAt: string | null = null;
+  let staleSuspect: boolean | undefined;
+  let staleSuspectUnsignedPath: string | null | undefined;
+  let staleSuspectNote: string | undefined;
   if (hapPath && fs.existsSync(hapPath)) {
     try {
       hapMtimeMs = fs.statSync(hapPath).mtimeMs;
@@ -124,6 +140,10 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
     } catch {
       hapMtimeMs = null;
     }
+    const stale = detectStaleSignedSuspect(hapPath);
+    staleSuspect = stale.staleSuspect;
+    staleSuspectUnsignedPath = stale.unsignedPath;
+    staleSuspectNote = stale.note;
   }
 
   if (envForceBuild()) {
@@ -136,6 +156,11 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
       inputsMaxMtimeMs,
       resolvedProduct,
       resolvedBuildMode,
+      staleSuspect,
+      staleSuspectUnsignedPath,
+      staleSuspectNote,
+      scannedDirs: discovery.scannedDirs,
+      candidates: discovery.candidates,
     };
   }
 
@@ -149,6 +174,8 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
       inputsMaxMtimeMs,
       resolvedProduct,
       resolvedBuildMode,
+      scannedDirs: discovery.scannedDirs,
+      candidates: discovery.candidates,
     };
   }
 
@@ -162,6 +189,11 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
       inputsMaxMtimeMs,
       resolvedProduct,
       resolvedBuildMode,
+      staleSuspect,
+      staleSuspectUnsignedPath,
+      staleSuspectNote,
+      scannedDirs: discovery.scannedDirs,
+      candidates: discovery.candidates,
     };
   }
 
@@ -173,6 +205,11 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
     hapBuiltAt,
     inputsMaxMtimeMs,
     resolvedProduct,
+    staleSuspect,
+    staleSuspectUnsignedPath,
+    staleSuspectNote,
     resolvedBuildMode,
+    scannedDirs: discovery.scannedDirs,
+    candidates: discovery.candidates,
   };
 }

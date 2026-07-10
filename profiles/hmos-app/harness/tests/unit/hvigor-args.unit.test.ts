@@ -23,6 +23,9 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   buildHvigorDiagnostics,
+  detectSignSkip,
+  ensureFailedAtStageTag,
+  buildOnDeviceSignDiagnosis,
   buildAssembleAppArgs,
   buildModuleHapArgs,
   buildUtHvigorArgs,
@@ -370,6 +373,122 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!diagnostics.some(d => d.includes('stop-daemon'))) {
         throw new Error(`应提及 stop-daemon：${JSON.stringify(diagnostics)}`);
       }
+    },
+  },
+  {
+    name: 'detectSignSkip: "Will skip sign" + "No signingConfigs profile is configured" → 两标志皆 true（宿主 bc-openCard 实测日志）',
+    run: () => {
+      const log = [
+        '> hvigor UP-TO-DATE :WalletMain:ohosTest@PackageHap...',
+        "> hvigor WARN: Will skip sign 'hos_hap'. No signingConfigs profile is configured in current project.",
+        '             If needed, configure the signingConfigs in build-profile.json5.',
+        '> hvigor Finished :WalletMain:ohosTest@SignHap... after 2 ms',
+        '> hvigor BUILD SUCCESSFUL in 449 ms',
+      ].join('\n');
+      const r = detectSignSkip(log);
+      assertEq(r.signSkipped, true, 'signSkipped');
+      assertEq(r.signingConfigMissing, true, 'signingConfigMissing');
+    },
+  },
+  {
+    name: 'detectSignSkip: 无 "Will skip sign" → 两标志皆 false（正常签名日志不误报）',
+    run: () => {
+      const log = [
+        '> hvigor Finished :Phone:onlineSignHap... after 1 s 131 ms',
+        '> hvigor Finished :Phone:product@PackingCheck... after 7 ms',
+        '> hvigor BUILD SUCCESSFUL in 4 s 572 ms',
+      ].join('\n');
+      const r = detectSignSkip(log);
+      assertEq(r.signSkipped, false, 'signSkipped 不应误报');
+      assertEq(r.signingConfigMissing, false, 'signingConfigMissing 不应误报');
+    },
+  },
+  {
+    name: 'buildHvigorDiagnostics: sign-skip 日志给出定向提示，且不影响既有 00308018 规则计数',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics(
+        "> hvigor WARN: Will skip sign 'hos_hap'. No signingConfigs profile is configured in current project.",
+      );
+      if (!diagnostics.some(d => d.includes('Will skip sign'))) {
+        throw new Error(`诊断中应包含 Will skip sign 提示：${JSON.stringify(diagnostics)}`);
+      }
+      if (!diagnostics.some(d => d.includes('signingConfigs'))) {
+        throw new Error(`诊断中应提及 signingConfigs 配置建议：${JSON.stringify(diagnostics)}`);
+      }
+      if (diagnostics.some(d => d.includes('可自动生成并持久化'))) {
+        throw new Error(
+          `不得承诺 DevEco 自动签名"必定持久化"（codex round5 P2；已改"不承诺特定 IDE 版本点击后必定持久化，请核实落盘结果"）：${JSON.stringify(diagnostics)}`,
+        );
+      }
+    },
+  },
+  {
+    name: 'buildHvigorDiagnostics: 00308018 场景（无 sign-skip 文本）不新增 sign-skip 诊断，既有计数不受影响',
+    run: () => {
+      const diagnostics = buildHvigorDiagnostics([
+        '$ hvigor --mode module -p product=product -p buildMode=debug assembleHap --analyze=advanced --parallel --incremental --daemon',
+        '> hvigor ERROR: Failed ::onlineSignApp...',
+        'Error Code: 00308018 Unknown Error - Failed to find the incremental input file:',
+        'D:/repo/build/product/outputs/product/demo-product-unsigned.hap',
+        'Archive HAP Package task start.',
+      ].join('\n'));
+      assertEq(diagnostics.length, 4, '不应因新增 sign-skip 规则而多出诊断条目');
+    },
+  },
+  {
+    name: 'ensureFailedAtStageTag: errors 为空 → 合成一条"失败阶段：<X>"（既有行为不破）',
+    run: () => {
+      const result = ensureFailedAtStageTag([], 'hap_not_found');
+      assertEq(result.length, 1, '应合成一条');
+      assertEq(result[0]!.message, '失败阶段：hap_not_found', '内容应为标准前缀+X');
+    },
+  },
+  {
+    name: 'ensureFailedAtStageTag: errors 非空但均无"失败阶段："前缀 → 前插标签，保留原诊断（codex round5 P1）',
+    run: () => {
+      const richDiagnostic = 'ohosTest HAP 已构建但未发现对应 signed HAP。hvigor 明确报告 signingConfigs 未配置。';
+      const result = ensureFailedAtStageTag([{ message: richDiagnostic }], 'hap_not_found');
+      assertEq(result.length, 2, '应前插而非替换，原诊断不丢失');
+      assertEq(result[0]!.message, '失败阶段：hap_not_found', '标签应在最前，供 ut-host-impl.ts 的 stageHint 检测命中');
+      assertEq(result[1]!.message, richDiagnostic, '原始诊断消息应保留在数组中');
+    },
+  },
+  {
+    name: 'ensureFailedAtStageTag: 已有"失败阶段："前缀（哪怕内容更细粒度如 device_locked）→ 不重复插入、不丢失细粒度诊断',
+    run: () => {
+      const specific = '失败阶段：device_locked；设备已连接但锁屏。';
+      const result = ensureFailedAtStageTag([{ message: specific }], 'run');
+      assertEq(result.length, 1, '不应额外前插粗粒度 "失败阶段：run"，避免覆盖细粒度诊断');
+      assertEq(result[0]!.message, specific, 'stageHint 检测应仍命中原有细粒度消息（含 device_locked）');
+    },
+  },
+  {
+    name: 'ensureFailedAtStageTag: failedAt 为 undefined → errors 原样返回',
+    run: () => {
+      const original = [{ message: 'x' }];
+      const result = ensureFailedAtStageTag(original, undefined);
+      assertEq(result, original, 'failedAt 缺失时不应合成/修改');
+    },
+  },
+  {
+    name: 'buildOnDeviceSignDiagnosis: 正确把 buildRes 字段 + mainAppSignedPath 组装进 signDiagnosis（cursor round5 minor：接线单测）',
+    run: () => {
+      const diag = buildOnDeviceSignDiagnosis(
+        { signSkipped: true, signingConfigMissing: true },
+        '/x/Phone-product-signed.hap',
+      );
+      assertEq(diag.signSkipped, true, 'signSkipped 应透传');
+      assertEq(diag.signingConfigMissing, true, 'signingConfigMissing 应透传');
+      assertEq(diag.mainAppSignedPath, '/x/Phone-product-signed.hap', 'mainAppSignedPath 应透传');
+    },
+  },
+  {
+    name: 'buildOnDeviceSignDiagnosis: buildRes 字段缺失时透传 undefined（不臆造 false）',
+    run: () => {
+      const diag = buildOnDeviceSignDiagnosis({}, null);
+      assertEq(diag.signSkipped, undefined, 'signSkipped 缺失时应为 undefined，不应臆造 false');
+      assertEq(diag.signingConfigMissing, undefined, 'signingConfigMissing 缺失时应为 undefined');
+      assertEq(diag.mainAppSignedPath, null, 'mainAppSignedPath 应透传 null');
     },
   },
   {

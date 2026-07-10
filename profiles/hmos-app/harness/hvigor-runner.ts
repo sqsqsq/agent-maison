@@ -38,6 +38,9 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
+// type-only：编译期擦除，不构成 hvigor-runner ↔ hdc-runner 运行期 import 环
+// （运行期互调仍走函数内 require，见 runHvigorTest）。
+import type { OhosTestSignDiagnosis } from './hdc-runner';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 
 export interface HvigorRunResult {
@@ -75,6 +78,10 @@ export interface HvigorRunResult {
   command?: string;
   /** 调用驱动：node_hvigorw_js / hvigorw_wrapper / path / … */
   invocationDriver?: string;
+  /** 日志命中 `Will skip sign`（plan d7e4b2a9 t3：签名被跳过，产物仅 unsigned） */
+  signSkipped?: boolean;
+  /** 日志命中 `No signingConfigs profile is configured`（signSkipped 的已知原因之一） */
+  signingConfigMissing?: boolean;
 }
 
 export interface HvigorError {
@@ -808,7 +815,34 @@ export function buildHvigorDiagnostics(log: string): string[] {
     );
   }
 
+  const signSkip = detectSignSkip(log);
+  if (signSkip.signSkipped) {
+    diagnostics.push(
+      [
+        '检测到 hvigor 签名被跳过（Will skip sign）：本轮产物为 unsigned，非编译错误。',
+        signSkip.signingConfigMissing
+          ? 'hvigor 明确报告：当前工程未配置 signingConfigs profile（No signingConfigs profile is configured）。'
+          : '未命中 "No signingConfigs profile is configured" 提示，具体跳过原因请见完整日志。',
+        '如需真机安装/自动化测试签名产物：在 DevEco 配置签名（如启用自动签名），并确认 build-profile.json5',
+        '最终存在可供 headless hvigor 使用的 signingConfigs（不承诺特定 IDE 版本点击后必定持久化，请核实落盘结果）；',
+        '或扩展自定义签名任务覆盖该 target。',
+      ].join(' '),
+    );
+  }
+
   return diagnostics;
+}
+
+/**
+ * plan d7e4b2a9 t3①：从 hvigor 日志解析签名跳过的机读标志。
+ * 不参与 PASS/FAIL 判定，供 HvigorRunResult.signSkipped/signingConfigMissing 与
+ * 下游 ut/testing 分层诊断消费（宿主 bc-openCard 现场日志即命中此模式）。
+ */
+export function detectSignSkip(log: string): { signSkipped: boolean; signingConfigMissing: boolean } {
+  return {
+    signSkipped: /Will skip sign/i.test(log),
+    signingConfigMissing: /No signingConfigs profile is configured/i.test(log),
+  };
 }
 
 /** 解析 hypium test 输出 */
@@ -984,62 +1018,192 @@ export function listBuildProfileModules(projectRoot: string): BuildProfileModule
   }
 }
 
+/** G2（plan d7e4b2a9）：build/<segment>/outputs/ 下枚举到的主 HAP signed 候选。 */
+export interface HapDiscoveryCandidate {
+  path: string;
+  moduleName: string;
+  moduleSrcPath: string;
+  /** `build/<segment>/` 段名（如 product、default，或其他自定义 target 名） */
+  segment: string;
+  /** `outputs/<outputsDir>/` 段名 */
+  outputsDir: string;
+}
+
+export interface HapDiscoveryResult {
+  /** 按四级排序键选出的首选 signed HAP（无命中为 null） */
+  signedPath: string | null;
+  /** 全部命中的候选，按同一排序键升序（[0] === signedPath 所在候选） */
+  candidates: HapDiscoveryCandidate[];
+  /** 实际扫描过的 outputs 目录（相对 projectRoot，正斜杠），无论是否命中都记录 */
+  scannedDirs: string[];
+}
+
+const OHOS_TEST_OUTPUTS_DIR_RE = /^ohostest$/i;
+const OHOS_TEST_NAME_RE = /ohostest/i;
+
+function rankBySegmentOrProduct(name: string, resolvedProduct: string): number {
+  if (name === resolvedProduct) return 0;
+  if (name === 'default') return 1;
+  return 2;
+}
+
+interface RawHapCandidate {
+  path: string;
+  moduleName: string;
+  moduleSrcPath: string;
+  moduleIndex: number;
+  segment: string;
+  outputsDir: string;
+  fileName: string;
+}
+
 /**
- * 在模块 `build/<product>/outputs/default/` 下查找已签名的主应用 HAP（非 ohosTest）。
- * 优先不含 `ohosTest` 语义的文件名；多命中时取字典序最后一条以稳定输出。
+ * 四级确定性排序键（plan d7e4b2a9 t1，codex round2 采纳）：
+ * ① segment rank（resolvedProduct → default → 其余字典序）
+ * ② build-profile modules[] 声明序
+ * ③ outputs 子目录 rank（resolvedProduct → default → 其余非 ohosTest 字典序）
+ * ④ 文件名 rank（非 ohostest 命名优先 → 字典序尾条，与既有行为一致）
+ */
+function compareHapCandidates(a: RawHapCandidate, b: RawHapCandidate, resolvedProduct: string): number {
+  const segRankA = rankBySegmentOrProduct(a.segment, resolvedProduct);
+  const segRankB = rankBySegmentOrProduct(b.segment, resolvedProduct);
+  if (segRankA !== segRankB) return segRankA - segRankB;
+  if (segRankA === 2 && a.segment !== b.segment) return a.segment < b.segment ? -1 : 1;
+
+  if (a.moduleIndex !== b.moduleIndex) return a.moduleIndex - b.moduleIndex;
+
+  const outRankA = rankBySegmentOrProduct(a.outputsDir, resolvedProduct);
+  const outRankB = rankBySegmentOrProduct(b.outputsDir, resolvedProduct);
+  if (outRankA !== outRankB) return outRankA - outRankB;
+  if (outRankA === 2 && a.outputsDir !== b.outputsDir) return a.outputsDir < b.outputsDir ? -1 : 1;
+
+  const ohosA = OHOS_TEST_NAME_RE.test(a.fileName) ? 1 : 0;
+  const ohosB = OHOS_TEST_NAME_RE.test(b.fileName) ? 1 : 0;
+  if (ohosA !== ohosB) return ohosA - ohosB;
+
+  // 字典序尾条：与既有行为一致（pool.sort() 后取最后一条 = 更大的文件名优先）
+  if (a.fileName !== b.fileName) return a.fileName < b.fileName ? 1 : -1;
+  return 0;
+}
+
+/**
+ * 枚举模块 `build/<segment>/outputs/<outputsDir>/` 下的已签名主应用 HAP（非 ohosTest）。
+ * 不再硬编码 outputs 子目录名为 'default'——真实布局中 target 段可能与 product 同名
+ * （如 `build/product/outputs/product/`），旧实现只扫 `outputs/default` 导致 headless
+ * 已签出的主 HAP 被判"未找到"（宿主 bc-openCard 误报根因）。
+ */
+export function discoverAppHapArtifacts(projectRoot: string, buildProduct?: string): HapDiscoveryResult {
+  const resolvedProduct = buildProduct?.trim() ?? '';
+  const modules = listBuildProfileModules(projectRoot);
+  const scannedDirs: string[] = [];
+  const raw: RawHapCandidate[] = [];
+
+  modules.forEach((m, moduleIndex) => {
+    const buildRoot = path.join(projectRoot, m.srcPath, 'build');
+    if (!fs.existsSync(buildRoot)) return;
+    let segEntries: fs.Dirent[];
+    try {
+      segEntries = fs.readdirSync(buildRoot, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const segEnt of segEntries) {
+      if (!segEnt.isDirectory()) continue;
+      const segment = segEnt.name;
+      const outputsRoot = path.join(buildRoot, segment, 'outputs');
+      if (!fs.existsSync(outputsRoot)) continue;
+      let outEntries: fs.Dirent[];
+      try {
+        outEntries = fs.readdirSync(outputsRoot, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const outEnt of outEntries) {
+        if (!outEnt.isDirectory()) continue;
+        if (OHOS_TEST_OUTPUTS_DIR_RE.test(outEnt.name)) continue; // ohosTest 产物由 findOhosTestSignedHap 负责
+        const outputsDir = path.join(outputsRoot, outEnt.name);
+        scannedDirs.push(path.relative(projectRoot, outputsDir).split(path.sep).join('/'));
+        let files: string[];
+        try {
+          files = fs.readdirSync(outputsDir).filter((f) => f.endsWith('-signed.hap'));
+        } catch {
+          continue;
+        }
+        for (const fileName of files) {
+          raw.push({
+            path: path.join(outputsDir, fileName),
+            moduleName: m.name,
+            moduleSrcPath: m.srcPath,
+            moduleIndex,
+            segment,
+            outputsDir: outEnt.name,
+            fileName,
+          });
+        }
+      }
+    }
+  });
+
+  raw.sort((a, b) => compareHapCandidates(a, b, resolvedProduct));
+
+  const candidates: HapDiscoveryCandidate[] = raw.map((c) => ({
+    path: c.path,
+    moduleName: c.moduleName,
+    moduleSrcPath: c.moduleSrcPath,
+    segment: c.segment,
+    outputsDir: c.outputsDir,
+  }));
+
+  return {
+    signedPath: candidates.length > 0 ? candidates[0]!.path : null,
+    candidates,
+    scannedDirs,
+  };
+}
+
+/**
+ * 薄包装（codex round2 采纳）：保持既有 `string | null` 契约，供
+ * device-test-build-reuse.ts / providers/device-test-build.ts 等既有调用方零改动消费。
+ * 需要 scannedDirs/candidates 的调用方应改用 discoverAppHapArtifacts。
  */
 export function findAppSignedHap(projectRoot: string, buildProduct?: string): string | null {
-  const segments: string[] = [];
-  if (buildProduct && buildProduct.trim()) {
-    segments.push(buildProduct.trim());
+  return discoverAppHapArtifacts(projectRoot, buildProduct).signedPath;
+}
+
+/**
+ * G2（plan d7e4b2a9 t2）：signed HAP 是否可能基于「上一轮」unsigned 产物——纯观测，
+ * 不做硬门禁（两家 review round2 一致意见：本批反馈无实锤样本，任意目录 mtime 比较
+ * 会误伤其他 target/变体；仅按相同 basename 配对，构建后由调用方带出该字段即可）。
+ */
+export interface StaleSignedSuspect {
+  staleSuspect: boolean;
+  unsignedPath: string | null;
+  note?: string;
+}
+
+export function detectStaleSignedSuspect(signedPath: string): StaleSignedSuspect {
+  const SIGNED_SUFFIX = '-signed.hap';
+  if (!signedPath.endsWith(SIGNED_SUFFIX)) {
+    return { staleSuspect: false, unsignedPath: null };
   }
-  if (!segments.includes('default')) {
-    segments.push('default');
+  const unsignedPath = `${signedPath.slice(0, -SIGNED_SUFFIX.length)}-unsigned.hap`;
+  if (!fs.existsSync(unsignedPath)) {
+    return { staleSuspect: false, unsignedPath: null };
   }
-
-  const modules = listBuildProfileModules(projectRoot);
-
-  const pickSigned = (dir: string): string | null => {
-    if (!fs.existsSync(dir)) return null;
-    let files: string[];
-    try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith('-signed.hap'));
-    } catch {
-      return null;
+  try {
+    const signedMtime = fs.statSync(signedPath).mtimeMs;
+    const unsignedMtime = fs.statSync(unsignedPath).mtimeMs;
+    if (unsignedMtime > signedMtime) {
+      return {
+        staleSuspect: true,
+        unsignedPath,
+        note: 'signed 可能基于上一轮 unsigned，宿主自定义签名任务时序所致，建议核对后重跑构建',
+      };
     }
-    if (files.length === 0) return null;
-    const appLike = files.filter((f) => !/ohostest/i.test(f));
-    const pool = appLike.length > 0 ? appLike : files;
-    pool.sort();
-    return path.join(dir, pool[pool.length - 1]!);
-  };
-
-  for (const seg of segments) {
-    for (const m of modules) {
-      const dir = path.join(projectRoot, m.srcPath, 'build', seg, 'outputs', 'default');
-      const hit = pickSigned(dir);
-      if (hit) return hit;
-    }
+    return { staleSuspect: false, unsignedPath };
+  } catch {
+    return { staleSuspect: false, unsignedPath };
   }
-
-  for (const m of modules) {
-    const buildRoot = path.join(projectRoot, m.srcPath, 'build');
-    if (!fs.existsSync(buildRoot)) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(buildRoot, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      const dir = path.join(buildRoot, ent.name, 'outputs', 'default');
-      const hit = pickSigned(dir);
-      if (hit) return hit;
-    }
-  }
-
-  return null;
 }
 
 /** framework.config > toolchain.hvigor.coding 与默认值合并（不抛） */
@@ -1401,6 +1565,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 
   const logPath = path.relative(process.cwd(), logAbs).replace(/\\/g, '/');
   const metaPath = path.relative(process.cwd(), metaAbs).replace(/\\/g, '/');
+  const signSkip = detectSignSkip(analysisText);
 
   return {
     executed: true,
@@ -1416,6 +1581,8 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     diagnostics,
     command: commandDisplay,
     invocationDriver: spawnPlan.invocationDriver,
+    signSkipped: signSkip.signSkipped,
+    signingConfigMissing: signSkip.signingConfigMissing,
   };
 }
 
@@ -1681,6 +1848,44 @@ export function buildModuleHapArgs(
  * 任何阶段失败都会被翻译成 HvigorRunResult，并把上下文（命令、日志路径、设备列表、
  * 失败阶段标记）回填，便于上层 check-ut.ts 给用户精准诊断。
  */
+
+/**
+ * 确保 errors 里存在一条 `失败阶段：<X>` 前缀的消息，供 ut-host-impl.ts 的
+ * `stageHint = errors.find(e => /失败阶段：/.test(e.message))` 契约消费
+ * （plan d7e4b2a9 review P1，codex round5 指出）。
+ *
+ * 只在**没有任何一条**消息命中 `/失败阶段：/` 时才**前插**一条合成消息——不能只判断
+ * `errors.length === 0`：hdc-runner 的诊断消息（sign-skip 分层诊断、部分无 diagnosis
+ * 的 install/aa-test 失败文案）可能已有内容但不含该前缀，此时若不补，会让
+ * `stageHint` 落空、suggestion 误导向"修改 UT"。也不能无条件覆盖/前插：已有
+ * `失败阶段：device_locked；...` 这类更具体消息时，`failedAt`（如 'run'）粒度更粗，
+ * 前插反而会用粗粒度覆盖 `.find()` 命中的细粒度消息，丢失 device_locked 特判。
+ */
+export function ensureFailedAtStageTag(
+  errors: HvigorError[],
+  failedAt: string | undefined,
+): HvigorError[] {
+  if (!failedAt) return errors;
+  if (errors.some((e) => /失败阶段：/.test(e.message))) return errors;
+  return [{ message: `失败阶段：${failedAt}` }, ...errors];
+}
+
+/**
+ * 组装 runHvigorTest → runOnDeviceUt 的模块级签名诊断透传对象（plan d7e4b2a9 t3③）。
+ * 抽成纯函数供单测覆盖"接线是否正确"（cursor round5 minor：此前仅测了分层文案本身，
+ * 未测 runHvigorTest 是否真的把 buildRes 的字段传对）。
+ */
+export function buildOnDeviceSignDiagnosis(
+  buildRes: Pick<HvigorRunResult, 'signSkipped' | 'signingConfigMissing'>,
+  mainAppSignedPath: string | null,
+): OhosTestSignDiagnosis {
+  return {
+    signSkipped: buildRes.signSkipped,
+    signingConfigMissing: buildRes.signingConfigMissing,
+    mainAppSignedPath,
+  };
+}
+
 export function runHvigorTest(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
     moduleName: string;
@@ -1731,6 +1936,12 @@ export function runHvigorTest(
   // 这里通过 require 动态导入，避免 hvigor-runner ↔ hdc-runner 之间形成 import 环。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { runOnDeviceUt } = require('./hdc-runner') as typeof import('./hdc-runner');
+  const resolvedProduct = detectProduct(opts.projectRoot);
+  // plan d7e4b2a9 t3③④：模块级签名诊断——同函数内直传，不跨阶段传输，防多 ohosTest 模块串诊断。
+  // mainAppSignedPath 仅扫描磁盘、不核对来源（codex round5 P1）：不得断言"本轮/本环境
+  // 已验证签名链路可用"，只作为"headless 全局不支持签名"这一归因不成立的弱证据，
+  // 具体措辞见 describeOhosTestSignSkipDiagnosis。
+  const mainAppDiscovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
   const onDevice = runOnDeviceUt({
     projectRoot: opts.projectRoot,
     harnessRoot: opts.harnessRoot,
@@ -1739,8 +1950,9 @@ export function runHvigorTest(
     phase: opts.phase,
     srcModuleName: opts.moduleName,
     srcPath: opts.moduleSrcPath,
-    buildProduct: detectProduct(opts.projectRoot),
+    buildProduct: resolvedProduct,
     skipEnvVar: opts.skipEnvVar, // 允许跟 build 用同一个 env 变量整体跳过
+    signDiagnosis: buildOnDeviceSignDiagnosis(buildRes, mainAppDiscovery.signedPath),
   });
 
   // 把 onDevice 结果折叠进 HvigorRunResult，让上层报告看见完整链路日志。
@@ -1762,9 +1974,7 @@ export function runHvigorTest(
   // 用 onDevice.failedAt 标注失败阶段：当 install 失败时仍属于真实执行链路异常，
   // 让 check-ut 把它当 BLOCKER FAIL 报；on_pass=有用例 fail 也是 FAIL。
   // 成功路径下 onDevice.report?.failed === 0 + executed=true，res.exitCode=0。
-  if (onDevice.failedAt && !res.errors.length) {
-    res.errors = [{ message: `失败阶段：${onDevice.failedAt}` }];
-  }
+  res.errors = ensureFailedAtStageTag(res.errors, onDevice.failedAt);
   if (onDevice.report && onDevice.report.failed === 0 && onDevice.executed) {
     res.exitCode = 0;
   }

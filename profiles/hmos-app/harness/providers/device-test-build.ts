@@ -7,9 +7,11 @@ import { featurePhaseReportsDir } from '../../../../harness/config';
 import type { CapabilityProvider } from './types';
 import {
   runHvigorAssembleApp,
-  findAppSignedHap,
+  discoverAppHapArtifacts,
+  detectStaleSignedSuspect,
   stopHvigorDaemon,
   type HvigorRunResult,
+  type HapDiscoveryCandidate,
 } from '../hvigor-runner';
 import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from '../testing-build-conventions';
 import { evaluateDeviceTestBuildReuse } from '../device-test-build-reuse';
@@ -41,6 +43,14 @@ export interface DeviceTestBuildResult {
   hapBuiltAt?: string | null;
   inputsMaxMtimeMs?: number;
   reuseReason?: string;
+  /** 实际扫描过的 outputs 目录（plan d7e4b2a9 t1；命中/未命中都记录，供 FAIL 文案列出） */
+  scannedDirs?: string[];
+  /** 全部候选 signed HAP，按稳定优先级排序（[0] 即 hapPath 所在候选）；>1 说明存在歧义 */
+  candidates?: HapDiscoveryCandidate[];
+  /** signed 是否可能基于上一轮 unsigned（plan d7e4b2a9 t2；纯观测，不阻断） */
+  staleSuspect?: boolean;
+  staleSuspectUnsignedPath?: string | null;
+  staleSuspectNote?: string;
 }
 
 function writeBuildResultSummary(
@@ -87,6 +97,11 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       hvigorExecuted: false,
       hvigorExitCode: 0,
       hvigorDurationMs: 0,
+      staleSuspect: reuseDecision.staleSuspect ?? false,
+      staleSuspectUnsignedPath: reuseDecision.staleSuspectUnsignedPath ?? null,
+      staleSuspectNote: reuseDecision.staleSuspectNote ?? null,
+      scannedDirs: reuseDecision.scannedDirs ?? [],
+      candidateCount: reuseDecision.candidates?.length ?? 0,
       timestamp: new Date().toISOString(),
     });
     return {
@@ -99,6 +114,11 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       hapBuiltAt: reuseDecision.hapBuiltAt,
       inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
       reuseReason: reuseDecision.reason,
+      staleSuspect: reuseDecision.staleSuspect,
+      staleSuspectUnsignedPath: reuseDecision.staleSuspectUnsignedPath,
+      staleSuspectNote: reuseDecision.staleSuspectNote,
+      scannedDirs: reuseDecision.scannedDirs,
+      candidates: reuseDecision.candidates,
     };
   }
 
@@ -127,6 +147,11 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   let hapPath: string | null = null;
   let hapMtimeMs: number | null = reuseDecision.hapMtimeMs;
   let hapBuiltAt: string | null = reuseDecision.hapBuiltAt;
+  let scannedDirs: string[] | undefined;
+  let candidates: HapDiscoveryCandidate[] | undefined;
+  let staleSuspect: boolean | undefined;
+  let staleSuspectUnsignedPath: string | null | undefined;
+  let staleSuspectNote: string | undefined;
 
   const ok =
     hvigor.executed &&
@@ -136,7 +161,10 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
     hvigor.successMarkerFound !== false;
 
   if (ok) {
-    hapPath = findAppSignedHap(opts.projectRoot, resolvedProduct) ?? reuseDecision.hapPath;
+    const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
+    scannedDirs = discovery.scannedDirs;
+    candidates = discovery.candidates;
+    hapPath = discovery.signedPath ?? reuseDecision.hapPath;
     if (hapPath && fs.existsSync(hapPath)) {
       try {
         hapMtimeMs = fs.statSync(hapPath).mtimeMs;
@@ -144,6 +172,10 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       } catch {
         /* keep prior */
       }
+      const stale = detectStaleSignedSuspect(hapPath);
+      staleSuspect = stale.staleSuspect;
+      staleSuspectUnsignedPath = stale.unsignedPath;
+      staleSuspectNote = stale.note;
     }
   }
 
@@ -163,6 +195,11 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       hvigorDurationMs: hvigor.durationMs,
       hvigorLogPath: hvigor.logPath ?? null,
       hvigorMetaPath: hvigor.metaPath ?? null,
+      scannedDirs: scannedDirs ?? [],
+      candidateCount: candidates?.length ?? 0,
+      staleSuspect: staleSuspect ?? false,
+      staleSuspectUnsignedPath: staleSuspectUnsignedPath ?? null,
+      staleSuspectNote: staleSuspectNote ?? null,
       timestamp: new Date().toISOString(),
     });
   } catch {
@@ -172,6 +209,11 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   return {
     hvigor,
     hapPath,
+    scannedDirs,
+    candidates,
+    staleSuspect,
+    staleSuspectUnsignedPath,
+    staleSuspectNote,
     resolvedProduct,
     resolvedBuildMode,
     reused: false,

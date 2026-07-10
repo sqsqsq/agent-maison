@@ -29,6 +29,8 @@ import {
   classifyAaTestFailure,
   parseHypiumStdout,
   findOhosTestSignedHap,
+  discoverOhosTestArtifacts,
+  describeOhosTestSignSkipDiagnosis,
   loadAppBundleName,
   loadOhosTestModuleName,
   loadAppInstallCandidateMeta,
@@ -278,6 +280,110 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(found, expected, '应扫描到 build/product/...');
     }),
   },
+
+  // --------------------------------------------------------------------------
+  // discoverOhosTestArtifacts / describeOhosTestSignSkipDiagnosis（plan d7e4b2a9 t3）
+  // --------------------------------------------------------------------------
+  {
+    name: 'discoverOhosTestArtifacts: 与 findOhosTestSignedHap 行为等价（薄包装）',
+    run: () => withTmpDir(root => {
+      const srcPath = '02-Feature/FeatureAlpha';
+      const expected = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest', 'FeatureAlpha-ohosTest-signed.hap');
+      writeFile(expected, 'fake hap');
+      const viaDiscover = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha').signedPath;
+      const viaFind = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha');
+      assertEq(viaFind, viaDiscover, 'find* 薄包装应与 discover*.signedPath 一致');
+      assertEq(viaFind, expected, '且应命中预期路径');
+    }),
+  },
+  {
+    name: 'discoverOhosTestArtifacts: 记录同目录 unsignedPath',
+    run: () => withTmpDir(root => {
+      const srcPath = '02-Feature/FeatureAlpha';
+      const dir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
+      writeFile(path.join(dir, 'FeatureAlpha-ohosTest-unsigned.hap'), 'unsigned');
+      const result = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha');
+      assertNull(result.signedPath, '只有 unsigned 时 signedPath 应为 null');
+      assertEq(result.unsignedPath, path.join(dir, 'FeatureAlpha-ohosTest-unsigned.hap'), '应记录 unsignedPath');
+    }),
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: unsigned 不存在 → 返回 null（回退通用 "请先 genOnDeviceTestHap" 文案）',
+    run: () => {
+      const result = describeOhosTestSignSkipDiagnosis({ signedPath: null, unsignedPath: null, scannedDirs: [] });
+      assertNull(result, 'unsigned 不存在时不应给出 sign-skip 诊断');
+    },
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: (b) signingConfigMissing=true → 文案含确切归因短语',
+    run: () => {
+      const discovery = { signedPath: null, unsignedPath: '/x/A-ohosTest-unsigned.hap', scannedDirs: [] };
+      const msg = describeOhosTestSignSkipDiagnosis(discovery, { signSkipped: true, signingConfigMissing: true });
+      assert(Boolean(msg), '应返回诊断文案');
+      assertIncludes(msg!, 'ohosTest HAP 已构建但未发现对应 signed HAP', '应含确定层文案');
+      assertIncludes(msg!, 'hvigor 明确报告 signingConfigs 未配置', '(b) 层应含明确归因短语');
+    },
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: (c) 仅 signSkipped=true → 文案含"见构建日志"，不臆测 signingConfigs',
+    run: () => {
+      const discovery = { signedPath: null, unsignedPath: '/x/A-ohosTest-unsigned.hap', scannedDirs: [] };
+      const msg = describeOhosTestSignSkipDiagnosis(discovery, { signSkipped: true, signingConfigMissing: false });
+      assertIncludes(msg!, 'hvigor 明确跳过签名，具体原因见构建日志', '(c) 层应指向日志而非臆测');
+      if (msg!.includes('hvigor 明确报告 signingConfigs 未配置')) {
+        throw new Error('(c) 层不应断言 signingConfigs 未配置（未收到该机读标志）');
+      }
+    },
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: (d) 标志未传但 unsigned 存在 → 只给确定层 + 核查建议，不得断言 signingConfigs 未配置',
+    run: () => {
+      const discovery = { signedPath: null, unsignedPath: '/x/A-ohosTest-unsigned.hap', scannedDirs: [] };
+      const msg = describeOhosTestSignSkipDiagnosis(discovery, undefined);
+      assertIncludes(msg!, 'ohosTest HAP 已构建但未发现对应 signed HAP', '(d) 层仍应给确定层文案');
+      if (msg!.includes('hvigor 明确报告 signingConfigs 未配置')) {
+        throw new Error('(d) 层（标志未传）不得断言 signingConfigs 未配置');
+      }
+      if (msg!.includes('hvigor 明确跳过签名，具体原因见构建日志')) {
+        throw new Error('(d) 层不应误用 (c) 层的措辞（没有 signSkipped 标志）');
+      }
+    },
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: 矛盾证据——mainAppSignedPath 非空时输出弱证据句（不断言本环境已验证可签名）+ 复用 (b)/(c)/(d) 原因层',
+    run: () => {
+      const discovery = { signedPath: null, unsignedPath: '/x/A-ohosTest-unsigned.hap', scannedDirs: [] };
+      const msg = describeOhosTestSignSkipDiagnosis(discovery, {
+        signSkipped: true,
+        signingConfigMissing: true,
+        mainAppSignedPath: '/x/Phone-product-signed.hap',
+      });
+      assertIncludes(msg!, '磁盘上检测到已签名的主 HAP', '应提及盘上检测到的主 HAP（弱证据表述）');
+      assertIncludes(msg!, '来源未核实', '不得断言来源，需承认不确定性（codex round5）');
+      assertIncludes(msg!, 'hvigor 明确报告 signingConfigs 未配置', '原因层应复用 (b) 拼接，不重复造词');
+      if (msg!.includes('同一 headless 环境已能执行宿主自定义主 HAP 签名')) {
+        throw new Error('不得断言"同一 headless 环境已验证可签名"这类过强因果结论（codex round5 P1）');
+      }
+      if (msg!.includes('直接原因是 signingConfigs 未配置或自定义任务未覆盖')) {
+        throw new Error('不得使用早期版本的写死措辞（round4 已收窄）');
+      }
+    },
+  },
+  {
+    name: 'describeOhosTestSignSkipDiagnosis: 矛盾证据负例——无主 signed 时不得提及盘上检测到的签名证据',
+    run: () => {
+      const discovery = { signedPath: null, unsignedPath: '/x/A-ohosTest-unsigned.hap', scannedDirs: [] };
+      const msg = describeOhosTestSignSkipDiagnosis(discovery, {
+        signSkipped: true,
+        signingConfigMissing: true,
+        mainAppSignedPath: null,
+      });
+      if (msg!.includes('磁盘上检测到已签名的主 HAP')) {
+        throw new Error('无主 signed 证据时不应提及"盘上检测到已签名主 HAP"');
+      }
+    },
+  },
+
   {
     name: 'loadAppBundleName: 标准 app.json5 → 返回 bundleName',
     run: () => withTmpDir(root => {

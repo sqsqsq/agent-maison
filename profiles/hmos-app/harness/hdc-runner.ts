@@ -598,17 +598,27 @@ export function loadOhosTestMetadata(projectRoot: string, srcPath: string): Ohos
   return { bundleName, ohosTestModuleName, testRunner, testTimeoutMs };
 }
 
+export interface OhosTestDiscoveryResult {
+  signedPath: string | null;
+  /** 与 signedPath 同目录（或扫描到的首个）未签名产物，用于 sign-skip 分层诊断 */
+  unsignedPath: string | null;
+  /** 实际扫描过的 outputs/ohosTest 目录（相对 projectRoot，正斜杠） */
+  scannedDirs: string[];
+}
+
 /**
- * 在模块的 build/<product>/outputs/ohosTest/ 下找已签名 hap。
+ * 在模块的 build/<product>/outputs/ohosTest/ 下发现已签名 / 未签名 hap。
  * 命名约定（hvigor 5.x）：`<srcModuleName>-ohosTest-signed.hap`，
  *   srcModuleName 取 build-profile.json5 modules[].name（即 contracts.modules[].name）。
+ * 扫描优先级与旧 findOhosTestSignedHap 一致（buildProduct → default → build/* 兜底），
+ * 仅额外记录 unsignedPath/scannedDirs 供 sign-skip 分层诊断消费（plan d7e4b2a9 t3）。
  */
-export function findOhosTestSignedHap(
+export function discoverOhosTestArtifacts(
   projectRoot: string,
   srcPath: string,
   srcModuleName: string,
   buildProduct?: string,
-): string | null {
+): OhosTestDiscoveryResult {
   const segments: string[] = [];
   if (buildProduct && buildProduct.trim()) {
     segments.push(buildProduct.trim());
@@ -617,37 +627,143 @@ export function findOhosTestSignedHap(
     segments.push('default');
   }
 
-  for (const seg of segments) {
-    const conventional = path.join(
-      projectRoot,
-      srcPath,
-      'build',
-      seg,
-      'outputs',
-      'ohosTest',
-      `${srcModuleName}-ohosTest-signed.hap`,
-    );
-    if (fs.existsSync(conventional)) return conventional;
+  const scannedDirs: string[] = [];
+  let signedPath: string | null = null;
+  let unsignedPath: string | null = null;
 
-    const dir = path.join(projectRoot, srcPath, 'build', seg, 'outputs', 'ohosTest');
-    if (fs.existsSync(dir)) {
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('-signed.hap'));
-      if (files.length) return path.join(dir, files[0]!);
+  const scanDir = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    scannedDirs.push(path.relative(projectRoot, dir).split(path.sep).join('/'));
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      return;
     }
+    if (!signedPath) {
+      const conventional = path.join(dir, `${srcModuleName}-ohosTest-signed.hap`);
+      if (fs.existsSync(conventional)) {
+        signedPath = conventional;
+      } else {
+        const hit = files.find((f) => f.endsWith('-signed.hap'));
+        if (hit) signedPath = path.join(dir, hit);
+      }
+    }
+    if (!unsignedPath) {
+      const conventionalUnsigned = path.join(dir, `${srcModuleName}-ohosTest-unsigned.hap`);
+      if (fs.existsSync(conventionalUnsigned)) {
+        unsignedPath = conventionalUnsigned;
+      } else {
+        const hitU = files.find((f) => f.endsWith('-unsigned.hap'));
+        if (hitU) unsignedPath = path.join(dir, hitU);
+      }
+    }
+  };
+
+  for (const seg of segments) {
+    scanDir(path.join(projectRoot, srcPath, 'build', seg, 'outputs', 'ohosTest'));
   }
 
   const buildRoot = path.join(projectRoot, srcPath, 'build');
-  if (!fs.existsSync(buildRoot)) return null;
-  for (const ent of fs.readdirSync(buildRoot, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const ohosDir = path.join(buildRoot, ent.name, 'outputs', 'ohosTest');
-    if (!fs.existsSync(ohosDir)) continue;
-    const conv = path.join(ohosDir, `${srcModuleName}-ohosTest-signed.hap`);
-    if (fs.existsSync(conv)) return conv;
-    const files = fs.readdirSync(ohosDir).filter(f => f.endsWith('-signed.hap'));
-    if (files.length) return path.join(ohosDir, files[0]!);
+  if (fs.existsSync(buildRoot)) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(buildRoot, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      if (segments.includes(ent.name)) continue; // 已在上面扫描过
+      scanDir(path.join(buildRoot, ent.name, 'outputs', 'ohosTest'));
+    }
   }
-  return null;
+
+  return { signedPath, unsignedPath, scannedDirs };
+}
+
+/**
+ * 薄包装（codex round2 采纳）：保持既有 `string | null` 契约，provider
+ * `providers/device-test.ts` 公开导出此函数，签名不变。需要 unsignedPath/scannedDirs
+ * 的调用方应改用 discoverOhosTestArtifacts。
+ */
+export function findOhosTestSignedHap(
+  projectRoot: string,
+  srcPath: string,
+  srcModuleName: string,
+  buildProduct?: string,
+): string | null {
+  return discoverOhosTestArtifacts(projectRoot, srcPath, srcModuleName, buildProduct).signedPath;
+}
+
+/** runHvigorTest 内模块级直传的签名诊断（plan d7e4b2a9 t3③；不承担跨阶段传输，仅同函数内传递）。 */
+export interface OhosTestSignDiagnosis {
+  signSkipped?: boolean;
+  signingConfigMissing?: boolean;
+  /**
+   * 磁盘上检测到的已签名主 HAP 路径（discoverAppHapArtifacts 结果，仅扫描文件系统，
+   * 不验证来源）。codex round5 修正：不得断言"本轮/本环境已验证可签名"，只能作为
+   * "headless 全局不支持签名"这一归因不成立的弱证据。
+   */
+  mainAppSignedPath?: string | null;
+}
+
+function ohosTestSignReasonLine(signDiag?: OhosTestSignDiagnosis): { text: string; withHostFix: boolean } {
+  if (signDiag?.signingConfigMissing) {
+    return {
+      text: 'hvigor 明确报告 signingConfigs 未配置（No signingConfigs profile is configured）。',
+      withHostFix: true,
+    };
+  }
+  if (signDiag?.signSkipped) {
+    return {
+      text: 'hvigor 明确跳过签名，具体原因见构建日志。',
+      withHostFix: false,
+    };
+  }
+  return {
+    text: '具体原因未知（未取得 hvigor 签名跳过的机读标志）。',
+    withHostFix: true,
+  };
+}
+
+/**
+ * ohosTest signed HAP 未命中时的分层诊断（plan d7e4b2a9 t3②④，codex round3 采纳）：
+ * (a) unsignedPath 存在 → 确定层："ohosTest HAP 已构建但未发现对应 signed HAP"；
+ * (b) signingConfigMissing → 追加 hvigor 明确原因；
+ * (c) 仅 signSkipped → 追加"见构建日志"，不臆测具体原因；
+ * (d) 两标志皆无 → 原因未知，仅给核查建议。
+ * mainAppSignedPath 非空时额外输出弱证据句（磁盘上检测到已签名主 HAP，来源未核实，
+ * 仅提示"headless 全局不支持签名"这一归因未必成立，不断言"本环境已验证可签名"，
+ * codex round5 收窄）——原因层复用同一套 (b)/(c)/(d) 拼接，不重复造词。
+ * unsignedPath 缺失（即真的从未构建过）时返回 null，调用方回退到通用"请先 genOnDeviceTestHap"文案。
+ */
+export function describeOhosTestSignSkipDiagnosis(
+  discovery: OhosTestDiscoveryResult,
+  signDiag?: OhosTestSignDiagnosis,
+): string | null {
+  if (!discovery.unsignedPath) return null;
+
+  const lines: string[] = ['ohosTest HAP 已构建但未发现对应 signed HAP。', `unsigned 产物：${discovery.unsignedPath}`];
+
+  if (signDiag?.mainAppSignedPath) {
+    lines.push(
+      `磁盘上检测到已签名的主 HAP（${signDiag.mainAppSignedPath}），来源未核实（可能产出于本次或历史 headless 构建，` +
+        '也可能来自 DevEco 会话）——不构成"当前 headless 环境已验证可签名"的证据，仅提示 ohosTest 未签名不一定是' +
+        ' headless 全局限制，请结合下方具体原因判断。',
+    );
+  }
+
+  const reason = ohosTestSignReasonLine(signDiag);
+  lines.push(reason.text);
+  if (reason.withHostFix) {
+    lines.push(
+      '修复建议（二选一）：① 在 DevEco 配置签名（如启用自动签名），并确认 build-profile.json5 最终存在可供 headless hvigor 使用的 signingConfigs；' +
+        '② 扩展自定义签名任务，使其覆盖 ohosTest 产物。',
+    );
+  }
+
+  return lines.join('\n');
 }
 
 // ----------------------------------------------------------------------------
@@ -1069,6 +1185,11 @@ export interface OnDeviceUtOptions {
   buildProduct?: string;
   /** 跳过环境变量（v2.2 风格） */
   skipEnvVar?: string;
+  /**
+   * 模块级签名诊断（plan d7e4b2a9 t3③）：由 runHvigorTest 在同一函数内从当前模块的
+   * buildRes 直传，供 hap 未命中时的分层诊断消费。不跨阶段传输（不同模块不串诊断）。
+   */
+  signDiagnosis?: OhosTestSignDiagnosis;
 }
 
 function ensureHdcLogReportDir(
@@ -1115,10 +1236,14 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   }
 
   // 2) 找 hap
-  const hap = findOhosTestSignedHap(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
+  const discovery = discoverOhosTestArtifacts(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
+  const hap = discovery.signedPath;
   if (!hap) {
     const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : 'default + build/* 扫描';
-    const msg = `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先 genOnDeviceTestHap`;
+    const signSkipMsg = describeOhosTestSignSkipDiagnosis(discovery, opts.signDiagnosis);
+    const msg =
+      signSkipMsg ??
+      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先 genOnDeviceTestHap`;
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',

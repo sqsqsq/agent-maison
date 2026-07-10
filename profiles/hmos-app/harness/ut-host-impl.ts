@@ -362,6 +362,13 @@ function checkUtHvigorBuild(
   );
 
   if (bad.length === 0) {
+    // plan d7e4b2a9 t3③：sign-skip 只做报告可见性，不改变 PASS 判定（编译本身成功，
+    // 签名是否跳过由后续 ut_hvigor_test 装机环节实际暴露；此处不承担跨阶段传输，
+    // signSkipped/signingConfigMissing 由 runHvigorTest 在同一函数内直传 hdc-runner）。
+    const signSkipModules = perModule.filter(x => x.result.signSkipped).map(x => x.module);
+    const signSkipNote = signSkipModules.length
+      ? `\n⚠ ${signSkipModules.join(', ')} 编译日志命中 "Will skip sign"，产物暂为 unsigned；后续装机/自动化测试若失败请优先核对 signingConfigs。`
+      : '';
     return [
       {
         id: 'ut_hvigor_build',
@@ -369,7 +376,7 @@ function checkUtHvigorBuild(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。`,
+        details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}`,
       },
     ];
   }
