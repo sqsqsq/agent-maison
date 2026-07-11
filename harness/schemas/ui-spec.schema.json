@@ -147,6 +147,26 @@
         "lightweight": {
           "type": "boolean",
           "description": "P2/P3 轻量版：可省略细粒度组件树与 bbox"
+        },
+        "must_have_elements": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "屏级必备元素 id 列表；coding C3 presence 校验与 region_attest 覆盖分母"
+        },
+        "forbidden_overlap": {
+          "type": "array",
+          "description": "T8-A1（plan c6d8f2b4）：禁止重叠元素对——运行时布局树 bounds 相交即 pixel_1to1 BLOCKER；每项恰为两个元素 id",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "protected_region": {
+          "type": "array",
+          "description": "T8-A1：保护区元素 id——任何非亲缘可交互控件 bounds 侵入即 BLOCKER",
+          "items": { "type": "string", "minLength": 1 }
         }
       }
     },

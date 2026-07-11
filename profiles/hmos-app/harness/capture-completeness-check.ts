@@ -27,6 +27,7 @@ import {
   walkComponentNodes,
   type UiSpecComponentNode,
   type UiSpecDoc,
+  type UiSpecScreen,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import {
   clusterOcrLines,
@@ -292,6 +293,33 @@ export function collectSpecTextUniverse(
 }
 
 /**
+ * t6④（plan c6d8f2b4）：单屏本地文本分母——overlay 屏专用。特意**不含** global_elements
+ * 与其它屏文本，堵"银行行挂靠主屏分母、overlay 屏整个漏建模"的洞（bc-openCard 实证：
+ * card_type_sheet 参考图含银行行，must_have_elements 五项无一银行元素，feature 级分母照过）。
+ */
+export function collectScreenLocalTexts(
+  screen: UiSpecScreen,
+  refElements: RefElementEntry[] | null,
+): string[] {
+  const out = new Set<string>();
+  const walk = (n: UiSpecComponentNode): void => {
+    if (typeof n.text === 'string' && norm(n.text)) out.add(n.text);
+    const sub = (n as { subtitle?: string }).subtitle;
+    if (typeof sub === 'string' && norm(sub)) out.add(sub);
+    if (typeof n.badge === 'string' && norm(n.badge)) out.add(n.badge);
+    for (const c of n.children ?? []) walk(c);
+  };
+  if (screen.root) walk(screen.root);
+  const screenRef = screen.ref_id ?? screen.id;
+  for (const e of refElements ?? []) {
+    if (e.screen_ref_id === screenRef || e.screen_ref_id === screen.id) {
+      if (typeof e.text === 'string' && norm(e.text)) out.add(e.text);
+    }
+  }
+  return [...out];
+}
+
+/**
  * 行是否被 spec 文本集覆盖：累计字符覆盖法——OCR 行常把同 y 带多个元素聚成一行
  * （如"集中管理您的卡证票券钥匙"+"添加管理卡片"），单文本最大比率会漏；
  * 改为逐 spec 文本按序命中计覆盖字符数，累计 ≥ 行长 50% 即覆盖。
@@ -410,6 +438,9 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
   const specTexts = collectSpecTextUniverse(uiDoc, denomResolved.elements);
 
   const uncovered: string[] = [];
+  // t6④：overlay P0 屏"本屏未建模但被 feature 分母覆盖"的行（ratchet=sheet 区域内可框定；advisory=区域不可定）
+  const overlayLocalRatchet: string[] = [];
+  const overlayLocalAdvisory: string[] = [];
   // E3②（多模态降级阶梯 plan d4a8f3c6）：盲档下 uncovered 改批量登记 blind-review-pending.yaml，
   // 需要结构化字段（非仅展示用字符串）——screen/text/y/confidence。
   const uncoveredEntries: BlindReviewPendingEntry[] = [];
@@ -438,10 +469,29 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
     const lines = collectAuditableOcrLines(
       clusterOcrLines(ocr.words.filter(w => norm(w.text).length > 0)),
     );
+    // t6④：overlay P0 屏本地分母——被 feature 级分母覆盖但**本屏自身未建模**的行。
+    // 参考图会透出被压暗的基屏背景文本（合法归属基屏），FP 风险真实存在：
+    // overlay root 有 bbox 时以 bbox 框定 sheet 区域内的行 → ratchet；无 bbox → 仅 advisory 复核清单
+    //（校准铁律：拦不下的子信号降 advisory，不硬上 gate）。
+    const isOverlayP0 = pixel && s.priority === 'P0' && s.root?.type === 'overlay_panel';
+    const localTexts = isOverlayP0 ? collectScreenLocalTexts(s, denomResolved.elements) : null;
+    const overlayRootBBox =
+      isOverlayP0 && Array.isArray(s.root?.bbox) && s.root!.bbox!.length === 4 ? s.root!.bbox! : null;
     for (const line of lines) {
       totalLines++;
-      if (isLineCoveredBySpecTexts(line.text, specTexts)) coveredLines++;
-      else {
+      if (isLineCoveredBySpecTexts(line.text, specTexts)) {
+        coveredLines++;
+        if (localTexts && !isLineCoveredBySpecTexts(line.text, localTexts)) {
+          const yCenter = line.box[1] + line.box[3] / 2;
+          const inSheet =
+            overlayRootBBox !== null &&
+            yCenter >= overlayRootBBox[1] &&
+            yCenter <= overlayRootBBox[1] + overlayRootBBox[3];
+          const entry = `${s.id}: "${line.text.slice(0, 24)}" @y≈${yCenter.toFixed(2)}（由其它屏声明覆盖，本屏未建模）`;
+          if (inSheet) overlayLocalRatchet.push(entry);
+          else overlayLocalAdvisory.push(entry);
+        }
+      } else {
         const yCenter = line.box[1] + line.box[3] / 2;
         uncovered.push(`${s.id}: "${line.text.slice(0, 24)}" @y≈${yCenter.toFixed(2)}`);
         const confs = line.words.map(w => w.conf).filter(c => typeof c === 'number');
@@ -554,6 +604,46 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
     }];
   }
 
+  // t6④：overlay 屏本地分母缺口报告（uncovered 早退不掩盖——本组行属"feature 级已覆盖"，与 uncovered 正交）
+  if (overlayLocalRatchet.length > 0) {
+    const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
+    return [{
+      id: 'capture_completeness_overlay_local',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: [
+        `【t6④ overlay 本屏建模缺口】${overlayLocalRatchet.length} 行位于 overlay root bbox 区域内、` +
+          `由其它屏声明覆盖但本 overlay 屏未建模（bc-openCard"银行行挂靠主屏分母"同型洞）：`,
+        ...overlayLocalRatchet.slice(0, 10).map(l => `  ${l}`),
+        overlayLocalAdvisory.length > 0
+          ? `另有 ${overlayLocalAdvisory.length} 行区域不可定（root 无 bbox），advisory 复核：${overlayLocalAdvisory.slice(0, 5).join('；')}`
+          : '',
+      ].filter(Boolean).join('\n'),
+      suggestion:
+        '确属 overlay 内元素 → 在该 overlay 屏组件树补建模（text/subtitle）；确属背景透出 → ' +
+        'ref-elements 以 screen_ref_id 归属基屏，或 defer+真人签（沿用既有出口，不另造白名单）。',
+      affected_files: [refRel, uiSpecRel],
+    }];
+  }
+  if (overlayLocalAdvisory.length > 0) {
+    return [{
+      id: 'capture_completeness_overlay_local',
+      category: 'structure',
+      description: desc,
+      severity: 'MINOR',
+      status: 'WARN',
+      details: [
+        `【t6④ overlay 本屏建模复核（advisory，root 无 bbox 无法框定 sheet 区域）】` +
+          `${overlayLocalAdvisory.length} 行由其它屏声明覆盖、本 overlay 屏未建模——可能是 overlay 内漏建模，也可能是背景透出：`,
+        ...overlayLocalAdvisory.slice(0, 10).map(l => `  ${l}`),
+        '给 overlay root 声明 bbox 后本检查可升为确定性拦截。',
+      ].join('\n'),
+      affected_files: [refRel, uiSpecRel],
+    }];
+  }
+
   return [{
     id: 'capture_completeness_external',
     category: 'structure',
@@ -574,8 +664,13 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
 // round6 实证：副标题右置无声明→coding 惯用题下；5 行卡种平铺→coding 全做独卡；浮动 tab 容器未建模。
 // ============================================================================
 
-/** 连续同型 list_selection 兄弟 ≥ 此数且无分组语义 → 须建分组容器 */
-export const STRUCTURE_LINT_FLAT_LIST_MIN = 3;
+/**
+ * 连续同型 list_selection 兄弟 ≥ 此数且无分组语义 → 须建分组容器。
+ * t6①（plan c6d8f2b4）3→2：bc-openCard card_type_sheet 实证 2 行（储蓄卡/信用卡）低于旧阈值
+ * 静默放行，而"须与银行行同白卡"正是人工抓出的核心结构缺陷。范围本就限 pixel_1to1+P0 屏；
+ * 合法独立双卡结构的既有出口=各行声明各自 layout_group 或各建 bg_color 容器（提示文案已注明）。
+ */
+export const STRUCTURE_LINT_FLAT_LIST_MIN = 2;
 
 interface LintHit {
   screen: string;
@@ -613,7 +708,8 @@ function lintNodeTree(
         detail:
           `${run.map(n => n.id ?? n.type).join('/')} 连续 ${run.length} 个 list_selection 平铺` +
           `${isRoot ? '在 root 下' : `在 ${parent.id ?? parent.type} 下（无 bg_color 容器语义）`}` +
-          `——原图同卡多行须建分组容器（含 bg_color/圆角的父节点包裹 children）或逐节点声明 layout_group`,
+          `——原图同卡多行须建分组容器（含 bg_color/圆角的父节点包裹 children）或逐节点声明 layout_group；` +
+          `确属独立卡片结构 → 各行声明各自 layout_group 或各建 bg_color 容器即豁免（既有出口，非新限制）`,
       });
     }
     run = [];
@@ -641,9 +737,42 @@ export function checkUiSpecStructureLint(ctx: CheckContext, specMarkdown: string
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
 
   const hits: LintHit[] = [];
+  const overlayAdvisories: LintHit[] = [];
   for (const s of uiDoc.screens ?? []) {
     if (s.priority !== 'P0' || !s.root) continue;
     lintNodeTree(s.id, s.root, true, hits);
+    // t6②（plan c6d8f2b4）overlay 屏几何合同：root=overlay_panel 的 P0 屏，直系
+    // list_selection/action_button 子节点须有 bbox 或 layout_group 至少其一
+    // （bc-openCard card_type_sheet 零几何声明照过的洞）。
+    if (s.root.type === 'overlay_panel') {
+      const bare = (s.root.children ?? []).filter(
+        c =>
+          (c.type === 'list_selection' || c.type === 'action_button') &&
+          !(Array.isArray(c.bbox) && c.bbox.length === 4) &&
+          !c.layout_group?.trim(),
+      );
+      if (bare.length > 0) {
+        hits.push({
+          screen: s.id,
+          detail:
+            `overlay 屏直系 ${bare.map(n => n.id ?? n.type).join('/')} 共 ${bare.length} 个节点既无 bbox 也无 layout_group` +
+            `——overlay P0 屏几何合同要求至少其一（t6②），否则 T8 布局断言与 coding 布局均无锚`,
+        });
+      }
+      // t6③ advisory：overlay 屏出现 ≥2 个 bg_color surface 类兄弟容器 → 提示复核
+      // （参考图为同一张白卡时须建同一分组容器；两块独立底色块正是 bc-openCard (a) 缺陷形态）。
+      const surfaceSiblings = (s.root.children ?? []).filter(
+        c => c.bg_color?.trim() && (c.children?.length ?? 0) > 0,
+      );
+      if (surfaceSiblings.length >= 2) {
+        overlayAdvisories.push({
+          screen: s.id,
+          detail:
+            `overlay 屏声明了 ${surfaceSiblings.length} 个 bg_color 兄弟容器（${surfaceSiblings.map(n => n.id ?? n.type).join('/')}）` +
+            `——请对照参考原图复核：若原图为同一张白底卡片，须合并为同一分组容器（advisory，不阻断）`,
+        });
+      }
+    }
   }
   // 3) 全局 bottom_tab 声明了却无容器建模（原图浮动胶囊 tab：bg+圆角）。
   // codex 二轮采纳：组件树里**根本没有**对应容器节点同样必拦——"只有首页/我的文本声明、无胶囊容器建模"
@@ -691,13 +820,29 @@ export function checkUiSpecStructureLint(ctx: CheckContext, specMarkdown: string
     }];
   }
 
+  if (overlayAdvisories.length > 0) {
+    return [{
+      id: 'ui_spec_structure_lint',
+      category: 'structure',
+      description: desc,
+      severity: 'MINOR',
+      status: 'WARN',
+      details: [
+        '【t6③ overlay surface advisory（不阻断）】',
+        ...overlayAdvisories.map(h => `  [${h.screen}] ${h.detail}`),
+        boundaryNote,
+      ].join('\n'),
+      affected_files: [uiSpecRel],
+    }];
+  }
+
   return [{
     id: 'ui_spec_structure_lint',
     category: 'structure',
     description: desc,
     severity: 'MAJOR',
     status: 'PASS',
-    details: `P0 屏结构声明齐全（subtitle 位置/分组容器/全局容器）。\n${boundaryNote}`,
+    details: `P0 屏结构声明齐全（subtitle 位置/分组容器/全局容器/overlay 几何合同）。\n${boundaryNote}`,
     affected_files: [uiSpecRel],
   }];
 }

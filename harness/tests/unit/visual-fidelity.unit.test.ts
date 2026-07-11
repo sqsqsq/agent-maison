@@ -271,6 +271,9 @@ export function runAll(): UnitCaseResult[] {
       const shot = path.join(root, 'fake-shot.png');
       writeMinimalRedPng(shot, 10, 10);
       const absShot = shot.replace(/\\/g, '/');
+      // t4（plan c6d8f2b4）契约更新：分数字段=reported_* 参考自评、零 gate 权重，
+      // pass/warn 不再强制必填数字——假 PASS 由 region_attest/defects 枚举/确定性信号拦，
+      // 不再靠"必须填一个分数"（bc-openCard 实证该要求只会催生填表）。
       const v = validateVisualDiffJson({
         schema_version: '1.0',
         screens: [{
@@ -279,8 +282,8 @@ export function runAll(): UnitCaseResult[] {
           screenshot_path: absShot,
           ref_id: 'ghost-ref',
         }],
-      }, root);
-      if (v.ok) throw new Error('missing fidelity_score should fail');
+      }, root, { authoritativeRefIds: new Set(['ghost-ref']) });
+      if (!v.ok) throw new Error(`缺分数不再是 schema 错误（零 gate 权重）：${v.errors.join('；')}`);
       const v2 = validateVisualDiffJson({
         schema_version: '1.0',
         screens: [{
@@ -580,11 +583,20 @@ export function runAll(): UnitCaseResult[] {
     if (!isJimpAvailable()) return;
     const root = mkProject();
     try {
+      // t4（plan c6d8f2b4）契约更新：灾难地板不再消费自报值（bc-openCard 实证自报退化成填表，
+      // 吃自报的地板=假保障）——低自报分不再触发"灾难地板"路径，details 须带 [skipped] 注记；
+      // 该屏仍因 P0 warn 无 must_fix 经 T4 零指令门禁 FAIL（拦截语义不丢，换到诚实通道）。
       writeFloorCase(root, 0.1, 0.12, 0);
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const hit = r.find((x: { id: string }) => x.id === 'visual_diff') as { status: string; details?: string } | undefined;
-      if (!hit || hit.status !== 'FAIL' || !/灾难地板|低于地板/.test(hit.details ?? '')) {
-        throw new Error(`warn 0.1 应经灾难地板 FAIL：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      if (!hit || hit.status !== 'FAIL') {
+        throw new Error(`warn 0.1 仍应 FAIL（经 T4 零指令门禁）：${JSON.stringify(r.map((x: { id: string; status: string }) => ({ id: x.id, status: x.status })))}`);
+      }
+      if (/灾难地板|低于地板/.test(hit.details ?? '')) {
+        throw new Error('灾难地板已降权（零 gate 权重），不应再以自报值触发');
+      }
+      if (!/分数地板未启用/.test(hit.details ?? '')) {
+        throw new Error('应带 [skipped] 分数地板未启用注记（诚实标注而非静默）');
       }
     } finally {
       clearFrameworkConfigCache();
@@ -743,10 +755,22 @@ export function runAll(): UnitCaseResult[] {
           ref_id: 'home', fidelity_score: 0.92, geometric_iou: 0.85,
           screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
           reverse_missing: [], defects: [],
+          // t5（plan c6d8f2b4）：pixel_1to1 P0 pass 屏 defects=[] 须附 region_attest——
+          // 干净的 await 候选按新契约自带逐区域举证
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
           ...s,
         };
       });
       fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.0', screens: rows }));
+      // rev7：任何 region_attest 均需结构合法 critic 回执（vl_screening 也是 critic 调用）；
+      // rev8：adapter 必填 + image_inputs 非空（空数组=无视觉输入的"视觉评审"，被拒）
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+        schema_version: '1.0', critic_run_id: 'test-run', adapter: 'test', prompt_hash: 'deadbeef',
+        input_provenance: 'unverified',
+        image_inputs: rows.map(r => ({ path: r.screenshot_path as string })),
+      }));
     };
     // (a) 纯 pass 候选缺签 + 指纹链齐全 → FAIL 且 failure_kind=await_human_confirm + 操作指引
     let root = mkProject();
@@ -782,7 +806,25 @@ export function runAll(): UnitCaseResult[] {
       }
       if (hit.status !== 'FAIL') throw new Error('缺签仍须 FAIL（T2 不放行）');
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    // (d) rev8：未处置的阻断性 WARN（M1 压线）在手 → 取消 candidate 资格，不得发起 T2
+    //（codex P1：candidate-pass 只排除额外 FAIL 会把 T8/M1 WARN 混进批量终审）
+    root = mkProject();
+    try {
+      const fp = writeBuildFingerprintChain(root);
+      writeScreens(root, [{
+        screen_id: 'home', verdict: 'pass', must_fix: [], evaluated_build_fingerprint: fp,
+        // 压线：非逐位相等但 |Δ|<ε 且 defects=[] → M1 WARN（阻断性）
+        fidelity_score: 0.9904, geometric_iou: 0.9, score_floor: 0.99,
+      }]);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; failure_kind?: string; details?: string };
+      if (!/压线提示/.test(hit.details ?? '')) throw new Error(`应报 M1 压线 WARN：${(hit.details ?? '').slice(0, 200)}`);
+      if (hit.failure_kind === 'await_human_confirm') {
+        throw new Error('M1 压线（阻断性 WARN）未处置时不得归 await_human_confirm（rev8）');
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
+
 
   // T1（窄）端到端：pixel_1to1 P0 pass 屏声明 3+ 文本锚点、但截图 OCR 找不到（整块缺失）→ visual_diff_text_missing。
   // 罩住 collectAllComponentNodes → screenAnchors → collectGrossMissingAnchorText → pushVisualDiffHit 全接线。
@@ -902,12 +944,237 @@ export function runAll(): UnitCaseResult[] {
             fidelity_score: 0.97, geometric_iou: 0.93, score_floor: 0.99,
             screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
             reverse_missing: [], defects: [], confirmed_by: 'reviewer-alice',
+            // t5（plan c6d8f2b4）：pixel_1to1 P0 pass 屏 defects=[] 须附 region_attest——
+            // 忠实屏的干净收口按新契约自带逐区域举证（举证≠误判，FP 校准语义不变）
+            region_attest: [{ region: 'mine_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
           }],
         }));
+      // rev7：attest 存在即需结构合法回执；rev8：adapter 必填 + image_inputs 非空
+      const mineRdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(mineRdir, { recursive: true });
+      fs.writeFileSync(path.join(mineRdir, 'critic-receipt.json'), JSON.stringify({
+        schema_version: '1.0', critic_run_id: 'test-run', adapter: 'test', prompt_hash: 'deadbeef',
+        input_provenance: 'unverified', image_inputs: [{ path: shotAbs }],
+      }));
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const blocked = r.filter((x: { severity: string; status: string }) => x.severity === 'BLOCKER' && x.status === 'FAIL');
       if (blocked.length > 0) {
         throw new Error(`忠实 mine+人确认 不应被任何门禁误判（FP 校准承重）：${JSON.stringify(blocked.map((x: { id: string; details?: string }) => ({ id: x.id, d: x.details })))}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // rev7（plan c6d8f2b4）端到端三案：M1 自报退化 / attest 无回执 / attest 覆盖缺失——
+  // 走完整 checkVisualDiff 路径（纯函数单测在 layout-oracle.unit.test.ts，此处补 e2e 缺口）。
+  const writeRev7Project = (
+    root: string,
+    opts: {
+      screens: Array<Record<string, unknown>>;
+      uiScreens: string[];
+      mustHave?: Record<string, string[]>;
+      writeReceipt: boolean;
+    },
+  ): void => {
+    const ddir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(ddir, { recursive: true });
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+      '```yaml\nui_change: new_or_changed\n```\n');
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
+      'schema_version: "1.0"', 'verified: human_confirmed',
+      'screens:',
+      ...opts.uiScreens.flatMap((id, i) => [
+        `  - id: ${id}`, '    priority: P0', `    ref_id: ${id}`,
+        '    root: { type: navigation_frame, order: 0 }',
+        ...(opts.mustHave?.[id] ? [`    must_have_elements: [${opts.mustHave[id].join(', ')}]`] : []),
+      ]),
+      'tokens: {}', 'assets: []',
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+    const rows = opts.screens.map((s, i) => {
+      const shot = path.join(ddir, `shot-${s.screen_id as string}.png`);
+      writeMinimalRedPng(shot, 10 + i, 10); // 尺寸各异 → hash 互异（避免 dedup 噪声）
+      const evalHash = hashScreenshotFile(shot);
+      return {
+        screenshot_path: `doc/features/bank-card/device-testing/device-screenshots/shot-${s.screen_id as string}.png`,
+        screenshot_hash: evalHash, evaluated_screenshot_hash: evalHash,
+        reverse_missing: [], defects: [], confirmed_by: 'reviewer-alice',
+        ...s,
+      };
+    });
+    fs.writeFileSync(path.join(ddir, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', screens: rows }));
+    if (opts.writeReceipt) {
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+        schema_version: '1.0', critic_run_id: 'run-1', adapter: 'test', prompt_hash: 'cafebabe',
+        input_provenance: 'unverified',
+        image_inputs: rows.map(r => ({ path: r.screenshot_path as string })),
+      }));
+    }
+  };
+
+  run('rev7_m1_constant_selfreport_blocks_e2e', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      const ids = ['s0', 's1', 's2', 's3'];
+      writeRev7Project(root, {
+        uiScreens: ids,
+        writeReceipt: true,
+        screens: ids.map((id, i) => ({
+          screen_id: id, verdict: 'pass', ref_id: id,
+          geometric_iou: 0.95, fidelity_score: 0.9 + i * 0.01, // iou 跨屏常数=bc-openCard 形态
+          region_attest: [{ region: `${id}_root`, verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        })),
+      });
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string };
+      if (hit.status !== 'FAIL' || !/自报退化/.test(hit.details ?? '')) {
+        throw new Error(`4 屏 iou 恒等应经 M1 FAIL：${JSON.stringify({ status: hit.status, d: (hit.details ?? '').slice(0, 300) })}`);
+      }
+      if (!/evaluation_invalidated/.test(hit.details ?? '')) {
+        throw new Error('M1 处置指引须指向 evaluation_invalidated 重评通道');
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  run('rev7_attest_without_receipt_blocks_e2e', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        writeReceipt: false, // vl_screening-only 也须回执（codex P1 绕过路径回归靶）
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string; failure_kind?: string };
+      if (hit.status !== 'FAIL' || !/回执无效/.test(hit.details ?? '')) {
+        throw new Error(`attest 无回执应 FAIL（不得进 candidate-pass）：${(hit.details ?? '').slice(0, 300)}`);
+      }
+      if (hit.failure_kind === 'await_human_confirm') {
+        throw new Error('缺回执时不得归类 await_human_confirm（candidate-pass 前禁 T2）');
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  run('rev7_attest_coverage_missing_blocks_e2e', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        mustHave: { home: ['el_a', 'el_b'] },
+        writeReceipt: true,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          // 一条泛化 region 不能替代逐区域举证（codex/cursor 同点回归靶）
+          region_attest: [{ region: 'root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string };
+      if (hit.status !== 'FAIL' || !/未覆盖屏级 must_have_elements/.test(hit.details ?? '')) {
+        throw new Error(`泛化 region 应因未覆盖 must_have FAIL：${(hit.details ?? '').slice(0, 300)}`);
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // rev8：verified 空 image_inputs 伪造回执被拒（codex 反例逐字复现——{"critic_run_id":"x",...,"image_inputs":[]}）
+  run('rev8_verified_empty_inputs_receipt_rejected', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        writeReceipt: false,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+        critic_run_id: 'x', prompt_hash: 'x', input_provenance: 'verified', image_inputs: [],
+      }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string; failure_kind?: string };
+      if (hit.status !== 'FAIL' || !/缺必填字段|非空/.test(hit.details ?? '')) {
+        throw new Error(`空 inputs 的 verified 回执应被拒（缺 adapter/空数组双重违规）：${(hit.details ?? '').slice(0, 300)}`);
+      }
+      if (hit.failure_kind === 'await_human_confirm') throw new Error('伪造回执不得进 candidate-pass');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // rev9：unverified 回执引用不存在的文件 → 拒（codex 反例逐字复现——
+  // unverified 只表示"无法证明注入模型"，不表示"无法证明文件存在/与本轮相关"）
+  run('rev9_unverified_nonexistent_input_receipt_rejected', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        writeReceipt: false,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+        critic_run_id: 'x', adapter: 'cursor', prompt_hash: 'x',
+        input_provenance: 'unverified', image_inputs: [{ path: 'does-not-exist.png' }],
+      }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { status: string; details?: string; failure_kind?: string };
+      if (hit.status !== 'FAIL' || !/引用不存在的文件/.test(hit.details ?? '')) {
+        throw new Error(`不存在的 image_inputs 应被拒：${(hit.details ?? '').slice(0, 300)}`);
+      }
+      if (!/未覆盖被评截图/.test(hit.details ?? '')) {
+        throw new Error('同时应报未覆盖被评截图（两档通用覆盖检查）');
+      }
+      if (hit.failure_kind === 'await_human_confirm') throw new Error('凭空回执不得进 candidate-pass');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // rev10：结构完全合法的手写 verified 回执（真实路径+真实 hash+非空 output_hash）——
+  // 签发链未落地前不得生产 candidate-pass(verified)，一律降级 unverified 并 WARN（codex 反例复现）
+  run('rev10_handwritten_verified_receipt_downgraded', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        writeReceipt: false,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const shotRel = 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png';
+      const realHash = hashScreenshotFile(path.join(root, shotRel));
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+        critic_run_id: 'x', adapter: 'cursor', prompt_hash: 'x',
+        input_provenance: 'verified', output_hash: '任意非空字符串',
+        image_inputs: [{ path: shotRel, hash: realHash }],
+      }));
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { details?: string };
+      if (!/verified 主张暂不采信/.test(hit.details ?? '')) {
+        throw new Error(`手写 verified 应被降级并 WARN：${(hit.details ?? '').slice(0, 300)}`);
+      }
+      if (!/生效档位=unverified/.test(hit.details ?? '')) {
+        throw new Error('provenance 注记应显示生效档位=unverified（声明 verified 已降级）');
+      }
+      if (/candidate-pass\(verified\)/.test(hit.details ?? '')) {
+        throw new Error('不得出现 candidate-pass(verified) 字样（签发链未落地）');
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });

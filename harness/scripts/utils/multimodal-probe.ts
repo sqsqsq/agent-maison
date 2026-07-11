@@ -213,6 +213,20 @@ export function readCanaryOcrCapableSignal(
   return Boolean(canary && isVisionCanaryFresh(canary, adapter) && canary.verdict === 'ocr_capable');
 }
 
+/**
+ * T8/t6⑥（plan c6d8f2b4）：fresh 金丝雀 verdict=tool_read = **真视觉实测在位**。
+ * 与 adapterImageInput 的区别：后者可来自 adapter.yaml 声明/heuristic（未实测）；
+ * 本信号只认实测缓存——几何/颜色题全对。ocr_capable 不算（仅文字题对、vision 仍 none）。
+ */
+export function readCanaryToolReadSignal(
+  projectRoot: string,
+  adapterName: string | undefined,
+): boolean {
+  const adapter = (adapterName ?? 'generic').trim() || 'generic';
+  const canary = tryLoadLocalConfig(projectRoot)?.vision?.canary;
+  return Boolean(canary && isVisionCanaryFresh(canary, adapter) && canary.verdict === 'tool_read');
+}
+
 /** 读取 agents/<adapter>/adapter.yaml 的 image_input / multimodal 声明 */
 export function probeAdapterImageInput(
   projectRoot: string,

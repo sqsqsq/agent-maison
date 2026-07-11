@@ -80,13 +80,26 @@ global_elements:
 
 组件节点字段：`type`、`layout`（column/row/full_width 等）、`order`、`text`（**逐字**，禁止泛化）、`style_ref`、`asset_ref`、`semantic_role`（`success` / `brand_primary` / `danger` / `promo` / `neutral`）、`color_ref`（须被对应组件源码 `$r('app.color.*')` 引用）、`icon`（`{ kind: brand_logo|system_symbol|illustration, ref }`）、`badge`、`bbox`（归一化 `[x,y,w,h]`，**原图侧 ground truth**）、`fidelity_note`（受控近似的显式承认）、`children[]`。
 
+**几何硬约束声明（T8-A1·plan c6d8f2b4，screens[] 级字段）**：
+- `forbidden_overlap: [[elem_a, elem_b], …]`——声明禁止重叠的元素对；device-testing 采图同时点
+  dump 运行时布局树（`layout-<screen_id>.json`），两元素 bounds 相交 → pixel_1to1 BLOCKER
+  （运行时确定性证据，VL pass 不可推翻）。典型：overlay 关闭钮 vs 内容卡片（`[close_btn, bank_surface]`）。
+- `protected_region: [elem, …]`——保护区元素；任何非亲缘可交互控件 bounds 侵入 → BLOCKER。
+- 生效前提：元素须能在布局树定位——coding 侧为声明元素设 `.id('<element_id>')`（ArkUI `.id()`
+  透传 hypium dump 已实证；缺 .id 退化到唯一文本锚，歧义即声明不生效并 WARN）。
+
 **结构声明（P0-D·round6 命门，门禁 `ui_spec_structure_lint` pixel_1to1 P0 屏强制）**：
 - **副标题**：list_row 的副标题（如"银行卡/交通卡/门禁卡等"）必须建模在**主节点**上：`subtitle: <逐字文本>` +
   `subtitle_position: trailing|below`（trailing=与主标题同行右置，below=题下）——**禁止**把副标题拆成独立平铺
   content_display 节点（round6 实证：不声明位置 coding 惯用题下排错，右置副标题全军覆没）。
-- **分组容器**：原图中同一张卡片/白底容器内的多行（如添加卡片页 5 行卡种），须建**分组容器节点**
-  （带 `bg_color`/圆角语义的父节点 + `children`）或逐行声明同一 `layout_group`——禁止 ≥3 行 list_selection
-  直接平铺在 root 下（coding 会全做独卡，边距/宽度对不上）。
+- **分组容器（t6③ 收紧：阈值 3→2，且明确覆盖异型行）**：原图中同一张卡片/白底容器内的多行
+  （如添加卡片页 5 行卡种），须建**分组容器节点**（带 `bg_color`/圆角语义的父节点 + `children`）
+  或逐行声明同一 `layout_group`——禁止 ≥2 行 list_selection 直接平铺在 root 下（coding 会全做独卡，
+  边距/宽度对不上）。**异型行同样适用**：如半模态「银行行+储蓄卡行+信用卡行」原图同处一张白卡以
+  细分割线分隔，须三行同容器建模，禁止拆成两个底色块（bc-openCard card_type_sheet 实证缺陷）；
+  overlay 屏声明 ≥2 个 bg_color 兄弟容器时 lint 给 advisory 提示复核。合法独立双卡结构的出口=
+  各行声明各自 layout_group 或各建 bg_color 容器。overlay P0 屏直系 list_selection/action_button
+  另须 bbox 或 layout_group 至少其一（t6②）。
 - **浮动容器**：底部悬浮胶囊 tab 等 global_elements，其容器节点必须声明 `bg_color`（否则 coding 易搭成裸文字行）。
 - **完整性外部对照（`capture_completeness_external`）**：门禁会用参考原图 OCR 全文当**真分母**逐行比对——
   原图上任何 ≥2 字的文本（含金额如 ¥119.40）没进 ref-elements/ui-spec 就 BLOCKER；分区扫描时**逐字抄全**，

@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnHylyre } from './hylyre-spawn';
-import type { VisualDiffScreenshotFn, VisualDiffNavExecutorFn } from './visual-diff-capture';
+import type { VisualDiffScreenshotFn, VisualDiffNavExecutorFn, VisualDiffLayoutDumpFn } from './visual-diff-capture';
 import { sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
 
 export interface HylyreVisualDiffScreenshotOptions {
@@ -36,6 +36,35 @@ export function buildHylyreVisualDiffScreenshotFn(
     return {
       ok,
       error: ok ? undefined : errOut.slice(0, 500) || `hylyre screenshot exit=${r.status ?? 'null'}`,
+    };
+  };
+}
+
+/**
+ * t2（plan c6d8f2b4）：真机布局树 dump 执行器——`hylyre dump-ui --out <destAbs>`。
+ * 与 screenshot 同一 hylyre 工作目录/session；输出 hypium-ui-dump-v1（含逐控件 bounds），
+ * 供 T8 几何不变量消费。
+ */
+export function buildHylyreLayoutDumpFn(
+  opts: HylyreVisualDiffScreenshotOptions,
+): VisualDiffLayoutDumpFn {
+  return ({ destAbs, deviceSn }) => {
+    const sn = (deviceSn ?? opts.deviceSn ?? '').trim();
+    const hylyreArgv = ['dump-ui', '--out', destAbs];
+    if (sn) hylyreArgv.push('--device-sn', sn);
+    const r = spawnHylyre({
+      pythonPath: opts.pythonPath,
+      hypiumWorkDir: opts.hypiumWorkDir,
+      hylyreArgv,
+      logPath: opts.logPath,
+      maxBuffer: 16 * 1024 * 1024,
+      echoToStdout: false,
+    });
+    const ok = (r.status ?? 1) === 0 && fs.existsSync(destAbs);
+    const errOut = `${r.stderr ?? ''}${r.stdout ?? ''}`.trim();
+    return {
+      ok,
+      error: ok ? undefined : errOut.slice(0, 500) || `hylyre dump-ui exit=${r.status ?? 'null'}`,
     };
   };
 }

@@ -34,6 +34,8 @@ import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { checkStructureDeclarationLedger } from './structure-ledger';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { collectDeclaredElements } from './layout-oracle-check';
+import { scanFeatureSourceTree } from './source-ref-scan';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -184,6 +186,42 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         'variant=tonal 不得高饱和实心 backgroundColor。真正静态不可判的场景收集器已跳过、由 device 兜。',
       affected_files: [uiSpecRel],
     });
+  }
+
+  // t1（plan c6d8f2b4）：pixel_1to1 P0 屏声明元素须在源码设 `.id('<element_id>')`——
+  // T8 布局 locator 的主方案锚（t0③ 实证 ArkUI .id() 透传 hypium dump id/key）。
+  // 首版 WARN（观察期）：缺 .id 不产生错误判定、只降 locator 覆盖率（device 侧 B 类 SKIP+WARN 另有兜底）。
+  if (isPixel1to1(ctx)) {
+    const contracts = ctx.featureSpec?.contracts;
+    if (contracts) {
+      const scan = scanFeatureSourceTree(ctx.projectRoot, contracts);
+      const sourceText = scan.etsFiles.map(f => {
+        try { return fs.readFileSync(f, 'utf-8'); } catch { return ''; }
+      }).join('\n');
+      const missingIds: string[] = [];
+      for (const s of doc.screens ?? []) {
+        if (s.priority !== 'P0') continue;
+        for (const el of collectDeclaredElements(s)) {
+          const idRe = new RegExp(`\\.id\\(\\s*['"\`]${el.elementId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]\\s*\\)`);
+          if (!idRe.test(sourceText)) missingIds.push(`${s.id}/${el.elementId}`);
+        }
+      }
+      if (missingIds.length > 0) {
+        results.push({
+          id: 'visual_parity_element_id_lint',
+          category: 'structure',
+          description: desc,
+          severity: 'MAJOR',
+          status: 'WARN',
+          details:
+            `【t1 locator 锚缺失（观察期 WARN）】pixel_1to1 P0 屏声明元素未在源码设 .id('<element_id>')：` +
+            `${missingIds.slice(0, 12).join(', ')}${missingIds.length > 12 ? ` …共 ${missingIds.length} 处` : ''}\n` +
+            `缺 .id 时 T8 布局断言退化到文本锚/结构匹配（歧义即 SKIP）——为组件补 .id 可让几何门禁全量生效。`,
+          suggestion: '在对应 ArkUI 组件链上加 .id(\'<element_id>\')（与 ui-spec 元素 id 一致）；容器/图标类无文本元素尤其需要。',
+          affected_files: [uiSpecRel],
+        });
+      }
+    }
   }
 
   // P1-A（f2d8c4a6）：可见文案白名单——源码/string.json 渲染文本 ⊆ spec 文本集 ∪ 豁免表（须 rationale）。

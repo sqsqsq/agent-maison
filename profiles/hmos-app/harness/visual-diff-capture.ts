@@ -57,6 +57,18 @@ export type VisualDiffNavExecutorFn = (args: {
   bundleName?: string;
 }) => { ok: boolean; error?: string };
 
+/**
+ * t2（plan c6d8f2b4）：布局树 dump 执行器——每屏截图成功后同步 dump 运行时组件树
+ * （hylyre dump-ui，hypium-ui-dump-v1），供 T8 几何不变量消费。与截图同一时点、
+ * 同键持久（跳采屏不重 dump）。
+ */
+export type VisualDiffLayoutDumpFn = (args: {
+  screenId: string;
+  destAbs: string;
+  deviceSn?: string;
+  bundleName?: string;
+}) => { ok: boolean; error?: string };
+
 export interface VisualDiffCaptureOptions {
   projectRoot: string;
   feature: string;
@@ -68,6 +80,8 @@ export interface VisualDiffCaptureOptions {
   navConfig?: NavConfig;
   /** round5 P1-A：导航执行器（真机 Hylyre）；缺省则不导航。与 navConfig 同时提供才生效 */
   navExecutorFn?: VisualDiffNavExecutorFn;
+  /** t2：布局树 dump 执行器；缺省 → 各屏 layout_dump_status=unavailable（能力缺失，非采集失败） */
+  layoutDumpFn?: VisualDiffLayoutDumpFn;
   bundleName?: string;
   deviceSn?: string;
   /** 对 shot vs authoritative ref 写入 score_floor（jimp 不可用则跳过） */
@@ -151,6 +165,29 @@ export function collectP0CaptureTargets(uiDoc: UiSpecDoc | null): UiSpecScreen[]
     if (isP0VisualTargetScreen(s)) out.push(s);
   }
   return out;
+}
+
+/**
+ * t2：布局树 dump 单屏执行——写 `layout-<screen_id>.json` 到 device-screenshots。
+ * 无 layoutDumpFn=能力缺失（unavailable）；有但失败=failed（错误记 errors 不中断采集）。
+ */
+function runLayoutDump(
+  opts: VisualDiffCaptureOptions,
+  screenId: string,
+  reportDir: string,
+  errors: string[],
+): 'captured' | 'failed' | 'unavailable' {
+  if (!opts.layoutDumpFn) return 'unavailable';
+  const destAbs = path.join(reportDir, `layout-${screenId}.json`);
+  try {
+    const r = opts.layoutDumpFn({ screenId, destAbs, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
+    if (r.ok && fs.existsSync(destAbs)) return 'captured';
+    errors.push(`${screenId}: 布局树 dump 失败${r.error ? ` — ${r.error}` : ''}（截图不受影响，T8 该屏降级）`);
+    return 'failed';
+  } catch (e) {
+    errors.push(`${screenId}: 布局树 dump 异常 — ${(e as Error).message}`);
+    return 'failed';
+  }
 }
 
 export function buildVisualDiffSkeletonEntry(
@@ -268,6 +305,10 @@ export function mergeCapturedScreenEntry(
   if (Array.isArray(captured.edge_over_threshold_tiles)) {
     merged.edge_over_threshold_tiles = captured.edge_over_threshold_tiles;
   }
+  // t2：本轮真跑过 dump 则更新状态（保留判定不受影响——评估/采集新鲜度解耦）
+  if (captured.layout_dump_status) {
+    merged.layout_dump_status = captured.layout_dump_status;
+  }
   return merged;
 }
 
@@ -298,7 +339,9 @@ export function mergeVisualDiffReports(
   }
   return {
     report: {
-      schema_version: existing?.schema_version ?? '1.0',
+      // t8（rev7）：capture 会写入 1.1 字段（layout_dump_status 等），新报告/合并报告一律标 1.1
+      //（legacy 1.0 读入由 validateVisualDiffJson 映射兼容，升版无破坏）。
+      schema_version: '1.1',
       screens: [...byId.values()],
       ...(existing?.degraded ? { degraded: existing.degraded } : {}),
       ...(existing?.degrade_reason ? { degrade_reason: existing.degrade_reason } : {}),
@@ -354,7 +397,7 @@ export function buildVisualDiffMdBody(
     '# Visual diff（设备渲染回环）',
     '',
     '> 本文件由 harness 从 `device-screenshots/visual-diff.json` **自动生成，请勿手改**——门禁结论始终以 JSON 为准。',
-    '> agent/VL 须在 **JSON**（结构化）填每屏 `verdict`（pass/warn/fail）+ `fidelity_score`/`geometric_iou`/`must_fix` + `evaluated_screenshot_hash`；勿在本 md 手写与 JSON 矛盾的结论。',
+    '> agent/VL 须在 **JSON**（结构化）填每屏 `verdict`（pass/warn/fail）+ `must_fix`/`defects[]`/`region_attest[]` + `evaluated_screenshot_hash`（`reported_fidelity_score`/`reported_geometric_iou` 为参考自评、零 gate 权重）；勿在本 md 手写与 JSON 矛盾的结论。',
     '',
     `screens=${report.screens.length}；json=\`device-screenshots/visual-diff.json\`${report.degraded ? '；degraded' : ''}`,
     '',
@@ -527,6 +570,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       row.edge_tile_divergence = edge.divergence;
       row.edge_over_threshold_tiles = edge.tiles;
     }
+    // t2：截图成功后同步 dump 布局树（同一时点、同键持久）；失败区分能力缺失 vs 采集失败。
+    row.layout_dump_status = runLayoutDump(opts, screen.id, reportDir, errors);
     // P0-9a：机器盖构建指纹戳（agent 无须也不应手填）——后续判定即绑定本构建。
     if (currentFp) row.evaluated_build_fingerprint = currentFp;
     capturedScreens.push({ entry: row, hash: screenshotHash });
@@ -575,6 +620,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       row.screenshot_hash = screenshotHash;
       if (currentFp) row.evaluated_build_fingerprint = currentFp;
       if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
+      // t2：overlay 屏在 sheet 开启态（导航后、截图同时点）dump 布局树
+      row.layout_dump_status = runLayoutDump(opts, ov.id, reportDir, errors);
       capturedScreens.push({ entry: row, hash: screenshotHash });
       continue;
     }

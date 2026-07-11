@@ -820,6 +820,54 @@ test('p0d_external_audit_p0_screen_unaudited_blocks', () => {
   }
 });
 
+test('t6_structure_lint_two_rows_and_overlay_contract', () => {
+  // plan c6d8f2b4 t6①②③：bc-openCard card_type_sheet 回归靶——旧阈值 3 静默放行的
+  // "恰 2 行 list_selection 无分组"现在必拦；overlay 直系子节点无 bbox/layout_group 点名；
+  // ≥2 surface 兄弟容器给 advisory（WARN 不阻断）。
+  const mk = (screen: Record<string, unknown>) => {
+    const doc = { schema_version: '1.0', screens: [screen], tokens: {}, assets: [] } as unknown as UiSpecDoc;
+    const { ctx } = mkProject(docToYaml(doc));
+    return checkUiSpecStructureLint(ctx, SPEC_MD);
+  };
+  // 坏态：恰 2 行裸 list_selection（card_type_sheet 实证形态）→ FAIL，且 overlay 合同同时点名
+  {
+    const r = mk({
+      id: 'card_type_sheet', priority: 'P0', ref_id: 'card_type_sheet',
+      root: {
+        type: 'overlay_panel', order: 0,
+        children: [
+          { type: 'content_display', order: 0, id: 'title', text: '选择卡类型' },
+          { type: 'list_selection', order: 1, id: 'debit', text: '储蓄卡' },
+          { type: 'list_selection', order: 2, id: 'credit', text: '信用卡' },
+        ],
+      },
+    });
+    const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+    assert.ok(hit && hit.status === 'FAIL', `2 行裸 list 应 FAIL（旧阈值 3 的洞）：${hit?.details.slice(0, 200)}`);
+    assert.ok(/连续 2 个 list_selection/.test(hit!.details), '须点名 2 行平铺');
+    assert.ok(/overlay 屏直系/.test(hit!.details), 'overlay 几何合同须同时点名（无 bbox/layout_group）');
+    assert.ok(/独立卡片结构/.test(hit!.details), '提示文案须含合法双卡出口');
+  }
+  // advisory：两块 bg_color surface 兄弟容器（(a) 缺陷形态）→ WARN 提示复核，不 FAIL
+  {
+    const r = mk({
+      id: 'sheet2', priority: 'P0', ref_id: 'sheet2',
+      root: {
+        type: 'overlay_panel', order: 0,
+        children: [
+          { type: 'content_display', order: 0, id: 'grp_bank', bg_color: 'bg.surface',
+            children: [{ type: 'list_selection', order: 0, id: 'bank_row', text: '招商银行', layout_group: 'g1' }] },
+          { type: 'content_display', order: 1, id: 'grp_types', bg_color: 'bg.surface',
+            children: [{ type: 'list_selection', order: 0, id: 'debit2', text: '储蓄卡', layout_group: 'g2' }] },
+        ],
+      },
+    });
+    const hit = r.find(x => x.id === 'ui_spec_structure_lint');
+    assert.ok(hit && hit.status === 'WARN', `2 surface 兄弟容器应 advisory WARN：${JSON.stringify(hit?.status)}`);
+    assert.ok(/surface advisory/.test(hit!.details), '须为 t6③ advisory 语义（复核提示，不阻断）');
+  }
+});
+
 test('p0d_structure_lint_missing_global_container_node', () => {
   // codex 二轮 P1：global_elements 声明了 bottom_tab 但组件树无对应容器节点 → 必拦（round6 tab 崩坏形态）
   const doc: UiSpecDoc = {

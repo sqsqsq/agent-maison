@@ -169,6 +169,30 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (sc.ref_id !== undefined && typeof sc.ref_id !== 'string') {
         errors.push(`screens[${i}].ref_id 须为字符串`);
       }
+      // T8-A1（plan c6d8f2b4）：forbidden_overlap 每项恰为两个非空元素 id；protected_region 为非空 id 数组
+      if (sc.forbidden_overlap !== undefined) {
+        if (!Array.isArray(sc.forbidden_overlap)) {
+          errors.push(`screens[${i}].forbidden_overlap 须为数组`);
+        } else {
+          sc.forbidden_overlap.forEach((pair, j) => {
+            if (
+              !Array.isArray(pair) ||
+              pair.length !== 2 ||
+              !pair.every(x => typeof x === 'string' && x.trim())
+            ) {
+              errors.push(`screens[${i}].forbidden_overlap[${j}] 须为恰两个非空元素 id 的数组`);
+            }
+          });
+        }
+      }
+      if (sc.protected_region !== undefined) {
+        if (
+          !Array.isArray(sc.protected_region) ||
+          !sc.protected_region.every(x => typeof x === 'string' && (x as string).trim())
+        ) {
+          errors.push(`screens[${i}].protected_region 须为非空元素 id 字符串数组`);
+        }
+      }
       if (sc.root !== undefined) {
         validateComponentNode(sc.root, `screens[${i}].root`, errors, seenNodeIds);
       }

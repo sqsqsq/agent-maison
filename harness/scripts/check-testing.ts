@@ -25,7 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn, loadSpecMarkdown } from './utils/fidelity-shared';
+import { fidelityRatchetFailOrWarn, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -83,7 +83,7 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
-import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
@@ -2170,6 +2170,19 @@ function checkDeviceTestRunGate(
               deviceSn: process.env.HARNESS_HDC_TARGET,
               logPath: run.logPath,
             }),
+            // t2（plan c6d8f2b4）：截图同时点 dump 布局树（layout-<screen_id>.json），T8 几何不变量消费。
+            // 轻量化守恒（rev8/D11）：仅 pixel_1to1 档采集——semantic_layout/reference_only 不付
+            // 每屏 dump-ui 设备调用成本（T8 对低档本就只 WARN 观察，重量跟着保真承诺走）。
+            ...(isPixel1to1(ctx)
+              ? {
+                  layoutDumpFn: buildHylyreLayoutDumpFn({
+                    pythonPath: ready.pythonPath,
+                    hypiumWorkDir,
+                    deviceSn: process.env.HARNESS_HDC_TARGET,
+                    logPath: run.logPath,
+                  }),
+                }
+              : {}),
             ...(navConfig
               ? {
                   navConfig,

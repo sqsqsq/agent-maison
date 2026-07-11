@@ -19,6 +19,9 @@ import {
 import { missingUiSpecGateScreens } from './ui-spec-gate';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
+import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
+import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
+import { loadFrameworkConfig } from '../../../harness/config';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -334,14 +337,29 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
     }];
   }
   const soft = ctx.uiSpecEnforcement === 'warn' || ctx.uiSpecEnforcement === 'reachable';
+  // t6⑥（plan c6d8f2b4）：pixel_1to1 + 真视觉实测在位（fresh canary verdict=tool_read；
+  // ocr_capable 不算——其语义=仅文字题对、vision 仍 none）→ unverified 一律 BLOCKER，
+  // 软档不豁免（bc-openCard 实证：unverified WARN 放行 → 几何合同空白 spec 流入下游）。
+  // 盲/ocr_capable 宿主不升级，继续按 d4a8f3c6 降级阶梯钳制，零新增噪声。
+  let sightedPixel1to1 = false;
+  if (isPixel1to1(ctx)) {
+    try {
+      const adapterName = loadFrameworkConfig(ctx.projectRoot).agent_adapter;
+      sightedPixel1to1 = readCanaryToolReadSignal(ctx.projectRoot, adapterName);
+    } catch {
+      sightedPixel1to1 = false; // 配置不可读 → 不升级（保守，不新增噪声）
+    }
+  }
   return [{
     id: 'ui_spec_fidelity_gate',
     category: 'structure',
     description: desc,
-    severity: soft ? 'MAJOR' : 'BLOCKER',
-    status: soft ? 'WARN' : 'FAIL',
-    details:
-      'ui-spec verified=unverified：未经人工 [x] gate 或多模态核对，不得作为保真基线进 plan（可降级继续但须显式标注）。',
+    severity: sightedPixel1to1 ? 'BLOCKER' : soft ? 'MAJOR' : 'BLOCKER',
+    status: sightedPixel1to1 ? 'FAIL' : soft ? 'WARN' : 'FAIL',
+    details: sightedPixel1to1
+      ? 'ui-spec verified=unverified 且宿主真视觉实测在位（canary tool_read）+ fidelity_target=pixel_1to1：' +
+        '有视觉能力却不核对 ui-spec 与原图，无软档豁免——未验真的 spec 流入下游是几何盲区根因之一（t6⑥）。'
+      : 'ui-spec verified=unverified：未经人工 [x] gate 或多模态核对，不得作为保真基线进 plan（可降级继续但须显式标注）。',
     suggestion: '逐屏人工确认 ui-spec 与原图一致，设 verified: human_confirmed；或用 VL 多模态 gate。',
     affected_files: [uiSpecRel],
   }];

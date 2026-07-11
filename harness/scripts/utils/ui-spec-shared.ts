@@ -78,6 +78,13 @@ export interface UiSpecScreen {
   lightweight?: boolean;
   /** 屏级必备元素 id（search_bar / letter_index / promo_badge 等） */
   must_have_elements?: string[];
+  /**
+   * T8-A1（plan c6d8f2b4）：禁止重叠元素对——运行时布局树 bounds 相交即 pixel_1to1 BLOCKER。
+   * 每项恰为两个元素 id（组件树节点 id 或 must_have_elements 项）。
+   */
+  forbidden_overlap?: string[][];
+  /** T8-A1：保护区元素——任何非亲缘可交互控件的 bounds 侵入即 BLOCKER */
+  protected_region?: string[];
 }
 
 export interface UiSpecToken {
