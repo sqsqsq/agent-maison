@@ -42,6 +42,11 @@ import {
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
+import {
+  commitVisualRound,
+  visualRoundsLedgerPath,
+  type VisualRoundEvaluation,
+} from './scripts/utils/visual-rounds-ledger';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
 import {
@@ -686,6 +691,13 @@ async function main(): Promise<void> {
     printStableSummary(runSummary);
   }
 
+  // review-fix 轮3（codex P2-2）：账本落盘失败在交互态也 fail-closed——ledger 是熔断与
+  // 校准的持久化基础，写失败不得以 exit 0 溜走（goal 态另有 summary 消费路径双保险）。
+  if (runSummary.visual_round?.disposition === 'append_failed') {
+    console.error('\n  ❌ 视觉轮次账本落盘失败（append_failed）——本轮评估未持久化，按失败退出（修复磁盘/权限后重跑）。');
+    process.exit(1);
+  }
+
   // 最终结果
   console.log('\n' + '='.repeat(60));
   if (finalReport.summary.verdict === 'PASS') {
@@ -707,6 +719,32 @@ async function main(): Promise<void> {
   console.log('='.repeat(60) + '\n');
 
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
+}
+
+/**
+ * t1（plan f7a3d9c2）：消费 check 的 visual_diff 结构化 payload——runner 侧追加轮次账本
+ * （check 只读判定、runner 写：账本与判定文件的红线切分），并生成 summary.visual_round
+ * 回执（goal-runner 写入 events.jsonl 做 integrity 对账）。
+ * disposition=duplicate：不追加，但**同样回传重放后的 decision**（rev5：agent 自跑首检
+ * fuse 后，外层 gate 必须仍能看到 no_progress_fuse）。
+ */
+function consumeVisualRoundPayload(
+  projectRoot: string,
+  report: ScriptReport,
+): HarnessRunSummary['visual_round'] | undefined {
+  for (const c of report.checks) {
+    const s = c.structured as { kind?: string; round?: VisualRoundEvaluation } | undefined;
+    if (!s || s.kind !== 'visual_diff' || !s.round) continue;
+    // review-fix（codex P1-2）：commitVisualRound 落盘失败返回 disposition=append_failed
+    // （无 row_hash）——如实进 summary，goal-runner 据此 fail-closed halt；绝不在写失败后
+    // 仍宣称 appended（末轮无下次对账兜底）。
+    const receipt = commitVisualRound(visualRoundsLedgerPath(projectRoot, report.feature), s.round);
+    if (receipt.disposition === 'append_failed') {
+      console.warn('   ⚠ [visual-rounds] 账本追加失败——已按 append_failed 上报（goal 态将 fail-closed halt）');
+    }
+    return receipt;
+  }
+  return undefined;
 }
 
 function writeRunSummary(
@@ -753,6 +791,9 @@ function writeRunSummary(
   // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
   // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
   const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
+  // t1（f7a3d9c2）：runner 侧追加视觉轮次账本 + 回执（在 summary 落盘前完成，保证
+  // summary.visual_round 与账本一致）。
+  const visualRound = consumeVisualRoundPayload(projectRoot, report);
   const summary: HarnessRunSummary = {
     schema_version: '1.0',
     phase: report.phase,
@@ -777,6 +818,7 @@ function writeRunSummary(
       : decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     receipt_status: receiptValidation?.status,
     closure_status: closed ? 'closed' : 'open',
+    ...(visualRound ? { visual_round: visualRound } : {}),
   };
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {

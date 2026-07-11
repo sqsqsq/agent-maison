@@ -144,6 +144,12 @@ export interface GoalRunEvent {
   substep?: string;
   start_index?: number;
   start_phase?: string;
+  /** t1（f7a3d9c2）：visual_round 事件字段——runner 把账本回执写入 events 做 integrity 对账 */
+  loop_id?: string;
+  visual_attempt?: string;
+  row_hash?: string;
+  disposition?: string;
+  fused?: boolean;
 }
 
 export interface ResumedBudget {
@@ -159,6 +165,47 @@ export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
     else if (e.type === 'agent_invoke') n++;
   }
   return n;
+}
+
+/**
+ * t1/rev6（f7a3d9c2）+ review-fix（cursor Critical）：events 回放——账本行期望 hash 集。
+ * **含 duplicate**：主路径是"agent 自跑 harness append → 外层 gate 撞同 round_key 得
+ * duplicate"，events 里只会出现 duplicate 事件，但其 row_hash 就是那条账本行——只收
+ * appended 会让期望集恒空、整段 integrity 空转（删账本绕 fuse 不再被拦）。
+ * append_failed 无 row_hash，天然不入期望。
+ */
+export function collectVisualRoundRowHashes(events: GoalRunEvent[]): string[] {
+  const out: string[] = [];
+  for (const e of events) {
+    if (e.type === 'visual_round' && typeof e.row_hash === 'string' && e.row_hash) {
+      out.push(e.row_hash);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * t1/rev6 + review-fix（codex P1-1，两轮收窄）：pending 行可收养的 attempt id——
+ * ①仅 **testing 阶段**的 invocation（spec/coding 等永不产 visual_round，入围会让其
+ * attempt 永久 pending、孤儿行可借名永续）；②仅"已 start、未 commit"（无对应
+ * visual_round 事件——含 reconciliation 收养后补写的 recovery 事件）；③仅**最后一个**
+ * 这样的 invocation（更早的未闭合 invocation 由上一次对账收养并补写 recovery 关闭；
+ * 若因故未关，其行按 orphan 拦下求人，不再默认收养）。
+ */
+export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): string[] {
+  const startedTesting: string[] = [];
+  const committed = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
+      const m = e.invoke_id.match(/-(i\d+)$/);
+      if (m) startedTesting.push(m[1]);
+    }
+    if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
+      committed.add(e.visual_attempt);
+    }
+  }
+  const uncommitted = startedTesting.filter(id => !committed.has(id));
+  return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
 }
 
 /**

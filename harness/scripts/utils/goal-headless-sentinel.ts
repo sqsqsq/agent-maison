@@ -83,6 +83,60 @@ function isTailDominated(lines: string[], hitIndex: number): boolean {
   return substantiveAfter <= 3;
 }
 
+/** stream-json 断流特征 status 码（与文本路径 API_TRUNCATION_HINTS 的数字集对齐；401/403 属鉴权非断流） */
+const STREAM_JSON_TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504, 529]);
+
+/**
+ * t3a/f7a3d9c2：claude structured_events（stream-json）模式的结构化错误信封。
+ * agent-output.log 仍是混合人读投影，但 stdout 行变 NDJSON——文本锚定 `^API Error` 不再
+ * 出现，改认结构化事件：①{type:'system',subtype:'api_retry',error_status,error}；
+ * ②{type:'result',is_error:true,api_error_status}。仅 429/5xx/网络类计 transient
+ * （401/403 鉴权失败不盲 backoff——2026-07-11 宿主实采样本即 401，误归 transient 会空转）。
+ */
+function parseClaudeStreamJsonApiError(lines: string[]): HeadlessApiErrorSentinel | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith('{')) continue;
+    let obj: {
+      type?: string;
+      subtype?: string;
+      error_status?: number;
+      error?: string;
+      is_error?: boolean;
+      api_error_status?: number;
+      result?: string;
+    };
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (obj.type === 'system' && obj.subtype === 'api_retry') {
+      const transient =
+        (typeof obj.error_status === 'number' && STREAM_JSON_TRANSIENT_STATUS.has(obj.error_status)) ||
+        (typeof obj.error === 'string' && matchesTruncationHint(obj.error) && !/authentication/i.test(obj.error));
+      if (transient) {
+        return {
+          code: TRANSIENT_API_ERROR_CODE,
+          matchedLine: `stream-json api_retry status=${obj.error_status ?? '?'} ${obj.error ?? ''}`.slice(0, 300),
+          lineIndex: i,
+        };
+      }
+    }
+    if (obj.type === 'result' && obj.is_error === true) {
+      const status = obj.api_error_status;
+      if (typeof status === 'number' && STREAM_JSON_TRANSIENT_STATUS.has(status)) {
+        return {
+          code: TRANSIENT_API_ERROR_CODE,
+          matchedLine: `stream-json result is_error api_error_status=${status} ${String(obj.result ?? '').slice(0, 120)}`.slice(0, 300),
+          lineIndex: i,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 function parseClaudeApiError(lines: string[]): HeadlessApiErrorSentinel | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
@@ -93,7 +147,8 @@ function parseClaudeApiError(lines: string[]): HeadlessApiErrorSentinel | null {
     if (!isTailDominated(lines, i)) continue;
     return { code: TRANSIENT_API_ERROR_CODE, matchedLine: line.slice(0, 300), lineIndex: i };
   }
-  return null;
+  // stream-json 模式回退：文本锚定无命中时再试结构化信封（两模式共存期都覆盖）
+  return parseClaudeStreamJsonApiError(lines);
 }
 
 /**

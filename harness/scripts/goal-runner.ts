@@ -82,15 +82,20 @@ import {
 } from './utils/goal-report-generator';
 import {
   invokeAgentHeadless,
+  agentEventsLogPath,
   createChildSettleWaiter,
   killProcessTree,
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
+import { createHash } from 'crypto';
+import { produceCriticReceipt } from './utils/critic-receipt-producer';
 import {
   buildHalfPhaseRecoveryEvents,
   checkRunBudget,
   checkTerminalResumeGuard,
+  collectUncommittedVisualAttemptIds,
+  collectVisualRoundRowHashes,
   countAgentInvokeStarts,
   countTransientApiRetries,
   detectHalfCompletedPhaseRecovery,
@@ -109,6 +114,10 @@ import {
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
 } from './utils/goal-runner-phase';
+import {
+  reconcileLedgerWithEvents,
+  visualRoundsLedgerPath,
+} from './utils/visual-rounds-ledger';
 import {
   applyClosurePatchFromReceiptValidation,
   isGoalHeadlessEnv,
@@ -403,6 +412,7 @@ async function runHarnessPhase(
   feature: string,
   dryRun: boolean,
   manifest?: GoalManifest,
+  roundIdentity?: { runId: string; attemptId: string },
 ): Promise<number> {
   if (dryRun) return 0;
   const harnessDir = path.join(frameworkRoot, 'harness');
@@ -414,6 +424,10 @@ async function runHarnessPhase(
   const childEnv: NodeJS.ProcessEnv = {
     ...sanitized.env,
     [MAISON_GOAL_RUNNER_ENV]: '1',
+    // t1（f7a3d9c2）：外层脚本闸门与 agent 自跑共用同一轮次身份（round_key 去重/重放）
+    ...(roundIdentity
+      ? { MAISON_GOAL_RUN_ID: roundIdentity.runId, MAISON_GOAL_ATTEMPT: roundIdentity.attemptId }
+      : {}),
   };
   const allowedTools = manifest?.unattended?.allowed_tools;
   if (allowedTools?.length) {
@@ -1583,6 +1597,49 @@ Goal runner — tool-agnostic multi-phase orchestrator
           break;
         }
 
+        // t1/rev6（f7a3d9c2）+ review-fix（cursor Critical/codex P1-1）：gate/resume 启动的
+        // events↔ledger integrity 对账——**无条件执行**（期望集恒空正是主路径失效形态：
+        // agent 先写→gate 恒 duplicate；期望集现已含 duplicate 的 row_hash）。缺行/改行/
+        // 损坏行/重复行/陈旧孤儿行 → halt 求人（删账本行=绕 fuse；损坏不解释成空历史）。
+        // pending 收养仅限"已 start、未 commit"的 invocation。诚实边界：运行时一致性防护，
+        // 非协同篡改双文件的密码学防护。
+        if (!dryRun && phase === 'testing') {
+          const eventsForIntegrity = loadEventsJsonl(eventsPath);
+          const recon = reconcileLedgerWithEvents({
+            ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
+            loopId: `goal:${manifest.run_id}`,
+            expectedRowHashes: collectVisualRoundRowHashes(eventsForIntegrity),
+            pendingAttemptIds: collectUncommittedVisualAttemptIds(eventsForIntegrity),
+          });
+          if (!recon.ok) {
+            halted = true;
+            const detail = recon.issues.map(i => `${i.kind}: ${i.detail}`).join('; ');
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'visual_ledger_integrity',
+              verdict: 'FAIL',
+            });
+            console.error(`\n===== visual_ledger_integrity =====\n视觉轮次账本与 events 对账失败（须人工核查，不得删账本重跑绕过熔断）：\n${detail}\n`);
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries });
+            break;
+          }
+          // review-fix 轮2（codex P1-1）：收养的 pending 行立即补写 recovery 事件——
+          // 进入下次期望集并关闭该 attempt 的 pending 身份（不写=pending 永久存活、
+          // 孤儿行可借其名义永续）。
+          for (const a of recon.adopted) {
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'visual_round',
+              phase,
+              loop_id: `goal:${manifest.run_id}`,
+              visual_attempt: a.attempt_id,
+              row_hash: a.row_hash,
+              disposition: 'recovered',
+              recovered: true,
+            });
+          }
+        }
+
         totalTurns++;
         const phaseDir = path.join(projectRoot, manifest.report_dir, 'phases', phase);
         fs.mkdirSync(phaseDir, { recursive: true });
@@ -1686,7 +1743,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         );
 
         const outputLogPath = path.join(phaseDir, 'agent-output.log');
-        const invokeId = `${phase}-${Date.now()}`;
+        // t1（f7a3d9c2，终审遗留②）：invoke_id 升级为 run 级持久序数（totalTurns 从 events
+        // 回放恢复，跨 --resume 单调），不再只靠系统时钟。visualAttemptId=轮次账本的
+        // attempt 身份：同一 invocation 的 agent 自跑 harness 与外层 gate 共用；任何
+        // 下一次 invocation（retry/detach/resume）必不同；崩溃恢复不重用（事件已落盘
+        // 则 totalTurns 回放计入）。禁 phase 内 retries+1（resume 归零会撞旧 round_key）。
+        const visualAttemptId = `i${totalTurns}`;
+        const invokeId = `${phase}-${visualAttemptId}`;
 
         progressSubstep = 'agent_invoke';
         appendEvent(manifest.report_dir, projectRoot, {
@@ -1701,6 +1764,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           dryRun,
           timeoutMs: resolvePhaseTimeoutMs(phase, manifest),
           outputLogPath,
+          // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
+          extraEnv: {
+            MAISON_GOAL_RUN_ID: manifest.run_id,
+            MAISON_GOAL_ATTEMPT: visualAttemptId,
+          },
+          // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
+          toolEventCapture: cap.capability?.tool_event_provenance ?? 'none',
           // C-ab-eval：按 adapter goal_capability.usage_capture 声明采集（缺省 none → proxy）
           usageCapture: cap.capability?.usage_capture,
           onActiveChild: ({ kill }) => {
@@ -1751,6 +1821,41 @@ Goal runner — tool-agnostic multi-phase orchestrator
           });
         }
 
+        // t3b（f7a3d9c2）：goal 态 verified 回执生产——runner 从纯净事件文件（agent-events.jsonl）
+        // 审计图片验读记录后签发 runner attestation 回执，在脚本闸门之前落盘（gate 消费）。
+        // adapter 未声明 structured_events / 无注册解析器 / 覆盖不全 → 如实 unverified/不产出。
+        if (!dryRun && phase === 'testing' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
+          try {
+            const produced = produceCriticReceipt({
+              projectRoot,
+              feature: manifest.feature,
+              adapter: manifest.adapter ?? '',
+              goalRunId: manifest.run_id,
+              attemptId: visualAttemptId,
+              eventsLogAbsPath: agentEventsLogPath(outputLogPath),
+              promptHash: createHash('sha256').update(prompt).digest('hex').slice(0, 16),
+              outputHash: fs.existsSync(outputLogPath)
+                ? createHash('sha256').update(fs.readFileSync(outputLogPath)).digest('hex').slice(0, 16)
+                : null,
+            });
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'critic_receipt_produced',
+              phase,
+              invoke_id: invokeId,
+              status: produced.produced ? (produced.provenance ?? 'unverified') : 'skipped',
+            });
+            if (!produced.produced) {
+              console.log(`[t3b] critic 回执未由 runner 签发（${produced.reason}）`);
+            } else if (produced.provenance === 'unverified') {
+              console.log(
+                `[t3b] critic 回执签发为 unverified（验读覆盖不全）：unread_screenshots=${produced.unreadScreenshots?.length ?? 0} unread_crops=${produced.unreadCrops?.length ?? 0}`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[t3b] critic 回执生产异常（不阻断）：${(e as Error).message}`);
+          }
+        }
+
         progressSubstep = 'harness';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_start',
@@ -1765,6 +1870,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest.feature,
           dryRun,
           manifest,
+          { runId: manifest.run_id, attemptId: visualAttemptId },
         );
 
         appendEvent(manifest.report_dir, projectRoot, {
@@ -1821,6 +1927,46 @@ Goal runner — tool-agnostic multi-phase orchestrator
             manifest.feature,
             phase,
           ));
+        }
+
+        // t1（f7a3d9c2）：账本回执写入 events——integrity 对账的期望集来源；duplicate 也记
+        // （重放裁决可观测），期望集只取 disposition=appended（collectVisualRoundRowHashes）。
+        const visualRoundReceipt = (
+          summary as {
+            visual_round?: {
+              loop_id: string;
+              attempt?: string;
+              row_hash?: string;
+              disposition: 'appended' | 'duplicate' | 'append_failed';
+              decision?: { fused: boolean };
+            };
+          } | null
+        )?.visual_round;
+        if (!dryRun && freshSummary && visualRoundReceipt) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'visual_round',
+            phase,
+            invoke_id: invokeId,
+            loop_id: visualRoundReceipt.loop_id,
+            visual_attempt: visualRoundReceipt.attempt,
+            row_hash: visualRoundReceipt.row_hash,
+            disposition: visualRoundReceipt.disposition,
+            fused: visualRoundReceipt.decision?.fused === true,
+          });
+          // review-fix（codex P1-2）：账本落盘失败=完整性事件——立即 fail-closed halt，
+          // 不得让"events 声称评估过而账本无行"的成功运行溜走（末轮无下次对账兜底）。
+          if (visualRoundReceipt.disposition === 'append_failed') {
+            halted = true;
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'visual_ledger_integrity',
+              verdict: 'FAIL',
+            });
+            console.error('\n===== visual_ledger_integrity =====\n视觉轮次账本追加失败（磁盘/权限）——本轮评估未持久化，fail-closed 求人；修复后重跑。\n');
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries });
+            break;
+          }
         }
 
         const resolved = resolvePhaseHarnessVerdict({
@@ -1930,6 +2076,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
           console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS') {
+          // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
+          // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
+          // 指纹 → 首触即 halt 求人，不烧重试预算；残差清单在 blocker details。
+          action = 'halt';
+          haltReason = 'no_progress_fuse';
         } else if (failureKind === 'verification_evidence_gap' && verdict !== 'PASS') {
           // C5-min 验证转嫁禁令：evidence 缺口属设计内求人时刻（与 await_human 系同构），
           // agent 不得以"已自测"替代真人/device 验证，重试无意义 → 首触即 halt，不计 no_progress。

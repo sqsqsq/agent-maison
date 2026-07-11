@@ -30,7 +30,7 @@
 - [x] 5.1 region_attest 门禁：非空 + **must_have_elements 逐区域覆盖** + diff_logged 须关联 defect/must_fix
 - [x] 5.2 _attest crop 物证（存在性 + 限定 _attest/ 目录 + mtime 不早于被评截图）+ critic-receipt.json 校验（任何 attest 即必需；image_inputs 覆盖 + hash 重算验真 + verified 档逐项 hash 必填）+ input_provenance 两档
 - [x] 5.3 SSOT：单轮条款改写（critic 迭代+指纹熔断+candidate-pass 两档+禁提前 T2）+ 成对图 Read 强制；缺陷指纹纯函数（computeDefectFingerprint/collectDefectFingerprints/fingerprintSetsEqual）+ check details [fingerprints] 注记（两轮逐字相同=no-progress 机器可比）
-- [ ] 5.4 goal-runner 原生 critic phase 与 verified 档回执（transcript 验读）——另立项（tool_read 型 adapter 调用侧无法证明注入，verified 档当前无诚实生产者；见校准报告 §4 与 plan D5/D9）
+- [ ] 5.4 goal-runner 原生 critic phase 与 verified 档回执（transcript 验读）——**半关（plan f7a3d9c2 / change critic-loop-hardening）**：verified 回执生产侧已关闭（runner attestation：goal-runner 审计 agent-events.jsonl 结构化验读事件后签发，check 重算 hash 验真，手写 verified 降级；无合格 adapter 时如实 unverified——见 docs/operations/adapter-tool-event-provenance.md）；**独立 critic phase（与实现者分离的 fresh context 调度/循环状态机）仍 open，另立项**
 
 ## 6. 验证
 

@@ -522,6 +522,24 @@ cases.push({
       },
     ];
     assert(!isRoundFingerprintable(partial), '部分转录（must_fix 多于 defects）→ 无资格（必要条件近似，错向安全侧）');
+    // review-fix 轮4（codex P1）：T8 转录 defect 的 source.finding_id 进指纹——同 class/
+    // 同元素/同 0.1 桶的两个不同 T8 finding（如两个 B 类 signal 都映射 shape_mismatch）
+    // 必须得到不同指纹，否则"修掉 A、冒出 B"会撞同指纹误熔断。
+    const t8a = computeDefectFingerprint('sheet', {
+      ...d([0.81, 0.52, 0.1, 0.05]),
+      source: { producer: 'T8', finding_id: 'aaaa111122223333', signal: 'B1_sibling_order' },
+    });
+    const t8b = computeDefectFingerprint('sheet', {
+      ...d([0.81, 0.52, 0.1, 0.05]),
+      source: { producer: 'T8', finding_id: 'bbbb444455556666', signal: 'B2_depth_mismatch' },
+    });
+    assert(t8a !== t8b, '不同 finding_id 的转录 defect 指纹必须互异（防同桶碰撞误熔断）');
+    assert(t8a !== f1, '带 source 的指纹与 legacy 四元组不同（跨格式比较不相等 → 熔断推迟，错向安全侧）');
+    const t8aAgain = computeDefectFingerprint('sheet', {
+      ...d([0.83, 0.54, 0.12, 0.07]), note: '措辞换了',
+      source: { producer: 'T8', finding_id: 'aaaa111122223333', signal: 'B1_sibling_order' },
+    });
+    assert(t8a === t8aAgain, '同 finding_id：像素抖动/措辞改写仍同指纹（稳定身份跨轮成立）');
   },
 });
 

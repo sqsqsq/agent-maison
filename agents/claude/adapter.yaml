@@ -65,6 +65,11 @@ deprecated_artifacts:
 
 goal_capability:
   mode: native_goal
+  # t3a（f7a3d9c2，2026-07-11 宿主实采回填）：claude -p 走 stream-json 事件流——
+  # tool_use/Read 验读记录进 agent-events.jsonl（三文件分流），t3b runner attestation
+  # 据此签发 verified 回执。运行时 SSOT：agent-invoke.ts claudeArgv 按本声明加
+  # --output-format stream-json --verbose；断流哨兵已适配结构化信封。
+  tool_event_provenance: structured_events
   native_goal:
     goal_condition_template: templates/goal-condition.md
     supports_resume: false

@@ -10,7 +10,8 @@ import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
-import { checkVisualDiff, validateVisualDiffJson, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { checkVisualDiff, validateVisualDiffJson, hashScreenshotFile, type VisualDiffStructuredPayload } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { appendVisualRound, evaluateVisualRound, visualRoundsLedgerPath } from '../../scripts/utils/visual-rounds-ledger';
 import { buildVisualDiffMdBody, captureVisualDiff, collectDuplicateHashGroups, mergeCapturedScreenEntry, mergeVisualDiffReports, resolveShotPaths, sanitizeVisualDiffScreenSlug } from '../../../profiles/hmos-app/harness/visual-diff-capture';
 import { cropAssetFromBbox, computeHistogramSimilarity, isJimpAvailable, sampleColorFromBbox } from '../../../profiles/hmos-app/harness/image-toolkit';
 import { collectUiSpecGateConfirmedScreens } from '../../../profiles/hmos-app/harness/ui-spec-gate';
@@ -1167,16 +1168,92 @@ export function runAll(): UnitCaseResult[] {
       }));
       const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
       const hit = r[0] as { details?: string };
-      if (!/verified 主张暂不采信/.test(hit.details ?? '')) {
+      // t3b（f7a3d9c2）：降级语义不变，判据升级为 runner attestation 校验——手写 verified
+      // 缺 attestation 段 → 不采信 + WARN（措辞随 t3b 更新，本测同步）。
+      if (!/verified 主张不采信/.test(hit.details ?? '')) {
         throw new Error(`手写 verified 应被降级并 WARN：${(hit.details ?? '').slice(0, 300)}`);
+      }
+      if (!/缺 runner_attestation 段/.test(hit.details ?? '')) {
+        throw new Error('降级原因应指向缺 runner_attestation（手写 verified 属冒充）');
       }
       if (!/生效档位=unverified/.test(hit.details ?? '')) {
         throw new Error('provenance 注记应显示生效档位=unverified（声明 verified 已降级）');
       }
       if (/candidate-pass\(verified\)/.test(hit.details ?? '')) {
-        throw new Error('不得出现 candidate-pass(verified) 字样（签发链未落地）');
+        throw new Error('不得出现 candidate-pass(verified) 字样（attestation 未通过）');
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  // review-fix 轮4（codex P2）：evidence 路径绑定从子串 includes 收紧为期望全路径精确等值
+  // ——父目录/路径片段含 run_id 的旁路（goal-runs/<run>-stale/…）必须拒；同一回执改指
+  // canonical 路径（goal-runs/<run>/phases/testing/agent-events.jsonl）则全链走通=verified。
+  run('round4_verified_evidence_path_exact_binding', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    process.env.MAISON_GOAL_RUN_ID = 'runx';
+    process.env.MAISON_GOAL_ATTEMPT = 'i3';
+    try {
+      writeRev7Project(root, {
+        uiScreens: ['home'],
+        writeReceipt: false,
+        screens: [{
+          screen_id: 'home', verdict: 'pass', ref_id: 'home',
+          region_attest: [{ region: 'home_root', verdict: 'no_diff', method: 'vl_screening', by: 'vl' }],
+        }],
+      });
+      const shotRel = 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png';
+      const realHash = hashScreenshotFile(path.join(root, shotRel));
+      // claude structured_events 形态的验读事件（覆盖被评截图）
+      const eventsContent = `${JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: shotRel } }] },
+      })}\n`;
+      const decoyRel = 'doc/features/bank-card/goal-runs/runx-stale/phases/testing/agent-events.jsonl';
+      const canonicalRel = 'doc/features/bank-card/goal-runs/runx/phases/testing/agent-events.jsonl';
+      for (const rel of [decoyRel, canonicalRel]) {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), eventsContent, 'utf-8');
+      }
+      const rdir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'reports');
+      fs.mkdirSync(rdir, { recursive: true });
+      const writeReceipt = (evidenceRel: string): void => {
+        fs.writeFileSync(path.join(rdir, 'critic-receipt.json'), JSON.stringify({
+          schema_version: '1.1', critic_run_id: 'runx-i3', adapter: 'claude', prompt_hash: 'cafebabe',
+          input_provenance: 'verified', output_hash: '任意非空字符串',
+          image_inputs: [{ path: shotRel, hash: realHash }],
+          runner_attestation: {
+            goal_run_id: 'runx',
+            evidence_log_path: evidenceRel,
+            evidence_log_hash: hashScreenshotFile(path.join(root, evidenceRel)),
+            source: 'runner_transcript_audit',
+          },
+        }));
+      };
+      // ① 子串旁路：路径含 "runx" 片段但不在 canonical 位置 → 降级拒
+      writeReceipt(decoyRel);
+      const r1 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit1 = r1[0] as { details?: string };
+      if (!/verified 主张不采信/.test(hit1.details ?? '') || !/未绑定当前 run 的 testing 阶段目录/.test(hit1.details ?? '')) {
+        throw new Error(`子串含 run_id 的旁路路径应被拒（includes 不等于目录绑定）：${(hit1.details ?? '').slice(0, 400)}`);
+      }
+      // ② canonical 路径：runner 签发形态全链走通（路径等值+hash 重算+验读事件复核）→ verified 生效
+      writeReceipt(canonicalRel);
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit2 = r2[0] as { details?: string };
+      if (/verified 主张不采信/.test(hit2.details ?? '')) {
+        throw new Error(`canonical 路径的 runner 签发回执不应被降级：${(hit2.details ?? '').slice(0, 400)}`);
+      }
+      if (!/生效档位=verified/.test(hit2.details ?? '')) {
+        throw new Error(`全链走通应呈现生效档位=verified：${(hit2.details ?? '').slice(0, 400)}`);
+      }
+    } finally {
+      if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId; else delete process.env.MAISON_GOAL_RUN_ID;
+      if (prevAttempt !== undefined) process.env.MAISON_GOAL_ATTEMPT = prevAttempt; else delete process.env.MAISON_GOAL_ATTEMPT;
+      clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   run('visual_diff_finalized_verdict_without_evaluated_hash_warns', () => {
@@ -3062,6 +3139,391 @@ export function runAll(): UnitCaseResult[] {
         throw new Error(`sample got ${JSON.stringify(sample)}`);
       }
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // ==========================================================================
+  // t4b（plan f7a3d9c2）：静稳采样进正式链 + unstable 独立 id 降档
+  // ==========================================================================
+
+  /** t4b 夹具：单 P0 顶层屏 uiDoc + 可编程 shot/dump mock */
+  function quiesceUiDoc(): { screens: Array<Record<string, unknown>>; tokens: Record<string, unknown>; assets: unknown[] } {
+    return {
+      screens: [{ id: 'home', priority: 'P0', root: { type: 'navigation_frame', order: 0, children: [] } }],
+      tokens: {},
+      assets: [],
+    };
+  }
+
+  function quiesceDumpJson(extraNode = false): string {
+    return JSON.stringify({
+      schema_version: 'hylyre-hypium-ui-dump-v1',
+      tree: {
+        attributes: { bounds: '[0,0][100,200]', type: 'Screen', text: '', id: '', key: '', clickable: 'false' },
+        children: [{
+          attributes: { bounds: '[0,10][100,200]', type: 'root', text: '', id: '', key: '', clickable: 'false' },
+          children: extraNode
+            ? [{ attributes: { bounds: '[0,20][50,40]', type: 'Button', text: 'x', id: 'x', key: '', clickable: 'true' }, children: [] }]
+            : [],
+        }],
+      },
+    });
+  }
+
+  run('f7a3_t4b_capture_quiescence_stable_and_unstable_and_conservation', () => {
+    if (!isJimpAvailable()) return;
+    // ①稳定：双拍一致 → captured + probe 侧车 + records
+    {
+      const root = mkProject();
+      try {
+        let shots = 0;
+        const cap = captureVisualDiff({
+          projectRoot: root,
+          feature: 'bank-card',
+          uiDoc: quiesceUiDoc() as unknown as Parameters<typeof captureVisualDiff>[0]['uiDoc'],
+          quiescenceSampling: true,
+          screenshotFn: ({ destAbs }) => {
+            shots++;
+            writeMinimalRedPng(destAbs, 10, 10);
+            return { ok: true };
+          },
+          layoutDumpFn: ({ destAbs }) => {
+            fs.writeFileSync(destAbs, quiesceDumpJson(), 'utf-8');
+            return { ok: true };
+          },
+        });
+        if (!cap.ok) throw new Error(`采集应成功：${JSON.stringify(cap.errors)}`);
+        if (shots !== 2) throw new Error(`静稳路径每屏应 2 shot（shot₁+shot₂），实际 ${shots}`);
+        const rep = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8')) as { screens: Array<{ layout_dump_status?: string }> };
+        if (rep.screens[0].layout_dump_status !== 'captured') {
+          throw new Error(`稳定屏应 captured：${JSON.stringify(rep.screens[0])}`);
+        }
+        const qDir = path.join(cap.reportDir, '_quiescence');
+        if (!fs.existsSync(path.join(qDir, 'home.records.json'))) throw new Error('records 侧车缺失');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    }
+    // ②持续不稳（每拍不同色）→ unstable + reason，不算采集失败
+    {
+      const root = mkProject();
+      try {
+        let n = 0;
+        const cap = captureVisualDiff({
+          projectRoot: root,
+          feature: 'bank-card',
+          uiDoc: quiesceUiDoc() as unknown as Parameters<typeof captureVisualDiff>[0]['uiDoc'],
+          quiescenceSampling: true,
+          screenshotFn: ({ destAbs }) => {
+            n++;
+            writeMinimalColorPng(destAbs, 10, 10, n % 2 === 0 ? 0x00ff00ff : 0xff0000ff);
+            return { ok: true };
+          },
+          layoutDumpFn: ({ destAbs }) => {
+            fs.writeFileSync(destAbs, quiesceDumpJson(), 'utf-8');
+            return { ok: true };
+          },
+        });
+        if (!cap.ok) throw new Error(`unstable 不是采集失败：${JSON.stringify(cap.errors)}`);
+        const rep = JSON.parse(fs.readFileSync(cap.jsonPath, 'utf-8')) as {
+          screens: Array<{ layout_dump_status?: string; layout_dump_unstable_reason?: string }>;
+        };
+        if (rep.screens[0].layout_dump_status !== 'unstable' || rep.screens[0].layout_dump_unstable_reason !== 'image_drift') {
+          throw new Error(`应标 unstable/image_drift：${JSON.stringify(rep.screens[0])}`);
+        }
+        if ((cap.p0CaptureFailures ?? []).length !== 0) throw new Error('unstable 不入 p0CaptureFailures');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    }
+    // ③守恒：不开 quiescenceSampling → 每屏 1 shot、无 _quiescence 目录（旧行为不变）
+    {
+      const root = mkProject();
+      try {
+        let shots = 0;
+        const cap = captureVisualDiff({
+          projectRoot: root,
+          feature: 'bank-card',
+          uiDoc: quiesceUiDoc() as unknown as Parameters<typeof captureVisualDiff>[0]['uiDoc'],
+          screenshotFn: ({ destAbs }) => {
+            shots++;
+            writeMinimalRedPng(destAbs, 10, 10);
+            return { ok: true };
+          },
+          layoutDumpFn: ({ destAbs }) => {
+            fs.writeFileSync(destAbs, quiesceDumpJson(), 'utf-8');
+            return { ok: true };
+          },
+        });
+        if (!cap.ok) throw new Error(JSON.stringify(cap.errors));
+        if (shots !== 1) throw new Error(`t6b 守恒：flag 关闭每屏应 1 shot，实际 ${shots}`);
+        if (fs.existsSync(path.join(cap.reportDir, '_quiescence'))) throw new Error('t6b 守恒：不得产生 _quiescence 侧车');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  });
+
+  run('f7a3_t4b_unstable_screen_t8_downgrades_to_separate_id', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      // pixel_1to1 + P0 屏 forbidden_overlap 真违反 + layout_dump_status=unstable →
+      // 不出 visual_diff_layout_invariants FAIL；出独立 id WARN；免 t2 转录。
+      const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      const shot = path.join(dir, 'shot-home.png');
+      writeMinimalRedPng(shot, 10, 10);
+      const h = hashScreenshotFile(shot);
+      fs.writeFileSync(
+        uiSpecAbsPath(root, 'bank-card'),
+        JSON.stringify({
+          schema_version: '1.0',
+          screens: [{
+            id: 'home', priority: 'P0',
+            forbidden_overlap: [['close', 'bank_surface']],
+            root: { type: 'navigation_frame', order: 0, children: [
+              { id: 'close', type: 'button', text: '关闭' },
+              { id: 'bank_surface', type: 'image' },
+            ] },
+          }],
+          tokens: {}, assets: [],
+        }),
+        'utf-8',
+      );
+      // 运行时 dump：close 与 bank_surface 真相交（A1 hard 靶）
+      fs.writeFileSync(path.join(dir, 'layout-home.json'), JSON.stringify({
+        schema_version: 'hylyre-hypium-ui-dump-v1',
+        tree: {
+          attributes: { bounds: '[0,0][1000,2000]', type: 'Screen', text: '', id: '', key: '', clickable: 'false' },
+          children: [{
+            attributes: { bounds: '[0,100][1000,2000]', type: 'root', text: '', id: '', key: '', clickable: 'false' },
+            children: [
+              { attributes: { bounds: '[100,200][400,400]', type: 'Button', text: '关闭', id: 'close', key: '', clickable: 'true' }, children: [] },
+              { attributes: { bounds: '[300,300][700,600]', type: 'Image', text: '', id: 'bank_surface', key: '', clickable: 'true' }, children: [] },
+            ],
+          }],
+        },
+      }), 'utf-8');
+      fs.writeFileSync(path.join(dir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.1',
+        screens: [{
+          screen_id: 'home', verdict: 'fail',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home', evaluated_screenshot_hash: h, screenshot_hash: h,
+          layout_dump_status: 'unstable', layout_dump_unstable_reason: 'image_drift',
+          must_fix: ['修复重叠'], reverse_missing: [],
+          defects: [{ class: 'overlap', element: 'close', bbox: [0.1, 0.1, 0.2, 0.2], severity: 'major', note: 'x', must_fix_refs: [0] }],
+        }],
+      }), 'utf-8');
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { details?: string };
+      const d = hit.details ?? '';
+      if (!/unstable 屏降档/.test(d)) throw new Error(`应出独立 id 的 unstable WARN：${d.slice(0, 400)}`);
+      if (/【T8 布局不变量违反/.test(d)) throw new Error('unstable 屏不得走 hard FAIL 通道（A 类不豁免的方向是降档，不是照判）');
+      if (/【t2 发现未落账】/.test(d)) throw new Error('unstable 屏 findings 免 t2 转录');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // ==========================================================================
+  // t1/t2/t6b（plan f7a3d9c2）：指纹熔断 e2e + must_fix 锚定 + 低档守恒
+  // ==========================================================================
+
+  /** f7a3d9c2 e2e 夹具：单 fail 屏（must_fix 1 条 + 锚定 defect）——可指纹、有 actionable 残差 */
+  function writeFuseFixture(root: string, opts: { anchored?: boolean } = {}): void {
+    const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+      '```yaml\nui_change: new_or_changed\n```\n',
+    );
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+    const shot = path.join(dir, 'shot-home.png');
+    writeMinimalRedPng(shot, 10, 10);
+    const h = hashScreenshotFile(shot);
+    fs.writeFileSync(
+      path.join(dir, 'visual-diff.json'),
+      JSON.stringify({
+        schema_version: '1.1',
+        screens: [{
+          screen_id: 'home',
+          verdict: 'fail',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          ref_id: 'home',
+          evaluated_screenshot_hash: h,
+          screenshot_hash: h,
+          must_fix: ['修复 close 与卡面的重叠'],
+          reverse_missing: [],
+          defects: [{
+            class: 'overlap',
+            element: 'close',
+            bbox: [0.1, 0.1, 0.2, 0.2],
+            severity: 'major',
+            note: 'close 与卡面重叠',
+            ...(opts.anchored === false ? {} : { must_fix_refs: [0] }),
+          }],
+        }],
+      }),
+      'utf-8',
+    );
+  }
+
+  run('f7a3_fuse_two_rounds_same_fingerprints_blocks_and_classifies', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      writeFuseFixture(root);
+      // 轮 1：干净账本 → appended、不熔；模拟 runner 追加
+      const r1 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const p1 = (r1[0] as { structured?: VisualDiffStructuredPayload }).structured;
+      if (!p1?.round || p1.round.disposition !== 'appended' || p1.round.decision.fused) {
+        throw new Error(`轮 1 应 appended 且不熔：${JSON.stringify(p1?.round)}`);
+      }
+      if (!p1.fingerprintable || p1.defect_fingerprints.length === 0) {
+        throw new Error('夹具应可指纹且指纹非空');
+      }
+      const ledgerPath = visualRoundsLedgerPath(root, 'bank-card');
+      // 用不同 screens_hash 伪造"上一轮"（同指纹、经历了重采）——本轮与之比较应熔断
+      const prior = evaluateVisualRound(ledgerPath, {
+        loopId: p1.loop_id,
+        attemptId: null,
+        goalRunId: null,
+        buildFingerprint: p1.build_fingerprint ?? '',
+        screensHash: 'prev-round-screens',
+        defectFingerprints: p1.defect_fingerprints,
+        sourceFailHitIds: p1.source_fail_hit_ids,
+        fingerprintable: true,
+        awaitHumanOnly: false,
+        actionableResidual: true,
+      });
+      appendVisualRound(ledgerPath, prior.row);
+      // 轮 2：同指纹 + 状态不同（screens_hash 变）→ fuse BLOCKER + failure_kind
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit2 = r2[0] as { status: string; details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload };
+      if (!/无进展熔断/.test(hit2.details ?? '')) {
+        throw new Error(`应出现 no_progress_fuse 命中：${(hit2.details ?? '').slice(0, 400)}`);
+      }
+      if (hit2.failure_kind !== 'no_progress_fuse') {
+        throw new Error(`failure_kind 应为 no_progress_fuse（goal-runner 首触即 halt 的 classification 通道）：${hit2.failure_kind}`);
+      }
+      if (hit2.structured?.round?.decision.attribution !== 'no_fix_attempt') {
+        throw new Error(`build 未变应归因 no_fix_attempt：${JSON.stringify(hit2.structured?.round?.decision)}`);
+      }
+      // 轮 3（duplicate 重放，rev5 codex 指定）：把轮 2 的 fused 行追加后原样重跑——
+      // 撞同 round_key → duplicate，但外层必须仍看到 fuse。
+      appendVisualRound(ledgerPath, hit2.structured!.round!.row);
+      const r3 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit3 = r3[0] as { details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload };
+      if (hit3.structured?.round?.disposition !== 'duplicate') {
+        throw new Error(`轮 3 应为 duplicate：${JSON.stringify(hit3.structured?.round?.disposition)}`);
+      }
+      if (hit3.failure_kind !== 'no_progress_fuse' || !/duplicate 重放/.test(hit3.details ?? '')) {
+        throw new Error('duplicate 必须重放 fused=true——外层 gate 不得看到 no-op');
+      }
+    } finally {
+      if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt !== undefined) process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('f7a3_mustfix_unanchored_blocks_pixel1to1_only', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    try {
+      // 需要 P0 屏语境：锚定门禁只对 pixel_1to1 P0 屏——构造 ui-spec 声明 home 为 P0
+      writeFuseFixture(root, { anchored: false });
+      fs.writeFileSync(
+        uiSpecAbsPath(root, 'bank-card'),
+        JSON.stringify({
+          schema_version: '1.0',
+          screens: [{ id: 'home', priority: 'P0', root: { type: 'navigation_frame', order: 0, children: [] } }],
+          tokens: {},
+          assets: [],
+        }),
+        'utf-8',
+      );
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit = r[0] as { details?: string };
+      if (!/回修指令未结构化锚定/.test(hit.details ?? '')) {
+        throw new Error(`must_fix 无 must_fix_refs 引用应 BLOCKER（filler defects 不作数）：${(hit.details ?? '').slice(0, 400)}`);
+      }
+      // 补锚定后该命中消失
+      writeFuseFixture(root, { anchored: true });
+      const r2 = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const hit2 = r2[0] as { details?: string };
+      if (/回修指令未结构化锚定/.test(hit2.details ?? '')) {
+        throw new Error('逐条锚定后不应再命中');
+      }
+      // 守恒：同一夹具在非 pixel_1to1 档不产生锚定 BLOCKER
+      writeFuseFixture(root, { anchored: false });
+      const r3 = checkVisualDiff(baseCtx(root));
+      const hit3 = r3[0] as { details?: string };
+      if (/回修指令未结构化锚定/.test(hit3.details ?? '')) {
+        throw new Error('t6b 守恒：semantic_layout 不得新增锚定 BLOCKER');
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('f7a3_conservation_semantic_layout_no_fuse_no_receipt_requirement', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    try {
+      writeFuseFixture(root);
+      // 伪造"上一轮"同指纹行——若 fuse 未按档位隔离，semantic 档会误熔
+      const probe = checkVisualDiff(baseCtx(root));
+      const payload = (probe[0] as { structured?: VisualDiffStructuredPayload }).structured;
+      if (!payload) throw new Error('semantic 档也应产出结构化 payload（账本观测两档通用）');
+      if (payload.actionable_residual !== false) {
+        throw new Error('t6b 守恒：actionable residual 仅 pixel_1to1 生效（decision 恒 fused=false）');
+      }
+      const ledgerPath = visualRoundsLedgerPath(root, 'bank-card');
+      const prior = evaluateVisualRound(ledgerPath, {
+        loopId: payload.loop_id,
+        attemptId: null,
+        goalRunId: null,
+        buildFingerprint: payload.build_fingerprint ?? '',
+        screensHash: 'prev-round-screens',
+        defectFingerprints: payload.defect_fingerprints,
+        sourceFailHitIds: payload.source_fail_hit_ids,
+        fingerprintable: true,
+        awaitHumanOnly: false,
+        actionableResidual: true,
+      });
+      appendVisualRound(ledgerPath, prior.row);
+      const r = checkVisualDiff(baseCtx(root));
+      const hit = r[0] as { details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload };
+      if (/无进展熔断/.test(hit.details ?? '') || hit.failure_kind === 'no_progress_fuse') {
+        throw new Error('t6b 守恒：semantic_layout 不得出现 fuse BLOCKER');
+      }
+      if (hit.structured?.round?.decision.fused) {
+        throw new Error('t6b 守恒：semantic 档 decision 恒 fused=false');
+      }
+      if (/critic 回执/.test(hit.details ?? '') && /candidate-pass 均须/.test(hit.details ?? '')) {
+        throw new Error('t6b 守恒：无 attest 的 semantic 档不得强制回执');
+      }
+      // ui_change: none → 整个 visual_diff 检查零接触（零新增一切）
+      fs.writeFileSync(
+        path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'),
+        '```yaml\nui_change: none\n```\n',
+      );
+      const none = checkVisualDiff(baseCtx(root));
+      if (none.length !== 0) {
+        throw new Error(`t6b 守恒：ui_change=none 应零结果：${JSON.stringify(none.map(x => x.id))}`);
+      }
+    } finally {
+      if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

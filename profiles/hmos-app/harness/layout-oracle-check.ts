@@ -15,6 +15,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { createHash } from 'crypto';
 import type { UiSpecComponentNode, UiSpecScreen } from '../../../harness/scripts/utils/ui-spec-shared';
 
 // ---------------------------------------------------------------------------
@@ -230,11 +231,36 @@ export function locateElements(
 export type LayoutFindingTier = 'hard' | 'warn' | 'advisory';
 
 export interface LayoutFinding {
+  /**
+   * t0（plan f7a3d9c2）：稳定发现 id=`hash(screen_id|signal|elements|bbox_bucket)` 前缀
+   * （16 hex）。emit 时 elements 已定稿（禁先空后补——否则跨轮 id 漂、转录对账全废）；
+   * bbox 按 0.1 网格分桶吸收像素抖动；elements 参与排序后哈希（顺序无关）。
+   */
+  finding_id: string;
   tier: LayoutFindingTier;
   signal: string;
+  /** t0：结构化元素引用（声明元素 id；替代 note 散文内嵌），转录对账主锚点之一 */
+  elements: string[];
   /** 归一化 [x,y,w,h]（相对 app 窗口），供 defect 定位引用 */
   bbox?: [number, number, number, number];
   note: string;
+}
+
+/** bbox → 0.1 网格桶串（与 visual-diff computeDefectFingerprint 同分桶策略） */
+export function layoutBBoxBucket(bbox: [number, number, number, number] | undefined): string {
+  if (!bbox) return 'nobbox';
+  return bbox.map(n => (Math.round(n * 10) / 10).toFixed(1)).join(',');
+}
+
+/** t0：稳定 finding_id——screen/signal/elements（排序）/bbox 桶 的 sha256 前 16 hex */
+export function computeLayoutFindingId(
+  screenId: string,
+  signal: string,
+  elements: string[],
+  bbox: [number, number, number, number] | undefined,
+): string {
+  const key = `${screenId}|${signal}|${[...elements].sort().join(',')}|${layoutBBoxBucket(bbox)}`;
+  return createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 
 function normBBox(r: LayoutRect, app: LayoutRect): [number, number, number, number] {
@@ -280,6 +306,23 @@ export interface LayoutOracleScreenResult {
 export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): LayoutOracleScreenResult {
   const { screenId, screen, dump } = input;
   const findings: LayoutFinding[] = [];
+  // t0：统一入口构造 finding——finding_id 在 emit 时以定稿的 elements/bbox 计算（禁回填）
+  const emit = (
+    tier: LayoutFindingTier,
+    signal: string,
+    elements: string[],
+    bbox: [number, number, number, number] | undefined,
+    note: string,
+  ): void => {
+    findings.push({
+      finding_id: computeLayoutFindingId(screenId, signal, elements, bbox),
+      tier,
+      signal,
+      elements,
+      ...(bbox ? { bbox } : {}),
+      note,
+    });
+  };
   const declared = collectDeclaredElements(screen);
   const { located, coverage } = locateElements(declared, dump.appRoot);
   const get = (id: string): LocatedElement | undefined => {
@@ -294,31 +337,36 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
     const a = get(ea);
     const b = get(eb);
     if (!a || !b) {
-      findings.push({
-        tier: 'warn',
-        signal: 'A1_forbidden_overlap_unlocatable',
-        note: `forbidden_overlap [${ea}, ${eb}] 有元素无法定位（${!a ? ea : ''}${!a && !b ? '、' : ''}${!b ? eb : ''}）——须 coding 设 .id() 或补唯一文本锚，声明未生效`,
-      });
+      emit(
+        'warn',
+        'A1_forbidden_overlap_unlocatable',
+        [ea, eb],
+        undefined,
+        `forbidden_overlap [${ea}, ${eb}] 有元素无法定位（${!a ? ea : ''}${!a && !b ? '、' : ''}${!b ? eb : ''}）——须 coding 设 .id() 或补唯一文本锚，声明未生效`,
+      );
       continue;
     }
     if (!isKinPair(a, b) && rectsIntersect(a.node!.bounds!, b.node!.bounds!)) {
       const u = unionRect(a.node!.bounds!, b.node!.bounds!);
-      findings.push({
-        tier: 'hard',
-        signal: 'A1_forbidden_overlap',
-        bbox: normBBox(u, dump.appRect),
-        note: `声明禁止重叠的 [${ea}] 与 [${eb}] 运行时 bounds 相交（${ea}=${JSON.stringify(a.node!.bounds)}，${eb}=${JSON.stringify(b.node!.bounds)}）——调整布局使二者不相交`,
-      });
+      emit(
+        'hard',
+        'A1_forbidden_overlap',
+        [ea, eb],
+        normBBox(u, dump.appRect),
+        `声明禁止重叠的 [${ea}] 与 [${eb}] 运行时 bounds 相交（${ea}=${JSON.stringify(a.node!.bounds)}，${eb}=${JSON.stringify(b.node!.bounds)}）——调整布局使二者不相交`,
+      );
     }
   }
   for (const prot of screen.protected_region ?? []) {
     const p = get(prot);
     if (!p) {
-      findings.push({
-        tier: 'warn',
-        signal: 'A1_protected_region_unlocatable',
-        note: `protected_region [${prot}] 无法定位——须 coding 设 .id() 或补唯一文本锚，声明未生效`,
-      });
+      emit(
+        'warn',
+        'A1_protected_region_unlocatable',
+        [prot],
+        undefined,
+        `protected_region [${prot}] 无法定位——须 coding 设 .id() 或补唯一文本锚，声明未生效`,
+      );
       continue;
     }
     const clickables = flattenLayoutNodes(dump.appRoot).filter(
@@ -329,12 +377,14 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
       if (kin) continue;
       if (rectsIntersect(c.node.bounds!, p.node!.bounds!)) {
         const label = c.node.id || c.node.text || c.node.type;
-        findings.push({
-          tier: 'hard',
-          signal: 'A1_protected_region',
-          bbox: normBBox(unionRect(c.node.bounds!, p.node!.bounds!), dump.appRect),
-          note: `保护区 [${prot}] 被可交互控件「${label}」侵入（${JSON.stringify(c.node.bounds)}）——移出保护区或调整布局`,
-        });
+        emit(
+          'hard',
+          'A1_protected_region',
+          // 入侵者是运行时节点（非声明元素）——elements 记保护区 id + 入侵者最佳标识
+          [prot, label].filter(Boolean),
+          normBBox(unionRect(c.node.bounds!, p.node!.bounds!), dump.appRect),
+          `保护区 [${prot}] 被可交互控件「${label}」侵入（${JSON.stringify(c.node.bounds)}）——移出保护区或调整布局`,
+        );
       }
     }
   }
@@ -344,12 +394,13 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
     const e = get(d.elementId);
     if (!e) continue;
     if (!rectContains(dump.screenRect, e.node!.bounds!)) {
-      findings.push({
-        tier: 'hard',
-        signal: 'A2_out_of_screen',
-        bbox: normBBox(e.node!.bounds!, dump.appRect),
-        note: `元素 [${d.elementId}] bounds ${JSON.stringify(e.node!.bounds)} 越出屏幕 ${JSON.stringify(dump.screenRect)}`,
-      });
+      emit(
+        'hard',
+        'A2_out_of_screen',
+        [d.elementId],
+        normBBox(e.node!.bounds!, dump.appRect),
+        `元素 [${d.elementId}] bounds ${JSON.stringify(e.node!.bounds)} 越出屏幕 ${JSON.stringify(dump.screenRect)}`,
+      );
     }
   }
 
@@ -372,12 +423,13 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
         const kin = cand.ancestors.includes(e.node!) || (e.ancestors ?? []).includes(cand.node);
         if (kin) continue;
         if (rectsIntersect(cand.node.bounds!, e.node!.bounds!)) {
-          findings.push({
-            tier: 'advisory',
-            signal: 'A3_close_overlap_default',
-            bbox: normBBox(unionRect(cand.node.bounds!, e.node!.bounds!), dump.appRect),
-            note: `overlay 右上疑似关闭钮（${cand.node.id || cand.node.type}@${JSON.stringify(cand.node.bounds)}）与声明元素 [${d.elementId}] 相交——advisory（默认规则待 D5 校准）；确定意图请在 ui-spec 声明 forbidden_overlap 升硬门禁`,
-          });
+          emit(
+            'advisory',
+            'A3_close_overlap_default',
+            [d.elementId, cand.node.id || cand.node.type].filter(Boolean),
+            normBBox(unionRect(cand.node.bounds!, e.node!.bounds!), dump.appRect),
+            `overlay 右上疑似关闭钮（${cand.node.id || cand.node.type}@${JSON.stringify(cand.node.bounds)}）与声明元素 [${d.elementId}] 相交——advisory（默认规则待 D5 校准）；确定意图请在 ui-spec 声明 forbidden_overlap 升硬门禁`,
+          );
         }
       }
     }
@@ -398,12 +450,13 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
         if (rectsIntersect(a.node.bounds!, b.node.bounds!)) {
           const la = a.node.id || a.node.text || a.node.type;
           const lb = b.node.id || b.node.text || b.node.type;
-          findings.push({
-            tier: 'advisory',
-            signal: 'A4_pairwise_overlap',
-            bbox: normBBox(unionRect(a.node.bounds!, b.node.bounds!), dump.appRect),
-            note: `可交互叶子「${la}」与「${lb}」bounds 相交——观察期素材（嵌套热区/badge/浮层可为合法形态）；确定意图请声明 forbidden_overlap 升硬门禁`,
-          });
+          emit(
+            'advisory',
+            'A4_pairwise_overlap',
+            [la, lb].filter(Boolean),
+            normBBox(unionRect(a.node.bounds!, b.node.bounds!), dump.appRect),
+            `可交互叶子「${la}」与「${lb}」bounds 相交——观察期素材（嵌套热区/badge/浮层可为合法形态）；确定意图请声明 forbidden_overlap 升硬门禁`,
+          );
           emitted++;
         }
       }
@@ -437,11 +490,14 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
         const pb = (nodes[i].ancestors ?? []).slice(-1)[0];
         const sharesParent = pa !== undefined && pa === pb && pa !== dump.appRoot;
         if (yOverlap <= 0 && !sharesParent) {
-          findings.push({
-            tier: 'warn',
-            signal: 'B1_layout_group_divergent',
-            note: `layout_group=${g} 的 [${nodes[0].elementId}] 与 [${nodes[i].elementId}] 运行时既不同行（y 带无重叠）也不共直接父容器——声明的同行/同组关系未实现`,
-          });
+          // t0：B 类尽力补 bbox（两节点 union）
+          emit(
+            'warn',
+            'B1_layout_group_divergent',
+            [nodes[0].elementId, nodes[i].elementId],
+            normBBox(unionRect(a, b), dump.appRect),
+            `layout_group=${g} 的 [${nodes[0].elementId}] 与 [${nodes[i].elementId}] 运行时既不同行（y 带无重叠）也不共直接父容器——声明的同行/同组关系未实现`,
+          );
         }
       }
     }
@@ -457,11 +513,15 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
           const shared = [...ancestorSets[0]].filter(a => ancestorSets.every(s => s.has(a)));
           const meaningful = shared.filter(a => a.bounds && rectArea(a.bounds) < 0.9 * rectArea(dump.appRect));
           if (meaningful.length === 0) {
-            findings.push({
-              tier: 'warn',
-              signal: 'B2_group_container_missing',
-              note: `声明分组容器 [${n.id ?? n.type}]（bg_color=${bg}）的子元素 ${locatedKids.map(e => e.elementId).join('/')} 运行时无共同子容器（最近公共祖先≈页面根）——疑似被实现为独立块而非同卡`,
-            });
+            const kidRects = locatedKids.map(e => e.node!.bounds!);
+            const kidUnion = kidRects.reduce((acc, r) => unionRect(acc, r));
+            emit(
+              'warn',
+              'B2_group_container_missing',
+              locatedKids.map(e => e.elementId),
+              normBBox(kidUnion, dump.appRect),
+              `声明分组容器 [${n.id ?? n.type}]（bg_color=${bg}）的子元素 ${locatedKids.map(e => e.elementId).join('/')} 运行时无共同子容器（最近公共祖先≈页面根）——疑似被实现为独立块而非同卡`,
+            );
           }
         }
       }
@@ -484,11 +544,13 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
         const b = get(cur.id as string);
         if (!a || !b) continue;
         if (b.node!.bounds!.y1 < a.node!.bounds!.y1 - 1) {
-          findings.push({
-            tier: 'warn',
-            signal: 'B3_order_inverted',
-            note: `[${prev.id}]（order=${prev.order}）与 [${cur.id}]（order=${cur.order}）运行时纵向顺序颠倒（y=${a.node!.bounds!.y1} vs ${b.node!.bounds!.y1}）`,
-          });
+          emit(
+            'warn',
+            'B3_order_inverted',
+            [prev.id as string, cur.id as string],
+            normBBox(unionRect(a.node!.bounds!, b.node!.bounds!), dump.appRect),
+            `[${prev.id}]（order=${prev.order}）与 [${cur.id}]（order=${cur.order}）运行时纵向顺序颠倒（y=${a.node!.bounds!.y1} vs ${b.node!.bounds!.y1}）`,
+          );
         }
       }
       for (const c of n.children ?? []) walkOrder(c);
@@ -512,11 +574,13 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
         if (refGap < 0) continue;
         const runGap = (b.node!.bounds!.y1 - a.node!.bounds!.y2) / appH;
         if (runGap >= 0 && Math.abs(runGap - refGap) > tol) {
-          findings.push({
-            tier: 'advisory',
-            signal: 'C1_gap_ratio_divergent',
-            note: `[${prev.id}]→[${cur.id}] 间距比例 ${runGap.toFixed(3)} vs 参考推导 ${refGap.toFixed(3)}（偏差>${tol}）——advisory 供 critic/人复核，永不 gate`,
-          });
+          emit(
+            'advisory',
+            'C1_gap_ratio_divergent',
+            [prev.id as string, cur.id as string],
+            normBBox(unionRect(a.node!.bounds!, b.node!.bounds!), dump.appRect),
+            `[${prev.id}]→[${cur.id}] 间距比例 ${runGap.toFixed(3)} vs 参考推导 ${refGap.toFixed(3)}（偏差>${tol}）——advisory 供 critic/人复核，永不 gate`,
+          );
         }
       }
       for (const c of n.children ?? []) walkGaps(c);

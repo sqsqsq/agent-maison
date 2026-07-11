@@ -2181,6 +2181,10 @@ function checkDeviceTestRunGate(
                     deviceSn: process.env.HARNESS_HDC_TARGET,
                     logPath: run.logPath,
                   }),
+                  // t4b（f7a3d9c2，2026-07-11 bc-openCard 真机双拍数据回填后启用）：静稳采样
+                  // ——与 layoutDumpFn 同守卫仅 pixel_1to1；实测 5/8 屏整图 hash 漂移而
+                  // app 裁剪判据 8/8 稳、动效屏 3 组内收敛（默认重试 2 已够）。
+                  quiescenceSampling: true,
                 }
               : {}),
             ...(navConfig

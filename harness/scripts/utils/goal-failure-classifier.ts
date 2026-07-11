@@ -24,6 +24,13 @@ export type FailureKind =
   | 'agent_no_output'
   /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
   | 'await_human_confirm'
+  /**
+   * t1（plan f7a3d9c2）：指纹级无进展熔断——check 层比对轮次账本（visual-rounds.ledger.jsonl）
+   * 判"连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差"。首触即 halt（重试只会
+   * 复现同指纹，不烧预算）；不入 SIGNATURE_HALT_KINDS（那是 runner 侧粗熔断兜底，本 kind
+   * 由 check 侧细粒度判定先触发）。duplicate 重放的 fuse 同样走本 kind（rev5）。
+   */
+  | 'no_progress_fuse'
   /** E4（案B chrys 银行卡实证）：用户主动 Ctrl+C（Windows STATUS_CONTROL_C_EXIT / POSIX
    * SIGINT）——不是超时/断流/空产出/内容失败，重试是对用户意图的冒犯，须首触即 halt。 */
   | 'operator_interrupt'
@@ -283,6 +290,12 @@ export function classifyFailureKind(
   // 候选且零 must_fix/stale，唯一 BLOCKER=真人确认。agent 不能替人签，重试无意义 → 独立 kind。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
     return 'await_human_confirm';
+  }
+  // t1（f7a3d9c2）：指纹级无进展熔断——须在 isVisualGapBlockerId 前缀归类**之前**判
+  // （fuse blocker id 以 visual_diff 开头，否则被吸成 visual_gap 走粗熔断路径）。
+  // 与 await_human_confirm 互斥由 check 侧保证（仅 awaitHumanOnly=false 才计算 fuse）。
+  if ((summary?.blockers ?? []).some((b) => b.classification === 'no_progress_fuse')) {
+    return 'no_progress_fuse';
   }
   // C5-min：验证转嫁禁令的 evidence 缺口（check 层 failure_kind: verification_evidence_gap）——
   // 设计内求人时刻，重试无意义，首触即 halt；不入 SIGNATURE_HALT_KINDS（不吃 no_progress 口径）。

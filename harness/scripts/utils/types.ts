@@ -424,6 +424,12 @@ export interface CheckResult {
   blocking_class?: string;
   /** spec Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
   visual_resolution_rows?: VisualHandoffResolutionRow[];
+  /**
+   * t0（plan f7a3d9c2）：check → runner 的进程内结构化 payload（如 visual_diff 的指纹/
+   * 轮次账本评估）。**不裸进 summary.json**（其 blocker schema additionalProperties:
+   * false）——runner 消费后经账本侧车 + 显式 schema 字段（summary.visual_round）落盘。
+   */
+  structured?: unknown;
 }
 
 /** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
@@ -500,6 +506,25 @@ export interface HarnessRunSummary {
     kind?: string;
   };
   soft_advisories?: SoftAdvisory[];
+  /**
+   * t1（plan f7a3d9c2）：视觉轮次账本回执——runner 追加账本后回传（goal-runner 写入
+   * events.jsonl 做 integrity 对账）。disposition=duplicate 时同样带重放后的 decision
+   * （rev5：外层 gate 在 agent 自跑首检 fuse 后必须仍能看到）。显式 schema 字段，
+   * 与 schemas/summary.schema.json 同步（不裸塞 additionalProperties:false 顶层）。
+   */
+  visual_round?: {
+    loop_id: string;
+    attempt?: string;
+    row_hash?: string;
+    /** append_failed=账本落盘失败（review-fix codex P1-2）——goal-runner 据此 fail-closed halt */
+    disposition: 'appended' | 'duplicate' | 'append_failed';
+    decision?: {
+      fused: boolean;
+      failure_kind?: string;
+      attribution?: string;
+      residual_fingerprints?: string[];
+    };
+  };
 }
 
 /** script-report.json checks 计数摘要 */

@@ -13,6 +13,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { spawn } from 'child_process';
 import * as readline from 'readline';
 import minimist from 'minimist';
@@ -21,11 +22,25 @@ import { loadFrameworkConfig, featureDir, featurePhaseReportsDir } from '../conf
 import { isHumanVerified } from './utils/fidelity-shared';
 import {
   isScreenAwaitConfirmEligible,
+  hashScreenshotFile,
   type VisualDiffScreenEntry,
   type VisualDiffReport,
+  type VisualDiffStructuredPayload,
 } from '../../profiles/hmos-app/harness/visual-diff-check';
 import { resolveCurrentBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from '../../profiles/hmos-app/harness/authoritative-ref-images';
+import {
+  appendFeedbackEntry,
+  commitFeedbackTransaction,
+  feedbackJournalPath,
+  newFeedbackId,
+  reconcileFeedbackJournal,
+  reviewFeedbackLedgerPath,
+  FEEDBACK_LEDGER_SCHEMA_VERSION,
+  type FeedbackLedgerEntry,
+  type HumanIssueKind,
+  type MachineSignalsSnapshot,
+} from './utils/review-feedback-ledger';
 
 /**
  * testing 的派生聚合 blocker id——visual_diff FAIL 时**永远同时存在**（只是 blocker_fail_count≥1
@@ -105,6 +120,97 @@ export function safeWriteVisualDiffJson(jsonPath: string, report: VisualDiffRepo
   fs.writeFileSync(jsonPath, Buffer.from(`${JSON.stringify(report, null, 2)}\n`, 'utf-8'));
 }
 
+// ---------------------------------------------------------------------------
+// t6（f7a3d9c2）：回灌台账辅助——oracle 版本指纹 / 结构化 payload 读取 / snapshot 构造
+// ---------------------------------------------------------------------------
+
+/** layout-oracle 代码指纹（版本变化 → ledger 历史样本失效标注） */
+export function computeOracleVersion(): string {
+  const oraclePath = path.resolve(__dirname, '../../profiles/hmos-app/harness/layout-oracle-check.ts');
+  try {
+    return createHash('sha256').update(fs.readFileSync(oraclePath)).digest('hex').slice(0, 12);
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** 最新 script-report.json 里的 visual_diff 结构化 payload（snapshot 数据源） */
+export function loadVisualDiffPayload(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+): VisualDiffStructuredPayload | null {
+  try {
+    const reportPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'script-report.json');
+    if (!fs.existsSync(reportPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) as {
+      checks?: Array<{ structured?: { kind?: string } }>;
+    };
+    for (const c of parsed.checks ?? []) {
+      if (c.structured && c.structured.kind === 'visual_diff') {
+        return c.structured as VisualDiffStructuredPayload;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * snapshot 构造 + 一致性校验（codex：不能直接吃"最新报告"——snapshot 的 build/hash/
+ * oracle_version 必须与**当前待确认屏**完全一致，否则旧报告制造错误 FN/FP）。
+ * 返回 null=不一致，调用方拒绝落账并提示重跑 harness。
+ */
+export function buildScreenSnapshot(
+  projectRoot: string,
+  screen: VisualDiffScreenEntry,
+  payload: VisualDiffStructuredPayload | null,
+  currentBuildFp: string,
+  oracleVersion: string,
+): MachineSignalsSnapshot | null {
+  const shotRel = screen.screenshot_path ?? '';
+  const shotAbs = path.isAbsolute(shotRel) ? shotRel : path.resolve(projectRoot, shotRel);
+  const fileHash = hashScreenshotFile(shotAbs);
+  const boundHash = screen.evaluated_screenshot_hash?.trim() || screen.screenshot_hash?.trim() || '';
+  if (!fileHash || !boundHash || fileHash !== boundHash) return null;
+  if (screen.evaluated_build_fingerprint?.trim() && screen.evaluated_build_fingerprint.trim() !== currentBuildFp) {
+    return null;
+  }
+  // payload 存在但 build 不一致=旧报告——拒绝消费（重跑 harness 刷新）
+  if (payload && payload.build_fingerprint && payload.build_fingerprint !== currentBuildFp) return null;
+  const hits: MachineSignalsSnapshot['hits'] = [];
+  for (const f of payload?.t8_findings ?? []) {
+    if (f.screen_id !== screen.screen_id) continue;
+    if (f.tier === 'hard') hits.push({ id: f.signal, status: 'FAIL' });
+    else if (f.tier === 'warn') hits.push({ id: f.signal, status: 'WARN' });
+    // advisory 不入 snapshot（非阻断信号，不参与"全绿"判定）
+  }
+  // review-fix 轮3（codex P2-1）：unstable 屏 T8 命中按屏归属入 hits（WARN 档）
+  for (const f of payload?.t8_unstable_findings ?? []) {
+    if (f.screen_id !== screen.screen_id) continue;
+    hits.push({ id: f.signal, status: 'WARN' });
+  }
+  // 报告级信号（OCR/placement/M1 等）**不可归屏**——单独入 report_level_hits，不冒充
+  // 该屏信号（否则屏 B 的真实漏检不计 FN、还能 overrule 只发生在屏 A 的信号）。
+  // 排除 human_confirm 自身（"待签"信号非缺陷发现）。
+  const reportLevel: MachineSignalsSnapshot['hits'] = [];
+  for (const id of payload?.source_fail_hit_ids ?? []) {
+    if (id === 'visual_diff_human_confirm_required') continue;
+    reportLevel.push({ id, status: 'FAIL' });
+  }
+  for (const id of payload?.source_warn_ids ?? []) {
+    if (!reportLevel.some(h => h.id === id)) reportLevel.push({ id, status: 'WARN' });
+  }
+  return {
+    hits,
+    ...(reportLevel.length > 0 ? { report_level_hits: reportLevel } : {}),
+    build_fingerprint: currentBuildFp,
+    screenshot_hash: boundHash,
+    oracle_version: oracleVersion,
+  };
+}
+
 function openInSystemViewer(absPath: string): void {
   const plat = process.platform;
   try {
@@ -146,6 +252,13 @@ async function main(): Promise<number> {
     console.error(`[visual-confirm] 未找到 ${path.relative(projectRoot, jsonPath)}——先跑 testing harness 采集。`);
     return 2;
   }
+  // t6②：启动 reconciliation——发现 pending journal（上次事务被中断）先幂等补完
+  const journalPath = feedbackJournalPath(projectRoot, feature);
+  const ledgerPath = reviewFeedbackLedgerPath(projectRoot, feature);
+  const recon = reconcileFeedbackJournal({ journalPath, ledgerPath, expectedVisualDiffPath: jsonPath });
+  if (recon.recovered) {
+    console.log(`[visual-confirm] ${recon.detail}`);
+  }
   const report = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as VisualDiffReport;
   const currentFp = resolveCurrentBuildFingerprint(projectRoot, feature, phase);
   if (!currentFp) {
@@ -154,6 +267,77 @@ async function main(): Promise<number> {
       '请确认 testing harness 已完整跑到 install 阶段后重试。',
     );
     return 2;
+  }
+  const oracleVersion = computeOracleVersion();
+  const payload = loadVisualDiffPayload(projectRoot, feature, phase);
+
+  // t6④：--overrule <screen> --signal <signal>——真人对信号已报缺陷判"不是问题"（FP 样本）。
+  // 发生在迭代中（非 await 态），不改 visual-diff.json 判定——ledger 记录 + 由 critic 下轮
+  // 携人工结论重判；gate 升档评审消费 FP 计数。
+  if (typeof argv.overrule === 'string' && argv.overrule.trim()) {
+    const screenId = argv.overrule.trim();
+    const signal = typeof argv.signal === 'string' ? argv.signal.trim() : '';
+    if (!signal) {
+      console.error('[visual-confirm] --overrule 须同时给 --signal <signal>（被否决的信号 id）');
+      return 2;
+    }
+    const screen = report.screens.find(s => s.screen_id === screenId);
+    if (!screen) {
+      console.error(`[visual-confirm] 屏 ${screenId} 不在 visual-diff.json`);
+      return 2;
+    }
+    const snapshot = buildScreenSnapshot(projectRoot, screen, payload, currentFp, oracleVersion);
+    if (!snapshot) {
+      console.error(
+        '[visual-confirm] snapshot 一致性校验失败（截图/build/报告与当前屏不一致）——先重跑 testing harness 刷新后再落账，否则旧报告会制造错误 FP/FN。',
+      );
+      return 2;
+    }
+    // review-fix（codex P2-1）：被否决的 signal 必须真实存在于当前机器信号快照——
+    // 任意字符串会制造无中生有的 FP 样本污染升档数据。
+    const overrulable = [...snapshot.hits, ...(snapshot.report_level_hits ?? [])];
+    if (!overrulable.some(h => h.id === signal)) {
+      console.error(
+        `[visual-confirm] signal=${signal} 不在当前机器信号快照中（可否决：${overrulable.map(h => h.id).join(', ') || '无'}）——只能否决真实报出的信号。`,
+      );
+      return 2;
+    }
+    if (!snapshot.hits.some(h => h.id === signal)) {
+      console.log(`  注：${signal} 是报告级信号（无逐屏归属）——FP 样本归因到信号本身，不绑定本屏。`);
+    }
+    const rlOv = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      let by = '';
+      for (;;) {
+        by = (await ask(rlOv, '  请输入你的署名（真人）： ')).trim();
+        if (isAcceptableSigner(by)) break;
+        console.log('  ✗ 署名无效，请重输。');
+      }
+      const reason = (await ask(rlOv, `  否决信号 ${signal}@${screenId} 的理由（一行）： `)).trim();
+      const entry: FeedbackLedgerEntry = {
+        schema_version: FEEDBACK_LEDGER_SCHEMA_VERSION,
+        at: new Date().toISOString(),
+        feedback_id: newFeedbackId(),
+        feature,
+        screen: screenId,
+        human_verdict: 'overrule',
+        reason,
+        by,
+        signal,
+        build_fingerprint: snapshot.build_fingerprint,
+        screenshot_hash: snapshot.screenshot_hash,
+        oracle_version: snapshot.oracle_version,
+        machine_signals_snapshot: snapshot,
+      };
+      appendFeedbackEntry(ledgerPath, entry);
+      console.log(
+        `[visual-confirm] overrule 已落账（FP 样本，feedback_id=${entry.feedback_id}）：${path.relative(projectRoot, ledgerPath)}\n` +
+        '判定文件未改动——critic 下轮携本条人工结论重判该信号；FP 计数进校准报告升档评审素材。',
+      );
+    } finally {
+      rlOv.close();
+    }
+    return 0;
   }
 
   // codex P1a：报告级 await gate——门禁结论须为 await_human_confirm（全份干净、唯一阻塞=真人确认）
@@ -205,25 +389,40 @@ async function main(): Promise<number> {
       }
       const canConfirm = Boolean(refAbs && fs.existsSync(refAbs));
 
+      // t6③：先做 snapshot 一致性校验——不一致（旧报告/截图漂移）拒绝对该屏落账
+      const snapshot = buildScreenSnapshot(projectRoot, screen, payload, currentFp, oracleVersion);
+      if (!snapshot) {
+        console.log('  ⚠ snapshot 一致性校验失败（截图/build/报告与当前屏不一致）——本屏跳过，请重跑 harness 后再确认。');
+        continue;
+      }
+
       const prompt = canConfirm ? '  认可(y) / 打回(f) / 跳过(s)？ ' : '  打回(f) / 跳过(s)？（无参考图，不能认可） ';
       const ans = (await ask(rl, prompt)).trim().toLowerCase();
       if (ans === 'y' && !canConfirm) {
         console.log('  ✗ 无参考原图不能认可，已按跳过处理。');
         continue;
       }
-      if (ans === 'y') {
-        if (!signer) {
-          // 首次表态前问一次署名，校验合法
-          for (;;) {
-            signer = (await ask(rl, '  请输入你的署名（真人；不可为 user_requirement/自动化身份）： ')).trim();
-            if (isAcceptableSigner(signer)) break;
-            console.log('  ✗ 署名无效（空/自动化身份/user_requirement 均不接受），请重输。');
-          }
+      if (ans !== 'y' && ans !== 'f') {
+        console.log('  ⏭ 跳过（未改动）');
+        continue;
+      }
+      if (!signer) {
+        // 首次表态前问一次署名，校验合法
+        for (;;) {
+          signer = (await ask(rl, '  请输入你的署名（真人；不可为 user_requirement/自动化身份）： ')).trim();
+          if (isAcceptableSigner(signer)) break;
+          console.log('  ✗ 署名无效（空/自动化身份/user_requirement 均不接受），请重输。');
         }
+      }
+
+      let verdict: 'approve' | 'reject';
+      let reason = '';
+      let issueKind: HumanIssueKind | undefined;
+      if (ans === 'y') {
         applyConfirm(screen, signer);
-        changed = true;
+        verdict = 'approve';
         console.log(`  ✓ 已认可，confirmed_by=${signer}`);
-      } else if (ans === 'f') {
+      } else {
         console.log('  逐行输入 must_fix（差异描述），空行结束：');
         const mustFix: string[] = [];
         for (;;) {
@@ -231,20 +430,58 @@ async function main(): Promise<number> {
           if (!line) break;
           mustFix.push(line);
         }
+        // t6⑤：问题类别（人描述类别，FN 归因由程序按映射完成——非 signals_that_missed 自填）
+        const kindAns = (
+          await ask(rl, '  问题类别？1=几何重叠 2=文本位置 3=整块缺渲染 4=颜色/样式 5=其他/不确定（回车=5）： ')
+        ).trim();
+        issueKind = (
+          { '1': 'geometry_overlap', '2': 'text_placement', '3': 'missing_render', '4': 'visual_style' } as Record<string, HumanIssueKind>
+        )[kindAns] ?? 'other';
         applyReject(screen, mustFix);
-        changed = true;
-        console.log(`  ✓ 已打回，verdict=fail，must_fix ${mustFix.length} 条`);
-      } else {
-        console.log('  ⏭ 跳过（未改动）');
+        verdict = 'reject';
+        reason = mustFix.join('；');
+        console.log(`  ✓ 已打回，verdict=fail，must_fix ${mustFix.length} 条（issue_kind=${issueKind}）`);
       }
+
+      // t6①/②：崩溃可恢复事务——journal(pending) → 原子替换 visual-diff.json →
+      // append ledger（feedback_id 幂等）→ journal 清除；中断由启动 reconciliation 恢复。
+      const entry: FeedbackLedgerEntry = {
+        schema_version: FEEDBACK_LEDGER_SCHEMA_VERSION,
+        at: new Date().toISOString(),
+        feedback_id: newFeedbackId(),
+        feature,
+        screen: screen.screen_id,
+        human_verdict: verdict,
+        ...(reason ? { reason } : {}),
+        by: signer,
+        ...(issueKind ? { human_issue_kind: issueKind } : {}),
+        build_fingerprint: snapshot.build_fingerprint,
+        screenshot_hash: snapshot.screenshot_hash,
+        oracle_version: snapshot.oracle_version,
+        machine_signals_snapshot: snapshot,
+      };
+      commitFeedbackTransaction({
+        journalPath,
+        ledgerPath,
+        journal: {
+          feedback_id: entry.feedback_id,
+          at: entry.at,
+          entry,
+          visual_diff_next: report,
+          visual_diff_path: jsonPath,
+          state: 'pending',
+        },
+      });
+      changed = true;
     }
   } finally {
     rl.close();
   }
 
   if (changed) {
-    safeWriteVisualDiffJson(jsonPath, report);
-    console.log(`\n[visual-confirm] 已写入 ${path.relative(projectRoot, jsonPath)}（无 BOM，绑定字段未动）。`);
+    console.log(
+      `\n[visual-confirm] 判定与台账已事务化落盘：${path.relative(projectRoot, jsonPath)} + ${path.relative(projectRoot, ledgerPath)}（append-only）。`,
+    );
     const prefix = layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness';
     console.log(`续跑本 run 收尾：在 goal-report 找到 run_id 后跑\n  npm --prefix ${prefix} run goal -- --feature ${feature} --resume <run_id> --force-resume`);
   } else {

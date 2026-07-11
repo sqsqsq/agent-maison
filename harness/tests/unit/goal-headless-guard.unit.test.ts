@@ -25,6 +25,8 @@ import {
   parseHeadlessInteractionSentinel,
 } from '../../scripts/utils/goal-headless-sentinel';
 import {
+  collectUncommittedVisualAttemptIds,
+  collectVisualRoundRowHashes,
   countTransientApiRetries,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
@@ -942,6 +944,28 @@ export function runAll(): UnitCaseResult[] {
         assert(sig === 'a|b', sig);
       },
     },
+    {
+      name: 'f7a3 轮3：pending attempt 收窄（仅 testing、仅最后一个未提交）+ 期望集含 duplicate/recovered',
+      run: () => {
+        const events = [
+          { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i1' },
+          { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i2' },
+          { type: 'visual_round', phase: 'testing', visual_attempt: 'i2', row_hash: 'aaaa000000000000', disposition: 'duplicate' },
+          { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i3' },
+          { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i4' },
+        ];
+        const pending = collectUncommittedVisualAttemptIds(events as never);
+        assert(pending.length === 1 && pending[0] === 'i4', `仅最后一个 testing 未提交 invocation：${JSON.stringify(pending)}`);
+        const withRecovery = [
+          ...events,
+          { type: 'visual_round', phase: 'testing', visual_attempt: 'i3', row_hash: 'bbbb000000000000', disposition: 'recovered' },
+        ];
+        const expected = collectVisualRoundRowHashes(withRecovery as never);
+        assert(expected.includes('aaaa000000000000') && expected.includes('bbbb000000000000'), JSON.stringify(expected));
+        const afterRecovery = collectUncommittedVisualAttemptIds(withRecovery as never);
+        assert(afterRecovery.length === 1 && afterRecovery[0] === 'i4', 'recovery event 关闭旧 pending 身份');
+      },
+    },
     // ======================================================================
     // P0-D（b8f36a12）：API 断流哨兵——adapter 感知 + CLI 错误信封锚定
     // ======================================================================
@@ -959,6 +983,42 @@ export function runAll(): UnitCaseResult[] {
         assert(hit !== null, 'expected hit');
         assert(hit!.code === 'transient_api_error', hit!.code);
         assert(hit!.matchedLine.includes('Connection closed'), hit!.matchedLine);
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'f7a3d9c2/t3a stream-json 信封：api_retry 529 → transient；401 鉴权 → 不误归',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const logPath = path.join(tmp, 'agent-output.log');
+        // ①529 overloaded：结构化 api_retry 事件 → transient 命中
+        fs.writeFileSync(
+          logPath,
+          [
+            JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+            JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 1, error_status: 529, error: 'overloaded' }),
+          ].join('\n'),
+          'utf-8',
+        );
+        const hit = parseHeadlessApiError(logPath, 'claude');
+        assert(hit !== null && hit.code === 'transient_api_error', `529 应命中：${JSON.stringify(hit)}`);
+        // ②401 authentication_failed（2026-07-11 宿主实采形状）：鉴权失败非断流，盲 backoff 会空转
+        fs.writeFileSync(
+          logPath,
+          [
+            JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 1, error_status: 401, error: 'authentication_failed' }),
+            JSON.stringify({ type: 'result', subtype: 'success', is_error: true, api_error_status: 401, result: 'Failed to authenticate. API Error: 401 Invalid authentication credentials' }),
+          ].join('\n'),
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(logPath, 'claude') === null, '401 鉴权失败不得归 transient_api_error');
+        // ③result is_error + api_error_status 503 → transient
+        fs.writeFileSync(
+          logPath,
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: true, api_error_status: 503, result: 'service unavailable' }),
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(logPath, 'claude') !== null, 'result 503 应命中');
         fs.rmSync(tmp, { recursive: true, force: true });
       },
     },

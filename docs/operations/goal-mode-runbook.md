@@ -162,10 +162,12 @@ goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[
 | 机制 | 行为 |
 |------|------|
 | **无进展守卫** | 同一 phase 连续 attempt：`deterministic_gate_or_artifact_missing` + 相同 blocker 签名 + 产物 delta 零（存在性/内容 hash，**非 mtime**）→ 立即 HALT |
+| **指纹级熔断（f7a3d9c2）** | testing 视觉迭代：check 比对 `visual-rounds.ledger.jsonl`，连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差 → `failure_kind=no_progress_fuse` **首触即 HALT**（不烧重试预算；归因 `no_fix_attempt`/`ineffective_fix` 在 blocker details；duplicate 重放保证 agent 自跑首检的 fuse 外层 gate 仍可见）。与旧 `no_progress_visual_gap`（blocker-id 粗粒度签名熔断）并存：fuse 更细更先触发，signature 熔断留作兜底 |
+| **账本完整性（f7a3d9c2）** | testing gate/resume 启动时 events↔ledger 反向对账：期望行缺失/被改（含 decision）→ `visual_ledger_integrity` HALT——删账本行绕不过熔断，损坏不解释成空历史（运行时一致性防护，非密码学防篡改） |
 | **chrys sentinel** | `agent-output.log` 逐行 JSON 命中 `code=headless_interaction_required` → 立即 HALT + `agent_interaction_required` 事件 |
 | **重试上下文** | 产物缺失类失败不注入「先 revert」话术；仅 `code_regression` 保留 revert-first |
 
-events 字段：`failure_kind_classified`、`blocker_signature`、`halt_reason`、`interaction_question`。
+events 字段：`failure_kind_classified`、`blocker_signature`、`halt_reason`、`interaction_question`；f7a3d9c2 新增 `visual_round`（loop_id/visual_attempt/row_hash/disposition/fused——账本回执，integrity 对账期望集）与 `critic_receipt_produced`。轮次身份：runner 对 agent 与 gate 双注入 `MAISON_GOAL_RUN_ID`/`MAISON_GOAL_ATTEMPT`（attempt=events 回放的 invocation 序数，跨 `--resume` 单调，绝不用 phase 内 retries 计数）。
 
 ## 宿主侧实机冒烟（chrys，跨机器）
 

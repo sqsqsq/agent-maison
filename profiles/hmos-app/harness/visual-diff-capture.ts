@@ -25,6 +25,7 @@ import {
 } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
+import { sampleQuiescent } from './quiescence-sampling';
 import { collectP0OverlayTargetIds, isP0VisualTargetScreen, isOverlayRootScreen } from './visual-diff-targets';
 import { resolveNavForTargets, type NavConfig, type NavScreenSteps } from './visual-diff-nav';
 
@@ -82,6 +83,14 @@ export interface VisualDiffCaptureOptions {
   navExecutorFn?: VisualDiffNavExecutorFn;
   /** t2：布局树 dump 执行器；缺省 → 各屏 layout_dump_status=unavailable（能力缺失，非采集失败） */
   layoutDumpFn?: VisualDiffLayoutDumpFn;
+  /**
+   * t4b（f7a3d9c2，2026-07-11 真机双拍数据回填后启用）：静稳采样——shot₁→dump₁→dump₂→shot₂
+   * 双稳判据（app 裁剪 hash + 布局签名）替代单 shot+dump；重试耗尽 → layout_dump_status=
+   * 'unstable'（T8 降档独立 id）。**仅 pixel_1to1 装配**（check-testing 侧与 layoutDumpFn
+   * 同守卫）；缺省/false=旧行为逐字节不变（t6b 守恒）。真机实测（bc-openCard 8 屏）：
+   * 5/8 屏整图 hash 漂移而 app 裁剪判据 8/8 稳，动效屏 3 组内收敛——默认重试 2 已够。
+   */
+  quiescenceSampling?: boolean;
   bundleName?: string;
   deviceSn?: string;
   /** 对 shot vs authoritative ref 写入 score_floor（jimp 不可用则跳过） */
@@ -188,6 +197,74 @@ function runLayoutDump(
     errors.push(`${screenId}: 布局树 dump 异常 — ${(e as Error).message}`);
     return 'failed';
   }
+}
+
+/**
+ * t4b：单屏取材（截图+布局树）统一入口。
+ * - 旧路径（缺省）：单 shot + runLayoutDump（行为逐字节不变，t6b 守恒）；
+ * - 静稳路径（quiescenceSampling && layoutDumpFn）：t4a 采样器双 shot 双 dump——probe
+ *   产物落 `_quiescence/`（记录含逐组 hash/签名/时间戳），final=正式 shot/dump 路径；
+ *   稳 → 'captured'；重试耗尽 → 'unstable'+reason（judgment 不禁，T8 降档观测）；
+ *   设备执行失败 → ok:false（与判据不稳区分，按采集失败处置）。
+ */
+function acquireScreenArtifacts(
+  opts: VisualDiffCaptureOptions,
+  screenId: string,
+  shotAbs: string,
+  reportDir: string,
+  errors: string[],
+): {
+  ok: boolean;
+  error?: string;
+  dumpStatus: 'captured' | 'failed' | 'unavailable' | 'unstable';
+  unstableReason?: string;
+} {
+  if (!(opts.quiescenceSampling && opts.layoutDumpFn)) {
+    const shot = opts.screenshotFn!({
+      screenId,
+      destAbs: shotAbs,
+      bundleName: opts.bundleName,
+      deviceSn: opts.deviceSn,
+    });
+    if (!shot.ok || !fs.existsSync(shotAbs)) {
+      return { ok: false, error: `截图失败${shot.error ? ` — ${shot.error}` : ''}`, dumpStatus: 'unavailable' };
+    }
+    return { ok: true, dumpStatus: runLayoutDump(opts, screenId, reportDir, errors) };
+  }
+  const qDir = path.join(reportDir, '_quiescence');
+  fs.mkdirSync(qDir, { recursive: true });
+  const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
+  const dumpAbs = path.join(reportDir, `layout-${screenId}.json`);
+  const q = sampleQuiescent({
+    probeShotAbs: path.join(qDir, `shot-${slug}.probe.png`),
+    probeDumpAbs: path.join(qDir, `layout-${slug}.probe.json`),
+    finalShotAbs: shotAbs,
+    finalDumpAbs: dumpAbs,
+    fns: {
+      screenshotFn: destAbs =>
+        opts.screenshotFn!({ screenId, destAbs, bundleName: opts.bundleName, deviceSn: opts.deviceSn }),
+      layoutDumpFn: destAbs =>
+        opts.layoutDumpFn!({ screenId, destAbs, deviceSn: opts.deviceSn, bundleName: opts.bundleName }),
+    },
+  });
+  try {
+    fs.writeFileSync(
+      path.join(qDir, `${slug}.records.json`),
+      `${JSON.stringify({ stable: q.stable, attempts: q.attempts, unstable_reason: q.unstable_reason, records: q.records }, null, 2)}\n`,
+      'utf-8',
+    );
+  } catch { /* 记录侧车失败不阻断取材 */ }
+  if (q.error) {
+    return { ok: false, error: `静稳采样失败 — ${q.error}`, dumpStatus: 'failed' };
+  }
+  if (!fs.existsSync(shotAbs)) {
+    return { ok: false, error: '静稳采样未产出最终截图', dumpStatus: 'failed' };
+  }
+  if (q.stable) return { ok: true, dumpStatus: 'captured' };
+  errors.push(
+    `${screenId}: 静稳采样重试耗尽（${q.unstable_reason ?? 'unknown'}）——标 unstable，T8 该屏降档观测（独立 id，不阻断 candidate-pass）`,
+  );
+  return { ok: true, dumpStatus: 'unstable', unstableReason: q.unstable_reason };
 }
 
 export function buildVisualDiffSkeletonEntry(
@@ -308,6 +385,12 @@ export function mergeCapturedScreenEntry(
   // t2：本轮真跑过 dump 则更新状态（保留判定不受影响——评估/采集新鲜度解耦）
   if (captured.layout_dump_status) {
     merged.layout_dump_status = captured.layout_dump_status;
+    // t4b：unstable 原因随状态同步（非 unstable 轮清掉旧 reason）
+    if (captured.layout_dump_unstable_reason) {
+      merged.layout_dump_unstable_reason = captured.layout_dump_unstable_reason;
+    } else {
+      delete merged.layout_dump_unstable_reason;
+    }
   }
   return merged;
 }
@@ -536,14 +619,10 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         continue;
       }
     }
-    const shot = opts.screenshotFn({
-      screenId: screen.id,
-      destAbs: paths.abs,
-      bundleName: opts.bundleName,
-      deviceSn: opts.deviceSn,
-    });
-    if (!shot.ok || !fs.existsSync(paths.abs)) {
-      errors.push(`${screen.id}: 截图失败${shot.error ? ` — ${shot.error}` : ''}`);
+    // t2/t4b：取材统一入口——旧路径=单 shot+dump；静稳路径=双 shot 双 dump（仅 pixel_1to1 装配）
+    const acq = acquireScreenArtifacts(opts, screen.id, paths.abs, reportDir, errors);
+    if (!acq.ok) {
+      errors.push(`${screen.id}: ${acq.error ?? '取材失败'}`);
       p0CaptureFailures.push(screen.id);
       continue;
     }
@@ -570,8 +649,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       row.edge_tile_divergence = edge.divergence;
       row.edge_over_threshold_tiles = edge.tiles;
     }
-    // t2：截图成功后同步 dump 布局树（同一时点、同键持久）；失败区分能力缺失 vs 采集失败。
-    row.layout_dump_status = runLayoutDump(opts, screen.id, reportDir, errors);
+    row.layout_dump_status = acq.dumpStatus;
+    if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
     // P0-9a：机器盖构建指纹戳（agent 无须也不应手填）——后续判定即绑定本构建。
     if (currentFp) row.evaluated_build_fingerprint = currentFp;
     capturedScreens.push({ entry: row, hash: screenshotHash });
@@ -598,9 +677,10 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         p0CaptureFailures.push(ov.id);
         continue;
       }
-      const shot = opts.screenshotFn({ screenId: ov.id, destAbs: paths.abs, bundleName: opts.bundleName, deviceSn: opts.deviceSn });
-      if (!shot.ok || !fs.existsSync(paths.abs)) {
-        errors.push(`${ov.id}: overlay 截图失败${shot.error ? ` — ${shot.error}` : ''}`);
+      // t2/t4b：overlay 屏在 sheet 开启态（导航后）取材——与主屏同一统一入口
+      const acq = acquireScreenArtifacts(opts, ov.id, paths.abs, reportDir, errors);
+      if (!acq.ok) {
+        errors.push(`${ov.id}: overlay ${acq.error ?? '取材失败'}`);
         p0CaptureFailures.push(ov.id);
         continue;
       }
@@ -620,8 +700,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       row.screenshot_hash = screenshotHash;
       if (currentFp) row.evaluated_build_fingerprint = currentFp;
       if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
-      // t2：overlay 屏在 sheet 开启态（导航后、截图同时点）dump 布局树
-      row.layout_dump_status = runLayoutDump(opts, ov.id, reportDir, errors);
+      row.layout_dump_status = acq.dumpStatus;
+      if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
       capturedScreens.push({ entry: row, hash: screenshotHash });
       continue;
     }
