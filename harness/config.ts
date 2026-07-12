@@ -1557,6 +1557,31 @@ function resolveFrameworkRootArg(
 }
 
 /**
+ * state_file 的布局感知解析：默认值 `framework/harness/state/...` 是 consumer 语义;
+ * standalone(框架源仓,frameworkRoot==projectRoot)下须剥 `framework/` 前缀落到
+ * 物理存在的 `harness/state/`——否则会在源仓根下凭空 mkdir 出 framework/harness/state/
+ * 杂散树(2026-07-08 事故:杂散 .current-correction.json 被打进宿主发布件与
+ * RELEASE-MANIFEST,宿主清理删除后 integrity 误报 framework_drift 阻断全 phase;
+ * scripts/release-excludes.json 的 "framework" 根目录排除为打包侧兜底,本函数修写入根因)。
+ * 非 framework/ 前缀的自定义覆盖、布局不可判(init 早期)保持原 path.resolve 语义。
+ */
+function resolveStateFilePath(projectRoot: string, rel: string): string {
+  // review-fix：先按旧语义 resolve 归一化（吸收 `..`/`.` 段），再做包含性判断——
+  // 字符串前缀剥离会把 `framework/../x` 多剥一层写出项目根（路径越界）。
+  const abs = path.resolve(projectRoot, rel);
+  try {
+    const layout = inferRepoLayout(projectRoot);
+    if (layout.kind === 'standalone') {
+      const fwPrefix = path.resolve(projectRoot, 'framework') + path.sep;
+      if (abs.startsWith(fwPrefix)) {
+        return path.join(layout.frameworkRoot, abs.slice(fwPrefix.length));
+      }
+    }
+  } catch { /* 布局不可判 → 保持原语义 */ }
+  return abs;
+}
+
+/**
  * 把 `framework.config.json` 中声明的相对路径统一解析为绝对路径。
  *
  * @param projectRoot 实例工程根的绝对路径
@@ -1585,10 +1610,7 @@ export function resolvePaths(
     glossaryYaml: path.resolve(projectRoot, cfg.paths.glossary),
     glossarySeedTxt: path.resolve(projectRoot, cfg.paths.glossary_seed),
     architectureMd: path.resolve(projectRoot, cfg.paths.architecture_md),
-    stateFile: path.resolve(
-      projectRoot,
-      cfg.paths.state_file ?? DEFAULT_PATHS.state_file!,
-    ),
+    stateFile: resolveStateFilePath(projectRoot, cfg.paths.state_file ?? DEFAULT_PATHS.state_file!),
     receiptDirPattern: cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!,
   };
 }
@@ -1894,11 +1916,11 @@ export function relFeatureArtifact(
   return toPosix(path.relative(projectRoot, featureArtifactPath(projectRoot, feature, base, opts)));
 }
 
-/** 阶段状态机文件绝对路径（agent 工作流强制门用） */
+/** 阶段状态机文件绝对路径（agent 工作流强制门用）——standalone 布局剥 framework/ 前缀 */
 export function statefilePath(projectRoot: string): string {
   const cfg = loadFrameworkConfig(projectRoot);
   const rel = cfg.paths.state_file ?? DEFAULT_PATHS.state_file!;
-  return path.resolve(projectRoot, rel);
+  return resolveStateFilePath(projectRoot, rel);
 }
 
 /**

@@ -330,6 +330,110 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    // 2026-07-08 事故回归：standalone(框架源仓)布局下默认 state_file 的 framework/
+    // 前缀不存在——statefilePath 若原样 resolve 会在源仓根下凭空创建 framework/harness/
+    // state/ 杂散树(曾被打进宿主发布件,清理后 integrity 误报 framework_drift)。
+    name: 'statefilePath: standalone 剥 framework/ 前缀;consumer 与自定义覆盖语义不变',
+    run: () => {
+      const write = (root: string, stateFileRel?: string): void => {
+        fs.writeFileSync(
+          path.join(root, 'framework.config.json'),
+          JSON.stringify({
+            schema_version: '1.1',
+            project_name: 'layout-test',
+            project_profile: { name: 'generic' },
+            agent_adapter: 'generic',
+            architecture: {
+              outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+              module_inner_layers: ['content'],
+              inner_dependency_direction: 'upward',
+              cross_module_exports_file: 'index.ts',
+            },
+            paths: {
+              features_dir: 'doc/features',
+              module_catalog: 'doc/module-catalog.yaml',
+              glossary: 'doc/glossary.yaml',
+              glossary_seed: 'doc/glossary-seed.txt',
+              architecture_md: 'doc/architecture.md',
+              ...(stateFileRel ? { state_file: stateFileRel } : {}),
+            },
+            active_workflow: 'spec-driven',
+          }),
+        );
+      };
+      // ① standalone:根下有 workflows/(无 framework/)→ 默认值剥前缀落 harness/state/。
+      // review-fix:断言不再只算路径——走正式写状态 API 真实落盘(mkdirSync recursive
+      // 正是杂散树制造者),证明文件写进 harness/state/ 且 framework/ 未被创建。
+      const standalone = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-standalone-'));
+      try {
+        fs.mkdirSync(path.join(standalone, 'workflows'), { recursive: true });
+        fs.copyFileSync(
+          path.resolve(__dirname, '..', '..', '..', 'workflows', 'spec-driven.workflow.yaml'),
+          path.join(standalone, 'workflows', 'spec-driven.workflow.yaml'),
+        );
+        write(standalone);
+        const abs = statefilePath(standalone).replace(/\\/g, '/');
+        assert(
+          abs === path.join(standalone, 'harness', 'state', '.current-phase.json').replace(/\\/g, '/'),
+          `standalone 应剥 framework/ 前缀:${abs}`,
+        );
+        const workflow = resolveWorkflowSpec(standalone);
+        mergeAndWritePhaseState(standalone, workflow, {
+          phase: 'coding',
+          feature: 'demo',
+          status: 'running',
+          started_at: new Date().toISOString(),
+        });
+        assert(
+          fs.existsSync(path.join(standalone, 'harness', 'state', '.current-phase.json')),
+          '正式写状态 API 应真实落盘到 harness/state/',
+        );
+        assert(!fs.existsSync(path.join(standalone, 'framework')), 'standalone 真实写盘后不得出现 framework/ 杂散树');
+      } finally {
+        fs.rmSync(standalone, { recursive: true, force: true });
+      }
+      // ② consumer:framework/ 树存在 → 默认值原样(既有语义守恒)
+      const consumer = mkProject();
+      try {
+        const abs = statefilePath(consumer).replace(/\\/g, '/');
+        assert(
+          abs === path.join(consumer, 'framework', 'harness', 'state', '.current-phase.json').replace(/\\/g, '/'),
+          `consumer 语义应不变:${abs}`,
+        );
+      } finally {
+        fs.rmSync(consumer, { recursive: true, force: true });
+      }
+      // ③ 非 framework/ 前缀的自定义覆盖:任何布局下保持原 resolve 语义
+      const custom = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-custom-'));
+      try {
+        fs.mkdirSync(path.join(custom, 'workflows'), { recursive: true });
+        write(custom, 'custom/state/.current-phase.json');
+        const abs = statefilePath(custom).replace(/\\/g, '/');
+        assert(
+          abs === path.join(custom, 'custom', 'state', '.current-phase.json').replace(/\\/g, '/'),
+          `自定义覆盖语义应不变:${abs}`,
+        );
+      } finally {
+        fs.rmSync(custom, { recursive: true, force: true });
+      }
+      // ④ review-fix(P1 路径越界):含 `..` 的 state_file 先归一化再判包含——
+      // `framework/../custom/x` 归一化后不在 framework/ 内 → 保持旧 resolve 语义
+      // (<root>/custom/x),绝不因字符串剥前缀写出项目根。
+      const dotdot = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-dotdot-'));
+      try {
+        fs.mkdirSync(path.join(dotdot, 'workflows'), { recursive: true });
+        write(dotdot, 'framework/../custom/state/.current-phase.json');
+        const abs = statefilePath(dotdot).replace(/\\/g, '/');
+        assert(
+          abs === path.join(dotdot, 'custom', 'state', '.current-phase.json').replace(/\\/g, '/'),
+          `含 .. 的配置应保持旧 resolve 语义、不得越界:${abs}`,
+        );
+      } finally {
+        fs.rmSync(dotdot, { recursive: true, force: true });
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

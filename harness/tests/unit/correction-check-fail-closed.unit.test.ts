@@ -11,7 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runCorrectionCheck } from '../../scripts/utils/correction-commands';
-import { readCorrectionState } from '../../scripts/utils/correction-state';
+import { correctionStatePath, readCorrectionState } from '../../scripts/utils/correction-state';
 
 export interface UnitCaseResult {
   name: string;
@@ -63,7 +63,10 @@ function mkGitProject(): string {
 }
 
 function writeCorrectionState(dir: string, baseCommit: string): void {
-  const abs = path.join(dir, 'framework', 'harness', 'state', '.current-correction.json');
+  // 夹具是 standalone 布局(根下 workflows/)——走 SSOT 路径 helper,不手拼
+  // framework/ 前缀(旧写法恰好依赖了 statefilePath 的布局无感 bug,即 2026-07-08
+  // 杂散 framework/harness/state/ 事故的形态)。
+  const abs = correctionStatePath(dir);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify({
     schema_version: '1.0',
