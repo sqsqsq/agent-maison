@@ -15,6 +15,7 @@ import {
   classifyCanaryResponse,
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
+  VISION_CANARY_PROBE_VERSION,
   type CanaryAnswerKey,
   type CanaryVerdict,
 } from './vision-canary';
@@ -156,6 +157,8 @@ export function finalizeInteractiveCanary(input: {
         probed_at: new Date(now()).toISOString(),
         reason: classify.reason,
         probed_via: 'interactive',
+        // plan c7d2e9a4 t1：探测协议版本——两写盘点一致，旧缓存缺字段自动 stale
+        probe_version: VISION_CANARY_PROBE_VERSION,
       },
     },
   });

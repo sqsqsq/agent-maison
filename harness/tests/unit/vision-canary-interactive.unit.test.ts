@@ -8,6 +8,7 @@ import {
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
   isCanaryAnswerComplete,
+  VISION_CANARY_PROBE_VERSION,
 } from '../../scripts/utils/vision-canary';
 import {
   startInteractiveCanaryChallenge,
@@ -214,6 +215,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           cfg.vision?.canary?.probed_at === new Date(1_700_000_000_000).toISOString(),
           String(cfg.vision?.canary?.probed_at),
         );
+        // plan c7d2e9a4 t1：交互式写盘同样带当前协议版本（两写盘点一致）
+        assert(
+          cfg.vision?.canary?.probe_version === VISION_CANARY_PROBE_VERSION,
+          `interactive 写盘须带 probe_version：${JSON.stringify(cfg.vision?.canary)}`,
+        );
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -270,7 +276,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         writeLocalConfig(interactiveRoot, {
           schema_version: '1.0',
           agent_adapter: 'cursor',
-          vision: { canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: new Date().toISOString(), probed_via: 'interactive' } },
+          // plan c7d2e9a4：SKIP 须当前协议版本（无版本旧缓存不再阻止重测）
+          vision: { canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: new Date().toISOString(), probed_via: 'interactive', probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         const r = await runCliConcurrently(
           ['--adapter', 'cursor', '--project-root', interactiveRoot, '--ttl-ms', '5000', '--poll-ms', '100'],

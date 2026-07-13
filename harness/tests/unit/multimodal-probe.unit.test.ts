@@ -14,7 +14,10 @@ import {
   isVisionCanaryFresh,
   isFreshInteractiveCanary,
   VISION_CANARY_INTERACTIVE_TTL_MS,
+  VISION_CANARY_NEGATIVE_TTL_MS,
+  VISION_CANARY_POSITIVE_TTL_MS,
 } from '../../scripts/utils/multimodal-probe';
+import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import {
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
@@ -136,7 +139,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         writeLocalConfig(tmp, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
         assert(r.imageInput === 'tool_read', r.reason);
@@ -151,10 +154,11 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-stale-'));
       try {
-        // 缓存记的是 claude 的探测结果，但当前查询的是 chrys —— adapter 变更即失效。
+        // 缓存记的是 claude 的探测结果，但当前查询的是 chrys —— adapter 变更即失效
+        //（带当前版本+近期时间，确保失效只因 adapter 不符）。
         writeLocalConfig(tmp, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'claude', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'claude', verdict: 'tool_read', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
         assert(r.imageInput === 'none', `应回退 chrys 真实声明 none，实得 ${r.imageInput}：${r.reason}`);
@@ -183,7 +187,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         writeLocalConfig(tmp, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         assert(readCanaryOcrCapableSignal(tmp, 'chrys') === true, '匹配 adapter + ocr_capable 应为 true');
         assert(readCanaryOcrCapableSignal(tmp, 'claude') === false, 'adapter 不匹配应为 false');
@@ -194,7 +198,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         writeLocalConfig(tmp2, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         assert(readCanaryOcrCapableSignal(tmp2, 'chrys') === false, 'verdict=tool_read 不应报 ocr_capable');
       } finally {
@@ -207,38 +211,100 @@ const cases: Array<{ name: string; run: () => void }> = [
   // I2（交互式缓存新鲜度单点收口 plan b7e42d19）：isVisionCanaryFresh + 四条硬语义
   // ==========================================================================
   {
-    name: 'I2 isVisionCanaryFresh: goal 来源（含缺省 probed_via）不受 TTL；interactive 超 24h → 不新鲜；adapter 不符/坏时间戳 → 不新鲜',
+    // plan c7d2e9a4 t4：goal 来源不再永久（tool_read 7d / none·ocr 24h）——原"headless
+    // 模型稳定假设"被 2026-07-12 事故推翻（额度/路由/权限会静默变，假 none 曾永久钳盲）。
+    name: 'I2/c7d2e9a4 isVisionCanaryFresh: goal 来源 TTL 分层；interactive 超 24h → 不新鲜；adapter 不符/坏时间戳 → 不新鲜',
     run: () => {
       const now = 1_700_000_000_000;
+      const PV = VISION_CANARY_PROBE_VERSION;
       const old = new Date(now - VISION_CANARY_INTERACTIVE_TTL_MS - 1).toISOString();
       const recent = new Date(now - 60_000).toISOString();
-      // goal 来源：即便很旧也新鲜（headless 模型稳定假设）
-      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'goal' }, 'chrys', now), 'goal 超龄仍新鲜');
-      // 缺省 probed_via 视作 goal（向后兼容 E1 旧缓存）
-      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: old }, 'chrys', now), '缺省 probed_via 视作 goal 不受 TTL');
-      // interactive 新鲜/超龄
-      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive' }, 'chrys', now), 'interactive 未超龄应新鲜');
-      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'interactive' }, 'chrys', now), 'interactive 超龄应不新鲜');
+      // goal tool_read：25h（超 24h、7d 内）仍新鲜；超 7d 不新鲜
+      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal tool_read 7d 内仍新鲜');
+      const beyond7d = new Date(now - VISION_CANARY_POSITIVE_TTL_MS - 1).toISOString();
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: beyond7d, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal tool_read 超 7d 不新鲜');
+      // goal 负结论：25h 即不新鲜（自动重探窗口）
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'none', probed_at: old, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal none 超 24h 不新鲜');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'ocr_capable', probed_at: old, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal ocr_capable 超 24h 不新鲜');
+      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'none', probed_at: recent, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal none 24h 内新鲜（真盲有效作答可短期采信）');
+      void VISION_CANARY_NEGATIVE_TTL_MS;
+      // interactive 新鲜/超龄（TTL 语义不变）
+      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive', probe_version: PV }, 'chrys', now), 'interactive 未超龄应新鲜');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'interactive', probe_version: PV }, 'chrys', now), 'interactive 超龄应不新鲜');
       // adapter 不符 / 坏时间戳 / 空
-      assert(!isVisionCanaryFresh({ adapter: 'claude', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive' }, 'chrys', now), 'adapter 不符不新鲜');
-      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: 'not-a-date', probed_via: 'interactive' }, 'chrys', now), '坏时间戳保守不新鲜');
+      assert(!isVisionCanaryFresh({ adapter: 'claude', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive', probe_version: PV }, 'chrys', now), 'adapter 不符不新鲜');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: 'not-a-date', probed_via: 'interactive', probe_version: PV }, 'chrys', now), '坏时间戳保守不新鲜');
       assert(!isVisionCanaryFresh(undefined, 'chrys', now), '无缓存不新鲜');
+    },
+  },
+  {
+    // plan c7d2e9a4 t1：协议版本迁移——旧缓存（缺 probe_version=v1，含 2026-07-12 假 none
+    // 毒缓存）与版本不符缓存一律 stale，下一次 UI goal 自动重探，用户零操作、无需删 local。
+    name: 'c7d2e9a4 isVisionCanaryFresh: 缺 probe_version 旧缓存 → stale；版本不符 → stale（毒缓存自愈通道）',
+    run: () => {
+      const now = 1_700_000_000_000;
+      const recent = new Date(now - 60_000).toISOString();
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'none', probed_at: recent, probed_via: 'goal' }, 'chrys', now), '无版本旧缓存（事故假 none 形态）应 stale');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'goal' }, 'chrys', now), '无版本正向缓存同样 stale（协议升级一致失效）');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'goal', probe_version: VISION_CANARY_PROBE_VERSION + 1 }, 'chrys', now), '版本不符应 stale');
+      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive' }, 'chrys', now), '交互式 SKIP 判据同样要求当前版本（委托传导）');
+    },
+  },
+  {
+    // rev5(codex P2)：未来时间戳拒绝——曾超前的时钟写出的 probed_at 会 fresh 到未来时刻
+    name: 'c7d2e9a4/rev5 isVisionCanaryFresh: 未来时间戳(超容差)→ 不新鲜；容差内小偏差 → 新鲜',
+    run: () => {
+      const now = 1_700_000_000_000;
+      const PV = VISION_CANARY_PROBE_VERSION;
+      const futureFar = new Date(now + 24 * 3600 * 1000).toISOString();
+      const futureNear = new Date(now + 60_000).toISOString();
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: futureFar, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal 未来+1d 应拒');
+      assert(!isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: futureFar, probed_via: 'interactive', probe_version: PV }, 'chrys', now), 'interactive 未来+1d 应拒');
+      assert(isVisionCanaryFresh({ adapter: 'chrys', verdict: 'tool_read', probed_at: futureNear, probed_via: 'goal', probe_version: PV }, 'chrys', now), '容差内(+1min)小时钟偏差应容忍');
+    },
+  },
+  {
+    // rev5(codex P3)：stale 归因——版本不符/坏时间戳不得被解释成"已超 24h"
+    name: 'c7d2e9a4/rev5 resolveContextAdapterImageInput: 版本不符的近期 interactive 缓存 → 回退声明但不标 interactive_canary_stale（归因准确）',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-probe-protostale-'));
+      try {
+        writeLocalConfig(tmp, {
+          schema_version: '1.0',
+          vision: {
+            canary: {
+              adapter: 'chrys',
+              verdict: 'tool_read',
+              probed_at: new Date(Date.now() - 60_000).toISOString(),
+              probed_via: 'interactive',
+              // 无 probe_version（协议升级前的旧缓存）——刚写不久，不是超龄
+            },
+          },
+        });
+        const r = resolveContextAdapterImageInput(tmp, FRAMEWORK_ROOT, 'chrys');
+        assert(r.imageInput === 'none', `旧协议缓存不得采信，应回退声明 none：${r.imageInput}`);
+        assert(!r.staleInteractiveCanary, '版本不符≠超龄，不得标 staleInteractiveCanary');
+        assert(!r.reason.includes('interactive_canary_stale'), `不得归因超 24h：${r.reason}`);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     },
   },
   {
     name: 'codex P1 isFreshInteractiveCanary: 仅新鲜 interactive → true；goal/缺省/超龄 interactive → false',
     run: () => {
       const now = 1_700_000_000_000;
+      const PV = VISION_CANARY_PROBE_VERSION;
       const recent = new Date(now - 60_000).toISOString();
       const old = new Date(now - VISION_CANARY_INTERACTIVE_TTL_MS - 1).toISOString();
       // 新鲜 interactive → true（唯一 SKIP 条件）
-      assert(isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive' }, 'chrys', now), '新鲜 interactive 应 true');
+      assert(isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'interactive', probe_version: PV }, 'chrys', now), '新鲜 interactive 应 true');
       // goal 来源即便很新 → false（不得阻交互式当前会话实测——本条是 codex P1 核心）
-      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'goal' }, 'chrys', now), 'goal 来源不得当交互式新鲜');
+      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probed_via: 'goal', probe_version: PV }, 'chrys', now), 'goal 来源不得当交互式新鲜');
       // 缺省 probed_via（旧 E1 缓存，视作 goal）→ false
-      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent }, 'chrys', now), '缺省 probed_via 不得当交互式新鲜');
+      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: recent, probe_version: PV }, 'chrys', now), '缺省 probed_via 不得当交互式新鲜');
       // 超龄 interactive → false
-      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'interactive' }, 'chrys', now), '超龄 interactive false');
+      assert(!isFreshInteractiveCanary({ adapter: 'chrys', verdict: 'tool_read', probed_at: old, probed_via: 'interactive', probe_version: PV }, 'chrys', now), '超龄 interactive false');
       assert(!isFreshInteractiveCanary(undefined, 'chrys', now), '无缓存 false');
     },
   },
@@ -256,6 +322,7 @@ const cases: Array<{ name: string; run: () => void }> = [
               verdict: 'tool_read',
               probed_at: new Date(Date.now() - VISION_CANARY_INTERACTIVE_TTL_MS - 3_600_000).toISOString(),
               probed_via: 'interactive',
+              probe_version: VISION_CANARY_PROBE_VERSION,
             },
           },
         });
@@ -281,6 +348,7 @@ const cases: Array<{ name: string; run: () => void }> = [
               verdict: 'tool_read',
               probed_at: new Date(Date.now() - 60_000).toISOString(),
               probed_via: 'interactive',
+              probe_version: VISION_CANARY_PROBE_VERSION,
             },
           },
         });
@@ -305,6 +373,7 @@ const cases: Array<{ name: string; run: () => void }> = [
               verdict: 'ocr_capable',
               probed_at: new Date(Date.now() - VISION_CANARY_INTERACTIVE_TTL_MS - 3_600_000).toISOString(),
               probed_via: 'interactive',
+              probe_version: VISION_CANARY_PROBE_VERSION,
             },
           },
         });
@@ -322,6 +391,7 @@ const cases: Array<{ name: string; run: () => void }> = [
               verdict: 'ocr_capable',
               probed_at: new Date(Date.now() - 60_000).toISOString(),
               probed_via: 'interactive',
+              probe_version: VISION_CANARY_PROBE_VERSION,
             },
           },
         });

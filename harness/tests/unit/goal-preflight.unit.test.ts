@@ -13,8 +13,11 @@ import {
   runGoalPreflight,
   reconcileRunAdapter,
   decideVisionCanaryProbe,
+  runVisionCanaryProbe,
 } from '../../scripts/utils/goal-preflight';
-import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
+import { writeLocalConfig, loadLocalConfig } from '../../scripts/utils/framework-local-config';
+import { buildCanaryPrompt, VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
+import type { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { DEFAULT_DEPENDENCY_POLICY, resolveAutoChain } from '../../scripts/utils/phase-transition-policy';
 import type { UnitCaseResult } from '../run-unit';
@@ -75,6 +78,45 @@ function withTmp(fn: (root: string) => void): void {
   }
 }
 
+async function withTmpAsync(fn: (root: string) => Promise<void>): Promise<void> {
+  const root = mkTmp();
+  try {
+    await fn(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    clearFrameworkConfigCache();
+  }
+}
+
+/**
+ * plan c7d2e9a4 t6：runVisionCanaryProbe 写盘边界的最小 frameworkRoot 夹具——
+ * agents/claude/adapter.yaml 只含 loadGoalCapability 声明级校验所需字段
+ * （不查模板文件存在）；harness/assets 由 ensureVisionCanaryAsset 自建。
+ */
+function setupCanaryFrameworkFixture(root: string): string {
+  const fw = path.join(root, 'fw');
+  const adapterDir = path.join(fw, 'agents', 'claude');
+  fs.mkdirSync(adapterDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(adapterDir, 'adapter.yaml'),
+    [
+      'adapter_name: claude',
+      'goal_capability:',
+      '  mode: native_goal',
+      '  native_goal:',
+      '    goal_condition_template: templates/goal-condition.md',
+      '    supports_resume: false',
+      '  external_runner:',
+      '    headless_invoke: \'claude -p "{{PROMPT}}"\'',
+      '    unattended:',
+      '      write_mode: accept-edits',
+      '      approval_mode: never',
+    ].join('\n'),
+    'utf-8',
+  );
+  return fw;
+}
+
 function preflightCtx(root: string, manifest: GoalManifest) {
   const cfg = loadFrameworkConfig(root);
   const resolvedProfile = loadResolvedProfile(root, cfg);
@@ -114,7 +156,7 @@ function baseManifest(adapter: string, endPhase: GoalManifest['end_phase'] = 'sp
   };
 }
 
-const cases: Array<{ name: string; run: () => void }> = [
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'resolveAdapterProvenance: --adapter → argv_adapter',
     run: () => {
@@ -452,7 +494,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       withTmp((root) => {
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         const manifestChrys = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
         const d1 = decideVisionCanaryProbe({ projectRoot: root, manifest: manifestChrys, chain: ['spec'], dryRun: false });
@@ -469,7 +511,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       withTmp((root) => {
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: '2026-07-08T00:00:00.000Z' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
         });
         const d = decideVisionCanaryProbe({
           projectRoot: root,
@@ -482,14 +524,17 @@ const cases: Array<{ name: string; run: () => void }> = [
       }),
   },
   {
-    name: 'I2 decideVisionCanaryProbe: 超龄 interactive 缓存 → probe（重探）；同龄 goal 缓存 → skip（不受 TTL）',
+    // plan c7d2e9a4 t4：goal 来源 TTL 分层取代"永不 TTL"——tool_read 25h（7d 内）仍 skip，
+    // 超 7d/负结论超 24h → probe；interactive 超 24h 语义不变。
+    name: 'I2/c7d2e9a4 decideVisionCanaryProbe: 超龄 interactive → probe；goal tool_read 25h → skip、超 7d → probe；goal none 25h → probe',
     run: () =>
       withTmp((root) => {
+        const PV = VISION_CANARY_PROBE_VERSION;
         const staleAt = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
         const manifest = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'interactive' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'interactive', probe_version: PV } },
         });
         assert.deepStrictEqual(
           decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
@@ -498,22 +543,190 @@ const cases: Array<{ name: string; run: () => void }> = [
         );
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'goal' } },
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'goal', probe_version: PV } },
         });
         assert.deepStrictEqual(
           decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
           { action: 'skip', reason: 'fresh_cache_present' },
-          'goal 来源超龄仍 skip',
+          'goal tool_read 25h（7d 内）仍 skip',
         );
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString(), probed_via: 'goal', probe_version: PV } },
+        });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
+          { action: 'probe' },
+          'goal tool_read 超 7d 应重探',
+        );
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: staleAt, probed_via: 'goal', probe_version: PV } },
+        });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
+          { action: 'probe' },
+          'goal none 超 24h 应重探',
+        );
+      }),
+  },
+  {
+    // plan c7d2e9a4 t1：毒缓存自愈 e2e——2026-07-12 事故形态（goal none、无 probe_version）
+    // 在场时必须 probe（旧代码在此 skip，把假盲档永久钳死）。
+    name: 'c7d2e9a4 decideVisionCanaryProbe: 无 probe_version 毒 none 缓存在场 → probe（自愈通道）',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'cursor', verdict: 'none', probed_at: new Date(Date.now() - 60_000).toISOString(), probed_via: 'goal' } },
+        });
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('cursor'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['spec'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(d, { action: 'probe' }, '事故毒缓存必须自动失效重探');
+      }),
+  },
+  // ==========================================================================
+  // plan c7d2e9a4 t6：runVisionCanaryProbe 写盘边界（事故真正发生地——invoke→写盘之间）
+  // fake invokeFn 注入免真 spawn；frameworkRoot 用临时夹具（最小 claude goal_capability）。
+  // ==========================================================================
+  {
+    name: 'c7d2e9a4 runVisionCanaryProbe: 空输出/额度错误文本 → invalid_not_cached，不写盘且 local 全字段无损',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          agent_adapter: 'claude',
+          toolchain: { devEcoStudio: { installPath: 'D:/DevEco' } },
+          vision: { image_input_override: 'none' },
+        });
+        for (const stdout of ['', 'ActionRequiredError: You have hit your usage limit. Get Pro for more.']) {
+          const r = await runVisionCanaryProbe({
+            projectRoot: root,
+            frameworkRoot: fw,
+            manifest: baseManifest('claude'),
+            invokeFn: (async () => ({ exitCode: 0, stdout, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+          });
+          assert.strictEqual(r.ran, true);
+          assert.strictEqual(r.outcome, 'invalid_not_cached', JSON.stringify(r));
+          const local = loadLocalConfig(root)!;
+          assert.strictEqual(local.vision?.canary, undefined, '无效探测不得写 canary');
+          assert.strictEqual(local.agent_adapter, 'claude', 'agent_adapter 无损');
+          assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, 'D:/DevEco', 'toolchain 无损');
+          assert.strictEqual(local.vision?.image_input_override, 'none', 'override 无损');
+        }
+      }),
+  },
+  {
+    name: 'c7d2e9a4 runVisionCanaryProbe: 非零退出/timed_out/silent_killed/skipped → invoke_failed_not_cached，不写盘',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        const fullAnswer = 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q';
+        const facts = [
+          { exitCode: 1, stdout: fullAnswer, stderr: '', command: 'fake' },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', timed_out: true },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', silent_killed: true },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', skipped: true },
+        ];
+        for (const f of facts) {
+          const r = await runVisionCanaryProbe({
+            projectRoot: root,
+            frameworkRoot: fw,
+            manifest: baseManifest('claude'),
+            invokeFn: (async () => f) as typeof invokeAgentHeadless,
+          });
+          assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify({ f, r }));
+          assert.strictEqual(loadLocalConfig(root)?.vision?.canary, undefined, '调用失败不得写 canary（即便 stdout 是完美答卷）');
+        }
+      }),
+  },
+  {
+    name: 'c7d2e9a4 runVisionCanaryProbe: 有效全对答卷 → valid_cached，写入 probe_version 且保留其余字段',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        writeLocalConfig(root, { schema_version: '1.0', agent_adapter: 'claude' });
+        const r = await runVisionCanaryProbe({
+          projectRoot: root,
+          frameworkRoot: fw,
+          manifest: baseManifest('claude'),
+          invokeFn: (async () => ({
+            exitCode: 0,
+            stdout: 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q',
+            stderr: '',
+            command: 'fake',
+          })) as typeof invokeAgentHeadless,
+        });
+        assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
+        assert.strictEqual(r.verdict, 'tool_read');
+        const canary = loadLocalConfig(root)?.vision?.canary;
+        assert.strictEqual(canary?.verdict, 'tool_read');
+        assert.strictEqual(canary?.probe_version, VISION_CANARY_PROBE_VERSION, '必须写入当前协议版本');
+        assert.strictEqual(canary?.probed_via, 'goal');
+        assert.strictEqual(loadLocalConfig(root)?.agent_adapter, 'claude', '既有字段保留');
+      }),
+  },
+  {
+    // rev5(codex P2)：invokeFn 抛异常（spawn/asset/config 层）→ 也归 invoke_failed_not_cached，
+    // 不绕过 runner 的 stale-if-error LKG 二分；盘上既有 fresh 缓存原样无损（自然沿用）。
+    name: 'c7d2e9a4/rev5 runVisionCanaryProbe: invokeFn 抛异常 → invoke_failed_not_cached，fresh LKG 缓存无损',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        const lkg = {
+          adapter: 'claude',
+          verdict: 'tool_read' as const,
+          probed_at: new Date(Date.now() - 60_000).toISOString(),
+          probed_via: 'goal' as const,
+          probe_version: VISION_CANARY_PROBE_VERSION,
+        };
+        writeLocalConfig(root, { schema_version: '1.0', vision: { canary: lkg } });
+        const r = await runVisionCanaryProbe({
+          projectRoot: root,
+          frameworkRoot: fw,
+          manifest: baseManifest('claude'),
+          invokeFn: (async () => {
+            throw new Error('spawn EPERM (模拟强刷时环境异常)');
+          }) as typeof invokeAgentHeadless,
+        });
+        assert.strictEqual(r.ran, true, '异常也算试跑过——须进 runner 的 LKG 二分而非通用跳过');
+        assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
+        assert.match(r.error ?? '', /探测异常/);
+        assert.deepStrictEqual(loadLocalConfig(root)?.vision?.canary, lkg, 'fresh last-known-good 必须原样无损');
+      }),
+  },
+  {
+    // prompt echo 穿透断言（codex 三轮 P2）：echo+尾部真答卷的最终 verdict 必须是 tool_read
+    //（若 canonical 重组缺位，旧 classifier 会被 echo 里的 CANNOT_SEE_IMAGE 子串污染判 none）。
+    name: 'c7d2e9a4 runVisionCanaryProbe: prompt echo + 尾部真答卷 → valid_cached 且 verdict=tool_read（穿透 classify）',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        const echo = buildCanaryPrompt('C:/tmp/vision-canary-x.png');
+        const stdout = `${echo}\n\nTOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q\n`;
+        const r = await runVisionCanaryProbe({
+          projectRoot: root,
+          frameworkRoot: fw,
+          manifest: baseManifest('claude'),
+          invokeFn: (async () => ({ exitCode: 0, stdout, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+        });
+        assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
+        assert.strictEqual(r.verdict, 'tool_read', 'echo 混排不得污染最终 verdict');
+        assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.verdict, 'tool_read');
       }),
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
     try {
-      c.run();
+      await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
@@ -523,10 +736,11 @@ export function runAll(): UnitCaseResult[] {
 }
 
 if (require.main === module) {
-  const results = runAll();
-  const failed = results.filter((r) => !r.ok);
-  for (const r of results) {
-    console.log(r.ok ? `PASS ${r.name}` : `FAIL ${r.name}: ${r.error}`);
-  }
-  process.exit(failed.length > 0 ? 1 : 0);
+  void runAll().then((results) => {
+    const failed = results.filter((r) => !r.ok);
+    for (const r of results) {
+      console.log(r.ok ? `PASS ${r.name}` : `FAIL ${r.name}: ${r.error}`);
+    }
+    process.exit(failed.length > 0 ? 1 : 0);
+  });
 }

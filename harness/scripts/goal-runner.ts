@@ -26,7 +26,8 @@ import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './util
 import { loadResolvedProfile } from '../profile-loader';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/multimodal-probe';
+import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
   detectPixel1to1Intent,
@@ -1430,8 +1431,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     if (visionProbeDecision.action === 'probe') {
       const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
-      if (probeResult.ran) {
+      if (probeResult.ran && probeResult.outcome === 'valid_cached') {
         console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
+      } else if (probeResult.ran) {
+        // plan c7d2e9a4 t3（stale-if-error）：探测无效/调用失败**未写盘**——日志须与消费面
+        // 实际行为一致（resolveBaseImageInput 只认盘）：盘上仍有当前版本 fresh 缓存（强刷
+        // 失败场景）→ 沿用 last-known-good；否则回退 adapter 声明路径,下次 run 自动重探。
+        let lkg: { probed_at: string; verdict: string } | null = null;
+        try {
+          const canary = loadFrameworkLocalConfig(projectRoot)?.vision?.canary;
+          if (canary && isVisionCanaryFresh(canary, manifest.adapter ?? 'generic')) {
+            lkg = { probed_at: canary.probed_at, verdict: canary.verdict };
+          }
+        } catch { /* local 读不出 → 按无缓存处理 */ }
+        console.warn(
+          lkg
+            ? `[goal-runner] 视觉金丝雀探测失败（${probeResult.error}），未写缓存——沿用既有实测缓存（probed_at=${lkg.probed_at}, verdict=${lkg.verdict}）`
+            : `[goal-runner] 视觉金丝雀探测无效/调用失败（${probeResult.error}），未缓存——本次 run 回退 adapter 声明路径，下次 run 自动重探`,
+        );
       } else if (probeResult.error) {
         console.warn(`[goal-runner] 视觉能力金丝雀实测跳过/失败（不阻断 run）：${probeResult.error}`);
       }

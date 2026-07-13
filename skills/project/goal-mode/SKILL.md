@@ -36,7 +36,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   [--start spec] [--end testing] [--dry-run]
 ```
 
-`--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。`--adapter` 须为 check-personal-setup 的 `activeAdapter`（SSOT），goal-runner 会以 `framework.local.json` 对账：与记录冲突即 STOP。**仅当用户明确要本次临时换 adapter** 才加 `--override-adapter`。
+`--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。`--adapter` 须为 check-personal-setup 的 `activeAdapter`（SSOT），goal-runner 会以 `framework.local.json` 对账：与记录冲突即 STOP。**仅当用户明确要本次临时换 adapter** 才加 `--override-adapter`。用户自然语言要求「强制刷新视觉探测」（换模型/账号后重测读图能力）→ 加 `--refresh-vision-probe`（缓存生命周期见 [goal-mode-runbook](../../../docs/operations/goal-mode-runbook.md) 视觉金丝雀段）。
 
 **无人值守一律用真 `--detach`**（不是只靠宿主"后台启动"，二者语义不同——事故背景见 reference）：
 

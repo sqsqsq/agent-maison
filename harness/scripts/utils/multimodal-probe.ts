@@ -12,6 +12,7 @@ import {
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
 } from './phase-state';
 import { loadLocalConfig, type FrameworkLocalConfigVisionCanary } from './framework-local-config';
+import { VISION_CANARY_PROBE_VERSION } from './vision-canary';
 
 export type ImageInputMode = 'none' | 'tool_read' | 'native_attach';
 
@@ -32,11 +33,25 @@ export interface MultimodalProbeResult {
 export const VISION_CANARY_INTERACTIVE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * plan c7d2e9a4 t4：goal 来源不再永久采信——CLI 模型路由/账号权限会静默变。
+ * 负结论（none/ocr_capable）24h（重探成本=一次 headless 调用，可接受）；
+ * 正结论（tool_read）7d（每周一次重探成本可忽略）。interactive 维持既有 24h。
+ */
+export const VISION_CANARY_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
+export const VISION_CANARY_POSITIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** rev5(codex P2)：未来时间戳容差——超前超过 5 分钟视为时钟异常写入,拒绝采信
+ * (否则曾超前的时钟写出的 probed_at 会让缓存 fresh 到未来时刻,实际寿命远超 TTL)。 */
+export const VISION_CANARY_CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
  * 金丝雀缓存是否可当"新鲜实测"采信——三消费点（resolveBaseImageInput /
  * readCanaryOcrCapableSignal / goal-preflight.decideVisionCanaryProbe）唯一判据：
  *   - adapter 不符 → false（换 adapter 即失效，既有语义）；
- *   - probed_via='interactive' 且 probed_at 超过 24h TTL → false（超龄，不再静默采信）；
- *   - probed_via='goal' 或缺省（向后兼容 E1 旧缓存）→ 仅看 adapter 匹配，不受 TTL 影响。
+ *   - probe_version ≠ 当前协议版本（含缺失=v1 旧缓存）→ false（plan c7d2e9a4：
+ *     协议升级自动失效重探，2026-07-12 假 none 毒缓存借此自愈，用户零操作）；
+ *   - probed_via='interactive' 且超 24h TTL → false（IDE 模型随手切，既有语义）；
+ *   - probed_via='goal'：tool_read 超 7d / none·ocr_capable 超 24h → false
+ *     （rev4：拒绝永久采信——模型路由/额度/权限会静默变）。
  */
 export function isVisionCanaryFresh(
   canary: FrameworkLocalConfigVisionCanary | undefined | null,
@@ -44,12 +59,16 @@ export function isVisionCanaryFresh(
   now: number = Date.now(),
 ): boolean {
   if (!canary || canary.adapter !== adapter) return false;
+  if (canary.probe_version !== VISION_CANARY_PROBE_VERSION) return false;
+  const probedAtMs = Date.parse(canary.probed_at);
+  if (!Number.isFinite(probedAtMs)) return false; // 时间戳坏 → 保守判不新鲜
+  const ageMs = now - probedAtMs;
+  // rev5(codex P2)：未来时间戳(超容差)拒绝——负 age 只查上限会 fresh 到未来时刻
+  if (ageMs < -VISION_CANARY_CLOCK_SKEW_TOLERANCE_MS) return false;
   if (canary.probed_via === 'interactive') {
-    const probedAtMs = Date.parse(canary.probed_at);
-    if (!Number.isFinite(probedAtMs)) return false; // 时间戳坏 → 保守判不新鲜
-    if (now - probedAtMs > VISION_CANARY_INTERACTIVE_TTL_MS) return false;
+    return ageMs <= VISION_CANARY_INTERACTIVE_TTL_MS;
   }
-  return true;
+  return ageMs <= (canary.verdict === 'tool_read' ? VISION_CANARY_POSITIVE_TTL_MS : VISION_CANARY_NEGATIVE_TTL_MS);
 }
 
 /**
@@ -68,18 +87,21 @@ export function isFreshInteractiveCanary(
   return canary?.probed_via === 'interactive' && isVisionCanaryFresh(canary, adapter, now);
 }
 
-/** 超龄 interactive 缓存（本 adapter 有缓存但 isVisionCanaryFresh=false 仅因超 TTL）。 */
+/**
+ * 超龄 interactive 缓存——**仅真 TTL 超龄**才标 stale 并打"已超 24h" advisory。
+ * rev5(codex P3)：版本不符(协议升级)/坏时间戳不属"超 24h",归因错误会误导用户
+ * (刚写不久的旧协议缓存被解释成超龄)——这两类走普通声明回退,不打超龄 advisory。
+ */
 function isStaleInteractiveCanary(
   canary: FrameworkLocalConfigVisionCanary | undefined | null,
   adapter: string,
   now: number = Date.now(),
 ): boolean {
-  return Boolean(
-    canary &&
-      canary.adapter === adapter &&
-      canary.probed_via === 'interactive' &&
-      !isVisionCanaryFresh(canary, adapter, now),
-  );
+  if (!canary || canary.adapter !== adapter || canary.probed_via !== 'interactive') return false;
+  if (canary.probe_version !== VISION_CANARY_PROBE_VERSION) return false; // protocol_stale,非超龄
+  const probedAtMs = Date.parse(canary.probed_at);
+  if (!Number.isFinite(probedAtMs)) return false; // invalid_timestamp,非超龄
+  return now - probedAtMs > VISION_CANARY_INTERACTIVE_TTL_MS;
 }
 
 const staleCanaryWarned = new Set<string>();

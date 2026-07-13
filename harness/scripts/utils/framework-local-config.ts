@@ -30,6 +30,12 @@ export interface FrameworkLocalConfigVisionCanary {
   reason?: string;
   /** I1：探测来源；缺省视作 'goal'（向后兼容 E1 已写的无该字段缓存）。 */
   probed_via?: 'goal' | 'interactive';
+  /**
+   * 探测协议版本（plan c7d2e9a4）：isVisionCanaryFresh 只采信
+   * VISION_CANARY_PROBE_VERSION 当前值；缺失=v1 旧缓存自动 stale（含 2026-07-12
+   * 假 none 毒缓存），下一次 UI goal 自动重探——用户升级零操作。
+   */
+  probe_version?: number;
 }
 
 export interface FrameworkLocalConfigVision {
@@ -172,6 +178,17 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
           `[framework-local-config] vision.canary.probed_via 必须是 goal|interactive，收到 ${String(probedVia)}`,
         );
       }
+      // plan c7d2e9a4：探测协议版本——可选（缺失=v1 旧缓存，fresh 判据自会拒），
+      // 但存在时必须是正整数（0/负/小数/字符串一律拒，防手写坏值）。
+      const probeVersion = canaryObj.probe_version;
+      if (
+        probeVersion !== undefined &&
+        (typeof probeVersion !== 'number' || !Number.isInteger(probeVersion) || probeVersion <= 0)
+      ) {
+        throw new Error(
+          `[framework-local-config] vision.canary.probe_version 必须是正整数，收到 ${String(probeVersion)}`,
+        );
+      }
       outVision.canary = {
         adapter: adapter.trim(),
         verdict: verdict as FrameworkLocalConfigVisionCanary['verdict'],
@@ -182,6 +199,7 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
         ...(typeof probedVia === 'string' && LOCAL_CANARY_PROBED_VIA_VALUES.has(probedVia)
           ? { probed_via: probedVia as FrameworkLocalConfigVisionCanary['probed_via'] }
           : {}),
+        ...(typeof probeVersion === 'number' ? { probe_version: probeVersion } : {}),
       };
     }
 

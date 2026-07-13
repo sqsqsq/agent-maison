@@ -30,7 +30,12 @@ import {
   type InvokeTemplateVars,
 } from './agent-invoke';
 import { resolveUiRelevanceForRun } from './fidelity-shared';
-import { ensureVisionCanaryAsset, buildCanaryPrompt, classifyCanaryResponse } from './vision-canary';
+import {
+  ensureVisionCanaryAsset,
+  buildCanaryPrompt,
+  resolveCanaryCacheDecision,
+  VISION_CANARY_PROBE_VERSION,
+} from './vision-canary';
 
 export type AdapterProvenance =
   | 'argv_adapter'
@@ -305,19 +310,34 @@ export function decideVisionCanaryProbe(input: {
   return { action: 'probe' };
 }
 
+export type VisionCanaryProbeOutcome =
+  | 'valid_cached'
+  | 'invalid_not_cached'
+  | 'invoke_failed_not_cached';
+
 /**
- * E1：实际执行金丝雀探测——生成资产、headless 问答、分类、写回 framework.local.json 缓存。
- * 【诚实声明】本函数会真实 spawn 一次 headless agent 调用（真实成本，同 goal-runner 本身
- * 每 phase 的调用性质一致，非额外风险类别）；单测只覆盖 decideVisionCanaryProbe 的纯决策
- * 分支，不在自动化测试中触发真实 agent 调用（那需要真实 CLI/账号，超出单测范畴）。
- * 失败降级：agent 调用/分类异常不抛出、不阻断 goal run——按 verdict='none' 保守处理，
- * 让主流程用现有（adapter 声明）路径继续跑，探测失败不是 BLOCKER。
+ * E1：实际执行金丝雀探测——生成资产、headless 问答、严格判卷、按有效性决定是否写缓存。
+ * 【诚实声明】本函数默认会真实 spawn 一次 headless agent 调用（真实成本，同 goal-runner
+ * 本身每 phase 的调用性质一致，非额外风险类别）；invokeFn 注入供单测覆盖写盘边界
+ * （plan c7d2e9a4 t6——事故真正发生地在"invoke → 写盘"之间，不能只测纯函数）。
+ * 写盘守卫（t2/t3）：resolveCanaryCacheDecision 消费完整调用事实——invoke 失败/无效答卷
+ * （空输出/额度错误文本/prompt echo/残卷）一律**不落缓存**（消费面按既有语义回退：盘上有
+ * fresh last-known-good 则沿用，否则 adapter 声明路径——stale-if-error，日志由 goal-runner
+ * 按盘上缓存现查二分）；只有有效作答（严格解析的 canonical answer）才 classify 并连同
+ * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER。
  */
 export async function runVisionCanaryProbe(input: {
   projectRoot: string;
   frameworkRoot: string;
   manifest: GoalManifest;
-}): Promise<{ ran: boolean; verdict?: 'tool_read' | 'ocr_capable' | 'none'; error?: string }> {
+  /** 单测注入（默认真实 invokeAgentHeadless），覆盖"invoke→写盘"边界免真 spawn */
+  invokeFn?: typeof invokeAgentHeadless;
+}): Promise<{
+  ran: boolean;
+  outcome?: VisionCanaryProbeOutcome;
+  verdict?: 'tool_read' | 'ocr_capable' | 'none';
+  error?: string;
+}> {
   const { projectRoot, frameworkRoot, manifest } = input;
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
   try {
@@ -338,8 +358,21 @@ export async function runVisionCanaryProbe(input: {
       PHASE: manifest.start_phase,
     };
     const plan = resolveHeadlessInvokePlan(adapter, cap.capability, manifest.unattended, prompt, vars);
-    const invoke = await invokeAgentHeadless(plan, projectRoot, { timeoutMs: 120_000 });
-    const classify = classifyCanaryResponse(invoke.stdout);
+    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    const decision = resolveCanaryCacheDecision({
+      stdout: invoke.stdout,
+      exitCode: invoke.exitCode,
+      timed_out: invoke.timed_out,
+      silent_killed: invoke.silent_killed,
+      skipped: invoke.skipped,
+    });
+    if (decision.kind !== 'valid') {
+      return {
+        ran: true,
+        outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
+        error: decision.detail,
+      };
+    }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
     writeLocalConfig(projectRoot, {
       ...existing,
@@ -347,16 +380,21 @@ export async function runVisionCanaryProbe(input: {
         ...(existing.vision ?? {}),
         canary: {
           adapter,
-          verdict: classify.verdict,
+          verdict: decision.classify.verdict,
           probed_at: new Date().toISOString(),
-          reason: classify.reason,
+          reason: decision.classify.reason,
           probed_via: 'goal',
+          probe_version: VISION_CANARY_PROBE_VERSION,
         },
       },
     });
-    return { ran: true, verdict: classify.verdict };
+    return { ran: true, outcome: 'valid_cached', verdict: decision.classify.verdict };
   } catch (e) {
-    return { ran: false, error: (e as Error).message };
+    // rev5(codex P2)：spawn/asset/config 异常同样是"探测执行失败"——归入
+    // invoke_failed_not_cached,让 runner 走统一的 stale-if-error LKG 二分日志
+    // (原 ran:false 会绕过 LKG 检查:强刷异常时旧 fresh 缓存实际仍被消费,日志却不说)。
+    // ran:false 仅保留给"没试跑"的合法跳过(无 goal_capability 声明)。
+    return { ran: true, outcome: 'invoke_failed_not_cached', error: `探测异常：${(e as Error).message}` };
   }
 }
 

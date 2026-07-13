@@ -365,6 +365,38 @@ const cases: Array<{ name: string; run: () => void }> = [
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
+  {
+    // plan c7d2e9a4 t1/rev5：probe_version schema 边界——正整数过；0/负/小数/字符串拒；
+    // 缺省合法（v1 旧缓存由 fresh 判据拒，schema 不拦）。
+    name: 'c7d2e9a4 loadLocalConfig: canary.probe_version 正整数过；0/负/小数/字符串拒；缺省合法',
+    run: () => {
+      const write = (root: string, probeVersion: unknown): void => {
+        fs.writeFileSync(
+          path.join(root, LOCAL_CONFIG_FILENAME),
+          JSON.stringify({
+            schema_version: '1.0',
+            vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: '2026-07-13T00:00:00.000Z', probe_version: probeVersion } },
+          }),
+        );
+      };
+      const root = mkTmp();
+      try {
+        write(root, 2);
+        assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.probe_version, 2, '正整数应 roundtrip');
+        for (const bad of [0, -1, 1.5, '2']) {
+          write(root, bad);
+          assert.throws(() => loadLocalConfig(root), /probe_version/, `probe_version=${JSON.stringify(bad)} 应被拒`);
+        }
+        fs.writeFileSync(
+          path.join(root, LOCAL_CONFIG_FILENAME),
+          JSON.stringify({ schema_version: '1.0', vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: 'x' } } }),
+        );
+        assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.probe_version, undefined, '缺省应合法（旧缓存可读）');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

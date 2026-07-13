@@ -19,6 +19,14 @@ import Jimp from 'jimp';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
+/**
+ * 探测协议版本(plan c7d2e9a4 rev4,从 2 起)——isVisionCanaryFresh 只采信当前版本缓存;
+ * 旧缓存缺字段即 v1/stale(含 2026-07-12 额度耗尽写入的假 none 毒缓存),下一次 UI goal
+ * 自动重探原位覆写,用户零操作升级、无需删 framework.local.json。改判卷/严格解析/
+ * 缓存语义须递增本值。
+ */
+export const VISION_CANARY_PROBE_VERSION = 2;
+
 export interface CanaryAnswerKey {
   schema_version: string;
   geometry_questions: Array<{ id: string; expected_color: string }>;
@@ -285,6 +293,104 @@ export function classifyCanaryResponse(
     textTokenMatched,
     externalToolSuspected,
     reason: `几何题 ${geometryCorrect}/${geometryTotal} 对、TEXT_TOKEN 未命中——判无视觉能力`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// t2/t3（plan c7d2e9a4）：goal 路径写盘决策——区分 invoke 失败 / 无效答卷 / 有效作答
+// ---------------------------------------------------------------------------
+
+/** goal headless 调用事实（AgentInvokeResult 子集——探测有效性须消费完整调用状态） */
+export interface CanaryInvocationFacts {
+  stdout: string;
+  exitCode: number;
+  timed_out?: boolean;
+  silent_killed?: boolean;
+  skipped?: boolean;
+}
+
+export type CanaryCacheDecision =
+  | { kind: 'invoke_failed'; cache: false; detail: string }
+  | { kind: 'invalid_answer'; cache: false; detail: string }
+  | { kind: 'valid'; cache: true; classify: CanaryClassifyResult; canonicalAnswer: string };
+
+/**
+ * 逐键提取**最后一次合法赋值**（echo 在前、真答卷在后；占位符 `<color>` 等含 <> 的
+ * 回显行与空值不算合法赋值）。返回 null=该键无合法赋值。
+ */
+function lastLegalAssignment(rawOutput: string, key: string): string | null {
+  const re = new RegExp(`^\\s*${key}\\s*=\\s*(.*?)\\s*$`, 'gim');
+  let last: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(rawOutput)) !== null) {
+    const value = m[1].trim();
+    if (value && !value.includes('<') && !value.includes('>')) last = value;
+  }
+  return last;
+}
+
+/**
+ * goal 路径唯一写盘判据（plan c7d2e9a4 t2/t3，codex 三轮收敛）：
+ * ① invoke 事实先行——skipped/timed_out/silent_killed/非零退出 = 调用没成，与答卷无关；
+ * ② 严格答卷解析（防 prompt echo 双杀——canary prompt 自身含全部答题键行与
+ *    CANNOT_SEE_IMAGE 字面，isCanaryAnswerComplete 的 `KEY=` 在场判据会被回显骗过，
+ *    classifyCanaryResponse 的 CANNOT_SEE 全文子串判会直接误判 none）：
+ *    - 全部答题键都有最后一次合法赋值 → 有效作答（对错交给 classify）；
+ *    - 否则 CANNOT_SEE_IMAGE **独立成行**（echo 行有前缀文字不整行匹配）→ 真盲声明；
+ *    - 两者皆无 → invalid_answer（空输出/额度错误文本/残卷——没作答，不落缓存）；
+ * ③ valid 时重组 canonical answer 交 classify——**不得回传原始 stdout**（旧 classifier
+ *    是首中解析 + CANNOT_SEE 子串判，echo+尾部真答卷会被二次污染判 none）；
+ *    externalToolSuspected 仍从原始 stdout 提取（规范化不丢诊断信号）。
+ */
+export function resolveCanaryCacheDecision(
+  invocation: CanaryInvocationFacts,
+  answerKey: CanaryAnswerKey = CANARY_ANSWER_KEY,
+): CanaryCacheDecision {
+  if (invocation.skipped) {
+    return { kind: 'invoke_failed', cache: false, detail: 'invoke 被跳过（dry-run/skipped）' };
+  }
+  if (invocation.timed_out || invocation.silent_killed) {
+    return {
+      kind: 'invoke_failed',
+      cache: false,
+      detail: invocation.timed_out ? 'invoke 超时被杀' : 'invoke 静默无输出被杀（silent watchdog）',
+    };
+  }
+  if (invocation.exitCode !== 0) {
+    return { kind: 'invoke_failed', cache: false, detail: `invoke 非零退出（exitCode=${invocation.exitCode}）` };
+  }
+
+  const raw = invocation.stdout;
+  const requiredKeys = [...answerKey.geometry_questions.map(q => q.id), 'TEXT_TOKEN'];
+  const finalAnswers = new Map<string, string>();
+  for (const k of requiredKeys) {
+    const v = lastLegalAssignment(raw, k);
+    if (v !== null) finalAnswers.set(k, v);
+  }
+
+  let canonicalAnswer: string | null = null;
+  if (finalAnswers.size === requiredKeys.length) {
+    canonicalAnswer = requiredKeys.map(k => `${k}=${finalAnswers.get(k)!}`).join('\n');
+  } else if (/^\s*CANNOT_SEE_IMAGE\s*$/im.test(raw)) {
+    canonicalAnswer = 'CANNOT_SEE_IMAGE';
+  }
+  if (canonicalAnswer === null) {
+    const trimmed = raw.trim();
+    return {
+      kind: 'invalid_answer',
+      cache: false,
+      detail: !trimmed
+        ? '空输出——非有效答卷（额度耗尽/断流?），不落缓存'
+        : `输出非有效答卷（合法答题键 ${finalAnswers.size}/${requiredKeys.length}、无独立行 CANNOT_SEE_IMAGE——错误文本/残卷/回显?），不落缓存`,
+    };
+  }
+
+  const classify = classifyCanaryResponse(canonicalAnswer, answerKey);
+  return {
+    kind: 'valid',
+    cache: true,
+    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(raw) },
+    canonicalAnswer,
   };
 }
 

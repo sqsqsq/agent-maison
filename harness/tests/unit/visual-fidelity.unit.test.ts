@@ -47,6 +47,7 @@ import {
   resolveOcrAvailableForRun,
 } from '../../scripts/utils/fidelity-shared';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
+import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { validateUiSpecSchema, BUTTON_VARIANT_ENUM, ALIGN_ENUM } from '../../../profiles/hmos-app/harness/ui-spec-schema-validate';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
@@ -2188,7 +2189,8 @@ export function runAll(): UnitCaseResult[] {
       }
       writeLocalConfig(root, {
         schema_version: '1.0',
-        vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: '2026-07-08T00:00:00.000Z' } },
+        // plan c7d2e9a4：ocr_capable 负结论 24h TTL + 须当前 probe_version
+        vision: { canary: { adapter: 'chrys', verdict: 'ocr_capable', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
       });
       if (resolveOcrAvailableForRun(root, genericDir, 'chrys') !== true) {
         throw new Error('generic 无 OCR 工具链，但金丝雀 verdict=ocr_capable 且 adapter 匹配 → 应 OR 为 true');

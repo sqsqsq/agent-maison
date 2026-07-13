@@ -9,6 +9,7 @@ import {
   isCanaryAnswerComplete,
   buildCanaryPrompt,
   ensureVisionCanaryAsset,
+  resolveCanaryCacheDecision,
   CANARY_ANSWER_KEY,
 } from '../../scripts/utils/vision-canary';
 import type { UnitCaseResult } from '../run-unit';
@@ -162,6 +163,114 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    },
+  },
+  // ==========================================================================
+  // plan c7d2e9a4 t2/t3：resolveCanaryCacheDecision——goal 路径唯一写盘判据
+  // ==========================================================================
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 空输出 → invalid_answer（2026-07-12 事故形态，不落缓存）',
+    run: () => {
+      const d = resolveCanaryCacheDecision({ stdout: '', exitCode: 0 });
+      assert(d.kind === 'invalid_answer' && d.cache === false, JSON.stringify(d));
+      assert(d.kind !== 'valid' && d.detail.includes('空输出'), JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 额度错误文本（非空、无答题键）→ invalid_answer',
+    run: () => {
+      const d = resolveCanaryCacheDecision({
+        stdout: "ActionRequiredError: You've hit your usage limit. Get Cursor Pro for more Agent usage.",
+        exitCode: 0,
+      });
+      assert(d.kind === 'invalid_answer', JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 残卷（仅 1 键）→ invalid_answer（半写入/断流不判卷）',
+    run: () => {
+      const d = resolveCanaryCacheDecision({ stdout: 'TOP_LEFT_COLOR=red\n', exitCode: 0 });
+      assert(d.kind === 'invalid_answer', JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: prompt echo 全文（含答题键行+CANNOT_SEE 字面）→ invalid_answer（防回显双杀）',
+    run: () => {
+      // 直接用真实 prompt 当 stdout——占位符 <color> 不算合法赋值、CANNOT_SEE 行有前缀不整行匹配
+      const d = resolveCanaryCacheDecision({ stdout: buildCanaryPrompt('C:/tmp/canary.png'), exitCode: 0 });
+      assert(d.kind === 'invalid_answer', `prompt 回显必须判无效：${JSON.stringify(d)}`);
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 独立行 CANNOT_SEE_IMAGE → valid + none（真盲有效作答，该缓存）',
+    run: () => {
+      const d = resolveCanaryCacheDecision({ stdout: 'Let me check.\nCANNOT_SEE_IMAGE\n', exitCode: 0 });
+      assert(d.kind === 'valid' && d.cache === true, JSON.stringify(d));
+      assert(d.kind === 'valid' && d.classify.verdict === 'none', JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 全键在场全错 → valid + none（答了题，结论可信可缓存）',
+    run: () => {
+      const d = resolveCanaryCacheDecision({
+        stdout: 'TOP_LEFT_COLOR=purple\nTOP_RIGHT_COLOR=black\nBOTTOM_LEFT_COLOR=white\nBOTTOM_RIGHT_COLOR=gray\nTEXT_TOKEN=WRONG123',
+        exitCode: 0,
+      });
+      assert(d.kind === 'valid', JSON.stringify(d));
+      assert(d.kind === 'valid' && d.classify.verdict === 'none', JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: 全对 → valid + tool_read',
+    run: () => {
+      const d = resolveCanaryCacheDecision({
+        stdout: 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q',
+        exitCode: 0,
+      });
+      assert(d.kind === 'valid' && d.classify.verdict === 'tool_read', JSON.stringify(d));
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: prompt echo + 尾部真答卷 → valid 且最终 verdict=tool_read（canonical 穿透 classify）',
+    run: () => {
+      const stdout =
+        `${buildCanaryPrompt('C:/tmp/canary.png')}\n\n` +
+        'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q\n';
+      const d = resolveCanaryCacheDecision({ stdout, exitCode: 0 });
+      assert(d.kind === 'valid', JSON.stringify(d));
+      // 关键（codex 三轮 P1）：canonical 重组隔离原始 stdout——否则旧 classifier 会被
+      // echo 里的 CANNOT_SEE_IMAGE 子串污染直接判 none
+      assert(d.kind === 'valid' && d.classify.verdict === 'tool_read', `echo 混排不得污染 verdict：${JSON.stringify(d)}`);
+      assert(d.kind === 'valid' && !d.canonicalAnswer.includes('CANNOT_SEE_IMAGE'), 'canonical 不得携带 echo 的 CANNOT_SEE 字面');
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: invoke 事实先行——非零退出/timed_out/silent_killed/skipped → invoke_failed（stdout 完美答卷也不缓存）',
+    run: () => {
+      const perfect = 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q';
+      for (const facts of [
+        { stdout: perfect, exitCode: 1 },
+        { stdout: perfect, exitCode: 0, timed_out: true },
+        { stdout: perfect, exitCode: 0, silent_killed: true },
+        { stdout: perfect, exitCode: 0, skipped: true },
+      ]) {
+        const d = resolveCanaryCacheDecision(facts);
+        assert(d.kind === 'invoke_failed' && d.cache === false, JSON.stringify({ facts, d }));
+      }
+    },
+  },
+  {
+    name: 'c7d2e9a4 resolveCanaryCacheDecision: externalToolSuspected 从原始 stdout 提取（canonical 化不丢诊断信号）',
+    run: () => {
+      const d = resolveCanaryCacheDecision({
+        stdout:
+          'I ran tesseract on the image first.\n' +
+          'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q',
+        exitCode: 0,
+      });
+      assert(d.kind === 'valid', JSON.stringify(d));
+      assert(d.kind === 'valid' && d.classify.externalToolSuspected === true, 'tesseract 迹象须保留（canonical 里没有）');
+      assert(d.kind === 'valid' && d.classify.verdict === 'tool_read', JSON.stringify(d));
     },
   },
 ];
