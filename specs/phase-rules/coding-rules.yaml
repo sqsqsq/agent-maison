@@ -14,6 +14,18 @@ version: "1.0"
 applies_to: "**"
 
 structure_checks:
+  resource_string_interpolation:
+    description: >
+      ArkTS 模板字符串内 `${$r(...)}` Resource 插值 lint（goal-fakepass-hardening t9）：
+      Resource 对象进模板串渲染为 [object Object]（bc-openCard 卡包实锤）→ BLOCKER。
+      仅 hmos 系 profile 生效。
+
+  product_behavior_switch_scan:
+    description: >
+      产品源码测试性行为开关扫描（coding 期早警，与 testing 同门禁语义，见
+      testing-rules.yaml 同 id）：命名命中且默认 true → BLOCKER；坐标级 waiver+receipt
+      仅降级 WARN 且封顶。goal-fakepass-hardening t3。
+
   # ---- 视觉保真硬门禁声明面（f2d8c4a6 P1-A/P0-B；checker 按 id 硬编码实现，本表为声明性
   # description SSOT + gate-fingerprint 指纹分量：门禁语义变化须同步本表，使存量回执正确失效）----
   visible_text_whitelist:

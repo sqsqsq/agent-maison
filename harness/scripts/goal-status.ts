@@ -16,6 +16,10 @@ import {
   resolveLatestRunId,
   runStatusWatchLoop,
 } from './utils/goal-progress';
+import { featurePhasesFromWorkflow } from './utils/phase-transition-policy';
+import { resolveFeatureTrack } from './utils/runtime-policy';
+import { loadFeatureTrackDecl } from './utils/feature-track';
+import { verifyFeatureCompletion } from './utils/verify-feature-completion';
 
 async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
@@ -93,6 +97,25 @@ Goal status — progress projection reader
     }
 
     console.log(formatGoalStatusText(snapshot, feature, runId));
+
+    // goal-fakepass-hardening t8：feature 级完成状态——唯一入口 verify-feature-completion
+    // （expectedChain 由 workflow SSOT 独立解析；禁止消费文件存在性/自报字段）。
+    try {
+      const workflow = resolveWorkflowSpec(projectRoot, { config: cfg });
+      const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+      const expectedChain = featurePhasesFromWorkflow(workflow, track).map(String);
+      const v = verifyFeatureCompletion({ projectRoot, feature, expectedChain, expectedTrack: track });
+      if (v.verdict === 'VALID') {
+        console.log(`feature_status=FEATURE_COMPLETED (verify=VALID, chain=${expectedChain.join('→')})`);
+      } else {
+        const brief = v.reasons.slice(0, 3).join('；');
+        console.log(
+          `feature_status=FEATURE_INCOMPLETE (verify=${v.verdict}${brief ? `; ${brief}${v.reasons.length > 3 ? '…' : ''}` : ''})`,
+        );
+      }
+    } catch (err) {
+      console.log(`feature_status=FEATURE_INCOMPLETE (verify 失败：${(err as Error).message})`);
+    }
   };
 
   if (watch) {

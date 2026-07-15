@@ -404,3 +404,124 @@ export function goalRequiredPrerequisites(
 ): Set<PersonalPrerequisiteId> {
   return unionPhasePersonalPrerequisites(chain, resolvedProfile);
 }
+
+// ----------------------------------------------------------------------------
+// goal-fakepass-hardening t6：保真档位 preflight（spec 前，agent 未被调用，不烧 run）
+// ----------------------------------------------------------------------------
+
+import * as cryptoT6 from 'crypto';
+import {
+  dereferenceRequirementDocs,
+  detectFidelityIntent,
+  resolveRequestedFidelity,
+  type FidelityTarget,
+} from './fidelity-shared';
+import { resolveContextAdapterImageInput } from './multimodal-probe';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './confirmation-receipt';
+import { featureFilePath } from '../../config';
+import * as fsT6 from 'fs';
+
+export type FidelityPreflightAction =
+  | { action: 'proceed'; effective?: FidelityTarget; note?: string }
+  | { action: 'defer_capability_missing'; detail: string }
+  | { action: 'await_human_fidelity_tier'; detail: string };
+
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp)$/i;
+
+function dirHasImages(absDir: string): boolean {
+  try {
+    if (!fsT6.existsSync(absDir) || !fsT6.statSync(absDir).isDirectory()) return false;
+    return fsT6.readdirSync(absDir).some((f) => IMAGE_EXT_RE.test(f));
+  } catch {
+    return false;
+  }
+}
+
+export interface FidelityPreflightInput {
+  projectRoot: string;
+  frameworkRoot: string;
+  manifest: GoalManifest;
+  featuresDirRel: string;
+  /** 链首非 spec（上游 spec 已闭环）→ 本 preflight 不适用（档位对账由 check-spec 承担） */
+  chainStartsAtSpec: boolean;
+  now?: () => Date;
+}
+
+/**
+ * 规则（openspec goal-runner delta）：
+ * - 解引用 requirement 引用文档后做三态意图检测（摘要弱措辞+SSOT 强信号=事故原形）；
+ * - 强 pixel 意图 + 缺视觉能力 → DEFERRED_CAPABILITY_MISSING（不盲跑全链；
+ *   继续的唯一通道=有效 fidelity_downgrade receipt——flag/manifest 不构成授权）；
+ * - ambiguous + 参考图存在 + 未预授权（--fidelity 持平或抬升）→ await_human_fidelity_tier；
+ * - --fidelity 只升不降（resolveRequestedFidelity；降档尝试无 receipt 即拒绝并告警）。
+ */
+export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  if (!input.chainStartsAtSpec) return { action: 'proceed', note: 'chain 起点非 spec，档位对账由 check-spec 承担' };
+  const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
+    featuresDirRel: input.featuresDirRel,
+  });
+  const intent = detectFidelityIntent(deref.combined);
+  if (intent === 'none') return { action: 'proceed', note: '无截图一致性意图信号' };
+
+  const detected: FidelityTarget = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
+
+  // 降档凭证（唯一降档通道）
+  let downgradeAuthorized = false;
+  let receiptNote = '';
+  if (manifest.fidelity && manifest.fidelity_receipt) {
+    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+    const v = validateConfirmationReceiptFile(
+      path.join(projectRoot, manifest.fidelity_receipt),
+      defaultTrustRegistryPath(projectRoot),
+      {
+        action: 'fidelity_downgrade',
+        feature: manifest.feature,
+        object_hash: objectHash,
+        run_id: manifest.run_id,
+        now: input.now,
+      },
+    );
+    downgradeAuthorized = v.valid;
+    if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
+  }
+  const resolved = resolveRequestedFidelity(detected, manifest.fidelity, downgradeAuthorized);
+  if (resolved.rejectedDowngrade) {
+    console.warn(
+      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，无有效 receipt 不生效（只升不降）。${receiptNote}`,
+    );
+  }
+
+  if (intent === 'strong_pixel' && resolved.effective === 'pixel_1to1') {
+    const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
+    if (!probe.supported) {
+      return {
+        action: 'defer_capability_missing',
+        detail:
+          `需求为强 1:1 还原意图（解引用命中：${deref.resolvedPaths.join('、') || 'requirement 文本'}），` +
+          `但 adapter=${manifest.adapter ?? 'unknown'} 无视觉能力。不盲跑全链（bc-openCard 4 轮 run 全废教训）；` +
+          `继续的唯一通道：真人经带外体系签发 fidelity_downgrade receipt 后以 --fidelity <tier> --fidelity-receipt <path> 重跑。` +
+          (receiptNote ? ` ${receiptNote}` : ''),
+      };
+    }
+    return { action: 'proceed', effective: 'pixel_1to1' };
+  }
+
+  // ambiguous：参考图存在 + 未预授权 → 停下问人（在烧掉整条 run 之前）
+  const hasImages =
+    dirHasImages(featureFilePath(projectRoot, manifest.feature, 'ux-reference')) ||
+    deref.resolvedPaths.some((rel) => dirHasImages(path.join(projectRoot, path.dirname(rel))));
+  if (intent === 'ambiguous' && hasImages && !manifest.fidelity) {
+    return {
+      action: 'await_human_fidelity_tier',
+      detail:
+        '需求提及与截图/设计稿一致但意图不明确（ambiguous），且存在参考图。请确认保真档位后重跑：' +
+        '`--fidelity pixel_1to1|semantic_layout`（预授权，不再停）；或修改需求原文写明' +
+        '「完全参考/像素级」等强措辞。headless 不代拍此决策。',
+    };
+  }
+  return { action: 'proceed', effective: resolved.effective };
+}

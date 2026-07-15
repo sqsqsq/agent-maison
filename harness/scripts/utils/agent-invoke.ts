@@ -16,7 +16,7 @@ import {
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
-import { sanitizeSpawnEnv } from './process-integrity';
+import { sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
 import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
 export interface InvokeTemplateVars {
@@ -648,7 +648,12 @@ function spawnHeadlessChild(
   const opts = {
     cwd,
     // P0-7①：agent 子进程同样剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
-    env: { ...sanitizeSpawnEnv(process.env).env, [MAISON_GOAL_HEADLESS_ENV]: '1', ...(extraEnv ?? {}) },
+    // t10（codex 六轮 P0-2）：信任锚材料（MAISON_HMAC_*/MAISON_TRUST_REGISTRY）不进 agent env。
+    env: {
+      ...stripTrustAnchorEnv(sanitizeSpawnEnv(process.env).env).env,
+      [MAISON_GOAL_HEADLESS_ENV]: '1',
+      ...(extraEnv ?? {}),
+    },
     stdio,
     detached: !isWin,
     shell: false as const,

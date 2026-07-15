@@ -518,7 +518,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         merged.map((o) => ({ phase: o.phase, deferred: o.deferred, halted: o.halted })),
         reachedEnd,
       );
-      assert(status === 'COMPLETED', status);
+      assert(status === 'CHAIN_SLICE_COMPLETED', status);
     },
   },
   {

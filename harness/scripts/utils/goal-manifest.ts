@@ -45,6 +45,10 @@ export interface GoalManifest {
   /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
   adapter_provenance?: string;
   chain_override?: FeaturePhase[];
+  /** t6：预授权档位（--fidelity；只升不降，降档须 fidelity_receipt 校验通过） */
+  fidelity?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
+  /** t6：降档 confirmation receipt 文件（项目根相对）；flag 本身不构成授权 */
+  fidelity_receipt?: string;
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;

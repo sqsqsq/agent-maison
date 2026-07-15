@@ -176,6 +176,14 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
+  { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
+  { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },
+  { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },
+  { id: 'verify-feature-completion', modulePath: './unit/verify-feature-completion.unit.test' },
+  { id: 'confirmation-receipt', modulePath: './unit/confirmation-receipt.unit.test' },
+  { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
+  { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
+  { id: 'fidelity-intent', modulePath: './unit/fidelity-intent.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

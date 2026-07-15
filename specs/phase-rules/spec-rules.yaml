@@ -18,6 +18,35 @@ applies_to: "doc/features/{module}/spec/spec.md"
 # --------------------------------------------------------------------------
 structure_checks:
 
+  acceptance_flow_structure:
+    description: >
+      P0 交互 AC 结构化流程模型（goal-fakepass-hardening t4a）：flows 有序屏链 +
+      checkpoint{pre/action.target_element_id/post/required_element_ids} 强制（P0 纯
+      自然语言锚点 FAIL）；三约束=每条边被 ≥1 P0 AC 拥有 / requirement_ref 源片段
+      sha256 验存 / flow=checkpoint edges 有序合成（bank_list→add_success 型跳边 FAIL）。
+
+  acceptance_flow_contract:
+    description: >
+      结构化流程模型真人确认点（t4b/codex 四轮 P0-3）：flow_contract receipt 绑定
+      requirement/acceptance/flows/ui-spec 哈希，任一改动即 stale；无有效 receipt →
+      WARN（工作可继续）但 clean_pass 拒绝、run 封顶 AWAITING_HUMAN_REVIEW、
+      不得 FEATURE_COMPLETED。
+
+  ux_reference_mapping:
+    description: >
+      ux-reference 逐图建模对账（t7）：每张参考图映射 ui-spec 屏或 ref-elements.yaml
+      out_of_scope 显式登记（crop_of 父图+reason 裁剪证明）；需求正文直接引用的图片
+      agent 无权自划 out-of-scope（FAIL）；多数 out-of-scope FAIL；未映射未登记 →
+      pixel_1to1 FAIL / 其余档 WARN。
+
+  fidelity_intent_reconciliation:
+    description: >
+      保真档位声明 vs 需求 SSOT 强意图对账（goal-fakepass-hardening t6）：goal-run
+      manifest requirement（含解引用文档）命中强 1:1 意图（完全参考/像素级/1比1 等）
+      而 spec 声明更低档位 → BLOCKER FAIL（「禁止的降级」机器化；bc-openCard/homepage
+      双事故同模式）。豁免=fidelity_deferrals 真人签字降档条目，且仅降级 WARN、
+      run 封顶 AWAITING_HUMAN_REVIEW。
+
   required_chapters:
     description: >
       spec 必须包含以下 10 个一级或二级章节（按 Markdown heading 匹配）：

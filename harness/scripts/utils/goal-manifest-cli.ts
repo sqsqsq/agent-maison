@@ -11,6 +11,9 @@ export interface ManifestCliArgv {
   end?: string;
   adapter?: string;
   requirement?: string;
+  /** t6：--fidelity（只升不降）与 --fidelity-receipt（降档凭证路径） */
+  fidelity?: string;
+  'fidelity-receipt'?: string;
   'override-start'?: boolean;
   'override-end'?: boolean;
   'override-manifest'?: boolean;
@@ -53,5 +56,13 @@ export function applyManifestCliOverrides(manifest: GoalManifest, argv: Manifest
   }
   if (argv['override-manifest'] && argv.requirement) {
     manifest.requirement = String(argv.requirement);
+  }
+  // t6：--fidelity 无需 override 开关（新字段无既有 manifest 冲突面）；只升不降与
+  // 降档凭证校验在 fidelity preflight 内执行（flag 本身不构成授权）。
+  if (argv.fidelity) {
+    manifest.fidelity = String(argv.fidelity) as GoalManifest['fidelity'];
+  }
+  if (argv['fidelity-receipt']) {
+    manifest.fidelity_receipt = String(argv['fidelity-receipt']);
   }
 }

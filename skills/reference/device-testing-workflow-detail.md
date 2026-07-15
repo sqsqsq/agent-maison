@@ -86,6 +86,23 @@
 3. 构建行集：派生表中出现的 TC 以 `cases[]` 为准写状态与备注（无 case 记录但 run 整体失败→标阻塞或失败并注原因）；仅在顶层 test-plan.md、未进派生表的 TC → 标跳过，备注示例「缺少稳定 selector，需补 plan.md/contracts.yaml」。
 4. **不要**与 Hylyre 状态枚举混用其它字样（门禁与 receipt 校验依赖一致词表）。
 
+## 红线：测试接缝与 P0 覆盖（goal-fakepass-hardening，BLOCKER）
+
+- **测试接缝不得改变用户可见流程/默认行为**：`*_FAST_PATH`/`DEVICE_TEST*`/`SKIP_SMS*` 类
+  开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
+  跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
+  源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
+- **P0 用例 skip 不可自决**：explicit_skip/未执行的 P0 → `p0_coverage_integrity` BLOCKER，
+  goal 首触 halt（`await_human_p0_skip`）。出路只有三条：修可测性去 skip / 外部阻塞按
+  DEFERRED 登记 / 真人签发 p0_skip_waiver receipt（仅降级 WARN，run 封顶
+  AWAITING_HUMAN_REVIEW）。通过率必须双口径（skip 计入分母），存在 P0 skip 时结论不得
+  无条件「达标」。
+- **P0 状态迁移证据**：派生计划各 P0 TC 须动作指向 acceptance checkpoint 的
+  `target_element_id` 且其后 `wait_for` required 元素；flow 每条中间屏边须有已执行且通过
+  的 owning TC（纯 wait 冒充/直达结果页=`p0_semantic_coverage_integrity` FAIL）。
+- **mock 数据可辨识**：多实体场景（多卡/多账户）各实体可见身份（掩码后卡号等）必须唯一
+  可区分——掩码口径要避免「前 4+后 4 恒相同」（bc-openCard：全部卡显示 6225 **** 0001）。
+
 ## Step 6 质量门禁自检完整清单
 
 **测试计划自检**（11 项）：必需章节齐全；用例清单表头含编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC；优先级仅 P0-P3；每条 device/both AC 至少 1 条 TC（步骤对齐 device_focus）；device/both P0/P1 AC 100% 覆盖；unit AC 已从计划剔除；测试步骤足够详细可重复执行；预期结果可观察可验证无模糊描述；测试环境含设备/系统版本/API 版本；通过标准含量化阈值；元数据（模块标识/版本/日期）齐全。

@@ -31,6 +31,7 @@ import {
   relFeatureArtifact,
   relFeatureFile,
   featurePhaseReportsDir,
+  receiptDirPath,
   resolveHylyreToolConfig,
 } from '../config';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
@@ -81,6 +82,12 @@ import {
   loadTestingRootPollutionMeta,
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import {
+  loadReviewClosureAttestation,
+  reconcileSourceTreeAgainstAttestation,
+} from './utils/closure-attestation';
+import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
+import { isPhaseDisabledByProfile } from '../profile-loader';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
@@ -91,11 +98,17 @@ import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
+  parseReportConclusionVerdict,
   reconcileReportWithHylyreTrace,
   resolveAuthoritativeHylyreTracePath,
   evaluateUiEntryCoverage,
   buildEntryUiPriorityMap,
 } from './utils/testing-trace-gates';
+import {
+  evaluateP0CoverageIntegrity,
+  evaluateP0SemanticCoverage,
+} from './utils/p0-semantic-gates';
+import { parseHylyreTrace } from '../../profiles/hmos-app/harness/providers/device-test-run';
 import type { UseCasesSpec } from './utils/types';
 import {
   diagnoseInstallBlocking,
@@ -2133,22 +2146,25 @@ function checkDeviceTestRunGate(
           const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
           const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
           const navValidation = navConfig ? validateNavConfig(navConfig, navP0TargetIds) : null;
+          // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩
+          // （bc-openCard 洞④：semantic_layout 下 fidelityRatchet 把缺 nav 降成 WARN，
+          //  9 个 P0 屏的视觉比对被静默吞掉——nav 配置是 agent 可产出的普通 artifact，
+          //  缺失属"活没干完"而非保真严格度问题）；门槛从 ≥2 改为 ≥1（单屏不逃）。
           const navGateError = navConfig
             ? (navValidation && !navValidation.ok
                 ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
                 : null)
-            : (navP0TargetIds.length >= 2
-                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航区分，否则多屏截同一帧（曾致 5 屏同 hash）`
+            : (navP0TargetIds.length >= 1
+                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航到位采集（≥2 屏另防多屏截同一帧）`
                 : null);
           if (navGateError) {
-            const navRatchet = fidelityRatchetFailOrWarn(ctx, true);
             out.push({
               id: 'visual_diff_capture',
               category: 'structure',
               description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: navRatchet.severity,
-              status: navRatchet.status,
-              details: `【nav 配置门禁·P1-A】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。`,
+              severity: 'BLOCKER',
+              status: 'FAIL',
+              details: `【nav 配置门禁·完备性（档位无关）】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。真到不了的屏用 unreachable 显式登记（仅限外部阻塞枚举+绑定失败证据），任一 P0 unreachable → run 封顶非成功状态。`,
               suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
             });
           } else {
@@ -2680,10 +2696,93 @@ const checker: PhaseChecker = {
       results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
     }
 
+    // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
+    results.push(...safeRun(() => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
+
+    // --- goal-fakepass-hardening t3：产品行为开关扫描（defense-in-depth）---
+    results.push(
+      ...safeRun(
+        () => buildBehaviorSwitchCheckResult({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        'product_behavior_switch_scan',
+      ),
+    );
+
+    // --- goal-fakepass-hardening t4/t5：P0 状态迁移证据 + skip 治理 + 双口径 ---
+    results.push(
+      ...safeRun(() => {
+        const reportsBaseP0 = path.join(receiptDirPath(ctx.projectRoot, ctx.feature, 'testing'), 'reports');
+        const tracePath = resolveAuthoritativeHylyreTracePath(reportsBaseP0);
+        const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+        const statusMap = trace
+          ? new Map((trace.cases ?? []).map((c) => [c.id.toUpperCase(), c.status] as const))
+          : null;
+        const inputs = {
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          planMd: plan ?? '',
+          reportMd: report ?? '',
+          traceCaseStatus: statusMap as Map<string, string> | null,
+          reportConclusion: report ? parseReportConclusionVerdict(report) : null,
+        };
+        return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
+      }, 'p0_semantic_gates'),
+    );
+
     results.push(buildTestingRunStatusResult(plan, report, results));
 
     return results;
   },
 };
+
+/**
+ * t2（goal-fakepass-hardening）：testing 期产品源码 vs review 闭环快照对账。
+ * bc-openCard 事故：testing 期写入 DEVICE_TEST_FAST_PATH=true 短路核心流程，review 审过的
+ * 代码与真机跑的不是同一份。基线=attestation 固化 inventory；走树=冻结 roots ∪ 当前重
+ * discovery（新增整模块可见）。任何差异/缺 attestation → BLOCKER，指引回跑 review 闭环。
+ */
+function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
+  const id = 'review_closure_attestation';
+  const description = 'review 闭环源码快照与 testing 期产品源码对账（防测试期篡改产品行为）';
+  if (isPhaseDisabledByProfile('review', ctx.resolvedProfile)) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MINOR', status: 'SKIP',
+      details: `project_profile=${ctx.resolvedProfile.name} 已禁用 review 阶段，无 attestation 可对账。`,
+    }];
+  }
+  const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!att) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details:
+        '缺 review-closure-attestation.json（review 四件套闭环时由 check-receipt 生成）。' +
+        '无 grace window：存量 feature 首次跑新版 testing 前须补跑一次 review 闭环' +
+        '（fail-open 通道正是 bc-openCard 事故的形状）。',
+      suggestion: '回跑 review 闭环（harness + verifier + receipt + check-receipt）生成 attestation 后重试。',
+    }];
+  }
+  const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
+  if (!rec.ok) {
+    const fmt = (label: string, arr: string[]): string =>
+      arr.length === 0 ? '' : `\n${label}（${arr.length}）：${arr.slice(0, 8).join('、')}${arr.length > 8 ? '…' : ''}`;
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details:
+        'review 闭环后产品源码发生变更——review 审过的代码与当前代码不是同一份：' +
+        fmt('新增', rec.added) + fmt('修改', rec.modified) + fmt('删除', rec.deleted) +
+        fmt('新出现的产品源码根', rec.new_roots),
+      suggestion:
+        '产品代码变更须回跑 review 闭环重审后再进 testing（ut 期修 bug 合法但同样触发重审）；' +
+        '测试接缝不得改变用户可见流程/默认行为。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `产品源码与 review 闭环快照一致（inventory ${att.inventory.file_count} 文件，roots=${att.inventory.roots.length}）。`,
+  }];
+}
 
 export default checker;

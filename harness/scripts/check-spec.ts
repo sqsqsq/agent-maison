@@ -45,8 +45,20 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact, loadFrameworkConfig } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, loadFrameworkConfig, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import {
+  collectRequirementIntentText,
+  detectFidelityIntent,
+  isHumanSignedDeferral,
+  isPixel1to1,
+  loadSpecMarkdown,
+  parseFidelityDeferrals,
+  parseFidelityTargetFromHandoffDoc,
+} from './utils/fidelity-shared';
+import { parseVisualHandoffYamlRoot } from './utils/ui-spec-shared';
+import { isGoalOrchestrationEnv } from './utils/phase-state';
+import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
@@ -1011,8 +1023,153 @@ const checker: PhaseChecker = {
       ),
     );
 
+    // --- goal-fakepass-hardening t6：档位声明 vs 需求 SSOT 强意图对账（BLOCKER，双模式）---
+    results.push(...safeRun(() => checkFidelityIntentReconciliation(ctx), 'fidelity_intent_reconciliation'));
+
+    // --- goal-fakepass-hardening t4a：P0 结构化流程模型 + flow_contract 确认点 ---
+    results.push(...safeRun(() => evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature), 'acceptance_flow_structure'));
+    results.push(
+      ...safeRun(() => {
+        const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+        const reqText = collectRequirementIntentText(ctx.projectRoot, ctx.feature, featuresDirRel);
+        return evaluateFlowContract(ctx.projectRoot, ctx.feature, reqText);
+      }, 'acceptance_flow_contract'),
+    );
+
+    // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
+    results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
+
     return results;
   },
 };
+
+/**
+ * t7（codex 二轮 P1-2/四轮 P1-8）：每张参考图须映射 ui-spec 屏或显式 out-of-scope
+ * 登记（裁剪证明：crop_of 父图 + reason）；需求正文直接引用的图片 agent 无权自划
+ * out-of-scope；多数（>50%）out-of-scope → FAIL——"难还原的截图全标裁剪素材"后门关闭。
+ */
+function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
+  const id = 'ux_reference_mapping';
+  const description = 'ux-reference 参考图逐图建模对账（未映射/越权 out-of-scope 拦截）';
+  const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');
+  const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
+  let images: string[] = [];
+  try {
+    if (fs.existsSync(uxDir)) images = fs.readdirSync(uxDir).filter((f) => IMAGE_RE.test(f));
+  } catch { /* 目录不可读按空处理 */ }
+  if (images.length === 0) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 ux-reference 参考图。' }];
+  }
+  const uiSpecPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'ui-spec.yaml'));
+  const uiSpecRaw = fs.existsSync(uiSpecPath) ? fs.readFileSync(uiSpecPath, 'utf-8') : '';
+  const refElementsPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'ref-elements.yaml'));
+  let outOfScope: Array<{ image?: string; reason?: string; crop_of?: string }> = [];
+  try {
+    if (fs.existsSync(refElementsPath)) {
+      const doc = YAML.parse(fs.readFileSync(refElementsPath, 'utf-8')) as { out_of_scope?: typeof outOfScope };
+      if (Array.isArray(doc?.out_of_scope)) outOfScope = doc.out_of_scope;
+    }
+  } catch { /* 解析失败按无登记 */ }
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const reqText = collectRequirementIntentText(ctx.projectRoot, ctx.feature, featuresDirRel);
+
+  const failures: string[] = [];
+  const unmapped: string[] = [];
+  let oosCount = 0;
+  for (const img of images) {
+    if (uiSpecRaw.includes(img)) continue; // 已映射建模
+    const entry = outOfScope.find((e) => e.image === img);
+    if (entry) {
+      oosCount++;
+      if (reqText.includes(img)) {
+        failures.push(`${img}：需求正文直接引用的图片不得 agent 自划 out-of-scope`);
+      } else if (!entry.crop_of || !entry.reason) {
+        failures.push(`${img}：out-of-scope 登记缺裁剪证明（crop_of 父图 + reason）`);
+      }
+      continue;
+    }
+    unmapped.push(img);
+  }
+  if (oosCount * 2 > images.length) {
+    failures.push(`out-of-scope 占多数（${oosCount}/${images.length}）——参考图整批跳过通道关闭`);
+  }
+  if (failures.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: failures.join('\n'),
+      suggestion: '为参考图建模 ui-spec 屏；裁剪素材在 ref-elements.yaml out_of_scope 登记 crop_of+reason；需求引用图必须建模。',
+    }];
+  }
+  if (unmapped.length > 0) {
+    const ratchet = isPixel1to1(ctx)
+      ? { severity: 'BLOCKER' as const, status: 'FAIL' as const }
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    return [{
+      id, category: 'structure', description,
+      severity: ratchet.severity, status: ratchet.status,
+      details: `参考图未映射 ui-spec 屏且未登记 out-of-scope：${unmapped.join('、')}（漏建模的屏不会进视觉比对）。`,
+      suggestion: '逐图建模或显式登记（登记进决议账本 must_review）。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `${images.length} 张参考图全部映射/合法登记（out-of-scope ${oosCount}）。`,
+  }];
+}
+
+/**
+ * t6：把「有截图+完全参考类措辞却用 semantic_layout=禁止的降级」从 prose 机器化。
+ * 事故对位：原始需求「完全参考」×7，spec 自声明 semantic_layout，整条视觉硬门禁失效；
+ * fidelity-shared G2 注释自证 homepage 同模式复发（此前 TS 侧只有弱 nudge，无门禁）。
+ * 豁免=fidelity_deferrals 真人签字降档条目（自动化身份/user_requirement 不算；
+ * goal 环境须留名）——且仅降级 WARN，不产生干净通过。
+ */
+function checkFidelityIntentReconciliation(ctx: CheckContext): CheckResult[] {
+  const id = 'fidelity_intent_reconciliation';
+  const description = '保真档位声明 vs 需求 SSOT 强意图对账（强 1:1 意图禁止静默降档）';
+  const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
+  if (!specMd) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: 'spec.md 不存在。' }];
+  }
+  const handoff = parseVisualHandoffYamlRoot(specMd);
+  const declared = parseFidelityTargetFromHandoffDoc(handoff);
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const reqText = collectRequirementIntentText(ctx.projectRoot, ctx.feature, featuresDirRel) || specMd;
+  const intent = detectFidelityIntent(reqText);
+  if (intent !== 'strong_pixel' || declared === 'pixel_1to1') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `intent=${intent}，declared=${declared}——无禁止的降级。`,
+    }];
+  }
+  const deferrals = parseFidelityDeferrals(handoff);
+  const headless = isGoalOrchestrationEnv();
+  const covering = deferrals.find(
+    (d) => /fidelity|档位|降档|pixel/i.test(`${d.element_id} ${d.reason ?? ''}`) &&
+      isHumanSignedDeferral(d, { requireExplicitSigner: headless }),
+  );
+  if (covering) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MAJOR', status: 'WARN',
+      details:
+        `需求 SSOT 为强 1:1 意图但声明 ${declared}——已有真人签字降档 deferral` +
+        `（${covering.element_id}, signed_by=${covering.signed_by ?? 'n/a'}）。降级不洗白：run 封顶 AWAITING_HUMAN_REVIEW。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      `需求 SSOT 命中强 1:1 还原意图（完全参考/像素级/1比1 类措辞），但 spec 声明 fidelity_target=${declared}` +
+      '——禁止的降级（bc-openCard/homepage 双事故同模式）。',
+    suggestion:
+      '将 fidelity_target 改为 pixel_1to1；或经用户确认在 fidelity_deferrals 增加真人签字降档条目' +
+      '（human_signed: true + signed_by 真人署名；goal-mode-auto/user_requirement 不算）。',
+  }];
+}
 
 export default checker;

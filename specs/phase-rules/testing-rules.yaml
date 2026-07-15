@@ -20,6 +20,43 @@ applies_to:
 # --------------------------------------------------------------------------
 structure_checks:
 
+  # ---- review 闭环源码快照对账（goal-fakepass-hardening t2）----
+
+  review_closure_attestation:
+    description: >
+      testing 期产品源码 vs review-closure-attestation.json 固化 inventory 对账
+      （走树=冻结 roots ∪ 当前重 discovery，新增整模块可见）。缺 attestation 或任何
+      新增/修改/删除/新 root → BLOCKER FAIL，指引回跑 review 闭环重审；无 grace window。
+      review 阶段被 profile 禁用 → SKIP。防线针对：测试期写入行为开关（如
+      DEVICE_TEST_FAST_PATH=true）短路用户流程、review 审过的代码与真机跑的不是同一份。
+
+  product_behavior_switch_scan:
+    description: >
+      产品源码（非测试目录）测试性行为开关扫描：命名命中
+      FAST_PATH/TEST_ONLY/FOR_TEST/DEVICE_TEST/E2E_ONLY/BYPASS/SKIP_(SMS|VERIFY|AUTH)
+      且初始化为 true → BLOCKER。waiver 须 behavior-switch-waivers.yaml 精确坐标
+      （file+symbol+content_sha256）+ t10 confirmation receipt，且仅降级 WARN、
+      run 封顶 AWAITING_HUMAN_REVIEW（不洗白）。defense-in-depth：主防线为
+      review_closure_attestation 与 P0 语义链。
+
+  p0_coverage_integrity:
+    description: >
+      P0 用例覆盖 fail-closed（goal-fakepass-hardening t5）：explicit_skip/未执行的
+      P0 须逐条 p0_skip_waiver receipt，否则 BLOCKER（failure_kind=await_human_p0_skip
+      → goal 首触即 halt 求人）；waived 仅降级 WARN 且 run 封顶 AWAITING_HUMAN_REVIEW。
+
+  p0_pass_rate_dual_metrics:
+    description: >
+      通过率双口径对账（t5）：全分母执行覆盖率与通过率分列重算；存在任何 P0 skip 时
+      报告结论不得无条件「达标」（bc-openCard：7/7=100% 冒充 18 条全量）。
+
+  p0_semantic_coverage_integrity:
+    description: >
+      P0 结构化状态迁移证据（t4b）：对账派生 Hylyre 计划 step 序列——映射完整/禁纯 wait
+      冒充/动作须指向 checkpoint.target_element_id/其后须 wait_for required_element_ids/
+      flow 每条中间屏边须有已执行且通过的 owning TC（「点银行直达成功页」确定性死刑）。
+      运行时 hit-test/页面签名为 provider 采集扩展 deferred 项（change tasks 显式登记）。
+
   # ---- 测试计划 ----
 
   plan_required_chapters:

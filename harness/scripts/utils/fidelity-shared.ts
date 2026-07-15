@@ -2,6 +2,7 @@
 // fidelity-shared.ts — fidelity_target / asset_acquisition_mode / severity ratchet
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -180,6 +181,215 @@ const PIXEL_1TO1_INTENT_PATTERNS: readonly RegExp[] = [
 export function detectPixel1to1Intent(text: string | null | undefined): boolean {
   if (typeof text !== 'string' || !text.trim()) return false;
   return PIXEL_1TO1_INTENT_PATTERNS.some(re => re.test(text));
+}
+
+// ----------------------------------------------------------------------------
+// goal-fakepass-hardening t6：三态意图 + 需求 SSOT 解引用 + 只升不降
+// ----------------------------------------------------------------------------
+
+/**
+ * ambiguous 信号：提到与截图/设计稿一致但非强 1:1 措辞（"尽量与截图一致"命中此类）——
+ * 不自动定档，进确认流（headless preflight halt / 交互态问用户）。
+ * bc-openCard 事故：manifest 摘要只有此类弱措辞，而被引用的原始需求.md「完全参考」×7
+ * 是强信号——检测必须在解引用后的合并文本上做。
+ */
+export const AMBIGUOUS_SCREENSHOT_INTENT_PATTERNS: readonly RegExp[] = [
+  /(与|跟|和)(参考)?(截图|设计稿|原图|效果图|参考图)[^。\n]{0,8}(一致|对齐|还原)/,
+  /(按照?|参考|依照)(截图|设计稿|原图|效果图|参考图)/,
+];
+
+export type FidelityIntent = 'strong_pixel' | 'ambiguous' | 'none';
+
+/** 三态意图：强信号（既有关键词表）优先于 ambiguous；两者皆无 → none。 */
+export function detectFidelityIntent(text: string | null | undefined): FidelityIntent {
+  if (typeof text !== 'string' || !text.trim()) return 'none';
+  if (detectPixel1to1Intent(text)) return 'strong_pixel';
+  if (AMBIGUOUS_SCREENSHOT_INTENT_PATTERNS.some((re) => re.test(text))) return 'ambiguous';
+  return 'none';
+}
+
+const REQUIREMENT_DOC_TOKEN_RE = /[\w\-./一-龥]+\.(?:md|txt|yaml)/g;
+const REQUIREMENT_DOC_MAX_BYTES = 256 * 1024;
+
+/**
+ * 需求文本解引用：requirement 中出现的相对路径 token（存在、≤256KB、限 doc/ 与
+ * features_dir 前缀）读入合并。事故对位：runner 只对 manifest 摘要做意图检测，
+ * SSOT 文档从未被读过。
+ */
+export function dereferenceRequirementDocs(
+  projectRoot: string,
+  requirement: string | null | undefined,
+  opts?: { featuresDirRel?: string },
+): { combined: string; resolvedPaths: string[] } {
+  const base = typeof requirement === 'string' ? requirement : '';
+  if (!base.trim()) return { combined: base, resolvedPaths: [] };
+  const featuresDirRel = (opts?.featuresDirRel ?? 'doc/features').replace(/\\/g, '/');
+  const allowedPrefixes = ['doc/', featuresDirRel.endsWith('/') ? featuresDirRel : `${featuresDirRel}/`];
+  const seen = new Set<string>();
+  const parts = [base];
+  const resolvedPaths: string[] = [];
+  let m: RegExpExecArray | null;
+  REQUIREMENT_DOC_TOKEN_RE.lastIndex = 0;
+  while ((m = REQUIREMENT_DOC_TOKEN_RE.exec(base)) !== null) {
+    const rel = m[0].replace(/\\/g, '/').replace(/^\.\//, '');
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    if (!allowedPrefixes.some((p) => rel.startsWith(p))) continue;
+    const abs = path.resolve(projectRoot, rel);
+    if (!abs.startsWith(path.resolve(projectRoot) + path.sep)) continue; // 越界防线
+    try {
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      if (fs.statSync(abs).size > REQUIREMENT_DOC_MAX_BYTES) continue;
+      parts.push(fs.readFileSync(abs, 'utf-8'));
+      resolvedPaths.push(rel);
+    } catch {
+      /* 不可读跳过 */
+    }
+  }
+  return { combined: parts.join('\n\n'), resolvedPaths };
+}
+
+/**
+ * 需求 SSOT 意图文本收集（check-spec 对账门禁消费）：全部 goal-run manifest 的
+ * requirement + 各自解引用文档合并；无 goal run（纯交互）→ 空串（调用方回退 spec.md）。
+ */
+export function collectRequirementIntentText(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+): string {
+  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  if (!fs.existsSync(runsDir)) return '';
+  const parts: string[] = [];
+  try {
+    for (const ent of fs.readdirSync(runsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!ent.isDirectory()) continue;
+      const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) continue;
+      try {
+        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
+        if (typeof m.requirement === 'string' && m.requirement.trim()) {
+          parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).combined);
+        }
+      } catch { /* 单 manifest 损坏跳过 */ }
+    }
+  } catch { /* runsDir 不可读 */ }
+  return parts.join('\n\n');
+}
+
+/**
+ * 需求 SSOT 引用文档路径集（codex 六轮 P0-5：manifest.requirement 引用的原始需求/
+ * 解引用文档必须进阶段血缘，否则改原始需求后上游 closure 仍判 fresh）。扫全部
+ * goal-run manifest 的 requirement，返回项目根相对路径去重集（供 evidence extraInputs）。
+ * ux-reference 目录下的参考图同样纳入（UI feature 的视觉 SSOT）。
+ */
+export function collectRequirementSsotPaths(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+): string[] {
+  const out = new Set<string>();
+  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  if (fs.existsSync(runsDir)) {
+    try {
+      for (const ent of fs.readdirSync(runsDir, { withFileTypes: true })) {
+        if (!ent.isDirectory()) continue;
+        const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
+        if (!fs.existsSync(manifestPath)) continue;
+        // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
+        //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
+        // 需求改写对 closure 隐形。
+        out.add(path.join(featuresDirRel, feature, 'goal-runs', ent.name, 'manifest.json').split(path.sep).join('/'));
+        try {
+          const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
+          for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).resolvedPaths) {
+            out.add(rel);
+          }
+        } catch { /* 单 manifest 损坏跳过 */ }
+      }
+    } catch { /* runsDir 不可读 */ }
+  }
+  // ux-reference 参考图
+  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
+  try {
+    if (fs.existsSync(uxDir)) {
+      for (const f of fs.readdirSync(uxDir)) {
+        if (/\.(jpe?g|png|webp|bmp)$/i.test(f)) {
+          out.add(path.join(featuresDirRel, feature, 'ux-reference', f).split(path.sep).join('/'));
+        }
+      }
+    }
+  } catch { /* 忽略 */ }
+  return [...out].sort();
+}
+
+/**
+ * 单个 run 的规范化 requirement 内容哈希（codex 八轮 P0-2：closure 血缘须绑定"当前权威
+ * run 的 requirement"，而非扫描所有历史 manifest 文件路径）。取该 run manifest.requirement
+ * 内联文本 + 解引用文档内容 + ux-reference 文件内容的稳定摘要——内容 hash 而非文件 hash，
+ * 故换 run（新文件路径）带来的新需求也能被检测。runId 缺失/manifest 不可读 → null。
+ */
+export function computeRunRequirementSha(
+  projectRoot: string,
+  feature: string,
+  runId: string | undefined,
+  featuresDirRel = 'doc/features',
+): string | null {
+  if (!runId) return null;
+  const manifestPath = path.join(projectRoot, featuresDirRel, feature, 'goal-runs', runId, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return null;
+  let requirement: string;
+  try {
+    requirement = (JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string }).requirement ?? '';
+  } catch {
+    return null;
+  }
+  const deref = dereferenceRequirementDocs(projectRoot, requirement, { featuresDirRel });
+  const parts = [`inline:${requirement}`];
+  for (const rel of deref.resolvedPaths.sort()) {
+    try {
+      parts.push(`${rel}:${fs.readFileSync(path.join(projectRoot, rel), 'utf-8')}`);
+    } catch { /* skip */ }
+  }
+  // ux-reference 文件内容摘要（存在才计）
+  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
+  try {
+    if (fs.existsSync(uxDir)) {
+      for (const f of fs.readdirSync(uxDir).sort()) {
+        if (!/\.(jpe?g|png|webp|bmp)$/i.test(f)) continue;
+        const buf = fs.readFileSync(path.join(uxDir, f));
+        parts.push(`ux:${f}:${crypto.createHash('sha256').update(buf).digest('hex')}`);
+      }
+    }
+  } catch { /* skip */ }
+  return crypto.createHash('sha256').update(parts.join('\n'), 'utf-8').digest('hex');
+}
+
+const FIDELITY_TIER_RANK: Record<FidelityTarget, number> = {
+  reference_only: 0,
+  semantic_layout: 1,
+  pixel_1to1: 2,
+};
+
+/**
+ * `--fidelity`/manifest.fidelity 只升不降（codex 三轮 P0-2：headless agent 可代跑命令
+ * 自带 flag，flag ≠ 用户授权）：requested < detected → 无效（降档唯一通道=t10 receipt，
+ * 调用方在凭证校验通过后显式传 downgradeAuthorized）。
+ */
+export function resolveRequestedFidelity(
+  detected: FidelityTarget,
+  requested: FidelityTarget | undefined,
+  downgradeAuthorized = false,
+): { effective: FidelityTarget; rejectedDowngrade: boolean } {
+  if (!requested || !FIDELITY_TARGETS.has(requested)) {
+    return { effective: detected, rejectedDowngrade: false };
+  }
+  if (FIDELITY_TIER_RANK[requested] >= FIDELITY_TIER_RANK[detected]) {
+    return { effective: requested, rejectedDowngrade: false };
+  }
+  return downgradeAuthorized
+    ? { effective: requested, rejectedDowngrade: false }
+    : { effective: detected, rejectedDowngrade: true };
 }
 
 /** pixel_1to1 联动：默认抬升 user_dir */

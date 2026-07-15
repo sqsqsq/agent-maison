@@ -36,6 +36,36 @@
 
 ---
 
+## goal 无头假 PASS 事故链根治（goal-fakepass-hardening）——四项 Breaking
+
+> 立项动因：bc-openCard 事故（goal 无头链绿灯放行严重残次品）。openspec change
+> `goal-fakepass-hardening`；plan e3a9c5d1。
+
+1. **review closure attestation 无 grace window**：check-testing 新 BLOCKER
+   `review_closure_attestation`——存量 feature 首次跑新版 testing 前**必须补跑一次
+   review 闭环**（`check-receipt --phase review` 通过时自动生成
+   `review/reports/review-closure-attestation.json`）。review 后任何产品源码变更（含
+   contracts 未登记的新文件/新模块）→ testing FAIL，回跑 review 重审。
+2. **goal run 状态枚举重命名**：成功侧不再产出裸 `COMPLETED`——新枚举
+   `CHAIN_SLICE_COMPLETED`（仅链切片语义）/`AWAITING_HUMAN_REVIEW`（存在待人工事项封顶）/
+   `DEFERRED_CAPABILITY_MISSING`（强 1:1 意图+缺视觉能力 preflight 终态）。feature 级完成
+   只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`）——旧 run 的
+   `COMPLETED` 事件仅保留读取兼容。
+3. **headless 决议账本改 JSONL**：goal 环境阶段闭环强制
+   `<phase>/headless-assumptions.jsonl`（schema + registry 完整性 BLOCKER 校验，见
+   user-confirmation-ux §9.3）；markdown 降为人读投影。
+4. **P0 AC 结构化 checkpoint 强制**：存在 P0 device 交互 AC 的 feature，acceptance.yaml
+   须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
+   ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
+   P0 用例 skip 须逐条 `p0_skip_waiver` confirmation receipt，否则 testing FAIL 且 goal
+   首触 halt（`await_human_p0_skip`）。
+
+配套：confirmation receipt 消费面已落地（`confirmation-trust-registry.json` 预置信任锚；
+签发体系为后继 change `confirmation-credential-issuance`——落地前所有降硬门禁授权不可用，
+相关 feature 封顶 `AWAITING_HUMAN_REVIEW`，属诚实现状）。
+
+---
+
 ## device visual-diff 缺陷枚举契约（round2）
 
 `visual-diff.json` 每屏新增可选 `defects[]`（正向渲染缺陷枚举：`clipping`|`overlap`|`shape_mismatch`|`missing_render`|`other` + `bbox` + `severity` + `note`）与采集层自动写入的 `edge_tile_divergence`/`edge_over_threshold_tiles`。

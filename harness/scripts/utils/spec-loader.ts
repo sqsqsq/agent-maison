@@ -73,7 +73,9 @@ const ARCHIVE_EXTENSIONS = [
   '.tbz2',
 ];
 
-const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
+// phase-evidence-manifest.ts（goal-fakepass-hardening t8）复用两表作为各阶段"真实读取面"
+// SSOT——增删阶段文件只改这里，evidence manifest 自动传导，禁止另立手写表。
+export const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   spec: ['spec.md', 'acceptance.yaml'],
   plan: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
   coding: ['plan.md', 'acceptance.yaml', 'contracts.yaml'],
@@ -82,7 +84,7 @@ const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   testing: ['spec.md', 'plan.md', 'acceptance.yaml'],
 };
 
-const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
+export const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   review: ['spec.md'],
   ut: ['use-cases.yaml'],
   testing: ['contracts.yaml', 'use-cases.yaml', 'review-report.md'],

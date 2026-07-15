@@ -37,14 +37,23 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 证据：`doc/features/<feature>/goal-runs/<run-id>/manifest.json`、`events.jsonl`、`goal-report.{md,json}`。
 
-## 状态语义
+## 状态语义（goal-fakepass-hardening 后）
 
 | 最终状态 | 含义 |
 |----------|------|
-| `COMPLETED` | 全链 PASS，无 DEFERRED |
+| `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
+| `AWAITING_HUMAN_REVIEW` | 链切片 PASS 但存在待人工事项（账本待复核 / waiver / 档位钳制 / flow_contract 缺 receipt）——封顶态，不得视为干净成功 |
+| `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行 |
+| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；新 halt 类：`await_human_p0_skip`（P0 用例被 skip 待真人裁决——修可测性 / DEFERRED 登记 / receipt waiver 三选一后 resume）、`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑） |
+| `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
+
+**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
+返回 `VALID`（重算全链 clean_pass/血缘/attestation/supersede 审计；伪造/缩链/世界后变
+分别判 INVALID/STALE）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
+closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
+废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 

@@ -40,6 +40,7 @@ import {
 } from '../config';
 import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, isCodingVisualParitySkipped, dispatchCodingVisualParity } from '../capability-registry';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
 // --------------------------------------------------------------------------
@@ -564,10 +565,22 @@ const checker: PhaseChecker = {
     );
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
 
+    // --- goal-fakepass-hardening t3：产品行为开关扫描（coding 期早警，与 testing 同门禁）---
+    results.push(
+      ...safeRun(
+        () => buildBehaviorSwitchCheckResult({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding' }),
+        'product_behavior_switch_scan',
+      ),
+    );
+
+    // t9 Resource 模板串插值 lint 实现于 hmos profile coding host（runStructureChecks），
+    // 根级 checker 保持宿主中性（root-zero-host-name 元测试约束）。
+
     results.push(buildCodingRunStatusResult(ctx, results));
 
     return results;
   },
 };
+
 
 export default checker;

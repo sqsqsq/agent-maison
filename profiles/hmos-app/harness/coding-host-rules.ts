@@ -1362,7 +1362,44 @@ function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckR
   out.push(...checkNoAnyType(ctx));
   out.push(...checkAsyncAwaitPattern(ctx));
   out.push(...runArkuiStaticRules(ctx, analyses));
+  out.push(...checkResourceStringInterpolation(ctx, analyses));
   return out;
+}
+
+/**
+ * t9（goal-fakepass-hardening）：模板字符串内 `${$r(...)}` 插值 lint——Resource 对象
+ * 进模板串渲染为 [object Object]（bc-openCard 卡包实锤：BankCardPackSection 标题行）。
+ * 确定性缺陷，防线独立于视觉比对。
+ */
+function checkResourceStringInterpolation(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
+  const id = 'resource_string_interpolation';
+  const description = '模板字符串 Resource 插值 lint（`${$r(...)}` → [object Object]）';
+  const RE = /\$\{\s*\$r\(/;
+  const hits: string[] = [];
+  for (const a of analyses) {
+    const abs = path.isAbsolute(a.filePath) ? a.filePath : path.join(ctx.projectRoot, a.filePath);
+    let content: string;
+    try {
+      content = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    if (!RE.test(content)) continue;
+    const rel = path.relative(ctx.projectRoot, abs).replace(/\\/g, '/');
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (RE.test(lines[i])) hits.push(`${rel}:${i + 1} ${lines[i].trim().slice(0, 120)}`);
+    }
+  }
+  if (hits.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `模板字符串内插值 $r() Resource 对象（渲染为 [object Object]，${hits.length} 处）：\n` + hits.slice(0, 8).join('\n') + (hits.length > 8 ? '\n…' : ''),
+      suggestion: '改用 resourceManager.getStringSync($r(...).id)，或将 Resource 直接传给组件属性而非拼进字符串。',
+    }];
+  }
+  return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: '未发现模板串 Resource 插值。' }];
 }
 
 function runTraceabilityChecks(ctx: CheckContext): CheckResult[] {

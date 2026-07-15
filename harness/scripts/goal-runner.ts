@@ -30,6 +30,8 @@ import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/mu
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
+  computeRunRequirementSha,
+  dereferenceRequirementDocs,
   detectPixel1to1Intent,
   detectUiRelevantRequirement,
   discoverReferenceImagesForOcrPrescan,
@@ -46,12 +48,23 @@ import {
 } from './utils/ui-spec-shared';
 import {
   classifyPhaseVerdict,
+  featurePhasesFromWorkflow,
   formatDeferredUpstreamNotice,
   resolveAutoChain,
   resolveGoalRunStatus,
   type FeaturePhase,
+  type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
+import { collectAutoDecisions, countPendingMustReview } from './utils/headless-assumptions';
+import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
+import { loadReviewClosureAttestation } from './utils/closure-attestation';
+import {
+  classifyCleanPassIssues,
+  collectCleanPassIssues,
+  generateFeatureCompletion,
+  resolvePhaseRunIds,
+} from './utils/verify-feature-completion';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { mergeUsageIntoTraceFile } from './utils/usage-capture';
@@ -133,6 +146,7 @@ import {
   reconcileRunAdapter,
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
+  evaluateFidelityTierPreflight,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
 import {
@@ -232,6 +246,8 @@ function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
     end: typeof argv.end === 'string' ? argv.end : undefined,
     adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
     requirement: typeof argv.requirement === 'string' ? argv.requirement : undefined,
+    fidelity: typeof argv.fidelity === 'string' ? argv.fidelity : undefined,
+    'fidelity-receipt': typeof argv['fidelity-receipt'] === 'string' ? argv['fidelity-receipt'] : undefined,
     'override-start': Boolean(argv['override-start']),
     'override-end': Boolean(argv['override-end']),
     'override-manifest': Boolean(argv['override-manifest']),
@@ -537,7 +553,8 @@ function buildUnattendedExecutionBlock(
   capabilityAdvisory?: CapabilityAdvisory,
 ): string[] {
   const approval = manifest.unattended?.approval_mode ?? 'never';
-  const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
+  const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.jsonl`);
+  const assumptionsMdRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
   // E0（cursor 采纳：同 prompt 自相矛盾预防）——原文硬编码「唯一出路是 pixel_1to1 P0 屏人工
   // 确认」；盲档下 effective fidelity 根本到不了 pixel_1to1，这句话与能力块（若同时注入）自相
   // 矛盾。按 capabilityAdvisory（与能力块同源取值）分支措辞；未传入（非 UI phase）时保留原文。
@@ -569,8 +586,19 @@ function buildUnattendedExecutionBlock(
     '',
     'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
     '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
-    `- Record **every** auto-decision in \`${assumptionsRel}\` with provenance \`auto-approved (goal-mode), pending human review\`.`,
-    '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log deferred request in headless-assumptions.md.',
+    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; check-receipt`,
+    '  BLOCKER-validates schema and registry completeness — a gate without a ledger line fails the phase closure):',
+    '  `{"decision_id":"<unique>","run_id":"<this run id>","phase":"<phase>","gate_id":"<registry id>",' +
+      '"class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<what you chose, or n/a: reason>",' +
+      '"must_review":true|false,"source":"agent","ts":"<ISO 8601>"}`',
+    `- Optionally mirror a human-readable table in \`${assumptionsMdRel}\` (projection only — never the SSOT).`,
+    '- Ledger records are **not** authorization: any hard-gate-lowering decision (fidelity downgrade, P0 skip',
+    '  waiver, conditional-review authorization, behavior-switch waiver) requires an out-of-band confirmation',
+    '  receipt; without one the run caps at AWAITING_HUMAN_REVIEW.',
+    '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log the deferred request as a ledger line (must_review=true).',
+    '- Product source under test phases is attestation-locked: any product-code change after review closure',
+    '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
+    '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',
@@ -821,8 +849,11 @@ export function resolvePhaseCapabilityAdvisory(
     isUiRelevant = uiChange !== null && UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
     desired = parseFidelityTargetFromHandoffDoc(parseVisualHandoffYamlRoot(specMd));
   } else {
-    isUiRelevant = detectUiRelevantRequirement(manifest.requirement);
-    desired = detectPixel1to1Intent(manifest.requirement) ? 'pixel_1to1' : 'semantic_layout';
+    // t6：意图检测在解引用后的合并文本上做——manifest 摘要只写 SSOT 路径+弱措辞而
+    // 原始需求.md「完全参考」×7 是强信号（bc-openCard 事故原形）。
+    const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement);
+    isUiRelevant = detectUiRelevantRequirement(deref.combined);
+    desired = detectPixel1to1Intent(deref.combined) ? 'pixel_1to1' : 'semantic_layout';
   }
   if (!isUiRelevant) return null;
 
@@ -979,7 +1010,13 @@ export function resolveOrphanedIncompleteRun(
   if (!runId) return null; // unidentifiable owner → fall through (steal stale lock)
   const events = loadEventsJsonl(path.join(featureRunsDirAbs, runId, 'events.jsonl'));
   const end = resolveEffectiveRunEnd(events);
-  if (end?.status === 'COMPLETED') return null; // prior run finished; only a leftover lock
+  if (
+    end?.status === 'COMPLETED' || // legacy
+    end?.status === 'CHAIN_SLICE_COMPLETED' ||
+    end?.status === 'AWAITING_HUMAN_REVIEW'
+  ) {
+    return null; // prior run finished; only a leftover lock
+  }
   const reason = isPidAlive(existing.pid) ? 'lock 心跳超时（owner 未释放）' : 'owner 进程已退出';
   return { runId, reason };
 }
@@ -1418,6 +1455,51 @@ Goal runner — tool-agnostic multi-phase orchestrator
       resolvedProfile,
     });
 
+    // goal-fakepass-hardening t8：截断链 preflight——start_phase 非链首时机器核验上游
+    // closure（血缘重算 + review attestation），manifest.requirement 的文本断言不作数
+    // （bc-openCard 事故：run2 以"上游已 PASS"文本断言直接从 ut 起跑）。
+    const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+    if (!dryRun && !argv.resume && chain[0] !== fullWorkflowChain[0]) {
+      const upstream = fullWorkflowChain.slice(0, fullWorkflowChain.indexOf(chain[0])).map(String);
+      // P0-2（八轮）+九轮 P0：比对**当前 run** 的 requirement 与上游 closure 记录的——
+      // 换需求起截断链时上游 closure 判 stale。当前 SHA 不可计算=无法证明需求血缘，
+      // goal 环境直接 BLOCKER（fail-closed，不静默跳过比较）。
+      const currentReqSha = computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir);
+      if (currentReqSha === null) {
+        console.error(
+          '[goal-runner] BLOCKER: 截断链核验无法计算当前 run 的 requirement 血缘哈希' +
+            `（goal-runs/${manifest.run_id}/manifest.json 缺失/不可读）——fail-closed，拒绝启动。`,
+        );
+        process.exit(1);
+      }
+      const staleness = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, upstream, {
+        currentRequirementSha: currentReqSha,
+      });
+      const bad = staleness.filter((r) => r.verdict !== 'fresh');
+      const missingAttestation =
+        upstream.includes('review') && !loadReviewClosureAttestation(projectRoot, manifest.feature);
+      if (bad.length > 0 || missingAttestation) {
+        console.error('[goal-runner] BLOCKER: 截断链上游 closure 核验失败——拒绝启动：');
+        for (const r of bad) {
+          const detail =
+            r.verdict === 'missing'
+              ? '缺 phase-evidence-manifest（旧版产物/未闭环，须补跑该阶段闭环）'
+              : r.propagated_from
+                ? `传染自上游 ${r.propagated_from}`
+                : `证据变更：${[...r.changed_paths, ...(r.receipt_changed ? ['<receipt>'] : []), ...(r.integrity_errors ?? [])].join('、')}`;
+          console.error(`  - [${r.phase}] ${r.verdict}：${detail}`);
+        }
+        if (missingAttestation) {
+          console.error('  - [review] 缺 review-closure-attestation.json（须回跑 review 闭环生成）');
+        }
+        console.error('  修复后重试，或从受影响的最上游阶段重新起链（--start）。');
+        process.exit(1);
+      }
+      emitMilestone(
+        `GOAL_RUN event=upstream_closure_verified phases=${upstream.join(',')} run_id=${manifest.run_id}`,
+      );
+    }
+
     // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
     // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
     // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
@@ -1514,6 +1596,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain,
     });
     flushProgress(true);
+
+    // goal-fakepass-hardening t8：--supersede <run_id>（可重复）——显式废弃 HALTED/PARTIAL
+    // 旧 run，写审计事件；completion verify 只认经审计的 supersede（自报 Set 不生效）。
+    const supersededRunIds: string[] = ([] as string[])
+      .concat(argv.supersede ?? [])
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+    for (const target of supersededRunIds) {
+      const targetEvents = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target, 'events.jsonl');
+      if (!fs.existsSync(targetEvents)) {
+        console.error(`[goal-runner] BLOCKER: --supersede 目标 run 不存在：${target}`);
+        process.exit(1);
+      }
+      appendEvent(manifest.report_dir, projectRoot, { type: 'supersede', target_run_id: target });
+      emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
+    }
+
+    // goal-fakepass-hardening t6：保真档位 preflight（agent 尚未被调用，不烧 run）——
+    // 强意图+缺视觉 → DEFERRED_CAPABILITY_MISSING；ambiguous+有图+未预授权 → halt 问人。
+    if (!argv.resume && !dryRun) {
+      const fidelityAction = evaluateFidelityTierPreflight({
+        projectRoot,
+        frameworkRoot,
+        manifest,
+        featuresDirRel: featuresDir,
+        chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
+      });
+      if (fidelityAction.action !== 'proceed') {
+        const status: GoalRunStatus =
+          fidelityAction.action === 'defer_capability_missing' ? 'DEFERRED_CAPABILITY_MISSING' : 'HALTED';
+        console.error(`\n[goal-runner] fidelity preflight → ${status}：\n${fidelityAction.detail}\n`);
+        const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, []);
+        writeGoalReport(projectRoot, manifest.report_dir, report, {
+          workflowChain: fullWorkflowChain.map(String),
+        });
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'run_end',
+          status,
+          ...(fidelityAction.action === 'await_human_fidelity_tier'
+            ? { halt_reason: 'await_human_fidelity_tier' }
+            : {}),
+        });
+        runConcluded = true;
+        emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
+        return fidelityAction.action === 'defer_capability_missing' ? 2 : 1;
+      }
+    }
 
     const cap = loadGoalCapability(frameworkRoot, manifest.adapter!);
     let outcomes: GoalPhaseOutcome[] = [];
@@ -2093,6 +2221,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
           console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'await_human_p0_skip' && verdict !== 'PASS') {
+          // t5（goal-fakepass-hardening）：P0 用例 skip 无凭证 waiver——agent 不可自决
+          // P0 去留，重试只会复现同 skip → 首触即 halt 求人；skip 清单与双口径在
+          // blocker details（p0_coverage_integrity）。
+          action = 'halt';
+          haltReason = 'await_human_p0_skip';
+          awaitConfirmGuidance = [
+            '===== await_human_p0_skip（P0 用例被跳过，须真人裁决）=====',
+            `feature=${manifest.feature} run_id=${manifest.run_id}`,
+            '- 被跳过的 P0 用例与全分母双口径见 testing summary 的 p0_coverage_integrity blocker details。',
+            '- 三条出路：①修复可测性后去 skip 重跑；②外部环境阻塞 → 按 DEFERRED 流程登记；',
+            '  ③确需豁免 → 真人经带外体系签发 p0_skip_waiver receipt，写入 testing/skip-waivers.yaml',
+            '  （逐条 tc_id + receipt_path），然后 --resume。waiver 只降级不洗白（run 封顶 AWAITING_HUMAN_REVIEW）。',
+          ].join('\n');
+          console.log(`\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS') {
           // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
           // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
@@ -2324,7 +2467,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...((haltReason === 'await_human_visual_confirm' || haltReason === 'closure_wall_repeated') &&
+          ...((haltReason === 'await_human_visual_confirm' || haltReason === 'closure_wall_repeated' || haltReason === 'await_human_p0_skip') &&
           awaitConfirmGuidance
             ? { halt_guidance: awaitConfirmGuidance }
             : {}),
@@ -2357,10 +2500,70 @@ Goal runner — tool-agnostic multi-phase orchestrator
       agent_timed_out: o.agent_timed_out,
       advance_blocked: o.advance_blocked,
     }));
-    const status = resolveGoalRunStatus(phaseRecords, reachedEnd);
+    // t8/P1-1/P1-2：全链跑完时消费真实门禁信号（与 completion 生成同源 issues 集）——
+    // needs_human（flow_contract/waiver/档位钳制/待复核/运行时证据）→ AWAITING_HUMAN_REVIEW；
+    // needs_fix（verdict FAIL/stale/tampered/attestation 失配）→ 不得 CHAIN_SLICE_COMPLETED
+    // （codex 八轮 P1-2：needs_fix 之前被写成成功态是强错觉）。
+    let pendingHumanReview = false;
+    let blockingFix = false;
+    if (reachedEnd) {
+      const cls = classifyCleanPassIssues(
+        collectCleanPassIssues({
+          projectRoot,
+          feature: manifest.feature,
+          chain: fullWorkflowChain.map(String),
+          currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
+        }),
+      );
+      pendingHumanReview = cls.needsHuman;
+      blockingFix = cls.needsFix;
+    } else {
+      pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
+    }
+    const status = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
-    writeGoalReport(projectRoot, manifest.report_dir, report);
+    writeGoalReport(projectRoot, manifest.report_dir, report, {
+      workflowChain: fullWorkflowChain.map(String),
+    });
     appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+
+    // t8：feature 完成凭证——仅当全链（按 track 解析）逐阶段 clean_pass 才生成；
+    // 生成失败/不满足只记录，不改变 run 终局（feature 级状态由 verify-feature-completion 判）。
+    if (status === 'CHAIN_SLICE_COMPLETED') {
+      try {
+        const issues = collectCleanPassIssues({
+          projectRoot,
+          feature: manifest.feature,
+          chain: fullWorkflowChain.map(String),
+        });
+        if (issues.length === 0) {
+          const { runIds: phaseRunIds, attempts: phaseAttempts } = resolvePhaseRunIds(
+            projectRoot, manifest.feature, fullWorkflowChain.map(String),
+          );
+          for (const o of outcomes) phaseRunIds[String(o.phase)] = manifest.run_id;
+          const { originalAbs } = generateFeatureCompletion({
+            projectRoot,
+            feature: manifest.feature,
+            chain: fullWorkflowChain.map(String),
+            workflowTrack: goalTrack,
+            runId: manifest.run_id,
+            runDirAbs: path.join(projectRoot, manifest.report_dir),
+            phaseRunIds,
+            phaseAttempts,
+            supersedes: supersededRunIds,
+          });
+          emitMilestone(
+            `GOAL_RUN event=feature_completion_generated path=${path.relative(projectRoot, originalAbs).replace(/\\/g, '/')} run_id=${manifest.run_id}`,
+          );
+        } else {
+          emitMilestone(
+            `GOAL_RUN event=feature_completion_skipped reason=non_clean_pass pending=${issues.length} run_id=${manifest.run_id}`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[goal-runner] feature completion 生成失败（不影响 run 终局）：${(err as Error).message}`);
+      }
+    }
     runConcluded = true; // normal terminal written → suppress the INTERRUPTED safety net
     progressSubstep = null;
     progressPhase = null;

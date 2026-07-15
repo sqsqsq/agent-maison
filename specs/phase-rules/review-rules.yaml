@@ -18,6 +18,14 @@ applies_to: "doc/features/{module}/review/review-report.md"
 # --------------------------------------------------------------------------
 structure_checks:
 
+  conditional_pass_closure:
+    description: >
+      「有条件通过」闭环门禁（goal-fakepass-hardening 洞⑥）：结论=有条件通过 且 问题表
+      存在未标记 已关闭/已修复 的 MAJOR 且 无有效 conditional_review_authorization
+      receipt（绑定报告哈希）→ BLOCKER FAIL，review 不得闭环推进；receipt 有效 → WARN
+      （降级不洗白，run 封顶 AWAITING_HUMAN_REVIEW）。LLM verifier 的 PASS 只证报告可信，
+      不被消费为产品 PASS。
+
   required_chapters:
     description: >
       Review 报告必须包含以下章节：

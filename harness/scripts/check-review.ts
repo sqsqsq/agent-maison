@@ -32,6 +32,11 @@ import {
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import * as crypto from 'crypto';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './utils/confirmation-receipt';
 import { checkFactsArtifact } from './utils/context-facts';
 
 // --------------------------------------------------------------------------
@@ -856,8 +861,71 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
     results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
 
+    // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
+    results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
+
     return results;
   },
 };
+
+/**
+ * 洞⑥（bc-openCard）：review 结论「有条件通过 + 2 MAJOR」在 conclusion_with_verdict
+ * 下无 BLOCKER 即 PASS，goal 照常推进——"修复后重跑或授权 review.ok_to_ut"只是 prose。
+ * 机器化：有条件通过 且 存在未关闭 MAJOR 且 无有效 conditional_review_authorization
+ * receipt → BLOCKER FAIL；receipt 有效 → WARN（降级不洗白，run 封顶
+ * AWAITING_HUMAN_REVIEW）。LLM verifier 的 PASS 只证"报告可信"，不再被消费为"产品 PASS"。
+ */
+function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckResult[] {
+  const id = 'conditional_pass_closure';
+  const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进；授权凭证仅降级）';
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
+  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  if (verdict !== '有条件通过') {
+    return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: `结论=${verdict ?? '未声明'}，本门禁不适用。` }];
+  }
+  const table = getIssueTable(report);
+  let openMajors = 0;
+  if (table) {
+    const iSev = table.headers.findIndex((h) => h.includes('严重程度') || h.includes('严重等级'));
+    const iState = table.headers.findIndex((h) => h.includes('状态'));
+    for (const row of table.rows) {
+      const sev = iSev >= 0 ? (row[iSev] ?? '').trim() : '';
+      if (sev !== 'MAJOR') continue;
+      const state = iState >= 0 ? (row[iState] ?? '').trim() : '';
+      if (!/已关闭|已修复|closed|fixed/i.test(state)) openMajors++;
+    }
+  }
+  if (openMajors === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: '有条件通过但全部 MAJOR 已标记关闭（问题表状态列）。',
+    }];
+  }
+  const receiptPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('review', 'conditional-authorization.receipt.json'));
+  const reportSha = crypto.createHash('sha256').update(report, 'utf-8').digest('hex');
+  const v = validateConfirmationReceiptFile(
+    receiptPath,
+    defaultTrustRegistryPath(ctx.projectRoot),
+    { action: 'conditional_review_authorization', feature: ctx.feature, object_hash: reportSha },
+  );
+  if (v.valid) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MAJOR', status: 'WARN',
+      details: `有条件通过（未闭环 MAJOR ${openMajors} 项）已获真人授权凭证——降级不洗白：run 封顶 AWAITING_HUMAN_REVIEW。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      `结论「有条件通过」且存在未闭环 MAJOR ${openMajors} 项，无有效授权凭证（${v.reasons.slice(0, 2).join('；')}）` +
+      '——review 不得闭环推进（bc-openCard 洞⑥：2 MAJOR 有条件通过照常进 ut/testing）。',
+    suggestion:
+      '修复 MAJOR 后重跑 coding→review（问题表状态列标记 已关闭）；或真人经带外体系签发' +
+      ' conditional_review_authorization receipt（绑定本报告哈希）落 review/conditional-authorization.receipt.json。',
+  }];
+}
 
 export default checker;

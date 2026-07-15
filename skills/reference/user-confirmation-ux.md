@@ -182,13 +182,25 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - **新术语（非 glossary 命中）**：强制 `medium`/`low` → 自动 `[x]` 但 **必入 must-review**；标 `high` 须有 glossary 背书（`check-spec` 对假 high 出 WARN）。
 - **medium / low**：自动放行，标 `DEFERRED-review`；goal-report **顶部** must-review 清单逐条列出（术语、模块、置信度、易混项）。
 
-### 9.3 留痕契约
+### 9.3 留痕契约（goal-fakepass-hardening：JSONL 为机器 SSOT）
 
-路径：`<features_dir>/<feature>/<phase>/headless-assumptions.md`（与 phase 目录同级，如 spec → `.../spec/headless-assumptions.md`）。
+**SSOT 路径**：`<features_dir>/<feature>/<phase>/headless-assumptions.jsonl` —— 每条自动决议一行 JSON：
 
-每条记录含：registry `id` / class / 自动选择 / provenance `auto-approved (goal-mode), pending human review` / 是否 must-review。
+```json
+{"decision_id":"<唯一>","run_id":"<run id>","phase":"<phase>","gate_id":"<registry id>","class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<决议内容，或 n/a: 理由>","must_review":true,"source":"agent","ts":"<ISO 8601>"}
+```
 
-goal-report 须高亮 must-review 与 `agent_interaction_required` 抛回问题。
+- **check-receipt BLOCKER 校验**（goal 环境）：文件缺失 / 行 schema 非法（含 phase/run_id 失配、
+  decision_id 重复、source 非 agent|goal-runner、ts 非法）/ confirmation-registry.yaml 中该
+  phase 任一 gate 无对应行（decision 或显式 `n/a: 理由`）→ 阶段闭环失败。registry 不可读同样
+  fail-closed。
+- `headless-assumptions.md` 降级为**人读投影**（可选）；旧 md-only 现场兼容读取时表格行
+  **保守全量**计入待复核（事故教训：行内正则 vs 表格错配曾让待审清单静默消失）。
+- **账本 ≠ 授权**：任何降低硬门禁的决定（降档 / P0 skip waiver / conditional-review 授权 /
+  行为开关豁免 / flow_contract）只认 confirmation receipt（信任锚见 openspec
+  confirmation-receipts spec）；无有效 receipt → run 封顶 `AWAITING_HUMAN_REVIEW`，
+  不得 `FEATURE_COMPLETED`。
+- goal-report 渲染"自动决议汇总"（JSONL 计数 + 待复核标记），Status 行携带待复核计数。
 
 ### 9.4 与交互态关系
 

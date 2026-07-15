@@ -58,7 +58,10 @@ export type ProgressRunStatus =
   | 'RUNNING'
   | 'STALLED'
   | 'WAITING_EXTERNAL'
-  | 'COMPLETED'
+  | 'CHAIN_SLICE_COMPLETED'
+  | 'AWAITING_HUMAN_REVIEW'
+  | 'DEFERRED_CAPABILITY_MISSING'
+  | 'COMPLETED' // legacy 事件读取兼容（旧 run）；新 run 写 CHAIN_SLICE_COMPLETED
   | 'DEFERRED'
   | 'PARTIAL'
   | 'HALTED'
@@ -180,7 +183,10 @@ interface PhaseSpan {
 }
 
 const TERMINAL_RUN_STATUSES = new Set<ProgressRunStatus>([
-  'COMPLETED',
+  'CHAIN_SLICE_COMPLETED',
+  'AWAITING_HUMAN_REVIEW',
+  'DEFERRED_CAPABILITY_MISSING',
+  'COMPLETED', // legacy
   'DEFERRED',
   'PARTIAL',
   'HALTED',

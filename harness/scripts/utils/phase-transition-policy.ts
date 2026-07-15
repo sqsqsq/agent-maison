@@ -26,7 +26,22 @@ export type PhaseVerdictAction =
   | 'defer_external_and_continue_if_allowed'
   | 'defer_external_and_halt';
 
-export type GoalRunStatus = 'COMPLETED' | 'PARTIAL' | 'DEFERRED' | 'HALTED';
+/**
+ * goal-fakepass-hardening t8（openspec goal-runner delta）：非最终成功状态不得含裸
+ * COMPLETED 语义——run 级成功=CHAIN_SLICE_COMPLETED（只证明本 run 的链切片，feature 级
+ * 完成只认 verify-feature-completion=VALID）；存在待人工事项（pending must-review/
+ * waiver/档位钳制）→ AWAITING_HUMAN_REVIEW 封顶。'COMPLETED' 仅为 legacy 事件读取兼容
+ * （旧 run 的 events.jsonl），新代码不得写出。INTERRUPTED 由 goal-mode-unattended-survival
+ * 管辖（异常退出终态，正交共存）。
+ */
+export type GoalRunStatus =
+  | 'CHAIN_SLICE_COMPLETED'
+  | 'AWAITING_HUMAN_REVIEW'
+  | 'DEFERRED_CAPABILITY_MISSING'
+  | 'PARTIAL'
+  | 'DEFERRED'
+  | 'HALTED'
+  | 'COMPLETED';
 
 export const DEFAULT_TRANSITION_POLICY: TransitionPolicy = 'manual';
 
@@ -137,7 +152,8 @@ export function validateFeatureChainDag(
   }
 }
 
-function featurePhasesFromWorkflow(spec: WorkflowSpec, track: FeatureTrack = 'full'): FeaturePhase[] {
+// export（goal-fakepass-hardening t8）：goal-runner 截断链核验/completion 需要完整链。
+export function featurePhasesFromWorkflow(spec: WorkflowSpec, track: FeatureTrack = 'full'): FeaturePhase[] {
   // workflow feature-scope 集（按 track 过滤，拓扑序）；新 phase 一等公民（C0/C1 收编）。
   return workflowFeaturePhases(spec, track);
 }
@@ -245,7 +261,8 @@ export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVer
 
 /**
  * Compute final goal run status from per-phase outcomes.
- * COMPLETED only when no DEFERRED and not halted early.
+ * 成功终态=CHAIN_SLICE_COMPLETED（仅链切片语义）；opts.pendingHumanReview（待复核决议/
+ * waiver/档位钳制）把否则成功的 run 封顶为 AWAITING_HUMAN_REVIEW——不再产出裸 COMPLETED。
  */
 export function resolveGoalRunStatus(
   phases: Array<{
@@ -256,6 +273,7 @@ export function resolveGoalRunStatus(
     advance_blocked?: boolean;
   }>,
   reachedEnd: boolean,
+  opts?: { pendingHumanReview?: boolean; blockingFix?: boolean },
 ): GoalRunStatus {
   const anyHalted = phases.some((p) => p.halted);
   if (anyHalted) return 'HALTED';
@@ -263,7 +281,11 @@ export function resolveGoalRunStatus(
   if (anyUnclosedTimeout && reachedEnd) return 'PARTIAL';
   const anyDeferred = phases.some((p) => p.deferred);
   if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
-  return reachedEnd ? 'COMPLETED' : 'PARTIAL';
+  if (!reachedEnd) return 'PARTIAL';
+  // codex 八轮 P1-2：needs_fix（血缘 stale/tampered/verdict FAIL/attestation 失配）非人工
+  // 确认事项，但同样不得 CHAIN_SLICE_COMPLETED（那声称链切片干净）——投 PARTIAL（修复重跑）。
+  if (opts?.blockingFix) return 'PARTIAL';
+  return opts?.pendingHumanReview ? 'AWAITING_HUMAN_REVIEW' : 'CHAIN_SLICE_COMPLETED';
 }
 
 /**

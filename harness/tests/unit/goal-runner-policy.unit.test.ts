@@ -95,13 +95,32 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveGoalRunStatus: all pass → COMPLETED',
+    name: 'resolveGoalRunStatus: all pass → CHAIN_SLICE_COMPLETED（t8：成功侧不再产出裸 COMPLETED）',
     run: () => {
       const s = resolveGoalRunStatus(
         [{ phase: 'spec' }, { phase: 'plan' }],
         true,
       );
-      assert(s === 'COMPLETED', s);
+      assert(s === 'CHAIN_SLICE_COMPLETED', s);
+      const capped = resolveGoalRunStatus(
+        [{ phase: 'spec' }, { phase: 'plan' }],
+        true,
+        { pendingHumanReview: true },
+      );
+      assert(capped === 'AWAITING_HUMAN_REVIEW', capped);
+      const halted = resolveGoalRunStatus(
+        [{ phase: 'spec', halted: true }],
+        false,
+        { pendingHumanReview: true },
+      );
+      assert(halted === 'HALTED', halted);
+      // codex 八轮 P1-2：needs_fix（血缘 stale/tampered/verdict FAIL）→ 非 CHAIN_SLICE_COMPLETED
+      const fix = resolveGoalRunStatus(
+        [{ phase: 'spec' }, { phase: 'plan' }],
+        true,
+        { blockingFix: true },
+      );
+      assert(fix === 'PARTIAL', fix);
     },
   },
   {

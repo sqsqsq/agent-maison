@@ -24,6 +24,9 @@ export type FailureKind =
   | 'agent_no_output'
   /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
   | 'await_human_confirm'
+  /** t5（goal-fakepass-hardening）：P0 用例被 skip 且无凭证 waiver——agent 不可自决 P0
+   * 去留，首触即 halt 求人（重试只会复现同 skip，不烧预算）。 */
+  | 'await_human_p0_skip'
   /**
    * t1（plan f7a3d9c2）：指纹级无进展熔断——check 层比对轮次账本（visual-rounds.ledger.jsonl）
    * 判"连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差"。首触即 halt（重试只会
@@ -150,6 +153,7 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
 export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'toolchain',
   'await_human_confirm',
+  'await_human_p0_skip',
 ]);
 
 /** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
@@ -290,6 +294,10 @@ export function classifyFailureKind(
   // 候选且零 must_fix/stale，唯一 BLOCKER=真人确认。agent 不能替人签，重试无意义 → 独立 kind。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
     return 'await_human_confirm';
+  }
+  // t5（goal-fakepass-hardening）：P0 skip 无凭证 waiver——agent 不可自决，首触即 halt 求人。
+  if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_p0_skip')) {
+    return 'await_human_p0_skip';
   }
   // t1（f7a3d9c2）：指纹级无进展熔断——须在 isVisualGapBlockerId 前缀归类**之前**判
   // （fuse blocker id 以 visual_diff 开头，否则被吸成 visual_gap 走粗熔断路径）。

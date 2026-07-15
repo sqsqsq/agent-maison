@@ -107,6 +107,23 @@ export function sanitizeSpawnEnv(env: NodeJS.ProcessEnv): { env: NodeJS.ProcessE
 }
 
 /**
+ * goal-fakepass-hardening t10（codex 六轮 P0-2）：凭证信任锚材料不得进 agent 子进程 env——
+ * HMAC 密钥（MAISON_HMAC_* 前缀约定）与 registry 路径覆盖（MAISON_TRUST_REGISTRY）
+ * 一律剥除；否则"验证密钥对 agent 不可读"是空话（goal agent 继承几乎完整 process.env）。
+ */
+export function stripTrustAnchorEnv(env: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; stripped: string[] } {
+  const next: NodeJS.ProcessEnv = { ...env };
+  const stripped: string[] = [];
+  for (const key of Object.keys(next)) {
+    if (key.startsWith('MAISON_HMAC_') || key === 'MAISON_TRUST_REGISTRY') {
+      delete next[key];
+      stripped.push(key);
+    }
+  }
+  return { env: next, stripped };
+}
+
+/**
  * ④回执 command 校验：harness 调用命令行内的预加载注入特征。
  * 命中=预加载 flag 带非白名单值，或 NODE_OPTIONS/node-options/.node-options 旁路声明。
  */
