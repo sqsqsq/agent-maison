@@ -42,6 +42,7 @@ import {
 } from '../../scripts/utils/goal-runner-phase';
 import {
   buildPhasePrompt,
+  extractPriorFailureContext,
   buildCapabilityBlock,
   resolvePhaseCapabilityAdvisory,
   TRANSIENT_API_BACKOFF_MS,
@@ -456,6 +457,45 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'b4 ut_hvigor_test: device_toolchain 标注 → toolchain',
+      run: () => {
+        const kind = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'ut_hvigor_test', blocking_class: 'device_toolchain' }],
+        });
+        assert(kind === 'toolchain', kind);
+      },
+    },
+    {
+      name: 'b4 ut_hvigor_test: 无结构化标注 → code_regression',
+      run: () => {
+        const kind = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'ut_hvigor_test' }] });
+        assert(kind === 'code_regression', kind);
+      },
+    },
+    {
+      name: 'b4+d9: agentTimedOut 让位 agent_timeout，但 prior failure 签名诊断不丢',
+      run: () => {
+        const summary = {
+          verdict: 'FAIL' as const,
+          blockers: [
+            {
+              id: 'ut_hvigor_test',
+              blocking_class: 'device_toolchain',
+              classification: 'ohos_test_sign_gap',
+              details_excerpt:
+                'ohosTest 签名环境缺口：signingConfigs 未配置；宿主请补 signingConfigs 或通过自定义签名任务覆盖 ohosTest',
+            },
+          ],
+        };
+        const kind = classifyFailureKind(summary, undefined, { agentTimedOut: true });
+        assert(kind === 'agent_timeout', kind);
+        const prior = extractPriorFailureContext(summary as any);
+        assert(prior.includes('signingConfigs 未配置'), prior);
+        assert(prior.includes('自定义签名任务覆盖 ohosTest'), prior);
+      },
+    },
+    {
       name: 'T6 (review#2): device_test_run 用例失败（无 device_toolchain 标）→ code_regression（须改码可重试）',
       run: () => {
         const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'device_test_run' }] });
@@ -787,6 +827,24 @@ export function runAll(): UnitCaseResult[] {
           'code_regression',
         );
         assert(prompt.includes('revert that change first'), 'should keep revert for code regression');
+      },
+    },
+    {
+      name: 'b4 buildPhasePrompt: toolchain 重试提示包含 signingConfigs 与自定义签名任务',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'ut',
+          FRAMEWORK_ROOT,
+          [],
+          'Verdict: FAIL\n- ut_hvigor_test [ohos_test_sign_gap]',
+          'toolchain',
+        );
+        assert(prompt.includes('signing configuration'), '缺签名配置类别');
+        assert(prompt.includes('signingConfigs'), '缺 signingConfigs 指引');
+        assert(prompt.includes('custom signing task coverage'), '缺自定义签名任务覆盖指引');
+        assert(!prompt.includes('revert that change first'), 'toolchain 不得引导回滚改码');
       },
     },
     {

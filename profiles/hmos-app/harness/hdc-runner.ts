@@ -474,6 +474,8 @@ export interface OnDeviceUtRunResult {
    *   'no_pass' = 跑通但有用例 fail / error
    */
   failedAt?: 'metadata' | 'hap_not_found' | 'install' | 'run' | 'no_pass';
+  /** ohosTest 产物发现阶段是否命中 unsigned HAP；不据此单独推断签名原因。 */
+  unsignedPresent?: boolean;
   durationMs: number;
   /** 总日志（命令拼接 + 各阶段输出），落盘 + 报告展示 */
   logExcerpt: string;
@@ -1237,6 +1239,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
 
   // 2) 找 hap
   const discovery = discoverOhosTestArtifacts(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
+  const unsignedPresent = Boolean(discovery.unsignedPath);
   const hap = discovery.signedPath;
   if (!hap) {
     const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : 'default + build/* 扫描';
@@ -1247,6 +1250,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',
+      unsignedPresent,
       metadata,
       logExcerpt: `${logChunks.join('\n')}\n[hap] FAIL: ${msg}`,
       errors: [{ message: msg }],
@@ -1263,6 +1267,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     return finalize({
       executed: false,
       toolMissing: true,
+      unsignedPresent,
       metadata,
       logExcerpt: `${logChunks.join('\n')}\n[device] FAIL: ${msg}`,
       errors: [{ message: msg }],
@@ -1274,6 +1279,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     return finalize({
       executed: false,
       failedAt: 'install',
+      unsignedPresent,
       metadata,
       logExcerpt: `${logChunks.join('\n')}\n[device] FAIL: ${msg}\n[device.raw] ${dev.raw}`,
       errors: [{ message: msg }],
@@ -1289,6 +1295,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     return finalize({
       executed: true,
       failedAt: 'install',
+      unsignedPresent,
       metadata,
       install,
       logExcerpt: logChunks.join('\n'),
@@ -1318,6 +1325,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     return finalize({
       executed: true,
       failedAt: aa.report ? 'no_pass' : 'run',
+      unsignedPresent,
       metadata,
       install,
       aaTest: aa,
@@ -1330,6 +1338,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
 
   return finalize({
     executed: true,
+    unsignedPresent,
     metadata,
     install,
     aaTest: aa,

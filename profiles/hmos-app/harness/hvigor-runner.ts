@@ -40,8 +40,20 @@ import {
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
 // type-only：编译期擦除，不构成 hvigor-runner ↔ hdc-runner 运行期 import 环
 // （运行期互调仍走函数内 require，见 runHvigorTest）。
-import type { OhosTestSignDiagnosis } from './hdc-runner';
+import type {
+  HdcFailureDiagnosis,
+  OhosTestSignDiagnosis,
+  OnDeviceUtRunResult,
+} from './hdc-runner';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
+
+export interface OnDeviceFailureEvidence {
+  failedAt?: OnDeviceUtRunResult['failedAt'];
+  unsignedPresent?: boolean;
+  signSkipped?: boolean;
+  signingConfigMissing?: boolean;
+  installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+}
 
 export interface HvigorRunResult {
   /** 是否真正执行了 hvigor（false：工具链缺失 / 被 env 跳过） */
@@ -74,6 +86,8 @@ export interface HvigorRunResult {
   testResult?: HypiumTestResult;
   /** 装机预检阻塞诊断（runHvigorTest 在 install_preflight 短路时填充） */
   installBlocking?: import('./device-install-diag').InstallBlockingDiagnosis;
+  /** on-device 失败阶段与签名/安装证据；上层分类只消费结构化字段，不解析错误文本。 */
+  onDeviceFailureEvidence?: OnDeviceFailureEvidence;
   /** 执行命令的完整 argv，便于复现 */
   command?: string;
   /** 调用驱动：node_hvigorw_js / hvigorw_wrapper / path / … */
@@ -1886,6 +1900,23 @@ export function buildOnDeviceSignDiagnosis(
   };
 }
 
+/**
+ * 把当前模块的 build/on-device 结果组装为上层可消费的结构化失败证据。
+ * 缺失值保持 undefined，禁止用 false/默认 kind 掩盖接线回归。
+ */
+export function buildOnDeviceFailureEvidence(
+  buildRes: Pick<HvigorRunResult, 'signSkipped' | 'signingConfigMissing'>,
+  onDevice: Pick<OnDeviceUtRunResult, 'failedAt' | 'unsignedPresent' | 'install'>,
+): OnDeviceFailureEvidence {
+  return {
+    failedAt: onDevice.failedAt,
+    unsignedPresent: onDevice.unsignedPresent,
+    signSkipped: buildRes.signSkipped,
+    signingConfigMissing: buildRes.signingConfigMissing,
+    installDiagnosis: onDevice.install?.diagnosis,
+  };
+}
+
 export function runHvigorTest(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
     moduleName: string;
@@ -1969,6 +2000,7 @@ export function runHvigorTest(
     logPath: onDevice.logPath ?? buildRes.logPath,
     errors: onDevice.errors.length ? onDevice.errors : (buildRes.errors ?? []),
     testResult: onDevice.report,
+    onDeviceFailureEvidence: buildOnDeviceFailureEvidence(buildRes, onDevice),
     command: 'genOnDeviceTestHap + hdc install -r + hdc shell aa test',
   };
   // 用 onDevice.failedAt 标注失败阶段：当 install 失败时仍属于真实执行链路异常，

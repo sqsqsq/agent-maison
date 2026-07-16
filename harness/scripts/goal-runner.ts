@@ -1052,7 +1052,7 @@ export function buildPhasePrompt(
       parts.push(
         '',
         '**This is a device toolchain / screenshot-capture (infrastructure) failure — NOT a code defect.**',
-        'Do NOT revert or rewrite application code to "fix" it. Diagnose the environment: device connection / hdc / build toolchain / screenshot permissions.',
+        'Do NOT revert or rewrite application code to "fix" it. Diagnose the environment: device connection / hdc / build toolchain / signing configuration (signingConfigs / custom signing task coverage) / screenshot permissions.',
         'If the same infrastructure failure repeats, the run will HALT for you to fix the environment — blind retries waste the budget and do not improve the UI.',
       );
     } else if (priorFailureKind === 'visual_gap') {

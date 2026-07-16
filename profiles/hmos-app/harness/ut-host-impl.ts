@@ -31,6 +31,10 @@ import {
 } from './device-install-diag';
 import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
 import { hasDependencyResolutionFailure as hasDepResolutionFailureSignal } from './hvigor-runner';
+import {
+  buildUtHvigorTestFailDetails,
+  type UtHvigorTestFailureModule,
+} from './ut-hvigor-test-failure';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -385,7 +389,7 @@ function checkUtHvigorBuild(
   const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
   const failureClass = classifyUtHvigorBuildFailure(first, ctx, bad[0].module, ctx.projectRoot);
   if (first.toolMissing) {
-    lines.push('原因：未找到 hvigor 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径）。');
+    lines.push('原因：未找到 hvigor 可执行文件（请在 framework.local.json > toolchain.devEcoStudio 配置本机 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
     lines.push('本规则不允许 SKIP —— 真实编译是出口条件。');
   } else if (first.skippedByEnv) {
@@ -701,7 +705,7 @@ function checkUtHvigorTest(
     ];
   }
 
-  const perModule: Array<{ module: string; result: any }> = [];
+  const perModule: UtHvigorTestFailureModule[] = [];
   for (const mod of mods) {
     const res = dispatchUtRun(ctx, {
       projectRoot: ctx.projectRoot,
@@ -755,67 +759,7 @@ function checkUtHvigorTest(
     ];
   }
 
-  const first = bad[0].result;
-  if (first.installBlocking?.kind && first.installBlocking.kind !== 'clear') {
-    const meta = mapInstallBlockingToUtCheckFields(first.installBlocking);
-    return [
-      {
-        id: 'ut_hvigor_test',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: buildUtInstallBlockingCheckDetails(first.installBlocking),
-        affected_files: [bad[0].module + '@ohosTest'],
-        failure_kind: meta.failure_kind,
-        blocking_class: meta.blocking_class,
-        suggestion: meta.suggestion,
-      },
-    ];
-  }
-
-  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 装机执行失败：`];
-  const stageHint = first.errors?.find((e: { message: string }) => /失败阶段：/.test(e.message))?.message;
-  if (stageHint) {
-    lines.push(stageHint);
-  }
-  if (first.toolMissing) {
-    lines.push(
-      '原因：未找到 hvigor / hdc 可执行文件（v2.3 起需通过 framework.config.json 声明 DevEco 路径，hdc 由 DevEco SDK toolchains 提供）。',
-    );
-    first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
-  } else if (!first.executed) {
-    lines.push(`原因：hvigor / hdc 未执行，日志：${first.logExcerpt}`);
-  } else if (first.exitCode !== 0 && !first.testResult) {
-    lines.push(`链路异常退出 exit_code=${first.exitCode}。`);
-    lines.push('日志尾部：');
-    lines.push(first.logExcerpt);
-  } else if (!first.testResult) {
-    lines.push('aa test 未输出 OHOS_REPORT_RESULT，无法证明用例已真实执行。');
-    if (first.errors?.length) {
-      lines.push('诊断：');
-      first.errors.forEach((e: { message: string }) => lines.push(`  - ${e.message}`));
-    }
-    lines.push('');
-    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
-  } else if (first.testResult) {
-    const t = first.testResult;
-    lines.push(`hypium 结果：total=${t.total}, passed=${t.passed}, failed=${t.failed}, skipped=${t.skipped}`);
-    if (t.total === 0) {
-      lines.push(
-        '警告：total=0 表示 hvigor test 没有跑到任何用例。请检查 List.test.ets 是否正确注册了所有 *.test.ets 入口。',
-      );
-    }
-    if (t.failures.length > 0) {
-      lines.push(`失败用例（前 15 条）：`);
-      t.failures.slice(0, 15).forEach((f: { suite: string; test: string; message: string }) =>
-        lines.push(`  - [${f.suite}] ${f.test}  →  ${f.message}`),
-      );
-    }
-    lines.push('');
-    lines.push(`日志落盘：${first.logPath ?? '(未落盘)'}`);
-  }
-
+  const formatted = buildUtHvigorTestFailDetails(bad);
   return [
     {
       id: 'ut_hvigor_test',
@@ -823,15 +767,11 @@ function checkUtHvigorTest(
       description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: lines.join('\n'),
-      affected_files: [bad[0].module + '@ohosTest'],
-      suggestion:
-        stageHint?.includes('device_locked')
-          ? '设备已连接但锁屏：请手动解锁并保持在桌面/前台后重跑。'
-          : stageHint
-            ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.log。'
-            : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
-              '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。',
+      details: formatted.lines.join('\n'),
+      affected_files: formatted.affectedFiles,
+      failure_kind: formatted.failureKind,
+      blocking_class: formatted.blockingClass,
+      suggestion: formatted.suggestion,
     },
   ];
 }

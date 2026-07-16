@@ -26,6 +26,7 @@ import {
   detectSignSkip,
   ensureFailedAtStageTag,
   buildOnDeviceSignDiagnosis,
+  buildOnDeviceFailureEvidence,
   buildAssembleAppArgs,
   buildModuleHapArgs,
   buildUtHvigorArgs,
@@ -489,6 +490,50 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(diag.signSkipped, undefined, 'signSkipped 缺失时应为 undefined，不应臆造 false');
       assertEq(diag.signingConfigMissing, undefined, 'signingConfigMissing 缺失时应为 undefined');
       assertEq(diag.mainAppSignedPath, null, 'mainAppSignedPath 应透传 null');
+    },
+  },
+  {
+    name: 'buildOnDeviceFailureEvidence: failedAt/unsigned/sign flags/installDiagnosis 五项保真',
+    run: () => {
+      const evidence = buildOnDeviceFailureEvidence(
+        { signSkipped: true, signingConfigMissing: true },
+        {
+          failedAt: 'install',
+          unsignedPresent: true,
+          install: {
+            ok: false,
+            exitCode: 1,
+            durationMs: 12,
+            output: 'fail',
+            diagnosis: {
+              kind: 'install_signature_mismatch',
+              summary: '签名不一致',
+              suggestion: '卸载旧包或使用一致签名',
+            },
+          },
+        },
+      );
+      assertEq(evidence.failedAt, 'install', 'failedAt 应透传');
+      assertEq(evidence.unsignedPresent, true, 'unsignedPresent 应透传');
+      assertEq(evidence.signSkipped, true, 'signSkipped 应透传');
+      assertEq(evidence.signingConfigMissing, true, 'signingConfigMissing 应透传');
+      assertEq(evidence.installDiagnosis?.summary, '签名不一致', 'installDiagnosis 应透传');
+    },
+  },
+  {
+    name: 'buildOnDeviceFailureEvidence: 缺失值保持 undefined，install 无 diagnosis 不臆造',
+    run: () => {
+      const evidence = buildOnDeviceFailureEvidence(
+        {},
+        {
+          install: { ok: false, exitCode: 7, durationMs: 12, output: 'failed' },
+        },
+      );
+      assertEq(evidence.failedAt, undefined, 'failedAt 不臆造');
+      assertEq(evidence.unsignedPresent, undefined, 'unsignedPresent 不臆造');
+      assertEq(evidence.signSkipped, undefined, 'signSkipped 不臆造');
+      assertEq(evidence.signingConfigMissing, undefined, 'signingConfigMissing 不臆造');
+      assertEq(evidence.installDiagnosis, undefined, 'installDiagnosis 不臆造');
     },
   },
   {
