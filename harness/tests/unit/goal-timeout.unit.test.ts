@@ -14,12 +14,25 @@ import {
   resolvePhaseTimeoutMs,
   resolveWallClockMinutes,
   resolveChainPhasesForBudget,
+  canAffordBackoff,
   collectPhaseTimeoutWarnings,
+  isExplicitPhaseTimeout,
+  CONSECUTIVE_TIMEOUT_ESCALATE_AFTER,
+  CONSECUTIVE_TIMEOUT_HALT_AT,
   DEFAULT_PHASE_TIMEOUT_SECONDS,
+  FINALIZE_RESERVE_MS,
   MIN_PHASE_TIMEOUT_SECONDS,
+  TIMEOUT_ESCALATION_FACTOR,
   WALL_CLOCK_BUFFER_MINUTES,
   type PhaseTimeoutManifestView,
 } from '../../scripts/utils/goal-timeout';
+import {
+  resolveKillGraceMs,
+  DEFAULT_CHILD_SETTLE_GRACE_MS,
+  DEFAULT_FORCE_SETTLE_AFTER_KILL_MS,
+  DEFAULT_KILL_INFLIGHT_DRAIN_MS,
+  DEFAULT_KILL_PROCESS_TREE_WAIT_MS,
+} from '../../scripts/utils/agent-invoke';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -239,6 +252,63 @@ const cases: Array<{ name: string; run: () => void }> = [
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    },
+  },
+  // ==========================================================================
+  // P0-4（plan d9b4f7e2）：升档常量 / 显式豁免 / grace 同源 / FINALIZE_RESERVE 契约
+  // ==========================================================================
+  {
+    name: 'P0-4 isExplicitPhaseTimeout: 显式 per-phase/扁平在位 → true，默认表 → false',
+    run: () => {
+      assertEq(isExplicitPhaseTimeout('spec', { unattended: {} }), false, '默认表非显式');
+      assertEq(
+        isExplicitPhaseTimeout('spec', { unattended: { phase_timeout_seconds: { spec: 900 } } }),
+        true,
+        'per-phase 显式',
+      );
+      assertEq(
+        isExplicitPhaseTimeout('plan', { unattended: { timeout_seconds: 3600 } }),
+        true,
+        '扁平显式',
+      );
+      assertEq(
+        isExplicitPhaseTimeout('plan', { unattended: { phase_timeout_seconds: { spec: 900 } } }),
+        false,
+        '其他 phase 的 per-phase 覆盖不影响本 phase',
+      );
+    },
+  },
+  {
+    name: 'P0-4 升档/熔断常量契约（第 2 次后升档 ×1.5、第 3 次 halt、reserve>0）',
+    run: () => {
+      assertEq(TIMEOUT_ESCALATION_FACTOR, 1.5, '升档系数');
+      assertEq(CONSECUTIVE_TIMEOUT_ESCALATE_AFTER, 2, '升档阈值');
+      assertEq(CONSECUTIVE_TIMEOUT_HALT_AT, 3, '熔断阈值');
+      assertTrue(CONSECUTIVE_TIMEOUT_HALT_AT > CONSECUTIVE_TIMEOUT_ESCALATE_AFTER, '先升档后熔断');
+      assertTrue(FINALIZE_RESERVE_MS > 0, '收尾预留须为正');
+    },
+  },
+  {
+    name: 'P0-4 复审 canAffordBackoff: 剩余装不下配置值 → false（不睡截断残量直接终局）',
+    run: () => {
+      assertEq(canAffordBackoff(45_000, 20_000), false, '剩余 20s 装不下配置 45s → 终局');
+      assertEq(canAffordBackoff(45_000, 45_000), true, '恰好够 → 可睡');
+      assertEq(canAffordBackoff(45_000, 300_000), true, '富余 → 可睡');
+      assertEq(canAffordBackoff(45_000, 0), false, '零预算 → 终局');
+      assertEq(canAffordBackoff(45_000, -5_000), false, '负预算 → 终局');
+      assertEq(canAffordBackoff(0, 100_000), false, '配置 0 视为不可睡（防 0ms 空转）');
+    },
+  },
+  {
+    name: 'P0-4 resolveKillGraceMs: 与 termination 契约四常量同源（缺一不可，禁脱钩常量）',
+    run: () => {
+      const expected =
+        DEFAULT_CHILD_SETTLE_GRACE_MS +
+        DEFAULT_FORCE_SETTLE_AFTER_KILL_MS +
+        DEFAULT_KILL_PROCESS_TREE_WAIT_MS +
+        DEFAULT_KILL_INFLIGHT_DRAIN_MS;
+      assertEq(resolveKillGraceMs(), expected, 'grace 必须由四常量派生');
+      assertTrue(resolveKillGraceMs() >= DEFAULT_KILL_PROCESS_TREE_WAIT_MS, 'grace ≥ tree-kill wait');
     },
   },
 ];

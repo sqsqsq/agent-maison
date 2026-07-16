@@ -567,6 +567,21 @@ async function main(): Promise<void> {
   checks.push(...(await emitLifecycle('pre_phase')));
   checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
 
+  // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
+  // "modules: {} 被归空后某门禁安静 PASS"属静默洗形状，此处兜底拦截（agent 可修：
+  // details 给期望形状与最小样例）。
+  if (context.featureSpec.shape_issues?.length) {
+    checks.push({
+      id: 'feature_spec_shape',
+      category: 'structure',
+      description: 'contracts/acceptance/use-cases 集合字段与根节点形状合法',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: context.featureSpec.shape_issues.join('\n'),
+      suggestion: '按 details 中的最小合法样例修正对应 YAML 字段形状后重跑；这是产物形状问题（agent 可修），非框架缺陷。',
+    });
+  }
+
   checks.push(
     ...(isPhaseDisabledByProfile(phase, resolvedProfile)
       ? [

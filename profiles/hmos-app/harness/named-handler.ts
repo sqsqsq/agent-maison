@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CheckContext, UseCasesSpec } from '../../../harness/scripts/utils/types';
+import { asArray } from '../../../harness/scripts/utils/shape-guards';
 import type { NamedHandlerScanResult } from '../../../harness/scripts/utils/named-handler';
 import { deriveNamedHandlerSearchRoots } from '../../../harness/scripts/utils/ut-business-src-scope';
 
@@ -98,9 +99,11 @@ export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanRes
   }
 
   const issues: string[] = [];
+  // P0-2 复审（cursor 阻断3）：嵌套集合同样是 agent 可写形状面——dict 形 ui_bindings/
+  // user_actions 会在此 for..of 崩（根字段 use_cases 已由 spec-loader 归一，嵌套字段没有）。
   for (const uc of spec.use_cases ?? []) {
-    for (const ub of uc.ui_bindings ?? []) {
-      for (const ua of ub.user_actions ?? []) {
+    for (const ub of asArray<NonNullable<typeof uc.ui_bindings>[number]>(uc.ui_bindings)) {
+      for (const ua of asArray<NonNullable<typeof ub.user_actions>[number]>(ub.user_actions)) {
         if (!ua.calls) continue;
         const parts = ua.calls.split(/[.]/).filter(Boolean);
         const symbol = parts[parts.length - 1]?.replace(/\(.*$/, '').trim();

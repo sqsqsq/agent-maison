@@ -129,11 +129,22 @@ export interface GoalRunEvent {
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
+  /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
+  integrity_subtypes?: string[];
   advance_blocked?: boolean;
   advance_block_reason?: string;
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;
+  /** P0-4（plan d9b4f7e2）：本 attempt 的有效超时（钳制/升档后）——timeout 单一事实源，
+   * progress/status/dead-man 优先读本字段，manifest 解析仅旧日志 fallback。 */
+  effective_timeout_ms?: number;
+  /** P1-7：kill 诊断（agent_invoke_end）——runner 永不写 agent-output.log，诊断走事件。 */
+  kill_reason?: string;
+  output_bytes?: number;
+  output_delivery?: string;
+  /** P1-7：adapter 版本运行时探测（adapter_probe 事件；探测失败记 unknown 不阻塞）。 */
+  adapter_version?: string;
   silent_killed?: boolean;
   lingering_pipe?: boolean;
   recovered?: boolean;
@@ -568,6 +579,104 @@ export function readPhaseSummaryPassReceipt(
   } catch {
     return null;
   }
+}
+
+/**
+ * P0-4（plan d9b4f7e2）：同 phase **连续** agent_timeout 次数（自最近一次非超时 verdict
+ * 起算，含 PASS+unclosed 型）。签名无关——07-13 chrys 案 i1/i2/i4/i5 FAIL 签名互异，
+ * 签名基熔断 6 连超时零命中。events.jsonl 回放（SSOT，resume/detach 重启不丢）。
+ */
+export function countConsecutiveAgentTimeouts(events: GoalRunEvent[], phase: string): number {
+  let n = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.failure_kind_classified === 'agent_timeout') {
+      n++;
+    } else {
+      break;
+    }
+  }
+  return n;
+}
+
+/** P0-4：最近一次 agent_invoke_start 的 effective_timeout_ms（timeout 单一事实源消费端）。 */
+export function findLatestEffectiveTimeoutMs(
+  events: GoalRunEvent[],
+  phase: string | null,
+): number | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== 'agent_invoke_start') continue;
+    if (phase && e.phase !== phase) continue;
+    return typeof e.effective_timeout_ms === 'number' && e.effective_timeout_ms > 0
+      ? e.effective_timeout_ms
+      : null;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// P0-1（plan d9b4f7e2 rev6）：continuation 五态 attempt 窗口
+// ---------------------------------------------------------------------------
+
+export type ContinuationCause =
+  | 'agent_timeout'
+  | 'transient_api_error'
+  | 'content_retry'
+  | 'unknown';
+
+/**
+ * 跨进程（--resume）continuation cause 派生——收敛到"当前 phase **最近一次** attempt
+ * 窗口"，不做全 phase 历史按超时优先扫描（旧 timeout 不得盖过更新的 content failure）。
+ * 五态（rev6 定稿，真实事件序 invoke_start → invoke_end → harness_start/end → phase_verdict）：
+ *   1. 无任何 agent_invoke_start           → null（全新 phase，不注入任何续作块）
+ *   2. 有 start、无 end                    → unknown（崩于 agent 段）
+ *   3. end.timed_out=true、无 verdict      → agent_timeout（真因已在 end 事件里，不丢成 unknown）
+ *   4. end 正常、无 verdict                → unknown（崩于 harness/verdict 段）
+ *   5. 有 verdict                          → 用该 verdict 的 failure_kind_classified
+ * invoke_id 精确配对优先；旧日志无 invoke_id 时按事件顺序分窗 fallback（verdict 窗口在
+ * end 之后、下一 start 之前）。
+ */
+export function deriveContinuationFromEvents(
+  events: GoalRunEvent[],
+  phase: string,
+): { cause: ContinuationCause } | null {
+  let startIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'agent_invoke_start' && e.phase === phase) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx < 0) return null;
+  const start = events[startIdx];
+
+  let end: GoalRunEvent | null = null;
+  let endIdx = -1;
+  for (let i = startIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type !== 'agent_invoke_end' || e.phase !== phase) continue;
+    if (start.invoke_id && e.invoke_id && e.invoke_id !== start.invoke_id) continue;
+    end = e;
+    endIdx = i;
+    break;
+  }
+  if (!end) return { cause: 'unknown' };
+
+  for (let i = endIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    // 防御：撞到下一 attempt 的 start 即关窗（正常不会发生——startIdx 已是最后一个 start）。
+    if (e.type === 'agent_invoke_start' && e.phase === phase) break;
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.invoke_id && end.invoke_id && e.invoke_id !== end.invoke_id) continue;
+    const fk = e.failure_kind_classified;
+    if (fk === 'agent_timeout') return { cause: 'agent_timeout' };
+    if (fk === 'transient_api_error') return { cause: 'transient_api_error' };
+    return { cause: 'content_retry' };
+  }
+  return end.timed_out === true ? { cause: 'agent_timeout' } : { cause: 'unknown' };
 }
 
 /** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */

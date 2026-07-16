@@ -257,6 +257,17 @@ optional_fields:
           trace.usage；none / 采集失败 → confidence: proxy（token 字段 null，代理
           指标复用 trace 顶层 tool_calls + wall-time）。model identity 同路径机器
           固化（响应元数据 / 调用配置，非 agent 文本自报）。
+      output_delivery:
+        type: string
+        enum: ["streaming", "buffered", "unknown"]
+        description: |
+          可选（缺省 unknown）。P1-7（plan d9b4f7e2）：headless invoke 的输出交付方式
+          **静态能力声明**（宿主侧 `<cli> run --help` 核实后填写，勿凭单次现象猜）。
+          buffered/unknown 的含义：被 kill 的 attempt agent-output.log 可能恒为 0 字节，
+          API 断流哨兵（扫 output log）对该 adapter 可能失效——断流表现为整 attempt
+          超时。goal-runner 把该值透传进 agent_invoke_end 事件供事后排障。
+          注意与 adapter_version 的分工：版本是**运行时信息**（每 run 一次 --version
+          动态探测进 events），不在本 schema 硬编码。
       native_goal:
         type: object | null
         fields:

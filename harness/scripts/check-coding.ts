@@ -41,6 +41,7 @@ import {
 import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, isCodingVisualParitySkipped, dispatchCodingVisualParity } from '../capability-registry';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
+import { validateProjectRelativePath } from './utils/project-relative-path';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
 // --------------------------------------------------------------------------
@@ -151,7 +152,8 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function checkDesignToCode(ctx: CheckContext): CheckResult[] {
+// 第五轮复审起导出：空集假 PASS（0 key_files）行为需单测钉死。
+export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   const traceability = ctx.featureSpec.contracts?.prd_to_code_traceability;
   if (!traceability?.length) {
     return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 prd_to_code_traceability 映射。' }];
@@ -162,9 +164,87 @@ function checkDesignToCode(ctx: CheckContext): CheckResult[] {
     for (const f of item.key_files) allKeyFiles.add(f);
   }
 
+  // P0-2 第七轮复审（codex P1）：prd_id 契约逐条校验——缺失/空白的条目"无法追溯到任何
+  // PRD"，即便 key_files 合法也不能 PASS。
+  const badPrdIds: string[] = [];
+  traceability.forEach((item, i) => {
+    const prdId = typeof item.prd_id === 'string' ? item.prd_id.trim() : '';
+    if (!prdId) badPrdIds.push(`prd_to_code_traceability[${i}]`);
+  });
+  if (badPrdIds.length > 0) {
+    return [{
+      id: 'plan_to_code', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `${badPrdIds.length}/${traceability.length} 条 traceability 条目缺 prd_id（或为空白）：${badPrdIds.join('、')}——无法追溯到任何 PRD。`,
+      suggestion: '为每条 traceability 条目补非空 prd_id（与 spec 功能清单/acceptance 的编号对应）。',
+    }];
+  }
+
+  // P0-2 第五/六轮复审（codex P1 两轮实测复现）：空 key_files 的判定必须**逐条目**——
+  // 只查聚合 allKeyFiles.size 会放过"一条空 + 一条合法"（合法条目的文件存在即整体 PASS，
+  // 空条目那个 PRD 的追溯链静默缺失）。07-13 案 contracts 15 条全缺 key_files 是全空
+  // 形态；部分空是同病灶的更隐蔽变体。追溯条目不映射任何文件=该 PRD 追溯无从谈起。
+  const emptyEntries = traceability.filter((item) => item.key_files.length === 0);
+  if (emptyEntries.length > 0) {
+    return [{
+      id: 'plan_to_code', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `${emptyEntries.length}/${traceability.length} 条 prd_to_code_traceability 条目未映射任何 key_files（prd_id: ${emptyEntries.map((e) => JSON.stringify(e.prd_id)).join('、')}）——这些 PRD 的追溯链缺失，存在性检查对空集无意义。`,
+      suggestion: '为每条 traceability 条目补 key_files: ["<实现该 PRD 的关键文件路径>", ...]；不涉及代码的条目不应出现在 prd_to_code_traceability。',
+    }];
+  }
+
+  // P0-2 第七轮复审（codex P1 实测复现）：existsSync 会把 ""/"."/目录/越根路径全判"存在"
+  // ——伪造追溯四件套。收紧为：trim 非空 + 安全相对路径（validateProjectRelativePath，
+  // 拒绝绝对路径/盘符/".."越根）+ stat.isFile() 普通文件。用户内容不合法=本门禁 FAIL，
+  // 不许 throw 成 [Harness 内部错误]。
+  const badPaths: string[] = [];
+  for (const item of traceability) {
+    for (const f of item.key_files) {
+      const trimmed = f.trim();
+      if (!trimmed) {
+        badPaths.push(`${JSON.stringify(item.prd_id)}: 空路径`);
+        continue;
+      }
+      try {
+        validateProjectRelativePath(ctx.projectRoot, trimmed, 'key_files');
+      } catch (e) {
+        badPaths.push(`${JSON.stringify(item.prd_id)}: "${f}"（${(e as Error).message.replace(/^\[project-relative-path\]\s*/, '')}）`);
+      }
+    }
+  }
+  if (badPaths.length > 0) {
+    return [{
+      id: 'plan_to_code', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `key_files 含非法路径（须为 project-root 内的相对路径）：\n${badPaths.slice(0, 10).map((b) => `  - ${b}`).join('\n')}${badPaths.length > 10 ? `\n  ... 还有 ${badPaths.length - 10} 处` : ''}`,
+      suggestion: '修正为相对宿主根的普通文件路径（如 "02-Feature/X/src/main/ets/..."），不得使用空串、"."、绝对路径或 ".." 越根。',
+    }];
+  }
+
   const missing: string[] = [];
+  const notFile: string[] = [];
   for (const f of allKeyFiles) {
-    if (!fs.existsSync(path.join(ctx.projectRoot, f))) missing.push(f);
+    let st: fs.Stats | null = null;
+    try {
+      st = fs.statSync(path.join(ctx.projectRoot, f));
+    } catch {
+      st = null;
+    }
+    if (!st) missing.push(f);
+    else if (!st.isFile()) notFile.push(f);
+  }
+  if (notFile.length > 0) {
+    return [{
+      id: 'plan_to_code', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `key_files 指向非普通文件（目录等）：${notFile.slice(0, 10).join('、')}${notFile.length > 10 ? ` ... 还有 ${notFile.length - 10} 处` : ''}——追溯必须落到具体实现文件。`,
+      suggestion: '把目录级映射改为该 PRD 的具体关键文件路径。',
+    }];
   }
 
   if (missing.length === 0) {
@@ -485,6 +565,16 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
       details: isProgrammerError
         ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
         : `检查执行时发生错误：${e.message}`,
+      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
+      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
+      ...(isProgrammerError
+        ? {
+            failure_kind: 'framework_bug',
+            blocking_class: 'framework_internal',
+            suggestion:
+              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
+          }
+        : {}),
     }];
   }
 }

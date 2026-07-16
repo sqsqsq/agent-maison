@@ -12,6 +12,7 @@ import {
   normalizeChildExitCode,
   awaitPromiseWithTimeout,
   killProcessTree,
+  probeAdapterVersion,
 } from '../../scripts/utils/agent-invoke';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -174,6 +175,135 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           /* best-effort */
         }
       }
+    },
+  },
+  // ==========================================================================
+  // P0-4（plan d9b4f7e2 rev5/rev6）：bounded Windows tree-kill
+  // ==========================================================================
+  {
+    name: 'P0-4 bounded kill: taskkill 永不退出 stub → 按时返回 kill_process_tree_timeout 且 helper 被结束/释放',
+    run: async () => {
+      const calls = { killed: 0, destroyed: 0, unref: 0, listenersRemoved: 0 };
+      // 永不调用 callback 的 fake helper——模拟卡死的 taskkill。
+      const fakeHelper = Object.assign(new EventEmitter(), {
+        kill: () => {
+          calls.killed++;
+          return true;
+        },
+        unref: () => {
+          calls.unref++;
+        },
+        stdout: { destroy: () => calls.destroyed++ },
+        stderr: { destroy: () => calls.destroyed++ },
+        stdin: { destroy: () => calls.destroyed++ },
+      });
+      const origRemove = fakeHelper.removeAllListeners.bind(fakeHelper);
+      (fakeHelper as unknown as { removeAllListeners: () => unknown }).removeAllListeners = () => {
+        calls.listenersRemoved++;
+        return origRemove();
+      };
+      const stubExecFile = ((..._args: unknown[]) =>
+        fakeHelper) as unknown as typeof import('child_process').execFile;
+      const t0 = Date.now();
+      const r = await killProcessTree(123456, {
+        execFileImpl: stubExecFile,
+        waitMs: 120,
+        forceWin32: true,
+      });
+      const elapsed = Date.now() - t0;
+      assert(r.kill_error === 'kill_process_tree_timeout', `expect timeout marker got ${r.kill_error}`);
+      assert(r.kill_attempted === true, 'kill_attempted');
+      assert(elapsed < 5_000, `bounded：须在 waitMs 量级返回（实际 ${elapsed}ms）`);
+      assert(calls.killed >= 1, '超时后必须主动结束 helper（存活 helper 持有 handle 阻止 Node 退出）');
+      assert(calls.destroyed >= 3, '超时后必须销毁 helper stdio');
+      assert(calls.listenersRemoved >= 1, '超时后必须移除监听');
+    },
+  },
+  {
+    // 第四轮复审（codex P2）：probe 超时行为测试——卡死的 --version 须走 bounded
+    // tree-kill（win32 shell 壳杀不到孙进程）+ 销毁 stdio/监听，且按时返回 unknown。
+    name: 'P0-4 probeAdapterVersion: 卡死的 --version → 按时 unknown + bounded tree-kill + handle 释放',
+    run: async () => {
+      const calls = { killTree: 0, destroyed: 0, listenersRemoved: 0, unref: 0 };
+      const fakeChild = Object.assign(new EventEmitter(), {
+        pid: 424242,
+        kill: () => true,
+        unref: () => {
+          calls.unref++;
+        },
+        stdout: Object.assign(new EventEmitter(), { destroy: () => calls.destroyed++ }),
+        stderr: Object.assign(new EventEmitter(), { destroy: () => calls.destroyed++ }),
+      });
+      const origRemove = fakeChild.removeAllListeners.bind(fakeChild);
+      (fakeChild as unknown as { removeAllListeners: () => unknown }).removeAllListeners = () => {
+        calls.listenersRemoved++;
+        return origRemove();
+      };
+      const stubSpawn = ((..._args: unknown[]) => fakeChild) as unknown as typeof spawn;
+      const t0 = Date.now();
+      const v = await probeAdapterVersion('stuck-cli-unit-test', 120, {
+        spawnImpl: stubSpawn,
+        killTreeImpl: async (pid: number) => {
+          calls.killTree++;
+          assert(pid === 424242, 'killTree 须收到 probe 子进程 pid');
+          return { kill_attempted: true, kill_exit_code: 0, kill_error: null };
+        },
+        noCache: true,
+      });
+      assert(v === 'unknown', `expect unknown got ${v}`);
+      assert(Date.now() - t0 < 5_000, 'bounded：须在 timeout 量级返回');
+      assert(calls.killTree === 1, '超时须走 bounded tree-kill（非 child.kill 壳杀）');
+      assert(calls.destroyed >= 2, '超时须销毁 stdout/stderr');
+      assert(calls.listenersRemoved >= 1, '超时须移除监听');
+    },
+  },
+  {
+    name: 'P0-4 probeAdapterVersion: 正常输出 → 取首行并缓存语义（noCache 隔离验证）',
+    run: async () => {
+      const mkChild = (): ChildProcess => {
+        const c = Object.assign(new EventEmitter(), {
+          pid: 1,
+          kill: () => true,
+          unref: () => undefined,
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+        }) as unknown as ChildProcess;
+        setTimeout(() => {
+          (c.stdout as unknown as EventEmitter).emit('data', 'chrys 9.9.9\nextra');
+          (c as unknown as EventEmitter).emit('close', 0);
+        }, 10);
+        return c;
+      };
+      const stubSpawn = ((..._args: unknown[]) => mkChild()) as unknown as typeof spawn;
+      const v = await probeAdapterVersion('ok-cli-unit-test', 3_000, {
+        spawnImpl: stubSpawn,
+        noCache: true,
+      });
+      assert(v === 'chrys 9.9.9', `expect first line got ${v}`);
+    },
+  },
+  {
+    name: 'P0-4 bounded kill: helper 正常退出 → 回传其 exit code、不触发 timeout 标记',
+    run: async () => {
+      const fakeHelper = Object.assign(new EventEmitter(), {
+        kill: () => true,
+        unref: () => undefined,
+        stdout: { destroy: () => undefined },
+        stderr: { destroy: () => undefined },
+        stdin: { destroy: () => undefined },
+      });
+      const stubExecFile = ((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (e: Error | null, so: string, se: string) => void;
+        setTimeout(() => cb(null, 'SUCCESS', ''), 10);
+        return fakeHelper;
+      }) as unknown as typeof import('child_process').execFile;
+      const r = await killProcessTree(123456, {
+        execFileImpl: stubExecFile,
+        waitMs: 5_000,
+        forceWin32: true,
+      });
+      assert(r.kill_exit_code === 0, `expect 0 got ${r.kill_exit_code}`);
+      assert(r.kill_error === null, `expect no error got ${r.kill_error}`);
     },
   },
 ];

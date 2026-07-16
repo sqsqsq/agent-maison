@@ -18,6 +18,7 @@ import {
   collectP0ComponentNodeIds,
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
+import { shapeName, takeArray } from '../../../harness/scripts/utils/shape-guards';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -78,7 +79,11 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
 
   let vpDoc: VisualParityDoc;
   try {
-    vpDoc = YAML.parse(fs.readFileSync(vpAbs, 'utf-8')) as VisualParityDoc;
+    const parsed = YAML.parse(fs.readFileSync(vpAbs, 'utf-8')) as VisualParityDoc | null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('not a mapping document');
+    }
+    vpDoc = parsed;
   } catch {
     const { severity, status } = structureFailOrWarn(enforcement);
     return [{
@@ -87,12 +92,29 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity,
       status,
-      details: `${vpRel} YAML 解析失败`,
+      details: `${vpRel} YAML 解析失败或根节点不是映射（map）`,
       affected_files: [vpRel],
     }];
   }
 
   const issues: string[] = [];
+
+  // P0-2（plan d9b4f7e2，07-13 现场 :142 `(x ?? []).map is not a function` 实锤）：
+  // mappings.* 非数组真值（{}/"" 等）→ 归一为空数组 + 形状留痕进 issues（结构化 FAIL，
+  // 不静默洗形状）；mappings 自身非 map 同理。
+  {
+    const shapeIssues: string[] = [];
+    const vr = vpDoc as unknown as Record<string, unknown>;
+    if (vr.mappings !== undefined && (vr.mappings === null || typeof vr.mappings !== 'object' || Array.isArray(vr.mappings))) {
+      shapeIssues.push(`mappings 应为映射（YAML map），实际是 ${shapeName(vr.mappings)}——最小合法样例：\`mappings: {assets: [], tokens: [], components: []}\``);
+      vr.mappings = {};
+    }
+    const mr = (vr.mappings ?? {}) as Record<string, unknown>;
+    if (mr.assets !== undefined) mr.assets = takeArray(mr.assets, 'mappings.assets', shapeIssues);
+    if (mr.tokens !== undefined) mr.tokens = takeArray(mr.tokens, 'mappings.tokens', shapeIssues);
+    if (mr.components !== undefined) mr.components = takeArray(mr.components, 'mappings.components', shapeIssues);
+    for (const si of shapeIssues) issues.push(`shape: ${si}`);
+  }
   const assetKeys = new Set((uiDoc?.assets ?? []).map(a => a.key));
   const tokenKeys = new Set(Object.keys(uiDoc?.tokens ?? {}));
   const mappedAssets = new Set((vpDoc.mappings?.assets ?? []).map(a => a.ui_spec_key));

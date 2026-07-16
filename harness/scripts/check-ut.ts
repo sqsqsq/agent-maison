@@ -28,6 +28,7 @@ import {
   UseCaseDef,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
+import { takeArray } from './utils/shape-guards';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
@@ -1063,7 +1064,9 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
       }
     }
     const roleEnum = new Set(['entry', 'progress', 'dialog', 'result', 'passive']);
-    for (const ub of uc.ui_bindings ?? []) {
+    // P0-2 复审：嵌套集合 dict 形防崩（takeArray 归空 + 结构化 issue，agent 可修——
+    // 不再落 safeRun 的 framework_bug 误归因）。
+    for (const ub of takeArray<NonNullable<typeof uc.ui_bindings>[number]>(uc.ui_bindings, `${tag}.ui_bindings`, issues)) {
       if (!ub.ui) issues.push(`${tag} > ui_binding: 缺少 ui`);
       if (!ub.role) issues.push(`${tag} > ui_binding[${ub.ui ?? '?'}]: 缺少 role`);
       else if (!roleEnum.has(ub.role as string)) {
@@ -1079,7 +1082,7 @@ function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
       }
     }
     const kindEnum = new Set(['cloud', 'storage', 'system']);
-    for (const b of uc.data_boundaries ?? []) {
+    for (const b of takeArray<NonNullable<typeof uc.data_boundaries>[number]>(uc.data_boundaries, `${tag}.data_boundaries`, issues)) {
       if (!b.name) issues.push(`${tag} > data_boundary: 缺少 name`);
       if (!b.type) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 type`);
       if (!b.kind) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 kind`);
@@ -3298,6 +3301,16 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
       details: isProgrammerError
         ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
         : `检查执行时发生错误：${e.message}`,
+      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
+      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
+      ...(isProgrammerError
+        ? {
+            failure_kind: 'framework_bug',
+            blocking_class: 'framework_internal',
+            suggestion:
+              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
+          }
+        : {}),
     }];
   }
 }

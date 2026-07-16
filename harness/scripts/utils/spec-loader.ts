@@ -157,28 +157,84 @@ export class SpecLoader {
     const featureDir = path.join(this.featuresDir, feature);
 
     const spec: FeatureSpec = { feature };
+    // P0-2（plan d9b4f7e2 复审）：形状偏差留痕——由 harness-runner 产出结构化 FAIL
+    // （feature_spec_shape），归一化只防崩溃，不许静默洗形状（warn 只写 console，
+    // headless 下没人看，等于洗）。
+    const shapeIssues: string[] = [];
 
     const contractsPath = path.join(featureDir, 'contracts.yaml');
     if (fs.existsSync(contractsPath)) {
-      const contracts = this.loadYaml<ContractsSpec>(contractsPath);
-      normalizeContractsFiles(contracts, contractsPath);
-      normalizeModuleDependencies(contracts, contractsPath);
-      normalizeTraceability(contracts, contractsPath);
-      spec.contracts = contracts;
+      // 复审修复（codex P1）：根节点守卫——YAML 解析为 null/标量/数组时，旧实现在
+      // normalizeContractsFiles 解引用即 TypeError，harness 在 safeRun 之前致命退出、
+      // 无 summary（比门禁 FAIL 更毒）。按"无法解析"语义处理：不挂载 + 留痕，
+      // 下游 acceptance_yaml_present/契约类门禁按缺失裁决。
+      const contracts = this.loadYamlMappingOrNull<ContractsSpec>(contractsPath, shapeIssues);
+      if (contracts) {
+        normalizeContractsFiles(contracts, contractsPath, shapeIssues);
+        normalizeModuleDependencies(contracts, contractsPath, shapeIssues);
+        normalizeTraceability(contracts, contractsPath, shapeIssues);
+        // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
+        // TypeError（07-13 现场门禁连环崩的同类）。归空 + 留痕（不 throw）。
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'modules', contractsPath, shapeIssues);
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
+        spec.contracts = contracts;
+      }
     }
 
     const acceptancePath = path.join(featureDir, 'acceptance.yaml');
     if (fs.existsSync(acceptancePath)) {
-      spec.acceptance = this.loadYaml<AcceptanceSpec>(acceptancePath);
+      const acceptance = this.loadYamlMappingOrNull<AcceptanceSpec>(acceptancePath, shapeIssues);
+      if (acceptance) {
+        // 复审修复（cursor 阻断2）：AcceptanceSpec 的集合字段是 criteria/boundaries
+        // （rev1 误写 use_cases——acceptance 根本没有该字段，等于零防护）。
+        normalizeArrayField(acceptance as unknown as Record<string, unknown>, 'criteria', acceptancePath, shapeIssues);
+        normalizeArrayField(acceptance as unknown as Record<string, unknown>, 'boundaries', acceptancePath, shapeIssues);
+        spec.acceptance = acceptance;
+      }
     }
 
     // v2: use-cases.yaml（可选）——定义业务流程 UseCase / ports / branches
     const useCasesPath = path.join(featureDir, 'use-cases.yaml');
     if (fs.existsSync(useCasesPath)) {
-      spec.useCases = this.loadYaml<UseCasesSpec>(useCasesPath);
+      const useCases = this.loadYamlMappingOrNull<UseCasesSpec>(useCasesPath, shapeIssues);
+      if (useCases) {
+        normalizeArrayField(useCases as unknown as Record<string, unknown>, 'use_cases', useCasesPath, shapeIssues);
+        // P0-2 复审（codex P1/cursor）：嵌套集合在 loader 统一归一——check-ut 的 reduce、
+        // testing-trace-gates 的遍历、named-handler 等**所有消费点**一处防崩；坏形状经
+        // shape_issues → feature_spec_shape 结构化 FAIL（不再落 safeRun 误归 framework_bug）。
+        for (const uc of useCases.use_cases ?? []) {
+          if (!uc || typeof uc !== 'object') continue;
+          const ur = uc as unknown as Record<string, unknown>;
+          const tag = `use_cases[${String(ur.id ?? '?')}]`;
+          normalizeArrayField(ur, 'ui_bindings', useCasesPath, shapeIssues, tag);
+          normalizeArrayField(ur, 'data_boundaries', useCasesPath, shapeIssues, tag);
+          normalizeArrayField(ur, 'branches', useCasesPath, shapeIssues, tag);
+          for (const ub of uc.ui_bindings ?? []) {
+            if (!ub || typeof ub !== 'object') continue;
+            const br = ub as unknown as Record<string, unknown>;
+            normalizeArrayField(br, 'user_actions', useCasesPath, shapeIssues, `${tag}.ui_bindings[${String(br.ui ?? '?')}]`);
+          }
+        }
+        spec.useCases = useCases;
+      }
     }
 
+    if (shapeIssues.length > 0) {
+      spec.shape_issues = shapeIssues;
+    }
     return spec;
+  }
+
+  /** 根节点须为 YAML map；null/标量/数组 → 留痕并按"无法解析"返回 null（不 throw）。 */
+  private loadYamlMappingOrNull<T>(filePath: string, shapeIssues: string[]): T | null {
+    const doc = this.loadYaml<unknown>(filePath);
+    if (doc && typeof doc === 'object' && !Array.isArray(doc)) return doc as T;
+    const kind = doc === null ? 'null（空文件/仅注释）' : Array.isArray(doc) ? 'array' : typeof doc;
+    shapeIssues.push(
+      `${path.basename(filePath)} 根节点应为映射（YAML map），实际是 ${kind}——文件已按"无法解析"处理，相关门禁按缺失裁决`,
+    );
+    console.warn(`[spec-loader] ${filePath} 根节点非 map（${kind}），按无法解析处理`);
+    return null;
   }
 
   inspectFeatureArtifacts(feature: string, phase?: Phase): FeatureArtifactInspection {
@@ -341,16 +397,69 @@ function coerceToPathString(raw: unknown): string | null {
   return null;
 }
 
-function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string): void {
+/**
+ * P0-2（plan d9b4f7e2）：集合字段非数组真值 → 归空数组 + shapeIssues 留痕（缺失/null
+ * 只归空不留痕——缺失语义由各门禁裁决）。不 throw（对齐"agent 产 YAML 形状偏差不得炸
+ * harness"——炸了连 summary 都没有，下游只剩 stale FAIL）；留痕由 harness-runner 产出
+ * feature_spec_shape 结构化 FAIL（复审修复：console.warn 在 headless 下没人看=静默洗）。
+ */
+function normalizeArrayField(
+  obj: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  shapeIssues: string[],
+  /** 嵌套字段的路径前缀（如 use_cases[uc-1]）——留痕可定位。 */
+  parentLabel?: string,
+): void {
+  const label = parentLabel ? `${parentLabel}.${field}` : field;
+  const v = obj[field];
+  if (v === undefined || v === null) return;
+  if (!Array.isArray(v)) {
+    const kind = typeof v === 'object' ? 'object(dict)' : typeof v;
+    shapeIssues.push(
+      `${path.basename(filePath)} 的 \`${label}\` 应为数组（YAML list），实际是 ${kind}——已按空数组防崩处理；最小合法样例：\`${field}: []\`（每项以 \`- \` 开头）`,
+    );
+    console.warn(`[spec-loader] ${filePath} 的 \`${label}\` 非数组（${kind}），已归空并留痕`);
+    obj[field] = [];
+    return;
+  }
+  // 第五轮复审（codex P1）：容器合法不等于条目合法——`- null` / `- 42` / 嵌套数组条目
+  // 会在下游 `mod.package_path` / `uc.id` 等解引用处崩成 framework_bug 误归因。
+  // 本 loader 的这些集合语义上都是 map 数组：剔除非 map 条目 + 带索引留痕。
+  const badIdx: number[] = [];
+  const cleaned = (v as unknown[]).filter((it, i) => {
+    const ok = it !== null && typeof it === 'object' && !Array.isArray(it);
+    if (!ok) badIdx.push(i);
+    return ok;
+  });
+  if (badIdx.length > 0) {
+    shapeIssues.push(
+      `${path.basename(filePath)} 的 \`${label}[${badIdx.join(',')}]\` 应为映射（map，形如 \`- key: value\`），实际为 null/标量/数组——非法条目已剔除、合法条目保留`,
+    );
+    console.warn(`[spec-loader] ${filePath} 的 \`${label}\` 含 ${badIdx.length} 个非 map 条目，已剔除并留痕`);
+    obj[field] = cleaned;
+  }
+}
+
+function normalizeContractsFiles(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  shapeIssues: string[],
+): void {
   const files = contracts.files;
   if (files === undefined || files === null) {
     contracts.files = [];
     return;
   }
+  // P0-2 复审（codex P1）：旧实现在此 throw——loadFeatureSpec 位于 checker safeRun 之外，
+  // throw = harness 无 summary 致命退出（比门禁 FAIL 更毒）。改留痕 + 归安全值，
+  // shape_issues 经 feature_spec_shape 出结构化 BLOCKER。
   if (!Array.isArray(files)) {
-    throw new Error(
-      `[spec-loader] ${contractsPath} 的 \`files\` 必须是数组，实际类型：${typeof files}`
+    shapeIssues.push(
+      `${path.basename(contractsPath)} 的 \`files\` 应为数组（YAML list），实际是 ${typeof files === 'object' ? 'object(dict)' : typeof files}——已按空数组防崩处理；最小合法样例：\`files: []\``,
     );
+    contracts.files = [];
+    return;
   }
 
   const bad: Array<{ index: number; raw: unknown }> = [];
@@ -365,11 +474,9 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
   }
 
   if (bad.length > 0) {
-    const detail = bad
-      .map(b => `  - files[${b.index}] = ${JSON.stringify(b.raw)}`)
-      .join('\n');
-    throw new Error(
-      `[spec-loader] ${contractsPath} 的 \`files\` 存在非字符串条目（期望形如 "path/to/file.ets"）：\n${detail}`
+    const detail = bad.map(b => `files[${b.index}]=${JSON.stringify(b.raw)}`).join('；');
+    shapeIssues.push(
+      `${path.basename(contractsPath)} 的 \`files\` 存在非字符串条目（期望形如 "path/to/file.ets"）：${detail}——非法条目已剔除、合法条目保留`,
     );
   }
 
@@ -391,23 +498,48 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
 // 虚假 PASS（规则实际失效）。这里在加载期把数组形归一到 Record 形。
 // ---------------------------------------------------------------------------
 
-function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: string): void {
+function normalizeModuleDependencies(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  shapeIssues: string[],
+): void {
   const deps = contracts.module_dependencies as unknown;
   if (deps === undefined || deps === null) {
     contracts.module_dependencies = {};
     return;
   }
 
-  // 已是 Record 形：原样放行
+  // 已是 Record 形：**逐值验证**后放行（第四轮复审 codex P1：`A: {}` 直接放行会在
+  // coding-host-rules 的 for..of 崩成 framework_bug 误归因；值须为 string[]）。
   if (!Array.isArray(deps) && typeof deps === 'object') {
+    const rec = deps as Record<string, unknown>;
+    for (const [mod, v] of Object.entries(rec)) {
+      if (!Array.isArray(v)) {
+        shapeIssues.push(
+          `${path.basename(contractsPath)} 的 \`module_dependencies.${mod}\` 应为字符串数组，实际是 ${v !== null && typeof v === 'object' ? 'object(dict)' : typeof v}——已按空数组防崩处理`,
+        );
+        rec[mod] = [];
+        continue;
+      }
+      const goodItems = v.filter((x) => typeof x === 'string');
+      if (goodItems.length !== v.length) {
+        shapeIssues.push(
+          `${path.basename(contractsPath)} 的 \`module_dependencies.${mod}\` 含非字符串条目——非法条目已剔除、合法条目保留`,
+        );
+        rec[mod] = goodItems;
+      }
+    }
     return;
   }
 
+  // P0-2 复审（codex P1）：非法标量（"" 等）旧实现 throw → harness 无 summary 致命退出。
+  // 改留痕 + 归空 Record（下游 oh_package_dependencies 会按"未检出依赖"裁决）。
   if (!Array.isArray(deps)) {
-    throw new Error(
-      `[spec-loader] ${contractsPath} 的 \`module_dependencies\` 类型非法（期望 Record<string,string[]> 或 {from,to}[]），` +
-      `实际：${typeof deps}`
+    shapeIssues.push(
+      `${path.basename(contractsPath)} 的 \`module_dependencies\` 类型非法（期望 Record<string,string[]> 或 {from,to}[]），实际是 ${typeof deps}——已按空映射防崩处理`,
     );
+    contracts.module_dependencies = {};
+    return;
   }
 
   const rec: Record<string, string[]> = {};
@@ -431,10 +563,10 @@ function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: st
 
   if (bad.length > 0) {
     const detail = bad
-      .map(b => `  - module_dependencies[${b.index}] = ${JSON.stringify(b.raw)}`)
-      .join('\n');
-    throw new Error(
-      `[spec-loader] ${contractsPath} 的 \`module_dependencies\` 数组形式要求每项含 from/to 字符串：\n${detail}`
+      .map(b => `module_dependencies[${b.index}]=${JSON.stringify(b.raw)}`)
+      .join('；');
+    shapeIssues.push(
+      `${path.basename(contractsPath)} 的 \`module_dependencies\` 数组形式要求每项含 from/to 字符串：${detail}——非法条目已剔除、合法条目保留`,
     );
   }
 
@@ -450,28 +582,65 @@ function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: st
 // 该规范化**只做别名回填**，不删除原字段，以免影响其他消费者。
 // ---------------------------------------------------------------------------
 
-function normalizeTraceability(contracts: ContractsSpec, contractsPath: string): void {
+function normalizeTraceability(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  shapeIssues: string[],
+): void {
   const trace = contracts.prd_to_code_traceability as unknown;
   if (trace === undefined || trace === null) return;
+  // P0-2 复审（codex P1）：dict 形旧实现 throw → harness 无 summary 致命退出。留痕 + 归空。
   if (!Array.isArray(trace)) {
-    throw new Error(
-      `[spec-loader] ${contractsPath} 的 \`prd_to_code_traceability\` 必须是数组，实际：${typeof trace}`
+    shapeIssues.push(
+      `${path.basename(contractsPath)} 的 \`prd_to_code_traceability\` 应为数组（YAML list），实际是 ${typeof trace === 'object' ? 'object(dict)' : typeof trace}——已按空数组防崩处理`,
     );
+    (contracts as unknown as Record<string, unknown>).prd_to_code_traceability = [];
+    return;
   }
 
+  // 第四轮复审（codex P1）：三层验证——①非 object 条目（42/null 等）剔除留痕（旧实现
+  // 原样保留 → check-coding 解引用崩）；②key_files 非数组真值（{} 等）留痕（旧实现
+  // 静默归空 → 0 文件可能安静 PASS，feature_spec_shape 兜底拦截）；③key_files 含非
+  // 字符串条目剔除留痕。
+  const cleaned: unknown[] = [];
   for (let i = 0; i < trace.length; i++) {
-    const item = trace[i] as Record<string, unknown> | null;
-    if (!item || typeof item !== 'object') continue;
-    if (!item.key_files && Array.isArray(item.files)) {
+    const raw = trace[i];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      shapeIssues.push(
+        `${path.basename(contractsPath)} 的 \`prd_to_code_traceability[${i}]\` 应为映射（{prd_id, key_files}），实际是 ${raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw}——非法条目已剔除`,
+      );
+      continue;
+    }
+    const item = raw as Record<string, unknown>;
+    // 第五轮复审（codex P1）：别名只在 key_files **缺失**（undefined/null）时生效——
+    // 旧条件 `!item.key_files` 会让 `key_files: ""` 借合法 files 静默绕过形状留痕。
+    if ((item.key_files === undefined || item.key_files === null) && Array.isArray(item.files)) {
       item.key_files = item.files;
     }
-    // 若仍非数组，赋空数组避免下游 for...of 崩栈（保留可查的告警）
-    if (!Array.isArray(item.key_files)) {
-      console.warn(
-        `[spec-loader] ${contractsPath} prd_to_code_traceability[${i}] 缺少 key_files/files，` +
-        `prd_id=${JSON.stringify((item as { prd_id?: unknown }).prd_id)}；已按空数组处理`
+    if (item.key_files !== undefined && item.key_files !== null && !Array.isArray(item.key_files)) {
+      shapeIssues.push(
+        `${path.basename(contractsPath)} 的 \`prd_to_code_traceability[${i}].key_files\`（prd_id=${JSON.stringify(item.prd_id)}）应为字符串数组，实际是 ${typeof item.key_files === 'object' ? 'object(dict)' : typeof item.key_files}——已按空数组防崩处理`,
       );
       item.key_files = [];
     }
+    if (!Array.isArray(item.key_files)) {
+      // 缺失（undefined/null）：归空防崩 + console 留痕；**内容裁决在 plan_to_code 门禁**
+      // （第五轮复审起：条目存在但总 key_files=0 → BLOCKER FAIL，空集不再真空 PASS）。
+      console.warn(
+        `[spec-loader] ${contractsPath} prd_to_code_traceability[${i}] 缺少 key_files/files，` +
+        `prd_id=${JSON.stringify(item.prd_id)}；已按空数组处理`
+      );
+      item.key_files = [];
+    } else {
+      const goodFiles = (item.key_files as unknown[]).filter((f) => typeof f === 'string');
+      if (goodFiles.length !== (item.key_files as unknown[]).length) {
+        shapeIssues.push(
+          `${path.basename(contractsPath)} 的 \`prd_to_code_traceability[${i}].key_files\`（prd_id=${JSON.stringify(item.prd_id)}）含非字符串条目——非法条目已剔除、合法条目保留`,
+        );
+        item.key_files = goodFiles;
+      }
+    }
+    cleaned.push(item);
   }
+  (contracts as unknown as Record<string, unknown>).prd_to_code_traceability = cleaned;
 }

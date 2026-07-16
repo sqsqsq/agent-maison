@@ -9,6 +9,9 @@ import {
   classifyFailureKind,
   extractBlockerSignature,
   extractDeterministicAffectedFiles,
+  extractIntegritySubtypes,
+  hasIntegrityBlocker,
+  isAllFrameworkBugBlockers,
   shouldHaltNoProgress,
   snapshotArtifacts,
   SIGNATURE_HALT_KINDS,
@@ -27,9 +30,12 @@ import {
 import {
   collectUncommittedVisualAttemptIds,
   collectVisualRoundRowHashes,
+  countConsecutiveAgentTimeouts,
   countTransientApiRetries,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
+  deriveContinuationFromEvents,
+  findLatestEffectiveTimeoutMs,
   isAgentNoOutputSignal,
   lastPhaseVerdictTransientApiError,
   type GoalRunEvent,
@@ -168,6 +174,220 @@ export function runAll(): UnitCaseResult[] {
           blockers: [{ id: 'some_new_lint_rule' }],
         });
         assert(k === 'code_regression', k);
+      },
+    },
+    // ------------------------------------------------------------------
+    // P0-5/P0-3（plan d9b4f7e2）freshness 决策表逐行 + 非超时轮归因
+    // ------------------------------------------------------------------
+    {
+      name: 'P0-5 决策表: timedOut+stale+integrity → agent_timeout（旧证据不可信）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [{ id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' }],
+          },
+          undefined,
+          { agentTimedOut: true, staleSummary: true },
+        );
+        assert(k === 'agent_timeout', k);
+      },
+    },
+    {
+      name: 'P0-5 决策表: timedOut+staleSummary 未传 → agent_timeout（fail-safe 视同 stale）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [{ id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' }],
+          },
+          undefined,
+          { agentTimedOut: true },
+        );
+        assert(k === 'agent_timeout', k);
+      },
+    },
+    {
+      name: 'P0-5 决策表: timedOut+fresh+含 integrity（混内容 blocker）→ framework_integrity_block（integrity 不回落混装）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+              { id: 'required_chapters' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true, staleSummary: false },
+        );
+        assert(k === 'framework_integrity_block', k);
+      },
+    },
+    {
+      name: 'P0-3 决策表: timedOut+fresh+非空全 framework_bug → framework_bug',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' },
+              { id: 'asset_acquisition', classification: 'framework_bug', blocking_class: 'framework_internal' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true, staleSummary: false },
+        );
+        assert(k === 'framework_bug', k);
+      },
+    },
+    {
+      name: 'P0-3 决策表: timedOut+fresh+framework_bug 混 content → agent_timeout（依赖 P0-2 收敛）',
+      run: () => {
+        const k = classifyFailureKind(
+          {
+            verdict: 'FAIL',
+            blockers: [
+              { id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' },
+              { id: 'required_chapters' },
+            ],
+          },
+          undefined,
+          { agentTimedOut: true, staleSummary: false },
+        );
+        assert(k === 'agent_timeout', k);
+      },
+    },
+    {
+      name: 'P0-3 决策表: timedOut+fresh+空 blockers → agent_timeout（.every() 真空真值防误判）',
+      run: () => {
+        const k = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [] },
+          undefined,
+          { agentTimedOut: true, staleSummary: false },
+        );
+        assert(k === 'agent_timeout', k);
+        assert(isAllFrameworkBugBlockers({ verdict: 'FAIL', blockers: [] }) === false, 'empty blockers must not be all-framework_bug');
+      },
+    },
+    {
+      name: 'P0-5 决策表: timedOut+fresh+纯 content → agent_timeout',
+      run: () => {
+        const k = classifyFailureKind(
+          { verdict: 'FAIL', blockers: [{ id: 'required_chapters' }] },
+          undefined,
+          { agentTimedOut: true, staleSummary: false },
+        );
+        assert(k === 'agent_timeout', k);
+      },
+    },
+    {
+      name: 'P0-5 非超时轮: integrity 在场 → framework_integrity_block（i8/i9 形态不再落 code_regression）',
+      run: () => {
+        const k = classifyFailureKind({
+          verdict: 'FAIL',
+          blocking_class: 'integrity',
+          failure_kind: 'framework_drift',
+          blockers: [
+            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+            { id: 'visual_parity_coverage' },
+          ],
+        });
+        assert(k === 'framework_integrity_block', k);
+      },
+    },
+    {
+      name: 'P0-5 复审: external+integrity 同场 → integrity 优先（完整性失守时 defer 归因不可信）',
+      run: () => {
+        const k = classifyFailureKind({
+          verdict: 'FAIL',
+          blocking_class: 'externalBlocked',
+          failure_kind: 'device_blocked',
+          blockers: [
+            { id: 'device_test_run', blocking_class: 'externalBlocked', classification: 'device_blocked' },
+            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+          ],
+        });
+        assert(k === 'framework_integrity_block', `expect integrity halt got ${k}`);
+      },
+    },
+    {
+      name: 'P0-3 非超时轮: 全 framework_bug → framework_bug；混装走既有归因',
+      run: () => {
+        const pure = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' }],
+        });
+        assert(pure === 'framework_bug', pure);
+        const mixed = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [
+            { id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' },
+            { id: 'some_new_lint_rule' },
+          ],
+        });
+        assert(mixed === 'code_regression', mixed);
+      },
+    },
+    {
+      name: 'P0-5 extractIntegritySubtypes: 三类共存全收集、去重、非 integrity classification 不混入',
+      run: () => {
+        const subtypes = extractIntegritySubtypes({
+          verdict: 'FAIL',
+          blockers: [
+            { id: 'framework_manifest_selfcheck', blocking_class: 'integrity', classification: 'framework_manifest_sidecar_missing' },
+            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+            { id: 'framework_integrity', blocking_class: 'integrity', classification: 'framework_drift' },
+            { id: 'framework_foreign_file', blocking_class: 'integrity', classification: 'framework_foreign_file' },
+            { id: 'content_gate', classification: 'device_blocked' },
+          ],
+        });
+        assert(subtypes.length === 3, `expect 3 got ${subtypes.length}: ${subtypes.join(',')}`);
+        assert(subtypes.includes('framework_manifest_sidecar_missing'), 'sidecar_missing collected');
+        assert(subtypes.includes('framework_drift'), 'drift collected');
+        assert(subtypes.includes('framework_foreign_file'), 'foreign collected');
+        assert(!subtypes.includes('device_blocked'), 'non-integrity classification must not leak in');
+      },
+    },
+    {
+      name: 'P0-5 extractIntegritySubtypes: 顶层回落带过滤（blocking_class 非 integrity 不回填）',
+      run: () => {
+        const ok = extractIntegritySubtypes({
+          verdict: 'FAIL',
+          blocking_class: 'integrity',
+          failure_kind: 'framework_drift',
+          blockers: [{ id: 'framework_integrity', blocking_class: 'integrity' }],
+        });
+        assert(ok.length === 1 && ok[0] === 'framework_drift', `fallback expected framework_drift got ${ok.join(',')}`);
+        const rejected = extractIntegritySubtypes({
+          verdict: 'FAIL',
+          blocking_class: 'externalBlocked',
+          failure_kind: 'device_blocked',
+          blockers: [],
+        });
+        assert(rejected.length === 0, `content-class top-level must not be pushed: ${rejected.join(',')}`);
+        assert(hasIntegrityBlocker({ verdict: 'FAIL', blocking_class: 'integrity' }), 'top-level integrity counts as present');
+      },
+    },
+    {
+      name: 'P0-3 buildSummaryBlockers: safeRun 的 framework_bug 归因保真传导到 blocker.classification',
+      run: () => {
+        const checks: CheckResult[] = [
+          {
+            id: 'ui_spec_structure',
+            category: 'structure',
+            description: 'ui_spec_structure 执行异常',
+            severity: 'BLOCKER',
+            status: 'FAIL',
+            details: '[Harness 内部错误] x.map is not a function\nTypeError: ...',
+            failure_kind: 'framework_bug',
+            blocking_class: 'framework_internal',
+          },
+        ];
+        const blockers = buildSummaryBlockers(checks, (t) => t, () => undefined);
+        assert(blockers.length === 1, 'one blocker');
+        assert(blockers[0].classification === 'framework_bug', String(blockers[0].classification));
+        assert(blockers[0].blocking_class === 'framework_internal', String(blockers[0].blocking_class));
       },
     },
     {
@@ -570,7 +790,8 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'buildPhasePrompt: P1-B 超时 partial 产物注入续作块',
+      // P0-1（plan d9b4f7e2）契约更新：续作块由 continuation.cause 驱动（不再由清单非空驱动）。
+      name: 'buildPhasePrompt: P1-B/P0-1 超时 continuation + partial 产物注入续作块',
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
@@ -581,6 +802,9 @@ export function runAll(): UnitCaseResult[] {
           undefined,
           undefined,
           ['doc/features/x/review/review-report.md', 'doc/features/x/review/context-exploration.md'],
+          undefined,
+          undefined,
+          { cause: 'agent_timeout', process_resumed: false },
         );
         assert(prompt.includes('TIMED OUT'), '缺超时续作标题');
         assert(prompt.includes('do NOT redo exploration'), '缺"勿从零重做探索"指令');
@@ -588,14 +812,74 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'buildPhasePrompt: 无 partial 产物时不注入续作块',
+      name: 'buildPhasePrompt: P0-1 无 continuation（干净首跑）→ 零注入；纯 partial 清单不再触发',
       run: () => {
-        const prompt = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, [], undefined, undefined, []);
-        assert(!prompt.includes('TIMED OUT'), '空清单不应注入续作块');
+        const clean = buildPhasePrompt(MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, [], undefined, undefined, []);
+        assert(!clean.includes('TIMED OUT') && !clean.includes('INTERRUPTED') && !clean.includes('CONNECTION DROP'), '干净首跑不得注入续作块');
+        const listOnly = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'review', FRAMEWORK_ROOT, [],
+          undefined, undefined, ['doc/features/x/review/review-report.md'], undefined, undefined, null,
+        );
+        assert(!listOnly.includes('TIMED OUT'), '无 continuation 时清单不得独立触发续作块');
       },
     },
     {
-      name: 'buildPhasePrompt: P2 skip-lines 注入续作块（无 artifacts 也生效）',
+      name: 'buildPhasePrompt: P0-1 PASS+timeout 空 partial 也出续作块（空清单即信息）+ 预算提示',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
+          undefined, undefined, [], [],
+          undefined,
+          { cause: 'agent_timeout', process_resumed: false },
+          2700_000,
+        );
+        assert(prompt.includes('TIMED OUT'), 'PASS+timeout（无 priorFailure）也须出续作块');
+        assert(prompt.includes('No partial phase artifacts'), '空清单须有 closure 提示行');
+        assert(prompt.includes('Time budget: ~45 minutes'), `缺预算提示: ${prompt.match(/Time budget[^\n]*/)?.[0]}`);
+      },
+    },
+    {
+      name: 'buildPhasePrompt: P0-1 断流块头不谎称 TIMED OUT',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
+          undefined, undefined, ['doc/features/x/spec/spec.md'], [],
+          undefined,
+          { cause: 'transient_api_error', process_resumed: false },
+        );
+        assert(prompt.includes('API CONNECTION DROP'), '缺断流块头');
+        assert(!prompt.includes('TIMED OUT'), '断流不得写 TIMED OUT');
+      },
+    },
+    {
+      name: 'buildPhasePrompt: P0-1 unknown（崩溃段）块头 + process_resumed 磁盘为准注记',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
+          undefined, undefined, [], [],
+          undefined,
+          { cause: 'unknown', process_resumed: true },
+        );
+        assert(prompt.includes('INTERRUPTED'), '缺 unknown 块头');
+        assert(prompt.includes('--resume'), '缺 process_resumed 注记');
+        assert(prompt.includes('trust the on-disk state'), '缺磁盘为准指令');
+      },
+    },
+    {
+      name: 'buildPhasePrompt: P0-1 content_retry 不出续作块（仅 priorFailure 通道）',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
+          'Verdict: FAIL\n- ut_compile', 'code_regression', [], [],
+          undefined,
+          { cause: 'content_retry', process_resumed: false },
+        );
+        assert(!prompt.includes('TIMED OUT') && !prompt.includes('INTERRUPTED'), 'content_retry 不得出中断续作块');
+        assert(prompt.includes('Prior attempt failure (retry context)'), 'priorFailure 通道保留');
+      },
+    },
+    {
+      name: 'buildPhasePrompt: P2 skip-lines + timeout continuation 注入续作块（无 artifacts 也生效）',
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST,
@@ -607,9 +891,149 @@ export function runAll(): UnitCaseResult[] {
           undefined,
           [],
           ['以下 3 个源文件上次已检视，勿重复 Read：', '  - src/a.ets'],
+          undefined,
+          { cause: 'agent_timeout', process_resumed: false },
         );
         assert(prompt.includes('TIMED OUT'), '仅 skip-lines 也应注入续作块');
         assert(prompt.includes('src/a.ets'), '缺 skip-list 文件');
+      },
+    },
+    // ==========================================================================
+    // P0-1 rev6：deriveContinuationFromEvents 五态窗口
+    // ==========================================================================
+    {
+      name: 'P0-1 五态窗口: 无 start → null（resume 全新 phase 零注入）',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'phase_start', phase: 'spec' },
+          { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+          { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i1' },
+          { type: 'phase_verdict', phase: 'spec', invoke_id: 'spec-i1', failure_kind_classified: 'code_regression' },
+        ];
+        assert(deriveContinuationFromEvents(events, 'plan') === null, '其他 phase 的历史不得触发 continuation');
+        assert(deriveContinuationFromEvents([], 'spec') === null, '空 events → null');
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: 有 start 无 end → unknown（崩于 agent 段）',
+      run: () => {
+        const c = deriveContinuationFromEvents(
+          [{ type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' }],
+          'spec',
+        );
+        assert(c?.cause === 'unknown', String(c?.cause));
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: end timed_out 无 verdict → agent_timeout（timeout end 后 verdict 前崩溃，真因不丢）',
+      run: () => {
+        const c = deriveContinuationFromEvents(
+          [
+            { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+            { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i1', timed_out: true },
+            { type: 'harness_start', phase: 'spec', invoke_id: 'spec-i1' },
+          ],
+          'spec',
+        );
+        assert(c?.cause === 'agent_timeout', String(c?.cause));
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: end 正常无 verdict → unknown（agent end 后 harness 中崩溃）',
+      run: () => {
+        const c = deriveContinuationFromEvents(
+          [
+            { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+            { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i1' },
+            { type: 'harness_start', phase: 'spec', invoke_id: 'spec-i1' },
+          ],
+          'spec',
+        );
+        assert(c?.cause === 'unknown', String(c?.cause));
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: 有 verdict → 用其 classified cause（timeout/transient/content 三态）',
+      run: () => {
+        const mk = (fk: string): GoalRunEvent[] => [
+          { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+          { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i1', timed_out: fk === 'agent_timeout' },
+          { type: 'phase_verdict', phase: 'spec', invoke_id: 'spec-i1', failure_kind_classified: fk },
+        ];
+        assert(deriveContinuationFromEvents(mk('agent_timeout'), 'spec')?.cause === 'agent_timeout', 'timeout verdict');
+        assert(deriveContinuationFromEvents(mk('transient_api_error'), 'spec')?.cause === 'transient_api_error', 'transient verdict');
+        assert(deriveContinuationFromEvents(mk('code_regression'), 'spec')?.cause === 'content_retry', 'content verdict');
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: 最新 attempt 优先——旧 timeout 不得盖过更新的 content FAIL',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+          { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i1', timed_out: true },
+          { type: 'phase_verdict', phase: 'spec', invoke_id: 'spec-i1', failure_kind_classified: 'agent_timeout' },
+          { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i2' },
+          { type: 'agent_invoke_end', phase: 'spec', invoke_id: 'spec-i2' },
+          { type: 'phase_verdict', phase: 'spec', invoke_id: 'spec-i2', failure_kind_classified: 'code_regression' },
+        ];
+        const c = deriveContinuationFromEvents(events, 'spec');
+        assert(c?.cause === 'content_retry', `expect content_retry got ${c?.cause}`);
+      },
+    },
+    {
+      name: 'P0-1 五态窗口: 旧日志无 invoke_id 按事件顺序分窗 fallback',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'agent_invoke_start', phase: 'spec' },
+          { type: 'agent_invoke_end', phase: 'spec', timed_out: true },
+          { type: 'phase_verdict', phase: 'spec', failure_kind_classified: 'agent_timeout' },
+        ];
+        assert(deriveContinuationFromEvents(events, 'spec')?.cause === 'agent_timeout', 'legacy windowing');
+      },
+    },
+    // ==========================================================================
+    // P0-4（plan d9b4f7e2）：连续超时计数 + effective_timeout_ms 单一事实源
+    // ==========================================================================
+    {
+      name: 'P0-4 countConsecutiveAgentTimeouts: FAIL/PASS+unclosed 混排连续计数、非超时 verdict 归零',
+      run: () => {
+        const v = (fk: string): GoalRunEvent => ({
+          type: 'phase_verdict',
+          phase: 'spec',
+          failure_kind_classified: fk,
+        });
+        // 07-13 形态：i1 FAIL(timeout) → i2 FAIL(timeout) → i3 PASS+unclosed(timeout) —— 3 连
+        assert(
+          countConsecutiveAgentTimeouts([v('agent_timeout'), v('agent_timeout'), v('agent_timeout')], 'spec') === 3,
+          '三连超时（含 PASS+unclosed 型，分类同为 agent_timeout）',
+        );
+        // 中间被内容 FAIL 打断 → 只数尾部
+        assert(
+          countConsecutiveAgentTimeouts([v('agent_timeout'), v('code_regression'), v('agent_timeout')], 'spec') === 1,
+          '非超时 verdict 重置连续计数',
+        );
+        // 其他 phase 的 verdict 不干扰
+        assert(
+          countConsecutiveAgentTimeouts(
+            [v('agent_timeout'), { type: 'phase_verdict', phase: 'plan', failure_kind_classified: 'code_regression' }],
+            'spec',
+          ) === 1,
+          '跨 phase 不串',
+        );
+        assert(countConsecutiveAgentTimeouts([], 'spec') === 0, '空 events');
+      },
+    },
+    {
+      name: 'P0-4 findLatestEffectiveTimeoutMs: 读最近 invoke 事件、旧日志无字段 → null（manifest fallback 口径）',
+      run: () => {
+        const events: GoalRunEvent[] = [
+          { type: 'agent_invoke_start', phase: 'spec', effective_timeout_ms: 2_700_000 },
+          { type: 'agent_invoke_start', phase: 'spec', effective_timeout_ms: 4_050_000 },
+        ];
+        assert(findLatestEffectiveTimeoutMs(events, 'spec') === 4_050_000, '取最近一次（升档后的值）');
+        const legacy: GoalRunEvent[] = [{ type: 'agent_invoke_start', phase: 'spec' }];
+        assert(findLatestEffectiveTimeoutMs(legacy, 'spec') === null, '旧日志无字段 → null（回落 manifest）');
+        assert(findLatestEffectiveTimeoutMs([], 'spec') === null, '无事件 → null');
       },
     },
     // ==========================================================================

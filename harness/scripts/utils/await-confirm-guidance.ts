@@ -103,3 +103,158 @@ export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[
     `处理完后续跑：${resumeCmd}`,
   ];
 }
+
+export interface FrameworkIntegrityGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  /** extractIntegritySubtypes 收集的多值 subtype（可空——blocker 无 classification 时）。 */
+  subtypes: string[];
+  /** consumer='framework/harness'、standalone='harness' */
+  harnessPrefixRel: string;
+}
+
+/**
+ * P0-5（plan d9b4f7e2，07-13 chrys bc-openCard 拉锯实证）：framework 完整性家族首触 halt
+ * 的引导话术。铁律：**不给 agent 任何"修复"指引**——本 halt 的全部出路都在真人侧；
+ * goal agent 对 framework 发布件的自动写操作（含"回滚可疑漂移"）一律禁止（案发现场
+ * goal agent 依 code_regression 通用话术回滚了宿主经用户批准的真修复）。
+ * 多 subtype 共存时按修复顺序列出（manifest 锚点层先于 per-file 层——manifest 不可信时
+ * per-file 比对无意义）。
+ */
+const INTEGRITY_SUBTYPE_REMEDIATION: ReadonlyArray<{ subtype: string; lines: string[] }> = [
+  {
+    subtype: 'framework_manifest_tampered',
+    lines: [
+      'manifest/sidecar 被本地改动或顶替——从发布包恢复 framework/RELEASE-MANIFEST.json 与 sidecar，',
+      '或经 framework-init UPDATE 重铺发布件。**禁止手工重算 manifest**（manifest 失锚时 drift allowlist 不适用）。',
+    ],
+  },
+  {
+    subtype: 'framework_manifest_sidecar_missing',
+    lines: [
+      'sidecar 缺失——经 framework-init UPDATE 重铺发布件恢复。**请勿手工补写**（手写完整性锚点无效且被写守卫拦截）。',
+    ],
+  },
+  {
+    subtype: 'framework_manifest_corrupt',
+    lines: ['manifest 损坏——重装或从发布包恢复 framework/RELEASE-MANIFEST.json（allowlist 对 manifest 层无效）。'],
+  },
+  {
+    subtype: 'framework_manifest_empty',
+    lines: ['manifest 为空——重装或从发布包恢复 framework/RELEASE-MANIFEST.json（allowlist 对 manifest 层无效）。'],
+  },
+  {
+    subtype: 'framework_drift',
+    lines: [
+      '发布源码漂移——三选一：①确属有意本地 fork：由**真人**在 framework.config.json',
+      '  integrity.drift_allowlist 添加 {path, rationale, approved_by} 具名审批（agent 自加无效）；',
+      '  ②还原漂移文件到发布件原状后重跑；③上游缺陷修复：回灌 agent-maison 源仓重新发布。',
+      '  注意：漂移可能是宿主/真人**有意热修**（本机制的立项事故正是 goal agent 回滚了真修复）——',
+      '  不确定来源时先问改动者，不要默认还原。goal run 进行中要热修 framework 的，请先停 run。',
+    ],
+  },
+  {
+    subtype: 'framework_foreign_file',
+    lines: ['framework/ 树上有外来文件——清理（临时脚本/宿主产物移出），或确属有意 → 真人 allowlist 具名审批。'],
+  },
+];
+
+export function buildFrameworkIntegrityGuidance(opts: FrameworkIntegrityGuidanceOpts): string[] {
+  const { feature, runId, phase, subtypes, harnessPrefixRel } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  const known = INTEGRITY_SUBTYPE_REMEDIATION.filter((r) => subtypes.includes(r.subtype));
+  const unknown = subtypes.filter((s) => !INTEGRITY_SUBTYPE_REMEDIATION.some((r) => r.subtype === s));
+  const out: string[] = [
+    `【${feature} · run ${runId} · ${phase}】framework 完整性门禁拦截` +
+      (subtypes.length ? `（${subtypes.join(' + ')}）` : '') +
+      '——此类问题 agent 修不了也不许修（包括"回滚可疑改动"），须真人处置后续跑。',
+    '',
+    '按顺序处置（涉及文件清单见 harness 报告的 framework_integrity/framework_foreign_file blocker details）：',
+  ];
+  let n = 0;
+  for (const r of known) {
+    n += 1;
+    out.push(`  ${n}. [${r.subtype}]`);
+    for (const l of r.lines) out.push(`     ${l}`);
+  }
+  for (const s of unknown) {
+    n += 1;
+    out.push(`  ${n}. [${s}] 未内置处置建议——人工对照 framework/RELEASE-MANIFEST.json 核查 framework/ 完整性。`);
+  }
+  if (n === 0) {
+    out.push('  1. blocker 未携带 subtype——人工对照 framework/RELEASE-MANIFEST.json 核查 framework/ 完整性。');
+  }
+  out.push('', `处置完后续跑：${resumeCmd}`);
+  return out;
+}
+
+export interface AgentTimeoutRepeatedGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  /** 各 attempt 实际时长（ms，按时间序）——让人一眼看出是"差一点"还是"根本跑不完"。 */
+  attemptDurationsMs: number[];
+  /** 当前有效超时（升档后，ms）。 */
+  effectiveTimeoutMs: number;
+  harnessPrefixRel: string;
+}
+
+/**
+ * P0-4（plan d9b4f7e2）：连续超时熔断（升档后仍超时）求人话术。前提：P0-1 已让超时
+ * 重试真续作、P0-2 已让门禁不再自崩——到这里还连续超时，说明预算/需求规模/adapter
+ * 环境有结构性问题，盲重试只烧 wall。
+ */
+export function buildAgentTimeoutRepeatedGuidance(opts: AgentTimeoutRepeatedGuidanceOpts): string[] {
+  const { feature, runId, phase, attemptDurationsMs, effectiveTimeoutMs, harnessPrefixRel } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  const fmt = (ms: number): string => `${Math.round(ms / 60000)}m`;
+  return [
+    `【${feature} · run ${runId} · ${phase}】连续多次 attempt 超时（含升档 ×1.5 后仍超时，当前有效预算 ${fmt(effectiveTimeoutMs)}）` +
+      '——续作与升档都救不回来，属结构性瓶颈，盲重试只烧 wall，需要你拍板。',
+    '',
+    `各 attempt 实际时长：${attemptDurationsMs.map(fmt).join(' → ') || '（无记录）'}`,
+    '',
+    '三条出路（按嫌疑排查）：',
+    `  1. 预算不足（时长都贴着预算被杀）：调大 manifest 的 unattended.phase_timeout_seconds.${phase} 后续跑；`,
+    '  2. 需求过大（单 phase 工作量超出单 attempt 能力）：把需求拆小（页面/模块分批）再跑；',
+    '  3. adapter/环境异常（时长离预算很远就死、或输出恒空）：检查 agent CLI 环境与 agent-output.log。',
+    '',
+    `处理完后续跑：${resumeCmd}`,
+  ];
+}
+
+export interface FrameworkBugGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  /** 崩溃的 checker id 列表（blocker id）。 */
+  checkerIds: string[];
+  /** 首个异常的栈首行摘录（可空）。 */
+  stackHead?: string;
+  harnessPrefixRel: string;
+}
+
+/**
+ * P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误首触 halt 的引导话术。案发现场：spec 前
+ * 5 轮 agent 反复"修"自己的产物试图安抚一个会崩溃的 checker——框架 bug 只能人修，
+ * 重试纯烧预算。
+ */
+export function buildFrameworkBugGuidance(opts: FrameworkBugGuidanceOpts): string[] {
+  const { feature, runId, phase, checkerIds, stackHead, harnessPrefixRel } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  return [
+    `【${feature} · run ${runId} · ${phase}】门禁脚本自身异常（[Harness 内部错误]，checker: ${checkerIds.join(', ') || '<unknown>'}）` +
+      '——这是 framework 缺陷，**不是 agent 产物的问题**。',
+    ...(stackHead ? [`  首行栈：${stackHead}`] : []),
+    '',
+    '处置：',
+    '  1. 把该缺陷回灌 agent-maison 源仓修复并重新发布（附 harness 报告里的完整栈）；',
+    '  2. 等不及发布需本地热修的：由**真人**修改并在 framework.config.json integrity.drift_allowlist',
+    '     添加 {path, rationale, approved_by} 具名审批（否则下一轮被 framework_integrity 拦截）；',
+    '  3. **不要**让 agent 继续修改自己的产物来绕过——崩溃发生在 checker 内部，产物怎么改都可能复现；',
+    '     agent 也不得修改 framework 发布件。',
+    '',
+    `处置完后续跑：${resumeCmd}`,
+  ];
+}

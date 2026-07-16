@@ -83,6 +83,8 @@ export interface GoalPhaseOutcome {
   halt_reason?: string;
   /** P0-9b：await_human_visual_confirm 等设计内求人 halt 的逐步操作指引（给真人读） */
   halt_guidance?: string;
+  /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
+  integrity_subtypes?: string[];
   interaction_question?: string;
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
@@ -223,9 +225,17 @@ export function generateGoalReportMarkdown(
                   ? '待真人逐屏过目确认（设计内求人时刻，见下方引导）'
                   : p.halt_reason === 'await_human_p0_skip'
                     ? 'P0 用例被跳过待真人裁决（设计内求人时刻，见下方引导）'
-                    : p.halted
-                      ? 'halted'
-                      : '—');
+                    : p.halt_reason === 'framework_integrity_block'
+                      ? `framework 完整性拦截${p.integrity_subtypes?.length ? `（${p.integrity_subtypes.join(' + ')}）` : ''}——须真人处置（allowlist 具名审批/还原/重铺/回灌，见下方引导），agent 不得改动 framework 发布件`
+                      : p.halt_reason === 'framework_bug'
+                        ? '门禁脚本自身异常（framework 缺陷，非产物问题）——须回灌源仓修复，见下方引导'
+                        : p.halt_reason === 'agent_timeout_repeated'
+                          ? '连续超时（升档后仍超时）——预算/需求规模/adapter 环境三选一排查，见下方引导'
+                          : p.halt_reason === 'budget_wall_clock'
+                            ? 'wall 总预算耗尽（deadline 制硬截断）'
+                            : p.halted
+                              ? 'halted'
+                              : '—');
     const summary = p.summary_path ?? '—';
     const warns = warnDigest.get(String(p.phase)) ?? '—';
     lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${warns} | ${reason} | ${summary} |`);
@@ -244,16 +254,14 @@ export function generateGoalReportMarkdown(
     }
   }
 
-  // P0-10a 补强②：await_human_visual_confirm 的机器生成引导渲染进 md（detach 用户看 md 亦撞见）。
-  const awaitConfirm = report.phases.filter(
-    (p) =>
-      (p.halt_reason === 'await_human_visual_confirm' || p.halt_reason === 'await_human_p0_skip') &&
-      p.halt_guidance,
-  );
-  if (awaitConfirm.length > 0) {
-    lines.push('', '## 需真人逐屏确认（await_human_visual_confirm）', '');
-    for (const p of awaitConfirm) {
-      lines.push(p.halt_guidance!.trim(), '');
+  // P0-10a 补强②（rev：cursor 复审采纳改为 reason 无关）：凡带 halt_guidance 的 halt
+  // 一律渲染进 md——detach 用户只看 md，framework_integrity_block/framework_bug/
+  // agent_timeout_repeated 的补救文案不渲染等于没写。
+  const guidedHalts = report.phases.filter((p) => p.halt_guidance);
+  if (guidedHalts.length > 0) {
+    lines.push('', '## 需人工处置（halt 引导）', '');
+    for (const p of guidedHalts) {
+      lines.push(`### ${p.phase} · ${p.halt_reason ?? 'halted'}`, '', p.halt_guidance!.trim(), '');
     }
   }
 

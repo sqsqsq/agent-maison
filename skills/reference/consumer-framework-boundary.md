@@ -34,6 +34,17 @@
 
 **两条运维提示**：①`framework/specs/runtime-artifact-policy.json` 是三方共读的运行时产物白名单——**勿删**（缺失时完整性扫描按"宁严勿松"不放行任何运行时目录，node_modules 等会被当外来文件 BLOCKER 刷屏，属预期防御行为，经 framework-init UPDATE 重铺恢复）。②写时守卫只认**逐路径**的 `integrity.drift_allowlist` 真人审批，不认 `allow_local_drift` 总开关（总开关仅把查时结果降 WARN，写入时仍会被拦）——比查时更严是有意设计，需要写某个 fork 文件请逐路径审批。
 
+## 修改 framework 发布件前必读（宿主热修正规通道）
+
+> 立项事故（2026-07-13 bc-openCard）：宿主 agent 经用户口头同意直接热修了 7 个 framework 门禁脚本——修复本身是对的，但没走审批通道，正在跑的 goal run 把它们判成漂移、还依旧话术把**真修复回滚回了有 bug 的发布版**，拉锯烧了两个多小时。
+
+发现 framework 缺陷时，按序：
+
+1. **首选：上报回灌源仓**——带上 harness 报告的完整栈/漂移清单，等新发布件；不改本地。
+2. **等不及需本地热修**：改之前由**真人**在 `framework.config.json` 的 `integrity.drift_allowlist` 逐路径添加 `{path, rationale, approved_by}` 具名审批（approved_by 必须真人署名——自动化身份/`user_requirement` 无效；agent 不得自改后自批）。先审批后动手，顺序不能反（写时守卫会拦无审批写入）。
+3. **goal run 正在跑**：先停 run（或接受 run 内被 `framework_integrity_block` halt 后再续跑）。goal agent 对 framework 发布件零写权限——它不会也不该替你处理漂移。
+4. **授权粒度**：用户批准"修某个 bug"不等于批准批量清扫——要扩大改动面（如同模式多文件修复）先回问一句再动手。逐文件审批条目也要跟着补齐。
+
 ## framework 资产树不承载宿主产物
 
 `framework/harness/` 仅用于 harness 运行时（reports、state、node_modules 等）。**禁止**在此目录 Write 宿主 `*.test.ets`、`ohosTest/`、`test/dag/` 或 `{package_path}/` 整树。`check-ut` 门禁 `harness_host_artifact_pollution` 会 BLOCKER。

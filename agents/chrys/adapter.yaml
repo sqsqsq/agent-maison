@@ -27,6 +27,11 @@ image_input: none
 
 goal_capability:
   mode: external_runner
+  # P1-7（plan d9b4f7e2）spike 待核实：07-13 现场表现为"被杀 attempt agent-output.log
+  # 恒 0 字节、成功 attempt 结束时一次性写结果 JSON"——与 --json 缓冲输出**一致但未经**
+  # 宿主端 `chrys run --help` 核实，故按 unknown 声明（不把单次现象固化成所有版本的事实）。
+  # unknown/buffered 的运维含义：API 断流哨兵对本 adapter 可能失效，断流表现为整 attempt 超时。
+  output_delivery: unknown
   external_runner:
     headless_invoke: 'chrys run --task {{PROMPT_FILE}} -C {{PROJECT_ROOT}} --agent Code --json'
     unattended:

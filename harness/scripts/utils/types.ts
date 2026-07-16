@@ -390,6 +390,12 @@ export interface FeatureSpec {
   acceptance?: AcceptanceSpec;
   /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
   useCases?: UseCasesSpec;
+  /**
+   * P0-2（plan d9b4f7e2 复审）：spec-loader 加载期发现并归一化的形状偏差留痕
+   * （根节点非 map / 集合字段非数组）。harness-runner 据此产出结构化 FAIL
+   * （feature_spec_shape）——归一化只防崩溃，不许静默洗形状。
+   */
+  shape_issues?: string[];
 }
 
 // --------------------------------------------------------------------------

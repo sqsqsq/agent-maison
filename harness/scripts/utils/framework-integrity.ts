@@ -481,7 +481,11 @@ export function runFrameworkIntegrityPreflight(opts: {
     '上游修复请回灌 agent-maison 并重新发布；确需本地 fork：由**真人**在 framework.config.json ' +
     'integrity.drift_allowlist 添加 {path, rationale, approved_by} 具名审批（approved_by 须真人——' +
     '自动化身份/user_requirement 无效；agent 不得自改 framework 后自批放行，发现框架问题应 halt 上报），' +
-    '或还原文件后重跑。';
+    '或还原文件后重跑。' +
+    // P1-6（plan d9b4f7e2，07-13 拉锯实证）：宿主在 goal run 进行中热修 framework →
+    // goal 侧 halt 拉锯数小时——并发场景先停 run。
+    '注意：goal run 进行中热修 framework 文件会让 run 内被本门禁 halt（漂移也可能是他人有意热修，' +
+    '不确定来源时先问改动者，不要默认还原）——要热修请先停 run 或先补具名审批。';
 
   const out: CheckResult[] = [selfcheck.result];
 

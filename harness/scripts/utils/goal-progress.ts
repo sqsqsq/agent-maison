@@ -14,6 +14,7 @@ import {
 import { loadFeatureTrackDecl } from './feature-track';
 import {
   countAgentInvokeStarts,
+  findLatestEffectiveTimeoutMs,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
   resolveResumedBudget,
@@ -713,7 +714,12 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
   const wallLimitMs = resolveWallClockMs(manifest);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
-  const phaseTimeoutMs = resolvePhaseTimeoutMs(stallPhase, manifest);
+  // P0-4（plan d9b4f7e2）：timeout 单一事实源——优先读最近 agent_invoke_start 的
+  // effective_timeout_ms（钳制/升档后的真值；runner 升档而 progress 静态解析 manifest
+  // 会把合法运行 attempt 误报 STALLED）；旧日志无该字段时回落 manifest 解析。
+  const phaseTimeoutMs =
+    findLatestEffectiveTimeoutMs(events, currentPhase) ??
+    resolvePhaseTimeoutMs(stallPhase, manifest);
 
   const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase);
 

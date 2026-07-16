@@ -803,6 +803,16 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
       details: isProgrammerError
         ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
         : `检查执行时发生错误：${e.message}`,
+      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
+      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
+      ...(isProgrammerError
+        ? {
+            failure_kind: 'framework_bug',
+            blocking_class: 'framework_internal',
+            suggestion:
+              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
+          }
+        : {}),
     }];
   }
 }

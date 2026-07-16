@@ -10,6 +10,7 @@ import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   collectAllComponentNodes,
   loadUiSpecFile,
+  loadUiSpecFileWithShapeIssues,
   parseUiChangeFromSpecMarkdown,
   structureFailOrWarn,
   uiSpecAbsPath,
@@ -122,8 +123,8 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
     }];
   }
 
-  const doc = loadUiSpecFile(absPath);
-  if (!doc) {
+  const loaded = loadUiSpecFileWithShapeIssues(absPath);
+  if (!loaded) {
     const { severity, status } = structureFailOrWarn(enforcement);
     return [{
       id: 'ui_spec_structure',
@@ -135,9 +136,16 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
       affected_files: [uiSpecRel],
     }];
   }
+  const doc = loaded.doc;
 
   const issues: string[] = [];
   const warnings: string[] = [];
+
+  // P0-2（plan d9b4f7e2）：loader 形状归一化的留痕在主门禁产出结构化 FAIL——
+  // 归一化只防下游 TypeError 崩溃（07-13 现场三门禁连环崩的根源），不许把坏形状洗成 PASS。
+  for (const si of loaded.shapeIssues) {
+    issues.push(`shape: ${si}`);
+  }
 
   // 运行时 schema 校验（enum/类型/additionalProperties），对照 ui-spec.schema.json
   for (const e of validateUiSpecSchema(doc)) {

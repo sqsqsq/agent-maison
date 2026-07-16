@@ -50,6 +50,45 @@ export const MIN_PHASE_TIMEOUT_SECONDS = 1800;
 /** 未知 phase / 全部回落用的最终兜底（= 旧全局值）。 */
 export const DEFAULT_GLOBAL_TIMEOUT_SECONDS = 3600;
 
+/**
+ * P0-4（plan d9b4f7e2）：wall deadline 制下为**收尾**（checkpoint/report/snapshot/
+ * completion receipt）预留的时间。agent/harness/backoff 的可用预算一律先扣本值；
+ * run_end 之后的 best-effort 收尾超出本预留即跳过（finalize_skipped 留痕）。
+ * 取值为保守常量（开放问题 4：收尾耗时分布未采样，事件回灌后再调）。
+ */
+export const FINALIZE_RESERVE_MS = 60_000;
+
+/**
+ * P0-4：连续超时升档——同 phase 连续第 CONSECUTIVE_TIMEOUT_ESCALATE_AFTER 次超时后，
+ * 下一 attempt 的**默认表派生**预算 ×TIMEOUT_ESCALATION_FACTOR（显式 override 不动，
+ * 与 MIN 地板同一豁免契约）；连续第 CONSECUTIVE_TIMEOUT_HALT_AT 次（升档后仍超时）
+ * → halt agent_timeout_repeated 求人。签名无关（07-13 chrys 案：i1/i2/i4/i5 FAIL 签名
+ * 互异，签名基熔断 6 连超时零命中）。
+ */
+export const TIMEOUT_ESCALATION_FACTOR = 1.5;
+export const CONSECUTIVE_TIMEOUT_ESCALATE_AFTER = 2;
+export const CONSECUTIVE_TIMEOUT_HALT_AT = 3;
+
+/**
+ * P0-4 第四轮复审：backoff 可负担性判定（纯函数，runner 接线 + 单测共用）。
+ * 剩余预算装不下**配置的** backoff 即 false → 不睡直接 budget_wall_clock 终局——
+ * 睡截断残量后本来也没预算再跑 attempt，只是把"卡到总超时"体验再拖一截。
+ */
+export function canAffordBackoff(configuredBackoffMs: number, availableMs: number): boolean {
+  return availableMs >= configuredBackoffMs && configuredBackoffMs > 0;
+}
+
+/** 显式 override（per-phase 或扁平）在位即 true——升档只对默认表派生值生效。 */
+export function isExplicitPhaseTimeout(
+  phase: FeaturePhase,
+  manifest: PhaseTimeoutManifestView,
+): boolean {
+  const u = manifest.unattended ?? {};
+  const perPhase = u.phase_timeout_seconds?.[phase];
+  if (typeof perPhase === 'number' && perPhase > 0) return true;
+  return typeof u.timeout_seconds === 'number' && u.timeout_seconds > 0;
+}
+
 /** wall 派生时在"链路 per-phase 总和"上额外加的缓冲（分钟）。 */
 export const WALL_CLOCK_BUFFER_MINUTES = 30;
 

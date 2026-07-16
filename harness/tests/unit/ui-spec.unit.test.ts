@@ -9,7 +9,10 @@ import * as path from 'path';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { checkUiSpecStructure } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
+import { checkVisualParityCoverage } from '../../../profiles/hmos-app/harness/plan-visual-parity-check';
 import { deltaE2000, hexToLab } from '../../../profiles/hmos-app/harness/image-toolkit';
+import { loadUiSpecFileWithShapeIssues } from '../../scripts/utils/ui-spec-shared';
+import { asArray, takeArray } from '../../scripts/utils/shape-guards';
 import type { CheckContext, PhaseRuleSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
@@ -375,6 +378,149 @@ export function runAll(): UnitCaseResult[] {
   run('deltaE_red_vs_blue_large', () => {
     const d = deltaE2000(hexToLab('#C7000B'), hexToLab('#0000FF'));
     if (d < 10) throw new Error(`expected large ΔE got ${d}`);
+  });
+
+  // ==========================================================================
+  // P0-2（plan d9b4f7e2）形状防崩溃 fixture 矩阵：{} / "" / 嵌套 dict / parse-null
+  // 断言三件事：零 throw、结构化 FAIL（shape: 前缀）、非法形状不得静默 PASS。
+  // ==========================================================================
+
+  const shapeFixture = (uiSpecBody: string): { r: ReturnType<typeof checkUiSpecStructure>; root: string } => {
+    const root = mkProject();
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), uiSpecBody);
+    const r = checkUiSpecStructure(baseCtx(root, { uiSpecEnforcement: 'strict' }), prdNewOrChanged());
+    return { r, root };
+  };
+
+  run('P0-2 shape: assets 为 dict（{}）→ 结构化 FAIL 不 throw 不静默 PASS', () => {
+    const { r, root } = shapeFixture([
+      'schema_version: "1.0"',
+      'screens: []',
+      'tokens: { brand: { kind: color, value: "#fff" } }',
+      'assets: {}',
+    ].join('\n'));
+    try {
+      const hit = r.find(x => x.id === 'ui_spec_structure');
+      if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
+      if (!/shape: assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 shape: assets 为字符串（""）→ 结构化 FAIL 不 throw', () => {
+    const { r, root } = shapeFixture([
+      'schema_version: "1.0"',
+      'screens: []',
+      'tokens: { brand: { kind: color, value: "#fff" } }',
+      'assets: ""',
+    ].join('\n'));
+    try {
+      const hit = r.find(x => x.id === 'ui_spec_structure');
+      if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
+      if (!/shape: assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 shape: screens 为 dict + 嵌套 children 为 dict → 结构化 FAIL 不 throw', () => {
+    const { r, root } = shapeFixture([
+      'schema_version: "1.0"',
+      'screens:',
+      '  - id: home',
+      '    priority: P0',
+      '    root:',
+      '      type: navigation_frame',
+      '      order: 0',
+      '      children: { oops: true }',
+      'tokens: { brand: { kind: color, value: "#fff" } }',
+      'assets: []',
+    ].join('\n'));
+    try {
+      const hit = r.find(x => x.id === 'ui_spec_structure');
+      if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
+      if (!/shape: screens\[home\]\.root\.children/.test(hit.details ?? '')) throw new Error(`missing children shape issue: ${hit.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 shape: loadUiSpecFileWithShapeIssues 归一化后 doc 全字段可安全迭代', () => {
+    const root = mkProject();
+    try {
+      const abs = path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml');
+      fs.writeFileSync(abs, ['screens: ""', 'tokens: []', 'assets: { a: 1 }', 'global_elements: "x"'].join('\n'));
+      const loaded = loadUiSpecFileWithShapeIssues(abs);
+      if (!loaded) throw new Error('expect doc');
+      if (!Array.isArray(loaded.doc.assets) || !Array.isArray(loaded.doc.screens)) throw new Error('normalize failed');
+      if (!Array.isArray(loaded.doc.global_elements)) throw new Error('global_elements normalize failed');
+      if (loaded.shapeIssues.length < 4) throw new Error(`expect ≥4 shape issues got ${loaded.shapeIssues.length}: ${loaded.shapeIssues.join(' | ')}`);
+      // 崩溃回归：归一化后 collectAllComponentNodes 等迭代面零 throw
+      for (const a of loaded.doc.assets) void a;
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 shape: 根节点解析为 null/标量 → loadUiSpecFile 返回 null（既有契约不变）', () => {
+    const root = mkProject();
+    try {
+      const abs = path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml');
+      fs.writeFileSync(abs, '"just a string"');
+      if (loadUiSpecFileWithShapeIssues(abs) !== null) throw new Error('scalar root must load as null');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 shape: visual-parity mappings.components 为 dict → 结构化 FAIL 不 throw（07-13 :142 崩溃回归）', () => {
+    const root = mkProject();
+    try {
+      const featureDir = path.join(root, 'doc', 'features', 'bank-card');
+      fs.mkdirSync(path.join(featureDir, 'plan'), { recursive: true });
+      fs.writeFileSync(path.join(featureDir, 'spec', 'spec.md'), prdNewOrChanged());
+      fs.writeFileSync(path.join(featureDir, 'spec', 'ui-spec.yaml'), validUiSpec());
+      fs.writeFileSync(
+        path.join(featureDir, 'plan', 'visual-parity.yaml'),
+        ['mappings:', '  assets: ""', '  tokens: {}', '  components: { oops: 1 }'].join('\n'),
+      );
+      const ctx = baseCtx(root, {
+        phase: 'plan',
+        phaseRule: {
+          phase: 'plan',
+          structure_checks: { visual_parity_coverage: { description: 'vp coverage' } },
+        } as unknown as PhaseRuleSpec,
+      });
+      const r = checkVisualParityCoverage(ctx);
+      const hit = r.find(x => x.id === 'visual_parity_coverage');
+      if (!hit) throw new Error(`expect result got ${JSON.stringify(r)}`);
+      if (hit.status === 'PASS') throw new Error('invalid shapes must not silently PASS');
+      if (!/shape: mappings\.components/.test(hit.details ?? '')) throw new Error(`missing components shape issue: ${hit.details}`);
+      if (!/shape: mappings\.assets/.test(hit.details ?? '')) throw new Error(`missing assets shape issue: ${hit.details}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('P0-2 asArray/takeArray 契约：非数组真值归空 + 留痕；缺失不留痕', () => {
+    if (asArray(undefined).length !== 0 || asArray('').length !== 0 || asArray({ a: 1 }).length !== 0) {
+      throw new Error('asArray must coerce non-arrays to []');
+    }
+    if (asArray([1, 2]).length !== 2) throw new Error('asArray must pass arrays through');
+    const missIssues: string[] = [];
+    takeArray(undefined, 'f', missIssues);
+    takeArray(null, 'f', missIssues);
+    if (missIssues.length > 0) throw new Error('missing fields must not record shape issues');
+    const shapeIssues: string[] = [];
+    takeArray({}, 'contracts.modules', shapeIssues);
+    if (shapeIssues.length !== 1 || !/contracts\.modules/.test(shapeIssues[0])) throw new Error(`takeArray must record: ${shapeIssues.join('|')}`);
   });
 
   return results;

@@ -33,6 +33,7 @@ import {
   type UiSpecAsset,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { featureFilePath, relFeatureFile } from '../../../harness/config';
+import { asArray } from '../../../harness/scripts/utils/shape-guards';
 import {
   isPixel1to1,
   fidelityRatchetFailOrWarn,
@@ -176,7 +177,14 @@ export function loadCropVlEntries(projectRoot: string, feature: string): Map<str
   if (!fs.existsSync(abs)) return out;
   try {
     const doc = YAML.parse(fs.readFileSync(abs, 'utf-8')) as { entries?: CropVlEntry[] } | null;
-    for (const e of doc?.entries ?? []) {
+    // P0-2：entries 非数组真值（{} 等）→ asArray 防 for..of 崩（原实现靠外层 catch 吞掉
+    // TypeError 整表作废；归一后按"无记录"语义走既有 fail-closed 路径——每个 crop 资产
+    // 会得到"无裁决记录"的结构化 FAIL，非静默 PASS）。复审补：坏形状留 warn 痕迹，
+    // 排障者可区分"真没跑 VL"与"报告文件形状坏了"。
+    if (doc?.entries !== undefined && doc?.entries !== null && !Array.isArray(doc.entries)) {
+      console.warn(`[asset-crop-validation] ${abs} 的 entries 非数组（${typeof doc.entries}），按无记录处理——相关 crop 资产将 FAIL"无裁决记录"`);
+    }
+    for (const e of asArray<CropVlEntry>(doc?.entries)) {
       if (e && typeof e.key === 'string' && e.key.trim()) out.set(e.key.trim(), e);
     }
   } catch {
@@ -263,7 +271,7 @@ export function collectUnverifiedCropLines(
   for (const a of cropAssets) {
     const v = verdicts.entries[a.key];
     if (!v || v.verdict !== 'verified') {
-      out.push(`${a.key}：${v ? `${v.verdict}（${(v.reasons ?? []).join('；') || '未通过验真'}）` : '无裁决记录'}`);
+      out.push(`${a.key}：${v ? `${v.verdict}（${asArray<string>(v.reasons).join('；') || '未通过验真'}）` : '无裁决记录'}`);
       continue;
     }
     // 绑定字段强制齐全（codex 二轮 P1 采纳）：verified 缺 sha256/resolved_path 即"旧格式/未绑定"裁决，

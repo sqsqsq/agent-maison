@@ -42,7 +42,20 @@ export type FailureKind =
    * 但 await_human_confirm 在 chrys 实证里被证明会被 agent_timeout 掩盖而未能首触即拦，因此才
    * 被拉进 CUMULATIVE_HALT_FAMILY 累计兜底。verification_evidence_gap 目前**未**加入该家族——
    * 是否也需要同样的累计兜底，取决于它在真实场景里是否会被类似掩盖，尚无实证，留待观察后决定。 */
-  | 'verification_evidence_gap';
+  | 'verification_evidence_gap'
+  /** P0-5（plan d9b4f7e2，07-13 chrys bc-openCard 拉锯实证）：framework 完整性门禁家族
+   * （blocking_class='integrity'，6 subtype：framework_drift / framework_foreign_file /
+   * framework_manifest_corrupt / framework_manifest_empty / framework_manifest_tampered /
+   * framework_manifest_sidecar_missing，可共存）。agent 修不了也**不许修**（含"回滚"——
+   * 案发现场 goal agent 依 code_regression 话术回滚了宿主经用户批准的真修复）→ 一律
+   * 首触即 halt 求人（allowlist 具名审批 / 人工还原 / 回灌源仓，manifest 层按 subtype
+   * 分补救）。命名映射：check 层 blocker.classification（failure_kind 落 summary 后的
+   * 字段名）∈ 上述 6 值 → runner 侧统一本 kind，subtype 经 extractIntegritySubtypes 透传。 */
+  | 'framework_integrity_block'
+  /** P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误（safeRun 捕获的 TypeError/RangeError/
+   * SyntaxError，[Harness 内部错误]）——agent 的产物修不好框架代码，重试只会空转（案发
+   * 现场 spec 前 5 轮反复"修"不存在于自己产物里的问题）→ 首触即 halt，指向回灌源仓。 */
+  | 'framework_bug';
 
 /** Windows STATUS_CONTROL_C_EXIT，spawn/spawnSync 在 win32 上把 Ctrl+C 杀死的子进程 exit code 报成这个无符号 32 位值。 */
 export const WINDOWS_CTRL_C_EXIT_CODE = 3221225786;
@@ -74,6 +87,14 @@ export interface AgentInvokeSignals {
   agentNoOutput?: boolean;
   /** isOperatorInterruptSignal(exitCode, signal) 命中——用户手动中断，非任何一种"失败"。 */
   operatorInterrupt?: boolean;
+  /**
+   * P0-5/P0-3 freshness（plan d9b4f7e2 决策表）：resolved.stale_summary——本轮 harness 是否
+   * **没有**产出新 summary（mtime 未更新）。fresh（false）时超时轮的确定性 integrity/
+   * framework_bug 证据可信（harness 在 tree-kill agent 之后新鲜跑出），优先于 agent_timeout；
+   * stale（true）时旧 summary 的此类证据不可信，一律归 agent_timeout。未传视同 stale
+   * （fail-safe：宁可多续作一轮，不凭旧证据 halt）。
+   */
+  staleSummary?: boolean;
 }
 
 /**
@@ -236,6 +257,50 @@ export function extractBlockerSignature(summary: GoalSummaryLike | null | undefi
   return ids.length > 0 ? ids.join('|') : '';
 }
 
+/** P0-5：summary 是否含任意 integrity 家族 blocker（blocking_class 判定，subtype 可缺）。 */
+export function hasIntegrityBlocker(summary: GoalSummaryLike | null | undefined): boolean {
+  if (!summary) return false;
+  if ((summary.blockers ?? []).some((b) => b.blocking_class === 'integrity')) return true;
+  return summary.blocking_class === 'integrity';
+}
+
+/**
+ * P0-5（rev5/rev6 收集式定稿）：从**所有** integrity blocker 收集 subtype（多值去重）。
+ * 字段名对码：check 层 CheckResult.failure_kind 经 buildSummaryBlockers 落到 summary
+ * blocker 的 **classification**（blocker 无 failure_kind 字段）；必须按
+ * blocking_class==='integrity' 过滤，否则内容 blocker 的 classification 混入。
+ * 顶层回落（旧 summary 兼容）同样带过滤：仅 summary.blocking_class==='integrity' 且
+ * failure_kind 非空才回填——防"无合格 integrity blocker、顶层却是内容类 failure_kind"误塞。
+ */
+export function extractIntegritySubtypes(summary: GoalSummaryLike | null | undefined): string[] {
+  if (!summary) return [];
+  const out: string[] = [];
+  for (const b of summary.blockers ?? []) {
+    if (b.blocking_class !== 'integrity') continue;
+    const c = (b.classification ?? '').trim();
+    if (c && !out.includes(c)) out.push(c);
+  }
+  if (
+    out.length === 0 &&
+    summary.blocking_class === 'integrity' &&
+    typeof summary.failure_kind === 'string' &&
+    summary.failure_kind.trim().length > 0
+  ) {
+    out.push(summary.failure_kind.trim());
+  }
+  return out;
+}
+
+/**
+ * P0-3（决策表"非空且全部 framework_bug"行）：blockers 非空且每条 classification 均为
+ * framework_bug。**length > 0 是硬条件**——空数组 `.every()` 真空真值会把"无 blocker"
+ * 误判成"全是框架 bug"（rev5 codex）。
+ */
+export function isAllFrameworkBugBlockers(summary: GoalSummaryLike | null | undefined): boolean {
+  const blockers = summary?.blockers ?? [];
+  return blockers.length > 0 && blockers.every((b) => b.classification === 'framework_bug');
+}
+
 /**
  * P0-B（§七.3）：跨 attempt 比较用的**有效** signature。PASS+timeout 常无普通 blocker
  * → 空 signature 会被 shouldHaltNoProgress 的 `!priorBlockerSignature` 短路、熔断恒不
@@ -267,6 +332,20 @@ export function classifyFailureKind(
   // 用户手动 Ctrl+C 时无论是否也恰好超时/断流/空产出，都不是"失败"，重试是对用户意图的冒犯。
   if (signals?.operatorInterrupt) return 'operator_interrupt';
   if (signals?.agentTimedOut) {
+    // P0-5/P0-3 freshness 决策表（plan d9b4f7e2 rev5 写死，P0-5.4 为 SSOT）：
+    //   stale                          → agent_timeout（旧 summary 证据不可信）
+    //   fresh + 含任意 integrity       → framework_integrity_block（integrity 优先于混装回落）
+    //   fresh + 非空全 framework_bug   → framework_bug（length>0 防真空真值）
+    //   fresh + 混装/纯 content        → agent_timeout（framework_bug 混装依赖 P0-2 收敛，
+    //                                    见开放问题 3；integrity 不适用回落）
+    // staleSummary 未传视同 stale（fail-safe）。
+    const fresh = signals.staleSummary === false;
+    if (fresh && hasIntegrityBlocker(summary)) {
+      return 'framework_integrity_block';
+    }
+    if (fresh && isAllFrameworkBugBlockers(summary)) {
+      return 'framework_bug';
+    }
     // E4（cursor+codex 双 review 采纳）：agentTimedOut 最高优先没错，但若这轮 summary 的
     // blockers 非空且**全部**已被 check 层判定为 await_human_confirm（真人签字家族），
     // 说明超时只是"顺带杀死了一个本来就只差人签的 attempt"——归 agent_timeout 会让 runner
@@ -280,11 +359,23 @@ export function classifyFailureKind(
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
 
+  // P0-5：非超时轮 integrity 在场即归 framework_integrity_block（一律首触 halt——07-13
+  // chrys 案 i8/i9 就是这里落 code_regression 后被"revert first"话术导向回滚宿主真修复）。
+  // 复审修复（cursor）：integrity 须在 external_block 之前判——framework 完整性失守时
+  // 其余一切归因（含"可 defer 的外部阻塞"）都不可信，先 halt 求人再谈 defer。
+  if (hasIntegrityBlocker(summary)) {
+    return 'framework_integrity_block';
+  }
   const meta = topBlockingMeta(summary);
   if (
     isDeferrableExternalBlock(meta.blocking_class, meta.failure_kind, dependencyPolicy)
   ) {
     return 'external_block';
+  }
+  // P0-3：非超时轮全 framework_bug（门禁自身崩溃）→ 首触 halt 指向回灌源仓；混装（框架
+  // bug + 内容 blocker）走既有归因——内容 blocker 仍可修，不因框架 bug 把整轮判死。
+  if (isAllFrameworkBugBlockers(summary)) {
+    return 'framework_bug';
   }
   const ids = blockerIds(summary);
   if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {

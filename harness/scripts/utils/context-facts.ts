@@ -134,13 +134,19 @@ function checkFactsFile(
   const results: CheckResult[] = [];
   const schemaVersion = (fm.schema_version ?? '').trim();
   if (schemaVersion !== '1.0') {
+    // P1-8（plan d9b4f7e2，07-13 chrys 案 i4/i5 实证连踩两轮）：facts.md 的 "1.0" 与隔壁
+    // context-exploration.md 的 1.0.0/1.1.0 是**两套版本号体系**，弱模型极易写混——
+    // details 直接给期望值 + 最小合法模板，不让 agent 猜。
     results.push({
       id: 'context_exploration_facts_schema_version',
       category: 'structure',
       description: 'facts.md schema_version 须为 "1.0"',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `当前 schema_version=${fm.schema_version ?? '<missing>'}`,
+      details:
+        `当前 schema_version=${fm.schema_version ?? '<missing>'}，期望 "1.0"（带引号的字符串）。` +
+        `注意：这是 context/facts.md 的版本号，与 context-exploration.md 的 1.0.0/1.1.0 是两套体系，不要照抄。` +
+        `最小合法 frontmatter：\n---\nschema_version: "1.0"\nfeature: ${feature}\nestablished_by: spec\n---`,
       affected_files: [relPath],
     });
   }
@@ -165,7 +171,9 @@ function checkFactsFile(
       description: 'facts.md frontmatter.established_by 须为该 track 首个 feature phase（spec 或 change）',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `established_by="${establishedBy || '<missing>'}"`,
+      details:
+        `established_by="${establishedBy || '<missing>'}"，期望 "spec"（full track）或 "change"（lite track）。` +
+        `在 frontmatter 顶层补一行，如：established_by: spec`,
       affected_files: [relPath],
     });
   } else {

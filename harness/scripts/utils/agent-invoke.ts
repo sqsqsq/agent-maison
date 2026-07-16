@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, spawnSync, type ChildProcess } from 'child_process';
+import { execFile, spawn, type ChildProcess } from 'child_process';
 import crossSpawn from 'cross-spawn';
 import type { UnattendedContract } from './goal-manifest';
 import type { GoalCapabilitySpec } from './goal-adapter-capability';
@@ -69,6 +69,22 @@ export const DEFAULT_KILL_PROCESS_TREE_WAIT_MS = 10_000;
 
 /** Max wait to drain in-flight kill after child settled — invoke must not hang here. */
 export const DEFAULT_KILL_INFLIGHT_DRAIN_MS = 1_000;
+
+/**
+ * P0-4（plan d9b4f7e2 rev5/rev6）：wall 硬预算验收用的 kill grace——由真实 termination
+ * 契约**四常量同源派生**（settle grace / force settle / tree-kill wait / inflight drain，
+ * 缺一不可），取串行最坏情形的保守上界。**禁止在 goal-timeout.ts 等处另造脱钩常量**：
+ * 验收不等式"进程总时长 ≤ wall 限 + resolveKillGraceMs()"只有在 grace 与实际 kill/settle
+ * 参数同源时才是真上界（bounded Windows kill 落地为前提，见 killProcessTree）。
+ */
+export function resolveKillGraceMs(): number {
+  return (
+    DEFAULT_CHILD_SETTLE_GRACE_MS +
+    DEFAULT_FORCE_SETTLE_AFTER_KILL_MS +
+    DEFAULT_KILL_PROCESS_TREE_WAIT_MS +
+    DEFAULT_KILL_INFLIGHT_DRAIN_MS
+  );
+}
 
 /** Race promise against timeout; on timeout return fallback (kill path must never block settle). */
 export async function awaitPromiseWithTimeout<T>(
@@ -534,27 +550,175 @@ export interface KillTreeResult {
   kill_error: string | null;
 }
 
+/** P1-7：adapter 版本探测结果缓存（每进程/每 binary 一次——版本探测自己不许卡 attempt）。 */
+const adapterVersionCache = new Map<string, string>();
+
+/**
+ * P1-7（plan d9b4f7e2）：adapter CLI 版本**运行时探测**（`<binary> --version`，短超时、
+ * 缓存、失败记 'unknown' 不阻塞）。版本随宿主环境漂移，**不硬编码进 adapter.yaml**
+ * （静态能力如 output_delivery 才进 schema）。结果由 goal-runner 写入 adapter_probe
+ * 事件供排障（如"哪个版本的 chrys 输出恒缓冲"这类归因）。
+ */
+/** probeAdapterVersion 的测试接缝（仅单测注入）。 */
+export interface ProbeAdapterVersionTestSeams {
+  spawnImpl?: typeof spawn;
+  killTreeImpl?: (pid: number) => Promise<KillTreeResult>;
+  /** 跳过缓存（单测隔离用）。 */
+  noCache?: boolean;
+}
+
+export async function probeAdapterVersion(
+  binary: string,
+  timeoutMs = 5_000,
+  testSeams?: ProbeAdapterVersionTestSeams,
+): Promise<string> {
+  const key = binary.trim();
+  if (!key) return 'unknown';
+  const cached = testSeams?.noCache ? undefined : adapterVersionCache.get(key);
+  if (cached) return cached;
+  const version = await new Promise<string>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (v: string): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(v);
+    };
+    let child: ChildProcess;
+    try {
+      // win32 下 .cmd shim 须经 shell 解析；binary 来自 adapter.yaml 的 headless_invoke
+      // 首 token（框架方维护的配置，非不可信输入）。
+      child = (testSeams?.spawnImpl ?? spawn)(key, ['--version'], {
+        shell: process.platform === 'win32',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      finish('unknown');
+      return;
+    }
+    let out = '';
+    child.stdout?.on('data', (c: Buffer | string) => {
+      out += String(c);
+    });
+    child.on('error', () => finish('unknown'));
+    child.on('close', (code) => {
+      const line = out.split(/\r?\n/).find((l) => l.trim());
+      finish(code === 0 && line ? line.trim().slice(0, 120) : 'unknown');
+    });
+    timer = setTimeout(() => {
+      // 复审修复（codex P2）：win32 下 shell:true 时 child.kill 只杀 shell 壳，CLI 孙进程
+      // 可能存活并持有 stdio 阻止根进程退出——改用 bounded killProcessTree（taskkill /T
+      // 全树、helper 自身有界）+ 销毁 stdio/监听（与 bounded taskkill 同套收尾）。
+      if (child.pid) {
+        void (testSeams?.killTreeImpl ?? killProcessTree)(child.pid);
+      } else {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already dead */
+        }
+      }
+      try {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      } catch {
+        /* stdio 可能已关 */
+      }
+      child.removeAllListeners();
+      child.unref();
+      finish('unknown');
+    }, timeoutMs);
+    // 注意：不 unref timer——它是 resolve 兜底路径（同 killProcessTree 的教训）。
+  });
+  if (!testSeams?.noCache) {
+    adapterVersionCache.set(key, version);
+  }
+  return version;
+}
+
+/** killProcessTree 的测试接缝（仅单测注入；生产调用一律走默认值）。 */
+export interface KillProcessTreeTestSeams {
+  /** 替换 taskkill 执行器（stub "永不退出的 helper" 场景）。 */
+  execFileImpl?: typeof execFile;
+  /** 替换有界等待上限（默认 DEFAULT_KILL_PROCESS_TREE_WAIT_MS，测试缩短避免 10s 等待）。 */
+  waitMs?: number;
+  /** 非 win32 平台强制走 win32 分支（bounded taskkill 逻辑的跨平台单测）。 */
+  forceWin32?: boolean;
+}
+
 /** Kill entire child process tree (Windows taskkill /T, POSIX process group). */
-export async function killProcessTree(pid: number): Promise<KillTreeResult> {
+export async function killProcessTree(
+  pid: number,
+  testSeams?: KillProcessTreeTestSeams,
+): Promise<KillTreeResult> {
   if (!pid || pid <= 0) {
     return { kill_attempted: false, kill_exit_code: null, kill_error: null };
   }
 
   try {
-    if (process.platform === 'win32') {
-      // spawnSync blocks the event loop — awaitPromiseWithTimeout cannot interrupt a hung taskkill.
-      const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
-        encoding: 'utf-8',
-        shell: true,
+    if (process.platform === 'win32' || testSeams?.forceWin32) {
+      // P0-4 rev5/rev6（plan d9b4f7e2）：taskkill 有界化。旧实现 spawnSync 阻塞 event loop
+      // ——外围 timeout 中断不了卡死的 taskkill，agent/harness 两条 hard wall 全部失界。
+      // 现改异步 execFile（shell:false，路径/参数不过 cmd 解析）+ helper 自身有界等待；
+      // 超时后**主动结束 helper 并销毁 stdio/监听**（存活 helper 持有 pipe/handle 仍会
+      // 阻止 Node 退出，"放弃等待"不够）→ 返回 kill_process_tree_timeout（kill 转
+      // best-effort 观测，与 DEFAULT_KILL_PROCESS_TREE_WAIT_MS 注释既有语义一致）。
+      return await new Promise<KillTreeResult>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const finish = (r: KillTreeResult): void => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          resolve(r);
+        };
+        const execFileImpl = testSeams?.execFileImpl ?? execFile;
+        let helper: ChildProcess;
+        try {
+          helper = execFileImpl(
+            'taskkill.exe',
+            ['/PID', String(pid), '/T', '/F'],
+            { shell: false, windowsHide: true },
+            (error, stdout, stderr) => {
+              const code = (error as { code?: number | string } | null)?.code;
+              const exit = error ? (typeof code === 'number' ? code : 1) : 0;
+              const err = error
+                ? String(stderr || stdout || error.message).trim().slice(0, 500) || null
+                : null;
+              finish({ kill_attempted: true, kill_exit_code: exit, kill_error: err });
+            },
+          );
+        } catch (e) {
+          finish({ kill_attempted: true, kill_exit_code: 1, kill_error: (e as Error).message });
+          return;
+        }
+        timer = setTimeout(() => {
+          try {
+            helper.kill('SIGKILL');
+          } catch {
+            /* helper 可能已死 */
+          }
+          try {
+            helper.stdout?.destroy();
+            helper.stderr?.destroy();
+            helper.stdin?.destroy();
+          } catch {
+            /* stdio 可能已关 */
+          }
+          helper.removeAllListeners();
+          helper.unref();
+          finish({
+            kill_attempted: true,
+            kill_exit_code: null,
+            kill_error: 'kill_process_tree_timeout',
+          });
+        }, testSeams?.waitMs ?? DEFAULT_KILL_PROCESS_TREE_WAIT_MS);
+        // 注意：本 timer **不得 unref**——它是 promise resolve 的唯一兜底路径；unref 后
+        // 事件循环若只剩它，Node 会在 timer 到点前静默退出（code 0），await 方永久悬挂。
+        // timer 本身有界（≤10s）且 finish 会 clearTimeout，不构成进程滞留风险。
       });
-      const err =
-        r.error?.message ??
-        (r.status !== 0 ? String(r.stderr ?? r.stdout ?? '').trim().slice(0, 500) || null : null);
-      return {
-        kill_attempted: true,
-        kill_exit_code: r.status,
-        kill_error: err,
-      };
     }
 
     try {

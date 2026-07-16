@@ -342,6 +342,24 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(!/async function runHarnessPhase[\s\S]*?spawnSync/.test(src), 'no spawnSync in runHarnessPhase');
     },
   },
+  {
+    // P0-4 复审修复回归（codex P0/cursor 阻断1）：harness kill 必须与 agent 路径同构——
+    // arm force-settle 先于 killProcessTree，且 POSIX 下 detached 进程组。行为级契约
+    // （armForceSettleAfterKill 在无 exit/close 时按时 resolve）由 agent-invoke-settle
+    // 套件覆盖；此处钉死 harness 段的接线不回退（源结构断言，集成断言见 tasks 7.3b）。
+    name: 'goal-runner: runHarnessPhase 超时路径 arm force-settle + detached（不挂死接线）',
+    run: () => {
+      const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-runner.ts'), 'utf-8');
+      const fn = /async function runHarnessPhase[\s\S]*?\n}/.exec(src)?.[0] ?? '';
+      assert(fn.includes('settleWaiter.armForceSettleAfterKill()'), 'harness 超时须 arm force-settle（否则杀不掉时 promise 永久悬挂）');
+      assert(
+        /armForceSettleAfterKill\(\);[\s\S]{0,400}?void killProcessTree\(child\.pid\)/.test(fn),
+        'timer 回调内 arm 须先于 kill（与 agent-invoke killTree 同构）',
+      );
+      assert(fn.includes("detached: process.platform !== 'win32'"), 'POSIX 须 detached（process.kill(-pid) 进程组前提）');
+      assert(fn.includes('timedOut'), 'timedOut 结构化结果');
+    },
+  },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {

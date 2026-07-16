@@ -32,6 +32,10 @@ export interface GoalCapabilityExternal {
   unattended?: Partial<UnattendedContract>;
 }
 
+/** P1-7（plan d9b4f7e2）：headless 输出交付方式（静态能力声明，宿主 --help 核实后填）。 */
+export type OutputDelivery = 'streaming' | 'buffered' | 'unknown';
+export const OUTPUT_DELIVERY_MODES = ['streaming', 'buffered', 'unknown'] as const;
+
 export interface GoalCapabilitySpec {
   mode: GoalCapabilityMode;
   native_goal?: GoalCapabilityNative;
@@ -40,6 +44,9 @@ export interface GoalCapabilitySpec {
   usage_capture?: UsageCaptureMethod;
   /** t3a（f7a3d9c2）：工具事件证据源声明（缺省 none=恒 unverified） */
   tool_event_provenance?: ToolEventProvenance;
+  /** P1-7：输出交付方式（缺省 unknown——buffered/unknown 时断流哨兵可能失效，
+   * 被杀 attempt 的 agent-output.log 可为 0 字节）；透传 agent_invoke_end 供排障。 */
+  output_delivery?: OutputDelivery;
 }
 
 export interface GoalCapabilityLoadResult {
@@ -100,12 +107,26 @@ export function loadGoalCapability(
       );
     }
   }
+  let outputDelivery: OutputDelivery = 'unknown';
+  if (gc.output_delivery !== undefined) {
+    if (
+      typeof gc.output_delivery === 'string' &&
+      (OUTPUT_DELIVERY_MODES as readonly string[]).includes(gc.output_delivery)
+    ) {
+      outputDelivery = gc.output_delivery as OutputDelivery;
+    } else {
+      issues.push(
+        `goal_capability.output_delivery 非法（${String(gc.output_delivery)}）；合法值 ${OUTPUT_DELIVERY_MODES.join('|')}`,
+      );
+    }
+  }
   const capability: GoalCapabilitySpec = {
     mode: mode ?? 'external_runner',
     native_goal: gc.native_goal as GoalCapabilityNative | undefined,
     external_runner: gc.external_runner as GoalCapabilityExternal | undefined,
     usage_capture: usageCapture,
     tool_event_provenance: toolEventProvenance,
+    output_delivery: outputDelivery,
   };
   return {
     adapter: adapterName,
