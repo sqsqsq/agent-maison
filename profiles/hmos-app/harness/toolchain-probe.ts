@@ -113,6 +113,65 @@ export function classifyHvigorEnvError(
 }
 
 /**
+ * 分块全文件错误码扫描（post-impl codex P2 收尾）：readLogTextForAnalysis 对 >32MB 日志
+ * 只保留尾部——错误码在更早位置时尾部分析漏判。本扫描器 O(1) 内存（4MB 块 + 64B overlap
+ * 防码串跨块），从头扫到尾收集 00303217/00303168 的命中行，返回拼接片段供
+ * classifyHvigorEnvError 复判（两码都收齐才提前退出，保留 classify 自身的 00303217 优先级）。
+ * 未命中/读失败返回 null。调用方（applyBuildProbe）只在「尾部分析未命中且文件超分析上限」
+ * 时触发，常规路径零开销；通用分析器的 32MB 内存保护不动。
+ */
+export function scanLogFileForHvigorEnvErrorCodes(logAbs: string): string | null {
+  const CHUNK = 4 * 1024 * 1024;
+  const OVERLAP = 64;
+  let fd: number;
+  try {
+    fd = fs.openSync(logAbs, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (size <= 0) return null;
+    const buf = Buffer.alloc(Math.min(CHUNK, size));
+    const hits: string[] = [];
+    let carry = '';
+    let pos = 0;
+    while (pos < size && hits.length < 2) {
+      const take = Math.min(CHUNK, size - pos);
+      fs.readSync(fd, buf, 0, take, pos);
+      const text = carry + buf.toString('utf-8', 0, take);
+      for (const code of ['00303217', '00303168'] as const) {
+        if (hits.some(h => h.includes(code))) continue;
+        // indexOf 线性定位（禁 `[^\n]*` 前缀正则——无换行超长行下二次方回溯会卡死进程），
+        // 命中后仅对錨点附近小片段验证 `ERROR:\s*` 前缀并手工截取所在行。
+        let from = 0;
+        while (from < text.length) {
+          const at = text.indexOf(code, from);
+          if (at < 0) break;
+          const preStart = Math.max(0, at - 16);
+          if (/ERROR:\s*$/.test(text.slice(preStart, at))) {
+            const lineStart = text.lastIndexOf('\n', at) + 1;
+            const lineEndRaw = text.indexOf('\n', at);
+            const lineEnd = lineEndRaw < 0 ? text.length : lineEndRaw;
+            // 行截取封顶 400 字符（超长行只留錨点邻域，classify 只需 `ERROR:\s*<code>` 可见）
+            hits.push(text.slice(Math.max(lineStart, at - 200), Math.min(lineEnd, at + 200)));
+            break;
+          }
+          from = at + code.length;
+        }
+      }
+      carry = text.slice(-OVERLAP);
+      pos += take;
+    }
+    return hits.length > 0 ? hits.join('\n') : null;
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * 生产链证据采集（best-effort，BLOCKER2 修复：让 incompatible_suspected 分支在真实链可达）：
  * SDK manifest 格式=扫 sdkHome 下 component 描述文件名；SDK 版本=读描述文件 version 字段；
  * hvigor 版本=--ensure 缓存的 cli_starts.hvigor_version。任一采不到即缺项（不臆造）。

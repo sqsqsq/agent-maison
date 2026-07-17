@@ -17,8 +17,10 @@ import {
   recordHvigorBuildOutcome,
   evaluateCapabilityGapAtPreflight,
   resetCapabilityFailedByHumanReprobe,
+  scanLogFileForHvigorEnvErrorCodes,
   TOOLCHAIN_PROBE_TTL_MS,
 } from '../../toolchain-probe';
+import { applyBuildProbe, type HvigorRunResult } from '../../hvigor-runner';
 
 interface UnitCaseResult {
   name: string;
@@ -235,6 +237,130 @@ const cases: Array<{ name: string; run: () => void }> = [
         lc.toolchain = { ...(lc.toolchain ?? {}), devEcoStudio: { installPath: 'D:/New/DevEco Studio' } };
         fs.writeFileSync(lp, JSON.stringify(lc, null, 2), 'utf-8');
         assert(evaluateCapabilityGapAtPreflight(root) === null, '换 DevEco 装配路径须自动失效回 unknown');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '分类输入=全量日志：错误码在头部、尾部被 >8KB 堆栈占满 → 仍判 capability_failed（不漏成 source_failure、不误清旧状态）',
+    run: () => {
+      const root = mkProject();
+      try {
+        const fp = computeHvigorInvocationFingerprint(root, DIMS);
+        // 基线：上一轮已正确建立 capability_failed——修复前的漏判会被 source_failure 分支误清。
+        recordHvigorBuildOutcome(root, { kind: 'capability_failed', fingerprint: fp, failure_code: 'sdk_component_missing', evidence: [] });
+        // 构造日志：错误码只在头部，其后 >8KB 堆栈把它推出尾部 excerpt 窗口。
+        const stack = Array.from({ length: 400 }, (_, i) => `    at hvigor internal frame ${i} (compile-pipeline.js:${i}:1)`).join('\n');
+        const full = `> hvigor ERROR: 00303168 Configuration Error\n${stack}\n> hvigor BUILD FAILED\n`;
+        const logAbs = path.join(root, 'hvigor-build.log');
+        fs.writeFileSync(logAbs, full, 'utf-8');
+        const excerpt = full.slice(-8000);
+        assert(!excerpt.includes('00303168'), '前置条件：尾部 excerpt 须不含错误码');
+        const r: HvigorRunResult = {
+          executed: true,
+          exitCode: 1,
+          durationMs: 1,
+          logExcerpt: excerpt,
+          logAbsPath: logAbs,
+          errors: [],
+        };
+        const out = applyBuildProbe(root, { ...DIMS }, r);
+        const s = resolveProjectCompileState(root, fp);
+        assert(
+          s.status === 'capability_failed' && s.failure_code === 'sdk_component_missing',
+          `全量日志分类须命中环境码（修复前漏判 source_failure 并误清旧状态），got ${s.status}/${s.failure_code ?? '<none>'}`,
+        );
+        assert(out.logExcerpt.startsWith('[env-diagnosis]'), '诊断头须注入 excerpt 首行');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '分块扫描器：跨块边界命中 / 双码收齐保 classify 优先级 / 无码返回 null',
+    run: () => {
+      const root = mkProject();
+      try {
+        const CHUNK = 4 * 1024 * 1024;
+        // ① 错误码正好横跨 4MB 块边界（overlap 兜住）
+        const p1 = path.join(root, 'boundary.log');
+        fs.writeFileSync(p1, 'x'.repeat(CHUNK - 10) + '\nERROR: 00303217 boundary\n' + 'y'.repeat(100), 'utf-8');
+        const hit1 = scanLogFileForHvigorEnvErrorCodes(p1);
+        assert(hit1 !== null && hit1.includes('00303217'), '跨块边界的错误码须被 overlap 捕获');
+        // ② 00303168 在前、00303217 在后 → 两码都收齐（classify 自身优先级不被扫描顺序破坏）
+        const p2 = path.join(root, 'both.log');
+        fs.writeFileSync(p2, `ERROR: 00303168 first\n${'z'.repeat(1000)}\nERROR: 00303217 later\n`, 'utf-8');
+        const hit2 = scanLogFileForHvigorEnvErrorCodes(p2);
+        assert(hit2 !== null && hit2.includes('00303168') && hit2.includes('00303217'), '双码须都收齐');
+        assert(classifyHvigorEnvError(hit2!)?.code === 'sdk_home_missing_or_invalid', 'classify 对拼接片段仍按 00303217 优先');
+        // ③ 无环境码 → null；文件不存在 → null
+        const p3 = path.join(root, 'clean.log');
+        fs.writeFileSync(p3, 'ArkTS Compiler Error: cannot find name Foo\n', 'utf-8');
+        assert(scanLogFileForHvigorEnvErrorCodes(p3) === null, '无环境码须返回 null');
+        assert(scanLogFileForHvigorEnvErrorCodes(path.join(root, 'absent.log')) === null, '文件不存在须返回 null');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '>32MB 日志、错误码仅在头部：尾部 32MB 分析漏判 → 分块全扫兜底仍判 capability_failed',
+    run: () => {
+      const root = mkProject();
+      try {
+        const fp = computeHvigorInvocationFingerprint(root, DIMS);
+        const logAbs = path.join(root, 'hvigor-build-huge.log');
+        // 头部一行错误码 + 33MB 填充（超 MAX_LOG_ANALYSIS_BYTES=32MB，readLogTextForAnalysis 丢头部）
+        fs.writeFileSync(logAbs, '> hvigor ERROR: 00303217 Configuration Error\n', 'utf-8');
+        fs.appendFileSync(logAbs, Buffer.alloc(33 * 1024 * 1024, 'stack frame filler line\n'));
+        fs.appendFileSync(logAbs, '\n> hvigor BUILD FAILED\n', 'utf-8');
+        const r: HvigorRunResult = {
+          executed: true,
+          exitCode: 1,
+          durationMs: 1,
+          logExcerpt: 'stack frame filler line\n> hvigor BUILD FAILED',
+          logAbsPath: logAbs,
+          errors: [],
+        };
+        const out = applyBuildProbe(root, { ...DIMS }, r);
+        const s = resolveProjectCompileState(root, fp);
+        assert(
+          s.status === 'capability_failed' && s.failure_code === 'sdk_home_missing_or_invalid',
+          `>32MB 头部错误码须被分块全扫兜底命中，got ${s.status}/${s.failure_code ?? '<none>'}`,
+        );
+        assert(out.logExcerpt.startsWith('[env-diagnosis]'), '诊断头须注入 excerpt 首行');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '>32MB 头部 00303217 + 尾部 00303168：全扫恒执行，最终按 classify 优先级判 sdk_home_missing_or_invalid（不被尾部低优先级码短路）',
+    run: () => {
+      const root = mkProject();
+      try {
+        const fp = computeHvigorInvocationFingerprint(root, DIMS);
+        const logAbs = path.join(root, 'hvigor-build-mixed.log');
+        // 头部高优先级码 + 33MB 填充（把头部推出尾部 32MB 窗口）+ 尾部低优先级码
+        fs.writeFileSync(logAbs, '> hvigor ERROR: 00303217 Configuration Error\n', 'utf-8');
+        fs.appendFileSync(logAbs, Buffer.alloc(33 * 1024 * 1024, 'stack frame filler line\n'));
+        fs.appendFileSync(logAbs, '\n> hvigor ERROR: 00303168 Configuration Error\n> hvigor BUILD FAILED\n', 'utf-8');
+        const r: HvigorRunResult = {
+          executed: true,
+          exitCode: 1,
+          durationMs: 1,
+          // 尾部 excerpt 含 00303168（修复前：尾部分类先命中低优先级码即短路，00303217 被埋）
+          logExcerpt: 'stack frame filler line\n> hvigor ERROR: 00303168 Configuration Error\n> hvigor BUILD FAILED',
+          logAbsPath: logAbs,
+          errors: [],
+        };
+        applyBuildProbe(root, { ...DIMS }, r);
+        const s = resolveProjectCompileState(root, fp);
+        assert(
+          s.status === 'capability_failed' && s.failure_code === 'sdk_home_missing_or_invalid',
+          `双码大日志须按 00303217 优先归类（修复前被尾部 00303168 短路成 sdk_component_missing），got ${s.status}/${s.failure_code ?? '<none>'}`,
+        );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

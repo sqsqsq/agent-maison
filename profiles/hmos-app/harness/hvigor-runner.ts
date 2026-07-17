@@ -51,6 +51,7 @@ import {
   collectHvigorEnvEvidence,
   computeHvigorInvocationFingerprint,
   recordHvigorBuildOutcome,
+  scanLogFileForHvigorEnvErrorCodes,
   type HvigorInvocationDims,
 } from './toolchain-probe';
 
@@ -1707,8 +1708,10 @@ export function runHvigorBuild(
  *     并在 logExcerpt 头部注入 ≤180 字诊断头 + 下一步指引（先于构建日志，不埋尾）；
  *   - 普通源码编译失败 → last_attempt 人读留痕；已达源码阶段=装配链全通，旧 capability_failed
  *     一并清回 unknown（v3，codex 阻断2），verified 不受影响。
+ * 导出仅供单测（post-impl codex 复核：分类输入曾只取 8KB 尾部 excerpt——错误码被长堆栈
+ * 推出窗口时会漏判成 source_failure，还连带误清既有 capability_failed；回归例钉死全量输入）。
  */
-function applyBuildProbe(
+export function applyBuildProbe(
   projectRoot: string,
   dims: HvigorInvocationDims,
   r: HvigorRunResult,
@@ -1721,7 +1724,23 @@ function applyBuildProbe(
     return r;
   }
   // t6 v2（codex BLOCKER2）：生产链证据采集——incompatible_suspected 分支在真实链可达。
-  const cls = classifyHvigorEnvError(r.logExcerpt ?? '', collectHvigorEnvEvidence(projectRoot));
+  // 分类输入=落盘全量日志（mergeHvigorLogForUtClassification 优先读 logAbsPath，32MB 上限），
+  // 不是 8KB 尾部 excerpt——错误码后跟长堆栈时尾部窗口会漏判（post-impl codex 复核项）。
+  const envEvidence = collectHvigorEnvEvidence(projectRoot);
+  let cls = classifyHvigorEnvError(mergeHvigorLogForUtClassification(r), envEvidence);
+  if (r.logAbsPath) {
+    // P2/P1 收尾：>32MB 日志 readLogTextForAnalysis 只保尾部——错误码更早时漏判；且尾部
+    // 先命中低优先级 00303168 时不得短路（头部可能藏高优先级 00303217，codex P1）。
+    // 大文件恒分块全扫：命中以全扫结果为准（双码收齐保 classify 优先级），无码/失败回退尾部结论。
+    try {
+      if (fs.statSync(r.logAbsPath).size > MAX_LOG_ANALYSIS_BYTES) {
+        const fullScan = scanLogFileForHvigorEnvErrorCodes(r.logAbsPath);
+        if (fullScan) cls = classifyHvigorEnvError(fullScan, envEvidence) ?? cls;
+      }
+    } catch {
+      /* stat/扫描失败：维持尾部分析结论 */
+    }
+  }
   if (cls) {
     recordHvigorBuildOutcome(projectRoot, {
       kind: 'capability_failed',
