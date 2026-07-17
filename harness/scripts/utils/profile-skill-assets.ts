@@ -456,6 +456,28 @@ export function scanAddendumAssetRefs(
       `${relMd}：出现不带 \`framework/\` 前缀的根 skill 树裸路径 \`${token}\`（疑似"相对 skills/feature|project/<x>/"误导基准形态）；根 skill 树资产用 \`framework/skills/...\` 逻辑路径，profile 资产用 \`profile-skill-asset:\` 占位符`,
     );
   }
+  // (d) t7d（plan e6a3c9f4）：addendum 普通相对链接存在性——语法教学文档（reference/*.md 等）
+  //     此前处于扫描盲区（既非 asset 键、reference/ 目录又被跳过），缺失/改名会静默断链，
+  //     agent 拿不到内部工具语法且无任何报错（07-16 事故 B 断点 5）。只查带扩展名的相对文件链接。
+  const linkSeen = new Set<string>();
+  const linkRe = /\]\(([^)\s]+)\)/g;
+  while ((m = linkRe.exec(content)) !== null) {
+    const rawTarget = m[1];
+    if (/^(https?:|mailto:|#)/.test(rawTarget)) continue;
+    if (rawTarget.startsWith('framework/') || rawTarget.startsWith('profile-skill-asset:')) continue;
+    if (/^([A-Za-z]:[\\/]|\/)/.test(rawTarget)) continue; // 绝对路径不属相对链接契约
+    const target = rawTarget.split('#')[0];
+    if (!target || !/\.[A-Za-z0-9]+$/.test(target)) continue;
+    if (target.includes('<')) continue; // 模板占位符
+    if (linkSeen.has(target)) continue;
+    linkSeen.add(target);
+    const abs = path.resolve(path.dirname(addendumAbs), target);
+    if (!fs.existsSync(abs)) {
+      issues.push(
+        `${relMd}：相对链接目标不存在 → ${rawTarget}（相对本 addendum 解析）；教学/参考文档断链会让 agent 静默拿不到知识，请修正链接或恢复文件`,
+      );
+    }
+  }
   return issues;
 }
 

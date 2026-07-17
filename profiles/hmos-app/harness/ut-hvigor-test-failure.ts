@@ -29,13 +29,10 @@ interface ClassifiedFailure extends UtHvigorTestFailureModule {
   failureKind?: UtHvigorTestFailureKind;
 }
 
-export function buildCompactDiagnosticHeader(text: string, max = 180): string {
-  const normalized = text.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
-  if (max <= 0) return '';
-  if (normalized.length <= max) return normalized;
-  if (max === 1) return '…';
-  return `${normalized.slice(0, max - 1).trimEnd()}…`;
-}
+// t6（plan e6a3c9f4）：实现移至共享 diagnostic-header.ts（hvigor build 链共同消费，
+// 避免 hvigor-runner 反向依赖本 UT 聚合模块）；此处 import+re-export 保持既有导入面零变化。
+import { buildCompactDiagnosticHeader } from './diagnostic-header';
+export { buildCompactDiagnosticHeader };
 
 function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
   const evidence = entry.result.onDeviceFailureEvidence;

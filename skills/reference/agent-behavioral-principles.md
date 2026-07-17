@@ -19,6 +19,7 @@
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding **默认 subagent**（仅 L1 trivial 可豁免）；spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。
 5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
+6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 
 ### 各阶段反例 / 正例
 

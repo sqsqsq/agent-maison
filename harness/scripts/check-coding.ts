@@ -42,6 +42,7 @@ import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, isCodingVisualPa
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { validateProjectRelativePath } from './utils/project-relative-path';
+import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-candidates';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
 // --------------------------------------------------------------------------
@@ -77,13 +78,33 @@ function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
     return [{ id: 'file_completeness', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'file_completeness'), severity: 'BLOCKER', status: 'PASS', details: `全部 ${contracts.files.length} 个文件均存在。` }];
   }
 
+  // t1c（plan e6a3c9f4）：basename 候选检索（限 architecture 层目录、单次遍历、硬上限）——
+  // 前缀错配时点破真因，不再只报"缺失"。只加诊断信息，判定逻辑零变化。
+  let prefixHint: string | null = null;
+  try {
+    const cfg = loadFrameworkConfig(ctx.projectRoot);
+    const layerDirs = (cfg.architecture?.outer_layers ?? []).map(l => l.id);
+    const candidates = findBasenameCandidates(
+      ctx.projectRoot,
+      layerDirs,
+      missing.map(m => path.basename(m)),
+    );
+    prefixHint = formatPrefixMismatchHint(missing, candidates);
+  } catch {
+    prefixHint = null; // 诊断是 best-effort，绝不因诊断失败拖垮门禁
+  }
+
   return [{
     id: 'file_completeness', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'file_completeness'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${contracts.files.length} 个文件缺失：\n${truncateList(missing, 15)}`,
+    details:
+      `${missing.length}/${contracts.files.length} 个文件缺失：\n${truncateList(missing, 15)}` +
+      (prefixHint ? `\n${prefixHint}` : ''),
     affected_files: missing,
-    suggestion: '请按照 contracts.yaml files 清单补全缺失文件。',
+    suggestion: prefixHint
+      ? '存在同名文件位于其他路径（见 details 诊断行）——优先核对 contracts.yaml files 的路径前缀是否与物理布局一致，修正 contracts 或移动文件，二选一后重跑。'
+      : '请按照 contracts.yaml files 清单补全缺失文件；若文件已存在，请核对 contracts.yaml 中的路径前缀与大小写。',
   }];
 }
 
@@ -551,7 +572,8 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
 
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
-    return fn();
+    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
+    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
   } catch (err) {
     const e = err as Error;
     const isProgrammerError =

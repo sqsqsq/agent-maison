@@ -46,6 +46,13 @@ import type {
   OnDeviceUtRunResult,
 } from './hdc-runner';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
+import {
+  classifyHvigorEnvError,
+  collectHvigorEnvEvidence,
+  computeHvigorInvocationFingerprint,
+  recordHvigorBuildOutcome,
+  type HvigorInvocationDims,
+} from './toolchain-probe';
 
 export interface OnDeviceFailureEvidence {
   failedAt?: OnDeviceUtRunResult['failedAt'];
@@ -1656,32 +1663,82 @@ export function runHvigorBuild(
       };
     }
     const product = detectProduct(opts.projectRoot);
-    return invokeHvigor({
-      ...opts,
-      spawnPlan: resolved.spawnPlan,
-      logBasename: 'hvigor-ut-build.log',
-      timeoutKind: 'ut',
-      requireSuccessMarker: false,
-      metaExtras: {
-        utHvigor: {
-          mode: 'module',
-          product,
-          buildMode: 'test',
-          isOhosTest: true,
-          task,
+    return applyBuildProbe(
+      opts.projectRoot,
+      { module: opts.moduleName, target: 'ohosTest', task, product, buildMode: 'test' },
+      invokeHvigor({
+        ...opts,
+        spawnPlan: resolved.spawnPlan,
+        logBasename: 'hvigor-ut-build.log',
+        timeoutKind: 'ut',
+        requireSuccessMarker: false,
+        metaExtras: {
+          utHvigor: {
+            mode: 'module',
+            product,
+            buildMode: 'test',
+            isOhosTest: true,
+            task,
+          },
         },
-      },
-    });
+      }),
+    );
   }
 
   const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, 'default', task);
-  return invokeHvigor({
-    ...opts,
-    args,
-    logBasename: 'hvigor-build.log',
-    timeoutKind: 'ut',
-    requireSuccessMarker: false,
+  return applyBuildProbe(
+    opts.projectRoot,
+    { module: opts.moduleName, target: 'default', task, product: detectProduct(opts.projectRoot), buildMode: 'default' },
+    invokeHvigor({
+      ...opts,
+      args,
+      logBasename: 'hvigor-build.log',
+      timeoutKind: 'ut',
+      requireSuccessMarker: false,
+    }),
+  );
+}
+
+/**
+ * t6 toolchain-probe-truth（plan e6a3c9f4）：真实编译结果 → probe 快照（wrapper 唯一写入方）
+ * + 环境类错误码证据分层诊断头部化。
+ *   - 成功 → project_compile=verified（绑定 invocation 指纹，TTL 见 toolchain-probe.ts）；
+ *   - 命中可信环境分类（00303217/00303168）→ capability_failed（含 failure_code/evidence），
+ *     并在 logExcerpt 头部注入 ≤180 字诊断头 + 下一步指引（先于构建日志，不埋尾）；
+ *   - 普通源码编译失败 → last_attempt 人读留痕；已达源码阶段=装配链全通，旧 capability_failed
+ *     一并清回 unknown（v3，codex 阻断2），verified 不受影响。
+ */
+function applyBuildProbe(
+  projectRoot: string,
+  dims: HvigorInvocationDims,
+  r: HvigorRunResult,
+): HvigorRunResult {
+  if (!r.executed) return r; // toolMissing / skippedByEnv：binary 层职责，不写 compile 态
+  const fingerprint = computeHvigorInvocationFingerprint(projectRoot, dims);
+  const success = r.exitCode === 0 && r.successMarkerFound !== false && !r.timedOut;
+  if (success) {
+    recordHvigorBuildOutcome(projectRoot, { kind: 'verified', fingerprint });
+    return r;
+  }
+  // t6 v2（codex BLOCKER2）：生产链证据采集——incompatible_suspected 分支在真实链可达。
+  const cls = classifyHvigorEnvError(r.logExcerpt ?? '', collectHvigorEnvEvidence(projectRoot));
+  if (cls) {
+    recordHvigorBuildOutcome(projectRoot, {
+      kind: 'capability_failed',
+      fingerprint,
+      failure_code: cls.code,
+      evidence: cls.evidence,
+    });
+    return {
+      ...r,
+      logExcerpt: `[env-diagnosis] ${cls.header}\n[next] ${cls.guidance}\n${r.logExcerpt}`,
+    };
+  }
+  recordHvigorBuildOutcome(projectRoot, {
+    kind: 'source_failure',
+    summary: (r.logExcerpt ?? 'hvigor build failed').slice(0, 400),
   });
+  return r;
 }
 
 /**
@@ -1751,13 +1808,25 @@ export function runHvigorAssembleApp(
       errors: [],
     };
   }
-  return invokeHvigor({
-    ...rest,
-    spawnPlan: resolved.spawnPlan,
-    logBasename: logBasename ?? 'hvigor-build.log',
-    timeoutKind: 'coding',
-    requireSuccessMarker: true,
-  });
+  // t6 v2（cursor C1）：coding/device-test-build 主路径同样过 probe——事故 A 的主链正是
+  // 这条 assembleApp 路径；不包=成功不写 verified、00303168 不进 preflight 缺口通道。
+  return applyBuildProbe(
+    opts.projectRoot,
+    {
+      module: '(project)',
+      target: 'app',
+      task: task ?? '(config-default)',
+      product: product ?? detectProduct(opts.projectRoot),
+      buildMode: buildMode ?? '(config-default)',
+    },
+    invokeHvigor({
+      ...rest,
+      spawnPlan: resolved.spawnPlan,
+      logBasename: logBasename ?? 'hvigor-build.log',
+      timeoutKind: 'coding',
+      requireSuccessMarker: true,
+    }),
+  );
 }
 
 // ----------------------------------------------------------------------------

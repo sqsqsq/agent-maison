@@ -41,8 +41,14 @@ import {
   evaluateDerivedCoverage,
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
+  lintHylyrePlanStepRules,
   type NavLintViolation,
+  type StepLintViolation,
 } from './utils/derived-hylyre-plan';
+import {
+  buildStandardHylyreDerivePayloadBase,
+  HYLYRE_PLANNED_STEP_FIELDS_REF,
+} from './utils/hylyre-standard-derive-knowledge';
 import {
   extractHeadings,
   getSectionContent,
@@ -1751,7 +1757,8 @@ type DeriveHintAugment = {
     | 'incomplete'
     | 'stale'
     | 'extra_in_derived'
-    | 'invalid_derived_steps';
+    | 'invalid_derived_steps'
+    | 'invalid_derived_step_rules';
   top_tc_ids?: string[];
   derived_tc_ids?: string[];
   missing_tc_ids?: string[];
@@ -1760,7 +1767,7 @@ type DeriveHintAugment = {
   rejected_placeholder_paths?: string[];
   source_plan_mtime_iso?: string;
   selected_derived_mtime_iso?: string;
-  lint_violations?: NavLintViolation[];
+  lint_violations?: Array<NavLintViolation | StepLintViolation>;
 };
 
 function absToProjectRel(projectRoot: string, abs: string): string {
@@ -1793,10 +1800,11 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     }
 
     const payload = {
-      schema: 3,
+      // t7a（plan e6a3c9f4）：统一基座（schema 4 = 3 + 机器步骤知识块，只增字段向后兼容）——
+      // agent 翻译 hylyre 时手边永远有机读目录，不依赖语法文档已读/上下文未压缩。
+      ...buildStandardHylyreDerivePayloadBase(),
       feature: ctx.feature,
       phase: ctx.phase,
-      generated_at: new Date().toISOString(),
       source_relative,
       source_plan_mtime_iso: aug?.source_plan_mtime_iso ?? source_plan_mtime_iso,
       test_cases,
@@ -1976,6 +1984,43 @@ function checkDeviceTestRunGate(
           severity: 'BLOCKER',
           status: 'FAIL',
           details: `派生计划早于顶层 test-plan.md 更新（mtime），可能过期。请重新派生或更新派生文件后重试。\n${hintLine}`,
+        },
+      ];
+    }
+
+    // t7b（plan e6a3c9f4）：STEP 级静态门禁接入标准派生计划路径（与即席同强度）——
+    // 非法根键/选择器形状/wait 误用在门禁层秒级拦下，不再只在真机执行时炸。
+    const stepLint = lintHylyrePlanStepRules(derivedContent);
+    const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
+    if (stepBlockers.length > 0) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'invalid_derived_step_rules',
+        lint_violations: stepBlockers,
+      });
+      const lines = stepBlockers.slice(0, 12).map(
+        v => `  - [${v.rule_id}] ${v.tc_id}: ${v.message}${v.suggested_fix ? `（建议：${v.suggested_fix}）` : ''}`,
+      );
+      const hintLine = hintPath ? `机器步骤目录（allowed_step_roots / step_shape_catalog）见 ${hintPath}` : '';
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处，当前 lint 支持的规则集 STEP-001~006）：`,
+            ...lines,
+            stepBlockers.length > 12 ? `  …等共 ${stepBlockers.length} 处` : '',
+            hintLine,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          suggestion:
+            `按 details 逐条修正派生表「测试步骤」列；步骤根键与形状目录以 derive-hint-from-plan.json 的 ` +
+            `allowed_step_roots / step_shape_catalog 为准（与本门禁同源）；语法细则深潜见 ${HYLYRE_PLANNED_STEP_FIELDS_REF}。`,
+          source: 'derived_hylyre_step_lint',
         },
       ];
     }

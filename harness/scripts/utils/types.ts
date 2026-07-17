@@ -428,6 +428,11 @@ export interface CheckResult {
   failure_kind?: string;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
+  /**
+   * 产出来源（t1d，plan e6a3c9f4）：由编排边界填充（safeRun origin / profile dispatch 标签），
+   * 供报告/summary 定位"哪段实现产出了这条结果"；未填时渲染层回退显示 check-<phase>.ts。
+   */
+  source?: string;
   /** spec Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
   visual_resolution_rows?: VisualHandoffResolutionRow[];
   /**
@@ -484,12 +489,14 @@ export interface HarnessRunSummary {
     blocking_class?: string;
     details_excerpt: string;
     suggestion?: string;
+    source?: string;
   }>;
   blocking_skips: Array<{
     id: string;
     blocking_class?: string;
     details_excerpt: string;
     suggestion?: string;
+    source?: string;
   }>;
   blockers: Array<{
     id: string;
@@ -501,10 +508,19 @@ export interface HarnessRunSummary {
     details_excerpt: string;
     affected_files?: string[];
     suggestion?: string;
+    source?: string;
   }>;
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
+  /** t2 v2（receipt-slim run identity）：base summary 生成时刻（ISO） */
+  generated_at?: string;
+  /** t2 v2：生成时 git HEAD——slim 回执须与 claimed_completion_commit_sha 及当前 HEAD 三方一致，杜绝旧 PASS 件复用 */
+  source_commit_sha?: string;
+  /** t2 v3：产品层目录工作区状态摘要（tracked diff+untracked）——HEAD 不动源码改动同样使旧件失效 */
+  worktree_digest?: string;
+  /** t2 v2：goal 环境 run 身份（MAISON_GOAL_RUN_ID） */
+  run_id?: string;
   compile_first_error?: {
     file?: string;
     line?: number;

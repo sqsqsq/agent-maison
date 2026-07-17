@@ -127,7 +127,7 @@
 
 ### plan 派生缺失时的结构化提示
 
-- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 3）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，便于下一轮 Agent 派生。
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，以及**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`——翻译步骤以此为准，不依赖已读语法文档），便于下一轮 Agent 派生。
 - **SSOT 覆盖门禁（v2）**：顶层 **`test-plan.md`** 为唯一用例清单权威；**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）并上 **显式跳过登记** 必须完整覆盖顶层全部 `TC-xxx`。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。
 - **显式跳过登记**（无法写成可靠 Hylyre JSON 的用例）：在派生 **`test-plan.hylyre.md`** 的 **YAML frontmatter** 中写 `explicit_skip_tc_ids: [TC-010, …]`，或在同目录 **`derive-manifest.json`** 写 `{ "explicit_skip_tc_ids": ["TC-010"] }`（可两项合并去重）。须在 Step 5 **test-report.md** 对应用例标 **跳过** 并说明原因。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。

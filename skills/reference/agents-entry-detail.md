@@ -68,6 +68,8 @@
 1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
 2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），把 feature/phase/报告路径完整传入；不得仅"提示用户去跑"或"等用户启动"。
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
+4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
+5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式 `--resume` 会重检放行）。
 
 ## §4.2 实例扩展与生命周期钩子
 

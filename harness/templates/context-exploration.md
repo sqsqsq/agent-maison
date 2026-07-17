@@ -15,6 +15,11 @@ key_inputs_read:
   - "paths.glossary — 已读"
   - "paths.architecture_md — 已读"
 # 实际 Read/Grep 过的源码/实现文件（相对仓库根；harness 验证磁盘存在）
+# 格式=纯相对路径，禁止附加描述（"路径 - 说明" 会被当作路径整体校验而失败）；
+# 描述/原因写正文「已检视文件」表格。示例：
+#   source_code_paths:
+#     - src/main/ets/service/FooService.ets
+#     - src/main/ets/model/BarModel.ets
 source_code_paths: []
 # subagent | sequential | minimal（复杂度越阈时禁止 minimal）
 exploration_mode: "sequential"

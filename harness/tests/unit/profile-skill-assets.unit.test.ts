@@ -363,10 +363,41 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       const bad = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
       assert(bad.some((e) => e.includes('skills/feature/spec')), 'expected bare-skills flag: ' + bad.join(';'));
-      // 相对链接 ../../../../skills/feature/spec/... 不应误报
+      // 相对链接 ../../../../skills/feature/spec/... 不应被裸路径规则误报——
+      // t7d 后相对链接会验存在性，故给目标建真实文件（合法链接=可解析链接）。
+      const linkTargetDir = path.join(tmp, 'framework', 'skills', 'feature', 'spec', 'reference');
+      fs.mkdirSync(linkTargetDir, { recursive: true });
+      fs.writeFileSync(path.join(linkTargetDir, 'ui-spec.md'), '# stub\n', 'utf-8');
       fs.writeFileSync(add, '诊断见 [x](../../../../skills/feature/spec/reference/ui-spec.md)。\n', 'utf-8');
       const good = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
       assert(good.length === 0, 'relative link must not be flagged: ' + good.join(';'));
+    },
+  },
+  {
+    name: 'scanAddendumAssetRefs: t7d 相对链接断链应报错、锚点/外链/无扩展名放行',
+    run: () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'psa-addendum-link-'));
+      fs.mkdirSync(path.join(tmp, 'framework', 'skills'), { recursive: true });
+      const addDir = path.join(tmp, 'framework', 'profiles', 'pa', 'skills', 'device-testing');
+      fs.mkdirSync(path.join(addDir, 'reference'), { recursive: true });
+      const add = path.join(addDir, 'profile-addendum.md');
+      fs.writeFileSync(path.join(addDir, 'reference', 'exists.md'), '# ok\n', 'utf-8');
+      const manifest: SkillAssetsManifest = { schema_version: '1.0', profile: 'pa', assets: {} };
+      fs.writeFileSync(
+        add,
+        [
+          '存在的[教学文档](reference/exists.md)。',
+          '断链的[教学文档](reference/ghost-fields.md)。',
+          '带锚点的[断链](reference/ghost-fields.md#根键)。',
+          '外链 [hylyre](https://example.com/x.md) 与锚点 [节](#本地锚) 放行。',
+          '目录链接 [dir](reference/) 放行（无扩展名）。',
+        ].join('\n'),
+        'utf-8',
+      );
+      const issues = scanAddendumAssetRefs(tmp, 'pa', manifest, add);
+      const linkIssues = issues.filter(e => e.includes('相对链接目标不存在'));
+      assert(linkIssues.length === 1, `断链应恰报 1 处（同目标去重）：${issues.join(';')}`);
+      assert(linkIssues[0].includes('ghost-fields.md'), '应指认断链目标');
     },
   },
   // ---- G3：命令式产物跨 profile 硬编码 ----

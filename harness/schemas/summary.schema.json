@@ -67,6 +67,10 @@
     "next_action": { "type": "string", "minLength": 1 },
     "receipt_status": { "type": "string" },
     "closure_status": { "type": "string", "enum": ["open", "closed"] },
+    "generated_at": { "type": "string", "description": "t2 v2（receipt-slim）：base summary 生成时刻" },
+    "source_commit_sha": { "type": "string", "description": "t2 v2：生成时 git HEAD——slim 回执三方绑定（summary↔receipt claimed↔当前 HEAD），杜绝旧 PASS 件复用" },
+    "worktree_digest": { "type": "string", "description": "t2 v3：产品层目录工作区状态摘要——HEAD 不动源码改动同样使旧件失效（check-receipt slim 重算比对）" },
+    "run_id": { "type": "string", "description": "t2 v2：goal run 身份（MAISON_GOAL_RUN_ID）" },
     "compile_first_error": { "$ref": "#/$defs/compile_first_error" },
     "soft_advisories": {
       "type": "array",
@@ -128,7 +132,8 @@
         "id": { "type": "string", "minLength": 1 },
         "blocking_class": { "type": "string" },
         "details_excerpt": { "type": "string" },
-        "suggestion": { "type": "string" }
+        "suggestion": { "type": "string" },
+        "source": { "type": "string" }
       }
     },
     "blocker": {
@@ -146,7 +151,11 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "suggestion": { "type": "string" }
+        "suggestion": { "type": "string" },
+        "source": {
+          "type": "string",
+          "description": "t1d（plan e6a3c9f4）：产出来源（safeRun origin / profile dispatch 标签 / check-<phase>.ts 回退）——供 agent 直接定位判定实现"
+        }
       }
     },
     "compile_first_error": {

@@ -1,33 +1,33 @@
 ---
-# 阶段完成回执（Phase Completion Receipt）
-# 由主 agent 在阶段结束前手动填写；由 framework/harness/scripts/check-receipt.ts 与
-# 实例根下发的 Stop hook 脚本解析作物理拦截依据（若有）。
+# 阶段完成回执（Phase Completion Receipt · 瘦身格式 2.0，openspec receipt-slim）
+# 由主 agent 在阶段结束前填写；check-receipt.ts 与 Stop hook（若有）解析作物理拦截依据。
 #
-# 全局入口 §5.1 SSOT：四条件缺一不可。
-# 编造任意一项 → 反假设条款触发 → 任务失败。
+# 2.0 与旧格式的区别：机器事实（harness verdict/blocker/门禁指纹/trace 存在性）不再手抄——
+# check-receipt 直读本次 harness base summary（doc/features/<feature>/<phase>/reports/summary.json）
+# 与磁盘做对账；本回执只承载机器不可替代的自证。编造任意一项 → 反假设条款触发 → 任务失败。
 #
-# 输出路径：doc/features/<feature>/<phase>/phase-completion-receipt.md
-# 模板路径：framework/harness/templates/phase-completion-receipt.md
+# 闭环判据（全局入口 §5.1 不变）：harness PASS（由 summary 直读证明）+ verifier PASS +
+# 本回执校验通过。harness 在 verdict=PASS 时会自动生成本骨架（自证字段仍须真实填写）。
 #
-# 回执 stale 治理（自动，无需填写）：harness 会把门禁集指纹机器写入 report_dir/summary.json；
-# framework 升级（phase-rules 变化）后 check-receipt 校验指纹失配 → 本回执自动失效
-# （gate_fingerprint_stale BLOCKER），必须重跑该阶段 harness 重验后才能再次闭环——旧回执不能豁免新门禁。
+# 回执 stale 治理（自动）：summary 内的门禁集指纹由 harness 机器写入；framework 升级后
+# check-receipt 指纹重算失配 → 本回执自动失效（gate_fingerprint_stale），须重跑 harness。
 
+receipt_schema: "2.0"
 feature: "<feature-name>"
 phase: "<spec | plan | coding | review | ut | testing>"
-agent_model: "<实际模型 id，如 minimax-2.5 / gpt-5.5 / <vendor-model-id>"
+agent_model: "<实际模型 id，如 minimax-2.5 / gpt-5.5 / <vendor-model-id>>"
 agent_runtime: "<cli-or-sdk-identifier | other>"
 claimed_completion_at: "<ISO 8601, 如 2026-04-27T10:00:00+08:00>"
 claimed_completion_commit_sha: "<git rev-parse HEAD 真实值>"
 
 # ----------------------------------------------------------------------
-# 1. Harness 验证（Layer 2 凭证）
+# 1. Verifier 子 agent（语义级凭证；机器无法替代的调用自证）
 # ----------------------------------------------------------------------
-script_harness:
-  command: "cd framework/harness && npx ts-node harness-runner.ts --phase <phase> --feature <feature>"
-  exit_code: 0           # 必须为 0；非 0 = FAIL；缺省 = 反假设
-  report_dir: "doc/features/<feature>/<phase>/reports"
-  blocker_count: 0       # 必须为 0
+verifier_subagent:
+  invoked_via: "Task(subagent_type=verifier)"   # 不允许 "told user to run"
+  prompt_template: "framework/harness/prompts/verify-<phase>.md"
+  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.md"
+  verdict: "PASS"        # PASS | FAIL；FAIL 即未闭环（从 verifier 报告摘录原文）
   ran_at: "<ISO 8601>"
 
 # ----------------------------------------------------------------------
@@ -38,54 +38,7 @@ testing_run_artifacts:
   hylyre_report_path: "doc/features/<feature>/testing/reports/<ts>/hylyre/test-report.md"
   hylyre_trace_path:  "doc/features/<feature>/testing/reports/<ts>/hylyre/trace.json"
   app_snapshot_cache_dir: "doc/app-snapshot-cache"
-
-# ----------------------------------------------------------------------
-# 2. Verifier 子 agent（Layer 2 凭证）
-# ----------------------------------------------------------------------
-verifier_subagent:
-  invoked_via: "Task(subagent_type=verifier)"   # 不允许 "told user to run"
-  prompt_template: "framework/harness/prompts/verify-<phase>.md"
-  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.md"
-  verdict: "PASS"        # PASS | FAIL；FAIL 即未闭环
-  ran_at: "<ISO 8601>"
-
-# ----------------------------------------------------------------------
-# 3. trace.json 凭证（Layer 1 凭证，全局入口 §5）
-# ----------------------------------------------------------------------
-trace_json:
-  path: "doc/features/<feature>/<phase>/reports/trace.json"
-  exists: true           # check-receipt.ts 会真实 fs.existsSync 校验
-  schema_valid: true     # 是否能被 trace.schema.json 解析
-
-# ----------------------------------------------------------------------
-# 3.5 Context Exploration Gate（与 check-* 的 context_exploration_* 对齐）
-# ----------------------------------------------------------------------
-context_exploration:
-  summary_path: "doc/features/<feature>/<phase>/context-exploration.md"
-  exists: true
-  ready_to_produce: true
-  has_blocker_coverage_risk: false
-
-# ----------------------------------------------------------------------
-# 4. 自检题（agent 必须自答；check-receipt.ts 会做反编造校验）
-# ----------------------------------------------------------------------
-self_check:
-  q1_trace_json_abs_path: "<给出 trace.json 真实绝对路径；check-receipt.ts 会 fs.existsSync 校验>"
-  q2_verifier_verdict_quoted: "<从 verifier_subagent.report_path 中摘录 verdict 字段原文>"
-  q3_last_diff_file: "<本阶段 git diff --name-only 输出的最后一行真实文件路径>"
-  q4_no_hallucinated_rule_used: true   # 必须为 true；填 false 即承认自我作弊
-  q4_evidence: "<若 q4 为 true，说明本次决策没有引用全局入口 / SKILL.md 中不存在的规则；若曾自我设限，请 quote 原文行号>"
 ---
-
-## 实际执行的 shell / 工具命令（最后 5 条，按时序）
-
-> agent 必须真实回填本次阶段执行过的命令；与 trace.json 中 `tool_calls` 相互印证。
-
-1. `<命令1>`
-2. `<命令2>`
-3. `<命令3>`
-4. `<命令4>`
-5. `<命令5>`
 
 ## 备注（可选）
 

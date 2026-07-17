@@ -43,6 +43,26 @@ export interface FrameworkLocalConfigVision {
   canary?: FrameworkLocalConfigVisionCanary;
 }
 
+/** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
+export interface FrameworkLocalToolchainProbe {
+  binary?: { hvigor_bin?: string; observed_at?: string };
+  cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string };
+  project_compile?: {
+    status: 'unknown' | 'verified' | 'capability_failed';
+    failure_code?: string | null;
+    evidence?: string[];
+    invocation_fingerprint?: string;
+    config_digest?: string;
+    observed_at?: string;
+    expires_at?: string;
+    /** @deprecated v4 授予模型移除——仅为兼容旧 local 文件保留，任何逻辑不再读写 */
+    recovery_probe_pending?: boolean;
+    integrity?: string;
+  };
+  last_attempt?: { summary?: string; observed_at?: string };
+  known_quirks?: string[];
+}
+
 export interface FrameworkLocalConfig {
   schema_version: string;
   agent_adapter?: string;
@@ -51,6 +71,7 @@ export interface FrameworkLocalConfig {
       installPath?: string;
       hvigorBin?: string;
     };
+    probe?: FrameworkLocalToolchainProbe;
   };
   vision?: FrameworkLocalConfigVision;
 }
@@ -108,6 +129,7 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
     }
     const tcObj = tc as Record<string, unknown>;
     rejectUnknownObjectKeys(tcObj, LOCAL_TOOLCHAIN_KEYS, 'toolchain');
+    const toolchainOut: NonNullable<FrameworkLocalConfig['toolchain']> = {};
     const deveco = tcObj.devEcoStudio;
     if (deveco !== undefined) {
       if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) {
@@ -118,13 +140,36 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
       const installPath = typeof row.installPath === 'string' ? row.installPath.trim() : '';
       const hvigorBin = typeof row.hvigorBin === 'string' ? row.hvigorBin.trim() : '';
       if (installPath || hvigorBin) {
-        out.toolchain = {
-          devEcoStudio: {
-            ...(installPath ? { installPath } : {}),
-            ...(hvigorBin ? { hvigorBin } : {}),
-          },
+        toolchainOut.devEcoStudio = {
+          ...(installPath ? { installPath } : {}),
+          ...(hvigorBin ? { hvigorBin } : {}),
         };
       }
+    }
+    // t6 toolchain-probe-truth：probe 机器快照——键白名单 + compile status 枚举校验后透传
+    // （字段本身由 wrapper/--ensure 机器写入；这里防的是手编坏形状，不做逐叶重建）。
+    const probe = tcObj.probe;
+    if (probe !== undefined) {
+      if (!probe || typeof probe !== 'object' || Array.isArray(probe)) {
+        throw new Error('[framework-local-config] toolchain.probe 必须是对象');
+      }
+      const probeObj = probe as Record<string, unknown>;
+      rejectUnknownObjectKeys(probeObj, LOCAL_PROBE_KEYS, 'toolchain.probe');
+      const pc = probeObj.project_compile as Record<string, unknown> | undefined;
+      if (pc !== undefined) {
+        if (!pc || typeof pc !== 'object' || Array.isArray(pc)) {
+          throw new Error('[framework-local-config] toolchain.probe.project_compile 必须是对象');
+        }
+        if (typeof pc.status !== 'string' || !LOCAL_PROBE_COMPILE_STATUS.has(pc.status)) {
+          throw new Error(
+            `[framework-local-config] toolchain.probe.project_compile.status 必须是 unknown|verified|capability_failed，收到 ${String(pc.status)}`,
+          );
+        }
+      }
+      toolchainOut.probe = probeObj as FrameworkLocalToolchainProbe;
+    }
+    if (Object.keys(toolchainOut).length > 0) {
+      out.toolchain = toolchainOut;
     }
   }
 
@@ -211,7 +256,10 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   return out;
 }
 
-const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio']);
+const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio', 'probe']);
+/** t6 toolchain-probe-truth：probe 分层键与 compile 三态（写入权限见 profiles/hmos-app/harness/toolchain-probe.ts） */
+const LOCAL_PROBE_KEYS = new Set(['binary', 'cli_starts', 'project_compile', 'last_attempt', 'known_quirks']);
+const LOCAL_PROBE_COMPILE_STATUS = new Set(['unknown', 'verified', 'capability_failed']);
 
 /** personal 叶子键 SSOT（与 config-field-ownership 对齐，避免循环 import 重复声明语义） */
 const LOCAL_DEVECO_LEAF_KEYS = new Set(['installPath', 'hvigorBin']);

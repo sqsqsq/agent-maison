@@ -369,7 +369,10 @@ export function runQuantitativeChecks(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `当前 ${sourcePaths.length} 条，要求 ≥ ${minSource}（schema 1.1.0）`,
-      suggestion: '在 Research Sub-Phase 中 Read/Grep 真实源码并写入 source_code_paths。',
+      suggestion:
+        '在 Research Sub-Phase 中 Read/Grep 真实源码并写入 source_code_paths。' +
+        '格式=纯相对路径（相对仓库根），每行一条，不要附加描述文字——' +
+        '例：`- src/main/ets/service/FooService.ets`；描述/原因写在正文「已检视文件」表格里。',
       affected_files: [relFromRoot],
     });
   }
@@ -387,6 +390,11 @@ export function runQuantitativeChecks(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `不存在：${missingOnDisk.slice(0, 8).join('、')}${missingOnDisk.length > 8 ? '…' : ''}`,
+      suggestion:
+        'source_code_paths 每项必须是**纯相对路径**（相对仓库根、磁盘上真实存在），' +
+        '不要写成「路径 - 描述」「路径（原因）」等带附注的形式——附注会被当作路径的一部分导致存在性校验失败。' +
+        '正确示例：`- src/main/ets/service/FooService.ets`；描述/原因请写在正文「已检视文件」表格。' +
+        '若路径确实存在但仍报错，请核对相对根与大小写。',
       affected_files: [relFromRoot, ...missingOnDisk.slice(0, 5)],
     });
   }

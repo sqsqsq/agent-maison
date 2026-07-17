@@ -171,7 +171,11 @@ async function checkExitLint(ctx: CheckContext): Promise<CheckResult[]> {
   }
   try {
     const lintResults = await host.checkCodingLint(ctx);
-    return lintResults.map((r) => ({ ...r, id: r.id.startsWith('exit_') ? r.id : `exit_${r.id}` }));
+    return lintResults.map((r) => ({
+      ...r,
+      id: r.id.startsWith('exit_') ? r.id : `exit_${r.id}`,
+      source: r.source ?? 'profile_coding_host_lint',
+    }));
   } catch (err) {
     return [{
       id: 'exit_lint',

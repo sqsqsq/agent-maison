@@ -35,7 +35,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
-import { loadFrameworkConfig, resolveReceiptFilePath } from '../config';
+import { loadFrameworkConfig, resolveReceiptFilePath, featurePhaseReportsDir } from '../config';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import {
   assertWorkflowFeaturePhase,
@@ -60,6 +60,8 @@ import {
 import { writeReviewClosureAttestation } from './utils/closure-attestation';
 import type { Phase as EvidencePhase } from './utils/types';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
+import { validateLiteSchema } from './utils/lite-json-schema';
+import { computeProductWorktreeDigest } from './utils/worktree-digest';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
@@ -311,8 +313,217 @@ function main(): void {
     });
   }
 
-  // 2. script_harness 必须 exit_code=0 且零 BLOCKER
+  // receipt-slim（plan e6a3c9f4 t2 / openspec receipt-slim）：receipt_schema=2.0 走瘦身契约——
+  // 机器事实（harness verdict/blocker/fingerprint/trace 存在性）直读本次 base summary 与磁盘，
+  // receipt 只承载不可派生自证；旧格式（无 receipt_schema）全量校验零变化。
+  const isSlim = String((frontmatter as { receipt_schema?: unknown }).receipt_schema ?? '').trim() === '2.0';
+  const canonicalReportsDir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const canonicalReportsRel = path.relative(projectRoot, canonicalReportsDir).replace(/\\/g, '/');
+  let slimSummary: { verdict?: string; blocker_count?: number; feature?: string; phase?: string; gate_fingerprint?: unknown } | null = null;
+
+  if (isSlim) {
+    const summaryPath = path.join(canonicalReportsDir, 'summary.json');
+    if (!fs.existsSync(summaryPath)) {
+      issues.push({
+        id: 'slim_summary_missing',
+        severity: 'BLOCKER',
+        message:
+          `瘦身回执的机器事实源 summary.json 缺失（${canonicalReportsRel}/summary.json）——` +
+          '请先自跑 harness-runner 生成本次 base summary，再校验回执（summary 缺失不静默豁免）。',
+      });
+    } else {
+      try {
+        slimSummary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
+      } catch {
+        issues.push({
+          id: 'slim_summary_unparseable',
+          severity: 'BLOCKER',
+          message: `summary.json 不是合法 JSON（${canonicalReportsRel}/summary.json）——重跑 harness 重新生成。`,
+        });
+      }
+    }
+    if (slimSummary) {
+      // t2 v3（codex 高优4）：summary 须过完整 schema 子集校验（type/enum/$ref/pattern/
+      // additionalProperties）——错误类型/非法嵌套/额外字段的伪 summary 不得过。
+      try {
+        const schemaPath = path.join(frameworkRoot, 'harness', 'schemas', 'summary.schema.json');
+        const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8')) as Record<string, unknown>;
+        const violations = validateLiteSchema(slimSummary, schema);
+        if (violations.length > 0) {
+          issues.push({
+            id: 'slim_summary_schema_invalid',
+            severity: 'BLOCKER',
+            message:
+              `summary.json 未通过 schema 校验（${violations.length} 处）：` +
+              violations.slice(0, 8).map(v => `${v.path}: ${v.message}`).join('；') +
+              '——瘦身回执的机器事实源必须是 harness 真实产出的完整 summary。',
+          });
+        }
+      } catch (e) {
+        issues.push({
+          id: 'slim_summary_schema_invalid',
+          severity: 'BLOCKER',
+          message: `无法加载 summary.schema.json 做校验：${(e as Error).message}`,
+        });
+      }
+      // t2 v2（codex BLOCKER3b）：run identity 三方绑定——summary.source_commit_sha 必须存在、
+      // 等于回执 claimed sha、且等于当前 git HEAD；同版本 framework 下旧 PASS 件复用被 sha 拒绝。
+      const summarySha = ((slimSummary as { source_commit_sha?: string }).source_commit_sha ?? '').trim();
+      if (!summarySha) {
+        issues.push({
+          id: 'slim_summary_source_sha_missing',
+          severity: 'BLOCKER',
+          message:
+            'summary.json 缺 source_commit_sha（run identity 锚）——请用当前版本 harness 重跑生成 base summary。',
+        });
+      } else {
+        // v3（codex）：短 SHA 先解析为完整 SHA 再比较（claimed 允许 7-40 位）。
+        const claimedRaw = (frontmatter.claimed_completion_commit_sha ?? '').trim();
+        let claimedFull = claimedRaw;
+        if (claimedRaw) {
+          const resolveClaimed = spawnSync('git', ['rev-parse', `${claimedRaw}^{commit}`], {
+            cwd: projectRoot,
+            encoding: 'utf-8',
+            shell: false,
+          });
+          if (resolveClaimed.status === 0) claimedFull = resolveClaimed.stdout.trim();
+        }
+        if (claimedFull && summarySha !== claimedFull) {
+          issues.push({
+            id: 'slim_summary_source_sha_mismatch',
+            severity: 'BLOCKER',
+            message:
+              `summary.source_commit_sha=${summarySha} 与回执 claimed_completion_commit_sha=${claimedRaw} 不一致——` +
+              'summary 与回执必须出自同一工作状态（旧 summary 冒充/回执后补皆拒）。',
+          });
+        }
+        const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', shell: false });
+        const headSha = headProbe.status === 0 ? headProbe.stdout.trim() : '';
+        // v6（codex 第五轮 P1）：HEAD 解析失败=run identity 无法核实 → fail-closed BLOCKER，
+        // 不得静默跳过 HEAD 绑定校验（slim 凭证链以 git 为前提）。
+        if (!headSha) {
+          issues.push({
+            id: 'slim_summary_head_unverifiable',
+            severity: 'BLOCKER',
+            message:
+              'git rev-parse HEAD 失败——当前 HEAD 无法核实时不得放行 summary 的 commit 绑定（fail-closed）；' +
+              '排查 git 环境后重跑闭环校验。',
+          });
+        } else if (summarySha !== headSha) {
+          issues.push({
+            id: 'slim_summary_source_sha_stale',
+            severity: 'BLOCKER',
+            message:
+              `summary.source_commit_sha=${summarySha} ≠ 当前 HEAD=${headSha}——` +
+              'HEAD 已推进，summary 属旧工作状态；请重跑 harness 重新生成后再闭环。',
+          });
+        }
+      }
+      // t2 v3（codex 阻断3）：dirty worktree 绑定——重算产品层目录工作区摘要比对；
+      // HEAD 不动但源码已改时旧 PASS 件失效。
+      const summaryWorktree = ((slimSummary as { worktree_digest?: string }).worktree_digest ?? '').trim();
+      if (!summaryWorktree) {
+        issues.push({
+          id: 'slim_summary_worktree_missing',
+          severity: 'BLOCKER',
+          message: 'summary.json 缺 worktree_digest——请用当前版本 harness 重跑生成 base summary。',
+        });
+      } else {
+        const layerDirs = (fw.architecture?.outer_layers ?? []).map(l => l.id);
+        const currentDigest = computeProductWorktreeDigest(projectRoot, layerDirs);
+        // v6（codex 第五轮 P1，收紧 v5）：**只有两侧都是 16 hex 摘要（或双 no-layers 的
+        // 确定性配置态）才允许相等比较**——no-git/unverifiable/未知哨兵一律 BLOCKER，
+        // 构造性排除"两侧同错误常量假匹配"（no-git===no-git 曾可放行）。
+        const HEX16 = /^[0-9a-f]{16}$/;
+        const bothNoLayers = currentDigest === 'no-layers' && summaryWorktree === 'no-layers';
+        if (!bothNoLayers && (!HEX16.test(currentDigest) || !HEX16.test(summaryWorktree))) {
+          issues.push({
+            id: 'slim_summary_worktree_unverifiable',
+            severity: 'BLOCKER',
+            message:
+              `worktree_digest 无法核实（summary=${summaryWorktree}，当前重算=${currentDigest}）——` +
+              '闭环只认成功生成的 16 hex 摘要；git 失败/文件不可读等哨兵值一律不放行（fail-closed）。' +
+              '排查 git 环境与不可读文件后重跑 harness。',
+          });
+        } else if (summaryWorktree !== currentDigest) {
+          issues.push({
+            id: 'slim_summary_worktree_stale',
+            severity: 'BLOCKER',
+            message:
+              `worktree_digest 失配（summary=${summaryWorktree}，当前=${currentDigest}）——` +
+              '产品源码工作区状态已变（HEAD 未动也算），summary 属旧状态；请重跑 harness。',
+          });
+        }
+      }
+      // t2 v3（codex 阻断3）：goal 环境 run 身份绑定——同 commit 上 run A 的 summary 不得被
+      // run B 复用。v4（codex 第三轮高优）fail-closed：goal 环境下当前 run id / summary run id
+      // 任一缺失同样 BLOCKER，不得静默降级（与 §10 assumptions ledger 的 run identity 先例对齐）。
+      if (isGoalOrchestrationEnv()) {
+        const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim() ?? '';
+        const summaryRunId = ((slimSummary as { run_id?: string }).run_id ?? '').trim();
+        if (!currentRunId) {
+          issues.push({
+            id: 'slim_summary_run_identity_unavailable',
+            severity: 'BLOCKER',
+            message:
+              'goal 环境缺 MAISON_GOAL_RUN_ID——run identity 是 slim 凭证绑定必填项，' +
+              '传播链异常不得静默跳过校验（fail-closed）。',
+          });
+        } else if (!summaryRunId) {
+          issues.push({
+            id: 'slim_summary_run_id_missing',
+            severity: 'BLOCKER',
+            message:
+              `goal 环境 summary.json 缺 run_id（当前 run=${currentRunId}）——` +
+              '旧版/非本 run 产物不得闭环；请在本 run 内重跑 harness 重新生成。',
+          });
+        } else if (summaryRunId !== currentRunId) {
+          issues.push({
+            id: 'slim_summary_run_id_mismatch',
+            severity: 'BLOCKER',
+            message:
+              `summary.run_id=${summaryRunId} ≠ 当前 goal run=${currentRunId}——` +
+              '跨 run 复用 summary 被拒；请在本 run 内重跑 harness。',
+          });
+        }
+      }
+      if (slimSummary.feature !== feature || slimSummary.phase !== phase) {
+        issues.push({
+          id: 'slim_summary_identity_mismatch',
+          severity: 'BLOCKER',
+          message:
+            `summary.json 身份不匹配：feature=${slimSummary.feature ?? '<missing>'}/phase=${slimSummary.phase ?? '<missing>'}，` +
+            `期望 ${feature}/${phase}（canonical path 按 feature/phase 解析，防串目录/串阶段）。`,
+        });
+      }
+      if ((slimSummary.verdict ?? '').toUpperCase() !== 'PASS') {
+        issues.push({
+          id: 'slim_summary_not_pass',
+          severity: 'BLOCKER',
+          message: `本次 base summary verdict=${slimSummary.verdict ?? '<missing>'}，必须为 PASS（含 INCOMPLETE 不放行）。`,
+        });
+      }
+      if (slimSummary.blocker_count !== 0) {
+        issues.push({
+          id: 'slim_summary_blockers_present',
+          severity: 'BLOCKER',
+          message: `本次 base summary blocker_count=${slimSummary.blocker_count ?? '<missing>'}，必须为 0。`,
+        });
+      }
+      const staleReason = assertGateFingerprintFresh(slimSummary, frameworkRootFromHere(), phase);
+      if (staleReason) {
+        issues.push({
+          id: 'gate_fingerprint_stale',
+          severity: 'BLOCKER',
+          message: `【回执 stale】${staleReason}`,
+        });
+      }
+    }
+  }
+
+  // 2. script_harness 必须 exit_code=0 且零 BLOCKER（legacy 格式；slim 已由 summary 直读承载）
   const sh = frontmatter.script_harness ?? {};
+  if (!isSlim) {
   if (sh.exit_code !== 0) {
     issues.push({
       id: 'script_harness_not_pass',
@@ -381,6 +592,7 @@ function main(): void {
       }
     }
   }
+  } // end !isSlim（legacy §2 script_harness）
 
   // C2：非 BLOCKER 的证据缺项（如 optional 档 trace 缺失）单独记录，不影响 pass/fail 判定。
   const warnings: CheckIssue[] = [];
@@ -426,8 +638,43 @@ function main(): void {
 
   // 4. trace.json 凭证（policy.trace === 'optional' 时"缺失"降 WARN；"提供但损坏"恒 BLOCKER——
   //    劣质凭证比没凭证更危险，optional 只豁免"不提供"，不豁免"提供假的"）
+  //    slim：不再经 receipt 手抄字段，直查 canonical 路径磁盘存在性与可解析性。
   const tj = frontmatter.trace_json ?? {};
-  const traceProvided = tj.exists === true && Boolean(tj.path);
+  let traceProvided: boolean;
+  let traceDisplay: string;
+  if (isSlim) {
+    const traceAbsSlim = path.join(canonicalReportsDir, 'trace.json');
+    traceProvided = fs.existsSync(traceAbsSlim);
+    traceDisplay = traceProvided ? `${canonicalReportsRel}/trace.json（磁盘直查存在）` : `未发现（${policy.trace} 档）`;
+    observed.trace = traceProvided ? 'provided' : 'missing';
+    if (!traceProvided) {
+      if (policy.trace === 'required') {
+        issues.push({
+          id: 'trace_json_file_not_found',
+          severity: 'BLOCKER',
+          message: `trace.json 在 canonical 路径不存在（${canonicalReportsRel}/trace.json）——阶段遥测凭证缺失。`,
+        });
+      } else {
+        warnings.push({
+          id: 'trace_json_missing_optional',
+          severity: 'MAJOR',
+          message: `trace 为 optional 档，缺失不阻塞（${canonicalReportsRel}/trace.json）——建议仍尽量提供。`,
+        });
+      }
+    } else {
+      try {
+        JSON.parse(fs.readFileSync(traceAbsSlim, 'utf-8'));
+      } catch {
+        issues.push({
+          id: 'trace_json_not_parseable',
+          severity: 'BLOCKER',
+          message: `${canonicalReportsRel}/trace.json 不是合法 JSON。`,
+        });
+      }
+    }
+  } else {
+  traceProvided = tj.exists === true && Boolean(tj.path);
+  traceDisplay = traceProvided ? `${tj.path}（存在）` : `未提供（${policy.trace} 档）`;
   observed.trace = traceProvided ? 'provided' : 'missing';
   if (!traceProvided) {
     const traceMissingDetail = `trace_json.exists=${tj.exists ?? '<missing>'}, trace_json.path=${tj.path ?? '<missing>'}`;
@@ -474,9 +721,17 @@ function main(): void {
       }
     }
   }
+  } // end !isSlim（legacy §4 trace_json）
 
   // 3.5 context_exploration（与 Context Exploration Gate 对齐；policy.exploration === 'off'/'not_applicable' 时不检）
+  //     slim：exploration 由各 phase 门禁的 facts gate（checkFactsArtifact）承载，receipt 不再手抄；
+  //     此处按 policy 记 observed（facts gate 未过时 base summary 本就不会 PASS）。
   const ce = frontmatter.context_exploration ?? {};
+  if (isSlim) {
+    observed.exploration = policy.exploration === 'off' || policy.exploration === 'not_applicable'
+      ? 'skipped_by_policy'
+      : 'provided';
+  } else {
   observed.exploration = ce.exists === true ? 'provided' : 'missing';
   if (policy.exploration === 'off' || policy.exploration === 'not_applicable') {
     // 矩阵当前所有 full 分支恒 required；此分支只在未来矩阵调整时生效，现状不可达。
@@ -518,6 +773,7 @@ function main(): void {
       message: 'context_exploration.has_blocker_coverage_risk=true，不得在完成回执中宣称阶段闭环。',
     });
   }
+  } // end !isSlim（legacy §3.5 context_exploration）
 
   // 4.5 testing_run_artifacts（Hylyre 子产物；仅 phase=testing 且 device_test.run 非 SKIP）
   if (phase === 'testing' && !isCapabilitySkipped(resolvedProfile, 'device_test.run')) {
@@ -626,8 +882,10 @@ function main(): void {
     }
   }
 
-  // 6. 自检题 Q1：trace.json 真实路径
+  // 6. 自检题 Q1：trace.json 真实路径（slim：q1/q3/q4 随镜像块删除——q1 重复 trace 路径、
+  //    q3 无真 diff 对账、q4 与反假设 checkbox 重复；反假设自证由 §9 checkbox 承载）
   const sc = frontmatter.self_check ?? {};
+  if (!isSlim) {
   if (!sc.q1_trace_json_abs_path) {
     issues.push({
       id: 'self_check_q1_missing',
@@ -688,6 +946,7 @@ function main(): void {
         ' 自承使用了不存在的规则 = 反假设条款触发 = 任务失败。',
     });
   }
+  } // end !isSlim（legacy §6-8 self_check）
 
   // 9. "反假设条款回顾" 三项 checkbox 全部为 [x]
   const checkboxResult = scanHallucinationCheckboxes(bodyAfterFm);
@@ -735,7 +994,7 @@ function main(): void {
       fw,
     );
     if (mmAdvisory) {
-      patchSummarySoftAdvisory(projectRoot, sh.report_dir, mmAdvisory);
+      patchSummarySoftAdvisory(projectRoot, isSlim ? canonicalReportsRel : sh.report_dir, mmAdvisory);
       if (mmAdvisory.status === 'WARN') {
         console.warn(`\n⚠️  [MAJOR/WARN] ${mmAdvisory.id}: ${mmAdvisory.details}\n`);
       } else if (mmAdvisory.status === 'SKIP') {
@@ -745,12 +1004,16 @@ function main(): void {
         `HARNESS_ADVISORY id=${mmAdvisory.id} status=${mmAdvisory.status} effective_image_input=${mmAdvisory.effective_image_input ?? 'n/a'}`,
       );
     }
-    console.log('✅ PASS — 完成回执校验通过。');
-    console.log('   - script_harness: exit_code=0, blocker_count=0');
+    console.log(`✅ PASS — 完成回执校验通过${isSlim ? '（瘦身格式 2.0，机器事实=本次 base summary 直读）' : ''}。`);
+    console.log(
+      isSlim
+        ? `   - base summary: verdict=PASS, blocker_count=0, fingerprint fresh（${canonicalReportsRel}/summary.json）`
+        : '   - script_harness: exit_code=0, blocker_count=0',
+    );
     console.log(
       `   - verifier_subagent: ${policy.verifier === 'off' ? 'skipped_by_policy（balanced 档非保留 phase）' : `verdict=${vs.verdict}`}`,
     );
-    console.log(`   - trace_json: ${traceProvided ? `${tj.path}（存在）` : `未提供（${policy.trace} 档）`}`);
+    console.log(`   - trace_json: ${traceDisplay}`);
     console.log(`   - commit_sha: ${sha}`);
     console.log('   - 反假设条款 3/3 已勾选');
     if (warnings.length > 0) {
@@ -773,7 +1036,7 @@ function main(): void {
         exit_code: 0,
       };
       syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
-        blocker_count: typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
+        blocker_count: isSlim ? (slimSummary?.blocker_count ?? 0) : typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
         frameworkRoot,
         evidence_policy_snapshot: evidencePolicySnapshot,
       });

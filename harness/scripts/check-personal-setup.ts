@@ -9,6 +9,7 @@ import {
   evaluatePersonalSetupGate,
   formatPersonalSetupGateStderr,
   resolveEnsurePrerequisites,
+  runEnsureHumanReprobe,
   type PersonalSetupEnsureJson,
 } from './utils/personal-setup-gate';
 
@@ -58,6 +59,17 @@ if (require.main === module) {
       requiredPrerequisites: prereqs,
       selectAdapter: opts.selectAdapter,
     });
+    // v4 人工 reprobe（仅 --ensure CLI 层；preflight 消费的 ensurePersonalSetup 无权触达）：
+    // 刷新 binary/cli_starts，且 cli 真实可启动时把 capability_failed 降级重置回 unknown。
+    if (prereqs.has('deveco_toolchain')) {
+      const reprobe = runEnsureHumanReprobe(opts.projectRoot);
+      if (reprobe.reset) {
+        process.stderr.write(
+          '[check-personal-setup] 人工 reprobe：capability_failed 已重置为 unknown——' +
+            '下一次真实编译定谳（resume/重跑即可）。\n',
+        );
+      }
+    }
     if (opts.json) {
       emitJson(payload);
     }

@@ -45,6 +45,23 @@ function ensureReportDir(projectRoot: string, feature: string, phase: Phase, fra
 // 脚本报告生成
 // --------------------------------------------------------------------------
 
+/**
+ * t1a①（plan e6a3c9f4）：suggestion 规范化——BLOCKER 级 FAIL 缺 suggestion 时补统一 fallback。
+ * 在 finalizeChecksForScriptReport（ScriptReport 落盘前的唯一上游）应用，
+ * 使 script-report.json / summary.json / merged-report / console --failures-only 四出口一致；
+ * 只改渲染面会漏 summary-blockers 透传与控制台出口（codex round3 坐实）。
+ */
+export function resolveEffectiveSuggestion(check: CheckResult, phase: Phase): string | undefined {
+  if (check.suggestion && check.suggestion.trim().length > 0) return check.suggestion;
+  if (check.severity !== 'BLOCKER' || check.status !== 'FAIL') return check.suggestion;
+  const origin = check.source ?? `check-${phase}.ts`;
+  return (
+    `（自动指引）该门禁未附带专属修复建议：先按 details 定位失败上下文；` +
+    `在 framework/harness/scripts/ 或对应 profile harness 的 ${origin} 中检索 id="${check.id}" 查看判定实现；` +
+    `各阶段门禁速查见 docs/operations/harness-runbook.md §5。`
+  );
+}
+
 export function finalizeChecksForScriptReport(
   checks: CheckResult[],
   phase: Phase,
@@ -56,7 +73,15 @@ export function finalizeChecksForScriptReport(
   compat_applied?: ScriptReportCompatApplied;
   compat_expired?: ScriptReportCompatExpired;
 } {
-  const { results, stats } = applyCompatDowngrade(checks, { feature, phase, projectRoot }, nowMs);
+  const { results: downgraded, stats } = applyCompatDowngrade(checks, { feature, phase, projectRoot }, nowMs);
+  // t1a/t1d（plan e6a3c9f4）：非 PASS 结果统一补 source 回退与 suggestion fallback——
+  // 在 ScriptReport 落盘前完成，下游（summary/merged/console）零各自兜底。
+  const results = downgraded.map(c => {
+    if (c.status === 'PASS') return c;
+    const withSource = c.source ? c : { ...c, source: `check-${phase}.ts` };
+    const effective = resolveEffectiveSuggestion(withSource, phase);
+    return effective === withSource.suggestion ? withSource : { ...withSource, suggestion: effective };
+  });
   let compat_applied: ScriptReportCompatApplied | undefined;
   if (stats.appliedIds.length > 0) {
     compat_applied = {
@@ -395,6 +420,9 @@ export function generateMergedReport(
       if (check.suggestion) {
         lines.push(`- **建议**: ${check.suggestion}`);
       }
+      if (check.source) {
+        lines.push(`- **来源**: ${check.source}`);
+      }
       lines.push('');
     }
   }
@@ -512,6 +540,13 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
       console.log(`       ${formatConsoleDetails(check.details, options.maxDetailsChars ?? 4000)}`);
       if (check.affected_files?.length) {
         console.log(`       Files: ${check.affected_files.slice(0, 5).join(', ')}${check.affected_files.length > 5 ? ` (+${check.affected_files.length - 5} more)` : ''}`);
+      }
+      // t1a（plan e6a3c9f4）：console 出口与 script-report/summary/merged 同源展示修复指引与来源。
+      if (check.suggestion) {
+        console.log(`       Fix: ${formatConsoleDetails(check.suggestion, 600)}`);
+      }
+      if (check.source) {
+        console.log(`       Source: ${check.source}`);
       }
     }
   }

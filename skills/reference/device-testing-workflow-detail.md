@@ -22,7 +22,7 @@
 
 **4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏回填（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。仍无可靠 selector 的 TC：不写入派生表行，但须在 frontmatter 或 `derive-manifest.json` 登记 `explicit_skip_tc_ids`，Step 5 标跳过并写原因。
 
-**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出，`snapshot_cache_empty:true` 先 warmup 或 dump-ui。
+**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出（hint JSON 内含 `allowed_step_roots`/`step_shape_catalog` 机读步骤目录，翻译时以此为准），`snapshot_cache_empty:true` 先 warmup 或 dump-ui；若步骤语法不在当前上下文（长会话被压缩后常见），翻译前重读 `profile-skill-asset:device-testing` 的 `reference/hylyre-planned-step-fields.md`。
 
 **4.5.4 裁决与跳过登记**：维护「进入派生/跳过」两份清单，跳过须在 Step 5 报告逐条可见；派生表用例编号须 ⊆ 顶层 test-plan.md（否则 extra FAIL）；顶层每个 TC 须出现于派生表或 `explicit_skip_tc_ids`（否则 missing FAIL）。
 

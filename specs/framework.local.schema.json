@@ -24,6 +24,59 @@
             "hvigorBin": { "type": "string" }
           },
           "additionalProperties": false
+        },
+        "probe": {
+          "type": "object",
+          "description": "t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照。写入权限固定——binary/cli_starts 由 check-personal-setup --ensure 更新；project_compile 的 verified/capability_failed 仅 hvigor wrapper 真实结果写入（agent 声明/手编不升级状态）；--ensure 人工 reprobe 仅可把 capability_failed 降级重置为 unknown（v4，绝不升级）；known_quirks 纯人读，永不参与 gate 判定。",
+          "properties": {
+            "binary": {
+              "type": "object",
+              "properties": {
+                "hvigor_bin": { "type": "string" },
+                "observed_at": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "cli_starts": {
+              "type": "object",
+              "properties": {
+                "ok": { "type": "boolean" },
+                "hvigor_version": { "type": "string" },
+                "observed_at": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "project_compile": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": { "type": "string", "enum": ["unknown", "verified", "capability_failed"] },
+                "failure_code": { "type": ["string", "null"] },
+                "evidence": { "type": "array", "items": { "type": "string" } },
+                "invocation_fingerprint": { "type": "string" },
+                "config_digest": { "type": "string", "description": "工程配置/依赖锁定态摘要——变更即状态自动失效回 unknown（preflight 可独立重算比对）" },
+                "observed_at": { "type": "string" },
+                "expires_at": { "type": "string" },
+                "recovery_probe_pending": { "type": "boolean", "description": "已废弃（v4）：授予模型移除——capability_failed 恒拦截，解除仅靠配置漂移自动失效 / --ensure 人工 reprobe / wrapper 真实编译改写。保留仅为兼容旧 local 文件，任何逻辑不再读取。" },
+                "integrity": { "type": "string", "description": "载荷完整性摘要（防手滑/威慑，非密码学）；失配按 unknown 处理——伪造不通过任何 gate" }
+              },
+              "additionalProperties": false
+            },
+            "last_attempt": {
+              "type": "object",
+              "description": "人读留痕（普通源码编译失败等）；不参与任何判定",
+              "properties": {
+                "summary": { "type": "string" },
+                "observed_at": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "known_quirks": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

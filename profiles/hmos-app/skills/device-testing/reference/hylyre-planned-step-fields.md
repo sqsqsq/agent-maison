@@ -1,6 +1,6 @@
 # Hylyre Planned Step 字段规则（vendored SSOT）
 
-> 从 [`hylyre-0.3.0-py3-none-any.whl`](../../../vendor/hylyre/hylyre-0.3.0-py3-none-any.whl) 内 `hylyre/api/planned_step_keys.py`、`selector_resolve.py` 等提取。
+> 从 [`hylyre-0.3.1-py3-none-any.whl`](../../../vendor/hylyre/hylyre-0.3.1-py3-none-any.whl) 内 `hylyre/api/planned_step_keys.py`、`selector_resolve.py` 等提取。
 > Framework 仓内 **不** 包含 Hylyre 工程的 `docs/agent-plan-a.md`；本文件供 agent / lint / derive 消费。
 
 ## 根键 SSOT
@@ -119,5 +119,5 @@
 
 ## 版本
 
-- Hylyre wheel：`0.3.0`（`framework/profiles/hmos-app/vendor/hylyre/`）
+- Hylyre wheel：`0.3.1`（`framework/profiles/hmos-app/vendor/hylyre/`）
 - 字段变更时：同步更新 wheel、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`

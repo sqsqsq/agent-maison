@@ -18,6 +18,8 @@ export interface SummaryBlockerEntry {
   details_excerpt: string;
   affected_files?: string[];
   suggestion?: string;
+  /** t1d（plan e6a3c9f4）：产出来源（safeRun origin / profile dispatch / check-<phase>.ts 回退） */
+  source?: string;
 }
 
 /**
@@ -40,5 +42,6 @@ export function buildSummaryBlockers(
       details_excerpt: excerpt(c.details, 800),
       affected_files: c.affected_files,
       suggestion: c.suggestion,
+      ...(c.source ? { source: c.source } : {}),
     }));
 }

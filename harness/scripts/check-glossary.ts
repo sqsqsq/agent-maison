@@ -463,7 +463,8 @@ function checkTermCoveredByCatalogTypicalTerms(
 
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
-    return fn();
+    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
+    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
   } catch (err) {
     return [{
       id: checkId, category: 'structure',

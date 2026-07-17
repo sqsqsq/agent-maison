@@ -3,7 +3,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
-import type { FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
+import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
+import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
 import type { ProfileCodingHost } from '../../../harness/profile-host-loader';
 import { loadFrameworkConfig } from '../../../harness/config';
 import {
@@ -24,6 +25,7 @@ import {
 } from './har-export-resolve';
 
 import { runArkuiStaticRules } from './arkui-static-rules';
+import { blockerFail } from '../../../harness/scripts/utils/check-result-factory';
 
 export { isCrossModuleExportFileStem } from './har-export-resolve';
 
@@ -1406,9 +1408,112 @@ function runTraceabilityChecks(ctx: CheckContext): CheckResult[] {
   return [...checkDesignFilePlanToCode(ctx), ...checkCodeToDesign(ctx)];
 }
 
+// ---------------------------------------------------------------------------
+// t5（plan e6a3c9f4）：checkCodingLint — lite/exit 轨与修正链路的快速 lint 派发
+// （profile-host-loader.ts 可选接口；check-exit.ts / correction-commands.ts 派发点
+// 此前空转退化 WARN——"coding.lint 声明 BLOCKER 但 provider 空缺"已知债清偿）。
+// 范围=高置信静态子集，不跑 hvigor 编译：
+//   - ArkUI 静态规则（bindsheet 双关/push 无守卫/单例多订阅/裁剪重叠，自带行内豁免）
+//   - $r 资源模板串插值（[object Object] 类 BLOCKER，与 full 轨 runStructureChecks 同源）
+//   - static enum（ArkTS 非法语法，正则高置信；宿主反馈 CR-001 类，本次新增）
+// dead import / TAG 硬编码等低置信候选按 plan 须真实宿主反例语料+误报预算达标后再入。
+// 分析对象=git 变更 .ets 文件（工作区∪HEAD），无变更空过——lint 是秒级增量检查，
+// 全仓扫描属 full 轨 coding 门禁职责。
+// ---------------------------------------------------------------------------
+
+const STATIC_ENUM_RE = /\bstatic\s+enum\b/;
+
+/**
+ * 剥离字符串字面量与注释（v2，post-impl review：`'static enum is unsupported'`、
+ * `// avoid static enum`、块注释示例均不得误报）。轻量词法扫描——保留换行以维持行号。
+ */
+export function stripStringsAndComments(src: string): string {
+  let out = '';
+  let i = 0;
+  type Mode = 'code' | 'line' | 'block' | 'single' | 'double' | 'template';
+  let mode: Mode = 'code';
+  while (i < src.length) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (mode === 'code') {
+      if (ch === '/' && next === '/') { mode = 'line'; i += 2; continue; }
+      if (ch === '/' && next === '*') { mode = 'block'; i += 2; continue; }
+      if (ch === "'") { mode = 'single'; i += 1; continue; }
+      if (ch === '"') { mode = 'double'; i += 1; continue; }
+      if (ch === '`') { mode = 'template'; i += 1; continue; }
+      out += ch; i += 1; continue;
+    }
+    if (ch === '\n') { out += '\n'; if (mode === 'line') mode = 'code'; i += 1; continue; }
+    if (mode === 'block' && ch === '*' && next === '/') { mode = 'code'; i += 2; continue; }
+    if (mode === 'single' && ch === '\\') { i += 2; continue; }
+    if (mode === 'double' && ch === '\\') { i += 2; continue; }
+    if (mode === 'template' && ch === '\\') { i += 2; continue; }
+    if (mode === 'single' && ch === "'") { mode = 'code'; i += 1; continue; }
+    if (mode === 'double' && ch === '"') { mode = 'code'; i += 1; continue; }
+    if (mode === 'template' && ch === '`') { mode = 'code'; i += 1; continue; }
+    i += 1;
+  }
+  return out;
+}
+
+export function checkNoStaticEnum(changedEts: string[], projectRoot: string): CheckResult[] {
+  const hits: string[] = [];
+  for (const rel of changedEts) {
+    const abs = path.join(projectRoot, rel);
+    if (!fs.existsSync(abs)) continue;
+    const sanitized = stripStringsAndComments(fs.readFileSync(abs, 'utf-8'));
+    const lines = sanitized.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (STATIC_ENUM_RE.test(lines[i])) {
+        hits.push(`${rel}:${i + 1}`);
+      }
+    }
+  }
+  if (hits.length === 0) {
+    return [{
+      id: 'lint_no_static_enum', category: 'structure',
+      description: 'ArkTS 禁止 static enum（class 内非法语法）',
+      severity: 'BLOCKER', status: 'PASS',
+      details: `变更 .ets 内未发现 static enum（共扫 ${changedEts.length} 文件）。`,
+    }];
+  }
+  // v2：经 check-result-factory 构造（t1a② 类型化 factory 的首个生产接入）。
+  return [blockerFail({
+    id: 'lint_no_static_enum', category: 'structure',
+    description: 'ArkTS 禁止 static enum（class 内非法语法）',
+    details: `发现 static enum（ArkTS 编译必败）：\n${hits.slice(0, 10).map(h => `  - ${h}`).join('\n')}${hits.length > 10 ? `\n  …等共 ${hits.length} 处` : ''}`,
+    affected_files: hits.map(h => h.split(':')[0]),
+    suggestion: '把 enum 移出 class 体作为顶层 enum（export enum Xxx {…}），class 内以 static readonly 引用其成员；namespace→class 改造时 enum 一律外提。',
+    source: 'profile_coding_host_lint',
+  })];
+}
+
+async function checkCodingLint(ctx: CheckContext): Promise<CheckResult[]> {
+  const diff = diffChangedFiles({ projectRoot: ctx.projectRoot });
+  const changedEts = diff.changedFiles.filter(
+    f => f.endsWith('.ets') && fs.existsSync(path.join(ctx.projectRoot, f)),
+  );
+  if (changedEts.length === 0) {
+    return [{
+      id: 'coding_lint', category: 'structure',
+      description: 'ArkTS 快速静态 lint（变更文件增量）',
+      severity: 'BLOCKER', status: 'PASS',
+      details: 'git 无 .ets 变更文件，lint 空过。',
+    }];
+  }
+  const analyzer = new AstAnalyzer(ctx.projectRoot);
+  const analyses = analyzer.analyzeFiles(changedEts);
+  const out: CheckResult[] = [];
+  out.push(...runArkuiStaticRules(ctx, analyses));
+  out.push(...checkResourceStringInterpolation(ctx, analyses));
+  out.push(...checkNoStaticEnum(changedEts, ctx.projectRoot));
+  return out;
+}
+
 export const profileCodingHost: ProfileCodingHost = {
   sourceFileSuffixes: ['.ets'],
   runStructureChecks,
   runTraceabilityChecks,
   checkCodingCompile,
+  checkCodingLint,
 };

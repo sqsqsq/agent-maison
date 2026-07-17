@@ -12,6 +12,7 @@ import {
   loadExplicitSkipTcIds,
   extractTcIdsFromPlanTable,
   lintDerivedHylyrePlanSteps,
+  lintHylyrePlanStepRules,
   lintHylyrePlanMarkdown,
   normalizePlannedStepsCell,
   isFullscreenHorizontalSwipeStep,
@@ -165,6 +166,45 @@ const cases: Case[] = [
       const rules = new Set(r.violations.map(v => v.rule_id));
       assertTrue(rules.has('NAV-001'), 'NAV-001');
       assertTrue(rules.has('NAV-003'), 'NAV-003');
+    },
+  },
+  {
+    // t7b（plan e6a3c9f4）：check-testing 标准路径接入的 STEP 级门禁所消费的判定——
+    // 非法根键 / 禁用 CLI 键 / wait 误用 timeout 均须 BLOCKER。
+    name: 'lintHylyrePlanStepRules: 非法根键/禁用 CLI 键/wait timeout → BLOCKER（t7b 接线判定）',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | 未知键 | - | {"tap":{"by_text":"确定"}} | x | P0 | AC-1 |',
+        '| TC-002 | 禁用 CLI 键 | - | {"dump_ui":{}} | x | P0 | AC-2 |',
+        '| TC-003 | wait 误用 | - | {"wait":{"timeout":3}} | x | P1 | AC-3 |',
+        '| TC-004 | 冷启越权 | - | {"start_app":{}} | x | P1 | AC-4 |',
+      ].join('\n');
+      const r = lintHylyrePlanStepRules(md);
+      assertTrue(!r.ok, 'illegal steps must fail');
+      const blockers = r.violations.filter(v => v.severity === 'BLOCKER');
+      const byTc = (tc: string) => blockers.filter(v => v.tc_id === tc);
+      assertTrue(byTc('TC-001').length > 0, 'TC-001 未知根键须 BLOCKER');
+      assertTrue(byTc('TC-002').some(v => v.rule_id === 'STEP-002'), 'TC-002 dump_ui 须 STEP-002');
+      assertTrue(byTc('TC-003').some(v => /timeout|seconds/i.test(v.message)), 'TC-003 wait timeout 须拦');
+      assertTrue(byTc('TC-004').length > 0, 'TC-004 start_app 须拦（派生计划冷启由 harness 负责）');
+    },
+  },
+  {
+    name: 'lintHylyrePlanStepRules: 合法计划零违规（t7b 好态）',
+    run: () => {
+      const md = [
+        '## 测试用例清单',
+        '',
+        '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+        '|----------|---------|---------|---------|---------|--------|---------|',
+        '| TC-001 | 触控 | 已在「首页」Tab | {"touch":{"by_text":"添加"}} ; {"wait":{"seconds":1}} ; {"wait_for":{"by_text":"完成"}} | x | P0 | AC-1 |',
+      ].join('\n');
+      const r = lintHylyrePlanStepRules(md);
+      assertTrue(r.ok, `legal plan must pass: ${JSON.stringify(r.violations)}`);
     },
   },
   {

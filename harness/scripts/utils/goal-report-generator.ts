@@ -233,9 +233,11 @@ export function generateGoalReportMarkdown(
                           ? '连续超时（升档后仍超时）——预算/需求规模/adapter 环境三选一排查，见下方引导'
                           : p.halt_reason === 'budget_wall_clock'
                             ? 'wall 总预算耗尽（deadline 制硬截断）'
-                            : p.halted
-                              ? 'halted'
-                              : '—');
+                            : p.halt_reason === 'await_human_capability_gap'
+                              ? '工具链能力缺口（invoke 前 preflight 拦截，未烧 agent 轮次）——按 HARNESS_PREFLIGHT 双出口处置：修环境或确认停止；修好后 --resume 重检放行'
+                              : p.halted
+                                ? 'halted'
+                                : '—');
     const summary = p.summary_path ?? '—';
     const warns = warnDigest.get(String(p.phase)) ?? '—';
     lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${warns} | ${reason} | ${summary} |`);

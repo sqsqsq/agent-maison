@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 import {
   clearFrameworkConfigCache,
@@ -134,8 +135,68 @@ function isDevecoToolchainReady(projectRoot: string): boolean {
   return false;
 }
 
+/**
+ * t6 toolchain-probe-truth（plan e6a3c9f4）：--ensure 只允许更新 binary/cli_starts 探针层
+ * （真跑 hvigorw --version 验证"存在≠能启动"）；project_compile 态归 hvigor wrapper，
+ * 本函数绝不触碰。profile 模块动态加载，缺失/失败即静默跳过（best-effort）。
+ */
+function recordEnsureProbeBestEffort(projectRoot: string): void {
+  try {
+    const cfg = loadDevEcoConfig(projectRoot);
+    const hvigorBin = cfg?.hvigorBin ?? (cfg?.installPath ? deriveHvigorBinFromInstallPath(cfg.installPath) : null);
+    if (!hvigorBin || !fs.existsSync(hvigorBin)) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as {
+      recordBinaryAndCliStartsProbe: (
+        root: string,
+        bin: string,
+        runVersion: (b: string) => { ok: boolean; version?: string },
+      ) => void;
+    };
+    probeMod.recordBinaryAndCliStartsProbe(projectRoot, hvigorBin, (bin: string) => {
+      const r = spawnSync(bin, ['--version'], {
+        encoding: 'utf-8',
+        timeout: 60_000,
+        shell: process.platform === 'win32',
+      });
+      const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+      const m = out.match(/(\d+\.\d+\.\d+)/);
+      return { ok: r.status === 0, ...(m ? { version: m[1] } : {}) };
+    });
+  } catch {
+    /* best-effort：探针失败不影响 --ensure 主流程 */
+  }
+}
+
+/**
+ * v4（codex 第三轮阻断1）：--ensure CLI 专用的人工 reprobe——刷新 binary/cli_starts
+ * （工具链已就绪时 ensurePersonalSetup 不会走 ensureDevecoToolchain，此处兜底），
+ * 且当 cli 真实可启动时把 capability_failed **降级重置**回 unknown（授予一次真实编译定谳）。
+ * 只允许 check-personal-setup CLI 调用；preflight 消费的 ensurePersonalSetup 不触达——
+ * 机器路径无权解除能力缺口，人为动作才是"我修好了，再试一次"的权威。
+ */
+export function runEnsureHumanReprobe(projectRoot: string): { reset: boolean } {
+  recordEnsureProbeBestEffort(projectRoot);
+  try {
+    const local = loadLocalConfig(projectRoot) as
+      | (FrameworkLocalConfig & { toolchain?: { probe?: { cli_starts?: { ok?: boolean } } } })
+      | null;
+    const cliOk = local?.toolchain?.probe?.cli_starts?.ok === true;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as {
+      resetCapabilityFailedByHumanReprobe: (root: string, ok: boolean) => boolean;
+    };
+    return { reset: probeMod.resetCapabilityFailedByHumanReprobe(projectRoot, cliOk) };
+  } catch {
+    return { reset: false };
+  }
+}
+
 function ensureDevecoToolchain(projectRoot: string): { ok: boolean; message: string; ensured?: 'auto_detect_deveco' } {
   if (isDevecoToolchainReady(projectRoot)) {
+    // t6 v2（codex BLOCKER2）：最常见的"已就绪"路径同样刷新 binary/cli_starts 事实——
+    // 否则 --ensure 从不建立 cli_starts（hvigor_version 证据链断头）。
+    recordEnsureProbeBestEffort(projectRoot);
     return { ok: true, message: 'deveco toolchain 已就绪' };
   }
   const report = detectScanForEnsure();
@@ -148,6 +209,7 @@ function ensureDevecoToolchain(projectRoot: string): { ok: boolean; message: str
     );
     clearFrameworkConfigCache();
     if (isDevecoToolchainReady(projectRoot)) {
+      recordEnsureProbeBestEffort(projectRoot);
       return {
         ok: true,
         message: `已自动探测并写入 framework.local.json installPath=${report.recommended.installPath}`,

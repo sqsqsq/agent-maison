@@ -30,6 +30,7 @@ import {
   buildFrameworkIntegrityGuidance,
 } from './utils/await-confirm-guidance';
 import { loadResolvedProfile } from '../profile-loader';
+import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/multimodal-probe';
@@ -406,6 +407,57 @@ function extractBlockingMeta(summary: SummaryJson | null): {
 function truncateOneLine(s: string, max: number): string {
   const oneLine = s.replace(/\s+/g, ' ').trim();
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+}
+
+/**
+ * t3-min invoke 前能力 gate（v5 可测抽取——codex 第四轮 P1：宿主行为不宜仅靠代码结构推断）：
+ * 真实链 runCapabilityPreflight（profile 前置解析→ensure 门→probe 深检）+ 机读
+ * HARNESS_PREFLIGHT 落盘 + phase_halt 事件。缺口=返回 halted outcome（调用方 push 后
+ * break——不产生 agent_invoke_start、不烧 agent 轮次）；齐备=null（调用方继续 invoke）。
+ * emitEvent 注入：主循环传 appendEvent 闭包；单测传事件收集器断言序列。
+ */
+export function runInvokeCapabilityGate(opts: {
+  projectRoot: string;
+  phase: string;
+  retries: number;
+  resolvedProfile: HarnessResolvedProfile;
+  emitEvent: (event: Record<string, unknown>) => void;
+}): { outcome: GoalPhaseOutcome } | null {
+  const capGap = runCapabilityPreflight(opts.projectRoot, opts.phase, opts.resolvedProfile);
+  if (capGap.ok) return null;
+  // t3-min v2（cursor MAJOR）：goal 路径同样落盘机读 HARNESS_PREFLIGHT（报告引导按它处置）。
+  emitHarnessPreflightGap(opts.projectRoot, opts.phase, capGap);
+  opts.emitEvent({
+    type: 'phase_halt',
+    phase: opts.phase,
+    halt_reason: 'await_human_capability_gap',
+    verdict: 'FAIL',
+  });
+  console.error(
+    `\n===== await_human_capability_gap =====\n[${capGap.code}] ${capGap.message}\n` +
+      `${capGap.guidance_install}\n${capGap.guidance_stop}\n` +
+      '环境修好后 --resume 继续（配置/SDK/DevEco 变更会自动解除；其余先跑 --ensure 人工 reprobe）；' +
+      '环境没修直接 resume 会再次在此拦截。\n',
+  );
+  // t3-min v2（codex P1）：halt_reason/guidance 进 outcome——goal-report 人读阶梯才可达。
+  return {
+    outcome: {
+      phase: opts.phase,
+      verdict: 'FAIL',
+      halted: true,
+      retries: opts.retries,
+      halt_reason: 'await_human_capability_gap',
+      halt_guidance: `[${capGap.code}] ${capGap.guidance_install} ${capGap.guidance_stop}`,
+    },
+  };
+}
+
+/**
+ * run_end 终态 halt_reason 语义（v5 可测抽取）：取最后一个 halted outcome 的原因——
+ * 消费方（goal-status/报告）无需回扫 phase_halt 事件即可分类终态。
+ */
+export function resolveLastHaltReason(outcomes: GoalPhaseOutcome[]): string | undefined {
+  return [...outcomes].reverse().find(o => o.halted && o.halt_reason)?.halt_reason;
 }
 
 /**
@@ -2098,6 +2150,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const visualAttemptId = `i${totalTurns}`;
         const invokeId = `${phase}-${visualAttemptId}`;
 
+        // t3-min（openspec capability-gap-preflight）：invoke 前共享 preflight——每 phase
+        // 每 attempt 重检（含 --resume）；缺口不产生 agent_invoke_start、不烧 agent 轮次，
+        // 首触即 halt 求人（不进 CUMULATIVE_HALT_FAMILY：agent 未开跑，无累计语义）。
+        // v5：逻辑抽取为 runInvokeCapabilityGate（真实链可测——goal-capability-gate 单测
+        // 断言"缺口无 agent_invoke_start / resume 重检仍 halt / reprobe 后放行"事件序列）。
+        if (!dryRun) {
+          const capHalt = runInvokeCapabilityGate({
+            projectRoot,
+            phase,
+            retries,
+            resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
+            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+          });
+          if (capHalt) {
+            halted = true;
+            outcomes.push(capHalt.outcome);
+            break;
+          }
+        }
+
         progressSubstep = 'agent_invoke';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'agent_invoke_start',
@@ -2893,7 +2965,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalReport(projectRoot, manifest.report_dir, report, {
       workflowChain: fullWorkflowChain.map(String),
     });
-    appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+    // t3-min v3（codex 高优6 / openspec capability-gap-preflight）：terminal event 携带
+    // halt_reason——取最后一个 halted outcome 的原因（await_human_capability_gap 等），
+    // 消费方无需回扫 phase_halt 事件即可分类终态。v5 抽 helper 使语义可单测。
+    const lastHaltReason = resolveLastHaltReason(outcomes);
+    appendEvent(manifest.report_dir, projectRoot, {
+      type: 'run_end',
+      status,
+      ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
+    });
 
     // P0-4（rev8 偏离① 定稿口径）：硬上界只覆盖 agent/harness/backoff 三路径；run_end 后
     // 收尾为 **pre-check 拦截的 best-effort**——同步 fs 工作无进程内可执行 bound（同步

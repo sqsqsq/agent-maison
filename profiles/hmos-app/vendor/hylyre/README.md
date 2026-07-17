@@ -56,7 +56,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 - 阶段入口（coding / ut / testing）内联 **`ensurePersonalSetup`**：半就绪 `framework.local.json`（如只记 `agent_adapter`、缺 DevEco）会在放行前自动确定性 repair（单 adapter / DevEco 探测）。
 - `init-orchestrate record-adapter` 写 local 后 **best-effort** 补 DevEco；探测不到时不失败任务，阶段入口仍会校验 DevEco。
 
-### Hylyre 0.3.0 CLI / 步骤能力
+### Hylyre 0.3.1 CLI / 步骤能力（0.3.x 系）
 
 - **`input`**：支持与 `touch` 一致的 `by_type` / 富选择器（`scope`/`within`/`index`/`all`/`visible` 等），或一步式 `into` 定位输入；无选择器时落当前聚焦框（仍建议先 `touch` 聚焦）。
 - **`scroll_to`**：滚动前先匹配已在屏目标，避免对已可见项空滚。
@@ -65,7 +65,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 ## 升级原则
 
-- Commit message 建议：`chore(vendor): hylyre 0.2.0 -> 0.3.0`
+- Commit message 建议：`chore(vendor): hylyre <旧版本> -> <新版本>`（如 `0.3.0 -> 0.3.1`）
 - 正文粘贴 `release.manifest.json` 中关键字段（如 `hylyre_version`、`wheel.sha256`）
 - **覆盖 vendor 后无需手删 `.hylyre/venv`**：协作者/用户用自然语言重新发起 **device-testing 真机测试**即可；**agent 在 device-testing Step 7 自跑 testing harness** 时，**`ensureHylyreReady`** 会按 manifest 版本与 wheel sha256 自动 pip 对齐（`tools.hylyre.auto_install=true` 且未设置 `HYLYRE_PYTHON` 时）。**用户不直接执行 harness 脚本。**
 - venv 内 **`.hylyre-vendor-fingerprint.json`** 记录上次安装的 wheel 指纹；同版本号补丁 wheel（sha256 变化）也会触发重装

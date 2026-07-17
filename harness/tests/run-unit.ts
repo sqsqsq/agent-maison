@@ -184,6 +184,14 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
   { id: 'fidelity-intent', modulePath: './unit/fidelity-intent.unit.test' },
+  { id: 'blocker-suggestion-ratchet', modulePath: './unit/blocker-suggestion-ratchet.unit.test' },
+  { id: 'report-suggestion-normalize', modulePath: './unit/report-suggestion-normalize.unit.test' },
+  { id: 'hylyre-keyset-consistency', modulePath: './unit/hylyre-keyset-consistency.unit.test' },
+  { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test' },
+  { id: 'capability-preflight', modulePath: './unit/capability-preflight.unit.test' },
+  { id: 'lite-json-schema', modulePath: './unit/lite-json-schema.unit.test' },
+  { id: 'worktree-digest', modulePath: './unit/worktree-digest.unit.test' },
+  { id: 'goal-capability-gate', modulePath: './unit/goal-capability-gate.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

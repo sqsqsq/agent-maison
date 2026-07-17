@@ -599,7 +599,11 @@ export async function runAdhocCorrection(
   } else if (host && typeof host.checkCodingLint === 'function') {
     try {
       const rs = await host.checkCodingLint(ctx);
-      results.push(...rs.map((r) => ({ ...r, id: r.id.startsWith('adhoc_') ? r.id : `adhoc_${r.id}` })));
+      results.push(...rs.map((r) => ({
+        ...r,
+        id: r.id.startsWith('adhoc_') ? r.id : `adhoc_${r.id}`,
+        source: r.source ?? 'profile_coding_host_lint',
+      })));
     } catch (err) {
       results.push({
         id: 'adhoc_lint',

@@ -18,6 +18,7 @@ import {
   resolveDefaultSnapshotBundle,
 } from './utils/app-snapshot-cache-hint';
 import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
+import { buildStandardHylyreDerivePayloadBase } from './utils/hylyre-standard-derive-knowledge';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -61,9 +62,9 @@ const snapshot_cache_empty = snapshotBundle
   : true;
 const available_pages = snapshotBundle ? listSnapshotPages(cacheAbs, snapshotBundle) : [];
 const payload = {
-  schema: 3,
+  // t7a（plan e6a3c9f4）：统一基座（与 check-testing 自动 hint 同源，schema/知识块永不分叉）
+  ...buildStandardHylyreDerivePayloadBase(),
   feature,
-  generated_at: new Date().toISOString(),
   source: relFeatureArtifact(projectRoot, feature, 'test-plan.md'),
   snapshot_bundle: snapshotBundle || null,
   snapshot_cache_empty,
