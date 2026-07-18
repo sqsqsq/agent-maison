@@ -18,6 +18,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { makeSafeRun } from './utils/safe-run';
+import { ruleDesc } from './utils/rule-desc';
 import * as path from 'path';
 import {
   PhaseChecker,
@@ -45,11 +47,6 @@ import { tryLoadProfileCodingHost } from '../profile-host-loader';
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
-
-function ruleDesc(ctx: CheckContext, section: 'structure_checks' | 'semantic_checks' | 'traceability_checks', id: string): string {
-  const checks = ctx.phaseRule[section] as Record<string, { description: string }>;
-  return checks?.[id]?.description?.trim() ?? id;
-}
 
 function truncateList(items: string[], max: number): string {
   const shown = items.slice(0, max).map(i => `  - ${i}`).join('\n');
@@ -468,25 +465,7 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
   };
 }
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    return fn();
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId,
-      category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-    }];
-  }
-}
+const safeRun = makeSafeRun({ classifyProgrammerErrors: true });
 
 const checker: PhaseChecker = {
   phase: 'coding',

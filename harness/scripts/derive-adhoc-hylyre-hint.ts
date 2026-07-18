@@ -6,6 +6,7 @@
  *     --bundle com.example.app --steps "打开应用->点击首页"
  */
 import * as fs from 'fs';
+import { defaultProjectRoot } from './utils/cli-project-root';
 import * as path from 'path';
 import minimist from 'minimist';
 import { buildAdhocDerivePayload } from './utils/adhoc-derive-payload';
@@ -14,14 +15,6 @@ import { appSnapshotCacheAbsFor, isCacheLayoutMismatch } from './utils/app-snaps
 const argv = minimist(process.argv.slice(2), {
   string: ['bundle', 'b', 'steps', 's', 'project-root', 'p', 'out', 'o'],
 });
-
-function defaultProjectRoot(): string {
-  const cwd = process.cwd();
-  if (path.basename(cwd) === 'harness' && path.basename(path.dirname(cwd)) === 'framework') {
-    return path.resolve(cwd, '..', '..');
-  }
-  return cwd;
-}
 
 const projectRoot = path.resolve(argv['project-root'] || argv.p || defaultProjectRoot());
 const bundle = (argv.bundle || argv.b || '').trim();

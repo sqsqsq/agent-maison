@@ -13,6 +13,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { makeSafeRun } from './utils/safe-run';
+import { ruleDesc } from './utils/rule-desc';
 
 import {
   PhaseChecker,
@@ -59,15 +61,6 @@ const REQUIRED_TERM_FIELDS: Array<keyof GlossaryTerm> = [
   'aliases',
   'easily_confused_with',
 ];
-
-function ruleDesc(
-  ctx: CheckContext,
-  section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
-  id: string,
-): string {
-  const checks = ctx.phaseRule[section] as Record<string, { description?: string }>;
-  return checks?.[id]?.description?.trim() ?? id;
-}
 
 // --------------------------------------------------------------------------
 // Structure Checks
@@ -461,18 +454,7 @@ function checkTermCoveredByCatalogTypicalTerms(
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    return fn();
-  } catch (err) {
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: 'MINOR', status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
-    }];
-  }
-}
+const safeRun = makeSafeRun();
 
 const checker: PhaseChecker = {
   phase: 'glossary',

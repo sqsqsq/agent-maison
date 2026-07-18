@@ -15,6 +15,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { ruleDesc } from './utils/rule-desc';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -106,15 +107,6 @@ function existsInRepo(layout: RepoLayout, rel: string): boolean {
 function gitPathFromInventoryRel(layout: RepoLayout, rel: string): string {
   const abs = resolveFrameworkPrefixedPath(layout.projectRoot, rel, layout);
   return path.relative(layout.projectRoot, abs).replace(/\\/g, '/');
-}
-
-function ruleDesc(
-  ctx: CheckContext,
-  section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
-  id: string,
-): string {
-  const checks = ctx.phaseRule[section] as Record<string, { description?: string }> | undefined;
-  return checks?.[id]?.description?.trim() ?? id;
 }
 
 // --------------------------------------------------------------------------

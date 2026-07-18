@@ -13,9 +13,8 @@
 //   - framework/harness/scripts/check-plan.ts (交叉校验 scope 一致性)
 // ============================================================================
 
-import * as fs from 'fs';
-import * as YAML from 'yaml';
 import { catalogPath, relCatalog } from '../../config';
+import { loadYamlSsotRoot, toStringArray, type YamlSsotLoadError } from './yaml-ssot';
 
 // --------------------------------------------------------------------------
 // 类型
@@ -45,10 +44,7 @@ export interface ModuleCatalog {
   modules: ModuleCard[];
 }
 
-export type CatalogLoadError =
-  | { kind: 'file_not_found'; path: string }
-  | { kind: 'invalid_yaml'; message: string }
-  | { kind: 'invalid_schema'; message: string };
+export type CatalogLoadError = YamlSsotLoadError;
 
 // --------------------------------------------------------------------------
 // 加载
@@ -63,38 +59,12 @@ export const CATALOG_RELATIVE_PATH = 'doc/module-catalog.yaml';
 export function loadCatalog(
   projectRoot: string,
 ): { ok: true; catalog: ModuleCatalog } | { ok: false; error: CatalogLoadError } {
-  const fullPath = catalogPath(projectRoot);
-  const relPath = relCatalog(projectRoot);
-
-  if (!fs.existsSync(fullPath)) {
-    return { ok: false, error: { kind: 'file_not_found', path: relPath } };
+  const loaded = loadYamlSsotRoot(catalogPath(projectRoot), relCatalog(projectRoot));
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
   }
 
-  let raw: string;
-  try {
-    raw = fs.readFileSync(fullPath, 'utf-8');
-  } catch (err) {
-    return { ok: false, error: { kind: 'file_not_found', path: relPath } };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(raw);
-  } catch (err) {
-    return {
-      ok: false,
-      error: { kind: 'invalid_yaml', message: (err as Error).message },
-    };
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    return {
-      ok: false,
-      error: { kind: 'invalid_schema', message: 'root must be an object' },
-    };
-  }
-
-  const root = parsed as Record<string, unknown>;
+  const root = loaded.root;
   const modules = root.modules;
 
   if (!Array.isArray(modules)) {
@@ -153,11 +123,6 @@ export function loadCatalog(
       modules: normalized,
     },
   };
-}
-
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === 'string');
 }
 
 function toEasilyConfusedArray(value: unknown): EasilyConfusedEntry[] {

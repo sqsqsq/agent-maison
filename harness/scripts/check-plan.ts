@@ -18,6 +18,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { makeSafeRun } from './utils/safe-run';
+import { ruleDesc } from './utils/rule-desc';
 import * as YAML from 'yaml';
 import {
   PhaseChecker,
@@ -170,15 +172,6 @@ function describeArchitectureImpactError(error: ArchitectureImpactParseError): s
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
-
-function ruleDesc(
-  ctx: CheckContext,
-  section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
-  id: string,
-): string {
-  const checks = ctx.phaseRule[section] as Record<string, { description: string }>;
-  return checks?.[id]?.description?.trim() ?? id;
-}
 
 function loadDoc(ctx: CheckContext, name: string): string | null {
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
@@ -821,24 +814,7 @@ function checkDesignToArchitecture(ctx: CheckContext, design: string): CheckResu
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    return fn();
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-    }];
-  }
-}
+const safeRun = makeSafeRun({ classifyProgrammerErrors: true });
 
 const CONSTRAINT_CATEGORIES = new Set(['security', 'performance', 'dfx', 'nfr', 'privacy', 'compatibility']);
 

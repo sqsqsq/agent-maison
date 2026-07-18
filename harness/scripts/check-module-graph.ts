@@ -6,6 +6,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { ruleDesc } from './utils/rule-desc';
 import * as path from 'path';
 
 import { evaluateCodeGraphDrift, type DriftFinding } from '../code-graph/drift';
@@ -17,15 +18,6 @@ import {
   CheckResult,
 } from './utils/types';
 import { loadCatalog, describeCatalogError } from './utils/catalog-parser';
-
-function ruleDesc(
-  ctx: CheckContext,
-  section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
-  id: string,
-): string {
-  const checks = ctx.phaseRule[section] as Record<string, { description?: string }>;
-  return checks?.[id]?.description?.trim() ?? id;
-}
 
 function resolvePackagePath(layer: string, name: string): string {
   return `${layer}/${name}`.replace(/\\/g, '/');

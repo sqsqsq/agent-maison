@@ -13,6 +13,7 @@ import type {
   PhaseRuleSpec,
   ScoringDimension,
   ScoringTier,
+  TrivialExemptionCondition,
 } from './types';
 import { parseScope } from './scope-parser';
 import { SpecLoader } from './spec-loader';
@@ -40,182 +41,88 @@ const TRIVIAL_INTENTS = new Set([
   'config',
 ]);
 
+/** subagent 型阶段（plan/coding）共用的 trivial 豁免条件 */
+const DEFAULT_TRIVIAL_EXEMPTION_CONDITIONS: TrivialExemptionCondition[] = [
+  { intent: ['rename', 'extract_function', 'move_file', 'typo_fix'] },
+  { prd_loc_delta_lt: 30 },
+  { single_function_scope: true },
+];
+
+/** sequential 型阶段（spec/review/ut）共用的复合评分配置 */
+const DEFAULT_SCORING: ExplorationScoringConfig = {
+  threshold: 60,
+  dimensions: [
+    {
+      id: 'module_loc',
+      weight: 25,
+      tiers: [
+        { gte: 50000, score: 25 },
+        { gte: 20000, score: 15 },
+        { gte: 5000, score: 8 },
+      ],
+    },
+    {
+      id: 'scope_breadth',
+      weight: 20,
+      tiers: [
+        { gte: 3, score: 20 },
+        { gte: 2, score: 12 },
+        { gte: 1, score: 5 },
+      ],
+    },
+    {
+      id: 'cross_layer',
+      weight: 20,
+      signal: 'touches_multiple_outer_layers',
+      score_if_true: 20,
+    },
+    {
+      id: 'new_api_surface',
+      weight: 15,
+      signal: 'adds_exports_or_public_api',
+      score_if_true: 15,
+    },
+    {
+      id: 'dependency_fan_out',
+      weight: 20,
+      tiers: [
+        { gte: 10, score: 20 },
+        { gte: 5, score: 12 },
+        { gte: 2, score: 5 },
+      ],
+    },
+  ],
+};
+
+function subagentPhaseStrategy(): ExplorationStrategy {
+  return {
+    default_mode: 'subagent',
+    trivial_exemption: {
+      enabled: true,
+      conditions_any: DEFAULT_TRIVIAL_EXEMPTION_CONDITIONS,
+    },
+    sequential_multiplier: 2.0,
+    sequential_min_files_inspected_add: 5,
+  };
+}
+
+function scoredPhaseStrategy(): ExplorationStrategy {
+  return {
+    default_mode: 'sequential',
+    scoring: DEFAULT_SCORING,
+    sequential_multiplier: 2.0,
+    sequential_min_files_inspected_add: 5,
+  };
+}
+
 export const DEFAULT_EXPLORATION_STRATEGY: Partial<
   Record<ContextExplorationPhase, ExplorationStrategy>
 > = {
-  plan: {
-    default_mode: 'subagent',
-    trivial_exemption: {
-      enabled: true,
-      conditions_any: [
-        { intent: ['rename', 'extract_function', 'move_file', 'typo_fix'] },
-        { prd_loc_delta_lt: 30 },
-        { single_function_scope: true },
-      ],
-    },
-    sequential_multiplier: 2.0,
-    sequential_min_files_inspected_add: 5,
-  },
-  coding: {
-    default_mode: 'subagent',
-    trivial_exemption: {
-      enabled: true,
-      conditions_any: [
-        { intent: ['rename', 'extract_function', 'move_file', 'typo_fix'] },
-        { prd_loc_delta_lt: 30 },
-        { single_function_scope: true },
-      ],
-    },
-    sequential_multiplier: 2.0,
-    sequential_min_files_inspected_add: 5,
-  },
-  spec: {
-    default_mode: 'sequential',
-    scoring: {
-      threshold: 60,
-      dimensions: [
-        {
-          id: 'module_loc',
-          weight: 25,
-          tiers: [
-            { gte: 50000, score: 25 },
-            { gte: 20000, score: 15 },
-            { gte: 5000, score: 8 },
-          ],
-        },
-        {
-          id: 'scope_breadth',
-          weight: 20,
-          tiers: [
-            { gte: 3, score: 20 },
-            { gte: 2, score: 12 },
-            { gte: 1, score: 5 },
-          ],
-        },
-        {
-          id: 'cross_layer',
-          weight: 20,
-          signal: 'touches_multiple_outer_layers',
-          score_if_true: 20,
-        },
-        {
-          id: 'new_api_surface',
-          weight: 15,
-          signal: 'adds_exports_or_public_api',
-          score_if_true: 15,
-        },
-        {
-          id: 'dependency_fan_out',
-          weight: 20,
-          tiers: [
-            { gte: 10, score: 20 },
-            { gte: 5, score: 12 },
-            { gte: 2, score: 5 },
-          ],
-        },
-      ],
-    },
-    sequential_multiplier: 2.0,
-    sequential_min_files_inspected_add: 5,
-  },
-  review: {
-    default_mode: 'sequential',
-    scoring: {
-      threshold: 60,
-      dimensions: [
-        {
-          id: 'module_loc',
-          weight: 25,
-          tiers: [
-            { gte: 50000, score: 25 },
-            { gte: 20000, score: 15 },
-            { gte: 5000, score: 8 },
-          ],
-        },
-        {
-          id: 'scope_breadth',
-          weight: 20,
-          tiers: [
-            { gte: 3, score: 20 },
-            { gte: 2, score: 12 },
-            { gte: 1, score: 5 },
-          ],
-        },
-        {
-          id: 'cross_layer',
-          weight: 20,
-          signal: 'touches_multiple_outer_layers',
-          score_if_true: 20,
-        },
-        {
-          id: 'new_api_surface',
-          weight: 15,
-          signal: 'adds_exports_or_public_api',
-          score_if_true: 15,
-        },
-        {
-          id: 'dependency_fan_out',
-          weight: 20,
-          tiers: [
-            { gte: 10, score: 20 },
-            { gte: 5, score: 12 },
-            { gte: 2, score: 5 },
-          ],
-        },
-      ],
-    },
-    sequential_multiplier: 2.0,
-    sequential_min_files_inspected_add: 5,
-  },
-  ut: {
-    default_mode: 'sequential',
-    scoring: {
-      threshold: 60,
-      dimensions: [
-        {
-          id: 'module_loc',
-          weight: 25,
-          tiers: [
-            { gte: 50000, score: 25 },
-            { gte: 20000, score: 15 },
-            { gte: 5000, score: 8 },
-          ],
-        },
-        {
-          id: 'scope_breadth',
-          weight: 20,
-          tiers: [
-            { gte: 3, score: 20 },
-            { gte: 2, score: 12 },
-            { gte: 1, score: 5 },
-          ],
-        },
-        {
-          id: 'cross_layer',
-          weight: 20,
-          signal: 'touches_multiple_outer_layers',
-          score_if_true: 20,
-        },
-        {
-          id: 'new_api_surface',
-          weight: 15,
-          signal: 'adds_exports_or_public_api',
-          score_if_true: 15,
-        },
-        {
-          id: 'dependency_fan_out',
-          weight: 20,
-          tiers: [
-            { gte: 10, score: 20 },
-            { gte: 5, score: 12 },
-            { gte: 2, score: 5 },
-          ],
-        },
-      ],
-    },
-    sequential_multiplier: 2.0,
-    sequential_min_files_inspected_add: 5,
-  },
+  plan: subagentPhaseStrategy(),
+  coding: subagentPhaseStrategy(),
+  spec: scoredPhaseStrategy(),
+  review: scoredPhaseStrategy(),
+  ut: scoredPhaseStrategy(),
 };
 
 export function extractChangeSignals(fm: ExplorationFrontmatterInput): ExplorationChangeSignals {
