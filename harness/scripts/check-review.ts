@@ -723,16 +723,13 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
   // 仅 UI 需求需要视觉维度：以 spec.md 的 ui_change 判定（与 spec/coding 视觉门禁同 gate）
   const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(specPath)) return [];
-  let requiresUiSpec = false;
-  try {
-    // 延迟 require 避免为非 UI 项目引入依赖面
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const shared = require('./utils/ui-spec-shared') as typeof import('./utils/ui-spec-shared');
-    const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
-    requiresUiSpec = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
-  } catch {
-    return [];
-  }
+  // 延迟 require 避免为非 UI 项目引入依赖面
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const shared = require('./utils/ui-spec-shared') as typeof import('./utils/ui-spec-shared');
+  // 不吞异常：读 spec.md / 判定 ui_change 若失败，交由 safeRun 显式暴露为 SKIP/BLOCKER，
+  // 避免"spec.md 不可读 → 静默 return [] → 视觉保真门禁被跳过"。
+  const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
+  const requiresUiSpec = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
   if (!requiresUiSpec) return [];
 
   const desc = ruleDesc(ctx, 'structure_checks', 'visual_fidelity_review');
