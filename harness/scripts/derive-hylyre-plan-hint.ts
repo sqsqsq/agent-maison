@@ -8,6 +8,7 @@
  *   cd framework/harness && npx ts-node scripts/derive-hylyre-plan-hint.ts --feature home-page --out ../../doc/features/home-page/testing/reports/hint.json
  */
 import * as fs from 'fs';
+import { defaultProjectRoot } from './utils/cli-project-root';
 import * as path from 'path';
 import minimist from 'minimist';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
@@ -22,14 +23,6 @@ import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
 });
-
-function defaultProjectRoot(): string {
-  const cwd = process.cwd();
-  if (path.basename(cwd) === 'harness' && path.basename(path.dirname(cwd)) === 'framework') {
-    return path.resolve(cwd, '..', '..');
-  }
-  return cwd;
-}
 
 const projectRoot = path.resolve(argv['project-root'] || argv.p || defaultProjectRoot());
 const feature = (argv.feature || argv.f || '').trim();

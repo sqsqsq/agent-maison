@@ -12,9 +12,8 @@
 //   - 未来可用于 skills 的辅助脚本
 // ============================================================================
 
-import * as fs from 'fs';
-import * as YAML from 'yaml';
 import { glossaryPath, relGlossary } from '../../config';
+import { loadYamlSsotRoot, toStringArray, type YamlSsotLoadError } from './yaml-ssot';
 
 // --------------------------------------------------------------------------
 // 类型
@@ -41,10 +40,7 @@ export interface Glossary {
   terms: GlossaryTerm[];
 }
 
-export type GlossaryLoadError =
-  | { kind: 'file_not_found'; path: string }
-  | { kind: 'invalid_yaml'; message: string }
-  | { kind: 'invalid_schema'; message: string };
+export type GlossaryLoadError = YamlSsotLoadError;
 
 // --------------------------------------------------------------------------
 // 加载
@@ -59,38 +55,12 @@ export const GLOSSARY_RELATIVE_PATH = 'doc/glossary.yaml';
 export function loadGlossary(
   projectRoot: string,
 ): { ok: true; glossary: Glossary } | { ok: false; error: GlossaryLoadError } {
-  const fullPath = glossaryPath(projectRoot);
-  const relPath = relGlossary(projectRoot);
-
-  if (!fs.existsSync(fullPath)) {
-    return { ok: false, error: { kind: 'file_not_found', path: relPath } };
+  const loaded = loadYamlSsotRoot(glossaryPath(projectRoot), relGlossary(projectRoot));
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
   }
 
-  let raw: string;
-  try {
-    raw = fs.readFileSync(fullPath, 'utf-8');
-  } catch {
-    return { ok: false, error: { kind: 'file_not_found', path: relPath } };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(raw);
-  } catch (err) {
-    return {
-      ok: false,
-      error: { kind: 'invalid_yaml', message: (err as Error).message },
-    };
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    return {
-      ok: false,
-      error: { kind: 'invalid_schema', message: 'root must be an object' },
-    };
-  }
-
-  const root = parsed as Record<string, unknown>;
+  const root = loaded.root;
   const termsRaw = root.terms;
   if (!Array.isArray(termsRaw)) {
     return {
@@ -142,11 +112,6 @@ export function loadGlossary(
       terms,
     },
   };
-}
-
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === 'string');
 }
 
 function toConfusionArray(value: unknown): GlossaryConfusionEntry[] {

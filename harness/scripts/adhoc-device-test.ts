@@ -8,6 +8,7 @@
  * Observe:    --bundle <id> --steps "…" --observe-ui  (touch-only NL auto-run + dump + summarize)
  */
 import * as fs from 'fs';
+import { defaultProjectRoot } from './utils/cli-project-root';
 import * as path from 'path';
 import minimist from 'minimist';
 import {
@@ -82,14 +83,6 @@ const argv = minimist(process.argv.slice(2), {
     'continue-session',
   ],
 });
-
-function defaultProjectRoot(): string {
-  const cwd = process.cwd();
-  if (path.basename(cwd) === 'harness' && path.basename(path.dirname(cwd)) === 'framework') {
-    return path.resolve(cwd, '..', '..');
-  }
-  return cwd;
-}
 
 function timestampSlug(): string {
   const d = new Date();
