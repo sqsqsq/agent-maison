@@ -14,8 +14,18 @@ import {
   loadUiSpecFile,
   parseUiChangeFromSpecMarkdown,
   structureFailOrWarn,
+  type UiSpecAsset,
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
+import {
+  ASSET_SANITY_THRESHOLD_VERSION,
+  assessMaterializedFile,
+  deriveAssetCriticality,
+  deriveAssetRole,
+  detectPlaceholderMarker,
+} from './asset-integrity';
+import { canonicalPkgPath, findModuleMediaFile } from './visual-parity-backstop';
+import { checkUiKitSourceConformance } from './ui-kit-conformance-check';
 import { computeStaticFidelityScore } from './static-fidelity-score';
 import { collectUnverifiedCropLines } from './asset-crop-validation';
 import {
@@ -35,7 +45,7 @@ import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/script
 import { checkStructureDeclarationLedger } from './structure-ledger';
 import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectDeclaredElements } from './layout-oracle-check';
-import { scanFeatureSourceTree } from './source-ref-scan';
+import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -52,6 +62,24 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   const p = path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'spec.md');
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
+}
+
+/** 五轮 P1-3：逐模块收集某 key 的全部 media 匹配（去 first-match——A 模块真素材不豁免 B 模块占位/坏图）；
+ * 六轮 P1-3：restrictPkgPaths=按 $r 实际引用模块限定（未引用模块的同名残留不入债务分母）。 */
+export function findAllModuleMediaFiles(
+  projectRoot: string,
+  contracts: NonNullable<CheckContext['featureSpec']['contracts']>,
+  key: string,
+  restrictPkgPaths?: ReadonlySet<string>,
+): string[] {
+  const canonRestrict = restrictPkgPaths ? new Set([...restrictPkgPaths].map(canonicalPkgPath)) : null;
+  const out: string[] = [];
+  for (const mod of contracts.modules ?? []) {
+    if (canonRestrict && !canonRestrict.has(canonicalPkgPath(mod.package_path))) continue;
+    const hit = findModuleMediaFile(projectRoot, contracts, key, new Set([mod.package_path]));
+    if (hit) out.push(hit);
+  }
+  return [...new Set(out)];
 }
 
 /** 供 harness / 白盒单测调用 */
@@ -326,6 +354,126 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     }
   }
 
+
+  // blind-visual-hardening d2（P0-B②）：物化 sanity——进入模块 media 的素材按 role 分档跑
+  // 内容检测；brand-critical 空白/纯色/损坏 → BLOCKER **档位无关**（bc-openCard 二轮：
+  // 23 张渲染不可见 placeholder 仅 WARN 放行的直接解药——档位管"像不像"，本检查管"有没有"）。
+  {
+    const contracts = ctx.featureSpec.contracts;
+    if (contracts) {
+      const sanityViolations: Array<{ line: string; critical: boolean; key: string }> = [];
+      // 六轮 P1-3：按 $r 实际引用模块限定（未引用模块的同名残留占位/坏图不入债务，
+      // brand-critical 不被无关残留误阻发布）；无引用记录的 key 回退全模块（兜未扫到的引用形态）。
+      const refModulesByKey = scanResourceRefModules(ctx.projectRoot, contracts);
+      for (const a of (doc.assets ?? []) as UiSpecAsset[]) {
+        if (!a?.key) continue;
+        const refs = refModulesByKey.get(resourceKeyToRef(a.key, 'media'));
+        const matches = findAllModuleMediaFiles(ctx.projectRoot, contracts, a.key, refs && refs.size > 0 ? refs : undefined);
+        if (matches.length === 0) continue; // 未物化——物化存在性归 visual_parity_asset_materialized
+        const derived = deriveAssetRole(a, doc);
+        const criticality = deriveAssetCriticality(derived.role, doc);
+        if (derived.declaredMismatch) {
+          sanityViolations.push({ key: a.key, line: `  - ${a.key}：${derived.declaredMismatch}`, critical: false });
+        }
+        for (const mediaAbs of matches) {
+          const assess = assessMaterializedFile(mediaAbs, derived.role);
+          const rel = path.relative(ctx.projectRoot, mediaAbs).replace(/\\/g, '/');
+          if (assess.status !== 'pass') {
+            // 三态处置（codex 实施 review P1-5 fail-closed）：fail=确定性违例；
+            // unverified（jimp 缺失/统计失败）brand-critical 同样 BLOCKER——统计没跑≠已验。
+            sanityViolations.push({
+              key: a.key,
+              line: `  - ${a.key}（role=${derived.role}/${criticality}，${assess.status}，${rel}）：${assess.reasons.join('；')}`,
+              critical: criticality === 'brand_critical',
+            });
+          }
+        }
+      }
+      if (sanityViolations.length > 0) {
+        const anyCritical = sanityViolations.some(v => v.critical);
+        results.push({
+          id: 'asset_materialization_sanity',
+          category: 'structure',
+          description: desc,
+          // brand-critical 命中（fail 或 unverified）→ BLOCKER/FAIL 不分档位；仅普通素材/role 失配 → MAJOR/WARN
+          severity: anyCritical ? 'BLOCKER' : 'MAJOR',
+          status: anyCritical ? 'FAIL' : 'WARN',
+          details: [
+            `【P0-B 物化 sanity·role 分档（阈值版本 ${ASSET_SANITY_THRESHOLD_VERSION}）】空白/纯色/损坏素材在任何保真档位都不是合法交付物；内容统计未执行（unverified）不作已验放行：`,
+            ...sanityViolations.map(v => v.line),
+            '【边界】近纯色仅判 brand_logo/illustration（单色 icon/mask 合法）；role/criticality 为机器派生，agent 声明失配不作数。',
+          ].join('\n'),
+          suggestion:
+            '用真实素材替换，或在 harness 目录执行占位生成 CLI（正式入口）：' +
+            `npm run ui-kit:placeholders -- --project-root <宿主根> --feature ${ctx.feature} --apply` +
+            '（brand_logo→文字头像 SVG / illustration→中性插画框 / decoration→中性块；禁空白 PNG）；' +
+            'unverified=修复 jimp 环境（npm install）后重跑；brand-critical 素材仍为占位时 release 保持 BLOCKED。',
+          affected_files: [uiSpecRel],
+          // 债务逐素材粒度消费面（visual-debt scopesOf）
+          structured: { kind: 'asset_sanity', assets: [...new Set(sanityViolations.map(v => v.key))] },
+        });
+      }
+    }
+  }
+
+  // blind-visual-hardening 四轮 P0-1：占位在场检测——maison 占位 SVG（provenance marker）
+  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_human），
+  // brand-critical 占位 → release 经债务链保持 BLOCKED（直至真素材替换或人工验收 receipt）。
+  // 五轮 P1-3：**全模块匹配**（first-match 会漏掉"A 模块真素材、B 模块占位"的实际引用模块）。
+  {
+    const contracts = ctx.featureSpec.contracts;
+    if (contracts) {
+      const placeholderHits: Array<{ key: string; kind: string; critical: boolean }> = [];
+      const refModulesByKey = scanResourceRefModules(ctx.projectRoot, contracts);
+      for (const a of (doc.assets ?? []) as UiSpecAsset[]) {
+        if (!a?.key) continue;
+        const refs = refModulesByKey.get(resourceKeyToRef(a.key, 'media'));
+        const matches = findAllModuleMediaFiles(ctx.projectRoot, contracts, a.key, refs && refs.size > 0 ? refs : undefined);
+        const marked = matches.map(m => detectPlaceholderMarker(m)).find(m => m !== null);
+        if (!marked) continue;
+        const derived = deriveAssetRole(a, doc);
+        placeholderHits.push({
+          key: a.key,
+          kind: marked.kind,
+          critical: deriveAssetCriticality(derived.role, doc) === 'brand_critical',
+        });
+      }
+      if (placeholderHits.length > 0) {
+        results.push({
+          id: 'asset_placeholder_present',
+          category: 'structure',
+          description: desc,
+          severity: 'MAJOR',
+          status: 'WARN',
+          details: [
+            `【占位在场】${placeholderHits.length} 项素材当前为 maison 占位（可见但≠真素材）：`,
+            ...placeholderHits.map(h => `  - ${h.key}（${h.kind}${h.critical ? '，brand-critical' : ''}）`),
+            '占位入视觉债务；brand-critical 占位 release 保持 BLOCKED，清偿=真素材替换（三态清偿）或人工验收 receipt 显式接受。',
+          ].join('\n'),
+          suggestion:
+            '真素材到位后放置到对应 resolved_path/media 路径重跑（三态清偿自动闭账）；' +
+            '或走人工视觉验收 receipt 显式接受残余占位（accepted 留痕，不阻断 release 但审计分列）。',
+          affected_files: [uiSpecRel],
+          structured: { kind: 'asset_sanity', assets: placeholderHits.map(h => h.key) },
+        });
+      }
+    }
+  }
+
+  // blind-visual-hardening d3（P0-C）：三段闭环·源码段——声明的语义容器须 block 实例化+锚点注入。
+  // 异常=BLOCKER（codex 三轮 P1-3：kit 是盲档视觉地板，执行异常若降 SKIP 即绕过 P0-C）。
+  try {
+    results.push(...checkUiKitSourceConformance(ctx));
+  } catch (e) {
+    results.push({
+      id: 'ui_kit_source_conformance', category: 'structure', description: desc,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `ui-kit 源码段校验执行异常（地板门禁不得因异常绕过）：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
+      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
+      failure_kind: 'framework_bug',
+      blocking_class: 'ui_kit_conformance',
+    });
+  }
 
   // 透明节点假 presence 拦截（codex 发现的对抗模式，2026-07-03）：spec 文本/资产/符号引用挂在
   // 字面硬不可见节点（opacity(0)/visibility None|Hidden/双零尺寸/fontSize(0)）＝骗静态 presence 扫描。

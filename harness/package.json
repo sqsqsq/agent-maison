@@ -17,6 +17,8 @@
     "check:glossary": "ts-node harness-runner.ts --phase glossary",
     "check:docs": "ts-node harness-runner.ts --phase docs",
     "check:global": "npm run check:catalog && npm run check:glossary && npm run check:docs",
+    "ui-kit:scaffold": "ts-node ../profiles/hmos-app/harness/ui-kit-scaffolder.ts",
+    "ui-kit:placeholders": "ts-node ../profiles/hmos-app/harness/asset-placeholder-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test:fixtures": "ts-node --transpile-only tests/run-tests.ts",
     "test:unit": "ts-node --transpile-only tests/run-unit.ts",

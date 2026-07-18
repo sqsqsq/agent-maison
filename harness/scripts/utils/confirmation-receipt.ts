@@ -39,7 +39,11 @@ export type ReceiptAction =
   | 'flow_contract'
   /** P0 运行时忠实性证明（Hylyre provider step 采集落地后由 runner 签发；落地前真人带外
    * 确认）——绑定 testing 源码 aggregate + acceptance flows hash，空文件不再能解除封顶 */
-  | 'runtime_fidelity_attestation';
+  | 'runtime_fidelity_attestation'
+  /** blind-visual-hardening d2：盲档 crop 产物来源的人签放行（provenance 三来源之 human_receipt） */
+  | 'crop_provenance'
+  /** blind-visual-hardening d5：人工视觉验收（冻结 rubric 阈值/结构化 screens 绑定/仅清主观项） */
+  | 'human_visual_acceptance';
 
 const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'fidelity_downgrade',
@@ -48,6 +52,8 @@ const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'behavior_switch_waiver',
   'flow_contract',
   'runtime_fidelity_attestation',
+  'crop_provenance',
+  'human_visual_acceptance',
 ]);
 
 const ALLOWED_ALGS = new Set(['ed25519', 'hmac-sha256']);

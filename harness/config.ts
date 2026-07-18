@@ -325,6 +325,12 @@ export interface FrameworkPaths {
    */
   extension_dir?: string;
   /**
+   * 盲档 UI kit（Maison blocks）scaffold 目标目录（相对实例工程根）。
+   * blind-visual-hardening d3：目标目录四级解析的第 1 级（显式配置优先）；
+   * 未配置时走 profile 推荐 → architecture 推导 → halt 问人（勿硬编码宿主层级）。
+   */
+  ui_kit_target_dir?: string;
+  /**
    * 模块级 Code Graph 落盘路径模式（相对实例工程根）。
    * 占位符：`<module>` 替换为 module-catalog 模块相对路径（如 `02-Feature/WalletHome`）。
    * 默认 `<module>/code-graph.yaml`（与模块根目录 `index.ets` 同级）。

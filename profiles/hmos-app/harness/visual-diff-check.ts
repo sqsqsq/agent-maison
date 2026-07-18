@@ -22,6 +22,9 @@ import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collec
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
 import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
+import { checkRenderVisibilityCalibrate } from './render-visibility';
+import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
+import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
 import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
@@ -901,7 +904,57 @@ function finalizeVisualDiffHits(
 }
 
 /** device-testing 渲染回环报告校验 */
+/** 入口：core 判定 + blind-visual-hardening d2/d3 附加面（渲染可见性 calibrate + 三段闭环运行时段） */
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
+  const results = checkVisualDiffCore(ctx);
+  // P0-B④ calibrate：采集物（shot-*/layout-*）在即评，自守卫（无目录/无配对→零结果）；
+  // WARN 观察不阻断，findings 供视觉债务与 enforce 校准消费。
+  results.push(...safeCalibrate(ctx));
+  // P0-C③ 运行时段：声明语义容器的锚点须出现在 layout dump（dump 缺失自跳过）。
+  // 异常=BLOCKER（codex 三轮 P1-3：地板门禁不得因异常降 SKIP 绕过）。
+  try {
+    results.push(...checkUiKitRuntimeConformance(ctx));
+  } catch (e) {
+    results.push({
+      id: 'ui_kit_runtime_conformance', category: 'structure',
+      description: 'UI kit 三段闭环·运行时段执行异常（地板门禁不得因异常绕过）',
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
+      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
+      failure_kind: 'framework_bug',
+      blocking_class: 'ui_kit_conformance',
+    });
+  }
+  // P1-E：盲档确定性反馈（deterministic_feedback 机器派生，非 agent 开关；自守卫）。
+  try {
+    results.push(...checkVisualFeedback(ctx));
+  } catch (e) {
+    results.push({
+      id: 'visual_feedback', category: 'structure',
+      description: '确定性视觉反馈执行异常',
+      severity: 'MINOR', status: 'SKIP',
+      details: `执行异常：${(e as Error).message}`,
+    });
+  }
+  return results;
+}
+
+function safeCalibrate(ctx: CheckContext): CheckResult[] {
+  try {
+    return checkRenderVisibilityCalibrate(ctx);
+  } catch (e) {
+    return [{
+      id: 'render_visibility_calibrate',
+      category: 'structure',
+      description: '设备渲染可见性（calibrate）执行异常',
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: `calibrate 执行异常（观察节点不阻断）：${(e as Error).message}`,
+    }];
+  }
+}
+
+function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx);
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'visual-diff.md');
   // P0-9 顺手项：走 featureDir 尊重 paths.features_dir 配置

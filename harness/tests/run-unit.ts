@@ -192,6 +192,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'lite-json-schema', modulePath: './unit/lite-json-schema.unit.test' },
   { id: 'worktree-digest', modulePath: './unit/worktree-digest.unit.test' },
   { id: 'goal-capability-gate', modulePath: './unit/goal-capability-gate.unit.test' },
+  { id: 'negative-verdict-gate', modulePath: './unit/negative-verdict-gate.unit.test' },
+  { id: 'quality-axes', modulePath: './unit/quality-axes.unit.test' },
+  { id: 'blind-crop-prohibition', modulePath: './unit/blind-crop-prohibition.unit.test' },
+  { id: 'visual-debt', modulePath: './unit/visual-debt.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

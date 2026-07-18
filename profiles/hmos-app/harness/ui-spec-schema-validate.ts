@@ -7,6 +7,21 @@
 // ============================================================================
 
 import type { UiSpecDoc } from '../../../harness/scripts/utils/ui-spec-shared';
+import { ASSET_KEY_RE } from './asset-integrity';
+
+/** blind-visual-hardening d3（codex 五轮 P1-5 契约统一）：语义容器节点入 canonical 枚举——
+ * docs/映射器教 `type: nav_bar` 直写，validator 必须同源认可（单测过、真实 spec 阶段挂=假绿）。 */
+export const SEMANTIC_BLOCK_TYPE_ENUM = [
+  'nav_bar',
+  'list_card_container',
+  'list_row',
+  'sheet_scaffold',
+  'primary_button',
+  'selector_group',
+  'result_state',
+  'sms_code_field',
+  'detail_section',
+] as const;
 
 export const COMPONENT_TYPE_ENUM = [
   'input',
@@ -16,13 +31,15 @@ export const COMPONENT_TYPE_ENUM = [
   'content_display',
   'list_selection',
   'logic_condition',
+  ...SEMANTIC_BLOCK_TYPE_ENUM,
 ] as const;
 
 export const TOKEN_KIND_ENUM = ['color', 'spacing', 'font_size', 'radius', 'divider'] as const;
 export const VERIFIED_ENUM = ['verified', 'unverified', 'human_confirmed'] as const;
 export const VERIFIED_METHOD_ENUM = ['vl_multimodal', 'human_gate', 'none'] as const;
 export const PRIORITY_ENUM = ['P0', 'P1', 'P2', 'P3'] as const;
-export const ACQUISITION_ENUM = ['crop', 'svg_grab', 'repo_ref'] as const;
+/** 'placeholder' = 盲档可见语义占位声明（blind-visual-hardening：占位由 CLI 按 role 生成） */
+export const ACQUISITION_ENUM = ['crop', 'svg_grab', 'repo_ref', 'placeholder'] as const;
 /** G3：按钮变体 / 对齐枚举 */
 export const BUTTON_VARIANT_ENUM = ['filled', 'tonal', 'outlined', 'ghost', 'text'] as const;
 export const ALIGN_ENUM = ['start', 'center', 'end', 'space_between', 'stretch'] as const;
@@ -35,6 +52,8 @@ const ASSET_ALLOWED_KEYS = new Set([
   'baked_text_defer', 'baked_text_defer_by',
   // P0-C（f2d8c4a6）：产物验真真人署名（与 crop_confirmed_by 授权语义正交）
   'bbox_verified_by',
+  // blind-visual-hardening：crop 产物来源记录 / role 声明（机器派生为准，声明供交叉对账）/ 占位形态
+  'crop_provenance', 'role', 'placeholder_kind',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets', 'global_elements']);
 
@@ -70,6 +89,10 @@ function validateComponentNode(
   }
   if (n.subtitle_position !== undefined && n.subtitle_position !== 'trailing' && n.subtitle_position !== 'below') {
     errors.push(`${pathLabel}.subtitle_position 非法：${JSON.stringify(n.subtitle_position)}（须 trailing/below）`);
+  }
+  // blind-visual-hardening：block 显式声明（与语义 type 直写二选一皆合法）
+  if (n.block !== undefined && !(SEMANTIC_BLOCK_TYPE_ENUM as readonly string[]).includes(n.block as string)) {
+    errors.push(`${pathLabel}.block 非法：${JSON.stringify(n.block)}（须 ${SEMANTIC_BLOCK_TYPE_ENUM.join('/')}）`);
   }
   if (typeof n.id === 'string' && n.id.trim()) {
     if (seenNodeIds.has(n.id)) {
@@ -249,6 +272,10 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       }
       if (typeof as.key !== 'string' || !as.key.trim()) {
         errors.push(`assets[${i}].key 必填字符串`);
+      } else if (!ASSET_KEY_RE.test(as.key)) {
+        // 六轮统一口径：与占位 CLI/asset-integrity 同一 ASSET_KEY_RE——非法 key（路径穿越/
+        // 特殊字符）在 spec 校验期即拒，而非等到 CLI 探测期
+        errors.push(`assets[${i}].key 非法资源名 "${as.key}"（须匹配 ${ASSET_KEY_RE}——ArkUI $r 资源命名）`);
       }
       if (typeof as.acquisition !== 'string' || !(ACQUISITION_ENUM as readonly string[]).includes(as.acquisition)) {
         errors.push(`assets[${i}].acquisition 非法：${JSON.stringify(as.acquisition)}（须 ${ACQUISITION_ENUM.join('/')}）`);

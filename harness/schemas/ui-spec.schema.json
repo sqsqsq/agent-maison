@@ -82,8 +82,33 @@
             "navigation_frame",
             "content_display",
             "list_selection",
-            "logic_condition"
-          ]
+            "logic_condition",
+            "nav_bar",
+            "list_card_container",
+            "list_row",
+            "sheet_scaffold",
+            "primary_button",
+            "selector_group",
+            "result_state",
+            "sms_code_field",
+            "detail_section"
+          ],
+          "description": "后 9 项为 blind-visual-hardening 语义容器（映射 Maison UI kit blocks，进入三段闭环）"
+        },
+        "block": {
+          "type": "string",
+          "enum": [
+            "nav_bar",
+            "list_card_container",
+            "list_row",
+            "sheet_scaffold",
+            "primary_button",
+            "selector_group",
+            "result_state",
+            "sms_code_field",
+            "detail_section"
+          ],
+          "description": "blind-visual-hardening：语义容器显式声明（与语义 type 直写二选一）"
         },
         "layout": { "type": "string" },
         "order": { "type": "integer", "minimum": 0 },
@@ -187,8 +212,8 @@
       "type": "object",
       "required": ["key", "acquisition"],
       "properties": {
-        "key": { "type": "string" },
-        "acquisition": { "type": "string", "enum": ["crop", "svg_grab", "repo_ref"] },
+        "key": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "ArkUI $r 资源命名——与 asset-integrity ASSET_KEY_RE 同一口径（非法名在 spec 期即拒）" },
+        "acquisition": { "type": "string", "enum": ["crop", "svg_grab", "repo_ref", "placeholder"], "description": "placeholder=盲档可见语义占位声明（blind-visual-hardening：占位由 CLI 按 role 生成，marker 入视觉债务）" },
         "source_ref": { "type": "string" },
         "source_bbox": { "$ref": "#/definitions/bbox" },
         "resolved_path": { "type": "string" },
@@ -198,7 +223,19 @@
         "crop_confirmed_by": { "type": "string", "description": "G4b：crop 裁剪**授权**来源；headless 下须为非自动化身份或 user_requirement（堵自报）。授权≠验真：产物验真见 asset_crop_validation 与 bbox_verified_by" },
         "baked_text_defer": { "type": "boolean", "description": "round5 P0-A：显式放行素材图内含声明文本（营销/装饰插画确需含字）" },
         "baked_text_defer_by": { "type": "string", "description": "round5 P0-A：baked_text_defer 真人署名（非自动化身份）；缺则 defer 无效" },
-        "bbox_verified_by": { "type": "string", "description": "P0-C：crop 产物验真的真人确认署名（对照 contact-sheet）；与授权正交，是 VL 辨认不可用/失配时的唯一逃生阀（自动化身份不算）" }
+        "bbox_verified_by": { "type": "string", "description": "P0-C：crop 产物验真的真人确认署名（对照 contact-sheet）；与授权正交，是 VL 辨认不可用/失配时的唯一逃生阀（自动化身份不算）" },
+        "crop_provenance": {
+          "type": "object",
+          "description": "blind-visual-hardening d2：crop 产物来源记录（external_tool 放行通道——source_sha256 须命中 feature 参考图集真实哈希）",
+          "properties": {
+            "kind": { "type": "string" },
+            "tool": { "type": "string" },
+            "source_sha256": { "type": "string" },
+            "bbox": { "$ref": "#/definitions/bbox" }
+          }
+        },
+        "role": { "type": "string", "description": "blind-visual-hardening：role 声明（机器派生为准，声明仅供交叉对账，失配不作数）" },
+        "placeholder_kind": { "type": "string", "description": "blind-visual-hardening：占位形态（text_avatar/illustration_frame/neutral_block/system_symbol）" }
       }
     }
   }

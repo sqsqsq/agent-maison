@@ -612,6 +612,12 @@ const ASSET_PLACEHOLDER_MIN_BYTES = 256;
 const ASSET_PLACEHOLDER_MIN_AREA_RATIO = 0.05;
 const MODULE_MEDIA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'svg'] as const;
 
+/** package_path 规范化（codex 六轮 P0：contracts 里 Windows 反斜杠 `app\feature` 与
+ * 归一化 restrict 集合精确匹配失败 → 已有真图被判缺失 → 占位覆盖真图）——比较双侧统一。 */
+export function canonicalPkgPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 /** 在指定模块（restrictPkgPaths，缺省=全部 in_scope 模块）的 resources/base/media 下定位 <key> 真实文件 */
 export function findModuleMediaFile(
   projectRoot: string,
@@ -620,8 +626,9 @@ export function findModuleMediaFile(
   restrictPkgPaths?: ReadonlySet<string>,
 ): string | null {
   const snake = key.replace(/\./g, '_');
+  const canonRestrict = restrictPkgPaths ? new Set([...restrictPkgPaths].map(canonicalPkgPath)) : null;
   for (const mod of contracts.modules ?? []) {
-    if (restrictPkgPaths && !restrictPkgPaths.has(mod.package_path)) continue;
+    if (canonRestrict && !canonRestrict.has(canonicalPkgPath(mod.package_path))) continue;
     const dir = path.join(projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media');
     for (const stem of new Set([key, snake])) {
       for (const ext of MODULE_MEDIA_EXTS) {

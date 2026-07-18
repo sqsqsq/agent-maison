@@ -14,6 +14,7 @@
 // 语义级检查由 AI Harness (verify-spec.md) 完成，不在本脚本范围内。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -45,24 +46,384 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact, loadFrameworkConfig, featureFilePath } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import {
   collectRequirementIntentText,
+  dereferenceRequirementDocs,
   detectFidelityIntent,
   isHumanSignedDeferral,
+  isHumanVerified,
   isPixel1to1,
   loadSpecMarkdown,
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
-import { parseVisualHandoffYamlRoot } from './utils/ui-spec-shared';
+import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, type UiSpecAsset } from './utils/ui-spec-shared';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './utils/confirmation-receipt';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
+
+// --------------------------------------------------------------------------
+// blind-visual-hardening d4：fidelity 意图三态覆盖扩面（逐阶段驱动路径前置闸）
+// --------------------------------------------------------------------------
+
+/**
+ * goal-fakepass t6 的三态检测只在 goal preflight 生效——bc-openCard 二轮宿主走
+ * CodeAgentCLI 逐阶段驱动，intent 检测从未运行，缺省 semantic_layout 全部 pixel 硬门禁
+ * 未激活。本 check 用**同源函数**（collectRequirementIntentText + detectFidelityIntent，
+ * 勿 fork）把三态闸覆盖到 phase-driven 路径：
+ *   强意图 + 盲 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义：不许静默降档继续跑），
+ *     唯一放行=有效 fidelity_downgrade receipt（绑定需求 SSOT 哈希）→ 降 WARN（不洗白，
+ *     债务/封顶语义由 quality_axes/completion 链承担）；
+ *   含混意图 + 盲 + 有参考图 → BLOCKER（await_human_fidelity_tier：交互式走 vision.blind_tier
+ *     告知确认——一次需求一次确认，成本属设计内，勿开旁路）；
+ *   none / 非盲 → PASS。
+ * 落盘 spec/reports/fidelity-intent.json：reference_intent{value,source}/desired/effective/
+ * downgrade_receipt（desired 永不被自动改写——ratchet 回升锚点）。
+ */
+/**
+ * 意图文本收集（含 phase-driven 回退）：collectRequirementIntentText 只读 goal-run
+ * manifest——逐阶段驱动路径（无 goal-runs）恒空串，正是覆盖缺口的实体。回退源：
+ * feature 根目录需求文档（*.md/*.txt，产物投影 visual-debt.md 除外）+ spec.md，
+ * 各自过 dereferenceRequirementDocs（同源解引用，勿 fork）。
+ */
+export function collectIntentTextWithPhaseFallback(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel: string,
+): string {
+  const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
+  if (goalText.trim()) return goalText;
+  const parts: string[] = [];
+  const featRoot = path.join(projectRoot, featuresDirRel, feature);
+  const EXCLUDE = new Set(['visual-debt.md']);
+  try {
+    if (fs.existsSync(featRoot)) {
+      for (const ent of fs.readdirSync(featRoot, { withFileTypes: true })) {
+        if (!ent.isFile() || EXCLUDE.has(ent.name) || !/\.(md|txt)$/i.test(ent.name)) continue;
+        try {
+          parts.push(fs.readFileSync(path.join(featRoot, ent.name), 'utf-8'));
+        } catch { /* 单文件失败跳过 */ }
+      }
+    }
+  } catch { /* ignore */ }
+  const specMd = loadSpecMarkdown(projectRoot, feature);
+  if (specMd) parts.push(specMd);
+  if (parts.length === 0) return '';
+  return parts
+    .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
+    .join('\n\n');
+}
+
+export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[] {
+  const id = 'fidelity_capability_pregate';
+  const description = 'fidelity 意图三态前置闸（强意图+盲→DEFERRED；含混+参考图→await_human；禁静默降档）';
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const reqText = collectIntentTextWithPhaseFallback(ctx.projectRoot, ctx.feature, featuresDirRel);
+  const intent = detectFidelityIntent(reqText);
+  const blind = ctx.adapterImageInput === 'none';
+
+  // 参考图存在性（含混意图的确认触发条件）：ux-reference 或 visual_handoff authoritative_refs
+  const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');
+  let hasRefs = false;
+  try {
+    hasRefs = fs.existsSync(uxDir) && fs.readdirSync(uxDir).some(f => /\.(jpe?g|png|webp|bmp)$/i.test(f));
+  } catch { /* ignore */ }
+  if (!hasRefs) {
+    const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
+    hasRefs = Boolean(specMd && /authoritative_refs:/.test(specMd));
+  }
+
+  // downgrade receipt：绑定需求 SSOT 规范化哈希（换需求即 stale）
+  const receiptPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'fidelity-downgrade.receipt.json'));
+  let downgradeAuthorized = false;
+  if (fs.existsSync(receiptPath)) {
+    const reqSha = crypto.createHash('sha256').update((reqText ?? '').trim(), 'utf-8').digest('hex');
+    const v = validateConfirmationReceiptFile(receiptPath, defaultTrustRegistryPath(ctx.projectRoot), {
+      action: 'fidelity_downgrade',
+      feature: ctx.feature,
+      object_hash: reqSha,
+    });
+    downgradeAuthorized = v.valid;
+  }
+
+  const referenceIntent =
+    intent === 'strong_pixel' ? 'exact' : intent === 'ambiguous' ? 'unknown' : hasRefs ? 'layout' : 'inspiration';
+  const desired = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
+  const effective =
+    !blind ? desired
+    : intent === 'strong_pixel' ? (downgradeAuthorized ? 'semantic_layout' : 'deferred')
+    : intent === 'ambiguous' && hasRefs ? (downgradeAuthorized ? 'semantic_layout' : 'deferred')
+    : 'semantic_layout';
+
+  // 落盘（harness-owned；desired 永不被改写）
+  try {
+    const outPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'reports', 'fidelity-intent.json'));
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, `${JSON.stringify({
+      schema_version: '1.0',
+      reference_intent: { value: referenceIntent, source: 'inferred' },
+      desired_fidelity: desired,
+      effective_fidelity: effective,
+      downgrade_receipt: downgradeAuthorized
+        ? relFeatureFile(ctx.projectRoot, ctx.feature, path.join('spec', 'fidelity-downgrade.receipt.json'))
+        : null,
+    }, null, 2)}\n`, 'utf-8');
+  } catch { /* 落盘失败不改变裁决 */ }
+
+  if (!blind || intent === 'none' || (intent === 'ambiguous' && !hasRefs)) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `intent=${intent}，blind=${blind}，refs=${hasRefs}——无需前置闸（effective=${effective}）。`,
+    }];
+  }
+  if (downgradeAuthorized) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MAJOR', status: 'WARN',
+      details:
+        `intent=${intent} + 盲档：已消费有效 fidelity_downgrade receipt（desired=${desired} 保留，` +
+        `effective=semantic_layout）——降级不洗白，视觉债务/completion 封顶语义照常生效。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details: [
+      intent === 'strong_pixel'
+        ? '【DEFERRED_CAPABILITY_MISSING】需求为强 pixel 意图而当前模型无视觉能力——不得静默以 semantic_layout 继续跑'
+        : '【await_human_fidelity_tier】需求含"与截图一致"类含混意图且存在参考图——盲档下须人工定档',
+      `（bc-openCard 二轮：逐阶段路径漏检 intent，缺省 semantic_layout 全部 pixel 硬门禁未激活）。`,
+      `reference_intent=${referenceIntent}，desired=${desired}（已落盘，不被改写）。`,
+    ].join('\n'),
+    suggestion:
+      '出路三选一：①换有视觉能力的模型/配置 vision.image_input_override 后重跑；' +
+      '②真人经带外体系签发 fidelity_downgrade receipt（绑定需求 SSOT 哈希）落 ' +
+      'spec/fidelity-downgrade.receipt.json 后重跑（交互式对应 vision.blind_tier 确认动线）；' +
+      '③修改需求明确接受布局级还原。',
+    failure_kind: intent === 'strong_pixel' ? 'capability_missing_strong_intent' : 'await_human_fidelity_tier',
+    blocking_class: 'await_human_fidelity_tier',
+  }];
+}
+
+// --------------------------------------------------------------------------
+// blind-visual-hardening d5/P1-F：盲档素材问人清单（素材是输入不是推断）
+// --------------------------------------------------------------------------
+
+/**
+ * 盲档下 brand_logo/illustration 类素材无法可信裁剪时，生成 asset-request.md
+ * （逐项：用途/建议尺寸/放置路径/当前占位形态）。headless 不阻塞（按 role 占位物化 +
+ * 计入视觉债务，release 语义由 P0-A/P0-D 约束）；交互式据此走 registry 确认
+ * （提供素材/接受占位/逐项 defer——文案含 ≥4/5 首跑预期）。
+ * 用户补素材后重跑 spec harness 自动吸收：resolved_path 存在且过 role-aware sanity →
+ * 债务三态 source=VERIFIED，binding/render 由 coding/testing 检查驱动闭账（防假清偿）。
+ */
+export function maybeWriteAssetRequest(ctx: CheckContext): void {
+  if (ctx.adapterImageInput !== 'none') return;
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const assets = (uiDoc?.assets ?? []) as UiSpecAsset[];
+  if (assets.length === 0) return;
+  const items = assets.filter(a => {
+    if (!a?.key) return false;
+    const roleGuess = /(logo|brand)/i.test(a.key) ? 'brand_logo' : /(ill|guide|promo|banner|face)/i.test(a.key) ? 'illustration' : null;
+    if (!roleGuess) return false;
+    // 已有可用产物（resolved_path 存在）视为已供给，不再催
+    const resolved = a.resolved_path && fs.existsSync(path.join(ctx.projectRoot, a.resolved_path));
+    return !resolved;
+  });
+  if (items.length === 0) return;
+  const outPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'asset-request.md'));
+  const lines = [
+    `# 素材需求清单 — ${ctx.feature}`,
+    '',
+    '> 盲档（模型无视觉能力）下品牌/插画类素材无法可信获取——素材是**输入**不是推断。',
+    '> 三个出路：①按下表放置路径提供素材后重跑 spec harness（自动吸收：过 role sanity 即',
+    '> source=VERIFIED，源码绑定/设备渲染两态由 coding/testing 检查闭账——文件放了但 UI 仍引用',
+    '> 旧占位不会假清偿）；②接受可见语义占位交付（brand-critical 占位时 release 保持 BLOCKED，',
+    '> 债务走人工验收 receipt 显式接受——盲宿主首轮预期走此路，rubric 冻结 ≥4/5）；③逐项 defer。',
+    '',
+    '| 素材 key | 用途推断 | 建议尺寸 | 放置路径 | 当前占位形态 |',
+    '|----------|----------|----------|----------|--------------|',
+    ...items.map(a => {
+      const role = /(logo|brand)/i.test(a.key) ? 'brand_logo' : 'illustration';
+      const size = role === 'brand_logo' ? '96×96（正方形，透明底 png/svg）' : '≥320×200（png/svg）';
+      const drop = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${a.key}.png`;
+      const ph = role === 'brand_logo' ? 'text_avatar（首字色块）' : 'illustration_frame（中性占位框）';
+      return `| ${a.key} | ${role} | ${size} | ${drop} | ${ph} |`;
+    }),
+    '',
+  ];
+  try {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, lines.join('\n'), 'utf-8');
+  } catch { /* best-effort 清单，失败不阻断 */ }
+}
+
+// --------------------------------------------------------------------------
+// blind-visual-hardening d2：盲档 crop 左移禁令
+// --------------------------------------------------------------------------
+
+/**
+ * 禁的是盲模型**执行或自证** crop，不禁消费已可信完成的 crop 产物（codex 三轮③收窄）。
+ * effective_image_input=none ∧ acquisition=crop 时，须同时满足：
+ *   c1 resolved_path 存在；
+ *   c2 provenance 可验证（三来源之一，design §1.6）：
+ *      verified_artifact = asset-crop-validation.json 该 key verdict=verified；
+ *      human_receipt    = spec/crop-provenance/<key>.receipt.json 有效 confirmation receipt；
+ *      external_tool    = asset.crop_provenance {kind:external_tool, tool, source_sha256} 结构记录
+ *                         （诚实边界：记录存在性确定性校验，工具真实性不做密码学验证）；
+ *   c3 human_crop_confirmed=true 且 crop_confirmed_by 为可信真人身份
+ *      （isHumanVerified：非空/非自动化/非 user_requirement 哨兵——授权哨兵≠条目级验真，P0-6）。
+ * 任一 crop 资产不满足 → BLOCKER FAIL；正确出路=placeholder:true+asset-manifest 或 asset-request 问人。
+ * 事故锚：bc-openCard 二轮 22 项 crop 全部 human_crop_confirmed:false 且零验真，物化空白占位。
+ */
+/** feature 参考图集哈希（external_tool provenance 的成员集）：feature 目录下图片文件递归
+ * （含 ux-reference/需求截图子目录），上限 64 文件 / 单文件 ≤32MB——防自填 sha 绕过。 */
+export function collectFeatureReferenceImageHashes(projectRoot: string, feature: string): Set<string> {
+  const out = new Set<string>();
+  const featRoot = featureFilePath(projectRoot, feature, '.');
+  const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
+  const MAX_FILES = 64;
+  const MAX_BYTES = 32 * 1024 * 1024;
+  const walk = (dir: string): void => {
+    if (out.size >= MAX_FILES || !fs.existsSync(dir)) return;
+    let ents: fs.Dirent[];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of ents) {
+      if (out.size >= MAX_FILES) return;
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === 'reports' || ent.name === 'goal-runs') continue; // 产物目录不算参考源
+        walk(abs);
+      } else if (ent.isFile() && IMAGE_RE.test(ent.name)) {
+        try {
+          if (fs.statSync(abs).size > MAX_BYTES) continue;
+          out.add(crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex').toLowerCase());
+        } catch { /* 单文件失败跳过 */ }
+      }
+    }
+  };
+  walk(path.resolve(featRoot));
+  return out;
+}
+
+export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
+  const id = 'blind_crop_prohibition';
+  const description = '盲档 crop 左移禁令（禁执行/自证裁剪；可信外部产物按 c1-c3 放行为消费态）';
+  if (ctx.adapterImageInput !== 'none') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `effective_image_input=${ctx.adapterImageInput ?? '未探测'}（非盲档），本门禁不适用。`,
+    }];
+  }
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const assets = (uiDoc?.assets ?? []) as UiSpecAsset[];
+  const cropAssets = assets.filter(a => a && a.acquisition === 'crop');
+  if (cropAssets.length === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: 'ui-spec 无 acquisition:crop 资产（placeholder/repo_assets 路径不受本门禁约束）。',
+    }];
+  }
+
+  // verified_artifact 来源：spec/reports/asset-crop-validation.json（profile 产物，此处只读 JSON）
+  let verifiedKeys = new Set<string>();
+  try {
+    const vPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'reports', 'asset-crop-validation.json'));
+    if (fs.existsSync(vPath)) {
+      const parsed = JSON.parse(fs.readFileSync(vPath, 'utf-8')) as {
+        entries?: Record<string, { verdict?: string }>;
+      };
+      verifiedKeys = new Set(
+        Object.entries(parsed.entries ?? {})
+          .filter(([, v]) => v?.verdict === 'verified')
+          .map(([k]) => k),
+      );
+    }
+  } catch { /* 解析失败按无验真处理（fail-closed） */ }
+
+  const violations: string[] = [];
+  const admitted: string[] = [];
+  for (const a of cropAssets) {
+    const missing: string[] = [];
+    const resolvedAbs = a.resolved_path ? path.join(ctx.projectRoot, a.resolved_path) : null;
+    if (!resolvedAbs || !fs.existsSync(resolvedAbs)) missing.push('c1 resolved_path 不存在');
+
+    let provenanceOk = verifiedKeys.has(a.key);
+    if (!provenanceOk && resolvedAbs && fs.existsSync(resolvedAbs)) {
+      const rPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'crop-provenance', `${a.key}.receipt.json`));
+      if (fs.existsSync(rPath)) {
+        // receipt 绑定 crop 产物字节哈希——换图即 stale（对齐 receipt 消费契约 object_hash 语义）
+        const artifactSha = crypto.createHash('sha256').update(fs.readFileSync(resolvedAbs)).digest('hex');
+        const v = validateConfirmationReceiptFile(rPath, defaultTrustRegistryPath(ctx.projectRoot), {
+          action: 'crop_provenance',
+          feature: ctx.feature,
+          object_hash: artifactSha,
+        });
+        provenanceOk = v.valid;
+      }
+    }
+    if (!provenanceOk) {
+      // cursor 实施 review P2 收紧：external_tool 记录不再"自填即过"——source_sha256 必须命中
+      // feature 参考图集的真实文件哈希（工具确实从某张权威原图裁出），否则不构成 provenance。
+      const p = a.crop_provenance;
+      const shapeOk = Boolean(
+        p && p.kind === 'external_tool' &&
+        typeof p.tool === 'string' && p.tool.trim().length > 0 &&
+        typeof p.source_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(p.source_sha256.trim()),
+      );
+      if (shapeOk) {
+        provenanceOk = collectFeatureReferenceImageHashes(ctx.projectRoot, ctx.feature).has(
+          p!.source_sha256!.trim().toLowerCase(),
+        );
+      }
+    }
+    if (!provenanceOk) missing.push('c2 provenance 不可验证（verified_artifact/human_receipt/external_tool 三来源均缺）');
+
+    if (a.human_crop_confirmed !== true || !isHumanVerified(a.crop_confirmed_by)) {
+      missing.push('c3 human_crop_confirmed 缺可信真人身份（自动化/user_requirement 哨兵不算条目级验真）');
+    }
+
+    if (missing.length > 0) violations.push(`  - ${a.key}：${missing.join('；')}`);
+    else admitted.push(a.key);
+  }
+
+  if (violations.length === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `盲档下 ${admitted.length} 项 crop 资产全部满足可信消费态（c1-c3）：${admitted.slice(0, 10).join(', ')}${admitted.length > 10 ? '…' : ''}`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details: [
+      `【盲档 crop 禁令】effective_image_input=none：盲模型不能执行/自证裁剪，${violations.length}/${cropAssets.length} 项 crop 资产不满足可信消费态`,
+      '（bc-openCard 二轮：22 项 crop 全未验真 → coding 物化空白占位 → 设备"假可见"）：',
+      ...violations.slice(0, 20),
+      violations.length > 20 ? `  …还有 ${violations.length - 20} 项` : null,
+    ].filter(Boolean).join('\n'),
+    suggestion:
+      '不满足条件的资产改走：①placeholder:true + asset-manifest（coding 期按 role 生成可见语义占位）；' +
+      '②asset-request 问人（用户提供素材/外部工具裁剪后按 crop_provenance 记录）；' +
+      '③已有可信产物则补齐 c1-c3（验真产物/人签 receipt/external_tool 记录 + 真人 crop_confirmed_by）。',
+    affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, path.join('spec', 'ui-spec.yaml'))],
+    failure_kind: 'blind_crop_prohibited',
+    blocking_class: 'asset_integrity',
+  }];
+}
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1001,6 +1362,14 @@ const checker: PhaseChecker = {
     if (!isSpecAssetAcquisitionSkipped(ctx.resolvedProfile)) {
       results.push(...safeRun(() => dispatchSpecAssetAcquisition(ctx), 'asset_acquisition'));
     }
+    // --- blind-visual-hardening d4：fidelity 意图三态前置闸（逐阶段路径扩面）---
+    results.push(...safeRun(() => checkFidelityCapabilityPregate(ctx), 'fidelity_capability_pregate'));
+
+    // --- blind-visual-hardening d2：盲档 crop 左移禁令（不依赖 profile capability 开关——
+    //     盲模型自证裁剪在任何 profile 下都非法）---
+    results.push(...safeRun(() => checkBlindCropProhibition(ctx), 'blind_crop_prohibition'));
+    // --- blind-visual-hardening P1-F：盲档素材问人清单（side artifact，best-effort）---
+    try { maybeWriteAssetRequest(ctx); } catch { /* 清单生成失败不阻断 */ }
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
     results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));
     results.push(...safeRun(() => checkAtLeastOneP0(ctx, prd), 'at_least_one_p0'));

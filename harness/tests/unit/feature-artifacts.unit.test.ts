@@ -306,7 +306,8 @@ const cases: Case[] = [
       const feature = 'bc-open';
       writeFile(
         path.join(root, 'doc', 'features', feature, 'contracts.yaml'),
-        ['feature: bc-open', 'modules:', '  - null', '  - name: M1'].join('\n'),
+        // 七轮 P1-2 起 package_path 必填——本用例只验"非 map 条目剔除"，给 M1 合法路径
+        ['feature: bc-open', 'modules:', '  - null', '  - name: M1', '    package_path: mod1'].join('\n'),
       );
       writeFile(
         path.join(root, 'doc', 'features', feature, 'acceptance.yaml'),
@@ -338,6 +339,39 @@ const cases: Case[] = [
       const joined = (spec.shape_issues ?? []).join('|');
       assertEq((spec.shape_issues ?? []).length, 4, `四处非 map 条目全留痕: ${joined}`);
       assertEq(/modules\[0\]/.test(joined) && /use_cases\[0\]/.test(joined), true, `留痕带索引: ${joined}`);
+    }),
+  },
+  {
+    name: '七轮 P1-2: modules[].package_path 边界校验——越界/绝对/缺失剔除留痕；反斜杠 canonical 化写回',
+    run: () => withTmpProject(root => {
+      const feature = 'bc-open';
+      writeFile(
+        path.join(root, 'doc', 'features', feature, 'contracts.yaml'),
+        [
+          'feature: bc-open',
+          'modules:',
+          '  - name: OK',
+          '    package_path: app/feature',
+          "  - name: BackslashOK",
+          "    package_path: 'app\\sub'",
+          '  - name: Escape',
+          '    package_path: ../outside',
+          '  - name: Abs',
+          "    package_path: 'D:/evil'",
+          '  - name: NoPath',
+        ].join('\n'),
+      );
+      const loader = new SpecLoader(root);
+      const spec = loader.loadFeatureSpec(feature);
+      const mods = (spec.contracts?.modules ?? []) as Array<{ name?: string; package_path: string }>;
+      assertEq(mods.map(m => m.package_path), ['app/feature', 'app/sub'], '合法条目保留且 canonical 化（反斜杠→正斜杠）');
+      const joined = (spec.shape_issues ?? []).join('|');
+      assertEq(
+        /modules\[2\]\.package_path/.test(joined) && /modules\[3\]\.package_path/.test(joined) && /modules\[4\]\.package_path/.test(joined),
+        true,
+        `越界/绝对/缺失三类全留痕（feature_spec_shape 结构化 BLOCKER 消费）: ${joined}`,
+      );
+      assertEq(/越出宿主根|越界|不得包含|相对 project-root/.test(joined), true, `留痕可行动: ${joined}`);
     }),
   },
   {

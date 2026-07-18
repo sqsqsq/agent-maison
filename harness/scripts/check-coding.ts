@@ -26,6 +26,7 @@ import {
 } from './utils/types';
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { checkFactsArtifact } from './utils/context-facts';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
@@ -643,6 +644,14 @@ const checker: PhaseChecker = {
           frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
+      ),
+    );
+
+    // --- blind-visual-hardening d1 切片一：上游裁决传播 ---
+    results.push(
+      ...safeRun(
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding' }),
+        'upstream_verdict_gate',
       ),
     );
 

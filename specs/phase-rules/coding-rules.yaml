@@ -14,6 +14,12 @@ version: "1.0"
 applies_to: "**"
 
 structure_checks:
+  upstream_verdict_gate:
+    description: >
+      跨阶段负面裁决传播门禁（blind-visual-hardening d1）：coding 启动时消费上游
+      spec/plan summary.json 机器裁决——上游 verdict 非 PASS / blocker 未清 /
+      证据 stale|tampered → BLOCKER FAIL。
+
   resource_string_interpolation:
     description: >
       ArkTS 模板字符串内 `${$r(...)}` Resource 插值 lint（goal-fakepass-hardening t9）：

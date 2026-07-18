@@ -28,6 +28,7 @@ import {
 } from './closure-attestation';
 import { collectAutoDecisions, countPendingMustReview } from './headless-assumptions';
 import { collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
+import { validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import { defaultTrustRegistryPath, validateConfirmationReceiptFile } from './confirmation-receipt';
 import { evaluateFlowContract, isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
@@ -123,6 +124,45 @@ function summaryVerdict(projectRoot: string, feature: string, phase: string): st
   }
 }
 
+/** ①b 消费面：schema_version + quality_axes（1.1 多轴；读取失败按 legacy 处理） */
+function readSummaryLattice(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+): {
+  exists: boolean;
+  schemaVersion: string | null;
+  axes: Record<string, {
+    applicable?: boolean;
+    verdict?: string;
+    resolution?: { class?: string; owner?: string } | null;
+  }> | null;
+  releaseReadiness: string | null;
+  completionStatus: string | null;
+  raw: unknown;
+} {
+  const p = path.join(receiptDirPath(projectRoot, feature, phase), 'reports', 'summary.json');
+  if (!fs.existsSync(p)) return { exists: false, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null, raw: null };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as {
+      schema_version?: string;
+      quality_axes?: Record<string, { applicable?: boolean; verdict?: string; resolution?: { class?: string; owner?: string } | null }>;
+      release_readiness?: string;
+      completion_status?: string;
+    };
+    return {
+      exists: true,
+      schemaVersion: typeof parsed.schema_version === 'string' ? parsed.schema_version : null,
+      axes: parsed.quality_axes ?? null,
+      releaseReadiness: typeof parsed.release_readiness === 'string' ? parsed.release_readiness : null,
+      completionStatus: typeof parsed.completion_status === 'string' ? parsed.completion_status : null,
+      raw: parsed as unknown,
+    };
+  } catch {
+    return { exists: true, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null, raw: null };
+  }
+}
+
 function waiverFilesPresent(projectRoot: string, feature: string, phase: string): string[] {
   const found: string[] = [];
   const candidates = [
@@ -157,6 +197,74 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     const v = summaryVerdict(projectRoot, feature, phase);
     if (v !== 'PASS') {
       issues.push({ phase, condition: 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+    }
+  }
+
+  // ①b summary schema 1.1（blind-visual-hardening d1：legacy 1.0 不作 completion 干净依据——
+  //    历史假 PASS 不得重入新状态机；须当前 gate_fingerprint 下重跑该阶段）+
+  //    多轴负面裁决消费：visual/asset 等轴 UNVERIFIED(needs_human) → 封顶求人；
+  //    轴 FAIL 已由 ① 的 verdict 投影覆盖，此处不重复计。
+  for (const phase of chain) {
+    const s = readSummaryLattice(projectRoot, feature, phase);
+    if (!s.exists) continue; // 缺 summary 由 ① 报"缺失"
+    if (s.schemaVersion !== '1.1') {
+      issues.push({
+        phase,
+        condition: 'summary_schema_current',
+        detail: `summary schema_version=${s.schemaVersion ?? '缺失'}（legacy 1.0 不作 completion 干净依据，须在当前 gate_fingerprint 下重跑本阶段）`,
+        kind: 'needs_fix',
+      });
+      continue;
+    }
+    // codex 实施 review P0-3 + 三轮 P1-4：1.1 完整契约唯一权威校验（四字段+轴不变量）——
+    // 手搓裸/半 summary 不得干净放行。
+    const v11Errors = validateSummaryV11(s.raw);
+    if (v11Errors.length > 0) {
+      issues.push({
+        phase,
+        condition: 'quality_axes_valid',
+        detail: `summary 1.1 契约违反（${v11Errors.slice(0, 3).join('；')}）——非 harness 生成或已被篡改，须重跑本阶段`,
+        kind: 'needs_fix',
+      });
+      continue;
+    }
+    // codex 三轮 P0-2：消费面统一规则——任一 required_for_release 轴非 PASS 都不得干净完成：
+    //   needs_human → 等待人工（AWAITING_HUMAN_REVIEW 封顶）；
+    //   needs_fix / external_dependency / 无 resolution 的负面态 → 必须修复/解除后重跑（needs_fix）。
+    for (const [axisId, axis] of Object.entries(s.axes ?? {})) {
+      if (!axis || axis.applicable !== true) continue;
+      if ((axis as { required_for_release?: boolean }).required_for_release === false) continue;
+      if (axis.verdict === 'PASS' || axis.verdict === 'NOT_APPLICABLE') continue;
+      const cls = axis.resolution?.class;
+      issues.push({
+        phase,
+        condition: 'quality_axis_verified',
+        detail: `${axisId} 轴 ${axis.verdict}（resolution=${cls ?? '缺失'}${axis.resolution?.owner ? `/${axis.resolution.owner}` : ''}）`,
+        kind: cls === 'needs_human' ? 'needs_human' : 'needs_fix',
+      });
+    }
+    // 投影一致性独立校验（防 release_readiness/completion_status 被单独篡改成 READY/COMPLETE）：
+    // 存在非 PASS 必需轴时 release_readiness 必须 BLOCKED；DEBT_PIPELINE_ERROR 一律 needs_fix。
+    const anyRequiredNotPass = Object.values(s.axes ?? {}).some(
+      a => a && a.applicable === true &&
+        (a as { required_for_release?: boolean }).required_for_release !== false &&
+        a.verdict !== 'PASS' && a.verdict !== 'NOT_APPLICABLE',
+    );
+    if (anyRequiredNotPass && s.releaseReadiness === 'READY') {
+      issues.push({
+        phase,
+        condition: 'release_projection_consistent',
+        detail: `release_readiness=READY 与非 PASS 必需轴矛盾（投影被篡改/派生缺陷）`,
+        kind: 'needs_fix',
+      });
+    }
+    if (s.completionStatus === 'DEBT_PIPELINE_ERROR') {
+      issues.push({
+        phase,
+        condition: 'debt_pipeline_healthy',
+        detail: '视觉债务管线故障（DEBT_PIPELINE_ERROR）——治理链自身失败不得干净完成，修复环境后重跑',
+        kind: 'needs_fix',
+      });
     }
   }
 

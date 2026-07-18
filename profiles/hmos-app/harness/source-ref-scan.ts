@@ -66,8 +66,9 @@ export function scanResourceRefModules(
     const etsRoot = path.join(projectRoot, mod.package_path, 'src', 'main', 'ets');
     walkEts(etsRoot, (file) => {
       const text = fs.readFileSync(file, 'utf-8');
-      for (const m of text.matchAll(new RegExp(RESOURCE_REF_RE.source, 'g'))) {
-        const ref = m[1];
+      // codex 七轮 P1-1：生扫正则会把注释/普通字符串里的 $r() 当真实引用——B 模块仅注释
+      // 引用也被计入引用模块，其残留占位随之入债务误阻发布。统一走 active-code 收集器。
+      for (const ref of collectResourceRefsInActiveCode(text)) {
         let set = map.get(ref);
         if (!set) {
           set = new Set<string>();
@@ -99,8 +100,10 @@ function scanEtsFile(
 ): void {
   etsFiles.push(file);
   const text = fs.readFileSync(file, 'utf-8');
-  for (const m of text.matchAll(RESOURCE_REF_RE)) {
-    resourceRefs.add(m[1]);
+  // 七轮 P1-1 同族收口：presence 类消费者（asset-render 等）以本集合判"已引用/已渲染"，
+  // 注释里的 $r() 生扫命中=假 PASS 方向的洞——同走 active-code 收集器。
+  for (const ref of collectResourceRefsInActiveCode(text)) {
+    resourceRefs.add(ref);
   }
   for (const m of text.matchAll(STRUCT_NAME_RE)) {
     structNames.add(m[1]);

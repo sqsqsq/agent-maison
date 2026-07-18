@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "description": "盲档可实例化 ArkUI block 库（blind-visual-hardening d3）。每 block：必需子结构、ui-spec semantic node 映射、variants、token 来源、素材缺失行为、锚点契约（组件接受 anchorId 并 .id() 注入——运行时以锚点定位，不依赖组件名保留于 uitree）。",
+  "anchor_contract": "maison:<feature>:<screen_id>:<semantic_node_id>:<instance_key>（ui-kit-anchors.ts SSOT）",
+  "blocks": {
+    "MaisonNavBar": {
+      "file": "MaisonNavBar.ets",
+      "semantic_node": "nav_bar",
+      "required_children": ["back_button", "title"],
+      "variants": ["with_back", "title_only", "with_trailing"],
+      "tokens": ["sys.color.ohos_id_color_titlebar_text", "sys.float.ohos_id_text_size_headline8"],
+      "asset_missing_behavior": "返回钮用 SymbolGlyph(sys.symbol.chevron_left)，无位图依赖",
+      "source_anchor_signature": "MaisonNavBar("
+    },
+    "MaisonListCard": {
+      "file": "MaisonListCard.ets",
+      "semantic_node": "list_card_container",
+      "required_children": ["content_slot"],
+      "variants": ["default", "flush"],
+      "tokens": ["sys.color.ohos_id_color_card_bg", "sys.float.ohos_id_corner_radius_default_l"],
+      "asset_missing_behavior": "纯容器无素材",
+      "source_anchor_signature": "MaisonListCard("
+    },
+    "MaisonListRow": {
+      "file": "MaisonListRow.ets",
+      "semantic_node": "list_row",
+      "required_children": ["leading_icon_slot", "label", "trailing_chevron"],
+      "variants": ["with_icon", "text_only", "with_subtitle"],
+      "tokens": ["sys.color.ohos_id_color_text_primary", "sys.float.ohos_id_text_size_body1"],
+      "asset_missing_behavior": "leading 图标缺失 → text_avatar 占位（asset-integrity generateRolePlaceholder），禁空白",
+      "source_anchor_signature": "MaisonListRow("
+    },
+    "MaisonBottomSheetScaffold": {
+      "file": "MaisonBottomSheetScaffold.ets",
+      "semantic_node": "sheet_scaffold",
+      "required_children": ["sheet_header", "close_button", "content_slot", "primary_action_slot"],
+      "variants": ["default"],
+      "tokens": ["sys.color.ohos_id_color_dialog_bg", "sys.float.ohos_id_corner_radius_dialog"],
+      "asset_missing_behavior": "关闭钮用 SymbolGlyph(sys.symbol.xmark)，无位图依赖",
+      "source_anchor_signature": "MaisonBottomSheetScaffold("
+    },
+    "MaisonPrimaryButton": {
+      "file": "MaisonPrimaryButton.ets",
+      "semantic_node": "primary_button",
+      "required_children": ["label"],
+      "variants": ["enabled", "disabled", "loading"],
+      "tokens": ["sys.color.ohos_id_color_emphasize", "sys.color.ohos_id_color_text_primary_contrary"],
+      "asset_missing_behavior": "纯组件无素材；enabled/disabled 状态色由 token 分支（禁写死禁用态淡蓝当常态——事故形态）",
+      "source_anchor_signature": "MaisonPrimaryButton("
+    },
+    "MaisonSelector": {
+      "file": "MaisonSelector.ets",
+      "semantic_node": "selector_group",
+      "required_children": ["option_rows", "check_indicator"],
+      "variants": ["radio_list", "check_list"],
+      "tokens": ["sys.color.ohos_id_color_activated", "sys.color.ohos_id_color_text_secondary"],
+      "asset_missing_behavior": "选中态指示用 SymbolGlyph(sys.symbol.checkmark_circle_fill)，无位图依赖",
+      "source_anchor_signature": "MaisonSelector("
+    },
+    "MaisonResultState": {
+      "file": "MaisonResultState.ets",
+      "semantic_node": "result_state",
+      "required_children": ["state_icon", "title", "hint_slot", "action_slot"],
+      "variants": ["success", "failure"],
+      "tokens": ["sys.color.ohos_id_color_connected", "sys.color.ohos_id_color_warning"],
+      "asset_missing_behavior": "成功/失败图标用 SymbolGlyph（checkmark_circle_fill / xmark_circle_fill），成功≠失败必须分 variant（事故：失败图标与成功相同）；插画 slot 缺素材 → illustration_frame 占位",
+      "source_anchor_signature": "MaisonResultState("
+    },
+    "MaisonSmsCodeField": {
+      "file": "MaisonSmsCodeField.ets",
+      "semantic_node": "sms_code_field",
+      "required_children": ["code_input", "countdown_button"],
+      "variants": ["default"],
+      "tokens": ["sys.color.ohos_id_color_text_hint", "sys.color.ohos_id_color_emphasize"],
+      "asset_missing_behavior": "纯组件无素材",
+      "source_anchor_signature": "MaisonSmsCodeField("
+    },
+    "MaisonDetailSection": {
+      "file": "MaisonDetailSection.ets",
+      "semantic_node": "detail_section",
+      "required_children": ["section_title", "content_slot"],
+      "variants": ["default", "with_action"],
+      "tokens": ["sys.color.ohos_id_color_text_primary", "sys.float.ohos_id_text_size_sub_title2"],
+      "asset_missing_behavior": "纯容器无素材",
+      "source_anchor_signature": "MaisonDetailSection("
+    }
+  }
+}

@@ -452,15 +452,33 @@ export interface SoftAdvisory {
   source?: string;
 }
 
-/** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐） */
+/** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐）
+ * schema 1.1（blind-visual-hardening d1）：新增 report_validity + quality_axes +
+ * release_readiness + completion_status——writer 恒写 1.1；1.0 仅兼容读取，
+ * 不作 1.1 completion 干净依据（verify-feature-completion 强制）。 */
 export interface HarnessRunSummary {
-  schema_version: '1.0';
+  schema_version: '1.0' | '1.1';
   phase: Phase;
   feature: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   blocker_count: number;
   fail_count: number;
   warn_count: number;
+  /** 报告工件可解析/可信（独立于产品裁决——design §1.2；1.1 起 writer 必写） */
+  report_validity?: 'PASS' | 'FAIL' | 'UNVERIFIED';
+  /** 产品多轴裁决（harness 派生非 agent 自报；shape 见 quality-axes.ts；1.1 起必写） */
+  quality_axes?: Record<string, {
+    applicable: boolean;
+    required_for_release: boolean;
+    verdict: string;
+    blocking_class: string | null;
+    source_checks: string[];
+    resolution: { class: string; owner: string; retry_phase: string | null } | null;
+  }>;
+  /** release 投影（quality_axes 唯一解析器产物；1.1 起必写） */
+  release_readiness?: 'READY' | 'BLOCKED';
+  /** completion 投影标签（仅标签，不构成状态机；1.1 起必写） */
+  completion_status?: string;
   /**
    * 门禁集指纹（回执 stale 治理）：`<frameworkVersion>:<phase-rules sha256 前12>`，
    * harness-runner 机器写入（agent 零参与、不可自报）；check-receipt 消费回执时重算比对，

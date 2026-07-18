@@ -27,6 +27,7 @@ import {
   resolveFeatureArtifact,
   type FeaturePathOptions,
 } from '../../config';
+import { validateProjectRelativePath } from './project-relative-path';
 
 export type FeatureArtifactVerdict =
   | 'ok'
@@ -176,6 +177,11 @@ export class SpecLoader {
         // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
         // TypeError（07-13 现场门禁连环崩的同类）。归空 + 留痕（不 throw）。
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'modules', contractsPath, shapeIssues);
+        // codex 七轮 P1-2：package_path 是全部源码/media 只读扫描的路径根（source-ref-scan/
+        // visual-parity-backstop 等直接 path.join）——`../outside` 会越出宿主根且外部文件可
+        // 影响门禁裁决。加载边界统一收口：必填字符串 + 宿主根内校验 + canonical 化后再交
+        // 消费者；非法条目剔除并经 shape_issues → feature_spec_shape 结构化 BLOCKER。
+        normalizeContractsModulePaths(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
         spec.contracts = contracts;
       }
@@ -438,6 +444,44 @@ function normalizeArrayField(
     );
     console.warn(`[spec-loader] ${filePath} 的 \`${label}\` 含 ${badIdx.length} 个非 map 条目，已剔除并留痕`);
     obj[field] = cleaned;
+  }
+}
+
+/**
+ * codex 七轮 P1-2：modules[].package_path 加载边界校验——必填字符串 + 拒绝绝对路径/盘符/
+ * `..` 段（validateProjectRelativePath）+ canonical 化（反斜杠→正斜杠、去尾斜杠）后写回，
+ * 所有消费者拿到统一安全形态。非法条目剔除 + shape_issues 留痕（feature_spec_shape 结构化
+ * BLOCKER），不 throw（loader 在 safeRun 外，炸=无 summary）、不放行越界读取。
+ */
+function normalizeContractsModulePaths(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  projectRoot: string,
+  shapeIssues: string[],
+): void {
+  const mods = contracts.modules;
+  if (!Array.isArray(mods) || mods.length === 0) return;
+  const kept: typeof mods = [];
+  for (let i = 0; i < mods.length; i++) {
+    const m = mods[i] as unknown as Record<string, unknown>;
+    const pp = m.package_path;
+    if (typeof pp !== 'string' || !pp.trim()) {
+      shapeIssues.push(
+        `${path.basename(contractsPath)} 的 \`modules[${i}].package_path\` 必填字符串（实际 ${JSON.stringify(pp)}）——条目已剔除；最小合法样例：\`package_path: app/feature\``,
+      );
+      continue;
+    }
+    try {
+      m.package_path = validateProjectRelativePath(projectRoot, pp.trim(), `modules[${i}].package_path`);
+      kept.push(mods[i]);
+    } catch (e) {
+      shapeIssues.push(
+        `${path.basename(contractsPath)} 的 \`modules[${i}].package_path\`（${JSON.stringify(pp)}）越界/非法：${(e as Error).message}——条目已剔除；源码/media 扫描不得越出宿主根`,
+      );
+    }
+  }
+  if (kept.length !== mods.length) {
+    contracts.modules = kept;
   }
 }
 

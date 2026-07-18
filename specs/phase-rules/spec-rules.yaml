@@ -18,6 +18,22 @@ applies_to: "doc/features/{module}/spec/spec.md"
 # --------------------------------------------------------------------------
 structure_checks:
 
+  fidelity_capability_pregate:
+    description: >
+      fidelity 意图三态前置闸（blind-visual-hardening d4）：goal-fakepass t6 三态检测扩面到
+      逐阶段驱动路径——强 pixel 意图+盲模型 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义，
+      禁静默降档）；含混意图+盲+有参考图 → BLOCKER（await_human_fidelity_tier）；
+      唯一放行=有效 fidelity_downgrade receipt（绑需求 SSOT 哈希，降 WARN 不洗白）。
+      reference_intent/desired/effective 落盘 spec/reports/fidelity-intent.json，desired 永不被改写。
+
+  blind_crop_prohibition:
+    description: >
+      盲档 crop 左移禁令（blind-visual-hardening d2）：effective_image_input=none 时
+      acquisition:crop 资产须满足可信消费态（resolved_path 存在 + provenance 三来源之一
+      可验证 + human_crop_confirmed 可信真人身份），否则 BLOCKER——盲模型不能执行或
+      自证裁剪；正确出路=placeholder+asset-manifest 或 asset-request 问人。
+      裸 user_requirement 哨兵不作条目级验真（P0-6 语义）。
+
   acceptance_flow_structure:
     description: >
       P0 交互 AC 结构化流程模型（goal-fakepass-hardening t4a）：flows 有序屏链 +

@@ -194,8 +194,9 @@ assets:
 | `crop` | 按 `source_bbox` 从原图裁出（宽松框 + auto trim；关键资产须 `human_crop_confirmed`；**G4b headless** 下还须 `crop_confirmed_by` 为真人非自动化身份或 `user_requirement`——表示用户在需求中自然语言授权“可从原图/截图裁剪资源”，堵 agent 自报，对齐 deferral `signed_by`） |
 | `svg_grab` | 抓取品牌矢量 |
 | `repo_ref` | 复用仓内已有资源 |
+| `placeholder` | **盲档可见语义占位声明**（blind-visual-hardening）：不产出真素材，由 coding 期 `ui-kit:placeholders` CLI 按 role 生成可见语义占位（brand_logo→文字头像 / illustration→中性插画框，内嵌 provenance marker）；`asset_placeholder_present` 逐素材入视觉债务，brand-critical 占位 release 保持 BLOCKED，直到真素材落位或人工验收清偿。CLI **只**为此声明生成——真素材缺失绝不代生成 |
 
-缺资产时 **必须** `placeholder: true` + `rationale`，禁止静默替换。
+缺资产时 **必须** `acquisition: placeholder`（或旧式 `placeholder: true`）+ `rationale`，禁止静默替换。
 
 ## DSL↔原图校验 gate
 
@@ -222,11 +223,29 @@ ui-spec 生成后、进 plan 前：
 
 **能力来源**：goal 模式由 goal-runner 在 phase prompt 注入 `Visual capability advisory` 块；**交互式**（IDE，无 goal-runner 注入）由 [interactive-vision-canary](../../../reference/interactive-vision-canary.md) 自测卷判卷写入 `framework.local.json` 的 `vision.canary`，harness 据此钳制 `fidelity_target`。本 Step **必须**按探测/判卷出的能力工作，不得假装拥有未探测到的能力：
 
-**交互式盲档告知与确认（I1 plan b7e42d19）**：交互式会话判卷为 `none`（无视觉）或 `ocr_capable`（仅 OCR）时，**一次性**告知用户——用一段话说明：①当前模型视觉判定结果；②本 feature 将生效的 effective fidelity 档位（`semantic_layout` / `reference_only`）；③OCR 辅助是否可用——再走 registry **`vision.blind_tier`** 确认一次（`1=接受降级继续`（默认）/ `2=拒绝`→指引设 `vision.image_input_override` 或换有视觉能力的模型后重测）。留痕沿 `user-confirmation-ux` 惯例。headless/goal 模式按 [user-confirmation-ux §9](../../../reference/user-confirmation-ux.md) 保守默认（不问人），本告知仅交互式生效。
+**交互式盲档告知与确认（I1 plan b7e42d19；v3.0 文案对齐 blind-visual-hardening）**：交互式会话判卷为 `none`（无视觉）或 `ocr_capable`（仅 OCR）时，**一次性**告知用户——用一段话说明：①当前模型视觉判定结果；②本 feature 将生效的 effective fidelity 档位（`semantic_layout` / `reference_only` / 强意图下 `deferred`）；③OCR 辅助是否可用；④**成本与预期（必须如实说）**：带参考截图的需求每条都会走一次定档确认（设计内成本，无静默旁路）；人工视觉验收 rubric 冻结为每维 ≥4/5——盲宿主**首轮大概率走「显式接受残余债务」而非一次清完**，视觉债务清单（visual-debt.md）会随交付透出，这是诚实交付不是失败——再走 registry **`vision.blind_tier`** 确认一次（`1=接受降级继续`（默认）/ `2=拒绝`→指引设 `vision.image_input_override` 或换有视觉能力的模型后重测）。留痕沿 `user-confirmation-ux` 惯例。headless/goal 模式按 [user-confirmation-ux §9](../../../reference/user-confirmation-ux.md) 保守默认（不问人），本告知仅交互式生效。
+
+**品牌色事实源纪律（blind-visual-hardening P0-D④）**：品牌色 token 的可信来源优先级=用户提供素材/主题 > 项目既有 Design Token > 官方品牌资源（须人工确认引入）> 标注临时的中性占位。模型「世界知识」猜出的品牌色（如"招商银行是红色"）**只可用于占位中性调色参考，永不写成品牌真值 token**——模型可能记错、品牌可能改版、且涉及品牌资产误用。
 
 - **文案与文本位置**：若 prompt 附带 OCR JSON 路径（`spec/reports/ocr/<screen>.ocr.json`，逐词文本 + 置信度 + 归一化 bbox），**以其为准，不许自造**——文案照抄，位置按其 bbox 归一化坐标换算。
-- **结构与布局**：由需求文字描述 + OCR 文本的相对位置聚类（同一 y 区间的词多半同行/同组）推断，不依赖看图判断颜色/像素级样式。
-- **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"。
+- **结构与布局（v3.0+ blind-visual-hardening：套 block 模板 + OCR 填内容）**：不再从零推断结构——
+  按 UI kit 语义节点建模：导航区→`nav_bar`、列表容器→`list_card_container`、列表行→`list_row`、
+  半模态→`sheet_scaffold`、主按钮→`primary_button`、单选组→`selector_group`、结果页→`result_state`、
+  验证码行→`sms_code_field`、详情分区→`detail_section`（在节点 `type` 或 `block` 字段声明）。
+  声明即进入三段闭环校验（声明→源码 block 锚点→运行时 uitree），coding 期用
+  `profiles/hmos-app/harness/ui-kit-scaffolder.ts` 落 blocks（目标目录四级解析，冲突不覆盖），
+  实例锚点用 `buildInstanceAnchor(feature, screen, node, instanceKey)` 生成传入 `anchorId`。
+  OCR 只负责"填内容"（文案/顺序/分组），平台质感由 blocks 的 sys token 缺省承担——
+  这是盲档地板从"线框"抬到"平台标准组件"的机制本体。颜色/像素级样式仍不依赖看图判断。
+- **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"；
+  盲档下**禁止声明 `acquisition: crop`**（`blind_crop_prohibition` BLOCKER——盲模型不能执行/自证裁剪；
+  用户/外部工具已裁好的可信产物按 c1-c3 条件放行），占位由 coding 期按 role 生成可见语义占位
+  （brand_logo→文字头像 / illustration→中性插画框 / system_symbol→SymbolGlyph，禁空白 PNG）。
+  品牌/插画类素材缺供给时 spec harness 生成 `spec/asset-request.md` 问人清单——交互式走 registry
+  **`vision.asset_request`** 确认（1=提供素材（放置后重跑自动吸收）/ 2=接受可见占位交付
+  （brand-critical 占位时 release 保持 BLOCKED，收口走人工验收 receipt）/ 3=逐项 defer）；
+  headless 不问人，按 role 占位物化并计入视觉债务。清偿走三态（source/binding/render 全 VERIFIED），
+  "文件放了但 UI 仍引用旧占位"不会假清偿。
 - **无法判定的项**：不要逐条反复猜测或长时间空转——登记进结构化待复核清单（见 phase harness 提示的 blind-review-pending 产物），交由收口阶段真人一次性终审。
 - **没有 OCR JSON 可用**（无参考图 / OCR 环境不可用）：仅凭需求文字描述工作，`fidelity_target` 会被能力钳制到 `reference_only` 地板——这是预期行为，不是错误。
 

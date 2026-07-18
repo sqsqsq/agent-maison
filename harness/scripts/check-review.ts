@@ -38,6 +38,7 @@ import {
   validateConfirmationReceiptFile,
 } from './utils/confirmation-receipt';
 import { checkFactsArtifact } from './utils/context-facts';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -875,9 +876,53 @@ const checker: PhaseChecker = {
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
     results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
 
+    // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
+    results.push(...safeRun(() => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(
+      ...safeRun(
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review' }),
+        'upstream_verdict_gate',
+      ),
+    );
+
     return results;
   },
 };
+
+/**
+ * blind-visual-hardening d1 切片一（bc-openCard 二轮洞①）：洞⑥只堵了「有条件通过」，
+ * 「不通过」分支曾"本门禁不适用→PASS"——review 终态「不通过+3 BLOCKER」时 summary
+ * verdict:PASS/closed 照常闭环推进 ut/testing。本 check 补上该分支：结论=不通过 →
+ * BLOCKER FAIL（产品负面裁决阻断 phase 闭环）。语义分层：报告一致性（结论 vs 统计）
+ * 归 conclusion_with_verdict（report_validity 语义）；本 check 是产品裁决传播。
+ * 本 check **不读** verifier 结果——verifier 的 PASS 只证"报告可信"，永不改写产品裁决
+ * （单测锁定：verifier PASS 在场时本 check 仍 FAIL）。
+ */
+export function checkNegativeVerdictClosure(report: string): CheckResult[] {
+  const id = 'negative_verdict_closure';
+  const description = '负面产品裁决闭环门禁（结论=不通过 → 阻断 phase 闭环，修复重跑后方可推进）';
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
+  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  if (verdict !== '不通过') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `结论=${verdict ?? '未声明'}，非负面裁决，本门禁不适用（缺声明行由 conclusion_with_verdict 拦）。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      '审查结论=「不通过」——产品负面裁决不得闭环推进（bc-openCard 二轮：不通过+3 BLOCKER 曾以 ' +
+      'summary verdict:PASS/closed 照常进 ut/testing 直至「达标可发布」）。报告本身合法≠产品通过。',
+    suggestion:
+      '修复问题清单中的问题后重跑 coding→review，结论更新为非「不通过」后方可闭环；' +
+      'verifier 的 PASS 只证明报告可信，不构成产品通过。',
+    failure_kind: 'negative_review_verdict',
+    blocking_class: 'product_verdict',
+  }];
+}
 
 /**
  * 洞⑥（bc-openCard）：review 结论「有条件通过 + 2 MAJOR」在 conclusion_with_verdict

@@ -48,10 +48,35 @@ function writeArtifact(root: string, name: string, content: string): void {
   fs.writeFileSync(p, content, 'utf-8');
 }
 
+/** 最小合法 lattice（过 validateQualityAxes：P0-3 裸 1.1 拒收后夹具须带轴） */
+function minimalAxes(): Record<string, unknown> {
+  const na = { applicable: false, required_for_release: false, verdict: 'NOT_APPLICABLE', blocking_class: null, source_checks: [], resolution: null };
+  return {
+    functional: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: [], resolution: null },
+    visual: na, asset: na, evidence: na,
+  };
+}
+
 function writeSummary(root: string, phase: string, verdict: string): void {
   const p = path.join(receiptDirPath(root, FEATURE, phase), 'reports', 'summary.json');
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify({ verdict }), 'utf-8');
+  // 切片二（blind-visual-hardening d1）：completion 干净依据须 schema 1.1 完整契约
+  // （validateSummaryV11 四字段+轴不变量——codex 三轮 P1-4 唯一权威）；
+  // legacy 1.0 拒绝行为由专门用例覆盖（writeLegacySummary）。
+  fs.writeFileSync(p, JSON.stringify({
+    schema_version: '1.1',
+    verdict,
+    report_validity: 'PASS',
+    quality_axes: minimalAxes(),
+    release_readiness: 'READY',
+    completion_status: 'COMPLETE',
+  }), 'utf-8');
+}
+
+function writeLegacySummary(root: string, phase: string, verdict: string): void {
+  const p = path.join(receiptDirPath(root, FEATURE, phase), 'reports', 'summary.json');
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify({ schema_version: '1.0', verdict }), 'utf-8');
 }
 
 function writeReceipt(root: string, phase: string): void {

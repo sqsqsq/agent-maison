@@ -550,6 +550,28 @@ entries:
         label: "拒绝 — 换有视觉能力的模型或设 vision.image_input_override 后重测，不在盲档下继续"
         portable: "2=拒绝"
 
+  - id: vision.asset_request
+    skill: "_cross_phase"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "盲档 spec 产出 asset-request.md 后（品牌/插画类素材无法可信获取时）"
+    portable_menu: "1=我来提供素材 2=接受可见占位交付 3=逐项 defer"
+    notes: >
+      blind-visual-hardening P1-F：素材是输入不是推断。选 2 时须如实告知：brand-critical
+      素材仍为占位时 release_readiness 保持 BLOCKED，收口走人工视觉验收 receipt 显式接受
+      残余债务（rubric 冻结每维 ≥4/5——盲宿主首轮预期走"显式接受"而非一次清完）。
+      headless 不问人：按 role 生成可见语义占位并计入视觉债务（§9 保守默认）。
+    options:
+      - value: provide
+        label: "提供素材 — 按 asset-request.md 放置路径供图后重跑 spec harness 自动吸收"
+        portable: "1=我来提供素材"
+      - value: accept_placeholder
+        label: "接受占位 — 以可见语义占位交付（brand-critical 占位时 release 保持 BLOCKED，债务留痕）"
+        portable: "2=接受可见占位交付"
+      - value: defer
+        label: "逐项 defer — 本轮不处理，债务条目保持 open"
+        portable: "3=逐项 defer"
+
   # --- code-review review ---
   - id: review.module_name
     skill: "code-review"

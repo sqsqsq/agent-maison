@@ -18,6 +18,20 @@ applies_to: "doc/features/{module}/review/review-report.md"
 # --------------------------------------------------------------------------
 structure_checks:
 
+  negative_verdict_closure:
+    description: >
+      负面产品裁决闭环门禁（blind-visual-hardening d1）：审查结论=不通过 → BLOCKER FAIL，
+      review 不得闭环推进（bc-openCard 二轮：不通过+3 BLOCKER 曾以 summary PASS/closed
+      照常进 ut/testing）。报告一致性（report_validity）归 conclusion_with_verdict，
+      本门禁是产品裁决传播；verifier PASS 只证报告可信，永不改写产品裁决。
+
+  upstream_verdict_gate:
+    description: >
+      跨阶段负面裁决传播门禁（blind-visual-hardening d1）：本阶段启动时消费上游阶段
+      summary.json 机器裁决（verdict+blockers+证据链新鲜度）——上游 verdict 非 PASS /
+      blocker 未清 / 证据 stale|tampered → BLOCKER FAIL。Markdown 报告只是上游 harness
+      的解析输入，下游不重新解释上游散文（防 TOCTOU）。
+
   conditional_pass_closure:
     description: >
       「有条件通过」闭环门禁（goal-fakepass-hardening 洞⑥）：结论=有条件通过 且 问题表

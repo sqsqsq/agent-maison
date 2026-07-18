@@ -41,6 +41,13 @@ export interface UiSpecIconRef {
 export interface UiSpecComponentNode {
   id?: string;
   type: string;
+  /**
+   * blind-visual-hardening d3：容器/结构语义节点 → UI kit block 映射声明
+   * （nav_bar/list_card_container/list_row/sheet_scaffold/primary_button/selector_group/
+   * result_state/sms_code_field/detail_section）。声明后进入三段闭环校验：
+   * 声明 → 源码命中 block 锚点 → 运行时 uitree 出现锚点（ui-kit-conformance）。
+   */
+  block?: string;
   layout?: string;
   order: number;
   text?: string;
@@ -117,6 +124,19 @@ export interface UiSpecAsset {
    * asset_crop_validation 的 VL 隔离辨认不可用/失配时，此署名是唯一逃生阀（自动化身份不算）。
    */
   bbox_verified_by?: string;
+  /**
+   * blind-visual-hardening d2（design §1.6）：crop 产物来源记录——盲档下 crop 禁令的
+   * external_tool 放行通道（外部裁剪工具产物：工具名 + 源图 hash + bbox 记录）。
+   * 诚实边界：记录结构存在性可确定性校验，工具真实性不做密码学验证（provenance 三来源的
+   * 另两路 verified_artifact / human_receipt 分别由 asset-crop-validation 与 confirmation
+   * receipt 承担强验证）。
+   */
+  crop_provenance?: {
+    kind?: string;
+    tool?: string;
+    source_sha256?: string;
+    bbox?: number[];
+  };
 }
 
 /**

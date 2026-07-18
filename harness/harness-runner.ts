@@ -18,6 +18,7 @@
 // 模型无关: 第 5/6 步只生成 prompt，不调用任何 AI API。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawnSync } from 'child_process';
@@ -41,6 +42,26 @@ import {
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
+import {
+  deriveSummaryVerdictLattice,
+  projectCompletionStatus,
+  projectReleaseReadiness,
+  validateSummaryV11,
+} from './scripts/utils/quality-axes';
+import {
+  annotateAssetTriState,
+  applyVisualAcceptance,
+  countBlockingDebt,
+  deriveVisualDebt,
+  loadVisualDebtEx,
+  validateRubricPolicy,
+  writeVisualDebt,
+  type VisualAcceptancePayload,
+} from './scripts/utils/visual-debt';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './scripts/utils/confirmation-receipt';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import {
   commitVisualRound,
@@ -775,6 +796,125 @@ function consumeVisualRoundPayload(
 }
 
 /**
+ * blind-visual-hardening d1 切片二：轴适用性判定（visual=UI 需求；asset=ui-spec 声明素材）。
+ * 懒 require ui-spec-shared——非 UI 项目不引入依赖面（沿 check-review 先例）；
+ * 任何读取失败按"不适用"保守处理（不适用轴的 FAIL 会被 deriveQualityAxes 重映射 functional，
+ * 不会丢失阻断）。
+ */
+function resolveAxisApplicability(
+  projectRoot: string,
+  feature: string,
+  phase: Phase,
+): { phase: Phase; visualApplicable: boolean; assetApplicable: boolean } {
+  let visualApplicable = false;
+  let assetApplicable = false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const shared = require('./scripts/utils/ui-spec-shared') as typeof import('./scripts/utils/ui-spec-shared');
+    const specPath = featureFilePath(projectRoot, feature, path.join('spec', 'spec.md'));
+    if (fs.existsSync(specPath)) {
+      const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
+      visualApplicable = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
+    }
+    if (visualApplicable) {
+      const uiDoc = shared.loadUiSpecFile(shared.uiSpecAbsPath(projectRoot, feature));
+      const assets = (uiDoc as { assets?: unknown[] } | null)?.assets;
+      assetApplicable = Array.isArray(assets) && assets.length > 0;
+    }
+  } catch {
+    /* 保守：读取失败按不适用处理 */
+  }
+  return { phase, visualApplicable, assetApplicable };
+}
+
+/**
+ * blind-visual-hardening d5：视觉债务管线（派生→验收消费→落盘→轴调整）。
+ * 全程 try/catch best-effort（债务管线异常不阻断 summary 落盘——但打印告警不静默）。
+ */
+function applyVisualDebtPipeline(
+  projectRoot: string,
+  report: ScriptReport,
+  lattice: ReturnType<typeof deriveSummaryVerdictLattice>,
+): void {
+  try {
+    const prevLoad = loadVisualDebtEx(projectRoot, report.feature);
+    if (prevLoad.state === 'invalid') {
+      // codex 三轮 P0-1：损坏账本≠不存在——fail-closed 且**不覆盖**原文件（保留取证现场）
+      throw new Error(`visual-debt.json 损坏（${prevLoad.reason}）——单调 ledger 不可信，禁止按"无历史"重建`);
+    }
+    const prev = prevLoad.doc;
+    let debtDoc = annotateAssetTriState(deriveVisualDebt(report.feature, report.checks, prev), report.checks);
+    if (debtDoc.entries.length === 0 && !prev) return; // 无债务面（非 UI/全绿且无历史）不落空文件
+
+    // 人工验收消费：payload（visual-acceptance.json）+ 信任链 receipt（.receipt.json 绑 payload 字节哈希）
+    const accDir = path.join(featureDir(projectRoot, report.feature), 'device-testing');
+    const payloadPath = path.join(accDir, 'visual-acceptance.json');
+    const receiptPath = path.join(accDir, 'visual-acceptance.receipt.json');
+    if (fs.existsSync(payloadPath) && fs.existsSync(receiptPath)) {
+      try {
+        const payload = JSON.parse(fs.readFileSync(payloadPath, 'utf-8')) as VisualAcceptancePayload;
+        const objectHash = crypto.createHash('sha256').update(fs.readFileSync(payloadPath)).digest('hex');
+        const trust = validateConfirmationReceiptFile(receiptPath, defaultTrustRegistryPath(projectRoot), {
+          action: 'human_visual_acceptance',
+          feature: report.feature,
+          object_hash: objectHash,
+        });
+        const policyErrors = validateRubricPolicy(payload);
+        if (trust.valid && policyErrors.length === 0) {
+          const applied = applyVisualAcceptance(
+            debtDoc,
+            payload,
+            path.relative(projectRoot, receiptPath).replace(/\\/g, '/'),
+          );
+          debtDoc = applied.doc;
+          if (applied.rejected.length > 0) {
+            console.warn(`   ⚠ [visual-debt] 验收 receipt 试图清偿确定性 FAIL，已拒绝：\n${applied.rejected.map(r => `     - ${r}`).join('\n')}`);
+          }
+        } else {
+          console.warn(
+            `   ⚠ [visual-debt] 人工验收无效（不予清偿）：${[...trust.reasons ?? [], ...policyErrors].slice(0, 4).join('；')}`,
+          );
+        }
+      } catch (e) {
+        console.warn(`   ⚠ [visual-debt] 验收消费异常（不予清偿）：${(e as Error).message}`);
+      }
+    }
+    writeVisualDebt(projectRoot, debtDoc);
+
+    const { open } = countBlockingDebt(debtDoc);
+    const visual = lattice.quality_axes.visual;
+    if (open > 0 && visual.applicable && visual.verdict === 'PASS') {
+      lattice.quality_axes.visual = {
+        ...visual,
+        verdict: 'UNVERIFIED',
+        blocking_class: 'needs_human',
+        resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+      };
+    }
+    // 债务影响 release/completion 投影（advance 投影不含 visual UNVERIFIED，等价性不破）
+    lattice.release_readiness = projectReleaseReadiness(lattice.quality_axes);
+    lattice.completion_status = projectCompletionStatus(lattice.quality_axes);
+  } catch (e) {
+    // fail-closed（codex 实施 review P0-2）：治理链自身失败时**最不该**放行——
+    // release 直接 BLOCKED、completion 记管线故障、visual 轴降 UNVERIFIED(needs_fix)；
+    // 债务文件不更新（保留 last-known-good），summary 携带故障态落盘。
+    console.warn(`   ⚠ [visual-debt] 债务管线异常——fail-closed：release=BLOCKED（${(e as Error).message}）`);
+    const visual = lattice.quality_axes.visual;
+    if (visual.applicable && (visual.verdict === 'PASS' || visual.verdict === 'NOT_APPLICABLE')) {
+      lattice.quality_axes.visual = {
+        ...visual,
+        applicable: true,
+        verdict: 'UNVERIFIED',
+        blocking_class: 'needs_fix',
+        resolution: { class: 'needs_fix', owner: 'toolchain', retry_phase: String(report.phase) },
+      };
+    }
+    lattice.release_readiness = 'BLOCKED';
+    lattice.completion_status = 'DEBT_PIPELINE_ERROR';
+  }
+}
+
+/**
  * t2 receipt-slim（plan e6a3c9f4 / openspec receipt-slim）：base summary——**无 receipt 依赖**、
  * 完整 schema-valid、原子写。closure 字段以"未闭环/等待 receipt"初值填充，由后续
  * patchRunSummaryClosure 定稿；进程中途崩溃不会留下非法 JSON 或残留旧 closed 态。
@@ -822,11 +962,45 @@ function writeRunSummaryBase(
   // t1（f7a3d9c2）：runner 侧追加视觉轮次账本 + 回执（在 summary 落盘前完成，保证
   // summary.visual_round 与账本一致）。
   const visualRound = consumeVisualRoundPayload(projectRoot, report);
+  // blind-visual-hardening d1 切片二：多轴产品裁决 + report_validity（harness 派生，
+  // 非 agent 自报）。外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle——
+  // projected_verdict 与 legacy verdict 不一致=派生缺陷，显式落 readiness signal 不静默。
+  const lattice = deriveSummaryVerdictLattice(
+    report.checks,
+    resolveAxisApplicability(projectRoot, report.feature, report.phase),
+  );
+  // blind-visual-hardening d5：视觉债务 SSOT 派生（harness 派生非 agent 自报）+ 人工验收
+  // receipt 消费（只清 needs_human；needs_fix 拒绝）+ 未清偿债务 → visual 轴 UNVERIFIED
+  //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
+  applyVisualDebtPipeline(projectRoot, report, lattice);
+  // 不变量对账（codex 实施 review P0-2 fail-closed）：投影与 legacy 不一致=框架派生缺陷——
+  // 顶层 verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。
+  const VERDICT_STRICTNESS: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
+  let effectiveVerdict = report.summary.verdict;
+  if (lattice.projected_verdict !== report.summary.verdict) {
+    const stricter =
+      (VERDICT_STRICTNESS[lattice.projected_verdict] ?? 2) > (VERDICT_STRICTNESS[report.summary.verdict] ?? 2)
+        ? lattice.projected_verdict
+        : report.summary.verdict;
+    console.warn(
+      `   ⚠ [quality-axes] 投影(${lattice.projected_verdict}) ≠ legacy(${report.summary.verdict})——不变量破坏，按更严侧 ${stricter} 落盘（框架派生缺陷，请回灌源仓）`,
+    );
+    effectiveVerdict = stricter as typeof effectiveVerdict;
+    readinessSignals.push({
+      id: 'quality_axes_projection_mismatch',
+      status: 'incomplete',
+      message: `quality_axes 投影=${lattice.projected_verdict} ≠ legacy=${report.summary.verdict}，已按更严侧 ${stricter} 落盘（派生缺陷回灌源仓）`,
+    });
+  }
   const summary: HarnessRunSummary = {
-    schema_version: '1.0',
+    schema_version: '1.1',
     phase: report.phase,
     feature: report.feature,
-    verdict: report.summary.verdict,
+    verdict: effectiveVerdict,
+    report_validity: lattice.report_validity,
+    quality_axes: lattice.quality_axes,
+    release_readiness: lattice.release_readiness,
+    completion_status: lattice.completion_status,
     blocker_count: report.summary.blockers,
     fail_count: report.summary.fail,
     warn_count: report.summary.warn,
@@ -860,6 +1034,12 @@ function writeRunSummaryBase(
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
+  }
+  // codex 三轮 P1-4：writer 侧 fail-fast——1.1 契约唯一权威校验；违反=框架缺陷，
+  // 宁可 harness 崩溃也不落一份缺 lattice 的"半 1.1"summary 让消费方各自猜。
+  const v11Errors = validateSummaryV11(summary);
+  if (v11Errors.length > 0) {
+    throw new Error(`[quality-axes] summary 1.1 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
   }
   atomicWriteJson(path.join(dir, 'summary.json'), summary);
   return summary;

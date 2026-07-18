@@ -75,6 +75,7 @@ import {
 } from './utils/ut-artifact-parse';
 import { deriveBusinessSourcePathPrefixes } from './utils/ut-business-src-scope';
 import { checkFactsArtifact } from './utils/context-facts';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
 import {
@@ -3472,6 +3473,14 @@ const checker: PhaseChecker = {
           frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
+      ),
+    );
+
+    // --- blind-visual-hardening d1 切片一：上游裁决传播（review 不通过不得进 ut）---
+    results.push(
+      ...safeRun(
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut' }),
+        'upstream_verdict_gate',
       ),
     );
 

@@ -24,7 +24,18 @@
     "next_action"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": {
+      "enum": ["1.0", "1.1"],
+      "description": "1.1（blind-visual-hardening d1）：新增 report_validity/quality_axes/release_readiness/completion_status，writer 恒写 1.1；1.0 仅兼容读取，不作 1.1 completion 干净依据（lite 校验器无 if/then，1.1 必填性由代码层强制）"
+    },
+    "report_validity": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "UNVERIFIED"],
+      "description": "报告工件可解析/可信——独立于产品裁决（design §1.2），不是产品质量轴"
+    },
+    "quality_axes": { "$ref": "#/$defs/quality_axes" },
+    "release_readiness": { "type": "string", "enum": ["READY", "BLOCKED"] },
+    "completion_status": { "type": "string", "minLength": 1 },
     "phase": {
       "type": "string",
       "enum": ["spec", "plan", "prd", "design", "coding", "review", "ut", "testing", "catalog", "glossary", "docs", "init"]
@@ -79,6 +90,39 @@
     "visual_round": { "$ref": "#/$defs/visual_round" }
   },
   "$defs": {
+    "quality_axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["functional", "visual", "asset", "evidence"],
+      "properties": {
+        "functional": { "$ref": "#/$defs/quality_axis" },
+        "visual": { "$ref": "#/$defs/quality_axis" },
+        "asset": { "$ref": "#/$defs/quality_axis" },
+        "evidence": { "$ref": "#/$defs/quality_axis" }
+      }
+    },
+    "quality_axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicable", "required_for_release", "verdict", "blocking_class", "source_checks", "resolution"],
+      "properties": {
+        "applicable": { "type": "boolean" },
+        "required_for_release": { "type": "boolean" },
+        "verdict": { "type": "string", "enum": ["PASS", "FAIL", "UNVERIFIED", "STALE", "MISSING", "NOT_APPLICABLE"] },
+        "blocking_class": { "enum": ["needs_fix", "needs_human", "external_dependency", null] },
+        "source_checks": { "type": "array", "items": { "type": "string" } },
+        "resolution": {
+          "type": ["null", "object"],
+          "additionalProperties": false,
+          "required": ["class", "owner", "retry_phase"],
+          "properties": {
+            "class": { "type": "string", "enum": ["needs_fix", "needs_human", "external_dependency"] },
+            "owner": { "type": "string", "enum": ["agent", "human", "toolchain", "external"] },
+            "retry_phase": { "type": ["null", "string"] }
+          }
+        }
+      }
+    },
     "visual_round": {
       "type": "object",
       "additionalProperties": false,

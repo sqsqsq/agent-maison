@@ -22,6 +22,12 @@ applies_to:
   # device-testing-todo.md 已废弃；见 acceptance.yaml > device_focus
 
 structure_checks:
+  upstream_verdict_gate:
+    description: >
+      跨阶段负面裁决传播门禁（blind-visual-hardening d1）：ut 启动时消费上游各阶段
+      summary.json 机器裁决——review 结论不通过（summary FAIL）等负面裁决未解决时
+      ut 不得启动（bc-openCard 二轮：不通过+3 BLOCKER 曾照常进 ut）。
+
   harness_host_artifact_pollution:
     description: >
       framework harness 目录（ctx.harnessRoot）下不得出现 contracts.modules[].package_path

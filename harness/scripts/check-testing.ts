@@ -83,6 +83,8 @@ import {
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { countBlockingDebt, loadVisualDebt } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
   loadTestingRootPollutionMeta,
@@ -827,6 +829,92 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     status: 'FAIL',
     details: '结论章节未找到可机读的判定声明行（达标/有条件达标/不达标）。',
     suggestion: '请写出明确声明行，例如 `**测试结论**: 不达标`（裁决词须紧邻在"测试结论:"之后）。',
+  }];
+}
+
+/**
+ * blind-visual-hardening d1 切片一（与 check-review negative_verdict_closure 同语义）：
+ * report_conclusion_with_verdict 只要有可机读裁决词就 PASS——「不达标」同样放行。
+ * 本 check：测试结论=不达标 → BLOCKER FAIL（产品负面裁决阻断 phase 闭环）。
+ * 不读 verifier/trace——裁决 vs trace 一致性归 reconcileReportWithHylyreTrace。
+ */
+export function checkNegativeTestingVerdictClosure(report: string | null): CheckResult[] {
+  const id = 'negative_verdict_closure';
+  const description = '负面产品裁决闭环门禁（测试结论=不达标 → 阻断 phase 闭环，修复重跑后方可推进）';
+  if (!report) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'SKIP',
+      details: 'test-report.md 不存在（报告存在性由 report_conclusion_with_verdict/run 状态门禁负责）。',
+    }];
+  }
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '测试结论') ?? '';
+  const { verdict } = extractDeclaredVerdict(section, ['有条件达标', '不达标', '达标']);
+  if (verdict !== '不达标') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `测试结论=${verdict ?? '未声明'}，非负面裁决，本门禁不适用（缺声明行由 report_conclusion_with_verdict 拦）。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      '测试结论=「不达标」——产品负面裁决不得闭环推进。报告如实登记不达标是 report_validity 层面的合规，' +
+      '但产品裁决为负时 phase 不得以 PASS 收口（对齐 review 侧 negative_verdict_closure 语义）。',
+    suggestion: '修复失败用例/缺陷后重跑 device 测试与本 harness，结论更新为非「不达标」后方可闭环。',
+    failure_kind: 'negative_testing_verdict',
+    blocking_class: 'product_verdict',
+  }];
+}
+
+/**
+ * blind-visual-hardening d5（P0-D③）：视觉债务披露门禁——存在未清偿（open/accepted）视觉债务时，
+ * test-report 结论章节必须引用视觉债务（字样+计数），防「达标可发布」裸奔（bc-openCard 二轮：
+ * 债务全埋 WARN/soft_advisories，结论零 caveat）。结构化轴以 summary.quality_axes 为 SSOT，
+ * 报告只需如实披露引用；禁止「达标（带视觉债务）」复合措辞由模板层约束，本 check 管"必须提"。
+ */
+export function checkVisualDebtDisclosure(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'visual_debt_disclosure';
+  const description = '视觉债务披露门禁（存在未清偿债务时结论必须引用视觉债务清单）';
+  const debt = loadVisualDebt(ctx.projectRoot, ctx.feature);
+  const { open, accepted } = countBlockingDebt(debt);
+  if (open + accepted === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: '无未清偿视觉债务，无披露义务。',
+    }];
+  }
+  if (!report) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `存在视觉债务（open=${open}, accepted=${accepted}）但 test-report.md 不存在（报告存在性归其他门禁）。`,
+    }];
+  }
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '测试结论') ?? '';
+  // cursor 实施 review P3 加固：须"视觉债务"字样 + 计数数字同段出现（裸四字塞入不满足披露义务）
+  if (/视觉债务/.test(section) && /视觉债务[^\n]*\d|\d[^\n]*视觉债务/.test(section)) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `结论已披露视觉债务（open=${open}, accepted=${accepted}；SSOT=visual-debt.json / summary.quality_axes）。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      `存在未清偿视觉债务（open=${open}, accepted=${accepted}）但 test-report 结论章节未引用「视觉债务」——` +
+      '结论不得对视觉未验真保持沉默（bc-openCard 二轮「达标可发布」裸奔形态）。',
+    suggestion:
+      '在结论章节如实引用：视觉债务清单（doc/features/<feature>/visual-debt.md）与条目计数；' +
+      '产品裁决以 summary.quality_axes 为准（visual=UNVERIFIED 时 completion=FUNCTIONALLY_COMPLETE_VISUAL_PENDING，' +
+      'release_readiness=BLOCKED）——功能达标与视觉验真是两根轴，不写复合措辞。',
+    failure_kind: 'visual_debt_undisclosed',
+    blocking_class: 'product_verdict',
   }];
 }
 
@@ -2712,6 +2800,17 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
     results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
     results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
+
+    // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
+    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
+    // --- blind-visual-hardening d5：视觉债务披露 ---
+    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
+    results.push(
+      ...safeRun(
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        'upstream_verdict_gate',
+      ),
+    );
 
     results.push(
       ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>

@@ -18,6 +18,7 @@ import {
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { missingUiSpecGateScreens } from './ui-spec-gate';
+import { checkUiKitDeclarationRequired } from './ui-kit-conformance-check';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
@@ -250,7 +251,7 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
   // 有 warning 时一律降级（不得 PASS）；严格度随档位：strict 视为完整性缺陷 → MAJOR，
   // warn/reachable → MAJOR/WARN。修复历史反向逻辑：此前 strict 下 warning 反而落 PASS。
   const hasWarn = warnings.length > 0;
-  return [{
+  const out: CheckResult[] = [{
     id: 'ui_spec_structure',
     category: 'structure',
     description: desc,
@@ -259,6 +260,23 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
     details: detailParts.join('\n'),
     affected_files: [uiSpecRel],
   }];
+  // blind-visual-hardening（cursor 实施 review P1）：盲档结构容器声明强制——kit 非 opt-in。
+  // 异常=BLOCKER（cursor 四轮 P2：spec 段若异常降 SKIP，coding 见零声明即空转，线框路径复活）。
+  try {
+    out.push(...checkUiKitDeclarationRequired(ctx));
+  } catch (e) {
+    out.push({
+      id: 'ui_kit_declaration_required', category: 'structure',
+      description: '盲档结构容器声明门禁执行异常（地板门禁不得因异常绕过）',
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
+      suggestion: '框架/环境问题——修复后重跑；不要通过移除 ui-spec 来绕过本门禁。',
+      failure_kind: 'framework_bug',
+      blocking_class: 'ui_kit_conformance',
+      affected_files: [uiSpecRel],
+    });
+  }
+  return out;
 }
 
 /** DSL↔原图校验 gate（人工 / 多模态） */

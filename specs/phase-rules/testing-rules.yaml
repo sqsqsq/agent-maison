@@ -20,6 +20,24 @@ applies_to:
 # --------------------------------------------------------------------------
 structure_checks:
 
+  negative_verdict_closure:
+    description: >
+      负面产品裁决闭环门禁（blind-visual-hardening d1）：测试结论=不达标 → BLOCKER FAIL，
+      testing 不得闭环推进。report_conclusion_with_verdict 只验声明行可机读（report_validity
+      语义），本门禁是产品裁决传播——与 review 侧 negative_verdict_closure 同语义。
+
+  upstream_verdict_gate:
+    description: >
+      跨阶段负面裁决传播门禁（blind-visual-hardening d1）：testing 启动时消费上游各阶段
+      summary.json 机器裁决——上游 verdict 非 PASS / blocker 未清 / 证据 stale|tampered
+      → BLOCKER FAIL（bc-openCard 二轮：review 不通过曾照常进 testing）。
+
+  visual_debt_disclosure:
+    description: >
+      视觉债务披露门禁（blind-visual-hardening d5）：visual-debt.json 存在未清偿条目
+      （open/accepted）时，test-report 结论章节必须引用「视觉债务」与清单——结论不得对
+      视觉未验真沉默；产品裁决 SSOT=summary.quality_axes（功能/视觉分轴，禁复合措辞）。
+
   # ---- review 闭环源码快照对账（goal-fakepass-hardening t2）----
 
   review_closure_attestation:

@@ -66,6 +66,43 @@
 
 ---
 
+## 盲宿主视觉根治（blind-visual-hardening）——四项 Breaking
+
+> 立项动因：bc-openCard 二轮事故（盲宿主线框级 UI 全绿交付「达标可发布」）。openspec change
+> `blind-visual-hardening`；plan a9d4c7e2（codex/cursor 四轮 review 定稿）。
+
+1. **负面产品裁决从此阻断闭环与推进**：review 结论「不通过」/testing 结论「不达标」→ 该
+   phase BLOCKER FAIL（`negative_verdict_closure`）；下游 phase 启动即消费上游 summary
+   机器裁决（`upstream_verdict_gate`：verdict 非 PASS/blocker 未清/证据 stale → BLOCKER）。
+   存量 feature 若带未闭环的「不通过」报告，重跑对应上游阶段前不得推进。四个 phase-rules
+   yaml 已登记新门禁 → **gate_fingerprint 变更，存量回执按 stale 治理重跑**（预期行为）。
+2. **summary schema 1.1**：新增 `report_validity`（报告合法性，独立于产品裁决）+
+   `quality_axes`（functional/visual/asset/evidence 四轴对象化，harness 派生非 agent 自报）+
+   `release_readiness`/`completion_status` 投影。1.0 summary 兼容读取，但**不作 1.1
+   feature-completion 干净依据**（`summary_schema_current` needs_fix——须当前 gate_fingerprint
+   下重跑，防历史假 PASS 重入新状态机）。visual/asset 轴 UNVERIFIED（如盲档视觉未验真）
+   → completion 封顶 `AWAITING_HUMAN_REVIEW`、`release_readiness=BLOCKED`——headless 可继续
+   执行但 FEATURE_COMPLETED 不可达，收口走人工视觉验收 receipt（`human_visual_acceptance`，
+   rubric 冻结每维 ≥4/5，只清主观项不洗确定性 FAIL）。
+3. **盲档素材纪律升级**：`effective_image_input=none` 时 `acquisition: crop` 须满足可信
+   消费态（resolved_path+provenance 三来源+真人 confirm）否则 spec BLOCKER
+   （`blind_crop_prohibition`）；物化进模块 media 的 brand-critical 素材空白/纯色/损坏 →
+   coding BLOCKER **档位无关**（`asset_materialization_sanity`）；占位必须为可见语义占位
+   （text_avatar/插画框/SymbolGlyph），空白 PNG 一律非法。素材缺供给走 `spec/asset-request.md`
+   问人清单（registry `vision.asset_request`）。
+4. **UI 需求 spec 前置意图闸扩面**：逐阶段驱动路径（非 goal preflight）同样执行档位三态
+   检测（`fidelity_capability_pregate`）——强 pixel 意图+盲模型 → BLOCKER（DEFERRED 语义，
+   出路=换模型/人签 `fidelity_downgrade` receipt/改需求）；含混意图+参考图 → 人工定档。
+   **盲宿主上每条带设计截图的需求都会多一次确认，属设计内成本**（vision.blind_tier 动线）。
+
+新增非 breaking 能力：盲档可实例化 UI kit（`profiles/hmos-app/ui-kit/` 九 blocks +
+scaffolder 四级目录解析 + 声明→源码→uitree 三段闭环）；视觉债务 SSOT（visual-debt.json+md，
+open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feedback.json，两类信号分立，
+盲模型的"文本化眼睛"）；设备渲染可见性 calibrate 观察节点（enforce 升级待实测回灌）。
+宿主复验规程见 `docs/operations/blind-host-replay-runbook.md`。
+
+---
+
 ## device visual-diff 缺陷枚举契约（round2）
 
 `visual-diff.json` 每屏新增可选 `defects[]`（正向渲染缺陷枚举：`clipping`|`overlap`|`shape_mismatch`|`missing_render`|`other` + `bbox` + `severity` + `note`）与采集层自动写入的 `edge_tile_divergence`/`edge_over_threshold_tiles`。
