@@ -170,6 +170,11 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
+  { id: 'find-files-recursive', modulePath: './unit/find-files-recursive.unit.test' },
+  { id: 'test-plan-derive-hint', modulePath: './unit/test-plan-derive-hint.unit.test' },
+  { id: 'hylyre-root-pollution-warn', modulePath: './unit/hylyre-root-pollution-warn.unit.test' },
+  { id: 'adhoc-derive-payload', modulePath: './unit/adhoc-derive-payload.unit.test' },
+  { id: 'adhoc-dump-ui-path', modulePath: './unit/adhoc-dump-ui-path.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];
