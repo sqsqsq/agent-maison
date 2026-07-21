@@ -8,7 +8,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureFile, featureDir } from '../../../harness/config';
+import { relFeatureFile, featureDir, featurePhaseReportsDir } from '../../../harness/config';
+import { loadVisualDiffNavConfigV2 } from './visual-diff-nav';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
   loadUiSpecFile,
@@ -62,6 +63,54 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   const p = path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'spec.md');
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
+}
+
+/** S6（P1-H）：locator-required 分母——只含 identity 锚点 id/must_have/交互目标/kit block 实例。 */
+const LOCATOR_INTERACTIVE_TYPES = new Set([
+  'primary_button', 'selector_group', 'sms_code_field', 'list_selection', 'nav_bar',
+  'sheet_scaffold', 'list_row', 'tab_bar', 'input_field', 'action_button',
+]);
+
+export function collectLocatorRequiredElements(
+  screen: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecScreen,
+  identityIds: ReadonlySet<string>,
+): Array<{ elementId: string; reason: string }> {
+  const out: Array<{ elementId: string; reason: string }> = [];
+  const seen = new Set<string>();
+  const add = (id: string, reason: string): void => {
+    const t = id.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push({ elementId: t, reason });
+  };
+  const walk = (n: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecComponentNode): void => {
+    const rec = n as { id?: unknown; type?: unknown; block?: unknown };
+    if (typeof rec.id === 'string' && rec.id.trim()) {
+      if (identityIds.has(rec.id.trim())) add(rec.id, 'identity_anchor');
+      else if (typeof rec.block === 'string' && rec.block.trim()) add(rec.id, 'kit_block_instance');
+      else if (typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) add(rec.id, 'interactive');
+    }
+    for (const c of n.children ?? []) walk(c);
+  };
+  if (screen.root) walk(screen.root);
+  for (const mh of screen.must_have_elements ?? []) add(mh, 'must_have');
+  return out;
+}
+
+/** nav 2.0 identity 的 id 成员集合（locator-required 分母输入；nav 缺失 → 空集） */
+export function collectNavIdentityIdMembers(projectRoot: string, feature: string): Set<string> {
+  const out = new Set<string>();
+  try {
+    const v2 = loadVisualDiffNavConfigV2(projectRoot, feature);
+    for (const entry of Object.values(v2?.screens ?? {})) {
+      for (const group of [entry.identity?.all_of, entry.identity?.any_of, entry.identity?.none_of]) {
+        for (const m of group ?? []) {
+          if (typeof m.id === 'string' && m.id.trim()) out.add(m.id.trim());
+        }
+      }
+    }
+  } catch { /* nav 不可读 → 空集 */ }
+  return out;
 }
 
 /** 五轮 P1-3：逐模块收集某 key 的全部 media 匹配（去 first-match——A 模块真素材不豁免 B 模块占位/坏图）；
@@ -226,14 +275,38 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       const sourceText = scan.etsFiles.map(f => {
         try { return fs.readFileSync(f, 'utf-8'); } catch { return ''; }
       }).join('\n');
+      // S6（visual-capability-truth P1-H calibrate）：分母收窄为 locator-required 集
+      // （identity 锚点 id 成员 / must_have / 交互目标 / UI kit block 实例）——动态列表行、
+      // 纯装饰/OCR 噪声节点不进分母（codex plan 审查二轮：全量分母会海量误报）。
+      // calibrate 期：WARN + 覆盖率落盘（locator-coverage.json）→ 两真实宿主 run 验证
+      // → enforce（<80% BLOCKER）另行升级，本期不升（breaking ratchet 纪律）。
+      const identityIds = collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature);
       const missingIds: string[] = [];
+      let requiredTotal = 0;
+      let requiredCovered = 0;
       for (const s of doc.screens ?? []) {
         if (s.priority !== 'P0') continue;
-        for (const el of collectDeclaredElements(s)) {
+        for (const el of collectLocatorRequiredElements(s, identityIds)) {
+          requiredTotal++;
           const idRe = new RegExp(`\\.id\\(\\s*['"\`]${el.elementId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]\\s*\\)`);
-          if (!idRe.test(sourceText)) missingIds.push(`${s.id}/${el.elementId}`);
+          if (idRe.test(sourceText)) requiredCovered++;
+          else missingIds.push(`${s.id}/${el.elementId}`);
         }
       }
+      const coverage = requiredTotal > 0 ? requiredCovered / requiredTotal : 1;
+      try {
+        const covPath = path.join(featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'coding', ctx.frameworkRoot), 'locator-coverage.json');
+        fs.mkdirSync(path.dirname(covPath), { recursive: true });
+        fs.writeFileSync(covPath, `${JSON.stringify({
+          schema_version: '1.0',
+          denominator: 'locator_required_v1',
+          required_total: requiredTotal,
+          required_covered: requiredCovered,
+          coverage: Number(coverage.toFixed(4)),
+          missing: missingIds,
+          at: new Date().toISOString(),
+        }, null, 2)}\n`, 'utf-8');
+      } catch { /* 覆盖率落盘失败不阻断（calibrate 数据面） */ }
       if (missingIds.length > 0) {
         results.push({
           id: 'visual_parity_element_id_lint',
@@ -242,10 +315,11 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           severity: 'MAJOR',
           status: 'WARN',
           details:
-            `【t1 locator 锚缺失（观察期 WARN）】pixel_1to1 P0 屏声明元素未在源码设 .id('<element_id>')：` +
+            `【t1 locator 锚缺失（calibrate 观察期 WARN；分母=locator-required 集）】` +
+            `P0 屏 locator-required 覆盖率 ${(coverage * 100).toFixed(0)}%（${requiredCovered}/${requiredTotal}）；缺 .id：` +
             `${missingIds.slice(0, 12).join(', ')}${missingIds.length > 12 ? ` …共 ${missingIds.length} 处` : ''}\n` +
-            `缺 .id 时 T8 布局断言退化到文本锚/结构匹配（歧义即 SKIP）——为组件补 .id 可让几何门禁全量生效。`,
-          suggestion: '在对应 ArkUI 组件链上加 .id(\'<element_id>\')（与 ui-spec 元素 id 一致）；容器/图标类无文本元素尤其需要。',
+            `缺 .id 时 T8 布局断言退化到文本锚/结构匹配（歧义即 SKIP）；两真实宿主 run 验证误报面后 pixel_1to1 <80% 将升 BLOCKER。`,
+          suggestion: '在对应 ArkUI 组件链上加 .id(\'<element_id>\')（与 ui-spec 元素 id 一致）；identity 锚点/交互目标/must_have 优先。',
           affected_files: [uiSpecRel],
         });
       }
@@ -332,6 +406,17 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     const unverified = collectUnverifiedCropLines(ctx.projectRoot, ctx.feature, doc, {
       contracts: ctx.featureSpec.contracts ?? undefined,
     });
+    if (unverified.length === 0) {
+      // cursor 深度 review P2（债务闭账）同 bug 类：violation-only → 债务永不闭账；零违例落 PASS
+      results.push({
+        id: 'visual_parity_unverified_crop',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'PASS',
+        details: '物化前置裁剪验真扫描已执行：无未 verified 的 crop 资产被消费/物化。',
+      });
+    }
     if (unverified.length > 0) {
       const { severity, status } = isPixel1to1(ctx)
         ? fidelityRatchetFailOrWarn(ctx, false)
@@ -389,7 +474,19 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           }
         }
       }
-      if (sanityViolations.length > 0) {
+      if (sanityViolations.length === 0) {
+        // cursor 深度 review P2（债务闭账）：violation-only 产出会让 deriveVisualDebt 恒走
+        // "本轮缺席→单调保留"分支——修好后债务永不 closed。扫描已执行且零违例=明确 PASS，
+        // 必须落结果供账本闭账（annotateAssetTriState 三态同理消费）。
+        results.push({
+          id: 'asset_materialization_sanity',
+          category: 'structure',
+          description: desc,
+          severity: 'MAJOR',
+          status: 'PASS',
+          details: `物化 sanity 扫描已执行，零违例（阈值版本 ${ASSET_SANITY_THRESHOLD_VERSION}）。`,
+        });
+      } else {
         const anyCritical = sanityViolations.some(v => v.critical);
         results.push({
           id: 'asset_materialization_sanity',
@@ -438,7 +535,17 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           critical: deriveAssetCriticality(derived.role, doc) === 'brand_critical',
         });
       }
-      if (placeholderHits.length > 0) {
+      if (placeholderHits.length === 0) {
+        // cursor 深度 review P2（债务闭账）：同 asset_materialization_sanity——零占位=明确 PASS 落结果
+        results.push({
+          id: 'asset_placeholder_present',
+          category: 'structure',
+          description: desc,
+          severity: 'MAJOR',
+          status: 'PASS',
+          details: '占位在场扫描已执行：未检出 maison 占位素材。',
+        });
+      } else {
         results.push({
           id: 'asset_placeholder_present',
           category: 'structure',
@@ -455,6 +562,47 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
             '或走人工视觉验收 receipt 显式接受残余占位（accepted 留痕，不阻断 release 但审计分列）。',
           affected_files: [uiSpecRel],
           structured: { kind: 'asset_sanity', assets: placeholderHits.map(h => h.key) },
+        });
+      }
+    }
+  }
+
+  // S7（visual-capability-truth P2-J.3）：资产实例绑定四段链（静态三段）——
+  // node.asset_ref → assets[key] → 物化文件；不同 asset_ref 解析到同一文件 = 实例复用
+  // 冲突（bc-openCard 多银行同 logo 形态——业务字段不入规格，此处纯通用链判定）。
+  {
+    const contracts = ctx.featureSpec.contracts;
+    if (contracts) {
+      const byFile = new Map<string, Set<string>>();
+      const walkRefs = (n: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecComponentNode): void => {
+        const ref = (n as { asset_ref?: unknown }).asset_ref;
+        if (typeof ref === 'string' && ref.trim()) {
+          const file = findModuleMediaFile(ctx.projectRoot, contracts, ref.trim());
+          if (file) {
+            const set = byFile.get(file) ?? new Set<string>();
+            set.add(ref.trim());
+            byFile.set(file, set);
+          }
+        }
+        for (const c of n.children ?? []) walkRefs(c);
+      };
+      for (const s of doc.screens ?? []) if (s.root) walkRefs(s.root);
+      const collisions = [...byFile.entries()].filter(([, refs]) => refs.size > 1);
+      if (collisions.length > 0) {
+        results.push({
+          id: 'asset_instance_binding',
+          category: 'structure',
+          description: desc,
+          severity: 'MAJOR',
+          status: 'WARN',
+          details: [
+            '【资产实例绑定冲突】不同 asset_ref 解析到同一物化文件（声明了不同实例、渲染同一素材）：',
+            ...collisions.slice(0, 6).map(([file, refs]) =>
+              `  - ${path.relative(ctx.projectRoot, file).replace(/\\/g, '/')} ← {${[...refs].join(', ')}}`,
+            ),
+          ].join('\n'),
+          suggestion: '为各实例落各自素材文件（key 与文件一一对应），或收敛声明为同一 asset_ref（确属同素材时）。',
+          affected_files: [uiSpecRel],
         });
       }
     }

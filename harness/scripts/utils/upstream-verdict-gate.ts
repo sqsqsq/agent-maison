@@ -71,6 +71,9 @@ export interface UpstreamPhaseView {
   freshnessDetail?: string;
   /** 切片二：schema 1.1 quality_axes 摘要（信息面——裁决仍走 verdict 投影，单点不分叉） */
   axisNotes?: string[];
+  /** S4（visual-capability-truth）：上游失败的环境层信号（ut_run_status.failure_code 等
+   * device_locked 类）——仍拦截不降门禁，只让指引说清"修环境重跑"而非"改代码"。 */
+  environmentFailureCode?: string;
 }
 
 export interface UpstreamViolation {
@@ -91,7 +94,15 @@ export function evaluateUpstreamViews(views: UpstreamPhaseView[]): UpstreamViola
       continue;
     }
     if (v.verdict !== 'PASS') {
-      violations.push({ phase: v.phase, reason: `上游机器裁决 verdict=${v.verdict}（非 PASS 不得下游推进）` });
+      violations.push({
+        phase: v.phase,
+        reason:
+          `上游机器裁决 verdict=${v.verdict}（非 PASS 不得下游推进）` +
+          (v.environmentFailureCode
+            ? `——failure_layer=environment（${v.environmentFailureCode}）：这是环境失败非代码回归，` +
+              `修复环境（如解锁真机保持前台）后重跑 ${v.phase} harness 即可解除，勿改产品代码`
+            : ''),
+      });
       continue;
     }
     if (v.blockerIds.length > 0) {
@@ -130,6 +141,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
       verdict?: unknown;
       blockers?: Array<{ id?: unknown }>;
       quality_axes?: Record<string, { applicable?: boolean; verdict?: string }>;
+      ut_run_status?: { failure_code?: unknown };
     };
     if (typeof parsed.verdict === 'string' && parsed.verdict.trim().length > 0) {
       verdict = parsed.verdict.trim();
@@ -188,7 +200,18 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     freshness = 'no_manifest';
   }
 
-  return { phase, summaryExists: true, verdictReadable, verdict, blockerIds, freshness, freshnessDetail, axisNotes };
+  // S4：环境层信号透出（device_locked 等 toolchain/环境失败码——20260718 事故：testing 期
+  // 重跑 ut 撞真机锁屏翻 FAIL，指引应说"修环境重跑"而非引向改码）。
+  let environmentFailureCode: string | undefined;
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8')) as { ut_run_status?: { failure_code?: unknown } };
+    const code = raw.ut_run_status?.failure_code;
+    if (typeof code === 'string' && /device_locked|no_hdc_target|app_not_foreground|device_offline/i.test(code)) {
+      environmentFailureCode = code;
+    }
+  } catch { /* 信号缺失不影响主判定 */ }
+
+  return { phase, summaryExists: true, verdictReadable, verdict, blockerIds, freshness, freshnessDetail, axisNotes, environmentFailureCode };
 }
 
 /**

@@ -46,6 +46,7 @@ import type {
   OnDeviceUtRunResult,
 } from './hdc-runner';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
+import { stripTrustAnchorEnv } from '../../../harness/scripts/utils/process-integrity';
 import {
   classifyHvigorEnvError,
   collectHvigorEnvEvidence,
@@ -537,7 +538,10 @@ function resolveHvigorCommand(
  * IDE 内部跑时 DevEco 会注入，但 harness 命令行跑不会。
  */
 export function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  // codex 八轮 P0：hvigor/ohpm 子进程会执行**宿主可产出的代码**（hvigorfile.ts/构建插件/
+  // 脚本钩子）——信任锚材料（MAISON_HMAC_*/MAISON_TRUST_REGISTRY/checkpoint 路径）绝不
+  // 得进入该链，否则 agent 经宿主构建脚本间接读密钥即可伪造 head/checkpoint/receipt。
+  const env: NodeJS.ProcessEnv = stripTrustAnchorEnv(process.env).env;
   let installPath: string | undefined;
   try {
     installPath = resolveDevEcoInstallRoot(projectRoot) ?? loadDevEcoConfig(projectRoot)?.installPath;

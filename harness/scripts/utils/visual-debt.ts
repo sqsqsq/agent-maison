@@ -248,6 +248,20 @@ export function annotateAssetTriState(doc: VisualDebtDoc, checks: CheckLike[]): 
   };
 }
 
+/**
+ * S7 asset 继承指纹链（codex 实施 review 二轮 P1-6）：asset 域债务 revision——
+ * coding summary 落盘、testing 继承时重算比对（跨阶段其他域条目会动整文件 hash，
+ * 域内投影才是可比不变量）。null/无条目 → 'no-debt' 哨兵（两侧同算法恒可比）。
+ */
+export function assetDomainDebtRevision(doc: VisualDebtDoc | null): string {
+  const entries = (doc?.entries ?? [])
+    .filter(e => /asset/i.test(e.source_check_id ?? ''))
+    .map(e => ({ id: e.id, source_check_id: e.source_check_id, status: e.status, resolution_class: e.resolution_class }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (entries.length === 0) return 'no-debt';
+  return crypto.createHash('sha256').update(JSON.stringify(entries), 'utf-8').digest('hex').slice(0, 16);
+}
+
 export function countBlockingDebt(doc: VisualDebtDoc | null): { open: number; accepted: number } {
   const entries = doc?.entries ?? [];
   return {
@@ -308,7 +322,7 @@ export interface VisualAcceptancePayload {
 /** screens 矩阵规范化哈希（receipt object_hash 绑定源；逐屏配对绑定，调序/换对即变） */
 export function screensMatrixHash(screens: VisualAcceptanceScreens[]): string {
   const canonical = [...screens]
-    .map(s => `${s.screen_id} ${s.variant} ${s.reference_sha256} ${s.actual_sha256}`)
+    .map(s => `${s.screen_id}\u0000${s.variant}\u0000${s.reference_sha256}\u0000${s.actual_sha256}`)
     .sort()
     .join('\n');
   return crypto.createHash('sha256').update(canonical, 'utf-8').digest('hex');

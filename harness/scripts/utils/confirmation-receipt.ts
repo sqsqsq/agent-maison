@@ -43,7 +43,18 @@ export type ReceiptAction =
   /** blind-visual-hardening d2：盲档 crop 产物来源的人签放行（provenance 三来源之 human_receipt） */
   | 'crop_provenance'
   /** blind-visual-hardening d5：人工视觉验收（冻结 rubric 阈值/结构化 screens 绑定/仅清主观项） */
-  | 'human_visual_acceptance';
+  | 'human_visual_acceptance'
+  /** visual-capability-truth S4（codex 实施 review 二轮 P0-3）：testing/ut 期产品改码授权的
+   * human 源——object_hash 绑定授权范围（run/phase/allowed_files/change_kind/max_files 规范化
+   * 哈希），真人签名不可被换皮到更宽的自写授权行 */
+  | 'source_mutation_authorization'
+  /** visual-capability-truth（codex 七轮 P1）：vision 账本无锚续跑的真人确认——object_hash
+   * 绑定 {project_root_hash, feature, run_id, 两账本 sha256} 规范化哈希；CLI 布尔旗标
+   * 可被模型拼出，不构成人工授权，仅受信 receipt 解除完成态封顶 */
+  | 'vision_ledger_ack'
+  /** visual-capability-truth（codex 八轮 P1-2）：密钥升级/轮换后信任锚重铸（rekey/reseal）
+   * ——object_hash 另绑旧 head 文件字节 hash；弱旗标不参与 */
+  | 'vision_trust_reseal';
 
 const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'fidelity_downgrade',
@@ -54,6 +65,9 @@ const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'runtime_fidelity_attestation',
   'crop_provenance',
   'human_visual_acceptance',
+  'source_mutation_authorization',
+  'vision_ledger_ack',
+  'vision_trust_reseal',
 ]);
 
 const ALLOWED_ALGS = new Set(['ed25519', 'hmac-sha256']);

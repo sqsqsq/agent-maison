@@ -20,6 +20,14 @@ applies_to:
 # --------------------------------------------------------------------------
 structure_checks:
 
+  test_case_flow_consistency:
+    description: >
+      TC 结构化 DAG 一致性（visual-capability-truth S6/P1-I）：test-plan.md 顶层
+      test_case_flow YAML 块与用例表完全一致（缺/多/引用错/环 → BLOCKER）；无块 → WARN。
+      级联归类三分（root/blocked/independent）依赖本块——BLOCKED_BY 非 PASS：仍进 P0
+      分母、仍阻 completion，仅根因归类变化；reset 失败归 environment。
+
+
   negative_verdict_closure:
     description: >
       负面产品裁决闭环门禁（blind-visual-hardening d1）：测试结论=不达标 → BLOCKER FAIL，

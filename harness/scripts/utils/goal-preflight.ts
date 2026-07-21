@@ -385,6 +385,11 @@ export async function runVisionCanaryProbe(input: {
           reason: decision.classify.reason,
           probed_via: 'goal',
           probe_version: VISION_CANARY_PROBE_VERSION,
+          // S3（visual-capability-truth）：receipt 增维——adapter 层无法证明实际模型路由
+          // （cursor auto 等），诚实记 unknown；scope 判级据此封顶 run_probed 且不跨 run。
+          model: 'unknown',
+          probe_context: 'goal_preflight',
+          run_id: manifest.run_id,
         },
       },
     });
@@ -413,6 +418,7 @@ import * as cryptoT6 from 'crypto';
 import {
   dereferenceRequirementDocs,
   detectFidelityIntent,
+  isValidFidelityTarget,
   resolveRequestedFidelity,
   type FidelityTarget,
 } from './fidelity-shared';
@@ -524,4 +530,92 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     };
   }
   return { action: 'proceed', effective: resolved.effective };
+}
+
+// ----------------------------------------------------------------------------
+// 十三轮 review P0-1：fidelity transition 独立前置校验——fresh/resume 都执行。
+// 事故面：evaluateFidelityTierPreflight 全跳 resume，而 --resume --manifest --fidelity
+// 照样 applyManifestCliOverrides 入 manifest → 我方 drift 字段级授权直接放行未经验证的
+// 降档/垃圾凭证/垃圾枚举，写进 authenticated checkpoint 成为新 SSOT。
+// 契约：只有枚举合法 + （降档 ⟹ fidelity_downgrade receipt 验真通过）才返回精确授权
+// 字段集——--fidelity 只授权 fidelity、--fidelity-receipt 验真过才授权 fidelity_receipt，
+// 不再互相搭车；违规=blockers（调用方 fresh/resume 一律 BLOCKER 退出，不静默）。
+// ----------------------------------------------------------------------------
+
+export interface FidelityTransitionInput {
+  projectRoot: string;
+  manifest: GoalManifest;
+  featuresDirRel: string;
+  /** string 过滤后的 CLI 实际应用旗标（与 applyManifestCliOverrides 同一来源对象——
+   * 裸旗标 --fidelity（minimist→true）没应用任何值，不得进入本校验的 applied 面） */
+  applied: { fidelity: boolean; fidelityReceipt: boolean };
+  now?: () => Date;
+}
+
+export interface FidelityTransitionVerdict {
+  /** 本次 CLI transition 授权覆盖的 manifest 身份字段（⊆ {fidelity, fidelity_receipt}） */
+  authorizedFields: Set<string>;
+  /** 非空=CLI 用法本身违规（枚举非法/降档无有效凭证/凭证无效）——一律 BLOCKER */
+  blockers: string[];
+}
+
+export function evaluateFidelityTransitionAuthorization(
+  input: FidelityTransitionInput,
+): FidelityTransitionVerdict {
+  const { manifest } = input;
+  const authorizedFields = new Set<string>();
+  const blockers: string[] = [];
+  if (!input.applied.fidelity && !input.applied.fidelityReceipt) return { authorizedFields, blockers };
+  // ① 枚举硬校验（resolveRequestedFidelity 对非法值静默回退 detected——显式传值必须显式拒）
+  if (input.applied.fidelity && !isValidFidelityTarget(manifest.fidelity)) {
+    blockers.push(
+      `--fidelity 值非法（${String(manifest.fidelity)}）——须 pixel_1to1|semantic_layout|reference_only`,
+    );
+    return { authorizedFields, blockers };
+  }
+  const deref = dereferenceRequirementDocs(input.projectRoot, manifest.requirement, {
+    featuresDirRel: input.featuresDirRel,
+  });
+  // ② 降档凭证验真（唯一降档通道；绑定语义与 evaluateFidelityTierPreflight 同源：
+  //    object_hash=解引用合并需求文本 sha256 + feature + run_id）
+  let receiptValid = false;
+  let receiptReasons: string[] = [];
+  if (manifest.fidelity_receipt) {
+    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+    const v = validateConfirmationReceiptFile(
+      path.join(input.projectRoot, manifest.fidelity_receipt),
+      defaultTrustRegistryPath(input.projectRoot),
+      {
+        action: 'fidelity_downgrade',
+        feature: manifest.feature,
+        object_hash: objectHash,
+        run_id: manifest.run_id,
+        now: input.now,
+      },
+    );
+    receiptValid = v.valid;
+    receiptReasons = v.reasons;
+  }
+  if (input.applied.fidelityReceipt && !receiptValid) {
+    blockers.push(
+      `--fidelity-receipt 校验失败（${receiptReasons.slice(0, 3).join('；') || '文件缺失/不可读'}）——` +
+      '无效凭证不入 manifest（fail-closed）',
+    );
+  }
+  // ③ 只升不降（相对 detected intent，与 fresh preflight 同源语义；intent none=无降档概念）
+  const intent = detectFidelityIntent(deref.combined);
+  if (input.applied.fidelity && intent !== 'none' && manifest.fidelity) {
+    const detected: FidelityTarget = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
+    const resolved = resolveRequestedFidelity(detected, manifest.fidelity, receiptValid);
+    if (resolved.rejectedDowngrade) {
+      blockers.push(
+        `--fidelity=${manifest.fidelity} 相对需求意图（${detected}）是降档且无有效 ` +
+        'fidelity_downgrade receipt——只升不降（fail-closed）',
+      );
+    }
+  }
+  if (blockers.length > 0) return { authorizedFields, blockers };
+  if (input.applied.fidelity) authorizedFields.add('fidelity');
+  if (input.applied.fidelityReceipt) authorizedFields.add('fidelity_receipt');
+  return { authorizedFields, blockers };
 }

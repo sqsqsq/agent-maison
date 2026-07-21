@@ -43,14 +43,18 @@ import {
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import {
+  applyAssetAxisInheritance,
   deriveSummaryVerdictLattice,
   projectCompletionStatus,
   projectReleaseReadiness,
   validateSummaryV11,
 } from './scripts/utils/quality-axes';
+import { createHash } from 'crypto';
+import { receiptDirPath } from './config';
 import {
   annotateAssetTriState,
   applyVisualAcceptance,
+  assetDomainDebtRevision,
   countBlockingDebt,
   deriveVisualDebt,
   loadVisualDebtEx,
@@ -68,6 +72,10 @@ import {
   visualRoundsLedgerPath,
   type VisualRoundEvaluation,
 } from './scripts/utils/visual-rounds-ledger';
+import {
+  appendJournalProposal,
+  intermediateRoundsJournalPath,
+} from './scripts/utils/intermediate-rounds-journal';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
 import {
@@ -136,6 +144,31 @@ import {
 import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
+import { resolveEffectiveVisionContext, sha256File } from './scripts/utils/effective-vision-context';
+
+/** S3：phase harness 侧 policy meet（codex P0-1d：异常 fail-closed 默认盲——异常默认
+ * visual 会让非多模态模型重回视觉链路）。四轮 review P1：ui-spec 已存在时以当前 hash 参与
+ * meet——unverified 产物（含 unverified_clean）即令无独立降级行也不得 visual；文件在但
+ * hash 不可算 → blind-safe。 */
+function resolvePolicyVisualForHarness(projectRoot: string, feature: string): boolean {
+  try {
+    let artifactHashes: string[] | undefined;
+    const uiSpecAbs = uiSpecAbsPath(projectRoot, feature);
+    if (fs.existsSync(uiSpecAbs)) {
+      const h = sha256File(uiSpecAbs);
+      if (!h) return false;
+      artifactHashes = [h];
+    }
+    const vctx = resolveEffectiveVisionContext({
+      projectRoot,
+      feature,
+      ...(artifactHashes ? { artifactHashes } : {}),
+    });
+    return vctx.effective_policy.mode === 'visual';
+  } catch {
+    return false;
+  }
+}
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
 
@@ -508,7 +541,9 @@ async function main(): Promise<void> {
         fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
       }
     : resolveEffectiveFidelityContext(resolveFidelityContextFromFeature(projectRoot, feature), {
-        hasVision: mmProbe.supported,
+        // visual-capability-truth S3：hasVision = meet(探测, 三轴 effective_policy)——
+        // 反证器 blind-safe 降级后，phase harness 的档位钳制与各 gate 同步转盲（消费面收口）。
+        hasVision: mmProbe.supported && resolvePolicyVisualForHarness(projectRoot, feature),
         ocrAvailable: resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
       });
   const context: CheckContext = {
@@ -783,6 +818,56 @@ function consumeVisualRoundPayload(
   for (const c of report.checks) {
     const s = c.structured as { kind?: string; round?: VisualRoundEvaluation } | undefined;
     if (!s || s.kind !== 'visual_diff' || !s.round) continue;
+    // S5（visual-capability-truth 单写者）：goal 态 **agent 自跑** harness（有 goal 轮次
+    // 身份但无 MAISON_GOAL_GATE_HARNESS 标）不直写正式 ledger——写 journal proposal，
+    // 由 goal-runner 在 invocation 结束后顺序重放收编（20260718 孤儿行误熔断的根治）。
+    // gate harness（runner 直接 spawn，带标）与交互态维持直写。
+    const isGoalAgentSide =
+      Boolean(process.env.MAISON_GOAL_RUN_ID) && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+    if (isGoalAgentSide && s.round.disposition === 'appended' && s.round.row.attempt_id) {
+      try {
+        const row = s.round.row;
+        const rowAttemptId = row.attempt_id as string; // 外层已判真值
+        appendJournalProposal(
+          intermediateRoundsJournalPath(
+            projectRoot,
+            report.feature,
+            (process.env.MAISON_GOAL_RUN_ID ?? row.goal_run_id ?? 'unknown-run').trim(),
+          ),
+          {
+            attemptId: rowAttemptId,
+            roundInput: {
+              loopId: row.loop_id,
+              attemptId: rowAttemptId,
+              goalRunId: row.goal_run_id ?? null,
+              buildFingerprint: row.build_fingerprint,
+              screensHash: row.screens_hash,
+              defectFingerprints: row.defect_fingerprints,
+              sourceFailHitIds: row.source_fail_hit_ids,
+              sourceWarnIds: row.source_warn_ids,
+              fingerprintable: row.fingerprintable,
+              awaitHumanOnly: row.await_human_only,
+              actionableResidual: row.actionable_residual,
+            },
+            claimed: {
+              base_state_hash: row.base_state_hash,
+              row_hash: row.row_hash,
+              fused: s.round.decision.fused,
+            },
+          },
+        );
+        console.log('   [visual-rounds] goal 态中间轮已写 journal proposal（runner 收编后入正式账本）');
+        return {
+          loop_id: row.loop_id,
+          attempt: row.attempt_id,
+          row_hash: row.row_hash,
+          disposition: 'journaled',
+        } as HarnessRunSummary['visual_round'];
+      } catch (e) {
+        console.warn(`   ⚠ [visual-rounds] journal 写入失败（${(e as Error).message}）——按 append_failed 上报`);
+        return { loop_id: s.round.row.loop_id, attempt: s.round.row.attempt_id, disposition: 'append_failed' } as HarnessRunSummary['visual_round'];
+      }
+    }
     // review-fix（codex P1-2）：commitVisualRound 落盘失败返回 disposition=append_failed
     // （无 row_hash）——如实进 summary，goal-runner 据此 fail-closed halt；绝不在写失败后
     // 仍宣称 appended（末轮无下次对账兜底）。
@@ -831,6 +916,117 @@ function resolveAxisApplicability(
  * blind-visual-hardening d5：视觉债务管线（派生→验收消费→落盘→轴调整）。
  * 全程 try/catch best-effort（债务管线异常不阻断 summary 落盘——但打印告警不静默）。
  */
+/**
+ * S7（P2-J.2）I/O 面：五指纹一致性判定 → AssetAxisInheritance（null=coding summary 不可得，
+ * 不继承）。判据：coding summary 1.1 存在且 asset 轴可读；review 闭环 attestation 对账 ok
+ * （源码/资产未漂移——build/source/inventory 三链的现实可得代理）；visual-debt 无 open 的
+ * asset 域条目（debt revision 面）。证据引用=coding summary sha256 + attestation inventory。
+ */
+function resolveAssetAxisInheritance(
+  projectRoot: string,
+  feature: string,
+): import('./scripts/utils/quality-axes').AssetAxisInheritance | null {
+  try {
+    const codingSummaryPath = path.join(
+      receiptDirPath(projectRoot, feature, 'coding'),
+      'reports',
+      'summary.json',
+    );
+    if (!fs.existsSync(codingSummaryPath)) return null;
+    const raw = fs.readFileSync(codingSummaryPath, 'utf-8');
+    const parsed = JSON.parse(raw) as {
+      schema_version?: string;
+      gate_fingerprint?: { fingerprint?: string } | string;
+      quality_axes?: { asset?: { applicable?: boolean; verdict?: string } };
+      asset_debt_revision?: string;
+    };
+    if (parsed.schema_version !== '1.1' || !parsed.quality_axes?.asset) return null;
+    const upstreamVerdict = String(parsed.quality_axes.asset.verdict ?? 'UNVERIFIED');
+    const summaryHash = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+    const issues: string[] = [];
+    // 指纹链 0（codex 实施 review P1-2 + 二轮 P1-6 fail-closed）：coding gate_fingerprint
+    // vs 当前重算——规则面变更后 asset 结论按 STALE；任一侧**缺失**同样不继承（缺指纹
+    // ≠ 指纹一致，fail-closed）。
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const gf = require('./scripts/utils/gate-fingerprint') as typeof import('./scripts/utils/gate-fingerprint');
+      const layout = detectRepoLayout(projectRoot);
+      const current = gf.computeGateFingerprint(layout.frameworkRoot, 'coding');
+      const recorded =
+        typeof parsed.gate_fingerprint === 'string'
+          ? parsed.gate_fingerprint
+          : parsed.gate_fingerprint?.fingerprint;
+      if (!current || !recorded) {
+        issues.push(`coding gate_fingerprint 不可比（recorded=${recorded ?? '缺失'}，current=${current ?? '缺失'}）——缺指纹不继承`);
+      } else if (current !== recorded) {
+        issues.push(`coding gate_fingerprint 漂移（规则面已变：${recorded} → ${current}）`);
+      }
+    } catch (e) {
+      issues.push(`gate fingerprint 重算异常：${(e as Error).message}`);
+    }
+    // 指纹链 1：review 闭环 attestation 对账（源码漂移检测=source fingerprint 实质绑定）；
+    // 证据引用记 inventory aggregate_sha256（二轮 P1-6：file_count 不是 hash）。
+    let inventoryRef = '';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const ca = require('./scripts/utils/closure-attestation') as typeof import('./scripts/utils/closure-attestation');
+      const att = ca.loadReviewClosureAttestation(projectRoot, feature);
+      if (!att) issues.push('无 review closure attestation（源码基线不可证）');
+      else {
+        const rec = ca.reconcileSourceTreeAgainstAttestation(projectRoot, att);
+        if (!rec.ok) issues.push(`源码漂移（+${rec.added.length}/~${rec.modified.length}/-${rec.deleted.length}）`);
+        const aggregate = (att.inventory as { aggregate_sha256?: string }).aggregate_sha256;
+        if (!aggregate) issues.push('attestation inventory 缺 aggregate_sha256——inventory hash 不可锚定');
+        else inventoryRef = `inventory:${aggregate}`;
+      }
+    } catch (e) {
+      issues.push(`attestation 对账异常：${(e as Error).message}`);
+    }
+    // 指纹链 2（二轮 P1-6 补上游比对）：asset 域债务 revision——coding summary 落盘值 vs
+    // 当前重算（域内投影，跨阶段其他域条目变动不误伤）；coding 侧未记录 → 不继承。
+    let debtRevisionRef = '';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const vd = require('./scripts/utils/visual-debt') as typeof import('./scripts/utils/visual-debt');
+      const load = vd.loadVisualDebtEx(projectRoot, feature);
+      if (load.state === 'invalid') issues.push('visual-debt.json 损坏');
+      else {
+        const openAsset = (load.doc?.entries ?? []).filter(
+          e => e.status === 'open' && /asset/i.test(e.source_check_id ?? ''),
+        );
+        if (openAsset.length > 0) issues.push(`债务账本存在 open 资产条目（${openAsset.map(e => e.id).join(',')}）`);
+        const currentRevision = vd.assetDomainDebtRevision(load.doc);
+        const recordedRevision = (parsed.asset_debt_revision ?? '').trim();
+        if (!recordedRevision) {
+          issues.push('coding summary 未记录 asset_debt_revision——债务 revision 链不可比（旧版 summary 不继承）');
+        } else if (recordedRevision !== currentRevision) {
+          issues.push(`asset 域债务 revision 漂移（coding=${recordedRevision} → 当前=${currentRevision}）`);
+        }
+        debtRevisionRef = `debt:${currentRevision}`;
+      }
+    } catch (e) {
+      issues.push(`debt 账本读取异常：${(e as Error).message}`);
+    }
+    // 指纹链 3（build fingerprint，三轮 review P1-5 fail-closed）：7.2b 落地前 build 链
+    // 不可证——**不允许部分 provenance 的 PASS 继承**（spec 要求五链全一致），恒并入缺证
+    // 原因 → 继承保持 STALE/needs_human；build 身份钩子（hylyre 实机采集）接入后解除。
+    issues.push('build fingerprint 链未接入（tasks 7.2b pending）——五链不齐，asset 轴不继承');
+    return {
+      upstreamPhase: 'coding',
+      upstreamVerdict: upstreamVerdict as import('./scripts/utils/quality-axes').AxisVerdict,
+      provenanceIntact: issues.length === 0,
+      provenanceDetail: issues.join('；') || 'ok',
+      evidenceRefs: [
+        `summary:${summaryHash}`,
+        ...(inventoryRef ? [inventoryRef] : []),
+        ...(debtRevisionRef ? [debtRevisionRef] : []),
+      ],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function applyVisualDebtPipeline(
   projectRoot: string,
   report: ScriptReport,
@@ -969,10 +1165,30 @@ function writeRunSummaryBase(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
   );
+  // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
+  // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
+  // 任一漂移 → STALE（needs_human），不复制裸 PASS。应用后重投影。
+  if (report.phase === 'testing') {
+    const inh = resolveAssetAxisInheritance(projectRoot, report.feature);
+    if (inh) {
+      applyAssetAxisInheritance(lattice.quality_axes, inh);
+      lattice.release_readiness = projectReleaseReadiness(lattice.quality_axes);
+      lattice.completion_status = projectCompletionStatus(lattice.quality_axes);
+    }
+  }
   // blind-visual-hardening d5：视觉债务 SSOT 派生（harness 派生非 agent 自报）+ 人工验收
   // receipt 消费（只清 needs_human；needs_fix 拒绝）+ 未清偿债务 → visual 轴 UNVERIFIED
   //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
   applyVisualDebtPipeline(projectRoot, report, lattice);
+  // S7 二轮 P1-6：asset 域债务 revision 落盘（继承指纹链 2 的上游锚点——testing 期
+  // resolveAssetAxisInheritance 重算比对；债务管线刚写完盘，此处读的是本轮定稿态）。
+  let assetDebtRevision: string | undefined;
+  try {
+    const debtNow = loadVisualDebtEx(projectRoot, report.feature);
+    if (debtNow.state !== 'invalid') assetDebtRevision = assetDomainDebtRevision(debtNow.doc);
+  } catch {
+    /* 债务面异常时不落 revision（继承侧按缺失 fail-closed） */
+  }
   // 不变量对账（codex 实施 review P0-2 fail-closed）：投影与 legacy 不一致=框架派生缺陷——
   // 顶层 verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。
   const VERDICT_STRICTNESS: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
@@ -1005,6 +1221,7 @@ function writeRunSummaryBase(
     fail_count: report.summary.fail,
     warn_count: report.summary.warn,
     ...(gateFingerprint ? { gate_fingerprint: gateFingerprint } : {}),
+    ...(assetDebtRevision ? { asset_debt_revision: assetDebtRevision } : {}),
     script_report: rel('script-report.json'),
     merged_report: rel('merged-report.md'),
     ai_prompt: rel('ai-prompt.md'),

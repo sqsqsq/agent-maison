@@ -1226,11 +1226,29 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=true（claude adapter）+ 1:1 意图 → 不钳制，effective=pixel_1to1',
+      name: 'E0 resolvePhaseCapabilityAdvisory: hasVision=true（claude adapter + 本 run canary 实测）+ 1:1 意图 → 不钳制，effective=pixel_1to1',
       run: () => {
         const root = mkCapabilityProject('hmos-app');
         try {
           const resolvedProfile = loadTestResolvedProfile(root);
+          // S3 硬化后语义：adapter 声明只授权探测，不进 visual——须本 run canary 实测
+          //（run_probed）才 hasVision=true（codex 实施 review P0-1a：声明≠能力）。
+          fs.writeFileSync(
+            path.join(root, 'framework.local.json'),
+            JSON.stringify({
+              schema_version: '1.0',
+              agent_adapter: 'claude',
+              vision: {
+                canary: {
+                  adapter: 'claude', verdict: 'tool_read',
+                  probed_at: new Date().toISOString(),
+                  probed_via: 'goal', probe_version: 2,
+                  model: 'unknown', run_id: MINIMAL_MANIFEST.run_id,
+                },
+              },
+            }, null, 2),
+            'utf-8',
+          );
           const manifest: GoalManifest = {
             ...MINIMAL_MANIFEST,
             adapter: 'claude', // agents/claude/adapter.yaml 声明 image_input: tool_read
@@ -1238,7 +1256,7 @@ export function runAll(): UnitCaseResult[] {
           };
           const advisory = resolvePhaseCapabilityAdvisory(manifest, root, FRAMEWORK_ROOT, resolvedProfile, 'spec');
           assert(advisory !== null, '真实 UI 需求应注入能力块');
-          assert(advisory!.hasVision === true, 'claude adapter 应判 hasVision=true');
+          assert(advisory!.hasVision === true, 'claude adapter + 本 run canary 应判 hasVision=true');
           assert(advisory!.effectiveFidelity === 'pixel_1to1', 'hasVision=true 不应钳制：' + JSON.stringify(advisory));
           assert(advisory!.fidelityClamped === false, JSON.stringify(advisory));
           assert(advisory!.ocrJsonPaths.length === 0, '有视觉时不应跑 OCR 预扫描：' + JSON.stringify(advisory));

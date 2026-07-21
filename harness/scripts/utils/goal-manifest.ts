@@ -3,6 +3,7 @@
  * {features_dir}/<feature>/goal-runs/<run-id>/manifest.json
  */
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
@@ -55,6 +56,19 @@ export interface GoalManifest {
   run_id: string;
   report_dir: string;
   created_at: string;
+  /**
+   * visual-capability-truth S4：goal 启动前预授权的源码变更（authority_kind=
+   * pre_run_manifest 的唯一合法来源）。runner 在 run_start 冻结 manifest hash，
+   * 运行中补写本字段不构成授权（授权判定只引用冻结快照）。
+   */
+  pre_authorized_mutations?: Array<{
+    id?: string;
+    phase: string;
+    allowed_files: string[];
+    allowed_change_kind?: 'test_seam' | 'integration_glue';
+    max_files: number;
+    approved_by?: string;
+  }>;
 }
 
 export interface GoalManifestParseOptions {
@@ -77,10 +91,94 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
   max_transient_api_retries: 3,
 };
 
+/**
+ * 十轮 review P1：manifest **身份哈希**——覆盖 run 期不应变的安全相关字段
+ * （start/end phase / requirement / chain / fidelity / budget / dependency / unattended /
+ * pre_authorized_mutations），排除 runner 运行中合法改写的易变字段（adapter/provenance/
+ * created_at）。用于 resume 时"当前规范化 hash 直接比历史冻结值"——停机期间改
+ * requirement/chain/budget/allowed_tools/fidelity 等非授权字段即被发现（旧文件全文件
+ * hash 会因 writeGoalManifest 重写而恒变，无法承担漂移检测）。
+ */
+/** 十一轮 review P1：**逐字段**身份哈希——resume 时字段级 diff（哪些字段变了），
+ * 支撑"只允许本次 override 覆盖对应字段"的字段级授权（裸 --override-start 不得放行
+ * requirement/budget 等无关字段的漂移）。 */
+export function computeManifestIdentityFields(manifest: GoalManifest): Record<string, string> {
+  const fields: Record<string, unknown> = {
+    schema_version: manifest.schema_version,
+    start_phase: manifest.start_phase,
+    end_phase: manifest.end_phase,
+    feature: manifest.feature,
+    requirement: manifest.requirement ?? null,
+    chain_override: manifest.chain_override ?? null,
+    fidelity: manifest.fidelity ?? null,
+    fidelity_receipt: manifest.fidelity_receipt ?? null,
+    budget: manifest.budget,
+    dependency_policy: manifest.dependency_policy,
+    unattended: manifest.unattended,
+    pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
+  };
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    out[k] = crypto.createHash('sha256').update(stableJson(v), 'utf-8').digest('hex').slice(0, 16);
+  }
+  return out;
+}
+
+export function computeManifestIdentityHash(manifest: GoalManifest): string {
+  return crypto.createHash('sha256')
+    .update(stableJson(computeManifestIdentityFields(manifest)), 'utf-8')
+    .digest('hex');
+}
+
+/** 两组逐字段哈希间发生变化的字段名（含新增/删除键）。 */
+export function diffManifestIdentityFields(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): string[] {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].filter(k => a[k] !== b[k]).sort();
+}
+
+/** override 旗标 → 其授权可变更的身份字段集（--override-manifest=整体替换，授权全部字段）。
+ * 十三轮 review P0-1：fidelity/fidelity_receipt 字段授权**不在本函数**——由
+ * evaluateFidelityTransitionAuthorization（goal-preflight）在枚举+降档 receipt 验真通过后
+ * 精确给出（十二轮的 fidelityApplied 搭车授权会放行 resume 绕过降档凭证验证的路径）。 */
+export function overrideAuthorizedIdentityFields(argv: {
+  'override-manifest'?: boolean;
+  'override-start'?: boolean;
+  'override-end'?: boolean;
+}): 'all' | Set<string> {
+  if (argv['override-manifest']) return 'all';
+  const set = new Set<string>();
+  if (argv['override-start']) set.add('start_phase');
+  if (argv['override-end']) set.add('end_phase');
+  return set;
+}
+
+/** 稳定序列化（键排序）——不引入外部依赖，避免键序影响哈希。 */
+function stableJson(v: unknown): string {
+  const seen = new WeakSet();
+  const norm = (x: unknown): unknown => {
+    if (x === null || typeof x !== 'object') return x;
+    if (seen.has(x as object)) return null;
+    seen.add(x as object);
+    if (Array.isArray(x)) return x.map(norm);
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(x as Record<string, unknown>).sort()) {
+      out[k] = norm((x as Record<string, unknown>)[k]);
+    }
+    return out;
+  };
+  return JSON.stringify(norm(v));
+}
+
 export function newRunId(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+  // codex 六轮（二期）P1：秒级时间戳跨工程/feature 同秒必碰撞（checkpoint namespace、
+  // supersede 引用等全局键消费）——追加 6 hex 随机后缀保全局唯一。
+  const rand = crypto.randomBytes(3).toString('hex');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z-${rand}`;
 }
 
 function normalizePhase(v: unknown, fallback: FeaturePhase): FeaturePhase {

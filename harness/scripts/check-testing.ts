@@ -84,7 +84,7 @@ import {
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
-import { countBlockingDebt, loadVisualDebt } from './utils/visual-debt';
+import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
   loadTestingRootPollutionMeta,
@@ -99,7 +99,15 @@ import { isPhaseDisabledByProfile } from '../profile-loader';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
-import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
+import { parseTestCaseFlowBlock, triageCascade, validateTestCaseFlow } from './utils/test-case-flow';
+import {
+  loadVisualDiffNavConfig,
+  loadVisualDiffNavConfigV2,
+  resolveIdentityForTargets,
+  toLegacyNavConfig,
+  validateNavConfig,
+  validateNavConfigV2,
+} from '../../profiles/hmos-app/harness/visual-diff-nav';
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
@@ -307,6 +315,75 @@ function checkTestCaseTableFormat(ctx: CheckContext, plan: string | null): Check
 
 function checkTestCasePriorityValues(ctx: CheckContext, plan: string | null): CheckResult[] {
   const id = 'test_case_priority_values';
+  if (!plan) {
+    return checkTestPlanMissingSkip(ctx, id);
+  }
+  return checkTestCasePriorityValuesBody(ctx, plan, id);
+}
+
+function checkTestPlanMissingSkip(ctx: CheckContext, id: string): CheckResult[] {
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'MAJOR',
+    status: 'SKIP',
+    details: 'test-plan.md 不存在。',
+  }];
+}
+
+/**
+ * S6（visual-capability-truth P1-I）：test_case_flow machine block 与 Markdown TC 表
+ * 一致性门禁——双 SSOT 漂移（缺/多/引用错/环）→ FAIL；无块 → WARN 建议声明
+ * （级联归类与 BLOCKED_BY 语义依赖本块，未声明则失败读数退回"N 个独立失败"形态）。
+ */
+export function checkTestCaseFlowConsistency(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'test_case_flow_consistency';
+  const description = 'test_case_flow 结构化 DAG 与用例表一致性（级联归类 SSOT）';
+  if (!plan) {
+    return [{ id, category: 'structure', description, severity: 'MAJOR', status: 'SKIP', details: 'test-plan.md 不存在。' }];
+  }
+  const parsed = parseTestCaseFlowBlock(plan);
+  if (parsed.error) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `test_case_flow 块不可解析：${parsed.error}`,
+      suggestion: '按契约修正：test_case_flow 为 tc_id → { precondition: { kind: fresh_app|after, tc|tcs, reset } } 映射。',
+    }];
+  }
+  const section = getSectionContent(plan, '测试用例');
+  const tables = section ? extractTables(section) : [];
+  const mdIds = tables.length > 0
+    ? getColumnValues(tables[0], '用例编号').map(v => v.trim()).filter(Boolean)
+    : [];
+  if (!parsed.flow) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MAJOR', status: 'WARN',
+      details:
+        'test-plan.md 无顶层 test_case_flow YAML 块——单 session 状态链失败将读成 N 个独立缺陷' +
+        '（20260718：TC-003 根故障级联成 7 FAIL）。建议声明每 TC 前置（fresh_app|after）。',
+      suggestion: '在 test-plan.md 顶部加 ```yaml test_case_flow: { TC-001: { precondition: { kind: fresh_app, reset: restart } }, ... } ```。',
+    }];
+  }
+  const errors = validateTestCaseFlow(parsed.flow, mdIds);
+  if (errors.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: ['【test_case_flow ↔ 用例表漂移/引用非法】', ...errors.map(e => `  - ${e}`)].join('\n'),
+      suggestion: '保持 machine block 与人审表完全一致（同增同删）；after 引用须存在且无环。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `test_case_flow ${Object.keys(parsed.flow).length} 条与用例表一致（引用/环校验通过）。`,
+  }];
+}
+
+function checkTestCasePriorityValuesBody(ctx: CheckContext, plan: string, id: string): CheckResult[] {
   if (!plan) {
     return [{
       id,
@@ -878,7 +955,22 @@ export function checkNegativeTestingVerdictClosure(report: string | null): Check
 export function checkVisualDebtDisclosure(ctx: CheckContext, report: string | null): CheckResult[] {
   const id = 'visual_debt_disclosure';
   const description = '视觉债务披露门禁（存在未清偿债务时结论必须引用视觉债务清单）';
-  const debt = loadVisualDebt(ctx.projectRoot, ctx.feature);
+  // cursor 深度 review P3：披露判定是消费面而非纯展示——deprecated loadVisualDebt 会把
+  // 损坏账本归 null（open+accepted=0 → PASS），绕过单调 ledger 的 fail-closed；改三态加载。
+  const debtLoad = loadVisualDebtEx(ctx.projectRoot, ctx.feature);
+  if (debtLoad.state === 'invalid') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details:
+        `visual-debt.json 损坏（${debtLoad.reason}）——债务账本不可信时不得视同"无债务"放行披露门禁（fail-closed）。`,
+      suggestion:
+        '不要覆盖原文件（保留取证现场）；核查损坏原因（进程中断/手改）后修复账本 JSON 再重跑本 harness。',
+      failure_kind: 'visual_debt_ledger_corrupt',
+      blocking_class: 'product_verdict',
+    }];
+  }
+  const debt = debtLoad.doc;
   const { open, accepted } = countBlockingDebt(debt);
   if (open + accepted === 0) {
     return [{
@@ -2238,6 +2330,31 @@ function checkDeviceTestRunGate(
     const outcomeEval = evaluateHylyreRunOutcome(run.trace);
     const runGatePass = outcomeEval.verdict === 'pass';
 
+    // S6（visual-capability-truth P1-I）：级联归类三分——**不改变通过率/verdict**（BLOCKED_BY
+    // 非 PASS：仍进分母、仍 FAIL），只把"1 根故障 + N 级联"如实呈现（20260718：7 FAIL 实为
+    // 1 导航根故障级联）。SSOT=test-plan.md 顶层 test_case_flow YAML 块；无块 → 不归类。
+    let cascadeLines: string[] = [];
+    try {
+      const planResolvedForFlow = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+      const planMd = fs.existsSync(planResolvedForFlow.actualPath)
+        ? fs.readFileSync(planResolvedForFlow.actualPath, 'utf-8')
+        : null;
+      const parsedFlow = planMd ? parseTestCaseFlowBlock(planMd) : { flow: null };
+      const failedIds = (run.trace?.cases ?? [])
+        .filter(c => c.status === '失败' || c.status === '阻塞')
+        .map(c => c.id)
+        .filter((x): x is string => typeof x === 'string');
+      if (parsedFlow.flow && failedIds.length > 0) {
+        const triage = triageCascade(parsedFlow.flow, failedIds);
+        cascadeLines = [
+          `级联归类（root/blocked 三分——通过率与裁决不变）：根故障 ${[...triage.rootFails, ...triage.independentFails].join(', ') || '无'}；` +
+          (triage.blocked.length > 0
+            ? `级联 ${triage.blocked.map(b => `${b}(BLOCKED_BY ${triage.byCase[b].blocked_by})`).join(', ')}`
+            : '无级联'),
+        ];
+      }
+    } catch { /* 归类失败不影响门禁判定 */ }
+
     const out: CheckResult[] = [
       {
         id,
@@ -2254,6 +2371,7 @@ function checkDeviceTestRunGate(
             : [
                 '自动化产物未达标（run.ok 仅表示 runner 未崩溃）：',
                 ...outcomeEval.reasonLines.map(l => `  - ${l}`),
+                ...cascadeLines.map(l => `  - ${l}`),
               ]),
         ].join('\n'),
         suggestion: runGatePass
@@ -2274,11 +2392,18 @@ function checkDeviceTestRunGate(
             ctx.frameworkRoot,
           );
           // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
-          const navConfig = loadVisualDiffNavConfig(ctx.projectRoot, ctx.feature);
+          // S2 P0-C（visual-capability-truth）：升 2.0 归一读取——identity 锚点随屏配置；
+          // pixel_1to1 下 P0 屏须有已确认 identity（proposed 候选不作数）。
+          const navConfigV2 = loadVisualDiffNavConfigV2(ctx.projectRoot, ctx.feature);
+          const navConfig = navConfigV2 ? toLegacyNavConfig(navConfigV2) : null;
           // P1-A fail-fast（消费 validateNavConfig，不静默裸采）：≥2 P0 屏须导航区分；缺配置/配置不一致=明确失败，不进 capture（防误导 PASS）。
           const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
           const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
-          const navValidation = navConfig ? validateNavConfig(navConfig, navP0TargetIds) : null;
+          const navValidation = navConfigV2
+            ? validateNavConfigV2(navConfigV2, navP0TargetIds, {
+                requireConfirmedIdentity: isPixel1to1(ctx),
+              })
+            : null;
           // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩
           // （bc-openCard 洞④：semantic_layout 下 fidelityRatchet 把缺 nav 降成 WARN，
           //  9 个 P0 屏的视觉比对被静默吞掉——nav 配置是 agent 可产出的普通 artifact，
@@ -2349,6 +2474,10 @@ function checkDeviceTestRunGate(
                     ...readDeviceTestRunHylyreNavOpts(run.logPath),
                   }),
                 }
+              : {}),
+            // S2 P0-C：identity gate 输入（proposed 候选由 capture 层跳过；pixel 强制在上方校验层）
+            ...(navConfigV2
+              ? { screenIdentity: resolveIdentityForTargets(navConfigV2, navP0TargetIds) }
               : {}),
           });
           const p0Failed = cap.p0CaptureFailures ?? [];
@@ -2790,6 +2919,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));
     results.push(...safeRun(() => checkTestCaseTableFormat(ctx, plan), 'test_case_table_format'));
     results.push(...safeRun(() => checkTestCasePriorityValues(ctx, plan), 'test_case_priority_values'));
+    // S6（visual-capability-truth P1-I）：TC DAG machine block 一致性
+    results.push(...safeRun(() => checkTestCaseFlowConsistency(ctx, plan), 'test_case_flow_consistency'));
     results.push(...safeRun(() => checkTestEnvironmentDefined(ctx, plan), 'test_environment_defined'));
     results.push(...safeRun(() => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
     results.push(...safeRun(() => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));

@@ -15,6 +15,7 @@ import {
   sanitizeSpawnEnv,
   scanCommandForPreloadInjection,
   runProcessIntegrityPreflight,
+  stripTrustAnchorEnv,
 } from '../../scripts/utils/process-integrity';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -22,6 +23,25 @@ const cases: Array<{ name: string; run: () => void }> = [];
 function test(name: string, run: () => void): void {
   cases.push({ name, run });
 }
+
+test('十轮 P0：stripTrustAnchorEnv 大小写不敏感——小写/混合大小写信任锚键同样剥离（Windows 绕过封堵）', () => {
+  const { env, stripped } = stripTrustAnchorEnv({
+    MAISON_HMAC_GOAL_CHECKPOINT: 'k1',
+    maison_hmac_goal_checkpoint: 'k2',
+    Maison_Hmac_Foo: 'k3',
+    maison_trust_registry: '/r',
+    MAISON_GOAL_CHECKPOINT_DIR: '/cp',
+    maison_goal_checkpoint_dir: '/cp2',
+    PATH: '/usr/bin',
+    MAISON_GOAL_RUN_ID: 'r',
+  });
+  for (const k of ['MAISON_HMAC_GOAL_CHECKPOINT', 'maison_hmac_goal_checkpoint', 'Maison_Hmac_Foo', 'maison_trust_registry', 'MAISON_GOAL_CHECKPOINT_DIR', 'maison_goal_checkpoint_dir']) {
+    assert.strictEqual(env[k], undefined, `信任锚键 ${k} 须剥离`);
+    assert.ok(stripped.includes(k), `${k} 应记入 stripped`);
+  }
+  assert.strictEqual(env.PATH, '/usr/bin', 'PATH 保留');
+  assert.strictEqual(env.MAISON_GOAL_RUN_ID, 'r', '非信任锚 MAISON_ 键保留');
+});
 
 test('scan_detects_all_five_preload_flags', () => {
   // cursor/codex 点名全集：--require/-r/--import/--loader/--experimental-loader（=与空格两种形态）

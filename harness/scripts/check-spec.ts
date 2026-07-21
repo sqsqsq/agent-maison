@@ -60,6 +60,19 @@ import {
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
 import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, type UiSpecAsset } from './utils/ui-spec-shared';
+import { loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
+import { scanUiSpecCounterevidence, type RefElementLite } from './utils/vision-counterevidence';
+import { verifyVlSigningChain } from './utils/critic-receipt-producer';
+import { computeGateFingerprint } from './utils/gate-fingerprint';
+import {
+  appendArtifactAttestation,
+  appendPolicyDowngrade,
+  computeCurrentBindingContext,
+  hasActiveDowngradeForArtifactHash,
+  readLatestRawAttestation,
+  resolveEffectiveVisionContext,
+  sha256File,
+} from './utils/effective-vision-context';
 import {
   defaultTrustRegistryPath,
   validateConfirmationReceiptFile,
@@ -314,6 +327,181 @@ export function collectFeatureReferenceImageHashes(projectRoot: string, feature:
   };
   walk(path.resolve(featRoot));
   return out;
+}
+
+/**
+ * visual-capability-truth S3：视觉产出确定性反证器。
+ * contradicted（已证明矛盾）→ BLOCKER FAIL + attestation contradicted + blind-safe 策略降级；
+ * evidence_gap（证据不足）→ MAJOR WARN + attestation unverified（reasons 前缀 evidence_gap:）
+ * ——两态同样使 vl_multimodal 失效（fidelity gate 消费 attestation），审计措辞不得混淆；
+ * heuristic → observe-only 计数落盘。
+ */
+export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult[] {
+  const id = 'vision_output_counterevidence';
+  const description = '视觉产出反证器（U+FFFD/无映射/低置信升 UI——三态分立，attestation 落盘）';
+  const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
+  const uiDoc = loadUiSpecFile(uiSpecAbs);
+  if (!uiDoc) return [];
+  const refDoc = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature));
+  const scan = scanUiSpecCounterevidence(
+    uiDoc,
+    (refDoc?.elements as RefElementLite[] | undefined) ?? null,
+  );
+  const uiSpecHash = sha256File(uiSpecAbs);
+  const uiSpecRelP = path
+    .relative(ctx.projectRoot, uiSpecAbs)
+    .replace(/\\/g, '/');
+  // attestation 落盘（append-only；同 hash 同 verdict 幂等跳过）
+  // 五轮 review P0-1：vision 账本单写者（对齐 visual-rounds ledger 的 S5 纪律）——
+  // goal 态 agent 自跑 harness 只**计算**反证结论（结果照常展示回喂），不写账本；
+  // 只有 runner 直接 spawn 的 gate harness（MAISON_GOAL_GATE_HARNESS=1）或非 goal 交互态
+  // 允许提交。agent 即便伪造该 env 直写，外层 runner 的 invoke 快照括号仍会检出并 halt。
+  const ledgerWriteAllowed =
+    !isGoalOrchestrationEnv() || process.env.MAISON_GOAL_GATE_HARNESS === '1';
+  const persistAttestation = (
+    verdict: 'contradicted' | 'unverified' | 'verified',
+    reasons: string[],
+    binding?: import('./utils/effective-vision-context').ArtifactAttestationRecord['binding'],
+  ): void => {
+    if (!uiSpecHash || !ledgerWriteAllowed) return;
+    // 幂等判据含 verdict/reasons/**canonical binding**（五轮 P1：同 hash 新 run/invoke 重验
+    // 时 binding 已变，不得跳写让账面保留旧签发身份）。
+    const existing = readLatestRawAttestation(ctx.projectRoot, ctx.feature, uiSpecHash);
+    if (
+      existing &&
+      existing.verdict === verdict &&
+      existing.reasons.join('|') === reasons.join('|') &&
+      JSON.stringify(existing.binding ?? null) === JSON.stringify(binding ?? null)
+    ) return;
+    appendArtifactAttestation(ctx.projectRoot, ctx.feature, {
+      artifact_path: uiSpecRelP,
+      artifact_hash: uiSpecHash,
+      verdict,
+      reasons,
+      source: 'vision_output_counterevidence',
+      ...(binding ? { binding } : {}),
+    });
+  };
+  if (scan.contradicted.length > 0) {
+    persistAttestation('contradicted', scan.contradicted.map(f => `${f.code}:${f.where}`));
+    // blind-safe 策略降级（幂等：activeDowngrades 层去重靠 supersede 语义，此处按 hash 防重复行）
+    if (ledgerWriteAllowed && uiSpecHash && !hasActiveDowngradeForHash(ctx.projectRoot, ctx.feature, uiSpecHash)) {
+      appendPolicyDowngrade(ctx.projectRoot, ctx.feature, {
+        reason: 'artifact_visual_attestation=contradicted（effective policy downgraded to blind-safe）',
+        artifact_path: uiSpecRelP,
+        artifact_hash: uiSpecHash,
+        source: 'vision_output_counterevidence',
+      });
+    }
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: [
+        `【反证成立（contradicted）】视觉产出与确定性证据矛盾——本产物的视觉验证签名无效，`,
+        `本 run 视觉策略保守降级 blind-safe（措辞注意：这是策略降级，不等于已证明模型无视觉能力）：`,
+        ...scan.contradicted.slice(0, 8).map(f => `  - [${f.code}] ${f.where}：${f.detail}`),
+        ...(scan.evidenceGap.length > 0 ? [`另有 ${scan.evidenceGap.length} 项证据缺口（evidence_gap，详见 WARN 明细）`] : []),
+      ].join('\n'),
+      suggestion:
+        '修正 ui-spec 受污染文本（重新核对参考图/重采 OCR）→ 产物新 hash 重新走验证（verified attestation 自动解除该降级）；或走盲档地板交付。',
+      affected_files: [uiSpecRelP],
+    }];
+  }
+  if (scan.evidenceGap.length > 0) {
+    persistAttestation('unverified', scan.evidenceGap.map(f => `evidence_gap:${f.code}:${f.where}`));
+    // codex 实施 review P0-3b：evidence_gap 同样落 blind-safe 策略降级（S1 design §4：
+    // 两态同样可安全降 blind-safe；措辞=缺证降级非证伪降级）
+    if (ledgerWriteAllowed && uiSpecHash && !hasActiveDowngradeForHash(ctx.projectRoot, ctx.feature, uiSpecHash)) {
+      appendPolicyDowngrade(ctx.projectRoot, ctx.feature, {
+        reason: 'artifact_visual_attestation=evidence_gap（缺证降级 blind-safe——非证伪，补证后新 hash verified 自动解除）',
+        artifact_path: uiSpecRelP,
+        artifact_hash: uiSpecHash,
+        source: 'vision_output_counterevidence',
+      });
+    }
+    return [{
+      id, category: 'structure', description,
+      severity: 'MAJOR', status: 'WARN',
+      details: [
+        `【证据不足（evidence_gap）】${scan.evidenceGap.length} 项 UI 文本缺乏可信视觉证据——`,
+        `不构成"已证伪"，但 vl_multimodal 签名不可采信（缺证 ≠ 证伪，审计分立）；本 run 视觉策略缺证降级 blind-safe：`,
+        ...scan.evidenceGap.slice(0, 8).map(f => `  - [${f.code}] ${f.where}：${f.detail}`),
+        ...(scan.heuristics.length > 0 ? [`observe-only 计数：${scan.heuristics.map(h => h.code).join(', ')}`] : []),
+      ].join('\n'),
+      suggestion: '为无映射文本补 source_ref/核对参考图；置信管线落盘后低置信项自动纳入判定。',
+      affected_files: [uiSpecRelP],
+    }];
+  }
+  // 三轮 review P0-3（收紧二轮）：文本互证（ui-spec vs ref-elements）两个文件都是 agent 产物，
+  // 单靠 exact/substring 匹配仍是间接自签。verified 只在**正向 provenance + 终签链全绑定**时
+  // 铸造：当前 run/精确 invoke 的 runner 事件锚回执（capability=canary 判卷证视觉能力 +
+  // refs=结构化验读事件证读过当前参考图，逐张 hash 核对）；铸造行携带 binding（run/invoke/
+  // refs hash/ref-elements hash/gate fingerprint）。盲模型同步两份文本 → 无 canary receipt →
+  // 铸不出 verified、解除不了 blind-safe。
+  if (scan.positive_provenance) {
+    const chain = verifyVlSigningChain({ projectRoot: ctx.projectRoot, feature: ctx.feature });
+    if (chain.ok) {
+      // 四轮 review P1：binding 与消费端同源计算（computeCurrentBindingContext——resolver 验的
+      // 就是这套值）；gate fingerprint 不可算 → **不铸 verified**（fail-closed，binding 必填）。
+      // 幂等语义：旧 verified 行 binding 陈旧时 resolver 投影为 unverified → 与新铸 verified
+      // 必然不等 → 落新行（幂等键实质含完整 binding 有效性）。
+      const bindingCtx = computeCurrentBindingContext(
+        ctx.projectRoot, ctx.feature, path.resolve(__dirname, '..', '..'),
+      );
+      if (!bindingCtx.gate_fingerprint) {
+        persistAttestation('unverified', ['counterevidence_clean_unbound', 'gate_fingerprint_uncomputable']);
+        return [{
+          id, category: 'structure', description,
+          severity: 'BLOCKER', status: 'PASS',
+          details:
+            `无确定性反证且终签链绑定，但 gate fingerprint 不可计算——verified 拒铸（binding 必填，fail-closed）；` +
+            'attestation 记 unverified。排查 framework phase-rules 可读性后重跑。',
+        }];
+      }
+      persistAttestation('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound'], {
+        run_id: chain.runId!,
+        invoke_id: chain.expectedInvoke!,
+        ref_elements_sha256: bindingCtx.ref_elements_sha256,
+        refs: bindingCtx.refs,
+        gate_fingerprint: bindingCtx.gate_fingerprint,
+      });
+      return [{
+        id, category: 'structure', description,
+        severity: 'BLOCKER', status: 'PASS',
+        details:
+          `无确定性反证、正向 provenance 成立且终签链全绑定（texts=${scan.counters.texts_total} 全匹配；` +
+          `refs=${bindingCtx.refs.length} 张 runner 事件锚验读）；verified attestation 已落盘（含 binding）。`,
+      }];
+    }
+    persistAttestation('unverified', ['counterevidence_clean_unbound', `signing_chain:${chain.failures[0] ?? 'unknown'}`]);
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details:
+        `无确定性反证且文本正向匹配（texts=${scan.counters.texts_total}），但终签链未绑定` +
+        `（${chain.failures.slice(0, 2).join('；')}）——文本互证不单独铸 verified（两份文件皆 agent 产物），` +
+        'attestation 记 unverified；不解除既有降级。',
+    }];
+  }
+  persistAttestation('unverified', ['counterevidence_clean_no_provenance']);
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details:
+      `无确定性反证（texts=${scan.counters.texts_total}，单字符碎片=${scan.counters.single_char_fragments}` +
+      `${scan.heuristics.length > 0 ? `；observe-only：${scan.heuristics.map(h => h.code).join(', ')}` : ''}），` +
+      '但无正向 provenance 基础（非 OCR 工作流/文本未全部匹配参考）——attestation 记 unverified_clean，' +
+      '不签 verified、不解除既有降级（解除须 runner supersede 或正向验证成立的新 hash verified）。',
+  }];
+}
+
+
+// codex 实施 review 二轮附带修：旧判据 downgrade_reasons.includes('contradicted') 对
+// evidence_gap 降级行永假 → 每次重跑重复追加同 hash 降级行（账面膨胀）；且 P0-4 后
+// per-hash attestation 原因也会进 downgrade_reasons（无账本行也含 'contradicted' 字样，
+// 会反向抑制真正的账本行落盘）。改为账本级 active 降级行按 hash 精确判定。
+function hasActiveDowngradeForHash(projectRoot: string, feature: string, hash: string): boolean {
+  return hasActiveDowngradeForArtifactHash(projectRoot, feature, hash);
 }
 
 export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
@@ -1347,6 +1535,10 @@ const checker: PhaseChecker = {
       // capture-completeness 同 run 优先读内存 manifest（见 capability-registry dispatchSpec*）。
       results.push(...safeRun(() => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
     }
+    // S3 P0-2b（codex 实施 review）：反证器**先于** ui-spec/fidelity gate 执行——同一次
+    // harness run 内 attestation 先落盘，终签消费本次结论而非上一轮陈旧记录（自守卫：
+    // 无 ui-spec 文档返回空结果，与 profile 开关无耦合）。
+    results.push(...safeRun(() => checkVisionOutputCounterevidence(ctx), 'vision_output_counterevidence'));
     if (isSpecUiSpecSkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'ui_spec_structure',
@@ -1368,6 +1560,7 @@ const checker: PhaseChecker = {
     // --- blind-visual-hardening d2：盲档 crop 左移禁令（不依赖 profile capability 开关——
     //     盲模型自证裁剪在任何 profile 下都非法）---
     results.push(...safeRun(() => checkBlindCropProhibition(ctx), 'blind_crop_prohibition'));
+    // （vision_output_counterevidence 已前移至 ui_spec 检查之前——同 run 内 attestation 先落盘）
     // --- blind-visual-hardening P1-F：盲档素材问人清单（side artifact，best-effort）---
     try { maybeWriteAssetRequest(ctx); } catch { /* 清单生成失败不阻断 */ }
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));

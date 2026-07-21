@@ -159,6 +159,9 @@ export function finalizeInteractiveCanary(input: {
         probed_via: 'interactive',
         // plan c7d2e9a4 t1：探测协议版本——两写盘点一致，旧缓存缺字段自动 stale
         probe_version: VISION_CANARY_PROBE_VERSION,
+        // S3：交互探测同样证不了模型路由——诚实 unknown（scope 封顶 run_probed）
+        model: 'unknown',
+        probe_context: 'interactive',
       },
     },
   });

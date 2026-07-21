@@ -36,6 +36,22 @@ export interface FrameworkLocalConfigVisionCanary {
    * 假 none 毒缓存），下一次 UI goal 自动重探——用户升级零操作。
    */
   probe_version?: number;
+  // ------ visual-capability-truth S3（P0-A）：canary receipt 增维 ------
+  // 20260718 事故：cursor auto 路由下"探针时模型 ≠ 各 phase 干活模型"——receipt 记录
+  // 实际探测上下文，resolveEffectiveVisionContext 据此判 capability_scope：
+  // model unknown 恒不超过 run_probed，且 run_probed 不跨 run（run_id 比对）。
+  /** 探测时的 provider（adapter 能证则记；证不了缺省） */
+  provider?: string;
+  /** 探测时的模型标识；无法证明时写 'unknown'（scope 封顶 run_probed + 不跨 run 复用） */
+  model?: string;
+  /** 原生图片输入（native_attach 通道）是否在场 */
+  native_image_input?: boolean;
+  /** 图片读取工具（Read 类）是否在场 */
+  image_tool_available?: boolean;
+  /** 探测语境（goal_preflight / interactive / inline_phase 等自由文本） */
+  probe_context?: string;
+  /** 探测所属 goal run（run_probed 判级依据；interactive 探测无此字段） */
+  run_id?: string;
 }
 
 export interface FrameworkLocalConfigVision {
@@ -234,6 +250,19 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
           `[framework-local-config] vision.canary.probe_version 必须是正整数，收到 ${String(probeVersion)}`,
         );
       }
+      // S3 增维字段（全可选）：string 类空串剔除、boolean 类严格布尔
+      for (const k of ['provider', 'model', 'probe_context', 'run_id'] as const) {
+        const v = canaryObj[k];
+        if (v !== undefined && typeof v !== 'string') {
+          throw new Error(`[framework-local-config] vision.canary.${k} 必须是字符串，收到 ${String(v)}`);
+        }
+      }
+      for (const k of ['native_image_input', 'image_tool_available'] as const) {
+        const v = canaryObj[k];
+        if (v !== undefined && typeof v !== 'boolean') {
+          throw new Error(`[framework-local-config] vision.canary.${k} 必须是布尔，收到 ${String(v)}`);
+        }
+      }
       outVision.canary = {
         adapter: adapter.trim(),
         verdict: verdict as FrameworkLocalConfigVisionCanary['verdict'],
@@ -245,6 +274,24 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
           ? { probed_via: probedVia as FrameworkLocalConfigVisionCanary['probed_via'] }
           : {}),
         ...(typeof probeVersion === 'number' ? { probe_version: probeVersion } : {}),
+        ...(typeof canaryObj.provider === 'string' && canaryObj.provider.trim()
+          ? { provider: canaryObj.provider.trim() }
+          : {}),
+        ...(typeof canaryObj.model === 'string' && canaryObj.model.trim()
+          ? { model: canaryObj.model.trim() }
+          : {}),
+        ...(typeof canaryObj.native_image_input === 'boolean'
+          ? { native_image_input: canaryObj.native_image_input }
+          : {}),
+        ...(typeof canaryObj.image_tool_available === 'boolean'
+          ? { image_tool_available: canaryObj.image_tool_available }
+          : {}),
+        ...(typeof canaryObj.probe_context === 'string' && canaryObj.probe_context.trim()
+          ? { probe_context: canaryObj.probe_context.trim() }
+          : {}),
+        ...(typeof canaryObj.run_id === 'string' && canaryObj.run_id.trim()
+          ? { run_id: canaryObj.run_id.trim() }
+          : {}),
       };
     }
 

@@ -14,6 +14,13 @@ version: "1.0"
 applies_to: "**"
 
 structure_checks:
+
+  host_entry_reachability:
+    description: >
+      宿主入口可达性（visual-capability-truth S6/P1-G）：以 integration_points 为真源静态
+      走查宿主入口→路由→feature 页面——入口未消费/路由缺失 → BLOCKER（页面孤岛在
+      review 前暴露，不等真机 TC-001 才发现）。
+
   upstream_verdict_gate:
     description: >
       跨阶段负面裁决传播门禁（blind-visual-hardening d1）：coding 启动时消费上游

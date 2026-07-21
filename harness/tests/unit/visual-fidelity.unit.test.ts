@@ -193,6 +193,153 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // 三轮 review P0-1/P0-2（收编二轮 P0-1）：vl_multimodal 终签全链——runner 事件锚回执
+  // （精确 invoke/adapter 绑定 + refs 逐张 hash 核对）+ attestation=verified + policy=visual。
+  // 六形态：全链 PASS / 旧 attempt 拒 / endsWith 后缀旁路拒 / unverified_clean 拒 /
+  // 无 runner 事件锚（agent 伪造回执）拒 / 空 refs 回执（不覆盖当前参考图）拒。
+  run('ui_spec_vl_sign_full_chain_and_five_bypass_rejections', () => {
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    process.env.MAISON_GOAL_RUN_ID = 'runx';
+    process.env.MAISON_GOAL_ATTEMPT = 'i2';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const evc = require('../../scripts/utils/effective-vision-context') as typeof import('../../scripts/utils/effective-vision-context');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const crp = require('../../scripts/utils/critic-receipt-producer') as typeof import('../../scripts/utils/critic-receipt-producer');
+      const featureAbs = path.join(root, 'doc', 'features', 'bank-card');
+      const uiSpecAbs = path.join(featureAbs, 'spec', 'ui-spec.yaml');
+      fs.writeFileSync(uiSpecAbs, [
+        'schema_version: "1.0"',
+        'verified: verified',
+        'verified_method: vl_multimodal',
+        'screens:',
+        '  - id: home',
+        '    priority: P0',
+        '    ref_id: home',
+        '    root: { type: navigation_frame, order: 0 }',
+        'tokens: {}',
+        'assets: []',
+      ].join('\n'));
+      const uiSpecHash = evc.sha256File(uiSpecAbs)!;
+      // authoritative ref 图 + spec.md（chain 从磁盘 loadSpecMarkdown 重算 refs）
+      const refAbs = path.join(featureAbs, 'spec', 'reference', 'home.png');
+      fs.mkdirSync(path.dirname(refAbs), { recursive: true });
+      writeMinimalRedPng(refAbs, 8, 8);
+      const refRel = 'doc/features/bank-card/spec/reference/home.png';
+      const specMd = ['```yaml', 'ui_change: new_or_changed', '```', '', `path: ${refRel}`].join('\n');
+      fs.writeFileSync(path.join(featureAbs, 'spec', 'spec.md'), specMd, 'utf-8');
+      const refHash = crp.sha256FileFull(refAbs)!;
+      // manifest（run adapter 身份）
+      const runDir = path.join(featureAbs, 'goal-runs', 'runx');
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ adapter: 'claude', run_id: 'runx' }), 'utf-8');
+      // 四轮 P1：binding 验真需要 framework 指纹面（package.json + spec 阶段 rules）；
+      // workflows 目录=consumer 布局判型依据（inferRepoLayout 据此解析 frameworkRoot）
+      fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'framework', 'specs', 'phase-rules'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'framework', 'package.json'), JSON.stringify({ version: '0.0.0-test' }), 'utf-8');
+      fs.writeFileSync(path.join(root, 'framework', 'specs', 'phase-rules', 'spec-rules.yaml'), 'rules: test\n', 'utf-8');
+
+      const refsPath = path.join(featureAbs, 'vision', 'spec-refs-receipt.json');
+      const writeChain = (opts: {
+        invoke?: string;
+        emptyRefs?: boolean;
+        skipEvents?: boolean;
+      } = {}): void => {
+        const invokeId = opts.invoke ?? 'spec-i2';
+        evc.writeCapabilityReceipt(root, 'bank-card', {
+          adapter: 'claude', run_id: 'runx', invoke_id: invokeId,
+          binding_path: 'inline_canary', verdict: 'tool_read',
+        });
+        fs.mkdirSync(path.dirname(refsPath), { recursive: true });
+        fs.writeFileSync(refsPath, JSON.stringify({
+          schema_version: '1.0', adapter: 'claude', goal_run_id: 'runx', invoke_id: invokeId,
+          produced_at: '2026-07-19T00:00:00.000Z',
+          refs: opts.emptyRefs ? [] : [{ path: refAbs, hash: refHash, read: true }],
+          unread: [],
+          attestation: { goal_run_id: 'runx', evidence_log_path: 'x', evidence_log_hash: 'y', source: 'runner_transcript_audit' },
+        }), 'utf-8');
+        const eventsAbs = path.join(runDir, 'events.jsonl');
+        if (opts.skipEvents) {
+          fs.rmSync(eventsAbs, { force: true });
+          return;
+        }
+        const capSha = crp.sha256FileFull(evc.capabilityReceiptPath(root, 'bank-card'))!;
+        const refsSha = crp.sha256FileFull(refsPath)!;
+        fs.writeFileSync(eventsAbs, [
+          JSON.stringify({ type: 'capability_receipt', invoke_id: invokeId, status: 'issued_inline_canary', receipt_sha256: capSha }),
+          JSON.stringify({ type: 'spec_refs_receipt_produced', invoke_id: invokeId, status: 'complete', receipt_sha256: refsSha }),
+        ].join('\n') + '\n', 'utf-8');
+      };
+      const attest = (verdict: 'verified' | 'unverified', reasons: string[], invokeOverride?: string): void => {
+        // 四轮 P1：verified 行 binding 必填且须与当前一致（同源计算——resolver 验的就是这套值）
+        const binding =
+          verdict === 'verified'
+            ? { run_id: 'runx', invoke_id: invokeOverride ?? 'spec-i2', ...evc.computeCurrentBindingContext(root, 'bank-card') }
+            : undefined;
+        evc.appendArtifactAttestation(root, 'bank-card', {
+          artifact_path: 'doc/features/bank-card/spec/ui-spec.yaml', artifact_hash: uiSpecHash,
+          verdict, reasons, source: 'test',
+          ...(binding ? { binding } : {}),
+        });
+      };
+      const gate = (): { status: string; details?: string } => {
+        const r = checkUiSpecFidelityGate(baseCtx(root), specMd);
+        return r.find((x: { id: string }) => x.id === 'ui_spec_fidelity_gate') as { status: string; details?: string };
+      };
+
+      // ① unverified_clean attestation → 拒（P0-1 核心：clean≠verified 不可终签）
+      writeChain();
+      attest('unverified', ['counterevidence_clean_no_provenance']);
+      const h1 = gate();
+      if (h1.status !== 'FAIL' || !/unverified/.test(h1.details ?? '')) {
+        throw new Error(`unverified_clean 应拒签：${(h1.details ?? '').slice(0, 400)}`);
+      }
+      // ② verified + 全链 → PASS
+      attest('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound']);
+      const h2 = gate();
+      if (h2.status !== 'PASS') throw new Error(`全链应通过：${(h2.details ?? '').slice(0, 500)}`);
+      // ③ 旧 attempt（spec-i1）→ 拒
+      writeChain({ invoke: 'spec-i1' });
+      const h3 = gate();
+      if (h3.status !== 'FAIL' || !/属旧 invocation/.test(h3.details ?? '')) {
+        throw new Error(`旧 attempt 应拒：${(h3.details ?? '').slice(0, 400)}`);
+      }
+      // ④ endsWith 后缀旁路（coding-i2）→ 拒（三轮 P1：精确等值）
+      writeChain({ invoke: 'coding-i2' });
+      const h4 = gate();
+      if (h4.status !== 'FAIL' || !/属旧 invocation/.test(h4.details ?? '')) {
+        throw new Error(`coding-i2 后缀旁路应拒：${(h4.details ?? '').slice(0, 400)}`);
+      }
+      // ⑤ 无 runner 事件锚（agent 伪造回执文件）→ 拒
+      writeChain({ skipEvents: true });
+      const h5 = gate();
+      if (h5.status !== 'FAIL' || !/(runner 事件锚|events 不可读)/.test(h5.details ?? '')) {
+        throw new Error(`无事件锚应拒：${(h5.details ?? '').slice(0, 400)}`);
+      }
+      // ⑥ 空 refs 回执（不覆盖当前 authoritative refs）→ 拒
+      writeChain({ emptyRefs: true });
+      const h6 = gate();
+      if (h6.status !== 'FAIL' || !/未覆盖当前参考图/.test(h6.details ?? '')) {
+        throw new Error(`空 refs 回执应拒：${(h6.details ?? '').slice(0, 400)}`);
+      }
+      // ⑦（五轮 P1）跨 invocation 铸造的 verified（binding invoke=spec-i1）→ 终签拒
+      writeChain();
+      attest('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound'], 'spec-i1');
+      const h7 = gate();
+      if (h7.status !== 'FAIL' || !/签发身份与当前 invocation 不一致/.test(h7.details ?? '')) {
+        throw new Error(`跨 invocation verified 应拒：${(h7.details ?? '').slice(0, 400)}`);
+      }
+    } finally {
+      if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId; else delete process.env.MAISON_GOAL_RUN_ID;
+      if (prevAttempt !== undefined) process.env.MAISON_GOAL_ATTEMPT = prevAttempt; else delete process.env.MAISON_GOAL_ATTEMPT;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_invalid_json_fail', () => {
     const root = mkProject();
     try {

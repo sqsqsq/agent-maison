@@ -24,11 +24,17 @@ import { canonicalOverlayBase } from './visual-diff-nav';
 import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
 import { checkRenderVisibilityCalibrate } from './render-visibility';
 import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
+import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
 import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
+import {
+  intermediateRoundsJournalPath,
+  journalRowsToLogicalHistory,
+  readJournalProposals,
+} from '../../../harness/scripts/utils/intermediate-rounds-journal';
 import {
   evaluateVisualRound,
   visualRoundsLedgerPath,
@@ -151,6 +157,9 @@ export interface CriticReceipt {
 export interface VisualDiffScreenEntry {
   screen_id: string;
   verdict: 'pass' | 'warn' | 'fail' | 'skipped' | 'pending';
+  /** S2/P1-3（visual-capability-truth）：本截图通过的 identity 规则指纹——同 build 跳采
+   * 须 identity 未变才合法（identity 变更/旧图未验身份 → 强制重采过 gate） */
+  identity_fingerprint?: string;
   screenshot_path?: string;
   ref_path?: string;
   ref_id?: string;
@@ -923,6 +932,18 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
       failure_kind: 'framework_bug',
       blocking_class: 'ui_kit_conformance',
+    });
+  }
+  // S7（visual-capability-truth P2-J.1）：结构保真运行时挂载轴——uitree 证据面（拆轴：
+  // 静态声明轴照旧；无 dump 自 SKIP 不装死）。
+  try {
+    results.push(...checkRuntimeMountConformance(ctx));
+  } catch (e) {
+    results.push({
+      id: 'runtime_mount_conformance', category: 'structure',
+      description: '运行时挂载轴执行异常',
+      severity: 'MAJOR', status: 'WARN',
+      details: `执行异常：${(e as Error).message}`,
     });
   }
   // P1-E：盲档确定性反馈（deterministic_feedback 机器派生，非 agent 开关；自守卫）。
@@ -2365,6 +2386,21 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     );
   } else {
     try {
+      // S5（visual-capability-truth 单写者）：goal 态 agent 侧评估的逻辑历史 =
+      // committed ledger + 本 attempt 的 journal proposals（中间轮第 N+1 轮能看到
+      // 第 N 轮，no-progress 熔断语义不随单写者化丢失）；gate harness（正式行已含
+      // 收编中间轮）extraRows 自然为空集。
+      let extraRows: import('../../../harness/scripts/utils/visual-rounds-ledger').VisualRoundRow[] = [];
+      if (goalRunId && attemptId && process.env.MAISON_GOAL_GATE_HARNESS !== '1') {
+        try {
+          const journal = readJournalProposals(
+            intermediateRoundsJournalPath(ctx.projectRoot, ctx.feature, goalRunId),
+          );
+          extraRows = journalRowsToLogicalHistory(journal.rows, attemptId);
+        } catch {
+          extraRows = [];
+        }
+      }
       roundEvaluation = evaluateVisualRound(visualRoundsLedgerPath(ctx.projectRoot, ctx.feature), {
         loopId,
         attemptId: goalRunId ? attemptId : null,
@@ -2377,7 +2413,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         fingerprintable,
         awaitHumanOnly,
         actionableResidual,
-      });
+      }, { extraRows });
       if (roundEvaluation.corrupt_lines > 0) {
         referenceNotes.push(
           `[visual_rounds] 账本存在 ${roundEvaluation.corrupt_lines} 条损坏行（崩溃半行已跳过；行数异常回退须人工核查——账本损坏不解释成空历史）`,

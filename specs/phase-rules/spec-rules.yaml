@@ -34,6 +34,15 @@ structure_checks:
       自证裁剪；正确出路=placeholder+asset-manifest 或 asset-request 问人。
       裸 user_requirement 哨兵不作条目级验真（P0-6 语义）。
 
+  vision_output_counterevidence:
+    description: >
+      视觉产出确定性反证器（visual-capability-truth S3）：扫描 componentNode.text/
+      global_elements[].texts/source_ref/ref-elements——contradicted（U+FFFD/非法代理对/
+      与高置信证据冲突）→ BLOCKER + attestation contradicted + blind-safe 策略降级；
+      evidence_gap（无 source 映射/低置信 OCR 升 UI）→ MAJOR WARN + attestation
+      unverified（缺证 ≠ 证伪，审计分立）；启发式（单字符碎片率等）observe-only 计数。
+      两态同样使 vl_multimodal 终签失效（fidelity gate 消费 attestation）。
+
   acceptance_flow_structure:
     description: >
       P0 交互 AC 结构化流程模型（goal-fakepass-hardening t4a）：flows 有序屏链 +

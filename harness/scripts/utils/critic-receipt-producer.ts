@@ -22,7 +22,14 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { featureDir } from '../../config';
+import { featureDir, loadFrameworkConfig } from '../../config';
+import {
+  capabilityReceiptPath,
+  readCapabilityReceipt,
+  type CapabilityReceipt,
+} from './effective-vision-context';
+import { loadSpecMarkdown } from './fidelity-shared';
+import { collectAuthoritativeImagePaths } from './multimodal-probe';
 
 export interface RunnerAttestation {
   goal_run_id: string;
@@ -83,6 +90,267 @@ export function hasImageReadParser(adapter: string): boolean {
 export function parseImageReadEventsFor(adapter: string, eventsJsonl: string): string[] | null {
   const parser = IMAGE_READ_PARSERS[adapter];
   return parser ? parser(eventsJsonl) : null;
+}
+
+// ---------------------------------------------------------------------------
+// visual-capability-truth S3：spec 期 authoritative refs 验读回执
+// （vl_multimodal 终签四条件之二——canary 只证"能看测试图"，不证"读过本需求参考图"）
+// ---------------------------------------------------------------------------
+
+export interface SpecRefsReceipt {
+  schema_version: '1.0';
+  adapter: string;
+  goal_run_id: string;
+  invoke_id: string;
+  produced_at: string;
+  refs: Array<{ path: string; hash: string | null; read: boolean }>;
+  unread: string[];
+  attestation: RunnerAttestation;
+}
+
+export function specRefsReceiptPath(projectRoot: string, feature: string): string {
+  return path.join(featureDir(projectRoot, feature), 'vision', 'spec-refs-receipt.json');
+}
+
+export function loadSpecRefsReceipt(projectRoot: string, feature: string): SpecRefsReceipt | null {
+  const p = specRefsReceiptPath(projectRoot, feature);
+  if (!fs.existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as SpecRefsReceipt;
+    return parsed?.schema_version === '1.0' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * runner 从纯净结构化事件审计 spec 期参考图验读并签发回执。
+ * 无解析器 adapter → produced:false（结构性不可签 vl_multimodal，诚实降级——
+ * 20260718 事故的 cursor 自签正是本回执要堵的洞）。
+ * 匹配语义：Read 事件 file_path 与 ref 绝对路径 resolve 相等，或尾段（basename）一致。
+ */
+export function produceSpecRefsReceipt(input: {
+  projectRoot: string;
+  feature: string;
+  adapter: string;
+  goalRunId: string;
+  invokeId: string;
+  eventsLogAbsPath: string;
+  refAbsPaths: string[];
+}): { produced: boolean; unread?: string[]; reason?: string } {
+  const parser = IMAGE_READ_PARSERS[input.adapter];
+  if (!parser) {
+    return { produced: false, reason: `adapter=${input.adapter} 无注册的结构化事件解析器——vl_multimodal 结构性不可签` };
+  }
+  if (!fs.existsSync(input.eventsLogAbsPath)) {
+    return { produced: false, reason: 'agent-events.jsonl 不存在（structured_events 分流未产出）' };
+  }
+  const readPaths = parser(fs.readFileSync(input.eventsLogAbsPath, 'utf-8'));
+  const readResolved = readPaths.map(p => ({
+    abs: path.resolve(input.projectRoot, p),
+    base: path.basename(p),
+  }));
+  const refs: SpecRefsReceipt['refs'] = [];
+  const unread: string[] = [];
+  for (const refAbs of input.refAbsPaths) {
+    const abs = path.resolve(refAbs);
+    const base = path.basename(abs);
+    const read = readResolved.some(r => r.abs === abs || r.base === base);
+    let hash: string | null = null;
+    try {
+      hash = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+    } catch {
+      hash = null;
+    }
+    refs.push({ path: abs, hash, read });
+    if (!read) unread.push(abs);
+  }
+  const receipt: SpecRefsReceipt = {
+    schema_version: '1.0',
+    adapter: input.adapter,
+    goal_run_id: input.goalRunId,
+    invoke_id: input.invokeId,
+    produced_at: new Date().toISOString(),
+    refs,
+    unread,
+    attestation: {
+      goal_run_id: input.goalRunId,
+      evidence_log_path: path.relative(input.projectRoot, input.eventsLogAbsPath).replace(/\\/g, '/'),
+      evidence_log_hash: sha256File16(input.eventsLogAbsPath) ?? '',
+      source: 'runner_transcript_audit',
+    },
+  };
+  const outPath = specRefsReceiptPath(input.projectRoot, input.feature);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
+  return { produced: true, unread };
+}
+
+// ===========================================================================
+// visual-capability-truth 三轮 review P0-1/P0-2/P0-3：vl_multimodal 终签链统一验证器
+// ---------------------------------------------------------------------------
+// "runner-owned receipt" 不再是命名约定：runner 在 agent invocation 结束后统一清理+
+// 重签发两张回执，并把回执文件 sha256 写入 goal-run events（capability_receipt /
+// spec_refs_receipt_produced 事件）。本验证器要求：
+//   ① run/attempt 身份在场（goal 态专属；交互态无 runner 链路，链恒不成立）；
+//   ② 两张回执 invoke_id **精确等于** `spec-<attempt>`（endsWith 后缀旁路封死）、
+//     run 匹配、adapter 与 run manifest 一致；
+//   ③ 事件绑定：events.jsonl 中该 invoke 的**最后一条** runner 事件必须是签发态且
+//     receipt_sha256 与盘上文件一致——agent 在 invocation 内伪造的文件/事件行必然被
+//     runner 在 invoke 结束后追加的权威事件与清理动作压尾（顺序信任：runner 恒最后写）；
+//   ④ refs 内容核对：重算当前 spec 的 authoritative refs，逐张要求回执含
+//     read=true + hash 与当前文件一致；当前无 authoritative refs → 无验证对象，不可签。
+// 消费方：check-spec verified 铸造（P0-3：文本互证不再单独铸 verified）与
+// ui_spec_fidelity_gate 终签（P0-1）。
+// ===========================================================================
+
+export function sha256FileFull(absPath: string): string | null {
+  if (!fs.existsSync(absPath)) return null;
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+export interface VlSigningChainResult {
+  ok: boolean;
+  failures: string[];
+  capReceipt: CapabilityReceipt | null;
+  refsReceipt: SpecRefsReceipt | null;
+  /** 当前 authoritative refs（abs path + sha256）——verified attestation 绑定字段源 */
+  currentRefs: Array<{ path: string; sha256: string }>;
+  runId: string | null;
+  expectedInvoke: string | null;
+}
+
+interface GoalRunEventLite {
+  type?: string;
+  invoke_id?: string;
+  status?: string;
+  receipt_sha256?: string;
+}
+
+export function verifyVlSigningChain(args: {
+  projectRoot: string;
+  feature: string;
+}): VlSigningChainResult {
+  const failures: string[] = [];
+  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim() || null;
+  const attempt = (process.env.MAISON_GOAL_ATTEMPT ?? '').trim() || null;
+  const expectedInvoke = attempt ? `spec-${attempt}` : null;
+  const fail = (msg: string): VlSigningChainResult => ({
+    ok: false,
+    failures: [...failures, msg],
+    capReceipt: null,
+    refsReceipt: null,
+    currentRefs: [],
+    runId,
+    expectedInvoke,
+  });
+  if (!runId || !expectedInvoke) {
+    return fail('无 goal run/attempt 身份（vl_multimodal 终签链仅 runner 编排链路可成立——交互态走 human_confirmed/盲档）');
+  }
+
+  // manifest.adapter=运行身份（goal 语境不以 config 为准——一轮 review 硬学习）
+  let runAdapter = '';
+  try {
+    const manifestPath = path.join(featureDir(args.projectRoot, args.feature), 'goal-runs', runId, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { adapter?: string };
+    runAdapter = (manifest.adapter ?? '').trim();
+  } catch {
+    /* manifest 不可读 → 回退 config */
+  }
+  if (!runAdapter) {
+    try {
+      runAdapter = (loadFrameworkConfig(args.projectRoot).agent_adapter ?? '').trim();
+    } catch {
+      runAdapter = '';
+    }
+  }
+  if (!runAdapter) return fail('运行 adapter 身份不可得（manifest/config 均无）——链不可校验');
+
+  const capReceipt = readCapabilityReceipt(args.projectRoot, args.feature);
+  if (!capReceipt) {
+    return fail('无 runner 签发的 invocation_bound capability receipt——模型路由未绑定或 inline canary 未通过，不可终签');
+  }
+  if (capReceipt.verdict === 'none') failures.push('capability receipt verdict=none——签发时模型无视觉能力');
+  if (capReceipt.run_id !== runId) failures.push(`capability receipt 属旧 run（${capReceipt.run_id} ≠ 当前 ${runId}）`);
+  if (capReceipt.invoke_id !== expectedInvoke) {
+    failures.push(`capability receipt 属旧 invocation（${capReceipt.invoke_id} ≠ 当前 ${expectedInvoke}，精确等值）`);
+  }
+  if (capReceipt.adapter !== runAdapter) {
+    failures.push(`capability receipt adapter 失配（${capReceipt.adapter} ≠ 运行身份 ${runAdapter}）`);
+  }
+
+  const refsReceipt = loadSpecRefsReceipt(args.projectRoot, args.feature);
+  if (!refsReceipt) {
+    return {
+      ok: false,
+      failures: [...failures, '无参考图验读回执（vision/spec-refs-receipt.json）——adapter 无结构化事件解析器时结构性不可签'],
+      capReceipt, refsReceipt: null, currentRefs: [], runId, expectedInvoke,
+    };
+  }
+  if (refsReceipt.goal_run_id !== runId) failures.push(`refs 回执属旧 run（${refsReceipt.goal_run_id} ≠ ${runId}）`);
+  if (refsReceipt.invoke_id !== expectedInvoke) {
+    failures.push(`refs 回执属旧 invocation（${refsReceipt.invoke_id} ≠ 当前 ${expectedInvoke}，精确等值）`);
+  }
+  if (refsReceipt.adapter !== runAdapter) failures.push(`refs 回执 adapter 失配（${refsReceipt.adapter} ≠ ${runAdapter}）`);
+  if (refsReceipt.unread.length > 0) {
+    failures.push(`参考图验读不完整：${refsReceipt.unread.length} 张无验读工具事件`);
+  }
+
+  // ③ runner 事件绑定（顺序信任：runner 在 invoke 结束后恒为该 invoke 的最后写入者）
+  const eventsAbs = path.join(featureDir(args.projectRoot, args.feature), 'goal-runs', runId, 'events.jsonl');
+  let events: GoalRunEventLite[] = [];
+  try {
+    events = fs.readFileSync(eventsAbs, 'utf-8')
+      .split(/\r?\n/)
+      .filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l) as GoalRunEventLite; } catch { return {}; } });
+  } catch {
+    return { ok: false, failures: [...failures, `goal-run events 不可读（${eventsAbs}）——receipt 无 runner 事件锚，不可采信`], capReceipt, refsReceipt, currentRefs: [], runId, expectedInvoke };
+  }
+  const lastFor = (type: string): GoalRunEventLite | null => {
+    const hits = events.filter(e => e.type === type && e.invoke_id === expectedInvoke);
+    return hits.length > 0 ? hits[hits.length - 1] : null;
+  };
+  const capEvent = lastFor('capability_receipt');
+  const capFileHash = sha256FileFull(capabilityReceiptPath(args.projectRoot, args.feature));
+  if (!capEvent || capEvent.status !== 'issued_inline_canary' || !capEvent.receipt_sha256 || capEvent.receipt_sha256 !== capFileHash) {
+    failures.push('capability receipt 无匹配的 runner 签发事件锚（事件缺失/非签发态/文件 hash 与事件不符）——非 runner 签发不可采信');
+  }
+  const refsEvent = lastFor('spec_refs_receipt_produced');
+  const refsFileHash = sha256FileFull(specRefsReceiptPath(args.projectRoot, args.feature));
+  if (!refsEvent || refsEvent.status !== 'complete' || !refsEvent.receipt_sha256 || refsEvent.receipt_sha256 !== refsFileHash) {
+    failures.push('refs 回执无匹配的 runner 签发事件锚（事件缺失/非 complete/文件 hash 与事件不符）——非 runner 签发不可采信');
+  }
+
+  // ④ refs 内容核对：回执必须覆盖**当前** authoritative refs（路径+hash+read=true）
+  const specMd = loadSpecMarkdown(args.projectRoot, args.feature);
+  const currentRefPaths = specMd
+    ? collectAuthoritativeImagePaths(args.projectRoot, specMd, p =>
+        path.isAbsolute(p) ? p : path.resolve(args.projectRoot, p))
+    : [];
+  const currentRefs: Array<{ path: string; sha256: string }> = [];
+  if (currentRefPaths.length === 0) {
+    failures.push('当前 spec 无 authoritative 参考图——vl_multimodal 无验证对象，不可终签（空 refs 回执不构成证明）');
+  }
+  for (const refAbs of currentRefPaths) {
+    const abs = path.resolve(refAbs);
+    const hash = sha256FileFull(abs);
+    if (!hash) {
+      failures.push(`参考图不可读/不可 hash（${path.basename(abs)}）——不可终签`);
+      continue;
+    }
+    currentRefs.push({ path: abs, sha256: hash });
+    const entry = refsReceipt.refs.find(r => path.resolve(r.path) === abs);
+    if (!entry) failures.push(`refs 回执未覆盖当前参考图 ${path.basename(abs)}（回执与当前 spec 的 refs 集不一致）`);
+    else if (entry.read !== true) failures.push(`参考图 ${path.basename(abs)} 无验读事件（read=false）`);
+    else if (entry.hash !== hash) failures.push(`参考图 ${path.basename(abs)} hash 失配（签发后文件已变/回执伪造）`);
+  }
+
+  return { ok: failures.length === 0, failures, capReceipt, refsReceipt, currentRefs, runId, expectedInvoke };
 }
 
 export interface ProduceCriticReceiptInput {

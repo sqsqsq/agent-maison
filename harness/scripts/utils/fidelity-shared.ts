@@ -371,6 +371,12 @@ const FIDELITY_TIER_RANK: Record<FidelityTarget, number> = {
   pixel_1to1: 2,
 };
 
+/** 档位枚举硬校验（十三轮 P0-1：resolveRequestedFidelity 对非法值静默回退 detected——
+ * CLI/manifest 显式传值时必须显式拒，垃圾枚举不得静默入 manifest）。 */
+export function isValidFidelityTarget(v: unknown): v is FidelityTarget {
+  return typeof v === 'string' && FIDELITY_TARGETS.has(v as FidelityTarget);
+}
+
 /**
  * `--fidelity`/manifest.fidelity 只升不降（codex 三轮 P0-2：headless agent 可代跑命令
  * 自带 flag，flag ≠ 用户授权）：requested < detected → 无效（降档唯一通道=t10 receipt，

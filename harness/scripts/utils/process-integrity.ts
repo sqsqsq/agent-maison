@@ -115,7 +115,16 @@ export function stripTrustAnchorEnv(env: NodeJS.ProcessEnv): { env: NodeJS.Proce
   const next: NodeJS.ProcessEnv = { ...env };
   const stripped: string[] = [];
   for (const key of Object.keys(next)) {
-    if (key.startsWith('MAISON_HMAC_') || key === 'MAISON_TRUST_REGISTRY') {
+    // codex 十轮（二期）P0：**大小写不敏感匹配**——Windows env 大小写不敏感，
+    // `maison_hmac_x` 与 `MAISON_HMAC_X` 是同一变量，Python/Node 大写读取仍拿得到；
+    // 大小写敏感的 startsWith/equality 会漏删小写/混合大小写键，绕过全部隔离。
+    const U = key.toUpperCase();
+    if (
+      U.startsWith('MAISON_HMAC_') ||
+      U === 'MAISON_TRUST_REGISTRY' ||
+      // codex 六轮（二期）P0-2：checkpoint 路径覆盖同属信任锚配置——不进 agent env
+      U === 'MAISON_GOAL_CHECKPOINT_DIR'
+    ) {
       delete next[key];
       stripped.push(key);
     }

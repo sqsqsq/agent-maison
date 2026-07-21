@@ -183,6 +183,36 @@ export class SpecLoader {
         // 消费者；非法条目剔除并经 shape_issues → feature_spec_shape 结构化 BLOCKER。
         normalizeContractsModulePaths(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
+        // S6（visual-capability-truth P1-F）：integration_points 机器块归一——map 数组 +
+        // consumer_module/provider_module 必填字符串（缺失剔除 + shape_issues 留痕，
+        // 镜像 modules[] 边界行为——feature_spec_shape 结构化 BLOCKER 消费）。
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'integration_points', contractsPath, shapeIssues);
+        {
+          const pts = contracts.integration_points;
+          if (Array.isArray(pts) && pts.length > 0) {
+            const kept: NonNullable<ContractsSpec['integration_points']> = [];
+            pts.forEach((p, i) => {
+              const rec = p as unknown as Record<string, unknown>;
+              const consumer = typeof rec.consumer_module === 'string' ? rec.consumer_module.trim() : '';
+              const provider = typeof rec.provider_module === 'string' ? rec.provider_module.trim() : '';
+              if (!consumer || !provider) {
+                shapeIssues.push(
+                  `${path.basename(contractsPath)} 的 \`integration_points[${i}]\` 缺 consumer_module/provider_module 必填字符串——条目已剔除`,
+                );
+                return;
+              }
+              kept.push({
+                consumer_module: consumer,
+                provider_module: provider,
+                requires_modification: rec.requires_modification === true,
+                ...(typeof rec.entry_symbol === 'string' && rec.entry_symbol.trim()
+                  ? { entry_symbol: rec.entry_symbol.trim() }
+                  : {}),
+              });
+            });
+            contracts.integration_points = kept;
+          }
+        }
         spec.contracts = contracts;
       }
     }

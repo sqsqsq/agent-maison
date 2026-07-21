@@ -103,6 +103,109 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
 
 ---
 
+## 视觉闭环二期（visual-capability-truth）——Breaking（随切片滚动登记）
+
+> 立项动因：20260718 宿主 goal run 首次实测——治理层全生效但能力误判/真机基建/回退编排
+> 五层新缺陷。openspec change `visual-capability-truth`；plan e9c4a7f3（codex 五轮 review 冻结）。
+
+1. **visual-diff-nav schema 2.0（S2）**：新格式 `{schema_version:"2.0", screens:{<id>:{steps,
+   identity}}}`；旧顶层数组格式**兼容可读**（steps-only），写回一律 2.0。`identity` 为页面
+   身份锚点（`all_of`/`any_of`/`none_of`，成员 text/id/route；最低强度=≥2 独特文本或 1 个
+   强 id/route）。**pixel_1to1 的 P0 屏缺已确认 identity → `visual_diff_capture` BLOCKER
+   FAIL**（`proposed: true` 的自动候选不作数——须人工核对后置 false）。迁移/候选生成：
+   `cd framework/harness && npm run visual-diff-nav:migrate -- --project-root <宿主根>
+   --feature <f> [--apply]`。采集顺序变更：navigate → dump uitree → identity gate →
+   screenshot——身份不匹配记 `screen_identity_mismatch`，截图归档 `_mismatch/` 不进正式
+   目录、不计 captured（错误页面从此进不了视觉流水线）。
+2. **hylyre 中文 UTF-8 round-trip 前置（S2）**：`ensureHylyreReady` 新增真实链路中文
+   round-trip（steps→hylyre parser→predicate→stdout 回读逐字符比对），失败 → device
+   testing 前置 BLOCKER（toolchain 类）。spawn 链恒注入 `PYTHONUTF8=1`+
+   `PYTHONIOENCODING=utf-8`（修复 Windows 下诊断日志中文变 `����` 的管道假象）。
+3. **`vl_multimodal` 终签硬化（S3）**：`verified: verified / verified_method: vl_multimodal`
+   从此要求信任链齐备——runner 签发的 invocation_bound capability receipt（inline canary
+   路径 B）+ 参考图逐张验读回执（结构化工具事件，无解析器 adapter **结构性不可签**）+
+   attestation 非 contradicted/evidence_gap；goal 态两张回执还须**属当前 invocation**
+   （`MAISON_GOAL_ATTEMPT` 精确匹配——旧 attempt 的互洽回执对不可为本 attempt 产物终签）。
+   存量自签 vl_multimodal 在下次 spec harness
+   即被拒（出路：真人 human_confirmed 逐屏确认 / 有 provenance 能力的 adapter 重签 /
+   盲档地板交付）。新增 spec 检查 `vision_output_counterevidence`（U+FFFD 等强证据 →
+   BLOCKER + blind-safe 策略降级；缺证 → WARN 同样使签名失效；`source_ref` 须解析到
+   已知 reference id 才算映射；**反证缺席最多记 `unverified_clean`——verified attestation
+   须正向 provenance（OCR 流在场且全部 UI 文本正向匹配参考文本）+ 终签链全绑定共同铸造**，
+   blind-safe 降级的解除仅认 runner supersede 事件（时间在后）或正向验证成立的新 hash
+   verified）。终签消费端同步收紧：attestation 必须 verified（unverified_clean 不可签）、
+   effective policy 必须 visual、两张回执 invoke **精确等于** `spec-<attempt>` 且带 **runner
+   事件锚**（runner 每个 spec invocation 结束后清理并重签发回执，文件 sha256 写入 goal-run
+   事件；无事件锚/hash 失配的回执一律拒——agent 伪造回执文件不再可行）、refs 回执须逐张
+   覆盖**当前** authoritative 参考图（hash 核对；无参考图=无验证对象不可签）。
+4. **goal 态源码变更授权链（S4）**：ut/testing 期产品源码 drift 由 runner 统一对账；
+   授权只认三源（真人 confirmation receipt——须过 workspace 外 trust registry 签名链 /
+   runner policy 注册表 / `manifest.pre_authorized_mutations` 且 run_start 冻结 hash 匹配），
+   配额逐 receipt、删除源文件恒不可授权。存量 agent 自写 `approved_by`（如
+   `headless-testability-setter-seam`）一律失效。**当前窗口：diff 内容级 change-kind 分类器
+   未落地，自动回退整体禁用——receipt 全合规也 HALT 上抛人工裁决（receipt 作为裁决输入）；
+   分类器落地（tasks 4.2b）后恢复 authorized_backtrack 自动路径。**
+5. **goal 态 visual ledger 单写者（S5）**：agent 自跑 harness 不再直写
+   visual-rounds ledger（写 `goal-runs/<runId>/intermediate-rounds.journal.jsonl`
+   proposal——**按 goal run 隔离**，attempt 序号跨 run 重号不再互相污染；runner 顺序
+   重放重算后收编；`disposition: journaled` 新枚举）；交互态直写不变。attempt 内中途
+   重跑 harness 不再产生孤儿行误熔断（20260718 halt 直接触发器根治）。
+6. **vision 账本行链 + 单写者 + legacy 迁移（S3 收口）**：
+   `vision/artifact-attestations.jsonl` 与 `vision/policy-downgrades.jsonl` 从此**行级
+   hash 链**（seq/prev_row_hash/row_hash；未链/断链行按 corrupt fail-closed 剔除）且
+   goal 态**单写者**（agent 自跑 harness 只算不写，gate harness 收口落盘；agent 调用
+   窗口内的账本写入被 runner 快照括号检出 → `vision_ledger_tampered` halt）。**存量
+   宿主升级**：首次 goal run 启动时自动迁移旧无链账本——原文件 quarantine 为
+   `*.legacy-<ts>.bak`（events 记录原 sha256），downgrade/contradicted 行保守继承，
+   **旧 verified/supersede 不自动升级**（verified 须当前 spec gate 重新铸造、supersede
+   须 runner 重新签发）；mixed/不可解析文件不自动修复（保持 corrupt fail-closed，转
+   人工处置）。完整性锚两级：feature 级 authenticated head
+   `~/.maison/goal-checkpoints/vision-heads/<projectHash>/<feature>.json`（跨 run 连续性，
+   fresh run/resume 都先验）+ per-run checkpoint
+   `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（env
+   `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境；另绑
+   pre_authorized_mutations 规范化哈希——停机窗口改 manifest 扩权 resume 即拒）。
+   **强烈建议部署配置 `MAISON_HMAC_GOAL_CHECKPOINT`**（MAISON_HMAC_ 前缀模型，agent env
+   恒剥离）：配置后损坏/验签失败一律 fail-closed；**未配置时 UI 相关 goal run 不产出
+   clean completion（CHAIN_SLICE_COMPLETED 封顶 AWAITING_HUMAN_REVIEW）**——writer
+   authenticity 是完成态前置条件。**resume 时信任锚缺失将 halt**：带
+   `--ack-unverified-ledgers` 为弱 ack（须 events anchor 可比对且通过，终态仍封顶人工
+   复核）；提供 `--ack-receipt <受信 confirmation receipt>`（action=vision_ledger_ack）
+   为强 ack。**配置/更换 HMAC 密钥后**旧 head/checkpoint 会判 invalid——用
+   `--reseal-receipt <受信 confirmation receipt>`（action=vision_trust_reseal，绑定当前
+   账本+旧 head/旧 checkpoint 字节 hash+当前授权子集+frozen manifest hash）重铸信任锚，
+   弱旗标不适用。信任锚 env（MAISON_HMAC_*/MAISON_TRUST_REGISTRY/
+   MAISON_GOAL_CHECKPOINT_DIR，**大小写不敏感匹配**）不会进入 agent、hvigor/ohpm、hylyre、
+   **整条 Python 准备链（解释器探测/import/venv/pip）**及 **HDC/设备工具** spawn 等可执行
+   宿主代码的子进程。MAC'd append-only 高水位链
+   `vision-heads/<projectHash>/<feature>.hwm.jsonl` 检测**非协调回滚/意外损坏/非尾部改**
+   （诚实边界：同权限域，协调回放+同步截断 HWM 尾部不可密码学阻止；真正 hardened
+   anti-rollback 需独立锚——broker/单调计数器，pending）。换钥/首配密钥后旧 HWM 会 invalid，
+   用 `--reseal-receipt`（现同时绑定旧 HWM 字节 hash）重铸，reseal 会事务化 quarantine 旧
+   HWM 链（**reseal journal v2**：MAC + rename 前记录计划备份名/旧三锚/receipt 绑定，quarantine 同步
+   sha 复验 copy 备份 head/checkpoint；崩溃后启动自动按内容恢复——**三锚全部**恢复到旧字节并
+   复验后才算回滚（任意崩溃窗口原 receipt 都可复用）、补 commit 须**四门全过**（head 对当前
+   账本快照验真 + checkpoint 存在/MAC/世代咬合 + HWM 与 head 精确等值——不完整提交不 commit
+   而是回滚，保留恢复资格）、备份被篡改 fail-closed；非终态事务在场时新 reseal 会被拒，先等
+   启动恢复）。启动时 head 世代与 HWM 高
+   水位**双向严格等值**：head 超前（上次锚提交未完成的残留态）同样 fail-closed
+   （vision_hwm_incomplete_commit，人工核查后 --reseal-receipt 重铸），不再静默续跑。**head 现声明 hwm_declared
+   （schema 1.1）**：声明后整个 HWM 文件被删=启动 fail-closed（恢复走 reseal receipt）；旧
+   1.0 head+缺 HWM 首次启动会落 vision_hwm_bootstrap 事件后自动建链。**checkpoint schema
+   1.2**：逐字段身份必填；旧 1.1 checkpoint（无逐字段身份）在聚合 hash 与当前 manifest 身份
+   相等时一次性自动迁移，不等则须 `--override-manifest` 显式确认（不静默 rebase）。**未配
+   HMAC 密钥的 resume 现须显式 ack**（弱旗标可续、终态照旧封顶；强 receipt 免打扰），且
+   pre_run_manifest 预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
+   （requirement/chain/budget/allowed_tools/fidelity/预授权）
+   在停机窗口被改会被身份哈希漂移检测（**锁内、副作用前**执行）拦截——合法变更走 `--override-manifest`
+   （整体）或 `--override-start`/`--override-end`（**仅授权对应字段**，裸旗标不放行无关字段
+   漂移）；`--fidelity`/`--fidelity-receipt` 经 **transition 前置校验**（fresh/resume 都执行：
+   枚举硬校验、降档须 fidelity_downgrade receipt 验真，垃圾值/无效凭证=BLOCKER）后仅精确授权
+   对应档位字段；authorized transition 会 rebase 持久化，下次 resume 不复报。run_id 格式升级为
+   `YYYYMMDDThhmmssZ-<6hex>`（随机后缀，防同秒跨工程碰撞）。
+
+---
+
 ## device visual-diff 缺陷枚举契约（round2）
 
 `visual-diff.json` 每屏新增可选 `defects[]`（正向渲染缺陷枚举：`clipping`|`overlap`|`shape_mismatch`|`missing_render`|`other` + `bbox` + `severity` + `note`）与采集层自动写入的 `edge_tile_divergence`/`edge_over_threshold_tiles`。

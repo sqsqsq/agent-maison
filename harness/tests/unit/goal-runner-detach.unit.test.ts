@@ -87,10 +87,11 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'newRunId: matches goal-run timestamp format YYYYMMDDThhmmssZ',
+    name: 'newRunId: 时间戳+6hex 随机后缀（六轮 P1：同秒跨工程不碰撞）',
     run: () => {
       const id = newRunId();
-      assert(/^\d{8}T\d{6}Z$/.test(id), `unexpected run_id format: ${id}`);
+      assert(/^\d{8}T\d{6}Z-[0-9a-f]{6}$/.test(id), `unexpected run_id format: ${id}`);
+      assert(newRunId() !== newRunId() || newRunId() !== id, '随机后缀应使同秒生成互异');
     },
   },
   {

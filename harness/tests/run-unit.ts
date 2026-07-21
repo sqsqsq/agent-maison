@@ -194,6 +194,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-capability-gate', modulePath: './unit/goal-capability-gate.unit.test' },
   { id: 'negative-verdict-gate', modulePath: './unit/negative-verdict-gate.unit.test' },
   { id: 'quality-axes', modulePath: './unit/quality-axes.unit.test' },
+  { id: 'effective-vision-context', modulePath: './unit/effective-vision-context.unit.test' },
+  { id: 'mutation-backtrack', modulePath: './unit/mutation-backtrack.unit.test' },
+  { id: 'intermediate-rounds-journal', modulePath: './unit/intermediate-rounds-journal.unit.test' },
+  { id: 'integration-tc-flow', modulePath: './unit/integration-tc-flow.unit.test' },
   { id: 'blind-crop-prohibition', modulePath: './unit/blind-crop-prohibition.unit.test' },
   { id: 'visual-debt', modulePath: './unit/visual-debt.unit.test' },
 ];

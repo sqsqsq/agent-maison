@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir } from '../../../harness/config';
+import { stripTrustAnchorEnv } from '../../../harness/scripts/utils/process-integrity';
 import { ensureHdcServerWarm, mergeEnvWithHdcOnPath } from './hdc-runner';
 import { ensureHypiumWorkDir } from './device-test-hypium-workdir';
 
@@ -59,7 +60,15 @@ export function buildHylyreSpawnInvocation(opts: SpawnHylyreOptions): {
   timeout?: number;
 } {
   const argv = ['-m', 'hylyre', ...opts.hylyreArgv];
-  const env: NodeJS.ProcessEnv = { ...mergeEnvWithHdcOnPath(process.env) };
+  // codex 八轮 P0：设备链子进程同样不携带信任锚材料（纵深——hylyre 无消费需求，剥离无损）
+  const env: NodeJS.ProcessEnv = { ...mergeEnvWithHdcOnPath(stripTrustAnchorEnv(process.env).env) };
+  // visual-capability-truth S2（P0-B）：Windows 下 Python 无此二变量时 stdout/stderr 按
+  // console code page（GBK）编码，Node 侧恒以 utf-8 解码 → 中文日志变 '����'（20260718
+  // 宿主事故：selector predicate 日志乱码把「页面不可达」误导成「编码破坏」——steps 文件
+  // 读取本身是显式 UTF-8，坏的只是诊断管道）。两条 spawn 路径（device test / visual nav）
+  // 均经本函数，统一注入。
+  env.PYTHONUTF8 = '1';
+  env.PYTHONIOENCODING = 'utf-8';
   const store = (opts.appSnapshotCacheAbs ?? '').trim();
   if (store) {
     env.HYLYRE_APP_STORE_DIR = store;

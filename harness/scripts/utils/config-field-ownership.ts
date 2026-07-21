@@ -23,6 +23,13 @@ export const LOCAL_VISION_CANARY_KEYS = new Set([
   'reason',
   'probed_via',
   'probe_version',
+  // visual-capability-truth S3：canary receipt 增维（capability_scope 判级证据）
+  'provider',
+  'model',
+  'native_image_input',
+  'image_tool_available',
+  'probe_context',
+  'run_id',
 ]);
 
 /** 唯一 known-legacy 顶层键（非 canonical，读盘时剥离） */

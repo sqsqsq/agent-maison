@@ -89,7 +89,11 @@ const VISUAL_PREFIXES = [
   'baked_text',
   'visible_text',
   'quiescence',
-  'ui_kit_conformance',
+  // S7（visual-capability-truth）：结构保真拆轴——运行时挂载轴（testing 侧）与静态轴分立聚合
+  // cursor 深度 review：实际 check id 为 ui_kit_source_conformance / ui_kit_runtime_conformance，
+  // 'ui_kit_conformance' 前缀两者都匹配不到（漂移归 functional 轴）——放宽到族前缀。
+  'runtime_mount_conformance',
+  'ui_kit_',
   'ui_spec_',
 ];
 const EVIDENCE_PREFIXES = [
@@ -251,6 +255,46 @@ export function deriveQualityAxes(checks: CheckLike[], opts: DeriveAxesOptions):
     };
   }
   return axes;
+}
+
+// ---------------------------------------------------------------------------
+// S7（visual-capability-truth P2-J.2）：asset 轴带 provenance 继承——testing 期无本阶段
+// asset 检查时，继承的是**证据引用**而非裸 verdict 复制：五指纹（source summary hash /
+// source&build fingerprint / gate fingerprint / inventory hash / debt revision）由调用方
+// I/O 判定一致性；任一漂移 → STALE/UNVERIFIED（needs_human），不得复制上游 PASS。
+// ---------------------------------------------------------------------------
+
+export interface AssetAxisInheritance {
+  upstreamPhase: string;
+  upstreamVerdict: AxisVerdict;
+  /** 调用方判定的五指纹一致性（任一漂移=false） */
+  provenanceIntact: boolean;
+  provenanceDetail: string;
+  /** 证据引用（coding summary hash / inventory hash / debt revision 等） */
+  evidenceRefs: string[];
+}
+
+export function applyAssetAxisInheritance(axes: QualityAxes, inh: AssetAxisInheritance): void {
+  const a = axes.asset;
+  // 只接管「applicable 但本阶段零 asset 检查」的 UNVERIFIED（有本阶段检查时以本阶段为准）
+  if (!a.applicable || a.verdict !== 'UNVERIFIED' || a.source_checks.length > 0) return;
+  if (inh.provenanceIntact && inh.upstreamVerdict === 'PASS') {
+    axes.asset = {
+      ...a,
+      verdict: 'PASS',
+      blocking_class: null,
+      resolution: null,
+      source_checks: inh.evidenceRefs.map(r => `inherited:${inh.upstreamPhase}:${r}`).sort(),
+    };
+    return;
+  }
+  axes.asset = {
+    ...a,
+    verdict: 'STALE',
+    blocking_class: 'needs_human',
+    resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+    source_checks: [`stale_inheritance:${inh.upstreamPhase}:${inh.provenanceDetail}`],
+  };
 }
 
 export function deriveReportValidity(checks: CheckLike[]): ReportValidity {

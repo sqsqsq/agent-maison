@@ -46,6 +46,10 @@ import {
   type MdTable,
 } from './utils/markdown-parser';
 import {
+  evaluateIntegrationScopeConsistency,
+  probeConsumerBinding,
+} from './utils/integration-scope';
+import {
   parseScope,
   describeScopeError,
   findScopeViolations,
@@ -232,6 +236,51 @@ function checkRequiredChapters(ctx: CheckContext, design: string): CheckResult[]
     severity: 'BLOCKER', status: 'FAIL',
     details: `缺少 ${missing.length} 个必需章节：${missing.join('、')}`,
     suggestion: '请补充缺失的plan 文档章节。',
+  }];
+}
+
+/**
+ * S6（visual-capability-truth P1-F）：integration_points（contracts 机器块）与 plan scope
+ * 一致性——「WalletMain/Phone 既禁改又必须经其接入」的自矛盾计划在 plan 期拒收
+ * （20260718 事故：矛盾计划 → coding 孤岛 → testing 补胶水 → review/ut 全失效）。
+ */
+function checkIntegrationScopeConsistency(ctx: CheckContext, design: string): CheckResult[] {
+  const id = 'integration_scope_consistency';
+  const description = '集成契约 scope 一致性（requires_modification 的 consumer 须 in_scope；零修改接入点须 binding 实存）';
+  const points = ctx.featureSpec.contracts?.integration_points ?? [];
+  if (points.length === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MINOR', status: 'SKIP',
+      details: 'contracts.integration_points 未声明——宿主集成面一致性无从机器校验（涉及跨模块接入的 feature 建议声明）。',
+    }];
+  }
+  const { scope } = parseScope(design);
+  const inScope = scope?.in_scope_modules ?? [];
+  const contracts = ctx.featureSpec.contracts;
+  const violations = evaluateIntegrationScopeConsistency({
+    points,
+    inScopeModules: inScope,
+    bindingProbe: (consumer, symbol) =>
+      contracts ? probeConsumerBinding(ctx.projectRoot, contracts, consumer, symbol) : false,
+  });
+  if (violations.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: [
+        '【集成契约与 scope 自矛盾/未证实】plan 不得携带矛盾计划推进：',
+        ...violations.map(v => `  - [${v.point}] ${v.reason}`),
+      ].join('\n'),
+      suggestion:
+        '二选一收敛：①把需要修改的 consumer 模块拉入 in_scope_modules（走 scope 决议）；' +
+        '②声明并证实零修改接入点（requires_modification=false + entry_symbol 在 consumer 源码实存）。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `integration_points ${points.length} 条与 scope 一致（binding 实存验证通过）。`,
   }];
 }
 
@@ -948,6 +997,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
+    // visual-capability-truth S6（P1-F）：集成契约 vs scope 一致性（机器真源=integration_points）
+    results.push(...safeRun(() => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
     results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
     results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
     results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));

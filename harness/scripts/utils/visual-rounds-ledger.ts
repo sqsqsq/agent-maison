@@ -174,9 +174,25 @@ export interface VisualRoundInput {
 /**
  * 评估当前轮：只读账本 → duplicate 重放 / 新轮算 decision。**不写盘**——追加由
  * harness-runner 在 check 后调用 appendVisualRound（disposition=appended 时）。
+ * S5（visual-capability-truth）：goal 态 agent 侧评估传 opts.extraRows=本 invoke 的
+ * journal proposals（逻辑历史=committed ledger + 中间轮拼接——单写者化后 no-progress
+ * 熔断语义不随孤儿行一起消失）；runner 收编重放用 evaluateVisualRoundOverRows 纯核。
  */
-export function evaluateVisualRound(ledgerPath: string, input: VisualRoundInput): VisualRoundEvaluation {
+export function evaluateVisualRound(
+  ledgerPath: string,
+  input: VisualRoundInput,
+  opts?: { extraRows?: VisualRoundRow[] },
+): VisualRoundEvaluation {
   const { rows, corruptLines } = readVisualRoundsLedger(ledgerPath);
+  return evaluateVisualRoundOverRows([...rows, ...(opts?.extraRows ?? [])], input, corruptLines);
+}
+
+/** 纯核：给定完整历史行集（含逻辑历史拼接）评估当前轮——runner 重放收编与单测直用。 */
+export function evaluateVisualRoundOverRows(
+  rows: VisualRoundRow[],
+  input: VisualRoundInput,
+  corruptLines = 0,
+): VisualRoundEvaluation {
   const loopRows = rows.filter(r => r.loop_id === input.loopId);
   const baseStateHash = computeBaseStateHash({
     buildFingerprint: input.buildFingerprint,
@@ -258,8 +274,9 @@ export interface VisualRoundReceipt {
   loop_id: string;
   attempt?: string;
   row_hash?: string;
-  /** review-fix（codex P1-2）：append 落盘失败必须如实上报——不得继续宣称 appended */
-  disposition: 'appended' | 'duplicate' | 'append_failed';
+  /** review-fix（codex P1-2）：append 落盘失败必须如实上报——不得继续宣称 appended。
+   * S5：journaled=goal 态 agent 侧中间轮已写 journal proposal（runner 收编后入正式账本）。 */
+  disposition: 'appended' | 'duplicate' | 'append_failed' | 'journaled';
   decision?: VisualRoundDecision;
 }
 

@@ -23,8 +23,39 @@ export type NavStep = Record<string, unknown>;
 /** 一屏到达步骤序列。顶层可直达屏可为空数组（无需导航）。 */
 export type NavScreenSteps = NavStep[];
 
-/** nav 配置：key=屏标识（规范化到 P0 target id），value=到达步骤。 */
+/** nav 配置（legacy 1.x 内存形态）：key=屏标识，value=到达步骤。 */
 export type NavConfig = Record<string, NavScreenSteps>;
+
+// ---------------------------------------------------------------------------
+// schema 2.0（visual-capability-truth S2 / P0-C）：screens + 每屏 identity 锚点。
+// 20260718 事故：add_bank_collapsed 导航落在「添加卡片类型页」仍被截图计入 captured
+// ——capture 层无页面身份断言。identity 在 dump→gate→screenshot 顺序中消费。
+// ---------------------------------------------------------------------------
+
+/** identity 成员：text（uitree 文本包含匹配）/ id（元素 id 精确）/ route（页面路由，dump 可证时匹配） */
+export interface NavIdentityMember {
+  text?: string;
+  id?: string;
+  route?: string;
+}
+
+export interface NavScreenIdentity {
+  all_of?: NavIdentityMember[];
+  any_of?: NavIdentityMember[];
+  none_of?: NavIdentityMember[];
+  /** 自动预填候选=true——未经确认不参与 gate 判定（宁缺不猜） */
+  proposed?: boolean;
+}
+
+export interface NavScreenEntry {
+  steps: NavScreenSteps;
+  identity?: NavScreenIdentity;
+}
+
+export interface NavConfigV2 {
+  schema_version: '2.0';
+  screens: Record<string, NavScreenEntry>;
+}
 
 export const OVERLAY_SEP = '__overlay__';
 
@@ -33,17 +64,57 @@ export function visualDiffNavConfigPath(projectRoot: string, feature: string): s
   return path.join(featureDir(projectRoot, feature), 'device-testing', 'visual-diff-nav.json');
 }
 
-/** 读固化 nav 配置；缺文件/非法 JSON → null（采集层据此不导航、走旧裸采并由一致性校验报缺配置）。 */
-export function loadVisualDiffNavConfig(projectRoot: string, feature: string): NavConfig | null {
+/** 原始 JSON → 2.0 内存形态归一：识别 2.0（schema_version+screens）与 legacy 数组格式（steps-only）。 */
+export function parseVisualDiffNavConfig(parsed: unknown): NavConfigV2 | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  if (obj.schema_version === '2.0') {
+    const screensRaw = obj.screens;
+    if (!screensRaw || typeof screensRaw !== 'object' || Array.isArray(screensRaw)) return null;
+    const screens: Record<string, NavScreenEntry> = {};
+    for (const [k, v] of Object.entries(screensRaw as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+      const entry = v as Record<string, unknown>;
+      screens[k] = {
+        steps: Array.isArray(entry.steps) ? (entry.steps as NavScreenSteps) : [],
+        ...(entry.identity && typeof entry.identity === 'object' && !Array.isArray(entry.identity)
+          ? { identity: entry.identity as NavScreenIdentity }
+          : {}),
+      };
+    }
+    return { schema_version: '2.0', screens };
+  }
+  // legacy：Record<screenId, NavStep[]> → steps-only 归一（无 identity）
+  const screens: Record<string, NavScreenEntry> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!Array.isArray(v)) return null;
+    screens[k] = { steps: v as NavScreenSteps };
+  }
+  return { schema_version: '2.0', screens };
+}
+
+/** 读固化 nav 配置（2.0 归一形态）；缺文件/非法 JSON → null。 */
+export function loadVisualDiffNavConfigV2(projectRoot: string, feature: string): NavConfigV2 | null {
   const p = visualDiffNavConfigPath(projectRoot, feature);
   if (!fs.existsSync(p)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as NavConfig;
+    return parseVisualDiffNavConfig(JSON.parse(fs.readFileSync(p, 'utf-8')) as unknown);
   } catch {
     return null;
   }
+}
+
+/** V2 → legacy steps 投影（既有 steps 消费面无感）。 */
+export function toLegacyNavConfig(v2: NavConfigV2): NavConfig {
+  const out: NavConfig = {};
+  for (const [k, e] of Object.entries(v2.screens)) out[k] = e.steps;
+  return out;
+}
+
+/** 读固化 nav 配置（legacy steps 投影——既有消费者入口，内部已兼容 2.0 文件）。 */
+export function loadVisualDiffNavConfig(projectRoot: string, feature: string): NavConfig | null {
+  const v2 = loadVisualDiffNavConfigV2(projectRoot, feature);
+  return v2 ? toLegacyNavConfig(v2) : null;
 }
 
 /** overlay 屏基名：`<base>__overlay__<x>` → `<base>`；非 overlay → 原样。 */
@@ -155,4 +226,163 @@ export function validateNavConfig(navConfig: NavConfig, p0TargetIds: string[]): 
     });
   }
   return { ok: errors.length === 0, errors, resolve };
+}
+
+// ---------------------------------------------------------------------------
+// identity 判定与校验（S2 P0-C）
+// ---------------------------------------------------------------------------
+
+/** identity 成员形状与最低强度校验：≥2 个 text 成员，或 ≥1 个 id/route。
+ * 单个通用文本不构成身份（20260718 错页正是「添加卡片」类通用文本重叠形态）。 */
+export function validateScreenIdentity(identity: NavScreenIdentity, screenKey: string): string[] {
+  const errs: string[] = [];
+  const members: NavIdentityMember[] = [
+    ...(identity.all_of ?? []),
+    ...(identity.any_of ?? []),
+  ];
+  for (const [group, arr] of [['all_of', identity.all_of], ['any_of', identity.any_of], ['none_of', identity.none_of]] as const) {
+    for (const m of arr ?? []) {
+      const keys = Object.keys(m ?? {}).filter(k => ['text', 'id', 'route'].includes(k));
+      if (!m || typeof m !== 'object' || keys.length !== 1 || !String((m as Record<string, unknown>)[keys[0]] ?? '').trim()) {
+        errs.push(`nav['${screenKey}'].identity.${group} 成员须恰含 text|id|route 之一且非空`);
+      }
+    }
+  }
+  const textCount = members.filter(m => typeof m.text === 'string' && m.text.trim()).length;
+  const strongCount = members.filter(
+    m => (typeof m.id === 'string' && m.id.trim()) || (typeof m.route === 'string' && m.route.trim()),
+  ).length;
+  if (textCount < 2 && strongCount < 1) {
+    errs.push(
+      `nav['${screenKey}'].identity 强度不足：须 ≥2 个文本锚点或 ≥1 个 id/route 锚点（单个通用文本可被错误页面命中）`,
+    );
+  }
+  return errs;
+}
+
+/** V2 校验：steps 语义沿用 legacy 校验 + identity 形状/最低强度 +（pixel_1to1）P0 屏须有已确认 identity。 */
+export function validateNavConfigV2(
+  v2: NavConfigV2,
+  p0TargetIds: string[],
+  opts?: { requireConfirmedIdentity?: boolean },
+): NavConfigValidation {
+  const base = validateNavConfig(toLegacyNavConfig(v2), p0TargetIds);
+  const errors = [...base.errors];
+  for (const [screenKey, entry] of Object.entries(v2.screens)) {
+    if (entry.identity) errors.push(...validateScreenIdentity(entry.identity, screenKey));
+  }
+  if (opts?.requireConfirmedIdentity) {
+    const identityByTarget = resolveIdentityForTargets(v2, p0TargetIds);
+    const missing = p0TargetIds.filter(t => {
+      const idn = identityByTarget.get(t);
+      return !idn || idn.proposed === true;
+    });
+    if (missing.length > 0) {
+      errors.push(
+        `pixel_1to1 P0 屏缺**已确认** identity 锚点（proposed 候选未确认不作数；错页截图曾计入 captured）：${missing.join(', ')}`,
+      );
+    }
+  }
+  return { ok: errors.length === 0, errors, resolve: base.resolve };
+}
+
+/** 按 P0 target 解析每屏 identity（X1 归一化匹配同 resolveNavForTargets）。 */
+export function resolveIdentityForTargets(
+  v2: NavConfigV2,
+  p0TargetIds: string[],
+): Map<string, NavScreenIdentity> {
+  const keys = Object.keys(v2.screens);
+  const out = new Map<string, NavScreenIdentity>();
+  for (const target of p0TargetIds) {
+    let hitKey = keys.find(k => k === target);
+    if (!hitKey) hitKey = keys.find(k => navKeyMatchesTarget(k, target));
+    const idn = hitKey ? v2.screens[hitKey].identity : undefined;
+    if (idn) out.set(target, idn);
+  }
+  return out;
+}
+
+/** layout dump 树 → identity 事实面（texts/ids/routes；容忍 {schema_version, tree} 包装）。 */
+export function extractLayoutDumpFacets(dumpJson: unknown): {
+  texts: string[];
+  ids: string[];
+  routes: string[];
+} {
+  const texts: string[] = [];
+  const ids: string[] = [];
+  const routes: string[] = [];
+  const root =
+    dumpJson && typeof dumpJson === 'object' && 'tree' in (dumpJson as Record<string, unknown>)
+      ? (dumpJson as Record<string, unknown>).tree
+      : dumpJson;
+  const walk = (n: unknown): void => {
+    if (!n || typeof n !== 'object') return;
+    const node = n as Record<string, unknown>;
+    const attrs = (node.attributes ?? node) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(attrs)) {
+      if (typeof v !== 'string' || !v.trim()) continue;
+      if (k === 'text') texts.push(v.trim());
+      else if (k === 'id' || k === 'key') ids.push(v.trim());
+      else if (/page|route|pagePath|navDestination/i.test(k)) routes.push(v.trim());
+    }
+    const children = node.children;
+    if (Array.isArray(children)) for (const c of children) walk(c);
+  };
+  walk(root);
+  return { texts, ids, routes };
+}
+
+export interface IdentityEvaluation {
+  ok: boolean;
+  missingAllOf: string[];
+  missedAnyOf: boolean;
+  hitNoneOf: string[];
+  detail: string;
+}
+
+function memberLabel(m: NavIdentityMember): string {
+  if (typeof m.text === 'string') return `text:「${m.text}」`;
+  if (typeof m.id === 'string') return `id:${m.id}`;
+  return `route:${m.route}`;
+}
+
+function memberHit(m: NavIdentityMember, facets: { texts: string[]; ids: string[]; routes: string[] }): boolean {
+  if (typeof m.text === 'string' && m.text.trim()) {
+    const t = m.text.trim();
+    return facets.texts.some(x => x.includes(t));
+  }
+  if (typeof m.id === 'string' && m.id.trim()) {
+    return facets.ids.includes(m.id.trim());
+  }
+  if (typeof m.route === 'string' && m.route.trim()) {
+    const r = m.route.trim();
+    return facets.routes.some(x => x.includes(r));
+  }
+  return false;
+}
+
+/** 页面身份判定：all_of 全命中 + any_of（在场时）至少一 + none_of 全不命中。
+ * proposed identity 不应传入本函数（调用方过滤——候选不参与判定）。 */
+export function evaluateScreenIdentity(
+  identity: NavScreenIdentity,
+  facets: { texts: string[]; ids: string[]; routes: string[] },
+): IdentityEvaluation {
+  const missingAllOf = (identity.all_of ?? []).filter(m => !memberHit(m, facets)).map(memberLabel);
+  const anyOf = identity.any_of ?? [];
+  const missedAnyOf = anyOf.length > 0 && !anyOf.some(m => memberHit(m, facets));
+  const hitNoneOf = (identity.none_of ?? []).filter(m => memberHit(m, facets)).map(memberLabel);
+  const ok = missingAllOf.length === 0 && !missedAnyOf && hitNoneOf.length === 0;
+  return {
+    ok,
+    missingAllOf,
+    missedAnyOf,
+    hitNoneOf,
+    detail: ok
+      ? 'identity 全部锚点命中'
+      : [
+          ...(missingAllOf.length > 0 ? [`缺必备锚点：${missingAllOf.join('、')}`] : []),
+          ...(missedAnyOf ? ['any_of 组无一命中'] : []),
+          ...(hitNoneOf.length > 0 ? [`命中禁入锚点（错误页面特征）：${hitNoneOf.join('、')}`] : []),
+        ].join('；'),
+  };
 }

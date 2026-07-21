@@ -247,6 +247,55 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(hit!.kind, 'needs_human', 'needs_human（封顶 AWAITING_HUMAN_REVIEW，非 FAIL）');
     }),
   },
+  {
+    name: 'S7 asset 轴 provenance 继承：五指纹一致才继承 PASS；漂移 → STALE；本阶段有检查不接管',
+    run: () => {
+      const { applyAssetAxisInheritance } = require('../../scripts/utils/quality-axes') as typeof import('../../scripts/utils/quality-axes');
+      const mkAxes = (assetOverride?: object) => ({
+        functional: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: ['x'], resolution: null },
+        visual: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: ['y'], resolution: null },
+        asset: {
+          applicable: true, required_for_release: true, verdict: 'UNVERIFIED',
+          blocking_class: 'needs_human', source_checks: [],
+          resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+          ...assetOverride,
+        },
+        evidence: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: ['z'], resolution: null },
+      });
+      // 一致 → 继承 PASS（证据引用非裸复制）
+      const a1 = mkAxes() as never;
+      applyAssetAxisInheritance(a1, {
+        upstreamPhase: 'coding', upstreamVerdict: 'PASS', provenanceIntact: true,
+        provenanceDetail: 'ok', evidenceRefs: ['summary:abc123'],
+      });
+      const asset1 = (a1 as { asset: { verdict: string; source_checks: string[] } }).asset;
+      assertEq(asset1.verdict, 'PASS', '一致继承 PASS');
+      assertTrue(asset1.source_checks[0].startsWith('inherited:coding:'), '证据引用形态');
+      // 漂移 → STALE needs_human（不复制 PASS）
+      const a2 = mkAxes() as never;
+      applyAssetAxisInheritance(a2, {
+        upstreamPhase: 'coding', upstreamVerdict: 'PASS', provenanceIntact: false,
+        provenanceDetail: '源码漂移（+2/~8/-0）', evidenceRefs: [],
+      });
+      const asset2 = (a2 as { asset: { verdict: string; blocking_class: string | null } }).asset;
+      assertEq(asset2.verdict, 'STALE', '漂移必须 STALE');
+      assertEq(asset2.blocking_class, 'needs_human', 'STALE needs_human');
+      // 本阶段已有 asset 检查（source_checks 非空）→ 不接管
+      const a3 = mkAxes({ source_checks: ['asset_materialization_sanity'], verdict: 'FAIL', blocking_class: 'needs_fix', resolution: { class: 'needs_fix', owner: 'agent', retry_phase: 'testing' } }) as never;
+      applyAssetAxisInheritance(a3, {
+        upstreamPhase: 'coding', upstreamVerdict: 'PASS', provenanceIntact: true,
+        provenanceDetail: 'ok', evidenceRefs: ['summary:abc'],
+      });
+      assertEq((a3 as { asset: { verdict: string } }).asset.verdict, 'FAIL', '本阶段检查优先，不被继承覆盖');
+      // 上游非 PASS → 不继承为 PASS
+      const a4 = mkAxes() as never;
+      applyAssetAxisInheritance(a4, {
+        upstreamPhase: 'coding', upstreamVerdict: 'UNVERIFIED', provenanceIntact: true,
+        provenanceDetail: 'ok', evidenceRefs: ['summary:abc'],
+      });
+      assertEq((a4 as { asset: { verdict: string } }).asset.verdict, 'STALE', '上游非 PASS 不得继承为 PASS');
+    },
+  },
 ];
 
 export function runAll(): Promise<UnitCaseResult[]> {

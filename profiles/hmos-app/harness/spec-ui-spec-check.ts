@@ -24,6 +24,12 @@ import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
 import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
 import { loadFrameworkConfig } from '../../../harness/config';
+import {
+  readLatestRawAttestation,
+  resolveEffectiveVisionContext,
+  sha256File,
+} from '../../../harness/scripts/utils/effective-vision-context';
+import { verifyVlSigningChain } from '../../../harness/scripts/utils/critic-receipt-producer';
 
 function ruleDesc(
   ctx: CheckContext,
@@ -309,13 +315,81 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         affected_files: [uiSpecRel],
       }];
     }
+    // visual-capability-truth S3 + 三轮 review P0-1/P0-2（openspec vision-capability-truth）：
+    // vl_multimodal 终签统一走 verifyVlSigningChain（runner 事件锚回执 + 精确 invoke/adapter
+    // 绑定 + 当前 authoritative refs 逐张 hash 核对），并要求：
+    //   - artifact attestation **必须为 verified**（unverified_clean/缺证/反证一律拒——
+    //     resolver 已把非 verified 判为 blind_safe，终签不得比 policy 更宽）；
+    //   - effective policy 为 visual（任何未解除降级/能力不足/账面损坏 → 拒签）。
+    // 20260718 事故：cursor 自签 vl_multimodal + OCR 乱码入 must_have——本硬化正是其解药。
+    const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
+    const uiSpecHash = sha256File(uiSpecAbs);
+    const chain = verifyVlSigningChain({ projectRoot: ctx.projectRoot, feature: ctx.feature });
+    const signFailures: string[] = [...chain.failures];
+    if (uiSpecHash) {
+      const vctx = resolveEffectiveVisionContext({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        phase: ctx.phase,
+        runId: chain.runId ?? undefined,
+        invokeId: chain.expectedInvoke ?? undefined,
+        artifactHashes: [uiSpecHash],
+      });
+      const att = vctx.artifact_attestation[uiSpecHash];
+      if (att.verdict !== 'verified') {
+        signFailures.push(
+          `artifact attestation=${att.verdict}（${att.reasons.slice(0, 3).join('；') || 'no reasons'}）——` +
+          '终签要求当前 hash 为 verified（unverified_clean/缺证/反证均不可终签）',
+        );
+      } else {
+        // 五轮 review P1：**最终 gate 语境**下 verified binding 的 run/invoke 须与当前
+        // signing chain 精确一致（下游历史 artifact 消费允许跨 invocation 复用内容有效的
+        // binding——继承边界见 openspec；终签不允许）。
+        const raw = readLatestRawAttestation(ctx.projectRoot, ctx.feature, uiSpecHash);
+        const b = raw?.binding;
+        if (!b || b.run_id !== chain.runId || b.invoke_id !== chain.expectedInvoke) {
+          signFailures.push(
+            `verified binding 签发身份与当前 invocation 不一致（binding=${b ? `${b.run_id}/${b.invoke_id}` : '缺失'} ≠ ` +
+            `当前 ${chain.runId}/${chain.expectedInvoke}）——终签须本 invocation 铸造的 verified`,
+          );
+        }
+      }
+      if (vctx.effective_policy.mode !== 'visual') {
+        signFailures.push(
+          `effective policy=blind_safe（${vctx.effective_policy.downgrade_reasons.slice(0, 3).join('；')}）——` +
+          '策略非 visual 时不得 vl_multimodal 终签',
+        );
+      }
+    } else {
+      signFailures.push('ui-spec 文件 hash 不可算——无法绑定 attestation，不可终签');
+    }
+    if (signFailures.length > 0) {
+      return [{
+        id: 'ui_spec_fidelity_gate',
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: [
+          '【vl_multimodal 终签拒收（fail-closed）】签名不满足信任链条件，按 unverified 处理：',
+          ...signFailures.map(f => `  - ${f}`),
+        ].join('\n'),
+        suggestion:
+          '出路：①有真视觉能力的 adapter（结构化事件 provenance 合格）重走 spec 生成签名；' +
+          '②真人逐屏 [x] 确认改 verified: human_confirmed；③走盲档地板交付（kit + 确定性反馈）。',
+        affected_files: [uiSpecRel],
+      }];
+    }
     return [{
       id: 'ui_spec_fidelity_gate',
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `ui-spec verified=${verified}（method=${doc.verified_method ?? 'n/a'}）`,
+      details:
+        `ui-spec verified=${verified}（method=${doc.verified_method ?? 'n/a'}）；` +
+        `终签信任链齐备：capability receipt（${chain.capReceipt!.binding_path}，runner 事件锚）+ ` +
+        `refs 验读 ${chain.currentRefs.length} 张（逐张 hash 核对）+ attestation=verified + policy=visual。`,
       affected_files: [uiSpecRel],
     }];
   }

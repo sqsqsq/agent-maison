@@ -27,6 +27,7 @@ import {
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { probeConsumerBinding } from './utils/integration-scope';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
@@ -526,6 +527,9 @@ const CODING_CRITICAL_SKIP_IDS = new Set([
   'plan_to_code',
   'plan_file_to_code',
   'diff_within_scope',
+  // cursor 深度 review P2：visual_parity BLOCKER 级 SKIP（failClosed 异常）计入 critical——
+  // profile 显式关闭产生的 MINOR SKIP 不在此列（severity 过滤天然放行）。
+  'visual_parity',
 ]);
 
 function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): CheckResult {
@@ -571,7 +575,11 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
   };
 }
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
+function safeRun(
+  fn: () => CheckResult[],
+  checkId: string,
+  opts?: { failClosed?: boolean },
+): CheckResult[] {
   try {
     // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
     return fn().map(r => (r.source ? r : { ...r, source: checkId }));
@@ -579,11 +587,14 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
     const e = err as Error;
     const isProgrammerError =
       e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
+    // cursor 深度 review P2：视觉关键检查（visual_parity）普通异常不得静默降 MINOR SKIP——
+    // 整包 dispatch 崩掉时 coding 可 PASS 收口=视觉门禁被异常绕过。failClosed 站点异常恒 BLOCKER。
+    const hard = isProgrammerError || opts?.failClosed === true;
     return [{
       id: checkId,
       category: 'structure',
       description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
+      severity: hard ? 'BLOCKER' : 'MINOR',
       status: isProgrammerError ? 'FAIL' : 'SKIP',
       details: isProgrammerError
         ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
@@ -597,7 +608,12 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
             suggestion:
               '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
           }
-        : {}),
+        : opts?.failClosed
+          ? {
+              suggestion:
+                '视觉关键检查执行异常按 fail-closed 阻断（不得当 MINOR 跳过）——排查异常原因（环境/输入产物）后重跑；无法定位时把完整信息回灌 agent-maison 源仓。',
+            }
+          : {}),
     }];
   }
 }
@@ -647,6 +663,7 @@ const checker: PhaseChecker = {
       ),
     );
 
+    // （host_entry_reachability 定义见文件下方 checkHostEntryReachability）
     // --- blind-visual-hardening d1 切片一：上游裁决传播 ---
     results.push(
       ...safeRun(
@@ -654,6 +671,9 @@ const checker: PhaseChecker = {
         'upstream_verdict_gate',
       ),
     );
+
+    // --- visual-capability-truth S6（P1-G）：宿主入口可达性（review 前静态走查）---
+    results.push(...safeRun(() => checkHostEntryReachability(ctx), 'host_entry_reachability'));
 
     // --- Structure checks ---
     results.push(...safeRun(() => checkFileCompleteness(ctx), 'file_completeness'));
@@ -676,7 +696,7 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 coding.visual_parity`,
       });
     } else {
-      results.push(...safeRun(() => dispatchCodingVisualParity(ctx), 'visual_parity'));
+      results.push(...safeRun(() => dispatchCodingVisualParity(ctx), 'visual_parity', { failClosed: true }));
     }
 
     // --- Traceability checks ---
@@ -703,5 +723,53 @@ const checker: PhaseChecker = {
   },
 };
 
+
+/**
+ * S6（visual-capability-truth P1-G）：宿主入口可达性——以 integration_points 为真源，
+ * 静态验证 consumer 模块源码已实际消费 provider 入口符号（页面孤岛在 review 前暴露，
+ * 不等真机 TC-001 才发现入口不可达；20260718 事故的入口是 testing 期现修的）。
+ */
+export function checkHostEntryReachability(ctx: CheckContext): CheckResult[] {
+  const id = 'host_entry_reachability';
+  const description = '宿主入口→路由→页面静态可达性（integration_points 为真源）';
+  const contracts = ctx.featureSpec.contracts;
+  const points = contracts?.integration_points ?? [];
+  if (points.length === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MINOR', status: 'SKIP',
+      details: 'contracts.integration_points 未声明——入口可达性无从机器校验。',
+    }];
+  }
+  const missing: string[] = [];
+  for (const p of points) {
+    if (!p.entry_symbol) {
+      missing.push(`${p.consumer_module}→${p.provider_module}：缺 entry_symbol（无从验证）`);
+      continue;
+    }
+    if (!probeConsumerBinding(ctx.projectRoot, contracts!, p.consumer_module, p.entry_symbol)) {
+      missing.push(
+        `${p.consumer_module}→${p.provider_module}：consumer 源码未发现「${p.entry_symbol}」消费——` +
+        (p.requires_modification ? '本 feature 声明要改 consumer 接入，coding 期须完成' : '声明的零修改接入点不实存'),
+      );
+    }
+  }
+  if (missing.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: [
+        '【入口不可达】feature 页面存在但宿主入口链未接通（页面孤岛——真机测试必然全链失败）：',
+        ...missing.map(m => `  - ${m}`),
+      ].join('\n'),
+      suggestion: '在 consumer 模块补路由注册/入口消费（in_scope 内），或修正 integration_points 声明后重跑。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `integration_points ${points.length} 条入口消费全部实存。`,
+  }];
+}
 
 export default checker;

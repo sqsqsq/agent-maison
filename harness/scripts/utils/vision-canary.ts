@@ -194,6 +194,34 @@ export function buildCanaryPrompt(imagePath: string): string {
   ].join('\n');
 }
 
+/**
+ * visual-capability-truth S3（路径 B）：phase prompt 内嵌视觉验证块——runner 出题、
+ * 同 invocation 作答、runner 判卷，通过才签发 invocation_bound（vl_multimodal 终签
+ * 的能力条件）。随机卷（答案只在 runner 内存），业务产出与答题同 invoke 绑定。
+ */
+export function buildInlineCanaryBlock(imagePath: string): string {
+  return [
+    '',
+    '## Inline visual verification (runner-issued — REQUIRED before any vl_multimodal signing)',
+    '',
+    'This run requires proof that THIS invocation can genuinely read images (a session-level probe is',
+    'not sufficient for final visual signing). A verification image has been generated at:',
+    `${imagePath}`,
+    '',
+    'Open it and include these answer lines VERBATIM near the END of your final output (one per line):',
+    'TOP_LEFT_COLOR=<color>',
+    'TOP_RIGHT_COLOR=<color>',
+    'BOTTOM_LEFT_COLOR=<color>',
+    'BOTTOM_RIGHT_COLOR=<color>',
+    'TEXT_TOKEN=<the short alphanumeric token printed in the image>',
+    '',
+    'If you cannot see images: output exactly CANNOT_SEE_IMAGE instead, work in the blind workflow,',
+    'and do NOT set `verified: verified` / `verified_method: vl_multimodal` — that signature will be',
+    'rejected without this verification anyway. Do not guess colors.',
+    '',
+  ].join('\n');
+}
+
 /** 输出转录里疑似调用外部读图/OCR 工具的迹象——尽力而为，非确定性判据（仅供诊断参考）。 */
 const EXTERNAL_TOOL_HINT_PATTERNS: readonly RegExp[] = [
   /tesseract/i,

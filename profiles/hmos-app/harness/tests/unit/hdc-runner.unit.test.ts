@@ -611,6 +611,30 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: '十轮 P0：buildHdcSpawnOptions env 剥离信任锚（HDC 可由 HARNESS_HDC_EXE 指定=宿主可控）',
+    run: () => {
+      const prev = {
+        k1: process.env.MAISON_HMAC_GOAL_CHECKPOINT,
+        k2: process.env.MAISON_TRUST_REGISTRY,
+        k3: process.env.MAISON_GOAL_CHECKPOINT_DIR,
+      };
+      process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'secret';
+      process.env.MAISON_TRUST_REGISTRY = '/r';
+      process.env.MAISON_GOAL_CHECKPOINT_DIR = '/cp';
+      try {
+        const env = buildHdcSpawnOptions('hdc').env as NodeJS.ProcessEnv;
+        assert(env !== undefined, 'env 必须显式设置（不再默认继承完整 process.env）');
+        assert(env.MAISON_HMAC_GOAL_CHECKPOINT === undefined, 'HDC env 不得含 HMAC 密钥');
+        assert(env.MAISON_TRUST_REGISTRY === undefined, 'HDC env 不得含 registry 路径');
+        assert(env.MAISON_GOAL_CHECKPOINT_DIR === undefined, 'HDC env 不得含 checkpoint 路径');
+      } finally {
+        if (prev.k1 === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prev.k1;
+        if (prev.k2 === undefined) delete process.env.MAISON_TRUST_REGISTRY; else process.env.MAISON_TRUST_REGISTRY = prev.k2;
+        if (prev.k3 === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prev.k3;
+      }
+    },
+  },
+  {
     name: 'isHdcListTargetsProbeOk: requires exit 0 and no spawn error',
     run: () => {
       assert(isHdcListTargetsProbeOk({ status: 0, error: undefined }), 'ok probe');

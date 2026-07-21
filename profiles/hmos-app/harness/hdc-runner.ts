@@ -24,6 +24,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
 import { loadDevEcoConfig, loadHmosDeviceConfig, featurePhaseReportsDir } from '../../../harness/config';
+import { stripTrustAnchorEnv } from '../../../harness/scripts/utils/process-integrity';
 import { HypiumTestResult } from './hvigor-runner';
 
 const MAX_LOG_CHARS = 200_000;
@@ -79,7 +80,7 @@ export interface HdcKillResult {
   error: string | null;
 }
 
-/** 纯函数：组装 hdc spawnSync 选项（统一隔离 cwd）。 */
+/** 纯函数：组装 hdc spawnSync 选项（统一隔离 cwd + 信任锚 env 剥离）。 */
 export function buildHdcSpawnOptions(
   exe: string,
   opts?: { timeout?: number; maxBuffer?: number },
@@ -89,6 +90,11 @@ export function buildHdcSpawnOptions(
     encoding: 'utf-8',
     cwd: ensureHdcIsolatedCwd(),
     shell: useShell,
+    // codex 十轮（二期）P0：HDC executable 可由 HARNESS_HDC_EXE/HDC_EXE 指定（宿主可控），
+    // 属"可执行宿主/设备工具"——统一 wrapper 剥离信任锚 env（此前默认继承 gate harness
+    // 完整环境，违反 3.9f 契约）。仅剥离、保留 process.env 的 PATH 原样（不再 merge——
+    // mergeEnvWithHdcOnPath 会经 resolveHdcExecutableSync 探测回调本函数造成无限递归）。
+    env: stripTrustAnchorEnv(process.env).env,
     ...(opts?.timeout !== undefined ? { timeout: opts.timeout } : {}),
     maxBuffer: opts?.maxBuffer ?? 64 * 1024 * 1024,
   };

@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import { featurePhaseReportsDir, resolveHylyreToolConfig } from '../../../../harness/config';
+import { stripTrustAnchorEnv } from '../../../../harness/scripts/utils/process-integrity';
 import {
   evaluateVendorSyncNeed,
   fingerprintFromManifest,
@@ -33,6 +34,7 @@ import {
   type RootPollutionMeta,
 } from '../hylyre-root-pollution';
 import { resolveHylyreRuntimeWorkDir, spawnHylyre } from '../hylyre-spawn';
+import { runHylyreUtf8RoundTrip } from '../hylyre-utf8-roundtrip';
 import {
   computeLastFailedStepIndex,
   parseStepsBatchFromRunOut,
@@ -219,10 +221,20 @@ function probePythonCandidates(): Array<{ cmd: string; args: string[] }> {
   ];
 }
 
+/**
+ * codex 九轮 P0：Python 准备链（探测/import/venv/pip）统一 env——宿主工程 cwd 下
+ * sitecustomize.py/同名模块/安装脚本都是 agent 可产出代码，信任锚材料一律剥离。
+ * 所有 Python 子进程（含 hylyre-spawn 正式入口）共用同一剥离口径。
+ */
+export function pythonSpawnEnv(): NodeJS.ProcessEnv {
+  return stripTrustAnchorEnv(process.env).env;
+}
+
 function findSystemPythonForVenv(): { cmd: string; args: string[] } | null {
   for (const c of probePythonCandidates()) {
     const r = spawnSync(c.cmd, [...c.args, '-c', 'import sys; assert sys.version_info >= (3, 10)'], {
       encoding: 'utf-8',
+      env: pythonSpawnEnv(),
     });
     if (r.status === 0) return c;
   }
@@ -230,7 +242,7 @@ function findSystemPythonForVenv(): { cmd: string; args: string[] } | null {
 }
 
 function canImportHylyre(pythonPath: string, logPath?: string): boolean {
-  const r = spawnSync(pythonPath, ['-c', 'import hylyre'], { encoding: 'utf-8' });
+  const r = spawnSync(pythonPath, ['-c', 'import hylyre'], { encoding: 'utf-8', env: pythonSpawnEnv() });
   if (logPath && (r.stdout || r.stderr)) {
     appendLogSync(logPath, (r.stdout || '') + (r.stderr || ''));
   }
@@ -252,6 +264,7 @@ function hylyrePackageContractsPresent(pythonPath: string, logPath: string): boo
   const r = spawnSync(pythonPath, ['-c', snippet], {
     encoding: 'utf-8',
     maxBuffer: 64 * 1024,
+    env: pythonSpawnEnv(),
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   if (out.trim()) {
@@ -264,6 +277,7 @@ function pipShowVersion(pythonPath: string): string {
   const r = spawnSync(pythonPath, ['-m', 'pip', 'show', 'hylyre'], {
     encoding: 'utf-8',
     maxBuffer: 2 * 1024 * 1024,
+    env: pythonSpawnEnv(),
   });
   if (r.status !== 0 || !r.stdout) return '';
   const m = r.stdout.match(/^Version:\s*(\S+)/m);
@@ -374,7 +388,8 @@ function runHylyrePipInstall(args: {
     cwd: args.projectRoot,
     stdio: ['ignore', 'inherit', 'inherit'],
     timeout: defaultPipTimeoutMs(),
-    env: { ...process.env },
+    // 九轮 P0：pip 以宿主工程为 cwd——宿主 sitecustomize/安装脚本可读 env，信任锚剥离
+    env: pythonSpawnEnv(),
   });
   const pipElapsed = ((Date.now() - pipStarted) / 1000).toFixed(1);
   appendLogSync(args.logPath, `\npip install 结束 exit=${pip.status}（${pipElapsed}s）\n`);
@@ -605,6 +620,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
         cwd: opts.projectRoot,
         stdio: ['ignore', 'inherit', 'inherit'],
         encoding: 'utf-8',
+        env: pythonSpawnEnv(),
       });
       if (mk.status !== 0) {
         errors.push({ message: `python -m venv 失败，exit=${mk.status}`, kind: 'venv' });
@@ -974,6 +990,23 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     }
   } else {
     doctorOk = true;
+  }
+
+  // visual-capability-truth S2（P0-B）：中文 UTF-8 round-trip——每次 ready 必跑（廉价：
+  // 单个 python 子进程），失败=BLOCKER 阻断 device testing（toolchain 类，非产品失败）。
+  // 20260718 宿主事故：selector 中文在 stdout 管道变 '����'，把「页面不可达」误导成
+  // 「编码破坏」；本探针使诊断通道字节保真可证。
+  if (canImportHylyre(pythonPath, logPath)) {
+    const rt = runHylyreUtf8RoundTrip({ pythonPath, hypiumWorkDir, logPath });
+    appendLogSync(logPath, `utf8-roundtrip: ${rt.ok ? 'PASS' : 'FAIL'} — ${rt.detail}\n`);
+    if (!rt.ok) {
+      errors.push({
+        message:
+          `中文 UTF-8 round-trip 失败（steps→hylyre parser→predicate→stdout 全链）：${rt.detail}\n` +
+          '修复指引：确认 venv Python ≥3.7 且未被宿主覆盖 PYTHONIOENCODING；重跑本 harness（env 注入 PYTHONUTF8/PYTHONIOENCODING 已内置）。',
+        kind: 'utf8_roundtrip',
+      });
+    }
   }
 
   const ok = errors.length === 0;

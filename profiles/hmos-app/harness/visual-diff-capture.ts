@@ -3,8 +3,10 @@
 // 带设备副作用：归 device_test.run 层调用，不得进入 check-testing 校验 dispatch。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { canonicalJson } from '../../../harness/scripts/utils/visual-rounds-ledger';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import {
@@ -27,7 +29,14 @@ import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-chec
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
 import { sampleQuiescent } from './quiescence-sampling';
 import { collectP0OverlayTargetIds, isP0VisualTargetScreen, isOverlayRootScreen } from './visual-diff-targets';
-import { resolveNavForTargets, type NavConfig, type NavScreenSteps } from './visual-diff-nav';
+import {
+  evaluateScreenIdentity,
+  extractLayoutDumpFacets,
+  resolveNavForTargets,
+  type NavConfig,
+  type NavScreenIdentity,
+  type NavScreenSteps,
+} from './visual-diff-nav';
 
 export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
@@ -81,6 +90,13 @@ export interface VisualDiffCaptureOptions {
   navConfig?: NavConfig;
   /** round5 P1-A：导航执行器（真机 Hylyre）；缺省则不导航。与 navConfig 同时提供才生效 */
   navExecutorFn?: VisualDiffNavExecutorFn;
+  /**
+   * S2 P0-C（visual-capability-truth）：每屏页面身份锚点（resolveIdentityForTargets 产物，
+   * proposed 候选须由调用方过滤）。有 identity 且 layoutDumpFn 可用时，导航后先 dump→
+   * identity gate→通过才 screenshot 落正式目录；不匹配 → screen_identity_mismatch，
+   * 证据图归档 _mismatch/，正式目录零写入（20260718 错页截图计入 captured 的解药）。
+   */
+  screenIdentity?: Map<string, NavScreenIdentity>;
   /** t2：布局树 dump 执行器；缺省 → 各屏 layout_dump_status=unavailable（能力缺失，非采集失败） */
   layoutDumpFn?: VisualDiffLayoutDumpFn;
   /**
@@ -513,6 +529,78 @@ export function buildVisualDiffMdBody(
  * 按 ui-spec P0 屏采集截图并写入 visual-diff.json 骨架（verdict=pending）。
  * 非顶层屏跳过自动截图（由 agent 导航后重跑或手工补 shot）。
  */
+/** identity 规则指纹（skip 旁路封堵：identity 变更/从未验证过身份的旧截图不得跳采） */
+export function identityFingerprintOf(identity: NavScreenIdentity): string {
+  return crypto.createHash('sha256').update(canonicalJson(identity)).digest('hex').slice(0, 16);
+}
+
+/**
+ * codex 实施 review P1-3：build 指纹跳采的 identity 维度——屏有**已确认** identity 时，
+ * 旧 entry 必须携带相同 identity_fingerprint（该截图曾过同一身份规则）才可跳采；
+ * identity 新增/变更、或旧图从未验身份（可能本来就是错页）→ 不得跳采。
+ */
+export function skipAllowedByIdentity(
+  entry: VisualDiffScreenEntry | undefined,
+  identity: NavScreenIdentity | undefined,
+): boolean {
+  if (!identity || identity.proposed === true) return true;
+  const fp = identityFingerprintOf(identity);
+  return (entry as { identity_fingerprint?: string } | undefined)?.identity_fingerprint === fp;
+}
+
+/**
+ * S2 P0-C：页面身份 gate——navigate 后、screenshot 落正式目录前执行。
+ * 顺序契约：navigate → dump uitree（_identity 探测位）→ identity gate → screenshot →
+ * canonical write。无 identity/proposed 候选/无 dump 能力 → 直接放行（强制策略由
+ * validateNavConfigV2 的 requireConfirmedIdentity 在校验层管）。
+ */
+function runScreenIdentityGate(
+  opts: VisualDiffCaptureOptions,
+  screenId: string,
+  reportDir: string,
+): { ok: boolean; detail?: string } {
+  const identity = opts.screenIdentity?.get(screenId);
+  if (!identity || identity.proposed === true) return { ok: true };
+  if (!opts.layoutDumpFn) return { ok: true };
+  const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
+  const probeAbs = path.join(reportDir, '_identity', `layout-${slug}.json`);
+  try {
+    fs.mkdirSync(path.dirname(probeAbs), { recursive: true });
+  } catch {
+    /* mkdir 失败随 dump 失败一并报 */
+  }
+  const d = opts.layoutDumpFn({
+    screenId,
+    destAbs: probeAbs,
+    deviceSn: opts.deviceSn,
+    bundleName: opts.bundleName,
+  });
+  if (!d.ok) {
+    return { ok: false, detail: `identity 探测 dump 失败${d.error ? ` — ${d.error}` : ''}（身份未验不得落正式截图）` };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(fs.readFileSync(probeAbs, 'utf-8'));
+  } catch (e) {
+    return { ok: false, detail: `identity dump 不可解析：${(e as Error).message}` };
+  }
+  const ev = evaluateScreenIdentity(identity, extractLayoutDumpFacets(json));
+  if (!ev.ok) {
+    const evidenceAbs = path.join(reportDir, '_mismatch', `shot-${slug}.png`);
+    try {
+      fs.mkdirSync(path.dirname(evidenceAbs), { recursive: true });
+      opts.screenshotFn?.({ screenId, destAbs: evidenceAbs, bundleName: opts.bundleName, deviceSn: opts.deviceSn });
+    } catch {
+      /* 证据图 best-effort，不影响 mismatch 判定 */
+    }
+    return {
+      ok: false,
+      detail: `screen_identity_mismatch — ${ev.detail}（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
+    };
+  }
+  return { ok: true };
+}
+
 export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCaptureResult {
   const errors: string[] = [];
   const uiDoc =
@@ -582,7 +670,10 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   for (const screen of targets) {
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
-    if (canSkipRecaptureForScreen(existingById.get(screen.id), opts.projectRoot, currentFp)) {
+    if (
+      canSkipRecaptureForScreen(existingById.get(screen.id), opts.projectRoot, currentFp) &&
+      skipAllowedByIdentity(existingById.get(screen.id), opts.screenIdentity?.get(screen.id))
+    ) {
       preservedBuildValidIds.push(screen.id);
       continue;
     }
@@ -619,6 +710,13 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         continue;
       }
     }
+    // S2 P0-C：identity gate（dump→判定）先于任何正式截图落盘
+    const idGate = runScreenIdentityGate(opts, screen.id, reportDir);
+    if (!idGate.ok) {
+      errors.push(`${screen.id}: ${idGate.detail}`);
+      p0CaptureFailures.push(screen.id);
+      continue;
+    }
     // t2/t4b：取材统一入口——旧路径=单 shot+dump；静稳路径=双 shot 双 dump（仅 pixel_1to1 装配）
     const acq = acquireScreenArtifacts(opts, screen.id, paths.abs, reportDir, errors);
     if (!acq.ok) {
@@ -653,12 +751,20 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
     // P0-9a：机器盖构建指纹戳（agent 无须也不应手填）——后续判定即绑定本构建。
     if (currentFp) row.evaluated_build_fingerprint = currentFp;
+    // P1-3：本截图通过的身份规则指纹——后续同 build 跳采须 identity 未变才合法
+    const idnMain = opts.screenIdentity?.get(screen.id);
+    if (idnMain && idnMain.proposed !== true) {
+      (row as { identity_fingerprint?: string }).identity_fingerprint = identityFingerprintOf(idnMain);
+    }
     capturedScreens.push({ entry: row, hash: screenshotHash });
   }
 
   for (const ov of collectP0OverlayTargetIds(uiDoc)) {
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
-    if (canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp)) {
+    if (
+      canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp) &&
+      skipAllowedByIdentity(existingById.get(ov.id), opts.screenIdentity?.get(ov.id))
+    ) {
       preservedBuildValidIds.push(ov.id);
       continue;
     }
@@ -674,6 +780,13 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       const nav = opts.navExecutorFn!({ screenId: ov.id, steps: ovSteps, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
       if (!nav.ok) {
         errors.push(`${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        p0CaptureFailures.push(ov.id);
+        continue;
+      }
+      // S2 P0-C：overlay 同样过 identity gate（sheet 开启态身份）
+      const ovIdGate = runScreenIdentityGate(opts, ov.id, reportDir);
+      if (!ovIdGate.ok) {
+        errors.push(`${ov.id}: ${ovIdGate.detail}`);
         p0CaptureFailures.push(ov.id);
         continue;
       }
@@ -702,6 +815,10 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
       row.layout_dump_status = acq.dumpStatus;
       if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
+      const idnOv = opts.screenIdentity?.get(ov.id);
+      if (idnOv && idnOv.proposed !== true) {
+        (row as { identity_fingerprint?: string }).identity_fingerprint = identityFingerprintOf(idnOv);
+      }
       capturedScreens.push({ entry: row, hash: screenshotHash });
       continue;
     }
