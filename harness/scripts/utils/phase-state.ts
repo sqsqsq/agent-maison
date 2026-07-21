@@ -189,6 +189,9 @@ export function tryValidateReceipt(
   projectRoot: string,
   phase: string,
   feature: string,
+  // P0-5（plan 7c4f2e9b）：resume 重探时 subprocess timeout 受 remaining wall-clock/
+  // FINALIZE_RESERVE 约束（codex 五轮）；缺省不限（既有行为不变）。
+  opts?: { timeoutMs?: number },
 ): ReceiptValidation {
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptAbs = receiptResolved.path;
@@ -242,6 +245,7 @@ export function tryValidateReceipt(
       cwd: harnessRoot,
       encoding: 'utf-8',
       shell: isWin,
+      ...(opts?.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}),
     },
   );
 

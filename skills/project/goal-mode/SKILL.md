@@ -64,7 +64,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 ## 运行中进度汇报
 
-启动 runner 后，立刻告诉用户 `run_id` 与 `progress.json` 路径。除非用户明确要求 **fire-and-forget**，主 agent 在当前活跃对话轮次内 **必须**进入 bounded monitor（只读等待器，不启动/不续跑/不杀掉 goal-runner）：
+启动 runner 后，立刻告诉用户 `run_id` 与 `progress.json` 路径。除非用户明确要求 **fire-and-forget**，主 agent 在当前活跃对话轮次内 **必须**进入 bounded monitor（只读等待器，不启动/不续跑/不杀掉 goal-runner）。**硬熔断**：连续 3 轮无 phase/substep 推进、或单 phase 累计 30min、或单轮对话 monitor 总时长 30min——任一命中即主动转 fire-and-forget 交还对话（模板见 goal-mode-operations.md「monitor 熔断」；07-17 实测宿主被 monitor 占用 2h05m 属事故）：
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-monitor.ts \

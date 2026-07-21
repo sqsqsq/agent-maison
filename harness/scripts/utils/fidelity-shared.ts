@@ -555,6 +555,15 @@ export function refElementsAbsPath(projectRoot: string, feature: string): string
   return featureFilePath(projectRoot, feature, path.join('spec', 'ref-elements.yaml'));
 }
 
+/**
+ * P0-2（plan 7c4f2e9b）：报错/affected_files 用的 spec/ 相对路径——与 refElementsAbsPath
+ * **同源**。事故实证：relFeatureArtifact('ref-elements.yaml') 落 feature 根路径，agent 照
+ * 报错把文件 cp 到根目录白耗时间（归档里因此存在双份 ref-elements.yaml）。
+ */
+export function refElementsRelPath(projectRoot: string, feature: string): string {
+  return path.relative(projectRoot, refElementsAbsPath(projectRoot, feature)).replace(/\\/g, '/');
+}
+
 export function assetManifestAbsPath(projectRoot: string, feature: string): string {
   return featureFilePath(projectRoot, feature, path.join('spec', 'asset-manifest.yaml'));
 }

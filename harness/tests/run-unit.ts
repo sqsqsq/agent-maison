@@ -200,6 +200,13 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'integration-tc-flow', modulePath: './unit/integration-tc-flow.unit.test' },
   { id: 'blind-crop-prohibition', modulePath: './unit/blind-crop-prohibition.unit.test' },
   { id: 'visual-debt', modulePath: './unit/visual-debt.unit.test' },
+  // plan 7c4f2e9b（cc-spec 卡死根治）六套件
+  { id: 'claude-envelope', modulePath: './unit/claude-envelope.unit.test' },
+  { id: 'ui-spec-schema-strict', modulePath: './unit/ui-spec-schema-strict.unit.test' },
+  { id: 'pass-snapshot', modulePath: './unit/pass-snapshot.unit.test' },
+  { id: 'blocker-actionability', modulePath: './unit/blocker-actionability.unit.test' },
+  { id: 'timeout-ratchet-closure', modulePath: './unit/timeout-ratchet-closure.unit.test' },
+  { id: 'attempt-axes-timeline', modulePath: './unit/attempt-axes-timeline.unit.test' },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string }> = [...CORE_SUITES, ...discoverProfileUnitSuites()];

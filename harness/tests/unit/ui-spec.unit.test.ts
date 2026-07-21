@@ -339,7 +339,11 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('ui_spec_screen_extension_field_allowed', () => {
+  // P0-2（plan 7c4f2e9b）契约反转：原名 ui_spec_screen_extension_field_allowed——
+  // 「扩展字段静默放行」正是事故根因机制（must_have 错键在 additionalProperties:true 下
+  // 覆盖清单归零、五连败 HALT）。新契约：screen/componentNode 未知键硬拒 + did-you-mean；
+  // 合法扩展须先登记进 ui-spec.schema.json（SSOT）。
+  run('ui_spec_screen_unknown_field_rejected_with_hint', () => {
     const root = mkProject();
     try {
       fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ui-spec.yaml'), [
@@ -349,7 +353,7 @@ export function runAll(): UnitCaseResult[] {
         'screens:',
         '  - id: home',
         '    priority: P0',
-        '    custom_note: "profile extension"',
+        '    must_have: [x]',
         '    root:',
         '      type: navigation_frame',
         '      order: 0',
@@ -360,8 +364,14 @@ export function runAll(): UnitCaseResult[] {
       ].join('\n'));
       const r = checkUiSpecStructure(baseCtx(root, { uiSpecEnforcement: 'strict' }), prdNewOrChanged());
       const fail = r.find(x => x.id === 'ui_spec_structure' && x.status === 'FAIL');
-      if (fail && /非法字段/.test(fail.details ?? '')) {
-        throw new Error(`extension fields should be allowed: ${JSON.stringify(fail)}`);
+      if (!fail || !/非法字段/.test(fail.details ?? '')) {
+        throw new Error(`unknown keys must be rejected now: ${JSON.stringify(r)}`);
+      }
+      if (!/must_have_elements/.test(fail.details ?? '')) {
+        throw new Error(`事故键 must_have 须给 did-you-mean 正名：${fail.details}`);
+      }
+      if (!/profile_hint/.test(fail.details ?? '')) {
+        throw new Error(`componentNode 未知键也须被拒：${fail.details}`);
       }
     } finally {
       clearFrameworkConfigCache();

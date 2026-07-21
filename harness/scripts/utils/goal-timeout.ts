@@ -78,6 +78,111 @@ export function canAffordBackoff(configuredBackoffMs: number, availableMs: numbe
   return availableMs >= configuredBackoffMs && configuredBackoffMs > 0;
 }
 
+// ============================================================================
+// P0-5（plan 7c4f2e9b）：超时预算——授予高水位 + 实测棘轮（codex P1#8 + 五轮收敛）。
+// 事故实证：i3 已获授 67.5min 且以 exit0@49.6min 证明全量一遍成本，i4/i5 仍回落 45min
+// 被腰斩。completed 的 SSOT 钉死为 agent_invoke_end.exit_code===0 && timed_out!==true
+// （i2 是 harness-PASS 但 agent 超时、i3 是 agent exit0 但 harness FAIL——棘轮只认后者）。
+// 两值均从 events 重建（--resume 不丢）。显式配置=hard cap 不被棘轮突破，但实测逼近/超过
+// 时输出 advisory（诚实呈现不可自愈面）。
+// ============================================================================
+
+export const OBSERVED_RATCHET_FACTOR = 1.2;
+
+export interface TimeoutRatchetObservations {
+  /** 本 phase 曾授予过的最高 effective_timeout_ms（agent_invoke_start/end + timeout_escalated 事件重建） */
+  grantedHighwaterMs: number;
+  /** 本 phase completed attempt（exit_code===0 && !timed_out）的最大 duration_ms；无则 0 */
+  maxCompletedDurationMs: number;
+}
+
+interface RatchetEventLike {
+  type?: string;
+  phase?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  timed_out?: boolean;
+  effective_timeout_ms?: number;
+}
+
+export function extractTimeoutRatchetFromEvents(
+  events: RatchetEventLike[],
+  phase: string,
+): TimeoutRatchetObservations {
+  let granted = 0;
+  let completed = 0;
+  for (const e of events) {
+    if (e.phase !== phase) continue;
+    if (
+      (e.type === 'agent_invoke_start' || e.type === 'agent_invoke_end' || e.type === 'timeout_escalated') &&
+      typeof e.effective_timeout_ms === 'number' &&
+      e.effective_timeout_ms > granted
+    ) {
+      granted = e.effective_timeout_ms;
+    }
+    if (
+      e.type === 'agent_invoke_end' &&
+      e.exit_code === 0 &&
+      e.timed_out !== true &&
+      typeof e.duration_ms === 'number' &&
+      e.duration_ms > completed
+    ) {
+      completed = e.duration_ms;
+    }
+  }
+  return { grantedHighwaterMs: granted, maxCompletedDurationMs: completed };
+}
+
+export type TimeoutBudgetSource = 'base' | 'consecutive_timeouts' | 'granted_highwater' | 'observed_ratchet' | 'explicit_cap';
+
+export interface EffectiveTimeoutResolution {
+  effectiveMs: number;
+  source: TimeoutBudgetSource;
+  /** 显式配置疑似过小时的诚实提示（goal-report 呈现；null=无话可说） */
+  advisory: string | null;
+}
+
+export function resolveEffectiveTimeoutMs(input: {
+  baseMs: number;
+  explicit: boolean;
+  consecutiveTimeouts: number;
+  observations: TimeoutRatchetObservations;
+}): EffectiveTimeoutResolution {
+  const { baseMs, explicit, consecutiveTimeouts, observations } = input;
+  const observedMs =
+    observations.maxCompletedDurationMs > 0
+      ? Math.ceil(observations.maxCompletedDurationMs * OBSERVED_RATCHET_FACTOR)
+      : 0;
+  if (explicit) {
+    // 显式配置=hard cap（棘轮不突破）；实测逼近/超过 → advisory 诚实提示
+    const nearOrOver =
+      observations.maxCompletedDurationMs >= baseMs * 0.9 || consecutiveTimeouts > 0;
+    return {
+      effectiveMs: baseMs,
+      source: 'explicit_cap',
+      advisory: nearOrOver
+        ? `显式 phase 超时（${Math.round(baseMs / 60000)}min）疑似过小：实测完成/超时数据已逼近或超过该值` +
+          `（max_completed=${Math.round(observations.maxCompletedDurationMs / 60000)}min，连续超时=${consecutiveTimeouts}）——考虑调大配置`
+        : null,
+    };
+  }
+  const escalatedMs =
+    consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_ESCALATE_AFTER
+      ? Math.round(baseMs * TIMEOUT_ESCALATION_FACTOR)
+      : 0;
+  const candidates: Array<{ ms: number; source: TimeoutBudgetSource }> = [
+    { ms: baseMs, source: 'base' },
+    { ms: escalatedMs, source: 'consecutive_timeouts' },
+    { ms: observations.grantedHighwaterMs, source: 'granted_highwater' },
+    { ms: observedMs, source: 'observed_ratchet' },
+  ];
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.ms > best.ms) best = c;
+  }
+  return { effectiveMs: best.ms, source: best.source, advisory: null };
+}
+
 /** 显式 override（per-phase 或扁平）在位即 true——升档只对默认表派生值生效。 */
 export function isExplicitPhaseTimeout(
   phase: FeaturePhase,

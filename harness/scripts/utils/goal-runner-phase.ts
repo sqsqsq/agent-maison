@@ -53,6 +53,70 @@ export interface PhaseVerdictResolveResult {
 
 export type ClosureAdvanceBlockReason = 'closure_open' | 'receipt_missing' | 'agent_timeout_unclosed';
 
+// ============================================================================
+// P0-5（plan 7c4f2e9b，codex 四/五轮）：closure_kind 确定性分类——**不得从
+// advance_block_reason 映射**（本文件 resolveClosureAdvanceBlock 中 agentTimedOut 先于
+// receiptStatus 返回，会掩盖 receipt 真值；advance_block_reason 仅作 telemetry）。
+// 分类是只读 receipt 探针（tryValidateReceipt）真值上的 **total function**
+// （ReceiptValidation 五态全集，phase-state.ts:36）：
+//   passed          → deterministic_recheck（runner 不调 agent，执行正式 sync-closure）
+//   missing/failed  → receipt_repair_with_verifier（agent attempt，沿用完整 effective 预算）
+//   error           → 立即 HALT closure_probe_error（探针自身崩溃=framework/toolchain 坏，
+//                     调 agent「修 receipt」只会空转回潮）
+//   not_applicable（且仍 advance_blocked）→ 立即 HALT closure_state_invariant
+//                    （lite track 本不产生 receipt，走到此即 runner 状态机 bug）
+// ============================================================================
+
+export type ClosureRoute =
+  | { kind: 'deterministic_recheck' }
+  | { kind: 'receipt_repair_with_verifier' }
+  | { kind: 'halt'; reason: 'closure_probe_error' | 'closure_state_invariant' };
+
+/**
+ * post-impl review P1#5：closure-only attempt 超时 → 直接 closure_timeout 求人，
+ * **不回内容重试**（OpenSpec 明文）。verdict=PASS 的超时不在此拦（advance_blocked 分支
+ * 走 closure 分类，deterministic 大概率直接关环推进——比 halt 更好）。
+ */
+export function shouldHaltClosureTimeout(
+  isClosureOnlyAttempt: boolean,
+  failureKind: string,
+  verdict: string,
+): boolean {
+  return isClosureOnlyAttempt && failureKind === 'agent_timeout' && verdict !== 'PASS';
+}
+
+/**
+ * round4 P1#3：deterministic sync-closure 结果的完整分流（纯函数，runner 消费 + 控制流
+ * 矩阵测试）。核心契约：closure-only attempt 一旦超时，**任何非 advance 出路都不得回
+ * 内容重试**——sync 成功→advance；sync 失败+已超时→closure_timeout；sync 失败+未超时
+ * →回落 repair（下一 attempt 仍是 closure 语境）。
+ */
+export function resolveClosureSyncOutcome(
+  syncExitCode: number,
+  isClosureOnlyAttempt: boolean,
+  timedOut: boolean,
+): 'advance' | 'closure_timeout' | 'repair_retry' {
+  if (syncExitCode === 0) return 'advance';
+  if (isClosureOnlyAttempt && timedOut) return 'closure_timeout';
+  return 'repair_retry';
+}
+
+export function classifyClosureKind(
+  probeStatus: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable',
+): ClosureRoute {
+  switch (probeStatus) {
+    case 'passed':
+      return { kind: 'deterministic_recheck' };
+    case 'missing':
+    case 'failed':
+      return { kind: 'receipt_repair_with_verifier' };
+    case 'error':
+      return { kind: 'halt', reason: 'closure_probe_error' };
+    case 'not_applicable':
+      return { kind: 'halt', reason: 'closure_state_invariant' };
+  }
+}
+
 /** Block goal advance when script PASS but receipt/closure incomplete or agent timed out unclosed. */
 export function resolveClosureAdvanceBlock(input: {
   verdict: HarnessVerdict;
@@ -133,6 +197,12 @@ export interface GoalRunEvent {
   integrity_subtypes?: string[];
   advance_blocked?: boolean;
   advance_block_reason?: string;
+  /** P0-3（plan 7c4f2e9b）：phase_invalidated 事件的事务锚——按 (tx_id, phase) 幂等，
+   * 恢复资格 SSOT 在 trust-state journal，事件仅审计投影。 */
+  invalidation_tx_id?: string;
+  /** P1-6（plan 7c4f2e9b）：四轴时间线 artifact delta 轴（changed/unchanged；restored 由
+   * pass_snapshot_restored 事件承载） */
+  artifact_delta?: string;
   exit_code?: number;
   duration_ms?: number;
   timed_out?: boolean;

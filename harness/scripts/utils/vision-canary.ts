@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Jimp from 'jimp';
+import { extractClaudeFinalResultText } from './claude-envelope';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -335,6 +336,12 @@ export interface CanaryInvocationFacts {
   timed_out?: boolean;
   silent_killed?: boolean;
   skipped?: boolean;
+  /**
+   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 为 claude stream-json
+   * NDJSON 信封流（planUsesClaudeStreamJson 判定）。true 时判卷前先取终态 result 文本
+   * 投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout 会把真视觉宿主判成永久盲档。
+   */
+  structured_stdout?: boolean;
 }
 
 export type CanaryCacheDecision =
@@ -388,7 +395,21 @@ export function resolveCanaryCacheDecision(
     return { kind: 'invoke_failed', cache: false, detail: `invoke 非零退出（exitCode=${invocation.exitCode}）` };
   }
 
-  const raw = invocation.stdout;
+  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影终态 result 文本；无合法终态
+  // （残卷/错误 result/多 result 全非法）→ invalid_answer 维持 fail-closed，不放宽。
+  // externalToolSuspected 仍从原始 stdout 提取（tool_use 事件在信封里，不在投影文本）。
+  let raw = invocation.stdout;
+  if (invocation.structured_stdout) {
+    const projected = extractClaudeFinalResultText(invocation.stdout);
+    if (projected === null) {
+      return {
+        kind: 'invalid_answer',
+        cache: false,
+        detail: 'structured envelope 无终态 success result（残卷/错误 result/断流）——不判卷，不落缓存',
+      };
+    }
+    raw = projected;
+  }
   const requiredKeys = [...answerKey.geometry_questions.map(q => q.id), 'TEXT_TOKEN'];
   const finalAnswers = new Map<string, string>();
   for (const k of requiredKeys) {
@@ -417,7 +438,7 @@ export function resolveCanaryCacheDecision(
   return {
     kind: 'valid',
     cache: true,
-    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(raw) },
+    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(invocation.stdout) },
     canonicalAnswer,
   };
 }

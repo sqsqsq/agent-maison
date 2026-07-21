@@ -19,6 +19,7 @@ import {
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
   refElementsAbsPath,
+  refElementsRelPath,
   assetManifestAbsPath,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import {
@@ -188,7 +189,7 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
   const refAbs = refElementsAbsPath(ctx.projectRoot, ctx.feature);
   const refDoc = fs.existsSync(refAbs) ? loadRefElementsFile(refAbs) : null;
   if (refDoc) {
-    const refRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'ref-elements.yaml');
+    const refRel = refElementsRelPath(ctx.projectRoot, ctx.feature);
     const deferViolations = findUnsignedRefElementDefers(refDoc, deferrals, { requireExplicitSigner: headless });
     if (deferViolations.length > 0) {
       const { severity, status } = fidelityRatchetFailOrWarn(ctx, false);

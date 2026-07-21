@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"fixture","model":"claude-sonnet-5","permissionMode":"dontAsk"}
+npm WARN deprecated something
+{"type":"result","subtype":"success","is
+  (stderr splice)
+_error":false,"result":"TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=K7XQ2"}

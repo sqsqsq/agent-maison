@@ -125,7 +125,9 @@ export const PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[
  * closure 后被改必须传导 stale。
  */
 export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, string[]>> = {
-  spec: ['spec/ui-spec.yaml', 'spec/ref-elements.yaml'],
+  // P0-3（plan 7c4f2e9b，codex 二轮 must-fix#1）：补齐 spec/asset-manifest.yaml——
+  // 本表是 PASS 快照 frozen deliverables 的 SSOT 之一，缺登记=该产物漏出冻结面。
+  spec: ['spec/ui-spec.yaml', 'spec/ref-elements.yaml', 'spec/asset-manifest.yaml'],
 };
 
 /**

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"fixture","model":"claude-sonnet-5","permissionMode":"dontAsk"}
+{"type":"result","subtype":"success","is_error":false,"result":"CANNOT_SEE_IMAGE"}

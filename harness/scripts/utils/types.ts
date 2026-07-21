@@ -439,6 +439,12 @@ export interface CheckResult {
   failure_kind?: string;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
+  /** P0-4（plan 7c4f2e9b）：显式 actionability（agent_fixable/human_only/toolchain_blocked）——
+   * 缺省走 goal-failure-classifier 注册表映射（优先级链：显式→映射→缺省 agent_fixable）。 */
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  /** P1-7（plan 7c4f2e9b）：operator/人类专用补充说明（framework 内部机制话术落此）——
+   * goal-report 渲染，**不进 agent 重试 prompt 失败回喂块**。 */
+  operator_note?: string;
   /**
    * 产出来源（t1d，plan e6a3c9f4）：由编排边界填充（safeRun origin / profile dispatch 标签），
    * 供报告/summary 定位"哪段实现产出了这条结果"；未填时渲染层回退显示 check-<phase>.ts。

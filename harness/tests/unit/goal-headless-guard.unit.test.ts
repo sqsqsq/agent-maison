@@ -474,7 +474,10 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'b4+d9: agentTimedOut 让位 agent_timeout，但 prior failure 签名诊断不丢',
+      // post-impl review P2#8（plan 7c4f2e9b）契约更新：toolchain 诊断的存活面=summary
+      // blocker excerpt（operator/halt guidance 消费，此处入参即为该面）；agent 回喂只
+      // parked（agent 修不了环境）。timeout+toolchain 现走 await_operator_toolchain 求人。
+      name: 'b4+d9: agentTimedOut 让位 agent_timeout；toolchain 诊断 parked 不进回喂正文',
       run: () => {
         const summary = {
           verdict: 'FAIL' as const,
@@ -491,8 +494,9 @@ export function runAll(): UnitCaseResult[] {
         const kind = classifyFailureKind(summary, undefined, { agentTimedOut: true });
         assert(kind === 'agent_timeout', kind);
         const prior = extractPriorFailureContext(summary as any);
-        assert(prior.includes('signingConfigs 未配置'), prior);
-        assert(prior.includes('自定义签名任务覆盖 ohosTest'), prior);
+        assert(/parked, environment\/toolchain/.test(prior), prior);
+        assert(prior.includes('ut_hvigor_test'), prior);
+        assert(!prior.includes('signingConfigs 未配置'), prior);
       },
     },
     {

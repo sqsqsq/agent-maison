@@ -22,6 +22,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { collectClaudeImageReadPaths } from './claude-envelope';
 import { featureDir, loadFrameworkConfig } from '../../config';
 import {
   capabilityReceiptPath,
@@ -55,26 +56,9 @@ function sha256File16(absPath: string): string | null {
  * input.file_path 以 .png/.jpg/.jpeg/.webp 结尾。只认结构化字段，非 JSON 行直接跳过。
  */
 export function parseClaudeImageReadEvents(eventsJsonl: string): string[] {
-  const out = new Set<string>();
-  for (const line of eventsJsonl.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{')) continue;
-    let evt: unknown;
-    try {
-      evt = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    const rec = evt as { type?: string; message?: { content?: unknown } };
-    if (rec.type !== 'assistant' || !rec.message || !Array.isArray(rec.message.content)) continue;
-    for (const block of rec.message.content as Array<Record<string, unknown>>) {
-      if (!block || block.type !== 'tool_use' || block.name !== 'Read') continue;
-      const input = block.input as { file_path?: unknown } | undefined;
-      const fp = typeof input?.file_path === 'string' ? input.file_path.trim() : '';
-      if (fp && /\.(png|jpe?g|webp)$/i.test(fp)) out.add(fp);
-    }
-  }
-  return [...out];
+  // P0-1（plan 7c4f2e9b）：本体收敛到 claude-envelope 共享模块（四类信封消费一份语义），
+  // 此处保留薄壳维持既有导出签名与注册表不变。
+  return collectClaudeImageReadPaths(eventsJsonl);
 }
 
 /** adapter → 结构化事件解析器注册表（盘点合格 + fixture 后方可入册） */

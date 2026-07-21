@@ -59,6 +59,8 @@ export interface UiSpecComponentNode {
   color_ref?: string;
   icon?: UiSpecIconRef;
   badge?: string;
+  /** P0-2（plan 7c4f2e9b）补登记：文本节点→参考元素映射（vision_output_counterevidence 消费；此前 TS 缺此字段由三方漂移测试拦出） */
+  source_ref?: string;
   /** G3：按钮视觉变体（filled/tonal/outlined/ghost/text） */
   variant?: UiSpecButtonVariant;
   /** G3：同行/同容器布局分组 id（同一 layout_group 的元素在同一行/容器内） */

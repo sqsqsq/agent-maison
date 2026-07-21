@@ -1,0 +1,10 @@
+{
+  "manifest_files": [
+    "harness/scripts/goal-runner.ts",
+    "harness/config.ts"
+  ],
+  "on_disk_extra": [
+    "harness/debug-coverage.ts"
+  ],
+  "incident_note": "i5 Write framework/harness/debug-coverage.ts — framework_foreign_file BLOCKER 未触发（P1-10 调查对象）"
+}

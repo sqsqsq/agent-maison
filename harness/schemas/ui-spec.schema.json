@@ -70,9 +70,26 @@
     "componentNode": {
       "type": "object",
       "required": ["type", "order"],
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "id": { "type": "string" },
+        "semantic_role": {
+          "type": "string",
+          "enum": ["success", "brand_primary", "danger", "promo", "neutral"],
+          "description": "语义色角色（f4aaf66d）；P0-2 收紧时补登记（此前 TS 有 schema 缺）"
+        },
+        "color_ref": { "type": "string", "description": "token 语义色引用；P0-2 补登记" },
+        "icon": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "type": "string", "enum": ["brand_logo", "system_symbol", "illustration"] },
+            "ref": { "type": "string" }
+          },
+          "description": "图标引用（f4aaf66d）；P0-2 补登记"
+        },
+        "badge": { "type": "string", "description": "角标文本；P0-2 补登记" },
+        "source_ref": { "type": "string", "description": "文本节点→参考元素映射（vision_output_counterevidence 消费）；P0-2 补登记" },
         "type": {
           "type": "string",
           "enum": [
@@ -163,7 +180,7 @@
     "screen": {
       "type": "object",
       "required": ["id", "priority"],
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "id": { "type": "string" },
         "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },

@@ -1,0 +1,34 @@
+# fixture: i2 PASS 态 ui-spec（正确键名 must_have_elements；回放 A 的冻结对象；schema 全合法）
+schema_version: "1.0"
+verified: unverified
+screens:
+  - id: add_card_home_collapsed
+    ref_id: add_card_home_collapsed
+    priority: P0
+    must_have_elements:
+      - add_card_title
+      - add_card_slogan
+      - more_button
+    root:
+      type: navigation_frame
+      layout: column
+      order: 0
+      children:
+        - id: add_card_title
+          type: content_display
+          order: 0
+          text: "添加银行卡"
+        - id: add_card_slogan
+          type: content_display
+          order: 1
+          text: "免输卡号添卡"
+        - id: more_button
+          type: action_button
+          order: 2
+          text: "更多"
+          variant: text
+tokens:
+  color_primary:
+    kind: color
+    value: "#165DFF"
+assets: []

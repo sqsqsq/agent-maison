@@ -54,11 +54,19 @@ function ensureReportDir(projectRoot: string, feature: string, phase: Phase, fra
 export function resolveEffectiveSuggestion(check: CheckResult, phase: Phase): string | undefined {
   if (check.suggestion && check.suggestion.trim().length > 0) return check.suggestion;
   if (check.severity !== 'BLOCKER' || check.status !== 'FAIL') return check.suggestion;
+  // P1-7（plan 7c4f2e9b）：agent 通道只给产物级动作——旧文案「检索 id=… 查看判定实现」
+  // 把弱模型引进 framework 源码逆向（事故 i5：135 次工具调用 62 Bash+33 Grep 全在读门禁
+  // 实现、写 debug 脚本进 framework/harness/，0 次产物修复）。源码定位指引移 operator_note
+  // （goal-report 渲染，不进重试回喂）。
   const origin = check.source ?? `check-${phase}.ts`;
+  if (!check.operator_note) {
+    check.operator_note =
+      `（operator 参考）判定实现：framework/harness/scripts/ 或对应 profile harness 的 ${origin}，` +
+      `检索 id="${check.id}"；各阶段门禁速查见 docs/operations/harness-runbook.md §5。`;
+  }
   return (
-    `（自动指引）该门禁未附带专属修复建议：先按 details 定位失败上下文；` +
-    `在 framework/harness/scripts/ 或对应 profile harness 的 ${origin} 中检索 id="${check.id}" 查看判定实现；` +
-    `各阶段门禁速查见 docs/operations/harness-runbook.md §5。`
+    `（自动指引）按 details 与 affected_files 修产物；` +
+    `修复路径不明时如实 halt 上报，不要为绕过门禁读改 framework 实现。`
   );
 }
 

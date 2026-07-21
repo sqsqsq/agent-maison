@@ -23,10 +23,39 @@ export interface GoalReportMarkdownOptions {
   workflowChain?: string[];
   /** phase → WARN 摘要（t9：warn_count + 置顶类 WARN id）；writeGoalReport 构建 */
   warnDigest?: Map<string, string>;
+  /** P1-6（plan 7c4f2e9b）：events.jsonl 回放——no_progress/closure 族 halt 渲染四轴时间线 */
+  events?: Array<Record<string, unknown>>;
+  /** P1#7（post-impl review）：operator 专用门禁指引（不进 agent 回喂，在报告渲染给人） */
+  operatorNotes?: Array<{ phase: string; blockerId: string; note: string }>;
 }
 
 /** t9：WARN 摘要置顶类——视觉缺席/覆盖不足/证据缺失沉底即事故形状，固定优先展示 */
 const PINNED_WARN_ID_RE = /visual|coverage|evidence|p0_|fidelity|flow_contract|attestation/i;
+
+/** P1#7（post-impl review）：从各 phase summary 收集 blocker.operator_note——受众分级的
+ * operator 半边：不进 agent 回喂（extractPriorFailureContext 已排除），在此渲染给人看。 */
+export function collectOperatorNotes(
+  projectRoot: string,
+  report: GoalReport,
+): Array<{ phase: string; blockerId: string; note: string }> {
+  const out: Array<{ phase: string; blockerId: string; note: string }> = [];
+  for (const p of report.phases) {
+    if (!p.summary_path) continue;
+    try {
+      const summaryAbs = path.isAbsolute(p.summary_path) ? p.summary_path : path.join(projectRoot, p.summary_path);
+      if (!fs.existsSync(summaryAbs)) continue;
+      const summary = JSON.parse(fs.readFileSync(summaryAbs, 'utf-8')) as {
+        blockers?: Array<{ id?: string; operator_note?: string }>;
+      };
+      for (const b of summary.blockers ?? []) {
+        if (typeof b.operator_note === 'string' && b.operator_note.trim()) {
+          out.push({ phase: String(p.phase), blockerId: b.id ?? '(unnamed)', note: b.operator_note.trim() });
+        }
+      }
+    } catch { /* summary 读不出 → 无 note */ }
+  }
+  return out;
+}
 
 export function buildWarnDigest(projectRoot: string, report: GoalReport): Map<string, string> {
   const out = new Map<string, string>();
@@ -106,6 +135,59 @@ export interface GoalReport {
   phases: GoalPhaseOutcome[];
   deferred_phases: FeaturePhase[];
   generated_at: string;
+}
+
+// ============================================================================
+// P1-6（plan 7c4f2e9b）：attempt 四正交轴时间线（codex P1#9：i2 同属「超时」与「PASS 被拦」
+// 两轴，互斥计数 3+2+1=6≠5 必然对不上）。轴：agent termination（timeout/exit0/error）×
+// harness verdict（PASS/FAIL/unavailable）× transition（advanced/advance_blocked/halted/
+// retried）× artifact delta（changed/unchanged/restored/unknown）。逐 attempt 渲染，
+// 汇总不伪装互斥计数——no_progress_* 族 halt 的死模板由本时间线替换主叙事。
+// ============================================================================
+
+interface AttemptAxisEventLike {
+  type?: string;
+  phase?: string;
+  invoke_id?: string;
+  exit_code?: number;
+  timed_out?: boolean;
+  verdict?: string;
+  action?: string;
+  advance_blocked?: boolean;
+  halt_reason?: string;
+  artifact_delta?: string;
+}
+
+export function buildAttemptAxesTimeline(events: AttemptAxisEventLike[], phase: string): string[] {
+  const rows: string[] = [];
+  const invokes = events.filter(e => e.type === 'agent_invoke_end' && e.phase === phase);
+  const verdicts = events.filter(e => e.type === 'phase_verdict' && e.phase === phase);
+  const restores = new Set(
+    events.filter(e => e.type === 'pass_snapshot_restored' && e.phase === phase).map(e => e.invoke_id),
+  );
+  let timeouts = 0;
+  let contentFails = 0;
+  let passBlocked = 0;
+  for (const inv of invokes) {
+    const v = verdicts.find(x => x.invoke_id === inv.invoke_id);
+    const termination = inv.timed_out === true ? 'timeout' : inv.exit_code === 0 ? 'exit0' : 'error';
+    const harnessVerdict = v?.verdict ?? 'unavailable';
+    const transition = v
+      ? (v.action === 'advance' ? 'advanced' : v.advance_blocked ? 'advance_blocked' : v.action === 'halt' ? 'halted' : 'retried')
+      : 'unavailable';
+    const delta = restores.has(inv.invoke_id) ? 'restored' : (v?.artifact_delta ?? 'unknown');
+    rows.push(`- ${inv.invoke_id ?? '?'}: ${termination} × ${harnessVerdict} × ${transition} × ${delta}`);
+    if (termination === 'timeout') timeouts++;
+    if (harnessVerdict === 'FAIL' && termination !== 'timeout') contentFails++;
+    if (harnessVerdict === 'PASS' && v?.advance_blocked) passBlocked++;
+  }
+  if (rows.length > 0) {
+    rows.push(
+      `- 汇总（轴可重叠，非互斥计数）：${invokes.length} attempts；其中 ${timeouts} 次超时、` +
+      `${contentFails} 次非超时内容 FAIL、${passBlocked} 次 harness PASS 被闭环拦截。`,
+    );
+  }
+  return rows;
 }
 
 export function generateGoalReportJson(
@@ -221,7 +303,23 @@ export function generateGoalReportMarkdown(
               ? 'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境'
               : p.halt_reason === 'no_progress_agent_timeout'
                 ? '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）'
-                : p.halt_reason === 'await_human_visual_confirm'
+                : p.halt_reason === 'closure_timeout'
+                  ? 'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume'
+                  : p.halt_reason === 'pass_snapshot_unavailable'
+                    ? 'PASS 产物无法建立/判定可信冻结保护（head 损坏/快照失败/预期快照消失）——不做无保护重试，人工核查 trust-state 后 --resume'
+                    : p.halt_reason === 'closure_probe_error'
+                  ? 'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume'
+                  : p.halt_reason === 'closure_state_invariant'
+                    ? 'lite track 不产生 receipt 却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查'
+                    : p.halt_reason === 'await_operator_toolchain'
+                  ? '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后 --resume，详见 blocker details'
+                  : p.halt_reason === 'await_human_gate_deferral'
+                    ? '仅剩需真人签字/确认项（设计内求人时刻，内容重试无意义）——逐条完成人签后 --resume；语义同 AWAITING_HUMAN_REVIEW'
+                    : p.halt_reason === 'pass_snapshot_restore_refused'
+                      ? 'PASS 冻结产物被改且无法自动恢复——人工核查产物与 trust-state 快照；生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT（使 resume 场景也可自动恢复）'
+                      : p.halt_reason === 'pass_snapshot_journal_unverifiable'
+                        ? 'PASS 快照失效 journal 无法验证（损坏/验签失败）——人工核查 trust-state 后 --resume，不得依据不可信 journal 改动快照'
+                        : p.halt_reason === 'await_human_visual_confirm'
                   ? '待真人逐屏过目确认（设计内求人时刻，见下方引导）'
                   : p.halt_reason === 'await_human_p0_skip'
                     ? 'P0 用例被跳过待真人裁决（设计内求人时刻，见下方引导）'
@@ -253,6 +351,41 @@ export function generateGoalReportMarkdown(
     }
     if (p.agent_stderr_excerpt) {
       lines.push(`| ↳ agent stderr | — | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
+    }
+    // P2#9（post-impl review）：显式超时预算过小 advisory 入报告（仅 console 会在 detach 后蒸发）
+    if (options.events?.length) {
+      const advisories = new Set(
+        options.events
+          .filter(e => e.type === 'timeout_advisory' && e.phase === String(p.phase) && typeof e.detail === 'string')
+          .map(e => e.detail as string),
+      );
+      for (const a of advisories) {
+        lines.push(`| ↳ 预算提示 | — | — | — | ${a.replace(/\|/g, '\\|')} | — |`);
+      }
+    }
+  }
+
+  // P1-6（plan 7c4f2e9b）：no_progress/超时族 halt 附四轴 attempt 时间线——事故文案
+  // 「连续超时且产物零进展」双分句失实（3/5 超时、产物一直在变），死模板降为兜底一行，
+  // 主叙事交给逐 attempt 四轴（termination × verdict × transition × delta）。
+  if (options.events?.length) {
+    const axedPhases = report.phases.filter(
+      (p) => p.halt_reason && /^(no_progress|agent_timeout_repeated|closure_wall_repeated)/.test(p.halt_reason),
+    );
+    for (const p of axedPhases) {
+      const rows = buildAttemptAxesTimeline(options.events as AttemptAxisEventLike[], String(p.phase));
+      if (rows.length > 0) {
+        lines.push('', `## Attempt 时间线（${p.phase} · 四轴：termination × verdict × transition × delta）`, '', ...rows);
+      }
+    }
+  }
+
+  // P1#7（post-impl review）：operator_note 渲染——受众分级若只做「不给 agent」半边、
+  // operator 也看不到，等于信息蒸发。
+  if (options.operatorNotes?.length) {
+    lines.push('', '## Operator 参考（门禁内部指引，勿向 agent 转述）', '');
+    for (const n of options.operatorNotes) {
+      lines.push(`- **${n.phase} · ${n.blockerId}**：${n.note.replace(/\|/g, '\\|')}`);
     }
   }
 
@@ -345,12 +478,27 @@ export function writeGoalReport(
     report.feature,
     report.phases.map((p) => p.phase),
   );
+  // P1-6：events.jsonl 回放供四轴时间线（读取失败降级为空——报告永不因时间线炸）
+  let axesEvents: Array<Record<string, unknown>> = [];
+  try {
+    const eventsPath = path.join(base, 'events.jsonl');
+    if (fs.existsSync(eventsPath)) {
+      axesEvents = fs
+        .readFileSync(eventsPath, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map(l => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
+        .filter((x): x is Record<string, unknown> => x !== null);
+    }
+  } catch { /* ignore */ }
   fs.writeFileSync(
     mdPath,
     generateGoalReportMarkdown(report, {
       mustReviewItems,
       workflowChain: opts?.workflowChain,
       warnDigest: buildWarnDigest(projectRoot, report),
+      events: axesEvents,
+      operatorNotes: collectOperatorNotes(projectRoot, report),
     }),
     'utf-8',
   );

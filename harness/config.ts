@@ -1776,8 +1776,10 @@ export function normalizeArtifactFileName(fileName: string): string {
   return trimmed;
 }
 
-/** 读解析候选路径（优先级：canonical → nested legacy → flat legacy） */
-function artifactReadCandidatePaths(
+/** 读解析候选路径（优先级：canonical → nested legacy → flat legacy）。
+ * 导出供 pass-snapshot 完整性对账使用：候选集是**磁盘无关**的静态注册表推导——
+ * 必需产物无论落 canonical 还是 legacy 位置，manifest 必须覆盖其中之一。 */
+export function artifactReadCandidatePaths(
   projectRoot: string,
   feature: string,
   fileName: string,

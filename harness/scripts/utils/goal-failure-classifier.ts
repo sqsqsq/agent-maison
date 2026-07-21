@@ -17,6 +17,9 @@ export type FailureKind =
   | 'toolchain'
   | 'capture'
   | 'visual_gap'
+  /** P0-4(d)（plan 7c4f2e9b）：spec 捕获完整性缺口——独立命名防误标 code_regression；
+   * 主出口=actionability 聚合层（全 human_only 即时求人），不入 SIGNATURE_HALT_KINDS。 */
+  | 'spec_capture_gap'
   | 'code_regression'
   | 'external_block'
   | 'agent_timeout'
@@ -115,7 +118,12 @@ const TOOLCHAIN_BLOCKING_CLASSES: ReadonlySet<string> = new Set(['device_toolcha
  * OCR（烤字门禁唯一承重探测）不可用属工具依赖缺失，须归 toolchain（signature 重复即 halt、指向"修 OCR 环境"），
  * 否则其 `visual_parity_*` 前缀会掉进 code_regression 被盲重试。
  */
-const TOOLCHAIN_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['visual_parity_ocr_unavailable']);
+const TOOLCHAIN_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
+  'visual_parity_ocr_unavailable',
+  // P0-4（plan 7c4f2e9b）迁移表：该 id 的 suggestion 一直自述「归 toolchain」但从未注册
+  // ——事故里它与 capture_completeness* 一起落 code_regression 盲重试。
+  'capture_completeness_external_ocr_unavailable',
+]);
 /**
  * round5 P1-B：采集/导航身份类精确 id 归 capture。`visual_diff_screenshot_dedup`（≥2 屏共享 hash=Tab
  * 未切换/重复采集）本质是采集导航 bug（非 UI 差距），归 capture 而非 visual_gap——halt 原因/重试指导才
@@ -212,6 +220,98 @@ export interface GoalSummaryBlocker {
   blocking_class?: string;
   classification?: string;
   affected_files?: string[];
+  /** P0-4（plan 7c4f2e9b）：check 侧显式 actionability（优先级链第一环；缺省走注册表映射） */
+  actionability?: BlockerActionability;
+}
+
+// ============================================================================
+// P0-4（plan 7c4f2e9b）：blocker actionability 单一注册表（codex 四轮 SF#4：复用既有
+// toolchain 判定，不造第三套 taxonomy）。summary 映射 / runner 重试回喂 / goal-report
+// 三方共同消费本注册表；优先级链：显式 actionability → failure_kind/blocking_class
+// 兼容映射 → 缺省 agent_fixable（未登记 blocker 行为不变）。
+// ============================================================================
+
+export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+
+/** human_only 兼容映射：id 精确表（真人签字/确认是唯一合规出路的门禁） */
+const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
+  'fidelity_deferrals_human_sign',
+  'fidelity_capability_pregate',
+]);
+/** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3） */
+const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
+  'await_human_confirm',
+  'await_human_p0_skip',
+  'await_human_fidelity_tier',
+  'capability_missing_strong_intent',
+]);
+
+export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActionability {
+  if (b.actionability) return b.actionability;
+  const id = b.id ?? '';
+  if (HUMAN_ONLY_BLOCKER_IDS.has(id)) return 'human_only';
+  if (b.classification && HUMAN_ONLY_CLASSIFICATIONS.has(b.classification)) return 'human_only';
+  if (isToolchainBlockerId(id)) return 'toolchain_blocked';
+  if (b.blocking_class && TOOLCHAIN_BLOCKING_CLASSES.has(b.blocking_class)) return 'toolchain_blocked';
+  return 'agent_fixable';
+}
+
+export interface ActionabilityAggregate {
+  hasToolchain: boolean;
+  /** blockers 非空且全部 human_only（求人谓词 ¬∃agent_fixable ∧ ∃human_only） */
+  allHumanOnly: boolean;
+  agentFixableIds: string[];
+  humanOnlyIds: string[];
+  toolchainIds: string[];
+}
+
+export function aggregateBlockerActionability(
+  summary: GoalSummaryLike | null | undefined,
+): ActionabilityAggregate {
+  const blockers = summary?.blockers ?? [];
+  const agentFixableIds: string[] = [];
+  const humanOnlyIds: string[] = [];
+  const toolchainIds: string[] = [];
+  for (const b of blockers) {
+    const id = b.id ?? '(unnamed)';
+    switch (resolveBlockerActionability(b)) {
+      case 'toolchain_blocked': toolchainIds.push(id); break;
+      case 'human_only': humanOnlyIds.push(id); break;
+      default: agentFixableIds.push(id);
+    }
+  }
+  return {
+    hasToolchain: toolchainIds.length > 0,
+    allHumanOnly: blockers.length > 0 && agentFixableIds.length === 0 && toolchainIds.length === 0 && humanOnlyIds.length > 0,
+    agentFixableIds,
+    humanOnlyIds,
+    toolchainIds,
+  };
+}
+
+/**
+ * P0-4(b)+九轮 P0：timeout 分流统一四步（timed_out 且有 fresh blockers 时调用；
+ * integrity/framework-bug 由更早的安全终态层处理，不进本函数）。
+ * 返回 null = 走既有 agent_timeout 语义。
+ */
+export function classifyTimedOutWithFreshBlockers(
+  summary: GoalSummaryLike | null | undefined,
+): 'await_operator_toolchain' | 'await_human_gate_deferral' | null {
+  const agg = aggregateBlockerActionability(summary);
+  if (agg.hasToolchain) return 'await_operator_toolchain';
+  if (agg.allHumanOnly) return 'await_human_gate_deferral';
+  return null;
+}
+
+/**
+ * P0-4(b)：no-progress 签名剔除 human_only blockers（防对着修不了的部分空转熔断）。
+ * 供 buildEffectiveBlockerSignature 消费。
+ */
+export function filterSignatureBlockers(summary: GoalSummaryLike | null | undefined): GoalSummaryLike | null | undefined {
+  if (!summary?.blockers?.length) return summary;
+  const kept = summary.blockers.filter(b => resolveBlockerActionability(b) !== 'human_only');
+  if (kept.length === summary.blockers.length) return summary;
+  return { ...summary, blockers: kept };
 }
 
 export interface GoalSummaryLike {
@@ -312,7 +412,9 @@ export function buildEffectiveBlockerSignature(
   failureKind: FailureKind,
   phase: string,
 ): string {
-  const base = extractBlockerSignature(summary);
+  // P0-4(b)（plan 7c4f2e9b）：human_only blockers 不入 no-progress 签名——agent 修不了的
+  // 签字项恒在会让签名恒等、把仍在推进 agent_fixable 部分的 attempt 误判零进展熔断。
+  const base = extractBlockerSignature(filterSignatureBlockers(summary));
   if (base) return base;
   if (failureKind === 'agent_timeout') return `agent_timeout@${phase}`;
   return base;
@@ -406,7 +508,17 @@ export function classifyFailureKind(
   if (ids.some(isToolchainBlockerId) || hasToolchainBlockingClass(summary)) return 'toolchain';
   if (ids.some(isCaptureBlockerId)) return 'capture';
   if (ids.some(isVisualGapBlockerId)) return 'visual_gap';
+  // P0-4(d)（plan 7c4f2e9b，cursor 二轮 must-fix#6）：spec 捕获完整性缺口独立命名——
+  // 不落 code_regression（事故 i3/i4 即被误标）、不复用 capture 桶（其语义=修采集导航）、
+  // 不入 SIGNATURE_HALT_KINDS（主出口=actionability 聚合层即时求人，不靠粗熔断兜底）。
+  if (ids.some(isSpecCaptureGapBlockerId)) return 'spec_capture_gap';
   return 'code_regression';
+}
+
+/** spec 期捕获完整性缺口族（capture_completeness / capture_completeness_external 等；
+ * ocr_unavailable 已被 toolchain 表先行吸收） */
+export function isSpecCaptureGapBlockerId(id: string): boolean {
+  return id.startsWith('capture_completeness');
 }
 
 /** Collect affected_files from deterministic blockers on the summary. */

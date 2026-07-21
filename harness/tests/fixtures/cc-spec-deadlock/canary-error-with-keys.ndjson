@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"fixture","model":"claude-sonnet-5","permissionMode":"dontAsk"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"result":"failed but echo:\nTOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=K7XQ2"}

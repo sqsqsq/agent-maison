@@ -204,6 +204,15 @@
         "source": {
           "type": "string",
           "description": "t1d（plan e6a3c9f4）：产出来源（safeRun origin / profile dispatch 标签 / check-<phase>.ts 回退）——供 agent 直接定位判定实现"
+        },
+        "actionability": {
+          "type": "string",
+          "enum": ["agent_fixable", "human_only", "toolchain_blocked"],
+          "description": "P0-4（plan 7c4f2e9b）：注册表解析后的可修性——runner 决策梯③层聚合（∃toolchain→await_operator_toolchain；非空且全 human_only→await_human_gate_deferral）、回喂过滤与 no-progress 签名剔除共同消费"
+        },
+        "operator_note": {
+          "type": "string",
+          "description": "P1-7（plan 7c4f2e9b）：operator/人类专用说明（framework 内部机制话术）——goal-report 渲染，不进 agent 重试回喂"
         }
       }
     },

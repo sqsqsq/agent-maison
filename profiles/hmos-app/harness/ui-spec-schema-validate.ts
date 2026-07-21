@@ -44,6 +44,72 @@ export const ACQUISITION_ENUM = ['crop', 'svg_grab', 'repo_ref', 'placeholder'] 
 export const BUTTON_VARIANT_ENUM = ['filled', 'tonal', 'outlined', 'ghost', 'text'] as const;
 export const ALIGN_ENUM = ['start', 'center', 'end', 'space_between', 'stretch'] as const;
 
+// ============================================================================
+// P0-2（plan 7c4f2e9b）：screen/componentNode 未知键硬拒 + did-you-mean。
+// 事故根因：must_have（应为 must_have_elements）在 additionalProperties:true 下静默放行，
+// 覆盖清单归零且门禁报错文案自写错名——弱模型永远修不对。
+// allowed-keys **从 schema JSON（SSOT）派生**，不手抄第二份清单（三方漂移测试钉死）。
+// ============================================================================
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const UI_SPEC_SCHEMA = require('../../../harness/schemas/ui-spec.schema.json') as {
+  definitions: Record<string, { properties?: Record<string, unknown> }>;
+};
+export const SCREEN_ALLOWED_KEYS: ReadonlySet<string> = new Set(
+  Object.keys(UI_SPEC_SCHEMA.definitions.screen.properties ?? {}),
+);
+export const COMPONENT_NODE_ALLOWED_KEYS: ReadonlySet<string> = new Set(
+  Object.keys(UI_SPEC_SCHEMA.definitions.componentNode.properties ?? {}),
+);
+export const SEMANTIC_ROLE_ENUM = ['success', 'brand_primary', 'danger', 'promo', 'neutral'] as const;
+export const ICON_KIND_ENUM = ['brand_logo', 'system_symbol', 'illustration'] as const;
+
+function editDistance(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/** 未知键 → 最近合法键建议（编辑距离≤3，或互为前缀——must_have→must_have_elements 即此形态） */
+export function suggestLegalKey(unknown: string, allowed: ReadonlySet<string>): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const k of allowed) {
+    if (k.startsWith(unknown) || unknown.startsWith(k)) {
+      return k;
+    }
+    const d = editDistance(unknown, k);
+    if (d <= 3 && d < bestDist) {
+      best = k;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+function pushUnknownKeyErrors(
+  obj: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  pathLabel: string,
+  errors: string[],
+): void {
+  for (const k of Object.keys(obj)) {
+    if (allowed.has(k)) continue;
+    const hint = suggestLegalKey(k, allowed);
+    errors.push(
+      `${pathLabel} 非法字段 "${k}"（additionalProperties=false）${hint ? `——是否想写 "${hint}"？` : ''}`,
+    );
+  }
+}
+
 const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref', 'sampled']);
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
@@ -76,8 +142,33 @@ function validateComponentNode(
     return;
   }
   const n = node as Record<string, unknown>;
+  // P0-2：未知键硬拒 + did-you-mean（allowed 从 schema SSOT 派生）
+  pushUnknownKeyErrors(n, COMPONENT_NODE_ALLOWED_KEYS, pathLabel, errors);
   if (typeof n.type !== 'string' || !(COMPONENT_TYPE_ENUM as readonly string[]).includes(n.type)) {
     errors.push(`${pathLabel}.type 非法：${JSON.stringify(n.type)}（须 ${COMPONENT_TYPE_ENUM.join('/')}）`);
+  }
+  // P0-2 补登记字段的轻类型校验（semantic_role/color_ref/icon/badge/source_ref）
+  if (n.semantic_role !== undefined && !(SEMANTIC_ROLE_ENUM as readonly string[]).includes(n.semantic_role as string)) {
+    errors.push(`${pathLabel}.semantic_role 非法：${JSON.stringify(n.semantic_role)}（须 ${SEMANTIC_ROLE_ENUM.join('/')}）`);
+  }
+  for (const k of ['color_ref', 'badge', 'source_ref'] as const) {
+    if (n[k] !== undefined && typeof n[k] !== 'string') {
+      errors.push(`${pathLabel}.${k} 须为字符串`);
+    }
+  }
+  if (n.icon !== undefined) {
+    const ic = n.icon as Record<string, unknown>;
+    if (!ic || typeof ic !== 'object' || Array.isArray(ic)) {
+      errors.push(`${pathLabel}.icon 须为对象`);
+    } else {
+      pushUnknownKeyErrors(ic, new Set(['kind', 'ref']), `${pathLabel}.icon`, errors);
+      if (ic.kind !== undefined && !(ICON_KIND_ENUM as readonly string[]).includes(ic.kind as string)) {
+        errors.push(`${pathLabel}.icon.kind 非法：${JSON.stringify(ic.kind)}（须 ${ICON_KIND_ENUM.join('/')}）`);
+      }
+      if (ic.ref !== undefined && typeof ic.ref !== 'string') {
+        errors.push(`${pathLabel}.icon.ref 须为字符串`);
+      }
+    }
   }
   if (typeof n.order !== 'number' || !Number.isInteger(n.order) || n.order < 0) {
     errors.push(`${pathLabel}.order 须为 ≥0 整数，收到 ${JSON.stringify(n.order)}`);
@@ -171,6 +262,8 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
         return;
       }
       const sc = s as Record<string, unknown>;
+      // P0-2：屏级未知键硬拒 + did-you-mean（事故键 must_have 在此被拦并给出正名）
+      pushUnknownKeyErrors(sc, SCREEN_ALLOWED_KEYS, `screens[${i}]`, errors);
       if (typeof sc.id !== 'string' || !sc.id.trim()) {
         errors.push(`screens[${i}].id 必填字符串`);
       } else if (seenScreenIds.has(sc.id)) {

@@ -11,6 +11,7 @@ import {
   fidelityRatchetFailOrWarn,
   isPixel1to1,
   refElementsAbsPath,
+  refElementsRelPath,
   resolveRefElementsDenominator,
   type RefElementEntry,
 } from '../../../harness/scripts/utils/fidelity-shared';
@@ -75,7 +76,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
     return [];
   }
 
-  const refRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'ref-elements.yaml');
+  const refRel = refElementsRelPath(ctx.projectRoot, ctx.feature);
   const refAbs = refElementsAbsPath(ctx.projectRoot, ctx.feature);
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
   const desc = ruleDesc(ctx);
@@ -105,7 +106,10 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
         severity,
         status,
         details: `pixel_1to1 须产出参考图侧独立枚举 ${refRel}（分母不得取自 ui-spec 自身）`,
-        suggestion: 'spec 分区扫描模板逐元素 implement|defer，落 spec/ref-elements.yaml；或 lock.structured_bundle 经 structured_ref_elements 注入内存 manifest',
+        // P1-7（plan 7c4f2e9b）：framework 内部机制话术移 operator_note——事故 i5 顺着
+        // 「structured_ref_elements 注入内存 manifest」进 framework 源码找绕分母路径
+        suggestion: 'spec 分区扫描模板逐元素 implement|defer，落 spec/ref-elements.yaml',
+        operator_note: '（operator 参考）结构化替代通道：lock.structured_bundle 经 structured_ref_elements 注入内存 manifest（framework 内部机制，勿向 agent 转述）',
         affected_files: [refRel, uiSpecRel],
       }];
     }
@@ -180,7 +184,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
       details: [
         sourceNote,
         `参考图枚举覆盖 ${covered}/${denom.length}（${ratioPct}%）`,
-        `ui-spec/must_have 未覆盖：${missing.slice(0, 12).join(', ')}${missing.length > 12 ? '…' : ''}`,
+        `ui-spec must_have_elements 未覆盖：${missing.slice(0, 12).join(', ')}${missing.length > 12 ? '…' : ''}`,
         '【边界】依赖 VL 视觉枚举，非 100% 上限；被动漏看由 testing 双向 diff 兜底。',
       ].join('\n'),
       affected_files: [refRel, uiSpecRel],
@@ -193,7 +197,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
     description: desc,
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `${sourceNote}；参考图枚举 ${denom.length} 项均已映射到 ui-spec/must_have（${ratioPct}%）`,
+    details: `${sourceNote}；参考图枚举 ${denom.length} 项均已映射到 ui-spec must_have_elements（${ratioPct}%）`,
     affected_files: [refRel, uiSpecRel],
   }];
 }
@@ -415,7 +419,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
   const checks = ctx.phaseRule.structure_checks as Record<string, { description?: string }>;
   const desc = checks?.capture_completeness_external?.description?.trim() ?? 'capture_completeness_external';
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
-  const refRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'ref-elements.yaml');
+  const refRel = refElementsRelPath(ctx.projectRoot, ctx.feature);
   const pixel = isPixel1to1(ctx);
 
   if (!isOcrAvailable()) {

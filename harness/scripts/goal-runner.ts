@@ -64,7 +64,7 @@ import {
   type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
-import { collectAutoDecisions, countPendingMustReview } from './utils/headless-assumptions';
+import { collectAutoDecisions, countPendingMustReview, loadHeadlessLedger } from './utils/headless-assumptions';
 import { recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
 import {
   defaultTrustRegistryPath,
@@ -95,7 +95,9 @@ import {
 import {
   canAffordBackoff,
   collectPhaseTimeoutWarnings,
+  extractTimeoutRatchetFromEvents,
   isExplicitPhaseTimeout,
+  resolveEffectiveTimeoutMs,
   resolvePhaseTimeoutMs,
   resolveWallClockMs,
   CONSECUTIVE_TIMEOUT_ESCALATE_AFTER,
@@ -124,6 +126,21 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
+import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
+import {
+  beginInvalidationTx,
+  commitInvalidationTx,
+  diffFrozenAgainstManifest,
+  readFrozenManifest,
+  loadTrustedSnapshotContext,
+  phaseHasFrozenSurface,
+  readPassSnapshotHead,
+  recoverInvalidationJournal,
+  resolveFrozenDeliverables,
+  restoreFrozenFromSnapshot,
+  passSnapshotPhaseDir,
+  takePassSnapshot,
+} from './utils/pass-snapshot';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import {
   produceCriticReceipt,
@@ -186,6 +203,9 @@ import {
   resolveWallClockStartMs,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
+  classifyClosureKind,
+  resolveClosureSyncOutcome,
+  shouldHaltClosureTimeout,
   type ContinuationCause,
 } from './utils/goal-runner-phase';
 import {
@@ -197,6 +217,7 @@ import {
   isGoalHeadlessEnv,
   MAISON_GOAL_RUNNER_ENV,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
+  runSyncClosure,
   tryValidateReceipt,
 } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
@@ -236,8 +257,12 @@ import {
   type ProgressWriterState,
 } from './utils/goal-progress';
 import {
+  aggregateBlockerActionability,
+  artifactsProgressed,
   buildEffectiveBlockerSignature,
   classifyFailureKind,
+  classifyTimedOutWithFreshBlockers,
+  resolveBlockerActionability,
   extractDeterministicAffectedFiles,
   extractIntegritySubtypes,
   isOperatorInterruptSignal,
@@ -512,9 +537,17 @@ export function resolveLastHaltReason(outcomes: GoalPhaseOutcome[]): string | un
  */
 export function extractPriorFailureContext(summary: SummaryJson): string {
   const verdict = summary.verdict ?? 'FAIL';
-  const blockers = (summary.blockers ?? []).slice(0, 4);
+  // P0-4(b)（plan 7c4f2e9b）：重试回喂只含 agent_fixable 条目——human_only 已转人工队列，
+  // 回喂只会诱导 agent 对着修不了的签字项空转（事故 i5 即全程逆向门禁）。operator_note
+  // 永不入回喂（P1-7 受众分级）。
+  const all = summary.blockers ?? [];
+  const parked = all.filter(b => resolveBlockerActionability(b) === 'human_only');
+  // post-impl review P2#8：严格 === 'agent_fixable'——toolchain_blocked 回喂只会诱导
+  // agent「修环境」（它修不了）；toolchain 走 operator 队列单列。
+  const toolchainParked = all.filter(b => resolveBlockerActionability(b) === 'toolchain_blocked');
+  const feedable = all.filter(b => resolveBlockerActionability(b) === 'agent_fixable').slice(0, 4);
   const lines: string[] = [];
-  for (const b of blockers) {
+  for (const b of feedable) {
     const id = b.id ?? '(unknown check)';
     const kind = b.classification ?? '';
     lines.push(kind ? `- ${id} [${kind}]` : `- ${id}`);
@@ -527,6 +560,18 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
     if (b.suggestion) {
       lines.push(`  suggestion: ${truncateOneLine(b.suggestion, 300)}`);
     }
+  }
+  if (parked.length > 0) {
+    lines.push(
+      `- (parked, human-only — do NOT attempt) ${parked.map(b => b.id ?? '?').join(', ')}: ` +
+      'these require human signature/confirmation and are queued for a human; retrying them is task failure.',
+    );
+  }
+  if (toolchainParked.length > 0) {
+    lines.push(
+      `- (parked, environment/toolchain — do NOT attempt) ${toolchainParked.map(b => b.id ?? '?').join(', ')}: ` +
+      'these are environment failures queued for the operator; do not modify product code or artifacts to work around them.',
+    );
   }
   if (lines.length === 0) {
     const meta = extractBlockingMeta(summary);
@@ -2325,6 +2370,33 @@ export function buildPhasePrompt(
         'Address the BLOCKER evidence above, then re-run harness for this phase.',
       );
     }
+    // P1-7（plan 7c4f2e9b）：品牌无关的弱模型防护——上一轮失败含 schema 未知键类 BLOCKER
+    // 时，附 ui-spec 屏级/节点级合法键清单（由 schema SSOT 生成，不引 profile 代码）。
+    if (/非法字段/.test(priorFailure)) {
+      try {
+        const schemaAbs = path.join(frameworkRoot, 'harness', 'schemas', 'ui-spec.schema.json');
+        const schema = JSON.parse(fs.readFileSync(schemaAbs, 'utf-8')) as {
+          definitions?: Record<string, { properties?: Record<string, unknown> }>;
+        };
+        const screenKeys = Object.keys(schema.definitions?.screen?.properties ?? {});
+        const nodeKeys = Object.keys(schema.definitions?.componentNode?.properties ?? {});
+        if (screenKeys.length && nodeKeys.length) {
+          parts.push(
+            '',
+            '## ui-spec legal keys (schema SSOT — the prior failure contained an unknown field)',
+            '',
+            `- screen-level: ${screenKeys.join(', ')}`,
+            `- componentNode-level: ${nodeKeys.join(', ')}`,
+            'Use EXACTLY these key names. Any other key fails schema validation.',
+          );
+        }
+      } catch { /* schema 读取失败不阻断 prompt */ }
+    }
+    // P1-7 红线：产物级修复之外的路径一律非法
+    parts.push(
+      '',
+      '**Red line: do NOT read or modify framework internals (harness/ sources, gate implementations, manifests) to get past a gate — that is task failure, not a fix path.**',
+    );
   }
   return parts.join('\n');
 }
@@ -2658,6 +2730,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 
   const featuresDir = cfg.paths.features_dir ?? 'doc/features';
+
+  // P1-10（plan 7c4f2e9b）：foreign-file 防线可观测性——consumer 形态（framework/ 嵌套）
+  // 却无 RELEASE-MANIFEST.json 时，framework_foreign_file BLOCKER 整线按 spec 设计 no-op
+  // （source layout Scenario）。07-17 事故 agent 向 framework/harness/ 写 debug 脚本未被拦，
+  // 每-harness 复扫机制在位（harness-runner 全模式入口直调），最可能根因即此部署形态。
+  // 只告警不改门（改判会破 source-repo 开发契约）；宿主据此改用发布包部署。
+  if (layout.frameworkRel && !fs.existsSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'))) {
+    console.warn(
+      '[goal-runner] ⚠ consumer 形态（framework/ 嵌套）但缺 RELEASE-MANIFEST.json——' +
+      'framework 写保护/foreign-file BLOCKER 整线处于 no-op（source layout 语义）。' +
+      '请改用发布包部署 framework（含 manifest 与 sidecar），否则 agent 写入 framework/** 不会被拦截。',
+    );
+  }
 
   let manifest: GoalManifest;
   if (argv.resume) {
@@ -3526,7 +3611,57 @@ Goal runner — tool-agnostic multi-phase orchestrator
       console.warn(warn);
     }
 
-    for (let phaseIdx = chainStartIndex; phaseIdx < chain.length; phaseIdx++) {
+    // ------------------------------------------------------------------
+    // P0-3（plan 7c4f2e9b）：PASS 快照同进程内存信任锚 + invalidation journal 恢复。
+    // journal 恢复**先于任何 pass_snapshot head 读取**（codex 八轮 P0）：pending →
+    // 续跑 head 更新并幂等补 phase_invalidated 事件；不可验证 → fail-closed halt。
+    // ------------------------------------------------------------------
+    const passSnapshotMemory = new Map<
+      string,
+      { epoch: number; memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> } }
+    >();
+    if (!dryRun) {
+      const jr = recoverInvalidationJournal(projectRoot, manifest.feature, manifest.run_id);
+      if (jr.kind === 'fail_closed') {
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'phase_halt',
+          phase: chain[chainStartIndex],
+          halt_reason: 'pass_snapshot_journal_unverifiable',
+          detail: jr.reason,
+        });
+        console.error(`\n===== pass_snapshot_journal_unverifiable =====\n${jr.reason}\n人工核查 trust-state 后 --resume。\n`);
+        outcomes.push({
+          phase: chain[chainStartIndex],
+          verdict: 'FAIL',
+          halted: true,
+          retries: 0,
+          halt_reason: 'pass_snapshot_journal_unverifiable',
+        });
+        halted = true;
+      }
+      if (jr.kind === 'pending_heads_applied') {
+        // 与正常路径同构：heads 已幂等应用 → 幂等补事件 → **最后** commit（post-impl P0#1：
+        // commit 提前会让「commit 后事件补齐前」的二次崩溃永久丢事件）。
+        const priorEv = loadEventsJsonl(eventsPath);
+        for (const ph of jr.invalidatedPhases) {
+          const already = priorEv.some(
+            e => e.type === 'phase_invalidated' && e.phase === ph && e.invalidation_tx_id === jr.txId,
+          );
+          if (!already) {
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_invalidated',
+              phase: ph,
+              cause_phase: 'journal_recovery',
+              reason: 'invalidation_journal_recovered',
+              invalidation_tx_id: jr.txId,
+            });
+          }
+        }
+        commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, jr.txId);
+      }
+    }
+
+    for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
       let retries = 0;
       let phaseDone = false;
@@ -3728,11 +3863,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           )
           .map((e) => e.duration_ms as number);
         const baseTimeoutMs = resolvePhaseTimeoutMs(phase, manifest);
-        const escalatedTimeoutMs =
-          !isExplicitPhaseTimeout(phase, manifest) &&
-          consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_ESCALATE_AFTER
-            ? Math.round(baseTimeoutMs * TIMEOUT_ESCALATION_FACTOR)
-            : baseTimeoutMs;
+        // P0-5（plan 7c4f2e9b）：授予高水位 + 实测棘轮——effective = max(base,
+        // consecutive-escalation, granted_highwater, 1.2×max_completed)，events 重建
+        // （resume 不丢）；显式配置=hard cap 不被棘轮突破（advisory 诚实提示预算过小）。
+        // 事故实证：i3 已获授 67.5min 且 exit0@49.6min，i4/i5 仍回落 45min 被腰斩。
+        const ratchetObs = extractTimeoutRatchetFromEvents(phaseEventsNow, String(phase));
+        const timeoutResolution = resolveEffectiveTimeoutMs({
+          baseMs: baseTimeoutMs,
+          explicit: isExplicitPhaseTimeout(phase, manifest),
+          consecutiveTimeouts,
+          observations: ratchetObs,
+        });
+        if (timeoutResolution.advisory) {
+          // post-impl review P2#9：advisory 入 events（detach/resume 后可追溯）；
+          // goal-report 经 events 渲染（timeout_advisory 行）。
+          console.warn(`[goal-timeout] ${timeoutResolution.advisory}`);
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'timeout_advisory',
+            phase,
+            detail: timeoutResolution.advisory,
+          });
+        }
+        const escalatedTimeoutMs = timeoutResolution.effectiveMs;
         const availableForAgentMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
         if (availableForAgentMs <= 0) {
           halted = true;
@@ -3752,6 +3904,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             type: 'timeout_escalated',
             phase,
             effective_timeout_ms: effectiveAgentTimeoutMs,
+            // P0-5：升档来源（consecutive_timeouts | granted_highwater | observed_ratchet）
+            source: timeoutResolution.source,
           });
         }
 
@@ -3781,6 +3935,42 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // post-impl round2 P0#2：**spawn agent 之前**做一次统一可信快照加载，整个 attempt
+        // 复用内存副本（防 attempt 中途盘上换 manifest）；坏 MAC/shape/上下文绑定/
+        // head↔manifest 绑定 → 在 agent 有机会碰产物**之前** halt。
+        const psMemAnchor = passSnapshotMemory.get(String(phase));
+        const trustedSnapshot = dryRun
+          ? ({ kind: 'none' } as const)
+          : loadTrustedSnapshotContext(
+              projectRoot,
+              manifest.feature,
+              manifest.run_id,
+              String(phase),
+              // post-impl round3 P0#1：同进程内存锚在场时，盘上 head 消失/退位/换代
+              // 一律 spawn 前 fail_closed（两轮绕过：先删 head 再改产物）
+              psMemAnchor
+                ? { epoch: psMemAnchor.epoch, manifestSha256: psMemAnchor.memoryDigest.manifestSha256 }
+                : null,
+            );
+        if (trustedSnapshot.kind === 'fail_closed') {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'pass_snapshot_unavailable',
+            detail: `pre-spawn 可信快照加载失败：${trustedSnapshot.reason}`,
+          });
+          console.error(
+            `\n===== pass_snapshot_unavailable =====\n可信快照加载失败（${trustedSnapshot.reason}）——在 agent 启动前拦截，不给它碰产物的机会。\n人工核查 trust-state 后 --resume。\n`,
+          );
+          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_unavailable' });
+          halted = true;
+          phaseDone = true;
+          continue;
+        }
+        // P1#5（post-impl review）：attempt 级 closure-only 状态——本 attempt 是否处于
+        // 「PASS 已冻结、只许关环」上下文；超时分流据此走 closure_timeout（不回内容重试）。
+        const closureOnlyAttempt = trustedSnapshot.kind === 'active';
+
         const prompt = buildPhasePrompt(
           manifest,
           projectRoot,
@@ -3804,7 +3994,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0
             ? buildBacktrackReviewFocusBlock(backtrackReviewFocus)
-            : '');
+            : '') +
+          // P0-3（plan 7c4f2e9b）：closure-only attempt——frozen 清单只读声明。提示词只是
+          // 第一道；硬保护在 harness 前的差异判定+恢复（提示词级约束对弱模型无约束力）。
+          (() => {
+            // post-impl round2 P0#2：frozen 清单取自 pre-spawn 可信加载的内存副本
+            if (trustedSnapshot.kind !== 'active') return '';
+            const frozenRels = trustedSnapshot.manifest.files.map(f => f.rel);
+            if (frozenRels.length === 0) return '';
+            return [
+              '',
+              '## PASS artifacts are FROZEN — closure-only attempt (BLOCKER)',
+              '',
+              'This phase already reached a PASS verdict; only the closure steps (receipt / harness re-run) remain.',
+              'The following deliverables are FROZEN and READ-ONLY — any modification will be detected,',
+              'reverted from a trusted snapshot, and counted as a violation (repeated violations halt the run):',
+              '',
+              ...frozenRels.map(r => `- ${r} (frozen)`),
+              '',
+              'Do NOT redo analysis or rewrite artifacts. Complete the phase closure only.',
+              '',
+            ].join('\n');
+          })();
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
         appendEvent(manifest.report_dir, projectRoot, {
@@ -3938,6 +4149,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
           output_bytes: fs.existsSync(outputLogPath) ? fs.statSync(outputLogPath).size : 0,
           output_delivery: cap.capability?.output_delivery ?? 'unknown',
         });
+        // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
+        // init 事件，append-only 新事件承载；不回写冻结 manifest / 不改 run 前 adapter_probe
+        // / 不为 telemetry 造 capability receipt / 不参与能力真值与任何策略分支。
+        if (!dryRun && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
+          try {
+            const eventsAbsForModel = agentEventsLogPath(outputLogPath);
+            const observedModel = fs.existsSync(eventsAbsForModel)
+              ? parseClaudeInitModel(fs.readFileSync(eventsAbsForModel, 'utf-8'))
+              : null;
+            if (observedModel) {
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'adapter_model_observed',
+                phase,
+                invoke_id: invokeId,
+                adapter: manifest.adapter ?? 'generic',
+                model: observedModel,
+                source: 'structured_event_init',
+              });
+            }
+          } catch { /* telemetry 缺失不阻断 */ }
+        }
         flushProgress();
 
         // 四轮 review P0：invoke 窗口闭合比对——agent 调用期间 vision 账本被写 = 篡改
@@ -4044,9 +4276,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // run_probed，vl_multimodal 终签自然被拒）——不阻断 phase，走盲档工作法。
         if (!dryRun && phase === 'spec' && inlineCanaryKey) {
           try {
-            const outRaw = fs.existsSync(outputLogPath) ? fs.readFileSync(outputLogPath, 'utf-8') : '';
+            // P0-1（plan 7c4f2e9b / 3.10）：structured adapter 判卷改读**纯 events 文件**
+            // 并取终态 result 文本投影——混合 agent-output.log 里 stderr 可插进 JSON 行
+            // 中间、答卷在信封字符串内永不成独立行（行锚判卷恒空 → 真视觉宿主永久盲档）。
+            // 归一失败（残卷/错误 result/文件缺失）→ outRaw='' → 不签发，维持 fail-closed。
+            const structuredStdout = planUsesClaudeStreamJson(
+              manifest.adapter ?? 'generic',
+              cap.capability?.tool_event_provenance,
+            );
+            let outRaw = '';
+            if (structuredStdout) {
+              const eventsAbs = agentEventsLogPath(outputLogPath);
+              const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
+              outRaw = eventsRaw ? (extractClaudeFinalResultText(eventsRaw) ?? '') : '';
+              if (!outRaw) {
+                console.log('[S3] inline canary：structured envelope 无终态 success result（残卷/断流/events 缺失）——不判卷不签发');
+              }
+            } else {
+              outRaw = fs.existsSync(outputLogPath) ? fs.readFileSync(outputLogPath, 'utf-8') : '';
+            }
             let issued = false;
-            if (isCanaryAnswerComplete(outRaw, inlineCanaryKey)) {
+            if (outRaw && isCanaryAnswerComplete(outRaw, inlineCanaryKey)) {
               const cls = classifyCanaryResponse(outRaw, inlineCanaryKey);
               if (cls.verdict === 'tool_read') {
                 writeCapabilityReceipt(projectRoot, manifest.feature, {
@@ -4174,6 +4424,75 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // ------------------------------------------------------------------
+        // P0-3（plan 7c4f2e9b）：closure-only 冻结差异判定与恢复（harness 之前——先恢复
+        // 再评审，恢复后的产物若仍 PASS 则 advance_blocked 续计由事件回放统计自然封顶）。
+        // 信任两层：同进程内存 digest 即可恢复；resume 后须 HMAC；恢复被拒 → halt 求人。
+        // ------------------------------------------------------------------
+        if (!dryRun) {
+          const psMem = passSnapshotMemory.get(String(phase));
+          // post-impl round2 P0#2：复用 pre-spawn 可信加载的内存副本——不再从盘上重读
+          // head/manifest（attempt 中途盘上被换的 manifest 不参与保护判定；坏 MAC/绑定
+          // 已在 spawn 前 halt）。
+          if (trustedSnapshot.kind === 'active') {
+            const psHeadBody = trustedSnapshot.head;
+            const psManifest = { body: trustedSnapshot.manifest };
+            if (psManifest.body) {
+              const diffs = diffFrozenAgainstManifest({
+                projectRoot, feature: manifest.feature, phase: String(phase), manifest: psManifest.body,
+              });
+              if (diffs.length > 0) {
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'pass_snapshot_violation',
+                  phase,
+                  invoke_id: invokeId,
+                  pass_epoch: psHeadBody.pass_epoch,
+                  diffs: diffs.slice(0, 30),
+                });
+                const outcome = restoreFrozenFromSnapshot({
+                  projectRoot,
+                  feature: manifest.feature,
+                  runId: manifest.run_id,
+                  phase: String(phase),
+                  diffs,
+                  trust: psMem ? { tier: 'in_process', memoryDigest: psMem.memoryDigest } : { tier: 'resume' },
+                  // post-impl round3 P0#2：恢复资格以 attempt 级不可变上下文为依据（防
+                  // diff 用快照 A、restore 被换成快照 B 的 TOCTOU）
+                  context: trustedSnapshot,
+                });
+                if (outcome.refused) {
+                  appendEvent(manifest.report_dir, projectRoot, {
+                    type: 'phase_halt',
+                    phase,
+                    halt_reason: 'pass_snapshot_restore_refused',
+                    detail: outcome.refused,
+                  });
+                  console.error(
+                    `\n===== pass_snapshot_restore_refused =====\nPASS 冻结产物被改且无法自动恢复（${outcome.refused}）。\n` +
+                    '人工核查产物与 trust-state 快照后 --resume（生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT，使 resume 场景也可自动恢复）。\n',
+                  );
+                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_restore_refused' });
+                  halted = true;
+                  phaseDone = true;
+                  continue;
+                }
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'pass_snapshot_restored',
+                  phase,
+                  invoke_id: invokeId,
+                  pass_epoch: psHeadBody.pass_epoch,
+                  restored: outcome.restored,
+                  deleted_added: outcome.deletedAdded,
+                });
+                console.warn(
+                  `[pass-snapshot] closure-only attempt 改动冻结产物已恢复（restored=${outcome.restored.length}, ` +
+                  `removed_added=${outcome.deletedAdded.length}）——违规计入 advance_blocked 累计`,
+                );
+              }
+            }
+          }
+        }
+
         // P0-4 rev6：harness 启动判据——扣除收尾预留后的可用预算 ≤0 即不 spawn，直接
         // budget_wall_clock 终局（"原始 remaining>0 但扣 reserve 后 ≤0"也不 spawn；
         // 不产半份 harness 证据，绝不把 0 传给 timer）。
@@ -4286,6 +4605,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const summaryMtimeAfter = getSummaryMtime(summaryAbsPath);
         const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
 
+        // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
+        // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
+        let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
         if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
           const harnessRoot = path.join(frameworkRoot, 'harness');
           const receiptValidation = tryValidateReceipt(
@@ -4294,6 +4616,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phase,
             manifest.feature,
           );
+          inFlowReceiptValidation = receiptValidation;
           applyClosurePatchFromReceiptValidation(
             projectRoot,
             manifest.feature,
@@ -4523,6 +4846,58 @@ Goal runner — tool-agnostic multi-phase orchestrator
           action = 'halt';
           haltReason = 'await_human_verification_evidence';
         } else if (
+          // ==============================================================
+          // P0-4(b)（plan 7c4f2e9b）：blocker actionability 聚合层（决策梯③层唯一插入位，
+          // 位于安全终态/专用求人态/transient API 之后、no-progress/内容重试之前）。
+          // timeout 四步分流（codex 九轮 P0）由此天然落地：timed_out + fresh blockers 时
+          // ①integrity 已被上方安全终态吸收 → ②∃toolchain→await_operator_toolchain →
+          // ③非空且全 human_only→await_human_gate_deferral → ④其余走下方 agent_timeout。
+          // fresh 判据=summary 非 stale（stale summary 是上一 attempt 的症状，不据此分流）。
+          verdict !== 'PASS' &&
+          !resolved.stale_summary &&
+          classifyTimedOutWithFreshBlockers(summary) !== null
+        ) {
+          const actionabilityRoute = classifyTimedOutWithFreshBlockers(summary)!;
+          const agg = aggregateBlockerActionability(summary);
+          action = 'halt';
+          haltReason = actionabilityRoute;
+          if (actionabilityRoute === 'await_operator_toolchain') {
+            // 「修环境」不得描述成「签字确认」（codex 二轮 must-fix#2）
+            awaitConfirmGuidance = [
+              '===== await_operator_toolchain（环境/工具链阻塞，须 operator 修复）=====',
+              `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
+              `- 工具链 blocker：${agg.toolchainIds.join(', ')}`,
+              '- 这不是产物内容问题：重试 agent 修不了环境。修复对应工具链（详见 blocker details）后 --resume。',
+              ...(agg.humanOnlyIds.length ? [`- 另有待人工项（环境修复后再处置）：${agg.humanOnlyIds.join(', ')}`] : []),
+            ].join('\n');
+          } else {
+            // 账本 deferred request 仅作佐证呈现（「账本不构成授权」契约），不参与触发
+            let ledgerNote = '';
+            try {
+              const ledger = loadHeadlessLedger(projectRoot, manifest.feature, String(phase));
+              const family = new Set<string>(agg.humanOnlyIds);
+              if (agg.humanOnlyIds.includes('fidelity_deferrals_human_sign')) {
+                family.add('capture_completeness_external'); // gate 族匹配（cursor 三轮）
+              }
+              const matched = (ledger?.entries ?? []).filter(
+                it => it.must_review === true && typeof it.gate_id === 'string' && family.has(it.gate_id),
+              );
+              if (matched.length) {
+                ledgerNote = `- agent 账本 deferred request 佐证（${matched.length} 条，仅供裁决参考，不构成授权）：` +
+                  matched.map(m => m.gate_id).join(', ');
+              }
+            } catch { /* 账本读取失败不影响求人引导 */ }
+            awaitConfirmGuidance = [
+              '===== await_human_gate_deferral（仅剩需真人签字/确认项，内容重试无意义）=====',
+              `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
+              `- 待签字/确认 blocker：${agg.humanOnlyIds.join(', ')}`,
+              '- 逐条处置：按各 blocker details 完成真人签字/确认（人签落点见 suggestion），然后 --resume。',
+              '- 本 halt 不消耗内容重试预算；run 语义同 AWAITING_HUMAN_REVIEW（复核前不得视为最终确认）。',
+              ...(ledgerNote ? [ledgerNote] : []),
+            ].join('\n');
+          }
+          console.log(`\n${awaitConfirmGuidance}\n`);
+        } else if (
           shouldHaltNoProgress({
             failureKind,
             priorBlockerSignature,
@@ -4592,6 +4967,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : 'harness',
           }).join('\n');
           console.log(`\n===== agent_timeout_repeated =====\n${awaitConfirmGuidance}\n`);
+        } else if (shouldHaltClosureTimeout(closureOnlyAttempt, failureKind, verdict)) {
+          // P1#5（post-impl review）：closure-only attempt 超时 → closure_timeout 求人，
+          // 不回内容重试（OpenSpec：closure timeout SHALL surface for human disposition）。
+          action = 'halt';
+          haltReason = 'closure_timeout';
+          console.error(
+            '\n===== closure_timeout =====\nclosure-only attempt（PASS 已冻结，仅补关环）超时——不回内容重试。\n' +
+            '人工核查 receipt/closure 状态后 --resume（deterministic 关环由 runner 代办，超时通常意味 verifier 参与的 repair 被卡）。\n',
+          );
         } else if (failureKind === 'agent_timeout' && verdict !== 'PASS') {
           // P0-B.5：超时+有进展（guard 未熔断）→ resume 续作，不吃内容重试预算；
           // 全局仍受 wall_clock + max_total_turns 兜底（checkRunBudget 每轮重查）。
@@ -4627,6 +5011,161 @@ Goal runner — tool-agnostic multi-phase orchestrator
             action = 'halt';
             haltReason = resolved.advance_block_reason ?? 'closure_open';
           }
+          // P0-3（plan 7c4f2e9b）：PASS+advance_blocked → 冻结 frozen deliverables。
+          // 事故 i2 正是此态被重试后产物遭 i3 冷启动重写毁掉——快照落 runner trust-state
+          // 独立命名空间，内存 digest 为同进程信任锚；已有活跃快照（violation 循环）不重取。
+          // post-impl review P0#2：**可信快照完整建立是 closure retry 的前置条件**——
+          // head 损坏/建立失败/表非空却零产物 一律 fail-closed halt（无保护重试=重开
+          // 「PASS 产物被毁」的洞）；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
+          // 产出走 closure-attestation）时按设计跳过。
+          if (action === 'retry' && !dryRun) {
+            let protectionFailure: string | null = null;
+            try {
+              const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
+              if (headNow.mac === 'invalid') {
+                protectionFailure = 'pass_snapshot head 损坏/跨协议/验签失败——不得在无保护下 closure retry';
+              } else if (!passSnapshotMemory.has(String(phase)) || headNow.body?.state !== 'active') {
+                if (!phaseHasFrozenSurface(phase)) {
+                  // 设计内不适用（产出表全空：源码树产出由 closure-attestation 承载）
+                } else {
+                  const frozen = resolveFrozenDeliverables({ projectRoot, feature: manifest.feature, phase });
+                  if (frozen.length === 0) {
+                    protectionFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
+                  } else {
+                    const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                    const taken = takePassSnapshot({
+                      projectRoot,
+                      feature: manifest.feature,
+                      runId: manifest.run_id,
+                      phase: String(phase),
+                      epoch,
+                      files: frozen,
+                    });
+                    passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
+                    appendEvent(manifest.report_dir, projectRoot, {
+                      type: 'pass_snapshot_taken',
+                      phase,
+                      invoke_id: invokeId,
+                      pass_epoch: epoch,
+                      manifest_sha256: taken.manifestSha256,
+                      files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              protectionFailure = `快照建立失败：${(e as Error).message}`;
+            }
+            if (protectionFailure) {
+              action = 'halt';
+              haltReason = 'pass_snapshot_unavailable';
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'phase_halt',
+                phase,
+                halt_reason: 'pass_snapshot_unavailable',
+                detail: protectionFailure,
+              });
+              console.error(
+                `\n===== pass_snapshot_unavailable =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
+                '不做无保护 closure retry（那会重开「PASS 产物被毁」的洞）；人工核查 trust-state/产物后 --resume。\n',
+              );
+            }
+          }
+          // ------------------------------------------------------------
+          // P0-5（plan 7c4f2e9b）：closure_kind 确定性分类——探针真值 total function，
+          // 不从 advance_block_reason 映射（其 agentTimedOut 先行返回会掩盖 receipt 真值，
+          // 保留为 telemetry）。fresh 复用 in-flow 探针；缺失（如超时被杀路径）才重探，
+          // subprocess timeout 受 remaining wall-clock/FINALIZE_RESERVE 约束。
+          // ------------------------------------------------------------
+          if (action === 'retry' && !dryRun) {
+            // P1#6（post-impl review）：probe timeout 严格受 remaining wall/finalize reserve
+            // 约束——剩余 ≤0 时不再"保底 30s"突破预算；直接跳过分类（下一轮预算判据会
+            // budget_wall_clock 终局），保持 retry 语义不变。
+            const probeRemainingMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+            const probe = inFlowReceiptValidation ?? (probeRemainingMs > 5_000
+              ? tryValidateReceipt(
+                  path.join(frameworkRoot, 'harness'),
+                  projectRoot,
+                  phase,
+                  manifest.feature,
+                  { timeoutMs: Math.min(300_000, probeRemainingMs) },
+                )
+              : null);
+            if (probe === null) {
+              // post-impl round2 P1#3：closure-only 超时且无预算探针 → 仍不得回内容重试
+              if (closureOnlyAttempt && invoke.timed_out === true) {
+                action = 'halt';
+                haltReason = 'closure_timeout';
+                console.error('\n===== closure_timeout =====\nclosure-only attempt 超时且剩余预算不足以探针——halt 求人，不回内容重试。\n');
+              } else {
+                console.warn('[closure] 剩余预算不足以运行 receipt 探针——跳过 closure 分类（wall-clock 判据接管）');
+              }
+            } else {
+            const route = classifyClosureKind(probe.status);
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'closure_kind_classified',
+              phase,
+              invoke_id: invokeId,
+              probe_status: probe.status,
+              closure_kind: route.kind === 'halt' ? undefined : route.kind,
+              halt_reason: route.kind === 'halt' ? route.reason : undefined,
+              probe_reused: inFlowReceiptValidation !== null,
+            });
+            if (route.kind === 'halt') {
+              // error=探针自身崩溃（framework/toolchain 坏，调 agent「修 receipt」只会空转）；
+              // not_applicable+advance_blocked=状态机不变量违例（lite 本不产生 receipt）。
+              action = 'halt';
+              haltReason = route.reason;
+              console.error(
+                `\n===== ${route.reason} =====\n` +
+                (route.reason === 'closure_probe_error'
+                  ? `receipt 探针自身执行失败（${(probe.message ?? '').slice(0, 300)}）——framework/toolchain 问题，不派 agent 修 receipt；人工修复后 --resume。\n`
+                  : 'lite track 不产生 receipt 却出现 advance_blocked——runner 状态机不变量违例，请回灌源仓核查。\n'),
+              );
+            } else if (route.kind === 'deterministic_recheck') {
+              // runner 不调 agent：正式 receipt state sync/closure patch → 直接推进
+              const syncExit = runSyncClosure(
+                path.join(frameworkRoot, 'harness'),
+                projectRoot,
+                manifest.feature,
+                String(phase),
+                frameworkRoot,
+              );
+              // round3 P1#4 + round4 P1#3：分流收敛为纯函数（矩阵测试锁定契约）
+              const syncOutcome = resolveClosureSyncOutcome(syncExit, closureOnlyAttempt, invoke.timed_out === true);
+              if (syncOutcome === 'advance') {
+                action = 'advance';
+                haltReason = undefined;
+                console.log('[closure] deterministic_recheck：receipt 已验真，runner 完成 sync-closure，phase 推进（不调 agent）');
+              } else if (syncOutcome === 'closure_timeout') {
+                action = 'halt';
+                haltReason = 'closure_timeout';
+                console.error(
+                  `\n===== closure_timeout =====\ndeterministic sync-closure 非零退出（${syncExit}）且 closure-only attempt 已超时——halt 求人，不回内容重试。\n`,
+                );
+              } else {
+                console.warn(`[closure] deterministic_recheck sync-closure 非零退出（${syncExit}）——回落 receipt_repair_with_verifier`);
+              }
+            }
+            // receipt_repair_with_verifier：保持 retry；预算=该 phase 当前完整 effective
+            // （P0-5 高水位棘轮已保证不回落），不虚构 verifier-only 校准值。
+            // post-impl round2 P1#3：**closure-only attempt 已超时**时 repair 不得再 retry
+            // ——OpenSpec：closure timeout 交人工处置 never re-enter retries（probe=passed
+            // 的 deterministic 直通仍保留：runner 自己关环不消耗 agent attempt）。
+            if (
+              action === 'retry' &&
+              route.kind === 'receipt_repair_with_verifier' &&
+              closureOnlyAttempt &&
+              invoke.timed_out === true
+            ) {
+              action = 'halt';
+              haltReason = 'closure_timeout';
+              console.error(
+                '\n===== closure_timeout =====\nclosure-only attempt 超时且 receipt 需 repair——不回内容重试，halt 求人。\n',
+              );
+            }
+            }
+          }
         }
 
         const agentWarn = buildAgentWarn(invoke);
@@ -4654,6 +5193,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 事件回放统计使用（events.jsonl 是唯一 SSOT，非内存计数，resume/detach 重启不丢）。
           advance_blocked: resolved.advance_blocked || undefined,
           advance_block_reason: resolved.advance_block_reason,
+          // P1-6（plan 7c4f2e9b）：四轴时间线的 artifact delta 轴（watched artifact 快照对比；
+          // restored 语义由 pass_snapshot_restored 事件承载，时间线侧优先）
+          artifact_delta:
+            priorArtifactSnapshot && Object.keys(currentArtifactSnapshot).length > 0
+              ? (artifactsProgressed(priorArtifactSnapshot, currentArtifactSnapshot) ? 'changed' : 'unchanged')
+              : undefined,
           halt_reason: haltReason,
           interaction_question: interactionSentinel?.error,
           // P0-B/P0-D 诚实归因：让下游排障者（人/AI）一眼见真因，不再有"缺 API key"式臆造空间。
@@ -4700,15 +5245,32 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const invalidatedPhases = chain
               .slice(codingIdx >= 0 ? codingIdx : 0, phaseIdx + 1)
               .filter(p => outcomes.some(o => o.phase === p));
+            // P0-3（plan 7c4f2e9b，codex 七/八轮）：失效走可恢复事务——journal pending →
+            // 全部受影响 pass_snapshot head/tombstone → 幂等事件（携 tx_id）→ commit。
+            // events 仅审计投影；恢复资格 SSOT 在 trust-state journal/head。
+            const invalidationTxId = `${manifest.run_id}-bt${backtracksUsed}`;
+            if (!dryRun) {
+              beginInvalidationTx({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                causePhase: String(phase),
+                invalidatedPhases: invalidatedPhases.map(String),
+                txId: invalidationTxId,
+              });
+              for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
+            }
             for (const p of invalidatedPhases) {
               appendEvent(manifest.report_dir, projectRoot, {
                 type: 'phase_invalidated',
                 phase: p,
                 cause_phase: phase,
                 reason: 'authorized_source_mutation_backtrack',
+                invalidation_tx_id: invalidationTxId,
                 files: driftDecision.files.slice(0, 20),
               });
             }
+            if (!dryRun) commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, invalidationTxId);
             appendEvent(manifest.report_dir, projectRoot, {
               type: 'phase_backtrack_requested',
               from_phase: phase,

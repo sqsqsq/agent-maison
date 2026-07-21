@@ -10,6 +10,7 @@ import { relFeatureArtifact } from '../../../harness/config';
 import {
   loadRefElementsFile,
   refElementsAbsPath,
+  refElementsRelPath,
   type RefElementEntry,
   fidelityRatchetFailOrWarn,
 } from '../../../harness/scripts/utils/fidelity-shared';
@@ -135,7 +136,7 @@ export function checkStructuredRefElements(ctx: CheckContext, _specMd: string): 
     ? lock.structured_bundle
     : path.resolve(cacheDir, lock.structured_bundle);
   const bundle = loadStructuredBundle(bundlePath);
-  const refRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'ref-elements.yaml');
+  const refRel = refElementsRelPath(ctx.projectRoot, ctx.feature);
   const desc = ruleDesc(ctx);
 
   if (!bundle) {

@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import { parseEnvelopeLine } from './claude-envelope';
 
 export const HEADLESS_INTERACTION_CODE = 'headless_interaction_required';
 
@@ -95,9 +96,10 @@ const STREAM_JSON_TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504, 529]);
  */
 function parseClaudeStreamJsonApiError(lines: string[]): HeadlessApiErrorSentinel | null {
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (!line.startsWith('{')) continue;
-    let obj: {
+    // P0-1（plan 7c4f2e9b）：行级信封解析统一走 claude-envelope 共享语义
+    const parsed = parseEnvelopeLine(lines[i]);
+    if (!parsed) continue;
+    const obj = parsed as {
       type?: string;
       subtype?: string;
       error_status?: number;
@@ -106,11 +108,6 @@ function parseClaudeStreamJsonApiError(lines: string[]): HeadlessApiErrorSentine
       api_error_status?: number;
       result?: string;
     };
-    try {
-      obj = JSON.parse(line);
-    } catch {
-      continue;
-    }
     if (obj.type === 'system' && obj.subtype === 'api_retry') {
       const transient =
         (typeof obj.error_status === 'number' && STREAM_JSON_TRANSIENT_STATUS.has(obj.error_status)) ||

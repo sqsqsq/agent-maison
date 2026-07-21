@@ -56,3 +56,19 @@ Enforcement: `harness/scripts/check-spec.ts`（新检查）, `<feature>/vision/a
 
 - **WHEN** ui-spec contains U+FFFD sequences in `componentNode.text` and additionally several low-confidence OCR strings without source mapping
 - **THEN** the check SHALL report the U+FFFD entries as `contradicted` (BLOCKER) and the low-confidence/no-mapping entries as `evidence_gap`, and the artifact's `vl_multimodal` signature SHALL be invalidated in both cases
+
+### Requirement: Canary grading normalizes structured envelopes on both paths
+
+For adapters declaring `structured_events` (whose invocations emit NDJSON envelopes), canary grading SHALL normalize structured output before answer extraction, on **both** grading paths: the preflight probe SHALL normalize `invoke.stdout` (pure stdout), and the inline canary SHALL parse the pure structured events file (`agent-events.jsonl`) and SHALL NOT read the mixed human-projection log. Normalization SHALL accept only the terminal result envelope — `type=result && subtype=success && is_error=false && typeof result==='string'` (multiple results: last valid wins) — an error result SHALL NOT be graded even if it contains answer-key lines, and unparseable/partial streams SHALL yield null preserving the existing fail-closed outcome. The normalization SHALL live in a shared claude-envelope module that also carries the existing image-read event and API-error envelope parsers, so all envelope consumers share one semantic. Non-structured adapters keep raw-text grading unchanged.
+
+Enforcement: `harness/scripts/utils/claude-envelope.ts`（新增）, `harness/scripts/utils/vision-canary.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: a genuinely sighted Claude host passes the canary through the NDJSON envelope
+
+- **WHEN** the claude adapter runs the preflight canary with `--output-format stream-json` and the assistant's final result text contains all answer lines
+- **THEN** grading SHALL extract the answers from the terminal result envelope and issue the capability verdict instead of failing on line-anchored matching
+
+#### Scenario: an error result carrying answer keys is not graded
+
+- **WHEN** the stream ends with a result envelope whose `is_error` is true but whose text happens to contain `Q1=A` lines
+- **THEN** normalization SHALL yield null and the probe SHALL remain fail-closed

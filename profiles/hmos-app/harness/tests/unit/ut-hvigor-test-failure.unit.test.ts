@@ -47,7 +47,10 @@ function count(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
 
-function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): string {
+// post-impl review P2#8（plan 7c4f2e9b）：诊断链验证面拆两半——toolchain_blocked 类
+// blocker 的诊断存活面在 **summary blocker excerpt**（operator/halt guidance 消费），
+// agent 重试回喂只保留 parked 行（agent 修不了环境，喂诊断只会诱导它「修环境」）。
+function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): { prior: string; excerpt: string } {
   const check: CheckResult = {
     id: 'ut_hvigor_test',
     category: 'structure',
@@ -65,7 +68,10 @@ function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): 
     (text, max) => (text.length > max ? text.slice(0, max) : text),
     () => undefined,
   );
-  return extractPriorFailureContext({ verdict: 'FAIL', blockers } as any);
+  return {
+    prior: extractPriorFailureContext({ verdict: 'FAIL', blockers } as any),
+    excerpt: blockers[0]?.details_excerpt ?? '',
+  };
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -359,16 +365,19 @@ const cases: Array<{ name: string; run: () => void }> = [
           }),
         },
       ]);
-      const prior = priorContext(signed);
-      assert(prior.includes('signingConfigs 未配置'), prior);
-      assert(prior.includes('自定义签名任务覆盖 ohosTest'), prior);
+      // 诊断在 operator 面（excerpt）存活；agent 回喂只见 parked 行（P2#8 新契约）
+      const signedCtx = priorContext(signed);
+      assert(signedCtx.excerpt.includes('signingConfigs 未配置'), signedCtx.excerpt);
+      assert(signedCtx.excerpt.includes('自定义签名任务覆盖 ohosTest'), signedCtx.excerpt);
+      assert(/parked, environment\/toolchain/.test(signedCtx.prior), signedCtx.prior);
+      assert(!signedCtx.prior.includes('signingConfigs 未配置'), signedCtx.prior);
 
       const unknown = priorContext(
         buildUtHvigorTestFailDetails([
           { module: 'A', result: result({ failedAt: 'hap_not_found' }) },
         ]),
       );
-      assert(!unknown.includes('signingConfigs 未配置'), unknown);
+      assert(!unknown.excerpt.includes('signingConfigs 未配置'), unknown.excerpt);
 
       const noPass = result(
         { failedAt: 'no_pass' },
@@ -387,7 +396,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           { module: 'NoPass', result: noPass },
         ]),
       );
-      assert(mixed.includes('多模块失败性质不同'), mixed);
+      assert(mixed.excerpt.includes('多模块失败性质不同'), mixed.excerpt);
 
       const heterogeneous = priorContext(
         buildUtHvigorTestFailDetails([
@@ -401,8 +410,8 @@ const cases: Array<{ name: string; run: () => void }> = [
           },
         ]),
       );
-      assert(heterogeneous.includes('多模块工具链失败'), heterogeneous);
-      assert(heterogeneous.includes('device_install_failed'), heterogeneous);
+      assert(heterogeneous.excerpt.includes('多模块工具链失败'), heterogeneous.excerpt);
+      assert(heterogeneous.excerpt.includes('device_install_failed'), heterogeneous.excerpt);
 
       const install = priorContext(
         buildUtHvigorTestFailDetails([
@@ -423,8 +432,8 @@ const cases: Array<{ name: string; run: () => void }> = [
           },
         ]),
       );
-      assert(install.includes('安装阶段失败：设备上已有冲突包'), install);
-      assert(!install.includes('签名环境缺口'), install);
+      assert(install.excerpt.includes('安装阶段失败：设备上已有冲突包'), install.excerpt);
+      assert(!install.excerpt.includes('签名环境缺口'), install.excerpt);
     },
   },
   {

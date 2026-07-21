@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"fixture","model":"claude-sonnet-5","permissionMode":"dontAsk"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"partial TOP_LEF

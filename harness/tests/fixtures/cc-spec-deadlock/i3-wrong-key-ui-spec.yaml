@@ -1,0 +1,120 @@
+# ui-spec.yaml — bc-openCard spec 阶段像素级保真声明
+schema_version: "1.0"
+verified: unverified
+# ----------------------------------------------------------------------
+# screens — P0 屏根组件树（按 spec.md §5 页面描述）
+# must_have 每个屏幕的 ref-element-id 覆盖（capture_completeness 分母）
+# ----------------------------------------------------------------------
+screens:
+  - id: add_card_home_collapsed
+    ref_id: add_card_home_collapsed
+    path: doc/features/原始需求/1-银行卡/1-银行卡添卡首页.jpg
+    priority: P0
+    must_have:
+      - add_card_title
+      - add_card_slogan
+      - add_card_sub_slogan
+      - bank_grid_item_0
+      - more_button
+      - add_card_expanded_bank_list
+      - view_all_banks_button
+    root:
+      type: Column
+      children:
+        - type: TitleBar
+          id: title_bar
+          props:
+            text: "添加银行卡"
+        - type: Text
+          id: slogan
+          props:
+            text: "免输卡号添卡"
+        - type: Text
+          id: sub_slogan
+          props:
+            text: "支持20家银行"
+        - type: Grid
+          id: bank_grid
+          props:
+            cols: 4
+          children:
+            - type: BankLogo
+              id: bank_logo_0
+              props:
+                bank_id: "0"
+            - type: BankLogo
+              id: bank_logo_1
+              props:
+                bank_id: "1"
+            - type: BankLogo
+              id: bank_logo_2
+              props:
+                bank_id: "2"
+            - type: BankLogo
+              id: bank_logo_3
+              props:
+                bank_id: "3"
+            - type: BankLogo
+              id: bank_logo_4
+              props:
+                bank_id: "4"
+            - type: BankLogo
+              id: bank_logo_5
+              props:
+                bank_id: "5"
+            - type: BankLogo
+              id: bank_logo_6
+              props:
+                bank_id: "6"
+            - type: BankLogo
+              id: bank_logo_7
+              props:
+                bank_id: "7"
+        - type: Row
+          id: bank_row
+          props:
+            justifyContent: FlexAlign.SpaceBetween
+          children:
+            - type: BankLogo
+              id: bank_logo_8
+              props:
+                bank_id: "8"
+            - type: BankLogo
+              id: bank_logo_9
+              props:
+                bank_id: "9"
+            - type: BankLogo
+              id: bank_logo_10
+              props:
+                bank_id: "10"
+            - type: BankLogo
+              id: bank_logo_11
+              props:
+                bank_id: "11"
+            - type: BankLogo
+              id: bank_logo_12
+              props:
+                bank_id: "12"
+        - type: Button
+          id: more_button
+          props:
+            text: "更多"
+
+  - id: add_card_home_expanded
+    ref_id: add_card_home_expanded
+    path: doc/features/原始需求/1-银行卡/1-2-银行卡添卡首页点击更多.jpg
+    priority: P0
+    must_have:
+      - add_card_expanded_bank_list
+      - view_all_banks_button
+    root:
+      type: Column
+      children:
+        - type: TitleBar
+          id: title_bar_exp
+          props:
+            text: "添加银行卡"
+        - type: Text
+          id: slogan_exp
+          props:
+            text: "免输卡号添卡"

@@ -1,0 +1,18 @@
+# fixture: i2 PASS 态 spec/ref-elements.yaml（回放 A 冻结对象）
+schema_version: "1.0"
+elements:
+  - element_id: add_card_title
+    screen_ref_id: add_card_home_collapsed
+    type: text
+    text: "添加银行卡"
+    disposition: implement
+  - element_id: add_card_slogan
+    screen_ref_id: add_card_home_collapsed
+    type: text
+    text: "免输卡号添卡"
+    disposition: implement
+  - element_id: more_button
+    screen_ref_id: add_card_home_collapsed
+    type: button
+    text: "更多"
+    disposition: implement

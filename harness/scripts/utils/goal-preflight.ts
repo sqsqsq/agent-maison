@@ -23,6 +23,7 @@ import {
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
 import { resolveGoalEffectiveImageInput, isVisionCanaryFresh } from './multimodal-probe';
+import { planUsesClaudeStreamJson } from './claude-envelope';
 import {
   invokeAgentHeadless,
   resolveHeadlessInvokePlan,
@@ -365,6 +366,9 @@ export async function runVisionCanaryProbe(input: {
       timed_out: invoke.timed_out,
       silent_killed: invoke.silent_killed,
       skipped: invoke.skipped,
+      // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
+      // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
+      structured_stdout: planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance),
     });
     if (decision.kind !== 'valid') {
       return {

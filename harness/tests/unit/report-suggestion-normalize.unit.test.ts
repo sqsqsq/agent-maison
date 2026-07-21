@@ -54,15 +54,22 @@ function mkTmpDir(): string {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'resolveEffectiveSuggestion：BLOCKER+FAIL 缺 suggestion → fallback 含 id 与来源',
+    // P1-7（plan 7c4f2e9b）契约反转：旧断言要求 fallback 含 id/来源/runbook——正是把弱模型
+    // 引进 framework 源码逆向的文案（事故 i5 全程读门禁实现 0 次产物修复）。新契约：
+    // agent 通道只给产物级动作+红线；源码定位指引移 operator_note（goal-report 渲染）。
+    name: 'resolveEffectiveSuggestion：BLOCKER+FAIL 缺 suggestion → 产物级 fallback + operator_note 承载源码定位',
     run: () => {
-      const eff = resolveEffectiveSuggestion(mkCheck({}), 'coding');
-      assert(eff && eff.includes('x_check'), 'fallback 应含 check id');
-      assert(eff!.includes('check-coding.ts'), '无 source 时 fallback 应回退 check-<phase>.ts');
-      assert(eff!.includes('harness-runbook.md'), 'fallback 应指向门禁速查');
+      const plain = mkCheck({});
+      const eff = resolveEffectiveSuggestion(plain, 'coding');
+      assert(eff && eff.includes('修产物'), 'fallback 应为产物级动作');
+      assert(!eff!.includes('检索 id='), 'fallback 不得引导检索判定实现');
+      assert(!!plain.operator_note && plain.operator_note.includes('x_check'), 'check id 应移入 operator_note');
+      assert(plain.operator_note!.includes('check-coding.ts'), '无 source 时 operator_note 回退 check-<phase>.ts');
+      assert(plain.operator_note!.includes('harness-runbook.md'), '门禁速查指引应在 operator_note');
 
-      const withSource = resolveEffectiveSuggestion(mkCheck({ source: 'profile_coding_host_structure' }), 'coding');
-      assert(withSource!.includes('profile_coding_host_structure'), '有 source 时 fallback 应引用真实来源');
+      const sourced = mkCheck({ source: 'profile_coding_host_structure' });
+      resolveEffectiveSuggestion(sourced, 'coding');
+      assert(sourced.operator_note!.includes('profile_coding_host_structure'), '有 source 时 operator_note 引用真实来源');
 
       const own = resolveEffectiveSuggestion(mkCheck({ suggestion: '按 X 修' }), 'coding');
       assert(own === '按 X 修', '已有 suggestion 必须原样保留');
@@ -93,7 +100,9 @@ const cases: Array<{ name: string; run: () => void }> = [
 
         const aFail = finalized.find(c => c.id === 'a_fail')!;
         assert(aFail.source === 'check-coding.ts', '非 PASS 缺 source 应补 check-<phase>.ts');
-        assert(!!aFail.suggestion && aFail.suggestion.includes('a_fail'), 'BLOCKER FAIL 应补 fallback suggestion');
+        // P1-7：fallback suggestion=产物级动作（不再含 check id——那在 operator_note）
+        assert(!!aFail.suggestion && aFail.suggestion.includes('修产物'), 'BLOCKER FAIL 应补产物级 fallback suggestion');
+        assert(!!aFail.operator_note && aFail.operator_note.includes('a_fail'), 'check id 定位移 operator_note');
 
         const bPass = finalized.find(c => c.id === 'b_pass')!;
         assert(bPass.source === undefined && bPass.suggestion === undefined, 'PASS 结果必须零改动');
