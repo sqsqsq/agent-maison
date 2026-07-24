@@ -144,15 +144,71 @@ test('无 drift → no_drift 不触发', () => {
   assert(r.kind === 'no_drift', r.kind);
 });
 
-test('三轮 P1-6：receipt 信任链全绿 + 全覆盖也不自动回退（change kind 分类器 pending）——unauthorized 上抛人工裁决', () => {
+test('三轮 P1-6 + e7c2a4d8 T3b：信任链全绿 + 全覆盖但**无 fingerprint 裁决** → 仍 unauthorized（classifier pending 不放行）', () => {
   const r = withTrust(() => classifySourceDrift(
     { added: ['02-Feature/F/src/main/ets/shared/utils/SmsCodeValidator.ets'], modified: [], deleted: [] },
     [humanReceipt()],
-    CTX,
+    { ...CTX, currentDriftFingerprint: 'f'.repeat(64) },
   ));
   assert(r.kind === 'unauthorized', JSON.stringify(r));
   assert(
-    (r as { violations: string[] }).violations.some(v => v.includes('授权 receipt 命中') && v.includes('自动回退')),
+    (r as { violations: string[] }).violations.some(v => v.includes('授权 receipt 命中') && /裁决|不放行/.test(v)),
+    JSON.stringify((r as { violations: string[] }).violations),
+  );
+});
+
+test('e7c2a4d8 T3b 正例：human 裁决 receipt 携 fingerprint 且与当前 drift 精确吻合 → authorized_backtrack', () => {
+  const fp = 'a'.repeat(64);
+  const r = withTrust(() => classifySourceDrift(
+    { added: ['02-Feature/F/src/main/ets/shared/utils/SmsCodeValidator.ets'], modified: [], deleted: [] },
+    [humanReceipt({ adjudicated_drift_fingerprint: fp })],
+    { ...CTX, currentDriftFingerprint: fp },
+  ));
+  assert(r.kind === 'authorized_backtrack', JSON.stringify(r));
+});
+
+test('round2 P0：裁决 receipt 只盖 A + 无 fingerprint receipt 盖 B（union 全覆盖）→ 拼接不放行', () => {
+  // 实施 round2 P0 回归：coverage 若按全部 valid receipt 并集计算，「human 裁 A +
+  // 其他 receipt 盖 B」可拼成 A+B 越权放行——放行覆盖必须由 fingerprint 吻合的
+  // 裁决 receipt 集合独立承担。
+  const fp = 'c'.repeat(64);
+  const r = withTrust(() => classifySourceDrift(
+    { added: [], modified: ['a.ets', 'b.ets'], deleted: [] },
+    [
+      humanReceipt({ allowed_files: ['a.ets'], max_files: 1, adjudicated_drift_fingerprint: fp }),
+      humanReceipt({ allowed_files: ['b.ets'], max_files: 1 }), // 无 fingerprint——意图登记位
+    ],
+    { ...CTX, currentDriftFingerprint: fp },
+  ));
+  assert(r.kind === 'unauthorized', `拼接被放行：${JSON.stringify(r)}`);
+  assert(
+    (r as { violations: string[] }).violations.some(v => v.includes('独立覆盖')),
+    JSON.stringify((r as { violations: string[] }).violations),
+  );
+});
+
+test('round2 P0 正例：多份 fingerprint 吻合裁决 receipt 合并独立覆盖全量 → authorized_backtrack', () => {
+  const fp = 'd'.repeat(64);
+  const r = withTrust(() => classifySourceDrift(
+    { added: [], modified: ['a.ets', 'b.ets'], deleted: [] },
+    [
+      humanReceipt({ allowed_files: ['a.ets'], max_files: 1, adjudicated_drift_fingerprint: fp }),
+      humanReceipt({ allowed_files: ['b.ets'], max_files: 1, adjudicated_drift_fingerprint: fp }),
+    ],
+    { ...CTX, currentDriftFingerprint: fp },
+  ));
+  assert(r.kind === 'authorized_backtrack', JSON.stringify(r));
+});
+
+test('e7c2a4d8 T3b 负例：裁决 fingerprint 与当前 drift 失配（签发后内容又变）→ unauthorized', () => {
+  const r = withTrust(() => classifySourceDrift(
+    { added: ['02-Feature/F/src/main/ets/shared/utils/SmsCodeValidator.ets'], modified: [], deleted: [] },
+    [humanReceipt({ adjudicated_drift_fingerprint: 'a'.repeat(64) })],
+    { ...CTX, currentDriftFingerprint: 'b'.repeat(64) },
+  ));
+  assert(r.kind === 'unauthorized', JSON.stringify(r));
+  assert(
+    (r as { violations: string[] }).violations.some(v => v.includes('失配')),
     JSON.stringify((r as { violations: string[] }).violations),
   );
 });

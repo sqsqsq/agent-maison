@@ -249,6 +249,64 @@ export function dereferenceRequirementDocs(
   return { combined: parts.join('\n\n'), resolvedPaths };
 }
 
+// ============================================================================
+// plan e7c2a4d8 T1d：goal-runs 权威枚举单一入口——结构性跳过 .dry 子树；无 manifest
+// 目录二分（v22 P1）：bootstrap-only 残留（be1c48 形态：仅 detach.log/lock，无
+// events/evidence）静默排除、走既有孤儿流程；已有 events/progress/phases 而 manifest
+// 缺失=曾启动的 run 被破坏 → corruptRuns（不 throw——七轮教训：上层枚举消费者吞
+// 异常；requirement hash/closure/completion/phase-lineage 四类门禁消费者见
+// corruptRuns 非空必须 BLOCKER/INVALID，不得静默改选其他 run）。
+// ============================================================================
+
+export interface AuthoritativeGoalRuns {
+  /** 权威 run 目录名（有 manifest.json；按名排序） */
+  runs: string[];
+  corruptRuns: Array<{ runId: string; reason: string }>;
+}
+
+export function listAuthoritativeGoalRuns(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+): AuthoritativeGoalRuns {
+  return classifyGoalRunsDir(path.join(projectRoot, featuresDirRel, feature, 'goal-runs'));
+}
+
+/** 绝对路径口径（verify-feature-completion 等经 featureFilePath 解析目录的消费面）。 */
+export function classifyGoalRunsDir(runsDir: string): AuthoritativeGoalRuns {
+  const out: AuthoritativeGoalRuns = { runs: [], corruptRuns: [] };
+  if (!fs.existsSync(runsDir)) return out;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    // 结构名（.dry 等点前缀目录）不入权威也不入 corrupt——目录名即隔离边界。
+    if (ent.name.startsWith('.')) continue;
+    const dir = path.join(runsDir, ent.name);
+    if (fs.existsSync(path.join(dir, 'manifest.json'))) {
+      out.runs.push(ent.name);
+      continue;
+    }
+    const started =
+      fs.existsSync(path.join(dir, 'events.jsonl')) ||
+      fs.existsSync(path.join(dir, 'progress.json')) ||
+      fs.existsSync(path.join(dir, 'phases'));
+    if (started) {
+      out.corruptRuns.push({
+        runId: ent.name,
+        reason: '目录已有 events/progress/phases 证据但 manifest.json 缺失——曾启动的 run 被破坏',
+      });
+    }
+    // else：bootstrap-only 残留（仅 detach.log/lock）→ 静默排除。
+  }
+  out.runs.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
 /**
  * 需求 SSOT 意图文本收集（check-spec 对账门禁消费）：全部 goal-run manifest 的
  * requirement + 各自解引用文档合并；无 goal run（纯交互）→ 空串（调用方回退 spec.md）。
@@ -261,19 +319,16 @@ export function collectRequirementIntentText(
   const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
   if (!fs.existsSync(runsDir)) return '';
   const parts: string[] = [];
-  try {
-    for (const ent of fs.readdirSync(runsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!ent.isDirectory()) continue;
-      const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
-      if (!fs.existsSync(manifestPath)) continue;
-      try {
-        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-        if (typeof m.requirement === 'string' && m.requirement.trim()) {
-          parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).combined);
-        }
-      } catch { /* 单 manifest 损坏跳过 */ }
-    }
-  } catch { /* runsDir 不可读 */ }
+  // T1d：权威枚举单一入口（跳过 .dry 与残留——dry manifest 不再进需求意图/hash）。
+  for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
+    const manifestPath = path.join(runsDir, runId, 'manifest.json');
+    try {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
+      if (typeof m.requirement === 'string' && m.requirement.trim()) {
+        parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).combined);
+      }
+    } catch { /* 单 manifest 损坏跳过 */ }
+  }
   return parts.join('\n\n');
 }
 
@@ -291,23 +346,20 @@ export function collectRequirementSsotPaths(
   const out = new Set<string>();
   const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
   if (fs.existsSync(runsDir)) {
-    try {
-      for (const ent of fs.readdirSync(runsDir, { withFileTypes: true })) {
-        if (!ent.isDirectory()) continue;
-        const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
-        if (!fs.existsSync(manifestPath)) continue;
-        // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
-        //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
-        // 需求改写对 closure 隐形。
-        out.add(path.join(featuresDirRel, feature, 'goal-runs', ent.name, 'manifest.json').split(path.sep).join('/'));
-        try {
-          const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-          for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).resolvedPaths) {
-            out.add(rel);
-          }
-        } catch { /* 单 manifest 损坏跳过 */ }
-      }
-    } catch { /* runsDir 不可读 */ }
+    // T1d：权威枚举单一入口（.dry/残留不入阶段血缘——更晚 dry run 不得改变 lineage）。
+    for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
+      const manifestPath = path.join(runsDir, runId, 'manifest.json');
+      // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
+      //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
+      // 需求改写对 closure 隐形。
+      out.add(path.join(featuresDirRel, feature, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
+      try {
+        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
+        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).resolvedPaths) {
+          out.add(rel);
+        }
+      } catch { /* 单 manifest 损坏跳过 */ }
+    }
   }
   // ux-reference 参考图
   const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
@@ -344,6 +396,20 @@ export function computeRunRequirementSha(
   } catch {
     return null;
   }
+  return computeRequirementShaFromText(projectRoot, feature, requirement, featuresDirRel);
+}
+
+/**
+ * 内容级 requirement 血缘哈希（plan e7c2a4d8 T1a）：与 computeRunRequirementSha 共用
+ * 同一 parts 组装路径——截断链 preflight 在 manifest 落盘前用内存 requirement 调本函数，
+ * 两口径逐字节同构（closure 记录与 preflight 重算的比对语义不变）。
+ */
+export function computeRequirementShaFromText(
+  projectRoot: string,
+  feature: string,
+  requirement: string,
+  featuresDirRel = 'doc/features',
+): string {
   const deref = dereferenceRequirementDocs(projectRoot, requirement, { featuresDirRel });
   const parts = [`inline:${requirement}`];
   for (const rel of deref.resolvedPaths.sort()) {

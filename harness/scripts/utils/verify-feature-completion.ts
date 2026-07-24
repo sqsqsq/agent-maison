@@ -27,7 +27,7 @@ import {
   reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
 import { collectAutoDecisions, countPendingMustReview } from './headless-assumptions';
-import { collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
+import { classifyGoalRunsDir, collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
 import { validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import { defaultTrustRegistryPath, validateConfirmationReceiptFile } from './confirmation-receipt';
@@ -191,6 +191,17 @@ export interface CleanPassOptions {
 export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[] {
   const { projectRoot, feature, chain } = opts;
   const issues: CleanPassIssue[] = [];
+
+  // ⓪ plan e7c2a4d8 T1d（v22 P1）：曾启动却缺 manifest 的 corrupt run 在场 → 完成
+  //    判定 fail-closed（不得静默把权威改选到其他 run）。
+  for (const c of classifyGoalRunsDir(featureFilePath(projectRoot, feature, 'goal-runs')).corruptRuns) {
+    issues.push({
+      phase: chain[0] ?? 'spec',
+      condition: 'goal_run_identity_intact',
+      detail: `goal-run ${c.runId} 损坏：${c.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`,
+      kind: 'needs_fix',
+    });
+  }
 
   // ① verdict PASS（needs_fix：FAIL 须修复/重跑，非人工确认）
   for (const phase of chain) {
@@ -520,9 +531,9 @@ function scanRunTerminalStates(
   const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
   if (!fs.existsSync(runsDir)) return [];
   const out: Array<{ run_id: string; status: string | null; last_ts: string | null }> = [];
-  for (const ent of fs.readdirSync(runsDir, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const eventsPath = path.join(runsDir, ent.name, 'events.jsonl');
+  // plan e7c2a4d8 T1d：权威枚举单一入口——.dry/残留不影响 completion freshness。
+  for (const runId of classifyGoalRunsDir(runsDir).runs) {
+    const eventsPath = path.join(runsDir, runId, 'events.jsonl');
     if (!fs.existsSync(eventsPath)) continue;
     let status: string | null = null;
     let lastTs: string | null = null;
@@ -536,7 +547,7 @@ function scanRunTerminalStates(
         } catch { /* 单行损坏不吞整文件 */ }
       }
     } catch { /* unreadable → 视为未知 run */ }
-    out.push({ run_id: ent.name, status, last_ts: lastTs });
+    out.push({ run_id: runId, status, last_ts: lastTs });
   }
   return out;
 }
@@ -604,14 +615,12 @@ export function resolvePhaseRunIds(
 ): { runIds: Record<string, string>; attempts: Record<string, string> } {
   const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
   const latest: Record<string, { run_id: string; ts: string }> = {};
-  if (fs.existsSync(runsDir)) {
-    for (const ent of fs.readdirSync(runsDir, { withFileTypes: true })) {
-      if (!ent.isDirectory()) continue;
-      for (const ev of readRunEventLines(projectRoot, feature, ent.name)) {
-        if (ev.type !== 'phase_start' || typeof ev.phase !== 'string' || typeof ev.ts !== 'string') continue;
-        const cur = latest[ev.phase];
-        if (!cur || ev.ts > cur.ts) latest[ev.phase] = { run_id: ent.name, ts: ev.ts };
-      }
+  // plan e7c2a4d8 T1d：权威枚举单一入口——更晚的 .dry run/残留不得被选为最新阶段证据。
+  for (const runId of classifyGoalRunsDir(runsDir).runs) {
+    for (const ev of readRunEventLines(projectRoot, feature, runId)) {
+      if (ev.type !== 'phase_start' || typeof ev.phase !== 'string' || typeof ev.ts !== 'string') continue;
+      const cur = latest[ev.phase];
+      if (!cur || ev.ts > cur.ts) latest[ev.phase] = { run_id: runId, ts: ev.ts };
     }
   }
   const runIds: Record<string, string> = {};

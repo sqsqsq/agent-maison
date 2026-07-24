@@ -203,7 +203,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'isLockStale: same-host alive pid + old heartbeat → stale',
+    // plan e7c2a4d8 T1e（v21 收口）：同机活 pid 永不判 stale——暂停/挂起中的活 runner
+    // 不得因 heartbeat 超时被抢占（busy + 人工处置）；旧「TTL 兜底抢占」语义废止。
+    name: 'isLockStale: same-host alive pid + old heartbeat → NOT stale（busy 人工处置）',
     run: () => {
       const record = {
         ownerId: 'x',
@@ -212,7 +214,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         started_at: '2020-01-01T00:00:00Z',
         updated_at: '2020-01-01T00:00:00Z',
       };
-      assert(isLockStale(record, 1000), 'heartbeat TTL stale even when pid alive');
+      assert(!isLockStale(record, 1000), 'alive pid must never be preempted on heartbeat timeout');
     },
   },
   {

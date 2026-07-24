@@ -55,6 +55,7 @@ import {
   isHumanSignedDeferral,
   isHumanVerified,
   isPixel1to1,
+  listAuthoritativeGoalRuns,
   loadSpecMarkdown,
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
@@ -134,6 +135,36 @@ export function collectIntentTextWithPhaseFallback(
   return parts
     .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
     .join('\n\n');
+}
+
+/**
+ * plan e7c2a4d8 T1d 补全（实施 round2 P1）：goal-runs 权威枚举的 corrupt 残留
+ *（有 events/progress/phases 执行证据但 manifest.json 缺失）对整张 check-spec 门面
+ * fail-closed。requirement intent / 血缘收集器按契约静默排除损坏 run——若不在门禁层
+ * 拦截，「删 manifest 洗需求」可让 intent 三态闸在证据被破坏时照常 PASS。
+ */
+export function checkGoalRunIdentityIntact(ctx: CheckContext): CheckResult[] {
+  const id = 'goal_run_identity_intact';
+  const description = 'goal-runs 目录完整性（started-but-manifest-less 残留 fail-closed）';
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const corrupt = listAuthoritativeGoalRuns(ctx.projectRoot, ctx.feature, featuresDirRel).corruptRuns;
+  if (corrupt.length === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: '无损坏 goal-run 残留。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      'goal-runs 存在曾启动但 manifest.json 缺失的损坏 run（需求意图/血缘无法完整重建，' +
+      `fail-closed）：${corrupt.map(c => c.runId).join('、')}`,
+    suggestion:
+      '人工核查这些 run 目录（events/progress 证据尚在）：恢复其 manifest.json，' +
+      '或确认废弃后整目录移除；不要在证据不完整时继续放行。',
+  }];
 }
 
 export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[] {
@@ -1554,6 +1585,8 @@ const checker: PhaseChecker = {
     if (!isSpecAssetAcquisitionSkipped(ctx.resolvedProfile)) {
       results.push(...safeRun(() => dispatchSpecAssetAcquisition(ctx), 'asset_acquisition'));
     }
+    // --- e7c2a4d8 T1d（round2 P1）：corrupt goal-run 残留 fail-closed（在 intent 门之前）---
+    results.push(...safeRun(() => checkGoalRunIdentityIntact(ctx), 'goal_run_identity_intact'));
     // --- blind-visual-hardening d4：fidelity 意图三态前置闸（逐阶段路径扩面）---
     results.push(...safeRun(() => checkFidelityCapabilityPregate(ctx), 'fidelity_capability_pregate'));
 

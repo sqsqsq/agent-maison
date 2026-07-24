@@ -40,6 +40,74 @@ export interface MutationAuthorizationReceipt {
   manifest_hash_at_run_start?: string;
   manifest_entry_id?: string;
   receipt_hash?: string;
+  /** plan e7c2a4d8 T3b：人工裁决绑定的 drift fingerprint（computeDriftFingerprint
+   * 口径——真人裁决的是**这份内容**；classifier 落地前它是唯一自动放行凭据，且已入
+   * v2 签名范围，签发后改写即失配）。 */
+  adjudicated_drift_fingerprint?: string;
+}
+
+// ---------------------------------------------------------------------------
+// plan e7c2a4d8 T3b：drift fingerprint 规范化（人工裁决替代未实现的内容分类器）。
+// entries=[{op: added|modified, path: canonical 项目相对, sha256: 内容哈希}]，
+// 稳定排序 + domain separation；deleted 恒不可授权不入 fingerprint；op 变化即失配。
+// ---------------------------------------------------------------------------
+
+export interface DriftFingerprintEntry {
+  op: 'added' | 'modified';
+  path: string;
+  sha256: string;
+}
+
+const DRIFT_FP_DOMAIN = 'MAISON_MUTATION_DRIFT_FP.v1';
+
+/** 项目相对路径规范化校验（v4 轮 P1-E：拒绝绝对路径/../重复项，fail-closed）。
+ * 返回问题列表（空=合法）。 */
+export function relPathIssues(paths: string[]): string[] {
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of paths) {
+    const p = norm(raw);
+    if (!p) { issues.push('存在空路径项'); continue; }
+    if (path.isAbsolute(p) || /^[A-Za-z]:/.test(p) || p.startsWith('//')) {
+      issues.push(`绝对路径不采信：${raw}`);
+    }
+    if (p.split('/').some((seg) => seg === '..' || seg === '.')) {
+      issues.push(`含 ./.. 段的路径不采信：${raw}`);
+    }
+    if (seen.has(p)) issues.push(`重复路径项：${raw}`);
+    seen.add(p);
+  }
+  return issues;
+}
+
+export function computeDriftFingerprint(entries: DriftFingerprintEntry[]): string {
+  const canonical = entries
+    .map((e) => ({ op: e.op, path: norm(e.path), sha256: e.sha256 }))
+    .sort((a, b) => (a.path === b.path ? a.op.localeCompare(b.op) : a.path.localeCompare(b.path)));
+  return crypto
+    .createHash('sha256')
+    .update(`${DRIFT_FP_DOMAIN}\n${stableStringify(canonical)}`, 'utf-8')
+    .digest('hex');
+}
+
+/** 当前 drift 的 fingerprint（runner 在 reconcile 时从盘上内容计算；deleted 不入）。
+ * 任一文件不可读 → null（fail-closed：无法证明内容即无法裁决）。 */
+export function computeCurrentDriftFingerprint(
+  projectRoot: string,
+  drift: SourceDriftInput,
+): { fingerprint: string; entries: DriftFingerprintEntry[] } | null {
+  const entries: DriftFingerprintEntry[] = [];
+  const push = (op: 'added' | 'modified', files: string[]): boolean => {
+    for (const f of files) {
+      const sha = sha256FileHex(path.join(projectRoot, ...norm(f).split('/')));
+      if (!sha) return false;
+      entries.push({ op, path: norm(f), sha256: sha });
+    }
+    return true;
+  };
+  if (!push('added', drift.added)) return null;
+  if (!push('modified', drift.modified)) return null;
+  return { fingerprint: computeDriftFingerprint(entries), entries };
 }
 
 export interface SourceDriftInput {
@@ -79,22 +147,32 @@ export interface ReceiptValidationCtx {
    * 授权（manifest 与冻结 hash 事件均在 agent 可写面，无 MAC 即整链可伪造）——弱信任处置，
    * 须 human receipt。undefined=调用方未断言（兼容非 runner 语境），不启用本降级。 */
   manifestIdentityAuthenticated?: boolean;
+  /** plan e7c2a4d8 T3b：当前 drift 的内容 fingerprint（runner 在 reconcile 时从盘上
+   * 计算；null=不可计算/未提供）。classifier 落地前唯一自动裁决判据。 */
+  currentDriftFingerprint?: string | null;
 }
 
 /**
  * human 源授权范围规范化哈希（confirmation receipt payload.object_hash 绑定源）：
  * 真人签的是**这个范围**——agent 改写 JSONL 行放宽 allowed_files/max_files 即哈希失配。
+ * plan e7c2a4d8 T3b（codex 二轮 P0-a + 三轮 P1-E + 四轮 P1-③）：**版本化 v2 单一
+ * 定义**——七字段（+source_inventory_before 纵深防御 + adjudicated_drift_fingerprint
+ * ?? null）+ domain separation。旧 v1 签名（五字段口径）必然失配 →
+ * INVALID_SCOPE_VERSION 不进裁决，不留 v1 verifier（现网 registry 不存在，零兼容成本）。
  */
 export function mutationAuthorizationScopeHash(r: MutationAuthorizationReceipt): string {
   return crypto
     .createHash('sha256')
     .update(
       stableStringify({
+        scope_version: 'v2',
         run_id: r.run_id,
         phase: r.phase,
+        source_inventory_before: r.source_inventory_before ?? null,
         allowed_files: [...(r.allowed_files ?? [])].map(norm).sort(),
         allowed_change_kind: r.allowed_change_kind,
         max_files: r.max_files,
+        adjudicated_drift_fingerprint: r.adjudicated_drift_fingerprint ?? null,
       }),
       'utf-8',
     )
@@ -121,6 +199,9 @@ export function receiptValidityIssues(
   }
   if (!Array.isArray(r.allowed_files) || r.allowed_files.length === 0) {
     issues.push('allowed_files 为空——无文件范围的宽授权不被采信');
+  } else {
+    // T3b（路径规范化 fail-closed）：绝对路径/../重复项不采信。
+    issues.push(...relPathIssues(r.allowed_files).map((m) => `allowed_files ${m}`));
   }
   if (!Number.isInteger(r.max_files) || r.max_files <= 0) issues.push('max_files 须为正整数');
   if (!['test_seam', 'integration_glue'].includes(r.allowed_change_kind)) {
@@ -166,7 +247,8 @@ export function receiptValidityIssues(
           if (!v.valid) {
             issues.push(
               `human confirmation receipt 信任链校验失败（${v.reasons.slice(0, 3).join('；')}）——` +
-              '须由预置 trust registry 签发方签名并绑定本授权范围',
+              '须由预置 trust registry 签发方签名并绑定本授权范围' +
+              '（注：v1 五字段 scope 的旧签名已废止=INVALID_SCOPE_VERSION，须按 v2 口径重签）',
             );
           }
         }
@@ -233,18 +315,47 @@ export function classifySourceDrift(
   const allowed = new Set(matched.flatMap(m => m.covered));
   const uncovered = files.filter(f => !allowed.has(f));
   const quotaViolations = matched.filter(m => m.covered.length > m.r.max_files);
+
+  // 三轮 review P1-6 + plan e7c2a4d8 T3b + 实施 round2 P0：added/modified 的内容级
+  // change kind 判定（diff 内容分类器）未实现——classifier 落地前**唯一自动裁决路径**
+  // = human receipt 携 adjudicated_drift_fingerprint 且与当前 drift 内容精确吻合，且
+  // 这些裁决 receipt 的 allowed_files **独立**覆盖全部 drift、各自配额合规。coverage
+  // 绝不与 preauth/无 fingerprint receipt 拼接（「human 裁 A + preauth 盖 B」拼成 A+B
+  // 放行=preauth 实际参与放行，违反"意图预登记永不作为放行路"）。
+  const currentFp = ctx.currentDriftFingerprint ?? null;
+  const adjudicators = currentFp
+    ? matched.filter(
+        (m) => m.r.authority_kind === 'human' && m.r.adjudicated_drift_fingerprint === currentFp,
+      )
+    : [];
+  if (adjudicators.length > 0) {
+    const adjAllowed = new Set(adjudicators.flatMap((m) => m.covered));
+    const adjUncovered = files.filter((f) => !adjAllowed.has(f));
+    const adjQuotaViolations = adjudicators.filter((m) => m.covered.length > m.r.max_files);
+    if (adjUncovered.length === 0 && adjQuotaViolations.length === 0) {
+      return { kind: 'authorized_backtrack', matched: adjudicators.map((m) => m.r), files };
+    }
+  }
   if (uncovered.length === 0 && quotaViolations.length === 0 && matched.length > 0) {
-    // 三轮 review P1-6：冻结 plan 要求"实际 diff 超出 change kind → unauthorized"，而
-    // added/modified 的内容级 test_seam/integration_glue 判定（diff 内容分类器）尚未实现——
-    // 判不了"超出"就不得自动放行（普通业务改码可借 seam receipt 洗白）。分类器落地前
-    // **自动回退禁用**：receipt 合规仅作为人工裁决输入随 HALT 上抛，不作 authorized_backtrack。
+    const humansWithFp = matched.filter(
+      (m) => m.r.authority_kind === 'human' && typeof m.r.adjudicated_drift_fingerprint === 'string',
+    );
+    const detail =
+      adjudicators.length > 0
+        ? 'human 裁决 receipt fingerprint 吻合但其 allowed_files/配额不能独立覆盖全部 drift' +
+          '（preauth/无 fingerprint receipt 不参与放行覆盖）——须补签独立覆盖全量 drift 的裁决'
+        : humansWithFp.length > 0
+          ? currentFp
+            ? 'human 裁决 receipt 在场但 adjudicated_drift_fingerprint 与当前 drift 内容失配（裁决签发后内容又变？）——须按当前内容重新裁决'
+            : '当前 drift fingerprint 不可计算（文件不可读）——无法与裁决绑定内容比对（fail-closed）'
+          : '无 fingerprint 吻合的人工裁决 receipt——preauth/无 fingerprint 授权仅意图预登记，' +
+            'change kind 内容级判定未实现（openspec 待办）前不放行';
     return {
       kind: 'unauthorized',
       files,
       violations: [
         `授权 receipt 命中（覆盖/配额合规：${matched.map(m => m.r.approved_by ?? '?').join('、')}），` +
-        '但 change kind 内容级判定未实现（openspec 待办）——自动回退在分类器落地前禁用，' +
-        '须人工确认变更确属授权范围后处置（HALT 安全方向）',
+        `但 ${detail}（HALT 安全方向）`,
       ],
     };
   }

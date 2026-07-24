@@ -25,6 +25,9 @@ import { sanitizeSpawnEnv } from './utils/process-integrity';
 import {
   buildAgentTimeoutRepeatedGuidance,
   buildAwaitHumanConfirmGuidance,
+  buildBudgetExhaustedGuidance,
+  buildUnauthorizedMutationGuidance,
+  MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
@@ -37,6 +40,8 @@ import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/mu
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
+  computeRequirementShaFromText,
+  listAuthoritativeGoalRuns,
   computeRunRequirementSha,
   dereferenceRequirementDocs,
   detectPixel1to1Intent,
@@ -88,6 +93,9 @@ import {
   loadGoalManifestFile,
   loadGoalManifestFromRun,
   newRunId,
+  resolveGoalReportDir,
+  resolveRawRunInput,
+  type RawRunInput,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
   type GoalManifest,
@@ -169,10 +177,12 @@ import {
 import { reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
 import {
   classifySourceDrift,
+  computeCurrentDriftFingerprint,
   loadMutationAuthorizations,
   receiptsFromManifestEntries,
   sha256FileHex,
   type DriftClassification,
+  type DriftFingerprintEntry,
 } from './utils/mutation-authorization';
 import {
   intermediateRoundsJournalPath,
@@ -194,6 +204,7 @@ import {
   isSummaryFresh,
   countConsecutiveAgentTimeouts,
   deriveContinuationFromEvents,
+  loadAuthoritativeEvents,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
@@ -409,10 +420,21 @@ function releaseAllLocks(): void {
   runLock = null;
 }
 
+/** plan e7c2a4d8 T1b：dry-run 期所有事件全量携 dry_run:true（.dry 隔离外的双保险——
+ * legacy 混写文件的会话过滤依赖它）。main 在解析 dry 形态后设置。 */
+let appendEventBaseFields: Record<string, unknown> = {};
+export function setAppendEventBaseFields(fields: Record<string, unknown>): void {
+  appendEventBaseFields = fields;
+}
+
 function appendEvent(reportDir: string, projectRoot: string, event: Record<string, unknown>): void {
   const abs = path.join(projectRoot, reportDir, 'events.jsonl');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.appendFileSync(abs, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n', 'utf-8');
+  fs.appendFileSync(
+    abs,
+    JSON.stringify({ ts: new Date().toISOString(), ...appendEventBaseFields, ...event }) + '\n',
+    'utf-8',
+  );
 }
 
 /**
@@ -784,6 +806,12 @@ function buildUnattendedExecutionBlock(
     '  waiver, conditional-review authorization, behavior-switch waiver) requires an out-of-band confirmation',
     '  receipt; without one the run caps at AWAITING_HUMAN_REVIEW.',
     '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log the deferred request as a ledger line (must_review=true).',
+    // plan e7c2a4d8 T4d：gap-notes 双账本冲突显式注入——fresh-context agent 读到自签
+    // 「已批准」就复写 seam 的循环（宿主 ut-003 reject → ut-006 implement 实证）。
+    '- gap-notes `approved_src_mutations[]` entries written by an agent are SELF-REPORTED intent, NOT',
+    '  authorization: the runner three-source chain will still HALT on any protected-source change they',
+    '  "approve". Even if a gap-note claims a seam was approved, do NOT (re-)implement it — log the request',
+    '  as must_review and continue without the mutation.',
     '- Product source under test phases is attestation-locked: any product-code change after review closure',
     '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
     '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
@@ -2150,14 +2178,31 @@ export function capRunStatusForVisionTrust(
 }
 
 /** ut/testing 期 source drift 对账 + 授权分类（attestation 缺失=review 未闭环，归上游门禁管，此处不判）。 */
+export type MutablePhaseDriftDecision = DriftClassification & {
+  /** plan e7c2a4d8 T3b/c：当前 drift 内容 fingerprint 与条目（裁决请求单/比对消费；
+   * no_drift 或不可计算时为 null）。 */
+  driftFingerprint?: string | null;
+  driftEntries?: DriftFingerprintEntry[] | null;
+  /** T4d（v6 轮 P0）：goal 环境 attestation 缺失/损坏→不走 reconciliation 的 fail-closed
+   * 信号（调用方发射 goal_review_closure_baseline_unavailable，本函数不再静默 no_drift）。 */
+  baselineUnavailable?: boolean;
+};
+
 export function reconcileMutablePhaseSourceDrift(args: {
   projectRoot: string;
   manifest: GoalManifest;
   phase: FeaturePhase;
   frozenManifestHash: string | null;
-}): DriftClassification {
+  /** goal 编排环境（缺 attestation fail-closed）；非 goal 消费面维持现 fallback 语义。 */
+  goalEnv?: boolean;
+}): MutablePhaseDriftDecision {
   const att = loadReviewClosureAttestation(args.projectRoot, args.manifest.feature);
-  if (!att) return { kind: 'no_drift' };
+  if (!att) {
+    // T4d：goal 环境无基线既判不了「review 后漂移」也不得放行——上抛 fail-closed 信号；
+    // 非 goal 交互模式保持现行为（no_drift 回退）。
+    if (args.goalEnv) return { kind: 'no_drift', baselineUnavailable: true };
+    return { kind: 'no_drift' };
+  }
   const rec = reconcileSourceTreeAgainstAttestation(args.projectRoot, att);
   if (rec.ok) return { kind: 'no_drift' };
   const receipts = [
@@ -2168,8 +2213,11 @@ export function reconcileMutablePhaseSourceDrift(args: {
       args.frozenManifestHash,
     ),
   ];
-  return classifySourceDrift(
-    { added: rec.added, modified: rec.modified, deleted: rec.deleted },
+  // T3b：当前 drift 内容 fingerprint（classifier 落地前唯一自动裁决判据）。
+  const drift = { added: rec.added, modified: rec.modified, deleted: rec.deleted };
+  const fp = computeCurrentDriftFingerprint(args.projectRoot, drift);
+  const decision = classifySourceDrift(
+    drift,
     receipts,
     {
       runId: args.manifest.run_id,
@@ -2183,8 +2231,10 @@ export function reconcileMutablePhaseSourceDrift(args: {
       // 十三轮 P1-3：runner 进程持 key（子进程已剥离）——无 key 部署下 pre_run_manifest
       // 整链（manifest 文件+run_start 冻结事件）在 agent 可写面，不构成机器可信授权。
       manifestIdentityAuthenticated: Boolean(process.env[VISION_CHECKPOINT_HMAC_ENV]),
+      currentDriftFingerprint: fp?.fingerprint ?? null,
     },
   );
+  return { ...decision, driftFingerprint: fp?.fingerprint ?? null, driftEntries: fp?.entries ?? null };
 }
 
 /** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
@@ -2409,14 +2459,37 @@ export function buildPhasePrompt(
  */
 export function resolveOrphanedIncompleteRun(
   featureRunsDirAbs: string,
-): { runId: string; reason: string } | null {
+  projectRootAbs?: string,
+): { runId: string; reason: string; runMode: 'authoritative' | 'dry' | 'unknown' } | null {
   const featureLockPath = path.join(featureRunsDirAbs, FEATURE_LOCK_NAME);
   const existing = readLockRecord(featureLockPath);
   if (!existing) return null; // clean
   if (!isLockStale(existing)) return null; // live runner → acquireGoalLocks will BLOCK
   const runId = existing.run_id;
   if (!runId) return null; // unidentifiable owner → fall through (steal stale lock)
-  const events = loadEventsJsonl(path.join(featureRunsDirAbs, runId, 'events.jsonl'));
+  // plan e7c2a4d8 T1b''/v23 P1-①：orphan 按 lock 的 run_mode/report_dir 定位与分流。
+  // 新 writer 恒写两字段；legacy 记录（宿主升级现场）默认 goal-runs/<run_id>，再以
+  // events 会话判别三态（仅 dry / 有 authoritative / 无法判断——不猜）。
+  if (existing.run_mode === 'dry') {
+    // stale dry orphan：不提示 resume（dry 无 resume 语义），真实 run 按既有
+    // stale-lock 流程直接接管（acquireGoalLocks 会偷 stale 锁）。
+    return null;
+  }
+  const eventsAbs =
+    existing.report_dir && projectRootAbs
+      ? path.join(projectRootAbs, ...existing.report_dir.split('/'), 'events.jsonl')
+      : path.join(featureRunsDirAbs, runId, 'events.jsonl');
+  const events = loadEventsJsonl(eventsAbs); // T1c：orphan 分类须读 raw（自行判别 dry 会话）
+  if (existing.run_mode === undefined) {
+    // legacy 三态判别（v23 P1-①）：run_start 会话形态。
+    const starts = events.filter((e) => e.type === 'run_start');
+    if (starts.length === 0) {
+      return { runId, reason: 'legacy lock 无法判别 run 形态（events 缺失/无 run_start）', runMode: 'unknown' };
+    }
+    if (starts.every((e) => (e as { dry_run?: unknown }).dry_run === true)) {
+      return null; // 仅 dry session → 按 stale dry orphan 处置
+    }
+  }
   const end = resolveEffectiveRunEnd(events);
   if (
     end?.status === 'COMPLETED' || // legacy
@@ -2426,7 +2499,7 @@ export function resolveOrphanedIncompleteRun(
     return null; // prior run finished; only a leftover lock
   }
   const reason = isPidAlive(existing.pid) ? 'lock 心跳超时（owner 未释放）' : 'owner 进程已退出';
-  return { runId, reason };
+  return { runId, reason, runMode: 'authoritative' };
 }
 
 /**
@@ -2442,8 +2515,16 @@ function guardOrphanedFeatureRun(
 ): void {
   if (force) return;
   const featureRunsDirAbs = path.join(projectRoot, featuresDir, feature, 'goal-runs');
-  const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs);
+  const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs, projectRoot);
   if (!orphan) return;
+  if (orphan.runMode === 'unknown') {
+    // v23 P1-①：无法判别形态——不猜、不给 resume 指引，人工处置。
+    console.error(
+      `[goal-runner] BLOCKER: feature "${feature}" 有形态无法判别的孤儿 lock（run "${orphan.runId}"，` +
+        `${orphan.reason}）。请人工核查 goal-runs/${orphan.runId}/ 后处置；确认放弃加 --force。`,
+    );
+    process.exit(1);
+  }
   console.error(
     `[goal-runner] BLOCKER: feature "${feature}" 有未完成的 goal-run "${orphan.runId}"` +
       `（疑似孤儿：${orphan.reason}）。\n` +
@@ -2457,20 +2538,27 @@ function acquireGoalLocks(
   projectRoot: string,
   featuresDir: string,
   feature: string,
-  runId: string,
+  run: { runId: string; reportDir: string; runMode: 'authoritative' | 'dry' },
 ): void {
+  const { runId, reportDir, runMode } = run;
   const featureRunsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
   const featureLockPath = path.join(featureRunsDir, FEATURE_LOCK_NAME);
-  const runLockPath = path.join(featureRunsDir, runId, RUN_LOCK_NAME);
+  // plan e7c2a4d8 T1b''：per-run lock 从 canonical manifest.report_dir 派生
+  //（dry 落 goal-runs/.dry/<run_id>/）；feature 串行锁继续共享（同 feature 串行）。
+  const runLockPath = path.join(projectRoot, ...reportDir.split('/'), RUN_LOCK_NAME);
 
-  const fRecord = tryAcquireLock(featureLockPath, { run_id: runId });
+  const fRecord = tryAcquireLock(featureLockPath, {
+    run_id: runId, run_mode: runMode, report_dir: reportDir,
+  });
   if (!fRecord) {
     const existing = readLockRecord(featureLockPath);
     console.error(formatLockBlocker(featureLockPath, existing));
     process.exit(1);
   }
 
-  const rRecord = tryAcquireLock(runLockPath, { run_id: runId, ownerId: fRecord.ownerId });
+  const rRecord = tryAcquireLock(runLockPath, {
+    run_id: runId, run_mode: runMode, report_dir: reportDir, ownerId: fRecord.ownerId,
+  });
   if (!rRecord) {
     releaseLock(featureLockPath, fRecord.ownerId);
     const existing = readLockRecord(runLockPath);
@@ -2544,7 +2632,7 @@ function setupProgressHooks(
       }
       const lockRec = featureLock ? readLockRecord(featureLock.path) : null;
       const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
-      const events = loadEventsJsonl(eventsPath);
+      const events = loadAuthoritativeEvents(eventsPath);
       appendEvent(manifest.report_dir, projectRoot, {
         type: 'heartbeat',
         phase: progressPhase,
@@ -2621,26 +2709,29 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
 
-  const feature = typeof argv.feature === 'string' ? argv.feature.trim() : '';
-  const isResume = Boolean(argv.resume);
-  if (!feature) {
-    console.error('[goal-runner] BLOCKER: --detach 须配 --feature（用于定位 run 日志目录）');
+  // plan e7c2a4d8 T1b（codex 六轮 P1-③）：parent 与 main 共用 resolveRawRunInput——
+  // feature 仅在 manifest 时不再提前拒绝；CLI↔manifest 冲突 fail-closed；dry 派生
+  // 同一 .dry 路径，parent/child 身份不分裂。
+  let raw: RawRunInput;
+  try {
+    raw = resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot);
+  } catch (e) {
+    console.error(`[goal-runner] BLOCKER: ${(e as Error).message}`);
     return 1;
   }
+  const feature = raw.feature;
+  const isResume = raw.isResume;
 
   // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
-  if (!isResume) {
+  // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。
+  if (!isResume && !raw.dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
   }
 
-  const runId = isResume
-    ? String(argv.resume)
-    : typeof argv['run-id'] === 'string' && argv['run-id'].trim()
-      ? String(argv['run-id']).trim()
-      : newRunId();
+  const runId = raw.runId ?? newRunId();
 
-  const reportDirRel = path.posix.join(featuresDir, feature, 'goal-runs', runId);
+  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
   const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
@@ -2744,6 +2835,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  // plan e7c2a4d8 T1b：dry/resume 互斥与 CLI↔manifest 一致性单点校验（与 detach parent
+  // 同源 resolveRawRunInput——feature 仅在 manifest 合法、冲突 fail-closed）。
+  let rawRunInput: RawRunInput;
+  try {
+    rawRunInput = resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot);
+  } catch (e) {
+    console.error(`[goal-runner] BLOCKER: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  const dryRunMode = rawRunInput.dryRun;
+
   let manifest: GoalManifest;
   if (argv.resume) {
     if (!argv.manifest && !argv.feature) {
@@ -2751,7 +2853,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
       process.exit(1);
     }
     if (argv.manifest) {
-      manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, { featuresDir });
+      // 实施 round2 P1：resume+manifest 第二道身份校验——runId 传入后 manifest.run_id
+      // 与 --resume 冲突在 buildGoalManifestFromInput fail-closed（resolveRawRunInput
+      // 已拦一道；此处防绕过单点解析的直接加载面）。
+      manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, {
+        featuresDir, runId: String(argv.resume).trim(),
+      });
     } else {
       manifest = loadGoalManifestFromRun(projectRoot, String(argv.resume), {
         feature: String(argv.feature),
@@ -2759,7 +2866,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
       });
     }
   } else if (argv.manifest) {
-    manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, { featuresDir });
+    manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, {
+      featuresDir, dryRun: dryRunMode, runId: rawRunInput.runId,
+    });
   } else {
     manifest = buildGoalManifestFromInput(
       {
@@ -2782,7 +2891,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 如需统一覆盖，显式设 unattended.timeout_seconds 或 phase_timeout_seconds。
         },
       },
-      { projectRoot, featuresDir },
+      { projectRoot, featuresDir, dryRun: dryRunMode },
     );
   }
 
@@ -2834,7 +2943,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (adapterDecision.writeLocal) pendingAdapterWriteback = adapterDecision.effectiveAdapter;
   }
 
-  const dryRun = Boolean(argv['dry-run']);
+  const dryRun = dryRunMode;
+  if (dryRun) setAppendEventBaseFields({ dry_run: true }); // T1b：dry 事件全量打标
   const forceResume = Boolean(argv['force-resume']);
 
   // Survival guard (code-level enforcement of the launch contract): block a real unattended
@@ -2864,11 +2974,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
   // Fresh start (not --resume): if an orphaned-but-incomplete run exists for this
   // feature, refuse a brand-new run_id and guide --resume (--force overrides).
-  if (!argv.resume) {
+  // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
+  if (!argv.resume && !dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
   }
 
-  acquireGoalLocks(projectRoot, featuresDir, manifest.feature, manifest.run_id);
+  acquireGoalLocks(projectRoot, featuresDir, manifest.feature, {
+    runId: manifest.run_id,
+    reportDir: manifest.report_dir,
+    runMode: dryRun ? 'dry' : 'authoritative',
+  });
 
   // 十二/十三轮 review：manifest 身份漂移检测——**锁内（防并发 TOCTOU/事件污染）+ 任何副作用
   // （回写 local/writeGoalManifest/canary/preflight）之前**执行；可信旧基线取自 **authenticated
@@ -2876,10 +2991,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 字段身份）不静默当基线（聚合 hash 相等才一次性迁移）；valid_unauthenticated 基线标记弱信任
   // （resume ack + 终态封顶 + pre_run_manifest 降级）。决策核心=resolveManifestDriftDecision
   // （纯函数，真路径可测）；未授权漂移 halt（drift 事件在锁内写，不污染他 run）。
+  // plan e7c2a4d8 T1b'（v22 P0-1）：dry-run 不读真实 run 的 vision checkpoint（同
+  // run_id 跨命名空间误读面）——以 absent 基线走「无基线」分支，零 trust 读写。
   const manifestDrift = resolveManifestDriftDecision({
     currentFields: computeManifestIdentityFields(manifest),
     currentHash: computeManifestIdentityHash(manifest),
-    cpMeta: readVisionCheckpointMeta({ projectRoot, feature: manifest.feature, runId: manifest.run_id }),
+    cpMeta: dryRun
+      ? ({ state: 'absent' } as ReturnType<typeof readVisionCheckpointMeta>)
+      : readVisionCheckpointMeta({ projectRoot, feature: manifest.feature, runId: manifest.run_id }),
     overrides: {
       'override-manifest': Boolean(argv['override-manifest']),
       'override-start': Boolean(argv['override-start']),
@@ -2938,13 +3057,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (!dryRun && !argv.resume && chain[0] !== fullWorkflowChain[0]) {
       const upstream = fullWorkflowChain.slice(0, fullWorkflowChain.indexOf(chain[0])).map(String);
       // P0-2（八轮）+九轮 P0：比对**当前 run** 的 requirement 与上游 closure 记录的——
-      // 换需求起截断链时上游 closure 判 stale。当前 SHA 不可计算=无法证明需求血缘，
-      // goal 环境直接 BLOCKER（fail-closed，不静默跳过比较）。
-      const currentReqSha = computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir);
-      if (currentReqSha === null) {
+      // 换需求起截断链时上游 closure 判 stale。plan e7c2a4d8 T1a：改用内存
+      // manifest.requirement 的内容级口径（writeGoalManifest 在本 preflight 之后才落盘，
+      // 读盘口径对新起截断链是鸡生蛋必死——be1c48 事故实锤）；requirement 缺失/空白
+      // 仍 BLOCKER（goal run 无需求属不变量违例，不静默放行）。
+      const requirementText = (manifest.requirement ?? '').trim();
+      if (!requirementText) {
         console.error(
           '[goal-runner] BLOCKER: 截断链核验无法计算当前 run 的 requirement 血缘哈希' +
-            `（goal-runs/${manifest.run_id}/manifest.json 缺失/不可读）——fail-closed，拒绝启动。`,
+            '（manifest.requirement 缺失/空白）——fail-closed，拒绝启动。',
+        );
+        process.exit(1);
+      }
+      const currentReqSha = computeRequirementShaFromText(
+        projectRoot, manifest.feature, manifest.requirement ?? '', featuresDir,
+      );
+      // T1d（v22 P1）：曾启动却缺 manifest 的 corrupt run 在场 → 截断链上游血缘不可信，
+      // fail-closed（不得静默把权威改选到其他 run）。
+      const corruptAtPreflight = listAuthoritativeGoalRuns(projectRoot, manifest.feature, featuresDir).corruptRuns;
+      if (corruptAtPreflight.length > 0) {
+        console.error(
+          '[goal-runner] BLOCKER: 截断链核验发现损坏的 goal-run（曾启动但 manifest 缺失）：\n' +
+            corruptAtPreflight.map((c) => `  - ${c.runId}: ${c.reason}`).join('\n') +
+            '\n人工核查（恢复 manifest 或确认废弃该目录）后重试。',
         );
         process.exit(1);
       }
@@ -3014,7 +3149,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // override 回写延后至此：survival guard / orphan guard / lock / preflight 全过，run 即将 commit 才切 local，
     // 避免任一启动前置 BLOCKER 退出却已把 framework.local.json 切走（run 没真启动 local 却变了）。
-    if (pendingAdapterWriteback) {
+    // plan e7c2a4d8 T1b'（v23 P1-②）：dry-run 禁止 framework.local.json 写回——
+    // --override-adapter --dry-run 组合不产生持久化副作用（config 只读）。
+    if (pendingAdapterWriteback && !dryRun) {
       recordAdapterToLocal(projectRoot, pendingAdapterWriteback);
       console.error(
         `[goal-runner] 按 --override-adapter 切到 adapter=${pendingAdapterWriteback}，` +
@@ -3024,7 +3161,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
-    let priorEvents = loadEventsJsonl(eventsPath);
+    let priorEvents = loadAuthoritativeEvents(eventsPath);
 
     if (argv.resume) {
       const halfRecovery = detectHalfCompletedPhaseRecovery(
@@ -3036,7 +3173,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         for (const ev of buildHalfPhaseRecoveryEvents(halfRecovery)) {
           appendEvent(manifest.report_dir, projectRoot, ev);
         }
-        priorEvents = loadEventsJsonl(eventsPath);
+        priorEvents = loadAuthoritativeEvents(eventsPath);
       }
 
       const priorReport = loadGoalReportJson(projectRoot, manifest.report_dir);
@@ -3124,6 +3261,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
       files: readonly VisionLedgerSnapshot[],
       opts?: { skipIntegrityCheck?: boolean },
     ): void => {
+      // plan e7c2a4d8 T1b'（v22 P0-1，宿主实证 ut2test dry 段曾写 vision anchor）：
+      // dry-run 零外部 trust 写——head/checkpoint/HWM 全家不落盘。
+      if (dryRun) return;
       if (!opts?.skipIntegrityCheck) {
         const headMeta = readVisionFeatureHeadMeta({ projectRoot, feature: manifest.feature });
         const headOk =
@@ -3186,6 +3326,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         resealTx.pending = false;
       }
     };
+    // plan e7c2a4d8 T1b'（v22 P0-1）：dry-run 完全跳过外部 vision trust 链——reseal
+    // 事务恢复、rekey/receipt 校验、head/HWM 完整性判定、legacy ledger 迁移与 run_start
+    // 基线锚全部不执行（capability/config 只读除外）；验收=trust 文件逐字节不变。
+    if (!dryRun) {
     {
       const now = snapshotVisionLedgers(projectRoot, manifest.feature);
       const ledgersPresent = now.some(f => f.sha256 !== 'absent');
@@ -3498,6 +3642,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 启动段刚完成验真/reseal——本次写入跳过覆盖前验盘（后续写点恒验）
       commitVisionAnchors('run_start', baseline, { skipIntegrityCheck: true });
     }
+    } // end if (!dryRun) —— vision trust 链（T1b'）
 
     // goal-fakepass-hardening t8：--supersede <run_id>（可重复）——显式废弃 HALTED/PARTIAL
     // 旧 run，写审计事件；completion verify 只认经审计的 supersede（自报 Set 不生效）。
@@ -3563,9 +3708,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let deferredUpstream: Array<{ phase: FeaturePhase; reason: string }> = [];
     let chainStartIndex = 0;
 
-    const budgetBase = resolveResumedBudget(priorEvents);
+    // plan e7c2a4d8 T2：wall-clock 预算改**活跃时间**累计——sessionStartMs 为当前进程
+    // 起点；priorActiveMs 由 partitionExecutionSessions 从历史段求和（崩溃段保守补收
+    // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
+    // 双计（codex 五轮 P1-②）。隔夜 resume 不再按日历跨度秒撞熔断（4035d4 事故）。
+    const sessionStartMs = Date.now();
+    const budgetBase = resolveResumedBudget(priorEvents, { nextSessionStartMs: sessionStartMs });
     let totalTurns = budgetBase.totalTurns;
-    const wallClockStartMs = budgetBase.wallClockStartMs;
+    const priorActiveMs = budgetBase.priorActiveMs;
+    // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
+    // 丢上一段落盘产物）；无历史段时=当前会话起点。
+    const wallClockStartMs = budgetBase.firstAuthoritativeStartMs ?? sessionStartMs;
 
     if (argv.resume) {
       const priorReport = loadGoalReportJson(projectRoot, manifest.report_dir);
@@ -3604,12 +3757,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
     // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
     // 07-13 案实锤：预算只在 attempt 启动前检查，review 在 ~580m 启动后跑满 32m，
-    // 限 585m 实跑 612m。
-    const wallDeadlineMs = wallClockStartMs + wallMs;
+    // 限 585m 实跑 612m。plan e7c2a4d8 T2：deadline 硬上界语义不变，只换基点——
+    // 当前会话起点 + 剩余活跃预算（priorActiveMs 已扣）。
+    const wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
     for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
       console.warn(warn);
     }
+
+    // T2(c)：wall 预算熔断统一发射器——reason+guidance 三处可见（phase_halt 事件/
+    // outcome/console banner；run_end 经 resolveLastHaltReason 取 outcome）。
+    const emitWallBudgetHaltGuidance = (phaseArg: string): string => {
+      const activeElapsedMs = priorActiveMs + (Date.now() - sessionStartMs);
+      const guidance = buildBudgetExhaustedGuidance({
+        feature: manifest.feature,
+        runId: manifest.run_id,
+        phase: phaseArg,
+        kind: 'budget_wall_clock',
+        activeElapsedMs,
+        limit: wallMs,
+        harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+      }).join('\n');
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'phase_halt',
+        phase: phaseArg,
+        halt_reason: 'budget_wall_clock',
+        halt_guidance: guidance,
+      });
+      console.error(`\n===== budget_wall_clock =====\n${guidance}\n`);
+      return guidance;
+    };
 
     // ------------------------------------------------------------------
     // P0-3（plan 7c4f2e9b）：PASS 快照同进程内存信任锚 + invalidation journal 恢复。
@@ -3642,7 +3819,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (jr.kind === 'pending_heads_applied') {
         // 与正常路径同构：heads 已幂等应用 → 幂等补事件 → **最后** commit（post-impl P0#1：
         // commit 提前会让「commit 后事件补齐前」的二次崩溃永久丢事件）。
-        const priorEv = loadEventsJsonl(eventsPath);
+        const priorEv = loadAuthoritativeEvents(eventsPath);
         for (const ph of jr.invalidatedPhases) {
           const already = priorEv.some(
             e => e.type === 'phase_invalidated' && e.phase === ph && e.invalidation_tx_id === jr.txId,
@@ -3671,7 +3848,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       let priorAttemptTimedOut = false;
       // P0-D：transient 计数与"上轮断流"语义都从 events.jsonl 派生（跨 continue/--resume
       // 不清零/不丢——内存变量在新进程必然归零，codex P1）。
-      const phaseStartEvents = loadEventsJsonl(
+      const phaseStartEvents = loadAuthoritativeEvents(
         path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
       );
       let transientRetriesUsed = countTransientApiRetries(phaseStartEvents, phase);
@@ -3701,23 +3878,46 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
 
       while (!phaseDone) {
+        // T2：elapsed = 历史活跃 + 当前会话（活跃口径，非日历跨度）。
+        const activeElapsedMs = priorActiveMs + (Date.now() - sessionStartMs);
         const budget = checkRunBudget(
           totalTurns,
           manifest.budget.max_total_turns,
-          Date.now() - wallClockStartMs,
+          activeElapsedMs,
           wallMs,
         );
         if (budget !== 'ok') {
           halted = true;
+          const budgetHaltReason = budget === 'wall_clock' ? 'budget_wall_clock' : 'budget_turns';
+          // T2(c)：budget halt 全链可解释——reason + guidance 进 outcome/phase_halt/
+          // run_end（resolveLastHaltReason 消费 outcome.halt_reason）+ console banner。
+          const budgetGuidance = buildBudgetExhaustedGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phase: String(phase),
+            kind: budgetHaltReason,
+            activeElapsedMs,
+            limit: budget === 'wall_clock' ? wallMs : manifest.budget.max_total_turns,
+            harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+          }).join('\n');
           appendEvent(manifest.report_dir, projectRoot, {
-            type: budget === 'wall_clock' ? 'budget_wall_clock' : 'budget_turns',
+            type: budgetHaltReason,
             phase,
           });
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt',
+            phase,
+            halt_reason: budgetHaltReason,
+            halt_guidance: budgetGuidance,
+          });
+          console.error(`\n===== ${budgetHaltReason} =====\n${budgetGuidance}\n`);
           outcomes.push({
             phase,
             verdict: 'FAIL',
             halted: true,
             retries,
+            halt_reason: budgetHaltReason,
+            halt_guidance: budgetGuidance,
           });
           break;
         }
@@ -3729,7 +3929,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // pending 收养仅限"已 start、未 commit"的 invocation。诚实边界：运行时一致性防护，
         // 非协同篡改双文件的密码学防护。
         if (!dryRun && phase === 'testing') {
-          const eventsForIntegrity = loadEventsJsonl(eventsPath);
+          const eventsForIntegrity = loadAuthoritativeEvents(eventsPath);
           const recon = reconcileLedgerWithEvents({
             ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
             loopId: `goal:${manifest.run_id}`,
@@ -3796,7 +3996,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // checkpoint 会盖过"attempt B 正常结束后崩于 harness"的 unknown 结论，违反
           // 五态表"最新 attempt 优先/end 正常无 verdict → unknown"。events 五态窗口是
           // 唯一权威（end 事件自带 timed_out，无需 checkpoint 佐证）。
-          const derived = deriveContinuationFromEvents(loadEventsJsonl(eventsPath), phase);
+          const derived = deriveContinuationFromEvents(loadAuthoritativeEvents(eventsPath), phase);
           if (derived) {
             continuation = { cause: derived.cause, process_resumed: true };
           }
@@ -3850,7 +4050,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 豁免契约）；agent 侧 zero-budget 禁启动（rev7：invoke timer 语义 timeoutMs>0
         // 才启用、checkRunBudget 只查原始 wall——"原始 remaining>0、扣 reserve 后 ≤0"
         // 时绝不把 0 交给 timer 无超时裸跑）。
-        const phaseEventsNow = loadEventsJsonl(eventsPath);
+        const phaseEventsNow = loadAuthoritativeEvents(eventsPath);
         const consecutiveTimeouts = countConsecutiveAgentTimeouts(phaseEventsNow, phase);
         // 复审补（cursor，plan P0-1.6 的"已耗时"）：本 phase 此前各 attempt 的累计耗时，
         // 注入续作块给 agent 预算感知（"这个 phase 已经烧了 X 分钟"）。
@@ -3889,12 +4089,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (availableForAgentMs <= 0) {
           halted = true;
           appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
             verdict: 'FAIL',
             halted: true,
             retries,
             halt_reason: 'budget_wall_clock',
+            halt_guidance: wallGuidance,
           });
           break;
         }
@@ -4074,17 +4276,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
         progressSubstep = 'agent_invoke';
         // 四轮 review P0：agent 调用窗口括号——invoke 前快照 vision 账本并落 anchor 事件；
         // invoke 结束后比对，窗口内任何账本变更 = agent 篡改 → phase halt（fail-closed）。
-        const preInvokeVisionSnap = snapshotVisionLedgers(projectRoot, manifest.feature);
-        appendEvent(manifest.report_dir, projectRoot, {
-          type: 'vision_ledger_anchor',
-          scope: 'pre_invoke',
-          phase,
-          invoke_id: invokeId,
-          files: preInvokeVisionSnap,
-        });
-        // 六轮 P0-2：checkpoint 写失败不静默降级——fail-closed 抛错；八轮 P1-1：覆盖前
-        // 验盘（head/checkpoint 被删/被改即 halt，runner 不为篡改锚重签）
-        commitVisionAnchors('pre_invoke', preInvokeVisionSnap);
+        // 实施 round2 P2：dry 全程零 trust 面接触——不读 vision 账本、不落 anchor 事件
+        //（post-invoke 比对块已同门；commitVisionAnchors 自身 dry no-op 是双保险）。
+        const preInvokeVisionSnap = dryRun ? [] : snapshotVisionLedgers(projectRoot, manifest.feature);
+        if (!dryRun) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'vision_ledger_anchor',
+            scope: 'pre_invoke',
+            phase,
+            invoke_id: invokeId,
+            files: preInvokeVisionSnap,
+          });
+          // 六轮 P0-2：checkpoint 写失败不静默降级——fail-closed 抛错；八轮 P1-1：覆盖前
+          // 验盘（head/checkpoint 被删/被改即 halt，runner 不为篡改锚重签）
+          commitVisionAnchors('pre_invoke', preInvokeVisionSnap);
+        }
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'agent_invoke_start',
           phase,
@@ -4500,12 +4706,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (!dryRun && availableForHarnessMs <= 0) {
           halted = true;
           appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
             verdict: 'FAIL',
             halted: true,
             retries,
             halt_reason: 'budget_wall_clock',
+            halt_guidance: wallGuidance,
             agent_exit_code: invoke.exitCode,
             agent_timed_out: invoke.timed_out,
           });
@@ -4545,7 +4753,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 五轮 review P0-2：gate harness 是 vision 账本唯一合法写入窗口——harness 结束后
         // 立即落 post_harness anchor + checkpoint（此后任何 halt/early-exit，最后锚都
         // 代表最后一次合法 runner 写入；resume 不再误报"停机篡改"）。
-        {
+        // 实施 round2 P2：dry 不读账本不落锚（trust 零触碰扩到 invoke/harness 窗口）。
+        if (!dryRun) {
           const postHarnessSnap = snapshotVisionLedgers(projectRoot, manifest.feature);
           appendEvent(manifest.report_dir, projectRoot, {
             type: 'vision_ledger_anchor',
@@ -4565,12 +4774,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (harnessRun.timedOut) {
           halted = true;
           appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
             verdict: 'FAIL',
             halted: true,
             retries,
             halt_reason: 'budget_wall_clock',
+            halt_guidance: wallGuidance,
             agent_exit_code: invoke.exitCode,
             agent_timed_out: invoke.timed_out,
           });
@@ -4925,7 +5136,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           CUMULATIVE_HALT_FAMILY.has(failureKind) &&
           currentBlockerSignature &&
           countRepeatedSignatureInFamily(
-            loadEventsJsonl(eventsPath),
+            loadAuthoritativeEvents(eventsPath),
             phase,
             currentBlockerSignature,
             CUMULATIVE_HALT_FAMILY,
@@ -4942,7 +5153,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 但"PASS 且闭环完成"的超时不拦（马上 advance，无需熔断）。
           failureKind === 'agent_timeout' &&
           (verdict !== 'PASS' || resolved.advance_blocked) &&
-          countConsecutiveAgentTimeouts(loadEventsJsonl(eventsPath), phase) + 1 >=
+          countConsecutiveAgentTimeouts(loadAuthoritativeEvents(eventsPath), phase) + 1 >=
             CONSECUTIVE_TIMEOUT_HALT_AT
         ) {
           action = 'halt';
@@ -4953,7 +5164,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phase,
             // 复审修复（codex P2）：本次 invoke 的 agent_invoke_end 在 verdict 链之前已
             // 落盘 events——不再 concat 当前时长，否则末条重复、attempt 数虚高。
-            attemptDurationsMs: loadEventsJsonl(eventsPath)
+            attemptDurationsMs: loadAuthoritativeEvents(eventsPath)
               .filter(
                 (e) =>
                   e.type === 'agent_invoke_end' &&
@@ -4987,7 +5198,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // reason：script 门禁反复"PASS 却关不了环"本身就是这个 phase 结构性关不了环的信号——
           // 给一次重试机会（也许只是没来得及关环），第二次即不再自证突破。
           const cumulativeAdvanceBlocked =
-            countCumulativeAdvanceBlocked(loadEventsJsonl(eventsPath), phase) + 1;
+            countCumulativeAdvanceBlocked(loadAuthoritativeEvents(eventsPath), phase) + 1;
           if (cumulativeAdvanceBlocked >= ADVANCE_BLOCKED_HALT_THRESHOLD) {
             action = 'halt';
             haltReason = 'closure_wall_repeated';
@@ -5219,13 +5430,87 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // （codex plan 审查一轮 B4：不见码就回退=给非法改码洗白的通道）：
         //   授权链命中 → 自动回退 coding（review/ut 失效，增量重点复审）；
         //   未授权/超界/无 receipt → HALT（人工裁决后可显式授权）。
-        if (!dryRun && (phase === 'ut' || phase === 'testing') && action !== 'retry') {
+        // plan e7c2a4d8 T4d（codex 四轮 P0-c）：goal 环境专用 blocker 出现时短路内容
+        // 重试——reconciliation 门放宽为「action!=='retry' ∨ 存在该 blocker」，同一事故
+        // 一个出口（unauthorized halt），不转化为 harness FAIL 后的内容重试循环。
+        const hasPostReviewMutationBlocker =
+          (summary?.blockers ?? []).some(
+            (b) => (b as { id?: string }).id === 'goal_post_review_source_mutation_unresolved',
+          );
+        if (
+          !dryRun && (phase === 'ut' || phase === 'testing') &&
+          (action !== 'retry' || hasPostReviewMutationBlocker)
+        ) {
           const driftDecision = reconcileMutablePhaseSourceDrift({
             projectRoot,
             manifest,
             phase,
             frozenManifestHash,
+            goalEnv: true,
           });
+          // T4d（codex 五/六轮 P0）：goal 环境 attestation 缺失/损坏 → 不走
+          // reconciliation（无基线可对账）→ 直接 halt（run 终态），guidance 只指向
+          // 新起 coding 起点 run（两态路由已撤销——「只删/删+改码」无证据源可分）。
+          if (driftDecision.baselineUnavailable) {
+            const baselineGuidance = [
+              `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
+              'goal 环境无源码基线，既判不了「review 后漂移」也不得放行（fail-closed）。',
+              '恢复路径（当前 run 不可达，resume 只会重入本 phase）：',
+              '  新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃。',
+              '不读取 run-start diff、不采信 gap-notes 授权（无基线时的降级通道即洗白通道）。',
+            ].join('\n');
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'goal_review_closure_baseline_unavailable',
+              verdict,
+              halt_guidance: baselineGuidance,
+            });
+            console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
+            outcomes.push({
+              phase, verdict, halted: true, retries,
+              halt_reason: 'goal_review_closure_baseline_unavailable',
+              halt_guidance: baselineGuidance,
+            });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
+          // T3b（codex 二轮 P0-b 方案 1）：authorized_backtrack 仅当当前 chain 同时含
+          // coding 与 review——截断链即使裁决有效也无法在本 run 回退重验。
+          const chainHasCodingReview =
+            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
+          if (driftDecision.kind === 'authorized_backtrack' && !chainHasCodingReview) {
+            const truncGuidance = buildUnauthorizedMutationGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              violations: ['人工裁决已生效（fingerprint 吻合），但当前为截断链（chain 不含 coding/review）'],
+              chainHasCodingReview: false,
+              receiptVerificationConfigured: fs.existsSync(defaultTrustRegistryPath(projectRoot)),
+              issuanceRouteAvailable: MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
+              adjudicationAlreadyAvailable: true,
+              adjudicationRequestRel: null,
+              harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+            }).join('\n');
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'authorized_mutation_requires_full_chain',
+              verdict,
+              files: driftDecision.files.slice(0, 20),
+              halt_guidance: truncGuidance,
+            });
+            console.error(`\n===== authorized_mutation_requires_full_chain =====\n${truncGuidance}\n`);
+            outcomes.push({
+              phase, verdict, halted: true, retries,
+              halt_reason: 'authorized_mutation_requires_full_chain',
+              halt_guidance: truncGuidance,
+            });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
           if (driftDecision.kind === 'authorized_backtrack') {
             if (backtracksUsed >= 1) {
               appendEvent(manifest.report_dir, projectRoot, {
@@ -5294,6 +5579,59 @@ Goal runner — tool-agnostic multi-phase orchestrator
             continue;
           }
           if (driftDecision.kind === 'unauthorized') {
+            // T4c（codex 二轮 P1-5）：处置前先快照 harness 证据——UT 实测 PASS 不得在
+            // 报告里呈现为「FAIL / Summary —」；outcome verdict=harness 真值 +
+            // halted=transition 轴分离。
+            const snap = snapshotPhaseHarness(
+              projectRoot, manifest.feature, phase, manifest.report_dir, frameworkRoot,
+            );
+            // T3c：裁决请求单落盘（canonical fingerprint + 条目 + receipt 字段模板——
+            // 供未来签发能力就绪后复用；不可计算时跳过）。
+            let adjudicationRequestRel: string | null = null;
+            if (driftDecision.driftFingerprint && driftDecision.driftEntries) {
+              try {
+                adjudicationRequestRel = path.posix.join(manifest.report_dir, 'mutation-adjudication-request.json');
+                fs.writeFileSync(
+                  path.join(projectRoot, ...adjudicationRequestRel.split('/')),
+                  `${JSON.stringify({
+                    schema_version: '1.0',
+                    run_id: manifest.run_id,
+                    feature: manifest.feature,
+                    phase: String(phase),
+                    drift_fingerprint: driftDecision.driftFingerprint,
+                    drift_entries: driftDecision.driftEntries,
+                    required_action: 'source_mutation_authorization',
+                    receipt_template: {
+                      schema_version: '1.0',
+                      run_id: manifest.run_id,
+                      phase: String(phase),
+                      allowed_files: [...new Set(driftDecision.driftEntries.map((e) => e.path))].sort(),
+                      allowed_change_kind: 'test_seam',
+                      max_files: new Set(driftDecision.driftEntries.map((e) => e.path)).size,
+                      adjudicated_drift_fingerprint: driftDecision.driftFingerprint,
+                      authority_kind: 'human',
+                    },
+                  }, null, 2)}\n`,
+                  'utf-8',
+                );
+              } catch {
+                adjudicationRequestRel = null; // best-effort：请求单失败不掩盖 halt 本体
+              }
+            }
+            // T3c：banner/phase_halt 事件/goal-report 单 SSOT——builder 按能力真值分层，
+            // 只列当下真正可走的路（旧 banner「写 receipt 后 --resume」属过度承诺，已废）。
+            const mutationGuidance = buildUnauthorizedMutationGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              violations: driftDecision.violations,
+              chainHasCodingReview,
+              receiptVerificationConfigured: fs.existsSync(defaultTrustRegistryPath(projectRoot)),
+              issuanceRouteAvailable: MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
+              adjudicationAlreadyAvailable: false,
+              adjudicationRequestRel,
+              harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+            }).join('\n');
             appendEvent(manifest.report_dir, projectRoot, {
               type: 'phase_halt',
               phase,
@@ -5301,13 +5639,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
               verdict,
               files: driftDecision.files.slice(0, 20),
               violations: driftDecision.violations.slice(0, 10),
+              halt_guidance: mutationGuidance,
             });
-            console.error(
-              `\n===== unauthorized_source_mutation =====\n${phase} 期产品源码变更未命中可信授权链（不自动回退洗白）：\n` +
-              driftDecision.violations.map(v => `  - ${v}`).join('\n') +
-              '\n人工裁决：确属合法变更 → 写入授权 receipt（mutation-authorizations.jsonl，三源之一）后 --resume；否则还原变更。\n',
-            );
-            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'unauthorized_source_mutation' });
+            console.error(`\n===== unauthorized_source_mutation =====\n${mutationGuidance}\n`);
+            outcomes.push({
+              phase,
+              verdict, // harness 真值（如 PASS）——transition 由 halted/halt_reason 表达
+              halted: true,
+              retries,
+              halt_reason: 'unauthorized_source_mutation',
+              halt_guidance: mutationGuidance,
+              summary_path: snap.snapshot_files['summary.json'] ?? summaryPath ?? undefined,
+              report_dir: snap.snapshotDirRel,
+              snapshot_files: snap.snapshot_files,
+            });
             halted = true;
             phaseDone = true;
             continue;
@@ -5402,12 +5747,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (!canAffordBackoff(configuredBackoffMs, backoffAvailableMs)) {
               halted = true;
               appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+              const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
               outcomes.push({
                 phase,
                 verdict: 'FAIL',
                 halted: true,
                 retries,
                 halt_reason: 'budget_wall_clock',
+                halt_guidance: wallGuidance,
               });
               phaseDone = true;
               continue;
@@ -5443,15 +5790,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...((haltReason === 'await_human_visual_confirm' ||
-            haltReason === 'closure_wall_repeated' ||
-            haltReason === 'await_human_p0_skip' ||
-            haltReason === 'framework_integrity_block' ||
-            haltReason === 'framework_bug' ||
-            haltReason === 'agent_timeout_repeated') &&
-          awaitConfirmGuidance
-            ? { halt_guidance: awaitConfirmGuidance }
-            : {}),
+          // plan e7c2a4d8 T3c（codex 二轮采纳）：凡有 guidance 一律附着——渲染侧
+          //（goal-report-generator）本已 reason 无关，枚举白名单是第三处漂移点，废。
+          ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
           // P0-5：integrity subtype 多值透传进最终报告。
           ...(integritySubtypes.length > 0 ? { integrity_subtypes: integritySubtypes } : {}),
           interaction_question: interactionSentinel?.error,
@@ -5565,7 +5906,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const finalizeStartMs = Date.now();
     const finalizeDeadlineExceeded = finalizeStartMs > wallDeadlineMs;
     if (finalizeDeadlineExceeded) {
-      appendEvent(manifest.report_dir, projectRoot, { type: 'finalize_skipped', phase: undefined });
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'finalize_skipped',
+        phase: undefined,
+        // T2(c)：如实说明跳过的是 completion receipt 等收尾——goal-report 本身已在
+        // 本预检之前生成（v2 归因自误的修正记录见 plan e7c2a4d8）。
+        reason: 'wall deadline 已过——跳过 completion receipt 等 best-effort 收尾（goal-report 已生成）',
+      });
       console.warn(
         '[goal-runner] wall deadline 已过——跳过 best-effort 收尾（completion receipt 等），事件已留痕 finalize_skipped',
       );
@@ -5632,7 +5979,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     console.log(`status=${status}`);
     console.log(`report_dir=${manifest.report_dir}`);
     console.log(`phases=${outcomes.map((o) => o.phase).join(',')}`);
-    console.log(`agent_invokes=${countAgentInvokeStarts(loadEventsJsonl(eventsPath))}`);
+    console.log(`agent_invokes=${countAgentInvokeStarts(loadAuthoritativeEvents(eventsPath))}`);
 
     if (status === 'HALTED') return 1;
     if (status === 'DEFERRED' || status === 'PARTIAL') return 2;

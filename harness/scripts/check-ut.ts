@@ -51,6 +51,9 @@ import {
   featureDir,
   relFeatureFile,
 } from '../config';
+import { loadReviewClosureAttestation, reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
+import { classifySourceDrift, computeCurrentDriftFingerprint, loadMutationAuthorizations } from './utils/mutation-authorization';
+import { isGoalOrchestrationEnv } from './utils/phase-state';
 import {
   tryLoadUtHostImpl,
   getLastProfileHarnessLoadError,
@@ -745,7 +748,109 @@ export function pickNonSrcConfigChanges(files: string[]): string[] {
   return files.filter(f => !/(?:^|\/)src\//.test(f.replace(/\\/g, '/')));
 }
 
+/**
+ * plan e7c2a4d8 T4d（codex 三轮 P0-A + 二轮 P0-c）：goal 编排环境的改码门禁——
+ * 与 runner reconcileMutablePhaseSourceDrift **共享同一基线与判定**（review closure
+ * attestation + classifySourceDrift），只裁决 review 后漂移：coding 阶段合法业务
+ * 改动（trace.start_commit 起算全量 diff，宿主实测 ~36 文件）不在裁决域，照 v3 直接
+ * 要求 runner 背书会把合法实现全打成 BLOCKER。自签 gap-notes 不再构成放行；仅
+ * fingerprint 精确吻合的人工裁决在场（classify=authorized_backtrack）方 PASS。
+ * 两个专用 blocker id 均注册 human_only（goal-failure-classifier），零内容重试。
+ * 非 goal 交互模式走下方 legacy 路径（trace.start_commit + gap-notes 真人对话授权——
+ * 诚实边界：该授权为自报性质，仅适用于有真人在场的交互会话）。
+ */
+function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
+  const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
+  const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!att) {
+    return [{
+      id: 'goal_review_closure_baseline_unavailable',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        'goal 环境 review closure attestation 缺失/损坏——无源码基线，既判不了「review 后' +
+        '漂移」也不得放行（fail-closed；不回退 run-start diff、不读 gap-notes 授权）。',
+      failure_kind: 'goal_review_closure_baseline_unavailable',
+      blocking_class: 'goal_review_closure_baseline_unavailable',
+      suggestion:
+        '新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃；' +
+        '本 blocker 为 human_only，agent 不得尝试修复。',
+    }];
+  }
+  const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
+  if (rec.ok) {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        'goal 环境基线=review closure attestation：review 后源码零漂移' +
+        '（coding 阶段合法实现不在裁决域）。',
+    }];
+  }
+  const drift = { added: rec.added, modified: rec.modified, deleted: rec.deleted };
+  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
+  const receipts = runId
+    ? loadMutationAuthorizations(
+        ctx.projectRoot,
+        path.relative(ctx.projectRoot, path.join(featureDir(ctx.projectRoot, ctx.feature), 'goal-runs', runId)).replace(/\\/g, '/'),
+      )
+    : [];
+  const fp = computeCurrentDriftFingerprint(ctx.projectRoot, drift);
+  const decision = classifySourceDrift(drift, receipts, {
+    runId,
+    frozenManifestHash: null, // harness 侧无 run_start 冻结事件——preauth 本就不放行
+    phase: ctx.phase ?? 'ut',
+    expectedInventoryHash: att.inventory.aggregate_sha256 ?? null,
+    projectRoot: ctx.projectRoot,
+    feature: ctx.feature,
+    manifestIdentityAuthenticated: Boolean(process.env.MAISON_HMAC_GOAL_CHECKPOINT),
+    currentDriftFingerprint: fp?.fingerprint ?? null,
+  });
+  if (decision.kind === 'authorized_backtrack') {
+    return [{
+      id: 'ut_no_src_mutation',
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        `review 后漂移 ${decision.files.length} 文件，但 fingerprint 精确吻合的人工裁决 receipt 在场——` +
+        'runner 将按授权回退（coding→review）重验该变更。',
+    }];
+  }
+  const files = [...drift.added, ...drift.modified, ...drift.deleted];
+  const violations = decision.kind === 'unauthorized' ? decision.violations : [];
+  return [{
+    id: 'goal_post_review_source_mutation_unresolved',
+    category: 'structure',
+    description: desc,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details:
+      `goal 环境基线=review closure attestation：检测到 review 后未授权源码漂移（${files.length} 文件）：\n` +
+      files.slice(0, 10).map(f => `  - ${f}`).join('\n') +
+      (violations.length > 0 ? `\n判定：\n${violations.slice(0, 5).map(v => `  - ${v}`).join('\n')}` : '') +
+      '\n\n注意：gap-notes approved_src_mutations 为 agent 自报，不构成 runner 三源授权。',
+    affected_files: files,
+    failure_kind: 'goal_post_review_source_mutation_unresolved',
+    blocking_class: 'goal_post_review_source_mutation_unresolved',
+    suggestion:
+      '本 blocker 为 human_only（零内容重试）——出路由 runner 的 unauthorized_source_mutation ' +
+      'halt guidance 给出（还原后续跑，或新起 coding 起点 run 合法实现该变更）。' +
+      '禁止再次实施受保护源码变更；改码诉求走 must_review 登记等待人工。',
+  }];
+}
+
 function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
+  // plan e7c2a4d8 T4d：goal 编排环境走 review-closure 基线共享判定（见上）。
+  if (isGoalOrchestrationEnv()) {
+    return checkUtNoSrcMutationGoalEnv(ctx);
+  }
   // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
   const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
   const traceFiles = findTraceJsonFiles(ctx.projectRoot, ctx.feature).sort((a, b) => {

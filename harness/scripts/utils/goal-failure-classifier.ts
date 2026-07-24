@@ -237,6 +237,12 @@ export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_b
 const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
   'fidelity_deferrals_human_sign',
   'fidelity_capability_pregate',
+  // plan e7c2a4d8 T4d（codex 二轮 P0-c + 四轮 P1-⑥）：goal 环境专用改码门禁——显式
+  // human_only，绝不落 agent_fixable 缺省（否则 harness FAIL 转化为内容重试循环）。
+  // 通用 ut_no_src_mutation 维持缺省（还承载 legacy fallback/stale_diff_base 等
+  // 机器可修形态）。
+  'goal_post_review_source_mutation_unresolved',
+  'goal_review_closure_baseline_unavailable',
 ]);
 /** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3） */
 const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([

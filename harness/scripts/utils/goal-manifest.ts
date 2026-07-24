@@ -75,6 +75,9 @@ export interface GoalManifestParseOptions {
   projectRoot: string;
   runId?: string;
   featuresDir?: string;
+  /** plan e7c2a4d8 T1b：dry-run 落保留子目录 goal-runs/.dry/<run_id>（同 run_id、
+   * run 级文件零共写）；canonical 校验按 dry 口径。 */
+  dryRun?: boolean;
 }
 
 export interface LoadGoalManifestFromRunOptions {
@@ -227,31 +230,103 @@ export function validateUnattendedContract(u: Partial<UnattendedContract> | unde
   return issues;
 }
 
+/** dry-run 保留子目录名（plan e7c2a4d8 T1b）——枚举器结构性跳过，run_id 校验拒绝
+ * 以 . 开头故天然不冲突。 */
+export const DRY_RUNS_SUBDIR = '.dry';
+
+/** report_dir 是否落在 .dry 保留子树（实施 round2 P1：progress 投影按此分流——dry 视图
+ * 读自己的 raw 事件，普通视图走权威过滤）。run_id 拒绝 . 前缀，.dry segment 只可能是
+ * 保留子树本身。 */
+export function isDryReportDir(reportDir: string): boolean {
+  return reportDir.replace(/\\/g, '/').split('/').includes(DRY_RUNS_SUBDIR);
+}
+
 export function resolveGoalReportDir(opts: {
   featuresDir: string;
   feature: string;
   runId: string;
+  dryRun?: boolean;
 }): string {
   const feature = opts.feature.trim();
   if (!feature) {
     throw new Error('[goal-manifest] feature 必填');
   }
-  return path
-    .join(opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', opts.runId)
-    .replace(/\\/g, '/');
+  const segs = opts.dryRun
+    ? [opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', DRY_RUNS_SUBDIR, opts.runId]
+    : [opts.featuresDir.replace(/\\/g, '/'), feature, 'goal-runs', opts.runId];
+  return path.join(...segs).replace(/\\/g, '/');
+}
+
+/** plan e7c2a4d8 T3a：pre_authorized_mutations 输入保真——逐条 shape 校验，非法条目
+ * 整单 fail-closed（不静默丢弃，修「用户写进 YAML 的预授权被静默丢掉」+ identity hash
+ * 该字段恒 null 的名存实亡）。定位=意图预登记，非放行路（classifier 冻结前不构成
+ * 自动 PASS，见 mutation-authorization.ts）。 */
+function parsePreAuthorizedMutations(
+  input: unknown,
+): GoalManifest['pre_authorized_mutations'] {
+  if (input === undefined || input === null) return undefined;
+  if (!Array.isArray(input)) {
+    throw new Error('[goal-manifest] pre_authorized_mutations 必须为数组');
+  }
+  const out: NonNullable<GoalManifest['pre_authorized_mutations']> = [];
+  input.forEach((raw, i) => {
+    const at = `pre_authorized_mutations[${i}]`;
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error(`[goal-manifest] ${at} 必须为对象`);
+    }
+    const r = raw as Record<string, unknown>;
+    const phase = typeof r.phase === 'string' ? r.phase.trim() : '';
+    if (!phase) throw new Error(`[goal-manifest] ${at}.phase 必填`);
+    const files = Array.isArray(r.allowed_files)
+      ? r.allowed_files.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+      : [];
+    if (!Array.isArray(r.allowed_files) || files.length === 0 || files.length !== r.allowed_files.length) {
+      throw new Error(`[goal-manifest] ${at}.allowed_files 必须为非空字符串数组`);
+    }
+    const kind = r.allowed_change_kind;
+    if (kind !== undefined && kind !== 'test_seam' && kind !== 'integration_glue') {
+      throw new Error(`[goal-manifest] ${at}.allowed_change_kind 必须为 test_seam|integration_glue`);
+    }
+    const maxFiles = r.max_files;
+    if (typeof maxFiles !== 'number' || !Number.isInteger(maxFiles) || maxFiles <= 0) {
+      throw new Error(`[goal-manifest] ${at}.max_files 必须为正整数`);
+    }
+    out.push({
+      id: typeof r.id === 'string' ? r.id : undefined,
+      phase,
+      allowed_files: files.map((f) => f.trim().replace(/\\/g, '/')),
+      allowed_change_kind: kind as 'test_seam' | 'integration_glue' | undefined,
+      max_files: maxFiles,
+      approved_by: typeof r.approved_by === 'string' ? r.approved_by : undefined,
+    });
+  });
+  return out.length > 0 ? out : undefined;
 }
 
 export function buildGoalManifestFromInput(
   input: Record<string, unknown>,
   opts: GoalManifestParseOptions,
 ): GoalManifest {
-  const runId = (typeof input.run_id === 'string' && input.run_id.trim()) || opts.runId || newRunId();
+  const inputRunId = typeof input.run_id === 'string' && input.run_id.trim() ? input.run_id.trim() : undefined;
+  // plan e7c2a4d8 T1b：manifest.run_id 与 CLI/--detach 传入 run_id 同时在场须一致
+  //（detach parent 已按其打印 run_id/report_dir，child 静默换 id 即身份分裂）。
+  if (inputRunId && opts.runId && inputRunId !== opts.runId) {
+    throw new Error(
+      `[goal-manifest] manifest.run_id（${inputRunId}）与命令行 run_id（${opts.runId}）冲突——fail-closed`,
+    );
+  }
+  const runId = inputRunId || opts.runId || newRunId();
+  // plan e7c2a4d8 T1b：run_id 单一安全 segment——拒绝以 . 开头（保留 .dry 等结构名）
+  // 与路径分隔符（防越出 goal-runs 命名空间）。
+  if (runId.startsWith('.') || /[\\/]/.test(runId)) {
+    throw new Error(`[goal-manifest] run_id 非法（不得以 . 开头或含路径分隔符）: ${runId}`);
+  }
   const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
   const feature = String(input.feature ?? '').trim();
   if (!feature) {
     throw new Error('[goal-manifest] feature 必填');
   }
-  const canonicalReportDir = resolveGoalReportDir({ featuresDir, feature, runId });
+  const canonicalReportDir = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: opts.dryRun });
   const explicitReportDir =
     typeof input.report_dir === 'string' && input.report_dir.trim()
       ? input.report_dir.trim().replace(/\\/g, '/')
@@ -282,6 +357,7 @@ export function buildGoalManifestFromInput(
     budget: mergeBudget(input.budget as GoalBudget | undefined),
     dependency_policy: mergeDependencyPolicy(input.dependency_policy as DependencyPolicy | undefined),
     unattended: input.unattended as UnattendedContract,
+    pre_authorized_mutations: parsePreAuthorizedMutations(input.pre_authorized_mutations),
     run_id: runId,
     report_dir: reportDir,
     created_at: new Date().toISOString(),
@@ -309,7 +385,7 @@ export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifes
 export function loadGoalManifestFile(
   filePath: string,
   projectRoot: string,
-  opts?: Pick<GoalManifestParseOptions, 'featuresDir'>,
+  opts?: Pick<GoalManifestParseOptions, 'featuresDir' | 'dryRun' | 'runId'>,
 ): GoalManifest {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
@@ -319,7 +395,85 @@ export function loadGoalManifestFile(
   return buildGoalManifestFromInput(raw, {
     projectRoot,
     featuresDir: opts?.featuresDir,
+    dryRun: opts?.dryRun,
+    runId: opts?.runId,
   });
+}
+
+/**
+ * plan e7c2a4d8 T1b（codex 六轮 P1-③/五轮 P1-①）：detach parent 与 main 共用的
+ * 原始 run 输入单点解析——一次解析 feature / run_id / dry 形态与 CLI↔manifest 一致性。
+ * feature 仅在 manifest 时 parent 不再提前拒绝；同时提供且冲突 → fail-closed。
+ */
+export interface RawRunInput {
+  feature: string;
+  /** undefined = 调用方自行 newRunId() */
+  runId?: string;
+  isResume: boolean;
+  dryRun: boolean;
+}
+
+export function resolveRawRunInput(
+  argv: Record<string, unknown>,
+  projectRoot: string,
+): RawRunInput {
+  const dryRun = Boolean(argv['dry-run']);
+  const isResume = Boolean(argv.resume);
+  if (dryRun && isResume) {
+    throw new Error('[goal-manifest] --dry-run 与 --resume 互斥（dry-run 无 resume 语义）');
+  }
+  const cliFeature = typeof argv.feature === 'string' && argv.feature.trim() ? argv.feature.trim() : undefined;
+  const cliRunId =
+    typeof argv['run-id'] === 'string' && (argv['run-id'] as string).trim()
+      ? (argv['run-id'] as string).trim()
+      : undefined;
+
+  let manifestFeature: string | undefined;
+  let manifestRunId: string | undefined;
+  if (typeof argv.manifest === 'string' && argv.manifest.trim()) {
+    const abs = path.isAbsolute(argv.manifest) ? argv.manifest : path.join(projectRoot, argv.manifest);
+    let raw: Record<string, unknown>;
+    try {
+      raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
+    } catch (e) {
+      throw new Error(`[goal-manifest] 无法读取 --manifest（${abs}）：${(e as Error).message}`);
+    }
+    if (raw && typeof raw === 'object') {
+      manifestFeature = typeof raw.feature === 'string' && raw.feature.trim() ? raw.feature.trim() : undefined;
+      manifestRunId = typeof raw.run_id === 'string' && raw.run_id.trim() ? raw.run_id.trim() : undefined;
+    }
+  }
+
+  if (cliFeature && manifestFeature && cliFeature !== manifestFeature) {
+    throw new Error(
+      `[goal-manifest] --feature（${cliFeature}）与 manifest.feature（${manifestFeature}）冲突——fail-closed`,
+    );
+  }
+  const feature = cliFeature ?? manifestFeature;
+  if (!feature) {
+    throw new Error('[goal-manifest] feature 必填（--feature 或 manifest.feature）');
+  }
+
+  if (cliRunId && manifestRunId && cliRunId !== manifestRunId) {
+    throw new Error(
+      `[goal-manifest] --run-id（${cliRunId}）与 manifest.run_id（${manifestRunId}）冲突——fail-closed`,
+    );
+  }
+  // 实施 round2 P1：--resume <id> 也入身份冲突面——否则 resume id 与 manifest.run_id
+  // 分裂时 parent 按 resume id 打印/加锁，随后 manifest 加载又换身份（report_dir 分裂）。
+  const resumeRunId = isResume ? String(argv.resume).trim() : undefined;
+  if (resumeRunId && manifestRunId && resumeRunId !== manifestRunId) {
+    throw new Error(
+      `[goal-manifest] --resume（${resumeRunId}）与 manifest.run_id（${manifestRunId}）冲突——fail-closed（resume 身份不得被 manifest 静默改写）`,
+    );
+  }
+  if (resumeRunId && cliRunId && resumeRunId !== cliRunId) {
+    throw new Error(
+      `[goal-manifest] --resume（${resumeRunId}）与 --run-id（${cliRunId}）冲突——fail-closed`,
+    );
+  }
+  const runId = resumeRunId ?? cliRunId ?? manifestRunId;
+  return { feature, runId, isResume, dryRun };
 }
 
 export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
@@ -367,6 +521,13 @@ export function loadGoalManifestFromRun(
   const feature = opts.feature?.trim();
   if (!feature) {
     throw new Error('[goal-manifest] --resume 须配 --feature 或 --manifest');
+  }
+  // plan e7c2a4d8 T1b：--resume 绝不解析进 .dry 命名空间（dry 无 resume 语义），
+  // 且 run_id 不得携路径分隔符（防 `.dry/<id>` 形式绕入）。
+  if (runId.startsWith('.') || /[\\/]/.test(runId)) {
+    throw new Error(
+      `[goal-manifest] --resume run_id 非法（dry-run 无 resume 语义，run_id 不得以 . 开头或含分隔符）: ${runId}`,
+    );
   }
   const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
   const abs = path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, 'manifest.json');

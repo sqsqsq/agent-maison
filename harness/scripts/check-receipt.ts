@@ -51,7 +51,7 @@ import { loadFeatureTrackDecl } from './utils/feature-track';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh, computeGateFingerprint } from './utils/gate-fingerprint';
 import { validateLedgerForClosure } from './utils/headless-assumptions';
-import { collectRequirementSsotPaths, computeRunRequirementSha } from './utils/fidelity-shared';
+import { collectRequirementSsotPaths, computeRunRequirementSha, listAuthoritativeGoalRuns } from './utils/fidelity-shared';
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
@@ -1082,6 +1082,17 @@ function main(): void {
         // P0-2（八轮）：requirementSha 绑定"当前权威 run"的规范化 requirement 内容——
         // recompute 比对当前权威 requirement，抓"新 run 换需求复用旧 closure"。
         const featuresDirRel = (fw.paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+        // e7c2a4d8 T1d（round2 P1）：closure 血缘消费权威枚举——corrupt 残留在场时
+        // extraInputs/requirement 意图集合不完整，closure fail-closed（与 completion ⓪
+        // 门 / runner 截断链 preflight 同一门径）。
+        const corruptForClosure = listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).corruptRuns;
+        if (corruptForClosure.length > 0) {
+          console.error(
+            '\n❌ BLOCKER — goal-runs 存在损坏 run（有执行证据但 manifest.json 缺失）——' +
+              `closure 血缘无法完整重建，fail-closed：${corruptForClosure.map((c) => c.runId).join('、')}`,
+          );
+          process.exit(1);
+        }
         const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
         const closureReqSha = computeRunRequirementSha(projectRoot, feature, currentRunId, featuresDirRel);
         // 九轮 P0：goal 环境闭环必须绑定 requirement 血缘——算不出（manifest 缺失/不可读）

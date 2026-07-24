@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { GoalManifest } from './goal-manifest';
+import { isDryReportDir, type GoalManifest } from './goal-manifest';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -14,10 +14,11 @@ import {
 import { loadFeatureTrackDecl } from './feature-track';
 import {
   countAgentInvokeStarts,
+  filterAuthoritativeEvents,
   findLatestEffectiveTimeoutMs,
   loadEventsJsonl,
+  partitionExecutionSessions,
   resolveEffectiveRunEnd,
-  resolveResumedBudget,
   resolveWallClockStartMs,
   type GoalRunEvent,
 } from './goal-runner-phase';
@@ -324,6 +325,17 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     if (e.type === 'agent_invoke_recovered') {
       span.recovered = true;
     }
+    // plan e7c2a4d8 T4a（codex 二轮 P1-4）：phase_halt 覆盖同 phase 在先的
+    // provisional verdict——「harness PASS → runner 拦截 halt」时面板不得撕裂成
+    // 「ut PASSED · 当前 testing · run HALTED」；current phase 固定为 halt 发生 phase。
+    if (e.type === 'phase_halt') {
+      span.ended = true;
+      span.ended_at = e.ts ?? span.ended_at;
+      span.status = 'HALTED';
+      span.halted = true;
+      span.deferred = false;
+      span.substep = 'verdict';
+    }
   }
 
   // Mark prior phases as PASSED when later phases started
@@ -352,6 +364,11 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
 }
 
 function findCurrentSpan(spans: PhaseSpan[]): PhaseSpan | null {
+  // plan e7c2a4d8 T4a：HALTED 优先——current phase 固定为 halt 发生 phase（面板不得
+  // 显示「ut PASSED · 当前 testing · run HALTED」撕裂；后续 span 未真正开跑）。
+  for (const s of spans) {
+    if (s.halted) return s;
+  }
   for (const s of spans) {
     if (!s.ended && s.status !== 'NOT_STARTED') return s;
   }
@@ -681,8 +698,14 @@ export function mapGoalStatusToProgress(status: GoalRunStatus): ProgressRunStatu
 
 export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSnapshot {
   const nowMs = input.nowMs ?? Date.now();
-  const { projectRoot, manifest, events, workflow } = input;
+  const { projectRoot, manifest, workflow } = input;
   const reportDir = manifest.report_dir;
+  // 实施 round2 P1：普通 run 的投影单点走权威视图——legacy 混写文件里的 dry 段
+  //（span/turn/run_start 基点/recent_events）不得进面板真值，修「面板显示旧 dry-run
+  // PASSED」原始事故形态；.dry 视图（dry 自己的 progress）保留 raw 事件。
+  const isDryView = isDryReportDir(reportDir);
+  const partition = isDryView ? null : partitionExecutionSessions(input.events);
+  const events = partition ? partition.authoritativeEvents : input.events;
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
   // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
@@ -707,10 +730,31 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const currentPhase = currentSpan?.phase ?? null;
   const currentIndex = currentPhase ? chain.indexOf(currentPhase) : 0;
 
-  const budgetBase = resolveResumedBudget(events);
-  const turnsUsed = countAgentInvokeStarts(events);
-  const wallStart = resolveWallClockStartMs(events);
-  const wallElapsed = nowMs - wallStart;
+  // 实施 round2 P1：预算轴与 runner T2 同构——turns 只计权威段；wall_elapsed=活跃时间
+  //（Σ 历史段 activeMs + 直播段 now−段首），不再用「首个 run_start→now」日历跨度
+  //（隔夜 resume 面板秒报预算耗尽=4035d4 形态）。dry 视图保留 raw 口径。
+  let turnsUsed: number;
+  let wallElapsed: number;
+  if (!partition) {
+    turnsUsed = countAgentInvokeStarts(events);
+    wallElapsed = nowMs - resolveWallClockStartMs(events);
+  } else {
+    turnsUsed = partition.totalTurns;
+    const auth = partition.sessions.filter((s) => s.mode === 'authoritative');
+    const last = auth.length > 0 ? auth[auth.length - 1] : null;
+    if (!last) {
+      wallElapsed = 0;
+    } else if (!lastRunEnd && Number.isFinite(last.startMs) && last.startMs > 0) {
+      // 直播段（无 run_end）：活跃计时随 now 前进，与 runner 的
+      // elapsed = priorActive + (now − sessionStart) 同构（崩溃段的保守补收只在
+      // 段后出现新段/终局时收敛，面板侧宁多计不漏计）。
+      wallElapsed =
+        auth.slice(0, -1).reduce((a, s) => a + s.activeMs, 0) +
+        Math.max(0, nowMs - last.startMs);
+    } else {
+      wallElapsed = partition.priorActiveMs;
+    }
+  }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
   const wallLimitMs = resolveWallClockMs(manifest);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
@@ -869,7 +913,7 @@ export function buildLiveGoalStatusSnapshot(opts: {
     resolveFeatureLockPath(opts.projectRoot, opts.featuresDir, opts.feature),
   );
   const runnerLock = readLockRecord(
-    resolveRunnerLockPath(opts.projectRoot, opts.featuresDir, opts.feature, opts.runId),
+    resolveRunnerLockPath(opts.projectRoot, opts.featuresDir, opts.feature, opts.runId, opts.manifest.report_dir),
   );
   const nowMs = opts.nowMs ?? Date.now();
 
@@ -890,9 +934,14 @@ export function buildLiveGoalStatusSnapshot(opts: {
   });
 
   if (opts.tailN && opts.tailN > 0) {
+    // 实施 round2 P1：tail 与投影同视图（普通 run 权威过滤、dry 视图 raw）——
+    // 面板 recent_events 混入 dry 行会与 status/phase 真值脑裂。
+    const viewEvents = isDryReportDir(opts.manifest.report_dir)
+      ? events
+      : filterAuthoritativeEvents(events);
     snapshot = {
       ...snapshot,
-      recent_events: events.slice(-opts.tailN).map((e) => ({
+      recent_events: viewEvents.slice(-opts.tailN).map((e) => ({
         ts: e.ts ?? '',
         type: e.type ?? '',
         phase: e.phase,
@@ -1152,7 +1201,13 @@ export function resolveRunnerLockPath(
   featuresDir: string,
   feature: string,
   runId: string,
+  /** plan e7c2a4d8 T1b''（v22 P0-2）：per-run lock 从 canonical manifest.report_dir
+   * 派生（dry 落 goal-runs/.dry/<run_id>）；未提供时按普通目录（legacy 调用面）。 */
+  reportDir?: string,
 ): string {
+  if (reportDir) {
+    return path.join(projectRoot, ...reportDir.replace(/\\/g, '/').split('/'), RUN_LOCK_NAME);
+  }
   return path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, RUN_LOCK_NAME);
 }
 
@@ -1171,7 +1226,7 @@ export function loadProgressContext(
     resolveFeatureLockPath(projectRoot, featuresDir, manifest.feature),
   );
   const runnerLock = readLockRecord(
-    resolveRunnerLockPath(projectRoot, featuresDir, manifest.feature, manifest.run_id),
+    resolveRunnerLockPath(projectRoot, featuresDir, manifest.feature, manifest.run_id, manifest.report_dir),
   );
   return { events, featureLock, runnerLock };
 }

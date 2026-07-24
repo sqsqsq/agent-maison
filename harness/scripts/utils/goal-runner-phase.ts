@@ -236,6 +236,10 @@ export interface GoalRunEvent {
 export interface ResumedBudget {
   totalTurns: number;
   wallClockStartMs: number;
+  /** plan e7c2a4d8 T2：历史活跃时长（Σ authoritative 段；崩溃段保守补收一个心跳周期）。 */
+  priorActiveMs: number;
+  /** 首个非 dry 段起点（sinceMs 消费面真实时间线；无 authoritative 段 → null）。 */
+  firstAuthoritativeStartMs: number | null;
 }
 
 /** Count agent attempts from events (new start/end + legacy agent_invoke). */
@@ -246,6 +250,113 @@ export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
     else if (e.type === 'agent_invoke') n++;
   }
   return n;
+}
+
+// ============================================================================
+// plan e7c2a4d8 T2：执行会话分段（wall-clock 预算改「活跃时间」的唯一真值来源）。
+// 事实基础（codex 二轮确认 + 4035d4 实测）：run_start 每次进程启动无条件追加（含
+// resume 会话）；heartbeat 事件 60s cadence 是持久化活跃检查点。
+// ============================================================================
+
+/** 与 goal-runner LOCK_HEARTBEAT_MS 同值（崩溃段保守补收周期；单独导出避免循环依赖）。 */
+export const SESSION_HEARTBEAT_MS = 60_000;
+
+export interface ExecutionSession {
+  /** 段首事件下标（含） */
+  startIndex: number;
+  /** 段尾事件下标（含） */
+  endIndex: number;
+  startMs: number;
+  /** 段时长（崩溃段=min(下一段首, 段内最大 ts + 心跳周期) − 段首；恒 ≥0） */
+  activeMs: number;
+  /** 段内是否有 run_end（无 = 崩溃/hard-kill 段，已保守补收） */
+  clean: boolean;
+  mode: 'dry' | 'authoritative';
+}
+
+export interface PartitionedSessions {
+  sessions: ExecutionSession[];
+  /** 仅 authoritative 段的事件（legacy 混写文件的权威消费面视图） */
+  authoritativeEvents: GoalRunEvent[];
+  /** Σ authoritative 段 activeMs */
+  priorActiveMs: number;
+  /** 仅 authoritative 段的 agent invoke 计数（修 dry 幻影 turn） */
+  totalTurns: number;
+  firstAuthoritativeStartMs: number | null;
+}
+
+function eventTsMs(e: GoalRunEvent): number | null {
+  if (!e.ts) return null;
+  const t = new Date(e.ts).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * 按 run_start 切会话段（防御性容错：文件不以 run_start 开头的孤儿前缀以首个
+ * resume/首事件兜底为段首）。段尾=本段 run_end；无 run_end 的段（崩溃/hard-kill）
+ * 保守补收：end = min(下一段首 ts, 段内最大事件 ts + SESSION_HEARTBEAT_MS)——
+ * 误差方向=多计 ≤1 心跳间隔（安全方向，预算只会更快耗尽，累计漏算为零）。
+ * 段 mode：段首 run_start.dry_run===true 或段内全事件携 dry_run:true → dry。
+ * 时间异常（乱序/回拨导致负时长）保守钳 0，不判负。
+ */
+export function partitionExecutionSessions(
+  events: GoalRunEvent[],
+  opts?: {
+    /** codex 五轮 P1-②：resume 边界——priorEvents 里最后一个未闭合历史段的补收上界
+     * （=当前进程 sessionStartMs），防与当前段（elapsed 另行承载）重复计时。 */
+    tailCapMs?: number;
+  },
+): PartitionedSessions {
+  const sessions: ExecutionSession[] = [];
+  const starts: number[] = [];
+  events.forEach((e, i) => {
+    if (e.type === 'run_start') starts.push(i);
+  });
+  if (starts.length === 0 && events.length > 0) starts.push(0); // 孤儿前缀兜底
+  for (let s = 0; s < starts.length; s++) {
+    const startIndex = starts[s];
+    const nextStartIndex = s + 1 < starts.length ? starts[s + 1] : events.length;
+    const endIndex = nextStartIndex - 1;
+    const seg = events.slice(startIndex, nextStartIndex);
+    const startMs = eventTsMs(events[startIndex]) ?? NaN;
+    const runEnd = seg.find((e) => e.type === 'run_end');
+    let maxTs = Number.isNaN(startMs) ? 0 : startMs;
+    for (const e of seg) {
+      const t = eventTsMs(e);
+      if (t !== null && t > maxTs) maxTs = t;
+    }
+    let endMs: number;
+    let clean = false;
+    if (runEnd) {
+      endMs = eventTsMs(runEnd) ?? maxTs;
+      clean = true;
+    } else {
+      // 崩溃段保守补收一个心跳周期，nextSessionStart/tailCap 截断防与后段重叠。
+      const credited = maxTs + SESSION_HEARTBEAT_MS;
+      const nextStartMs = nextStartIndex < events.length ? eventTsMs(events[nextStartIndex]) : null;
+      const cap = nextStartMs ?? opts?.tailCapMs ?? null;
+      endMs = cap !== null ? Math.min(cap, credited) : credited;
+    }
+    const startEvent = events[startIndex] as { dry_run?: unknown };
+    const isDry =
+      (events[startIndex].type === 'run_start' && startEvent.dry_run === true) ||
+      (seg.length > 0 && seg.every((e) => (e as { dry_run?: unknown }).dry_run === true));
+    const activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
+    sessions.push({
+      startIndex, endIndex, startMs: Number.isNaN(startMs) ? 0 : startMs, activeMs, clean,
+      mode: isDry ? 'dry' : 'authoritative',
+    });
+  }
+  const authSessions = sessions.filter((x) => x.mode === 'authoritative');
+  const authoritativeEvents: GoalRunEvent[] = [];
+  for (const x of authSessions) authoritativeEvents.push(...events.slice(x.startIndex, x.endIndex + 1));
+  return {
+    sessions,
+    authoritativeEvents,
+    priorActiveMs: authSessions.reduce((acc, x) => acc + x.activeMs, 0),
+    totalTurns: countAgentInvokeStarts(authoritativeEvents),
+    firstAuthoritativeStartMs: authSessions.length > 0 ? authSessions[0].startMs : null,
+  };
 }
 
 /**
@@ -399,10 +510,22 @@ export function resolveWallClockStartMs(events: GoalRunEvent[]): number {
   return Date.now();
 }
 
-export function resolveResumedBudget(events: GoalRunEvent[]): ResumedBudget {
+export function resolveResumedBudget(
+  events: GoalRunEvent[],
+  opts?: {
+    /** 当前进程会话起点（codex 五轮 P1-②）：仅作最后一个未闭合历史段补收的 min 上界，
+     * **不创建、不计入当前段**（当前段由 elapsed = priorActiveMs + (now − sessionStart)
+     * 在 goal-runner 侧承载）。 */
+    nextSessionStartMs?: number;
+  },
+): ResumedBudget {
+  const p = partitionExecutionSessions(events, { tailCapMs: opts?.nextSessionStartMs });
   return {
-    totalTurns: countAgentInvokeStarts(events),
+    // plan e7c2a4d8 T2：turns 只计 authoritative 段（修 dry 幻影 invoke——宿主 ut-i3 现象）。
+    totalTurns: p.totalTurns,
     wallClockStartMs: resolveWallClockStartMs(events),
+    priorActiveMs: p.priorActiveMs,
+    firstAuthoritativeStartMs: p.firstAuthoritativeStartMs,
   };
 }
 
@@ -496,14 +619,37 @@ export function rebuildOutcomesFromEvents(
   chain: FeaturePhase[],
 ): GoalPhaseOutcome[] {
   const lastTerminal = new Map<FeaturePhase, GoalRunEvent>();
+  // plan e7c2a4d8 T4b（codex 二轮 P1-4）：phase_halt 覆盖同 phase 在先的 provisional
+  // phase_verdict——goal-report.json 缺失走 events-only 重建时，已 HALT 的 phase 不得
+  // 被重建成合法 PASS（resume 会跳过它）；halt_reason/halt_guidance 一并保留。
+  const lastHalt = new Map<FeaturePhase, GoalRunEvent>();
   for (const e of events) {
-    if (e.type !== 'phase_verdict' || !e.phase || !FEATURE_PHASE_SET.has(e.phase)) continue;
+    if (!e.phase || !FEATURE_PHASE_SET.has(e.phase)) continue;
+    if (e.type === 'phase_halt') {
+      lastHalt.set(e.phase as FeaturePhase, e);
+      continue;
+    }
+    if (e.type !== 'phase_verdict') continue;
     if (e.action === 'retry') continue;
     lastTerminal.set(e.phase as FeaturePhase, e);
+    // verdict 晚于 halt（回退重跑后重新裁决）→ halt 不再覆盖
+    lastHalt.delete(e.phase as FeaturePhase);
   }
 
   const outcomes: GoalPhaseOutcome[] = [];
   for (const phase of chain) {
+    const halt = lastHalt.get(phase);
+    if (halt) {
+      const h = halt as { verdict?: string; halt_reason?: string; halt_guidance?: string };
+      outcomes.push({
+        phase,
+        verdict: (h.verdict ?? 'FAIL') as string,
+        halted: true,
+        ...(h.halt_reason ? { halt_reason: h.halt_reason } : {}),
+        ...(h.halt_guidance ? { halt_guidance: h.halt_guidance } : {}),
+      });
+      break;
+    }
     const e = lastTerminal.get(phase);
     if (!e) break;
 
@@ -570,6 +716,18 @@ export function loadEventsJsonl(absPath: string): GoalRunEvent[] {
     }
   }
   return out;
+}
+
+/** plan e7c2a4d8 T1c：权威消费面视图——按会话段剔除 dry-run 段（.dry 隔离后新文件
+ * 天然纯净；本过滤专治 legacy 混写文件如宿主 ut2test 形态）。凡从 events 派生权威
+ * 状态（预算/重试计数/棘轮/resume 重建/对账期望集）一律走本口径；纯审计/展示读取
+ * 显式用 loadEventsJsonl 并注明。 */
+export function filterAuthoritativeEvents(events: GoalRunEvent[]): GoalRunEvent[] {
+  return partitionExecutionSessions(events).authoritativeEvents;
+}
+
+export function loadAuthoritativeEvents(absPath: string): GoalRunEvent[] {
+  return filterAuthoritativeEvents(loadEventsJsonl(absPath));
 }
 
 export interface ResumeState {

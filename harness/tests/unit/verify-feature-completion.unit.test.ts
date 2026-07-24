@@ -5,6 +5,7 @@
 //   INVALID / 世界后变(artifact 改动·更晚 HALTED run) STALE / supersedes 豁免。
 
 import assert from 'assert';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -89,6 +90,18 @@ function writeRunEvents(root: string, runId: string, events: Array<Record<string
   const p = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'events.jsonl'));
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+  // plan e7c2a4d8 T1d：真实 runner 恒在启动即写 manifest——fixture 同步落一份，
+  // 否则「有 events 无 manifest」会被残留二分正确判为 corrupt run（v22 P1 契约）。
+  const manifestAbs = featureFilePath(root, FEATURE, path.join('goal-runs', runId, 'manifest.json'));
+  if (!fs.existsSync(manifestAbs)) {
+    // requirement 字段留空：feature 级 intent 拼接（collectRequirementIntentText）
+    // 对空 requirement 零贡献——后建 run 不因 fixture 需求文本重复而翻转需求 SSOT。
+    fs.writeFileSync(
+      manifestAbs,
+      JSON.stringify({ schema_version: '1.0', feature: FEATURE, run_id: runId }),
+      'utf-8',
+    );
+  }
 }
 
 /**
@@ -100,19 +113,23 @@ function seedCleanChain(root: string): void {
   writeArtifact(root, 'acceptance.yaml', 'criteria: []\n');
   writeArtifact(root, 'plan.md', '# plan\n');
   writeArtifact(root, 'contracts.yaml', 'files: []\n');
-  for (const phase of CHAIN) {
-    writeSummary(root, phase, 'PASS');
-    writeReceipt(root, phase);
-    const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
-      projectRoot: root, feature: FEATURE, phase: phase as Phase, now: FIXED_NOW,
-    }));
-    writeReceiptManifestPointer(root, FEATURE, phase, `doc/features/${FEATURE}/${phase}/reports/phase-evidence-manifest.json`, written.sha256);
-  }
+  // plan e7c2a4d8 T1d：先落 RUN1 manifest（真实 runner 启动即写）——evidence 血缘
+  // 与残留二分（有 events 无 manifest=corrupt）都以其在场为前提；requirementSha
+  // 绑定 closure（八/九轮 requirement 血缘契约）。
   writeRunEvents(root, 'RUN1', [
     { ts: '2026-07-12T23:00:00.000Z', type: 'run_start', chain: CHAIN },
     ...CHAIN.map((phase, i) => ({ ts: `2026-07-12T23:0${i + 1}:00.000Z`, type: 'phase_start', phase })),
     { ts: '2026-07-12T23:30:00.000Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' },
   ]);
+  const reqSha = computeRunRequirementSha(root, FEATURE, 'RUN1');
+  for (const phase of CHAIN) {
+    writeSummary(root, phase, 'PASS');
+    writeReceipt(root, phase);
+    const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
+      projectRoot: root, feature: FEATURE, phase: phase as Phase, now: FIXED_NOW, requirementSha: reqSha,
+    }));
+    writeReceiptManifestPointer(root, FEATURE, phase, `doc/features/${FEATURE}/${phase}/reports/phase-evidence-manifest.json`, written.sha256);
+  }
 }
 
 function runDirAbs(root: string, runId: string): string {
@@ -443,8 +460,12 @@ const cases: Case[] = [
         { ts: '2026-07-14T00:00:00.000Z', type: 'run_end', status: 'HALTED' },
       ]);
       v = verify(root);
-      assert.strictEqual(v.verdict, 'STALE');
-      assert.ok(v.reasons.some((r) => r.includes('RUN2')));
+      // plan e7c2a4d8 T1d 契约更正：真实 run 恒有 manifest（无 manifest+有 events=
+      // corrupt），而后建 run 的 manifest 本就进 requirement SSOT aggregate（七轮
+      // P1-3）→ 凭证按设计 INVALID（需求 SSOT 变更）且同时携「更晚未终局 run」
+      // 新鲜度理由。旧 STALE 期望依赖「RUN2 无 manifest」的不真实夹具。
+      assert.ok(v.verdict === 'INVALID' || v.verdict === 'STALE', v.verdict);
+      assert.ok(v.reasons.some((r) => r.includes('RUN2')), v.reasons.join('；'));
     },
   },
   {

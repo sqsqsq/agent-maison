@@ -104,6 +104,129 @@ export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[
   ];
 }
 
+/** plan e7c2a4d8 T3c（codex 五轮 P1-③）：receipt 签发路可用性——仓库现无 signer
+ * 配置/命令/服务协议（confirmation-receipt.ts 明文：签发属后继 change
+ * confirmation-credential-issuance，registry 通常不存在→一切 INVALID 是设计行为）。
+ * **本 plan 内恒 false**；issuance change 落地时只改本常量（生产者），builder 五轴
+ * 契约不变。语义（codex 四轮 P1-⑤）：不得由 registry 存在或历史 receipt 推断。 */
+export const MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE = false;
+
+export interface UnauthorizedMutationGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  violations: string[];
+  /** 当前 chain 是否同时含 coding 与 review（authorized_backtrack 的能力前提）。 */
+  chainHasCodingReview: boolean;
+  /** trust registry 在且可验（≠签发能力）。 */
+  receiptVerificationConfigured: boolean;
+  /** 显式配置且探测可用的签发路（本 plan 恒 false，见常量）。 */
+  issuanceRouteAvailable: boolean;
+  /** 已存在与本次 drift 精确吻合的有效裁决 receipt（=裁决已可用，非签发可用）。 */
+  adjudicationAlreadyAvailable: boolean;
+  /** runner 落盘的裁决请求单（report_dir 相对路径；未能生成 → null）。 */
+  adjudicationRequestRel: string | null;
+  harnessPrefixRel: string;
+}
+
+/**
+ * plan e7c2a4d8 T3c：unauthorized_source_mutation 的引导话术——banner/phase_halt 事件/
+ * goal-report 单 SSOT。铁律：**只列当下真正可走的路**（v2 时 banner「写 receipt 后
+ * --resume」按当日代码照做仍会再次 HALT，属过度承诺——本 builder 按能力真值分层）；
+ * 恒有：agent 自产 gap-notes/自签 approved_by 不构成授权；pre_authorized_mutations
+ * 在任何信任态下都只是意图预登记（classifier 落地前不放行，不列为出路）。
+ */
+export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuidanceOpts): string[] {
+  const {
+    feature, runId, phase, violations, chainHasCodingReview,
+    issuanceRouteAvailable, adjudicationAlreadyAvailable, adjudicationRequestRel, harnessPrefixRel,
+  } = opts;
+  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId}`;
+  const lines: string[] = [
+    `【${feature} · run ${runId} · ${phase}】产品源码变更未命中可信授权链（不自动回退洗白）：`,
+    ...violations.map((v) => `  - ${v}`),
+    '',
+  ];
+  if (adjudicationAlreadyAvailable && chainHasCodingReview) {
+    lines.push(
+      '裁决已可用：存在与当前变更内容精确吻合的人工裁决 receipt——',
+      `  直接续跑：${resumeCmd}（将走 coding→review→ut→testing 授权回退重验，消耗回退预算）。`,
+    );
+  } else if (adjudicationAlreadyAvailable && !chainHasCodingReview) {
+    lines.push(
+      '裁决已可用，但当前为截断链（chain 不含 coding/review），无法在本 run 内回退重验——',
+      '  请新起 coding 起点 run（coding 期合法实现该变更 → review 重审 → ut/testing 重验），',
+      '  旧 run 以 --supersede 废弃。',
+    );
+  } else if (issuanceRouteAvailable) {
+    lines.push(
+      '人工裁决路径（认可该变更时）：',
+      adjudicationRequestRel
+        ? `  1. 审阅裁决请求单 ${adjudicationRequestRel}（含变更内容 fingerprint 与 receipt 字段模板）；`
+        : '  1. 审阅本次变更内容；',
+      '  2. 经受信签发方签发绑定该 fingerprint 的 human confirmation receipt，登记入',
+      '     mutation-authorizations.jsonl 后 --resume' +
+        (chainHasCodingReview ? '（走 coding→review 授权回退重验）；' : '，并新起 coding 起点 run 重验（截断链无法回退）；'),
+      '  不认可：还原上述文件后 ' + resumeCmd + '。',
+    );
+  } else {
+    lines.push(
+      '当前部署 **human receipt 签发不可用**（无签发命令/服务；trust registry 属验签面，' ,
+      '不构成签发能力——confirmation-credential-issuance 落地前该路不通）。当下真正可走的两条路：',
+      `  1. 不认可该变更：还原上述文件后 ${resumeCmd}；`,
+      '  2. 认可该变更：新起 coding 起点 run——在 coding 期合法实现该变更并走 review 重审',
+      '     （旧 run 以 --supersede 废弃）。',
+    );
+    if (adjudicationRequestRel) {
+      lines.push(`  （裁决请求单已落盘 ${adjudicationRequestRel}，供未来签发能力就绪后复用。）`);
+    }
+  }
+  lines.push(
+    '',
+    '注意：agent 自产 gap-notes/自签 approved_by 不构成授权；manifest 的',
+    'pre_authorized_mutations 仅为意图预登记（内容级分类器落地前不放行）。',
+  );
+  return lines;
+}
+
+export interface BudgetExhaustedGuidanceOpts {
+  feature: string;
+  runId: string;
+  phase: string;
+  kind: 'budget_wall_clock' | 'budget_turns';
+  /** 已消费活跃时长（ms，wall 口径）——写进话术让人知道预算真用光了而非钟漂。 */
+  activeElapsedMs: number;
+  /** 预算上限（wall=ms；turns=次数）。 */
+  limit: number;
+  /** consumer='framework/harness'、standalone='harness' */
+  harnessPrefixRel: string;
+}
+
+/**
+ * plan e7c2a4d8 T2(c)（4035d4 事故：resume→budget_wall_clock→9ms 裸 HALTED，死因
+ * 不可见）：budget 熔断的引导话术。措辞铁律（codex 三轮 P1-F）：预算按**活跃时间**
+ * 累计、隔夜 resume 不再误伤；真耗尽的出路只有两条真路——不得出现裸「重启」（同 run
+ * budget 已入 identity hash 冻结，裸重启不加预算；改 manifest 触发 identity drift）。
+ */
+export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts): string[] {
+  const { feature, runId, phase, kind, activeElapsedMs, limit, harnessPrefixRel } = opts;
+  const spent =
+    kind === 'budget_wall_clock'
+      ? `已累计活跃 ${Math.round(activeElapsedMs / 60000)}m / 预算 ${Math.round(limit / 60000)}m`
+      : `已消耗 agent 轮次达上限 ${limit}`;
+  return [
+    `【${feature} · run ${runId} · ${phase}】run 预算已耗尽（${kind}，${spent}）。`,
+    '预算按活跃执行时间累计（停机等待不计入）——本次熔断是真实消耗，不是隔夜钟漂。',
+    '',
+    '两条出路（任选其一）：',
+    `  1. 新 manifest 新起 run：复制原 manifest、调大 budget.wall_clock_minutes /`,
+    '     budget.max_total_turns 后以新 run_id 启动（旧 run 可用 --supersede 废弃）；',
+    `  2. 授权续跑本 run：修改该 run manifest.json 的 budget 字段后，以`,
+    `     npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --override-manifest`,
+    '     显式授权 identity rebase 续跑（--override-manifest=字段级授权，防未授权漂移）。',
+  ];
+}
+
 export interface FrameworkIntegrityGuidanceOpts {
   feature: string;
   runId: string;

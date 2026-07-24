@@ -20,6 +20,12 @@ export interface LockRecord {
   started_at: string;
   updated_at: string;
   run_id?: string;
+  /** plan e7c2a4d8 T1b''：run 形态——dry 的 orphan 处置不得提示 --resume。
+   * 旧记录无此字段（宿主升级现场）：reader 按 legacy 三态判别，不做 schema 迁移。 */
+  run_mode?: 'authoritative' | 'dry';
+  /** canonical manifest.report_dir（dry 落 goal-runs/.dry/<run_id>）——orphan/progress
+   * 按此定位 events/per-run lock，不再固定 goal-runs/<run_id>。 */
+  report_dir?: string;
 }
 
 export function isPidAlive(pid: number): boolean {
@@ -53,10 +59,11 @@ export function isLockStale(
 
   const heartbeatStale = referenceMs - updated > staleMs;
 
-  // Same-host: dead pid → immediately stale; alive pid → heartbeat TTL fallback.
+  // Same-host: dead pid → immediately stale; alive pid → NEVER stale（plan e7c2a4d8
+  // T1e：暂停/挂起中的活 runner 不得因 heartbeat 超时被抢占——返回 busy 由人工处置；
+  // PID 复用误判窗口在冻结威胁模型内接受）。
   if (record.hostname === os.hostname()) {
-    if (!isPidAlive(record.pid)) return true;
-    return heartbeatStale;
+    return !isPidAlive(record.pid);
   }
 
   // Cross-host: cannot trust local pid probe — TTL only.
@@ -111,6 +118,11 @@ export function tryAcquireLock(
     started_at: partial.started_at ?? now,
     updated_at: partial.updated_at ?? now,
     run_id: partial.run_id,
+    // 实施 round2 P1：run_mode/report_dir 必须随记录落盘——丢字段=所有新锁被 reader
+    // 判成 legacy，T1b'' 的 orphan 三态分流（stale dry 不提示 resume）整线失效。
+    // undefined 时 JSON.stringify 自然省略，legacy 写入面形状不变。
+    run_mode: partial.run_mode,
+    report_dir: partial.report_dir,
   };
 
   try {
@@ -178,9 +190,13 @@ export function formatLockBlocker(lockPath: string, existing: LockRecord | null)
   if (!existing) {
     return `[goal-runner] BLOCKER: could not acquire lock ${lockPath} (holder unknown or corrupt)`;
   }
+  const aliveHint =
+    existing.hostname === os.hostname() && isPidAlive(existing.pid)
+      ? '——owner 进程仍在运行（可能暂停/挂起），不会被自动抢占，请人工确认后处置'
+      : '';
   return (
     `[goal-runner] BLOCKER: another goal-runner holds lock ${lockPath} ` +
     `(pid=${existing.pid}, host=${existing.hostname}, run_id=${existing.run_id ?? '—'}, ` +
-    `updated_at=${existing.updated_at})`
+    `updated_at=${existing.updated_at})${aliveHint}`
   );
 }

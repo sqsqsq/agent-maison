@@ -47,6 +47,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 }
 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+  { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
   { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },

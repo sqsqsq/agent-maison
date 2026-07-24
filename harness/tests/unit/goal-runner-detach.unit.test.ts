@@ -40,7 +40,9 @@ function staleLock(runId: string): Record<string, unknown> {
   const old = new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(); // 4h ago > 90m TTL
   return {
     ownerId: 'o1',
-    pid: process.pid,
+    // plan e7c2a4d8 T1e：同机活 pid 永不判 stale（heartbeat 超时只 busy）——stale
+    // fixture 须用已消失的 pid（owner 进程退出才是孤儿语义）。
+    pid: 999999999,
     hostname: os.hostname(),
     started_at: old,
     updated_at: old,
