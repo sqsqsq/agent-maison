@@ -200,12 +200,124 @@ export const AMBIGUOUS_SCREENSHOT_INTENT_PATTERNS: readonly RegExp[] = [
 
 export type FidelityIntent = 'strong_pixel' | 'ambiguous' | 'none';
 
-/** 三态意图：强信号（既有关键词表）优先于 ambiguous；两者皆无 → none。 */
+/** 三态意图：强信号（既有关键词表）优先于 ambiguous；两者皆无 → none。
+ * @deprecated plan f6b2d9a4：门禁路由改用 detectDesiredFidelity（ambiguous 态删除
+ * ——「与截图一致」类=瞄准截图 desired=pixel_1to1，严格度另轴）。保留仅供过渡。 */
 export function detectFidelityIntent(text: string | null | undefined): FidelityIntent {
   if (typeof text !== 'string' || !text.trim()) return 'none';
   if (detectPixel1to1Intent(text)) return 'strong_pixel';
   if (AMBIGUOUS_SCREENSHOT_INTENT_PATTERNS.some((re) => re.test(text))) return 'ambiguous';
   return 'none';
+}
+
+// ============================================================================
+// plan f6b2d9a4：三正交轴检测（质量目标/严格度/素材策略）——「非关键冲突不阻塞」
+// 数据模型。inferred 只由需求文本推导（ratchet 锚点）；selected/effective 见
+// resolveFidelityRoutingDecision。
+// ============================================================================
+
+export type AcceptanceStrictness = 'best_effort' | 'hard';
+
+/** 否定邻域窗口：命中点前该窗口内出现否定词 → 该命中不作数（v3 P1-5 规则②：
+ * 「不要求 pixel_1to1，semantic_layout 即可」不得先命中 pixel）。 */
+const NEGATION_WINDOW = 12;
+const NEGATION_TAIL_RE = /(不要求|不需要|无需|不必|不用|不追求|不做|不是|并非)\s*$/;
+
+function isNegatedAt(text: string, index: number): boolean {
+  return NEGATION_TAIL_RE.test(text.slice(Math.max(0, index - NEGATION_WINDOW), index));
+}
+
+/** 规范枚举字面量（显式声明优先于措辞推断；`pixel_1to1` 的下划线会挡 \b 词边界——
+ * 五轮实锤，故手工列举变体）。 */
+const ENUM_LITERAL_PATTERNS: ReadonlyArray<{ tier: FidelityTarget; re: RegExp }> = [
+  { tier: 'pixel_1to1', re: /pixel[\s_-]?1\s*to\s*1/gi },
+  { tier: 'semantic_layout', re: /semantic[\s_-]?layout/gi },
+  { tier: 'reference_only', re: /reference[\s_-]?only/gi },
+];
+
+function collectNonNegatedMatches(text: string, re: RegExp): number[] {
+  const out: number[] = [];
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  let m: RegExpExecArray | null;
+  while ((m = g.exec(text)) !== null) {
+    if (!isNegatedAt(text, m.index)) out.push(m.index);
+    if (m.index === g.lastIndex) g.lastIndex++;
+  }
+  return out;
+}
+
+/**
+ * 质量目标轴（v7 定稿）：
+ *   ① 显式规范枚举声明（非否定）> 一切措辞推断——多枚举同现取最高档（瞄高，clamp 兜底）；
+ *   ② 强 1:1 措辞（既有词表，含否定过滤）→ pixel_1to1；
+ *   ③ 「与截图一致/按截图」类参考措辞 → pixel_1to1（对照截图开发=瞄准截图；
+ *      严格度由另一轴承载，能力 clamp 兜底——ambiguous 态删除）；
+ *   ④ 无任何视觉措辞 → semantic_layout（既有默认不变）。
+ * 「没有高保真（素材）/没有设计稿」是素材声明，不进本轴（见 detectAssetAcquisitionIntent）。
+ */
+export function detectDesiredFidelity(text: string | null | undefined): {
+  desired: FidelityTarget;
+  basis: 'explicit_enum' | 'strong_wording' | 'reference_wording' | 'default';
+} {
+  if (typeof text !== 'string' || !text.trim()) return { desired: 'semantic_layout', basis: 'default' };
+  const enumHits = ENUM_LITERAL_PATTERNS
+    .filter((p) => collectNonNegatedMatches(text, p.re).length > 0)
+    .map((p) => p.tier);
+  if (enumHits.length > 0) {
+    const best = enumHits.sort((a, b) => FIDELITY_TIER_RANK[b] - FIDELITY_TIER_RANK[a])[0];
+    return { desired: best, basis: 'explicit_enum' };
+  }
+  if (PIXEL_1TO1_INTENT_PATTERNS.some((re) => collectNonNegatedMatches(text, re).length > 0)) {
+    return { desired: 'pixel_1to1', basis: 'strong_wording' };
+  }
+  if (AMBIGUOUS_SCREENSHOT_INTENT_PATTERNS.some((re) => collectNonNegatedMatches(text, re).length > 0)) {
+    return { desired: 'pixel_1to1', basis: 'reference_wording' };
+  }
+  return { desired: 'semantic_layout', basis: 'default' };
+}
+
+/** hard 词表（v3 P1-5 规则③：须与视觉/保真语义在有限邻域内关联——需求其他章节的
+ * 「严格验收」不得翻转视觉档位严格度）。 */
+const HARD_STRICTNESS_PATTERNS: readonly RegExp[] = [
+  /必须[^。\n]{0,4}(像素|1\s*[:：比]\s*1|pixel)/, /不接受降级/, /不许降级/, /不得降级/,
+  /(达不到|不达标)[^。\n]{0,8}(不得|不能|禁止)[^。\n]{0,4}(继续|通过|交付)/,
+  /严格验收/, /严格按[^。\n]{0,6}验收/,
+];
+const HARD_VISUAL_PROXIMITY = 40;
+const VISUAL_SEMANTIC_TOKEN_RE = /(像素|保真|还原|视觉|参考图|截图|设计稿|效果图|原图|界面|UI|fidelity|pixel)/i;
+
+/** 严格度轴：hard 词（视觉邻域内）→ hard；否则 best_effort（「尽量/尽可能」类
+ * 与缺省同为 best_effort——缺省即默认，plan v3 P0-2）。 */
+export function detectAcceptanceStrictness(text: string | null | undefined): AcceptanceStrictness {
+  if (typeof text !== 'string' || !text.trim()) return 'best_effort';
+  for (const re of HARD_STRICTNESS_PATTERNS) {
+    for (const idx of collectNonNegatedMatches(text, re)) {
+      const start = Math.max(0, idx - HARD_VISUAL_PROXIMITY);
+      const end = Math.min(text.length, idx + HARD_VISUAL_PROXIMITY);
+      if (VISUAL_SEMANTIC_TOKEN_RE.test(text.slice(start, end))) return 'hard';
+    }
+  }
+  return 'best_effort';
+}
+
+/** 素材策略轴：需求输入/显式用户声明（ui-spec 声明仅为投影——v7）。
+ * 「（无高保真素材）从截图裁剪获取」→ auto_crop；显式素材目录 → user_dir；
+ * 无措辞 → null（调用方回落 approximate 缺省）。 */
+export function detectAssetAcquisitionIntent(
+  text: string | null | undefined,
+): AssetAcquisitionMode | null {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  if (
+    /(从|在)[^。\n]{0,12}(截图|原图|参考图)[^。\n]{0,10}(裁剪|裁切|截取|抠图|抠出|获取)/.test(text) ||
+    /(截图|原图|参考图)[^。\n]{0,6}(里|中|上)[^。\n]{0,6}(裁剪|裁切|截取|抠)/.test(text)
+  ) {
+    return 'auto_crop';
+  }
+  if (/(提供|给定|指定|已备)[^。\n]{0,8}(素材|切图|资源|assets?)[^。\n]{0,4}(目录|文件夹|路径)?/.test(text) &&
+      /(目录|文件夹|路径|dir)/i.test(text)) {
+    return 'user_dir';
+  }
+  return null;
 }
 
 const REQUIREMENT_DOC_TOKEN_RE = /[\w\-./一-龥]+\.(?:md|txt|yaml)/g;
@@ -559,13 +671,289 @@ export function resolveEffectiveFidelityContext(
   };
 }
 
-/** pixel_1to1 下关键视觉项 ratchet：WARN → FAIL/BLOCKER */
+// ============================================================================
+// plan f6b2d9a4：两谓词拆分 + 三段式路由决策 + fidelity-intent SSOT / capability
+// snapshot IO。执行类逻辑读 isPixelExecutionTarget；严重度抬升/人确认/封顶读
+// isHardPixelContract（effective=pixel ∧ strictness=hard——不用 desired：有效降档
+// receipt 放行 semantic 后不得再激活 pixel 硬门禁）。确定性完整性错误不经这两谓词。
+// ============================================================================
+
+/** 执行类谓词：是否按 pixel 目标运行高质量提取/diff/度量（=旧 isPixel1to1 语义）。 */
+export function isPixelExecutionTarget(ctx: CheckContext): boolean {
+  return ctx.fidelityTarget === 'pixel_1to1';
+}
+
+/** 裁决类谓词：质量缺口是否升级 BLOCKER/真人确认/completion 封顶。 */
+export function isHardPixelContract(ctx: CheckContext): boolean {
+  return ctx.fidelityTarget === 'pixel_1to1' && ctx.acceptanceStrictness === 'hard';
+}
+
+export interface FidelityRoutingInput {
+  /** 解引用后的合并需求文本 */
+  requirementText: string;
+  /** manifest.fidelity（未校验原值——非法枚举由 transition 校验拦，此处忽略非法值） */
+  manifestFidelity?: string;
+  /** 该值来源（CLI 显式 / manifest 文件声明）——decision.source 用 */
+  manifestFidelitySource?: 'explicit_cli' | 'manifest_declared';
+  /** fidelity_downgrade receipt 验真结果（调用方验；本函数不读盘） */
+  downgradeReceiptValid?: boolean;
+  capability: FidelityCapability;
+  /** goal run_id 或显式 phase execution identity（如 phase:<feature>:spec） */
+  executionIdentity: string;
+  requirementSha: string;
+}
+
+export type FidelityDecisionSource =
+  | 'requirement_self_declared'
+  | 'auto_default'
+  | 'explicit_cli'
+  | 'manifest_declared'
+  | 'downgrade_receipt'
+  | 'human_confirmed';
+
+export interface FidelityRoutingDecision {
+  inferred: FidelityTarget;
+  selected: FidelityTarget;
+  effective: FidelityTarget;
+  strictness: AcceptanceStrictness;
+  assetAcquisitionMode: AssetAcquisitionMode;
+  clamped: boolean;
+  clampReason?: FidelityClampReason;
+  rejectedDowngrade: boolean;
+  /** 唯一真冲突：selected=pixel ∧ strictness=hard ∧ clamp 降档 */
+  defer: boolean;
+  decision: { source: FidelityDecisionSource; rationale: string; decision_id: string };
+}
+
+/**
+ * 三段式路由（v4 P0 冻结）：inferred（文本推导，ratchet 锚）→ selected（只升不降；
+ * 有效降档 receipt 才许降）→ effective（能力 clamp）。纯函数，不读盘不探测——
+ * capability/receipt 验真由调用方（goal-runner / initializer / check-spec 复核）供给。
+ */
+export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): FidelityRoutingDecision {
+  const det = detectDesiredFidelity(input.requirementText);
+  const strictness = detectAcceptanceStrictness(input.requirementText);
+  const assetIntent = detectAssetAcquisitionIntent(input.requirementText);
+  const requested = isValidFidelityTarget(input.manifestFidelity) ? input.manifestFidelity : undefined;
+  const sel = resolveRequestedFidelity(det.desired, requested, input.downgradeReceiptValid === true);
+  const clamp = clampFidelityByCapability(sel.effective, input.capability);
+  const defer = sel.effective === 'pixel_1to1' && strictness === 'hard' && clamp.clamped;
+
+  const receiptDowngraded =
+    input.downgradeReceiptValid === true && requested !== undefined &&
+    sel.effective === requested && FIDELITY_TIER_RANK[requested] < FIDELITY_TIER_RANK[det.desired];
+  const requestedApplied =
+    requested !== undefined && sel.effective === requested && requested !== det.desired;
+  const source: FidelityDecisionSource = receiptDowngraded
+    ? 'downgrade_receipt'
+    : requestedApplied
+      ? (input.manifestFidelitySource ?? 'manifest_declared')
+      : det.basis === 'default'
+        ? 'auto_default'
+        : 'requirement_self_declared';
+  // routing_input_digest（v5 P2）：manifest/receipt/capability 任一变化 → 新 decision_id
+  const digest = crypto.createHash('sha256').update(JSON.stringify({
+    f: requested ?? null,
+    r: input.downgradeReceiptValid === true,
+    v: input.capability.hasVision,
+    o: input.capability.ocrAvailable,
+  })).digest('hex');
+  const decision_id = crypto.createHash('sha256')
+    .update(`${input.executionIdentity}|${input.requirementSha}|${digest}`)
+    .digest('hex').slice(0, 16);
+  const rationale =
+    `inferred=${det.desired}(${det.basis}) selected=${sel.effective} effective=${clamp.effective}` +
+    `${clamp.clamped ? `(clamped:${clamp.reason})` : ''} strictness=${strictness}` +
+    ` asset=${assetIntent ?? 'approximate(default)'}`;
+  return {
+    inferred: det.desired,
+    selected: sel.effective,
+    effective: clamp.effective,
+    strictness,
+    assetAcquisitionMode: assetIntent ?? 'approximate',
+    clamped: clamp.clamped,
+    clampReason: clamp.reason,
+    rejectedDowngrade: sel.rejectedDowngrade,
+    defer,
+    decision: { source, rationale, decision_id },
+  };
+}
+
+// ---- fidelity-intent.json（唯一 SSOT）与 capability-snapshot.json IO ----
+
+export const FIDELITY_INTENT_SCHEMA_VERSION = '2.0';
+
+export interface FidelityIntentSsot {
+  schema_version: string;
+  inferred_fidelity: FidelityTarget;
+  selected_fidelity: FidelityTarget;
+  effective_fidelity: FidelityTarget;
+  acceptance_strictness: AcceptanceStrictness;
+  asset_acquisition_mode: AssetAcquisitionMode;
+  clamped: boolean;
+  clamp_reason?: FidelityClampReason;
+  decision: { source: FidelityDecisionSource; rationale: string; decision_id: string };
+  execution_identity: string;
+  requirement_sha256: string;
+}
+
+export function fidelityIntentSsotPath(projectRoot: string, feature: string): string {
+  return featureFilePath(projectRoot, feature, path.join('spec', 'reports', 'fidelity-intent.json'));
+}
+
+/** post-impl2 P1-3：SSOT 三态——missing（可自动初始化）/corrupt（完整性问题，恒 BLOCKER
+ * 或 runner-owned 受控重建）/valid。损坏与缺失不得折叠（「损坏恒 BLOCKER」不变量）。 */
+export type FidelityIntentSsotState =
+  | { state: 'missing' }
+  | { state: 'corrupt' }
+  | { state: 'valid'; doc: FidelityIntentSsot };
+
+export function loadFidelityIntentSsotState(projectRoot: string, feature: string): FidelityIntentSsotState {
+  const s = loadFidelityIntentSsotStateInner(projectRoot, feature);
+  return s;
+}
+
+export function loadFidelityIntentSsot(projectRoot: string, feature: string): FidelityIntentSsot | null {
+  const s = loadFidelityIntentSsotStateInner(projectRoot, feature);
+  return s.state === 'valid' ? s.doc : null;
+}
+
+function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string): FidelityIntentSsotState {
+  const p = fidelityIntentSsotPath(projectRoot, feature);
+  if (!fs.existsSync(p)) return { state: 'missing' };
+  try {
+    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as FidelityIntentSsot;
+    // post-impl P1-6：全字段严格校验——部分损坏的 SSOT 不得被当权威输入消费
+    //（返回 null=按缺失处理：UI 特性 pregate BLOCKER 指向重新初始化；v1 三态旧文件同路）。
+    const validAsset = doc?.asset_acquisition_mode === 'approximate' ||
+      doc?.asset_acquisition_mode === 'auto_crop' || doc?.asset_acquisition_mode === 'user_dir';
+    const validStrict = doc?.acceptance_strictness === 'best_effort' || doc?.acceptance_strictness === 'hard';
+    if (
+      !isValidFidelityTarget(doc?.inferred_fidelity) ||
+      !isValidFidelityTarget(doc?.selected_fidelity) ||
+      !isValidFidelityTarget(doc?.effective_fidelity) ||
+      !validStrict || !validAsset ||
+      typeof doc?.clamped !== 'boolean' ||
+      typeof doc?.decision?.source !== 'string' ||
+      doc?.schema_version !== FIDELITY_INTENT_SCHEMA_VERSION ||
+      typeof doc?.decision?.decision_id !== 'string' || !/^[0-9a-f]{16}$/i.test(doc.decision.decision_id) ||
+      typeof doc?.execution_identity !== 'string' || !doc.execution_identity.trim() ||
+      typeof doc?.requirement_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(doc.requirement_sha256) ||
+      // clamp 关系：clamped=true 须携合法 reason；false 不得携（半改写即 corrupt）
+      (doc.clamped === true && doc.clamp_reason !== 'no_vision_ocr_available' && doc.clamp_reason !== 'no_vision_no_ocr') ||
+      (doc.clamped === false && doc.clamp_reason !== undefined) ||
+      typeof doc?.decision?.rationale !== 'string' ||
+      !['requirement_self_declared', 'auto_default', 'explicit_cli', 'manifest_declared',
+        'downgrade_receipt', 'human_confirmed'].includes(doc.decision.source)
+    ) {
+      return { state: 'corrupt' };
+    }
+    return { state: 'valid', doc };
+  } catch {
+    return { state: 'corrupt' };
+  }
+}
+
+export function writeFidelityIntentSsot(
+  projectRoot: string,
+  feature: string,
+  d: FidelityRoutingDecision,
+  ids: { executionIdentity: string; requirementSha: string },
+): string {
+  const p = fidelityIntentSsotPath(projectRoot, feature);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const doc: FidelityIntentSsot = {
+    schema_version: FIDELITY_INTENT_SCHEMA_VERSION,
+    inferred_fidelity: d.inferred,
+    selected_fidelity: d.selected,
+    effective_fidelity: d.effective,
+    acceptance_strictness: d.strictness,
+    asset_acquisition_mode: d.assetAcquisitionMode,
+    clamped: d.clamped,
+    ...(d.clampReason ? { clamp_reason: d.clampReason } : {}),
+    decision: d.decision,
+    execution_identity: ids.executionIdentity,
+    requirement_sha256: ids.requirementSha,
+  };
+  // post-impl3 P1-4：tmp+rename 原子替换（半写崩溃不得留下截断 SSOT）
+  const tmp = `${p}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
+  fs.renameSync(tmp, p);
+  return p;
+}
+
+/** post-impl3 P0-3：能力单源——快照判盲时 CheckContext.adapterImageInput 同步转 none
+ * （否则 fidelity 已降档而 blind 门禁仍按 adapter 声明认「非盲」，crop 禁令/占位/
+ * 问人清单被跳过）。无快照回落探测值。 */
+export function deriveEffectiveAdapterImageInput<T extends string | undefined>(
+  snapVisionVerdict: boolean | null,
+  probeImageInput: T,
+): T | 'none' {
+  if (snapVisionVerdict === false) return 'none';
+  return probeImageInput;
+}
+
+export interface CapabilitySnapshot {
+  schema_version: string;
+  execution_identity: string;
+  /** post-impl4 P1-5：与 fidelity-intent SSOT 同批事务标记——pregate 强制两者一致 */
+  decision_id?: string;
+  vision: { verdict: boolean; source: string };
+  ocr: { verdict: boolean; source: string };
+  created_at: string;
+}
+
+export function capabilitySnapshotPath(projectRoot: string, feature: string): string {
+  return featureFilePath(projectRoot, feature, path.join('spec', 'reports', 'capability-snapshot.json'));
+}
+
+export function writeCapabilitySnapshot(
+  projectRoot: string,
+  feature: string,
+  snap: Omit<CapabilitySnapshot, 'schema_version' | 'created_at'>,
+): string {
+  const p = capabilitySnapshotPath(projectRoot, feature);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  fs.writeFileSync(
+    tmp,
+    `${JSON.stringify({ schema_version: '1.0', ...snap, created_at: new Date().toISOString() }, null, 2)}\n`,
+    'utf-8',
+  );
+  fs.renameSync(tmp, p);
+  return p;
+}
+
+export function loadCapabilitySnapshot(projectRoot: string, feature: string): CapabilitySnapshot | null {
+  const p = capabilitySnapshotPath(projectRoot, feature);
+  if (!fs.existsSync(p)) return null;
+  try {
+    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as CapabilitySnapshot;
+    if (
+      typeof doc?.vision?.verdict !== 'boolean' || typeof doc?.ocr?.verdict !== 'boolean' ||
+      typeof doc?.vision?.source !== 'string' || typeof doc?.ocr?.source !== 'string' ||
+      typeof doc?.execution_identity !== 'string' || !doc.execution_identity.trim() ||
+      typeof (doc as { decision_id?: unknown }).decision_id !== 'string' ||
+      !/^[0-9a-f]{16}$/i.test((doc as { decision_id: string }).decision_id) ||
+      doc.schema_version !== '1.0' ||
+      typeof doc?.created_at !== 'string' || !doc.created_at.trim() ||
+      !doc.vision.source.trim() || !doc.ocr.source.trim()
+    ) return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
+/** pixel_1to1 下关键视觉项 ratchet：WARN → FAIL/BLOCKER。
+ * plan f6b2d9a4 P0-1：裁决类升级只在 **hard contract**（effective=pixel ∧ hard）生效
+ * ——best_effort 的质量缺口维持缺省严重度并记债务，不再借 pixel 目标抬 BLOCKER。 */
 export function fidelityRatchetSeverity(
   ctx: CheckContext,
   defaultSeverity: 'BLOCKER' | 'MAJOR' | 'MINOR',
   opts?: { elevateWarnToBlocker?: boolean },
 ): 'BLOCKER' | 'MAJOR' | 'MINOR' {
-  if (!isPixel1to1(ctx)) return defaultSeverity;
+  if (!isHardPixelContract(ctx)) return defaultSeverity;
   if (defaultSeverity === 'MAJOR' || opts?.elevateWarnToBlocker) {
     return 'BLOCKER';
   }
@@ -576,7 +964,7 @@ export function fidelityRatchetFailOrWarn(
   ctx: CheckContext,
   softWouldWarn: boolean,
 ): { severity: 'BLOCKER' | 'MAJOR'; status: 'FAIL' | 'WARN' } {
-  if (isPixel1to1(ctx)) {
+  if (isHardPixelContract(ctx)) {
     return { severity: 'BLOCKER', status: 'FAIL' };
   }
   return softWouldWarn

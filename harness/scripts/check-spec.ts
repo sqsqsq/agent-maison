@@ -49,14 +49,22 @@ import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkip
 import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import {
+  clampFidelityByCapability,
   collectRequirementIntentText,
+  computeRunRequirementSha,
   dereferenceRequirementDocs,
   detectFidelityIntent,
+  isHardPixelContract,
   isHumanSignedDeferral,
   isHumanVerified,
   isPixel1to1,
   listAuthoritativeGoalRuns,
+  loadCapabilitySnapshot,
+  loadFidelityIntentSsot,
+  loadFidelityIntentSsotState,
+  loadHandoffDocFromFeature,
   loadSpecMarkdown,
+  parseAssetAcquisitionModeFromHandoffDoc,
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
@@ -167,95 +175,164 @@ export function checkGoalRunIdentityIntact(ctx: CheckContext): CheckResult[] {
   }];
 }
 
+/**
+ * plan f6b2d9a4 v7：本闸从「三态意图首产+阻塞求人」改为「路由 SSOT 复核」——
+ * fidelity-intent.json 由 initializer 首产（goal=goal-runner preflight；phase-driven=
+ * skills/feature/spec Step 1 经 fidelity-intent-init CLI）；本闸只复核：
+ *   ① SSOT 在场（缺失=流程未走 initializer → BLOCKER，agent 补跑命令即修）；
+ *   ② 内部一致（effective==clamp(selected, snapshot)）；
+ *   ③ 投影一致（spec.md Visual Handoff 的 fidelity_target/asset_acquisition_mode 是
+ *      决策投影——与 SSOT 失配由 agent 自动修复投影，禁升级为用户询问）；
+ *   ④ 唯一真冲突：selected=pixel ∧ strictness=hard ∧ clamped → BLOCKER（DEFERRED 语义）；
+ *   ⑤ goal 环境需求变更侦测（requirement_sha 失配 → 重新初始化）。
+ * await_human_fidelity_tier 已删除（「非关键冲突不阻塞」）。
+ */
 export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[] {
   const id = 'fidelity_capability_pregate';
-  const description = 'fidelity 意图三态前置闸（强意图+盲→DEFERRED；含混+参考图→await_human；禁静默降档）';
-  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
-  const reqText = collectIntentTextWithPhaseFallback(ctx.projectRoot, ctx.feature, featuresDirRel);
-  const intent = detectFidelityIntent(reqText);
-  const blind = ctx.adapterImageInput === 'none';
-
-  // 参考图存在性（含混意图的确认触发条件）：ux-reference 或 visual_handoff authoritative_refs
-  const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');
-  let hasRefs = false;
-  try {
-    hasRefs = fs.existsSync(uxDir) && fs.readdirSync(uxDir).some(f => /\.(jpe?g|png|webp|bmp)$/i.test(f));
-  } catch { /* ignore */ }
-  if (!hasRefs) {
-    const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
-    hasRefs = Boolean(specMd && /authoritative_refs:/.test(specMd));
-  }
-
-  // downgrade receipt：绑定需求 SSOT 规范化哈希（换需求即 stale）
-  const receiptPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'fidelity-downgrade.receipt.json'));
-  let downgradeAuthorized = false;
-  if (fs.existsSync(receiptPath)) {
-    const reqSha = crypto.createHash('sha256').update((reqText ?? '').trim(), 'utf-8').digest('hex');
-    const v = validateConfirmationReceiptFile(receiptPath, defaultTrustRegistryPath(ctx.projectRoot), {
-      action: 'fidelity_downgrade',
-      feature: ctx.feature,
-      object_hash: reqSha,
-    });
-    downgradeAuthorized = v.valid;
-  }
-
-  const referenceIntent =
-    intent === 'strong_pixel' ? 'exact' : intent === 'ambiguous' ? 'unknown' : hasRefs ? 'layout' : 'inspiration';
-  const desired = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
-  const effective =
-    !blind ? desired
-    : intent === 'strong_pixel' ? (downgradeAuthorized ? 'semantic_layout' : 'deferred')
-    : intent === 'ambiguous' && hasRefs ? (downgradeAuthorized ? 'semantic_layout' : 'deferred')
-    : 'semantic_layout';
-
-  // 落盘（harness-owned；desired 永不被改写）
-  try {
-    const outPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'reports', 'fidelity-intent.json'));
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.writeFileSync(outPath, `${JSON.stringify({
-      schema_version: '1.0',
-      reference_intent: { value: referenceIntent, source: 'inferred' },
-      desired_fidelity: desired,
-      effective_fidelity: effective,
-      downgrade_receipt: downgradeAuthorized
-        ? relFeatureFile(ctx.projectRoot, ctx.feature, path.join('spec', 'fidelity-downgrade.receipt.json'))
-        : null,
-    }, null, 2)}\n`, 'utf-8');
-  } catch { /* 落盘失败不改变裁决 */ }
-
-  if (!blind || intent === 'none' || (intent === 'ambiguous' && !hasRefs)) {
+  const description = 'fidelity 路由 SSOT 复核（真冲突=pixel∧hard∧clamp；含混/自声明自动定档不阻塞）';
+  // post-impl2 P1-3：损坏≠缺失——corrupt 恒 BLOCKER（完整性不变量），missing 才走
+  // 非 UI 放行/初始化指引。
+  const ssotState = loadFidelityIntentSsotState(ctx.projectRoot, ctx.feature);
+  const ssot = ssotState.state === 'valid' ? ssotState.doc : null;
+  const initHint =
+    '运行 initializer 落 SSOT（在 harness 目录）：`node -r ts-node/register/transpile-only ' +
+    `scripts/fidelity-intent-init.ts --feature ${ctx.feature}` +
+    '`（goal 模式由 goal-runner preflight 自动初始化；phase-driven 由 spec Skill Step 1 执行）。';
+  if (ssotState.state === 'corrupt') {
     return [{
       id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'PASS',
-      details: `intent=${intent}，blind=${blind}，refs=${hasRefs}——无需前置闸（effective=${effective}）。`,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: 'fidelity-intent.json 存在但损坏/字段非法——完整性问题恒 BLOCKER（不折叠为缺失静默回落）。',
+      suggestion: `受控重建（runner-owned initializer 覆盖损坏文件）：${initHint}`,
     }];
   }
-  if (downgradeAuthorized) {
+  if (!ssot) {
+    // 非 UI 特性（无 ui-spec / 无 Visual Handoff / 无参考图）：路由不适用——SSOT 缺失
+    // 不阻塞（auto-match 哲学：新记账不得拦老流程/非视觉流程；缺省语义=semantic_layout
+    // best_effort 由 harness context 回落承载）。UI 相关才要求 initializer。
+    let uiRelevant = fs.existsSync(uiSpecAbsPath(ctx.projectRoot, ctx.feature)) ||
+      loadHandoffDocFromFeature(ctx.projectRoot, ctx.feature) !== null;
+    if (!uiRelevant) {
+      try {
+        const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');
+        uiRelevant = fs.existsSync(uxDir) && fs.readdirSync(uxDir).some(f => /\.(jpe?g|png|webp|bmp)$/i.test(f));
+      } catch { /* ignore */ }
+    }
+    if (!uiRelevant) {
+      return [{
+        id, category: 'structure', description,
+        severity: 'BLOCKER', status: 'PASS',
+        details: '非 UI 特性（无 ui-spec/Visual Handoff/参考图）——fidelity 路由不适用，SSOT 缺失不阻塞。',
+      }];
+    }
     return [{
       id, category: 'structure', description,
-      severity: 'MAJOR', status: 'WARN',
+      severity: 'BLOCKER', status: 'FAIL',
+      details: 'fidelity-intent.json（三轴路由 SSOT）缺失——UI 特性的路由决策未初始化，档位/严格度/素材轴无从复核。',
+      suggestion: initHint,
+    }];
+  }
+  const issues: string[] = [];
+  // ② 内部一致：effective 必须等于 clamp(selected, snapshot capability)
+  const snap = loadCapabilitySnapshot(ctx.projectRoot, ctx.feature);
+  if (snap) {
+    const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
+      hasVision: snap.vision.verdict,
+      ocrAvailable: snap.ocr.verdict,
+    });
+    if (reclamp.effective !== ssot.effective_fidelity) {
+      issues.push(
+        `SSOT 内部失配：clamp(${ssot.selected_fidelity}, snapshot)=${reclamp.effective} ≠ ` +
+        `effective_fidelity=${ssot.effective_fidelity}——须重新初始化。`,
+      );
+    }
+  } else {
+    issues.push('capability-snapshot.json 缺失（与 SSOT 应同批产出）——须重新初始化。');
+  }
+  // ⑥ post-impl3 P1-4：身份一致性——半重建（崩溃留下新旧混合产物）fail-closed
+  if (snap && snap.decision_id !== ssot.decision.decision_id) {
+    issues.push(
+      `capability-snapshot 与 SSOT 事务标记失配（${snap.decision_id ?? '缺失'} ≠ ${ssot.decision.decision_id}）` +
+      '——非同批产物，须重新初始化。',
+    );
+  }
+  if (snap && snap.execution_identity !== ssot.execution_identity) {
+    issues.push(
+      `capability-snapshot 与 SSOT 身份失配（${snap.execution_identity} ≠ ${ssot.execution_identity}）` +
+      '——疑似半重建产物，须重新初始化。',
+    );
+  }
+  // ⑤ goal 环境：需求变更后旧 SSOT 失效
+  const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (goalRunId && isGoalOrchestrationEnv()) {
+    const featuresDirRelG = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+    const currentSha = computeRunRequirementSha(ctx.projectRoot, ctx.feature, goalRunId, featuresDirRelG);
+    if (currentSha && currentSha !== ssot.requirement_sha256) {
+      issues.push('requirement 内容已变更（sha 失配）——路由决策过期，须重新初始化。');
+    }
+    if (ssot.execution_identity !== goalRunId) {
+      issues.push(`SSOT 身份（${ssot.execution_identity}）非当前 goal run（${goalRunId}）——resume/新 run 须重初始化。`);
+    }
+  }
+  if (issues.length > 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details: issues.join('\n'),
+      suggestion: initHint,
+    }];
+  }
+  // ③ 投影一致：spec.md Visual Handoff 是决策投影，不是首次决策来源
+  const handoff = loadHandoffDocFromFeature(ctx.projectRoot, ctx.feature);
+  if (handoff) {
+    const projTier = parseFidelityTargetFromHandoffDoc(handoff);
+    const projAsset = parseAssetAcquisitionModeFromHandoffDoc(handoff);
+    const drift: string[] = [];
+    if (projTier !== ssot.selected_fidelity) {
+      drift.push(`fidelity_target 投影=${projTier} ≠ SSOT selected=${ssot.selected_fidelity}`);
+    }
+    if (projAsset !== ssot.asset_acquisition_mode) {
+      drift.push(`asset_acquisition_mode 投影=${projAsset} ≠ SSOT=${ssot.asset_acquisition_mode}`);
+    }
+    if (drift.length > 0) {
+      return [{
+        id, category: 'structure', description,
+        severity: 'BLOCKER', status: 'FAIL',
+        details: `spec.md Visual Handoff 投影与 fidelity-intent SSOT 失配：\n${drift.join('\n')}`,
+        suggestion:
+          '按 SSOT 修正 spec.md Visual Handoff yaml 块的投影字段（SSOT 是唯一决策来源，' +
+          '投影失配由 agent 直接修复——不询问用户）。',
+      }];
+    }
+  }
+  // ④ 唯一真冲突：selected=pixel ∧ hard ∧ clamped → DEFERRED 语义 BLOCKER
+  if (
+    ssot.selected_fidelity === 'pixel_1to1' &&
+    ssot.acceptance_strictness === 'hard' &&
+    ssot.clamped
+  ) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
       details:
-        `intent=${intent} + 盲档：已消费有效 fidelity_downgrade receipt（desired=${desired} 保留，` +
-        `effective=semantic_layout）——降级不洗白，视觉债务/completion 封顶语义照常生效。`,
+        '【DEFERRED_CAPABILITY_MISSING】需求为 pixel_1to1 目标且严格度=hard（不接受降级），' +
+        `而当前能力不足（${ssot.clamp_reason ?? 'capability_clamped'}）——不得静默降档继续跑。`,
+      suggestion:
+        '出路三选一：①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt' +
+        '（绑定需求 SSOT 哈希）后重跑；③修改需求措辞放宽严格度（best-effort）。',
+      failure_kind: 'capability_missing_strong_intent',
+      blocking_class: 'await_human_fidelity_tier',
     }];
   }
   return [{
     id, category: 'structure', description,
-    severity: 'BLOCKER', status: 'FAIL',
-    details: [
-      intent === 'strong_pixel'
-        ? '【DEFERRED_CAPABILITY_MISSING】需求为强 pixel 意图而当前模型无视觉能力——不得静默以 semantic_layout 继续跑'
-        : '【await_human_fidelity_tier】需求含"与截图一致"类含混意图且存在参考图——盲档下须人工定档',
-      `（bc-openCard 二轮：逐阶段路径漏检 intent，缺省 semantic_layout 全部 pixel 硬门禁未激活）。`,
-      `reference_intent=${referenceIntent}，desired=${desired}（已落盘，不被改写）。`,
-    ].join('\n'),
-    suggestion:
-      '出路三选一：①换有视觉能力的模型/配置 vision.image_input_override 后重跑；' +
-      '②真人经带外体系签发 fidelity_downgrade receipt（绑定需求 SSOT 哈希）落 ' +
-      'spec/fidelity-downgrade.receipt.json 后重跑（交互式对应 vision.blind_tier 确认动线）；' +
-      '③修改需求明确接受布局级还原。',
-    failure_kind: intent === 'strong_pixel' ? 'capability_missing_strong_intent' : 'await_human_fidelity_tier',
-    blocking_class: 'await_human_fidelity_tier',
+    severity: 'BLOCKER', status: 'PASS',
+    details:
+      `路由：inferred=${ssot.inferred_fidelity} selected=${ssot.selected_fidelity} ` +
+      `effective=${ssot.effective_fidelity}${ssot.clamped ? `（clamped:${ssot.clamp_reason}）` : ''} ` +
+      `strictness=${ssot.acceptance_strictness} asset=${ssot.asset_acquisition_mode} ` +
+      `source=${ssot.decision.source}` +
+      (ssot.clamped ? '——自动定档不洗白：视觉债务/封顶语义照常生效。' : '。'),
   }];
 }
 
@@ -547,7 +624,9 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
   }
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const assets = (uiDoc?.assets ?? []) as UiSpecAsset[];
-  const cropAssets = assets.filter(a => a && a.acquisition === 'crop');
+  // post-impl3 P0-1：排除逐项 fallback（crop+placeholder:true）——与 asset-acquisition/
+  // asset-crop-validation 两消费面统一口径，否则 fallback 后仍被本门禁当 crop 打回成循环。
+  const cropAssets = assets.filter(a => a && a.acquisition === 'crop' && a.placeholder !== true);
   if (cropAssets.length === 0) {
     return [{
       id, category: 'structure', description,
@@ -557,18 +636,23 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
   }
 
   // verified_artifact 来源：spec/reports/asset-crop-validation.json（profile 产物，此处只读 JSON）
+  // v7 P0-2：同时保留绑定字段（sha256/resolved_path）供消费端复验——免 c3 不得只读
+  // verdict 字符串（agent 可预写字段齐全的假报告；绑定复验+本 invocation provider
+  // 执行标记双条件才构成豁免）。
   let verifiedKeys = new Set<string>();
+  const verifiedBindings = new Map<string, { sha256?: string; resolved_path?: string }>();
   try {
     const vPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'reports', 'asset-crop-validation.json'));
     if (fs.existsSync(vPath)) {
       const parsed = JSON.parse(fs.readFileSync(vPath, 'utf-8')) as {
-        entries?: Record<string, { verdict?: string }>;
+        entries?: Record<string, { verdict?: string; sha256?: string; resolved_path?: string }>;
       };
-      verifiedKeys = new Set(
-        Object.entries(parsed.entries ?? {})
-          .filter(([, v]) => v?.verdict === 'verified')
-          .map(([k]) => k),
-      );
+      for (const [k, v] of Object.entries(parsed.entries ?? {})) {
+        if (v?.verdict === 'verified') {
+          verifiedKeys.add(k);
+          verifiedBindings.set(k, { sha256: v.sha256, resolved_path: v.resolved_path });
+        }
+      }
     }
   } catch { /* 解析失败按无验真处理（fail-closed） */ }
 
@@ -579,7 +663,18 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
     const resolvedAbs = a.resolved_path ? path.join(ctx.projectRoot, a.resolved_path) : null;
     if (!resolvedAbs || !fs.existsSync(resolvedAbs)) missing.push('c1 resolved_path 不存在');
 
-    let provenanceOk = verifiedKeys.has(a.key);
+    // post-impl5 P1-1：统一 verifiedArtifactBound 判据——c2 的 verified 通道同样要求
+    // hash/resolved_path 绑定复验（伪造/陈旧 verified 报告 + 可信 human 确认曾可分别过
+    // c2/c3 整体 PASS）；c3 机器豁免在此之上再要求本 invocation provider 执行。
+    let verifiedArtifactBound = false;
+    if (verifiedKeys.has(a.key) && resolvedAbs && fs.existsSync(resolvedAbs)) {
+      const b = verifiedBindings.get(a.key);
+      if (b?.sha256 && b.resolved_path && b.resolved_path === a.resolved_path) {
+        const artSha = crypto.createHash('sha256').update(fs.readFileSync(resolvedAbs)).digest('hex');
+        verifiedArtifactBound = b.sha256 === artSha;
+      }
+    }
+    let provenanceOk = verifiedArtifactBound;
     if (!provenanceOk && resolvedAbs && fs.existsSync(resolvedAbs)) {
       const rPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'crop-provenance', `${a.key}.receipt.json`));
       if (fs.existsSync(rPath)) {
@@ -610,8 +705,16 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
     }
     if (!provenanceOk) missing.push('c2 provenance 不可验证（verified_artifact/human_receipt/external_tool 三来源均缺）');
 
-    if (a.human_crop_confirmed !== true || !isHumanVerified(a.crop_confirmed_by)) {
-      missing.push('c3 human_crop_confirmed 缺可信真人身份（自动化/user_requirement 哨兵不算条目级验真）');
+    // v7 P1-2：免 c3 条目级预确认——仅当①本 invocation 中 asset_acquisition provider
+    // 确认执行（skip/throw 不算）②该 key 为严格生产者 verified（sanity+VL 辨认或真人
+    // bbox 翻案——verified 语义在生产者，不降标）③hash/resolved_path 绑定复验有效。
+    // 真人确认降级为终验收/翻案角色，不再是启动前置。
+    const machineVerifiedAdmit = ctx.assetAcquisitionProviderRan === true && verifiedArtifactBound;
+    if (!machineVerifiedAdmit && (a.human_crop_confirmed !== true || !isHumanVerified(a.crop_confirmed_by))) {
+      missing.push(
+        'c3 缺条目级验真：机器验真路径（本 invocation provider 执行 + verified + 绑定复验）' +
+        '与可信真人 human_crop_confirmed 均不满足（自动化/user_requirement 哨兵不算）',
+      );
     }
 
     if (missing.length > 0) violations.push(`  - ${a.key}：${missing.join('；')}`);
@@ -1583,7 +1686,15 @@ const checker: PhaseChecker = {
       results.push(...safeRun(() => dispatchSpecUiSpec(ctx, prd), 'ui_spec_structure'));
     }
     if (!isSpecAssetAcquisitionSkipped(ctx.resolvedProfile)) {
-      results.push(...safeRun(() => dispatchSpecAssetAcquisition(ctx), 'asset_acquisition'));
+      // v7 P1-2：provider 确认执行标记——只有**本 invocation** 中 provider 真跑完
+      //（未 skip、未 throw）才置位；盲档 crop 免 c3 判据消费此标记（skip/throw 时
+      // 磁盘旧报告/agent 预写报告不构成豁免）。
+      results.push(...safeRun(() => {
+        // post-impl4 P1-4：执行回执不从聚合 CheckResult[] 猜——provider 在真正跑完验真
+        // 并写盘 asset-crop-validation.json 的位置内部置位（空数组/不适用/SKIP/WARN 未
+        // 裁图均不会写盘 → 不授信）。
+        return dispatchSpecAssetAcquisition(ctx);
+      }, 'asset_acquisition'));
     }
     // --- e7c2a4d8 T1d（round2 P1）：corrupt goal-run 残留 fail-closed（在 intent 门之前）---
     results.push(...safeRun(() => checkGoalRunIdentityIntact(ctx), 'goal_run_identity_intact'));
@@ -1708,7 +1819,8 @@ function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
     }];
   }
   if (unmapped.length > 0) {
-    const ratchet = isPixel1to1(ctx)
+    // plan f6b2d9a4 P0-1：严重度抬升=裁决类——hard contract 才 FAIL，best_effort 记 WARN+债务
+    const ratchet = isHardPixelContract(ctx)
       ? { severity: 'BLOCKER' as const, status: 'FAIL' as const }
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
     return [{

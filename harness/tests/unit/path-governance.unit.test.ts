@@ -126,6 +126,7 @@ test('production_entry_check_review_reads_spec_in_custom_features_dir', () => {
       feature: 'homepage',
       projectRoot: root,
       fidelityTarget: 'pixel_1to1',
+      acceptanceStrictness: 'hard', // plan f6b2d9a4 P0-1：回归 pixel 硬门禁行为
       phaseRule: { structure_checks: {} },
     } as unknown as CheckContext;
     // 报告不含任何"视觉保真/视觉维度/visual fidelity"触发词 → insufficient → 门禁 FAIL

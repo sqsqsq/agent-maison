@@ -36,7 +36,7 @@
 
 ## 流程骨架
 
-1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。
+1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`——落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。goal 模式该文件已由 goal-runner 首产——CLI 会自动探测并跳过，**绝不覆盖** goal 决策（writer 唯一）。
 2. **术语消歧**（BLOCKER，详见 reference）：必读 [doc/glossary.yaml](../../../../doc/glossary.yaml)（业务术语↔权威模块）与 [doc/module-catalog.yaml](../../../../doc/module-catalog.yaml)（模块职责画像），生成`## 0. 术语映射表`，所有行 `[x]` 用户确认后才允许生成正文；headless 例外见 reference。**`project_scale=small`**（`framework.config.json`，framework-init 按 catalog 模块数 ≤3 建议）时映射表仍须产出，但可用节末一行 `- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射` 整体替代逐行 `[x]`；Scope/`diff_within_scope` 等红线不受影响。
 3. **截图分析 → ui-spec.yaml**（UI 需求，详见 reference）：分区扫描、逐屏识别、组件 taxonomy、token 表、资产清单、保真档位判定、DSL↔原图 gate。
 4. **Research Sub-Phase**（Context Facts Gate·BLOCKER，C4）：进入 Step 5 正文前必读本阶段 SSOT（glossary/catalog/architecture.md + 相关既有实现，≥2 源码文件）+ profile 必查路径；填 `context_intent`/`estimated_loc_delta`/`touches_layers`；harness 按 `exploration_strategy` 复合评分决定是否须 subagent。spec 是 full track 的**建立阶段**：在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`ready_to_produce: true` 且 `has_blocker_coverage_risk: false`）——后续 plan/coding/review/ut/testing 各阶段只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 `spec/context-exploration.md`（per-phase）仍可读但已弃用，SSOT 见 `framework/harness/scripts/utils/context-facts.ts`。

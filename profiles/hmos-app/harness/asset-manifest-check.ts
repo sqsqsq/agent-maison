@@ -10,7 +10,7 @@ import { relFeatureArtifact, featureFilePath } from '../../../harness/config';
 import {
   assetManifestAbsPath,
   fidelityRatchetFailOrWarn,
-  isPixel1to1,
+  isHardPixelContract,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import {
   collectAllComponentNodes,
@@ -90,7 +90,7 @@ export function checkAssetManifest(ctx: CheckContext): CheckResult[] {
   const required = collectRequiredArtAssets(uiDoc);
   const results: CheckResult[] = [];
 
-  if (isPixel1to1(ctx) && placeholders.length > 0) {
+  if (isHardPixelContract(ctx) && placeholders.length > 0) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
     results.push({
       id: 'asset_placeholder_manifest',
@@ -109,7 +109,7 @@ export function checkAssetManifest(ctx: CheckContext): CheckResult[] {
 
   // G4：禁止通用图标冒充品牌 logo —— pixel_1to1 下 brand_logo/illustration 节点须有真实素材
   // (asset_ref) 或显式 placeholder；二者皆无 = 会渲染成通用图标冒充（比纯占位更误导）。
-  if (isPixel1to1(ctx)) {
+  if (isHardPixelContract(ctx)) {
     const placeholderKeys = new Set((uiDoc.assets ?? []).filter(a => a.placeholder).map(a => a.key));
     const impersonationRisk = collectAllComponentNodes(uiDoc).filter(n => {
       const kind = n.icon?.kind;
@@ -139,7 +139,7 @@ export function checkAssetManifest(ctx: CheckContext): CheckResult[] {
 
   const effectiveMode = ctx.effectiveAssetAcquisitionMode ?? 'approximate';
   if (effectiveMode === 'user_dir' && !fs.existsSync(manifestAbs)) {
-    const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isPixel1to1(ctx));
+    const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isHardPixelContract(ctx));
     results.push({
       id: 'asset_manifest',
       category: 'structure',

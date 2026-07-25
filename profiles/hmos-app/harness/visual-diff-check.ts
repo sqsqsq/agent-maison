@@ -27,7 +27,7 @@ import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
@@ -1142,7 +1142,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     .filter(([, ids]) => ids.length >= 2)
     .map(([h, ids]) => `${h}:${ids.join('+')}`);
 
-  const pixel1to1 = isPixel1to1(ctx);
+  const pixel1to1 = isHardPixelContract(ctx);
   const refElementsPath = refElementsAbsPath(ctx.projectRoot, ctx.feature);
   const refElementsDoc = fs.existsSync(refElementsPath)
     ? loadRefElementsFile(refElementsPath)

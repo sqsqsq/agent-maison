@@ -29,7 +29,7 @@ import {
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 import { scanFeatureSourceTree } from './source-ref-scan';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 /** 一条结构声明：node_key + declaration（如 subtitle_position=trailing）。 */
 export interface StructureDeclaration {
@@ -186,7 +186,7 @@ export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[
     return [{ ...base, severity: 'MINOR', status: 'PASS', details: 'ui-spec 无结构声明，无需台账。' }];
   }
 
-  const ratchet = isPixel1to1(ctx)
+  const ratchet = isHardPixelContract(ctx)
     ? fidelityRatchetFailOrWarn(ctx, true)
     : { severity: 'MAJOR' as const, status: 'WARN' as const };
 

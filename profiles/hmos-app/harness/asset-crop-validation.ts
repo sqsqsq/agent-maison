@@ -35,7 +35,7 @@ import {
 import { featureFilePath, relFeatureFile } from '../../../harness/config';
 import { asArray } from '../../../harness/scripts/utils/shape-guards';
 import {
-  isPixel1to1,
+  isHardPixelContract,
   fidelityRatchetFailOrWarn,
   isHumanVerified,
   isAutomationSigner,
@@ -339,7 +339,7 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   const cropAssets = (doc.assets ?? []).filter(a => a.acquisition === 'crop' && !a.placeholder);
   if (cropAssets.length === 0) return [];
 
-  const pixel = isPixel1to1(ctx);
+  const pixel = isHardPixelContract(ctx);
   const results: CheckResult[] = [];
 
   // jimp 缺失：头部项仍可判条状，但纯色/空白盲 → pixel_1to1 不得静默放行（toolchain 归因）
@@ -468,6 +468,9 @@ export function checkAssetCropValidation(ctx: CheckContext): CheckResult[] {
   const verdictsAbs = cropValidationVerdictsAbsPath(ctx.projectRoot, ctx.feature);
   fs.mkdirSync(path.dirname(verdictsAbs), { recursive: true });
   fs.writeFileSync(verdictsAbs, JSON.stringify(verdicts, null, 2), 'utf-8');
+  // post-impl4 P1-4：执行回执——只有本 invocation 真正跑完验真并写盘才授信
+  //（盲档 crop 免 c3 消费此标记；磁盘旧报告/预写报告不经此点，不授信）。
+  (ctx as { assetAcquisitionProviderRan?: boolean }).assetAcquisitionProviderRan = true;
 
   const statsLine =
     `verified ${okKeys.length} / failed ${failedLines.length} / pending ${pendingLines.length}` +

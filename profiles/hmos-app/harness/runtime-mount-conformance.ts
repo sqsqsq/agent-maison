@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { extractLayoutDumpFacets } from './visual-diff-nav';
 import { deviceScreenshotsDir, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
 import { collectLocatorRequiredElements, collectNavIdentityIdMembers } from './coding-visual-parity-check';
@@ -59,7 +59,7 @@ export function checkRuntimeMountConformance(ctx: CheckContext): CheckResult[] {
   }
   const rate = mounted / total;
   if (missing.length > 0) {
-    const hard = isPixel1to1(ctx);
+    const hard = isHardPixelContract(ctx);
     return [{
       id, category: 'structure', description,
       severity: hard ? 'BLOCKER' : 'MAJOR',

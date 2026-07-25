@@ -21,7 +21,7 @@ import { missingUiSpecGateScreens } from './ui-spec-gate';
 import { checkUiKitDeclarationRequired } from './ui-kit-conformance-check';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
-import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
 import { loadFrameworkConfig } from '../../../harness/config';
 import {
@@ -442,7 +442,7 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
   // 软档不豁免（bc-openCard 实证：unverified WARN 放行 → 几何合同空白 spec 流入下游）。
   // 盲/ocr_capable 宿主不升级，继续按 d4a8f3c6 降级阶梯钳制，零新增噪声。
   let sightedPixel1to1 = false;
-  if (isPixel1to1(ctx)) {
+  if (isHardPixelContract(ctx)) {
     try {
       const adapterName = loadFrameworkConfig(ctx.projectRoot).agent_adapter;
       sightedPixel1to1 = readCanaryToolReadSignal(ctx.projectRoot, adapterName);

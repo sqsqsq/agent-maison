@@ -12,6 +12,7 @@ import {
   DEFAULT_DEPENDENCY_POLICY,
   type DependencyPolicy,
 } from './phase-transition-policy';
+import { isValidFidelityTarget } from './fidelity-shared';
 
 export interface GoalBudget {
   max_retries_per_phase?: number;
@@ -342,7 +343,22 @@ export function buildGoalManifestFromInput(
     ? (input.chain_override.filter((x) => typeof x === 'string') as FeaturePhase[])
     : undefined;
 
+  // plan f6b2d9a4 T3：fidelity/fidelity_receipt 随 parser 保留（此前静默丢弃——手写
+  // manifest 的档位声明进不了路由决策层）；非法枚举 fail-closed（显式传值必须显式拒）。
+  const rawFidelity = input.fidelity;
+  if (rawFidelity !== undefined && rawFidelity !== null && !isValidFidelityTarget(rawFidelity)) {
+    throw new Error(
+      `[goal-manifest] fidelity 值非法（${String(rawFidelity)}）——须 pixel_1to1|semantic_layout|reference_only`,
+    );
+  }
+  const rawFidelityReceipt =
+    typeof input.fidelity_receipt === 'string' && input.fidelity_receipt.trim()
+      ? input.fidelity_receipt.trim().replace(/\\/g, '/')
+      : undefined;
+
   return {
+    ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
+    ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),

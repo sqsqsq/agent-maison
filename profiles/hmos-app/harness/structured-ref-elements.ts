@@ -13,6 +13,7 @@ import {
   refElementsRelPath,
   type RefElementEntry,
   fidelityRatchetFailOrWarn,
+  isHardPixelContract,
 } from '../../../harness/scripts/utils/fidelity-shared';
 import {
   collectUiSpecScreenRefIds,
@@ -188,15 +189,15 @@ export function checkStructuredRefElements(ctx: CheckContext, _specMd: string): 
     existingDoc?.elements?.length ? `VL 磁盘增补 ${existingDoc.elements.length} 项（structured 优先）` : '',
   ].filter(Boolean).join('；');
 
-  const soft = unmappedCount > 0 && ctx.fidelityTarget !== 'pixel_1to1';
+  const soft = unmappedCount > 0 && !isHardPixelContract(ctx); // post-impl2 P1-4
   const { severity, status } = fidelityRatchetFailOrWarn(ctx, soft);
 
   return [{
     id: 'structured_ref_elements',
     category: 'structure',
     description: desc,
-    severity: unmappedCount > 0 && ctx.fidelityTarget === 'pixel_1to1' ? severity : 'MINOR',
-    status: unmappedCount > 0 && ctx.fidelityTarget === 'pixel_1to1' ? status : 'PASS',
+    severity: unmappedCount > 0 && isHardPixelContract(ctx) ? severity : 'MINOR',
+    status: unmappedCount > 0 && isHardPixelContract(ctx) ? status : 'PASS',
     details: [
       `结构化派生 ${structured.length} 项注入内存 manifest（capture-completeness 同 run 消费，不写盘）`,
       unmappedCount > 0 ? `${unmappedCount} 项未映射（不计入分母）` : '',

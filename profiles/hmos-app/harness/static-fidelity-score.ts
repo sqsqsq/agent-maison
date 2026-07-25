@@ -16,7 +16,7 @@ import {
 import { deltaE2000, hexToLab } from './image-toolkit';
 import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 import { computeStructureSequenceScore, loadVisualParityMappings } from './visual-structure-parity';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectSemanticColorBindingIssues, moduleMediaRealnessForKey } from './visual-parity-backstop';
 
 const COPY_MATCH_THRESHOLD = 0.85;
@@ -159,7 +159,7 @@ export function computeStaticFidelityScore(
   const assets = doc.assets ?? [];
   let assetResolved = 0;
   let assetReferenced = 0;
-  const pixel1to1 = isPixel1to1(ctx);
+  const pixel1to1 = isHardPixelContract(ctx);
   for (const a of assets) {
     const countsInDenom = !a.placeholder || pixel1to1;
     if (!countsInDenom) continue;

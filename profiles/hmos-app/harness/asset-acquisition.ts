@@ -19,7 +19,7 @@ import {
   resolveRefSourceImage,
 } from './authoritative-ref-images';
 import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
-import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../../harness/scripts/utils/fidelity-shared';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 
 /**

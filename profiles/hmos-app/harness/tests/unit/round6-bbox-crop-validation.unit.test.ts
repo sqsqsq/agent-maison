@@ -122,6 +122,8 @@ function mkProject(uiSpecYaml: string): { root: string; ctx: CheckContext } {
     phaseRule: stubPhaseRule(),
     featureSpec: { feature: 'homepage' },
     fidelityTarget: 'pixel_1to1',
+    // plan f6b2d9a4 P0-1：本套件回归 pixel 硬门禁行为——夹具显式 hard（等价旧契约）
+    acceptanceStrictness: 'hard',
   } as unknown as CheckContext;
   return { root, ctx };
 }

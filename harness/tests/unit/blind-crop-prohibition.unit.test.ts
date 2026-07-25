@@ -147,7 +147,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       fs.writeFileSync(abs, 'x', 'utf-8');
       const vPath = featureFilePath(root, 'demo', path.join('spec', 'reports', 'asset-crop-validation.json'));
       fs.mkdirSync(path.dirname(vPath), { recursive: true });
-      fs.writeFileSync(vPath, JSON.stringify({ entries: { k2: { verdict: 'verified' } } }), 'utf-8');
+      // post-impl5 P1-1 契约更新：c2 的 verified 通道同样要求绑定复验——verdict-only
+      // 报告（旧形态）不再构成 provenance（伪造/陈旧报告曾借此过 c2）。
+      const k2Sha = require('crypto').createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+      fs.writeFileSync(vPath, JSON.stringify({
+        entries: { k2: { verdict: 'verified', sha256: k2Sha, resolved_path: rel } },
+      }), 'utf-8');
       writeUiSpec(root, [
         '  - key: k2',
         '    acquisition: crop',
@@ -165,6 +170,84 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       writeUiSpec(root, '  - key: p1\n    acquisition: placeholder\n    placeholder: true');
       const [r] = checkBlindCropProhibition(ctx(root, 'none'));
       assertEq(r.status, 'PASS', 'status');
+    }),
+  },
+  {
+    name: 'post-impl3 P0-1：逐项 fallback（crop+placeholder:true）不进盲档禁令 → PASS（防循环卡死）',
+    run: async () => withTmpProject(async root => {
+      writeUiSpec(root, [
+        '  - key: fb1',
+        '    acquisition: crop',
+        '    placeholder: true', // 验真失败后的逐项 fallback 形态（prompt 指引产物）
+      ].join('\n'));
+      const [r] = checkBlindCropProhibition(ctx(root, 'none'));
+      assertEq(r.status, 'PASS', `fallback 不得再被当 crop 打回（${r.details}）`);
+    }),
+  },
+  // ---- plan f6b2d9a4 T4：机器验真免 c3（本 invocation provider 执行 + 绑定复验）----
+  {
+    name: 'f6b2d9a4: provider 本 invocation 执行 + verified + 绑定复验有效 → 免 c3 不求人',
+    run: async () => withTmpProject(async root => {
+      const rel = 'doc/features/demo/spec/assets/k3.png';
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
+      const sha = require('crypto').createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+      const vPath = featureFilePath(root, 'demo', path.join('spec', 'reports', 'asset-crop-validation.json'));
+      fs.mkdirSync(path.dirname(vPath), { recursive: true });
+      fs.writeFileSync(vPath, JSON.stringify({
+        entries: { k3: { verdict: 'verified', sha256: sha, resolved_path: rel } },
+      }), 'utf-8');
+      writeUiSpec(root, [
+        '  - key: k3',
+        '    acquisition: crop',
+        `    resolved_path: ${rel}`,
+        // 注意：无 human_crop_confirmed——机器验真路径免 c3
+      ].join('\n'));
+      const c = ctx(root, 'none');
+      (c as { assetAcquisitionProviderRan?: boolean }).assetAcquisitionProviderRan = true;
+      const [r] = checkBlindCropProhibition(c);
+      assertEq(r.status, 'PASS', `免 c3 放行（${r.details}）`);
+    }),
+  },
+  {
+    name: 'f6b2d9a4: agent 预写 verified 报告 + provider skipped → 不获豁免仍 FAIL（伪造 fixture）',
+    run: async () => withTmpProject(async root => {
+      const rel = 'doc/features/demo/spec/assets/k4.png';
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, Buffer.from([0x89, 0x50, 0x4e, 0x47, 9]));
+      const sha = require('crypto').createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+      const vPath = featureFilePath(root, 'demo', path.join('spec', 'reports', 'asset-crop-validation.json'));
+      fs.mkdirSync(path.dirname(vPath), { recursive: true });
+      // 字段齐全的「假 verified」——磁盘报告自称不构成豁免（v7 P1-2 可执行判据）
+      fs.writeFileSync(vPath, JSON.stringify({
+        entries: { k4: { verdict: 'verified', sha256: sha, resolved_path: rel } },
+      }), 'utf-8');
+      writeUiSpec(root, ['  - key: k4', '    acquisition: crop', `    resolved_path: ${rel}`].join('\n'));
+      const c = ctx(root, 'none'); // assetAcquisitionProviderRan 未置位 = provider skip/throw
+      const [r] = checkBlindCropProhibition(c);
+      assertEq(r.status, 'FAIL', '预写报告不豁免——回落占位+债务/问人路线');
+      assertTrue(/c3/.test(r.details), '点名 c3 缺失');
+    }),
+  },
+  {
+    name: 'f6b2d9a4: provider 执行但绑定失配（产物被换）→ 不豁免 FAIL',
+    run: async () => withTmpProject(async root => {
+      const rel = 'doc/features/demo/spec/assets/k5.png';
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, Buffer.from([0x89, 0x50, 0x4e, 0x47, 7]));
+      const vPath = featureFilePath(root, 'demo', path.join('spec', 'reports', 'asset-crop-validation.json'));
+      fs.mkdirSync(path.dirname(vPath), { recursive: true });
+      fs.writeFileSync(vPath, JSON.stringify({
+        entries: { k5: { verdict: 'verified', sha256: 'f'.repeat(64), resolved_path: rel } },
+      }), 'utf-8');
+      writeUiSpec(root, ['  - key: k5', '    acquisition: crop', `    resolved_path: ${rel}`].join('\n'));
+      const c = ctx(root, 'none');
+      (c as { assetAcquisitionProviderRan?: boolean }).assetAcquisitionProviderRan = true;
+      const [r] = checkBlindCropProhibition(c);
+      assertEq(r.status, 'FAIL', '绑定失配不豁免');
     }),
   },
 ];

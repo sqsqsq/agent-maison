@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
-import { isPixel1to1 } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { featureFilePath } from '../../../harness/config';
 import {
   collectAllComponentNodes,
@@ -175,7 +175,7 @@ export function collectSemanticColorBindingIssues(
   if (baselineUnverified) return [];
   const contracts = ctx.featureSpec.contracts;
   const mappings = loadVisualParityMappings(ctx.projectRoot, ctx.feature);
-  const pixel1to1 = isPixel1to1(ctx);
+  const pixel1to1 = isHardPixelContract(ctx);
   const issues: BackstopIssue[] = [];
 
   for (const n of collectAllComponentNodes(doc)) {
@@ -1262,7 +1262,7 @@ export function collectActionButtonVariantDeclIssues(
   doc: UiSpecDoc,
   baselineUnverified: boolean,
 ): BackstopIssue[] {
-  if (baselineUnverified || !isPixel1to1(ctx)) return [];
+  if (baselineUnverified || !isHardPixelContract(ctx)) return [];
   const p0 = p0ScreenIdSet(doc);
   const issues: BackstopIssue[] = [];
   for (const s of doc.screens ?? []) {

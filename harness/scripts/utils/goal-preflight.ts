@@ -420,12 +420,20 @@ export function goalRequiredPrerequisites(
 
 import * as cryptoT6 from 'crypto';
 import {
+  computeRequirementShaFromText,
   dereferenceRequirementDocs,
-  detectFidelityIntent,
+  detectDesiredFidelity,
   isValidFidelityTarget,
+  resolveFidelityRoutingDecision,
+  resolveOcrAvailableForRun,
   resolveRequestedFidelity,
+  writeCapabilitySnapshot,
+  writeFidelityIntentSsot,
+  type FidelityRoutingDecision,
   type FidelityTarget,
 } from './fidelity-shared';
+import { resolveEffectiveVisionContext, sha256File as sha256FileVc } from './effective-vision-context';
+import { uiSpecAbsPath as uiSpecAbsPathT6 } from './ui-spec-shared';
 import { resolveContextAdapterImageInput } from './multimodal-probe';
 import {
   defaultTrustRegistryPath,
@@ -435,20 +443,8 @@ import { featureFilePath } from '../../config';
 import * as fsT6 from 'fs';
 
 export type FidelityPreflightAction =
-  | { action: 'proceed'; effective?: FidelityTarget; note?: string }
-  | { action: 'defer_capability_missing'; detail: string }
-  | { action: 'await_human_fidelity_tier'; detail: string };
-
-const IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp)$/i;
-
-function dirHasImages(absDir: string): boolean {
-  try {
-    if (!fsT6.existsSync(absDir) || !fsT6.statSync(absDir).isDirectory()) return false;
-    return fsT6.readdirSync(absDir).some((f) => IMAGE_EXT_RE.test(f));
-  } catch {
-    return false;
-  }
-}
+  | { action: 'proceed'; effective?: FidelityTarget; note?: string; routing?: FidelityRoutingDecision }
+  | { action: 'defer_capability_missing'; detail: string; routing?: FidelityRoutingDecision };
 
 export interface FidelityPreflightInput {
   projectRoot: string;
@@ -457,83 +453,194 @@ export interface FidelityPreflightInput {
   featuresDirRel: string;
   /** 链首非 spec（上游 spec 已闭环）→ 本 preflight 不适用（档位对账由 check-spec 承担） */
   chainStartsAtSpec: boolean;
+  /** OCR 探测的 profile 目录（缺省仅走 canary 信号兜底） */
+  profileDir?: string;
+  /** manifest.fidelity 是否来自 CLI 显式旗标（decision.source=explicit_cli） */
+  fidelityFromCli?: boolean;
+  now?: () => Date;
+}
+
+/** S3 policy meet（与 goal-runner advisory 同一 resolveEffectiveVisionContext 判定链——
+ * 单源在 effective-vision-context；异常 fail-closed 默认盲）。
+ * post-impl2 P0-1：必须带 run 身份（runId/adapter/frameworkRoot/phase）——goal canary
+ * 只认 run_id 匹配（effective-vision-context:328），缺身份会把已证明有视觉的模型误判盲档。 */
+function resolvePolicyVisualForRouting(
+  projectRoot: string,
+  feature: string,
+  identity?: { runId?: string; adapter?: string; frameworkRoot?: string; phase?: string },
+): boolean {
+  try {
+    let artifactHashes: string[] | undefined;
+    const uiSpecAbs = uiSpecAbsPathT6(projectRoot, feature);
+    if (fsT6.existsSync(uiSpecAbs)) {
+      const h = sha256FileVc(uiSpecAbs);
+      if (!h) return false;
+      artifactHashes = [h];
+    }
+    const vctx = resolveEffectiveVisionContext({
+      projectRoot,
+      feature,
+      ...(identity?.runId ? { runId: identity.runId } : {}),
+      ...(identity?.adapter ? { adapter: identity.adapter } : {}),
+      ...(identity?.frameworkRoot ? { frameworkRoot: identity.frameworkRoot } : {}),
+      ...(identity?.phase ? { phase: identity.phase } : {}),
+      ...(artifactHashes ? { artifactHashes } : {}),
+    } as Parameters<typeof resolveEffectiveVisionContext>[0]);
+    return vctx.effective_policy.mode === 'visual';
+  } catch {
+    return false;
+  }
+}
+
+export interface FidelityRoutingInitInput {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  requirement: string | undefined;
+  featuresDirRel: string;
+  /** goal run_id 或显式 phase execution identity（如 `phase:<feature>:spec`） */
+  executionIdentity: string;
+  adapter?: string;
+  profileDir?: string;
+  manifestFidelity?: string;
+  fidelityFromCli?: boolean;
+  fidelityReceiptRel?: string;
+  runIdForReceipt?: string;
   now?: () => Date;
 }
 
 /**
- * 规则（openspec goal-runner delta）：
- * - 解引用 requirement 引用文档后做三态意图检测（摘要弱措辞+SSOT 强信号=事故原形）；
- * - 强 pixel 意图 + 缺视觉能力 → DEFERRED_CAPABILITY_MISSING（不盲跑全链；
- *   继续的唯一通道=有效 fidelity_downgrade receipt——flag/manifest 不构成授权）；
- * - ambiguous + 参考图存在 + 未预授权（--fidelity 持平或抬升）→ await_human_fidelity_tier；
- * - --fidelity 只升不降（resolveRequestedFidelity；降档尝试无 receipt 即拒绝并告警）。
+ * plan f6b2d9a4 T2：路由初始化唯一执行实现（runner-owned）——goal 模式由 goal-runner
+ * 在 agent invoke 前调用；phase-driven 由 skills/feature/spec Step 1 经
+ * fidelity-intent-init CLI 调用（薄入口只透传，agent-adapters 约束）。职责：
+ * 解引用需求 → 降档 receipt 验真 → capability 探测（vision probe × S3 policy meet、
+ * OCR）→ 三段式路由 → 落 capability-snapshot.json + fidelity-intent.json（唯一 SSOT）。
+ * harness-runner/check-spec 只加载复核，不首产。
  */
-export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
-  const { projectRoot, frameworkRoot, manifest } = input;
-  if (!input.chainStartsAtSpec) return { action: 'proceed', note: 'chain 起点非 spec，档位对账由 check-spec 承担' };
-  const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
+export function initializeFidelityRouting(
+  input: FidelityRoutingInitInput,
+): { routing: FidelityRoutingDecision; receiptNote: string; requirementSha: string } {
+  const deref = dereferenceRequirementDocs(input.projectRoot, input.requirement, {
     featuresDirRel: input.featuresDirRel,
   });
-  const intent = detectFidelityIntent(deref.combined);
-  if (intent === 'none') return { action: 'proceed', note: '无截图一致性意图信号' };
-
-  const detected: FidelityTarget = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
-
-  // 降档凭证（唯一降档通道）
-  let downgradeAuthorized = false;
+  // 降档 receipt 验真（唯一降档通道；绑定=解引用合并需求文本 sha + feature + run_id）
+  let downgradeReceiptValid = false;
   let receiptNote = '';
-  if (manifest.fidelity && manifest.fidelity_receipt) {
+  if (input.fidelityReceiptRel) {
     const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
     const v = validateConfirmationReceiptFile(
-      path.join(projectRoot, manifest.fidelity_receipt),
-      defaultTrustRegistryPath(projectRoot),
+      path.join(input.projectRoot, input.fidelityReceiptRel),
+      defaultTrustRegistryPath(input.projectRoot),
       {
         action: 'fidelity_downgrade',
-        feature: manifest.feature,
+        feature: input.feature,
         object_hash: objectHash,
-        run_id: manifest.run_id,
+        run_id: input.runIdForReceipt,
         now: input.now,
       },
     );
-    downgradeAuthorized = v.valid;
+    downgradeReceiptValid = v.valid;
     if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
   }
-  const resolved = resolveRequestedFidelity(detected, manifest.fidelity, downgradeAuthorized);
-  if (resolved.rejectedDowngrade) {
+  // capability snapshot（v3 P1-4 同源：一次探测，preflight/prompt/check-spec/intent 四消费面共用）
+  const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter);
+  const policyVisual = resolvePolicyVisualForRouting(input.projectRoot, input.feature, {
+    runId: input.runIdForReceipt,
+    adapter: input.adapter,
+    frameworkRoot: input.frameworkRoot,
+    phase: 'spec',
+  });
+  const hasVision = probe.supported && policyVisual;
+  const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter);
+  const requirementSha =
+    computeRequirementShaFromText(
+      input.projectRoot, input.feature, input.requirement ?? deref.combined, input.featuresDirRel,
+    ) ?? cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+  const routing = resolveFidelityRoutingDecision({
+    requirementText: deref.combined,
+    manifestFidelity: input.manifestFidelity,
+    manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
+    downgradeReceiptValid,
+    capability: { hasVision, ocrAvailable },
+    executionIdentity: input.executionIdentity,
+    requirementSha,
+  });
+  writeCapabilitySnapshot(input.projectRoot, input.feature, {
+    execution_identity: input.executionIdentity,
+    decision_id: routing.decision.decision_id,
+    vision: {
+      verdict: hasVision,
+      source: `probe:${probe.imageInput ?? 'none'}·policy:${policyVisual ? 'visual' : 'blind_safe'}`,
+    },
+    ocr: { verdict: ocrAvailable, source: input.profileDir ? 'profile_probe_or_canary' : 'canary_signal' },
+  });
+  writeFidelityIntentSsot(input.projectRoot, input.feature, routing, {
+    executionIdentity: input.executionIdentity,
+    requirementSha,
+  });
+  return { routing, receiptNote, requirementSha };
+}
+
+/**
+ * 规则（plan f6b2d9a4：「非关键冲突不阻塞」）：
+ * - 三段式路由：inferred（文本推导）→ selected（只升不降；receipt 降档）→ effective（clamp）；
+ * - **唯一阻塞形态**=selected=pixel_1to1 ∧ strictness=hard ∧ clamp 降档 →
+ *   DEFERRED_CAPABILITY_MISSING（出路=换视觉模型 / fidelity_downgrade receipt / 改需求）；
+ * - 其余一律 proceed（含混/自声明自动定档到能力内最优档，透明记录进 fidelity-intent SSOT）；
+ *   await_human_fidelity_tier 分支已删除（v2 定稿）。
+ */
+export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  // post-impl P1-5：init 不被 chainStartsAtSpec 短路——截断链/resume 换档同样要刷新
+  // SSOT/snapshot（否则 manifest 已换档而决策层用旧数据）；仅 DEFER 判定限 spec 起点链。
+  const { routing, receiptNote } = initializeFidelityRouting({
+    projectRoot,
+    frameworkRoot,
+    feature: manifest.feature,
+    requirement: manifest.requirement,
+    featuresDirRel: input.featuresDirRel,
+    executionIdentity: manifest.run_id,
+    adapter: manifest.adapter,
+    profileDir: input.profileDir,
+    manifestFidelity: manifest.fidelity,
+    fidelityFromCli: input.fidelityFromCli,
+    fidelityReceiptRel: manifest.fidelity_receipt,
+    runIdForReceipt: manifest.run_id,
+    now: input.now,
+  });
+  if (routing.rejectedDowngrade) {
     console.warn(
       `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，无有效 receipt 不生效（只升不降）。${receiptNote}`,
     );
   }
-
-  if (intent === 'strong_pixel' && resolved.effective === 'pixel_1to1') {
-    const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
-    if (!probe.supported) {
-      return {
-        action: 'defer_capability_missing',
-        detail:
-          `需求为强 1:1 还原意图（解引用命中：${deref.resolvedPaths.join('、') || 'requirement 文本'}），` +
-          `但 adapter=${manifest.adapter ?? 'unknown'} 无视觉能力。不盲跑全链（bc-openCard 4 轮 run 全废教训）；` +
-          `继续的唯一通道：真人经带外体系签发 fidelity_downgrade receipt 后以 --fidelity <tier> --fidelity-receipt <path> 重跑。` +
-          (receiptNote ? ` ${receiptNote}` : ''),
-      };
-    }
-    return { action: 'proceed', effective: 'pixel_1to1' };
-  }
-
-  // ambiguous：参考图存在 + 未预授权 → 停下问人（在烧掉整条 run 之前）
-  const hasImages =
-    dirHasImages(featureFilePath(projectRoot, manifest.feature, 'ux-reference')) ||
-    deref.resolvedPaths.some((rel) => dirHasImages(path.join(projectRoot, path.dirname(rel))));
-  if (intent === 'ambiguous' && hasImages && !manifest.fidelity) {
+  // post-impl4 P0-1：唯一真冲突（selected=pixel∧hard∧clamp）**不受链起点限制**——
+  // review/ut/testing 起点 resume 时能力重算为盲同样必须 DEFER，先于截断链说明判定。
+  if (routing.defer) {
     return {
-      action: 'await_human_fidelity_tier',
+      action: 'defer_capability_missing',
+      routing,
       detail:
-        '需求提及与截图/设计稿一致但意图不明确（ambiguous），且存在参考图。请确认保真档位后重跑：' +
-        '`--fidelity pixel_1to1|semantic_layout`（预授权，不再停）；或修改需求原文写明' +
-        '「完全参考/像素级」等强措辞。headless 不代拍此决策。',
+        `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
+        `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路三选一：` +
+        '①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
+        '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。' +
+        (receiptNote ? ` ${receiptNote}` : ''),
     };
   }
-  return { action: 'proceed', effective: resolved.effective };
+  if (!input.chainStartsAtSpec) {
+    return {
+      action: 'proceed',
+      effective: routing.effective,
+      routing,
+      note: 'chain 起点非 spec：SSOT/snapshot 已按当前 manifest 刷新，档位对账由 check-spec 承担',
+    };
+  }
+  return {
+    action: 'proceed',
+    effective: routing.effective,
+    routing,
+    note: routing.decision.rationale,
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -606,10 +713,10 @@ export function evaluateFidelityTransitionAuthorization(
       '无效凭证不入 manifest（fail-closed）',
     );
   }
-  // ③ 只升不降（相对 detected intent，与 fresh preflight 同源语义；intent none=无降档概念）
-  const intent = detectFidelityIntent(deref.combined);
-  if (input.applied.fidelity && intent !== 'none' && manifest.fidelity) {
-    const detected: FidelityTarget = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
+  // ③ 只升不降（相对 inferred desired，与 routing 三段式同源——plan f6b2d9a4：
+  //    ambiguous 态删除，detectDesiredFidelity 缺省 semantic_layout）
+  if (input.applied.fidelity && manifest.fidelity) {
+    const detected: FidelityTarget = detectDesiredFidelity(deref.combined).desired;
     const resolved = resolveRequestedFidelity(detected, manifest.fidelity, receiptValid);
     if (resolved.rejectedDowngrade) {
       blockers.push(

@@ -576,6 +576,22 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'f6b2d9a4 T3: parser 保留 fidelity/fidelity_receipt；非法枚举 fail-closed（手写 manifest 不再静默丢档）',
+    run: () => {
+      const base = { feature: 'f1', unattended: { write_mode: 'workspace-write', approval_mode: 'never' } };
+      const m = buildGoalManifestFromInput(
+        { ...base, fidelity: 'pixel_1to1', fidelity_receipt: 'spec/fd.receipt.json' },
+        { projectRoot: '/x' },
+      );
+      if (m.fidelity !== 'pixel_1to1') throw new Error('fidelity 被 parser 丢弃');
+      if (m.fidelity_receipt !== 'spec/fd.receipt.json') throw new Error('fidelity_receipt 被丢弃');
+      let threw = false;
+      try { buildGoalManifestFromInput({ ...base, fidelity: 'ultra_hd' }, { projectRoot: '/x' }); }
+      catch (e) { threw = /非法/.test((e as Error).message); }
+      if (!threw) throw new Error('非法枚举未 fail-closed');
+    },
+  },
+  {
     // ------------------------------------------------------------ round2 P2 e2e
     // dry trust 字节级回归：真实拉起 goal-runner --dry-run（consumer 布局临时宿主，
     // framework 共享目录用 junction、harness 真拷贝+node_modules junction），断言：

@@ -25,7 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
+import { fidelityRatchetFailOrWarn, isHardPixelContract, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -2401,7 +2401,9 @@ function checkDeviceTestRunGate(
           const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
           const navValidation = navConfigV2
             ? validateNavConfigV2(navConfigV2, navP0TargetIds, {
-                requireConfirmedIdentity: isPixel1to1(ctx),
+                // plan f6b2d9a4 P0-1：真人确认要求=裁决类——只在 hard contract 生效
+                //（best_effort 记债不阻塞；执行类采集仍看 pixel target）。
+                requireConfirmedIdentity: isHardPixelContract(ctx),
               })
             : null;
           // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩

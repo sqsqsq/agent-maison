@@ -2,6 +2,7 @@
  * Goal report generator — aggregates per-phase harness summaries into goal-report.{md,json}
  */
 
+import { loadFidelityIntentSsot } from './fidelity-shared';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
@@ -127,6 +128,17 @@ export interface GoalPhaseOutcome {
   agent_stderr_excerpt?: string;
 }
 
+export interface GoalReportFidelityRouting {
+  inferred: string;
+  selected: string;
+  effective: string;
+  strictness: string;
+  asset_acquisition_mode: string;
+  clamped: boolean;
+  source: string;
+  decision_id: string;
+}
+
 export interface GoalReport {
   schema_version: '1.0';
   run_id: string;
@@ -135,6 +147,8 @@ export interface GoalReport {
   phases: GoalPhaseOutcome[];
   deferred_phases: FeaturePhase[];
   generated_at: string;
+  /** plan f6b2d9a4：三轴路由投影（writeGoalReport 从 fidelity-intent SSOT 派生；非 UI/legacy 缺省无） */
+  fidelity_routing?: GoalReportFidelityRouting;
 }
 
 // ============================================================================
@@ -245,6 +259,16 @@ export function generateGoalReportMarkdown(
     `- **Generated**: ${report.generated_at}`,
     '',
   ];
+
+  // plan f6b2d9a4 P2：三轴路由投影（与 goal-report.json 同一 SSOT 派生，头部固定渲染）
+  if (report.fidelity_routing) {
+    const fr = report.fidelity_routing;
+    lines.push(
+      `- **保真路由**（SSOT 派生）：inferred=${fr.inferred} → selected=${fr.selected} → effective=${fr.effective}` +
+      `${fr.clamped ? '（能力钳制）' : ''} · 严格度=${fr.strictness} · 素材=${fr.asset_acquisition_mode} · source=${fr.source}`,
+      '',
+    );
+  }
 
   if (mustReview.length > 0) {
     lines.push(
@@ -472,6 +496,23 @@ export function writeGoalReport(
   fs.mkdirSync(base, { recursive: true });
   const jsonPath = path.join(base, 'goal-report.json');
   const mdPath = path.join(base, 'goal-report.md');
+  // plan f6b2d9a4：三轴路由投影——从 fidelity-intent.json 单一 SSOT 派生（报告不自算，
+  // 防 intent/report/summary 三处结论漂移）；SSOT 缺失（非 UI/legacy）不注入。
+  try {
+    const routingSsot = loadFidelityIntentSsot(projectRoot, report.feature);
+    if (routingSsot) {
+      report.fidelity_routing = {
+        inferred: routingSsot.inferred_fidelity,
+        selected: routingSsot.selected_fidelity,
+        effective: routingSsot.effective_fidelity,
+        strictness: routingSsot.acceptance_strictness,
+        asset_acquisition_mode: routingSsot.asset_acquisition_mode,
+        clamped: routingSsot.clamped,
+        source: routingSsot.decision.source,
+        decision_id: routingSsot.decision.decision_id,
+      };
+    }
+  } catch { /* 投影失败不阻断报告 */ }
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
   const mustReviewItems = collectMustReviewFromAssumptions(
     projectRoot,

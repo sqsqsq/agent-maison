@@ -13,6 +13,7 @@
 // 语义级检查由 AI Harness (verify-review.md) 完成，不在本脚本范围内。
 // ============================================================================
 
+import { isHardPixelContract } from './utils/fidelity-shared';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -743,7 +744,7 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
 
   const desc = ruleDesc(ctx, 'structure_checks', 'visual_fidelity_review');
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
-  const pixel = ctx.fidelityTarget === 'pixel_1to1';
+  const pixel = isHardPixelContract(ctx); // post-impl2 P1-4：视觉评审维度抬升=裁决类，只在 hard contract 生效
 
   const hasDimension = /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(report);
   const missingEvidence = VISUAL_REVIEW_EVIDENCE.filter(e => !e.re.test(report));

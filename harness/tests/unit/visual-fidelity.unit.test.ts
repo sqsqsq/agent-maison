@@ -34,6 +34,13 @@ import { extractStructBody, scanStructResourceRefs, collectResourceRefsInActiveC
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import {
   detectPixel1to1Intent,
+  detectDesiredFidelity,
+  detectAcceptanceStrictness,
+  detectAssetAcquisitionIntent,
+  resolveFidelityRoutingDecision,
+  deriveEffectiveAdapterImageInput,
+  isHardPixelContract,
+  fidelityRatchetSeverity,
   isAutomationSigner,
   USER_REQUIREMENT_CONFIRMER,
   clampFidelityByCapability,
@@ -73,7 +80,7 @@ function baseCtx(root: string, o: Partial<CheckContext> = {}): CheckContext {
   clearFrameworkConfigCache();
   const fw = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf-8'));
   const resolvedProfile = loadResolvedProfile(root, fw);
-  return {
+  const ctx: CheckContext = {
     phase: 'testing',
     feature: 'bank-card',
     projectRoot: root,
@@ -86,6 +93,13 @@ function baseCtx(root: string, o: Partial<CheckContext> = {}): CheckContext {
     resolvedProfile,
     ...o,
   };
+  // plan f6b2d9a4 P0-1 契约更新：本套件既有用例回归的是 pixel **硬门禁**行为——
+  // pixel 夹具未显式给 strictness 时默认 hard（等价旧行为）；best_effort 新行为
+  // （质量缺口记债不抬升）由本套件新增的专用反例覆盖。
+  if (ctx.fidelityTarget === 'pixel_1to1' && !('acceptanceStrictness' in o)) {
+    ctx.acceptanceStrictness = 'hard';
+  }
+  return ctx;
 }
 
 function mkProject(): string {
@@ -3677,5 +3691,123 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  // ========== plan f6b2d9a4：三轴检测 / 三段式路由 / 两谓词 验收矩阵 ==========
+  const eq = (a: unknown, b: unknown, m: string): void => {
+    if (a !== b) throw new Error(`${m}: 期望 ${JSON.stringify(b)}，实际 ${JSON.stringify(a)}`);
+  };
+
+  run('f6b2d9a4 T1: 显式枚举 > 推断；否定优先——「不要求 pixel_1to1，semantic_layout 即可」→ semantic', () => {
+    eq(detectDesiredFidelity('页面与截图一致；不要求 pixel_1to1，semantic_layout 即可。').desired,
+      'semantic_layout', '否定的 pixel 枚举不作数，非否定 semantic 枚举生效');
+    eq(detectDesiredFidelity('对照参考截图保真实现（pixel_1to1 意图）。').desired, 'pixel_1to1', '枚举字面量识别（下划线词边界）');
+    eq(detectDesiredFidelity('按截图还原页面。').desired, 'pixel_1to1', '参考措辞=瞄准截图（ambiguous 态删除）');
+    eq(detectDesiredFidelity('实现一个设置页。').desired, 'semantic_layout', '无视觉措辞缺省');
+  });
+
+  run('f6b2d9a4 T1: hard 词视觉邻域限定——异章节「严格验收」不翻档；视觉语境「必须像素级」=hard', () => {
+    eq(detectAcceptanceStrictness('交付流程需评审，文档齐全后严格验收归档。'), 'best_effort', '非视觉语境不翻 hard');
+    eq(detectAcceptanceStrictness('界面必须像素级还原，不接受降级。'), 'hard', '视觉语境 hard');
+    eq(detectAcceptanceStrictness('结构/颜色/布局尽量一致。'), 'best_effort', '「尽量」=best_effort（缺省同）');
+  });
+
+  run('f6b2d9a4 T1: 素材轴——「从截图裁剪获取」→auto_crop；指定素材目录→user_dir；无措辞→null', () => {
+    eq(detectAssetAcquisitionIntent('无高保真素材时，logo/图标/插画可从原始截图裁剪获取。'), 'auto_crop', 'auto_crop');
+    eq(detectAssetAcquisitionIntent('已提供切图资源目录 assets/。'), 'user_dir', 'user_dir');
+    eq(detectAssetAcquisitionIntent('实现一个设置页。'), null, '无措辞');
+  });
+
+  run('f6b2d9a4 P0 路由①: inferred=semantic + CLI 升 pixel → selected/effective=pixel（升档真实生效）', () => {
+    const d = resolveFidelityRoutingDecision({
+      requirementText: '实现一个设置页。', manifestFidelity: 'pixel_1to1',
+      manifestFidelitySource: 'explicit_cli',
+      capability: { hasVision: true, ocrAvailable: true },
+      executionIdentity: 'x', requirementSha: 'a'.repeat(64),
+    });
+    eq(d.inferred, 'semantic_layout', 'inferred');
+    eq(d.selected, 'pixel_1to1', 'selected（CLI 升档进路由）');
+    eq(d.effective, 'pixel_1to1', 'effective');
+    eq(d.decision.source, 'explicit_cli', 'source');
+  });
+
+  run('f6b2d9a4 P0 路由②: pixel+hard + 有效 receipt 降 semantic → proceed；inferred 保留；下游 hard gate 不触发', () => {
+    const d = resolveFidelityRoutingDecision({
+      requirementText: '界面必须像素级还原，不接受降级，完全参考截图。',
+      manifestFidelity: 'semantic_layout', downgradeReceiptValid: true,
+      capability: { hasVision: false, ocrAvailable: true },
+      executionIdentity: 'x', requirementSha: 'a'.repeat(64),
+    });
+    eq(d.inferred, 'pixel_1to1', 'inferred 保留（ratchet 锚不被洗）');
+    eq(d.selected, 'semantic_layout', 'receipt 降档真实生效');
+    eq(d.defer, false, '降档后无真冲突——proceed');
+    eq(d.decision.source, 'downgrade_receipt', 'source');
+    const ctx = { fidelityTarget: d.effective, acceptanceStrictness: d.strictness } as CheckContext;
+    eq(isHardPixelContract(ctx), false, 'effective=semantic → pixel 硬门禁不被 desired 重新激活');
+  });
+
+  run('f6b2d9a4 T2: clamp 三档消费——无视觉+OCR→semantic；无视觉无OCR→reference_only；hard+降档=唯一 DEFER', () => {
+    const base = { requirementText: '完全参考截图还原。', executionIdentity: 'x', requirementSha: 'b'.repeat(64) };
+    eq(resolveFidelityRoutingDecision({ ...base, capability: { hasVision: false, ocrAvailable: true } }).effective,
+      'semantic_layout', 'OCR 档');
+    eq(resolveFidelityRoutingDecision({ ...base, capability: { hasVision: false, ocrAvailable: false } }).effective,
+      'reference_only', '地板档');
+    const hard = resolveFidelityRoutingDecision({
+      ...base, requirementText: '必须像素级还原，不接受降级。完全参考截图。',
+      capability: { hasVision: false, ocrAvailable: true },
+    });
+    eq(hard.defer, true, 'pixel∧hard∧clamped=唯一真冲突');
+    eq(resolveFidelityRoutingDecision({ ...base, capability: { hasVision: false, ocrAvailable: true } }).defer,
+      false, 'best_effort 不 DEFER');
+  });
+
+  run('f6b2d9a4 P0-1 谓词对照: ratchet 只在 hard contract 抬升；best_effort 记 WARN/缺省严重度', () => {
+    const hardCtx = { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'hard' } as CheckContext;
+    const softCtx = { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' } as CheckContext;
+    eq(fidelityRatchetFailOrWarn(hardCtx, true).status, 'FAIL', 'hard→FAIL');
+    eq(fidelityRatchetFailOrWarn(softCtx, true).status, 'WARN', 'best_effort→WARN（记债不阻塞）');
+    eq(fidelityRatchetSeverity(hardCtx, 'MAJOR'), 'BLOCKER', 'hard 抬升');
+    eq(fidelityRatchetSeverity(softCtx, 'MAJOR'), 'MAJOR', 'best_effort 不抬升');
+    eq(isPixel1to1(softCtx), true, '执行类谓词仍看 pixel target（提取/度量全力跑）');
+  });
+
+  run('f6b2d9a4 T2: decision_id 覆盖 routing 输入——capability/manifest 变化不复用同 ID', () => {
+    const base = { requirementText: '完全参考截图。', executionIdentity: 'x', requirementSha: 'c'.repeat(64) };
+    const a = resolveFidelityRoutingDecision({ ...base, capability: { hasVision: true, ocrAvailable: true } });
+    const b = resolveFidelityRoutingDecision({ ...base, capability: { hasVision: false, ocrAvailable: true } });
+    const c = resolveFidelityRoutingDecision({ ...base, capability: { hasVision: true, ocrAvailable: true }, manifestFidelity: 'pixel_1to1' });
+    if (a.decision.decision_id === b.decision.decision_id) throw new Error('capability 变化须换 decision_id');
+    if (a.decision.decision_id === c.decision.decision_id) throw new Error('manifest 输入变化须换 decision_id');
+    const a2 = resolveFidelityRoutingDecision({ ...base, capability: { hasVision: true, ocrAvailable: true } });
+    eq(a2.decision.decision_id, a.decision.decision_id, '同输入幂等');
+  });
+
+
+  run('post-impl3 P0-2: pixel+best_effort 未签 defer 不进人签区（不 HALT——债务链承载）', () => {
+    const root = mkProject();
+    try {
+      const specMd = [
+        '```yaml',
+        'ui_change: new_or_changed',
+        'fidelity_target: pixel_1to1',
+        'fidelity_deferrals:',
+        '  - element_id: search_bar',
+        '    reason: defer test',
+        '```',
+      ].join('\n');
+      const r = checkFidelityGovernance(
+        baseCtx(root, { fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' }), specMd,
+      );
+      const hardFail = r.find(x => x.id === 'fidelity_deferrals_human_sign' && x.status === 'FAIL');
+      if (hardFail) throw new Error('best_effort 不得因未签 defer HALT: ' + JSON.stringify(hardFail));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('post-impl3 P0-3: 快照判盲 → adapterImageInput 派生为 none（blind 门禁与 fidelity 同步）', () => {
+    if (deriveEffectiveAdapterImageInput(false, 'tool_read') !== 'none') throw new Error('快照盲须转 none');
+    if (deriveEffectiveAdapterImageInput(true, 'tool_read') !== 'tool_read') throw new Error('快照 visual 保留探测值');
+    if (deriveEffectiveAdapterImageInput(null, 'native_attach') !== 'native_attach') throw new Error('无快照回落探测');
+  });
   return results;
 }

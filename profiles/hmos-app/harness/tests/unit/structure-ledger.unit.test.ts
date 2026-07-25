@@ -143,6 +143,8 @@ function mkFixture(opts: { specYaml: string; ledgerYaml?: string; structSource?:
     feature: 'homepage',
     projectRoot: root,
     fidelityTarget: 'pixel_1to1',
+    // plan f6b2d9a4 P0-1：本套件回归 pixel 硬门禁行为——夹具显式 hard（等价旧契约）
+    acceptanceStrictness: 'hard',
     phaseRule: { structure_checks: {} },
     featureSpec: { feature: 'homepage', contracts: { modules: [{ package_path: 'mod' }] } },
   } as unknown as CheckContext;
@@ -257,6 +259,7 @@ test('gate_respects_custom_features_dir', () => {
     fs.writeFileSync(path.join(modDir, 'Sections.ets'), 'struct CardPackEntrySection { build() {} }\n', 'utf-8');
     const ctx = {
       phase: 'coding', feature: 'homepage', projectRoot: root, fidelityTarget: 'pixel_1to1',
+      acceptanceStrictness: 'hard', // plan f6b2d9a4 P0-1：回归 pixel 硬门禁行为
       phaseRule: { structure_checks: {} },
       featureSpec: { feature: 'homepage', contracts: { modules: [{ package_path: 'mod' }] } },
     } as unknown as CheckContext;
@@ -301,6 +304,7 @@ test('production_entry_check_visual_parity_reaches_ledger_in_custom_features_dir
     fs.writeFileSync(path.join(modDir, 'Sections.ets'), 'struct CardPackEntrySection { build() {} }\n', 'utf-8');
     const ctx = {
       phase: 'coding', feature: 'homepage', projectRoot: root, fidelityTarget: 'pixel_1to1',
+      acceptanceStrictness: 'hard', // plan f6b2d9a4 P0-1：回归 pixel 硬门禁行为
       phaseRule: { structure_checks: {} },
       featureSpec: { feature: 'homepage', contracts: { modules: [{ name: 'mod', package_path: 'mod' }] } },
     } as unknown as CheckContext;

@@ -41,6 +41,8 @@ import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-l
 import {
   clampFidelityByCapability,
   computeRequirementShaFromText,
+  loadCapabilitySnapshot,
+  loadFidelityIntentSsot,
   listAuthoritativeGoalRuns,
   computeRunRequirementSha,
   dereferenceRequirementDocs,
@@ -239,6 +241,7 @@ import {
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
   evaluateFidelityTierPreflight,
+  initializeFidelityRouting,
   evaluateFidelityTransitionAuthorization,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
@@ -701,6 +704,11 @@ export interface CapabilityAdvisory {
   fidelityClamped: boolean;
   /** OCR 预扫描产出的 project-relative .ocr.json 路径（无参考图/OCR 不可用/有视觉时为空数组） */
   ocrJsonPaths: string[];
+  /** plan f6b2d9a4：三轴 SSOT 下发（SSOT 缺失=best_effort/undefined 回落） */
+  acceptanceStrictness?: 'best_effort' | 'hard';
+  assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
+  /** post-impl3 P0-3：mid-chain vision 收紧触发 pixel∧hard∧clamped 真冲突——runner 须在 spawn 前 halt */
+  deferTriggered?: boolean;
 }
 
 /**
@@ -718,6 +726,14 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       (advisory.fidelityClamped
         ? ' (auto-clamped down from a higher desired target by the capability above — this is expected, not a mistake; do not try to "fix" it by editing fidelity_target)'
         : ''),
+    // plan f6b2d9a4：三轴 SSOT 下发——严格度与素材策略与门禁同源，agent 不得自行改判
+    `- Acceptance strictness: **${advisory.acceptanceStrictness ?? 'best_effort'}**` +
+      ((advisory.acceptanceStrictness ?? 'best_effort') === 'best_effort'
+        ? ' (quality gaps are recorded as visual debt and do NOT hard-block; do not stop to ask about them)'
+        : ' (hard contract: quality gaps escalate to BLOCKER and require human final confirmation)'),
+    ...(advisory.assetAcquisitionMode
+      ? [`- Asset acquisition mode (from fidelity-intent SSOT): **${advisory.assetAcquisitionMode}** — mirror this into ui-spec verbatim.`]
+      : []),
     '',
   ];
   if (advisory.fidelityClamped) {
@@ -735,8 +751,22 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       '- Structure and screen layout: infer from the requirement text and any structured hints available.',
       '- Text copy and text positions: if OCR JSON files are listed below, treat them as ground truth — copy',
       '  text verbatim from there, do NOT invent wording.',
-      '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
-      '  claim to have visually verified their appearance.',
+      // plan f6b2d9a4 P0-1：素材建议按 SSOT 素材轴分流——auto_crop 需求下再教 placeholder
+      // 会直接顶撞路由决策（银行卡场景实证），一致性门禁必打回。
+      ...(advisory.assetAcquisitionMode === 'auto_crop'
+        ? [
+            '- Icons/logos/illustrations: the requirement authorizes cropping them from the reference screenshots',
+            '  (asset_acquisition_mode=auto_crop). Declare them as `acquisition: crop` with source/bbox in ui-spec;',
+            '  the crop pipeline (asset_crop_validation) verifies artifacts — do NOT claim visual verification yourself.',
+            '  Per-item fallback IS allowed and expected: when an item cannot pass trusted validation (no VL/human',
+            '  verification available), mark THAT item `placeholder: true` + register it as visual debt and continue',
+            '  — feature-level auto_crop does not mean every single item must crop successfully. Never loop retrying',
+            '  an unverifiable crop.',
+          ]
+        : [
+            '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
+            '  claim to have visually verified their appearance.',
+          ]),
       '- Anything you genuinely cannot determine without seeing the image: register it in the structured',
       '  blind-review pending list (see phase SKILL reference/ui-spec.md「盲档工作法」) instead of guessing',
       '  or endlessly re-attempting — that is the correct way to close this out at your capability level.',
@@ -1073,6 +1103,14 @@ export function resolvePhaseCapabilityAdvisory(
   }
   if (!isUiRelevant) return null;
 
+  // post-impl P0-1（plan f6b2d9a4）：SSOT-first——preflight/initializer 已产
+  // fidelity-intent.json 时，档位（selected）/严格度/素材轴以 SSOT 为准（spec.md 投影
+  // 与需求启发式仅作回落），prompt 与门禁同源；否则银行卡场景 preflight 判 auto_crop
+  // 而 prompt 仍教 placeholder，agent 首轮产出即与一致性门禁相撞。
+  const intentSsot = loadFidelityIntentSsot(projectRoot, manifest.feature);
+  if (intentSsot) desired = intentSsot.selected_fidelity;
+  const capSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
+
   const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
@@ -1112,12 +1150,49 @@ export function resolvePhaseCapabilityAdvisory(
     policyVisual = false;
     console.warn(`[S3] vision context 解析异常 → fail-closed blind_safe：${(e as Error).message}`);
   }
-  const hasVision = mmProbe.supported && policyVisual;
-  const clamp = clampFidelityByCapability(desired, { hasVision, ocrAvailable });
+  // post-impl2 P0-1：消费面只认同一 run 快照；live policy 收紧（快照 visual、live 盲）
+  // 时由本处（runner-owned writer）**原子重建** snapshot+SSOT+decision_id——DEFER 裁决
+  // 由 pregate 按刷新后的 SSOT 重执行（hard pixel 被收紧钳制不再静默降档）。
+  let effectiveSnap = capSnap;
+  let effectiveIntent = intentSsot;
+  let deferTriggered = false;
+  if (effectiveSnap && effectiveSnap.vision.verdict && !policyVisual) {
+    try {
+      const fdRel = (loadFrameworkConfig(projectRoot).paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
+      initializeFidelityRouting({
+        projectRoot, frameworkRoot, feature: manifest.feature,
+        requirement: manifest.requirement, featuresDirRel: fdRel,
+        executionIdentity: manifest.run_id,
+        adapter: manifest.adapter, profileDir: resolvedProfile.profileDir,
+        manifestFidelity: manifest.fidelity, fidelityReceiptRel: manifest.fidelity_receipt,
+        runIdForReceipt: manifest.run_id,
+      });
+      effectiveIntent = loadFidelityIntentSsot(projectRoot, manifest.feature);
+      effectiveSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
+      if (effectiveIntent) desired = effectiveIntent.selected_fidelity;
+      console.warn('[goal-runner] vision policy 收紧（blind-safe）——capability snapshot 与 fidelity SSOT 已原子重建。');
+      if (effectiveIntent && effectiveIntent.selected_fidelity === 'pixel_1to1' &&
+          effectiveIntent.acceptance_strictness === 'hard' && effectiveIntent.clamped) {
+        deferTriggered = true; // mid-chain 收紧触发真冲突——由调用方在 spawn 前消费
+      }
+    } catch (e) {
+      console.warn(`[goal-runner] 收紧重建失败：${(e as Error).message}`);
+      effectiveSnap = null;
+      // post-impl4 P0-2：fail-closed——旧 SSOT 为 pixel∧hard 时重建失败必须 DEFER，
+      // 不得在写盘异常时按盲档静默继续 hard 合同。
+      if (intentSsot && intentSsot.selected_fidelity === 'pixel_1to1' &&
+          intentSsot.acceptance_strictness === 'hard') {
+        deferTriggered = true;
+      }
+    }
+  }
+  const hasVision = effectiveSnap ? effectiveSnap.vision.verdict : (mmProbe.supported && policyVisual);
+  const effectiveOcr = effectiveSnap ? effectiveSnap.ocr.verdict : ocrAvailable;
+  const clamp = clampFidelityByCapability(desired, { hasVision, ocrAvailable: effectiveOcr });
 
   // spec 是 OCR 预扫描的唯一生产者（有真实 OCR 耗时）；plan/coding 只列出盘上已有的产物
   // （宿主复验修复①——此前 plan/coding 恒为空数组，能力块对 agent 谎称"没找到参考图"）。
-  const ocrJsonPaths = !hasVision && ocrAvailable
+  const ocrJsonPaths = !hasVision && effectiveOcr
     ? phase === 'spec' && toolkit
       ? runOcrPrescanForSpec(projectRoot, frameworkRoot, resolvedProfile, manifest, toolkit)
       : listExistingOcrPrescanOutputs(projectRoot, frameworkRoot, manifest.feature)
@@ -1125,10 +1200,13 @@ export function resolvePhaseCapabilityAdvisory(
 
   return {
     hasVision,
-    ocrAvailable,
+    ocrAvailable: effectiveOcr,
     effectiveFidelity: clamp.effective,
     fidelityClamped: clamp.clamped,
     ocrJsonPaths,
+    acceptanceStrictness: effectiveIntent?.acceptance_strictness ?? 'best_effort',
+    assetAcquisitionMode: effectiveIntent?.asset_acquisition_mode,
+    ...(deferTriggered ? { deferTriggered: true } : {}),
   };
 }
 
@@ -2877,6 +2955,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         feature: argv.feature,
         requirement: argv.requirement,
         adapter: argv.adapter ?? cfg.agent_adapter,
+        // plan f6b2d9a4 T3：fresh CLI 的 --fidelity/--fidelity-receipt 送入 parser
+        //（非法枚举在 parser fail-closed；此前 fresh 路径静默丢弃——宿主实证 papercut）。
+        fidelity:
+          typeof argv.fidelity === 'string' && argv.fidelity.trim() ? argv.fidelity.trim() : undefined,
+        fidelity_receipt:
+          typeof argv['fidelity-receipt'] === 'string' && String(argv['fidelity-receipt']).trim()
+            ? String(argv['fidelity-receipt']).trim()
+            : undefined,
         // Detached child reuses the run_id the launcher already printed to the host.
         run_id:
           typeof argv['run-id'] === 'string' && argv['run-id'].trim()
@@ -2895,14 +2981,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  // 十三轮 review P0-1：fidelity transition 独立前置校验——**fresh/resume 都执行**。
-  // 此前 evaluateFidelityTierPreflight 全跳 resume，--resume --manifest --fidelity 降档
-  // +垃圾凭证/垃圾枚举可绕过全部验证直落 authenticated checkpoint。枚举合法+降档 receipt
+  // 十三轮 review P0-1 + plan f6b2d9a4 T3：fidelity transition 独立前置校验——
+  // **fresh/manifest/resume 三路径全部执行**（此前被 if(argv.manifest) 圈住：宿主实证
+  // fresh CLI 的 --fidelity 被静默丢弃，被迫强化措辞 workaround）。枚举合法+降档 receipt
   // 验真通过才返回精确授权字段集（--fidelity→仅 fidelity；receipt 验真过→仅 fidelity_receipt，
   // 不互相搭车）；违规=BLOCKER。applied 判 string 过滤后的 manifestArgv（与
   // applyManifestCliOverrides 同一来源——裸旗标 --fidelity 没应用任何值，不进校验面）。
   let fidelityTransitionFields: ReadonlySet<string> = new Set<string>();
-  if (argv.manifest) {
+  {
     applyManifestCliOverrides(manifest, manifestArgv);
     const ft = evaluateFidelityTransitionAuthorization({
       projectRoot,
@@ -3659,34 +3745,38 @@ Goal runner — tool-agnostic multi-phase orchestrator
       emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
     }
 
-    // goal-fakepass-hardening t6：保真档位 preflight（agent 尚未被调用，不烧 run）——
-    // 强意图+缺视觉 → DEFERRED_CAPABILITY_MISSING；ambiguous+有图+未预授权 → halt 问人。
-    if (!argv.resume && !dryRun) {
+    // plan f6b2d9a4：保真路由 preflight（agent 尚未被调用，不烧 run）——三段式自动定档，
+    // await_human 分支已删除（非关键冲突不阻塞）；唯一 DEFER=selected pixel ∧ hard ∧
+    // clamp 降档。initializeFidelityRouting 同时落 capability-snapshot + fidelity-intent
+    // SSOT（goal 模式的路由初始化唯一入口——agent invoke 前）。
+    // post-impl P1-5：resume 且 fidelity transition 字段被授权（--fidelity/--fidelity-receipt
+    // 生效）时必须重建路由——否则 manifest 已换档而 SSOT/snapshot/prompt/CheckContext 全用旧决策。
+    // post-impl3 P1-5：非 dry 一律幂等重算路由（resume 含 adapter/OCR/需求引用图/盲→视觉
+    // 恢复等能力变化——只靠 fidelity CLI transition 触发会复用旧决策；重算确定性幂等）。
+    if (!dryRun) {
       const fidelityAction = evaluateFidelityTierPreflight({
         projectRoot,
         frameworkRoot,
         manifest,
         featuresDirRel: featuresDir,
         chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
+        profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
+        fidelityFromCli: Boolean(manifestArgv.fidelity),
       });
       if (fidelityAction.action !== 'proceed') {
-        const status: GoalRunStatus =
-          fidelityAction.action === 'defer_capability_missing' ? 'DEFERRED_CAPABILITY_MISSING' : 'HALTED';
+        const status: GoalRunStatus = 'DEFERRED_CAPABILITY_MISSING';
         console.error(`\n[goal-runner] fidelity preflight → ${status}：\n${fidelityAction.detail}\n`);
         const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, []);
         writeGoalReport(projectRoot, manifest.report_dir, report, {
           workflowChain: fullWorkflowChain.map(String),
         });
-        appendEvent(manifest.report_dir, projectRoot, {
-          type: 'run_end',
-          status,
-          ...(fidelityAction.action === 'await_human_fidelity_tier'
-            ? { halt_reason: 'await_human_fidelity_tier' }
-            : {}),
-        });
+        appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
         runConcluded = true;
         emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
-        return fidelityAction.action === 'defer_capability_missing' ? 2 : 1;
+        return 2;
+      }
+      if (fidelityAction.routing) {
+        console.log(`[goal-runner] fidelity 路由：${fidelityAction.routing.decision.rationale}（source=${fidelityAction.routing.decision.source}）`);
       }
     }
 
@@ -4120,6 +4210,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
           resolvedProfile,
           phase,
         );
+        // post-impl3 P0-3：mid-chain 能力收紧命中真冲突（pixel∧hard∧clamped）——spawn 前
+        // 消费裁决（否则收紧发生在 plan/coding 时后续不重跑 spec pregate，hard pixel 静默继续）。
+        if (capabilityAdvisory?.deferTriggered) {
+          halted = true;
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt', phase, halt_reason: 'capability_tightened_hard_pixel',
+          });
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: 'capability_tightened_hard_pixel',
+            halt_guidance:
+              'vision policy 收紧后 pixel_1to1+hard 无法满足——换视觉能力模型 / 真人签发 ' +
+              'fidelity_downgrade receipt / 放宽需求严格度，然后 --resume。',
+          });
+          break;
+        }
 
         // visual-capability-truth S3（路径 B）：spec 期 inline canary——runner 随机出题
         // （答案只在内存），业务产出与答题同 invocation；判卷通过才签 invocation_bound。

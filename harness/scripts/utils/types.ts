@@ -769,7 +769,13 @@ export interface CheckContext {
   fidelityClamped?: boolean;
   /** 钳制原因（fidelityClamped=true 时有值） */
   fidelityClampReason?: 'no_vision_ocr_available' | 'no_vision_no_ocr';
-  /** 来自 spec Visual Handoff yaml 块；默认 approximate */
+  /** 验收严格度（plan f6b2d9a4 三轴之一；SSOT=fidelity-intent.json）——缺省 best_effort。
+   * 裁决类逻辑（severity 抬升/人确认/completion 封顶）读 isHardPixelContract。 */
+  acceptanceStrictness?: 'best_effort' | 'hard';
+  /** 本 invocation 中 spec.asset_acquisition provider 是否确认执行（v7 P1-2：
+   * 盲档 crop 免 c3 的可执行判据——skip/throw 时磁盘旧报告不构成豁免）。 */
+  assetAcquisitionProviderRan?: boolean;
+  /** 来自 fidelity-intent SSOT（首产）或 spec Visual Handoff yaml 投影；默认 approximate */
   assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
   /** pixel_1to1 联动后的有效素材模式 */
   effectiveAssetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';

@@ -30,7 +30,7 @@ import {
   type UiSpecComponentNode,
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import {
   clusterOcrLines,
   fuzzyMatchRatio,
@@ -290,7 +290,7 @@ export function checkUiSpecBboxSemantic(ctx: CheckContext, specMarkdown: string)
   }
 
   // ---- 裁决（优先级：OCR 正面验证 > OCR 判转置 > orientation 预检 > 覆盖率不足）----
-  const pixel = isPixel1to1(ctx);
+  const pixel = isHardPixelContract(ctx);
 
   if (assessment?.systematicTransposed) {
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);

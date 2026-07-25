@@ -24,6 +24,19 @@ import {
 } from '../../scripts/utils/visual-debt';
 import { checkFidelityCapabilityPregate } from '../../scripts/check-spec';
 import { checkVisualDebtDisclosure } from '../../scripts/check-testing';
+import { evaluateFidelityTierPreflight, initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
+import {
+  loadFidelityIntentSsot,
+  resolveFidelityRoutingDecision,
+  writeCapabilitySnapshot,
+  writeFidelityIntentSsot,
+} from '../../scripts/utils/fidelity-shared';
+import { buildCapabilityBlock, resolvePhaseCapabilityAdvisory } from '../../scripts/goal-runner';
+import { generateGoalReportJson, writeGoalReport } from '../../scripts/utils/goal-report-generator';
+import { phaseInitDecision } from '../../scripts/fidelity-intent-init';
+import { loadResolvedProfile } from '../../profile-loader';
+import { loadFrameworkConfig } from '../../config';
+import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { clearFrameworkConfigCache, featureFilePath, featureDir, receiptDirPath } from '../../config';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
@@ -161,41 +174,203 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertTrue(swapped !== h, '跨屏换对 → 哈希变（codex 四轮⑤：裸 hash 数组调序漏洞已堵）');
     },
   },
+  // ---- plan f6b2d9a4：前置闸从「三态首产+阻塞求人」改为「路由 SSOT 复核」----
   {
-    name: '前置闸：强 pixel 意图 + 盲 → BLOCKER FAIL（DEFERRED 语义）+ fidelity-intent.json 落盘 desired=pixel_1to1',
+    name: '前置闸(v7)：SSOT 缺失——非 UI 不阻塞；UI 相关（有参考图）→ BLOCKER 指向 initializer',
     run: async () => withTmpProject(async root => {
-      const reqPath = featureFilePath(root, 'demo', '原始需求.md');
-      fs.mkdirSync(path.dirname(reqPath), { recursive: true });
-      fs.writeFileSync(reqPath, '页面布局完全参考"1-银行卡添卡首页.jpg"，逐像素还原设计稿。', 'utf-8');
-      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root, adapterImageInput: 'none' } as unknown as CheckContext;
+      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
+      // 非 UI（无 ui-spec/handoff/参考图）：路由不适用，不拦老流程
+      const [nonUi] = checkFidelityCapabilityPregate(ctx);
+      assertEq(nonUi.status, 'PASS', nonUi.details);
+      // UI 相关（ux-reference 有图）：复核不首产 → FAIL 指向 initializer
+      const uxDir = featureFilePath(root, 'demo', 'ux-reference');
+      fs.mkdirSync(uxDir, { recursive: true });
+      fs.writeFileSync(path.join(uxDir, 'ref.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
       const [r] = checkFidelityCapabilityPregate(ctx);
-      assertEq(r.status, 'FAIL', `status（${r.details}）`);
-      assertEq(r.failure_kind, 'capability_missing_strong_intent', 'failure_kind');
-      const intent = JSON.parse(fs.readFileSync(
-        featureFilePath(root, 'demo', path.join('spec', 'reports', 'fidelity-intent.json')), 'utf-8',
-      )) as { desired_fidelity: string; effective_fidelity: string; reference_intent: { value: string } };
-      assertEq(intent.desired_fidelity, 'pixel_1to1', 'desired 落盘');
-      assertEq(intent.effective_fidelity, 'deferred', 'effective=deferred');
-      assertEq(intent.reference_intent.value, 'exact', 'reference_intent');
+      assertEq(r.status, 'FAIL', r.details);
+      assertTrue(/fidelity-intent-init/.test(r.suggestion ?? ''), '指向 initializer 命令');
     }),
   },
   {
-    name: '前置闸：非盲（tool_read）同需求 → PASS（effective=desired）',
+    name: '前置闸(v7)：宿主银行卡原话 + 盲 → 零询问自动定档（pixel_1to1/best_effort/auto_crop）',
     run: async () => withTmpProject(async root => {
-      const reqPath = featureFilePath(root, 'demo', '原始需求.md');
-      fs.mkdirSync(path.dirname(reqPath), { recursive: true });
-      fs.writeFileSync(reqPath, '页面布局完全参考"1-银行卡添卡首页.jpg"，逐像素还原设计稿。', 'utf-8');
-      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root, adapterImageInput: 'tool_read' } as unknown as CheckContext;
+      // 宿主 bc-openCard 原始需求.md ground truth（:3 素材声明 + :85 pixel_1to1 意图+尽量）
+      const hostReq =
+        '权威需求文档。同目录参考图为 UI 真源；结构/颜色/布局尽量一致。' +
+        '无高保真素材时，logo/图标/插画可从原始截图裁剪获取（模拟数据环境）。\n' +
+        '对照同目录参考截图保真实现（pixel_1to1 意图）：结构、颜色、布局、文案位置尽量与参考图一致。';
+      const { routing } = initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo',
+        requirement: hostReq, featuresDirRel: 'doc/features',
+        executionIdentity: 'phase:demo:spec',
+      });
+      assertEq(routing.inferred, 'pixel_1to1', 'inferred=pixel（枚举字面量 pixel_1to1 识别）');
+      assertEq(routing.strictness, 'best_effort', '「尽量」=best_effort（素材声明不进质量轴）');
+      assertEq(routing.assetAcquisitionMode, 'auto_crop', '「从截图裁剪获取」=auto_crop');
+      assertEq(routing.defer, false, 'best_effort 不 DEFER——自动定档继续跑');
+      assertEq(routing.decision.source, 'requirement_self_declared', 'decision.source');
+      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
       const [r] = checkFidelityCapabilityPregate(ctx);
-      assertEq(r.status, 'PASS', r.details);
+      assertEq(r.status, 'PASS', `零询问零 HALT（${r.details}）`);
     }),
   },
   {
-    name: '前置闸：无意图文本 + 盲 → PASS（semantic_layout 缺省语义不变，非强意图不钳）',
+    name: '前置闸(v7)：pixel+hard+能力不足=唯一真冲突 → BLOCKER；同 pixel 需求 best_effort → PASS',
     run: async () => withTmpProject(async root => {
-      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root, adapterImageInput: 'none' } as unknown as CheckContext;
-      const [r] = checkFidelityCapabilityPregate(ctx);
-      assertEq(r.status, 'PASS', r.details);
+      const initHard = (): void => {
+        initializeFidelityRouting({
+          projectRoot: root, frameworkRoot: root, feature: 'demo',
+          requirement: '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。',
+          featuresDirRel: 'doc/features', executionIdentity: 'phase:demo:spec',
+        });
+      };
+      initHard();
+      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
+      const [hard] = checkFidelityCapabilityPregate(ctx);
+      assertEq(hard.status, 'FAIL', hard.details);
+      assertEq(hard.failure_kind, 'capability_missing_strong_intent', 'failure_kind');
+      // 同 pixel 目标但「尽量」（best_effort 缺省）→ 自动钳制 + PASS（P0-1 验收对）
+      initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo',
+        requirement: '页面完全参考截图，尽量还原。',
+        featuresDirRel: 'doc/features', executionIdentity: 'phase:demo:spec',
+      });
+      const [soft] = checkFidelityCapabilityPregate(ctx);
+      assertEq(soft.status, 'PASS', soft.details);
+    }),
+  },
+  {
+    name: 'post-impl4 P0-1：截断链（起点非 spec）hard+pixel+盲同样 DEFER（真冲突不受链起点限制）',
+    run: async () => withTmpProject(async root => {
+      const manifest = {
+        feature: 'demo', run_id: 'r-trunc',
+        requirement: '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。',
+      } as unknown as GoalManifest;
+      const action = evaluateFidelityTierPreflight({
+        projectRoot: root, frameworkRoot: root, manifest,
+        featuresDirRel: 'doc/features', chainStartsAtSpec: false,
+      });
+      assertEq(action.action, 'defer_capability_missing', JSON.stringify(action));
+    }),
+  },
+  {
+    name: '前置闸(v7)：有视觉 → effective=pixel；spec.md 投影失配 → BLOCKER 自动修复指引（禁问用户）',
+    run: async () => withTmpProject(async root => {
+      const d = resolveFidelityRoutingDecision({
+        requirementText: '完全参考截图还原。',
+        capability: { hasVision: true, ocrAvailable: true },
+        executionIdentity: 'phase:demo:spec', requirementSha: 'a'.repeat(64),
+      });
+      assertEq(d.effective, 'pixel_1to1', '有视觉不钳（三档矩阵上限）');
+      writeFidelityIntentSsot(root, 'demo', d, {
+        executionIdentity: 'phase:demo:spec', requirementSha: 'a'.repeat(64),
+      });
+      writeCapabilitySnapshot(root, 'demo', {
+        execution_identity: 'phase:demo:spec',
+        decision_id: d.decision.decision_id, // post-impl4 P1-5：同批事务标记
+        vision: { verdict: true, source: 'test' },
+        ocr: { verdict: true, source: 'test' },
+      });
+      const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
+      assertEq(checkFidelityCapabilityPregate(ctx)[0].status, 'PASS', 'SSOT 一致 → PASS');
+      // spec.md 投影与 SSOT 失配 → BLOCKER + agent 自动修复投影（不升级为用户询问）
+      const specPath = featureFilePath(root, 'demo', path.join('spec', 'spec.md'));
+      fs.mkdirSync(path.dirname(specPath), { recursive: true });
+      // Visual Handoff 根块须含 ui_change 键才被识别（parseVisualHandoffYamlRoot 契约）
+      fs.writeFileSync(
+        specPath,
+        '# spec\n\n```yaml\nui_change: new_or_changed\nfidelity_target: semantic_layout\n```\n',
+        'utf-8',
+      );
+      const [drift] = checkFidelityCapabilityPregate(ctx);
+      assertEq(drift.status, 'FAIL', drift.details);
+      assertTrue(/投影/.test(drift.details ?? ''), '点名投影失配');
+      assertTrue(/agent 直接修复|不询问用户/.test(drift.suggestion ?? ''), '指引=agent 自动修复投影，禁升级为用户询问');
+    }),
+  },
+  {
+    name: 'post-impl P0-1 e2e：银行卡需求 init → spec prompt 能力块消费 SSOT（auto_crop 建议、无 placeholder 冲突、best_effort 告知）',
+    run: async () => withTmpProject(async root => {
+      const hostReq =
+        '添加银行卡页面开发。同目录参考图为 UI 真源；结构/颜色/布局尽量一致。' +
+        '无高保真素材时，logo/图标/插画可从原始截图裁剪获取。（pixel_1to1 意图）尽量与参考图一致。';
+      initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo',
+        requirement: hostReq, featuresDirRel: 'doc/features',
+        executionIdentity: '20260724T000000Z-goal1',
+      });
+      const manifest = {
+        feature: 'demo', requirement: hostReq, run_id: '20260724T000000Z-goal1',
+      } as unknown as GoalManifest;
+      const advisory = resolvePhaseCapabilityAdvisory(
+        manifest, root, root, loadResolvedProfile(root, loadFrameworkConfig(root)), 'spec',
+      );
+      assertTrue(advisory !== null, 'UI 相关需求须产 advisory');
+      assertEq(advisory!.assetAcquisitionMode, 'auto_crop', 'advisory 素材轴来自 SSOT');
+      assertEq(advisory!.acceptanceStrictness, 'best_effort', 'advisory 严格度来自 SSOT');
+      const block = buildCapabilityBlock(advisory!).join('\n');
+      assertTrue(/auto_crop/.test(block), '能力块下发素材轴');
+      assertTrue(/acquisition: crop/.test(block), 'auto_crop 下教 crop 声明路线');
+      assertTrue(!/use placeholder assets/.test(block), 'auto_crop 下不整体改教 placeholder（顶撞 SSOT）');
+      // post-impl2 P0-2：逐项 fallback 必须被明示允许——否则「crop 验不了→建议 placeholder→
+      // prompt 禁 placeholder」形成循环卡死（feature 级 auto_crop ≠ 每项都必须裁成功）
+      assertTrue(/Per-item fallback IS allowed/.test(block), '逐项占位+记债出路明示');
+      assertTrue(/quality gaps are recorded as visual debt/.test(block), 'best_effort 告知不硬拦');
+    }),
+  },
+  {
+    name: 'post-impl2 P1-3：SSOT 生命周期四态——valid+sha 匹配复用/stale 重建/missing·corrupt 初始化/goal 首产无 sha 保守复用',
+    run: async () => withTmpProject(async root => {
+      const sha = 'a'.repeat(64);
+      const goalValid = {
+        state: 'valid' as const,
+        doc: { execution_identity: '20260724T000000Z-goal1', requirement_sha256: sha },
+      };
+      const act = { activeGoalRunId: '20260724T000000Z-goal1' };
+      assertEq(phaseInitDecision(goalValid, sha, act), 'reuse', '活跃 goal+sha 匹配 → 复用');
+      assertEq(phaseInitDecision(goalValid, sha), 'init', 'post-impl4 P1-3：无活跃 goal（历史残留）→ 重算能力');
+      assertEq(phaseInitDecision(goalValid, 'b'.repeat(64), act), 'init', '需求变更（stale）→ 自动重建，不沿用旧决策');
+      assertEq(phaseInitDecision(goalValid, null, act), 'reuse', '活跃 goal 且无法重算 sha → 保守复用');
+      assertEq(phaseInitDecision({ state: 'missing' }, sha), 'init', 'missing → 初始化（goal env 不再盲跳=修死循环）');
+      assertEq(phaseInitDecision({ state: 'corrupt' }, sha), 'init', 'corrupt → runner-owned 受控重建');
+      const phaseValid = {
+        state: 'valid' as const,
+        doc: { execution_identity: 'phase:demo:spec', requirement_sha256: sha },
+      };
+      assertEq(phaseInitDecision(phaseValid, null), 'init', 'phase 身份且无法重算 → 重建（非 goal 保护面）');
+      assertEq(phaseInitDecision(phaseValid, sha), 'init', 'post-impl3 P1-5：phase-owned 即使 sha 匹配也幂等重算（adapter/能力变化比较不出）');
+    }),
+  },
+  {
+    name: 'post-impl P1-6：SSOT 损坏（字段缺失/非法枚举）→ loader 判 null（按缺失处理不消费）',
+    run: async () => withTmpProject(async root => {
+      const p = featureFilePath(root, 'demo', path.join('spec', 'reports', 'fidelity-intent.json'));
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, JSON.stringify({
+        schema_version: '2.0', selected_fidelity: 'pixel_1to1', // 缺 inferred/effective/decision 等
+      }), 'utf-8');
+      assertEq(loadFidelityIntentSsot(root, 'demo'), null, '部分损坏不得当权威输入');
+    }),
+  },
+  {
+    name: 'post-impl5 P2：goal-report 写盘级三轴投影——json.fidelity_routing 强类型 + md 保真路由行（SSOT 派生）',
+    run: async () => withTmpProject(async root => {
+      initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo',
+        requirement: '页面完全参考截图，尽量还原。无高保真素材时可从原始截图裁剪获取。',
+        featuresDirRel: 'doc/features', executionIdentity: 'r-report',
+      });
+      const reportDir = 'doc/features/demo/goal-runs/r-report';
+      const report = generateGoalReportJson('r-report', 'demo', 'COMPLETED', []);
+      writeGoalReport(root, reportDir, report);
+      const json = JSON.parse(fs.readFileSync(
+        path.join(root, reportDir, 'goal-report.json'), 'utf-8',
+      )) as { fidelity_routing?: { selected: string; asset_acquisition_mode: string } };
+      assertEq(json.fidelity_routing?.selected, 'pixel_1to1', 'json 三轴投影 selected');
+      assertEq(json.fidelity_routing?.asset_acquisition_mode, 'auto_crop', 'json 三轴投影素材轴');
+      const md = fs.readFileSync(path.join(root, reportDir, 'goal-report.md'), 'utf-8');
+      assertTrue(/保真路由/.test(md), 'md 渲染三轴行');
+      assertTrue(/auto_crop/.test(md), 'md 含素材轴');
     }),
   },
   {

@@ -13,7 +13,7 @@ import {
   findUnsignedRefElementDefers,
   isHumanSignedDeferral,
   isP0VisualElementId,
-  isPixel1to1,
+  isHardPixelContract,
   loadRefElementsFile,
   parseAssetAcquisitionModeFromHandoffDoc,
   parseFidelityDeferrals,
@@ -154,7 +154,9 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
     }
   }
 
-  if (fidelityTarget !== 'pixel_1to1') {
+  // post-impl3 P0-2：人签区=裁决类——只在 hard contract（pixel∧hard）进入；best_effort
+  // 的 defer 本身即声明债务，由债务/披露链承载，不再借 pixel 目标 HALT。
+  if (!(fidelityTarget === 'pixel_1to1' && ctx.acceptanceStrictness === 'hard')) {
     return results;
   }
 
@@ -230,7 +232,7 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
     const manifestRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'asset-manifest.yaml');
     const manifestPath = assetManifestAbsPath(ctx.projectRoot, ctx.feature);
     if (!fs.existsSync(manifestPath)) {
-      const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isPixel1to1(ctx));
+      const { severity, status } = fidelityRatchetFailOrWarn(ctx, !isHardPixelContract(ctx));
       results.push({
         id: 'asset_manifest_required',
         category: 'structure',

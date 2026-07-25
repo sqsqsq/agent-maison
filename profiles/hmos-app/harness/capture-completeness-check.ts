@@ -9,7 +9,7 @@ import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/t
 import { relFeatureArtifact, featureArtifactPath } from '../../../harness/config';
 import {
   fidelityRatchetFailOrWarn,
-  isPixel1to1,
+  isHardPixelContract,
   refElementsAbsPath,
   refElementsRelPath,
   resolveRefElementsDenominator,
@@ -85,7 +85,7 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
   const hasMemoryManifest = denomResolved.source === 'memory_manifest';
 
   if (!hasMemoryManifest) {
-    if (ctx.fidelityTarget !== 'pixel_1to1') {
+    if (!isHardPixelContract(ctx)) { // post-impl2 P1-4
       if (!fs.existsSync(refAbs)) {
         return [{
           id: 'capture_completeness',
@@ -217,7 +217,7 @@ function collectButtonsInNode(node: UiSpecComponentNode | undefined, out: UiSpec
 export function checkCaptureStyleFields(ctx: CheckContext, specMarkdown: string): CheckResult[] {
   const uiChange = parseUiChangeFromSpecMarkdown(specMarkdown);
   if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) return [];
-  if (ctx.fidelityTarget !== 'pixel_1to1') return []; // 仅 1:1 下强制；semantic_layout 零噪声
+  if (!isHardPixelContract(ctx)) return [] // post-impl2 P1-4; // 仅 1:1 下强制；semantic_layout 零噪声
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   if (!uiDoc) return [];
 
@@ -420,7 +420,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
   const desc = checks?.capture_completeness_external?.description?.trim() ?? 'capture_completeness_external';
   const uiSpecRel = uiSpecRelPath(ctx.projectRoot, ctx.feature);
   const refRel = refElementsRelPath(ctx.projectRoot, ctx.feature);
-  const pixel = isPixel1to1(ctx);
+  const pixel = isHardPixelContract(ctx);
 
   if (!isOcrAvailable()) {
     return [{
@@ -733,7 +733,7 @@ function lintNodeTree(
 export function checkUiSpecStructureLint(ctx: CheckContext, specMarkdown: string): CheckResult[] {
   const uiChange = parseUiChangeFromSpecMarkdown(specMarkdown);
   if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) return [];
-  if (!isPixel1to1(ctx)) return []; // 仅 pixel_1to1 强制；semantic_layout 零噪声
+  if (!isHardPixelContract(ctx)) return []; // 仅 pixel_1to1 强制；semantic_layout 零噪声
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   if (!uiDoc) return [];
   const checks = ctx.phaseRule.structure_checks as Record<string, { description?: string }>;
