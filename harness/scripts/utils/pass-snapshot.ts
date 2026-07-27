@@ -19,6 +19,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { spawnSync } from 'child_process';
 import { artifactReadCandidatePaths, featureDir, featureFilePath, resolveFeatureArtifact } from '../../config';
 import {
   PHASE_OUTPUT_FILES_BY_PHASE,
@@ -74,6 +75,17 @@ export function passSnapshotHeadPath(projectRoot: string, feature: string, runId
 
 export function invalidationJournalPath(projectRoot: string, feature: string, runId: string): string {
   return path.join(passSnapshotRunDir(projectRoot, feature, runId), 'invalidation.json');
+}
+
+/** coding 基线锚（c4e8b1d3 G1-1）：与 pass-snapshots 同 run 命名空间的兄弟文件。 */
+export function codingBasePath(projectRoot: string, feature: string, runId: string): string {
+  return path.join(
+    goalTrustRootDir(),
+    projectIdentityHash(projectRoot),
+    safeFeatureName(feature),
+    runId,
+    'coding-base.json',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +512,106 @@ export function takePassSnapshot(input: {
   return { manifest, manifestSha256, head, phaseDir, memoryDigest: { manifestSha256, fileHashes } };
 }
 
+// ---------------------------------------------------------------------------
+// coding 基线锚（c4e8b1d3 G1-1：pre-coding 锚定）
+// ---------------------------------------------------------------------------
+// runner 在**首次 coding agent invoke 前**记录当时的 git HEAD（agent 尚未动码）。
+// write-once：同 run 已有合法记录即复用（resume 不得重新取 HEAD——那会把 agent
+// 已 commit 的越界文件洗出 diff 基线）。harness 侧 ui_diff_within_declared_files
+// 以此为 diff baseRef；缺失/损坏 → 门禁 fail-closed BLOCKER。
+
+export interface CodingBaseBody {
+  kind: 'coding_base';
+  schema_version: '1.0';
+  project_identity_hash: string;
+  feature: string;
+  run_id: string;
+  base_sha: string;
+  recorded_at: string;
+}
+
+function isValidCodingBaseShape(b: Record<string, unknown>): boolean {
+  return (
+    typeof b.project_identity_hash === 'string' &&
+    typeof b.feature === 'string' &&
+    typeof b.run_id === 'string' &&
+    typeof b.base_sha === 'string' && /^[0-9a-f]{40}$/.test(b.base_sha as string) &&
+    typeof b.recorded_at === 'string'
+  );
+}
+
+export function readCodingBase(
+  projectRoot: string,
+  feature: string,
+  runId: string,
+): { body: CodingBaseBody | null; mac: MacVerdict | 'absent' } {
+  const p = codingBasePath(projectRoot, feature, runId);
+  if (!fs.existsSync(p)) return { body: null, mac: 'absent' };
+  try {
+    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as CodingBaseBody & { mac?: unknown };
+    const { mac, ...body } = doc;
+    if (body.kind !== 'coding_base' || body.schema_version !== '1.0') {
+      return { body: null, mac: 'invalid' };
+    }
+    if (!isValidCodingBaseShape(body as unknown as Record<string, unknown>)) {
+      return { body: null, mac: 'invalid' };
+    }
+    if (
+      body.project_identity_hash !== projectIdentityHash(projectRoot) ||
+      body.feature !== feature ||
+      body.run_id !== runId
+    ) {
+      return { body: null, mac: 'invalid' }; // 跨 project/feature/run 重放
+    }
+    return { body: body as CodingBaseBody, mac: verifyMac(body, mac) };
+  } catch {
+    return { body: null, mac: 'invalid' };
+  }
+}
+
+/** 当前 git HEAD（40-hex）；非 git 仓库/失败 → null。供 runner 锚定 coding_base 用。 */
+export function resolveGitHeadSha(projectRoot: string): string | null {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: projectRoot, encoding: 'utf-8', shell: false,
+  });
+  if (r.status !== 0) return null;
+  const sha = (r.stdout ?? '').trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+export type CodingBaseRecordOutcome =
+  | { kind: 'recorded'; body: CodingBaseBody }
+  | { kind: 'reused'; body: CodingBaseBody }
+  | { kind: 'invalid_existing' };
+
+export function recordCodingBase(input: {
+  projectRoot: string;
+  feature: string;
+  runId: string;
+  baseSha: string;
+}): CodingBaseRecordOutcome {
+  const { projectRoot, feature, runId, baseSha } = input;
+  const existing = readCodingBase(projectRoot, feature, runId);
+  if (existing.body && existing.mac !== 'invalid') {
+    return { kind: 'reused', body: existing.body }; // write-once：resume 复用原 SHA
+  }
+  if (existing.mac === 'invalid') {
+    // 损坏/伪造的既有记录不重签洗白——保留现场，调用方与门禁侧 fail-closed
+    return { kind: 'invalid_existing' };
+  }
+  const body: CodingBaseBody = {
+    kind: 'coding_base',
+    schema_version: '1.0',
+    project_identity_hash: projectIdentityHash(projectRoot),
+    feature,
+    run_id: runId,
+    base_sha: baseSha,
+    recorded_at: new Date().toISOString(),
+  };
+  writeJsonAtomic(codingBasePath(projectRoot, feature, runId), { ...body, mac: macFor(body) });
+  return { kind: 'recorded', body };
+}
+
 export interface HeadReadResult {
   body: PassSnapshotHeadBody | null;
   mac: MacVerdict | 'absent';
@@ -618,6 +730,20 @@ export function readFrozenManifest(phaseDir: string): { body: FrozenManifestBody
     return { body: body as FrozenManifestBody, mac: verifyMac(body, mac) };
   } catch {
     return { body: null, mac: 'invalid' };
+  }
+}
+
+/** 读取快照内存储的 frozen 文件字节（存储名 = rel 的 `/`→`__`），并验哈希。
+ * 缺失/哈希不符 → null（调用方 fail-closed）。 */
+export function readFrozenSnapshotFile(phaseDir: string, rel: string, expectedSha256: string): Buffer | null {
+  const stored = path.join(phaseDir, rel.replace(/\//g, '__'));
+  if (!fs.existsSync(stored)) return null;
+  try {
+    const buf = fs.readFileSync(stored);
+    if (sha256Buf(buf) !== expectedSha256) return null;
+    return buf;
+  } catch {
+    return null;
   }
 }
 

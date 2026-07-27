@@ -31,6 +31,7 @@ import { probeConsumerBinding } from './utils/integration-scope';
 import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
+import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
 import { classifyChangedFiles, layerDirPrefixes } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import {
@@ -438,6 +439,37 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   }];
 }
 
+/**
+ * c4e8b1d3 G1：ui_diff_within_declared_files——UI 文件级 scope 门。
+ * 白名单=同 run plan PASS snapshot 冻结的 contracts.files（fail-closed 禁退 live）；
+ * diff 基线=runner 锚定的 coding_base_sha（四态覆盖）；删除/重命名 base 侧分类。
+ * 任何 strictness 均 BLOCKER（不受视觉 fidelity 档位影响）。
+ */
+function checkUiDiffWithinDeclaredFiles(ctx: CheckContext): CheckResult[] {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
+  const r = runUiDiffWithinDeclaredFiles({
+    projectRoot: ctx.projectRoot,
+    feature: ctx.feature,
+    runId,
+  });
+  // round 19 P1：goal run 内本门**永不 SKIP**（任何不可判都是 FAIL）；唯一合法 SKIP =
+  // 非 goal 起跑（无 run 级锚，设计内），降 MINOR 使其不进 critical-skip 判定；
+  // 除此之外出现的 BLOCKER 级 SKIP（如未来回归）由 CODING_CRITICAL_SKIP_IDS 拦 claim done。
+  const designedSkip = r.status === 'SKIP' && runId === null;
+  return [{
+    id: 'ui_diff_within_declared_files',
+    category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'ui_diff_within_declared_files'),
+    severity: designedSkip ? 'MINOR' : 'BLOCKER',
+    status: r.status,
+    details: r.details,
+    affected_files: r.affectedFiles,
+    suggestion: r.suggestion,
+    failure_kind: r.failureKind,
+    blocking_class: r.failureKind ? 'ui_diff_within_declared_files' : undefined,
+  }];
+}
+
 // --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
@@ -530,6 +562,9 @@ const CODING_CRITICAL_SKIP_IDS = new Set([
   // cursor 深度 review P2：visual_parity BLOCKER 级 SKIP（failClosed 异常）计入 critical——
   // profile 显式关闭产生的 MINOR SKIP 不在此列（severity 过滤天然放行）。
   'visual_parity',
+  // c4e8b1d3 round19 P1：UI scope 门在 goal run 内永不合法 SKIP——出现 BLOCKER 级 SKIP
+  // 即异常，须拦 claim done；normal 模式的设计内 SKIP 已降 MINOR，天然放行。
+  'ui_diff_within_declared_files',
 ]);
 
 function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): CheckResult {
@@ -705,6 +740,8 @@ const checker: PhaseChecker = {
       ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
+    // c4e8b1d3 G1：UI 文件级 scope 门（冻结 contracts.files + coding_base_sha 基线）
+    results.push(...safeRun(() => checkUiDiffWithinDeclaredFiles(ctx), 'ui_diff_within_declared_files'));
     // （v23 D2）required_anchors 通道已删：spec 侧从无生产者（schema/模板都没有），该检查
     // 永久 SKIP 只制造"已覆盖"错觉。锚点缺失如今作为 testing 的 actionable 缺陷回 coding 修。
 

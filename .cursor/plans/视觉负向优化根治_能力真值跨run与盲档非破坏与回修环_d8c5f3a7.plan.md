@@ -365,7 +365,7 @@ overview: >
 > 范围；现行范围 = **T1/T2 保留 + 最小回修闭环（F1-F5）+ 删除批（D1-D10）**。文件名不改（保
 > 引用稳定）。
 
-状态：**v23.5 已实施（2026-07-26）——review 第 14 轮 gate 两档一致性修复，代码收口**；typecheck 0 / unit 2461 / fixtures 44；**下一步=宿主真实闭环复演**（解禁条件三之三）；禁发保持生效直至复演完成
+状态：**v23.5 已实施并提交（4a3e86a3，2026-07-26）——14 轮 review 收口**；typecheck 0 / unit 2461 / fixtures 44；**排期更新（用户定案）：先完成 c4e8b1d3（UI 文件级 scope 门 + consumer golden——其 v17 Todo 1-4 已于 2026-07-27 实施完毕），与本 plan 统一打包（candidate zip：npm run candidate:build）后做宿主真实闭环复演**（解禁条件三之三）；复演时宿主装 candidate zip、按 MAISON_GOLDEN_CONTRACT 跑 golden 十固定屏采集、evaluator 裁决 PASS 才 candidate:promote；禁发保持生效直至复演完成
 
 > **v23.4 → v23.5（review 第 14 轮，最后一处）**
 > 【必修】gate 侧 `visual_diff_evaluation_invalidated` 改**档位无关 BLOCKER/FAIL**：OpenSpec

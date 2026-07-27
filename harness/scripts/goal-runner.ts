@@ -152,6 +152,8 @@ import {
   restoreFrozenFromSnapshot,
   passSnapshotPhaseDir,
   takePassSnapshot,
+  recordCodingBase,
+  resolveGitHeadSha,
 } from './utils/pass-snapshot';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import {
@@ -4756,6 +4758,42 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // c4e8b1d3 G1-1（pre-coding 锚定）：**首次 coding agent invoke 前**记录当时 git
+        // HEAD 为 coding_base_sha（write-once trust 文件；resume/backtrack 复用原 SHA，
+        // 不得重新取 HEAD——那会把 agent 已 commit 的越界文件洗出 diff 基线）。
+        // 记录失败不在此 halt：ui_diff_within_declared_files 在 check 侧对缺锚 fail-closed，
+        // 此处只保证"能记则记 + 事件可审计"。
+        if (!dryRun && phase === ('coding' as FeaturePhase)) {
+          try {
+            const headSha = resolveGitHeadSha(projectRoot);
+            if (headSha) {
+              const rec = recordCodingBase({
+                projectRoot, feature: manifest.feature, runId: manifest.run_id, baseSha: headSha,
+              });
+              if (rec.kind === 'recorded') {
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'coding_base_recorded', phase, invoke_id: invokeId, base_sha: rec.body.base_sha,
+                });
+              } else if (rec.kind === 'invalid_existing') {
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'coding_base_invalid', phase, invoke_id: invokeId,
+                  detail: '既有 coding-base 记录损坏/验签失败——不重签洗白，门禁侧将 fail-closed',
+                });
+              }
+            } else {
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'coding_base_unavailable', phase, invoke_id: invokeId,
+                detail: 'git HEAD 不可得（非 git 仓库或 git 不可用）',
+              });
+            }
+          } catch (e) {
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'coding_base_unavailable', phase, invoke_id: invokeId,
+              detail: `coding_base 记录异常：${(e as Error).message.slice(0, 200)}`,
+            });
+          }
+        }
+
         progressSubstep = 'agent_invoke';
         // 四轮 review P0：agent 调用窗口括号——invoke 前快照 vision 账本并落 anchor 事件；
         // invoke 结束后比对，窗口内任何账本变更 = agent 篡改 → phase halt（fail-closed）。
@@ -6016,6 +6054,69 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             }
             }
+          }
+        }
+
+        // c4e8b1d3 G1-1（pre-coding 锚定）：**plan 正常 PASS advance 前必建 pass snapshot**
+        // ——coding 的 ui_diff_within_declared_files 白名单唯一来源。原实现只在
+        // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
+        // 无快照。失败 fail-closed halt（pass_snapshot_unavailable），与 closure retry
+        // 分支同语义；resume 场景盘上已有 active 快照则可信加载复验、不重取。
+        if (action === 'advance' && phase === ('plan' as FeaturePhase) && !dryRun) {
+          let planFreezeFailure: string | null = null;
+          try {
+            const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
+            if (headNow.mac === 'invalid') {
+              planFreezeFailure = 'pass_snapshot head 损坏/验签失败——不得在无可信冻结下 advance';
+            } else if (headNow.body?.state === 'active') {
+              if (!passSnapshotMemory.has(String(phase))) {
+                const trusted = loadTrustedSnapshotContext(
+                  projectRoot, manifest.feature, manifest.run_id, String(phase), null,
+                );
+                if (trusted.kind !== 'active') {
+                  planFreezeFailure = `盘上 head active 但可信加载失败：${
+                    trusted.kind === 'fail_closed' ? trusted.reason : trusted.kind}`;
+                }
+              }
+              // 本进程已建（closure retry 分支）→ 不重取
+            } else {
+              const frozen = resolveFrozenDeliverables({ projectRoot, feature: manifest.feature, phase });
+              if (frozen.length === 0) {
+                planFreezeFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
+              } else {
+                const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                const taken = takePassSnapshot({
+                  projectRoot,
+                  feature: manifest.feature,
+                  runId: manifest.run_id,
+                  phase: String(phase),
+                  epoch,
+                  files: frozen,
+                });
+                passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'pass_snapshot_taken',
+                  phase,
+                  invoke_id: invokeId,
+                  pass_epoch: epoch,
+                  manifest_sha256: taken.manifestSha256,
+                  files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
+                });
+              }
+            }
+          } catch (e) {
+            planFreezeFailure = `快照建立失败：${(e as Error).message}`;
+          }
+          if (planFreezeFailure) {
+            action = 'halt';
+            haltReason = 'pass_snapshot_unavailable';
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt', phase, halt_reason: 'pass_snapshot_unavailable', detail: planFreezeFailure,
+            });
+            console.error(
+              `\n===== pass_snapshot_unavailable =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
+              '不做无冻结 advance（coding 的 UI scope 门将失去白名单来源）；人工核查 trust-state/产物后 --resume。\n',
+            );
           }
         }
 

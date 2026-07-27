@@ -99,7 +99,19 @@ structure_checks:
 
 semantic_checks: {}
 
-traceability_checks: {}
+traceability_checks:
+  ui_diff_within_declared_files:
+    description: >
+      UI 文件级 scope 门（plan c4e8b1d3 G1）：越界 UI 文件 = 本次 changed UI files −
+      冻结 contracts.files。白名单只来自**同 run plan PASS snapshot** 冻结的 contracts.yaml
+      files（缺失/失效/损坏 fail-closed BLOCKER，禁止退回 live contracts——coding 期 agent
+      可写）；diff 基线 = runner 在首次 coding agent invoke 前锚定的 coding_base_sha
+      （覆盖 committed/staged/unstaged/untracked 四态，agent 自行 commit 也检出）；
+      删除/重命名从 base 侧读旧内容做 UI 分类。UI 判据三类：pages/components/presentation
+      路径 .ets、ArkUI 结构标志（@Entry/@Component/build()/NavDestination/Tabs/bindSheet）、
+      resources media。未声明 UI 文件默认即受保护范围，任何 strictness 均 BLOCKER；
+      expansion 唯一路径 = 更新 contracts.files 并重新通过 plan（重取 PASS snapshot）。
+    severity: BLOCKER
 
 exploration_thresholds:
   min_files_inspected: 6

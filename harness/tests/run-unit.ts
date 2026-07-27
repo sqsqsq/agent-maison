@@ -92,6 +92,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
   { id: 'product-source-snapshot', modulePath: './unit/product-source-snapshot.unit.test' },
+  // plan c4e8b1d3 G1：UI 文件级 scope 门（冻结 contracts.files + coding_base_sha 基线）
+  { id: 'ui-scope-gate', modulePath: './unit/ui-scope-gate.unit.test' },
+  // plan c4e8b1d3 G3：bc-openCard consumer golden evaluator（结果聚合 + 绑定校验）
+  { id: 'consumer-golden', modulePath: './unit/consumer-golden.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
   // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）

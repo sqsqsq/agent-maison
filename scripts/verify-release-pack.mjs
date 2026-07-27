@@ -254,12 +254,15 @@ export function assertInZipManifest(frameworkRoot, sidecarManifestPath) {
 }
 
 /**
- * @param {{ skipTypecheck?: boolean, externalZip?: string | null, externalManifest?: string | null }} [opts]
+ * @param {{ skipTypecheck?: boolean, externalZip?: string | null, externalManifest?: string | null, skipPlanReleaseGate?: boolean }} [opts]
  *   skipTypecheck：聚合链路（release:all）已单独跑 typecheck 时跳过，避免重复；
- *   externalZip/externalManifest：校验「已 pack 的产物」而非自 pack→extract（pack→verify 只打一次 zip）。
+ *   externalZip/externalManifest：校验「已 pack 的产物」而非自 pack→extract（pack→verify 只打一次 zip）；
+ *   skipPlanReleaseGate：candidate 模式（c4e8b1d3 Todo 4）**唯一**允许跳过的门——
+ *     「最终发布 plan 完成门禁」；promote 时必须补跑（candidate-release.mjs promote 强制）。
+ *     其余校验（zip 内容/manifest 链/文本 EOL/stale 扫描）一律照跑。
  */
 export async function verifyReleasePack(opts = {}) {
-  const { skipTypecheck = false, externalZip = null, externalManifest = null } = opts;
+  const { skipTypecheck = false, externalZip = null, externalManifest = null, skipPlanReleaseGate = false } = opts;
   const rules = loadReleaseExcludes();
 
   if (skipTypecheck) {
@@ -325,13 +328,17 @@ export async function verifyReleasePack(opts = {}) {
   }
   console.log('[release:verify] stale deveco project-guidance PASS');
 
-  console.log('[release:verify] plan version (--release)...');
-  const planVer = checkPlanVersions({ mode: 'release' });
-  if (!planVer.ok) {
-    console.error('[release:verify] plan version FAIL:\n' + formatPlanVersionHits(planVer.hits));
-    fail(`plan version: ${planVer.hits.length} hit(s)`);
+  if (skipPlanReleaseGate) {
+    console.log('[release:verify] plan version (--release) SKIPPED (--skip-plan-release-gate；candidate 模式，promote 时补跑)');
+  } else {
+    console.log('[release:verify] plan version (--release)...');
+    const planVer = checkPlanVersions({ mode: 'release' });
+    if (!planVer.ok) {
+      console.error('[release:verify] plan version FAIL:\n' + formatPlanVersionHits(planVer.hits));
+      fail(`plan version: ${planVer.hits.length} hit(s)`);
+    }
+    console.log('[release:verify] plan version PASS');
   }
-  console.log('[release:verify] plan version PASS');
 
   // 复用「已 pack 的产物」（externalZip，聚合链路 pack→verify 只打一次 zip），或自 pack 到临时目录（默认自包含）
   const tmpOut = externalZip ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'am-release-verify-'));
@@ -415,7 +422,7 @@ export async function verifyReleasePack(opts = {}) {
 
 /** @param {string[]} argv */
 function parseVerifyArgs(argv) {
-  const opts = { skipTypecheck: false, externalZip: null, externalManifest: null };
+  const opts = { skipTypecheck: false, externalZip: null, externalManifest: null, skipPlanReleaseGate: false };
   /** 取 flag 的值参数；缺值或下一个又是 flag 时 fail-fast（避免 `--zip --manifest x` 把 `--manifest` 误当路径） */
   const takeValue = (flag, i) => {
     const v = argv[i + 1];
@@ -429,6 +436,8 @@ function parseVerifyArgs(argv) {
     const a = argv[i];
     if (a === '--skip-typecheck') {
       opts.skipTypecheck = true;
+    } else if (a === '--skip-plan-release-gate') {
+      opts.skipPlanReleaseGate = true;
     } else if (a === '--zip') {
       opts.externalZip = takeValue('--zip', i);
       i += 1;

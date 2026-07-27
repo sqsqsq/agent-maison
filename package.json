@@ -9,6 +9,8 @@
     "openspec": "openspec",
     "openspec:validate": "openspec validate --all --strict",
     "release:all": "node scripts/release-all.mjs",
+    "candidate:build": "node scripts/candidate-release.mjs build",
+    "candidate:promote": "node scripts/candidate-release.mjs promote",
     "release:pack": "node scripts/pack-release.mjs",
     "release:verify": "node scripts/verify-release-pack.mjs",
     "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs",

@@ -217,6 +217,134 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 带 status 的四态 diff（c4e8b1d3 G1：ui_diff_within_declared_files 消费）
+// ---------------------------------------------------------------------------
+// 与 diffChangedFiles 的差异：
+//   - 保留每个条目的 git status（A/M/D/R/C/T）与 rename 的 old/new path——删除/重命名
+//     文件的 UI 分类须从 base 侧读旧内容（改后内容已不在盘上），--name-only 会丢这一信息；
+//   - baseRef 必须真实存在（rev-parse --verify ^{commit}），不存在即 executed=false
+//     （调用方 fail-closed，不做 HEAD 回退——回退会把"agent 已 commit 的越界文件"洗掉）；
+//   - 用 `git diff <base>`（base ↔ worktree）一次覆盖 committed+staged+unstaged 三态，
+//     untracked 由 ls-files 补为 'A'；
+//   - -z 输出（NUL 分隔）——CJK 路径在非 -z 模式会被 core.quotepath 转义污染。
+
+export interface StatusDiffEntry {
+  /** 现路径（删除条目 = 被删路径；rename = 新路径），POSIX 归一 */
+  path: string;
+  /** rename/copy 的旧路径（base 侧），POSIX 归一 */
+  oldPath?: string;
+  status: 'A' | 'M' | 'D' | 'R' | 'C' | 'T';
+}
+
+export interface StatusDiffResult {
+  executed: boolean;
+  baseRef: string;
+  entries: StatusDiffEntry[];
+  error?: string;
+}
+
+function parseNameStatusZ(stdout: Buffer): StatusDiffEntry[] {
+  const tokens = stdout.toString('utf-8').split('\0').filter(t => t.length > 0);
+  const out: StatusDiffEntry[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const rawStatus = tokens[i];
+    const code = rawStatus.charAt(0);
+    if (code === 'R' || code === 'C') {
+      const oldPath = tokens[i + 1];
+      const newPath = tokens[i + 2];
+      if (oldPath !== undefined && newPath !== undefined) {
+        out.push({
+          path: newPath.replace(/\\/g, '/'),
+          oldPath: oldPath.replace(/\\/g, '/'),
+          status: code,
+        });
+      }
+      i += 3;
+    } else if (code === 'A' || code === 'M' || code === 'D' || code === 'T') {
+      const p = tokens[i + 1];
+      if (p !== undefined) out.push({ path: p.replace(/\\/g, '/'), status: code });
+      i += 2;
+    } else {
+      // U（冲突）/X 等罕见态：按 M 保守归入（宁可多分类一个候选，不静默丢）
+      const p = tokens[i + 1];
+      if (p !== undefined) out.push({ path: p.replace(/\\/g, '/'), status: 'M' });
+      i += 2;
+    }
+  }
+  return out;
+}
+
+export function diffChangedFilesWithStatus(opts: {
+  projectRoot: string;
+  /** 必须是真实存在的 commit（如 runner 锚定的 coding_base_sha）——不存在即 executed=false */
+  baseRef: string;
+}): StatusDiffResult {
+  const cwd = opts.projectRoot;
+  const baseRef = opts.baseRef.trim();
+  if (!baseRef) {
+    return { executed: false, baseRef: '', entries: [], error: 'baseRef 为空' };
+  }
+  const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd, encoding: 'utf-8', shell: false,
+  });
+  if (probe.status !== 0) {
+    return { executed: false, baseRef, entries: [], error: `非 git 仓库或 git 不可用：${probe.stderr?.trim() ?? ''}` };
+  }
+  const verify = spawnSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], {
+    cwd, encoding: 'utf-8', shell: false,
+  });
+  if (verify.status !== 0) {
+    return { executed: false, baseRef, entries: [], error: `baseRef 不可达（不存在的 commit）：${baseRef}` };
+  }
+
+  // base ↔ worktree：一次覆盖 committed + staged + unstaged
+  const diff = spawnSync(
+    'git',
+    ['diff', '--name-status', '-M', '-z', baseRef],
+    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (diff.status !== 0) {
+    return {
+      executed: false, baseRef, entries: [],
+      error: `git diff --name-status 失败：${(diff.stderr ?? Buffer.alloc(0)).toString('utf-8').trim()}`,
+    };
+  }
+  const entries = parseNameStatusZ(diff.stdout as Buffer);
+  const seen = new Set(entries.map(e => e.path));
+
+  // untracked → 'A'
+  const untracked = spawnSync(
+    'git',
+    ['ls-files', '--others', '--exclude-standard', '-z'],
+    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (untracked.status === 0 && untracked.stdout) {
+    for (const p of (untracked.stdout as Buffer).toString('utf-8').split('\0').filter(Boolean)) {
+      const norm = p.replace(/\\/g, '/');
+      if (!seen.has(norm)) {
+        entries.push({ path: norm, status: 'A' });
+        seen.add(norm);
+      }
+    }
+  }
+
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+  return { executed: true, baseRef, entries };
+}
+
+/** 读取 base 侧文件内容（`git show <ref>:<path>`）；不存在/失败 → null。 */
+export function readFileAtRef(projectRoot: string, ref: string, relPath: string): Buffer | null {
+  const res = spawnSync(
+    'git',
+    ['show', `${ref}:${relPath.replace(/\\/g, '/')}`],
+    { cwd: projectRoot, shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (res.status !== 0) return null;
+  return res.stdout as Buffer;
+}
+
 export function analyzeDiffStaleness(diff: GitDiffResult): DiffStaleness {
   const workingSide = new Set([
     ...diff.workingTreeFiles,

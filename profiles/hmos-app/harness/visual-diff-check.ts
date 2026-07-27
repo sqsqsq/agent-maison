@@ -198,6 +198,13 @@ export interface VisualDiffScreenEntry {
    * 已定判定缺本字段 = legacy stale（当前指纹可算时）。
    */
   evaluated_build_fingerprint?: string;
+  /**
+   * c4e8b1d3 round19 P1：本条目截图采集时的 goal run id（capture 机器盖戳，
+   * MAISON_GOAL_RUN_ID 在场即写）。golden 统一回归强制**本 run 重采**：golden 模式下
+   * 同 build 跳采额外要求本字段等于当前 run；consumer golden evaluator 校验其与传入
+   * run 一致（防第二个 run 复用第一个 run 的截图）。普通模式不参与跳采判定。
+   */
+  captured_in_run?: string;
   /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
   confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */

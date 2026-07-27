@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "feature": "bc-openCard",
+  "note": "c4e8b1d3 G3 golden screen oracle：10 个固定正向需求屏（9 P0 + P1 bank_card_list_sheet——第 10 张原始需求图对应页面）。集合与 declared↔capture 映射固定，不从 P0 / 宿主本轮 ui-spec / 数量动态推导（三条推导路径均被证伪：漏 P1 屏 / ui-spec 误改自证 / 错误屏替换凑数）。HomeTab 是第 11 个负向目标，不计入正向屏。随 candidate zip 发布，evaluator 按精确集合相等裁决。",
+  "positive_screens": [
+    { "declared": "add_card_home_collapsed", "capture": "add_card_home_collapsed" },
+    { "declared": "add_card_home_expanded", "capture": "add_card_home_expanded" },
+    { "declared": "all_banks", "capture": "all_banks" },
+    { "declared": "card_type_sheet", "capture": "card_type_sheet__overlay__0" },
+    { "declared": "card_select", "capture": "card_select" },
+    { "declared": "sms_verify", "capture": "sms_verify__overlay__0" },
+    { "declared": "add_success", "capture": "add_success" },
+    { "declared": "card_detail", "capture": "card_detail" },
+    { "declared": "card_pack_with_cards", "capture": "card_pack_with_cards" },
+    { "declared": "bank_card_list_sheet", "capture": "bank_card_list_sheet__overlay__0" }
+  ],
+  "forbidden": [
+    {
+      "id": "HomeTab",
+      "anchor": "bank_card_section",
+      "evidence": "device-testing/device-screenshots/layout-HomeTab.json",
+      "note": "R4 回归：WalletMain 主页不得出现银行卡区块（误开发的直接复归目标）。evidence（相对 feature 目录）由 golden 采集自动生产：设 MAISON_GOLDEN_CONTRACT 后 capture 按 nav 配置导航该屏 + UITree dump，写 golden_forbidden_evidence wrapper（run_id + build fingerprint 绑定）；evaluator 只认本 run + 当前 build 的 wrapper，裸 dump/历史残留不采信。宿主 visual-diff-nav 配置须含 HomeTab 到达步骤"
+    }
+  ],
+  "key_overlays_and_completion": ["card_type_sheet__overlay__0", "sms_verify__overlay__0", "add_success"]
+}

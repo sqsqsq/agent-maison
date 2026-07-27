@@ -40,6 +40,7 @@ import {
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { readCodingBase, readPassSnapshotHead } from '../../scripts/utils/pass-snapshot';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -123,6 +124,11 @@ function setupHost(): { root: string } {
     JSON.stringify({ hapPath: 'build/default/app.hap' }));
   writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, '# spec\n');
   writeFile(root, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
+  // c4e8b1d3 G1-1：plan 正常 PASS advance 前 runner 必建 pass snapshot——PASS 态要求
+  // plan.md + contracts.yaml 在盘（缺任一 = 不变量违例 halt）。夹具按真实 plan PASS 形态造。
+  writeFile(root, `doc/features/${FEATURE}/plan/plan.md`, '# plan\n');
+  writeFile(root, `doc/features/${FEATURE}/contracts.yaml`,
+    `feature: ${FEATURE}\nfiles:\n  - ${PRODUCT_FILE}\n`);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
   return { root };
@@ -217,6 +223,9 @@ async function runChain(
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
   const prevCwd = process.cwd();
+  // c4e8b1d3：plan PASS advance 会建 pass snapshot——trust 目录隔离到宿主内，绝不写用户主目录
+  const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
   try {
     __testing_setInvokeAgent((async (plan: unknown, _root: unknown, o: unknown) => {
       const logPath = String((o as { outputLogPath?: string })?.outputLogPath ?? '')
@@ -330,6 +339,8 @@ async function runChain(
   } finally {
     __testing_resetGoalRunnerSeams();
     process.argv = prevArgv;
+    if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+    else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
     try { process.chdir(prevCwd); } catch { /* ignore */ }
   }
 }
@@ -382,6 +393,41 @@ test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源
   assert(!hasEvent(probe.events, 'testing_write_violation'),
     `pre-existing dirty 不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'testing_write_violation'))}`);
   assertRunReachedEnd(probe, 'E2E-1');
+});
+
+test('⑤ c4e8b1d3：正常 plan PASS（非 advance_blocked）也建快照，且首次 coding 前锚定 coding_base_sha', async () => {
+  const { root } = setupHost();
+  let codingRunId = '';
+  const probe = await runChain(root, {
+    onCoding: ctx => { codingRunId = ctx.runId; },
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assertRunReachedEnd(probe, '⑤');
+  const types = probe.events.map(e => e.type);
+  const snapIdx = probe.events.findIndex(e => e.type === 'pass_snapshot_taken' && e.phase === 'plan');
+  assert(snapIdx >= 0, `plan 正常 PASS 须落 pass_snapshot_taken(plan)：${types.join(',')}`);
+  const baseEv = probe.events.find(e => e.type === 'coding_base_recorded') as
+    { base_sha?: string } | undefined;
+  assert(!!baseEv && /^[0-9a-f]{40}$/.test(String(baseEv.base_sha ?? '')),
+    `coding_base_recorded 须带 40-hex base_sha：${JSON.stringify(baseEv)}`);
+  // 时序：plan 快照先于首次 coding agent invoke（pre-coding 锚定语义）
+  const codingInvokeIdx = probe.events.findIndex(
+    e => e.type === 'agent_invoke_start' && e.phase === 'coding',
+  );
+  assert(codingInvokeIdx > snapIdx, `plan 快照须先于 coding agent invoke（snap@${snapIdx}, invoke@${codingInvokeIdx}）`);
+  // trust 文件真值（不只信事件）：head active + base_sha 与事件一致
+  assert(!!codingRunId, 'coding attempt 须带 MAISON_GOAL_RUN_ID');
+  const prevTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+  try {
+    const head = readPassSnapshotHead(root, FEATURE, codingRunId, 'plan');
+    assert(head.body?.state === 'active', `plan snapshot head 须 active：mac=${head.mac}`);
+    const base = readCodingBase(root, FEATURE, codingRunId);
+    assert(base.body?.base_sha === String(baseEv!.base_sha), 'trust 文件 base_sha 须与事件一致');
+  } finally {
+    if (prevTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+    else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrust;
+  }
 });
 
 test('E2E-2a testing 改产品源码 → violation：gate 不运行、halt、精确报文件', async () => {

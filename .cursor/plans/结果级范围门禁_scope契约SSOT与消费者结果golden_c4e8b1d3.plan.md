@@ -1,173 +1,391 @@
 ---
-name: 结果级范围门禁 — scope 契约 SSOT / 屏级 scope 门 / consumer-outcome golden
+name: 结果级范围门禁 — UI 文件级 scope 门 / 消费者结果 golden
 version: 3.0.0
 # 版本说明：窗口不 bump（用户控版本）。
-# v1（2026-07-25）：从 plan d8c5f3a7 拆出（用户拍板：T9 族独立 change，d8c5f3a7 先开工
-#   T2/T1）。本文件承接 d8c5f3a7 v8~v12 十轮 review 已冻结的 T9/T8/T7b 全部设计决议，
-#   内容逐字迁移、不重新论证；上下文与根因见 d8c5f3a7 的 overview（同一事故：2026-07-24
-#   bc-openCard「越优化越差」）。
-# 拆分理由：连续三轮 review 的新发现全部集中在这一族（scope contract 信任来源 / UI owner
-#   inventory 全集枚举 / trusted-base lineage / 结果级 receipt 签发），T9 已从"一个字段"
-#   长成独立子系统，且挡在 T8/T7b 前面；而 d8c5f3a7 的 P0 核心（T1/T2/T4/T5/T7a）自 v9
-#   起已收敛。拆分后两条线并行推进，P0 修复不被 P1 设计迭代拖住。
+# ============================================================================
+# v13 起整体重写（2026-07-26 定案；v14 起为 review 修订——现行版本以正文状态行为准）
+# ============================================================================
+# 【为什么推倒 v12】v12 经十轮 review 长成了至少五六个独立子系统：requirement→screen
+# 语义推导器 / 全宿主 UI owner inventory（四类枚举）/ proposal-effective 双层 scope SSOT /
+# trusted-base 跨 run lineage / source→HAP→截图 provenance / negative screen baseline /
+# consumer outcome attestation（HMAC 签发·registry·轮换·吊销）/ release 触发路径矩阵。
+# 这不再是"范围门禁 plan"。且其依赖段消费 d8c5f3a7 的 provenance 链与
+# metric_contract_hash——两者已在 d8c5f3a7 v22 删减重构中删除（依赖链本身失效）。
+# 三个不可修的结构性问题：
+#   ① 需求文本自动映射 screen ID 无通用确定性算法（v12 自己的 Q2 至终未解）；
+#   ② ArkTS 动态 Builder/状态分支/间接组件不可能静态完整枚举——"不可判就 BLOCKER"
+#     会把复杂宿主大面积锁死；
+#   ③ runner-owned ≠ 语义正确——runner 生成的 scope 终究依赖不可靠的语义推断。
+# 【核心反转】拦 HomeTab 误开发不需要知道"全世界有哪些页面"。真正可观测的只有
+# "本次改了哪些文件"：
+#     越界 UI 文件 = 本次 changed UI files − 冻结 contracts.files（v14 修订：key_files 保持追溯语义不参与本门）
+# 仓库已具备全部地基：模块级 diff_within_scope（check-coding.ts:312）、
+# contracts.yaml::prd_to_code_traceability[].key_files（check-coding.ts:180）、
+# plan/contracts frozen pass snapshot（pass-snapshot.ts:320）、release pack→verify→promote
+# 生命周期（pack-release.mjs / release-all.mjs）。缺的只是一个较窄的 UI 文件级 scope 门，
+# 不是新的 scope 信任平台。
+# 【v1-v12 历史】原方案全文见 git 提交 4a3e86a3 的本文件版本；inventory/双层 SSOT/
+# trusted-base/HMAC 路线整体放弃，不再构成实施要求。
+# ============================================================================
 overview: >
-  【承接来源】plan d8c5f3a7（视觉负向优化根治）v12 的 T9/T8/T7b 三切片。事故样本、三链
-  根因、证据锚点均见 d8c5f3a7 的 frontmatter overview，本 plan 不重复。
-  【本 plan 要解的问题】(1) R4 余波：需求外页面被误开发（本案 BankCardPackSection 被塞进
-  WalletMain HomeTabPage，ui-spec 十屏无主页屏、plan F8 只分给 CardPackPage，模块级 scope
-  门放行、盲 review 未拦）——**这是唯一能直接阻止该类复发的门禁**；(2) R10 结果层：
-  b4aa7290..HEAD 计 548 files/+80788 行机制改动，无一条结果级门禁用银行卡 10 屏做回归，
-  于是"机制测试越来越绿、宿主效果越来越差"。
-  【与 d8c5f3a7 的依赖】本 plan 消费 d8c5f3a7 的两个产物：T4 的
-  `computeProductSourceSnapshotSha256` + source→HAP→截图 provenance 链（baseline 可信性
-  与 receipt 绑定用）、T5 的视觉指标机器契约 `metric_contract_hash`（归一化比较用）。
-  故本 plan 的实施须在 d8c5f3a7 的 T4/T5 落地之后；T9 的设计与 fixture 可先行。
-  【⚠️ 依赖失效注记（2026-07-26，d8c5f3a7 v22 删减式重构）】上述两个被消费产物
-  （T4 provenance 链、T5 `metric_contract_hash`）已被 d8c5f3a7 v22 的 D5/D6 **删除**——
-  本段依赖描述失效。本 plan 动工前必须先重写依赖段：baseline 可信性改锚 fs 快照
-  （v22 F2 的 `product-source-snapshot` 重写版）或另行设计；归一化比较不再有 metric
-  contract 可引。在依赖段重写并 review 通过前，本 plan 不得开工。
-  【关键冻结决议（十轮 review 结论，勿重新论证）】
-  ① proposal / effective 两层分立：`acceptance.yaml::scope_contract` 仅为 agent proposal，
-  **runtime SSOT = runner-owned effective artifact**，门禁只消费 effective 及其 pinned hash；
-  ② 受保护集由**差集推导**而非 proposal 枚举：
-  `protected_negatives = UI owner inventory − authorized_positive_scope`，两端各须有信任来源；
-  ③ UI owner inventory 必须覆盖四类（含**根页面条件 Tab 分支**——宿主 HomeTabPage 在
-  `01-Product/Phone/src/main/ets/pages/index.ets:87` 是 Navigation 内 `if` 子树，
-  **不在 navDestinationMap(:27)**，只扫路由注册表会漏掉本案页面）；
-  ④ baseline 可信性 = 完整 provenance 链 **∧** 可信历史锚点（trusted-base/已批准 commit/
-  人工 receipt），缺锚点恒 `unavailable`；trusted-base 每 feature lineage 只初始化一次、跨
-  run 复用；
-  ⑤ 受保护屏越界**任何 strictness 恒 BLOCKER**（真实银行卡是 best_effort，hard-only 门禁
-  对本事故无效）；
-  ⑥ outcome receipt = 精确对象绑定（staging 哈希必填、commit 仅元数据）+ 决策与范围 SSOT
-  绑定 + `negative_screen_evidence[]`；**签发端不存在须自建**（confirmation-receipt.ts:19
-  明言签发不在该模块，registry 缺失时一切校验 INVALID 并封顶 AWAITING_HUMAN_REVIEW）。
+  【要解的两个问题（不变）】(1) R4 余波：需求外页面被误开发（本案 BankCardPackSection
+  被塞进 WalletMain HomeTabPage，ui-spec 十屏无主页屏、plan F8 只分给 CardPackPage，
+  模块级 scope 门放行、盲 review 未拦）；(2) R10 结果层：大量机制改动无一条结果级门禁
+  用银行卡 10 屏做回归，"机制测试越来越绿、宿主效果越来越差"可以同时成立。
+  【现行解法】UI 文件级 scope 门（越界 = changed UI files − plan PASS snapshot 冻结的
+  contracts.files；plan 正常 PASS 必建快照 + 首次 coding 前锚定 coding_base_sha）+
+  candidate zip consumer golden（candidate = 持久化 zip + manifest + sha256，宿主装 zip，
+  evaluator 按固定 10 屏 golden contract 精确集合裁决，PASS 才对同一字节 zip 补门禁
+  promote，不签名不复用）。
+todos:
+  - id: 1
+    content: "ui_diff_within_declared_files 门禁：白名单=plan PASS snapshot 冻结 contracts.files（fail-closed）；pre-coding 锚定（plan 正常 PASS 必建快照 + 首次 coding 前记 coding_base_sha，resume 复用）；diff 基线覆盖四态；注册 coding checker"
+    status: completed
+  - id: 2
+    content: "六用例：HomeTab 未声明→best_effort BLOCKER；CardPackPage 已声明→PASS；只改 live contracts→仍 FAIL；expansion 重取快照→PASS；正常 plan PASS 也建快照；agent 改码并 commit 后仍检出越界"
+    status: completed
+  - id: 3
+    content: "consumer golden evaluator：固定 golden screen contract（10 固定正向需求屏含 P1 bank_card_list_sheet + capture ID 映射，精确集合相等）+ 生产接线（golden 显式 targets 绕 P0 过滤，普通 visual-diff 仍 P0-only，缺失/形态不符 fail-closed）+ HomeTab forbidden anchor + 三用例"
+    status: completed
+  - id: 4
+    content: "candidate 模式：candidate=持久化 zip+sidecar manifest+zip sha256，只跳发布 plan 门禁；evaluator 随包发布并校验 manifest/run ID；PASS 后补门禁移动同一字节 zip，禁止重新 pack"
+    status: completed
+  - id: 5
+    content: "一次真实宿主回归（与 d8 复演同次）：两 run+fault-injection+golden 十固定屏+HomeTab+AllBanks，evaluator 裁决归档"
+    status: pending
 ---
 
-# 结果级范围门禁——scope 契约 SSOT / 屏级 scope 门 / consumer-outcome golden (c4e8b1d3)
+# 结果级范围门禁——UI 文件级 scope 门 + 消费者结果 golden (c4e8b1d3)
 
-状态：**v1 拆分落地，待用户 review**（未实施）
+状态：**v17 已实施 + 实施 review 两轮（round19：5P1+1P2；round20：3P1+1P2）全修——待用户 review 提交；Todo 5 与 d8c5f3a7 复演同一次宿主统一回归（须先重跑 candidate:build——现存 candidate zip 是修复前构建）**
 
-> 本 plan 从 [d8c5f3a7](视觉负向优化根治_能力真值跨run与盲档非破坏与回修环_d8c5f3a7.plan.md) 拆出。
-> 切片编号沿用原 plan（T9/T8/T7b），便于与十轮 review 记录对齐。
+> **实施 review 第 2 轮（round20，2026-07-27，全采纳）**
+> ① 素材门改按**真实 summary 契约**消费（writer 无 checks 字段）：quality_axes.asset 轴
+>   verdict 须 PASS + 沿 script_report 指针读 script-report.json.checks（visual_parity_asset_*
+>   无 FAIL）+ summary.run_id 须绑定本 run；任一环缺席/失配 fail-closed。
+> ② HomeTab 负向证据**生产接线**：golden capture 按 contract.forbidden 导航 + UITree dump，
+>   写 golden_forbidden_evidence wrapper（run_id + build fp 绑定）；nav 步骤/layoutDumpFn
+>   缺失或导航/dump 失败 → fail-closed 记采集失败。evaluator 只认本 run + 当前 build 的
+>   wrapper——裸 dump/历史残留/他 run/旧 build 一律不采信。
+> ③ run_binding 升级为 **testing 成功闭环**判据（最新 testing phase_verdict=PASS 且
+>   action=advance）；新增 build_binding：条目 evaluated_build_fingerprint 须等于当前
+>   安装指纹（同 run 内 backtrack 换 build 后的早期旧截图不过关；当前指纹不可算=全 FAIL）。
+> ④（P2）candidate 输出 env 命令改双 shell 可执行形式（PowerShell `$env:` / bash `export`）。
 
-## 切片
+> **实施 review 第 3 轮（round21，2026-07-27，全采纳——两个假通过口封死）**
+> ① run_binding 判据收紧：最新一次 testing phase_start **之后**须存在 PASS/advance
+>   verdict（旧 PASS 后 testing 重启并中断不再误判）+ 最后 run_end.status ∈
+>   {CHAIN_SLICE_COMPLETED, COMPLETED}（HALTED/INTERRUPTED/PARTIAL/缺失一律不采信）。
+> ② 素材链三个 fail-open 口封死：asset 轴 applicable=false 不豁免（bc-openCard 明确需要
+>   图片，不适用=链路异常）；summary.script_report 指针缺失不回退默认文件名；
+>   script-report.json 无 checks 数组按畸形报告 FAIL，不按空数组放行。
 
-### T9（P1，**T8/T7b 的前置**）scope contract SSOT —— 补 v8 P0 缺口
+> **实施 review 第 4 轮（round22，2026-07-27，全采纳——两个边界收口）**
+> ① run_end 与最新 testing verdict **顺序绑定**：保存最新 testing verdict 完整状态与
+>   索引（不再是"任意 PASS"），成功 run_end 的索引必须位于其后——
+>   "旧段 PASS→旧 run_end=COMPLETED→resume 新段→testing PASS→写新 run_end 前中断"
+>   不再借旧终局判 PASS。
+> ② asset.applicable 改 `!== true`：契约必填 boolean，缺失/畸形与 false 同罪。
 
-> **缺口实锤**：T8/T7b 都要读「受保护屏」，但全仓无该字段——ui-spec 根字段是封闭白名单 `ROOT_ALLOWED_KEYS={schema_version, verified, verified_method, screens, tokens, assets, global_elements}`（ui-spec-schema-validate.ts:124，additionalProperties=false），且 `.cursor/plans` 不进发布件，运行时消费者无从得知 HomeTab 受保护。没有 SSOT，T8 写的「best_effort 恒 BLOCKER」在 coding gate 上是空转。
+> **实施 review 第 1 轮（round19，2026-07-27，全采纳）**
+> ① 删 live ui-spec 绕过：gate 不再做任何 live 文件前置探测——适用面只由「diff 有无 UI
+>   变更」决定（无→PASS 白名单不咨询；有→冻结白名单缺失即 FAIL）；goal run 内永不 SKIP，
+>   id 进 CODING_CRITICAL_SKIP_IDS（normal 模式设计内 SKIP 降 MINOR 天然放行）。
+> ② golden 宿主入口：candidate build 输出三步指引（装 zip → **先设 MAISON_GOLDEN_CONTRACT
+>   再跑 goal run** → 包内 evaluator 裁决）；evaluator 缺 P1 屏时提示未设 env 的常见根因。
+> ③ run 绑定：capture 给条目盖 `captured_in_run` 机器戳（字节恒等保留路径也更新——本轮
+>   确实重采）；golden 模式同 build 跳采额外要求条目为本 run 采集（跨 run 强制重采，
+>   普通模式 P0-9a 行为逐字节不变）；evaluator 新增 run_freshness 项。
+> ④ crash schema：evaluator 改读真实归档形态 `diagnosis.kind`（顶层无 kind）+
+>   `screen_or_case`；夹具同步为真实 schema。
+> ⑤ 严格判定：evaluator 新增 verdict_all_pass（pending/skipped/缺失均 FAIL）与
+>   screenshot_binding（evaluated_screenshot_hash 须与盘上截图一致，hash 口径运行时
+>   require profile 的 hashScreenshotFile，不本地复刻公式）。
+> ⑥（P2）重复 screen ID 不被 Map 吞——ten_fixed_screens_exact_set 点名重复并 FAIL。
 
-**改动**：
-1. **两层落点与唯一 runtime SSOT（v11 B1 定稿，消除双身份）**：
-   - **proposal 层**：`acceptance.yaml::scope_contract`——**仅为 agent 提案**（spec 阶段产出，人类可读、便于 review），**任何门禁都不得直接消费**；
-   - **runtime SSOT**：**runner-owned effective scope contract artifact**（落 runner 证据区，非 feature 目录内 agent 可写面），由 runner 依第 2 条生成；**T8 / T7b / outcome receipt 一律只消费 effective artifact 及其 pinned hash**；
-   - acceptance / plan / ui-spec 中的 scope 表述降为**一致性投影**：与 effective 不一致 → 提示同步并留痕，**不参与裁决**（防读到不可信 proposal）。
-   - **不放 ui-spec**——其根字段白名单封闭，扩展代价与语义归属都不合适。
+> **实施记录（2026-07-27，Todo 1-4）**
+> - **G1 门禁**：`harness/scripts/utils/ui-scope-gate.ts`（核心）+ check-coding.ts 注册
+>   `ui_diff_within_declared_files`（traceability，恒 BLOCKER）+ coding-rules.yaml 声明；
+>   git-diff.ts 新增 `diffChangedFilesWithStatus`（-z name-status -M，base↔worktree 一次
+>   覆盖三态 + untracked 补 'A'；baseRef 不存在即 executed=false 不回退）与 `readFileAtRef`
+>   （删除/重命名 base 侧分类）。
+> - **pre-coding 锚定**：goal-runner「plan 正常 PASS advance 前必建 pass snapshot」
+>   （失败 halt pass_snapshot_unavailable，与 closure retry 分支同语义；resume 盘上已有
+>   active 快照走可信加载复验不重取）+「首次 coding agent invoke 前 recordCodingBase」
+>   （write-once trust 文件 coding-base.json，MAC 同 pass-snapshot 协议域；事件
+>   coding_base_recorded/unavailable/invalid）。非 goal run 无 run 级锚 → 门禁 SKIP 并
+>   诚实声明（normal 模式过渡按发布约束人工核对）；无 ui-spec 的 feature → SKIP（非 UI
+>   feature 不受 UI 门拦截）。
+> - **用例**：ui-scope-gate 套件 12 例（含六用例的 ①②③④⑥ + 删除 base 侧分类 +
+>   untracked + 缺锚 fail-closed + write-once）；⑤ 在 goal-runner-testing-integrity 增
+>   runner 级用例（pass_snapshot_taken 先于 coding invoke + trust 文件真值）。
+> - **G3 oracle + 接线**：随包 contract `harness/scripts/consumer-golden/
+>   bc-opencard.golden-contract.json`（10 固定屏 + HomeTab forbidden + key overlays；
+>   harness/scripts/** 在 release 包内）；visual-diff-targets.ts 新增
+>   `resolveGoldenCaptureTargets`（无 P0 过滤的显式目标解析，缺失/形态不符 fail-closed）；
+>   visual-diff-capture.ts 接 `goldenTargets` opt + env `MAISON_GOLDEN_CONTRACT` 装载器
+>   （env 设了读不出=抛错，不许静默降级 P0-only），目标=P0 ∪ golden 显式（普通模式零变化）。
+>   evaluator `evaluate-bc-opencard.ts`：十项聚合（candidate/run 绑定 + 八条清单），
+>   普通 JSON 报告。profile 套件 5 例 + consumer-golden 套件 9 例。
+> - **Todo 4 candidate 模式**：`scripts/candidate-release.mjs`（npm run candidate:build /
+>   candidate:promote）。build=typecheck+全部测试+pack+verify（verify-release-pack 新增
+>   `--skip-plan-release-gate`，candidate 唯一跳过项）→ 持久化
+>   dist/candidates/framework-<v>-candidate.zip + manifest（记 zip_sha256 与 in-zip
+>   manifest sha，后者即 evaluator --expected-manifest-sha）。promote=验 zip 字节身份
+>   （与 build 记录 sha 逐字节一致，禁重新 pack）+ 要求 evaluator 报告 verdict=PASS 且
+>   manifest 绑定一致 + 补跑 check-plan-version --release；门禁被在研 plan 拦截 → 只标
+>   `candidate.status=eligible` 不绕过；通过 → renameSync 同一字节 zip 到 dist/ 正式名。
 
-   两层共用结构：
-   - `protected_negative_screens[]`：每项含 `screen_id` / `owner_paths[]`（文件或 path pattern）/ `forbidden_anchors[]`（不得出现的组件锚点，如本案 `bank_card_section`）/ `baseline_structure_hash` + `baseline_screenshot_hash`（**语义见 3**）/ `baseline_provenance` / `update_policy`；
-   - `excluded_scope[]`：显式声明不在本需求域内的页面/模块。
-2. **信任模型（v10 收紧：runner 生成生效版，非事后冻结 agent 自签）**：v9 让 agent 写 baseline、runner 事后冻结 hash——**冻结只防后改，不证明首次登记为真**，污染态首页照样可被登记成基线。冻结如下：
-   - **产出分工**：agent **只能产出 `scope_contract` proposal**；**runner 生成 effective scope contract**——依据 coding 阶段前的 **source snapshot**（T4 的 `computeProductSourceSnapshotSha256`）+ 路由清单（plan 关键文件/ui-spec 屏 owner + 实际路由注册表）+ 构建产物生成；proposal 与生效版不一致处如实记录，不静默采纳；
-   - **完整性算法必须确定性（v11 B3，防整项遗漏）**：「逐项核验」只能验 proposal 已列项，agent 干脆不写 HomeTab 就绕过了（同「逐条目合法 ≠ 集合完整」既有硬学习）。冻结规则：
-     **`protected_negatives = UI owner inventory（全集） − authorized_positive_scope`**
-     即受保护集由**全集差集推导**、不由 proposal 枚举决定；proposal 只能**补充说明**（forbidden_anchors 细化等），不能减少集合。差集算不出（全集不可枚举/来源缺失）→ **BLOCKER**，不得退化为空集。**两个输入项各自须有信任来源，见下 2a / 2b**（否则差集两端都可被 agent 操纵，公式形同虚设）。
+> **v16 → v17（review 第 4 轮，采纳；已对代码核实）**
+> oracle 要求 P1 屏但现有采集器不会生产它：`collectP0OverlayTargetIds` 先过
+> `isP0VisualTargetScreen`（visual-diff-targets.ts:50，= priority === 'P0'），P1 的
+> bank_card_list_sheet 进不了 overlay 遍历——只改 evaluator 则该屏永不被采、golden 永远
+> FAIL。v17 在 Todo 3 增加**最小生产接线**：golden 模式读随包 contract，把十个 declared
+> screen ID 作为**显式 capture targets** 传给既有采集器（显式目标不受全局 P0 过滤）；
+> 普通 visual-diff 仍保持 P0-only；contract 屏在宿主 ui-spec 缺失/非 overlay root →
+> fail-closed FAIL。补三个用例。
 
-   - **2a. `authorized_positive_scope` 的信任来源（v12 B1）**：若 positive 仍取自 agent 写的 plan/ui-spec，agent 只需把 HomeTab 多声明成 positive，它就从 protected 里消失——差集防线归零。故：
-     - **runner-owned `authorized_positive_scope`**：由**需求 SSOT** 派生（manifest.requirement + 解引用文档 + ux-reference 参考图；可复用既有 `collectRequirementSsotPaths` / `computeRunRequirementSha`），runner 核验后固化；
-     - 每项绑定 **需求输入哈希 + screen_ids + owner_paths + 确认依据**（哪段需求/哪张参考图授权了该屏）；
-     - **agent 提议额外 positive 页面 → 须可信 receipt 或人工确认**，本 run 不自动采纳（与 T4-8 amendment 同构）；
-     - 需求输入变化 → positive scope 重新派生并使下游失效。
+> **v15 → v16（review 第 3 轮，采纳；事实已对归档核实）**
+> 「10 个正向 P0 屏」不是事实：ui-spec 实为 **9 个 P0 + bank_card_list_sheet（P1，却对应
+> 第 10 张原始需求图）**；归档 visual-diff.json 只采到 6 屏；registry 只有文件名+hash 无
+> screen ID 映射。故 evaluator 不能从 P0 动态推导（漏 P1 屏）、不能从宿主本轮 ui-spec
+> 推导（误改可自证）、不能只数数量（错误屏替换可凑数）。v16 新增**随 candidate 发布的
+> 固定 golden screen contract**：精确 10 屏集合 + declared↔capture ID 映射，集合相等裁决；
+> HomeTab 为第 11 个负向目标不计入；文案统一为"10 个固定正向需求屏"。
 
-   - **2b. UI owner inventory（全集）的确定性来源（v12 B2；当前本案页面正在盲区）**：宿主 `HomeTabPage` 在 `01-Product/Phone/src/main/ets/pages/index.ets:87` 是 `Navigation` 内 `if (this.currentTabIndex === 0)` 的**条件 Tab 子树**，**不在 `navDestinationMap`(:27)**——只扫路由注册表会把本案那个页面整个漏掉。故 inventory 采集须覆盖**四类**且规则冻结：
-     ① `Navigation` / `NavDestination` 注册项；② **`Tabs`/`TabContent` 与根页面条件分支**（`if/else` 内直接实例化的页面组件）；③ `@Builder` 导出的页面构建器；④ **sheet/modal 等非 route 屏**（`bindSheet`/`bindContentCover` 挂载的组件）。
-     采集不完整/存在不可判定构造 → **BLOCKER**（如实报"inventory 不可枚举"），不得静默产出偏小全集。
-   - **初始 baseline 的可信性（v11 B2：链完整 ≠ 未污染）**：`source_snapshot → HAP → structure/screenshot` 只证明**截图确实出自当前源码**，**不证明该源码是授权、干净的**——已污染的 HomeTab 同样能产出完整链。故建立 baseline 须**同时**满足：(i) 完整 provenance 链，**且** (ii) **可信历史锚点**三者之一——runner 在 **feature agent 启动前**固化的 trusted-base snapshot / 已批准的 commit·snapshot / 人工或可信 receipt。缺 (ii) → 该屏 baseline 记 **`unavailable`**（靠 owner_paths+forbidden_anchors 保护），**不得以当前状态充当基线**；**legacy 迁移无锚点时必须保持 `unavailable`**，不得因「当前源码构建成功」升级为可信 baseline；
-   - **trusted-base 的生命周期（v12 P1-4）**：**一条 feature lineage 只初始化一次，跨 run 复用**——**禁止**每个新 run 重新捕获当前状态作 base（否则 run1 把首页改脏、run2 起来就把脏态当基线，防线自动失效）。base 更新只走「可信 receipt/人工确认 + 新 run」同一授权链；lineage 身份随 feature 而非 run。
-   - **`update_policy` 是框架固定策略，不由 acceptance.yaml 自由声明**（agent 不能给自己写宽松规则）；contract 中该字段若与框架策略冲突 → BLOCKER；
-   - **pinned hash 持久化到 runner-owned 证据**（与 effective artifact 同域，非 feature 目录内 agent 可写面），**进程重启后仍可核验**；**禁止**在校验时从当前 acceptance/proposal 重算并覆盖 pinned 值（那等于每次都信当下）；
-   - **agent 不得刷新 baseline**；更新保护范围须**同时**满足「可信 receipt 或人工确认」**且**「新 run」——**新 run 单独不构成授权**；
-   - scope contract 变更 → **plan/coding/testing/outcome 全链失效**并重跑（防"测完再改保护范围"）。
-3. **两类 hash 语义分立（v9，防假失败与伪造）**：
-   - `baseline_screenshot_hash` **只证明基线图片文件身份**（哪张图是基线），**严禁**与当前实拍截图做原始字节相等比较——状态栏、渲染抖动、压缩差异都会造成假失败；**实际视觉比较一律走 T5 归一化 metric contract**；
-   - `baseline_structure_hash` 须**冻结 canonicalization 规则**（稳定排序 + 排除运行时 ID、时间戳等易变字段），规则版本随 contract 记录；
-   - **初始无可信基线截图时允许显式 `unavailable`**，该屏保护靠 `owner_paths` + `forbidden_anchors` 生效——**不得伪造 hash 充数**（loader 见非法/占位 hash 即 BLOCKER）。
-4. 配套 **schema 校验 + writer（spec 阶段产出）+ loader（缺失/损坏/unavailable 三态）+ 漂移检查**（受保护屏漂移且无授权 → BLOCKER）。
-5. **T8 与 T7b 消费同一份 contract**（单 SSOT，禁各自定义）。
-6. **legacy 缺失的分档处置（v10 B2，堵死本事故的复现路径）**：宿主现有 `doc/features/bc-openCard/acceptance.yaml` **零 `scope_contract`**——若按"缺失只 WARN"，升级后 HomeTab 仍不被识别为 protected、best_effort 越界仍只 WARN、T7b 也无 negative screen 可断言，**本事故原样漏过**。故：
-   - **UI/视觉链触发的 feature**（ui_change=true 或存在 ui-spec/视觉门禁）：缺 `scope_contract` → **BLOCKER**，并 **backtrack 到 spec 生成**，或执行**可信迁移**（runner 依既有 ui-spec 屏清单+plan 关键文件推导初版 proposal，再按第 2 条生成生效版；baseline 无可信来源即记 `unavailable`）；
-   - **非 UI 任务**：维持 WARN 提示补齐。
+> **v14 → v15（review 第 2 轮，全采纳；两条均为"实现不可达"级缺口，已对代码核实）**
+> ① **pre-coding 锚定**：现状 `takePassSnapshot` 全库唯一调用点在 PASS+advance_blocked+
+>   closure retry 分支（goal-runner.ts:5887）——正常 plan PASS 直接 advance **不建快照**；
+>   `trace.start_commit` 由 harness 记录（harness-runner.ts:626），而 harness 是 agent 执行
+>   完之后的检查通道——agent 若已 commit，记到的就是**改动后的 HEAD**。v15 钉死：
+>   plan 正常 PASS → runner 必建 plan snapshot → 首次 coding agent_invoke_start 前记录
+>   coding_base_sha → coding harness 读同 run 快照 + coding_base_sha；resume 复用原 SHA；
+>   缺同 run 快照直接 BLOCKER（第一版不做跨 run 自动找）。
+> ② **candidate 精确化**：现状 `--stage-only` 只建目录无 zip/hash，正常 pack 打完 zip 即删
+>   staging，`release:all` 第一步就是 `check-plan-version --release`（被在研 3.0.0 plan
+>   拦截）且 verify 后立即 promote——都不能原样当 candidate。v15 钉死：candidate =
+>   持久化 zip + sidecar manifest + zip sha256；只跳"发布 plan 完成门禁"；evaluator 随包；
+>   PASS 后对同一字节 zip 补门禁 promote，禁止重新 pack。
+> ③ 顺手清理：依赖段 smoke-consumer-staging.mjs → pack/release 生命周期；文件头 v13
+>   标识与正文统一。
 
-**验收/单测**：schema 四态（有效/缺失/损坏/unavailable）；
-- **（v11 B3 通用完整性测试，非案例特判）proposal 故意漏掉一个需求外 route → runner 必须按差集自动补入 protected，或 BLOCKER**；全集不可枚举 → BLOCKER 而非空集；
-- **（v12 B1）agent 擅自多报一个 positive route（把需求外页面声明成 positive）→ 拒绝**（无 receipt/人工确认不得进 `authorized_positive_scope`）；需求输入变化 → positive scope 重新派生并使下游失效；
-- **（v12 B2）inventory 四类采集用例**：`Navigation/NavDestination` / **根页面条件 Tab 分支（fixture：从当前 `01-Product/Phone/src/main/ets/pages/index.ets` 自动发现 `HomeTabPage`——本案页面不在 navDestinationMap，必须被发现）** / `@Builder` 导出页面 / sheet·modal 屏；存在不可判定构造 → BLOCKER 而非偏小全集；
-- **（v12 P1-4）run1 污染首页后启动 run2 → run2 不得把污染态重设为 trusted-base**（lineage 只初始化一次，跨 run 复用）；
-- **（v11 B1）门禁读的是 effective artifact**：篡改 acceptance 的 proposal 节点不改变 T8/T7b 裁决；消费前 pinned hash 不符 → BLOCKER；
-- **（v11 B2）完整 provenance 链但无可信历史锚点 → baseline 必须 `unavailable`**（不得升级为可信基线）；有锚点 → 可建立；
-- 本案 fixture=首页列入 protected 且 `forbidden_anchors` 含银行卡分区 → T8 与 T7b 均命中；**agent proposal 与 runner 生效版不一致 → 以生效版为准且留痕**；**agent 自行刷新 baseline → 拒绝**；**acceptance 自带宽松 `update_policy` → BLOCKER**（框架策略固定）；**pinned hash 在进程重启后仍可核验，且不被当前 acceptance 重算覆盖**；**只有新 run 无 receipt → 拒绝**（新 run ≠ 授权）；receipt+新 run 齐备 → 允许且全链失效重跑；**当前截图与 baseline 字节不等但归一化 metric 达标 → PASS**（防假失败）；伪造 hash 充 `unavailable` → BLOCKER；**UI feature 缺 contract → BLOCKER+backtrack（非 WARN）**；**「现有 bc-openCard acceptance 迁移」fixture：无 scope_contract 的真实文件 → 可信迁移出生效 contract 且首页被识别为 protected**；非 UI 任务缺 contract → WARN。
+> **v13 → v14（review 第 1 轮，全采纳）**
+> ① 允许集合从 `key_files` 改为 **`contracts.files`**——key_files 语义是"关键文件"（PRD→
+>   代码追溯），contracts.files 才是完整文件清单；强改 key_files 穷举会连带 plan skill/
+>   模板/校验/历史契约再次复杂化。同时**删除"已批准 expansion"第二 SSOT**：expansion 的
+>   唯一路径 = 更新 contracts.files 并重新取得 plan PASS snapshot。
+> ② "冻结 scope + 当前 coding diff"接线四条钉死（快照 fail-closed / trace.start_commit
+>   基线 / 删除重命名的 base 侧分类 / expansion fixture 断言 live contracts 无效）。
+> ③ G3 拆开"真机结果生产"与"staging 验证"：candidate staging（生成不 promote）→ 宿主
+>   统一执行 → candidate 内 evaluator 消费产物 → PASS 才 promote 同一 candidate。
+>   Todo 1-4 先完成"实现"；G3 真实验收与 Todo 5 在同一次宿主回归共同完成。
 
-### T8（P1，v3 升格并入发布约束；**依赖 T9**）屏级 scope 门 —— 修 R4 余波
+## 核心思路（v13 反转）
 
-> **v7 P0 修正**：v6 写「hard pixel 下越界=BLOCKER」，但真实银行卡请求是 **best_effort**（见 T7a），照此首页误开发仍只 WARN——门禁对本事故失效。改按「是否受保护」而非「strictness」分级。
+**不枚举页面全集，只看本次 diff**：
 
-**改动**：coding 侧文件级意图校验：coding diff 触及的 UI 页面文件 ↔ plan「关键文件」清单+ui-spec 屏 owner 映射 + **T9 的 runner-owned effective scope contract（唯一 runtime SSOT；v11 B1：**不读** acceptance 里的 proposal 节点，消费前先核对 pinned hash）**，两级处置：
-1. **受保护/显式排除范围**（命中 T9 `protected_negative_screens` 的 `owner_paths`/`forbidden_anchors`，或列入 `excluded_scope`，如本案首页 HomeTab）→ **任何 strictness 下越界修改恒 BLOCKER**（与 f6「确定性完整性错误不受 strictness 影响」同构）；
-2. **未列保护的一般跨屏修改** → hard contract=BLOCKER / best_effort=WARN+review 必审。
+```
+越界 UI 文件 = 本次 changed UI files − 冻结 contracts.files
+```
 
-确需跨屏修改 → **走 T9 唯一 SSOT 的正道链路（v10 P1-5）**：提交 `scope_contract amendment proposal` → 可信 receipt / 人工确认 → **新 run** → 更新 T9 生效 contract → plan/ui-spec 作**一致性投影**同步更新（不再表述为「扩展 plan/ui-spec scope」——那会绕开唯一 SSOT）。非 coding/testing 私扩，与 T4-8 amendment 原则同构。goal/普通模式同覆盖。
+（v14：白名单是 **`contracts.files`**——契约的完整文件清单；`key_files` 保持其原语义
+"PRD→代码追溯的关键文件"，不动。）
 
-**验收/单测**：**HomeTabPage 越界 fixture 在 best_effort 下必须 BLOCKER**（本事故真实档位，v7 关键）；未保护页面越界 → hard=BLOCKER / best_effort=WARN；CardPackPage 合法 → PASS；「先扩 scope 再改」路径 → PASS。
+保留 v12 唯一有效思想：**UI 相关文件必须显式进入 contracts.files；未声明的 UI 文件默认
+就是受保护范围**——因此不需要显式维护 `protected_negative_screens[]`，也不需要任何
+inventory / 双层 SSOT / trusted-base。
 
-### T7b（P1）consumer-outcome golden —— 修 R10（结果层，机器门禁）
+## G1：`ui_diff_within_declared_files`（原 T8 收缩为文件级门禁）
 
-**改动**：
-1. framework 提供 `golden:consumer-outcome` harness 套件（宿主执行）：真实 hvigor 构建 → hdc 装机 → 屏级 bootstrap **采齐「10 个 positive screens + 本次需验证的全部 protected-negative screens」**（v12 B3：negative 屏是**额外采集对象**，不含在 10 屏内；漏采即无法支撑 `unavailable` 分支的弱断言）→ 确定性断言（必需图片资产存在且非占位/屏级结构锚点在场/布局几何+edge divergence 达标（复用 T5 常量）/截图覆盖率 100% P0/crash-free：faultlog 窗口零新增）→ **protected_negative_screens（v3；v11 补 unavailable 分支）**：需求外「不应变化」页面（首页 HomeTab 等）反向断言，**按 baseline 可用性分两支**：
-   - **baseline 可用**（有完整 provenance 链 + 可信历史锚点）：无银行卡组件锚点 ∧ `baseline_structure_hash` 按冻结 canonicalization 规则比对不变（截图侧走 T5 归一化 metric，**不做字节相等**）；
-   - **`baseline=unavailable`**（legacy 迁移/无锚点）：**不得无条件要求「结构哈希不变」**——PASS 途径 = **`owner_paths` 的依赖闭包**未被本需求 diff 触及 ∧ `forbidden_anchors` 在实拍/uitree 中未出现 ∧ T8 侧无越界证据；三者任一不满足 → FAIL。
-     - **依赖闭包（v12 P1-5）**：只查 owner_paths 直接文件会漏**传递依赖**——shared component / design token / 资源文件改动同样能改变页面。须取 **owner dependency closure**（import 图 + `$r` 资源引用）；闭包不可解析时退回 **run-start observation**（run 开始时对该屏的实拍/uitree 快照），并**明示其语义**：「不代表质量正确，仅用于本 run 内的非退化比较」。
-     - 该分支须留痕「基线不可用，按弱断言通过」，并进债务清单提示补锚点。
-2. **outcome receipt = 精确对象绑定（v3 重定义，时间仅参考；v4 收紧 staging 与签名复用）**，绑定字段：**framework staging 内容哈希（必填）**+ sanitized framework zip 哈希 / **宿主源码完整快照 `source_snapshot_sha256`**（含 dirty workspace 状态；用 v5 新原语 `computeProductSourceSnapshotSha256`，**不用**轻量 `computeProductWorktreeDigest`）/ **构建 HAP sha256 + install session·device package sha256**（provenance 链中段）/ goal manifest+需求文档+10 参考图哈希 / 设备型号·分辨率·系统版本 / checker 版本 + **`metric_contract_hash`（T5 契约表）** / **决策与范围 SSOT 绑定（v7/v9，必填）：`fidelity-intent.json` sha256 + `capability-snapshot.json` sha256 + `decision_id` + `execution_identity` + canary run identity + `acceptance_sha256` + **`scope_contract_hash`（T9 的 runner-owned effective artifact 的 pinned hash——**非** acceptance proposal 节点的哈希；缺则「测完再改保护范围」可复用旧 PASS receipt）**（`source_snapshot_sha256` 明确排除 `reports/`，不会间接覆盖这些文件；缺则 PASS receipt 可被复用到**不同能力或不同定档决策**上）/ 10 实拍截图哈希（各自绑定所属 HAP identity）/ **`negative_screen_evidence[]`（v12 B3，必填）：每个 protected-negative 屏逐项绑定 screenshot hash + UITree·structure hash + HAP identity + bootstrap identity + 断言结果**（否则「forbidden anchor 未出现」这一结论不进 receipt，等于没验）/ faultlog 时间窗 / 签名主体与 key provenance。**commit id 仅作辅助元数据、不得作为绑定依据**（dirty worktree / sanitize / 打包内容均可能与 commit 不同）。签名**复用 confirmation-receipt.ts 既有原语**（`canonicalReceiptPayload` 稳定序列化 + domain-separated `ReceiptAction` + `object_hash` + HMAC/trust registry），**不另造签名协议**——但**必须自建签发端**（见下 2b）。
+- 允许文件集合 = **冻结的 `contracts.files`**（契约完整文件清单；`key_files` 只负责
+  PRD→代码追溯，不参与本门）。
+- **冻结口径（v15 钉死，最小实现五条）**：
+  1. **pre-coding 锚定（v15 新增——补两个实现缺口，仍是复用既有 snapshot 设施，不是
+     跨 run 信任平台）**。现状缺口：`takePassSnapshot` 只在 PASS+advance_blocked+closure
+     retry 时建（goal-runner.ts:5887 唯一调用点），正常 plan PASS 直接进 coding **没有
+     快照**；`trace.start_commit` 由 harness（agent 之后的检查通道）写（harness-runner.ts:626），
+     agent 已 commit 则记到改后 HEAD。正解流程：
+     **plan 正常 PASS → runner 必建 plan snapshot（复用 takePassSnapshot，advance 前执行，
+     失败 fail-closed halt）→ 首次 coding agent_invoke_start 前 runner 记录 coding_base_sha
+     （事件持久化）→ coding harness 读取当前 run 的 plan snapshot + coding_base_sha**。
+     钉死：resume 复用原 coding_base_sha，**不得重新取 HEAD**；从 coding 起跑却没有
+     **同 run** plan snapshot → 直接 BLOCKER 引导从 plan 起跑，第一版**不做**跨 run
+     "自动找最近 plan snapshot"。
+  2. **快照来源 fail-closed**：从**有效 plan PASS snapshot** 读取冻结 contracts.files；
+     快照缺失或损坏 → BLOCKER，**禁止退回 live `ctx.featureSpec.contracts`**（live 契约
+     coding 期 agent 可写，读它=门禁形同虚设——现有 check-coding 读 live 的形态不可复用）。
+  3. **diff 基线 = coding_base_sha**（第 1 条 runner 在 agent 起跑前锚定的 SHA，经既有
+     git-diff.ts 设施）——覆盖 **committed / staged / unstaged / untracked** 四态
+     （agent 改码后自行 commit 的越界文件同样检出；缺 coding_base_sha 与缺快照同罚：
+     BLOCKER，不回退 trace.start_commit——那是 agent 之后才写的）。
+  4. **删除/重命名**：diff 至少保留 status 与 old/new path（不用 `--name-only`），
+     删除/重命名文件从 **base 侧读旧内容**做 UI 分类（改后内容已不在盘上）。
+  5. **expansion 唯一路径**：更新 `contracts.files` 并重新取得 plan PASS snapshot——
+     没有"已批准 expansion"旁路（那是第二 SSOT）。
+- UI 敏感文件三类判据：
+  1. 页面/组件/presentation 类 `.ets`（路径含 `pages/`、`components/`、`presentation/`）；
+  2. 文件内容含 ArkUI UI 结构标志：`@Entry` / `@Component` / `build()` / `NavDestination` /
+     `Tabs` / `bindSheet`；
+  3. UI media/resource 文件（`resources/base/media/**` 等）。
+- **changed UI file 不在冻结 contracts.files → 任何 strictness 都是 BLOCKER**。本案自然
+  得到：CardPackPage.ets 在清单 → PASS；HomeTabPage/index.ets 不在 → best_effort 也
+  FAIL；确实要改 HomeTab → 回 plan 把它加进 contracts.files、重取 PASS snapshot。
+- 非 UI 文件继续走既有模块级 `diff_within_scope`，本门不重复管。
+- **第一版不做 owner dependency closure**（共享组件影响面是真问题，但等直接文件门跑出
+  真实漏报再加；提前做就又长成静态程序分析平台）。
 
-2b. **签发端建设（v8 新增，否则 T7b 死在起跑线）**：confirmation-receipt.ts:19 原文「**签发不在本模块**（后继 change `confirmation-credential-issuance`）。签发落地前 registry 通常不存在 → 一切校验 INVALID → 消费点 fail-closed 封顶 `AWAITING_HUMAN_REVIEW`——这是设计行为」，且 `ReceiptAction`(:34) 无 consumer outcome 项。仅"复用原语"会造出**永远验不过的 receipt**，且那个封顶正是本事故同款陷阱。故 T7b 显式含：
-   - 新增 `consumer_outcome_attestation` action（domain-separated）；
-   - **runner-owned issuer**（签发只在 runner 信任域内发生，agent 与宿主构建脚本均不可签）；
-   - issuer / key / trust-registry 配置落地（含 registry 条目 schema 与部署指引）；
-   - **独立 HMAC env**，且从**所有不可信子进程**环境剥离——不止 agent，**hvigor / Hylyre / 宿主脚本同样净化**（否则宿主构建脚本可读密钥自签 receipt）；不与 `MAISON_HMAC_GOAL_CHECKPOINT` 混用同一密钥；
-   - 签发 / 验证 / 轮换 / 吊销（`revoked=true` 即全失效）四类测试 + **「runner 可签、所有 child process 环境均无 key」回归**。
-   - **依赖标注**：与后继 change `confirmation-credential-issuance` 范围重叠——本 plan 只做 consumer outcome 这一 action 的最小签发闭环，**不等待该 change**，避免 T7b 被悬置卡死；届时按其通用方案收敛。**发布门禁校验「当前待发布字节 ≡ receipt 绑定字节」**（staging/zip 哈希比对），不满足即拒发；HMAC 密钥仅 runner 侧持有，**不暴露给宿主构建脚本与 testing agent**。
-3. 消费范围：**UI/能力链相关路径**变更的发版要求绑定匹配的 PASS receipt；非相关变更不强制。触发集合 release 配置显式列举，**除 profiles/*/harness 视觉链、goal-runner 视觉段、skills 视觉文案外，必须包含本次事故的能力链真实文件（v8 补齐）**：`harness/scripts/utils/goal-preflight.ts`、`harness/scripts/utils/fidelity-shared.ts`、`harness/scripts/utils/effective-vision-context.ts`、`harness/scripts/utils/multimodal-probe.ts`、`harness/harness-runner.ts`、`harness/scripts/check-spec.ts`——否则改动最关键的能力路由代码却不触发结果门禁（正是本次事故的成因形态）。
-4. **宿主复演两用例（v8 澄清生命周期）**：
-   - **(a) 干净全链**：**必须连跑两个 run**（第二个在 7 天 TTL 内启动）——第二 run 的 canary 已 fresh 且 run_id 属前一 run，是 R1' 永久陷阱的**唯一暴露口径**，单 run 必假绿。两 run 均 PASS 才算通过；
-   - **(b) 受控 fault-injection**：验证链路为「污染尝试 **FAIL** → backtrack → 修复/还原 → **新快照绑定的 PASS**」，**不强制两个新 run**——首个故障 run 常处 HALTED/PARTIAL，会被 fresh-start guard 挡住直接建 run2；确需新 run 时使用**隔离工作副本 + audited supersede 流程**（留痕谁、何时、以何依据取代前一 run）。
-   - 与 fidelity-intent-auto-routing **tasks#11**（当前 10/11）合并执行，**该项按 (a) 的两 run 口径**；截图按 `D:\1.code\对比结果\1-bc-opencard\<N>-<标签>` 归档。
+## G3：bc-openCard consumer golden（原 T7b 收缩——保留 golden，撤掉签发平台）
 
-**验收**：宿主干净全链（**连跑两 run**，第二 run 仍 visual 且 receipt PASS）→ 存档；fault-injection「删素材」「占位替换」「首页塞组件（打 protected_negative，**best_effort 档亦须 BLOCKER**）」各一例 → **完整链断言：注入快照 FAIL receipt → backtrack → 修复快照 PASS receipt**（不止 FAIL），且指纹指向对应断言；伪造场景（旧 receipt 配新 zip / 未来时间戳 / 同 commit 但 staging 内容不同 / **同字节但 decision_id·capability-snapshot 不同**）→ 发布门禁拒绝。
+**candidate 定义（v15 钉死为可执行对象）**：`candidate = 持久化 zip + sidecar manifest +
+zip sha256`——**不是可变 staging 目录**。现状核实：`--stage-only` 只建目录、`zipPath: null`
+无 hash（pack-release.mjs）；正常 pack 打完 zip 即删 staging；`release:all` 第一步就是
+`check-plan-version --release`（当前被多个在研 3.0.0 plan 拦截）且 verify 通过立即
+promote、finally 清 staging；`release:verify` 自带同一 plan 门禁（verify-release-pack.mjs:328）
+——都不能原样当 candidate 用，需要独立 candidate 模式。
 
-## 发布约束
+**执行形态（v15 五步钉死）**：
 
-本 plan 全部完成前，**UI 相关变更的发版**须附一次宿主人工复演记录作为过渡等价物（按「干净全链」口径，含连跑两 run）。T7b receipt 机制落地后转为机器门禁。
+```
+两份 plan 代码/单测/fixture 全部完成
+  → candidate 模式：完成测试 + pack + zip 内容校验，唯一跳过项 =「最终发布 plan 完成
+    门禁」（check-plan-version --release）；产出持久化 zip + sidecar manifest + zip sha256
+    → 宿主安装该 zip（非可变 staging 目录），统一执行：两 run + fault-injection +
+      golden 十固定屏 + HomeTab + AllBanks
+      → 用 candidate zip 内的 golden evaluator 消费宿主本轮产物
+        → PASS → 对已有 zip 补最终发布门禁，移动同一字节对象 promote（禁止重新 pack）；
+          FAIL → 不 promote
+```
 
-> 注：d8c5f3a7 的发布约束（T1~T5+T7a 完成前禁发）独立生效，两者叠加。
+- **evaluator 属于发布内容**（打进 candidate zip），确保运行的是 candidate 内实现。
+  输入 = candidate manifest + 宿主 goal run ID + 结果目录；宿主侧安装的
+  `RELEASE-MANIFEST.sha256` 或结果 run ID 与 candidate 不匹配 → **FAIL**，旧结果不能复用。
+- **evaluator 只做结果聚合，不造真机执行平台**：
+  · HomeTab：复用既有 identity 的 `none_of: [{id: bank_card_section}]` + UITree；
+  · AllBanks：capture 成功 + identity PASS + 无 crash；
+  · 其余各项复用既有 identity / faultlog 集合差 / 素材门 / visual-diff 结果。
+- 若其他在研 plan 仍阻止正式发布：只标记 **candidate eligible**，**不绕过全局发布门禁**。
+- 不允许跨 release 复用结果 → 自然不需要 HMAC/receipt/registry/轮换/吊销。
+- 输出**普通 JSON 诊断报告**（zip sha256、截图 hash、设备信息）——用于诊断，
+  不是长期可信凭证。
+- **Todo 1-4 先完成"实现"；G3 的真实验收与 Todo 5 在同一次宿主回归中共同完成**
+  （正好满足"两份 plan 全部开发完，只去宿主回归一次"）。
 
-## 执行顺序
+**Golden screen oracle（v16 新增——固定集合契约，随 candidate zip 发布）**：
 
-d8c5f3a7 的 T4/T5 落地 →（本 plan）**T9** → **T8** → **T7b**（宿主）。T9 的 schema/fixture 设计可与 d8c5f3a7 并行先行。
+事实核定（对事故归档）：ui-spec 十屏 = **9 个 P0 + `bank_card_list_sheet`（P1，却对应
+第 10 张原始需求图「9.银行卡列表页-半模态形式.jpg」）**；归档 visual-diff.json 只采到
+6 屏；reference-images.registry.json 只有文件名+hash、无 screen ID 映射。因此 evaluator
+**不能**从 P0 动态推导（漏 bank_card_list_sheet）、**不能**从宿主本轮 ui-spec 推导
+（ui-spec 被误改后可自证通过）、**不能**只检查数量为 10（错误屏替换正确屏也能凑数）。
 
-## 风险与开放问题
+固定 **10 个正向需求屏**（declared → capture ID 映射一并固定；overlay 命名按既有
+visual-diff-targets.ts:40 规则 `<screen>__overlay__<id|order>`）：
 
-- Q1 UI owner inventory 四类采集的实现代价：ArkTS 条件分支/Builder/sheet 挂载的静态可判定性存疑，不可判定构造须 BLOCKER 而非猜测——首轮实现后按真实命中率校准。
-- Q2 `authorized_positive_scope` 从需求 SSOT 派生的精度：需求文本→屏 ID 的映射由谁裁决（runner 规则 or spec agent 提议+runner 核验）。
-- Q3 trusted-base 首次初始化时机：feature 首个 run 之前宿主可能已有历史改动，"干净"的定义需与用户约定。
-- Q4 T7b「UI 相关路径」触发集合粒度（过宽=发版瘫痪、过窄=漏网）；v1 先显式列举+发版 checklist 人工兜底。
-- Q5 签发端与后继 change `confirmation-credential-issuance` 的收敛路径。
-- Q6 golden fixture 维护流程：需求变更时由谁、以何 receipt 更新期望断言（防 golden 自身腐化假绿）。
+| declared screen ID | capture ID |
+|---|---|
+| add_card_home_collapsed | 同名 |
+| add_card_home_expanded | 同名 |
+| all_banks | 同名 |
+| card_type_sheet | card_type_sheet\_\_overlay\_\_0 |
+| card_select | 同名 |
+| sms_verify | sms_verify\_\_overlay\_\_0 |
+| add_success | 同名 |
+| card_detail | 同名 |
+| card_pack_with_cards | 同名 |
+| bank_card_list_sheet | bank_card_list_sheet\_\_overlay\_\_0 |
+
+HomeTab 是额外的**第 11 个负向目标**，不计入十个正向屏。门禁口径：**精确集合相等** +
+declared↔capture ID 映射校验——**缺失、重复、替换、多出错误屏均 FAIL**。这是 consumer
+golden 必须有的最小 oracle（一个随包小契约文件），不是通用 baseline/inventory 平台。
+全文文案统一为"**10 个固定正向需求屏**"，不再称"10 个 P0 屏"。
+
+**生产接线（v17 新增——否则 contract 要求 P1 屏而采集器永不生产）**：现状
+`collectP0OverlayTargetIds` 先过 `isP0VisualTargetScreen`（visual-diff-targets.ts:50，
+= `priority === 'P0'`），P1 的 bank_card_list_sheet 进不了 overlay 遍历。最小接线四条：
+1. **golden 模式**读取随包固定 contract，把十个 declared screen ID 作为**显式 capture
+   targets** 传给既有采集器——显式目标**不受全局 P0 过滤**；
+2. **普通 visual-diff 不传 golden targets，仍保持 P0-only**（不因此全局扩面到 P1）；
+3. contract 要求的 declared screen 必须在宿主 ui-spec 中**存在且形态相符**
+   （bank_card_list_sheet 仍为 overlay root 才解析得出 `__overlay__0`）——缺失或形态
+   不符**直接 FAIL**（fail-closed，不静默跳过）；
+4. 复用既有导航（visual-diff-nav）、identity、截图、faultlog 流程，**不另造设备执行平台**。
+
+**Golden 验证清单（只留确定性且有判别力的结果）**：
+1. 10 个固定正向需求屏全部采集（按上表 golden contract 精确集合相等）；
+2. screen identity 正确（既有 identity gate 口径）；
+3. 无 crash（faultlog 集合差口径，d8c5f3a7 F3 已交付）；
+4. required asset 不缺失、不为 maison placeholder（d8c5f3a7 F4 已交付的档位无关门）；
+5. visual-diff.json 无 must_fix；
+6. **HomeTab 实拍/UITree 中没有 `bank_card_section`**（forbidden anchor，本案直接回归）；
+7. AllBanks 可进入（本案崩溃屏直接回归）；
+8. 关键半模态（card_type/sms）与完成页有声明且采到。
+
+**明确删除**：score_floor / blank_area_ratio / 未校准 edge divergence / 通用 metric
+contract（d8c5f3a7 v22 已删且实测证伪）/ "HomeTab 必须与历史截图·结构 hash 不变" /
+trusted baseline 双分支。Golden 的目标是防**灾难性退化与错误范围**，不冒充能机器判定
+全部视觉美感——高保真好坏在可靠感知指标建立前，保留并排截图人工终审。
+
+## 移出本 plan 的内容
+
+- **两 run canary 验收**归 d8c5f3a7 / fidelity-intent-auto-routing 的 T1 验收（v12 在
+  T7b 又写了一份，两个 plan 对同一验收负责——删此处，只留彼处）。
+- HMAC issuer / trust registry / 独立密钥 / 子进程环境剥离 / 密钥轮换吊销 /
+  consumer_outcome_attestation action / receipt 复用验证 / staging·commit·decision·canary·
+  截图 provenance 绑定字段 / UI 相关路径触发白名单——全部移出，不再属于任何当前版本。
+
+## 依赖（重写后——不消费任何已删产物）
+
+只依赖**既有已交付**设施：
+- 冻结 contracts / plan 的 pass snapshot（既有，pass-snapshot.ts）；
+- `diff_within_scope` 的 diff 采集面（既有，check-coding.ts）；
+- release pack→verify→promote 生命周期（既有，pack-release.mjs / release-all.mjs /
+  verify-release-pack.mjs——candidate 模式在其上加"跳发布 plan 门禁 + 持久化 zip"分支）；
+- d8c5f3a7 已交付的 identity gate / crash 集合差 / 素材档位无关门（G3 清单 2-4 直接复用）。
+
+## 排期与发布约束（2026-07-26 用户定案：先做完本 plan，再统一打包复演）
+
+**本 plan 先于宿主复演实现**——三个理由：① 宿主回归是全流程最贵环节（配套 1-4/真机
+两 run/fault-injection/人工核对），只做一次；② G3 的 staging→golden→promote 本来就是
+打包流程的一部分——发给宿主的包应当是经过 consumer golden 的；③ 复演中若 scope 误开发
+复发，带着 G1 门禁当场 BLOCKER，不带则只能人工发现后再装再跑。v13 设计已确定
+（文件级门禁不需要复演数据做输入），归因风险可控（与 d8c5f3a7 v23 是正交模块，
+事件/门禁 id 不重叠）。
+
+顺序：**本 plan review → 实现（Todo 1-4）→ candidate 模式产出唯一 candidate zip（不
+promote，记 sha256）→ 宿主安装 candidate zip 统一回归（d8 的干净两 run + fault-injection +
+本 plan Todo 5）→ evaluator PASS → 对同一字节 zip 补发布门禁 promote → 双 plan 解禁**。
+发布约束：Todo 1-4 完成前，涉及 UI 范围的发版继续以人工核对 golden 十固定屏 + 无新增页面作为
+过渡等价物。
 
 ## Todos
 
-- [ ] T9 scope contract SSOT（见上，含 proposal/effective 分层、差集完整性算法、四类 inventory、trusted-base lineage、框架固定 update_policy、pinned hash 持久化、UI feature 缺 contract=BLOCKER、bc-openCard 迁移 fixture）
-- [ ] T8 屏级 scope 门（消费 T9 effective SSOT；受保护屏任何 strictness 恒 BLOCKER；扩 scope 走 amendment 正道）
-- [ ] T7b consumer-outcome golden（宿主机器门禁+对象绑定 receipt+自建 runner-owned 签发端+negative_screen_evidence+两用例复演）
-- [ ] unit 全量绿 + 新增 fixture 全绿
-- [ ] 宿主复演（与 d8c5f3a7 的宿主配套第 5 条合并执行）
+- [x] 1. `ui_diff_within_declared_files` 门禁：UI 文件级 scope 门，白名单=**plan PASS
+      snapshot 冻结的 contracts.files**（快照缺失/损坏 fail-closed，禁退 live）；
+      **pre-coding 锚定**：plan 正常 PASS 必建快照 + 首次 coding agent 起跑前记
+      coding_base_sha（resume 复用原 SHA）；diff 基线 = coding_base_sha，覆盖四态含
+      删除/重命名 base 侧分类；注册进 coding 阶段 checker
+- [x] 2. 六个用例：
+      ① HomeTab 未声明却修改 → **best_effort 也 BLOCKER**（本案直接回归）；
+      ② CardPackPage 已声明修改 → PASS；
+      ③ **只改 live contracts（不重跑 plan）→ 仍 FAIL**（防绕过冻结）；
+      ④ scope expansion：更新 contracts.files + 重取 plan PASS snapshot → PASS；
+      ⑤ **正常 plan PASS（非 advance_blocked）也建快照**（runner 用例）；
+      ⑥ **agent 改码并自行 commit 后仍检出越界文件**（coding_base_sha 基线用例）
+- [x] 3. 精简 bc-openCard consumer golden evaluator：**固定 golden screen contract**
+      （10 个固定正向需求屏 = 9 P0 + P1 bank_card_list_sheet，declared↔capture ID 映射
+      一并固定，精确集合相等——缺失/重复/替换/多余均 FAIL；随 candidate zip 发布）
+      + **生产接线**（golden 模式把 contract 十屏作显式 capture targets 传既有采集器、
+      不受 P0 过滤；普通 visual-diff 仍 P0-only；contract 屏在 ui-spec 缺失/非 overlay
+      root → fail-closed FAIL；复用既有导航/identity/截图/faultlog）
+      + HomeTab forbidden anchor（G3 验证清单八条；只聚合既有结果，不造执行平台）。
+      三个接线用例：
+      ① golden 显式选择 P1 bank_card_list_sheet → 产出 bank_card_list_sheet__overlay__0；
+      ② 普通 visual-diff 不传 golden targets → 仍不采普通 P1（防全局扩面）；
+      ③ contract 要求的 declared screen 在 ui-spec 缺失/非 overlay root → fail-closed FAIL
+- [x] 4. candidate 模式：candidate = **持久化 zip + sidecar manifest + zip sha256**；
+      完成测试+pack+zip 内容校验，唯一跳过项 = 发布 plan 完成门禁；evaluator 打进
+      zip 并校验 manifest sha256 / 宿主 run ID 匹配（不匹配 FAIL，旧结果不复用）；
+      PASS 后补门禁**移动同一字节 zip** promote，禁止重新 pack；其他在研 plan 未完
+      时只标 candidate eligible；普通 JSON 诊断报告（不签名、不复用）
+- [ ] 5. 一次真实宿主回归（与 d8c5f3a7 复演同一次）：两 run + fault-injection +
+      golden 十固定屏 + HomeTab + AllBanks，evaluator 裁决并归档
