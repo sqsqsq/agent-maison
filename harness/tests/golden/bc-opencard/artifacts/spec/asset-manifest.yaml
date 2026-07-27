@@ -1,0 +1,21 @@
+schema_version: "1.0"
+feature: bc-openCard
+mode: blind_placeholder
+assets:
+  - key: bank_logo_cmb
+    role: brand_logo
+    label: 招商银行
+    acquisition: placeholder
+    status: pending_human_asset
+  - key: bank_logo_icbc
+    role: brand_logo
+    label: 工商银行
+    acquisition: placeholder
+    status: pending_human_asset
+  - key: success_illustration
+    role: illustration
+    label: 添卡成功插图
+    acquisition: placeholder
+    status: pending_human_asset
+notes: |
+  盲档 headless run：禁止 acquisition:crop。用户可在后续提供裁剪素材至 spec/assets/ 并更新 ui-spec resolved_path。

@@ -12,3 +12,4 @@ export const provider: CapabilityProvider = {
 export { checkAssetAcquisition } from '../asset-acquisition';
 export { checkAssetManifest } from '../asset-manifest-check';
 export { checkAssetCropValidation } from '../asset-crop-validation';
+// plan d8c5f3a7 T3：盲档非破坏化两道确定性防线（档位无关）

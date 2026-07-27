@@ -91,6 +91,11 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'arkui-clip-overlap', modulePath: './unit/arkui-clip-overlap.unit.test' },
   { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
   { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
+  { id: 'product-source-snapshot', modulePath: './unit/product-source-snapshot.unit.test' },
+  // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
+  { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
+  // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）
+  { id: 'golden-bc-opencard', modulePath: './unit/golden-bc-opencard.unit.test' },
   { id: 'vision-canary', modulePath: './unit/vision-canary.unit.test' },
   { id: 'vision-canary-interactive', modulePath: './unit/vision-canary-interactive.unit.test' },
   { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },

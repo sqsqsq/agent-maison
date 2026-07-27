@@ -23,6 +23,8 @@ import {
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
 import { resolveGoalEffectiveImageInput, isVisionCanaryFresh } from './multimodal-probe';
+// plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
+import { canaryAdmissibleForRun } from './effective-vision-context';
 import { planUsesClaudeStreamJson } from './claude-envelope';
 import {
   invokeAgentHeadless,
@@ -266,9 +268,12 @@ export type VisionCanaryProbeSkipReason =
   | 'fresh_cache_present'
   | 'no_capability_declared';
 
+/** probe 触发缘由（plan d8c5f3a7 T1：新增 fresh_but_not_admissible_for_run 供日志/断言区分） */
+export type VisionCanaryProbeReason = 'fresh_but_not_admissible_for_run';
+
 export type VisionCanaryProbeDecision =
   | { action: 'skip'; reason: VisionCanaryProbeSkipReason }
-  | { action: 'probe' };
+  | { action: 'probe'; reason?: VisionCanaryProbeReason };
 
 /**
  * E1：是否该触发金丝雀实测的**纯决策**（无 I/O 副作用之外——只读 framework.local.json，
@@ -303,10 +308,20 @@ export function decideVisionCanaryProbe(input: {
   if (local?.vision?.image_input_override) {
     return { action: 'skip', reason: 'local_override_present' };
   }
-  // I2：新鲜度单点判据（超龄 interactive 缓存不算新鲜 → 重探；goal 缓存不受 TTL 影响）。
+  // I2：新鲜度判据（超龄 interactive 缓存不算新鲜 → 重探）。
+  // plan d8c5f3a7 T1：**skip 的前提是消费端将会采信**——新鲜度只答「证据是否过期」，
+  // 还须合取 canaryAdmissibleForRun 答「证据是否属于当前执行身份」。否则出现
+  // 2026-07-24 事故形态：goal canary 因 TTL 内被判 fresh 而跳过重探，却因 run_id 不匹配
+  // 在三轴 resolver 处落 adapter_declared → blind_safe，凭空致盲；且 goal·tool_read
+  // 正结论 TTL=7d，等于「每 7 天只有第一个 run 有视觉，其余全盲」的永久陷阱。
   const canary = local?.vision?.canary;
   if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
-    return { action: 'skip', reason: 'fresh_cache_present' };
+    if (canaryAdmissibleForRun(canary, { runId: manifest.run_id })) {
+      return { action: 'skip', reason: 'fresh_cache_present' };
+    }
+    // 新鲜但本 run 不可采信（跨 run 的 goal canary / 旧缓存无 run_id）→ 当场重探，
+    // 探测结果会带本 run 的 run_id 写盘，消费面随即可采信。
+    return { action: 'probe', reason: 'fresh_but_not_admissible_for_run' };
   }
   return { action: 'probe' };
 }

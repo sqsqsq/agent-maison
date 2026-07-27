@@ -69,7 +69,7 @@ function agentRound(
       attemptId: input.attemptId!,
       roundInput: input,
       claimed: { base_state_hash: ev.row.base_state_hash, row_hash: ev.row.row_hash, fused: ev.decision.fused },
-      now: () => at,
+      at,
     });
   }
   return { fused: ev.decision.fused };
@@ -217,6 +217,88 @@ test('evaluateVisualRoundOverRows 纯核：与文件路径入口等价', () => {
     const viaFile = evaluateVisualRound(ledger, input);
     const viaRows = evaluateVisualRoundOverRows([], input);
     assert(viaFile.row.row_hash === viaRows.row.row_hash, '纯核与文件入口同一结果');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// plan d8c5f3a7 T2：2026-07-24 visual_ledger_integrity 误杀根治
+// 硬学习「测试须命中目标分支」：既有用例把同一个 at 显式传给评估与 append，恰好绕过了
+// 生产调用形态（consumeVisualRoundPayload 当时**不传** at → 内部 new Date() 重打）。
+// 下列两例按**生产形态**构造，覆盖真实事故路径。
+// ---------------------------------------------------------------------------
+
+/** 复刻 harness-runner.ts::consumeVisualRoundPayload 的调用形态：拿 ev.row.at 回传 */
+function productionShapeRound(
+  ledgerPath: string,
+  journalPath: string,
+  input: Omit<VisualRoundInput, 'now'>,
+  evalAt: string,
+  /** 注入"写盘时刻"以模拟旧 bug（不传=按生产形态用 row.at） */
+  writeAtOverride?: string,
+): void {
+  const journal = readJournalProposals(journalPath);
+  const extraRows = journalRowsToLogicalHistory(journal.rows, input.attemptId!);
+  const ev = evaluateVisualRound(ledgerPath, { ...input, now: () => evalAt }, { extraRows });
+  if (ev.disposition !== 'appended') return;
+  appendJournalProposal(journalPath, {
+    attemptId: input.attemptId!,
+    roundInput: input,
+    claimed: { base_state_hash: ev.row.base_state_hash, row_hash: ev.row.row_hash, fused: ev.decision.fused },
+    // 生产形态：评估时刻随 row 回传（修复后的 harness-runner 传的就是 row.at）
+    at: writeAtOverride ?? ev.row.at,
+  });
+}
+
+test('T2 生产调用形态：评估时刻随 row 回传 → 多轮收编全通过（不再误判篡改）', () => {
+  withTmp(dir => {
+    const ledger = path.join(dir, 'ledger.jsonl');
+    const journal = path.join(dir, 'journal.jsonl');
+    // 三个中间轮，各自不同评估时刻（真实 run 即如此）
+    productionShapeRound(ledger, journal, INPUT({ defectFingerprints: ['fp:a'] }), '2026-07-24T06:10:00.000Z');
+    productionShapeRound(ledger, journal, INPUT({ defectFingerprints: ['fp:b'] }), '2026-07-24T06:20:00.000Z');
+    productionShapeRound(ledger, journal, INPUT({ defectFingerprints: ['fp:c'] }), '2026-07-24T06:30:00.000Z');
+    const rows = readJournalProposals(journal).rows;
+    assert(rows.length === 3, `journal 应有 3 行，实得 ${rows.length}`);
+    const replay = replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9' });
+    assert(replay.ok, `生产形态收编必须通过，实得 mismatches=${JSON.stringify(replay.mismatches)}`);
+    assert(replay.replayed === 3, `应收编 3 行，实得 ${replay.replayed}`);
+  });
+});
+
+test('T2 事故形态可检出且归因正确：写盘 at 与评估 at 不同源 → base/fused 全对、唯 row 不符', () => {
+  withTmp(dir => {
+    const ledger = path.join(dir, 'ledger.jsonl');
+    const journal = path.join(dir, 'journal.jsonl');
+    // 模拟旧 bug：评估用 06:10，写盘却打了 06:11（旧代码的 new Date()）
+    productionShapeRound(
+      ledger, journal, INPUT(), '2026-07-24T06:10:00.000Z', '2026-07-24T06:11:00.000Z',
+    );
+    const replay = replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9' });
+    assert(!replay.ok, '时间戳不同源必须被检出（fail-closed 语义不变）');
+    const msg = replay.mismatches.join('\n');
+    // 事故现场签名：base 一致、fused 一致、唯 row_hash 不一致
+    assert(msg.includes('仅 row_hash 不符'), `归因须指向时间戳/输入未同源，实得：${msg}`);
+    assert(!msg.includes('评估器漂移或 journal 被篡改'), `不得再一律甩「篡改」，实得：${msg}`);
+    assert(msg.includes('at 2026-07-24T06:11:00.000Z'), `报文须带 at 字段级线索，实得：${msg}`);
+  });
+});
+
+test('T2 at 必填：空串/缺失即抛错（编译期外的运行时兜底）', () => {
+  withTmp(dir => {
+    const journal = path.join(dir, 'journal.jsonl');
+    let threw = false;
+    try {
+      appendJournalProposal(journal, {
+        attemptId: 'i9',
+        roundInput: INPUT(),
+        claimed: { base_state_hash: 'b', row_hash: 'r', fused: false },
+        at: '   ',
+      });
+    } catch (e) {
+      threw = (e as Error).message.includes('at 必填');
+    }
+    assert(threw, '空 at 必须抛错，不得回落 new Date()');
+    assert(!fs.existsSync(journal), '抛错时不得留下半行 journal');
   });
 });
 

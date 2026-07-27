@@ -354,6 +354,38 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  run('evaluation_invalidated 档位无关 FAIL：best_effort 下同样阻断（OpenSpec：While present, the gate SHALL FAIL）', () => {
+    // review 第 14 轮：旧实现只在 pixel_1to1 下 FAIL，best_effort 只 WARN——与规格明文冲突，
+    // 也与 runner 侧 unverified 通路打架（runner 对该标记 retry/halt，gate 却放行）。
+    const root = mkProject();
+    try {
+      const dir = path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'device-screenshots');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+      fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing', 'visual-diff.md'), '# diff');
+      fs.writeFileSync(path.join(dir, 'shot-home.png'), 'png');
+      fs.writeFileSync(path.join(dir, 'visual-diff.json'), JSON.stringify({
+        schema_version: '1.2',
+        screens: [{
+          screen_id: 'home',
+          screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
+          verdict: 'pass',
+          must_fix: [],
+          evaluation_invalidated: true,
+        }],
+      }, null, 2));
+      // baseCtx 缺省非 pixel_1to1（best_effort 语境）——正是旧实现放行的档位
+      const r = checkVisualDiff(baseCtx(root));
+      const hit = r.find((x: { id: string; status: string; severity: string; details?: string }) =>
+        x.id === 'visual_diff' && x.status === 'FAIL' && /evaluation_invalidated/.test(x.details ?? ''));
+      if (!hit) throw new Error(`best_effort 下 evaluation_invalidated 须 FAIL：${JSON.stringify(r.map((x: { id: string; status: string }) => `${x.id}:${x.status}`))}`);
+      if ((hit as { severity: string }).severity !== 'BLOCKER') throw new Error(`须 BLOCKER，实得 ${(hit as { severity: string }).severity}`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   run('visual_diff_invalid_json_fail', () => {
     const root = mkProject();
     try {
@@ -3727,6 +3759,58 @@ export function runAll(): UnitCaseResult[] {
     eq(d.selected, 'pixel_1to1', 'selected（CLI 升档进路由）');
     eq(d.effective, 'pixel_1to1', 'effective');
     eq(d.decision.source, 'explicit_cli', 'source');
+  });
+
+  // ==========================================================================
+  // plan d8c5f3a7 T1：两 run 决策身份断言（能力真值跨 run 收口）
+  // 事故背景：canary 跨 run 不可采信 + TTL 内不重探 = 「每 7 天只有第一个 run 有视觉」。
+  // 修复后第二个 run 会重探并写本 run 的 run_id；此处断言**决策身份随 run 更新**，
+  // 防止「能力相同 → 复用上一个 run 的 decision_id」把跨 run 的决策混为一谈。
+  // ==========================================================================
+  run('T1 两 run 决策身份: 能力完全相同时 run2.decision_id 仍须 ≠ run1（execution_identity 进公式）', () => {
+    const common = {
+      requirementText: '完全参考截图做像素级还原（pixel_1to1），结构/颜色/布局尽量一致。',
+      capability: { hasVision: true, ocrAvailable: true },
+      requirementSha: 'b'.repeat(64),
+    };
+    const d1 = resolveFidelityRoutingDecision({ ...common, executionIdentity: 'run-1' });
+    const d2 = resolveFidelityRoutingDecision({ ...common, executionIdentity: 'run-2' });
+    eq(d1.effective, 'pixel_1to1', 'run1 有视觉 → 不钳');
+    eq(d2.effective, 'pixel_1to1', 'run2 有视觉 → 同样不钳（永久陷阱已解）');
+    if (d1.decision.decision_id === d2.decision.decision_id) {
+      throw new Error('跨 run 必须产生不同 decision_id（execution_identity 是公式输入项）');
+    }
+  });
+
+  run('T1 两 run 决策身份: 同 run 同输入重复计算 → decision_id 幂等', () => {
+    const args = {
+      requirementText: '完全参考截图做像素级还原（pixel_1to1），结构/颜色/布局尽量一致。',
+      capability: { hasVision: true, ocrAvailable: true },
+      requirementSha: 'c'.repeat(64),
+      executionIdentity: 'run-1',
+    };
+    const a = resolveFidelityRoutingDecision(args);
+    const b = resolveFidelityRoutingDecision(args);
+    eq(a.decision.decision_id, b.decision.decision_id, '同 run 同输入须幂等');
+  });
+
+  run('T1 能力真值直达档位: 同一 run 下 hasVision=false→钳、true→不钳（canary 采信与否的下游后果）', () => {
+    const common = {
+      requirementText: '完全参考截图做像素级还原（pixel_1to1），结构/颜色/布局尽量一致。',
+      requirementSha: 'd'.repeat(64),
+      executionIdentity: 'run-1',
+    };
+    // 事故形态：canary 不可采信 → adapter_declared → blind_safe → hasVision=false
+    const blind = resolveFidelityRoutingDecision({ ...common, capability: { hasVision: false, ocrAvailable: true } });
+    eq(blind.effective, 'semantic_layout', '无视觉 → 钳到 semantic_layout（2026-07-24 事故档位）');
+    eq(blind.clamped, true, '须如实标记 clamped');
+    // 修复形态：重探成功 → run_probed 采信 → hasVision=true
+    const seeing = resolveFidelityRoutingDecision({ ...common, capability: { hasVision: true, ocrAvailable: true } });
+    eq(seeing.effective, 'pixel_1to1', '有视觉 → 保持 pixel_1to1');
+    eq(seeing.clamped, false, '不得标记 clamped');
+    // 严格度轴不受影响：银行卡原话是「尽量一致」→ best_effort（f6 冻结口径，勿改判 hard）
+    eq(blind.strictness, 'best_effort', 'strictness 轴与能力轴正交');
+    eq(seeing.strictness, 'best_effort', 'strictness 轴与能力轴正交');
   });
 
   run('f6b2d9a4 P0 路由②: pixel+hard + 有效 receipt 降 semantic → proceed；inferred 保留；下游 hard gate 不触发', () => {

@@ -47,6 +47,7 @@ import {
   resolvePhaseCapabilityAdvisory,
   TRANSIENT_API_BACKOFF_MS,
   VISUAL_GAP_RETRY_GUIDANCE,
+  VISUAL_GAP_RETRY_GUIDANCE_TESTING,
   type CapabilityAdvisory,
 } from '../../scripts/goal-runner';
 import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from '../../scripts/utils/await-confirm-guidance';
@@ -745,6 +746,30 @@ export function runAll(): UnitCaseResult[] {
     {
       // P0-2（round6 收尾批·codex 意见）：visual_gap 重试指导必须含弃判禁令——
       // fail_signals 非空不得 pending、须转 must_fix 并在本轮修码重测（终局 run 实锤 agent 弃判）。
+      name: 'T4 矛盾指令根除：testing 版指导不得含「本轮改码」，且明令零源码写入',
+      run: () => {
+        const text = VISUAL_GAP_RETRY_GUIDANCE_TESTING.join('\n');
+        // 事故实锤：通用版含 "fix the code in THIS retry"，与 device-testing SKILL.md:114
+        // 「不修改源码」正面冲突——agent 照 runner 的话改码，随即被双锁判违规。
+        if (/fix the code in THIS retry/i.test(text)) {
+          throw new Error('testing 版不得再要求本轮改码（与 SKILL 禁令冲突）');
+        }
+        if (!/Do NOT modify product source code/i.test(text)) {
+          throw new Error('testing 版须明令零产品源码写入');
+        }
+        if (!/backtrack/i.test(text)) {
+          throw new Error('testing 版须指出回修出路（backtrack 到 coding）');
+        }
+        if (!/anchors?/i.test(text)) {
+          throw new Error('testing 版须说明锚点缺失属缺陷、由 acceptance+coding 解决');
+        }
+        // 通用（coding 侧）版保持原样——本轮修码在 coding 阶段仍然正确
+        if (!/fix the code in THIS retry/i.test(VISUAL_GAP_RETRY_GUIDANCE.join('\n'))) {
+          throw new Error('通用版（coding 侧）不应被改动');
+        }
+      },
+    },
+    {
       name: 'VISUAL_GAP_RETRY_GUIDANCE: forbids verdict abandonment',
       run: () => {
         const text = VISUAL_GAP_RETRY_GUIDANCE.join('\n');

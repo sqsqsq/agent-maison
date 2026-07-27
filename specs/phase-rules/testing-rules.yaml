@@ -238,7 +238,9 @@ structure_checks:
       P0-2（9d4b7e21，声明补录——实现已随收尾批落地，本条补齐指纹纪律）：确定性 FAIL 弃判硬
       backstop——某屏 placement fail_signals 非空且 verdict=pending → BLOCKER 必报（不以
       must_fix 有无为条件防绕过）；details 合并 fail_signals 与该屏既有 must_fix 作现成回修指令。
-      fail 屏须 verdict=fail + 信号转 must_fix + 重试轮内修码重测，禁止"无人值守不可闭环"式弃判。
+      fail 屏须 verdict=fail + 信号逐条转录进该屏 must_fix，禁止"无人值守不可闭环"式弃判。
+      （v23 F5：**testing 阶段禁止修改产品源码**——修码由 runner 消费 must_fix 回退 coding
+      执行，不在 testing 重试轮内进行；旧文案"重试轮内修码重测"作废。）
     severity: BLOCKER
     rule:
       provider: device_test.visual_diff

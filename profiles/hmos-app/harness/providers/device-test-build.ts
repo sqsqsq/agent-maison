@@ -15,6 +15,7 @@ import {
 } from '../hvigor-runner';
 import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from '../testing-build-conventions';
 import { evaluateDeviceTestBuildReuse } from '../device-test-build-reuse';
+// plan d8c5f3a7 T4 接线：构建**当刻**把源码快照绑定到 HAP——抓 self-revert 的关键一环
 
 export const provider: CapabilityProvider = {
   id: 'hvigor_app',

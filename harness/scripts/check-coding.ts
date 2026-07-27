@@ -705,6 +705,8 @@ const checker: PhaseChecker = {
       ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
+    // （v23 D2）required_anchors 通道已删：spec 侧从无生产者（schema/模板都没有），该检查
+    // 永久 SKIP 只制造"已覆盖"错觉。锚点缺失如今作为 testing 的 actionable 缺陷回 coding 修。
 
     // --- goal-fakepass-hardening t3：产品行为开关扫描（coding 期早警，与 testing 同门禁）---
     results.push(

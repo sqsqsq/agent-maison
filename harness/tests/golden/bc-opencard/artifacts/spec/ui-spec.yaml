@@ -1,0 +1,418 @@
+schema_version: "1.0"
+verified: unverified
+verified_method: none
+
+global_elements:
+  - id: bottom_tab
+    texts: ['首页', '我的']
+    owner_screen_ids: ['card_pack_with_cards']
+
+screens:
+  - id: add_card_home_collapsed
+    priority: P0
+    ref_id: add_card_home_collapsed
+    must_have_elements: [nav_title, promo_subtitle, bank_list, more_entry]
+    root:
+      type: navigation_frame
+      block: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: nav_title
+          type: content_display
+          order: 0
+          text: "添加银行卡"
+        - id: promo_subtitle
+          type: content_display
+          order: 1
+          text: "免输卡号添卡"
+        - id: promo_bank_count
+          type: content_display
+          order: 2
+          text: "支持20家银行"
+        - id: bank_list
+          type: list_card_container
+          block: list_card_container
+          order: 3
+          bg_color: surface.card
+          children:
+            - id: bank_row_cmb
+              type: list_selection
+              order: 0
+              layout: row
+              text: "招商银行"
+              asset_ref: bank_logo_cmb
+              icon: { kind: brand_logo, ref: bank_logo_cmb }
+            - id: bank_row_icbc
+              type: list_selection
+              order: 1
+              layout: row
+              text: "工商银行"
+              asset_ref: bank_logo_icbc
+            - id: bank_row_ccb
+              type: list_selection
+              order: 2
+              layout: row
+              text: "建设银行"
+            - id: bank_row_abc
+              type: list_selection
+              order: 3
+              layout: row
+              text: "农业银行"
+            - id: bank_row_bocom
+              type: list_selection
+              order: 4
+              layout: row
+              text: "交通银行"
+        - id: more_entry
+          type: action_button
+          order: 4
+          variant: text
+          text: "更多"
+
+  - id: add_card_home_expanded
+    priority: P0
+    ref_id: add_card_home_expanded
+    must_have_elements: [bank_list_expanded, view_all_banks_link]
+    root:
+      type: navigation_frame
+      block: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: bank_list_expanded
+          type: list_card_container
+          block: list_card_container
+          order: 0
+          children:
+            - id: bank_row_psbc
+              type: list_selection
+              order: 0
+              text: "邮储银行"
+            - id: bank_row_spdb
+              type: list_selection
+              order: 1
+              text: "浦发银行"
+            - id: bank_row_cib
+              type: list_selection
+              order: 2
+              text: "兴业银行"
+        - id: view_all_banks_link
+          type: action_button
+          order: 1
+          variant: text
+          text: "查看全部银行"
+
+  - id: all_banks
+    priority: P0
+    ref_id: all_banks
+    must_have_elements: [nav_title, search_bar, letter_index, bank_list]
+    root:
+      type: navigation_frame
+      block: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: all_banks_nav_title
+          type: content_display
+          order: 0
+          text: "全部银行"
+        - id: search_bar
+          type: input
+          order: 1
+          text: "搜索银行"
+        - id: letter_index
+          type: content_display
+          order: 2
+          text: "A"
+        - id: all_banks_list
+          type: list_selection
+          order: 3
+          layout: column
+          text: "工商银行"
+
+  - id: card_type_sheet
+    priority: P0
+    ref_id: card_type_sheet
+    must_have_elements: [sheet_title, card_type_group, agreement_text, agree_continue_btn]
+    forbidden_overlap: [[close_btn, bank_surface]]
+    root:
+      type: overlay_panel
+      block: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: sheet_title
+          type: content_display
+          order: 0
+          text: "选择卡类型"
+        - id: card_type_group
+          type: list_card_container
+          block: list_card_container
+          order: 1
+          bg_color: surface.card
+          children:
+            - id: debit_row
+              type: list_selection
+              order: 0
+              layout: full_width
+              text: "储蓄卡"
+              layout_group: card_type_group
+            - id: credit_row
+              type: list_selection
+              order: 1
+              layout: full_width
+              text: "信用卡"
+              layout_group: card_type_group
+        - id: agreement_text
+          type: content_display
+          order: 2
+          text: "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。"
+        - id: protocol_links
+          type: content_display
+          order: 3
+          text: "我已阅读快捷支付服务协议、银联无卡自助消费授权协议"
+        - id: agree_continue_btn
+          type: action_button
+          block: primary_button
+          order: 4
+          variant: filled
+          text: "同意并继续"
+
+  - id: card_select
+    priority: P0
+    ref_id: card_select
+    must_have_elements: [select_hint, card_item_list, protocol_checkbox, next_btn]
+    root:
+      type: navigation_frame
+      block: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: bank_nav_title
+          type: content_display
+          order: 0
+          text: "招商银行"
+        - id: select_hint
+          type: content_display
+          order: 1
+          text: "请选择要添加的银行卡"
+        - id: card_item_list
+          type: list_selection
+          order: 2
+          text: "4392 2269"
+        - id: protocol_checkbox
+          type: logic_condition
+          order: 3
+          text: "同意并阅读《云闪付App一键绑卡用户授权协议》"
+        - id: next_btn
+          type: action_button
+          block: primary_button
+          order: 4
+          variant: filled
+          text: "下一步"
+
+  - id: sms_verify
+    priority: P0
+    ref_id: sms_verify
+    must_have_elements: [sms_title, sms_hint, sms_code_field, resend_timer]
+    root:
+      type: overlay_panel
+      block: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: sms_title
+          type: content_display
+          order: 0
+          text: "短信验证"
+        - id: sms_hint
+          type: content_display
+          order: 1
+          text: "为确认是您本人操作，请输入发送至手机185****3841的验证码。"
+        - id: sms_code_field
+          type: input
+          block: sms_code_field
+          order: 2
+          text: "输入短信验证码"
+        - id: resend_timer
+          type: content_display
+          order: 3
+          text: "55秒后重试"
+
+  - id: add_success
+    priority: P0
+    ref_id: add_success
+    must_have_elements: [success_title, success_subtitle, done_btn]
+    root:
+      type: navigation_frame
+      block: result_state
+      layout: column
+      order: 0
+      children:
+        - id: success_title
+          type: content_display
+          order: 0
+          text: "添卡成功"
+          semantic_role: success
+        - id: success_subtitle
+          type: content_display
+          order: 1
+          text: "可用于实体店二维码支付和网上商城支付"
+        - id: nfc_promo
+          type: content_display
+          order: 2
+          text: "激活NFC支付功能可用于实体店碰一碰支付"
+        - id: done_btn
+          type: action_button
+          block: primary_button
+          order: 3
+          variant: filled
+          text: "完成"
+
+  - id: card_detail
+    priority: P0
+    ref_id: card_detail
+    must_have_elements: [card_face, txn_list, huawei_pay_switch, unionpay_switch]
+    root:
+      type: navigation_frame
+      block: detail_section
+      layout: column
+      order: 0
+      children:
+        - id: card_face
+          type: content_display
+          order: 0
+          text: "招商银行"
+        - id: set_default_btn
+          type: action_button
+          order: 1
+          text: "设为默认卡"
+        - id: card_info_entry
+          type: list_selection
+          order: 2
+          text: "卡片信息"
+        - id: unbind_entry
+          type: list_selection
+          order: 3
+          text: "解除绑定"
+        - id: txn_section_title
+          type: content_display
+          order: 4
+          text: "交易记录"
+        - id: txn_list
+          type: list_selection
+          order: 5
+          text: "二维码支付"
+        - id: pay_service_title
+          type: content_display
+          order: 6
+          text: "此卡的支付服务"
+        - id: huawei_pay_switch
+          type: logic_condition
+          order: 7
+          text: "华为支付"
+        - id: unionpay_switch
+          type: logic_condition
+          order: 8
+          text: "银联手机闪付"
+
+  - id: card_pack_with_cards
+    priority: P0
+    ref_id: card_pack_with_cards
+    must_have_elements: [bank_card_section, view_all_link]
+    root:
+      type: navigation_frame
+      block: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: pack_title
+          type: content_display
+          order: 0
+          text: "卡包"
+        - id: bank_card_section
+          type: content_display
+          order: 1
+          text: "银行卡"
+        - id: bank_card_preview_1
+          type: list_selection
+          order: 2
+          text: "北京银行信用卡"
+        - id: bank_card_preview_2
+          type: list_selection
+          order: 3
+          text: "招商银行信用卡(****2209)"
+        - id: view_all_link
+          type: action_button
+          order: 4
+          variant: text
+          text: "查看全部(6)"
+
+  - id: bank_card_list_sheet
+    priority: P1
+    ref_id: bank_card_list_sheet
+    must_have_elements: [sheet_title, bank_card_rows]
+    root:
+      type: overlay_panel
+      block: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: bank_list_sheet_title
+          type: content_display
+          order: 0
+          text: "银行卡"
+        - id: bank_card_rows
+          type: list_card_container
+          block: list_card_container
+          order: 1
+          children:
+            - id: row_bob
+              type: list_selection
+              order: 0
+              text: "北京银行"
+            - id: row_cmb_credit
+              type: list_selection
+              order: 1
+              text: "招商银行信用卡(****2269)"
+            - id: row_cmb_debit
+              type: list_selection
+              order: 2
+              text: "招商银行储蓄卡"
+            - id: row_icbc
+              type: list_selection
+              order: 3
+              text: "工商银行储蓄卡(****0550)"
+
+tokens:
+  brand.primary:
+    kind: color
+    value: "#0A59F7"
+    sampled: false
+  surface.card:
+    kind: color
+    value: "#FFFFFF"
+    sampled: false
+  text.primary:
+    kind: color
+    value: "#182431"
+    sampled: false
+  status.success:
+    kind: color
+    value: "#64BB5C"
+    sampled: false
+
+assets:
+  - key: bank_logo_cmb
+    acquisition: placeholder
+    placeholder: true
+    rationale: "盲档禁止 crop；招商银行 logo 待素材供给或人工裁剪"
+  - key: bank_logo_icbc
+    acquisition: placeholder
+    placeholder: true
+    rationale: "盲档禁止 crop；工商银行 logo 待素材供给"
+  - key: success_illustration
+    acquisition: placeholder
+    placeholder: true
+    rationale: "添卡成功页插图；盲档占位"

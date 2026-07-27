@@ -18,6 +18,7 @@ import {
 } from '../hdc-runner';
 import { detectInstallDowngrade } from '../device-install-diag';
 
+
 export const provider: CapabilityProvider = {
   id: 'hdc_app',
   capability: 'device_test.install',

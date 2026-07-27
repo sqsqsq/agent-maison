@@ -21,6 +21,17 @@ structure_checks:
       走查宿主入口→路由→feature 页面——入口未消费/路由缺失 → BLOCKER（页面孤岛在
       review 前暴露，不等真机 TC-001 才发现）。
 
+  media_reference_integrity:
+    description: >
+      资源引用完整性（plan d8c5f3a7 v23 F4）：源码 `$r('app.media.X')` 必须解析到实际素材
+      文件。悬空引用编译期不报错、运行期渲染空白（2026-07-24 事故：删素材后残留 7 处引用致
+      大面积空白）——coding 是素材被删的实际现场，在此确定性拦截，档位无关。
+      （v23 收敛：asset_non_destructive 证据分级体系与 required_anchors 通道已删；本条是
+      素材完整性唯一保留的静态硬门禁——"文件存在但页面没渲染"交 visual-diff。）
+    severity: BLOCKER
+    rule:
+      expect: "media_reference_integrity"
+
   upstream_verdict_gate:
     description: >
       跨阶段负面裁决传播门禁（blind-visual-hardening d1）：coding 启动时消费上游

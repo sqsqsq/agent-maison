@@ -16,6 +16,7 @@ import {
   runVisionCanaryProbe,
 } from '../../scripts/utils/goal-preflight';
 import { writeLocalConfig, loadLocalConfig } from '../../scripts/utils/framework-local-config';
+import { canaryAdmissibleForRun } from '../../scripts/utils/effective-vision-context';
 import { buildCanaryPrompt, VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import type { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
@@ -489,20 +490,124 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       }),
   },
   {
-    name: 'E1 decideVisionCanaryProbe: 新鲜缓存（adapter 匹配）→ skip；adapter 变更 → probe',
+    // plan d8c5f3a7 T1：skip 的前提是**消费端将会采信**。原用例的 canary 无 run_id
+    // （goal 来源缺省），在三轴 resolver 处落 adapter_declared → 若此处 skip 即造成
+    // 「新到不必探、旧到不可信」的凭空致盲（2026-07-24 事故）。故同 run 匹配才 skip。
+    name: 'E1/T1 decideVisionCanaryProbe: 新鲜且本 run 可采信 → skip；adapter 变更 → probe',
     run: () =>
       withTmp((root) => {
+        const manifestChrys = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION } },
+          vision: { canary: { adapter: 'chrys', verdict: 'none', probed_at: new Date(Date.now() - 60_000).toISOString(), probe_version: VISION_CANARY_PROBE_VERSION, run_id: manifestChrys.run_id } },
         });
-        const manifestChrys = { ...baseManifest('chrys'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
         const d1 = decideVisionCanaryProbe({ projectRoot: root, manifest: manifestChrys, chain: ['spec'], dryRun: false });
         assert.deepStrictEqual(d1, { action: 'skip', reason: 'fresh_cache_present' });
 
         const manifestClaude = { ...baseManifest('claude'), requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' };
         const d2 = decideVisionCanaryProbe({ projectRoot: root, manifest: manifestClaude, chain: ['spec'], dryRun: false });
         assert.deepStrictEqual(d2, { action: 'probe' }, 'adapter 变更应视为缓存过期');
+      }),
+  },
+  // ==========================================================================
+  // plan d8c5f3a7 T1：能力真值跨 run 收口（2026-07-24 bc-openCard 致盲事故根治）
+  // 事故链：07-18 实测 tool_read(4/4) 的 goal canary，在 07-24 的新 run 上——
+  //   preflight 判「7d TTL 内 fresh → skip probe」，三轴 resolver 判「跨 run → 不可采信」
+  //   → hasVision=false → pixel_1to1 钳成 semantic_layout → 盲档协议接管 → UI 大幅倒退。
+  // 且因正结论 TTL=7d，这是**永久陷阱**：每 7 天只有第一个 run 有视觉。
+  // ==========================================================================
+  {
+    name: 'T1 事故现场复现：goal canary 无 run_id + TTL 内 + 新 runId → 必须 probe（不得 skip）',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          // 宿主 07-18 那份 canary 的真实形态：tool_read / probed_via=goal / **无 run_id**
+          vision: { canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString(), probed_via: 'goal', probe_version: VISION_CANARY_PROBE_VERSION } },
+        });
+        const d = decideVisionCanaryProbe({
+          projectRoot: root,
+          manifest: { ...baseManifest('cursor'), run_id: '20260724T030240Z-5f8dc9', requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' },
+          chain: ['spec', 'coding'],
+          dryRun: false,
+        });
+        assert.deepStrictEqual(
+          d,
+          { action: 'probe', reason: 'fresh_but_not_admissible_for_run' },
+          '新鲜但本 run 不可采信 → 必须当场重探，否则凭空致盲',
+        );
+      }),
+  },
+  {
+    name: 'T1 永久陷阱：canary 已写 run_id 但属上一个 run（TTL 内）→ 第二个 run 仍须 probe',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: new Date(Date.now() - 3600_000).toISOString(), probed_via: 'goal', probe_version: VISION_CANARY_PROBE_VERSION, run_id: 'run-1' } },
+        });
+        const req = '银行卡开卡需求，含7个页面，参考图还原布局。';
+        // run-1 自身：可采信 → skip
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest: { ...baseManifest('cursor'), run_id: 'run-1', requirement: req }, chain: ['spec'], dryRun: false }),
+          { action: 'skip', reason: 'fresh_cache_present' },
+          '同 run 应复用，不重复付探测成本',
+        );
+        // run-2（TTL 内的下一个 run）：不可采信 → 必须重探，否则「每 7 天只有第一个 run 有视觉」
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest: { ...baseManifest('cursor'), run_id: 'run-2', requirement: req }, chain: ['spec'], dryRun: false }),
+          { action: 'probe', reason: 'fresh_but_not_admissible_for_run' },
+          '跨 run 不可采信即须重探——这是永久陷阱的唯一暴露口径',
+        );
+      }),
+  },
+  {
+    name: 'T1 interactive 来源不绑 run：fresh 即 skip（IDE 会话内实测语义不变）',
+    run: () =>
+      withTmp((root) => {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          vision: { canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: new Date(Date.now() - 3600_000).toISOString(), probed_via: 'interactive', probe_version: VISION_CANARY_PROBE_VERSION } },
+        });
+        assert.deepStrictEqual(
+          decideVisionCanaryProbe({ projectRoot: root, manifest: { ...baseManifest('cursor'), run_id: 'whatever', requirement: '银行卡开卡需求，含7个页面，参考图还原布局。' }, chain: ['spec'], dryRun: false }),
+          { action: 'skip', reason: 'fresh_cache_present' },
+          'interactive 不绑 run，采信语义不受 T1 影响',
+        );
+      }),
+  },
+  {
+    name: 'T1 契约：preflight 与三轴 resolver 共用同一采信谓词（禁两把尺子）',
+    run: () =>
+      withTmp((root) => {
+        const req = '银行卡开卡需求，含7个页面，参考图还原布局。';
+        const mk = (over: Record<string, unknown>): Record<string, unknown> => ({
+          adapter: 'cursor', verdict: 'tool_read',
+          probed_at: new Date(Date.now() - 3600_000).toISOString(),
+          probed_via: 'goal', probe_version: VISION_CANARY_PROBE_VERSION, ...over,
+        });
+        // 逐形态交叉断言：resolver 判「可采信」⟺ preflight 判「可 skip」
+        const forms: Array<{ canary: Record<string, unknown>; runId: string; admissible: boolean }> = [
+          { canary: mk({ run_id: 'r1' }), runId: 'r1', admissible: true },
+          { canary: mk({ run_id: 'r1' }), runId: 'r2', admissible: false },
+          { canary: mk({}), runId: 'r1', admissible: false },
+          { canary: mk({ probed_via: 'interactive' }), runId: 'r1', admissible: true },
+        ];
+        for (const f of forms) {
+          writeLocalConfig(root, { schema_version: '1.0', vision: { canary: f.canary as never } });
+          const pre = decideVisionCanaryProbe({
+            projectRoot: root,
+            manifest: { ...baseManifest('cursor'), run_id: f.runId, requirement: req },
+            chain: ['spec'], dryRun: false,
+          });
+          const preSkips = pre.action === 'skip';
+          const resolverAdmits = canaryAdmissibleForRun(f.canary as never, { runId: f.runId });
+          assert.strictEqual(
+            preSkips, resolverAdmits,
+            `两侧判定必须一致（canary=${JSON.stringify(f.canary)} runId=${f.runId}）：preflight skip=${preSkips} resolver admit=${resolverAdmits}`,
+          );
+          assert.strictEqual(resolverAdmits, f.admissible, '谓词语义与预期不符');
+        }
       }),
   },
   {
@@ -543,12 +648,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         );
         writeLocalConfig(root, {
           schema_version: '1.0',
-          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'goal', probe_version: PV } },
+          // T1：TTL 分层语义不变，但 skip 还须本 run 可采信 → 补 run_id 同 run
+          vision: { canary: { adapter: 'chrys', verdict: 'tool_read', probed_at: staleAt, probed_via: 'goal', probe_version: PV, run_id: manifest.run_id } },
         });
         assert.deepStrictEqual(
           decideVisionCanaryProbe({ projectRoot: root, manifest, chain: ['spec'], dryRun: false }),
           { action: 'skip', reason: 'fresh_cache_present' },
-          'goal tool_read 25h（7d 内）仍 skip',
+          'goal tool_read 25h（7d 内）+ 同 run → 仍 skip',
         );
         writeLocalConfig(root, {
           schema_version: '1.0',
@@ -668,6 +774,18 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.strictEqual(canary?.verdict, 'tool_read');
         assert.strictEqual(canary?.probe_version, VISION_CANARY_PROBE_VERSION, '必须写入当前协议版本');
         assert.strictEqual(canary?.probed_via, 'goal');
+        // plan d8c5f3a7 T1 回归：写盘必须带**本 run** 的 run_id（f6b2d9a4 已实现，此处钉死）。
+        // 缺它 → 三轴 resolver 判不可采信 → 下一步就是 blind_safe（2026-07-24 事故起点）；
+        // 且带上它之后，本 run 内后续消费（含 gate harness）才能复用这次实测。
+        assert.strictEqual(canary?.run_id, baseManifest('claude').run_id, 'canary 须绑定本 run 身份');
+        assert.strictEqual(
+          canaryAdmissibleForRun(canary, { runId: baseManifest('claude').run_id }), true,
+          '刚写盘的 canary 必须对本 run 可采信（写入与采信同口径）',
+        );
+        assert.strictEqual(
+          canaryAdmissibleForRun(canary, { runId: 'another-run' }), false,
+          'run_probed 不跨 run',
+        );
         assert.strictEqual(loadLocalConfig(root)?.agent_adapter, 'claude', '既有字段保留');
       }),
   },

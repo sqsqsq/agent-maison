@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0",
+  "feature": "bc-openCard",
+  "entries": [
+    {
+      "id": "debt:asset_materialization_sanity:bank_logo_cmb",
+      "source_check_id": "asset_materialization_sanity",
+      "severity": "BLOCKER",
+      "summary": "物化素材 sanity 违例（空白/纯色/损坏/role 失配）（素材 bank_logo_cmb）",
+      "status": "closed",
+      "resolution_class": "needs_fix",
+      "asset_key": "bank_logo_cmb",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:asset_materialization_sanity:bank_logo_icbc",
+      "source_check_id": "asset_materialization_sanity",
+      "severity": "BLOCKER",
+      "summary": "物化素材 sanity 违例（空白/纯色/损坏/role 失配）（素材 bank_logo_icbc）",
+      "status": "closed",
+      "resolution_class": "needs_fix",
+      "asset_key": "bank_logo_icbc",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:asset_materialization_sanity:success_illustration",
+      "source_check_id": "asset_materialization_sanity",
+      "severity": "BLOCKER",
+      "summary": "物化素材 sanity 违例（空白/纯色/损坏/role 失配）（素材 success_illustration）",
+      "status": "closed",
+      "resolution_class": "needs_fix",
+      "asset_key": "success_illustration",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:asset_placeholder_present:bank_logo_cmb",
+      "source_check_id": "asset_placeholder_present",
+      "severity": "MAJOR",
+      "summary": "素材为 maison 占位（可见但≠真素材已供给）（素材 bank_logo_cmb）",
+      "status": "open",
+      "resolution_class": "needs_human",
+      "asset_key": "bank_logo_cmb",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:asset_placeholder_present:bank_logo_icbc",
+      "source_check_id": "asset_placeholder_present",
+      "severity": "MAJOR",
+      "summary": "素材为 maison 占位（可见但≠真素材已供给）（素材 bank_logo_icbc）",
+      "status": "open",
+      "resolution_class": "needs_human",
+      "asset_key": "bank_logo_icbc",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:asset_placeholder_present:success_illustration",
+      "source_check_id": "asset_placeholder_present",
+      "severity": "MAJOR",
+      "summary": "素材为 maison 占位（可见但≠真素材已供给）（素材 success_illustration）",
+      "status": "open",
+      "resolution_class": "needs_human",
+      "asset_key": "success_illustration",
+      "asset_source_status": "VERIFIED",
+      "asset_binding_status": "VERIFIED"
+    },
+    {
+      "id": "debt:static_fidelity_score",
+      "source_check_id": "static_fidelity_score",
+      "severity": "MAJOR",
+      "summary": "静态保真分未评估/未达（基线未校验）",
+      "status": "open",
+      "resolution_class": "needs_human"
+    },
+    {
+      "id": "debt:capture_completeness_external",
+      "source_check_id": "capture_completeness_external",
+      "severity": "MAJOR",
+      "summary": "参考图覆盖缺口（盲档待人工复核清单）",
+      "status": "open",
+      "resolution_class": "needs_human"
+    },
+    {
+      "id": "debt:visual_diff",
+      "source_check_id": "visual_diff",
+      "severity": "BLOCKER",
+      "summary": "设备视觉对照未产出/未达",
+      "status": "open",
+      "resolution_class": "needs_fix"
+    },
+    {
+      "id": "debt:ui_kit_runtime_conformance",
+      "source_check_id": "ui_kit_runtime_conformance",
+      "severity": "MAJOR",
+      "summary": "语义容器运行时未命中（渲染路径断）",
+      "status": "open",
+      "resolution_class": "needs_human"
+    }
+  ]
+}

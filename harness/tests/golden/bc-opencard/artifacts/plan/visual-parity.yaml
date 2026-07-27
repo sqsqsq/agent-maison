@@ -1,0 +1,145 @@
+schema_version: "1.0"
+feature: bc-openCard
+effective_fidelity: semantic_layout
+mappings:
+  assets:
+    - ui_spec_key: bank_logo_cmb
+      contract_resource_key: bank_logo_cmb
+    - ui_spec_key: bank_logo_icbc
+      contract_resource_key: bank_logo_icbc
+    - ui_spec_key: success_illustration
+      contract_resource_key: success_illustration
+  tokens:
+    - ui_spec_key: brand.primary
+      contract_resource_key: brand_primary
+    - ui_spec_key: surface.card
+      contract_resource_key: surface_card
+    - ui_spec_key: text.primary
+      contract_resource_key: text_primary
+    - ui_spec_key: status.success
+      contract_resource_key: status_success
+  components:
+    - ui_spec_node_id: add_card_home_collapsed
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: nav_title
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: promo_subtitle
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: promo_bank_count
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_list
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_cmb
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_icbc
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_ccb
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_abc
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_bocom
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: more_entry
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: add_card_home_expanded
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_list_expanded
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_psbc
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_spdb
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: bank_row_cib
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: view_all_banks_link
+      contract_component: AllBanksPage
+    - ui_spec_node_id: all_banks
+      contract_component: AllBanksPage
+    - ui_spec_node_id: all_banks_nav_title
+      contract_component: AllBanksPage
+    - ui_spec_node_id: search_bar
+      contract_component: AllBanksPage
+    - ui_spec_node_id: letter_index
+      contract_component: AllBanksPage
+    - ui_spec_node_id: all_banks_list
+      contract_component: AllBanksPage
+    - ui_spec_node_id: card_type_sheet
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: sheet_title
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: card_type_group
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: debit_row
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: credit_row
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: agreement_text
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: protocol_links
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: agree_continue_btn
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: card_select
+      contract_component: SelectBankCardPage
+    - ui_spec_node_id: bank_nav_title
+      contract_component: SelectBankCardPage
+    - ui_spec_node_id: select_hint
+      contract_component: SelectBankCardPage
+    - ui_spec_node_id: card_item_list
+      contract_component: SelectBankCardPage
+    - ui_spec_node_id: protocol_checkbox
+      contract_component: SelectCardTypeSheet
+    - ui_spec_node_id: next_btn
+      contract_component: SelectBankCardPage
+    - ui_spec_node_id: sms_verify
+      contract_component: SmsVerifySheet
+    - ui_spec_node_id: sms_title
+      contract_component: SmsVerifySheet
+    - ui_spec_node_id: sms_hint
+      contract_component: SmsVerifySheet
+    - ui_spec_node_id: sms_code_field
+      contract_component: SmsVerifySheet
+    - ui_spec_node_id: resend_timer
+      contract_component: SmsVerifySheet
+    - ui_spec_node_id: add_success
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: success_title
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: success_subtitle
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: nfc_promo
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: done_btn
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: card_detail
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: card_face
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: set_default_btn
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: card_info_entry
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: unbind_entry
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: txn_section_title
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: txn_list
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: pay_service_title
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: huawei_pay_switch
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: unionpay_switch
+      contract_component: BankCardDetailPage
+    - ui_spec_node_id: card_pack_with_cards
+      contract_component: CardPackPage
+    - ui_spec_node_id: pack_title
+      contract_component: CardPackPage
+    - ui_spec_node_id: bank_card_section
+      contract_component: CardPackPage
+    - ui_spec_node_id: bank_card_preview_1
+      contract_component: CardPackPage
+    - ui_spec_node_id: bank_card_preview_2
+      contract_component: CardPackPage
+    - ui_spec_node_id: view_all_link
+      contract_component: CardPackPage

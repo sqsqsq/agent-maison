@@ -356,13 +356,13 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // s1 asset 真渲染：声明 asset_ref 却未 $r 引用 media（catches #6 tab 仅文字）
-  // review#4：pixel_1to1 下「声明却未真实渲染」(not_rendered) 升 BLOCKER；显式 placeholder 豁免仍 WARN。
+  // v23 F4 收窄：静态"没找到渲染引用"本就低置信（动态渲染/间接引用会漏判）——**一律 WARN**，
+  // 不再按档位升 BLOCKER。刚删掉不可靠指标（score_floor/blank_ratio），不再引入另一个
+  // 不可靠硬门禁；"实际页面未渲染"交给**新鲜的** visual-diff must_fix（回修环消费）。
   const assetIssues = collectAssetRenderIssues(ctx, doc, baselineUnverified);
   if (assetIssues.length > 0) {
-    const hardNotRendered = isHardPixelContract(ctx) && assetIssues.some(i => i.assetRole === 'not_rendered');
-    const { severity, status } = hardNotRendered
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const severity = 'MAJOR' as const;
+    const status = 'WARN' as const;
     results.push({
       id: 'visual_parity_asset_render',
       category: 'structure',
@@ -370,7 +370,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details: [
-        hardNotRendered ? '【asset 真渲染·pixel_1to1 阻断：声明 asset_ref 却未渲染】' : '【asset 真渲染·低置信，以 device visual-diff 为准】',
+        '【asset 真渲染·低置信，以 device visual-diff 为准】',
         ...assetIssues.map(i => i.detail),
       ].join('\n'),
       suggestion: '声明 asset_ref 的元素须在对应组件 $r 引用并渲染该 media（如 tab 图标）；动态渲染/显式 placeholder 可豁免。',
@@ -379,12 +379,13 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // B s1.5 asset 物化真图校验：被 $r('app.media.*') 引用的【模块实际】media 必须是真图，禁 1×1/退化占位冒充。
-  // 以模块 resources/base/media 为准（不信 contracts/根 media path，那归 F）；pixel_1to1 → BLOCKER。
+  // v23 F4：**档位无关 FAIL**——"被引用的非占位素材物化缺失/损坏/空白/纯色"是确定性事实
+  //（collectPlaceholderAssetIssues 已豁免显式 placeholder 声明），best_effort 档同样有害：
+  // 2026-07-24 事故正是 best_effort 下删真素材换占位、一路漏到用户眼前。
   const materializeIssues = collectPlaceholderAssetIssues(ctx, doc, baselineUnverified);
   if (materializeIssues.length > 0) {
-    const { severity, status } = isHardPixelContract(ctx)
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const severity = 'BLOCKER' as const;
+    const status = 'FAIL' as const;
     results.push({
       id: 'visual_parity_asset_materialized',
       category: 'structure',

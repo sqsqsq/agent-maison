@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "note": "参考图**只登记身份**，不入仓：0-原始需求 的截图含真实 PII（姓名/身份证号/人像），框架仓要打包发给宿主，PII 一旦进去就随发布包扩散。决策链回放不需要像素，只需要这些图存在且未被替换。",
+  "source_dir": "D:/1.code/对比结果/1-bc-opencard/0-原始需求",
+  "images": [
+    {
+      "file": "1-2-银行卡添卡首页点击更多.jpg",
+      "bytes": 511047,
+      "sha256": "2be2c7f7e81fc373e4367a3910f29b64aabc32a0f1f268e0dd7fc29a65316522"
+    },
+    {
+      "file": "1-银行卡添卡首页.jpg",
+      "bytes": 256445,
+      "sha256": "28550939b94064424ab7ba5d531bbab25ddbb2c0f0720e74fab8a2e5c5da646d"
+    },
+    {
+      "file": "2-银行卡添卡全部银行页.jpg",
+      "bytes": 1036930,
+      "sha256": "1ea25336cb87c2beb570af378174b53c9ae324b0abdff982c4029b5207390c0f"
+    },
+    {
+      "file": "3-点击任意银行拉起添卡选卡半模态.jpg",
+      "bytes": 296103,
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73"
+    },
+    {
+      "file": "4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "bytes": 199326,
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc"
+    },
+    {
+      "file": "5-选中某张卡片后拉起短信验证.jpg",
+      "bytes": 560756,
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13"
+    },
+    {
+      "file": "6-短信验证完成后结果页.jpg",
+      "bytes": 189945,
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c"
+    },
+    {
+      "file": "7.卡详情页面.jpg",
+      "bytes": 878980,
+      "sha256": "60beefab25b78a44e1310db7b3db56ed6d38f79c01d4d53efa99b75d23b42ff6"
+    },
+    {
+      "file": "8.卡包页-有卡状态.jpg",
+      "bytes": 709502,
+      "sha256": "8c9a65edd2a3d3f71dc27e1dec28553929b74a19902b3b66c6e3786bf98f3e0f"
+    },
+    {
+      "file": "9.银行卡列表页-半模态形式.jpg",
+      "bytes": 504910,
+      "sha256": "1964ec9490043697cccdf92c0caa5371685c489f007ebc35274c165b8b1b7dd5"
+    }
+  ]
+}

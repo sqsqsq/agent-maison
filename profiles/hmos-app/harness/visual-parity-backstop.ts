@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { CheckContext } from '../../../harness/scripts/utils/types';
+import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { featureFilePath } from '../../../harness/config';
 import {
@@ -1283,4 +1283,110 @@ export function collectActionButtonVariantDeclIssues(
     }
   }
   return issues;
+}
+
+// ============================================================================
+// 悬空素材引用门禁（v23 F4：自 asset-nondestructive 迁入——该模块的五级证据/偏序/
+// baseline 体系已删，唯一保留的就是这 ~60 行确定性扫描）。
+// 2026-07-24 事故：素材被删后源码残留 7 处 $r 引用 → 运行期图片全空、编译不报错。
+// 本门禁把它变成 coding 期确定性 FAIL，档位无关。
+// ============================================================================
+
+/** 悬空引用门禁的描述取 phase-rules 声明（有则用之，缺则回落硬编码） */
+function mediaRefRuleDesc(ctx: CheckContext, id: string, fallback: string): string {
+  const rule = (ctx.phaseRule as { structure_checks?: Record<string, { description?: string }> })
+    ?.structure_checks?.[id];
+  const d = rule?.description?.trim();
+  return d && d.length > 0 ? d : fallback;
+}
+
+/** `$r('app.media.X')` / `$rawfile` 之外只管 media；捕获 key */
+const MEDIA_REF_RE = /\$r\(\s*['"]app\.media\.([A-Za-z0-9_.]+)['"]\s*\)/g;
+const SOURCE_EXTS = new Set(['.ets', '.ts']);
+
+function walkSources(root: string, out: string[], depth = 0): void {
+  if (depth > 12) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (e.name === 'node_modules' || e.name === 'oh_modules' || e.name === 'build' || e.name.startsWith('.')) continue;
+    const p = path.join(root, e.name);
+    if (e.isDirectory()) walkSources(p, out, depth + 1);
+    else if (SOURCE_EXTS.has(path.extname(e.name))) out.push(p);
+  }
+}
+
+/**
+ * 引用完整性：源码里的 `$r('app.media.X')` 必须能在该模块 media 下解析到文件。
+ *
+ * 2026-07-24 事故：素材被删后代码里残留 7 处引用 → 运行期图片全空。编译不报错（资源在运行时
+ * 解析），真机才看得见，而视觉裁决当时又全 pending，于是一路漏到用户眼前。此门禁把它变成
+ * **编译期之前**就能确定性检出的错误，档位无关。
+ */
+export function checkMediaReferenceIntegrity(ctx: CheckContext): CheckResult[] {
+  const id = 'media_reference_integrity';
+  const desc = mediaRefRuleDesc(ctx, id, '源码 $r(app.media.*) 引用必须解析到实际素材文件');
+  const contracts = ctx.featureSpec.contracts;
+  const modules = contracts?.modules ?? [];
+  if (modules.length === 0) {
+    return [{ id, category: 'structure', status: 'SKIP', severity: 'BLOCKER', description: desc, details: 'contracts 无模块声明——无源码范围可扫描' }];
+  }
+
+  const dangling: string[] = [];
+  let refCount = 0;
+  let scanned = 0;
+  for (const mod of modules) {
+    if (!mod?.package_path) continue;
+    const srcDir = path.join(ctx.projectRoot, mod.package_path, 'src', 'main', 'ets');
+    if (!fs.existsSync(srcDir)) continue;
+    const files: string[] = [];
+    walkSources(srcDir, files);
+    const mediaDir = path.join(ctx.projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media');
+    for (const f of files) {
+      scanned++;
+      let text: string;
+      try {
+        text = fs.readFileSync(f, 'utf-8');
+      } catch {
+        continue;
+      }
+      MEDIA_REF_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = MEDIA_REF_RE.exec(text)) !== null) {
+        refCount++;
+        const key = m[1];
+        // 同模块 media 优先；跨模块引用（har 依赖）回落全 in_scope 模块查找
+        const local = fs.existsSync(mediaDir)
+          ? fs.readdirSync(mediaDir).some(n => path.parse(n).name === key)
+          : false;
+        if (local) continue;
+        const cross = contracts ? findModuleMediaFile(ctx.projectRoot, contracts, key) : null;
+        if (cross) continue;
+        const line = text.slice(0, m.index).split('\n').length;
+        dangling.push(`${path.relative(ctx.projectRoot, f).split(path.sep).join('/')}:${line} → app.media.${key}`);
+      }
+    }
+  }
+
+  if (dangling.length > 0) {
+    const shown = dangling.slice(0, 20);
+    return [{
+      id, category: 'structure', status: 'FAIL', severity: 'BLOCKER', description: desc,
+      details:
+        `检出 ${dangling.length} 处悬空素材引用（源码引用了不存在的 media 资源）：\n` +
+        shown.map(d => `  - ${d}`).join('\n') +
+        (dangling.length > shown.length ? `\n  …（另 ${dangling.length - shown.length} 处）` : '') +
+        '\n运行期这些位置会渲染为空白——编译不报错，真机才可见。',
+      suggestion: '补齐缺失素材（恢复被删文件或生成占位），或同步移除源码中的引用；两者不得只做一半。',
+      affected_files: shown.map(d => d.split(' → ')[0].split(':')[0]),
+    }];
+  }
+  return [{
+    id, category: 'structure', status: 'PASS', severity: 'BLOCKER', description: desc,
+    details: `扫描 ${scanned} 个源文件、${refCount} 处 $r(app.media.*) 引用，全部可解析`,
+  }];
 }

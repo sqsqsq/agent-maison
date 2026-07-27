@@ -86,7 +86,18 @@ export function readJournalProposals(p: string): { rows: JournalProposalRow[]; c
   return { rows, corruptLines };
 }
 
-/** agent 侧追加 proposal（hash 链：previous=同 attempt 最后一行的 proposal_hash）。 */
+/**
+ * agent 侧追加 proposal（hash 链：previous=同 attempt 最后一行的 proposal_hash）。
+ *
+ * plan d8c5f3a7 T2（2026-07-24 visual_ledger_integrity 误杀根治）：`at` **必填**。
+ * 事故链：本函数原先在 caller 不传 now 时用 `new Date()` 重打时间戳，而 claimed.row_hash
+ * 是调用方在**更早的评估时刻**算出的；`at` 参与 row_hash 但不参与 base_state_hash，故
+ * runner 侧 replayJournalIntoLedger 用 journal 里的新 `at` 重算时，必然得到
+ * 「base 全对、fused 全对、row 全错」——被 fail-closed 判成「评估器漂移或 journal 被篡改」
+ * 而 halt。真因是本函数自己造的时间戳漂移，不是篡改。
+ * 故此处不再提供 `new Date()` 兜底：**调用方必须传入 claimed 所对应的评估时刻**，
+ * 编译期即拒绝"忘了传"的形态（生产调用见 harness-runner.ts::consumeVisualRoundPayload）。
+ */
 export function appendJournalProposal(
   journalPath: string,
   args: {
@@ -94,14 +105,19 @@ export function appendJournalProposal(
     roundInput: Omit<VisualRoundInput, 'now'>;
     claimed: { base_state_hash: string; row_hash: string; fused: boolean };
     gateFingerprint?: string;
-    now?: () => string;
+    /** claimed 的评估时刻（ISO 串）——必须与算出 claimed.row_hash 时用的 `at` 同源 */
+    at: string;
   },
 ): JournalProposalRow {
+  const at = args.at?.trim();
+  if (!at) {
+    throw new Error('appendJournalProposal: at 必填（须与 claimed.row_hash 的评估时刻同源）');
+  }
   const { rows } = readJournalProposals(journalPath);
   const mine = rows.filter(r => r.attempt_id === args.attemptId);
   const base: Omit<JournalProposalRow, 'proposal_hash'> = {
     schema_version: JOURNAL_SCHEMA_VERSION,
-    at: (args.now ?? (() => new Date().toISOString()))(),
+    at,
     attempt_id: args.attemptId,
     sequence: mine.length,
     previous_proposal_hash: mine.length > 0 ? mine[mine.length - 1].proposal_hash : null,
@@ -208,15 +224,23 @@ export function replayJournalIntoLedger(args: {
       }
       continue;
     }
-    if (
-      ev.row.base_state_hash !== r.claimed.base_state_hash ||
-      ev.row.row_hash !== r.claimed.row_hash ||
-      ev.decision.fused !== r.claimed.fused
-    ) {
-      mismatches.push(
-        `sequence=${r.sequence} 重放结果与 claimed 不符（base ${ev.row.base_state_hash}≟${r.claimed.base_state_hash}，` +
-        `row ${ev.row.row_hash}≟${r.claimed.row_hash}，fused ${ev.decision.fused}≟${r.claimed.fused}）——评估器漂移或 journal 被篡改`,
-      );
+    const baseOk = ev.row.base_state_hash === r.claimed.base_state_hash;
+    const rowOk = ev.row.row_hash === r.claimed.row_hash;
+    const fusedOk = ev.decision.fused === r.claimed.fused;
+    if (!baseOk || !rowOk || !fusedOk) {
+      // plan d8c5f3a7 T2：字段级 diff + 归因分流。「base/fused 全对、唯 row 不符」是
+      // **时间戳/评估输入不同源**的特征签名（2026-07-24 事故形态），与「行被改」不同因，
+      // 报文须给出自诊线索而非一律甩「篡改」。halt 语义不变（仍 fail-closed）。
+      const fields = [
+        `base ${ev.row.base_state_hash}≟${r.claimed.base_state_hash}${baseOk ? '' : ' ✗'}`,
+        `row ${ev.row.row_hash}≟${r.claimed.row_hash}${rowOk ? '' : ' ✗'}`,
+        `fused ${ev.decision.fused}≟${r.claimed.fused}${fusedOk ? '' : ' ✗'}`,
+        `at ${r.at}`,
+      ].join('，');
+      const attribution = baseOk && fusedOk && !rowOk
+        ? '仅 row_hash 不符（base/fused 一致）——典型为**评估时刻/输入未同源**（写 journal 的 at 与算 claimed 的 at 不同），而非行内容被改'
+        : '评估器漂移或 journal 被篡改';
+      mismatches.push(`sequence=${r.sequence} 重放结果与 claimed 不符（${fields}）——${attribution}`);
       continue;
     }
     committed.push(ev.row);

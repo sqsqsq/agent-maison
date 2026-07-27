@@ -1277,16 +1277,19 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）
+  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）。
+  // v23.5（review 第 14 轮）：**档位无关 FAIL**——OpenSpec visual-diff 规格明文
+  // "While present, the gate SHALL FAIL until a fresh evaluation clears the flag"（无档位
+  // 条件）；旧实现 best_effort 只 WARN，与 runner 侧 unverified 通路也不一致（runner 已
+  // 对该标记 retry/halt，gate 却放行=两层判定打架）。"评估不可信"与保真档位无关。
   const invalidatedScreens = rep.screens.filter(s => s.evaluation_invalidated === true);
   if (invalidatedScreens.length > 0) {
-    const ratchet = pixel1to1
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const invalidatedSeverity = 'BLOCKER' as const;
+    const invalidatedStatus = 'FAIL' as const;
     pushVisualDiffHit(hits, {
       id: 'visual_diff_evaluation_invalidated',
-      severity: ratchet.severity,
-      status: ratchet.status,
+      severity: invalidatedSeverity,
+      status: invalidatedStatus,
       line:
         `评估已失效待重判（evaluation_invalidated=true）：${invalidatedScreens.map(s => s.screen_id).join(', ')}` +
         `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；真人已签屏保留 verdict/confirmed_by，` +

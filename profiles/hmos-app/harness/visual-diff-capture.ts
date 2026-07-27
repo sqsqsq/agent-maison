@@ -37,6 +37,15 @@ import {
   type NavScreenIdentity,
   type NavScreenSteps,
 } from './visual-diff-nav';
+// T5 接线：采集失败即崩溃诊断（此前本模块零生产调用方）
+import {
+  archiveTimeoutDiagnosis,
+  diagnoseNavigationFailure,
+  makeHdcCrashProbeDeps,
+  renderDiagnosis,
+  snapshotFaultlogSet,
+  type CrashProbeDeps,
+} from './device-crash-diagnostics';
 
 export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
@@ -86,6 +95,8 @@ export interface VisualDiffCaptureOptions {
   specMd?: string | null;
   /** 注入 mock 或真实 Hylyre screenshot；缺省且无 Hylyre 时不写屏条目 */
   screenshotFn?: VisualDiffScreenshotFn;
+  /** v23 F3：崩溃诊断依赖注入（缺省走真机 hdc）；单测用它免真机 */
+  crashProbeDeps?: CrashProbeDeps;
   /** round5 P1-A：每屏到达步骤的显式导航配置（key 经 X1 归一化匹配 P0 target）；缺省则不导航（沿用旧裸采行为） */
   navConfig?: NavConfig;
   /** round5 P1-A：导航执行器（真机 Hylyre）；缺省则不导航。与 navConfig 同时提供才生效 */
@@ -139,6 +150,8 @@ export interface VisualDiffCaptureResult {
 }
 
 // P0-9 顺手项（codex）：feature artifact 路径统一走 featureDir（尊重 paths.features_dir 配置）。
+// plan d8c5f3a7 T4 接线：截图批绑定装机会话（未登记的截图来源不可追溯 → verify 判断链）
+
 export function deviceScreenshotsDir(projectRoot: string, feature: string): string {
   return path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots');
 }
@@ -159,6 +172,11 @@ export function sanitizeVisualDiffScreenSlug(screenId: string): string | null {
     .replace(/^_|_$/g, '');
   if (!slug || slug.includes('..')) return null;
   return slug;
+}
+
+/** 崩溃诊断归档根：`device-testing/reports`（消费者按同一口径回读，见 goal-runner 的确定性缺陷收集） */
+function testingReportsDirForDiag(projectRoot: string, feature: string): string {
+  return path.join(featureDir(projectRoot, feature), 'device-testing', 'reports');
 }
 
 /** 解析截图相对/绝对路径，并断言落在 device-screenshots/ 内 */
@@ -667,6 +685,31 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
+  // v23 F3：集合差基线——导航前拍 faultlog 文件名集合；失败后重列，只有**本轮新增**
+  // 且属于本应用的 faultlog 才判崩溃（无时钟依赖：旧时间窗方案按 UTC 解析设备本地时间
+  // 文件名，时区差会把历史崩溃判成本轮崩溃）。仅有 bundleName 时才拍（诊断可用的前提）。
+  // v23 F3：集合差崩溃诊断。基线**每次导航前单独拍**（review 第 10 轮 P1：整批只拍一次
+  // 的话，A 屏崩溃产生的 faultlog 对之后 B 屏的"整批基线"永远是新增——B 只是选择器超时
+  // 也会被误判 crash_suspected）。无时钟依赖（旧时间窗方案的时区坑已删）。
+  const crashDeps = opts.crashProbeDeps ?? (opts.bundleName?.trim() ? makeHdcCrashProbeDeps() : null);
+  const takeFaultlogBaseline = (): ReadonlySet<string> | null =>
+    crashDeps && opts.bundleName?.trim() ? snapshotFaultlogSet(crashDeps) : null;
+  // v23 F3：清理**本 run** 的既有 crash 归档——本轮采集将对每个导航失败屏重新判定；
+  // 不清的话，上一轮修好后旧归档仍在（run_id 相同）会被消费成 actionable，造成
+  // "修好了还回退/熔断"的假信号。其他 run 的归档不动（本来就不被消费）。
+  {
+    const runIdNow = process.env.MAISON_GOAL_RUN_ID?.trim();
+    const diagDirNow = path.join(testingReportsDirForDiag(opts.projectRoot, opts.feature), 'crash-diagnostics');
+    if (runIdNow && fs.existsSync(diagDirNow)) {
+      for (const n of fs.readdirSync(diagDirNow)) {
+        if (!n.endsWith('.json')) continue;
+        try {
+          const doc = JSON.parse(fs.readFileSync(path.join(diagDirNow, n), 'utf-8')) as { run_id?: string };
+          if (doc.run_id === runIdNow) fs.rmSync(path.join(diagDirNow, n));
+        } catch { /* 损坏归档一并清（本轮会重写） */ fs.rmSync(path.join(diagDirNow, n), { force: true }); }
+      }
+    }
+  }
   for (const screen of targets) {
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
@@ -698,6 +741,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
     // P1-A：截图前先导航到位（有 executor 时）；导航失败 → 记 P0 采集失败，绝不截错屏。
     if (navEnabled) {
+      const navFaultlogBaseline = takeFaultlogBaseline();   // per-nav（不是整批一拍）
       const nav = opts.navExecutorFn!({
         screenId: screen.id,
         steps: navSteps ?? [],
@@ -705,7 +749,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         bundleName: opts.bundleName,
       });
       if (!nav.ok) {
-        errors.push(`${screen.id}: 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        // 到不了屏时**立刻**诊断是不是进入即崩溃。事故里这一步缺席，于是
+        // "点全部银行直接崩溃"被降级成一条 15.1s 元素超时，真凶从未进回修集合。
+        // 结构化诊断 + **归档**（含 run_id）——goal-runner 只认本 run 的归档，作为
+        // ActionableDefect(source='crash') 直接进回修环
+        const dg = crashDeps
+          ? diagnoseNavigationFailure(opts.bundleName ?? '', navFaultlogBaseline, crashDeps)
+          : { kind: 'diagnosis_unavailable' as const, reason: '未知 bundleName，崩溃诊断未跑' };
+        archiveTimeoutDiagnosis(testingReportsDirForDiag(opts.projectRoot, opts.feature), screen.id, dg);
+        errors.push(
+          `${screen.id}: 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）；${renderDiagnosis(dg)}`,
+        );
         p0CaptureFailures.push(screen.id);
         continue;
       }
@@ -777,9 +831,16 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     const ovSteps = navResolve?.resolved.get(ov.id);
     if (navEnabled && ovSteps !== undefined) {
       fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
+      const ovFaultlogBaseline = takeFaultlogBaseline();    // per-nav（overlay 同规则）
       const nav = opts.navExecutorFn!({ screenId: ov.id, steps: ovSteps, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
       if (!nav.ok) {
-        errors.push(`${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        const dg = crashDeps
+          ? diagnoseNavigationFailure(opts.bundleName ?? '', ovFaultlogBaseline, crashDeps)
+          : { kind: 'diagnosis_unavailable' as const, reason: '未知 bundleName，崩溃诊断未跑' };
+        archiveTimeoutDiagnosis(testingReportsDirForDiag(opts.projectRoot, opts.feature), ov.id, dg);
+        errors.push(
+          `${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）；${renderDiagnosis(dg)}`,
+        );
         p0CaptureFailures.push(ov.id);
         continue;
       }
@@ -871,6 +932,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReportEarly, capturedScreens, currentFp);
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
+
 
   // P1-C：md 为 JSON 纯投影，每次无条件再生（不再"定型后不再生成"，根除手写散文与 JSON 背离）。
   fs.writeFileSync(mdPath, buildVisualDiffMdBody(report, { p0CaptureFailures, preservedBuildValidIds }), 'utf-8');

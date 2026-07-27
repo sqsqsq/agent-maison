@@ -1,0 +1,289 @@
+{
+  "schema_version": "1.1",
+  "screens": [
+    {
+      "screen_id": "add_card_home_collapsed",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-add_card_home_collapsed.png",
+      "ref_id": "add_card_home_collapsed",
+      "verdict": "pending",
+      "screenshot_hash": "0a8669d172895cc1",
+      "score_floor": 0.9965099643438362,
+      "edge_tile_divergence": 0.5995705965179974,
+      "edge_over_threshold_tiles": [
+        [
+          5,
+          0
+        ],
+        [
+          5,
+          1
+        ],
+        [
+          5,
+          5
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "identity_fingerprint": "f09cc7d0bad388c1"
+    },
+    {
+      "screen_id": "add_card_home_expanded",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-add_card_home_expanded.png",
+      "ref_id": "add_card_home_expanded",
+      "verdict": "pending",
+      "screenshot_hash": "76ac9f665bb7512b",
+      "score_floor": 0.997424745677514,
+      "edge_tile_divergence": 0.8713680404289689,
+      "edge_over_threshold_tiles": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          7,
+          0
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          5
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "identity_fingerprint": "4331c1d5692980f0"
+    },
+    {
+      "screen_id": "all_banks",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-all_banks.png",
+      "ref_id": "all_banks",
+      "verdict": "pending",
+      "screenshot_hash": "99c4194ea834e6d9",
+      "score_floor": 0,
+      "edge_tile_divergence": 0.6929088194459937,
+      "edge_over_threshold_tiles": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          2
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "identity_fingerprint": "8117e856bbff6af9"
+    },
+    {
+      "screen_id": "card_select",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-card_select.png",
+      "ref_id": "card_select",
+      "verdict": "pending",
+      "screenshot_hash": "9c41f2a3e8002067",
+      "score_floor": 0.9921841318213417,
+      "edge_tile_divergence": 0.926675086386417,
+      "edge_over_threshold_tiles": [
+        [
+          7,
+          0
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          2
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          5
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "identity_fingerprint": "a7739d3a1e07a698"
+    },
+    {
+      "screen_id": "card_type_sheet__overlay__0",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-card_type_sheet_overlay_0.png",
+      "ref_id": "card_type_sheet",
+      "verdict": "pending",
+      "score_floor": 0.9523110942335252,
+      "screenshot_hash": "221232519adf7266",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "edge_tile_divergence": 0.800868445259881,
+      "edge_over_threshold_tiles": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          6,
+          5
+        ],
+        [
+          7,
+          2
+        ],
+        [
+          7,
+          3
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "identity_fingerprint": "a0c133a66531ed27"
+    },
+    {
+      "screen_id": "sms_verify__overlay__0",
+      "screenshot_path": "doc/features/bc-openCard/device-testing/device-screenshots/shot-sms_verify_overlay_0.png",
+      "ref_id": "sms_verify",
+      "verdict": "pending",
+      "score_floor": 0.4012204267836162,
+      "screenshot_hash": "a9efe39487f3b6c1",
+      "evaluated_build_fingerprint": "c9925c5edccd",
+      "edge_tile_divergence": 0.6697326255872333,
+      "edge_over_threshold_tiles": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          2
+        ],
+        [
+          7,
+          3
+        ]
+      ],
+      "layout_dump_status": "unavailable",
+      "identity_fingerprint": "fa013fc0101bb8ab"
+    }
+  ]
+}

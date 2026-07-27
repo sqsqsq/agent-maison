@@ -23,6 +23,19 @@ export type PhaseVerdictAction =
   | 'advance'
   | 'retry'
   | 'halt'
+  /**
+   * plan d8c5f3a7 T4：带缺陷指纹回退 coding 修复（扩展既有 authorized_backtrack 语义，
+   * 不新造机制）。2026-07-24 事故暴露的结构性缺口：转移策略只有「同阶段 retry ≤2 → halt」，
+   * **不存在 testing FAIL → 回 coding → 再 testing 的环**；既有回退通道
+   * （reconcileMutablePhaseSourceDrift）门槛又高到全程未触发。于是"真机发现问题→回码修复"
+   * 这个用户最期待的循环从来没跑起来过。
+   *
+   * 触发与 strictness **解耦**（设计原则）：确定性 P0 缺陷（crash 嫌疑 / needs_fix 素材债 /
+   * score_floor 崩塌 / 声明锚点缺失）即触发回修；`isHardPixelContract` 只决定这些缺口
+   * 是否额外升 BLOCKER/求人，**不决定是否回修**——否则 best_effort 档（银行卡真实档位）
+   * 永远只记 WARN 不修。
+   */
+  | 'backtrack_to_coding'
   | 'defer_external_and_continue_if_allowed'
   | 'defer_external_and_halt';
 
@@ -69,6 +82,17 @@ export interface ClassifyPhaseVerdictInput {
   dependency_policy?: DependencyPolicy;
   retries_used?: number;
   max_retries_per_phase?: number;
+  /** 当前阶段（backtrack 只对 review 闭环后的可变阶段 ut/testing 有意义） */
+  phase?: FeaturePhase;
+  /**
+   * plan d8c5f3a7 T4：本轮是否检出**确定性 P0 缺陷**且当前阶段无法零写入解决
+   * （crash 嫌疑 / needs_fix 素材债 / score_floor 崩塌 / 声明锚点缺失）。
+   * 由 runner 从 summary 的结构化缺陷指纹派生——**不看 strictness**。
+   */
+  deterministic_p0_defects?: boolean;
+  /** 已用回退次数（预算 max_backtracks，默认 2；配合轮次指纹熔断防 ping-pong） */
+  backtracks_used?: number;
+  max_backtracks?: number;
 }
 
 export interface BatchAuthorizationResult {
@@ -243,6 +267,20 @@ export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVer
     max_retries_per_phase = 2,
   } = input;
 
+  // v23 F1：actionable 缺陷判据在 **PASS 判定之前**——这是回修环可达性的关键。
+  // 旧顺序 `PASS 先行 return` 是第 6 轮 review 实锤的致命错误：best_effort（银行卡真实
+  // 档位）下视觉缺陷表现为 WARN、verdict=PASS → 回修环从未可达。actionable 缺陷非空
+  // 即回退，与 verdict 无关。只在 testing（UT 不读视觉产物；runner 侧同样只在 testing
+  // 收集）。优先级序：安全 halt（在 runner 层先行 continue，根本到不了这里）→
+  // actionable 回退（此处）→ 普通 PASS/FAIL。
+  // 预算/指纹/回退目标的裁决**全部收归 runner 的统一回退分支**——policy 里不看预算。
+  // review 第 10 轮实锤：旧写法预算耗尽后 PASS+actionable 掉到 advance、FAIL+actionable
+  // 掉到 retry——残留缺陷被当成通过推进/原地空转，与"耗尽即 halt"相反。恒返回
+  // backtrack_to_coding，runner 分支判 target/fingerprint/budget 并在那里 halt。
+  if (input.deterministic_p0_defects === true && input.phase === 'testing') {
+    return 'backtrack_to_coding';
+  }
+
   if (verdict === 'PASS') return 'advance';
 
   if (verdict === 'INCOMPLETE') {
@@ -258,6 +296,9 @@ export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVer
   if (retries_used < max_retries_per_phase) return 'retry';
   return 'halt';
 }
+
+/** 回退预算缺省值（plan d8c5f3a7 T4；与轮次指纹熔断共同防 ping-pong） */
+export const DEFAULT_MAX_BACKTRACKS = 2;
 
 /**
  * Compute final goal run status from per-phase outcomes.
