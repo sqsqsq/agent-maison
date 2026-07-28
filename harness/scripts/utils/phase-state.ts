@@ -94,6 +94,23 @@ export function isGoalHeadlessEnv(): boolean {
   return process.env[MAISON_GOAL_HEADLESS_ENV] === '1';
 }
 
+/**
+ * goal run 内 agent 侧 harness（agent 自跑）——只计算、不写正式 vision 账本
+ * （b7e4d2a9 Todo3 单写者唯一谓词；check-spec attestation 与 harness-runner
+ * visual-rounds journal 分流都必须消费本函数，不得各自造判定）。
+ * 信号取并集：adapter 工具子进程实测会丢部分 env（2026-07-27 宿主实锤：cursor 丢
+ * MAISON_GOAL_HEADLESS 留 MAISON_GOAL_RUN_ID——单一信号判定必翻车）；任一 goal 信号
+ * 在场而无 gate authority（MAISON_GOAL_GATE_HARNESS=1，runner 直接 spawn 的 gate
+ * harness 独有、agent env 构造时按信任锚剥离）即视为 agent 侧。
+ */
+export function isAgentSideGoalHarness(): boolean {
+  const anyGoalSignal =
+    Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
+    Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
+    isGoalOrchestrationEnv();
+  return anyGoalSignal && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+}
+
 export function mergeAndWritePhaseState(
   projectRoot: string,
   workflowSpec: WorkflowSpec,

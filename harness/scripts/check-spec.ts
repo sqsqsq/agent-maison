@@ -86,7 +86,7 @@ import {
   defaultTrustRegistryPath,
   validateConfirmationReceiptFile,
 } from './utils/confirmation-receipt';
-import { isGoalOrchestrationEnv } from './utils/phase-state';
+import { isAgentSideGoalHarness, isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
@@ -464,8 +464,10 @@ export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult
   // goal 态 agent 自跑 harness 只**计算**反证结论（结果照常展示回喂），不写账本；
   // 只有 runner 直接 spawn 的 gate harness（MAISON_GOAL_GATE_HARNESS=1）或非 goal 交互态
   // 允许提交。agent 即便伪造该 env 直写，外层 runner 的 invoke 快照括号仍会检出并 halt。
-  const ledgerWriteAllowed =
-    !isGoalOrchestrationEnv() || process.env.MAISON_GOAL_GATE_HARNESS === '1';
+  // b7e4d2a9 Todo3（2026-07-27 宿主误杀实锤）：判定统一走共享谓词——此前用
+  // isGoalOrchestrationEnv()（只看 RUNNER/HEADLESS），cursor 工具子进程丢 HEADLESS 留
+  // RUN_ID 时被误判为交互态直写正式账本 → 外层按篡改 halt（假阳性）。
+  const ledgerWriteAllowed = !isAgentSideGoalHarness();
   const persistAttestation = (
     verdict: 'contradicted' | 'unverified' | 'verified',
     reasons: string[],

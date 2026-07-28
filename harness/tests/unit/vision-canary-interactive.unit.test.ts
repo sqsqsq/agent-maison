@@ -10,6 +10,7 @@ import {
   isCanaryAnswerComplete,
   VISION_CANARY_PROBE_VERSION,
 } from '../../scripts/utils/vision-canary';
+import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 import {
   startInteractiveCanaryChallenge,
   waitForAnswerFile,
@@ -306,7 +307,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           answerPath,
           expiresAtMs: 100,
           pollMs: 1,
-          isComplete: content => isCanaryAnswerComplete(content),
+          isComplete: content => isCanaryAnswerComplete(content, FIXTURE_CANARY_KEY),
           now: () => {
             ticks += 1;
             // 第 3 次检查时补齐余下键（模拟续写完成）
@@ -334,7 +335,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const r = await waitForAnswerFile({
           answerPath,
           expiresAtMs: 5,
-          isComplete: content => isCanaryAnswerComplete(content),
+          isComplete: content => isCanaryAnswerComplete(content, FIXTURE_CANARY_KEY),
           now: () => (t += 10),
           sleep: async () => undefined,
         });

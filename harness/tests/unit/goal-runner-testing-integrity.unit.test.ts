@@ -40,7 +40,7 @@ import {
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
-import { readCodingBase, readPassSnapshotHead } from '../../scripts/utils/pass-snapshot';
+import { projectIdentityHash, readCodingBase, readPassSnapshotHead } from '../../scripts/utils/pass-snapshot';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -213,8 +213,13 @@ async function runChain(
   opts: {
     onTesting?: (ctx: AgentCtx) => void;
     onCoding?: (ctx: AgentCtx) => void;
+    onSpec?: (ctx: AgentCtx) => void;
     resume?: string;
     forceResume?: boolean;
+    /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
+    supersede?: string[];
+    /** b7e4d2a9 Todo2：设 HMAC 密钥跑（vision checkpoint 认证 → clean run 可达 CHAIN_SLICE_COMPLETED） */
+    hmacKey?: string;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -226,6 +231,8 @@ async function runChain(
   // c4e8b1d3：plan PASS advance 会建 pass snapshot——trust 目录隔离到宿主内，绝不写用户主目录
   const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+  const prevHmac = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
+  if (opts.hmacKey) process.env.MAISON_HMAC_GOAL_CHECKPOINT = opts.hmacKey;
   try {
     __testing_setInvokeAgent((async (plan: unknown, _root: unknown, o: unknown) => {
       const logPath = String((o as { outputLogPath?: string })?.outputLogPath ?? '')
@@ -245,6 +252,7 @@ async function runChain(
       };
       if (phase === 'testing') opts.onTesting?.(ctx);
       if (phase === 'coding') opts.onCoding?.(ctx);
+      if (phase === 'spec') opts.onSpec?.(ctx);
       return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
@@ -309,12 +317,14 @@ async function runChain(
       } catch { /* manifest 失败 → clean-pass 会如实判 needs_fix（非本套被测对象） */ }
       return { exitCode: 0, timedOut: false };
     });
+    const supersedeArgs = (opts.supersede ?? []).flatMap(id => ['--supersede', id]);
     process.argv = opts.resume
       ? [
           'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', FEATURE,
           '--foreground-ok', '--force',
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
+          ...supersedeArgs,
         ]
       : [
           'node', 'goal-runner.ts',
@@ -323,6 +333,7 @@ async function runChain(
           '--start', 'spec', '--end', 'testing',
           '--adapter', 'cursor',
           '--foreground-ok', '--force',
+          ...supersedeArgs,
         ];
     process.chdir(root);
     clearFrameworkConfigCache();
@@ -341,6 +352,8 @@ async function runChain(
     process.argv = prevArgv;
     if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
     else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
+    if (prevHmac === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT;
+    else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevHmac;
     try { process.chdir(prevCwd); } catch { /* ignore */ }
   }
 }
@@ -398,8 +411,18 @@ test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源
 test('⑤ c4e8b1d3：正常 plan PASS（非 advance_blocked）也建快照，且首次 coding 前锚定 coding_base_sha', async () => {
   const { root } = setupHost();
   let codingRunId = '';
+  // trust 文件真值在 **coding 窗口内**采（b7e4d2a9 Todo2 起，成功封卷会即刻回收 per-run
+  // 场外状态——run 结束后再查文件查的是"回收后"，不是锚定语义本身）
+  let headActiveInWindow = false;
+  let baseShaInWindow = '';
   const probe = await runChain(root, {
-    onCoding: ctx => { codingRunId = ctx.runId; },
+    onCoding: ctx => {
+      codingRunId = ctx.runId;
+      const head = readPassSnapshotHead(ctx.root, FEATURE, ctx.runId, 'plan');
+      headActiveInWindow = head.body?.state === 'active';
+      const base = readCodingBase(ctx.root, FEATURE, ctx.runId);
+      baseShaInWindow = base.body?.base_sha ?? '';
+    },
     onTesting: ({ root: r }) => writeCleanTesting(r),
   });
   assertRunReachedEnd(probe, '⑤');
@@ -415,19 +438,141 @@ test('⑤ c4e8b1d3：正常 plan PASS（非 advance_blocked）也建快照，且
     e => e.type === 'agent_invoke_start' && e.phase === 'coding',
   );
   assert(codingInvokeIdx > snapIdx, `plan 快照须先于 coding agent invoke（snap@${snapIdx}, invoke@${codingInvokeIdx}）`);
-  // trust 文件真值（不只信事件）：head active + base_sha 与事件一致
+  // coding 窗口内的 trust 文件真值（不只信事件）
   assert(!!codingRunId, 'coding attempt 须带 MAISON_GOAL_RUN_ID');
-  const prevTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
-  try {
-    const head = readPassSnapshotHead(root, FEATURE, codingRunId, 'plan');
-    assert(head.body?.state === 'active', `plan snapshot head 须 active：mac=${head.mac}`);
-    const base = readCodingBase(root, FEATURE, codingRunId);
-    assert(base.body?.base_sha === String(baseEv!.base_sha), 'trust 文件 base_sha 须与事件一致');
-  } finally {
-    if (prevTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrust;
+  assert(headActiveInWindow, 'coding 窗口内 plan snapshot head 须 active');
+  assert(baseShaInWindow === String(baseEv!.base_sha), 'coding 窗口内 trust 文件 base_sha 须与事件一致');
+});
+
+test('b7e4d2a9 Todo2：HMAC 干净 run → CHAIN_SLICE_COMPLETED 封卷 + 场外状态即刻回收 + 同 run resume 被 sealed 绝对拒绝（force 无效、零新增事件、feature 级锚保留）', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, { hmacKey: 'test-hmac-secret', onTesting: ({ root: r }) => writeCleanTesting(r) });
+  const st = runEndStatus(probe.events);
+  assert(st === 'CHAIN_SLICE_COMPLETED', `HMAC 干净 run 须达封卷终态，实得 ${st}（exit=${probe.exitCode}）`);
+  const runId = path.basename(probe.reportDir);
+  // 场外状态即刻回收：flat checkpoint + run 目录都不在；feature 级锚（vision-heads/HWM）保留
+  const hash = projectIdentityHash(root);
+  const featTrust = path.join(root, 'trust-cp', hash, FEATURE);
+  assert(!fs.existsSync(path.join(featTrust, `${runId}.json`)), '封卷后 flat checkpoint 须被回收');
+  assert(!fs.existsSync(path.join(featTrust, runId)), '封卷后 run 目录（pass-snapshots 等）须被回收');
+  assert(fs.existsSync(path.join(root, 'trust-cp', 'vision-heads', hash)), 'feature 级 vision-heads/HWM 不得被回收');
+  // sealed 绝对拒绝：--force-resume 也无效；events 零新增（封卷后归档不再被修改）
+  const eventsFile = path.join(probe.reportDir, 'events.jsonl');
+  const before = fs.readFileSync(eventsFile);
+  const resumed = await runChain(root, { resume: runId, forceResume: true, hmacKey: 'test-hmac-secret' });
+  assert(resumed.exitCode === 1, `sealed resume 须 exit 1，实得 ${resumed.exitCode}`);
+  assert(resumed.invokedPhases.length === 0, 'sealed 拒绝不得 invoke 任何 agent');
+  const after = fs.readFileSync(eventsFile);
+  assert(before.equals(after), 'sealed 拒绝须零新增事件（events.jsonl 字节不变）');
+});
+
+test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身）；指向他 run → 审计事件先落、目标场外状态回收', async () => {
+  // run A：unverifiable halt（可恢复 HALTED 态，场外状态保留——封卷才回收）
+  const { root } = setupHost();
+  const probeA = await runChain(root, {
+    onTesting: ({ root: r }) =>
+      writeVisualDiff(r, [{ id: 'all_banks', verdict: 'warn', mustFix: [MUST_FIX_TEXT], buildFp: false }]),
+  });
+  assert(runEndStatus(probeA.events) === 'HALTED', `前置：run A 须 HALTED，实得 ${runEndStatus(probeA.events)}`);
+  const runA = path.basename(probeA.reportDir);
+  const hash = projectIdentityHash(root);
+  const featTrust = path.join(root, 'trust-cp', hash, FEATURE);
+  const aStateExists = (): boolean =>
+    fs.existsSync(path.join(featTrust, runA)) || fs.existsSync(path.join(featTrust, `${runA}.json`));
+  assert(aStateExists(), '前置：HALTED run 的场外状态应保留（可恢复态）');
+  // cooldown 硬防线（判定在 forceResume 之前）——与 R-8 同法回拨 run_end 10 分钟
+  {
+    const evPath = path.join(probeA.reportDir, 'events.jsonl');
+    const patched = fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+      if (!l.trim()) return l;
+      try {
+        const e = JSON.parse(l) as { type?: string; ts?: string };
+        if (e.type === 'run_end' && e.ts) {
+          e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(e);
+        }
+      } catch { /* keep */ }
+      return l;
+    });
+    fs.writeFileSync(evPath, patched.join('\n'), 'utf-8');
   }
+  // 自指：resume runA 并 --supersede runA → BLOCKER（不落 supersede 事件、自身状态不动）
+  const self = await runChain(root, { resume: runA, forceResume: true, supersede: [runA] });
+  assert(self.exitCode === 1, `supersede 自指须 BLOCKER，实得 ${self.exitCode}`);
+  assert(!self.events.some(e => e.type === 'supersede'), '自指被拒不得落 supersede 审计事件');
+  assert(aStateExists(), '自指被拒后自身场外状态必须原样保留');
+  // 他指：新 run B --supersede runA → 审计事件先落、runA 场外状态被回收
+  const probeB = await runChain(root, { supersede: [runA], onTesting: ({ root: r }) => writeCleanTesting(r) });
+  const supEv = probeB.events.find(e => e.type === 'supersede') as { target_run_id?: string } | undefined;
+  assert(!!supEv && supEv.target_run_id === runA, `run B 须落 supersede 审计事件：${JSON.stringify(supEv)}`);
+  assert(!aStateExists(), 'supersede 后目标 run 场外状态须被回收');
+});
+
+test('b7e4d2a9 Todo3：agent 窗口内自跑 check-spec（cursor 丢 env 形态）→ 反证真执行但账本零写入，无 vision_ledger_tampered', async () => {
+  const { root } = setupHost();
+  const visionAtt = path.join(root, 'doc', 'features', FEATURE, 'vision', 'artifact-attestations.jsonl');
+  const visionDown = path.join(root, 'doc', 'features', FEATURE, 'vision', 'policy-downgrades.jsonl');
+  let scanRan = false;
+  const probe = await runChain(root, {
+    onSpec: ctx => {
+      // spec agent 正常产出（含 evidence_gap 形态：ui-spec 文本无参考映射 + ref-elements 在场）
+      writeFile(ctx.root, `doc/features/${FEATURE}/spec/ui-spec.yaml`, [
+        'schema_version: "1.0"', 'screens:',
+        '  - id: add_card_home', '    priority: P0', '    ref_id: add_card_home',
+        '    root:', '      type: navigation_frame', '      order: 0',
+        '      children:',
+        '        - id: hint_text', '          type: content_display', '          order: 0',
+        '          text: "首页无映射文案"', '',
+      ].join('\n'));
+      writeFile(ctx.root, `doc/features/${FEATURE}/spec/ref-elements.yaml`,
+        'schema_version: "1.0"\nelements:\n  - element_id: e1\n    screen_ref_id: add_card_home\n    text: "银行卡"\n');
+      // 模拟 agent 自跑 check-spec：cursor 实锤 env 形态（RUN_ID/ATTEMPT 在、HEADLESS/RUNNER/GATE 无）
+      const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS', 'MAISON_GOAL_GATE_HARNESS'];
+      const prev: Record<string, string | undefined> = {};
+      for (const k of keys) { prev[k] = process.env[k]; delete process.env[k]; }
+      process.env.MAISON_GOAL_RUN_ID = ctx.runId;
+      process.env.MAISON_GOAL_ATTEMPT = `${ctx.runId}-i1`;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { checkVisionOutputCounterevidence } = require('../../scripts/check-spec') as {
+          checkVisionOutputCounterevidence: (c: unknown) => Array<{ details: string }>;
+        };
+        const res = checkVisionOutputCounterevidence({ projectRoot: ctx.root, feature: FEATURE });
+        scanRan = res.length > 0 && res[0].details.includes('evidence_gap');
+      } finally {
+        for (const k of keys) {
+          if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+        }
+      }
+      assert(!fs.existsSync(visionAtt) && !fs.existsSync(visionDown),
+        'agent 窗口内正式账本必须保持 absent（agent 侧只算不写）');
+    },
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  assert(scanRan, '反证扫描必须真执行且得 evidence_gap（防空跑假绿）');
+  assert(!hasEvent(probe.events, 'vision_ledger_tamper'),
+    `不得出现 vision_ledger_tamper：${probe.events.filter(e => e.type === 'vision_ledger_tamper').length} 条`);
+  assert(!probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'vision_ledger_tampered'),
+    '不得因账本被 halt');
+  // 随后 gate harness 形态（GATE=1）正式写入两行合法记录（单写者授权面）
+  const keys2 = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_GATE_HARNESS'];
+  const prev2: Record<string, string | undefined> = {};
+  for (const k of keys2) prev2[k] = process.env[k];
+  process.env.MAISON_GOAL_RUN_ID = 'post-run';
+  process.env.MAISON_GOAL_ATTEMPT = 'post-run-i1';
+  process.env.MAISON_GOAL_GATE_HARNESS = '1';
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { checkVisionOutputCounterevidence } = require('../../scripts/check-spec') as {
+      checkVisionOutputCounterevidence: (c: unknown) => unknown;
+    };
+    checkVisionOutputCounterevidence({ projectRoot: root, feature: FEATURE });
+  } finally {
+    for (const k of keys2) {
+      if (prev2[k] === undefined) delete process.env[k]; else process.env[k] = prev2[k];
+    }
+  }
+  assert(fs.existsSync(visionAtt) && fs.existsSync(visionDown), 'gate harness（GATE=1）须能正式写入两份账本');
 });
 
 test('E2E-2a testing 改产品源码 → violation：gate 不运行、halt、精确报文件', async () => {

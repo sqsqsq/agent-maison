@@ -15,6 +15,9 @@
 // ============================================================================
 
 import './utils/transpile-only-env'; // 须为首个 import：本进程+子进程走 transpile-only（见 plan a7c3e1f9 P0）
+// b7e4d2a9 Todo1：第二个 import 必须是 trust 隔离 bootstrap——在任何可能读
+// MAISON_GOAL_CHECKPOINT_DIR 的模块加载之前无条件覆写到独立临时根（测试零泄漏）。
+import { cleanupStrict } from './utils/test-trust-bootstrap';
 import * as path from 'path';
 import * as fs from 'fs';
 import { selectSuites } from './utils/select-suites';
@@ -96,6 +99,13 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'ui-scope-gate', modulePath: './unit/ui-scope-gate.unit.test' },
   // plan c4e8b1d3 G3：bc-openCard consumer golden evaluator（结果聚合 + 绑定校验）
   { id: 'consumer-golden', modulePath: './unit/consumer-golden.unit.test' },
+  // plan b7e4d2a9 Todo3：vision 账本单写者谓词（2026-07-27 宿主误杀根治）
+  { id: 'single-writer-predicate', modulePath: './unit/single-writer-predicate.unit.test' },
+  // plan b7e4d2a9 Todo1：测试 trust 隔离（probe 与 blackbox 两 suite id 不得子串包含）
+  { id: 'trust-isolation-probe', modulePath: './unit/trust-isolation-probe.unit.test' },
+  { id: 'trust-bootstrap-blackbox', modulePath: './unit/trust-bootstrap-blackbox.unit.test' },
+  // plan b7e4d2a9 Todo2：per-run 场外状态回收契约（封卷/supersede 集成面在 testing-integrity）
+  { id: 'trust-lifecycle', modulePath: './unit/trust-lifecycle.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
   // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）
@@ -280,10 +290,23 @@ async function main(): Promise<void> {
   console.log('='.repeat(72));
   console.log(`\n结果：${totalPass} passed, ${totalFail} failed (共 ${totalPass + totalFail})\n`);
 
-  process.exit(totalFail > 0 ? 1 : 0);
+  // b7e4d2a9 Todo1：不再直接 process.exit——exitCode + finally 严格清理（see 底部）
+  process.exitCode = totalFail > 0 ? 1 : 0;
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+void (async () => {
+  try {
+    await main();
+  } catch (err) {
+    console.error(err);
+    process.exitCode = 1;
+  } finally {
+    // 严格语义：临时 trust 根删不掉=测试留了垃圾——非零退出并打印路径（不许静默）；
+    // process.once('exit') 的 best-effort 后备兜异常路径。
+    const r = cleanupStrict();
+    if (!r.ok) {
+      console.error(`[test-trust-bootstrap] 临时 trust 根清理失败，遗留：${r.leftoverPath}`);
+      process.exitCode = 1;
+    }
+  }
+})();

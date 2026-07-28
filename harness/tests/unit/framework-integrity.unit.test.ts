@@ -236,18 +236,16 @@ test('p1_10_incident_debug_coverage_ts → manifest 在位必拦 / 缺 manifest 
   assert.ok(!noManifest.some(r => r.id === 'framework_foreign_file' && r.status === 'FAIL'), '无 manifest 时 foreign 防线不激活——事故根因形态');
 });
 
-test('g2_canary_pattern_allowed_but_other_assets_file_fails（收窄生效）', () => {
+test('g2_canary_assets_now_foreign（b7e4d2a9 Todo4 反向保护：白名单已删，framework/ 真正恢复只读）', () => {
   const { projectRoot, frameworkRoot } = setup({ 'a.ts': 'hello' });
   fs.mkdirSync(path.join(frameworkRoot, 'harness', 'assets'), { recursive: true });
   fs.writeFileSync(path.join(frameworkRoot, 'harness', 'assets', 'vision-canary-abc.png'), 'png', 'utf-8');
   fs.writeFileSync(path.join(frameworkRoot, 'harness', 'assets', 'vision-canary-abc.answer-key.json'), '{}', 'utf-8');
-  let results = runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot });
-  assert.strictEqual(foreignOf(results).status, 'PASS', 'canary 两模式应放行');
-  fs.writeFileSync(path.join(frameworkRoot, 'harness', 'assets', 'smuggled.mjs'), '// hide', 'utf-8');
-  results = runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot });
+  const results = runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot });
   const foreign = foreignOf(results);
-  assert.strictEqual(foreign.status, 'FAIL');
-  assert.ok(foreign.details.includes('harness/assets/smuggled.mjs'), foreign.details);
+  assert.strictEqual(foreign.status, 'FAIL', 'canary 旧路径须判 foreign（随机卷已迁 goal-runs，framework/ 不再被运行时写入）');
+  assert.ok(foreign.details.includes('harness/assets/vision-canary-abc.png'), foreign.details);
+  assert.ok(foreign.details.includes('harness/assets/vision-canary-abc.answer-key.json'), foreign.details);
 });
 
 test('g2_sidecar_reserved_metadata_not_foreign', () => {

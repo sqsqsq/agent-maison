@@ -16,11 +16,8 @@
     "harness/init-decision.json",
     "harness/init-context.json"
   ],
-  "_comment_generated": "运行时按需生成的合法文件（按文件名模式收窄——不放行整个目录，防藏任意脚本；与 vision-canary.ts canaryAssetPaths 产物精确对齐）",
-  "generated_file_patterns": [
-    "harness/assets/vision-canary-*.png",
-    "harness/assets/vision-canary-*.answer-key.json"
-  ],
+  "_comment_generated": "运行时按需生成的合法文件（按文件名模式收窄——不放行整个目录，防藏任意脚本）。b7e4d2a9 Todo4：vision-canary 固定资产两条已删——preflight 随机卷写 goal-runs run 目录、答案只在内存，framework/ 恢复只读发布件属性；此表当前为空但保留结构（新增须过'in-repo+签名做不到'红线）",
+  "generated_file_patterns": [],
   "_comment_reserved": "framework 根部保留元数据（G3b sidecar：不入 RELEASE-MANIFEST.json files[]（循环依赖），extra-file 扫描亦不得判 foreign）",
   "reserved_metadata_files": [
     "RELEASE-MANIFEST.sha256"

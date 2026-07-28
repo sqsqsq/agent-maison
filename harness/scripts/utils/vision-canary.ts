@@ -12,8 +12,6 @@
 // 文字题"（几何题非 OCR 能直接回答，需真正的视觉理解）；不防宿主工具链恶意伪造读图
 // （那属 gate-integrity 红线域，非本模块职责）。
 
-import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 import Jimp from 'jimp';
 import { extractClaudeFinalResultText } from './claude-envelope';
@@ -44,19 +42,10 @@ export interface CanaryClassifyResult {
   reason: string;
 }
 
-/** 金丝雀设计版本——改任一几何/文案参数须递增，强制新 contenthash（旧缓存自动失效）。 */
-const CANARY_DESIGN_VERSION = 1;
-
-const CANARY_ANSWER_KEY: CanaryAnswerKey = {
-  schema_version: '1.0',
-  geometry_questions: [
-    { id: 'TOP_LEFT_COLOR', expected_color: 'red' },
-    { id: 'TOP_RIGHT_COLOR', expected_color: 'blue' },
-    { id: 'BOTTOM_LEFT_COLOR', expected_color: 'green' },
-    { id: 'BOTTOM_RIGHT_COLOR', expected_color: 'yellow' },
-  ],
-  text_token: 'MAISON7X3Q',
-};
+// b7e4d2a9 Todo4 收尾（review round9）：生产级固定答案层（CANARY_DESIGN_VERSION /
+// CANARY_ANSWER_KEY 常量与导出、各 API 的固定默认参）已整体删除——固定卷没有任何
+// 运行时用途（preflight/交互式都走随机卷），保留即"随机图+固定答案"漏传形态的温床；
+// 测试需要固定 fixture 时在测试侧自定义（tests/utils/canary-fixture-key.ts）。
 
 const CANARY_COLORS_HEX: Record<string, number> = {
   red: 0xff0000ff,
@@ -92,19 +81,10 @@ function quadrantOrigin(id: string, half: number): { x: number; y: number } | nu
   }
 }
 
-function computeCanaryContentHash(): string {
-  const material = JSON.stringify({ v: CANARY_DESIGN_VERSION, key: CANARY_ANSWER_KEY });
-  return crypto.createHash('sha256').update(material).digest('hex').slice(0, 12);
-}
-
-/** 文件名不含答案——只含内容哈希，答案独立存 <basename>.answer-key.json。 */
-export function canaryAssetPaths(assetsDir: string): { imagePath: string; answerKeyPath: string } {
-  const hash = computeCanaryContentHash();
-  return {
-    imagePath: path.join(assetsDir, `vision-canary-${hash}.png`),
-    answerKeyPath: path.join(assetsDir, `vision-canary-${hash}.answer-key.json`),
-  };
-}
+// b7e4d2a9 Todo4：固定资产路线（canaryAssetPaths/ensureVisionCanaryAsset——写死
+// framework/harness/assets/ + answer-key 落盘）已删除：运行时改发布件 + 答案与题图
+// 同目录削弱金丝雀 + 固定卷可被记忆（答案本就在发布源码里）三宗罪；preflight 与
+// 交互式探针统一走随机卷（generateRandomCanaryAnswerKey），答案只在调用方内存。
 
 /**
  * 随机题卷生成（I1a 交互式金丝雀，plan b7e42d19 分叉2）：随机颜色→象限排列 + 随机 token。
@@ -131,12 +111,13 @@ export function generateRandomCanaryAnswerKey(
 }
 
 /**
- * 渲染金丝雀图：象限颜色与 token 全由 answerKey 驱动（I1a 前重构——原实现颜色/token 硬编码
- * 且函数私有，随机题卷无法复用）。缺省 answerKey=固定卷（goal 模式沿用不变）。
+ * 渲染金丝雀图：象限颜色与 token 全由 answerKey 驱动。
+ * b7e4d2a9 Todo4：answerKey **编译期必传**（原默认参=固定卷——"随机图片+固定答案判卷"
+ * 的漏传形态由 TS 直接阻止；测试需要固定卷时在测试内自定义）。
  */
 export async function renderCanaryImage(
   outPath: string,
-  answerKey: CanaryAnswerKey = CANARY_ANSWER_KEY,
+  answerKey: CanaryAnswerKey,
 ): Promise<void> {
   const half = CANARY_SIZE / 2;
   const image = new Jimp(CANARY_SIZE, CANARY_SIZE, 0xffffffff);
@@ -160,21 +141,6 @@ export async function renderCanaryImage(
     40,
   );
   await image.writeAsync(outPath);
-}
-
-/** 幂等：资产已存在（内容哈希未变）则跳过渲染，仅首次/设计变更后重新生成。 */
-export async function ensureVisionCanaryAsset(
-  assetsDir: string,
-): Promise<{ imagePath: string; answerKeyPath: string }> {
-  const { imagePath, answerKeyPath } = canaryAssetPaths(assetsDir);
-  fs.mkdirSync(assetsDir, { recursive: true });
-  if (!fs.existsSync(answerKeyPath)) {
-    fs.writeFileSync(answerKeyPath, `${JSON.stringify(CANARY_ANSWER_KEY, null, 2)}\n`, 'utf-8');
-  }
-  if (!fs.existsSync(imagePath)) {
-    await renderCanaryImage(imagePath);
-  }
-  return { imagePath, answerKeyPath };
 }
 
 /** 发给 agent 的一次性能力探测 prompt——非正式任务，明确允许诚实答"看不见"。 */
@@ -250,7 +216,7 @@ function parseAnswerLine(rawOutput: string, key: string): string | null {
  */
 export function isCanaryAnswerComplete(
   rawOutput: string,
-  answerKey: CanaryAnswerKey = CANARY_ANSWER_KEY,
+  answerKey: CanaryAnswerKey,
 ): boolean {
   const trimmed = rawOutput.trim();
   if (!trimmed) return false;
@@ -267,7 +233,7 @@ export function isCanaryAnswerComplete(
  */
 export function classifyCanaryResponse(
   rawOutput: string,
-  answerKey: CanaryAnswerKey = CANARY_ANSWER_KEY,
+  answerKey: CanaryAnswerKey,
 ): CanaryClassifyResult {
   const externalToolSuspected = detectExternalToolSuspected(rawOutput);
   const trimmed = rawOutput.trim();
@@ -379,7 +345,8 @@ function lastLegalAssignment(rawOutput: string, key: string): string | null {
  */
 export function resolveCanaryCacheDecision(
   invocation: CanaryInvocationFacts,
-  answerKey: CanaryAnswerKey = CANARY_ANSWER_KEY,
+  // b7e4d2a9 Todo4：编译期必传（原默认参=固定卷，随机图+固定答案的漏传形态 TS 直接阻止）
+  answerKey: CanaryAnswerKey,
 ): CanaryCacheDecision {
   if (invocation.skipped) {
     return { kind: 'invoke_failed', cache: false, detail: 'invoke 被跳过（dry-run/skipped）' };
@@ -442,5 +409,3 @@ export function resolveCanaryCacheDecision(
     canonicalAnswer,
   };
 }
-
-export { CANARY_ANSWER_KEY };

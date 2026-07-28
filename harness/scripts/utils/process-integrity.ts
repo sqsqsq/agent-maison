@@ -123,13 +123,24 @@ export function stripTrustAnchorEnv(env: NodeJS.ProcessEnv): { env: NodeJS.Proce
       U.startsWith('MAISON_HMAC_') ||
       U === 'MAISON_TRUST_REGISTRY' ||
       // codex 六轮（二期）P0-2：checkpoint 路径覆盖同属信任锚配置——不进 agent env
-      U === 'MAISON_GOAL_CHECKPOINT_DIR'
+      U === 'MAISON_GOAL_CHECKPOINT_DIR' ||
+      // b7e4d2a9 Todo3：正式 vision 账本写权限标（单写者授权）——agent 树绝不携带；
+      // 残留（父 shell/上游 spawn/extraEnv 回带）会让 agent 自跑 harness 重新获得直写权。
+      U === 'MAISON_GOAL_GATE_HARNESS'
     ) {
       delete next[key];
       stripped.push(key);
     }
   }
   return { env: next, stripped };
+}
+
+/** 大小写不敏感地删除 env 中某个键的全部形态（Windows env 大小写不敏感——见上）。 */
+export function deleteEnvKeyCaseInsensitive(env: NodeJS.ProcessEnv, name: string): void {
+  const U = name.toUpperCase();
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === U) delete env[key];
+  }
 }
 
 /**

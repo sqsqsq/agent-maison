@@ -16,7 +16,7 @@ import {
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
-import { sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
+import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
 import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
 export interface InvokeTemplateVars {
@@ -799,6 +799,26 @@ export interface AgentInvokeOptions {
   onChildExit?: () => void;
 }
 
+/**
+ * agent 子进程 env（b7e4d2a9 Todo3 顺序钉死，纯函数可测）：
+ *   process.env + extraEnv 合并 → 强制 HEADLESS=1（角色位不由调用方覆盖）→
+ *   最终 sanitize（NODE_OPTIONS 预加载）+ stripTrustAnchorEnv（HMAC/registry/
+ *   checkpoint 路径/GATE 写权限标，大小写不敏感）→ 交 spawn。
+ * 旧顺序 strip 在前、extraEnv 在后展开——extraEnv 可回带 GATE/HMAC，也可覆盖
+ * HEADLESS 角色位（cursor 丢 env 事故的修复面之一）。
+ */
+export function buildAgentSpawnEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  extraEnv?: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...baseEnv, ...(extraEnv ?? {}) };
+  // 角色位定档前先清大小写变体（extraEnv 注入 `maison_goal_headless=''` 会与大写键并存，
+  // Windows 子进程读取哪个是未定义行为）——保证子进程 env 恰有一个大写 HEADLESS='1'。
+  deleteEnvKeyCaseInsensitive(merged, MAISON_GOAL_HEADLESS_ENV);
+  merged[MAISON_GOAL_HEADLESS_ENV] = '1';
+  return stripTrustAnchorEnv(sanitizeSpawnEnv(merged).env).env;
+}
+
 function spawnHeadlessChild(
   plan: HeadlessInvokePlan,
   cwd: string,
@@ -811,13 +831,10 @@ function spawnHeadlessChild(
 
   const opts = {
     cwd,
-    // P0-7①：agent 子进程同样剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
-    // t10（codex 六轮 P0-2）：信任锚材料（MAISON_HMAC_*/MAISON_TRUST_REGISTRY）不进 agent env。
-    env: {
-      ...stripTrustAnchorEnv(sanitizeSpawnEnv(process.env).env).env,
-      [MAISON_GOAL_HEADLESS_ENV]: '1',
-      ...(extraEnv ?? {}),
-    },
+    // P0-7①：agent 子进程剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
+    // t10（codex 六轮 P0-2）：信任锚材料不进 agent env。
+    // b7e4d2a9 Todo3：合并后统一 strip + HEADLESS 最后定档（见 buildAgentSpawnEnv）。
+    env: buildAgentSpawnEnv(process.env, extraEnv),
     stdio,
     detached: !isWin,
     shell: false as const,

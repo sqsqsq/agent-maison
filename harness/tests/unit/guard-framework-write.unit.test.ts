@@ -155,21 +155,21 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'A5 claude 壳：金丝雀产物模式放行；assets/ 下非 canary 文件仍拦（收窄生效）',
+    name: 'A5 claude 壳（b7e4d2a9 Todo4 反向保护）：canary 固定资产白名单已删——assets/ 下全部拦截',
     run: () => {
       const root = mkConsumerProject();
       try {
         assert(
-          runHook(root, { file_path: 'framework/harness/assets/vision-canary-abc123.png' }).exit === 0,
-          'canary png 应放行',
+          runHook(root, { file_path: 'framework/harness/assets/vision-canary-abc123.png' }).exit === 2,
+          'canary png 旧路径不得再放行（framework/ 恢复只读发布件）',
         );
         assert(
-          runHook(root, { file_path: 'framework/harness/assets/vision-canary-abc123.answer-key.json' }).exit === 0,
-          'canary answer-key 应放行',
+          runHook(root, { file_path: 'framework/harness/assets/vision-canary-abc123.answer-key.json' }).exit === 2,
+          'canary answer-key 旧路径不得再放行',
         );
         assert(
           runHook(root, { file_path: 'framework/harness/assets/evil-script.mjs' }).exit === 2,
-          'assets/ 下非 canary 模式应拦截',
+          'assets/ 下非 canary 模式照旧拦截',
         );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -210,7 +210,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(core.isPolicyAllowedPath('RELEASE-MANIFEST.sha256', policy), '扫描谓词：sidecar 合法存在');
       assert(!(core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('RELEASE-MANIFEST.sha256', policy), '写时谓词：sidecar 不可写');
       assert((core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('harness/reports/x.json', policy), '写时谓词：运行时目录可写');
-      assert((core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('harness/assets/vision-canary-a.png', policy), '写时谓词：金丝雀产物可写');
+      // b7e4d2a9 Todo4：金丝雀固定资产白名单已删——写时谓词同拒（随机卷写 goal-runs，不再进 framework/）
+      assert(!(core as unknown as { isWriteAllowedPath(rel: string, p: unknown): boolean }).isWriteAllowedPath('harness/assets/vision-canary-a.png', policy), '写时谓词：金丝雀旧路径不可写');
     },
   },
   {
@@ -312,7 +313,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const probe = `${p}deep/nested/file.bin`.replace('**/', 'a/b/');
         assert(core.isPolicyAllowedPath(probe, policy), `目录条目 ${p} 应覆盖 ${probe}`);
       }
-      assert(core.isPolicyAllowedPath('harness/assets/vision-canary-x.png', policy), 'canary 模式应命中');
+      // b7e4d2a9 Todo4 反向保护：canary 固定资产白名单已删——旧路径回到 foreign/拒写域，
+      // framework/ 是"真正恢复只读"而不只是"不再主动生成"。
+      assert(!core.isPolicyAllowedPath('harness/assets/vision-canary-x.png', policy),
+        'canary PNG 旧路径不得再被放行（写守卫拒、integrity 判 foreign）');
+      assert(!core.isPolicyAllowedPath('harness/assets/vision-canary-x.answer-key.json', policy),
+        'canary answer-key 旧路径不得再被放行');
       assert(core.isPolicyAllowedPath('RELEASE-MANIFEST.sha256', policy), 'sidecar 应命中');
       assert(!core.isPolicyAllowedPath('harness/scripts/tmp-evil.mjs', policy), 'scripts 下任意文件不得命中');
       assert(!core.isPolicyAllowedPath('skills/feature/spec/SKILL.md', policy), 'skills 不得命中');

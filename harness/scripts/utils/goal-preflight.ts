@@ -10,6 +10,7 @@ import {
   evaluatePersonalSetupGate,
   resolveProjectMaterializedForGate,
 } from './personal-setup-gate';
+import * as fs from 'fs';
 import * as path from 'path';
 import { loadLocalConfig, writeLocalConfig, LOCAL_SCHEMA_VERSION } from './framework-local-config';
 import { evaluateConfigPlacementGate } from './config-placement-gate';
@@ -34,8 +35,9 @@ import {
 } from './agent-invoke';
 import { resolveUiRelevanceForRun } from './fidelity-shared';
 import {
-  ensureVisionCanaryAsset,
   buildCanaryPrompt,
+  generateRandomCanaryAnswerKey,
+  renderCanaryImage,
   resolveCanaryCacheDecision,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
@@ -348,6 +350,8 @@ export async function runVisionCanaryProbe(input: {
   manifest: GoalManifest;
   /** 单测注入（默认真实 invokeAgentHeadless），覆盖"invoke→写盘"边界免真 spawn */
   invokeFn?: typeof invokeAgentHeadless;
+  /** 单测注入（默认随机卷）：canned stdout 夹具须知道卷面答案才能构造有效作答（与 invokeFn 同款缝） */
+  answerKeyFn?: typeof generateRandomCanaryAnswerKey;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
@@ -356,9 +360,15 @@ export async function runVisionCanaryProbe(input: {
 }> {
   const { projectRoot, frameworkRoot, manifest } = input;
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
+  // b7e4d2a9 Todo4（金丝雀临时化）：随机卷写 run 报告目录（workspace 内——tool_read
+  // 判卷要求 workspace 沙箱 adapter 能读到；%TEMP% 会假阴性），答案只在内存，finally
+  // 三态删除。不再写 framework/harness/assets/ 固定资产与 answer-key（运行时改发布件 +
+  // 答案与题图同目录削弱金丝雀 + 固定卷可被记忆，三宗罪一并根治）。
+  const imagePath = path.join(projectRoot, manifest.report_dir, 'preflight-canary.png');
   try {
-    const assetsDir = path.join(frameworkRoot, 'harness', 'assets');
-    const { imagePath } = await ensureVisionCanaryAsset(assetsDir);
+    const answerKey = (input.answerKeyFn ?? generateRandomCanaryAnswerKey)();
+    fs.mkdirSync(path.dirname(imagePath), { recursive: true });
+    await renderCanaryImage(imagePath, answerKey);
     const prompt = buildCanaryPrompt(imagePath);
     const cap = loadGoalCapability(frameworkRoot, adapter);
     if (!cap.capability) {
@@ -384,7 +394,7 @@ export async function runVisionCanaryProbe(input: {
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
       structured_stdout: planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance),
-    });
+    }, answerKey);
     if (decision.kind !== 'valid') {
       return {
         ran: true,
@@ -419,6 +429,14 @@ export async function runVisionCanaryProbe(input: {
     // (原 ran:false 会绕过 LKG 检查:强刷异常时旧 fresh 缓存实际仍被消费,日志却不说)。
     // ran:false 仅保留给"没试跑"的合法跳过(无 goal_capability 声明)。
     return { ran: true, outcome: 'invoke_failed_not_cached', error: `探测异常：${(e as Error).message}` };
+  } finally {
+    // b7e4d2a9 Todo4：成功/失败/无效答卷三态都删随机卷 PNG；删除失败只警告不 HALT，
+    // 不落事件不建清理账本——hard-kill 最坏残留当前 run 下一个固定文件。
+    try {
+      fs.rmSync(imagePath, { force: true });
+    } catch (rmErr) {
+      console.warn(`[vision-canary] preflight 随机卷清理失败（不阻断）：${(rmErr as Error).message}`);
+    }
   }
 }
 

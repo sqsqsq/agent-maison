@@ -22,7 +22,7 @@ import {
   relFeatureFile,
 } from '../config';
 import { detectRepoLayout, type RepoLayout } from '../repo-layout';
-import { sanitizeSpawnEnv } from './utils/process-integrity';
+import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-integrity';
 import {
   buildAgentTimeoutRepeatedGuidance,
   buildAwaitHumanConfirmGuidance,
@@ -154,6 +154,8 @@ import {
   takePassSnapshot,
   recordCodingBase,
   resolveGitHeadSha,
+  deleteRunTrustState,
+  isValidRunIdBasename,
 } from './utils/pass-snapshot';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import {
@@ -728,10 +730,13 @@ async function runHarnessPhase(
     ...(roundIdentity
       ? { MAISON_GOAL_RUN_ID: roundIdentity.runId, MAISON_GOAL_ATTEMPT: roundIdentity.attemptId }
       : {}),
-    // S5（visual-capability-truth）：单写者标记——只有 runner 直接 spawn 的 gate harness
-    // 可直写正式 visual-rounds ledger；agent 自跑 harness（无此标）写 journal proposal。
-    MAISON_GOAL_GATE_HARNESS: '1',
   };
+  // S5（visual-capability-truth）：单写者标记——只有 runner 直接 spawn 的 gate harness
+  // 可直写正式 vision 账本；agent 自跑 harness（无此标）只算不写/写 journal proposal。
+  // b7e4d2a9 Todo3：先清大小写变体再设唯一大写=1（父环境残留 mixed-case 键会与之并存，
+  // Windows 子进程读取哪个是未定义行为）。
+  deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_HARNESS');
+  childEnv.MAISON_GOAL_GATE_HARNESS = '1';
   const allowedTools = manifest?.unattended?.allowed_tools;
   if (allowedTools?.length) {
     childEnv[MAISON_GOAL_ALLOWED_TOOLS_ENV] = allowedTools.join(',');
@@ -1633,6 +1638,10 @@ function projectIdentityHash(projectRoot: string): string {
 }
 
 function visionTrustDir(): string {
+  // 【场外状态红线（plan b7e4d2a9）】场外数据 = 活跃/可恢复 run 的临时恢复区，不是
+  // 历史档案库：per-run 状态成功封卷/明确 supersede 即删；新增任何场外状态类型须先
+  // 证明「in-repo 产物 + 签名/哈希绑定」做不到，默认不允许。
+  // （另一路径入口：pass-snapshot.ts goalTrustRootDir()——两处红线同文，勿分叉。）
   const dirOverride = process.env.MAISON_GOAL_CHECKPOINT_DIR?.trim();
   return dirOverride
     ? path.resolve(dirOverride)
@@ -3411,6 +3420,33 @@ Goal runner — tool-agnostic multi-phase orchestrator
     runMode: dryRun ? 'dry' : 'authoritative',
   });
 
+  // b7e4d2a9 Todo2：保护性 try 前移到紧跟 acquireGoalLocks——sealed guard 与 manifest
+  // drift 检测都在持锁 try 内执行；此前两者位于 lock 与 try 之间的裸区，提前
+  // return/throw 会漏锁（finally 的 releaseAllLocks 只盖 try 内；process.on('exit')
+  // 仅为后备）。不加新锁机制。
+  try {
+
+  // b7e4d2a9 Todo2：**成功封卷（sealed）拒绝一切启动面**——任何解析到已封卷 run 的启动
+  // （--resume 与 --manifest 都盖）一律拒绝；`--force`/`--force-resume` 不可绕过。
+  // SSOT=最新 authoritative run_end 事件（不信可变 goal-report.status——report 被改成
+  // PARTIAL 不得重开封卷；诚实边界：events 亦在仓内非密码学防篡改，取 append-only 惯例
+  // 的相对强可信）。检查先于一切 trust-state 读取（含下方 manifest drift 的 checkpoint
+  // meta 读）、manifest/config 写入、canary/preflight——被删 checkpoint 的封卷 run 绝不
+  // 先走 drift/缺失确认流程再报 sealed。拒绝**只输出错误，不追加任何事件**（封卷后
+  // 归档不再被修改）。COMPLETED 仅 legacy 读取兼容（新代码不得写出）。
+  {
+    const sealedEventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+    const sealedRunEnd = findLastRunEnd(loadAuthoritativeEvents(sealedEventsPath));
+    if (sealedRunEnd?.status === 'CHAIN_SLICE_COMPLETED' || sealedRunEnd?.status === 'COMPLETED') {
+      console.error(
+        `[goal-runner] BLOCKER: run ${manifest.run_id} 已成功封卷（sealed，${sealedRunEnd.status}）——` +
+        '同 run 不可再启动（--resume/--manifest/--force/--force-resume 均无效），其归档与场外状态不再变更。' +
+        '如需继续请新开 run（--feature ... --start <phase>）。',
+      );
+      return 1;
+    }
+  }
+
   // 十二/十三轮 review：manifest 身份漂移检测——**锁内（防并发 TOCTOU/事件污染）+ 任何副作用
   // （回写 local/writeGoalManifest/canary/preflight）之前**执行；可信旧基线取自 **authenticated
   // checkpoint**（MAC 保护的 SSOT），events 仅审计投影。十三轮 P1-3：legacy checkpoint（无逐
@@ -3446,7 +3482,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
   }
 
-  try {
     const { adapterStatus } = loadFrameworkConfigWithSources(projectRoot);
     const resolvedProfile = loadResolvedProfile(projectRoot, cfg);
     const provenance = resolveAdapterProvenance(
@@ -4110,13 +4145,44 @@ Goal runner — tool-agnostic multi-phase orchestrator
       .concat(argv.supersede ?? [])
       .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
     for (const target of supersededRunIds) {
-      const targetEvents = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target, 'events.jsonl');
+      // b7e4d2a9 Todo2：supersede 现在连带删除目标场外状态——新增两道前置：
+      // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
+      // ② target ≠ 当前 run（运行中删自己的 checkpoint/pass snapshot 是新删除能力
+      //   带来的新风险）——否则 BLOCKER。
+      if (!isValidRunIdBasename(target)) {
+        console.error(`[goal-runner] BLOCKER: --supersede 目标 runId 非法（须为合法 basename）：${JSON.stringify(target)}`);
+        return 1; // try 内 return——finally 释放锁（不用 process.exit：进程内调用可测）
+      }
+      if (target === manifest.run_id) {
+        console.error(`[goal-runner] BLOCKER: --supersede 不得指向当前 run（${target}）——运行中不得删除自身场外状态`);
+        return 1;
+      }
+      const targetRunDir = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target);
+      const targetEvents = path.join(targetRunDir, 'events.jsonl');
       if (!fs.existsSync(targetEvents)) {
         console.error(`[goal-runner] BLOCKER: --supersede 目标 run 不存在：${target}`);
         process.exit(1);
       }
+      // 目标 manifest 身份验证：仓内 manifest.run_id 必须精确等于 target——身份验证
+      // 失败只拒删场外状态（审计事件照落：supersede 语义本身不依赖场外状态在场）。
+      let targetIdentityOk = false;
+      try {
+        const tm = JSON.parse(fs.readFileSync(path.join(targetRunDir, 'manifest.json'), 'utf-8')) as { run_id?: string };
+        targetIdentityOk = tm.run_id === target;
+      } catch { targetIdentityOk = false; }
+      // 审计事件**成功追加之后**才 best-effort 删除目标场外状态；appendEvent 抛错则
+      // 循环中断、绝不删除（不建新事务/删除账本）。
       appendEvent(manifest.report_dir, projectRoot, { type: 'supersede', target_run_id: target });
       emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
+      if (!dryRun) {
+        if (!targetIdentityOk) {
+          console.warn(`[trust-gc] supersede 目标 ${target} 的 manifest 身份验证失败——场外状态保留不删（仅诊断）`);
+        } else {
+          const gc = deleteRunTrustState({ projectRoot, feature: manifest.feature, runId: target });
+          if (gc.diagnostics.length > 0) console.warn(`[trust-gc] supersede ${target}：${gc.diagnostics.join('；')}`);
+          if (gc.deleted.length > 0) console.log(`[trust-gc] supersede ${target}：已回收（${gc.deleted.join('、')}）`);
+        }
+      }
     }
 
     // plan f6b2d9a4：保真路由 preflight（agent 尚未被调用，不烧 run）——三段式自动定档，
@@ -6817,6 +6883,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
     progressPhase = null;
     progressHeartbeatHook = null;
     flushProgress(true, true);
+
+    // b7e4d2a9 Todo2：**成功封卷 → 本 run 场外 trust 状态立即回收**（临时恢复区语义：
+    // 封卷后同 run 永拒 resume，状态无保留价值）。触发仅 CHAIN_SLICE_COMPLETED（legacy
+    // COMPLETED 只参与 sealed 判定不触发回收；HALTED/PARTIAL/AWAITING_HUMAN_REVIEW/
+    // DEFERRED* 可恢复态全保留）。位置=全部终局收尾结束（run_end/completion receipt/
+    // finalize_overrun/progress 终刷）之后、持 feature lock、return 前 best-effort；
+    // 失败仅记录，绝不影响退出码；dry-run 零接触。
+    if (!dryRun && status === 'CHAIN_SLICE_COMPLETED') {
+      const gc = deleteRunTrustState({ projectRoot, feature: manifest.feature, runId: manifest.run_id });
+      if (gc.diagnostics.length > 0) console.warn(`[trust-gc] 封卷回收诊断：${gc.diagnostics.join('；')}`);
+      if (gc.deleted.length > 0) console.log(`[trust-gc] 封卷回收：${gc.deleted.join('、')}`);
+    }
 
     emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
     console.log('');

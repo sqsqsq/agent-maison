@@ -13,6 +13,12 @@
 //   4) 恢复安全：逐级 lstat 拒 symlink/junction、realpath 域内、单 buffer TOCTOU、原子写。
 // 信任分两层（codex 三轮#1）：同进程内存 digest 验真即可恢复（与 HMAC 无关）；
 // resume/重启须 HMAC 验签，未配密钥只检测+halt，绝不用弱信任快照覆盖用户文件。
+//
+// 【场外状态红线（plan b7e4d2a9）】场外数据 = 活跃/可恢复 run 的临时恢复区，**不是
+// 历史档案库**：per-run 状态只在 run 活跃或可恢复期间存在，成功封卷或明确 supersede
+// 即删（deleteRunTrustState）；普通完整性靠仓内签名/hash 做"检测并停止"。**新增任何
+// 场外状态类型，必须先证明「in-repo 产物 + 签名/哈希绑定」做不到；默认答案是不允许。**
+// （另一路径入口：goal-runner.ts visionTrustDir()——两处红线同文，勿分叉。）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -86,6 +92,79 @@ export function codingBasePath(projectRoot: string, feature: string, runId: stri
     runId,
     'coding-base.json',
   );
+}
+
+// ---------------------------------------------------------------------------
+// per-run 场外状态回收（b7e4d2a9 Todo2）：场外数据 = 活跃/可恢复 run 的临时恢复区，
+// 成功封卷或明确 supersede 即删。逻辑删除单元 = 同 runId 的 flat vision checkpoint
+// （<feature>/<runId>.json）+ run 目录（<feature>/<runId>/，含 pass-snapshots/
+// invalidation/coding-base）。**不动** vision-heads/HWM（feature 级单调锚，独立子树）。
+// ---------------------------------------------------------------------------
+
+export interface RunTrustGcResult {
+  deleted: string[];
+  diagnostics: string[];
+}
+
+/** runId 严格路径契约：单个合法 basename，禁分隔符与 ./..（--supersede 输入来自原始 CLI 串）。 */
+export function isValidRunIdBasename(runId: string): boolean {
+  if (typeof runId !== 'string' || !runId.trim()) return false;
+  if (runId.includes('/') || runId.includes('\\')) return false;
+  if (runId === '.' || runId === '..') return false;
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(runId);
+}
+
+/**
+ * best-effort 删除某 run 的全部场外 trust 状态（逻辑删除单元，允许部分成功）。
+ * 任一路径校验失败 → 不删该路径、只记 diagnostics（fail-closed 于删除方向）：
+ * runId 合法 basename → resolve 后严格位于 <projectHash>/<feature> 根下 → 逐级非
+ * symlink/junction。调用方须先完成身份验证（目标 manifest.run_id === runId）与审计
+ * 事件落盘——本函数只做路径安全与删除本身，不落任何事件（零新增机制）。
+ */
+export function deleteRunTrustState(input: {
+  projectRoot: string;
+  feature: string;
+  runId: string;
+}): RunTrustGcResult {
+  const { projectRoot, feature, runId } = input;
+  const out: RunTrustGcResult = { deleted: [], diagnostics: [] };
+  if (!isValidRunIdBasename(runId)) {
+    out.diagnostics.push(`runId 非法（拒删）：${JSON.stringify(runId)}`);
+    return out;
+  }
+  const trustRoot = goalTrustRootDir();
+  const featureRoot = path.join(trustRoot, projectIdentityHash(projectRoot), safeFeatureName(feature));
+  const units = [
+    { label: `checkpoint ${runId}.json`, abs: path.join(featureRoot, `${runId}.json`) },
+    { label: `run 目录 ${runId}/`, abs: path.join(featureRoot, runId) },
+  ];
+  for (const u of units) {
+    const abs = path.resolve(u.abs);
+    const rel = path.relative(path.resolve(featureRoot), abs);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || rel.includes(path.sep)) {
+      out.diagnostics.push(`${u.label} 越界（拒删）：${abs}`);
+      continue;
+    }
+    const st = lstatOrNull(abs);
+    if (!st) continue; // 不存在——无事
+    if (st.isSymbolicLink()) {
+      out.diagnostics.push(`${u.label} 是符号链接（拒删）`);
+      continue;
+    }
+    try {
+      assertNoLinkInChain(abs, trustRoot);
+    } catch (e) {
+      out.diagnostics.push(`${u.label} 路径链含链接（拒删）：${(e as Error).message}`);
+      continue;
+    }
+    try {
+      fs.rmSync(abs, { recursive: true, force: true });
+      out.deleted.push(u.label);
+    } catch (e) {
+      out.diagnostics.push(`${u.label} 删除失败（best-effort，不阻断）：${(e as Error).message}`);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

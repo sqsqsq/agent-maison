@@ -115,6 +115,7 @@ import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-persona
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
+  isAgentSideGoalHarness,
   mergeAndWritePhaseState,
   tryValidateReceipt,
   runSyncClosure,
@@ -866,8 +867,9 @@ function consumeVisualRoundPayload(
     // 身份但无 MAISON_GOAL_GATE_HARNESS 标）不直写正式 ledger——写 journal proposal，
     // 由 goal-runner 在 invocation 结束后顺序重放收编（20260718 孤儿行误熔断的根治）。
     // gate harness（runner 直接 spawn，带标）与交互态维持直写。
-    const isGoalAgentSide =
-      Boolean(process.env.MAISON_GOAL_RUN_ID) && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+    // b7e4d2a9 Todo3：判定统一走共享谓词（对现状是超集收紧——HEADLESS/ATTEMPT-only
+    // 形态也走 journal，语义一致；check-spec attestation 同谓词，永不再分叉）。
+    const isGoalAgentSide = isAgentSideGoalHarness();
     if (isGoalAgentSide && s.round.disposition === 'appended' && s.round.row.attempt_id) {
       try {
         const row = s.round.row;

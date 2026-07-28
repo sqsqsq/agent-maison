@@ -17,6 +17,9 @@
 // ============================================================================
 
 import './utils/transpile-only-env'; // 须为首个 import：本进程+子进程走 transpile-only（见 plan a7c3e1f9 P0）
+// b7e4d2a9 Todo1：第二个 import 必须是 trust 隔离 bootstrap——先于 fixture-runner 等
+// 一切可能读 MAISON_GOAL_CHECKPOINT_DIR 的静态加载，无条件覆写到独立临时根。
+import { cleanupStrict } from './utils/test-trust-bootstrap';
 import * as fs from 'fs';
 import * as path from 'path';
 import { runFixture, FixtureRunResult, fixtureDisplayName } from './utils/fixture-runner';
@@ -55,7 +58,8 @@ async function main(): Promise<void> {
 
   if (targets.length === 0) {
     console.error(`未发现任何 fixture${filter ? `（filter=${filter}）` : ''}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log(`\nFramework Harness Regression — 共 ${targets.length} 个 fixture\n`);
@@ -87,9 +91,10 @@ async function main(): Promise<void> {
       }
     }
     console.log('');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-  process.exit(0);
+  process.exitCode = 0;
 }
 
 function scanFixtures(root: string): string[] {
@@ -138,7 +143,18 @@ function printOne(r: FixtureRunResult): void {
   }
 }
 
-main().catch(err => {
-  console.error('test runner 致命错误：', err);
-  process.exit(2);
-});
+void (async () => {
+  try {
+    await main();
+  } catch (err) {
+    console.error('test runner 致命错误：', err);
+    process.exitCode = 2;
+  } finally {
+    // b7e4d2a9 Todo1 严格语义：临时 trust 根删不掉=留垃圾——非零退出并打印路径
+    const r = cleanupStrict();
+    if (!r.ok) {
+      console.error(`[test-trust-bootstrap] 临时 trust 根清理失败，遗留：${r.leftoverPath}`);
+      process.exitCode = process.exitCode || 1;
+    }
+  }
+})();

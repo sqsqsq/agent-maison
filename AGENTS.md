@@ -61,6 +61,8 @@ maison 自身不走 feature phase skill 管线；`harness-runner` 在消费者�
 
 **依赖安装契约**：standalone 开发在仓根 `npm run harness:install` 或 `cd harness && npm install`；consumer 仅在 `cd framework/harness && npm install`，禁止在宿主工程根安装 framework runtime。
 
+**场外状态红线（plan b7e4d2a9）**：`~/.maison/goal-checkpoints` 是活跃/可恢复 run 的临时恢复区、不是档案库——新增任何场外状态类型须先证明「in-repo 产物 + 签名/哈希绑定」做不到，默认不允许（路径入口：pass-snapshot.ts `goalTrustRootDir()` / goal-runner.ts `visionTrustDir()`）。
+
 发版前见 [`docs/operations/release-checklist.md`](docs/operations/release-checklist.md)。
 
 ## OpenSpec（框架自身演进）

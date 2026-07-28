@@ -13,7 +13,8 @@ import {
   parseEnvelopeLine,
   planUsesClaudeStreamJson,
 } from '../../scripts/utils/claude-envelope';
-import { resolveCanaryCacheDecision, CANARY_ANSWER_KEY } from '../../scripts/utils/vision-canary';
+import { resolveCanaryCacheDecision } from '../../scripts/utils/vision-canary';
+import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 
 export interface UnitCaseResult {
   name: string;
@@ -26,7 +27,7 @@ const read = (f: string) => fs.readFileSync(path.join(FIX, f), 'utf-8');
 
 /** fixture 答卷键为 canary 固定四色+token；构造与样卷一致的 answerKey 供判卷 */
 const FIXTURE_KEY = {
-  ...CANARY_ANSWER_KEY,
+  ...FIXTURE_CANARY_KEY,
   geometry_questions: [
     { id: 'TOP_LEFT_COLOR', expected_color: 'red' },
     { id: 'TOP_RIGHT_COLOR', expected_color: 'blue' },
@@ -34,7 +35,7 @@ const FIXTURE_KEY = {
     { id: 'BOTTOM_RIGHT_COLOR', expected_color: 'yellow' },
   ],
   text_token: 'K7XQ2',
-} as typeof CANARY_ANSWER_KEY;
+} as typeof FIXTURE_CANARY_KEY;
 
 function decide(file: string, structured = true) {
   return resolveCanaryCacheDecision(

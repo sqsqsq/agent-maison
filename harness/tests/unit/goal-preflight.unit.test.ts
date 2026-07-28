@@ -18,6 +18,7 @@ import {
 import { writeLocalConfig, loadLocalConfig } from '../../scripts/utils/framework-local-config';
 import { canaryAdmissibleForRun } from '../../scripts/utils/effective-vision-context';
 import { buildCanaryPrompt, VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
+import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 import type { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { DEFAULT_DEPENDENCY_POLICY, resolveAutoChain } from '../../scripts/utils/phase-transition-policy';
@@ -92,7 +93,7 @@ async function withTmpAsync(fn: (root: string) => Promise<void>): Promise<void> 
 /**
  * plan c7d2e9a4 t6：runVisionCanaryProbe 写盘边界的最小 frameworkRoot 夹具——
  * agents/claude/adapter.yaml 只含 loadGoalCapability 声明级校验所需字段
- * （不查模板文件存在）；harness/assets 由 ensureVisionCanaryAsset 自建。
+ * （不查模板文件存在）；金丝雀为随机 PNG 写入 report_dir 并在 finally 回收。
  */
 function setupCanaryFrameworkFixture(root: string): string {
   const fw = path.join(root, 'fw');
@@ -767,6 +768,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             stderr: '',
             command: 'fake',
           })) as typeof invokeAgentHeadless,
+          // b7e4d2a9 Todo4：canned stdout 是固定卷答案——注入固定卷 key（生产默认随机卷）
+          answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
         assert.strictEqual(r.verdict, 'tool_read');
@@ -832,6 +835,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           frameworkRoot: fw,
           manifest: baseManifest('claude'),
           invokeFn: (async () => ({ exitCode: 0, stdout, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+          answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
         assert.strictEqual(r.verdict, 'tool_read', 'echo 混排不得污染最终 verdict');
