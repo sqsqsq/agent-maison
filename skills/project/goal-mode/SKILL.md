@@ -28,31 +28,12 @@
 ### 首次启动
 
 **前置（BLOCKER，须在启动 runner 之前）：设备策略确认。**
-链路含需要设备的阶段（hmos-app 的 ut/testing）时，先跑：
+链路含需要设备的阶段（hmos-app 的 ut/testing）时，按
+[device-policy-gate.md](../../reference/device-policy-gate.md) 执行：跑 `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本——`npm run` 会往 stdout 插 banner）（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止），`code=device_policy_unset` 就**必须先问用户四选一**再启动 runner。选 ③ 时须追问 `existing`/`managed` 档位，**禁默认托管**。
 
-```bash
-cd framework/harness && npm run device:policy
-```
-
-`code=ok` → 直接继续启动。`code=device_policy_unset` → **必须先问用户四选一**（后台 runner 无法弹交互，问不了就只能一路 BLOCKED）：
-
-| 选项 | 含义 | 落盘命令（agent 自跑） |
-|------|------|----------------------|
-| ① 手工解锁 | 人保证设备可用；框架永不碰口令 | `npm run device:set -- --manual-unlock` |
-| ③ 允许模拟器降级 | `existing` 复用已开实例 / `managed` 由框架起停回收 | `npm run device:set -- --emulator managed --emulator-profile "<AVD 名>"` |
-| ④ 本次停止 | 属本次运行结果，**不持久化** | — |
-
-写完后**重跑 `npm run device:policy` 确认 `code=ok`**，再启动 runner。多设备时补 `--serial <序列号>`（否则就绪门判 AMBIGUOUS 停止求人，不赌"第一个"）。
-
-选 ② 时，把下面这条命令**交给用户在他自己的终端里跑**——PIN 只能在真实 TTY 隐藏输入，agent 不得代跑：
-
-```bash
-cd framework/harness && npm run device:enroll -- --serial <设备序列号>
-```
-
-> **红线**：绝不要让用户把 PIN 发到对话里，也绝不要代为输入。口令进对话即等于进 transcript。
-> 框架只使用用户登记的那一个凭据；**任何一次解锁失败即机器级锁定该凭据版本**，此后所有
-> goal/项目/并发进程都不再尝试，唯一出路是重新登记（生成新版本）。
+goal 特有的紧迫性：后台 detached runner **结构上无法弹交互**，错过启动前这个窗口就只能
+一路 BLOCKED。选 ② 时那条 `device:enroll` 必须交给用户在自己终端跑，**绝不要让用户把 PIN
+发到对话里**，也不得代为输入（完整红线见上述文档）。
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-runner.ts \

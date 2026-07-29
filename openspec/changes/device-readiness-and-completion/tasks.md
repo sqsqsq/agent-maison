@@ -243,3 +243,70 @@ P0 已确认闭合（named mutex + 危险时序回归）。本轮 3 个 P1 边�
 
 - 全量 unit 全绿；`device-*` 14 个套件 **121/121**。
 - 仍需宿主真机回归的项目不变（见第三轮记录）。
+
+## 宿主问答暴露的能力缺口（2026-07-29，已修）
+
+- [x] W1 **设备策略前置只接了 goal 模式** → 用户问"非 goal 模式开发时难道不会主动问吗"，
+  核实属实：`grep -rln device_policy skills/` 只命中 goal-mode 与 registry，
+  `business-ut`（`ut.run` 需真机）与 `device-testing` 两个普通模式入口**一个都没接**。
+  根因是 Todo 5 只按 plan 的字面（`outer_layers`，goal 的概念）实施，没往普通模式推，
+  违反框架自己的"goal 与普通模式能力持续拉齐"原则。
+  **后果是可用性不是安全**：就绪门照样挡住锁屏、不会去猜密码，但用户在普通模式下只会
+  看到一句干巴巴的"设备锁屏"，没人告诉他还有"启用自动解锁"这个选项；且 testing 侧
+  （`check-testing` 的 suggestion）有登记提示而 UT 侧没有，两条路径提示还不一致。
+  修法：
+  ① 新增 `skills/reference/device-policy-gate.md` 作**单一 SSOT**（同 `personal-setup-gate`
+     惯例），goal-mode 由整段自述改为引用 + 就地保留 detached runner 的紧迫性与 PIN 红线；
+     `business-ut` / `device-testing` 前置各加一行引用——避免同一段在三处抄三遍必然漂移。
+  ② 统一 blocked 指引：`ensureDeviceReadyAtRuntime` 的 `unauthorized` note 补上"可由用户
+     本人在自己终端 `device:enroll` 登记"，四个边界一并受益。
+  ③ **元门禁** `skills-device-policy-gate.unit.test.ts`：由 profile 的 `device_capabilities`
+     × `PHASE_CAPABILITY_MAP` **推导**哪些 phase 需设备，再断言其承载 skill 必须引用门文档；
+     另有一条断言盯着 `PHASE_SKILL` 登记表必须覆盖 `PHASE_CAPABILITY_MAP` 全部 key
+     （新增 phase 漏登记即红，不静默假绿）。已做**负向验证**：删掉 business-ut 的引用后
+     该套件立刻变红，还原后恢复。
+
+## 缺口补丁的 review（2026-07-29）
+
+三条全部属实，且 P1-1 比 review 描述的更严重（实测 `exit=3` 而非 1）。
+
+- [x] X1 **`device:policy` 不是文档承诺的"纯 JSON 接口"** → ① `npm run` 会往 stdout 插
+  banner（`> harness@1.0.0 device:policy` 两行），JSON 无法直接 `JSON.parse`；
+  ② 未配置时**退出码 3**——agent 极可能当成"命令失败"而不是读 `code` 去问用户，
+  四选一的闭环就此断掉。修法：`--json` 模式改 `process.stdout.write` 纯输出 +
+  **退出码恒 0**（`device_policy_unset` 是正常状态不是失败；人读模式保留非零，
+  在 shell 里那才是"要你处理"的信号）；文档/三个 skill 的命令统一改为直接调脚本
+  `npx ts-node scripts/device-policy.ts --check --json`（与 personal-setup-gate 同惯例）。
+  另补 `--project-root`（同 `check-personal-setup` 惯例，多仓/发布包布局必需）。
+  **回归是进程级的**：真实子进程断言 stdout 可直接 parse + 退出码契约；已做负向验证
+  （把退出码改回 3 → 用例立刻红并指出 `实得 3`，还原后恢复）。
+- [x] X2 **"允许模拟器降级"授权粒度不足** → 文档把 `existing`/`managed` 合成一个选项，
+  落盘命令却直接写死 `--emulator managed`。「允许降级」**不等于**「同意框架主动拉起并
+  托管模拟器」——后者会 spawn 进程、收尾时 kill 进程，是另一个量级的授权。修法：③ 之后
+  **必须追问档位**（`existing` 只复用绝不启停 / `managed` 启动并回收），选 `managed`
+  还须再确认具体 emulator profile（AVD 名），**禁默认托管**；registry notes 与三个 skill
+  的引用同步写明。
+- [x] X3 **registry 的 ④ 自相矛盾** → 原文"①③④ 由 agent 自跑 `npm run device:set`
+  （④ 不持久化）"，但 ④ 不持久化就不该跑 `device:set`，CLI 也没有 stop 动作。
+  改为明确分工：**①③ 落盘 / ② 用户在自己终端登记 / ④ 不执行任何命令，直接停止本次运行**。
+
+## 文档契约收尾（2026-07-29，两条 P2）
+
+- [x] Y1 **登记后的复检仍残留旧命令** → 门文档第 75 行还写 `npm run device:policy`，
+  与前文"不要走 npm run"自相矛盾，照跑会重新引入 stdout banner。已统一为
+  `npx ts-node scripts/device-policy.ts --check --json`；元门禁加断言**全文不得残留**
+  该命令（已负向验证：写回旧命令即红）。
+- [x] Y2 **"退出码恒 0"表述过于绝对** → `device_policy_unset` 与 `ok` 确实都回 0，但
+  真实执行错误仍会非零（实测：`framework.local.json` 损坏 → **exit=1 且 stdout 0 字节**）。
+  原文"不要据退出码判断成败"会让 agent 带着坏配置继续跑。改为**两段判定**：
+  ① 退出码 0 **且** stdout 合法 JSON → 看 `code`（`device_policy_unset` 属正常结果）；
+  ② 非零 **或** stdout 非合法 JSON → 执行失败，必须停止并把原因交回用户。
+  三个 skill 的同款绝对化表述一并改。**加进程级回归给第 ② 段背书**：构造损坏配置，
+  断言非零退出 + stdout 不可 parse + 原因进 stderr——防文档再次说一套代码一套。
+
+- [x] Y3 **registry 的同款绝对化表述**（第三方 review 抓到）→ 上一条只改了门文档与三个
+  skill，`confirmation-registry.yaml` 自己仍写"该模式退出码恒 0"。已同步为两段判定。
+  **这是同类残留漏的第二次**（第一次是门文档第 75 行的旧命令），说明"只盯单个文件"的
+  断言必然重蹈覆辙——元门禁改为**枚举全部承载该契约的文件**（门文档 + registry +
+  goal-mode + 各 phase skill）逐一检查旧命令与绝对化表述，已负向验证：把绝对化表述写回
+  registry，用例立刻红并**精确点名该文件**。

@@ -3,6 +3,7 @@
 //                                  （openspec ... t6）
 // ============================================================================
 
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -159,6 +160,101 @@ export function runAll(): UnitCaseResult[] {
     assertEq(setPolicy(rootC, { unlockMode: 'manual' }), 0, 'setPolicy 应成功');
     clearFrameworkConfigCache();
     assertEq(collectPolicyStatus(rootC).credential_ref, null, '切回手工解锁须清掉凭据引用');
+  });
+
+  run(results, '**进程级**：--check --json 的 stdout 可直接 JSON.parse，退出码恒 0', () => {
+    // review：文档承诺"仅解析 stdout JSON"，但此前 ① `npm run` 会往 stdout 插 banner，
+    // ② 未配置时退出码是 3 —— agent 很可能当成"命令失败"，而不是读 code 去问用户，
+    // 四选一的闭环就此断掉。这条用**真实子进程**验证契约，不是查文档关键词。
+    const root = hostWith(); // 未配置状态
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    const r = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--check', '--json', '--project-root', root],
+      {
+        encoding: 'utf-8',
+        cwd: path.join(__dirname, '..', '..'),
+        timeout: 60_000,
+        env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' },
+      },
+    );
+    assertEq(r.error, undefined, `子进程不应报错：${r.error?.message}`);
+    // ① stdout 必须是**纯 JSON**——一个字符的前缀都不能有
+    let parsed: { code?: string; guidance?: string } | null = null;
+    try {
+      parsed = JSON.parse(r.stdout ?? '') as { code?: string; guidance?: string };
+    } catch (e) {
+      throw new Error(
+        `stdout 必须可直接 JSON.parse（${(e as Error).message}）。实际前 200 字符：\n${(r.stdout ?? '').slice(0, 200)}`,
+      );
+    }
+    assert(typeof parsed?.code === 'string', `须有 code 字段：${JSON.stringify(parsed).slice(0, 200)}`);
+    // ② 退出码恒 0：device_policy_unset 是正常状态，不是命令失败
+    assertEq(
+      r.status,
+      0,
+      `--json 模式退出码必须恒 0（实得 ${r.status}，code=${parsed?.code}）——` +
+        '非零会让调用方误判成"命令挂了"而不去读 code 问用户',
+    );
+    // ③ 人读信息在 guidance 字段里，不得另走 stdout
+    assert(typeof parsed?.guidance === 'string' && parsed.guidance.length > 0, '人读指引须在 guidance 字段');
+  });
+
+  run(results, '**进程级**：已配置时同样 code=ok + 退出码 0（两态一致）', () => {
+    const root = hostWith({ unlock: { mode: 'manual' } });
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    const r = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--check', '--json', '--project-root', root],
+      {
+        encoding: 'utf-8',
+        cwd: path.join(__dirname, '..', '..'),
+        timeout: 60_000,
+        env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' },
+      },
+    );
+    const parsed = JSON.parse(r.stdout ?? '') as { code?: string; configured?: boolean };
+    assertEq(parsed.code, 'ok', '已配置须 code=ok');
+    assertEq(parsed.configured, true, 'configured 须 true');
+    assertEq(r.status, 0, '已配置同样 0');
+  });
+
+  run(results, '**进程级**：配置损坏 → 非零退出 + stdout 非合法 JSON（执行失败必须可辨认）', () => {
+    // review：文档若写成"退出码恒 0、不看退出码"就太绝对了——真实执行错误
+    //（framework.local.json 损坏等）仍会非零。契约是**两段**判定：
+    //   ① 0 且 stdout 合法 JSON → 看 code；② 否则 = 执行失败必须停止。
+    // 这条给第 ② 段代码背书，防文档再次说一套。
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'device-policy-corrupt-'));
+    tmpRoots.push(root);
+    fs.writeFileSync(
+      path.join(root, 'framework.config.json'),
+      JSON.stringify({ schema_version: '1.1', project_name: 'T' }),
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(root, 'framework.local.json'), '{ not json', 'utf-8');
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    const r = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--check', '--json', '--project-root', root],
+      {
+        encoding: 'utf-8',
+        cwd: path.join(__dirname, '..', '..'),
+        timeout: 60_000,
+        env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' },
+      },
+    );
+    assert(r.status !== 0, `配置损坏必须非零退出（实得 ${r.status}）——否则调用方无从分辨执行失败`);
+    let parseable = true;
+    try {
+      JSON.parse(r.stdout ?? '');
+    } catch {
+      parseable = false;
+    }
+    assertEq(parseable, false, '执行失败时 stdout 不得是合法 JSON（不能让调用方误当正常结果）');
+    assert(
+      /framework\.local\.json|JSON/i.test(r.stderr ?? ''),
+      `失败原因须进 stderr 供人排查：${(r.stderr ?? '').slice(0, 200)}`,
+    );
   });
 
   run(results, '源码契约：口令只从 TTY 隐藏输入读取，不接受 argv/env 传入', () => {

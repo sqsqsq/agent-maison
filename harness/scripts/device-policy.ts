@@ -180,11 +180,13 @@ export function setPolicy(
 }
 
 export function main(argv: string[]): number {
-  const projectRoot = resolveProjectRoot();
   const valueOf = (flag: string): string | undefined => {
     const i = argv.indexOf(flag);
     return i >= 0 ? argv[i + 1]?.trim() : undefined;
   };
+  // `--project-root` 与 check-personal-setup 同惯例：默认按脚本位置推导仓库根，
+  // 显式传入时以传入为准（多仓/发布包布局下必需，也让进程级测试能构造真实 host）。
+  const projectRoot = valueOf('--project-root') || resolveProjectRoot();
   if (argv.includes('--set')) {
     const em = valueOf('--emulator');
     if (em && !['disabled', 'existing', 'managed'].includes(em)) {
@@ -209,11 +211,18 @@ export function main(argv: string[]): number {
   }
   const status = collectPolicyStatus(projectRoot);
   if (argv.includes('--json')) {
-    console.log(JSON.stringify(status, null, 2));
-  } else {
-    console.log(`[device-policy] code=${status.code}`);
-    console.log(status.guidance);
+    // **纯 JSON 契约**（review：文档承诺"仅解析 stdout JSON"，实现却不满足）：
+    //   - stdout 只有 JSON，不掺任何前缀/日志（人读信息在 `guidance` 字段里）；
+    //   - **退出码一律 0**。`device_policy_unset` 是一个**正常且可预期的状态**，
+    //     不是命令失败——此前返回 3，调用方（尤其 agent）很容易当成"命令挂了"
+    //     而不是"读 code 去问用户"，四选一的闭环就此断掉。
+    //     真正的失败（参数非法等）仍走上面的非零返回。
+    process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return 0;
   }
+  // 人读模式保留非零：在 shell 里 `code=device_policy_unset` 就该是"要你处理"的信号
+  console.log(`[device-policy] code=${status.code}`);
+  console.log(status.guidance);
   return status.configured ? 0 : 3;
 }
 

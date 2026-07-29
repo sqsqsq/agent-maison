@@ -70,7 +70,12 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
   if (!input.credentialRef) {
     return {
       recovered: false,
-      note: '设备锁屏且未登记自动解锁凭据——请人解锁后重跑；框架不会尝试任何口令',
+      // 指引必须把**出路**说全：只说"请人解锁"会让用户以为没有别的办法，
+      // 而"启用自动解锁"是明确支持的选项（普通模式下尤其容易漏掉这一点）。
+      note:
+        '设备锁屏且未登记自动解锁凭据——请人解锁设备后重跑；框架不会尝试任何口令。' +
+        '若希望无人值守时自动解锁，可由**用户本人在自己的终端**运行 ' +
+        '`npm run device:enroll -- --serial <序列号>` 登记 PIN（真实 TTY 隐藏输入，绝不进对话）。',
       authorized: false,
       reason: 'unauthorized',
     };

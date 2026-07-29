@@ -99,12 +99,21 @@ entries:
     skill_step: "S3 设备策略（链路含需设备 phase 时）"
     portable_menu: "1=手工解锁 2=启用自动解锁 3=允许模拟器降级 4=本次停止"
     notes: >-
-      openspec device-readiness-and-completion。由**主 agent 在启动 detached runner 之前**
-      询问——后台 runner 结构上无法弹交互，问不了就只能一路 BLOCKED。
-      ①③④ 由 agent 自跑 `npm run device:set`（④ 不持久化）；②**必须交给用户在自己的终端**
-      运行 `npm run device:enroll -- --serial <序列号>`：PIN 只能在真实 TTY 隐藏输入，
-      **绝不接受用户把 PIN 发到对话里**，agent 也不得代为输入。写完须重跑
-      `npm run device:policy` 确认 `code=ok`。
+      openspec device-readiness-and-completion。goal 模式由**主 agent 在启动 detached runner
+      之前**询问（后台 runner 结构上无法弹交互，问不了就只能一路 BLOCKED）；普通模式由
+      business-ut / device-testing 在碰设备之前询问。完整流程见 device-policy-gate.md。
+      执行分工：**① 与 ③ 由 agent 自跑 `npm run device:set` 落盘**；**② 必须交给用户在
+      自己的终端**运行 `npm run device:enroll -- --serial <序列号>`——PIN 只能在真实 TTY
+      隐藏输入，**绝不接受用户把 PIN 发到对话里**，agent 也不得代为输入；**④ 不执行任何
+      命令**（属本次运行结果，不落盘），直接停止本次运行。
+      ③ **必须先追问档位**：`existing`（只复用已开实例，绝不启停）还是 `managed`（框架
+      启动并回收）——「允许降级」不等于同意框架主动拉起模拟器；选 `managed` 还须再确认
+      具体 emulator profile（AVD 名），**禁默认托管**。
+      ①③ 写完须重跑探测确认 `code=ok`：
+      `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本，`npm run` 会往
+      stdout 插 banner）。**判定两段**：退出码 0 **且** stdout 合法 JSON → 看 `code`
+      （`device_policy_unset` 属正常结果）；非零 **或** stdout 非合法 JSON → 执行失败
+      （如 framework.local.json 损坏），必须停止并把原因交回用户，不得忽略退出码继续。
     options:
       - value: manual_unlock
         label: "手工解锁 — 人保证设备可用，框架永不碰口令"
