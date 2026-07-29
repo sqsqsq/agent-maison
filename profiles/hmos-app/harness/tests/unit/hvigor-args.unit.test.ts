@@ -493,7 +493,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'buildOnDeviceFailureEvidence: failedAt/unsigned/sign flags/installDiagnosis 五项保真',
+    name: 'buildOnDeviceFailureEvidence: failedAt/unsigned/sign flags/install+runDiagnosis 六项保真',
     run: () => {
       const evidence = buildOnDeviceFailureEvidence(
         { signSkipped: true, signingConfigMissing: true },
@@ -511,6 +511,19 @@ const cases: Array<{ name: string; run: () => void }> = [
               suggestion: '卸载旧包或使用一致签名',
             },
           },
+          // t1（openspec device-readiness-and-completion）：aa test 诊断须结构化透传，
+          // 否则下游只能靠 errors 散文子串判 device_locked（脆弱且无法参与机器判定）。
+          aaTest: {
+            ok: false,
+            exitCode: 1,
+            durationMs: 30,
+            output: 'screen is locked',
+            diagnosis: {
+              kind: 'device_locked',
+              summary: '屏幕锁定',
+              suggestion: '请人解锁真机',
+            },
+          },
         },
       );
       assertEq(evidence.failedAt, 'install', 'failedAt 应透传');
@@ -518,6 +531,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(evidence.signSkipped, true, 'signSkipped 应透传');
       assertEq(evidence.signingConfigMissing, true, 'signingConfigMissing 应透传');
       assertEq(evidence.installDiagnosis?.summary, '签名不一致', 'installDiagnosis 应透传');
+      assertEq(evidence.runDiagnosis?.kind, 'device_locked', 'runDiagnosis 应透传');
     },
   },
   {
@@ -534,6 +548,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(evidence.signSkipped, undefined, 'signSkipped 不臆造');
       assertEq(evidence.signingConfigMissing, undefined, 'signingConfigMissing 不臆造');
       assertEq(evidence.installDiagnosis, undefined, 'installDiagnosis 不臆造');
+      assertEq(evidence.runDiagnosis, undefined, 'runDiagnosis 不臆造');
     },
   },
   {

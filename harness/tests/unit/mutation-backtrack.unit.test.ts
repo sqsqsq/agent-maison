@@ -415,6 +415,13 @@ test('S4 环境层：ut FAIL + device_locked → 指引说"修环境重跑"不�
   }]);
   assert(violations.length === 1, 'FAIL 仍拦截（不降门禁）');
   assert(violations[0].reason.includes('environment') && violations[0].reason.includes('勿改产品代码'), violations[0].reason);
+  // t1（openspec device-readiness-and-completion）：措辞主语必须是人——原文"解锁真机"被
+  // agent 读作自我指令，07-28 事故据此对用户真机枚举 PIN。此处钉死反回归。
+  assert(violations[0].reason.includes('请人解锁真机'), `指引须明示由人解锁：${violations[0].reason}`);
+  assert(
+    violations[0].reason.includes('不要尝试自行解锁设备'),
+    `指引须显式禁止 agent 自解锁：${violations[0].reason}`,
+  );
 });
 
 export function runAll(): UnitCaseResult[] {

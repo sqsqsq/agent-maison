@@ -106,6 +106,22 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'trust-bootstrap-blackbox', modulePath: './unit/trust-bootstrap-blackbox.unit.test' },
   // plan b7e4d2a9 Todo2：per-run 场外状态回收契约（封卷/supersede 集成面在 testing-integrity）
   { id: 'trust-lifecycle', modulePath: './unit/trust-lifecycle.unit.test' },
+  // openspec device-readiness-and-completion t2：托管设备会话所有权/回收/target_kind 分类
+  { id: 'device-session', modulePath: './unit/device-session.unit.test' },
+  // openspec device-readiness-and-completion t3：设备就绪门三态/降级/启动即锁屏死锁回归
+  { id: 'device-readiness-gate', modulePath: './unit/device-readiness-gate.unit.test' },
+  // openspec device-readiness-and-completion t4：完成观测判据（新鲜度/半写入/收口不算失败）
+  { id: 'phase-completion-probe', modulePath: './unit/phase-completion-probe.unit.test' },
+  // openspec device-readiness-and-completion t6：凭据身份不可变 + 机器级锁存 + 跨进程互斥
+  { id: 'device-credential-store', modulePath: './unit/device-credential-store.unit.test' },
+  // openspec device-readiness-and-completion t6：解锁执行器（禁枚举/键位不全零输入/口令不泄露）
+  { id: 'device-unlock-helper', modulePath: './unit/device-unlock-helper.unit.test' },
+  // openspec device-readiness-and-completion t6：策略检查/登记 CLI（非 TTY 拒绝登记）
+  { id: 'device-policy-cli', modulePath: './unit/device-policy-cli.unit.test' },
+  // openspec device-readiness-and-completion t6：运行期再次锁屏的恢复（同 serial、一次、禁热切）
+  { id: 'device-runtime-recovery', modulePath: './unit/device-runtime-recovery.unit.test' },
+  // openspec device-readiness-and-completion R17：跨进程并发/损坏场景（真子进程，非同进程假并发）
+  { id: 'device-concurrency', modulePath: './unit/device-concurrency.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
   // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）

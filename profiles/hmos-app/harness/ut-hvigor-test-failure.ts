@@ -27,7 +27,20 @@ interface ClassifiedFailure extends UtHvigorTestFailureModule {
   toolchain: boolean;
   phase: string;
   failureKind?: UtHvigorTestFailureKind;
+  /**
+   * t1（openspec device-readiness-and-completion）：设备环境阻断（当前唯一来源=运行期锁屏）。
+   * **与 `toolchain` 正交**——锁屏不是工具链缺失，归 `device_toolchain` 会误导"修工具链"，
+   * 而留在默认分支（`toolchain:false`）又会让上层 goal-failure-classifier 兜底成
+   * `code_regression`（须改码、可重试）。故单列一维，聚合时映射到既有
+   * `externalBlocked`/`device_blocked` 契约（DEFAULT_DEPENDENCY_POLICY 的可 defer 集合）。
+   */
+  deviceBlocked?: boolean;
+  /** 设备阻断的精确子类（仅供人读的 details，**不进 summary 顶层**——schema 为 additionalProperties:false） */
+  deviceSubkind?: string;
 }
+
+/** 运行期设备阻断诊断族：目前只有锁屏；新增前须确认其语义确为"人修环境即可解除、改码无用"。 */
+const DEVICE_BLOCKING_RUN_DIAGNOSIS_KINDS: ReadonlySet<string> = new Set(['device_locked']);
 
 // t6（plan e6a3c9f4）：实现移至共享 diagnostic-header.ts（hvigor build 链共同消费，
 // 避免 hvigor-runner 反向依赖本 UT 聚合模块）；此处 import+re-export 保持既有导入面零变化。
@@ -69,6 +82,11 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
       : entry.result.executed
         ? 'run_or_result'
         : 'not_executed');
+  // t1：运行期设备阻断按**结构化** runDiagnosis.kind 判定（不做 stageHint 散文子串匹配）。
+  const runKind = evidence?.runDiagnosis?.kind;
+  if (runKind && DEVICE_BLOCKING_RUN_DIAGNOSIS_KINDS.has(runKind)) {
+    return { ...entry, toolchain: false, phase, deviceBlocked: true, deviceSubkind: runKind };
+  }
   return { ...entry, toolchain: false, phase };
 }
 
@@ -228,8 +246,9 @@ function actionFor(item: ClassifiedFailure): string {
     );
   }
   const stageHint = stageHintOf(item.result);
-  return stageHint?.includes('device_locked')
-    ? '设备已连接但锁屏：请手动解锁并保持在桌面/前台后重跑。'
+  // t1：改用结构化 deviceBlocked 判定（此前为 stageHint 散文子串匹配——同类子串误判已有前科）。
+  return item.deviceBlocked
+    ? '设备已连接但锁屏：请人解锁真机并保持在桌面/前台后重跑；这是环境问题，不要改动代码或 UT。'
     : stageHint
       ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.log。'
       : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
@@ -261,6 +280,14 @@ export function buildUtHvigorTestFailDetails(
     allToolchain && firstKind && items.every(item => item.failureKind === firstKind)
       ? firstKind
       : undefined;
+  // t1：全员设备阻断 → 接既有 externalBlocked/device_blocked 契约（可 defer、指引修环境）。
+  // **混合场景必须不整体 defer**：只要有一个模块是真实用例失败/工具链缺口，就不得因另一个
+  // 模块锁屏而把整体标成可 defer——否则设备问题会掩盖代码问题（同 257 行 sign-gap 同款理由）。
+  const allDeviceBlocked = items.every(item => item.deviceBlocked === true);
+  if (allDeviceBlocked) {
+    blockingClass = 'externalBlocked';
+    failureKind = 'device_blocked';
+  }
   const activeInstallBlockings = items
     .map(item => item.result.installBlocking)
     .filter(diag => Boolean(diag?.kind && diag.kind !== 'clear'));

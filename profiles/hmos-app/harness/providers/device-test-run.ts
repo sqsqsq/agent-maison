@@ -79,6 +79,12 @@ export interface HylyreTrace {
   artifacts?: Record<string, unknown>;
   retries?: number;
   tool_calls?: Array<Record<string, unknown>>;
+  /**
+   * 机器可读的失败原因。结论层据此区分"外部阻断"（如 `device_locked`）与
+   * "工具链/环境问题"，二者的处置指引完全不同。
+   */
+  run_failure_kind?: RunFailureKind | string;
+  error_kind?: string;
 }
 
 export interface HylyreReadyOptions {
@@ -179,6 +185,12 @@ export type RunFailureKind =
   | 'step_field_invalid'
   | 'device_disconnect'
   | 'aa_start_preflight_failed'
+  /**
+   * P1（三轮 review）：设备锁屏且**恢复失败**。必须与 `aa_start_preflight_failed`
+   * 区分——前者是外部阻断（人解锁后重跑即可），后者会被归入 device_toolchain 让人
+   * 去查签名/环境。此前恢复失败也写成 preflight_failed，结论层就丢掉了锁屏这个真因。
+   */
+  | 'device_locked'
   | 'unknown';
 
 export function classifyRunFailure(runOut: string, exitCode: number | null): RunFailureKind {
@@ -475,6 +487,18 @@ function runAaStartPreflight(
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   appendLogSync(logPath, out);
   return { ok: r.status === 0, output: out };
+}
+
+/**
+ * S9：testing 运行链路的运行期锁屏恢复——统一走 device-recovery-bridge。
+ */
+function recoverDeviceLockForRun(
+  projectRoot: string,
+  deviceSn: string | undefined,
+): { recovered: boolean; note: string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
+  return bridge.recoverAfterLockFailure(projectRoot, deviceSn);
 }
 
 // -------- ensureHylyreReady --------
@@ -1245,12 +1269,39 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         appendLogSync(logPath, '[WARN] aa force-stop 未成功，仍尝试 aa start\n');
       }
     }
-    const pre = runAaStartPreflight(opts.bundleName, pageName, opts.deviceSn, logPath);
+    // P1（三轮 review）：**操作前**先确保设备就绪，且这是**硬前置**——
+    // 确认为外部阻断时一次 `aa start` 都不发，直接走 device_locked 结论。
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
+    const preReady = bridge.ensureReadyBefore(opts.projectRoot, opts.deviceSn);
+    appendLogSync(logPath, `[device-ready/testing-run] ${preReady.note}\n`);
+
+    let lockedAndUnrecovered = preReady.blocked;
+    let pre = preReady.blocked
+      ? {
+          ok: false,
+          output: `[device-ready] 运行前置检查判定设备不可用，已阻断（未执行 aa start）：${preReady.note}`,
+        }
+      : runAaStartPreflight(opts.bundleName, pageName, opts.deviceSn, logPath);
+    // S9：**正式 testing 运行链路**的运行期锁屏恢复。`aa start` 是 testing 侧第一个真正
+    // 触碰设备的动作，手机在此前刚锁屏时会失败并被归成 aa_start_preflight_failed。
+    // 与其它边界同款：只在锁屏信号命中时恢复一次，恢复失败如实失败、不重试不切目标。
+    if (!pre.ok && !lockedAndUnrecovered
+        && /screen is locked|unlock screen failed|need.*unlock|10106102/i.test(pre.output)) {
+      const rec = recoverDeviceLockForRun(opts.projectRoot, opts.deviceSn);
+      appendLogSync(logPath, `[device-recovery/testing-run] ${rec.note}\n`);
+      if (rec.recovered) pre = runAaStartPreflight(opts.bundleName, pageName, opts.deviceSn, logPath);
+      // P1（三轮）：恢复失败必须**保留锁屏这个真因**，否则结论层只看到
+      // aa_start_preflight_failed → 归 device_toolchain → 指引变成"查签名"。
+      if (!pre.ok) lockedAndUnrecovered = true;
+    }
     if (!pre.ok) {
       errors.push({
         message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName} source=${abilityResolved.source}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
       });
-      const preflightKind: RunFailureKind = 'aa_start_preflight_failed';
+      const preflightKind: RunFailureKind = lockedAndUnrecovered
+        ? 'device_locked'
+        : 'aa_start_preflight_failed';
       const rootPollutionEarly = finishHylyrePhasePollutionGuard(opts.projectRoot, pollutionBefore, {
         phase: 'run',
         logPath,
@@ -1314,8 +1365,11 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
         ok: false,
         command: '',
         reportPath: null,
-        tracePath: null,
-        trace: null,
+        // P1（三轮 review）：**必须回传 trace**。此前这里写了 trace 文件却返回 null，
+        // 结论层读 `run.trace?.run_failure_kind` 永远拿不到，device_locked 与
+        // aa_start_preflight_failed 在上游依旧无法区分——文件写了等于没写。
+        tracePath: tracePathResolved,
+        trace: readJsonSafe<HylyreTrace>(tracePathResolved),
         logPath,
         errors,
       };

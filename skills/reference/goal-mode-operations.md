@@ -72,3 +72,37 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
 - 运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）
+
+## 设备策略与就绪门（openspec device-readiness-and-completion）
+
+**事故背景**：2026-07-28 bc-openCard run —— agent 在 ut 阶段发现真机锁屏后自行处置，对用户手机**枚举了 10 组常见 PIN** 致设备锁定；随后它自拉一个模拟器作为**自己的**后台终端，该常驻进程钉住 cursor-agent 不退出，框架空等 84 分钟到 hard timeout（而超时后 gate 只用 13 秒就判了 PASS）。
+
+框架侧的三条结论：
+
+1. **结构性阻断优于行为禁令**。`AGENTS.md` 空白处按"允许"理解，框架拦不住 agent 用绝对路径调 `hdc`——所以"禁止猜密码"只能是指导。真正有效的是**未取得 READY 就不产生 `agent_invoke_start`**：agent 根本不进入"发现锁屏后自行处置"的场景。
+2. **长驻进程一律框架托管**。模拟器由 runner 以 detached 独立进程组 + `stdio:'ignore'` 启动（继承管道正是钉死 agent 的根因），会话记 `device-session.json`，只回收本 run 启动的实例。
+3. **完成证据可用就别空等**。receipt 四条件在盘即收口，记 `completion_observed`（与 `timed_out`/`agent_failed` 互斥）。
+
+### 就绪门三态
+
+| 态 | 含义 | 后果 |
+|----|------|------|
+| `READY` | 目标可用 | `{serial,targetKind,sessionId}` 经 `extraEnv` 注入子进程（**不写全局 env**，防多 run 串 target） |
+| `BLOCKED` | 设备不可用/仍锁屏 | 走既有 `externalBlocked`/`device_blocked` 契约（可 defer、指引修环境），**无 `agent_invoke_start`** |
+| `AMBIGUOUS` | 多设备且未配 `target_serial` | HALT 求人——绝不赌"第一个"，凭据/操作打到别人手机上不可接受 |
+
+门的执行范围由 profile `device_capabilities` 派生（不硬编码 phase），因此 spec/plan/coding 不会去动手机。
+
+### 解锁授权的安全边界（逐条说准，不笼统宣称）
+
+| 层级 | 内容 |
+|------|------|
+| **强保证** | 框架只使用用户登记的凭据；任何一次失败即**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version` |
+| **防御性指导** | agent 运行期只应调 framework 的 readiness 入口，prompt 明确禁止直接输入 PIN、直接启动模拟器 |
+| **不宣称** | 在没有 OS 沙箱的前提下，硬阻断恶意或偏航 agent 的直接 shell 操作 |
+
+口令由 Windows 凭据管理器托管（`CredRead`/`CredWrite`），`framework.local.json` 只存 opaque `credential_ref`。登记只能在真实 TTY 隐藏输入（`npm run device:enroll`），非 TTY 一律拒绝。
+
+### 模拟器降级不得冒充真机
+
+`ut` 允许在模拟器上 PASS；`testing` 在 `target_kind ∈ {emulator, unknown}` 时由 runner 依可信 device session **封顶 PARTIAL/DEFERRED**——不看 agent summary 自报（自报即可绕过）。`unknown` 与 `emulator` 同等对待：判不出机型绝不等于是真机。

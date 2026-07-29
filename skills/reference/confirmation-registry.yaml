@@ -92,6 +92,33 @@ entries:
         label: "跳过 — 本轮不写入 DevEco 安装路径"
         portable: "2=跳过"
 
+  - id: setup.device_policy
+    skill: "_personal_setup"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S3 设备策略（链路含需设备 phase 时）"
+    portable_menu: "1=手工解锁 2=启用自动解锁 3=允许模拟器降级 4=本次停止"
+    notes: >-
+      openspec device-readiness-and-completion。由**主 agent 在启动 detached runner 之前**
+      询问——后台 runner 结构上无法弹交互，问不了就只能一路 BLOCKED。
+      ①③④ 由 agent 自跑 `npm run device:set`（④ 不持久化）；②**必须交给用户在自己的终端**
+      运行 `npm run device:enroll -- --serial <序列号>`：PIN 只能在真实 TTY 隐藏输入，
+      **绝不接受用户把 PIN 发到对话里**，agent 也不得代为输入。写完须重跑
+      `npm run device:policy` 确认 `code=ok`。
+    options:
+      - value: manual_unlock
+        label: "手工解锁 — 人保证设备可用，框架永不碰口令"
+        portable: "1=手工解锁"
+      - value: credential_unlock
+        label: "启用自动解锁 — 用户在自己终端登记凭据（TTY 隐藏输入）"
+        portable: "2=启用自动解锁"
+      - value: emulator_fallback
+        label: "允许模拟器降级 — existing 复用已开实例 / managed 由框架起停回收"
+        portable: "3=允许模拟器降级"
+      - value: stop
+        label: "本次停止 — 属本次运行结果，不持久化"
+        portable: "4=本次停止"
+
   - id: init.project_profile
     skill: "framework-init"
     class: enum

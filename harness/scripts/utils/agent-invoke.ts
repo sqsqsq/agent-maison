@@ -58,6 +58,15 @@ const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
 /** Disabled by default — cursor-agent often streams little until phase end. Opt-in via silentWatchdogMs. */
 export const DEFAULT_SILENT_WATCHDOG_MS = 0;
 
+/** t4 完成观测：探针轮询间隔。2s 足够快（相对 90min 预算），又不至于打爆磁盘 IO。 */
+export const DEFAULT_COMPLETION_POLL_MS = 2_000;
+/**
+ * t4 完成观测：命中后等待自然退出的宽限。
+ * 给足一个正常收尾的窗口（agent 可能正在写最后一行日志），又不至于把"已完成"拖长——
+ * 实际生效值再取 min(该值, deadlineMs - now)。
+ */
+export const DEFAULT_COMPLETION_GRACE_MS = 5_000;
+
 /** Grace after child `exit` before forcing resolve when `close` never arrives (lingering pipe). */
 export const DEFAULT_CHILD_SETTLE_GRACE_MS = 3_000;
 
@@ -131,6 +140,8 @@ export interface ChildSettleWaiter {
   promise: Promise<ChildSettledResult>;
   /** Arm hard deadline after timeout/silent kill when exit/close may never arrive. */
   armForceSettleAfterKill: () => void;
+  /** t4：进程是否已 settle——完成观测的 grace 到点后据此决定还要不要 tree-kill。 */
+  isSettled: () => boolean;
 }
 
 /**
@@ -197,7 +208,7 @@ export function createChildSettleWaiter(
     void finalize(false);
   });
 
-  return { promise, armForceSettleAfterKill };
+  return { promise, armForceSettleAfterKill, isSettled: () => settled };
 }
 
 export function renderInvokeTemplate(template: string, vars: InvokeTemplateVars): string {
@@ -766,6 +777,11 @@ export interface AgentInvokeResult {
   duration_ms?: number;
   timed_out?: boolean;
   silent_killed?: boolean;
+  /**
+   * t4：本次 invocation 因**完成证据确定性成立**而收口（非超时、非静默杀、非 agent 失败）。
+   * 上层据此走正常 gate 流程，绝不按失败路径重试一个已完成的阶段。
+   */
+  completion_observed?: boolean;
   signal?: string | null;
   lingering_pipe?: boolean;
   kill_attempted?: boolean;
@@ -797,6 +813,30 @@ export interface AgentInvokeOptions {
   /** Called when child spawns — register tree-kill for signal handlers. */
   onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
   onChildExit?: () => void;
+  /**
+   * openspec device-readiness-and-completion t4：**完成观测探针**。
+   *
+   * 背景（07-28 事故）：agent 的 turn 已 `turn_ended status=success`、receipt 四条件齐全
+   * 在盘，但进程被自己拉起的后台模拟器钉住不退出——框架空等 84 分钟到 hard timeout，
+   * 而超时后 gate harness 只用 13 秒就判了 PASS。判据一直可用，只是没人问。
+   *
+   * **分层**：本模块是通用进程层，只负责 timer/race/kill，**不得依赖 receipt schema**。
+   * 判据由 goal-runner 以回调注入：返回 true = 本 attempt 的完成证据已确定性成立。
+   * 探针须为纯只读（不得启动会写盘的 CLI），异常/半写入一律返回 false 由下轮重试。
+   *
+   * 命中后：等 `completionGraceMs` 让进程自然退出，仍存活则 tree-kill 本次 invocation，
+   * 结果记 `completion_observed`（**不是** timed_out / silent_killed / agent_failed）。
+   */
+  completionProbe?: () => boolean;
+  /** 探针轮询间隔（默认 2s） */
+  completionPollMs?: number;
+  /** 命中后等待自然退出的宽限（默认 5s；实际取 min(该值, deadlineMs-now)） */
+  completionGraceMs?: number;
+  /**
+   * 本次 invocation 的**绝对** deadline（epoch ms）。grace 不得越过它——
+   * 否则收口反而把 run 拖过 wall-clock 预算。
+   */
+  deadlineMs?: number;
 }
 
 /**
@@ -933,11 +973,13 @@ async function spawnHeadlessAsync(
     });
   }
 
-  const killTree = (reason: 'timeout' | 'silent' | 'signal'): Promise<void> => {
+  const killTree = (reason: 'timeout' | 'silent' | 'signal' | 'completion'): Promise<void> => {
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
     if (reason === 'timeout') timedOut = true;
     if (reason === 'silent') silentKilled = true;
+    // reason='completion' 刻意不置任何失败标记：证据已确定性完成，这不是超时也不是
+    // 静默杀，更不是 agent 失败——归错类会让上层按失败路径重试一个已经完成的阶段。
     settleWaiter.armForceSettleAfterKill();
     killInFlight = (async () => {
       if (pid > 0) {
@@ -969,6 +1011,8 @@ async function spawnHeadlessAsync(
   const timeoutTimer =
     timeoutMs && timeoutMs > 0
       ? setTimeout(() => {
+          // R8：completion 已命中则不得再置超时标记（二者互斥）
+          if (completionObserved) return;
           void killTree('timeout');
         }, timeoutMs)
       : null;
@@ -977,11 +1021,56 @@ async function spawnHeadlessAsync(
   const silentTimer =
     silentMs != null && silentMs > 0
       ? setInterval(() => {
+          // R8：completion 命中后进入 grace 期，此期间**静默是预期的**（agent 已写完
+          // 回执正在收尾）。不加这道闸，silent watchdog 会在 grace 内先开枪，最终
+          // 同时得到 completion_observed 与 silent_killed，又被归入失败分类。
+          if (completionObserved) return;
           if (Date.now() - lastActivity >= silentMs) {
             void killTree('silent');
           }
         }, 30_000)
       : null;
+
+  // t4：完成观测——与 settle / hard timeout / silent 竞争。
+  // 判据是**确定性**的（证据在盘），不是概率性的（静默/无输出）：cursor-agent 本就
+  // "streams little until phase end"，拿静默做判据会误杀正常长任务（见
+  // DEFAULT_SILENT_WATCHDOG_MS=0 的既有理由）。故此处只接受注入的确定性探针。
+  let completionObserved = false;
+  /** R8：completion 命中时取消了 hard timeout —— 用于断言二者互斥 */
+  let timeoutCancelledByCompletion = false;
+  const completionTimer = opts.completionProbe
+    ? setInterval(() => {
+        if (completionObserved || killTriggered) return;
+        let hit = false;
+        try {
+          hit = opts.completionProbe!() === true;
+        } catch {
+          // 半写入 / 解析错误 → 本轮视为未完成，下轮重试；**绝不**转判 completion，
+          // 也不终止 agent（探针出错是探针的问题，不是 agent 的）
+          hit = false;
+        }
+        if (!hit) return;
+        completionObserved = true;
+        // R8：命中即**取消 hard timeout**。否则证据在 deadline 前几秒完成时，先注册的
+        // timeout timer 很可能先于 grace 到期执行并置 timed_out=true，随后 completion
+        // 的 kill 变成 no-op —— 结果同时出现 completion_observed 与 timed_out，仍被
+        // 归入超时失败分类，等于收口白做。两者语义互斥，必须原子裁决。
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutCancelledByCompletion = true;
+        }
+        // 同理停掉 silent watchdog——grace 期内的静默是收尾，不是失联
+        if (silentTimer) clearInterval(silentTimer);
+        const graceBudget = opts.completionGraceMs ?? DEFAULT_COMPLETION_GRACE_MS;
+        const untilDeadline = opts.deadlineMs ? opts.deadlineMs - Date.now() : graceBudget;
+        // grace 不得越过绝对 deadline——收口不能反过来把 run 拖过 wall-clock 预算
+        const grace = Math.max(0, Math.min(graceBudget, untilDeadline));
+        setTimeout(() => {
+          // 宽限内自然退出即最佳；仍存活才 tree-kill 本次 invocation
+          if (!settleWaiter.isSettled()) void killTree('completion');
+        }, grace);
+      }, opts.completionPollMs ?? DEFAULT_COMPLETION_POLL_MS)
+    : null;
 
   const settled = await settleWaiter.promise;
 
@@ -991,6 +1080,8 @@ async function spawnHeadlessAsync(
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (silentTimer) clearInterval(silentTimer);
+  // t4：settle / timeout / abort 任一命中即取消 observer（不留悬挂 interval）
+  if (completionTimer) clearInterval(completionTimer);
 
   exitCode = settled.exitCode;
   signal = settled.signal;
@@ -1008,6 +1099,7 @@ async function spawnHeadlessAsync(
     duration_ms,
     timed_out: timedOut || undefined,
     silent_killed: silentKilled || undefined,
+    completion_observed: completionObserved || undefined,
     signal,
     lingering_pipe: settled.lingering_pipe || undefined,
     kill_attempted: killResult.kill_attempted,

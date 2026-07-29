@@ -10,6 +10,8 @@ import {
   LOCAL_LEGACY_TOP_KEY,
   LOCAL_VISION_KEYS,
   LOCAL_VISION_CANARY_KEYS,
+  LOCAL_DEVICE_KEYS,
+  LOCAL_DEVICE_UNLOCK_KEYS,
 } from './config-field-ownership';
 import type { ToolchainConfig } from '../../config';
 
@@ -79,6 +81,28 @@ export interface FrameworkLocalToolchainProbe {
   known_quirks?: string[];
 }
 
+/**
+ * 设备策略（openspec device-readiness-and-completion t3/t6）——**个人级、gitignored**。
+ *
+ * 为何不是单个布尔：`auto_unlock=false` 区分不了「人工解锁」与「允许模拟器降级」这两个
+ * 独立意图，用户拒绝自动解锁不等于拒绝模拟器。
+ *
+ * `credential_ref` 是 **opaque 引用**，口令本体由 OS 凭据库托管——本文件在项目根、属
+ * agent 可写区，**绝不放明文口令**。
+ */
+export interface FrameworkLocalConfigDevice {
+  unlock?: {
+    mode?: 'manual' | 'credential';
+    /** OS 凭据库条目的不可变引用；轮换生成新引用，不原地覆盖 */
+    credential_ref?: string;
+  };
+  emulator_fallback?: 'disabled' | 'existing' | 'managed';
+  /** 多设备时必须显式指定，否则就绪门判 AMBIGUOUS 停止求人（不赌"第一个"） */
+  target_serial?: string;
+  /** managed 档启动用的 AVD 名（如 "Pura 90"）；未配置则 managed 档不可用 */
+  emulator_profile?: string;
+}
+
 export interface FrameworkLocalConfig {
   schema_version: string;
   agent_adapter?: string;
@@ -90,6 +114,7 @@ export interface FrameworkLocalConfig {
     probe?: FrameworkLocalToolchainProbe;
   };
   vision?: FrameworkLocalConfigVision;
+  device?: FrameworkLocalConfigDevice;
 }
 
 export type AgentAdapterSource = 'local' | 'project_legacy' | 'fallback';
@@ -300,6 +325,65 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
     }
   }
 
+  // openspec device-readiness-and-completion：device 策略（个人级）。
+  // 旧配置无 device 键 → out.device 保持 undefined，消费方按 manual/disabled 语义处理，
+  // 行为与本改动前完全一致（round-trip 不丢字段、不臆造默认值写盘）。
+  const device = raw.device;
+  if (device !== undefined) {
+    if (!device || typeof device !== 'object' || Array.isArray(device)) {
+      throw new Error('[framework-local-config] device 必须是对象');
+    }
+    const deviceObj = device as Record<string, unknown>;
+    rejectUnknownObjectKeys(deviceObj, LOCAL_DEVICE_KEYS, 'device');
+    const outDevice: FrameworkLocalConfigDevice = {};
+
+    const unlock = deviceObj.unlock;
+    if (unlock !== undefined) {
+      if (!unlock || typeof unlock !== 'object' || Array.isArray(unlock)) {
+        throw new Error('[framework-local-config] device.unlock 必须是对象');
+      }
+      const unlockObj = unlock as Record<string, unknown>;
+      // 白名单是**安全边界**：拒绝任何未知键，防手写 `pin`/`password` 之类明文口令进项目根
+      rejectUnknownObjectKeys(unlockObj, LOCAL_DEVICE_UNLOCK_KEYS, 'device.unlock');
+      const mode = unlockObj.mode;
+      if (mode !== undefined && mode !== 'manual' && mode !== 'credential') {
+        throw new Error(
+          `[framework-local-config] device.unlock.mode 必须是 manual|credential，收到 ${String(mode)}`,
+        );
+      }
+      const ref = unlockObj.credential_ref;
+      if (ref !== undefined && (typeof ref !== 'string' || !ref.trim())) {
+        throw new Error('[framework-local-config] device.unlock.credential_ref 必须是非空字符串');
+      }
+      const unlockOut: NonNullable<FrameworkLocalConfigDevice['unlock']> = {};
+      if (mode === 'manual' || mode === 'credential') unlockOut.mode = mode;
+      if (typeof ref === 'string' && ref.trim()) unlockOut.credential_ref = ref.trim();
+      if (unlockOut.mode || unlockOut.credential_ref) outDevice.unlock = unlockOut;
+    }
+
+    const fallback = deviceObj.emulator_fallback;
+    if (fallback !== undefined) {
+      if (fallback !== 'disabled' && fallback !== 'existing' && fallback !== 'managed') {
+        throw new Error(
+          `[framework-local-config] device.emulator_fallback 必须是 disabled|existing|managed，收到 ${String(fallback)}`,
+        );
+      }
+      outDevice.emulator_fallback = fallback;
+    }
+
+    for (const k of ['target_serial', 'emulator_profile'] as const) {
+      const v = deviceObj[k];
+      if (v !== undefined) {
+        if (typeof v !== 'string' || !v.trim()) {
+          throw new Error(`[framework-local-config] device.${k} 必须是非空字符串`);
+        }
+        outDevice[k] = v.trim();
+      }
+    }
+
+    if (Object.keys(outDevice).length > 0) out.device = outDevice;
+  }
+
   return out;
 }
 
@@ -343,10 +427,32 @@ export function loadLocalConfig(projectRoot: string): FrameworkLocalConfig | nul
   return validateLocalSchema(parsed);
 }
 
+/**
+ * 原子写（S12）。
+ *
+ * 此前是裸 `writeFileSync`：进程在写入中途被杀会留下**半截 JSON**，下次加载直接抛错，
+ * 用户的 adapter/凭据引用/设备策略一起丢。凭据引用切换尤其敏感——半截状态意味着
+ * "指向哪个 credential_version"不可知。改为 `写临时文件 → fsync → 原子 rename`：
+ * 任何时刻读到的要么是旧内容、要么是新内容，不存在中间态。
+ */
 export function writeLocalConfig(projectRoot: string, config: FrameworkLocalConfig): void {
   const validated = validateLocalSchema(config);
   const p = localConfigPath(projectRoot);
-  fs.writeFileSync(p, `${JSON.stringify(validated, null, 2)}\n`, 'utf-8');
+  const body = `${JSON.stringify(validated, null, 2)}\n`;
+  const tmp = `${p}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeFileSync(fd, body, 'utf-8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(tmp, p);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* best-effort */ }
+    throw err;
+  }
 }
 
 export function resolveAgentAdapterSource(

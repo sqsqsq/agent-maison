@@ -38,6 +38,71 @@ function mkTmp(): string {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    // openspec device-readiness-and-completion：device 策略入 local config
+    name: 'device 策略：round-trip 不丢字段；旧配置无 device 键仍可加载（行为等价 manual/disabled）',
+    run: () => {
+      const root = mkTmp();
+      try {
+        writeLocalConfig(root, {
+          schema_version: '1.0',
+          agent_adapter: 'cursor',
+          device: {
+            unlock: { mode: 'credential', credential_ref: 'maison/dev/3UJ0/v2' },
+            emulator_fallback: 'managed',
+            target_serial: '3UJ0225321000395',
+            emulator_profile: 'Pura 90',
+          },
+        });
+        const back = loadLocalConfig(root);
+        assert.strictEqual(back?.device?.unlock?.mode, 'credential', 'mode 保真');
+        assert.strictEqual(back?.device?.unlock?.credential_ref, 'maison/dev/3UJ0/v2', 'credential_ref 保真');
+        assert.strictEqual(back?.device?.emulator_fallback, 'managed', 'fallback 保真');
+        assert.strictEqual(back?.device?.target_serial, '3UJ0225321000395', 'serial 保真');
+        assert.strictEqual(back?.device?.emulator_profile, 'Pura 90', 'profile 保真');
+        assert.strictEqual(back?.agent_adapter, 'cursor', '既有字段不受影响');
+
+        // 旧配置（无 device 键）仍可加载
+        writeLocalConfig(root, { schema_version: '1.0', agent_adapter: 'claude' });
+        const legacy = loadLocalConfig(root);
+        assert.strictEqual(legacy?.device, undefined, '旧配置 device 保持 undefined，不臆造默认值');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'device 策略：拒未知键（防明文口令混入项目根）与非法枚举',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const write = (device: unknown): void => {
+          fs.writeFileSync(
+            path.join(root, 'framework.local.json'),
+            JSON.stringify({ schema_version: '1.0', device }),
+            'utf-8',
+          );
+        };
+        // **安全边界**：手写 pin/password 之类必须被拒，绝不能悄悄留在 agent 可读的项目根
+        write({ unlock: { mode: 'credential', pin: '000000' } });
+        assert.throws(() => loadLocalConfig(root), /device\.unlock/, 'unlock 未知键须拒');
+
+        write({ passcode: '1234' });
+        assert.throws(() => loadLocalConfig(root), /device/, 'device 未知键须拒');
+
+        write({ emulator_fallback: 'sometimes' });
+        assert.throws(() => loadLocalConfig(root), /emulator_fallback/, '非法 fallback 枚举须拒');
+
+        write({ unlock: { mode: 'auto' } });
+        assert.throws(() => loadLocalConfig(root), /unlock\.mode/, '非法 mode 枚举须拒');
+
+        write({ target_serial: '' });
+        assert.throws(() => loadLocalConfig(root), /target_serial/, '空 serial 须拒');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'resolveAgentAdapterSource: local wins',
     run: () => {
       const s = resolveAgentAdapterSource('/x', { agent_adapter: 'claude' }, { schema_version: '1.0', agent_adapter: 'cursor' }, 'generic');

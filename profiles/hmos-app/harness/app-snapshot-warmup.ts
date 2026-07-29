@@ -329,7 +329,41 @@ export function classifyWarmupFailure(
 
 
 
+/**
+ * R13：warmup 也是设备操作边界——手机可能在 warmup 前刚锁屏，`aa start` 会失败并被
+ * 分类为 `device_locked`。与 `aa test`/`install` 同款语义：只在锁屏诊断命中时用**登记
+ * 凭据**恢复一次，然后整段重跑；恢复失败就如实返回原结果（不重试、不切目标）。
+ *
+ * 入口是纯 opts→result 的，重入安全，故用"包一层 + 重跑一次"而非在序列内插桩。
+ */
 export function ensureAppSnapshotWarmup(opts: SnapshotWarmupOptions): SnapshotWarmupResult {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const bridge = require('./device-recovery-bridge') as typeof import('./device-recovery-bridge');
+  const serial = opts.deviceSn?.trim() || process.env.HARNESS_HDC_TARGET?.trim();
+
+  // P1（三轮 review）：**操作前**先确保就绪，且这是**硬前置**——确认为外部阻断时
+  // 一次设备命令都不发。息屏/锁屏是无人值守场景的常态，前置能避免整轮无谓失败。
+  const preReady = bridge.ensureReadyBefore(opts.projectRoot, serial);
+  if (preReady.blocked) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: `设备锁屏且未能自动解锁——已在 warmup 前阻断（未执行任何设备命令）。${preReady.note}`,
+      reasonKind: 'device_locked',
+      log: `[device-ready/warmup] ${preReady.note}\n[warmup] BLOCKED：设备未就绪，未执行任何设备命令。\n`,
+    };
+  }
+
+  const first = runWarmupOnce(opts);
+  if (first.reasonKind !== 'device_locked') return first;
+
+  // 操作后仍命中锁屏 → 允许**一次**有界恢复再重试原操作
+  if (!serial) return first;
+  if (!bridge.recoverAfterLockFailure(opts.projectRoot, serial).recovered) return first;
+  return runWarmupOnce(opts);
+}
+
+function runWarmupOnce(opts: SnapshotWarmupOptions): SnapshotWarmupResult {
 
   const logLines: string[] = [];
 

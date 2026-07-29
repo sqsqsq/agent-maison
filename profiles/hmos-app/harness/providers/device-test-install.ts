@@ -18,6 +18,16 @@ import {
 } from '../hdc-runner';
 import { detectInstallDowngrade } from '../device-install-diag';
 
+/**
+ * S9：testing 链路的运行期锁屏恢复——统一走 device-recovery-bridge，
+ * 四个设备边界（UT aa test / UT install / testing install / testing run / warmup）同一语义。
+ */
+function recoverDeviceLockForTesting(projectRoot: string): { recovered: boolean; note: string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
+  return bridge.recoverAfterLockFailure(projectRoot);
+}
+
 
 export const provider: CapabilityProvider = {
   id: 'hdc_app',
@@ -324,27 +334,68 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     });
     ok = false;
   } else {
-    if (downgradeDetected && uninstallBefore) {
-      runUninstallOnce();
-    }
+    // P1（四轮 review）：前检必须排在**任何设备变更之前**，且 blocked 后**不得**
+    // 落入后续任何设备分支。上一版有两条穿透：
+    //   ① 降级场景的 `runUninstallOnce()` 在前检**之前**就卸载了；
+    //   ② blocked 只构造失败对象却没短路，公共重试分支
+    //      `if (!install.ok && uninstallBefore && ...)` 仍会 bm uninstall + installHap。
+    // 现在整段设备操作都收在 `if (!deviceBlocked)` 里，blocked 时一条命令都不发。
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
+    const preReady = bridge.ensureReadyBefore(opts.projectRoot);
+    logLines.push(`[device-ready/testing-install] ${preReady.note}`);
 
-    install = installHap(opts.hapPath);
-    logLines.push(install.output);
-
-    if (!install.ok && uninstallBefore && !uninstallAttempted) {
-      runUninstallOnce();
-      install = installHap(opts.hapPath);
+    if (preReady.blocked) {
+      // 构造与"装机时命中锁屏"同形的诊断，让结论层归入 externalBlocked/device_blocked
+      install = {
+        ok: false,
+        exitCode: -1,
+        durationMs: 0,
+        output: `[device-ready] 装机前置检查判定设备不可用，已阻断：${preReady.note}`,
+        diagnosis: {
+          kind: 'device_locked',
+          summary: `设备锁屏且未能自动解锁——已在装机前阻断（未执行卸载或安装）。${preReady.note}`,
+          suggestion: '请人工解锁设备后重跑；框架不会尝试任何口令。',
+        },
+      };
+      ok = false;
+      errors.push({ message: `${install.diagnosis!.summary}\n修复建议：${install.diagnosis!.suggestion}` });
       logLines.push(install.output);
-    }
+    } else {
+      if (downgradeDetected && uninstallBefore) {
+        runUninstallOnce();
+      }
 
-    ok = Boolean(install?.ok);
-    if (install && !install.ok) {
-      const diagnosis = install.diagnosis;
-      errors.push({
-        message: diagnosis
-          ? `${diagnosis.summary}\n修复建议：${diagnosis.suggestion}`
-          : `hdc install 失败（exit=${install.exitCode}）。`,
-      });
+      install = installHap(opts.hapPath);
+
+      // S9：**正式 testing 装机链路**的运行期锁屏恢复。此前只有 UT 侧接了，testing
+      // 走的是本文件——手机在 testing 装机前刚锁屏时，这里会直接失败且指引指向"查签名"。
+      // 与其它边界同款语义：只在锁屏诊断命中时恢复一次，恢复失败如实失败、不重试不切目标。
+      if (!install.ok && install.diagnosis?.kind === 'device_locked') {
+        const rec = recoverDeviceLockForTesting(opts.projectRoot);
+        logLines.push(`[device-recovery/testing-install] ${rec.note}`);
+        if (rec.recovered) install = installHap(opts.hapPath);
+      }
+      logLines.push(install.output);
+
+      // 公共重试：仅在设备可用的前提下才允许卸载重装。
+      // **恢复失败后仍是 device_locked 时也不得进来**——那说明设备还锁着。
+      if (!install.ok && uninstallBefore && !uninstallAttempted
+          && install.diagnosis?.kind !== 'device_locked') {
+        runUninstallOnce();
+        install = installHap(opts.hapPath);
+        logLines.push(install.output);
+      }
+
+      ok = Boolean(install?.ok);
+      if (install && !install.ok) {
+        const diagnosis = install.diagnosis;
+        errors.push({
+          message: diagnosis
+            ? `${diagnosis.summary}\n修复建议：${diagnosis.suggestion}`
+            : `hdc install 失败（exit=${install.exitCode}）。`,
+        });
+      }
     }
   }
 

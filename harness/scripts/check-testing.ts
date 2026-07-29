@@ -1582,7 +1582,34 @@ function buildDeviceInstallFailResults(
   id: string,
   desc: string,
   fallbackDetails: string,
+  /**
+   * provider 侧对本次装机失败的诊断（P1，四轮 review）。
+   *
+   * 必须**优先**于重新探测：`diagnoseInstallBlocking` 只看 HDC 在线性与版本，
+   * 手机连着但锁屏时它通常返回 `clear` —— 于是 provider 明明已经判出
+   * `device_locked`，结论层却把它当普通失败，`externalBlocked`/`device_blocked`
+   * 全丢了，goal 也就归不到 external_block。
+   */
+  installDiagnosisKind?: string,
 ): CheckResult[] {
+  if (installDiagnosisKind === 'device_locked') {
+    holder.installExternallyBlocked = true;
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: `${fallbackDetails}\n\n设备锁屏且未能自动解锁——这是外部阻断，不是代码或签名问题。`,
+        suggestion:
+          '请人工解锁设备后重跑 testing harness；框架不会尝试任何口令。' +
+          '若希望框架自动解锁，先在**自己的终端**运行 device-policy --enroll 登记 PIN。',
+        failure_kind: 'device_blocked',
+        blocking_class: 'externalBlocked',
+      },
+    ];
+  }
   const diag = diagnoseInstallBlocking(ctx.projectRoot);
   if (diag.kind === 'externalBlocked') {
     holder.installExternallyBlocked = true;
@@ -1888,6 +1915,8 @@ function checkDeviceTestInstallGate(
         [...res.errors.map(e => e.message), res.logPath ? `装机日志: ${res.logPath}` : '']
           .filter(Boolean)
           .join('\n'),
+        // provider 已经判出的失败原因优先——重新探测看不见"手机连着但锁屏"
+        res.install?.diagnosis?.kind,
       );
     }
 
@@ -2292,6 +2321,11 @@ function checkDeviceTestRunGate(
     }) as HylyreRunResult;
 
     if (!run.ok) {
+      // P1（三轮 review）：**设备锁屏且恢复失败是外部阻断，不是工具链问题**。
+      // 二者的处置完全不同：前者「人解锁后重跑」，后者「查签名/环境」。此前一律标
+      // device_toolchain，锁屏这个真因在结论层被抹掉，指引把人带向错误方向。
+      // 与 UT 侧同一契约（externalBlocked/device_blocked → goal 归 external_block）。
+      const deviceLocked = run.trace?.run_failure_kind === 'device_locked';
       return [
         {
           id,
@@ -2301,8 +2335,16 @@ function checkDeviceTestRunGate(
           status: 'FAIL',
           // review#2：runner 崩溃（!run.ok）= 真机环境/工具链问题，非 UI/业务代码 → 标 device_toolchain，
           // 让 goal 失败分类归 toolchain（早 halt 修环境、勿误导改码）。下方"用例失败"路径不打此标 → code_regression。
-          blocking_class: 'device_toolchain',
-          details: [`真机自动化执行失败：exit=${run.exitCode}`, `命令：${run.command}`, `日志：${run.logPath}`, ...run.errors.map(e => `  - ${e.message}`)].join('\n'),
+          blocking_class: deviceLocked ? 'externalBlocked' : 'device_toolchain',
+          ...(deviceLocked ? { failure_kind: 'device_blocked' } : {}),
+          details: [
+            deviceLocked
+              ? `设备锁屏且自动恢复失败（exit=${run.exitCode}）——请人工解锁设备后重跑；框架不会尝试任何口令。`
+              : `真机自动化执行失败：exit=${run.exitCode}`,
+            `命令：${run.command}`,
+            `日志：${run.logPath}`,
+            ...run.errors.map(e => `  - ${e.message}`),
+          ].join('\n'),
         },
       ];
     }

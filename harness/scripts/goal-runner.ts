@@ -117,6 +117,22 @@ import {
   FINALIZE_RESERVE_MS,
   TIMEOUT_ESCALATION_FACTOR,
 } from './utils/goal-timeout';
+// openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
+// gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
+import { phaseRequiresDevice } from './utils/phase-device-requirement';
+import { runDeviceReadinessGate } from './utils/device-readiness-gate';
+import { buildDeviceReadinessInput } from './utils/device-readiness-deps';
+import {
+  capsTestingConclusion,
+  collectForeignManagedSessions,
+  defaultProcessProbe,
+  readDeviceSession,
+  reclaimManagedDevice,
+  registerManagedDeviceCleanup,
+  writeDeviceSession,
+  type DeviceTargetKind,
+} from './utils/device-session';
+import { createCompletionProbe, decideSkipAgentInvoke } from './utils/phase-completion-probe';
 import {
   deriveResumeInspection,
   buildResumeSkipLines,
@@ -690,12 +706,26 @@ export function __testing_setValidateReceipt(fn: ValidateReceiptFn | null): void
   injectedValidateReceipt = fn;
 }
 
+/**
+ * 设备就绪门注入（测试用）。
+ *
+ * 就绪门会真的跑 `hdc list targets` / 唤醒 / 探锁屏——在临时宿主里必然无设备，
+ * 使所有 ut/testing 链路被判 BLOCKED。注入后可模拟 READY/BLOCKED/AMBIGUOUS 三态，
+ * 从而在集成层验证"未 READY 不产生 agent_invoke_start"这条核心契约。
+ */
+type DeviceGateFn = typeof runDeviceReadinessGate;
+let injectedDeviceGate: DeviceGateFn | null = null;
+export function __testing_setDeviceReadinessGate(fn: DeviceGateFn | null): void {
+  injectedDeviceGate = fn;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
   injectedInvokeAgent = null;
   injectedRunHarness = null;
   injectedLayout = null;
+  injectedDeviceGate = null;
 }
 
 async function runHarnessPhase(
@@ -710,6 +740,8 @@ async function runHarnessPhase(
   // 停在 deadline 后 harness 仍可无限跑，"超支 ≤ grace"无从保证。返回结构化结果：
   // exitCode=1 无法区分门禁真失败与 wall 树杀，timedOut 单独承载。
   timeoutMs?: number,
+  /** P0-3：就绪门冻结的设备 env（serial/kind/session/credential_ref）——须与 agent 侧同源 */
+  deviceTargetEnv: Record<string, string> = {},
 ): Promise<{ exitCode: number; timedOut: boolean }> {
   if (injectedRunHarness) {
     return injectedRunHarness(
@@ -730,6 +762,11 @@ async function runHarnessPhase(
     ...(roundIdentity
       ? { MAISON_GOAL_RUN_ID: roundIdentity.runId, MAISON_GOAL_ATTEMPT: roundIdentity.attemptId }
       : {}),
+    // P0-3（device-readiness review 二轮）：**冻结的设备目标必须同时给外层 gate harness**。
+    // 此前只注入 agent 的 extraEnv，而 gate harness 从 `process.env` 构造环境——多设备
+    // 时它会退回 hdc 默认目标，于是"就绪门冻结了 A 机、UT/testing 却在 B 机上跑"。
+    // 这里显式透传，与 agent 侧同源。
+    ...deviceTargetEnv,
   };
   // S5（visual-capability-truth）：单写者标记——只有 runner 直接 spawn 的 gate harness
   // 可直写正式 vision 账本；agent 自跑 harness（无此标）只算不写/写 journal proposal。
@@ -2590,6 +2627,32 @@ export function capRunStatusForVisionTrust(
   return { status, capped: false };
 }
 
+/**
+ * openspec device-readiness-and-completion t2：**设备真实性封顶**（导出单测）。
+ *
+ * testing 在模拟器/未知目标上跑出的结果不足以证明真机行为——没有逐用例设备能力矩阵时，
+ * 让它产出完整 completion 就是假绿。故封顶 PARTIAL（诚实的完成度表达，仍保留全部证据）。
+ *
+ * 判据取自 **runner 侧可信 device session**，不看 agent summary 自报（自报即可绕过）。
+ * `unknown` 与 `emulator` 同等对待——"判不出"绝不等于"是真机"。
+ */
+export function capRunStatusForDeviceAuthenticity(
+  status: string,
+  opts: { testingRan: boolean; targetKind: DeviceTargetKind | null },
+): { status: string; capped: boolean; reason?: string } {
+  if (status !== 'CHAIN_SLICE_COMPLETED' || !opts.testingRan) return { status, capped: false };
+  // targetKind=null：testing 未经设备就绪门（profile 未声明需设备 / dry-run）——该链路
+  // 与设备无关，封顶无从谈起。**不得**把它当作 'unknown' 处理，否则所有非设备工程的
+  // 正常完成都会被误降为 PARTIAL。
+  if (opts.targetKind === null) return { status, capped: false };
+  if (opts.targetKind === 'physical') return { status, capped: false };
+  return {
+    status: 'PARTIAL',
+    capped: true,
+    reason: `testing_on_${opts.targetKind}_device`,
+  };
+}
+
 /** ut/testing 期 source drift 对账 + 授权分类（attestation 缺失=review 未闭环，归上游门禁管，此处不判）。 */
 export type MutablePhaseDriftDecision = DriftClassification & {
   /** plan e7c2a4d8 T3b/c：当前 drift 内容 fingerprint 与条目（裁决请求单/比对消费；
@@ -3622,6 +3685,80 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+
+    // openspec device-readiness-and-completion t5：outer_layers 声明与文件系统对账**前移**。
+    //
+    // 事故（07-28）：framework.config.json 声明的 03-CommonBusiness 目录不存在，但该校验
+    // 只在 testing 的 pre-invoke 跑，于是跑满 2.7 小时、烧完 spec/plan/coding/ut 才 HALT。
+    //
+    // 时点：run/manifest 已建（有可监控 run、能表达 --resume）→ **整个 run 的第一个 phase
+    // agent invocation 之前**。不是"testing 自己的 invoke 前"——那等于没前移。
+    // 条件：仅当链路含 testing（或确需 product snapshot）。无条件早检会让 spec-only /
+    // plan-only / ut-only 任务因一个**永不访问**的目录失败。
+    // 判据复用 computeProductSourceSnapshotDetail，与 testing pre-invoke 处**同源**，
+    // 避免早晚两套规则漂移；后者保留作纵深防御（防运行期目录被删）。
+    if (!dryRun && chain.includes('testing' as FeaturePhase)) {
+      const declaredLayers = productLayerDirsOf(projectRoot);
+      const earlySnap = computeProductSourceSnapshotDetail(projectRoot, declaredLayers, manifest.feature);
+      if (!isUsableSnapshot(earlySnap.sha256)) {
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'phase_halt',
+          phase: chain[0],
+          halt_reason: 'declared_product_layer_missing',
+          verdict: 'FAIL',
+          reason: earlySnap.failureReason ?? earlySnap.sha256,
+          declared_layers: declaredLayers,
+        });
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'run_end', status: 'HALTED', halt_reason: 'declared_product_layer_missing',
+        });
+        runConcluded = true;
+        console.error(
+          '\n===== declared_product_layer_missing =====\n' +
+            `${earlySnap.failureReason ?? earlySnap.sha256}\n` +
+            `framework.config.json 的 architecture.outer_layers 声明：${declaredLayers.join('、') || '(空)'}\n` +
+            '本链路含 testing，须对产品源码层做快照保护——声明的目录必须真实存在。\n' +
+            '处置：修正配置声明或补建目录后重跑（--resume 会重检）。\n',
+        );
+        return 1;
+      }
+    }
+
+    // R10：**启动期对账回收**——上一个 run 若被硬杀（SIGKILL/断电），它的清理代码没机会
+    // 执行，托管模拟器会成为孤儿。此处依 device-session.json 对账：四元组吻合才回收，
+    // 用户自开实例与 PID 重用一律拒绝（reclaimManagedDevice 内判）。`--resume` 同样经过。
+    if (!dryRun) {
+      // S10：扫 **feature 下所有 run 目录**——上一个被硬杀的 run 的 session 躺在它自己的
+      // 目录里，只看当前 report_dir 永远发现不了，于是每次崩溃留一个孤儿模拟器。
+      const goalRunsRel = path.dirname(manifest.report_dir);
+      for (const { session: stale, reportDirRel } of collectForeignManagedSessions(
+        projectRoot,
+        goalRunsRel,
+        manifest.run_id,
+      )) {
+        const out = reclaimManagedDevice(stale, defaultProcessProbe());
+        if (out.action === 'reclaimed') {
+          console.log(
+            `[device] 启动对账：回收了 run ${stale.started_by_run} 遗留的托管模拟器（pid=${out.pid}）`,
+          );
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'managed_device_reclaimed',
+            scope: 'startup_reconcile',
+            prior_run_id: stale.started_by_run,
+            pid: out.pid,
+          });
+          // 标记已释放，避免下次启动重复尝试
+          try {
+            writeDeviceSession(projectRoot, reportDirRel, {
+              serial: null, target_kind: 'unknown', started_by_run: null, status: 'released',
+            });
+          } catch { /* best-effort */ }
+        } else if (out.action === 'refused') {
+          console.warn(`[device] 启动对账未回收（run ${stale.started_by_run}）：${out.reason}`);
+        }
+      }
+    }
+
     // v23 F1：缺陷交接上下文——回退后注入下一次 coding prompt；进程重启从 events 恢复
     let backtrackCodingContext: ActionableDefect[] = [];
     // v23 F1：整轮集合指纹熔断——启动时从本 run 有效 events 初始化（进程重启后同集合
@@ -3729,6 +3866,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // receipt（action=vision_ledger_ack，绑 project/feature/run/两账本 hash）为强 ack；
     // 旗标为弱 ack：须 events anchor 比对可行且通过，且终态封顶 AWAITING_HUMAN_REVIEW。
     let visionAckWeak = false;
+    // openspec device-readiness-and-completion t2：最后一次 testing 经设备就绪门取得的目标类型。
+    // **null = 本 run 的 testing 未经设备门**（profile 未声明 device_capabilities / dry-run），
+    // 与 'unknown'（经过了门但判不出机型）**语义不同**：前者不参与封顶（该链路本就与设备无关），
+    // 后者按模拟器同等封顶。混淆二者会把所有非设备链路误降为 PARTIAL。
+    let lastTestingTargetKind: DeviceTargetKind | null = null;
+    /** R10：托管模拟器的信号清理反注册句柄（正常回收后摘除，防重复回收） */
+    let releaseManagedDeviceCleanup: (() => void) | null = null;
     const currentAuthSubsetSha256 = computeAuthSubsetSha256(manifest.pre_authorized_mutations);
     // 八/九轮 P1：runner 内存可信态——启动验真后 head 世代/migrations/**上次写入字节 digest**
     // 只活在进程内；后续写点以内存为权威，覆盖前既比对身份/MAC/世代（缺失/漂移 halt），
@@ -4824,6 +4968,131 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // openspec device-readiness-and-completion t3：设备就绪门。
+        // **必须排在 agent_invoke_start 之前**——未取得 READY 就不调 agent，agent 便
+        // 根本不进入"发现锁屏后自行处置"的场景（07-28 事故里它在该场景对用户真机
+        // 枚举了 10 组常见 PIN）。与 capability gate 是相邻的**独立**门：后者同步、
+        // 固定 capability FAIL；设备不可用应走 external_block defer 契约。
+        let deviceEnv: Record<string, string> = {};
+        // null = 本 phase 未经设备门（与 'unknown'=经过门但判不出机型 语义不同，见封顶函数）
+        let deviceKindThisPhase: DeviceTargetKind | null = null;
+        if (!dryRun && phaseRequiresDevice(phase, loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)))) {
+          // P1（三轮 review）：把**本 run 已托管的模拟器**交给 gate 复用。
+          // 不传的话，每个设备 phase 都会当作"从零开始"：真机若一直锁着，UT 起一个、
+          // testing 再起一个，后写的 session 覆盖前一个 → 旧进程再也回收不掉。
+          // `--resume` 走的也是这条路径（读的是本 run 自己的 report_dir）。
+          const priorSession = readDeviceSession(projectRoot, manifest.report_dir);
+          const reusableManaged =
+            priorSession?.managed &&
+            priorSession.started_by_run === manifest.run_id &&
+            priorSession.status !== 'released'
+              ? { serial: priorSession.serial, identity: priorSession.managed }
+              : null;
+          const decision = await (injectedDeviceGate ?? runDeviceReadinessGate)({
+            phase,
+            retries,
+            sessionId: invokeId,
+            input: { ...buildDeviceReadinessInput(projectRoot), existingManaged: reusableManaged },
+            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+          });
+          if (decision.outcome) {
+            // S10：BLOCKED 但已启动了托管模拟器 → **先落 session 再退出**，
+            // 否则那个进程没有任何回收凭证，会一直挂到用户手动关闭。
+            if (decision.managed) {
+              writeDeviceSession(projectRoot, manifest.report_dir, {
+                serial: decision.target?.serial || null,
+                target_kind: 'emulator',
+                started_by_run: manifest.run_id,
+                managed: decision.managed,
+                status: 'failed',
+                note: decision.outcome.halt_guidance,
+              });
+            }
+            halted = decision.outcome.halted;
+            outcomes.push(decision.outcome as GoalPhaseOutcome);
+            console.error(
+              `\n===== ${decision.outcome.halt_reason} =====\n${decision.outcome.halt_guidance ?? ''}\n` +
+                `${decision.notes.join('\n')}\n` +
+                '设备就绪后重跑/--resume 继续；框架不会替你解锁设备。\n',
+            );
+            break;
+          }
+          deviceEnv = decision.env ?? {};
+          deviceKindThisPhase = decision.target?.targetKind ?? 'unknown';
+          if (phase === ('testing' as FeaturePhase)) lastTestingTargetKind = deviceKindThisPhase;
+          // 托管实例落 session 供回收（崩溃残留由下次启动/--resume 对账，见 device-session.ts）
+          if (decision.managed && decision.target) {
+            // P1（三轮 review）：session 是**单文件**模型——写新记录就覆盖旧记录。
+            // 若旧记录指向另一个仍活着的实例，它的 pid 四元组会就此永久丢失
+            //（当前 run 被 collectForeignManagedSessions 排除，退出清理只读最新 session）。
+            // gate 在新建前已确认回收旧实例（reclaimManaged），此处再兜一道：
+            // 覆盖前若发现旧记录是**不同的** pid，先尝试回收并留痕。
+            const prior = reusableManaged;
+            if (prior && prior.identity.pid !== decision.managed.pid) {
+              const out = reclaimManagedDevice(
+                {
+                  schema_version: '1.0',
+                  serial: prior.serial,
+                  target_kind: 'emulator',
+                  started_by_run: manifest.run_id,
+                  managed: prior.identity,
+                  status: 'ready',
+                  updated_at: new Date().toISOString(),
+                },
+                defaultProcessProbe(),
+              );
+              // P1（四轮 review）：这道兜底**必须检查结果**，不能只记录。
+              // `reclaimed`（已终止）与 `none`（进程本就不在）都表示没有遗留；
+              // `refused` 说明那个进程还活着且不敢动——此时覆盖 session 就等于
+              // 永久丢失它的回收凭证（当前 run 被 collectForeignManagedSessions 排除），
+              // 只能 halt 求人。
+              if (out.action === 'refused') {
+                const detail =
+                  `[device] 拒绝覆盖 device-session：旧托管实例 pid=${prior.identity.pid} ` +
+                  `仍在运行且未能回收（${out.reason}）。覆盖会永久丢失它的回收凭证。\n` +
+                  '  请手动结束该进程后重跑；或用 --resume 继续（届时会重新对账）。';
+                console.error(`\n===== 设备会话冲突 =====\n${detail}\n`);
+                halted = true;
+                outcomes.push({
+                  phase,
+                  verdict: 'FAIL',
+                  halted: true,
+                  retries,
+                  halt_reason: 'managed_device_session_conflict',
+                  halt_guidance: detail,
+                  // 与设备阻断同一契约：可 defer，指引指向"处理环境"而非"改代码"
+                  blocking_class: 'externalBlocked',
+                  failure_kind: 'device_blocked',
+                } as GoalPhaseOutcome);
+                break;
+              }
+              console.log(
+                `[device] 覆盖 session 前处置旧托管实例 pid=${prior.identity.pid}：${out.action}`,
+              );
+            }
+            writeDeviceSession(projectRoot, manifest.report_dir, {
+              serial: decision.target.serial,
+              target_kind: decision.target.targetKind,
+              started_by_run: manifest.run_id,
+              managed: decision.managed,
+              status: 'ready',
+            });
+            // R10：注册信号/退出清理。只覆盖"进程还能执行代码"的退出路径；
+            // 硬杀（SIGKILL/断电）由下次启动的对账回收兜底（见 run 启动处）。
+            if (!releaseManagedDeviceCleanup) {
+              releaseManagedDeviceCleanup = registerManagedDeviceCleanup(() => {
+                const out = reclaimManagedDevice(
+                  readDeviceSession(projectRoot, manifest.report_dir),
+                  defaultProcessProbe(),
+                );
+                if (out.action === 'reclaimed') {
+                  console.log(`[device] 信号退出：已回收托管模拟器（pid=${out.pid}）`);
+                }
+              });
+            }
+          }
+        }
+
         // c4e8b1d3 G1-1（pre-coding 锚定）：**首次 coding agent invoke 前**记录当时 git
         // HEAD 为 coding_base_sha（write-once trust 文件；resume/backtrack 复用原 SHA，
         // 不得重新取 HEAD——那会把 agent 已 commit 的越界文件洗出 diff 基线）。
@@ -4924,14 +5193,74 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `[goal-runner] BUG: effectiveAgentTimeoutMs=${effectiveAgentTimeoutMs} 不得 ≤0 到达 adapter（zero-budget 应已在启动判据拦截）`,
           );
         }
-        const invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
+        // t4：完成观测探针。invoke **之前**建基线——只认本次调用内"不完整→完整"的跃迁，
+        // 否则 retry 遗留的上一轮 receipt 会被当作本轮完成。基线已完整时不做观测
+        // （该情形应由上层判为"无需再调 agent"，而不是启动后立刻杀）。
+        const completion = dryRun
+          ? null
+          : createCompletionProbe({ projectRoot, feature: manifest.feature, phase });
+        // R7 的处置（**与 review 建议部分分歧，已实证**）：
+        //
+        // review 要求"基线证据已完整时跳过本次 agent 调用"。实现后集成测试实锤：这会
+        // 破坏 **backtrack 语义**——回退到 coding 重跑时，上一轮的 receipt/summary 仍在
+        // 盘上，基线判"已完整"就直接跳过，于是 coding 只跑一次、crash/must_fix 修复指令
+        // 永远注入不进去（4 个既有用例同时红）。
+        //
+        // 根因是判据不足：`证据齐全` ≠ `本轮无需工作`。要安全地跳过，需要"证据确属本轮
+        // 需求与本轮回退上下文"的新鲜度判据，而不只是文件齐全。该判据设计留待下一轮
+        // （openspec tasks R7）。此处**只记事件不跳过**——保留一个已知的次优行为，
+        // 好过引入一个破坏回退闭环的行为。
+        //
+        // 注意：observer 在基线已完整时**恒不命中**（见 createCompletionProbe），所以
+        // 不会出现"启动后立刻被自己杀掉"的情形；这条路径的代价只是多烧一轮 agent。
+        // R7：证据齐全**且**通过新鲜度判据时才跳过 agent 调用。
+        // 只判"齐全"会破坏 backtrack——回退重跑时上一轮 receipt 仍在盘上，跳过会让
+        // coding 只跑一次、修复指令注入不进去（实证：4 个集成用例同时红）。
+        const skipDecision = completion
+          ? decideSkipAgentInvoke({
+              baselineComplete: completion.baselineComplete,
+              retries,
+              pendingHandoffCount: backtrackCodingContext.length,
+              evidenceRunId: completion.baselineRunId,
+              currentRunId: manifest.run_id,
+            })
+          : { skip: false, reason: 'dry-run' };
+        if (completion?.baselineComplete) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'completion_evidence_pre_existing',
+            phase,
+            invoke_id: invokeId,
+            action: skipDecision.skip ? 'skip_agent_invoke' : 'invoke_anyway',
+            reason: skipDecision.reason,
+          });
+          if (skipDecision.skip) {
+            console.log(`[goal-runner] ${phase}: ${skipDecision.reason} → 跳过本轮 agent 调用，直接跑 gate 复验。`);
+          }
+        }
+        const invoke = skipDecision.skip
+          ? ({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              command: '(skipped: completion evidence fresh)',
+              skipped: true,
+              duration_ms: 0,
+            } as Awaited<ReturnType<typeof invokeAgentHeadless>>)
+          : await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
+          // t4：确定性完成观测（与 settle/hard timeout/silent race）。判据注入自 runner，
+          // 通用进程层不依赖 receipt schema。
+          completionProbe: completion ? completion.probe : undefined,
+          deadlineMs: Date.now() + effectiveAgentTimeoutMs,
           // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
+          // t3（device-readiness）：设备目标经 extraEnv 注入子进程，**不写全局 process.env**
+          //（全局写会让多 phase/多 run 串 target——凭据/操作打到别人的手机上）
           extraEnv: {
             MAISON_GOAL_RUN_ID: manifest.run_id,
             MAISON_GOAL_ATTEMPT: visualAttemptId,
+            ...deviceEnv,
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
           toolEventCapture: cap.capability?.tool_event_provenance ?? 'none',
@@ -5432,6 +5761,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest,
           { runId: manifest.run_id, attemptId: visualAttemptId },
           availableForHarnessMs,
+          // P0-3：把本 attempt 冻结的设备目标一并给外层 gate harness——
+          // 否则多设备时它退回 hdc 默认目标，跑在与就绪门冻结的不同设备上。
+          deviceEnv,
         );
         const harnessExit = harnessRun.exitCode;
 
@@ -5587,7 +5919,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
           closureStatus: summary?.closure_status,
           receiptStatus: summary?.receipt_status,
           agentTimedOut: invoke.timed_out,
+          completionObserved: invoke.completion_observed,
         });
+        // openspec device-readiness-and-completion t2：testing 结论封顶。
+        // **由 runner 依可信 device session 派生，不看 agent summary 自报**——自报即可绕过。
+        // 没有逐用例能力矩阵时，模拟器/未知目标上的 testing 结果不足以证明真机行为，
+        // 让它整体 PASS 就是假绿；封顶为 PARTIAL（诚实的完成度表达）。ut 不封顶。
+        const testingCapped =
+          deviceKindThisPhase !== null &&
+          capsTestingConclusion(phase, deviceKindThisPhase) &&
+          resolved.verdict === 'PASS';
+        if (testingCapped) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'testing_conclusion_capped',
+            phase,
+            invoke_id: invokeId,
+            target_kind: deviceKindThisPhase,
+            reason: '模拟器/未知目标上的 testing 不得冒充真机通过（无逐用例能力矩阵时保守封顶）',
+          });
+          console.warn(
+            `[device] testing 在 target_kind=${deviceKindThisPhase} 上执行——结论封顶为 PARTIAL，` +
+              '不得宣称真机测试完成（接真机后重跑可解除）。',
+          );
+        }
         const verdict = resolved.verdict;
         const meta = extractBlockingMeta(summary);
         // P0-D：API 断流哨兵（adapter 感知信封锚定）。B/D 并存取 agent_timeout 优先
@@ -6198,6 +6552,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           harness_exit: harnessExit,
           stale_summary: resolved.stale_summary,
           agent_failed: resolved.agent_failed,
+          // t4：完成观测收口——与 timed_out/agent_failed **互斥的独立原因码**。
+          // 归错类会让上层按失败路径重试一个证据已完整的阶段（正是 07-28 事故的放大链）。
+          completion_observed: invoke.completion_observed,
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
           // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案
@@ -6795,7 +7152,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
         `配置 ${VISION_CHECKPOINT_HMAC_ENV} 获得 authenticated checkpoint / 提供受信 ack receipt 后方可 clean completion`,
       );
     }
-    const status = visionCap.status as ReturnType<typeof resolveGoalRunStatus>;
+    // openspec device-readiness-and-completion t2：设备真实性封顶（在 vision 封顶之后叠加）。
+    // 只有 testing 真的跑过才判——纯 spec/plan/coding/ut 链路与设备无关，不受影响。
+    const testingRan = outcomes.some(o => o.phase === 'testing');
+    const deviceCap = capRunStatusForDeviceAuthenticity(visionCap.status, {
+      testingRan,
+      targetKind: lastTestingTargetKind,
+    });
+    if (deviceCap.capped) {
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'device_authenticity_completion_cap',
+        from: visionCap.status,
+        to: deviceCap.status,
+        reason: deviceCap.reason,
+        target_kind: lastTestingTargetKind,
+      });
+      console.warn(
+        `[device] 设备真实性封顶：${visionCap.status} → ${deviceCap.status}（${deviceCap.reason}）——` +
+          'testing 未在已确认的真机上执行，不得宣称完整通过；接真机后重跑可解除。',
+      );
+    }
+    const status = deviceCap.status as ReturnType<typeof resolveGoalRunStatus>;
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
     writeGoalReport(projectRoot, manifest.report_dir, report, {
       workflowChain: fullWorkflowChain.map(String),
@@ -6894,6 +7271,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const gc = deleteRunTrustState({ projectRoot, feature: manifest.feature, runId: manifest.run_id });
       if (gc.diagnostics.length > 0) console.warn(`[trust-gc] 封卷回收诊断：${gc.diagnostics.join('；')}`);
       if (gc.deleted.length > 0) console.log(`[trust-gc] 封卷回收：${gc.deleted.join('、')}`);
+    }
+
+    // openspec device-readiness-and-completion t2：托管模拟器回收（**任何终态**都回收——
+    // 不像 trust 状态只在封卷回收：模拟器是本 run 借用的机器资源，HALTED 也该还）。
+    // 只回收本 run 启动的实例；用户自开实例、PID 重用、exe 不符一律拒绝（见
+    // reclaimManagedDevice 的四元组校验）。崩溃路径回收不了——那由下次启动对账兜底。
+    if (!dryRun) {
+      // 正常终态回收：先摘信号钩子，避免 exit handler 再回收一次
+      releaseManagedDeviceCleanup?.();
+      releaseManagedDeviceCleanup = null;
+      const outcome = reclaimManagedDevice(
+        readDeviceSession(projectRoot, manifest.report_dir),
+        defaultProcessProbe(),
+      );
+      if (outcome.action === 'reclaimed') {
+        console.log(`[device] 已回收本 run 托管的模拟器（pid=${outcome.pid}）`);
+        writeDeviceSession(projectRoot, manifest.report_dir, {
+          serial: null, target_kind: 'unknown', started_by_run: null, status: 'released',
+        });
+      } else if (outcome.action === 'refused') {
+        console.warn(`[device] 托管实例未回收：${outcome.reason}`);
+      }
     }
 
     emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);

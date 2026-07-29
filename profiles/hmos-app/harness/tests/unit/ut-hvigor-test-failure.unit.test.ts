@@ -6,6 +6,7 @@ import {
 } from '../../ut-hvigor-test-failure';
 import type { HvigorRunResult, OnDeviceFailureEvidence } from '../../hvigor-runner';
 import { buildSummaryBlockers } from '../../../../../harness/scripts/utils/summary-blockers';
+import { classifyFailureKind } from '../../../../../harness/scripts/utils/goal-failure-classifier';
 import { extractPriorFailureContext } from '../../../../../harness/scripts/goal-runner';
 import type { CheckResult } from '../../../../../harness/scripts/utils/types';
 
@@ -72,6 +73,15 @@ function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): 
     prior: extractPriorFailureContext({ verdict: 'FAIL', blockers } as any),
     excerpt: blockers[0]?.details_excerpt ?? '',
   };
+}
+
+/** t1：与上方 priorContext 同款的 blockers 构造（buildSummaryBlockers 需三参） */
+function summaryBlockersOf(check: CheckResult): ReturnType<typeof buildSummaryBlockers> {
+  return buildSummaryBlockers(
+    [check],
+    (text, max) => (text.length > max ? text.slice(0, max) : text),
+    () => undefined,
+  );
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -333,6 +343,109 @@ const cases: Array<{ name: string; run: () => void }> = [
       ]);
       assertEq(withCodeFailure.blockingClass, undefined, '真实 no_pass 共存时不得被环境类掩盖');
       assertEq(withCodeFailure.failureKind, undefined, '混合失败无顶层 kind');
+    },
+  },
+  {
+    // t1（openspec device-readiness-and-completion）：07-28 事故——运行期锁屏走
+    // classifyFailure 默认分支（toolchain:false 无任何 class），到 goal 侧兜底成
+    // code_regression（须改码、可重试），锁屏被当代码问题反复重试放大事故。
+    name: 'device_locked（运行期锁屏）：接既有 externalBlocked/device_blocked，不落 code_regression；混合不整体 defer',
+    run: () => {
+      const lockedRunResult = () =>
+        result(
+          {
+            failedAt: 'run',
+            runDiagnosis: {
+              kind: 'device_locked',
+              summary: '设备已连接，但 aa test 启动测试 Ability 时发现屏幕锁定，无法自动解锁。',
+              suggestion: '请手动解锁真机并保持在桌面/前台后重跑 UT harness。',
+            },
+          },
+          {
+            executed: true,
+            exitCode: 1,
+            errors: [{ message: '失败阶段：device_locked；设备已连接，但 aa test 启动测试 Ability 时发现屏幕锁定' }],
+          },
+        );
+
+      // ① 单模块锁屏 → 既有设备阻断契约（复用，不新建第三套分类）
+      const locked = buildUtHvigorTestFailDetails([{ module: 'Biz', result: lockedRunResult() }]);
+      assertEq(locked.blockingClass, 'externalBlocked', '锁屏须复用既有 externalBlocked');
+      assertEq(locked.failureKind, 'device_blocked', '锁屏须复用既有 device_blocked');
+      assert(locked.suggestion.includes('请人解锁真机'), `指引主语须是人：${locked.suggestion}`);
+      assert(!locked.suggestion.includes('修改 UT'), `锁屏不得引向改码：${locked.suggestion}`);
+      // 精确原因只留 details（summary.schema.json 为 additionalProperties:false，不扩协议面）
+      assert(locked.lines.join('\n').includes('屏幕锁定'), '精确原因须保留在 details 供人读');
+
+      // ② 全员锁屏（多模块）→ 仍可 defer
+      const allLocked = buildUtHvigorTestFailDetails([
+        { module: 'A', result: lockedRunResult() },
+        { module: 'B', result: lockedRunResult() },
+      ]);
+      assertEq(allLocked.blockingClass, 'externalBlocked', '全员锁屏仍归设备阻断');
+      assertEq(allLocked.failureKind, 'device_blocked', '全员锁屏保留可 defer 元数据');
+
+      // ③ 混合：A 锁屏 + B 用例真实失败 → **不得整体 defer**（设备问题不得掩盖代码问题）
+      const realFailure = result(
+        { failedAt: 'no_pass' },
+        {
+          executed: true,
+          exitCode: 1,
+          testResult: { total: 2, passed: 1, failed: 1, skipped: 0, failures: [] },
+        },
+      );
+      const mixedLock = buildUtHvigorTestFailDetails([
+        { module: 'Locked', result: lockedRunResult() },
+        { module: 'RealFail', result: realFailure },
+      ]);
+      assertEq(mixedLock.blockingClass, undefined, '混合场景不得整体 defer');
+      assertEq(mixedLock.failureKind, undefined, '混合场景无顶层 kind');
+      assert(
+        mixedLock.suggestion.includes('多模块失败性质不同'),
+        `混合须提示性质不同：${mixedLock.suggestion}`,
+      );
+
+      // ④ 结构化判定：只认 runDiagnosis.kind，不做 stageHint 散文子串匹配
+      //    （散文里出现 device_locked 字样但诊断不是设备阻断 → 不得误判为可 defer）
+      const proseOnly = result(
+        { failedAt: 'no_pass' },
+        {
+          executed: true,
+          exitCode: 1,
+          testResult: { total: 1, passed: 0, failed: 1, skipped: 0, failures: [] },
+          errors: [{ message: '用例断言失败：期望 device_locked 分支返回 false' }],
+        },
+      );
+      const proseResult = buildUtHvigorTestFailDetails([{ module: 'Prose', result: proseOnly }]);
+      assertEq(proseResult.blockingClass, undefined, '散文含 device_locked 字样不得误判为设备阻断');
+      assertEq(proseResult.failureKind, undefined, '散文子串不得产出 device_blocked');
+
+      // ⑤ 端到端：externalBlocked/device_blocked → goal 侧归 external_block（非 code_regression）
+      const lockedCheck: CheckResult = {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: 'UT 真机执行',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: locked.lines.join('\n'),
+        failure_kind: locked.failureKind,
+        blocking_class: locked.blockingClass,
+        suggestion: locked.suggestion,
+      };
+      const goalKind = classifyFailureKind({
+        blocking_class: lockedCheck.blocking_class,
+        failure_kind: lockedCheck.failure_kind,
+        blockers: summaryBlockersOf(lockedCheck),
+      });
+      assertEq(goalKind, 'external_block', 'goal 侧须归 external_block（不得落 code_regression）');
+
+      // ⑥ 反向：混合场景在 goal 侧不得被误判成可 defer
+      const mixedGoalKind = classifyFailureKind({
+        blocking_class: mixedLock.blockingClass,
+        failure_kind: mixedLock.failureKind,
+        blockers: summaryBlockersOf({ ...lockedCheck, blocking_class: undefined, failure_kind: undefined }),
+      });
+      assert(mixedGoalKind !== 'external_block', `混合场景不得整体 defer：${mixedGoalKind}`);
     },
   },
   {

@@ -10,7 +10,12 @@ export const HMOS_DEVICE_TUNING_KEYS = [
   'testRunner',
 ] as const;
 
-export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'toolchain', 'vision']);
+export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'toolchain', 'vision', 'device']);
+
+/** device 策略顶层允许键（openspec device-readiness-and-completion） */
+export const LOCAL_DEVICE_KEYS = new Set(['unlock', 'emulator_fallback', 'target_serial', 'emulator_profile']);
+/** device.unlock 允许键——**只放 opaque credential_ref，绝不放明文口令** */
+export const LOCAL_DEVICE_UNLOCK_KEYS = new Set(['mode', 'credential_ref']);
 
 /** E1（多模态降级阶梯 plan d4a8f3c6）：framework.local.json.vision 顶层允许键。 */
 export const LOCAL_VISION_KEYS = new Set(['image_input_override', 'canary']);

@@ -26,6 +26,7 @@ import { spawnSync } from 'child_process';
 import {
   __testing_resetGoalRunnerSeams,
   __testing_setInvokeAgent,
+  __testing_setDeviceReadinessGate,
   __testing_setRepoLayout,
   __testing_setRunHarnessPhase,
   __testing_setValidateReceipt,
@@ -197,6 +198,8 @@ interface AgentCtx {
 interface RunProbe {
   invokedPhases: string[];
   harnessPhases: string[];
+  /** device-readiness t3：就绪门被调用的 phase 序列 */
+  deviceGatePhases: string[];
   codingPrompts: string[];
   exitCode: number;
   root: string;
@@ -220,10 +223,14 @@ async function runChain(
     supersede?: string[];
     /** b7e4d2a9 Todo2：设 HMAC 密钥跑（vision checkpoint 认证 → clean run 可达 CHAIN_SLICE_COMPLETED） */
     hmacKey?: string;
+    /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
+    deviceGate?: unknown;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
   const harnessPhases: string[] = [];
+  /** device-readiness t3：就绪门实际被调用的 phase 序列（断言"只在需设备 phase 执行"） */
+  const deviceGatePhases: string[] = [];
   const codingPrompts: string[] = [];
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
@@ -256,6 +263,20 @@ async function runChain(
       return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
     }) as never);
     __testing_setRepoLayout(layoutFieldsForTmpHost(root));
+    // openspec device-readiness-and-completion t3：临时宿主无真实设备，真实就绪门会
+    // 判 BLOCKED 并把所有 ut/testing 链路降级。默认注入 READY(physical) 保持既有用例
+    // 语义不变；需要验证门本身行为的用例可在 opts 里覆盖（见 deviceGate 参数）。
+    __testing_setDeviceReadinessGate(
+      (opts.deviceGate ??
+        ((gateOpts: { phase: string }) => {
+          deviceGatePhases.push(String(gateOpts.phase));
+          return {
+            env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+            target: { serial: 'fake-device', targetKind: 'physical' as const },
+            notes: ['test seam'],
+          };
+        })) as never,
+    );
     __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string) => ({
       status: 'passed' as const,
       receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
@@ -342,9 +363,22 @@ async function runChain(
     const runs = fs.existsSync(runsDir)
       ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.'))
       : [];
-    const reportDir = runs.length > 0 ? path.join(runsDir, runs.sort().slice(-1)[0]) : '';
+    // R18：**不得按字典序取"最后一个 run"**。run id = `<ISO 秒级时间戳>-<随机后缀>`，
+    // 同一秒内创建的两个 run 时间戳相同、只有随机后缀不同，字典序因此与创建序无关
+    // （约 50% 概率取到前一个 run 的目录，读到它的 events → supersede 用例随机红）。
+    // 改按目录 mtime 取最新。
+    const reportDir =
+      runs.length > 0
+        ? path.join(
+            runsDir,
+            runs
+              .map(n => ({ n, t: fs.statSync(path.join(runsDir, n)).mtimeMs }))
+              .sort((a, b) => a.t - b.t)
+              .slice(-1)[0].n,
+          )
+        : '';
     return {
-      invokedPhases, harnessPhases, codingPrompts, exitCode, root, reportDir,
+      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, exitCode, root, reportDir,
       events: readEvents(reportDir),
     };
   } finally {
@@ -504,7 +538,11 @@ test('b7e4d2a9 Todo2：--supersede 指向当前 run → BLOCKER（不删自身�
   // 他指：新 run B --supersede runA → 审计事件先落、runA 场外状态被回收
   const probeB = await runChain(root, { supersede: [runA], onTesting: ({ root: r }) => writeCleanTesting(r) });
   const supEv = probeB.events.find(e => e.type === 'supersede') as { target_run_id?: string } | undefined;
-  assert(!!supEv && supEv.target_run_id === runA, `run B 须落 supersede 审计事件：${JSON.stringify(supEv)}`);
+  assert(
+    !!supEv && supEv.target_run_id === runA,
+    `run B 须落 supersede 审计事件：${JSON.stringify(supEv)}；` +
+      `run B 事件序列=${JSON.stringify(probeB.events.map(e => e.type))}；exit=${probeB.exitCode}`,
+  );
   assert(!aStateExists(), 'supersede 后目标 run 场外状态须被回收');
 });
 
@@ -910,6 +948,129 @@ test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断'
     (e as { halt_reason?: string }).halt_reason === 'backtrack_fingerprint_repeat').length;
   assert(repeatHalts2 === repeatHalts1 + 1,
     `resume 后须**新增一条** repeat 熔断（${repeatHalts1} → ${repeatHalts2}）——从事件 round_fingerprint 恢复生效的直接证据`);
+});
+
+// ---------------------------------------------------------------------------
+// openspec device-readiness-and-completion t3：设备就绪门的集成契约
+// ---------------------------------------------------------------------------
+
+test('t3 就绪门：只在需设备 phase 执行；BLOCKED 时不产生 agent_invoke_start 且走 external_block', async () => {
+  const { root } = setupHost();
+  const gateCalls: string[] = [];
+  const probe = await runChain(root, {
+    deviceGate: (opts: {
+      phase: string;
+      retries: number;
+      emitEvent: (e: Record<string, unknown>) => void;
+    }) => {
+      gateCalls.push(opts.phase);
+      // 注入缝替换的是**整个** gate，事件发射也在其内——桩须自行发，否则事件面失真
+      opts.emitEvent({
+        type: 'phase_halt',
+        phase: opts.phase,
+        halt_reason: 'device_not_ready',
+        verdict: 'FAIL',
+        reason: '测试注入：设备不可用',
+      });
+      return {
+        outcome: {
+          phase: opts.phase,
+          verdict: 'FAIL' as const,
+          halted: false,
+          retries: opts.retries,
+          halt_reason: 'device_not_ready',
+          halt_guidance: '设备锁屏且未授权自动解锁',
+          blocking_class: 'externalBlocked',
+          failure_kind: 'device_blocked',
+        },
+        notes: ['测试注入：设备不可用'],
+      };
+    },
+  });
+
+  // ① 门只在 profile 声明需设备的 phase 执行（hmos-app：ut/testing；spec/plan/coding 不碰设备）
+  assert(gateCalls.length > 0, '需设备 phase 必须过门');
+  assert(
+    gateCalls.every(p => p === 'ut' || p === 'testing'),
+    `门不得在非设备 phase 执行，实得 [${gateCalls.join(',')}]`,
+  );
+  assert(
+    !gateCalls.includes('spec') && !gateCalls.includes('plan') && !gateCalls.includes('coding'),
+    'spec/plan/coding 不得触发设备探测（否则每 attempt 都去动用户手机）',
+  );
+
+  // ② **核心契约**：未 READY → 该 phase 无 agent_invoke_start（agent 根本不进入锁屏自处置场景）
+  const utInvokeStarts = probe.events.filter(
+    e => e.type === 'agent_invoke_start' && (e as { phase?: string }).phase === 'ut',
+  );
+  assert(
+    utInvokeStarts.length === 0,
+    `设备未就绪时 ut 不得产生 agent_invoke_start，实得 ${utInvokeStarts.length} 条`,
+  );
+  assert(!probe.invokedPhases.includes('ut'), `agent 不得被调用，实得 [${probe.invokedPhases.join(',')}]`);
+
+  // ③ 走 external_block 契约（可 defer、指引修环境），不是 capability FAIL
+  const halts = probe.events.filter(e => e.type === 'phase_halt');
+  const deviceHalt = halts.find(e => (e as { halt_reason?: string }).halt_reason === 'device_not_ready');
+  assert(!!deviceHalt, `须落 device_not_ready 事件，实得 ${JSON.stringify(halts.map(h => h.halt_reason))}`);
+  assert(
+    !halts.some(e => (e as { halt_reason?: string }).halt_reason === 'await_human_capability_gap'),
+    '设备不可用不得冒充静态 capability 缺口',
+  );
+});
+
+test('t5 outer_layers 前移：缺目录在**第一个 phase invoke 之前**即 HALTED；spec-only 链路不受影响', async () => {
+  const { root } = setupHost();
+  // 声明一个不存在的产品层（复刻 07-28 事故的 03-CommonBusiness）
+  const cfgPath = path.join(root, 'framework.config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) as {
+    architecture: { outer_layers: Array<{ id: string; can_depend_on: string[]; intra_layer_deps: string }> };
+  };
+  cfg.architecture.outer_layers.push({ id: '03-CommonBusiness', can_depend_on: [], intra_layer_deps: 'dag' });
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf-8');
+  clearFrameworkConfigCache();
+
+  const probe = await runChain(root);
+
+  // ① 一个 agent 都没跑（事故里是跑满 2.7 小时才发现）
+  assert(
+    probe.invokedPhases.length === 0,
+    `缺目录须在首个 invoke 前 HALT，实得已跑 [${probe.invokedPhases.join(',')}]`,
+  );
+  const invokeStarts = probe.events.filter(e => e.type === 'agent_invoke_start');
+  assert(invokeStarts.length === 0, `不得产生任何 agent_invoke_start，实得 ${invokeStarts.length} 条`);
+
+  // ② 有可监控的 run 与明确的终态（不是建 run 前裸退——那样无从 resume）
+  const halt = probe.events.find(
+    e => e.type === 'phase_halt' && (e as { halt_reason?: string }).halt_reason === 'declared_product_layer_missing',
+  );
+  assert(!!halt, `须落 declared_product_layer_missing，实得 ${JSON.stringify(probe.events.map(e => e.type))}`);
+  assert(
+    String((halt as { reason?: string }).reason).includes('03-CommonBusiness'),
+    `原因须指名缺失目录：${JSON.stringify(halt)}`,
+  );
+  const runEnd = probe.events.find(e => e.type === 'run_end');
+  assert(
+    (runEnd as { status?: string } | undefined)?.status === 'HALTED',
+    `run_end 须为 HALTED，实得 ${JSON.stringify(runEnd)}`,
+  );
+  assert(probe.exitCode === 1, `退出码须为 1，实得 ${probe.exitCode}`);
+});
+
+test('t3 就绪门：READY(physical) 正常放行且 testing 结论不被封顶', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    hmacKey: 'test-hmac-secret',
+    onTesting: ({ root: r }) => {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pass', mustFix: [] }]);
+    },
+  });
+  // 默认注入 READY(physical) → 门放行、agent 正常被调用
+  assert(probe.deviceGatePhases.includes('ut'), 'ut 须过门');
+  assert(probe.invokedPhases.includes('ut'), 'READY 后 agent 须被调用');
+  // physical 目标 → 不触发设备真实性封顶
+  const caps = probe.events.filter(e => e.type === 'device_authenticity_completion_cap');
+  assert(caps.length === 0, `physical 目标不得被封顶，实得 ${JSON.stringify(caps)}`);
 });
 
 // ---------------------------------------------------------------------------

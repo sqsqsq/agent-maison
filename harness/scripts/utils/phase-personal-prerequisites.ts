@@ -12,7 +12,7 @@ import type { FeaturePhase } from './phase-transition-policy';
 export type { PersonalPrerequisiteId } from './personal-prerequisite-registry';
 
 /** 框架级 phase → 候选 capability（profile yaml 不承载此映射） */
-const PHASE_CAPABILITY_MAP: Partial<Record<FeaturePhase, CapabilityKey[]>> = {
+export const PHASE_CAPABILITY_MAP: Partial<Record<FeaturePhase, CapabilityKey[]>> = {
   coding: ['coding.compile'],
   ut: ['ut.compile', 'ut.run'],
   testing: ['device_test.build', 'device_test.install', 'device_test.run'],

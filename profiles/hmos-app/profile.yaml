@@ -30,6 +30,16 @@ capabilities:
   coding.visual_parity: { provider: script_visual_parity, severity: MAJOR }
   device_test.visual_diff: { provider: hylyre_visual_diff, severity: MAJOR }
 
+# openspec device-readiness-and-completion t3：声明哪些 capability 必须有真实设备/模拟器。
+# 设备就绪门只在命中这些 capability 的 phase 执行——不硬编码 phase，未来 host-only UT
+# profile（纯 JVM/Node 跑单测）只需不列 ut.run 即可，无需改框架。
+# 未声明该键的 profile（如 generic）天然不触发就绪门，行为与本改动前一致。
+device_capabilities:
+  - ut.run
+  - device_test.build
+  - device_test.install
+  - device_test.run
+
 personal_prerequisites:
   coding.compile: [deveco_toolchain]
   ut.compile: [deveco_toolchain]

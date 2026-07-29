@@ -981,6 +981,18 @@ export function parseInstalledBundleVersionFromDump(output: string): InstalledBu
 export function diagnoseHdcInstallFailure(output: string, exitCode: number): HdcFailureDiagnosis {
   const lower = output.toLowerCase();
 
+  // S9：**锁屏必须先判**——此前 install 诊断器从不产出 device_locked，于是 install 路径上
+  // 的锁屏恢复分支实际不可达（锁屏被归入泛化的 install_failed，指引指向"检查签名/包名"）。
+  // 与 aa test 侧同一组信号，保持两条路径判据一致。
+  if (/screen is locked|unlock screen failed|device screen is locked|need.*unlock|Error Code:\s*10106102/i.test(output)) {
+    return {
+      kind: 'device_locked',
+      summary: '设备已连接，但 hdc install 期间屏幕处于锁定状态。',
+      suggestion:
+        '请人解锁真机并保持在桌面/前台后重跑；这是环境问题，不要改动代码或签名配置。',
+    };
+  }
+
   const downgradeHints =
     /versioncode|version\s*code|downgrade|lower\s+version|older\s+version|版本.*低|降级|无法降级|code\s*962|code\s*956/i.test(
       output,
@@ -1211,6 +1223,18 @@ function ensureHdcLogReportDir(
   return dir;
 }
 
+/**
+ * 运行期锁屏恢复（t6）——统一走 device-recovery-bridge，与就绪门同一套授权语义。
+ * projectRoot 缺失或未登记凭据 → 零输入，只回一句人读指引。
+ */
+function recoverFromRuntimeLock(opts: OnDeviceUtOptions): { recovered: boolean; note: string } {
+  const projectRoot = opts.projectRoot;
+  if (!projectRoot) return { recovered: false, note: '无 projectRoot，跳过运行期恢复' };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const bridge = require('./device-recovery-bridge') as typeof import('./device-recovery-bridge');
+  return bridge.recoverAfterLockFailure(projectRoot);
+}
+
 export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   const t0 = Date.now();
   const errors: Array<{ message: string }> = [];
@@ -1294,7 +1318,48 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   }
 
   // 4) install
-  const install = installHap(hap);
+  // P1（三轮 review）：UT 侧此前**完全没有操作前检查**，只有失败后补救。
+  // 与其它三个边界拉齐：确认为外部阻断时一次 hdc install 都不发。
+  if (opts.projectRoot) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const bridge = require('./device-recovery-bridge') as typeof import('./device-recovery-bridge');
+    const preReady = bridge.ensureReadyBefore(opts.projectRoot);
+    append(`[device-ready/ut-install] ${preReady.note}`);
+    if (preReady.blocked) {
+      const msg =
+        `设备锁屏且未能自动解锁——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
+        '修复建议：请人工解锁设备后重跑；框架不会尝试任何口令。';
+      return finalize({
+        executed: false,
+        failedAt: 'install',
+        unsignedPresent,
+        metadata,
+        install: {
+          ok: false,
+          exitCode: -1,
+          durationMs: 0,
+          output: msg,
+          diagnosis: {
+            kind: 'device_locked',
+            summary: `设备锁屏且未能自动解锁——已在 UT 装机前阻断。${preReady.note}`,
+            suggestion: '请人工解锁设备后重跑；框架不会尝试任何口令。',
+          },
+        },
+        logExcerpt: `${logChunks.join('\n')}\n[device] BLOCKED: ${msg}`,
+        errors: [{ message: msg }],
+        durationMs: Date.now() - t0,
+      }, opts);
+    }
+  }
+
+  // R13：install 同样是设备操作边界——手机可能在装机前刚锁屏。与 aa test 同款语义：
+  // 只在锁屏诊断命中时恢复一次，恢复失败就如实失败（不重试、不切目标）。
+  let install = installHap(hap);
+  if (!install.ok && install.diagnosis?.kind === 'device_locked') {
+    const rec = recoverFromRuntimeLock(opts);
+    append(`[device-recovery/install] ${rec.note}`);
+    if (rec.recovered) install = installHap(hap);
+  }
   append(install.output);
   if (!install.ok) {
     const diagnosis = install.diagnosis;
@@ -1318,7 +1383,16 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   }
 
   // 5) aa test
-  const aa = runAaTest(metadata);
+  // openspec device-readiness-and-completion t6：**运行期再次锁屏的一次有界恢复**。
+  // 用户场景是"鸿蒙无法常亮 + 长时间无人值守"——invoke 前就绪门放行，跑到这里手机
+  // 已自动锁屏。锁屏信号恰恰只在这一步才暴露（aa test 启动 Ability 失败）。
+  // 授权边界与门完全一致：只用登记凭据、同 serial、失败即机器级锁死；未登记则零输入。
+  let aa = runAaTest(metadata);
+  if (!aa.ok && aa.diagnosis?.kind === 'device_locked') {
+    const rec = recoverFromRuntimeLock(opts);
+    append(`[device-recovery] ${rec.note}`);
+    if (rec.recovered) aa = runAaTest(metadata); // 同 serial 重试原操作**一次**
+  }
   append(aa.output);
   if (!aa.ok) {
     const ec = aa.exitCode;

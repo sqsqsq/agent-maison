@@ -40,6 +40,13 @@ export interface PhaseVerdictResolveInput {
   closureStatus?: string;
   receiptStatus?: string;
   agentTimedOut?: boolean;
+  /**
+   * t4（openspec device-readiness-and-completion）：本次 invocation 因**完成证据确定性
+   * 成立**而由框架主动收口。收口走 tree-kill，必然产生非零退出码——若不在此排除，
+   * `agent_failed` 会为真，上层就会按失败路径重试一个证据已完整的阶段（正是 07-28
+   * 事故的放大链）。收口不是失败，故显式排除。
+   */
+  completionObserved?: boolean;
 }
 
 export interface PhaseVerdictResolveResult {
@@ -143,7 +150,9 @@ export function resolveClosureAdvanceBlock(input: {
  */
 export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): PhaseVerdictResolveResult {
   const fresh = isSummaryFresh(input.summaryBeforeMtime, input.summaryAfterMtime);
-  const agentFailed = !input.agentSkipped && input.agentExitCode !== 0;
+  // t4：完成观测收口的非零退出码由**框架自己的 tree-kill** 造成，不是 agent 失败
+  const agentFailed =
+    !input.agentSkipped && input.agentExitCode !== 0 && input.completionObserved !== true;
 
   if (input.dryRun) {
     const verdict = (input.summaryVerdict ?? 'PASS') as HarnessVerdict;

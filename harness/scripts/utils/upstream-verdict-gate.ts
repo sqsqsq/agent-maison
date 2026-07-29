@@ -100,7 +100,11 @@ export function evaluateUpstreamViews(views: UpstreamPhaseView[]): UpstreamViola
           `上游机器裁决 verdict=${v.verdict}（非 PASS 不得下游推进）` +
           (v.environmentFailureCode
             ? `——failure_layer=environment（${v.environmentFailureCode}）：这是环境失败非代码回归，` +
-              `修复环境（如解锁真机保持前台）后重跑 ${v.phase} harness 即可解除，勿改产品代码`
+              // t1（openspec device-readiness-and-completion）：措辞须明确主语是**人**——
+              // 原文"解锁真机"被 agent 读作自我指令，07-28 事故中 agent 据此对用户真机
+              // 枚举 10 组常见 PIN 致设备锁定。指引只描述人的动作，不给 agent 留自解锁暗示。
+              `请人修复环境（如请人解锁真机并保持前台）后重跑 ${v.phase} harness 即可解除；` +
+              `勿改产品代码，也不要尝试自行解锁设备`
             : ''),
       });
       continue;
