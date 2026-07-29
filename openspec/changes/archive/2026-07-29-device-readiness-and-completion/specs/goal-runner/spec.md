@@ -72,8 +72,6 @@ validator 遇半写入/解析错误 MUST 视为本轮未完成并在下轮重试
 - **WHEN** chain 为 spec-only / plan-only / ut-only
 - **THEN** 不执行该早检，不因永不访问的目录失败
 
-## MODIFIED Requirements
-
 ### Requirement: Device-blocked failures reuse external_block classification
 
 设备环境阻断（含锁屏）MUST 归入既有 `FailureKind` `external_block`，MUST NOT 落入 `code_regression`，MUST NOT 触发内容修复 retry。MUST NOT 为此新建平行分类体系。

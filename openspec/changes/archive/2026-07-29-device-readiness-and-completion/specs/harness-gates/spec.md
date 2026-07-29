@@ -1,6 +1,6 @@
 # Delta: Harness Gates — 设备阻断产出与模拟器结论封顶
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Screen-locked device produces the existing external-block contract
 
