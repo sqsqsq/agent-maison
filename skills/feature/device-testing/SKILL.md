@@ -111,7 +111,7 @@ Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`�
 7. 测试计划与测试报告是独立文档，分别在不同时间点产出。
 8. 中文输出；P0 优先，资源有限时优先覆盖 P0 AC。
 9. Harness 验证闭环：agent 必须自跑 Step 7 + 主动触发 verifier；确保零 BLOCKER+verifier PASS+完成回执通过后才认为阶段完成。
-10. 不修改源码：**整个 testing 阶段**（生成文档、真机执行、视觉回环、重试轮，全程）不得修改任何业务代码、UT 代码、需求 SSOT（acceptance/ui-spec/contracts/spec/plan/use-cases）或根构建配置。runner 对 invoke 前后做快照比对，任何写入=run 终止态（证据作废、gate 不跑、--resume 拒绝）。修码诉求一律写进 must_fix 由回退后的 coding 实施。
+10. 不修改源码：**整个 testing 阶段**（生成文档、真机执行、视觉回环、重试轮，全程）不得修改任何业务代码、UT 代码、需求 SSOT（acceptance/ui-spec/contracts/spec/plan/use-cases）或根构建配置。runner 对 invoke 前后做快照比对，手工写入=run 终止态（证据作废、gate 不跑、--resume 拒绝）。**framework harness 触发的构建生成物例外**：`device_test.build` 重写的模块根 `BuildProfile.ets` 由 runner 自动分类为合法副作用（不算违规）——放心跑 harness 自检。**禁止在自己的命令里临时覆盖 `HARNESS_DEVICE_TEST_PRODUCT` / `HARNESS_DEVICE_TEST_BUILD_MODE`**：runner 已按 attempt 冻结这两个值并注入环境，覆盖会让生成物与冻结配置不符、被判违规。修码诉求一律写进 must_fix 由回退后的 coding 实施。
 
 ## 关联文件
 

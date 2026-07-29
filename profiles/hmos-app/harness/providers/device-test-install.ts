@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { featurePhaseReportsDir } from '../../../../harness/config';
-import { computeHapBuildFingerprint } from '../build-fingerprint';
+import { computeHapBuildFingerprint, computeHapSha256Full } from '../build-fingerprint';
 import type { CapabilityProvider } from './types';
 import {
   installHap,
@@ -57,6 +57,13 @@ export interface DeviceTestInstallResult {
   ok: boolean;
   logPath?: string;
   errors: Array<{ message: string }>;
+  /**
+   * d9e4b7c1 T2：**调用 hdc install 之前**计算的完整 64 hex HAP 摘要——
+   * device-test-evidence 的 build 绑定字段。装机后写 meta 时才算（旧口径）存在
+   * "安装中 HAP 被并发重建 → 记到设备上没有的字节"的 TOCTOU；装前计算钉死
+   * "装入的就是这些字节"。reuse/未执行安装路径为 null（evidence 要求 executed）。
+   */
+  hapSha256Full?: string | null;
 }
 
 function envTruthy(name: string): boolean {
@@ -318,6 +325,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   let install: HdcInstallResult | undefined;
   let ok = false;
   let downgradeBlocked = false;
+  let hapSha256Full: string | null = null;
 
   if (downgradeDetected && !uninstallBefore) {
     downgradeBlocked = true;
@@ -365,6 +373,10 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
       if (downgradeDetected && uninstallBefore) {
         runUninstallOnce();
       }
+
+      // d9e4b7c1 T2：**首次 hdc install 之前**算完整摘要（TOCTOU 钉死：装入的就是这些字节）
+      hapSha256Full = computeHapSha256Full(opts.hapPath);
+      logLines.push(`[hap_sha256_full_pre_install] ${hapSha256Full ?? '(不可读)'}`);
 
       install = installHap(opts.hapPath);
 
@@ -427,5 +439,6 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
     ok,
     logPath,
     errors,
+    hapSha256Full,
   };
 }

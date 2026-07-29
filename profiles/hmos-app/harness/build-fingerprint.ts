@@ -28,6 +28,21 @@ export function computeHapBuildFingerprint(hapPath: string | null | undefined): 
 }
 
 /**
+ * d9e4b7c1 T2：完整 64 hex 的 HAP 内容摘要——device-test-evidence 的 build 绑定字段。
+ * 12 hex 截断版（computeHapBuildFingerprint）的既有消费者（visual-diff
+ * evaluated_build_fingerprint 等）不动；evidence 链用完整摘要独立字段。
+ */
+export function computeHapSha256Full(hapPath: string | null | undefined): string | null {
+  if (typeof hapPath !== 'string' || !hapPath.trim()) return null;
+  try {
+    if (!fs.existsSync(hapPath)) return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(hapPath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * check 端解析"当前构建指纹"：读 device-test-install.meta.json 拿 hapPath（仅定位），
  * 指纹现算文件内容。任何一环失败 → null。
  */

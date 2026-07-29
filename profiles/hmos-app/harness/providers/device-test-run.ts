@@ -43,11 +43,13 @@ import {
 import type { CapabilityProvider } from './types';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug, resolveHylyrePageSaveNames } from '../device-test-page-save';
+// d9e4b7c1 T2：evidence 合成入口（check-testing 协调层经 capability dispatch 调用）
+export { composeDeviceTestEvidence } from '../device-test-evidence';
 
 export const provider: CapabilityProvider = {
   id: 'hylyre',
   capability: 'device_test.run',
-  exports: ['ensureHylyreReady', 'runHylyreDeviceTest', 'parseHylyreTrace'],
+  exports: ['ensureHylyreReady', 'runHylyreDeviceTest', 'parseHylyreTrace', 'composeDeviceTestEvidence'],
 };
 
 // -------- 公共类型 --------

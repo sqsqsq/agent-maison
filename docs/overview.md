@@ -491,6 +491,7 @@ git submodule update --init --recursive
 | `ut_hvigor_build`     | `check-ut.ts` → profile `hvigor-runner.ts`                           | BLOCKER | 对 `<module>@ohosTest` 跑 `assembleHap`；兜底 tsc 漏过的跨文件类型违约                                  |
 | `ut_hvigor_test`      | `check-ut.ts` → profile `hdc-runner.ts`                              | BLOCKER | `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`；解析 hypium `OHOS_REPORT_RESULT`            |
 | `ut_no_src_mutation`  | `check-ut.ts` + `scripts/utils/git-diff.ts`                         | BLOCKER | git diff 检测业务源码改动；未在 `gap-notes.md > approved_src_mutations[]` 登记的一律 FAIL              |
+| `device_test_evidence_write`（非门禁） | `check-testing.ts` → profile `device-test-evidence.ts`（plan d9e4b7c1） | —       | goal 正式 gate 专属：`MAISON_GOAL_GATE_HARNESS=1` + 身份完整 + 本轮强装成功（`FORCE_INSTALL` 由 runner 注入）+ run 有 trace + 写前复算 HAP sha 一致 → 统一写 `device-test-evidence.json`（testing→coding 回修的唯一 device 输入；普通模式零变化）。另：testing 写保护对 hvigor 生成的模块根 `BuildProfile.ets` 走生成物分类降级（`testing_generated_file_change` 事件，不 halt） |
 
 **调度模型**：根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主 toolchain 由 **`project_profile`** 注册 capability（`coding.compile`、`ut.compile`、`ut.run`、`device_test.*`），经 **`capability-registry.ts`** 动态加载 `profiles/<name>/harness/providers/*`。generic profile 可声明 SKIP，脚本层返回 SKIP 而非假 PASS。
 

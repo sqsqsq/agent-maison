@@ -945,7 +945,7 @@ function parseHypiumOutput(log: string): HypiumTestResult {
 // 探测本身不应该成为编译失败的原因。
 
 /** 简易 JSON5 解析（容忍 // / /* 注释与尾逗号） */
-function parseProductJson5(content: string): unknown {
+export function parseProductJson5(content: string): unknown {
   let s = content.replace(/^\s*\/\/.*$/gm, '');
   s = s.replace(/([^"':])\s*\/\/.*$/gm, '$1');
   s = s.replace(/\/\*[\s\S]*?\*\//g, '');

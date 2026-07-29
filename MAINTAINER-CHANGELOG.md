@@ -2,14 +2,57 @@
 
 > 由 `npm run release:changelog` 从 `.cursor/plans/*.plan.md` 自动生成。消费者向变更见 `RELEASE-NOTES-v*.md` 与 `MIGRATION.md`。
 
-Generated: 2026-07-07 · current window: `3.0.0`
+Generated: 2026-07-29 · current window: `3.0.0`
+
+## 3.1.0
+
+- **android 工程适配** — 在 maison 3.1.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md + 4 个 OpenSpec change。 [0/6 completed]
+  - `android_工程适配_5e3400c3.plan.md`
 
 ## 3.0.0
 
-- **android 工程适配** — 在 maison 3.0.0 窗口落地 Android 工程支持：新增 android-app profile（Gradle/AGP/JUnit 工具链）与一个全新的、与 profile 正交的「workspace 拓扑」维度（single_tree / binary_deps / source_overlay），与真实工程"自下而上 AAR 分层集成"的生产构建同构，不造平行构建体系。交付物 = 1 份 master .plan.md（version/deferred_to 均为 3.0.0）+ 4 个 OpenSpec change。 [0/6 completed]
-  - `android_工程适配_5e3400c3.plan.md`
-- **framework 轻量化重构 — 分档工作流与验证收敛** — > [0/10 completed]
+- **cc-spec 卡死根治 — canary 归一、PASS 态冻结、门禁可修复性与无头求人闭环** — > [0/11 completed]
+  - `cc-spec卡死根治_PASS态冻结与门禁可修复性与无头求人闭环_7c4f2e9b.plan.md`
+- **宿主 framework 写保护与完整性加固** — > [6/7 completed]
+  - `consumer-guard_宿主framework写保护与完整性加固_e8f5a2c7.plan.md`
+- **critic 闭环基础设施加固 — 结构化发现 + 熔断账本 + 回执生产 + 静稳采样 + 校准回灌** — > [11/12 completed]
+  - `critic-loop-hardening_自动闭环机器化与校准回灌_f7a3d9c2.plan.md`
+- **framework 轻量化重构 — 分档工作流与验证收敛** — > [9/10 completed]
   - `framework_轻量化重构_分档工作流与验证收敛_d4a7c1e8.plan.md`
+- **goal 无头假 PASS 事故链根治 — 决议账本 + closure attestation + P0 状态迁移证明 + 完成血缘 + 档位对账** — (no overview) [0/0 completed]
+  - `goal-fakepass-hardening_无头假PASS事故链根治_e3a9c5d1.plan.md`
+- **goal 超时重试冷启动回喂失效 + 门禁 ?? [] 崩溃类 + framework_integrity 拉锯 全盘根治** — > [9/11 completed]
+  - `goal超时重试冷启动与门禁崩溃类与integrity拉锯根治_d9b4f7e2.plan.md`
+- **宿主反馈回灌(2.3.0) — 报错自解释 / 能力缺口诚实化 / receipt 瘦身** — > [8/9 completed]
+  - `host-feedback-dx-hardening_报错自解释与能力缺口三态与凭证机器预填_e6a3c9f4.plan.md`
+- **交互式视觉能力实测与 framework.local.json 无感收口** — > [5/5 completed]
+  - `interactive-vision-canary_交互式视觉能力实测与local无感收口_b7e42d19.plan.md`
+- **运行时布局树几何 oracle + 自报度量诚实性治理 + VL critic 闭环 — 视觉回环几何盲区根治** — > [11/12 completed]
+  - `layout-oracle_视觉几何盲区根治_c6d8f2b4.plan.md`
+- **signed-hap 产物发现去硬编码 + 未签名精确诊断 — 宿主 ut/testing "签名失败" 误报根治** — > [4/5 completed]
+  - `signed-hap-discovery_ut真机签名误报根治_d7e4b2a9.plan.md`
+- **testing 写保护误伤与真机缺陷回修缺口 — 生成物分类降级 / 正式 gate 强制安装 + device_test 回修接入** — > [0/3 completed]
+  - `testing误伤与回修缺口_生成物分类与真机缺陷回退_d9e4b7c1.plan.md`
+- **ut 签名/环境缺口失败分类修正 + 分层诊断头部化 + 装机失败话术硬约束** — > [4/5 completed]
+  - `ut-sign-gap-toolchain-classify_签名环境缺口误归code-regression与诊断头部化_b4e7a2c9.plan.md`
+- **vision-canary 缓存生命周期与探测有效性加固 — probe_version 迁移 + 严格判卷 + TTL** — (no overview) [0/0 completed]
+  - `vision-canary-probe-validity_探测失败不落盲档缓存_c7d2e9a4.plan.md`
+- **场外信任状态最小化 — 测试隔离 / 生命周期回收 / 单写者修复 / 金丝雀临时化** — > [4/4 completed]
+  - `场外信任状态最小化_测试泄漏根治与终局回收_b7e4d2a9.plan.md`
+- **宿主回灌三修 — 截断链预检鸡生蛋、wall-clock 活跃预算、halt 出路真实化** — > [0/5 completed]
+  - `宿主回灌三修_截断链预检与活跃预算与halt出路_e7c2a4d8.plan.md`
+- **盲档意图自动定档 — 三正交轴（质量目标/严格度/素材策略）与「非关键冲突不阻塞」** — (no overview) [0/0 completed]
+  - `盲档意图自动定档_自声明识别与非关键冲突不阻塞_f6b2d9a4.plan.md`
+- **盲档视觉根治 — 负面裁决传播、盲档地板抬升（可执行组件+确定性度量）与多轴完成语义** — > [6/8 completed]
+  - `盲档视觉根治_盲档地板重构与视觉债务收口_a9d4c7e2.plan.md`
+- **结果级范围门禁 — UI 文件级 scope 门 / 消费者结果 golden** — > [4/5 completed]
+  - `结果级范围门禁_scope契约SSOT与消费者结果golden_c4e8b1d3.plan.md`
+- **视觉负向优化根治 — 能力真值跨 run 收口/盲档非破坏化/testing→coding 回修环/journal 确定性/两层 golden** — > [0/0 completed]
+  - `视觉负向优化根治_能力真值跨run与盲档非破坏与回修环_d8c5f3a7.plan.md`
+- **视觉闭环二期 — 视觉能力真值路由、真机执行基建（UTF-8/页面身份）与阶段回退编排根治** — (no overview) [0/0 completed]
+  - `视觉闭环二期_能力真值路由与真机基建与阶段回退根治_e9c4a7f3.plan.md`
+- **设备就绪与阶段完成判定 — 分类复用 / 就绪门 / 模拟器托管 / 完成观测 / 声明前移** — > [6/6 completed]
+  - `设备就绪与阶段完成判定_解锁授权与模拟器托管_a7f2e5d1.plan.md`
 
 ## 2.4.0
 
@@ -21,6 +64,8 @@ Generated: 2026-07-07 · current window: `3.0.0`
   - `adapter_候选自动化_48356d3e.plan.md`
 - **chrys + opencode adapter 接入** — 为 chrys 与 opencode 各新建一等 agent adapter（agents/chrys/、agents/opencode/）。二者均为 external_runner，物化复用同一 shared .agents bundle（AGENTS.md + .agents/skills bridge + .agents/rules，与 generic 默认 bridge 字节一致、可幂等共存），唯一差异是 headless 命令：chrys=chrys run --task <file>、opencode=opencode run --dangerously-skip-permissions（stdin prompt）。在 goal-runner headless 链路把两者都接为结构化运行器。 [8/8 completed]
   - `chrys_adapter_接入_91f6f0c8.plan.md`
+- **goal-mode headless prompt 传参改 stdin — Windows .cmd 命令行截断根治** — > [4/4 completed]
+  - `goal-headless-prompt-stdin_windows-cmd截断根治_b3f7c1a9.plan.md`
 - **goal-mode-bounded-monitor** — 为 goal 模式新增 bounded monitor，把阶段进度从“用户问了才读状态”改成“主 agent 在当前活跃轮次内按统一事件流主动汇报 phase verdict / 终态 / 异常”，明确跨轮次唤醒属于宿主增强，并修正 progress 已完成阶段 duration 膨胀问题。 [6/6 completed]
   - `goal-mode-bounded-monitor.plan.md`
 - **goal-mode-unattended-survival** — 根治 goal 模式"过夜任务静默死亡却显示运行中"的机制性缺陷。分四层补齐——真存活（宿主无关的存活语义 + 启动后存活自校验 + 实施前一次性"会话存活探针"背书 --detach 是否真活过 Cursor 会话）、诚实化（所有退出路径写终态事件 + liveness beacon + 绝对 dead-man 硬判，死了就是 DEAD 绝不粉饰成 RUNNING）、自愈看门狗（独立单例 supervisor，带防抖/限次/INTERRUPTED-vs-HALTED 区分的有界自动续跑；敌对宿主下退守 OS 调度任务）、跨轮通知（声明式拆成正交两条：会话内加速器 in_session_accelerator 与真·跨轮唤醒 cross_turn_wakeup，绝不依赖被 --detach 切走的 runner stdout；缺失即降级"回来时补报"，新增宿主零 bespoke 代码）。承接 goal-mode-bounded-monitor 明确划在范围外的"跨轮存活/唤醒"，并已纳入独立复核提出的裂缝 A–D 补强。 [7/13 completed]
@@ -39,6 +84,8 @@ Generated: 2026-07-07 · current window: `3.0.0`
   - `init_s4_动态下一步_0e149097.plan.md`
 - **maison testing 门禁加固** — 基于 bc-openCard 实践案例，加固 AgentMaison（在研窗口 2.4.0）的 testing 阶段门禁、goal-runner 完成裁决与 ArkUI 静态规则，杜绝「真机 trace 失败/超时但 goal-report 仍 COMPLETED」的假完成，并补齐 UI 入口覆盖与 visual 回环阻断。 [9/9 completed]
   - `maison_testing_门禁加固_700f51fc.plan.md`
+- **多模态能力阶梯 — 盲模型自动降级、门禁语义随档位切换与收口治理** — > [8/8 completed]
+  - `multimodal-degradation-ladder_盲模型自动降级与收口治理_d4a8f3c6.plan.md`
 - **P2 — Phase 内 checkpoint/resume：重阶段超时续跑而非整阶段重来** — > [3/3 completed]
   - `phase内checkpoint_resume_重阶段续跑_d7b1e4f2.plan.md`
 - **全阶段门禁根治 — 裁决提取子串 bug + 跨阶段超时预算（P0+P1）** — > [4/4 completed]

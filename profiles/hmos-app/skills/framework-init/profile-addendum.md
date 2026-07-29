@@ -136,5 +136,6 @@ toolchain.devEcoStudio.installPath（用户跳过，未配置）
 | --- | --- |
 | `/reports/` | Hylyre/Hypium 曾以**工程根**为 cwd 时落盘的 task 日志；现代 harness 已将 hypium cwd 定向到 `<features_dir>/<feature>/testing/reports/.hypium-workdir/`（已落在 `<features_dir>/*/*/reports/*` 内），根目录 `/reports/` 多为历史遗留 |
 | `/build-profile.json5` | 本机 product/SDK 与 CI 不一致时的个人 build-profile；需单独提交时再移出 ignore |
+| `**/BuildProfile.ets` | **强烈建议**：hvigor `CreateHarBuildProfile` 任务在每个模块根生成的编译中间件（HAR_VERSION/BUILD_MODE_NAME/DEBUG/TARGET_NAME 常量），随构建参数变化——入库只会制造无意义 diff。注意：这只解决 **Git 污染**；goal testing 的快照写保护是纯 fs 的（故意 git 盲），对生成物的误伤由 runner 的生成物分类器解决（plan d9e4b7c1），**两者不能互相替代** |
 
 **勿**用 `/harness/reports/*` 代替 `framework/harness/reports/*`（路径错误，无法忽略 harness 全局报告）。

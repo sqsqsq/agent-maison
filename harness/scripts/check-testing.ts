@@ -65,6 +65,11 @@ import {
   dispatchDeviceTestInstall,
   dispatchDeviceTestEnsureReady,
   dispatchDeviceTestRun,
+  dispatchDeviceTestEvidenceCompose,
+} from '../capability-registry';
+// d9e4b7c1 T2：evidence 落盘路径（与 goal-runner pre-delete/collector 共用同一 basename）
+import { deviceTestEvidencePath } from './utils/device-test-evidence-shared';
+import {
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
   analyzeProjectDependencyIssueViaProfile,
@@ -1574,6 +1579,14 @@ interface DeviceTestPipelineHolder {
   /** Set after device_test_run when hylyre trace is available */
   hylyreTracePath: string | null;
   deviceTestRunExecuted: boolean;
+  // d9e4b7c1 T2：evidence 写入门槛输入——installPassed 把"实装成功"与"复用成功"合并，
+  // 证不了 install_executed；evidence 需要三个未合并的事实（既有 installPassed 消费不动）。
+  /** 本轮真实执行了 hdc install（reuse/skip 为 false） */
+  installExecuted: boolean;
+  /** 安装命令成功（含 reuse 的 ok 不算——只在 installExecuted 时有意义） */
+  installOk: boolean;
+  /** 装机前计算的完整 64 hex HAP 摘要（provider 回传） */
+  hapSha256Full: string | null;
 }
 
 function buildDeviceInstallFailResults(
@@ -1921,6 +1934,10 @@ function checkDeviceTestInstallGate(
     }
 
     holder.installPassed = true;
+    // d9e4b7c1 T2：未合并的实装事实（evidence 写入门槛消费）
+    holder.installExecuted = res.executed === true && res.reused !== true;
+    holder.installOk = res.ok === true && holder.installExecuted;
+    holder.hapSha256Full = res.hapSha256Full ?? null;
 
     const installDetail = res.reused
       ? `复用装机（跳过 hdc install）：${hapPath}`
@@ -1948,6 +1965,96 @@ function checkDeviceTestInstallGate(
       },
     ];
   }
+}
+
+/**
+ * d9e4b7c1 T2：goal 正式 testing gate 的 device-test-evidence 统一写入（协调层单写者——
+ * install provider 知道 executed/ok/hash、run provider 知道 trace/cases，二者都不具备
+ * 写入的全部事实；由 build→install→run 完成后的本函数单点合成）。
+ *
+ * 写入门槛（plan d9e4b7c1 v13 冻结，全部满足才写）：
+ *   · MAISON_GOAL_GATE_HARNESS==='1'（runner 直 spawn 的 gate 专属标记）；
+ *   · goal run/attempt 身份完整；
+ *   · 本轮真实安装成功（installExecuted && installOk——installPassed 合并了 reuse 不作数）；
+ *   · device_test.run 已执行且本轮 trace 在盘（trace_path 直取 holder，禁调 authoritative
+ *     resolver——那是 collector 的二次核验器，writer 用它会把旧 trace 洗成本轮）；
+ *   · 写前复算 HAP 完整摘要与装机前一致（compose 内执行，TOCTOU 钉死）。
+ * 结果语义（review P1：evidence 生成失败不得静默吞——"真机测的是旧 HAP、当前 HAP 已变化"
+ * 时 compose 会拒绝，若只 warn 则 collector 把缺文件当无信号、testing 可能假放行）：
+ *   · 非 goal gate / goal 身份不全 → []（普通模式零变化）；
+ *   · 真实安装或 run 未完成 → []（上游 install/run 门禁已 FAIL，本函数不重复报）；
+ *   · **真实安装 + run 都已成功**但 compose 失败/写盘异常 → BLOCKER FAIL（进 results）；
+ *   · 成功写入 → PASS（可观测）。
+ */
+export function writeDeviceTestEvidenceIfEligible(
+  ctx: CheckContext,
+  holder: DeviceTestPipelineHolder,
+  /** 测试缝：覆盖 compose（默认走 capability dispatch） */
+  composeFn?: (options: Record<string, unknown>) => unknown,
+): CheckResult[] {
+  const id = 'device_test_evidence';
+  const desc = 'goal 正式 gate：device-test-evidence 统一写入';
+  if (process.env.MAISON_GOAL_GATE_HARNESS !== '1') return [];
+  const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() ?? '';
+  const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() ?? '';
+  if (!goalRunId || !attemptId) return [];
+  if (!holder.installExecuted || !holder.installOk) {
+    console.warn('[device-test-evidence] 未写入：本轮无真实安装成功事实（上游 install 门禁负责裁决）');
+    return [];
+  }
+  if (!holder.deviceTestRunExecuted || !holder.hylyreTracePath) {
+    console.warn('[device-test-evidence] 未写入：本轮 device_test.run 未执行或 trace 缺失（上游 run 门禁负责裁决）');
+    return [];
+  }
+  // 至此：正式 gate 已完成真实安装与 run——evidence 必须写出，任何失败都是 BLOCKER
+  const fail = (details: string): CheckResult[] => [{
+    id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'FAIL',
+    details: `goal 正式 gate 已完成真实安装与 device_test.run，但 evidence 未能写出：${details}\n` +
+      '缺 evidence 时 goal-runner 无法采信本轮真机结果（旧包/改写 HAP 的结果可能被误当有效）。',
+    suggestion: '核查 HAP 是否在装机后被并发改写（compose 会复算 sha 拒绝）、reports 目录可写性后重跑 testing harness。',
+  }];
+  if (!holder.hapSha256Full || !holder.hapPath) {
+    return fail('装机前 HAP 完整摘要缺失（install provider 未回传 hapSha256Full）');
+  }
+  let composed: { ok: boolean; reason?: string; doc?: Record<string, unknown> };
+  try {
+    composed = (composeFn ?? (options => dispatchDeviceTestEvidenceCompose(ctx, options)))({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      tracePath: holder.hylyreTracePath,
+      hapPath: holder.hapPath,
+      expectedHapSha256Full: holder.hapSha256Full,
+      goalRunId,
+      attemptId,
+      deviceTarget: {
+        serial: process.env.HARNESS_HDC_TARGET?.trim() || null,
+        target_kind: process.env.MAISON_DEVICE_TARGET_KIND?.trim() || null,
+        session_id: process.env.MAISON_DEVICE_SESSION_ID?.trim() || null,
+      },
+      installExecuted: holder.installExecuted,
+      installOk: holder.installOk,
+    }) as { ok: boolean; reason?: string; doc?: Record<string, unknown> };
+  } catch (e) {
+    return fail(`compose 异常：${(e as Error).message}`);
+  }
+  if (!composed?.ok || !composed.doc) {
+    return fail(composed?.reason ?? 'compose 失败（无原因）');
+  }
+  try {
+    const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+    fs.mkdirSync(reportsDir, { recursive: true });
+    const doc = { ...composed.doc, written_at: new Date().toISOString() };
+    fs.writeFileSync(deviceTestEvidencePath(reportsDir), `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
+  } catch (e) {
+    return fail(`写盘异常：${(e as Error).message}`);
+  }
+  const caseCount = Array.isArray((composed.doc as { cases?: unknown[] }).cases)
+    ? (composed.doc as { cases: unknown[] }).cases.length
+    : 0;
+  return [{
+    id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'PASS',
+    details: `device-test-evidence.json 已写入（cases=${caseCount}）`,
+  }];
 }
 
 function readBundleNameFromAppScope(projectRoot: string): string {
@@ -2947,10 +3054,20 @@ const checker: PhaseChecker = {
       buildReused: false,
       hylyreTracePath: null,
       deviceTestRunExecuted: false,
+      installExecuted: false,
+      installOk: false,
+      hapSha256Full: null,
     };
     results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
     results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
+    // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，
+    // 协调层单点写）。review P1：结果必须进 results——真实安装+run 已成功而 evidence
+    // 写不出时是 BLOCKER（否则 collector 把缺文件当无信号，旧包结果可能假放行）。
+    results.push(...safeRun(
+      () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
+      'device_test_evidence_write',
+    ));
     results.push(
       ...safeRun(
         () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),

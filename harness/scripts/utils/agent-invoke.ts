@@ -851,7 +851,14 @@ export function buildAgentSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   extraEnv?: Record<string, string>,
 ): NodeJS.ProcessEnv {
-  const merged: NodeJS.ProcessEnv = { ...baseEnv, ...(extraEnv ?? {}) };
+  const merged: NodeJS.ProcessEnv = { ...baseEnv };
+  // d9e4b7c1 T1（v12 P2 泛化）：extraEnv 每个键先清大小写变体再写唯一键——父环境存在
+  // `Harness_Device_Test_Product` 等 mixed-case 变体时，直接展开会留两个等价 Windows
+  // env key，子进程读取哪个是未定义行为（HEADLESS 单键处理的既有教训推广到全部注入键）。
+  for (const [k, v] of Object.entries(extraEnv ?? {})) {
+    deleteEnvKeyCaseInsensitive(merged, k);
+    merged[k] = v;
+  }
   // 角色位定档前先清大小写变体（extraEnv 注入 `maison_goal_headless=''` 会与大写键并存，
   // Windows 子进程读取哪个是未定义行为）——保证子进程 env 恰有一个大写 HEADLESS='1'。
   deleteEnvKeyCaseInsensitive(merged, MAISON_GOAL_HEADLESS_ENV);

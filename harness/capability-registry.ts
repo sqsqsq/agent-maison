@@ -407,6 +407,15 @@ export function dispatchDeviceTestRun(
   return fn(options);
 }
 
+/** d9e4b7c1 T2：goal 正式 gate 的 device-test-evidence 合成（写入由 check-testing 协调层执行） */
+export function dispatchDeviceTestEvidenceCompose(
+  ctx: CheckContext,
+  options: Record<string, unknown>,
+): unknown {
+  const fn = requireProviderFunction(ctx.resolvedProfile, 'device_test.run', 'composeDeviceTestEvidence');
+  return fn(options);
+}
+
 /**
  * Rule id 对照（fixture / 报告兼容）：
  * - `coding_compile` ≡ 原 `coding_hvigor_build`（真实编译门禁）

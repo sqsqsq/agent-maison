@@ -116,6 +116,9 @@ function setupHost(): { root: string } {
     app: { products: [{ name: 'default' }] },
     modules: [{ name: 'FinancialCard', srcPath: './02-Feature/FinancialCard' }],
   }, null, 2));
+  // d9e4b7c1 T1：生成物分类器按模块根 oh-package.json5 核 HAR_VERSION——夹具补齐
+  writeFile(root, '02-Feature/FinancialCard/oh-package.json5',
+    '{ "name": "financialcard", "version": "1.0.0" }');
   clearFrameworkConfigCache();
   // build 身份（P1-1 谓词④）：actionable 要求当前 build fingerprint 可算且与
   // evaluated_build_fingerprint 相等。生产口径 = device-test-install.meta.json 的
@@ -201,6 +204,10 @@ interface RunProbe {
   /** device-readiness t3：就绪门被调用的 phase 序列 */
   deviceGatePhases: string[];
   codingPrompts: string[];
+  /** d9e4b7c1 T1：testing 各 attempt 收到的 extraEnv（断言冻结配置注入三方同源） */
+  testingExtraEnvs: Array<Record<string, string>>;
+  /** d9e4b7c1 T2（v13 缝扩展）：gate harness 各 phase 收到的注入 env */
+  harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }>;
   exitCode: number;
   root: string;
   reportDir: string;
@@ -225,6 +232,11 @@ async function runChain(
     hmacKey?: string;
     /** device-readiness t3：覆盖设备就绪门（默认注入 READY(physical)；传入可验三态行为） */
     deviceGate?: unknown;
+    /** d9e4b7c1 T2：testing 的 gate harness 窗口回调（模拟正式 gate 写 evidence 等产物） */
+    onTestingHarness?: (ctx: {
+      root: string; feature: string; runId: string; attemptId: string;
+      deviceEnv: Record<string, string>; attempt: number;
+    }) => void;
   } = {},
 ): Promise<RunProbe> {
   const invokedPhases: string[] = [];
@@ -232,6 +244,8 @@ async function runChain(
   /** device-readiness t3：就绪门实际被调用的 phase 序列（断言"只在需设备 phase 执行"） */
   const deviceGatePhases: string[] = [];
   const codingPrompts: string[] = [];
+  const testingExtraEnvs: Array<Record<string, string>> = [];
+  const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
   const attempts = new Map<string, number>();
   const prevArgv = process.argv;
   const prevCwd = process.cwd();
@@ -253,6 +267,7 @@ async function runChain(
       const prompt = [...(pl.argv ?? []), pl.stdin ?? ''].join('\n');
       if (phase === 'coding') codingPrompts.push(prompt);
       const extraEnv = (o as { extraEnv?: Record<string, string> })?.extraEnv ?? {};
+      if (phase === 'testing') testingExtraEnvs.push(extraEnv);
       const ctx: AgentCtx = {
         root, phase, attempt: n, prompt,
         runId: extraEnv.MAISON_GOAL_RUN_ID ?? '',
@@ -282,8 +297,17 @@ async function runChain(
       receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
       exit_code: 0,
     })) as never);
-    __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm) => {
+    __testing_setRunHarnessPhase(async (pr, _fr, ph, feat, _dry, gm, roundIdentity, _timeout, deviceTargetEnv) => {
       harnessPhases.push(String(ph));
+      harnessDeviceEnvs.push({ phase: String(ph), env: deviceTargetEnv });
+      if (String(ph) === 'testing') {
+        opts.onTestingHarness?.({
+          root: pr, feature: feat,
+          runId: roundIdentity?.runId ?? '', attemptId: roundIdentity?.attemptId ?? '',
+          deviceEnv: deviceTargetEnv ?? {},
+          attempt: harnessPhases.filter(p => p === 'testing').length,
+        });
+      }
       const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
@@ -378,7 +402,9 @@ async function runChain(
           )
         : '';
     return {
-      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, exitCode, root, reportDir,
+      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, testingExtraEnvs,
+      harnessDeviceEnvs,
+      exitCode, root, reportDir,
       events: readEvents(reportDir),
     };
   } finally {
@@ -1071,6 +1097,260 @@ test('t3 就绪门：READY(physical) 正常放行且 testing 结论不被封顶'
   // physical 目标 → 不触发设备真实性封顶
   const caps = probe.events.filter(e => e.type === 'device_authenticity_completion_cap');
   assert(caps.length === 0, `physical 目标不得被封顶，实得 ${JSON.stringify(caps)}`);
+});
+
+// ---------------------------------------------------------------------------
+// d9e4b7c1 T1：构建生成物分类降级（testing_generated_file_change）
+// ---------------------------------------------------------------------------
+
+/** hvigor 生成模板（与宿主 bc-openCard 事故三文件同款形态；version=夹具 oh-package） */
+const GEN_BUILD_PROFILE = `/**
+ * Use these variables when you tailor your ArkTS code. They must be of the const type.
+ */
+export const HAR_VERSION = '1.0.0';
+export const BUILD_MODE_NAME = 'debug';
+export const DEBUG = true;
+export const TARGET_NAME = 'default';
+
+/**
+ * BuildProfile Class is used only for compatibility purposes.
+ */
+export default class BuildProfile {
+\tstatic readonly HAR_VERSION = HAR_VERSION;
+\tstatic readonly BUILD_MODE_NAME = BUILD_MODE_NAME;
+\tstatic readonly DEBUG = DEBUG;
+\tstatic readonly TARGET_NAME = TARGET_NAME;
+}`;
+
+const GEN_FILE_REL = '02-Feature/FinancialCard/BuildProfile.ets';
+
+/** 冻结解析读进程 env（HARNESS_DEVICE_TEST_*）——用例内钉死为未设置，防开发机残留串味 */
+async function withCleanDeviceTestEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const saved: Record<string, string | undefined> = {
+    HARNESS_DEVICE_TEST_PRODUCT: process.env.HARNESS_DEVICE_TEST_PRODUCT,
+    HARNESS_DEVICE_TEST_BUILD_MODE: process.env.HARNESS_DEVICE_TEST_BUILD_MODE,
+  };
+  delete process.env.HARNESS_DEVICE_TEST_PRODUCT;
+  delete process.env.HARNESS_DEVICE_TEST_BUILD_MODE;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('T1-1 hvigor 合法生成（testing invoke 内新增模块根 BuildProfile.ets）→ 降级事件、不 halt、gate 照常、冻结 env 注入 agent', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => {
+        // 模拟 agent 自检触发 device_test.build → hvigor 重写生成物（invoke 窗口内）
+        writeFile(r, GEN_FILE_REL, GEN_BUILD_PROFILE);
+        writeCleanTesting(r);
+      },
+    });
+    assert(!hasEvent(probe.events, 'testing_write_violation'),
+      `合法生成物不得判越权：${JSON.stringify(probe.events.filter(e => e.type === 'testing_write_violation'))}`);
+    const gen = probe.events.find(e => e.type === 'testing_generated_file_change') as
+      { files?: string[]; count?: number; build_mode?: string } | undefined;
+    assert(!!gen, `须落 testing_generated_file_change：${probe.events.map(e => e.type).join(',')}`);
+    assert((gen!.files ?? []).includes(GEN_FILE_REL), `事件须列出生成物文件：${JSON.stringify(gen)}`);
+    assert(gen!.build_mode === 'debug', `事件须带冻结 buildMode：${JSON.stringify(gen)}`);
+    assert(probe.harnessPhases.includes('testing'), '降级后 gate harness 须照常运行');
+    assertRunReachedEnd(probe, 'T1-1');
+    // 冻结配置注入 agent（三方同源之一；gate 侧经 runHarnessPhase deviceTargetEnv 透传）
+    assert(probe.testingExtraEnvs.length > 0, '须捕获 testing extraEnv');
+    for (const env of probe.testingExtraEnvs) {
+      assert(env.HARNESS_DEVICE_TEST_BUILD_MODE === 'debug' && env.HARNESS_DEVICE_TEST_PRODUCT === 'default',
+        `testing agent env 须带冻结配置：${JSON.stringify(env)}`);
+    }
+  });
+});
+
+test('T1-2 混合场景（生成物 + 真源码改动）→ violation 只列真违规、生成物单列 generated_changed、照常 halt', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => {
+        writeFile(r, GEN_FILE_REL, GEN_BUILD_PROFILE);
+        writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("tampered") } }');
+        writeCleanTesting(r);
+      },
+    });
+    const v = probe.events.find(e => e.type === 'testing_write_violation') as
+      { changed?: string[]; generated_changed?: string[] } | undefined;
+    assert(!!v, `混合场景须维持 violation：${probe.events.map(e => e.type).join(',')}`);
+    assert((v!.changed ?? []).some(c => c.includes(PRODUCT_FILE)),
+      `changed 须含真违规：${JSON.stringify(v!.changed)}`);
+    assert(!(v!.changed ?? []).some(c => c.includes('BuildProfile.ets')),
+      `changed 不得混入生成物：${JSON.stringify(v!.changed)}`);
+    assert((v!.generated_changed ?? []).includes(GEN_FILE_REL),
+      `generated_changed 须单列生成物：${JSON.stringify(v!.generated_changed)}`);
+    assert(!hasEvent(probe.events, 'testing_generated_file_change'),
+      '混合场景不得落降级事件（violation 为主）');
+    const halts = probe.events.filter(e => e.type === 'phase_halt').map(e => (e as { halt_reason?: string }).halt_reason);
+    assert(halts.includes('testing_write_violation'), `须照常 halt：${JSON.stringify(halts)}`);
+  });
+});
+
+test('T1-3 篡改的生成物（常量与冻结配置不符）→ 仍 violation', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => {
+        // DEBUG 翻转（冻结 debug 推导 DEBUG=true，文件写 false）——合法形状但值不符
+        writeFile(r, GEN_FILE_REL, GEN_BUILD_PROFILE.replace('export const DEBUG = true;', 'export const DEBUG = false;'));
+        writeCleanTesting(r);
+      },
+    });
+    assert(hasEvent(probe.events, 'testing_write_violation'),
+      `常量篡改须判 violation：${probe.events.map(e => e.type).join(',')}`);
+    assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级');
+  });
+});
+
+test('T1-4 partitionGeneratedSourceChanges fail-closed：冻结配置/profile 目录缺失 → 全部按 violation', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { partitionGeneratedSourceChanges } = require('../../scripts/goal-runner') as {
+    partitionGeneratedSourceChanges: (
+      root: string,
+      changed: Array<{ path: string; how: 'added' | 'removed' | 'modified' | 'type-changed' }>,
+      frozen: { product: string; buildMode: 'debug' | 'release' } | null,
+      profileHarnessDir: string | null,
+    ) => { violations: unknown[]; generated: string[] };
+  };
+  const changed = [{ path: GEN_FILE_REL, how: 'modified' as const }];
+  const r1 = partitionGeneratedSourceChanges('/nonexistent', changed, null, '/some/dir');
+  assert(r1.violations.length === 1 && r1.generated.length === 0, 'frozen=null 须全部 violation');
+  // review P2：profile 目录缺失是**真实可达**的 fail-closed 路径（不硬编码 hmos-app 后）
+  const r2 = partitionGeneratedSourceChanges(
+    '/nonexistent', changed, { product: 'default', buildMode: 'debug' }, null,
+  );
+  assert(r2.violations.length === 1 && r2.generated.length === 0, 'profileDir=null 须全部 violation');
+  const r3 = partitionGeneratedSourceChanges(
+    '/nonexistent', changed, { product: 'default', buildMode: 'debug' }, '/no/such/profile/harness',
+  );
+  assert(r3.violations.length === 1 && r3.generated.length === 0, 'profile 模块加载失败须全部 violation');
+});
+
+test('T1-5 mixed-case env 清理：extraEnv 注入键唯一（父环境残留大小写变体被清除）', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { buildAgentSpawnEnv } = require('../../scripts/utils/agent-invoke') as {
+    buildAgentSpawnEnv: (base: NodeJS.ProcessEnv, extra?: Record<string, string>) => NodeJS.ProcessEnv;
+  };
+  const base: NodeJS.ProcessEnv = { Harness_Device_Test_Product: 'stale', PATH: process.env.PATH };
+  const env = buildAgentSpawnEnv(base, { HARNESS_DEVICE_TEST_PRODUCT: 'frozen' });
+  const keys = Object.keys(env).filter(k => k.toLowerCase() === 'harness_device_test_product');
+  assert(keys.length === 1 && keys[0] === 'HARNESS_DEVICE_TEST_PRODUCT' && env[keys[0]] === 'frozen',
+    `注入键须唯一且为大写冻结值：${JSON.stringify(keys.map(k => [k, env[k]]))}`);
+});
+
+// ---------------------------------------------------------------------------
+// d9e4b7c1 T2：正式 gate 强装/evidence/回修环 E2E
+// ---------------------------------------------------------------------------
+
+test('T2-1 gate env：强装 flag 只注入 gate harness（agent env 无）；pre-delete 消除 agent 预写的伪 evidence', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { deviceTestEvidencePath } = require('../../scripts/utils/device-test-evidence-shared') as
+      typeof import('../../scripts/utils/device-test-evidence-shared');
+    const reportsDir = path.join(root, 'doc/features', FEATURE, 'testing', 'reports');
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => {
+        // agent 在 invoke 内伪造 evidence（骗 backtrack 的攻击形态）
+        fs.mkdirSync(reportsDir, { recursive: true });
+        fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify({ forged: true }), 'utf-8');
+        writeCleanTesting(r);
+      },
+    });
+    // 强装 flag：gate harness env 有、agent extraEnv 无
+    const testingHarnessEnv = probe.harnessDeviceEnvs.find(h => h.phase === 'testing')?.env ?? {};
+    assert(testingHarnessEnv.HARNESS_DEVICE_TEST_FORCE_INSTALL === '1',
+      `gate harness env 须带强装 flag：${JSON.stringify(testingHarnessEnv)}`);
+    assert(testingHarnessEnv.HARNESS_DEVICE_TEST_BUILD_MODE === 'debug',
+      `gate harness env 须带冻结配置：${JSON.stringify(testingHarnessEnv)}`);
+    for (const env of probe.testingExtraEnvs) {
+      assert(env.HARNESS_DEVICE_TEST_FORCE_INSTALL === undefined,
+        `agent env 不得带强装 flag（自检保留 reuse）：${JSON.stringify(env)}`);
+    }
+    // pre-delete：spy harness 不写 evidence → 伪造文件在 gate spawn 前被删、终局不存在
+    assert(!fs.existsSync(deviceTestEvidencePath(reportsDir)),
+      'agent 预写的伪 evidence 须被 pre-delete 消除');
+    assert(!probe.events.some(e => e.type === 'backtrack_to_coding'), '伪 evidence 不得驱动回修');
+  });
+});
+
+test('T2-2 全链回修：正式 gate 写 evidence（product_actionable×physical）→ backtrack_to_coding → coding prompt 含缺陷 → 修复后完成', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { deviceTestEvidencePath } = require('../../scripts/utils/device-test-evidence-shared') as
+      typeof import('../../scripts/utils/device-test-evidence-shared');
+    // 机器 SSOT：flow 块（TC-001 为根）+ 权威派生计划（resolver 消费）
+    writeFile(root, `doc/features/${FEATURE}/testing/test-plan.md`, [
+      '# 测试计划', '', '```yaml', 'test_case_flow:',
+      '  TC-001: { precondition: { kind: fresh_app, reset: restart } }',
+      '```', '',
+    ].join('\n'));
+    const reportsDir = path.join(root, 'doc/features', FEATURE, 'testing', 'reports');
+    const runDirAbs = path.join(reportsDir, '20260101T000000Z', 'hylyre');
+    fs.mkdirSync(runDirAbs, { recursive: true });
+    fs.writeFileSync(path.join(runDirAbs, 'test-plan.hylyre.md'), [
+      '# 派生计划', '', '## 测试用例清单', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+      '|---|---|---|---|---|---|---|',
+      '| TC-001 | 收起态 | 冷启动 | {"touch":{"by_id":"hc_bank_row_cmb"}} | 正确 | P0 | AC-1 |',
+    ].join('\n'), 'utf-8');
+    const tracePath = path.join(runDirAbs, 'trace.json');
+    const evidenceForAttempt = (runId: string, attemptId: string, failed: boolean): void => {
+      fs.writeFileSync(tracePath, JSON.stringify({
+        schema_version: '0.2-p4', feature: FEATURE, phase: 'testing',
+        outcome: failed ? 'partial' : 'success',
+        cases: failed ? [{ id: 'TC-001', status: '失败', notes: 'x' }] : [{ id: 'TC-001', status: '通过' }],
+      }), 'utf-8');
+      fs.writeFileSync(path.join(reportsDir, 'device-test-run.meta.json'), JSON.stringify({
+        run_started_at: new Date().toISOString(),
+        run_ended_at: new Date().toISOString(),
+      }), 'utf-8');
+      const doc = {
+        schema_version: '1.0',
+        goal_run_id: runId,
+        attempt_id: attemptId,
+        device_target: { serial: 'fake-device', target_kind: 'physical', session_id: null },
+        hap_sha256_full: 'f'.repeat(64),
+        install_executed: true,
+        install_ok: true,
+        trace_path: path.resolve(tracePath),
+        run_failure_kind: null,
+        written_at: new Date().toISOString(),
+        cases: failed ? [{
+          case_id: 'TC-001', status: '失败', classification: 'product_actionable',
+          failing_step: { index: 0, action: 'touch', selector_kind: 'by_id', selector: 'hc_bank_row_cmb' },
+          expected_screen: 'add_card_home_collapsed',
+          evidence: { ui_dump: 'failures/TC-001-step-0.json' },
+        }] : [],
+      };
+      fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify(doc, null, 2), 'utf-8');
+    };
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => writeCleanTesting(r),
+      onTestingHarness: ({ runId, attemptId, attempt }) => {
+        // 正式 gate 单写者：第 1 轮产出真机缺陷 evidence；回修后第 2 轮干净
+        evidenceForAttempt(runId, attemptId, attempt === 1);
+      },
+    });
+    assert(probe.events.some(e => e.type === 'backtrack_to_coding' || e.type === 'phase_backtrack_started'),
+      `须回退 coding：${probe.events.map(e => e.type).join(',')}`);
+    assert(probe.codingPrompts.length >= 2, `coding 须被重新调用（回修轮）：${probe.codingPrompts.length}`);
+    const secondCoding = probe.codingPrompts[probe.codingPrompts.length - 1];
+    assert(secondCoding.includes('hc_bank_row_cmb') && secondCoding.includes('device_test'),
+      '回修 coding prompt 须含 device_test 缺陷与目标锚点');
+    assertRunReachedEnd(probe, 'T2-2');
+  });
 });
 
 // ---------------------------------------------------------------------------

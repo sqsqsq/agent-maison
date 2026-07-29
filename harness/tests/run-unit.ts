@@ -122,6 +122,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'device-runtime-recovery', modulePath: './unit/device-runtime-recovery.unit.test' },
   // openspec device-readiness-and-completion R17：跨进程并发/损坏场景（真子进程，非同进程假并发）
   { id: 'device-concurrency', modulePath: './unit/device-concurrency.unit.test' },
+  // d9e4b7c1 T2：真机缺陷回修接入（evidence 合成/绑定校验/根级联三分/physical-only）
+  { id: 'device-test-backtrack', modulePath: './unit/device-test-backtrack.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
   { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
