@@ -129,6 +129,7 @@ export function canonicalIgnorePatterns(featuresDir: string = FEATURES_DIR_DEFAU
     '/scratch/',
     'framework.local.json',
     '**/.claude/settings.local.json',
+    '**/.cac/settings.local.json',
   ];
 }
 
@@ -215,6 +216,12 @@ export function ignoreEquivPatterns(featuresDir: string = FEATURES_DIR_DEFAULT):
     '**/.claude/settings.local.json',
     '/.claude/settings.local.json',
   ],
+  // codeagent（plan c7a9e2f4）：.cac 结构与 .claude 完全一致，个人 settings 同规则
+  '**/.cac/settings.local.json': [
+    '.cac/settings.local.json',
+    '**/.cac/settings.local.json',
+    '/.cac/settings.local.json',
+  ],
   };
 }
 
@@ -260,7 +267,7 @@ function canonicalSections(featuresDir: string = FEATURES_DIR_DEFAULT): readonly
     },
     {
       header: '# Personal / local agent settings (per developer, gitignored)',
-      patterns: ['framework.local.json', '**/.claude/settings.local.json'],
+      patterns: ['framework.local.json', '**/.claude/settings.local.json', '**/.cac/settings.local.json'],
     },
   ];
 }

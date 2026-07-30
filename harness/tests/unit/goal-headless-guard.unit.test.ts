@@ -1607,6 +1607,49 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'c7a9e2f4 #7b codeagent 实采信封：字符串 "500" api_retry 与无状态终局 result 均须命中（claude 同源受益）',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));
+        const logPath = path.join(tmp, 'agent-output.log');
+        // ① 2026-07-29 断网实采原形（error_status 为字符串——修复前 typeof number 判定整行漏判）
+        const retryLine = '{"type":"system","subtype":"api_retry","error_status":"500","error":"server_error"}';
+        fs.writeFileSync(logPath, [retryLine, retryLine, retryLine].join('\n'), 'utf-8');
+        for (const adapter of ['codeagent', 'claude'] as const) {
+          const hit = parseHeadlessApiError(logPath, adapter);
+          assert(hit !== null && hit.code === 'transient_api_error', `${adapter}: 字符串 "500" 应命中`);
+        }
+        // ② 重试耗尽终局行（实采脱敏：无 api_error_status 字段，错误全在 result 文本）——
+        //    修复前 result 分支要求 number 状态码，整行漏判 → 断流退化为干等超时（实采 ~7 分钟）
+        const terminalLine = JSON.stringify({
+          type: 'result', subtype: 'success', is_error: true,
+          duration_ms: 413183, duration_api_ms: 0, num_turns: 1,
+          result: 'API Error: 500 Unable to connect. Is the computer able to access the url?【00000000-0000-0000-0000-000000000000】',
+          stop_reason: 'stop_sequence', session_id: '00000000-0000-0000-0000-000000000000',
+          total_cost_usd: 0, fast_mode_state: 'off', uuid: '00000000-0000-0000-0000-000000000000',
+        });
+        fs.writeFileSync(logPath, terminalLine, 'utf-8');
+        for (const adapter of ['codeagent', 'claude'] as const) {
+          const hit = parseHeadlessApiError(logPath, adapter);
+          assert(hit !== null && hit.code === 'transient_api_error', `${adapter}: 无状态终局 result 应经文本回退命中`);
+        }
+        // ③ 鉴权防线不被回退击穿：字符串 "401" 不进 transient 集且文案排除；
+        //    无状态 + authentication 措辞的 result 同样不得误归
+        fs.writeFileSync(
+          logPath,
+          '{"type":"system","subtype":"api_retry","error_status":"401","error":"authentication_failed"}',
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(logPath, 'codeagent') === null, '字符串 "401" 鉴权不得归 transient');
+        fs.writeFileSync(
+          logPath,
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate. API Error: 500 authentication token invalid' }),
+          'utf-8',
+        );
+        assert(parseHeadlessApiError(logPath, 'codeagent') === null, 'authentication 措辞回退不得误归');
+        fs.rmSync(tmp, { recursive: true, force: true });
+      },
+    },
+    {
       name: 'P0-D 保守面：0 字节 → null（走 agent_no_output 兜底）；未知 adapter → null（不承诺）',
       run: () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-api-'));

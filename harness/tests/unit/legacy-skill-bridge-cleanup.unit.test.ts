@@ -55,6 +55,70 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'collectLegacySkillBridgePaths：codeagent 走 .cac/commands 同径，不落 .claude（plan c7a9e2f4 #12）',
+    run: () => {
+      const config = baseConfig();
+      const paths = collectLegacySkillBridgePaths({
+        projectRoot: '/tmp',
+        materializedAdapters: ['codeagent'],
+        mode: 'update',
+        config,
+      });
+      assert(paths.length > 0, 'codeagent 应登记 legacy 探测路径');
+      assert(paths.every(p => p.relPosix.startsWith('.cac/commands/')), JSON.stringify(paths));
+      assert(paths.some(p => p.relPosix === '.cac/commands/3-coding.md'));
+      assert(!paths.some(p => p.relPosix.includes('.claude/')), 'codeagent 不得探测 .claude');
+    },
+  },
+  {
+    name: 'kernel legacy 路径 manifest 化（codex P2 回灌）：非标 commands target_dir 时跟随 manifest 不漂移',
+    run: () => {
+      const root = mkTmp();
+      const adapterDir = path.join(root, 'framework', 'agents', 'codeagent');
+      fs.mkdirSync(adapterDir, { recursive: true });
+      // consumer 布局判据：framework/skills 存在（inferRepoLayout hasFrameworkTree）
+      fs.mkdirSync(path.join(root, 'framework', 'skills'), { recursive: true });
+      fs.writeFileSync(
+        path.join(adapterDir, 'adapter.yaml'),
+        ['adapter_name: codeagent', 'commands:', '  target_dir: .cac2/commands'].join('\n'),
+        'utf-8',
+      );
+      const config = baseConfig();
+      const paths2 = collectLegacySkillBridgePaths({
+        projectRoot: root,
+        materializedAdapters: ['codeagent'],
+        mode: 'update',
+        config,
+      });
+      assert(paths2.length > 0);
+      assert(paths2.every(p => p.relPosix.startsWith('.cac2/commands/')), JSON.stringify(paths2.slice(0, 2)));
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
+    name: 'applyLegacySkillBridgeCleanup UPDATE：codeagent 遗留 .cac/commands/3-coding.md 备份后清理',
+    run: () => {
+      const root = mkTmp();
+      const legacyFile = path.join(root, '.cac', 'commands', '3-coding.md');
+      const flatFile = path.join(root, '.cac', 'commands', 'coding.md');
+      fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+      fs.writeFileSync(legacyFile, 'legacy');
+      fs.writeFileSync(flatFile, 'flat');
+      const config = baseConfig();
+      const { cleaned, backupRelDir } = applyLegacySkillBridgeCleanup({
+        projectRoot: root,
+        materializedAdapters: ['codeagent'],
+        mode: 'update',
+        config,
+      });
+      assert.strictEqual(cleaned.length, 1, JSON.stringify(cleaned));
+      assert(!fs.existsSync(legacyFile), 'legacy 应被清理');
+      assert(fs.existsSync(flatFile), '扁平名不受影响');
+      assert(backupRelDir && fs.existsSync(path.join(root, backupRelDir!, '.cac', 'commands', '3-coding.md')), '应先备份');
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  },
+  {
     name: 'readGenericBundlePathsFromConfigPaths：不依赖 active adapter',
     run: () => {
       const bundle = readGenericBundlePathsFromConfigPaths({

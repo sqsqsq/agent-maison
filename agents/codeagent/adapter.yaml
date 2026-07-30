@@ -1,0 +1,85 @@
+adapter_name: codeagent
+description: |
+  CodeAgent adapter——Claude Code CLI 内核衍生 agent（headless CLI=codeagentcli，参数
+  与 claude -p 等价），物化目录 .cac（结构与 .claude 完全一致）。入口文件 AGENTS.md；
+  slash 路由 .cac/commands/（自有副本，身份行=codeagent）；verifier/goal-condition/
+  hooks/rules 跨目录共享 claude 模板（claude-kernel 家族 SSOT）。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template   # 共享模板；与 cursor/codex/chrys/opencode 同名字节一致可共存
+  target_path: AGENTS.md
+
+commands:
+  target_dir: .cac/commands                     # 相对于实例工程根
+  template_dir: templates/commands              # 自有 ×12：与 claude 版仅差运行身份行（goal-mode 另有
+                                                # RESOLVED_ADAPTER 与权威段）；归一化等值由 unit test 守护
+  subagents:
+    target_dir: .cac/agents
+    template_dir: ../claude/templates/agents    # verifier.md 共享（无身份标记，grep 核实）
+    update_policy: auto_overwrite
+
+skill_bridge: null
+
+rules:
+  target_dir: .cac/rules
+  template_dir: ../claude/templates/rules       # 共享（文案已中性化为 Claude-kernel 口径）
+  update_policy: prompt_if_changed
+
+
+# codeagent 的 .cac/settings.json：注册 Stop / SubagentStop / PreToolUse hook，
+# 「弱模型工作流强制门」Layer 3 物理拦截入口（与 claude 同构）。原样拷贝，不做占位符替换。
+# 与 claude 版差异仅三处：无 $schema、路径 .cac/、变量 ${CODEAGENT3_PROJECT_DIR}
+#（2026-07-29 宿主实证：hook 进程注入该变量且 ${...} 占位符可展开）。
+settings_file:
+  template_path: templates/settings.json
+  target_path: .cac/settings.json
+  update_policy: auto_overwrite
+
+# hook 脚本与 claude 共享同一份模板（resolveProjectRoot 已做厂商无关加固：
+# env 链 CLAUDE_PROJECT_DIR → CODEAGENT3_PROJECT_DIR → import.meta.url 自锚 → payload.cwd）。
+hooks:
+  target_dir: .cac/hooks
+  template_dir: ../claude/templates/hooks
+  update_policy: auto_overwrite
+
+instance_skill_bridge:
+  commands_target_dir: .cac/commands
+
+user_confirmation:
+  structured_widget: supported                  # 2026-07-29 宿主实证：AskUserQuestion 同名同签名+真实渲染
+  portable_required: true
+  interaction_renderer_rule: ../claude/templates/rules/interaction-renderer.md
+
+# 内核同 claude：Read 工具可读 sidecar 图片（交互/headless 均 tool_read）
+image_input: tool_read
+
+goal_capability:
+  mode: native_goal
+  # 2026-07-29 宿主实证：stream-json 事件流（api_retry/result/tool_use Read）与 claude
+  # 逐字段同构；agent-invoke.ts 按家族谓词复用 claude argv（二进制 codeagentcli）。
+  tool_event_provenance: structured_events
+  native_goal:
+    goal_condition_template: ../claude/templates/goal-condition.md
+    supports_resume: false
+  external_runner:
+    # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
+    # (codeagentcli -p …, prompt via STDIN — 与 claude 同款 Windows cmd shim 换行截断铁律)。
+    headless_invoke: 'codeagentcli -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
+    unattended:
+      write_mode: accept-edits
+      approval_mode: never
+
+post_install_hooks: []
+
+notes: |
+  - 内核=Claude Code CLI 衍生；模板 SSOT 在 agents/claude/templates/（claude-kernel 家族共享），
+    分叉仅 settings.json（三处差异见上）与 commands ×12（运行身份行；plan c7a9e2f4）。
+    改动 claude 的 agents/hooks/rules/goal-condition 模板对本 adapter 同时生效。
+  - 宿主实证（2026-07-29，plan c7a9e2f4 T0）：hook 进程注入 CODEAGENT3_PROJECT_DIR（正斜杠
+    形态）；Bash 子 shell 注入 CODEAGENT=1（宿主身份识别，对照 claude=CLAUDECODE）；
+    $schema 被静默忽略（模板不带它属品牌/语义决策）；hook cwd（payload.cwd 与 process.cwd()）
+    随会话 cd 漂移——项目根一律走 env/自锚，绝不依赖 cwd。
+  - CODEAGENT3_ 前缀带版本号，codeagent 大版本升级可能改名；升级时按 plan c7a9e2f4 T0
+    探针法重采（hooks env 链两个变量名都覆盖）。
+  - hard_hook 档位的对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写/
+    Stop 真拦收尾/SubagentStop 真落报告）完成为准。

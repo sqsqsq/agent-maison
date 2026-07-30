@@ -30,6 +30,9 @@ entries:
       - value: opencode
         label: "opencode — 物化 AGENTS.md + 自有 .opencode/ bundle（headless = opencode run）"
         portable: "opencode"
+      - value: codeagent
+        label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
+        portable: "codeagent"
 
   - id: init.task_plan
     skill: "framework-init"

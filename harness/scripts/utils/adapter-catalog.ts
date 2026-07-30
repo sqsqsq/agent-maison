@@ -37,6 +37,9 @@ const MENU_CANDIDATE_SCAN_FILES = [
   ['skills', 'project', 'framework-init', 'prompts', 'adapter-selection.md'],
   ['skills', 'project', 'framework-init', 'templates', 'adapter-widget-options.md'],
   ['agents', 'claude', 'templates', 'commands', 'framework-init.md'],
+  // codeagent 自有 commands 副本（plan c7a9e2f4）：与 claude 版同携 adapter-candidates 锚点，
+  // 同样纳入硬编码扫描，防止副本漂移出菜单口径。
+  ['agents', 'codeagent', 'templates', 'commands', 'framework-init.md'],
   ['skills', 'reference', 'user-confirmation-ux.md'],
 ] as const;
 
@@ -56,6 +59,7 @@ const WIDGET_GATE_DOC_FILES = [
   ['agents', 'cursor', 'templates', 'rules', 'interaction-renderer.mdc'],
   ['agents', 'claude', 'templates', 'rules', 'interaction-renderer.md'],
   ['agents', 'claude', 'templates', 'commands', 'framework-init.md'],
+  ['agents', 'codeagent', 'templates', 'commands', 'framework-init.md'],
 ] as const;
 
 function isAdapterDirName(name: string): boolean {

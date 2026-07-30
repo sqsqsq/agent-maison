@@ -1,5 +1,5 @@
 // ============================================================================
-// multimodal-evidence-gate.ts — 读图证据软门禁（M3-5，claude-scoped）
+// multimodal-evidence-gate.ts — 读图证据软门禁（M3-5，claude-kernel scoped）
 // ============================================================================
 
 import * as fs from 'fs';
@@ -10,7 +10,7 @@ export interface MultimodalEvidenceGateInput {
   adapter: string;
   imageInput: ImageInputMode;
   verifierReportText?: string;
-  /** 强制解析仅 Claude（hook 落 verifier.report.md） */
+  /** 强制解析仅 claude-kernel 家族（claude/codeagent；SubagentStop hook 落 verifier.report.md，check-receipt 按 isClaudeKernelAdapter 传入） */
   forceParse: boolean;
 }
 
@@ -22,8 +22,8 @@ export interface MultimodalEvidenceGateResult {
 
 /**
  * 评估 verifier 报告是否含合规读图证据块。
- * - Claude + tool_read + forceParse：解析文件，无证据 → WARN
- * - 非 Claude / none：SKIP（prompt 自律，不假装强制）
+ * - claude-kernel（claude/codeagent）+ tool_read + forceParse：解析文件，无证据 → WARN
+ * - 非 claude-kernel / none：SKIP（prompt 自律，不假装强制）
  */
 export function evaluateMultimodalEvidenceGate(
   input: MultimodalEvidenceGateInput,
@@ -43,8 +43,8 @@ export function evaluateMultimodalEvidenceGate(
       id: 'visual_multimodal_parity',
       status: 'SKIP',
       details:
-        `adapter=${input.adapter}：读图证据无 harness 强制解析（非 Claude verifier.report.md）；` +
-        '依赖 prompt 自律。Claude 经 SubagentStop hook 强制解析。',
+        `adapter=${input.adapter}：读图证据无 harness 强制解析（非 claude-kernel verifier.report.md）；` +
+        '依赖 prompt 自律。claude-kernel 家族（claude/codeagent）经 SubagentStop hook 强制解析。',
     };
   }
   const text = input.verifierReportText ?? '';

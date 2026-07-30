@@ -31,6 +31,7 @@ import {
 } from './skills-index-init-steps';
 import { loadSkillsIndex } from './resolve-skill-path';
 import { resolveMaterializedBuiltinSkillEntryRel } from './instance-skill-bridge';
+import { isClaudeKernelAdapter } from './types';
 
 export type InitNextStepSource = 'index' | 'harness';
 
@@ -543,8 +544,10 @@ export function renderNextStepsMarkdown(
         if (!entry?.exists) {
           continue;
         }
-        if (adapter === 'claude') {
-          lines.push(`  - claude: \`/${s.invoke!.command_id}\` → \`${entry.rel}\``);
+        if (isClaudeKernelAdapter(adapter)) {
+          // 家族谓词（plan c7a9e2f4 #13）：codeagent 同为 slash 内核，渲染 /<cmd> 形态；
+          // 目录名来自 entry.rel（manifest 解析），无硬编码。
+          lines.push(`  - ${adapter}: \`/${s.invoke!.command_id}\` → \`${entry.rel}\``);
         } else {
           lines.push(`  - ${adapter}: \`${entry.rel}\``);
         }

@@ -101,6 +101,21 @@ export function runAll(): UnitCaseResult[] {
     );
   });
 
+  run('CANONICAL_IGNORE_PATTERNS 含 codeagent 个人 .cac/settings.local.json（plan c7a9e2f4）', () => {
+    assert(
+      CANONICAL_IGNORE_PATTERNS.includes('**/.cac/settings.local.json'),
+      '.cac settings.local.json',
+    );
+    assert(
+      patternIsCovered('**/.cac/settings.local.json', ['.cac/settings.local.json']),
+      'equiv .cac/settings.local.json',
+    );
+    assert(
+      patternIsCovered('**/.cac/settings.local.json', ['/.cac/settings.local.json']),
+      'equiv /.cac/settings.local.json',
+    );
+  });
+
   run('空目录 ensure：创建文件且 added 含全部 canonical', () => {
     withTmpProject(root => {
       const r = ensureCanonicalGitignore(root);

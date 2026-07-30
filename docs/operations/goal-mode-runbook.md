@@ -101,6 +101,7 @@ UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜�
 ## Headless 路径（MVP 硬化）
 
 - Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
+- CodeAgent：`codeagentcli -p`——Claude Code 内核 fork，flags 与 Claude 全套等价（2026-07-29 宿主实证含 stream-json/dontAsk/stdin prompt），agent-invoke 按家族谓词复用 claude argv；宿主身份 env=`CODEAGENT=1`，hook 进程注入 `CODEAGENT3_PROJECT_DIR`
 - Codex：`codex exec --sandbox workspace-write --ask-for-approval never|on-request`
 - Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
 - Chrys：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`（文件传 prompt；preflight 空 `PROMPT_FILE` 时回退 positional）。前置：CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；`bootstrap_runtime` 需 provider 凭据（`~/.chrys` 或 `.env`）；先手跑 `chrys run "hi" --agent Code` 验证。无流式输出（`agent-output.log` phase 结束前可能为空）；退出码 0/1(stderr JSON)/124/130。

@@ -38,11 +38,13 @@ export interface InvokeTemplateVars {
  */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
-const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor', 'chrys', 'opencode']);
+const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codeagent', 'codex', 'cursor', 'chrys', 'opencode']);
 
 /** Cursor headless CLI candidates (official name first). */
 export const CURSOR_HEADLESS_BINARY_CANDIDATES = ['cursor-agent', 'agent'] as const;
 export const CLAUDE_HEADLESS_BINARY_CANDIDATES = ['claude'] as const;
+/** codeagent（Claude Code 内核 fork，plan c7a9e2f4）：CLI=codeagentcli，argv 与 claude -p 等价（2026-07-29 宿主实证）。 */
+export const CODEAGENT_HEADLESS_BINARY_CANDIDATES = ['codeagentcli'] as const;
 export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
 export const CHRYS_HEADLESS_BINARY_CANDIDATES = ['chrys'] as const;
 export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
@@ -50,6 +52,7 @@ export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
 const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
   claude: CLAUDE_HEADLESS_BINARY_CANDIDATES,
+  codeagent: CODEAGENT_HEADLESS_BINARY_CANDIDATES,
   codex: CODEX_HEADLESS_BINARY_CANDIDATES,
   chrys: CHRYS_HEADLESS_BINARY_CANDIDATES,
   opencode: OPENCODE_HEADLESS_BINARY_CANDIDATES,
@@ -250,6 +253,12 @@ export interface HeadlessInvokePlan {
   useCrossSpawn?: boolean;
   /** Human-readable label for logs / dry-run. */
   label: string;
+  /**
+   * 生成本 plan 的 adapter 名（plan c7a9e2f4 #5b）：诊断信息（binary 不可执行时的候选提示）
+   * 优先取此字段，argv[0] 子串猜测仅作 custom headless_invoke 的兜底——
+   * codeagentcli 不含任何旧子串，纯猜测会误报成 cursor。
+   */
+  adapterName?: string;
 }
 
 function attachResolvedBinary(
@@ -270,14 +279,18 @@ function attachResolvedBinary(
 
 // Windows 铁律：prompt 不进 argv。claude 无 .exe 只有 claude.cmd → 必经 cmd.exe，
 // 命令行遇换行即截断（实测多行 prompt 只剩 2 字符），故 prompt 一律走 stdin（见 defaultHeadlessInvokePlan）。
+// binary 参数化（plan c7a9e2f4）：codeagent（codeagentcli）与 claude argv 逐 flag 等价
+//（-p / --allowedTools / --output-format stream-json --verbose / --permission-mode dontAsk
+// 均 2026-07-29 宿主实证可用），复用全套。
 function claudeArgv(
   unattended: UnattendedContract,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
+  binary: string = 'claude',
 ): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
     : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
-  const argv = ['claude', '-p', '--allowedTools', tools.join(',')];
+  const argv = [binary, '-p', '--allowedTools', tools.join(',')];
   // t3a/f7a3d9c2：adapter 声明 structured_events → stdout 输出 NDJSON 事件流（含
   // tool_use/Read 验读记录，t3b runner attestation 的证据源）。2026-07-11 宿主实采样本
   // 确认事件形状；agent-output.log 仍为混合人读投影（三文件分流见 spawnHeadlessAsync），
@@ -429,6 +442,7 @@ function planFromTemplate(
   const argv = injectPromptIntoArgv(tokenizeInvokeCommand(tokenized), promptContent);
   const label =
     argv[0] === 'claude' ||
+    argv[0] === 'codeagentcli' ||
     argv[0] === 'codex' ||
     argv[0] === 'cursor' ||
     argv[0] === 'cursor-agent' ||
@@ -448,44 +462,57 @@ export function defaultHeadlessInvokePlan(
   if (adapterName === 'claude') {
     const argv = claudeArgv(unattended, toolEventProvenance);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
-    return { ...plan, useStdin: true, stdin: promptContent };
+    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
+  }
+  // codeagent（plan c7a9e2f4）：Claude Code 内核 fork，argv 全套复用（仅二进制名不同）；
+  // prompt 走 stdin 同款铁律（codeagentcli 亦为 Windows cmd shim，实证 stdin 喂 prompt 可用）。
+  if (adapterName === 'codeagent') {
+    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli');
+    const plan = attachResolvedBinary(argv, CODEAGENT_HEADLESS_BINARY_CANDIDATES, 'codeagentcli -p …');
+    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
     const argv = codexArgv(unattended);
     const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
-    return { ...plan, useStdin: true, stdin: promptContent };
+    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
-    return cursorHeadlessPlan(unattended, promptContent, resolved);
+    return { ...cursorHeadlessPlan(unattended, promptContent, resolved), adapterName };
   }
   if (adapterName === 'chrys') {
-    return chrysHeadlessPlan(
-      {
-        PROMPT_FILE: '',
-        PROMPT: promptContent,
-        SKILL_PATH: '',
-        PROJECT_ROOT: '.',
-        FRAMEWORK_ROOT: '',
-        FEATURE: '',
-        PHASE: '',
-      },
-      promptContent,
-    );
+    return {
+      ...chrysHeadlessPlan(
+        {
+          PROMPT_FILE: '',
+          PROMPT: promptContent,
+          SKILL_PATH: '',
+          PROJECT_ROOT: '.',
+          FRAMEWORK_ROOT: '',
+          FEATURE: '',
+          PHASE: '',
+        },
+        promptContent,
+      ),
+      adapterName,
+    };
   }
   if (adapterName === 'opencode') {
-    return opencodeHeadlessPlan(
-      {
-        PROMPT_FILE: '',
-        PROMPT: promptContent,
-        SKILL_PATH: '',
-        PROJECT_ROOT: '.',
-        FRAMEWORK_ROOT: '',
-        FEATURE: '',
-        PHASE: '',
-      },
-      promptContent,
-    );
+    return {
+      ...opencodeHeadlessPlan(
+        {
+          PROMPT_FILE: '',
+          PROMPT: promptContent,
+          SKILL_PATH: '',
+          PROJECT_ROOT: '.',
+          FRAMEWORK_ROOT: '',
+          FEATURE: '',
+          PHASE: '',
+        },
+        promptContent,
+      ),
+      adapterName,
+    };
   }
   return genericStdinPlan(promptContent);
 }
@@ -1117,6 +1144,24 @@ async function spawnHeadlessAsync(
   };
 }
 
+/**
+ * binary 不可执行时的诊断归属（plan c7a9e2f4 #5b；导出供单测）：
+ * 优先取 plan.adapterName（内建 plan 均显式携带）；argv[0] 子串猜测仅兜底
+ * custom headless_invoke——codeagentcli 须在 codex/claude 之前判
+ *（不含 'claude' 子串，纯猜测时代会误报 cursor）。
+ */
+export function diagnoseAdapterForBinaryIssue(
+  plan: Pick<HeadlessInvokePlan, 'argv' | 'adapterName'>,
+): string {
+  return plan.adapterName && plan.adapterName in STRUCTURED_BINARY_CANDIDATES ? plan.adapterName
+    : plan.argv[0]?.includes('codeagent') ? 'codeagent'
+    : plan.argv[0]?.includes('claude') ? 'claude'
+    : plan.argv[0]?.includes('codex') ? 'codex'
+    : plan.argv[0]?.includes('chrys') ? 'chrys'
+    : plan.argv[0]?.includes('opencode') ? 'opencode'
+    : 'cursor';
+}
+
 export async function invokeAgentHeadless(
   plan: HeadlessInvokePlan,
   cwd: string,
@@ -1128,12 +1173,7 @@ export async function invokeAgentHeadless(
   }
 
   if (plan.resolvedBinary && !headlessBinarySpawnable(plan.resolvedBinary)) {
-    const adapterGuess =
-      plan.argv[0]?.includes('claude') ? 'claude'
-      : plan.argv[0]?.includes('codex') ? 'codex'
-      : plan.argv[0]?.includes('chrys') ? 'chrys'
-      : plan.argv[0]?.includes('opencode') ? 'opencode'
-      : 'cursor';
+    const adapterGuess = diagnoseAdapterForBinaryIssue(plan);
     const candidates = STRUCTURED_BINARY_CANDIDATES[adapterGuess] ?? [...CURSOR_HEADLESS_BINARY_CANDIDATES];
     return {
       exitCode: 1,

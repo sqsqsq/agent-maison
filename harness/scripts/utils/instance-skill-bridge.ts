@@ -13,6 +13,7 @@ import {
   renderBridgeSkillStubMarkdown,
 } from './materialize-agent-bundle-skills';
 import { resolveSkillPathOrNull } from './resolve-skill-path';
+import { isClaudeKernelAdapter } from './types';
 
 export interface ExtensionSkillScanRow {
   sourceSlug: string;
@@ -258,13 +259,21 @@ export function resolveMaterializedBuiltinSkillEntryRel(
   commandId: string,
 ): { rel: string; exists: boolean } | null {
   const name = adapter.trim().toLowerCase();
-  if (name === 'claude') {
-    const adapterPath = path.join(frameworkDir, 'agents', 'claude', 'adapter.yaml');
+  // claude-kernel 家族（plan c7a9e2f4 #11）：manifest 驱动——读**本 adapter** 的
+  // agents/<name>/adapter.yaml 解析 commands target_dir（claude→.claude/commands，
+  // codeagent→.cac/commands），不再写死 claude 目录。默认兜底仅保留 claude 的
+  // 历史缺省；codeagent adapter.yaml 恒声明 target_dir，解析不到属异常 → null（不猜）。
+  if (isClaudeKernelAdapter(name)) {
+    const adapterPath = path.join(frameworkDir, 'agents', name, 'adapter.yaml');
     if (!fs.existsSync(adapterPath)) {
       return null;
     }
     const commandsDir =
-      parseCommandsTargetDir(fs.readFileSync(adapterPath, 'utf8')) ?? '.claude/commands';
+      parseCommandsTargetDir(fs.readFileSync(adapterPath, 'utf8'))
+      ?? (name === 'claude' ? '.claude/commands' : null);
+    if (!commandsDir) {
+      return null;
+    }
     const rel = path.posix.join(commandsDir.replace(/\\/g, '/'), `${commandId}.md`);
     const abs = path.join(projectRoot, ...rel.split('/'));
     return { rel, exists: fs.existsSync(abs) };

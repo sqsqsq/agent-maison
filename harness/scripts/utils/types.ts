@@ -4,6 +4,19 @@
 
 import type { RefElementEntry } from './fidelity-shared';
 
+/**
+ * Claude Code 内核家族 adapter（plan c7a9e2f4）：CLI 参数 / stream-json 信封 /
+ * hooks 协议 / slash 机制同源。codeagent=Claude Code CLI fork（物化目录 .cac，
+ * 二进制 codeagentcli，2026-07-29 宿主探针实证信封逐字段同构）。
+ * 消费方注意：本谓词只覆盖「内核同源」语义（信封解析、argv 复用、事件 forceParse 等）；
+ * 文案 / 目录名 / 身份标记类分支勿盲目收编——目录名以各 adapter.yaml target 为准。
+ */
+export const CLAUDE_KERNEL_ADAPTERS: ReadonlySet<string> = new Set(['claude', 'codeagent']);
+
+export function isClaudeKernelAdapter(name: string | null | undefined): boolean {
+  return typeof name === 'string' && CLAUDE_KERNEL_ADAPTERS.has(name);
+}
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 

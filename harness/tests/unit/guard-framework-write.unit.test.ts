@@ -203,6 +203,63 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'A8 codeagent env（plan c7a9e2f4 T2）：无 CLAUDE_PROJECT_DIR、仅 CODEAGENT3_PROJECT_DIR → 照常拦截',
+    run: () => {
+      const root = mkConsumerProject();
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-elsewhere-'));
+      try {
+        const env: NodeJS.ProcessEnv = { ...process.env, CODEAGENT3_PROJECT_DIR: root };
+        delete env.CLAUDE_PROJECT_DIR;
+        const payload = JSON.stringify({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Write',
+          tool_input: { file_path: path.join(root, 'framework', 'harness', 'scripts', 'evil.mjs') },
+          cwd: elsewhere, // payload.cwd 指向别处（漂移形态）——env 候选须先命中
+        });
+        const r = spawnSync(process.execPath, [HOOK_ABS], {
+          input: payload, encoding: 'utf-8', env, shell: false, cwd: elsewhere,
+        });
+        assert(r.status === 2, `CODEAGENT3_PROJECT_DIR 应支撑拦截，实际 ${r.status}；stderr=${r.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(elsewhere, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'A9 cd 漂移自锚（plan c7a9e2f4 T2）：无任何 env、payload.cwd/进程 cwd 均漂移 → import.meta.url 自锚兜住',
+    run: () => {
+      // 物化实例形态：hook 物理位于 <root>/.cac/hooks/，自锚 ../.. = root（含 framework 标记）
+      const root = mkConsumerProject();
+      try {
+        const hooksDir = path.join(root, '.cac', 'hooks');
+        fs.mkdirSync(hooksDir, { recursive: true });
+        const hookAbs = path.join(hooksDir, 'guard-framework-write.mjs');
+        fs.copyFileSync(HOOK_ABS, hookAbs);
+        const sub = path.join(root, 'sub');
+        fs.mkdirSync(sub, { recursive: true });
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        delete env.CLAUDE_PROJECT_DIR;
+        delete env.CODEAGENT3_PROJECT_DIR;
+        const runDrifted = (filePath: string) => spawnSync(process.execPath, [hookAbs], {
+          input: JSON.stringify({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Write',
+            tool_input: { file_path: filePath },
+            cwd: sub, // 宿主实证（2026-07-29）：cd 后 payload.cwd 跟随漂移
+          }),
+          encoding: 'utf-8', env, shell: false, cwd: sub,
+        });
+        const denied = runDrifted(path.join(root, 'framework', 'skills', 'x.md'));
+        assert(denied.status === 2, `自锚应兜住漂移拦截 framework 写，实际 ${denied.status}；stderr=${denied.stderr}`);
+        const allowed = runDrifted(path.join(root, 'src', 'main.ets'));
+        assert(allowed.status === 0, `非 framework 路径应放行，实际 ${allowed.status}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'A7 写时/扫描谓词拆分（第七轮 P1-1）：isWriteAllowedPath 拒 sidecar、isPolicyAllowedPath 认 sidecar 合法存在',
     run: async () => {
       const core = await loadCore();

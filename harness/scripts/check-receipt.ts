@@ -59,6 +59,7 @@ import {
 } from './utils/phase-evidence-manifest';
 import { writeReviewClosureAttestation } from './utils/closure-attestation';
 import type { Phase as EvidencePhase } from './utils/types';
+import { isClaudeKernelAdapter } from './utils/types';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
 import { validateLiteSchema } from './utils/lite-json-schema';
 import { computeProductWorktreeDigest } from './utils/worktree-digest';
@@ -1163,7 +1164,7 @@ function parseFrontmatterAndBody(raw: string): {
 }
 
 // --------------------------------------------------------------------------
-// M3 读图证据软门禁（claude-scoped 强制；非 Claude 仅 advisory SKIP 文案）
+// M3 读图证据软门禁（claude-kernel scoped 强制——claude/codeagent；非家族仅 advisory SKIP 文案）
 // --------------------------------------------------------------------------
 
 function collectMultimodalEvidenceAdvisory(
@@ -1186,7 +1187,8 @@ function collectMultimodalEvidenceAdvisory(
     adapter,
     imageInput: probe.imageInput,
     verifierReportText: reportText,
-    forceParse: adapter === 'claude',
+    // 家族谓词（plan c7a9e2f4）：codeagent 事件流与 claude 同构，同样强制解析
+    forceParse: isClaudeKernelAdapter(adapter),
   });
   if (!gate) return null;
   if (gate.status === 'PASS') return null;

@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import { parseEnvelopeLine } from './claude-envelope';
+import { isClaudeKernelAdapter } from './types';
 
 export const HEADLESS_INTERACTION_CODE = 'headless_interaction_required';
 
@@ -88,11 +89,29 @@ function isTailDominated(lines: string[], hitIndex: number): boolean {
 const STREAM_JSON_TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504, 529]);
 
 /**
- * t3a/f7a3d9c2：claude structured_events（stream-json）模式的结构化错误信封。
+ * 结构化 status 字段数字化（plan c7a9e2f4 #7b-a）：真实 writer 吐的是**字符串**——
+ * 2026-07-29 codeagent 断网实采 `{"type":"system","subtype":"api_retry","error_status":"500",...}`，
+ * 原 `typeof === 'number'` 判定整行漏判（断流退化为整 attempt 干等超时，实采重试耗 ~7 分钟）。
+ * claude 同源内核同一 writer，同样受益。非数字/缺失返回 null。
+ */
+function coerceStatusCode(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value.trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * t3a/f7a3d9c2：claude-kernel structured_events（stream-json）模式的结构化错误信封。
  * agent-output.log 仍是混合人读投影，但 stdout 行变 NDJSON——文本锚定 `^API Error` 不再
  * 出现，改认结构化事件：①{type:'system',subtype:'api_retry',error_status,error}；
- * ②{type:'result',is_error:true,api_error_status}。仅 429/5xx/网络类计 transient
+ * ②{type:'result',is_error:true,…}。仅 429/5xx/网络类计 transient
  * （401/403 鉴权失败不盲 backoff——2026-07-11 宿主实采样本即 401，误归 transient 会空转）。
+ * 2026-07-29 实采回灌（plan c7a9e2f4 #7b）：status 字段一律 coerceStatusCode 数字化；
+ * 终局 result 事件可**不带 api_error_status**（错误全在 result 文本，如
+ * "API Error: 500 Unable to connect…"）——状态缺失/非数时回退 result 文本过断流特征正则。
  */
 function parseClaudeStreamJsonApiError(lines: string[]): HeadlessApiErrorSentinel | null {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -102,30 +121,41 @@ function parseClaudeStreamJsonApiError(lines: string[]): HeadlessApiErrorSentine
     const obj = parsed as {
       type?: string;
       subtype?: string;
-      error_status?: number;
+      error_status?: number | string;
       error?: string;
       is_error?: boolean;
-      api_error_status?: number;
+      api_error_status?: number | string;
       result?: string;
     };
     if (obj.type === 'system' && obj.subtype === 'api_retry') {
+      const status = coerceStatusCode(obj.error_status);
       const transient =
-        (typeof obj.error_status === 'number' && STREAM_JSON_TRANSIENT_STATUS.has(obj.error_status)) ||
+        (status !== null && STREAM_JSON_TRANSIENT_STATUS.has(status)) ||
         (typeof obj.error === 'string' && matchesTruncationHint(obj.error) && !/authentication/i.test(obj.error));
       if (transient) {
         return {
           code: TRANSIENT_API_ERROR_CODE,
-          matchedLine: `stream-json api_retry status=${obj.error_status ?? '?'} ${obj.error ?? ''}`.slice(0, 300),
+          matchedLine: `stream-json api_retry status=${status ?? obj.error_status ?? '?'} ${obj.error ?? ''}`.slice(0, 300),
           lineIndex: i,
         };
       }
     }
     if (obj.type === 'result' && obj.is_error === true) {
-      const status = obj.api_error_status;
-      if (typeof status === 'number' && STREAM_JSON_TRANSIENT_STATUS.has(status)) {
+      const status = coerceStatusCode(obj.api_error_status);
+      if (status !== null && STREAM_JSON_TRANSIENT_STATUS.has(status)) {
         return {
           code: TRANSIENT_API_ERROR_CODE,
           matchedLine: `stream-json result is_error api_error_status=${status} ${String(obj.result ?? '').slice(0, 120)}`.slice(0, 300),
+          lineIndex: i,
+        };
+      }
+      // #7b-b：终局行无 status 字段（实采确认）→ 回退 result 文本判定；
+      // 鉴权措辞排除，沿用 api_retry 分支同款防线（401/403 不误归 transient）。
+      if (status === null && typeof obj.result === 'string'
+        && matchesTruncationHint(obj.result) && !/authentication/i.test(obj.result)) {
+        return {
+          code: TRANSIENT_API_ERROR_CODE,
+          matchedLine: `stream-json result is_error ${obj.result.slice(0, 200)}`.slice(0, 300),
           lineIndex: i,
         };
       }
@@ -188,7 +218,9 @@ export function parseHeadlessApiError(
   const raw = fs.readFileSync(outputLogPath, 'utf-8');
   if (raw.trim().length === 0) return null; // 0 字节走 agent_no_output 兜底，不冒充断流
   const lines = raw.split(/\r?\n/);
-  if (adapter === 'claude') return parseClaudeApiError(lines);
+  // 家族谓词（plan c7a9e2f4）：codeagent 信封三段（参数校验文案/api_retry/终局 result）
+  // 2026-07-29 实采确认与 claude 同源，走同一解析器。
+  if (isClaudeKernelAdapter(adapter)) return parseClaudeApiError(lines);
   if (adapter === 'chrys') return parseChrysApiError(lines);
   return null;
 }

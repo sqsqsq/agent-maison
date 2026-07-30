@@ -194,6 +194,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },
   { id: 'goal-runner-detach', modulePath: './unit/goal-runner-detach.unit.test' },
   { id: 'chrys-opencode-adapter', modulePath: './unit/chrys-opencode-adapter.unit.test' },
+  { id: 'codeagent-adapter', modulePath: './unit/codeagent-adapter.unit.test' },
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
   { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },

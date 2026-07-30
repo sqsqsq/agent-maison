@@ -15,6 +15,8 @@
 //     （三文件分流的纯 events 文件），禁读混合 agent-output.log（stderr 可插进 JSON 行中间）。
 // ============================================================================
 
+import { isClaudeKernelAdapter } from './types';
+
 /** 单行信封解析：非 JSON 行（stderr 插行/人读投影）返回 null，绝不 throw。 */
 export function parseEnvelopeLine(line: string): Record<string, unknown> | null {
   const trimmed = line.trim();
@@ -90,5 +92,7 @@ export function planUsesClaudeStreamJson(
   adapterName: string,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript' | null,
 ): boolean {
-  return adapterName === 'claude' && toolEventProvenance === 'structured_events';
+  // 家族谓词（plan c7a9e2f4）：codeagent=Claude Code 内核 fork，stream-json 信封
+  // 逐字段同构（2026-07-29 宿主实证），与 claudeArgv 注入条件保持同构。
+  return isClaudeKernelAdapter(adapterName) && toolEventProvenance === 'structured_events';
 }

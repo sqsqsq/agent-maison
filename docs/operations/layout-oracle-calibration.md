@@ -107,7 +107,8 @@ f7a3d9c2 t5⑨/⑥ 设备模式校准（calibration.json 在该 feature `device-
 - critic 回执的 `input_provenance`（f7a3d9c2 更新）：**goal 态已有诚实 verified 生产者**
   ——goal-runner 审计 agent-events.jsonl（structured_events 三文件分流的纯净事件流）中的
   图片验读记录后签发 runner attestation 回执，check 重算证据日志 hash 验真，手写 verified
-  一律降级；仅对盘点合格的 adapter 生效（当前解析器仅 claude，其余恒 unverified——盘点
-  SSOT 见 docs/operations/adapter-tool-event-provenance.md，真机 fixture 待宿主复验）。
+  一律降级；仅对盘点合格的 adapter 生效（当前解析器=claude-kernel 家族——claude 与
+  codeagent（2026-07-29 凭实采 fixture 入册，plan c7a9e2f4），其余恒 unverified——盘点
+  SSOT 见 docs/operations/adapter-tool-event-provenance.md）。
   **交互态仍无信任根 → 一律如实 `unverified`**。证明力边界不变：验读记录=工具调用发生
   且输入被注入，≠模型看懂了图。

@@ -85,8 +85,14 @@ goal_capability:
 post_install_hooks: []
 
 notes: |
-  - 提供 11 份 slash 路由模板：catalog-bootstrap（catalog-bootstrap / glossary-bootstrap）、
-    goal-mode、code-graph、spec/plan/coding/code-review/business-ut/device-testing 六篇 feature skill、framework-init（framework-init.md）。个人 setup 无 slash，由阶段入口 `--ensure` 内联完成。
+  - 提供 12 份 slash 路由模板：catalog-bootstrap / glossary-bootstrap、goal-mode、code-graph、
+    change-lite、spec/plan/coding/code-review/business-ut/device-testing 六篇 feature skill、
+    framework-init（framework-init.md）。个人 setup 无 slash，由阶段入口 `--ensure` 内联完成。
+  - **claude-kernel 家族模板 SSOT**（plan c7a9e2f4）：本目录 templates/ 的 agents/（verifier）、
+    hooks/、rules/、goal-condition.md 同时被 codeagent adapter 跨目录引用（agents/codeagent/
+    adapter.yaml 以 `../claude/templates/...` 声明）——改动这些模板对两个 adapter 同时生效；
+    commands/ 与 settings.json 例外（codeagent 自有副本/分叉，等值由
+    codeagent-adapter.unit.test.ts 归一化测试守护）。
   - 模板里的 `../../framework/skills/<n>/SKILL.md` 相对路径假设 .claude/commands/
     在实例工程根下（与 `commands.target_dir` 一致），且仓库内含 `framework/` 子目录布局；移植时以本 adapter.yaml 的
     `target_*` 为准，不因具体业务仓名而异。

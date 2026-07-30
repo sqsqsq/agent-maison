@@ -96,14 +96,46 @@ async function readStdin() {
 // 2. 项目根 / 状态文件路径解析
 // --------------------------------------------------------------------------
 
-function resolveProjectRoot(payload) {
-  // 优先级：env > payload.cwd > process.cwd()
-  const fromEnv = process.env.CLAUDE_PROJECT_DIR;
-  if (fromEnv && fromEnv.trim()) return path.resolve(fromEnv.trim());
-  if (payload && typeof payload.cwd === 'string' && payload.cwd.trim()) {
-    return path.resolve(payload.cwd.trim());
+// 项目根解析（plan c7a9e2f4 T2：厂商无关加固，三 hook 同款）——
+// 候选序：env(claude → codeagent3) → import.meta.url 自锚 → payload.cwd → process.cwd()，
+// 取首个含 hooks 真实依赖标记（guard-core / check-receipt 任一）的候选。
+// 自锚排在 payload.cwd 前：hook 物理位于 <root>/.claude|.cac/hooks/，比会话 cwd 权威——
+// 宿主实证（2026-07-29）payload.cwd 与 process.cwd() 都随会话 cd 漂移。
+// 全不中：回落原兜底序（env → payload.cwd → cwd）首个非空值，fail-open 语义不变；
+// 自锚不参与盲兜底（源仓/模板目录下自锚指向 agents/<name>，非实例根）。
+
+const PROJECT_ROOT_MARKERS = [
+  ['framework', 'agents', 'shared', 'guard-framework-write-core.mjs'],
+  ['framework', 'harness', 'scripts', 'check-receipt.ts'],
+];
+
+function hasProjectRootMarker(root) {
+  try {
+    return PROJECT_ROOT_MARKERS.some((parts) => fs.existsSync(path.join(root, ...parts)));
+  } catch {
+    return false;
   }
-  return process.cwd();
+}
+
+function normalizeCandidate(value) {
+  return typeof value === 'string' && value.trim() ? path.resolve(value.trim()) : null;
+}
+
+function resolveProjectRoot(payload) {
+  let selfAnchor = null;
+  try {
+    selfAnchor = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  } catch {
+    selfAnchor = null;
+  }
+  const envClaude = normalizeCandidate(process.env.CLAUDE_PROJECT_DIR);
+  const envCodeagent = normalizeCandidate(process.env.CODEAGENT3_PROJECT_DIR);
+  const payloadCwd = normalizeCandidate(payload && typeof payload.cwd === 'string' ? payload.cwd : null);
+  const anchored = [envClaude, envCodeagent, selfAnchor, payloadCwd, process.cwd()].filter(Boolean);
+  for (const cand of anchored) {
+    if (hasProjectRootMarker(cand)) return cand;
+  }
+  return envClaude ?? envCodeagent ?? payloadCwd ?? process.cwd();
 }
 
 function readJSONSafe(filePath) {

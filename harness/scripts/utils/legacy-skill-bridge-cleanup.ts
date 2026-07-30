@@ -4,9 +4,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { FrameworkConfig } from '../../config';
+import { frameworkAbs, inferRepoLayout } from '../../repo-layout';
 import type { InitMode } from '../check-init';
 import { validateAgentBundleRoot, type ResolvedAgentBundlePaths } from './agent-bundle-paths';
 import type { CleanupResult } from './init-sync-telemetry';
+import { parseCommandsTargetDir } from './instance-skill-bridge';
+import { isClaudeKernelAdapter } from './types';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
   // 00 / 0 前缀
@@ -117,17 +120,45 @@ export function readGenericBundlePathsFromConfigPaths(
   };
 }
 
+/** claude-kernel 家族 commands 目录历史缺省（manifest 不可读时的兜底；与 instance-skill-bridge 同语义） */
+const KERNEL_COMMANDS_DIR_DEFAULTS: Record<string, string> = {
+  claude: '.claude/commands',
+  codeagent: '.cac/commands',
+};
+
+/**
+ * claude-kernel 家族 legacy 路径 manifest 化（codex P2 回灌，plan c7a9e2f4 #12）：
+ * 与 instance-skill-bridge 主入口同径——优先读 vendored agents/<name>/adapter.yaml 的
+ * commands.target_dir，避免未来 target_dir 调整时清理路径漂移；manifest 不可读
+ * （测试夹具/异常布局）回落历史缺省。
+ */
+function kernelCommandsDir(projectRoot: string, adapter: string): string {
+  try {
+    const layout = inferRepoLayout(projectRoot);
+    const yamlPath = frameworkAbs(layout, 'agents', adapter, 'adapter.yaml');
+    if (fs.existsSync(yamlPath)) {
+      const parsed = parseCommandsTargetDir(fs.readFileSync(yamlPath, 'utf-8'));
+      if (parsed) return parsed.replace(/\\/g, '/').replace(/\/+$/, '');
+    }
+  } catch {
+    /* fallthrough to default */
+  }
+  return KERNEL_COMMANDS_DIR_DEFAULTS[adapter]!;
+}
+
 function legacyRelPathForAdapter(
   adapter: string,
   legacyId: string,
   config: FrameworkConfig,
+  projectRoot: string,
 ): string | null {
   const name = adapter.trim().toLowerCase();
   if (name === 'cursor') {
     return `.cursor/skills/${legacyId}/`;
   }
-  if (name === 'claude') {
-    return `.claude/commands/${legacyId}.md`;
+  if (isClaudeKernelAdapter(name)) {
+    // claude=历史遗留真实存在；codeagent=新 adapter 现阶段恒 no-op，登记以防未来 skill-id 演化
+    return `${kernelCommandsDir(projectRoot, name)}/${legacyId}.md`;
   }
   if (name === 'generic') {
     const bundle = readGenericBundlePathsFromConfigPaths(config.paths);
@@ -146,7 +177,7 @@ export function collectLegacySkillBridgePaths(
     if (!adapter || seenAdapters.has(adapter)) continue;
     seenAdapters.add(adapter);
     for (const legacyId of LEGACY_SKILL_BRIDGE_IDS) {
-      const relPosix = legacyRelPathForAdapter(adapter, legacyId, opts.config);
+      const relPosix = legacyRelPathForAdapter(adapter, legacyId, opts.config, opts.projectRoot);
       if (!relPosix) continue;
       out.push({ adapter, relPosix: toPosix(relPosix), legacyId });
     }

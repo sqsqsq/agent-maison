@@ -1,6 +1,6 @@
-# 用户交互渲染器（Claude Code · BLOCKER）
+# 用户交互渲染器（Claude-kernel adapter · BLOCKER）
 
-> 与 [framework/skills/reference/user-confirmation-ux.md](../../framework/skills/reference/user-confirmation-ux.md) 配套；**Claude adapter 会话级 BLOCKER**。
+> 与 [framework/skills/reference/user-confirmation-ux.md](../../framework/skills/reference/user-confirmation-ux.md) 配套；**Claude-kernel adapter（claude / codeagent）会话级 BLOCKER**。
 > 选项文案 SSOT：[confirmation-registry.yaml](../../framework/skills/reference/confirmation-registry.yaml)。
 
 ## 全局规则（BLOCKER）
@@ -61,7 +61,7 @@
 ## BLOCKER 反模式
 
 - widget 可用却仅给 Markdown 表 + 文本编号，未调 AskUserQuestion
-- option label 自造路径（含 `.claude/commands/skills/`）或 `(Recommended)` 标签
+- option label 自造路径（含 `.claude/commands/skills/`、`.cac/commands/skills/`）或 `(Recommended)` 标签
 - 跳过 Research Sub-Phase 直接写 spec 正文大块（Step 2.5 仍 BLOCKER）
 - 阶段四件套 PASS 后在同一执行流自动 Read 下一 Skill（须 `phase.next_step` 停等，见 user-confirmation-ux §8）
 - framework-init **S4 `buildRunSummary` 后**再附 `init.task_plan` / `init.materialized_adapters` 等 portable 脚注

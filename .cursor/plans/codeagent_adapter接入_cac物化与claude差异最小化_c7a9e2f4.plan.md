@@ -2,209 +2,231 @@
 name: codeagent adapter 接入——.cac 物化与 claude 差异最小化
 version: 3.0.0
 # 版本说明：跟随当前版本窗口 3.0.0（用户控版本，不 bump）。
-overview: 新增 codeagent（Claude Code CLI 内核衍生 agent，物化目录 .cac，headless CLI=codeagentcli 与 claude -p 等价）adapter：除 settings.json 单文件分叉外，commands/agents/rules/hooks/goal-condition 模板 100% 跨目录引用 claude adapter；goal/headless 本期接入（claude-kernel 家族谓词收敛 9 处 === 'claude' 散点）；claude 侧 ${CLAUDE_PROJECT_DIR} 经官方文档核实不可改相对路径（hook cwd 随会话 cd 漂移，改了=Layer 3 三 hook 静默失效），codeagent 侧优先探针等价变量、相对路径仅作降级并记录诚实边界。
+overview: 新增 codeagent（Claude Code CLI 内核衍生，物化目录 .cac，headless CLI=codeagentcli）adapter。T0 六项宿主探针已全部回灌（2026-07-29），三处待定分支全部收敛到最优形态：settings.json 用 ${CODEAGENT3_PROJECT_DIR}（实证可展开）、AskUserQuestion 同名同签名（rules 共享成立）、Read 事件同构（视觉链入册）。收敛原则：只共享经实证且不含 adapter 身份/工具能力/目标目录差异的模板——共享=verifier/goal-condition/hooks/rules/AGENTS.md，分叉=settings.json+12 份 commands（身份行仿 cursor 先例）。hooks 项目根解析升级 import.meta.url 自锚+CODEAGENT3 env（cd 漂移已实证）；goal 接线 13 点闭合清单（含 keyed registry/substring dispatch 盲区与哨兵两处实采漏判修复）。
 todos:
   - id: t0-host-probe
-    content: "T0: 宿主探针（对 codeagent 宿主的话术+预期回报）——等价 project-dir 变量/hook cwd 漂移语义/$schema 容忍度/AskUserQuestion/ambient env 标识/headless 错误信封文案"
-    status: pending
+    content: "T0: 宿主探针六项（等价变量/占位符展开/cwd 漂移/$schema/AskUserQuestion/身份 env/Read 事件样本）——2026-07-29 全部回灌，结果见 T0 节"
+    status: completed
   - id: t1-adapter
-    content: "T1: agents/codeagent/adapter.yaml（入口 AGENTS.md；五段模板全 ../claude 引用；goal_capability 全量镜像 claude）+ 唯一分叉文件 templates/settings.json（无 $schema、.cac 路径、按 T0 定变量或相对路径降级）"
-    status: pending
-  - id: t2-goal-wiring
-    content: "T2: goal/headless 接线——claude-kernel 家族谓词落 utils/types.ts；agent-invoke（candidates=codeagentcli/claudeArgv 参数化/dispatch/label）+ claude-envelope + goal-headless-sentinel + check-receipt forceParse + multimodal-probe + init-next-steps + instance-skill-bridge/legacy-cleanup 共 9 处逐点适配；#7b 实采回灌修复 error_status 字符串型漏判（实采样本原文作 fixture）"
-    status: pending
-  - id: t3-registry-docs
-    content: "T3: confirmation-registry.yaml options 补 codeagent + agents/README.md 参考表五处 + claude adapter.yaml notes 标注 claude-kernel 家族模板 SSOT + 入口文件类文档扫尾"
-    status: pending
-  - id: t4-tests
-    content: "T4: 新增 codeagent-adapter.unit.test.ts（跨目录引用可解析/settings 与 claude 结构等价守护/无 $schema）+ agent-invoke 侧 codeagent headless plan 用例 + run-unit.ts CORE_SUITES 显式注册 + cd harness && npm test 全绿"
-    status: pending
-  - id: t5-deferred
-    content: "T5(悬置): hooks 兜底链插入 codeagent 等价 env（T0 探到后）/ 宿主实测回灌（goal 全链路真跑 + API 断流信封文案校准 + Stop/guard 硬门禁实拦验证）"
-    status: pending
+    content: "T1: agents/codeagent/adapter.yaml（入口 AGENTS.md；verifier/goal-condition/hooks/rules 四段 ../claude 引用；goal_capability 镜像 claude）+ templates/settings.json（${CODEAGENT3_PROJECT_DIR}、无 $schema、.cac 路径）+ templates/commands/×12 自有副本（身份行=codeagent，仿 cursor）+ 共享 interaction-renderer 文案中性化（Claude-kernel 口径，反例路径兼列 .cac）"
+    status: completed
+  - id: t2-hooks-hardening
+    content: "T2: 三个共享 hook resolveProjectRoot 升级——env 链补 CODEAGENT3_PROJECT_DIR + import.meta.url 自锚排 payload.cwd 前 + 依赖文件级标记验真（guard-core/check-receipt 任一存在）；record-verifier-report 来源行 import.meta.url 自述；claude 正常路径行为不变"
+    status: completed
+  - id: t3-goal-wiring
+    content: "T3: goal/headless 接线 13 点——家族谓词落 utils/types.ts；agent-invoke（candidates=codeagentcli/claudeArgv 参数化/dispatch/label/HeadlessInvokePlan.adapterName 治 substring 误猜）+ claude-envelope + sentinel（#7b 两处实采漏判修复）+ check-receipt + multimodal-probe + init-next-steps + skill-bridge 两处 manifest 化 + IMAGE_READ_PARSERS 凭实采 fixture 入册"
+    status: completed
+  - id: t4-registry-docs
+    content: "T4: confirmation-registry options 补 codeagent + agents/README 参考表 + canonical-gitignore 增 **/.cac/settings.local.json + claude notes 修 11→12 并标注家族 SSOT + 身份键 CODEAGENT=1 回填宿主识别记录 + 文档扫尾"
+    status: completed
+  - id: t5-tests
+    content: "T5: codeagent-adapter.unit.test.ts（commands 归一化等值 delta 白名单/settings 结构等值/无 $schema/跨目录引用存在/goal_capability 等值）+ hooks 新链用例 + agent-invoke codeagent 用例 + T3 路径接线点三用例（next-steps/legacy-cleanup/skill-bridge 多 adapter 防交叉）+ sentinel/图片事件脱敏 fixture 用例 + gitignore 用例 + run-unit.ts CORE_SUITES 注册 + npm test 全绿（unit 2700/fixtures 44）"
+    status: completed
+  - id: t6-host-acceptance
+    content: "T6(宿主回归验收): 2026-07-30 用户决定移交用户侧——在 codeagent 宿主自行执行（PreToolUse exit2 真拒写/Stop 真拦收尾/SubagentStop 真落报告/goal 全链路/codeagentcli --version），发现问题另开 plan；本 todo 据此关闭（plan 所有者决定，非绕门禁）；hard_hook 对外声明仍以宿主实测通过为前提"
+    status: cancelled
 isProject: false
 ---
 
 ## 背景
 
-接入新 agent 类型 **codeagent**：内核基于 Claude Code CLI 开发，物化目录 `.cac`（结构与 `.claude` 完全一致），headless CLI 为 **`codeagentcli`**，参数与 `claude -p` 基本完全等价。已知不兼容点：不认识 `$schema`（claude-code-settings 的 schema URL）；不认识 `${CLAUDE_PROJECT_DIR}` 等 Claude 注入变量。
+接入新 agent 类型 **codeagent**：内核基于 Claude Code CLI 开发，物化目录 `.cac`（结构与 `.claude` 完全一致），headless CLI 为 **`codeagentcli`**，参数与 `claude -p` 等价。最初报告的两个"不兼容点"经 T0 实证后修正定性：`$schema` 实为**静默忽略**（删除属品牌/语义决策，非运行时兼容性要求）；`${CLAUDE_PROJECT_DIR}` 有等价变量 `CODEAGENT3_PROJECT_DIR`（可展开）。
 
-**用户已拍板**（2026-07-29）：① 注册名用全称 `codeagent`，物化目录 `.cac`；② 入口说明文件 CLAUDE.md / AGENTS.md 都能读；④ goal/headless 本期要做，CLI=`codeagentcli`。③（等价变量）见 T0 说明——不需要用户回答，探针自答。
+**用户已拍板**（2026-07-29）：① 注册名 `codeagent`，物化目录 `.cac`；② 入口文件取 AGENTS.md（CLAUDE.md/AGENTS.md 都能读）；④ goal/headless 本期做。
 
-## 先回答核心问题：相对路径能不能用？
+**实证基础已闭合**（2026-07-29）：信封三轮实测（参数校验文案/api_retry/终局 result 同源）+ T0 六项探针全部回灌（见 T0 节）。
 
-**已向 Claude Code 官方文档核实**（hooks.md / hooks-guide.md / settings.md，claude-code-guide 代理查证）：
+## Review 回灌（codex，2026-07-29）——逐条对 ground truth 核实后的裁决
 
-| 事实 | 出处结论 |
-|---|---|
-| hook command 的 cwd = **hook 触发时会话当前工作目录**，会随 Bash 工具 `cd` 漂移（有 CwdChanged 事件） | hooks.md "run in the current working directory of the Claude Code session at the time the hook fires" |
-| `${CLAUDE_PROJECT_DIR}` 恒指项目根，且作为 env 注入 hook 子进程 | hooks.md "Path Placeholders" |
-| 官方**明确不建议** hook command 写相对路径："Relative paths are resolved relative to the current cwd, which may vary during a session" | hooks.md "Relative Paths vs. Absolute Paths" |
-| `$schema` 对运行时**零影响**，纯编辑器福利（自动补全/校验），未知字段被忽略 | settings.md |
-| hook stdin payload 恒含 `cwd` 字段（=触发时会话 cwd） | hooks.md "Common Input Fields" |
+| # | 意见 | 核实结论 | 裁决 |
+|---|---|---|---|
+| B1 | commands 100% 共享会把运行身份写成 claude | **实锤**：[goal-mode.md:10](agents/claude/templates/commands/goal-mode.md) 写死 `RESOLVED_ADAPTER：claude`（运行契约，goal-runner 对账冲突 STOP）；cursor 先例=12 份自有副本+每份身份行 | 采纳：codeagent 自建 commands ×12，归一化等值测试防漂移（T1） |
+| B2 | 等价变量只解决启动，hook 内部仍读 CLAUDE_PROJECT_DIR；相对路径降级下 hard_hook 虚标 | **实锤**：三 hook 兜底链第二级 payload.cwd 随 cd 漂移（T0#2 已实证：cd .cac 后 payload_cwd/proc_cwd 双漂移） | 采纳：import.meta.url 自锚提为 T2 必做；tier 虚标问题因 T0#1b 实证占位符可展开而**自然消解**（无需降级分支） |
+| H3 | AskUserQuestion unsupported 分支缺失；探针前默认 supported 乐观 | **实锤**（当时）；T0#4 已实证 supported 同签名+真实渲染 | 采纳过程改进（探针升硬前置）；结果走 supported 分支 |
+| H4 | IMAGE_READ_PARSERS keyed registry 漏枚举 | **实锤**：[critic-receipt-producer.ts:65](harness/scripts/utils/critic-receipt-producer.ts) 仅 claude，注释契约"fixture 后方可入册" | 采纳：T0#6 已实采同构 fixture → T3 入册 |
+| H5 | T5 混淆必要验收与悬置；"发布门禁拒 pending todo" | 结构批评成立；门禁说法**属实**——首轮驳回是错的：门禁在仓库根 [scripts/check-plan-version.mjs:91](scripts/check-plan-version.mjs)（`release:all` 第一阶段 `--release` 模式下 version===当前版本的 plan 有 open todo 即报错），首轮只 grep 了 harness/ 检索范围错误 | **全量采纳**：hooks 加固入 T2 必做；T6=**发布前 BLOCKER**（见 T6 政策段）；硬学习：驳回 review 意见前检索须覆盖仓库根 scripts/，不只 harness/ |
+| M6 | skill-bridge 两处须 manifest 化 | **实锤**：[instance-skill-bridge.ts:262](harness/scripts/utils/instance-skill-bridge.ts) 写死读 agents/claude/adapter.yaml、[legacy-skill-bridge-cleanup.ts:129](harness/scripts/utils/legacy-skill-bridge-cleanup.ts) 写死 .claude/commands | 采纳（T3 #11/#12） |
+| M7 | agent-invoke:1131 substring 猜 adapter，codeagentcli 误报 cursor | **实锤**：codeagentcli 不含任何已知子串 → 兜底 'cursor' | 采纳：HeadlessInvokePlan 显式携带 adapterName（T3 #5b） |
+| 次 | 11→12 份 slash / T0#2 话术执行不出 / verifier 报告来源写死 / .cac/settings.local.json 未进 gitignore | 四条全实锤 | 全采纳（话术已修并执行完毕 / T2 来源自述 / T4 gitignore+notes） |
 
-**裁决：claude 侧不改相对路径。** maison 工作流里 agent 高频 `cd harness && npm ...`（Bash 持久 shell，cwd 停在 harness/）；相对路径写法下，此后触发的三个 hook（PreToolUse guard / Stop 假完成拦截 / SubagentStop verifier 落地）node 找不到脚本 → 非 0 非 2 退出 → 按协议是 non-blocking error → **Layer 3 物理门整体静默失效**，且没有任何报错会阻断 agent。为省一行变量把最硬的门变成"一次 cd 就绕过"，不划算。
+另核实：verifier.md 与 goal-condition.md 确无身份标记（grep 空），维持共享。
 
-**差异最小化换个收敛点**：不追求"两边 settings.json 逐字节相同"，而是收敛为——**settings.json 是唯一分叉文件（39 行），其余全部产物 100% 共享 claude 模板**。framework-init 零新机制（跨目录 template 引用已有先例）。
+## 相对路径裁决（官方文档核实，维持不变）
 
-**codeagent 侧的 settings.json 变量**分两级：
-- **优先**：T0 探针确认 codeagent 是否注入等价变量（内核是 Claude Code fork，`CLAUDE_*` env 大概率被机械重命名而非删除，如 `CAC_PROJECT_DIR` 之类）→ 有则用等价变量，与 claude 同等鲁棒；
-- **降级**：确认无等价变量 → 用相对路径 `node ".cac/hooks/x.mjs"`，并在 adapter notes + README 记录已知限制：**须在工程根启动 codeagent；会话 cd 漂移后 hook 失效（fail-open）**，兜底=Layer 2 check-receipt + G2 framework_integrity 查时扫描（与 guard hook 既有诚实边界同构）。
+hook cwd=触发时会话 cwd 且随 `cd` 漂移（T0#2 在 codeagent 上实证同语义）；官方明确不建议 hook command 相对路径；`$schema` 运行时零影响。**claude 侧 `${CLAUDE_PROJECT_DIR}` 与 `$schema` 保留不动**；codeagent 侧用 `${CODEAGENT3_PROJECT_DIR}`（T0#1b 实证可展开）——**用户最初的"改相对路径降差异"提议正式否决**，差异收敛改走"等价变量+单点分叉"路线。
 
-> **③"等价变量"是什么意思**（补充解释）：Claude Code 启动 hook 子进程时会额外塞一个环境变量 `CLAUDE_PROJECT_DIR=<工程根绝对路径>`，settings.json 里的 `${CLAUDE_PROJECT_DIR}` 占位符引用的就是它。codeagent 既然是 fork，很可能只是把这个变量**改了名**（而不是删掉）——如果能探出它的新名字，`.cac/settings.json` 就能用 `${新名字}` 写出与 claude 同等鲁棒的绝对路径。这事不用你回答，T0 探针第 1 条会实测出来。
+## T0：宿主探针结果（✅ 2026-07-29 全部回灌，WalletForHarmonyOS 实机）
+
+| # | 探针 | 结果 | 定稿决策 |
+|---|---|---|---|
+| 1a | 等价 project-dir 变量 | **`CODEAGENT3_PROJECT_DIR`**=工程根（正斜杠形态 `D:/...`），注入 hook 进程；另有 `CODEAGENT3_EXPERIMENTAL_AGENT_TEAMS`/`CODEAGENT3_WINDOWS_SHELL_TYPE`；无 CLAUDE_PROJECT_DIR | settings.json 变量基座 |
+| 1b | `${...}` 占位符展开 | **可展开**：`${CODEAGENT3_PROJECT_DIR}` → argv 收到真实路径 | settings.json 用 `${CODEAGENT3_PROJECT_DIR}/.cac/hooks/...`，与 claude 同构同鲁棒；**tier=hard_hook 名副其实，降级分支/hook_launch_anchor 机制废弃不做** |
+| 2 | cwd 漂移 | Bash `cd .cac` 后，Write 触发的 hook `payload_cwd`/`proc_cwd` **双双漂移**到 `.cac`；env 变量恒定 | 实证 T2 必要性：payload.cwd 不可作项目根依据；env+自锚双保险 |
+| 3 | $schema 容忍度 | **静默忽略**（exit=0、无 stderr、正常应答） | codeagent 模板仍删 $schema（纯语义干净，非功能必需——它指向 claude 的 schema URL） |
+| 4 | AskUserQuestion | **同名同签名**（questions/question/header/options/label/description/preview/multiSelect/answers/annotations/metadata 与 claude 逐字段对齐）且**真实渲染成功**（widget 出现并回收了选择） | `structured_widget: supported`；rules 共享 `../claude/templates/rules`；commands 副本 BLOCKER 行原样保留 |
+| 5 | 身份 env 键 | **`CODEAGENT=1`**（Bash 子 shell 注入；对照 claude=CLAUDECODE=1）。claude 对照组同机采集确认互斥 | 回填宿主识别记录（T4） |
+| 6 | Read 图片事件 | assistant 消息 `content[].{type:"tool_use",name:"Read",input.file_path}` 与 [claude 解析器](harness/scripts/utils/critic-receipt-producer.ts)锚定形状**逐字段同构**（id 形态 `call_*` 与 fork 附加的 `tool_use_result.vlDescription`/`modelID` 等扩展字段均不在解析路径，无害） | fixture 落库 → `IMAGE_READ_PARSERS` 入册（T3 #10）；视觉证据链**不降级** |
+
+> 实采原始样本（1a/1b/2/6 的 ndjson 行）随 T5 落为 unit fixture，**入库前必须脱敏+路径归一化**：只保留白名单字段（`CODEAGENT3_PROJECT_DIR`/`CODEAGENT`/`payload_cwd`/`proc_cwd`/事件结构字段），绝对路径归一为占位路径，session_id/token/代理配置/模型名一律剔除——完整 env dump **不得**进 plan/fixture/git（codex 安全提醒，采纳）。探针宿主的 `codeagentcli --version` 本轮未采：**T6 必录**（adapter_version 机制只是非阻塞遥测，不判兼容，替代不了版本锚定——`CODEAGENT3_` 前缀带版本号，升级可能改 env/信封协议）。探针法留档：hook 探针脚本自锚写盘（import.meta.url），与 T2 生产方案同源验证。
 
 ## 设计原则
 
-1. **单文件分叉**：codeagent 与 claude 的全部差异压进 `agents/codeagent/templates/settings.json` 一个文件；commands（11 份 slash）/ agents（verifier.md）/ rules（interaction-renderer.md）/ hooks（3 份 .mjs）/ goal-condition.md 全部跨目录引用 `../claude/templates/...`，**零复制**。先例：codex/chrys/opencode 的 `skill_bridge.template_dir: ../shared/agent-bundle/templates/skills-bridge`（[codex/adapter.yaml:15](agents/codex/adapter.yaml)）；check-init 用 `path.join(adapterDir, tpl)` 解析，`..` 天然支持（[check-init.ts:674](harness/scripts/check-init.ts)）。
-2. **hooks 脚本零改动**：三个 hook 的项目根解析已是 `CLAUDE_PROJECT_DIR ?? payload.cwd ?? process.cwd()` 兜底链（[guard-framework-write.mjs:41](agents/claude/templates/hooks/guard-framework-write.mjs)、[check-phase-completion.mjs:99](agents/claude/templates/hooks/check-phase-completion.mjs)、[record-verifier-report.mjs:67](agents/claude/templates/hooks/record-verifier-report.mjs)），codeagent 下 env 缺失自动落 `payload.cwd`。模板内其余 `.claude` 字样均为注释/报告文案，无功能性硬编码（已全量 grep 核实）。
-3. **不动 claude 现有行为**：`${CLAUDE_PROJECT_DIR}` 保留、`$schema` 保留（运行时无影响，编辑器福利没理由丢）。
-4. **goal 接入走"家族谓词"不走散点 ||**：全库 `=== 'claude'` 仅 9 处（已枚举，见 T2 表），语义各不同——统一引入 `CLAUDE_KERNEL_ADAPTERS = {claude, codeagent}` 谓词，逐点判断该不该收编，**禁止无脑替换**（硬学习：枚举完整状态空间）。
-5. **enforcement tier 自动对齐**：codeagent 声明 settings_file+hooks 后，`resolveEnforcementTier` 自动判 `hard_hook`（[runtime-policy.ts:340](harness/scripts/utils/runtime-policy.ts)），与 claude 同档，无需改代码。
+1. **共享原则**：只共享经实证、且不含 adapter 身份/工具能力/目标目录差异的模板。
+   - **共享**（`../claude/templates/...` 跨目录引用，先例 codex→`../shared`）：`agents/verifier.md`、`goal-condition.md`（无身份标记）、`hooks/` ×3（T2 加固后厂商无关）、`rules/interaction-renderer.md`（T0#4 实证工具同签名；**共享前提=文案中性化**——现文本首部"Claude Code · BLOCKER"/"Claude adapter 会话级"与 :64 的 `.claude/commands/skills/` 反例带 claude 身份，改为"Claude-kernel adapter"口径、反例路径兼列 `.claude|.cac`，否则物化进 .cac/rules/ 会自相矛盾）、`AGENTS.md.template`。
+   - **分叉**：`settings.json`（$schema/路径/变量）、`commands/` ×12（身份行，cursor 先例）。
+2. **hooks 自锚**：项目根解析 env 优先、自锚兜底（T2），不依赖单一厂商变量。
+3. **接线检索四盲区闭合**：字面量 `=== 'claude'` + keyed registry + substring dispatch + 模板身份标记/target 路径——T3 表为闭合清单。
+4. **claude 侧"正常路径行为不变"**（口径按 codex 意见收紧，不再宣称字面零 diff）：hooks 链 env 恒在链首、claudeArgv 参数化缺省 'claude'、来源行自述输出不变——**运行语义零变化**；两处已知良性 diff：rules 文案中性化（Claude Code → Claude-kernel adapter）、病态实例（env 指向 framework 缺失/损坏）下 hooks 项目根选择可能不同（属修复）。
 
-## T0：宿主探针（与 T1 并行，回报回灌后 settings.json 定稿）
+## T1：adapter 落地（探针后定稿版）
 
-按「宿主工程指引=话术+预期回报」惯例，把下面这段话术交给 **codeagent 宿主会话** 执行，回报贴回来：
-
-> 请在一个已有 `.cac` 的测试工程里做 5 件事并逐条回报：
-> 1. **等价变量**：在 `.cac/settings.json` 里注册一个 PreToolUse hook，command 为 `node -e "console.error(JSON.stringify(process.env))"`，触发一次工具调用，把 stderr 里所有含 PROJECT / DIR / CAC / CODEAGENT / CLAUDE 字样的 env 键值贴出来——回报：是否存在指向工程根的注入变量及其准确名字；并确认 command 字符串里 `${变量名}` 占位符是否会被展开。
-> 2. **cwd 漂移**：先用你的 shell 工具 `cd` 进一个子目录，再触发上述 hook，把 hook 收到的 stdin payload 里的 `cwd` 字段和 `process.cwd()` 各是什么贴出来——回报：两值是否跟随 cd 漂移。
-> 3. **$schema 容忍度**：settings.json 顶层带 `"$schema": "https://json.schemastore.org/claude-code-settings.json"` 时你是报错、警告还是忽略——回报：三选一+原文。
-> 4. **确认 widget**：你是否有 AskUserQuestion（或同名结构化提问）工具——回报：工具名或"无"。
-> 5. **身份标识**：从你的 shell 工具执行 `node -e "console.log(JSON.stringify(process.env))"`，贴出能唯一识别"当前宿主是 codeagent"的 env 键（对照：claude=CLAUDECODE / cursor=CURSOR_AGENT / codex=CODEX_SHELL）——回报：键名。
->    信封已全程实证（2026-07-29 三轮实测，无需再采）：① 参数校验报错文案与 claude CLI 逐字相同，`-p/--print` 支持 stdin 喂 prompt（maison agent-invoke 正走 stdin 路径）；② 断网下吐 `{"type":"system","subtype":"api_retry","error_status":"500","error":"server_error"}` NDJSON 流，与 claude 结构化信封形状逐字段一致；③ 重试耗尽终局行 `{"type":"result","subtype":"success","is_error":true,...}` 无 `api_error_status` 字段、错误在 `result` 文本。②③ 各暴露一处现行哨兵漏判，修复见 T2 #7b（实采原文作 fixture）。
-
-回报回灌决定：settings.json 变量写法（等价 env vs 相对路径降级）、user_confirmation 定档、sentinel 信封文案是否需要 codeagent 专属锚点（T5）。**探针未回前按默认假设推进到可 review 状态，不 halt**（默认：变量=相对路径降级、widget=supported、信封=与 claude 同文案）。
-
-## T1：adapter 落地
-
-**新增 `agents/codeagent/adapter.yaml`**（要点，非全文）：
+**`agents/codeagent/adapter.yaml`**：
 
 ```yaml
-adapter_name: codeagent          # 与目录名一致（adapter-catalog 硬校验）
+adapter_name: codeagent
 agent_entry_file:
-  template_path: templates/AGENTS.md.template   # 共享模板
-  target_path: AGENTS.md   # 已拍板"两个都能读"→选 AGENTS.md：与 cursor/codex/chrys/opencode
-                           # 同名字节一致可共存（README 既有先例）；与 claude 并存时两文件
-                           # 内容同源、各归各 adapter 管，卸载归属清晰
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
 commands:
   target_dir: .cac/commands
-  template_dir: ../claude/templates/commands     # 11 份 slash 全共享
+  template_dir: templates/commands              # 自有 ×12：身份行=codeagent
   subagents:
     target_dir: .cac/agents
-    template_dir: ../claude/templates/agents     # verifier.md 共享
+    template_dir: ../claude/templates/agents    # verifier.md 共享
     update_policy: auto_overwrite
 rules:
   target_dir: .cac/rules
-  template_dir: ../claude/templates/rules        # interaction-renderer.md 共享
+  template_dir: ../claude/templates/rules       # 共享（前提：先中性化文案，见设计原则 1）
 settings_file:
-  template_path: templates/settings.json         # ★ 唯一 codeagent 自有文件
+  template_path: templates/settings.json
   target_path: .cac/settings.json
   update_policy: auto_overwrite
 hooks:
   target_dir: .cac/hooks
-  template_dir: ../claude/templates/hooks        # 3 份 .mjs 共享，零改动
+  template_dir: ../claude/templates/hooks       # 共享（T2 加固后厂商无关）
   update_policy: auto_overwrite
 instance_skill_bridge:
   commands_target_dir: .cac/commands
 user_confirmation:
-  structured_widget: supported                   # 按 T0 回报定档；unsupported 则退 portable
+  structured_widget: supported                  # T0#4 实证：同名同签名+真实渲染
   portable_required: true
   interaction_renderer_rule: ../claude/templates/rules/interaction-renderer.md
 image_input: tool_read
-goal_capability:                                 # 全量镜像 claude（CLI 等价，仅二进制名不同）
+goal_capability:
   mode: native_goal
-  tool_event_provenance: structured_events       # stream-json 事件流，同 claude
+  tool_event_provenance: structured_events      # T0#6+信封三轮实证
   native_goal:
     goal_condition_template: ../claude/templates/goal-condition.md
     supports_resume: false
   external_runner:
-    # 声明性；运行时 SSOT = agent-invoke.ts（prompt 走 STDIN，Windows cmd 截断铁律同 claude）
     headless_invoke: 'codeagentcli -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
     unattended:
       write_mode: accept-edits
       approval_mode: never
 post_install_hooks: []
 notes: |
-  - 内核=Claude Code CLI 衍生（headless CLI=codeagentcli，参数与 claude -p 等价）；模板 SSOT 在
-    agents/claude/templates/（claude-kernel 家族共享），本 adapter 仅 settings.json 分叉：
-    无 $schema、路径 .cac/、变量按宿主实测。
-  - <若走相对路径降级> 已知限制：须在工程根启动；会话 cd 漂移后 hooks fail-open，
-    兜底=Layer 2 check-receipt + G2 framework_integrity 扫描。
+  - 内核=Claude Code CLI 衍生；模板 SSOT 在 agents/claude/templates/（家族共享），
+    分叉仅 settings.json（变量 ${CODEAGENT3_PROJECT_DIR}，2026-07-29 实证可展开）与
+    commands ×12（身份行）。--permission-mode dontAsk 实证可用。
+  - 宿主身份 env：CODEAGENT=1（Bash 子 shell）；hook 进程注入 CODEAGENT3_PROJECT_DIR。
 ```
 
-**新增 `agents/codeagent/templates/settings.json`**：以 claude 版为基（[settings.json](agents/claude/templates/settings.json)），三处差异——删 `$schema` 行；`.claude/hooks/` → `.cac/hooks/`；`${CLAUDE_PROJECT_DIR}/` → 等价变量或删除（相对路径降级）。hook 结构（PreToolUse matcher `Write|Edit|MultiEdit|NotebookEdit` / Stop `*` / SubagentStop `verifier`）与 claude 逐项相同，由 T4 等价性测试守护。
+**`templates/settings.json`**：claude 版三处改——删 `$schema`（T0#3 实证纯忽略，删除仅语义干净）；`.claude/hooks/`→`.cac/hooks/`；`${CLAUDE_PROJECT_DIR}`→`${CODEAGENT3_PROJECT_DIR}`。hook 结构逐项同 claude，T5 等值测试守护。
 
-**核对项**：`agent_entry_file.template_path` 相对 framework 根解析（与其它字段相对 adapter 目录不同，[check-init.ts:584](harness/scripts/check-init.ts)）；跨目录引用在 check-init 的 `templateRel` 展示会被 path.join 归一为 `agents/claude/templates/...`，确认 UPDATE 体检/物化任务表对此无排异（先例 codex 已趟过 `../shared`，`../claude` 是同机制）；`goal_capability.native_goal.goal_condition_template` 的 `../` 引用是否被 goal-runner preflight 正确解析（同 path.join 机制，落地时验证）。
+**`templates/commands/` ×12**（仿 cursor 先例）：内容=claude 对应文件，差异仅——每份头部 `> 运行身份：codeagent（薄入口……勿被同名 .claude/commands/x.md 误导）`；`goal-mode.md` 用 `RESOLVED_ADAPTER：codeagent` + 运行身份权威段（仿 [cursor/goal-mode.md:18](agents/cursor/templates/commands/goal-mode.md)）。AskUserQuestion BLOCKER 行原样保留（T0#4）。防漂移：T5 归一化等值测试（delta 白名单见 T5）。
 
-## T2：goal/headless 接线（claude-kernel 家族谓词）
+**共享 rules 中性化**（[interaction-renderer.md](agents/claude/templates/rules/interaction-renderer.md)，本任务内完成）：标题与会话级声明 "Claude Code / Claude adapter" → "Claude-kernel adapter（claude / codeagent）"；:64 反例路径 `.claude/commands/skills/` 兼列 `.cac`。纯文案 diff，运行语义不变（claude 实例 UPDATE 时经 rules 段 `prompt_if_changed` 正常下发）。
 
-**谓词落点**：`harness/scripts/utils/types.ts`（既有共享底座、被各 utils 引用、无循环依赖风险）新增：
+**核对项**：`agent_entry_file.template_path` 相对 framework 根解析（[check-init.ts:584](harness/scripts/check-init.ts)）；`../` 跨目录引用先例 codex 已趟（`templateRel` path.join 归一）；`goal_condition_template` **当前属 metadata**（[goal-adapter-capability.ts:26](harness/scripts/utils/goal-adapter-capability.ts) 仅类型字段，无运行时路径解析/存在性检查——已核实），其 `../` 路径存在性由 T5 codeagent adapter unit test 验证，不顺便给 preflight 加检查。
 
-```ts
-/** Claude Code 内核家族：CLI 参数/stream-json 信封/slash 机制同源（codeagent=fork，二进制 codeagentcli） */
-export const CLAUDE_KERNEL_ADAPTERS: ReadonlySet<string> = new Set(['claude', 'codeagent']);
-export function isClaudeKernelAdapter(name: string): boolean { return CLAUDE_KERNEL_ADAPTERS.has(name); }
+## T2：共享 hooks 加固（必做；claude 零行为变化）
+
+三个 hook 的 `resolveProjectRoot` 升级为**候选链+标记验真**：
+
+```
+候选序：env CLAUDE_PROJECT_DIR → env CODEAGENT3_PROJECT_DIR → import.meta.url 自锚(脚本目录/../..) → payload.cwd → process.cwd()
+验真：取首个含 hooks 真实依赖标记的候选——`framework/agents/shared/guard-framework-write-core.mjs` 或
+`framework/harness/scripts/check-receipt.ts` 任一存在（比裸 framework/ 目录严格：cwd 恰落在嵌套工程/fixture
+时不会被宽 marker 误选；自锚排在 payload.cwd 之前——hook 物理位于 <root>/.claude|.cac/hooks/，比会话 cwd 权威）
+全不中：回落现行顺序首个非空值（fail-open 语义不变）
 ```
 
-全库 `=== 'claude'` 共 **9 处**（已枚举核实），逐点裁决：
+- claude：env 恒在链首即中，**正常合法实例路径下行为不变**（诚实口径：env 指向 framework 缺失/损坏的病态实例时新旧选择可能不同——那是修复而非回归，不再宣称字面"零 diff"）；
+- codeagent：`CODEAGENT3_PROJECT_DIR` 命中（T0#1a 实证 hook 进程有此变量）；极端情形（env 被清）由自锚兜住；
+- `record-verifier-report.mjs` 报告来源行（[:245](agents/claude/templates/hooks/record-verifier-report.mjs)）改 import.meta.url 自述（claude 输出不变，codeagent 输出 `.cac/hooks/...` 真实来源）；
+- 落地核对三 hook 既有 unit fixtures（fixture 工程无 framework/ 则补空目录，保证既有用例语义不变）。
 
-| # | 位置 | 语义 | 处置 |
-|---|---|---|---|
-| 1 | [agent-invoke.ts:41](harness/scripts/utils/agent-invoke.ts) `KNOWN_STRUCTURED_ADAPTERS` | tool_event_provenance 合法 adapter 集 | + `codeagent` |
-| 2 | [agent-invoke.ts:45-56](harness/scripts/utils/agent-invoke.ts) binary candidates 表 | headless 二进制解析 | 新增 `CODEAGENT_HEADLESS_BINARY_CANDIDATES = ['codeagentcli']` 并入 `STRUCTURED_BINARY_CANDIDATES` |
-| 3 | [agent-invoke.ts:273](harness/scripts/utils/agent-invoke.ts) `claudeArgv` | argv[0] 硬编码 `'claude'` | 参数化二进制名（缺省 'claude'），codeagent 复用全套 flags（`-p --allowedTools … --output-format stream-json --verbose --permission-mode`） |
-| 4 | [agent-invoke.ts:431](harness/scripts/utils/agent-invoke.ts) 自定义 invoke 的 label 分支 | 显示标签 | + `'codeagentcli'` |
-| 5 | [agent-invoke.ts:448](harness/scripts/utils/agent-invoke.ts) `defaultHeadlessInvokePlan` dispatch | 内置 headless 方案 | + codeagent 分支：claudeArgv('codeagentcli', …) + attachResolvedBinary(CODEAGENT_…, 'codeagentcli -p …')，`useStdin: true`（Windows cmd shim 截断铁律同 claude） |
-| 6 | [claude-envelope.ts:93](harness/scripts/utils/claude-envelope.ts) 信封语义门 | stream-json 行级信封是否适用 | 改 `isClaudeKernelAdapter(name) && structured_events` |
-| 7 | [goal-headless-sentinel.ts:191](harness/scripts/utils/goal-headless-sentinel.ts) API 断流解析路由 | 断流哨兵 adapter 感知 | codeagent → `parseClaudeApiError`。**信封形状已获实测证实**（2026-07-29 断网实采）：`{"type":"system","subtype":"api_retry","error_status":"500","error":"server_error"}` 与锚定形状逐字段一致（type/subtype/字段名全同）→ 结构化路径零改动复用成立 |
-| 7b | [goal-headless-sentinel.ts:111-135](harness/scripts/utils/goal-headless-sentinel.ts) 结构化信封两分支 vs 真实 writer schema | **实采样本暴露的两处真实漏判**（消费方须按真实 writer schema 硬学习；2026-07-29 断网全程实采）：① api_retry 行 `error_status` 是**字符串 "500"**，现行只认 `typeof === 'number'`，回退条件 `error:"server_error"` 不匹配 API_TRUNCATION_HINTS 任何一条 → 漏判；② 重试耗尽终局行 `{"type":"result","subtype":"success","is_error":true,...}` **根本不带 `api_error_status` 字段**，错误全在 `result` 文本（`"API Error: 500 Unable to connect. Is the computer able to access the url?…"`）→ result 分支同样漏判；文本路径 `^API Error` 行首锚定对 NDJSON 行也恒不中。两处齐漏 = 断流退化为整 attempt 干等超时（本次实采 CLI 重试即耗了 ~7 分钟） | 修复两条：**a)** `error_status` / `api_error_status` 经 `Number()` 强转后进 `STREAM_JSON_TRANSIENT_STATUS` 判定（NaN 不计）；**b)** result 分支补真实 schema 回退——`is_error:true` 且 `api_error_status` 缺失/非数时，`typeof result === 'string' && matchesTruncationHint(result) && !/authentication/i.test(result)` 计 transient（实采文本含 `\b500\b`，既有 hint 可命中）。unit 用例以两条实采样本**原文逐字**作 fixture（api_retry 行 + result 终局行）。对 claude 同样生效——同源内核同一 writer，属修潜在漏判，非行为回归 |
-| 8 | [check-receipt.ts:1189](harness/scripts/check-receipt.ts) `forceParse: adapter === 'claude'` | 回执校验强制解析事件流 | 改 `isClaudeKernelAdapter(adapter)` |
-| 9 | [multimodal-probe.ts:154](harness/scripts/utils/multimodal-probe.ts) 读图档位缺省 | image_input 缺省推断 | + codeagent → `tool_read`（与 adapter.yaml 声明一致） |
-| 附 | [init-next-steps.ts:546](harness/scripts/utils/init-next-steps.ts) slash 提示文案 | next-steps 渲染 `/command` 形态 | codeagent 并入 slash 形态分支（文案目录名取实际 entry.rel，无硬编码 .claude，核实后收编） |
-| 附 | [instance-skill-bridge.ts:261](harness/scripts/utils/instance-skill-bridge.ts)、[legacy-skill-bridge-cleanup.ts:129](harness/scripts/utils/legacy-skill-bridge-cleanup.ts) | 扩展 skill 桥/旧跳板清理的 commands 形态分支 | 逐点核实语义后并入家族谓词（桥目录取 adapter.yaml `instance_skill_bridge.commands_target_dir`，应无 .claude 硬编码；若有则先修硬编码再收编） |
+## T3：goal/headless 接线（13 点闭合清单）
 
-> 处置原则：能走谓词的走谓词；**语义不属于"内核家族"的（如文案、目录名）绝不顺手收编**——逐点核实后再动，避免"非阻塞顺便实现"膨胀。
+家族谓词落 `harness/scripts/utils/types.ts`：`CLAUDE_KERNEL_ADAPTERS = new Set(['claude','codeagent'])` + `isClaudeKernelAdapter()`。
 
-## T3：注册与文档
+| # | 位置 | 处置 |
+|---|---|---|
+| 1 | [agent-invoke.ts:41](harness/scripts/utils/agent-invoke.ts) `KNOWN_STRUCTURED_ADAPTERS` | + codeagent |
+| 2 | [agent-invoke.ts:45-56](harness/scripts/utils/agent-invoke.ts) candidates 表 | + `CODEAGENT_HEADLESS_BINARY_CANDIDATES = ['codeagentcli']` |
+| 3 | [agent-invoke.ts:273](harness/scripts/utils/agent-invoke.ts) `claudeArgv` | 参数化二进制名（缺省 'claude'，纯重构）；`--permission-mode dontAsk` 已实证可用 |
+| 4 | [agent-invoke.ts:431](harness/scripts/utils/agent-invoke.ts) label 分支 | + 'codeagentcli' |
+| 5 | [agent-invoke.ts:448](harness/scripts/utils/agent-invoke.ts) dispatch | + codeagent 分支（claudeArgv 复用 + `useStdin: true`，stdin 喂 prompt 已实证） |
+| 5b | [agent-invoke.ts:1131](harness/scripts/utils/agent-invoke.ts) adapterGuess | `HeadlessInvokePlan` 增 `adapterName?: string`（defaultHeadlessInvokePlan 填充），1131 优先取之；substring 猜仅剩 custom invoke 兜底并补 codeagent 子串 |
+| 6 | [claude-envelope.ts:93](harness/scripts/utils/claude-envelope.ts) 信封语义门 | `isClaudeKernelAdapter(name) && structured_events` |
+| 7 | [goal-headless-sentinel.ts:191](harness/scripts/utils/goal-headless-sentinel.ts) 断流路由 | codeagent → `parseClaudeApiError`（信封三段实证同源） |
+| 7b | [goal-headless-sentinel.ts:111-135](harness/scripts/utils/goal-headless-sentinel.ts) 实采漏判修复 | **a)** `error_status`/`api_error_status` 经 `Number()` 强转再判 transient 集（实采为字符串 "500"）；**b)** result 分支补回退——`is_error:true` 且状态字段缺失/非数时 `result` 文本过 `matchesTruncationHint` 且非 authentication 措辞计 transient（实采终局行无 api_error_status、文本含 `\b500\b`）。两条实采原文作 fixture；claude 同源受益 |
+| 8 | [check-receipt.ts:1189](harness/scripts/check-receipt.ts) forceParse | `isClaudeKernelAdapter(adapter)` |
+| 9 | [multimodal-probe.ts:154](harness/scripts/utils/multimodal-probe.ts) 读图缺省 | + codeagent → tool_read |
+| 10 | [critic-receipt-producer.ts:65](harness/scripts/utils/critic-receipt-producer.ts) `IMAGE_READ_PARSERS` | T0#6 实采 fixture 同构 → `codeagent: parseClaudeImageReadEvents` 入册（注册契约"fixture 后方可入册"已满足） |
+| 11 | [instance-skill-bridge.ts:261](harness/scripts/utils/instance-skill-bridge.ts) | manifest 化：`isClaudeKernelAdapter` 命中时读 `agents/${name}/adapter.yaml` 解析 commands target_dir（codeagent → `.cac/commands`） |
+| 12 | [legacy-skill-bridge-cleanup.ts:129](harness/scripts/utils/legacy-skill-bridge-cleanup.ts) | + codeagent → `.cac/commands/<id>.md`（新 adapter 无遗留，现阶段恒 no-op；实现与 #11 同径） |
+| 13 | [init-next-steps.ts:546](harness/scripts/utils/init-next-steps.ts) slash 提示 | codeagent 并入 slash 形态分支（entry.rel 按 adapter 解析，无硬编码） |
 
-1. **[confirmation-registry.yaml](skills/reference/confirmation-registry.yaml)** `init.materialized_adapters.options` 追加（与 T1 同一提交，否则 `catalog_join` BLOCKER 红灯）：
-   ```yaml
-   - value: codeagent
-     label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
-     portable: "codeagent"
-   ```
-   锚点门禁自动把它带进 S1 `adapter_catalog` 菜单，**勿**在任何 `adapter-candidates` 锚定段手写 adapter 名（catalog gate 拦 ≥2 硬编码）。
-2. **[agents/README.md](agents/README.md)** 参考表五处：目录约定树、产物速查表、`materialized_adapters` 多选建议、personal setup 建议行、第一版 adapter 列表 + Layer 3 小节改为"claude / codeagent 均具 settings_file+hooks 物理层"。
-3. **[claude/adapter.yaml](agents/claude/adapter.yaml)** notes 加一句：templates/ 同时被 codeagent adapter 跨目录引用（claude-kernel 家族 SSOT），改动 commands/hooks/rules/goal-condition 模板时两 adapter 同时生效。
-4. **文档扫尾**：grep 列出"逐 adapter 入口文件/产物/goal 能力"的其余文档（docs/overview.md、skills/reference/agents-entry-detail.md、docs/operations/goal-mode-runbook.md 等）按需补行；不改锚定段。
+## T4：注册与文档
 
-## T4：测试
+1. [confirmation-registry.yaml](skills/reference/confirmation-registry.yaml) options 追加 codeagent（label 含 `.cac`/内核/headless；与 T1 同提交防 `catalog_join` BLOCKER）；锚定段勿手写 adapter 名。
+2. [agents/README.md](agents/README.md)：目录树、产物速查、多选建议、personal setup 建议、第一版列表 + Layer 3 小节（claude/codeagent 均具物理层）。
+3. [claude/adapter.yaml](agents/claude/adapter.yaml) notes：标注 templates 被 codeagent 引用（家族 SSOT）+ 修正"11 份"→"12 份"（含 change-lite，既有笔误）。
+4. canonical gitignore：[canonical-gitignore.ts](harness/scripts/utils/canonical-gitignore.ts) + 等价表增 `**/.cac/settings.local.json`；本仓 .gitignore 同步。
+5. 身份 env 键回填：codeagent=**CODEAGENT**（对照表 claude=CLAUDECODE / cursor=CURSOR_AGENT / codex=CODEX_SHELL / opencode=OPENCODE_TERMINAL / chrys=CHRYS），写入宿主识别相关文档。
+6. 文档扫尾：docs/overview.md、agents-entry-detail.md、goal-mode-runbook.md 等逐 adapter 清单按需补行。
 
-1. 新增 `harness/tests/unit/codeagent-adapter.unit.test.ts`（模式参照 [chrys-opencode-adapter.unit.test.ts](harness/tests/unit/chrys-opencode-adapter.unit.test.ts)）：
-   - adapter.yaml 可解析、adapter_name=目录名、五段跨目录 template 路径真实存在；
-   - **settings 等价性守护**：解析 claude/codeagent 两份 settings.json，断言 hook 事件集/matcher/条目数逐项相同，command 仅相差 `.claude→.cac` 与变量前缀，codeagent 无 `$schema` 键——防两 adapter 日后漂移；
-   - goal_capability 与 claude 逐字段等价（除 headless_invoke 二进制名）。
-2. **agent-invoke 用例**：`defaultHeadlessInvokePlan('codeagent', …)` 断言 argv[0] 解析自 codeagentcli 候选、`-p`/`--output-format stream-json`/`--permission-mode` 与 claude 同构、`useStdin: true`；`KNOWN_STRUCTURED_ADAPTERS`/信封门/sentinel 路由含 codeagent（家族谓词生效）。
-3. **`run-unit.ts` CORE_SUITES 显式注册**新套件（硬学习：不注册=假绿）。
-4. `cd harness && npm test` 全绿（含 adapter-catalog 一致性门、check-init 模板存在性门）。
+## T5：测试
 
-## T5：悬置项（显式，不在本 plan 闭环）
+1. `codeagent-adapter.unit.test.ts`（参照 [chrys-opencode-adapter.unit.test.ts](harness/tests/unit/chrys-opencode-adapter.unit.test.ts)）：yaml 可解析/名目录一致/全部 template 路径存在（含 goal_condition_template 的 `../` 路径）；**commands 归一化等值——delta 白名单按文件显式声明**：普通 11 份仅允许 codeagent 身份行一处；`goal-mode.md` 允许身份行 + `RESOLVED_ADAPTER` 行 + 运行身份权威段三处；归一化后其余内容逐字节等于 claude 版；**实现禁止用"删除任意含 codeagent 的整段"式宽松归一**（会假绿）；**settings 结构等值**（事件/matcher 同构、command 仅差目录与变量名、无 $schema）；goal_capability 逐字段等值（除二进制名）。
+2. hooks `resolveProjectRoot` 新链用例：CLAUDE env 命中（现状）/CODEAGENT3 env 命中/无 env+cwd 漂移+自锚兜住/全不中 fail-open。
+3. agent-invoke 用例：codeagent plan 同构 claude（binary/flags/useStdin）；adapterName 显式携带下不再误猜 cursor；家族谓词生效面。
+3b. **T3 三个路径接线点的 codeagent 分支用例**（扩展既有套件，不新建平行文件）：[init-next-steps.unit.test.ts](harness/tests/unit/init-next-steps.unit.test.ts) 增 codeagent 解析 `.cac/commands/<cmd>.md` 并渲染 `/<cmd>` slash 形态；[legacy-skill-bridge-cleanup.unit.test.ts](harness/tests/unit/legacy-skill-bridge-cleanup.unit.test.ts) 增 codeagent 生成/清理 `.cac/commands/<legacy-id>.md`；instance-skill-bridge 侧增**多 adapter 用例** `['claude','codeagent']` 各自解析到各自目录、**断言互不交叉落到对方目录**（现有用例只覆盖 claude/cursor/generic，.cac 分支写错 npm test 也会假绿）。
+4. sentinel #7b + 图片事件：四条实采样本作 fixture（api_retry 字符串 status / 终局 result 文本回退 / authentication 不误报 / tool_use Read 行入册解析），**保留结构逐字、敏感值脱敏+路径归一化**（白名单口径见 T0 附注；"原文"指字段结构与类型不得手工美化——字符串 "500" 必须保持字符串）。
+5. canonical-gitignore `.cac` 用例；`run-unit.ts` CORE_SUITES **显式注册**全部新套件（不注册=假绿）。
+6. `cd harness && npm test` 全绿。
 
-- **hooks 兜底链加固（可选）**：T0 探到等价 env 后，三个 hook 的 `resolveProjectRoot` 兜底链插入该变量（一行/文件；claude 侧行为不变）。
-- **宿主实测回灌**：codeagent 实机跑一轮 coding phase + goal 全链路（codeagentcli headless 真跑、stream-json 事件流入账、attestation 签发），验证 Stop hook 真拦假完成、guard 真拦 framework 写入；API 断流信封文案按 T0 第 5 条回报校准 sentinel；相对路径降级方案则额外验证 cd 漂移后的 fail-open 行为与 G2 兜底。
+## T6：宿主回归验收（依赖宿主实机；探针工程 WalletForHarmonyOS 可复用）
 
-## 开放问题（已收敛）
+**发布门禁政策（BLOCKER）**：本 plan `version: 3.0.0`，[check-plan-version.mjs:91](scripts/check-plan-version.mjs) 在 `release:all` 第一阶段会因 open todo 阻断发布——**这是正确行为**：T6 未完成不得随 3.0.0 发布 hard_hook 声明。T6 不得为过门禁标 cancelled；若届时无法完成，二选一——把 codeagent 的 hard_hook 声明移除/降级后再发布，或整个接入 `deferred_to` 顺延到下一版本窗口。
+
+> **2026-07-30 修订（plan 所有者决定）**：T1-T5 实施完毕、codex 六轮 review 闭环后，用户决定**宿主验收移交用户侧**——由用户携本章验收单在 codeagent 宿主自行执行，发现问题另开 plan 回修；本 plan 的 t6 todo 据此关闭（cancelled=移交留痕，非绕门禁——决定出自 plan 所有者本人）。hard_hook 的对外声明前提不变：仍以宿主实测三项通过为准（agents/README.md Layer 3 注记保留）。
+
+T0 证明了 hook 会加载、matcher 会触发、变量稳定，但**阻断协议等价性**尚未实证——hard_hook 档位的对外声明（README/发布说明）以本章三项完成为准，不凭"配置结构相同"提前定档（codex 意见采纳；adapter.yaml 声明本身不设闸，结构性 tier 判定维持 schema 既有语义）：
+
+- **PreToolUse 阻断**：guard 真拦 framework 写入（exit 2 → 工具调用被拒 + stderr 回喂 agent）；
+- **Stop 阻断**：真拦假完成（阶段未闭环时 Stop hook 阻止收尾）；
+- **SubagentStop**：verifier 子 agent 结束时 matcher=verifier 真触发、报告真落盘（check-receipt 可引用）；
+- 以上各项**cd harness 后再触发一次**，验 T2 链在漂移下命中 CODEAGENT3 env；
+- goal 态：codeagentcli headless 全链路——stream-json 三文件分流入账、attestation 签发、图片验读回执产出（IMAGE_READ_PARSERS 入册后首次实跑）；
+- **`codeagentcli --version` 必录**——记录到宿主验收证据及本 plan 文末**「实施记录」**小节（[plan-execution.mdc](.cursor/rules/plan-execution.mdc) 唯一许可通道，**不回写 T0 正文**）；`CODEAGENT3_` 前缀带版本号，不锚定版本则未来无法判断哪一版改了 env/信封协议（既有 adapter_version 机制只是非阻塞遥测，不做兼容判断，替代不了此记录）。
+
+## 开放问题（全部收敛）
 
 | # | 问题 | 结论 |
 |---|---|---|
-| 1 | adapter 注册名 | ✅ `codeagent`（用户拍板）；`.cac` 只出现在 target 路径 |
-| 2 | 入口文件 | 用户拍板"都能读"→ 取 **AGENTS.md**（与非 claude 家族同名共存先例；与 claude 并存时各归各管。若你更想用 CLAUDE.md 说一声，改动即一行） |
-| 3 | 等价 project-dir 变量 | 无需用户回答；T0 探针第 1 条实测，未回前按相对路径降级推进 |
-| 4 | goal/headless | ✅ 本期做（用户拍板：CLI=codeagentcli，与 claude -p 等价），见 T2 |
+| 1 | 注册名/目录 | ✅ codeagent / `.cac` |
+| 2 | 入口文件 | ✅ AGENTS.md |
+| 3 | 等价变量 | ✅ `CODEAGENT3_PROJECT_DIR`，占位符可展开（实证） |
+| 4 | goal/headless | ✅ 本期做，CLI=codeagentcli，`--permission-mode dontAsk` 可用（实证） |
+| 5 | AskUserQuestion | ✅ 同名同签名+真实渲染（实证）→ rules 共享 |
+| 6 | Read 事件 | ✅ 同构（实证）→ 视觉链入册 |
 
 ## 风险与诚实边界
 
-- **相对路径降级方案的真实代价**（若 T0 确认无等价变量）：codeagent 会话内一次 `cd` 即令后续 hooks 静默 fail-open——Layer 3 对 codeagent 从"物理拦截"降为"工程根启动约定下的物理拦截"，Layer 2/G2 仍在。此边界写进 adapter notes 与 README，不粉饰。
-- **信封形状已全程实证**：参数校验文案、api_retry 事件、重试耗尽终局 result 事件三段均实采确认与 claude 同源（2026-07-29）——"fork 未改文案/形状"不再是假设。仅纯文本（非 stream-json）模式的 `API Error` 行未单独采（低风险：goal 恒走 structured_events）。实采同时暴露现行哨兵两处真实漏判（字符串 error_status / 终局行无 api_error_status），已列 T2 #7b 修复，claude 同源受益。
-- **跨目录引用的耦合**：claude 模板改动即刻影响 codeagent（这正是收敛目的），T4 等价性测试+claude notes 双向声明来管理；若未来两内核分叉加大，届时再泵到 `agents/shared/claude-kernel/`，本期不预设（简单优先）。
-- **不改 claude 行为**：本 plan 对既有 claude 实例产物零 diff；`claudeArgv` 参数化属纯重构（缺省 'claude'，既有单测守护）；版本号不动。
+- **commands 副本维护成本**：12 份与 claude 平行，T5 归一化等值测试强制同步（改 claude 模板→测试红→同步副本）；接受此成本换运行身份正确性（cursor 同款先例）。
+- **fork 扩展字段**：codeagent 事件流带 `tool_use_result.vlDescription`/`modelID` 等 claude 没有的扩展字段——均不在现有解析路径上（解析器只按结构化字段取值，实采样本验证）；若未来消费这些字段须按"消费方按真实 writer schema"先采样再接。
+- **探针环境局限**：实采来自单台宿主（WalletForHarmonyOS，经本地代理接第三方模型）；`CODEAGENT3_` 前缀含版本号 "3"，codeagent 大版本升级可能改名——T5 为 env 链写用例时两个变量名都覆盖，升级时按同法重探。
+- **claude 侧口径**：运行语义零变化；两处良性 diff（rules 文案中性化、病态实例下 hooks 选根修复）见设计原则 4；版本号跟随 3.0.0 不 bump。
+- **发布约束**：T6 未完成前本 plan open todo 会被 [check-plan-version.mjs](scripts/check-plan-version.mjs) `--release` 门禁正确阻断——届时要么完成 T6，要么移除/降级 hard_hook 声明，要么 `deferred_to` 顺延，**不得标 cancelled 过门禁**。

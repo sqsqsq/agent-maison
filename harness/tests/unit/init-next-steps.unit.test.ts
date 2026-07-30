@@ -83,6 +83,12 @@ function writeClaudeCommandStub(root: string, commandId: string): void {
   fs.writeFileSync(path.join(dir, `${commandId}.md`), '# stub\n', 'utf-8');
 }
 
+function writeCodeagentCommandStub(root: string, commandId: string): void {
+  const dir = path.join(root, '.cac', 'commands');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${commandId}.md`), '# stub\n', 'utf-8');
+}
+
 function writeGenericSkillStub(root: string, skillId: string, bundleRoot = '.custom-agents'): void {
   const dir = path.join(root, ...bundleRoot.split('/'), 'skills', skillId);
   fs.mkdirSync(dir, { recursive: true });
@@ -580,6 +586,43 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(md.includes('claude:'), md);
       assert(!md.includes('入口未物化'), md);
       assert(!md.includes('- cursor:'), md);
+    },
+  },
+  {
+    name: 'codeagent（plan c7a9e2f4 #13）：.cac/commands 入口解析 + /slash 形态渲染；claude/codeagent 各落各目录不交叉',
+    run: () => {
+      const root = mkProject();
+      writeMinimalConfig(root);
+      fs.writeFileSync(
+        path.join(root, 'doc', 'module-catalog.yaml'),
+        'schema_version: "1.0"\nmodules:\n  - name: Wallet\n    layer: Feature\n    sub_layer: null\n    one_liner: x\n    responsibilities: []\n    NOT_responsible_for: []\n    typical_business_terms: []\n    easily_confused_with: []\n    key_exports: []\n    entry_file: index.ets\n',
+        'utf-8',
+      );
+      writeClaudeCommandStub(root, 'code-graph');
+      writeCodeagentCommandStub(root, 'code-graph');
+      // 入口解析：manifest 驱动，各 adapter 落各目录
+      const codeagentEntry = resolveMaterializedBuiltinSkillEntryRel(
+        root, FRAMEWORK_DIR, 'codeagent', 'code-graph', 'code-graph',
+      );
+      assert(codeagentEntry?.exists === true, JSON.stringify(codeagentEntry));
+      assert(codeagentEntry!.rel === '.cac/commands/code-graph.md', codeagentEntry!.rel);
+      const claudeEntry = resolveMaterializedBuiltinSkillEntryRel(
+        root, FRAMEWORK_DIR, 'claude', 'code-graph', 'code-graph',
+      );
+      assert(claudeEntry?.exists === true, JSON.stringify(claudeEntry));
+      assert(claudeEntry!.rel === '.claude/commands/code-graph.md', claudeEntry!.rel);
+      assert(!codeagentEntry!.rel.includes('.claude'), '禁止交叉落到对方目录');
+      // 渲染：codeagent 并入 slash 形态分支
+      const adapters = ['claude', 'codeagent'];
+      const steps = deriveInitNextSteps(baseLog([], adapters), phase1Ctx(root, undefined, 'project', adapters));
+      assert(steps.some(s => s.when === 'graph_gap'), JSON.stringify(steps));
+      const md = renderNextStepsMarkdown(steps, {
+        materializedAdapters: adapters,
+        projectRoot: root,
+        frameworkRoot: FRAMEWORK_DIR,
+      });
+      assert(md.includes('- codeagent: `/code-graph` → `.cac/commands/code-graph.md`'), md);
+      assert(md.includes('- claude: `/code-graph` → `.claude/commands/code-graph.md`'), md);
     },
   },
   {

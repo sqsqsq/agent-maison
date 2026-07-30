@@ -12,6 +12,7 @@ import {
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
 } from './phase-state';
 import { loadLocalConfig, type FrameworkLocalConfigVisionCanary } from './framework-local-config';
+import { isClaudeKernelAdapter } from './types';
 import { VISION_CANARY_PROBE_VERSION } from './vision-canary';
 
 export type ImageInputMode = 'none' | 'tool_read' | 'native_attach';
@@ -151,7 +152,8 @@ function parseImageInputFromDoc(
 }
 
 function heuristicImageInput(adapter: string): ImageInputMode {
-  return adapter === 'cursor' || adapter === 'claude' ? 'tool_read' : 'none';
+  // 家族谓词（plan c7a9e2f4）：codeagent 内核同 claude，Read 可读 sidecar 图片
+  return adapter === 'cursor' || isClaudeKernelAdapter(adapter) ? 'tool_read' : 'none';
 }
 
 function toProbeResult(

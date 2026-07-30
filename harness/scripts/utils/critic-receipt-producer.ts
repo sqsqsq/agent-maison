@@ -12,8 +12,10 @@
  * 部分缺失 → 如实 unverified + unread_screenshots[]/unread_crops[]。
  *
  * 解析器契约（t3a codex 红线）：只接受 CLI 产生的结构化事件，禁止从普通文本正则猜测
- * Read。当前实装解析器：claude（stream-json NDJSON 的 tool_use/Read 事件）。其余 adapter
- * 在 docs/operations/adapter-tool-event-provenance.md 盘点合格并配真实 fixture 后再注册
+ * Read。当前实装解析器：claude-kernel 家族——claude 与 codeagent（同一 stream-json NDJSON
+ * tool_use/Read 事件形状，共用 parseClaudeImageReadEvents；codeagent 2026-07-29 凭实采
+ * fixture 入册，plan c7a9e2f4）。其余 adapter 在
+ * docs/operations/adapter-tool-event-provenance.md 盘点合格并配真实 fixture 后再注册
  * ——无解析器=生产者不产出（保持 agent 侧 unverified 回执），如实降级。
  *
  * 证明力边界：验读记录=「工具调用发生过且输入被注入」，≠「模型看懂了图」。
@@ -51,8 +53,9 @@ function sha256File16(absPath: string): string | null {
 }
 
 /**
- * claude structured_events 解析器：`claude -p --output-format stream-json --verbose` 的
- * NDJSON 事件流。图片读取事件=assistant 消息 content 内 type=tool_use、name=Read、
+ * claude-kernel structured_events 解析器：`claude|codeagentcli -p --output-format stream-json
+ * --verbose` 的 NDJSON 事件流（家族共用，2026-07-29 codeagent 实采确认逐字段同构）。
+ * 图片读取事件=assistant 消息 content 内 type=tool_use、name=Read、
  * input.file_path 以 .png/.jpg/.jpeg/.webp 结尾。只认结构化字段，非 JSON 行直接跳过。
  */
 export function parseClaudeImageReadEvents(eventsJsonl: string): string[] {
@@ -64,6 +67,11 @@ export function parseClaudeImageReadEvents(eventsJsonl: string): string[] {
 /** adapter → 结构化事件解析器注册表（盘点合格 + fixture 后方可入册） */
 const IMAGE_READ_PARSERS: Record<string, (eventsJsonl: string) => string[]> = {
   claude: parseClaudeImageReadEvents,
+  // 入册凭据（plan c7a9e2f4 #10）：2026-07-29 codeagent 宿主实采 Read tool_use 事件——
+  // assistant.content[].{type:'tool_use',name:'Read',input.file_path} 与 claude 逐字段同构
+  //（fork 附加的 tool_use_result.vlDescription 等扩展字段不在解析路径）；脱敏 fixture 见
+  // tests/unit/codeagent-adapter.unit.test.ts。
+  codeagent: parseClaudeImageReadEvents,
 };
 
 export function hasImageReadParser(adapter: string): boolean {
