@@ -116,6 +116,7 @@ import {
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { lintDerivedPlanSelectorContract } from '../../profiles/hmos-app/harness/selector-contract';
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
@@ -2307,6 +2308,10 @@ function checkDeviceTestRunGate(
     // t7b（plan e6a3c9f4）：STEP 级静态门禁接入标准派生计划路径（与即席同强度）——
     // 非法根键/选择器形状/wait 误用在门禁层秒级拦下，不再只在真机执行时炸。
     const stepLint = lintHylyrePlanStepRules(derivedContent);
+    const selectorUiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+    const selectorWarnings = selectorUiSpec
+      ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature)
+      : [];
     const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
     if (stepBlockers.length > 0) {
       const hintPath = writeDeriveHintFromPlanJson(ctx, {
@@ -2505,6 +2510,22 @@ function checkDeviceTestRunGate(
     } catch { /* 归类失败不影响门禁判定 */ }
 
     const out: CheckResult[] = [
+      ...(selectorWarnings.length > 0
+        ? [{
+            id: 'derived_selector_contract',
+            category: 'structure' as const,
+            description: '派生 Hylyre selector 必须可追溯到 ui-spec',
+            severity: 'MINOR' as const,
+            status: 'WARN' as const,
+            details: [
+              `[SELECTOR-SPEC-001] 共 ${selectorWarnings.length} 个 selector 无 ui-spec 契约依据（首版观察期 WARN）：`,
+              ...selectorWarnings.slice(0, 12).map(v =>
+                `  - ${v.tc_id} step ${v.step_index} ${v.selector_kind}=${v.selector}: ${v.message}`),
+            ].join('\n'),
+            suggestion: '用 derive-hylyre-plan-hint 的 selector_contract 只读查询修正；dump/cache 发现的候选须先回写 ui-spec/锚点注入。',
+            source: 'derived_selector_contract',
+          }]
+        : []),
       {
         id,
         category: 'structure',

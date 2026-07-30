@@ -28,6 +28,7 @@ import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-i
 import {
   deviceTestEvidencePath,
   type DeviceDefectClassification,
+  type DeviceTestEvidenceCase,
   type DeviceTestEvidenceDoc,
 } from './utils/device-test-evidence-shared';
 import { resolveAuthoritativeHylyreTracePath } from './utils/testing-trace-gates';
@@ -1181,10 +1182,30 @@ export interface ActionableDefect {
 }
 
 /** 整轮集合指纹：只有整轮 actionable 集合完全相同才算无进展（{A,B}→{B} 允许再回退） */
-export function roundFingerprintOf(defects: readonly ActionableDefect[]): string {
+export function roundFingerprintOf(defects: readonly { fingerprint: string }[]): string {
   const h = createHash('sha256');
   h.update(defects.map(d => d.fingerprint).slice().sort().join('\n'), 'utf-8');
   return h.digest('hex').slice(0, 32);
+}
+
+export function evaluateUnverifiedRound(
+  previous: { phase: string; fingerprint: string } | null,
+  phase: string,
+  entries: readonly { fingerprint: string }[],
+): { fingerprint: string; repeatedWithoutProgress: boolean } {
+  const fingerprint = roundFingerprintOf(entries);
+  return {
+    fingerprint,
+    repeatedWithoutProgress: previous?.phase === phase && previous.fingerprint === fingerprint,
+  };
+}
+
+export interface UnverifiedDefect {
+  screen_or_case_id: string;
+  reason: string;
+  reason_code: string;
+  source: 'visual' | 'device_test';
+  fingerprint: string;
 }
 
 export interface ActionableCollectResult {
@@ -1196,7 +1217,7 @@ export interface ActionableCollectResult {
    * 耗尽后 halt。真实生产路径可达：install 成功但 install meta 写失败 → currentFp
    * 算不出 → 已知 must_fix 若静默丢弃，best_effort 下 gate 只 WARN、run 直接 advance。
    */
-  unverified: Array<{ screen_or_case_id: string; reason: string; source: 'visual' | 'device_test' }>;
+  unverified: UnverifiedDefect[];
   /**
    * f4b2c8e6 t1：仅在正式 device evidence 通过绑定校验后提供。test_case_flow 可用时只含
    * 根/独立失败；flow 缺失或 triage 失败时保守包含全部 failed case，这只会阻止 all-test_contract
@@ -1306,7 +1327,7 @@ export function validateDeviceTestEvidenceBinding(
   runId: string,
   ctx: DeviceTestCollectContext,
 ): string | null {
-  if (doc.schema_version !== '1.0') return `evidence schema_version 不受支持：${String(doc.schema_version)}`;
+  if (doc.schema_version !== '1.1') return `evidence schema_version 不受支持：${String(doc.schema_version)}`;
   if (doc.goal_run_id !== runId || doc.attempt_id !== ctx.attemptId) {
     return `evidence 身份不匹配（${String(doc.goal_run_id)}/${String(doc.attempt_id)} vs 当前 ${runId}/${ctx.attemptId}）`;
   }
@@ -1354,7 +1375,16 @@ export function collectActionableDefects(
   deviceTest?: DeviceTestCollectContext,
 ): ActionableCollectResult {
   const out: ActionableDefect[] = [];
-  const unverified: Array<{ screen_or_case_id: string; reason: string; source?: 'visual' | 'device_test' }> = [];
+  const unverified: UnverifiedDefect[] = [];
+  const pushVisualUnverified = (id: string, reasonCode: string, reason: string): void => {
+    unverified.push({
+      screen_or_case_id: id,
+      reason,
+      reason_code: reasonCode,
+      source: 'visual',
+      fingerprint: `visual|${id}|${reasonCode}`,
+    });
+  };
   let trustedDeviceRootClassifications: DeviceDefectClassification[] | undefined;
 
   // ---- A) visual_diff：新鲜 must_fix ----
@@ -1391,7 +1421,7 @@ export function collectActionableDefects(
         // 失效屏会在 ① 就被跳过，评估不可采信却照样完成。命中即进 unverified 通路
         //（不回退、retry 重评、耗尽 halt），无新状态机。
         if (sc.evaluation_invalidated === true) {
-          unverified.push({ screen_or_case_id: id, reason: '评估已被判无效（evaluation_invalidated，待 critic 重评）——该屏视觉评估尚不可采信' });
+          pushVisualUnverified(id, 'evaluation_invalidated', '评估已被判无效（evaluation_invalidated，待 critic 重评）——该屏视觉评估尚不可采信');
           continue;
         }
         if (sc.verdict !== 'warn' && sc.verdict !== 'fail') continue;               // ①
@@ -1406,10 +1436,10 @@ export function collectActionableDefects(
         const evalShot = typeof (sc as { evaluated_screenshot_hash?: string }).evaluated_screenshot_hash === 'string'
           ? String((sc as { evaluated_screenshot_hash?: string }).evaluated_screenshot_hash).trim() : '';
         // 身份不可核实 ≠ 没缺陷：must_fix 在场时记 unverified（调用方 FAIL/retry，不静默丢）
-        if (!evalShot) { unverified.push({ screen_or_case_id: id, reason: '缺 evaluated_screenshot_hash（截图身份未绑定）' }); continue; }   // ③
+        if (!evalShot) { pushVisualUnverified(id, 'evaluated_screenshot_hash_missing', '缺 evaluated_screenshot_hash（截图身份未绑定）'); continue; }   // ③
         const shotRel = typeof (sc as { screenshot_path?: string }).screenshot_path === 'string'
           ? String((sc as { screenshot_path?: string }).screenshot_path).trim() : '';
-        if (!shotRel) { unverified.push({ screen_or_case_id: id, reason: '缺 screenshot_path' }); continue; }
+        if (!shotRel) { pushVisualUnverified(id, 'screenshot_path_missing', '缺 screenshot_path'); continue; }
         const shotNow = vd.hashScreenshotFile(
           path.isAbsolute(shotRel) ? shotRel : path.join(projectRoot, ...shotRel.split('/')),
         );
@@ -1417,13 +1447,13 @@ export function collectActionableDefects(
         // 正常代谢静默跳过——但"代谢"的前提是重评真的会发生；best_effort 下 stale gate
         // 只 WARN，若重评没发生，已知 must_fix 就假绿完成。持续 mismatch = 尚无当前身份
         // 的新判定 → 不驱动回退、也不允许完成，retry 引导重评，耗尽 halt。）
-        if (!shotNow) { unverified.push({ screen_or_case_id: id, reason: '绑定截图文件不可读（无法核验截图身份）' }); continue; }
-        if (shotNow !== evalShot) { unverified.push({ screen_or_case_id: id, reason: '截图身份不匹配（盘上截图已变但该屏尚未按当前截图重评）' }); continue; }
-        if (!currentFp) { unverified.push({ screen_or_case_id: id, reason: '当前 build fingerprint 不可算（install meta 缺失/损坏——install ok 但 meta 写失败的生产路径可达）' }); continue; } // ④
+        if (!shotNow) { pushVisualUnverified(id, 'screenshot_unreadable', '绑定截图文件不可读（无法核验截图身份）'); continue; }
+        if (shotNow !== evalShot) { pushVisualUnverified(id, 'screenshot_identity_mismatch', '截图身份不匹配（盘上截图已变但该屏尚未按当前截图重评）'); continue; }
+        if (!currentFp) { pushVisualUnverified(id, 'current_build_fingerprint_unavailable', '当前 build fingerprint 不可算（install meta 缺失/损坏——install ok 但 meta 写失败的生产路径可达）'); continue; } // ④
         const evalFp = typeof (sc as { evaluated_build_fingerprint?: string }).evaluated_build_fingerprint === 'string'
           ? String((sc as { evaluated_build_fingerprint?: string }).evaluated_build_fingerprint).trim() : '';
-        if (!evalFp) { unverified.push({ screen_or_case_id: id, reason: '缺 evaluated_build_fingerprint（build 身份未绑定）' }); continue; }
-        if (evalFp !== currentFp) { unverified.push({ screen_or_case_id: id, reason: 'build 身份不匹配（改码重装后该屏尚未按当前 HAP 重评）' }); continue; } // ④
+        if (!evalFp) { pushVisualUnverified(id, 'evaluated_build_fingerprint_missing', '缺 evaluated_build_fingerprint（build 身份未绑定）'); continue; }
+        if (evalFp !== currentFp) { pushVisualUnverified(id, 'build_identity_mismatch', 'build 身份不匹配（改码重装后该屏尚未按当前 HAP 重评）'); continue; } // ④
         if (vd.isStaleVisualDiffVerdict(sc, projectRoot, { currentBuildFingerprint: currentFp })) continue; // ⑤ stale
         const structural = (sc.defects ?? []).map(d => vd.computeDefectFingerprint(id, d)).filter(Boolean);
         const fingerprint = structural.length > 0
@@ -1489,21 +1519,40 @@ export function collectActionableDefects(
     try {
       const evPath = deviceTestEvidencePath(deviceTest.reportsDir);
       if (fs.existsSync(evPath)) {
-        const pushUnverified = (id: string, reason: string): void => {
-          unverified.push({ screen_or_case_id: id, reason, source: 'device_test' });
+        const pushUnverified = (
+          id: string,
+          reasonCode: string,
+          reason: string,
+          evidenceCase?: DeviceTestEvidenceCase,
+        ): void => {
+          const step = evidenceCase?.failing_step;
+          unverified.push({
+            screen_or_case_id: id,
+            reason,
+            reason_code: reasonCode,
+            source: 'device_test',
+            fingerprint: [
+              'device_test',
+              id,
+              evidenceCase?.classification ?? 'evidence',
+              step ? `step:${step.index}` : 'step:none',
+              step ? `${step.selector_kind}:${step.selector}` : 'selector:none',
+              reasonCode,
+            ].join('|'),
+          });
         };
         let doc: DeviceTestEvidenceDoc | null = null;
         try {
           doc = JSON.parse(fs.readFileSync(evPath, 'utf-8')) as DeviceTestEvidenceDoc;
         } catch (e) {
-          pushUnverified('device-test-evidence', `evidence 不可解析：${(e as Error).message}`);
+          pushUnverified('device-test-evidence', 'evidence_parse_failed', `evidence 不可解析：${(e as Error).message}`);
         }
         if (doc) {
           const failedCases = (doc.cases ?? []).filter(c => c && typeof c.case_id === 'string');
           const bindFailure = validateDeviceTestEvidenceBinding(doc, runId, deviceTest);
           if (bindFailure) {
-            if (failedCases.length === 0) pushUnverified('device-test-evidence', bindFailure);
-            for (const c of failedCases) pushUnverified(c.case_id, bindFailure);
+            if (failedCases.length === 0) pushUnverified('device-test-evidence', 'evidence_binding_invalid', bindFailure);
+            for (const c of failedCases) pushUnverified(c.case_id, 'evidence_binding_invalid', bindFailure, c);
           } else {
             // 根/级联三分复用 test_case_flow SSOT（级联 case 不产缺陷也不产 unverified——
             // 与既有 run gate 的 triage 语义一致）；无 flow 块 → 不归类，全部按根处理。
@@ -1528,44 +1577,71 @@ export function collectActionableDefects(
             trustedDeviceRootClassifications = rootCases.map((c) => c.classification);
             for (const c of failedCases) {
               if (rootSet && !rootSet.has(c.case_id)) continue; // 级联：根修好自然消失
+              const actionableClassification =
+                c.classification === 'product_actionable' ||
+                c.classification === 'product_state' ||
+                c.classification === 'scaffold_contract_drift';
               if (
-                c.classification === 'product_actionable' &&
+                actionableClassification &&
                 doc.device_target?.target_kind === 'physical' &&
                 c.failing_step
               ) {
+                const evidenceLine = c.evidence?.ui_dump
+                  ? `UI dump evidence: ${c.evidence.ui_dump}` +
+                    (c.evidence.screenshot ? `; screenshot: ${c.evidence.screenshot}` : '')
+                  : null;
+                const instructions =
+                  c.classification === 'product_state'
+                    ? [
+                        `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
+                          `(${c.failing_step.action}): the element exists but its observable state ` +
+                          `does not satisfy the retained predicate. ${c.reason ?? ''}`.trim(),
+                        `Fix product state/binding logic; expected vs actual node observations are in device evidence.`,
+                      ]
+                    : c.classification === 'scaffold_contract_drift'
+                      ? [
+                          `On-device test case ${c.case_id} uses a runtime maison anchor that cannot be ` +
+                            `resolved to the ui-spec node for screen ${c.expected_screen ?? '(unknown)'}.`,
+                          `Inject the canonical anchor maison:<feature>:<screen>:<ui-spec-node>[:<instance>] ` +
+                            `in product code; block semantic_node and host-only suffixes are not spec node ids.`,
+                        ]
+                      : [
+                          `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
+                            `(${c.failing_step.action}): ui-spec requires ` +
+                            `${c.failing_step.selector_kind}=${c.failing_step.selector} on screen ` +
+                            `${c.expected_screen ?? '(unknown)'}, but the whole attempt evidence pool has no exact hit.`,
+                          `Implement the canonical ui-spec-derived anchor/text in product code for that screen.`,
+                        ];
+                if (evidenceLine) instructions.push(evidenceLine);
+                if (c.diagnostics?.length) {
+                  instructions.push(`Additional diagnostics: ${c.diagnostics.map(d => `${d.code}: ${d.message}`).join('; ')}`);
+                }
+                if (c.error_excerpt) instructions.push(`Machine error: ${c.error_excerpt.slice(0, 200)}`);
                 out.push({
                   source: 'device_test',
                   screen_or_case_id: c.case_id,
-                  instructions: [
-                    `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
-                      `(${c.failing_step.action}): spec anchor ${c.failing_step.selector_kind}=` +
-                      `${c.failing_step.selector} is missing on screen ${c.expected_screen ?? '(unknown)'} ` +
-                      `of the real device (serial=${doc.device_target.serial ?? 'unknown'}).`,
-                    `Implement the exact anchor (id/text) in product code for that screen — do NOT ` +
-                      `emit namespaced variants (e.g. 'maison:<feature>:<screen>:<id>'); acceptance ` +
-                      `requires the exact form.`,
-                    ...(c.evidence?.ui_dump
-                      ? [
-                          `UI dump evidence: ${c.evidence.ui_dump}` +
-                            (c.evidence.screenshot ? `; screenshot: ${c.evidence.screenshot}` : ''),
-                        ]
-                      : []),
-                    ...(c.error_excerpt ? [`Machine error: ${c.error_excerpt.slice(0, 200)}`] : []),
-                  ],
+                  instructions,
                   fingerprint:
-                    `${c.case_id}|step:${c.failing_step.index}|` +
+                    `${c.classification}|${c.case_id}|step:${c.failing_step.index}|` +
                     `${c.failing_step.selector_kind}:${c.failing_step.selector}`,
                   evidence_path: `${path.relative(projectRoot, evPath).split(path.sep).join('/')}#${c.case_id}`,
                 });
-              } else if (c.classification === 'product_actionable') {
+              } else if (actionableClassification) {
                 pushUnverified(
                   c.case_id,
-                  `product_actionable 但 target_kind=${doc.device_target?.target_kind ?? 'null'} 非 physical——非真机结果不驱动回修`,
+                  'actionable_requires_physical',
+                  `${c.classification} 但 target_kind=${doc.device_target?.target_kind ?? 'null'} 非 physical——非真机结果不驱动回修`,
+                  c,
                 );
               } else {
+                const availableNodes = c.classification === 'test_contract'
+                  ? `；请改用该屏 ui-spec 声明的精确 node/text`
+                  : '';
                 pushUnverified(
                   c.case_id,
-                  `${c.classification}${c.reason ? `（${c.reason}）` : ''}——不属可回修产品缺陷`,
+                  c.reason_code ?? `classification_${c.classification}`,
+                  `${c.classification}${c.reason ? `（${c.reason}）` : ''}${availableNodes}——不属可回修产品缺陷`,
+                  c,
                 );
               }
             }
@@ -1579,7 +1655,7 @@ export function collectActionableDefects(
 
   return {
     defects: out,
-    unverified: unverified.map(u => ({ ...u, source: u.source ?? ('visual' as const) })),
+    unverified,
     ...(trustedDeviceRootClassifications !== undefined
       ? { trustedDeviceRootClassifications }
       : {}),
@@ -4046,6 +4122,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 不得再回退），随后内存实时更新
     const seenRoundFingerprints = new Set<string>();
     let priorEvents = loadAuthoritativeEvents(eventsPath);
+    let previousUnverifiedRound: { phase: string; fingerprint: string } | null = null;
+    for (const event of priorEvents) {
+      const item = event as {
+        type?: string;
+        phase?: string;
+        round_fingerprint?: string;
+        action?: string;
+      };
+      if (
+        item.type === 'unverifiable_must_fix' &&
+        typeof item.phase === 'string' &&
+        typeof item.round_fingerprint === 'string' &&
+        item.round_fingerprint
+      ) {
+        previousUnverifiedRound = { phase: item.phase, fingerprint: item.round_fingerprint };
+      } else if (
+        item.type === 'phase_backtrack_requested' ||
+        (item.type === 'phase_verdict' && item.action !== 'retry') ||
+        item.type === 'run_end'
+      ) {
+        previousUnverifiedRound = null;
+      }
+    }
     // v23 F2：testing_write_violation 是 run 终止态——同 run resume 一律拒绝（否则 resume
     // 的新前快照会把上次遗留修改当合法基线，违规被洗白）。人工整理现场后必须新开 run。
     if (argv.resume && priorEvents.some(e =>
@@ -6420,16 +6519,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        if (!unverifiableOnly) previousUnverifiedRound = null;
         if (unverifiableOnly && (action === 'advance' || action === 'retry')) {
           const notes = actionableResult.unverified.slice(0, 6)
             .map(u => `${u.screen_or_case_id}：${u.reason}`).join('；');
+          const unverifiedRound = evaluateUnverifiedRound(
+            previousUnverifiedRound,
+            String(phase),
+            actionableResult.unverified,
+          );
+          const unverifiedRoundFingerprint = unverifiedRound.fingerprint;
+          const repeatedWithoutProgress = unverifiedRound.repeatedWithoutProgress;
           appendEvent(manifest.report_dir, projectRoot, {
-            type: 'unverifiable_must_fix', phase, invoke_id: invokeId,
+            type: 'unverifiable_must_fix',
+            phase,
+            invoke_id: invokeId,
             entries: actionableResult.unverified.slice(0, 20),
             count: actionableResult.unverified.length,
+            round_fingerprint: unverifiedRoundFingerprint,
           });
-          // d9e4b7c1 T2：retry/halt 指引按 source 分支——visual 的"补 evaluated_screenshot_hash"
-          // 对 device 源是完全错误的提示（事件 type 名保留 unverifiable_must_fix，审计连续性）。
+          previousUnverifiedRound = {
+            phase: String(phase),
+            fingerprint: unverifiedRoundFingerprint,
+          };
           const visualCount = actionableResult.unverified.filter(u => u.source !== 'device_test').length;
           const deviceCount = actionableResult.unverified.length - visualCount;
           const guidanceParts: string[] = [];
@@ -6442,28 +6554,47 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
           if (deviceCount > 0) {
             guidanceParts.push(
-              `真机测试有 ${deviceCount} 个用例的缺陷证据不可采信或不可归因：设备缺陷只有在正式 `
-              + 'gate evidence 身份齐备（run/attempt/设备元组/trace/时间窗全部匹配）、'
-              + 'classification=product_actionable 且 target_kind=physical 时才驱动回修。'
-              + '请核对测试 selector 与 ui-spec 锚点的对应关系（test_contract 类是测试问题不回 coding）、'
-              + '确认设备就绪与安装链正常（正式 gate 会强制重装并写 device-test-evidence.json）。',
+              `真机测试有 ${deviceCount} 个用例的缺陷证据不可采信或不可归因：请按 priorFailure `
+              + '中的 reason_code 与 selector/ui-spec 对照修复；只有绑定可信的 physical '
+              + 'product_actionable/product_state/scaffold_contract_drift 才驱动回修。',
             );
           }
-          if (retries < manifest.budget.max_retries_per_phase) {
+          if (repeatedWithoutProgress) {
+            action = 'halt';
+            haltReason = 'unverifiable_must_fix';
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'unverifiable_must_fix',
+              halt_trigger: 'fingerprint_repeat',
+              round_fingerprint: unverifiedRoundFingerprint,
+            });
+            console.error(
+              `\n===== unverifiable_must_fix =====\n${notes}\n`
+              + `连续两轮 unverified 集合完全相同（roundFingerprint=`
+              + `${unverifiedRoundFingerprint.slice(0, 12)}…）——继续重试只会空转，halt 求人。\n`,
+            );
+          } else if (retries < manifest.budget.max_retries_per_phase) {
             action = 'retry';
             priorFailure =
               `本轮存在 ${actionableResult.unverified.length} 项不可采信的缺陷证据（${notes}）。`
-              + '不可采信的证据既不驱动回退、也不算通过。' + guidanceParts.join(' ');
+              + `集合指纹=${unverifiedRoundFingerprint}。不可采信证据既不驱动回退、也不算通过。`
+              + guidanceParts.join(' ');
             priorFailureKind = 'contract_violation' as FailureKind;
             console.error(
               `\n===== unverifiable_must_fix =====\n${notes}\n`
-              + `缺陷证据尚不可采信——不回退也不放行，retry 重采/重评（${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
+              + `缺陷证据尚不可采信——retry 重采/重评（`
+              + `${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
             );
           } else {
             action = 'halt';
             haltReason = 'unverifiable_must_fix';
             appendEvent(manifest.report_dir, projectRoot, {
-              type: 'phase_halt', phase, halt_reason: 'unverifiable_must_fix',
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'unverifiable_must_fix',
+              halt_trigger: 'retry_budget_exhausted',
+              round_fingerprint: unverifiedRoundFingerprint,
             });
             console.error(
               `\n===== unverifiable_must_fix =====\n${notes}\n`

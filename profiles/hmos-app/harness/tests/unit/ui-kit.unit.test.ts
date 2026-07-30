@@ -19,7 +19,10 @@ import {
   findDuplicateAnchors,
   isValidAnchor,
   normalizeAnchorSegment,
+  normalizeRuntimeAnchor,
   parseAnchor,
+  validateAnchorCardinality,
+  validateAnchorSuffixContract,
 } from '../../ui-kit-anchors';
 import {
   BLOCK_SEMANTIC_NODES,
@@ -30,6 +33,7 @@ import {
   stripArkTsComments,
 } from '../../ui-kit-conformance-check';
 import { resolveUiKitTargetDir, scaffoldUiKit, uiKitTemplatesDir } from '../../ui-kit-scaffolder';
+import { buildSelectorContractQuery, lintDerivedPlanSelectorContract } from '../../selector-contract';
 import { clearFrameworkConfigCache, featureFilePath, featureDir } from '../../../../../harness/config';
 import { ensureConsumerFrameworkTree } from '../../../../../harness/tests/utils/layout-test-helper';
 import type { CheckContext } from '../../../../../harness/scripts/utils/types';
@@ -79,6 +83,36 @@ test('锚点：同屏重复检出', () => {
   assert.deepStrictEqual(findDuplicateAnchors([a, a, buildInstanceAnchor('f', 's', 'row', 'cmb')]), [a]);
 });
 
+
+test('锚点：单实例四段、重复实例五段；语法校验与带 spec 上下文的基数校验分层', () => {
+  const singleton = buildInstanceAnchor('bc-openCard', 'sms_verify', 'sms_input');
+  const repeated = buildInstanceAnchor('bc-openCard', 'bank_list', 'bank_row', 'icbc');
+  assert.strictEqual(singleton, 'maison:bc-opencard:sms_verify:sms_input');
+  assert.strictEqual(repeated, 'maison:bc-opencard:bank_list:bank_row:icbc');
+  assert.ok(isValidAnchor(singleton) && isValidAnchor(repeated), '语法层接受 4/5 段');
+  assert.strictEqual(parseAnchor(singleton)?.instanceKey, undefined);
+  assert.strictEqual(validateAnchorCardinality(singleton, 1), null);
+  assert.strictEqual(validateAnchorCardinality(repeated, 2), null);
+  assert.ok(validateAnchorCardinality(singleton, 2)?.includes('5-segment'));
+  assert.ok(validateAnchorCardinality(repeated, 1)?.includes('4-segment'));
+});
+
+test('锚点后缀：blocks.json 与 ArkTS .id() 静态一致；最长终端逐级剥离且不误剥宿主 -next', () => {
+  assert.deepStrictEqual(validateAnchorSuffixContract(), []);
+  const input = normalizeRuntimeAnchor('maison:bc-opencard:sms_verify:sms_input-input');
+  assert.strictEqual(input.specNode, 'sms_input');
+  assert.deepStrictEqual(input.suffixChain, ['-input']);
+  const hosted = normalizeRuntimeAnchor('maison:bc-opencard:sms_verify:sheet_scaffold-next-label');
+  assert.strictEqual(hosted.specNode, 'sheet_scaffold-next');
+  assert.deepStrictEqual(hosted.suffixChain, ['-label'], '-next 不是 kit 后缀，不得剥离');
+  const primary = normalizeRuntimeAnchor('maison:bc-opencard:sms_verify:sheet_scaffold-primary-action');
+  assert.strictEqual(primary.specNode, 'sheet_scaffold');
+  assert.deepStrictEqual(primary.suffixChain, ['-primary-action'], '须最长终端匹配，不能误剥 -action');
+  const option = normalizeRuntimeAnchor('maison:bc-opencard:bank_list:bank_selector-option-icbc');
+  assert.strictEqual(option.specNode, 'bank_selector');
+  assert.deepStrictEqual(option.suffixChain, ['-option-icbc']);
+});
+
 // ---------------- ② gallery 结构基线 ----------------
 
 test('gallery：blocks.json 与 BLOCK_SEMANTIC_NODES 双向对账（防两处漂移）', () => {
@@ -115,6 +149,32 @@ test('gallery：硬编码色 lint——白名单外不得出现 hex 字面量（
       assert.ok(WHITELIST.has(m[1].toUpperCase()), `${f} 硬编码色 ${m[1]} 不在白名单`);
     }
   }
+});
+
+
+test('selector 来源契约：只读 query 给 canonical anchor；next_step_btn 即使跑过仍结构化 WARN', () => {
+  const doc = docWithBlocks();
+  const query = buildSelectorContractQuery(doc, 'bc-openCard');
+  const nav = query.find(e => e.node_id === 'top_nav')!;
+  assert.strictEqual(nav.canonical_base_anchor, 'maison:bc-opencard:bank-list:top_nav');
+  assert.strictEqual(nav.cardinality, 'singleton');
+  assert.strictEqual(nav.instance_key, 'forbidden');
+  assert.ok(nav.applicable_suffixes.includes('-title'));
+  const derived = [
+    '## 测试用例清单',
+    '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+    '|---|---|---|---|---|---|---|',
+    '| TC-005 | 历史通过 selector | 无 | {"touch":{"by_id":"next_step_btn"}} | 可点 | P0 | AC-1 |',
+    '| TC-006 | 合法 selector | 无 | {"wait_for":{"by_id":"maison:bc-opencard:bank-list:top_nav-title"}} | 可见 | P0 | AC-1 |',
+    '| TC-007 | 嵌套 selector | 无 | {"touch":{"by_id":"top_nav","within":{"by_id":"next_step_btn"}}} | 可点 | P0 | AC-1 |',
+  ].join('\n');
+  const warnings = lintDerivedPlanSelectorContract(derived, doc, 'bc-openCard');
+  assert.strictEqual(warnings.length, 2);
+  assert.strictEqual(warnings[0].rule_id, 'SELECTOR-SPEC-001');
+  assert.strictEqual(warnings[0].tc_id, 'TC-005');
+  assert.strictEqual(warnings[0].selector, 'next_step_btn');
+  assert.ok(warnings.some(w => w.tc_id === 'TC-007' && w.selector === 'next_step_btn'),
+    'within/in/into/all 等任意嵌套对象里的 selector 都必须递归 lint');
 });
 
 // ---------------- ③ scaffolder ----------------

@@ -11,7 +11,7 @@
 - **构建复用**：当 **业务源码 mtime ≤ 已有 HAP mtime** 且 product/buildMode 一致时，**跳过 hvigor**（`reused: true`，门禁仍 PASS）。`timestamp` 为本次跑门禁时刻，**不是** HAP 生成时间——以资源管理器中 HAP 修改时间或 `hapBuiltAt` 为准。
 - **交互默认值**：见 **`framework/profiles/hmos-app/harness/testing-build-conventions.ts`**（导出 **`listAvailableProducts`**、**`describeDeviceTestHarnessEnvHints`** 等）。
 - **可选构建矩阵**：通过环境变量覆盖：`HARNESS_DEVICE_TEST_PRODUCT`、`HARNESS_DEVICE_TEST_BUILD_MODE`（`debug`|`release`）。不要用 **`HARNESS_SKIP_DEVICE_TEST_BUILD` / `HARNESS_SKIP_DEVICE_TEST_INSTALL`** 作为出口——testing harness 会判 **FAIL**。**goal 模式下禁止 agent 临时覆盖这两个变量**（plan d9e4b7c1）：runner 在 attempt 开始已冻结 {product, buildMode} 并注入环境（agent 与外层 gate 同源），覆盖会让 hvigor 生成物（模块根 `BuildProfile.ets`）与冻结配置不符、被写保护判违规。
-- **goal 正式 gate 强装与 evidence**（plan d9e4b7c1）：goal 模式的外层 testing gate 会注入 `HARNESS_DEVICE_TEST_FORCE_INSTALL=1`（强制 `hdc install -r`，装机复用只保留给 agent 自检与普通模式）并在 build→install→run 全部完成后由 check-testing 协调层统一写 **`reports/<feature>/testing/device-test-evidence.json`**（覆盖式、当前轮专属：goal 身份 + 设备元组 + 完整 HAP sha256 + `written_at` + 结构化 cases 四分类）。goal-runner 只消费该 evidence 驱动 testing→coding 回修（仅 `target_kind=physical` 且 `classification=product_actionable`）；agent 自检产物仅供参考、runner 在 spawn gate 前会删除旧 evidence——**不要手写该文件**。
+- **goal 正式 gate 强装与 evidence**（plan d9e4b7c1）：goal 模式的外层 testing gate 会注入 `HARNESS_DEVICE_TEST_FORCE_INSTALL=1`（强制 `hdc install -r`，装机复用只保留给 agent 自检与普通模式）并在 build→install→run 全部完成后由 check-testing 协调层统一写 **`reports/<feature>/testing/device-test-evidence.json`**（覆盖式、当前轮专属：goal 身份 + 设备元组 + 完整 HAP sha256 + `written_at` + 结构化 cases 四分类）。goal-runner 只消费该 evidence 驱动 testing→coding 回修（仅 `target_kind=physical` 且 `classification=product_actionable|product_state|scaffold_contract_drift`）；agent 自检产物仅供参考、runner 在 spawn gate 前会删除旧 evidence——**不要手写该文件**。
 - **强制重编**：`HARNESS_DEVICE_TEST_FORCE_BUILD=1` 时始终执行 hvigor。
 - **真编译前停 daemon**：源码新于 HAP、需执行 hvigor 时，harness 会先 **`hvigor --stop-daemon`** 再 assemble，并注入 DevEco **JBR** 到子进程 `Path`（避免旧 daemon worker 在 PackageHap 阶段 `spawn java ENOENT`）。复用 HAP（`reused: true`）时不调 hvigor，亦不停 daemon。
 
@@ -98,7 +98,7 @@
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
   - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`scroll_to`** / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor wheel 内 `hylyre/api/planned_step_keys.py` 为 SSOT）
-- **selector 查找顺序**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` 探索结果 → 仍无稳定 selector 则 **该 TC 不写入派生计划**，在顶层 **test-report.md** 标为 **跳过**（备注说明需补契约/设计）。
+- **selector 查找顺序与真值边界**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` → 设备 dump；后两级只发现候选。任何 `by_id` 必须反解到当前 feature/screen 的 ui-spec node，`by_text` 必须与 ui-spec text 精确等值；用 `derive-hylyre-plan-hint.selector_contract.entries[]` 查询 canonical base anchor/后缀/基数。`SELECTOR-SPEC-001` 首版 WARN；即使真机跑过（如历史 `next_step_btn`）也不等于有契约依据。无法校验则补 ui-spec/锚点，否则该 TC 不写入派生计划并显式跳过。
 - **富选择器（Hylyre 0.2+）**：同名文案/同类型多组件（如 bindSheet 半模态「下一步」 vs 背后页面「下一步」）优先用 `scope:"top_overlay"`、`within`/`below`/`above`、`all`、`index`、`visible`/`enabled` 等（详见 [hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)）；勿仅写裸 `by_text` 碰运气。
 - **长列表**：屏外项用 **`scroll_to`** 或 touch 内 `scroll_into_view`，勿盲猜 `scroll` 步数。Hylyre 0.3+ `scroll_to` 对已在屏目标先匹配再滚。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
@@ -119,7 +119,7 @@
 
 ### `hylyre dump-ui` 与快照缓存
 
-- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；将可复用的 selector **回写** `plan.md` / `contracts.yaml` 后再派生。
+- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；dump 结果仅是候选：先补回 ui-spec node/anchor 注入并通过 `SELECTOR-SPEC-001` 校验，再回写 `plan.md` / `contracts.yaml` 派生，禁止把运行时实现原样抄成真值。
 - **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`）。默认 page slug **`home`**；环境变量优先级：**`HARNESS_HYLYRE_PAGE_SAVE_NAMES`**（逗号分隔，多名）> **`HARNESS_HYLYRE_PAGE_SAVE_NAME`**（旧单名）> `home`。写入 **`doc/app-snapshot-cache/<bundle>/pages/<slug>.json`**。该步骤**失败不会**把本次 `run` 判为失败；stderr 全文见 phase 级 **`reports/<feature>/testing/hylyre-page-save.log`**，结构化摘要见 **`device-test-run.meta.json` → `hylyre_page_save`**（含 `names[]` 明细）。
 - **步骤失败诊断（Hylyre 0.2+）**：`hylyre run` 传 **`--failure-dir <reportOutDir>/failures`**（与本轮 `test-report.md` 同目录下的 `failures/`），失败步骤自动落 UI dump + 截图；路径写入 **`device-test-run.meta.json` → `failure_dir`**。
 - **冷重启（Hylyre 0.2+ / testing 阶段）**：默认 **`tools.hylyre.cold_restart_before_run: true`**（`aa force-stop` positional + `aa start`）；可用 **`HARNESS_DEVICE_TEST_COLD_RESTART=0/1`** 覆盖。即席默认仍见 Step 4.B `ADHOC_COLD_RESTART`。

@@ -19,6 +19,8 @@ import {
 } from './utils/app-snapshot-cache-hint';
 import { resolveFeatureArtifact, relFeatureArtifact } from '../config';
 import { buildStandardHylyreDerivePayloadBase } from './utils/hylyre-standard-derive-knowledge';
+import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { buildSelectorContractQuery } from '../../profiles/hmos-app/harness/selector-contract';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -61,6 +63,8 @@ const snapshot_cache_empty = snapshotBundle
   ? isSnapshotCacheEmpty(cacheAbs, snapshotBundle)
   : true;
 const available_pages = snapshotBundle ? listSnapshotPages(cacheAbs, snapshotBundle) : [];
+const uiSpec = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
+const selector_contract = uiSpec ? buildSelectorContractQuery(uiSpec, feature) : [];
 const payload = {
   // t7a（plan e6a3c9f4）：统一基座（与 check-testing 自动 hint 同源，schema/知识块永不分叉）
   ...buildStandardHylyreDerivePayloadBase(),
@@ -69,6 +73,11 @@ const payload = {
   snapshot_bundle: snapshotBundle || null,
   snapshot_cache_empty,
   available_pages,
+  selector_contract: {
+    rule_id: 'SELECTOR-SPEC-001',
+    policy: 'snapshot-cache/device dump only discover candidates; by_id MUST resolve to ui-spec node and by_text MUST equal ui-spec text',
+    entries: selector_contract,
+  },
   navigation_discipline:
     'Nav 子页回 Tab 须用 {"back":{}}；禁止无 area/at 的 swipe RIGHT/LEFT 代替返回。',
   test_cases,

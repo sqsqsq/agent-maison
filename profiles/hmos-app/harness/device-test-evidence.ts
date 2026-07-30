@@ -1,56 +1,50 @@
 // ============================================================================
-// device-test-evidence.ts — 真机缺陷结构化合成与机器归因（plan d9e4b7c1 T2）
-// ----------------------------------------------------------------------------
-// 输入全部为**机器产物**（gap-notes/test-report 等 agent 散文不作输入）：
-//   · hylyre trace.json：cases[].status + notes 里机器写入的 failure_artifacts 子句
-//     （宿主实锤：failure_dir 会积累多个 step 的诊断文件且 dump 顶层无失败标记，
-//      真失败 step 只能从该子句解析——缺失/多义/冲突一律 unjoinable，禁猜）；
-//   · 选中派生计划 test-plan.hylyre.md：步骤定义（selector/动作，机器拥有）；
-//   · failure_dir UI dump：expected screen 语境核验（basename 防逃逸）；
-//   · ui-spec.yaml：spec 声明锚点（must_have_elements + 组件树 id/text）。
-//
-// 归因四分类（只有 product_actionable 可驱动回 coding，collector 侧再叠
-// physical-only 白名单）：
-//   product_actionable —— 三条件齐备：(i) selector 可归到 spec 锚点且推导出唯一
-//     expected screen；(ii) 失败 dump 命中该屏**其他** identity 锚点（确认真机在
-//     预期页面——防"导航错页时合法 selector 自然缺失"误回 coding）；(iii) 仅目标
-//     selector 缺失（精确形态——namespaced 变体不算在场，这正是宿主 hc_bank_row_cmb
-//     缺陷的形态）。
-//   environment —— 只消费既有结构化来源（trace.run_failure_kind ∈ 设备/连接类）；
-//     **绝不重新扫描散文日志**。
-//   test_contract —— selector 无 spec 依据（测试自造）。
-//   unknown —— 三条件不齐/歧义/其余（诚实降级，进 unverified 通路）。
+// device-test-evidence.ts — 真机缺陷结构化合成与机器归因
+// （d9e4b7c1 T2 + e3c7d95f predicate/state/anchor attribution）
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadUiSpecFile, uiSpecAbsPath, type UiSpecComponentNode, type UiSpecDoc } from '../../../harness/scripts/utils/ui-spec-shared';
+import {
+  loadUiSpecFile,
+  uiSpecAbsPath,
+  type UiSpecComponentNode,
+  type UiSpecDoc,
+} from '../../../harness/scripts/utils/ui-spec-shared';
 import type {
   DeviceDefectClassification,
+  DeviceEvidenceObservation,
   DeviceTestEvidenceCase,
   DeviceTestEvidenceDocDraft,
 } from '../../../harness/scripts/utils/device-test-evidence-shared';
 import { computeHapSha256Full } from './build-fingerprint';
+import { normalizeAnchorSegment, normalizeRuntimeAnchor, type NormalizedRuntimeAnchor } from './ui-kit-anchors';
 
-/** run 级结构化失败里属"设备/连接/会话"的环境类（RunFailureKind 子集） */
 const ENVIRONMENT_RUN_FAILURE_KINDS: ReadonlySet<string> = new Set([
   'device_locked',
   'device_disconnect',
 ]);
+
+const OBSERVABLE_STATE_KEYS = [
+  'enabled',
+  'visible',
+  'clickable',
+  'checked',
+  'selected',
+  'focused',
+] as const;
+// all:[...] 等组合选择器内的状态语义本期不提升为节点状态；无法稳定绑定单一节点时诚实落 unknown。
+type ObservableStateKey = typeof OBSERVABLE_STATE_KEYS[number];
 
 export interface DerivedPlanStep {
   action: string;
   selectorKind?: 'by_id' | 'by_text';
   selector?: string;
   scope?: string;
+  /** action body 原样保真；未知字段不得丢失。 */
+  payload: Record<string, unknown>;
 }
 
-/**
- * trace notes 的机器子句：`failure_artifacts: ui_dump=TC-001-step-9.json, screenshot=...`
- * **恰好一个**合法子句才返回结果（review P1：多子句静默取第一个会把旧 step 当作当前
- * 失败 step、误生成 product_actionable 牵引 coding 改错地方）——0 个或 >1 个一律 null，
- * 调用方按 unjoinable 处理（契约：缺失/多义/冲突禁猜）。
- */
 export function parseFailureArtifactsClause(
   notes: string | undefined,
 ): { uiDump: string; screenshot?: string } | null {
@@ -60,11 +54,7 @@ export function parseFailureArtifactsClause(
   return { uiDump: matches[0][1], screenshot: matches[0][2] };
 }
 
-/**
- * 解析派生计划（markdown 表格）为 caseId → steps[]。
- * 步骤列为分号分隔的 JSON 对象序列（hylyre 派生格式）；单步解析失败保留占位
- * （action='__unparsed__'），命中失败 index 时按 unjoinable 处理。
- */
+/** 解析派生计划为 caseId → steps[]；payload 保留 action body 全字段。 */
 export function parseDerivedPlanSteps(planMdRaw: string): Map<string, DerivedPlanStep[]> {
   const out = new Map<string, DerivedPlanStep[]>();
   const lines = planMdRaw.split('\n');
@@ -74,7 +64,6 @@ export function parseDerivedPlanSteps(planMdRaw: string): Map<string, DerivedPla
     const trimmed = line.trim();
     if (!trimmed.startsWith('|')) continue;
     const cells = trimmed.split('|').map(c => c.trim());
-    // cells[0]/[last] 为空（表格边界）
     if (stepsCol < 0) {
       const sIdx = cells.findIndex(c => c.includes('测试步骤'));
       const iIdx = cells.findIndex(c => c.includes('用例编号'));
@@ -86,28 +75,32 @@ export function parseDerivedPlanSteps(planMdRaw: string): Map<string, DerivedPla
     }
     const caseId = cells[idCol] ?? '';
     if (!/^TC-/i.test(caseId)) continue;
-    const stepsCell = cells[stepsCol] ?? '';
-    const steps: DerivedPlanStep[] = stepsCell
+    const steps: DerivedPlanStep[] = (cells[stepsCol] ?? '')
       .split(/;\s*/)
       .map(s => s.trim())
       .filter(Boolean)
       .map(sRaw => {
         try {
-          const obj = JSON.parse(sRaw) as Record<string, Record<string, unknown>>;
+          const obj = JSON.parse(sRaw) as Record<string, unknown>;
           const action = Object.keys(obj)[0];
-          const body = (obj[action] ?? {}) as Record<string, unknown>;
+          const rawBody = obj[action];
+          const payload =
+            rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody)
+              ? { ...(rawBody as Record<string, unknown>) }
+              : {};
           const selectorKind =
-            typeof body.by_id === 'string' ? ('by_id' as const)
-            : typeof body.by_text === 'string' ? ('by_text' as const)
+            typeof payload.by_id === 'string' ? ('by_id' as const)
+            : typeof payload.by_text === 'string' ? ('by_text' as const)
             : undefined;
           return {
             action,
             selectorKind,
-            selector: selectorKind ? String(body[selectorKind]) : undefined,
-            scope: typeof body.scope === 'string' ? body.scope : undefined,
+            selector: selectorKind ? String(payload[selectorKind]) : undefined,
+            scope: typeof payload.scope === 'string' ? payload.scope : undefined,
+            payload,
           };
         } catch {
-          return { action: '__unparsed__' };
+          return { action: '__unparsed__', payload: {} };
         }
       });
     out.set(caseId, steps);
@@ -116,53 +109,88 @@ export function parseDerivedPlanSteps(planMdRaw: string): Map<string, DerivedPla
 }
 
 interface SpecAnchorIndex {
-  /** 锚点（id 或 text）→ 声明它的 screen ids（去重） */
   idToScreens: Map<string, string[]>;
   textToScreens: Map<string, string[]>;
-  /** screen → identity 锚点（must_have_elements 中的元素 id，排除 ref_* 参考图条目） */
   screenIdentityAnchors: Map<string, string[]>;
+  screenIds: Set<string>;
 }
 
 function walkNodes(node: UiSpecComponentNode | undefined, fn: (n: UiSpecComponentNode) => void): void {
   if (!node) return;
   fn(node);
-  for (const c of node.children ?? []) walkNodes(c, fn);
+  for (const child of node.children ?? []) walkNodes(child, fn);
 }
 
 export function buildSpecAnchorIndex(doc: UiSpecDoc): SpecAnchorIndex {
   const idToScreens = new Map<string, string[]>();
   const textToScreens = new Map<string, string[]>();
   const screenIdentityAnchors = new Map<string, string[]>();
+  const screenIds = new Set<string>();
   const add = (map: Map<string, string[]>, key: string, screen: string): void => {
-    const arr = map.get(key) ?? [];
-    if (!arr.includes(screen)) arr.push(screen);
-    map.set(key, arr);
+    const values = map.get(key) ?? [];
+    if (!values.includes(screen)) values.push(screen);
+    map.set(key, values);
   };
-  for (const sc of doc.screens ?? []) {
-    const identity = (sc.must_have_elements ?? []).filter(e => !/^ref_/.test(e));
-    screenIdentityAnchors.set(sc.id, identity);
-    for (const e of identity) add(idToScreens, e, sc.id);
-    walkNodes(sc.root, n => {
-      if (typeof n.id === 'string' && n.id) add(idToScreens, n.id, sc.id);
-      if (typeof n.text === 'string' && n.text) add(textToScreens, n.text, sc.id);
+  for (const screen of doc.screens ?? []) {
+    screenIds.add(screen.id);
+    const identity = (screen.must_have_elements ?? []).filter(element => !/^ref_/.test(element));
+    screenIdentityAnchors.set(screen.id, identity);
+    for (const element of identity) add(idToScreens, element, screen.id);
+    walkNodes(screen.root, node => {
+      if (typeof node.id === 'string' && node.id) add(idToScreens, node.id, screen.id);
+      if (typeof node.text === 'string' && node.text) add(textToScreens, node.text, screen.id);
     });
   }
-  return { idToScreens, textToScreens, screenIdentityAnchors };
+  return { idToScreens, textToScreens, screenIdentityAnchors, screenIds };
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+interface DumpNode {
+  id?: string;
+  text?: string;
+  originalText?: string;
+  enabled?: boolean;
+  visible?: boolean;
+  clickable?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+  focused?: boolean;
 }
 
-/** dump 命中判定：id 须精确形态（namespaced 变体不算）；text 为存在性 */
-export function anchorPresentInDump(
-  dumpRaw: string,
-  anchor: { kind: 'by_id' | 'by_text'; value: string },
-): boolean {
-  if (anchor.kind === 'by_id') {
-    return new RegExp(`"id"\\s*:\\s*"${escapeRegExp(anchor.value)}"`).test(dumpRaw);
+function collectDumpNodes(dumpRaw: string): DumpNode[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(dumpRaw);
+  } catch {
+    return [];
   }
-  return dumpRaw.includes(anchor.value);
+  const nodes: DumpNode[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const child of value) visit(child);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.id === 'string' ||
+      typeof record.text === 'string' ||
+      typeof record.originalText === 'string'
+    ) {
+      const node: DumpNode = {};
+      for (const key of ['id', 'text', 'originalText'] as const) {
+        if (typeof record[key] === 'string') node[key] = record[key] as string;
+      }
+      for (const key of OBSERVABLE_STATE_KEYS) {
+        const value = record[key];
+        if (typeof value === 'boolean') node[key] = value;
+        else if (value === 'true' || value === 'false') node[key] = value === 'true';
+      }
+      nodes.push(node);
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(parsed);
+  return nodes;
 }
 
 interface TraceCaseLike {
@@ -180,9 +208,7 @@ interface TraceLike {
 export interface ComposeDeviceTestEvidenceOptions {
   projectRoot: string;
   feature: string;
-  /** 本轮 pipeline holder 的 trace 路径（coordinator 直传；本模块不做任何 trace 寻找） */
   tracePath: string;
-  /** 装机前计算的完整摘要；本函数写前复算当前 HAP，二者不一致即拒绝合成 */
   hapPath: string;
   expectedHapSha256Full: string;
   goalRunId: string;
@@ -196,10 +222,165 @@ export type ComposeDeviceTestEvidenceResult =
   | { ok: true; doc: DeviceTestEvidenceDocDraft }
   | { ok: false; reason: string };
 
-/**
- * coordinator（check-testing）调用的合成入口。写入门槛中的"复算 hash 一致"在此执行
- * （TOCTOU：装机后 HAP 被并发重建 → 拒绝合成，collector 走 unverified）。
- */
+interface PreparedFailure {
+  traceCase: TraceCaseLike;
+  caseId: string;
+  status: string;
+  notesExcerpt?: string;
+  clause?: { uiDump: string; screenshot?: string };
+  stepIdx?: number;
+  step?: DerivedPlanStep;
+  dumpAbs?: string;
+  dumpRaw?: string;
+  dumpNodes: DumpNode[];
+  joinReason?: string;
+}
+
+interface PoolFrame {
+  caseId: string;
+  stepIdx: number;
+  dumpAbs: string;
+  dumpRaw: string;
+  nodes: DumpNode[];
+}
+
+function relativePortable(root: string, target: string): string {
+  return path.relative(root, target).split(path.sep).join('/');
+}
+
+function expectedStateOf(payload: Record<string, unknown>): Partial<Record<ObservableStateKey, boolean>> {
+  const expected: Partial<Record<ObservableStateKey, boolean>> = {};
+  for (const key of OBSERVABLE_STATE_KEYS) {
+    if (typeof payload[key] === 'boolean') expected[key] = payload[key] as boolean;
+  }
+  return expected;
+}
+
+function nodeSatisfies(
+  node: DumpNode,
+  expected: Partial<Record<ObservableStateKey, boolean>>,
+): boolean {
+  return Object.entries(expected).every(([key, value]) => node[key as ObservableStateKey] === value);
+}
+
+function nodeSummary(node: DumpNode): DeviceEvidenceObservation['node'] {
+  const summary: DeviceEvidenceObservation['node'] = {};
+  if (node.id) summary.id = node.id;
+  if (node.text) summary.text = node.text;
+  for (const key of OBSERVABLE_STATE_KEYS) {
+    if (typeof node[key] === 'boolean') summary[key] = node[key];
+  }
+  return summary;
+}
+
+function specNodePresentInFrame(frame: { dumpNodes: DumpNode[] }, screen: string, specNode: string): boolean {
+  return frame.dumpNodes.some(node => {
+    if (node.id === specNode) return true;
+    if (!node.id) return false;
+    const normalized = normalizeRuntimeAnchor(node.id);
+    return normalized.validity === 'valid' &&
+      normalized.screen === screen &&
+      normalized.specNode === specNode;
+  });
+}
+
+interface SelectorBinding {
+  screens: string[];
+  normalized?: NormalizedRuntimeAnchor;
+  drift?: string;
+}
+
+function resolveSelectorBinding(
+  step: DerivedPlanStep,
+  anchors: SpecAnchorIndex,
+  feature: string,
+): SelectorBinding {
+  if (!step.selectorKind || !step.selector) return { screens: [] };
+  if (step.selectorKind === 'by_text') {
+    return { screens: anchors.textToScreens.get(step.selector) ?? [] };
+  }
+  if (!step.selector.startsWith('maison:')) {
+    return { screens: anchors.idToScreens.get(step.selector) ?? [] };
+  }
+  const normalized = normalizeRuntimeAnchor(step.selector);
+  if (normalized.validity !== 'valid' || !normalized.specNode || !normalized.screen) {
+    return { screens: [], normalized };
+  }
+  const canonicalFeature = normalizeAnchorSegment(feature);
+  if (normalized.feature !== canonicalFeature) {
+    return { screens: [], normalized, drift: `anchor feature=${normalized.feature} 与当前 feature=${canonicalFeature} 不一致` };
+  }
+  const declaredScreens = anchors.idToScreens.get(normalized.specNode) ?? [];
+  if (!anchors.screenIds.has(normalized.screen) || !declaredScreens.includes(normalized.screen)) {
+    return {
+      screens: [],
+      normalized,
+      drift:
+        `runtime anchor semantic=${normalized.specNode} 无法反解为 screen=${normalized.screen} 的 ui-spec node`,
+    };
+  }
+  return { screens: [normalized.screen], normalized };
+}
+
+function prepareFailures(
+  trace: TraceLike,
+  failureDir: string,
+  planSteps: Map<string, DerivedPlanStep[]> | null,
+): PreparedFailure[] {
+  const prepared: PreparedFailure[] = [];
+  for (const traceCase of trace.cases ?? []) {
+    const caseId = typeof traceCase.id === 'string' ? traceCase.id : '';
+    if (!caseId || (traceCase.status !== '失败' && traceCase.status !== '阻塞')) continue;
+    const item: PreparedFailure = {
+      traceCase,
+      caseId,
+      status: String(traceCase.status),
+      notesExcerpt: typeof traceCase.notes === 'string' ? traceCase.notes.slice(0, 400) : undefined,
+      dumpNodes: [],
+    };
+    const clause = parseFailureArtifactsClause(traceCase.notes);
+    if (!clause) {
+      item.joinReason = 'trace notes 无唯一 failure_artifacts 机器子句';
+      prepared.push(item);
+      continue;
+    }
+    item.clause = clause;
+    const nameMatch = /^(.+)-step-(\d+)\.json$/.exec(clause.uiDump);
+    if (!nameMatch || nameMatch[1] !== caseId) {
+      item.joinReason = `failure_artifacts 文件名与 case 不一致：${clause.uiDump}`;
+      prepared.push(item);
+      continue;
+    }
+    const dumpAbs = path.resolve(failureDir, clause.uiDump);
+    if (!dumpAbs.startsWith(failureDir + path.sep)) {
+      item.joinReason = 'failure_artifacts 路径逃逸 failure_dir';
+      prepared.push(item);
+      continue;
+    }
+    if (!fs.existsSync(dumpAbs)) {
+      item.joinReason = `UI dump 不存在：${clause.uiDump}`;
+      prepared.push(item);
+      continue;
+    }
+    item.stepIdx = Number(nameMatch[2]);
+    item.dumpAbs = dumpAbs;
+    try {
+      item.dumpRaw = fs.readFileSync(dumpAbs, 'utf-8');
+      item.dumpNodes = collectDumpNodes(item.dumpRaw);
+    } catch {
+      item.joinReason = 'UI dump 不可读';
+      prepared.push(item);
+      continue;
+    }
+    item.step = planSteps?.get(caseId)?.[item.stepIdx];
+    if (!item.step || item.step.action === '__unparsed__') {
+      item.joinReason = `派生计划中查不到 step ${item.stepIdx} 的定义`;
+    }
+    prepared.push(item);
+  }
+  return prepared;
+}
+
 export function composeDeviceTestEvidence(
   opts: ComposeDeviceTestEvidenceOptions,
 ): ComposeDeviceTestEvidenceResult {
@@ -207,22 +388,20 @@ export function composeDeviceTestEvidence(
   if (!nowSha || nowSha !== opts.expectedHapSha256Full) {
     return {
       ok: false,
-      reason: `HAP 在装机后被改写或不可读（装机前 ${opts.expectedHapSha256Full.slice(0, 12)}… vs 现 ${nowSha ? `${nowSha.slice(0, 12)}…` : '(不可读)'}）`,
+      reason:
+        `HAP 在装机后被改写或不可读（装机前 ${opts.expectedHapSha256Full.slice(0, 12)}… vs 现 ` +
+        `${nowSha ? `${nowSha.slice(0, 12)}…` : '(不可读)'})`,
     };
   }
   let trace: TraceLike;
   try {
     trace = JSON.parse(fs.readFileSync(opts.tracePath, 'utf-8')) as TraceLike;
-  } catch (e) {
-    return { ok: false, reason: `trace 不可读：${(e as Error).message}` };
+  } catch (error) {
+    return { ok: false, reason: `trace 不可读：${(error as Error).message}` };
   }
   const runFailureKind = typeof trace.run_failure_kind === 'string' ? trace.run_failure_kind : null;
-
-  // spec 锚点索引（ui-spec 缺失/不可解析 → 全部归 unknown，诚实降级不猜）
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(opts.projectRoot, opts.feature));
   const anchors = uiDoc ? buildSpecAnchorIndex(uiDoc) : null;
-
-  // 派生计划步骤定义（与 trace 同目录）
   const planPath = path.join(path.dirname(opts.tracePath), 'test-plan.hylyre.md');
   let planSteps: Map<string, DerivedPlanStep[]> | null = null;
   try {
@@ -232,125 +411,215 @@ export function composeDeviceTestEvidence(
   }
 
   const failureDir = path.resolve(path.dirname(opts.tracePath), 'failures');
+  const prepared = prepareFailures(trace, failureDir, planSteps);
+  // 当前 trace 严格引用的可读 dump 才进证据池；按绝对路径去重，禁扫 failure_dir 残留。
+  const poolByPath = new Map<string, PoolFrame>();
+  for (const item of prepared) {
+    if (!item.dumpAbs || item.dumpRaw === undefined || item.stepIdx === undefined) continue;
+    if (!poolByPath.has(item.dumpAbs)) {
+      poolByPath.set(item.dumpAbs, {
+        caseId: item.caseId,
+        stepIdx: item.stepIdx,
+        dumpAbs: item.dumpAbs,
+        dumpRaw: item.dumpRaw,
+        nodes: item.dumpNodes,
+      });
+    }
+  }
+  const evidencePool = [...poolByPath.values()];
   const cases: DeviceTestEvidenceCase[] = [];
 
-  for (const c of trace.cases ?? []) {
-    const caseId = typeof c.id === 'string' ? c.id : '';
-    if (!caseId) continue;
-    if (c.status !== '失败' && c.status !== '阻塞') continue;
-    const notesExcerpt = typeof c.notes === 'string' ? c.notes.slice(0, 400) : undefined;
+  for (const item of prepared) {
     const push = (
       classification: DeviceDefectClassification,
-      extra: Partial<DeviceTestEvidenceCase> & { reason?: string } = {},
+      extra: Partial<DeviceTestEvidenceCase> = {},
     ): void => {
       cases.push({
-        case_id: caseId,
-        status: String(c.status),
+        case_id: item.caseId,
+        status: item.status,
         classification,
-        error_excerpt: notesExcerpt,
+        error_excerpt: item.notesExcerpt,
         ...extra,
       });
     };
-
-    // run 级环境失败：整轮 case 归 environment（结构化来源，禁扫散文）
     if (runFailureKind && ENVIRONMENT_RUN_FAILURE_KINDS.has(runFailureKind)) {
-      push('environment', { reason: `run 级结构化失败：${runFailureKind}` });
+      push('environment', {
+        reason_code: 'run_environment_failure',
+        reason: `run 级结构化失败：${runFailureKind}`,
+      });
       continue;
     }
-
-    // failure_artifacts 严格 join（缺失/多义/冲突一律 unjoinable，禁猜）
-    const clause = parseFailureArtifactsClause(c.notes);
-    if (!clause) {
-      push('unjoinable', { reason: 'trace notes 无 failure_artifacts 机器子句' });
+    if (item.joinReason || !item.dumpAbs || item.stepIdx === undefined || !item.step) {
+      push('unjoinable', {
+        reason_code: 'failure_artifacts_unjoinable',
+        reason: item.joinReason ?? 'failure_artifacts 无法 join',
+      });
       continue;
     }
-    const nameMatch = /^(.+)-step-(\d+)\.json$/.exec(clause.uiDump);
-    if (!nameMatch || nameMatch[1] !== caseId) {
-      push('unjoinable', { reason: `failure_artifacts 文件名与 case 不一致：${clause.uiDump}` });
-      continue;
-    }
-    const dumpAbs = path.resolve(failureDir, clause.uiDump);
-    if (!dumpAbs.startsWith(failureDir + path.sep)) {
-      push('unjoinable', { reason: 'failure_artifacts 路径逃逸 failure_dir' });
-      continue;
-    }
-    if (!fs.existsSync(dumpAbs)) {
-      push('unjoinable', { reason: `UI dump 不存在：${clause.uiDump}` });
-      continue;
-    }
-    const stepIdx = Number(nameMatch[2]);
-    const steps = planSteps?.get(caseId);
-    const step = steps?.[stepIdx];
-    if (!step || step.action === '__unparsed__') {
-      push('unjoinable', { reason: `派生计划中查不到 step ${stepIdx} 的定义` });
-      continue;
-    }
+    const step = item.step;
     if (!step.selectorKind || !step.selector) {
-      push('unknown', { reason: `失败 step（${step.action}）无选择器，无法归因` });
+      push('unknown', {
+        reason_code: 'failing_step_without_selector',
+        reason: `失败 step（${step.action}）无选择器，无法归因`,
+      });
       continue;
     }
     const failingStep = {
-      index: stepIdx,
+      index: item.stepIdx,
       action: step.action,
       selector_kind: step.selectorKind,
       selector: step.selector,
+      payload: { ...step.payload },
       ...(step.scope ? { scope: step.scope } : {}),
     };
-    const evidence = {
-      ui_dump: path.relative(opts.projectRoot, dumpAbs).split(path.sep).join('/'),
-      ...(clause.screenshot
-        ? { screenshot: path.relative(opts.projectRoot, path.resolve(failureDir, clause.screenshot)).split(path.sep).join('/') }
+    const evidenceBase = {
+      ui_dump: relativePortable(opts.projectRoot, item.dumpAbs),
+      ...(item.clause?.screenshot
+        ? { screenshot: relativePortable(opts.projectRoot, path.resolve(failureDir, item.clause.screenshot)) }
         : {}),
     };
-
     if (!anchors) {
-      push('unknown', { reason: 'ui-spec.yaml 缺失或不可解析，selector 无从归 spec', failing_step: failingStep, evidence });
+      push('unknown', {
+        reason_code: 'ui_spec_unavailable',
+        reason: 'ui-spec.yaml 缺失或不可解析，selector 无从归 spec',
+        failing_step: failingStep,
+        evidence: evidenceBase,
+      });
       continue;
     }
-    const screens =
-      step.selectorKind === 'by_id'
-        ? anchors.idToScreens.get(step.selector)
-        : anchors.textToScreens.get(step.selector);
-    if (!screens || screens.length === 0) {
-      push('test_contract', { reason: `selector 无 spec 依据（${step.selectorKind}=${step.selector} 不在 ui-spec）`, failing_step: failingStep, evidence });
+
+    const binding = resolveSelectorBinding(step, anchors, opts.feature);
+    const exactHits: Array<{ frame: PoolFrame; node: DumpNode }> = [];
+    for (const frame of evidencePool) {
+      for (const node of frame.nodes) {
+        const exact =
+          step.selectorKind === 'by_id'
+            ? node.id === step.selector
+            : node.text === step.selector || node.originalText === step.selector;
+        if (!exact) continue;
+        if (!step.selector.startsWith('maison:')) {
+          if (binding.screens.length !== 1) continue;
+          const screen = binding.screens[0];
+          const identities = anchors.screenIdentityAnchors.get(screen) ?? [];
+          if (!identities.some(identity => specNodePresentInFrame(
+            { dumpNodes: frame.nodes },
+            screen,
+            identity,
+          ))) continue;
+        }
+        exactHits.push({ frame, node });
+      }
+    }
+
+    const observations: DeviceEvidenceObservation[] = exactHits.map(hit => ({
+      case_id: hit.frame.caseId,
+      step_index: hit.frame.stepIdx,
+      ui_dump: relativePortable(opts.projectRoot, hit.frame.dumpAbs),
+      node: nodeSummary(hit.node),
+    }));
+    const expectedState = expectedStateOf(step.payload);
+    const expectedStateKeys = Object.keys(expectedState);
+    const driftDiagnostic = binding.drift
+      ? [{ code: 'scaffold_contract_drift', message: binding.drift }]
+      : undefined;
+
+    if (exactHits.length > 0) {
+      const comparableHits = exactHits.filter(hit =>
+        expectedStateKeys.every(key => typeof hit.node[key as ObservableStateKey] === 'boolean'),
+      );
+      if (
+        expectedStateKeys.length > 0 &&
+        comparableHits.length > 0 &&
+        comparableHits.every(hit => !nodeSatisfies(hit.node, expectedState))
+      ) {
+        push('product_state', {
+          reason_code: 'observable_state_mismatch',
+          reason:
+            `selector 在同 attempt 证据池中命中，但可观测状态不满足：` +
+            `${JSON.stringify(expectedState)}`,
+          diagnostics: driftDiagnostic,
+          failing_step: failingStep,
+          expected_screen: binding.screens[0] ?? binding.normalized?.screen,
+          evidence: { ...evidenceBase, observations, expected_state: expectedState },
+        });
+      } else {
+        push('unknown', {
+          reason_code:
+            expectedStateKeys.length === 0 ? 'selector_present_without_state_predicate' : 'state_observations_conflict',
+          reason:
+            expectedStateKeys.length === 0
+              ? '目标在场，但失败步骤无 dump 可观测状态谓词（scope/时序/级联待查）'
+              : comparableHits.length === 0
+                ? '目标在场，但 dump 未提供完整可观测状态；不能归 product_state'
+                : '跨帧状态观测包含满足谓词的帧，不能稳定归 product_state',
+          diagnostics: driftDiagnostic,
+          failing_step: failingStep,
+          expected_screen: binding.screens[0] ?? binding.normalized?.screen,
+          evidence: { ...evidenceBase, observations, expected_state: expectedState },
+        });
+      }
       continue;
     }
-    if (screens.length > 1) {
-      push('unknown', { reason: `selector 归属多屏（${screens.join('、')}），expected screen 不唯一`, failing_step: failingStep, evidence });
+
+    if (binding.drift && binding.normalized?.validity === 'valid') {
+      push('scaffold_contract_drift', {
+        reason_code: 'anchor_spec_node_drift',
+        reason: binding.drift,
+        failing_step: failingStep,
+        expected_screen: binding.normalized.screen,
+        evidence: evidenceBase,
+      });
       continue;
     }
-    const screenId = screens[0];
-    let dumpRaw: string;
-    try {
-      dumpRaw = fs.readFileSync(dumpAbs, 'utf-8');
-    } catch {
-      push('unjoinable', { reason: 'UI dump 不可读', failing_step: failingStep, evidence });
+    if (binding.screens.length === 0) {
+      push('test_contract', {
+        reason_code: 'selector_without_spec_basis',
+        reason: `selector 无 spec 依据（${step.selectorKind}=${step.selector} 不在 ui-spec）`,
+        failing_step: failingStep,
+        evidence: evidenceBase,
+      });
       continue;
     }
+    if (binding.screens.length > 1) {
+      push('unknown', {
+        reason_code: 'selector_screen_ambiguous',
+        reason: `selector 归属多屏（${binding.screens.join('、')}），expected screen 不唯一`,
+        failing_step: failingStep,
+        evidence: evidenceBase,
+      });
+      continue;
+    }
+    const screenId = binding.screens[0];
     const identity = anchors.screenIdentityAnchors.get(screenId) ?? [];
-    const others = identity.filter(a => !(step.selectorKind === 'by_id' && a === step.selector));
-    const otherHits = others.filter(a => anchorPresentInDump(dumpRaw, { kind: 'by_id', value: a }));
-    if (others.length === 0 || otherHits.length === 0) {
+    const otherIdentityHits = identity.filter(identityNode =>
+      !(step.selectorKind === 'by_id' && identityNode === binding.normalized?.specNode) &&
+      specNodePresentInFrame(item, screenId, identityNode),
+    );
+    if (identity.length === 0 || otherIdentityHits.length === 0) {
       push('unknown', {
-        reason: `dump 未命中 expected screen（${screenId}）的其他 identity 锚点——无法确认真机在预期页面（可能导航错页）`,
-        failing_step: failingStep, expected_screen: screenId, evidence,
+        reason_code: 'expected_screen_not_confirmed',
+        reason:
+          `dump 未命中 expected screen（${screenId}）的其他 identity 锚点——` +
+          '无法确认真机在预期页面（可能导航错页/级联）',
+        failing_step: failingStep,
+        expected_screen: screenId,
+        evidence: evidenceBase,
       });
       continue;
     }
-    if (anchorPresentInDump(dumpRaw, { kind: step.selectorKind, value: step.selector })) {
-      push('unknown', {
-        reason: `目标锚点在 dump 中以精确形态在场——失败原因非缺失（可能 scope/时序问题）`,
-        failing_step: failingStep, expected_screen: screenId, evidence,
-      });
-      continue;
-    }
-    push('product_actionable', { failing_step: failingStep, expected_screen: screenId, evidence });
+    push('product_actionable', {
+      reason_code: 'spec_element_missing',
+      reason: `ui-spec 要求 ${screenId} 含 ${binding.normalized?.specNode ?? step.selector}，同 attempt 证据池零精确命中`,
+      failing_step: failingStep,
+      expected_screen: screenId,
+      evidence: evidenceBase,
+    });
   }
 
   return {
     ok: true,
     doc: {
-      schema_version: '1.0',
+      schema_version: '1.1',
       goal_run_id: opts.goalRunId,
       attempt_id: opts.attemptId,
       device_target: opts.deviceTarget,

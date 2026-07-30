@@ -839,6 +839,17 @@ test('R-6a2 缺 evaluated_build_fingerprint / build 身份不可算 → 不回�
     assert(!hasEvent(probe.events, 'phase_backtrack_requested'), '缺 build 身份不得回退');
     assert(hasEvent(probe.events, 'unverifiable_must_fix'), '须落 unverifiable_must_fix 事件');
     assert(runEndStatus(probe.events) === 'HALTED', `不得完成，实得 ${runEndStatus(probe.events)}`);
+    const unverifiedEvents = probe.events.filter(e => e.type === 'unverifiable_must_fix') as
+      Array<Record<string, unknown>>;
+    assert(unverifiedEvents.length >= 2 && unverifiedEvents.every(e =>
+      typeof e.round_fingerprint === 'string' && e.round_fingerprint.length === 32),
+    '每轮 unverifiable_must_fix 事件必须装配稳定 round_fingerprint');
+    const repeatedHalt = probe.events.find(e =>
+      e.type === 'phase_halt' && (e as Record<string, unknown>).halt_trigger === 'fingerprint_repeat',
+    ) as Record<string, unknown> | undefined;
+    assert(Boolean(repeatedHalt) && repeatedHalt!.round_fingerprint ===
+      unverifiedEvents[unverifiedEvents.length - 1].round_fingerprint,
+    '相邻同集合 halt 事件必须带 halt_trigger=fingerprint_repeat 与同一 round_fingerprint');
   }
   // 当前 build fingerprint 不可算（删 install meta——install ok 但 meta 写失败的生产路径）
   {
@@ -1320,7 +1331,7 @@ test('T2-2 全链回修：正式 gate 写 evidence（product_actionable×physica
         run_ended_at: new Date().toISOString(),
       }), 'utf-8');
       const doc = {
-        schema_version: '1.0',
+        schema_version: '1.1',
         goal_run_id: runId,
         attempt_id: attemptId,
         device_target: { serial: 'fake-device', target_kind: 'physical', session_id: null },
@@ -1386,7 +1397,7 @@ test('f4 t1 E2E：同进程 retry 与 --resume 均从 phase_verdict 恢复 test_
         run_started_at: new Date().toISOString(), run_ended_at: new Date().toISOString(),
       }), 'utf-8');
       fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify({
-        schema_version: '1.0', goal_run_id: runId, attempt_id: attemptId,
+        schema_version: '1.1', goal_run_id: runId, attempt_id: attemptId,
         device_target: { serial: 'fake-device', target_kind: 'physical', session_id: null },
         hap_sha256_full: 'f'.repeat(64), install_executed: true, install_ok: true,
         trace_path: path.resolve(tracePath), run_failure_kind: null,
