@@ -1,0 +1,103 @@
+{
+ "schema_version": "1.0",
+ "goal_run_id": "20260729T123155Z-0c5411",
+ "attempt_id": "i5",
+ "device_target": {
+  "serial": "3UJ0225321000395",
+  "target_kind": "physical",
+  "session_id": "testing-i5"
+ },
+ "hap_sha256_full": "4f359c1bdab8677402efd88db0d8cfcdaac461756ab16c7d7d09ab1c3b8467ed",
+ "install_executed": true,
+ "install_ok": true,
+ "trace_path": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/trace.json",
+ "run_failure_kind": null,
+ "cases": [
+  {
+   "case_id": "TC-006",
+   "status": "失败",
+   "classification": "test_contract",
+   "error_excerpt": "wait for: target not in desired state failure_artifacts: ui_dump=TC-006-step-5.json, screenshot=TC-006-step-5.png",
+   "reason": "selector 无 spec 依据（by_id=maison:bc-opencard:sms_verify:sheet_scaffold-next 不在 ui-spec）",
+   "failing_step": {
+    "index": 5,
+    "action": "wait_for",
+    "selector_kind": "by_id",
+    "selector": "maison:bc-opencard:sms_verify:sheet_scaffold-next"
+   },
+   "evidence": {
+    "ui_dump": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-006-step-5.json",
+    "screenshot": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-006-step-5.png"
+   }
+  },
+  {
+   "case_id": "TC-007",
+   "status": "失败",
+   "classification": "test_contract",
+   "error_excerpt": "wait for: target not in desired state failure_artifacts: ui_dump=TC-007-step-17.json, screenshot=TC-007-step-17.png",
+   "reason": "selector 无 spec 依据（by_id=maison:bc-opencard:sms_verify:sheet_scaffold-next 不在 ui-spec）",
+   "failing_step": {
+    "index": 17,
+    "action": "wait_for",
+    "selector_kind": "by_id",
+    "selector": "maison:bc-opencard:sms_verify:sheet_scaffold-next"
+   },
+   "evidence": {
+    "ui_dump": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-007-step-17.json",
+    "screenshot": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-007-step-17.png"
+   }
+  },
+  {
+   "case_id": "TC-008",
+   "status": "失败",
+   "classification": "test_contract",
+   "error_excerpt": "[Script-0203002] Can't find component with [BY.id('maison:bc-opencard:add_success-done')] failure_artifacts: ui_dump=TC-008-step-1.json, screenshot=TC-008-step-1.png",
+   "reason": "selector 无 spec 依据（by_id=maison:bc-opencard:add_success-done 不在 ui-spec）",
+   "failing_step": {
+    "index": 1,
+    "action": "touch",
+    "selector_kind": "by_id",
+    "selector": "maison:bc-opencard:add_success-done"
+   },
+   "evidence": {
+    "ui_dump": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-008-step-1.json",
+    "screenshot": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-008-step-1.png"
+   }
+  },
+  {
+   "case_id": "TC-010",
+   "status": "失败",
+   "classification": "test_contract",
+   "error_excerpt": "no matching UI target for predicate {'by_text': '查看全部', 'within': {'by_id': 'maison:bc-opencard:card_pack_with_cards:list_card_container'}} failure_artifacts: ui_dump=TC-010-step-2.json, screenshot=TC-010-step-2.png",
+   "reason": "selector 无 spec 依据（by_text=查看全部 不在 ui-spec）",
+   "failing_step": {
+    "index": 2,
+    "action": "touch",
+    "selector_kind": "by_text",
+    "selector": "查看全部"
+   },
+   "evidence": {
+    "ui_dump": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-010-step-2.json",
+    "screenshot": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-010-step-2.png"
+   }
+  },
+  {
+   "case_id": "TC-011",
+   "status": "失败",
+   "classification": "test_contract",
+   "error_excerpt": "no matching UI target for predicate {'by_text': '查看全部', 'within': {'by_id': 'maison:bc-opencard:card_pack_with_cards:list_card_container'}} failure_artifacts: ui_dump=TC-011-step-0.json, screenshot=TC-011-step-0.png",
+   "reason": "selector 无 spec 依据（by_text=查看全部 不在 ui-spec）",
+   "failing_step": {
+    "index": 0,
+    "action": "touch",
+    "selector_kind": "by_text",
+    "selector": "查看全部"
+   },
+   "evidence": {
+    "ui_dump": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-011-step-0.json",
+    "screenshot": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/failures/TC-011-step-0.png"
+   }
+  }
+ ],
+ "written_at": "2026-07-29T15:06:43.242Z"
+}

@@ -1,0 +1,836 @@
+{
+ "schema_version": "hylyre-hypium-ui-dump-v1",
+ "source": "hypium.UiTree",
+ "tree": {
+  "attributes": {
+   "bounds": "[0,0][1320,2120]"
+  },
+  "children": [
+   {
+    "attributes": {
+     "bounds": "[0,117][1320,2120]",
+     "checkable": "false",
+     "checked": "false",
+     "clickable": "false",
+     "enabled": "true",
+     "focused": "true",
+     "longClickable": "false",
+     "scrollable": "false",
+     "selected": "false",
+     "type": "root",
+     "visible": "true"
+    },
+    "children": [
+     {
+      "attributes": {
+       "bounds": "[0,117][1320,2120]",
+       "checkable": "false",
+       "checked": "false",
+       "clickable": "false",
+       "enabled": "true",
+       "focused": "false",
+       "longClickable": "false",
+       "scrollable": "false",
+       "selected": "false",
+       "type": "Navigation",
+       "visible": "true"
+      },
+      "children": [
+       {
+        "attributes": {
+         "bounds": "[0,117][1320,2120]",
+         "checkable": "false",
+         "checked": "false",
+         "clickable": "false",
+         "enabled": "true",
+         "focused": "false",
+         "longClickable": "false",
+         "scrollable": "false",
+         "selected": "false",
+         "type": "NavigationContent",
+         "visible": "true"
+        },
+        "children": [
+         {
+          "attributes": {
+           "bounds": "[0,117][1320,2120]",
+           "checkable": "false",
+           "checked": "false",
+           "clickable": "false",
+           "enabled": "true",
+           "focused": "false",
+           "longClickable": "false",
+           "scrollable": "false",
+           "selected": "false",
+           "type": "NavDestination",
+           "visible": "true"
+          },
+          "children": [
+           {
+            "attributes": {
+             "bounds": "[0,117][1320,285]",
+             "checkable": "false",
+             "checked": "false",
+             "clickable": "false",
+             "enabled": "true",
+             "focused": "false",
+             "longClickable": "false",
+             "originalText": "招商银行",
+             "scrollable": "false",
+             "selected": "false",
+             "text": "招商银行",
+             "type": "TitleBar",
+             "visible": "true"
+            },
+            "children": [
+             {
+              "attributes": {
+               "bounds": "[48,141][168,261]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "true",
+               "enabled": "true",
+               "focused": "false",
+               "id": "__NavdestinationField__BackButton__Back__",
+               "key": "__NavdestinationField__BackButton__Back__",
+               "longClickable": "false",
+               "scrollable": "false",
+               "selected": "false",
+               "type": "BackButton",
+               "visible": "true"
+              },
+              "children": [
+               {
+                "attributes": {
+                 "bounds": "[72,165][144,237]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "SymbolGlyph",
+                 "visible": "true"
+                }
+               }
+              ]
+             },
+             {
+              "attributes": {
+               "bounds": "[192,166][432,236]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "false",
+               "enabled": "true",
+               "focused": "false",
+               "id": "__NavdestinationField__Text__MainTitle__",
+               "key": "__NavdestinationField__Text__MainTitle__",
+               "longClickable": "false",
+               "originalText": "招商银行",
+               "scrollable": "false",
+               "selected": "false",
+               "text": "招商银行",
+               "type": "Text",
+               "visible": "true"
+              }
+             }
+            ]
+           },
+           {
+            "attributes": {
+             "bounds": "[0,285][1320,2120]",
+             "checkable": "false",
+             "checked": "false",
+             "clickable": "false",
+             "enabled": "true",
+             "focused": "false",
+             "longClickable": "false",
+             "scrollable": "false",
+             "selected": "false",
+             "type": "NavDestinationContent",
+             "visible": "true"
+            },
+            "children": [
+             {
+              "attributes": {
+               "bounds": "[0,285][1320,2036]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "false",
+               "enabled": "true",
+               "focused": "false",
+               "longClickable": "false",
+               "scrollable": "false",
+               "selected": "false",
+               "type": "Column",
+               "visible": "true"
+              },
+              "children": [
+               {
+                "attributes": {
+                 "bounds": "[0,285][1320,358]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "originalText": "请选择要添加的银行卡",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "text": "请选择要添加的银行卡",
+                 "type": "Text",
+                 "visible": "true"
+                }
+               },
+               {
+                "attributes": {
+                 "bounds": "[0,406][1320,1636]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "__Common__",
+                 "visible": "true"
+                },
+                "children": [
+                 {
+                  "attributes": {
+                   "bounds": "[48,406][1272,1636]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "id": "maison:bc-opencard:card_select:list_card_container",
+                   "key": "maison:bc-opencard:card_select:list_card_container",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "Column",
+                   "visible": "true"
+                  },
+                  "children": [
+                   {
+                    "attributes": {
+                     "bounds": "[48,418][1272,1624]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "false",
+                     "enabled": "true",
+                     "focused": "false",
+                     "longClickable": "false",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "type": "List",
+                     "visible": "true"
+                    },
+                    "children": [
+                     {
+                      "attributes": {
+                       "bounds": "[48,418][1272,602]",
+                       "checkable": "false",
+                       "checked": "false",
+                       "clickable": "false",
+                       "enabled": "true",
+                       "focused": "false",
+                       "longClickable": "false",
+                       "scrollable": "false",
+                       "selected": "false",
+                       "type": "ListItem",
+                       "visible": "true"
+                      },
+                      "children": [
+                       {
+                        "attributes": {
+                         "bounds": "[48,418][1272,602]",
+                         "checkable": "false",
+                         "checked": "false",
+                         "clickable": "true",
+                         "enabled": "true",
+                         "focused": "false",
+                         "longClickable": "false",
+                         "scrollable": "false",
+                         "selected": "false",
+                         "type": "Row",
+                         "visible": "true"
+                        },
+                        "children": [
+                         {
+                          "attributes": {
+                           "bounds": "[110,480][170,540]",
+                           "checkable": "true",
+                           "checked": "true",
+                           "clickable": "true",
+                           "enabled": "true",
+                           "focused": "false",
+                           "longClickable": "false",
+                           "originalText": "b01_debit_1",
+                           "scrollable": "false",
+                           "selected": "false",
+                           "text": "b01_debit_1",
+                           "type": "Radio",
+                           "visible": "true"
+                          },
+                          "children": [
+                           {
+                            "attributes": {
+                             "bounds": "[119,489][161,531]",
+                             "checkable": "false",
+                             "checked": "false",
+                             "clickable": "false",
+                             "enabled": "true",
+                             "focused": "false",
+                             "longClickable": "false",
+                             "scrollable": "false",
+                             "selected": "false",
+                             "type": "Image",
+                             "visible": "true"
+                            }
+                           }
+                          ]
+                         },
+                         {
+                          "attributes": {
+                           "bounds": "[208,482][536,538]",
+                           "checkable": "false",
+                           "checked": "false",
+                           "clickable": "false",
+                           "enabled": "true",
+                           "focused": "false",
+                           "longClickable": "false",
+                           "originalText": "6222 **** 0101",
+                           "scrollable": "false",
+                           "selected": "false",
+                           "text": "6222 **** 0101",
+                           "type": "Text",
+                           "visible": "true"
+                          }
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "attributes": {
+                 "bounds": "[0,1684][1320,2036]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "Column",
+                 "visible": "true"
+                },
+                "children": [
+                 {
+                  "attributes": {
+                   "bounds": "[406,1732][915,1820]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "Row",
+                   "visible": "true"
+                  },
+                  "children": [
+                   {
+                    "attributes": {
+                     "bounds": "[420,1746][480,1806]",
+                     "checkable": "true",
+                     "checked": "true",
+                     "clickable": "true",
+                     "enabled": "true",
+                     "focused": "false",
+                     "longClickable": "false",
+                     "originalText": "agreement",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "agreement",
+                     "type": "Checkbox",
+                     "visible": "true"
+                    }
+                   },
+                   {
+                    "attributes": {
+                     "bounds": "[518,1755][915,1797]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "false",
+                     "enabled": "true",
+                     "focused": "false",
+                     "longClickable": "false",
+                     "originalText": "我已阅读并同意相关协议",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "我已阅读并同意相关协议",
+                     "type": "Text",
+                     "visible": "true"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "attributes": {
+                   "bounds": "[48,1856][1272,1988]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "true",
+                   "enabled": "true",
+                   "focused": "false",
+                   "id": "next_step_btn",
+                   "key": "next_step_btn",
+                   "longClickable": "false",
+                   "originalText": "下一步",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "text": "下一步",
+                   "type": "Button",
+                   "visible": "true"
+                  }
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "attributes": {
+       "bounds": "[0,117][1320,2120]",
+       "checkable": "false",
+       "checked": "false",
+       "clickable": "true",
+       "enabled": "true",
+       "focused": "true",
+       "longClickable": "false",
+       "scrollable": "false",
+       "selected": "false",
+       "type": "SheetWrapper",
+       "visible": "true"
+      },
+      "children": [
+       {
+        "attributes": {
+         "bounds": "[0,848][1320,2120]",
+         "checkable": "false",
+         "checked": "false",
+         "clickable": "true",
+         "enabled": "true",
+         "focused": "true",
+         "longClickable": "false",
+         "scrollable": "false",
+         "selected": "false",
+         "type": "SheetPage",
+         "visible": "true"
+        },
+        "children": [
+         {
+          "attributes": {
+           "bounds": "[48,847][1272,848]",
+           "checkable": "false",
+           "checked": "false",
+           "clickable": "false",
+           "enabled": "true",
+           "focused": "false",
+           "longClickable": "false",
+           "scrollable": "false",
+           "selected": "false",
+           "type": "Column",
+           "visible": "true"
+          }
+         },
+         {
+          "attributes": {
+           "bounds": "[0,848][1320,2120]",
+           "checkable": "false",
+           "checked": "false",
+           "clickable": "false",
+           "enabled": "true",
+           "focused": "true",
+           "longClickable": "false",
+           "scrollable": "false",
+           "selected": "false",
+           "type": "Scroll",
+           "visible": "true"
+          },
+          "children": [
+           {
+            "attributes": {
+             "bounds": "[0,848][1320,2120]",
+             "checkable": "false",
+             "checked": "false",
+             "clickable": "false",
+             "enabled": "true",
+             "focused": "true",
+             "id": "maison:bc-opencard:sms_verify:sheet_scaffold",
+             "key": "maison:bc-opencard:sms_verify:sheet_scaffold",
+             "longClickable": "false",
+             "scrollable": "false",
+             "selected": "false",
+             "type": "Column",
+             "visible": "true"
+            },
+            "children": [
+             {
+              "attributes": {
+               "bounds": "[0,848][1320,1028]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "false",
+               "enabled": "true",
+               "focused": "false",
+               "longClickable": "false",
+               "scrollable": "false",
+               "selected": "false",
+               "type": "Row",
+               "visible": "true"
+              },
+              "children": [
+               {
+                "attributes": {
+                 "bounds": "[72,915][312,985]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "id": "maison:bc-opencard:sms_verify:sheet_scaffold-header",
+                 "key": "maison:bc-opencard:sms_verify:sheet_scaffold-header",
+                 "longClickable": "false",
+                 "originalText": "短信验证",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "text": "短信验证",
+                 "type": "Text",
+                 "visible": "true"
+                }
+               },
+               {
+                "attributes": {
+                 "bounds": "[312,896][1164,1004]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "Blank",
+                 "visible": "true"
+                }
+               },
+               {
+                "attributes": {
+                 "bounds": "[1164,896][1272,1004]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "true",
+                 "enabled": "true",
+                 "focused": "false",
+                 "id": "maison:bc-opencard:sms_verify:sheet_scaffold-close",
+                 "key": "maison:bc-opencard:sms_verify:sheet_scaffold-close",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "Button",
+                 "visible": "true"
+                },
+                "children": [
+                 {
+                  "attributes": {
+                   "bounds": "[1194,926][1243,974]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "SymbolGlyph",
+                   "visible": "true"
+                  }
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "attributes": {
+               "bounds": "[0,1028][1320,1904]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "false",
+               "enabled": "true",
+               "focused": "false",
+               "id": "maison:bc-opencard:sms_verify:sheet_scaffold-content",
+               "key": "maison:bc-opencard:sms_verify:sheet_scaffold-content",
+               "longClickable": "false",
+               "scrollable": "false",
+               "selected": "false",
+               "type": "Column",
+               "visible": "true"
+              },
+              "children": [
+               {
+                "attributes": {
+                 "bounds": "[0,1028][1320,1269]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "true",
+                 "focused": "false",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "Column",
+                 "visible": "true"
+                },
+                "children": [
+                 {
+                  "attributes": {
+                   "bounds": "[0,1028][1320,1077]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "Row",
+                   "visible": "true"
+                  },
+                  "children": [
+                   {
+                    "attributes": {
+                     "bounds": "[0,1028][295,1077]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "false",
+                     "enabled": "true",
+                     "focused": "false",
+                     "longClickable": "false",
+                     "originalText": "验证码已发送至",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "验证码已发送至",
+                     "type": "Text",
+                     "visible": "true"
+                    }
+                   },
+                   {
+                    "attributes": {
+                     "bounds": "[307,1028][547,1077]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "false",
+                     "enabled": "true",
+                     "focused": "false",
+                     "longClickable": "false",
+                     "originalText": "138****6790",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "138****6790",
+                     "type": "Text",
+                     "visible": "true"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "attributes": {
+                   "bounds": "[0,1125][1320,1269]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "id": "maison:bc-opencard:sms_verify:sms_input",
+                   "key": "maison:bc-opencard:sms_verify:sms_input",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "Row",
+                   "visible": "true"
+                  },
+                  "children": [
+                   {
+                    "attributes": {
+                     "bounds": "[48,1137][1205,1257]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "true",
+                     "enabled": "true",
+                     "focused": "false",
+                     "id": "maison:bc-opencard:sms_verify:sms_input-input",
+                     "key": "maison:bc-opencard:sms_verify:sms_input-input",
+                     "longClickable": "true",
+                     "originalText": "000000",
+                     "scrollable": "true",
+                     "selected": "false",
+                     "text": "000000",
+                     "type": "TextInput",
+                     "visible": "true"
+                    }
+                   },
+                   {
+                    "attributes": {
+                     "bounds": "[1205,1173][1272,1222]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "true",
+                     "enabled": "true",
+                     "focused": "false",
+                     "id": "maison:bc-opencard:sms_verify:sms_input-countdown",
+                     "key": "maison:bc-opencard:sms_verify:sms_input-countdown",
+                     "longClickable": "false",
+                     "originalText": "60s",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "60s",
+                     "type": "Text",
+                     "visible": "true"
+                    }
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "attributes": {
+               "bounds": "[0,1904][1320,2120]",
+               "checkable": "false",
+               "checked": "false",
+               "clickable": "false",
+               "enabled": "true",
+               "focused": "false",
+               "id": "maison:bc-opencard:sms_verify:sheet_scaffold-primary-action",
+               "key": "maison:bc-opencard:sms_verify:sheet_scaffold-primary-action",
+               "longClickable": "false",
+               "scrollable": "false",
+               "selected": "false",
+               "type": "Column",
+               "visible": "true"
+              },
+              "children": [
+               {
+                "attributes": {
+                 "bounds": "[72,1928][1248,2048]",
+                 "checkable": "false",
+                 "checked": "false",
+                 "clickable": "false",
+                 "enabled": "false",
+                 "focused": "false",
+                 "id": "maison:bc-opencard:sms_verify:sheet_scaffold-next",
+                 "key": "maison:bc-opencard:sms_verify:sheet_scaffold-next",
+                 "longClickable": "false",
+                 "scrollable": "false",
+                 "selected": "false",
+                 "type": "Button",
+                 "visible": "true"
+                },
+                "children": [
+                 {
+                  "attributes": {
+                   "bounds": "[588,1960][733,2016]",
+                   "checkable": "false",
+                   "checked": "false",
+                   "clickable": "false",
+                   "enabled": "true",
+                   "focused": "false",
+                   "longClickable": "false",
+                   "scrollable": "false",
+                   "selected": "false",
+                   "type": "Row",
+                   "visible": "true"
+                  },
+                  "children": [
+                   {
+                    "attributes": {
+                     "bounds": "[588,1960][733,2016]",
+                     "checkable": "false",
+                     "checked": "false",
+                     "clickable": "false",
+                     "enabled": "true",
+                     "focused": "false",
+                     "id": "maison:bc-opencard:sms_verify:sheet_scaffold-next-label",
+                     "key": "maison:bc-opencard:sms_verify:sheet_scaffold-next-label",
+                     "longClickable": "false",
+                     "originalText": "下一步",
+                     "scrollable": "false",
+                     "selected": "false",
+                     "text": "下一步",
+                     "type": "Text",
+                     "visible": "true"
+                    }
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "attributes": {
+     "bounds": "[0,0][1320,117]",
+     "checkable": "false",
+     "checked": "false",
+     "clickable": "false",
+     "enabled": "true",
+     "focused": "false",
+     "id": "session26",
+     "key": "session26",
+     "longClickable": "false",
+     "scrollable": "false",
+     "selected": "false",
+     "type": "WindowScene",
+     "visible": "true"
+    }
+   }
+  ]
+ },
+ "_hylyre_hints": {
+  "scrollable_containers": [],
+  "scrollable_container_count": 0
+ }
+}

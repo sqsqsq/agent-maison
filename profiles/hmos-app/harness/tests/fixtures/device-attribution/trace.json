@@ -1,0 +1,568 @@
+{
+  "schema_version": "0.2-p4",
+  "feature": "bc-openCard",
+  "phase": "testing",
+  "outcome": "partial",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u5361\u5305",
+          "timeout": 30
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u5361\u5305"
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u6dfb\u52a0\u5361\u7247",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u6dfb\u52a0\u5361\u7247"
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u6dfb\u52a0\u94f6\u884c\u5361",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u514d\u8f93\u5361\u53f7\u6dfb\u5361",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u66f4\u591a"
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u641c\u7d22\u94f6\u884c",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u67e5\u770b\u5168\u90e8\u94f6\u884c"
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u5168\u90e8\u94f6\u884c",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "kind": "planned_json",
+      "payload": {
+        "input": {
+          "by_id": "all_banks_search",
+          "text": "\u62db\u5546"
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u62db\u5546\u94f6\u884c",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "kind": "planned_json",
+      "payload": {
+        "back": {}
+      }
+    },
+    {
+      "case": "TC-004",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u62db\u5546\u94f6\u884c",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u62db\u5546\u94f6\u884c"
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u9009\u62e9\u5361\u7c7b\u578b",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_text": "\u540c\u610f\u5e76\u7ee7\u7eed",
+          "scope": "top_overlay"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u8bf7\u9009\u62e9\u8981\u6dfb\u52a0\u7684\u94f6\u884c\u5361",
+          "timeout": 15
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_type": "Checkbox"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.5
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_id": "next_step_btn"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_id": "maison:bc-opencard:sms_verify:sheet_scaffold-header",
+          "timeout": 20
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "swipe": {
+          "direction": "UP",
+          "distance": 80
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.5
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_type": "TextInput",
+          "scope": "top_overlay"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.5
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "kind": "planned_json",
+      "payload": {
+        "input": {
+          "text": "000000"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardLeftButton"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.5
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_type": "TextInput",
+          "scope": "top_overlay"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.3
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.1
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.1
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.1
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.1
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.1
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardRightButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "input": {
+          "text": "123456"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "touch": {
+          "by_key": "keyboardLeftButton"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "kind": "planned_json",
+      "payload": {
+        "wait": {
+          "seconds": 0.5
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_id": "maison:bc-opencard:add_success-done",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u4ea4\u6613\u8bb0\u5f55",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_text": "\u534e\u4e3a\u652f\u4ed8",
+          "timeout": 10
+        }
+      }
+    },
+    {
+      "case": "TC-010",
+      "kind": "planned_json",
+      "payload": {
+        "back": {}
+      }
+    },
+    {
+      "case": "TC-010",
+      "kind": "planned_json",
+      "payload": {
+        "wait_for": {
+          "by_id": "maison:bc-opencard:card_pack_with_cards:list_card_container",
+          "timeout": 15
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "doc/features/bc-openCard/testing/reports/20260729T223800Z/hylyre/test-plan.hylyre.md",
+    "use_fakes": false
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-1",
+      "notes": ""
+    },
+    {
+      "id": "TC-002",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-2",
+      "notes": ""
+    },
+    {
+      "id": "TC-003",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-3",
+      "notes": ""
+    },
+    {
+      "id": "TC-004",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-4",
+      "notes": ""
+    },
+    {
+      "id": "TC-005",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-5",
+      "notes": ""
+    },
+    {
+      "id": "TC-006",
+      "status": "\u5931\u8d25",
+      "priority": "P0",
+      "ac_ref": "BD-2",
+      "notes": "wait for: target not in desired state failure_artifacts: ui_dump=TC-006-step-5.json, screenshot=TC-006-step-5.png"
+    },
+    {
+      "id": "TC-007",
+      "status": "\u5931\u8d25",
+      "priority": "P0",
+      "ac_ref": "AC-6",
+      "notes": "wait for: target not in desired state failure_artifacts: ui_dump=TC-007-step-17.json, screenshot=TC-007-step-17.png"
+    },
+    {
+      "id": "TC-008",
+      "status": "\u5931\u8d25",
+      "priority": "P0",
+      "ac_ref": "AC-7",
+      "notes": "[Script-0203002] Can't find component with [BY.id('maison:bc-opencard:add_success-done')] failure_artifacts: ui_dump=TC-008-step-1.json, screenshot=TC-008-step-1.png"
+    },
+    {
+      "id": "TC-009",
+      "status": "\u901a\u8fc7",
+      "priority": "P0",
+      "ac_ref": "AC-8",
+      "notes": ""
+    },
+    {
+      "id": "TC-010",
+      "status": "\u5931\u8d25",
+      "priority": "P0",
+      "ac_ref": "AC-9",
+      "notes": "no matching UI target for predicate {'by_text': '\u67e5\u770b\u5168\u90e8', 'within': {'by_id': 'maison:bc-opencard:card_pack_with_cards:list_card_container'}} failure_artifacts: ui_dump=TC-010-step-2.json, screenshot=TC-010-step-2.png"
+    },
+    {
+      "id": "TC-011",
+      "status": "\u5931\u8d25",
+      "priority": "P1",
+      "ac_ref": "AC-12",
+      "notes": "no matching UI target for predicate {'by_text': '\u67e5\u770b\u5168\u90e8', 'within': {'by_id': 'maison:bc-opencard:card_pack_with_cards:list_card_container'}} failure_artifacts: ui_dump=TC-011-step-0.json, screenshot=TC-011-step-0.png"
+    }
+  ]
+}

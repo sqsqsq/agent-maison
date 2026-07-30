@@ -1,0 +1,509 @@
+schema_version: "1.0"
+# ux-reference images: add_card_home_collapsed.jpg add_card_home_expanded.jpg all_banks.jpg card_type_sheet.jpg card_select.jpg sms_verify.jpg add_success.jpg card_detail.jpg card_pack_with_cards.jpg bank_card_list_sheet.jpg
+verified: unverified
+verified_method: none
+
+screens:
+  - id: add_card_home_collapsed
+    priority: P0
+    ref_id: ref_add_card_home_collapsed
+    must_have_elements:
+      - collapsed_title
+      - collapsed_subtitle_main
+      - collapsed_bank_cmb
+      - promo_badge_hxb
+      - collapsed_more_entry
+    root:
+      type: nav_bar
+      layout: column
+      order: 0
+      bg_color: bg.page
+      children:
+        - id: collapsed_title
+          type: content_display
+          order: 1
+          text: "添加银行卡"
+          color_ref: text.primary
+          bbox: [0.12, 0.05, 0.50, 0.05]
+        - id: collapsed_subtitle_main
+          type: content_display
+          order: 2
+          text: "免输卡号添卡"
+          color_ref: text.secondary
+          bbox: [0.04, 0.11, 0.30, 0.03]
+        - id: collapsed_subtitle_count
+          type: content_display
+          order: 3
+          text: "支持 100 家银行"
+          color_ref: text.secondary
+          bbox: [0.58, 0.11, 0.34, 0.03]
+        - id: collapsed_bank_list
+          type: list_card_container
+          order: 4
+          layout: column
+          bg_color: bg.surface
+          bbox: [0.04, 0.15, 0.92, 0.62]
+          children:
+            - id: collapsed_bank_cmb
+              type: list_selection
+              order: 5
+              text: "招商银行"
+              asset_ref: bank_logo_cmb
+              icon:
+                kind: brand_logo
+                ref: bank_logo_cmb
+              bbox: [0.06, 0.16, 0.88, 0.07]
+            - id: collapsed_bank_icbc
+              type: list_selection
+              order: 6
+              text: "工商银行"
+              asset_ref: bank_logo_icbc
+              bbox: [0.06, 0.23, 0.88, 0.07]
+            - id: collapsed_bank_citic
+              type: list_selection
+              order: 7
+              text: "中信银行"
+              bbox: [0.06, 0.30, 0.88, 0.07]
+            - id: collapsed_bank_hxb
+              type: list_selection
+              order: 8
+              text: "华夏银行"
+              subtitle: "首绑送12元券包"
+              subtitle_position: below
+              bbox: [0.06, 0.37, 0.88, 0.08]
+            - id: promo_badge_hxb
+              type: content_display
+              order: 9
+              text: "首绑送12元券包"
+              semantic_role: promo
+              color_ref: brand.promo_orange
+              bbox: [0.20, 0.40, 0.28, 0.03]
+            - id: collapsed_bank_ccb
+              type: list_selection
+              order: 10
+              text: "建设银行"
+              bbox: [0.06, 0.45, 0.88, 0.07]
+        - id: collapsed_more_entry
+          type: action_button
+          order: 11
+          text: "更多"
+          variant: text
+          color_ref: brand.primary
+          bbox: [0.40, 0.78, 0.20, 0.04]
+
+  - id: add_card_home_expanded
+    priority: P0
+    ref_id: ref_add_card_home_expanded
+    must_have_elements:
+      - expanded_search_bar
+      - expanded_view_all_link
+    root:
+      type: nav_bar
+      layout: column
+      order: 0
+      children:
+        - id: expanded_title
+          type: content_display
+          order: 1
+          text: "添加银行卡"
+          bbox: [0.12, 0.05, 0.50, 0.05]
+        - id: expanded_search_bar
+          type: input
+          order: 2
+          text: "搜索银行"
+          bbox: [0.04, 0.12, 0.72, 0.05]
+        - id: expanded_search_btn
+          type: action_button
+          order: 3
+          text: "搜索"
+          color_ref: brand.primary
+          bbox: [0.78, 0.12, 0.14, 0.05]
+        - id: expanded_view_all_link
+          type: action_button
+          order: 4
+          text: "查看全部银行"
+          variant: text
+          color_ref: brand.primary
+          bbox: [0.30, 0.90, 0.40, 0.04]
+
+  - id: all_banks
+    priority: P0
+    ref_id: ref_all_banks
+    must_have_elements:
+      - all_banks_title
+      - all_banks_search
+      - all_banks_letter_index
+    root:
+      type: list_card_container
+      layout: column
+      order: 0
+      children:
+        - id: all_banks_title
+          type: content_display
+          order: 1
+          text: "全部银行"
+          bbox: [0.35, 0.05, 0.30, 0.05]
+        - id: all_banks_search
+          type: input
+          order: 2
+          text: "搜索银行"
+          bbox: [0.04, 0.11, 0.72, 0.05]
+        - id: all_banks_letter_index
+          type: navigation_frame
+          order: 3
+          layout: column
+          bbox: [0.92, 0.15, 0.06, 0.70]
+
+  - id: card_type_sheet
+    priority: P0
+    ref_id: ref_card_type_sheet
+    must_have_elements:
+      - sheet_type_title
+      - sheet_type_debit
+      - sheet_agree_btn
+    forbidden_overlap:
+      - [sheet_close_btn, sheet_type_surface]
+    root:
+      type: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: sheet_type_title
+          type: content_display
+          order: 1
+          text: "选择卡类型"
+          bbox: [0.06, 0.42, 0.40, 0.05]
+        - id: sheet_close_btn
+          type: action_button
+          order: 2
+          variant: ghost
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.xmark
+          bbox: [0.86, 0.42, 0.08, 0.05]
+        - id: sheet_type_surface
+          type: navigation_frame
+          order: 3
+          layout: column
+          bg_color: bg.surface
+          bbox: [0.04, 0.50, 0.92, 0.22]
+          children:
+            - id: sheet_bank_name
+              type: list_selection
+              order: 4
+              text: "招商银行"
+              bbox: [0.06, 0.51, 0.88, 0.06]
+            - id: sheet_type_debit
+              type: list_selection
+              order: 5
+              text: "储蓄卡"
+              layout_group: card_type_group
+              bbox: [0.06, 0.58, 0.88, 0.06]
+            - id: sheet_type_credit
+              type: list_selection
+              order: 6
+              text: "信用卡"
+              layout_group: card_type_group
+              bbox: [0.06, 0.65, 0.88, 0.06]
+        - id: sheet_agree_btn
+          type: action_button
+          order: 7
+          text: "同意并继续"
+          variant: filled
+          color_ref: brand.primary
+          width_ratio: 0.92
+          bbox: [0.04, 0.82, 0.92, 0.06]
+
+  - id: card_select
+    priority: P0
+    ref_id: ref_card_select
+    must_have_elements:
+      - select_hint
+      - select_next_btn
+    root:
+      type: list_card_container
+      layout: column
+      order: 0
+      children:
+        - id: select_bank_title
+          type: content_display
+          order: 1
+          text: "招商银行"
+          bbox: [0.30, 0.05, 0.40, 0.05]
+        - id: select_hint
+          type: content_display
+          order: 2
+          text: "请选择您要绑定的银行卡"
+          color_ref: text.secondary
+          bbox: [0.04, 0.12, 0.70, 0.04]
+        - id: select_card_row
+          type: list_selection
+          order: 3
+          text: "4392 **** **** 2269"
+          bg_color: bg.surface
+          bbox: [0.04, 0.18, 0.92, 0.10]
+        - id: select_agreement_chk
+          type: logic_condition
+          order: 4
+          bbox: [0.04, 0.72, 0.08, 0.04]
+        - id: select_next_btn
+          type: action_button
+          order: 5
+          text: "下一步"
+          variant: filled
+          color_ref: brand.cmb_red
+          bbox: [0.20, 0.82, 0.60, 0.06]
+
+  - id: sms_verify
+    priority: P0
+    ref_id: ref_sms_verify
+    must_have_elements:
+      - sms_title
+      - sms_input
+    root:
+      type: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: sms_title
+          type: content_display
+          order: 1
+          text: "输入验证码"
+          bbox: [0.06, 0.45, 0.40, 0.05]
+        - id: sms_phone_hint
+          type: content_display
+          order: 2
+          text: "为确认是您本人操作，请输入发送至手机 185****3841 的验证码。"
+          bbox: [0.06, 0.52, 0.88, 0.08]
+        - id: sms_input
+          type: sms_code_field
+          order: 3
+          text: "请输入短信验证码"
+          bbox: [0.06, 0.62, 0.88, 0.06]
+        - id: sms_countdown
+          type: content_display
+          order: 4
+          text: "55 秒后重试"
+          color_ref: brand.primary
+          bbox: [0.60, 0.62, 0.30, 0.06]
+        - id: sms_next_btn
+          type: action_button
+          order: 5
+          text: "下一步"
+          variant: filled
+          color_ref: brand.primary
+          bbox: [0.06, 0.72, 0.88, 0.06]
+
+  - id: add_success
+    priority: P0
+    ref_id: ref_add_success
+    must_have_elements:
+      - success_title
+      - success_done_btn
+    root:
+      type: result_state
+      layout: column
+      order: 0
+      align: center
+      children:
+        - id: success_icon
+          type: content_display
+          order: 1
+          semantic_role: success
+          color_ref: status.success
+          bbox: [0.42, 0.18, 0.16, 0.08]
+        - id: success_title
+          type: content_display
+          order: 2
+          text: "添卡成功"
+          bbox: [0.30, 0.28, 0.40, 0.05]
+        - id: success_subtitle
+          type: content_display
+          order: 3
+          text: "可用于实体店二维码支付和网上商城支付"
+          color_ref: text.secondary
+          bbox: [0.08, 0.34, 0.84, 0.05]
+        - id: success_illustration
+          type: content_display
+          order: 4
+          asset_ref: success_qr_illustration
+          bbox: [0.20, 0.42, 0.60, 0.28]
+        - id: success_done_btn
+          type: action_button
+          order: 5
+          text: "完成"
+          variant: tonal
+          color_ref: brand.primary
+          bbox: [0.08, 0.82, 0.84, 0.06]
+
+  - id: card_detail
+    priority: P0
+    ref_id: ref_card_detail
+    must_have_elements:
+      - detail_title
+      - detail_transactions
+      - detail_huawei_pay
+    root:
+      type: detail_section
+      layout: column
+      order: 0
+      children:
+        - id: detail_title
+          type: content_display
+          order: 1
+          text: "银行卡"
+          bbox: [0.38, 0.05, 0.24, 0.05]
+        - id: detail_card_face
+          type: content_display
+          order: 2
+          asset_ref: card_face_cmb_sunflower
+          bbox: [0.04, 0.11, 0.92, 0.22]
+        - id: detail_transactions
+          type: navigation_frame
+          order: 3
+          text: "交易记录"
+          bg_color: bg.surface
+          bbox: [0.04, 0.40, 0.92, 0.28]
+        - id: detail_huawei_pay
+          type: list_selection
+          order: 4
+          text: "华为支付"
+          bbox: [0.04, 0.72, 0.92, 0.08]
+        - id: detail_unionpay
+          type: list_selection
+          order: 5
+          text: "银联手机闪付"
+          bbox: [0.04, 0.81, 0.92, 0.10]
+
+  - id: card_pack_with_cards
+    priority: P0
+    ref_id: ref_card_pack_with_cards
+    must_have_elements:
+      - pack_bank_section_title
+      - pack_view_all_cards
+    root:
+      type: list_card_container
+      layout: column
+      order: 0
+      children:
+        - id: pack_title
+          type: content_display
+          order: 1
+          text: "卡包"
+          bbox: [0.38, 0.05, 0.24, 0.05]
+        - id: pack_add_card_row
+          type: list_selection
+          order: 2
+          text: "添加卡片"
+          bbox: [0.04, 0.11, 0.92, 0.08]
+        - id: pack_bank_section_title
+          type: content_display
+          order: 3
+          text: "银行卡"
+          bbox: [0.04, 0.22, 0.20, 0.04]
+        - id: pack_view_all_cards
+          type: action_button
+          order: 4
+          text: "查看全部 (6)"
+          variant: text
+          color_ref: text.secondary
+          bbox: [0.62, 0.22, 0.30, 0.04]
+        - id: pack_bank_preview_1
+          type: list_selection
+          order: 5
+          bbox: [0.04, 0.27, 0.92, 0.10]
+        - id: pack_bank_preview_2
+          type: list_selection
+          order: 6
+          bbox: [0.04, 0.38, 0.92, 0.10]
+
+  - id: bank_card_list_sheet
+    priority: P1
+    ref_id: ref_bank_card_list_sheet
+    must_have_elements:
+      - list_sheet_title
+    root:
+      type: sheet_scaffold
+      layout: column
+      order: 0
+      children:
+        - id: list_sheet_title
+          type: content_display
+          order: 1
+          text: "银行卡"
+          bbox: [0.06, 0.12, 0.30, 0.05]
+        - id: list_sheet_close
+          type: action_button
+          order: 2
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.xmark
+          bbox: [0.86, 0.12, 0.08, 0.05]
+        - id: list_sheet_item
+          type: list_selection
+          order: 3
+          bg_color: bg.surface
+          bbox: [0.04, 0.20, 0.92, 0.12]
+
+tokens:
+  bg.page:
+    kind: color
+    value: "#F1F3F5"
+  bg.surface:
+    kind: color
+    value: "#FFFFFF"
+  text.primary:
+    kind: color
+    value: "#1A1A1A"
+  text.secondary:
+    kind: color
+    value: "#999999"
+  brand.primary:
+    kind: color
+    value: "#007DFF"
+  brand.cmb_red:
+    kind: color
+    value: "#E60012"
+  brand.promo_orange:
+    kind: color
+    value: "#FF7D00"
+  status.success:
+    kind: color
+    value: "#00C853"
+
+assets:
+  - key: bank_logo_cmb
+    acquisition: crop
+    source_ref: ref_add_card_home_collapsed
+    source_bbox: [0.06, 0.16, 0.08, 0.05]
+    resolved_path: doc/features/bc-openCard/spec/assets/bank_logo_cmb.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: bank_logo_icbc
+    acquisition: crop
+    source_ref: ref_add_card_home_collapsed
+    source_bbox: [0.06, 0.23, 0.08, 0.05]
+    resolved_path: doc/features/bc-openCard/spec/assets/bank_logo_icbc.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: bank_logo_citic
+    acquisition: crop
+    source_ref: ref_add_card_home_collapsed
+    source_bbox: [0.06, 0.30, 0.08, 0.05]
+    resolved_path: doc/features/bc-openCard/spec/assets/bank_logo_citic.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: success_qr_illustration
+    acquisition: crop
+    source_ref: ref_add_success
+    source_bbox: [0.20, 0.42, 0.60, 0.28]
+    resolved_path: doc/features/bc-openCard/spec/assets/success_qr_illustration.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
+  - key: card_face_cmb_sunflower
+    acquisition: crop
+    source_ref: ref_card_detail
+    source_bbox: [0.04, 0.11, 0.92, 0.22]
+    resolved_path: doc/features/bc-openCard/spec/assets/card_face_cmb_sunflower.png
+    human_crop_confirmed: true
+    crop_confirmed_by: user_requirement
