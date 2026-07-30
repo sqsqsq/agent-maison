@@ -1,0 +1,998 @@
+{
+ "attributes": {
+  "bounds": "[0,0][1320,2120]"
+ },
+ "children": [
+  {
+   "attributes": {
+    "bounds": "[0,117][1320,2120]",
+    "checkable": "false",
+    "checked": "false",
+    "clickable": "false",
+    "enabled": "true",
+    "id": "session21",
+    "key": "session21",
+    "selected": "false",
+    "type": "WindowScene",
+    "visible": "true"
+   },
+   "children": [
+    {
+     "attributes": {
+      "bounds": "[0,117][1320,2120]",
+      "checkable": "false",
+      "checked": "false",
+      "clickable": "false",
+      "enabled": "true",
+      "id": "ScreenLockRootComponent",
+      "key": "ScreenLockRootComponent",
+      "selected": "false",
+      "type": "Stack",
+      "visible": "true"
+     },
+     "children": [
+      {
+       "attributes": {
+        "bounds": "[0,117][1320,2120]",
+        "checkable": "false",
+        "checked": "false",
+        "clickable": "false",
+        "enabled": "true",
+        "id": "BackGroundView",
+        "key": "BackGroundView",
+        "selected": "false",
+        "type": "Stack",
+        "visible": "true"
+       }
+      },
+      {
+       "attributes": {
+        "bounds": "[0,117][1320,2120]",
+        "checkable": "false",
+        "checked": "false",
+        "clickable": "false",
+        "enabled": "true",
+        "selected": "false",
+        "type": "Stack",
+        "visible": "true"
+       },
+       "children": [
+        {
+         "attributes": {
+          "bounds": "[0,117][1320,2120]",
+          "checkable": "false",
+          "checked": "false",
+          "clickable": "false",
+          "enabled": "true",
+          "id": "MainPageView_Screen_Lock_Home",
+          "key": "MainPageView_Screen_Lock_Home",
+          "selected": "false",
+          "type": "Stack",
+          "visible": "true"
+         },
+         "children": [
+          {
+           "attributes": {
+            "bounds": "[0,117][1320,2120]",
+            "checkable": "false",
+            "checked": "false",
+            "clickable": "false",
+            "enabled": "true",
+            "selected": "false",
+            "type": "EffectComponent",
+            "visible": "true"
+           },
+           "children": [
+            {
+             "attributes": {
+              "bounds": "[0,117][1320,2120]",
+              "checkable": "false",
+              "checked": "false",
+              "clickable": "false",
+              "enabled": "true",
+              "selected": "false",
+              "type": "RelativeContainer",
+              "visible": "true"
+             },
+             "children": [
+              {
+               "attributes": {
+                "bounds": "[0,117][1320,2120]",
+                "checkable": "false",
+                "checked": "false",
+                "clickable": "false",
+                "enabled": "true",
+                "selected": "false",
+                "type": "RelativeContainer",
+                "visible": "true"
+               },
+               "children": [
+                {
+                 "attributes": {
+                  "bounds": "[72,165][1248,297]",
+                  "checkable": "false",
+                  "checked": "false",
+                  "clickable": "false",
+                  "enabled": "true",
+                  "id": "sl_lock_head",
+                  "key": "sl_lock_head",
+                  "selected": "false",
+                  "type": "__Common__",
+                  "visible": "true"
+                 },
+                 "children": [
+                  {
+                   "attributes": {
+                    "bounds": "[72,165][1248,297]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[72,195][1248,267]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "true",
+                      "enabled": "true",
+                      "id": "sl_lock_head_lock_anim",
+                      "key": "sl_lock_head_lock_anim",
+                      "selected": "false",
+                      "type": "Flex",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[330,195][402,267]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "selected": "false",
+                        "type": "Stack",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[330,195][402,267]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "selected": "false",
+                          "type": "Canvas",
+                          "visible": "true"
+                         }
+                        }
+                       ]
+                      },
+                      {
+                       "attributes": {
+                        "bounds": "[414,205][991,261]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "id": "LockIcon_Text_lock",
+                        "key": "LockIcon_Text_lock",
+                        "originalText": "未识别成功，双击屏幕重试",
+                        "selected": "false",
+                        "type": "Text",
+                        "visible": "true"
+                       }
+                      }
+                     ]
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[72,165][1248,297]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Column",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[72,165][1248,297]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Column",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              },
+              {
+               "attributes": {
+                "bounds": "[0,117][1320,2120]",
+                "checkable": "false",
+                "checked": "false",
+                "clickable": "false",
+                "enabled": "true",
+                "selected": "false",
+                "type": "Stack",
+                "visible": "true"
+               },
+               "children": [
+                {
+                 "attributes": {
+                  "bounds": "[0,117][1320,2120]",
+                  "checkable": "false",
+                  "checked": "false",
+                  "clickable": "false",
+                  "enabled": "true",
+                  "id": "ScreenLockWidgetView",
+                  "key": "ScreenLockWidgetView",
+                  "selected": "false",
+                  "type": "Stack",
+                  "visible": "true"
+                 },
+                 "children": [
+                  {
+                   "attributes": {
+                    "bounds": "[0,117][1320,2120]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "id": "ScreenLockWidgetView-RelativeContainer",
+                    "key": "ScreenLockWidgetView-RelativeContainer",
+                    "selected": "false",
+                    "type": "RelativeContainer",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[460,297][860,1097]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "true",
+                      "enabled": "true",
+                      "id": "sl_clock",
+                      "key": "sl_clock",
+                      "selected": "false",
+                      "text": "1, 0, 5, 9, 7月30日, 星期四, 六月十七",
+                      "type": "Stack",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[460,297][860,1097]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "selected": "false",
+                        "type": "__Common__",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[460,297][860,1097]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "id": "Text_Digital",
+                          "key": "Text_Digital",
+                          "selected": "false",
+                          "type": "Stack",
+                          "visible": "true"
+                         },
+                         "children": [
+                          {
+                           "attributes": {
+                            "bounds": "[460,297][860,1097]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "false",
+                            "enabled": "true",
+                            "selected": "false",
+                            "type": "Stack",
+                            "visible": "true"
+                           }
+                          },
+                          {
+                           "attributes": {
+                            "bounds": "[60,297][1260,1097]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "false",
+                            "enabled": "true",
+                            "selected": "false",
+                            "type": "Stack",
+                            "visible": "true"
+                           },
+                           "children": [
+                            {
+                             "attributes": {
+                              "bounds": "[60,297][1260,1097]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Stack",
+                              "visible": "true"
+                             },
+                             "children": [
+                              {
+                               "attributes": {
+                                "bounds": "[60,297][1260,1097]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "id": "normal_clock",
+                                "key": "normal_clock",
+                                "selected": "false",
+                                "text": "1, 0, 5, 9",
+                                "type": "Stack",
+                                "visible": "true"
+                               },
+                               "children": [
+                                {
+                                 "attributes": {
+                                  "bounds": "[481,338][662,600]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "id": "Text_Digital_Text_0_0",
+                                  "key": "Text_Digital_Text_0_0",
+                                  "originalText": "1",
+                                  "selected": "false",
+                                  "text": "1",
+                                  "type": "Text",
+                                  "visible": "true"
+                                 }
+                                },
+                                {
+                                 "attributes": {
+                                  "bounds": "[657,338][838,600]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "id": "Text_Digital_Text_0_1",
+                                  "key": "Text_Digital_Text_0_1",
+                                  "originalText": "0",
+                                  "selected": "false",
+                                  "text": "0",
+                                  "type": "Text",
+                                  "visible": "true"
+                                 }
+                                },
+                                {
+                                 "attributes": {
+                                  "bounds": "[481,610][662,872]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "id": "Text_Digital_Text_1_0",
+                                  "key": "Text_Digital_Text_1_0",
+                                  "originalText": "5",
+                                  "selected": "false",
+                                  "text": "5",
+                                  "type": "Text",
+                                  "visible": "true"
+                                 }
+                                },
+                                {
+                                 "attributes": {
+                                  "bounds": "[657,610][838,872]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "id": "Text_Digital_Text_1_1",
+                                  "key": "Text_Digital_Text_1_1",
+                                  "originalText": "9",
+                                  "selected": "false",
+                                  "text": "9",
+                                  "type": "Text",
+                                  "visible": "true"
+                                 }
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          },
+                          {
+                           "attributes": {
+                            "bounds": "[60,297][1260,1097]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "false",
+                            "enabled": "true",
+                            "selected": "false",
+                            "type": "Stack",
+                            "visible": "true"
+                           },
+                           "children": [
+                            {
+                             "attributes": {
+                              "bounds": "[60,297][1260,1097]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Stack",
+                              "visible": "true"
+                             }
+                            },
+                            {
+                             "attributes": {
+                              "bounds": "[244,892][1077,1137]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Column",
+                              "visible": "true"
+                             }
+                            },
+                            {
+                             "attributes": {
+                              "bounds": "[60,297][1260,1097]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Stack",
+                              "visible": "true"
+                             },
+                             "children": [
+                              {
+                               "attributes": {
+                                "bounds": "[60,297][1260,1097]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "id": "date_lunar",
+                                "key": "date_lunar",
+                                "selected": "false",
+                                "type": "Stack",
+                                "visible": "true"
+                               },
+                               "children": [
+                                {
+                                 "attributes": {
+                                  "bounds": "[509,892][811,940]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "selected": "false",
+                                  "type": "Row",
+                                  "visible": "true"
+                                 },
+                                 "children": [
+                                  {
+                                   "attributes": {
+                                    "bounds": "[509,892][663,940]",
+                                    "checkable": "false",
+                                    "checked": "false",
+                                    "clickable": "false",
+                                    "enabled": "true",
+                                    "selected": "false",
+                                    "type": "Row",
+                                    "visible": "true"
+                                   },
+                                   "children": [
+                                    {
+                                     "attributes": {
+                                      "bounds": "[509,892][663,940]",
+                                      "checkable": "false",
+                                      "checked": "false",
+                                      "clickable": "false",
+                                      "enabled": "true",
+                                      "id": "date_normal_multiline",
+                                      "key": "date_normal_multiline",
+                                      "originalText": "7月30日",
+                                      "selected": "false",
+                                      "text": "7月30日",
+                                      "type": "Text",
+                                      "visible": "true"
+                                     }
+                                    }
+                                   ]
+                                  },
+                                  {
+                                   "attributes": {
+                                    "bounds": "[687,892][811,940]",
+                                    "checkable": "false",
+                                    "checked": "false",
+                                    "clickable": "false",
+                                    "enabled": "true",
+                                    "selected": "false",
+                                    "type": "Row",
+                                    "visible": "true"
+                                   },
+                                   "children": [
+                                    {
+                                     "attributes": {
+                                      "bounds": "[687,892][811,940]",
+                                      "checkable": "false",
+                                      "checked": "false",
+                                      "clickable": "false",
+                                      "enabled": "true",
+                                      "id": "week_multiline",
+                                      "key": "week_multiline",
+                                      "originalText": "星期四",
+                                      "selected": "false",
+                                      "text": "星期四",
+                                      "type": "Text",
+                                      "visible": "true"
+                                     }
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                },
+                                {
+                                 "attributes": {
+                                  "bounds": "[578,951][743,999]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "selected": "false",
+                                  "type": "Row",
+                                  "visible": "true"
+                                 },
+                                 "children": [
+                                  {
+                                   "attributes": {
+                                    "bounds": "[578,951][743,999]",
+                                    "checkable": "false",
+                                    "checked": "false",
+                                    "clickable": "false",
+                                    "enabled": "true",
+                                    "id": "lunar_multiline",
+                                    "key": "lunar_multiline",
+                                    "originalText": "六月十七",
+                                    "selected": "false",
+                                    "text": "六月十七",
+                                    "type": "Text",
+                                    "visible": "true"
+                                   }
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[0,1820][1320,2120]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "sl_bottom_tools_icon",
+                      "key": "sl_bottom_tools_icon",
+                      "selected": "false",
+                      "type": "RelativeContainer",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[48,1820][192,1964]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "id": "sl_quick_tools_icon",
+                        "key": "sl_quick_tools_icon",
+                        "selected": "false",
+                        "type": "__Common__",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[48,1820][192,1964]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "id": "QuickToolsHotZone",
+                          "key": "QuickToolsHotZone",
+                          "selected": "false",
+                          "type": "Stack",
+                          "visible": "true"
+                         },
+                         "children": [
+                          {
+                           "attributes": {
+                            "bounds": "[48,1820][192,1964]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "true",
+                            "enabled": "true",
+                            "id": "ScreenLock-QuickToolBar",
+                            "key": "ScreenLock-QuickToolBar",
+                            "selected": "false",
+                            "type": "Column",
+                            "visible": "true"
+                           },
+                           "children": [
+                            {
+                             "attributes": {
+                              "bounds": "[48,1820][192,1964]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Stack",
+                              "visible": "true"
+                             },
+                             "children": [
+                              {
+                               "attributes": {
+                                "bounds": "[48,1820][192,1964]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "selected": "false",
+                                "type": "Column",
+                                "visible": "true"
+                               }
+                              },
+                              {
+                               "attributes": {
+                                "bounds": "[48,1820][192,1964]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "selected": "false",
+                                "type": "Column",
+                                "visible": "true"
+                               }
+                              },
+                              {
+                               "attributes": {
+                                "bounds": "[84,1856][156,1928]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "selected": "false",
+                                "type": "Stack",
+                                "visible": "true"
+                               },
+                               "children": [
+                                {
+                                 "attributes": {
+                                  "bounds": "[84,1856][156,1928]",
+                                  "checkable": "false",
+                                  "checked": "false",
+                                  "clickable": "false",
+                                  "enabled": "true",
+                                  "id": "QuickToolCommon_QUICK_TOOLS_ICON_IMAGE",
+                                  "key": "QuickToolCommon_QUICK_TOOLS_ICON_IMAGE",
+                                  "selected": "false",
+                                  "type": "SymbolGlyph",
+                                  "visible": "true"
+                                 }
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "attributes": {
+                        "bounds": "[1128,1820][1272,1964]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "id": "sl_camera_icon",
+                        "key": "sl_camera_icon",
+                        "selected": "false",
+                        "type": "__Common__",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[1128,1820][1272,1964]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "true",
+                          "enabled": "true",
+                          "id": "id_persist_camera_icon",
+                          "key": "id_persist_camera_icon",
+                          "selected": "false",
+                          "type": "Column",
+                          "visible": "true"
+                         },
+                         "children": [
+                          {
+                           "attributes": {
+                            "bounds": "[1128,1820][1272,1964]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "false",
+                            "enabled": "true",
+                            "selected": "false",
+                            "type": "Stack",
+                            "visible": "true"
+                           },
+                           "children": [
+                            {
+                             "attributes": {
+                              "bounds": "[1128,1820][1272,1964]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Column",
+                              "visible": "true"
+                             }
+                            },
+                            {
+                             "attributes": {
+                              "bounds": "[1128,1820][1272,1964]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Column",
+                              "visible": "true"
+                             }
+                            },
+                            {
+                             "attributes": {
+                              "bounds": "[1164,1856][1236,1928]",
+                              "checkable": "false",
+                              "checked": "false",
+                              "clickable": "false",
+                              "enabled": "true",
+                              "selected": "false",
+                              "type": "Stack",
+                              "visible": "true"
+                             },
+                             "children": [
+                              {
+                               "attributes": {
+                                "bounds": "[1164,1856][1236,1928]",
+                                "checkable": "false",
+                                "checked": "false",
+                                "clickable": "false",
+                                "enabled": "true",
+                                "id": "QuickToolCommon_QUICK_TOOLS_ICON_IMAGE",
+                                "key": "QuickToolCommon_QUICK_TOOLS_ICON_IMAGE",
+                                "selected": "false",
+                                "type": "SymbolGlyph",
+                                "visible": "true"
+                               }
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[0,297][1320,2120]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "sl_immersive_list",
+                      "key": "sl_immersive_list",
+                      "selected": "false",
+                      "type": "__Common__",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[0,297][1320,2120]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "id": "sl_immersive_list_show_area",
+                        "key": "sl_immersive_list_show_area",
+                        "selected": "false",
+                        "type": "Stack",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[48,619][1272,1772]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "id": "sl_immersive_for_aod_layer",
+                          "key": "sl_immersive_for_aod_layer",
+                          "selected": "false",
+                          "type": "Stack",
+                          "visible": "true"
+                         }
+                        },
+                        {
+                         "attributes": {
+                          "bounds": "[48,619][1272,1772]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "id": "sl_immersive_for_aod",
+                          "key": "sl_immersive_for_aod",
+                          "selected": "false",
+                          "type": "Stack",
+                          "visible": "true"
+                         },
+                         "children": [
+                          {
+                           "attributes": {
+                            "bounds": "[48,619][1272,1772]",
+                            "checkable": "false",
+                            "checked": "false",
+                            "clickable": "false",
+                            "enabled": "true",
+                            "selected": "false",
+                            "type": "__Common__",
+                            "visible": "true"
+                           }
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[0,297][1320,1820]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "sl_immersive_card",
+                      "key": "sl_immersive_card",
+                      "selected": "false",
+                      "type": "__Common__",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[228,1820][1092,1982]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "sl_immersive_capsule",
+                      "key": "sl_immersive_capsule",
+                      "selected": "false",
+                      "type": "__Common__",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[228,1820][1092,1982]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "id": "sl_immersive_cap_show_area",
+                        "key": "sl_immersive_cap_show_area",
+                        "selected": "false",
+                        "type": "Stack",
+                        "visible": "true"
+                       },
+                       "children": [
+                        {
+                         "attributes": {
+                          "bounds": "[228,1820][1092,1982]",
+                          "checkable": "false",
+                          "checked": "false",
+                          "clickable": "false",
+                          "enabled": "true",
+                          "id": "sl_immersive_cap_for_aod",
+                          "key": "sl_immersive_cap_for_aod",
+                          "selected": "false",
+                          "type": "Stack",
+                          "visible": "true"
+                         }
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "attributes": {
+    "bounds": "[0,0][1320,174]",
+    "checkable": "false",
+    "checked": "false",
+    "clickable": "false",
+    "enabled": "true",
+    "id": "session26",
+    "key": "session26",
+    "selected": "false",
+    "type": "WindowScene",
+    "visible": "true"
+   }
+  }
+ ]
+}

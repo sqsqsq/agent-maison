@@ -1,0 +1,922 @@
+{
+ "attributes": {
+  "bounds": "[0,0][1320,2120]"
+ },
+ "children": [
+  {
+   "attributes": {
+    "bounds": "[0,117][1320,2120]",
+    "checkable": "false",
+    "checked": "false",
+    "clickable": "false",
+    "enabled": "true",
+    "id": "session21",
+    "key": "session21",
+    "selected": "false",
+    "type": "WindowScene",
+    "visible": "true"
+   },
+   "children": [
+    {
+     "attributes": {
+      "bounds": "[0,117][1320,2120]",
+      "checkable": "false",
+      "checked": "false",
+      "clickable": "false",
+      "enabled": "true",
+      "id": "ScreenLockRootComponent",
+      "key": "ScreenLockRootComponent",
+      "selected": "false",
+      "type": "Stack",
+      "visible": "true"
+     },
+     "children": [
+      {
+       "attributes": {
+        "bounds": "[0,117][1320,2120]",
+        "checkable": "false",
+        "checked": "false",
+        "clickable": "false",
+        "enabled": "true",
+        "id": "BackGroundView",
+        "key": "BackGroundView",
+        "selected": "false",
+        "type": "Stack",
+        "visible": "true"
+       },
+       "children": [
+        {
+         "attributes": {
+          "bounds": "[0,117][1320,2120]",
+          "checkable": "false",
+          "checked": "false",
+          "clickable": "false",
+          "enabled": "true",
+          "selected": "false",
+          "type": "Column",
+          "visible": "true"
+         }
+        }
+       ]
+      },
+      {
+       "attributes": {
+        "bounds": "[0,117][1320,2120]",
+        "checkable": "false",
+        "checked": "false",
+        "clickable": "false",
+        "enabled": "true",
+        "id": "BouncerView",
+        "key": "BouncerView",
+        "selected": "false",
+        "type": "Stack",
+        "visible": "true"
+       },
+       "children": [
+        {
+         "attributes": {
+          "bounds": "[270,117][1050,2120]",
+          "checkable": "false",
+          "checked": "false",
+          "clickable": "false",
+          "enabled": "true",
+          "id": "BouncerView_Screen_Lock_Home",
+          "key": "BouncerView_Screen_Lock_Home",
+          "selected": "false",
+          "type": "Stack",
+          "visible": "true"
+         },
+         "children": [
+          {
+           "attributes": {
+            "bounds": "[270,117][1050,2120]",
+            "checkable": "false",
+            "checked": "false",
+            "clickable": "false",
+            "enabled": "true",
+            "selected": "false",
+            "type": "__Common__",
+            "visible": "true"
+           },
+           "children": [
+            {
+             "attributes": {
+              "bounds": "[270,117][1050,2120]",
+              "checkable": "false",
+              "checked": "false",
+              "clickable": "false",
+              "enabled": "true",
+              "id": "Digital_PSD_Input_Tip",
+              "key": "Digital_PSD_Input_Tip",
+              "selected": "false",
+              "type": "Flex",
+              "visible": "true"
+             },
+             "children": [
+              {
+               "attributes": {
+                "bounds": "[270,293][1050,608]",
+                "checkable": "false",
+                "checked": "false",
+                "clickable": "false",
+                "enabled": "true",
+                "selected": "false",
+                "type": "Column",
+                "visible": "true"
+               },
+               "children": [
+                {
+                 "attributes": {
+                  "bounds": "[270,293][1050,500]",
+                  "checkable": "false",
+                  "checked": "false",
+                  "clickable": "false",
+                  "enabled": "true",
+                  "selected": "false",
+                  "type": "Stack",
+                  "visible": "true"
+                 },
+                 "children": [
+                  {
+                   "attributes": {
+                    "bounds": "[270,293][1050,500]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "id": "screenLock_Text_enterPsd",
+                    "key": "screenLock_Text_enterPsd",
+                    "selected": "false",
+                    "type": "Column",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[606,293][714,401]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "InputPwdTip_Face_view",
+                      "key": "InputPwdTip_Face_view",
+                      "selected": "false",
+                      "type": "Stack",
+                      "visible": "true"
+                     },
+                     "children": [
+                      {
+                       "attributes": {
+                        "bounds": "[606,293][714,401]",
+                        "checkable": "false",
+                        "checked": "false",
+                        "clickable": "false",
+                        "enabled": "true",
+                        "selected": "false",
+                        "type": "Canvas",
+                        "visible": "true"
+                       }
+                      }
+                     ]
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[240,437][1080,500]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "未识别成功，点击此处重试",
+                      "selected": "false",
+                      "text": "未识别成功，点击此处重试",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  }
+                 ]
+                },
+                {
+                 "attributes": {
+                  "bounds": "[357,572][963,608]",
+                  "checkable": "false",
+                  "checked": "false",
+                  "clickable": "false",
+                  "enabled": "true",
+                  "selected": "false",
+                  "type": "Row",
+                  "visible": "true"
+                 },
+                 "children": [
+                  {
+                   "attributes": {
+                    "bounds": "[372,572][408,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[480,572][516,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[588,572][624,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[696,572][732,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[804,572][840,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[912,572][948,608]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "false",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Image",
+                    "visible": "true"
+                   }
+                  }
+                 ]
+                }
+               ]
+              },
+              {
+               "attributes": {
+                "bounds": "[270,836][1050,1832]",
+                "checkable": "false",
+                "checked": "false",
+                "clickable": "false",
+                "enabled": "true",
+                "selected": "false",
+                "type": "EffectComponent",
+                "visible": "true"
+               },
+               "children": [
+                {
+                 "attributes": {
+                  "bounds": "[270,836][1050,1832]",
+                  "checkable": "false",
+                  "checked": "false",
+                  "clickable": "false",
+                  "enabled": "true",
+                  "selected": "false",
+                  "type": "RelativeContainer",
+                  "visible": "true"
+                 },
+                 "children": [
+                  {
+                   "attributes": {
+                    "bounds": "[270,836][474,1040]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[270,836][474,1040]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[270,820][474,1002]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "1",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[558,836][762,1040]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[558,836][762,1040]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,957][762,1005]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "ABC",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,820][762,1002]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "2",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[846,836][1050,1040]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[846,836][1050,1040]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,957][1050,1005]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "DEF",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,820][1050,1002]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "3",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[270,1100][474,1304]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[270,1100][474,1304]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[270,1221][474,1269]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "GHI",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[270,1084][474,1266]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "4",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[558,1100][762,1304]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[558,1100][762,1304]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1221][762,1269]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "JKL",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1084][762,1266]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "5",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[846,1100][1050,1304]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[846,1100][1050,1304]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,1221][1050,1269]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "MNO",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,1084][1050,1266]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "6",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[270,1364][474,1568]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[270,1364][474,1568]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[270,1485][474,1533]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "PQRS",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[270,1348][474,1530]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "7",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[558,1364][762,1568]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[558,1364][762,1568]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1485][762,1533]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "TUV",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1348][762,1530]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "8",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[846,1364][1050,1568]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[846,1364][1050,1568]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,1485][1050,1533]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "WXYZ",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[846,1348][1050,1530]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "9",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[270,1628][474,1832]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[270,1625][474,1808]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "紧急呼叫",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[558,1628][762,1832]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[558,1628][762,1832]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "selected": "false",
+                      "type": "Row",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1756][762,1804]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "id": "numKeyBoard",
+                      "key": "numKeyBoard",
+                      "originalText": "+",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    },
+                    {
+                     "attributes": {
+                      "bounds": "[558,1612][762,1794]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "0",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  },
+                  {
+                   "attributes": {
+                    "bounds": "[846,1628][1050,1832]",
+                    "checkable": "false",
+                    "checked": "false",
+                    "clickable": "true",
+                    "enabled": "true",
+                    "selected": "false",
+                    "type": "Stack",
+                    "visible": "true"
+                   },
+                   "children": [
+                    {
+                     "attributes": {
+                      "bounds": "[846,1625][1050,1808]",
+                      "checkable": "false",
+                      "checked": "false",
+                      "clickable": "false",
+                      "enabled": "true",
+                      "originalText": "返回",
+                      "selected": "false",
+                      "type": "Text",
+                      "visible": "true"
+                     }
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "attributes": {
+    "bounds": "[0,0][1320,174]",
+    "checkable": "false",
+    "checked": "false",
+    "clickable": "false",
+    "enabled": "true",
+    "id": "session26",
+    "key": "session26",
+    "selected": "false",
+    "type": "WindowScene",
+    "visible": "true"
+   }
+  }
+ ]
+}
