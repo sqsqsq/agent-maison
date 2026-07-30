@@ -21,7 +21,12 @@ import {
   spawnManagedDevice,
   type ManagedProcessIdentity,
 } from './device-session';
-import { ensureUnlocked, type LockScreenSnapshot } from './device-unlock-helper';
+import {
+  ensureUnlocked,
+  type KeypadKey,
+  type LockScreenSnapshot,
+  type ScreenBounds,
+} from './device-unlock-helper';
 import type { DeviceReadinessDeps, DeviceReadinessInput, EmulatorFallback } from './device-readiness-gate';
 
 /** 设备侧探测/操作的统一超时——任何一条都不得成为新的无限等待 */
@@ -292,10 +297,10 @@ function sleep(ms: number): Promise<void> {
 // 诚实边界：不同 HarmonyOS 版本的锁屏组件树结构不同，下面的节点匹配需随真机校准。
 // 识别不足 10 键时上层零输入——宁可不解锁，也绝不乱点。
 
-/** 锁屏根组件标识——键位只从它的子树里取 */
+/** 锁屏根、认证子树和 PIN 容器均使用现场 UI dump 已证实的稳定 id。 */
 const LOCK_ROOT_PATTERN = /ScreenLockRootComponent/i;
-/** 系统失败惩罚期的界面标识（文案随版本而异，命中任一即视为冷却中） */
-const LOCKOUT_COOLDOWN_PATTERN = /(try again in|重试|稍后再试|已停用|disabled)/i;
+const AUTH_ROOT_PATTERN = /BouncerView/i;
+const PIN_CONTAINER_ID = 'Digital_PSD_Input_Tip';
 
 /**
  * **单次取样**：一次 dumpLayout 同时给出锁屏判定、锁屏子树内的键位、冷却期标识（P0-2）。
@@ -305,24 +310,34 @@ const LOCKOUT_COOLDOWN_PATTERN = /(try again in|重试|稍后再试|已停用|di
  * 现在键位只从**被判定为锁屏的那棵树**的锁屏根组件子树里取，非锁屏时恒为空。
  */
 export function readLockScreenSnapshot(serial: string): LockScreenSnapshot {
+  const unavailable = (): LockScreenSnapshot => ({
+    locked: undefined,
+    keypad: [],
+    cooldown: { state: 'ambiguous', ruleId: 'snapshot_unavailable' },
+  });
   const raw = dumpLayoutJson(serial);
-  if (raw === null) return { locked: undefined, keypad: [] };
+  if (raw === null) return unavailable();
   let tree: unknown;
   try {
     tree = JSON.parse(raw);
   } catch {
-    return { locked: undefined, keypad: [] };
+    return unavailable();
   }
+  return parseLockScreenTree(tree);
+}
+
+/** UI dump 的纯解析入口，供脱敏 fixture 单测复用。 */
+export function parseLockScreenTree(tree: unknown): LockScreenSnapshot {
   const lockRoot = findLockRoot(tree);
   if (!lockRoot) {
-    // 树可解析但没有锁屏根 → 明确"未锁屏"（而非"判不出"）
-    return { locked: false, keypad: [] };
+    return { locked: false, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'not_locked' } };
   }
-  const keypad = collectDigitKeys(lockRoot);
+  const lockBounds = boundsOf(lockRoot);
   return {
     locked: true,
-    keypad,
-    lockoutCooldown: LOCKOUT_COOLDOWN_PATTERN.test(JSON.stringify(lockRoot)),
+    keypad: collectDigitKeys(lockRoot),
+    cooldown: classifyCooldown(lockRoot),
+    ...(lockBounds ? { lockBounds } : {}),
   };
 }
 
@@ -372,31 +387,133 @@ function findLockRoot(node: unknown): unknown | null {
   return null;
 }
 
-/** 只在给定子树内收集 0–9 按键中心点 */
-function collectDigitKeys(root: unknown): Array<{ digit: string; x: number; y: number }> {
-  const found = new Map<string, { digit: string; x: number; y: number }>();
-  const visit = (node: unknown): void => {
-    const attrs = nodeAttrs(node);
+/** 按稳定 id 找第一个节点；只用于锁屏根内的认证/PIN 容器。 */
+function findNode(node: unknown, predicate: (attrs: Record<string, unknown>) => boolean): unknown | null {
+  const attrs = nodeAttrs(node);
+  if (attrs && predicate(attrs)) return node;
+  for (const kid of childrenOf(node)) {
+    const hit = findNode(kid, predicate);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function boundsOf(node: unknown): ScreenBounds | null {
+  const attrs = nodeAttrs(node);
+  const m = String(attrs?.bounds ?? '').match(/\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/);
+  if (!m) return null;
+  const out = { left: Number(m[1]), top: Number(m[2]), right: Number(m[3]), bottom: Number(m[4]) };
+  return out.right > out.left && out.bottom > out.top ? out : null;
+}
+
+function visibleText(node: unknown): string[] {
+  const out: string[] = [];
+  const visit = (current: unknown): void => {
+    const attrs = nodeAttrs(current);
     if (attrs) {
-      const text = String(attrs.text ?? '').trim();
-      if (/^\d$/.test(text) && !found.has(text)) {
-        // bounds 形如 "[l,t][r,b]" —— 取中心点
-        const b = String(attrs.bounds ?? '').match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
-        if (b) {
-          found.set(text, {
-            digit: text,
-            x: Math.round((Number(b[1]) + Number(b[3])) / 2),
-            y: Math.round((Number(b[2]) + Number(b[4])) / 2),
-          });
+      const identity = `${attrs.id ?? ''} ${attrs.type ?? ''} ${attrs.key ?? ''}`;
+      // 某些版本把通知挂进锁屏认证区域；仍须显式剪掉整棵通知子树。
+      if (/notification/i.test(identity)) return;
+      const hidden = attrs.visible === false || String(attrs.visible ?? '').toLowerCase() === 'false' ||
+        String(attrs.opacity ?? '') === '0';
+      if (!hidden) {
+        for (const key of ['originalText', 'text']) {
+          const value = typeof attrs[key] === 'string' ? String(attrs[key]).trim() : '';
+          if (value && !out.includes(value)) out.push(value);
         }
       }
     }
-    childrenOf(node).forEach(visit);
+    childrenOf(current).forEach(visit);
   };
-  visit(root);
-  return [...found.values()];
+  visit(node);
+  return out;
 }
 
+/** 冷却判定只看 Bouncer 认证子树，返回稳定 rule_id，永不返回命中文案。 */
+export function classifyCooldown(lockRoot: unknown): LockScreenSnapshot['cooldown'] {
+  const authRoot = findNode(lockRoot, attrs => AUTH_ROOT_PATTERN.test(`${attrs.id ?? ''} ${attrs.type ?? ''} ${attrs.key ?? ''}`));
+  if (!authRoot) return { state: 'not_cooldown', ruleId: 'auth_text_absent' };
+  const texts = visibleText(authRoot).filter(text =>
+    !/^未识别成功[，,].*(?:点击|双击).*(?:重试)/.test(text),
+  );
+  if (texts.some(text => /(?:\d+\s*(?:秒|分钟|小时)后.*(?:重试|再试)|try again in\s+\d+|temporarily disabled|设备已停用|device\s+(?:is\s+)?disabled)/i.test(text))) {
+    return { state: 'cooldown', ruleId: 'auth_cooldown_explicit' };
+  }
+  if (texts.some(text => /重试|retry|disabled|停用/i.test(text))) {
+    return { state: 'ambiguous', ruleId: 'auth_cooldown_ambiguous' };
+  }
+  return { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' };
+}
+
+/** 只在 Digital_PSD_Input_Tip 内收集 0–9；重复、缺失或几何异常一律返回空。 */
+export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: number; y: number }> {
+  const container = findNode(lockRoot, attrs => String(attrs.id ?? '') === PIN_CONTAINER_ID);
+  if (!container) return [];
+  const found = new Map<string, { digit: string; x: number; y: number }>();
+  let invalid = false;
+  const visit = (node: unknown, inheritedBounds: ScreenBounds | null): void => {
+    const attrs = nodeAttrs(node);
+    if (attrs) {
+      const hidden = attrs.visible === false || String(attrs.visible ?? '').toLowerCase() === 'false' ||
+        String(attrs.opacity ?? '') === '0';
+      if (hidden) return;
+      const ownBounds = boundsOf(node);
+      const effectiveBounds = ownBounds ?? inheritedBounds;
+      const original = String(attrs.originalText ?? '').trim();
+      const fallback = String(attrs.text ?? '').trim();
+      const digit = original || fallback;
+      if (/^\d$/.test(digit)) {
+        if (!effectiveBounds || found.has(digit)) invalid = true;
+        else found.set(digit, {
+          digit,
+          x: Math.round((effectiveBounds.left + effectiveBounds.right) / 2),
+          y: Math.round((effectiveBounds.top + effectiveBounds.bottom) / 2),
+        });
+      }
+      childrenOf(node).forEach(kid => visit(kid, effectiveBounds));
+      return;
+    }
+    childrenOf(node).forEach(kid => visit(kid, inheritedBounds));
+  };
+  visit(container, boundsOf(container));
+  const keys = [...found.values()];
+  if (invalid || keys.length !== 10 || !'0123456789'.split('').every(d => found.has(d))) return [];
+  return keypadGeometryIsSane(found) ? keys : [];
+}
+
+function keypadGeometryIsSane(keys: ReadonlyMap<string, KeypadKey>): boolean {
+  const rows = ['123', '456', '789'].map(ds => [...ds].map(d => keys.get(d)!));
+  const xValues = rows.flat().map(k => k.x).sort((a, b) => a - b);
+  const yValues = rows.flat().map(k => k.y).sort((a, b) => a - b);
+  const xSpan = xValues[xValues.length - 1] - xValues[0];
+  const ySpan = yValues[yValues.length - 1] - yValues[0];
+  const rowTolerance = Math.max(6, ySpan * 0.12);
+  const colTolerance = Math.max(6, xSpan * 0.12);
+  for (const row of rows) {
+    if (!(row[0].x < row[1].x && row[1].x < row[2].x)) return false;
+    if (Math.max(...row.map(k => k.y)) - Math.min(...row.map(k => k.y)) > rowTolerance) return false;
+  }
+  if (!(rows[0][0].y < rows[1][0].y && rows[1][0].y < rows[2][0].y)) return false;
+  for (let col = 0; col < 3; col++) {
+    const xs = rows.map(row => row[col].x);
+    if (Math.max(...xs) - Math.min(...xs) > colTolerance) return false;
+  }
+  const zero = keys.get('0')!;
+  return zero.y > Math.max(...rows[2].map(k => k.y)) && Math.abs(zero.x - rows[0][1].x) <= colTolerance;
+}
+
+/** 展示 PIN 键盘的非秘密上滑；全部坐标从当前锁屏 bounds 相对推导。 */
+export function revealLockKeypad(serial: string, bounds: ScreenBounds): void {
+  const x = Math.round((bounds.left + bounds.right) / 2);
+  const fromY = Math.round(bounds.top + (bounds.bottom - bounds.top) * 0.78);
+  const toY = Math.round(bounds.top + (bounds.bottom - bounds.top) * 0.32);
+  // 设备端 `uitest uiInput help` 定义第 5 参数为 velocity（200–40000 px/s，默认 600），不是时长。
+  const velocityPxPerSecond = 300;
+  runHdc([
+    '-t', serial, 'shell', 'uitest', 'uiInput', 'swipe',
+    String(x), String(fromY), String(x), String(toY), String(velocityPxPerSecond),
+  ], 5_000);
+}
 /** 坐标点击——argv 只出现数字坐标，**不出现 PIN 字符** */
 export function tapAt(serial: string, x: number, y: number): void {
   runHdc(['-t', serial, 'shell', 'uitest', 'uiInput', 'click', String(x), String(y)], 5_000);
@@ -508,6 +625,7 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
               deps: {
                 snapshot: readLockScreenSnapshot,
                 wake: wakeDevice,
+                reveal: revealLockKeypad,
                 tap: tapAt,
               },
             });

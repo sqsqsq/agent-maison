@@ -20,6 +20,7 @@ import {
 import { computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
 import {
   collectActionableDefects,
+  refineFailureKindWithTrustedDeviceEvidence,
   validateDeviceTestEvidenceBinding,
   type DeviceTestCollectContext,
 } from '../../scripts/goal-runner';
@@ -403,6 +404,34 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
+  t('可信根失败非空且全 test_contract → 精修 kind；混合/绑定失败均不得冒充', () => {
+    const f = setupFixture();
+    const ctx = writeEvidence(f, doc => {
+      const cases = doc.cases as Array<Record<string, unknown>>;
+      for (const item of cases) item.classification = 'test_contract';
+    });
+    const allContract = collectActionableDefects(f.root, FEATURE, 'run-1', ctx);
+    assert(allContract.trustedDeviceRootClassifications?.length === 2,
+      `应只聚合两个根失败：${JSON.stringify(allContract.trustedDeviceRootClassifications)}`);
+    assert(refineFailureKindWithTrustedDeviceEvidence(
+      'code_regression', allContract.trustedDeviceRootClassifications,
+    ) === 'test_contract', '可信非空全 test_contract 应精修');
+
+    assert(refineFailureKindWithTrustedDeviceEvidence(
+      'code_regression', ['test_contract', 'product_actionable'],
+    ) === 'code_regression', '混合分类不得精修');
+    assert(refineFailureKindWithTrustedDeviceEvidence('code_regression', []) === 'code_regression',
+      '空根集合不得精修');
+    assert(refineFailureKindWithTrustedDeviceEvidence('toolchain', ['test_contract']) === 'toolchain',
+      '只允许窄化 base code_regression');
+
+    const untrusted = collectActionableDefects(f.root, FEATURE, 'run-OTHER', ctx);
+    assert(untrusted.trustedDeviceRootClassifications === undefined,
+      '身份绑定失败不得暴露可信聚合结论');
+    assert(refineFailureKindWithTrustedDeviceEvidence(
+      'code_regression', untrusted.trustedDeviceRootClassifications,
+    ) === 'code_regression', '绑定失败不得精修');
+  });
   t('collector：target_kind 非 physical → product_actionable 也只进 unverified', () => {
     const f = setupFixture();
     const ctx = writeEvidence(f, doc => {

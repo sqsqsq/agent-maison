@@ -27,6 +27,7 @@ import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-i
 // d9e4b7c1 T2：device_test 缺陷进回修环——evidence schema/路径、权威 trace 二次核验、根/级联三分
 import {
   deviceTestEvidencePath,
+  type DeviceDefectClassification,
   type DeviceTestEvidenceDoc,
 } from './utils/device-test-evidence-shared';
 import { resolveAuthoritativeHylyreTracePath } from './utils/testing-trace-gates';
@@ -1196,6 +1197,25 @@ export interface ActionableCollectResult {
    * 算不出 → 已知 must_fix 若静默丢弃，best_effort 下 gate 只 WARN、run 直接 advance。
    */
   unverified: Array<{ screen_or_case_id: string; reason: string; source: 'visual' | 'device_test' }>;
+  /**
+   * f4b2c8e6 t1：仅在正式 device evidence 通过绑定校验后提供。test_case_flow 可用时只含
+   * 根/独立失败；flow 缺失或 triage 失败时保守包含全部 failed case，这只会阻止 all-test_contract
+   * 精修，不会造成错误精修。undefined = 无 evidence 或 evidence 不可信。
+   */
+  trustedDeviceRootClassifications?: DeviceDefectClassification[];
+}
+
+/** 只对已由 collector 验真的“非空且全 test_contract 根失败”做窄化精修。 */
+export function refineFailureKindWithTrustedDeviceEvidence(
+  base: FailureKind,
+  rootClassifications: readonly DeviceDefectClassification[] | undefined,
+): FailureKind {
+  return base === 'code_regression' &&
+    rootClassifications !== undefined &&
+    rootClassifications.length > 0 &&
+    rootClassifications.every((c) => c === 'test_contract')
+    ? 'test_contract'
+    : base;
 }
 
 /** d9e4b7c1 T2：collector 的 device_test 消费上下文（runner 内存直传，禁从事件反推） */
@@ -1335,6 +1355,7 @@ export function collectActionableDefects(
 ): ActionableCollectResult {
   const out: ActionableDefect[] = [];
   const unverified: Array<{ screen_or_case_id: string; reason: string; source?: 'visual' | 'device_test' }> = [];
+  let trustedDeviceRootClassifications: DeviceDefectClassification[] | undefined;
 
   // ---- A) visual_diff：新鲜 must_fix ----
   try {
@@ -1501,6 +1522,10 @@ export function collectActionableDefects(
             } catch {
               rootSet = null;
             }
+            const rootCases = rootSet
+              ? failedCases.filter((c) => rootSet!.has(c.case_id))
+              : failedCases;
+            trustedDeviceRootClassifications = rootCases.map((c) => c.classification);
             for (const c of failedCases) {
               if (rootSet && !rootSet.has(c.case_id)) continue; // 级联：根修好自然消失
               if (
@@ -1555,6 +1580,9 @@ export function collectActionableDefects(
   return {
     defects: out,
     unverified: unverified.map(u => ({ ...u, source: u.source ?? ('visual' as const) })),
+    ...(trustedDeviceRootClassifications !== undefined
+      ? { trustedDeviceRootClassifications }
+      : {}),
   };
 }
 
@@ -3093,7 +3121,13 @@ export function buildPhasePrompt(
       priorFailure,
       '```',
     );
-    if (priorFailureKind === 'code_regression') {
+    if (priorFailureKind === 'test_contract') {
+      parts.push(
+        '',
+        '**This is a TEST-CONTRACT failure, not a product-code regression.**',
+        'Do NOT revert or modify application source to satisfy it. Inspect the testing selector / ui-spec anchor contract, regenerate or correct test-side artifacts as allowed by the testing phase, then re-run the testing harness.',
+      );
+    } else if (priorFailureKind === 'code_regression') {
       parts.push(
         '',
         '**These failures may have been introduced by a prior attempt in this same goal run.** Before making new changes:',
@@ -4903,6 +4937,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //   ② events 五态窗口（--resume 跨进程，见 deriveContinuationFromEvents）；
         //   ③ checkpoint timed_out（仅用于把 ② 的 unknown 升级为 agent_timeout——旧日志
         //      end 事件可能缺 timed_out 标记）。
+        const persistedContinuation = deriveContinuationFromEvents(
+          loadAuthoritativeEvents(eventsPath),
+          phase,
+        );
         let continuation: { cause: ContinuationCause; process_resumed: boolean } | null = null;
         if (priorAttemptApiError) {
           continuation = { cause: 'transient_api_error', process_resumed: false };
@@ -4917,9 +4955,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // checkpoint 会盖过"attempt B 正常结束后崩于 harness"的 unknown 结论，违反
           // 五态表"最新 attempt 优先/end 正常无 verdict → unknown"。events 五态窗口是
           // 唯一权威（end 事件自带 timed_out，无需 checkpoint 佐证）。
-          const derived = deriveContinuationFromEvents(loadAuthoritativeEvents(eventsPath), phase);
-          if (derived) {
-            continuation = { cause: derived.cause, process_resumed: true };
+          if (persistedContinuation) {
+            continuation = { cause: persistedContinuation.cause, process_resumed: true };
           }
         }
         const isPhaseContinuation = continuation !== null;
@@ -4943,6 +4980,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // "revert first" 指导随之错向）。现在同进程与 --resume 跨进程同一来源，kind 不再丢。
         if (continuation?.cause === 'transient_api_error') priorFailureKind = 'transient_api_error';
         else if (continuation?.cause === 'agent_timeout') priorFailureKind = 'agent_timeout';
+        else if (
+          continuation?.cause === 'content_retry' &&
+          persistedContinuation?.failureKind === 'test_contract'
+        ) {
+          // f4b2c8e6 t1：summary 不含 device evidence；同进程 retry / --resume 都从最新
+          // attempt 的权威 phase_verdict 恢复精修 kind，防 prompt 退回 code_regression。
+          priorFailureKind = 'test_contract';
+          // 正式 device gate 可在 harness summary=PASS 后由 collector 判出 test_contract；
+          // 此时 summary 没有 FAIL 正文，仍须给 prompt 一个固定、脱敏的上下文入口。
+          priorFailure ??= 'Previous testing attempt has trusted device evidence classified as test_contract.';
+        }
 
         // P1-B/P2：上轮被基建原因打断（超时/断流/进程崩死）而非内容失败时，把已落盘
         // partial 产物 + 已检视文件 skip-list 回喂，让重试续作而非从零重做探索。
@@ -6293,7 +6341,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // E4（案B chrys 实录：exit=3221225786 两次被误判 code_regression/agent_no_output）：
         // 用户手动 Ctrl+C，不是任何一种"失败"信号，最高优先单独识别。
         const operatorInterrupt = isOperatorInterruptSignal(invoke.exitCode, invoke.signal);
-        const failureKind = classifyFailureKind(summary, manifest.dependency_policy, {
+        const baseFailureKind = classifyFailureKind(summary, manifest.dependency_policy, {
           agentTimedOut: invoke.timed_out === true,
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
@@ -6305,21 +6353,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // P0-5：integrity subtype 多值收集（blocking_class 过滤 + classification 通道），
         // 透传 phase_verdict / halt guidance / outcome。
         const integritySubtypes =
-          failureKind === 'framework_integrity_block' ? extractIntegritySubtypes(summary) : [];
-        // P0-B §七.3：agent_timeout 无普通 blocker 时用专用 signature（agent_timeout@<phase>），
-        // 否则空 signature 被 shouldHaltNoProgress 短路、零进展熔断恒不触发。
-        const currentBlockerSignature = buildEffectiveBlockerSignature(
-          summary,
-          failureKind,
-          phase,
-        );
+          baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(summary) : [];
         const affectedFiles = extractDeterministicAffectedFiles(summary);
         // P0-B：agent_timeout 无 deterministic affected_files 时监控 phase 主产物
         // （spec.md 等 + context-exploration.md）——产物内容变化=有进展，guard 放行续作。
         const watchedFiles =
           affectedFiles.length > 0
             ? affectedFiles
-            : failureKind === 'agent_timeout'
+            : baseFailureKind === 'agent_timeout'
               ? timeoutWatchArtifactPaths(projectRoot, manifest.feature, phase)
               : [];
         const currentArtifactSnapshot =
@@ -6346,6 +6387,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
               })
             : { defects: [], unverified: [] };
         const actionableDefects = actionableResult.defects;
+        const failureKind = refineFailureKindWithTrustedDeviceEvidence(
+          baseFailureKind,
+          actionableResult.trustedDeviceRootClassifications,
+        );
+        // P0-B §七.3：签名必须使用 evidence 精修后的最终 kind。否则 phase_verdict 虽然
+        // 是 test_contract，blocker_signature / 熔断仍会残留 code_regression。
+        const currentBlockerSignature = buildEffectiveBlockerSignature(
+          summary,
+          failureKind,
+          phase,
+        );
         const envBlocked = meta.failure_kind === 'toolchain' || meta.failure_kind === 'capture' ||
           meta.blocking_class === 'externalBlocked';
         const hasActionable = actionableDefects.length > 0 && !envBlocked;

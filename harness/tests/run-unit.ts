@@ -116,6 +116,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'device-credential-store', modulePath: './unit/device-credential-store.unit.test' },
   // openspec device-readiness-and-completion t6：解锁执行器（禁枚举/键位不全零输入/口令不泄露）
   { id: 'device-unlock-helper', modulePath: './unit/device-unlock-helper.unit.test' },
+  { id: 'device-lockscreen-parser', modulePath: './unit/device-lockscreen-parser.unit.test' },
   // openspec device-readiness-and-completion t6：策略检查/登记 CLI（非 TTY 拒绝登记）
   { id: 'device-policy-cli', modulePath: './unit/device-policy-cli.unit.test' },
   // openspec device-readiness-and-completion t6：运行期再次锁屏的恢复（同 serial、一次、禁热切）
@@ -198,6 +199,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
   { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },
+  { id: 'patch-openspec-artifacts', modulePath: './unit/patch-openspec-artifacts.unit.test' },
   { id: 'goal-closure-gate', modulePath: './unit/goal-closure-gate.unit.test' },
   { id: 'testing-trace-gates', modulePath: './unit/testing-trace-gates.unit.test' },
   { id: 'goal-progress', modulePath: './unit/goal-progress.unit.test' },

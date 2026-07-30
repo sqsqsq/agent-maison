@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "purpose": "f4b2c8e6 OpenSpec task 2.3 physical-host readiness-gate acceptance",
+  "started_at": "2026-07-30T06:45:56.317Z",
+  "finished_at": "2026-07-30T06:46:14.015Z",
+  "project_root": "D:/1.code/SimulatedWalletForHmos",
+  "framework_root": "D:\\1.code\\agent-maison",
+  "serial": "3UJ0225321000395",
+  "precondition": "hdc power-shell suspend completed immediately before production gate invocation",
+  "invocation": "runDeviceReadinessGate(buildDeviceReadinessInput(hostRoot))",
+  "credential_material_recorded": false,
+  "source_sha256": {
+    "harness/scripts/utils/device-readiness-gate.ts": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a",
+    "harness/scripts/utils/device-readiness-deps.ts": "a80f72383700737b04cbf5b0d03408526bb80514dd7baad833c8eeb325e85234",
+    "harness/scripts/utils/device-unlock-helper.ts": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4"
+  },
+  "result": {
+    "passed": true,
+    "event_types": [
+      "device_unlock_attempt",
+      "device_ready"
+    ],
+    "unlock_outcome": "succeeded",
+    "device_ready": true,
+    "target_kind": "physical",
+    "serial_unchanged": true
+  }
+}

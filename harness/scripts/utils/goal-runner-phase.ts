@@ -878,7 +878,7 @@ export type ContinuationCause =
 export function deriveContinuationFromEvents(
   events: GoalRunEvent[],
   phase: string,
-): { cause: ContinuationCause } | null {
+): { cause: ContinuationCause; failureKind?: string } | null {
   let startIdx = -1;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
@@ -909,9 +909,9 @@ export function deriveContinuationFromEvents(
     if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
     if (e.invoke_id && end.invoke_id && e.invoke_id !== end.invoke_id) continue;
     const fk = e.failure_kind_classified;
-    if (fk === 'agent_timeout') return { cause: 'agent_timeout' };
-    if (fk === 'transient_api_error') return { cause: 'transient_api_error' };
-    return { cause: 'content_retry' };
+    if (fk === 'agent_timeout') return { cause: 'agent_timeout', failureKind: fk };
+    if (fk === 'transient_api_error') return { cause: 'transient_api_error', failureKind: fk };
+    return { cause: 'content_retry', ...(fk ? { failureKind: fk } : {}) };
   }
   return end.timed_out === true ? { cause: 'agent_timeout' } : { cause: 'unknown' };
 }

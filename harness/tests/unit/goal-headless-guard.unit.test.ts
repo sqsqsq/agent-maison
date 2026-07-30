@@ -843,6 +843,23 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'buildPhasePrompt: test_contract 只指导修测试契约，不含产品源码回滚/修改话术',
+      run: () => {
+        const prompt = buildPhasePrompt(
+          MINIMAL_MANIFEST,
+          FRAMEWORK_ROOT,
+          'testing',
+          FRAMEWORK_ROOT,
+          [],
+          'Verdict: FAIL\n- device_test_run',
+          'test_contract',
+        );
+        assert(prompt.includes('TEST-CONTRACT failure'), '须有明确 test_contract 分支');
+        assert(prompt.includes('Do NOT revert or modify application source'), '须明确禁止改产品源码');
+        assert(!prompt.includes('revert that change first'), '不得落入 code_regression 回滚话术');
+        assert(!prompt.includes('minimal fix'), '不得注入产品代码最小修复话术');
+      },
+    },    {
       name: 'buildPhasePrompt: code_regression priorFailure keeps revert-first',
       run: () => {
         const prior = 'Verdict: FAIL\n- ut_compile';
@@ -1050,6 +1067,9 @@ export function runAll(): UnitCaseResult[] {
         assert(deriveContinuationFromEvents(mk('agent_timeout'), 'spec')?.cause === 'agent_timeout', 'timeout verdict');
         assert(deriveContinuationFromEvents(mk('transient_api_error'), 'spec')?.cause === 'transient_api_error', 'transient verdict');
         assert(deriveContinuationFromEvents(mk('code_regression'), 'spec')?.cause === 'content_retry', 'content verdict');
+        const persisted = deriveContinuationFromEvents(mk('test_contract'), 'spec');
+        assert(persisted?.cause === 'content_retry' && persisted.failureKind === 'test_contract',
+          '同进程 retry / --resume 的共同 events 恢复源必须保留 test_contract');
       },
     },
     {

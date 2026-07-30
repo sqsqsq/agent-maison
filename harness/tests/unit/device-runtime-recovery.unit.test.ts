@@ -56,9 +56,12 @@ function depsWith(lockSeq: Array<boolean | undefined>, taps: number[] = []): Unl
         keypad: locked === true
           ? '0123456789'.split('').map((d, k) => ({ digit: d, x: k, y: k }))
           : [],
+        cooldown: { state: 'not_cooldown', ruleId: 'test_clear' },
+        lockBounds: { left: 0, top: 0, right: 100, bottom: 200 },
       };
     },
     wake: () => {},
+    reveal: () => {},
     tap: (_s, x) => { taps.push(x); },
   };
 }

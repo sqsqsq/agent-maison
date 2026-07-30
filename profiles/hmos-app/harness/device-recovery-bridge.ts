@@ -70,6 +70,7 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
       deps: {
         snapshot: deps.readLockScreenSnapshot,
         wake: deps.wakeDevice,
+        reveal: deps.revealLockKeypad,
         tap: deps.tapAt,
       },
     });

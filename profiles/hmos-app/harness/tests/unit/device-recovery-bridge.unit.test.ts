@@ -159,8 +159,9 @@ export function runAll(): UnitCaseResult[] {
       serial: 'PHONE-B',
       credentialRef: null,
       deps: {
-        snapshot: () => ({ locked: true, keypad: [] }),
+        snapshot: () => ({ locked: true, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'test_clear' } }),
         wake: () => {},
+        reveal: () => {},
         tap: () => {},
       },
     });
@@ -172,8 +173,9 @@ export function runAll(): UnitCaseResult[] {
       serial: 'PHONE-B',
       credentialRef: null,
       deps: {
-        snapshot: () => ({ locked: undefined, keypad: [] }),
+        snapshot: () => ({ locked: undefined, keypad: [], cooldown: { state: 'ambiguous', ruleId: 'test_unknown' } }),
         wake: () => {},
+        reveal: () => {},
         tap: () => {},
       },
     });

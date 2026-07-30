@@ -64,17 +64,19 @@ interface Bench {
   deps: UnlockDeps;
   taps: Array<{ x: number; y: number }>;
   wakes: number;
+  reveals: number;
 }
 function bench(
   over: {
     lockSeq?: Array<boolean | undefined>;
     keypad?: KeypadKey[];
-    cooldown?: boolean;
+    cooldown?: 'cooldown' | 'not_cooldown' | 'ambiguous';
     tap?: UnlockDeps['tap'];
   } = {},
 ): Bench {
   const taps: Array<{ x: number; y: number }> = [];
   let wakes = 0;
+  let reveals = 0;
   const seq = over.lockSeq;
   let i = 0;
   const deps: UnlockDeps = {
@@ -84,13 +86,15 @@ function bench(
       return {
         locked,
         keypad: locked === true ? (over.keypad ?? FULL_KEYPAD) : [],
-        lockoutCooldown: over.cooldown,
+        cooldown: { state: over.cooldown ?? 'not_cooldown', ruleId: 'test_rule' },
+        lockBounds: { left: 0, top: 0, right: 1000, bottom: 2000 },
       };
     },
     wake: () => { wakes += 1; },
+    reveal: () => { reveals += 1; },
     tap: over.tap ?? ((_s, x, y) => { taps.push({ x, y }); }),
   };
-  return { deps, taps, get wakes() { return wakes; } } as Bench;
+  return { deps, taps, get wakes() { return wakes; }, get reveals() { return reveals; } } as Bench;
 }
 
 export function runAll(): UnitCaseResult[] {
@@ -124,7 +128,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, '键位不全 → **零输入**（对着事故里的固定分辨率坐标表）', () => {
     const p = providerOf();
     const partial = FULL_KEYPAD.slice(0, 7); // 只识别到 7 个键
-    const b = bench({ keypad: partial, lockSeq: [true, false] });
+    const b = bench({ keypad: partial, lockSeq: [true, true] });
     const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
     assertEq(r.ok, false, '键位不全须失败');
     assertEq(p.clickCount, 0, '**零输入**——绝不用固定坐标兜底');
@@ -132,9 +136,51 @@ export function runAll(): UnitCaseResult[] {
     assertEq(p.inspect(ID).state, 'ready', '未输入则凭据保持可用，不得被误烧');
   });
 
+  run(results, 'wake 后无键盘 → reveal 恰好一次 → 新快照完整后才允许输入', () => {
+    const p = providerOf();
+    let snapshots = 0;
+    let reveals = 0;
+    const deps: UnlockDeps = {
+      wake: () => {},
+      reveal: () => { reveals += 1; },
+      tap: () => {},
+      snapshot: () => {
+        snapshots += 1;
+        if (snapshots === 1) {
+          return {
+            locked: true,
+            keypad: [],
+            cooldown: { state: 'not_cooldown', ruleId: 'test_clear' },
+            lockBounds: { left: 0, top: 0, right: 1080, bottom: 2400 },
+          };
+        }
+        return {
+          locked: snapshots === 2,
+          keypad: snapshots === 2 ? FULL_KEYPAD : [],
+          cooldown: { state: 'not_cooldown', ruleId: 'test_clear' },
+          lockBounds: { left: 0, top: 0, right: 1080, bottom: 2400 },
+        };
+      },
+    };
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps, provider: p });
+    assertEq(r.ok, true, `应在 reveal 后解锁：${r.note}`);
+    assertEq(reveals, 1, '非秘密 reveal 必须恰好一次');
+    assertEq(p.clickCount, 1, '只有第二帧完整键盘后才可进入一次凭据临界区');
+  });
+
+  run(results, 'ambiguous 冷却只输出 rule_id，不泄露 UI/通知原文且零输入', () => {
+    const p = providerOf();
+    const sentinel = 'PRIVATE_NOTIFICATION_retry_disabled';
+    const b = bench({ lockSeq: [true], cooldown: 'ambiguous' });
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
+    assertEq(r.ok, false, 'ambiguous 必须保守拒绝');
+    assertEq(p.clickCount, 0, 'ambiguous 必须零输入');
+    assert(!JSON.stringify(r).includes(sentinel), 'note 不得携带 UI 原文');
+    assert(r.note.includes('test_rule'), `note 只应给稳定 rule_id：${r.note}`);
+  });
   run(results, '锁定冷却期 → 零输入（再输只会加重系统惩罚）', () => {
     const p = providerOf();
-    const b = bench({ lockSeq: [true, false], cooldown: true });
+    const b = bench({ lockSeq: [true, false], cooldown: 'cooldown' });
     const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
     assertEq(r.ok, false, '冷却期须拒绝');
     assertEq(p.clickCount, 0, '零输入');

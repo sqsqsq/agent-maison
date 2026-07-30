@@ -44,20 +44,28 @@ export interface KeypadKey {
  *
  * 因此键位**必须**取自被判定为锁屏的那一棵树，且只取锁屏根组件子树内的按键。
  */
+export type LockCooldownState = 'cooldown' | 'not_cooldown' | 'ambiguous';
+
+export interface ScreenBounds { left: number; top: number; right: number; bottom: number }
+
 export interface LockScreenSnapshot {
   /** 该快照是否显示锁屏；判不出 → undefined（不猜） */
   locked: boolean | undefined;
-  /** **锁屏子树内**的数字键位；非锁屏时应为空 */
+  /** **锁屏 PIN 容器内**的数字键位；非锁屏时应为空 */
   keypad: KeypadKey[];
-  /** 系统是否处于失败惩罚冷却期（此时任何输入都会加重惩罚）；判不出 → undefined */
-  lockoutCooldown?: boolean;
+  /** 冷却三态与稳定规则号；不得携带任何 UI 原文。 */
+  cooldown: { state: LockCooldownState; ruleId: string };
+  /** reveal gesture 的相对坐标来源；缺失时不使用固定分辨率兜底。 */
+  lockBounds?: ScreenBounds;
 }
 
 export interface UnlockDeps {
-  /** 取**一份**锁屏 UI 快照：锁屏判定与键位同源，杜绝两次 dump 之间的界面漂移 */
+  /** 取**一份**锁屏 UI 快照：锁屏判定、键位、冷却同源 */
   snapshot(serial: string): LockScreenSnapshot;
   /** 非秘密唤醒 */
   wake(serial: string): void;
+  /** 仅展示 PIN 键盘的非秘密上滑；坐标由当前锁屏 bounds 推导。 */
+  reveal(serial: string, bounds: ScreenBounds): void;
   /** 点击坐标（argv 只出现数字坐标，**不出现 PIN 字符**） */
   tap(serial: string, x: number, y: number): void;
 }
@@ -78,7 +86,7 @@ export interface UnlockInput {
  * 确保设备已解锁。返回值**只有成败**，不含任何凭据信息。
  *
  * 顺序（与 gate 的 ensureDeviceReady 共用同一语义）：
- *   读 CM 状态放行判定 → wake → **一次**取样 → 冷却检查 → 键位完整性 →
+ *   读 CM 状态放行判定 → wake → 首帧取样 → 必要时 reveal + 二帧取样 → 冷却/键位校验 →
  *   claim 抢占并点击（同一 helper 进程内）→ **重新取样**复验 → commit / burn
  */
 export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
@@ -99,30 +107,50 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
   // 先唤醒再取快照：息屏时 UI tree 不完整，先探测必然判不出（P1）
   deps.wake(serial);
 
-  // **一次**取样：锁屏判定与键位同源（P0-2）
-  const snap = deps.snapshot(serial);
+  // 首帧只用于确认锁屏/冷却/键盘状态；时钟帧不会被误当成 PIN 键盘。
+  let snap = deps.snapshot(serial);
   if (snap.locked === undefined) {
-    return { ok: false, note: '无法判定锁屏状态', attempted: false };
+    return { ok: false, note: 'unlock_blocked:lock_state_unknown（零输入）', attempted: false };
   }
-  // 可能在此期间已被人工解锁 → 无需输入直接成功
   if (!snap.locked) return { ok: true, note: '已解锁（无需输入）' };
 
-  // 锁定冷却期内输入只会加重惩罚 → 零输入
-  if (snap.lockoutCooldown === true) {
-    return { ok: false, note: '设备处于锁定冷却期——零输入', attempted: false };
-  }
+  const cooldownBlocked = (s: LockScreenSnapshot): UnlockOutcome | null => {
+    if (s.cooldown.state === 'cooldown') {
+      return { ok: false, note: `unlock_blocked:${s.cooldown.ruleId}（冷却期，零输入）`, attempted: false };
+    }
+    if (s.cooldown.state === 'ambiguous') {
+      return { ok: false, note: `unlock_blocked:${s.cooldown.ruleId}（冷却状态不明确，零输入）`, attempted: false };
+    }
+    return null;
+  };
+  const initialCooldown = cooldownBlocked(snap);
+  if (initialCooldown) return initialCooldown;
 
-  // 键位取自**同一份被判定为锁屏的快照**；不全即放弃（不得用固定分辨率坐标兜底）
-  const byDigit = new Map(snap.keypad.map(k => [k.digit, k]));
-  const complete = '0123456789'.split('').every(d => byDigit.has(d));
-  if (!complete) {
-    return {
-      ok: false,
-      note: `未能从锁屏 UI 完整识别 0–9 键位（识别到 ${byDigit.size} 个）——零输入`,
-      attempted: false,
-    };
-  }
+  const completeKeypad = (s: LockScreenSnapshot): Map<string, KeypadKey> | null => {
+    const map = new Map(s.keypad.map(k => [k.digit, k]));
+    return s.keypad.length === 10 && map.size === 10 &&
+      '0123456789'.split('').every(d => map.has(d)) ? map : null;
+  };
 
+  let byDigit = completeKeypad(snap);
+  if (!byDigit) {
+    if (!snap.lockBounds) {
+      return { ok: false, note: 'unlock_blocked:lock_bounds_missing（无法安全展示键盘，零输入）', attempted: false };
+    }
+    // 只做一次非秘密状态迁移，不 sleep、不盲重试、更不读取凭据。
+    deps.reveal(serial, snap.lockBounds);
+    snap = deps.snapshot(serial);
+    if (snap.locked === undefined) {
+      return { ok: false, note: 'unlock_blocked:post_reveal_state_unknown（零输入）', attempted: false };
+    }
+    if (!snap.locked) return { ok: true, note: '已解锁（reveal 后无需输入）' };
+    const postRevealCooldown = cooldownBlocked(snap);
+    if (postRevealCooldown) return postRevealCooldown;
+    byDigit = completeKeypad(snap);
+    if (!byDigit) {
+      return { ok: false, note: 'unlock_blocked:keypad_incomplete_after_reveal（零输入）', attempted: false };
+    }
+  }
   // 抢占 + 点击一体：CredWrite 覆盖 + 读回验 nonce 即互斥，赢家才会真的点。
   // 写入 claim 这一步同时充当"输入第一个数字前的 durable commit"——它就在 OS 凭据库里，
   // 且崩溃残留会让该版本永久停在 in_flight（等价 disabled），不可靠删文件复位。

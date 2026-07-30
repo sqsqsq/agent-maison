@@ -6,6 +6,7 @@
 import {
   deviceEnvFor,
   ensureDeviceReady,
+  runDeviceReadinessGate,
   type DeviceReadinessDeps,
   type DeviceReadinessResult,
   type EmulatorFallback,
@@ -497,6 +498,34 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(refused.state, 'BLOCKED', JSON.stringify(refused));
     if (refused.state === 'BLOCKED') {
       assertEq(refused.orphanManaged?.pid, orphan.pid, '须把旧实例 identity 交给上层');
+    }
+  });
+
+  await run(results, '解锁成功的全部事件/返回投影只含固定 note，并产生 succeeded + device_ready', async () => {
+    const locks = [true, false];
+    const events: Array<Record<string, unknown>> = [];
+    const decision = await runDeviceReadinessGate({
+      phase: 'testing', retries: 0, sessionId: 'privacy-test',
+      input: {
+        configuredSerial: 'phone-1', credentialRef: 'opaque-ref', emulatorFallback: 'disabled',
+        deps: {
+          listTargets: () => ['phone-1'],
+          isLocked: () => locks.shift(),
+          wake: () => {},
+          knownEmulatorSerials: () => [],
+          attestPhysical: () => true,
+          unlockWithCredential: () => ({ ok: true, note: 'unlock_succeeded:credential_verified' }),
+        },
+      },
+      emitEvent: event => events.push(event),
+    });
+    assert(decision.outcome === undefined, '成功后应 READY');
+    assert(events.some(e => e.type === 'device_unlock_attempt' && e.outcome === 'succeeded'),
+      `须有 succeeded 审计事件：${JSON.stringify(events)}`);
+    assert(events.some(e => e.type === 'device_ready'), '须有 device_ready');
+    const projected = JSON.stringify({ events, notes: decision.notes });
+    for (const raw of ['未识别成功', '点击此处重试', 'PRIVATE_NOTICE']) {
+      assert(!projected.includes(raw), `所有投影均不得含 UI/通知原文：${projected}`);
     }
   });
 

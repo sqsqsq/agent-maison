@@ -204,6 +204,7 @@ interface RunProbe {
   /** device-readiness t3：就绪门被调用的 phase 序列 */
   deviceGatePhases: string[];
   codingPrompts: string[];
+  testingPrompts: string[];
   /** d9e4b7c1 T1：testing 各 attempt 收到的 extraEnv（断言冻结配置注入三方同源） */
   testingExtraEnvs: Array<Record<string, string>>;
   /** d9e4b7c1 T2（v13 缝扩展）：gate harness 各 phase 收到的注入 env */
@@ -244,6 +245,7 @@ async function runChain(
   /** device-readiness t3：就绪门实际被调用的 phase 序列（断言"只在需设备 phase 执行"） */
   const deviceGatePhases: string[] = [];
   const codingPrompts: string[] = [];
+  const testingPrompts: string[] = [];
   const testingExtraEnvs: Array<Record<string, string>> = [];
   const harnessDeviceEnvs: Array<{ phase: string; env: Record<string, string> | undefined }> = [];
   const attempts = new Map<string, number>();
@@ -266,6 +268,7 @@ async function runChain(
       const pl = plan as { argv?: string[]; stdin?: string };
       const prompt = [...(pl.argv ?? []), pl.stdin ?? ''].join('\n');
       if (phase === 'coding') codingPrompts.push(prompt);
+      if (phase === 'testing') testingPrompts.push(prompt);
       const extraEnv = (o as { extraEnv?: Record<string, string> })?.extraEnv ?? {};
       if (phase === 'testing') testingExtraEnvs.push(extraEnv);
       const ctx: AgentCtx = {
@@ -402,7 +405,7 @@ async function runChain(
           )
         : '';
     return {
-      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, testingExtraEnvs,
+      invokedPhases, harnessPhases, deviceGatePhases, codingPrompts, testingPrompts, testingExtraEnvs,
       harnessDeviceEnvs,
       exitCode, root, reportDir,
       events: readEvents(reportDir),
@@ -1350,6 +1353,85 @@ test('T2-2 全链回修：正式 gate 写 evidence（product_actionable×physica
     assert(secondCoding.includes('hc_bank_row_cmb') && secondCoding.includes('device_test'),
       '回修 coding prompt 须含 device_test 缺陷与目标锚点');
     assertRunReachedEnd(probe, 'T2-2');
+  });
+});
+
+test('f4 t1 E2E：同进程 retry 与 --resume 均从 phase_verdict 恢复 test_contract prompt', async () => {
+  await withCleanDeviceTestEnv(async () => {
+    const { root } = setupHost();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { deviceTestEvidencePath } = require('../../scripts/utils/device-test-evidence-shared') as
+      typeof import('../../scripts/utils/device-test-evidence-shared');
+    writeFile(root, `doc/features/${FEATURE}/testing/test-plan.md`, [
+      '# 测试计划', '', '```yaml', 'test_case_flow:',
+      '  TC-006: { precondition: { kind: fresh_app, reset: restart } }',
+      '```', '',
+    ].join('\n'));
+    const reportsDir = path.join(root, 'doc/features', FEATURE, 'testing', 'reports');
+    const runDirAbs = path.join(reportsDir, '20260101T000000Z', 'hylyre');
+    fs.mkdirSync(runDirAbs, { recursive: true });
+    fs.writeFileSync(path.join(runDirAbs, 'test-plan.hylyre.md'), [
+      '# 派生计划', '', '## 测试用例清单', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |',
+      '|---|---|---|---|---|---|---|',
+      '| TC-006 | 契约失配 | 冷启动 | {"touch":{"by_id":"missing_anchor"}} | 正确 | P0 | AC-1 |',
+    ].join('\n'), 'utf-8');
+    const tracePath = path.join(runDirAbs, 'trace.json');
+    const writeContractEvidence = (runId: string, attemptId: string): void => {
+      fs.writeFileSync(tracePath, JSON.stringify({
+        schema_version: '0.2-p4', feature: FEATURE, phase: 'testing', outcome: 'partial',
+        cases: [{ id: 'TC-006', status: '失败', notes: 'selector contract mismatch' }],
+      }), 'utf-8');
+      fs.writeFileSync(path.join(reportsDir, 'device-test-run.meta.json'), JSON.stringify({
+        run_started_at: new Date().toISOString(), run_ended_at: new Date().toISOString(),
+      }), 'utf-8');
+      fs.writeFileSync(deviceTestEvidencePath(reportsDir), JSON.stringify({
+        schema_version: '1.0', goal_run_id: runId, attempt_id: attemptId,
+        device_target: { serial: 'fake-device', target_kind: 'physical', session_id: null },
+        hap_sha256_full: 'f'.repeat(64), install_executed: true, install_ok: true,
+        trace_path: path.resolve(tracePath), run_failure_kind: null,
+        written_at: new Date().toISOString(),
+        cases: [{
+          case_id: 'TC-006', status: '失败', classification: 'test_contract',
+          failing_step: { index: 0, action: 'touch', selector_kind: 'by_id', selector: 'missing_anchor' },
+          expected_screen: 'add_card_home_collapsed', evidence: {},
+        }],
+      }, null, 2), 'utf-8');
+    };
+    const opts = {
+      onTesting: ({ root: r }: AgentCtx) => writeCleanTesting(r),
+      onTestingHarness: ({ runId, attemptId }: { runId: string; attemptId: string }) =>
+        writeContractEvidence(runId, attemptId),
+    };
+    const first = await runChain(root, opts);
+    const verdicts = first.events.filter(e => e.type === 'phase_verdict' && e.phase === 'testing');
+    assert(verdicts.length >= 2 && verdicts.every(e => e.failure_kind_classified === 'test_contract'),
+      `每轮权威 verdict 均须持久化 test_contract：${JSON.stringify(verdicts)}`);
+    assert(!first.events.some(e => e.type === 'backtrack_to_coding' || e.type === 'phase_backtrack_started'),
+      'test_contract 不得回退 coding');
+    assert(first.testingPrompts.slice(1).every(p => p.includes('TEST-CONTRACT failure') &&
+      !p.includes('revert that change first')), '同进程 retry prompt 必须从上一 verdict 恢复 test_contract');
+
+    const runId = path.basename(first.reportDir);
+    // cooldown 是独立硬防线；模拟 5 分钟后的合法进程重启（与 R-8 同口径）。
+    const evPath = path.join(first.reportDir, 'events.jsonl');
+    const aged = fs.readFileSync(evPath, 'utf-8').split('\n').map(line => {
+      if (!line.trim()) return line;
+      try {
+        const event = JSON.parse(line) as { type?: string; ts?: string };
+        if (event.type === 'run_end' && event.ts) {
+          event.ts = new Date(Date.parse(event.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(event);
+        }
+      } catch { /* keep original */ }
+      return line;
+    });
+    fs.writeFileSync(evPath, aged.join('\n'), 'utf-8');
+    const resumed = await runChain(root, { ...opts, resume: runId, forceResume: true });
+    assert(resumed.testingPrompts.length > 0, 'resume 须重入 testing');
+    assert(resumed.testingPrompts[0].includes('TEST-CONTRACT failure') &&
+      !resumed.testingPrompts[0].includes('revert that change first'),
+      '--resume 首个 prompt 必须从 events 最新有效 verdict 恢复 test_contract');
   });
 });
 

@@ -17,6 +17,9 @@ export type FailureKind =
   | 'toolchain'
   | 'capture'
   | 'visual_gap'
+  /** f4b2c8e6 t1：可信真机 evidence 的根失败非空且全部为 test_contract。
+   * 只修 goal 级归因/提示，不驱动产品代码回退。 */
+  | 'test_contract'
   /** P0-4(d)（plan 7c4f2e9b）：spec 捕获完整性缺口——独立命名防误标 code_regression；
    * 主出口=actionability 聚合层（全 human_only 即时求人），不入 SIGNATURE_HALT_KINDS。 */
   | 'spec_capture_gap'
