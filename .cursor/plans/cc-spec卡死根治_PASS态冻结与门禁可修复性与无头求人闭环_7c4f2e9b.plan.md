@@ -174,6 +174,7 @@ todos:
       插行）、MiniMax init 事件行、账本 deferred 行、framework foreign file 清单差异、
       P0-4 e2e B 合成夹具（见 p04）。原始归档只作 provenance 不进测试依赖。
       【验收】npm run openspec:validate 绿；后续各 todo 的 unit/e2e 全部只引用仓内 fixture。
+    status: completed
   - id: p01-canary-ndjson-normalization
     content: >
       P0-1 claude envelope 共享解析模块 + 两条 canary 判卷路径归一（codex 一轮 P0#1 +
@@ -206,6 +207,7 @@ todos:
       二轮澄清#2）：Claude 宿主（真视觉）→ 判卷通过并签发 capability receipt；MiniMax
       宿主 → 归一后仍判真盲、落 E3 盲档 WARN 路径（**不以「external BLOCKER 复现」为
       P0-1 验收**）。
+    status: completed
   - id: p02-uispec-schema-strict-didyoumean
     content: >
       P0-2 ui-spec schema 严格化 + did-you-mean + 自误导文案/路径全修。
@@ -229,6 +231,7 @@ todos:
       【验收】unit：must_have 键→FAIL+did-you-mean；componentNode 未知键→FAIL；全部存量
       合法键→PASS；三方漂移测试绿；报错 affected_files 均为 spec/ 路径。fixture 回归：
       i3 错键终态 ui-spec 喂检查→同时报出未知键+正名指引+正确路径（事故三重误导全消）。
+    status: completed
   - id: p03-pass-freeze-closure-only
     content: >
       P0-3 PASS 态冻结（HMAC 锚定的 runner-owned epoch）+ 闭环-only attempt 硬保护。
@@ -347,6 +350,7 @@ todos:
       不影响快照元数据（命名空间隔离）。e2e 回放 A（P0-0 fixture）：
       i2 场景（PASS+timeout）→ 冻结 → closure-only 补 receipt → phase 以 i2 产物推进，
       i3 式重写在**未配 HMAC 的默认环境**下也被同进程恢复。
+    status: completed
   - id: p04-actionability-await-human
     content: >
       P0-4 门禁结构化 actionability 主导的无头求人闭环（codex 一轮 P0#7：账本仅留痕不
@@ -436,6 +440,7 @@ todos:
       codex 三轮#2 生命周期对齐）：夹具态=「字段已正名、可建模 OCR 行已全部建模清零
       （external 不再 FAIL）、agent 已写 defer 但无人签 → 仅剩
       fidelity_deferrals_human_sign」→ 一次 FAIL 即 AWAITING_HUMAN_REVIEW。
+    status: completed
   - id: p05-timeout-highwater-ratchet
     content: >
       P0-5 超时预算：授予高水位 + 实测棘轮 + closure-only 按内容定档预算。
@@ -489,6 +494,7 @@ todos:
   # ==========================================================================
   # P1 —— 诚实度与弱模型宿主体验
   # ==========================================================================
+    status: completed
   - id: p06-attempt-axes-report
     content: >
       P1-6 halt 文案按 attempt 实况四正交轴生成（i2 同属超时与 PASS 被拦，互斥计数
@@ -499,6 +505,7 @@ todos:
       （goal-report-generator.ts:214-231）改由四轴统计合成，汇总不伪装互斥计数。
       验收：fixture 回放→时间线呈现「i2: timeout×PASS×advance_blocked×changed」等五行 +
       汇总语句与 events 逐项可对账。
+    status: completed
   - id: p07-suggestion-audience-split
     content: >
       P1-7 门禁指引分级：agent 通道只给产物级动作。report-generator.ts 通用自动指引段
@@ -512,6 +519,7 @@ todos:
       重试 prompt 附 ui-spec 屏级/节点级合法键清单（由 schema SSOT 生成）。
       验收：unit 断言重试 prompt 无 framework 源码路径/内部机制词表；operator_note 只在
       goal-report；未知键失败→下轮 prompt 含合法键清单。
+    status: completed
   - id: p08-monitor-circuit-breaker
     content: >
       P1-8 宿主 monitor 熔断话术。skills/project/goal-mode + skills/reference/
@@ -520,6 +528,7 @@ todos:
       续看指令，交还对话轮次；禁止单轮对话连续 monitor 超 30min（实测 2h05m 占用）。
       纯话术层，不动 goal-monitor.ts。弱模型宿主可能无视话术——接受为已知残留。
       验收：SKILL 文案含轮数/时长阈值与交还模板。
+    status: completed
   - id: p09-model-identity-telemetry
     content: >
       P1-9 模型身份 telemetry-only，append-only 事件承载（codex 二轮 must-fix#3：manifest
@@ -539,6 +548,7 @@ todos:
       【验收】unit：fixture init 行→adapter_model_observed 事件落值=MiniMax-M2.7；
       manifest 字节不变（frozen hash 校验绿）；无 init/解析失败→无事件不报错；能力路由/
       档位行为零变化（快照对比断言）。
+    status: completed
   - id: p10-foreign-file-gate-investigation
     content: >
       P1-10 调查既有 framework_foreign_file BLOCKER 为何未拦 i5 写入（不新加 WARN 扫描、
@@ -553,6 +563,12 @@ todos:
       完整性缺口，本项**升 P0** 处置，验收升级为 consumer-layout E2E（真实 layout 下
       agent 写入→下一 attempt 前被 BLOCKER 拦截），不止清单纯函数 unit；若根因=宿主版本
       落后，则修复项转化为发布/升级动作并如实记录。
+      【✅ 2026-07-29 盘点结论】调查与复现 unit 已落地（提交 a6d21eb0：
+      tests/fixtures/cc-spec-deadlock/foreign-file-delta.json + framework-integrity.unit.test.ts）。
+      **条件升级部分未做**：phase_verdict 前复扫 scanForeignFiles 的接线在 goal-runner
+      零命中、consumer-layout E2E 未建——该残留**顺延 3.1.0**（见完整性/信任加固 plan），
+      本项按调查交付完成收口，不再挡 3.0.0 发布。
+    status: completed
 verification:
   - 前置：e9c4a7f3 提交基线上全量 unit 绿（含其既有用例零回归），npm run
     openspec:validate 绿（P0-0 change + visual-capability-truth delta）。

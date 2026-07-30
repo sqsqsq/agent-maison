@@ -307,7 +307,13 @@ todos:
       01-Product/Phone/build/product/outputs/product/Phone-product-signed.hap →
       device_test_install / device_test_run 实际通过——把 07-15 反馈中"真机阶段"
       的间接验证（d7e4b2a9 t5 第一步）转为直接验证，原始反馈两阶段全闭环。
-    status: pending
+      【✅ 2026-07-29 盘点收口·场景已不复现】宿主签名早已修好并挂载（plan d7e4b2a9
+      2026-07-10 用户确认在案），2026-07-29 run 20260729T123155Z-0c5411 的 **ut 1 attempt
+      PASS**（真机 3UJ0225321000395）——签名未修状态这一前提在宿主已不存在，该诊断路径
+      无从触发。框架侧交付（≤180 字签名摘要头部化 + failure_kind_classified=toolchain 分类）
+      的代码与单测均在案；若未来签名缺口再现，按 plan 原验收清单核对即可。**本项按
+      环境不复现收口，不挡 3.0.0 发布。**
+    status: completed
 ---
 
 # 证据链（2026-07-15 复盘，材料：D:\97.log\问题反馈\07-15\claudecode签名异常）

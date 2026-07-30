@@ -52,4 +52,4 @@
 ## 7. 收尾
 
 - [x] 7.1 全量验收：typecheck 0 · unit 全绿 · fixtures 全绿 · openspec validate 全绿 · plan version check
-- [ ] 7.2 宿主实测回灌（bc-openCard 重跑观测，需用户宿主环境）
+- [x] 7.2 宿主实测回灌（✅ 2026-07-29 宿主回归 run 20260729T123155Z-0c5411 + 前置 run 20260729T105738Z-59021a）：spec 阶段**单 attempt PASS**（五连败形态未复现）；同链 plan/coding/review 亦 PASS。

@@ -35,4 +35,4 @@
 - [x] 00303217/00303168 样本日志→结构化诊断（无证据不得输出 incompatible 结论）
 - [x] unknown 首编译不 halt；capability_failed+新鲜指纹→缺口码成立；源码编译失败不进缺口、状态保持 unknown
 - [x] probe 快照写读/TTL 失效回归（写入权限=代码结构保证：--ensure 路径只调 recordBinaryAndCliStartsProbe）；agent 声明不可升级 compile 态（写入权限负例）
-- [ ] 宿主复验项（用户执行）：framework 完整调用链重测 07-16 事故机，确证/否证 00303168 真因
+- [x] 宿主复验项（✅ 2026-07-29 宿主回归 run 20260729T123155Z-0c5411）：framework 完整调用链重测同一宿主，**ut PASS（真机 3UJ0225321000395，1 attempt）** ⇒ 07-16 的 00303168 故障**未复现**，工具链/签名链路正常。诚实边界：本次是未复现而非证伪真因——该故障若再现需保留现场 hvigor/hdc 日志再判。

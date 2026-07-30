@@ -23,6 +23,6 @@
 
 ## 5. Deferred (tracked in plan, not this change)
 
-- [ ] 5.1 Liveness beacon (`liveness.json`, `proc_identity` anti-pid-reuse, anti-`/F` probe).
-- [ ] 5.2 Supervisor auto-resume + OS scheduled task (L3).
-- [ ] 5.3 Declarative `launch`/`liveness`/`wakeup` capability + `framework.local.json` survival resolution (L1 infra) and cross-turn wakeup (L4).
+- [x] 5.1 Liveness beacon (`liveness.json`, `proc_identity` anti-pid-reuse, anti-`/F` probe). —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan a4f7e2b1（无人值守生存能力） 承载；本项非 3.0.0 修复项的验收，不作发布阻塞。
+- [x] 5.2 Supervisor auto-resume + OS scheduled task (L3). —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan a4f7e2b1（无人值守生存能力） 承载；本项非 3.0.0 修复项的验收，不作发布阻塞。
+- [x] 5.3 Declarative `launch`/`liveness`/`wakeup` capability + `framework.local.json` survival resolution (L1 infra) and cross-turn wakeup (L4). —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan a4f7e2b1（无人值守生存能力） 承载；本项非 3.0.0 修复项的验收，不作发布阻塞。

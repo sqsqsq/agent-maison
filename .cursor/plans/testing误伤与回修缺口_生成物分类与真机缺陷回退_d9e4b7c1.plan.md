@@ -52,10 +52,27 @@ todos:
 
 # testing 写保护误伤与真机缺陷回修缺口 (d9e4b7c1)
 
-状态：**已实施（2026-07-29）——T1/T2/T3 全部落地，typecheck ✓ / unit 2679 全绿 /
-fixtures 44 全绿 / openspec 45 全绿 / plan gate PASS；待用户 review 提交。
-悬置：T3-④ 宿主回归（宿主侧后续：device:policy preflight + R11 attestation 校准 →
-新开完整 run → 分支化事件验收），OpenSpec tasks 3.5 保持未勾。
+状态：**已完结（2026-07-29）——T1/T2/T3 全部落地并提交（e60b4ca0），宿主真机回归通过。**
+框架侧：typecheck ✓ / unit 2682 / fixtures 44 / openspec 45 / plan gate PASS。
+**宿主回归（run 20260729T123155Z-0c5411，真机 3UJ0225321000395）三项验收全过**：
+① 生成物分类——4 个模块根 BuildProfile.ets 降级为 testing_generated_file_change（带冻结
+product/build_mode），**全 run 零 testing_write_violation**，07-28 原事故形态消除；
+② gate 强装 + evidence——install_executed/ok=true、身份与 physical 元组齐备、64 hex sha、
+written_at 在窗口内；③ **归因完整性**——trace 5 失败（TC-006/007/008/010/011）与 evidence
+cases 集合完全一致（零漏项，join 链正常），分类全部落 test_contract。
+**⚠ 该分类结果已被后续核查证伪为误判（勿再引用旧表述）**：TC-010/011 的 dump 里
+`sheet_scaffold-next` 实际**存在**且 `enabled=false`，测试等的是被解析器丢弃的 `enabled:true`
+谓词——属"元素在、状态不对"（应 product_state），不是"测试自造 selector"。只有 by_text 侧
+（`查看全部` vs spec `查看全部银行`）确为测试文案不精确，test_contract 判定对。
+**故本 plan 的验收边界要说清**：d9 的机制交付（join 链 / 身份绑定 / 生成物白名单 / 集合一致性
+/ 强装 / evidence schema）**验收通过**；**归因判据的精度不在 d9 范围，已移交 plan e3c7d95f**
+（三环缺口：谓词被丢弃 / 分类器不看 dump 实际状态 / 锚点 semantic 段与 ui-spec node 无互认）。
+附带收获：R11 physical attestation 在该机型通过（target_kind=physical）。
+**残留（已知边界）**：product_actionable→backtrack 真机通路本轮未触达——**原因不是"产品没
+缺陷"而是"真缺陷被 test_contract 误判掩盖了"**（DEF-001/002 经 2026-07-30 人工采证确认为
+产品侧缺陷：手动输入 123456 后按钮仍不可点击）；该通路由单测覆盖（device-test-backtrack +
+testing-integrity T2-2 全链 E2E）。test_contract 类失败无自动出路（不回 coding，retry 耗尽即
+HALT），修测试计划需人/agent 介入。
 实施记录：a7 OpenSpec change 已归档（归档时修正其两处 delta 误归 MODIFIED——
 基线无对应头，实为 ADDED）；d9 change=testing-generated-source-and-device-backtrack。
 实施 review 两轮偏离与修补（最终语义以 OpenSpec delta 为准，本 plan 正文不重写）：

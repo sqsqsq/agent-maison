@@ -56,6 +56,51 @@
 - [x] 3.3 hmos-app 专属 init/addendum 补宿主 .gitignore 指引（`**/BuildProfile.ets`，
       profile 级测试钉住；不进通用 canonical；注明与 T1 分类不互替）
 - [x] 3.4 docs/overview.md 门禁表；MAINTAINER-CHANGELOG 经 gen-changelog 生成
-- [ ] 3.5 宿主回归（后续宿主侧）：preflight（device:policy + R11 attestation 校准）→ 新开
-      完整 run → 分支化事件验收（invoke 内有生成物变化才要求 generated 事件；gate 强装 →
-      evidence → product_actionable(physical) → backtrack_to_coding；不看终态 COMPLETED）
+- [x] 3.5 宿主回归（✅ 2026-07-29 run `20260729T123155Z-0c5411`，SimulatedWalletForHmos 真机
+      3UJ0225321000395）：
+      · **生成物分类**：`testing_generated_file_change`（invoke_id=testing-i3）降级 4 个模块根
+        BuildProfile.ets（02-Feature/FinancialCard、04-BusinessBase/AccountManager、
+        05-SystemBase/CommFunc、05-SystemBase/CommUI），带冻结 product=default/build_mode=debug；
+        **全 run 零 `testing_write_violation`** —— 07-28 原事故形态（同类文件致 run 终止）已消除；
+      · **gate 强装 + evidence**：`device-test-evidence.json` 写出，schema 1.0、
+        goal_run_id/attempt_id 齐备、device_target={serial, physical, testing-i5}、
+        hap_sha256_full 64 hex、install_executed=install_ok=true（强装生效、reuse 被跳过）、
+        written_at 在 harness 窗口内；
+      · **归因完整性**：trace 5 失败（TC-006/007/008/010/011）与 evidence cases 集合完全一致
+        （零漏项，join 链工作正常）；分类全部落 test_contract。**⚠ 该分类结果已被后续核查
+        证伪为误判**——TC-010/011 的 dump 里 `sheet_scaffold-next` 实际**存在**且
+        `enabled=false`，测试等的是 `enabled:true` 谓词（该谓词被解析器丢弃），属"元素在、
+        状态不对"而非"测试自造 selector"。**d9 的机制交付（join/身份/白名单/集合一致性）
+        验收通过；归因判据的精度问题移交 plan e3c7d95f**（详见残留二）。by_text 侧
+        （`查看全部` vs spec `查看全部银行`/`查看全部 (6)`）确为测试文案不精确，
+        test_contract 判定对。
+      · R11 physical attestation 在该机型**通过**（target_kind=physical，非 unknown）。
+      **残留一（已知边界）**：product_actionable → backtrack_to_coding 真机通路本轮未触达
+      （见残留二：真缺陷被 test_contract 掩盖了）；该通路由单测覆盖（device-test-backtrack +
+      testing-integrity T2-2 全链 E2E）。
+      **残留二（本轮回归新发现的 P0 缺口，超出 d9 范围 → 已建 plan e3c7d95f）**——
+      定性经两轮纠错后定稿（前两版均被证伪，教训见 e3c7d95f 的"判读纠错记录"）：
+      · **误判链三环**：① 派生步骤解析**丢弃谓词**——派生计划写
+        `{"wait_for":{"by_id":"maison:...:sheet_scaffold-next","enabled":true,...}}`，
+        解析后只留 selector/scope，evidence 里 `enabled:true` 不见了；② 分类器只做
+        selector 字面比对，**不看 dump 里元素实际状态**——TC-010/011 的 dump 里该元素
+        **存在**且 `enabled=false`（selector 正确、元素在场、状态不满足），却被判
+        test_contract（测试自造）不回 coding；③ runtime 锚点 semantic 段与 ui-spec node
+        无规范化互认（产品 `sheet_scaffold-next` vs spec `sms_next_btn`；同屏
+        `sms_input` 却与 spec 同名——脚手架命名部分对齐部分漂移）。
+      · **定性纠正（勿再写错）**：`maison:` 前缀是 framework 自己的 ui-kit 实例语义锚点
+        （ui-kit-anchors.ts 的设计契约，解决 ArkUI uitree 展开与重复行 id 不唯一），
+        产品渲染锚点是**正确行为**；**此前"产品系统性偏离 spec"与"产品缺 sms_next_btn"
+        两个定性均已被证伪**（后者错在以单帧 TC-006 dump 推全局——那帧是键盘展开/Sheet
+        被裁剪的树）。
+      · **附带**：`isValidAnchor` 要求五段而真机全四段，且该函数在生产代码零消费
+        （契约存在但无人执行）；unverified 集合无无进展熔断（i3/i4/i5 完全相同 5 条，
+        白烧 130 分钟真机）；回喂 reason 未给正确 node（agent 三轮没修对）。
+      · **DEF-001/002 性质已判定（✅ 2026-07-30 人工采证）**：真机手动输入 123456 后
+        `sheet_scaffold-next` **仍不可点击** ⇒ 排除 (a) Hylyre input 未触发 ArkUI onChange
+        的工具侧假设，定性为 **(b) 产品侧缺陷**（双向绑定/enabled 联动）。这同时反证
+        `test_contract` 判定掩盖了一个真产品缺陷——即残留二的机制缺口在真机上确有后果。
+        **宿主处置（2026-07-30 用户决定）**：产品代码**全部回退重写**，不单修该缺陷；故本
+        缺陷的价值从"待修项"转为**归因逻辑的黄金样本**（性质已确证 + dump 证据完整 +
+        形态清晰），由 plan e3c7d95f 落 fixture 后单测锁住四种分类——重写后的产品大概率
+        不再产生同形态失败，本轮 dump 是唯一历史样本。

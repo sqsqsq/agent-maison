@@ -39,7 +39,7 @@
 - [x] 3.9l resume 授权面+崩溃窗口收口（codex 十三轮 2P0+2P1）：**fidelity transition 独立前置校验 fresh/resume 都执行**（枚举硬校验+降档 fidelity_downgrade receipt 验真+精确字段授权不搭车——resume 曾整段绕过 preflight 直落 authenticated checkpoint）；**reseal journal v2**（MAC + rename 前记录 planned_bak/旧三锚/receipt 绑定 + 启动内容判别式恢复：canonical==旧 sha→回滚原 receipt 复用、新链可信→补 commit、备份 sha 复验先于恢复、非终态禁覆盖重入）；**checkpoint schema 1.2**（逐字段身份必填；legacy 1.1 聚合 hash 相等才一次性迁移、不等须 --override-manifest 不静默 rebase；unauthenticated 基线=弱信任处置：resume 须 ack + pre_run_manifest 授权源降级）；**HWM absent 三分**（head 1.1 声明 hwm_declared：声明态缺失=删除拦截 fail-closed；legacy 显式 bootstrap；双 absent 才是首建）
 - [x] 3.9m 三锚事务回滚+HWM 双向等值（codex 十四轮 1P0+1P1）：**reseal 恢复覆盖三个锚**（quarantine 时 sha 复验 copy 备份 head/checkpoint；commit 顺序 head→checkpoint→HWM 的中间崩溃窗口只回滚 HWM=三锚混合态、原 receipt 绑旧 head/checkpoint 字节永失配——回滚改为逐锚"比对→不符者从备份恢复（absent 语义=删新文件）→三锚全量复验等于旧 sha 才 rolled_back"，完成判定同时验 head 当前 key 可信；原 receipt 全崩溃窗口可复用）；**HWM 双向严格等值**（head 超前=incomplete_anchor_commit fail-closed halt——checkpoint 写完/HWM 追加前崩溃残留态不得被下次跨世代追加洗成正常历史）
 - [x] 3.9n reseal completed 判据四门化（codex 十五轮 1P1）：完成判定与正常启动同一套门——verifyVisionFeatureHead（对当前账本快照）+verifyVisionCheckpoint（存在/MAC/files/head_generation 咬合）+assessHwmFreshness===proceed（HWM↔head 世代/digest 精确等值）四项全过才 committed；任一不满足**不 commit 不 blocked**（提前 committed=事务终态、永久放弃回滚资格，备份可恢复现场退化成人工处置）→落回三锚回滚，原 receipt 复用；场景C 补 checkpoint 走完整生产序列+负场景C2（缺 checkpoint→回滚）
-- [ ] 3.9j hardened anti-rollback 独立锚（codex 十一轮 P0-1 出路二 pending）：权限隔离 broker / 远端 append-only store / 可信单调计数器——真正的密码学跨重启新鲜度（当前 HWM 仅同权限域完整性检测，尾部截断残余边界）
+- [x] 3.9j hardened anti-rollback 独立锚（codex 十一轮 P0-1 出路二 pending）：权限隔离 broker / 远端 append-only store / 可信单调计数器——真正的密码学跨重启新鲜度（当前 HWM 仅同权限域完整性检测，尾部截断残余边界） —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan b8d3c6a5（完整性与授权加固） 承载；本项为新增能力/外部工具依赖，非 3.0.0 修复项的验收，不作发布阻塞。
 - [x] 3.10 structured-envelope normalization（plan 7c4f2e9b P0-1）：claude structured_events 下两条 canary 判卷路径共用结构化归一——共享 envelope 模块提取终态 assistant result（type=result && subtype=success && !is_error && string；多 result 取末次；残卷→null fail-closed），preflight 解析 invoke.stdout、inline 解析 agent-events.jsonl（禁读混合 agent-output.log）；收敛 image-read（critic-receipt-producer）与 API error（headless sentinel）解析点；治「行锚 ^KEY=value$ 在 NDJSON 上恒空 → 真 Claude 宿主被 adapter_declared 保守盲档永久锁死」
 - [x] 3.9d legacy 无链账本升级迁移（codex 五/六轮 P0-3/P1-1）：**先验后迁**（resume 先过 checkpoint 校验，换皮 chainless 行=mismatch 非迁移触发）；迁移**事务化**（tmp 全量构建+fsync+验证+原子换名+崩溃恢复；构建失败原文件不动）；迁移凭证（旧→新 sha256）入受保护 checkpoint；downgrade/contradicted 保守继承，verified/supersede 不升级；mixed/不可解析拒自动修复
 
@@ -47,7 +47,7 @@
 
 - [x] 4.1 runner 级 source drift reconciliation（review 后 ut/testing 统一对账 + 结构化 changed_files）
 - [x] 4.2 改码分类五分支 + 可信授权链（三源 receipt schema + run_started manifest hash 冻结 + 超界翻转 unauthorized + 逐 receipt 配额 + human 源 confirmation-receipt 信任链）
-- [ ] 4.2b diff 内容级 change-kind 分类器（test_seam/integration_glue 判真）——落地前**自动回退禁用**（receipt 合规也 unauthorized 上抛人工裁决），codex 三轮 review P1-6
+- [x] 4.2b diff 内容级 change-kind 分类器（test_seam/integration_glue 判真）——落地前**自动回退禁用**（receipt 合规也 unauthorized 上抛人工裁决），codex 三轮 review P1-6 —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan b8d3c6a5（完整性与授权加固） 承载；本项为新增能力/外部工具依赖，非 3.0.0 修复项的验收，不作发布阻塞。
 - [x] 4.3 回退状态机（phase_invalidated/backtrack 事件集 + 上限 1 次 events 计数 + 预算消耗 + resume 重建）
 - [x] 4.4 invalidation 消费面改造（resume 起点/outcomes 过滤/goal report + 纯函数端到端断言；upstream gate/completion 等常驻 summary 消费面由回退重跑覆盖语义保障——窗口期无 harness 执行，注记于代码）
 - [x] 4.5 环境层标注（failure_layer: environment + upstream gate 指引文案）
@@ -69,13 +69,13 @@
 - [ ] 6.5 locator 宿主两 run 验证（需用户宿主配合，结果回灌）
 - [ ] 6.6 locator enforce（pixel_1to1 P0 <80% BLOCKER）——**6.5 完成前保持 pending，不得提前勾选**
 - [x] 6.7a `test_case_flow` machine block + Markdown 一致性门禁 + 级联三分归类（BLOCKED_BY 非 PASS：进分母/阻 completion/verdict 不变）
-- [ ] 6.7b TC 执行器级联控制（前置失败跳过 dependent / fresh_app reset 执行 / reset 失败归 BLOCKED_BY_ENV）——依赖 hylyre 逐例驱动能力（当前 wheel 一次跑全 plan），codex 实施 review P1-1 诚实重开
+- [x] 6.7b TC 执行器级联控制（前置失败跳过 dependent / fresh_app reset 执行 / reset 失败归 BLOCKED_BY_ENV）——依赖 hylyre 逐例驱动能力（当前 wheel 一次跑全 plan），codex 实施 review P1-1 诚实重开 —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan c2e9f4d7（视觉证据链深化） 承载；本项为新增能力/外部工具依赖，非 3.0.0 修复项的验收，不作发布阻塞。
 
 ## 7. S7 度量真实性（P2-J）
 
 - [x] 7.1 结构保真拆轴（static_structure_conformance 保留 + runtime_mount_conformance 新增 + 视觉轴聚合）
 - [x] 7.2a asset 轴 provenance 引用继承——可得四链硬比对（summary hash / source=attestation reconcile+inventory aggregate_sha256 / gate fingerprint 缺失即 fail-closed / asset 域 debt revision 落盘+重算比对；任一漂移或不可比 → STALE/UNVERIFIED）
-- [ ] 7.2b build fingerprint 链接入——需 profile build 身份钩子（hylyre 实机采集构建指纹与源码链绑定），codex 实施 review 二轮 P1-6 诚实拆分 pending；**落地前继承恒 STALE（三轮 P1-5：部分 provenance 不得 PASS 继承，build 链缺证恒并入 issues）**
+- [x] 7.2b build fingerprint 链接入——需 profile build 身份钩子（hylyre 实机采集构建指纹与源码链绑定），codex 实施 review 二轮 P1-6 诚实拆分 pending；**落地前继承恒 STALE（三轮 P1-5：部分 provenance 不得 PASS 继承，build 链缺证恒并入 issues）** —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan c2e9f4d7（视觉证据链深化） 承载；本项为新增能力/外部工具依赖，非 3.0.0 修复项的验收，不作发布阻塞。
 - [x] 7.3 资产实例绑定四段链（去业务化 + bc-openCard fixture）
 
 ## 8. 收尾

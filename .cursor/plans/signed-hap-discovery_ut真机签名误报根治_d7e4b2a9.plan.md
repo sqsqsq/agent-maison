@@ -125,6 +125,13 @@ todos:
     status: completed
   - id: t5-host-reverify-two-step
     content: >
+      【✅ 2026-07-29 第一步已回归通过】run 20260729T123155Z-0c5411（真机 3UJ0225321000395）：
+      device-test-build.result.json 命中 signed 主 HAP
+      `Phone/build/default/outputs/default/Phone-default-signed.hap`，scannedDirs=1 /
+      candidateCount=1（**无歧义候选**，四级排序键未被触发即命中）；device_test.install
+      ok=true 且 reused=false（正式 gate 强装）；ut 阶段 1 attempt PASS，未出现环境不支持
+      文案。**第一步（框架修复 + 新诊断）到此关闭**；第二步（签名未修状态的诊断路径）
+      因宿主签名已可用，场景不复现——见下方 2026-07-10 收尾说明，不再列为待办。
       宿主复验分两步（用户执行）：【第一步·宿主原状不动，验证框架修复与新诊断】同步
       framework 后直接重跑——期望 testing device_test_build 命中既有
       01-Product/Phone/build/product/outputs/product/Phone-product-signed.hap 走通
@@ -156,7 +163,7 @@ todos:
       spec/plan/coding/review 回执被判 stale 属**预期行为**（升级本身所致，非本修复
       引入的 bug），按提示重验即可；③可与 e8f5a2c7 遗留的 g1b 真实 Cursor payload
       宿主实测共用同一次 3.0.0 回归件宿主复验。
-    status: pending
+    status: completed
 ---
 
 # 证据链(2026-07-10 核实)

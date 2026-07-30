@@ -132,8 +132,14 @@ todos:
     content: 主链诊断（events/detach/宿主对话/源码对码，四根因 ground-truth 核实；codex+cursor 两轮双审确认）
     status: completed
   - id: diagnosis-residual
-    content: 残留诊断：goal-monitor stale 误报 replay fixture 定位（调用侧 --since-event 0 vs monitor 历史 verdict 未标 superseded 两候选）+ chrys 输出行为 spike（P1-7）
-    status: pending
+    content: >
+      残留诊断：goal-monitor stale 误报 replay fixture 定位（调用侧 --since-event 0 vs monitor 历史 verdict 未标 superseded 两候选）+ chrys 输出行为 spike（P1-7）
+      【顺延 3.1.0 · 2026-07-30 盘点】goal-monitor stale 误报的 replay fixture 定位
+      （两候选根因：调用侧 --since-event 0 / monitor 历史 verdict 未标 superseded）交由
+      plan d6b1a8e3（goal 报告与监控真值）t2 承载——与 failure_kind 归因一致性、硬预算
+      集成断言共用同一套"goal 状态表述真值"验收面。chrys 输出行为 spike 部分见同 plan 内
+      p1-7（已 cancelled，外部环境依赖）。本项标 cancelled 以指向新承载，不挡 3.0.0 发布。
+    status: cancelled
   - id: p0-5-integrity-halt
     content: P0-5（实施第 1 位）framework_integrity_block 统一 kind + integrity_subtypes 多值收集（6 subtype）分补救文案，integrity 家族一律首触 halt；超时掩盖以 stale_summary freshness 条件化
     status: completed
@@ -153,8 +159,15 @@ todos:
     content: P1-6（实施第 6 位）宿主修 framework 正规通道引导 + framework.config.template.json 过期 integrity field_notes 修正
     status: completed
   - id: p1-7-observability-spike
-    content: P1-7（spike）chrys 输出行为核实——output_delivery 静态能力进 adapter-schema/adapter 配置；adapter_version 每 run 一次短超时动态探测进 run event；kill 诊断走 agent_invoke_end 事件字段（不污染 agent-output.log）
-    status: pending
+    content: >
+      P1-7（spike）chrys 输出行为核实——output_delivery 静态能力进 adapter-schema/adapter 配置；adapter_version 每 run 一次短超时动态探测进 run event；kill 诊断走 agent_invoke_end 事件字段（不污染 agent-output.log）
+      【cancelled 2026-07-30·盘点决议】chrys 输出行为 spike 依赖 chrys 宿主环境，
+      当前不在手边（2026-07-29 宿主回归 adapter=cursor，adapter_probe 采到的
+      output_delivery=unknown 是 cursor 的值，不能替代 chrys 结论）。**外部环境依赖，
+      标 cancelled 不挡 3.0.0**；chrys 宿主可用时另开 plan。已落地部分（adapter_version
+      每 run 探测进 run event、kill 诊断走 agent_invoke_end 不污染 agent-output.log）
+      随本 plan 主体提交在案。
+    status: cancelled
   - id: p1-8-attribution-noise
     content: P1-8 归因/提示噪声（PASS 事件不输出 failure_kind_classified / facts.md 门禁报错带模板；stale 项待 diagnosis-residual 定位后再定方案）
     status: completed

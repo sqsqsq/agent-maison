@@ -48,7 +48,7 @@
 - [x] 4.4 cd harness && npm test 等价物全绿（typecheck 0 错 + unit 1917/1917 + fixtures 44/44）
 - [x] 4.5 npm run openspec:validate（35/35）
 - [x] 4.6 release:smoke-consumer PASS；⚠️ release:verify 的 plan-version 门禁被**既有** 5 个 3.0.0 未完成 plan（consumer-guard/critic-loop/轻量化/layout-oracle/signed-hap）挡住——非本 change 引入，发布前须由各自 plan 收口
-- [ ] 4.7 openspec update/archive 时 rerun node scripts/patch-openspec-artifacts.mjs（归档期动作，实现期不适用）
+- [x] 4.7 归档期 openspec artifacts 重生成 —— **[2026-07-30 移出实现任务]** 这是**归档期动作**，不是实现项：本 change 归档那一刻执行 `node scripts/patch-openspec-artifacts.mjs`。已移入下方「Archive checklist」；实现期无从执行，故此处不再作为待办跟踪。⚠ **执行前提**（2026-07-30 误触实测）：该脚本**不幂等**——CLI_PREFIX 注入的 lookbehind 防不住已 patch 文本（`npm run openspec -- list` 里的 `openspec ` 前缀是 `npm run `，不匹配 `(?<!npm run openspec -- )`），二次运行产出 `npm run npm run openspec -- -- list` 损坏形态（本次误触损坏 8 个 skill 文件并已 git 回滚）。**幂等修复已列入 3.0 小修合集 plan f4b2c8e6**；在它落地前，归档时须先确认目标文件未被 patch 过。
 
 ## 5. codex 六轮基座 review 修复（3P0+3P1+3P2 全采纳，2026-07-13）
 
@@ -99,3 +99,8 @@
 - [x] 9.2 P2 expectedTrack 可选=fail-open API：改必填（与 expectedChain 同哲学），缺失/空 → INVALID"expectedTrack 缺失"；对账无条件执行；goal-status 已合规传参；单测补 expectedTrack:'' → INVALID
 - [x] 9.3 OpenSpec 同步：attempt 三态推导语义（malformed 不得退化 null）+ expected chain/track 均为消费方强制输入（唯一入口无 fail-open 可选参数）
 - [x] 9.4 验证：typecheck 0 + unit 1930/1930 + fixtures 44/44 + openspec 35/35 + smoke-consumer PASS
+
+## Archive checklist（归档那一刻执行，非实现任务）
+
+- [ ] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
+      （前提：脚本幂等修复 plan f4b2c8e6 已落地，或人工确认目标文件未被 patch 过）

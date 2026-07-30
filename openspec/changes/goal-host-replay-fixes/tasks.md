@@ -36,6 +36,9 @@
 
 - [x] 5.1 新 unit 套件 `host-replay-fixes`（23 例）注册 CORE_SUITES；既有测试随新契约更新（stale-lock fixture 用死 pid、fingerprint 正负例、completion fixture 落真实 manifest）
 - [x] 5.2 全量验证：typecheck 0 / unit 2377/2377 / fixtures 44/44 / openspec validate / git diff --check
-- [ ] 5.3 宿主实测复验（NL 指引见 plan T5(d)：直接新起截断链不需 dry 预埋；隔夜 resume 不秒停；测缝诉求走还原或新起 coding 链；自签改码由专用 blocker 拦截零空转）
+- [x] 5.3a 截断链直接新起（**已验** 2026-07-29 run 20260729T123155Z-0c5411）：manifest start_phase=review / end_phase=testing，**无 dry-run 预埋、无同目录混写**，review 1 attempt PASS。
+- [ ] 5.3b 隔夜 resume 不秒停（**未触达**：本轮无跨停机 resume 场景；2026-07-30 盘点从"已完成"撤回——原勾选自相矛盾（勾完成却注明未触达）。留待下次真实跨夜 run 顺带验证，不单独安排）
+- [ ] 5.3c 测缝诉求走还原或新起 coding 链（**未触达**：本轮 agent 未提出测缝诉求）
+- [ ] 5.3d 自签改码由专用 blocker 拦截零空转（**未触达**：本轮无自签改码发生）
 - [x] 5.4 实施后 review round2 修复：P0 裁决覆盖独立化（禁与 preauth 拼接）/ lock run_mode·report_dir 落盘 / progress 权威视图+活跃预算口径（.dry 视图保 raw）/ --resume↔manifest.run_id 双道 fail-closed / corruptRuns 传播 check-spec `goal_run_identity_intact` + check-receipt closure / dry invoke·post-harness 窗口零账本读（含 anchor 事件）；新增 4+2 单测
 - [x] 5.5 dry trust 字节级仓内回归（round2 终审 P2 验收缺口）：e2e 真实拉起 `goal-runner --dry-run --override-adapter`（consumer 布局临时宿主，framework junction+harness 拷贝），断言项目侧预置文件（vision 账本/checkpoint 种子/config/入口）逐字节不变、新文件仅落 `.dry/<run_id>/`、framework.local.json 不写回、events 全 dry 打标零 vision anchor

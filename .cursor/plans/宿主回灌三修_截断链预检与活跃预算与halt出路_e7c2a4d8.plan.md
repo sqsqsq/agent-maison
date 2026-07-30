@@ -508,6 +508,7 @@ todos:
   # ==========================================================================
   # T2 P0 —— wall-clock 活跃预算（统一分段纯函数）+ budget halt 可解释性
   # ==========================================================================
+    status: completed
   - id: t2-active-time-budget
     content: >
       P0 wall-clock 预算按活跃时间累计，分段/turns/起点单点产出；budget halt 补
@@ -568,6 +569,7 @@ todos:
   # ==========================================================================
   # T3 P0 —— 授权出路真实化（输入保真 + 签名绑定的人工裁决 + 能力分层诚实 guidance）
   # ==========================================================================
+    status: completed
   - id: t3-mutation-authorization-real-exit
     content: >
       P0 unauthorized_source_mutation 从「可解释」升级为「可恢复或诚实不可恢复」：
@@ -658,6 +660,7 @@ todos:
   # ==========================================================================
   # T4 P1 —— 阶段真值：phase_halt 投影/重建 + 证据快照前置 + gap-notes 双账本对齐
   # ==========================================================================
+    status: completed
   - id: t4-phase-halt-truth-and-evidence
     content: >
       P1 halt 阶段真值全链一致：投影、重建、报告、证据、双账本、actionability 路由。
@@ -757,6 +760,7 @@ todos:
   # ==========================================================================
   # T5 —— OpenSpec delta + 全量验证 + 宿主复验指引（诚实版）
   # ==========================================================================
+    status: completed
   - id: t5-openspec-and-verification
     content: >
       OpenSpec + 全量验证收口 + 宿主复验。【行为】(a) 新建 openspec change
@@ -838,6 +842,7 @@ todos:
       宿主当前工作区 OpenCardFlow.ets 仍处被改状态，续跑前按上述二选一处置。
       【验收】十 scenario 形态全部以仓内合成 fixture 复现（宿主 goal-runs 证据仅作
       provenance 不进测试依赖）；plan todo 全勾。
+    status: completed
 ---
 
 # 宿主回灌三修（plan e7c2a4d8）

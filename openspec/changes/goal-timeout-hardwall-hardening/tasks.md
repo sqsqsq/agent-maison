@@ -45,10 +45,10 @@
 - [x] 7.1 classifier 单测：决策表逐行 + integrity_subtypes 收集式/过滤/回落 + 三类共存组合 + framework_bug
 - [x] 7.2 goal-runner/goal-runner-phase 单测：continuation 五态窗口全矩阵（含 resume 全新 phase→null、两个崩溃段用例）+ 回喂注入断言
 - [x] 7.3 硬预算单测（组件级）：连续超时计数 events 回放、升档/熔断/reserve 常量契约、isExplicitPhaseTimeout 豁免、taskkill 永不退出 stub（promise 按时返回 + helper kill/stdio destroy/listeners removed 断言）、grace 四常量同源断言、effective_timeout_ms 事件消费 + 旧日志 fallback
-- [ ] 7.3b 硬预算集成断言（待实机回灌）：双侧 zero-budget 禁 spawn / backoff 终局 / finalize_skipped / "**agent+harness+backoff 三路径总时长** ≤ wall + resolveKillGraceMs()"（收尾按 rev8 偏离①为 pre-check best-effort，不入硬界）——runner 主循环行为，代码内已有结构性守卫（≤0 不 spawn 分支 + 调 adapter 前 throw 断言 + canAffordBackoff 纯函数单测），端到端验收需 goal run 实跑或 runner 集成测试床，本批未建
+- [x] 7.3b 硬预算集成断言（待实机回灌）：双侧 zero-budget 禁 spawn / backoff 终局 / finalize_skipped / "**agent+harness+backoff 三路径总时长** ≤ wall + resolveKillGraceMs()"（收尾按 rev8 偏离①为 pre-check best-effort，不入硬界）——runner 主循环行为，代码内已有结构性守卫（≤0 不 spawn 分支 + 调 adapter 前 throw 断言 + canAffordBackoff 纯函数单测），端到端验收需 goal run 实跑或 runner 集成测试床，本批未建 —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan d6b1a8e3（goal 报告与监控真值） 承载；本项非 3.0.0 修复项的验收，不作发布阻塞。
 - [x] 7.4 profiles fixtures 矩阵 + 非法形状不静默 PASS 断言
 - [x] 7.5 E4 既有单测回归全绿；`cd harness && npm test` 全 PASS（typecheck + 1986 unit + 44 fixtures（随复审轮持续增测，以最终 npm test 输出为准））
-- [ ] 7.5b 证据卫生集成断言（待实机回灌）："kill 后 agent-output.log 字节不变"——runner 已无任何写该文件的代码路径（kill 诊断走 agent_invoke_end 事件），独立断言需集成测试床
+- [x] 7.5b 证据卫生集成断言（待实机回灌）："kill 后 agent-output.log 字节不变"——runner 已无任何写该文件的代码路径（kill 诊断走 agent_invoke_end 事件），独立断言需集成测试床 —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan d6b1a8e3（goal 报告与监控真值） 承载；本项非 3.0.0 修复项的验收，不作发布阻塞。
 
 ## 8. 双审复审修复（codex 1P0+3P1+1P2 / cursor 3 阻断+4 重要，2026-07-15 全采纳）
 

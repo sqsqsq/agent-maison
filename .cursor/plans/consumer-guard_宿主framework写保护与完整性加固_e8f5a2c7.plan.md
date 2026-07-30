@@ -197,7 +197,22 @@ todos:
       升级数组长度不增 / 两个历史自有条目 UPDATE 后去重为一 / matcher 或 command 版本
       变化后卸载：自有全清、第三方保留**（第五轮 P2 三件套）+ payload 解析（实测样本
       回放）+ enforcement tier 回归 + 共享核心判定复用。
-    status: pending
+      【✅ 2026-07-30 宿主实测闭合】真实 cursor（3.13.25 / cursor-agent
+      2026.07.23-e383d2b）preToolUse payload 采集：`tool_name="Write"`、`tool_input`=
+      {file_path, content}——**现有 matcher `Write|Delete` 与 extractTargetPath 的
+      file_path 候选均正确，两个待实测字段零改动**。
+      附带证伪一个高风险怀疑：payload 的 file_path 形态是小写盘符+反斜杠绝对路径
+      （`d:\1.code\...\framework\x`），曾疑心朴素前缀比对会漏判导致写保护空转；
+      实际 `evaluateFrameworkWrite` 用 `path.relative`（Node win32 对盘符大小写不敏感，
+      resolve 统一分隔符），宿主真跑五形态——小写/大写/正斜杠/projectRoot 与 filePath
+      交叉大小写全部 **DENY**，runtime 产物与非 framework 路径正确 allow——**G1b 确在
+      生效、非空转**。
+      未落 fixture：结论为零代码改动，且 payload 含 user_email/transcript_path/session_id
+      等须脱敏字段，无新代码可测。
+      **顺带识别出一个改进项（不在本 todo 范围）**：payload 顶层有 `workspace_roots`，比现
+      解析链（env → 自锚 → payload.cwd → cwd）更权威且免疫 cd 漂移，但它是**数组**（多根
+      工作区），需先定"取哪一个"的规则——已单列进 3.0 小修合集 plan f4b2c8e6。
+    status: completed
   - id: g2-integrity-extra-file-scan
     content: >
       G2 framework-integrity extra-file 扫描（既有 framework-integrity capability 的

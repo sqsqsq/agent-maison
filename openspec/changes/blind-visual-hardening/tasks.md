@@ -85,4 +85,9 @@
   （7 个存量：consumer-guard/critic-loop/轻量化/goal超时/layout-oracle/signed-hap/ut-sign-gap，
   与 goal-fakepass 4.6 同性质非本 change 引入；第 8 个=本 plan a9d4c7e2，因 P0-B enforce 与
   P1-G 实机段悬置而诚实未完结）。发布前由各 plan 收口。
-- [ ] 10.7 归档期：openspec update/archive 后 rerun `node scripts/patch-openspec-artifacts.mjs`（归档期动作，实现期不适用）
+- [x] 10.7 归档期 openspec artifacts 重生成 —— **[2026-07-30 移出实现任务]** 这是**归档期动作**，不是实现项：本 change 归档那一刻执行 `node scripts/patch-openspec-artifacts.mjs`。已移入下方「Archive checklist」；实现期无从执行，故此处不再作为待办跟踪。⚠ **执行前提**（2026-07-30 误触实测）：该脚本**不幂等**——CLI_PREFIX 注入的 lookbehind 防不住已 patch 文本（`npm run openspec -- list` 里的 `openspec ` 前缀是 `npm run `，不匹配 `(?<!npm run openspec -- )`），二次运行产出 `npm run npm run openspec -- -- list` 损坏形态（本次误触损坏 8 个 skill 文件并已 git 回滚）。**幂等修复已列入 3.0 小修合集 plan f4b2c8e6**；在它落地前，归档时须先确认目标文件未被 patch 过。
+
+## Archive checklist（归档那一刻执行，非实现任务）
+
+- [ ] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
+      （前提：脚本幂等修复 plan f4b2c8e6 已落地，或人工确认目标文件未被 patch 过）

@@ -34,7 +34,7 @@
 - [x] adapter-schema.yaml 新增 hooks_config 字段（明示不参与 hard_hook 判定）；check-init.ts kind 增 structured_upsert（描述符 + 机制 sync 分支 + 巡检特判"upsert(现状) 收敛即同步"）
 - [x] cursor adapter.yaml hooks_config 声明（不声明 settings_file/hooks——tier 语义注释齐）；templates/hooks.json（仅自有条目，matcher Write|Delete 初版）；`agents/cursor/hooks/guard-framework-write.mjs` 包内壳（相对 import 共享核心；deny={permission:"deny",user_message,agent_message}+exit 0；候选字段宽容解析）
 - [x] 单测 `hooks-config-upsert.unit.test.ts` 10 例：**四件套**（第三方保留/自有升级/幂等/非法不覆盖）+ **三件套**（matcher 原位升级长度不增/两历史条目去重/卸载自有全清第三方留）+ 创建最小结构 + **T1 tier 回归**（cursor===soft_rule_only）+ **S1 cursor 壳真实子进程协议**（deny JSON+exit 0+教育文案经 agent_message/白名单/宽容字段/fail-open）+ S2 模板 command 指向真实壳脚本
-- [ ] **宿主实测 payload**（plan 钉死的落地第一步，本机无 Cursor IDE 会话可驱动）：真实宿主里确认 preToolUse 的 Write 工具名与 tool_input 路径字段名，据实测调整 matcher/候选字段（均为受管可变字段，upsert 原位更新）——随 3.0.0 回归件在宿主执行
+- [x] **宿主实测 payload**（plan 钉死的落地第一步，本机无 Cursor IDE 会话可驱动）：真实宿主里确认 preToolUse 的 Write 工具名与 tool_input 路径字段名，据实测调整 matcher/候选字段（均为受管可变字段，upsert 原位更新）——随 3.0.0 回归件在宿主执行 —— **[✅ 2026-07-30 宿主实测闭合]** 真实 cursor（3.13.25 / cursor-agent 2026.07.23-e383d2b）preToolUse payload 采集结论：`tool_name="Write"`（现有 matcher `Write|Delete` 正确命中）、`tool_input` = {file_path, content}（现有 `extractTargetPath` 认 file_path 正确）——**两个待实测字段均无需调整**。附带核实（高风险怀疑已证伪）：payload 的 file_path 是小写盘符+反斜杠绝对路径（`d:\...\framework\x`），而 `evaluateFrameworkWrite` 用 `path.relative` 而非朴素 startsWith 拼串——Node win32 的 relative 对盘符大小写不敏感、resolve 统一分隔符；宿主真跑五形态（小写/大写/正斜杠/projectRoot 与 filePath 交叉大小写/runtime 产物豁免）判定全部正确，**G1b 写保护确在生效、非空转**。未落 fixture：结论为"现有实现正确、零代码改动"，且 payload 含 user_email/transcript_path/session_id 等须脱敏字段，无新代码可测。
 
 ## 6. 第七轮双 AI review 修复（codex 三 P1 两 P2 全部核实属实；cursor 两 P2 采纳）
 
