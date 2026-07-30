@@ -423,7 +423,7 @@ function lintInitSetupNoFreeText(registryText: string, registryRel: string): Che
   return results;
 }
 
-function lintRegistryOptionsSchema(registryText: string, registryRel: string): CheckResult[] {
+export function lintRegistryOptionsSchema(registryText: string, registryRel: string): CheckResult[] {
   const results: CheckResult[] = [];
   if (!/schema_version:\s*"2\.0"/.test(registryText)) {
     results.push(blocker('registry_schema_version', 'confirmation-registry.yaml 须 schema_version: "2.0"', [registryRel]));
@@ -474,6 +474,29 @@ function lintRegistryOptionsSchema(registryText: string, registryRel: string): C
         results.push(blocker(
           'registry_matrix_incomplete',
           `registry ${id} (matrix) 须 matrix_options 或 parent`,
+          [registryRel],
+        ));
+      }
+    }
+
+    // portable_menu 为编号菜单时，序号序列须与 options[].portable 逐项一致（含重复与顺序）
+    // （动态/散文菜单如 setup.adapter 无 N= 段，跳过；matrix_options 不参与对照）
+    const menu = block.match(/\n    portable_menu: "(.+)"/)?.[1] ?? '';
+    const menuOrdinals = [...menu.matchAll(/(?:^|\s)(\d+)=/g)].map(m => m[1]!);
+    const optionsIdx = block.indexOf('\n    options:\n');
+    if (menuOrdinals.length > 0 && optionsIdx >= 0) {
+      const rest = block.slice(optionsIdx + '\n    options:'.length);
+      const end = rest.search(/\n    [a-z_]+:/);
+      const optionsSection = end >= 0 ? rest.slice(0, end) : rest;
+      const optionOrdinals =
+        [...optionsSection.matchAll(/\n        portable: "(\d+)=/g)].map(m => m[1]!);
+      const consistent =
+        menuOrdinals.length === optionOrdinals.length
+        && menuOrdinals.every((o, i) => o === optionOrdinals[i]);
+      if (!consistent) {
+        results.push(blocker(
+          'registry_portable_menu_ordinal_mismatch',
+          `registry ${id} portable_menu 序号 [${menuOrdinals.join(',')}] 与 options[].portable 序号 [${optionOrdinals.join(',')}] 不一致：${menu}`,
           [registryRel],
         ));
       }

@@ -537,7 +537,7 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §8.3"
     skill_step: "任一 feature phase 四件套 PASS 后"
-    portable_menu: "1=进入下一plan=暂停 3=其它"
+    portable_menu: "1=进入下一 Skill 2=暂停 3=其它"
     options:
       - value: enter_next
         label: "进入下一 Skill — {next_skill_label}"
