@@ -60,3 +60,9 @@ feature/run lock 是当前 owner 的投影，不拥有 epoch。
 - monitor fuse：结束本轮只读轮询，不杀 active run。
 
 这三个边界互不替代。
+
+## 能力解析与调和
+
+每个 phase 的 checker 之前会生成一份不可变 `CapabilityResolutionReport`。`assess@1` 只读取 summary 1.2 已持久化的 `assurance`、`capability_resolutions` 与 closure/evidence 新鲜度，不会重新解析 artifact 或擅自选择 fallback。这样 session 与 detached driver 对同一磁盘事实得到相同 recommendation。
+
+`minimum_assurance` 是 goal 的可选稀疏约束，仅把低于 `degraded`/`full` 的实际保证等级转换为 `insufficient_assurance`。它不授予 runner 执行权限，也不能覆盖 quality axis、release 或 PASS closure。已授权的 `pruned` 会作为 assess 的 `observed.degradations` 透出；`blocked` 由既有非 PASS/closure 路径处理。仅当 artifact attempt 的上游 producer 同时报告 `pruned`，并使下游 core capability (`on_missing: fail`) 被阻塞时，调和器额外生成 `pruned` gap，建议先回补 producer。

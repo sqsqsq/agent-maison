@@ -1,60 +1,37 @@
 // ============================================================================
-// skill-contract.unit.test.ts — contract parsing, tier proof, graph consistency
+// skill-contract.unit.test.ts — capability contract parsing and static graph gate
 // ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { loadWorkflowSpec } from '../../workflow-loader';
+import { checkContractConsistency, validateContractConsistency } from '../../scripts/check-contract-consistency';
 import {
-  checkContractConsistency,
-  validateContractConsistency,
-} from '../../scripts/check-contract-consistency';
-import {
-  enumerateTierCombinations,
+  assuranceSatisfies,
   loadArtifactInventory,
   loadFeatureContracts,
   loadSkillContract,
-  parseTierPredicate,
-  evaluateTierPredicate,
-  tierSatisfies,
 } from '../../scripts/utils/skill-contract';
 
-export interface UnitCaseResult {
-  name: string;
-  ok: boolean;
-  error?: string;
-}
-
-interface Case {
-  name: string;
-  run: () => void;
-}
-
+export interface UnitCaseResult { name: string; ok: boolean; error?: string; }
+interface Case { name: string; run: () => void; }
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
-function assert(condition: boolean, message: string): void {
-  if (!condition) throw new Error(message);
-}
-
+function assert(condition: boolean, message: string): void { if (!condition) throw new Error(message); }
 function expectThrow(fn: () => void, includes: string): void {
   let message = '';
-  try {
-    fn();
-  } catch (error) {
-    message = (error as Error).message;
-  }
-  assert(message.includes(includes), `expected error containing "${includes}", got "${message}"`);
+  try { fn(); } catch (error) { message = (error as Error).message; }
+  assert(message.includes(includes), `expected ${includes}, got ${message}`);
 }
-
 function writeContract(source: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-contract-'));
-  const filePath = path.join(dir, 'contract.yaml');
-  fs.writeFileSync(filePath, source, 'utf8');
-  return filePath;
+  const file = path.join(dir, 'contract.yaml');
+  fs.writeFileSync(file, source, 'utf8');
+  return file;
 }
 
-const contractPrefix = [
+const prefix = [
   'schema_version: "1.0"',
   'skill: fixture',
   'skill_doc: SKILL.md',
@@ -62,149 +39,91 @@ const contractPrefix = [
   '  fixture:',
   '    tracks: [full]',
   '    inputs:',
-  '      required: []',
-  '      optional:',
-  '        - id: plan',
-  '          artifact: plan@1',
-  '          absent_effect: fixture',
+  '      - id: plan',
+  '        sources: [{ kind: artifact, artifact: plan@1 }]',
+  '    capabilities:',
+  '      - id: capability_fixture',
+  '        axis: functional',
+  '        inputs: [plan]',
+  '        tracks: [full]',
+  '        on_missing: fail',
   '    produces: []',
-  '    verifies:',
-  '      check: check-fixture.ts',
-  '      depth_field: summary.depth',
-  '    tiers:',
+  '    verifies: { check: check-fixture.ts }',
 ];
 
 const cases: Case[] = [
   {
-    name: 'artifact inventory 注册完整的 16 个叙述产物与 schema',
+    name: 'artifact inventory registers narrative artifacts and schemas',
     run: () => {
-      const inventory = loadArtifactInventory(FRAMEWORK_ROOT);
-      const ids = new Set(inventory.artifacts.map((artifact) => artifact.id));
-      assert(ids.size === 16, `inventory size=${ids.size}`);
-      for (const required of [
-        'change@1',
-        'use-cases@1',
-        'ui-spec@1',
-        'visual-parity@1',
-        'ref-elements@1',
-        'asset-manifest@1',
-      ]) {
+      const ids = new Set(loadArtifactInventory(FRAMEWORK_ROOT).artifacts.map((artifact) => artifact.id));
+      for (const required of ['change@1', 'use-cases@1', 'ui-spec@1', 'visual-parity@1', 'asset-manifest@1']) {
         assert(ids.has(required), `missing ${required}`);
       }
     },
   },
   {
-    name: 'workflow feature phases, not a hardcoded skill count, define contract coverage',
+    name: 'workflow feature phases rather than a fixed skill count define coverage',
     run: () => {
       const contracts = loadFeatureContracts(FRAMEWORK_ROOT);
       const phases = contracts.flatMap((contract) => Object.keys(contract.phases));
-      assert(contracts.length === 7, `contracts=${contracts.length}`);
-      assert(phases.length === 8, `phases=${phases.join(',')}`);
       assert(phases.includes('change') && phases.includes('exit'), 'change-lite phase sections missing');
       const source = fs.readFileSync(path.resolve(FRAMEWORK_ROOT, 'harness/scripts/utils/skill-contract.ts'), 'utf8');
-      assert(source.includes('listWorkflowPhases'), 'coverage must derive expected phases from workflow');
-      assert(!source.includes('contracts.length !== 7'), 'coverage must not hardcode seven contracts');
+      assert(source.includes('listWorkflowPhases'), 'coverage must derive workflow phases');
+      assert(!source.includes('enumerateTierCombinations'), 'tier enumeration must be removed');
     },
   },
   {
-    name: 'bounded tier DSL evaluates nested all/any/not predicates',
+    name: 'legacy tiers/when/depth_field are rejected by the loader',
     run: () => {
-      const predicate = parseTierPredicate('all(present(plan), not(alternative(cases, adhoc)))');
-      const observed = {
-        present: new Set(['plan', 'cases']),
-        alternatives: new Map([['cases', 'acceptance']]),
-      };
-      assert(evaluateTierPredicate(predicate, observed), 'predicate should match');
+      const file = writeContract([...prefix, '    tiers: {}'].join('\n'));
+      expectThrow(() => loadSkillContract(file), '含未知字段 tiers');
     },
   },
   {
-    name: 'tier enumeration selects exactly one tier for all production contracts',
+    name: 'capability input references and provider ids fail closed',
     run: () => {
-      for (const contract of loadFeatureContracts(FRAMEWORK_ROOT)) {
-        for (const phase of Object.values(contract.phases)) {
-          for (const track of phase.tracks) {
-            const combinations = enumerateTierCombinations(phase, track);
-            assert(combinations.length > 0, `${contract.skill}/${track} has no combinations`);
-          }
-        }
-      }
+      const unknownInput = writeContract(prefix.join('\n').replace('inputs: [plan]', 'inputs: [unknown]'));
+      expectThrow(() => loadSkillContract(unknownInput), '引用未知 input');
+      const unknownProvider = writeContract(prefix.join('\n').replace('artifact: plan@1', 'provider_id: derive.not-registered').replace('{ kind: artifact, provider_id:', '{ kind: derive, provider_id:'));
+      expectThrow(() => loadSkillContract(unknownProvider), 'provider_id 未注册');
     },
   },
   {
-    name: 'zero-match fixture without otherwise is rejected',
+    name: 'assurance order is global and blocked never satisfies a floor',
     run: () => {
-      const filePath = writeContract([
-        ...contractPrefix,
-        '      full:',
-        '        when: "present(plan)"',
-        '        satisfies: [full]',
-      ].join('\n'));
-      expectThrow(() => loadSkillContract(filePath), '必须且只能有一个 otherwise');
+      assert(assuranceSatisfies('full', 'full'), 'full >= full');
+      assert(assuranceSatisfies('full', 'degraded'), 'full >= degraded');
+      assert(assuranceSatisfies('degraded', 'degraded'), 'degraded >= degraded');
+      assert(!assuranceSatisfies('degraded', 'full'), 'degraded < full');
+      assert(!assuranceSatisfies('blocked', 'degraded'), 'blocked cannot satisfy degraded');
     },
   },
   {
-    name: 'multiple-match fixture is rejected by finite enumeration',
-    run: () => {
-      const filePath = writeContract([
-        ...contractPrefix,
-        '      full:',
-        '        when: "present(plan)"',
-        '        satisfies: [full]',
-        '      broad:',
-        '        when: "any(present(plan), not(present(plan)))"',
-        '        satisfies: [broad]',
-        '      fallback:',
-        '        when: otherwise',
-        '        satisfies: [fallback]',
-      ].join('\n'));
-      expectThrow(() => loadSkillContract(filePath), 'tier 非确定');
-    },
-  },
-  {
-    name: 'missing-producer fixture is rejected by producer/consumer graph',
+    name: 'missing producer from an artifact source is rejected by static graph gate',
     run: () => {
       const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const contracts = loadFeatureContracts(FRAMEWORK_ROOT);
-      const plan = contracts.find((contract) => contract.skill === 'plan');
-      assert(Boolean(plan), 'plan contract missing');
-      plan!.phases.plan.inputs.required[0].artifact = 'orphan@1';
-      const registered = new Set([
-        ...loadArtifactInventory(FRAMEWORK_ROOT).artifacts.map((artifact) => artifact.id),
-        'orphan@1',
-      ]);
+      const plan = contracts.find((contract) => contract.skill === 'plan')!;
+      const source = plan.phases.plan.inputs.find((input) => input.id === 'spec')!.sources[0];
+      if (source.kind !== 'artifact') throw new Error('fixture assumption');
+      source.artifact = 'orphan@1';
+      const registered = new Set([...loadArtifactInventory(FRAMEWORK_ROOT).artifacts.map((artifact) => artifact.id), 'orphan@1']);
       const issues = validateContractConsistency(FRAMEWORK_ROOT, workflow, contracts, registered);
-      assert(
-        issues.some((issue) => issue.code === 'missing_producer' && issue.message.includes('orphan@1')),
-        JSON.stringify(issues),
-      );
+      assert(issues.some((issue) => issue.code === 'missing_producer' && issue.message.includes('orphan@1')), JSON.stringify(issues));
     },
   },
   {
-    name: 'production contracts pass workflow consistency',
+    name: 'production capability contracts pass the static declaration gate',
     run: () => {
       const issues = checkContractConsistency(FRAMEWORK_ROOT);
       assert(issues.length === 0, issues.map((issue) => `${issue.code}: ${issue.message}`).join('\n'));
-    },
-  },
-  {
-    name: 'tier satisfaction is contract-local and explicit',
-    run: () => {
-      const ut = loadFeatureContracts(FRAMEWORK_ROOT)
-        .find((contract) => contract.skill === 'business-ut')!.phases.ut;
-      assert(tierSatisfies(ut, 'full', 'basic'), 'full should satisfy basic');
-      assert(!tierSatisfies(ut, 'basic', 'full'), 'basic must not satisfy full');
-      assert(!tierSatisfies(ut, 'adhoc', 'basic'), 'unknown cross-contract tier must not compare');
     },
   },
 ];
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((testCase) => {
-    try {
-      testCase.run();
-      return { name: testCase.name, ok: true };
-    } catch (error) {
-      return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    try { testCase.run(); return { name: testCase.name, ok: true }; }
+    catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; }
   });
 }

@@ -158,6 +158,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'assess', modulePath: './unit/assess.unit.test' },
   { id: 'device-test-case-kernel', modulePath: './unit/device-test-case-kernel.unit.test' },
   { id: 'quality-tiers', modulePath: './unit/quality-tiers.unit.test' },
+  { id: 'capability-degradation', modulePath: './unit/capability-degradation.unit.test' },
   { id: 'goal-adapter-routing', modulePath: './unit/goal-adapter-routing.unit.test' },
   { id: 'goal-reconcile-observation', modulePath: './unit/goal-reconcile-observation.unit.test' },
   { id: 'goal-reconcile-boundary-fixtures', modulePath: './unit/goal-reconcile-boundary-fixtures.unit.test' },

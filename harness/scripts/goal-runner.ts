@@ -268,7 +268,7 @@ import {
 } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
-import { validateMinimumDepthByPhase } from './utils/skill-contract';
+import { validateMinimumAssurance } from './utils/skill-contract';
 import { assessFeature } from './utils/assess';
 import type { DriverGuardAction } from './utils/goal-assess-driver';
 import { createGoalReconcileBoundary } from './utils/goal-reconcile-boundary';
@@ -3810,9 +3810,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  validateMinimumDepthByPhase(
+  validateMinimumAssurance(
     frameworkRoot,
-    manifest.minimum_depth_by_phase,
+    manifest.minimum_assurance,
     new Set(workflow.artifacts.filter((item) => item.scope === 'feature').map((item) => item.id)),
   );
   // 十三轮 review P0-1 + plan f6b2d9a4 T3：fidelity transition 独立前置校验——
@@ -7290,7 +7290,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           frameworkRoot,
           feature: manifest.feature,
           goalEnd: manifest.end_phase,
-          minimumDepthByPhase: manifest.minimum_depth_by_phase,
+          minimumAssurance: manifest.minimum_assurance,
           authorization: { mode: 'goal_mode' },
           runId: manifest.run_id,
           attemptId: invokeId,
@@ -7831,7 +7831,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             await sleepMs(backoffMs);
           } else if (failureKind === 'agent_timeout') {
             // PASS+超时仍必须计入本 phase 的 assess retry budget；否则叠加
-            // insufficient_depth/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。
+            // insufficient_assurance/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。
             retries++;
           } else {
             retries++;

@@ -409,7 +409,7 @@ export function runAll(): UnitCaseResult[] {
         const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closure-fatal-'));
         const report: ScriptReport = {
           phase: 'testing', feature: '_global', timestamp: new Date(0).toISOString(), project_root: projectRoot,
-          quality_depth: 'full', missing_optional_inputs: [], checks: [],
+          assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null, checks: [],
           summary: { total: 0, pass: 0, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
         };
         const fatalReport = failScriptReportWithFatalError(report, 'closure_finalization', new Error('disk mismatch'), FRAMEWORK_ROOT);

@@ -46,7 +46,7 @@ import {
 import {
   loadFrameworkConfig,
   featuresDirPath,
-  resolveFeatureArtifact,
+
   featureArtifactPath,
   featureDir,
   relFeatureFile,
@@ -100,9 +100,6 @@ import {
   collectContractPackagePathPollution,
   mergePollutionViolations,
 } from './utils/harness-path-guard';
-import { resolvePhaseQuality } from './utils/skill-contract';
-import { resolveFeatureTrack } from './utils/runtime-policy';
-import { loadFeatureTrackDecl } from './utils/feature-track';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -301,16 +298,6 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   return ctx.featureSpec.useCases ?? null;
 }
 
-function loadDesignMd(ctx: CheckContext): string | null {
-  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
-  if (!resolved.exists) return null;
-  try {
-    return fs.readFileSync(resolved.actualPath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
 function acceptanceHasUnitLayerRequirement(ctx: CheckContext): boolean {
   const ac = ctx.featureSpec.acceptance;
   if (!ac) return false;
@@ -321,10 +308,6 @@ function acceptanceHasUnitLayerRequirement(ctx: CheckContext): boolean {
   );
 }
 
-function designMentionsUseCaseChapter(ctx: CheckContext): boolean {
-  const md = loadDesignMd(ctx);
-  return !!md && md.includes('业务流程 UseCase 清单');
-}
 
 // --------------------------------------------------------------------------
 // Structure Checks
@@ -3535,31 +3518,6 @@ function buildUtRunStatusResult(
   };
 }
 
-function checkUtQualityDepth(ctx: CheckContext): CheckResult[] {
-  const quality = resolvePhaseQuality(
-    ctx.frameworkRoot,
-    ctx.projectRoot,
-    ctx.feature,
-    'ut',
-    resolveFeatureTrack(loadFeatureTrackDecl(ctx.projectRoot, ctx.feature)),
-  );
-  return [{
-    id: 'ut_quality_depth',
-    category: 'structure',
-    description: 'Business UT 输入质量档位与缺失输入披露',
-    severity: 'MAJOR',
-    status: quality.depth === 'full' ? 'PASS' : 'WARN',
-    details: [
-      `quality_depth=${quality.depth}`,
-      `missing_optional_inputs=${quality.missing_optional_inputs.join(',') || 'none'}`,
-      ...(quality.depth === 'basic'
-        ? ['basic 档从 acceptance、业务源码 diff scope 与 module catalog 推导测试对象；契约断言覆盖按不可用披露。']
-        : []),
-    ].join('\n'),
-    suggestion: quality.depth === 'full' ? undefined : '若 goal 要求 full，补齐 plan+contracts 后重跑 UT。',
-  }];
-}
-
 const checker: PhaseChecker = {
   phase: 'ut',
 
@@ -3597,7 +3555,6 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
-    results.push(...checkUtQualityDepth(ctx));
 
     results.push(
       ...safeRun(

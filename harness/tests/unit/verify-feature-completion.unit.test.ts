@@ -70,7 +70,9 @@ function writeSummary(root: string, phase: string, verdict: string): void {
     quality_axes: minimalAxes(),
     release_readiness: 'READY',
     completion_status: 'COMPLETE',
-    depth: 'full',
+    assurance: 'full',
+    capability_resolutions: [],
+    capability_resolution_contract_fingerprint: null,
     closure_status: 'closed',
     closure_commit: { schema_version: '1.0' },
   }), 'utf-8');

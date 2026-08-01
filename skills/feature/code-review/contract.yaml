@@ -5,31 +5,18 @@ phases:
   review:
     tracks: [full]
     inputs:
-      required:
-        - { id: code, kind: source }
-      optional:
-        - id: spec
-          artifact: spec@1
-          absent_effect: "Review records the missing requirement baseline and selects basic depth."
-        - id: plan
-          artifact: plan@1
-          absent_effect: "Review derives intent from source, module catalog, and glossary."
-        - id: contracts
-          artifact: contracts@1
-          absent_effect: "Interface conformance coverage is unavailable and depth is basic."
-        - id: acceptance
-          artifact: acceptance@1
-          absent_effect: "Acceptance-specific semantic review is unavailable."
+      - { id: code, sources: [{ kind: derive, provider_id: derive.codebase }] }
+      - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
+      - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }, { kind: derive, provider_id: derive.test-targets }] }
+      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }] }
+      - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }] }
+      - { id: ui_spec, sources: [{ kind: artifact, artifact: ui-spec@1 }] }
+    capabilities:
+      - { id: capability_review_code_context, axis: functional, inputs: [code], tracks: [full], on_missing: fail }
+      - { id: capability_review_design_context, axis: functional, inputs: [spec, plan, contracts], tracks: [full], on_missing: prune }
+      - { id: capability_review_acceptance_context, axis: evidence, inputs: [acceptance], tracks: [full], on_missing: prune }
+      - { id: capability_review_visual_context, axis: visual, inputs: [ui_spec], tracks: [full], applicability_provider_id: applicability.ui, on_missing: prune }
     produces:
       - { artifact: review-report@1 }
-    verifies:
-      check: check-review.ts
-      depth_field: summary.depth
+    verifies: { check: check-review.ts }
     control_dependencies: [coding]
-    tiers:
-      full:
-        when: "all(present(spec), present(contracts))"
-        satisfies: [full, basic]
-      basic:
-        when: otherwise
-        satisfies: [basic]

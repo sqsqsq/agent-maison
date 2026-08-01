@@ -30,9 +30,7 @@ import {
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
-import { resolvePhaseQuality } from './skill-contract';
-import { resolveFeatureTrack } from './runtime-policy';
-import { loadFeatureTrackDecl } from './feature-track';
+import type { CapabilityResolutionReport } from './capability-resolution';
 
 // --------------------------------------------------------------------------
 // 报告目录管理
@@ -118,30 +116,20 @@ export function generateScriptReport(
   projectRoot: string,
   checks: CheckResult[],
   frameworkRoot?: string,
+  capabilityReport?: CapabilityResolutionReport,
 ): ScriptReport {
+  void _harnessRoot;
+  void frameworkRoot;
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
-  let quality = { depth: 'not_applicable', missing_optional_inputs: [] as string[] };
-  if (feature !== '_global') {
-    try {
-      quality = resolvePhaseQuality(
-        frameworkRoot ?? path.resolve(_harnessRoot, '..'),
-        projectRoot,
-        feature,
-        phase,
-        resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
-      );
-    } catch (error) {
-      quality = { depth: 'unknown', missing_optional_inputs: [`contract_resolution_error:${(error as Error).message}`] };
-    }
-  }
   const report: ScriptReport = {
     phase,
     feature,
     timestamp: new Date().toISOString(),
     project_root: projectRoot,
-    quality_depth: quality.depth,
-    missing_optional_inputs: quality.missing_optional_inputs,
+    assurance: capabilityReport?.assurance ?? 'not_applicable',
+    capability_resolutions: capabilityReport?.capabilities ?? [],
+    capability_resolution_contract_fingerprint: capabilityReport?.contract_fingerprint ?? null,
     checks: finalized.checks,
     summary,
   };
@@ -422,8 +410,8 @@ export function generateMergedReport(
   lines.push(`# ${phase.toUpperCase()} 阶段验证报告 — ${feature}`);
   lines.push('');
   lines.push(`> 生成时间: ${new Date().toISOString()}`);
-  lines.push(`> 质量深度: ${scriptReport.quality_depth}`);
-  lines.push(`> 缺失可选输入: ${scriptReport.missing_optional_inputs.join(', ') || 'none'}`);
+  lines.push(`> 保证等级: ${scriptReport.assurance}`);
+  lines.push(`> 能力解析: ${scriptReport.capability_resolutions.length} 项`);
   lines.push('');
 
   // 脚本 Harness 摘要
@@ -551,8 +539,8 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'='.repeat(60)}`);
   console.log(`  Harness Script Report — ${report.phase}/${report.feature}`);
   console.log(`  ${report.timestamp}`);
-  console.log(`  quality_depth=${report.quality_depth}`);
-  console.log(`  missing_optional_inputs=${report.missing_optional_inputs.join(',') || 'none'}`);
+  console.log(`  assurance=${report.assurance}`);
+  console.log(`  capability_resolutions=${report.capability_resolutions.length}`);
   console.log(`${'='.repeat(60)}`);
   console.log('');
 

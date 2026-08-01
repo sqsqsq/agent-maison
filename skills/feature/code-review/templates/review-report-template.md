@@ -4,8 +4,8 @@
 > **审查日期**: {date}
 > **审查版本**: v1.0
 > **审查人**: AI Code Reviewer
-> **质量深度**: `{full|basic}`
-> **缺失输入**: `{none|spec,plan,contracts,acceptance}`
+> **保证等级**: `{full|degraded|blocked}`
+> **能力解析说明**: `{由 harness summary 1.2 的 capability_resolutions 派生；不得手写缺失输入政策}`
 > **对应设计文档**: `<features_dir>/{module-name}/plan/plan.md`
 
 ---

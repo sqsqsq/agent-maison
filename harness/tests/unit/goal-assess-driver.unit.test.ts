@@ -50,9 +50,9 @@ function result(recommendation: AssessRecommendation, fused = false): AssessResu
       schema_version: '1.2',
       verdict: 'PASS',
       closure: 'closed',
-      depth: 'full',
-      required_depth: null,
-      depth_satisfied: null,
+      assurance: 'full',
+      required_assurance: null,
+      assurance_satisfied: null,
       deferred: false,
       summary_fingerprint: phase,
       evidence_fingerprint: phase,
@@ -131,9 +131,9 @@ const cases: TestCase[] = [
         schema_version: '1.2',
         verdict: phase === 'testing' ? 'FAIL' : 'PASS',
         closure: phase === 'testing' ? 'open' : 'closed',
-        depth: 'full',
-        required_depth: null,
-        depth_satisfied: null,
+        assurance: 'full',
+        required_assurance: null,
+        assurance_satisfied: null,
         deferred: false,
         summary_fingerprint: phase,
         evidence_fingerprint: phase,
@@ -210,8 +210,8 @@ const cases: TestCase[] = [
           phases: chain.map((phase) => ({
             phase, summary_state: 'current', schema_version: '1.2',
             verdict: phase === 'ut' ? 'INCOMPLETE' : 'PASS',
-            closure: phase === 'ut' ? 'open' : 'closed', depth: 'full',
-            required_depth: null, depth_satisfied: null, deferred: phase === 'ut',
+            closure: phase === 'ut' ? 'open' : 'closed', assurance: 'full',
+            required_assurance: null, assurance_satisfied: null, deferred: phase === 'ut',
             summary_fingerprint: phase, evidence_fingerprint: phase,
           })),
           fingerprints: {
@@ -246,8 +246,8 @@ const cases: TestCase[] = [
           schema_version: phase === 'spec' || phase === 'ut' ? null : '1.2',
           verdict: phase === 'spec' || phase === 'ut' ? null : 'PASS',
           closure: phase === 'spec' || phase === 'ut' ? 'open' : 'closed',
-          depth: phase === 'spec' || phase === 'ut' ? 'unknown' : 'full',
-          required_depth: null, depth_satisfied: null, deferred: false,
+          assurance: phase === 'spec' || phase === 'ut' ? 'unknown' : 'full',
+          required_assurance: null, assurance_satisfied: null, deferred: false,
           summary_fingerprint: null, evidence_fingerprint: null,
         })),
         fingerprints: {
@@ -265,7 +265,7 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'PASS with current insufficient depth retries within budget then halts',
+    name: 'PASS with current insufficient assurance retries within budget then halts',
     run: () => {
       for (const [retriesUsed, expected] of [[0, 'retry'], [2, 'halt']] as const) {
         const reconcile = observation({
@@ -281,9 +281,9 @@ const cases: TestCase[] = [
             schema_version: '1.2',
             verdict: 'PASS',
             closure: 'closed',
-            depth: phase === 'review' ? 'basic' : 'full',
-            required_depth: phase === 'review' ? 'full' : null,
-            depth_satisfied: phase === 'review' ? false : null,
+            assurance: phase === 'review' ? 'degraded' : 'full',
+            required_assurance: phase === 'review' ? 'full' : null,
+            assurance_satisfied: phase === 'review' ? false : null,
             deferred: false,
             summary_fingerprint: phase,
             evidence_fingerprint: phase,
@@ -316,8 +316,8 @@ const cases: TestCase[] = [
         phases: chain.map((phase) => ({
           phase, summary_state: 'current', schema_version: '1.2',
           verdict: phase === 'ut' ? 'FAIL' : 'PASS',
-          closure: phase === 'ut' ? 'open' : 'closed', depth: 'full',
-          required_depth: null, depth_satisfied: null, deferred: false,
+          closure: phase === 'ut' ? 'open' : 'closed', assurance: 'full',
+          required_assurance: null, assurance_satisfied: null, deferred: false,
           summary_fingerprint: phase, evidence_fingerprint: phase,
         })),
         fingerprints: {
@@ -346,7 +346,7 @@ const cases: TestCase[] = [
         'assess-derived halt must get a named reason',
       );
       assert(
-        /insufficient_depth\/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。\r?\n\s*retries\+\+;/.test(runner),
+        /insufficient_assurance\/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。\r?\n\s*retries\+\+;/.test(runner),
         'agent timeout retry must consume phase budget',
       );
     },

@@ -20,6 +20,7 @@
 // ============================================================================
 
 import type { CheckResult, Phase } from './types';
+import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
@@ -165,11 +166,22 @@ const ADVANCE_UNVERIFIED_BLOCKING: Record<AxisId, (phase: string) => boolean> = 
   asset: () => false,
 };
 
-export function deriveQualityAxes(checks: CheckLike[], opts: DeriveAxesOptions): QualityAxes {
+export function deriveQualityAxes(
+  checks: CheckLike[],
+  opts: DeriveAxesOptions,
+  capabilityReport?: Pick<CapabilityResolutionReport, 'capabilities'>,
+): QualityAxes {
   // 外部阻塞唯一 oracle：legacy INCOMPLETE ⇔ 全部 BLOCKER FAIL 均为 device-external
   // （resolveVerdictFromChecks 内部判定；此处不重复实现其 id/class 细则）。
   const legacy = resolveVerdictFromChecks(checks as CheckResult[]);
   const allBlockerFailsExternal = legacy === 'INCOMPLETE';
+  // Contract axis is the single source for migrated capability-backed checks.
+  // Prefix mapping remains fallback for all ordinary legacy checks.
+  const capabilityAxisByCheckId = new Map(
+    (capabilityReport?.capabilities ?? [])
+      .filter((capability) => capability.active && capability.state === 'resolved')
+      .map((capability) => [capability.id, capability.axis] as const),
+  );
 
   const applicableOf: Record<AxisId, boolean> = {
     functional: true,
@@ -197,7 +209,7 @@ export function deriveQualityAxes(checks: CheckLike[], opts: DeriveAxesOptions):
     // "报告格式坏了"不得被描述成"产品功能失败"（其阻断由 projectPhaseAdvanceVerdict 的
     // reportValidity 输入承担，推进照样被拦，责任归属不混）。
     if (REPORT_VALIDITY_CHECK_IDS.has(c.id)) continue;
-    let axis = mapCheckToAxis(c.id);
+    let axis = capabilityAxisByCheckId.get(c.id) ?? mapCheckToAxis(c.id);
     // 安全网：FAIL 绝不落进 inapplicable 轴而消失——重映射 functional
     if (!applicableOf[axis]) axis = 'functional';
     const b = buckets[axis];
@@ -353,18 +365,51 @@ export function projectCompletionStatus(axes: QualityAxes): string {
   return 'COMPLETE';
 }
 
+/**
+ * A capability report is a pre-check fact. Authorized pruning remains visible in
+ * assurance/report/assess provenance, while only blocked capabilities tighten the
+ * quality lattice and make PASS closure impossible.
+ */
+export function applyCapabilityResolutionProjection(
+  axes: QualityAxes,
+  report: Pick<CapabilityResolutionReport, 'capabilities'> | undefined,
+  phase: string,
+): { hasBlocked: boolean } {
+  if (!report) return { hasBlocked: false };
+  let hasBlocked = false;
+  for (const capability of report.capabilities) {
+    if (!capability.active || capability.state !== 'blocked') continue;
+    const axis = axes[capability.axis];
+    const resolution: AxisResolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+    axes[capability.axis] = {
+      ...axis,
+      applicable: true,
+      required_for_release: true,
+      verdict: 'UNVERIFIED',
+      blocking_class: resolution.class,
+      source_checks: [...new Set([...axis.source_checks, `capability:${capability.id}`])].sort(),
+      resolution,
+    };
+    hasBlocked = true;
+  }
+  return { hasBlocked };
+}
+
 export function deriveSummaryVerdictLattice(
   checks: CheckLike[],
   opts: DeriveAxesOptions,
+  capabilityReport?: Pick<CapabilityResolutionReport, 'capabilities'>,
 ): VerdictLattice {
-  const quality_axes = deriveQualityAxes(checks, opts);
+  const quality_axes = deriveQualityAxes(checks, opts, capabilityReport);
   const report_validity = deriveReportValidity(checks);
+  const capabilityProjection = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
+  const projected = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
   return {
     report_validity,
     quality_axes,
-    projected_verdict: projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity),
-    release_readiness: projectReleaseReadiness(quality_axes),
-    completion_status: projectCompletionStatus(quality_axes),
+    projected_verdict: capabilityProjection.hasBlocked && projected === 'PASS' ? 'INCOMPLETE' : projected,
+    release_readiness: capabilityProjection.hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
+    completion_status: capabilityProjection.hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
   };
 }
 
@@ -398,8 +443,12 @@ export function validateSummaryV11(summary: unknown): string[] {
   if (s.quality_axes == null) errors.push('quality_axes 缺失');
   else errors.push(...validateQualityAxes(s.quality_axes));
   if (s.schema_version === '1.2') {
-    if (typeof s.depth !== 'string' || s.depth.trim().length === 0) {
-      errors.push('depth 缺失/空');
+    if (typeof s.assurance !== 'string' || !['blocked', 'degraded', 'full', 'not_applicable'].includes(s.assurance)) {
+      errors.push('assurance 缺失/非法');
+    }
+    if (!Array.isArray(s.capability_resolutions)) errors.push('capability_resolutions 缺失/非法');
+    if (typeof s.capability_resolution_contract_fingerprint !== 'string' && s.capability_resolution_contract_fingerprint !== null) {
+      errors.push('capability_resolution_contract_fingerprint 缺失/非法');
     }
     if (s.closure_status !== 'open' && s.closure_status !== 'closed') {
       errors.push(`closure_status 缺失/非法（${String(s.closure_status)}）`);

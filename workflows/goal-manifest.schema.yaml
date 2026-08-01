@@ -35,14 +35,14 @@ fields:
     type: array
     items: string
     description: Optional ordered phase list overriding workflow auto_chain
-  minimum_depth_by_phase:
+  minimum_assurance:
     type: object
     additionalProperties:
       type: string
-      minLength: 1
+      enum: [degraded, full]
     description: >
-      Contract-local minimum quality tier for each phase. Tier labels are interpreted
-      only through that phase skill contract's explicit satisfies relation.
+      Optional sparse phase-to-assurance floor. It only adds assess insufficient_assurance
+      gaps and never waives quality-axis, closure, or release rules.
   budget:
     type: object
     properties:

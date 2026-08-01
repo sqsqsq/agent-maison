@@ -22,7 +22,7 @@ import {
   type GoalManifest,
 } from './utils/goal-manifest';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { validateMinimumDepthByPhase } from './utils/skill-contract';
+import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
 
 export interface GoalModeInSessionOptions extends Omit<InSessionRoundOptions, 'round' | 'reconcile'> {
@@ -233,9 +233,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     },
     { projectRoot: options.projectRoot },
   );
-  validateMinimumDepthByPhase(
+  validateMinimumAssurance(
     options.frameworkRoot,
-    manifest.minimum_depth_by_phase,
+    manifest.minimum_assurance,
     new Set(workflow.artifacts.filter((item) => item.scope === 'feature').map((item) => item.id)),
   );
   const manifestPath = path.resolve(options.projectRoot, manifest.report_dir, 'manifest.json');
@@ -276,9 +276,9 @@ export async function runGoalModeHostBridge(
   const workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
-  validateMinimumDepthByPhase(
+  validateMinimumAssurance(
     options.frameworkRoot,
-    manifest.minimum_depth_by_phase,
+    manifest.minimum_assurance,
     new Set(workflow.artifacts.filter((item) => item.scope === 'feature').map((item) => item.id)),
   );
   const runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));

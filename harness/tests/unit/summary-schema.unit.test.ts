@@ -187,7 +187,9 @@ function testSchemaV12ClosureFields(): void {
   const schema = loadSchema();
   const props = schema.properties as Record<string, Record<string, unknown>>;
   assert((props.schema_version.enum as string[]).includes('1.2'), 'schema_version 须支持 1.2');
-  assert(Object.prototype.hasOwnProperty.call(props, 'depth'), 'properties 须含 depth');
+  assert(Object.prototype.hasOwnProperty.call(props, 'assurance'), 'properties 须含 assurance');
+  assert(Object.prototype.hasOwnProperty.call(props, 'capability_resolutions'), 'properties 须含 capability_resolutions');
+  assert(Object.prototype.hasOwnProperty.call(props, 'capability_resolution_contract_fingerprint'), 'properties 须含 capability resolution fingerprint');
   assert(Object.prototype.hasOwnProperty.call(props, 'closure_commit'), 'properties 须含 closure_commit');
   const commit = props.closure_commit;
   const required = commit.required as string[];
@@ -197,7 +199,7 @@ function testSchemaV12ClosureFields(): void {
   const allOf = schema.allOf as Array<Record<string, unknown>>;
   assert(Array.isArray(allOf) && allOf.length > 0, '1.2 条件必填约束缺失');
   const serialized = JSON.stringify(allOf);
-  assert(serialized.includes('depth'), '1.2 必须条件要求 depth');
+  assert(serialized.includes('assurance'), '1.2 必须条件要求 assurance');
   assert(serialized.includes('closure_status'), '1.2 必须条件要求 closure_status');
   assert(!serialized.includes('closure_commit'), 'open 1.2 summary 不应强制 closure_commit');
 }
@@ -219,6 +221,6 @@ export function runAll(): UnitCaseResult[] {
     runCase('summary schema: spec/plan 样例通过形状校验', testSpecPlanSamplesValidateShape),
     runCase('summary schema: 缺少 next_action 会被拒绝', testInvalidSampleRejectedByUnitGuard),
     runCase('summary schema: soft_advisories 可选且形状合法', testSchemaAllowsSoftAdvisories),
-    runCase('summary schema: 1.2 depth 与 closure_commit 条件稳定', testSchemaV12ClosureFields),
+    runCase('summary schema: 1.2 assurance 与 closure_commit 条件稳定', testSchemaV12ClosureFields),
   ];
 }

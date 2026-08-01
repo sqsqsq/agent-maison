@@ -53,7 +53,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | doc/architecture.md / 源代码（contracts.yaml files 列表） | ✅ |
 | spec.md | 可选，验证功能覆盖完整性 |
 
-**质量深度与上下文缺失**：报告头必须写 `质量深度` 与 `缺失输入`。`spec+contracts` 齐全为 `full`；否则为 `basic`，以 module catalog、glossary、报告声明的源码范围与代码意图为回退基线，并明确披露接口/需求专项未覆盖。输入降档不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
+**能力解析与上下文**：报告头必须写 `保证等级`，其值只来自 harness summary 1.2 的 `assurance` 与 `capability_resolutions`，不得手写 `full/basic` 或另一套缺失输入政策。review contract 的结构化 source chain 决定 artifact/derive 回退；显式非 UI 由 applicability preflight 判定为不适用，输入存在却不能解析仍是 invalid/blocking，不能伪装为降级。输入裁剪不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
 
 ## 流程骨架
 

@@ -1,29 +1,56 @@
 // ============================================================================
-// skill-contract.ts — versioned feature-skill contracts and bounded tier DSL
+// skill-contract.ts — versioned feature-skill contracts (capability model)
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { artifactReadCandidatePaths, featureFilePath } from '../../config';
 import { listWorkflowPhases, loadWorkflowSpec } from '../../workflow-loader';
+import type { AxisId } from './quality-axes';
 
 export type FeatureTrackName = 'full' | 'lite';
+export type Assurance = 'blocked' | 'degraded' | 'full';
+export type MinimumAssurance = Exclude<Assurance, 'blocked'>;
 
-export interface ContractAlternative {
-  value: string;
-  artifact?: string;
-  kind?: 'source' | 'adhoc';
-  normalizer?: string;
-}
+export const ASSURANCE_RANK: Readonly<Record<Assurance, number>> = {
+  blocked: 0,
+  degraded: 1,
+  full: 2,
+};
 
+export const DERIVE_PROVIDER_IDS = [
+  'derive.codebase',
+  'derive.requirement',
+  'derive.test-targets',
+  'derive.adhoc-cases',
+] as const;
+export type DeriveProviderId = typeof DERIVE_PROVIDER_IDS[number];
+
+export const APPLICABILITY_PROVIDER_IDS = [
+  'applicability.always',
+  'applicability.ui',
+] as const;
+export type ApplicabilityProviderId = typeof APPLICABILITY_PROVIDER_IDS[number];
+
+export type ContractInputSource =
+  | { kind: 'artifact'; artifact: string }
+  | { kind: 'derive'; provider_id: DeriveProviderId };
+
+/** Input catalog only: it contains sources, never required/optional policy. */
 export interface ContractInput {
   id: string;
-  artifact?: string;
-  kind?: 'source' | 'adhoc';
-  alternatives?: ContractAlternative[];
-  absent_effect?: string;
-  tracks?: FeatureTrackName[];
+  sources: ContractInputSource[];
+}
+
+export interface ContractCapability {
+  /** Bound 1:1 to the synthetic or migrated CheckResult id. */
+  id: string;
+  axis: AxisId;
+  inputs: string[];
+  tracks: FeatureTrackName[];
+  applicability_provider_id?: ApplicabilityProviderId;
+  on_missing: 'prune' | 'fail';
 }
 
 export interface ContractOutput {
@@ -32,24 +59,13 @@ export interface ContractOutput {
   id?: string;
 }
 
-export interface ContractTier {
-  when: string;
-  satisfies: string[];
-}
-
 export interface PhaseContract {
   tracks: FeatureTrackName[];
-  inputs: {
-    required: ContractInput[];
-    optional: ContractInput[];
-  };
+  inputs: ContractInput[];
+  capabilities: ContractCapability[];
   produces: ContractOutput[];
-  verifies: {
-    check: string;
-    depth_field: 'summary.depth';
-  };
+  verifies: { check: string };
   control_dependencies?: string[];
-  tiers: Record<string, ContractTier>;
 }
 
 export interface SkillContract {
@@ -71,22 +87,6 @@ export interface ArtifactInventory {
   artifacts: ArtifactInventoryEntry[];
 }
 
-export type TierPredicate =
-  | { op: 'present'; id: string }
-  | { op: 'alternative'; id: string; value: string }
-  | { op: 'all' | 'any'; args: TierPredicate[] }
-  | { op: 'not'; arg: TierPredicate };
-
-export interface TierObservation {
-  present: Set<string>;
-  alternatives: Map<string, string>;
-}
-
-export interface TierCombination {
-  label: string;
-  observation: TierObservation;
-}
-
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`[skill-contract] ${label} 必须是 map`);
@@ -99,248 +99,121 @@ function assertString(value: unknown, label: string): asserts value is string {
   }
 }
 
-function assertStringArray(value: unknown, label: string): asserts value is string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.some((v) => typeof v !== 'string')) {
-    throw new Error(`[skill-contract] ${label} 必须是非空字符串数组`);
+function assertStringArray(value: unknown, label: string, allowEmpty = false): asserts value is string[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.some((v) => typeof v !== 'string')) {
+    throw new Error(`[skill-contract] ${label} 必须是${allowEmpty ? '' : '非空'}字符串数组`);
   }
 }
 
-function splitArgs(source: string): string[] {
-  const args: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < source.length; i++) {
-    const ch = source[i];
-    if (ch === '(') depth += 1;
-    if (ch === ')') depth -= 1;
-    if (depth < 0) throw new Error(`[skill-contract] tier DSL 括号不平衡：${source}`);
-    if (ch === ',' && depth === 0) {
-      args.push(source.slice(start, i).trim());
-      start = i + 1;
+function validateTracks(value: unknown, label: string): FeatureTrackName[] {
+  assertStringArray(value, label);
+  if (value.some((track) => track !== 'full' && track !== 'lite')) {
+    throw new Error(`[skill-contract] ${label} 仅支持 full|lite`);
+  }
+  if (new Set(value).size !== value.length) throw new Error(`[skill-contract] ${label} 不得重复`);
+  return [...value] as FeatureTrackName[];
+}
+
+function validId(value: string): boolean {
+  return /^[a-z][a-z0-9_]*$/.test(value);
+}
+
+function validArtifact(value: string): boolean {
+  return /^[a-z][a-z0-9-]*@[1-9][0-9]*$/.test(value);
+}
+
+function validateInputSource(raw: unknown, label: string): ContractInputSource {
+  assertRecord(raw, label);
+  if (raw.kind === 'artifact') {
+    assertString(raw.artifact, `${label}.artifact`);
+    if (!validArtifact(raw.artifact)) throw new Error(`[skill-contract] ${label}.artifact 格式非法`);
+    const keys = Object.keys(raw);
+    if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('artifact')) {
+      throw new Error(`[skill-contract] ${label} artifact source 仅允许 kind/artifact`);
     }
+    return { kind: 'artifact', artifact: raw.artifact };
   }
-  if (depth !== 0) throw new Error(`[skill-contract] tier DSL 括号不平衡：${source}`);
-  args.push(source.slice(start).trim());
-  if (args.some((a) => a === '')) {
-    throw new Error(`[skill-contract] tier DSL 含空参数：${source}`);
-  }
-  return args;
-}
-
-/** Parse the finite v1 DSL. `otherwise` is handled by tier selection, not as an expression. */
-export function parseTierPredicate(source: string): TierPredicate {
-  const text = source.trim();
-  const match = /^([a-z]+)\((.*)\)$/.exec(text);
-  if (!match) throw new Error(`[skill-contract] 非法 tier predicate：${source}`);
-  const op = match[1];
-  const args = splitArgs(match[2]);
-  if (op === 'present') {
-    if (args.length !== 1 || !/^[a-z][a-z0-9_]*$/.test(args[0])) {
-      throw new Error(`[skill-contract] present 需要一个 input id：${source}`);
+  if (raw.kind === 'derive') {
+    assertString(raw.provider_id, `${label}.provider_id`);
+    if (!(DERIVE_PROVIDER_IDS as readonly string[]).includes(raw.provider_id)) {
+      throw new Error(`[skill-contract] ${label}.provider_id 未注册：${raw.provider_id}`);
     }
-    return { op, id: args[0] };
-  }
-  if (op === 'alternative') {
-    if (
-      args.length !== 2 ||
-      !/^[a-z][a-z0-9_]*$/.test(args[0]) ||
-      !/^[a-z][a-z0-9_-]*$/.test(args[1])
-    ) {
-      throw new Error(`[skill-contract] alternative 需要 input id 与 value：${source}`);
+    const keys = Object.keys(raw);
+    if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('provider_id')) {
+      throw new Error(`[skill-contract] ${label} derive source 仅允许 kind/provider_id`);
     }
-    return { op, id: args[0], value: args[1] };
+    return { kind: 'derive', provider_id: raw.provider_id as DeriveProviderId };
   }
-  if (op === 'not') {
-    if (args.length !== 1) throw new Error(`[skill-contract] not 需要一个表达式：${source}`);
-    return { op, arg: parseTierPredicate(args[0]) };
-  }
-  if (op === 'all' || op === 'any') {
-    if (args.length === 0) throw new Error(`[skill-contract] ${op} 至少需要一个表达式：${source}`);
-    return { op, args: args.map(parseTierPredicate) };
-  }
-  throw new Error(`[skill-contract] tier DSL 不支持操作符 "${op}"`);
+  throw new Error(`[skill-contract] ${label}.kind 仅支持 artifact|derive`);
 }
 
-export function evaluateTierPredicate(predicate: TierPredicate, observed: TierObservation): boolean {
-  switch (predicate.op) {
-    case 'present':
-      return observed.present.has(predicate.id);
-    case 'alternative':
-      return observed.alternatives.get(predicate.id) === predicate.value;
-    case 'not':
-      return !evaluateTierPredicate(predicate.arg, observed);
-    case 'all':
-      return predicate.args.every((p) => evaluateTierPredicate(p, observed));
-    case 'any':
-      return predicate.args.some((p) => evaluateTierPredicate(p, observed));
-  }
-}
-
-function inputApplies(input: ContractInput, track: FeatureTrackName): boolean {
-  return !input.tracks || input.tracks.includes(track);
-}
-
-function copyObservation(observation: TierObservation): TierObservation {
-  return {
-    present: new Set(observation.present),
-    alternatives: new Map(observation.alternatives),
-  };
-}
-
-function expandInput(
-  combinations: TierCombination[],
-  input: ContractInput,
-  required: boolean,
-): TierCombination[] {
-  const variants: Array<{ suffix: string; apply: (o: TierObservation) => void }> = [];
-  if (!required) {
-    variants.push({ suffix: `${input.id}=absent`, apply: () => undefined });
-  }
-  if (input.alternatives) {
-    for (const alt of input.alternatives) {
-      variants.push({
-        suffix: `${input.id}=${alt.value}`,
-        apply: (o) => {
-          o.present.add(input.id);
-          o.alternatives.set(input.id, alt.value);
-        },
-      });
-    }
-  } else {
-    variants.push({
-      suffix: `${input.id}=present`,
-      apply: (o) => o.present.add(input.id),
-    });
-  }
-  return combinations.flatMap((combination) =>
-    variants.map((variant) => {
-      const observation = copyObservation(combination.observation);
-      variant.apply(observation);
-      return {
-        label: combination.label ? `${combination.label},${variant.suffix}` : variant.suffix,
-        observation,
-      };
-    }),
-  );
-}
-
-/** Enumerate the finite declared-input state space used to prove tier totality/exclusivity. */
-export function enumerateTierCombinations(
-  phase: PhaseContract,
-  track: FeatureTrackName,
-): TierCombination[] {
-  let combinations: TierCombination[] = [
-    { label: '', observation: { present: new Set(), alternatives: new Map() } },
-  ];
-  for (const input of phase.inputs.required.filter((i) => inputApplies(i, track))) {
-    combinations = expandInput(combinations, input, true);
-  }
-  for (const input of phase.inputs.optional.filter((i) => inputApplies(i, track))) {
-    combinations = expandInput(combinations, input, false);
-  }
-  return combinations;
-}
-
-export function selectTier(
-  phase: PhaseContract,
-  observation: TierObservation,
-): string[] {
-  const entries = Object.entries(phase.tiers);
-  const explicit = entries.filter(([, tier]) => tier.when !== 'otherwise');
-  const matches = explicit
-    .filter(([, tier]) => evaluateTierPredicate(parseTierPredicate(tier.when), observation))
-    .map(([name]) => name);
-  if (matches.length > 0) return matches;
-  return entries.filter(([, tier]) => tier.when === 'otherwise').map(([name]) => name);
-}
-
-function validateInput(raw: unknown, label: string, optional: boolean): ContractInput {
+function validateInput(raw: unknown, label: string): ContractInput {
   assertRecord(raw, label);
   assertString(raw.id, `${label}.id`);
-  const alternatives = raw.alternatives;
-  const representations = [raw.artifact !== undefined, raw.kind !== undefined, alternatives !== undefined]
-    .filter(Boolean).length;
-  if (representations !== 1) {
-    throw new Error(`[skill-contract] ${label} 须且只能声明 artifact、kind、alternatives 之一`);
+  if (!validId(raw.id)) throw new Error(`[skill-contract] ${label}.id 格式非法`);
+  if (!Array.isArray(raw.sources) || raw.sources.length === 0) {
+    throw new Error(`[skill-contract] ${label}.sources 必须为非空数组`);
   }
-  if (raw.artifact !== undefined) assertString(raw.artifact, `${label}.artifact`);
-  if (raw.kind !== undefined && raw.kind !== 'source' && raw.kind !== 'adhoc') {
-    throw new Error(`[skill-contract] ${label}.kind 仅支持 source|adhoc`);
+  const sources = raw.sources.map((source, index) => validateInputSource(source, `${label}.sources[${index}]`));
+  return { id: raw.id, sources };
+}
+
+function validateCapability(raw: unknown, label: string, phaseTracks: readonly FeatureTrackName[], inputIds: ReadonlySet<string>): ContractCapability {
+  assertRecord(raw, label);
+  assertString(raw.id, `${label}.id`);
+  if (!validId(raw.id)) throw new Error(`[skill-contract] ${label}.id 格式非法`);
+  if (raw.axis !== 'functional' && raw.axis !== 'visual' && raw.axis !== 'asset' && raw.axis !== 'evidence') {
+    throw new Error(`[skill-contract] ${label}.axis 仅支持 functional|visual|asset|evidence`);
   }
-  let parsedAlternatives: ContractAlternative[] | undefined;
-  if (alternatives !== undefined) {
-    if (!Array.isArray(alternatives) || alternatives.length < 2) {
-      throw new Error(`[skill-contract] ${label}.alternatives 至少两个`);
-    }
-    parsedAlternatives = alternatives.map((alt, index) => {
-      assertRecord(alt, `${label}.alternatives[${index}]`);
-      assertString(alt.value, `${label}.alternatives[${index}].value`);
-      const count = [alt.artifact !== undefined, alt.kind !== undefined].filter(Boolean).length;
-      if (count !== 1) {
-        throw new Error(`[skill-contract] ${label}.alternatives[${index}] 须且只能声明 artifact 或 kind`);
-      }
-      if (alt.artifact !== undefined) assertString(alt.artifact, `${label}.alternatives[${index}].artifact`);
-      if (alt.kind !== undefined && alt.kind !== 'source' && alt.kind !== 'adhoc') {
-        throw new Error(`[skill-contract] ${label}.alternatives[${index}].kind 非法`);
-      }
-      return alt as unknown as ContractAlternative;
-    });
-    const values = parsedAlternatives.map((a) => a.value);
-    if (new Set(values).size !== values.length) {
-      throw new Error(`[skill-contract] ${label}.alternatives.value 重复`);
+  assertStringArray(raw.inputs, `${label}.inputs`);
+  if (new Set(raw.inputs).size !== raw.inputs.length) throw new Error(`[skill-contract] ${label}.inputs 不得重复`);
+  for (const inputId of raw.inputs) {
+    if (!inputIds.has(inputId)) throw new Error(`[skill-contract] ${label}.inputs 引用未知 input "${inputId}"`);
+  }
+  const tracks = validateTracks(raw.tracks, `${label}.tracks`);
+  if (tracks.some((track) => !phaseTracks.includes(track))) {
+    throw new Error(`[skill-contract] ${label}.tracks 必须是 phase tracks 子集`);
+  }
+  if (raw.applicability_provider_id !== undefined) {
+    assertString(raw.applicability_provider_id, `${label}.applicability_provider_id`);
+    if (!(APPLICABILITY_PROVIDER_IDS as readonly string[]).includes(raw.applicability_provider_id)) {
+      throw new Error(`[skill-contract] ${label}.applicability_provider_id 未注册：${raw.applicability_provider_id}`);
     }
   }
-  if (optional) assertString(raw.absent_effect, `${label}.absent_effect`);
-  if (raw.tracks !== undefined) {
-    assertStringArray(raw.tracks, `${label}.tracks`);
-    if (raw.tracks.some((track) => track !== 'full' && track !== 'lite')) {
-      throw new Error(`[skill-contract] ${label}.tracks 仅支持 full|lite`);
+  if (raw.on_missing !== 'prune' && raw.on_missing !== 'fail') {
+    throw new Error(`[skill-contract] ${label}.on_missing 仅支持 prune|fail`);
+  }
+  const keys = new Set(Object.keys(raw));
+  for (const key of keys) {
+    if (!['id', 'axis', 'inputs', 'tracks', 'applicability_provider_id', 'on_missing'].includes(key)) {
+      throw new Error(`[skill-contract] ${label} 含未知字段 ${key}`);
     }
   }
   return {
     id: raw.id,
-    artifact: raw.artifact as string | undefined,
-    kind: raw.kind as 'source' | 'adhoc' | undefined,
-    alternatives: parsedAlternatives,
-    absent_effect: raw.absent_effect as string | undefined,
-    tracks: raw.tracks as FeatureTrackName[] | undefined,
+    axis: raw.axis,
+    inputs: [...raw.inputs],
+    tracks,
+    ...(raw.applicability_provider_id ? { applicability_provider_id: raw.applicability_provider_id as ApplicabilityProviderId } : {}),
+    on_missing: raw.on_missing,
   };
-}
-
-function predicateReferences(
-  predicate: TierPredicate,
-  out: Array<{ op: 'present' | 'alternative'; id: string; value?: string }> = [],
-): Array<{ op: 'present' | 'alternative'; id: string; value?: string }> {
-  if (predicate.op === 'present') out.push({ op: 'present', id: predicate.id });
-  if (predicate.op === 'alternative') {
-    out.push({ op: 'alternative', id: predicate.id, value: predicate.value });
-  }
-  if (predicate.op === 'not') predicateReferences(predicate.arg, out);
-  if (predicate.op === 'all' || predicate.op === 'any') {
-    predicate.args.forEach((arg) => predicateReferences(arg, out));
-  }
-  return out;
 }
 
 function validatePhase(raw: unknown, label: string): PhaseContract {
   assertRecord(raw, label);
-  assertStringArray(raw.tracks, `${label}.tracks`);
-  if (raw.tracks.some((track) => track !== 'full' && track !== 'lite')) {
-    throw new Error(`[skill-contract] ${label}.tracks 仅支持 full|lite`);
+  const tracks = validateTracks(raw.tracks, `${label}.tracks`);
+  if (!Array.isArray(raw.inputs)) throw new Error(`[skill-contract] ${label}.inputs 必须是数组`);
+  const inputs = raw.inputs.map((input, index) => validateInput(input, `${label}.inputs[${index}]`));
+  const inputIds = inputs.map((input) => input.id);
+  if (new Set(inputIds).size !== inputIds.length) throw new Error(`[skill-contract] ${label} input id 重复`);
+  if (!Array.isArray(raw.capabilities) || raw.capabilities.length === 0) {
+    throw new Error(`[skill-contract] ${label}.capabilities 必须为非空数组`);
   }
-  assertRecord(raw.inputs, `${label}.inputs`);
-  if (!Array.isArray(raw.inputs.required) || !Array.isArray(raw.inputs.optional)) {
-    throw new Error(`[skill-contract] ${label}.inputs.required/optional 必须是数组`);
-  }
-  const required = raw.inputs.required.map((input, i) =>
-    validateInput(input, `${label}.inputs.required[${i}]`, false),
-  );
-  const optional = raw.inputs.optional.map((input, i) =>
-    validateInput(input, `${label}.inputs.optional[${i}]`, true),
-  );
-  const ids = [...required, ...optional].map((input) => input.id);
-  if (new Set(ids).size !== ids.length) {
-    throw new Error(`[skill-contract] ${label} input id 重复`);
+  const capabilities = raw.capabilities.map((capability, index) =>
+    validateCapability(capability, `${label}.capabilities[${index}]`, tracks, new Set(inputIds)));
+  const capabilityIds = capabilities.map((capability) => capability.id);
+  if (new Set(capabilityIds).size !== capabilityIds.length) {
+    throw new Error(`[skill-contract] ${label} capability id 重复`);
   }
 
   if (!Array.isArray(raw.produces)) throw new Error(`[skill-contract] ${label}.produces 必须是数组`);
@@ -348,7 +221,10 @@ function validatePhase(raw: unknown, label: string): PhaseContract {
     assertRecord(output, `${label}.produces[${i}]`);
     const count = [output.artifact !== undefined, output.kind !== undefined].filter(Boolean).length;
     if (count !== 1) throw new Error(`[skill-contract] ${label}.produces[${i}] 形状非法`);
-    if (output.artifact !== undefined) assertString(output.artifact, `${label}.produces[${i}].artifact`);
+    if (output.artifact !== undefined) {
+      assertString(output.artifact, `${label}.produces[${i}].artifact`);
+      if (!validArtifact(output.artifact)) throw new Error(`[skill-contract] ${label}.produces[${i}].artifact 格式非法`);
+    }
     if (output.kind !== undefined && (output.kind !== 'source' || typeof output.id !== 'string')) {
       throw new Error(`[skill-contract] ${label}.produces[${i}] source output 缺 id`);
     }
@@ -357,111 +233,46 @@ function validatePhase(raw: unknown, label: string): PhaseContract {
 
   assertRecord(raw.verifies, `${label}.verifies`);
   assertString(raw.verifies.check, `${label}.verifies.check`);
-  if (raw.verifies.depth_field !== 'summary.depth') {
-    throw new Error(`[skill-contract] ${label}.verifies.depth_field 必须为 summary.depth`);
+  if (!/^check-[a-z-]+\.ts$/.test(raw.verifies.check)) {
+    throw new Error(`[skill-contract] ${label}.verifies.check 格式非法`);
   }
-  assertRecord(raw.tiers, `${label}.tiers`);
-  const tierEntries = Object.entries(raw.tiers);
-  if (tierEntries.length === 0) throw new Error(`[skill-contract] ${label}.tiers 不得为空`);
-  const tiers: Record<string, ContractTier> = {};
-  let otherwiseCount = 0;
-  const inputById = new Map([...required, ...optional].map((input) => [input.id, input]));
-  for (const [name, tierRaw] of tierEntries) {
-    assertRecord(tierRaw, `${label}.tiers.${name}`);
-    assertString(tierRaw.when, `${label}.tiers.${name}.when`);
-    assertStringArray(tierRaw.satisfies, `${label}.tiers.${name}.satisfies`);
-    if (tierRaw.when === 'otherwise') {
-      otherwiseCount += 1;
-    } else {
-      const predicate = parseTierPredicate(tierRaw.when);
-      for (const ref of predicateReferences(predicate)) {
-        const input = inputById.get(ref.id);
-        if (!input) {
-          throw new Error(`[skill-contract] ${label}.tiers.${name} 引用未知 input "${ref.id}"`);
-        }
-        if (ref.op === 'alternative') {
-          if (!input.alternatives?.some((alt) => alt.value === ref.value)) {
-            throw new Error(
-              `[skill-contract] ${label}.tiers.${name} 引用未知 alternative "${ref.id}:${String(ref.value)}"`,
-            );
-          }
-        }
-      }
-    }
-    tiers[name] = {
-      when: tierRaw.when,
-      satisfies: [...tierRaw.satisfies],
-    };
-  }
-  if (otherwiseCount !== 1) {
-    throw new Error(`[skill-contract] ${label}.tiers 必须且只能有一个 otherwise`);
-  }
-  for (const [name, tier] of Object.entries(tiers)) {
-    if (!tier.satisfies.includes(name)) {
-      throw new Error(`[skill-contract] ${label}.tiers.${name}.satisfies 必须包含自身`);
-    }
-    for (const satisfied of tier.satisfies) {
-      if (!(satisfied in tiers)) {
-        throw new Error(`[skill-contract] ${label}.tiers.${name}.satisfies 引用未知 tier "${satisfied}"`);
-      }
-    }
+  const verifyKeys = Object.keys(raw.verifies);
+  if (verifyKeys.length !== 1 || verifyKeys[0] !== 'check') {
+    throw new Error(`[skill-contract] ${label}.verifies 仅允许 check（depth_field 已移除）`);
   }
   const controlDependencies = raw.control_dependencies;
-  if (
-    controlDependencies !== undefined &&
-    (!Array.isArray(controlDependencies) || controlDependencies.some((value) => typeof value !== 'string'))
-  ) {
-    throw new Error(`[skill-contract] ${label}.control_dependencies 必须是字符串数组`);
-  }
-  const phase: PhaseContract = {
-    tracks: [...raw.tracks] as FeatureTrackName[],
-    inputs: { required, optional },
-    produces,
-    verifies: {
-      check: raw.verifies.check,
-      depth_field: 'summary.depth',
-    },
-    control_dependencies: controlDependencies as string[] | undefined,
-    tiers,
-  };
-  for (const track of phase.tracks) {
-    for (const combination of enumerateTierCombinations(phase, track)) {
-      const selected = selectTier(phase, combination.observation);
-      if (selected.length !== 1) {
-        throw new Error(
-          `[skill-contract] ${label} track=${track} tier 非确定（${combination.label || '<empty>'} -> ` +
-            `${selected.length === 0 ? 'zero' : selected.join(',')}）`,
-        );
-      }
+  if (controlDependencies !== undefined) {
+    assertStringArray(controlDependencies, `${label}.control_dependencies`, true);
+    if (new Set(controlDependencies).size !== controlDependencies.length) {
+      throw new Error(`[skill-contract] ${label}.control_dependencies 不得重复`);
     }
   }
-  return phase;
+  const allowed = new Set(['tracks', 'inputs', 'capabilities', 'produces', 'verifies', 'control_dependencies']);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new Error(`[skill-contract] ${label} 含未知字段 ${key}`);
+  }
+  return {
+    tracks,
+    inputs,
+    capabilities,
+    produces,
+    verifies: { check: raw.verifies.check },
+    control_dependencies: controlDependencies as string[] | undefined,
+  };
 }
 
 export function loadSkillContract(filePath: string): SkillContract {
   if (!fs.existsSync(filePath)) throw new Error(`[skill-contract] 未找到 contract：${filePath}`);
   const raw = YAML.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
   assertRecord(raw, filePath);
-  if (raw.schema_version !== '1.0') {
-    throw new Error(`[skill-contract] ${filePath} schema_version 仅支持 1.0`);
-  }
+  if (raw.schema_version !== '1.0') throw new Error(`[skill-contract] ${filePath} schema_version 仅支持 1.0`);
   assertString(raw.skill, `${filePath}.skill`);
-  if (raw.skill_doc !== 'SKILL.md') {
-    throw new Error(`[skill-contract] ${filePath}.skill_doc 必须为 SKILL.md`);
-  }
+  if (raw.skill_doc !== 'SKILL.md') throw new Error(`[skill-contract] ${filePath}.skill_doc 必须为 SKILL.md`);
   assertRecord(raw.phases, `${filePath}.phases`);
   const phases: Record<string, PhaseContract> = {};
-  for (const [phase, value] of Object.entries(raw.phases)) {
-    phases[phase] = validatePhase(value, `${raw.skill}.phases.${phase}`);
-  }
+  for (const [phase, value] of Object.entries(raw.phases)) phases[phase] = validatePhase(value, `${raw.skill}.phases.${phase}`);
   if (Object.keys(phases).length === 0) throw new Error(`[skill-contract] ${filePath}.phases 不得为空`);
-  return {
-    schema_version: '1.0',
-    skill: raw.skill,
-    skill_doc: 'SKILL.md',
-    phases,
-    source_path: filePath,
-  };
+  return { schema_version: '1.0', skill: raw.skill, skill_doc: 'SKILL.md', phases, source_path: filePath };
 }
 
 export function loadFeatureContracts(frameworkRoot: string): SkillContract[] {
@@ -472,7 +283,6 @@ export function loadFeatureContracts(frameworkRoot: string): SkillContract[] {
     .filter((filePath) => fs.existsSync(filePath))
     .sort();
   const contracts = files.map(loadSkillContract);
-  // Contract coverage is reconciled against workflow feature phases, not a hardcoded skill count.
   let workflowPhases: string[];
   try {
     workflowPhases = listWorkflowPhases(loadWorkflowSpec(frameworkRoot, 'spec-driven'))
@@ -492,10 +302,7 @@ export function loadFeatureContracts(frameworkRoot: string): SkillContract[] {
   return contracts;
 }
 
-export function phaseContractIndex(contracts: readonly SkillContract[]): Map<string, {
-  contract: SkillContract;
-  phase: PhaseContract;
-}> {
+export function phaseContractIndex(contracts: readonly SkillContract[]): Map<string, { contract: SkillContract; phase: PhaseContract }> {
   const index = new Map<string, { contract: SkillContract; phase: PhaseContract }>();
   for (const contract of contracts) {
     for (const [phaseName, phase] of Object.entries(contract.phases)) {
@@ -534,138 +341,28 @@ export function loadArtifactInventory(frameworkRoot: string): ArtifactInventory 
   return { schema_version: '1.0', artifacts };
 }
 
-export function tierSatisfies(
-  phase: PhaseContract,
-  actual: string,
-  required: string,
-): boolean {
-  const actualTier = phase.tiers[actual];
-  if (!actualTier || !phase.tiers[required]) return false;
-  return actualTier.satisfies.includes(required);
+export function contractFingerprint(contract: SkillContract): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(contract.source_path).toString('utf8'), 'utf8').digest('hex');
 }
 
-function registeredArtifactExists(
+export function assuranceSatisfies(actual: Assurance, minimum: MinimumAssurance): boolean {
+  return ASSURANCE_RANK[actual] >= ASSURANCE_RANK[minimum];
+}
+
+export function validateMinimumAssurance(
   frameworkRoot: string,
-  projectRoot: string,
-  feature: string,
-  artifactId: string,
-): boolean {
-  const inventory = loadArtifactInventory(frameworkRoot);
-  const registered = inventory.artifacts.find((artifact) => artifact.id === artifactId);
-  if (!registered) return false;
-  return registered.paths.some((relativePath) => {
-    const candidates = artifactReadCandidatePaths(projectRoot, feature, relativePath);
-    candidates.push(featureFilePath(projectRoot, feature, relativePath));
-    return [...new Set(candidates)].some((candidate) => fs.existsSync(candidate));
-  });
-}
-
-export interface PhaseQualityResolution {
-  depth: string;
-  missing_optional_inputs: string[];
-  selected_alternatives: Record<string, string>;
-}
-
-/**
- * Observe only declared inputs and resolve one contract-local depth. Required input
- * truth is still enforced by phase checkers; this function never converts a missing
- * required artifact into PASS.
- */
-export function resolvePhaseQuality(
-  frameworkRoot: string,
-  projectRoot: string,
-  feature: string,
-  phaseName: string,
-  track: FeatureTrackName,
-  adhocAlternatives: ReadonlyMap<string, string> = new Map(),
-): PhaseQualityResolution {
-  const indexed = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(phaseName);
-  if (!indexed || !indexed.phase.tracks.includes(track)) {
-    return { depth: 'not_applicable', missing_optional_inputs: [], selected_alternatives: {} };
-  }
-  const phase = indexed.phase;
-  const observation: TierObservation = { present: new Set(), alternatives: new Map() };
-  const optionalIds = new Set(phase.inputs.optional.map((input) => input.id));
-  const missingOptionalInputs: string[] = [];
-  for (const input of [...phase.inputs.required, ...phase.inputs.optional]) {
-    if (!inputApplies(input, track)) continue;
-    let present = false;
-    if (input.artifact && registeredArtifactExists(frameworkRoot, projectRoot, feature, input.artifact)) {
-      observation.present.add(input.id);
-      present = true;
-    } else if (input.kind === 'source') {
-      observation.present.add(input.id);
-      present = true;
-    } else if (input.kind === 'adhoc') {
-      observation.present.add(input.id);
-      present = true;
-    } else if (input.alternatives) {
-      const artifactAlternative = input.alternatives.find(
-        (alternative) =>
-          alternative.artifact &&
-          registeredArtifactExists(frameworkRoot, projectRoot, feature, alternative.artifact),
-      );
-      const selected =
-        artifactAlternative?.value ??
-        adhocAlternatives.get(input.id) ??
-        (feature === '_adhoc'
-          ? input.alternatives.find((alternative) => alternative.kind === 'adhoc')?.value
-          : undefined);
-      if (selected) {
-        observation.present.add(input.id);
-        observation.alternatives.set(input.id, selected);
-        present = true;
-      }
-    }
-    if (!present && optionalIds.has(input.id)) missingOptionalInputs.push(input.id);
-  }
-  const selected = selectTier(phase, observation);
-  if (selected.length !== 1) {
-    throw new Error(
-      `[skill-contract] ${phaseName} runtime tier 非确定：${selected.join(',') || 'zero'}`,
-    );
-  }
-  return {
-    depth: selected[0],
-    missing_optional_inputs: missingOptionalInputs.sort(),
-    selected_alternatives: Object.fromEntries(
-      [...observation.alternatives.entries()].sort(([a], [b]) => a.localeCompare(b)),
-    ),
-  };
-}
-
-export function validateMinimumDepthByPhase(
-  frameworkRoot: string,
-  minimumDepthByPhase: Record<string, string> | undefined,
+  minimumAssurance: Record<string, MinimumAssurance> | undefined,
   allowedPhaseIds?: ReadonlySet<string>,
 ): void {
-  if (!minimumDepthByPhase) return;
+  if (!minimumAssurance) return;
   const index = phaseContractIndex(loadFeatureContracts(frameworkRoot));
-  for (const [phaseName, requiredTier] of Object.entries(minimumDepthByPhase)) {
+  for (const [phaseName, value] of Object.entries(minimumAssurance)) {
     if (allowedPhaseIds && !allowedPhaseIds.has(phaseName)) {
-      throw new Error(`[skill-contract] minimum_depth_by_phase phase 不在 active workflow：${phaseName}`);
+      throw new Error(`[skill-contract] minimum_assurance phase 不在 active workflow：${phaseName}`);
     }
-    const phase = index.get(phaseName)?.phase;
-    if (!phase) {
-      throw new Error(`[skill-contract] minimum_depth_by_phase phase 无 contract：${phaseName}`);
-    }
-    if (!phase.tiers[requiredTier]) {
-      throw new Error(
-        `[skill-contract] minimum_depth_by_phase.${phaseName} tier 非法：${requiredTier}；` +
-        `允许值=[${Object.keys(phase.tiers).sort().join(',')}]`,
-      );
+    if (!index.has(phaseName)) throw new Error(`[skill-contract] minimum_assurance phase 无 contract：${phaseName}`);
+    if (value !== 'degraded' && value !== 'full') {
+      throw new Error(`[skill-contract] minimum_assurance.${phaseName} 仅支持 degraded|full`);
     }
   }
-}
-export function resolvePhaseDepth(
-  frameworkRoot: string,
-  projectRoot: string,
-  feature: string,
-  phaseName: string,
-  track: FeatureTrackName,
-  adhocAlternatives: ReadonlyMap<string, string> = new Map(),
-): string {
-  return resolvePhaseQuality(
-    frameworkRoot, projectRoot, feature, phaseName, track, adhocAlternatives,
-  ).depth;
 }

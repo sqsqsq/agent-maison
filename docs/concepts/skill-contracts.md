@@ -1,60 +1,60 @@
-# Skill 契约与确定性评估
+# Skill 契约与能力解析
 
-Skill 的 Markdown 负责说明“如何工作”，机器契约负责回答“什么输入、产物与闭环才算合格”。两者共同描述一个 phase，但运行时只从发布的 contract、summary、closure 和 evidence 读取确定性事实；写边界与 closure 策略仍由既有 policy/evidence 机制执行，不是 contract schema 字段。
+Skill contract 是 feature phase 的可执行输入声明。它定义产生的 artifact、验证入口，以及在 checker 开始前能够确定的能力输入；它不替代 phase rules、quality axes、closure 或 release 的既有裁决。
 
-## 契约边界
+每个 feature Skill 在 `skills/feature/<skill>/contract.yaml` 中维护契约；`harness/scripts/utils/skill-contract.ts` 负责加载，`check-contract-consistency.ts` 负责静态一致性校验。新增或调整 phase 时，先调整 contract，再调整 checker 与 Skill 文档。
 
-每个 feature phase 都有一份 `skill-contract@1`，至少声明：
+## 输入与 capability
 
-- required / optional inputs；
-- produces 与 verification checks；
-- quality tiers 及其输入条件；
-- 与 workflow phase 的绑定。
+一个 phase 的 `inputs` 只是输入目录：每项由稳定 `id` 和按顺序尝试的结构化 `sources` 组成。
 
-契约由 [`skill-contract.ts`](../../harness/scripts/utils/skill-contract.ts) 加载和校验，跨 Skill 一致性由 consistency checker 检查。新增 phase 或改变产物语义时，应先修改 contract，再修改 Skill 和检查器；不能只改 Markdown。
+- `artifact` source 精确引用已登记 artifact；不存在时记录为 `absent`，然后尝试下一 source。
+- `derive` source 精确引用纯 provider id；不存在的目录或无法推导的输入同样是 `absent`；`invalid` 会停止该 input 的 fallback。
+- 不存在字符串 DSL、交互式 ask source、动态 provider 匹配或 input 级 required/optional 政策。
 
-## Summary 1.2 与 closure
+`capabilities` 通过 input id 声明要验证的能力，每一项都包含 `id`、`axis`、`inputs`、`tracks`、可选 `applicability_provider_id` 和唯一的缺失策略 `on_missing`。
 
-所有 phase 的 `summary.json` 使用 schema `1.2`，包含：
-
-- `verdict`；
-- `depth` 与缺失的 optional inputs；
-- blocker 和 evidence 身份；
-- full track 上的 `closure_status` / `closure_commit`。
-
-`PASS` 只是当前检查结果。full track 只有在 closure commit 与新鲜 evidence 绑定后才算 closed；lite track 由退出报告闭环。旧 schema、开放 closure、过期 evidence 都不会被 `assess` 当作可推进事实。
-
-## 质量深度
-
-质量深度是 contract-local 的，不是全局硬编码：
-
-- `full`：可选输入齐备，执行完整检查面；
-- `basic`：缺少可选输入时的可解释降级；
-- phase 可声明自己的 tier 名称与替代输入。
-
-`minimum_depth_by_phase` 可以要求某 phase 的最低深度。未达到时，`assess@1` 推荐恢复输入并重跑，而不是把缺输入伪装成失败或 PASS。
-
-## `assess@1`
-
-[`assess.ts`](../../harness/scripts/utils/assess.ts) 是 level-triggered、无 LLM 的确定性评估器。它每次从当前磁盘事实重算：
-
-```text
-workflow + track + goal
-  + summary 1.2 + closure + evidence freshness
-  + ReconcileObservation@1
-  → gaps + one recommendation + fingerprints
+```yaml
+inputs:
+  - id: acceptance
+    sources:
+      - kind: artifact
+        artifact: acceptance@1
+      - kind: derive
+        provider_id: derive.requirement
+capabilities:
+  - id: capability_example_acceptance
+    axis: evidence
+    inputs: [acceptance]
+    tracks: [full]
+    on_missing: fail
 ```
 
-`next.json` 只是可重建投影，不是权威状态。任何输入指纹变化都会使缓存失效并重算。从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 会校验输入指纹并原子刷新 `<paths.features_dir>/<feature>/next.json`；只读观察使用 `--no-write`。
+解析先运行 track 与命名 applicability provider；若不适用，capability 是 `not_applicable`，且不会尝试 source。适用后 source 依声明顺序解析：`resolved` 停止成功，`absent` 回退，`invalid` 停止并使 capability `blocked`。可用 capability 的最终状态只有 `resolved`、`pruned`、`blocked`；input 的缺失政策只由 capability 的 `on_missing` 决定。
 
-Assess 负责“哪个工作现在合格且值得做”；driver 负责“是否获授权、是否还有预算、是否安全执行”。推荐永远不自动授予权限。
+## 一次性报告、保证等级与新鲜度
 
-## 扩展检查清单
+phase runner 在 checker 之前只生成一次不可变 `CapabilityResolutionReport`。报告只描述 artifact/derive 的前置可用性；build、install、device run、trace 等运行时事实仍由 checker 的 `CheckResult` 与 holder 管理，绝不回写报告。
 
-新增或调整 Skill 时：
+报告据 capability 状态机械计算全局保证等级：`blocked < degraded < full`。`summary.json` 1.2 持久化 `assurance`、`capability_resolutions` 及 `capability_resolution_contract_fingerprint`；不再输出 `summary.depth` 或 quality-depth/missing-input 镜像字段。
 
-1. 更新 `skills/feature/<skill>/contract.yaml` 及 `specs/skill-contract-schema.yaml`；
-2. 保证 workflow phase、Skill、contract 一一对齐；
-3. 让 checker 输出 summary 1.2 的 depth、缺失输入和 closure；
-4. 为 assess gap/recommendation 增加确定性 fixture；
+为保证 fallback 可审计，evidence manifest 只绑定项目内的 applicability 输入，以及从第一个 source 到 resolved/invalid 终止 source 的每一次实际尝试；framework contract 不以文件路径进入 consumer manifest，而以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance。缺失的高优先级文件按 `exists:false` 绑定，因此随后出现文件也会使旧 closure stale；未尝试的低优先级 source 不进入绑定。
+
+## 质量轴、closure 和 assess
+
+Capability report 是进入质量轴的唯一桥接：
+
+- `pruned` 不改写 quality axis；它保留在 `assurance`、`capability_resolutions`、报告降级段和 `assess.observed.degradations` 中，后者的 `reason_code=capability_pruned` 仅用于 assess 溯源。
+- `blocked` 强制对应轴为 `UNVERIFIED`，并令 release 为 `BLOCKED`、投影视图至少 `INCOMPLETE`；这不能被 visual/asset 的 advance 豁免绕过。其 axis resolution 继续复用既有 `needs_fix/agent/current_phase` 路由。
+
+这些投影不会新增公开 `PRUNED` 状态，也不会覆盖任何既有质量、phase advance、closure 或 release 规则。runner 收尾会以 `assertCapabilityConsumption(report, checks)` 双向对账：每个 active `resolved` capability 恰有一个同 ID `CheckResult`，其他状态没有；重复或反向矛盾均为错误。
+
+Goal manifest 可选提供稀疏的 `minimum_assurance`：`{ phase: degraded|full }`。它只会给 `assess@1` 增加 `insufficient_assurance` gap，绝不成为 release 或 closure waiver。满足 floor 的 `pruned` 会列入 `observed.degradations`，不另造 gap；但若带 producer 指针的上游裁剪令下游 `on_missing: fail` capability 变为 `blocked`，assess 会产生 `pruned` gap 并把回补定向到该 producer phase。
+
+## 维护清单
+
+1. 更新 contract schema 与七个 feature contracts。
+2. 确保 input source/provider、capability track/axis 和 artifact producer 可由静态 gate 验证。
+3. 确保 resolver report 在同一 phase 内只解析一次，并由 summary、质量轴、evidence 和 assess 共用。
+4. 为 fallback、invalid、N/A、blocked、freshness 与双向消费分别提供负例回归。
 5. 运行 `cd harness && npm test`。

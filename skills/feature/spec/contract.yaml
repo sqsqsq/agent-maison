@@ -5,23 +5,16 @@ phases:
   spec:
     tracks: [full]
     inputs:
-      required:
-        - { id: requirement, kind: adhoc }
-      optional:
-        - id: codebase
-          kind: source
-          absent_effect: "Greenfield requirements may establish a spec without existing feature source."
+      - { id: requirement, sources: [{ kind: derive, provider_id: derive.requirement }] }
+      - { id: codebase, sources: [{ kind: derive, provider_id: derive.codebase }] }
+    capabilities:
+      - { id: capability_spec_requirement, axis: functional, inputs: [requirement], tracks: [full], on_missing: fail }
+      - { id: capability_spec_codebase, axis: functional, inputs: [codebase], tracks: [full], on_missing: prune }
     produces:
       - { artifact: spec@1 }
       - { artifact: acceptance@1 }
       - { artifact: ui-spec@1 }
       - { artifact: ref-elements@1 }
       - { artifact: asset-manifest@1 }
-    verifies:
-      check: check-spec.ts
-      depth_field: summary.depth
+    verifies: { check: check-spec.ts }
     control_dependencies: [catalog, glossary]
-    tiers:
-      full:
-        when: otherwise
-        satisfies: [full]

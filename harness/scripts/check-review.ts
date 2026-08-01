@@ -40,9 +40,6 @@ import {
 } from './utils/confirmation-receipt';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
-import { resolvePhaseQuality } from './utils/skill-contract';
-import { resolveFeatureTrack } from './utils/runtime-policy';
-import { loadFeatureTrackDecl } from './utils/feature-track';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -67,62 +64,8 @@ function loadDesign(ctx: CheckContext): string | null {
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md');
 }
 
-function reviewQuality(ctx: CheckContext) {
-  return resolvePhaseQuality(
-    ctx.frameworkRoot,
-    ctx.projectRoot,
-    ctx.feature,
-    'review',
-    resolveFeatureTrack(loadFeatureTrackDecl(ctx.projectRoot, ctx.feature)),
-  );
-}
-
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
-  const quality = reviewQuality(ctx);
-  results.push({
-    id: 'review_quality_depth',
-    category: 'structure',
-    description: 'Review 输入质量档位与缺失输入披露',
-    severity: 'MAJOR',
-    status: quality.depth === 'full' ? 'PASS' : 'WARN',
-    details: [
-      `quality_depth=${quality.depth}`,
-      `missing_optional_inputs=${quality.missing_optional_inputs.join(',') || 'none'}`,
-      ...(quality.depth === 'basic'
-        ? ['basic 审查须以 module-catalog.yaml、glossary.yaml、报告声明的代码范围和代码意图作为回退基线；接口/需求专项覆盖不可宣称为 full。']
-        : []),
-    ].join('\n'),
-    suggestion: quality.depth === 'full'
-      ? undefined
-      : '报告头显式写入质量深度与缺失输入，并披露未覆盖的专项审查维度。',
-  });
-  if (!ctx.featureSpec.contracts) {
-    results.push({
-      id: 'review_context_contracts',
-      category: 'structure',
-      description: 'Review 缺少 contracts.yaml，按 basic 深度运行',
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')} 不存在；接口契约专项覆盖不可用，源码范围改由报告声明、catalog/glossary 与代码意图交叉确认。`,
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
-      suggestion: '若目标要求 full 深度，回到 plan 阶段补齐 contracts.yaml 后重跑；否则在报告头披露缺失输入。',
-      failure_kind: 'missing_contracts',
-    });
-  }
-  if (!ctx.featureSpec.acceptance) {
-    results.push({
-      id: 'review_context_acceptance',
-      category: 'structure',
-      description: 'Review 缺少 acceptance.yaml，验收专项不可用',
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')} 不存在；不执行 acceptance 专项追溯，且报告不得宣称该专项已覆盖。`,
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')],
-      suggestion: '需要验收专项时补齐 acceptance.yaml 后重跑；否则在报告头披露缺失输入。',
-      failure_kind: 'missing_acceptance',
-    });
-  }
   const files = ctx.featureSpec.contracts?.files ?? [];
   const missingSources = files.filter(f => f.endsWith('.ets') && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
@@ -523,9 +466,7 @@ function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckRes
 
 function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
   const metadata = extractMetadata(report);
-  const quality = reviewQuality(ctx);
-  const required = ['模块标识', '审查日期', '审查版本', '质量深度'];
-  if (quality.missing_optional_inputs.length > 0) required.push('缺失输入');
+  const required = ['模块标识', '审查日期', '审查版本', '保证等级'];
   const missing = required.filter(f => !metadata[f]);
 
   if (missing.length === 0) {

@@ -84,8 +84,61 @@ function isGoalEnvironment(): boolean {
   );
 }
 
+function capabilityResolutionEvidenceInputs(
+  summaryPath: string,
+  projectRoot: string,
+): string[] {
+  const paths = new Set<string>();
+  const isProjectInput = (candidate: string): boolean => {
+    const relative = path.relative(projectRoot, path.resolve(candidate));
+    return relative === '' || (
+      relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    );
+  };
+  try {
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as Record<string, unknown>;
+    const capabilities = Array.isArray(summary.capability_resolutions) ? summary.capability_resolutions : [];
+    for (const capability of capabilities) {
+      if (!capability || typeof capability !== 'object') continue;
+      const c = capability as Record<string, unknown>;
+      const addDependencies = (value: unknown) => {
+        if (!Array.isArray(value)) return;
+        for (const entry of value) {
+          if (!entry || typeof entry !== 'object') continue;
+          const candidate = (entry as Record<string, unknown>).path;
+          if (
+            typeof candidate === 'string' &&
+            candidate.trim() &&
+            isProjectInput(candidate)
+          ) {
+            paths.add(path.resolve(candidate));
+          }
+        }
+      };
+      addDependencies(c.applicability_dependencies);
+      if (!Array.isArray(c.inputs)) continue;
+      for (const input of c.inputs) {
+        if (!input || typeof input !== 'object') continue;
+        const attempts = (input as Record<string, unknown>).attempts;
+        if (!Array.isArray(attempts)) continue;
+        for (const attempt of attempts) {
+          if (attempt && typeof attempt === 'object') addDependencies((attempt as Record<string, unknown>).dependencies);
+        }
+      }
+    }
+
+  } catch {
+    // Summary parse failure is handled by the surrounding closure validation;
+    // never invent a partial evidence chain here.
+  }
+  return [...paths].sort();
+}
+
 function productionEvidence(
   opts: FinalizePhaseClosureOptions,
+  summaryPath: string,
 ): { extraInputs: string[]; extraOutputs: string[]; requirementSha: string | null } {
   const extraOutputs: string[] = [];
   if (opts.phase === 'review') {
@@ -130,11 +183,10 @@ function productionEvidence(
     );
   }
   return {
-    extraInputs: collectRequirementSsotPaths(
-      opts.projectRoot,
-      opts.feature,
-      featuresDirRel,
-    ),
+    extraInputs: [...new Set([
+      ...collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel),
+      ...capabilityResolutionEvidenceInputs(summaryPath, opts.projectRoot),
+    ])].sort(),
     extraOutputs,
     requirementSha,
   };
@@ -202,7 +254,7 @@ function publishEvidenceBinding(
 ): { manifestRel: string; manifestSha: string } {
   const manifestAbs = phaseEvidenceManifestPath(opts.projectRoot, opts.feature, opts.phase);
   const manifestRel = path.relative(opts.projectRoot, manifestAbs).replace(/\\/g, '/');
-  const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts);
+  const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts, summaryPath);
   const manifest = resolvePhaseEvidenceManifest({
     projectRoot: opts.projectRoot,
     feature: opts.feature,
@@ -262,7 +314,7 @@ function finalizePhaseClosureUnlocked(
   const current = readSummary(summaryPath);
   if (current.parsed.schema_version !== '1.2') {
     throw new Error(
-      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；请重跑 harness 生成 1.2 depth 后再闭环`,
+      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；请重跑 harness 生成 1.2 assurance 后再闭环`,
     );
   }
   if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
@@ -270,8 +322,11 @@ function finalizePhaseClosureUnlocked(
       `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`,
     );
   }
-  if (!current.parsed.depth || current.parsed.depth === 'unknown') {
-    throw new Error('summary.depth 缺失或 unknown；须重跑 harness 或执行显式验证迁移');
+  if (!current.parsed.assurance) {
+    throw new Error('summary.assurance 缺失；须重跑 harness 或执行显式验证迁移');
+  }
+  if (current.parsed.assurance === 'blocked') {
+    throw new Error('blocked capability assurance 不得提交 PASS closure');
   }
   if (
     current.parsed.closure_status === 'closed' &&

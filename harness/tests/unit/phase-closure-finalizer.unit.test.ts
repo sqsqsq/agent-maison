@@ -96,7 +96,7 @@ function mkProject(): {
     blockers: [],
     next_action: 'run_receipt',
     closure_status: 'open',
-    depth: 'full',
+    assurance: 'full',
   } as HarnessRunSummary;
   const originalSummary = JSON.stringify(summary, null, 2);
   fs.writeFileSync(summaryPath, originalSummary, 'utf8');
@@ -128,7 +128,57 @@ function finalize(
   });
 }
 
+function finalizeWithProductionEvidence(fixture: ReturnType<typeof mkProject>) {
+  return finalizePhaseClosure({
+    projectRoot: fixture.root,
+    frameworkRoot: FRAMEWORK_ROOT,
+    feature: FEATURE,
+    phase: PHASE,
+    receipt: {
+      status: 'passed',
+      receipt_path: path.relative(fixture.root, fixture.receiptPath).replace(/\\/g, '/'),
+    },
+    persistPhaseState: () => undefined,
+    now: () => new Date('2026-07-30T00:00:00.000Z'),
+  });
+}
 const cases: Case[] = [
+  {
+    name: 'production evidence binds project fallback attempts but never framework contracts',
+    run: () => {
+      const fixture = mkProject();
+      try {
+        const preferred = path.join(fixture.root, 'doc', 'features', FEATURE, 'spec', 'preferred-input.md');
+        const summary = JSON.parse(fs.readFileSync(fixture.summaryPath, 'utf8')) as Record<string, unknown>;
+        summary.capability_resolutions = [{
+          id: 'capability_spec_requirement', axis: 'functional', active: true, state: 'resolved',
+          applicability_dependencies: [],
+          inputs: [{
+            id: 'requirement', state: 'resolved', selected_source: 'derive.requirement',
+            selected_source_fingerprint: 'a'.repeat(64),
+            attempts: [
+              { kind: 'artifact', source: 'preferred@1', state: 'absent', dependencies: [{ path: preferred, exists: false, sha256: null, role: 'artifact' }] },
+              { kind: 'derive', source: 'derive.requirement', state: 'resolved', dependencies: [] },
+            ],
+          }],
+        }];
+        summary.capability_resolution_contract_fingerprint = 'b'.repeat(64);
+        fs.writeFileSync(fixture.summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+        finalizeWithProductionEvidence(fixture);
+        const manifest = loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE)!;
+        assert(manifest.manifest.inputs.some((entry) => entry.path.endsWith('preferred-input.md') && entry.exists === false), 'absent attempt not bound');
+        assert(
+          !manifest.manifest.inputs.some((entry) => entry.path.endsWith('skills/feature/spec/contract.yaml')),
+          'framework contract must bind through contract_fingerprint, not feature evidence input',
+        );
+        fs.writeFileSync(preferred, 'now preferred\n', 'utf8');
+        const stale = require('../../scripts/utils/phase-evidence-manifest').recomputePhaseEvidenceStaleness(fixture.root, FEATURE, [PHASE]);
+        assert(stale[0].verdict === 'stale', JSON.stringify(stale[0]));
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'staged output hash is recorded under canonical summary path',
     run: () => {
@@ -212,7 +262,7 @@ const cases: Case[] = [
         const legacy = JSON.parse(fixture.originalSummary) as Record<string, unknown>;
         legacy.schema_version = '1.1';
         legacy.closure_status = 'closed';
-        delete legacy.depth;
+        delete legacy.assurance;
         const legacyRaw = JSON.stringify(legacy, null, 2);
         fs.writeFileSync(fixture.summaryPath, legacyRaw, 'utf8');
         let message = '';
@@ -229,12 +279,29 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'unknown depth cannot be finalized',
+    name: 'blocked assurance cannot be finalized even if a malformed summary claims PASS',
     run: () => {
       const fixture = mkProject();
       try {
         const summary = JSON.parse(fixture.originalSummary) as HarnessRunSummary;
-        summary.depth = 'unknown';
+        summary.assurance = 'blocked';
+        const raw = JSON.stringify(summary, null, 2);
+        fs.writeFileSync(fixture.summaryPath, raw, 'utf8');
+        let message = '';
+        try { finalize(fixture); } catch (error) { message = (error as Error).message; }
+        assert(message.includes('blocked capability assurance'), message);
+        assert(fs.readFileSync(fixture.summaryPath, 'utf8') === raw, 'blocked summary must stay open');
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  },  {
+    name: 'missing assurance cannot be finalized',
+    run: () => {
+      const fixture = mkProject();
+      try {
+        const summary = JSON.parse(fixture.originalSummary) as HarnessRunSummary;
+        delete summary.assurance;
         const unknownRaw = JSON.stringify(summary, null, 2);
         fs.writeFileSync(fixture.summaryPath, unknownRaw, 'utf8');
         let message = '';
@@ -243,8 +310,8 @@ const cases: Case[] = [
         } catch (error) {
           message = (error as Error).message;
         }
-        assert(message.includes('unknown'), message);
-        assert(fs.readFileSync(fixture.summaryPath, 'utf8') === unknownRaw, 'unknown-depth summary changed');
+        assert(message.includes('assurance'), message);
+        assert(fs.readFileSync(fixture.summaryPath, 'utf8') === unknownRaw, 'missing-assurance summary changed');
         const staged = fs.readdirSync(path.dirname(fixture.summaryPath))
           .filter((name) => name.includes('.staged-'));
         assert(staged.length === 0, `staged leftovers=${staged.join(',')}`);

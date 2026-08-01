@@ -230,7 +230,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         report_validity: 'PASS',
         release_readiness: 'BLOCKED',
         completion_status: 'FUNCTIONALLY_COMPLETE_VISUAL_PENDING',
-        depth: 'full',
+        assurance: 'full',
+        capability_resolutions: [],
+        capability_resolution_contract_fingerprint: null,
         closure_status: 'closed',
         closure_commit: { schema_version: '1.0' },
         quality_axes: {

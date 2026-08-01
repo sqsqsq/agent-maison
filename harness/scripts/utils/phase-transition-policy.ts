@@ -82,7 +82,8 @@ export type AssessmentGapKind =
   | 'stale'
   | 'unclosed'
   | 'legacy_unverified'
-  | 'insufficient_depth'
+  | 'insufficient_assurance'
+  | 'pruned'
   | 'deterministic_defects';
 
 export type AssessmentRecommendationAction =
@@ -298,7 +299,8 @@ export function classifyPhaseVerdict(
         return 'complete_closure';
       case 'deferred':
         return 'resolve_deferred';
-      case 'insufficient_depth':
+      case 'insufficient_assurance':
+      case 'pruned':
         return 'restore_inputs_and_rerun';
       case 'deterministic_defects':
         return input.target_state === 'missing' ? 'run_phase' : 'rerun_phase';

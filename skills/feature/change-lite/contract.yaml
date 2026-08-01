@@ -5,32 +5,20 @@ phases:
   change:
     tracks: [lite]
     inputs:
-      required:
-        - { id: requirement, kind: adhoc }
-        - { id: codebase, kind: source }
-      optional: []
+      - { id: requirement, sources: [{ kind: derive, provider_id: derive.requirement }] }
+      - { id: codebase, sources: [{ kind: derive, provider_id: derive.codebase }] }
+    capabilities:
+      - { id: capability_change_context, axis: functional, inputs: [requirement, codebase], tracks: [lite], on_missing: fail }
     produces:
       - { artifact: change@1 }
-    verifies:
-      check: check-change.ts
-      depth_field: summary.depth
-    tiers:
-      lite:
-        when: otherwise
-        satisfies: [lite]
+    verifies: { check: check-change.ts }
   exit:
     tracks: [lite]
     inputs:
-      required:
-        - { id: change, artifact: change@1 }
-        - { id: implementation, kind: source }
-      optional: []
+      - { id: change, sources: [{ kind: artifact, artifact: change@1 }] }
+      - { id: implementation, sources: [{ kind: derive, provider_id: derive.codebase }] }
+    capabilities:
+      - { id: capability_exit_context, axis: functional, inputs: [change, implementation], tracks: [lite], on_missing: fail }
     produces: []
-    verifies:
-      check: check-exit.ts
-      depth_field: summary.depth
+    verifies: { check: check-exit.ts }
     control_dependencies: [coding]
-    tiers:
-      lite:
-        when: otherwise
-        satisfies: [lite]

@@ -334,7 +334,8 @@ async function runChain(
       });
       // fake harness 只写 base；不得伪造 closed/closure_commit。
       fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-        schema_version: '1.2', depth: 'full',
+        schema_version: '1.2', assurance: 'full',
+        capability_resolutions: [], capability_resolution_contract_fingerprint: null,
         verdict: 'PASS', blocker_count: 0, receipt_status: 'missing', closure_status: 'open',
         next_action: 'run_receipt',
         report_validity: 'PASS', release_readiness: 'READY',

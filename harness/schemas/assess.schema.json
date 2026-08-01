@@ -58,9 +58,11 @@
     "observed": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["phases"],
+      "required": ["phases", "degradations", "pruned_propagations"],
       "properties": {
-        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" } }
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" } },
+        "degradations": { "type": "array", "items": { "$ref": "#/$defs/degradation" } },
+        "pruned_propagations": { "type": "array", "items": { "$ref": "#/$defs/pruned_propagation" } }
       }
     },
     "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } },
@@ -85,8 +87,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "phase", "summary_state", "schema_version", "verdict", "closure", "depth",
-        "required_depth", "depth_satisfied", "deferred", "summary_fingerprint", "evidence_fingerprint"
+        "phase", "summary_state", "schema_version", "verdict", "closure", "assurance",
+        "required_assurance", "assurance_satisfied", "deferred", "summary_fingerprint", "evidence_fingerprint"
       ],
       "properties": {
         "phase": { "type": "string" },
@@ -94,12 +96,36 @@
         "schema_version": { "type": ["string", "null"] },
         "verdict": { "type": ["string", "null"] },
         "closure": { "enum": ["open", "closed", "stale"] },
-        "depth": { "type": "string" },
-        "required_depth": { "type": ["string", "null"] },
-        "depth_satisfied": { "type": ["boolean", "null"] },
+        "assurance": { "enum": ["blocked", "degraded", "full", "unknown"] },
+        "required_assurance": { "type": ["string", "null"], "enum": ["degraded", "full", null] },
+        "assurance_satisfied": { "type": ["boolean", "null"] },
         "deferred": { "type": "boolean" },
         "summary_fingerprint": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
         "evidence_fingerprint": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "capability", "axis", "reason_code"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "capability": { "type": "string", "minLength": 1 },
+        "axis": { "enum": ["functional", "visual", "asset", "evidence"] },
+        "reason_code": { "const": "capability_pruned" }
+      }
+    },
+    "pruned_propagation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer_phase", "producer_capability", "downstream_phase", "downstream_capability", "input_id", "source"],
+      "properties": {
+        "producer_phase": { "type": "string", "minLength": 1 },
+        "producer_capability": { "type": "string", "minLength": 1 },
+        "downstream_phase": { "type": "string", "minLength": 1 },
+        "downstream_capability": { "type": "string", "minLength": 1 },
+        "input_id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
       }
     },
     "gap": {
@@ -109,7 +135,7 @@
       "properties": {
         "phase": { "type": "string" },
         "kind": {
-          "enum": ["missing", "failed", "deferred", "stale", "unclosed", "legacy_unverified", "insufficient_depth"]
+          "enum": ["missing", "failed", "deferred", "stale", "unclosed", "legacy_unverified", "insufficient_assurance", "pruned"]
         },
         "detail": { "type": "string" }
       }

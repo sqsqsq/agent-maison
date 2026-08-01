@@ -7,7 +7,8 @@
 | ---------------------------------------------------------- | --------------------------------------------------------------------- |
 | [`terminology-guarding.md`](./terminology-guarding.md)     | 术语守门：catalog + glossary + 三道 BLOCKER + 演进路线图              |
 | [`extensibility.md`](./extensibility.md)                 | 扩展分层与合并顺序：workflow / profile / adapter / `doc/extensions` SSOT |
-| [`skill-contracts.md`](./skill-contracts.md)             | Skill contract、summary 1.2、quality depth 与确定性 `assess@1` |
+| [`skill-contracts.md`](./skill-contracts.md)             | Skill contract、summary 1.2、保证等级与确定性 `assess@1` |
+| [`capability-degradation.md`](./capability-degradation.md) | 输入解析、能力裁剪、保证等级、新鲜度与质量投影 |
 | [`reconcile-loop.md`](./reconcile-loop.md)               | assess/driver 单循环、两种运行模式、fencing 与 handoff          |
 
 ## 候选议题（按需补）

@@ -9,6 +9,8 @@ import * as path from 'path';
 import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import checker from '../../scripts/check-review';
+import { resolveCapabilityReport } from '../../scripts/utils/capability-resolution';
+import { deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
 import { CheckContext } from '../../scripts/utils/types';
 import { inferRepoLayout } from '../../repo-layout';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
@@ -133,7 +135,23 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           components: [],
         },
       }));
-      assertTrue(results.some(r => r.failure_kind === 'missing_acceptance'), '应提示 missing_acceptance');
+      const capabilityReport = resolveCapabilityReport({
+        frameworkRoot: DEFAULT_LAYOUT.frameworkRoot,
+        projectRoot: root,
+        feature: 'demo',
+        phase: 'review',
+        track: 'full',
+      });
+      const acceptance = capabilityReport.capabilities.find(
+        (capability) => capability.id === 'capability_review_acceptance_context',
+      );
+      assertTrue(acceptance?.state === 'pruned', `acceptance capability=${acceptance?.state}`);
+      const opts = { phase: 'review', visualApplicable: false, assetApplicable: false };
+      const baseline = deriveSummaryVerdictLattice([], opts);
+      const lattice = deriveSummaryVerdictLattice([], opts, capabilityReport);
+      assertTrue(lattice.projected_verdict === baseline.projected_verdict, 'pruned acceptance must not change projected verdict');
+      assertTrue(lattice.release_readiness === baseline.release_readiness, 'pruned acceptance must not change release readiness');
+      assertTrue(JSON.stringify(lattice.quality_axes) === JSON.stringify(baseline.quality_axes), 'pruned acceptance must not mutate quality axes');
       assertTrue(results.some(r => r.failure_kind === 'missing_source_from_contracts'), '应提示缺源码');
     }),
   },

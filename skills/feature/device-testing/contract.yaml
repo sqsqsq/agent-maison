@@ -5,39 +5,25 @@ phases:
   testing:
     tracks: [full]
     inputs:
-      required:
-        - id: cases
-          alternatives:
-            - { value: acceptance, artifact: acceptance@1 }
-            - { value: adhoc, kind: adhoc, normalizer: adhoc-nl-split }
-        - { id: tested_code, kind: source }
-      optional:
-        - id: spec
-          artifact: spec@1
-          absent_effect: "Adhoc execution does not require a feature specification."
-        - id: plan
-          artifact: plan@1
-          absent_effect: "Adhoc execution derives a normalized plan from supplied cases."
-        - id: contracts
-          artifact: contracts@1
-          absent_effect: "Contract-specific traceability is omitted."
-        - id: use_cases
-          artifact: use-cases@1
-          absent_effect: "Use-case branch context is omitted."
-        - id: review_report
-          artifact: review-report@1
-          absent_effect: "Testing does not assume a separate review report."
+      - id: cases
+        sources:
+          - { kind: artifact, artifact: acceptance@1 }
+          - { kind: derive, provider_id: derive.adhoc-cases }
+      - { id: tested_code, sources: [{ kind: derive, provider_id: derive.codebase }] }
+      - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
+      - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }, { kind: derive, provider_id: derive.test-targets }] }
+      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }] }
+      - { id: use_cases, sources: [{ kind: artifact, artifact: use-cases@1 }] }
+      - { id: review_report, sources: [{ kind: artifact, artifact: review-report@1 }] }
+    capabilities:
+      - { id: capability_testing_cases, axis: evidence, inputs: [cases], tracks: [full], on_missing: fail }
+      - { id: capability_testing_code_context, axis: functional, inputs: [tested_code], tracks: [full], on_missing: fail }
+      # The static derived-plan gates consume the declared top-level test plan before
+      # the runtime build/install/run DAG; the derived plan itself is a phase output.
+      - { id: capability_testing_static_plan_context, axis: evidence, inputs: [plan], tracks: [full], on_missing: prune }
+      - { id: capability_testing_design_context, axis: evidence, inputs: [spec, contracts, use_cases, review_report], tracks: [full], on_missing: prune }
     produces:
       - { artifact: test-plan@1 }
       - { artifact: test-report@1 }
-    verifies:
-      check: check-testing.ts
-      depth_field: summary.depth
+    verifies: { check: check-testing.ts }
     control_dependencies: [ut]
-    tiers:
-      full:
-        when: "alternative(cases, acceptance)"
-        satisfies: [full]
-      adhoc:
-        when: otherwise
-        satisfies: [adhoc]

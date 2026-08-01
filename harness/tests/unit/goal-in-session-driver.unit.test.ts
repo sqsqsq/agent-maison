@@ -155,7 +155,7 @@ const cases: TestCase[] = [
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
           schema_version: '1.2', verdict: 'PASS', closure_status: 'closed',
-          depth: 'full', blockers: [],
+          assurance: 'full', blockers: [],
         }), 'utf8');
       }
       let called = false;
@@ -355,11 +355,11 @@ const cases: TestCase[] = [
       assert(orphan >= 0 && takeover > orphan, 'orphan sweep must precede explicit takeover');
     },
   },  {
-    name: 'host bridge rejects minimum-depth phases outside the active workflow',
+    name: 'host bridge rejects minimum-assurance phases outside the active workflow',
     run: async () => {
       const env = mkProject();
       try {
-        env.manifest.minimum_depth_by_phase = { 'device-testing': 'full' };
+        env.manifest.minimum_assurance = { 'device-testing': 'full' };
         fs.mkdirSync(env.runDir, { recursive: true });
         fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
         let rejected = false;
@@ -385,7 +385,7 @@ const cases: TestCase[] = [
         schema_version: '1.2',
         verdict: 'INCOMPLETE',
         closure_status: 'open',
-        depth: 'full',
+        assurance: 'full',
         blockers: [{ id: 'device_missing', blocking_class: 'externalBlocked' }],
       }), 'utf8');
       let called = false;

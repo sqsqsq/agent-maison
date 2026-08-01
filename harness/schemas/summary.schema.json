@@ -26,7 +26,7 @@
   "properties": {
     "schema_version": {
       "enum": ["1.0", "1.1", "1.2"],
-      "description": "Writer emits 1.2. Legacy 1.0/1.1 remains readable but has unknown depth and legacy_unverified closure."
+      "description": "Writer emits 1.2. Legacy 1.0/1.1 remains readable but has unknown assurance and legacy_unverified closure."
     },
     "report_validity": {
       "type": "string",
@@ -83,10 +83,18 @@
     "next_action": { "type": "string", "minLength": 1 },
     "receipt_status": { "type": "string" },
     "closure_status": { "type": "string", "enum": ["open", "closed"] },
-    "depth": {
+    "assurance": {
       "type": "string",
-      "minLength": 1,
-      "description": "Contract-local actual tier; names are not globally ordered."
+      "enum": ["blocked", "degraded", "full", "not_applicable"],
+      "description": "Mechanical projection of the immutable capability resolution report."
+    },
+    "capability_resolutions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capability_resolution" }
+    },
+    "capability_resolution_contract_fingerprint": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
     },
     "closure_commit": {
       "type": "object",
@@ -117,7 +125,7 @@
         "properties": { "schema_version": { "const": "1.2" } },
         "required": ["schema_version"]
       },
-      "then": { "required": ["depth", "closure_status"] }
+      "then": { "required": ["assurance", "capability_resolutions", "capability_resolution_contract_fingerprint", "closure_status"] }
     }
   ],
   "$defs": {
@@ -152,6 +160,57 @@
             "retry_phase": { "type": ["null", "string"] }
           }
         }
+      }
+    },
+    "resolution_dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "exists", "sha256", "role"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "exists": { "type": "boolean" },
+        "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "role": { "enum": ["applicability", "artifact", "derive"] }
+      }
+    },
+    "source_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "state", "dependencies"],
+      "properties": {
+        "kind": { "enum": ["artifact", "derive"] },
+        "source": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["resolved", "absent", "invalid", "not_applicable"] },
+        "dependencies": { "type": "array", "items": { "$ref": "#/$defs/resolution_dependency" } },
+        "upstream_producer": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" }
+      }
+    },
+    "input_resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "state", "selected_source", "selected_source_fingerprint", "attempts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["resolved", "absent", "invalid", "not_applicable"] },
+        "selected_source": { "type": ["string", "null"] },
+        "selected_source_fingerprint": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/source_attempt" } }
+      }
+    },
+    "capability_resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "axis", "active", "state", "on_missing", "applicability_provider_id", "applicability_dependencies", "inputs"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "axis": { "enum": ["functional", "visual", "asset", "evidence"] },
+        "active": { "type": "boolean" },
+        "state": { "enum": ["resolved", "pruned", "blocked", "not_applicable"] },
+        "on_missing": { "enum": ["prune", "fail"] },
+        "applicability_provider_id": { "type": ["string", "null"] },
+        "applicability_dependencies": { "type": "array", "items": { "$ref": "#/$defs/resolution_dependency" } },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/input_resolution" } }
       }
     },
     "visual_round": {

@@ -570,7 +570,9 @@ cases.push({
       schema_version: '1.2', verdict: 'PASS', report_validity: 'PASS',
       release_readiness: 'READY', // 与 visual 非 PASS 矛盾（篡改形态）
       completion_status: 'DEBT_PIPELINE_ERROR',
-      depth: 'full',
+      assurance: 'full',
+      capability_resolutions: [],
+      capability_resolution_contract_fingerprint: null,
       closure_status: 'closed',
       closure_commit: { schema_version: '1.0' },
       quality_axes: {

@@ -5,23 +5,16 @@ phases:
   plan:
     tracks: [full]
     inputs:
-      required:
-        - { id: spec, artifact: spec@1 }
-        - { id: acceptance, artifact: acceptance@1 }
-        - { id: codebase, kind: source }
-      optional:
-        - id: ui_spec
-          artifact: ui-spec@1
-          absent_effect: "Non-UI work does not need a visual handoff."
+      - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
+      - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }] }
+      - { id: codebase, sources: [{ kind: derive, provider_id: derive.codebase }] }
+      - { id: ui_spec, sources: [{ kind: artifact, artifact: ui-spec@1 }] }
+    capabilities:
+      - { id: capability_plan_context, axis: functional, inputs: [spec, acceptance, codebase], tracks: [full], on_missing: fail }
+      - { id: capability_plan_visual_context, axis: visual, inputs: [ui_spec], tracks: [full], applicability_provider_id: applicability.ui, on_missing: prune }
     produces:
       - { artifact: plan@1 }
       - { artifact: contracts@1 }
       - { artifact: use-cases@1 }
       - { artifact: visual-parity@1 }
-    verifies:
-      check: check-plan.ts
-      depth_field: summary.depth
-    tiers:
-      full:
-        when: otherwise
-        satisfies: [full]
+    verifies: { check: check-plan.ts }

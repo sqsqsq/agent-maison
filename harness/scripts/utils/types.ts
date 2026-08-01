@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { RefElementEntry } from './fidelity-shared';
+import type { CapabilityResolution } from './capability-resolution';
 
 /**
  * Claude Code 内核家族 adapter（plan c7a9e2f4）：CLI 参数 / stream-json 信封 /
@@ -484,7 +485,7 @@ export interface SoftAdvisory {
 
 /** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐）
  * schema 1.1（blind-visual-hardening d1）：新增 report_validity + quality_axes +
- * release_readiness + completion_status。schema 1.2 新增 depth + closure_commit；
+ * release_readiness + completion_status。schema 1.2 新增 assurance + capability resolution + closure_commit；
  * writer 恒写 1.2，1.0/1.1 仅兼容读取并视作 legacy_unverified。 */
 export interface HarnessRunSummary {
   schema_version: '1.0' | '1.1' | '1.2';
@@ -567,8 +568,11 @@ export interface HarnessRunSummary {
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
-  /** Contract-local execution depth; legacy summaries read as unknown. */
-  depth?: string;
+  /** Mechanical capability projection; legacy summaries read as unknown. */
+  assurance?: 'blocked' | 'degraded' | 'full' | 'not_applicable';
+  /** Immutable capability preflight result written by the runner. */
+  capability_resolutions?: CapabilityResolution[];
+  capability_resolution_contract_fingerprint?: string | null;
   /** Full-track verified closure marker. It intentionally excludes the manifest hash. */
   closure_commit?: {
     schema_version: '1.0';
@@ -642,8 +646,11 @@ export interface ScriptReport {
   feature: string;
   timestamp: string;
   project_root: string;
-  quality_depth: string;
-  missing_optional_inputs: string[];
+  /** Capability preflight mechanical projection; never agent-authored. */
+  assurance: 'blocked' | 'degraded' | 'full' | 'not_applicable';
+  /** Immutable pre-check report, absent only for global phases. */
+  capability_resolutions: CapabilityResolution[];
+  capability_resolution_contract_fingerprint: string | null;
   checks: CheckResult[];
   summary: ReportSummary;
   compat_applied?: ScriptReportCompatApplied;

@@ -47,8 +47,8 @@ export interface GoalManifest {
   /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
   adapter_provenance?: string;
   chain_override?: FeaturePhase[];
-  /** Contract-local minimum tier by phase; labels are never compared globally. */
-  minimum_depth_by_phase?: Record<string, string>;
+  /** Contract-local minimum assurance by phase; labels are never compared globally. */
+  minimum_assurance?: Record<string, 'degraded' | 'full'>;
   /** t6：预授权档位（--fidelity；只升不降，降档须 fidelity_receipt 校验通过） */
   fidelity?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
   /** t6：降档 confirmation receipt 文件（项目根相对）；flag 本身不构成授权 */
@@ -112,7 +112,7 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   const fields: Record<string, unknown> = {
     schema_version: manifest.schema_version,
     start_phase: manifest.start_phase,
-    minimum_depth_by_phase: manifest.minimum_depth_by_phase ?? null,
+    minimum_assurance: manifest.minimum_assurance ?? null,
     end_phase: manifest.end_phase,
     feature: manifest.feature,
     requirement: manifest.requirement ?? null,
@@ -307,19 +307,19 @@ function parsePreAuthorizedMutations(
   return out.length > 0 ? out : undefined;
 }
 
-function normalizeMinimumDepthByPhase(raw: unknown): Record<string, string> | undefined {
+function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'full'> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('[goal-manifest] minimum_depth_by_phase 必须为 phase→tier 对象');
+    throw new Error('[goal-manifest] minimum_assurance 必须为 phase→assurance 对象');
   }
-  const out: Record<string, string> = {};
-  for (const [phase, tier] of Object.entries(raw as Record<string, unknown>)) {
+  const out: Record<string, 'degraded' | 'full'> = {};
+  for (const [phase, rawAssurance] of Object.entries(raw as Record<string, unknown>)) {
     const phaseId = phase.trim();
-    const tierId = typeof tier === 'string' ? tier.trim() : '';
-    if (!phaseId || !tierId) {
-      throw new Error(`[goal-manifest] minimum_depth_by_phase.${phase || '<empty>'} 必须为非空 tier 字符串`);
+    const assurance = typeof rawAssurance === 'string' ? rawAssurance.trim() : '';
+    if (!phaseId || (assurance !== 'degraded' && assurance !== 'full')) {
+      throw new Error(`[goal-manifest] minimum_assurance.${phase || '<empty>'} 必须为 degraded|full`);
     }
-    out[phaseId] = tierId;
+    out[phaseId] = assurance;
   }
   return Object.keys(out).length > 0
     ? Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)))
@@ -330,6 +330,9 @@ export function buildGoalManifestFromInput(
   input: Record<string, unknown>,
   opts: GoalManifestParseOptions,
 ): GoalManifest {
+  if (Object.prototype.hasOwnProperty.call(input, 'minimum_depth_by_phase')) {
+    throw new Error('[goal-manifest] minimum_depth_by_phase 已删除；请改用 minimum_assurance');
+  }
   const inputRunId = typeof input.run_id === 'string' && input.run_id.trim() ? input.run_id.trim() : undefined;
   // plan e7c2a4d8 T1b：manifest.run_id 与 CLI/--detach 传入 run_id 同时在场须一致
   //（detach parent 已按其打印 run_id/report_dir，child 静默换 id 即身份分裂）。
@@ -394,7 +397,7 @@ export function buildGoalManifestFromInput(
     chain_override: chainOverride,
     budget: mergeBudget(input.budget as GoalBudget | undefined),
     dependency_policy: mergeDependencyPolicy(input.dependency_policy as DependencyPolicy | undefined),
-    minimum_depth_by_phase: normalizeMinimumDepthByPhase(input.minimum_depth_by_phase),
+    minimum_assurance: normalizeMinimumAssurance(input.minimum_assurance),
     unattended: input.unattended as UnattendedContract,
     pre_authorized_mutations: parsePreAuthorizedMutations(input.pre_authorized_mutations),
     run_id: runId,

@@ -5,9 +5,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 import {
   assessObservation,
   assessFeature,
+  observeFeatureState,
   nextProjectionPath,
   readFreshNextOrRecompute,
   type AssessObservation,
@@ -64,7 +66,7 @@ function mkProject(): string {
 function goalInput(minimum: Record<string, string>): Record<string, unknown> {
   return {
     feature: 'demo',
-    minimum_depth_by_phase: minimum,
+    minimum_assurance: minimum,
     unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
   };
 }
@@ -77,9 +79,9 @@ function phase(overrides: Partial<AssessPhaseObservation> = {}): AssessPhaseObse
     schema_version: '1.2',
     verdict: 'PASS',
     closure: 'closed',
-    depth: 'full',
-    required_depth: null,
-    depth_satisfied: null,
+    assurance: 'full',
+    required_assurance: null,
+    assurance_satisfied: null,
     deferred: false,
     summary_fingerprint: H,
     evidence_fingerprint: H,
@@ -112,15 +114,75 @@ function observation(
   };
 }
 
+const authorizedDegradationCase: Case = {
+  name: 'floor-satisfying pruned capability is observed as a controlled degradation without a parallel gap',
+  run: () => {
+    const root = mkProject();
+    try {
+      const reports = path.join(root, 'doc', 'features', 'demo', 'spec', 'reports');
+      fs.mkdirSync(reports, { recursive: true });
+      fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({
+        schema_version: '1.2',
+        verdict: 'PASS',
+        assurance: 'degraded',
+        capability_resolutions: [{ id: 'capability_optional_visual', axis: 'visual', active: true, state: 'pruned' }],
+      }), 'utf8');
+      const observed = observeFeatureState({
+        projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', goalEnd: 'spec',
+        minimumAssurance: { spec: 'degraded' },
+      });
+      assert(observed.degradations?.length === 1, JSON.stringify(observed.degradations));
+      assert(observed.degradations?.[0]?.reason_code === 'capability_pruned', JSON.stringify(observed.degradations));
+      const result = assessObservation(observed);
+      assert(!result.gaps.some((gap) => gap.kind === 'insufficient_assurance'), JSON.stringify(result.gaps));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+};
+const prunedPropagationCase: Case = {
+  name: 'upstream pruned becomes a producer-targeted gap only when it blocks a downstream core capability',
+  run: () => {
+    const root = mkProject();
+    try {
+      for (const [phaseName, capability_resolutions] of [
+        ['spec', [{ id: 'capability_spec_optional', axis: 'visual', active: true, state: 'pruned', on_missing: 'prune', inputs: [] }]],
+        ['plan', [{
+          id: 'capability_plan_core', axis: 'functional', active: true, state: 'blocked', on_missing: 'fail',
+          inputs: [{ id: 'spec_input', attempts: [{ kind: 'artifact', source: 'spec@1', state: 'absent', dependencies: [], upstream_producer: 'spec' }] }],
+        }]],
+      ] as Array<[string, unknown[]]>) {
+        const reports = path.join(root, 'doc', 'features', 'demo', phaseName, 'reports');
+        fs.mkdirSync(reports, { recursive: true });
+        fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({
+          schema_version: '1.2', verdict: phaseName === 'spec' ? 'PASS' : 'INCOMPLETE',
+          assurance: phaseName === 'spec' ? 'degraded' : 'blocked', capability_resolutions,
+        }), 'utf8');
+      }
+      const observed = observeFeatureState({
+        projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', goalEnd: 'plan',
+      });
+      assert(observed.pruned_propagations?.length === 1, JSON.stringify(observed.pruned_propagations));
+      const result = assessObservation(observed);
+      assert(result.gaps[0]?.kind === 'pruned', JSON.stringify(result.gaps));
+      assert(result.recommendation.action === 'restore_inputs_and_rerun', JSON.stringify(result.recommendation));
+      assert(result.recommendation.phase === 'spec', JSON.stringify(result.recommendation));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+};
 const cases: Case[] = [
+  authorizedDegradationCase,
+  prunedPropagationCase,
   {
     name: 'no-reconcile multi-phase gaps choose the first workflow gap',
     run: () => {
       const multi = observation();
       multi.goal_end = 'plan';
       multi.phases = [
-        phase({ phase: 'spec', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', depth: 'unknown' }),
-        phase({ phase: 'plan', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', depth: 'unknown' }),
+        phase({ phase: 'spec', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', assurance: 'unknown' }),
+        phase({ phase: 'plan', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', assurance: 'unknown' }),
       ];
       const result = assessObservation(multi);
       assert(result.recommendation.action === 'run_phase', JSON.stringify(result.recommendation));
@@ -149,7 +211,7 @@ const cases: Case[] = [
         summary_state: 'legacy',
         schema_version: '1.1',
         closure: 'closed',
-        depth: 'unknown',
+        assurance: 'unknown',
       }));
       assert(result.gaps[0]?.kind === 'legacy_unverified', JSON.stringify(result.gaps));
       assert(result.recommendation.action === 'rerun_phase', result.recommendation.action);
@@ -178,14 +240,14 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'insufficient contract-local depth restores inputs before rerun',
+    name: 'insufficient assurance restores inputs before rerun',
     run: () => {
       const result = assessObservation(observation({
-        depth: 'basic',
-        required_depth: 'full',
-        depth_satisfied: false,
+        assurance: 'degraded',
+        required_assurance: 'full',
+        assurance_satisfied: false,
       }));
-      assert(result.gaps[0]?.kind === 'insufficient_depth', JSON.stringify(result.gaps));
+      assert(result.gaps[0]?.kind === 'insufficient_assurance', JSON.stringify(result.gaps));
       assert(result.recommendation.action === 'restore_inputs_and_rerun', result.recommendation.action);
     },
   },
@@ -284,12 +346,12 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'goal minimum depth is normalized and identity-bound',
+    name: 'goal minimum assurance is normalized and identity-bound',
     run: () => {
       const root = mkProject();
       try {
         const one = buildGoalManifestFromInput(
-          goalInput({ ut: 'basic', review: 'full' }),
+          goalInput({ ut: 'degraded', review: 'full' }),
           { projectRoot: root, runId: 'run-one' },
         );
         const two = buildGoalManifestFromInput(
@@ -297,13 +359,13 @@ const cases: Case[] = [
           { projectRoot: root, runId: 'run-one' },
         );
         assert(
-          JSON.stringify(one.minimum_depth_by_phase) === JSON.stringify({ review: 'full', ut: 'basic' }),
-          JSON.stringify(one.minimum_depth_by_phase),
+          JSON.stringify(one.minimum_assurance) === JSON.stringify({ review: 'full', ut: 'degraded' }),
+          JSON.stringify(one.minimum_assurance),
         );
         assert(
-          computeManifestIdentityFields(one).minimum_depth_by_phase !==
-            computeManifestIdentityFields(two).minimum_depth_by_phase,
-          'minimum depth must participate in manifest identity',
+          computeManifestIdentityFields(one).minimum_assurance !==
+            computeManifestIdentityFields(two).minimum_assurance,
+          'minimum assurance must participate in manifest identity',
         );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -311,6 +373,34 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'goal manifest schema and parser accept minimum_assurance only',
+    run: () => {
+      const root = mkProject();
+      try {
+        const schema = YAML.parse(fs.readFileSync(path.join(FRAMEWORK_ROOT, 'workflows', 'goal-manifest.schema.yaml'), 'utf8')) as {
+          fields?: Record<string, { additionalProperties?: { enum?: string[] } }>;
+        };
+        assert(!('minimum_depth_by_phase' in (schema.fields ?? {})), 'legacy depth field remains in goal manifest schema');
+        const assurance = schema.fields?.minimum_assurance;
+        assert(
+          JSON.stringify(assurance?.additionalProperties?.enum) === JSON.stringify(['degraded', 'full']),
+          'minimum_assurance schema enum drifted',
+        );
+        let legacyError = '';
+        try {
+          buildGoalManifestFromInput({
+            ...goalInput({}),
+            minimum_depth_by_phase: { testing: 'full' },
+          }, { projectRoot: root, runId: 'run-one' });
+        } catch (error) {
+          legacyError = (error as Error).message;
+        }
+        assert(legacyError.includes('minimum_depth_by_phase'), `legacy field was accepted: ${legacyError}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },  {
     name: 'renderer is bounded, outside HARNESS_SUMMARY, and process-once',
     run: () => {
       const root = mkProject();

@@ -5,35 +5,20 @@ phases:
   ut:
     tracks: [full]
     inputs:
-      required:
-        - { id: code, kind: source }
-        - { id: acceptance, artifact: acceptance@1 }
-      optional:
-        - id: use_cases
-          artifact: use-cases@1
-          absent_effect: "Test scope is derived from acceptance criteria, diff scope, and the module catalog."
-        - id: plan
-          artifact: plan@1
-          absent_effect: "Test targets are derived from diff scope and the module catalog; depth is basic."
-        - id: contracts
-          artifact: contracts@1
-          absent_effect: "Contract assertion coverage is unavailable; depth is basic."
-        - id: spec
-          artifact: spec@1
-          absent_effect: "Acceptance remains the required test truth source."
+      - { id: code, sources: [{ kind: derive, provider_id: derive.codebase }] }
+      - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }] }
+      - { id: use_cases, sources: [{ kind: artifact, artifact: use-cases@1 }] }
+      - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }] }
+      - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }] }
+      - { id: test_targets, sources: [{ kind: derive, provider_id: derive.test-targets }] }
+    capabilities:
+      - { id: capability_ut_core_context, axis: functional, inputs: [code, acceptance], tracks: [full], on_missing: fail }
+      - { id: capability_ut_design_context, axis: functional, inputs: [plan, contracts, test_targets], tracks: [full], on_missing: prune }
+      - { id: capability_ut_use_case_context, axis: evidence, inputs: [use_cases], tracks: [full], on_missing: prune }
     produces:
       - { kind: source, id: ut_source_and_dag }
       - { artifact: testability-audit@1 }
       - { artifact: mock-plan@1 }
       - { artifact: coverage-evidence@1 }
-    verifies:
-      check: check-ut.ts
-      depth_field: summary.depth
+    verifies: { check: check-ut.ts }
     control_dependencies: [coding]
-    tiers:
-      full:
-        when: "all(present(plan), present(contracts))"
-        satisfies: [full, basic]
-      basic:
-        when: otherwise
-        satisfies: [basic]

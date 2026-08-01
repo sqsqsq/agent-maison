@@ -17,7 +17,7 @@ export interface AssessRenderOptions {
   mode: AssessAuthorizationContext['mode'];
   status: string;
   goalEnd?: string;
-  minimumDepthByPhase?: Record<string, string>;
+  minimumAssurance?: Record<string, 'degraded' | 'full'>;
   runId?: string;
   attemptId?: string;
 }
@@ -57,20 +57,20 @@ export function assessAndRenderNextStep(options: AssessRenderOptions): AssessRes
   try {
     const runId = options.runId ?? (process.env.MAISON_GOAL_RUN_ID?.trim() || undefined);
     let goalEnd = options.goalEnd;
-    let minimumDepthByPhase = options.minimumDepthByPhase;
-    if (runId && (options.mode === 'goal_mode' || process.env.MAISON_GOAL_GATE_HARNESS === '1') && (!goalEnd || !minimumDepthByPhase)) {
+    let minimumAssurance = options.minimumAssurance;
+    if (runId && (options.mode === 'goal_mode' || process.env.MAISON_GOAL_GATE_HARNESS === '1') && (!goalEnd || !minimumAssurance)) {
       const manifest = loadGoalManifestFromRun(options.projectRoot, runId, {
         feature: options.feature,
       });
       goalEnd ??= manifest.end_phase;
-      minimumDepthByPhase ??= manifest.minimum_depth_by_phase;
+      minimumAssurance ??= manifest.minimum_assurance;
     }
     const result = assessFeature({
       projectRoot: options.projectRoot,
       frameworkRoot: options.frameworkRoot,
       feature: options.feature,
       goalEnd,
-      minimumDepthByPhase,
+      minimumAssurance,
       authorization: { mode: options.mode },
       runId,
       attemptId: options.attemptId ?? (process.env.MAISON_GOAL_ATTEMPT?.trim() || undefined),

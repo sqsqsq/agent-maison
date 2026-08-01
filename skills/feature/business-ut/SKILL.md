@@ -63,7 +63,7 @@
 
 **缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段。
 
-**质量档位**：`plan+contracts` 齐全为 `full`，否则为 `basic`。Harness 的 `merged-report.md` 报告头与 `summary.json.depth` 必须同时显式标注档位；basic 只省略不可执行的契约专项覆盖，acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
+**保证等级**：Harness 在 checker 前一次性解析 contract capabilities 与输入 source chain，机械写入 `summary.assurance` 和 `capability_resolutions`；Skill 不得手写 `full/basic` 档位。可裁剪能力会以受控理由投影到质量轴，核心输入缺失仍不可闭环；acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 
 ## 规约参考
 

@@ -29,9 +29,9 @@ import {
   type PhaseVerdictAction,
 } from './phase-transition-policy';
 import {
-  loadFeatureContracts,
-  phaseContractIndex,
-  tierSatisfies,
+  assuranceSatisfies,
+  type Assurance,
+  type MinimumAssurance,
 } from './skill-contract';
 
 export type AssessGapKind =
@@ -41,7 +41,8 @@ export type AssessGapKind =
   | 'stale'
   | 'unclosed'
   | 'legacy_unverified'
-  | 'insufficient_depth';
+  | 'insufficient_assurance'
+  | 'pruned';
 
 export type AssessAuthorizationMode = 'manual' | 'batch_authorized' | 'goal_mode';
 
@@ -94,14 +95,29 @@ export interface AssessPhaseObservation {
   schema_version: string | null;
   verdict: string | null;
   closure: 'open' | 'closed' | 'stale';
-  depth: string;
-  required_depth: string | null;
-  depth_satisfied: boolean | null;
+  assurance: string;
+  required_assurance: string | null;
+  assurance_satisfied: boolean | null;
   deferred: boolean;
   summary_fingerprint: string | null;
   evidence_fingerprint: string | null;
 }
 
+export interface AssessDegradation {
+  phase: string;
+  capability: string;
+  axis: 'functional' | 'visual' | 'asset' | 'evidence';
+  reason_code: 'capability_pruned';
+}
+
+export interface AssessPrunedPropagation {
+  producer_phase: string;
+  producer_capability: string;
+  downstream_phase: string;
+  downstream_capability: string;
+  input_id: string;
+  source: string;
+}
 export interface AssessObservation {
   schema_version: '1.0';
   feature: string;
@@ -109,6 +125,8 @@ export interface AssessObservation {
   track: FeatureTrack;
   goal_end: string;
   phases: AssessPhaseObservation[];
+  degradations?: AssessDegradation[];
+  pruned_propagations?: AssessPrunedPropagation[];
   fingerprints: {
     workflow: string;
     track: string;
@@ -154,7 +172,7 @@ export interface AssessResult {
   authorization_context: AssessAuthorizationContext;
   observed_fingerprint: string;
   fingerprints: AssessObservation['fingerprints'];
-  observed: { phases: AssessPhaseObservation[] };
+  observed: { phases: AssessPhaseObservation[]; degradations?: AssessDegradation[]; pruned_propagations?: AssessPrunedPropagation[] };
   gaps: AssessGap[];
   recommendation: AssessRecommendation;
   alternatives: AssessRecommendation[];
@@ -169,7 +187,7 @@ export interface AssessFeatureOptions {
   frameworkRoot?: string;
   feature: string;
   goalEnd?: string;
-  minimumDepthByPhase?: Record<string, string>;
+  minimumAssurance?: Record<string, MinimumAssurance>;
   authorization?: AssessAuthorizationContext;
   runId?: string;
   attemptId?: string;
@@ -241,6 +259,78 @@ function isDeferredSummary(summary: Record<string, unknown>): boolean {
   ) ?? false;
 }
 
+function capabilityEntries(summary: Record<string, unknown>): Record<string, unknown>[] {
+  return Array.isArray(summary.capability_resolutions)
+    ? summary.capability_resolutions.filter((entry): entry is Record<string, unknown> =>
+      Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    : [];
+}
+
+/**
+ * A blocked core capability only becomes a dedicated pruned gap when its missing
+ * artifact has a concrete upstream producer and that producer reports a pruned
+ * capability. This keeps legal local degradation observable without treating it
+ * as a global repair target, while selecting the smallest producer repair when a
+ * downstream core input is actually unavailable.
+ */
+function collectPrunedPropagations(
+  summaries: ReadonlyMap<string, Record<string, unknown>>,
+): AssessPrunedPropagation[] {
+  const producerPruned = new Map<string, string[]>();
+  for (const [phase, summary] of summaries) {
+    const ids = capabilityEntries(summary)
+      .filter((capability) => capability.active === true && capability.state === 'pruned')
+      .map((capability) => capability.id)
+      .filter((id): id is string => typeof id === 'string');
+    if (ids.length > 0) producerPruned.set(phase, ids.sort());
+  }
+
+  const propagation = new Map<string, AssessPrunedPropagation>();
+  for (const [downstreamPhase, summary] of summaries) {
+    for (const capability of capabilityEntries(summary)) {
+      if (capability.active !== true || capability.state !== 'blocked' || capability.on_missing !== 'fail') continue;
+      const capabilityId = typeof capability.id === 'string' ? capability.id : null;
+      if (!capabilityId || !Array.isArray(capability.inputs)) continue;
+      for (const input of capability.inputs) {
+        if (!input || typeof input !== 'object') continue;
+        const inputRecord = input as Record<string, unknown>;
+        const inputId = typeof inputRecord.id === 'string' ? inputRecord.id : null;
+        if (!inputId || !Array.isArray(inputRecord.attempts)) continue;
+        for (const attempt of inputRecord.attempts) {
+          if (!attempt || typeof attempt !== 'object') continue;
+          const attemptRecord = attempt as Record<string, unknown>;
+          const producerPhase = typeof attemptRecord.upstream_producer === 'string'
+            ? attemptRecord.upstream_producer
+            : null;
+          if (!producerPhase || !producerPruned.has(producerPhase)) continue;
+          const source = typeof attemptRecord.source === 'string' ? attemptRecord.source : inputId;
+          for (const producerCapability of producerPruned.get(producerPhase)!) {
+            const item: AssessPrunedPropagation = {
+              producer_phase: producerPhase,
+              producer_capability: producerCapability,
+              downstream_phase: downstreamPhase,
+              downstream_capability: capabilityId,
+              input_id: inputId,
+              source,
+            };
+            propagation.set([
+              item.producer_phase,
+              item.producer_capability,
+              item.downstream_phase,
+              item.downstream_capability,
+              item.input_id,
+              item.source,
+            ].join('|'), item);
+          }
+        }
+      }
+    }
+  }
+  return [...propagation.values()].sort((a, b) =>
+    [a.producer_phase, a.producer_capability, a.downstream_phase, a.downstream_capability, a.input_id]
+      .join('|')
+      .localeCompare([b.producer_phase, b.producer_capability, b.downstream_phase, b.downstream_capability, b.input_id].join('|')));
+}
 export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
   const workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
@@ -252,7 +342,6 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   const phases = sliceThrough(allPhases, goalEnd);
   const frameworkRoot = options.frameworkRoot ??
     path.resolve(__dirname, '..', '..', '..');
-  const contracts = phaseContractIndex(loadFeatureContracts(frameworkRoot));
   const staleness = new Map(
     recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, phases, {
       frameworkRoot,
@@ -269,7 +358,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     const summaryPath = path.join(reportsDir, 'summary.json');
     const summary = readJson(summaryPath);
     const evidencePath = phaseEvidenceManifestPath(options.projectRoot, options.feature, phase);
-    const requiredDepth = options.minimumDepthByPhase?.[phase] ?? null;
+    const requiredAssurance = options.minimumAssurance?.[phase] ?? null;
     if (summary === null) {
       return {
         phase,
@@ -277,9 +366,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
         schema_version: null,
         verdict: null,
         closure: 'open',
-        depth: 'unknown',
-        required_depth: requiredDepth,
-        depth_satisfied: requiredDepth ? false : null,
+        assurance: 'unknown',
+        required_assurance: requiredAssurance,
+        assurance_satisfied: requiredAssurance ? false : null,
         deferred: false,
         summary_fingerprint: null,
         evidence_fingerprint: fileHash(evidencePath),
@@ -292,9 +381,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
         schema_version: null,
         verdict: null,
         closure: 'open',
-        depth: 'unknown',
-        required_depth: requiredDepth,
-        depth_satisfied: requiredDepth ? false : null,
+        assurance: 'unknown',
+        required_assurance: requiredAssurance,
+        assurance_satisfied: requiredAssurance ? false : null,
         deferred: false,
         summary_fingerprint: fileHash(summaryPath),
         evidence_fingerprint: fileHash(evidencePath),
@@ -303,13 +392,14 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     const schemaVersion = typeof summary.schema_version === 'string' ? summary.schema_version : null;
     const legacy = schemaVersion !== '1.2';
     const verdict = typeof summary.verdict === 'string' ? summary.verdict : null;
-    const depth = !legacy && typeof summary.depth === 'string' && summary.depth.trim()
-      ? summary.depth.trim()
+    const assurance = !legacy && typeof summary.assurance === 'string' && ['blocked', 'degraded', 'full'].includes(summary.assurance)
+      ? summary.assurance
       : 'unknown';
-    const indexed = contracts.get(phase);
-    const depthSatisfied = requiredDepth === null
+    const assuranceSatisfied = requiredAssurance === null
       ? null
-      : Boolean(indexed && tierSatisfies(indexed.phase, depth, requiredDepth));
+      : assurance === 'blocked' || assurance === 'degraded' || assurance === 'full'
+        ? assuranceSatisfies(assurance as Assurance, requiredAssurance as MinimumAssurance)
+        : false;
     const evidenceVerdict = staleness.get(phase);
     let closure: AssessPhaseObservation['closure'] = 'open';
     if (track === 'full') {
@@ -336,15 +426,38 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       schema_version: schemaVersion,
       verdict,
       closure,
-      depth,
-      required_depth: requiredDepth,
-      depth_satisfied: depthSatisfied,
+      assurance,
+      required_assurance: requiredAssurance,
+      assurance_satisfied: assuranceSatisfied,
       deferred: isDeferredSummary(summary),
       summary_fingerprint: fileHash(summaryPath),
       evidence_fingerprint: fileHash(evidencePath),
     };
   });
 
+  const currentSummaries = new Map<string, Record<string, unknown>>();
+  for (const phase of observedPhases) {
+    if (phase.summary_state !== 'current') continue;
+    const reportsDir = featurePhaseReportsDir(options.projectRoot, options.feature, phase.phase, frameworkRoot);
+    const summary = readJson(path.join(reportsDir, 'summary.json'));
+    if (summary && summary !== 'corrupt') currentSummaries.set(phase.phase, summary);
+  }
+  const degradations: AssessDegradation[] = observedPhases.flatMap((phase) => {
+    if (phase.summary_state !== 'current' || phase.assurance_satisfied === false) return [];
+    return capabilityEntries(currentSummaries.get(phase.phase) ?? {}).flatMap((capability): AssessDegradation[] => {
+      if (capability.active !== true || capability.state !== 'pruned') return [];
+      const id = typeof capability.id === 'string' ? capability.id : null;
+      const axis = capability.axis;
+      if (!id || !['functional', 'visual', 'asset', 'evidence'].includes(String(axis))) return [];
+      return [{
+        phase: phase.phase,
+        capability: id,
+        axis: axis as AssessDegradation['axis'],
+        reason_code: 'capability_pruned',
+      }];
+    });
+  });
+  const prunedPropagations = collectPrunedPropagations(currentSummaries);
   const workflowFingerprint = hash(workflow);
   const trackFingerprint = hash({
     track,
@@ -352,7 +465,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   });
   const goalFingerprint = hash({
     goal_end: goalEnd,
-    minimum_depth_by_phase: options.minimumDepthByPhase ?? {},
+    minimum_assurance: options.minimumAssurance ?? {},
   });
   const runAttemptFingerprint = hash({
     run_id: options.runId ?? null,
@@ -376,6 +489,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     evidence: evidenceFingerprint,
     reconcile: reconcileFingerprint,
     phases: observedPhases,
+    degradations,
+    pruned_propagations: prunedPropagations,
   });
 
   return {
@@ -385,6 +500,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     track,
     goal_end: goalEnd,
     phases: observedPhases,
+    degradations,
+    pruned_propagations: prunedPropagations,
     fingerprints: {
       workflow: workflowFingerprint,
       track: trackFingerprint,
@@ -400,7 +517,11 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
 }
 
 function gapsFromObservation(observation: AssessObservation): AssessGap[] {
-  const gaps: AssessGap[] = [];
+  const gaps: AssessGap[] = (observation.pruned_propagations ?? []).map((item) => ({
+    phase: item.producer_phase,
+    kind: 'pruned',
+    detail: `restore producer=${item.producer_phase} capability=${item.producer_capability}; downstream=${item.downstream_phase}/${item.downstream_capability}; input=${item.input_id}; source=${item.source}`,
+  }));
   for (const phase of observation.phases) {
     if (phase.summary_state === 'missing') {
       gaps.push({ phase: phase.phase, kind: 'missing', detail: 'summary.json 缺失' });
@@ -434,11 +555,11 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       gaps.push({ phase: phase.phase, kind: 'unclosed', detail: 'PASS 但 verified closure 尚未提交' });
       continue;
     }
-    if (phase.required_depth && phase.depth_satisfied !== true) {
+    if (phase.required_assurance && phase.assurance_satisfied !== true) {
       gaps.push({
         phase: phase.phase,
-        kind: 'insufficient_depth',
-        detail: `actual=${phase.depth}, required=${phase.required_depth}`,
+        kind: 'insufficient_assurance',
+        detail: `actual=${phase.assurance}, required=${phase.required_assurance}`,
       });
     }
   }
@@ -527,17 +648,17 @@ function recommendationForObservation(
     // the first historical gap. Advance to the next node in the observed chain;
     // at the chain end, request final feature validation.
     if (decision.runner_action === 'advance') {
-      const currentDepthGap = gaps.find(
-        (gap) => gap.phase === phaseOutcome.phase && gap.kind === 'insufficient_depth',
+      const currentAssuranceGap = gaps.find(
+        (gap) => gap.phase === phaseOutcome.phase && gap.kind === 'insufficient_assurance',
       );
-      if (currentDepthGap) {
+      if (currentAssuranceGap) {
         const retriesUsed = observation.reconcile?.budgets?.retries_used ?? 0;
         const maxRetries = observation.reconcile?.budgets?.max_retries_per_phase ?? 2;
         if (retriesUsed >= maxRetries) {
           return {
             action: 'stop',
             phase: phaseOutcome.phase,
-            reason: `insufficient_depth_retry_exhausted: ${currentDepthGap.detail}`,
+            reason: `insufficient_assurance_retry_exhausted: ${currentAssuranceGap.detail}`,
             requires_driver_authorization: true,
             runner_action: 'halt',
           };
@@ -545,7 +666,7 @@ function recommendationForObservation(
         return {
           action: 'restore_inputs_and_rerun',
           phase: phaseOutcome.phase,
-          reason: `insufficient_depth: ${currentDepthGap.detail}`,
+          reason: `insufficient_assurance: ${currentAssuranceGap.detail}`,
           requires_driver_authorization: true,
           runner_action: 'retry',
         };
@@ -582,7 +703,11 @@ export function assessObservation(
     authorization_context: authorization,
     observed_fingerprint: observation.fingerprints.observed,
     fingerprints: observation.fingerprints,
-    observed: { phases: observation.phases },
+    observed: {
+      phases: observation.phases,
+      degradations: observation.degradations ?? [],
+      pruned_propagations: observation.pruned_propagations ?? [],
+    },
     gaps,
     recommendation,
     alternatives: [] as AssessRecommendation[],
