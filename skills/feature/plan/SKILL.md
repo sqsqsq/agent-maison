@@ -93,7 +93,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 1. `<features_dir>/<feature>/plan/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后设计阶段完成，**具备**进 coding 的资格；**不授权**自动开 coding。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：四件套 PASS 后须 **`plan.ok_to_code`** 或 **`phase.next_step`** 停等（除非 batch 授权）。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -130,10 +130,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 | 脚本 Harness | `framework/harness/scripts/check-plan.ts` |
 | Trace | `<features_dir>/<feature>/plan/reports/<timestamp>/<model>-plan/trace.json`（schema=trace.schema.json，phase=plan）；`human_interventions` 须记 Scope 扩展批准（`type: scope_expansion_approval`），模型擅自扩展被拦截记 `human_pain_points`（category=`scope_creep`）+ 同目录 `gap-notes.md` |
 
-## 下游消费者
+## 收尾
 
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **coding** | plan.md + contracts.yaml | 按文件规划和接口契约逐模块生成代码 |
-| **code-review** | plan.md + contracts.yaml | 对照检查实现一致性 |
-| **business-ut** | plan.md + contracts.yaml | 读业务流程信息生成 DAG |
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

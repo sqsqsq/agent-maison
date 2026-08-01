@@ -75,6 +75,31 @@ export const DEFAULT_DEPENDENCY_POLICY: DependencyPolicy = {
   propagate_to_downstream: true,
 };
 
+export type AssessmentGapKind =
+  | 'missing'
+  | 'failed'
+  | 'deferred'
+  | 'stale'
+  | 'unclosed'
+  | 'legacy_unverified'
+  | 'insufficient_depth'
+  | 'deterministic_defects';
+
+export type AssessmentRecommendationAction =
+  | 'run_phase'
+  | 'rerun_phase'
+  | 'complete_closure'
+  | 'resolve_deferred'
+  | 'restore_inputs_and_rerun'
+  | 'validate_feature_completion'
+  | 'stop';
+
+export interface ClassifyAssessmentGapInput {
+  assessment_gap: AssessmentGapKind | null;
+  fused?: boolean;
+  target_state?: 'missing' | 'current';
+}
+
 export interface ClassifyPhaseVerdictInput {
   verdict: HarnessVerdict;
   blocking_class?: string;
@@ -257,7 +282,37 @@ export function isDeferrableExternalBlock(
 /**
  * Classify harness verdict into runner action. SSOT for goal-runner.
  */
-export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVerdictAction {
+export function classifyPhaseVerdict(input: ClassifyAssessmentGapInput): AssessmentRecommendationAction;
+export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVerdictAction;
+export function classifyPhaseVerdict(
+  input: ClassifyAssessmentGapInput | ClassifyPhaseVerdictInput,
+): AssessmentRecommendationAction | PhaseVerdictAction {
+  if ('assessment_gap' in input) {
+    if (input.fused) return 'stop';
+    switch (input.assessment_gap) {
+      case null:
+        return 'validate_feature_completion';
+      case 'missing':
+        return 'run_phase';
+      case 'unclosed':
+        return 'complete_closure';
+      case 'deferred':
+        return 'resolve_deferred';
+      case 'insufficient_depth':
+        return 'restore_inputs_and_rerun';
+      case 'deterministic_defects':
+        return input.target_state === 'missing' ? 'run_phase' : 'rerun_phase';
+      case 'failed':
+      case 'stale':
+      case 'legacy_unverified':
+        return 'rerun_phase';
+      default: {
+        const exhaustive: never = input.assessment_gap;
+        throw new Error(`[phase-transition-policy] unsupported assessment gap: ${exhaustive}`);
+      }
+    }
+  }
+
   const {
     verdict,
     blocking_class,
@@ -297,6 +352,39 @@ export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVer
   return 'halt';
 }
 
+export interface PhaseAssessmentDecision {
+  action: AssessmentRecommendationAction | null;
+  target: 'current' | 'coding' | null;
+  runner_action: PhaseVerdictAction;
+}
+
+/**
+ * Translate the verdict SSOT into assess vocabulary. The mapping lives beside
+ * classifyPhaseVerdict so assess and every driver consume one decision table.
+ * `action=null` means normal workflow-gap reconciliation decides the next node.
+ */
+export function classifyPhaseAssessment(
+  input: ClassifyPhaseVerdictInput,
+): PhaseAssessmentDecision {
+  const runnerAction = classifyPhaseVerdict(input);
+  switch (runnerAction) {
+    case 'advance':
+      return { action: null, target: null, runner_action: runnerAction };
+    case 'retry':
+      return { action: 'rerun_phase', target: 'current', runner_action: runnerAction };
+    case 'halt':
+      return { action: 'stop', target: null, runner_action: runnerAction };
+    case 'backtrack_to_coding':
+      return { action: 'rerun_phase', target: 'coding', runner_action: runnerAction };
+    case 'defer_external_and_continue_if_allowed':
+    case 'defer_external_and_halt':
+      return { action: 'resolve_deferred', target: 'current', runner_action: runnerAction };
+    default: {
+      const exhaustive: never = runnerAction;
+      throw new Error(`[phase-transition-policy] unsupported runner action: ${exhaustive}`);
+    }
+  }
+}
 /** 回退预算缺省值（plan d8c5f3a7 T4；与轮次指纹熔断共同防 ping-pong） */
 export const DEFAULT_MAX_BACKTRACKS = 2;
 
@@ -395,24 +483,23 @@ export function isPhaseWithinBatchRange(
   return toIdx === fromIdx + 1 && toIdx <= throughIdx;
 }
 
-/** Next phase skill label for phase.next_step portable menu. */
-export function nextSkillLabelForPhase(phase: FeaturePhase): string {
-  switch (phase) {
-    case 'spec':
-      return 'plan 技术设计';
-    case 'plan':
-      return 'coding 编码';
-    case 'coding':
-      return 'code-review Code Review';
-    case 'review':
-      return 'business-ut 业务级 UT';
-    case 'ut':
-      return 'device-testing 真机测试';
-    case 'testing':
-      return '结束交付 / 归档';
-    default:
-      return '下一阶段 skill';
-  }
+/**
+ * Workflow-derived compatibility label for phase.next_step renderers.
+ * Cross-phase qualification itself comes from assess@1; this helper only
+ * names the next workflow node and never authorizes execution.
+ */
+export function nextSkillLabelForPhase(
+  workflow: WorkflowSpec,
+  phase: FeaturePhase,
+  track: FeatureTrack = 'full',
+): string {
+  const ordered = featurePhasesFromWorkflow(workflow, track);
+  const last = ordered[ordered.length - 1];
+  const chain = resolveAutoChain(workflow, ordered[0], last, undefined, track);
+  const index = chain.indexOf(phase);
+  if (index < 0) return 'assess recommendation';
+  const next = chain[index + 1];
+  return next ?? 'feature completion validation';
 }
 
 /** Dedicated ok_to_* registry id for phase closure (if any). */

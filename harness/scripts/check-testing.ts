@@ -105,6 +105,7 @@ import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-c
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { parseTestCaseFlowBlock, triageCascade, validateTestCaseFlow } from './utils/test-case-flow';
+import { normalizeDeviceTestCases } from './utils/device-test-case-kernel';
 import {
   loadVisualDiffNavConfig,
   loadVisualDiffNavConfigV2,
@@ -1066,6 +1067,40 @@ function extractReportCaseIds(report: string): string[] {
   const idCol = tables[0].headers.findIndex(h => h.includes('编号'));
   if (idCol === -1) return [];
   return tables[0].rows.map(row => (row[idCol] || '').trim()).filter(id => id);
+}
+
+function checkDeviceCaseNormalization(ctx: CheckContext): CheckResult[] {
+  const acceptance = ctx.featureSpec.acceptance;
+  if (!acceptance) {
+    return [{
+      id: 'device_case_contract',
+      category: 'traceability',
+      description: 'Device testing cases 统一归一契约',
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'phase 轨缺少 acceptance.yaml，无法归一 cases。',
+    }];
+  }
+  const normalized = normalizeDeviceTestCases({ mode: 'acceptance', acceptance });
+  if (normalized.issues.length > 0) {
+    return [{
+      id: 'device_case_contract',
+      category: 'traceability',
+      description: 'Device testing cases 统一归一契约',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: normalized.issues.join('\n'),
+      suggestion: '按 acceptance.yaml 的 criteria/expected/boundaries 修正设备用例结构后重跑 testing harness；adhoc 输入须使用同一 normalization kernel。',
+    }];
+  }
+  return [{
+    id: 'device_case_contract',
+    category: 'traceability',
+    description: 'Device testing cases 统一归一契约',
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `mode=acceptance depth=${normalized.depth} cases=${normalized.cases.length}`,
+  }];
 }
 
 function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): CheckResult[] {
@@ -3132,6 +3167,7 @@ const checker: PhaseChecker = {
     );
 
     // --- Traceability checks ---
+    results.push(...safeRun(() => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
     results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
     results.push(...safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac'));

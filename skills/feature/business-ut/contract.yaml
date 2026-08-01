@@ -1,0 +1,39 @@
+schema_version: "1.0"
+skill: business-ut
+skill_doc: SKILL.md
+phases:
+  ut:
+    tracks: [full]
+    inputs:
+      required:
+        - { id: code, kind: source }
+        - { id: acceptance, artifact: acceptance@1 }
+      optional:
+        - id: use_cases
+          artifact: use-cases@1
+          absent_effect: "Test scope is derived from acceptance criteria, diff scope, and the module catalog."
+        - id: plan
+          artifact: plan@1
+          absent_effect: "Test targets are derived from diff scope and the module catalog; depth is basic."
+        - id: contracts
+          artifact: contracts@1
+          absent_effect: "Contract assertion coverage is unavailable; depth is basic."
+        - id: spec
+          artifact: spec@1
+          absent_effect: "Acceptance remains the required test truth source."
+    produces:
+      - { kind: source, id: ut_source_and_dag }
+      - { artifact: testability-audit@1 }
+      - { artifact: mock-plan@1 }
+      - { artifact: coverage-evidence@1 }
+    verifies:
+      check: check-ut.ts
+      depth_field: summary.depth
+    control_dependencies: [coding]
+    tiers:
+      full:
+        when: "all(present(plan), present(contracts))"
+        satisfies: [full, basic]
+      basic:
+        when: otherwise
+        satisfies: [basic]

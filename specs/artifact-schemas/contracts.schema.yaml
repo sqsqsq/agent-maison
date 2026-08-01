@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/contracts@1"
+title: Feature implementation contracts
+x-artifact-id: contracts@1
+x-version: 1
+x-authority: "Compatibility identity; field-level checks remain in spec-loader and phase checkers."
+type: object
+additionalProperties: true

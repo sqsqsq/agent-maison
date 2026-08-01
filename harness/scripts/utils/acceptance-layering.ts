@@ -28,7 +28,8 @@ export function isDeviceUtLayer(layer?: string): boolean {
 }
 
 export function isP0P1Priority(priority: string): boolean {
-  return priority === 'P0' || priority === 'P1';
+  const normalized = priority.trim().toUpperCase();
+  return normalized === 'P0' || normalized === 'P1';
 }
 
 export function acceptanceYamlRel(projectRoot: string, feature: string): string {

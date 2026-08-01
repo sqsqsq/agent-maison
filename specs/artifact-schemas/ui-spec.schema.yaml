@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/ui-spec@1"
+title: UI specification
+x-artifact-id: ui-spec@1
+x-version: 1
+x-authority: "Compatibility identity; strict validation remains harness/schemas/ui-spec.schema.json."
+type: object
+additionalProperties: true

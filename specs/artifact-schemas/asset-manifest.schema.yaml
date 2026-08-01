@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/asset-manifest@1"
+title: Feature asset manifest
+x-artifact-id: asset-manifest@1
+x-version: 1
+x-authority: "Compatibility identity; asset acquisition and fidelity checks remain imperative."
+type: object
+additionalProperties: true

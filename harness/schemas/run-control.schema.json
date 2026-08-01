@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run-control@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "current_epoch", "owner", "updated_at"],
+  "properties": {
+    "schema": { "const": "run-control@1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "current_epoch": { "type": "integer", "minimum": 0 },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "owner": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "owner_id", "epoch", "state"],
+          "properties": {
+            "kind": { "enum": ["process", "session"] },
+            "owner_id": { "type": "string", "minLength": 1 },
+            "epoch": { "type": "integer", "minimum": 1 },
+            "state": { "enum": ["active", "quiescing", "released", "orphaned_session"] },
+            "pid": { "type": "integer", "minimum": 1 },
+            "hostname": { "type": "string" },
+            "lease_expires_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

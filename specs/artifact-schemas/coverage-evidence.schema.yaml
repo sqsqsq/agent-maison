@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/coverage-evidence@1"
+title: Acceptance coverage evidence
+x-artifact-id: coverage-evidence@1
+x-version: 1
+x-authority: "Projection shape only; acceptance and toolchain checks remain completion authorities."
+type: object
+additionalProperties: true

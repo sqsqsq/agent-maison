@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/visual-parity@1"
+title: Visual parity mapping
+x-artifact-id: visual-parity@1
+x-version: 1
+x-authority: "Compatibility identity; visual fidelity gates remain imperative."
+type: object
+additionalProperties: true

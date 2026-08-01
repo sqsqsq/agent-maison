@@ -1,0 +1,27 @@
+schema_version: "1.0"
+skill: spec
+skill_doc: SKILL.md
+phases:
+  spec:
+    tracks: [full]
+    inputs:
+      required:
+        - { id: requirement, kind: adhoc }
+      optional:
+        - id: codebase
+          kind: source
+          absent_effect: "Greenfield requirements may establish a spec without existing feature source."
+    produces:
+      - { artifact: spec@1 }
+      - { artifact: acceptance@1 }
+      - { artifact: ui-spec@1 }
+      - { artifact: ref-elements@1 }
+      - { artifact: asset-manifest@1 }
+    verifies:
+      check: check-spec.ts
+      depth_field: summary.depth
+    control_dependencies: [catalog, glossary]
+    tiers:
+      full:
+        when: otherwise
+        satisfies: [full]

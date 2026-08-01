@@ -3,6 +3,22 @@
 schema_version: "2.0"
 
 entries:
+  # --- goal mode ---
+  - id: goal.run_mode
+    skill: "goal-mode"
+    class: enum
+    ssot_anchor: "goal-mode/SKILL.md §何时使用"
+    skill_step: "输入解析"
+    portable_menu: "1=有人在场 2=无人值守"
+    notes: "仅在用户意图不明确时询问；明确自然语言意图直接映射，CLI --detach 恒为无人值守。用户界面不得暴露 in-session、headless 或 capability tier。"
+    options:
+      - value: attended
+        label: "有人在场 — 自动推进；需要人时立即询问"
+        portable: "1=有人在场"
+      - value: unattended
+        label: "无人值守 — 自动推进；人类等待项安全停放"
+        portable: "2=无人值守"
+
   # --- framework-init init ---
   - id: init.materialized_adapters
     skill: "framework-init"
@@ -537,20 +553,15 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §8.3"
     skill_step: "任一 feature phase 四件套 PASS 后"
-    portable_menu: "1=进入下一 Skill 2=暂停 3=其它"
+    portable_menu: "1=执行 assess 推荐动作 2=暂停 3=其它"
     options:
       - value: enter_next
-        label: "进入下一 Skill — {next_skill_label}"
-        portable: "1=进入下一 Skill"
+        label: "执行 assess 推荐动作 — {assess_recommendation}"
+        portable: "1=执行 assess 推荐动作"
         dynamic_label:
-          placeholder: "{next_skill_label}"
+          placeholder: "{assess_recommendation}"
           lookup: |
-            spec → plan 技术设计
-            plan → coding 编码
-            coding → code-review Code Review
-            review → business-ut 业务级 UT
-            ut → device-testing 真机测试
-            testing → 结束交付 / 归档
+            读取刚由 assess CLI 原子生成且指纹自洽的 recommendation。投影路径为 `<paths.features_dir>/<feature>/next.json`；缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 重算。只读巡检加 `--no-write`，不得手改 next.json。
       - value: pause
         label: "暂停 — 本阶段到此，暂不进入下游"
         portable: "2=暂停"

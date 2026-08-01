@@ -25,8 +25,8 @@
   ],
   "properties": {
     "schema_version": {
-      "enum": ["1.0", "1.1"],
-      "description": "1.1（blind-visual-hardening d1）：新增 report_validity/quality_axes/release_readiness/completion_status，writer 恒写 1.1；1.0 仅兼容读取，不作 1.1 completion 干净依据（lite 校验器无 if/then，1.1 必填性由代码层强制）"
+      "enum": ["1.0", "1.1", "1.2"],
+      "description": "Writer emits 1.2. Legacy 1.0/1.1 remains readable but has unknown depth and legacy_unverified closure."
     },
     "report_validity": {
       "type": "string",
@@ -83,6 +83,23 @@
     "next_action": { "type": "string", "minLength": 1 },
     "receipt_status": { "type": "string" },
     "closure_status": { "type": "string", "enum": ["open", "closed"] },
+    "depth": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Contract-local actual tier; names are not globally ordered."
+    },
+    "closure_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "committed_at", "receipt_path", "evidence_manifest_path"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "committed_at": { "type": "string", "minLength": 1 },
+        "receipt_path": { "type": "string", "minLength": 1 },
+        "evidence_manifest_path": { "type": "string", "minLength": 1 }
+      },
+      "description": "Verified full-track closure marker. Deliberately excludes the manifest hash to avoid a summary-manifest hash cycle."
+    },
     "generated_at": { "type": "string", "description": "t2 v2（receipt-slim）：base summary 生成时刻" },
     "source_commit_sha": { "type": "string", "description": "t2 v2：生成时 git HEAD——slim 回执三方绑定（summary↔receipt claimed↔当前 HEAD），杜绝旧 PASS 件复用" },
     "worktree_digest": { "type": "string", "description": "t2 v3：产品层目录工作区状态摘要——HEAD 不动源码改动同样使旧件失效（check-receipt slim 重算比对）" },
@@ -94,6 +111,15 @@
     },
     "visual_round": { "$ref": "#/$defs/visual_round" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "1.2" } },
+        "required": ["schema_version"]
+      },
+      "then": { "required": ["depth", "closure_status"] }
+    }
+  ],
   "$defs": {
     "quality_axes": {
       "type": "object",

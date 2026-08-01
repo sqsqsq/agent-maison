@@ -185,6 +185,8 @@ export interface CleanPassOptions {
   fidelityCapped?: boolean;
   /** 当前权威 run 的规范化 requirement 内容哈希（P0-2）——血缘重算比对，抓换需求复用旧 closure */
   currentRequirementSha?: string | null;
+  /** 与 closure writer 相同的 framework 身份；省略时由 repo layout 推导。 */
+  frameworkRoot?: string;
 }
 
 /** 六条件逐一检测；返回全部违例（空数组=全链 clean_pass） */
@@ -218,7 +220,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   for (const phase of chain) {
     const s = readSummaryLattice(projectRoot, feature, phase);
     if (!s.exists) continue; // 缺 summary 由 ① 报"缺失"
-    if (s.schemaVersion !== '1.1') {
+    if (s.schemaVersion !== '1.2') {
       issues.push({
         phase,
         condition: 'summary_schema_current',
@@ -235,6 +237,16 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
         phase,
         condition: 'quality_axes_valid',
         detail: `summary 1.1 契约违反（${v11Errors.slice(0, 3).join('；')}）——非 harness 生成或已被篡改，须重跑本阶段`,
+        kind: 'needs_fix',
+      });
+      continue;
+    }
+    const closureCommit = (s.raw as { closure_commit?: { schema_version?: unknown } }).closure_commit;
+    if (closureCommit?.schema_version !== '1.0') {
+      issues.push({
+        phase,
+        condition: 'closure_commit_present',
+        detail: 'summary 1.2 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交',
         kind: 'needs_fix',
       });
       continue;
@@ -302,6 +314,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   // ⑤ 血缘一致（needs_fix：stale/tampered/missing 须重跑闭环）——含 requirement 血缘比对
   for (const r of recomputePhaseEvidenceStaleness(projectRoot, feature, chain, {
     currentRequirementSha: opts.currentRequirementSha,
+    frameworkRoot: opts.frameworkRoot,
   })) {
     if (r.verdict !== 'fresh') {
       issues.push({

@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/mock-plan@1"
+title: UT test-double plan
+x-artifact-id: mock-plan@1
+x-version: 1
+x-authority: "Compatibility identity; profile mock-plan schema and UT checkers remain semantic authorities."
+type: object
+additionalProperties: true

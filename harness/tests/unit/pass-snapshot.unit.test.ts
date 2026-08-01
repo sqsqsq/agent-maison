@@ -57,6 +57,9 @@ function setupEnv(withHmac: boolean): Env {
   // round5 P0：根级契约（watched_roots 之外，manifest files 是唯一差异入口）——真实
   // spec PASS 形态必含；缺席时 takePassSnapshot 现在会按不变量违例拒建
   fs.writeFileSync(path.join(featDir, 'acceptance.yaml'), 'criteria: []\n', 'utf-8');
+  fs.mkdirSync(path.join(featDir, 'plan'), { recursive: true });
+  fs.writeFileSync(path.join(featDir, 'plan', 'plan.md'), '# plan v1\n', 'utf-8');
+  fs.writeFileSync(path.join(featDir, 'contracts.yaml'), 'contracts: []\n', 'utf-8');
   // round6 P1：根级 optional 产物（PHASE_OPTIONAL_OUTPUT_FILES，非 phase-scoped 落根）
   // ——磁盘在场即须入 manifest（建侧全集对账），伪造删条目由弱信任载侧+diff added 双拦
   fs.writeFileSync(path.join(featDir, 'use-cases.yaml'), 'use_cases: []\n', 'utf-8');
@@ -84,6 +87,20 @@ function diffs(env: Env) {
   const head = readPassSnapshotHead(env.root, FEATURE, RUN, 'spec');
   const m = readFrozenManifest(passSnapshotPhaseDir(env.root, FEATURE, RUN, 'spec', head.body!.pass_epoch));
   return diffFrozenAgainstManifest({ projectRoot: env.root, feature: FEATURE, phase: 'spec', manifest: m.body! });
+}
+
+function takePlan(env: Env) {
+  const frozen = resolveFrozenDeliverables({ projectRoot: env.root, feature: FEATURE, phase: 'plan' });
+  return takePassSnapshot({
+    projectRoot: env.root, feature: FEATURE, runId: RUN, phase: 'plan',
+    epoch: 1, files: frozen,
+  });
+}
+
+function planDiffs(env: Env) {
+  const head = readPassSnapshotHead(env.root, FEATURE, RUN, 'plan');
+  const m = readFrozenManifest(passSnapshotPhaseDir(env.root, FEATURE, RUN, 'plan', head.body!.pass_epoch));
+  return diffFrozenAgainstManifest({ projectRoot: env.root, feature: FEATURE, phase: 'plan', manifest: m.body! });
 }
 
 /** round5 P0：一致性伪造——manifest 改写后同步换 head.manifest_sha256（弱信任下两文件
@@ -756,23 +773,23 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const env = setupEnv(false);
       try {
-        take(env);
-        const before = loadTrustedSnapshotContext(env.root, FEATURE, RUN, 'spec');
+        takePlan(env);
+        const before = loadTrustedSnapshotContext(env.root, FEATURE, RUN, 'plan');
         if (before.kind !== 'active') throw new Error(`伪造前应 active：${JSON.stringify(before)}`);
         if (!before.manifest.files.some(f => f.rel === 'use-cases.yaml')) {
           throw new Error('前置：合法 manifest 应含根级 use-cases.yaml（建侧全集对账）');
         }
-        forgeManifestConsistently(env, 'spec', 1, doc => {
+        forgeManifestConsistently(env, 'plan', 1, doc => {
           doc.files = (doc.files as Array<{ rel: string }>).filter(f => f.rel !== 'use-cases.yaml');
         });
         // 载侧：未认证 manifest + 磁盘在场缺条目 → spawn 前 fail_closed
-        const forged = loadTrustedSnapshotContext(env.root, FEATURE, RUN, 'spec');
+        const forged = loadTrustedSnapshotContext(env.root, FEATURE, RUN, 'plan');
         if (forged.kind !== 'fail_closed' || !/use-cases\.yaml/.test(forged.reason)) {
           throw new Error(`删根级 optional 条目应 fail_closed：${JSON.stringify(forged)}`);
         }
         // diff 兜底：同一伪造 manifest 直接 diff（模拟绕过 loader 的消费方）→ added 检出
-        const m = readFrozenManifest(passSnapshotPhaseDir(env.root, FEATURE, RUN, 'spec', 1));
-        const d = diffFrozenAgainstManifest({ projectRoot: env.root, feature: FEATURE, phase: 'spec', manifest: m.body! });
+        const m = readFrozenManifest(passSnapshotPhaseDir(env.root, FEATURE, RUN, 'plan', 1));
+        const d = diffFrozenAgainstManifest({ projectRoot: env.root, feature: FEATURE, phase: 'plan', manifest: m.body! });
         if (!d.some(x => x.rel === 'use-cases.yaml' && x.class === 'added')) {
           throw new Error(`diff added 域应含根级 use-cases.yaml：${JSON.stringify(d)}`);
         }
@@ -784,11 +801,11 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const env = setupEnv(false);
       try {
-        const frozen = resolveFrozenDeliverables({ projectRoot: env.root, feature: FEATURE, phase: 'spec' })
+        const frozen = resolveFrozenDeliverables({ projectRoot: env.root, feature: FEATURE, phase: 'plan' })
           .filter(f => f.rel !== 'use-cases.yaml');
         let threw = '';
         try {
-          takePassSnapshot({ projectRoot: env.root, feature: FEATURE, runId: RUN, phase: 'spec', epoch: 1, files: frozen });
+          takePassSnapshot({ projectRoot: env.root, feature: FEATURE, runId: RUN, phase: 'plan', epoch: 1, files: frozen });
         } catch (e) { threw = (e as Error).message; }
         if (!/use-cases\.yaml/.test(threw)) throw new Error(`应拒建并点名漏出产物：${threw || '（未抛错）'}`);
       } finally { env.restore(); }
@@ -802,9 +819,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const env = setupEnv(false);
       try {
         fs.rmSync(path.join(env.featDir, 'use-cases.yaml'));
-        take(env);
+        takePlan(env);
         fs.writeFileSync(path.join(env.featDir, 'use-cases.yaml'), 'use_cases: [injected]\n', 'utf-8');
-        const d = diffs(env);
+        const d = planDiffs(env);
         if (!d.some(x => x.rel === 'use-cases.yaml' && x.class === 'added')) {
           throw new Error(`根级新增应判 added：${JSON.stringify(d)}`);
         }

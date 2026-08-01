@@ -61,16 +61,18 @@ function minimalAxes(): Record<string, unknown> {
 function writeSummary(root: string, phase: string, verdict: string): void {
   const p = path.join(receiptDirPath(root, FEATURE, phase), 'reports', 'summary.json');
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  // 切片二（blind-visual-hardening d1）：completion 干净依据须 schema 1.1 完整契约
-  // （validateSummaryV11 四字段+轴不变量——codex 三轮 P1-4 唯一权威）；
+  // completion 干净依据须 summary 1.2 + lattice + closure commit；
   // legacy 1.0 拒绝行为由专门用例覆盖（writeLegacySummary）。
   fs.writeFileSync(p, JSON.stringify({
-    schema_version: '1.1',
+    schema_version: '1.2',
     verdict,
     report_validity: 'PASS',
     quality_axes: minimalAxes(),
     release_readiness: 'READY',
     completion_status: 'COMPLETE',
+    depth: 'full',
+    closure_status: 'closed',
+    closure_commit: { schema_version: '1.0' },
   }), 'utf-8');
 }
 

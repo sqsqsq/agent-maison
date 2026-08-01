@@ -54,7 +54,7 @@
 5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 强制校验命名符号、禁匿名 lambda、禁新造 Port。
 6. **模块配置与资源文件**：模块包描述/构建配置/module.json5/根级模块清单/依赖清单；资源文件按 profile 目录布局；路由配置按 profile 约定注册。
 7. **质量门禁自检**（13 项：模块完整性/分层合规/文件完整性/接口一致性/编译零 error/资源引用/页面注册/无硬编码字符串/DAG 合规/导入完整/命名入口完整性/UI 层副作用翻译/视觉背板映射）：不通过定位问题自动修复重检。
-8. **输出交付摘要**：模块变更表 + 新增文件表 + 质量门禁结果 → 下一步指向 Step 9 Harness 验证。
+8. **输出交付摘要**：模块变更表 + 新增文件表 + 质量门禁结果，供 Step 9 Harness 验证消费。
 9. **真实编译闭环**（详见 reference）：`coding.compile` 是必要出口，非可选；agent 自跑 harness、读日志、按错误类型分类修复、重跑直到 PASS。
 10. **Harness 验证门禁**：见下方门禁清单表；脚本/编译 FAIL 时的用户可见汇报模板见 reference Step 7.1。
 
@@ -83,7 +83,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`coding.ok_to_review`** 或 **`phase.next_step`**（确认菜单+portable 编号）停等，禁止读完 receipt/trace 后同一执行流写 review（除非 batch 授权）。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 编码规范速记
 
@@ -110,9 +110,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 | 脚本 Harness | `framework/harness/scripts/check-coding.ts` |
 | Trace | `<features_dir>/<feature>/coding/reports/<timestamp>/<model>-code/trace.json`（phase=coding）；`tool_calls` 记 `ReadLints` count/failed_count；`retries` 记 `lint_error`/`language_rule_violation` 自修次数；`harness_checks` 记 `diff_within_scope` 结果；同目录 `gap-notes.md` |
 
-## 下游消费者
+## 收尾
 
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **code-review** | 源代码 + contracts.yaml | 审查代码与契约一致性 |
-| **business-ut** | 源代码 + acceptance.yaml | 基于验收标准生成 UT |
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

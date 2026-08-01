@@ -1,113 +1,64 @@
-# Goal 模式（薄入口）
+# Goal 模式（薄驱动）
 
-> **BLOCKER**：本 Skill 是 **goal-runner 的宿主入口**，不实现独立 phase 裁决循环。裁决 SSOT：`harness/scripts/utils/phase-transition-policy.ts` + `goal-runner.ts`。宿主可见能力仅 **slash / 自然语言 / Skill**；**禁止**要求宿主手跑 harness（执行权见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md) §8.2b · `framework-agent-execution`）。
+> **BLOCKER**：本 Skill 只编排 `assess → authorize → execute one phase → reassess`。阶段事实来自既有 summary / closure / evidence，跨阶段建议只来自 `assess@1`；本 Skill 不维护 next-phase 表，也不复制 runner 裁决。
 
 ## 何时使用
 
-用户要求进入 **目标模式 / 全自动（无人值守）**，对某个 **feature** 从指定 phase 推进到终点时，进入本 Skill 并由 **agent 自跑** goal-runner。「全链路 / 从 spec 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
+用户要求以目标模式持续推进一个 feature 时使用。对用户只暴露两种模式：
 
-## 输入解析
+- **有人在场**：自动执行已授权工作；出现必须由人决定或补充的信息时，立即列出等待项并询问。
+- **无人值守**：自动执行已授权工作；把必须由人处理的事项停放为等待项，并确保 run 可脱离当前会话继续或稍后恢复。
+
+明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。意图不明确时使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。
+
+## 输入
 
 | 字段 | 必填 | 说明 |
-|------|------|------|
+|---|---|---|
 | `feature` | 是 | feature slug |
 | `requirement` | 否 | 需求描述 |
-| `start_phase` / `end_phase` | 否 | 默认 spec→testing |
-| `adapter` | 否 | 用户显式指定 agent → 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `RESOLVED_ADAPTER`；未物化 → **STOP** 引导 `/framework-init` |
+| `start_phase` / `end_phase` | 否 | 默认由 workflow 决定 |
+| `adapter` | 否 | 按 personal setup 的已物化 adapter 解析 |
+| `run_mode` | 条件 | 明确意图直接映射；歧义时走 `goal.run_mode` |
 
-## 条件加载索引
+## 每轮唯一循环
 
-- **首次启动 / 续跑 / 监控 loop 前**：完整读 [goal-mode-operations.md](../../reference/goal-mode-operations.md)（adapter 解析阶梯、personal setup 分流表、survival-first 启动事故背景、监控 loop 全部细则、manifest 字段）——本文档只留骨架命令，细节与 BLOCKER 判据均在那里。
+1. **Assess**：读取 `assess@1` 结构化结果；不得凭聊天上下文猜当前阶段。
+2. **Authorize**：driver 校验预算、权限、preflight、device policy、write guard、trust、lease/fencing 与 adapter capability。`assess` 推荐不等于越权许可。
+3. **Execute one phase**：每个 phase 必须使用新鲜的 phase-scoped context，只把结构化 outcome/evidence 写回既有 manifest、events、progress 与 phase artifact。
+4. **Reassess**：重新运行 `assess@1`，然后进入下一轮；不得根据上一轮内存直接决定下一 phase。
 
-## Agent 必须执行（勿推给用户）
+若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守需要 adapter 的 resume/handoff 能力，缺失时停止并明确说明能力缺口。
 
-**BLOCKER**：主 agent 须通过 Shell **自己**启动 goal-runner，读取报告后用自然语言汇报；**不得**在回复里写「请用户执行以下命令」作为唯一出路。
+## 启动与续跑
 
-前置（**严格顺序**）：[host-harness-readiness](../../reference/host-harness-readiness.md) Tier_1 + [harness-cli-cwd](../../reference/harness-cli-cwd.md) → Personal setup（见 reference 的解析阶梯与分流表）。
+开始前按顺序执行：
 
-### 首次启动
+1. [host-harness-readiness.md](../../reference/host-harness-readiness.md) 与 [harness-cli-cwd.md](../../reference/harness-cli-cwd.md)。
+2. [personal-setup-gate.md](../../reference/personal-setup-gate.md)，以返回的 `activeAdapter` 为准。
+3. 链路含设备阶段时执行 [device-policy-gate.md](../../reference/device-policy-gate.md)。`device_policy_unset` 必须先确认；PIN 只能由用户在真实 TTY 登记，**绝不要让用户把 PIN 发到对话里**，也不得代输。
+4. 新 run 先用 operations 文档的 `goal-mode-entry.ts --prepare-run --feature ... --requirement ... --adapter ...` 创建 manifest/run-control；已有 run 只按同一 `run_id` 恢复。随后 host bridge 取得 run-control owner/epoch 后才能执行 phase。
 
-**前置（BLOCKER，须在启动 runner 之前）：设备策略确认。**
-链路含需要设备的阶段（hmos-app 的 ut/testing）时，按
-[device-policy-gate.md](../../reference/device-policy-gate.md) 执行：跑 `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本——`npm run` 会往 stdout 插 banner）（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止），`code=device_policy_unset` 就**必须先问用户四选一**再启动 runner。选 ③ 时须追问 `existing`/`managed` 档位，**禁默认托管**。
+有人在场由当前会话逐轮驱动，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（内部调用 `runGoalModeHostBridge()`→`runGoalModeInSession()`→`runInSessionRound()`）；完整命令和 JSONL phase callback 协议见 operations 文档。Skill/宿主不得另拼循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守。session 与 detached process 互转时只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。禁止复制或转换 ledger。
 
-goal 特有的紧迫性：后台 detached runner **结构上无法弹交互**，错过启动前这个窗口就只能
-一路 BLOCKED。选 ② 时那条 `device:enroll` 必须交给用户在自己终端跑，**绝不要让用户把 PIN
-发到对话里**，也不得代为输入（完整红线见上述文档）。
+具体 CLI、adapter 解析、detach 存活检查和 bounded monitor 见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
 
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> \
-  --requirement "<需求描述>" \
-  --adapter <activeAdapter（check-personal-setup 返回的 SSOT）> \
-  [--adapter-source <user_explicit|entry_declared|registry>] \
-  [--start spec] [--end testing] [--dry-run]
-```
+## 每轮汇报
 
-`--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。`--adapter` 须为 check-personal-setup 的 `activeAdapter`（SSOT），goal-runner 会以 `framework.local.json` 对账：与记录冲突即 STOP。**仅当用户明确要本次临时换 adapter** 才加 `--override-adapter`。用户自然语言要求「强制刷新视觉探测」（换模型/账号后重测读图能力）→ 加 `--refresh-vision-probe`（缓存生命周期见 [goal-mode-runbook](../../../docs/operations/goal-mode-runbook.md) 视觉金丝雀段）。
+稳定输出以下用户可见字段：
 
-**无人值守一律用真 `--detach`**（不是只靠宿主"后台启动"，二者语义不同——事故背景见 reference）：
+- feature、当前 phase、round
+- 模式：有人在场 / 无人值守
+- 本轮结果与下一动作
+- 等待项（没有则省略）
+- `run_id` 与进度文件
 
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "<需求>" --adapter <adapter> --detach
-```
+遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 
-`--detach` 启动后**解析 stdout JSON 取 `run_id`**。**启动后存活自校验（BLOCKER）**：拿到 `run_id` 后必须确认它**真的起来了**——`report_dir/detach.log` 在增长、`goal-status` 活性正常。若没起来，如实报"启动未存活"，**不要**回报"已在后台跑"。
+## 不可绕过的边界
 
-### 续跑
-
-用户说「继续 goal run `<run-id>`」→ agent 自跑（**须带 feature**）：
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --resume <run-id> --feature <feature-slug>
-```
-
-**BLOCKER**：主 agent **不得自行循环 `--resume`**；续跑必须由**用户**在对话中显式触发。若上次终态为 `HALTED` 或 `DEFERRED`，默认须加 `--force-resume`（冷却期内会被拒绝）。
-
-### manifest（可选，agent 写入后自跑）
-
-复杂参数可写 `goal-manifest.yaml`（schema：`framework/workflows/goal-manifest.schema.yaml`），再 `goal-runner.ts --manifest <path>`；字段说明见 reference。
-
-## 运行中进度汇报
-
-启动 runner 后，立刻告诉用户 `run_id` 与 `progress.json` 路径。除非用户明确要求 **fire-and-forget**，主 agent 在当前活跃对话轮次内 **必须**进入 bounded monitor（只读等待器，不启动/不续跑/不杀掉 goal-runner）。**硬熔断**：连续 3 轮无 phase/substep 推进、或单 phase 累计 30min、或单轮对话 monitor 总时长 30min——任一命中即主动转 fire-and-forget 交还对话（模板见 goal-mode-operations.md「monitor 熔断」；07-17 实测宿主被 monitor 占用 2h05m 属事故）：
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-monitor.ts \
-  --feature <feature-slug> --run-id <run-id|latest> \
-  --since-event <last-seen-event-index> \
-  --max-seconds 240 --markdown
-```
-
-loop 循环方式、超时耦合、liveness 异常处置等全部细则见 reference——**BLOCKER 要点**：调用 `--max-seconds N` 时宿主工具 timeout 必须显式 `> N`。
-
-## 门禁清单表
-
-| 检查 | 判据 | 失败处置 |
-|---|---|---|
-| 前台无人值守真跑 | `approval_mode=never` 且无 `--detach` | goal-runner BLOCKER 退出，改用 `--detach` |
-| adapter 冲突 | `framework.local.json` 记录与请求不一致 | 默认尊重 local；换需走 registry `setup.adapter` |
-| 未物化 adapter | `no_materialized_adapter` 等 code | STOP，引导 `/framework-init` |
-
-## 报告解读（汇报给用户）
-
-终态后 Read `<features_dir>/<feature>/goal-runs/<run-id>/goal-report.md` + `progress.md`：
-
-| 状态 | 含义 |
-|------|------|
-| `COMPLETED` | 无 DEFERRED，全链 PASS |
-| `DEFERRED` / `PARTIAL` | 存在外部阻塞未闭环，**禁止**宣称完成 |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行 |
-
-## 与原生 /goal 的关系
-
-Maison 全链路 SSOT 是本 Skill → agent 自跑 **goal-runner**；Claude/Codex 原生 `/goal` 第一版仅为 adapter metadata + 条件模板占位，**不**替代 harness 裁决。
-
-## 禁止
-
-- 在本 Skill 内复刻 `classifyPhaseVerdict` / `resolveAutoChain` 逻辑
-- 将 INCOMPLETE 软通过为 PASS 或 completed
-- 把 `npx ts-node scripts/goal-runner.ts` 贴给用户让其手动执行
-- personal-setup / preflight 门控失败、`no_materialized_adapter`、或任何歧义 → **STOP**，把结论与建议交回用户；**严禁**自行绕过 goal-runner、**严禁**转入自由改码、**严禁**据单次失败探测自下「项目未物化」结论而不复核 `--project-root`
+- driver 只做授权、失效事务、预算与运行控制；不得重写 `assess` 的跨阶段建议。
+- preflight、device、timeout、cleanup、pass-snapshot、evidence freshness、write guard 与 fencing 仍是硬门禁。
+- 非 owner 或旧 epoch 不得写 events / progress / manifest，也不得启动 phase。
+- 主 agent 必须自己运行 harness/runner；不得把命令作为唯一出路推给用户。
+- 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。

@@ -80,15 +80,15 @@ export const REQUIRED_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> =
   spec: ['spec.md', 'acceptance.yaml'],
   plan: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
   coding: ['plan.md', 'acceptance.yaml', 'contracts.yaml'],
-  review: ['plan.md', 'acceptance.yaml', 'contracts.yaml'],
-  ut: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
-  testing: ['spec.md', 'plan.md', 'acceptance.yaml'],
+  review: [],
+  ut: ['acceptance.yaml'],
+  testing: ['acceptance.yaml'],
 };
 
 export const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
-  review: ['spec.md'],
-  ut: ['use-cases.yaml'],
-  testing: ['contracts.yaml', 'use-cases.yaml', 'review-report.md'],
+  review: ['spec.md', 'plan.md', 'acceptance.yaml', 'contracts.yaml'],
+  ut: ['spec.md', 'plan.md', 'contracts.yaml', 'use-cases.yaml'],
+  testing: ['spec.md', 'plan.md', 'contracts.yaml', 'use-cases.yaml', 'review-report.md'],
 };
 
 export class SpecLoader {

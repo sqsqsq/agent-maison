@@ -1,0 +1,39 @@
+schema_version: "1.0"
+skill: coding
+skill_doc: SKILL.md
+phases:
+  coding:
+    tracks: [full, lite]
+    inputs:
+      required:
+        - { id: codebase, kind: source }
+        - { id: plan, artifact: plan@1, tracks: [full] }
+        - { id: contracts, artifact: contracts@1, tracks: [full] }
+        - { id: acceptance, artifact: acceptance@1, tracks: [full] }
+        - { id: change, artifact: change@1, tracks: [lite] }
+      optional:
+        - id: spec
+          artifact: spec@1
+          tracks: [full]
+          absent_effect: "Coding uses plan, contracts, and acceptance as the primary full-track inputs."
+        - id: use_cases
+          artifact: use-cases@1
+          tracks: [full]
+          absent_effect: "Simple features do not require a use-case model."
+        - id: ui_spec
+          artifact: ui-spec@1
+          tracks: [full]
+          absent_effect: "Non-UI work does not require visual implementation evidence."
+        - id: visual_parity
+          artifact: visual-parity@1
+          tracks: [full]
+          absent_effect: "Non-UI work does not require plan-level visual parity mappings."
+    produces:
+      - { kind: source, id: implementation }
+    verifies:
+      check: check-coding.ts
+      depth_field: summary.depth
+    tiers:
+      standard:
+        when: otherwise
+        satisfies: [standard]

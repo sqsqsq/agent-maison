@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "goal-handoff-request@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "request_id",
+    "run_id",
+    "from_epoch",
+    "target_owner_kind",
+    "requested_at",
+    "expires_at",
+    "status"
+  ],
+  "properties": {
+    "schema": { "const": "goal-handoff-request@1" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "from_epoch": { "type": "integer", "minimum": 1 },
+    "target_owner_kind": { "enum": ["process", "session"] },
+    "requested_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["pending", "consumed", "accepted", "rejected"] },
+    "consumed_at": { "type": "string", "format": "date-time" },
+    "consumed_by_owner": { "type": "string" },
+    "accepted_at": { "type": "string", "format": "date-time" },
+    "accepted_epoch": { "type": "integer", "minimum": 1 },
+    "rejection_reason": { "type": "string" }
+  }
+}

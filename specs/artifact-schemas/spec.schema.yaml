@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/spec@1"
+title: Feature specification
+x-artifact-id: spec@1
+x-version: 1
+x-authority: "Narrative shape only; semantic gates remain specs/phase-rules/spec-rules.yaml and check-spec.ts."
+type: string
+minLength: 1

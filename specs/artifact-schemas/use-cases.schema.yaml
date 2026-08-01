@@ -1,0 +1,11 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/use-cases@1"
+title: Business use cases
+x-artifact-id: use-cases@1
+x-version: 1
+x-authority: "Compatibility identity; profile schemas and ut-artifact-validate.ts remain semantic authorities."
+type: object
+required: [use_cases]
+properties:
+  use_cases: { type: array }
+additionalProperties: true

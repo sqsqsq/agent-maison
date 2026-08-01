@@ -1,0 +1,35 @@
+schema_version: "1.0"
+skill: code-review
+skill_doc: SKILL.md
+phases:
+  review:
+    tracks: [full]
+    inputs:
+      required:
+        - { id: code, kind: source }
+      optional:
+        - id: spec
+          artifact: spec@1
+          absent_effect: "Review records the missing requirement baseline and selects basic depth."
+        - id: plan
+          artifact: plan@1
+          absent_effect: "Review derives intent from source, module catalog, and glossary."
+        - id: contracts
+          artifact: contracts@1
+          absent_effect: "Interface conformance coverage is unavailable and depth is basic."
+        - id: acceptance
+          artifact: acceptance@1
+          absent_effect: "Acceptance-specific semantic review is unavailable."
+    produces:
+      - { artifact: review-report@1 }
+    verifies:
+      check: check-review.ts
+      depth_field: summary.depth
+    control_dependencies: [coding]
+    tiers:
+      full:
+        when: "all(present(spec), present(contracts))"
+        satisfies: [full, basic]
+      basic:
+        when: otherwise
+        satisfies: [basic]

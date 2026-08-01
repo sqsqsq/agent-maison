@@ -7,6 +7,42 @@
 
 `goal-runner` 是 Maison 工具无关的确定性全链路编排器：按 phase DAG 逐阶段 headless 调 agent → 跑 harness → 裁决 → 续行/重试/停止。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
+## 3.0 调和模型：一个循环、两个运行方式
+
+interactive session 与 detached `goal-runner` 现在共用：
+
+```text
+assess@1 → driver authorize/guard → execute one phase → reassess
+```
+
+`assess@1` 是唯一跨 phase 推荐源；runner 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 process guard。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
+
+用户只选择：
+
+| 运行方式 | 行为 |
+|---|---|
+| 有人在场 | 自动推进；遇到 human-only waiting item 立即询问 |
+| 无人值守 | 自动推进；waiting item 停放，run 可 detach/resume |
+
+明确自然语言意图直接映射；歧义走 registry `goal.run_mode`；CLI `--detach` 恒为无人值守。菜单不得出现 `in-session`、`headless` 或 capability tier。
+
+### Adapter capability 与降级
+
+adapter root `goal_capability` 新增：
+
+- `in_session_reconcile`
+- `phase_context_isolation`
+- `supports_resume`
+- `handoff: none | to_detached | bidirectional`
+
+in-session 自治必须同时声明 reconcile 与 phase context isolation；缺失时降级为手动 harness+assess。无人值守仍要求 external runner preflight。handoff 还要求 resume 能力。
+
+### Run control 与 handoff
+
+每个权威 run 持久化 `run-control.json`（`run-control@1`）。`current_epoch` 单调递增且 owner 释放后保留；所有 assess、phase invoke、harness/finalizer、event/progress/manifest 写入与终态发布都须通过 fencing。
+
+session 与 detached process 切换使用原子 mailbox。 requester 只写 request；当前 owner 在 phase verdict 边界写 `handoff_requested`、quiesce、释放；新 owner 以 `epoch+1` CAS 后写 `handoff_accepted`。两者继续使用同一 `run_id` 和 events ledger。过期 session 不会被自动接管，须协作 handoff 或显式 force takeover。
+
 原生 Claude/Codex `/goal` 仅为可选加速层；闭环裁决以 harness `summary.json` + runner 为准。
 
 ## 宿主怎么用（产品面）

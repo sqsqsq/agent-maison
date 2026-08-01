@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/review-report@1"
+title: Code review report
+x-artifact-id: review-report@1
+x-version: 1
+x-authority: "Narrative shape only; semantic gates remain specs/phase-rules/review-rules.yaml and check-review.ts."
+type: string
+minLength: 1

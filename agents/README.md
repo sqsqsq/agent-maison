@@ -38,6 +38,30 @@ framework/agents/
 
 各 adapter 可选声明 `goal_capability`（goal-runner 全链路；check-init 仅 WARN，runner preflight BLOCKER）。见 `docs/operations/goal-mode-runbook.md`。
 
+## Goal capability 路由
+
+`goal_capability` 同时描述外部 runner 与会话内调和能力。root 字段：
+
+| 字段 | 含义 |
+|---|---|
+| `level` | 既有 native/external/hook 能力级别 |
+| `in_session_reconcile` | 宿主可运行 assess 驱动的会话内循环 |
+| `phase_context_isolation` | 每个 phase 可在新鲜隔离上下文执行 |
+| `supports_resume` | 能恢复同一 goal ledger |
+| `handoff` | `none` / `to_detached` / `bidirectional` |
+
+约束：
+
+- `in_session_reconcile=true` 必须同时声明 `phase_context_isolation=true`；
+- `handoff!=none` 必须声明 `supports_resume=true`；
+- 未声明的新字段按保守 `false` / `none` 处理，不从 CLI 存在性推断；
+- adapter 缺会话隔离时，用户的“有人在场”请求降级为手动 harness+assess；
+- 无人值守仍须通过 `external_runner.unattended` preflight。
+
+当前显式声明：Codex 支持会话内隔离、resume 与双向 handoff；Claude 支持会话内隔离，但不声明 resume/handoff。其他 adapter 保持保守默认，继续走既有 external runner 或手动路径。用户界面只显示“有人在场 / 无人值守”，不显示内部能力层级。
+
+schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.yaml) 和 [`goal-adapter-capability.ts`](../harness/scripts/utils/goal-adapter-capability.ts) 为准。
+
 ## 关键设计
 
 1. **adapter 不承担任何 skill 逻辑**——skill 本身是纯 Markdown，adapter 只负责

@@ -14,7 +14,7 @@ import {
   FORBIDDEN_STEP_ROOT_KEYS,
   PLANNED_STEP_ROOT_KEYS,
 } from './hylyre-planned-step-keys';
-import { splitNaturalLanguageSteps } from './adhoc-nl-split';
+import { normalizeDeviceTestCases } from './device-test-case-kernel';
 import {
   STEPS_FILE_CONTRACT,
   STEP_SHAPE_CATALOG,
@@ -35,7 +35,9 @@ export function buildAdhocDerivePayload(
   bundle: string,
   stepsRaw: string,
 ): Record<string, unknown> {
-  const natural_steps = splitNaturalLanguageSteps(stepsRaw);
+  const normalizedCases = normalizeDeviceTestCases({ mode: 'adhoc', natural_language: stepsRaw });
+  const normalizedCase = normalizedCases.cases[0];
+  const natural_steps = normalizedCase?.steps ?? [];
   const cacheAbs = appSnapshotCacheAbsFor(projectRoot);
   const snapshot_cache_empty = isSnapshotCacheEmpty(cacheAbs, bundle);
   const cache_layout_mismatch = isCacheLayoutMismatch(cacheAbs, bundle);
@@ -48,13 +50,13 @@ export function buildAdhocDerivePayload(
   const has_observation = hasObservationIntent(stepsRaw, natural_steps);
 
   const navRow = {
-    tc_id: 'TC-001',
-    name: 'adhoc flow',
+    tc_id: normalizedCase?.id ?? 'TC-001',
+    name: normalizedCase?.name ?? 'adhoc flow',
     precondition: '已启动 app',
     steps_natural_language: stepsRaw,
-    expected: '',
-    priority: 'P0',
-    ac_ref: 'ad-hoc',
+    expected: normalizedCase?.expected ?? '',
+    priority: normalizedCase?.priority ?? 'P0',
+    ac_ref: normalizedCase?.source_ref ?? 'ad-hoc',
   };
 
   return {
@@ -63,6 +65,8 @@ export function buildAdhocDerivePayload(
     bundle,
     generated_at: new Date().toISOString(),
     natural_steps,
+    normalized_cases: normalizedCases.cases,
+    case_contract_issues: normalizedCases.issues,
     observation_steps,
     navigation_steps,
     has_observation,

@@ -65,9 +65,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {mo
 
 ## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
 
-1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后 spec 阶段完成，**具备**进 plan 的资格；**不授权**自动开 plan。
+1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后只证明本阶段闭环；跨阶段资格与建议由 `assess@1` 输出。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：除非 batch 多阶段授权（§8.2），否则须 **`phase.next_step`**（确认菜单+portable 编号）停等。`spec.freeze` 只冻结 spec 内容，不等同于可自动写 plan.md。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -96,11 +96,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {mo
 | 脚本 Harness | `framework/harness/scripts/check-spec.ts` |
 | Trace | `<features_dir>/<feature>/spec/reports/<timestamp>/<model>-spec/trace.json`（schema: `harness/trace/trace.schema.json`，phase=spec）+ 同目录 `gap-notes.md` |
 
-## 下游消费者
+## 收尾
 
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **plan** | spec.md | 读功能清单，生成实现计划 |
-| **coding** | acceptance.yaml | 参照验收标准和边界用例实现 |
-| **business-ut** | acceptance.yaml | 参照验收标准生成 UT 断言 |
-| **device-testing** | acceptance.yaml | 参照验收标准生成测试用例 |
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

@@ -103,7 +103,7 @@ artifacts:
     scope: feature
     check: check-testing.ts
     rule: phase-rules/testing-rules.yaml
-    requires: [ut]
+    requires: [ut, review]
     verifier_prompt: prompts/verify-testing.md
     skill_doc: ../skills/feature/device-testing/SKILL.md
 
@@ -114,6 +114,7 @@ artifacts:
     rule: phase-rules/change-rules.yaml
     requires: []
     tracks: ["lite"]
+    skill_doc: ../skills/feature/change-lite/SKILL.md
 
   - id: exit
     scope: feature
@@ -121,3 +122,4 @@ artifacts:
     rule: phase-rules/exit-rules.yaml
     requires: [coding]
     tracks: ["lite"]
+    skill_doc: ../skills/feature/change-lite/SKILL.md

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reconcile-observation@1",
+  "title": "ReconcileObservation@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "state",
+    "phase_outcome",
+    "blockers",
+    "deterministic_defects",
+    "budgets",
+    "repeated_round",
+    "invalidatable_phases",
+    "signals"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "state": { "enum": ["active", "fused"] },
+    "reason": { "type": "string" },
+    "residual_fingerprints": { "type": "array", "items": { "type": "string" } },
+    "phase_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "verdict", "legacy_action"],
+      "properties": {
+        "phase": { "type": "string" },
+        "verdict": { "type": "string" },
+        "legacy_action": { "type": "string" },
+        "failure_kind": { "type": "string" },
+        "blocking_class": { "type": "string" },
+        "propagate_to_downstream": { "type": "boolean" }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "actionability"],
+        "properties": {
+          "id": { "type": "string" },
+          "actionability": { "enum": ["automatic", "human", "external", "unknown"] },
+          "blocking_class": { "type": "string" }
+        }
+      }
+    },
+    "deterministic_defects": { "type": "array", "items": { "type": "string" } },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retries_used", "backtracks_used"],
+      "properties": {
+        "retries_used": { "type": "integer", "minimum": 0 },
+        "max_retries_per_phase": { "type": "integer", "minimum": 0 },
+        "backtracks_used": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repeated_round": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fingerprint", "count"],
+      "properties": {
+        "fingerprint": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "invalidatable_phases": { "type": "array", "items": { "type": "string" } },
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timed_out", "operator_interrupted", "api_disconnected"],
+      "properties": {
+        "timed_out": { "type": "boolean" },
+        "operator_interrupted": { "type": "boolean" },
+        "api_disconnected": { "type": "boolean" }
+      }
+    }
+  }
+}

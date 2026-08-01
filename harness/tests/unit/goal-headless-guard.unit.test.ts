@@ -22,7 +22,8 @@ import {
   ADVANCE_BLOCKED_HALT_THRESHOLD,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
-import type { CheckResult } from '../../scripts/utils/types';
+import type { CheckResult, ScriptReport } from '../../scripts/utils/types';
+import { failScriptReportWithFatalError, fatalFailureKindForStage } from '../../scripts/utils/report-generator';
 import {
   parseHeadlessApiError,
   parseHeadlessInteractionSentinel,
@@ -393,6 +394,38 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'closure finalization fatal preserves distinct halt classification',
+      run: () => {
+        const checks: CheckResult[] = [{
+          id: 'runner_closure_finalization_failed', category: 'structure',
+          description: 'closure failed', severity: 'BLOCKER', status: 'FAIL', details: 'disk mismatch',
+          failure_kind: 'closure_finalization_failed', blocking_class: 'closure_finalization',
+          actionability: 'human_only',
+        }];
+        const blockers = buildSummaryBlockers(checks, (t) => t, () => undefined);
+        assert(blockers[0]?.classification === 'closure_finalization_failed', JSON.stringify(blockers));
+        assert(classifyFailureKind({ verdict: 'FAIL', blockers }) === 'closure_finalization_failed', 'classification downgraded');
+        assert(fatalFailureKindForStage('closure_finalization') === 'closure_finalization_failed', 'fatal helper must preserve closure kind');
+        const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closure-fatal-'));
+        const report: ScriptReport = {
+          phase: 'testing', feature: '_global', timestamp: new Date(0).toISOString(), project_root: projectRoot,
+          quality_depth: 'full', missing_optional_inputs: [], checks: [],
+          summary: { total: 0, pass: 0, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' },
+        };
+        const fatalReport = failScriptReportWithFatalError(report, 'closure_finalization', new Error('disk mismatch'), FRAMEWORK_ROOT);
+        assert(fatalReport.checks.at(-1)?.failure_kind === 'closure_finalization_failed', 'fatal report kind');
+      },
+    },    {
+      name: 'harness PASS gate and closure catch remain wired together',
+      run: () => {
+        const source = fs.readFileSync(path.resolve(__dirname, '../../harness-runner.ts'), 'utf8');
+        const gate = source.indexOf("finalReport.summary.verdict === 'PASS'");
+        const finalize = source.indexOf('finalizePhaseClosure({');
+        const closureFatal = source.indexOf("'closure_finalization'");
+        assert(gate >= 0 && finalize > gate, 'PASS gate must guard finalization');
+        assert(closureFatal > finalize && source.includes('failScriptReportWithFatalError'), 'finalizer catch must classify fatal');
+      },
+    },    {
       name: 'T6 classifyFailureKind: device_test_build → toolchain（不再 code_regression）',
       run: () => {
         const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'device_test_build' }] });

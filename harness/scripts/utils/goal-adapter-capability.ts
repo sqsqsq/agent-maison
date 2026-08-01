@@ -35,6 +35,8 @@ export interface GoalCapabilityExternal {
 /** P1-7（plan d9b4f7e2）：headless 输出交付方式（静态能力声明，宿主 --help 核实后填）。 */
 export type OutputDelivery = 'streaming' | 'buffered' | 'unknown';
 export const OUTPUT_DELIVERY_MODES = ['streaming', 'buffered', 'unknown'] as const;
+export const GOAL_HANDOFF_MODES = ['none', 'to_detached', 'bidirectional'] as const;
+export type GoalHandoffMode = (typeof GOAL_HANDOFF_MODES)[number];
 
 export interface GoalCapabilitySpec {
   mode: GoalCapabilityMode;
@@ -47,6 +49,10 @@ export interface GoalCapabilitySpec {
   /** P1-7：输出交付方式（缺省 unknown——buffered/unknown 时断流哨兵可能失效，
    * 被杀 attempt 的 agent-output.log 可为 0 字节）；透传 agent_invoke_end 供排障。 */
   output_delivery?: OutputDelivery;
+  in_session_reconcile: boolean;
+  phase_context_isolation: boolean;
+  supports_resume: boolean;
+  handoff: GoalHandoffMode;
 }
 
 export interface GoalCapabilityLoadResult {
@@ -120,6 +126,29 @@ export function loadGoalCapability(
       );
     }
   }
+  const boolField = (name: string): boolean => {
+    const value = gc[name];
+    if (value === undefined) return false;
+    if (typeof value !== 'boolean') {
+      issues.push(`goal_capability.${name} 必须为 boolean`);
+      return false;
+    }
+    return value;
+  };
+  const inSessionReconcile = boolField('in_session_reconcile');
+  const phaseContextIsolation = boolField('phase_context_isolation');
+  const supportsResume = boolField('supports_resume');
+  const handoff = typeof gc.handoff === 'string' &&
+    (GOAL_HANDOFF_MODES as readonly string[]).includes(gc.handoff)
+    ? gc.handoff as GoalHandoffMode
+    : 'none';
+  if (gc.handoff !== undefined && handoff === 'none' && gc.handoff !== 'none') {
+    issues.push(`goal_capability.handoff 非法（${String(gc.handoff)}）`);
+  }
+  if (handoff !== 'none' && !supportsResume) issues.push('handoff 要求 supports_resume=true');
+  if (inSessionReconcile && !phaseContextIsolation) {
+    issues.push('in_session_reconcile 要求 phase_context_isolation=true');
+  }
   const capability: GoalCapabilitySpec = {
     mode: mode ?? 'external_runner',
     native_goal: gc.native_goal as GoalCapabilityNative | undefined,
@@ -127,6 +156,10 @@ export function loadGoalCapability(
     usage_capture: usageCapture,
     tool_event_provenance: toolEventProvenance,
     output_delivery: outputDelivery,
+    in_session_reconcile: inSessionReconcile,
+    phase_context_isolation: phaseContextIsolation,
+    supports_resume: supportsResume,
+    handoff,
   };
   return {
     adapter: adapterName,
@@ -158,4 +191,42 @@ export function validateGoalCapabilityForRunner(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+export type GoalRunMode = 'attended' | 'unattended';
+export type GoalCapabilityRoute =
+  | { kind: 'in_session'; reason: string }
+  | { kind: 'manual'; reason: string }
+  | { kind: 'external_runner'; reason: string }
+  | { kind: 'halt'; reason: string };
+
+export function routeGoalCapability(
+  loaded: GoalCapabilityLoadResult,
+  requested: GoalRunMode,
+  options: { requireHandoff?: boolean; unattendedPreflightOk?: boolean } = {},
+): GoalCapabilityRoute {
+  const capability = loaded.capability;
+  if (!loaded.present || !loaded.valid || !capability) {
+    return requested === 'attended'
+      ? { kind: 'manual', reason: 'adapter 未声明有效会话内能力，回退为手动 harness+assess' }
+      : { kind: 'halt', reason: 'adapter goal capability 缺失或非法，不能无人值守执行' };
+  }
+  if (options.requireHandoff && (
+    !capability.supports_resume || capability.handoff === 'none'
+  )) {
+    return { kind: 'halt', reason: 'adapter 未声明 resume+handoff 能力' };
+  }
+  if (requested === 'attended') {
+    if (capability.in_session_reconcile && capability.phase_context_isolation) {
+      return { kind: 'in_session', reason: 'adapter 支持会话内调和与 phase 隔离' };
+    }
+    return { kind: 'manual', reason: 'adapter 不支持 phase 隔离，回退为手动 harness+assess' };
+  }
+  if (options.unattendedPreflightOk !== true) {
+    return { kind: 'halt', reason: '无人值守 preflight 未通过' };
+  }
+  if (!capability.external_runner?.headless_invoke?.trim()) {
+    return { kind: 'halt', reason: 'adapter 未声明 external_runner.headless_invoke' };
+  }
+  return { kind: 'external_runner', reason: 'adapter 与无人值守 preflight 均满足' };
 }

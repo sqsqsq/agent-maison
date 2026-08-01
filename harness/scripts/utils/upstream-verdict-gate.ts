@@ -170,7 +170,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     }
     // codex 实施 review P0-3 + 三轮 P1-4：声明 1.1 → 完整契约唯一权威校验（四字段+轴不变量）；
     // 违反 → 机器裁决不可信（手搓裸/半 summary 拒收）
-    if ((parsed as { schema_version?: unknown }).schema_version === '1.1') {
+    if (['1.1', '1.2'].includes(String((parsed as { schema_version?: unknown }).schema_version))) {
       const v11Errors = validateSummaryV11(parsed);
       if (v11Errors.length > 0) {
         return {

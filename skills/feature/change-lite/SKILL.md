@@ -93,7 +93,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase exit --feature <fe
 5. **条件 UT**：验收清单存在 `[unit]` 条目时强制运行，UT 缺失即 FAIL；
 6. **Context Facts Gate（C4）**：追加 facts.md 的 `## phase_delta: exit` 节（无新增事实写 "none"）。
 
-exit PASS 即 feature 闭环，**停等 `phase.next_step`**（1=结束交付 / 2=暂停 / 3=其它）。**闭环停等**：禁止未经确认自动续接其它 feature 或阶段。
+exit PASS 只证明 lite feature 闭环。**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 中途升档（BLOCKER）
 
@@ -111,3 +111,7 @@ exit PASS 即 feature 闭环，**停等 `phase.next_step`**（1=结束交付 / 2
 ## 修正路由（中途 NL 修正）
 
 对本 feature 的修正请求，先跑 `harness-runner.ts --correction-init`（内部按**修正三问**分层：需求变→意图/验收清单；契约变→关键契约/Scope；纯实现→coding；纯验证→UT/验收自证）。`.current-correction.json` 的 `auto_confirm_eligible: true` 时可直接按声明层实施；否则须经 `correction.layer` 1/2 用户确认后才动手。只改根因层，再重跑受影响门禁（**重验 ≠ 重做**）。分层表与禁令见工程入口 AGENTS 指令第四节。
+
+## 收尾
+
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

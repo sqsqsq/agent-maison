@@ -28,6 +28,10 @@ image_input: none
 
 goal_capability:
   mode: native_goal
+  in_session_reconcile: true
+  phase_context_isolation: true
+  supports_resume: true
+  handoff: bidirectional
   native_goal:
     goal_condition_template: templates/goal-condition.md
     supports_resume: true

@@ -24,8 +24,10 @@ import {
   type PolicySnapshot,
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
+import { finalizePhaseClosure } from './phase-closure-finalizer';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
+import { assessAndRenderNextStep } from './assess-renderer';
 export type FeaturePhase = string;
 
 export interface ReceiptValidation {
@@ -115,6 +117,7 @@ export function mergeAndWritePhaseState(
   projectRoot: string,
   workflowSpec: WorkflowSpec,
   partial: CurrentPhaseStatePartial,
+  writeOptions?: { strict?: boolean },
 ): void {
   // goal 编排链下不写全局 state，避免污染 Stop hook 判定
   if (isGoalOrchestrationEnv()) return;
@@ -172,6 +175,7 @@ export function mergeAndWritePhaseState(
 
     fs.writeFileSync(stateAbs, JSON.stringify(next, null, 2) + '\n', 'utf-8');
   } catch (err) {
+    if (writeOptions?.strict) throw err;
     console.warn(`   ⚠ 写 .current-phase.json 失败: ${(err as Error).message}`);
   }
 }
@@ -199,6 +203,31 @@ export function syncPhaseStateOnReceiptPass(
     receipt: receiptValidation,
     evidence_policy_snapshot: opts?.evidence_policy_snapshot ?? null,
   });
+}
+
+/** Closure-only state path: persistence failure aborts before canonical summary commit. */
+export function syncPhaseStateOnReceiptPassStrict(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  receiptValidation: ReceiptValidation,
+  opts?: {
+    blocker_count?: number;
+    frameworkRoot?: string;
+    evidence_policy_snapshot?: EvidencePolicySnapshot | null;
+  },
+): void {
+  const workflowSpec = loadWorkflowSpec(projectRoot, opts?.frameworkRoot);
+  mergeAndWritePhaseState(projectRoot, workflowSpec, {
+    phase,
+    feature,
+    status: 'harness_finished',
+    last_run_at: new Date().toISOString(),
+    verdict: 'PASS',
+    blocker_count: opts?.blocker_count ?? 0,
+    receipt: receiptValidation,
+    evidence_policy_snapshot: opts?.evidence_policy_snapshot ?? null,
+  }, { strict: true });
 }
 
 export function tryValidateReceipt(
@@ -325,43 +354,79 @@ export function applyClosurePatchFromReceiptValidation(
   receiptValidation: ReceiptValidation | null,
   frameworkRoot?: string,
 ): void {
-  const closed = receiptValidation?.status === 'passed';
+  if (receiptValidation?.status === 'passed') {
+    throw new Error('passed closure 必须通过 finalizePhaseClosure 原子提交，禁止直接 patch summary');
+  }
+
   patchSummaryClosureStatus(projectRoot, feature, phase, {
-    closure_status: closed ? 'closed' : 'open',
+    closure_status: 'open',
     receipt_status: receiptValidation?.status,
-    next_action: closed ? 'phase_closed_wait_user' : undefined,
+    next_action: undefined,
   }, frameworkRoot);
 }
 
-export function runSyncClosure(
+export interface SyncClosureResult {
+  exitCode: number;
+  /** Present only when receipt passed but the atomic closure commit failed. */
+  finalizationError?: string;
+}
+
+export function runSyncClosureDetailed(
   harnessRoot: string,
   projectRoot: string,
   feature: string,
   phase: string,
   frameworkRoot?: string,
-): number {
+): SyncClosureResult {
   const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
   if (receiptValidation.status === 'not_applicable') {
-    // lite track：receipt 不是本 phase 的闭环判据，不动 state / summary（避免误盖成
-    // 'open'——那会暗示"receipt 检查失败待补"，但 lite 根本不该被这样问）。
-    // 真实闭环态由 harness-runner 跑该 phase（如 exit）时自身写入的 verdict 承载。
+    // lite track：receipt 不是本 phase 的闭环判据，不动 state / summary。
     console.log('');
     console.log('ℹ️  sync-closure: receipt 机制对 lite track 不适用（not_applicable）');
     console.log(`   ↳ ${receiptValidation.message}`);
     console.log(`   请改查 harness-runner --phase ${phase} --feature ${feature} 的 script-report.json verdict。`);
-    return 0;
+    return { exitCode: 0 };
   }
 
   if (receiptValidation.status === 'passed') {
-    syncPhaseStateOnReceiptPass(projectRoot, feature, phase, receiptValidation, { frameworkRoot });
-    applyClosurePatchFromReceiptValidation(projectRoot, feature, phase, receiptValidation, frameworkRoot);
+    let finalized;
+    try {
+      finalized = finalizePhaseClosure({
+        projectRoot,
+        frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'),
+        feature,
+        phase,
+        receipt: { ...receiptValidation, status: 'passed' },
+        persistPhaseState: () =>
+          syncPhaseStateOnReceiptPassStrict(projectRoot, feature, phase, receiptValidation, {
+            frameworkRoot,
+          }),
+      });
+    } catch (error) {
+      const message = (error as Error).message;
+      console.error(`❌ sync-closure: closure finalization 失败：${message}`);
+      return { exitCode: 1, finalizationError: message };
+    }
     console.log('');
     console.log('✅ sync-closure: 阶段已闭环（check-receipt PASS）');
     console.log(`   state: ${path.relative(projectRoot, statefilePath(projectRoot)).replace(/\\/g, '/')}`);
     console.log(`   receipt: ${receiptValidation.receipt_path}`);
-    return 0;
+    console.log(
+      `   closure_commit: ${finalized.transitioned ? 'committed' : 'already_committed'} ` +
+        `(${finalized.closure_fingerprint.slice(0, 16)})`,
+    );
+    assessAndRenderNextStep({
+      projectRoot,
+      frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'),
+      feature,
+      phase,
+      mode: isGoalHeadlessEnv() ? 'goal_mode' : 'manual',
+      status: 'PASS/closed',
+    });
+
+    return { exitCode: 0 };
   }
 
   mergeAndWritePhaseState(projectRoot, workflowSpec, {
@@ -380,5 +445,21 @@ export function runSyncClosure(
   if (receiptValidation.message) {
     console.error(`   ↳ ${receiptValidation.message.split(/\r?\n/)[0]}`);
   }
-  return receiptValidation.status === 'missing' ? 2 : 1;
+  return { exitCode: receiptValidation.status === 'missing' ? 2 : 1 };
+}
+
+export function runSyncClosure(
+  harnessRoot: string,
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): number {
+  return runSyncClosureDetailed(
+    harnessRoot,
+    projectRoot,
+    feature,
+    phase,
+    frameworkRoot,
+  ).exitCode;
 }

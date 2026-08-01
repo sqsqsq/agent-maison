@@ -73,7 +73,6 @@ import {
   uiSpecAbsPath,
 } from './utils/ui-spec-shared';
 import {
-  classifyPhaseVerdict,
   DEFAULT_MAX_BACKTRACKS,
   featurePhasesFromWorkflow,
   formatDeferredUpstreamNotice,
@@ -253,6 +252,7 @@ import {
   shouldHaltClosureTimeout,
   type ContinuationCause,
 } from './utils/goal-runner-phase';
+import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
 import {
   reconcileLedgerWithEvents,
   visualRoundsLedgerPath,
@@ -262,10 +262,16 @@ import {
   isGoalHeadlessEnv,
   MAISON_GOAL_RUNNER_ENV,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
-  runSyncClosure,
+  runSyncClosureDetailed,
+  syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
 } from './utils/phase-state';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
+import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
+import { validateMinimumDepthByPhase } from './utils/skill-contract';
+import { assessFeature } from './utils/assess';
+import type { DriverGuardAction } from './utils/goal-assess-driver';
+import { createGoalReconcileBoundary } from './utils/goal-reconcile-boundary';
 import {
   resolveAdapterProvenance,
   runGoalPreflight,
@@ -285,10 +291,27 @@ import {
   isPidAlive,
   readLockRecord,
   releaseLock,
+  setLockEpoch,
   touchLock,
   tryAcquireLock,
   type LockRecord,
 } from './utils/goal-run-lock';
+import {
+  acceptConsumedHandoff,
+  consumeHandoffAtBoundary,
+  readHandoffRequest,
+} from './utils/goal-handoff';
+import { quiesceRunOwner } from './utils/goal-run-control';
+import {
+  assertFencedOwner,
+  casAcquireRunOwner,
+  ensureRunControl,
+  forceTakeoverRunOwner,
+  markExpiredSessionOrphaned,
+  readRunControl,
+  releaseRunOwner,
+  type RunFenceToken,
+} from './utils/goal-run-control';
 import { snapshotPhaseHarness } from './utils/goal-phase-snapshot';
 import {
   applyManifestCliOverrides,
@@ -390,6 +413,8 @@ let activeAgentKill: (() => Promise<void>) | null = null;
 let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
 let runLock: { path: string; ownerId: string } | null = null;
+let runControl: { dir: string; token: RunFenceToken } | null = null;
+
 
 /** Runtime substep for heartbeat / progress projection. */
 let progressSubstep: 'agent_invoke' | 'harness' | 'prompt' | 'verdict' | null = null;
@@ -478,11 +503,20 @@ function setupSignalHandlers(): void {
 }
 
 function releaseAllLocks(): void {
+  if (runControl) {
+    try { releaseRunOwner(runControl.dir, runControl.token, { allowQuiescing: true }); }
+    catch { /* stale owner or already released */ }
+  }
   if (featureLock?.interval) clearInterval(featureLock.interval);
   if (featureLock) releaseLock(featureLock.path, featureLock.ownerId);
   if (runLock) releaseLock(runLock.path, runLock.ownerId);
   featureLock = null;
   runLock = null;
+  runControl = null;
+}
+
+function assertGoalBoundary(boundary: string): void {
+  if (runControl) assertFencedOwner(runControl.dir, runControl.token, boundary);
 }
 
 /** plan e7c2a4d8 T1b：dry-run 期所有事件全量携 dry_run:true（.dry 隔离外的双保险——
@@ -493,6 +527,7 @@ export function setAppendEventBaseFields(fields: Record<string, unknown>): void 
 }
 
 function appendEvent(reportDir: string, projectRoot: string, event: Record<string, unknown>): void {
+  assertGoalBoundary('event_append');
   const abs = path.join(projectRoot, reportDir, 'events.jsonl');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.appendFileSync(
@@ -3381,7 +3416,12 @@ function acquireGoalLocks(
   projectRoot: string,
   featuresDir: string,
   feature: string,
-  run: { runId: string; reportDir: string; runMode: 'authoritative' | 'dry' },
+  run: {
+    runId: string;
+    reportDir: string;
+    runMode: 'authoritative' | 'dry';
+    explicitTakeover?: boolean;
+  },
 ): void {
   const { runId, reportDir, runMode } = run;
   const featureRunsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
@@ -3399,16 +3439,35 @@ function acquireGoalLocks(
     process.exit(1);
   }
 
+  const runDir = path.dirname(runLockPath);
+  let existingControl = ensureRunControl(runDir, runId);
+  existingControl = markExpiredSessionOrphaned(runDir, runId);
+  const ownerInput = { kind: 'process' as const, owner_id: fRecord.ownerId };
+  const acquiredControl =
+    run.explicitTakeover && existingControl.owner?.state === 'orphaned_session'
+      ? { ok: true as const, ...forceTakeoverRunOwner(
+          runDir, runId, existingControl.current_epoch, ownerInput,
+        ) }
+      : casAcquireRunOwner(runDir, runId, existingControl.current_epoch, ownerInput);
+  if (!acquiredControl.ok) {
+    releaseLock(featureLockPath, fRecord.ownerId);
+    console.error('[goal-runner] BLOCKER: run-control owner busy or epoch changed');
+    process.exit(1);
+  }
+  setLockEpoch(featureLockPath, fRecord.ownerId, acquiredControl.token.epoch);
   const rRecord = tryAcquireLock(runLockPath, {
     run_id: runId, run_mode: runMode, report_dir: reportDir, ownerId: fRecord.ownerId,
+    epoch: acquiredControl.token.epoch,
   });
   if (!rRecord) {
+    releaseRunOwner(runDir, acquiredControl.token);
     releaseLock(featureLockPath, fRecord.ownerId);
     const existing = readLockRecord(runLockPath);
     console.error(formatLockBlocker(runLockPath, existing));
     process.exit(1);
   }
 
+  runControl = { dir: runDir, token: acquiredControl.token };
   featureLock = {
     path: featureLockPath,
     ownerId: fRecord.ownerId,
@@ -3439,6 +3498,7 @@ function setupProgressHooks(
 ): (force?: boolean, writeMd?: boolean) => void {
   const flushProgress = (force = false, writeMd = false): void => {
     try {
+      assertGoalBoundary('progress_write');
       const now = Date.now();
       if (!force && shouldThrottleSnapshot(writerState, now)) return;
       const ctx = loadProgressContext(projectRoot, manifest, featuresDir);
@@ -3750,6 +3810,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  validateMinimumDepthByPhase(
+    frameworkRoot,
+    manifest.minimum_depth_by_phase,
+    new Set(workflow.artifacts.filter((item) => item.scope === 'feature').map((item) => item.id)),
+  );
   // 十三轮 review P0-1 + plan f6b2d9a4 T3：fidelity transition 独立前置校验——
   // **fresh/manifest/resume 三路径全部执行**（此前被 if(argv.manifest) 圈住：宿主实证
   // fresh CLI 的 --fidelity 被静默丢弃，被迫强化措辞 workaround）。枚举合法+降档 receipt
@@ -3838,13 +3903,43 @@ Goal runner — tool-agnostic multi-phase orchestrator
     runId: manifest.run_id,
     reportDir: manifest.report_dir,
     runMode: dryRun ? 'dry' : 'authoritative',
+    explicitTakeover: Boolean(argv.resume) && forceResume,
   });
+  const goalEvents = createGoalReconcileBoundary((event) =>
+    appendEvent(manifest.report_dir, projectRoot, event),
+  );
 
   // b7e4d2a9 Todo2：保护性 try 前移到紧跟 acquireGoalLocks——sealed guard 与 manifest
   // drift 检测都在持锁 try 内执行；此前两者位于 lock 与 try 之间的裸区，提前
   // return/throw 会漏锁（finally 的 releaseAllLocks 只盖 try 内；process.on('exit')
   // 仅为后备）。不加新锁机制。
   try {
+  if (runControl) {
+    const handoffRequestBeforeAccept = readHandoffRequest(runControl.dir);
+    const acceptedHandoff = acceptConsumedHandoff(runControl.dir, runControl.token, 'process');
+    if (acceptedHandoff) {
+      goalEvents.emit({
+        type: 'handoff_accepted',
+        request_id: acceptedHandoff.request_id,
+        from_epoch: acceptedHandoff.from_epoch,
+        epoch: runControl.token.epoch,
+        owner_kind: 'process',
+      });
+    }
+    if (handoffRequestBeforeAccept?.status === 'consumed') {
+      const acceptanceValid = acceptedHandoff?.target_owner_kind === 'process' &&
+        acceptedHandoff.accepted_epoch === runControl.token.epoch &&
+        acceptedHandoff.from_epoch + 1 === runControl.token.epoch;
+      if (!acceptanceValid) {
+        quiesceRunOwner(runControl.dir, runControl.token);
+        runConcluded = true;
+        console.error(
+          '[goal-runner] handoff mailbox 已消费但当前 process owner 未完成目标/epoch/accepted 校验；保持静默等待',
+        );
+        return 0;
+      }
+    }
+  }
 
   // b7e4d2a9 Todo2：**成功封卷（sealed）拒绝一切启动面**——任何解析到已封卷 run 的启动
   // （--resume 与 --manifest 都盖）一律拒绝；`--force`/`--force-resume` 不可绕过。
@@ -3889,7 +3984,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     fidelityTransitionFields,
   });
   if (manifestDrift.halt) {
-    appendEvent(manifest.report_dir, projectRoot, {
+    goalEvents.emit({
       type: 'manifest_identity_drift',
       changed_fields: manifestDrift.halt.changedFields,
       authorized: manifestDrift.halt.authorized,
@@ -3897,7 +3992,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     throw new Error(manifestDrift.halt.message);
   }
   if (manifestDrift.legacyMigrated) {
-    appendEvent(manifest.report_dir, projectRoot, {
+    goalEvents.emit({
       type: 'vision_checkpoint_schema_migrated', from: '1.1', to: '1.2',
     });
   }
@@ -4058,7 +4153,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const declaredLayers = productLayerDirsOf(projectRoot);
       const earlySnap = computeProductSourceSnapshotDetail(projectRoot, declaredLayers, manifest.feature);
       if (!isUsableSnapshot(earlySnap.sha256)) {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'phase_halt',
           phase: chain[0],
           halt_reason: 'declared_product_layer_missing',
@@ -4066,7 +4161,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           reason: earlySnap.failureReason ?? earlySnap.sha256,
           declared_layers: declaredLayers,
         });
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'run_end', status: 'HALTED', halt_reason: 'declared_product_layer_missing',
         });
         runConcluded = true;
@@ -4098,7 +4193,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.log(
             `[device] 启动对账：回收了 run ${stale.started_by_run} 遗留的托管模拟器（pid=${out.pid}）`,
           );
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'managed_device_reclaimed',
             scope: 'startup_reconcile',
             prior_run_id: stale.started_by_run,
@@ -4151,7 +4246,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       (e as { type?: string }).type === 'testing_write_violation')) {
       // 判据是 violation **事件本身**而非 halt reason——ledger tamper 与 violation 并发时
       // halt reason 归 tamper，但 violation 事件仍在，终止态保护不得因此失效。
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'resume_rejected', reason: 'testing_write_violation_terminal',
       });
       console.error(
@@ -4183,7 +4278,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
       if (halfRecovery) {
         for (const ev of buildHalfPhaseRecoveryEvents(halfRecovery)) {
-          appendEvent(manifest.report_dir, projectRoot, ev);
+          goalEvents.emit(ev);
         }
         priorEvents = loadAuthoritativeEvents(eventsPath);
       }
@@ -4224,13 +4319,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const effectiveFrozenManifestIdentityHash = manifestDrift.effectiveHash;
     if (manifestDrift.rebaseApplied) {
       // 审计投影（可信 rebase 基线由 authenticated checkpoint 承载，见 commitVisionAnchors）
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'manifest_identity_rebase',
         to_fields: manifestDrift.currentFields,
         authorized_by: manifestDrift.rebaseAuthorizedBy,
       });
     }
-    appendEvent(manifest.report_dir, projectRoot, {
+    goalEvents.emit({
       type: 'run_start',
       dry_run: dryRun,
       chain,
@@ -4295,7 +4390,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           (cpMeta.state === 'valid' || cpMeta.state === 'valid_unauthenticated') &&
           cpMeta.digest === visionTrust.checkpointDigest;
         if (!headOk || !cpOk) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_ledger_tamper',
             scope: `${scope}_anchor_meta`,
             head_state: headMeta.state,
@@ -4375,7 +4470,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 补记 commit）。blocked=不可恢复，fail-closed 人工处置。
       const resealRecovery = recoverResealTransaction({ projectRoot, feature: manifest.feature });
       if (resealRecovery.outcome === 'blocked') {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'vision_reseal_recovery_blocked', detail: resealRecovery.detail ?? null,
         });
         throw new Error(
@@ -4383,7 +4478,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         );
       }
       if (resealRecovery.outcome !== 'none') {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'vision_reseal_recovered', mode: resealRecovery.outcome, detail: resealRecovery.detail ?? null,
         });
       }
@@ -4430,28 +4525,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           receiptObjectHash: resealObjectHash,
         });
         resealTx.pending = true;
-        appendEvent(manifest.report_dir, projectRoot, { type: 'vision_hwm_resealed', old_hwm_sha256: oldHwmSha, quarantined_as: bak });
+        goalEvents.emit({ type: 'vision_hwm_resealed', old_hwm_sha256: oldHwmSha, quarantined_as: bak });
       }
       const requireAck = (context: string): void => {
         if (ackStrong) {
-          appendEvent(manifest.report_dir, projectRoot, { type: 'vision_ledger_resume_ack', mode: 'receipt', context });
+          goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'receipt', context });
           return;
         }
         if (!argv['ack-unverified-ledgers']) {
-          appendEvent(manifest.report_dir, projectRoot, { type: 'vision_ledger_checkpoint_absent', ack: false, context });
+          goalEvents.emit({ type: 'vision_ledger_checkpoint_absent', ack: false, context });
           throw new Error(
             `vision 信任锚缺失（${context}）——须人工核查账本后带 --ack-unverified-ledgers（弱 ack，终态封顶人工复核）` +
             '或提供 --ack-receipt <受信 confirmation receipt>（强 ack）后重试（fail-closed，不静默回落）。',
           );
         }
         visionAckWeak = true;
-        appendEvent(manifest.report_dir, projectRoot, { type: 'vision_ledger_resume_ack', mode: 'flag_weak', context });
+        goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'flag_weak', context });
       };
 
       // ① feature 级 head（七轮 P0-3：跨 run 连续性——fresh run 与 resume 都先验）
       const head = verifyVisionFeatureHead({ projectRoot, feature: manifest.feature, current: now });
       if (head.state === 'mismatch') {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'vision_ledger_tamper', scope: 'feature_head', files: head.mismatched,
         });
         throw new Error(
@@ -4470,11 +4565,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (typeof priorDoc.generation === 'number' && priorDoc.generation > 0) priorGen = priorDoc.generation;
           } catch { /* 不可解析——从 0 重铸 */ }
           visionTrust.headGeneration = priorGen;
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_trust_resealed', scope: 'feature_head', reason: head.reason, prior_generation: priorGen,
           });
         } else {
-          appendEvent(manifest.report_dir, projectRoot, { type: 'vision_head_invalid', reason: head.reason });
+          goalEvents.emit({ type: 'vision_head_invalid', reason: head.reason });
           throw new Error(
             `vision feature head 不可信（${head.reason}）——拒绝启动（fail-closed）。密钥升级/轮换场景请走 ` +
             '--reseal-receipt <受信 confirmation receipt>（action=vision_trust_reseal，绑定当前账本与旧 head hash）。',
@@ -4501,19 +4596,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
             hwm,
           });
           if (fresh.action === 'halt_hwm_invalid') {
-            appendEvent(manifest.report_dir, projectRoot, { type: 'vision_hwm_invalid', reason: fresh.reason });
+            goalEvents.emit({ type: 'vision_hwm_invalid', reason: fresh.reason });
             throw new Error(
               `vision HWM 链不可信（${fresh.reason}）——拒绝启动（fail-closed）。密钥升级/轮换请走 --reseal-receipt。`,
             );
           }
           if (fresh.action === 'halt_hwm_missing') {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_hwm_missing', head_generation: head.generation ?? 0,
             });
             throw new Error(`vision HWM 缺失拦截：${fresh.reason}（fail-closed）`);
           }
           if (fresh.action === 'halt_incomplete_commit') {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_hwm_incomplete_commit',
               head_generation: head.generation ?? 0,
               hwm_generation: hwm.maxGeneration ?? null,
@@ -4521,7 +4616,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             throw new Error(`vision 锚提交未完成拦截：${fresh.reason}（fail-closed）`);
           }
           if (fresh.action === 'halt_rollback') {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_ledger_rollback',
               head_generation: head.generation ?? 0,
               hwm_generation: hwm.maxGeneration ?? null,
@@ -4536,14 +4631,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (fresh.action === 'bootstrap_legacy') {
             // legacy 1.0 head（HWM 机制落地前）——一次性显式迁移：事件留痕后继续；
             // 首个 commit 写 1.1 head（hwm_declared）+ 同世代 HWM 首行，进入声明态。
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_hwm_bootstrap', head_generation: head.generation ?? 0, reason: fresh.reason,
             });
           }
         }
       }
       if (head.state === 'ok_unauthenticated') {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'vision_checkpoint_unauthenticated', scope: 'feature_head',
           note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——head 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
         });
@@ -4562,7 +4657,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             : {}),
         });
         if (cp.state === 'mismatch') {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_ledger_tamper', scope: 'resume_checkpoint', files: cp.mismatched,
           });
           throw new Error(
@@ -4571,12 +4666,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         if (cp.state === 'invalid') {
           if (resealStrong) {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_trust_resealed', scope: 'run_checkpoint', reason: cp.reason,
             });
             // 迁移凭证以内存重建（旧 checkpoint 不可信不读回）；后续 baseline 重写
           } else {
-            appendEvent(manifest.report_dir, projectRoot, { type: 'vision_checkpoint_invalid', reason: cp.reason });
+            goalEvents.emit({ type: 'vision_checkpoint_invalid', reason: cp.reason });
             throw new Error(
               `vision checkpoint 不可信（${cp.reason}）——resume 拒绝继续（fail-closed）。密钥升级/轮换场景请走 ` +
               '--reseal-receipt（action=vision_trust_reseal）。',
@@ -4593,7 +4688,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (Array.isArray(lastAnchor?.files)) {
             const tampered = diffVisionLedgerSnapshots(lastAnchor!.files!, now);
             if (tampered.length > 0) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'vision_ledger_tamper', scope: 'resume', files: tampered,
               });
               throw new Error(
@@ -4602,7 +4697,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
           } else if (!ackStrong) {
             // 七轮 P1-1：last anchor 缺失时弱 ack（旗标）不足以继续——须强 ack receipt
-            appendEvent(manifest.report_dir, projectRoot, { type: 'vision_ledger_no_anchor', ack: 'weak_insufficient' });
+            goalEvents.emit({ type: 'vision_ledger_no_anchor', ack: 'weak_insufficient' });
             throw new Error(
               'vision 账本无任何可比对锚（checkpoint 缺失且本 run 无 anchor 事件）——弱 ack 旗标不足以继续，' +
               '须 --ack-receipt <受信 confirmation receipt> 强 ack（fail-closed）。',
@@ -4614,7 +4709,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           visionTrust.migrations = cp.migrations ?? [];
         }
         if (cp.state === 'ok_unauthenticated') {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_checkpoint_unauthenticated',
             note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——checkpoint 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
           });
@@ -4633,7 +4728,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // verified/supersede 不升级；mixed/不可解析拒自动修复。
     const ledgerMigrations = migrateLegacyVisionLedgers(projectRoot, manifest.feature);
     for (const m of ledgerMigrations.filter(x => x.action !== 'none')) {
-      appendEvent(manifest.report_dir, projectRoot, { type: 'vision_ledger_legacy_migration', ...m });
+      goalEvents.emit({ type: 'vision_ledger_legacy_migration', ...m });
       if (m.action === 'manual_required') {
         console.warn(
           `[S3] vision 账本 ${m.file} 为 mixed/不可解析形态——不自动修复（读取端 corrupt fail-closed 兜底），须人工处置`,
@@ -4653,7 +4748,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ...ledgerMigrations.filter(m => m.action === 'migrated'),
       ];
       const baseline = snapshotVisionLedgers(projectRoot, manifest.feature);
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'vision_ledger_anchor',
         scope: 'run_start',
         files: baseline,
@@ -4696,7 +4791,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       } catch { targetIdentityOk = false; }
       // 审计事件**成功追加之后**才 best-effort 删除目标场外状态；appendEvent 抛错则
       // 循环中断、绝不删除（不建新事务/删除账本）。
-      appendEvent(manifest.report_dir, projectRoot, { type: 'supersede', target_run_id: target });
+      goalEvents.emit({ type: 'supersede', target_run_id: target });
       emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
       if (!dryRun) {
         if (!targetIdentityOk) {
@@ -4734,7 +4829,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         writeGoalReport(projectRoot, manifest.report_dir, report, {
           workflowChain: fullWorkflowChain.map(String),
         });
-        appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+        goalEvents.emit({ type: 'run_end', status });
         runConcluded = true;
         emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
         return 2;
@@ -4752,7 +4847,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const headlessCmd = cap.capability?.external_runner?.headless_invoke ?? '';
       const adapterBinary = headlessCmd.trim().split(/\s+/)[0] || manifest.adapter!;
       const adapterVersion = await probeAdapterVersion(adapterBinary);
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'adapter_probe',
         adapter_version: adapterVersion,
         output_delivery: cap.capability?.output_delivery ?? 'unknown',
@@ -4792,7 +4887,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'resume',
         start_index: chainStartIndex,
         start_phase: chain[chainStartIndex],
@@ -4832,7 +4927,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         limit: wallMs,
         harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
       }).join('\n');
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'phase_halt',
         phase: phaseArg,
         halt_reason: 'budget_wall_clock',
@@ -4854,7 +4949,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (!dryRun) {
       const jr = recoverInvalidationJournal(projectRoot, manifest.feature, manifest.run_id);
       if (jr.kind === 'fail_closed') {
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'phase_halt',
           phase: chain[chainStartIndex],
           halt_reason: 'pass_snapshot_journal_unverifiable',
@@ -4879,7 +4974,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             e => e.type === 'phase_invalidated' && e.phase === ph && e.invalidation_tx_id === jr.txId,
           );
           if (!already) {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_invalidated',
               phase: ph,
               cause_phase: 'journal_recovery',
@@ -4917,7 +5012,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       progressPhase = phase;
       progressSubstep = null;
 
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'phase_start',
         phase,
         phase_index: phaseIdx,
@@ -4954,11 +5049,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             limit: budget === 'wall_clock' ? wallMs : manifest.budget.max_total_turns,
             harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
           }).join('\n');
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: budgetHaltReason,
             phase,
           });
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: budgetHaltReason,
@@ -4993,7 +5088,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (!recon.ok) {
             halted = true;
             const detail = recon.issues.map(i => `${i.kind}: ${i.detail}`).join('; ');
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'visual_ledger_integrity',
@@ -5007,7 +5102,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 进入下次期望集并关闭该 attempt 的 pending 身份（不写=pending 永久存活、
           // 孤儿行可借其名义永续）。
           for (const a of recon.adopted) {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'visual_round',
               phase,
               loop_id: `goal:${manifest.run_id}`,
@@ -5146,7 +5241,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // post-impl review P2#9：advisory 入 events（detach/resume 后可追溯）；
           // goal-report 经 events 渲染（timeout_advisory 行）。
           console.warn(`[goal-timeout] ${timeoutResolution.advisory}`);
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'timeout_advisory',
             phase,
             detail: timeoutResolution.advisory,
@@ -5156,7 +5251,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const availableForAgentMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
         if (availableForAgentMs <= 0) {
           halted = true;
-          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          goalEvents.emit({ type: 'budget_wall_clock', phase });
           const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
@@ -5170,7 +5265,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         const effectiveAgentTimeoutMs = Math.min(escalatedTimeoutMs, availableForAgentMs);
         if (escalatedTimeoutMs > baseTimeoutMs) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'timeout_escalated',
             phase,
             effective_timeout_ms: effectiveAgentTimeoutMs,
@@ -5192,7 +5287,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 消费裁决（否则收紧发生在 plan/coding 时后续不重跑 spec pregate，hard pixel 静默继续）。
         if (capabilityAdvisory?.deferTriggered) {
           halted = true;
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'capability_tightened_hard_pixel',
           });
           outcomes.push({
@@ -5239,7 +5334,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 : null,
             );
         if (trustedSnapshot.kind === 'fail_closed') {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'pass_snapshot_unavailable',
@@ -5309,7 +5404,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           })();
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'prompt_written',
           phase,
           prompt_path: path.relative(projectRoot, promptPath).replace(/\\/g, '/'),
@@ -5353,7 +5448,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phase,
             retries,
             resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
-            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+            emitEvent: ev => goalEvents.emit(ev as Parameters<typeof appendEvent>[2]),
           });
           if (capHalt) {
             halted = true;
@@ -5387,7 +5482,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             retries,
             sessionId: invokeId,
             input: { ...buildDeviceReadinessInput(projectRoot), existingManaged: reusableManaged },
-            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+            emitEvent: ev => goalEvents.emit(ev as Parameters<typeof appendEvent>[2]),
           });
           if (decision.outcome) {
             // S10：BLOCKED 但已启动了托管模拟器 → **先落 session 再退出**，
@@ -5526,23 +5621,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 projectRoot, feature: manifest.feature, runId: manifest.run_id, baseSha: headSha,
               });
               if (rec.kind === 'recorded') {
-                appendEvent(manifest.report_dir, projectRoot, {
+                goalEvents.emit({
                   type: 'coding_base_recorded', phase, invoke_id: invokeId, base_sha: rec.body.base_sha,
                 });
               } else if (rec.kind === 'invalid_existing') {
-                appendEvent(manifest.report_dir, projectRoot, {
+                goalEvents.emit({
                   type: 'coding_base_invalid', phase, invoke_id: invokeId,
                   detail: '既有 coding-base 记录损坏/验签失败——不重签洗白，门禁侧将 fail-closed',
                 });
               }
             } else {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'coding_base_unavailable', phase, invoke_id: invokeId,
                 detail: 'git HEAD 不可得（非 git 仓库或 git 不可用）',
               });
             }
           } catch (e) {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'coding_base_unavailable', phase, invoke_id: invokeId,
               detail: `coding_base 记录异常：${(e as Error).message.slice(0, 200)}`,
             });
@@ -5570,7 +5665,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // v23 F2 冻结：**invoke 前快照失败 → 不得调用 agent**（fail-closed）。没有可信基线
         // 就放 agent 进来，事后连"它改没改"都判不了。
         if (preInvokeSourceSnap && !isUsableSnapshot(preInvokeSourceSnap.sha256)) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed',
             reason: preInvokeSourceSnap.failureReason,
           });
@@ -5585,7 +5680,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
         if (!dryRun) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_ledger_anchor',
             scope: 'pre_invoke',
             phase,
@@ -5596,7 +5691,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 验盘（head/checkpoint 被删/被改即 halt，runner 不为篡改锚重签）
           commitVisionAnchors('pre_invoke', preInvokeVisionSnap);
         }
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'agent_invoke_start',
           phase,
           invoke_id: invokeId,
@@ -5646,7 +5741,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             })
           : { skip: false, reason: 'dry-run' };
         if (completion?.baselineComplete) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'completion_evidence_pre_existing',
             phase,
             invoke_id: invokeId,
@@ -5657,6 +5752,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             console.log(`[goal-runner] ${phase}: ${skipDecision.reason} → 跳过本轮 agent 调用，直接跑 gate 复验。`);
           }
         }
+        if (!skipDecision.skip) assertGoalBoundary('phase_invoke');
         const invoke = skipDecision.skip
           ? ({
               exitCode: 0,
@@ -5696,7 +5792,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           },
         });
 
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'agent_invoke_end',
           phase,
           invoke_id: invokeId,
@@ -5730,7 +5826,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ? parseClaudeInitModel(fs.readFileSync(eventsAbsForModel, 'utf-8'))
               : null;
             if (observedModel) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'adapter_model_observed',
                 phase,
                 invoke_id: invokeId,
@@ -5775,7 +5871,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               partition.violations.length === 0 &&
               partition.generated.length > 0
             ) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'testing_generated_file_change',
                 phase,
                 invoke_id: invokeId,
@@ -5795,7 +5891,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 verdictSrc.kind === 'mutated'
                   ? partition.violations.map(c => `${c.how} ${c.path}`)
                   : [`unverifiable: ${verdictSrc.reason}`];
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'testing_write_violation',
                 phase,
                 invoke_id: invokeId,
@@ -5822,7 +5918,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const postInvokeVisionSnap = snapshotVisionLedgers(projectRoot, manifest.feature);
           ledgerTampered = diffVisionLedgerSnapshots(preInvokeVisionSnap, postInvokeVisionSnap);
           if (ledgerTampered.length > 0) {
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'vision_ledger_tamper',
               scope: 'agent_invoke',
               phase,
@@ -5849,7 +5945,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //（自动改用户文件比停在现场风险更高）；同 run --resume 会被拒绝（见 resume 入口），
         // 人工整理现场后必须新开 run。
         if (testingSourceMutated) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'testing_write_violation',
           });
           console.error(
@@ -5872,7 +5968,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // ledger-only：无源码违规时才给 --resume 指引（人工核查账本差异后可续）
         if (ledgerTampered.length > 0) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'vision_ledger_tampered', files: ledgerTampered,
           });
           console.error(
@@ -5896,7 +5992,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         const interactionSentinel = parseHeadlessInteractionSentinel(outputLogPath);
         if (interactionSentinel) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'agent_interaction_required',
             phase,
             invoke_id: invokeId,
@@ -5923,7 +6019,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ? createHash('sha256').update(fs.readFileSync(outputLogPath)).digest('hex').slice(0, 16)
                 : null,
             });
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'critic_receipt_produced',
               phase,
               invoke_id: invokeId,
@@ -5993,7 +6089,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 issued = true;
               }
             }
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'capability_receipt',
               phase,
               invoke_id: invokeId,
@@ -6032,7 +6128,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 eventsLogAbsPath: agentEventsLogPath(outputLogPath),
                 refAbsPaths,
               });
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'spec_refs_receipt_produced',
                 phase,
                 invoke_id: invokeId,
@@ -6070,7 +6166,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               runId: manifest.run_id,
             });
             for (const row of replay.committed) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'visual_round',
                 phase,
                 invoke_id: invokeId,
@@ -6096,7 +6192,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
           if (journalReplayHalt) {
             halted = true;
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'visual_ledger_integrity',
@@ -6126,7 +6222,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 projectRoot, feature: manifest.feature, phase: String(phase), manifest: psManifest.body,
               });
               if (diffs.length > 0) {
-                appendEvent(manifest.report_dir, projectRoot, {
+                goalEvents.emit({
                   type: 'pass_snapshot_violation',
                   phase,
                   invoke_id: invokeId,
@@ -6145,7 +6241,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   context: trustedSnapshot,
                 });
                 if (outcome.refused) {
-                  appendEvent(manifest.report_dir, projectRoot, {
+                  goalEvents.emit({
                     type: 'phase_halt',
                     phase,
                     halt_reason: 'pass_snapshot_restore_refused',
@@ -6160,7 +6256,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   phaseDone = true;
                   continue;
                 }
-                appendEvent(manifest.report_dir, projectRoot, {
+                goalEvents.emit({
                   type: 'pass_snapshot_restored',
                   phase,
                   invoke_id: invokeId,
@@ -6183,7 +6279,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const availableForHarnessMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
         if (!dryRun && availableForHarnessMs <= 0) {
           halted = true;
-          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          goalEvents.emit({ type: 'budget_wall_clock', phase });
           const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
@@ -6219,7 +6315,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // d9e4b7c1 T2：attempt 的 harness 窗口（written_at/run meta 时间窗裁决的数据源）
         const harnessStartedAtMs = Date.now();
-        appendEvent(manifest.report_dir, projectRoot, {
+        assertGoalBoundary('harness_invoke');
+        goalEvents.emit({
           type: 'harness_start',
           phase,
           // P0-1 rev6：attempt 窗口按 invoke_id 精确切分（continuation 五态派生消费）。
@@ -6243,7 +6340,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const harnessExit = harnessRun.exitCode;
         const harnessEndedAtMs = Date.now();
 
-        appendEvent(manifest.report_dir, projectRoot, {
+        goalEvents.emit({
           type: 'harness_end',
           phase,
           exit_code: harnessExit,
@@ -6257,7 +6354,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 实施 round2 P2：dry 不读账本不落锚（trust 零触碰扩到 invoke/harness 窗口）。
         if (!dryRun) {
           const postHarnessSnap = snapshotVisionLedgers(projectRoot, manifest.feature);
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'vision_ledger_anchor',
             scope: 'post_harness',
             phase,
@@ -6274,7 +6371,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 只写了一半的 summary**（半份证据比无证据更毒）。
         if (harnessRun.timedOut) {
           halted = true;
-          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          goalEvents.emit({ type: 'budget_wall_clock', phase });
           const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
           outcomes.push({
             phase,
@@ -6320,6 +6417,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
         // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
         let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
+        let closureFinalizationError: string | null = null;
         if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
           const harnessRoot = path.join(frameworkRoot, 'harness');
           const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
@@ -6329,13 +6427,40 @@ Goal runner — tool-agnostic multi-phase orchestrator
             manifest.feature,
           );
           inFlowReceiptValidation = receiptValidation;
-          applyClosurePatchFromReceiptValidation(
-            projectRoot,
-            manifest.feature,
-            phase,
-            receiptValidation,
-            frameworkRoot,
-          );
+          if (receiptValidation.status === 'passed') {
+            assertGoalBoundary('closure_finalizer');
+            try {
+              finalizePhaseClosure({
+              projectRoot,
+              frameworkRoot,
+              feature: manifest.feature,
+              phase,
+              receipt: { ...receiptValidation, status: 'passed' },
+              goalRunId: manifest.run_id,
+              blockerCount: summary?.blockers?.length ?? 0,
+              persistPhaseState: () =>
+                syncPhaseStateOnReceiptPassStrict(
+                  projectRoot,
+                  manifest.feature,
+                  phase,
+                  receiptValidation,
+                  {
+                    blocker_count: summary?.blockers?.length ?? 0,
+                    frameworkRoot,
+                  },
+                ),
+              });
+            } catch (error) {
+              closureFinalizationError = (error as Error).message;
+              console.error(
+                `\n===== closure_finalization_failed =====\n${closureFinalizationError}\n`,
+              );
+            }
+          } else {
+            applyClosurePatchFromReceiptValidation(
+              projectRoot, manifest.feature, phase, receiptValidation, frameworkRoot,
+            );
+          }
           ({ summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(
             projectRoot,
             manifest.feature,
@@ -6357,7 +6482,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } | null
         )?.visual_round;
         if (!dryRun && freshSummary && visualRoundReceipt) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'visual_round',
             phase,
             invoke_id: invokeId,
@@ -6371,7 +6496,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 不得让"events 声称评估过而账本无行"的成功运行溜走（末轮无下次对账兜底）。
           if (visualRoundReceipt.disposition === 'append_failed') {
             halted = true;
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'visual_ledger_integrity',
@@ -6406,7 +6531,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           capsTestingConclusion(phase, deviceKindThisPhase) &&
           resolved.verdict === 'PASS';
         if (testingCapped) {
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'testing_conclusion_capped',
             phase,
             invoke_id: invokeId,
@@ -6499,28 +6624,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
         );
         const envBlocked = meta.failure_kind === 'toolchain' || meta.failure_kind === 'capture' ||
           meta.blocking_class === 'externalBlocked';
-        const hasActionable = actionableDefects.length > 0 && !envBlocked;
+        // External/toolchain evidence is reportable but never a content backtrack input.
+        const driverActionableDefects = envBlocked ? [] : actionableDefects;
+        const hasActionable = driverActionableDefects.length > 0;
         // review 第 11 轮 P1：可信缺陷优先回退；**只有 unverified** 时既不回退（不可信
         // 不能驱动改码）也不 advance（must_fix 在场不能装干净）——testing 内 retry 引导
         // 重采/补身份，耗尽 halt。
         const unverifiableOnly =
           phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
 
-        let action = classifyPhaseVerdict({
-          verdict,
-          ...meta,
-          dependency_policy: manifest.dependency_policy,
-          retries_used: retries,
-          max_retries_per_phase: manifest.budget.max_retries_per_phase,
-          phase,
-          deterministic_p0_defects: hasActionable,
-          backtracks_used: backtracksUsed,
-        });
+        let driverGuardAction: DriverGuardAction = 'none';
+
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
         if (!unverifiableOnly) previousUnverifiedRound = null;
-        if (unverifiableOnly && (action === 'advance' || action === 'retry')) {
+        if (unverifiableOnly) {
           const notes = actionableResult.unverified.slice(0, 6)
             .map(u => `${u.screen_or_case_id}：${u.reason}`).join('；');
           const unverifiedRound = evaluateUnverifiedRound(
@@ -6530,7 +6649,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
           const unverifiedRoundFingerprint = unverifiedRound.fingerprint;
           const repeatedWithoutProgress = unverifiedRound.repeatedWithoutProgress;
-          appendEvent(manifest.report_dir, projectRoot, {
+          goalEvents.emit({
             type: 'unverifiable_must_fix',
             phase,
             invoke_id: invokeId,
@@ -6560,9 +6679,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             );
           }
           if (repeatedWithoutProgress) {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = 'unverifiable_must_fix';
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'unverifiable_must_fix',
@@ -6575,7 +6694,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + `${unverifiedRoundFingerprint.slice(0, 12)}…）——继续重试只会空转，halt 求人。\n`,
             );
           } else if (retries < manifest.budget.max_retries_per_phase) {
-            action = 'retry';
+            driverGuardAction = 'retry';
             priorFailure =
               `本轮存在 ${actionableResult.unverified.length} 项不可采信的缺陷证据（${notes}）。`
               + `集合指纹=${unverifiedRoundFingerprint}。不可采信证据既不驱动回退、也不算通过。`
@@ -6587,9 +6706,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + `${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
             );
           } else {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = 'unverifiable_must_fix';
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'unverifiable_must_fix',
@@ -6606,21 +6725,33 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // transient_api_error > blocker。E4：用户手动中断压过一切（含 verdict===PASS 的边缘情况——
         // 中断就是中断，不因为脚本恰好跑完就当没发生）。
         if (operatorInterrupt) {
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'operator_interrupt';
+        } else if (closureFinalizationError) {
+          driverGuardAction = 'halt';
+          haltReason = 'closure_finalization_failed';
+          awaitConfirmGuidance =
+            `closure finalizer 未能完成原子闭环：${closureFinalizationError}。` +
+            ' 请修复磁盘/权限/绑定不一致后 --resume；不得重跑内容阶段掩盖该错误。';
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'closure_finalization_failed',
+            detail: closureFinalizationError,
+          });
         } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'headless_interaction_required';
         } else if (agentNoOutput && verdict !== 'PASS') {
           // P0-D §六-8：空产出（疑似 spawn/权限/弱模型）第一次即 halt 求人——goal 无头
           // 没有 normal 模式的 Stop hook 逃生阀；不 backoff、不盲重试、不冒充断流。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'agent_no_output';
         } else if (failureKind === 'framework_integrity_block' && verdict !== 'PASS') {
           // P0-5（plan d9b4f7e2）：framework 完整性家族一律首触 halt——agent 修不了也不许修
           // （含"回滚可疑漂移"：07-13 chrys 案 goal agent 依 code_regression 通用话术回滚了
           // 宿主经用户批准的真修复）。guidance 按 subtype 分补救、多值按修复顺序逐条。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'framework_integrity_block';
           awaitConfirmGuidance = buildFrameworkIntegrityGuidance({
             feature: manifest.feature,
@@ -6630,10 +6761,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
             harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
           }).join('\n');
           console.log(`\n===== framework_integrity_block =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'closure_finalization_failed' && verdict !== 'PASS') {
+          driverGuardAction = 'halt';
+          haltReason = 'closure_finalization_failed';
+          awaitConfirmGuidance = 'closure finalization 失败：请人工修复闭环产物、磁盘绑定或权限后 --resume。';
+          console.log(`\n===== closure_finalization_failed =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'framework_bug' && verdict !== 'PASS') {
           // P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误——框架缺陷只能人修（回灌源仓），
           // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'framework_bug';
           const bugBlockers = (summary?.blockers ?? []).filter(
             (b) => b.classification === 'framework_bug',
@@ -6653,15 +6789,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         } else if (failureKind === 'transient_api_error' && verdict !== 'PASS') {
           // P0-D：断流走独立 backoff 重试（与 max_retries_per_phase 解耦），耗尽才 halt。
           if (transientRetriesUsed < manifest.budget.max_transient_api_retries) {
-            action = 'retry';
+            driverGuardAction = 'retry';
           } else {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = 'transient_api_error_exhausted';
           }
         } else if (failureKind === 'await_human_confirm' && verdict !== 'PASS') {
           // P0-9b：设计内求人时刻——agent 不能替人签 confirmed_by，重试无意义，首触即 halt。
           // P0-10a：引导话术按 run 上下文机器生成（feature/run_id/路径/layout 命令注入）。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'await_human_visual_confirm';
           awaitConfirmGuidance = buildAwaitHumanConfirmGuidance({
             feature: manifest.feature,
@@ -6677,7 +6813,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // t5（goal-fakepass-hardening）：P0 用例 skip 无凭证 waiver——agent 不可自决
           // P0 去留，重试只会复现同 skip → 首触即 halt 求人；skip 清单与双口径在
           // blocker details（p0_coverage_integrity）。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'await_human_p0_skip';
           awaitConfirmGuidance = [
             '===== await_human_p0_skip（P0 用例被跳过，须真人裁决）=====',
@@ -6692,12 +6828,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
           // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
           // 指纹 → 首触即 halt 求人，不烧重试预算；残差清单在 blocker details。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'no_progress_fuse';
         } else if (failureKind === 'verification_evidence_gap' && verdict !== 'PASS') {
           // C5-min 验证转嫁禁令：evidence 缺口属设计内求人时刻（与 await_human 系同构），
           // agent 不得以"已自测"替代真人/device 验证，重试无意义 → 首触即 halt，不计 no_progress。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'await_human_verification_evidence';
         } else if (
           // ==============================================================
@@ -6713,7 +6849,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ) {
           const actionabilityRoute = classifyTimedOutWithFreshBlockers(summary)!;
           const agg = aggregateBlockerActionability(summary);
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = actionabilityRoute;
           if (actionabilityRoute === 'await_operator_toolchain') {
             // 「修环境」不得描述成「签字确认」（codex 二轮 must-fix#2）
@@ -6760,7 +6896,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             currentArtifactSnapshot,
           })
         ) {
-          action = 'halt';
+          driverGuardAction = 'halt';
           // T6/P0-B：分流 halt 原因——基建(toolchain/capture/agent_timeout)求人修环境
           // vs 视觉(visual_gap)同门禁无改善熔断求复核。
           haltReason =
@@ -6787,7 +6923,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             1 >=
             CUMULATIVE_HALT_THRESHOLD
         ) {
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = `no_progress_cumulative_${failureKind}`;
         } else if (
           // P0-4（plan d9b4f7e2）：连续超时熔断——升档（第 2 次后 ×1.5）仍救不回的第
@@ -6799,7 +6935,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           countConsecutiveAgentTimeouts(loadAuthoritativeEvents(eventsPath), phase) + 1 >=
             CONSECUTIVE_TIMEOUT_HALT_AT
         ) {
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'agent_timeout_repeated';
           awaitConfirmGuidance = buildAgentTimeoutRepeatedGuidance({
             feature: manifest.feature,
@@ -6824,7 +6960,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         } else if (shouldHaltClosureTimeout(closureOnlyAttempt, failureKind, verdict)) {
           // P1#5（post-impl review）：closure-only attempt 超时 → closure_timeout 求人，
           // 不回内容重试（OpenSpec：closure timeout SHALL surface for human disposition）。
-          action = 'halt';
+          driverGuardAction = 'halt';
           haltReason = 'closure_timeout';
           console.error(
             '\n===== closure_timeout =====\nclosure-only attempt（PASS 已冻结，仅补关环）超时——不回内容重试。\n' +
@@ -6833,7 +6969,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         } else if (failureKind === 'agent_timeout' && verdict !== 'PASS') {
           // P0-B.5：超时+有进展（guard 未熔断）→ resume 续作，不吃内容重试预算；
           // 全局仍受 wall_clock + max_total_turns 兜底（checkRunBudget 每轮重查）。
-          action = 'retry';
+          driverGuardAction = 'retry';
         } else if (resolved.advance_blocked) {
           // E4（案B chrys 实证：advance_blocked 两次分别以不同 reason 出现——closure_open 类走
           // max_retries_per_phase 兜底但慢，agent_timeout_unclosed 类曾**无任何上限**、真无限
@@ -6843,7 +6979,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const cumulativeAdvanceBlocked =
             countCumulativeAdvanceBlocked(loadAuthoritativeEvents(eventsPath), phase) + 1;
           if (cumulativeAdvanceBlocked >= ADVANCE_BLOCKED_HALT_THRESHOLD) {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = 'closure_wall_repeated';
             awaitConfirmGuidance = buildClosureWallGuidance({
               feature: manifest.feature,
@@ -6858,11 +6994,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } else if (resolved.advance_block_reason === 'agent_timeout_unclosed') {
             // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的首次续跑不受 max_retries
             // 闸控（给一次机会补关环）；第二次即上面的累计分支接管，不再无限重试。
-            action = 'retry';
+            driverGuardAction = 'retry';
           } else if (retries < manifest.budget.max_retries_per_phase) {
-            action = 'retry';
+            driverGuardAction = 'retry';
           } else {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = resolved.advance_block_reason ?? 'closure_open';
           }
           // P0-3（plan 7c4f2e9b）：PASS+advance_blocked → 冻结 frozen deliverables。
@@ -6872,7 +7008,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // head 损坏/建立失败/表非空却零产物 一律 fail-closed halt（无保护重试=重开
           // 「PASS 产物被毁」的洞）；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
           // 产出走 closure-attestation）时按设计跳过。
-          if (action === 'retry' && !dryRun) {
+          if (driverGuardAction === 'retry' && !dryRun) {
             let protectionFailure: string | null = null;
             try {
               const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
@@ -6896,7 +7032,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                       files: frozen,
                     });
                     passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
-                    appendEvent(manifest.report_dir, projectRoot, {
+                    goalEvents.emit({
                       type: 'pass_snapshot_taken',
                       phase,
                       invoke_id: invokeId,
@@ -6911,9 +7047,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               protectionFailure = `快照建立失败：${(e as Error).message}`;
             }
             if (protectionFailure) {
-              action = 'halt';
+              driverGuardAction = 'halt';
               haltReason = 'pass_snapshot_unavailable';
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'phase_halt',
                 phase,
                 halt_reason: 'pass_snapshot_unavailable',
@@ -6931,7 +7067,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 保留为 telemetry）。fresh 复用 in-flow 探针；缺失（如超时被杀路径）才重探，
           // subprocess timeout 受 remaining wall-clock/FINALIZE_RESERVE 约束。
           // ------------------------------------------------------------
-          if (action === 'retry' && !dryRun) {
+          if (driverGuardAction === 'retry' && !dryRun) {
             // P1#6（post-impl review）：probe timeout 严格受 remaining wall/finalize reserve
             // 约束——剩余 ≤0 时不再"保底 30s"突破预算；直接跳过分类（下一轮预算判据会
             // budget_wall_clock 终局），保持 retry 语义不变。
@@ -6948,7 +7084,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (probe === null) {
               // post-impl round2 P1#3：closure-only 超时且无预算探针 → 仍不得回内容重试
               if (closureOnlyAttempt && invoke.timed_out === true) {
-                action = 'halt';
+                driverGuardAction = 'halt';
                 haltReason = 'closure_timeout';
                 console.error('\n===== closure_timeout =====\nclosure-only attempt 超时且剩余预算不足以探针——halt 求人，不回内容重试。\n');
               } else {
@@ -6956,7 +7092,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
             } else {
             const route = classifyClosureKind(probe.status);
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'closure_kind_classified',
               phase,
               invoke_id: invokeId,
@@ -6968,7 +7104,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (route.kind === 'halt') {
               // error=探针自身崩溃（framework/toolchain 坏，调 agent「修 receipt」只会空转）；
               // not_applicable+advance_blocked=状态机不变量违例（lite 本不产生 receipt）。
-              action = 'halt';
+              driverGuardAction = 'halt';
               haltReason = route.reason;
               console.error(
                 `\n===== ${route.reason} =====\n` +
@@ -6978,21 +7114,39 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             } else if (route.kind === 'deterministic_recheck') {
               // runner 不调 agent：正式 receipt state sync/closure patch → 直接推进
-              const syncExit = runSyncClosure(
+              const syncResult = runSyncClosureDetailed(
                 path.join(frameworkRoot, 'harness'),
                 projectRoot,
                 manifest.feature,
                 String(phase),
                 frameworkRoot,
               );
+              const syncExit = syncResult.exitCode;
+              if (syncResult.finalizationError) {
+                driverGuardAction = 'halt';
+                haltReason = 'closure_finalization_failed';
+                awaitConfirmGuidance =
+                  `closure finalizer 未能完成原子闭环：${syncResult.finalizationError}。` +
+                  ' 请修复磁盘/权限/绑定不一致后 --resume。';
+                goalEvents.emit({
+                  type: 'phase_halt',
+                  phase,
+                  halt_reason: 'closure_finalization_failed',
+                  detail: syncResult.finalizationError,
+                });
+              }
               // round3 P1#4 + round4 P1#3：分流收敛为纯函数（矩阵测试锁定契约）
-              const syncOutcome = resolveClosureSyncOutcome(syncExit, closureOnlyAttempt, invoke.timed_out === true);
-              if (syncOutcome === 'advance') {
-                action = 'advance';
+              const syncOutcome = syncResult.finalizationError
+                ? 'closure_finalization_failed'
+                : resolveClosureSyncOutcome(syncExit, closureOnlyAttempt, invoke.timed_out === true);
+              if (syncOutcome === 'closure_finalization_failed') {
+                // Already translated to a terminal driver halt above.
+              } else if (syncOutcome === 'advance') {
+                driverGuardAction = 'advance';
                 haltReason = undefined;
                 console.log('[closure] deterministic_recheck：receipt 已验真，runner 完成 sync-closure，phase 推进（不调 agent）');
               } else if (syncOutcome === 'closure_timeout') {
-                action = 'halt';
+                driverGuardAction = 'halt';
                 haltReason = 'closure_timeout';
                 console.error(
                   `\n===== closure_timeout =====\ndeterministic sync-closure 非零退出（${syncExit}）且 closure-only attempt 已超时——halt 求人，不回内容重试。\n`,
@@ -7007,12 +7161,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // ——OpenSpec：closure timeout 交人工处置 never re-enter retries（probe=passed
             // 的 deterministic 直通仍保留：runner 自己关环不消耗 agent attempt）。
             if (
-              action === 'retry' &&
+              driverGuardAction === 'retry' &&
               route.kind === 'receipt_repair_with_verifier' &&
               closureOnlyAttempt &&
               invoke.timed_out === true
             ) {
-              action = 'halt';
+              driverGuardAction = 'halt';
               haltReason = 'closure_timeout';
               console.error(
                 '\n===== closure_timeout =====\nclosure-only attempt 超时且 receipt 需 repair——不回内容重试，halt 求人。\n',
@@ -7027,7 +7181,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
         // 无快照。失败 fail-closed halt（pass_snapshot_unavailable），与 closure retry
         // 分支同语义；resume 场景盘上已有 active 快照则可信加载复验、不重取。
-        if (action === 'advance' && phase === ('plan' as FeaturePhase) && !dryRun) {
+        if (
+          verdict === 'PASS' &&
+          driverGuardAction !== 'halt' &&
+          phase === ('plan' as FeaturePhase) &&
+          !dryRun
+        ) {
           let planFreezeFailure: string | null = null;
           try {
             const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
@@ -7059,7 +7218,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   files: frozen,
                 });
                 passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
-                appendEvent(manifest.report_dir, projectRoot, {
+                goalEvents.emit({
                   type: 'pass_snapshot_taken',
                   phase,
                   invoke_id: invokeId,
@@ -7073,9 +7232,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             planFreezeFailure = `快照建立失败：${(e as Error).message}`;
           }
           if (planFreezeFailure) {
-            action = 'halt';
+            driverGuardAction = 'halt';
             haltReason = 'pass_snapshot_unavailable';
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt', phase, halt_reason: 'pass_snapshot_unavailable', detail: planFreezeFailure,
             });
             console.error(
@@ -7086,14 +7245,69 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         const agentWarn = buildAgentWarn(invoke);
-
-        appendEvent(manifest.report_dir, projectRoot, {
-          type: 'phase_verdict',
+        const reconcileObservation = deriveReconcileObservation({
           phase,
+          verdict,
+          legacyAction: driverGuardAction,
+          failureKind: meta.failure_kind ?? failureKind,
+          blockingClass: meta.blocking_class,
+          propagateToDownstream: manifest.dependency_policy.propagate_to_downstream,
+          dependencyPolicy: manifest.dependency_policy,
+          blockers: (summary?.blockers ?? []).map((blocker) => ({
+            id: String((blocker as { id?: string }).id ?? 'unknown'),
+            blocking_class: (blocker as { blocking_class?: string }).blocking_class,
+          })),
+          deterministicDefects: driverActionableDefects.map((defect) => defect.fingerprint),
+          retriesUsed: retries,
+          maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
+          backtracksUsed,
+          repeatedCount: currentBlockerSignature
+            ? countRepeatedSignatureInFamily(
+                loadAuthoritativeEvents(eventsPath),
+                phase,
+                currentBlockerSignature,
+                CUMULATIVE_HALT_FAMILY,
+              ) + 1
+            : 0,
+          residualFingerprints: currentBlockerSignature ? [currentBlockerSignature] : [],
+          invalidatablePhases:
+            hasActionable &&
+            (phase === 'ut' || phase === 'testing') &&
+            chain.includes('coding' as FeaturePhase)
+              ? chain.slice(Math.max(0, chain.indexOf('coding' as FeaturePhase)))
+              : [],
+          timedOut: invoke.timed_out,
+          operatorInterrupted: haltReason === 'operator_interrupt',
+          apiDisconnected: apiErrorSentinel !== null,
+          fused: driverGuardAction === 'halt' && /^no_progress|repeated/.test(haltReason ?? ''),
+          fuseReason: haltReason,
+        });
+        if (runControl) {
+          assertFencedOwner(runControl.dir, runControl.token, 'assess_recommendation');
+        }
+        const assessment = assessFeature({
+          projectRoot,
+          frameworkRoot,
+          feature: manifest.feature,
+          goalEnd: manifest.end_phase,
+          minimumDepthByPhase: manifest.minimum_depth_by_phase,
+          authorization: { mode: 'goal_mode' },
+          runId: manifest.run_id,
+          attemptId: invokeId,
+          writeProjection: !dryRun,
+          reconcile: reconcileObservation,
+        });
+        let action = goalEvents.decideAndEmit({
+          assessment,
+          observation: reconcileObservation,
+          currentPhase: String(phase),
+          chain,
+          driverGuardAction,
+          verdictEvent: {
+            phase,
           // P0-1 rev6：attempt 窗口按 invoke_id 精确切分（continuation 五态派生消费）。
           invoke_id: invokeId,
           verdict,
-          action,
           harness_exit: harnessExit,
           stale_summary: resolved.stale_summary,
           agent_failed: resolved.agent_failed,
@@ -7104,8 +7318,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           failure_kind: meta.failure_kind,
           // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案
           // 全部 advance 事件带着 code_regression 字样，事后排障已实际造成误导。
-          failure_kind_classified:
-            verdict === 'PASS' && action === 'advance' ? undefined : failureKind,
+          failure_kind_classified: failureKind,
           blocker_signature: currentBlockerSignature || undefined,
           // P0-5：integrity subtype 多值透传（事后排障/报告消费；空列表不写）。
           integrity_subtypes: integritySubtypes.length > 0 ? integritySubtypes : undefined,
@@ -7130,9 +7343,50 @@ Goal runner — tool-agnostic multi-phase orchestrator
             invoke.exitCode !== 0 && invoke.stderr.trim()
               ? truncateOneLine(invoke.stderr.trim(), 400)
               : undefined,
+          },
         });
+        if (action === 'halt' && !haltReason) {
+          const assessReason = assessment.recommendation.reason.trim();
+          haltReason = assessReason ? 'assess_halt:' + assessReason.slice(0, 160) : 'assess_halt';
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: assessReason || 'assess returned halt without a driver-owned reason',
+          });
+        }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();
+
+        // Cooperative handoff is polled only after a complete phase verdict boundary.
+        if (runControl) {
+          const handoff = consumeHandoffAtBoundary(runControl.dir, runControl.token);
+          if (handoff.kind === 'rejected') {
+            goalEvents.emit({
+              type: 'handoff_rejected',
+              request_id: handoff.request.request_id,
+              reason: handoff.reason,
+              epoch: runControl.token.epoch,
+            });
+          } else if (handoff.kind === 'consumed') {
+            goalEvents.emit({
+              type: 'handoff_requested',
+              request_id: handoff.request.request_id,
+              target_owner_kind: handoff.request.target_owner_kind,
+              from_epoch: handoff.request.from_epoch,
+              epoch: runControl.token.epoch,
+            });
+            flushProgress(true, true);
+            quiesceRunOwner(runControl.dir, runControl.token);
+            emitMilestone(
+              `GOAL_HANDOFF request=${handoff.request.request_id} state=quiesced target=${handoff.request.target_owner_kind}`,
+            );
+            // Handoff is a non-terminal control transfer. Suppress process_exit run_end;
+            // finally still releases lock projections while preserving run-control epoch.
+            runConcluded = true;
+            return 0;
+          }
+        }
 
         // visual-capability-truth S4：review 闭环后的可变阶段（ut/testing）在任何推进/
         // 重试决策生效前做 runner 级 source drift reconciliation——先分类后动作
@@ -7168,7 +7422,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               '  新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃。',
               '不读取 run-start diff、不采信 gap-notes 授权（无基线时的降级通道即洗白通道）。',
             ].join('\n');
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'goal_review_closure_baseline_unavailable',
@@ -7202,7 +7456,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               adjudicationRequestRel: null,
               harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
             }).join('\n');
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'authorized_mutation_requires_full_chain',
@@ -7222,7 +7476,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
           if (driftDecision.kind === 'authorized_backtrack') {
             if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'phase_halt',
                 phase,
                 halt_reason: 'backtrack_limit',
@@ -7255,7 +7509,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
             }
             for (const p of invalidatedPhases) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'phase_invalidated',
                 phase: p,
                 cause_phase: phase,
@@ -7265,14 +7519,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
               });
             }
             if (!dryRun) commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, invalidationTxId);
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_backtrack_requested',
               from_phase: phase,
               to_phase: chain[Math.max(codingIdx, 0)],
               matched_receipts: driftDecision.matched.map(r => r.approved_by),
               files: driftDecision.files.slice(0, 20),
             });
-            appendEvent(manifest.report_dir, projectRoot, { type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
+            goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
             // 被失效 attempt 从 outcomes 剔除（goal report/resume 只见最新有效 attempt；
             // 常驻 summary 将被回退后的重跑覆盖，upstream gate 消费面天然新鲜化）
             outcomes = outcomes.filter(o => !invalidatedPhases.includes(o.phase));
@@ -7282,7 +7536,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 否则上一次 visual 回退已修好的旧缺陷会被再次注入 coding prompt。
             backtrackCodingContext = [];
             backtrackToIdx = Math.max(codingIdx, 0);
-            appendEvent(manifest.report_dir, projectRoot, { type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
+            goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
             console.log(
               `[S4] 授权源码变更（${driftDecision.files.length} 文件，receipts=${driftDecision.matched.map(r => r.approved_by).join(',')}）` +
               `→ 回退 ${chain[backtrackToIdx]}→review→ut→${phase}（消耗共用回退预算 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}）`,
@@ -7344,7 +7598,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               adjudicationRequestRel,
               harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
             }).join('\n');
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt',
               phase,
               halt_reason: 'unauthorized_source_mutation',
@@ -7439,7 +7693,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 修成 {B} 允许再回退）；预算与授权回退共用 DEFAULT_MAX_BACKTRACKS。
         if (action === 'backtrack_to_coding') {
           const codingIdxBt = chain.indexOf('coding' as FeaturePhase);
-          const roundFp = roundFingerprintOf(actionableDefects);
+          const roundFp = roundFingerprintOf(driverActionableDefects);
           if (codingIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
             action = 'halt';
             haltReason = codingIdxBt < 0
@@ -7447,7 +7701,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
             // 对齐其他 halt 分支惯例：专项事件落盘（resume/审计按事件恢复语境，
             // outcome.halt_reason 只进 goal report）
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_halt', phase, halt_reason: haltReason,
               round_fingerprint: roundFp,
               backtracks_used: backtracksUsed,
@@ -7463,7 +7717,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } else {
             backtracksUsed++;
             seenRoundFingerprints.add(roundFp);
-            backtrackCodingContext = actionableDefects.slice(0, 20);
+            backtrackCodingContext = driverActionableDefects.slice(0, 20);
             const invalidatedBt = chain
               .slice(codingIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
@@ -7480,7 +7734,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               for (const ph of invalidatedBt) passSnapshotMemory.delete(String(ph));
               commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, txIdBt);
             }
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'phase_backtrack_requested',
               phase,
               to_phase: 'coding',
@@ -7496,11 +7750,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 instructions: d.instructions.map(t => t.length > 400 ? `${t.slice(0, 400)}…` : t),
                 evidence_path: d.evidence_path,
               })),
-              defect_count: actionableDefects.length,
+              defect_count: driverActionableDefects.length,
               invalidation_tx_id: txIdBt,
             });
             for (const ph of invalidatedBt) {
-              appendEvent(manifest.report_dir, projectRoot, {
+              goalEvents.emit({
                 type: 'phase_invalidated',
                 phase: ph,
                 cause_phase: phase,
@@ -7510,8 +7764,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
             console.error(
               `\n===== backtrack_to_coding =====\n`
-              + `${phase} 检出 ${actionableDefects.length} 项可回修缺陷（`
-              + actionableDefects.slice(0, 6).map(d => `${d.source}:${d.screen_or_case_id}`).join('、')
+              + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`
+              + driverActionableDefects.slice(0, 6).map(d => `${d.source}:${d.screen_or_case_id}`).join('、')
               + `）——修复需要改产品码，而 ${phase} 阶段禁止写源码。\n`
               + `回退 coding（缺陷清单已注入下一次 coding prompt），再重走 review/ut/${phase}。\n`
               + `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
@@ -7519,7 +7773,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // v23：被失效阶段的旧 outcome 必须剔除——完成判定是 outcomes.length===chain.length，
             // 不剔除则回退重跑后永远无法正常完成（review 第 6 轮实锤）。对齐 authorized_backtrack。
             outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
-            appendEvent(manifest.report_dir, projectRoot, { type: 'phase_backtrack_started', to_phase: 'coding' });
+            goalEvents.emit({ type: 'phase_backtrack_started', to_phase: 'coding' });
             phaseIdx = codingIdxBt - 1; // for 循环 ++ 后落回 coding
             phaseDone = true;
             if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
@@ -7552,7 +7806,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const backoffMs = configuredBackoffMs;
             if (!canAffordBackoff(configuredBackoffMs, backoffAvailableMs)) {
               halted = true;
-              appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+              goalEvents.emit({ type: 'budget_wall_clock', phase });
               const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
               outcomes.push({
                 phase,
@@ -7565,7 +7819,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               phaseDone = true;
               continue;
             }
-            appendEvent(manifest.report_dir, projectRoot, {
+            goalEvents.emit({
               type: 'transient_api_retry_scheduled',
               phase,
               attempt: transientRetriesUsed,
@@ -7576,8 +7830,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             flushProgress();
             await sleepMs(backoffMs);
           } else if (failureKind === 'agent_timeout') {
-            // P0-B.5：超时+有进展的续跑不吃内容重试预算（零进展熔断由 guard 负责，
-            // wall_clock + max_total_turns 全局兜底）。
+            // PASS+超时仍必须计入本 phase 的 assess retry budget；否则叠加
+            // insufficient_depth/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。
+            retries++;
           } else {
             retries++;
           }
@@ -7648,6 +7903,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           feature: manifest.feature,
           chain: fullWorkflowChain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
+          frameworkRoot,
         }),
       );
       pendingHumanReview = cls.needsHuman;
@@ -7658,6 +7914,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           feature: manifest.feature,
           chain: fullWorkflowChain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
+          frameworkRoot,
         }))}`);
       }
     } else {
@@ -7686,7 +7943,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       ackWeak: visionAckWeak,
     });
     if (visionCap.capped) {
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'vision_trust_completion_cap',
         from: rawStatus,
         to: visionCap.status,
@@ -7705,7 +7962,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       targetKind: lastTestingTargetKind,
     });
     if (deviceCap.capped) {
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'device_authenticity_completion_cap',
         from: visionCap.status,
         to: deviceCap.status,
@@ -7726,7 +7983,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // halt_reason——取最后一个 halted outcome 的原因（await_human_capability_gap 等），
     // 消费方无需回扫 phase_halt 事件即可分类终态。v5 抽 helper 使语义可单测。
     const lastHaltReason = resolveLastHaltReason(outcomes);
-    appendEvent(manifest.report_dir, projectRoot, {
+    goalEvents.emit({
       type: 'run_end',
       status,
       ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
@@ -7740,7 +7997,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const finalizeStartMs = Date.now();
     const finalizeDeadlineExceeded = finalizeStartMs > wallDeadlineMs;
     if (finalizeDeadlineExceeded) {
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'finalize_skipped',
         phase: undefined,
         // T2(c)：如实说明跳过的是 completion receipt 等收尾——goal-report 本身已在
@@ -7760,6 +8017,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           projectRoot,
           feature: manifest.feature,
           chain: fullWorkflowChain.map(String),
+          frameworkRoot,
         });
         if (issues.length === 0) {
           const { runIds: phaseRunIds, attempts: phaseAttempts } = resolvePhaseRunIds(
@@ -7792,7 +8050,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // P0-4 复审（codex P1）：收尾越过 deadline 的如实留痕——同步工作不可中断，超支量
     // 进 events 供 FINALIZE_RESERVE 取值回灌（开放问题 4）。
     if (!finalizeDeadlineExceeded && Date.now() > wallDeadlineMs) {
-      appendEvent(manifest.report_dir, projectRoot, {
+      goalEvents.emit({
         type: 'finalize_overrun',
         duration_ms: Date.now() - finalizeStartMs,
       });

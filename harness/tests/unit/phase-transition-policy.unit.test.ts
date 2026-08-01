@@ -63,9 +63,23 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'nextSkillLabelForPhase + dedicatedOkToRegistryId',
+    name: 'nextSkillLabelForPhase derives from workflow + dedicatedOkToRegistryId',
     run: () => {
-      assert(nextSkillLabelForPhase('coding').includes('code-review'), 'coding next label');
+      const workflow = {
+        schema_version: '1.1',
+        name: 'custom',
+        auto_chain: ['coding', 'verify-custom'],
+        artifacts: [
+          { id: 'coding', scope: 'feature' as const, requires: [], tracks: ['full'] },
+          {
+            id: 'verify-custom',
+            scope: 'feature' as const,
+            requires: ['coding'],
+            tracks: ['full'],
+          },
+        ],
+      };
+      assert(nextSkillLabelForPhase(workflow, 'coding') === 'verify-custom', 'workflow next label');
       assert(dedicatedOkToRegistryId('coding') === 'coding.ok_to_review', 'coding ok id');
       assert(dedicatedOkToRegistryId('spec') === undefined, 'spec has no dedicated ok_to');
     },

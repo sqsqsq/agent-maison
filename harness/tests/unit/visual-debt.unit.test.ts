@@ -433,15 +433,15 @@ cases.push({
 // ---------------- codex 实施 review P0-3：裸 1.1 summary 拒收 ----------------
 
 cases.push({
-  name: 'P0-3 completion：{"schema_version":"1.1","verdict":"PASS"} 裸 summary → quality_axes_valid(needs_fix) 拒作干净依据',
+  name: 'P0-3 completion：{"schema_version":"1.2","verdict":"PASS"} 裸 summary → quality_axes_valid(needs_fix) 拒作干净依据',
   run: async () => withTmpProject(async root => {
     const p = path.join(receiptDirPath(root, 'demo', 'review'), 'reports', 'summary.json');
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify({ schema_version: '1.1', verdict: 'PASS' }), 'utf-8');
+    fs.writeFileSync(p, JSON.stringify({ schema_version: '1.2', verdict: 'PASS' }), 'utf-8');
     const { collectCleanPassIssues } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
     const issues = collectCleanPassIssues({ projectRoot: root, feature: 'demo', chain: ['review'] });
     const hit = issues.find(i => i.condition === 'quality_axes_valid');
-    assertTrue(hit !== undefined, '裸 1.1 应被拒');
+    assertTrue(hit !== undefined, '裸 1.2 应被拒');
     assertEq(hit!.kind, 'needs_fix', 'needs_fix');
   }),
 });
@@ -567,9 +567,12 @@ cases.push({
     fs.mkdirSync(path.dirname(p), { recursive: true });
     const na = { applicable: false, required_for_release: false, verdict: 'NOT_APPLICABLE', blocking_class: null, source_checks: [], resolution: null };
     fs.writeFileSync(p, JSON.stringify({
-      schema_version: '1.1', verdict: 'PASS', report_validity: 'PASS',
+      schema_version: '1.2', verdict: 'PASS', report_validity: 'PASS',
       release_readiness: 'READY', // 与 visual 非 PASS 矛盾（篡改形态）
       completion_status: 'DEBT_PIPELINE_ERROR',
+      depth: 'full',
+      closure_status: 'closed',
+      closure_commit: { schema_version: '1.0' },
       quality_axes: {
         functional: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: [], resolution: null },
         visual: {

@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/test-plan@1"
+title: Device test plan
+x-artifact-id: test-plan@1
+x-version: 1
+x-authority: "Narrative shape only; semantic gates remain specs/phase-rules/testing-rules.yaml and check-testing.ts."
+type: string
+minLength: 1

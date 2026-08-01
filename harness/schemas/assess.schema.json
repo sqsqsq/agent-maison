@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmaison.dev/schemas/assess.schema.json",
+  "title": "assess@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "feature",
+    "workflow",
+    "track",
+    "goal_end",
+    "authorization_context",
+    "observed_fingerprint",
+    "fingerprints",
+    "observed",
+    "gaps",
+    "recommendation",
+    "alternatives",
+    "stop",
+    "run_status_candidate",
+    "feature_completion",
+    "projection_fingerprint"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "assess@1" },
+    "feature": { "type": "string", "minLength": 1 },
+    "workflow": { "type": "string", "minLength": 1 },
+    "track": { "enum": ["full", "lite"] },
+    "goal_end": { "type": "string", "minLength": 1 },
+    "authorization_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["manual", "batch_authorized", "goal_mode"] },
+        "through_phase": { "type": "string", "minLength": 1 }
+      }
+    },
+    "observed_fingerprint": { "$ref": "#/$defs/hash" },
+    "fingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow", "track", "goal", "run_attempt", "summaries", "evidence", "reconcile", "observed"],
+      "properties": {
+        "workflow": { "$ref": "#/$defs/hash" },
+        "track": { "$ref": "#/$defs/hash" },
+        "goal": { "$ref": "#/$defs/hash" },
+        "run_attempt": { "$ref": "#/$defs/hash" },
+        "summaries": { "$ref": "#/$defs/hash" },
+        "evidence": { "$ref": "#/$defs/hash" },
+        "reconcile": { "$ref": "#/$defs/hash" },
+        "observed": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phases"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" } }
+      }
+    },
+    "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } },
+    "recommendation": { "$ref": "#/$defs/recommendation" },
+    "alternatives": { "type": "array", "items": { "$ref": "#/$defs/recommendation" } },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fused", "reason"],
+      "properties": {
+        "fused": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "run_status_candidate": { "type": ["string", "null"], "enum": ["CHAIN_SLICE_COMPLETED", null] },
+    "feature_completion": { "type": ["string", "null"], "enum": ["REQUIRES_VALIDATION", null] },
+    "projection_fingerprint": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase", "summary_state", "schema_version", "verdict", "closure", "depth",
+        "required_depth", "depth_satisfied", "deferred", "summary_fingerprint", "evidence_fingerprint"
+      ],
+      "properties": {
+        "phase": { "type": "string" },
+        "summary_state": { "enum": ["missing", "corrupt", "legacy", "current"] },
+        "schema_version": { "type": ["string", "null"] },
+        "verdict": { "type": ["string", "null"] },
+        "closure": { "enum": ["open", "closed", "stale"] },
+        "depth": { "type": "string" },
+        "required_depth": { "type": ["string", "null"] },
+        "depth_satisfied": { "type": ["boolean", "null"] },
+        "deferred": { "type": "boolean" },
+        "summary_fingerprint": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+        "evidence_fingerprint": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "kind", "detail"],
+      "properties": {
+        "phase": { "type": "string" },
+        "kind": {
+          "enum": ["missing", "failed", "deferred", "stale", "unclosed", "legacy_unverified", "insufficient_depth"]
+        },
+        "detail": { "type": "string" }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "phase", "reason", "requires_driver_authorization"],
+      "properties": {
+        "action": {
+          "enum": [
+            "run_phase", "rerun_phase", "complete_closure", "resolve_deferred",
+            "restore_inputs_and_rerun", "validate_feature_completion", "stop"
+          ]
+        },
+        "phase": { "type": ["string", "null"] },
+        "reason": { "type": "string" },
+        "requires_driver_authorization": { "const": true }
+      }
+    }
+  }
+}

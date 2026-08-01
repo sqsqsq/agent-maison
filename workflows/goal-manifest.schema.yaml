@@ -35,6 +35,14 @@ fields:
     type: array
     items: string
     description: Optional ordered phase list overriding workflow auto_chain
+  minimum_depth_by_phase:
+    type: object
+    additionalProperties:
+      type: string
+      minLength: 1
+    description: >
+      Contract-local minimum quality tier for each phase. Tier labels are interpreted
+      only through that phase skill contract's explicit satisfies relation.
   budget:
     type: object
     properties:

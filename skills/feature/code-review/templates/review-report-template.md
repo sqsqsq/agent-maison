@@ -4,6 +4,8 @@
 > **审查日期**: {date}
 > **审查版本**: v1.0
 > **审查人**: AI Code Reviewer
+> **质量深度**: `{full|basic}`
+> **缺失输入**: `{none|spec,plan,contracts,acceptance}`
 > **对应设计文档**: `<features_dir>/{module-name}/plan/plan.md`
 
 ---
@@ -83,8 +85,3 @@
 - BLOCKER 数量: N
 - MAJOR 数量: N
 - 判定规则：存在 BLOCKER → 必须判"不通过"；无 BLOCKER 但有 MAJOR → 判"有条件通过"；均无 → 判"通过"
-
-**下一步建议**（按上方审查结论执行）:
-- 若结论为"不通过"：修复所有 BLOCKER 后重新审查
-- 若结论为"有条件通过"：修复 MAJOR 后建议重新审查，或经团队评审后可进入下一阶段
-- 若结论为"通过"：若需 UT，请用户明示 business-ut 意图或确认 **`review.ok_to_ut` / `phase.next_step`**（user-confirmation-ux §8）；**禁止** agent 因报告结论自动开 business-ut

@@ -268,6 +268,25 @@ optional_fields:
           超时。goal-runner 把该值透传进 agent_invoke_end 事件供事后排障。
           注意与 adapter_version 的分工：版本是**运行时信息**（每 run 一次 --version
           动态探测进 events），不在本 schema 硬编码。
+      in_session_reconcile:
+        type: boolean
+        default: false
+        description: 声明宿主可在当前会话内运行 assess/authorize/execute/reassess 薄 driver。
+      phase_context_isolation:
+        type: boolean
+        default: false
+        description: 声明每个 feature phase 可在新鲜隔离上下文中执行并只返回结构化 outcome。
+      supports_resume:
+        type: boolean
+        default: false
+        description: 声明 adapter 可恢复同一 goal run_id 与权威事件序列。
+      handoff:
+        type: string
+        default: "none"
+        enum: ["none", "to_detached", "bidirectional"]
+        description: |
+          声明会话 driver 与 detached runner 的交接能力。任何非 none 值都要求
+          supports_resume=true；bidirectional 同时允许 detached→session。
       native_goal:
         type: object | null
         fields:

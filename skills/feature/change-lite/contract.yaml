@@ -1,0 +1,36 @@
+schema_version: "1.0"
+skill: change-lite
+skill_doc: SKILL.md
+phases:
+  change:
+    tracks: [lite]
+    inputs:
+      required:
+        - { id: requirement, kind: adhoc }
+        - { id: codebase, kind: source }
+      optional: []
+    produces:
+      - { artifact: change@1 }
+    verifies:
+      check: check-change.ts
+      depth_field: summary.depth
+    tiers:
+      lite:
+        when: otherwise
+        satisfies: [lite]
+  exit:
+    tracks: [lite]
+    inputs:
+      required:
+        - { id: change, artifact: change@1 }
+        - { id: implementation, kind: source }
+      optional: []
+    produces: []
+    verifies:
+      check: check-exit.ts
+      depth_field: summary.depth
+    control_dependencies: [coding]
+    tiers:
+      lite:
+        when: otherwise
+        satisfies: [lite]

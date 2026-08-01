@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/ref-elements@1"
+title: Reference element ledger
+x-artifact-id: ref-elements@1
+x-version: 1
+x-authority: "Compatibility identity; visual semantic gates remain imperative harness checks."
+type: object
+additionalProperties: true

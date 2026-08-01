@@ -1,0 +1,29 @@
+schema_version: "1.0"
+authority: skill-authored-feature-artifacts
+generated_from:
+  - harness/scripts/utils/spec-loader.ts
+  - harness/scripts/utils/phase-evidence-manifest.ts
+  - skills/feature/*/SKILL.md
+scope:
+  includes: skill-authored narrative artifacts exchanged between feature skills
+  excludes:
+    - source code and generated tests
+    - harness summaries, receipts, traces, and evidence manifests
+    - feature.yaml and goal manifests
+artifacts:
+  - { id: spec@1, schema: spec.schema.yaml, paths: ["spec/spec.md"] }
+  - { id: acceptance@1, schema: acceptance.schema.yaml, paths: ["acceptance.yaml"] }
+  - { id: ui-spec@1, schema: ui-spec.schema.yaml, paths: ["spec/ui-spec.yaml"] }
+  - { id: ref-elements@1, schema: ref-elements.schema.yaml, paths: ["spec/ref-elements.yaml"] }
+  - { id: asset-manifest@1, schema: asset-manifest.schema.yaml, paths: ["spec/asset-manifest.yaml"] }
+  - { id: plan@1, schema: plan.schema.yaml, paths: ["plan/plan.md"] }
+  - { id: contracts@1, schema: contracts.schema.yaml, paths: ["contracts.yaml"] }
+  - { id: use-cases@1, schema: use-cases.schema.yaml, paths: ["use-cases.yaml"] }
+  - { id: visual-parity@1, schema: visual-parity.schema.yaml, paths: ["plan/visual-parity.yaml"] }
+  - { id: change@1, schema: change.schema.yaml, paths: ["change.md"] }
+  - { id: review-report@1, schema: review-report.schema.yaml, paths: ["review/review-report.md"] }
+  - { id: testability-audit@1, schema: testability-audit.schema.yaml, paths: ["ut/testability-audit.md"] }
+  - { id: mock-plan@1, schema: mock-plan.schema.yaml, paths: ["ut/mock-plan.yaml"] }
+  - { id: coverage-evidence@1, schema: coverage-evidence.schema.yaml, paths: ["ut/reports/ac-coverage.json"] }
+  - { id: test-plan@1, schema: test-plan.schema.yaml, paths: ["testing/test-plan.md"] }
+  - { id: test-report@1, schema: test-report.schema.yaml, paths: ["testing/test-report.md"] }

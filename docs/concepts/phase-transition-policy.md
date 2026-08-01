@@ -2,6 +2,7 @@
 
 > **SSOT（对话 UX）**：[user-confirmation-ux.md §8](../../skills/reference/user-confirmation-ux.md)  
 > **SSOT（batch / goal 解析）**：[phase-transition-policy.ts](../../harness/scripts/utils/phase-transition-policy.ts)  
+> **调和 SSOT**：[skill-contracts.md](./skill-contracts.md) + [reconcile-loop.md](./reconcile-loop.md)
 > **运行手册**：[goal-mode-runbook.md](../operations/goal-mode-runbook.md)
 
 Harness **不是**开发流水线；阶段四件套 PASS 只证明**当前 phase 完成**，不授权下一 Skill（`manual` 默认）。
@@ -25,13 +26,18 @@ auto_chain: [spec, plan, coding, review, ut, testing]
 
 `auto_chain` 可省略；`goal-runner` 从 DAG 推导，manifest `chain_override` 可覆盖。
 
-## goal_mode 裁决（DEFERRED）
+## goal_mode：推荐与授权分离
 
-- `PASS` → 进入下一 phase
-- `FAIL` → 重试（未超预算）或 `HALTED`
-- `INCOMPLETE`（可 defer 的外部阻塞）→ 标 **DEFERRED**，按 `dependency_policy` 决定是否续行；**禁止** completed 伪装
+goal driver 不再维护独立的 verdict→next-phase 表。每个 phase 边界统一执行：
 
-下游 phase prompt 须携带 upstream DEFERRED 清单。详见 [goal-mode-runbook.md](../operations/goal-mode-runbook.md)。
+1. `assess@1` 从 summary 1.2、closure、evidence freshness 与 `ReconcileObservation@1` 推荐工作；
+2. driver 校验授权、预算、fencing、device、trust、write guard 等硬门禁；
+3. 只执行一个推荐 phase；
+4. 重跑 assess。
+
+通常 PASS+closed 会使 assess 推荐下一个 gap，FAIL 推荐同 phase，可信 testing 确定性缺陷推荐 coding。外部阻塞由 assess 标识为 deferred gap，是否向下游传播仍由 driver 的 `dependency_policy` 授权。`INCOMPLETE` / `DEFERRED` 禁止伪装为 completed。
+
+`phase-transition-policy.ts` 仍承载 manual/batch 授权和 runner 的安全 guard action vocabulary；跨阶段目标由 assess 唯一选择。下游 prompt 须携带 upstream DEFERRED 清单。详见 [goal-mode-runbook.md](../operations/goal-mode-runbook.md)。
 
 ## 相关 registry id
 

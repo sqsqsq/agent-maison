@@ -117,6 +117,7 @@ import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
   mergeAndWritePhaseState,
+  syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
   runSyncClosure,
   type ReceiptValidation,
@@ -141,6 +142,9 @@ import {
 } from './workflow-loader';
 import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
+import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
+import { resolvePhaseDepth } from './scripts/utils/skill-contract';
+import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
 import {
   dispatchLifecycleHooks,
   type HookDispatchPayload,
@@ -799,26 +803,86 @@ async function main(): Promise<void> {
   // t2 receipt-slim（openspec receipt-slim）：base→骨架→check（读本次 base）→closure patch。
   // 拆环：旧序 receiptValidation 先于 summary 落盘，check-receipt 直读 summary 时会读到
   // 上次 run 的旧件；现在 base summary（无 receipt 依赖、原子写）先落盘。
-  const baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
   }
   const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
-  mergeAndWritePhaseState(projectRoot, workflowSpec, {
-    phase,
-    feature,
-    status: 'harness_finished',
-    last_run_at: new Date().toISOString(),
-    verdict: finalReport.summary.verdict,
-    blocker_count: finalReport.summary.blockers,
-    receipt: receiptValidation,
-  });
-
-  const runSummary = patchRunSummaryClosure(projectRoot, finalReport, baseSummary, receiptValidation, resolvedFrameworkRoot);
+  const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  let runSummary: HarnessRunSummary = baseSummary;
+  let closureFinalized = false;
+  if (
+    !phaseIsGlobal &&
+    closureTrack === 'full' &&
+    finalReport.summary.verdict === 'PASS' &&
+    receiptValidation?.status === 'passed'
+  ) {
+    try {
+      const finalized = finalizePhaseClosure({
+        projectRoot,
+        frameworkRoot: resolvedFrameworkRoot,
+        feature,
+        phase,
+        receipt: { ...receiptValidation, status: 'passed' },
+        blockerCount: finalReport.summary.blockers,
+        persistPhaseState: () =>
+          syncPhaseStateOnReceiptPassStrict(
+            projectRoot,
+            feature,
+            phase,
+            receiptValidation,
+            {
+              blocker_count: finalReport.summary.blockers,
+              frameworkRoot: resolvedFrameworkRoot,
+            },
+          ),
+      });
+      runSummary = finalized.summary;
+      closureFinalized = true;
+    } catch (err) {
+      const e = err as Error;
+      console.error(`   ✗ closure finalization 失败: ${e.message}`);
+      finalReport = failScriptReportWithFatalError(
+        finalReport,
+        'closure_finalization',
+        e,
+        resolvedFrameworkRoot,
+      );
+      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+    }
+  }
+  if (!closureFinalized) {
+    mergeAndWritePhaseState(projectRoot, workflowSpec, {
+      phase,
+      feature,
+      status: 'harness_finished',
+      last_run_at: new Date().toISOString(),
+      verdict: finalReport.summary.verdict,
+      blocker_count: finalReport.summary.blockers,
+      receipt: receiptValidation,
+    });
+    runSummary = patchRunSummaryClosure(
+      projectRoot,
+      finalReport,
+      baseSummary,
+      receiptValidation,
+      resolvedFrameworkRoot,
+    );
+  }
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
 
+  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL) {
+    assessAndRenderNextStep({
+      projectRoot,
+      frameworkRoot: resolvedFrameworkRoot,
+      feature,
+      phase,
+      mode: isAgentSideGoalHarness() ? 'goal_mode' : 'manual',
+      status: `${runSummary.verdict}/${runSummary.closure_status ?? 'open'}`,
+    });
+  }
   // review-fix 轮3（codex P2-2）：账本落盘失败在交互态也 fail-closed——ledger 是熔断与
   // 校准的持久化基础，写失败不得以 exit 0 溜走（goal 态另有 summary 消费路径双保险）。
   if (runSummary.visual_round?.disposition === 'append_failed') {
@@ -991,7 +1055,10 @@ function resolveAssetAxisInheritance(
       quality_axes?: { asset?: { applicable?: boolean; verdict?: string } };
       asset_debt_revision?: string;
     };
-    if (parsed.schema_version !== '1.1' || !parsed.quality_axes?.asset) return null;
+    if (
+      (parsed.schema_version !== '1.1' && parsed.schema_version !== '1.2') ||
+      !parsed.quality_axes?.asset
+    ) return null;
     const upstreamVerdict = String(parsed.quality_axes.asset.verdict ?? 'UNVERIFIED');
     const summaryHash = createHash('sha256').update(raw).digest('hex').slice(0, 16);
     const issues: string[] = [];
@@ -1260,7 +1327,7 @@ function writeRunSummaryBase(
     });
   }
   const summary: HarnessRunSummary = {
-    schema_version: '1.1',
+    schema_version: '1.2',
     phase: report.phase,
     feature: report.feature,
     verdict: effectiveVerdict,
@@ -1286,6 +1353,13 @@ function writeRunSummaryBase(
     // base 初值：未闭环/等待 receipt——closure 定稿归 patchRunSummaryClosure。
     next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     closure_status: 'open',
+    depth: resolvePhaseDepth(
+      frameworkRoot,
+      projectRoot,
+      report.feature,
+      report.phase,
+      resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, report.feature)),
+    ),
     // t2 v2（codex BLOCKER3）：run identity——slim 回执三方绑定的机器锚（同版本 framework 下
     // 旧 PASS 件复用被 sha 失配拒绝）。
     generated_at: new Date().toISOString(),
@@ -1303,11 +1377,10 @@ function writeRunSummaryBase(
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
   }
-  // codex 三轮 P1-4：writer 侧 fail-fast——1.1 契约唯一权威校验；违反=框架缺陷，
-  // 宁可 harness 崩溃也不落一份缺 lattice 的"半 1.1"summary 让消费方各自猜。
+  // Writer fail-fast：1.2 extends the quality lattice with depth and closure state.
   const v11Errors = validateSummaryV11(summary);
   if (v11Errors.length > 0) {
-    throw new Error(`[quality-axes] summary 1.1 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
+    throw new Error(`[quality-axes] summary 1.2 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
   }
   atomicWriteJson(path.join(dir, 'summary.json'), summary);
   return summary;

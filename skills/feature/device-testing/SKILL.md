@@ -31,6 +31,8 @@
 | **标准** | 「对 `home-page` 做真机测试」、已存在需求目录 | ✅ 须存在 spec/plan/acceptance，按 Step 1-7 与 `harness-runner --phase testing --feature <名>` 闭环 |
 | **即席** | 仅描述 bundle id + 自然语言操作步骤，不指向本仓库某 feature | ❌ 不消费需求目录；用占位目录名 `_adhoc`（详见 reference Step 4.B） |
 
+两种模式共享 `device-test-case-kernel`：标准轨把 `acceptance.yaml` 的 device/both P0/P1 AC/BD 归一为 cases（`depth=full`），即席轨把自然语言步骤归一为同一 case 结构（`depth=adhoc`）。仅输入模态与深度不同；设备可用性、安装、真实执行、trace、视觉与 device-policy BLOCKER 一律沿用原门禁，不因即席或降档放宽。
+
 **即席识别启发**：用户给出 `com.xxx.yyy` 类 bundle 字符串且步骤像「打开应用→点某按钮→…」；或未提供与本仓库已有目录匹配的 feature 名，且核心诉求是「当场跑一遍 UI 流程」而非「完成某需求的 testing 阶段门禁」。
 
 ## 核心理念
@@ -89,7 +91,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后真机测试阶段完成（**最终环**）。
 
-**闭环停等（BLOCKER）**：须 **`phase.next_step`** 汇报交付摘要并停等；**禁止**因"流水线已走完"而自动开其它 Skill。若测试报告结论为"不达标"，开发者需修复代码后重新执行 coding → code-review → business-ut → device-testing。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成（含回修起点），执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -125,14 +127,10 @@ Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`�
 | AI Harness Prompt | `framework/harness/prompts/verify-testing.md` |
 | 测试计划/报告模板 | `` `profile-skill-asset:device-testing/test_plan_template` `` / `` `profile-skill-asset:device-testing/test_report_template` `` |
 
-## 下游消费者
-
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **开发者** | test-report.md | 按缺陷清单修复代码 |
-| **产品经理** | test-report.md | 确认功能验收达标 |
-| **Harness（验证层）** | test-plan.md + test-report.md | 脚本/AI 验证文档质量 |
-
 ## Slash/trace 约定
 
 通过 `/device-testing` 或等价快捷入口触发时，须在阶段结束时产出 trace 凭证：`<features_dir>/<feature>/testing/reports/<timestamp>/<model>-devtest/trace.json`（Schema：[trace.schema.json](../../../../harness/trace/trace.schema.json)，`phase: testing`）；同目录 `gap-notes.md`（模板 [gap-notes.template.md](../../../../harness/trace/gap-notes.template.md)）。
+
+## 收尾
+
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

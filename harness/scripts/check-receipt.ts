@@ -51,14 +51,8 @@ import { loadFeatureTrackDecl } from './utils/feature-track';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh, computeGateFingerprint } from './utils/gate-fingerprint';
 import { validateLedgerForClosure } from './utils/headless-assumptions';
-import { collectRequirementSsotPaths, computeRunRequirementSha, listAuthoritativeGoalRuns } from './utils/fidelity-shared';
-import {
-  resolvePhaseEvidenceManifest,
-  writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
-} from './utils/phase-evidence-manifest';
-import { writeReviewClosureAttestation } from './utils/closure-attestation';
-import type { Phase as EvidencePhase } from './utils/types';
+import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
+import { assessAndRenderNextStep } from './utils/assess-renderer';
 import { isClaudeKernelAdapter } from './utils/types';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
 import { validateLiteSchema } from './utils/lite-json-schema';
@@ -66,9 +60,8 @@ import { computeProductWorktreeDigest } from './utils/worktree-digest';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
-  applyClosurePatchFromReceiptValidation,
   isGoalOrchestrationEnv,
-  syncPhaseStateOnReceiptPass,
+  syncPhaseStateOnReceiptPassStrict,
   type FeaturePhase,
 } from './utils/phase-state';
 import {
@@ -1036,92 +1029,57 @@ function main(): void {
         receipt_path: receiptRel,
         exit_code: 0,
       };
-      syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
-        blocker_count: isSlim ? (slimSummary?.blocker_count ?? 0) : typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
-        frameworkRoot,
-        evidence_policy_snapshot: evidencePolicySnapshot,
-      });
-      applyClosurePatchFromReceiptValidation(
-        projectRoot,
-        feature,
-        phase as FeaturePhase,
-        receiptValidation,
-        frameworkRoot,
-      );
-
-      // goal-fakepass-hardening t2/t8：闭环产物——review attestation + 阶段证据快照 +
-      // 回执指针。封装序（openspec design §3.1）：summary 已被 closure patch 定稿 →
-      // （review）attestation → manifest（含 summary/attestation 哈希）→ 指针回写回执
-      // （指针行在规范化剔除集内，回执规范化哈希不变）。生成失败=closure 不成立。
       try {
-        const extraOutputs: string[] = [];
-        if (phase === 'review') {
-          const attRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
-          // P1-1（八轮）：attempt 是字符串（invocation 序数如 "i3"）——旧 Number("i3")=NaN
-          // 使 attempt 永远丢失。直接用字符串。
-          const attAttempt = process.env.MAISON_GOAL_ATTEMPT?.trim();
-          const att = writeReviewClosureAttestation({
-            projectRoot,
-            feature,
-            // 消费态宿主（应用工程）恒预期有产品源码；空 inventory=root discovery
-            // 失败 → fail-closed（closure-attestation 内 throw）
-            expectProductSources: true,
-            gateFingerprint: computeGateFingerprint(frameworkRoot, phase),
-            // P1-2：绑定 run/attempt 身份（此前恒 null，与 spec 不符）
-            runIdentity: attRunId
-              ? { run_id: attRunId, ...(attAttempt ? { attempt: attAttempt } : {}) }
-              : null,
-          });
-          extraOutputs.push(att.absPath);
-          console.log(
-            `   review-closure-attestation 已生成（inventory ${att.attestation.inventory.file_count} 文件）：` +
-              path.relative(projectRoot, att.absPath).replace(/\\/g, '/'),
-          );
-        }
-        // t6/P0-5：需求 SSOT 引用文档 + ux-reference 进阶段血缘输入——改原始需求后
-        // 上游 closure 应判 stale（此前 extraInputs 缺失让需求变更对 closure 隐形）。
-        // P0-2（八轮）：requirementSha 绑定"当前权威 run"的规范化 requirement 内容——
-        // recompute 比对当前权威 requirement，抓"新 run 换需求复用旧 closure"。
-        const featuresDirRel = (fw.paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
-        // e7c2a4d8 T1d（round2 P1）：closure 血缘消费权威枚举——corrupt 残留在场时
-        // extraInputs/requirement 意图集合不完整，closure fail-closed（与 completion ⓪
-        // 门 / runner 截断链 preflight 同一门径）。
-        const corruptForClosure = listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).corruptRuns;
-        if (corruptForClosure.length > 0) {
-          console.error(
-            '\n❌ BLOCKER — goal-runs 存在损坏 run（有执行证据但 manifest.json 缺失）——' +
-              `closure 血缘无法完整重建，fail-closed：${corruptForClosure.map((c) => c.runId).join('、')}`,
-          );
-          process.exit(1);
-        }
-        const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
-        const closureReqSha = computeRunRequirementSha(projectRoot, feature, currentRunId, featuresDirRel);
-        // 九轮 P0：goal 环境闭环必须绑定 requirement 血缘——算不出（manifest 缺失/不可读）
-        // 即 fail-closed，不产出 requirement_sha256:null 的"未绑定" closure。
-        if (isGoalOrchestrationEnv() && closureReqSha === null) {
-          console.error(
-            '\n❌ BLOCKER — goal 环境闭环无法计算 requirement 血缘哈希' +
-              `（goal-runs/${currentRunId ?? '<缺 run id>'}/manifest.json 缺失/不可读）——closure 不成立。`,
-          );
-          process.exit(1);
-        }
-        const manifest = resolvePhaseEvidenceManifest({
+        const finalized = finalizePhaseClosure({
           projectRoot,
-          feature,
-          phase: phase as EvidencePhase,
-          extraInputs: collectRequirementSsotPaths(projectRoot, feature, featuresDirRel),
-          extraOutputs,
           frameworkRoot,
-          requirementSha: closureReqSha,
+          feature,
+          phase,
+          receipt: receiptValidation,
+          blockerCount:
+            isSlim
+              ? slimSummary?.blocker_count ?? 0
+              : typeof sh.blocker_count === 'number'
+                ? sh.blocker_count
+                : 0,
+          evidencePolicySnapshot,
+          persistPhaseState: () =>
+            syncPhaseStateOnReceiptPassStrict(
+              projectRoot,
+              feature,
+              phase as FeaturePhase,
+              receiptValidation,
+              {
+                blocker_count:
+                  isSlim
+                    ? slimSummary?.blocker_count ?? 0
+                    : typeof sh.blocker_count === 'number'
+                      ? sh.blocker_count
+                      : 0,
+                frameworkRoot,
+                evidence_policy_snapshot: evidencePolicySnapshot,
+              },
+            ),
         });
-        const written = writePhaseEvidenceManifest(projectRoot, manifest);
-        const relManifest = path.relative(projectRoot, written.absPath).replace(/\\/g, '/');
-        writeReceiptManifestPointer(projectRoot, feature, phase, relManifest, written.sha256);
-        console.log(`   phase-evidence-manifest 已生成并回写回执指针：${relManifest}`);
+        console.log(
+          `   closure_commit ${finalized.transitioned ? 'published' : 'already current'}：` +
+            `${finalized.closure_fingerprint.slice(0, 16)} (${finalized.manifest_path})`,
+        );
       } catch (err) {
         console.error(`\n❌ BLOCKER — 闭环产物生成失败（closure 不成立）：${(err as Error).message}`);
         process.exit(1);
       }
+    }
+
+    if (!skipStateSync) {
+      assessAndRenderNextStep({
+        projectRoot,
+        frameworkRoot,
+        feature,
+        phase,
+        mode: isGoalOrchestrationEnv() ? 'goal_mode' : 'manual',
+        status: 'PASS/closed',
+      });
     }
 
     process.exit(0);
@@ -1195,7 +1153,7 @@ function collectMultimodalEvidenceAdvisory(
   return { ...gate, effective_image_input: probe.imageInput };
 }
 
-function patchSummarySoftAdvisory(
+export function patchSummarySoftAdvisory(
   projectRoot: string,
   reportDirRel: string | undefined,
   advisory: MultimodalEvidenceGateResult & { effective_image_input?: string },
@@ -1205,6 +1163,9 @@ function patchSummarySoftAdvisory(
   if (!fs.existsSync(summaryPath)) return;
   try {
     const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
+    // Closed summary bytes are manifest-bound evidence. Advisory is presentation-only
+    // and must never mutate an already committed closure.
+    if (summary.closure_status === 'closed') return;
     const existing = Array.isArray(summary.soft_advisories) ? summary.soft_advisories : [];
     const entry: SoftAdvisory = {
       id: advisory.id,
@@ -1245,4 +1206,4 @@ function scanHallucinationCheckboxes(body: string): { total: number; checked: nu
   return { total, checked };
 }
 
-main();
+if (require.main === module) main();

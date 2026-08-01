@@ -382,7 +382,9 @@ const NEGATIVE_VERDICTS = new Set<AxisVerdict>(['FAIL', 'UNVERIFIED', 'STALE', '
 export function validateSummaryV11(summary: unknown): string[] {
   if (!summary || typeof summary !== 'object') return ['summary 非对象'];
   const s = summary as Record<string, unknown>;
-  if (s.schema_version !== '1.1') return [`schema_version=${String(s.schema_version)} 非 1.1`];
+  if (s.schema_version !== '1.1' && s.schema_version !== '1.2') {
+    return [`schema_version=${String(s.schema_version)} 非 1.1/1.2`];
+  }
   const errors: string[] = [];
   if (s.report_validity !== 'PASS' && s.report_validity !== 'FAIL' && s.report_validity !== 'UNVERIFIED') {
     errors.push(`report_validity 缺失/非法（${String(s.report_validity)}）`);
@@ -395,6 +397,14 @@ export function validateSummaryV11(summary: unknown): string[] {
   }
   if (s.quality_axes == null) errors.push('quality_axes 缺失');
   else errors.push(...validateQualityAxes(s.quality_axes));
+  if (s.schema_version === '1.2') {
+    if (typeof s.depth !== 'string' || s.depth.trim().length === 0) {
+      errors.push('depth 缺失/空');
+    }
+    if (s.closure_status !== 'open' && s.closure_status !== 'closed') {
+      errors.push(`closure_status 缺失/非法（${String(s.closure_status)}）`);
+    }
+  }
   return errors;
 }
 

@@ -30,6 +30,9 @@ import {
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
+import { resolvePhaseQuality } from './skill-contract';
+import { resolveFeatureTrack } from './runtime-policy';
+import { loadFeatureTrackDecl } from './feature-track';
 
 // --------------------------------------------------------------------------
 // 报告目录管理
@@ -118,11 +121,27 @@ export function generateScriptReport(
 ): ScriptReport {
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
+  let quality = { depth: 'not_applicable', missing_optional_inputs: [] as string[] };
+  if (feature !== '_global') {
+    try {
+      quality = resolvePhaseQuality(
+        frameworkRoot ?? path.resolve(_harnessRoot, '..'),
+        projectRoot,
+        feature,
+        phase,
+        resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+      );
+    } catch (error) {
+      quality = { depth: 'unknown', missing_optional_inputs: [`contract_resolution_error:${(error as Error).message}`] };
+    }
+  }
   const report: ScriptReport = {
     phase,
     feature,
     timestamp: new Date().toISOString(),
     project_root: projectRoot,
+    quality_depth: quality.depth,
+    missing_optional_inputs: quality.missing_optional_inputs,
     checks: finalized.checks,
     summary,
   };
@@ -151,9 +170,13 @@ export function generateScriptReport(
  *   3. 覆盖写回 script-report.json
  *   4. 删除同目录下可能残留的 ai-prompt.md / merged-report.md（避免下游误读）
  */
+export function fatalFailureKindForStage(stage: 'assemble_ai_prompt' | 'generate_merged_report' | 'closure_finalization'): 'closure_finalization_failed' | 'framework_bug' {
+  return stage === 'closure_finalization' ? 'closure_finalization_failed' : 'framework_bug';
+}
+
 export function failScriptReportWithFatalError(
   report: ScriptReport,
-  stage: 'assemble_ai_prompt' | 'generate_merged_report',
+  stage: 'assemble_ai_prompt' | 'generate_merged_report' | 'closure_finalization',
   err: Error,
   frameworkRoot?: string,
 ): ScriptReport {
@@ -164,6 +187,9 @@ export function failScriptReportWithFatalError(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `[Harness runner fatal] ${err.message}\n${err.stack ?? ''}`,
+    failure_kind: fatalFailureKindForStage(stage),
+    blocking_class: stage === 'closure_finalization' ? 'closure_finalization' : 'framework_bug',
+    actionability: 'human_only',
   };
 
   const updated: ScriptReport = {
@@ -396,6 +422,8 @@ export function generateMergedReport(
   lines.push(`# ${phase.toUpperCase()} 阶段验证报告 — ${feature}`);
   lines.push('');
   lines.push(`> 生成时间: ${new Date().toISOString()}`);
+  lines.push(`> 质量深度: ${scriptReport.quality_depth}`);
+  lines.push(`> 缺失可选输入: ${scriptReport.missing_optional_inputs.join(', ') || 'none'}`);
   lines.push('');
 
   // 脚本 Harness 摘要
@@ -523,6 +551,8 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'='.repeat(60)}`);
   console.log(`  Harness Script Report — ${report.phase}/${report.feature}`);
   console.log(`  ${report.timestamp}`);
+  console.log(`  quality_depth=${report.quality_depth}`);
+  console.log(`  missing_optional_inputs=${report.missing_optional_inputs.join(',') || 'none'}`);
   console.log(`${'='.repeat(60)}`);
   console.log('');
 

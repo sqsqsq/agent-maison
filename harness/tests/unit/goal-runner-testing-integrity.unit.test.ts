@@ -326,19 +326,17 @@ async function runChain(
           gateFingerprint: 'integration-spy', runIdentity: null,
         });
       }
-      // v1.1 完整契约 summary（clean-pass 巡检 validateSummaryV11 全字段校验；
+      // v1.2 完整契约 open summary（goal-runner 通过共享 finalizer 提交 closure；
       // 手搓半 summary 会被判 needs_fix → PARTIAL，链到不了 clean completion）
       const axis = (verdict: string): Record<string, unknown> => ({
         applicable: true, required_for_release: true, verdict,
         blocking_class: null, source_checks: [], resolution: null,
       });
-      // receipt_status/closure_status/next_action 预置为 runner patch 后的终值——
-      // applyClosurePatchFromReceiptValidation 会在 manifest 落盘后回写这三键，
-      // 值相同则字节不变（幂等），manifest 哈希才不 stale（生产链同一时序）。
+      // fake harness 只写 base；不得伪造 closed/closure_commit。
       fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-        schema_version: '1.1',
-        verdict: 'PASS', receipt_status: 'passed', closure_status: 'closed',
-        next_action: 'phase_closed_wait_user',
+        schema_version: '1.2', depth: 'full',
+        verdict: 'PASS', blocker_count: 0, receipt_status: 'missing', closure_status: 'open',
+        next_action: 'run_receipt',
         report_validity: 'PASS', release_readiness: 'READY',
         completion_status: 'complete',
         quality_axes: {

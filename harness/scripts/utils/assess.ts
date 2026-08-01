@@ -1,0 +1,661 @@
+// ============================================================================
+// assess.ts — deterministic, level-triggered feature reconciliation (assess@1)
+// ============================================================================
+
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  featureFilePath,
+  featurePhaseReportsDir,
+} from '../../config';
+import { resolveWorkflowSpec } from '../../workflow-loader';
+import {
+  recomputePhaseEvidenceStaleness,
+  phaseEvidenceManifestPath,
+} from './phase-evidence-manifest';
+import { loadFeatureTrackDecl } from './feature-track';
+import {
+  resolveFeatureTrack,
+  resolvePhaseChain,
+  resolvePhaseClosureSource,
+  type FeatureTrack,
+} from './runtime-policy';
+import {
+  classifyPhaseAssessment,
+  classifyPhaseVerdict,
+  type HarnessVerdict,
+  type DependencyPolicy,
+  type PhaseVerdictAction,
+} from './phase-transition-policy';
+import {
+  loadFeatureContracts,
+  phaseContractIndex,
+  tierSatisfies,
+} from './skill-contract';
+
+export type AssessGapKind =
+  | 'missing'
+  | 'failed'
+  | 'deferred'
+  | 'stale'
+  | 'unclosed'
+  | 'legacy_unverified'
+  | 'insufficient_depth';
+
+export type AssessAuthorizationMode = 'manual' | 'batch_authorized' | 'goal_mode';
+
+export interface AssessAuthorizationContext {
+  mode: AssessAuthorizationMode;
+  through_phase?: string;
+}
+
+/** Injected by a reconcile driver; assess never reads event logs directly. */
+export interface ReconcileObservationV1 {
+  schema_version: '1.0';
+  state: 'active' | 'fused';
+  reason?: string;
+  residual_fingerprints?: string[];
+  phase_outcome?: {
+    phase: string;
+    verdict: string;
+    legacy_action: string;
+    failure_kind?: string;
+    blocking_class?: string;
+    propagate_to_downstream?: boolean;
+    dependency_policy?: DependencyPolicy;
+  };
+  blockers?: Array<{
+    id: string;
+    actionability: 'automatic' | 'human' | 'external' | 'unknown';
+    blocking_class?: string;
+  }>;
+  deterministic_defects?: string[];
+  budgets?: {
+    retries_used: number;
+    max_retries_per_phase?: number;
+    backtracks_used: number;
+  };
+  repeated_round?: {
+    fingerprint: string;
+    count: number;
+  };
+  invalidatable_phases?: string[];
+  signals?: {
+    timed_out: boolean;
+    operator_interrupted: boolean;
+    api_disconnected: boolean;
+  };
+}
+
+export interface AssessPhaseObservation {
+  phase: string;
+  summary_state: 'missing' | 'corrupt' | 'legacy' | 'current';
+  schema_version: string | null;
+  verdict: string | null;
+  closure: 'open' | 'closed' | 'stale';
+  depth: string;
+  required_depth: string | null;
+  depth_satisfied: boolean | null;
+  deferred: boolean;
+  summary_fingerprint: string | null;
+  evidence_fingerprint: string | null;
+}
+
+export interface AssessObservation {
+  schema_version: '1.0';
+  feature: string;
+  workflow: string;
+  track: FeatureTrack;
+  goal_end: string;
+  phases: AssessPhaseObservation[];
+  fingerprints: {
+    workflow: string;
+    track: string;
+    goal: string;
+    run_attempt: string;
+    summaries: string;
+    evidence: string;
+    reconcile: string;
+    observed: string;
+  };
+  reconcile: ReconcileObservationV1 | null;
+}
+
+export interface AssessGap {
+  phase: string;
+  kind: AssessGapKind;
+  detail: string;
+}
+
+export interface AssessRecommendation {
+  action:
+    | 'run_phase'
+    | 'rerun_phase'
+    | 'complete_closure'
+    | 'resolve_deferred'
+    | 'restore_inputs_and_rerun'
+    | 'validate_feature_completion'
+    | 'stop';
+  phase: string | null;
+  reason: string;
+  requires_driver_authorization: true;
+  /** Exact SSOT verdict action when recommendation was derived from a phase outcome. */
+  runner_action?: PhaseVerdictAction;
+}
+
+export interface AssessResult {
+  schema_version: '1.0';
+  kind: 'assess@1';
+  feature: string;
+  workflow: string;
+  track: FeatureTrack;
+  goal_end: string;
+  authorization_context: AssessAuthorizationContext;
+  observed_fingerprint: string;
+  fingerprints: AssessObservation['fingerprints'];
+  observed: { phases: AssessPhaseObservation[] };
+  gaps: AssessGap[];
+  recommendation: AssessRecommendation;
+  alternatives: AssessRecommendation[];
+  stop: { fused: boolean; reason: string | null };
+  run_status_candidate: 'CHAIN_SLICE_COMPLETED' | null;
+  feature_completion: 'REQUIRES_VALIDATION' | null;
+  projection_fingerprint: string;
+}
+
+export interface AssessFeatureOptions {
+  projectRoot: string;
+  frameworkRoot?: string;
+  feature: string;
+  goalEnd?: string;
+  minimumDepthByPhase?: Record<string, string>;
+  authorization?: AssessAuthorizationContext;
+  runId?: string;
+  attemptId?: string;
+  reconcile?: ReconcileObservationV1 | null;
+  writeProjection?: boolean;
+}
+
+export interface NextProjectionReadResult {
+  result: AssessResult;
+  source: 'fresh_projection' | 'recomputed_missing' | 'recomputed_corrupt' | 'recomputed_stale';
+}
+
+function stableJson(value: unknown): string {
+  const normalize = (v: unknown): unknown => {
+    if (v === null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(normalize);
+    return Object.fromEntries(
+      Object.entries(v as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, normalize(child)]),
+    );
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function hash(value: unknown): string {
+  return crypto.createHash('sha256').update(
+    typeof value === 'string' ? value : stableJson(value),
+    'utf8',
+  ).digest('hex');
+}
+
+function fileHash(filePath: string): string | null {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function readJson(filePath: string): Record<string, unknown> | null | 'corrupt' {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : 'corrupt';
+  } catch {
+    return 'corrupt';
+  }
+}
+
+function sliceThrough(phases: string[], end: string): string[] {
+  const index = phases.indexOf(end);
+  if (index < 0) {
+    throw new Error(`[assess] goal_end=${end} 不在 active workflow/track phase chain`);
+  }
+  return phases.slice(0, index + 1);
+}
+
+function isDeferredSummary(summary: Record<string, unknown>): boolean {
+  if (summary.verdict === 'INCOMPLETE') return true;
+  if (summary.completion_status === 'deferred') return true;
+  return (summary.blockers as Array<Record<string, unknown>> | undefined)?.some((blocker) =>
+    ['externalBlocked', 'external_block', 'device_blocked'].includes(
+      String(blocker.blocking_class ?? blocker.classification ?? ''),
+    ),
+  ) ?? false;
+}
+
+export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
+  const workflow = resolveWorkflowSpec(options.projectRoot, {
+    frameworkRoot: options.frameworkRoot,
+  });
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature));
+  const allPhases = resolvePhaseChain(workflow, track).featureOrdered.map(String);
+  if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
+  const goalEnd = options.goalEnd ?? allPhases[allPhases.length - 1];
+  const phases = sliceThrough(allPhases, goalEnd);
+  const frameworkRoot = options.frameworkRoot ??
+    path.resolve(__dirname, '..', '..', '..');
+  const contracts = phaseContractIndex(loadFeatureContracts(frameworkRoot));
+  const staleness = new Map(
+    recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, phases, {
+      frameworkRoot,
+    }).map((entry) => [entry.phase, entry.verdict]),
+  );
+
+  const observedPhases = phases.map((phase): AssessPhaseObservation => {
+    const reportsDir = featurePhaseReportsDir(
+      options.projectRoot,
+      options.feature,
+      phase,
+      frameworkRoot,
+    );
+    const summaryPath = path.join(reportsDir, 'summary.json');
+    const summary = readJson(summaryPath);
+    const evidencePath = phaseEvidenceManifestPath(options.projectRoot, options.feature, phase);
+    const requiredDepth = options.minimumDepthByPhase?.[phase] ?? null;
+    if (summary === null) {
+      return {
+        phase,
+        summary_state: 'missing',
+        schema_version: null,
+        verdict: null,
+        closure: 'open',
+        depth: 'unknown',
+        required_depth: requiredDepth,
+        depth_satisfied: requiredDepth ? false : null,
+        deferred: false,
+        summary_fingerprint: null,
+        evidence_fingerprint: fileHash(evidencePath),
+      };
+    }
+    if (summary === 'corrupt') {
+      return {
+        phase,
+        summary_state: 'corrupt',
+        schema_version: null,
+        verdict: null,
+        closure: 'open',
+        depth: 'unknown',
+        required_depth: requiredDepth,
+        depth_satisfied: requiredDepth ? false : null,
+        deferred: false,
+        summary_fingerprint: fileHash(summaryPath),
+        evidence_fingerprint: fileHash(evidencePath),
+      };
+    }
+    const schemaVersion = typeof summary.schema_version === 'string' ? summary.schema_version : null;
+    const legacy = schemaVersion !== '1.2';
+    const verdict = typeof summary.verdict === 'string' ? summary.verdict : null;
+    const depth = !legacy && typeof summary.depth === 'string' && summary.depth.trim()
+      ? summary.depth.trim()
+      : 'unknown';
+    const indexed = contracts.get(phase);
+    const depthSatisfied = requiredDepth === null
+      ? null
+      : Boolean(indexed && tierSatisfies(indexed.phase, depth, requiredDepth));
+    const evidenceVerdict = staleness.get(phase);
+    let closure: AssessPhaseObservation['closure'] = 'open';
+    if (track === 'full') {
+      const commit = summary.closure_commit as { schema_version?: unknown } | undefined;
+      if (
+        !legacy &&
+        summary.closure_status === 'closed' &&
+        commit?.schema_version === '1.0'
+      ) {
+        closure = evidenceVerdict === 'fresh' ? 'closed' : 'stale';
+      }
+    } else {
+      const scriptReport = readJson(path.join(reportsDir, 'script-report.json'));
+      const scriptVerdict = scriptReport && scriptReport !== 'corrupt'
+        ? String((scriptReport.summary as { verdict?: unknown } | undefined)?.verdict ?? verdict ?? '')
+        : verdict ?? undefined;
+      closure = resolvePhaseClosureSource(track, scriptVerdict, undefined) === 'closed_by_exit_report'
+        ? 'closed'
+        : 'open';
+    }
+    return {
+      phase,
+      summary_state: legacy ? 'legacy' : 'current',
+      schema_version: schemaVersion,
+      verdict,
+      closure,
+      depth,
+      required_depth: requiredDepth,
+      depth_satisfied: depthSatisfied,
+      deferred: isDeferredSummary(summary),
+      summary_fingerprint: fileHash(summaryPath),
+      evidence_fingerprint: fileHash(evidencePath),
+    };
+  });
+
+  const workflowFingerprint = hash(workflow);
+  const trackFingerprint = hash({
+    track,
+    feature_decl: fileHash(featureFilePath(options.projectRoot, options.feature, 'feature.yaml')),
+  });
+  const goalFingerprint = hash({
+    goal_end: goalEnd,
+    minimum_depth_by_phase: options.minimumDepthByPhase ?? {},
+  });
+  const runAttemptFingerprint = hash({
+    run_id: options.runId ?? null,
+    attempt_id: options.attemptId ?? null,
+  });
+  const summariesFingerprint = hash(observedPhases.map((phase) => ({
+    phase: phase.phase,
+    fingerprint: phase.summary_fingerprint,
+  })));
+  const evidenceFingerprint = hash(observedPhases.map((phase) => ({
+    phase: phase.phase,
+    fingerprint: phase.evidence_fingerprint,
+  })));
+  const reconcileFingerprint = hash(options.reconcile ?? null);
+  const observedFingerprint = hash({
+    workflow: workflowFingerprint,
+    track: trackFingerprint,
+    goal: goalFingerprint,
+    run_attempt: runAttemptFingerprint,
+    summaries: summariesFingerprint,
+    evidence: evidenceFingerprint,
+    reconcile: reconcileFingerprint,
+    phases: observedPhases,
+  });
+
+  return {
+    schema_version: '1.0',
+    feature: options.feature,
+    workflow: workflow.name,
+    track,
+    goal_end: goalEnd,
+    phases: observedPhases,
+    fingerprints: {
+      workflow: workflowFingerprint,
+      track: trackFingerprint,
+      goal: goalFingerprint,
+      run_attempt: runAttemptFingerprint,
+      summaries: summariesFingerprint,
+      evidence: evidenceFingerprint,
+      reconcile: reconcileFingerprint,
+      observed: observedFingerprint,
+    },
+    reconcile: options.reconcile ?? null,
+  };
+}
+
+function gapsFromObservation(observation: AssessObservation): AssessGap[] {
+  const gaps: AssessGap[] = [];
+  for (const phase of observation.phases) {
+    if (phase.summary_state === 'missing') {
+      gaps.push({ phase: phase.phase, kind: 'missing', detail: 'summary.json 缺失' });
+      continue;
+    }
+    if (phase.summary_state === 'corrupt') {
+      gaps.push({ phase: phase.phase, kind: 'failed', detail: 'summary.json 损坏或非对象' });
+      continue;
+    }
+    if (phase.summary_state === 'legacy') {
+      gaps.push({
+        phase: phase.phase,
+        kind: 'legacy_unverified',
+        detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 1.2`,
+      });
+      continue;
+    }
+    if (phase.deferred) {
+      gaps.push({ phase: phase.phase, kind: 'deferred', detail: `verdict=${phase.verdict ?? 'unknown'}` });
+      continue;
+    }
+    if (phase.verdict !== 'PASS') {
+      gaps.push({ phase: phase.phase, kind: 'failed', detail: `verdict=${phase.verdict ?? 'missing'}` });
+      continue;
+    }
+    if (phase.closure === 'stale') {
+      gaps.push({ phase: phase.phase, kind: 'stale', detail: 'phase evidence manifest 非 fresh' });
+      continue;
+    }
+    if (phase.closure !== 'closed') {
+      gaps.push({ phase: phase.phase, kind: 'unclosed', detail: 'PASS 但 verified closure 尚未提交' });
+      continue;
+    }
+    if (phase.required_depth && phase.depth_satisfied !== true) {
+      gaps.push({
+        phase: phase.phase,
+        kind: 'insufficient_depth',
+        detail: `actual=${phase.depth}, required=${phase.required_depth}`,
+      });
+    }
+  }
+  return gaps;
+}
+
+function recommendationFor(gap: AssessGap | undefined, fused: boolean): AssessRecommendation {
+  const action = classifyPhaseVerdict({
+    assessment_gap: gap?.kind ?? null,
+    fused,
+  });
+  return {
+    action,
+    phase: gap?.phase ?? null,
+    reason: fused
+      ? 'reconcile observation 已熔断；等待输入或外部状态变化'
+      : gap
+        ? `${gap.kind}: ${gap.detail}`
+        : '链切片无剩余 gap；仍须执行 feature completion validation',
+    requires_driver_authorization: true,
+  };
+}
+
+
+function recommendationForObservation(
+  observation: AssessObservation,
+  gaps: AssessGap[],
+  fused: boolean,
+): AssessRecommendation {
+  if (!fused) {
+    const reconcile = observation.reconcile;
+    const currentPhase = reconcile?.phase_outcome?.phase;
+    const codingTarget = reconcile?.invalidatable_phases?.find((phase) => phase === 'coding');
+    if (
+      reconcile?.state === 'active' &&
+      currentPhase &&
+      codingTarget &&
+      currentPhase !== codingTarget &&
+      (reconcile.deterministic_defects?.length ?? 0) > 0
+    ) {
+      const target = observation.phases.find((phase) => phase.phase === codingTarget);
+      const recommendationAction = classifyPhaseVerdict({
+        assessment_gap: 'deterministic_defects',
+        target_state: target?.summary_state === 'missing' ? 'missing' : 'current',
+      });
+      const runnerAction: PhaseVerdictAction = 'backtrack_to_coding';
+      return {
+        action: recommendationAction,
+        phase: codingTarget,
+        reason: `deterministic_defects: ${reconcile.deterministic_defects!.join(', ')}`,
+        requires_driver_authorization: true,
+        runner_action: runnerAction,
+      };
+    }
+  }
+  const phaseOutcome = observation.reconcile?.phase_outcome;
+  if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {
+    const decision = classifyPhaseAssessment({
+      verdict: phaseOutcome.verdict as HarnessVerdict,
+      phase: phaseOutcome.phase,
+      failure_kind: phaseOutcome.failure_kind,
+      blocking_class: phaseOutcome.blocking_class,
+      dependency_policy: phaseOutcome.dependency_policy ?? {
+        propagate_to_downstream: phaseOutcome.propagate_to_downstream,
+      },
+      retries_used: observation.reconcile?.budgets?.retries_used ?? 0,
+      max_retries_per_phase: observation.reconcile?.budgets?.max_retries_per_phase ?? 2,
+      deterministic_p0_defects:
+        (observation.reconcile?.deterministic_defects?.length ?? 0) > 0,
+    });
+    if (decision.action !== null) {
+      const targetPhase = decision.target === 'coding'
+        ? observation.reconcile?.invalidatable_phases?.find((phase) => phase === 'coding') ?? null
+        : decision.target === 'current'
+          ? phaseOutcome.phase
+          : null;
+      return {
+        action: decision.action,
+        phase: targetPhase,
+        reason: `phase_verdict:${decision.runner_action}; failure_kind=${phaseOutcome.failure_kind ?? 'none'}`,
+        requires_driver_authorization: true,
+        runner_action: decision.runner_action,
+      };
+    }
+    // PASS/advance is an explicit phase outcome, not permission to rescan from
+    // the first historical gap. Advance to the next node in the observed chain;
+    // at the chain end, request final feature validation.
+    if (decision.runner_action === 'advance') {
+      const currentDepthGap = gaps.find(
+        (gap) => gap.phase === phaseOutcome.phase && gap.kind === 'insufficient_depth',
+      );
+      if (currentDepthGap) {
+        const retriesUsed = observation.reconcile?.budgets?.retries_used ?? 0;
+        const maxRetries = observation.reconcile?.budgets?.max_retries_per_phase ?? 2;
+        if (retriesUsed >= maxRetries) {
+          return {
+            action: 'stop',
+            phase: phaseOutcome.phase,
+            reason: `insufficient_depth_retry_exhausted: ${currentDepthGap.detail}`,
+            requires_driver_authorization: true,
+            runner_action: 'halt',
+          };
+        }
+        return {
+          action: 'restore_inputs_and_rerun',
+          phase: phaseOutcome.phase,
+          reason: `insufficient_depth: ${currentDepthGap.detail}`,
+          requires_driver_authorization: true,
+          runner_action: 'retry',
+        };
+      }
+      const currentIndex = observation.phases.findIndex((item) => item.phase === phaseOutcome.phase);
+      const nextPhase = currentIndex >= 0 ? observation.phases[currentIndex + 1]?.phase ?? null : null;
+      return {
+        action: nextPhase ? 'run_phase' : 'validate_feature_completion',
+        phase: nextPhase,
+        reason: `phase_verdict:advance; from=${phaseOutcome.phase}`,
+        requires_driver_authorization: true,
+        runner_action: 'advance',
+      };
+    }
+  }
+  return recommendationFor(gaps[0], fused);
+}
+export function assessObservation(
+  observation: AssessObservation,
+  authorization: AssessAuthorizationContext = { mode: 'manual' },
+): AssessResult {
+  const gaps = gapsFromObservation(observation);
+  const fused = observation.reconcile?.state === 'fused';
+  const recommendation = recommendationForObservation(observation, gaps, fused);
+  const reconciled = gaps.length === 0 && !fused &&
+    recommendation.action === 'validate_feature_completion';
+  const resultWithoutProjection = {
+    schema_version: '1.0' as const,
+    kind: 'assess@1' as const,
+    feature: observation.feature,
+    workflow: observation.workflow,
+    track: observation.track,
+    goal_end: observation.goal_end,
+    authorization_context: authorization,
+    observed_fingerprint: observation.fingerprints.observed,
+    fingerprints: observation.fingerprints,
+    observed: { phases: observation.phases },
+    gaps,
+    recommendation,
+    alternatives: [] as AssessRecommendation[],
+    stop: {
+      fused,
+      reason: fused ? observation.reconcile?.reason ?? 'reconcile_fused' : null,
+    },
+    run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
+    feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
+  };
+  return {
+    ...resultWithoutProjection,
+    projection_fingerprint: hash(resultWithoutProjection),
+  };
+}
+
+export function nextProjectionPath(projectRoot: string, feature: string): string {
+  return featureFilePath(projectRoot, feature, 'next.json');
+}
+
+export function writeNextProjection(
+  projectRoot: string,
+  feature: string,
+  result: AssessResult,
+): string {
+  const target = nextProjectionPath(projectRoot, feature);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const staged = `${target}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(staged, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  fs.renameSync(staged, target);
+  return target;
+}
+
+export function assessFeature(options: AssessFeatureOptions): AssessResult {
+  const observation = observeFeatureState(options);
+  const result = assessObservation(
+    observation,
+    options.authorization ?? { mode: 'manual' },
+  );
+  if (options.writeProjection !== false) {
+    writeNextProjection(options.projectRoot, options.feature, result);
+  }
+  return result;
+}
+
+/**
+ * Continue path: next.json is only a cache. Any absence, corruption, or
+ * authoritative fingerprint mismatch recomputes before the driver can act.
+ */
+export function readFreshNextOrRecompute(
+  options: AssessFeatureOptions,
+): NextProjectionReadResult {
+  const nextPath = nextProjectionPath(options.projectRoot, options.feature);
+  const current = assessFeature({ ...options, writeProjection: false });
+  if (!fs.existsSync(nextPath)) {
+    writeNextProjection(options.projectRoot, options.feature, current);
+    return { result: current, source: 'recomputed_missing' };
+  }
+  let stored: AssessResult;
+  try {
+    stored = JSON.parse(fs.readFileSync(nextPath, 'utf8')) as AssessResult;
+  } catch {
+    writeNextProjection(options.projectRoot, options.feature, current);
+    return { result: current, source: 'recomputed_corrupt' };
+  }
+  if (
+    stored?.kind !== 'assess@1' ||
+    stored.schema_version !== '1.0' ||
+    stored.projection_fingerprint !== current.projection_fingerprint ||
+    stored.observed_fingerprint !== current.observed_fingerprint
+  ) {
+    writeNextProjection(options.projectRoot, options.feature, current);
+    return { result: current, source: 'recomputed_stale' };
+  }
+  return { result: stored, source: 'fresh_projection' };
+}

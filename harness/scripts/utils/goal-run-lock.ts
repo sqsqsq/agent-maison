@@ -26,6 +26,8 @@ export interface LockRecord {
   /** canonical manifest.report_dir（dry 落 goal-runs/.dry/<run_id>）——orphan/progress
    * 按此定位 events/per-run lock，不再固定 goal-runs/<run_id>。 */
   report_dir?: string;
+  /** run-control@1 的公共 fencing epoch；lock 只是当前 owner 投影。 */
+  epoch?: number;
 }
 
 export function isPidAlive(pid: number): boolean {
@@ -123,6 +125,7 @@ export function tryAcquireLock(
     // undefined 时 JSON.stringify 自然省略，legacy 写入面形状不变。
     run_mode: partial.run_mode,
     report_dir: partial.report_dir,
+    epoch: partial.epoch,
   };
 
   try {
@@ -184,6 +187,18 @@ export function touchLock(lockPath: string, ownerId: string): void {
       /* best-effort */
     }
   }
+}
+
+export function setLockEpoch(lockPath: string, ownerId: string, epoch: number): void {
+  const existing = readLockRecord(lockPath);
+  if (!existing || existing.ownerId !== ownerId) {
+    throw new Error('[goal-run-lock] owner mismatch while setting epoch');
+  }
+  existing.epoch = epoch;
+  existing.updated_at = new Date().toISOString();
+  const tmp = `${lockPath}.${process.pid}.epoch.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, lockPath);
 }
 
 export function formatLockBlocker(lockPath: string, existing: LockRecord | null): string {

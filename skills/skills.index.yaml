@@ -58,7 +58,7 @@ skills:
     source_rel: project/goal-mode
     order: 5
     description: >
-      目标模式 goal-runner 薄入口（调用确定性编排器，非自驱动裁决）
+      目标模式生产入口（有人在场先 prepare-run 再走 goal-mode-entry host bridge，无人值守走 detached runner）
     init_next_steps:
       - step_id: goal-optional
         when: always_optional

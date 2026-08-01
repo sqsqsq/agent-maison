@@ -1,0 +1,116 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://skill-contract@1"
+title: AgentMaison feature skill contract
+type: object
+required: [schema_version, skill, skill_doc, phases]
+additionalProperties: false
+properties:
+  schema_version:
+    const: "1.0"
+  skill:
+    type: string
+    pattern: "^[a-z][a-z0-9-]*$"
+  skill_doc:
+    type: string
+    const: SKILL.md
+  phases:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      $ref: "#/$defs/phase"
+$defs:
+  phase:
+    type: object
+    required: [tracks, inputs, produces, verifies, tiers]
+    additionalProperties: false
+    properties:
+      tracks:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { enum: [full, lite] }
+      inputs:
+        type: object
+        required: [required, optional]
+        additionalProperties: false
+        properties:
+          required:
+            type: array
+            items: { $ref: "#/$defs/input" }
+          optional:
+            type: array
+            items:
+              allOf:
+                - { $ref: "#/$defs/input" }
+                - required: [absent_effect]
+      produces:
+        type: array
+        items: { $ref: "#/$defs/output" }
+      verifies:
+        type: object
+        required: [check, depth_field]
+        additionalProperties: false
+        properties:
+          check: { type: string, pattern: "^check-[a-z-]+\\.ts$" }
+          depth_field: { const: summary.depth }
+      control_dependencies:
+        type: array
+        uniqueItems: true
+        items: { type: string }
+      tiers:
+        type: object
+        minProperties: 1
+        additionalProperties:
+          type: object
+          required: [when, satisfies]
+          additionalProperties: false
+          properties:
+            when:
+              type: string
+              description: "V1 DSL: present(id), alternative(id,value), all(...), any(...), not(...), or the sole otherwise."
+            satisfies:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items: { type: string }
+  input:
+    type: object
+    required: [id]
+    additionalProperties: false
+    properties:
+      id: { type: string, pattern: "^[a-z][a-z0-9_]*$" }
+      artifact: { type: string, pattern: "^[a-z][a-z0-9-]*@[1-9][0-9]*$" }
+      kind: { enum: [source, adhoc] }
+      normalizer: { type: string }
+      tracks:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { enum: [full, lite] }
+      alternatives:
+        type: array
+        minItems: 2
+        items:
+          type: object
+          additionalProperties: false
+          properties:
+            value: { type: string, pattern: "^[a-z][a-z0-9_-]*$" }
+            artifact: { type: string, pattern: "^[a-z][a-z0-9-]*@[1-9][0-9]*$" }
+            kind: { enum: [source, adhoc] }
+            normalizer: { type: string }
+          required: [value]
+      absent_effect: { type: string, minLength: 1 }
+    oneOf:
+      - required: [artifact]
+      - required: [kind]
+      - required: [alternatives]
+  output:
+    type: object
+    additionalProperties: false
+    properties:
+      artifact: { type: string, pattern: "^[a-z][a-z0-9-]*@[1-9][0-9]*$" }
+      kind: { const: source }
+      id: { type: string }
+    oneOf:
+      - required: [artifact]
+      - required: [kind, id]

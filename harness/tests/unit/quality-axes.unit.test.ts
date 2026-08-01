@@ -220,16 +220,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: 'completion 消费面：1.1 + visual UNVERIFIED(needs_human) → quality_axis_verified(needs_human) 封顶求人',
+    name: 'completion 消费面：1.2 + visual UNVERIFIED(needs_human) → quality_axis_verified(needs_human) 封顶求人',
     run: async () => withTmpProject(async root => {
       const p = path.join(receiptDirPath(root, 'demo', 'testing'), 'reports', 'summary.json');
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, JSON.stringify({
-        schema_version: '1.1',
+        schema_version: '1.2',
         verdict: 'PASS',
         report_validity: 'PASS',
         release_readiness: 'BLOCKED',
         completion_status: 'FUNCTIONALLY_COMPLETE_VISUAL_PENDING',
+        depth: 'full',
+        closure_status: 'closed',
+        closure_commit: { schema_version: '1.0' },
         quality_axes: {
           functional: { applicable: true, required_for_release: true, verdict: 'PASS', blocking_class: null, source_checks: [], resolution: null },
           visual: {

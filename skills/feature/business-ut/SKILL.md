@@ -54,13 +54,16 @@
 | `use-cases.yaml` | ⚠️仅复杂 feature | plan 产出，含 coordinator/ui_bindings/data_boundaries/state_model/branches，主规划来源 |
 | 业务编排源代码 | ✅ | coding 产出，代码形态自选 |
 | data 层源代码 | ✅ | UT 在 profile 允许边界打桩 |
-| contracts.yaml | ✅ | `data_boundaries[].type` 须来自 `interfaces[].class` |
+| contracts.yaml | 可选 | 存在时校验 `data_boundaries[].type` 与 `interfaces[].class`；缺失则降为 basic 并披露契约断言未覆盖 |
 | acceptance.yaml | ✅ | 含 `ut_layer`；简单 feature 时是主规划来源 |
 | `ut/testability-audit.md` | ✅ | Step 1.5 产出 |
 | `ut/mock-plan.yaml` | ⚠️存在 L0/L1/L2 可测项时必填 | Step 1.6 产出 |
-| plan.md / spec.md / doc/architecture.md | ✅ | 上下文 |
+| plan.md / spec.md | 可选 | plan 缺失时从 acceptance、业务源码 diff scope 与 module catalog 推导测试对象 |
+| doc/architecture.md | ✅ | 架构与依赖红线 |
 
 **缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段。
+
+**质量档位**：`plan+contracts` 齐全为 `full`，否则为 `basic`。Harness 的 `merged-report.md` 报告头与 `summary.json.depth` 必须同时显式标注档位；basic 只省略不可执行的契约专项覆盖，acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 
 ## 规约参考
 
@@ -88,7 +91,7 @@
 7. **Step 4 测试注册**：套件注册入口登记新增用例；测试框架依赖已声明；无测试目录时按 profile 标准目录创建。
 8. **Step 5 质量门禁自检**（14 项，见门禁清单表 + reference 详述）。
 9. **Step 6 机器回执**：harness PASS 后写 `ut/reports/ac-coverage.json`（unit 层覆盖摘要，非 SSOT）；device/both 缺 `device_focus` 回 spec 补全，不新建平行 todo。
-10. **Step 7 输出交付摘要**：UseCase/DAG/UT 文件清单 + 覆盖率统计 → 下一步指向 Step 8 Harness 验证。
+10. **Step 7 输出交付摘要**：UseCase/DAG/UT 文件清单 + 覆盖率统计，供 Step 8 Harness 验证消费。
 11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**触及业务源码进约束#12 HARD STOP**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
 12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
@@ -128,7 +131,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 1. `<features_dir>/<feature>/ut/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后业务级 UT 阶段完成，**具备**进 device-testing 的资格；**不授权**自动开 device-testing。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`ut.ok_to_testing`** 或 **`phase.next_step`** 停等（除非 batch 授权）。物理拦截层会读 `.current-phase.json` 与上述四份凭证决定能否放行。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 约束与注意事项
 
@@ -155,14 +158,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 | AI Harness Prompt | `framework/harness/prompts/verify-ut.md` |
 | Trace | `<features_dir>/<feature>/ut/reports/<timestamp>/<model>-ut/trace.json`（phase=ut）+ 同目录 `gap-notes.md` |
 
-## 下游消费者
-
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **device-testing** | acceptance.yaml(device_focus) + UT + DAG | 真机 test-plan 与追溯 |
-| **Harness（验证层）** | use-cases.yaml + DAG + UT | 脚本/AI 验证 UT 质量 |
-| **开发者** | DAG + 业务编排源码 | 理解业务流程，维护 UT |
-
 ## Slash/trace 约定
 
 通过 `/business-ut` 或等价快捷入口触发时，须在阶段结束时产出 trace 凭证：`<features_dir>/<feature>/ut/reports/<timestamp>/<model>-ut/trace.json`（Schema：[trace.schema.json](../../../../harness/trace/trace.schema.json)，`phase: ut`）；同目录 `gap-notes.md`（模板 [gap-notes.template.md](../../../../harness/trace/gap-notes.template.md)）。
@@ -176,3 +171,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 ├── check-ut.report.md
 └── verifier.report.md     # verifier 跑 verify-ut.md（可选）
 ```
+
+## 收尾
+
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

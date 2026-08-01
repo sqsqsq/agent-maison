@@ -61,7 +61,9 @@ export type FailureKind =
   /** P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误（safeRun 捕获的 TypeError/RangeError/
    * SyntaxError，[Harness 内部错误]）——agent 的产物修不好框架代码，重试只会空转（案发
    * 现场 spec 前 5 轮反复"修"不存在于自己产物里的问题）→ 首触即 halt，指向回灌源仓。 */
-  | 'framework_bug';
+  | 'framework_bug'
+  /** Harness closure finalizer failed after a PASS/receipt gate. */
+  | 'closure_finalization_failed';
 
 /** Windows STATUS_CONTROL_C_EXIT，spawn/spawnSync 在 win32 上把 Ctrl+C 杀死的子进程 exit code 报成这个无符号 32 位值。 */
 export const WINDOWS_CTRL_C_EXIT_CODE = 3221225786;
@@ -253,6 +255,7 @@ const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
   'await_human_p0_skip',
   'await_human_fidelity_tier',
   'capability_missing_strong_intent',
+  'closure_finalization_failed',
 ]);
 
 export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActionability {
@@ -470,6 +473,10 @@ export function classifyFailureKind(
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
 
+  // Closure finalization is a distinct machine-visible halt class; do not downgrade it to content regression.
+  if ((summary?.blockers ?? []).some((b) => b.classification === 'closure_finalization_failed')) {
+    return 'closure_finalization_failed';
+  }
   // P0-5：非超时轮 integrity 在场即归 framework_integrity_block（一律首触 halt——07-13
   // chrys 案 i8/i9 就是这里落 code_regression 后被"revert first"话术导向回滚宿主真修复）。
   // 复审修复（cursor）：integrity 须在 external_block 之前判——framework 完整性失守时

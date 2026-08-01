@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/testability-audit@1"
+title: UT testability audit
+x-artifact-id: testability-audit@1
+x-version: 1
+x-authority: "Narrative compatibility boundary; UT checkers remain semantic authorities."
+type: string
+minLength: 1

@@ -1,0 +1,14 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/acceptance@1"
+title: Feature acceptance criteria
+x-artifact-id: acceptance@1
+x-version: 1
+x-authority: "Compatibility shape; semantic and coverage truth remains check-acceptance.ts."
+type: object
+required: [criteria]
+properties:
+  criteria: { type: array }
+  boundaries: { type: array }
+  performance: {}
+  coverage_summary: {}
+additionalProperties: true

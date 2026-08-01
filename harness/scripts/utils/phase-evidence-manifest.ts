@@ -111,12 +111,13 @@ export const PHASE_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   coding: [],
   review: ['review-report.md'],
   ut: [],
+  change: ['change.md'],
   testing: ['test-plan.md', 'test-report.md'],
 };
 
 /** spec 阶段可选产出（存在才纳入；ui-spec/use-cases 等按需产出的 artifact） */
 export const PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
-  spec: ['use-cases.yaml'],
+  plan: ['use-cases.yaml'],
 };
 
 /**
@@ -128,6 +129,8 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
   // P0-3（plan 7c4f2e9b，codex 二轮 must-fix#1）：补齐 spec/asset-manifest.yaml——
   // 本表是 PASS 快照 frozen deliverables 的 SSOT 之一，缺登记=该产物漏出冻结面。
   spec: ['spec/ui-spec.yaml', 'spec/ref-elements.yaml', 'spec/asset-manifest.yaml'],
+  plan: ['plan/visual-parity.yaml'],
+  ut: ['ut/testability-audit.md', 'ut/mock-plan.yaml', 'ut/reports/ac-coverage.json'],
 };
 
 /**
@@ -149,6 +152,12 @@ export interface ResolveManifestOptions {
   featurePathOpts?: FeaturePathOptions;
   /** framework 根（gate 指纹/workflow 定位）；缺省从 projectRoot 推导 */
   frameworkRoot?: string;
+  /**
+   * Staged bytes whose hash must be recorded under the canonical project path.
+   * Used by closure finalization so the manifest binds the final summary bytes
+   * before those bytes are atomically published.
+   */
+  stagedOutputs?: Array<{ canonicalPath: string; sha256: string }>;
   /** 闭环时当前权威 run 的规范化 requirement 内容哈希（codex 八轮 P0-2）——check-receipt
    * 由 computeRunRequirementSha(当前 MAISON_GOAL_RUN_ID) 传入。 */
   requirementSha?: string | null;
@@ -321,6 +330,18 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     ),
   ];
 
+  const stagedHashes = new Map<string, string>();
+  for (const staged of opts.stagedOutputs ?? []) {
+    if (!/^[0-9a-f]{64}$/.test(staged.sha256)) {
+      throw new Error(`[phase-evidence-manifest] staged output sha256 非法：${staged.canonicalPath}`);
+    }
+    const abs = path.isAbsolute(staged.canonicalPath)
+      ? staged.canonicalPath
+      : path.join(projectRoot, staged.canonicalPath);
+    const rel = toPosixRel(projectRoot, abs);
+    stagedHashes.set(rel, staged.sha256);
+  }
+
   const entryMap = new Map<string, EvidenceEntry>();
   const addEntry = (absPath: string, role: 'input' | 'output'): void => {
     const rel = toPosixRel(projectRoot, absPath);
@@ -335,7 +356,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
       if (prev.role !== role) prev.role = 'both';
       return;
     }
-    const hash = sha256File(absPath);
+    const hash = stagedHashes.get(rel) ?? sha256File(absPath);
     entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null });
   };
 
@@ -357,7 +378,8 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   const reportsDir = path.join(receiptDirPath(projectRoot, feature, String(phase)), 'reports');
   for (const name of PHASE_REPORTS_OUTPUT_FILES) {
     const abs = path.join(reportsDir, name);
-    if (fs.existsSync(abs)) addEntry(abs, 'output');
+    const rel = toPosixRel(projectRoot, abs);
+    if (fs.existsSync(abs) || stagedHashes.has(rel)) addEntry(abs, 'output');
   }
   for (const p of opts.extraOutputs ?? []) {
     addEntry(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'output');
@@ -533,7 +555,7 @@ export function recomputePhaseEvidenceStaleness(
   projectRoot: string,
   feature: string,
   chain: string[],
-  opts?: { currentRequirementSha?: string | null },
+  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string },
 ): PhaseStalenessResult[] {
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
@@ -588,7 +610,7 @@ export function recomputePhaseEvidenceStaleness(
     }
     // ②b 环境重算（codex 六轮 P0-5：记录了却不重算=装饰）：config/workflow/gate 指纹/
     //    framework 版本任一变化 → stale（environment_changed）。
-    const envNow = resolveEnvironment(projectRoot, phase);
+    const envNow = resolveEnvironment(projectRoot, phase, opts?.frameworkRoot);
     const envRec = loaded.manifest.environment;
     const envChanged: string[] = [];
     if (envNow.framework_config_sha256 !== envRec.framework_config_sha256) envChanged.push('framework_config');

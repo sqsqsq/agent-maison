@@ -1,6 +1,6 @@
 # Goal Mode 运维细则（条件加载：实际启动/监控 goal run 时读）
 
-> SSOT 索引见 [`skills/project/goal-mode/SKILL.md`](../project/goal-mode/SKILL.md)。本文承载该 Skill 的深度操作细节与事故知识，触发/命令骨架仍以主文档为准。
+> SSOT 索引见 [`skills/project/goal-mode/SKILL.md`](../project/goal-mode/SKILL.md)。本文承载该 Skill 的可执行命令、host bridge 协议与事故知识；主文档只负责触发与安全边界。
 
 ## 运行身份（RESOLVED_ADAPTER）解析阶梯
 
@@ -33,6 +33,41 @@
 
 **边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
+## 可执行命令（从实例工程的 `framework/harness/` 目录运行）
+
+无人值守新 run（`activeAdapter` / `adapterSource` 来自上节 personal setup 对账结果）：
+
+```bash
+npx ts-node scripts/goal-runner.ts --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --detach
+```
+
+同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
+
+```bash
+npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
+npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --force-resume --detach
+```
+
+新起 attended run 先由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge：
+
+```powershell
+npx ts-node scripts/goal-mode-entry.ts --prepare-run --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
+```
+
+命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
+
+有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，并逐轮输出一行 `phase_execute_request` JSON。active adapter 必须为每个请求提供一个隔离 phase context，并向 stdin 回一行 `{"status":"passed|failed|waiting","phase":"...","details":"..."}`；不得由 Skill 自建循环或 token：
+
+```bash
+npx ts-node scripts/goal-mode-entry.ts --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
+```
+
+读取状态与有界监控：
+
+```bash
+npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
+npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --max-seconds 240
+```
 ## 启动方式（survival-first）事故背景
 
 goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟），goal 模式的承诺是**无人值守过夜跑完**。**必须纠正的概念错误**：宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让你**立即拿回控制权**，但进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾时会被宿主回收（实测：用 `is_background` 直挂的 run 在轮次收尾即被杀，留下"显示运行中的尸体"）。**"拿回控制权" ≠ "进程能活过我的会话"。**

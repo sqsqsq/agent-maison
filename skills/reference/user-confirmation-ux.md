@@ -252,9 +252,11 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 用户通过 `/goal-mode`、自然语言（**目标模式 / 全自动 / 无人值守全自动**）或 [goal-mode](../project/goal-mode/SKILL.md) 显式启动时，`transition_policy=goal_mode`。解析 SSOT：`resolveTransitionPolicy` — **goal_mode 优先于** §8.2 的 `batch_authorized`（同句同时命中时以 goal 为准）。
 
-主 agent **自跑** goal-runner（勿让用户手跑 harness）；跨 phase 推进由 **runner + harness verdict** 裁决，**不是**对话内自驱动。运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`。
+运行方式只暴露 **有人在场 / 无人值守**：明确意图直接映射；歧义时使用 [confirmation-registry.yaml](./confirmation-registry.yaml) 的 `goal.run_mode`；`--detach` 恒为无人值守。不得在菜单中暴露 in-session/headless/tier。
 
-- DEFERRED（外部阻塞）≠ completed；最终报告仅 `COMPLETED` 表示无 DEFERRED。
+主 agent **自跑** driver/goal-runner（勿让用户手跑 harness）。跨 phase 推荐只来自 `assess@1`，driver 再执行授权、预算、fencing、设备与 trust 门禁；每次只执行一个 phase 后重新 assess。运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`。
+
+- DEFERRED（外部阻塞）≠ completed；新 run 的成功态是 `CHAIN_SLICE_COMPLETED`，feature 完成仍须 `verify-feature-completion=VALID`。
 - 运行手册：`framework/docs/operations/goal-mode-runbook.md`
 
 ### 8.3 `phase.next_step` portable 模板
@@ -263,12 +265,12 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 {current_phase} 阶段已闭环（harness / verifier / receipt / trace 齐全）。
 
 请选择下一步（回复编号；支持 widget 时可直接选，同轮仍附下列编号）：
-1. 进入下一 Skill — {next_skill_label}
+1. 执行 assess 推荐动作 — {assess_recommendation}
 2. 暂停 — 本阶段到此，暂不进入下游
 3. 其它 — 我在对话中说明意图
 ```
 
-选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 spec→plan、coding→code-review review）。
+`{assess_recommendation}` 来自刚生成且指纹已验证的 `assess@1`；投影位于 `<paths.features_dir>/<feature>/next.json`。缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 原子重算（只读巡检加 `--no-write`）；不得手改投影。推荐不构成授权，仍由当前 driver 按 `transition_policy` 裁决。
 
 ---
 

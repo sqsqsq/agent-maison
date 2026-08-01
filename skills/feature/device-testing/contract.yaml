@@ -1,0 +1,43 @@
+schema_version: "1.0"
+skill: device-testing
+skill_doc: SKILL.md
+phases:
+  testing:
+    tracks: [full]
+    inputs:
+      required:
+        - id: cases
+          alternatives:
+            - { value: acceptance, artifact: acceptance@1 }
+            - { value: adhoc, kind: adhoc, normalizer: adhoc-nl-split }
+        - { id: tested_code, kind: source }
+      optional:
+        - id: spec
+          artifact: spec@1
+          absent_effect: "Adhoc execution does not require a feature specification."
+        - id: plan
+          artifact: plan@1
+          absent_effect: "Adhoc execution derives a normalized plan from supplied cases."
+        - id: contracts
+          artifact: contracts@1
+          absent_effect: "Contract-specific traceability is omitted."
+        - id: use_cases
+          artifact: use-cases@1
+          absent_effect: "Use-case branch context is omitted."
+        - id: review_report
+          artifact: review-report@1
+          absent_effect: "Testing does not assume a separate review report."
+    produces:
+      - { artifact: test-plan@1 }
+      - { artifact: test-report@1 }
+    verifies:
+      check: check-testing.ts
+      depth_field: summary.depth
+    control_dependencies: [ut]
+    tiers:
+      full:
+        when: "alternative(cases, acceptance)"
+        satisfies: [full]
+      adhoc:
+        when: otherwise
+        satisfies: [adhoc]

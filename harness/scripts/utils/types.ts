@@ -484,10 +484,10 @@ export interface SoftAdvisory {
 
 /** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐）
  * schema 1.1（blind-visual-hardening d1）：新增 report_validity + quality_axes +
- * release_readiness + completion_status——writer 恒写 1.1；1.0 仅兼容读取，
- * 不作 1.1 completion 干净依据（verify-feature-completion 强制）。 */
+ * release_readiness + completion_status。schema 1.2 新增 depth + closure_commit；
+ * writer 恒写 1.2，1.0/1.1 仅兼容读取并视作 legacy_unverified。 */
 export interface HarnessRunSummary {
-  schema_version: '1.0' | '1.1';
+  schema_version: '1.0' | '1.1' | '1.2';
   phase: Phase;
   feature: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
@@ -567,6 +567,15 @@ export interface HarnessRunSummary {
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
+  /** Contract-local execution depth; legacy summaries read as unknown. */
+  depth?: string;
+  /** Full-track verified closure marker. It intentionally excludes the manifest hash. */
+  closure_commit?: {
+    schema_version: '1.0';
+    committed_at: string;
+    receipt_path: string;
+    evidence_manifest_path: string;
+  };
   /** t2 v2（receipt-slim run identity）：base summary 生成时刻（ISO） */
   generated_at?: string;
   /** t2 v2：生成时 git HEAD——slim 回执须与 claimed_completion_commit_sha 及当前 HEAD 三方一致，杜绝旧 PASS 件复用 */
@@ -633,6 +642,8 @@ export interface ScriptReport {
   feature: string;
   timestamp: string;
   project_root: string;
+  quality_depth: string;
+  missing_optional_inputs: string[];
   checks: CheckResult[];
   summary: ReportSummary;
   compat_applied?: ScriptReportCompatApplied;
