@@ -26,6 +26,7 @@ import {
 import {
   acceptConsumedHandoff,
   consumeHandoffAtBoundary,
+  type HandoffMailboxQuarantine,
   readHandoffRequest,
   writeHandoffRequest,
 } from './goal-handoff';
@@ -60,6 +61,18 @@ export interface InSessionRoundOptions {
   leaseMs?: number;
   reconcile?: ReconcileObservationV1;
   executePhase: (phase: string, recommendation: AssessRecommendation) => Promise<InSessionPhaseOutcome>;
+}
+
+function appendHandoffMailboxQuarantined(
+  options: Pick<InSessionRoundOptions, 'projectRoot' | 'manifest' | 'runDir' | 'token'>,
+  notice: HandoffMailboxQuarantine,
+): void {
+  appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
+    type: 'handoff_mailbox_quarantined',
+    original_file: notice.original_file,
+    quarantined_file: notice.quarantined_file,
+    reason: notice.reason,
+  });
 }
 
 export function resolveGoalRunModeIntent(
@@ -161,7 +174,9 @@ export async function runInSessionRound(
 
   renewSessionLease(options.runDir, options.token, options.leaseMs ?? 60_000);
   assertFencedOwner(options.runDir, options.token, 'assess');
-  const handoffRequest = readHandoffRequest(options.runDir);
+  const handoffRequest = readHandoffRequest(options.runDir, {
+    on_quarantined: (notice) => appendHandoffMailboxQuarantined(options, notice),
+  });
   const acceptedHandoff = acceptConsumedHandoff(options.runDir, options.token, 'session');
   if (acceptedHandoff) {
     appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
@@ -340,8 +355,11 @@ export function handoffSessionToDetached(
     run_id: options.token.run_id,
     from_epoch: options.token.epoch,
     target_owner_kind: 'process',
+    on_quarantined: (notice) => appendHandoffMailboxQuarantined(options, notice),
   });
-  const consumed = consumeHandoffAtBoundary(options.runDir, options.token);
+  const consumed = consumeHandoffAtBoundary(options.runDir, options.token, Date.now(), {
+    on_quarantined: (notice) => appendHandoffMailboxQuarantined(options, notice),
+  });
   if (consumed.kind !== 'consumed') throw new Error('[goal-in-session] handoff consume failed');
   appendGoalEventFenced(options.projectRoot, options.manifest, options.runDir, options.token, {
     type: 'handoff_requested',

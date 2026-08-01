@@ -459,6 +459,21 @@ const MUST_FIX_TEXT = '添卡首页左侧银行 logo 全部缺失——恢复 me
 
 // ---------------------------------------------------------------------------
 
+test('corrupt phase-boundary handoff mailbox is quarantined and headless run reaches terminal', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    hmacKey: 'mailbox-quarantine-secret',
+    onSpec: ({ root: hostRoot, runId }) => {
+      writeFile(hostRoot, `doc/features/${FEATURE}/goal-runs/${runId}/handoff-request.json`, '{not-json');
+    },
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+  });
+  assertRunReachedEnd(probe, 'corrupt handoff mailbox');
+  assert(hasEvent(probe.events, 'handoff_mailbox_quarantined'), 'quarantine event must be authoritative');
+  assert(fs.readdirSync(probe.reportDir).some(name => /^handoff-request\.invalid-.*\.json$/.test(name)),
+    'quarantine file must remain in the same run directory');
+});
+
 test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源码改动，testing 不写 → 正常放行', async () => {
   const { root } = setupHost();
   // 模拟"新 goal 的未提交需求 + 用户手上的源码 dirty"（v22 前的 dirty-vs-HEAD 判据会误伤这里）

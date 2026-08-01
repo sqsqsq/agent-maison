@@ -583,6 +583,36 @@ function recommendationFor(gap: AssessGap | undefined, fused: boolean): AssessRe
   };
 }
 
+function recommendationForGap(
+  observation: AssessObservation,
+  gap: AssessGap | undefined,
+  fused: boolean,
+): AssessRecommendation {
+  if (!fused && gap?.kind === 'insufficient_assurance') {
+    const phaseOutcome = observation.reconcile?.phase_outcome;
+    if (phaseOutcome?.verdict === 'PASS' && phaseOutcome.phase === gap.phase) {
+      const retriesUsed = observation.reconcile?.budgets?.retries_used ?? 0;
+      const maxRetries = observation.reconcile?.budgets?.max_retries_per_phase ?? 2;
+      if (retriesUsed >= maxRetries) {
+        return {
+          action: 'stop',
+          phase: gap.phase,
+          reason: `insufficient_assurance_retry_exhausted: ${gap.detail}`,
+          requires_driver_authorization: true,
+          runner_action: 'halt',
+        };
+      }
+      return {
+        action: 'restore_inputs_and_rerun',
+        phase: gap.phase,
+        reason: `insufficient_assurance: ${gap.detail}`,
+        requires_driver_authorization: true,
+        runner_action: 'retry',
+      };
+    }
+  }
+  return recommendationFor(gap, fused);
+}
 
 function recommendationForObservation(
   observation: AssessObservation,
@@ -644,45 +674,8 @@ function recommendationForObservation(
         runner_action: decision.runner_action,
       };
     }
-    // PASS/advance is an explicit phase outcome, not permission to rescan from
-    // the first historical gap. Advance to the next node in the observed chain;
-    // at the chain end, request final feature validation.
-    if (decision.runner_action === 'advance') {
-      const currentAssuranceGap = gaps.find(
-        (gap) => gap.phase === phaseOutcome.phase && gap.kind === 'insufficient_assurance',
-      );
-      if (currentAssuranceGap) {
-        const retriesUsed = observation.reconcile?.budgets?.retries_used ?? 0;
-        const maxRetries = observation.reconcile?.budgets?.max_retries_per_phase ?? 2;
-        if (retriesUsed >= maxRetries) {
-          return {
-            action: 'stop',
-            phase: phaseOutcome.phase,
-            reason: `insufficient_assurance_retry_exhausted: ${currentAssuranceGap.detail}`,
-            requires_driver_authorization: true,
-            runner_action: 'halt',
-          };
-        }
-        return {
-          action: 'restore_inputs_and_rerun',
-          phase: phaseOutcome.phase,
-          reason: `insufficient_assurance: ${currentAssuranceGap.detail}`,
-          requires_driver_authorization: true,
-          runner_action: 'retry',
-        };
-      }
-      const currentIndex = observation.phases.findIndex((item) => item.phase === phaseOutcome.phase);
-      const nextPhase = currentIndex >= 0 ? observation.phases[currentIndex + 1]?.phase ?? null : null;
-      return {
-        action: nextPhase ? 'run_phase' : 'validate_feature_completion',
-        phase: nextPhase,
-        reason: `phase_verdict:advance; from=${phaseOutcome.phase}`,
-        requires_driver_authorization: true,
-        runner_action: 'advance',
-      };
-    }
   }
-  return recommendationFor(gaps[0], fused);
+  return recommendationForGap(observation, gaps[0], fused);
 }
 export function assessObservation(
   observation: AssessObservation,

@@ -149,14 +149,16 @@ const cases: TestCase[] = [
   },  {
     name: 'batch authorization gate reaches real in-session waiting behavior',
     run: () => withSession(async (env) => {
-      const manifest = { ...env.manifest, end_phase: 'testing' as const };
-      for (const phase of ['spec', 'plan', 'coding', 'review']) {
+      fs.writeFileSync(path.join(env.root, 'doc', 'features', 'demo', 'feature.yaml'), 'track: lite\n', 'utf8');
+      const manifest = { ...env.manifest, start_phase: 'change' as const, end_phase: 'exit' as const };
+      for (const phase of ['change', 'coding']) {
         const dir = featurePhaseReportsDir(env.root, 'demo', phase, FRAMEWORK_ROOT);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-          schema_version: '1.2', verdict: 'PASS', closure_status: 'closed',
+          schema_version: '1.2', verdict: 'PASS', closure_status: 'open',
           assurance: 'full', blockers: [],
         }), 'utf8');
+        fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify({ summary: { verdict: 'PASS' } }), 'utf8');
       }
       let called = false;
       const result = await runInSessionRound({
@@ -164,13 +166,13 @@ const cases: TestCase[] = [
         token: env.token, manifest,
         workflow: resolveWorkflowSpec(env.root, { frameworkRoot: FRAMEWORK_ROOT }),
         adapter: 'codex', mode: 'attended', round: 1,
-        authorization: { mode: 'batch_authorized', through_phase: 'review' },
-        reconcile: { schema_version: '1.0', state: 'active', phase_outcome: { phase: 'review', verdict: 'PASS', legacy_action: 'advance' } },
+        authorization: { mode: 'batch_authorized', through_phase: 'coding' },
+        reconcile: { schema_version: '1.0', state: 'active', phase_outcome: { phase: 'coding', verdict: 'PASS', legacy_action: 'advance' } },
         executePhase: async (phase) => { called = true; return { status: 'passed', phase }; },
       });
       assert(result.status === 'waiting', `status=${result.status}`);
-      assert(result.assessment?.recommendation.phase === 'ut', JSON.stringify(result.assessment?.recommendation));
-      assert(!called, 'ut outside through=review must not execute');
+      assert(result.assessment?.recommendation.phase === 'exit', JSON.stringify(result.assessment?.recommendation));
+      assert(!called, 'exit outside through=coding must not execute');
     }),
   },  {
     name: 'in-session happy path executes one recommended phase in isolated callback',
@@ -288,29 +290,30 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'host bridge releases owner when pre-executor mailbox validation throws',
+    name: 'host bridge quarantines a malformed mailbox and reaches its terminal round',
     run: async () => {
       const env = mkProject();
       try {
         fs.mkdirSync(env.runDir, { recursive: true });
         fs.writeFileSync(path.join(env.runDir, 'manifest.json'), `${JSON.stringify(env.manifest, null, 2)}\n`, 'utf8');
-        fs.writeFileSync(path.join(env.runDir, 'handoff-request.json'), '{"schema":"broken"}', 'utf8');
-        let threw = false;
-        try {
-          await runGoalModeHostBridge({
-            projectRoot: env.root,
-            frameworkRoot: FRAMEWORK_ROOT,
-            feature: 'demo',
-            runId: 'r1',
-            adapter: 'codex',
-            maxRounds: 1,
-            executePhase: async (phase) => ({ status: 'passed', phase }),
-          });
-        } catch (error) {
-          threw = String(error).includes('mailbox');
-        }
-        assert(threw, 'malformed mailbox must fail closed');
-        assert(readRunControl(env.runDir, 'r1')?.owner?.state === 'released', 'outer bridge finally must release owner');
+        const mailbox = path.join(env.runDir, 'handoff-request.json');
+        fs.writeFileSync(mailbox, '{"schema":"broken"}', 'utf8');
+        const result = await runGoalModeHostBridge({
+          projectRoot: env.root,
+          frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'demo',
+          runId: 'r1',
+          adapter: 'codex',
+          maxRounds: 1,
+          executePhase: async (phase) => ({ status: 'passed', phase }),
+        });
+        assert(result.status === 'fused', `terminal status=${result.status}`);
+        assert(readRunControl(env.runDir, 'r1')?.owner?.state === 'released', 'terminal bridge must release owner');
+        assert(!fs.existsSync(mailbox), 'malformed mailbox must be renamed');
+        assert(fs.readdirSync(env.runDir).some(name => /^handoff-request\.invalid-.*\.json$/.test(name)),
+          'quarantine file must preserve malformed bytes');
+        assert(fs.readFileSync(path.join(env.runDir, 'events.jsonl'), 'utf8').includes('handoff_mailbox_quarantined'),
+          'quarantine must be observable in the authoritative event log');
       } finally {
         fs.rmSync(env.root, { recursive: true, force: true });
       }

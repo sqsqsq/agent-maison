@@ -231,7 +231,7 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'PASS advances from current phase even when an earlier disk gap exists',
+    name: 'PASS does not advance past an earlier disk gap',
     run: () => {
       const reconcile = observation({
         phase_outcome: { phase: 'review', verdict: 'PASS', legacy_action: 'none' },
@@ -256,12 +256,13 @@ const cases: TestCase[] = [
         },
         reconcile,
       }, { mode: 'goal_mode' });
-      assert(assessed.recommendation.phase === 'ut', JSON.stringify(assessed.recommendation));
-      assert(assessed.recommendation.runner_action === 'advance', 'advance marker lost');
+      assert(assessed.recommendation.action === 'run_phase', JSON.stringify(assessed.recommendation));
+      assert(assessed.recommendation.phase === 'spec', JSON.stringify(assessed.recommendation));
+      assert(assessed.recommendation.runner_action === undefined, JSON.stringify(assessed.recommendation));
       assert(selectRunnerActionFromAssess({
         assessment: assessed, observation: reconcile, currentPhase: 'review', chain,
         driverGuardAction: 'none',
-      }) === 'advance', 'PASS must advance');
+      }) !== 'advance', 'PASS must not skip an earlier gap');
     },
   },
   {

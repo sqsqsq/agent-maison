@@ -117,6 +117,47 @@ const cases: TestCase[] = [
       assert(fresh.request_id === 'fresh' && fresh.status === 'pending', 'fresh request');
     }),
   },  {
+    name: 'invalid JSON, schema, and missing fields are quarantined without throwing',
+    run: () => withRun((dir) => {
+      const mailbox = path.join(dir, 'handoff-request.json');
+      const malformed = [
+        { body: '{not-json', reason: 'invalid_json' },
+        { body: JSON.stringify({ schema: 'wrong' }), reason: 'invalid_shape' },
+        { body: JSON.stringify({ schema: 'goal-handoff-request@1', request_id: 'q1' }), reason: 'invalid_shape' },
+      ] as const;
+      for (const [index, sample] of malformed.entries()) {
+        fs.writeFileSync(mailbox, sample.body, 'utf8');
+        const notices: Array<{ reason: string; original_file: string; quarantined_file: string | null }> = [];
+        const result = readHandoffRequest(dir, {
+          now_ms: 1_700_000_000_000 + index,
+          on_quarantined: (notice) => notices.push(notice),
+        });
+        assert(result === null, `malformed #${index} must be absent`);
+        assert(!fs.existsSync(mailbox), `malformed #${index} original must be renamed`);
+        assert(notices.length === 1 && notices[0].reason === sample.reason, `notice #${index}`);
+        assert(notices[0].original_file === mailbox && notices[0].quarantined_file !== null, `path #${index}`);
+        assert(fs.existsSync(notices[0].quarantined_file!), `quarantine bytes #${index}`);
+      }
+    }),
+  },
+  {
+    name: 'writing a handoff self-heals a quarantined mailbox',
+    run: () => withRun((dir) => {
+      const mailbox = path.join(dir, 'handoff-request.json');
+      fs.writeFileSync(mailbox, '{not-json', 'utf8');
+      const notices: Array<{ quarantined_file: string | null }> = [];
+      const request = writeHandoffRequest(dir, {
+        request_id: 'fresh-after-quarantine', run_id: 'r1', from_epoch: 1, target_owner_kind: 'session',
+        now_ms: 1_700_000_000_000,
+        on_quarantined: (notice) => notices.push(notice),
+      });
+      assert(request.request_id === 'fresh-after-quarantine', 'fresh request written');
+      assert(readHandoffRequest(dir)?.request_id === request.request_id, 'fresh request readable');
+      assert(notices.length === 1 && notices[0].quarantined_file !== null, 'quarantine observed');
+      assert(fs.existsSync(notices[0].quarantined_file!), 'original bytes preserved');
+    }),
+  },
+  {
     name: 'target owner kind mismatch cannot accept',
     run: () => withRun((dir) => {
       ensureRunControl(dir, 'r1');

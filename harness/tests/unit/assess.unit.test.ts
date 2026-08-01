@@ -205,6 +205,21 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'PASS-open closure recommendation is identical with an active PASS reconcile outcome',
+    run: () => {
+      const baseline = assessObservation(observation({ closure: 'open' }));
+      const reconciled = assessObservation(observation({ closure: 'open' }, {
+        schema_version: '1.0',
+        state: 'active',
+        phase_outcome: { phase: 'spec', verdict: 'PASS', legacy_action: 'advance' },
+        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+        residual_fingerprints: [],
+      }));
+      assert(reconciled.recommendation.action === baseline.recommendation.action, JSON.stringify(reconciled.recommendation));
+      assert(reconciled.recommendation.phase === baseline.recommendation.phase, JSON.stringify(reconciled.recommendation));
+      assert(reconciled.recommendation.reason === baseline.recommendation.reason, JSON.stringify(reconciled.recommendation));
+    },
+  },  {
     name: 'legacy closed is legacy_unverified',
     run: () => {
       const result = assessObservation(observation({

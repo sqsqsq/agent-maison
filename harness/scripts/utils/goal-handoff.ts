@@ -25,6 +25,17 @@ export interface GoalHandoffRequestV1 {
   rejection_reason?: string;
 }
 
+export interface HandoffMailboxQuarantine {
+  original_file: string;
+  quarantined_file: string | null;
+  reason: 'invalid_json' | 'invalid_shape';
+}
+
+export interface ReadHandoffRequestOptions {
+  now_ms?: number;
+  on_quarantined?: (notice: HandoffMailboxQuarantine) => void;
+}
+
 function mailboxPath(runDir: string): string {
   return path.join(runDir, HANDOFF_REQUEST_NAME);
 }
@@ -36,18 +47,65 @@ function atomicWrite(filePath: string, value: GoalHandoffRequestV1): void {
   fs.renameSync(tmp, filePath);
 }
 
-export function readHandoffRequest(runDir: string): GoalHandoffRequestV1 | null {
+function isValidHandoffRequest(value: unknown): value is GoalHandoffRequestV1 {
+  if (!value || typeof value !== 'object') return false;
+  const request = value as Partial<GoalHandoffRequestV1>;
+  return request.schema === 'goal-handoff-request@1' &&
+    typeof request.request_id === 'string' && request.request_id.length > 0 &&
+    typeof request.run_id === 'string' && request.run_id.length > 0 &&
+    Number.isInteger(request.from_epoch) &&
+    (request.target_owner_kind === 'process' || request.target_owner_kind === 'session') &&
+    typeof request.requested_at === 'string' && typeof request.expires_at === 'string' &&
+    (request.status === 'pending' || request.status === 'consumed' ||
+      request.status === 'accepted' || request.status === 'rejected');
+}
+
+function quarantineInvalidMailbox(
+  filePath: string,
+  reason: HandoffMailboxQuarantine['reason'],
+  options: ReadHandoffRequestOptions,
+): void {
+  const stamp = new Date(options.now_ms ?? Date.now()).toISOString().replace(/[:.]/g, '-');
+  const parsed = path.parse(filePath);
+  let quarantinedFile = path.join(parsed.dir, `${parsed.name}.invalid-${stamp}${parsed.ext}`);
+  for (let suffix = 1; fs.existsSync(quarantinedFile); suffix += 1) {
+    quarantinedFile = path.join(parsed.dir, `${parsed.name}.invalid-${stamp}-${suffix}${parsed.ext}`);
+  }
+  let renamedTo: string | null = null;
+  try {
+    fs.renameSync(filePath, quarantinedFile);
+    renamedTo = quarantinedFile;
+  } catch {
+    // A concurrent owner may have already replaced the mailbox. Never delete the
+    // malformed bytes; callers continue with no mailbox and retain the original.
+  }
+  try {
+    options.on_quarantined?.({
+      original_file: filePath,
+      quarantined_file: renamedTo,
+      reason,
+    });
+  } catch {
+    // Quarantine is a recovery path: observer failures must not re-brick a run.
+  }
+}
+
+export function readHandoffRequest(
+  runDir: string,
+  options: ReadHandoffRequestOptions = {},
+): GoalHandoffRequestV1 | null {
   const filePath = mailboxPath(runDir);
   if (!fs.existsSync(filePath)) return null;
-  const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as GoalHandoffRequestV1;
-  if (
-    value.schema !== 'goal-handoff-request@1' ||
-    !value.request_id ||
-    !value.run_id ||
-    !Number.isInteger(value.from_epoch) ||
-    (value.target_owner_kind !== 'process' && value.target_owner_kind !== 'session')
-  ) {
-    throw new Error('[goal-handoff] mailbox shape invalid');
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    quarantineInvalidMailbox(filePath, 'invalid_json', options);
+    return null;
+  }
+  if (!isValidHandoffRequest(value)) {
+    quarantineInvalidMailbox(filePath, 'invalid_shape', options);
+    return null;
   }
   return value;
 }
@@ -62,9 +120,13 @@ export function writeHandoffRequest(
     target_owner_kind: RunOwnerKind;
     ttl_ms?: number;
     now_ms?: number;
+    on_quarantined?: ReadHandoffRequestOptions['on_quarantined'];
   },
 ): GoalHandoffRequestV1 {
-  const existing = readHandoffRequest(runDir);
+  const existing = readHandoffRequest(runDir, {
+    now_ms: input.now_ms,
+    on_quarantined: input.on_quarantined,
+  });
   const requestId = input.request_id ?? randomUUID();
   if (existing?.request_id === requestId) return existing;
   const now = new Date(input.now_ms ?? Date.now());
@@ -102,9 +164,10 @@ export function consumeHandoffAtBoundary(
   runDir: string,
   token: RunFenceToken,
   nowMs: number = Date.now(),
+  options: ReadHandoffRequestOptions = {},
 ): ConsumeHandoffResult {
   assertFencedOwner(runDir, token, 'handoff_poll');
-  const request = readHandoffRequest(runDir);
+  const request = readHandoffRequest(runDir, { ...options, now_ms: options.now_ms ?? nowMs });
   if (!request) return { kind: 'none' };
   if (request.status !== 'pending') return { kind: 'duplicate', request };
   let reason: string | null = null;

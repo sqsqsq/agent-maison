@@ -299,6 +299,7 @@ import {
 import {
   acceptConsumedHandoff,
   consumeHandoffAtBoundary,
+  type HandoffMailboxQuarantine,
   readHandoffRequest,
 } from './utils/goal-handoff';
 import { quiesceRunOwner } from './utils/goal-run-control';
@@ -3915,7 +3916,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 仅为后备）。不加新锁机制。
   try {
   if (runControl) {
-    const handoffRequestBeforeAccept = readHandoffRequest(runControl.dir);
+    const recordHandoffMailboxQuarantine = (notice: HandoffMailboxQuarantine): void => {
+      goalEvents.emit({
+        type: 'handoff_mailbox_quarantined',
+        original_file: notice.original_file,
+        quarantined_file: notice.quarantined_file,
+        reason: notice.reason,
+      });
+    };
+    const handoffRequestBeforeAccept = readHandoffRequest(runControl.dir, {
+      on_quarantined: recordHandoffMailboxQuarantine,
+    });
     const acceptedHandoff = acceptConsumedHandoff(runControl.dir, runControl.token, 'process');
     if (acceptedHandoff) {
       goalEvents.emit({
@@ -7360,7 +7371,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         // Cooperative handoff is polled only after a complete phase verdict boundary.
         if (runControl) {
-          const handoff = consumeHandoffAtBoundary(runControl.dir, runControl.token);
+          const handoff = consumeHandoffAtBoundary(runControl.dir, runControl.token, Date.now(), {
+            on_quarantined: (notice) => goalEvents.emit({
+              type: 'handoff_mailbox_quarantined',
+              original_file: notice.original_file,
+              quarantined_file: notice.quarantined_file,
+              reason: notice.reason,
+            }),
+          });
           if (handoff.kind === 'rejected') {
             goalEvents.emit({
               type: 'handoff_rejected',
