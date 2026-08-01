@@ -5,7 +5,7 @@
 //（复用 round6 真实废图夹具：空白/纯蓝——同时验证"单色 icon 合法"的反误伤边界）；
 // ③分角色占位生成确定性 + SVG 可见性静态判 + system_symbol 不落文件；
 // ④渲染可见性 calibrate：纯色"截图"上区域 invisible / 真实 mockup 内容区 visible
-//（阈值版本 r1-calibrate 的 synthetic 双向校准锚）。
+//（阈值版本 r1-debt-gated 的 synthetic 双向校准锚）。
 // jimp 实跑用例按仓库惯例以 isJimpAvailable 守卫。
 // ============================================================================
 

@@ -53,7 +53,7 @@ replay_run:
 | M7 | summary 1.1：`quality_axes` 四轴如实（存在占位素材时 visual=UNVERIFIED、`completion_status=FUNCTIONALLY_COMPLETE_VISUAL_PENDING`、`release_readiness=BLOCKED`——**如实=通过**，谎报 COMPLETE=失败） | 各 phase summary.json |
 | M8 | test-report 结论披露视觉债务（`visual_debt_disclosure` PASS）；无「达标可发布」裸奔 | test-report.md + visual-debt.md |
 | M9 | 负面裁决传播：过程中任何 review「不通过」/testing「不达标」都阻断了推进（summary FAIL + 下游 upstream_verdict_gate） | 各 phase summary 时序 |
-| M10 | 产物 hash/gate_fingerprint 新鲜（无 stale 豁免）；calibrate 观察项零误报记录（P0-B enforce 升级判据之一） | receipts + visual-feedback.identity |
+| M10 | 产物 hash/gate_fingerprint 新鲜（无 stale 豁免）；render-visibility 观察项误报记录（用于阈值/夹具校准，不触发自动升级） | receipts + visual-feedback.identity |
 
 ## 3. 人工验收（rubric receipt，阈值冻结不许事后调）
 
@@ -80,7 +80,7 @@ replay_run:
 
 ## 4. 结果回灌（做完必填）
 
-- calibrate 误报观察：`render_visibility_calibrate` 本轮误报数=___（连续两轮 0 → 触发 P0-B enforce 升 BLOCKER 落地）
+- 渲染可见性误报观察：`render_visibility_calibrate` 本轮误报数=___（回灌阈值/夹具；findings 仍经 visual-debt 阻断 release，不设自动 enforce）
 - gallery 实机段：blocks 编译通过=___；维护者基线截图采集=___（P0-C 5.6 诚实边界收口）
-- visual_feedback hard 信号准确率观察 → 决定是否升独立 BLOCKER（P1-E 7.2 阻断承载再评估）
+- visual_feedback hard 信号准确率观察 → 校准信号/夹具；硬事实继续由既有 OCR 门禁承载（不升独立 BLOCKER）
 - 四组对比截图归档至 `D:\1.code\对比结果\1-bc-opencard\4-盲档根治后/`（命名沿 1-8 屏矩阵）

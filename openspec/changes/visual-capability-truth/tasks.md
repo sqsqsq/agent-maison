@@ -65,9 +65,9 @@
 - [x] 6.1 contracts `integration_points` 机器块 + `integration_scope_consistency`（plan 期 FAIL + binding 实存验证）
 - [x] 6.2 headless `plan.scope_expansion` 与 integration_points 矛盾 → halt 问人
 - [x] 6.3 `host_entry_reachability`（coding 期静态走查）
-- [x] 6.4 locator calibrate（七类分母 + 覆盖率落盘 WARN）
-- [ ] 6.5 locator 宿主两 run 验证（需用户宿主配合，结果回灌）
-- [ ] 6.6 locator enforce（pixel_1to1 P0 <80% BLOCKER）——**6.5 完成前保持 pending，不得提前勾选**
+- [x] 6.4 locator 终态诊断（七类分母 + 覆盖率落盘 WARN）
+- [ ] 6.5 locator 宿主两 run 回灌（需用户宿主配合；只校准分母/夹具，不作为自动升级条件）
+- [x] 6.6 locator 独立 enforce 取消（3.0.0 收尾决定）：覆盖率是定位断言能力量测，低覆盖导致 B 类断言 SKIP，不直接表达产品质量或 visual-debt；宿主两 run 不触发自动 BLOCKER。
 - [x] 6.7a `test_case_flow` machine block + Markdown 一致性门禁 + 级联三分归类（BLOCKED_BY 非 PASS：进分母/阻 completion/verdict 不变）
 - [x] 6.7b TC 执行器级联控制（前置失败跳过 dependent / fresh_app reset 执行 / reset 失败归 BLOCKED_BY_ENV）——依赖 hylyre 逐例驱动能力（当前 wheel 一次跑全 plan），codex 实施 review P1-1 诚实重开 —— **[顺延 3.1.0 · 2026-07-30 盘点]** 交由 plan c2e9f4d7（视觉证据链深化） 承载；本项为新增能力/外部工具依赖，非 3.0.0 修复项的验收，不作发布阻塞。
 

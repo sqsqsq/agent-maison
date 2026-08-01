@@ -17,13 +17,14 @@ receipt 新鲜度）。切片二引入 schema 1.1 后，传播消费面切换 `q
 会诱使消费方把它当产品轴参与 release 判定（required_for_release 对它无意义）。
 现 `conclusion_with_verdict` 等报告合法性检查归入 report_validity 计算；产品裁决走 quality_axes。
 
-### 1.3 P0-B 渲染可见性两验收节点（codex 四轮③）
+### 1.3 P0-B 渲染可见性终态债务门控观察（3.0.0 收尾决定）
 
-拆 `p0b-calibrate-render-visibility` 与 `p0b-enforce-render-visibility`：
-calibrate 期冻结——正样本（本事故 6 屏截图：空白图标区）≥6、反样本（VL 宿主正常截图 +
-扁平合法 UI：纯色背景卡片/大留白设计）≥10、可接受误报率 0/反样本集、阈值版本号
-（`render_visibility_threshold_version`）、升级条件（连续两轮真实 run 零误报）。
-WARN 观察期内 P0-B 整体**不得标记完成**；enforce（升 BLOCKER）落地才算达成。
+`render_visibility_calibrate` 保留为稳定 check id 的 r1-debt-gated 观察节点：冻结正样本
+（本事故 6 屏截图：空白图标区）≥6、反样本（VL 宿主正常截图 + 扁平合法 UI：纯色背景卡片/
+大留白设计）≥10 与版本化阈值。命中以 MAJOR/WARN 结构化 findings 落入 visual-debt；open debt
+令 visual 轴 UNVERIFIED 并阻断 release。不会再为同一像素启发式事实增设独立 phase BLOCKER/
+`enforce`：它会形成重复阻断，且单次误报会伤害无人值守运行。宿主两 run 只用于误报记录、
+夹具扩充和阈值校准；若将来需要新硬门，须以该证据单独立项。
 
 ### 1.4 债务状态 accepted ≠ closed（codex 四轮④）
 

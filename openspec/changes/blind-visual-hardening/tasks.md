@@ -1,7 +1,7 @@
 ## 1. 立项（实施顺序 1）
 
 - [x] 1.1 OpenSpec change 立项（proposal/design/六域 specs；plan a9d4c7e2 四轮 review 定稿为源）
-- [x] 1.2 四轮 review 8 条实施备注落 design.md §1（两切片过渡/report_validity 落盘/calibrate-enforce 拆分/accepted≠closed/P1-E 措辞/crop provenance 枚举/锚点字符集/≥4/5 首跑预期）
+- [x] 1.2 四轮 review 8 条实施备注落 design.md §1（两切片过渡/report_validity 落盘/P0-B 债务门控终态/accepted≠closed/P1-E 措辞/crop provenance 枚举/锚点字符集/≥4/5 首跑预期）
 
 ## 2. P0-A 切片一：负面裁决传播（实施顺序 2）
 
@@ -27,8 +27,8 @@
 - [x] 4.2 role/criticality 机器派生（asset-integrity.ts：key 语义+icon.kind 证据交叉；criticality 由 P0 屏派生；agent 声明失配→conformance 违例不作数）
 - [x] 4.3 物化 sanity role 分档（assessMaterializedFile + coding `asset_materialization_sanity`）：brand-critical 空白/纯色/损坏 → BLOCKER 档位无关；单色 icon/mask 反误伤边界；阈值独立冻结版本 r1
 - [x] 4.4 分角色占位生成器（generateRolePlaceholder，确定性 SVG——CJK 首字文字头像走系统字体渲染无字体依赖；illustration→中性插画框；system_symbol→SymbolGlyph 指引不落文件；svgLooksVisible 禁空白占位）
-- [x] 4.5 render-visibility.ts calibrate 节点：uitree Image bbox×截图区域三信号合议（结构 lumaStddev+背景 ΔE2000）；阈值版本 r1-calibrate；WARN 观察不阻断；bbox 归一化换算（round6 转置教训防复发）；接线 visual-diff-check 入口 wrapper
-- [ ] 4.6 enforce 节点（升 BLOCKER；条件=连续两轮真实 run 零误报——**待 P1-G 宿主实测回灌后单独落**；观察期内 P0-B 渲染可见性子项不算达成）
+- [x] 4.5 render-visibility.ts 债务门控观察节点：uitree Image bbox×截图区域三信号合议（结构 lumaStddev+背景 ΔE2000）；阈值版本 r1-debt-gated；MAJOR/WARN findings 入 visual-debt，open debt 阻断 release；bbox 归一化换算（round6 转置教训防复发）；接线 visual-diff-check 入口 wrapper
+- [x] 4.6 独立 enforce 取消（3.0.0 收尾决定）：同一事实已由 visual-debt→visual UNVERIFIED→release BLOCKED 承载；不叠加 phase BLOCKER。P1-G 回灌仅校准阈值/夹具，不触发自动升级。
 - [x] 4.7 单测 21 例（core 6 + profile 15）：禁令条件矩阵/role 失配/brand-critical 阻断/占位确定性/可见性夹具双向（round6 真废图+真 mockup）。验收：typecheck 0 · unit 2117/2117 · fixtures 44/44
 
 ## 5. P0-C 盲档 UI kit（实施顺序 5）
@@ -55,7 +55,7 @@
 ## 7. P1-E 确定性反馈（实施顺序 7）
 
 - [x] 7.1 `visual-feedback.ts`：JSON SSOT（身份=version+package digest(RELEASE-MANIFEST 哈希)+gate_fingerprint+commit 可空）+ md 投影 + ref/actual 文件哈希绑定；接线 visual-diff wrapper
-- [x] 7.2 两类信号分立：声明文案缺失=hard（子串容错防 OCR 拼行误报）；text_extra/region_color(OCR 锚定分区 ΔE2000)/line_rhythm=advisory 恒不产 hard；**阻断承载声明**：文本存在性 BLOCKER 归既有 OCR 门禁，本 check WARN 观察产出（防同一事实双 BLOCKER 抖动，P1-G 回灌后再评估独立升级）——偏差已在文件头声明
+- [x] 7.2 两类信号分立：声明文案缺失=hard（子串容错防 OCR 拼行误报）；text_extra/region_color(OCR 锚定分区 ΔE2000)/line_rhythm=advisory 恒不产 hard；**阻断承载声明**：文本存在性 BLOCKER 归既有 OCR 门禁，本 check WARN 观察产出（防同一事实双 BLOCKER 抖动；P1-G 回灌只校准信号/夹具，不预留独立升级）——偏差已在文件头声明
 - [x] 7.3 收敛五态（first_round/converged/converging/stalled/regressing）自上一轮指纹集对比；**偏差声明**：未直改 evaluateVisualRound 输入面——stalled/regressing 事实与既有 fuse 同源（visual_diff 结构化轮次承载 defect 指纹），不并行造熔断状态机（openspec visual-diff spec 语义内）
 - [x] 7.4 `isDeterministicFeedbackRequired` 机器派生（盲档∧ui_change，数据驱动非配置开关）；**偏差声明**：capture-completeness pixel-only 早退未改（那些是 spec 期 OCR 完备性检查非设备采集；设备采集本就档位无关，quiescence 仍 pixel-only 属既有语义）
 - [x] 7.5 nav 档位无关 BLOCKER 回归 tripwire（源码锚定：BLOCKER/FAIL + 注释锚 + 禁 fidelityRatchet 回归——深管线端到端归 P1-G）
@@ -71,7 +71,7 @@
 
 - [x] 9.1 8 屏 screen_id+variant 固定矩阵 + fixture 前置条件表（docs/operations/blind-host-replay-runbook.md §1/§0）
 - [x] 9.2 机器验收清单 M1-M10 + 人工 rubric receipt 模板（r1-frozen 冻结规则内联）+ 首轮"显式接受债务"预期声明（§2/§3）
-- [x] 9.3 发布包 digest 记录规程 + 结果回灌表（calibrate 误报→enforce 升级判据 / gallery 实机段 / visual_feedback 阻断承载再评估）（§0/§4）
+- [x] 9.3 发布包 digest 记录规程 + 结果回灌表（render-visibility 误报记录→阈值/夹具校准 / gallery 实机段 / visual_feedback 既有 OCR 承载确认）（§0/§4）
 - [ ] 9.4 **实机复验执行**（用户宿主：minimax 2.7 + 真机 + 新发布包）——framework 侧物料已备齐，此项属外部依赖
 
 ## 10. 全局验证（每切片完成后滚动执行）
@@ -83,8 +83,8 @@
 - [x] 10.5 MIGRATION.md 四条 breaking + 非 breaking 能力段落
 - [x] 10.6 `npm run release:verify`：**除 plan-version 门禁外全 PASS**——8 个 3.0.0 未完结 plan 命中
   （7 个存量：consumer-guard/critic-loop/轻量化/goal超时/layout-oracle/signed-hap/ut-sign-gap，
-  与 goal-fakepass 4.6 同性质非本 change 引入；第 8 个=本 plan a9d4c7e2，因 P0-B enforce 与
-  P1-G 实机段悬置而诚实未完结）。发布前由各 plan 收口。
+  与 goal-fakepass 4.6 同性质非本 change 引入；第 8 个=本 plan a9d4c7e2，仅因 P1-G 实机段
+  悬置而诚实未完结）。发布前由各 plan 收口。
 - [x] 10.7 归档期 openspec artifacts 重生成 —— **[2026-07-30 移出实现任务]** 这是**归档期动作**，不是实现项：本 change 归档那一刻执行 `node scripts/patch-openspec-artifacts.mjs`。已移入下方「Archive checklist」；实现期无从执行，故此处不再作为待办跟踪。⚠ **执行前提**（2026-07-30 误触实测）：该脚本**不幂等**——CLI_PREFIX 注入的 lookbehind 防不住已 patch 文本（`npm run openspec -- list` 里的 `openspec ` 前缀是 `npm run `，不匹配 `(?<!npm run openspec -- )`），二次运行产出 `npm run npm run openspec -- -- list` 损坏形态（本次误触损坏 8 个 skill 文件并已 git 回滚）。**幂等修复已列入 3.0 小修合集 plan f4b2c8e6**；在它落地前，归档时须先确认目标文件未被 patch 过。
 
 ## Archive checklist（归档那一刻执行，非实现任务）

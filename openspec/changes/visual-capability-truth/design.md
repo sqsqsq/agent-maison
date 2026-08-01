@@ -225,8 +225,9 @@ max_files / change kind → 翻转 unauthorized → HALT。
   `device_test_run` 仍 FAIL，仅根因三分（root-fail/blocked-by/independent-fail）；
 - locator-required 分母（P1-H）：identity anchor 成员 / bbox 几何断言目标 /
   forbidden-overlap 参与元素 / must_have_elements / region attest 元素 / 交互目标 /
-  UI kit block 实例锚点；calibrate（WARN+落盘）→ 两真实宿主 run 验证 → enforce
-  （pixel_1to1 P0 覆盖 <80% BLOCKER；enforce 前任务保持 pending）；
+  UI kit block 实例锚点；终态为 WARN+落盘的定位断言能力量测。两真实宿主 run 仅回灌分母/
+  夹具；它不直接表达产品质量或 visual-debt，故不预留 pixel_1to1 <80% 的自动 BLOCKER/enforce。
+  若未来需要硬门，须以宿主证据单独立项；
 - 结构保真拆轴：`static_structure_conformance`（coding，现状保留）+
   `runtime_mount_conformance`（testing，以 uitree 挂载树为证据）→ 视觉轴聚合；
 - asset 轴 provenance 继承：testing 无本阶段 asset 检查时继承**证据引用**（source

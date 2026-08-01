@@ -7,8 +7,7 @@
 //   advisory（连续指标：区域主色 ΔE / 行距节奏比）——默认不阻断，只报事实。
 // 【阻断承载声明（measured rollout）】本模块产出 = 修复输入 SSOT；文本缺失类阻断由既有
 // OCR 门禁（visual-diff-ocr-gates gross-missing-anchor 等）继续承载，本 check 观察产出
-// （WARN 列 hard findings）——待 P1-G 宿主实测回灌后再评估是否把 hard 升独立 BLOCKER，
-// 避免同一事实双 BLOCKER 抖动。红线：不产单一全局相似度当质量结论（历史证伪）。
+// （WARN 列 hard findings）——终态：阻断由既有 OCR 门禁承载，本 check 不设独立 BLOCKER。红线：不产单一全局相似度当质量结论（历史证伪）。
 // 收敛：与上一轮 feedback JSON 的指纹集对比（converging|stalled|regressing|converged）；
 // stalled 与既有 visual-rounds-ledger no-progress fuse 同源事实（defect 指纹由 visual_diff
 // 结构化轮次承载——本模块不并行造熔断状态机，见 openspec visual-diff spec）。

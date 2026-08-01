@@ -33,16 +33,16 @@ Enforcement: `profiles/hmos-app/harness/{asset-materialization-sanity,placeholde
 - **WHEN** coding materializes placeholder PNGs whose jimp stats show blank content for brand-critical bank logos
 - **THEN** the materialization gate SHALL FAIL (BLOCKER) naming each asset, at semantic_layout no less than at pixel_1to1
 
-### Requirement: On-device rendered visibility is verified in a calibrate-then-enforce rollout
+### Requirement: On-device rendered visibility is a debt-gated observation
 
-A device-side check SHALL compare uitree Image/self-drawn node bboxes against the device screenshot region for: indistinguishability from surrounding background, absent foreground contrast, absent edge/structure signal, and declared-vs-rendered bbox consistency. Rollout is two acceptance nodes: `calibrate` (WARN; frozen positive samples ≥6 from the incident screenshots, negative samples ≥10 including flat legitimate UI, acceptable false-positive rate 0 on the negative set, versioned thresholds) then `enforce` (BLOCKER after two consecutive real runs with zero false positives). The capability SHALL NOT be reported complete while in calibrate.
+A device-side check SHALL compare uitree Image/self-drawn node bboxes against the device screenshot region for: indistinguishability from surrounding background, absent foreground contrast, absent edge/structure signal, and declared-vs-rendered bbox consistency. It SHALL keep versioned r1-debt-gated thresholds calibrated by frozen positive samples ≥6 from the incident screenshots and negative samples ≥10 including flat legitimate UI. A hit SHALL emit MAJOR/WARN structured findings into visual-debt; an open debt SHALL project visual UNVERIFIED and release BLOCKED. The check SHALL NOT add a duplicate phase BLOCKER/enforce path. Host runs record false positives only for fixture/threshold calibration; any new hard gate requires a separate evidence-backed change.
 
-Enforcement: `profiles/hmos-app/harness/render-visibility-check.ts`（新增）, `harness/scripts/check-testing.ts`
+Enforcement: `profiles/hmos-app/harness/render-visibility.ts`, `harness/scripts/utils/visual-debt.ts`, `harness/harness-runner.ts`
 
 #### Scenario: TC-002's fake-visible icons
 
 - **WHEN** the uitree lists five Image nodes whose screenshot regions are indistinguishable from the background
-- **THEN** the check SHALL flag all five (calibrate: WARN with structured findings; enforce: BLOCKER), breaking the "node exists = visible" equivalence
+- **THEN** the check SHALL flag all five as WARN with structured findings; the resulting open visual debt SHALL block release, breaking the "node exists = visible" equivalence without a duplicate phase BLOCKER
 
 ### Requirement: Fidelity intent tri-state detection covers phase-driven runs
 

@@ -267,7 +267,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
 
   // t1（plan c6d8f2b4）：pixel_1to1 P0 屏声明元素须在源码设 `.id('<element_id>')`——
   // T8 布局 locator 的主方案锚（t0③ 实证 ArkUI .id() 透传 hypium dump id/key）。
-  // 首版 WARN（观察期）：缺 .id 不产生错误判定、只降 locator 覆盖率（device 侧 B 类 SKIP+WARN 另有兜底）。
+  // 终态诊断 WARN：缺 .id 不产生产品错误判定、只降 locator 覆盖率（device 侧 B 类 SKIP+WARN 另有兜底）。
   if (isHardPixelContract(ctx)) {
     const contracts = ctx.featureSpec?.contracts;
     if (contracts) {
@@ -278,8 +278,8 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       // S6（visual-capability-truth P1-H calibrate）：分母收窄为 locator-required 集
       // （identity 锚点 id 成员 / must_have / 交互目标 / UI kit block 实例）——动态列表行、
       // 纯装饰/OCR 噪声节点不进分母（codex plan 审查二轮：全量分母会海量误报）。
-      // calibrate 期：WARN + 覆盖率落盘（locator-coverage.json）→ 两真实宿主 run 验证
-      // → enforce（<80% BLOCKER）另行升级，本期不升（breaking ratchet 纪律）。
+      // 终态诊断：WARN + 覆盖率落盘（locator-coverage.json）；宿主两 run 只回灌分母/夹具，
+      // 不预留 <80% 自动升 BLOCKER。定位覆盖率是断言能力量测，不直接表达产品质量或 visual-debt。
       const identityIds = collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature);
       const missingIds: string[] = [];
       let requiredTotal = 0;
@@ -315,10 +315,10 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           severity: 'MAJOR',
           status: 'WARN',
           details:
-            `【t1 locator 锚缺失（calibrate 观察期 WARN；分母=locator-required 集）】` +
+            `【t1 locator 锚缺失（终态诊断 WARN；分母=locator-required 集）】` +
             `P0 屏 locator-required 覆盖率 ${(coverage * 100).toFixed(0)}%（${requiredCovered}/${requiredTotal}）；缺 .id：` +
             `${missingIds.slice(0, 12).join(', ')}${missingIds.length > 12 ? ` …共 ${missingIds.length} 处` : ''}\n` +
-            `缺 .id 时 T8 布局断言退化到文本锚/结构匹配（歧义即 SKIP）；两真实宿主 run 验证误报面后 pixel_1to1 <80% 将升 BLOCKER。`,
+            `缺 .id 时 T8 布局断言退化到文本锚/结构匹配（歧义即 SKIP）；宿主两 run 仅回灌分母与夹具，不设自动 BLOCKER 升级。`,
           suggestion: '在对应 ArkUI 组件链上加 .id(\'<element_id>\')（与 ui-spec 元素 id 一致）；identity 锚点/交互目标/must_have 优先。',
           affected_files: [uiSpecRel],
         });

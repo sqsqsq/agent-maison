@@ -57,8 +57,7 @@ HALTED 无假 PASS。但暴露五层新缺陷（plan e9c4a7f3，codex 五轮 rev
   `integration_scope_consistency`（requires_modification 的 consumer ∉ in_scope → FAIL；
   零修改接入点须验证实际 consumer binding）+ headless 决议矛盾 halt；
   `host_entry_reachability`（coding 期宿主入口→路由→页面静态走查）。
-- **d6 度量真实性（P1-H/I、P2-J）**：locator-required 七类分母 + calibrate→两宿主 run→
-  enforce 三步（enforce 前保持观察）；test-plan `test_case_flow` YAML machine block +
+- **d6 度量真实性（P1-H/I、P2-J）**：locator-required 七类分母 + 终态诊断 WARN（覆盖率持久化）；两宿主 run 仅回灌分母/夹具，不预留自动 enforce；test-plan `test_case_flow` YAML machine block +
   Markdown 一致性门禁 + `BLOCKED_BY` 硬边界（非 PASS、进分母、阻 completion，仅根因归类）；
   结构保真拆轴（static_structure_conformance + runtime_mount_conformance）；asset 轴
   provenance 引用继承（hash/fingerprint 全一致才继承，否则 STALE）；资产实例绑定四段
@@ -78,7 +77,7 @@ HALTED 无假 PASS。但暴露五层新缺陷（plan e9c4a7f3，codex 五轮 rev
 ### Modified Capabilities
 
 - `visual-diff`：nav schema 2.0 + screen identity gate + 采集顺序；UTF-8 round-trip
-  doctor；locator calibrate→enforce。
+  doctor；locator coverage 终态诊断。
 - `goal-runner`：source drift reconciliation + 改码分类 + 持久化回退状态机 +
   invalidation 消费面；ledger 单写者/journal 协议（修改 critic-loop-hardening 引入的
   对账规格）；manifest 授权冻结。

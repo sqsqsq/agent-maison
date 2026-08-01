@@ -35,9 +35,9 @@ Enforcement: `profiles/hmos-app/harness/hylyre-spawn.ts`, hylyre doctor 扩项�
 - **WHEN** the round-trip doctor reads back `'����'` instead of 「添加管理卡片」
 - **THEN** device testing SHALL be blocked with a toolchain-classified BLOCKER explaining the UTF-8 boundary, and no test-case failures SHALL be attributed to the product
 
-### Requirement: locator coverage hardens via calibrate → host validation → enforce
+### Requirement: locator coverage remains a terminal diagnostic measurement
 
-The locator-required denominator SHALL include only: identity anchor members, bbox geometry assertion targets, forbidden-overlap participants, must_have_elements, region-attest elements, interaction targets, and UI-kit block instance anchors. The `visual_parity_element_id_lint` upgrade SHALL be staged: calibrate (WARN + coverage persisted) → validation on two real host runs → enforce (fidelity pixel_1to1 with P0 locator-required coverage < 80% → BLOCKER, at which point host `visual_parity_enforcement: warn` SHALL NOT downgrade this item). The enforce step SHALL NOT be enabled before the two-run validation completes.
+The locator-required denominator SHALL include only: identity anchor members, bbox geometry assertion targets, forbidden-overlap participants, must_have_elements, region-attest elements, interaction targets, and UI-kit block instance anchors. `visual_parity_element_id_lint` SHALL remain a WARN with persisted coverage: it measures the availability of locator-dependent assertions and a low result causes those B-class assertions to SKIP rather than claiming a product defect. Two real host runs MAY calibrate the denominator and fixtures, but SHALL NOT automatically enable a P0 coverage BLOCKER/enforce path. A future hard gate requires a separate evidence-backed change.
 
 Enforcement: `profiles/hmos-app/harness/coding-visual-parity-check.ts`
 

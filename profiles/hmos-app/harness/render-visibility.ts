@@ -1,16 +1,16 @@
 // ============================================================================
-// render-visibility.ts — 设备渲染可见性（blind-visual-hardening d2 / P0-B④，calibrate 节点）
+// render-visibility.ts — 设备渲染可见性（blind-visual-hardening d2 / P0-B④，债务门控观察节点）
 // ----------------------------------------------------------------------------
 // 事故锚（bc-openCard 二轮 TC-002）：「底部5个小图标可见」以 uitree Image 节点存在为准，
 // 空白渲染照样 PASS——组件真值与像素真值脱节。本模块以确定性像素统计补齐"看得见"判据：
 //   uitree Image 节点 bbox × 设备截图区域 → 三信号合议：
 //   ①区域内部结构（lumaStddev）②区域-周边背景对比（扩窗众数色 ΔE2000）——
 //   两者皆低 → invisible（与背景不可区分/无前景信号）。
-// 【两段式落地（codex 二轮 M5 / cursor 二轮⑤ / design §1.3）】本文件为 **calibrate 节点**：
-//   - 阈值冻结为版本 r1-calibrate（synthetic 夹具双向校准，见 asset-integrity.unit.test）；
-//   - check 以 MAJOR/WARN 产出结构化 findings **观察**，不阻断；
-//   - enforce（升 BLOCKER）为独立后续节点，条件=连续两轮真实 run 零误报——
-//     观察期内 P0-B 不得声称完成（tasks.md 4.6 单列）。
+// 【终态语义（3.0.0 收尾决定）】本文件为 **debt-gated observation**：
+//   - 阈值冻结为版本 r1-debt-gated（synthetic 夹具双向校准，见 asset-integrity.unit.test）；
+//   - check 以 MAJOR/WARN 产出结构化 findings，不阻断 phase；
+//   - findings 进入 visual-debt；open debt 令 visual 轴 UNVERIFIED 并阻断 release，
+//     不再预留同一事实的独立 phase BLOCKER/enforce。
 // 无 VL 依赖：纯 jimp 统计；jimp 不可用 → unknown（不误报也不冒充已验）。
 // ============================================================================
 
@@ -29,7 +29,7 @@ import {
 } from './image-toolkit';
 import { parseHypiumDump, flattenLayoutNodes, type LayoutRect } from './layout-oracle-check';
 
-export const RENDER_VISIBILITY_THRESHOLD_VERSION = 'r1-calibrate';
+export const RENDER_VISIBILITY_THRESHOLD_VERSION = 'r1-debt-gated';
 
 /** 区域内部结构下限：灰度标准差低于此值=区域内无前景结构（空白图标区实测 ≈0-2） */
 export const REGION_MIN_LUMA_STDDEV = 4;
@@ -108,14 +108,14 @@ function deviceScreenshotsDirAbs(projectRoot: string, feature: string): string {
 }
 
 /**
- * calibrate 检查：对每对 layout-<screen>.json + shot-<screen>.png，取 Image 类节点做区域可见性
- * 合议；invisible 命中 → MAJOR/WARN 结构化 findings（观察期不阻断）。
+ * 债务门控观察检查：对每对 layout-<screen>.json + shot-<screen>.png，取 Image 类节点做区域可见性
+ * 合议；invisible 命中 → MAJOR/WARN 结构化 findings（不阻断 phase，入 visual-debt 阻断 release）。
  * 采集物缺失（无 dump/无截图）→ 不产结果（采集完备性归 visual_diff_capture 既有 BLOCKER）。
  */
 export function checkRenderVisibilityCalibrate(ctx: CheckContext): CheckResult[] {
   const id = 'render_visibility_calibrate';
   const description =
-    `设备渲染可见性（calibrate 观察节点，阈值版本 ${RENDER_VISIBILITY_THRESHOLD_VERSION}）——uitree 存在 ≠ 像素可见`;
+    `设备渲染可见性（债务门控观察，阈值版本 ${RENDER_VISIBILITY_THRESHOLD_VERSION}）——uitree 存在 ≠ 像素可见`;
   const dir = deviceScreenshotsDirAbs(ctx.projectRoot, ctx.feature);
   if (!fs.existsSync(dir)) return [];
   const layoutFiles = fs.readdirSync(dir).filter(f => /^layout-.+\.json$/.test(f));
@@ -168,13 +168,13 @@ export function checkRenderVisibilityCalibrate(ctx: CheckContext): CheckResult[]
   }
   return [{
     id, category: 'structure', description,
-    severity: 'MAJOR', status: 'WARN', // calibrate 观察期：不阻断；enforce 升 BLOCKER 为独立后续节点
+    severity: 'MAJOR', status: 'WARN', // 终态观察：不阻断 phase；findings 入 visual-debt 阻断 release
     details: [
-      `【渲染可见性 calibrate】${findings.length} 处 Image 节点"存在但像素不可见"（bc-openCard 假可见形态）：`,
+      `【渲染可见性（债务门控观察）】${findings.length} 处 Image 节点"存在但像素不可见"（bc-openCard 假可见形态）：`,
       ...findings.slice(0, 12).map(f =>
         `  - [${f.screen}] node#${f.nodeIndex} bounds=${JSON.stringify(f.bounds)}：${f.assessment.reasons.join('；')}`),
       findings.length > 12 ? `  …还有 ${findings.length - 12} 处` : null,
-      '【观察期语义】本节点 WARN 观察、findings 入视觉债务；连续两轮真实 run 零误报后升 BLOCKER（enforce 节点）。',
+      '【终态语义】本节点 WARN 观察、findings 入 visual-debt；open debt 令 visual 轴 UNVERIFIED 并阻断 release，不设独立 enforce 节点。',
     ].filter(Boolean).join('\n'),
     suggestion:
       '空白 Image 通常=占位/素材缺失或资源引用错误——用真实素材或按 role 生成可见语义占位；' +
