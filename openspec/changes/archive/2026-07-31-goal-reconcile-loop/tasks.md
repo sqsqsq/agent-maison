@@ -49,3 +49,11 @@
 - [x] 7.2 Update `MIGRATION.md` for goal-mode semantics, capability declarations, run-control state, and handoff behavior
 - [x] 7.3 Run `cd harness && npm test` and fix all runtime-SSOT regressions
 - [ ] 7.4 Run `npm run openspec:validate`, `node scripts/check-plan-version.mjs`, and `npm run release:verify`
+
+## Post-archive correction (2026-08-01)
+
+Recorded after a code-level re-review. Checkboxes above are left as archived history; this section is the authoritative scope statement.
+
+- **2.5 / 6.1 were completed at a reduced scope.** Delivered: the versioned `ReconcileObservation@1` pure-input boundary, a single `decideAndEmit` cross-phase decision boundary, `selectRunnerActionFromAssess()` as the only assess-to-action converter, and the static anti-regrowth guard `checkAssessDrivenRunnerSource()`. Not delivered: full modularization of the verdict ladder and event emission (≈115 `appendEvent` call sites remain inline), and the `while(assess)` thin shell — `goal-runner.ts` is still ≈8143 lines.
+- **The remaining thin-shell work is explicitly out of scope for 3.0.0.** The anti-two-brain benefit is already secured by the single decision boundary plus the static guard; the rewrite trades risk for shape rather than behavior; and plans `a4f7e2b1` (3.1.0 supervisor auto-resume) and `d6b1a8e3` (t3/t4 integration assertions) target the same runner, so the refactor window is reserved for a combined evaluation. See plan `7c4e9a2b` §L4.2.
+- **7.4 remains unchecked** and is tracked by that plan's `l5-release-gate` todo. Its current blockers are other 3.0.0-window plans, not this change.
