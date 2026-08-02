@@ -7,11 +7,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import {
+  featureDir,
   featurePhaseReportsDir,
   loadFrameworkConfig,
   resolveReceiptFilePath,
   statefilePath,
 } from '../../config';
+import { readRunControl, type RunOwnerKind } from './goal-run-control';
 import {
   isPhaseGlobalInWorkflow,
   resolveWorkflowSpec,
@@ -111,6 +113,31 @@ export function isAgentSideGoalHarness(): boolean {
     Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
     isGoalOrchestrationEnv();
   return anyGoalSignal && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+}
+
+/**
+ * plan a5f9c3e2 t1：当前 run 的 owner 种类 —— **`can_prompt_now` 的唯一事实来源**。
+ *
+ * 绝不再用 `!isGoalOrchestrationEnv()` 反推：旧式写法把 goal「有人在场」（会话内驱动、
+ * 真人就在旁边）误判成无人，是本 plan 立项盘点出的唯一算过该谓词却算错的地方。
+ * owner 是**动态**的——同一 run 可在 session↔detached 间 mailbox handoff，故按运行时
+ * run-control 现值解析，**不冻结进 manifest identity**（冻结会让合法 handoff 变 drift）。
+ *
+ *  - 无任何 goal 信号 → direct 交互模式，真人在场 → `'session'`；
+ *  - 有 goal 信号 → 读 run-control 的 `owner.kind`；
+ *  - run-control 缺失/损坏 → fail-safe `'process'`（视为不可问人），与改造前 goal 行为一致。
+ */
+export function resolveRunOwnerKind(projectRoot: string, feature?: string): RunOwnerKind {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const inGoal = isGoalOrchestrationEnv() || Boolean(runId);
+  if (!inGoal) return 'session';
+  if (!runId || !feature) return 'process';
+  try {
+    const runDir = path.join(featureDir(projectRoot, feature), 'goal-runs', runId);
+    return readRunControl(runDir, runId)?.owner?.kind ?? 'process';
+  } catch {
+    return 'process';
+  }
 }
 
 export function mergeAndWritePhaseState(

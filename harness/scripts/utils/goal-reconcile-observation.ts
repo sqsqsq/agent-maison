@@ -1,6 +1,11 @@
 import * as crypto from 'crypto';
 import type { ReconcileObservationV1 } from './assess';
 import type { DependencyPolicy } from './phase-transition-policy';
+import {
+  lookupIncident,
+  projectToObservedActionability,
+  type ObservedActionability,
+} from './adjudication';
 
 export interface GoalReconcileBlockerInput {
   id: string;
@@ -30,8 +35,20 @@ export interface GoalReconcileObservationInput {
   fuseReason?: string;
 }
 
-function actionability(blockingClass?: string): 'automatic' | 'human' | 'external' | 'unknown' {
+/**
+ * plan a5f9c3e2 t2：**分类 SSOT 归裁决内核**，本层只消费并投影，不再自行分类。
+ *
+ * 收编边界（诚实记录）：INCIDENT_REGISTRY 的键空间是 **incident id**（halt_reason 家族
+ * 与同形态的 harness blocking_class）。仍有一部分 `blocking_class` 是**内容质量 blocker
+ * 类目**而非 incident（asset_integrity / product_verdict / ui_kit_conformance 等），把它们
+ * 塞进 incident 注册表属于概念错配。故：**注册表命中即以内核为准；未命中保留既有正则
+ * 兜底**（legacy，随类目逐步注册而收敛）——不因收编而改判历史 blocking_class。
+ */
+function actionability(blockingClass?: string): ObservedActionability {
   if (!blockingClass) return 'unknown';
+  const spec = lookupIncident(blockingClass);
+  if (spec) return projectToObservedActionability(spec.class);
+  // legacy 兜底：未注册类目沿用改造前口径（fail-open，行为不变）
   if (/external|device|environment|api/i.test(blockingClass)) return 'external';
   if (/human|confirmation|authorization|interaction/i.test(blockingClass)) return 'human';
   if (/code|test|contract|artifact|quality|review/i.test(blockingClass)) return 'automatic';

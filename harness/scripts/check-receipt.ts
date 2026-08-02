@@ -61,9 +61,11 @@ import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
   isGoalOrchestrationEnv,
+  resolveRunOwnerKind,
   syncPhaseStateOnReceiptPassStrict,
   type FeaturePhase,
 } from './utils/phase-state';
+import { canPromptNow } from './utils/adjudication';
 import {
   evaluateMultimodalEvidenceGate,
   readVerifierReportFile,
@@ -226,7 +228,10 @@ function main(): void {
     adapter: fw.agent_adapter ?? 'generic',
     phase,
     workflow: fw.active_workflow ?? 'spec-driven',
-    can_prompt_user: !isGoalOrchestrationEnv(),
+    // plan a5f9c3e2 t1：能否问人取决于**当前 run owner**（session=会话内驱动、真人在旁；
+    // process=脱离会话），不是「是不是 goal」——旧式 `!isGoalOrchestrationEnv()` 把
+    // goal「有人在场」误判成无人。owner 动态可 handoff，故按 run-control 现值解析。
+    can_prompt_user: canPromptNow(resolveRunOwnerKind(projectRoot, feature)),
     can_collect_usage: isGoalOrchestrationEnv(),
   };
   const evidenceConfig = { evidence_profile: fw.evidence_profile };

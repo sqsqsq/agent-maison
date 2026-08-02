@@ -42,7 +42,14 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
+  buildLineageMismatchGuidance,
 } from './utils/await-confirm-guidance';
+import {
+  decide,
+  dispositionOf,
+  NO_AUTHORITY,
+  UNTRUSTED_DRIFT_REASON,
+} from './utils/adjudication';
 import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
@@ -108,6 +115,8 @@ import {
   newRunId,
   resolveGoalReportDir,
   resolveRawRunInput,
+  resolveVisionLineage,
+  visionLineageResumeIssue,
   type RawRunInput,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
@@ -2856,6 +2865,166 @@ export function appendVisionHwm(args: {
   fs.appendFileSync(p, `${JSON.stringify(row)}\n`, 'utf-8');
 }
 
+// ---------------------------------------------------------------------------
+// plan a5f9c3e2 t3①：lineage reset —— **recovery intent，不是授权**
+// ---------------------------------------------------------------------------
+// 用户以 `--vision-lineage=reset`（仅 fresh run）声明放弃历史连续性时执行：
+//   ① 事务性 quarantine 旧 head/HWM（临时改名，供中途失败回滚）；
+//   ② 断裂显式记 repo 内事件 `lineage_discontinuity`（旧 hash / 原因 / run_id）；
+//   ③ 世代归零 → 新 lineage 从头建立，后续全链重验；
+//   ④ 新 head 写入成功后**删除**旧场外实体（场外不是历史档案库，b7e4d2a9 红线）。
+// 安全性不靠授权：危险的从来不是 reset 本身，是**静默的** reset。断裂被响亮记录、
+// 连续性主张被禁止后，agent 即便自行触发 reset 也一无所获——旧 FAIL 不会被洗白，
+// 只会被标记为「链在此处断开」。不新增 head/checkpoint/HWM 字段、不建新状态机：
+// 备份名内嵌 run_id 即是全部所需状态（无第二本账）。
+// ---------------------------------------------------------------------------
+
+function lineageResetBackupPaths(projectRoot: string, feature: string, runId: string): {
+  head: string; headBak: string; hwm: string; hwmBak: string;
+} {
+  const head = visionFeatureHeadPath(projectRoot, feature);
+  const hwm = visionHwmPath(projectRoot, feature);
+  const suffix = `.reset-${runId.replace(/[^\w.-]/g, '_')}.bak`;
+  return { head, headBak: `${head}${suffix}`, hwm, hwmBak: `${hwm}${suffix}` };
+}
+
+export interface LineageResetQuarantine {
+  old_head_sha256: string | null;
+  old_hwm_sha256: string | null;
+  head_backup: string | null;
+  hwm_backup: string | null;
+  /** 本次开始前从**上一次崩溃的 reset**回滚回来的锚（文件名列表；空=无残留） */
+  rolled_back_from: string[];
+}
+
+/**
+ * 该 feature 名下所有 reset 残留（任意 run，用于回滚/清扫）。
+ *
+ * 两种残留（codex 七轮 P1）：
+ *   `.bak`    旧锚**有内容** —— 回滚=删半成品 + 改名还原；
+ *   `.absent` 旧锚**本就不存在**（legacy 状态：有 head 无 HWM 是受支持形态）——
+ *             回滚=**删掉当前半成品**，把该锚恢复成 absent。
+ * 少了墓碑这一半，「旧 head + 新 HWM」这种混合链会从 absent 侧漏过去
+ *（随后被 assessHwmFreshness 判 rollback 停机，等于把可自愈的崩溃变成人工事故）。
+ */
+const RESET_RESIDUE_RE = /\.reset-[\w.-]+\.(bak|absent)$/;
+
+function listLineageResetBackups(projectRoot: string, feature: string): Array<{
+  residue: string; restoreTo: string; wasAbsent: boolean;
+}> {
+  const head = visionFeatureHeadPath(projectRoot, feature);
+  const hwm = visionHwmPath(projectRoot, feature);
+  const dir = path.dirname(head);
+  if (!fs.existsSync(dir)) return [];
+  const out: Array<{ residue: string; restoreTo: string; wasAbsent: boolean }> = [];
+  for (const name of fs.readdirSync(dir)) {
+    const abs = path.join(dir, name);
+    const m = RESET_RESIDUE_RE.exec(name);
+    if (!m) continue;
+    const base = abs.replace(RESET_RESIDUE_RE, '');
+    const wasAbsent = m[1] === 'absent';
+    if (base === head) out.push({ residue: abs, restoreTo: head, wasAbsent });
+    else if (base === hwm) out.push({ residue: abs, restoreTo: hwm, wasAbsent });
+  }
+  return out;
+}
+
+/**
+ * 事务回滚：把上一次未完成 reset 的备份**还原**回原位。
+ *
+ * **全有全无（codex 六轮 P1 订正）**：v1 逐文件判「原位为空才还原」，在
+ * 「新 head 已写、新 HWM 未写」的崩溃窗口会拼出 **新 head + 旧 HWM** 的混合链——
+ * 比两头落空更坏（看起来像一条完整链，实际世代与 HWM 不同源）。
+ * 现在的语义：备份在场即视为**事务未提交**（提交点已后移到三件套齐备之后），
+ * 因此把该 feature 的锚整体退回备份时点——原位若有半成品新锚，先删再还原。
+ * 返回被还原的文件名（空=无残留）。
+ *
+ * 诚实边界（有意的简单化）：若崩溃恰好发生在「三件套齐备、finalize 之前」这一极窄窗口，
+ * 本函数会退回旧 lineage 而不是提交那条已建好的新链——代价是重做一次 reset（幂等），
+ * 换来的是**任何时刻都不会出现混合链**。不为这个窗口再引入一本提交日志。
+ */
+export function rollbackLineageResetQuarantine(args: {
+  projectRoot: string; feature: string;
+}): string[] {
+  const backups = listLineageResetBackups(args.projectRoot, args.feature);
+  if (backups.length === 0) return [];
+  const restored: string[] = [];
+  for (const { residue, restoreTo, wasAbsent } of backups) {
+    // 半成品新锚（未提交事务的产物）先清除，避免与旧锚混链
+    if (fs.existsSync(restoreTo)) fs.rmSync(restoreTo, { force: true });
+    if (wasAbsent) {
+      // 旧值就是 absent —— 恢复到 absent 即「删掉半成品」，墓碑随之清除
+      fs.rmSync(residue, { force: true });
+    } else {
+      fs.renameSync(residue, restoreTo);
+    }
+    restored.push(path.basename(restoreTo));
+  }
+  return restored;
+}
+
+/**
+ * ① + ③ 的落盘部分：把旧锚改名让路（不销毁），返回旧 hash 供事件留痕。
+ *
+ * **前置回滚**（崩溃恢复）：上一次 reset 若在「改名后、新 head 写入前」崩掉，会留下
+ * `.reset-<旧runId>.bak`。此时原位为空——先把它**还原**回来再重新 quarantine，
+ * 这样任何时刻场外最多只有一代备份，旧 runId 的备份不会成为永远没人清的孤儿
+ *（否则违反「场外不是历史档案库」红线）。
+ */
+export function quarantineLineageAnchorsForReset(args: {
+  projectRoot: string; feature: string; runId: string;
+}): LineageResetQuarantine {
+  const rolledBack = rollbackLineageResetQuarantine({
+    projectRoot: args.projectRoot, feature: args.feature,
+  });
+  const p = lineageResetBackupPaths(args.projectRoot, args.feature, args.runId);
+  const out: LineageResetQuarantine = {
+    old_head_sha256: null, old_hwm_sha256: null, head_backup: null, hwm_backup: null,
+    rolled_back_from: rolledBack,
+  };
+  const anchors = [
+    [p.head, p.headBak, 'head'] as const,
+    [p.hwm, p.hwmBak, 'hwm'] as const,
+  ];
+  // 一个锚都不存在 = 没有可回滚的前态，本次 reset 等同「首次建链」——不留墓碑，
+  // 免得把一次正常的首建也变成「未提交事务」。
+  if (!anchors.some(([src]) => fs.existsSync(src))) return out;
+  for (const [src, bak, key] of anchors) {
+    if (fs.existsSync(bak) || fs.existsSync(`${bak.slice(0, -'.bak'.length)}.absent`)) {
+      throw new Error(
+        `lineage reset 残留名冲突（${path.basename(bak)}）——中止（fail-closed，人工处置残留）`,
+      );
+    }
+    if (!fs.existsSync(src)) {
+      // codex 七轮 P1：旧值 absent 也要留痕（legacy「有 head 无 HWM」是受支持形态）。
+      // 无墓碑则回滚遍历不到该锚，新产物会残留 → 旧 head + 新 HWM 混合链。
+      fs.writeFileSync(`${bak.slice(0, -'.bak'.length)}.absent`, '', 'utf-8');
+      continue;
+    }
+    const sha = createHash('sha256').update(fs.readFileSync(src)).digest('hex');
+    fs.renameSync(src, bak);
+    if (key === 'head') { out.old_head_sha256 = sha; out.head_backup = bak; }
+    else { out.old_hwm_sha256 = sha; out.hwm_backup = bak; }
+  }
+  return out;
+}
+
+/**
+ * ④ 事务提交：新 lineage head 写入并验证成功后删除旧场外实体。
+ * **清扫该 feature 名下全部 `.reset-*.bak`（不限本 run）**——新 lineage 既已建立，
+ * 任何残留备份都已无回滚价值，留着就是场外档案库。幂等；返回实际删除的文件数。
+ */
+export function finalizeLineageResetQuarantine(args: {
+  projectRoot: string; feature: string; runId?: string;
+}): number {
+  let removed = 0;
+  for (const { residue } of listLineageResetBackups(args.projectRoot, args.feature)) {
+    fs.rmSync(residue, { force: true });
+    removed += 1;
+  }
+  return removed;
+}
+
 export function verifyVisionFeatureHead(args: {
   projectRoot: string;
   feature: string;
@@ -3682,7 +3851,13 @@ export async function main(): Promise<number> {
   setupSignalHandlers();
 
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest', 'run-id', 'ack-receipt', 'reseal-receipt'],
+    string: [
+      'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
+      'run-id', 'ack-receipt', 'reseal-receipt',
+      // plan a5f9c3e2 t3①：vision lineage 处置的**唯一输入入口**（continue|reset）。
+      // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
+      'vision-lineage',
+    ],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
       'override-adapter',
@@ -3793,6 +3968,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           typeof argv['fidelity-receipt'] === 'string' && String(argv['fidelity-receipt']).trim()
             ? String(argv['fidelity-receipt']).trim()
             : undefined,
+        // plan a5f9c3e2 t3①：--vision-lineage 只在 fresh 路径落键（缺省不写键——
+        // 旧 manifest 兼容与身份字段集同源约束）。非法枚举在 parser fail-closed。
+        vision_lineage:
+          typeof argv['vision-lineage'] === 'string' && String(argv['vision-lineage']).trim()
+            ? String(argv['vision-lineage']).trim()
+            : undefined,
         // Detached child reuses the run_id the launcher already printed to the host.
         run_id:
           typeof argv['run-id'] === 'string' && argv['run-id'].trim()
@@ -3809,6 +3990,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
       },
       { projectRoot, featuresDir, dryRun: dryRunMode },
     );
+  }
+
+  // plan a5f9c3e2 t3①：vision lineage 声明的时点约束——**放弃历史连续性只能在 fresh run
+  // 启动时声明**。resume 携 reset（无论来自加载的 manifest 还是命令行）一律拒绝：
+  // 跑到一半把已建立的链一笔勾销，与「绝不冒充连续」同属不可接受方向。
+  {
+    const isResume = Boolean(argv.resume);
+    const lineageFlag =
+      typeof argv['vision-lineage'] === 'string' ? String(argv['vision-lineage']).trim() : '';
+    if (isResume && lineageFlag) {
+      console.error(
+        '[goal-runner] BLOCKER: --vision-lineage 仅在 fresh run 生效——resume 不接受该旗标' +
+        '（避免静默忽略造成「我已声明重建」的错觉）。如确需重建 lineage，请以新 run_id 启动。',
+      );
+      process.exit(1);
+    }
+    const issue = visionLineageResumeIssue(manifest, isResume ? 'resume' : 'fresh');
+    if (issue) {
+      console.error(`[goal-runner] BLOCKER: ${issue}`);
+      process.exit(1);
+    }
   }
 
   validateMinimumAssurance(
@@ -4227,6 +4429,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // v23 F1：整轮集合指纹熔断——启动时从本 run 有效 events 初始化（进程重启后同集合
     // 不得再回退），随后内存实时更新
     const seenRoundFingerprints = new Set<string>();
+    // plan a5f9c3e2 t3②：未受信漂移的保守恢复防震荡——同一 drift 内容指纹重现即判
+    // terminal（回退→agent 又加同一处接缝→再回退，纯烧预算）。与 seenRoundFingerprints
+    // 同款手法（含**从 events 回放**，见下方恢复循环），键空间不同（drift 内容 vs 整轮
+    // 缺陷集合）故分立集合，共用回退预算。**必须跨 resume 记忆**：否则重启即失忆，
+    // 同一漂移会再吃一次回退预算，违反「同 fingerprint 重现即 terminal」。
+    const seenDriftFingerprints = new Set<string>();
     let priorEvents = loadAuthoritativeEvents(eventsPath);
     let previousUnverifiedRound: { phase: string; fingerprint: string } | null = null;
     for (const event of priorEvents) {
@@ -4271,10 +4479,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // v23 F1：整轮集合指纹从有效 events 恢复（直接读 round_fingerprint 字段，不从有界
     // defects[] 反算）；缺陷交接上下文取最近一条回退事件的 defects[]（一次遍历取两者）
     for (const e of priorEvents) {
-      const ev = e as { type?: string; round_fingerprint?: string; defects?: ActionableDefect[] };
+      const ev = e as {
+        type?: string; round_fingerprint?: string; drift_fingerprint?: string;
+        defects?: ActionableDefect[];
+      };
       if (ev.type !== 'phase_backtrack_requested') continue;
       if (typeof ev.round_fingerprint === 'string' && ev.round_fingerprint) {
         seenRoundFingerprints.add(ev.round_fingerprint);
+      }
+      // plan a5f9c3e2 t3②：未受信漂移指纹同样回放——跨 resume 记住「这个漂移已回退过」，
+      // 否则重启即失忆，同一漂移会再吃一次回退预算（违反「同 fingerprint 重现即 terminal」）。
+      if (typeof ev.drift_fingerprint === 'string' && ev.drift_fingerprint) {
+        seenDriftFingerprints.add(ev.drift_fingerprint);
       }
       // 无条件覆盖（review 第 10 轮）：授权回退事件不带 defects[]——只在非空时覆盖会让
       // 后续授权回退仍携带早已修好的旧缺陷。每条回退事件都重置 context 为其 defects ?? []。
@@ -4381,6 +4597,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 十三轮：只在本 run 新开 quarantine 时置位——崩溃事务由 recoverResealTransaction 在启动
     // 期按内容恢复（rolled_back 后原 receipt 复用/completed 补 commit），不再靠"同 run 续跑"。
     const resealTx: { pending: boolean } = { pending: false };
+    // plan a5f9c3e2 t3①：lineage reset 事务待提交标记——旧锚已改名让路、新 head 尚未写。
+    // 新 head 写入成功后 finalizeLineageResetQuarantine 删除旧场外实体（见 commitVisionAnchors）。
+    // 崩溃留下的 .reset-<runId>.bak 由「head absent + 已声明 reset」路径自然重入处理。
+    let lineageResetPending = false;
     const commitVisionAnchors = (
       scope: string,
       files: readonly VisionLedgerSnapshot[],
@@ -4440,6 +4660,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
         projectRoot, feature: manifest.feature,
         generation: visionTrust.headGeneration, headDigest: headWrite.digest,
       });
+      // plan a5f9c3e2 t3① ④（codex 六轮 P1 订正）：**新 lineage 三件套（head + checkpoint
+      // + HWM）齐备并复验通过后**才提交 reset 事务、删除旧场外实体。
+      // v1 把提交点放在 head 写完就删备份——若在 checkpoint/HWM 写入前崩溃，旧锚已毁、
+      // 新链未成，两头落空且无法回滚。提交点必须是整条新链的终点，不是第一步。
+      if (lineageResetPending) {
+        const freshHwm = readVisionHwmHighWater({ projectRoot, feature: manifest.feature });
+        if (freshHwm.state === 'invalid' || freshHwm.state === 'absent') {
+          throw new Error(
+            `lineage reset 新链复验失败（HWM=${freshHwm.state}）——事务不提交、` +
+            '旧锚备份保留待回滚（fail-closed）。',
+          );
+        }
+        const removed = finalizeLineageResetQuarantine({ projectRoot, feature: manifest.feature });
+        lineageResetPending = false;
+        goalEvents.emit({
+          type: 'lineage_reset_committed',
+          scope,
+          new_head_sha256: headWrite.digest,
+          new_generation: visionTrust.headGeneration,
+          offsite_backups_removed: removed,
+          continuity_claim: 'revoked',
+        });
+      }
       // 十二轮 P0-b：reseal 事务——新 HWM 首写后**立即复验**（新 key 链可读），通过才 commit
       // 日志；复验失败 fail-closed 抛（不留半事务态）。
       if (resealTx.pending) {
@@ -4554,18 +4797,99 @@ Goal runner — tool-agnostic multi-phase orchestrator
         goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'flag_weak', context });
       };
 
+      // plan a5f9c3e2 t3① 崩溃恢复：上一次 lineage reset 若在「改名后、新 head 写入前」
+      // 崩掉，原位为空——**先无条件回滚**再做 head 判定。否则崩溃残留会伪装成「head 被删」
+      // （一个截然不同、且更严重的故障），把人引向错误处置。回滚后：声明了 reset 就重做，
+      // 没声明就照常 fail-closed 报真实的失配——两条都比看见假象强。
+      {
+        const restored = rollbackLineageResetQuarantine({ projectRoot, feature: manifest.feature });
+        if (restored.length > 0) {
+          goalEvents.emit({
+            type: 'lineage_reset_rolled_back',
+            restored,
+            reason: '上一次 reset 未完成（新 head 未写入）——还原旧锚后按真实状态重新判定',
+          });
+        }
+      }
       // ① feature 级 head（七轮 P0-3：跨 run 连续性——fresh run 与 resume 都先验）
       const head = verifyVisionFeatureHead({ projectRoot, feature: manifest.feature, current: now });
-      if (head.state === 'mismatch') {
+      // plan a5f9c3e2 t3①：裁决由统一内核给出（不在此就地判处置）。
+      // reset 只在 fresh + 已显式声明 vision_lineage=reset 时成立；resume 恒 terminal。
+      const lineageDecision = decide(
+        {
+          incident: 'vision_feature_head_mismatch',
+          detail: head.mismatched.join('、'),
+          files: head.mismatched,
+          lineage_reset_requested: resolveVisionLineage(manifest) === 'reset',
+        },
+        NO_AUTHORITY,
+        {
+          orchestration: 'goal',
+          owner_kind: 'process',
+          // 铁律 (c)：can_prompt_now 不改变裁决，只供话术选择措辞。
+          can_prompt_now: false,
+          invocation: argv.resume ? 'resume' : 'fresh',
+        },
+      );
+      const lineageResetGranted =
+        lineageDecision.kind === 'recover' && lineageDecision.action === 'reset_lineage';
+      // codex 六轮 P2 订正：v1 把执行限定在 mismatch|absent，于是「fresh 显式声明 reset
+      // 但 head 恰好正常」变成**静默 no-op**——manifest 记着 reset、实际沿用旧 lineage、
+      // 连 discontinuity 都没有，输入语义与执行不一致。现在**无条件遵从**：用户明确声明
+      // 放弃历史连续性，head 是否有效不改变该意图；安全性依旧由「仅 fresh + 断裂记事件 +
+      // 禁连续性主张 + 全链重验」保证，与 head 状态无关。
+      // 副作用（正向）：invalid（MAC 验签失败）此前唯一出路是签不出来的 --reseal-receipt，
+      // 现在也有了一条不需人签的合法出路。
+      if (lineageResetGranted) {
+        // 断裂显式记录（repo 内事件），旧锚事务性 quarantine，世代归零重建。
+        const q = quarantineLineageAnchorsForReset({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id,
+        });
+        lineageResetPending = true;
+        goalEvents.emit({
+          type: 'lineage_discontinuity',
+          scope: 'vision_feature_head',
+          head_state_before: head.state,
+          reason: head.state === 'mismatch'
+            ? `账本与 feature head 失配（${head.mismatched.join('、')}）`
+            : head.state === 'absent'
+              ? 'feature head 缺失'
+              : `用户显式声明放弃旧 lineage（head 当时状态=${head.state}）`,
+          declared_by: 'manifest.vision_lineage=reset',
+          old_head_sha256: q.old_head_sha256,
+          old_hwm_sha256: q.old_hwm_sha256,
+          old_generation: head.generation ?? null,
+          run_id: manifest.run_id,
+          // 上一次 reset 崩在半路时先回滚再重做——留痕，便于排障
+          rolled_back_from: q.rolled_back_from,
+          // 结论口径铁律：本 run 只能声称「新 lineage 已全链验证」，
+          // **不得**声称「历史连续性得以保持」。
+          continuity_claim: 'revoked',
+        });
+        visionTrust.headGeneration = 0;
+      } else if (head.state === 'mismatch') {
         goalEvents.emit({
           type: 'vision_ledger_tamper', scope: 'feature_head', files: head.mismatched,
+          disposition: dispositionOf(lineageDecision),
         });
         throw new Error(
           `vision 账本与 feature head 失配（${head.mismatched.join('、')}）——跨 run 篡改拦截（fail-closed）。` +
-          '人工核查后处置；不要删改账本/head 冒充原状。',
+          `${lineageDecision.reason}\n` +
+          buildLineageMismatchGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            mismatched: head.mismatched,
+            invocation: argv.resume ? 'resume' : 'fresh',
+            harnessPrefixRel: layout.frameworkRel
+              ? path.posix.join(layout.frameworkRel, 'harness')
+              : 'harness',
+          }).join('\n'),
         );
       }
-      if (head.state === 'invalid') {
+      // reset 已执行时，旧 head 已被 quarantine 让路——后续所有基于 head.state 的处置
+      // （invalid 拦截 / absent ack / ok 分支的 HWM 新鲜度对账）都不再适用：
+      // 判据指向的那个 head 已经不在了，新 lineage 从世代 0 重建。
+      if (head.state === 'invalid' && !lineageResetGranted) {
         if (resealStrong) {
           // 八轮 P1-2：受信 reseal——按当前账本重铸信任锚（世代 best-effort 续接旧值，防回卷）
           let priorGen = 0;
@@ -4587,11 +4911,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
         }
       }
-      if (head.state === 'absent' && ledgersPresent) {
-        // 账本在场但无 head：首次升级或 head 被删——须显式 ack
+      if (head.state === 'absent' && ledgersPresent && !lineageResetGranted) {
+        // 账本在场但无 head：首次升级或 head 被删——须显式 ack。
+        // plan a5f9c3e2 t3①：已声明 vision_lineage=reset 的 fresh run 例外——用户已明确
+        // 放弃历史连续性、断裂已记事件、世代归零后全链重验，无须再 ack「缺锚」
+        //（同一入口也承接 reset 中途崩溃后的重入：head 已改名让路即为 absent）。
         requireAck('feature_head_absent_with_ledgers');
       }
-      if (head.state === 'ok' || head.state === 'ok_unauthenticated') {
+      if (!lineageResetGranted && (head.state === 'ok' || head.state === 'ok_unauthenticated')) {
         visionTrust.headGeneration = head.generation ?? 0;
         // 十/十一/十三轮：HWM 新鲜度对账（**诚实边界**：检测非协调回滚/意外损坏/整链删除，
         // 非密码学跨重启 anti-rollback——协调回放会同时截断 HWM 尾部，须 hardened 独立锚，
@@ -7461,6 +7788,40 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // coding 与 review——截断链即使裁决有效也无法在本 run 回退重验。
           const chainHasCodingReview =
             chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
+          // plan a5f9c3e2 t3②：未受信漂移的**保守恢复**裁决（统一内核给出，不在此就地判）。
+          // 恢复本身不降低保证——失效旧 coding closure 及其后阶段、把 diff 当未受信候选
+          // 完整重走 coding→review→ut→testing，故**不需要任何授权**。
+          // 纪律：复用执行机制（失效事务 / 回退预算 / phase 回退执行器），
+          // **不复用授权语义**——不产 matched_receipts、不标 authorized。
+          let untrustedRevalidation = false;
+          let untrustedTerminalReason = '';
+          if (driftDecision.kind === 'unauthorized') {
+            const driftFp = driftDecision.driftFingerprint ?? null;
+            const driftDisposition = decide(
+              {
+                incident: 'unauthorized_source_mutation',
+                phase: String(phase),
+                files: driftDecision.files,
+                chain_has_coding_review: chainHasCodingReview,
+                backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
+                round_fingerprint_repeated: Boolean(driftFp && seenDriftFingerprints.has(driftFp)),
+              },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal',
+                owner_kind: 'process',
+                // 铁律 (c)：can_prompt_now 不改变裁决，只供 L3 话术选择措辞。
+                can_prompt_now: false,
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            );
+            if (driftDisposition.kind === 'recover' && driftDisposition.action === 'backtrack_to_coding') {
+              untrustedRevalidation = true;
+              if (driftFp) seenDriftFingerprints.add(driftFp);
+            } else {
+              untrustedTerminalReason = driftDisposition.reason;
+            }
+          }
           if (driftDecision.kind === 'authorized_backtrack' && !chainHasCodingReview) {
             const truncGuidance = buildUnauthorizedMutationGuidance({
               feature: manifest.feature,
@@ -7492,7 +7853,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phaseDone = true;
             continue;
           }
-          if (driftDecision.kind === 'authorized_backtrack') {
+          if (
+            driftDecision.kind === 'authorized_backtrack' ||
+            (untrustedRevalidation && driftDecision.kind === 'unauthorized')
+          ) {
             if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
               goalEvents.emit({
                 type: 'phase_halt',
@@ -7531,7 +7895,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 type: 'phase_invalidated',
                 phase: p,
                 cause_phase: phase,
-                reason: 'authorized_source_mutation_backtrack',
+                reason: untrustedRevalidation
+                  ? UNTRUSTED_DRIFT_REASON
+                  : 'authorized_source_mutation_backtrack',
                 invalidation_tx_id: invalidationTxId,
                 files: driftDecision.files.slice(0, 20),
               });
@@ -7541,7 +7907,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
               type: 'phase_backtrack_requested',
               from_phase: phase,
               to_phase: chain[Math.max(codingIdx, 0)],
-              matched_receipts: driftDecision.matched.map(r => r.approved_by),
+              // 授权回退才带 receipt 语义；保守恢复路**恒不产该字段**（不冒充授权）。
+              ...(driftDecision.kind === 'authorized_backtrack'
+                ? { matched_receipts: driftDecision.matched.map(r => r.approved_by) }
+                : {
+                    reason: UNTRUSTED_DRIFT_REASON,
+                    authorized: false,
+                    // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
+                    // 重启失忆=同一漂移白吃一次回退预算。
+                    drift_fingerprint: driftDecision.driftFingerprint ?? null,
+                    // t4④：统一 disposition 由 decide 单点产出并落 events
+                    //（report / monitor / supervisor 的共同消费面）
+                    disposition: 'RECOVERY_PENDING',
+                  }),
               files: driftDecision.files.slice(0, 20),
             });
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
@@ -7556,7 +7934,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             backtrackToIdx = Math.max(codingIdx, 0);
             goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
             console.log(
-              `[S4] 授权源码变更（${driftDecision.files.length} 文件，receipts=${driftDecision.matched.map(r => r.approved_by).join(',')}）` +
+              (driftDecision.kind === 'authorized_backtrack'
+                ? `[S4] 授权源码变更（${driftDecision.files.length} 文件，receipts=${driftDecision.matched.map(r => r.approved_by).join(',')}）`
+                : `[a5f9c3e2] 未受信源码漂移（${driftDecision.files.length} 文件）——保守恢复：` +
+                  '失效旧 coding closure 及其后阶段，携未受信 diff 完整重验（无需人签，不跳过验证）') +
               `→ 回退 ${chain[backtrackToIdx]}→review→ut→${phase}（消耗共用回退预算 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}）`,
             );
             phaseDone = true;
@@ -7609,6 +7990,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               runId: manifest.run_id,
               phase: String(phase),
               violations: driftDecision.violations,
+              // t3②：走到这里说明保守恢复被**结构性前提**挡住（截断链 / 预算耗尽 /
+              // 同一 drift 指纹重现）——话术须先讲清这一点，否则人会以为「又是要签字」。
+              conservativeRecoveryBlockedReason: untrustedTerminalReason || null,
               chainHasCodingReview,
               receiptVerificationConfigured: fs.existsSync(defaultTrustRegistryPath(projectRoot)),
               issuanceRouteAvailable: MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE,
@@ -7624,6 +8008,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               files: driftDecision.files.slice(0, 20),
               violations: driftDecision.violations.slice(0, 10),
               halt_guidance: mutationGuidance,
+              // t4④：走到这里=保守恢复被结构前提挡住，结构上无法在本 run 继续
+              disposition: 'TERMINAL',
+              conservative_recovery_blocked: untrustedTerminalReason || null,
             });
             console.error(`\n===== unauthorized_source_mutation =====\n${mutationGuidance}\n`);
             outcomes.push({

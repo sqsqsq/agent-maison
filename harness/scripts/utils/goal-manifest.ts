@@ -56,6 +56,19 @@ export interface GoalManifest {
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
+  /**
+   * plan a5f9c3e2 t3①：vision lineage 处置意图。**是 recovery intent，不是 authority**
+   * ——CLI 旗标可被模型拼出、无 key 部署下 manifest 整链在 agent 可写面，故本字段
+   * 绝不进 AuthorityFacts.grants。其安全性由「仅 fresh 可选 + 断裂显式记事件 +
+   * 禁止声称历史连续性 + 全链重验」保证：危险的不是 reset 本身，是静默的 reset。
+   *
+   * 唯一入口 CLI `--vision-lineage=reset`；缺省 continue；resume 携 reset 直接拒绝；
+   * 运行中不得自动升级为 reset。
+   *
+   * **旧 manifest 兼容**：文档中无该键时行为按 `continue`，且身份字段集**不注入该键**
+   * （见 computeManifestIdentityFields）——否则既有 run resume 会多出一个身份字段而误判漂移。
+   */
+  vision_lineage?: 'continue' | 'reset';
   run_id: string;
   report_dir: string;
   created_at: string;
@@ -124,6 +137,12 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
+  // plan a5f9c3e2 t3①：vision_lineage **仅在文档中实际存在该键时**入身份字段集。
+  // 凭空给旧 manifest 补默认值会让既有 run resume 多出一个字段 → 误判漂移。
+  // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
+    fields.vision_lineage = manifest.vision_lineage ?? null;
+  }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(fields)) {
     out[k] = crypto.createHash('sha256').update(stableJson(v), 'utf-8').digest('hex').slice(0, 16);
@@ -380,10 +399,18 @@ export function buildGoalManifestFromInput(
     typeof input.fidelity_receipt === 'string' && input.fidelity_receipt.trim()
       ? input.fidelity_receipt.trim().replace(/\\/g, '/')
       : undefined;
+  // t3①：仅在输入显式给出该键时写入（缺省不落键——旧 manifest 兼容与身份字段集同源约束）
+  const rawLineage = input.vision_lineage;
+  if (rawLineage !== undefined && rawLineage !== 'continue' && rawLineage !== 'reset') {
+    throw new Error(
+      `[goal-manifest] vision_lineage 值非法（${String(rawLineage)}）——须 continue|reset`,
+    );
+  }
 
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
+    ...(rawLineage !== undefined ? { vision_lineage: rawLineage } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
@@ -416,6 +443,31 @@ export function buildGoalManifestFromInput(
  * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
  */
 const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
+/**
+ * plan a5f9c3e2 t3①：lineage 意图解析（唯一读取点）。缺键 → `continue`。
+ * 注意：**读到 `reset` 只表示「已声明放弃历史连续性」这一 recovery intent**，
+ * 不表示任何授权；调用方仍须按 fresh-only + 断裂记事件 + 禁连续性主张 + 全链重验落地。
+ */
+export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineage'>): 'continue' | 'reset' {
+  return manifest.vision_lineage === 'reset' ? 'reset' : 'continue';
+}
+
+/**
+ * t3①：resume 携 `reset` 直接拒绝——放弃历史连续性只能在 fresh run 启动时声明，
+ * run 中途/续跑不得升级（否则等于跑到一半把已建立的链一笔勾销）。
+ * 返回错误消息（null=合法）。
+ */
+export function visionLineageResumeIssue(
+  manifest: Pick<GoalManifest, 'vision_lineage'>,
+  invocation: 'fresh' | 'resume',
+): string | null {
+  if (invocation === 'resume' && resolveVisionLineage(manifest) === 'reset') {
+    return 'vision_lineage=reset 仅允许 fresh run 声明——resume 携 reset 拒绝启动' +
+      '（放弃历史连续性不得在续跑中途升级）。如确需重建 lineage，请以新 run_id 启动。';
+  }
+  return null;
+}
+
 export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
   const u = manifest.unattended;
   if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {

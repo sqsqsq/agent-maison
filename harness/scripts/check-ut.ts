@@ -51,7 +51,7 @@ import {
   featureDir,
   relFeatureFile,
 } from '../config';
-import { loadReviewClosureAttestation, reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
+import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
 import { classifySourceDrift, computeCurrentDriftFingerprint, loadMutationAuthorizations } from './utils/mutation-authorization';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
 import {
@@ -747,8 +747,10 @@ export function pickNonSrcConfigChanges(files: string[]): string[] {
  */
 function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
   const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
-  const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
-  if (!att) {
+  // plan a5f9c3e2 t1③：事实采集经统一 provider 归一为 SourceDriftFacts（canonical
+  // 三元组与 direct 模式 provider 同 schema；provenance/baseline_kind 是来源标注）。
+  const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!closure) {
     return [{
       id: 'goal_review_closure_baseline_unavailable',
       category: 'structure',
@@ -765,8 +767,7 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
         '本 blocker 为 human_only，agent 不得尝试修复。',
     }];
   }
-  const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
-  if (rec.ok) {
+  if (closure.clean) {
     return [{
       id: 'ut_no_src_mutation',
       category: 'structure',
@@ -778,7 +779,11 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
         '（coding 阶段合法实现不在裁决域）。',
     }];
   }
-  const drift = { added: rec.added, modified: rec.modified, deleted: rec.deleted };
+  const drift = {
+    added: closure.facts.added,
+    modified: closure.facts.modified,
+    deleted: closure.facts.deleted,
+  };
   const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
   const receipts = runId
     ? loadMutationAuthorizations(
@@ -791,7 +796,7 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
     runId,
     frozenManifestHash: null, // harness 侧无 run_start 冻结事件——preauth 本就不放行
     phase: ctx.phase ?? 'ut',
-    expectedInventoryHash: att.inventory.aggregate_sha256 ?? null,
+    expectedInventoryHash: closure.inventoryHash,
     projectRoot: ctx.projectRoot,
     feature: ctx.feature,
     manifestIdentityAuthenticated: Boolean(process.env.MAISON_HMAC_GOAL_CHECKPOINT),
@@ -826,9 +831,11 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
     failure_kind: 'goal_post_review_source_mutation_unresolved',
     blocking_class: 'goal_post_review_source_mutation_unresolved',
     suggestion:
-      '本 blocker 为 human_only（零内容重试）——出路由 runner 的 unauthorized_source_mutation ' +
-      'halt guidance 给出（还原后续跑，或新起 coding 起点 run 合法实现该变更）。' +
-      '禁止再次实施受保护源码变更；改码诉求走 must_review 登记等待人工。',
+      '本 blocker 零内容重试——**agent 不得再改产物试图安抚它**。' +
+      'plan a5f9c3e2 t3②起，runner 对未受信漂移的默认处置是**保守恢复**：失效旧 coding ' +
+      'closure 及其后阶段，把该 diff 当未受信候选回退 coding→review→ut→testing 完整重验' +
+      '（无需人签，不跳过验证）。仅当结构前提不满足（截断链 / 回退预算耗尽 / 同一 drift ' +
+      '指纹重现）才 halt，届时出路由 runner 的 unauthorized_source_mutation halt guidance 给出。',
   }];
 }
 
@@ -875,7 +882,19 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const businessChanges = filterProtected(ctx, diff.changedFiles);
+  // plan a5f9c3e2 t1③：direct provider —— 与 goal provider 归一成同一 SourceDriftFacts。
+  // **集合口径与改造前逐字等值**：partition 只分区不增删，union 后排序 = 原
+  // filterProtected(diff.changedFiles)（该数组本就 normalizeSorted）。
+  const driftFacts = partitionDriftByGitStatus({
+    projectRoot: ctx.projectRoot,
+    baseRef: diff.baseRef,
+    files: filterProtected(ctx, diff.changedFiles),
+    untrackedFiles: filterProtected(ctx, diff.untrackedFiles),
+    provenance: `trace-start-commit:${diff.baseRef}`,
+  });
+  const businessChanges = [
+    ...new Set([...driftFacts.added, ...driftFacts.modified, ...driftFacts.deleted]),
+  ].sort();
   const committedBusinessChanges = filterProtected(ctx, diff.committedFiles);
   const workingBusinessChanges = filterProtected(ctx, diff.workingTreeFiles);
   const stagedBusinessChanges = filterProtected(ctx, diff.stagedFiles);

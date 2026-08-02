@@ -50,6 +50,8 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 }
 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
+  // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
+  { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

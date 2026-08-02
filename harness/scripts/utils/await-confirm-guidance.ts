@@ -126,6 +126,13 @@ export interface UnauthorizedMutationGuidanceOpts {
   adjudicationAlreadyAvailable: boolean;
   /** runner 落盘的裁决请求单（report_dir 相对路径；未能生成 → null）。 */
   adjudicationRequestRel: string | null;
+  /**
+   * plan a5f9c3e2 t3②：保守恢复（失效旧 coding closure 及其后阶段、携未受信 diff 完整
+   * 重验）**已是默认路径且不需要人签**。走到本 halt 说明它被结构性前提挡住——
+   * 本字段承载具体原因（截断链 / 回退预算耗尽 / 同一 drift 指纹重现）。
+   * null=旧调用方或非结构性阻塞。
+   */
+  conservativeRecoveryBlockedReason?: string | null;
   harnessPrefixRel: string;
 }
 
@@ -140,6 +147,7 @@ export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuid
   const {
     feature, runId, phase, violations, chainHasCodingReview,
     issuanceRouteAvailable, adjudicationAlreadyAvailable, adjudicationRequestRel, harnessPrefixRel,
+    conservativeRecoveryBlockedReason,
   } = opts;
   const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId}`;
   const lines: string[] = [
@@ -147,6 +155,15 @@ export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuid
     ...violations.map((v) => `  - ${v}`),
     '',
   ];
+  if (conservativeRecoveryBlockedReason) {
+    // t3②：先讲清「这不是又要签字」——保守恢复本来会自动跑，是结构前提挡住了。
+    lines.push(
+      '注意：**保守恢复（失效旧 coding closure 及其后阶段、携未受信 diff 完整重验）本是默认',
+      '路径且不需要任何人签**——它不跳过验证、也不伪造保证。本次未能自动执行的原因：',
+      `  · ${conservativeRecoveryBlockedReason}`,
+      '',
+    );
+  }
   if (adjudicationAlreadyAvailable && chainHasCodingReview) {
     lines.push(
       '裁决已可用：存在与当前变更内容精确吻合的人工裁决 receipt——',
@@ -186,6 +203,61 @@ export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuid
     '注意：agent 自产 gap-notes/自签 approved_by 不构成授权；manifest 的',
     'pre_authorized_mutations 仅为意图预登记（内容级分类器落地前不放行）。',
   );
+  return lines;
+}
+
+export interface LineageMismatchGuidanceOpts {
+  feature: string;
+  runId: string;
+  /** 与 head 失配的账本文件（project 相对） */
+  mismatched: string[];
+  invocation: 'fresh' | 'resume';
+  /** consumer='framework/harness'、standalone='harness' */
+  harnessPrefixRel: string;
+}
+
+/**
+ * plan a5f9c3e2 t3①：vision feature head 失配的引导话术。
+ *
+ * 立项事故（宿主 run 20260801T145522Z-16408e）：该拦截此前是**裸 throw、无 builder**，
+ * 只说「人工核查后处置」，而唯一成文的重铸路 `--reseal-receipt` 需要受信签发方，
+ * 签发端全仓不存在 → agent 只能自己现编出路（实测编出了「quarantine 改名备份」）。
+ *
+ * 铁律照本文件其余 builder：**只列当下真正可走的路**。现在真的有两条：
+ *   ① 认为旧连续性仍然有效 → 恢复账本原状后重跑（不改锚、不冒充）；
+ *   ② 明确放弃旧连续性 → `--vision-lineage=reset` 新起 fresh run（**仅 fresh**）——
+ *      旧锚事务性 quarantine、断裂记 `lineage_discontinuity` 事件、世代归零全链重验。
+ * 关键措辞：② **不是**「认可这次变更」，而是「撤销历史连续性主张、重新证明一遍」——
+ * 它不需要任何人签，因为它不跳过验证、也不伪造保证。
+ */
+export function buildLineageMismatchGuidance(opts: LineageMismatchGuidanceOpts): string[] {
+  const { feature, runId, mismatched, invocation, harnessPrefixRel } = opts;
+  const freshCmd =
+    `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --vision-lineage=reset`;
+  const lines: string[] = [
+    `【${feature} · run ${runId}】vision 账本与场外 feature head 失配：`,
+    ...mismatched.slice(0, 8).map((f) => `  - ${f}`),
+    '',
+    'head 是**跨 run 的防洗账本锚**（记录上次收盘时各账本的哈希），不是授权——它只陈述',
+    '「账本变了」这一事实，无法被任何指令改成「没变过」。当下两条真正可走的路：',
+    '',
+    '  1. 旧连续性仍然有效（账本是误删/误改）：把账本恢复原状后重跑本 run。',
+    '     不要删改 head 冒充原状——那才是这道闸要挡的事。',
+    '',
+    '  2. 明确放弃旧连续性、从头重建：以新 run_id 起 fresh run 并显式声明——',
+    `     ${freshCmd}`,
+    '     该声明**不是**「认可变更」，而是「撤销历史连续性主张、重新证明一遍」：',
+    '     旧 head/HWM 事务性 quarantine → 断裂写入 lineage_discontinuity 事件（含旧哈希）',
+    '     → 世代归零 → 全链重验。因此它不需要任何人签署，也不会洗白任何历史 FAIL——',
+    '     本 run 只能声称「新 lineage 已全链验证」，不能声称「历史连续性得以保持」。',
+  ];
+  if (invocation === 'resume') {
+    lines.push(
+      '',
+      '注意：当前是 --resume。**放弃连续性只能在 fresh run 启动时声明**，续跑中途不得升级',
+      '（跑到一半把已建立的链一笔勾销不可接受）。本 run 到此为止，请按上面两条之一处置。',
+    );
+  }
   return lines;
 }
 
