@@ -9,6 +9,7 @@ import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
 import type { PhaseSnapshotFiles } from './goal-phase-snapshot';
 import { relFeatureFile } from '../../config';
 import { collectAutoDecisions } from './headless-assumptions';
+import type { Disposition, WaitKind } from './adjudication';
 
 export interface MustReviewItem {
   phase: FeaturePhase;
@@ -111,6 +112,13 @@ export interface GoalPhaseOutcome {
   agent_silent_killed?: boolean;
   agent_warn?: string;
   halt_reason?: string;
+  /**
+   * plan d6b1a8e3 t5④：**权威**状态/next-action 轴——由统一投影出口给出。
+   * 报告的状态与下一步一律读本字段；`halt_reason` 只作诊断散文的键与原文透传，
+   * **不得**用来推导状态或 next action（那就是第二张分类表）。
+   */
+  run_disposition?: Disposition;
+  run_wait_kind?: WaitKind;
   /** P0-9b：await_human_visual_confirm 等设计内求人 halt 的逐步操作指引（给真人读） */
   halt_guidance?: string;
   /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
@@ -211,6 +219,12 @@ export function generateGoalReportJson(
   phases: GoalPhaseOutcome[],
 ): GoalReport {
   const deferred_phases = phases.filter((p) => p.deferred).map((p) => p.phase);
+  // t5④（codex 订正）：报告**只消费**投影，绝不重算。
+  // 此前这里调 withRunDisposition 用**中性上下文**按 halt_reason 重新 decide——
+  // 那是第二个裁决入口：runner 拿着真实结构事实（回退预算/截断链/重复指纹）算出
+  // TERMINAL，报告却会重算成 RECOVERY_PENDING，「运行器说无法恢复、报告说正在恢复」。
+  // 真实投影由生产端在 halt 那一刻写进事件，并由 runner 回填进 outcome（见
+  // goal-runner enrichOutcomesWithProjection）。此处原样透传。
   return {
     schema_version: '1.0',
     run_id: runId,
@@ -220,6 +234,158 @@ export function generateGoalReportJson(
     deferred_phases,
     generated_at: new Date().toISOString(),
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// plan d6b1a8e3 t5④：报告侧「权威轴 vs 诊断散文」分离
+// ---------------------------------------------------------------------------
+// 此前这里是一棵 19 层嵌套的 `halt_reason === …` 三元树，把两件事揉在一列：
+// ①这个 phase 现在算什么状态、下一步该谁动手（**控制语义**）；②给人读的一句话解释。
+// ① 必须来自统一投影 `run_disposition`（否则就是下游第二张分类表）；② 是散文，
+// 允许按 halt_reason 查表、也允许缺项——缺了只是话说得笼统，不影响任何判定。
+// ---------------------------------------------------------------------------
+
+/** 权威轴的人读标签（**只由 disposition 决定**，与具体事故原因无关）。 */
+const DISPOSITION_LABEL: Readonly<Record<string, string>> = {
+  RESUME_READY: '可续跑',
+  RECOVERY_PENDING: '框架自动恢复中',
+  TERMINAL: '终局·本 run 无法继续',
+};
+
+export function renderPhaseDispositionCell(p: {
+  run_disposition?: string; run_wait_kind?: string; halted?: boolean;
+}): string {
+  const d = p.run_disposition;
+  if (!d) return p.halted ? 'halted' : '—';
+  if (d === 'WAITING') {
+    return p.run_wait_kind === 'external' ? '等待外部条件（环境/设备/工具链）' : '等待人工处置';
+  }
+  return DISPOSITION_LABEL[d] ?? d;
+}
+
+/**
+ * 诊断散文（**非权威**，仅供人读；缺项完全可以）。取值优先级：
+ *   ① 生产端已生成的 halt_guidance 首行（最贴近现场，随生产端演进自动更新）
+ *   ② 本表按 halt_reason 查到的固定说明
+ *   ③ 通用兜底 `halted (<halt_reason>)`
+ */
+const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
+  headless_interaction_required:
+    '需人工输入（headless）',
+  no_progress_guard:
+    '确定性闸门无进展',
+  transient_api_error_exhausted:
+    'API 连接反复中断（非框架/需求/代码问题）——退避重试已达上限，请检查网络/代理稳定性或增大 max_transient_api_retries',
+  agent_no_output:
+    'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境',
+  no_progress_agent_timeout:
+    '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）',
+  closure_timeout:
+    'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume',
+  pass_snapshot_unavailable:
+    'PASS 产物无法建立/判定可信冻结保护（head 损坏/快照失败/预期快照消失）——不做无保护重试，人工核查 trust-state 后 --resume',
+  closure_probe_error:
+    'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume',
+  closure_state_invariant:
+    'lite track 不产生 receipt 却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查',
+  await_operator_toolchain:
+    '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后 --resume，详见 blocker details',
+  await_human_gate_deferral:
+    '仅剩需真人签字/确认项（设计内求人时刻，内容重试无意义）——逐条完成人签后 --resume；语义同 AWAITING_HUMAN_REVIEW',
+  pass_snapshot_restore_refused:
+    'PASS 冻结产物被改且无法自动恢复——人工核查产物与 trust-state 快照；生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT（使 resume 场景也可自动恢复）',
+  pass_snapshot_journal_unverifiable:
+    'PASS 快照失效 journal 无法验证（损坏/验签失败）——人工核查 trust-state 后 --resume，不得依据不可信 journal 改动快照',
+  await_human_visual_confirm:
+    '待真人逐屏过目确认（设计内求人时刻，见下方引导）',
+  framework_integrity_block:
+    'framework 完整性拦截——须真人处置（allowlist 具名审批/还原/重铺/回灌，见下方引导），agent 不得改动 framework 发布件',
+  framework_bug:
+    '门禁脚本自身异常（framework 缺陷，非产物问题）——须回灌源仓修复，见下方引导',
+  agent_timeout_repeated:
+    '连续超时（升档后仍超时）——预算/需求规模/adapter 环境三选一排查，见下方引导',
+  budget_wall_clock:
+    'wall 总预算耗尽（deadline 制硬截断）',
+  await_human_capability_gap:
+    '工具链能力缺口（invoke 前 preflight 拦截，未烧 agent 轮次）——按 HARNESS_PREFLIGHT 双出口处置：修环境或确认停止；修好后 --resume 重检放行',
+};
+
+const SPLIT_LINES = /\r?\n/;
+const PIPE = /\|/g;
+const PIPE_ESC = '\\|';
+
+export function renderPhaseDiagnosticProse(p: {
+  halt_reason?: string; halt_guidance?: string; halted?: boolean; integrity_subtypes?: string[];
+}): string {
+  const guidanceHead = p.halt_guidance
+    ?.split(SPLIT_LINES)
+    .map((l) => l.trim())
+    .find(Boolean);
+  // 表格单元格内需转义竖线，否则一行 guidance 会把 Markdown 表撑破
+  if (guidanceHead) return guidanceHead.replace(PIPE, PIPE_ESC);
+  const reason = p.halt_reason ?? '';
+  const prose = HALT_DIAGNOSTIC_PROSE[reason];
+  if (prose) {
+    return reason === 'framework_integrity_block' && p.integrity_subtypes?.length
+      ? `${prose}（${p.integrity_subtypes.join(' + ')}）`
+      : prose;
+  }
+  return p.halted ? `halted (${reason || 'unknown'})` : '—';
+}
+
+
+/**
+ * plan d6b1a8e3 t5③：**lineage 断裂展示**。
+ * 上游 a5f9c3e2 只负责写 `lineage_discontinuity` / `lineage_reset_committed` 事件并
+ * 禁止连续性主张；把它讲给人听是报告的事。
+ * 铁律：结论只能声称「新 lineage 已全链验证」，**不得**出现「历史连续性得以保持」。
+ * 无断裂事件时返回空数组——不给未 reset 的 run 平白加一节。
+ */
+export function renderLineageDiscontinuitySection(
+  events: ReadonlyArray<Record<string, unknown>>,
+  /**
+   * 本 run 的终态（`report.status`）。**必须由调用方传入，不能从 events 里找 run_end**
+   * ——生产顺序是 writeGoalReport 先于 emit(run_end)，报告生成时事件流里永远还没有
+   * 本次终态，靠扫事件会让**每一个成功 run 都被写成「尚不能声称已全链验证」**。
+   * 传 status 而不是重排落盘顺序：重排会造出「run_end 已落、报告却说失败」的反向不一致。
+   */
+  runStatus?: string,
+): string[] {
+  const broken = events.filter((e) => e.type === 'lineage_discontinuity');
+  if (broken.length === 0) return [];
+  const committed = events.filter((e) => e.type === 'lineage_reset_committed');
+  const lines: string[] = ['## Vision lineage', '', '> **历史连续性已撤销**（本 run 显式放弃旧 lineage 并重建）。', ''];
+  for (const b of broken) {
+    const oldHead = typeof b.old_head_sha256 === 'string' ? b.old_head_sha256 : '(absent)';
+    const gen = b.old_generation ?? '(n/a)';
+    lines.push(`- 断裂原因：${String(b.reason ?? '(未记录)')}`);
+    lines.push(`- 旧锚：head=\`${oldHead}\` · 世代 ${String(gen)}`);
+  }
+  for (const c of committed) {
+    lines.push(`- 新 lineage：head=\`${String(c.new_head_sha256 ?? '(pending)')}\` · 世代 ${String(c.new_generation ?? '(pending)')}`);
+  }
+  // codex 订正：此前只要见到 discontinuity 就宣称「新 lineage 已全链验证」——
+  // reset 中途失败、或后续阶段 HALTED 时那就是**假话**。三个事实按证据**递进**：
+  //   ①有 discontinuity            → 只能说「历史连续性已撤销」
+  //   ②有 lineage_reset_committed  → 才能加一句「新 lineage 已建立」
+  //   ③run 真的走完（CHAIN_SLICE_COMPLETED/COMPLETED）→ 才能说「已全链验证」
+  const chainCompleted =
+    runStatus === 'CHAIN_SLICE_COMPLETED' || runStatus === 'COMPLETED';
+  lines.push('', '结论口径（按已有证据逐级给出，不越级）：');
+  lines.push('- 历史连续性**已撤销**——旧 lineage 的判定不因本次重建而延续，也不因本次重建而被洗白（断裂已如实记账）。');
+  if (committed.length > 0) {
+    lines.push('- 新 lineage **已建立**（reset 事务已提交，旧场外锚已清理）。');
+  } else {
+    lines.push('- 新 lineage **尚未建立**：reset 事务未提交（中途中断）——旧锚备份仍在，下次启动会先回滚再重做。');
+  }
+  if (committed.length > 0 && chainCompleted) {
+    lines.push('- 新 lineage **已全链验证**（本 run 走完整链并取得完成终态）。');
+  } else {
+    lines.push('- **尚不能声称「已全链验证」**：本 run 未取得完成终态，新 lineage 的验证不完整。');
+  }
+  lines.push('');
+  return lines;
 }
 
 export function generateGoalReportMarkdown(
@@ -309,72 +475,32 @@ export function generateGoalReportMarkdown(
   lines.push(
     '## Phase outcomes',
     '',
-    '| Phase | Verdict | DEFERRED | WARNs | Reason | Summary |',
-    '|-------|---------|----------|-------|--------|---------|',
+    '| Phase | Verdict | DEFERRED | WARNs | Disposition | Reason | Summary |',
+    '|-------|---------|----------|-------|-------------|--------|---------|',
   );
 
   for (const p of report.phases) {
     const deferred = p.deferred ? 'YES（未完成·待外部条件）' : '—';
-    const reason =
-      p.deferred_reason ??
-      (p.halt_reason === 'headless_interaction_required'
-        ? '需人工输入（headless）'
-        : p.halt_reason === 'no_progress_guard'
-          ? '确定性闸门无进展'
-          : p.halt_reason === 'transient_api_error_exhausted'
-            ? 'API 连接反复中断（非框架/需求/代码问题）——退避重试已达上限，请检查网络/代理稳定性或增大 max_transient_api_retries'
-            : p.halt_reason === 'agent_no_output'
-              ? 'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境'
-              : p.halt_reason === 'no_progress_agent_timeout'
-                ? '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）'
-                : p.halt_reason === 'closure_timeout'
-                  ? 'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume'
-                  : p.halt_reason === 'pass_snapshot_unavailable'
-                    ? 'PASS 产物无法建立/判定可信冻结保护（head 损坏/快照失败/预期快照消失）——不做无保护重试，人工核查 trust-state 后 --resume'
-                    : p.halt_reason === 'closure_probe_error'
-                  ? 'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume'
-                  : p.halt_reason === 'closure_state_invariant'
-                    ? 'lite track 不产生 receipt 却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查'
-                    : p.halt_reason === 'await_operator_toolchain'
-                  ? '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后 --resume，详见 blocker details'
-                  : p.halt_reason === 'await_human_gate_deferral'
-                    ? '仅剩需真人签字/确认项（设计内求人时刻，内容重试无意义）——逐条完成人签后 --resume；语义同 AWAITING_HUMAN_REVIEW'
-                    : p.halt_reason === 'pass_snapshot_restore_refused'
-                      ? 'PASS 冻结产物被改且无法自动恢复——人工核查产物与 trust-state 快照；生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT（使 resume 场景也可自动恢复）'
-                      : p.halt_reason === 'pass_snapshot_journal_unverifiable'
-                        ? 'PASS 快照失效 journal 无法验证（损坏/验签失败）——人工核查 trust-state 后 --resume，不得依据不可信 journal 改动快照'
-                        : p.halt_reason === 'await_human_visual_confirm'
-                  ? '待真人逐屏过目确认（设计内求人时刻，见下方引导）'
-                  : p.halt_reason === 'await_human_p0_skip'
-                    ? 'P0 用例被跳过待真人裁决（设计内求人时刻，见下方引导）'
-                    : p.halt_reason === 'framework_integrity_block'
-                      ? `framework 完整性拦截${p.integrity_subtypes?.length ? `（${p.integrity_subtypes.join(' + ')}）` : ''}——须真人处置（allowlist 具名审批/还原/重铺/回灌，见下方引导），agent 不得改动 framework 发布件`
-                      : p.halt_reason === 'framework_bug'
-                        ? '门禁脚本自身异常（framework 缺陷，非产物问题）——须回灌源仓修复，见下方引导'
-                        : p.halt_reason === 'agent_timeout_repeated'
-                          ? '连续超时（升档后仍超时）——预算/需求规模/adapter 环境三选一排查，见下方引导'
-                          : p.halt_reason === 'budget_wall_clock'
-                            ? 'wall 总预算耗尽（deadline 制硬截断）'
-                            : p.halt_reason === 'await_human_capability_gap'
-                              ? '工具链能力缺口（invoke 前 preflight 拦截，未烧 agent 轮次）——按 HARNESS_PREFLIGHT 双出口处置：修环境或确认停止；修好后 --resume 重检放行'
-                              : p.halted
-                                ? 'halted'
-                                : '—');
+    // t5④：**权威轴**（状态/next action）只来自 run_disposition；
+    // halt_reason 仅作诊断散文的键与原文透传。等价性：固定 disposition 后替换
+    // halt_reason，Disposition 列必须逐字不变（散文列可变，它不参与控制）。
+    const disposition = renderPhaseDispositionCell(p);
+    const reason = p.deferred_reason ?? renderPhaseDiagnosticProse(p);
     const summary = p.summary_path ?? '—';
     const warns = warnDigest.get(String(p.phase)) ?? '—';
-    lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${warns} | ${reason} | ${summary} |`);
+    lines.push(`| ${p.phase} | ${p.verdict} | ${deferred} | ${warns} | ${disposition} | ${reason} | ${summary} |`);
     if (p.interaction_question) {
-      lines.push(`| ↳ 待确认 | — | — | — | ${p.interaction_question.replace(/\|/g, '\\|')} | — |`);
+      lines.push(`| ↳ 待确认 | — | — | — | — | ${p.interaction_question.replace(/\|/g, '\\|')} | — |`);
     }
     if (p.agent_warn) {
-      lines.push(`| ↳ agent | WARN | — | — | ${p.agent_warn} | — |`);
+      lines.push(`| ↳ agent | WARN | — | — | — | ${p.agent_warn} | — |`);
     }
     // P0-D（codex P3）：断流信封原文/agent stderr 直进报告——下游无需回读 events.jsonl。
     if (p.api_error_excerpt) {
-      lines.push(`| ↳ API 断流信封 | — | — | — | ${p.api_error_excerpt.replace(/\|/g, '\\|')} | — |`);
+      lines.push(`| ↳ API 断流信封 | — | — | — | — | ${p.api_error_excerpt.replace(/\|/g, '\\|')} | — |`);
     }
     if (p.agent_stderr_excerpt) {
-      lines.push(`| ↳ agent stderr | — | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
+      lines.push(`| ↳ agent stderr | — | — | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
     }
     // P2#9（post-impl review）：显式超时预算过小 advisory 入报告（仅 console 会在 detach 后蒸发）
     if (options.events?.length) {
@@ -384,18 +510,25 @@ export function generateGoalReportMarkdown(
           .map(e => e.detail as string),
       );
       for (const a of advisories) {
-        lines.push(`| ↳ 预算提示 | — | — | — | ${a.replace(/\|/g, '\\|')} | — |`);
+        lines.push(`| ↳ 预算提示 | — | — | — | — | ${a.replace(/\|/g, '\\|')} | — |`);
       }
     }
+  }
+
+  // t5③：lineage 断裂展示（上游只写事件+禁连续性主张，讲给人听归报告）
+  if (options.events?.length) {
+    const section = renderLineageDiscontinuitySection(options.events, report.status);
+    if (section.length > 0) lines.push('', ...section);
   }
 
   // P1-6（plan 7c4f2e9b）：no_progress/超时族 halt 附四轴 attempt 时间线——事故文案
   // 「连续超时且产物零进展」双分句失实（3/5 超时、产物一直在变），死模板降为兜底一行，
   // 主叙事交给逐 attempt 四轴（termination × verdict × transition × delta）。
   if (options.events?.length) {
-    const axedPhases = report.phases.filter(
-      (p) => p.halt_reason && /^(no_progress|agent_timeout_repeated|closure_wall_repeated)/.test(p.halt_reason),
-    );
+    // t5④（codex 裁决）：**不再按 halt_reason 正则筛选**——那是又一处按事故原因分叉的
+    // 控制逻辑，且新增 halt 家族必然漏配。改为对所有 halted phase 一律尝试生成，
+    // 有数据才展示（时间线本身是证据渲染，没数据自然不出节）。
+    const axedPhases = report.phases.filter((p) => p.halted);
     for (const p of axedPhases) {
       const rows = buildAttemptAxesTimeline(options.events as AttemptAxisEventLike[], String(p.phase));
       if (rows.length > 0) {

@@ -39,6 +39,8 @@ import {
 import { normalizePhaseId } from './phase-alias';
 import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
 import type { WorkflowSpec } from '../../workflow-loader';
+import { reduceRunState } from './run-state-reducer';
+import type { Disposition, WaitKind } from './adjudication';
 
 export const PROGRESS_SCHEMA_VERSION = '1.0';
 export const LOCK_HEARTBEAT_MS = 60_000;
@@ -99,6 +101,14 @@ export interface GoalProgressSnapshot {
   feature: string;
   status: ProgressRunStatus;
   status_reason: string | null;
+  /**
+   * plan d6b1a8e3 t5⓪-b：**裁决轴**投影（与 `status` 的 liveness 轴正交，刻意不合并——
+   * 合并成一个大枚举会得到两轴笛卡尔积状态机）。由单一 run-state reducer 折叠事件里
+   * 已落盘的 `run_disposition` 得出，**不读 halt_reason 自行判类**。
+   * monitor / supervisor 只消费本字段，不再各自从事件类型推导。
+   */
+  run_disposition: Disposition;
+  run_wait_kind?: WaitKind;
   generated_at: string;
   source: {
     events_path: string;
@@ -788,6 +798,10 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     lastLingeringPipe,
   });
 
+  // d6 t5⓪-b：裁决轴由单一 reducer 给出（total function——空序列/仅 run_start 亦有值）。
+  // 与下面的 liveness 轴各算各的，报告侧同时如实展示两轴。
+  const runState = reduceRunState(events as unknown[]);
+
   let status: ProgressRunStatus = 'PENDING';
   let statusReason: string | null = null;
 
@@ -831,9 +845,22 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // An INTERRUPTED / abnormal exit writes no report — never point the user at a missing file.
   const goalReportExists = fs.existsSync(path.join(projectRoot, reportDir, 'goal-report.json'));
 
+  // plan d6b1a8e3 t5①（codex 订正）：**next_action 是控制语义，必须由统一投影决定**。
+  // 此前 runState 只被复制进快照字段、nextAction 仍按 run_end/substep 独立推导——
+  // 那样 reducer 只是展示字段而不是控制真值：WAITING(human) 与 WAITING(external)
+  // 没有不同动作、RECOVERY_PENDING 不显示恢复中、TERMINAL 还在劝人 resume。
+  // liveness 轴保持正交：它只影响下面的等待细分，不覆盖四态给出的控制结论。
   let nextAction = 'wait';
   if (status === 'PENDING') nextAction = 'await_run_start';
-  else if (lastRunEnd) nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_or_resume';
+  else if (runState.run_disposition === 'TERMINAL') {
+    nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_terminal';
+  } else if (runState.run_disposition === 'RECOVERY_PENDING') {
+    nextAction = 'wait_for_framework_recovery';
+  } else if (runState.run_disposition === 'WAITING') {
+    nextAction = runState.run_wait_kind === 'external'
+      ? 'await_external_condition'
+      : 'await_human_action';
+  } else if (lastRunEnd) nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_or_resume';
   else if (currentSpan?.substep === 'agent_invoke') nextAction = 'wait_for_agent_invoke_end';
   else if (currentSpan?.substep === 'harness') nextAction = 'wait_for_harness_end';
   else if (currentSpan?.status === 'RETRYING') nextAction = 'wait_for_retry';
@@ -852,6 +879,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     feature: manifest.feature,
     status,
     status_reason: statusReason,
+    // 裁决轴（正交于上面的 liveness 轴）——supervisor 按 beacon × run_disposition 决策
+    run_disposition: runState.run_disposition,
+    ...(runState.run_wait_kind ? { run_wait_kind: runState.run_wait_kind } : {}),
     generated_at: new Date(nowMs).toISOString(),
     source: {
       events_path: eventsPath,

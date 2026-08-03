@@ -81,7 +81,8 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 ## 监控 loop 细则
 
 - **宿主工具 timeout 耦合（BLOCKER）**：调用 `goal-monitor --max-seconds N` 时，shell/tool 的 timeout 必须显式设置为 `> N`（建议 `N + 60s`；例如 `--max-seconds 240` 对应工具 timeout ≥300s）。如果宿主默认 timeout 更短（如 120s），必须显式提升；无法提升时把 `N` 降到安全值并循环。
-- **循环方式**：monitor 有输出后，向用户汇报并把返回的 `event_index` 记为 `last_seen`；未终态且当前轮次仍活跃时，再启动下一段 bounded monitor。**不要**跑 `goal-status --watch` 常驻。
+- **循环方式**：monitor 有输出后，向用户汇报，并把输出里的 **`next_since_event` 原样**作为下一段 monitor 的 `--since-event`（该字段就是为此而设，不要自己从 `event_index` 换算，也不要省略）。**漏传或传 0 会让历史事件被反复消费、同一条异常每轮重报**——这正是宿主 stale 误报的成因。未终态且当前轮次仍活跃时，再启动下一段 bounded monitor。**不要**跑 `goal-status --watch` 常驻。
+- **通知自带裁决轴**：输出含 `run_disposition`（`RESUME_READY`/`RECOVERY_PENDING`/`WAITING`/`TERMINAL`）与 `run_wait_kind`（`human`/`external`）。汇报时按它说「在等人 / 在等环境 / 框架正在自动恢复 / 已终局」，**不要**自己按 halt_reason 另判一套。
 - **no-op**：若到 `--max-seconds` 仍无通知事件，monitor 会 no-op 退出；agent 可继续下一段 bounded monitor，不得误判 runner 卡死。
 - **heartbeat**：低频运行中摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断，并去重；不是每个 240s monitor 都汇报一次。
 - **硬 liveness 异常**：monitor 返回 `notification_kind=liveness`（`STALLED` / `ORPHAN_SUSPECTED`）时，向用户汇报一次并**停止** bounded monitor loop，升级让用户决策（查 `detach.log`、决定是否 `--force-resume` 或停 run）；**不要**继续轮询。monitor 已对同一异常去重（无新事件不复报），硬卡死/孤儿继续 loop 没有意义。

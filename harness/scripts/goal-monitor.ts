@@ -23,7 +23,7 @@ const POLL_MS = 2_000;
 
 type NotificationKind = 'phase_verdict' | 'run_end' | 'liveness' | 'heartbeat' | 'none';
 
-interface IndexedEvent {
+export interface IndexedEvent {
   index: number;
   event: GoalRunEvent;
 }
@@ -34,6 +34,11 @@ interface MonitorNotification {
   feature: string;
   event_index: number;
   notification_kind: NotificationKind;
+  /** 裁决轴投影（与 liveness_state 正交；由统一 reducer 给出，非本地推导） */
+  run_disposition?: string;
+  run_wait_kind?: string;
+  /** 下一轮 --since-event 应传的值（照抄即可，避免重复消费历史） */
+  next_since_event?: number;
   status: GoalProgressSnapshot['status'];
   phase: string | null;
   phase_verdict?: string;
@@ -175,6 +180,14 @@ function notificationBase(
     status: snapshot.status,
     phase: snapshot.phase.name,
     liveness_state: snapshot.liveness.state,
+    // plan d6b1a8e3 t5①：通知自带**裁决轴**——消费方（人/agent/supervisor）不必再
+    // 自己从 halt_reason 推「现在算什么状态」。与 liveness_state 正交并列。
+    run_disposition: snapshot.run_disposition,
+    ...(snapshot.run_wait_kind ? { run_wait_kind: snapshot.run_wait_kind } : {}),
+    // t2（codex 订正）：**把下一轮该传的游标直接给出来**。此前调用方要自己记
+    // event_index 再回传，宿主事故说明这条 prose 约定不可靠执行；现在输出即答案，
+    // 漏传的唯一后果从「静默重复上报历史」变成「照抄本字段即可」。
+    next_since_event: eventIndex,
   };
 }
 
@@ -229,7 +242,7 @@ function heartbeatNotification(
   return null;
 }
 
-function classifyNotification(
+export function __testing_classifyNotification(
   events: IndexedEvent[],
   sinceEvent: number,
   snapshot: GoalProgressSnapshot,
@@ -261,7 +274,14 @@ function classifyNotification(
   }
 
   const latestIndex = events.length > 0 ? events[events.length - 1].index : -1;
+  // plan d6b1a8e3 t2（replay fixture 复现后修）：**run 停着不等于异常**。
+  // 框架正在保守恢复（RECOVERY_PENDING）、已知在等人/等环境（WAITING）、或已终局
+  // （TERMINAL）时，事件流本来就该安静，liveness=STALLED 是预期内的——报出来是纯噪音，
+  // 也正是「stale 误报」的主要来源。只有 RESUME_READY（本该在推进却不动）才是真异常。
+  // 判据取自 t5 的统一投影，**不在此按 halt_reason 自行判类**。
+  const dispositionExpectsProgress = (snapshot.run_disposition ?? 'RESUME_READY') === 'RESUME_READY';
   if (
+    dispositionExpectsProgress &&
     (snapshot.liveness.state === 'STALLED' || snapshot.liveness.state === 'ORPHAN_SUSPECTED') &&
     latestIndex > sinceEvent
   ) {
@@ -345,7 +365,7 @@ async function main(): Promise<number> {
       tailN: 5,
     });
     const events = loadIndexedEvents(eventsPath);
-    const notification = classifyNotification(events, sinceEvent, snapshot);
+    const notification = __testing_classifyNotification(events, sinceEvent, snapshot);
     if (notification) {
       if (wantJson) console.log(JSON.stringify(notification, null, 2));
       else console.log(notification.markdown);
@@ -368,9 +388,13 @@ async function main(): Promise<number> {
   }
 }
 
-void main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error((err as Error).message ?? err);
-    process.exit(1);
-  });
+// CLI 入口守卫：本模块的纯判定函数需被单测直接 import（plan d6b1a8e3 t2 replay
+// fixture）——无守卫时一 import 就跑 CLI 并 process.exit，测试根本起不来。
+if (require.main === module) {
+  void main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error((err as Error).message ?? err);
+      process.exit(1);
+    });
+}

@@ -53,6 +53,8 @@ export interface GoalCapabilitySpec {
   phase_context_isolation: boolean;
   supports_resume: boolean;
   handoff: GoalHandoffMode;
+  /** a4f7e2b1 t3：声明式生存能力（launch/liveness/wakeup）；无实证的声明会被降级 */
+  survival?: SurvivalCapabilityDecl;
 }
 
 export interface GoalCapabilityLoadResult {
@@ -160,6 +162,9 @@ export function loadGoalCapability(
     phase_context_isolation: phaseContextIsolation,
     supports_resume: supportsResume,
     handoff,
+    ...(gc.survival && typeof gc.survival === 'object'
+      ? { survival: gc.survival as SurvivalCapabilityDecl }
+      : {}),
   };
   return {
     adapter: adapterName,
@@ -191,6 +196,87 @@ export function validateGoalCapabilityForRunner(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+
+// ---------------------------------------------------------------------------
+// plan a4f7e2b1 t3：声明式 launch / liveness / wakeup —— **先探针后声明**
+// ---------------------------------------------------------------------------
+// 生存策略由配置解析而非硬编码。但配置**不等于**能力：a7f2e5d1 的教训是
+// 「tier 虚标要么实证要么降级」——一个 adapter 自称能后台存活、实际不能，
+// supervisor 会一直往一个起不来的东西上撞。
+//
+// 因此本解析器的核心不是「读到什么就信什么」，而是：
+//   声明 + **实证样本引用**（verified_by）齐备 → 采信；
+//   只有声明、没有实证       → **降级为 unsupported** 并给出诚实原因；
+//   什么都没有               → unsupported。
+// 探针法参照 c7a9e2f4 T0：实证样本须由宿主实跑产生并落档，不接受口头声明。
+// ---------------------------------------------------------------------------
+
+export type SurvivalFacet = 'launch' | 'liveness' | 'wakeup';
+
+export interface SurvivalFacetDecl {
+  /** adapter 自称支持该能力 */
+  supported?: boolean;
+  /** 实证样本引用（宿主实跑产物路径 / probe 记录 id）——缺失即降级 */
+  verified_by?: string;
+  /** 该能力的具体机制（诊断用，不参与判定） */
+  mechanism?: string;
+}
+
+export interface SurvivalCapabilityDecl {
+  launch?: SurvivalFacetDecl;
+  liveness?: SurvivalFacetDecl;
+  wakeup?: SurvivalFacetDecl;
+}
+
+export type SurvivalFacetResolution =
+  | { facet: SurvivalFacet; supported: true; verified_by: string; mechanism: string | null }
+  | { facet: SurvivalFacet; supported: false; reason: string };
+
+/**
+ * 单能力解析。**无实证不采信**——这是本函数存在的全部意义。
+ */
+export function resolveSurvivalFacet(
+  facet: SurvivalFacet,
+  decl: SurvivalFacetDecl | undefined,
+): SurvivalFacetResolution {
+  if (!decl || decl.supported !== true) {
+    return { facet, supported: false, reason: `${facet} 未声明支持` };
+  }
+  const verified = typeof decl.verified_by === 'string' ? decl.verified_by.trim() : '';
+  if (!verified) {
+    return {
+      facet,
+      supported: false,
+      reason:
+        `${facet} 已声明 supported=true 但缺 verified_by 实证样本——按「先探针后声明」降级为不支持` +
+        '（虚标的能力会让 supervisor 一直撞一个起不来的东西）',
+    };
+  }
+  return {
+    facet,
+    supported: true,
+    verified_by: verified,
+    mechanism: typeof decl.mechanism === 'string' && decl.mechanism.trim() ? decl.mechanism.trim() : null,
+  };
+}
+
+export function resolveSurvivalCapability(
+  decl: SurvivalCapabilityDecl | undefined,
+): Record<SurvivalFacet, SurvivalFacetResolution> {
+  return {
+    launch: resolveSurvivalFacet('launch', decl?.launch),
+    liveness: resolveSurvivalFacet('liveness', decl?.liveness),
+    wakeup: resolveSurvivalFacet('wakeup', decl?.wakeup),
+  };
+}
+
+/** 从已加载的 adapter capability 取生存声明（缺省空——不代表支持）。 */
+export function survivalCapabilityOf(
+  loaded: GoalCapabilityLoadResult,
+): Record<SurvivalFacet, SurvivalFacetResolution> {
+  return resolveSurvivalCapability(loaded.capability?.survival);
 }
 
 export type GoalRunMode = 'attended' | 'unattended';

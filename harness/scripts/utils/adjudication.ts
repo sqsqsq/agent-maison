@@ -244,6 +244,48 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   framework_bug: { class: 'framework_fault' },
   framework_integrity_block: { class: 'framework_fault' },
   framework_internal: { class: 'framework_fault' },
+  /** closure 探针子进程异常 / 状态不变式被破坏——框架侧缺陷，人也修不了产物。 */
+  closure_probe_error: { class: 'framework_fault' },
+  closure_state_invariant: { class: 'framework_fault' },
+  /** session 内 phase 执行抛异常（driver 侧）——按框架缺陷处置，不诱导 agent 改产物。 */
+  in_session_phase_exception: { class: 'framework_fault' },
+
+  // --- 元门禁扫描域扩展补登（codex 七轮 P1：原扫描只覆盖 goal-runner.ts，
+  //     session driver / delegated producer 的 halt_reason 从未入册，「全覆盖」是虚的）。
+  //     一律按**保持现行行为**的类登记（这些今天都是停下求人/等外部），
+  //     绝不落 recoverable —— 映射完整 ≠ 行为改动。
+  /** 仅剩需真人签字/确认项，内容重试无意义（actionability 聚合层出口）。 */
+  await_human_gate_deferral: { class: 'operator' },
+  /** 存在 toolchain 阻塞项——环境修好后继续。 */
+  await_operator_toolchain: { class: 'external' },
+  /** in-session 调和熔断（goal-mode-entry）。codex 七轮 P1：`fuse_reason` **持久化在
+   *  会话状态里**，下一次进入立即再次 fused，同一 run 没有清除或恢复入口——按
+   *  structurally_terminal 的既定定义（不存在使本 run 能继续的未来输入）应判 terminal，
+   *  而不是「等人一下就能续」的 WAITING(human)。 */
+  in_session_reconcile_fused: { class: 'operator', structurally_terminal: true },
+  /** no-progress 家族：签名重复 / 超时无进展——盲重试只烧预算，停下求人。 */
+  no_progress_guard: { class: 'operator' },
+  /** codex 八轮 P1：产生端把 agent_timeout 与 toolchain/capture 同归「基建/环境问题」
+   *  （goal-runner driverGuard 分支注释原文），且既有 `agent_timeout_repeated` 也是
+   *  external——判 operator 会错报成「等人决策」。 */
+  no_progress_agent_timeout: { class: 'external' },
+  /** 视觉门禁无改善熔断（与基建类分流，见 goal-runner driverGuard 分支注释）。 */
+  no_progress_visual_gap: { class: 'operator' },
+  /** 基建类无进展：工具链 / 采集失败——环境修好后继续。 */
+  no_progress_toolchain: { class: 'external' },
+  no_progress_capture: { class: 'external' },
+  /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
+   *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
+   *  与 `await_human_confirm` / `await_human_p0_skip`（等人），压成一个会让 wait_kind
+   *  真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
+  no_progress_cumulative_external: { class: 'external' },
+  no_progress_cumulative_human: { class: 'operator' },
+  /** 设备就绪门（delegated producer：device-readiness-gate）。 */
+  device_not_ready: { class: 'external' },
+  /** codex 七轮 P1：AMBIGUOUS 的原契约是「多设备无法唯一确定 → HALT 求人，须用户配置
+   *  target_serial」——登记成 external 会产出 WAITING(external) 的错误报告（等环境自愈，
+   *  可这环境不会自愈）。它等的是**人做一次配置决定**。 */
+  device_target_ambiguous: { class: 'operator' },
 
   // --- harness 侧 blocking_class（与上面的 halt_reason 同为 incident 形态；
   //     观测层按同一注册表投影，见 projectToObservedActionability） --------------
@@ -302,6 +344,57 @@ export type Decision =
 
 /** 统一投影（report / monitor / supervisor 的共同消费面；本 plan 只定义与发布）。 */
 export type Disposition = 'RESUME_READY' | 'RECOVERY_PENDING' | 'WAITING' | 'TERMINAL';
+
+/**
+ * **统一投影的唯一出口**（codex 七轮 P1-③）：事件字段用 `run_disposition` /
+ * `run_wait_kind`，**不复用 `disposition`**——该字段名在 events 里已被占用且值空间不同
+ * （run-control 的 `'recovered'`、visual round receipt 的 `'appended'|'duplicate'|
+ * 'append_failed'`，且 GoalRunEvent.disposition 类型是宽泛 string）。下游 reducer 按名
+ * 取值会撞车，靠 event type 消歧则等于要求每个消费方各记一份对应关系。
+ *
+ * 下游（report / monitor / supervisor）只读这两个字段，**不得回读原始事故原因补算**。
+ */
+export function runDispositionFields(decision: Decision): {
+  run_disposition: Disposition;
+  run_wait_kind?: WaitKind;
+} {
+  const run_disposition = dispositionOf(decision);
+  return decision.kind === 'waiting'
+    ? { run_disposition, run_wait_kind: decision.wait_kind }
+    : { run_disposition };
+}
+
+/** 通用投影所用的中性上下文：铁律(c) 保证 can_prompt_now/orchestration 不影响裁决，
+ *  真正影响结果的 `invocation` 只对 lineage 家族有意义，而那条路已显式传自己的裁决。 */
+const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
+  orchestration: 'goal',
+  owner_kind: 'process',
+  can_prompt_now: false,
+  invocation: 'fresh',
+};
+
+/**
+ * **投影注入点（d6 t5⓪）**：带 `halt_reason` 的事件在**写盘那一层**自动补
+ * `run_disposition` / `run_wait_kind`。
+ *
+ * 为什么不在 29 个 emit 点各写一遍：那等于要求每个新增 halt 的作者都记得补投影，
+ * 漏一个 supervisor 就无判据——与「新增 incident 不注册即红」是同一类问题。
+ * 全仓只有两条事件写入路径（goal-runner 的 reconcile boundary writer、
+ * in-session 的 appendGoalEventFenced），在这两处各调一次即全覆盖。
+ *
+ * **已显式携带 `run_disposition` 的事件原样放行**——那是调用方投影了真实
+ * `decide()` 结果（含结构性事实），比按 incident id 重算更准，不得覆盖。
+ */
+export function withRunDisposition<T extends Record<string, unknown>>(
+  event: T,
+  context?: Partial<ExecutionContext>,
+): T & { run_disposition?: Disposition; run_wait_kind?: WaitKind } {
+  if (event.run_disposition !== undefined) return event;
+  const incident = typeof event.halt_reason === 'string' ? event.halt_reason.trim() : '';
+  if (!incident) return event;
+  const decision = decide({ incident }, NO_AUTHORITY, { ...NEUTRAL_PROJECTION_CONTEXT, ...context });
+  return { ...event, ...runDispositionFields(decision) };
+}
 
 export function dispositionOf(decision: Decision): Disposition {
   switch (decision.kind) {

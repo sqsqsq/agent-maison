@@ -287,6 +287,37 @@ optional_fields:
         description: |
           声明会话 driver 与 detached runner 的交接能力。任何非 none 值都要求
           supports_resume=true；bidirectional 同时允许 detached→session。
+      survival:
+        type: object | null
+        description: |
+          可选。plan a4f7e2b1 t3：无人值守**生存能力**的声明式三段
+          （launch / liveness / wakeup），供 supervisor 决定能否自动拉起。
+          **铁律「先探针后声明」**：每段除 supported 外必须给 verified_by
+          （宿主实跑产生的实证样本引用）；只声明不实证的一律**降级为不支持**
+          （a7f2e5d1 教训：tier 虚标要么实证要么降级——虚标会让 supervisor
+          一直往一个起不来的东西上撞）。探针法参照 c7a9e2f4 T0。
+        fields:
+          launch:
+            type: object | null
+            description: 能否由外部（OS 计划任务等）重新拉起本 adapter 的 run
+            fields:
+              supported: { type: boolean }
+              verified_by: { type: string }
+              mechanism: { type: string }
+          liveness:
+            type: object | null
+            description: 能否给出可对账的进程存活证据（四元组 beacon 之外的 adapter 侧补充）
+            fields:
+              supported: { type: boolean }
+              verified_by: { type: string }
+              mechanism: { type: string }
+          wakeup:
+            type: object | null
+            description: 跨回合唤醒——agent 回合结束后 run 仍在跑时，能否把结论带回下一回合
+            fields:
+              supported: { type: boolean }
+              verified_by: { type: string }
+              mechanism: { type: string }
       native_goal:
         type: object | null
         fields:

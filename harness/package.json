@@ -32,6 +32,7 @@
     "visual-confirm": "ts-node scripts/visual-confirm.ts",
     "layout-oracle-calibrate": "ts-node scripts/layout-oracle-calibrate.ts",
     "goal": "ts-node scripts/goal-runner.ts",
+    "goal:supervise": "ts-node scripts/goal-supervise.ts",
     "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts",
     "visual-diff-nav:migrate": "ts-node ../profiles/hmos-app/harness/visual-diff-nav-migrate.ts",

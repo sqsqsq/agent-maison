@@ -46,10 +46,13 @@ import {
 } from './utils/await-confirm-guidance';
 import {
   decide,
-  dispositionOf,
   NO_AUTHORITY,
+  runDispositionFields,
   UNTRUSTED_DRIFT_REASON,
+  withRunDisposition,
+  type Decision,
 } from './utils/adjudication';
+import { writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
@@ -2400,6 +2403,38 @@ export function resolveManifestDriftDecision(args: {
 // generation 更新。head 与 checkpoint 同 MAC 模型。
 // ---------------------------------------------------------------------------
 
+
+/**
+ * plan d6b1a8e3 t5④（codex 订正）：把**生产端已落盘的真实投影**回填进 outcome。
+ *
+ * 为什么不在 report 端算：报告只有 halt_reason 与中性上下文，按它重新 decide() 会丢掉
+ * runner 当时掌握的结构事实（回退预算 / 截断链 / 重复 drift 指纹），把 TERMINAL 重算成
+ * RECOVERY_PENDING——「运行器说本 run 已无法恢复、报告说正在自动恢复」。
+ *
+ * 为什么不逐个 outcomes.push 补：halt push 点有十几处，逐个补必漏；而事件写盘层
+ * （withRunDisposition）已对**每一条** phase_halt 落了投影，取同 phase 最后一条即权威值。
+ */
+export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?: boolean }>(
+  outcomes: readonly T[],
+  events: ReadonlyArray<Record<string, unknown>>,
+): T[] {
+  const byPhase = new Map<string, { run_disposition?: unknown; run_wait_kind?: unknown }>();
+  for (const e of events) {
+    if (e?.type !== 'phase_halt') continue;
+    if (typeof e.run_disposition !== 'string') continue;
+    byPhase.set(String(e.phase), { run_disposition: e.run_disposition, run_wait_kind: e.run_wait_kind });
+  }
+  return outcomes.map((o) => {
+    const proj = byPhase.get(String(o.phase));
+    if (!proj) return o;
+    return {
+      ...o,
+      run_disposition: proj.run_disposition,
+      ...(typeof proj.run_wait_kind === 'string' ? { run_wait_kind: proj.run_wait_kind } : {}),
+    };
+  });
+}
+
 export function visionFeatureHeadPath(projectRoot: string, feature: string): string {
   const safeFeature = feature.replace(/[^\w.-]/g, '_');
   return path.join(visionTrustDir(), 'vision-heads', projectIdentityHash(projectRoot), `${safeFeature}.json`);
@@ -3653,6 +3688,13 @@ function acquireGoalLocks(
     }, LOCK_HEARTBEAT_MS),
   };
   runLock = { path: runLockPath, ownerId: rRecord.ownerId };
+  // plan a4f7e2b1 t1（codex 订正）：**取锁后立即写一次 beacon**，不等 60s 首次心跳。
+  // 否则新 run 启动到首次心跳之间 beacon 为 absent，supervisor 按「无可信证据即 stale」
+  // 会去 --resume 一个**还活着**的 run：虽被 owner lock 拦下，但 supervisor_restart
+  // 已记账，白白吃掉一次重启预算。定时器此后只负责刷新。
+  try {
+    writeLivenessBeacon({ projectRoot, reportDir: run.reportDir, runId: run.runId });
+  } catch { /* 非致命：写不成按 stale 处置，方向保守 */ }
 }
 
 function emitMilestone(line: string): void {
@@ -3716,6 +3758,13 @@ function setupProgressHooks(
         agent_output_mtime: agentOutputMtime,
         agent_output_bytes: agentOutputBytes,
       });
+      // plan a4f7e2b1 t1：随心跳刷新 liveness beacon。**写侧唯一归属 run 自己**——
+      // 探针只读不写。刷新失败不致命（beacon 缺失按 stale 处理，方向保守）。
+      try {
+        writeLivenessBeacon({
+          projectRoot, reportDir: manifest.report_dir, runId: manifest.run_id,
+        });
+      } catch { /* 非致命：缺 beacon 会被判 stale，不会被误判存活 */ }
       flushProgress();
     } catch (err) {
       console.warn(
@@ -4108,8 +4157,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     runMode: dryRun ? 'dry' : 'authoritative',
     explicitTakeover: Boolean(argv.resume) && forceResume,
   });
+  // d6 t5⓪：**投影注入点之一**——带 halt_reason 的事件在写盘那一层自动补
+  // run_disposition/run_wait_kind（device-readiness-gate 的 emitEvent 也接在这里，
+  // 故本处一并覆盖 delegated producer）。已显式携带投影的事件原样放行。
   const goalEvents = createGoalReconcileBoundary((event) =>
-    appendEvent(manifest.report_dir, projectRoot, event),
+    appendEvent(
+      manifest.report_dir,
+      projectRoot,
+      withRunDisposition(event as Record<string, unknown>) as typeof event,
+    ),
   );
 
   // b7e4d2a9 Todo2：保护性 try 前移到紧跟 acquireGoalLocks——sealed guard 与 manifest
@@ -4870,7 +4926,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       } else if (head.state === 'mismatch') {
         goalEvents.emit({
           type: 'vision_ledger_tamper', scope: 'feature_head', files: head.mismatched,
-          disposition: dispositionOf(lineageDecision),
+          ...runDispositionFields(lineageDecision),
         });
         throw new Error(
           `vision 账本与 feature head 失配（${head.mismatched.join('、')}）——跨 run 篡改拦截（fail-closed）。` +
@@ -7237,14 +7293,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           // T6/P0-B：分流 halt 原因——基建(toolchain/capture/agent_timeout)求人修环境
           // vs 视觉(visual_gap)同门禁无改善熔断求复核。
+          // plan a5f9c3e2（codex 七轮 P0）：**incident id 一律显式 literal，禁止模板串生成**
+          // ——模板生成的 id 绕过注册表元门禁（扫描器只提字面量），实测 6 个真实可达 id
+          // 未注册而测试仍全绿。此处按原值域逐项展开，emit 值与改造前逐字等同。
           haltReason =
             failureKind === 'visual_gap'
               ? 'no_progress_visual_gap'
-              : failureKind === 'toolchain' ||
-                  failureKind === 'capture' ||
-                  failureKind === 'agent_timeout'
-                ? `no_progress_${failureKind}`
-                : 'no_progress_guard';
+              : failureKind === 'toolchain'
+                ? 'no_progress_toolchain'
+                : failureKind === 'capture'
+                  ? 'no_progress_capture'
+                  : failureKind === 'agent_timeout'
+                    ? 'no_progress_agent_timeout'
+                    : 'no_progress_guard';
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
           // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
@@ -7262,7 +7323,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
             CUMULATIVE_HALT_THRESHOLD
         ) {
           driverGuardAction = 'halt';
-          haltReason = `no_progress_cumulative_${failureKind}`;
+          // 同上（codex 七轮 P0）：原按 failureKind 模板生成 id，值域随 FailureKind
+          // 膨胀。改为**稳定 literal**——但不能压成一个：CUMULATIVE_HALT_FAMILY 同时含
+          // `toolchain`（等环境）与 `await_human_confirm` / `await_human_p0_skip`（等人），
+          // 压成单一 id 会让 wait_kind 真值永久丢失，而下游又被禁止读 failure_kind_classified
+          // 自行纠正（codex 八轮 P1）。故按等待对象拆两个稳定 literal，不恢复模板 id。
+          haltReason =
+            failureKind === 'toolchain'
+              ? 'no_progress_cumulative_external'
+              : 'no_progress_cumulative_human';
         } else if (
           // P0-4（plan d9b4f7e2）：连续超时熔断——升档（第 2 次后 ×1.5）仍救不回的第
           // CONSECUTIVE_TIMEOUT_HALT_AT 次连续超时 → halt 求人。签名无关（07-13 案 FAIL
@@ -7795,6 +7864,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // **不复用授权语义**——不产 matched_receipts、不标 authorized。
           let untrustedRevalidation = false;
           let untrustedTerminalReason = '';
+          // codex 八轮 P2：**保存真实裁决结果**供后续事件投影原样复用——此前落事件时
+          // 手工重造 Decision，今天结果一致，但 decide() 一改，执行动作与报告投影就会分叉。
+          let untrustedDecision: Decision | null = null;
           if (driftDecision.kind === 'unauthorized') {
             const driftFp = driftDecision.driftFingerprint ?? null;
             const driftDisposition = decide(
@@ -7815,6 +7887,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 invocation: argv.resume ? 'resume' : 'fresh',
               },
             );
+            untrustedDecision = driftDisposition;
             if (driftDisposition.kind === 'recover' && driftDisposition.action === 'backtrack_to_coding') {
               untrustedRevalidation = true;
               if (driftFp) seenDriftFingerprints.add(driftFp);
@@ -7916,9 +7989,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
                     // 重启失忆=同一漂移白吃一次回退预算。
                     drift_fingerprint: driftDecision.driftFingerprint ?? null,
-                    // t4④：统一 disposition 由 decide 单点产出并落 events
-                    //（report / monitor / supervisor 的共同消费面）
-                    disposition: 'RECOVERY_PENDING',
+                    // t4④：统一投影只经唯一出口 runDispositionFields()，且**投影的是
+                    // 真实裁决结果本身**（不重造 Decision——执行与报告不得有第二个真值源）。
+                    ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
                   }),
               files: driftDecision.files.slice(0, 20),
             });
@@ -8008,8 +8081,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               files: driftDecision.files.slice(0, 20),
               violations: driftDecision.violations.slice(0, 10),
               halt_guidance: mutationGuidance,
-              // t4④：走到这里=保守恢复被结构前提挡住，结构上无法在本 run 继续
-              disposition: 'TERMINAL',
+              // t4④：走到这里=保守恢复被结构前提挡住，结构上无法在本 run 继续。
+              // 同样投影真实裁决结果，不手写字面量、不重造 Decision。
+              ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
               conservative_recovery_blocked: untrustedTerminalReason || null,
             });
             console.error(`\n===== unauthorized_source_mutation =====\n${mutationGuidance}\n`);
@@ -8380,7 +8454,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
     }
     const status = deviceCap.status as ReturnType<typeof resolveGoalRunStatus>;
-    const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
+    // t5④：报告用的 phases 必须携带**生产端真实投影**（report 端禁止重算）
+    const reportEvents = loadAuthoritativeEvents(
+      path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
+    ) as unknown as Array<Record<string, unknown>>;
+    const report = generateGoalReportJson(
+      manifest.run_id,
+      manifest.feature,
+      status,
+      enrichOutcomesWithProjection(outcomes, reportEvents),
+    );
     writeGoalReport(projectRoot, manifest.report_dir, report, {
       workflowChain: fullWorkflowChain.map(String),
     });

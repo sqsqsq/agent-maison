@@ -52,6 +52,16 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
 const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
   { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
+  // plan d6b1a8e3 t2：monitor stale 误报的 replay fixture（先复现后改）
+  { id: 'goal-monitor-stale', modulePath: './unit/goal-monitor-stale.unit.test' },
+  // plan d6b1a8e3 t3/t4：硬预算跨进程不等式 + kill 后证据卫生（真子进程测试床）
+  { id: 'goal-budget-integration', modulePath: './unit/goal-budget-integration.unit.test' },
+  // plan a4f7e2b1 t1：run 级存活信标（PID 重用负例 / 反 /F 强杀 / 无证据即 stale）
+  { id: 'liveness-beacon', modulePath: './unit/liveness-beacon.unit.test' },
+  // plan a4f7e2b1 t2：supervisor 决策核（beacon × run_disposition 矩阵 + 反重建等价性）
+  { id: 'goal-supervisor', modulePath: './unit/goal-supervisor.unit.test' },
+  // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
+  { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

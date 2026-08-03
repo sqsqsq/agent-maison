@@ -9,6 +9,7 @@ import {
 } from './goal-progress';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { assertFencedOwner, type RunFenceToken } from './goal-run-control';
+import { withRunDisposition } from './adjudication';
 
 export function appendGoalEventFenced(
   projectRoot: string,
@@ -22,7 +23,10 @@ export function appendGoalEventFenced(
   fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
   fs.appendFileSync(
     eventsPath,
-    `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`,
+    // d6 t5⓪：**投影注入点之二**——session 路径（goal-mode-entry 的 fused、
+    // goal-in-session-driver 的 phase 异常）同样必须落 run_disposition，
+    // 否则 supervisor 面对会话侧 halt 无判据可依。
+    `${JSON.stringify({ ts: new Date().toISOString(), ...withRunDisposition(event) })}\n`,
     'utf8',
   );
 }
