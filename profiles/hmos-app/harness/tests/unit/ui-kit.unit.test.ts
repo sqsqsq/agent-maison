@@ -18,6 +18,7 @@ import {
   buildInstanceAnchor,
   findDuplicateAnchors,
   isValidAnchor,
+  loadAnchorSuffixContract,
   normalizeAnchorSegment,
   normalizeRuntimeAnchor,
   parseAnchor,
@@ -111,6 +112,37 @@ test('锚点后缀：blocks.json 与 ArkTS .id() 静态一致；最长终端逐�
   const option = normalizeRuntimeAnchor('maison:bc-opencard:bank_list:bank_selector-option-icbc');
   assert.strictEqual(option.specNode, 'bank_selector');
   assert.deepStrictEqual(option.suffixChain, ['-option-icbc']);
+});
+
+// e3c7d95f t7(a)·p0c：上一例是抽查（4 个后缀、单级链）。本例补「全量 + 多级 + 五段挂载」
+// 三个未覆盖面——反解是归因分类的第一跳，漏一个后缀就等于该子件的失败恒判 drift。
+test('锚点后缀：固定后缀全集 round-trip + 多级链按源序 + 五段挂 instanceKey', () => {
+  const contract = loadAnchorSuffixContract();
+  // 只防真空通过（契约加载坏掉时下面的循环会一条都不跑却全绿）；
+  // 不写死基数——循环本身已覆盖全集，新增后缀自动纳入
+  assert.ok(contract.fixed.length > 0, '固定后缀全集为空——循环将真空通过');
+  for (const suffix of contract.fixed) {
+    const r = normalizeRuntimeAnchor(`maison:bc-opencard:sms_verify:sheet_scaffold${suffix}`);
+    assert.strictEqual(r.validity, 'valid', `${suffix} 应可反解`);
+    assert.strictEqual(r.specNode, 'sheet_scaffold', `${suffix} 未剥回 specNode`);
+    assert.deepStrictEqual(r.suffixChain, [suffix], `${suffix} 剥离链不符`);
+  }
+
+  // 多级链：剥离从右向左，但 suffixChain MUST 按**源序**（左→右）呈现，
+  // 否则消费方拼回 runtime id 时会得到反序的错误锚点
+  const twoLevel = normalizeRuntimeAnchor('maison:bc-opencard:sms_verify:sheet_scaffold-header-title');
+  assert.strictEqual(twoLevel.specNode, 'sheet_scaffold');
+  assert.deepStrictEqual(twoLevel.suffixChain, ['-header', '-title'], '多级链须按源序');
+  // 多级 + 最长终端并存：末级须命中 -primary-action 而非 -action
+  const mixed = normalizeRuntimeAnchor('maison:bc-opencard:sms_verify:sheet_scaffold-content-primary-action');
+  assert.strictEqual(mixed.specNode, 'sheet_scaffold');
+  assert.deepStrictEqual(mixed.suffixChain, ['-content', '-primary-action']);
+
+  // 五段（重复实例）：后缀挂在 instanceKey 段，不得吃掉 specNode 或 instanceKey 本身
+  const repeated = normalizeRuntimeAnchor('maison:bc-opencard:bank_list:bank_row:icbc-icon');
+  assert.strictEqual(repeated.specNode, 'bank_row');
+  assert.strictEqual(repeated.instanceKey, 'icbc');
+  assert.deepStrictEqual(repeated.suffixChain, ['-icon']);
 });
 
 // ---------------- ② gallery 结构基线 ----------------

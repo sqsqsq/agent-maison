@@ -17,9 +17,10 @@ overview: >
   而 device-test-evidence 里 5 条全是 test_contract=测试自造 selector——报告把"测试问题"
   说成"代码回归"，会把排查引向改产品）；② d9b4f7e2 diagnosis-residual（goal-monitor stale
   误报的 replay fixture 定位，两候选根因待证）；③④ goal-timeout 7.3b/7.5b 硬预算与证据
-  卫生的**集成**断言（需集成测试床，单测覆盖不到"三路径总时长 ≤ wall + grace"这类跨进程
-  性质）。
-  定性：①② 是**框架侧可查证的真问题**（不依赖宿主），③④ 需要集成测试床基建。前两项本可
+  卫生的**集成**断言（单测覆盖不到"三路径总时长 ≤ wall + grace"这类跨进程性质；上游
+  7.3b 原文是"需 goal run **实跑或** runner 集成测试床"，2026-08-03 订正为宿主受控实跑
+  优先，见 t3）。
+  定性：①② 是**框架侧可查证的真问题**（不依赖宿主），③④ 需要集成级证据。前两项本可
   在 3.0.0 修，但它们与 ③④ 共用同一套"goal 状态表述"的验收面，合并做能一次把报告真值
   这条线收干净，故整体顺延 3.1.0。**（2026-08-02 用户拍板推翻顺延，改回 3.0.0 窗口；上述
   "顺延"表述保留为决策历史，现行窗口以 frontmatter version 为准。合并做的理由不变——四项
@@ -47,24 +48,41 @@ todos:
     content: >
       goal-timeout 7.3b 硬预算集成断言：双侧 zero-budget 禁 spawn / backoff 终局 /
       finalize_skipped / **"agent + harness + backoff 三路径总时长 ≤ wall +
-      resolveKillGraceMs()"**。这条不等式是跨进程性质，单测装不下——需集成测试床
-      （可控假 agent + 可控假 harness + 时钟推进）。grace 必须继续由四常量同源派生
+      resolveKillGraceMs()"**。这条不等式是跨进程性质，单测装不下——端到端以**宿主受控
+      goal run 为首选**，runner 集成测试床仅作宿主长期不可用时的替代路线（详见下方路线
+      订正）。grace 必须继续由四常量同源派生
       （DEFAULT_CHILD_SETTLE_GRACE_MS 等），禁在测试里另造脱钩常量。
       【2026-08-02 实施后如实降级 · codex 裁决「不得用局部单测冒充完成」】
       **已交付**（tests/unit/goal-budget-integration.unit.test.ts）：agent 路径的真跨进程
       不等式（真子进程 + 真实小超时，非 mock 时钟）；grace 四常量同源断言且四常量均须为正；
       zero-budget / backoff 终局（在其真实所在层 goal-timeout.canAffordBackoff）；
       finalize_skipped 的 pre-check 边界与预留常量为正。
-      **未交付**：三路径**聚合**不等式——它要求真正驱动整个 goal-runner（假 adapter +
-      假 harness + manifest/锁/vision-trust 全套 fixture）。本仓现无任何端到端驱动 runner
-      的测试先例，新建成本与 flaky 风险都高。故本项**保持未完成**，不以局部断言充数；
-      真要做须先建 runner 驱动 fixture，或由用户明确缩掉聚合不等式这条验收。
+      **未交付**：三路径**聚合**不等式——它要求真正驱动整个 goal-runner。故本项
+      **保持未完成**，不以局部断言充数。
+      【路线订正 · 2026-08-03，codex 复核】此前把选项写成「建 runner fixture 或缩减验收」
+      是**漏读上游**：openspec `goal-timeout-hardwall-hardening` tasks 7.3b 原文为
+      「端到端验收需 goal run **实跑或** runner 集成测试床」。二选一里的第一条被丢了。
+      **首选宿主受控实跑**——已有 6 项宿主回归待批量执行，本项边际成本接近零；
+      建假 adapter + 假 harness + manifest/锁/vision-trust 全套 fixture 成本与 flaky
+      风险都高，**仅作宿主长期不可用时的替代路线**。两条路线都**不缩减验收**。
+      宿主证据要求：必须是**受控故障场景**（普通成功 run 不算数），一至数个 run 覆盖
+      agent 超时 / harness 超时 / backoff 装不进剩余预算，并证明三者共用同一 deadline。
+      **时间口径（2026-08-03 codex 复核订正，此前写错）**：wall 预算自 plan e7c2a4d8 T2
+      起是**活跃时间累计**，不是日历跨度——`resolveResumedBudget` /
+      `partitionExecutionSessions`（goal-runner-phase.ts:311/522）按权威执行会话分段求和，
+      隔夜等待与无人值守停顿**不消耗预算**（4035d4 事故的修复）。故不等式是：
+      `Σ 权威执行会话活跃时长 ≤ wall + resolveKillGraceMs()`。
+      含 resume 的 run 完全可能 `首个 run_start → 最终 run_end > wall` 而行为正确，
+      **不得据此判超预算**；仅 fresh、无 resume 的单进程 run 可等价用该次
+      `run_start → run_end` 计算。
+      zero-budget / backoff 终局 / grace 四常量派生 / finalize pre-check 已由上列单测在其
+      真实所在层覆盖，宿主不必重复证明。**宿主证据回灌前保持 pending。**
     status: pending
   - id: t4-evidence-hygiene-integration
     content: >
       goal-timeout 7.5b 证据卫生集成断言："kill 后 agent-output.log 字节不变"。runner 已
       无任何写该文件的代码路径（kill 诊断走 agent_invoke_end 事件字段），但**独立断言**
-      需要集成测试床才能证明（进程被杀那一刻的落盘状态）。与 t3 共用测试床。
+      需要集成级证据才能证明（进程被杀那一刻的落盘状态）。
     status: completed
   - id: t5-unified-run-disposition
     content: >
@@ -105,7 +123,8 @@ todos:
       来自 `run_disposition`；诊断文字优先直接渲染生产端已有的 `halt_guidance`；
       无 guidance 时退化为通用 `halted (<halt_reason>)`；attempt 时间线不再按 halt_reason
       正则筛选，改为对 halted phase 一律尝试生成、有数据才展示。
-      ⑤ 复用 t3/t4 的集成测试床验证最终状态投影（不另建）。
+      ⑤ 最终状态投影的验证随 ⓪-b reducer 单测落地（**2026-08-03 订正**：原文写"复用
+      t3/t4 的集成测试床"，该测试床从未存在也不需要——见文末"为什么合并"的订正）。
     status: completed
 isProject: false
 ---
@@ -116,8 +135,8 @@ isProject: false
 |---|---|---|
 | **2026-07-29 宿主回归新发现** | failure_kind 与 case 归因不一致 | 新增：报告口径误导（code_regression vs test_contract） |
 | plan `d9b4f7e2` | diagnosis-residual（monitor stale 误报定位） | 框架侧可查证，不依赖宿主 |
-| openspec `goal-timeout-hardwall-hardening` | 7.3b 硬预算集成断言 | 需集成测试床 |
-| 同上 | 7.5b 证据卫生集成断言 | 同上，共用测试床 |
+| openspec `goal-timeout-hardwall-hardening` | 7.3b 硬预算集成断言 | 需集成级证据；宿主受控实跑优先（见 t3） |
+| 同上 | 7.5b 证据卫生集成断言 | 已完成（t4） |
 | **plan `a5f9c3e2`（已提交 707148e7）** | t5 消费统一 disposition + lineage 断裂展示 | 上游落地后新增：决策层已产出四态投影，报告/监控必须同源理解 |
 
 ## 为什么合并（而非把 t1/t2 塞进 3.0.0）
@@ -129,9 +148,10 @@ t1/t2 确实可以在 3.0.0 做，但它们与 t3/t4 验的是同一件事的四
 - t3：预算**边界**声明得对不对；
 - t4：证据**完整性**声称得对不对。
 
-四项共用一套集成测试床（可控 agent/harness/时钟）与一套报告断言口径。分两批做的结果是
-测试床建两次、报告断言口径可能漂移。3.0.0 的发布不依赖这四项中的任何一项（既有行为
-可用，只是表述不够准）。
+四项共用一套报告断言口径，分两批做会让口径漂移。
+**（2026-08-03 订正）** 原文此处还写着"共用一套集成测试床（可控 agent/harness/时钟）"——
+该前提已废：t1 已拆走、t2/t4/t5 全部由单测在其真实所在层落地，t3 改走宿主受控实跑优先，
+四项从未、也不需要共用测试床。
 
 ## 硬约束
 
@@ -157,8 +177,10 @@ t1/t2 确实可以在 3.0.0 做，但它们与 t3/t4 验的是同一件事的四
 - t1：宿主 run 20260729T123155Z-0c5411 的 evidence 作 fixture，断言 failure_kind 不再是
   code_regression；无 evidence 的旧形态断言归因不变；
 - t2：replay fixture 复现误报 → 修 → 同 fixture 转绿；
-- t3/t4：集成测试床 + 四条断言（zero-budget / backoff 终局 / finalize_skipped / 总时长
-  不等式）+ kill 后日志字节不变；
+- t3/t4：四条断言（zero-budget / backoff 终局 / finalize_skipped / 总时长不等式）
+  + kill 后日志字节不变。**（2026-08-03 订正）** 前三条与日志字节已由单测在其真实所在层
+  交付（t4 completed）；只剩**总时长聚合不等式**待宿主受控实跑，且口径为
+  「Σ 权威执行会话活跃时长 ≤ wall + grace」——**不是日历跨度**（见 t3）；
 - t5⓪：元门禁——goal-runner / session driver / delegated producer 三处产出的任一 halt
   事件缺 `run_disposition` 即红（与 a5f9c3e2「halt_reason 未注册即红」同款，扫描域同宽）；
 - t5⓪-b **全函数断言**：①只含 `run_start` 的 events（尚未发生任何事故）→ reducer 必须
