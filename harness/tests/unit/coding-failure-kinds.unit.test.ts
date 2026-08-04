@@ -10,8 +10,14 @@ import type { CheckContext } from '../../scripts/utils/types';
 import { withDefaultLayoutFields, DEFAULT_LAYOUT, layoutFieldsForHost } from '../utils/layout-test-helper';
 import {
   classifyCodingCompileFailure,
+  resolveCompileBlockingClass as resolveCompileBlockingClassForTest,
   type CodingCompileFailureKind,
 } from '../../../profiles/hmos-app/harness/coding-host-rules';
+import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
+import {
+  classifyPhaseVerdict,
+  isDeferrableExternalBlock,
+} from '../../scripts/utils/phase-transition-policy';
 
 export interface UnitCaseResult {
   name: string;
@@ -171,6 +177,145 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
 ];
+
+
+// ============================================================================
+// f9c2e6b4 t2 —— hvigor 配置错误按**路径存在性**分流（分类矩阵，不做散文元门禁）
+// 立项 run 20260803T103413Z-3f72a8：hvigor 23ms 配置失败，六条 resolve 正则不命中，
+// 落兜底 project_build → 让 agent 去找一个 `(no file)` 的 file:line。
+// ============================================================================
+
+/** 真实宿主日志形态（**保留 ANSI 转义**，实证 hvigor-build.log） */
+function hvigorConfigErrorLog(atPath: string): string {
+  return [
+    '> hvigor [91mERROR: [31m00303149 Configuration Error',
+    `Error Message: Path not found. At file: ${atPath}`,
+    '',
+    '* Try the following:',
+    '  > Please check field: modules in file: build-profile.json5.',
+    '[39m',
+    '> hvigor [91mERROR: BUILD FAILED in 23 ms [39m',
+  ].join('\n');
+}
+
+cases.push(
+  {
+    name: 't2 配置错误 + 路径不存在 → project_config_error（不再落 project_build）',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgerr-'));
+      const missing = path.join(root, '05-SystemBase', 'CommFunc');
+      const r = classifyCodingCompileFailure(
+        { executed: true, exitCode: 1, errors: [], logExcerpt: hvigorConfigErrorLog(missing) },
+        mkCtx(root),
+      );
+      assert.strictEqual(r.kind, 'project_config_error');
+      assert.ok(/ohpm install/.test(r.suggestion), '须显式劝阻用 ohpm install 解决');
+    },
+  },
+  {
+    name: 't2 配置错误 + 路径实际存在 → project_build_environment_inconsistent（立项事故形态）',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgerr-'));
+      const present = path.join(root, '05-SystemBase', 'CommFunc');
+      fs.mkdirSync(present, { recursive: true });
+      const r = classifyCodingCompileFailure(
+        { executed: true, exitCode: 1, errors: [], logExcerpt: hvigorConfigErrorLog(present) },
+        mkCtx(root),
+      );
+      assert.strictEqual(r.kind, 'project_build_environment_inconsistent');
+      assert.ok(/不应.*让 agent 改代码|不再启动 agent|不应/.test(r.suggestion), '须明示不该让 agent 改代码');
+    },
+  },
+  {
+    // codex 复核 P1：局部分类对了不代表状态穿透到最终裁决。这条走**生产链**：
+    // check 结果 → resolveVerdictFromChecks → isDeferrableExternalBlock → goal action。
+    name: 't2 生产链：环境不一致须一路走到 external defer（不得回去让 agent 改代码）',
+    run: () => {
+      const check = {
+        id: 'coding_compile',
+        category: 'structure',
+        description: 'x',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        failure_kind: 'project_build_environment_inconsistent',
+        blocking_class: resolveCompileBlockingClassForTest('project_build_environment_inconsistent'),
+      } as never;
+      assert.strictEqual(
+        (check as { blocking_class: string }).blocking_class,
+        'externalBlocked',
+        '必须落既有 externalBlocked 契约，否则策略层认不出来',
+      );
+      const verdict = resolveVerdictFromChecks([check]);
+      assert.strictEqual(verdict, 'INCOMPLETE', 'external 阻塞须投影 INCOMPLETE 而非 FAIL');
+      assert.ok(
+        isDeferrableExternalBlock(
+          (check as { blocking_class: string }).blocking_class,
+          'project_build_environment_inconsistent',
+        ),
+        'dependency policy 须认出它是可延期的外部阻塞',
+      );
+      const action = classifyPhaseVerdict({
+        verdict,
+        blocking_class: (check as { blocking_class: string }).blocking_class,
+        failure_kind: 'project_build_environment_inconsistent',
+      } as never);
+      assert.ok(
+        String(action).startsWith('defer_external'),
+        `最终动作须是 defer_external*，实得 ${String(action)}——否则又回到 agent 内容重试`,
+      );
+    },
+  },
+  {
+    name: 't2 探测范围：非 00303149 / 缺 At file 一律不进本分流（走既有分类）',
+    run: () => {
+      const other = classifyCodingCompileFailure(
+        {
+          executed: true, exitCode: 1, errors: [],
+          logExcerpt: '> hvigor ERROR: 00301001 Configuration Error\nError Message: something else',
+        },
+        mkCtx(process.cwd()),
+      );
+      assert.notStrictEqual(other.kind, 'project_config_error');
+      assert.notStrictEqual(other.kind, 'project_build_environment_inconsistent');
+      const noPath = classifyCodingCompileFailure(
+        {
+          executed: true, exitCode: 1, errors: [],
+          logExcerpt: '> hvigor ERROR: 00303149 Configuration Error\nError Message: no path here',
+        },
+        mkCtx(process.cwd()),
+      );
+      assert.notStrictEqual(noPath.kind, 'project_build_environment_inconsistent');
+    },
+  },
+  {
+    name: 't2 普通编译错误不受影响（配置判据不得越界吃掉真编译失败）',
+    run: () => {
+      const r = classifyCodingCompileFailure(
+        {
+          executed: true,
+          exitCode: 1,
+          errors: [{ file: 'a.ets', line: 12, message: 'Type error' }],
+          logExcerpt: 'a.ets(12,3): error TS2322: Type error',
+        },
+        mkCtx(process.cwd()),
+      );
+      assert.strictEqual(r.kind, 'project_build');
+      assert.ok(/定位文件\/行/.test(r.suggestion), '有 file/line 时仍应指向源码位置');
+    },
+  },
+  {
+    name: 't2 无 file/line 时兜底话术不得说"定位文件/行"（原独立 todo 并入）',
+    run: () => {
+      const r = classifyCodingCompileFailure(
+        { executed: true, exitCode: 1, errors: [{ message: 'something broke, no location' }] },
+        mkCtx(process.cwd()),
+      );
+      assert.strictEqual(r.kind, 'project_build');
+      assert.ok(!/定位文件\/行/.test(r.suggestion), '无 file/line 却让 agent 定位文件行 = 不可执行指令');
+      assert.ok(/首条错误/.test(r.suggestion), '应把首条错误原样呈现');
+    },
+  },
+);
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {

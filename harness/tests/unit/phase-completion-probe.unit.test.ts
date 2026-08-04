@@ -10,13 +10,17 @@ import {
   createCompletionProbe,
   decideSkipAgentInvoke,
   isCompletionEvidenceComplete,
+  isEvidenceFromCurrentInvocation,
   type CompletionEvidenceState,
 } from '../../scripts/utils/phase-completion-probe';
 import {
   DEFAULT_COMPLETION_GRACE_MS,
   DEFAULT_COMPLETION_POLL_MS,
 } from '../../scripts/utils/agent-invoke';
-import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
+import {
+  isReceiptFreshForInvokeStart,
+  resolvePhaseHarnessVerdict,
+} from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 
 const tmpRoots: string[] = [];
@@ -378,6 +382,160 @@ export function runAll(): UnitCaseResult[] {
     assert(
       /setInterval\(\(\) => \{[\s\S]{0,400}?if \(completionObserved\) return;[\s\S]{0,300}?killTree\('silent'\)/.test(src),
       'silent 回调须在 completionObserved 时直接返回',
+    );
+  });
+
+  // ==========================================================================
+  // f9c2e6b4 t1 —— 完成证据必须属于**本次 invocation**
+  // 立项事故 run 20260803T103413Z-3f72a8：coding attempt 2/3 各只活 35.3 秒，
+  // 因为上一轮回执被原样复写（mtime 新、claimed_completion_at 仍是旧的 19:40），
+  // observer 判"不完整→完整"跃迁成立即 tree-kill，90 秒烧光重试预算。
+  // ==========================================================================
+
+  /** 把四条件证据落盘到既有 host（模拟 agent 在 invoke 期间写出回执 + summary） */
+  function materializeEvidence(root: string, receipt: string, runId?: string): void {
+    const phaseDir = path.join(root, 'doc', 'features', FEATURE, PHASE);
+    fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), receipt, 'utf-8');
+    const summary = runId
+      ? JSON.stringify({ ...JSON.parse(FULL_SUMMARY), run_id: runId })
+      : FULL_SUMMARY;
+    fs.writeFileSync(path.join(phaseDir, 'reports', 'summary.json'), summary, 'utf-8');
+  }
+  const withAttempt = (receipt: string, attempt: string): string =>
+    receipt.replace('claimed_completion_at:', `claimed_attempt_id: "${attempt}"\nclaimed_completion_at:`);
+  const withClaimedAt = (receipt: string, iso: string): string =>
+    receipt.replace(/claimed_completion_at: "[^"]*"/, `claimed_completion_at: "${iso}"`);
+
+  run(results, 't1 立项事故回归：原样复写的旧回执（claimed_completion_at 早于本次调用）不得命中', () => {
+    const root = hostWith({});
+    const probe = createCompletionProbe({
+      projectRoot: root,
+      feature: FEATURE,
+      phase: PHASE,
+      invocation: { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() },
+    });
+    assert(!probe.baselineComplete, '前置：基线应不完整（否则测的不是跃迁）');
+    materializeEvidence(root, FULL_RECEIPT); // claimed_completion_at = 2026-07-28，早于 now
+    assertEq(probe.probe(), false, '旧声明被原样复写 → 不得判本轮完成');
+  });
+
+  run(results, 't1 正例：本轮 attempt 写出的回执须命中（不得把 observer 判死）', () => {
+    const root = hostWith({});
+    const probe = createCompletionProbe({
+      projectRoot: root,
+      feature: FEATURE,
+      phase: PHASE,
+      invocation: { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() },
+    });
+    // goal 模式的生产形态：check-receipt 会强制 agent 填 claimed_attempt_id
+    materializeEvidence(root, withAttempt(FULL_RECEIPT, 'i5'), 'run-A');
+    assertEq(probe.probe(), true, '本轮 attempt 的完成声明应命中');
+  });
+
+  run(results, 't1 goal 模式不得回退时间戳：新鲜时间戳但缺 attempt 字段 → 不命中', () => {
+    // codex 复核订正：原实现缺字段就退到 claimed_completion_at，等于 goal 下没有绑定——
+    // agent 自报未来时间仍能骗停本轮。goal 模式（invocation 带 attemptId）一律硬绑。
+    const root = hostWith({});
+    const startedAtMs = Date.now();
+    const probe = createCompletionProbe({
+      projectRoot: root,
+      feature: FEATURE,
+      phase: PHASE,
+      invocation: { runId: 'run-A', attemptId: 'i5', startedAtMs },
+    });
+    materializeEvidence(
+      root,
+      withClaimedAt(FULL_RECEIPT, new Date(startedAtMs + 600_000).toISOString()),
+      'run-A',
+    );
+    assertEq(probe.probe(), false, 'goal 模式缺 claimed_attempt_id 一律不命中');
+  });
+
+  run(results, 't1 goal 模式 run 身份缺失即 fail-closed', () => {
+    const s: CompletionEvidenceState = {
+      receipt: true, summary: true, receiptStatus: true, closure: true,
+      attemptId: 'i5', // run_id 缺失
+    };
+    assertEq(
+      isEvidenceFromCurrentInvocation(s, { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() }),
+      false,
+      'goal 模式下证据缺 run_id 不得放行',
+    );
+  });
+
+  run(results, 't1 显式绑定：claimed_attempt_id 不符当前 attempt → 不命中；相符 → 命中', () => {
+    const stale = hostWith({});
+    const staleProbe = createCompletionProbe({
+      projectRoot: stale,
+      feature: FEATURE,
+      phase: PHASE,
+      invocation: { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() },
+    });
+    // 关键：即便时间戳是新的，attempt 不符也不得命中（显式字段优先于 legacy 时间判据）
+    materializeEvidence(
+      stale,
+      withAttempt(withClaimedAt(FULL_RECEIPT, new Date(Date.now() + 60_000).toISOString()), 'i3'),
+    );
+    assertEq(staleProbe.probe(), false, 'attempt=i3 的回执不得算作 i5 的完成');
+
+    const fresh = hostWith({});
+    const freshProbe = createCompletionProbe({
+      projectRoot: fresh,
+      feature: FEATURE,
+      phase: PHASE,
+      invocation: { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() },
+    });
+    materializeEvidence(fresh, withAttempt(FULL_RECEIPT, 'i5'), 'run-A');
+    assertEq(freshProbe.probe(), true, 'attempt 相符即命中（此时不看时间戳）');
+  });
+
+  run(results, 't1 legacy 分支与 isReceiptFreshForInvokeStart 等价（两处判据不得漂移）', () => {
+    // 同一份"旧声明"素材，喂给两个实现应得同一结论；漂移会让 gate 与 observer 各说各话。
+    // **夹具必须带 `---` frontmatter**：isReceiptFreshForInvokeStart 只解析 frontmatter 块，
+    // 无分隔符时宽容返回 true（生产回执恒带分隔符，实证宿主
+    // doc/features/bc-openCard/coding/phase-completion-receipt.md）。用无分隔符的夹具比，
+    // 比的是解析面差异而不是判据差异。
+    const root = hostWith({});
+    const startedAtMs = Date.now();
+    materializeEvidence(root, `---\n${FULL_RECEIPT}---\n`); // 旧 claimed_completion_at
+    const state = collectCompletionEvidence(root, FEATURE, PHASE);
+    // legacy 分支只在**非 goal**（无 attemptId）下生效，故此处不传 attemptId
+    const pure = isEvidenceFromCurrentInvocation(state, { startedAtMs });
+    const onDisk = isReceiptFreshForInvokeStart(root, FEATURE, PHASE as never, startedAtMs);
+    assertEq(pure, false, 'legacy 分支应判旧');
+    assertEq(pure, onDisk, '纯函数判据须与文件级判据同判（严格大于，语义对齐）');
+  });
+
+  run(results, 't1 run 身份不符一律不命中（别的 run 的遗留证据）', () => {
+    const s: CompletionEvidenceState = {
+      receipt: true, summary: true, receiptStatus: true, closure: true,
+      runId: 'run-OTHER', claimedCompletionAtMs: Date.now() + 60_000,
+    };
+    assertEq(
+      isEvidenceFromCurrentInvocation(s, { runId: 'run-A', attemptId: 'i5', startedAtMs: Date.now() }),
+      false,
+      '跨 run 遗留证据不得算本次完成',
+    );
+  });
+
+  run(results, 't1 护栏：身份绑定不得改变 decideSkipAgentInvoke 的既有正例', () => {
+    // codex 三轮订正：调用前的跳过判据**不得**要求匹配"尚未开始的新 attempt"，
+    // 否则「证据须属当前 attempt」与「调用前已完整则跳过」会变成互相不可达。
+    assertEq(
+      decideSkipAgentInvoke({
+        baselineComplete: true, retries: 0, pendingHandoffCount: 0,
+        evidenceRunId: 'run-A', currentRunId: 'run-A',
+      }).skip,
+      true,
+      '同 run、非重试、无待修、证据齐全 → 仍须可跳过',
+    );
+    assertEq(
+      decideSkipAgentInvoke({
+        baselineComplete: true, retries: 1, pendingHandoffCount: 0,
+        evidenceRunId: 'run-A', currentRunId: 'run-A',
+      }).skip,
+      false,
+      '重试轮仍须真跑（立项事故里 attempt 2/3 正是靠这条正确地没被跳过）',
     );
   });
 

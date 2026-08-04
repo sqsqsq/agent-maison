@@ -41,6 +41,22 @@
 npx ts-node scripts/goal-runner.ts --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --detach
 ```
 
+**需求超过一行、或含中文标点/换行时，改用 `--requirement-file`**（与 `--requirement` 互斥）：
+
+```bash
+npx ts-node scripts/goal-runner.ts --feature <feature> --requirement-file <path/to/需求.md> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
+```
+
+路径相对**实例工程根**解析，可以直接指向权威需求文件本身（例如
+`doc/features/原始需求/<模块>/原始需求.md`），不必另抄一份。内容在 fresh 启动时读取并**冻结进
+manifest**，`--resume` 只认冻结值、不会重读源文件——所以源文件长期复用是安全的，改了它也
+不会污染已在跑的 run。
+
+> **不要为启动 goal 写包装脚本。** 之前的做法是把需求抄进临时 txt、再写个 JS launcher 去
+> spawn goal-runner，理由是命令行引号难写。现在这条路已经不需要了：`--requirement-file`
+> 就是为它准备的。包装脚本的实际代价是——每次 run 重新发明一遍、文件名各不相同，下次谁
+> 重跑旧 launcher 就会把**上一轮的旧需求**带进新 run（宿主已出现两份不同名的需求文件）。
+
 同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
 
 ```bash

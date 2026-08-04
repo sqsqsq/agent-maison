@@ -636,6 +636,22 @@ function areBlockersOnlyTestingDeviceExternal(checks: CheckResult[]): boolean {
   );
 }
 
+/**
+ * f9c2e6b4 t2（codex 复核补接）：coding 编译的**外部条件阻塞**——构建事务原样重跑后
+ * 仍报"引用路径找不到、但它就在那儿"，属环境/复验不一致，不是本轮编码的内容问题。
+ * 与 ut/testing 设备阻塞同构：唯一 BLOCKER 且标 `externalBlocked` → 投影 INCOMPLETE，
+ * 后续由 dependency policy 走 defer_external 分支，而不是回去让 agent 改代码。
+ */
+function areBlockersOnlyCodingBuildExternal(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c =>
+      c.blocking_class === 'externalBlocked' &&
+      c.failure_kind === 'project_build_environment_inconsistent',
+  );
+}
+
 /** 供 unit test 与 report 生成复用 */
 export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   let blockers = 0;
@@ -649,6 +665,9 @@ export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
     return 'INCOMPLETE';
   }
   if (areBlockersOnlyTestingDeviceExternal(checks) && isTestingDeviceExternalBlocked(checks)) {
+    return 'INCOMPLETE';
+  }
+  if (areBlockersOnlyCodingBuildExternal(checks)) {
     return 'INCOMPLETE';
   }
   return 'FAIL';

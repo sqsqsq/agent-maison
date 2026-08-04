@@ -62,6 +62,8 @@ interface SlimOpts {
   dirtyRootConfigAfter?: boolean;
   /** t2 v4 负例（codex 第三轮高优）：goal 环境 summary 带/不带 run_id */
   summaryRunId?: string;
+  /** f9c2e6b4 t1：回执自报的 attempt 身份（省略 = 旧格式回执） */
+  claimedAttemptId?: string;
   /** t2 v6 负例（codex 第五轮 P1）：summary 侧写入哨兵值（no-git/unverifiable 等非 hex） */
   sentinelWorktreeDigest?: string;
   /** t2 v6 负例（codex 第五轮 P1）：校验前删除 .git——当前侧 no-git + HEAD 不可解析 */
@@ -175,6 +177,7 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
     'agent_runtime: "test-runtime"',
     'claimed_completion_at: "2026-07-16T10:00:00+08:00"',
     `claimed_completion_commit_sha: "${sha}"`,
+    ...(opts.claimedAttemptId ? [`claimed_attempt_id: "${opts.claimedAttemptId}"`] : []),
     'verifier_subagent:',
     '  invoked_via: "Task(subagent_type=verifier)"',
     `  report_path: "doc/features/demo/${PHASE}/reports/verifier.report.md"`,
@@ -338,6 +341,88 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(
         (v.message ?? '').includes('slim_summary_head_unverifiable'),
         `应命中 HEAD 无法核实 BLOCKER：${v.message}`,
+      );
+    },
+  },
+  // ==========================================================================
+  // f9c2e6b4 t1 —— attempt 身份门禁必须在**Cursor 丢 env 的真实形态**下也生效。
+  // 仓内实锤（phase-state.ts:107）：adapter 工具子进程会丢 MAISON_GOAL_HEADLESS/RUNNER，
+  // 只留 RUN_ID/ATTEMPT。若门禁只认 isGoalOrchestrationEnv()，agent 侧跑 check-receipt
+  // 时校验完全不执行，而 observer 又严格要求该字段 → 一路跑到 hard timeout。
+  // 三例均只设 RUN_ID+ATTEMPT（不设 RUNNER/HEADLESS），复现该形态。
+  // ==========================================================================
+  {
+    name: 'f9c2e6b4 t1：仅 RUN_ID+ATTEMPT（cursor 丢 env 形态）且回执缺 claimed_attempt_id → failed',
+    run: () => {
+      const v = runCase(
+        { summaryRunId: 'r-123' },
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+        },
+      );
+      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(
+        (v.message ?? '').includes('claimed_attempt_id'),
+        `应点名 claimed_attempt_id 缺失：${v.message}`,
+      );
+    },
+  },
+  {
+    name: 'f9c2e6b4 t1：仅 RUN_ID+ATTEMPT 且 claimed_attempt_id 与本轮不符（抄旧回执）→ failed',
+    run: () => {
+      const v = runCase(
+        { summaryRunId: 'r-123', claimedAttemptId: 'i3' },
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+        },
+      );
+      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(
+        (v.message ?? '').includes('i3') && (v.message ?? '').includes('i5'),
+        `应点名两侧 attempt 值：${v.message}`,
+      );
+    },
+  },
+  {
+    // 二轮复核：上面三例只证明 attempt 门禁没被绕过，未证明**整个 check-receipt** 在该
+    // 环境下仍保持 goal 语义。本例打 slim 凭证的 run 绑定分支（与 attempt 门禁无关的另一处
+    // goal 分支）：cursor 形态下 summary 缺 run_id 必须照样 BLOCKER，否则说明该分支仍被
+    // 误判成 interactive 而静默跳过。
+    name: 'f9c2e6b4 t1：cursor 丢 env 形态下**非 attempt 分支**同样保持 goal 语义（summary 缺 run_id → failed）',
+    run: () => {
+      const v = runCase(
+        { claimedAttemptId: 'i5' }, // 不设 summaryRunId
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+        },
+      );
+      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(
+        (v.message ?? '').includes('slim_summary_run_id_missing'),
+        `goal 语义须覆盖 slim 凭证 run 绑定分支：${v.message}`,
+      );
+    },
+  },
+  {
+    name: 'f9c2e6b4 t1：仅 RUN_ID+ATTEMPT 且 claimed_attempt_id 精确匹配 → 不因本门禁失败',
+    run: () => {
+      const v = runCase(
+        { summaryRunId: 'r-123', claimedAttemptId: 'i5' },
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+        },
+      );
+      assert(
+        !(v.message ?? '').includes('claimed_attempt_id'),
+        `匹配时不得再报 attempt 身份问题：${v.message}`,
       );
     },
   },

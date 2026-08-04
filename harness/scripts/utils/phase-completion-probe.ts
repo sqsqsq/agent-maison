@@ -34,6 +34,13 @@ export interface CompletionEvidenceState {
   verdict?: string;
   /** R7：证据自报的 run 身份（跳过判据用；缺失即不跳过） */
   runId?: string;
+  /**
+   * f9c2e6b4 t1：回执自报的 attempt 身份（`claimed_attempt_id`）。
+   * agent 侧从 `MAISON_GOAL_ATTEMPT` 取值填写；缺失 = 旧格式回执（见 attempt 新鲜度判据）。
+   */
+  attemptId?: string;
+  /** f9c2e6b4 t1：回执自报完成时刻的毫秒时间戳（attempt 新鲜度的 legacy 判据） */
+  claimedCompletionAtMs?: number;
   /** 回执声明的 commit sha（形态已校验）；用于与 summary 的 run identity 锚对账 */
   receiptSha?: string;
   /** 诊断用：哪一条不满足 */
@@ -102,7 +109,17 @@ export function collectCompletionEvidence(
       const atRaw = receiptField(text, 'claimed_completion_at') ?? '';
       const atOk = atRaw.length > 0 && Number.isFinite(Date.parse(atRaw));
       out.receipt = hasAllKeys && filled && identityOk && schemaOk && shaOk && atOk;
-      if (out.receipt) out.receiptSha = shaRaw.toLowerCase();
+      if (out.receipt) {
+        out.receiptSha = shaRaw.toLowerCase();
+        // f9c2e6b4 t1：attempt 新鲜度素材。两者都**只采集不判定**——判定在
+        // isEvidenceFromCurrentInvocation，因为"完整"与"属于本次调用"是两个问题
+        // （前者还要喂 decideSkipAgentInvoke，那条路径不得要求匹配尚未开始的 attempt）。
+        const attemptRaw = receiptField(text, 'claimed_attempt_id');
+        if (attemptRaw && attemptRaw.length > 0 && !RECEIPT_PLACEHOLDER.test(`x: ${attemptRaw}`)) {
+          out.attemptId = attemptRaw;
+        }
+        out.claimedCompletionAtMs = Date.parse(atRaw);
+      }
     }
   } catch {
     out.receipt = false;
@@ -173,6 +190,53 @@ export function isCompletionEvidenceComplete(s: CompletionEvidenceState): boolea
   return s.receipt && s.summary && s.receiptStatus && s.closure;
 }
 
+/** invocation 身份：observer 判"这份完成证据是不是**本次调用**产出的"所需的全部输入。 */
+export interface InvocationIdentity {
+  runId?: string | null;
+  attemptId?: string | null;
+  /** 本次 agent 调用的开始时刻（ms）——legacy 回执无 attempt 字段时的新鲜度下界 */
+  startedAtMs: number;
+}
+
+/**
+ * f9c2e6b4 t1：**证据是否属于当前 invocation**（与"证据是否完整"分开的第二问）。
+ *
+ * 立项事故（run 20260803T103413Z-3f72a8）：coding attempt 2/3 的 agent 各只活了 35.3 秒，
+ * 因为上一轮的回执被**原样复写**（mtime 19:42:25，内容仍写 `claimed_completion_at: 19:40`，
+ * 早于该 attempt 启动），observer 判"不完整→完整"跃迁成立即 tree-kill。规格
+ * （openspec/specs/goal-runner/spec.md:75）本就要求判据叠加**本 attempt 新鲜度**。
+ *
+ * 为什么绑回执而不绑 summary：summary 由 harness 生成，agent 在 attempt 内重跑门禁就会
+ * 刷新它，绑上去抓不住陈旧声明；**陈旧的是 agent 的自证**，所以判据必须落在回执侧。
+ *
+ * **判据按模式分层（codex 复核订正——原实现的 legacy 回退在 goal 下也生效，等于没绑定）**：
+ *   · **goal 模式**（invocation 带 attemptId）：`run_id` 与 `attempt_id` **都必须精确匹配**，
+ *     缺任一即判否。不再回退到时间戳——那是 agent 自报值，未来时间/错误时区仍会误杀本轮。
+ *     可行性由 `check-receipt` 保证：goal 环境下 `claimed_attempt_id` 是必填项，
+ *     agent 收尾时跑门禁就会被要求补上（同一次调用内自纠，不会永久判死 observer）。
+ *   · **非 goal / 人工模式**（无 attemptId）：沿用 `claimed_completion_at > 本次调用开始时刻`，
+ *     兼容旧回执。运算符**刻意与 `goal-runner-phase.isReceiptFreshForInvokeStart` 对齐
+ *     （严格大于）**——那是仓内既有的同一判据（文件级，另叠 mtime），单测有等价性断言钉住；
+ *     此处不直接调用它，是为了让本函数保持纯函数（探针每 2 秒轮询，不再多做一次文件读）。
+ */
+export function isEvidenceFromCurrentInvocation(
+  s: CompletionEvidenceState,
+  id: InvocationIdentity,
+): boolean {
+  if (id.attemptId) {
+    // goal 模式：三元组硬绑定（phase 已在采集侧校验）。缺失即判否，**不回退时间戳**。
+    if (!id.runId || s.runId !== id.runId) return false;
+    return s.attemptId === id.attemptId;
+  }
+  // 非 goal / 人工模式：run 身份若两侧都有则仍须一致，其余走时间新鲜度。
+  if (id.runId && s.runId && s.runId !== id.runId) return false;
+  return (
+    typeof s.claimedCompletionAtMs === 'number' &&
+    Number.isFinite(s.claimedCompletionAtMs) &&
+    s.claimedCompletionAtMs > id.startedAtMs
+  );
+}
+
 /**
  * 构造 observer 探针：闭包捕获 invoke 前基线，只在**本次调用内发生跃迁**时返回 true。
  *
@@ -232,6 +296,11 @@ export function createCompletionProbe(input: {
   feature: string;
   phase: string;
   pathOpts?: FeaturePathOptions;
+  /**
+   * f9c2e6b4 t1：本次调用的身份。传入后，跃迁还须**属于本次 invocation** 才算命中
+   * （见 isEvidenceFromCurrentInvocation）。省略 = 保持旧行为（只判跃迁）。
+   */
+  invocation?: InvocationIdentity;
   /** 测试注入；缺省走真实文件系统 */
   collect?: (projectRoot: string, feature: string, phase: string) => CompletionEvidenceState;
 }): { probe: () => boolean; baselineComplete: boolean; baselineRunId: string | null } {
@@ -250,6 +319,8 @@ export function createCompletionProbe(input: {
       if (baselineComplete || fired) return false;
       const now = collect(input.projectRoot, input.feature, input.phase);
       if (!isCompletionEvidenceComplete(now)) return false;
+      // 跃迁成立仍不够：原样复写的旧回执也会造出"不完整→完整"（立项事故形态）。
+      if (input.invocation && !isEvidenceFromCurrentInvocation(now, input.invocation)) return false;
       fired = true;
       return true;
     },

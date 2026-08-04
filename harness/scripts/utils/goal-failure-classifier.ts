@@ -190,6 +190,28 @@ export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureK
   'await_human_p0_skip',
 ]);
 
+/**
+ * f9c2e6b4 t3：重试耗尽时的**责任归属**——哪些 FailureKind 属"外部条件未满足"。
+ *
+ * 立项事故 run 20260803T103413Z-3f72a8：耗尽后产生端发
+ * `assess_halt:phase_verdict:halt; failure_kind=project_build`，被 `normalizeIncidentId`
+ * 截到首个 `:` 变成 `assess_halt`，registry 固定 `operator` → **WAITING/human**。
+ * 真实责任类别在这一步被抹平，而 WAITING 会让 supervisor 永不拉起。
+ *
+ * 本集合**复用既有 FailureKind 分类**，不新建正则、不新建第二套责任表——
+ * 它只回答一个问题：这个失败是"内容没做对"（重启无用，人来看）还是"外部条件不满足"
+ * （环境恢复后可继续）。不在集合内的一律按内容失败处理（保守：内容失败 → TERMINAL，
+ * 不会让 supervisor 反复拉起一个注定再死的 run）。
+ */
+export const EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
+  'toolchain',
+  'external_block',
+  'capture',
+  'agent_timeout',
+  'transient_api_error',
+  'agent_no_output',
+]);
+
 /** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
 export const CUMULATIVE_HALT_THRESHOLD = 3;
 

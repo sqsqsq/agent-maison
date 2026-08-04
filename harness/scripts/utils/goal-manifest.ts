@@ -345,6 +345,45 @@ function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'f
     : undefined;
 }
 
+/**
+ * f9c2e6b4 t4：`--requirement` / `--requirement-file` 的**单一解析入口**。
+ *
+ * 立项事实：goal 启动指引只给 `--requirement "<string>"`，而宿主真实需求是 544 字节多行中文
+ * （含 `；`、`/`、换行）。在 Windows 命令行上传这种实参既难写又易错，于是宿主 agent 每次
+ * 自造 `launch-*.js` 包装器 + `*-requirement.txt` 落到 scratch/——两次 run 留下两份不同名、
+ * 不同内容的需求文件，重跑旧 launcher 就会把**旧需求**带进新 run。
+ *
+ * 设计要点：
+ *   · 与 `--requirement` **互斥**（同给即 fail-closed——两个真值来源必须有人裁决，不猜）；
+ *   · 相对路径按 **projectRoot** 解析（两个入口同一口径，不依赖各自 cwd）；
+ *   · **只读取内容**。防陈旧靠调用方在 fresh 时把内容冻结进 manifest，
+ *     **不靠**规定文件命名或禁止复用路径——权威需求文件本就该长期复用。
+ */
+export function resolveRequirementInput(input: {
+  requirement?: unknown;
+  requirementFile?: unknown;
+  projectRoot: string;
+}): string | undefined {
+  const inline = typeof input.requirement === 'string' ? input.requirement : undefined;
+  const fileRaw = typeof input.requirementFile === 'string' ? input.requirementFile.trim() : '';
+  if (!fileRaw) return inline;
+  if (inline !== undefined && inline.trim().length > 0) {
+    throw new Error(
+      '[goal] --requirement 与 --requirement-file 互斥：两者同给时无法判定哪个是真值，' +
+        '请只保留一个。',
+    );
+  }
+  const abs = path.isAbsolute(fileRaw) ? fileRaw : path.join(input.projectRoot, fileRaw);
+  if (!fs.existsSync(abs)) {
+    throw new Error(`[goal] --requirement-file 指向的文件不存在：${abs}`);
+  }
+  const text = fs.readFileSync(abs, 'utf-8').replace(/^﻿/, '').trim();
+  if (!text) {
+    throw new Error(`[goal] --requirement-file 内容为空：${abs}`);
+  }
+  return text;
+}
+
 export function buildGoalManifestFromInput(
   input: Record<string, unknown>,
   opts: GoalManifestParseOptions,

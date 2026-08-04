@@ -60,6 +60,7 @@ import { computeProductWorktreeDigest } from './utils/worktree-digest';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
+  isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
   resolveRunOwnerKind,
   syncPhaseStateOnReceiptPassStrict,
@@ -84,6 +85,8 @@ interface ReceiptFrontmatter {
   agent_runtime?: string;
   claimed_completion_at?: string;
   claimed_completion_commit_sha?: string;
+  /** f9c2e6b4 t1：本回执属于哪一次 attempt（goal 环境必填；值取自 env MAISON_GOAL_ATTEMPT） */
+  claimed_attempt_id?: string;
   script_harness?: {
     command?: string;
     exit_code?: number;
@@ -204,6 +207,20 @@ function main(): void {
   const { feature, phase, projectRoot, skipStateSync } = parseArgs();
   const frameworkRoot = path.resolve(__dirname, '..', '..');
 
+  /**
+   * f9c2e6b4 t1（二轮复核收敛）：**本文件所有 goal 分支的唯一判据**。
+   *
+   * 此前各处分别写 `isGoalOrchestrationEnv()`——而 adapter 工具子进程会丢 env
+   * （phase-state.ts:107 实锤：cursor 丢 MAISON_GOAL_HEADLESS/RUNNER，只留 RUN_ID/ATTEMPT）。
+   * 于是 agent 侧跑 check-receipt 时被误判成 interactive：evidence policy 走人工档、
+   * slim 凭证的 run 绑定不校验、assumptions ledger 不校验、assess 投影成 manual。
+   * **门禁被静默跳过比门禁判错更难发现**，所以这里一次算准、全文件复用。
+   *
+   * 并集是严格超集：gate harness（runner 直接 spawn，带 MAISON_GOAL_GATE_HARNESS=1）
+   * 由 orchestration 位命中；agent 侧由 isAgentSideGoalHarness() 命中。
+   */
+  const inGoalReceiptContext = isGoalOrchestrationEnv() || isAgentSideGoalHarness();
+
   const fw = loadFrameworkConfig(projectRoot);
   // phase 合法性按 active workflow feature phase 集校验（C0 收编：不再持有硬编码枚举）
   try {
@@ -224,7 +241,7 @@ function main(): void {
   // C2 verification-matrix：track/mode/config → evidence policy 求解。
   const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
   const runtimeCtx: RuntimeContext = {
-    mode: isGoalOrchestrationEnv() ? 'goal' : 'interactive',
+    mode: inGoalReceiptContext ? 'goal' : 'interactive',
     adapter: fw.agent_adapter ?? 'generic',
     phase,
     workflow: fw.active_workflow ?? 'spec-driven',
@@ -232,7 +249,7 @@ function main(): void {
     // process=脱离会话），不是「是不是 goal」——旧式 `!isGoalOrchestrationEnv()` 把
     // goal「有人在场」误判成无人。owner 动态可 handoff，故按 run-control 现值解析。
     can_prompt_user: canPromptNow(resolveRunOwnerKind(projectRoot, feature)),
-    can_collect_usage: isGoalOrchestrationEnv(),
+    can_collect_usage: inGoalReceiptContext,
   };
   const evidenceConfig = { evidence_profile: fw.evidence_profile };
   const policy = resolveEvidencePolicy(track, runtimeCtx, evidenceConfig);
@@ -457,7 +474,7 @@ function main(): void {
       // t2 v3（codex 阻断3）：goal 环境 run 身份绑定——同 commit 上 run A 的 summary 不得被
       // run B 复用。v4（codex 第三轮高优）fail-closed：goal 环境下当前 run id / summary run id
       // 任一缺失同样 BLOCKER，不得静默降级（与 §10 assumptions ledger 的 run identity 先例对齐）。
-      if (isGoalOrchestrationEnv()) {
+      if (inGoalReceiptContext) {
         const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim() ?? '';
         const summaryRunId = ((slimSummary as { run_id?: string }).run_id ?? '').trim();
         if (!currentRunId) {
@@ -960,7 +977,48 @@ function main(): void {
   // 10. goal 环境：自动决议账本 schema + registry 完整性（goal-fakepass-hardening t1）
   //     JSONL 为判定 SSOT（markdown 仅人读投影）；registry 不可读同样 fail-closed——
   //     bc-openCard 洞⑤：留痕解析静默失败让待复核清单消失，本门禁把留痕升为闭环硬条件。
-  if (isGoalOrchestrationEnv()) {
+  // f9c2e6b4 t1：goal 下 `claimed_attempt_id` **必填且须等于本次 attempt**。
+  // 它是完成观测判"这份回执属不属于本轮"的唯一凭据——立项事故（run 20260803T103413Z-3f72a8）
+  // 正是"旧回执原样复写"骗停了两次 attempt；observer 现已严格要求该字段，门禁必须把它变成
+  // 硬条件，否则 agent 不填 → observer 永不命中 → 跑到 hard timeout。
+  //
+  // **谓词取并集（codex 复核订正）**：不能只用 isGoalOrchestrationEnv()——仓内已实锤
+  // adapter 工具子进程会丢 env（phase-state.ts:107：2026-07-27 宿主实锤 cursor 丢
+  // MAISON_GOAL_HEADLESS 只留 RUN_ID/ATTEMPT，"单一信号判定必翻车"）。复用既有
+  // isAgentSideGoalHarness()，不新造谓词。
+  if (inGoalReceiptContext) {
+    const currentAttempt = process.env.MAISON_GOAL_ATTEMPT?.trim();
+    const claimedAttempt = frontmatter.claimed_attempt_id?.trim();
+    if (!currentAttempt) {
+      // goal 信号在场却没有 attempt：是环境传播链异常，不是"非 goal"——静默跳过等于把
+      // 本门禁关掉（与上面 MAISON_GOAL_RUN_ID 缺失同一处置口径）。
+      issues.push({
+        id: 'receipt_attempt_identity',
+        severity: 'BLOCKER',
+        message:
+          'goal 信号在场但缺 MAISON_GOAL_ATTEMPT——attempt identity 是闭环必填项，' +
+          '环境传播链异常不得静默降级（fail-closed）。',
+      });
+    } else if (!claimedAttempt) {
+      issues.push({
+        id: 'receipt_attempt_identity',
+        severity: 'BLOCKER',
+        message:
+          `回执缺 claimed_attempt_id——请填当前 attempt（env MAISON_GOAL_ATTEMPT=${currentAttempt}）。` +
+          '该字段是"本回执属于哪一轮"的唯一凭据，缺失会让完成观测把上一轮的旧声明当成本轮完成。',
+      });
+    } else if (claimedAttempt !== currentAttempt) {
+      issues.push({
+        id: 'receipt_attempt_identity',
+        severity: 'BLOCKER',
+        message:
+          `回执 claimed_attempt_id="${claimedAttempt}" 与本次 attempt="${currentAttempt}" 不一致` +
+          '——这通常意味着回执是从上一轮抄来的；请按本轮实际情况重填，不要复制旧回执。',
+      });
+    }
+  }
+
+  if (inGoalReceiptContext) {
     // P1-2 + 七轮 P2-2：goal orchestration 下 run identity 必填——缺 MAISON_GOAL_RUN_ID
     // 不得静默降级（跳过 run 对账），fail-closed。
     const currentRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
@@ -1082,7 +1140,7 @@ function main(): void {
         frameworkRoot,
         feature,
         phase,
-        mode: isGoalOrchestrationEnv() ? 'goal_mode' : 'manual',
+        mode: inGoalReceiptContext ? 'goal_mode' : 'manual',
         status: 'PASS/closed',
       });
     }

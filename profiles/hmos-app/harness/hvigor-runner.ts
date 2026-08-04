@@ -318,6 +318,51 @@ export function hasDependencyResolutionFailure(log: string): boolean {
   return PROJECT_DEPENDENCY_PATTERNS.some(re => re.test(log));
 }
 
+/**
+ * hvigor **配置阶段**错误（plan f9c2e6b4 t2）。
+ *
+ * 立项事故 run 20260803T103413Z-3f72a8：hvigor 在 23 毫秒内失败，输出
+ *   `00303149 Configuration Error` / `Error Message: Path not found. At file: <模块路径>`
+ *   `* Try: Please check field: modules in file: build-profile.json5`
+ * 这是**工程配置**问题，既不是编译错误、也不是 ohpm 依赖解析失败——上述六条
+ * `PROJECT_DEPENDENCY_PATTERNS` 一条都不匹配，于是落到兜底 `project_build`，
+ * 把 agent 指向一个根本不存在的 file:line。
+ *
+ * 判据取**结构化字段**（八位错误码 + `At file:` 段），不扫散文关键词。
+ * **必须先剥 ANSI**：hvigor 落盘日志保留转义（实证 `> hvigor ^[[91mERROR: ^[[31m00303149 …`），
+ * 不剥则 `> hvigor ERROR` 之类的既有规则同样匹配不到。
+ */
+export interface HvigorConfigError {
+  /** 八位 hvigor 错误码；本检测器只产出 `00303149` */
+  code: string;
+  /** `At file:` 解析出的路径原文（可能是相对或绝对）——**恒非空**，缺失时整体返回 null */
+  atPath: string;
+}
+
+const ANSI_ESCAPE_RE = /\[[0-9;]*m/g;
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, '');
+}
+
+/**
+ * 本分流**只认** `00303149`（"引用路径找不到"）这一个错误码。
+ * codex 复核订正：原实现匹配任意八位码、且允许 `At file:` 缺失，会把其他配置错误
+ * （本应由既有 toolchain/config 分类处置）吞成"环境不一致"并错误停放。范围超出 plan。
+ * 不满足两个条件之一 → 返回 null，**完全走既有分类**。
+ */
+export const HVIGOR_PATH_NOT_FOUND_CODE = '00303149';
+
+export function detectHvigorConfigError(log: string): HvigorConfigError | null {
+  const clean = stripAnsi(log);
+  const code = /\b(\d{8})\s+Configuration Error\b/.exec(clean);
+  if (!code || code[1] !== HVIGOR_PATH_NOT_FOUND_CODE) return null;
+  const at = /^\s*(?:Error Message:\s*)?.*?At file:\s*(\S.*?)\s*$/m.exec(clean);
+  if (!at) return null;
+  const atPath = at[1].trim();
+  return atPath ? { code: code[1], atPath } : null;
+}
+
 export function analyzeProjectDependencyIssue(
   projectRoot: string,
   input: Pick<HvigorRunResult, 'logExcerpt' | 'errors' | 'logAbsPath'> | string,

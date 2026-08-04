@@ -16,7 +16,7 @@ import {
   dispatchDepsInstall,
   analyzeCodingDependencyIssueViaProfile,
 } from '../../../harness/capability-registry';
-import type { ProjectDependencyIssue } from './hvigor-runner';
+import { detectHvigorConfigError, type ProjectDependencyIssue } from './hvigor-runner';
 import {
   isCrossModuleExportFileStem,
   isLibraryFormat,
@@ -1003,6 +1003,10 @@ export type CodingCompileFailureKind =
   | 'project_dependency_missing'
   | 'project_dependency_undeclared'
   | 'project_dependency_install_failed'
+  /** f9c2e6b4 t2：hvigor 配置错误且引用路径**确实不存在** → agent 修 build-profile / 补回模块 */
+  | 'project_config_error'
+  /** f9c2e6b4 t2：配置错误但路径**实际存在** → 构建环境/复验不一致，事务重跑仍失败即 external */
+  | 'project_build_environment_inconsistent'
   | 'project_build';
 
 export interface CodingCompileFailureClassification {
@@ -1010,6 +1014,25 @@ export interface CodingCompileFailureClassification {
   explanation: string;
   suggestion: string;
   depIssue?: ProjectDependencyIssue;
+}
+
+/** f9c2e6b4 t2：分类可见的完整日志文本（落盘日志优先，退到 excerpt + 已解析错误消息）。 */
+function compileLogText(res: {
+  logAbsPath?: string;
+  logExcerpt?: string;
+  errors?: Array<{ message: string }>;
+}): string {
+  let fromDisk = '';
+  try {
+    if (res.logAbsPath && fs.existsSync(res.logAbsPath)) {
+      fromDisk = fs.readFileSync(res.logAbsPath, 'utf-8');
+    }
+  } catch {
+    fromDisk = '';
+  }
+  return [fromDisk, res.logExcerpt ?? '', ...(res.errors ?? []).map((e) => e.message)]
+    .filter((s) => s && String(s).trim().length > 0)
+    .join('\n');
 }
 
 /** 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。 */
@@ -1022,6 +1045,9 @@ export function classifyCodingCompileFailure(
     exitCode?: number;
     errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
     successMarkerFound?: boolean;
+    /** f9c2e6b4 t2：配置错误判据需要原始日志（与 analyzeProjectDependencyIssue 同源入参） */
+    logAbsPath?: string;
+    logExcerpt?: string;
   },
   ctx: CheckContext,
 ): CodingCompileFailureClassification {
@@ -1060,6 +1086,40 @@ export function classifyCodingCompileFailure(
     };
   }
 
+  // f9c2e6b4 t2：**配置错误先于依赖判据**——两者互斥且前者更具体。
+  // hvigor 在配置阶段就失败（实证 23ms）时根本没进编译，把它落进 project_build 会让
+  // agent 去找一个不存在的 file:line；落进依赖自愈链则会去跑一条与之无关的 ohpm install
+  //（`At file:` 指的是 build-profile.modules[].srcPath 引用的**本地源码目录**，
+  // ohpm 不负责创建它）。故此处按**路径存在性**分流。
+  const configError = detectHvigorConfigError(compileLogText(res));
+  if (configError) {
+    // 检测器已保证 code=00303149 且 atPath 非空；其余配置错误一律不进本分流。
+    const atPath = configError.atPath;
+    const resolved = path.isAbsolute(atPath) ? atPath : path.join(ctx.projectRoot, atPath);
+    const pathExists = fs.existsSync(resolved);
+    if (!pathExists) {
+      return {
+        kind: 'project_config_error',
+        explanation:
+          `hvigor 配置阶段失败（${configError.code}）：构建配置引用的路径不存在——${resolved}。\n` +
+          '这不是编译错误，也不是依赖解析失败：hvigor 尚未进入编译。',
+        suggestion:
+          '按 hvigor 的 `* Try:` 提示核对 build-profile.json5 的 modules 字段：' +
+          '要么该模块条目应删除/改名，要么本地源码目录需要恢复。' +
+          '修正后重跑 harness；**不要**尝试用 ohpm install 解决（它不创建本地源码目录）。',
+      };
+    }
+    return {
+      kind: 'project_build_environment_inconsistent',
+      explanation:
+        `hvigor 配置阶段失败（${configError.code}），但引用路径**实际存在**` +
+        `${resolved ? `——${resolved}` : ''}。构建环境与磁盘状态不一致（非本轮编码所致）。`,
+      suggestion:
+        '同一构建事务原样重跑一次即可自证；仍失败则属外部条件（工具链/文件锁/缓存），' +
+        '**不应**再让 agent 改代码。',
+    };
+  }
+
   const depIssue = analyzeCodingDependencyIssueViaProfile(ctx, res);
   // 根因 B（真实代码/构建错误优先）：depIssue.found 已收敛为"命中真实解析失败信号"
   // （hvigor-runner `hasDependencyResolutionFailure` 单一判据；见 P0-A 的 found 收紧）。
@@ -1082,6 +1142,23 @@ export function classifyCodingCompileFailure(
     };
   }
 
+  // f9c2e6b4 t2（并入原独立 todo）：**没有 file/line 时不得说"定位文件/行"**。
+  // 立项事故里 harness 自己记的是 `compile_first_error=(no file)`，兜底话术却让 agent
+  // 去定位文件行——一条物理上无法执行的指令，正是"agent 自己解决不了"的直接原因。
+  const hasLocatedError = errs.some((e) => Boolean(e.file) && Number.isFinite(e.line));
+  if (!hasLocatedError) {
+    const firstMessage = errs[0]?.message?.trim();
+    return {
+      kind: 'project_build',
+      explanation:
+        '编译失败（非零退出或解析到 error），且**日志中没有可定位的文件/行**——' +
+        '通常是工程级失败（构建配置 / 工具链 / 依赖状态），不是某一行源码的问题。',
+      suggestion:
+        '读取完整日志（details 中的日志路径），按其中的首条错误与构建工具给出的 `* Try:` 提示处置' +
+        (firstMessage ? `；首条错误：${firstMessage}` : '') +
+        '。该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
+    };
+  }
   return {
     kind: 'project_build',
     explanation: '编译失败（非零退出或解析到 error），未识别为依赖安装问题。',
@@ -1149,13 +1226,22 @@ function isCompilePass(res: CompileRunResult): boolean {
   );
 }
 
-function resolveCompileBlockingClass(kind: CodingCompileFailureKind): string {
+/** 导出供生产链单测断言（failure kind → blocking_class 的唯一映射点）。 */
+export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): string {
   if (
     kind === 'compile_timeout' ||
     kind === 'compile_incomplete_output' ||
     kind === 'project_build'
   ) {
     return CANONICAL_CODING_COMPILE_ID;
+  }
+  // f9c2e6b4 t2（codex 复核补接）：事务重跑后仍矛盾 = **外部条件**，必须落既有
+  // `externalBlocked` 契约才会被 dependency policy 认出来（isDeferrableExternalBlock
+  // 只查 deferrable_blocking_classes，默认集合就是 ['externalBlocked']）。
+  // 原实现把 kind 原样当 blocking_class，策略层认不出来 → 又回去让 agent 改代码，
+  // 等于 plan 要求的 WAITING/external 根本没接通。**复用既有契约，不造新状态。**
+  if (kind === 'project_build_environment_inconsistent') {
+    return 'externalBlocked';
   }
   return kind;
 }
@@ -1267,9 +1353,30 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   let depsAutoFixNote: string | undefined;
   let overrideFailure: CodingCompileFailureClassification | undefined;
   let installExtraLines: string[] = [];
+  /** f9c2e6b4 t2：构建事务重跑的审计行（与 ohpm 自动安装同一投影位） */
+  let buildTxnRetryLines: string[] = [];
 
   if (res.toolMissing || res.skippedByEnv || !isCompilePass(res)) {
-    const firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    let firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+
+    // f9c2e6b4 t2：配置错误但路径实际存在 → **原样重跑一次构建事务**再下结论。
+    // 这一步不启动 agent、不消耗内容重试预算：矛盾（"说找不到、但它就在那儿"）本身
+    // 就不该由改代码来解决。重跑仍矛盾 → 保留 environment_inconsistent，由裁决层归 external。
+    if (firstFailure.kind === 'project_build_environment_inconsistent') {
+      buildTxnRetryLines = [
+        '--- 构建事务重跑（f9c2e6b4 t2）---',
+        `原因：${firstFailure.explanation.split('\n')[0]}`,
+      ];
+      res = dispatchCodingCompile(ctx, { ...compileBaseOpts, forceNoDaemon: true });
+      const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+      buildTxnRetryLines.push(
+        isCompilePass(res)
+          ? '重跑结果：PASS（首次失败为一次性环境不一致，已自证）'
+          : `重跑结果：仍失败（kind=${afterRetry.kind}）——不再启动 agent，交裁决层归外部条件`,
+      );
+      firstFailure = afterRetry;
+    }
+
     const canAutoInstall =
       firstFailure.kind === 'project_dependency_missing' &&
       firstFailure.depIssue &&
@@ -1344,7 +1451,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: buildCompileFailDetails(res, failure, installExtraLines),
+    details: buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines]),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),

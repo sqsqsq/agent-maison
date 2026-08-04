@@ -36,6 +36,8 @@ import {
   type SourceDriftFacts,
 } from '../../scripts/utils/adjudication';
 import { partitionDriftByGitStatus } from '../../scripts/utils/source-drift-facts';
+import { EXTERNAL_RETRY_RESPONSIBILITY_KINDS } from '../../scripts/utils/goal-failure-classifier';
+import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { reduceRunState, supervisorAction } from '../../scripts/utils/run-state-reducer';
 import {
   renderLineageDiscontinuitySection,
@@ -1333,6 +1335,164 @@ const projectionCases: TestCase[] = [
       assert(
         !/lookupIncident|INCIDENT_REGISTRY|\bdecide\s*\(/.test(src),
         'reducer 不得直接调用裁决内核，只折叠已落盘投影',
+      );
+    },
+  },
+  // ==========================================================================
+  // f9c2e6b4 t3 —— 重试耗尽必须保留责任类别
+  // 立项 run 20260803T103413Z-3f72a8：真因 project_build（内容），却因
+  // `assess_halt:<reason>` 被 normalizeIncidentId 截成 `assess_halt` → operator
+  // → WAITING/human；而 WAITING 会让 supervisor 永不拉起（goal-supervisor.ts:17）。
+  // ==========================================================================
+  {
+    name: 't3 content_retry_exhausted → TERMINAL（重启同一 run 只会原地再死）',
+    run: () => {
+      const d = decide({ incident: 'content_retry_exhausted' }, NO_AUTHORITY, ctx());
+      assert(d.kind === 'terminal', `内容失败耗尽应终局，实得 ${d.kind}`);
+    },
+  },
+  {
+    name: 't3 external_retry_exhausted → WAITING(external)（等环境，不是等人做决定）',
+    run: () => {
+      const d = decide({ incident: 'external_retry_exhausted' }, NO_AUTHORITY, ctx());
+      assert(d.kind === 'waiting', `应停放，实得 ${d.kind}`);
+      assert(
+        d.kind === 'waiting' && d.wait_kind === 'external',
+        `外部条件耗尽须判 external，实得 ${d.kind === 'waiting' ? d.wait_kind : '-'}`,
+      );
+    },
+  },
+  {
+    name: 't3 反向回归：旧写法 assess_halt:<reason> 仍会被洗成 human（故不得再用）',
+    run: () => {
+      // 这条钉的是"为什么必须改"：同一条真因走旧 id 形态，结论是 human；
+      // 将来若有人把产生端改回拼接，本用例与 goal-assess-driver 的契约断言会一起提醒。
+      const legacy = decide(
+        { incident: 'assess_halt:phase_verdict:halt; failure_kind=project_build' },
+        NO_AUTHORITY,
+        ctx(),
+      );
+      assert(
+        legacy.kind === 'waiting' && legacy.wait_kind === 'human',
+        '旧形态应被洗成 waiting(human)——这正是本项要消除的行为',
+      );
+      assert(
+        normalizeIncidentId('assess_halt:phase_verdict:halt; failure_kind=project_build') === 'assess_halt',
+        '归一确实截断到首个冒号（洗白链的机制根因）',
+      );
+    },
+  },
+  {
+    name: 't3 责任集合复用既有 FailureKind 分类，未另建第二套分类表',
+    run: () => {
+      // codex 开工原则①：直接消费现有规范化失败分类。集合成员必须都是合法 FailureKind，
+      // 且集合定义与既有 SIGNATURE_HALT_KINDS / CUMULATIVE_HALT_FAMILY 同文件同风格。
+      const src = stripComments(
+        fs.readFileSync(path.join(SCRIPTS_DIR, 'utils', 'goal-failure-classifier.ts'), 'utf8'),
+      );
+      assert(
+        /EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind>/.test(src),
+        '责任集合须建立在既有 FailureKind 之上（而非新造枚举）',
+      );
+      for (const kind of EXTERNAL_RETRY_RESPONSIBILITY_KINDS) {
+        assert(typeof kind === 'string' && kind.length > 0, '集合成员须为 FailureKind 字面');
+      }
+      assert(
+        !EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has('code_regression' as never),
+        'code_regression 是内容失败，不得归外部',
+      );
+    },
+  },
+  // ==========================================================================
+  // f9c2e6b4 t4 —— --requirement-file 的单一读取入口
+  // 立项事实：指引只给 `--requirement "<string>"`，宿主 544 字节多行中文需求撞 Windows
+  // 引号，agent 每次自造 launch-*.js 包装器 + *-requirement.txt（两份不同名的需求文件，
+  // 重跑旧 launcher 即把旧需求带进新 run）。
+  // ==========================================================================
+  {
+    name: 't4 相对路径按 projectRoot 解析；保留换行、去 BOM、首尾裁白',
+    run: () => {
+      tmpProject((root) => {
+        fs.mkdirSync(path.join(root, 'doc'), { recursive: true });
+        const body = ['第一行；含中文标点', '', '第二行'].join('\n');
+        // 带 BOM + 尾随空行落盘：这正是宿主编辑器写出的真实形态
+        fs.writeFileSync(path.join(root, 'doc', 'req.md'), `﻿${body}\n`, 'utf-8');
+        const out = resolveRequirementInput({ requirementFile: 'doc/req.md', projectRoot: root });
+        assert(out === body, `内容不符：${JSON.stringify(out)}`);
+      });
+    },
+  },
+  {
+    name: 't4 与 --requirement 互斥（同给即 fail-closed，不猜哪个是真值）',
+    run: () => {
+      tmpProject((root) => {
+        fs.writeFileSync(path.join(root, 'r.md'), 'from file', 'utf-8');
+        let threw = false;
+        try {
+          resolveRequirementInput({ requirement: 'inline', requirementFile: 'r.md', projectRoot: root });
+        } catch {
+          threw = true;
+        }
+        assert(threw, '两个真值来源同给必须报错');
+        assert(
+          resolveRequirementInput({ requirement: 'inline', projectRoot: root }) === 'inline',
+          '只给 --requirement 时行为不变',
+        );
+      });
+    },
+  },
+  {
+    name: 't4 缺文件 / 空文件一律 fail-closed（不静默产出空需求）',
+    run: () => {
+      tmpProject((root) => {
+        let missingThrew = false;
+        try {
+          resolveRequirementInput({ requirementFile: 'nope.md', projectRoot: root });
+        } catch {
+          missingThrew = true;
+        }
+        assert(missingThrew, '文件不存在须报错');
+        fs.writeFileSync(path.join(root, 'blank.md'), '   \n', 'utf-8');
+        let blankThrew = false;
+        try {
+          resolveRequirementInput({ requirementFile: 'blank.md', projectRoot: root });
+        } catch {
+          blankThrew = true;
+        }
+        assert(blankThrew, '空文件须报错——空需求会让整条链跑一个没有目标的 run');
+      });
+    },
+  },
+  {
+    name: 't4 两个启动入口共用同一读取函数（不得各写一份）',
+    run: () => {
+      const runner = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-runner.ts'), 'utf8'));
+      const entry = stripComments(fs.readFileSync(path.join(SCRIPTS_DIR, 'goal-mode-entry.ts'), 'utf8'));
+      for (const [name, src] of [['goal-runner', runner], ['goal-mode-entry', entry]] as const) {
+        assert(/resolveRequirementInput\(/.test(src), `${name} 未复用共享读取函数`);
+        assert(
+          !/readFileSync\([^)]*requirement-file/.test(src),
+          `${name} 自行读了 requirement 文件——两份实现必然漂移`,
+        );
+      }
+      // resume 不得重读源文件：runner 侧解析必须被 fresh 条件圈住
+      assert(
+        /if \(!argv\.resume\) \{[\s\S]{0,400}?resolveRequirementInput\(/.test(runner),
+        'runner 必须只在 fresh 分支解析 requirement-file（resume 只认已冻结 manifest）',
+      );
+      // codex 复核 P2：resume 携该参数必须**显式拒绝**，不得静默忽略
+      assert(
+        /argv\.resume && typeof argv\['requirement-file'\][\s\S]{0,300}?process\.exit\(2\)/.test(runner),
+        'resume 携 --requirement-file 须 fail-closed（同 --vision-lineage 的禁止静默忽略原则）',
+      );
+      // codex 复核 P2：manifest override 校验必须在 requirement 解析之后，
+      // 否则 `--manifest + --requirement-file` 未带 override 时内容被静默忽略
+      const resolveAt = runner.indexOf('resolveRequirementInput({');
+      const validateAt = runner.indexOf('validateManifestCliOverrides(manifestArgv)');
+      assert(resolveAt > 0 && validateAt > 0, '两个锚点都应存在');
+      assert(
+        validateAt > resolveAt,
+        'manifest override 校验必须晚于 requirement 解析，否则 --manifest + --requirement-file 静默失效',
       );
     },
   },

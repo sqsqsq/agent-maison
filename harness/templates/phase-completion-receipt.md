@@ -19,6 +19,11 @@ agent_model: "<实际模型 id，如 minimax-2.5 / gpt-5.5 / <vendor-model-id>>"
 agent_runtime: "<cli-or-sdk-identifier | other>"
 claimed_completion_at: "<ISO 8601, 如 2026-04-27T10:00:00+08:00>"
 claimed_completion_commit_sha: "<git rev-parse HEAD 真实值>"
+# goal 模式下**必填**：填 env `MAISON_GOAL_ATTEMPT` 的当前值（非 goal 模式留空即可）。
+# 它是"本回执属于哪一次 attempt"的唯一凭据——**不要从上一轮回执抄**：抄了会让完成观测
+# 把上一轮的旧声明当作本轮完成，agent 刚启动就被判完成并终止（实证 run 20260803T103413Z-3f72a8：
+# coding 连续两次 attempt 各只活 35 秒，重试预算 90 秒烧光）。
+claimed_attempt_id: "<env MAISON_GOAL_ATTEMPT 的值；非 goal 模式留空>"
 
 # ----------------------------------------------------------------------
 # 1. Verifier 子 agent（语义级凭证；机器无法替代的调用自证）

@@ -223,8 +223,26 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   await_human_p0_skip: { class: 'operator', requires_grant: 'p0_skip_waiver' },
   /** 闭环墙：脚本门禁反复 PASS 但回执关不了环（多为只能真人签的确认项）。 */
   closure_open: { class: 'operator' },
-  /** assess 侧 halt（运行时带 `assess_halt:<reason>` 后缀——normalizeIncidentId 归一）。 */
+  /**
+   * assess 侧 halt 的**通用**兜底（运行时带 `assess_halt:<reason>` 后缀——normalizeIncidentId 归一）。
+   * f9c2e6b4 t3 起，产生端对"重试耗尽"改发下面两个带责任类别的 id；本条只留给未分类的
+   * 其余 assess halt，**不再是所有 assess halt 的唯一出口**。
+   */
   assess_halt: { class: 'operator' },
+
+  /**
+   * f9c2e6b4 t3：重试耗尽 · **内容失败**。反复做不对内容，重启同一个 run 只会在同一处再死，
+   * 故结构上终局——supervisor 不得拉起（人工 --resume 仍是人的选择，不由框架自动做）。
+   */
+  content_retry_exhausted: { class: 'operator', structurally_terminal: true },
+
+  /**
+   * f9c2e6b4 t3：重试耗尽 · **外部条件**（工具链/设备/网络/断流）。环境恢复后可继续，
+   * 不是"需要人做决定"，故 waiting(external) 而非 waiting(human)。
+   * 注意：这**不等于**会被自动重试——a4 的 supervisor 对 `stale × WAITING` 一律 no_op；
+   * 本条的收益是责任归属正确（据此决定找谁、是否值得重启），不是自动恢复。
+   */
+  external_retry_exhausted: { class: 'external' },
 
   // --- 外部条件未满足 -------------------------------------------------------
   await_human_capability_gap: { class: 'external' },

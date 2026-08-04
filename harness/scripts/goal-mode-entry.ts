@@ -18,6 +18,7 @@ import {
 import {
   buildGoalManifestFromInput,
   loadGoalManifestFromRun,
+  resolveRequirementInput,
   writeGoalManifest,
   type GoalManifest,
 } from './utils/goal-manifest';
@@ -340,6 +341,8 @@ async function main(): Promise<void> {
     string: [
       'project-root', 'framework-root', 'feature', 'run-id', 'adapter', 'requirement', 'start', 'end',
       'authorization-mode', 'through-phase',
+      // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
+      'requirement-file',
     ],
     boolean: ['force-takeover', 'prepare-run', 'help'],
   });
@@ -348,6 +351,7 @@ async function main(): Promise<void> {
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '[--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end).\n' +
+      'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
       'Protocol: stdout emits one JSON phase_execute_request per round; stdin supplies ' +
       'one JSON {status:"passed|failed|waiting",phase,details?} response.',
     );
@@ -365,7 +369,14 @@ async function main(): Promise<void> {
       feature,
       runId: runId || undefined,
       adapter,
-      requirement: String(argv.requirement ?? ''),
+      // f9c2e6b4 t4：两个启动入口**共用** resolveRequirementInput——互斥判定、相对路径
+      // 口径、空文件处置只有一份实现，不写两遍（codex 开工原则②）。
+      requirement:
+        resolveRequirementInput({
+          requirement: argv.requirement,
+          requirementFile: argv['requirement-file'],
+          projectRoot,
+        }) ?? '',
       startPhase: String(argv.start ?? 'spec'),
       endPhase: String(argv.end ?? 'testing'),
     });

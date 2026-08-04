@@ -118,6 +118,7 @@ import {
   newRunId,
   resolveGoalReportDir,
   resolveRawRunInput,
+  resolveRequirementInput,
   resolveVisionLineage,
   visionLineageResumeIssue,
   type RawRunInput,
@@ -353,6 +354,7 @@ import {
   ADVANCE_BLOCKED_HALT_THRESHOLD,
   CUMULATIVE_HALT_FAMILY,
   CUMULATIVE_HALT_THRESHOLD,
+  EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
   type ArtifactSnapshot,
   type FailureKind,
 } from './utils/goal-failure-classifier';
@@ -3903,6 +3905,9 @@ export async function main(): Promise<number> {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
       'run-id', 'ack-receipt', 'reseal-receipt',
+      // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
+      // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
+      'requirement-file',
       // plan a5f9c3e2 t3①：vision lineage 处置的**唯一输入入口**（continue|reset）。
       // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
       'vision-lineage',
@@ -3940,15 +3945,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const manifestArgv = toManifestCliArgv(argv);
+  const layout = injectedLayout ?? detectRepoLayout(__dirname);
+  const projectRoot = layout.projectRoot;
+  const frameworkRoot = layout.frameworkRoot;
+
+  // f9c2e6b4 t4：**fresh 才读源文件**——resume 一律只认 manifest 里已冻结的 requirement，
+  // 这样"权威需求文件可长期复用"与"旧内容绝不悄悄进新 run"同时成立。
+  // 位置：projectRoot 定下之后（相对路径按它解析）、manifest 构建之前——
+  // 下游看到的就是最终值，不存在第二个真值来源。
+  // resume **显式拒绝** --requirement-file（同 --vision-lineage 的"禁止静默忽略"原则）：
+  // resume 只认已冻结的 requirement，悄悄忽略一个用户明确给了的输入是最坏的形态。
+  if (argv.resume && typeof argv['requirement-file'] === 'string' && argv['requirement-file'].trim()) {
+    console.error(
+      '[goal-runner] BLOCKER: --requirement-file 仅在 fresh run 生效——resume 只认 manifest ' +
+      '中已冻结的 requirement。若确要换需求，请开新 run。',
+    );
+    process.exit(2);
+  }
+  if (!argv.resume) {
+    try {
+      const resolvedRequirement = resolveRequirementInput({
+        requirement: argv.requirement,
+        requirementFile: argv['requirement-file'],
+        projectRoot,
+      });
+      if (resolvedRequirement !== undefined) {
+        argv.requirement = resolvedRequirement;
+        manifestArgv.requirement = resolvedRequirement;
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(2);
+    }
+  }
+  // codex 复核订正：manifest override 校验必须在 requirement 解析**之后**——否则
+  // `--manifest + --requirement-file`（未带 --override-manifest）不会被前置拦截，
+  // 文件内容被静默忽略。
   const manifestCliCheck = validateManifestCliOverrides(manifestArgv);
   if (!manifestCliCheck.ok) {
     console.error(manifestCliCheck.message);
     process.exit(1);
   }
 
-  const layout = injectedLayout ?? detectRepoLayout(__dirname);
-  const projectRoot = layout.projectRoot;
-  const frameworkRoot = layout.frameworkRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 
@@ -6105,9 +6143,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // t4：完成观测探针。invoke **之前**建基线——只认本次调用内"不完整→完整"的跃迁，
         // 否则 retry 遗留的上一轮 receipt 会被当作本轮完成。基线已完整时不做观测
         // （该情形应由上层判为"无需再调 agent"，而不是启动后立刻杀）。
+        // f9c2e6b4 t1：跃迁之外再叠**本 attempt 新鲜度**（openspec/specs/goal-runner/spec.md:75
+        // 本就要求）。立项事故：上一轮回执被原样复写 → 跃迁成立 → attempt 2/3 各活 35.3 秒
+        // 就被 tree-kill，重试预算 90 秒烧光。身份用 run+phase+attempt 三元组（phase 已在
+        // 采集侧校验），**不带 invoke_id**——它是 `${phase}-${attemptId}` 的派生值。
         const completion = dryRun
           ? null
-          : createCompletionProbe({ projectRoot, feature: manifest.feature, phase });
+          : createCompletionProbe({
+              projectRoot,
+              feature: manifest.feature,
+              phase,
+              invocation: {
+                runId: manifest.run_id,
+                attemptId: visualAttemptId,
+                startedAtMs: Date.now(),
+              },
+            });
         // R7 的处置（**与 review 建议部分分歧，已实证**）：
         //
         // review 要求"基线证据已完整时跳过本次 agent 调用"。实现后集成测试实锤：这会
@@ -7754,7 +7805,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         });
         if (action === 'halt' && !haltReason) {
           const assessReason = assessment.recommendation.reason.trim();
-          haltReason = assessReason ? 'assess_halt:' + assessReason.slice(0, 160) : 'assess_halt';
+          // f9c2e6b4 t3：**责任类别不得被洗白**。旧写法发 `assess_halt:<reason>`，
+          // 而 normalizeIncidentId 截到首个 ':' → 恒为 `assess_halt` → registry 固定
+          // operator → WAITING/human，且 WAITING 会让 supervisor 永不拉起（实证
+          // run 20260803T103413Z-3f72a8：真因是 project_build，却被判成"等人"）。
+          // 责任来源是**既有的 FailureKind 归一分类**，不新建正则或第二套责任表。
+          // 详细原因不丢：仍原样写进下面的 `reason` 字段。
+          haltReason = EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(failureKind)
+            ? 'external_retry_exhausted'
+            : 'content_retry_exhausted';
           goalEvents.emit({
             type: 'phase_halt',
             phase,

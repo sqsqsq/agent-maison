@@ -342,9 +342,22 @@ const cases: TestCase[] = [
         ...checkGoalReconcileBoundarySource(runner),
       ];
       assert(errors.length === 0, errors.join('; '));
+      // f9c2e6b4 t3：原断言钉的是 `assess_halt:<reason>` 字面拼接。该写法已被证明会让
+      // normalizeIncidentId 截成 `assess_halt` → registry 固定 operator → WAITING/human，
+      // 把真实责任类别（内容失败 / 外部条件）抹平。现改为钉**责任类别不被洗白**这条契约。
       assert(
-        runner.includes("haltReason = assessReason ? 'assess_halt:' + assessReason.slice(0, 160) : 'assess_halt';"),
-        'assess-derived halt must get a named reason',
+        !runner.includes("'assess_halt:' + assessReason"),
+        'assess halt 不得再用 `assess_halt:<reason>` 拼接——会被 normalizeIncidentId 洗成通用 operator',
+      );
+      assert(
+        runner.includes('EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(failureKind)') &&
+          runner.includes("'external_retry_exhausted'") &&
+          runner.includes("'content_retry_exhausted'"),
+        'assess-derived halt 须由既有 FailureKind 分类派生出带责任类别的稳定事故 id',
+      );
+      assert(
+        /reason: assessReason \|\|/.test(runner),
+        '详细 assess 原因不得丢失（仍须原样写进 reason 字段）',
       );
       assert(
         /insufficient_assurance\/advance_blocked 时 retries_used 永远为 0，只能靠全局轮数兜底。\r?\n\s*retries\+\+;/.test(runner),
