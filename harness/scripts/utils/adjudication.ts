@@ -244,6 +244,14 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    */
   external_retry_exhausted: { class: 'external' },
 
+  /**
+   * plan b3e8d4c7 t2：上游阶段闭环缺口——assess 推荐 `complete_closure:<上游>`，
+   * runner 已尝试过一次确定性关环（不启 agent、不烧内容预算）仍不成立。
+   * 需要人看上游那一环，但**不是**内容失败、也不是重试耗尽——不得再被洗成
+   * content_retry_exhausted（那正是宿主 run 20260804T033834Z-99c0a1 的错误标签）。
+   */
+  upstream_closure_gap: { class: 'operator' },
+
   // --- 外部条件未满足 -------------------------------------------------------
   await_human_capability_gap: { class: 'external' },
   managed_device_session_conflict: { class: 'external' },

@@ -116,6 +116,7 @@ import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
+  isGoalOrchestrationEnv,
   mergeAndWritePhaseState,
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
@@ -928,7 +929,12 @@ async function main(): Promise<void> {
       frameworkRoot: resolvedFrameworkRoot,
       feature,
       phase,
-      mode: isAgentSideGoalHarness() ? 'goal_mode' : 'manual',
+      // b3e8d4c7 t3：判的是"在不在 goal run 里"，**不是**"是不是 agent 侧"。
+      // isAgentSideGoalHarness 是 vision 账本的**单写者**谓词，刻意排除
+      // MAISON_GOAL_GATE_HARNESS=1——于是权威 gate harness 反而按 manual 渲染并写投影
+      //（宿主实锤 run 20260804T033834Z-99c0a1：NEXT_STEP mode=manual policy=manual）。
+      // 用既有并集，不新造谓词。
+      mode: isGoalOrchestrationEnv() || isAgentSideGoalHarness() ? 'goal_mode' : 'manual',
       status: `${runSummary.verdict}/${runSummary.closure_status ?? 'open'}`,
     });
   }

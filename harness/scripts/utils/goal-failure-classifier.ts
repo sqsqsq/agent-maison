@@ -212,6 +212,38 @@ export const EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind> = new
   'agent_no_output',
 ]);
 
+/**
+ * plan b3e8d4c7 t3：**assess-halt 汇点的事故 id**。
+ *
+ * 该汇点（goal-runner 的 `action==='halt' && !haltReason`）承载多类 halt，f9c2e6b4 t3
+ * 曾把它**整体**假设成"重试耗尽"，于是宿主 run 20260804T033834Z-99c0a1 里预算只用了 1/2、
+ * 真因是"推荐无路由"，却被标 content_retry_exhausted + TERMINAL（halt_reason 说 exhausted、
+ * reason 说 unclosed，自相矛盾，还让 supervisor 永不拉起）。
+ *
+ * `retries >= max` 只是**必要**条件——预算恰好用满时任何落进 catch-all 的 halt 都会被误标。
+ * 充分证据须同时满足：来自 phase-outcome SSOT 的 halt（runner_action==='halt'）、
+ * 本轮非 PASS、且未熔断。其余一律 fail-closed 到 framework_bug——**不给 catch-all 起精确名字**。
+ */
+export function resolveAssessHaltIncident(input: {
+  retriesUsed: number;
+  maxRetriesPerPhase: number;
+  /** assess recommendation 的 SSOT 动作（仅当推荐派生自 phase outcome 时存在） */
+  runnerAction?: string;
+  verdict: string;
+  fused: boolean;
+  failureKind: FailureKind;
+}): 'content_retry_exhausted' | 'external_retry_exhausted' | 'framework_bug' {
+  const exhausted =
+    input.retriesUsed >= input.maxRetriesPerPhase &&
+    input.runnerAction === 'halt' &&
+    input.verdict !== 'PASS' &&
+    !input.fused;
+  if (!exhausted) return 'framework_bug';
+  return EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(input.failureKind)
+    ? 'external_retry_exhausted'
+    : 'content_retry_exhausted';
+}
+
 /** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
 export const CUMULATIVE_HALT_THRESHOLD = 3;
 

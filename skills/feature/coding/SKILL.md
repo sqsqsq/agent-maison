@@ -37,9 +37,16 @@
 
 ## 输入
 
+> **`contracts.yaml` 在本阶段只读（BLOCKER 纪律）。** 它是 plan 的产出、coding 的权威输入；
+> UI scope 白名单取自 **plan PASS 时冻结的快照**（`fail-closed 禁退 live`），改 live 文件
+> 不会放宽任何门禁，只会让 plan 的证据链判 stale。
+> 撞 `ui_scope_violation` 时只有两条合法出路：**收回越界文件**，或**把控制权交还 driver**
+> 由它回退到 plan 重新裁决 scope（plan 重新 PASS 后 runner 会签发新快照）。
+> **自行扩写 contracts.yaml、或自行重取 pass snapshot，都是自我授权，一律无效且会被拦。**
+
 | 输入项 | 必需 |
 |--------|------|
-| plan.md / contracts.yaml / acceptance.yaml | ✅ |
+| plan.md / contracts.yaml / acceptance.yaml | ✅（**只读**，见上） |
 | ui-spec.yaml + 原始需求截图 | `ui_change=new_or_changed` 时必填 |
 | use-cases.yaml | 仅复杂 feature（多 UI 共享状态/多步云调用/含回滚分支）存在 |
 | doc/architecture.md / 当前工程代码 | ✅ |

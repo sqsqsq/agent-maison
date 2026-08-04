@@ -19,6 +19,8 @@ import { spawnSync } from 'child_process';
 import {
   recordCodingBase,
   resolveFrozenDeliverables,
+  PASS_SNAPSHOT_ANCHOR_ENV,
+  formatSnapshotAnchorEnv,
   takePassSnapshot,
 } from '../../scripts/utils/pass-snapshot';
 import {
@@ -26,6 +28,7 @@ import {
   isUiSensitivePath,
   runUiDiffWithinDeclaredFiles,
 } from '../../scripts/utils/ui-scope-gate';
+import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -309,6 +312,105 @@ export function runAll(): UnitCaseResult[] {
       });
       assert(rec.kind === 'reused', `第二次记录须 reused，got ${rec.kind}`);
       assert(rec.kind === 'reused' && rec.body.base_sha === first, 'resume 须复用最初 SHA');
+    });
+  });
+
+  // ==========================================================================
+  // b3e8d4c7 t4 —— scope 内存锚跨进程接线（**真跑 gate**，不是扫源码）
+  // 宿主实锤 run 20260804T033834Z-99c0a1：agent 撞 ui_scope_violation 后扩写
+  // contracts.yaml，再自调 takePassSnapshot 造出 epoch 2，scope 门禁照单全收 → 自我扩权。
+  // 根因：ui-scope-gate 此前恒传 expectedAnchor=null，把 loadTrustedSnapshotContext
+  // 的换代检测整个关掉。以下三例锁住锚真的生效。
+  // ==========================================================================
+
+  /** 用 runner 侧同款编码设置锚 env，执行完还原 */
+  function withAnchorEnv<T>(raw: string | undefined, fn: () => T): T {
+    const prev = process.env[PASS_SNAPSHOT_ANCHOR_ENV];
+    if (raw === undefined) delete process.env[PASS_SNAPSHOT_ANCHOR_ENV];
+    else process.env[PASS_SNAPSHOT_ANCHOR_ENV] = raw;
+    try {
+      return fn();
+    } finally {
+      if (prev === undefined) delete process.env[PASS_SNAPSHOT_ANCHOR_ENV];
+      else process.env[PASS_SNAPSHOT_ANCHOR_ENV] = prev;
+    }
+  }
+
+  run(results, 't4 锚与盘上 head 一致：声明内修改照常 PASS（防过严回归）', () => {
+    const { root } = setupHost();
+    withTrust(root, () => {
+      const frozen = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
+      const taken = takePassSnapshot({
+        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 1, files: frozen,
+      });
+      anchor(root, { snapshot: false });
+      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
+      const raw = formatSnapshotAnchorEnv('plan', {
+        epoch: 1, manifestSha256: taken.memoryDigest.manifestSha256,
+      });
+      const r = withAnchorEnv(raw, () => gate(root));
+      assert(r.status === 'PASS', `锚一致 + 声明内修改应 PASS，实得 ${r.status}：${r.details}`);
+    });
+  });
+
+  run(results, 't4 事故形态：runner 锚 epoch1、盘上被换成 epoch2 → 真 gate FAIL（自我扩权被拦）', () => {
+    const { root } = setupHost();
+    withTrust(root, () => {
+      const frozen = resolveFrozenDeliverables({ projectRoot: root, feature: FEATURE, phase: 'plan' });
+      const epoch1 = takePassSnapshot({
+        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 1, files: frozen,
+      });
+      anchor(root, { snapshot: false });
+      // agent 自行重取快照（宿主实锤动作）：盘上 head 变成 epoch 2
+      takePassSnapshot({
+        projectRoot: root, feature: FEATURE, runId: RUN_ID, phase: 'plan', epoch: 2, files: frozen,
+      });
+      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
+      const raw = formatSnapshotAnchorEnv('plan', {
+        epoch: 1, manifestSha256: epoch1.memoryDigest.manifestSha256,
+      });
+      const r = withAnchorEnv(raw, () => gate(root));
+      assert(
+        r.status === 'FAIL',
+        `runner 只签发过 epoch1，盘上却是 epoch2——必须判篡改，实得 ${r.status}：${r.details}`,
+      );
+      // 对照：不传锚（旧行为）时同一现场会被放过——证明本用例真的在测锚，不是别的原因
+      const without = withAnchorEnv(undefined, () => gate(root));
+      assert(
+        without.status !== 'FAIL',
+        `对照组应因缺锚而放过（证明 FAIL 确由锚导致），实得 ${without.status}`,
+      );
+    });
+  });
+
+  run(results, 't4 锚 env 在场但损坏 → FAIL（不得静默降级回"没有锚"）', () => {
+    const { root } = setupHost();
+    withTrust(root, () => {
+      anchor(root);
+      w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
+      const r = withAnchorEnv('plan:not-a-number:zzz', () => gate(root));
+      assert(r.status === 'FAIL', `损坏锚必须 fail-closed，实得 ${r.status}`);
+      assert(
+        (r.details ?? '').includes(PASS_SNAPSHOT_ANCHOR_ENV),
+        `应点名锚 env 传播异常：${r.details}`,
+      );
+      // **责任类别断言**：锚传播异常是框架侧问题。用未登记的 kind 会被 classifier 兜底成
+      // code_regression（goal-failure-classifier.ts:585），于是环境问题被丢给 coding 重试。
+      assert(
+        r.failureKind === 'framework_bug',
+        `锚传播异常须归框架侧，实得 ${r.failureKind}——未登记 kind 会退化成 code_regression`,
+      );
+      // 经既有 classifier 走一遍：blockers[].classification 才是它读的字段
+      // （isAllFrameworkBugBlockers，goal-failure-classifier.ts:465）。
+      // **断等值不断"不等于 code_regression"**（codex）：后者在将来退化成任何别的
+      // kind 时仍会假绿。
+      assert(
+        classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'ui_diff_within_declared_files', classification: r.failureKind }],
+        } as never) === 'framework_bug',
+        '经既有 classifier 后须落 framework_bug（环境异常不得被当产品问题重试）',
+      );
     });
   });
 

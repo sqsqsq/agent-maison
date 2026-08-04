@@ -155,6 +155,7 @@ import {
   type DeviceTargetKind,
 } from './utils/device-session';
 import { createCompletionProbe, decideSkipAgentInvoke } from './utils/phase-completion-probe';
+import { tryCloseUpstreamPhase } from './utils/upstream-closure';
 import {
   deriveResumeInspection,
   buildResumeSkipLines,
@@ -184,6 +185,9 @@ import {
   readFrozenManifest,
   loadTrustedSnapshotContext,
   phaseHasFrozenSurface,
+  PASS_SNAPSHOT_ANCHOR_ENV,
+  PASS_SNAPSHOT_HMAC_ENV,
+  formatSnapshotAnchorEnv,
   readPassSnapshotHead,
   recoverInvalidationJournal,
   resolveFrozenDeliverables,
@@ -355,6 +359,7 @@ import {
   CUMULATIVE_HALT_FAMILY,
   CUMULATIVE_HALT_THRESHOLD,
   EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
+  resolveAssessHaltIncident,
   type ArtifactSnapshot,
   type FailureKind,
 } from './utils/goal-failure-classifier';
@@ -734,6 +739,24 @@ export function __testing_setInvokeAgent(fn: InvokeAgentFn | null): void {
   injectedInvokeAgent = fn;
 }
 
+/**
+ * b3e8d4c7 t4：把 runner 内存里的 **plan** PASS 快照锚编成 gate harness 的 env。
+ * 只有 plan 锚需要跨进程——ui-scope-gate 的白名单唯一来源就是它。
+ * 内存里没有（未到 plan PASS / 已被合法 supersede 清除）→ 不注入，消费方退回既有行为。
+ */
+function scopeAnchorEnv(
+  memory: Map<string, { epoch: number; memoryDigest: { manifestSha256: string } }>,
+): Record<string, string> {
+  const planAnchor = memory.get('plan');
+  if (!planAnchor) return {};
+  return {
+    [PASS_SNAPSHOT_ANCHOR_ENV]: formatSnapshotAnchorEnv('plan', {
+      epoch: planAnchor.epoch,
+      manifestSha256: planAnchor.memoryDigest.manifestSha256,
+    }),
+  };
+}
+
 /** gate harness 注入（测试用；**spy 它有没有被调用**是"污染轮不 spawn"的核心断言） */
 type RunHarnessFn = (
   projectRoot: string, frameworkRoot: string, phase: FeaturePhase, feature: string,
@@ -829,7 +852,13 @@ async function runHarnessPhase(
   const gateInjectedEnv: Record<string, string> = {
     // t1（f7a3d9c2）：外层脚本闸门与 agent 自跑共用同一轮次身份（round_key 去重/重放）
     ...(roundIdentity
-      ? { MAISON_GOAL_RUN_ID: roundIdentity.runId, MAISON_GOAL_ATTEMPT: roundIdentity.attemptId }
+      ? {
+          MAISON_GOAL_RUN_ID: roundIdentity.runId,
+          MAISON_GOAL_ATTEMPT: roundIdentity.attemptId,
+          // plan b3e8d4c7 t1：attempt 身份必须带**所属 phase**——否则下游 attempt 里
+          // 复验上游回执时 attempt 等值恒不成立（i3≠i5 无解，宿主实锤死锁）。
+          MAISON_GOAL_ATTEMPT_PHASE: String(phase),
+        }
       : {}),
     // P0-3（device-readiness review 二轮）：**冻结的设备目标必须同时给外层 gate harness**。
     // 此前只注入 agent 的 extraEnv，而 gate harness 从 `process.env` 构造环境——多设备
@@ -3997,6 +4026,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // （source layout Scenario）。07-17 事故 agent 向 framework/harness/ 写 debug 脚本未被拦，
   // 每-harness 复扫机制在位（harness-runner 全模式入口直调），最可能根因即此部署形态。
   // 只告警不改门（改判会破 source-repo 开发契约）；宿主据此改用发布包部署。
+  // b3e8d4c7 t4（用户拍板：仅警告，不设启动硬门）：未配 writer authenticity 密钥时，
+  // 同进程内的 scope 保护仍由内存锚承担（本 plan 已接线），但 **resume/重启后内存锚没了**，
+  // 只能退回弱快照——盘上 head 被换代无法证伪。既有约束（MIGRATION.md）已让未配置时
+  // UI 类 run 不产出 clean completion，这里只把降级说清楚，不再加门。
+  if (!process.env[PASS_SNAPSHOT_HMAC_ENV]?.trim()) {
+    console.warn(
+      `[goal-runner] ⚠ 未配置 ${PASS_SNAPSHOT_HMAC_ENV}——resume/重启后 scope 冻结保护降级为` +
+      '弱快照（同进程内由内存锚保护，不受影响）。配置该密钥可让跨进程也 fail-closed；' +
+      '未配置时 UI 类 run 的完成态仍按既有约束封顶人工复核。',
+    );
+  }
+
   if (layout.frameworkRel && !fs.existsSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'))) {
     console.warn(
       '[goal-runner] ⚠ consumer 形态（framework/ 嵌套）但缺 RELEASE-MANIFEST.json——' +
@@ -6221,6 +6262,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           extraEnv: {
             MAISON_GOAL_RUN_ID: manifest.run_id,
             MAISON_GOAL_ATTEMPT: visualAttemptId,
+            // plan b3e8d4c7 t1：见 runHarnessPhase 同款注入——agent 侧自跑 harness /
+            // check-receipt 也要能分辨"这个 attempt 属于哪个 phase"。
+            MAISON_GOAL_ATTEMPT_PHASE: String(phase),
             ...deviceEnv,
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
@@ -6780,7 +6824,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           availableForHarnessMs,
           // P0-3：把本 attempt 冻结的设备目标一并给外层 gate harness——
           // 否则多设备时它退回 hdc 默认目标，跑在与就绪门冻结的不同设备上。
-          gateDeviceEnv,
+          // b3e8d4c7 t4：**scope 内存锚同路透传**。ui-scope-gate 此前用
+          // expectedAnchor=null 加载 plan 快照，于是 agent 自建的 epoch/head 也被当授权面
+          // （宿主实锤：agent 自调 takePassSnapshot 造 epoch 2，scope 门禁随之消失）。
+          // 锚只给 gate harness，**不进 agent env**——信任材料不下发。
+          { ...gateDeviceEnv, ...scopeAnchorEnv(passSnapshotMemory) },
         );
         const harnessExit = harnessRun.exitCode;
         const harnessEndedAtMs = Date.now();
@@ -6870,6 +6918,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             projectRoot,
             phase,
             manifest.feature,
+            // b3e8d4c7 t1：权威路径与 agent 路径执行同一套 goal 门禁
+            { goalIdentity: { runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase) } },
           );
           inFlowReceiptValidation = receiptValidation;
           if (receiptValidation.status === 'passed') {
@@ -7536,7 +7586,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   projectRoot,
                   phase,
                   manifest.feature,
-                  { timeoutMs: Math.min(300_000, probeRemainingMs) },
+                  {
+                    timeoutMs: Math.min(300_000, probeRemainingMs),
+                    goalIdentity: {
+                      runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase),
+                    },
+                  },
                 )
               : null);
             if (probe === null) {
@@ -7743,7 +7798,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (runControl) {
           assertFencedOwner(runControl.dir, runControl.token, 'assess_recommendation');
         }
-        const assessment = assessFeature({
+        const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
           projectRoot,
           frameworkRoot,
           feature: manifest.feature,
@@ -7755,6 +7810,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
           writeProjection: !dryRun,
           reconcile: reconcileObservation,
         });
+        let assessment = runAssess();
+
+        // b3e8d4c7 t2：assess 推荐 `complete_closure:<上游>` 时，driver 词汇表里没有这个
+        // 动作 → 旧实现落无条件 halt，重试当前阶段永远修不好上游闭环（宿主实锤死锁）。
+        // 这里做**一次**确定性关环（不启 agent、不消耗内容重试预算），成功后**重新 assess**
+        // ——旧 assessment 仍是 complete_closure，直接复用会再 halt。不循环：第二次仍是
+        // 同一 gap 就交给下面的既有 halt 路径。
+        if (!dryRun && assessment.recommendation.action === 'complete_closure') {
+          const closure = tryCloseUpstreamPhase({
+            projectRoot,
+            frameworkRoot,
+            harnessRoot: path.join(frameworkRoot, 'harness'),
+            feature: manifest.feature,
+            currentPhase: String(phase),
+            chain: chain.map(String),
+            recommendation: assessment.recommendation,
+            goalRunId: manifest.run_id,
+            attemptId: visualAttemptId,
+            remainingBudgetMs: wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS,
+            fence: () => {
+              if (runControl) {
+                assertFencedOwner(runControl.dir, runControl.token, 'upstream_closure');
+              }
+              assertGoalBoundary('closure_finalizer');
+            },
+          });
+          if (closure.kind === 'closed') {
+            goalEvents.emit({
+              type: 'upstream_closure_committed', phase: closure.phase, current_phase: String(phase),
+            });
+            assessment = runAssess();
+          } else if (closure.kind === 'blocked') {
+            goalEvents.emit({
+              type: 'upstream_closure_blocked',
+              phase: closure.phase, current_phase: String(phase),
+              halt_reason: closure.incident, detail: closure.detail,
+            });
+            // 事故 id 已分派好——下面的 halt 汇点不得再贴 *_retry_exhausted
+            haltReason ??= closure.incident;
+          }
+        }
+
         let action = goalEvents.decideAndEmit({
           assessment,
           observation: reconcileObservation,
@@ -7811,9 +7908,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // run 20260803T103413Z-3f72a8：真因是 project_build，却被判成"等人"）。
           // 责任来源是**既有的 FailureKind 归一分类**，不新建正则或第二套责任表。
           // 详细原因不丢：仍原样写进下面的 `reason` 字段。
-          haltReason = EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(failureKind)
-            ? 'external_retry_exhausted'
-            : 'content_retry_exhausted';
+          //
+          // b3e8d4c7 t3：**来源穷尽 + fail-closed**。本汇点承载的不只是重试耗尽——
+          // 宿主 run 20260804T033834Z-99c0a1 里预算只用了 1/2，真因是"推荐无路由"，
+          // 却被 f9c2e6b4 t3 整体假设成 exhausted，事件里 halt_reason=exhausted 与
+          // reason=unclosed 自相矛盾。规则：
+          //   · 只有 retries_used >= max 的**正证据**才允许标 *_retry_exhausted；
+          //   · complete_closure:<上游> 走 t2 分派（已在上面写入 haltReason）；
+          //   · 其余未识别来源（fused / 无效目标 / 无法执行的推荐）→ framework_bug
+          //     fail-closed。**不给 catch-all 起精确名字**。
+          // 判据抽在 resolveAssessHaltIncident（纯函数，行为矩阵单测）——`retries >= max`
+          // 只是必要条件，预算恰好用满时任何落进本 catch-all 的 halt 都会被误标。
+          haltReason = resolveAssessHaltIncident({
+            retriesUsed: retries,
+            maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
+            runnerAction: assessment.recommendation.runner_action,
+            verdict,
+            fused: assessment.stop.fused,
+            failureKind,
+          });
           goalEvents.emit({
             type: 'phase_halt',
             phase,

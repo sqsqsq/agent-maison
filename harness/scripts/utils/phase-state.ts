@@ -111,6 +111,9 @@ export function isAgentSideGoalHarness(): boolean {
   const anyGoalSignal =
     Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
     Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
+    // plan b3e8d4c7 t1：新增的 attempt phase 同属 goal 信号——不入并集的话，
+    // 子进程只剩 PHASE 时真实 goal 上下文会被当 manual（与本 plan 的 fail-closed 相悖）。
+    Boolean(process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim()) ||
     isGoalOrchestrationEnv();
   return anyGoalSignal && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
 }
@@ -264,7 +267,13 @@ export function tryValidateReceipt(
   feature: string,
   // P0-5（plan 7c4f2e9b）：resume 重探时 subprocess timeout 受 remaining wall-clock/
   // FINALIZE_RESERVE 约束（codex 五轮）；缺省不限（既有行为不变）。
-  opts?: { timeoutMs?: number },
+  // plan b3e8d4c7 t1：`goalIdentity` 透传 goal 身份 env——runner 从不给自己设 MAISON_GOAL_*，
+  // 此前本函数 spawn 的 check-receipt 因此 goal 门禁**全部静默跳过**（权威路径最松、
+  // agent 修复路径最严）。传入后两侧执行同一套门禁。
+  opts?: {
+    timeoutMs?: number;
+    goalIdentity?: { runId: string; attemptId: string; attemptPhase: string };
+  },
 ): ReceiptValidation {
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptAbs = receiptResolved.path;
@@ -319,6 +328,16 @@ export function tryValidateReceipt(
       encoding: 'utf-8',
       shell: isWin,
       ...(opts?.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}),
+      ...(opts?.goalIdentity
+        ? {
+            env: {
+              ...process.env,
+              MAISON_GOAL_RUN_ID: opts.goalIdentity.runId,
+              MAISON_GOAL_ATTEMPT: opts.goalIdentity.attemptId,
+              MAISON_GOAL_ATTEMPT_PHASE: opts.goalIdentity.attemptPhase,
+            },
+          }
+        : {}),
     },
   );
 

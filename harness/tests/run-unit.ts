@@ -62,6 +62,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-supervisor', modulePath: './unit/goal-supervisor.unit.test' },
   // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
   { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
+  { id: 'upstream-closure', modulePath: './unit/upstream-closure.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

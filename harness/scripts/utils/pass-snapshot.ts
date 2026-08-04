@@ -42,6 +42,59 @@ import type { Phase } from './types';
 
 export const PASS_SNAPSHOT_HMAC_ENV = 'MAISON_HMAC_GOAL_CHECKPOINT';
 
+/**
+ * plan b3e8d4c7 t4：**scope 内存锚的跨进程载体**（`<phase>:<epoch>:<manifestSha256>`）。
+ *
+ * `loadTrustedSnapshotContext` 早就有内存锚防线（expectedAnchor：盘上任何消失/退位/换代
+ * 都判篡改），但 ui-scope-gate 跑在 runner spawn 的 gate harness **子进程**里，拿不到
+ * runner 的内存，于是一直传 null——防线整个关掉。宿主实锤（run 20260804T033834Z-99c0a1）：
+ * agent 自调 takePassSnapshot 造出 epoch 2 / mac:null 的 head，scope 门禁照单全收，
+ * 越界文件被自我授权。
+ *
+ * **只注入 gate harness，不进 agent env**——信任材料不下发（与 GATE_HARNESS 同款口径）。
+ * 缺 env 时消费方退回 null（非 goal / 人工跑 harness 的既有行为不变）。
+ */
+export const PASS_SNAPSHOT_ANCHOR_ENV = 'MAISON_GOAL_SCOPE_ANCHOR';
+
+export function formatSnapshotAnchorEnv(
+  phase: string,
+  anchor: { epoch: number; manifestSha256: string },
+): string {
+  return `${phase}:${anchor.epoch}:${anchor.manifestSha256}`;
+}
+
+/**
+ * 解析 scope 锚 env。
+ *
+ * **必须区分"不存在"与"损坏"（codex 复核 P1）**：初版把两者都返回 null，于是 env 传播
+ * 出错/被截断时不是 fail-closed，而是**退回相信盘上的 head**——本仓已多次实锤环境变量
+ * 传播缺失，这不是理论问题。
+ *   · `absent`：非 goal / 人工跑 harness → 消费方按既有 resume 策略处理；
+ *   · `invalid`：env 在场但形状/phase 不符 → 消费方**直接 FAIL**，不得降级为弱快照。
+ */
+export type SnapshotAnchorParse =
+  | { kind: 'absent' }
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'ok'; anchor: { epoch: number; manifestSha256: string } };
+
+export function parseSnapshotAnchorEnv(
+  raw: string | undefined,
+  expectedPhase: string,
+): SnapshotAnchorParse {
+  const text = (raw ?? '').trim();
+  if (!text) return { kind: 'absent' };
+  const parts = text.split(':');
+  if (parts.length !== 3) return { kind: 'invalid', reason: `期望 <phase>:<epoch>:<sha256>，实得 ${parts.length} 段` };
+  const [phase, epochRaw, manifestSha256] = parts;
+  if (phase !== expectedPhase) {
+    return { kind: 'invalid', reason: `锚 phase=${phase} 与消费方 ${expectedPhase} 不符` };
+  }
+  const epoch = Number(epochRaw);
+  if (!Number.isInteger(epoch) || epoch <= 0) return { kind: 'invalid', reason: `epoch 非法：${epochRaw}` };
+  if (!/^[0-9a-f]{64}$/.test(manifestSha256)) return { kind: 'invalid', reason: 'manifest sha256 形状非法' };
+  return { kind: 'ok', anchor: { epoch, manifestSha256 } };
+}
+
 export function goalTrustRootDir(): string {
   const dirOverride = process.env.MAISON_GOAL_CHECKPOINT_DIR?.trim();
   return dirOverride ? path.resolve(dirOverride) : path.join(os.homedir(), '.maison', 'goal-checkpoints');

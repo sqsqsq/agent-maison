@@ -36,7 +36,10 @@ import {
   type SourceDriftFacts,
 } from '../../scripts/utils/adjudication';
 import { partitionDriftByGitStatus } from '../../scripts/utils/source-drift-facts';
-import { EXTERNAL_RETRY_RESPONSIBILITY_KINDS } from '../../scripts/utils/goal-failure-classifier';
+import {
+  EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
+  resolveAssessHaltIncident,
+} from '../../scripts/utils/goal-failure-classifier';
 import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { reduceRunState, supervisorAction } from '../../scripts/utils/run-state-reducer';
 import {
@@ -1379,6 +1382,58 @@ const projectionCases: TestCase[] = [
       assert(
         normalizeIncidentId('assess_halt:phase_verdict:halt; failure_kind=project_build') === 'assess_halt',
         '归一确实截断到首个冒号（洗白链的机制根因）',
+      );
+    },
+  },
+  {
+    name: 'b3 t2/t3 upstream_closure_gap → WAITING(human)：上游闭环缺口须人看，但不是内容失败',
+    run: () => {
+      const d = decide({ incident: 'upstream_closure_gap' }, NO_AUTHORITY, ctx());
+      assert(d.kind === 'waiting', `应停放等人，实得 ${d.kind}`);
+      assert(
+        d.kind === 'waiting' && d.wait_kind === 'human',
+        `应 waiting(human)，实得 ${d.kind === 'waiting' ? d.wait_kind : '-'}`,
+      );
+      // 反向：绝不能再被洗成 content_retry_exhausted（那是 TERMINAL，supervisor 永不拉起）
+      const wrong = decide({ incident: 'content_retry_exhausted' }, NO_AUTHORITY, ctx());
+      assert(wrong.kind === 'terminal', '对照组：content_retry_exhausted 仍是 TERMINAL');
+    },
+  },
+  {
+    // codex 复核 P1：只扫源码里有没有 budgetExhausted = 假绿。改成**行为矩阵**。
+    name: 'b3 t3 halt 标签来源穷尽（行为矩阵）：只有充分证据才叫 exhausted',
+    run: () => {
+      const base = {
+        retriesUsed: 2, maxRetriesPerPhase: 2, runnerAction: 'halt',
+        verdict: 'FAIL', fused: false, failureKind: 'code_regression' as never,
+      };
+      // 充分证据齐备 → 按 FailureKind 二分
+      assert(
+        resolveAssessHaltIncident(base) === 'content_retry_exhausted',
+        '内容失败且证据齐备 → content_retry_exhausted',
+      );
+      assert(
+        resolveAssessHaltIncident({ ...base, failureKind: 'toolchain' as never })
+          === 'external_retry_exhausted',
+        '外部条件且证据齐备 → external_retry_exhausted',
+      );
+      // 宿主实锤形态：预算未耗尽（1/2）却落进 catch-all —— 绝不能标 exhausted
+      assert(
+        resolveAssessHaltIncident({ ...base, retriesUsed: 1 }) === 'framework_bug',
+        '预算未耗尽 → 不得标 exhausted（run 20260804T033834Z-99c0a1 的错误标签）',
+      );
+      // 其余未识别来源：非 phase-outcome halt / 本轮 PASS / 已熔断
+      assert(
+        resolveAssessHaltIncident({ ...base, runnerAction: undefined }) === 'framework_bug',
+        '推荐非 phase-outcome halt（无路由类）→ fail-closed',
+      );
+      assert(
+        resolveAssessHaltIncident({ ...base, verdict: 'PASS' }) === 'framework_bug',
+        '本轮 PASS 不可能是内容重试耗尽 → fail-closed',
+      );
+      assert(
+        resolveAssessHaltIncident({ ...base, fused: true }) === 'framework_bug',
+        '已熔断另有原因 → fail-closed',
       );
     },
   },

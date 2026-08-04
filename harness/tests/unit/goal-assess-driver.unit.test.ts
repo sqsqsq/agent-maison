@@ -349,11 +349,15 @@ const cases: TestCase[] = [
         !runner.includes("'assess_halt:' + assessReason"),
         'assess halt 不得再用 `assess_halt:<reason>` 拼接——会被 normalizeIncidentId 洗成通用 operator',
       );
+      // b3e8d4c7 t3：判据已抽成 resolveAssessHaltIncident（纯函数，行为矩阵在
+      // adjudication 套件里验）。这里只钉"runner 不得自己就地拼标签"这条契约。
       assert(
-        runner.includes('EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(failureKind)') &&
-          runner.includes("'external_retry_exhausted'") &&
-          runner.includes("'content_retry_exhausted'"),
-        'assess-derived halt 须由既有 FailureKind 分类派生出带责任类别的稳定事故 id',
+        runner.includes('resolveAssessHaltIncident({'),
+        'assess-derived halt 须走 resolveAssessHaltIncident 统一判据',
+      );
+      assert(
+        !/haltReason\s*=\s*EXTERNAL_RETRY_RESPONSIBILITY_KINDS/.test(runner),
+        'runner 不得就地按 FailureKind 拼 halt 标签（判据只有一处）',
       );
       assert(
         /reason: assessReason \|\|/.test(runner),

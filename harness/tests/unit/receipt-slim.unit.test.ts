@@ -360,6 +360,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
           MAISON_GOAL_GATE_HARNESS: undefined,
           MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+          MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
       assert(v.status === 'failed', `expected failed, got ${v.status}`);
@@ -378,6 +379,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
           MAISON_GOAL_GATE_HARNESS: undefined,
           MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+          MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
       assert(v.status === 'failed', `expected failed, got ${v.status}`);
@@ -400,6 +402,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
           MAISON_GOAL_GATE_HARNESS: undefined,
           MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+          MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
       assert(v.status === 'failed', `expected failed, got ${v.status}`);
@@ -418,11 +421,73 @@ const cases: Array<{ name: string; run: () => void }> = [
           MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
           MAISON_GOAL_GATE_HARNESS: undefined,
           MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+          MAISON_GOAL_ATTEMPT_PHASE: PHASE,
         },
       );
       assert(
         !(v.message ?? '').includes('claimed_attempt_id'),
         `匹配时不得再报 attempt 身份问题：${v.message}`,
+      );
+    },
+  },
+  // ==========================================================================
+  // b3e8d4c7 t1 —— attempt 等值**只在同 phase 内成立**。
+  // 宿主实锤 run 20260804T033834Z-99c0a1：coding attempt(i5) 里按门禁指引回上游重跑
+  // plan harness，plan 回执写的是 plan 自己的 attempt(i3)——跨阶段复验结构上不可能通过
+  // （填 i3≠i5，改 i5=伪造），把框架自己指的修复路堵死，最终死锁。
+  // ==========================================================================
+  {
+    name: 'b3e8d4c7 t1 事故回归：跨阶段复验（attempt 属别的 phase）不得因 attempt 不等而 BLOCKER',
+    run: () => {
+      const v = runCase(
+        { summaryRunId: 'r-123', claimedAttemptId: 'i3' }, // 回执带本 phase 自己的 attempt
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123',
+          MAISON_GOAL_ATTEMPT: 'i5', MAISON_GOAL_ATTEMPT_PHASE: 'coding', // 当前在 coding attempt 里
+        },
+      );
+      assert(
+        !(v.message ?? '').includes('claimed_attempt_id'),
+        `跨阶段复验不得报 attempt 身份问题（本次事故形态）：${v.message}`,
+      );
+    },
+  },
+  {
+    name: 'b3e8d4c7 t1：goal context 有 attempt 却缺 ATTEMPT_PHASE → failed（fail-closed，不静默跳过门禁）',
+    run: () => {
+      const v = runCase(
+        { summaryRunId: 'r-123', claimedAttemptId: 'i5' },
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined,
+          MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5',
+          MAISON_GOAL_ATTEMPT_PHASE: undefined,
+        },
+      );
+      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(
+        (v.message ?? '').includes('MAISON_GOAL_ATTEMPT_PHASE'),
+        `应点名 attempt phase 上下文缺失：${v.message}`,
+      );
+    },
+  },
+  {
+    name: 'b3e8d4c7 t1：仅 ATTEMPT_PHASE 在场也算 goal 信号（并集扩充，不得当 manual 放行）',
+    run: () => {
+      const v = runCase(
+        { claimedAttemptId: 'i5' }, // 不设 summaryRunId
+        {
+          MAISON_GOAL_RUNNER: undefined, MAISON_GOAL_HEADLESS: undefined,
+          MAISON_GOAL_GATE_HARNESS: undefined, MAISON_GOAL_ATTEMPT: undefined,
+          MAISON_GOAL_RUN_ID: undefined, MAISON_GOAL_ATTEMPT_PHASE: PHASE,
+        },
+      );
+      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      assert(
+        (v.message ?? '').includes('MAISON_GOAL_RUN_ID'),
+        `goal 语义须生效（run identity 必填）：${v.message}`,
       );
     },
   },

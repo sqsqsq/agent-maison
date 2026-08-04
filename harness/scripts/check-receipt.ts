@@ -986,10 +986,28 @@ function main(): void {
   // adapter 工具子进程会丢 env（phase-state.ts:107：2026-07-27 宿主实锤 cursor 丢
   // MAISON_GOAL_HEADLESS 只留 RUN_ID/ATTEMPT，"单一信号判定必翻车"）。复用既有
   // isAgentSideGoalHarness()，不新造谓词。
+  // plan b3e8d4c7 t1：attempt 等值**只在同 phase 内成立**。
+  // 宿主实锤（run 20260804T033834Z-99c0a1）：coding attempt(i5) 里按门禁指引回上游重跑
+  // plan harness，plan 回执写的是 plan 自己的 attempt(i3)——跨阶段复验结构上永远不可能
+  // 通过（填 i3≠i5，改 i5=伪造），把框架自己指的修复路堵死。
+  // 跨阶段回执的新鲜度由 run_id 绑定 + evidence manifest + sha 三重承担，本就不缺 attempt。
   if (inGoalReceiptContext) {
     const currentAttempt = process.env.MAISON_GOAL_ATTEMPT?.trim();
+    const attemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
     const claimedAttempt = frontmatter.claimed_attempt_id?.trim();
-    if (!currentAttempt) {
+    // 缺 phase 上下文 fail-closed：否则 cursor 丢 env 形态下新 env 一丢，
+    // 门禁又被静默跳过（f9c2e6b4 三轮复核同款坑，不再踩第二次）。
+    // 跨阶段**只跳过最后的等值比较**——身份字段的存在性一律无条件校验，
+    // 否则跨阶段复验会接受一份完全没有 attempt 身份的回执（codex 复核 P1）。
+    if (currentAttempt && !attemptPhase) {
+      issues.push({
+        id: 'receipt_attempt_identity',
+        severity: 'BLOCKER',
+        message:
+          'goal 信号与 MAISON_GOAL_ATTEMPT 在场但缺 MAISON_GOAL_ATTEMPT_PHASE——' +
+          'attempt 所属 phase 是判定"能否做 attempt 等值"的前提，环境传播链异常不得静默降级（fail-closed）。',
+      });
+    } else if (!currentAttempt) {
       // goal 信号在场却没有 attempt：是环境传播链异常，不是"非 goal"——静默跳过等于把
       // 本门禁关掉（与上面 MAISON_GOAL_RUN_ID 缺失同一处置口径）。
       issues.push({
@@ -1007,7 +1025,9 @@ function main(): void {
           `回执缺 claimed_attempt_id——请填当前 attempt（env MAISON_GOAL_ATTEMPT=${currentAttempt}）。` +
           '该字段是"本回执属于哪一轮"的唯一凭据，缺失会让完成观测把上一轮的旧声明当成本轮完成。',
       });
-    } else if (claimedAttempt !== currentAttempt) {
+    } else if (attemptPhase === phase && claimedAttempt !== currentAttempt) {
+      // **只有同阶段**才做等值：跨阶段时 currentAttempt 属于别的 phase，比了必假
+      //（宿主实锤：coding 的 i5 比 plan 回执的 i3，无解死锁）。
       issues.push({
         id: 'receipt_attempt_identity',
         severity: 'BLOCKER',

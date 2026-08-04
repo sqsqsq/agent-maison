@@ -25,7 +25,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import {
+  PASS_SNAPSHOT_ANCHOR_ENV,
   loadTrustedSnapshotContext,
+  parseSnapshotAnchorEnv,
   readCodingBase,
   readFrozenSnapshotFile,
 } from './pass-snapshot';
@@ -182,7 +184,31 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
   }
 
   // ④ 有 UI 变更 → 冻结白名单必须可用（fail-closed，禁退 live contracts）
-  const snap = loadTrustedSnapshotContext(projectRoot, feature, runId, 'plan', null);
+  // b3e8d4c7 t4：**内存锚接线**。此前恒传 null，把 loadTrustedSnapshotContext 的
+  // 换代检测整个关掉——agent 自建 epoch/head 也会被当授权面（宿主实锤自我扩权）。
+  // 锚由 runner 经 MAISON_GOAL_SCOPE_ANCHOR 注入本 gate harness；缺 env（非 goal /
+  // 人工跑）时仍为 null，既有行为不变。
+  const anchorParse = parseSnapshotAnchorEnv(process.env[PASS_SNAPSHOT_ANCHOR_ENV], 'plan');
+  if (anchorParse.kind === 'invalid') {
+    // env 在场但损坏 → **fail-closed**，绝不降级为"没有锚"再去相信盘上的 head
+    //（codex 复核 P1：本仓已多次实锤 env 传播缺失，静默降级等于把 t4 防线还回去）。
+    return {
+      status: 'FAIL',
+      // **责任类别必须是框架侧**：锚 env 损坏是 runner→gate 的传播异常，不是产品代码问题。
+      // 用 ui_scope_frozen_contract_missing（未登记在 FailureKind 分类表）会退化成
+      // code_regression → 把环境问题丢给 coding agent 重试，t5 落地后还可能被误送 replan。
+      failureKind: 'framework_bug',
+      details: `scope 锚 env（${PASS_SNAPSHOT_ANCHOR_ENV}）在场但不可解析：${anchorParse.reason}`,
+      suggestion: '这是 runner→gate 的锚传播异常（非产品问题）。核查 goal-runner 的 env 注入后重跑。',
+    };
+  }
+  const snap = loadTrustedSnapshotContext(
+    projectRoot,
+    feature,
+    runId,
+    'plan',
+    anchorParse.kind === 'ok' ? anchorParse.anchor : null,
+  );
   if (snap.kind === 'none') {
     return {
       status: 'FAIL',
