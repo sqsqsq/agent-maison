@@ -35,11 +35,12 @@
 // ============================================================================
 
 import {
-  beginInvalidationTx,
-  commitInvalidationTx,
   diffFrozenAgainstManifest,
   loadTrustedSnapshotContext,
+  type beginInvalidationTx,
+  type commitInvalidationTx,
 } from './pass-snapshot';
+import { runInvalidationTx } from './invalidation-tx';
 import { validateProjectRelativePath } from './project-relative-path';
 
 /** 触发面的**闭集**——跨 resume 回放时只认这三个值，未知一律不采信 */
@@ -145,28 +146,22 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
   const txId = `${input.runId}-scopebt${ordinal}`;
   const files = (input.affectedFiles ?? []).slice(0, 20);
 
-  if (!input.dryRun) {
-    (input.begin ?? beginInvalidationTx)({
-      projectRoot: input.projectRoot,
-      feature: input.feature,
-      runId: input.runId,
-      causePhase: input.causePhase,
-      invalidatedPhases,
-      txId,
-    });
-    // 合法 supersede：同进程内存锚必须一并清除，否则下一轮 loader 会拿旧锚判"盘上被换代"
-    for (const p of invalidatedPhases) input.passSnapshotMemory.delete(p);
-  }
+  // 失效事务 + 其事件投影走**唯一实现**（顺序不变量在那里，见 invalidation-tx.ts）
+  runInvalidationTx({
+    projectRoot: input.projectRoot,
+    feature: input.feature,
+    runId: input.runId,
+    causePhase: input.causePhase,
+    invalidatedPhases,
+    txId,
+    reason: input.trigger,
+    dryRun: input.dryRun,
+    passSnapshotMemory: input.passSnapshotMemory,
+    emit: input.emit,
+    begin: input.begin,
+    commit: input.commit,
+  });
 
-  for (const p of invalidatedPhases) {
-    input.emit({
-      type: 'phase_invalidated',
-      phase: p,
-      cause_phase: input.causePhase,
-      reason: input.trigger,
-      invalidation_tx_id: txId,
-    });
-  }
   input.emit({
     type: 'phase_backtrack_requested',
     phase: input.causePhase,
@@ -178,11 +173,6 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
     files,
     invalidation_tx_id: txId,
   });
-
-  // commit **最后**（见文件头顺序不变量）
-  if (!input.dryRun) {
-    (input.commit ?? commitInvalidationTx)(input.projectRoot, input.feature, input.runId, txId);
-  }
 
   input.emit({ type: 'phase_backtrack_started', to_phase: 'plan' });
   return { kind: 'replanned', planIdx, invalidatedPhases, txId };

@@ -4,6 +4,19 @@
 
 import * as path from 'path';
 
+/**
+ * 绝对路径 `abs` 是否落在 `root` 内。
+ *
+ * **不得写成 `rel.startsWith('..')`**：那会把工程内合法的 `..notes/x.json`（文件名以点
+ * 开头）误判成越界。只有 `rel === '..'` 或以 `..<sep>` 开头才是真的往上跳。
+ */
+export function isInsideProjectRoot(root: string, abs: string): boolean {
+  const rel = path.relative(path.resolve(root), path.resolve(abs));
+  if (rel === '') return true;
+  if (path.isAbsolute(rel)) return false; // 跨盘符
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`);
+}
+
 /** 校验相对路径落在 projectRoot 内（拒绝绝对路径、盘符与 `..` 段）。 */
 export function validateProjectRelativePath(
   projectRoot: string,
@@ -20,10 +33,7 @@ export function validateProjectRelativePath(
   if (normalized.split('/').some(seg => seg === '..')) {
     throw new Error(`[project-relative-path] ${label} 不得包含 ".." 段`);
   }
-  const abs = path.resolve(projectRoot, normalized);
-  const root = path.resolve(projectRoot);
-  const rel = path.relative(root, abs);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+  if (!isInsideProjectRoot(projectRoot, path.resolve(projectRoot, normalized))) {
     throw new Error(`[project-relative-path] ${label} 必须落在 project-root 内`);
   }
   return normalized;

@@ -35,6 +35,7 @@ import {
   tryScopeReplan,
   type PlanScopeAnchor,
 } from '../../scripts/utils/scope-replan';
+import { runInvalidationTx } from '../../scripts/utils/invalidation-tx';
 import { buildScopeReplanContextBlock } from '../../scripts/goal-runner';
 import { clearFrameworkConfigCache } from '../../config';
 import type { UnitCaseResult } from '../run-unit';
@@ -317,7 +318,66 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, 'B4 commit 必须在**所有事件之后**（先 commit 再补事件＝二次崩溃丢事件不可修复）', () => {
+  run(results, 'B4a runInvalidationTx：commit 必须在**全部 phase_invalidated 之后**（三个调用点共用的唯一实现）', () => {
+    const root = setupHost();
+    withTrust(root, () => {
+      takePlanSnapshot(root);
+      const events: Array<Record<string, unknown>> = [];
+      let eventsAtCommit = -1;
+      const memory = new Map<string, PlanScopeAnchor>([['plan', takePlanSnapshot(root, 2)]]);
+      runInvalidationTx({
+        projectRoot: root, feature: FEATURE, runId: RUN_ID,
+        causePhase: 'testing', invalidatedPhases: ['plan', 'coding', 'review'],
+        txId: `${RUN_ID}-orderchk`, reason: 'actionable_defect_backtrack',
+        dryRun: false, passSnapshotMemory: memory, emit: e => events.push(e),
+        commit: ((...args: unknown[]) => {
+          eventsAtCommit = events.length;
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          (require('../../scripts/utils/pass-snapshot').commitInvalidationTx as (...a: unknown[]) => void)(...args);
+        }) as never,
+      });
+      // 完成态=journal 文件不存在，所以 commit 之后崩溃就再也补不回事件——
+      // 三条 phase_invalidated 必须**全部**先落盘。
+      assert(eventsAtCommit === 3, `commit 前应已落 3 条 phase_invalidated，实得 ${eventsAtCommit}`);
+      assert(events.length === 3, `本函数只产 phase_invalidated，实得 ${events.length} 条`);
+      assert(events.every(e => e.type === 'phase_invalidated'), '事件类型须全为 phase_invalidated');
+      assert(!memory.has('plan'), '合法 supersede 必须清同进程内存锚');
+      assert(readPassSnapshotHead(root, FEATURE, RUN_ID, 'plan').body?.state === 'superseded',
+        'head 应被 supersede');
+    });
+  });
+
+  run(results, 'B4b runInvalidationTx：extraEventFields **不得覆盖**事务身份字段', () => {
+    const root = setupHost();
+    withTrust(root, () => {
+      takePlanSnapshot(root);
+      const events: Array<Record<string, unknown>> = [];
+      runInvalidationTx({
+        projectRoot: root, feature: FEATURE, runId: RUN_ID,
+        causePhase: 'coding', invalidatedPhases: ['plan'],
+        txId: `${RUN_ID}-idchk`, reason: 'actionable_defect_backtrack',
+        // 调用方试图篡改事务身份——必须全部被最终写定的字段盖回去
+        extraEventFields: {
+          type: 'something_else',
+          phase: 'testing',
+          cause_phase: 'spec',
+          reason: 'forged',
+          invalidation_tx_id: 'forged-tx',
+          files: ['a.ets'],   // 真正的附加字段仍应保留
+        },
+        dryRun: false, passSnapshotMemory: new Map(), emit: e => events.push(e),
+      });
+      const ev = events[0];
+      assert(ev.type === 'phase_invalidated', `type 不得被覆盖：${ev.type}`);
+      assert(ev.phase === 'plan', `phase 不得被覆盖：${ev.phase}`);
+      assert(ev.cause_phase === 'coding', `cause_phase 不得被覆盖：${ev.cause_phase}`);
+      assert(ev.reason === 'actionable_defect_backtrack', `reason 不得被覆盖：${ev.reason}`);
+      assert(ev.invalidation_tx_id === `${RUN_ID}-idchk`, `tx_id 不得被覆盖：${ev.invalidation_tx_id}`);
+      assert(JSON.stringify(ev.files) === JSON.stringify(['a.ets']), '非身份的附加字段应保留');
+    });
+  });
+
+  run(results, 'B4 tryScopeReplan 的完整事件序列：全部 phase_invalidated 先于 commit，回退信号在其后', () => {
     const root = setupHost();
     withTrust(root, () => {
       takePlanSnapshot(root);
@@ -337,9 +397,14 @@ export function runAll(): UnitCaseResult[] {
         }) as never,
       });
       assert(r.kind === 'replanned', `实得 ${JSON.stringify(r)}`);
-      // commit 时刻已落的事件数 = phase_invalidated ×n + phase_backtrack_requested
-      // （phase_backtrack_started 在 commit 之后，是"回退已开始"的信号，不属事务）
-      assert(eventsAtCommit === 3, `commit 前应已落 3 条事件（2×invalidated + requested），实得 ${eventsAtCommit}`);
+      // 受顺序不变量约束的**只有 phase_invalidated**——journal 恢复要replay 的就是它们。
+      // phase_backtrack_requested / _started 是回退信号，不参与 journal 恢复，
+      // 落在 commit 之后是正常的（三个调用点统一如此）。
+      assert(eventsAtCommit === 2, `commit 前应已落 2 条 phase_invalidated，实得 ${eventsAtCommit}`);
+      assert(
+        events.slice(0, 2).every(e => e.type === 'phase_invalidated'),
+        `前两条须是 phase_invalidated：${JSON.stringify(events.map(e => e.type))}`,
+      );
       assert(events.length === 4, `总事件数应为 4，实得 ${events.length}`);
     });
   });
@@ -363,7 +428,8 @@ export function runAll(): UnitCaseResult[] {
           JSON.stringify(['plan', 'coding', 'review', 'ut', 'testing']),
         `启动期应 plan→链尾全量，实得 ${JSON.stringify(r.invalidatedPhases)}`,
       );
-      // spec **不**在内：从 plan 起算是本仓一切可能 journal 的严格超集，但不越界到 spec
+      // spec **不**在内：从 plan 起算已覆盖一切可能的 journal（下限均不早于 plan），
+      // 不需要也不应该越界到 spec
       assert(!r.invalidatedPhases.includes('spec'), 'spec 不得被卷入（重建下限就是 plan）');
     });
   });

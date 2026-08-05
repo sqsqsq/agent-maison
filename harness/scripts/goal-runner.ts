@@ -179,7 +179,6 @@ import {
 } from './utils/agent-invoke';
 import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
 import {
-  beginInvalidationTx,
   commitInvalidationTx,
   diffFrozenAgainstManifest,
   readFrozenManifest,
@@ -199,6 +198,7 @@ import {
   deleteRunTrustState,
   isValidRunIdBasename,
 } from './utils/pass-snapshot';
+import { runInvalidationTx } from './utils/invalidation-tx';
 import {
   checkPlanAuthority,
   resolveScopeReplanContext,
@@ -5498,11 +5498,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // t5 的自动回退在它自己的崩溃窗里失效。
         // 定稿：**完全不读旧 journal 的 payload**（phase/epoch/generation 一律不采信），
         // 只按当前 run manifest 的 chain 从 plan 起重建一笔新事务覆盖它，然后回 plan 重跑。
-        // 「不读 payload 也不会漏失效」的论证：仓内 beginInvalidationTx 只有两处调用方，
-        // invalidatedPhases 都是 chain.slice(codingIdx, phaseIdx+1)（goal-runner.ts:8120/8372）
-        // ——**都从 coding 起算**，所以从 plan 起重建是本仓一切可能 journal 的**严格超集**。
-        // **边界（改动即失效）**：将来若出现从 plan 之前（spec）起算的失效调用方，
-        // 重建下限必须同步前移，否则会漏失效。
+        // 「不读 payload 也不会漏失效」的论证（**重构后已更新**：事务入口已统一）：
+        // 生产侧一切失效事务都经 `runInvalidationTx`（utils/invalidation-tx.ts），当前三个
+        // 调用点的失效**下限**分别是 coding / coding / plan，均不早于 plan，
+        // 所以从 plan 起重建**覆盖**本仓一切可能的 journal（超集或相等——scope replan
+        // 自身的失效区间就是 plan→链尾，那一档是相等，不是严格超集）。
+        // 其中授权/漂移回退那处写作 `chain.slice(codingIdx >= 0 ? codingIdx : 0, …)`，
+        // 字面上像是能落到链首（可能是 spec），但该分支**不可达**：进入它要么是
+        // authorized_backtrack（截断链在更早处已 halt authorized_mutation_requires_full_chain），
+        // 要么是 decide() 判出的 recover——而 `chain_has_coding_review === false` 时
+        // backtrackBlocked 直接拦下（adjudication.ts:443），不会返回 recover。
+        // 故执行到失效时 chain 必含 coding。
+        // **边界（改动即失效）**：新增调用点的下限若早于 plan，或上述 chain 守卫被放宽，
+        // 本处重建下限必须同步前移，否则会漏失效。
         // 旧 journal 只留审计说明，不新建 quarantine 系统。
         goalEvents.emit({
           type: 'pass_snapshot_journal_untrusted',
@@ -5525,7 +5533,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           detail: jr.reason,
           dryRun,
           passSnapshotMemory,
-          emit: (e) => goalEvents.emit(e),
+          emit: (e: Record<string, unknown>) => goalEvents.emit(e),
         });
         if (rebuilt.kind === 'replanned') {
           // 重建**吃回退预算**：否则确定性崩溃 = 每次 resume 重建再崩 = 无限自动循环；
@@ -5987,7 +5995,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             detail: authority.detail,
             dryRun,
             passSnapshotMemory,
-            emit: (e) => goalEvents.emit(e),
+            emit: (e: Record<string, unknown>) => goalEvents.emit(e),
           });
           if (replan.kind === 'replanned') {
             backtracksUsed++;
@@ -8344,30 +8352,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 全部受影响 pass_snapshot head/tombstone → 幂等事件（携 tx_id）→ commit。
             // events 仅审计投影；恢复资格 SSOT 在 trust-state journal/head。
             const invalidationTxId = `${manifest.run_id}-bt${backtracksUsed}`;
-            if (!dryRun) {
-              beginInvalidationTx({
-                projectRoot,
-                feature: manifest.feature,
-                runId: manifest.run_id,
-                causePhase: String(phase),
-                invalidatedPhases: invalidatedPhases.map(String),
-                txId: invalidationTxId,
-              });
-              for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
-            }
-            for (const p of invalidatedPhases) {
-              goalEvents.emit({
-                type: 'phase_invalidated',
-                phase: p,
-                cause_phase: phase,
-                reason: untrustedRevalidation
-                  ? UNTRUSTED_DRIFT_REASON
-                  : 'authorized_source_mutation_backtrack',
-                invalidation_tx_id: invalidationTxId,
-                files: driftDecision.files.slice(0, 20),
-              });
-            }
-            if (!dryRun) commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, invalidationTxId);
+            runInvalidationTx({
+              projectRoot,
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              causePhase: String(phase),
+              invalidatedPhases: invalidatedPhases.map(String),
+              txId: invalidationTxId,
+              reason: untrustedRevalidation
+                ? UNTRUSTED_DRIFT_REASON
+                : 'authorized_source_mutation_backtrack',
+              extraEventFields: { files: driftDecision.files.slice(0, 20) },
+              dryRun,
+              passSnapshotMemory,
+              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
+            });
             goalEvents.emit({
               type: 'phase_backtrack_requested',
               from_phase: phase,
@@ -8542,7 +8541,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 `（${scopeViolationFiles.slice(0, 5).join('、')}）——交回 plan 独立裁决是否纳入 scope`,
               dryRun,
               passSnapshotMemory,
-              emit: (e) => goalEvents.emit(e),
+              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
             });
             if (replan.kind === 'replanned') {
               backtracksUsed++;
@@ -8668,18 +8667,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
               .slice(codingIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
             const txIdBt = `${manifest.run_id}-defectbt${backtracksUsed}`;
-            if (!dryRun) {
-              beginInvalidationTx({
-                projectRoot,
-                feature: manifest.feature,
-                runId: manifest.run_id,
-                causePhase: String(phase),
-                invalidatedPhases: invalidatedBt.map(String),
-                txId: txIdBt,
-              });
-              for (const ph of invalidatedBt) passSnapshotMemory.delete(String(ph));
-              commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, txIdBt);
-            }
+            // **顺序修复**：此处原为 begin → delete → **commit** → 事件，与
+            // pass-snapshot 定下的「事件先于 commit」不变量相反——commit 后崩溃时
+            // journal 已被移除，phase_invalidated 永久补不回来，resume 会把已 supersede
+            // 的阶段当成仍然完成。改走唯一实现 runInvalidationTx。
+            runInvalidationTx({
+              projectRoot,
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              causePhase: String(phase),
+              invalidatedPhases: invalidatedBt.map(String),
+              txId: txIdBt,
+              reason: 'actionable_defect_backtrack',
+              dryRun,
+              passSnapshotMemory,
+              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
+            });
             goalEvents.emit({
               type: 'phase_backtrack_requested',
               phase,
@@ -8699,15 +8702,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               defect_count: driverActionableDefects.length,
               invalidation_tx_id: txIdBt,
             });
-            for (const ph of invalidatedBt) {
-              goalEvents.emit({
-                type: 'phase_invalidated',
-                phase: ph,
-                cause_phase: phase,
-                reason: 'actionable_defect_backtrack',
-                invalidation_tx_id: txIdBt,
-              });
-            }
             console.error(
               `\n===== backtrack_to_coding =====\n`
               + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`

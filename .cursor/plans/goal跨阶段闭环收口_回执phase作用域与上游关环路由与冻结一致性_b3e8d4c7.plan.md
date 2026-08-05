@@ -318,10 +318,19 @@ todos:
       · 不可信 journal → **完全不读其 payload**（phase / epoch / generation 一律不采信），
         仅按**当前 run manifest 的 chain** 从 plan 起重建一笔新失效事务覆盖旧 journal，回 plan 重跑；
       · 旧 journal 只留审计说明，**不新建 quarantine 系统**。
-      **"不读 payload 也不会漏失效"的论证（须原样进实现注释）**：仓内 `beginInvalidationTx`
-      只有两处调用方，`invalidatedPhases` 都是 `chain.slice(codingIdx, phaseIdx+1)`
-      （goal-runner.ts:8120/8372）——**都从 coding 起算**。从 plan 起重建是本仓一切可能 journal 的
-      **严格超集**。**边界（改动即失效）**：将来若出现从 plan 之前（spec）起算的失效调用方，
+      **"不读 payload 也不会漏失效"的论证（须原样进实现注释）**——
+      ~~【实施前调查结论，已被后续重构取代】仓内 `beginInvalidationTx` 只有两处调用方，
+      `invalidatedPhases` 都是 `chain.slice(codingIdx, phaseIdx+1)`，都从 coding 起算~~。
+      **现行版本（chip 修复后，事务入口已统一）**：生产侧一切失效事务都经
+      `runInvalidationTx`（utils/invalidation-tx.ts），三个调用点的失效**下限**为
+      coding / coding / plan，均不早于 plan，故从 plan 起重建**覆盖**一切可能的 journal
+      （超集或相等——scope replan 自身的失效区间就是 plan→链尾，那一档是相等）。
+      其中授权/漂移回退那处字面上写作 `codingIdx >= 0 ? codingIdx : 0`，像是能落到链首（spec），
+      但该分支**不可达**：进入它要么是 authorized_backtrack（截断链在更早处已 halt
+      `authorized_mutation_requires_full_chain`），要么是 `decide()` 判出的 recover——
+      而 `chain_has_coding_review === false` 时 `backtrackBlocked` 直接拦下
+      （adjudication.ts:443），不返回 recover。故执行到失效时 chain 必含 coding。
+      **边界（改动即失效）**：新增调用点的下限若早于 plan，或上述 chain 守卫被放宽，
       重建下限必须同步前移，否则会漏失效。
       **重建吃回退预算**：重建走 ① 的同一条通道，`backtracksUsed++` 共用
       `DEFAULT_MAX_BACKTRACKS`。否则确定性崩溃 = 每次 resume 都重建再崩 =
