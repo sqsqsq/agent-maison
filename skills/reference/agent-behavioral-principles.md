@@ -2,6 +2,8 @@
 
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
+> **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-两条总设计原则) 的“简单优先”与“回退重签”；本文件不重复定义。
+>
 > 灵感来源：[Andrej Karpathy 对 LLM coding 的观察](https://x.com/karpathy/status/2015883857489522876)；工程化适配见 [andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)。
 >
 > **进入任意 catalog-bootstrap … device-testing phase skills 前须完整阅读**；Context Exploration Gate（Research Sub-Phase）须按本规约执行。

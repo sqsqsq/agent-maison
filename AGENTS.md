@@ -10,6 +10,10 @@
 
 **排除规则 SSOT**：[`scripts/release-excludes.json`](scripts/release-excludes.json)
 
+## 总设计原则（BLOCKER）
+
+AgentMaison 的“简单优先”与“回退重签”两条总原则以 [`docs/overview.md §1.2.1`](docs/overview.md#121-两条总设计原则) 为 SSOT。框架设计、plan 与 review 必须同时遵守；不得另建平行版本或用局部便利绕过权责阶段。
+
 ## 行尾（LF，BLOCKER）
 
 文本文件统一 **LF**（与历史 framework 发布件一致）。SSOT：根 [`.gitattributes`](.gitattributes) + [`.editorconfig`](.editorconfig)。

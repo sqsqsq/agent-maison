@@ -223,7 +223,7 @@ todos:
       **要区分两件事**：coding 发现需要扩范围＝正常，应自动处理；
       coding 直接改 live contracts.yaml 再自建 snapshot 让旧 plan 继续有效＝自我授权，禁止。
       ---
-      **落地三项（codex 终稿，全部复用既有机器）**：
+      **落地五项 ①–⑤（全部复用既有机器；①②③ 为原三项，④⑤ 为 review 补的时序缺口）**：
       ① `ui_scope_violation` **不再只给文字建议**，进既有 backtrack/invalidation 通道——
       `beginInvalidationTx` 已是通用事务（goal-runner.ts:8127 区），当前 `invalidatedPhases`
       从 `coding` 索引起算，改为可从 **plan** 起算即可；自动回 plan 更新 scope → plan 重新
@@ -256,12 +256,57 @@ todos:
       发现问题——白烧一次 attempt，且 agent 在授权未确认时已经动过代码。
       定稿时序（进 coding、`agent_invoke_start` **之前**）：
       ```
-      同进程 plan 内存锚在场且与盘上 head 吻合 → 继续
-      否则 plan head + manifest 的 HMAC 均 ok    → **固定为本 attempt 内存锚**后继续
-      否则                                        → 不 spawn coding，直接走 ① 的自动 replan
+      mem = passSnapshotMemory.get('plan')            // { epoch, memoryDigest:{ manifestSha256, fileHashes } }
+      expectedAnchor = mem                            // loader 要的是 { epoch, manifestSha256 }——须显式投影
+        ? { epoch: mem.epoch, manifestSha256: mem.memoryDigest.manifestSha256 }
+        : null
+      ctx = loadTrustedSnapshotContext(projectRoot, feature, runId, 'plan', expectedAnchor)
+
+      ctx.kind !== 'active'                                        → 不 spawn，走 ① 自动 replan
+      expectedAnchor === null ∧ (headMac≠'ok' ∨ manifestMac≠'ok')  → 同上
+      diffFrozenAgainstManifest(..., ctx.manifest) 非空             → 同上
+      否则 → 用**同一个 ctx** 固定本 attempt 内存锚，spawn coding
       ```
+      **两条信任路径必须收敛到同一次 loader 调用（codex P1）**：同进程由**内存锚**担保
+      （传入 `expectedAnchor` 时 loader 已内建「盘上消失/退位/换代即篡改」，
+      pass-snapshot.ts:919-926，所以 `kind='active'` 就意味着锚已核对，无需另写比较）；
+      resume 时 `expectedAnchor` 为 null，改由**两个 MAC** 担保。两条路径消费的是
+      **同一次返回的 `ctx.manifest`**——不存在「先比 head、再重新读另一份 manifest」的 TOCTOU。
+      **为什么同进程分支也必须过 loader（已核实）**：`passSnapshotMemory` 只存
+      `{ epoch, memoryDigest:{ manifestSha256, fileHashes } }`（goal-runner.ts:5418 /
+      pass-snapshot.ts:644），**不含完整 manifest**；而 `diffFrozenAgainstManifest` 的
+      **added 判定要 `manifest.watched_roots`**（pass-snapshot.ts:1029），仅凭 fileHashes
+      判不出来。所以「内存锚够用、不必读盘」是错的。
+      投影不是可省的写法问题（codex P2）：内存 map 存的是 `memoryDigest` 结构，
+      loader 的 `expectedAnchor` 只要 `{ epoch, manifestSha256 }`，直接整体传入是类型错误。
+      **仓内已有同款投影两处可照抄**：goal-runner.ts:5805（既有 pre-spawn 加载）与
+      `scopeAnchorEnv`（goal-runner.ts:753）——别再写第三种形状。
+      **固定内存锚时不得再读第三次盘**：直接由 ctx 折出——`epoch = ctx.head.pass_epoch`、
+      `manifestSha256 = ctx.head.manifest_sha256`、`fileHashes` 由 `ctx.manifest.files` 折出，
+      与 `takePassSnapshot` 产出的 memoryDigest 同构（pass-snapshot.ts:644）。
+      **恢复条件必须复用 `loadTrustedSnapshotContext()`，不得手写"两个 MAC 都 ok"**
+      （codex P1；已核实其 `active` 分支**本来就返回 `headMac`/`manifestMac`**，
+      pass-snapshot.ts:888-899，所以这是**减法**不是加法）。只看两个 MAC 会漏掉：
+      合法 MAC 的**已 supersede** 快照（state≠active）、project/feature/run/phase **绑定失配**、
+      head↔manifest 的 **sha 绑定失配**、以及必需 frozen 产物的**完整性对账**——
+      这些判据都已在该函数里，重写一遍只会漏。
       HMAC 恢复出的锚**必须写回 `passSnapshotMemory`**，`scopeAnchorEnv` 才会把同一个值传给
       gate——否则「preflight 读 A、gate 又读 B」是 TOCTOU。
+      **③ 这一步不可省（codex P1；核实后缺口比 codex 描述的更宽）**：
+      `loadTrustedSnapshotContext` 只证明「**快照本身**可信、绑定正确、存储完整」，
+      它读的是快照目录里的 `manifest.json`，**从不去哈希宿主 live 的 plan.md / contracts.yaml**
+      （pass-snapshot.ts:983 直接返回 active）。live 内容比对是另一个函数
+      `diffFrozenAgainstManifest`（pass-snapshot.ts:995）的职责，而 goal-runner **早已 import 它**
+      （goal-runner.ts:184），只是接错了时机——唯一调用点在 **post-agent** 的
+      closure-only 块（goal-runner.ts:6710）。
+      **更宽的一格**：那个调用点吃的是**当前 phase** 的 `trustedSnapshot`；而普通 coding
+      attempt 根本没有 coding 快照（`kind='none'`），整块被跳过。**即：一次普通 coding attempt
+      期间，plan 冻结面的 live 漂移在 spawn 前后都没有任何地方在比。** 所以这不只是
+      「先跑一轮再发现」，而是「本来就没在比」。
+      **有 diff 时不必先 restore**：`restoreFrozenFromSnapshot` 在无内存锚的 resume 面
+      （tier=`resume`）可能被拒，那会把「自动回退」重新变成求人；而 replan 本来就会重出
+      plan 产物并由 runner 重新签发，restore 是多余动作。直接 replan，drift 文件按 ① 作为
+      **未受信上下文**交给 plan。
       ⑤ **invalidation 崩溃窗不得退化成求人（codex P1；逐行核实过）**。
       现状：启动先跑 `recoverInvalidationJournal`（goal-runner.ts:5423），其中 `mac !== 'ok'`
       一律 fail_closed（pass-snapshot.ts:1357）；而**无 HMAC 环境 `macFor` 恒返回 null**、
@@ -278,11 +323,32 @@ todos:
       （goal-runner.ts:8120/8372）——**都从 coding 起算**。从 plan 起重建是本仓一切可能 journal 的
       **严格超集**。**边界（改动即失效）**：将来若出现从 plan 之前（spec）起算的失效调用方，
       重建下限必须同步前移，否则会漏失效。
-      **重建吃回退预算（本方补充，codex 未覆盖）**：重建走 ① 的同一条通道，
-      `backtracksUsed++` 共用 `DEFAULT_MAX_BACKTRACKS`。否则确定性崩溃 =
-      每次 resume 都重建再崩 = **无限自动循环**；吃预算才能在耗尽后收敛到既有等待机制。
-      `backtracksUsed` 由 events 的 `phase_backtrack_requested` 计数恢复
-      （goal-runner.ts:5373），跨 resume 成立。
+      **重建吃回退预算**：重建走 ① 的同一条通道，`backtracksUsed++` 共用
+      `DEFAULT_MAX_BACKTRACKS`。否则确定性崩溃 = 每次 resume 都重建再崩 =
+      **无限自动循环**；吃预算才能在耗尽后收敛到既有等待机制。
+      **预算保证只能声明到这个强度（codex P1 订正——上一稿"跨 resume 成立"是我方过度声明）**：
+      `backtracksUsed` 从 events 的 `phase_backtrack_requested` 计数重建
+      （goal-runner.ts:5373），而本 plan 自己已经认定 `events.jsonl` **无 MAC、agent 可写**。
+      两者不能并存：agent 删旧事件即重置预算（可无限自动回退），伪造事件即提前耗尽（可致停机）。
+      如实分档——
+      · **同进程**：`backtracksUsed` 是**硬预算**；
+      · **跨进程（resume）**：**无论是否配置 HMAC**，events 派生的预算恢复一律是
+        **best-effort 恢复提示**——普通崩溃可恢复，**不具备抗 agent 篡改的保证**；
+      · **HMAC 保护的是 pass-snapshot 与 vision trust 状态，不保护 events**
+        （codex P2 两轮订正。第一稿"配 HMAC 后才谈得上跨进程强连续性"结论错；
+        第二稿结论对但**论据错**——我写"唯一签名消费者是 pass-snapshot.ts 的 `macFor`"，
+        事实是 `MAISON_HMAC_GOAL_CHECKPOINT` 同时被 `VISION_CHECKPOINT_HMAC_ENV`
+        消费（goal-runner.ts:2098，另有 vision checkpoint / head / HWM 等约 10 处引用）。
+        正确论据是**消费面的边界而非唯一性**：`events.jsonl` 的**写入与读取链从不使用该 HMAC**
+        ——写是裸 `appendFileSync`，读是 `loadEventsJsonl` + 会话段过滤，全程无签名/验签。
+        因此配了 HMAC，events 派生的预算计数照样是 best-effort）；
+      · journal 崩溃恢复**本次仍在内存里消耗一次预算**，但**不宣称** events 提供可信硬上界。
+      **预算计数的抗篡改连续性不在本 plan 解决**，也不为这句话新增预算账本。
+      **本 plan 不解决这个问题**：要"无 HMAC 也具备抗篡改的跨进程硬预算"，客观上必须新增
+      可信写者或签名计数器，与"保持简单 / HMAC 非硬门"直接冲突。它是**既有系统的共性属性**
+      （重试计数、棘轮、对账期望集同样从 events 派生），不是 t5 引入的，不在 t5 里偷偷扩张。
+      注：`loadAuthoritativeEvents` 的 "authoritative" 指**按会话段剔除 dry-run 的正确口径**
+      （goal-runner-phase.ts:730-736），**不是密码学可信**——别被这个名字误导。
       ---
       **触发面（codex P1：原稿只写 ui_scope_violation，验收却承诺更多，作废）**：
       收敛成**一条路由**——
@@ -299,7 +365,7 @@ todos:
       回退预算耗尽 / 截断链走既有等待机制。
       **不新增**"明显超出原始需求 / 无法确定"分类器（codex P1）——那句话**没有机器判据**，
       很容易再长出一张规则表。是否符合需求由 **plan 阶段及其既有 harness** 判断。
-      **验收（codex 定稿五格 + 时序两格）**：
+      **验收（codex 定稿五格 + 时序四格：负向 / 正向对照 / live 漂移 / 崩溃恢复）**：
       · coding 新发现必要文件 → **自动 replan → 新快照 → 继续 coding，run 不停**；
       · coding 直接改 live contracts → **不立即获得权限**，但触发同一个自动 replan；
       · agent 私自生成 epoch 2 → **不采信**（忽略或隔离皆可），白名单不变且**不 halt**
@@ -307,13 +373,23 @@ todos:
       · 改 plan.md 等 plan 独占产物 → plan 失效并自动重闭环；
       · plan 重跑后自行判定不合理 / 回退预算耗尽 / 截断链 → 走**既有**等待机制
         （不新增分类器）；
-      · **无 HMAC resume（对应 ④）**：plan 重新签发之前，**coding agent 调用次数必须为 0**
-        ——用既有 `__testing_setRunHarnessPhase` / spawn spy 断言，不是看日志；
+      · **无 HMAC resume（对应 ④，负向）**：plan 重新签发之前，**coding agent 调用次数必须为 0**
+        ——必须用 `__testing_setInvokeAgent`（goal-runner.ts:738）做 **phase 级调用断言**。
+        **不得用 `__testing_setRunHarnessPhase`**（codex P2）：它只能观测 gate/harness 有没有跑，
+        证明不了 agent 没被拉起——"agent 已跑、harness 没跑"照样假绿；
+      · **有效 HMAC resume（对应 ④，正向对照——缺了它上面那条负向可能全绿于错误实现）**：
+        **不回退 plan**、coding 正常启动、且 **gate 收到的 plan anchor 与 preflight 固定的是同一个**
+        （断锚值相等，不是只断"有锚"）。没有这格，把实现写成"所有 resume 无脑 replan"也能过；
+      · **有效 HMAC 但 live 已漂移（对应 ④③，codex P1）**：快照 MAC 全 ok、`kind='active'`，
+        但宿主 live `contracts.yaml` 或 `plan.md` 与冻结面不一致 → **coding agent 调用次数为 0**，
+        自动回 plan。**这格必须与上一格共用同一套装置、只差 live 文件一处改动**——
+        否则证明不了拦截来自 ③ 的 diff 而不是别的原因；
       · **`beginInvalidationTx` 后故障注入（对应 ⑤）**：resume **自动回 plan**，
-        不产生 human waiting；且重建**计入** `backtracksUsed`。
+        不产生 human waiting；且重建**计入本进程内存里的** `backtracksUsed`。
       **不新增**：注册表 / 签名服务 / 凭据配置 / 新权限系统 / 新预算面。
       **HMAC 定位最终确认**：可选加固，**不参与正常流程硬门禁**（codex 自撤前议，用户同裁）。
-    status: pending
+      **实施偏差与验收对应见文末「t5 实施偏差与边界」节。**
+    status: completed
 isProject: false
 ---
 
@@ -357,3 +433,97 @@ isProject: false
 4. 事故 id 与事件 reason 不得自相矛盾（halt_reason 说 exhausted 而 reason 说 unclosed
    = 本次实锤形态，单测钉住）。
 5. t4 调查先行——冻结时序未在 fixture 复现前，不改任何冻结语义。
+
+## t5 实施偏差与边界（2026-08-04 完工登记，禁删）
+
+**落地形态**：新增 `harness/scripts/utils/scope-replan.ts`（两个导出：`tryScopeReplan` 回退通道、
+`checkPlanAuthority` 授权检查），runner **四处**接线（启动期 journal 重建 / coding **spawn 前** /
+coding **agent 返回后、harness 之前** / coding verdict 后的 scope 违规路由）。
+未新增注册表、状态机、预算面、凭据配置。
+
+**codex 第二轮 review 补齐的两处 P1（均为真缺口，本方漏做）**
+1. **plan 授权检查必须在 coding 的两个边界各做一次**。原稿只做 spawn 前，于是
+   coding agent 在**本轮**改掉 `plan.md` / `contracts.yaml` 后，只要 coding gate 仍 PASS
+   就能带着漂移的授权面直接 advance 到 review——既有 post-agent 冻结检查只看**当前 phase**
+   的 trustedSnapshot，而普通 coding attempt 没有 coding 快照（kind='none'）→ 整块被跳过。
+   直接违反本 plan 的验收行「改 plan.md 等 plan 独占产物 → plan 失效并自动重闭环」。
+   修法：**同一个函数、同一条 `tryScopeReplan` 路由**在 gate 之前再跑一次，不另建检测器。
+   顺带把 `checkPlanAuthorityBeforeCoding` 改名 `checkPlanAuthority`——一个叫 "BeforeCoding"
+   的函数在 coding 之后被调用，正是本仓反复踩的误导性命名。
+2. **越界文件必须真的进 plan prompt**。原稿只把 `detail/files` 写进事件，
+   `buildPhasePrompt` 没有消费方——等于本 plan 自己写的路由「affected files 作为**未受信
+   上下文**交给 plan」**没有实现**。测试当时只断了 `coding→plan→coding` 的顺序，
+   而集成测试里的 plan 是无条件 PASS 的 mock，恰好掩盖了"真实 plan agent 不知道为何重跑"。
+   修法：新增 `buildScopeReplanContextBlock`，措辞刻意只陈述观察、显式标注
+   `UNTRUSTED / not an authorization`，并明写"不得因为文件出现在上面就加进去"——
+   写成指令就等于让下游给自己授权。跨 resume 从最近一条 `to_phase=plan` 的回退事件恢复，
+   **无条件覆盖**（对齐 backtrackCodingContext 的 review 第 10 轮教训）。
+
+**codex 第三轮 review 的 P1（同一条链上的最后一个洞）**
+3. **不得把无签名事件原样注入 LLM prompt**。上一版从 `events.jsonl` 回放
+   `reason/detail/files` 直接拼进 plan 提示词——而本 plan 自己反复认定 events **无 MAC、
+   agent 可写**。于是伪造一条 `phase_backtrack_requested{to_phase:'plan'}`、在 `detail`
+   里塞换行指令，就能诱导 plan 扩大 scope：**刚堵死的自我授权换了道门又回来了**。
+   贴 `UNTRUSTED` 标签**不是**安全边界。
+   修法（比 codex 建议更严一格）：进提示词的上下文**刻意只剩两个字段**
+   `{ reason(闭集), files(经校验路径) }`，**没有自由文本**——散文 `detail` 只进事件与控制台
+   （那不是 LLM 的输入面），提示词里的说明由 `reason` 查固定文案。
+   **两条来源统一净化**，不分同进程/跨 resume：同进程的 `affectedFiles` 也来自
+   `diffFrozenAgainstManifest` 对 watched_roots 的目录清点，**文件名由 agent 决定**，
+   同样不是可直接拼进提示词的可信输入。
+   路径判据：复用既有 `validateProjectRelativePath`（拒绝绝对路径/盘符/`..`/越根）
+   + 字符集 `[A-Za-z0-9._\-/]`（**不放行空格、引号、反引号、反斜杠、任何控制字符**——
+   换行是注入主载体）+ 单条 ≤200 字符 + 至多 20 条 + 去重；单条不合规**丢弃该条**
+   而非整体作废（上下文是辅助信息，少列几条只是提示变弱，放行一条恶意串是权限面被架空）。
+   `reason` 不在闭集 → `resolveScopeReplanContext` 返回 `null`，**什么都不注入提示词**
+   （files 自然一并不采信——两者出自同一条伪造事件）。
+   ~~初版写的是"降为 `unrecognized` 并退回固定的『请自查 git diff』"，**已被下方
+   「自查瘦身」第 2 条作废**~~：在没有可信事实时发明一句新指令，仍然是让不可信事件影响 agent。
+   合法路径以 ```` ```text ```` 数据围栏渲染，不可被读成 markdown 指令。
+   诚实边界：含中文/空格的合法文件名会被丢弃——如实少列，不会误导 plan。
+
+| # | 偏差 | 为什么 |
+|---|---|---|
+| ② | **无独立代码**——授权来源收口由 ④ 的分支结构承载（同进程=内存锚、resume=HMAC、否则自动 replan） | ② 本就是"不要做什么"（events 永不授权）。events 的权限面一行未动，写的是新的判据而不是新的授权源 |
+| ③ | **无独立代码**——孤儿 generation 由 ④ 承接 | agent 私造 epoch2 → 当轮 gate FAIL → **下一次 spawn 前**预检判 `snapshot_untrusted` → 自动 replan。既不 halt 也不采信，且 agent **不会被再次拉起**（预检在 while 循环顶部、spawn 之前） |
+| ① | ~~加了防震荡指纹 `seenScopeReplanFingerprints`~~ **已删（见下「自查瘦身」）** | 曾自行加过，plan 未要求；复盘认定是重复机制且会削弱自愈，连同 `scope_fingerprint` 事件字段、resume 回放、`fingerprint` 参数一并删除 |
+| ⑤ | **`mac==='invalid'`（真篡改）也走自动重建**，不只 `ok_unauthenticated` | 重建不读旧 payload、只失效不授权，所以在攻击面上同样安全；而"篡改就 halt 求人"正是本条要消掉的形态。篡改事实由 `pass_snapshot_journal_untrusted` 事件如实留痕 |
+
+**验收对应**（unit 3015/0；括号内为用例所在套件）
+· ①：`t5① coding 撞冻结白名单 → 自动回退 plan…`（goal-runner-testing-integrity，真 runner 驱动）
+· ④负向/正向对照/live 漂移：三格**共用同一装置、只差一处变量**（scope-replan A3/A4/A5 + integrity 三格）
+· ⑤：`beginInvalidationTx 后崩溃` 故障注入（integrity）
+· 调用次数断言一律用 `__testing_setInvokeAgent` 的 phase 级记录，**未用** `__testing_setRunHarnessPhase`
+**变异复验**（每条都实测转红，非推断）：禁用 ④ spawn 前 → 三格 ④ 红、①⑤ 绿；
+禁用 ④ **post-agent** → 只 post-agent 那格红；禁用 ⑤ → 只 ⑤ 红；禁用 ① → 只 ① 红；
+关掉 live diff → 只 A5/A6 红；commit 提前到事件之前 → 只 B4 红；
+**摘掉 plan prompt 交接块 → ① 与 post-agent 两格红**（证明交接不是摆设）；
+**回放绕过净化器 → 注入用例红**（该用例特意让 run 停在 **plan** 而非 coding：停在 coding 时
+resume 会先由 preflight 产生一份新上下文覆盖伪造的，用例就变成覆盖导致没进提示词
+而非净化导致没进提示词，无法判别＝假绿）。
+post-agent 那格的判别式特意不用"coding gate 次数"——没有修复时它同样只跑一次
+（PASS 后直接 advance），改用 **plan gate 跑了两次**。
+
+**自查瘦身（2026-08-04，用户问「有没有搞复杂」后复盘 + codex 同裁，两处**删掉**）**
+1. **防震荡指纹整套删除**（`seenScopeReplanFingerprints` / `scope_fingerprint` 事件字段 /
+   resume 回放 / `fingerprint` 参数 / 对应断言）。它**没有**解决无限循环——全局
+   `DEFAULT_MAX_BACKTRACKS` 本就负责收敛；它只是叠了第二条规则「同一组 scope 文件只能
+   触发一次 replan」。更糟的是**它削弱自愈**：plan 第一次没扩对时，第二次本还有机会重新
+   裁决，却被指纹提前拦掉、转去注定无效的 coding retry。
+   **边界**：`seenRoundFingerprints` / `seenDriftFingerprints` **不动**——那两个针对
+   「完全相同的**不可修复**结果再现」，有明确 terminal 语义；scope 不足是正常演进，不是一回事。
+2. **`unrecognized` 兜底块删除**，`resolveScopeReplanContext` 改为返回 `null`。
+   合法生产路径只产闭集里那三个 reason；未知只能是伪造 / 损坏 / 不兼容新版事件——
+   此时凭空造一句「请自查 git diff」是**在没有可信事实时发明行为**，仍然是让不可信事件
+   影响了 agent。正确处理是**什么都不注入**，事件留在日志里供排障。
+   同删：`'unrecognized'` 类型成员、固定文案分支、构造器分支。
+   已知 reason 但零可信路径（如 journal 重建本就无文件面）→ 只留原因句，不补空围栏、不补新指令。
+**净效果**：goal-runner −19 行；模块非注释行几乎持平（223 vs 225——删掉的机制换成了
+「为何刻意不做」的说明，这类说明本仓要求保留）。真正的收益不在行数，而在**少一个概念、
+少一个事件字段、少一条可能堵住自愈的规则**。
+
+**已知边界**
+· 预算跨进程仍是 best-effort（events 无 MAC），与 plan 内声明一致，**本 plan 不解决**；
+· 顺带查实**未修**（不属 t5）：既有第二处回退调用点 goal-runner.ts:8386 **先 commit 再落
+  `phase_invalidated` 事件**，与 pass-snapshot.ts:1327-1331 定下的「events 先于 commit」不变量相反——
+  该窗口内二次崩溃会永久丢失失效事件。第一处（:8150）顺序正确。新模块按正确顺序实现并有专测钉住。
