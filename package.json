@@ -13,7 +13,7 @@
     "candidate:promote": "node scripts/candidate-release.mjs promote",
     "release:pack": "node scripts/pack-release.mjs",
     "release:verify": "node scripts/verify-release-pack.mjs",
-    "release:smoke-consumer": "node scripts/smoke-consumer-staging.mjs",
+    "release:smoke-consumer": "node scripts/smoke-consumer-lifecycle.mjs",
     "release:version": "node scripts/version-evolve.mjs",
     "release:check-plans": "node scripts/check-plan-version.mjs --release",
     "release:changelog": "node scripts/gen-changelog.mjs"

@@ -65,6 +65,11 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'upstream-closure', modulePath: './unit/upstream-closure.unit.test' },
   { id: 'scope-replan', modulePath: './unit/scope-replan.unit.test' },
   { id: 'release-shipped-in-ignored-dirs', modulePath: './unit/release-shipped-in-ignored-dirs.unit.test' },
+  // e5d8a2c4 T4：整机 smoke 的注册表/接线约束下放到秒级单测（整机链本身分钟级，
+  // 不适合每次改动都跑；而"注册表缩水"是最廉价的假绿形态）
+  { id: 'smoke-lifecycle-registry', modulePath: './unit/smoke-lifecycle-registry.unit.test' },
+  // e5d8a2c4 T4 用例 #8：在案"第一死"的行为钉（棘轮——T2 落地改行为后本套必红）
+  { id: 'goal-lineage-first-death', modulePath: './unit/goal-lineage-first-death.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

@@ -14,6 +14,25 @@ import { loadFrameworkConfig } from '../config';
 import { frameworkAbs, frameworkLogicalRelPath, frameworkRelPath, inferRepoLayout, repoLayoutFromContext, type RepoLayout } from '../repo-layout';
 import { resolveSkillPathOrNull } from './utils/resolve-skill-path';
 import { checkAdapterCatalogConsistency, listAvailableAdapters } from './utils/adapter-catalog';
+import { normalizeIntegrityTextEol } from './utils/framework-integrity';
+
+/**
+ * 读文本并**归一 EOL**——本文件所有文本读取都必须经它。
+ *
+ * 本文件的解析大量是手写正则、且锚死在 `\n` 上（`/\n    options:\n/` 这类）。
+ * 宿主若 `core.autocrlf=true`（Windows 常见默认），clone 出来的 YAML 是 CRLF，
+ * `options:` 后面跟的是 `\r\n`，那些模式**恒不匹配**。
+ *
+ * 这不是推测：2026-08-06 由 T4 整机链首跑实测——**同一份发布件**，宿主副本（LF）
+ * `check:global` 18/18 PASS，`git -c core.autocrlf=true clone` 出来的副本
+ * **44 个 BLOCKER**（全是 `registry_options_missing`，registry 每个条目各一次）。
+ * 病根不在数据，在**读入口没归一**；逐条给正则打 `\r?` 补丁只会漏，且下一个手写
+ * 模式又会重犯。归一口径复用 `normalizeIntegrityTextEol`（与发布 pack 同源），
+ * 不另造一份。
+ */
+function readTextNormalized(abs: string): string {
+  return normalizeIntegrityTextEol(fs.readFileSync(abs, 'utf-8'));
+}
 
 const SHARED_LAYER_TOOL_NAME_FORBIDDEN = /\b(?:AskUserQuestion|AskQuestion)\b/;
 const TEXT_LIKE_EXTENSIONS = new Set([
@@ -105,7 +124,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
     return results;
   }
 
-  const registryText = fs.readFileSync(registryPath, 'utf-8');
+  const registryText = readTextNormalized(registryPath);
   const registryIds = [...registryText.matchAll(/^\s*-\s+id:\s+([a-z0-9_.]+)/gm)].map(m => m[1]);
 
   const files: string[] = [];
@@ -124,7 +143,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
 
   for (const abs of files) {
     const rel = path.relative(projectRoot, abs).replace(/\\/g, '/');
-    const content = fs.readFileSync(abs, 'utf-8');
+    const content = readTextNormalized(abs);
     results.push(...lintOneFile(rel, content));
   }
 
@@ -183,7 +202,7 @@ function lintSharedLayerNoToolNames(layout: RepoLayout): CheckResult[] {
   for (const root of scanRoots) {
     for (const abs of listTextLikeFiles(root)) {
       const rel = frameworkRelPath(layout, abs).replace(/\\/g, '/');
-      const content = fs.readFileSync(abs, 'utf-8');
+      const content = readTextNormalized(abs);
       if (SHARED_LAYER_TOOL_NAME_FORBIDDEN.test(content)) {
         results.push(blocker(
           'shared_layer_tool_name',
@@ -283,7 +302,7 @@ function listInitSetupPromptTemplateFiles(layout: RepoLayout): string[] {
 function lintInitSetupForbiddenPatternsInFile(projectRoot: string, abs: string): CheckResult[] {
   const results: CheckResult[] = [];
   const rel = path.relative(projectRoot, abs).replace(/\\/g, '/');
-  const lines = fs.readFileSync(abs, 'utf-8').split('\n');
+  const lines = readTextNormalized(abs).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     if (initSetupPromptLineAllowed(line)) continue;
@@ -315,7 +334,9 @@ function lintInitSetupPromptsAndTemplates(layout: RepoLayout): CheckResult[] {
 }
 
 /** init/setup registry 禁止 custom / 自由路径 / legacy Q1=y 通道 */
-function lintInitSetupNoFreeText(registryText: string, registryRel: string): CheckResult[] {
+function lintInitSetupNoFreeText(rawRegistryText: string, registryRel: string): CheckResult[] {
+  // 同 lintRegistryOptionsSchema：下面用 `/\n  - id: …/` 定位条目，CRLF 下恒不匹配
+  const registryText = normalizeIntegrityTextEol(rawRegistryText);
   const results: CheckResult[] = [];
   if (/\n  - id: init\.populated_diff\b/.test(registryText)) {
     results.push(blocker(
@@ -423,7 +444,12 @@ function lintInitSetupNoFreeText(registryText: string, registryRel: string): Che
   return results;
 }
 
-export function lintRegistryOptionsSchema(registryText: string, registryRel: string): CheckResult[] {
+export function lintRegistryOptionsSchema(rawRegistryText: string, registryRel: string): CheckResult[] {
+  // **归一放在函数边界，不只放在读文件那一步**：本函数是导出 API，调用方可以从任何
+  // 地方拿到文本（测试、其它 check、未来的复用），只在 `readTextNormalized` 归一
+  // 等于把契约寄托在"每个调用方都记得先归一"上。下面全是锚 `\n` 的手写模式，
+  // 拿到 CRLF 就会把整份 registry 判成"缺 options"（见 readTextNormalized 头注的实测）。
+  const registryText = normalizeIntegrityTextEol(rawRegistryText);
   const results: CheckResult[] = [];
   if (!/schema_version:\s*"2\.0"/.test(registryText)) {
     results.push(blocker('registry_schema_version', 'confirmation-registry.yaml 须 schema_version: "2.0"', [registryRel]));
@@ -520,7 +546,7 @@ function lintInitS4ClosedNoPortableFooter(layout: RepoLayout): CheckResult[] {
       results.push(blocker('init_s4_closed_ssot_missing', `${label} 缺失`, [rel]));
       continue;
     }
-    const text = fs.readFileSync(abs, 'utf-8');
+    const text = readTextNormalized(abs);
     if (!text.includes(INIT_S4_CLOSED_MARKER)) {
       results.push(blocker(
         'init_s4_closed_ssot_missing_rule',
@@ -549,7 +575,7 @@ function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
       results.push(blocker('adapter_yaml_missing', `${adapter} adapter.yaml 缺失`, [yamlRel]));
       continue;
     }
-    const cfg = YAML.parse(fs.readFileSync(yamlPath, 'utf-8')) as Record<string, unknown>;
+    const cfg = YAML.parse(readTextNormalized(yamlPath)) as Record<string, unknown>;
     const uc = cfg.user_confirmation as Record<string, unknown> | undefined;
     if (!uc) {
       results.push(blocker('adapter_user_confirmation_missing', `${adapter} 缺少 user_confirmation`, [yamlRel]));
@@ -573,7 +599,7 @@ function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
         [rulePathRel],
       ));
     } else {
-      const ruleText = fs.readFileSync(ruleAbs, 'utf-8');
+      const ruleText = readTextNormalized(ruleAbs);
       if (!ruleText.includes(INIT_S4_CLOSED_MARKER)) {
         results.push(blocker(
           'adapter_interaction_renderer_init_s4_closed',
@@ -604,7 +630,7 @@ function lintClaudeInteractionTemplates(layout: RepoLayout): CheckResult[] {
   if (!fs.existsSync(rendererPath)) {
     results.push(blocker('claude_interaction_renderer_missing', 'Claude interaction-renderer.md 模板缺失', [rendererRel]));
   } else {
-    const renderer = fs.readFileSync(rendererPath, 'utf-8');
+    const renderer = readTextNormalized(rendererPath);
     if (!renderer.includes('AskUserQuestion')) {
       results.push(blocker('claude_interaction_renderer_no_tool', 'interaction-renderer.md 须声明 AskUserQuestion', [rendererRel]));
     }
@@ -629,7 +655,7 @@ function lintClaudeInteractionTemplates(layout: RepoLayout): CheckResult[] {
       results.push(blocker('claude_slash_missing', `Claude slash 模板缺失: ${posix}`, [posix]));
       continue;
     }
-    const content = fs.readFileSync(abs, 'utf-8');
+    const content = readTextNormalized(abs);
     if (!content.includes('AskUserQuestion') || !content.includes('BLOCKER')) {
       results.push(blocker('claude_slash_no_widget_blocker', `${posix} 须含 AskUserQuestion BLOCKER 段`, [posix]));
     }

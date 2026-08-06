@@ -171,6 +171,37 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
     },
   },
+  {
+    // e5d8a2c4 T4 整机链首跑抓到的真 bug（2026-08-06）：本文件的解析全是手写正则、
+    // 锚死在 `\n` 上（`/\n    options:\n/`）。宿主 `core.autocrlf=true` 时 clone 出来
+    // 的 YAML 是 CRLF，`options:` 后面是 `\r\n`，模式恒不匹配 → registry 每个条目都报
+    // "缺少 options 数组"。实测：**同一份发布件**，LF 副本 check:global 18/18 PASS，
+    // autocrlf clone 出来的副本 **44 个 BLOCKER**。
+    //
+    // 断言直接喂 CRLF 文本，不经文件——`readTextNormalized` 是读入口的归一，
+    // 而这里钉的是"解析器在 CRLF 上不得误报"这条更强的性质：即便将来有人绕过读入口
+    // 直接把 CRLF 串传进来，也不该崩。
+    name: 'CRLF 回归：registry 文本为 CRLF 时不得误报 options 缺失（整机链实测事故）',
+    run: () => {
+      const lf = registryEntryYaml({
+        id: 'phase.next_step',
+        menu: '1=进入下一 Skill 2=暂停 3=其它（说明）',
+        portables: NEXT_STEP_PORTABLES,
+      });
+      const crlf = lf.replace(/\n/g, '\r\n');
+      assert(crlf.includes('\r\n'), '夹具必须真的是 CRLF（否则这条用例空转）');
+
+      const lfBlockers = lintRegistryOptionsSchema(lf, 'r.yaml').filter(r => r.severity === 'BLOCKER');
+      assert(lfBlockers.length === 0, `LF 基线本应无 BLOCKER，实得 ${lfBlockers.map(b => b.id).join(',')}`);
+
+      const crlfBlockers = lintRegistryOptionsSchema(crlf, 'r.yaml').filter(r => r.severity === 'BLOCKER');
+      assert(
+        crlfBlockers.length === 0,
+        `CRLF 下不得产生 BLOCKER，实得 [${crlfBlockers.map(b => b.id).join(',')}]`
+          + '——手写正则锚在 `\\n` 上时会把整份 registry 判成"缺 options"',
+      );
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {
