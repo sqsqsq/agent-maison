@@ -163,6 +163,7 @@ export function runAll(): UnitCaseResult[] {
         wake: () => {},
         reveal: () => {},
         tap: () => {},
+        settle: () => {},
       },
     });
     assertEq(locked.recovered, false, '锁屏未授权不得就绪');
@@ -177,6 +178,7 @@ export function runAll(): UnitCaseResult[] {
         wake: () => {},
         reveal: () => {},
         tap: () => {},
+        settle: () => {},
       },
     });
     assertEq(unknown.recovered, false, '判不出不得宣称就绪');

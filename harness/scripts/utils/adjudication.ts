@@ -103,6 +103,12 @@ export interface IncidentFacts {
   round_fingerprint_repeated?: boolean;
   /** manifest 声明 vision_lineage=reset（**recovery intent，不是授权**）。 */
   lineage_reset_requested?: boolean;
+  /**
+   * e5d8a2c4 T1③(c)：出生已声明 reset 且尚无 `lineage_reset_committed`——
+   * **同一笔已获准事务未完成**，与"resume 中途升级 reset"是两回事（后者仍恒 terminal）。
+   * 由调用方从「出生冻结的 manifest + events」派生；覆盖 discontinuity 落盘前后的崩溃窗。
+   */
+  lineage_reset_in_flight?: boolean;
   /** 相关文件（诊断用；不参与裁决）。 */
   files?: string[];
 }
@@ -492,7 +498,9 @@ export function decide(
         // reset 是 **recovery intent 不是 authority**：不查 grants。
         // 安全性由「仅 fresh + 断裂显式记事件 + 禁连续性主张 + 全链重验」保证——
         // 危险的从来不是 reset 本身，是静默的 reset。
-        if (context.invocation !== 'fresh') {
+        // 未完成的出生 reset：幂等续做（**不是**中途升级）。它只会撤销连续性主张、
+        // 不授予任何权限，故在 resume 上也允许——否则崩在 reset 半途即成死路。
+        if (context.invocation !== 'fresh' && facts.lineage_reset_in_flight !== true) {
           return {
             kind: 'terminal',
             reason: 'resume 遇 lineage 失配——绝不冒充连续（fail-closed）',

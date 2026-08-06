@@ -197,8 +197,12 @@ type SelfcheckOutcome =
  *     不成立：本 selfcheck 代码只随 ≥3.0.0 发布件存在，consumer 布局下代码与包同树——
  *     能跑到这里就说明包本应带 sidecar，缺失只能是被删除/非发布件铺设（"删 sidecar +
  *     重算 manifest"正是要堵的绕过链）；真正的旧包（2.4.0）跑的是旧代码，根本没有本检查。
- * manifest 按**原始字节**比对（不做 EOL 归一——manifest 被 CRLF 重写同样属"被本地改动"）；
- * sidecar 格式与 release:verify 严格一致（64 位小写 hex + **必须**末尾 LF）。
+ * manifest 与 per-file 同口径 **EOL 归一后**比对（e5d8a2c4 T4 #2 推翻早先"原始字节"决定：
+ * per-file 早已容忍 CRLF 重写（sha256FileEolNormalized，"G3a"），sidecar 独独强制原始 LF
+ * = 同一完整性体系两种字节语义——宿主 autocrlf=true 检出即假失败，2026-08-05 实锤）。
+ * pack 侧 sidecar 记的本就是 LF 版哈希（writeInZipManifest 先 normalizeReleaseTextEol 再
+ * sha256File），归一后相等；manifest 改一字节仍失败——归一只消除无语义的 CRLF/LF 差异。
+ * sidecar 自身格式同理容忍 `\r?\n` 结尾（64 位小写 hex）。
  */
 function runManifestSelfcheck(frameworkRoot: string, manifestRaw: Buffer): SelfcheckOutcome {
   const sidecarAbs = path.join(frameworkRoot, SIDECAR_NAME);
@@ -235,8 +239,8 @@ function runManifestSelfcheck(frameworkRoot: string, manifestRaw: Buffer): Selfc
     };
   }
   const text = fs.readFileSync(sidecarAbs, 'utf-8');
-  const m = text.match(/^([0-9a-f]{64})\n$/);
-  const actual = sha256Bytes(manifestRaw);
+  const m = text.match(/^([0-9a-f]{64})\r?\n$/);
+  const actual = sha256Bytes(Buffer.from(normalizeIntegrityTextEol(manifestRaw.toString('utf-8')), 'utf-8'));
   if (!m || m[1] !== actual) {
     return {
       kind: 'tampered',

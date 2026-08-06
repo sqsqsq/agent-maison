@@ -104,11 +104,49 @@ export function runAll(): UnitCaseResult[] {
     assertEq(verification.result.serial_unchanged, true, 'serial 冻结');
     assertEq(verification.credential_material_recorded, false, '不得记录凭据材料');
     assert(!/credentialRef|password|"pin"|secret/i.test(rawEvents), '事件不得含秘密字段');
+    // 证据绑定生产源码：哈希一致 = 该真机验收仍覆盖当前代码。
+    // e5d8a2c4 T3：源码合法演进后**不得为迁就改动而重写哈希**（那是伪造真机证据——
+    // 新代码从未在真机上验过）。允许的唯一出路是**如实记录失效并逐个枚举**：
+    // superseded 块必须精确覆盖全部失配文件，且每条带 verified/current 双哈希。
+    // 于是"改了代码"这件事无法被悄悄抹掉，真机复验欠账始终可见。
+    const sup = (verification as unknown as {
+      superseded_by_source_change?: {
+        status?: string;
+        changed_files?: Array<{ path: string; verified_sha256: string; current_sha256: string }>;
+      };
+    }).superseded_by_source_change;
+    const mismatched: string[] = [];
     for (const [rel, expected] of Object.entries(verification.source_sha256)) {
       const actual = crypto.createHash('sha256')
         .update(fs.readFileSync(path.join(REPO_ROOT, rel)))
         .digest('hex');
-      assertEq(actual, expected, `${rel} 源码哈希`);
+      if (actual !== expected) mismatched.push(rel);
+    }
+    // **集合精确相等**（codex 订正：只验"每个失配都被登记"允许多登记未失配文件，
+    // 等于给记录留了注水空间）；**零失配时旧标记必须关闭**，否则"待真机复验"会永久挂着。
+    const declared = [...new Set((sup?.changed_files ?? []).map(c => c.path))].sort();
+    if (mismatched.length === 0) {
+      assert(
+        !sup,
+        '源码与真机验收记录已一致，superseded_by_source_change 必须移除——' +
+        '否则"待真机复验"欠账永远挂着，失去指示意义。',
+      );
+    } else {
+      assert(
+        !!sup && sup.status === 'PENDING_REAL_DEVICE_REVERIFICATION',
+        `生产源码已变（${mismatched.join(', ')}）却无 superseded_by_source_change 记录——` +
+        '禁止重写 source_sha256 迁就改动（=伪造真机证据），须如实记录待真机复验。',
+      );
+      assertEq(
+        declared.join('|'), [...mismatched].sort().join('|'),
+        'superseded.changed_files 须与实际失配集合**精确相等**（不多不少）',
+      );
+      for (const c of sup!.changed_files ?? []) {
+        const now = crypto.createHash('sha256')
+          .update(fs.readFileSync(path.join(REPO_ROOT, c.path))).digest('hex');
+        assertEq(c.current_sha256, now, `${c.path} 的 current_sha256 须与当前源码一致（记录不得过期）`);
+        assertEq(c.verified_sha256, verification.source_sha256[c.path], `${c.path} 的 verified_sha256 须与原验收记录一致`);
+      }
     }
   });
   run(results, 'wake 时钟帧的 0/1/5/9 不得冒充 PIN 键盘', () => {

@@ -74,9 +74,13 @@ todos:
       （无 verified_by 一律降级为不支持）+ 「仓库内不得留虚标」的断言。
       **未交付**：本项的**实质**——各 adapter 的真实能力探针，以及生存策略的生产消费方
       （目前 supervisor 走的是 beacon×disposition，不读 survival 声明）。
-      现状等于「有 schema 和解析函数，没有探针也没有消费者」。故**保持未完成**，
-      且**不再扩展这一层**——先有真实探针与消费者，再谈完成。
-    status: pending
+      现状等于「有 schema 和解析函数，没有探针也没有消费者」。
+      【2026-08-05 取消：被 e5d8a2c4 T3 吸收】可靠性总纲裁定：不扩建通用
+      launch/liveness/wakeup 声明层，直接复用既有 supervisor + 具体 probe
+      （waiting(kind, probe?) + 条件转绿自动 resume）满足本项目标。已落地的
+      schema/解析器保留（无 verified_by 恒降级不支持），声明层若日后确有需要，
+      须在 T3 有真实探针与消费方之后另立项。
+    status: cancelled
 isProject: false
 ---
 

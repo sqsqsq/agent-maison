@@ -392,6 +392,36 @@ test('g3a_lone_cr_also_normalized（与 pack /\\r\\n?/g 口径一致）', () => 
   assert.strictEqual(r.status, 'PASS', `孤立 CR 应归一：${r.details}`);
 });
 
+test('g3b_crlf_manifest_and_sidecar_selfcheck_passes（e5d8a2c4 T4#2：2026-08-05 宿主实锤——autocrlf=true 检出把两文件转 CRLF，sidecar 自检不得比 per-file 更严）', () => {
+  const { projectRoot, frameworkRoot } = setup({ 'a.ts': 'line1\nline2\n' });
+  // 模拟 autocrlf=true 检出：manifest 与 sidecar 均被转成 CRLF（内容不变）
+  for (const rel of ['RELEASE-MANIFEST.json', 'RELEASE-MANIFEST.sha256']) {
+    const abs = path.join(frameworkRoot, rel);
+    fs.writeFileSync(abs, fs.readFileSync(abs, 'utf-8').replace(/\n/g, '\r\n'), 'utf-8');
+  }
+  const results = runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot });
+  const sc = selfcheckOf(results);
+  assert.strictEqual(sc.status, 'PASS', `CRLF 副本不得假失败：${sc.details}`);
+  assert.strictEqual(integrityOf(results).status, 'PASS', '整体 integrity 也应 PASS');
+});
+
+test('g3b_crlf_manifest_lf_sidecar_also_passes（混合形态：只有 manifest 被转写）', () => {
+  const { projectRoot, frameworkRoot } = setup({ 'a.ts': 'x' });
+  const abs = path.join(frameworkRoot, 'RELEASE-MANIFEST.json');
+  fs.writeFileSync(abs, fs.readFileSync(abs, 'utf-8').replace(/\n/g, '\r\n'), 'utf-8');
+  assert.strictEqual(selfcheckOf(runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot })).status, 'PASS');
+});
+
+test('g3b_one_byte_manifest_change_still_tampered（对照：归一不放松真实改动）', () => {
+  const { projectRoot, frameworkRoot } = setup({ 'a.ts': 'x' });
+  const abs = path.join(frameworkRoot, 'RELEASE-MANIFEST.json');
+  // 改一个字节（版本号 2.4.0 → 2.4.1），行尾不动——必须仍判 tampered
+  fs.writeFileSync(abs, fs.readFileSync(abs, 'utf-8').replace('"2.4.0"', '"2.4.1"'), 'utf-8');
+  const sc = selfcheckOf(runFrameworkIntegrityPreflight({ frameworkRoot, projectRoot }));
+  assert.strictEqual(sc.status, 'FAIL', '真实内容改动不得被 EOL 归一洗过');
+  assert.strictEqual(sc.failure_kind, 'framework_manifest_tampered');
+});
+
 test('g3a_real_content_change_still_drifts（归一不放过真改动）', () => {
   const { projectRoot, frameworkRoot } = setup({ 'a.ts': 'line1\nline2\n' });
   fs.writeFileSync(path.join(frameworkRoot, 'a.ts'), 'line1\nCHANGED\n', 'utf-8');

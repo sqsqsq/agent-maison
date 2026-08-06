@@ -19,6 +19,8 @@
 // 等于永远处理不了"锁屏了没注意"这个真实场景。
 // ============================================================================
 
+import type { UnlockFailureKind } from './device-unlock-helper';
+
 import {
   capsTestingConclusion,
   classifyTargetKind,
@@ -33,8 +35,41 @@ export interface DeviceTarget {
   targetKind: DeviceTargetKind;
 }
 
+/**
+ * e5d8a2c4 T3#2：本次解锁尝试的**结构化事实**——全链**只有这一份**，逐层原样携带。
+ *
+ * 为什么必须是一份完整事实而不是散字段（codex 三轮 P1）：初版只在 `ensureDeviceReady`
+ * 内留了个局部 `unlockFailureKind`，`fallbackToEmulator` 收不到，于是降级路径上归因
+ * 全丢；事件层则用 `notes.find(n => n.startsWith('unlock:'))` 反推——正是本类型注释
+ * 自己禁止的"解析文案"。
+ *
+ * `serial` 是**被尝试解锁的那台**，不是最终 READY 的那台。二者可以不同：真机解锁失败
+ * → 降级到模拟器 → READY。旧代码在这一幕里发出的是
+ * `device_unlock_attempt{serial: 模拟器, outcome: 'succeeded'}`——一条**凭空捏造的
+ * 成功记录**，同时把真机那次失败抹掉。证据链上这是最坏的一类错。
+ */
+export interface UnlockAttemptFact {
+  /** 被尝试解锁的设备（可能与最终 target 不同） */
+  serial: string;
+  /** **复验后**的结论：helper 报成功但重新探测仍锁 → 仍记 failed */
+  outcome: 'succeeded' | 'failed';
+  /**
+   * 三类可行动归因之一；前置/并发/等待类不带（走既有 device_not_ready 通道）。
+   * **闭集类型不得放宽成 string**（codex 四批 P2）——放宽后 adapter 可以静默引入
+   * 第四、第五种未登记分类而编译器不报警，等于把刚删掉的兜底类从边界重新放回来。
+   */
+  failureKind?: UnlockFailureKind;
+  note: string;
+}
+
 export type DeviceReadinessResult =
-  | { state: 'READY'; target: DeviceTarget; managed?: ManagedProcessIdentity; notes: string[] }
+  | {
+      state: 'READY';
+      target: DeviceTarget;
+      managed?: ManagedProcessIdentity;
+      notes: string[];
+      unlockAttempt?: UnlockAttemptFact;
+    }
   /**
    * 设备不可用/仍锁屏：走既有 external_block defer 契约（**不是** capability FAIL）。
    *
@@ -45,11 +80,12 @@ export type DeviceReadinessResult =
       state: 'BLOCKED';
       reason: string;
       notes: string[];
+      unlockAttempt?: UnlockAttemptFact;
       orphanManaged?: ManagedProcessIdentity;
       orphanSerial?: string;
     }
   /** 目标无法唯一确定等歧义态：HALT 求人（继续跑等于赌一个设备） */
-  | { state: 'AMBIGUOUS'; reason: string; notes: string[] };
+  | { state: 'AMBIGUOUS'; reason: string; notes: string[]; unlockAttempt?: UnlockAttemptFact };
 
 /** 模拟器降级策略（来自用户本机配置，非发布 profile——否则所有消费者机器都会自动弹 GUI） */
 export type EmulatorFallback = 'disabled' | 'existing' | 'managed';
@@ -72,7 +108,7 @@ export interface DeviceReadinessDeps {
    * t6 注入的凭据解锁能力。**本 Todo 不实现**——但 gate 必须调用它，
    * 否则"启动时已锁屏 → BLOCKED → agent 不启动 → 运行期 wrapper 永无机会执行"成死锁。
    */
-  unlockWithCredential?(serial: string): { ok: boolean; note: string };
+  unlockWithCredential?(serial: string): { ok: boolean; note: string; failureKind?: UnlockFailureKind };
   /** 托管启动模拟器（Todo 2 能力）；返回其 serial 与进程身份 */
   launchManagedEmulator?(): Promise<{ ok: boolean; serial?: string; identity?: ManagedProcessIdentity; note: string }>;
   /**
@@ -132,10 +168,16 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
     notes.push(`wake 失败（忽略，继续探测）：${(err as Error).message}`);
   }
 
+  // e5d8a2c4 T3#2：本次解锁尝试的**唯一一份**结构化事实（原样来自 ensureUnlocked，
+  // 不在此重新分类）。**每一条返回路径都必须带上它**——包括降级到模拟器那条。
+  let unlockAttempt: UnlockAttemptFact | undefined;
+  const withAttempt = <T extends object>(r: T): T & { unlockAttempt?: UnlockAttemptFact } =>
+    (unlockAttempt ? { ...r, unlockAttempt } : r);
+
   // ② 重新探测锁屏
   let locked = deps.isLocked(serial);
   if (locked === undefined) {
-    return { state: 'BLOCKED', reason: `无法判定设备 ${serial} 的锁屏状态`, notes };
+    return withAttempt({ state: 'BLOCKED' as const, reason: `无法判定设备 ${serial} 的锁屏状态`, notes });
   }
 
   // ③ 已授权则解锁一次 → ④ 复验（t6 注入；未注入=未授权，直接走降级）
@@ -143,12 +185,21 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
     if (deps.unlockWithCredential) {
       const attempt = deps.unlockWithCredential(serial);
       notes.push(`unlock: ${attempt.note}`);
+      // **先按失败记**：只有复验真的看到未锁屏才改判成功。helper 报 ok 不作数
+      // ——这与下面"不凭返回值宣称成功"是同一条纪律，只是也落到了结构化事实上。
+      unlockAttempt = {
+        serial,
+        outcome: 'failed',
+        ...(attempt.failureKind ? { failureKind: attempt.failureKind } : {}),
+        note: attempt.note,
+      };
       if (attempt.ok) {
         // 复验：不凭返回值宣称成功，必须重新探测
         locked = deps.isLocked(serial);
         if (locked === undefined) {
-          return { state: 'BLOCKED', reason: `解锁后无法复验 ${serial} 锁屏状态`, notes };
+          return withAttempt({ state: 'BLOCKED' as const, reason: `解锁后无法复验 ${serial} 锁屏状态`, notes });
         }
+        if (!locked) unlockAttempt = { ...unlockAttempt, outcome: 'succeeded' };
       }
     } else {
       notes.push('未配置自动解锁（或本次未授权）——不尝试任何密码输入');
@@ -156,15 +207,17 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
   }
 
   if (!locked) {
-    return {
-      state: 'READY',
+    return withAttempt({
+      state: 'READY' as const,
       target: { serial, targetKind: classifyKind(input, serial, null) },
       notes,
-    };
+    });
   }
 
-  // ⑤ 仍锁屏 → 按策略选模拟器
-  return fallbackToEmulator(input, notes, `设备 ${serial} 仍处于锁屏`);
+  // ⑤ 仍锁屏 → 按策略选模拟器。**解锁事实随之带走**：降级成功不改变"这台真机没解开"
+  // 这个事实，丢了它，事件里就只剩一条模拟器上的假成功。
+  const fallback = await fallbackToEmulator(input, notes, `设备 ${serial} 仍处于锁屏`);
+  return withAttempt(fallback);
 }
 
 /**
@@ -368,20 +421,30 @@ export async function runDeviceReadinessGate(opts: {
 }): Promise<DeviceGateDecision> {
   const res = await ensureDeviceReady(opts.input);
 
+  // t6：解锁尝试的**审计投影**——安全 SSOT 是机器级 Credential Manager 锁存
+  //（device-credential-store），goal events 只作可回溯记录，**不参与放行判定**。
+  // 这也保证 events 里永远看不到口令本身（note 由 helper 产出，已剔除凭据细节）。
+  //
+  // 事实**原样来自** res.unlockAttempt，三态共用同一段代码。此前 READY 与非 READY
+  // 各写一遍、且都靠 `notes.find(n => n.startsWith('unlock:'))` 反推，于是：
+  //   · READY 分支把 outcome 硬编码成 'succeeded'、serial 取**最终 target**
+  //     → "真机解锁失败 + 模拟器降级成功"会产出一条模拟器上的**假成功**记录，
+  //       真机那次失败被彻底抹掉；
+  //   · 非 READY 分支硬编码 'failed' 且不带 serial。
+  // 现在成败与 serial 都由事实本身说了算（codex 三轮 P1）。
+  const attempt = res.unlockAttempt;
+  if (attempt) {
+    opts.emitEvent({
+      type: 'device_unlock_attempt',
+      phase: opts.phase,
+      serial: attempt.serial,
+      outcome: attempt.outcome,
+      ...(attempt.failureKind ? { failure_kind: attempt.failureKind } : {}),
+      note: attempt.note,
+    });
+  }
+
   if (res.state === 'READY') {
-    // t6：解锁尝试的**审计投影**——安全 SSOT 是机器级 Credential Manager 锁存
-    //（device-credential-store），goal events 只作可回溯记录，**不参与放行判定**。
-    // 这也保证 events 里永远看不到口令本身（notes 由 helper 产出，已剔除凭据细节）。
-    const unlockNote = res.notes.find(n => n.startsWith('unlock:'));
-    if (unlockNote) {
-      opts.emitEvent({
-        type: 'device_unlock_attempt',
-        phase: opts.phase,
-        serial: res.target.serial,
-        outcome: 'succeeded',
-        note: unlockNote,
-      });
-    }
     opts.emitEvent({
       type: 'device_ready',
       phase: opts.phase,
@@ -401,21 +464,15 @@ export async function runDeviceReadinessGate(opts: {
 
   const halted = res.state === 'AMBIGUOUS';
   const haltReason = halted ? 'device_target_ambiguous' : 'device_not_ready';
-  const failedUnlock = res.notes.find(n => n.startsWith('unlock:'));
-  if (failedUnlock) {
-    opts.emitEvent({
-      type: 'device_unlock_attempt',
-      phase: opts.phase,
-      outcome: 'failed',
-      note: failedUnlock,
-    });
-  }
   opts.emitEvent({
     type: 'phase_halt',
     phase: opts.phase,
     halt_reason: haltReason,
     verdict: 'FAIL',
     reason: res.reason,
+    // 三类可行动归因随 halt 一并落盘，供 supervisor/probe **按类别**决定下一步
+    // （重新登记 / 真机校准 / 自动重试），而不是去 grep notes 文案
+    ...(attempt?.failureKind ? { unlock_failure_kind: attempt.failureKind } : {}),
     notes: res.notes,
   });
   return {

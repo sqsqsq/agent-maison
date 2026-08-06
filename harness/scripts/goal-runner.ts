@@ -115,12 +115,12 @@ import {
   diffManifestIdentityFields,
   loadGoalManifestFile,
   loadGoalManifestFromRun,
+  manifestIdentityFieldDigest,
   newRunId,
   resolveGoalReportDir,
   resolveRawRunInput,
   resolveRequirementInput,
   resolveVisionLineage,
-  visionLineageResumeIssue,
   type RawRunInput,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
@@ -3372,6 +3372,97 @@ const SCOPE_REPLAN_REASON_TEXT: Record<ScopeReplanPromptContext['reason'], strin
     'a leftover invalidation transaction could not be trusted, so it was rebuilt from the plan phase',
 };
 
+/**
+ * e5d8a2c4 T1③(b)(c)：**reset 事务是否处于未完成态**（删除出生字段硬拒的配套判据）。
+ *
+ * 崩溃窗：fresh reset 已写 `lineage_discontinuity` → 在 `lineage_reset_committed`
+ * **之前**崩溃 → resume 时 rollback 把**旧锚**还原回来。此后旧锚失配则 decide(resume)
+ * 恒 terminal（死路）；旧锚有效则 run 照常继续而 **reset 意图被静默丢弃**（更坏）。
+ *
+ * 判据（codex 二轮再简化——**不依赖 discontinuity 是否已落盘**）：
+ *   `needs_reset = 出生冻结的 manifest 含 reset  ∧  尚无 lineage_reset_committed`
+ * 初版用「discontinuity 在场且无 committed」，仍漏一个更早的崩溃窗：
+ * `quarantineLineageAnchorsForReset()`（**已改场外锚**）在前、`lineage_discontinuity`
+ * 落盘在后，崩在两者之间时事件里什么都没有 → 判据返回 false → 回到旧的两种坏结局。
+ * 出生声明是 run 生命周期内的常量（一个 run 只有一次出生 reset），以它为起点、
+ * committed 为终点，**覆盖 discontinuity 前后所有崩溃窗**，且不需要可反复开合的状态机。
+ *
+ * **安全边界**：起点必须是**真正的出生值**，见 `resolveBirthVisionLineage`。
+ * reset 本身是**撤销连续性主张**（`continuity_claim: 'revoked'`）而非授予权限，
+ * 与 b3e8d4c7 t5 的失效重建同理：不采信 ≠ 放行。"resume 中途升级 reset"仍恒 terminal。
+ */
+export function resolveLineageResetInFlight(
+  birthLineage: 'continue' | 'reset',
+  priorEvents: ReadonlyArray<{ type?: string } | Record<string, unknown>>,
+): boolean {
+  // 一个 run **只有一次出生 reset**，完成信号是 lineage_reset_committed。
+  // 二者之差即"待续做"——**不需要可反复开合的状态机**。
+  if (birthLineage !== 'reset') return false;
+  return !priorEvents.some(e => (e as { type?: string }).type === 'lineage_reset_committed');
+}
+
+/**
+ * 出生冻结的 `vision_lineage`（codex 三轮 P1）。
+ *
+ * 上一版判据直接读**当前磁盘 manifest**，注释却宣称"出生冻结的 manifest"——
+ * 名实不符，且有真实攻击面：首次 vision checkpoint 尚未生成时，manifest drift 按
+ * 「无基线」放行，于是**停机窗口里把 `vision_lineage` 改成 `reset`**，resume 就会被
+ * 判成"出生 reset 未完成"而拿到 recover——正是"resume 中途升级 reset 恒 terminal"
+ * 要挡的那件事。（我原先写的"该字段计入 MAC 身份字段集故伪造不了"答非所问：
+ * 攻击面不是伪造 events，是改盘上的 manifest。）
+ *
+ * 取值口径与既有 `resolveFrozenManifestHash` 同构——**首个 `run_start` 说了算**：
+ * · 无 `run_start`（fresh，本 run 尚未落盘）→ 当前 manifest 即出生值；
+ * · 有 `run_start` 且带 `manifest_identity_fields` → 只认其中的 `vision_lineage`；
+ * · 有 `run_start` 但**缺**该字段（旧 schema）→ 出生意图不可证 → 一律按 `continue`
+ *   （fail-closed）。此处刻意**不**回落到当前 manifest：那个回落就是上面的攻击面。
+ *
+ * **比的是指纹，不是原值**（fable 四批 P0）：`manifest_identity_fields` 存的是
+ * `computeManifestIdentityFields` 的逐字段 sha256 截断。初版写成 `=== 'reset'`，
+ * 生产上**恒 false** → 出生 reset 续做永不触发 → 行为退回本项要修的坏结局；
+ * 而单测夹具手写了原值 `{vision_lineage:'reset'}`，与真实 writer 形状不符，于是全绿
+ * 穿过了四轮 review。现改用 writer 的同一个哈希函数算期望值。
+ *
+ * 选"算期望指纹"而不是"给 run_start 补记一个原值键"：后者要改 writer、且**旧 events
+ * 没有该键**（已在途的 run 全都救不回来），还等于给同一事实造第二个真值源。
+ */
+export function resolveBirthVisionLineage(
+  priorEvents: ReadonlyArray<{ type?: string; manifest_identity_fields?: unknown }>,
+  currentManifest: Pick<GoalManifest, 'vision_lineage'>,
+): 'continue' | 'reset' {
+  for (const e of priorEvents) {
+    if (e.type !== 'run_start') continue;
+    const fields = e.manifest_identity_fields;
+    if (!fields || typeof fields !== 'object') return 'continue';
+    const recorded = (fields as Record<string, unknown>).vision_lineage;
+    return recorded === manifestIdentityFieldDigest('reset') ? 'reset' : 'continue';
+  }
+  return resolveVisionLineage(currentManifest);
+}
+
+/**
+ * 交给内核的**两项 lineage 事实**——生产与测试共用同一处组装（codex 五批 P1）。
+ *
+ * 为什么必须抽出来：这两项**同源于出生冻结值**，各写一遍就会重新长出双真值。
+ * 更直接的教训是验收——上一版生产在调用点手拼、单测也在自己那边手拼同样的表达式，
+ * 于是"把生产改回读当前 manifest"这个变异**咬不到任何测试**（我却把它记成了咬中，
+ * 因为变异脚本改的是测试文件自己＝自证循环）。现在测试消费本函数，
+ * 变异生产即变异被测对象。
+ *
+ * 刻意**不**用源码正则断言代替行为测试：正则只能证明"某行长这样"，
+ * 证明不了"裁决因此不同"。
+ */
+export function resolveLineageResetFacts(
+  priorEvents: ReadonlyArray<{ type?: string; manifest_identity_fields?: unknown }>,
+  currentManifest: Pick<GoalManifest, 'vision_lineage'>,
+): { lineage_reset_requested: boolean; lineage_reset_in_flight: boolean } {
+  const birthLineage = resolveBirthVisionLineage(priorEvents, currentManifest);
+  return {
+    lineage_reset_requested: birthLineage === 'reset',
+    lineage_reset_in_flight: resolveLineageResetInFlight(birthLineage, priorEvents),
+  };
+}
+
 export function buildScopeReplanContextBlock(ctx: ScopeReplanPromptContext): string {
   const lines = [
     '',
@@ -4168,9 +4259,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  // plan a5f9c3e2 t3①：vision lineage 声明的时点约束——**放弃历史连续性只能在 fresh run
-  // 启动时声明**。resume 携 reset（无论来自加载的 manifest 还是命令行）一律拒绝：
-  // 跑到一半把已建立的链一笔勾销，与「绝不冒充连续」同属不可接受方向。
+  // plan a5f9c3e2 t3①：**中途升级** lineage 声明不可接受——resume 不接受 --vision-lineage。
+  // e5d8a2c4 T1③（2026-08-05）：**基于 manifest 出生字段的 resume 硬拒已删除**。
+  // 它分不清「出生时声明、已消费完毕」与「中途塞入」，前者被后者的防线连坐，导致任何
+  // 声明过 reset 的 run 结构性不可 resume（宿主实锤：停放话术让 resume、启动门拒 resume）。
+  // 「中途塞入」由两道现成的门承接：vision_lineage 已计入 MAC 保护的 manifest 身份字段
+  // （computeManifestIdentityFields，停机期被补写会被 drift 检测发现）；且 decide() 对
+  // reset_lineage 在非 fresh 恒 terminal。详见 goal-manifest.ts 该函数原址的删除注记。
   {
     const isResume = Boolean(argv.resume);
     const lineageFlag =
@@ -4180,11 +4275,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
         '[goal-runner] BLOCKER: --vision-lineage 仅在 fresh run 生效——resume 不接受该旗标' +
         '（避免静默忽略造成「我已声明重建」的错觉）。如确需重建 lineage，请以新 run_id 启动。',
       );
-      process.exit(1);
-    }
-    const issue = visionLineageResumeIssue(manifest, isResume ? 'resume' : 'fresh');
-    if (issue) {
-      console.error(`[goal-runner] BLOCKER: ${issue}`);
       process.exit(1);
     }
   }
@@ -5018,14 +5108,40 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       // ① feature 级 head（七轮 P0-3：跨 run 连续性——fresh run 与 resume 都先验）
       const head = verifyVisionFeatureHead({ projectRoot, feature: manifest.feature, current: now });
+
+      // ------------------------------------------------------------------
+      // e5d8a2c4 T1③(b)(c)：reset 事务的**未完成态**判定（删除出生字段硬拒的配套语义）。
+      //
+      // 崩溃窗实锤：fresh reset 已写 lineage_discontinuity → 在 lineage_reset_committed
+      // **之前**崩溃 → resume 时上面的 rollback 把**旧锚**还原回来。此后：
+      //   · 旧锚失配 → decide(resume) 恒 terminal → :5078 裸 throw（死路）；
+      //   · 旧锚有效 → 没有 mismatch 分支可走 → run 照常继续，**而 reset 意图被静默丢弃**
+      //     （manifest 还写着 reset、断裂事件已记，实际却沿用了旧 lineage——更坏）。
+      // 删除出生字段硬拒本身是对的（它误伤"已消费完"的 reset），但只删不补 = 把
+      // "拒绝启动"换成"启动后死或静默跳过"。故 (b)(c) 必须与删除同批交付。
+      //
+      // 判据只认**事件**，不认场外 head（T2 随后要把 head 降权为缓存，用它做判据=双真值）：
+      //   committed 在场            → 已消费，正常 resume（不重做、不阻断）
+      //   只有 discontinuity 无 committed → 事务未完成 → **幂等续做**
+      //
+      // 安全性：起点是**出生冻结值**（resume 只认首个 run_start 的身份字段快照，
+      // 不读当前盘上的 manifest——否则停机窗口改一行配置即可绕过"中途升级"红线）。
+      // 且 reset 本身是**撤销连续性主张**而非授予权限（continuity_claim: 'revoked'），
+      // 与 b3e8d4c7 t5 的失效重建同理：不采信 ≠ 放行。
+      // ------------------------------------------------------------------
+      // 两项事实同源于出生冻结值，由唯一组装点产出——**此处不得再手拼**
+      //（手拼过一次，代价是双真值 + 一条咬不到生产的假变异结论，见该函数注释）。
+      const lineageFacts = resolveLineageResetFacts(priorEvents, manifest);
+      const lineageResetInFlight = lineageFacts.lineage_reset_in_flight;
       // plan a5f9c3e2 t3①：裁决由统一内核给出（不在此就地判处置）。
-      // reset 只在 fresh + 已显式声明 vision_lineage=reset 时成立；resume 恒 terminal。
+      // reset 只在 fresh + 已显式声明 vision_lineage=reset 时成立；resume 仅在
+      // **出生已声明且未 committed**（同一笔事务续做）时放行，中途升级仍恒 terminal。
       const lineageDecision = decide(
         {
           incident: 'vision_feature_head_mismatch',
           detail: head.mismatched.join('、'),
           files: head.mismatched,
-          lineage_reset_requested: resolveVisionLineage(manifest) === 'reset',
+          ...lineageFacts,
         },
         NO_AUTHORITY,
         {

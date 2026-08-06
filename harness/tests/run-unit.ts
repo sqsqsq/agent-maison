@@ -64,6 +64,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
   { id: 'upstream-closure', modulePath: './unit/upstream-closure.unit.test' },
   { id: 'scope-replan', modulePath: './unit/scope-replan.unit.test' },
+  { id: 'release-shipped-in-ignored-dirs', modulePath: './unit/release-shipped-in-ignored-dirs.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

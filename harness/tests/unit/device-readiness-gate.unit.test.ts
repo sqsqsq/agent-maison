@@ -247,27 +247,48 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(b.state === 'READY' && b.target.targetKind === 'physical', JSON.stringify(b));
   });
 
-  await run(results, 'R16：设备门链路**不得**同步阻塞事件循环（禁 Atomics.wait）', async () => {
+  await run(results, 'R16：**无界/长时**等待必须异步；同步等待只走唯一有界原语', async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fsMod = require('fs') as typeof import('fs');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pathMod = require('path') as typeof import('path');
-    for (const f of ['device-readiness-deps.ts', 'device-readiness-gate.ts']) {
-      const src = fsMod.readFileSync(
-        pathMod.join(__dirname, '..', '..', 'scripts', 'utils', f),
-        'utf-8',
-      );
-      // 只查**可执行代码**——注释里说明"此前用 Atomics.wait"是有价值的历史记录
-      const code = src
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .split('\n')
-        .filter(l => !/^\s*(\/\/|\*)/.test(l))
-        .join('\n');
+    const utils = (f: string) => pathMod.join(__dirname, '..', '..', 'scripts', 'utils', f);
+    // 只查**可执行代码**——注释里说明"此前用 Atomics.wait"是有价值的历史记录
+    const executable = (p: string): string => fsMod.readFileSync(p, 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter(l => !/^\s*(\/\/|\*)/.test(l))
+      .join('\n');
+
+    // e5d8a2c4 T3#3：规则被**说准**（不是放宽）。原表述"设备门链路不得同步阻塞事件
+    // 循环"与事实不符——同一条链路上本来就通篇是同步 spawnSync：dumpLayout 数百 ms、
+    // providers/device-test-run.ts 的 hdc 调用 timeout:120_000、UT 整轮以分钟计，而
+    // provider 契约一路同步到 checkDeviceTestRunGate 这个同步 check 门。在这种链路上
+    // 禁 400ms 的观察间隔、却放行 120s 的同步 spawnSync，规则就不是在保护活性。
+    //
+    // 真实规则 = **纯等待必须有硬上限**，长/无界的必须异步。扫描范围因此**扩大**到
+    // 解锁与运行期恢复两个文件（原来只扫两个门文件，解锁链根本不在管辖内）。
+    const SYNC_WAIT_BANNED = [
+      'device-readiness-deps.ts',
+      'device-readiness-gate.ts',
+      'device-unlock-helper.ts',
+      'device-runtime-recovery.ts',
+    ];
+    for (const f of SYNC_WAIT_BANNED) {
+      const code = executable(utils(f));
       assert(
         !/Atomics\.wait/.test(code),
-        `${f} 不得用 Atomics.wait 同步阻塞——模拟器 boot 最长 180s，期间 heartbeat/信号/timer 全停摆`,
+        `${f} 不得**直接**调用 Atomics.wait——同步等待只许经 boundedSyncWait（那里有硬上限把关）`,
       );
     }
+
+    // 唯一豁免模块：必须自带硬上限，且**抛而不 clamp**（静默截断 = 调用方以为等够了）
+    const waitSrc = executable(utils('bounded-sync-wait.ts'));
+    assert(/export const MAX_SYNC_WAIT_MS/.test(waitSrc), 'bounded-sync-wait 必须导出硬上限常量');
+    assert(
+      /throw new Error\(/.test(waitSrc) && /ms > MAX_SYNC_WAIT_MS/.test(waitSrc),
+      '超上限必须抛——clamp 会把"其实没等够"变成查不出来的行为差异',
+    );
     const gateSrc = fsMod.readFileSync(
       pathMod.join(__dirname, '..', '..', 'scripts', 'utils', 'device-readiness-gate.ts'),
       'utf-8',
@@ -527,6 +548,70 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     for (const raw of ['未识别成功', '点击此处重试', 'PRIVATE_NOTICE']) {
       assert(!projected.includes(raw), `所有投影均不得含 UI/通知原文：${projected}`);
     }
+  });
+
+  await run(results, 'T3#2 真机解锁失败 + 模拟器降级成功 → **不得**记成模拟器上的 succeeded', async () => {
+    // 事故形态（codex 三轮 P1 的"伴生错误"）：READY 分支此前用
+    // `notes.find(n => n.startsWith('unlock:'))` 反推事件，成败**硬编码** succeeded、
+    // serial 取**最终 target**。于是这一幕会产出一条凭空捏造的成功记录，
+    // 而真机那次失败被彻底抹掉——证据链上最坏的一类错。
+    const events: Array<Record<string, unknown>> = [];
+    const decision = await runDeviceReadinessGate({
+      phase: 'testing', retries: 0, sessionId: 'fallback-truth',
+      input: {
+        configuredSerial: 'phone-1', credentialRef: 'opaque-ref', emulatorFallback: 'existing',
+        deps: {
+          listTargets: () => ['phone-1', 'emu-9'],
+          isLocked: (s: string) => s === 'phone-1',       // 真机恒锁，模拟器没锁
+          wake: () => {},
+          knownEmulatorSerials: () => ['emu-9'],
+          unlockWithCredential: () => ({
+            ok: false,
+            note: 'unlock_blocked:layout_unsupported:pin_container_not_found（零输入）',
+            failureKind: 'layout_unsupported',
+          }),
+        },
+      },
+      emitEvent: event => events.push(event),
+    });
+    assert(decision.outcome === undefined, `降级后应放行：${JSON.stringify(decision.outcome)}`);
+    const unlockEvents = events.filter(e => e.type === 'device_unlock_attempt');
+    assertEq(unlockEvents.length, 1, `解锁只尝试过一次，事件也只该有一条：${JSON.stringify(events)}`);
+    assertEq(unlockEvents[0].outcome, 'failed', '真机没解开就是 failed——降级成功不改变这个事实');
+    assertEq(unlockEvents[0].serial, 'phone-1', 'serial 须是**被尝试解锁的那台**，不是降级后的目标');
+    assertEq(unlockEvents[0].failure_kind, 'layout_unsupported', '结构化归因须原样落到事件上');
+    assert(
+      events.some(e => e.type === 'device_ready' && e.serial === 'emu-9'),
+      `device_ready 仍应是降级后的模拟器：${JSON.stringify(events)}`,
+    );
+  });
+
+  await run(results, 'T3#2 归因贯通到 phase_halt：BLOCKED 时带 unlock_failure_kind（消费方不解析文案）', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const decision = await runDeviceReadinessGate({
+      phase: 'testing', retries: 0, sessionId: 'kind-vantage',
+      input: {
+        configuredSerial: 'phone-1', credentialRef: 'opaque-ref', emulatorFallback: 'disabled',
+        deps: {
+          listTargets: () => ['phone-1'],
+          isLocked: () => true,
+          wake: () => {},
+          knownEmulatorSerials: () => [],
+          unlockWithCredential: () => ({
+            ok: false,
+            note: '凭据不存在（未登记或已被烧毁）——零输入',
+            failureKind: 'credential_unavailable',
+          }),
+        },
+      },
+      emitEvent: event => events.push(event),
+    });
+    assertEq(decision.outcome?.halt_reason, 'device_not_ready', '仍走既有 external_block 通道');
+    const halt = events.find(e => e.type === 'phase_halt');
+    assertEq(halt?.unlock_failure_kind, 'credential_unavailable', 'halt 须带结构化归因');
+    const attemptEvent = events.find(e => e.type === 'device_unlock_attempt');
+    assertEq(attemptEvent?.failure_kind, 'credential_unavailable', '事件须带结构化归因');
+    assertEq(attemptEvent?.serial, 'phone-1', '失败事件同样须带 serial（此前非 READY 分支根本不写）');
   });
 
   return results;

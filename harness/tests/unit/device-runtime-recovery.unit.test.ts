@@ -63,6 +63,7 @@ function depsWith(lockSeq: Array<boolean | undefined>, taps: number[] = []): Unl
     wake: () => {},
     reveal: () => {},
     tap: (_s, x) => { taps.push(x); },
+    settle: () => {},   // 本套件不测 settle 时序（见 device-unlock-helper 套件）
   };
 }
 
@@ -106,6 +107,16 @@ export function runAll(): UnitCaseResult[] {
     assertEq(r.recovered, false, 'burned 不得恢复');
     assertEq(taps.length, 0, '零输入');
     assertEq(provider.clickCount, 0, '结构上未进入临界区');
+    // e5d8a2c4 T3#2（codex 三轮 P1）：`reason` 是**本模块的处置枚举**（要不要外部阻断），
+    // `failureKind` 是**解锁链的归因枚举**（下一步该干什么）——不是一回事。此前只回
+    // reason:'unlock_failed'，把 helper 已分好的三类重新压平成一个字，消费方要按类别
+    // 行动就只能解析 note 文案或再分类一次（=第二份分类表）。
+    assertEq(r.recovered === false ? r.reason : undefined, 'unlock_failed', '处置枚举不变');
+    assertEq(
+      r.recovered === false ? r.failureKind : undefined,
+      'credential_unavailable',
+      '归因须原样上浮，不得被压平成 reason',
+    );
   });
 
   run(results, 'withDeviceRecovery：锁屏失败 → 恢复一次 → 重试原操作成功', () => {

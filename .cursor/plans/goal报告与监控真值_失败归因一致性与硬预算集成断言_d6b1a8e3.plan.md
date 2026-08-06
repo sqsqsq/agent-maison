@@ -76,8 +76,11 @@ todos:
       **不得据此判超预算**；仅 fresh、无 resume 的单进程 run 可等价用该次
       `run_start → run_end` 计算。
       zero-budget / backoff 终局 / grace 四常量派生 / finalize pre-check 已由上列单测在其
-      真实所在层覆盖，宿主不必重复证明。**宿主证据回灌前保持 pending。**
-    status: pending
+      真实所在层覆盖，宿主不必重复证明。
+      【2026-08-05 移交：归 e5d8a2c4 T4 关系面】可靠性总纲裁定：三路径聚合不等式
+      归 **candidate 宿主 evaluator** 承接（真实时间性质在真实宿主受控 run 上验），
+      不进 CI smoke。验收判据（上方不等式与口径）随移交继续有效，本 plan 不再追踪。
+    status: cancelled
   - id: t4-evidence-hygiene-integration
     content: >
       goal-timeout 7.5b 证据卫生集成断言："kill 后 agent-output.log 字节不变"。runner 已

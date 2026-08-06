@@ -8,13 +8,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   ensureUnlocked,
+  MAX_RESAMPLES,
+  SETTLE_INTERVAL_MS,
   type KeypadKey,
+  type LockScreenSnapshot,
   type UnlockDeps,
+  type UnlockOutcome,
 } from '../../scripts/utils/device-unlock-helper';
+import { boundedSyncWait, MAX_SYNC_WAIT_MS } from '../../scripts/utils/bounded-sync-wait';
 import {
   credentialRefOf,
   credentialTargetName,
   type CredentialIdentity,
+  type CredentialProvider,
 } from '../../scripts/utils/device-credential-store';
 import { FakeCredentialProvider } from '../helpers/fake-credential-provider';
 import type { UnitCaseResult } from '../run-unit';
@@ -93,12 +99,174 @@ function bench(
     wake: () => { wakes += 1; },
     reveal: () => { reveals += 1; },
     tap: over.tap ?? ((_s, x, y) => { taps.push({ x, y }); }),
+    settle: () => {},   // 本 bench 不测 settle 时序（见 benchFrames 与 T3#3 用例）
   };
   return { deps, taps, get wakes() { return wakes; }, get reveals() { return reveals; } } as Bench;
 }
 
+/**
+ * e5d8a2c4 T3：键盘按帧演进的测试床——首若干帧键位不全，第 N 帧齐。
+ * 用于钉住「reveal 后有界 settle + 重取样」这条行为（此前 reveal 后零等待，
+ * 任何动画延迟都变成永久零输入 → 无人值守停机，2026-08-05 宿主实况）。
+ */
+function benchFrames(
+  frames: Array<{ keypad: KeypadKey[]; diag?: LockScreenSnapshot['keypadDiag'] }>,
+): {
+  deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number;
+} {
+  let snapshots = 0;
+  const settleArgs: number[] = [];
+  const deps: UnlockDeps = {
+    snapshot: () => {
+      const f = frames[Math.min(snapshots++, frames.length - 1)];
+      return {
+        locked: true,
+        keypad: f.keypad,
+        ...(f.diag ? { keypadDiag: f.diag } : {}),
+        cooldown: { state: 'not_cooldown', ruleId: 'test_rule' },
+        lockBounds: { left: 0, top: 0, right: 1000, bottom: 2000 },
+      };
+    },
+    wake: () => { /* no-op */ },
+    reveal: () => { /* no-op */ },
+    tap: () => { /* no-op */ },
+    // 记录**被请求的间隔**——只数次数看不出"到底等够了没有"
+    settle: ms => { settleArgs.push(ms); },
+  };
+  return {
+    deps,
+    get settles() { return settleArgs.length; },
+    get settleArgs() { return settleArgs; },
+    get snapshots() { return snapshots; },
+  } as { deps: UnlockDeps; settles: number; settleArgs: number[]; snapshots: number };
+}
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  run(results, 'T3#3 reveal 后首帧键盘未稳、settle 重取样后齐 → 继续解锁（此前直接零输入退出）', () => {
+    const partial = FULL_KEYPAD.slice(0, 7);
+    const b = benchFrames([
+      { keypad: partial, diag: { reason: 'digits_incomplete', found: 7, containerFound: true, hiddenSkipped: false } },
+      { keypad: partial, diag: { reason: 'digits_incomplete', found: 7, containerFound: true, hiddenSkipped: false } },
+      { keypad: FULL_KEYPAD },
+    ]);
+    const p = providerOf();
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: p });
+    assert(b.settles >= 1, `须真的 settle 过（实得 ${b.settles} 次）`);
+    // 键盘齐了就会去输入——这里只关心"没有在首帧就零输入退出"
+    assert(!/keypad_incomplete|ui_not_settled/.test(r.note), `不应停在键盘未稳：${r.note}`);
+  });
+
+  run(results, 'T3#3 间隔是**固定常量**且真的传给 settle（不是碰巧靠 dump 耗时）', () => {
+    const partial = FULL_KEYPAD.slice(0, 7);
+    const diag = { reason: 'digits_incomplete', found: 7, containerFound: true, hiddenSkipped: false };
+    // 首帧在 reveal 之前就被消费；重取样从第二帧开始，故未稳一帧产生一次等待
+    const b = benchFrames([{ keypad: partial, diag }, { keypad: partial, diag }, { keypad: FULL_KEYPAD }]);
+    ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+    assertEq(b.settleArgs.length, 1, '未稳一帧 → 应等一次');
+    assertEq(
+      b.settleArgs[0],
+      SETTLE_INTERVAL_MS,
+      '必须等**完整**间隔（旧注释宣称"重取样本身就是间隔"，那是把 hdc dump 的偶然' +
+      '耗时当成保证；取样一变快，间隔就归零）',
+    );
+  });
+
+  run(results, 'T3#3 同步等待**真的会耗时**（生产注入的就是这个原语，不是计数桩）', () => {
+    // 前面几条用假时钟验证"请求了多少补足"，这条验证"请求真的变成了等待"——
+    // 少了它，settle 可以是个永远立即返回的空壳而全绿（正是此前生产侧的实况）。
+    const t0 = Date.now();
+    boundedSyncWait(30);
+    const elapsed = Date.now() - t0;
+    assert(elapsed >= 20, `boundedSyncWait(30) 应真的阻塞约 30ms，实测 ${elapsed}ms`);
+    assert(elapsed < 1_000, `不得远超请求值（实测 ${elapsed}ms）`);
+  });
+
+  run(results, 'T3#3 单次等待超硬上限 → **抛**而不是静默截断', () => {
+    let threw = false;
+    try {
+      boundedSyncWait(MAX_SYNC_WAIT_MS + 1);
+    } catch (err) {
+      threw = true;
+      assert(/超过硬上限/.test((err as Error).message), `错误须说明原因：${(err as Error).message}`);
+    }
+    assert(threw, 'clamp 会让调用方以为自己拿到了请求的间隔——宁可当场炸');
+    // 负数/0 是正常输入（差额为负），不得抛
+    boundedSyncWait(0);
+    boundedSyncWait(-5);
+    // 非有限值（codex 四批 P3）：`Infinity` 是所有输入里最该炸的那个，此前却和
+    // "负数/0" 一起走了最安静的分支——与"越界必须抛、绝不静默"的契约相矛盾。
+    for (const bad of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN]) {
+      let nonFiniteThrew = false;
+      try { boundedSyncWait(bad); } catch { nonFiniteThrew = true; }
+      assert(nonFiniteThrew, `boundedSyncWait(${String(bad)}) 必须抛，不得静默返回`);
+    }
+  });
+
+  run(results, 'T3#3 两条生产接线**共用同一处** unlock deps（此前各拼一份，恢复那条漏了 settle）', () => {
+    // 事故形态：门这边讨论过 settle，运行期恢复那边连字段都没写；settle 当时是可选，
+    // 于是缺的那份静默零等待——而单测注入了计数桩，全绿。类型层面已把 settle 改必填，
+    // 但"两处各拼一份"这个**形态**本身才是病根，故在此结构性钉死。
+    const files: Array<{ path: string; label: string }> = [
+      { path: path.join(__dirname, '..', '..', 'scripts', 'utils', 'device-readiness-deps.ts'), label: '就绪门' },
+      {
+        path: path.join(
+          __dirname, '..', '..', '..', 'profiles', 'hmos-app', 'harness', 'device-recovery-bridge.ts',
+        ),
+        label: '运行期恢复桥',
+      },
+    ];
+    for (const f of files) {
+      const code = fs.readFileSync(f.path, 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+      assert(
+        /buildUnlockDeps\(\)/.test(code),
+        `${f.label}（${path.basename(f.path)}）必须经 buildUnlockDeps()，不得再手拼一份 UnlockDeps`,
+      );
+      assert(
+        !/settle:\s*\(\s*\)\s*=>\s*\{\s*\}/.test(code),
+        `${f.label} 不得注入空 settle——那等于把"有界等待"重新变回零等待`,
+      );
+    }
+    // 且这一处接线给出的 settle 必须是**真会阻塞**的原语，不是占位
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const deps = require('../../scripts/utils/device-readiness-deps') as
+      typeof import('../../scripts/utils/device-readiness-deps');
+    const t0 = Date.now();
+    deps.buildUnlockDeps().settle(30);
+    assert(Date.now() - t0 >= 20, 'buildUnlockDeps().settle 必须真的等待');
+  });
+
+  run(results, 'T3#2 布局不认识（容器未找到）→ 立即停、不重取样，归类 layout_unsupported', () => {
+    const b = benchFrames([
+      { keypad: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } },
+      { keypad: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } },
+    ]);
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+    assertEq(r.ok, false, '不应解锁');
+    assert(r.ok === false && r.attempted === false, '零输入（绝不因诊断增强而输入）');
+    assertEq(r.ok === false ? r.failureKind : undefined, 'layout_unsupported', '须归 layout_unsupported');
+    assert(r.note.includes('container=absent'), `须带结构化事实：${r.note}`);
+    assertEq(b.settles, 0, '布局不认识时再等也没用——不得浪费 settle');
+  });
+
+  run(results, 'T3#2 键盘始终不齐 → 有界重取样后归类 ui_not_settled，且携带 digits=N/10', () => {
+    const partial = FULL_KEYPAD.slice(0, 4);
+    const b = benchFrames([
+      { keypad: partial, diag: { reason: 'digits_incomplete', found: 4, containerFound: true, hiddenSkipped: false } },
+    ]);
+    const r = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider: providerOf() });
+    assertEq(r.ok, false, '不应解锁');
+    assert(r.ok === false && r.attempted === false, '零输入');
+    assertEq(r.ok === false ? r.failureKind : undefined, 'ui_not_settled', '须归 ui_not_settled');
+    assert(r.note.includes('digits=4/10'), `须带识别到的数字个数：${r.note}`);
+    // 上界钉在**常量本身**，不写魔数——常量调大时这条会跟着走，不会变成永真断言
+    assert(b.settles >= 1 && b.settles <= MAX_RESAMPLES, `重取样须有界于 ${MAX_RESAMPLES}（实得 ${b.settles}）`);
+    // **诊断里不得出现任何 UI 原文/秘密**
+    assert(!r.note.includes(CANARY_PIN), '诊断不得泄露 PIN');
+  });
 
   run(results, '正常路径：解锁并**重新探测**复验 → 成功，凭据 commit 回 ready', () => {
     const taps: Array<{ x: number; y: number }> = [];
@@ -117,12 +285,57 @@ export function runAll(): UnitCaseResult[] {
     assertEq(r.ok, false, '仍锁必须判失败');
     assertEq(p.inspect(ID).state, 'burned', '失败即烧毁该凭据版本');
 
+    assertEq(r.ok === false ? r.failureKind : undefined, 'credential_unavailable', '烧毁 → 须归凭据类');
+
     // 再来一次：零输入。且**凭据已不存在**，不是靠某个可删的标志位挡住的
     const before = p.clickCount;
     const b2 = bench({ lockSeq: [true, false] });
     const r2 = ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b2.deps, provider: p });
     assertEq(r2.ok, false, '烧毁后不得再试');
     assertEq(p.clickCount, before, '烧毁后必须零输入');
+    assertEq(
+      r2.ok === false ? r2.failureKind : undefined,
+      'credential_unavailable',
+      '凭据不存在 → 仍是"去重新登记"',
+    );
+  });
+
+  run(results, 'T3#2 claim 期 absent/unsupported（TOCTOU 竞态）→ 仍归 credential_unavailable', () => {
+    // codex 三轮：这两条曾被兜底类 precondition_unmet **错归**——它们的下一步和
+    // "凭据被烧"完全一样（重新登记），处置相同就不该分家。
+    //
+    // 覆盖这两个分支必须走**竞态**：`canAttemptUnlock` 已经把 absent/burned/
+    // in_flight/unsupported 挡在前面，所以 `claimAndUnlock` 的同名 outcome 只在
+    // "放行判定时 ready、真正抢占前被删/被改" 这个窗口里出现。
+    // （第一版我把断言写在"烧毁后重试"那条路上——那条走的是 gate 分支，
+    //  变异复验证明它根本不咬这两行。）
+    const raced = (outcome: 'absent' | 'unsupported'): UnlockOutcome => {
+      const base = providerOf();
+      const provider: CredentialProvider = {
+        ...base,
+        available: () => base.available(),
+        inspect: id => base.inspect(id),                       // 放行判定：ready
+        claimAndUnlock: () => ({ outcome }),                    // 抢占时已经没了 / 形态不对
+        commitUnlock: (id, nonce) => base.commitUnlock(id, nonce),
+        burnCredential: (id, reason) => base.burnCredential(id, reason),
+        promptAndWrite: (id, prompt) => base.promptAndWrite(id, prompt),
+        remove: id => base.remove(id),
+        listVersions: s => base.listVersions(s),
+        reserveVersion: (s, v, n) => base.reserveVersion(s, v, n),
+      };
+      const b = bench({ lockSeq: [true, true] });
+      return ensureUnlocked({ serial: SERIAL, credentialRef: REF, deps: b.deps, provider });
+    };
+    for (const outcome of ['absent', 'unsupported'] as const) {
+      const r = raced(outcome);
+      assertEq(r.ok, false, `${outcome} 须失败`);
+      assert(r.ok === false && r.attempted === false, `${outcome} 必须零输入`);
+      assertEq(
+        r.ok === false ? r.failureKind : undefined,
+        'credential_unavailable',
+        `${outcome} 的下一步同样是重新登记 → 须归凭据类`,
+      );
+    }
   });
 
   run(results, '键位不全 → **零输入**（对着事故里的固定分辨率坐标表）', () => {
@@ -144,6 +357,7 @@ export function runAll(): UnitCaseResult[] {
       wake: () => {},
       reveal: () => { reveals += 1; },
       tap: () => {},
+      settle: () => {},
       snapshot: () => {
         snapshots += 1;
         if (snapshots === 1) {

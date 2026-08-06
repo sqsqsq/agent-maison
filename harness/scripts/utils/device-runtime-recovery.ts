@@ -13,7 +13,7 @@
 //     （热切会产出一半真机一半模拟器的混合证据，而 target_kind 只记一个）。
 // ============================================================================
 
-import { ensureUnlocked, type UnlockDeps } from './device-unlock-helper';
+import { ensureUnlocked, type UnlockDeps, type UnlockFailureKind } from './device-unlock-helper';
 import type { CredentialProvider } from './device-credential-store';
 
 export interface RuntimeRecoveryInput {
@@ -42,7 +42,21 @@ export type RuntimeRecoveryReason =
 
 export type RuntimeRecoveryResult =
   | { recovered: true; note: string; reason: 'not_locked' }
-  | { recovered: false; note: string; authorized: boolean; reason: RuntimeRecoveryReason };
+  | {
+      recovered: false;
+      note: string;
+      authorized: boolean;
+      reason: RuntimeRecoveryReason;
+      /**
+       * e5d8a2c4 T3#2（codex 三轮 P1）：解锁失败的**结构化归因原样上浮**。
+       *
+       * `reason` 是**本模块**的处置枚举（要不要外部阻断），`failureKind` 是**解锁链**
+       * 的归因枚举（下一步该干什么）——两者不是一回事。此前只回 `reason:'unlock_failed'`，
+       * 把 helper 已经分好的三类重新压平成一个字，消费方要按类别行动就只能解析
+       * `note` 文案或**再分类一次**（=第二份分类表，本纲要治的正是这个）。
+       */
+      failureKind?: UnlockFailureKind;
+    };
 
 /**
  * 设备操作前的就绪保证（幂等，可在每个边界前调用）。
@@ -89,7 +103,13 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
   });
   return r.ok
     ? { recovered: true, note: r.note, reason: 'not_locked' }
-    : { recovered: false, note: r.note, authorized: true, reason: 'unlock_failed' };
+    : {
+        recovered: false,
+        note: r.note,
+        authorized: true,
+        reason: 'unlock_failed',
+        ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+      };
 }
 
 /**

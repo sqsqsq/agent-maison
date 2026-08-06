@@ -272,6 +272,25 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'A7b e5d8a2c4 T4#1：ignored 目录内的**发布件**写时 deny（此前被目录级放行顺带开了口子）',
+    run: async () => {
+      const core = await loadCore();
+      const policy = core.loadRuntimeArtifactPolicy(frameworkAbs(LAYOUT, '.'))!;
+      const canWrite = (rel: string): boolean =>
+        (core as unknown as { isWriteAllowedPath(r: string, p: unknown): boolean })
+          .isWriteAllowedPath(rel, policy);
+      // 发布件：随 pack 产出、由 RELEASE-MANIFEST 逐字节校验——agent 绝不该覆写
+      assert(!canWrite('harness/trace/trace.schema.json'), '发布件 trace.schema.json 不可写');
+      assert(!canWrite('harness/trace/gap-notes.template.md'), '发布件 gap-notes.template.md 不可写');
+      assert(!canWrite('harness/reports/.gitkeep'), '占位发布件 .gitkeep 不可写');
+      // 同目录的运行时产物照常可写（降权只针对发布件，不误伤运行时面）
+      assert(canWrite('harness/trace/run-2026.jsonl'), '同目录运行时产物仍可写');
+      assert(canWrite('harness/reports/x.json'), 'reports 运行时产物仍可写');
+      // 扫描谓词不变：发布件在磁盘上合法存在，不算 foreign
+      assert(core.isPolicyAllowedPath('harness/trace/trace.schema.json', policy), '扫描谓词：发布件合法存在');
+    },
+  },
+  {
     name: 'B1 core allowlist：合法结构化真人审批 → 放行；五负例全 deny（第六轮 P1）',
     run: async () => {
       const core = await loadCore();

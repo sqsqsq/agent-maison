@@ -243,6 +243,74 @@ export function runAll(): UnitCaseResult[] {
     assert(!patternIsCovered('framework/harness/tsconfig.json', lines), 'tsconfig.json not ignored');
   });
 
+  // ==========================================================================
+  // e5d8a2c4 T4#1：ignored 目录内的发布件必须能被宿主 git 跟踪
+  // 2026-08-05 宿主实锤：framework-init 2026-04-25 写入的 `framework/harness/trace/`
+  // 把两个发布件静默吞掉，换机 clone 后 integrity 必 BLOCKER。
+  // ==========================================================================
+
+  /** 真起临时 git 仓跑 `git add -A`——**不接受字符串断言**（本次事故正是"看起来对"） */
+  function gitTrackedUnder(dirRel: string, gitignoreLines: string[], files: string[]): Set<string> {
+    return withTmpProject(root => {
+      const git = (args: string[]): void => {
+        const r = require('child_process').spawnSync('git', args, { cwd: root, encoding: 'utf-8' });
+        if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+      };
+      git(['init', '-q']);
+      git(['config', 'user.email', 't@t']);
+      git(['config', 'user.name', 't']);
+      for (const rel of files) {
+        const abs = path.join(root, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, 'x\n', 'utf-8');
+      }
+      fs.writeFileSync(path.join(root, '.gitignore'), gitignoreLines.join('\n') + '\n', 'utf-8');
+      git(['add', '-A']);
+      const out = require('child_process')
+        .spawnSync('git', ['ls-files'], { cwd: root, encoding: 'utf-8' }).stdout as string;
+      void dirRel;
+      return new Set(out.split('\n').map(s => s.trim()).filter(Boolean));
+    });
+  }
+
+  const SHIPPED = [
+    'framework/harness/trace/trace.schema.json',
+    'framework/harness/trace/gap-notes.template.md',
+  ];
+  const RUNTIME_OUT = 'framework/harness/trace/run-2026.jsonl';
+
+  run('T4#1 发布件在**真实 git** 里被跟踪，同目录运行时产物仍被忽略', () => {
+    const tracked = gitTrackedUnder('framework/harness/trace', [...CANONICAL_IGNORE_PATTERNS],
+      [...SHIPPED, RUNTIME_OUT]);
+    for (const f of SHIPPED) assert(tracked.has(f), `发布件须被跟踪：${f}（实得 ${[...tracked].join(',')}）`);
+    assert(!tracked.has(RUNTIME_OUT), '同目录运行时产物仍须被忽略');
+  });
+
+  run('T4#1 **叠加宿主历史宽规则**后仍被跟踪（真实事故初始条件；只验空仓=只修新宿主）', () => {
+    // framework-init 2026-04-25 写入的目录式宽规则——updater 只追加不删，它会一直在
+    const withLegacy = ['framework/harness/trace/', ...CANONICAL_IGNORE_PATTERNS];
+    const tracked = gitTrackedUnder('framework/harness/trace', withLegacy, [...SHIPPED, RUNTIME_OUT]);
+    for (const f of SHIPPED) {
+      assert(tracked.has(f), `历史宽规则在场时发布件仍须被跟踪：${f}——缺 !<dir>/ 前置行即在此转红`);
+    }
+    assert(!tracked.has(RUNTIME_OUT), '运行时产物仍须被忽略');
+  });
+
+  run('T4#1 派生形状：含发布件的目录产出「!<dir>/ + <dir>/* + 逐文件 !」且顺序正确', () => {
+    const lines = [...CANONICAL_IGNORE_PATTERNS];
+    const iNeg = lines.indexOf('!framework/harness/trace/');
+    const iStar = lines.indexOf('framework/harness/trace/*');
+    assert(iNeg >= 0, '须有反忽略父目录行');
+    assert(iStar > iNeg, `<dir>/* 须在 !<dir>/ 之后（实得 ${iNeg} / ${iStar}）`);
+    for (const f of SHIPPED) assert(lines.indexOf(`!${f}`) > iStar, `逐文件放行须在 <dir>/* 之后：${f}`);
+    // GITKEEP_DIRS 已删除——两个 .gitkeep 走同一条派生路径
+    assert(lines.includes('!framework/harness/reports/'), 'reports 段也应有反忽略父目录行');
+    assert(lines.includes('!framework/harness/state/.gitkeep'), 'state 的 .gitkeep 仍须放行');
+    // 无发布件的目录保持单行形态（不为所有目录无谓展开）
+    assert(lines.includes('framework/harness/dist/'), 'dist 无发布件，保持单行');
+    assert(!lines.includes('!framework/harness/dist/'), 'dist 不应有反忽略行');
+  });
+
   run('ensure 后 inspect11 为 POPULATED', () => {
     withTmpProject(root => {
       ensureCanonicalGitignore(root);

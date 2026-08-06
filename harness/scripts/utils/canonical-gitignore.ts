@@ -20,6 +20,8 @@ function normFeaturesDir(featuresDir: string): string {
 
 export interface RuntimeArtifactPolicy {
   ignored_runtime_patterns: string[];
+  /** e5d8a2c4 T4#1：ignored 目录内的**发布件**精确路径（禁 glob）；旧 policy 缺键回退 [] */
+  shipped_files_in_runtime_dirs: string[];
   generated_file_patterns: string[];
   reserved_metadata_files: string[];
 }
@@ -31,6 +33,8 @@ export function loadRuntimeArtifactPolicy(): RuntimeArtifactPolicy {
   const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   return {
     ignored_runtime_patterns: arr(doc.ignored_runtime_patterns),
+    // 旧发布件无此键 → []（不炸；届时行为回落为整目录忽略的历史语义）
+    shipped_files_in_runtime_dirs: arr(doc.shipped_files_in_runtime_dirs),
     generated_file_patterns: arr(doc.generated_file_patterns),
     reserved_metadata_files: arr(doc.reserved_metadata_files),
   };
@@ -83,23 +87,46 @@ export function isPolicyAllowedPath(rel: string, policy: RuntimeArtifactPolicy):
   return all.some(p => matchesPolicyPattern(rel, p));
 }
 
-/** SSOT 目录条目中须保留 .gitkeep 的目录（gitignore 关心"占位文件要跟踪"，匹配语义不关心）。 */
-const GITKEEP_DIRS = new Set(['harness/reports/', 'harness/state/']);
-
 /**
  * SSOT ignored_runtime_patterns → gitignore framework 段（实例根相对，framework/ 前缀）。
- * 目录条目默认 `framework/<dir>`；GITKEEP_DIRS 展开为 `<dir>/*` + `!<dir>/.gitkeep` 对
- * （保持与历史 canonical 列表逐字节一致——既有 equiv/断言测试零改动）。
+ *
+ * e5d8a2c4 T4#1（2026-08-05 宿主实锤）：目录内若有**发布件**
+ * （`shipped_files_in_runtime_dirs`），必须产出四行形状——
+ * ```
+ * !framework/<dir>/          ← 先反忽略父目录
+ * framework/<dir>/*          ← 再忽略目录内容
+ * !framework/<dir>/<file>    ← 逐个放行发布件
+ * ```
+ * **首行不可省**：`ensureCanonicalGitignore` 只追加不删除，宿主 2026-04-25 由
+ * framework-init 写入的 `framework/harness/trace/`（目录式）会一直在；而 git 硬规则是
+ * **父目录被排除时 `!` 无法重新纳入其中文件**。只加后两行在空仓能过、在真实宿主仍全忽略
+ * ——这正是发布件被宿主 git 静默吞掉、换机 clone 后 integrity 必 BLOCKER 的根因。
+ *
+ * 此前硬编码的 `GITKEEP_DIRS` 已删除：它是**派生方自己维护的第二份清单**，直接违反
+ * 该 SSOT 自述的"禁止任何一方另行维护第二份列表"；两个 `.gitkeep` 并入新字段走同一路径。
+ * 代价如实：reports/state 段因此多出一行 `!framework/<dir>/`，与历史 canonical 列表
+ * **不再逐字节一致**（既有 equiv/断言测试随之更新）。
  */
 export function frameworkRuntimeIgnorePatterns(): string[] {
+  const policy = loadRuntimeArtifactPolicy();
   const out: string[] = [];
-  for (const p of loadRuntimeArtifactPolicy().ignored_runtime_patterns) {
-    if (GITKEEP_DIRS.has(p)) {
-      const base = `framework/${p.replace(/\/$/, '')}`;
-      out.push(`${base}/*`, `!${base}/.gitkeep`);
-    } else {
+  for (const p of policy.ignored_runtime_patterns) {
+    const base = `framework/${p.replace(/\/$/, '')}`;
+    // 该 ignored 条目下的发布件。**只取直接子文件**（codex P2）：`<dir>/*` 会把直接
+    // 子目录整体忽略，git 无法用 `!` 穿透被忽略的父目录，故 `<dir>/sub/file` 即使登记
+    // 也不会生效——按简单优先收窄契约（对账套件同步断言），不实现递归祖先展开。
+    const shipped = p.endsWith('/') && !p.includes('*')
+      ? policy.shipped_files_in_runtime_dirs.filter(f => {
+          if (!f.startsWith(p)) return false;
+          const rest = f.slice(p.length);
+          return rest.length > 0 && !rest.includes('/');
+        })
+      : [];
+    if (shipped.length === 0) {
       out.push(`framework/${p}`);
+      continue;
     }
+    out.push(`!${base}/`, `${base}/*`, ...shipped.map(f => `!framework/${f}`));
   }
   return out;
 }
@@ -159,12 +186,15 @@ export function ignoreEquivPatterns(featuresDir: string = FEATURES_DIR_DEFAULT):
     'framework/harness/dist/',
     'framework/**/dist/',
   ],
+  // e5d8a2c4 T4#1：含发布件的 ignored 目录改出四行形状——反忽略父目录行也需 equiv 键
+  '!framework/harness/reports/': ['!framework/harness/reports/', '!framework/harness/reports'],
   'framework/harness/reports/*': ['framework/harness/reports/*'],
   '!framework/harness/reports/.gitkeep': ['!framework/harness/reports/.gitkeep'],
-  'framework/harness/trace/': [
-    'framework/harness/trace',
-    'framework/harness/trace/',
-  ],
+  '!framework/harness/trace/': ['!framework/harness/trace/', '!framework/harness/trace'],
+  'framework/harness/trace/*': ['framework/harness/trace/*'],
+  '!framework/harness/trace/trace.schema.json': ['!framework/harness/trace/trace.schema.json'],
+  '!framework/harness/trace/gap-notes.template.md': ['!framework/harness/trace/gap-notes.template.md'],
+  '!framework/harness/state/': ['!framework/harness/state/', '!framework/harness/state'],
   'framework/harness/state/*': [
     'framework/harness/state/*',
     'framework/harness/state',

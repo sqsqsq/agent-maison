@@ -21,11 +21,13 @@ import {
   spawnManagedDevice,
   type ManagedProcessIdentity,
 } from './device-session';
+import { boundedSyncWait } from './bounded-sync-wait';
 import {
   ensureUnlocked,
   type KeypadKey,
   type LockScreenSnapshot,
   type ScreenBounds,
+  type UnlockDeps,
 } from './device-unlock-helper';
 import type { DeviceReadinessDeps, DeviceReadinessInput, EmulatorFallback } from './device-readiness-gate';
 
@@ -294,6 +296,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * 解锁链的**唯一**生产接线（e5d8a2c4 T3#3）。
+ *
+ * 为什么必须只有一处：解锁 deps 此前在两个地方各拼一份——门这边（本文件
+ * `buildDeviceReadinessInput`）和运行期恢复那边（`profiles/hmos-app/harness/
+ * device-recovery-bridge.ts`）。两份都"看起来一样"，但 settle 只在其中一处被讨论过，
+ * 另一处连字段都没写；而 `settle` 当时是可选字段，于是缺的那份**静默零等待**。
+ * 这就是本纲要反复在治的形态：同一语义两处各写一遍 → 漂移 → 谁也没报错。
+ *
+ * settle 的机制选型与 R16 的关系见 `bounded-sync-wait.ts` 文件头（那里是权威说明）：
+ * 长/无界等待（模拟器 boot、readiness 轮询）仍恒为 async；这里补的是**有硬上限的
+ * 短观察间隔**——固定 `SETTLE_INTERVAL_MS`、最多 `MAX_RESAMPLES` 次。
+ *（早先这里写"差额多数为 0，dump 耗时已计入间隔"，那套差额计时已随第四批删除。）
+ */
+export function buildUnlockDeps(): UnlockDeps {
+  return {
+    snapshot: readLockScreenSnapshot,
+    wake: wakeDevice,
+    reveal: revealLockKeypad,
+    tap: tapAt,
+    settle: boundedSyncWait,
+  };
+}
+
 // 诚实边界：不同 HarmonyOS 版本的锁屏组件树结构不同，下面的节点匹配需随真机校准。
 // 识别不足 10 键时上层零输入——宁可不解锁，也绝不乱点。
 
@@ -333,9 +359,11 @@ export function parseLockScreenTree(tree: unknown): LockScreenSnapshot {
     return { locked: false, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'not_locked' } };
   }
   const lockBounds = boundsOf(lockRoot);
+  const kp = collectDigitKeysWithDiag(lockRoot);
   return {
     locked: true,
-    keypad: collectDigitKeys(lockRoot),
+    keypad: kp.keys,
+    keypadDiag: kp.diag,
     cooldown: classifyCooldown(lockRoot),
     ...(lockBounds ? { lockBounds } : {}),
   };
@@ -445,18 +473,59 @@ export function classifyCooldown(lockRoot: unknown): LockScreenSnapshot['cooldow
   return { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' };
 }
 
-/** 只在 Digital_PSD_Input_Tip 内收集 0–9；重复、缺失或几何异常一律返回空。 */
-export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: number; y: number }> {
+/**
+ * e5d8a2c4 T3#1：键位识别失败的**结构化归因**。
+ *
+ * 此前五种截然不同的原因全部返回空数组，上层塌缩成一句
+ * `keypad_incomplete_after_reveal（零输入）`——2026-08-05 宿主实况：agent 只能列
+ * 「AOD/表盘/通知遮挡、非数字 PIN 盘、截图时机」猜一遍，maison 侧也无从复查
+ * （dump 用完即弃）。两类原因的处置**完全不同**：容器没找到=布局不认识，须真机校准，
+ * 重试无意义；容器在但键不全=动画/遮挡，settle 后重取样很可能就好。
+ *
+ * 只产**非敏感结构化事实**（容器在否 / 识别到几个 / 何种校验不过），
+ * **不含任何 UI 原文**——原始 dump 仅在显式校准旗标下另行落盘。
+ */
+export type KeypadDiagReason =
+  | 'ok'
+  /** 容器 id 未命中——OS 版本或锁屏布局变了，须真机校准 */
+  | 'pin_container_not_found'
+  /** 容器在但数字不足 10——动画未完成 / 被遮挡 */
+  | 'digits_incomplete'
+  /** 同一数字重复出现，或数字节点无 bounds——树结构异常 */
+  | 'digit_invalid'
+  /** 数字齐但 3×3 几何校验不过——非标准 PIN 盘 */
+  | 'geometry_insane'
+  /** 有节点因 visible=false / opacity=0 被跳过——通常是过渡态 */
+  | 'keys_hidden';
+
+export interface KeypadDiag {
+  reason: KeypadDiagReason;
+  /** 识别到的合法数字个数（0–10） */
+  found: number;
+  /** 是否发现 PIN 容器 */
+  containerFound: boolean;
+  /** 是否有节点因 hidden 被跳过（区分「没渲染」与「渲染了但隐藏」） */
+  hiddenSkipped: boolean;
+}
+
+/** 只在 Digital_PSD_Input_Tip 内收集 0–9；重复、缺失或几何异常一律不返回键位（带归因）。 */
+export function collectDigitKeysWithDiag(lockRoot: unknown): {
+  keys: Array<{ digit: string; x: number; y: number }>;
+  diag: KeypadDiag;
+} {
   const container = findNode(lockRoot, attrs => String(attrs.id ?? '') === PIN_CONTAINER_ID);
-  if (!container) return [];
+  if (!container) {
+    return { keys: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } };
+  }
   const found = new Map<string, { digit: string; x: number; y: number }>();
   let invalid = false;
+  let hiddenSkipped = false;
   const visit = (node: unknown, inheritedBounds: ScreenBounds | null): void => {
     const attrs = nodeAttrs(node);
     if (attrs) {
       const hidden = attrs.visible === false || String(attrs.visible ?? '').toLowerCase() === 'false' ||
         String(attrs.opacity ?? '') === '0';
-      if (hidden) return;
+      if (hidden) { hiddenSkipped = true; return; }
       const ownBounds = boundsOf(node);
       const effectiveBounds = ownBounds ?? inheritedBounds;
       const original = String(attrs.originalText ?? '').trim();
@@ -477,8 +546,19 @@ export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: n
   };
   visit(container, boundsOf(container));
   const keys = [...found.values()];
-  if (invalid || keys.length !== 10 || !'0123456789'.split('').every(d => found.has(d))) return [];
-  return keypadGeometryIsSane(found) ? keys : [];
+  const base = { found: keys.length, containerFound: true, hiddenSkipped };
+  if (invalid) return { keys: [], diag: { reason: 'digit_invalid', ...base } };
+  if (keys.length !== 10 || !'0123456789'.split('').every(d => found.has(d))) {
+    // hidden 跳过导致的不全单独归类——它更像过渡态而非布局不支持
+    return { keys: [], diag: { reason: hiddenSkipped ? 'keys_hidden' : 'digits_incomplete', ...base } };
+  }
+  if (!keypadGeometryIsSane(found)) return { keys: [], diag: { reason: 'geometry_insane', ...base } };
+  return { keys, diag: { reason: 'ok', ...base } };
+}
+
+/** 既有调用面兼容（只要键位、不要归因）。 */
+export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: number; y: number }> {
+  return collectDigitKeysWithDiag(lockRoot).keys;
 }
 
 function keypadGeometryIsSane(keys: ReadonlyMap<string, KeypadKey>): boolean {
@@ -622,14 +702,12 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
             const r = ensureUnlocked({
               serial,
               credentialRef: unlockRef,
-              deps: {
-                snapshot: readLockScreenSnapshot,
-                wake: wakeDevice,
-                reveal: revealLockKeypad,
-                tap: tapAt,
-              },
+              deps: buildUnlockDeps(),
             });
-            return { ok: r.ok, note: r.note };
+            // e5d8a2c4 T3#2：**结构化类别原样传递**（codex P1）——此前只回 ok/note，
+            // 到 readiness result / device_unlock_attempt / phase_halt 就只剩文案，
+            // 下游要按类别行动只能解析字符串或**再分类一次**（=第二份分类表）。
+            return r.ok ? { ok: true, note: r.note } : { ok: false, note: r.note, failureKind: r.failureKind };
           },
         }
       : {}),

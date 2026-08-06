@@ -50,13 +50,16 @@ import {
 import {
   buildGoalManifestFromInput,
   computeManifestIdentityFields,
+  manifestIdentityFieldDigest,
   resolveVisionLineage,
-  visionLineageResumeIssue,
   type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
 import {
   finalizeLineageResetQuarantine,
   quarantineLineageAnchorsForReset,
+  resolveBirthVisionLineage,
+  resolveLineageResetFacts,
+  resolveLineageResetInFlight,
   rollbackLineageResetQuarantine,
 } from '../../scripts/goal-runner';
 
@@ -64,6 +67,10 @@ const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts');
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
+}
+
+function assertEq<T>(actual: T, expected: T, message: string): void {
+  if (actual !== expected) throw new Error(`${message}（期望 ${String(expected)}，实得 ${String(actual)}）`);
 }
 
 /**
@@ -973,7 +980,7 @@ const manifestCompatCases: TestCase[] = [
     }),
   },
   {
-    name: 'vision_lineage 非法枚举 fail-closed；resume 携 reset 拒绝',
+    name: 'vision_lineage 非法枚举 fail-closed；resume 中途升级 reset 恒 terminal',
     run: () => tmpProject((root) => {
       let msg = '';
       try {
@@ -981,11 +988,183 @@ const manifestCompatCases: TestCase[] = [
       } catch (e) { msg = (e as Error).message; }
       assert(msg.includes('vision_lineage'), `应拒绝非法枚举，实际：${msg}`);
 
-      const reset = { vision_lineage: 'reset' } as Pick<GoalManifest, 'vision_lineage'>;
-      assert(visionLineageResumeIssue(reset, 'fresh') === null, 'fresh 合法');
-      assert((visionLineageResumeIssue(reset, 'resume') ?? '').includes('仅允许 fresh'), 'resume 须拒绝');
-      assert(visionLineageResumeIssue({}, 'resume') === null, '未声明 reset 的 resume 不受影响');
+      // e5d8a2c4 T1③：基于出生字段的 resume 硬拒**已删除**（它把「已消费的出生声明」
+      // 与「中途塞入」连坐）。此处改为钉住接替它的两道门仍在：
+      // ① vision_lineage 计入 MAC 保护的 manifest 身份字段 → 停机期被补写会被 drift 检出；
+      const withReset = buildGoalManifestFromInput(
+        baseManifestInput({ vision_lineage: 'reset' }), { projectRoot: root });
+      const withoutReset = buildGoalManifestFromInput(baseManifestInput({}), { projectRoot: root });
+      const fReset = computeManifestIdentityFields(withReset);
+      const fPlain = computeManifestIdentityFields(withoutReset);
+      assert('vision_lineage' in fReset, 'reset 在场须入身份字段集（否则中途补写检测不到）');
+      assert(!('vision_lineage' in fPlain), '未声明时不得凭空补键（否则旧 run resume 误判漂移）');
+      // ② decide() 对 reset_lineage 在非 fresh 恒 terminal（中途升级的真正防线）
+      const midRunReset = decide(
+        { incident: 'vision_feature_head_mismatch', lineage_reset_requested: true },
+        NO_AUTHORITY,
+        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
+      );
+      assert(midRunReset.kind === 'terminal', `非 fresh 的 reset 须 terminal，实得 ${midRunReset.kind}`);
+
+      // T1③(b)(c)：**未完成的 reset 事务**判据——它不是"中途升级"（上面那条仍 terminal），
+      // 而是同一笔已获准事务的幂等完成。崩溃窗实锤：discontinuity 已写、committed 未写时
+      // 崩溃，resume 回滚旧锚后，旧锚失配→terminal 死路 / 旧锚有效→reset 被静默丢弃。
+      const ev = (t: string): Record<string, unknown> => ({ type: t });
+      assert(
+        resolveLineageResetInFlight('reset', [ev('lineage_discontinuity')]) === true,
+        'discontinuity 无 committed → 未完成，须幂等续做',
+      );
+      assert(
+        resolveLineageResetInFlight('reset', [ev('lineage_discontinuity'), ev('lineage_reset_committed')]) === false,
+        'committed 在场 → 已消费，不得重做',
+      );
+      // codex 二轮：一个 run **只有一次出生 reset**，"committed 后再起新事务"不是合法
+      // 形态——原用例连同那套可反复开合的状态机一并删除。
+      assert(
+        resolveLineageResetInFlight('reset', [ev('lineage_reset_committed'), ev('lineage_discontinuity')]) === false,
+        'committed 一旦出现即已消费，其后再有 discontinuity 也不重开',
+      );
+      // **覆盖更早的崩溃窗**：quarantine 已改场外锚、discontinuity 尚未落盘时崩溃，
+      // 事件里什么都没有——初版判据在此返回 false（旧锚失配→terminal / 旧锚有效→静默跳过）。
+      assert(
+        resolveLineageResetInFlight('reset', [ev('run_start')]) === true,
+        'discontinuity 落盘前崩溃 → 仍须判未完成（出生声明为起点，不依赖过程事件）',
+      );
+      assert(
+        resolveLineageResetInFlight('continue', [ev('lineage_discontinuity')]) === false,
+        '出生未声明 reset 时恒 false——单靠伪造过程事件拿不到 reset',
+      );
+      assert(
+        resolveLineageResetInFlight('reset', []) === true,
+        '声明了 reset 且无 committed → 待消费（判据是出生声明，不是过程事件）',
+      );
     }),
+  },
+  {
+    // codex 三轮 P1：上一版判据读的是**当前盘上的 manifest**，注释却写"出生冻结"。
+    // 真实攻击面不是伪造 events，而是**停机窗口改 manifest**——首次 vision checkpoint
+    // 尚未生成时 drift 按「无基线」放行，于是中途补写 reset 就能骗到 recover，
+    // 正好绕过"resume 中途升级 reset 恒 terminal"这条红线。
+    name: 'T1③ 出生冻结 lineage：resume 只认首个 run_start，停机期改 manifest 无效',
+    run: () => {
+      const reset = { vision_lineage: 'reset' } as Pick<GoalManifest, 'vision_lineage'>;
+      // **夹具必须按真实 writer 的形状造**（fable 四批 P0）：生产写进 run_start 的
+      // `manifest_identity_fields` 是逐字段 sha256 截断，**不是原值**。初版夹具手写
+      // `{vision_lineage:'reset'}`，于是判据里那句 `=== 'reset'` 在夹具上成立、在
+      // 生产上恒 false——功能等于没修，还全绿穿过了四轮 review。
+      const runStart = (lineage?: string): Record<string, unknown> => ({
+        type: 'run_start',
+        ...(lineage === undefined
+          ? {}
+          : { manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest(lineage) } }),
+      });
+
+      // 形状断言：夹具里存的必须是指纹。手写回原值 → 这一格立刻红。
+      const fields = (runStart('reset').manifest_identity_fields ?? {}) as Record<string, string>;
+      assert(
+        /^[0-9a-f]{16}$/.test(fields.vision_lineage) && fields.vision_lineage !== 'reset',
+        `夹具须与真实 writer 同形状（逐字段 sha256 截断），实得 ${fields.vision_lineage}`,
+      );
+      // 并且这个指纹确实来自真实 writer——不是本用例自己另算一份
+      assertEq(
+        fields.vision_lineage,
+        computeManifestIdentityFields(
+          buildGoalManifestFromInput(baseManifestInput({ vision_lineage: 'reset' }), { projectRoot: process.cwd() }),
+        ).vision_lineage,
+        '夹具指纹须与 computeManifestIdentityFields 的产出逐字节一致',
+      );
+
+      // fresh：本 run 尚未落 run_start → 当前 manifest 就是出生值
+      assertEq(resolveBirthVisionLineage([], reset), 'reset', 'fresh 取当前 manifest');
+
+      // resume 且出生确实声明了 reset → 续做成立
+      assertEq(
+        resolveBirthVisionLineage([runStart('reset')], { vision_lineage: 'continue' }),
+        'reset',
+        '出生为 reset 时，即便当前 manifest 已被改回 continue 也须认出生值',
+      );
+
+      // **攻击面正例**：出生是 continue，停机期把 manifest 改成 reset
+      assertEq(
+        resolveBirthVisionLineage([runStart('continue')], reset),
+        'continue',
+        '停机期补写 reset 不得被认成出生声明',
+      );
+      // 出生时压根没有该键（未声明）——身份字段集里也不会有它
+      assertEq(
+        resolveBirthVisionLineage([{ type: 'run_start', manifest_identity_fields: {} }], reset),
+        'continue',
+        '出生未声明该键 → 中途补写同样无效',
+      );
+      // 旧 schema：run_start 无身份字段快照 → 出生意图不可证 → fail-closed，
+      // **不得**回落到当前 manifest（那个回落就是攻击面本身）
+      assertEq(
+        resolveBirthVisionLineage([runStart(undefined)], reset),
+        'continue',
+        '缺身份字段快照须 fail-closed，不得回落当前 manifest',
+      );
+
+      // 端到端：篡改后的 resume 必须仍然 terminal
+      const tamperedInFlight = resolveLineageResetInFlight(
+        resolveBirthVisionLineage([runStart('continue')], reset),
+        [runStart('continue')],
+      );
+      assertEq(tamperedInFlight, false, '篡改后不得判为未完成事务');
+      const verdict = decide(
+        {
+          incident: 'vision_feature_head_mismatch',
+          lineage_reset_requested: true,          // 盘上 manifest 确实写着 reset
+          lineage_reset_in_flight: tamperedInFlight,
+        },
+        NO_AUTHORITY,
+        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
+      );
+      assertEq(verdict.kind, 'terminal', '停机期补写 reset 的 resume 必须仍恒 terminal');
+    },
+  },
+  {
+    // codex 四批 P1：同一次裁决里 lineage_reset_in_flight 用出生冻结值、
+    // lineage_reset_requested 却读当前盘上 manifest = **同一事实两个来源**。
+    name: 'T1③ reset 两项事实同源：出生 reset + 停机期改回 continue + 未 committed + resume → recover',
+    run: () => {
+      const birthReset = [{
+        type: 'run_start',
+        manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest('reset') },
+      }];
+      // 盘上 manifest 已被改回 continue（或干脆删了该键）——出生值不因此改变
+      const birthLineage = resolveBirthVisionLineage(birthReset, { vision_lineage: 'continue' });
+      assertEq(birthLineage, 'reset', '出生值只认首个 run_start');
+
+      // **消费生产的组装点**（codex 五批 P1）：此前这里手拼 `birthLineage === 'reset'`，
+      // 与 goal-runner 调用点各写一遍——于是"把生产改回读当前 manifest"这个变异
+      // 咬不到本用例，而我把它记成了咬中（变异脚本改的是本文件自己＝自证循环）。
+      const facts = resolveLineageResetFacts(birthReset, { vision_lineage: 'continue' });
+      assertEq(facts.lineage_reset_requested, true, 'requested 须取出生值，不读当前 manifest');
+      assertEq(facts.lineage_reset_in_flight, true, '无 committed → 事务未完成');
+      const decision = decide(
+        { incident: 'vision_feature_head_mismatch', ...facts },
+        NO_AUTHORITY,
+        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
+      );
+      assertEq(decision.kind, 'recover', `未完成的出生事务须幂等续做，实得 ${decision.kind}`);
+
+      // 对照：出生就是 continue（真·中途升级）→ 仍恒 terminal，红线没被这条修复削弱
+      const midRunDecision = decide(
+        {
+          incident: 'vision_feature_head_mismatch',
+          ...resolveLineageResetFacts(
+            [{
+              type: 'run_start',
+              manifest_identity_fields: { vision_lineage: manifestIdentityFieldDigest('continue') },
+            }],
+            { vision_lineage: 'reset' },   // 停机期补写 reset
+          ),
+        },
+        NO_AUTHORITY,
+        { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'resume' },
+      );
+      assertEq(midRunDecision.kind, 'terminal', 'resume 中途升级 reset 仍恒 terminal');
+    },
   },
 ];
 

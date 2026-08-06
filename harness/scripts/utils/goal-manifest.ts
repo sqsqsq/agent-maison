@@ -62,8 +62,8 @@ export interface GoalManifest {
    * 绝不进 AuthorityFacts.grants。其安全性由「仅 fresh 可选 + 断裂显式记事件 +
    * 禁止声称历史连续性 + 全链重验」保证：危险的不是 reset 本身，是静默的 reset。
    *
-   * 唯一入口 CLI `--vision-lineage=reset`；缺省 continue；resume 携 reset 直接拒绝；
-   * 运行中不得自动升级为 reset。
+   * 唯一入口 CLI `--vision-lineage=reset`；缺省 continue；**resume 显式携带该旗标**直接拒绝
+   * （出生 manifest 里的 reset 不再据此拒绝——e5d8a2c4 T1③）；运行中不得自动升级为 reset。
    *
    * **旧 manifest 兼容**：文档中无该键时行为按 `continue`，且身份字段集**不注入该键**
    * （见 computeManifestIdentityFields）——否则既有 run resume 会多出一个身份字段而误判漂移。
@@ -145,9 +145,25 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(fields)) {
-    out[k] = crypto.createHash('sha256').update(stableJson(v), 'utf-8').digest('hex').slice(0, 16);
+    out[k] = manifestIdentityFieldDigest(v);
   }
   return out;
+}
+
+/**
+ * 身份字段集里**单个字段的取值指纹**。
+ *
+ * 存在的理由是给**消费方**用：`manifest_identity_fields` 里存的是逐字段 sha256 截断，
+ * **不是原值**。任何想问"出生时这个字段是不是某个值"的代码，都必须拿本函数算出期望
+ * 指纹再比，**不能拿原值去比**——那样恒不相等，且失败得毫无声息。
+ *
+ * 这不是假设：`resolveBirthVisionLineage` 初版正是拿 `=== 'reset'` 去比哈希，生产上
+ * 恒 false（＝出生 reset 续做永不触发），却因为测试夹具**手写了原值**而全绿，
+ * 穿过了四轮 review。对应本仓硬学习"消费方须按真实 writer 的 schema 造夹具"。
+ * 抽成同一个函数即消除了"两处各写一遍哈希口径"的漂移面。
+ */
+export function manifestIdentityFieldDigest(value: unknown): string {
+  return crypto.createHash('sha256').update(stableJson(value), 'utf-8').digest('hex').slice(0, 16);
 }
 
 export function computeManifestIdentityHash(manifest: GoalManifest): string {
@@ -492,20 +508,26 @@ export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineag
 }
 
 /**
- * t3①：resume 携 `reset` 直接拒绝——放弃历史连续性只能在 fresh run 启动时声明，
- * run 中途/续跑不得升级（否则等于跑到一半把已建立的链一笔勾销）。
- * 返回错误消息（null=合法）。
+ * 【已删除 · e5d8a2c4 T1③，2026-08-05】`visionLineageResumeIssue()`
+ *
+ * 它按 manifest 的**出生字段**在启动期硬拒 resume，分不清两件完全不同的事：
+ * ① 出生时声明 reset、**已在启动时消费完毕**（quarantine + lineage_discontinuity +
+ *    新链三件套齐备后 `lineage_reset_committed`），其后阶段全 PASS；
+ * ② 跑到一半往 manifest 里塞 reset，想把已建立的链一笔勾销。
+ * manifest 是 run 的出生记录，reset 键**永远留在里面**，于是 ① 被 ② 的防线连坐——
+ * 任何声明过 reset 的 run 遇设备锁屏/超时/崩溃即**结构性不可 resume**
+ * （`--force-resume` 也无效）。2026-08-05 宿主实锤：PARTIAL 停放后框架自己的停放话术
+ * 让人 resume，自己的启动门拒绝 resume。
+ *
+ * 删除而非重写，因为它想防的 ② **已被两道现成的门覆盖**：
+ * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 MAC 保护的身份字段
+ *   （见上方该函数注释"键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现"）；
+ * · `decide()` 对 `reset_lineage` 在 `invocation !== 'fresh'` 时恒 terminal
+ *   （adjudication.ts）。
+ * 一件事三道门、其中一道分不清合法与非法——收敛回前两道。
+ * 命令行 `--vision-lineage` **显式旗标**在 resume 上的拒绝**保留**（goal-runner.ts）——
+ * 那才是真的"中途升级"；出生 manifest 里的 reset 不再据此拒绝。
  */
-export function visionLineageResumeIssue(
-  manifest: Pick<GoalManifest, 'vision_lineage'>,
-  invocation: 'fresh' | 'resume',
-): string | null {
-  if (invocation === 'resume' && resolveVisionLineage(manifest) === 'reset') {
-    return 'vision_lineage=reset 仅允许 fresh run 声明——resume 携 reset 拒绝启动' +
-      '（放弃历史连续性不得在续跑中途升级）。如确需重建 lineage，请以新 run_id 启动。';
-  }
-  return null;
-}
 
 export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
   const u = manifest.unattended;

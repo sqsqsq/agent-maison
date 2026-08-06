@@ -16,6 +16,8 @@
 // 静态依赖会在部分入口形成环。
 // ============================================================================
 
+import type { UnlockFailureKind } from '../../../harness/scripts/utils/device-unlock-helper';
+
 export interface DeviceReadyOutcome {
   ready: boolean;
   note: string;
@@ -30,6 +32,15 @@ export interface DeviceReadyOutcome {
    * 一台好设备判死。判不出时放行，让实际操作去暴露真实问题。
    */
   blocked: boolean;
+  /**
+   * e5d8a2c4 T3#2：解锁失败的结构化归因。**消费方按它决定下一步，禁止解析 `note` 文案。**
+   * 前置/并发/等待类失败不带该字段——照走既有 `device_blocked` 通道。
+   *
+   * 用**闭集类型**而非 string（codex 四批 P2）：放宽成 string 后，adapter 可以静默
+   * 产出第四、第五种未登记分类而编译器不报警——等于把刚删掉的兜底类从边界放回来。
+   * 这里是 `import type`（编译期擦除），不会形成本文件头注说的那种 require 环。
+   */
+  failureKind?: UnlockFailureKind;
 }
 
 function loadDeps(): {
@@ -67,12 +78,10 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
     const r = ensureDeviceReadyAtRuntime({
       serial: target,
       credentialRef: deps.resolveAttemptCredentialRef(projectRoot),
-      deps: {
-        snapshot: deps.readLockScreenSnapshot,
-        wake: deps.wakeDevice,
-        reveal: deps.revealLockKeypad,
-        tap: deps.tapAt,
-      },
+      // e5d8a2c4 T3#3：解锁 deps 走 harness 的**唯一**接线，不在此再拼一份。
+      // 此前这里手拼四个字段、独独漏了 settle（当时是可选字段，不报错），于是
+      // 运行期恢复这条路在真机上恒零等待——正是 2026-08-05 宿主"永久零输入"的那条路。
+      deps: deps.buildUnlockDeps(),
     });
     // 只有"确实锁着且没解开"才算外部阻断；"判不出"不阻断（见 blocked 字段说明）
     const blocked = !r.recovered && (r.reason === 'unauthorized' || r.reason === 'unlock_failed');
@@ -81,6 +90,7 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
       note: r.note,
       authorized: r.recovered ? true : r.authorized,
       blocked,
+      ...(!r.recovered && r.failureKind ? { failureKind: r.failureKind } : {}),
     };
   } catch (err) {
     // 桥自身加载/执行失败：这是框架问题，不是设备阻断。放行让实际操作去暴露真实原因，

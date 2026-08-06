@@ -24,5 +24,32 @@
     "device_ready": true,
     "target_kind": "physical",
     "serial_unchanged": true
+  },
+  "superseded_by_source_change": {
+    "recorded_at": "2026-08-05",
+    "by": "e5d8a2c4 T3（解锁诊断三分类 + 结构化 failureKind 全链贯通 + reveal 后固定间隔重取样）",
+    "status": "PENDING_REAL_DEVICE_REVERIFICATION",
+    "note": "上面 source_sha256 是 2026-07-30 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
+    "new_dependencies_not_covered": [
+      "harness/scripts/utils/bounded-sync-wait.ts"
+    ],
+    "new_dependencies_note": "该文件在 2026-07-30 验收时尚不存在，故不在 source_sha256 里——**刻意不补进去**：补了就等于宣称它被真机验过。它现在是解锁链的实际依赖（settle 原语），真机复验时须一并纳入新的 source_sha256。",
+    "changed_files": [
+      {
+        "path": "harness/scripts/utils/device-readiness-gate.ts",
+        "verified_sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a",
+        "current_sha256": "548f9f207f89d08c60edd2a34429d82c79d2166876dd13073b51eb8e90f66da3"
+      },
+      {
+        "path": "harness/scripts/utils/device-readiness-deps.ts",
+        "verified_sha256": "a80f72383700737b04cbf5b0d03408526bb80514dd7baad833c8eeb325e85234",
+        "current_sha256": "d1e519779eba4171b91f127543d27a0e40243df9135f7d098dd1a3acc8a77629"
+      },
+      {
+        "path": "harness/scripts/utils/device-unlock-helper.ts",
+        "verified_sha256": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4",
+        "current_sha256": "b8b972bc8356bbcbf1f2afddf760810e4dc22914efde697b9e2bd6cc49741481"
+      }
+    ]
   }
 }

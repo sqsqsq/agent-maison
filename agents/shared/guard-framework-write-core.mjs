@@ -22,7 +22,7 @@ import * as path from 'path';
 // 策略加载（SSOT）
 // --------------------------------------------------------------------------
 
-/** @typedef {{ignored_runtime_patterns: string[], generated_file_patterns: string[], reserved_metadata_files: string[]}} RuntimeArtifactPolicy */
+/** @typedef {{ignored_runtime_patterns: string[], shipped_files_in_runtime_dirs: string[], generated_file_patterns: string[], reserved_metadata_files: string[]}} RuntimeArtifactPolicy */
 
 /**
  * 读 specs/runtime-artifact-policy.json。frameworkRoot = 消费端 <repo>/framework 或
@@ -38,6 +38,8 @@ export function loadRuntimeArtifactPolicy(frameworkRoot) {
     const arr = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
     return {
       ignored_runtime_patterns: arr(doc.ignored_runtime_patterns),
+      // 旧发布件无此键 → []（不炸；届时行为回落为整目录忽略的历史语义）
+      shipped_files_in_runtime_dirs: arr(doc.shipped_files_in_runtime_dirs),
       generated_file_patterns: arr(doc.generated_file_patterns),
       reserved_metadata_files: arr(doc.reserved_metadata_files),
     };
@@ -115,6 +117,11 @@ export function isPolicyAllowedPath(rel, policy) {
  * @param {string} rel @param {RuntimeArtifactPolicy} policy @returns {boolean}
  */
 export function isWriteAllowedPath(rel, policy) {
+  // e5d8a2c4 T4#1：ignored 目录内的**发布件**先行 deny——它们随 pack 产出、由
+  // RELEASE-MANIFEST 逐字节校验，是发布件不是运行时产物。此前它们被目录级
+  // ignored_runtime_patterns 顺带放行，等于 agent 可随意覆写 trace.schema.json。
+  const normalized = String(rel).replace(/\\/g, '/');
+  if (policy.shipped_files_in_runtime_dirs.includes(normalized)) return false;
   const writable = [...policy.ignored_runtime_patterns, ...policy.generated_file_patterns];
   return writable.some((p) => matchesPolicyPattern(rel, p));
 }
