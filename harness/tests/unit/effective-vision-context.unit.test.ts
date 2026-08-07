@@ -492,7 +492,7 @@ test('五轮 P0-3：legacy 无链账本迁移——downgrade/contradicted 保守
   });
 });
 
-test('六轮 P0-2：vision checkpoint 五态（absent/ok_unauthenticated/ok/mismatch/invalid）+ namespace 隔离', () => {
+test('vision checkpoint 四态（absent/ok/mismatch/invalid，5a 后签名维度删）+ namespace 隔离', () => {
   withTmp(root => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
@@ -505,10 +505,10 @@ test('六轮 P0-2：vision checkpoint 五态（absent/ok_unauthenticated/ok/mism
       const snap = gr.snapshotVisionLedgers(root, 'f');
       assert(gr.verifyVisionCheckpoint({ ...base, current: snap }).state === 'absent', '无 checkpoint=absent');
       gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH', files: snap });
-      // 未配 HMAC key → 如实 ok_unauthenticated（不冒充强信任）
+      // T2 5a 完成刀：签名维度删除——内容一致即 ok（不再有 ok_unauthenticated 态）
       assert(
-        gr.verifyVisionCheckpoint({ ...base, current: gr.snapshotVisionLedgers(root, 'f') }).state === 'ok_unauthenticated',
-        '无 key=ok_unauthenticated',
+        gr.verifyVisionCheckpoint({ ...base, current: gr.snapshotVisionLedgers(root, 'f') }).state === 'ok',
+        '内容一致=ok（签名维度已删）',
       );
       // 六轮 P0-1 组合攻击封堵：checkpoint 在场时把链式账本换成一条 chainless 行 →
       // verify=mismatch（先验后迁——迁移路径不可达，换皮绕过失效）
@@ -523,23 +523,22 @@ test('六轮 P0-2：vision checkpoint 五态（absent/ok_unauthenticated/ok/mism
       );
       const swap = gr.verifyVisionCheckpoint({ ...base, current: gr.snapshotVisionLedgers(root, 'f') });
       assert(swap.state === 'mismatch' && swap.mismatched.includes('artifact-attestations.jsonl'), JSON.stringify(swap));
-      // HMAC：配 key 后写 → ok；篡改 payload → invalid；带 MAC 但 key 被移除 → invalid
-      // 十二轮 P0-a：verifyVisionCheckpoint 不再 force-equal manifest/auth_subset（rebase 自我
-      // 判死已移除）——扩权检测改由 manifestDrift 以 checkpoint 为可信旧基线做字段级授权。
+      // T2 5a 完成刀：MAC/密钥维度整体退役——env 有无 key 均不影响判定；
+      // 内容被改＝快照失配 → mismatch（处置=丢缓存重算，非 fail-closed）。
+      // 收口刀二：auth_subset 绑定随"resume 扩权比对"消费端一并退役（只写不读即删）。
       process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'k-secret';
       const snap2 = gr.snapshotVisionLedgers(root, 'f');
-      const authSubset = gr.computeAuthSubsetSha256([{ phase: 'ut', allowed_files: ['a.ets'], max_files: 1 }]);
-      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH', files: snap2, authSubsetSha256: authSubset });
-      assert(gr.verifyVisionCheckpoint({ ...base, current: snap2 }).state === 'ok', '配 key=ok');
+      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH', files: snap2 });
+      assert(gr.verifyVisionCheckpoint({ ...base, current: snap2 }).state === 'ok', '内容一致=ok（key 在场也不改判定）');
       const cpPath = gr.visionCheckpointPath(root, 'f', 'runx');
       const doc = JSON.parse(fs.readFileSync(cpPath, 'utf-8')) as { files: Array<{ sha256: string }> };
       doc.files[0].sha256 = 'deadbeef';
       fs.writeFileSync(cpPath, JSON.stringify(doc), 'utf-8');
       const forged = gr.verifyVisionCheckpoint({ ...base, current: snap2 });
-      assert(forged.state === 'invalid' && /MAC/.test(forged.reason ?? ''), JSON.stringify(forged));
-      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH', files: snap2, authSubsetSha256: authSubset });
+      assert(forged.state === 'mismatch', `内容改动=mismatch（丢缓存重算）：${JSON.stringify(forged)}`);
+      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH', files: snap2 });
       delete process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-      assert(gr.verifyVisionCheckpoint({ ...base, current: snap2 }).state === 'invalid', '带 MAC 无 key=invalid（fail-closed）');
+      assert(gr.verifyVisionCheckpoint({ ...base, current: snap2 }).state === 'ok', '旧 mac 字段被忽略（兼容读取）');
       // namespace：不同工程/feature 同 runId → 不同路径（六轮 P1 碰撞根治）
       const otherRoot = path.join(root, 'other-proj');
       fs.mkdirSync(otherRoot, { recursive: true });
@@ -598,26 +597,26 @@ test('七轮 P0-3：feature head——fresh run 前跨 run 篡改检出（mismat
       const w1 = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'run-a', files: snap, generation: 1 });
       const w2 = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'run-a', files: snap, generation: 2 });
       assert(typeof w1.digest === 'string' && w1.digest !== w2.digest, 'write 返回字节 digest 且随世代变');
-      const meta = gr.readVisionFeatureHeadMeta({ projectRoot: root, feature: 'f' });
-      assert(meta.state === 'valid' && meta.generation === 2 && meta.digest === w2.digest,
-        `meta 应验真、世代=2、digest 匹配：${JSON.stringify(meta)}`);
-      assert(gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap }).state === 'ok', '未动=ok');
+      const vOk = gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap });
+      assert(vOk.state === 'ok' && vOk.generation === 2, `未动=ok 且世代=2：${JSON.stringify(vOk)}`);
       // 跨 run 攻击：run-a 结束后改账本 → run-b fresh 启动前 head 比对失配
       appendArtifactAttestation(root, 'f', {
         artifact_path: 'spec/ui-spec.yaml', artifact_hash: 'H-EVIL', verdict: 'unverified', reasons: ['y'], source: 'evil',
       });
       const v = gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: gr.snapshotVisionLedgers(root, 'f') });
       assert(v.state === 'mismatch' && v.mismatched.includes('artifact-attestations.jsonl'), JSON.stringify(v));
-      // head MAC 篡改 → invalid（verify 与覆盖前 meta 双面）
+      // T2 5a 完成刀：mac 字段不再参与判定——head 内容被改＝快照与账本失配 → mismatch
+      // （处置=自动重建，非 fail-closed）；结构损坏（非 JSON）仍 invalid（同样自动重建）。
       const hp = gr.visionFeatureHeadPath(root, 'f');
       const hd = JSON.parse(fs.readFileSync(hp, 'utf-8')) as { files: Array<{ sha256: string }> };
       hd.files[0].sha256 = 'deadbeef';
       fs.writeFileSync(hp, JSON.stringify(hd), 'utf-8');
-      assert(gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap }).state === 'invalid', 'MAC 破坏=invalid');
-      assert(gr.readVisionFeatureHeadMeta({ projectRoot: root, feature: 'f' }).state === 'invalid', '覆盖前 meta 同判 invalid');
-      // head 被删 → meta=absent（八轮 P1-1：世代>0 期望在场，runner 写点据此 halt 不重签）
+      assert(gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap }).state === 'mismatch', '内容改动=mismatch（自动重建）');
+      fs.writeFileSync(hp, 'not-json{', 'utf-8');
+      assert(gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap }).state === 'invalid', '结构损坏=invalid（同样自动重建）');
+      // head 被删 → absent（收口刀后：记录+继续/自动重建，运行中覆盖前 meta 复验已退役）
       fs.rmSync(hp, { force: true });
-      assert(gr.readVisionFeatureHeadMeta({ projectRoot: root, feature: 'f' }).state === 'absent', '删除=absent');
+      assert(gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap }).state === 'absent', '删除=absent');
     } finally {
       if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
       else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
@@ -627,7 +626,7 @@ test('七轮 P0-3：feature head——fresh run 前跨 run 篡改检出（mismat
   });
 });
 
-test('九/十二轮：checkpoint 校验 head generation 咬合；manifest 身份/授权子集经 meta 交 drift 授权（不 force-equal）', () => {
+test('九轮：checkpoint 校验 head generation 咬合（缓存可复用性判定，不管 manifest 身份）', () => {
   withTmp(root => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
@@ -638,17 +637,14 @@ test('九/十二轮：checkpoint 校验 head generation 咬合；manifest 身份
     try {
       const base = { projectRoot: root, feature: 'f', runId: 'r9' };
       const snap = gr.snapshotVisionLedgers(root, 'f');
-      const AS = gr.computeAuthSubsetSha256([]);
       const idFields = { requirement: 'aaaaaaaaaaaaaaaa', budget: 'bbbbbbbbbbbbbbbb' };
-      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH1', manifestIdentityFields: idFields, files: snap, authSubsetSha256: AS, headGeneration: 3 });
+      gr.writeVisionCheckpoint({ ...base, manifestHash: 'MH1', manifestIdentityFields: idFields, files: snap, headGeneration: 3 });
       // head generation 一致 → ok；脱节 → invalid（十二轮：manifest/auth_subset 不再 force-equal）
       assert(gr.verifyVisionCheckpoint({ ...base, current: snap, expectedHeadGeneration: 3 }).state === 'ok', 'head 世代一致=ok');
       const hg = gr.verifyVisionCheckpoint({ ...base, current: snap, expectedHeadGeneration: 5 });
       assert(hg.state === 'invalid' && /head_generation/.test(hg.reason ?? ''), JSON.stringify(hg));
-      // 十二轮 P0-a：readVisionCheckpointMeta 带回可信旧基线（manifest_hash + 逐字段身份）供 drift 授权
-      const meta = gr.readVisionCheckpointMeta({ ...base });
-      assert(meta.state === 'valid' && meta.manifestHash === 'MH1', `meta 带回 manifest_hash：${JSON.stringify(meta)}`);
-      assert(meta.manifestIdentityFields?.requirement === 'aaaaaaaaaaaaaaaa', 'meta 带回逐字段身份（drift 基线 SSOT）');
+      // 收口刀（codex P1-1）：checkpoint 不再向任何裁决面输出 manifest 身份——
+      // readVisionCheckpointMeta 已删（防复活断言见统一格）。
     } finally {
       if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
       if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
@@ -656,92 +652,13 @@ test('九/十二轮：checkpoint 校验 head generation 咬合；manifest 身份
   });
 });
 
-test('九轮 P1-2：合法旧文件重放——身份+MAC 均过但字节 digest 不符内存最近值 → 覆盖前判篡改', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'k9';
-    try {
-      const base = { projectRoot: root, feature: 'f', runId: 'r9', manifestHash: 'MH', authSubsetSha256: 'AS', manifestIdentityFields: {} as Record<string, string> };
-      const snap = gr.snapshotVisionLedgers(root, 'f');
-      // gen1 写入 → 保存该合法旧文件字节
-      gr.writeVisionCheckpoint({ ...base, files: snap, headGeneration: 1 });
-      const cpPath = gr.visionCheckpointPath(root, 'f', 'r9');
-      const gen1Bytes = fs.readFileSync(cpPath);
-      // gen2 写入（内存 digest 前进）
-      const gen2Digest = gr.writeVisionCheckpoint({ ...base, files: snap, headGeneration: 2 });
-      const metaAfterGen2 = gr.readVisionCheckpointMeta({ ...base });
-      assert(metaAfterGen2.state === 'valid' && metaAfterGen2.digest === gen2Digest, 'gen2 digest 匹配');
-      // 攻击：把 gen1 的合法 MAC 文件放回（身份+MAC 均过）——meta digest ≠ 内存最近(gen2)
-      fs.writeFileSync(cpPath, gen1Bytes);
-      const replayed = gr.readVisionCheckpointMeta({ ...base });
-      assert(replayed.state === 'valid', '重放旧文件身份/MAC 仍 valid（单看这两项检不出）');
-      assert(replayed.digest !== gen2Digest, '但字节 digest 与内存最近值不符——commit 覆盖前据此判篡改 halt');
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
-  });
-});
+// 【已删除 · T2 5a 收口刀（codex P2）】九轮 P1-2"合法旧文件重放 digest 检测"测试格——
+// 被测机制（运行中覆盖前 meta 复验 + readVisionCheckpointMeta）随防伪造纵深退役：
+// runner 是 writer，提交即覆盖写；重放/篡改的兜底=下次启动按仓内事实重算（缓存三态丢弃）。
 
-test('九轮 P0-2：reseal object_hash 绑授权子集+manifest+旧 checkpoint——改授权后旧 reseal 失配', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const snap = gr.snapshotVisionLedgers(root, 'f');
-    const commonBase = { projectRoot: root, feature: 'f', runId: 'r9', files: snap, oldHeadSha256: 'OLDH', oldCheckpointSha256: 'OLDC', oldHwmSha256: 'OLDHWM', frozenManifestHash: 'MH' };
-    const h1 = gr.visionTrustResealObjectHash({ ...commonBase, authSubsetSha256: gr.computeAuthSubsetSha256([{ phase: 'ut', allowed_files: ['a.ets'], max_files: 1 }]) });
-    // 模型改 manifest 授权子集（扩权）→ 授权子集哈希变 → reseal object_hash 必不同
-    const h2 = gr.visionTrustResealObjectHash({ ...commonBase, authSubsetSha256: gr.computeAuthSubsetSha256([{ phase: 'ut', allowed_files: ['a.ets', 'evil.ets'], max_files: 9 }]) });
-    assert(h1 !== h2, '授权子集变 → reseal 签名对象变（真人签 reseal 不覆盖扩权后的 manifest）');
-    // manifest identity hash 变、旧 checkpoint/HWM hash 变 → 同样失配（十一轮 P1-5/P0-2）
-    assert(gr.visionTrustResealObjectHash({ ...commonBase, frozenManifestHash: 'MH2', authSubsetSha256: 'AS' }) !==
-           gr.visionTrustResealObjectHash({ ...commonBase, authSubsetSha256: 'AS' }), 'manifest identity hash 入签名对象');
-    assert(gr.visionTrustResealObjectHash({ ...commonBase, oldCheckpointSha256: 'X', authSubsetSha256: 'AS' }) !==
-           gr.visionTrustResealObjectHash({ ...commonBase, authSubsetSha256: 'AS' }), '旧 checkpoint hash 入签名对象');
-    assert(gr.visionTrustResealObjectHash({ ...commonBase, oldHwmSha256: 'X', authSubsetSha256: 'AS' }) !==
-           gr.visionTrustResealObjectHash({ ...commonBase, authSubsetSha256: 'AS' }), '旧 HWM hash 入签名对象（换钥不死锁的绑定）');
-  });
-});
-
-test('十轮 P0-1：HWM 高水位链——跨重启回放旧状态被拦（世代 < 高水位）+ 链断 invalid', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'kh';
-    try {
-      const base = { projectRoot: root, feature: 'f' };
-      assert(gr.readVisionHwmHighWater(base).state === 'absent', '无 HWM=absent');
-      gr.appendVisionHwm({ ...base, generation: 1, headDigest: 'd1' });
-      gr.appendVisionHwm({ ...base, generation: 2, headDigest: 'd2' });
-      gr.appendVisionHwm({ ...base, generation: 3, headDigest: 'd3' });
-      const hwm = gr.readVisionHwmHighWater(base);
-      assert(hwm.state === 'ok' && hwm.maxGeneration === 3 && hwm.lastHeadDigest === 'd3', JSON.stringify(hwm));
-      // 回放判据：当前 head 世代 2 < 高水位 3 → 回滚（生产在启动段据此 halt）
-      assert((2 < (hwm.maxGeneration ?? 0)), '世代 2 < 高水位 3 → 回滚拦截依据成立');
-      // 世代等于高水位但 digest 不符 → 亦回滚
-      assert('dX' !== hwm.lastHeadDigest, '同世代 digest 不符 → 回滚');
-      // 篡改中间行（非尾部改）→ 链断 invalid
-      const p = gr.visionHwmPath(root, 'f');
-      const lines = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean);
-      const tampered = JSON.parse(lines[1]) as { generation: number };
-      tampered.generation = 99;
-      lines[1] = JSON.stringify(tampered);
-      fs.writeFileSync(p, lines.join('\n') + '\n', 'utf-8');
-      assert(gr.readVisionHwmHighWater(base).state === 'invalid', '非尾部改行 → 链断 invalid');
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
-  });
-});
-
+// 【已删除 · T2 5a 完成刀】本处原有 HWM 高水位链/换钥 reseal/reseal journal 状态机/
+// HWM absent 三分 等测试格——被测机制（防"协调回滚"的密码学纵深）整体退役。
+// 防复活断言见下方统一格。
 test('十轮 P1：manifest 身份哈希——非授权字段变化被检出；易变字段（adapter）不误报', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const gm = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
@@ -778,111 +695,67 @@ test('十一轮 P1：manifest 字段级 override 授权——裸 --override-star
   assert(changedStartOnly.every(f => (authStart as Set<string>).has(f)), 'start-only 变更被 --override-start 授权');
 });
 
-test('十一轮 P1：rebase 持久化——override rebase 后连续两次 resume 不复报 drift（fold 基线前进）', () => {
-  // fold 语义纯函数：首个 run_start.fields → 历次 rebase.to_fields 覆盖为最新基线
+test('十一轮 P1→收口刀转正：rebase 持久化——resolveManifestIdentityBaseline fold（首个 run_start → 历次 rebase 前进）', () => {
+  // 收口刀（codex P1-1）：本格原是内联 fold 草稿，现直接消费生产函数（双真值教训——
+  // 测试自拼同构表达式时，改坏生产咬不到测试）。
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
   const events = [
     { type: 'run_start', manifest_identity_fields: { requirement: 'H1', budget: 'b' } },
     { type: 'manifest_identity_rebase', to_fields: { requirement: 'H2', budget: 'b' } },
+    // 后续 resume 的 run_start 不覆盖基线（只认首个 run_start；前进只经 rebase 事件）
+    { type: 'run_start', manifest_identity_fields: { requirement: 'H3', budget: 'b' } },
   ];
-  let frozen: Record<string, string> | null = null;
-  for (const e of events) {
-    const ev = e as { type?: string; manifest_identity_fields?: Record<string, string>; to_fields?: Record<string, string> };
-    if (ev.type === 'run_start' && ev.manifest_identity_fields && frozen === null) frozen = ev.manifest_identity_fields;
-    else if (ev.type === 'manifest_identity_rebase' && ev.to_fields) frozen = ev.to_fields;
-  }
-  // 下次普通 resume：当前=H2，冻结基线已前进到 H2 → 无 drift（不再复报 H1 vs H2）
-  assert(frozen!.requirement === 'H2', `fold 基线应前进到 H2：${JSON.stringify(frozen)}`);
+  const frozen = gr.resolveManifestIdentityBaseline(events);
+  assert(frozen !== null && frozen.requirement === 'H2', `fold 基线应前进到 H2 且不被后续 run_start 覆盖：${JSON.stringify(frozen)}`);
+  // 无 run_start / 旧 schema 缺字段 → null（无基线，fail-to-continue，与出生 lineage 同口径）
+  assert(gr.resolveManifestIdentityBaseline([]) === null, '空 events=无基线');
+  assert(gr.resolveManifestIdentityBaseline([{ type: 'run_start' }]) === null, '旧 schema 缺字段=无基线');
 });
 
-test('十一轮 P0-2：换钥 reseal——旧 HWM quarantine 后新 key 链从空起（不因旧 key 行 MAC 失败死锁）', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    try {
-      const base = { projectRoot: root, feature: 'f' };
-      // 旧 key 写链
-      process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'old-key';
-      gr.appendVisionHwm({ ...base, generation: 1, headDigest: 'd1' });
-      gr.appendVisionHwm({ ...base, generation: 2, headDigest: 'd2' });
-      // 换新 key：不 quarantine 直接追加 → 读在旧 key 行 MAC 失败（死锁复现）
-      process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'new-key';
-      gr.appendVisionHwm({ ...base, generation: 3, headDigest: 'd3' });
-      assert(gr.readVisionHwmHighWater(base).state === 'invalid', '未 quarantine → 旧 key 行 MAC 失败=死锁');
-      // reseal quarantine：改名旧链后新链从空起 → 新 key 单独可信
-      const hp = gr.visionHwmPath(root, 'f');
-      fs.renameSync(hp, `${hp}.rekey-1.bak`);
-      gr.appendVisionHwm({ ...base, generation: 3, headDigest: 'd3' });
-      const after = gr.readVisionHwmHighWater(base);
-      assert(after.state === 'ok' && after.maxGeneration === 3, `quarantine 后新 key 链可信：${JSON.stringify(after)}`);
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
+// 【已删除 · T2 5a 完成刀】本处原有 HWM 高水位链/换钥 reseal/reseal journal 状态机/
+// HWM absent 三分 等测试格——被测机制（防"协调回滚"的密码学纵深）整体退役。
+// 防复活断言见下方统一格。
+test('收口刀（codex P1-1）：drift 出生基线=events SSOT——场外缓存的存在与否**不得**改变裁决', () => {
+  // codex 实测反例（立项事故）：同一份 manifest 漂移，checkpoint 在场→halt、
+  // checkpoint 删除/损坏→放行——"缓存是否存在"改变权限结果，删缓存即绕过出生意图。
+  // 现决策函数在类型上只吃 events 出生基线（birthFields），checkpoint 无输入通道；
+  // 本格证明同一漂移在"有基线"时恒 halt、且基线只来自 events。
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
+  const noOverride = { 'override-manifest': false, 'override-start': false, 'override-end': false };
+  const birth = { requirement: 'r1hash', budget: 'bhash', start_phase: 'sp' };
+  const drifted = { requirement: 'r2hash', budget: 'bhash', start_phase: 'sp' }; // requirement 变
+  const baseline = gr.resolveManifestIdentityBaseline([
+    { type: 'run_start', manifest_identity_fields: birth },
+  ]);
+  // ① 未授权漂移 → halt（真冲突）
+  const haltRes = gr.resolveManifestDriftDecision({
+    currentFields: drifted, currentHash: 'H2', birthFields: baseline,
+    overrides: noOverride, fidelityTransitionFields: new Set(),
   });
-});
-
-test('十一轮 P0-1：HWM 诚实边界——尾部截断（删最高世代行）不被检出（声明残余边界）', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'k';
-    try {
-      const base = { projectRoot: root, feature: 'f' };
-      gr.appendVisionHwm({ ...base, generation: 1, headDigest: 'd1' });
-      gr.appendVisionHwm({ ...base, generation: 2, headDigest: 'd2' });
-      gr.appendVisionHwm({ ...base, generation: 3, headDigest: 'd3' });
-      // 尾部截断到世代 2（协调回放步骤）——链仍合法，读到 max=2（**诚实：检不出**）
-      const p = gr.visionHwmPath(root, 'f');
-      const lines = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean);
-      fs.writeFileSync(p, lines.slice(0, 2).join('\n') + '\n', 'utf-8');
-      const hwm = gr.readVisionHwmHighWater(base);
-      assert(hwm.state === 'ok' && hwm.maxGeneration === 2, `尾部截断后链仍 ok（残余边界如实声明）：${JSON.stringify(hwm)}`);
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
+  assert(haltRes.halt !== null && haltRes.halt.changedFields.join() === 'requirement',
+    `未授权漂移须 halt：${JSON.stringify(haltRes)}`);
+  // ② --override-manifest → 授权 rebase
+  const rebase = gr.resolveManifestDriftDecision({
+    currentFields: drifted, currentHash: 'H2', birthFields: baseline,
+    overrides: { ...noOverride, 'override-manifest': true }, fidelityTransitionFields: new Set(),
   });
-});
-
-test('十二轮 P0-a：checkpoint 是 rebase 可信基线 SSOT——authenticated checkpoint 带回旧身份供字段级授权', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gm = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'krb';
-    try {
-      const base = { projectRoot: root, feature: 'f', runId: 'rrb' };
-      const snap = gr.snapshotVisionLedgers(root, 'f');
-      const oldFields = { requirement: 'r1hash', budget: 'bhash', start_phase: 'sp' };
-      gr.writeVisionCheckpoint({ ...base, manifestHash: 'ID1', manifestIdentityFields: oldFields, files: snap, authSubsetSha256: 'AS', headGeneration: 1 });
-      // 生产 drift 决策的可信基线=readVisionCheckpointMeta（不是 events）
-      const meta = gr.readVisionCheckpointMeta({ ...base });
-      const newFields = { requirement: 'r2hash', budget: 'bhash', start_phase: 'sp' }; // requirement 变
-      const changed = gm.diffManifestIdentityFields(meta.manifestIdentityFields!, newFields);
-      assert(changed.length === 1 && changed[0] === 'requirement', JSON.stringify(changed));
-      // 未授权 → 不放行；--override-manifest → 授权（不自我判死：verify 已不 force-equal）
-      const authNone = gm.overrideAuthorizedIdentityFields({});
-      assert(authNone !== 'all' && changed.every(f => (authNone as Set<string>).has(f)) === false, '无 override 不放行 requirement');
-      assert(gm.overrideAuthorizedIdentityFields({ 'override-manifest': true }) === 'all', 'override-manifest 授权');
-      // rebase 后写新身份进 checkpoint → 成为新 SSOT，下次 meta 返回新身份（不复报）
-      gr.writeVisionCheckpoint({ ...base, manifestHash: 'ID2', manifestIdentityFields: newFields, files: snap, authSubsetSha256: 'AS', headGeneration: 1 });
-      const meta2 = gr.readVisionCheckpointMeta({ ...base });
-      assert(gm.diffManifestIdentityFields(meta2.manifestIdentityFields!, newFields).length === 0, 'rebase 后 checkpoint 成新 SSOT，下次 resume 无 drift');
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
+  assert(rebase.rebaseApplied && rebase.halt === null, `override 授权 rebase：${JSON.stringify(rebase)}`);
+  // ③ rebase 事件落盘后基线前进 → 同一"漂移"下次 resume 不复报
+  const advanced = gr.resolveManifestIdentityBaseline([
+    { type: 'run_start', manifest_identity_fields: birth },
+    { type: 'manifest_identity_rebase', to_fields: drifted },
+  ]);
+  const after = gr.resolveManifestDriftDecision({
+    currentFields: drifted, currentHash: 'H2', birthFields: advanced,
+    overrides: noOverride, fidelityTransitionFields: new Set(),
   });
+  assert(after.halt === null && !after.rebaseApplied, `rebase 后不复报：${JSON.stringify(after)}`);
+  // ④ 决策输入里不存在 checkpoint 通道（防复活：删缓存/塞缓存都无从影响裁决）
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-runner.ts'), 'utf-8');
+  assert(!/cpMeta/.test(src.replace(/\/\/[^\n]*/g, '')),
+    'resolveManifestDriftDecision 不得再出现 cpMeta 输入通道（checkpoint 退出裁决权威）');
 });
 
 test('十三轮 P0-1：fidelity transition 前置校验——枚举/降档凭证真路径（resume 不再绕过）', () => {
@@ -956,141 +829,9 @@ test('十三轮 P0-1：fidelity transition 前置校验——枚举/降档凭证
   });
 });
 
-test('十二轮 P0-b：reseal 事务——rename 失败 fail-closed；quarantine 后崩溃可恢复（journal 状态机）', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'ktx';
-    try {
-      const hp = () => gr.visionHwmPath(root, 'f');
-      const headP = () => gr.visionFeatureHeadPath(root, 'f');
-      const sha = (p: string) => require('crypto').createHash('sha256').update(fs.readFileSync(p)).digest('hex') as string;
-      const shaOr = (p: string) => (fs.existsSync(p) ? sha(p) : 'absent');
-      // 十四轮：备份改 copy 语义（回滚后备份保留供审计）——各场景须用不同 runId 免备份名撞
-      const quarArgs = (oldHwmSha256: string, runId: string, over?: Record<string, string>) => ({
-        projectRoot: root, feature: 'f', runId, oldHwmSha256,
-        oldHeadSha256: shaOr(headP()), oldCheckpointSha256: 'absent', receiptObjectHash: 'RO',
-        ...(over ?? {}),
-      });
-      // ===== 场景A：quarantined 后崩溃（head/checkpoint 未重写）→ 恢复=回滚，原 receipt 可复用
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 1, headDigest: 'd1' });
-      const oldSha = sha(hp());
-      const bak = gr.transactionalQuarantineHwm(quarArgs(oldSha, 'rtxA'));
-      assert(bak !== null && !fs.existsSync(hp()), 'canonical 已 quarantine');
-      const j1 = gr.readResealJournal(root, 'f');
-      assert(j1.verdict === 'ok' && j1.journal.state === 'quarantined' && j1.journal.planned_bak === bak,
-        `journal=quarantined 且 planned_bak 已在 rename 前记录：${JSON.stringify(j1)}`);
-      // 非终态 journal 在场 → 重入禁止（不覆盖现场）
-      let threw = false;
-      try { gr.transactionalQuarantineHwm(quarArgs(oldSha, 'rtx2')); } catch { threw = true; }
-      assert(threw, '非终态 journal 重入须抛（禁覆盖）');
-      // 崩溃后启动恢复：canonical 缺失 + 备份在场 → 恢复 + rolled_back
-      const rec1 = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(rec1.outcome === 'rolled_back', `恢复=回滚：${JSON.stringify(rec1)}`);
-      assert(fs.existsSync(hp()) && sha(hp()) === oldSha, '旧 HWM 已按事务绑定 sha 恢复（原 receipt 复用可行）');
-      const jr = gr.readResealJournal(root, 'f');
-      assert(jr.verdict === 'ok' && jr.journal.state === 'rolled_back', 'journal=rolled_back');
-      // 终态后可开新事务
-      // ===== 场景B：prepared 后崩溃（rename 已发生、quarantined 未落盘）→ 凭 planned_bak 恢复
-      const bak2 = gr.transactionalQuarantineHwm(quarArgs(oldSha, 'rtxB'));
-      assert(bak2 !== null, '新事务 quarantine');
-      // 手工把 journal 倒回 prepared（模拟 rename 后、quarantined 写入前崩溃——planned_bak 已在）
-      const jq = gr.readResealJournal(root, 'f');
-      if (jq.verdict !== 'ok') throw new Error(`journal 须可读：${JSON.stringify(jq)}`);
-      const preparedBody = { ...jq.journal, state: 'prepared', quarantined_as: null } as Record<string, unknown>;
-      delete preparedBody.mac;
-      const preparedMac = require('crypto').createHmac('sha256', 'ktx').update(JSON.stringify(preparedBody), 'utf-8').digest('hex');
-      fs.writeFileSync(gr.visionResealJournalPath(root, 'f'), JSON.stringify({ ...preparedBody, mac: preparedMac }), 'utf-8');
-      const rec2 = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(rec2.outcome === 'rolled_back' && fs.existsSync(hp()) && sha(hp()) === oldSha,
-        `prepared 崩溃凭 planned_bak 恢复：${JSON.stringify(rec2)}`);
-      // ===== 场景C：quarantine 后三锚已按生产顺序（head→checkpoint→HWM）全部写完、journal
-      // commit 前崩溃 → 四门（head/checkpoint/HWM/账本快照）全过 → 补记 committed
-      const bak3 = gr.transactionalQuarantineHwm(quarArgs(oldSha, 'rtxC'));
-      assert(bak3 !== null, '场景C quarantine');
-      const snapC = gr.snapshotVisionLedgers(root, 'f');
-      const hw = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'rtxC', files: snapC, generation: 2 });
-      gr.writeVisionCheckpoint({
-        projectRoot: root, feature: 'f', runId: 'rtxC', manifestHash: 'MH',
-        manifestIdentityFields: {}, files: snapC, headGeneration: 2,
-        authSubsetSha256: 'AS', // 配 key 部署下 verify 必填（生产 commitVisionAnchors 恒传）
-      });
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 2, headDigest: hw.digest }); // 新链首写
-      const rec3 = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(rec3.outcome === 'completed', `三锚整体一致=补 commit：${JSON.stringify(rec3)}`);
-      const jc = gr.readResealJournal(root, 'f');
-      assert(jc.verdict === 'ok' && jc.journal.state === 'committed', 'journal=committed');
-      // ===== 场景C2（十五轮 P1）：新链已起但 checkpoint 未写（不完整提交）→ **不得 committed**
-      // （提前 commit=永久放弃回滚资格），落回三锚回滚，原 receipt 复用可行
-      const oldHeadShaC2 = sha(headP());
-      const oldHwmShaC2 = sha(hp());
-      const bakC2 = gr.transactionalQuarantineHwm(quarArgs(oldHwmShaC2, 'rtxC2'));
-      assert(bakC2 !== null, '场景C2 quarantine');
-      const hw3 = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'rtxC2', files: gr.snapshotVisionLedgers(root, 'f'), generation: 3 });
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 3, headDigest: hw3.digest }); // checkpoint 缺席
-      const recC2 = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(recC2.outcome === 'rolled_back', `checkpoint 缺失=不完整提交须回滚：${JSON.stringify(recC2)}`);
-      assert(sha(headP()) === oldHeadShaC2 && sha(hp()) === oldHwmShaC2, '三锚已回滚到旧字节（原 receipt 复用可行）');
-      const jc2 = gr.readResealJournal(root, 'f');
-      assert(jc2.verdict === 'ok' && jc2.journal.state === 'rolled_back', 'journal=rolled_back（保留了回滚资格）');
-      // ===== 场景E（十四轮 P0）：head 已换新、HWM 首写前崩溃 → 三锚全回滚，原 receipt 可复用
-      // 现场：head=gen2（上场景写入）+ HWM=gen2 新链。先固化"旧三锚"字节，再 quarantine+重写 head。
-      const oldHeadShaE = sha(headP());
-      const oldHwmShaE = sha(hp());
-      const bakE = gr.transactionalQuarantineHwm(quarArgs(oldHwmShaE, 'rtxE'));
-      assert(bakE !== null, '场景E quarantine（head/checkpoint 备份已 copy）');
-      const jE = gr.readResealJournal(root, 'f');
-      assert(jE.verdict === 'ok' && jE.journal.planned_head_bak !== null, `head 备份名已入 journal：${JSON.stringify(jE.verdict === 'ok' ? jE.journal.planned_head_bak : null)}`);
-      // 模拟 commitVisionAnchors 写了 head（新字节）后、appendVisionHwm 前崩溃
-      gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'rtxE', files: gr.snapshotVisionLedgers(root, 'f'), generation: 3 });
-      assert(sha(headP()) !== oldHeadShaE, 'head 已被换写（混合态现场）');
-      const recE = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(recE.outcome === 'rolled_back', `三锚回滚：${JSON.stringify(recE)}`);
-      assert(sha(headP()) === oldHeadShaE, 'head 已恢复旧字节（原 receipt 绑定重新可验）');
-      assert(sha(hp()) === oldHwmShaE, 'HWM 已恢复旧字节');
-      // ===== 场景F（codex 十五轮非阻断建议的回归钉）：旧 checkpoint 原本存在、写入新
-      // checkpoint 后、HWM 前崩溃 → planned_checkpoint_bak 非空恢复分支
-      const cpF = () => gr.visionCheckpointPath(root, 'f', 'rtxF');
-      const snapF = gr.snapshotVisionLedgers(root, 'f');
-      gr.writeVisionCheckpoint({
-        projectRoot: root, feature: 'f', runId: 'rtxF', manifestHash: 'MHF',
-        manifestIdentityFields: {}, files: snapF, headGeneration: 2, authSubsetSha256: 'AS',
-      });
-      const oldCpShaF = sha(cpF());
-      const oldHeadShaF = sha(headP());
-      const oldHwmShaF = sha(hp());
-      gr.transactionalQuarantineHwm(quarArgs(oldHwmShaF, 'rtxF', { oldCheckpointSha256: oldCpShaF }));
-      const jF = gr.readResealJournal(root, 'f');
-      assert(jF.verdict === 'ok' && jF.journal.planned_checkpoint_bak !== null, 'checkpoint 备份名已入 journal（非空分支）');
-      // 模拟 commitVisionAnchors 写了 head+checkpoint（新字节）后、appendVisionHwm 前崩溃
-      const hwF = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'rtxF', files: snapF, generation: 3 });
-      gr.writeVisionCheckpoint({
-        projectRoot: root, feature: 'f', runId: 'rtxF', manifestHash: 'MHF2',
-        manifestIdentityFields: {}, files: snapF, headGeneration: 3, authSubsetSha256: 'AS',
-      });
-      assert(hwF.digest !== oldHeadShaF && sha(cpF()) !== oldCpShaF, 'head/checkpoint 均已换写（混合态现场）');
-      const recF = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(recF.outcome === 'rolled_back', `三锚回滚（含 checkpoint 备份恢复）：${JSON.stringify(recF)}`);
-      assert(sha(cpF()) === oldCpShaF, 'checkpoint 已从 planned_checkpoint_bak 恢复旧字节');
-      assert(sha(headP()) === oldHeadShaF && sha(hp()) === oldHwmShaF, 'head/HWM 同步恢复旧字节');
-      // ===== 场景D：备份被篡改 → 恢复 blocked（fail-closed，不借恢复洗白）
-      fs.rmSync(hp());
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 1, headDigest: 'd1' });
-      const oldSha2 = sha(hp());
-      const bak4 = gr.transactionalQuarantineHwm(quarArgs(oldSha2, 'rtx4'));
-      fs.appendFileSync(path.join(path.dirname(hp()), bak4!), 'tampered\n', 'utf-8');
-      const rec4 = gr.recoverResealTransaction({ projectRoot: root, feature: 'f' });
-      assert(rec4.outcome === 'blocked', `备份被篡改须 blocked：${JSON.stringify(rec4)}`);
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
-  });
-});
-
+// 【已删除 · T2 5a 完成刀】本处原有 HWM 高水位链/换钥 reseal/reseal journal 状态机/
+// HWM absent 三分 等测试格——被测机制（防"协调回滚"的密码学纵深）整体退役。
+// 防复活断言见下方统一格。
 test('垂直闭环追补（2026-08-06）：vision 信任封顶已删除——完成态不再因认证状态改写（防复活）', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const gr = require('../../scripts/goal-runner') as Record<string, unknown>;
@@ -1101,6 +842,27 @@ test('垂直闭环追补（2026-08-06）：vision 信任封顶已删除——完
     'capRunStatusForVisionTrust 已按 2026-08-06 理念裁定删除，不得复活');
   assert(typeof gr.capRunStatusForDeviceAuthenticity === 'function',
     '设备真实性封顶（防假绿面）不属删除范围，必须保留');
+  // T2 5a 完成刀：HWM/reseal 全套设施不得复活（防伪造纵深，三分类①）
+  // + 收口刀（codex 三 P1/P2）：checkpoint/head 裁决面读取器、ack/reseal 绑定函数、
+  //   reseal journal 路径、HMAC env 常量同样不得复活。
+  for (const dead of ['appendVisionHwm', 'readVisionHwmHighWater', 'assessHwmFreshness',
+    'transactionalQuarantineHwm', 'recoverResealTransaction', 'commitResealJournal',
+    'readResealJournal', 'capRunStatusForVisionTrust',
+    'readVisionCheckpointMeta', 'readVisionFeatureHeadMeta',
+    'visionLedgerAckObjectHash', 'visionTrustResealObjectHash',
+    'visionResealJournalPath', 'VISION_CHECKPOINT_HMAC_ENV',
+    'visionHwmPath', 'computeAuthSubsetSha256']) {
+    assert(!(dead in gr), `${dead} 已按 5a 完成/收口刀删除，不得复活`);
+  }
+  // guidance 侧：head 失配求人话术无调用方（失配恒自动重建）
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const acg = require('../../scripts/utils/await-confirm-guidance') as Record<string, unknown>;
+  assert(!('buildLineageMismatchGuidance' in acg), 'buildLineageMismatchGuidance 已删除，不得复活');
+  // receipt 侧：vision ack/reseal 两个 action 已随协议退役
+  const crSrc = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'scripts', 'utils', 'confirmation-receipt.ts'), 'utf-8');
+  assert(!/'vision_ledger_ack'|'vision_trust_reseal'/.test(crSrc.replace(/\/\/[^\n]*/g, '')),
+    'confirmation receipt 不得再声明 vision_ledger_ack/vision_trust_reseal action');
 });
 
 test('七轮 P1-2：迁移凭证跨 checkpoint 持久化——后续 pre_invoke/post_harness 写入不覆盖', () => {
@@ -1112,7 +874,7 @@ test('七轮 P1-2：迁移凭证跨 checkpoint 持久化——后续 pre_invoke/
     process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'outside-cp');
     process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'k-mig';
     try {
-      const base = { projectRoot: root, feature: 'f', runId: 'runm', manifestHash: 'MH', authSubsetSha256: 'AS', manifestIdentityFields: {} as Record<string, string> };
+      const base = { projectRoot: root, feature: 'f', runId: 'runm', manifestHash: 'MH', manifestIdentityFields: {} as Record<string, string> };
       const snap = gr.snapshotVisionLedgers(root, 'f');
       const migration = { file: 'policy-downgrades.jsonl', action: 'migrated', original_sha256: 'OLD', new_sha256: 'NEW' };
       // 八轮 P1-1 契约：migrations 由 runner 内存可信态权威传入（不从盘继承——磁盘旧文件
@@ -1126,22 +888,22 @@ test('七轮 P1-2：迁移凭证跨 checkpoint 持久化——后续 pre_invoke/
         Array.isArray(cpv.migrations) && (cpv.migrations as Array<{ original_sha256?: string }>).some(m => m.original_sha256 === 'OLD'),
         `迁移凭证经验真回读存活：${JSON.stringify(cpv.migrations)}`,
       );
-      // 对抗（八轮 P1-1）：盘上 checkpoint 被删 → 覆盖前 meta=absent（runner 写点据此 halt，
-      // 迁移凭证不会因"删文件+runner 重写"而静默消失）
+      // 收口刀语境：盘上 checkpoint 被删 → 缓存 absent（记录+按仓内事实重算，
+      // 迁移凭证由 runner 内存可信态权威持有，不依赖盘上文件存活）
       fs.rmSync(gr.visionCheckpointPath(root, 'f', 'runm'), { force: true });
       assert(
-        gr.readVisionCheckpointMeta({ projectRoot: root, feature: 'f', runId: 'runm' }).state === 'absent',
-        '删除后 meta=absent（写点 halt 依据）',
+        gr.verifyVisionCheckpoint({ projectRoot: root, feature: 'f', runId: 'runm', current: snap }).state === 'absent',
+        '删除后缓存=absent（丢缓存重算，不停死）',
       );
-      // 对抗：盘上伪造 migrations（无 MAC/坏 MAC）→ meta=invalid，runner 不重签
+      // 对抗：盘上伪造身份绑定（project_root_hash 不符）→ invalid，缓存不可复用
       fs.mkdirSync(require('path').dirname(gr.visionCheckpointPath(root, 'f', 'runm')), { recursive: true });
       fs.writeFileSync(gr.visionCheckpointPath(root, 'f', 'runm'), JSON.stringify({
         schema_version: '1.1', run_id: 'runm', project_root_hash: 'x', feature: 'f',
         manifest_hash: 'MH', updated_at: 'x', files: snap, migrations: [{ file: 'forged' }], mac: null,
       }), 'utf-8');
       assert(
-        gr.readVisionCheckpointMeta({ projectRoot: root, feature: 'f', runId: 'runm' }).state === 'invalid',
-        '伪造 checkpoint meta=invalid（不重签）',
+        gr.verifyVisionCheckpoint({ projectRoot: root, feature: 'f', runId: 'runm', current: snap }).state === 'invalid',
+        '身份失配的缓存=invalid（丢弃，migrations 不被采信）',
       );
     } finally {
       if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
@@ -1152,153 +914,64 @@ test('七轮 P1-2：迁移凭证跨 checkpoint 持久化——后续 pre_invoke/
   });
 });
 
-test('十三轮 P1-4：HWM absent 三分——声明态缺失 halt / legacy bootstrap / 删除不可洗白（真文件路径）', () => {
+// 【已删除 · T2 5a 完成刀】本处原有 HWM 高水位链/换钥 reseal/reseal journal 状态机/
+// HWM absent 三分 等测试格——被测机制（防"协调回滚"的密码学纵深）整体退役。
+// 防复活断言见下方统一格。
+// 【已删除 · T2 5a 收口刀（codex P1-1/P2）】十三轮 P1-3"legacy/unauthenticated checkpoint
+// 不静默当基线"测试格——checkpoint 退出 drift 基线角色后，legacy 聚合迁移/
+// `valid_unauthenticated` 弱信任标记/`vision_checkpoint_schema_migrated` 事件全部无对象。
+// 存活的两条语义换了住处：字段级授权见下格（birthFields 口径）；1.2 结构必填见本格。
+test('checkpoint 结构完整性（缓存可复用性面）：1.2 缺 manifest_identity_fields = invalid', () => {
   withTmp(root => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const crypto = require('crypto') as typeof import('crypto');
     const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
     process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'khwm13';
-    try {
-      const snap = gr.snapshotVisionLedgers(root, 'f');
-      // ① 现行 write（1.1）→ verify 带回 hwmDeclared=true；同世代 HWM 行在 → proceed
-      const w = gr.writeVisionFeatureHead({ projectRoot: root, feature: 'f', runId: 'rh', files: snap, generation: 3 });
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 3, headDigest: w.digest });
-      const head1 = gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap });
-      assert(head1.state === 'ok' && head1.hwmDeclared === true, `1.1 head 声明 HWM：${JSON.stringify(head1)}`);
-      const meta1 = gr.readVisionFeatureHeadMeta({ projectRoot: root, feature: 'f' });
-      const okFresh = gr.assessHwmFreshness({
-        headGeneration: 3, headDigest: meta1.digest, hwmDeclared: true,
-        hwm: gr.readVisionHwmHighWater({ projectRoot: root, feature: 'f' }),
-      });
-      assert(okFresh.action === 'proceed', `一致态 proceed：${JSON.stringify(okFresh)}`);
-      // ② 删除整个 HWM 文件（洗白攻击）→ 声明态缺失 = halt（不再静默重建）
-      fs.rmSync(gr.visionHwmPath(root, 'f'));
-      const gone = gr.assessHwmFreshness({
-        headGeneration: 3, headDigest: meta1.digest, hwmDeclared: true,
-        hwm: gr.readVisionHwmHighWater({ projectRoot: root, feature: 'f' }),
-      });
-      assert(gone.action === 'halt_hwm_missing', `声明态 HWM 删除须 halt：${JSON.stringify(gone)}`);
-      // ③ legacy 1.0 head（无 hwm_declared，MAC 正确）+ HWM absent → 一次性显式 bootstrap
-      const legacyBody = {
-        schema_version: '1.0',
-        project_root_hash: JSON.parse(fs.readFileSync(gr.visionFeatureHeadPath(root, 'f'), 'utf-8')).project_root_hash,
-        feature: 'f', generation: 1, files: snap, last_run_id: 'r0', updated_at: '2026-01-01T00:00:00.000Z',
-      };
-      const legacyMac = crypto.createHmac('sha256', 'khwm13').update(JSON.stringify(legacyBody), 'utf-8').digest('hex');
-      fs.writeFileSync(gr.visionFeatureHeadPath(root, 'f'), JSON.stringify({ ...legacyBody, mac: legacyMac }), 'utf-8');
-      const headL = gr.verifyVisionFeatureHead({ projectRoot: root, feature: 'f', current: snap });
-      assert(headL.state === 'ok' && headL.hwmDeclared === false, `legacy head 验真且无声明：${JSON.stringify(headL)}`);
-      const boot = gr.assessHwmFreshness({
-        headGeneration: 1, headDigest: undefined, hwmDeclared: false,
-        hwm: gr.readVisionHwmHighWater({ projectRoot: root, feature: 'f' }),
-      });
-      assert(boot.action === 'bootstrap_legacy', `legacy 缺 HWM 走显式 bootstrap：${JSON.stringify(boot)}`);
-      // ④ rollback 语义不回归：HWM 高水位 5 > head 世代 3 → halt_rollback
-      gr.appendVisionHwm({ projectRoot: root, feature: 'f', generation: 5, headDigest: 'dX' });
-      const rb = gr.assessHwmFreshness({
-        headGeneration: 3, headDigest: meta1.digest, hwmDeclared: true,
-        hwm: gr.readVisionHwmHighWater({ projectRoot: root, feature: 'f' }),
-      });
-      assert(rb.action === 'halt_rollback', `世代回滚须 halt：${JSON.stringify(rb)}`);
-      // ⑤ 十四轮 P1：**双向严格等值**——head 超前（6 > 高水位 5，checkpoint 写完/HWM 追加前
-      // 崩溃的残留态）不再 proceed：halt_incomplete_commit（未完成提交不得洗成正常历史）
-      const ahead = gr.assessHwmFreshness({
-        headGeneration: 6, headDigest: meta1.digest, hwmDeclared: true,
-        hwm: gr.readVisionHwmHighWater({ projectRoot: root, feature: 'f' }),
-      });
-      assert(ahead.action === 'halt_incomplete_commit', `head 超前须 halt：${JSON.stringify(ahead)}`);
-    } finally {
-      if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
-    }
-  });
-});
-
-test('十三轮 P1-3：legacy/unauthenticated checkpoint 不静默当基线（schema 1.2 + drift 决策真路径）', () => {
-  withTmp(root => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-    const crypto = require('crypto') as typeof import('crypto');
-    const prevDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
-    const prevKey = process.env.MAISON_HMAC_GOAL_CHECKPOINT;
-    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'cp');
-    process.env.MAISON_HMAC_GOAL_CHECKPOINT = 'k13c';
     try {
       const snap = gr.snapshotVisionLedgers(root, 'f');
       const cpPath = gr.visionCheckpointPath(root, 'f', 'r13');
-      fs.mkdirSync(path.dirname(cpPath), { recursive: true });
-      // ① 现行 write 恒 1.2 + 必填 fields；meta legacy=false
       gr.writeVisionCheckpoint({
         projectRoot: root, feature: 'f', runId: 'r13', manifestHash: 'AGG',
         manifestIdentityFields: { requirement: 'rh', budget: 'bh' }, files: snap,
       });
-      const m12 = gr.readVisionCheckpointMeta({ projectRoot: root, feature: 'f', runId: 'r13' });
-      assert(m12.state === 'valid' && m12.legacy === false, `1.2 非 legacy：${JSON.stringify(m12)}`);
-      // ② 1.2 缺 fields = invalid（必填）
+      assert(
+        gr.verifyVisionCheckpoint({ projectRoot: root, feature: 'f', runId: 'r13', current: snap }).state === 'ok',
+        '现行 write 结构完整=ok',
+      );
       const doc12 = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
       delete doc12.manifest_identity_fields;
       fs.writeFileSync(cpPath, JSON.stringify(doc12), 'utf-8');
       assert(
-        gr.readVisionCheckpointMeta({ projectRoot: root, feature: 'f', runId: 'r13' }).state === 'invalid',
-        '1.2 缺逐字段身份=invalid',
+        gr.verifyVisionCheckpoint({ projectRoot: root, feature: 'f', runId: 'r13', current: snap }).state === 'invalid',
+        '1.2 缺逐字段身份=invalid（缓存丢弃，不参与任何裁决）',
       );
-      // ③ 手写 legacy 1.1（无 fields，MAC 正确，聚合 manifest_hash=OLDAGG）→ meta legacy=true
-      const prh = JSON.parse(fs.readFileSync(cpPath, 'utf-8')).project_root_hash;
-      const legacyBody = {
-        schema_version: '1.1', run_id: 'r13', project_root_hash: prh, feature: 'f',
-        manifest_hash: 'OLDAGG', auth_subset_sha256: 'AS', updated_at: 'x', files: snap,
-      };
-      const mac = crypto.createHmac('sha256', 'k13c').update(JSON.stringify(legacyBody), 'utf-8').digest('hex');
-      fs.writeFileSync(cpPath, JSON.stringify({ ...legacyBody, mac }), 'utf-8');
-      const mLeg = gr.readVisionCheckpointMeta({ projectRoot: root, feature: 'f', runId: 'r13' });
-      assert(mLeg.state === 'valid' && mLeg.legacy === true && mLeg.manifestHash === 'OLDAGG', `legacy meta：${JSON.stringify(mLeg)}`);
-      const noOverride = { 'override-manifest': false, 'override-start': false, 'override-end': false };
-      const cur = { requirement: 'rh2', budget: 'bh' };
-      // ④ legacy 聚合 hash 等于当前身份 → 一次性迁移（不 halt 不 rebase）
-      const mig = gr.resolveManifestDriftDecision({
-        currentFields: cur, currentHash: 'OLDAGG', cpMeta: mLeg,
-        overrides: noOverride, fidelityTransitionFields: new Set(),
-      });
-      assert(mig.legacyMigrated && !mig.halt && !mig.rebaseApplied, `聚合相等=一次性迁移：${JSON.stringify(mig)}`);
-      // ⑤ legacy 聚合不等 + 无 override → halt（升级窗口篡改不得借 schema 升级洗白）
-      const haltLeg = gr.resolveManifestDriftDecision({
-        currentFields: cur, currentHash: 'NEWAGG', cpMeta: mLeg,
-        overrides: noOverride, fidelityTransitionFields: new Set(),
-      });
-      assert(haltLeg.halt !== null && !haltLeg.legacyMigrated, `legacy 不等须 halt：${JSON.stringify(haltLeg)}`);
-      // ⑥ legacy 不等 + --override-manifest → 显式 rebase
-      const rbLeg = gr.resolveManifestDriftDecision({
-        currentFields: cur, currentHash: 'NEWAGG', cpMeta: mLeg,
-        overrides: { ...noOverride, 'override-manifest': true }, fidelityTransitionFields: new Set(),
-      });
-      assert(rbLeg.rebaseApplied && rbLeg.halt === null, `legacy+override 显式 rebase：${JSON.stringify(rbLeg)}`);
-      // ⑦ 字段级：fidelity 变更仅在 transition 验真授权集覆盖时放行
-      const cpFields = { state: 'valid' as const, manifestHash: 'H', manifestIdentityFields: { fidelity: 'f1', budget: 'bh' }, legacy: false };
-      const fidNo = gr.resolveManifestDriftDecision({
-        currentFields: { fidelity: 'f2', budget: 'bh' }, currentHash: 'H2', cpMeta: cpFields,
-        overrides: noOverride, fidelityTransitionFields: new Set(),
-      });
-      assert(fidNo.halt !== null, 'fidelity 漂移无 transition 授权须 halt');
-      const fidYes = gr.resolveManifestDriftDecision({
-        currentFields: { fidelity: 'f2', budget: 'bh' }, currentHash: 'H2', cpMeta: cpFields,
-        overrides: noOverride, fidelityTransitionFields: new Set(['fidelity']),
-      });
-      assert(fidYes.rebaseApplied && fidYes.halt === null, 'transition 验真授权集覆盖 → rebase');
-      // ⑧ 无 key（valid_unauthenticated）基线 → 弱信任标记（调用方 resume 须 ack）
-      const weak = gr.resolveManifestDriftDecision({
-        currentFields: cur, currentHash: 'H3',
-        cpMeta: { state: 'valid_unauthenticated', manifestHash: 'H3', manifestIdentityFields: cur, legacy: false },
-        overrides: noOverride, fidelityTransitionFields: new Set(),
-      });
-      assert(weak.baselineUnauthenticated && !weak.halt, `无 key 基线标记弱信任：${JSON.stringify(weak)}`);
     } finally {
       if (prevDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevDir;
-      if (prevKey === undefined) delete process.env.MAISON_HMAC_GOAL_CHECKPOINT; else process.env.MAISON_HMAC_GOAL_CHECKPOINT = prevKey;
     }
   });
+});
+
+test('字段级 override 授权（birthFields 口径）：fidelity 变更仅在 transition 验真授权集覆盖时放行', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
+  const noOverride = { 'override-manifest': false, 'override-start': false, 'override-end': false };
+  const birth = { fidelity: 'f1', budget: 'bh' };
+  const fidNo = gr.resolveManifestDriftDecision({
+    currentFields: { fidelity: 'f2', budget: 'bh' }, currentHash: 'H2', birthFields: birth,
+    overrides: noOverride, fidelityTransitionFields: new Set(),
+  });
+  assert(fidNo.halt !== null, 'fidelity 漂移无 transition 授权须 halt');
+  const fidYes = gr.resolveManifestDriftDecision({
+    currentFields: { fidelity: 'f2', budget: 'bh' }, currentHash: 'H2', birthFields: birth,
+    overrides: noOverride, fidelityTransitionFields: new Set(['fidelity']),
+  });
+  assert(fidYes.rebaseApplied && fidYes.halt === null, 'transition 验真授权集覆盖 → rebase');
+  // 无基线（fresh/legacy events）→ 当前身份即出生值，零 halt
+  const fresh = gr.resolveManifestDriftDecision({
+    currentFields: { fidelity: 'f2', budget: 'bh' }, currentHash: 'H2', birthFields: null,
+    overrides: noOverride, fidelityTransitionFields: new Set(),
+  });
+  assert(fresh.halt === null && !fresh.rebaseApplied, '无基线=当前身份即 effective');
 });
 
 test('hasInvalidUnicode：U+FFFD 与孤立代理对检出；正常中英不误报', () => {

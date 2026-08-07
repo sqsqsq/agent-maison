@@ -84,13 +84,14 @@ const CASE_REGISTRY = [
   {
     id: 8,
     name: 'fresh + head 失配 + 未声明 reset → 自动 discontinuity 续跑，不 TERMINAL 不裸崩',
-    status: 'pending',
-    // 整机面仍待 goal stage；**行为面已先行钉桩**：
-    // harness/tests/unit/goal-lineage-first-death.unit.test.ts 用进程内 `__testing_*` 缝
-    // 复现了宿主 run1 的"第一死"（events=[run_start, vision_ledger_tamper] + 裸 throw）。
-    // 那条是**棘轮**：T2 把行为改成自动 discontinuity 后它立刻转红，强制回来把
-    // 本条 status 改成 covered。
-    note: '行为面已由 goal-lineage-first-death 单测钉住现状（棘轮）；整机面待 goal stage',
+    status: 'covered',
+    coveredBy: 'goal',
+    // T2 5a-1（2026-08-07）落地后由棘轮第二次翻转转正：decide 对失配三条 invocation
+    // 路径统一 recover(reset_lineage)；启动期 tamper+裸 throw 分支删除。
+    // 整机面=goal stage 第四段（独立 feature first-death：种失配 head → 自动
+    // discontinuity（declared_by=auto_mismatch_recovery）→ spec 真跑收官，无 tamper
+    // 无 uncaught_exception）；行为面=goal-lineage-first-death 目标断言。
+    note: 'goal stage 第四段：失配自动重建续跑（宿主 run1"第一死"的整机级根治）',
   },
 ];
 
@@ -411,10 +412,10 @@ function stageGoal(ctx) {
   const driver = path.join(REPO_ROOT, 'harness', 'tests', 'helpers', 'goal-run-driver.ts');
   const tsNode = path.join(ctx.harnessRoot, 'node_modules', 'ts-node', 'dist', 'bin.js');
   const RESULT = '<<goal-run-result>>';
-  const runDriver = (scenario, extra) => {
+  const runDriver = (scenario, extra, featOverride) => {
     const r = mustRun(`goal driver ${scenario}`, process.execPath, [
       tsNode, '--transpile-only', driver,
-      scenario, feature, ctx.clonedFrameworkRoot, ctx.cloneRoot, ...(extra ? [extra] : []),
+      scenario, featOverride ?? feature, ctx.clonedFrameworkRoot, ctx.cloneRoot, ...(extra ? [extra] : []),
     ], { cwd: ctx.harnessRoot });
     const at = (r.stdout ?? '').lastIndexOf(RESULT);
     if (at < 0) throw new Error(`goal driver ${scenario} 未返回结果：${(r.stdout ?? '').slice(-400)}`);
@@ -473,6 +474,23 @@ function stageGoal(ctx) {
       + JSON.stringify(staleWaiting));
   }
   ctx.log('goal/ready：设备恢复后同一 run 无钥匙完整收官（报告 CHAIN_SLICE_COMPLETED、零 WAITING 残留）');
+
+  // 第四段（T2 5a-1，#8 整机面）：fresh + head 失配 + 未声明 reset → **自动
+  // discontinuity 续跑**，不 TERMINAL 不裸崩——宿主 run1"第一死"的整机级回放。
+  // 独立 feature（first-death），与 recovery-park 的 head 文件天然隔离。
+  const fd = runDriver('seed_head_mismatch', null, 'first-death');
+  const fdOk = fd.error === null && (fd.exitCode === 0 || fd.exitCode === 2)
+    && fd.eventTypes.includes('lineage_discontinuity')
+    && !fd.eventTypes.includes('vision_ledger_tamper')
+    && fd.phaseStartsThisCall.includes('spec')
+    && fd.runEndReason !== 'uncaught_exception';
+  if (!fdOk) {
+    throw new Error(
+      'goal/#8：失配应自动 discontinuity 并续跑（无 tamper、无裸崩、spec 真跑）。实得 '
+      + JSON.stringify(fd),
+    );
+  }
+  ctx.log('goal/#8：head 失配自动 discontinuity 续跑（第一死根治，整机面）');
 }
 
 /**

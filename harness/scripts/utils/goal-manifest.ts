@@ -520,10 +520,11 @@ export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineag
  * 让人 resume，自己的启动门拒绝 resume。
  *
  * 删除而非重写，因为它想防的 ② **已被两道现成的门覆盖**：
- * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 MAC 保护的身份字段
- *   （见上方该函数注释"键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现"）；
- * · `decide()` 对 `reset_lineage` 在 `invocation !== 'fresh'` 时恒 terminal
- *   （adjudication.ts）。
+ * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 manifest 身份字段
+ *   （停机期被补写会被 events 出生基线的 drift 检测发现——T2 5a 收口后基线由 events
+ *   承载，MAC 已整体退役）；
+ * · 执行判据只认**出生冻结值**（resolveBirthVisionLineage——中途补写拿不到出生值；
+ *   decide 对失配本身恒 recover，见 5a-1，不再有 terminal 分支）。
  * 一件事三道门、其中一道分不清合法与非法——收敛回前两道。
  * 命令行 `--vision-lineage` **显式旗标**在 resume 上的拒绝**保留**（goal-runner.ts）——
  * 那才是真的"中途升级"；出生 manifest 里的 reset 不再据此拒绝。

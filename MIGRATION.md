@@ -206,42 +206,28 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    `*.legacy-<ts>.bak`（events 记录原 sha256），downgrade/contradicted 行保守继承，
    **旧 verified/supersede 不自动升级**（verified 须当前 spec gate 重新铸造、supersede
    须 runner 重新签发）；mixed/不可解析文件不自动修复（保持 corrupt fail-closed，转
-   人工处置）。完整性锚两级：feature 级 authenticated head
-   `~/.maison/goal-checkpoints/vision-heads/<projectHash>/<feature>.json`（跨 run 连续性，
-   fresh run/resume 都先验）+ per-run checkpoint
-   `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（env
-   `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境；另绑
-   pre_authorized_mutations 规范化哈希——停机窗口改 manifest 扩权 resume 即拒）。
-   **`MAISON_HMAC_GOAL_CHECKPOINT` 为纯可选加固**（MAISON_HMAC_ 前缀模型，agent env
-   恒剥离；2026-08-06 起）：**未配置只如实记录认证状态（`vision_checkpoint_unauthenticated`
-   等观察事件），不阻塞执行、不影响完成态**。resume 遇信任锚缺失/未认证同样**记录后
-   继续**，无须任何 ack；`--ack-unverified-ledgers` / `--ack-receipt` 两个参数仅保留
-   **兼容读取**（带了只是多记一个 mode，不再是必需品）。配置密钥后损坏/验签失败仍
-   fail-closed（配了就要说话算话）。**配置/更换 HMAC 密钥后**旧 head/checkpoint 会判 invalid——用
-   `--reseal-receipt <受信 confirmation receipt>`（action=vision_trust_reseal，绑定当前
-   账本+旧 head/旧 checkpoint 字节 hash+当前授权子集+frozen manifest hash）重铸信任锚，
-   弱旗标不适用。信任锚 env（MAISON_HMAC_*/MAISON_TRUST_REGISTRY/
-   MAISON_GOAL_CHECKPOINT_DIR，**大小写不敏感匹配**）不会进入 agent、hvigor/ohpm、hylyre、
-   **整条 Python 准备链（解释器探测/import/venv/pip）**及 **HDC/设备工具** spawn 等可执行
-   宿主代码的子进程。MAC'd append-only 高水位链
-   `vision-heads/<projectHash>/<feature>.hwm.jsonl` 检测**非协调回滚/意外损坏/非尾部改**
-   （诚实边界：同权限域，协调回放+同步截断 HWM 尾部不可密码学阻止；真正 hardened
-   anti-rollback 需独立锚——broker/单调计数器，pending）。换钥/首配密钥后旧 HWM 会 invalid，
-   用 `--reseal-receipt`（现同时绑定旧 HWM 字节 hash）重铸，reseal 会事务化 quarantine 旧
-   HWM 链（**reseal journal v2**：MAC + rename 前记录计划备份名/旧三锚/receipt 绑定，quarantine 同步
-   sha 复验 copy 备份 head/checkpoint；崩溃后启动自动按内容恢复——**三锚全部**恢复到旧字节并
-   复验后才算回滚（任意崩溃窗口原 receipt 都可复用）、补 commit 须**四门全过**（head 对当前
-   账本快照验真 + checkpoint 存在/MAC/世代咬合 + HWM 与 head 精确等值——不完整提交不 commit
-   而是回滚，保留恢复资格）、备份被篡改 fail-closed；非终态事务在场时新 reseal 会被拒，先等
-   启动恢复）。启动时 head 世代与 HWM 高
-   水位**双向严格等值**：head 超前（上次锚提交未完成的残留态）同样 fail-closed
-   （vision_hwm_incomplete_commit，人工核查后 --reseal-receipt 重铸），不再静默续跑。**head 现声明 hwm_declared
-   （schema 1.1）**：声明后整个 HWM 文件被删=启动 fail-closed（恢复走 reseal receipt）；旧
-   1.0 head+缺 HWM 首次启动会落 vision_hwm_bootstrap 事件后自动建链。**checkpoint schema
-   1.2**：逐字段身份必填；旧 1.1 checkpoint（无逐字段身份）在聚合 hash 与当前 manifest 身份
-   相等时一次性自动迁移，不等则须 `--override-manifest` 显式确认（不静默 rebase）。**未配
-   HMAC 密钥的 resume 无须任何 ack（2026-08-06 起：记录认证状态后直接继续，完成态不
-   封顶）**；pre_run_manifest 预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
+   人工处置）。场外观察缓存两级：feature 级 head
+   `~/.maison/goal-checkpoints/vision-heads/<projectHash>/<feature>.json`（跨 run 连续性
+   观察锚，fresh run/resume 都先验）+ per-run checkpoint
+   `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（resume 恢复缓存；
+   env `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境）。停机窗口改
+   manifest（含 pre_authorized_mutations 扩权）由 **events 出生基线**的身份 drift 检测
+   拦截，见下。
+   **vision 信任链已简化（T2 5a 完成+收口刀，2026-08-07）**：HMAC 签验、HWM 高水位链、
+   reseal 流程与全部 ack 参数**整体退役**。head（唯一连续性观察锚）与 per-run
+   checkpoint（resume 加速缓存）均为**无签名**纯内容快照：内容一致=ok；失配/损坏=
+   自动 discontinuity 重建或丢缓存重算，**不停死、不求人**；场外缓存**写失败同样不中断
+   run**（记 `vision_anchor_persist_failed` 后继续）。`MAISON_HMAC_GOAL_CHECKPOINT`
+   对 vision 链不再有任何作用；`--ack-unverified-ledgers` / `--ack-receipt` /
+   `--reseal-receipt` 参数已移除（旧脚本传入会被 CLI 忽略）。旧 `.hwm.jsonl` 与
+   reseal journal 文件成为无消费者的惰性遗留物（lineage reset 事务只处理 head，
+   HWM 本体及其 `.reset-*.bak/.absent` 残留一律不读取/不改名/不识别），可安全人工
+   删除；head 若被异常实体顶替（如目录）同样只按缓存不可用继续，不中断 run。
+   **manifest 出生基线由 events 承载（收口刀）**：drift 检测的可信旧基线=首个
+   `run_start` 逐字段身份 → 历次授权 rebase 事件前进；checkpoint 的存在与否**不影响
+   任何裁决**（旧版"1.1 聚合迁移/未认证弱信任"随之消失）。**resume 无须任何 ack
+   （2026-08-06 起：记录信任状态后直接继续，完成态不封顶）**；pre_run_manifest
+   预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
    （requirement/chain/budget/allowed_tools/fidelity/预授权）
    在停机窗口被改会被身份哈希漂移检测（**锁内、副作用前**执行）拦截——合法变更走 `--override-manifest`
    （整体）或 `--override-start`/`--override-end`（**仅授权对应字段**，裸旗标不放行无关字段

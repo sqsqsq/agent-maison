@@ -95,9 +95,11 @@ export function runAll(): UnitCaseResult[] {
         `**T4#3 判据核心**：最早未完成的 WAITING(external) phase 必须真正重新执行`
         + `（start_index 收口形态在此必挂）：${detail}`);
       assert(out.agentCalls === 0, `设备阶段不烧 agent 轮次：${detail}`);
-      // 求人门已删：信任状态仍如实记录（checkpoint_absent 事件 continued:true）但不拦截
-      assert(out.eventTypes.includes('vision_ledger_checkpoint_absent'),
-        `信任状态观察事件应保留（检测便宜地留，响应=继续）：${detail}`);
+      // T2 5a 完成刀后：签名维度已删，checkpoint 内容一致即 ok——"未认证基线"概念
+      // 消失，resume 不再产生任何信任类观察事件（旧断言要求 checkpoint_absent 事件
+      // 在场，那来自已退役的 unauthenticated-baseline 路径）。零信任事件=正确形态。
+      assert(!out.eventTypes.includes('vision_ledger_resume_ack'),
+        `ack 语义已整体退役，不得再产 ack 事件：${detail}`);
     });
 
     run('恢复场景/READY：设备恢复后同一 run 无钥匙**真正完成**（codex 第九批 P0 后半闭环）', () => {

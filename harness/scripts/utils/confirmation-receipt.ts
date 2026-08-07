@@ -47,14 +47,10 @@ export type ReceiptAction =
   /** visual-capability-truth S4（codex 实施 review 二轮 P0-3）：testing/ut 期产品改码授权的
    * human 源——object_hash 绑定授权范围（run/phase/allowed_files/change_kind/max_files 规范化
    * 哈希），真人签名不可被换皮到更宽的自写授权行 */
-  | 'source_mutation_authorization'
-  /** visual-capability-truth（codex 七轮 P1）：vision 账本无锚续跑的真人确认——object_hash
-   * 绑定 {project_root_hash, feature, run_id, 两账本 sha256} 规范化哈希；CLI 布尔旗标
-   * 可被模型拼出，不构成人工授权，仅受信 receipt 解除完成态封顶 */
-  | 'vision_ledger_ack'
-  /** visual-capability-truth（codex 八轮 P1-2）：密钥升级/轮换后信任锚重铸（rekey/reseal）
-   * ——object_hash 另绑旧 head 文件字节 hash；弱旗标不参与 */
-  | 'vision_trust_reseal';
+  | 'source_mutation_authorization';
+// 【已删除 · T2 5a 收口刀（codex P2）】`vision_ledger_ack` / `vision_trust_reseal` 两个
+// action——vision 面 ack/reseal 凭据协议整体退役（记录+继续/自动重建取代求人），
+// 消费端与 object_hash 绑定函数已先行删除；旧 receipt 文件按未知 action 拒收即正确行为。
 
 const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'fidelity_downgrade',
@@ -66,8 +62,6 @@ const RECEIPT_ACTIONS = new Set<ReceiptAction>([
   'crop_provenance',
   'human_visual_acceptance',
   'source_mutation_authorization',
-  'vision_ledger_ack',
-  'vision_trust_reseal',
 ]);
 
 const ALLOWED_ALGS = new Set(['ed25519', 'hmac-sha256']);

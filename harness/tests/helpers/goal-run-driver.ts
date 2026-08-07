@@ -209,6 +209,11 @@ export function setupMinimalHost(feature: string, profile: 'generic' | 'hmos-app
   w(root, 'doc/module-catalog.yaml', 'schema_version: "1.0"\nmodules: []\n');
   w(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
   w(root, `doc/features/${feature}/spec/spec.md`, '# spec\n');
+  // spec PASS 冻结清单要求（T2 5a-1：#8 翻转后 seed 场景要真跑通 spec 收官）
+  w(root, `doc/features/${feature}/acceptance.yaml`, `feature: ${feature}\ncriteria: []\n`);
+  // 部分 utils 在 phase 期自调 inferRepoLayout（不走注入缝）——generic 场景现在也要
+  // 跑真 phase（#8 续跑收官），同样需要 framework tree 喂饱探测（与 hmos 段同理由）
+  fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
   if (profile === 'hmos-app') provisionHmosGoalFixture(root, feature);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
@@ -263,6 +268,16 @@ function latestRunId(root: string, feature: string): string | null {
  *   的 WAITING(external) phase 重新入队，ut `phase_start` 重现（`phaseStartsThisCall`）；
  * - `resume_with_device_ready`：同上但设备门注入 READY——验证"设备恢复后同一 run
  *   无钥匙真正完成"（后半闭环）。
+ * - `trust_dir_unwritable`：收口刀（codex P1-2）复现——checkpoint 根被普通文件顶住
+ *   （场外一切写入 ENOTDIR）。目标行为：缓存写失败只记录 `vision_anchor_persist_failed`
+ *   后继续，run 正常收官（旧行为=uncaught_exception 零 phase）。
+ * - `head_is_directory`：收口刀二/三（codex P1-1'+P1）复现——head 路径是**目录**且
+ *   旁边有旧 `head.reset-old.bak` 残留（rollback 还原目标被目录顶住＝最危险组合，
+ *   旧行为=rollback rmSync EISDIR 零 phase）。目标行为：rollback 跳过告警、quarantine
+ *   不读异常实体、新 head 写失败走 persist_failed 降级，spec 照常执行、正常收官。
+ * - `trust_namespace_is_file`：收口刀三（codex P1）复现——`vision-heads/<projectHash>`
+ *   本身是**文件**（残留枚举 readdirSync ENOTDIR）。目标行为：枚举失败=无残留，
+ *   head 写失败走 persist_failed，spec 照常执行、正常收官。
  */
 async function runScenario(args: {
   scenario: string;
@@ -286,6 +301,26 @@ async function runScenario(args: {
   const { scenario, feature, frameworkRoot, projectRoot: root, extra } = args;
   const { goal, config } = loadFrameworkModules(frameworkRoot);
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+  if (scenario === 'trust_dir_unwritable') {
+    // codex P1-2 实测形态：trust 根路径中段是普通文件 → mkdir/write 全程 ENOTDIR
+    fs.writeFileSync(path.join(root, 'trust-poison'), 'not a directory\n', 'utf-8');
+    process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-poison', 'cp');
+  }
+
+  if (scenario === 'head_is_directory') {
+    // codex 实测形态：场外 head 是目录（异常实体）——verify=invalid，恢复路径不得再读；
+    // 收口刀三追加旧 .bak 残留（rollback 还原目标被目录顶住＝最危险组合，须跳过不抛）
+    const headPath = (goal.visionFeatureHeadPath as (r: string, f: string) => string)(root, feature);
+    fs.mkdirSync(headPath, { recursive: true });
+    fs.writeFileSync(`${headPath}.reset-old.bak`, '{"generation":1}', 'utf-8');
+  }
+  if (scenario === 'trust_namespace_is_file') {
+    // codex 实测形态：namespace 目录本身是文件——残留枚举 readdirSync ENOTDIR
+    const headPath = (goal.visionFeatureHeadPath as (r: string, f: string) => string)(root, feature);
+    const nsDir = path.dirname(headPath);
+    fs.mkdirSync(path.dirname(nsDir), { recursive: true });
+    fs.writeFileSync(nsDir, 'not a directory\n', 'utf-8');
+  }
 
   if (scenario === 'seed_head_mismatch') {
     // **用生产 writer 种 head**，不手拼 JSON：writer 与 reader 同源，
@@ -309,7 +344,10 @@ async function runScenario(args: {
 
   const isDeviceScenario = scenario === 'device_park' || scenario === 'resume_after_park'
     || scenario === 'resume_with_device_ready';
-  if (isDeviceScenario) {
+  // T2 5a-1：桩集对**全部场景**统一（此前仅设备场景）——seed_head_mismatch 翻转为
+  // 目标行为后要验"自动 discontinuity 且 spec 真 PASS 收官"，同样需要写盘桩/闭环
+  // 探针桩/capability 桩；多注入对旧行为无影响（generic 宿主本就用不到设备 capability）。
+  {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const req = (rel: string): Record<string, unknown> =>
       require(path.join(frameworkRoot, rel)) as Record<string, unknown>;
