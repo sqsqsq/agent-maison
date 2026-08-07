@@ -265,7 +265,10 @@ import {
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
+  collectSupersededAncestorEvents,
+  extractSupersedeTargets,
   resolveResumeFromEvents,
+  rebuildOutcomesFromEvents,
   resolveResumeState,
   resolveWallClockStartMs,
   countCumulativeAdvanceBlocked,
@@ -448,7 +451,13 @@ let progressPhase: FeaturePhase | null = null;
 let progressHeartbeatHook: (() => void) | null = null;
 
 /** Set once the manifest is loaded; lets signal/exit handlers locate events.jsonl. */
-let terminalEventCtx: { reportDir: string; projectRoot: string } | null = null;
+let terminalEventCtx: {
+  reportDir: string; projectRoot: string;
+  /** T1①：优雅收口要生成报告，须知道 run 身份 */
+  runId: string; feature: string;
+  /** codex 第九批 P1：报告阶段视图从 events 重建（不写空表抹掉 resume 进度）——须知道链 */
+  chain: FeaturePhase[]; workflowChain: string[];
+} | null = null;
 /** True once any run_end (normal or interrupted) is written — keeps terminal event idempotent. */
 let runConcluded = false;
 
@@ -497,7 +506,14 @@ export function evaluateForegroundSurvival(opts: {
   return opts.foregroundOk ? 'warn' : 'block';
 }
 
+/** codex 第九批收尾 P3：进程级幂等——`main()` 可被程序化多次调用（driver/测试），
+ * 重复注册会累积 SIGINT/SIGTERM/SIGBREAK handler（全量 unit 已触发
+ * MaxListenersExceededWarning）。布尔守卫即可，不引入新生命周期机制。 */
+let signalHandlersInstalled = false;
+
 function setupSignalHandlers(): void {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
   const handler = (signal: NodeJS.Signals): void => {
     // Synchronous + first: a host kill may not grant async time, so the terminal event
     // must land (appendFileSync) before the async tree-kills below.
@@ -582,6 +598,66 @@ function writeTerminalEvent(reason: string): void {
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * T1①（e5d8a2c4）：**一切 terminal 出口必须经正常收口**——run_end 事件 + 报告落盘，
+ * 禁 throw 逃逸出 `main()`。
+ *
+ * 在案实锤（宿主 run1/6a969a 与 fa0663 三连）：runChain 内裸 throw 逃逸，CLI 外层
+ * catch 只补一条裸 `run_end{INTERRUPTED}`——**报告不生成**、退出方式与崩溃无异；
+ * driver 直调 `main()` 时连那条兜底事件都没有（棘轮单测钉过这个形态）。
+ *
+ * 返回 false＝run 身份尚未建立（manifest 解析前的异常），只能照旧抛给 CLI。
+ * 报告阶段视图**从 events 重建**（codex 第九批 P1：初版写空表会把 resume run 已有的
+ * 真实进度抹掉——events 是权威来源，就该从 events 折叠，而不是"不可信所以清空"）。
+ */
+function concludeInterruptedRun(err: unknown): boolean {
+  if (runConcluded || !terminalEventCtx) return false;
+  const ctx = terminalEventCtx;
+  runConcluded = true;
+  const message = ((err as Error)?.message ?? String(err)).slice(0, 2000);
+  try {
+    appendEvent(ctx.reportDir, ctx.projectRoot, {
+      type: 'run_end',
+      status: 'INTERRUPTED',
+      reason: 'uncaught_exception',
+      error: message,
+    });
+  } catch { /* best-effort：事件写不进也要试着写报告 */ }
+  try {
+    const evs = loadAuthoritativeEvents(
+      path.join(ctx.projectRoot, ctx.reportDir, 'events.jsonl'));
+    const outcomes = enrichOutcomesWithProjection(
+      rebuildOutcomesFromEvents(evs, ctx.chain) as GoalPhaseOutcome[],
+      evs as unknown as Array<Record<string, unknown>>,
+    );
+    const report = generateGoalReportJson(ctx.runId, ctx.feature, 'INTERRUPTED', outcomes);
+    writeGoalReport(ctx.projectRoot, ctx.reportDir, report, { workflowChain: ctx.workflowChain });
+  } catch { /* best-effort */ }
+  return true;
+}
+
+/**
+ * codex 第九批 P1：启动期 BLOCKER（run 身份已建立、run_start 已落，但在进入链执行前
+ * 被参数/前置校验拒绝）也必须优雅收口——此前直接 `return 1`/`process.exit(1)`，
+ * events 只有 run_start 没有 run_end，投影成僵尸 RUNNING。
+ */
+function concludeStartupBlocker(reason: string, detail: string): void {
+  if (runConcluded || !terminalEventCtx) return;
+  const ctx = terminalEventCtx;
+  runConcluded = true;
+  try {
+    // codex 第九批收尾 P1：run_end 必须经统一投影——裸 HALTED 会被 reducer 退回
+    // run_start 的 RESUME_READY，supervisor 把需要人修参数的 run 重新拉起
+    appendEvent(ctx.reportDir, ctx.projectRoot, withRunDisposition({
+      type: 'run_end', status: 'HALTED', halt_reason: reason, error: detail.slice(0, 1000),
+    }) as Parameters<typeof appendEvent>[2]);
+  } catch { /* best-effort */ }
+  try {
+    const report = generateGoalReportJson(ctx.runId, ctx.feature, 'HALTED', []);
+    writeGoalReport(ctx.projectRoot, ctx.reportDir, report, { workflowChain: ctx.workflowChain });
+  } catch { /* best-effort */ }
 }
 
 function readPhaseSummary(
@@ -811,6 +887,20 @@ export function __testing_setDeviceReadinessGate(fn: DeviceGateFn | null): void 
   injectedDeviceGate = fn;
 }
 
+/**
+ * invoke 前 capability gate 注入（测试用；e5d8a2c4 步骤 1）。
+ *
+ * 为什么需要它：capability gate 排在设备就绪门**之前**，而设备类 capability 的
+ * provider 恰是设备工具链（hdc/hvigor）——临时宿主必然缺，于是"注入设备门造
+ * WAITING 停放"的场景根本走不到设备门。桩掉 capability gate（返回 null=无缺口）
+ * 是唯一薄解；这不改变两门的真实顺序与语义。
+ */
+type InvokeCapabilityGateFn = typeof runInvokeCapabilityGate;
+let injectedCapabilityGate: InvokeCapabilityGateFn | null = null;
+export function __testing_setInvokeCapabilityGate(fn: InvokeCapabilityGateFn | null): void {
+  injectedCapabilityGate = fn;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
@@ -818,6 +908,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedRunHarness = null;
   injectedLayout = null;
   injectedDeviceGate = null;
+  injectedCapabilityGate = null;
 }
 
 async function runHarnessPhase(
@@ -2334,7 +2425,8 @@ export function readVisionCheckpointMeta(args: {
 /**
  * 十三轮 review P1-3：manifest 身份漂移决策（锁内、副作用前调用）——纯函数抽出供真路径测试。
  * 基线信任规则：
- *   - checkpoint absent/invalid → 无基线（交后续 vision 信任链 reseal/ack 处置），当前身份即 effective；
+ *   - checkpoint absent/invalid → 无基线（垂直闭环后：如实记录认证状态并继续，按仓内
+ *     事实重算——不再有 ack 流程；invalid 的 reseal 分支随 T2 5a 退役），当前身份即 effective；
  *   - **legacy checkpoint（1.1 无逐字段身份）不得静默当新基线**：聚合 manifest_hash 与当前
  *     身份哈希相等 → 一次性 schema 迁移（本次 commit 写 1.2 全字段）；不等 → 须显式
  *     --override-manifest（无逐字段可 diff，只能整体确认），否则 halt——升级停机窗口的
@@ -2456,7 +2548,18 @@ export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?
   events: ReadonlyArray<Record<string, unknown>>,
 ): T[] {
   const byPhase = new Map<string, { run_disposition?: unknown; run_wait_kind?: unknown }>();
+  // codex 第九批 P0：**有序覆盖语义**（与 rebuildOutcomesFromEvents 同规则）——
+  // 后来的 phase_verdict{advance/defer} 清除该 phase 的旧 halt 投影。否则
+  // 「ut WAITING 停放 → resume 重跑 PASS」会产出"ut PASS + run_disposition=WAITING"
+  // 的自相矛盾报告，且下一次 resume 又把已成功的 ut 重新入队（纯函数回放实证）。
+  const CLEARING_ACTIONS = new Set([
+    'advance', 'defer_external_and_continue_if_allowed', 'defer_external_and_halt',
+  ]);
   for (const e of events) {
+    if (e?.type === 'phase_verdict' && CLEARING_ACTIONS.has(String(e.action))) {
+      byPhase.delete(String(e.phase));
+      continue;
+    }
     if (e?.type !== 'phase_halt') continue;
     if (typeof e.run_disposition !== 'string') continue;
     byPhase.set(String(e.phase), { run_disposition: e.run_disposition, run_wait_kind: e.run_wait_kind });
@@ -3238,22 +3341,11 @@ export function visionTrustResealObjectHash(args: {
     .digest('hex');
 }
 
-/** 七轮 P0-1：vision 信任封顶（导出单测）——UI 相关 run 在无 authenticated checkpoint
- * （未配 HMAC 密钥）或仅弱 ack（CLI 旗标非真人凭证）时不得产出 clean completion，
- * 封顶 AWAITING_HUMAN_REVIEW。非 UI run 不受影响。 */
-export function capRunStatusForVisionTrust(
-  status: string,
-  opts: { uiRelevant: boolean; hmacKeyPresent: boolean; ackWeak: boolean },
-): { status: string; capped: boolean; reason?: string } {
-  if (status !== 'CHAIN_SLICE_COMPLETED' || !opts.uiRelevant) return { status, capped: false };
-  if (!opts.hmacKeyPresent) {
-    return { status: 'AWAITING_HUMAN_REVIEW', capped: true, reason: 'vision_checkpoint_unauthenticated' };
-  }
-  if (opts.ackWeak) {
-    return { status: 'AWAITING_HUMAN_REVIEW', capped: true, reason: 'vision_ledger_ack_unattested' };
-  }
-  return { status, capped: false };
-}
+/** 【已删除 · 垂直闭环追补（codex 第九批 P0 + 2026-08-06 理念裁定）】
+ * `capRunStatusForVisionTrust`（七轮 P0-1）：UI run 无 HMAC 密钥/仅弱 ack 时完成态
+ * 封顶 AWAITING_HUMAN_REVIEW。整体删除——认证状态退出完成态语义；防伪造主防线=
+ * 终点验收不信 agent 自报（视觉裁判去自报化 + pixel_1to1 人工确认）。
+ * 防复活断言见 effective-vision-context 套件。设备真实性封顶（诚实完成度）保留在下方。 */
 
 /**
  * openspec device-readiness-and-completion t2：**设备真实性封顶**（导出单测）。
@@ -4165,15 +4257,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // （source layout Scenario）。07-17 事故 agent 向 framework/harness/ 写 debug 脚本未被拦，
   // 每-harness 复扫机制在位（harness-runner 全模式入口直调），最可能根因即此部署形态。
   // 只告警不改门（改判会破 source-repo 开发契约）；宿主据此改用发布包部署。
-  // b3e8d4c7 t4（用户拍板：仅警告，不设启动硬门）：未配 writer authenticity 密钥时，
-  // 同进程内的 scope 保护仍由内存锚承担（本 plan 已接线），但 **resume/重启后内存锚没了**，
-  // 只能退回弱快照——盘上 head 被换代无法证伪。既有约束（MIGRATION.md）已让未配置时
-  // UI 类 run 不产出 clean completion，这里只把降级说清楚，不再加门。
+  // codex 第九批收尾 P2：旧警告陈述"完成态封顶人工复核"已随垂直闭环删除——不再
+  // 诱导用户配置不需要的密钥。降级为一次性纯诊断（认证状态只影响记录，不影响执行
+  // 与完成态；HMAC 签验面整体删除属 T2 5a，届时本提示一并退役）。
   if (!process.env[PASS_SNAPSHOT_HMAC_ENV]?.trim()) {
-    console.warn(
-      `[goal-runner] ⚠ 未配置 ${PASS_SNAPSHOT_HMAC_ENV}——resume/重启后 scope 冻结保护降级为` +
-      '弱快照（同进程内由内存锚保护，不受影响）。配置该密钥可让跨进程也 fail-closed；' +
-      '未配置时 UI 类 run 的完成态仍按既有约束封顶人工复核。',
+    console.info(
+      `[goal-runner] checkpoint 未配 ${PASS_SNAPSHOT_HMAC_ENV}：以未认证状态记录（仅诊断，` +
+      '不影响执行与完成态）。',
     );
   }
 
@@ -4830,7 +4920,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // Arm the terminal-event safety net now that report_dir is known: any abnormal exit
     // from here on writes run_end{INTERRUPTED} instead of dying silently.
-    terminalEventCtx = { reportDir: manifest.report_dir, projectRoot };
+    terminalEventCtx = {
+      reportDir: manifest.report_dir, projectRoot,
+      runId: manifest.run_id, feature: manifest.feature,
+      chain: [...chain], workflowChain: fullWorkflowChain.map(String),
+    };
 
     // visual-capability-truth S4：run_start 冻结 manifest hash——pre_run_manifest 授权源
     // 只认此快照（运行中补写 manifest 不构成授权）；resume 沿用首个 run_start 的冻结值。
@@ -4860,9 +4954,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 六/七轮 review P0：vision 信任链启动序——**head 先验（跨 run 连续性）→ resume
     // checkpoint 校验（同 run 停机窗口 + 授权子集绑定）→ 迁移（验后迁）→ 基线锚**。
     // ack 语义（七轮 P1-1）：CLI 旗标可被模型拼出，不构成人工授权——仅受信 confirmation
-    // receipt（action=vision_ledger_ack，绑 project/feature/run/两账本 hash）为强 ack；
-    // 旗标为弱 ack：须 events anchor 比对可行且通过，且终态封顶 AWAITING_HUMAN_REVIEW。
-    let visionAckWeak = false;
+    // receipt（action=vision_ledger_ack，绑 project/feature/run/两账本 hash）为强 ack。
+    // 弱 ack 变量已随垂直闭环删除（求人语义与完成态封顶均已作废，见 requireAck 头注）。
     // openspec device-readiness-and-completion t2：最后一次 testing 经设备就绪门取得的目标类型。
     // **null = 本 run 的 testing 未经设备门**（profile 未声明 device_capabilities / dry-run），
     // 与 'unknown'（经过了门但判不出机型）**语义不同**：前者不参与封顶（该链路本就与设备无关），
@@ -5076,20 +5169,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
         resealTx.pending = true;
         goalEvents.emit({ type: 'vision_hwm_resealed', old_hwm_sha256: oldHwmSha, quarantined_as: bak });
       }
+      // e5d8a2c4 步骤 3（垂直恢复闭环，2026-08-06 理念裁定）：**求人语义已删除**。
+      // 旧行为：无 ack 旗标即 throw（fa0663 三连实锤：未配密钥的常态宿主 100% 触发，
+      // 每次 resume 都要人肉带旗标，终态还封顶人工复核）。新行为：如实记录信任状态
+      // 后**继续跑**——证据信任状态退出执行控制面（T2④），完成态不再因此封顶
+      // （capRunStatusForVisionTrust 与弱 ack 变量已一并删除）。
+      // 两个 ack 旗标保留**读取兼容**（带了只是多记一个 mode，不再是必需品）。
       const requireAck = (context: string): void => {
         if (ackStrong) {
           goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'receipt', context });
           return;
         }
-        if (!argv['ack-unverified-ledgers']) {
-          goalEvents.emit({ type: 'vision_ledger_checkpoint_absent', ack: false, context });
-          throw new Error(
-            `vision 信任锚缺失（${context}）——须人工核查账本后带 --ack-unverified-ledgers（弱 ack，终态封顶人工复核）` +
-            '或提供 --ack-receipt <受信 confirmation receipt>（强 ack）后重试（fail-closed，不静默回落）。',
-          );
-        }
-        visionAckWeak = true;
-        goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'flag_weak', context });
+        goalEvents.emit({
+          type: 'vision_ledger_checkpoint_absent',
+          ack: Boolean(argv['ack-unverified-ledgers']),
+          context,
+          continued: true,
+        });
       };
 
       // plan a5f9c3e2 t3① 崩溃恢复：上一次 lineage reset 若在「改名后、新 head 写入前」
@@ -5299,7 +5395,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (head.state === 'ok_unauthenticated') {
         goalEvents.emit({
           type: 'vision_checkpoint_unauthenticated', scope: 'feature_head',
-          note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——head 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
+          note: `head 未认证（未配 ${VISION_CHECKPOINT_HMAC_ENV}）——仅记录状态，不影响执行与完成态`,
         });
       }
 
@@ -5355,12 +5451,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             }
           } else if (!ackStrong) {
-            // 七轮 P1-1：last anchor 缺失时弱 ack（旗标）不足以继续——须强 ack receipt
-            goalEvents.emit({ type: 'vision_ledger_no_anchor', ack: 'weak_insufficient' });
-            throw new Error(
-              'vision 账本无任何可比对锚（checkpoint 缺失且本 run 无 anchor 事件）——弱 ack 旗标不足以继续，' +
-              '须 --ack-receipt <受信 confirmation receipt> 强 ack（fail-closed）。',
-            );
+            // 垂直闭环追补（codex 第九批 P0）：no-anchor 同样**记录后继续**——此前这条
+            // 独立强 ack 门是"三个 context 一律记录并继续"的漏网：checkpoint 缺失且
+            // 崩溃前尚未写 anchor 的 run 无法无人值守恢复（七轮 P1-1 的求人语义随
+            // 理念裁定作废；无锚=无可比对缓存=按仓内事实重算，与 absent 同处置）。
+            goalEvents.emit({ type: 'vision_ledger_no_anchor', ack: 'none', continued: true });
           }
         }
         if (cp.state === 'ok' || cp.state === 'ok_unauthenticated') {
@@ -5370,12 +5465,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (cp.state === 'ok_unauthenticated') {
           goalEvents.emit({
             type: 'vision_checkpoint_unauthenticated',
-            note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——checkpoint 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
+            note: `checkpoint 未认证（未配 ${VISION_CHECKPOINT_HMAC_ENV}）——仅记录状态，不影响执行与完成态`,
           });
         }
-        // 十三轮 P1-3：无 writer authenticity 的 checkpoint 被用作 drift 基线 → **弱信任处置**，
-        // 不能仅靠终态封顶（run 仍会按可能被扩的 budget/unattended/pre_authorized_mutations 执行）。
-        // resume 须显式 ack：弱旗标可续（终态照旧封顶），强 receipt 免吵；无 ack 不启动。
+        // 十三轮 P1-3 原意=弱信任处置须显式 ack；垂直闭环（2026-08-06）后 requireAck
+        // 已改"记录+继续"——此处只落一条信任状态观察事件，不再拦截、不封顶完成态。
         if (manifestDrift.baselineUnauthenticated) {
           requireAck('checkpoint_unauthenticated_baseline');
         }
@@ -5427,19 +5521,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
       // ② target ≠ 当前 run（运行中删自己的 checkpoint/pass snapshot 是新删除能力
       //   带来的新风险）——否则 BLOCKER。
+      // codex 第九批 P1：三条 BLOCKER 统一走优雅收口（run_start 已落，直接 return/
+      // process.exit 会留下无 run_end 的僵尸 RUNNING 投影）；process.exit 一并替换为
+      // try 内 return（finally 释放锁，进程内调用可测——本区既有注释的约定）。
       if (!isValidRunIdBasename(target)) {
-        console.error(`[goal-runner] BLOCKER: --supersede 目标 runId 非法（须为合法 basename）：${JSON.stringify(target)}`);
-        return 1; // try 内 return——finally 释放锁（不用 process.exit：进程内调用可测）
+        const msg = `--supersede 目标 runId 非法（须为合法 basename）：${JSON.stringify(target)}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
       }
       if (target === manifest.run_id) {
-        console.error(`[goal-runner] BLOCKER: --supersede 不得指向当前 run（${target}）——运行中不得删除自身场外状态`);
+        const msg = `--supersede 不得指向当前 run（${target}）——运行中不得删除自身场外状态`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
         return 1;
       }
       const targetRunDir = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target);
       const targetEvents = path.join(targetRunDir, 'events.jsonl');
       if (!fs.existsSync(targetEvents)) {
-        console.error(`[goal-runner] BLOCKER: --supersede 目标 run 不存在：${target}`);
-        process.exit(1);
+        const msg = `--supersede 目标 run 不存在：${target}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
       }
       // 目标 manifest 身份验证：仓内 manifest.run_id 必须精确等于 target——身份验证
       // 失败只拒删场外状态（审计事件照落：supersede 语义本身不依赖场外状态在场）。
@@ -5521,7 +5624,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
     // 双计（codex 五轮 P1-②）。隔夜 resume 不再按日历跨度秒撞熔断（4035d4 事故）。
     const sessionStartMs = Date.now();
-    const budgetBase = resolveResumedBudget(priorEvents, { nextSessionStartMs: sessionStartMs });
+    // T1④（e5d8a2c4）：**预算沿 supersede 链折叠——supersede 不得刷新任何预算**。
+    // 预算是 per-run 从各自 events 回放的，新 run_id 即清零；不折叠的话"废弃旧 run
+    // 开后继"就是绕过 DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道。种子=
+    // 本次 CLI 的 --supersede（fresh）∪ 本 run events 里的 audited supersede（resume）。
+    // **阶段完成状态仍只读当前 run**（进度不跨 run 折叠，见 collectSupersededAncestorEvents 头注）。
+    const budgetFoldSeeds = [...supersededRunIds, ...extractSupersedeTargets(priorEvents)];
+    const ancestorBudgetEvents = budgetFoldSeeds.length > 0
+      ? collectSupersededAncestorEvents({
+          projectRoot, featuresDir, feature: manifest.feature, seedTargets: budgetFoldSeeds,
+        })
+      : [];
+    const budgetFoldEvents = ancestorBudgetEvents.length > 0
+      ? [...ancestorBudgetEvents, ...priorEvents]
+      : priorEvents;
+    const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
     let totalTurns = budgetBase.totalTurns;
     const priorActiveMs = budgetBase.priorActiveMs;
     // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
@@ -5556,7 +5673,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let halted = false;
     // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 1 次/run。
     let backtrackToIdx: number | null = null;
-    let backtracksUsed = priorEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
+    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents）
+    let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     let backtrackReviewFocus: string[] = [];
     // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
     // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
@@ -5719,7 +5837,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const phaseStartEvents = loadAuthoritativeEvents(
         path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
       );
-      let transientRetriesUsed = countTransientApiRetries(phaseStartEvents, phase);
+      // T1④：transient 本就跨 resume 计数——跨 supersede 同样折叠（祖先同 phase 的断流重试计入）
+      let transientRetriesUsed = countTransientApiRetries(
+        ancestorBudgetEvents.length > 0 ? [...ancestorBudgetEvents, ...phaseStartEvents] : phaseStartEvents,
+        phase,
+      );
       // P0-D：上一次 attempt 是否 API 断流（同样非内容失败，partial 产物照样复用）。
       // resume 首轮从最近一次 phase_verdict 恢复，否则 prompt 归因错向 deterministic、
       // partial 续作块打不开。
@@ -6248,7 +6370,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // v5：逻辑抽取为 runInvokeCapabilityGate（真实链可测——goal-capability-gate 单测
         // 断言"缺口无 agent_invoke_start / resume 重检仍 halt / reprobe 后放行"事件序列）。
         if (!dryRun) {
-          const capHalt = runInvokeCapabilityGate({
+          const capHalt = (injectedCapabilityGate ?? runInvokeCapabilityGate)({
             projectRoot,
             phase,
             retries,
@@ -8993,40 +9115,30 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
     })();
     const rawStatus = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
-    const visionCap = capRunStatusForVisionTrust(rawStatus, {
-      uiRelevant: uiRelevantAtEnd,
-      hmacKeyPresent: Boolean(process.env[VISION_CHECKPOINT_HMAC_ENV]),
-      ackWeak: visionAckWeak,
-    });
-    if (visionCap.capped) {
-      goalEvents.emit({
-        type: 'vision_trust_completion_cap',
-        from: rawStatus,
-        to: visionCap.status,
-        reason: visionCap.reason,
-      });
-      console.warn(
-        `[S3] vision 信任封顶：${rawStatus} → ${visionCap.status}（${visionCap.reason}）——` +
-        `配置 ${VISION_CHECKPOINT_HMAC_ENV} 获得 authenticated checkpoint / 提供受信 ack receipt 后方可 clean completion`,
-      );
-    }
-    // openspec device-readiness-and-completion t2：设备真实性封顶（在 vision 封顶之后叠加）。
+    // 【已删除 · 垂直闭环追补（codex 第九批 P0 + 2026-08-06 理念裁定）】
+    // `capRunStatusForVisionTrust`（七轮 P0-1 的 vision 信任封顶）：UI run 未配 HMAC
+    // 密钥/仅弱 ack 时完成态封顶 AWAITING_HUMAN_REVIEW。按裁定"完成态不再因认证状态
+    // 封顶"整体删除——防伪造主防线是终点验收不信 agent 自报（视觉裁判去自报化 +
+    // pixel_1to1 人工确认），认证状态彻底退出执行控制面与完成态语义。
+    // 注意与下方设备真实性封顶的区别：那是「模拟器结果不能冒充真机行为」的**诚实
+    // 完成度表达**（三分类里的防假绿面），不属防伪造类，保留。
+    // openspec device-readiness-and-completion t2：设备真实性封顶。
     // 只有 testing 真的跑过才判——纯 spec/plan/coding/ut 链路与设备无关，不受影响。
     const testingRan = outcomes.some(o => o.phase === 'testing');
-    const deviceCap = capRunStatusForDeviceAuthenticity(visionCap.status, {
+    const deviceCap = capRunStatusForDeviceAuthenticity(rawStatus, {
       testingRan,
       targetKind: lastTestingTargetKind,
     });
     if (deviceCap.capped) {
       goalEvents.emit({
         type: 'device_authenticity_completion_cap',
-        from: visionCap.status,
+        from: rawStatus,
         to: deviceCap.status,
         reason: deviceCap.reason,
         target_kind: lastTestingTargetKind,
       });
       console.warn(
-        `[device] 设备真实性封顶：${visionCap.status} → ${deviceCap.status}（${deviceCap.reason}）——` +
+        `[device] 设备真实性封顶：${rawStatus} → ${deviceCap.status}（${deviceCap.reason}）——` +
           'testing 未在已确认的真机上执行，不得宣称完整通过；接真机后重跑可解除。',
       );
     }
@@ -9175,6 +9287,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (status === 'HALTED') return 1;
     if (status === 'DEFERRED' || status === 'PARTIAL') return 2;
     return 0;
+  } catch (err) {
+    // T1①：run 身份已建立的任何未处理异常 → 优雅收口（run_end + 报告），返回 1。
+    // 身份未建立（manifest 解析前）→ 照旧抛给 CLI（那里没有可收口的 run）。
+    if (!concludeInterruptedRun(err)) throw err;
+    console.error(
+      `\n[goal-runner] run 因未处理异常中断——已优雅收口（run_end{INTERRUPTED} + 报告已落盘）：\n`
+      + `${(err as Error)?.message ?? err}`,
+    );
+    return 1;
   } finally {
     if (activeHarnessKill) {
       void activeHarnessKill().catch(() => {

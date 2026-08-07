@@ -212,13 +212,12 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（env
    `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境；另绑
    pre_authorized_mutations 规范化哈希——停机窗口改 manifest 扩权 resume 即拒）。
-   **强烈建议部署配置 `MAISON_HMAC_GOAL_CHECKPOINT`**（MAISON_HMAC_ 前缀模型，agent env
-   恒剥离）：配置后损坏/验签失败一律 fail-closed；**未配置时 UI 相关 goal run 不产出
-   clean completion（CHAIN_SLICE_COMPLETED 封顶 AWAITING_HUMAN_REVIEW）**——writer
-   authenticity 是完成态前置条件。**resume 时信任锚缺失将 halt**：带
-   `--ack-unverified-ledgers` 为弱 ack（须 events anchor 可比对且通过，终态仍封顶人工
-   复核）；提供 `--ack-receipt <受信 confirmation receipt>`（action=vision_ledger_ack）
-   为强 ack。**配置/更换 HMAC 密钥后**旧 head/checkpoint 会判 invalid——用
+   **`MAISON_HMAC_GOAL_CHECKPOINT` 为纯可选加固**（MAISON_HMAC_ 前缀模型，agent env
+   恒剥离；2026-08-06 起）：**未配置只如实记录认证状态（`vision_checkpoint_unauthenticated`
+   等观察事件），不阻塞执行、不影响完成态**。resume 遇信任锚缺失/未认证同样**记录后
+   继续**，无须任何 ack；`--ack-unverified-ledgers` / `--ack-receipt` 两个参数仅保留
+   **兼容读取**（带了只是多记一个 mode，不再是必需品）。配置密钥后损坏/验签失败仍
+   fail-closed（配了就要说话算话）。**配置/更换 HMAC 密钥后**旧 head/checkpoint 会判 invalid——用
    `--reseal-receipt <受信 confirmation receipt>`（action=vision_trust_reseal，绑定当前
    账本+旧 head/旧 checkpoint 字节 hash+当前授权子集+frozen manifest hash）重铸信任锚，
    弱旗标不适用。信任锚 env（MAISON_HMAC_*/MAISON_TRUST_REGISTRY/
@@ -241,8 +240,8 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    1.0 head+缺 HWM 首次启动会落 vision_hwm_bootstrap 事件后自动建链。**checkpoint schema
    1.2**：逐字段身份必填；旧 1.1 checkpoint（无逐字段身份）在聚合 hash 与当前 manifest 身份
    相等时一次性自动迁移，不等则须 `--override-manifest` 显式确认（不静默 rebase）。**未配
-   HMAC 密钥的 resume 现须显式 ack**（弱旗标可续、终态照旧封顶；强 receipt 免打扰），且
-   pre_run_manifest 预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
+   HMAC 密钥的 resume 无须任何 ack（2026-08-06 起：记录认证状态后直接继续，完成态不
+   封顶）**；pre_run_manifest 预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
    （requirement/chain/budget/allowed_tools/fidelity/预授权）
    在停机窗口被改会被身份哈希漂移检测（**锁内、副作用前**执行）拦截——合法变更走 `--override-manifest`
    （整体）或 `--override-start`/`--override-end`（**仅授权对应字段**，裸旗标不放行无关字段

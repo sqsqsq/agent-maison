@@ -151,7 +151,9 @@ export interface GoalReport {
   schema_version: '1.0';
   run_id: string;
   feature: string;
-  status: GoalRunStatus;
+  /** `INTERRUPTED`＝未处理异常的优雅收口（e5d8a2c4 T1①）——events 层异常终态在
+   *  报告里如实透传，与正常终态并列显示，**不是** GoalRunStatus 的新成员。 */
+  status: GoalRunStatus | 'INTERRUPTED';
   phases: GoalPhaseOutcome[];
   deferred_phases: FeaturePhase[];
   generated_at: string;
@@ -215,7 +217,7 @@ export function buildAttemptAxesTimeline(events: AttemptAxisEventLike[], phase: 
 export function generateGoalReportJson(
   runId: string,
   feature: string,
-  status: GoalRunStatus,
+  status: GoalRunStatus | 'INTERRUPTED',
   phases: GoalPhaseOutcome[],
 ): GoalReport {
   const deferred_phases = phases.filter((p) => p.deferred).map((p) => p.phase);

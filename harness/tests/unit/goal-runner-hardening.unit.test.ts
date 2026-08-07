@@ -8,6 +8,8 @@ import {
   countAgentInvokeStarts,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
+  collectSupersededAncestorEvents,
+  extractSupersedeTargets,
   resolveWallClockStartMs,
 } from '../../scripts/utils/goal-runner-phase';
 import { isGoalHeadlessEnv, MAISON_GOAL_HEADLESS_ENV } from '../../scripts/utils/phase-state';
@@ -110,6 +112,48 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         b.wallClockStartMs === new Date('2026-06-09T13:12:25.820Z').getTime(),
         String(b.wallClockStartMs),
       );
+    },
+  },
+  {
+    name: 'T1④ 预算折叠：沿 supersede 链递归收祖先 events（turns/backtracks 求和、防环、缺失容忍、ts 升序）',
+    run: () => {
+      // 内存夹具注入 loadEvents——按 run 目录名路由（不真读盘）
+      const store: Record<string, Array<Record<string, unknown>>> = {
+        'run-A': [
+          { type: 'run_start', ts: '2026-08-01T00:00:00.000Z' },
+          { type: 'agent_invoke', phase: 'spec', ts: '2026-08-01T00:01:00.000Z' },
+          { type: 'phase_backtrack_requested', ts: '2026-08-01T00:02:00.000Z' },
+          // 链式：A supersede 更早的 Z；含环引用 B（防环须不炸）
+          { type: 'supersede', target_run_id: 'run-Z', ts: '2026-08-01T00:03:00.000Z' },
+          { type: 'supersede', target_run_id: 'run-B', ts: '2026-08-01T00:03:01.000Z' },
+        ],
+        'run-Z': [
+          { type: 'run_start', ts: '2026-07-31T00:00:00.000Z' },
+          { type: 'agent_invoke', phase: 'spec', ts: '2026-07-31T00:01:00.000Z' },
+          { type: 'phase_backtrack_requested', ts: '2026-07-31T00:02:00.000Z' },
+          { type: 'supersede', target_run_id: 'run-A', ts: '2026-07-31T00:03:00.000Z' }, // 环
+        ],
+        // run-B 无 events（被清理的历史 run）——缺失容忍：跳过不炸
+      };
+      const folded = collectSupersededAncestorEvents({
+        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+        seedTargets: ['run-A'],
+        loadEvents: (abs) => {
+          const m = abs.replace(/\\/g, '/').match(/goal-runs\/([^/]+)\/events\.jsonl$/);
+          return (m && store[m[1]] ? store[m[1]] : []) as never;
+        },
+      });
+      // 祖先 A+Z 全收（B 缺失跳过、环不重复）
+      const bt = folded.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
+      assert(bt === 2, `祖先回退计数应折叠求和（A+Z=2），实得 ${bt}`);
+      // ts 升序：最早的 run-Z 事件在前 → wall 起点=祖先最早 run_start
+      const b = resolveResumedBudget(folded as never);
+      assert(b.wallClockStartMs === new Date('2026-07-31T00:00:00.000Z').getTime(),
+        `wall 起点应为祖先最早 run_start，实得 ${b.wallClockStartMs}`);
+      assert(b.totalTurns === 2, `turns 应折叠求和（A+Z 各 1），实得 ${b.totalTurns}`);
+      // 变异靶：extractSupersedeTargets 只认 audited supersede 事件
+      const targets = extractSupersedeTargets(store['run-A'] as never);
+      assert(targets.join(',') === 'run-Z,run-B', `直接目标提取：${targets.join(',')}`);
     },
   },
   {

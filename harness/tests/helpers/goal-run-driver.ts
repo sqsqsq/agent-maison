@@ -106,6 +106,17 @@ export interface GoalRunOutcome {
   eventTypes: string[];
   /** 注入 agent 被调用次数——死在 phase 之前时应为 0 */
   agentCalls: number;
+  /** 宿主 goal-runs 下最新 run 的 id（park→resume 两段式场景用；无 run 目录为 null） */
+  runId: string | null;
+  /**
+   * 恢复场景的精确判据（e5d8a2c4 T4#3 收紧后）：resume 后指定 phase 是否真的
+   * **重新开始执行**（`phase_start` 在本次调用期间新增）——只看"启动门过了"会把
+   * `start_index=6 直接收口`（fa0663 实测形态）误判为成功。
+   */
+  phaseStartsThisCall: string[];
+  /** 最后一条 run_end 的 reason / error（T1① 优雅收口后，死因在事件里而非 throw） */
+  runEndReason: string | null;
+  runEndError: string | null;
 }
 
 function w(root: string, rel: string, content: string): void {
@@ -118,8 +129,69 @@ function git(root: string, args: string[]): void {
   spawnSync('git', args, { cwd: root, encoding: 'utf-8' });
 }
 
-/** 最小可跑宿主：generic profile（coding/ut/testing 全禁），够跑到 vision head 裁决点 */
-export function setupMinimalHost(feature: string): string {
+/**
+ * hmos-app goal 场景的宿主夹具（设备停放/恢复场景专用；smoke 对 cloneRoot 也铺同一套）。
+ *
+ * 逐项都是实证出来的（缺一项就 halt 在对应门上，别删）：
+ * - hmos-app profile + hvigorBin 存在性（personal-setup-gate.ts:129 `fs.existsSync`）；
+ * - config-defaults 的五个产品层目录（缺→`declared_product_layer_missing`）；
+ * - `framework/workflows`：部分 utils 在 phase 期**自调** `inferRepoLayout(projectRoot)`，
+ *   不走 goal-runner 注入缝（cloneRoot 天然有发布件树，此处只为裸宿主兜底）；
+ * - PASS 冻结清单：spec 要 acceptance.yaml、plan 要 plan.md+contracts.yaml（G1-1）、
+ *   review closure 要产品源在盘（清单与 goal-runner-testing-integrity 宿主同源）；
+ * - canary 声明（vision 链 spec 期消费）。
+ */
+export function provisionHmosGoalFixture(root: string, feature: string): void {
+  w(root, 'framework.config.json', JSON.stringify({
+    schema_version: '1.1',
+    project_name: 'GoalDriverHost',
+    project_profile: { name: 'hmos-app' },
+    paths: { features_dir: 'doc/features', docs_committed: false },
+    materialized_adapters: ['cursor'],
+  }, null, 2));
+  // cursor 的 agent_entry_file.target_path = AGENTS.md（agents/cursor/adapter.yaml）
+  w(root, 'AGENTS.md', '# AGENTS\n');
+  w(root, 'fake-tools/hvigor.js', '// fake hvigor for device scenarios\n');
+  w(root, 'framework.local.json', JSON.stringify({
+    schema_version: '1.0',
+    agent_adapter: 'cursor',
+    toolchain: { devEcoStudio: { hvigorBin: path.join(root, 'fake-tools', 'hvigor.js') } },
+    vision: {
+      canary: {
+        adapter: 'cursor', verdict: 'tool_read', probed_at: new Date().toISOString(),
+        probed_via: 'interactive', probe_version: 2,
+      },
+    },
+  }, null, 2));
+  for (const layer of ['01-Product', '02-Feature', '03-CommonBusiness', '04-BusinessBase', '05-SystemBase']) {
+    w(root, `${layer}/.gitkeep`, '');
+  }
+  fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
+  const productFile = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
+  w(root, productFile, 'struct AllBanksPage { build() { Text("x") } }');
+  w(root, 'build-profile.json5', JSON.stringify({
+    app: { products: [{ name: 'default' }] },
+    modules: [{ name: 'FinancialCard', srcPath: './02-Feature/FinancialCard' }],
+  }, null, 2));
+  w(root, '02-Feature/FinancialCard/oh-package.json5',
+    '{ "name": "financialcard", "version": "1.0.0" }');
+  w(root, 'doc/module-catalog.yaml', 'schema_version: "1.0"\nmodules: []\n');
+  w(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
+  w(root, `doc/features/${feature}/spec/spec.md`, '# spec\n');
+  w(root, `doc/features/${feature}/acceptance.yaml`, `feature: ${feature}\ncriteria: []\n`);
+  w(root, `doc/features/${feature}/plan/plan.md`, '# plan\n');
+  w(root, `doc/features/${feature}/contracts.yaml`,
+    `feature: ${feature}\nfiles:\n  - ${productFile}\n`);
+}
+
+/**
+ * 最小可跑宿主。
+ * - `generic`（缺省）：coding/ut/testing 全禁，够跑到 vision head 裁决点（#8 用）；
+ * - `hmos-app`：唯一带 `device_capabilities` 的发布 profile——设备停放/恢复场景
+ *   必须用它（generic 无设备语义，phaseRequiresDevice 恒 false，注入的设备门
+ *   根本不会被调用）。capability gate 由注入桩放行（见 goal-runner 缝头注）。
+ */
+export function setupMinimalHost(feature: string, profile: 'generic' | 'hmos-app' = 'generic'): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-drv-'));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.email', 't@t']);
@@ -132,29 +204,47 @@ export function setupMinimalHost(feature: string): string {
     paths: { features_dir: 'doc/features', docs_committed: false },
     materialized_adapters: ['cursor'],
   }, null, 2));
-  // cursor 的 agent_entry_file.target_path = AGENTS.md（agents/cursor/adapter.yaml）
   w(root, 'AGENTS.md', '# AGENTS\n');
   w(root, 'framework.local.json', JSON.stringify({ schema_version: '1.0', agent_adapter: 'cursor' }, null, 2));
   w(root, 'doc/module-catalog.yaml', 'schema_version: "1.0"\nmodules: []\n');
   w(root, 'doc/glossary.yaml', 'schema_version: "1.0"\nterms: []\n');
   w(root, `doc/features/${feature}/spec/spec.md`, '# spec\n');
+  if (profile === 'hmos-app') provisionHmosGoalFixture(root, feature);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
   return root;
 }
 
-function readEventTypes(root: string, feature: string): string[] {
+interface DriverEvent { type: string; phase?: string; reason?: string; error?: string }
+
+/** 按 run 目录名排序合并读全部 events（run id 前缀是 UTC 时间戳，字典序=时间序） */
+function readEvents(root: string, feature: string): DriverEvent[] {
   const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
   if (!fs.existsSync(runsDir)) return [];
-  const types: string[] = [];
-  for (const r of fs.readdirSync(runsDir).filter(n => !n.startsWith('.'))) {
+  const out: DriverEvent[] = [];
+  for (const r of fs.readdirSync(runsDir).filter(n => !n.startsWith('.')).sort()) {
     const f = path.join(runsDir, r, 'events.jsonl');
     if (!fs.existsSync(f)) continue;
     for (const line of fs.readFileSync(f, 'utf-8').split('\n').filter(Boolean)) {
-      try { types.push((JSON.parse(line) as { type?: string }).type ?? '?'); } catch { types.push('?'); }
+      try {
+        const e = JSON.parse(line) as { type?: string; phase?: string; reason?: string; error?: string };
+        out.push({
+          type: e.type ?? '?',
+          ...(typeof e.phase === 'string' ? { phase: e.phase } : {}),
+          ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
+          ...(typeof e.error === 'string' ? { error: e.error } : {}),
+        });
+      } catch { out.push({ type: '?' }); }
     }
   }
-  return types;
+  return out;
+}
+
+function latestRunId(root: string, feature: string): string | null {
+  const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
+  if (!fs.existsSync(runsDir)) return null;
+  const runs = fs.readdirSync(runsDir).filter(n => !n.startsWith('.')).sort();
+  return runs.length > 0 ? runs[runs.length - 1] : null;
 }
 
 /**
@@ -162,6 +252,17 @@ function readEventTypes(root: string, feature: string): string[] {
  * 然后 fresh 启动且**不声明** `--vision-lineage=reset`。这就是宿主主仓 run1
  * （6a969a）"启动 11 秒即死"的形态：head 存场外、账本在 repo 内，跨存储域失配
  * 是结构常态而非攻击信号。
+ */
+/**
+ * 场景清单（e5d8a2c4 步骤 1 起）：
+ * - `seed_head_mismatch`：#8"第一死"回放（generic 宿主）；
+ * - `device_park`：设备停放——hmos-app 宿主 + 注入设备门 BLOCKED（`WAITING(external)`
+ *   + `halted:false`，与 fa0663 同形）→ run PARTIAL 停放。`--start ut`；
+ * - `resume_after_park`：`--resume <extra=runId>`——恢复场景的行为面。
+ *   垂直闭环（步骤 3）已落地：无 HMAC resume **零拦截**（认证状态仅记录），最早未完成
+ *   的 WAITING(external) phase 重新入队，ut `phase_start` 重现（`phaseStartsThisCall`）；
+ * - `resume_with_device_ready`：同上但设备门注入 READY——验证"设备恢复后同一 run
+ *   无钥匙真正完成"（后半闭环）。
  */
 async function runScenario(args: {
   scenario: string;
@@ -179,8 +280,10 @@ async function runScenario(args: {
    * 顺带解决目录归属：谁建谁删，父进程 `finally` 兜得住超时/解析失败。
    */
   projectRoot: string;
+  /** 场景附加参数：resume_after_park 传要续跑的 runId */
+  extra?: string;
 }): Promise<GoalRunOutcome> {
-  const { scenario, feature, frameworkRoot, projectRoot: root } = args;
+  const { scenario, feature, frameworkRoot, projectRoot: root, extra } = args;
   const { goal, config } = loadFrameworkModules(frameworkRoot);
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
 
@@ -204,14 +307,133 @@ async function runScenario(args: {
   });
   (goal.__testing_setRunHarnessPhase as (f: unknown) => void)(async () => ({ verdict: 'PASS', blockers: [] }));
 
-  process.argv = [
-    'node', 'goal-runner.ts',
-    '--feature', feature,
-    '--requirement', `T4 driver scenario=${scenario}`,
-    '--start', 'spec', '--end', 'spec',
-    '--adapter', 'cursor',
-    '--foreground-ok', '--force',
-  ];
+  const isDeviceScenario = scenario === 'device_park' || scenario === 'resume_after_park'
+    || scenario === 'resume_with_device_ready';
+  if (isDeviceScenario) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const req = (rel: string): Record<string, unknown> =>
+      require(path.join(frameworkRoot, rel)) as Record<string, unknown>;
+    // ---- 写盘 harness 桩（与 goal-runner-testing-integrity 同源形态）----
+    // 桩必须把 receipt/verifier/summary(1.2)/evidence-manifest 写到盘：runner 的
+    // 截断链 preflight 与 closure finalizer 消费的是**文件**，内存 PASS 走不通全链。
+    // 全部 writer 从 frameworkRoot 动态取（静态 import = 恒锚开发仓，第八批 P1 教训）。
+    const closure = req('harness/scripts/utils/closure-attestation');
+    const pem = req('harness/scripts/utils/phase-evidence-manifest');
+    const fidelity = req('harness/scripts/utils/fidelity-shared');
+    (goal.__testing_setRunHarnessPhase as (f: unknown) => void)(async (
+      pr: string, _fr: string, ph: string, feat: string, _dry: boolean,
+      gm?: { run_id?: string },
+    ) => {
+      const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
+      const dir = path.join(phaseDir, 'reports');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), [
+        `# ${String(ph)} 阶段完成回执`, '',
+        `- 模块: ${feat}`, `- 阶段: ${String(ph)}`, '- 结论: PASS',
+        '- 脚本 harness: 退出码 0，零 BLOCKER', '- verifier: PASS', '',
+      ].join('\n'), 'utf-8');
+      fs.writeFileSync(path.join(dir, 'verifier.report.md'), '# verifier\nverdict: PASS\n', 'utf-8');
+      if (String(ph) === 'review') {
+        (closure.writeReviewClosureAttestation as (a: unknown) => void)({
+          projectRoot: pr, feature: feat, expectProductSources: true,
+          gateFingerprint: 'goal-run-driver', runIdentity: null,
+        });
+      }
+      const axis = (verdict: string): Record<string, unknown> => ({
+        applicable: true, required_for_release: true, verdict,
+        blocking_class: null, source_checks: [], resolution: null,
+      });
+      fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
+        schema_version: '1.2', assurance: 'full',
+        capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+        verdict: 'PASS', blocker_count: 0, receipt_status: 'missing', closure_status: 'open',
+        next_action: 'run_receipt',
+        report_validity: 'PASS', release_readiness: 'READY',
+        completion_status: 'complete',
+        quality_axes: {
+          functional: axis('PASS'), visual: axis('PASS'),
+          asset: axis('PASS'), evidence: axis('PASS'),
+        },
+        blockers: [], checks: [],
+      }, null, 2), 'utf-8');
+      try {
+        const manifest = (pem.resolvePhaseEvidenceManifest as (a: unknown) => unknown)({
+          projectRoot: pr, feature: feat, phase: String(ph),
+          extraInputs: [], extraOutputs: [],
+          requirementSha: gm?.run_id
+            ? (fidelity.computeRunRequirementSha as (...a: unknown[]) => unknown)(pr, feat, gm.run_id, 'doc/features')
+            : null,
+        });
+        const written = (pem.writePhaseEvidenceManifest as (r: string, m: unknown) => { absPath: string; sha256: string })(pr, manifest);
+        const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
+        (pem.writeReceiptManifestPointer as (...a: unknown[]) => void)(pr, feat, String(ph), rel, written.sha256);
+      } catch { /* manifest 失败 → 后续门如实红（非本场景被测对象） */ }
+      return { exitCode: 0, timedOut: false };
+    });
+    // capability gate 桩（无缺口放行）——它排在设备门之前，而设备 capability 的
+    // provider 恰是临时宿主必缺的设备工具链；不桩它就永远走不到设备门（缝头注详述）
+    (goal.__testing_setInvokeCapabilityGate as (f: unknown) => void)(() => null);
+    // 闭环探针桩——tryValidateReceipt 会 spawn 真 check-receipt 子进程，tmp host
+    // 必然 error（closure_probe_error，实证）；缝头注自述它就是为此存在
+    (goal.__testing_setValidateReceipt as (f: unknown) => void)(
+      (_hr: string, _pr: string, ph: string, feat: string) => ({
+        status: 'passed', receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`, exit_code: 0,
+      }),
+    );
+    // 设备门桩：两种形态——
+    // · BLOCKED（halted:false + externalBlocked，fa0663 同形）：park / 仍锁 resume；
+    // · READY（`resume_with_device_ready`，codex 第九批 P0）：验证"设备恢复后同一 run
+    //   无钥匙**真正完成**"的后半闭环——此前 smoke 只证明了"仍锁时能再次停放"。
+    //   target 自称 physical：模拟真机就绪（设备真实性封顶因此不触发，完成态可满）。
+    const deviceReady = scenario === 'resume_with_device_ready';
+    (goal.__testing_setDeviceReadinessGate as (f: unknown) => void)(
+      async (opts: { phase: string; retries: number; emitEvent: (e: unknown) => void }) => {
+        if (deviceReady) {
+          return {
+            env: {}, target: { serial: 'stub-device', targetKind: 'physical' },
+            notes: ['injected-device-ready'],
+          };
+        }
+        opts.emitEvent({
+          type: 'phase_halt', phase: opts.phase, halt_reason: 'device_not_ready',
+          verdict: 'FAIL', reason: '注入：设备锁屏（smoke 恢复场景）', notes: ['injected-device-gate'],
+        });
+        return {
+          outcome: {
+            phase: opts.phase, verdict: 'FAIL', halted: false, retries: opts.retries,
+            halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏（smoke 恢复场景）',
+            blocking_class: 'externalBlocked', failure_kind: 'device_blocked',
+          },
+          notes: ['injected-device-gate'],
+        };
+      },
+    );
+  }
+
+  const preCount = readEvents(root, feature).length;
+  const argvBase = ['node', 'goal-runner.ts', '--feature', feature, '--adapter', 'cursor', '--foreground-ok'];
+  if (scenario === 'resume_after_park' || scenario === 'resume_with_device_ready') {
+    if (!extra) throw new Error(`${scenario} 需要 extra=runId`);
+    process.argv = [...argvBase, '--resume', extra];
+  } else if (scenario === 'device_park') {
+    // 全链启动：spec→review 由写盘桩 PASS 走过（截断链 preflight 消费的是文件，
+    // `--start ut` 空宿主必被"上游 missing/stale"拒启——实证过），ut 撞设备门停放。
+    // `--vision-lineage reset`＝T4#3 的完整前提（"reset 已消费"）：fresh 声明 reset
+    // → 启动期消费（discontinuity+committed）→ 四阶段 PASS → 停放；resume 一并验证
+    // "已消费的出生 reset 不再阻断"（T1③(b) 的整机面）。
+    process.argv = [
+      ...argvBase,
+      '--requirement', `T4 driver scenario=${scenario}`,
+      '--start', 'spec', '--end', 'testing', '--force',
+      '--vision-lineage', 'reset',
+    ];
+  } else {
+    process.argv = [
+      ...argvBase,
+      '--requirement', `T4 driver scenario=${scenario}`,
+      '--start', 'spec', '--end', 'spec', '--force',
+    ];
+  }
   process.chdir(root);
   config.clearFrameworkConfigCache();
 
@@ -222,11 +444,19 @@ async function runScenario(args: {
   } catch (e) {
     error = (e as Error).message;
   }
+  const all = readEvents(root, feature);
+  const lastRunEnd = [...all].reverse().find(e => e.type === 'run_end');
   const out: GoalRunOutcome = {
     exitCode,
     error,
-    eventTypes: readEventTypes(root, feature),
+    eventTypes: all.map(e => e.type),
     agentCalls,
+    runId: latestRunId(root, feature),
+    phaseStartsThisCall: all.slice(preCount)
+      .filter(e => e.type === 'phase_start' && typeof e.phase === 'string')
+      .map(e => e.phase as string),
+    runEndReason: lastRunEnd?.reason ?? null,
+    runEndError: lastRunEnd?.error ?? null,
   };
   (goal.__testing_resetGoalRunnerSeams as () => void)();
   // 宿主目录**不在此删**——谁建谁删，见 runScenario 的 projectRoot 注释
@@ -234,13 +464,20 @@ async function runScenario(args: {
 }
 
 if (require.main === module) {
-  const [, , scenario, feature, frameworkRootArg, projectRootArg] = process.argv;
+  const [, , scenario, feature, frameworkRootArg, projectRootArg, extraArg] = process.argv;
   if (!scenario || !feature || !projectRootArg) {
     process.stderr.write(
-      'usage: goal-run-driver.ts <scenario> <feature> <frameworkRoot|-> <projectRoot>\n'
-      + '  projectRoot **必填**：driver 不自建宿主，一条整机链只能有一个宿主。\n',
+      'usage: goal-run-driver.ts <scenario> <feature> <frameworkRoot|-> <projectRoot> [extra]\n'
+      + '  projectRoot **必填**：driver 不自建宿主，一条整机链只能有一个宿主。\n'
+      + '  extra：resume_after_park 传要续跑的 runId。\n',
     );
     process.exit(2);
+  }
+  // provision：只对既有宿主铺 hmos goal 夹具，不跑 run（smoke 对 cloneRoot 用）
+  if (scenario === 'provision') {
+    provisionHmosGoalFixture(path.resolve(projectRootArg), feature);
+    process.stdout.write(`\n${RESULT_MARK}${JSON.stringify({ provisioned: true })}\n`);
+    process.exit(0);
   }
   runScenario({
     scenario,
@@ -250,6 +487,7 @@ if (require.main === module) {
       ? path.resolve(frameworkRootArg)
       : DEV_FRAMEWORK_ROOT,
     projectRoot: path.resolve(projectRootArg),
+    ...(extraArg ? { extra: extraArg } : {}),
   })
     .then(out => {
       process.stdout.write(`\n${RESULT_MARK}${JSON.stringify(out)}\n`);

@@ -519,6 +519,58 @@ export function resolveWallClockStartMs(events: GoalRunEvent[]): number {
   return Date.now();
 }
 
+/** 从 events 提取 supersede 链的直接目标（audited supersede 事件才算，自报不生效）。 */
+export function extractSupersedeTargets(events: GoalRunEvent[]): string[] {
+  const out: string[] = [];
+  for (const e of events) {
+    const t = (e as { type?: string; target_run_id?: unknown });
+    if (t.type === 'supersede' && typeof t.target_run_id === 'string' && t.target_run_id.trim()) {
+      out.push(t.target_run_id.trim());
+    }
+  }
+  return out;
+}
+
+/**
+ * T1④（e5d8a2c4）：沿 supersede 链折叠**祖先 run 的 events**——仅供预算 reducer
+ * 消费（totalTurns / priorActiveMs / wall 起点 / 回退计数 / transient retry）。
+ *
+ * 硬约束语义：**supersede 不得刷新任何预算**。预算是 per-run 从各自 events 回放的，
+ * 新 run_id 即清零——不折叠的话，"废弃旧 run 开后继"就是绕过
+ * DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道（plan 判读 v3 教训原文）。
+ *
+ * 边界：
+ * - **阶段完成状态不折叠**（resolveResumeState 只吃当前 run——预算跨 run 折叠、
+ *   进度不跨 run 折叠，语义不同，plan T1④ 原文）；
+ * - 递归祖先的祖先（链式 supersede），`visited` 防环；目标 events 缺失＝跳过
+ *   （被清理的历史 run 不阻断新 run——只损失其预算记账，如实少算不如拒启）；
+ * - 返回按 ts 升序（祖先在前），供 `resolveWallClockStartMs` 取最早 run_start。
+ */
+export function collectSupersededAncestorEvents(opts: {
+  projectRoot: string;
+  featuresDir: string;
+  feature: string;
+  seedTargets: string[];
+  /** 注入供测试；缺省读盘（authoritative 口径——dry 段照常剔除） */
+  loadEvents?: (absPath: string) => GoalRunEvent[];
+}): GoalRunEvent[] {
+  const load = opts.loadEvents ?? loadAuthoritativeEvents;
+  const visited = new Set<string>();
+  const chainEvents: GoalRunEvent[] = [];
+  const queue = [...opts.seedTargets];
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (!id || visited.has(id)) continue;
+    visited.add(id);
+    const abs = path.join(
+      opts.projectRoot, opts.featuresDir, opts.feature, 'goal-runs', id, 'events.jsonl');
+    const evs = load(abs);
+    chainEvents.push(...evs);
+    queue.push(...extractSupersedeTargets(evs));
+  }
+  return chainEvents.sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+}
+
 export function resolveResumedBudget(
   events: GoalRunEvent[],
   opts?: {
@@ -770,6 +822,35 @@ export function resolveResumeState(
       priorOutcomes: priorOutcomes.slice(0, -1),
       startIndex: idx >= 0 ? idx : 0,
       deferredUpstream,
+    };
+  }
+
+  // e5d8a2c4 步骤 3（垂直恢复闭环）：**最早一个尚未完成的 `WAITING(external)` phase
+  // 必须重新入队**。fa0663 实锤：设备停放的 outcome 是 `{verdict:'FAIL', halted:false,
+  // run_disposition:'WAITING', run_wait_kind:'external'}`——旧逻辑把它计入 done，
+  // resume `start_index=链长` 直接收口，停放话术承诺的"设备就绪后 --resume 继续"
+  // 永不发生（同一 run 恒 PARTIAL 的吸收态）。判据**消费既有投影字段**（写盘层对每条
+  // phase_halt 都落了 run_disposition/run_wait_kind，报告 phases 原样携带）；`halted`
+  // 只表示"当前会话是否停止推进"（设备门仅 AMBIGUOUS 置 true），不是跨 run 完成判据。
+  const isUnfinishedExternalWait = (o: GoalPhaseOutcome): boolean =>
+    o.run_disposition === 'WAITING' && o.run_wait_kind === 'external';
+  const firstWaitingIdx = chain.findIndex((p) =>
+    priorOutcomes.some((o) => o.phase === p && isUnfinishedExternalWait(o)));
+  if (firstWaitingIdx >= 0) {
+    // codex 第九批 P0 订正（前缀规则）：从 phase k 重跑，**只保留严格位于 k 之前的
+    // outcome**——初版只删后缀中的 WAITING、保留下游旧 PASS，会让重跑后的链把
+    // 过期 PASS 当完成态；deferredUpstream 同理**从保留前缀重算**（初版沿用全量，
+    // 会把正在重试的 phase 的旧 deferred 记录带进新一轮）。
+    const prefix = priorOutcomes.filter((o) => {
+      const i = chain.indexOf(o.phase);
+      return i >= 0 && i < firstWaitingIdx;
+    });
+    return {
+      priorOutcomes: prefix,
+      startIndex: firstWaitingIdx,
+      deferredUpstream: prefix
+        .filter((o) => o.deferred)
+        .map((o) => ({ phase: o.phase, reason: o.deferred_reason ?? 'external_blocked' })),
     };
   }
 

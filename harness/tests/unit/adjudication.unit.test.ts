@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   INCIDENT_REGISTRY,
+  isStructuralFactsIncident,
   NO_AUTHORITY,
   UNTRUSTED_DRIFT_REASON,
   canPromptNow,
@@ -1191,17 +1192,52 @@ const projectionCases: TestCase[] = [
     },
   },
   {
-    name: 't5⓪ 元门禁：**每一条**注册 incident 经写盘层都必须产出投影（无投影即 supervisor 无判据）',
+    name: 't5⓪ 元门禁（T1⑤ 收敛版）：非结构敏感 incident 写盘必产投影；**结构敏感缺投影拒绝化妆**',
     run: () => {
       const missing: string[] = [];
+      const disguised: string[] = [];
       for (const incident of Object.keys(INCIDENT_REGISTRY)) {
         const ev = withRunDisposition({ type: 'phase_halt', halt_reason: incident });
+        if (isStructuralFactsIncident(incident)) {
+          // T1⑤：decide() 读结构 facts 的家族——写盘层兜底只有 halt_reason，
+          // 化妆会把 TERMINAL 算成 RECOVERY_PENDING（d6 t5④ 原始反例）。守卫=原样放行。
+          if (typeof ev.run_disposition === 'string') disguised.push(incident);
+          continue;
+        }
         if (typeof ev.run_disposition !== 'string') missing.push(incident);
         if (ev.run_disposition === 'WAITING' && typeof ev.run_wait_kind !== 'string') {
           missing.push(`${incident}(WAITING 缺 wait_kind)`);
         }
       }
       assert(missing.length === 0, `以下 incident 落盘后无完整投影：\n  ${missing.join('\n  ')}`);
+      assert(disguised.length === 0,
+        `以下结构敏感 incident 被写盘层用兜底 facts 化妆（T1⑤ 禁止）：\n  ${disguised.join('\n  ')}`);
+    },
+  },
+  {
+    name: 'T1⑤：敏感集合由注册表派生（recoverable 非 terminal）；等价家族兜底=生产点计算逐字段一致',
+    run: () => {
+      // 集合派生正确性（不手写第二份清单的机器面）
+      for (const id of ['unauthorized_source_mutation', 'vision_feature_head_mismatch',
+        'goal_post_review_source_mutation_unresolved']) {
+        assert(isStructuralFactsIncident(id), `${id} 应属结构敏感（decide 读结构 facts）`);
+      }
+      for (const id of ['backtrack_limit', 'backtrack_fingerprint_repeat', 'backtrack_target_absent',
+        'device_not_ready', 'pass_snapshot_unavailable']) {
+        assert(!isStructuralFactsIncident(id),
+          `${id} 不属结构敏感（structurally_terminal 零 facts 或纯 incident 映射）`);
+      }
+      // 等价性契约：非敏感 incident 的写盘兜底与生产点显式计算是纯函数同输入——逐字段一致。
+      // 这个等价是"写盘层保留补算"的全部合法性来源，一旦被打破本格必红。
+      for (const id of ['device_not_ready', 'backtrack_limit', 'budget_wall_clock', 'device_toolchain']) {
+        const production = runDispositionFields(
+          decide({ incident: id }, NO_AUTHORITY,
+            { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'fresh' }));
+        const sink = withRunDisposition({ type: 'phase_halt', halt_reason: id });
+        assert(sink.run_disposition === production.run_disposition
+          && sink.run_wait_kind === production.run_wait_kind,
+          `${id} 兜底与生产点投影不一致：sink=${JSON.stringify(sink)} prod=${JSON.stringify(production)}`);
+      }
     },
   },
   {
@@ -1228,6 +1264,42 @@ const projectionCases: TestCase[] = [
       assert(reduceRunState([{ type: 'run_start' }]).run_disposition === 'RESUME_READY', '仅 run_start');
       // 垃圾输入不得抛也不得 undefined
       assert(reduceRunState([null, 42, 'x', {}]).run_disposition === 'RESUME_READY', '脏输入');
+    },
+  },
+  {
+    name: '第九批收尾 P1：启动期 BLOCKER 的 run_end 显式投影须被采用（裸 HALTED 不得退回 RESUME_READY）',
+    run: () => {
+      // 最小复现（codex 实测）：run_start → run_end{HALTED, supersede_target_invalid}。
+      // 修前：reducer 对 HALTED"保留此前投影"→ 退回 run_start 的 RESUME_READY →
+      // supervisor action=resume——把一个需要人修启动参数的 run 重新拉起。
+      // 修后：run_end 自带显式投影（concludeStartupBlocker 经 withRunDisposition）
+      // 时优先采用并封口。
+      const s = reduceRunState([
+        { type: 'run_start' },
+        {
+          type: 'run_end', status: 'HALTED', halt_reason: 'supersede_target_invalid',
+          run_disposition: 'WAITING', run_wait_kind: 'human',
+        },
+      ]);
+      assert(s.run_disposition === 'WAITING' && s.run_wait_kind === 'human' && s.sealed,
+        `显式投影须被采用并封口，实得 ${JSON.stringify(s)}`);
+      // codex 第九批收尾二订：初版传了 `{...s, stale:true} as never`——参数形状错
+      // （真实签名={beaconStale, state}），beaconStale 为 undefined 时函数天然 no_op，
+      // 断言无论 disposition 是什么都能过（假绿）。用真实参数形状：
+      // beacon 已 stale（进程死了）+ WAITING(human) → 仍必须 no_op（等人，不拉起）。
+      assert(supervisorAction({ beaconStale: true, state: s }) === 'no_op',
+        'supervisor 不得把等待人修参数的 run 重新拉起（beacon stale + WAITING/human = no_op）');
+      // 反向对照（证明断言有区分度）：同样 beacon stale，若投影是 RESUME_READY 则会 resume
+      assert(supervisorAction({ beaconStale: true, state: { run_disposition: 'RESUME_READY' } }) === 'resume',
+        '对照组：RESUME_READY + stale 应 resume——否则上一条断言没有区分度');
+      // 无显式投影的 HALTED 仍保留此前投影（既有语义不变）
+      const legacy = reduceRunState([
+        { type: 'run_start' },
+        { type: 'phase_halt', run_disposition: 'WAITING', run_wait_kind: 'external' },
+        { type: 'run_end', status: 'HALTED' },
+      ]);
+      assert(legacy.run_disposition === 'WAITING' && legacy.run_wait_kind === 'external',
+        `无显式投影保留生产端权威值：${JSON.stringify(legacy)}`);
     },
   },
   {

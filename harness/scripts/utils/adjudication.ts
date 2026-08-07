@@ -327,6 +327,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   },
   await_human_fidelity_tier: { class: 'operator', requires_grant: 'fidelity_downgrade' },
   needs_human: { class: 'operator' },
+  /** codex 第九批 P1：--supersede 参数校验失败的启动期优雅收口（改参数重跑即可） */
+  supersede_target_invalid: { class: 'operator' },
   device_toolchain: { class: 'external' },
 
   // --- 疑似误分类：**只映射不改行为**（行为订正归后续 plan，先复现后改） -------
@@ -406,16 +408,39 @@ const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
 };
 
 /**
- * **投影注入点（d6 t5⓪）**：带 `halt_reason` 的事件在**写盘那一层**自动补
- * `run_disposition` / `run_wait_kind`。
+ * **结构敏感 incident**（e5d8a2c4 T1⑤）：`decide()` 的输出依赖 incident id **之外**
+ * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹；reset_lineage 读
+ * lineage_reset_requested/in_flight）。这类事件的投影**必须在事故生产点**用完整
+ * facts 计算——写盘层兜底只有 halt_reason，会把 TERMINAL 化妆成 RECOVERY_PENDING
+ * （d6b1a8e3 t5④ 的原始反例）。集合由注册表**派生**，不手写第二份清单：
+ * `class==='recoverable' && !structurally_terminal`（structurally_terminal 在
+ * decide 最前直接 terminal、零 facts——其余家族的兜底与生产点计算**数学等价**：
+ * 纯函数、同输入。operator 类兜底 NO_AUTHORITY 亦等价——生产点若有 grant 就不会
+ * emit halt）。
+ */
+export function isStructuralFactsIncident(incident: string): boolean {
+  const spec = lookupIncident(incident);
+  return Boolean(spec && spec.class === 'recoverable' && !spec.structurally_terminal);
+}
+
+/**
+ * **投影注入点（d6 t5⓪；T1⑤ 收敛）**：带 `halt_reason` 的事件在**写盘那一层**补
+ * `run_disposition` / `run_wait_kind`——这**不是第二裁决**，而是**等价延迟投影**：
+ * 对非结构敏感 incident，`decide({incident})` 与生产点计算是纯函数同输入，结果
+ * 逐字段一致（该等价性由 adjudication 单测钉为契约）。
  *
  * 为什么不在 29 个 emit 点各写一遍：那等于要求每个新增 halt 的作者都记得补投影，
  * 漏一个 supervisor 就无判据——与「新增 incident 不注册即红」是同一类问题。
- * 全仓只有两条事件写入路径（goal-runner 的 reconcile boundary writer、
- * in-session 的 appendGoalEventFenced），在这两处各调一次即全覆盖。
  *
- * **已显式携带 `run_disposition` 的事件原样放行**——那是调用方投影了真实
- * `decide()` 结果（含结构性事实），比按 incident id 重算更准，不得覆盖。
+ * **已显式携带 `run_disposition` 的事件原样放行**——调用方投影了真实 `decide()`
+ * 结果（含结构性事实），不得覆盖。
+ *
+ * **结构敏感 incident 缺投影 = 开发错误**（T1⑤）：**拒绝化妆**——原样放行
+ * （宁缺判据，不给错误判据；下游对缺投影按 `halted` 原样显示），并打日志。
+ * **如实边界（codex 第九批 P3）**：本守卫当前只是"拒化妆+日志"，不是"测试直接
+ * 失败"级 fail-loud——被测保护是 t5⓪ 元门禁的 disguised 断言（写盘层不化妆）与
+ * 集合派生断言；"生产 emit 点缺投影会红"的生产路径断言随 T2 5b（六条改行为，
+ * 会重排 halt 生产面）一并收口，不在此提前建出口注册表。
  */
 export function withRunDisposition<T extends Record<string, unknown>>(
   event: T,
@@ -424,6 +449,14 @@ export function withRunDisposition<T extends Record<string, unknown>>(
   if (event.run_disposition !== undefined) return event;
   const incident = typeof event.halt_reason === 'string' ? event.halt_reason.trim() : '';
   if (!incident) return event;
+  if (isStructuralFactsIncident(incident)) {
+    console.error(
+      `[adjudication] 开发错误：结构敏感 incident（${incident}）的 halt 事件缺少生产点投影`
+      + '——写盘层拒绝用兜底 facts 化妆（会把 TERMINAL 算成 RECOVERY_PENDING）。'
+      + '请在 emit 点用完整 facts 调 decide() 并 runDispositionFields() 显式投影。',
+    );
+    return event;
+  }
   const decision = decide({ incident }, NO_AUTHORITY, { ...NEUTRAL_PROJECTION_CONTEXT, ...context });
   return { ...event, ...runDispositionFields(decision) };
 }

@@ -99,7 +99,20 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
         };
         continue;
       }
-      // 其余（HALTED / INTERRUPTED / PARTIAL …）：**保留停机前最后一次投影**。
+      // codex 第九批收尾 P1：run_end **自带显式投影**时优先采用并封口——启动期
+      // BLOCKER（如 supersede_target_invalid）的事件流只有 run_start + run_end，
+      // "保留此前投影"会退回 run_start 的 RESUME_READY，supervisor 据此把一个
+      // 需要人修参数的 run 重新拉起（最小事件流实测）。
+      const explicitD = typeof ev.run_disposition === 'string' ? ev.run_disposition : '';
+      if (DISPOSITIONS.has(explicitD)) {
+        current = {
+          run_disposition: explicitD as Disposition,
+          ...(typeof ev.run_wait_kind === 'string' ? { run_wait_kind: ev.run_wait_kind as WaitKind } : {}),
+          source_event_type: type, sealed: true,
+        };
+        continue;
+      }
+      // 其余（HALTED / INTERRUPTED / PARTIAL …无显式投影）：**保留停机前最后一次投影**。
       // 「进程停了」是 liveness 的事实，「能不能续」是 disposition 的事实——
       // 由生产端在 halt 那一刻用真实结构事实算出的投影才是权威，此处不替它改判。
       current = { ...current, source_event_type: current.source_event_type ?? type, sealed: true };

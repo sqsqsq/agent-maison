@@ -1091,20 +1091,16 @@ test('十二轮 P0-b：reseal 事务——rename 失败 fail-closed；quarantine
   });
 });
 
-test('七轮 P0-1：vision 信任封顶——UI 相关 run 无 HMAC key/仅弱 ack 不得 clean completion', () => {
+test('垂直闭环追补（2026-08-06）：vision 信任封顶已删除——完成态不再因认证状态改写（防复活）', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const gr = require('../../scripts/goal-runner') as typeof import('../../scripts/goal-runner');
-  const cap = gr.capRunStatusForVisionTrust;
-  // 无 key 的协调伪造场景：即便账本+checkpoint 全被重算，终态也封顶人工复核
-  const c1 = cap('CHAIN_SLICE_COMPLETED', { uiRelevant: true, hmacKeyPresent: false, ackWeak: false });
-  assert(c1.capped && c1.status === 'AWAITING_HUMAN_REVIEW' && c1.reason === 'vision_checkpoint_unauthenticated', JSON.stringify(c1));
-  // 弱 ack（旗标）同样封顶
-  const c2 = cap('CHAIN_SLICE_COMPLETED', { uiRelevant: true, hmacKeyPresent: true, ackWeak: true });
-  assert(c2.capped && c2.reason === 'vision_ledger_ack_unattested', JSON.stringify(c2));
-  // 配 key + 无弱 ack → 不封顶；非 UI run 不受影响；非成功终态不改写
-  assert(!cap('CHAIN_SLICE_COMPLETED', { uiRelevant: true, hmacKeyPresent: true, ackWeak: false }).capped, '强信任不封顶');
-  assert(!cap('CHAIN_SLICE_COMPLETED', { uiRelevant: false, hmacKeyPresent: false, ackWeak: false }).capped, '非 UI 不封顶');
-  assert(!cap('HALTED', { uiRelevant: true, hmacKeyPresent: false, ackWeak: false }).capped, '非成功终态不改写');
+  const gr = require('../../scripts/goal-runner') as Record<string, unknown>;
+  // 七轮 P0-1 的 capRunStatusForVisionTrust（UI run 无 HMAC/弱 ack → AWAITING_HUMAN_REVIEW）
+  // 按理念裁定整体删除：认证状态退出完成态语义，防伪造主防线=终点不信 agent 自报。
+  // 本格防复活：函数不得回归；设备真实性封顶（诚实完成度，非防伪造）必须仍在。
+  assert(!('capRunStatusForVisionTrust' in gr),
+    'capRunStatusForVisionTrust 已按 2026-08-06 理念裁定删除，不得复活');
+  assert(typeof gr.capRunStatusForDeviceAuthenticity === 'function',
+    '设备真实性封顶（防假绿面）不属删除范围，必须保留');
 });
 
 test('七轮 P1-2：迁移凭证跨 checkpoint 持久化——后续 pre_invoke/post_harness 写入不覆盖', () => {

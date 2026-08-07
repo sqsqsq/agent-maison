@@ -70,6 +70,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'smoke-lifecycle-registry', modulePath: './unit/smoke-lifecycle-registry.unit.test' },
   // e5d8a2c4 T4 用例 #8：在案"第一死"的行为钉（棘轮——T2 落地改行为后本套必红）
   { id: 'goal-lineage-first-death', modulePath: './unit/goal-lineage-first-death.unit.test' },
+  { id: 'goal-park-resume', modulePath: './unit/goal-park-resume.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
   { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },

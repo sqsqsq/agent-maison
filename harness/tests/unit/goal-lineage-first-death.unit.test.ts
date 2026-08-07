@@ -1,9 +1,11 @@
 // ============================================================================
 // goal-lineage-first-death.unit.test.ts — T4 用例 #8：在案"第一死"的行为钉
 // ----------------------------------------------------------------------------
-// 回放对象（宿主 ground truth，主仓 run1 / 6a969a）：
+// 回放对象（宿主 ground truth，主仓 run1 / 6a969a——2026-08-06 复核过真实 events）：
 //   fresh 启动 11 秒即死——vision feature head 失配 + 未声明 vision_lineage=reset
-//   → `vision_ledger_tamper` + TERMINAL → **裸 throw**，events 仅 3 行、报告没生成。
+//   → `vision_ledger_tamper` → **裸 throw**。真实事件序列恰为 3 行：
+//   `[run_start, vision_ledger_tamper, run_end{status:INTERRUPTED, reason:uncaught_exception}]`
+//   ——末尾那条 run_end 是 **CLI 外层 catch 补的**，不是优雅终止（报告也没生成）。
 //
 // **本用例当前钉的是"现状"，不是目标。** 目标行为（总纲 A【P0】#8）是：
 //   fresh + 失配 + 未声明 → **自动记 discontinuity 并续跑**，不 TERMINAL、不裸崩。
@@ -71,35 +73,40 @@ function runDriver(scenario: string, feature: string, projectRoot: string): Goal
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'T4#8 棘轮：fresh + head 失配 + 未声明 reset → **现状是裸崩**（T2 落地后本格必红）',
+    name: 'T4#8 棘轮：fresh + head 失配 + 未声明 reset → 现状=判死但**优雅收口**（T2 5a 落地后本格必红）',
     run: () => {
       const out = withHost('first-death', root => runDriver('seed_head_mismatch', 'first-death', root));
       const detail = JSON.stringify(out);
 
-      // ---- 棘轮主断言 ----
+      // ---- T1①（2026-08-06 落地）后的第一次棘轮翻转 ----
+      // 旧现状=裸 throw 逃逸出 main()、报告不生成；T1① 后=优雅收口：
+      // main() 捕获 → run_end{INTERRUPTED, error} + 报告落盘 → return 1。
+      // 死因从 throw 挪进了 run_end.error——断言随之搬家。
       assert(
-        out.error !== null || (out.exitCode !== null && out.exitCode !== 0),
-        '**本格是棘轮**：现状应当是"失配即死"。若它开始通过，说明 T2 已把 '
-        + '`vision_feature_head_mismatch` 改成自动 discontinuity 续跑——请把本用例翻成'
-        + '目标行为断言（discontinuity 在场 + 正常 run_end + 无 uncaught_exception），'
-        + `并把 T4 smoke 注册表 #8 改成 covered。实测：${detail}`,
+        out.error === null && out.exitCode === 1,
+        `T1① 后 main() 不再抛，优雅返回 1：${detail}`,
+      );
+
+      // ---- 棘轮主断言（下一次翻转的靶＝T2 5a）----
+      assert(
+        out.eventTypes.includes('run_end')
+        && out.runEndReason === 'uncaught_exception',
+        '**本格是棘轮**：现状仍是"失配即死"（只是死得优雅了）。若 run_end 不再是 '
+        + 'uncaught_exception，说明 T2 5a 已把 `vision_feature_head_mismatch` 改成自动 '
+        + 'discontinuity 续跑——请把本用例翻成目标行为断言（discontinuity 在场 + 正常 '
+        + `run_end + exitCode∈{0,2}），并把 T4 smoke 注册表 #8 改成 covered。实测：${detail}`,
       );
 
       // ---- 命中目标分支的证据（不是"夹具没搭好也算死"）----
-      // 本会话已四次栽在"断言没打到目标分支"上，这里逐条显式钉死。
       assert(
         out.eventTypes.includes('vision_ledger_tamper'),
         `须死在 vision head 裁决上（events 应含 vision_ledger_tamper）：${detail}`,
       );
       assert(
-        out.error !== null
-        && /feature head 失配/.test(out.error)
-        && /未声明 vision_lineage=reset/.test(out.error),
-        `须是"失配 + 未声明 reset"这条路径的**裸 throw**：${detail}`,
-      );
-      assert(
-        !out.eventTypes.includes('run_end'),
-        `"裸崩"的定义就是没有正常 run_end：${detail}`,
+        out.runEndError !== null
+        && /feature head 失配/.test(out.runEndError)
+        && /未声明 vision_lineage=reset/.test(out.runEndError),
+        `死因（run_end.error）须是"失配 + 未声明 reset"这条路径：${detail}`,
       );
       assert(
         !out.eventTypes.includes('lineage_discontinuity'),

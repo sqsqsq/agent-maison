@@ -63,7 +63,17 @@ const CASE_REGISTRY = [
     coveredBy: 'integrity',
     note: 'autocrlf=true clone 后跑 framework_integrity，CRLF 通道是真的走过的',
   },
-  { id: 3, name: 'reset 已消费、设备停放后 resume 成功', status: 'pending' },
+  {
+    id: 3,
+    name: 'reset 已消费、设备停放后 resume 成功',
+    status: 'covered',
+    coveredBy: 'goal',
+    // 垂直恢复闭环（2026-08-06）落地后由棘轮翻转为目标断言：fresh+reset 消费 →
+    // 四阶段 PASS → 设备 WAITING 停放 → 无 HMAC resume **零 ack 过门** → 最早未完成的
+    // WAITING(external) phase（ut）**真正重新执行** → 设备仍锁如实再停放。
+    // 判据=phaseStartsThisCall 含 'ut'（start_index 收口形态在此必挂，T4#3 收紧判据）。
+    note: 'goal stage 端到端：park（reset 消费+停放）→ resume（零 ack + ut 真重跑）',
+  },
   { id: 4, name: 'snapshot/HMAC 缺失 → 自动失效重签，不求人', status: 'pending' },
   { id: 5, name: 'UT 改源码 → 自动回 coding', status: 'pending' },
   { id: 6, name: '恢复中途各崩溃窗口：阶段不漏失效 + 交接上下文不丢', status: 'pending' },
@@ -384,9 +394,85 @@ function stageCheckGlobal(ctx) {
 }
 
 /** S8 goal —— 完整 goal 生命周期（骨架期占位；用例 #3–#8 挂在它下面） */
+/**
+ * S8 goal —— 在 clone 宿主上跑**真实 goal 生命周期**（e5d8a2c4 步骤 1，driver 薄编排）。
+ *
+ * 场景=宿主 fa0663 实锤链：`fresh 全链 → ut/testing 设备 WAITING 停放（PARTIAL）
+ * → 无 HMAC resume`。当前对 resume 的断言是**棘轮**（现状=被 checkpoint ack 门拦、
+ * ut 不重跑）；垂直恢复闭环（plan 步骤 3）落地后棘轮必红，届时翻成目标断言
+ * （零拦截 + ut 真正重跑）并把注册表 #3 改 covered。
+ *
+ * 薄编排纪律：仅 spawn 既有 goal-run-driver 三次（provision / device_park /
+ * resume_after_park）+ 断言——**不得**在此生长 DSL、第二状态机或持久化层。
+ * driver 从**发布件根**动态加载 goal-runner（验的是要发的字节）。
+ */
 function stageGoal(ctx) {
-  ctx.log('goal：**未实现**（骨架期占位）——用例 #3–#8 依赖它，一并计入 pending');
-  return { skipped: true };
+  const feature = 'recovery-park';
+  const driver = path.join(REPO_ROOT, 'harness', 'tests', 'helpers', 'goal-run-driver.ts');
+  const tsNode = path.join(ctx.harnessRoot, 'node_modules', 'ts-node', 'dist', 'bin.js');
+  const RESULT = '<<goal-run-result>>';
+  const runDriver = (scenario, extra) => {
+    const r = mustRun(`goal driver ${scenario}`, process.execPath, [
+      tsNode, '--transpile-only', driver,
+      scenario, feature, ctx.clonedFrameworkRoot, ctx.cloneRoot, ...(extra ? [extra] : []),
+    ], { cwd: ctx.harnessRoot });
+    const at = (r.stdout ?? '').lastIndexOf(RESULT);
+    if (at < 0) throw new Error(`goal driver ${scenario} 未返回结果：${(r.stdout ?? '').slice(-400)}`);
+    return JSON.parse((r.stdout ?? '').slice(at + RESULT.length));
+  };
+
+  runDriver('provision');
+  const park = runDriver('device_park');
+  if (park.error !== null || park.exitCode !== 2) {
+    throw new Error(`goal/park：应 PARTIAL 停放（exit 2、无异常），实得 ${JSON.stringify(park)}`);
+  }
+  const phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+  if (!phases.every(p => park.phaseStartsThisCall.includes(p)) || park.agentCalls !== 4) {
+    throw new Error(`goal/park：六 phase start、前四真跑后二被设备门拦（agent=4），实得 ${JSON.stringify(park)}`);
+  }
+  ctx.log(`goal/park：四阶段 PASS → ut/testing 设备 WAITING 停放（run=${park.runId}）`);
+
+  const resume = runDriver('resume_after_park', park.runId);
+  // ---- 目标断言（2026-08-06 垂直闭环落地，棘轮翻转而来；fa0663 的解）：
+  // 无 HMAC resume 零拦截（不求 ack）；最早未完成的 WAITING(external) phase（ut）
+  // **真正重新执行**（start_index 收口形态在此必挂）；设备仍锁 → 如实再停放。
+  const goalBehavior = resume.error === null && resume.exitCode === 2
+    && resume.runEndReason === null && resume.runEndError === null
+    && resume.phaseStartsThisCall.includes('ut');
+  if (!goalBehavior) {
+    throw new Error(
+      'goal/resume（T4#3 判据）：resume 应零 ack 过门且 ut 真正重新执行后如实再停放'
+      + '（PARTIAL exit 2）。实得 ' + JSON.stringify(resume),
+    );
+  }
+  ctx.log('goal/resume：零 ack 过门，WAITING(external) 重新入队，ut 真正重跑后如实再停放（#3 覆盖）');
+
+  // 第三段（codex 第九批 P0 后半闭环）：设备恢复 READY → 同一 run 无钥匙**真正完成**。
+  // 此前只证明了"仍锁时能再次停放"；这一段证明"设备好了就能收官"——
+  // exit 0 + 报告无 WAITING 残留（旧 halt 被后续 PASS 清除）+ 完成态不封顶人工复核。
+  const ready = runDriver('resume_with_device_ready', park.runId);
+  const readyOk = ready.error === null && ready.exitCode === 0
+    && ready.phaseStartsThisCall.includes('ut') && ready.phaseStartsThisCall.includes('testing');
+  if (!readyOk) {
+    throw new Error(
+      'goal/ready：设备 READY 后同一 run 应无钥匙完整收官（exit 0，ut/testing 真跑）。实得 '
+      + JSON.stringify(ready),
+    );
+  }
+  // codex 第九批收尾 P2：注释声称的两条必须真的断言——**读发布件宿主上的报告**
+  // （开发仓 unit 验过一遍不算数：这里验的是 clone 出来的字节跑出的报告）
+  const reportPath = path.join(ctx.cloneRoot, 'doc', 'features', feature, 'goal-runs',
+    park.runId, 'goal-report.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  if (report.status !== 'CHAIN_SLICE_COMPLETED') {
+    throw new Error(`goal/ready：无钥匙完成态应为 CHAIN_SLICE_COMPLETED（不封顶人工复核），实得 ${report.status}`);
+  }
+  const staleWaiting = (report.phases ?? []).filter(p => p.run_disposition === 'WAITING');
+  if (staleWaiting.length > 0) {
+    throw new Error('goal/ready：报告不得残留 WAITING 投影（旧 halt 须被后续 PASS 清除）：'
+      + JSON.stringify(staleWaiting));
+  }
+  ctx.log('goal/ready：设备恢复后同一 run 无钥匙完整收官（报告 CHAIN_SLICE_COMPLETED、零 WAITING 残留）');
 }
 
 /**
