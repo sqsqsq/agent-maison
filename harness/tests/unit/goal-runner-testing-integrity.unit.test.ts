@@ -42,10 +42,10 @@ import {
 import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import {
-  beginInvalidationTx,
   projectIdentityHash,
   readCodingBase,
   readPassSnapshotHead,
+  passSnapshotHeadPath,
 } from '../../scripts/utils/pass-snapshot';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import type { UnitCaseResult } from '../run-unit';
@@ -1614,9 +1614,11 @@ test('t5① coding 撞冻结白名单 → 自动回退 plan 重新裁决，再�
   );
   // 失效事件从 plan 起算（既有两处回退都是从 coding 起算，这是 t5 的关键差异）
   assert(
-    probe.events.some(e => e.type === 'phase_invalidated' && e.phase === 'plan'
+    probe.events.some(e => e.type === 'phase_backtrack_requested'
+      && Array.isArray(e.invalidated_phases)
+      && (e.invalidated_phases as string[]).includes('plan')
       && e.reason === 'ui_scope_violation'),
-    'plan 必须被失效（旧快照不得继续生效）',
+    'plan 必须在原子失效事件中被标记失效（旧快照不得继续生效）',
   );
   // **闭环最后一段电线**：plan 必须知道自己为何被重跑、哪些文件要重新裁决。
   // 只断"顺序是 coding→plan→coding"证明不了这一点——真实 plan agent 会原样重跑，
@@ -1663,10 +1665,15 @@ test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gat
   );
 });
 
-test('t5④负向 无 HMAC resume：plan 重新签发前 coding agent 调用次数必须为 0', async () => {
+test('t5④负向 unsigned cache miss resume：plan 重新签发前 coding agent 调用次数必须为 0', async () => {
   const { root } = setupHost();
   const { runId } = await haltAtCoding(root);
-  // resume：新进程内存锚为空、未配 HMAC → 证明不了旧授权 → 不得开工，先回 plan
+  // resume：把 plan head 变成不可读缓存；新协议丢弃缓存并先回 plan，不能开工。
+  withCheckpointDir(root, () => {
+    const headPath = passSnapshotHeadPath(root, FEATURE, runId, 'plan');
+    assert(readPassSnapshotHead(root, FEATURE, runId, 'plan').body !== null, '前置：plan head 应存在');
+    fs.writeFileSync(headPath, '{"corrupt":true}', 'utf-8');
+  });
   const resumed = await runChain(root, {
     resume: runId, forceResume: true,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
@@ -1682,18 +1689,16 @@ test('t5④负向 无 HMAC resume：plan 重新签发前 coding agent 调用次�
   );
 });
 
-test('t5④正向对照 有效 HMAC resume：不回退 plan、coding 正常启动，且 gate 收到与 preflight 同一个锚', async () => {
+test('t5④正向对照 unsigned cache resume：不回退 plan、coding 正常启动，且 gate 收到与 preflight 同一个锚', async () => {
   const { root } = setupHost();
-  const KEY = 't5-anchor-secret';
-  const { runId } = await haltAtCoding(root, KEY);
-  // **锚必须在 resume 之前读**：干净完成的 HMAC run 会封卷并即刻回收场外状态
-  //（既有 b7e4d2a9 Todo2 行为），跑完再读只会读到已回收的目录。resume 不重跑 plan，
-  // 故这就是 preflight 将要认定的那个锚。
-  const head = withCheckpointDir(root, () => readPassSnapshotHead(root, FEATURE, runId, 'plan').body, KEY);
+  const { runId } = await haltAtCoding(root);
+  // **锚必须在 resume 之前读**：它只是 unsigned cache 的内容绑定，不是授权凭据。
+  // resume 不重跑 plan，故这就是 preflight 将要认定的那个锚。
+  const head = withCheckpointDir(root, () => readPassSnapshotHead(root, FEATURE, runId, 'plan').body);
   assert(!!head, 'plan head 应在盘');
   const expected = `plan:${head!.pass_epoch}:${head!.manifest_sha256}`;
   const resumed = await runChain(root, {
-    resume: runId, forceResume: true, hmacKey: KEY,
+    resume: runId, forceResume: true,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
   assert(
@@ -1770,41 +1775,6 @@ test('t5② 伪造 backtrack 事件（events 无 MAC、agent 可写）→ 恶意
     assert(!p.includes('IGNORE ALL PREVIOUS'), `plan prompt #${i} 混入了注入指令`);
     assert(!p.includes('etc/passwd'), `plan prompt #${i} 混入了越根路径`);
   }
-});
-
-test('t5⑤ beginInvalidationTx 后崩溃：resume 自动回 plan 重建，不产生人工等待', async () => {
-  const { root } = setupHost();
-  const { runId } = await haltAtCoding(root);
-  // 故障注入：事务已开始、进程死于 commit 之前 —— 无 HMAC 面上残留 journal 恒不可验证
-  withCheckpointDir(root, () => {
-    beginInvalidationTx({
-      projectRoot: root, feature: FEATURE, runId,
-      causePhase: 'coding', invalidatedPhases: ['coding'],
-      txId: `${runId}-crashed`,
-    });
-  });
-  const resumed = await runChain(root, {
-    resume: runId, forceResume: true,
-    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
-  });
-  assert(
-    !resumed.events.some(e => e.type === 'phase_halt'
-      && e.halt_reason === 'pass_snapshot_journal_unverifiable'),
-    '崩溃窗不得退化成人工等待（这正是 t5 要消掉的形态）',
-  );
-  assert(
-    hasEvent(resumed.events, 'pass_snapshot_journal_untrusted'),
-    '旧 journal 须留审计说明',
-  );
-  assert(
-    resumed.events.some(e => e.type === 'phase_backtrack_requested'
-      && e.reason === 'invalidation_journal_untrusted'),
-    `须从 plan 重建失效事务并回退：${resumed.events.map(e => e.type).join(',')}`,
-  );
-  assert(
-    codingInvokesBeforeFirstPlan(resumed.invokedPhases) === 0,
-    `重建后须先回 plan（实得 ${resumed.invokedPhases.join('→')}）`,
-  );
 });
 
 // ---------------------------------------------------------------------------

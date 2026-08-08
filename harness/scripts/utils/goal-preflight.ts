@@ -556,7 +556,8 @@ export function initializeFidelityRouting(
   const deref = dereferenceRequirementDocs(input.projectRoot, input.requirement, {
     featuresDirRel: input.featuresDirRel,
   });
-  // 降档 receipt 验真（唯一降档通道；绑定=解引用合并需求文本 sha + feature + run_id）
+  // 降档 receipt 验真（唯一降档通道；绑定 feature + 合并需求 object_hash + expiry，
+  // 不绑定物理 run_id，故同一语义任务的 successor 可复用）。
   let downgradeReceiptValid = false;
   let receiptNote = '';
   if (input.fidelityReceiptRel) {
@@ -568,7 +569,6 @@ export function initializeFidelityRouting(
         action: 'fidelity_downgrade',
         feature: input.feature,
         object_hash: objectHash,
-        run_id: input.runIdForReceipt,
         now: input.now,
       },
     );
@@ -720,8 +720,8 @@ export function evaluateFidelityTransitionAuthorization(
   const deref = dereferenceRequirementDocs(input.projectRoot, manifest.requirement, {
     featuresDirRel: input.featuresDirRel,
   });
-  // ② 降档凭证验真（唯一降档通道；绑定语义与 evaluateFidelityTierPreflight 同源：
-  //    object_hash=解引用合并需求文本 sha256 + feature + run_id）
+  // ② 降档凭证验真（唯一降档通道；绑定语义，与 initializeFidelityRouting 同源：
+  //    object_hash=解引用合并需求文本 sha256 + feature + expiry，跨 successor run 复用）
   let receiptValid = false;
   let receiptReasons: string[] = [];
   if (manifest.fidelity_receipt) {
@@ -733,7 +733,6 @@ export function evaluateFidelityTransitionAuthorization(
         action: 'fidelity_downgrade',
         feature: manifest.feature,
         object_hash: objectHash,
-        run_id: manifest.run_id,
         now: input.now,
       },
     );

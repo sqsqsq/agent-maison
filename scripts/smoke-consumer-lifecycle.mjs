@@ -74,10 +74,14 @@ const CASE_REGISTRY = [
     // 判据=phaseStartsThisCall 含 'ut'（start_index 收口形态在此必挂，T4#3 收紧判据）。
     note: 'goal stage 端到端：park（reset 消费+停放）→ resume（零 ack + ut 真重跑）',
   },
-  { id: 4, name: 'snapshot/HMAC 缺失 → 自动失效重签，不求人', status: 'pending' },
-  { id: 5, name: 'UT 改源码 → 自动回 coding', status: 'pending' },
-  { id: 6, name: '恢复中途各崩溃窗口：阶段不漏失效 + 交接上下文不丢', status: 'pending' },
-  { id: 7, name: 'build 失败归因与空转重试', status: 'pending' },
+  { id: 4, name: 'snapshot 缺失/损坏 → 自动丢弃重跑，不求人', status: 'covered', coveredBy: 'goal',
+    note: 'goal driver 用真实 pass snapshot writer 制造 cache miss，验证 phase_backtrack_requested 后 plan/coding 重跑且 exit 0' },
+  { id: 5, name: 'UT 改源码 → 自动回 coding', status: 'covered', coveredBy: 'goal',
+    note: 'goal driver 在 UT agent 窗口真实改产品源码，runner 以 source-drift 原子失效回 coding 后重新闭环' },
+  { id: 6, name: '恢复中途各崩溃窗口：阶段不漏失效 + 交接上下文不丢', status: 'covered', coveredBy: 'goal',
+    note: 'goal driver 在 atomic invalidation record 落盘后崩溃，随后同一 run resume 验证 plan/coding 不漏失效' },
+  { id: 7, name: 'build 失败归因与空转重试', status: 'covered', coveredBy: 'goal',
+    note: 'goal driver 真实写入 ut_hvigor_build/test FAIL，验证 toolchain 归因与重复签名熔断' },
   // #8 是总纲「A【P0】T4 增用例 #8」后补的（plan 481 行），**初版注册表把它漏了**，
   // 而单测还硬断言"恰好七条"——等于把漏洞钉死：已知 pending 项不在册，门禁照绿。
   // 这正是本文件声称要防的假绿形态，被 codex 当场抓出（第七批 P1）。
@@ -433,6 +437,58 @@ function stageGoal(ctx) {
   }
   ctx.log(`goal/park：四阶段 PASS → ut/testing 设备 WAITING 停放（run=${park.runId}）`);
 
+  // T3①：停放 run 的同源 device_readiness probe 转绿后，supervisor 必须自动
+  // 重新入队同一 run；这个调用仍经 goal-run-driver 子进程，并走发布件 CLI。
+  const probeWake = runDriver('supervisor_probe_wake', park.runId);
+  const probeArgs = probeWake.supervisorRunnerArgs ?? [];
+  if (probeWake.error !== null || probeWake.exitCode !== 0
+    || probeWake.supervisorAction !== 'resume'
+    || !probeArgs.includes('--resume') || !probeArgs.includes(park.runId)
+    || probeArgs.includes('--supersede')) {
+    throw new Error(
+      'goal/T3①：同源 device_readiness probe 转绿必须自动 resume 同一 run，实得 '
+      + JSON.stringify(probeWake),
+    );
+  }
+  ctx.log('goal/T3①：supervisor 周期 probe 转绿后自动 resume 同一 run（无人工确认/无 supersede）');
+
+  // T3① 后继分支：用真实 crash 窗留下 RECOVERY_PENDING，再由 supervisor 消费
+  // 既有 phase_halt 的 successor_required 交接，生产 CLI 必须自动改走 --supersede，
+  // 并把责任阶段作为新 run 起点。
+  const successorFeature = 'supervisor-successor';
+  runDriver('provision', null, successorFeature);
+  const truncated = runDriver('successor_source_crash', null, successorFeature);
+  const successorWake = truncated.runId
+    ? runDriver('supervisor_successor_wake', truncated.runId, successorFeature)
+    : null;
+  const successorArgs = successorWake?.supervisorRunnerArgs ?? [];
+  if (!successorWake || successorWake.error !== null || successorWake.exitCode !== 0
+    || successorWake.supervisorAction !== 'resume'
+    || !successorArgs.includes('--start') || !successorArgs.includes('coding')
+    || !successorArgs.includes('--supersede') || !successorArgs.includes(truncated.runId)
+    || !successorArgs.includes('--force') || !successorArgs.includes('--detach')) {
+    throw new Error(
+      'goal/T3①：截断链不可回退时 supervisor 应自动 supersede 并从 coding 起后继。实得 '
+      + JSON.stringify({ truncated, successorWake }),
+    );
+  }
+  // 参数只是 supervisor 的意图；再启动一次真实 goal-runner，读取生产 writer
+  // 写出的最终 successor manifest，钉住一次性出生字段不会被整对象深拷贝带过来。
+  const successorRun = runDriver('successor_manifest_probe', truncated.runId, successorFeature);
+  const successorManifest = successorRun.manifest;
+  if (successorRun.error !== null || !successorRun.runId || successorRun.runId === truncated.runId
+    || !successorRun.phaseStartsThisCall.includes('coding')
+    || !successorManifest
+    || successorManifest.successor_of !== truncated.runId
+    || Object.prototype.hasOwnProperty.call(successorManifest, 'vision_lineage')
+    || truncated.manifest?.vision_lineage !== 'reset') {
+    throw new Error(
+      'goal/T3①：真实后继必须消费源 reset 并写出 continue 语义 manifest。实得 '
+      + JSON.stringify({ truncated, successorWake, successorRun }),
+    );
+  }
+  ctx.log('goal/T3①：截断链自动 supersede，真实后继从 coding 起步；源 reset 已消费且未继承');
+
   const resume = runDriver('resume_after_park', park.runId);
   // ---- 目标断言（2026-08-06 垂直闭环落地，棘轮翻转而来；fa0663 的解）：
   // 无 HMAC resume 零拦截（不求 ack）；最早未完成的 WAITING(external) phase（ut）
@@ -474,6 +530,110 @@ function stageGoal(ctx) {
       + JSON.stringify(staleWaiting));
   }
   ctx.log('goal/ready：设备恢复后同一 run 无钥匙完整收官（报告 CHAIN_SLICE_COMPLETED、零 WAITING 残留）');
+
+  // 第五段（T2 5b）：unsigned pass snapshot 只是可丢弃缓存。生产 writer 先种出
+  // plan 快照，再在其真正落盘后制造损坏；目标是 phase_backtrack_requested → plan/coding
+  // 自动重跑，且整个 run 不落人审/终局。
+  const snapshotFeature = 'snapshot-cache-miss';
+  runDriver('provision', null, snapshotFeature);
+  const cacheMiss = runDriver('cache_miss_in_run', null, snapshotFeature);
+  const cacheRecord = cacheMiss.invalidationRecords.find(r =>
+    r.reason === 'plan_authority_unverifiable'
+      && r.invalidated_phases?.includes('plan')
+      && r.to_phase === 'plan');
+  if (cacheMiss.error !== null || cacheMiss.exitCode !== 0
+    || !cacheMiss.eventTypes.includes('phase_backtrack_requested')
+    || !cacheMiss.phaseStartsThisCall.includes('plan')
+    || !cacheMiss.phaseStartsThisCall.includes('coding')
+    || !cacheRecord
+    || (cacheMiss.phaseHalts ?? []).some(h =>
+      h.halt_reason === 'awaiting_human_review'
+      || h.halt_reason === 'goal_review_closure_baseline_unavailable')) {
+    throw new Error(
+      'goal/#4：snapshot cache miss 应自动丢弃并重跑 plan/coding，纯证据故障不得求人/终局。实得 '
+      + JSON.stringify(cacheMiss),
+    );
+  }
+  ctx.log('goal/#4：snapshot 缺失自动丢弃，plan/coding 重跑，无 human/terminal');
+
+  // 第六段（T4#5）：UT agent 窗口真实改产品源码。runner 必须把 review closure
+  // 后的漂移作为未受信事实，原子失效 coding/review/ut 并自动回 coding；不得把它
+  // 变成 testing_write_violation 或人工签字循环。
+  const utMutationFeature = 'ut-source-mutation';
+  runDriver('provision', null, utMutationFeature);
+  const utMutation = runDriver('ut_source_mutation', null, utMutationFeature);
+  const mutationRecord = utMutation.invalidationRecords.find(r =>
+    r.reason === 'untrusted_source_drift_revalidation'
+      && r.to_phase === 'coding'
+      && r.invalidated_phases?.includes('coding')
+      && r.invalidated_phases?.includes('review'));
+  if (utMutation.error !== null || utMutation.exitCode !== 0
+    || !mutationRecord
+    || !utMutation.phaseStartsThisCall.includes('coding')
+    || utMutation.eventTypes.includes('testing_write_violation')
+    || utMutation.phaseHalts.some(h => h.halt_reason === 'awaiting_human_review')) {
+    throw new Error(
+      'goal/#5：UT 改源码应自动回 coding 并重新闭环，不得求人/终局。实得 '
+      + JSON.stringify(utMutation),
+    );
+  }
+  ctx.log('goal/#5：UT 源码漂移经原子失效自动回 coding，重跑后收官');
+
+  // 第六段（T2 5c）：唯一原子失效记录落盘后立即模拟进程崩溃，再用同一 run 恢复。
+  // 断言 crash 窗只有 requested、没有 pending/completed 二态；resume 仍从 plan 起步，
+  // 并保留 files/defects/fingerprint 交接上下文。
+  const crashFeature = 'atomic-invalidation-crash';
+  runDriver('provision', null, crashFeature);
+  const crashed = runDriver('crash_scope_in_run', null, crashFeature);
+  const crashRecord = crashed.invalidationRecords.find(r =>
+    r.reason === 'plan_authority_unverifiable' && r.invalidated_phases?.includes('plan'));
+  const crashContext = crashRecord
+    && Array.isArray(crashRecord.files)
+    && Array.isArray(crashRecord.defects)
+    && Object.prototype.hasOwnProperty.call(crashRecord, 'fingerprint');
+  if (crashed.error !== null || crashed.exitCode !== 1
+    || crashed.runEndReason !== 'uncaught_exception'
+    || !crashed.eventTypes.includes('phase_backtrack_requested')
+    || crashed.eventTypes.includes('phase_backtrack_started')
+    || !crashContext || !crashed.runId) {
+    throw new Error(
+      'goal/#6：原子失效记录落盘后崩溃应可恢复，且不得出现第二态。实得 '
+      + JSON.stringify(crashed),
+    );
+  }
+  const resumedCrash = runDriver('resume_after_crash_scope', crashed.runId, crashFeature);
+  if (resumedCrash.error !== null || resumedCrash.exitCode !== 0
+    || !resumedCrash.phaseStartsThisCall.includes('plan')
+    || !resumedCrash.phaseStartsThisCall.includes('coding')
+    || resumedCrash.invalidationRecords.length !== 1
+    || resumedCrash.invalidationRecords[0]?.invalidated_phases?.includes('plan') !== true) {
+    throw new Error(
+      'goal/#6：resume 必须消费同一条失效记录并从 plan/coding 继续，交接不得丢失。实得 '
+      + JSON.stringify(resumedCrash),
+    );
+  }
+  ctx.log('goal/#6：原子失效记录 crash-safe，resume 同一 run 从 plan/coding 继续');
+
+  // 第七段（T4#7）：真实 phase verdict 写入 UT build blocker。`ut_hvigor_build`
+  // 的无结构化 device_toolchain 标注仍是可回修的 code_regression；相同内容失败
+  // 只允许在既有 phase retry 上限内收口，不能误归 toolchain 或无限空转。
+  const buildFailureFeature = 'ut-build-failure';
+  runDriver('provision', null, buildFailureFeature);
+  const buildFailure = runDriver('ut_build_failure', null, buildFailureFeature);
+  const buildFailureOk = buildFailure.error === null
+    && buildFailure.exitCode === 1
+    && (buildFailure.failureKinds?.length ?? 0) > 0
+    && buildFailure.failureKinds.every(k => k === 'code_regression')
+    && buildFailure.phaseHalts.some(h => h.halt_reason === 'content_retry_exhausted')
+    && !buildFailure.eventTypes.includes('phase_backtrack_requested')
+    && buildFailure.agentCalls < 8;
+  if (!buildFailureOk) {
+    throw new Error(
+      'goal/#7：build FAIL 应归 code_regression 并在 phase retry 上限收口，不得误判 toolchain/无限重试。实得 '
+      + JSON.stringify(buildFailure),
+    );
+  }
+  ctx.log('goal/#7：build 失败保留 code_regression 归因，在 phase retry 上限收口且不无限空转');
 
   // 第四段（T2 5a-1，#8 整机面）：fresh + head 失配 + 未声明 reset → **自动
   // discontinuity 续跑**，不 TERMINAL 不裸崩——宿主 run1"第一死"的整机级回放。
@@ -622,10 +782,14 @@ function parseArgs(argv) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  smokeConsumerLifecycle(parseArgs(process.argv.slice(2))).catch(err => {
-    console.error('[smoke/lifecycle] FAIL:', err.message);
-    process.exit(1);
-  });
+  smokeConsumerLifecycle(parseArgs(process.argv.slice(2)))
+    .then(result => {
+      if (!result.complete) process.exitCode = 1;
+    })
+    .catch(err => {
+      console.error('[smoke/lifecycle] FAIL:', err.message);
+      process.exit(1);
+    });
 }
 
 export { CASE_REGISTRY, STAGES, HISTORICAL_GITIGNORE, REPO_ROOT };

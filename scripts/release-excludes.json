@@ -19,6 +19,7 @@
     "**/.hylyre/**",
     "**/tmp_hypium/**",
     "**/oh_modules/**",
+    "framework.local.json",
     "profiles/*/vendor/**/*.md"
   ],
   "includeOverrides": [

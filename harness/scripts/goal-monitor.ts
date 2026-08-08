@@ -6,7 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
-import { detectRepoLayout } from '../repo-layout';
+import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { loadGoalManifestFromRun } from './utils/goal-manifest';
@@ -53,7 +53,7 @@ function usage(): string {
   return `
 Goal monitor — bounded, read-only goal notification reader
 
-  npx ts-node scripts/goal-monitor.ts --feature <f> [--run-id latest|id] [--since-event N] [--max-seconds 240] [--json|--markdown]
+  npx ts-node scripts/goal-monitor.ts --feature <f> [--run-id latest|id] [--project-root <root>] [--since-event N] [--max-seconds 240] [--json|--markdown]
 `;
 }
 
@@ -303,7 +303,7 @@ async function sleep(ms: number): Promise<void> {
 
 async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'run-id', 'since-event', 'max-seconds'],
+    string: ['feature', 'run-id', 'since-event', 'max-seconds', 'project-root'],
     boolean: ['json', 'markdown', 'help'],
     alias: { f: 'feature', h: 'help' },
     default: { 'run-id': 'latest' },
@@ -320,7 +320,10 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const layout = detectRepoLayout(__dirname);
+  const requestedProjectRoot = String(argv['project-root'] ?? '').trim();
+  const layout = requestedProjectRoot
+    ? inferRepoLayout(requestedProjectRoot)
+    : detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = cfg.paths.features_dir ?? 'doc/features';

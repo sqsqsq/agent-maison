@@ -124,6 +124,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(count() === 1, `缺口只产生一个事件，got ${count()}`);
         assert(events[0].type === 'phase_halt', '事件须是 phase_halt');
         assert(events[0].halt_reason === 'await_human_capability_gap', 'phase_halt 须带 halt_reason');
+        assert(events[0].probe === 'capability_preflight_ready', '能力缺口须携带 supervisor 可观测 probe');
         assert(
           events.every(e => e.type !== 'agent_invoke_start'),
           '缺口不得产生 agent_invoke_start（不烧 agent 轮次）',

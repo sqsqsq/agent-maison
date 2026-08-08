@@ -124,13 +124,13 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
   // 决定适用面——agent 删掉 ui-spec 即可让门禁 SKIP，绕过成本为零）。适用面只由
   // 「diff 里有没有 UI 文件变更」决定：没有 → PASS；有 → 必须过冻结白名单。
   const base = readCodingBase(projectRoot, feature, runId);
-  if (!base.body || base.mac === 'invalid') {
+  if (!base.body || base.status === 'invalid') {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_base_missing',
       details:
-        base.mac === 'invalid'
-          ? 'coding_base 记录损坏/验签失败——diff 基线不可信。'
+        base.status === 'invalid'
+          ? 'coding_base 记录损坏/上下文不匹配——diff 基线不可信。'
           : `本 run（${runId}）无 coding_base_sha——应由 runner 在首次 coding agent invoke 前锚定。`,
       suggestion: '请通过 goal-runner 从 plan 起跑（runner 会在 coding agent 起跑前锚定基线）；不使用 trace.start_commit 回退（其记录时点在 agent 之后）。',
     };

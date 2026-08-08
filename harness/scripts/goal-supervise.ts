@@ -22,8 +22,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
+import { loadFrameworkConfig } from '../config';
+import { loadResolvedProfile } from '../profile-loader';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
 import { superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
+import {
+  probeDeviceReadiness,
+} from './utils/device-readiness-deps';
+import { probeCapabilityPreflight } from './utils/capability-preflight';
+import type { ReadinessProbeName } from './utils/device-readiness-gate';
 import { featureDir } from '../config';
 
 interface ResolvedRun {
@@ -74,8 +81,51 @@ let injectedRunnerScript: string | null = null;
 export function __testing_setRunnerScript(scriptPath: string | null): void {
   injectedRunnerScript = scriptPath;
 }
+let injectedConditionProbe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null = null;
+export function __testing_setConditionProbe(
+  probe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
+): void {
+  injectedConditionProbe = probe;
+}
 function runnerScriptPath(): string {
   return injectedRunnerScript ?? path.join(__dirname, 'goal-runner.ts');
+}
+
+function runConditionProbe(
+  projectRoot: string,
+  reportDir: string,
+  probe: string,
+  phase?: string,
+): { ready: boolean; reason?: string } {
+  if (injectedConditionProbe) return injectedConditionProbe(probe, phase);
+  if (probe === 'storage_ready') {
+    const reportDirAbs = path.join(projectRoot, reportDir);
+    try {
+      fs.accessSync(reportDirAbs, fs.constants.W_OK);
+      return { ready: true, reason: 'run report directory is writable' };
+    } catch (error) {
+      return { ready: false, reason: 'run report directory is not writable: ' + String((error as Error).message) };
+    }
+  }
+  if (
+    probe === 'device_readiness' ||
+    probe === 'credential_state_ready' ||
+    probe === 'adapter_capability_ready'
+  ) {
+    const result = probeDeviceReadiness(projectRoot, probe as ReadinessProbeName);
+    return { ready: result.ready, reason: result.reason };
+  }
+  if (probe === 'capability_preflight_ready') {
+    if (!phase?.trim()) return { ready: false, reason: 'capability probe 缺少责任 phase' };
+    const cfg = loadFrameworkConfig(projectRoot);
+    const resolved = loadResolvedProfile(projectRoot, cfg);
+    const result = probeCapabilityPreflight(projectRoot, phase.trim(), resolved);
+    return {
+      ready: result.ready,
+      reason: result.reason ?? result.code ?? 'capability preflight not ready',
+    };
+  }
+  return { ready: false, reason: 'unsupported condition probe: ' + probe };
 }
 
 const TASK_PREFIX = 'MaisonGoalSupervise';
@@ -166,6 +216,7 @@ async function main(): Promise<number> {
   const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
   const decision = superviseRun({
     projectRoot, reportDir: run.reportDir, runId: run.runId, events,
+    conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
   });
 
   console.log(`[goal-supervise] run=${run.runId} → ${decision.action}：${decision.reason}`);
@@ -196,19 +247,37 @@ async function main(): Promise<number> {
 
   // **先落事件再拉起**：崩在 spawn 之前也已计数，避免「拉起失败但没记账」导致无限重试
   appendSupervisorEvent(run.eventsPath, {
-    type: 'supervisor_restart',
+    type: 'supervisor_restart', action: 'resume',
     run_id: run.runId,
     restart_seq: decision.restart_seq,
     backoff_ms: decision.backoff_ms,
     reason: decision.reason,
+    ...(decision.successor_required
+      ? {
+          successor_required: true,
+          successor_start_phase: decision.successor_start_phase ?? 'coding',
+        }
+      : {}),
   });
 
-  const runnerArgs = [
-    runnerScriptPath(),
-    '--feature', feature,
-    '--resume', run.runId,
-    '--detach',
-  ];
+  const successorStartPhase = decision.successor_required
+    ? decision.successor_start_phase ?? 'coding'
+    : null;
+  const runnerArgs = successorStartPhase
+    ? [
+        runnerScriptPath(),
+        '--feature', feature,
+        '--start', successorStartPhase,
+        '--supersede', run.runId,
+        '--force',
+        '--detach',
+      ]
+    : [
+        runnerScriptPath(),
+        '--feature', feature,
+        '--resume', run.runId,
+        '--detach',
+      ];
   const child = spawn(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
     cwd: projectRoot,
     detached: true,
@@ -220,6 +289,9 @@ async function main(): Promise<number> {
   appendSupervisorEvent(run.eventsPath, {
     type: 'supervisor_restart_spawned', run_id: run.runId,
     restart_seq: decision.restart_seq, pid: child.pid ?? null,
+    ...(successorStartPhase
+      ? { successor_required: true, successor_start_phase: successorStartPhase }
+      : {}),
   });
   return 0;
 }
@@ -234,7 +306,12 @@ if (require.main === module) {
     });
 }
 
-export { resolveRun as __testing_resolveRun, taskName as __testing_taskName };
+export {
+  appendSupervisorEvent as __testing_appendSupervisorEvent,
+  resolveRun as __testing_resolveRun,
+  taskName as __testing_taskName,
+  runConditionProbe as __testing_runConditionProbe,
+};
 // 进程内入口（测试用）：非 dry-run 分支必须真跑一次才算验收，见 supervisor-kill-recovery
 export { main as __testing_main };
 export { restartBackoffMs };

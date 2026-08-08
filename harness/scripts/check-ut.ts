@@ -903,8 +903,8 @@ function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
       failure_kind: 'goal_review_closure_baseline_unavailable',
       blocking_class: 'goal_review_closure_baseline_unavailable',
       suggestion:
-        '新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃；' +
-        '本 blocker 为 human_only，agent 不得尝试修复。',
+        '按既有回退协议失效旧 coding closure，回到 coding→review→ut/testing 重建合法基线；' +
+        '截断链由 supervisor 生成 coding 起点后继 run。',
     }];
   }
   if (closure.clean) {

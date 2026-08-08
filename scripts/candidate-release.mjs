@@ -108,11 +108,25 @@ function buildCandidate() {
     manifest.zipPath = `dist/candidates/framework-${version}-candidate.zip`;
     manifest.candidate = {
       status: 'built',
+      complete: false,
       built_at: new Date().toISOString(),
       zip_sha256: zipSha,
       skipped_gates: ['check-plan-version --release'],
       note: 'candidate 未经最终发布 plan 门禁；宿主统一回归 + consumer golden evaluator PASS 后由 promote 补门禁并移动同一字节 zip。',
     };
+    fs.writeFileSync(finalPaths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+    // T4 收口：candidate 必须先用**刚刚产出的同一字节 zip**跑完整 consumer
+    // lifecycle；repack 快速模式不能替代这条证据。smoke 失败时保留 complete=false
+    // 的 candidate，promote 永远不能把它当作可发布产物。
+    console.log('\n[candidate] consumer lifecycle smoke（同一字节 zip）...');
+    run(
+      process.execPath,
+      ['scripts/smoke-consumer-lifecycle.mjs', '--zip', finalPaths.zip],
+      REPO_ROOT,
+    );
+    manifest.candidate.complete = true;
+    manifest.candidate.smoke_checked_at = new Date().toISOString();
     fs.writeFileSync(finalPaths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 
     console.log(`\n[candidate] BUILT → ${path.relative(REPO_ROOT, finalPaths.zip)}`);
@@ -160,6 +174,12 @@ function promoteCandidate(argv) {
   }
 
   // ② consumer golden evaluator PASS（G3：evaluator PASS → promote 同一 candidate）
+  if (manifest.candidate?.complete !== true) {
+    throw new Error(
+      'candidate complete !== true：必须先用同一字节 zip 通过 consumer lifecycle smoke，禁止 promote',
+    );
+  }
+
   if (!evalReportPath) {
     throw new Error('promote 需要 --evaluator-report <consumer-golden-report.json>（宿主统一回归后由包内 evaluator 产出）');
   }

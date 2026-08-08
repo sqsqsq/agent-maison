@@ -20,6 +20,7 @@ import {
   resolveSurvivalCapability,
   resolveSurvivalFacet,
 } from '../../scripts/utils/goal-adapter-capability';
+import { evaluateDeviceReadinessProbe } from '../../scripts/utils/device-readiness-gate';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -289,6 +290,145 @@ const cases: TestCase[] = [
     },
   },
 ];
+
+cases.push(
+  {
+    name: 'T3 probe 只唤醒同源 external WAITING；缺 probe 或 probe 不匹配保持等待',
+    run: () => {
+      const events = [
+        { type: 'run_start' },
+        {
+          type: 'phase_halt',
+          phase: 'testing',
+          run_disposition: 'WAITING',
+          run_wait_kind: 'external',
+          probe: 'device_readiness',
+        },
+      ];
+      const notReady = decideSupervision({
+        events,
+        restartsSoFar: 0,
+        beaconStale: true,
+        condition: { probe: 'device_readiness', ready: false },
+      });
+      assert(notReady.action === 'no_op', 'probe 未转绿不得自动 resume');
+      const wrongProbe = decideSupervision({
+        events,
+        restartsSoFar: 0,
+        beaconStale: true,
+        condition: { probe: 'credential_state_ready', ready: true },
+      });
+      assert(wrongProbe.action === 'no_op', '不同来源的 probe 不得唤醒');
+      const ready = decideSupervision({
+        events,
+        restartsSoFar: 0,
+        beaconStale: true,
+        condition: { probe: 'device_readiness', ready: true },
+      });
+      assert(ready.action === 'resume', '同源 probe 转绿必须自动重新入队');
+    },
+  },
+  {
+    name: 'T3 截断链用现有 resume 决策标记 successor，不引入新状态',
+    run: () => {
+      const decision = decideSupervision({
+        events: [
+          { type: 'run_start' },
+          {
+            type: 'phase_halt',
+            phase: 'coding',
+            successor_required: true,
+            run_disposition: 'RECOVERY_PENDING',
+          },
+        ],
+        restartsSoFar: 0,
+        beaconStale: true,
+      });
+      assert(decision.action === 'resume', '截断链仍沿用既有 resume 动作');
+      assert(
+        decision.action === 'resume' &&
+          decision.successor_required === true &&
+          decision.successor_start_phase === 'coding',
+        '必须携带责任阶段 successor 元数据',
+      );
+    },
+  },
+  {
+    name: 'T3 probe/successor 必须绑定当前 run_start 之后的投影事件，不得消费旧 run 元数据',
+    run: () => {
+      const events = [
+        { type: 'run_start' },
+        {
+          type: 'phase_halt', phase: 'ut', run_disposition: 'WAITING', run_wait_kind: 'external',
+          probe: 'device_readiness', successor_required: true,
+        },
+        { type: 'run_end', status: 'PARTIAL' },
+        { type: 'run_start', resume: 'same-run' },
+        { type: 'phase_halt', phase: 'coding', run_disposition: 'WAITING', run_wait_kind: 'human' },
+      ];
+      const staleProbe = decideSupervision({
+        events, restartsSoFar: 0, beaconStale: true,
+        condition: { probe: 'device_readiness', ready: true },
+      });
+      assert(staleProbe.action === 'no_op', '新一轮 WAITING(human) 不得被旧 probe 唤醒');
+      assert(
+        staleProbe.action !== 'resume' || staleProbe.successor_required !== true,
+        '新一轮不得继承旧 phase_halt 的 successor_required',
+      );
+
+      const current = [
+        { type: 'run_start' },
+        { type: 'phase_halt', phase: 'ut', run_disposition: 'WAITING', run_wait_kind: 'external', probe: 'device_readiness' },
+      ];
+      const ready = decideSupervision({
+        events: current, restartsSoFar: 0, beaconStale: true,
+        condition: { probe: 'device_readiness', ready: true },
+      });
+      assert(ready.action === 'resume', '当前投影事件的 probe 转绿仍须唤醒');
+    },
+  },
+  {
+    name: 'T3 设备 probe 只返回隐私安全的 settle/layout/credential 结构化事实',
+    run: () => {
+      const base = {
+        targets: ['device-1'],
+        credentialReady: true,
+      };
+      const unsettled = evaluateDeviceReadinessProbe({
+        ...base,
+        snapshot: {
+          locked: true,
+          keypad: [],
+          keypadDiag: { reason: 'digits_incomplete', found: 4, containerFound: true, hiddenSkipped: false },
+          cooldown: { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' },
+        },
+      });
+      assert(unsettled.ready === false && unsettled.category === 'ui_not_settled', '未完整键盘必须归 settle');
+      assert(unsettled.diagnostics.digit_count === 4 && unsettled.diagnostics.container_found === true, '必须保留数字数/容器事实');
+      const unsupported = evaluateDeviceReadinessProbe({
+        ...base,
+        snapshot: {
+          locked: true,
+          keypad: [],
+          keypadDiag: { reason: 'geometry_insane', found: 10, containerFound: true, hiddenSkipped: false },
+          cooldown: { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' },
+        },
+      });
+      assert(unsupported.category === 'layout_unsupported' && unsupported.diagnostics.geometry_failure === true, '几何异常必须归 layout');
+      const ready = evaluateDeviceReadinessProbe({
+        ...base,
+        snapshot: {
+          locked: true,
+          keypad: [],
+          keypadDiag: { reason: 'ok', found: 10, containerFound: true, hiddenSkipped: false },
+          cooldown: { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' },
+        },
+      });
+      assert(ready.ready === true, '键盘稳定且 credential ready 时 probe 必须转绿');
+      assert(!('raw' in ready.diagnostics), '诊断不得携带 raw UI dump');
+    },
+  },
+);
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return cases.map((testCase) => {

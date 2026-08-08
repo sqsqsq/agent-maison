@@ -448,12 +448,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'T4d: 专用 blocker id 显式 human_only；通用 ut_no_src_mutation 缺省不变',
+    name: 'T4d/5b: 授权型 blocker 保持 human_only；证据基线缺失回到机器恢复',
     run: () => {
       const a = resolveBlockerActionability({ id: 'goal_post_review_source_mutation_unresolved' } as never);
       if (a !== 'human_only') throw new Error(`post_review=${a}`);
       const b = resolveBlockerActionability({ id: 'goal_review_closure_baseline_unavailable' } as never);
-      if (b !== 'human_only') throw new Error(`baseline=${b}`);
+      if (b !== 'agent_fixable') throw new Error(`baseline=${b}`);
       const c = resolveBlockerActionability({ id: 'ut_no_src_mutation' } as never);
       if (c !== 'agent_fixable') throw new Error(`通用 id 缺省被改：${c}`);
     },

@@ -32,30 +32,34 @@ const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
 
 function runGoalStatusCli(
   args: string[],
+  projectRoot?: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  return runGoalCli('scripts/goal-status.ts', args);
+  return runGoalCli('scripts/goal-status.ts', args, projectRoot);
 }
 
 function runGoalMonitorCli(
   args: string[],
+  projectRoot?: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  return runGoalCli('scripts/goal-monitor.ts', args);
+  return runGoalCli('scripts/goal-monitor.ts', args, projectRoot);
 }
 
 function runGoalCli(
   scriptRel: string,
   args: string[],
+  projectRoot?: string,
 ): { status: number | null; stdout: string; stderr: string } {
   const localTsNode = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'dist', 'bin.js');
   const cwd = HARNESS_ROOT;
+  const cliArgs = projectRoot ? [...args, '--project-root', projectRoot] : args;
   const r = fs.existsSync(localTsNode)
-    ? spawnSync(process.execPath, [localTsNode, scriptRel, ...args], {
+    ? spawnSync(process.execPath, [localTsNode, scriptRel, ...cliArgs], {
         cwd,
         encoding: 'utf-8',
         shell: false,
         timeout: 120_000,
       })
-    : spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['ts-node', scriptRel, ...args], {
+    : spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['ts-node', scriptRel, ...cliArgs], {
         cwd,
         encoding: 'utf-8',
         shell: process.platform === 'win32',
@@ -66,6 +70,17 @@ function runGoalCli(
     stdout: (r.stdout ?? '').toString(),
     stderr: (r.stderr ?? '').toString(),
   };
+}
+
+function mkGoalCliProjectRoot(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-progress-cli-'));
+  const workflowDir = path.join(root, 'framework', 'workflows');
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(FRAMEWORK_ROOT, 'workflows', 'spec-driven.workflow.yaml'),
+    path.join(workflowDir, 'spec-driven.workflow.yaml'),
+  );
+  return root;
 }
 
 function assert(condition: boolean, message: string): void {
@@ -1077,9 +1092,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-status CLI: --json smoke from repo fixture',
     run: () => {
       const feature = `goal-cli-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({ feature, report_dir: reportRel });
       fs.mkdirSync(reportDir, { recursive: true });
       fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
@@ -1089,13 +1105,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         'utf-8',
       );
       try {
-        const r = runGoalStatusCli(['--feature', feature, '--run-id', runId, '--json']);
+        const r = runGoalStatusCli(['--feature', feature, '--run-id', runId, '--json'], cliRoot);
         assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
         const parsed = JSON.parse(r.stdout.trim()) as { status: string; schema_version: string };
         assert(parsed.schema_version === '1.0', 'schema');
         assert(parsed.status === 'COMPLETED', `status ${parsed.status}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1103,9 +1119,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-monitor CLI: phase_verdict edge notification',
     run: () => {
       const feature = `goal-monitor-verdict-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({ feature, report_dir: reportRel });
       fs.mkdirSync(reportDir, { recursive: true });
       fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
@@ -1125,7 +1142,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--max-seconds',
           '0',
           '--json',
-        ]);
+        ], cliRoot);
         assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
         const parsed = JSON.parse(r.stdout.trim()) as {
           notification_kind: string;
@@ -1136,7 +1153,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(parsed.event_index === 6, `event_index ${parsed.event_index}`);
         assert(parsed.phase_verdict === 'PASS', `verdict ${parsed.phase_verdict}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1144,9 +1161,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-monitor CLI: no-op timeout when no new edge',
     run: () => {
       const feature = `goal-monitor-noop-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({ feature, report_dir: reportRel });
       fs.mkdirSync(reportDir, { recursive: true });
       fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
@@ -1166,7 +1184,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--max-seconds',
           '0',
           '--json',
-        ]);
+        ], cliRoot);
         assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
         const parsed = JSON.parse(r.stdout.trim()) as {
           notification_kind: string;
@@ -1175,7 +1193,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(parsed.notification_kind === 'none', `kind ${parsed.notification_kind}`);
         assert(parsed.no_op_reason === 'timeout_no_notification', `reason ${parsed.no_op_reason}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1183,9 +1201,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-monitor CLI: heartbeat uses 10m event-time threshold and dedupe',
     run: () => {
       const feature = `goal-monitor-heartbeat-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({
         feature,
         report_dir: reportRel,
@@ -1218,7 +1237,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         run_id: runId,
       };
       fs.writeFileSync(
-        path.join(FRAMEWORK_ROOT, 'doc/features', feature, 'goal-runs', '.feature.lock'),
+        path.join(cliRoot, 'doc/features', feature, 'goal-runs', '.feature.lock'),
         JSON.stringify(lock, null, 2) + '\n',
         'utf-8',
       );
@@ -1238,7 +1257,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--max-seconds',
           '0',
           '--json',
-        ]);
+        ], cliRoot);
         assert(early.status === 0, `exit ${early.status} stderr=${early.stderr}`);
         const earlyParsed = JSON.parse(early.stdout.trim()) as {
           notification_kind: string;
@@ -1257,12 +1276,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--max-seconds',
           '0',
           '--json',
-        ]);
+        ], cliRoot);
         assert(deduped.status === 0, `exit ${deduped.status} stderr=${deduped.stderr}`);
         const dedupedParsed = JSON.parse(deduped.stdout.trim()) as { notification_kind: string };
         assert(dedupedParsed.notification_kind === 'none', `kind ${dedupedParsed.notification_kind}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1270,12 +1289,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-monitor CLI: latest run resolves from feature directory',
     run: () => {
       const feature = `goal-monitor-latest-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const oldId = '20260609T120000Z';
       const runId = '20260610T120000Z';
       const oldRel = `doc/features/${feature}/goal-runs/${oldId}`;
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const oldDir = path.join(FRAMEWORK_ROOT, oldRel);
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const oldDir = path.join(cliRoot, oldRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const oldManifest = mkManifest({
         feature,
         run_id: oldId,
@@ -1304,13 +1324,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--max-seconds',
           '0',
           '--json',
-        ]);
+        ], cliRoot);
         assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
         const parsed = JSON.parse(r.stdout.trim()) as { run_id: string; notification_kind: string };
         assert(parsed.run_id === runId, `run_id ${parsed.run_id}`);
         assert(parsed.notification_kind === 'phase_verdict', `kind ${parsed.notification_kind}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1318,9 +1338,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-monitor CLI: hard liveness anomaly edge-notifies once then dedupes',
     run: () => {
       const feature = `goal-monitor-liveness-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({
         feature,
         report_dir: reportRel,
@@ -1347,7 +1368,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const first = runGoalMonitorCli([
           '--feature', feature, '--run-id', runId,
           '--since-event', '-1', '--max-seconds', '0', '--json',
-        ]);
+        ], cliRoot);
         assert(first.status === 0, `exit ${first.status} stderr=${first.stderr}`);
         const firstParsed = JSON.parse(first.stdout.trim()) as {
           notification_kind: string;
@@ -1365,7 +1386,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const second = runGoalMonitorCli([
           '--feature', feature, '--run-id', runId,
           '--since-event', String(firstParsed.event_index), '--max-seconds', '0', '--json',
-        ]);
+        ], cliRoot);
         assert(second.status === 0, `exit ${second.status} stderr=${second.stderr}`);
         const secondParsed = JSON.parse(second.stdout.trim()) as {
           notification_kind: string;
@@ -1377,7 +1398,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           `reason ${secondParsed.no_op_reason}`,
         );
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },
@@ -1385,9 +1406,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'goal-status CLI: --watch --max-ticks 1 exits',
     run: async () => {
       const feature = `goal-watch-${process.pid}`;
+      const cliRoot = mkGoalCliProjectRoot();
       const runId = '20260610T120000Z';
       const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-      const reportDir = path.join(FRAMEWORK_ROOT, reportRel);
+      const reportDir = path.join(cliRoot, reportRel);
       const manifest = mkManifest({ feature, report_dir: reportRel });
       fs.mkdirSync(reportDir, { recursive: true });
       fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
@@ -1405,11 +1427,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           '--watch',
           '--max-ticks',
           '1',
-        ]);
+        ], cliRoot);
         assert(r.status === 0, `exit ${r.status} stderr=${r.stderr}`);
         assert(r.stdout.includes('COMPLETED'), `stdout ${r.stdout.slice(0, 200)}`);
       } finally {
-        fs.rmSync(path.join(FRAMEWORK_ROOT, 'doc/features', feature), { recursive: true, force: true });
+        fs.rmSync(cliRoot, { recursive: true, force: true });
       }
     },
   },

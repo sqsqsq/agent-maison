@@ -51,6 +51,7 @@ import {
 import {
   buildGoalManifestFromInput,
   computeManifestIdentityFields,
+  inheritSuccessorManifest,
   manifestIdentityFieldDigest,
   resolveVisionLineage,
   type GoalManifest,
@@ -520,17 +521,36 @@ const metaGateCases: TestCase[] = [
     },
   },
   {
-    name: '疑似误分类项**只标注不改行为**：suspected_misclassified 恒不影响裁决输出',
+    name: '5b 六条 suspected_misclassified 转正：证据故障自动恢复，基础设施 external probe',
     run: () => {
+      const expected = {
+        pass_snapshot_unavailable: { class: 'recoverable', action: 'retry_transaction' },
+        pass_snapshot_restore_refused: { class: 'recoverable', action: 'retry_transaction' },
+        pass_snapshot_journal_unverifiable: { class: 'recoverable', action: 'retry_transaction' },
+        pre_invoke_snapshot_failed: { class: 'external', action: undefined },
+        closure_finalization_failed: { class: 'recoverable', action: 'retry_transaction' },
+        goal_review_closure_baseline_unavailable: { class: 'recoverable', action: 'backtrack_to_coding' },
+      } as const;
       const suspects = Object.entries(INCIDENT_REGISTRY).filter(([, s]) => s.suspected_misclassified);
-      assert(suspects.length === 6, `疑似误分类应为 6 条，实际 ${suspects.length}`);
-      for (const [incident, spec] of suspects) {
-        const d = decide({ incident }, NO_AUTHORITY, ctx());
-        // 与「保持现行行为」同构：停下（waiting/terminal），不得自动恢复或放行
-        assert(
-          d.kind === 'waiting' || d.kind === 'terminal',
-          `${incident}(${spec.class}): 只映射不改行为——不得产出 ${d.kind}`,
-        );
+      assert(suspects.length === Object.keys(expected).length, `疑似误分类应为 6 条，实际 ${suspects.length}`);
+      for (const [incident, shape] of Object.entries(expected)) {
+        const spec = lookupIncident(incident);
+        assert(Boolean(spec?.suspected_misclassified), `${incident} 必须保留来源标注`);
+        assert(spec?.class === shape.class, `${incident} class 实得 ${spec?.class}`);
+        assert(spec?.recover_action === shape.action, `${incident} recover_action 实得 ${spec?.recover_action}`);
+        const d = decide({
+          incident,
+          chain_has_coding_review: true,
+          backtrack_budget_remaining: 2,
+          round_fingerprint_repeated: false,
+        }, NO_AUTHORITY, ctx());
+        if (shape.class === 'external') {
+          assert(d.kind === 'waiting' && d.wait_kind === 'external', `${incident} 必须 external waiting：${JSON.stringify(d)}`);
+        } else {
+          assert(d.kind === 'recover' && d.action === shape.action, `${incident} 必须自动恢复：${JSON.stringify(d)}`);
+        }
+        assert(d.kind !== 'waiting' || d.wait_kind !== 'human', `${incident} 不得 waiting(human)`);
+        assert(d.kind !== 'terminal', `${incident} 不得 terminal`);
       }
     },
   },
@@ -1255,6 +1275,70 @@ const manifestCompatCases: TestCase[] = [
       assertEq(midRunDecision.kind, 'recover', '5a-1 后失配裁决恒 recover（同源判据不变）');
     },
   },
+  {
+    name: 'T3 后继 manifest 继承源 run 的完整启动契约与去重指纹，不继承阶段完成态',
+    run: () => tmpProject((root) => {
+      const source = buildGoalManifestFromInput(baseManifestInput({
+        run_id: '20260807T000000Z-source',
+        end_phase: 'ut',
+        vision_lineage: 'reset',
+        requirement: 'source requirement',
+        adapter: 'source-adapter',
+        chain_override: ['spec', 'coding', 'review', 'ut'],
+        minimum_assurance: { ut: 'full' },
+        fidelity: 'semantic_layout',
+        fidelity_receipt: 'doc/receipts/source.json',
+        dependency_policy: {
+          deferrable_blocking_classes: ['sourceBlocked'],
+          deferrable_failure_kinds: ['source_failure'],
+          propagate_to_downstream: false,
+        },
+        pre_authorized_mutations: [{
+          phase: 'ut', allowed_files: ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'],
+          max_files: 1, approved_by: 'source-reviewer',
+        }],
+        budget: { max_total_turns: 7, max_backtracks: 1 },
+        unattended: { write_mode: 'workspace-write', approval_mode: 'never', max_turns: 11 },
+      }), { projectRoot: root });
+      const fresh = buildGoalManifestFromInput(baseManifestInput({
+        run_id: '20260807T000001Z-successor',
+        budget: { max_total_turns: 99, max_backtracks: 99 },
+        unattended: { write_mode: 'workspace-write', approval_mode: 'never', max_turns: 99 },
+      }), { projectRoot: root });
+      const successor = inheritSuccessorManifest(fresh, source, {
+        round: ['round-a', 'round-a', ''],
+        drift: ['drift-a', 'drift-a', 'drift-b'],
+      });
+      assertEq(JSON.stringify(successor.budget), JSON.stringify(source.budget), '后继不得刷新预算上限');
+      assertEq(JSON.stringify(successor.unattended), JSON.stringify(source.unattended), '后继不得刷新无人值守上限');
+      assertEq(successor.start_phase, fresh.start_phase, '后继只接受新 run 明确要求的起点');
+      for (const key of [
+        'end_phase', 'requirement', 'adapter', 'chain_override', 'minimum_assurance',
+        'fidelity', 'fidelity_receipt', 'dependency_policy', 'pre_authorized_mutations',
+      ] as const) {
+        assertEq(JSON.stringify(successor[key]), JSON.stringify(source[key]), `后继不得丢失 ${key}`);
+      }
+      assertEq(successor.successor_of, source.run_id, '后继须绑定源 run');
+      assert(!Object.prototype.hasOwnProperty.call(successor, 'vision_lineage'),
+        '后继不得继承已消费的一次性 vision_lineage 出生指令');
+      assertEq(resolveVisionLineage(successor), 'continue', '后继默认继续源 lineage，不得重复 reset');
+      const explicitReset = buildGoalManifestFromInput(baseManifestInput({
+        run_id: '20260807T000002Z-successor-reset',
+        vision_lineage: 'reset',
+      }), { projectRoot: root });
+      const resetSuccessor = inheritSuccessorManifest(explicitReset, source, { round: [], drift: [] });
+      assert(Object.prototype.hasOwnProperty.call(resetSuccessor, 'vision_lineage'),
+        'fresh successor 显式声明 reset 时必须保留该出生字段');
+      assertEq(resolveVisionLineage(resetSuccessor), 'reset',
+        'fresh successor 显式 reset 不得被继承清理逻辑静默吞掉');
+      assertEq(JSON.stringify(successor.inherited_round_fingerprints), JSON.stringify(['round-a']), 'round 指纹须去重');
+      assertEq(JSON.stringify(successor.inherited_drift_fingerprints), JSON.stringify(['drift-a', 'drift-b']), 'drift 指纹须去重');
+      const identity = computeManifestIdentityFields(successor);
+      assert('successor_of' in identity && 'inherited_round_fingerprints' in identity
+        && 'inherited_drift_fingerprints' in identity, '后继身份字段须绑定继承元数据');
+      assert(!('phase_outcomes' in successor), '后继不得复制源 run 阶段完成态');
+    }),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1307,11 +1391,13 @@ const projectionCases: TestCase[] = [
     run: () => {
       // 集合派生正确性（不手写第二份清单的机器面）
       for (const id of ['unauthorized_source_mutation', 'vision_feature_head_mismatch',
-        'goal_post_review_source_mutation_unresolved']) {
+        'goal_post_review_source_mutation_unresolved', 'pass_snapshot_unavailable',
+        'pass_snapshot_restore_refused', 'pass_snapshot_journal_unverifiable',
+        'closure_finalization_failed', 'goal_review_closure_baseline_unavailable']) {
         assert(isStructuralFactsIncident(id), `${id} 应属结构敏感（decide 读结构 facts）`);
       }
       for (const id of ['backtrack_limit', 'backtrack_fingerprint_repeat', 'backtrack_target_absent',
-        'device_not_ready', 'pass_snapshot_unavailable']) {
+        'device_not_ready', 'pre_invoke_snapshot_failed']) {
         assert(!isStructuralFactsIncident(id),
           `${id} 不属结构敏感（structurally_terminal 零 facts 或纯 incident 映射）`);
       }

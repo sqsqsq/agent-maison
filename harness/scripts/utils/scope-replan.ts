@@ -10,7 +10,7 @@
 // 违背无人值守的立项目标。本模块补「允许发现」那一半：
 //
 //     发现 plan 权责面的范围不足 / 授权不可信 / 产物漂移
-//     → invalidation 从 **plan** 起算（既有事务，不新增机制）
+//     → 一条 phase_backtrack_requested 记录从 **plan** 起算，缓存随后可重复丢弃
 //     → affected files 作为**未受信上下文**交给 plan（是"发现事实"，不是授权）
 //     → plan 重跑并独立裁决 → PASS 后 runner 新签 snapshot → 回 coding
 //
@@ -26,21 +26,15 @@
 //
 // 与既有两处回退调用点（goal-runner.ts:8118 授权/漂移回退、:8369 缺陷回退）的关系：
 // 那两处目标是 **coding**，本模块目标是 **plan**，触发面与失效下限都不同，故并存。
-// 事件顺序按 pass-snapshot.ts:1327-1331 定下的不变量：
-//
-//     journal pending → heads → **events** → commit
-//
-// 即 commit **必须最后**——先 commit 再补事件时，「commit 后、事件补齐前」的二次崩溃
-// 会让缺失事件永久不可修复（下次 resume 见 journal 已消失，直接 none）。
+// 事件顺序：**事件先落盘，缓存副作用后做**。事件本身是失效事实的原子记录；缓存
+// 退位/内存锚清理都可重复执行，崩溃后 resume 只需重放同一条记录。
 // ============================================================================
 
 import {
+  discardPassSnapshotCache,
   diffFrozenAgainstManifest,
   loadTrustedSnapshotContext,
-  type beginInvalidationTx,
-  type commitInvalidationTx,
 } from './pass-snapshot';
-import { runInvalidationTx } from './invalidation-tx';
 import { validateProjectRelativePath } from './project-relative-path';
 
 /** 触发面的**闭集**——跨 resume 回放时只认这三个值，未知一律不采信 */
@@ -74,6 +68,13 @@ export type ScopeReplanOutcome =
       detail: string;
     };
 
+/** 测试缝：原子失效 record 落盘、缓存副作用开始前的崩溃窗。 */
+let injectedAfterInvalidationRequested: (() => void) | null = null;
+
+export function __testing_setAfterInvalidationRequested(fn: (() => void) | null): void {
+  injectedAfterInvalidationRequested = fn;
+}
+
 /** 只用到 delete——不耦合 runner 的内存锚具体形状 */
 type AnchorMemory = { delete(key: string): boolean };
 
@@ -103,14 +104,13 @@ export interface ScopeReplanInput {
   causePhase: string;
   /** 触发事实。**未受信上下文**——交给 plan 看，不构成任何授权 */
   affectedFiles?: readonly string[];
+  defects?: readonly string[];
+  fingerprint?: string;
   /** 人类可读的触发说明，进事件供排障 */
   detail: string;
   dryRun: boolean;
   passSnapshotMemory: AnchorMemory;
   emit: (event: Record<string, unknown>) => void;
-  /** 测试注入；缺省走真实事务 */
-  begin?: typeof beginInvalidationTx;
-  commit?: typeof commitInvalidationTx;
 }
 
 /**
@@ -146,33 +146,34 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
   const txId = `${input.runId}-scopebt${ordinal}`;
   const files = (input.affectedFiles ?? []).slice(0, 20);
 
-  // 失效事务 + 其事件投影走**唯一实现**（顺序不变量在那里，见 invalidation-tx.ts）
-  runInvalidationTx({
-    projectRoot: input.projectRoot,
-    feature: input.feature,
-    runId: input.runId,
-    causePhase: input.causePhase,
-    invalidatedPhases,
-    txId,
-    reason: input.trigger,
-    dryRun: input.dryRun,
-    passSnapshotMemory: input.passSnapshotMemory,
-    emit: input.emit,
-    begin: input.begin,
-    commit: input.commit,
-  });
-
+  // 这条记录必须是失效事实的唯一落点：invalidated_phases/to_phase/reason 及交接上下文
+  // 同时写入；后续缓存退位只是可重复副作用，不再有 pending/completed journal。
   input.emit({
     type: 'phase_backtrack_requested',
     phase: input.causePhase,
     to_phase: 'plan',
     reason: input.trigger,
+    invalidated_phases: invalidatedPhases,
     // 保守恢复路**恒不产授权语义**——不冒充人工授权回退（对齐 goal-runner.ts:8155 惯例）
     authorized: false,
     detail: input.detail,
     files,
+    defects: (input.defects ?? []).slice(0, 20),
+    fingerprint: input.fingerprint ?? null,
     invalidation_tx_id: txId,
   });
+  // 只用于子进程故障回放：record 已落盘即逻辑失效已生效，下面动作必须可重复。
+  injectedAfterInvalidationRequested?.();
+
+  if (!input.dryRun) {
+    for (const phase of invalidatedPhases) input.passSnapshotMemory.delete(phase);
+    discardPassSnapshotCache({
+      projectRoot: input.projectRoot,
+      feature: input.feature,
+      runId: input.runId,
+      phases: invalidatedPhases,
+    });
+  }
 
   input.emit({ type: 'phase_backtrack_started', to_phase: 'plan' });
   return { kind: 'replanned', planIdx, invalidatedPhases, txId };
@@ -214,7 +215,7 @@ export type PlanAuthorityOutcome =
  *    时它检 coding 快照，不检 plan scope 快照；
  * ② `passSnapshotMemory` 每进程新建（goal-runner.ts:5418），**resume 后恒空**；
  * ③ gate 的锚来自 `scopeAnchorEnv` → `memory.get('plan')`，取不到就不注入，gate 退回
- *    无锚行为，无 HMAC 时 `ok_unauthenticated` 弱信任放行。
+ *    无锚行为会被视为缓存不可用并重建，不以凭据或弱信任放行。
  * 合起来即：**t4 的锚保护在 resume 后自然蒸发**。不前移的话，无可信 plan 授权的 resume
  * 会先跑完一轮 coding、再由 post-agent gate 发现问题——白烧一次 attempt，且 agent 在
  * 授权未确认时已经动过代码。
@@ -222,7 +223,8 @@ export type PlanAuthorityOutcome =
  * 两条信任路径**收敛到同一次 loader 调用**：
  * · 同进程 → 传 `expectedAnchor`，loader 已内建「盘上消失/退位/换代即篡改」
  *   （pass-snapshot.ts:919-926），`kind='active'` 即锚已核对，无需另写比较；
- * · resume → `expectedAnchor` 为 null，改由**两个 MAC** 担保。
+ * · resume → `expectedAnchor` 为 null，按无内存锚读取 unsigned cache；内容或绑定异常
+ *   直接判 cache miss，由责任阶段重跑。
  * 两者随后消费**同一个 `ctx.manifest`**——不存在「先比 head、再重新读另一份 manifest」
  * 的 TOCTOU。
  *
@@ -234,9 +236,8 @@ export type PlanAuthorityOutcome =
  * coding 快照（kind='none'），整块被跳过。**即：一次普通 coding attempt 期间，plan 冻结面
  * 的 live 漂移在 spawn 前后都没有任何地方在比。**
  *
- * 有 diff 时**不先 restore**：`restoreFrozenFromSnapshot` 在无内存锚的 resume 面
- * （tier=resume）可能被拒，那会把「自动回退」重新变成求人；而 replan 本来就会重出 plan
- * 产物并由 runner 重新签发，restore 是多余动作。
+ * 有 diff 时直接进入 replan：缓存只提供观察基线，不能把宿主旧字节写回；replan 会重出
+ * plan 产物并由 runner 重新建立缓存。
  */
 export function checkPlanAuthority(input: {
   projectRoot: string;
@@ -273,19 +274,7 @@ export function checkPlanAuthority(input: {
       affectedFiles: [],
     };
   }
-  // resume 面（无内存锚）改由 HMAC 担保；同进程面锚已在 loader 内核对过，不再要求 MAC
-  // （HMAC 是可选加固，不参与正常流程硬门禁）。
-  if (expectedAnchor === null && (ctx.headMac !== 'ok' || ctx.manifestMac !== 'ok')) {
-    return {
-      kind: 'replan',
-      reason: 'snapshot_untrusted',
-      detail:
-        `resume 面无同进程内存锚，且 plan 快照未认证（head=${ctx.headMac} / manifest=${ctx.manifestMac}）` +
-        '——不采信可疑旧授权，回 plan 重新签发',
-      affectedFiles: [],
-    };
-  }
-
+  // loader 已核对缓存内容、上下文与 manifest 绑定；这里不再叠加凭据验证。
   const diffs = (input.diff ?? diffFrozenAgainstManifest)({
     projectRoot: input.projectRoot,
     feature: input.feature,
@@ -373,7 +362,7 @@ export function sanitizeScopeReplanFiles(projectRoot: string, raw: unknown): str
 /**
  * 由**任意来源**的 reason/files 得到可安全进提示词的上下文。
  *
- * 为什么两条路径都走它（比 codex 建议更严一格）：跨 resume 的 `events.jsonl` 无 MAC、
+ * 为什么两条路径都走它：跨 resume 的 `events.jsonl` 无凭据面、
  * agent 可写自不必说；**同进程的 `affectedFiles` 也不是全可信**——它来自
  * `diffFrozenAgainstManifest` 对 watched_roots 的目录清点，文件名由 agent 决定。
  * 所以净化不分来源，统一在这里做一次。

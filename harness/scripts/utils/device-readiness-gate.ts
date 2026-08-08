@@ -19,7 +19,7 @@
 // 等于永远处理不了"锁屏了没注意"这个真实场景。
 // ============================================================================
 
-import type { UnlockFailureKind } from './device-unlock-helper';
+import type { LockScreenSnapshot, UnlockFailureKind } from './device-unlock-helper';
 
 import {
   capsTestingConclusion,
@@ -33,6 +33,123 @@ export type DeviceReadinessState = 'READY' | 'BLOCKED' | 'AMBIGUOUS';
 export interface DeviceTarget {
   serial: string;
   targetKind: DeviceTargetKind;
+}
+
+export type ReadinessProbeName =
+  | 'device_readiness'
+  | 'credential_state_ready'
+  | 'adapter_capability_ready';
+
+export interface DeviceReadinessProbeContext {
+  configuredSerial?: string | null;
+  targets: readonly string[];
+  snapshot?: LockScreenSnapshot;
+  credentialReady?: boolean;
+}
+
+export interface DeviceReadinessProbeResult {
+  probe: ReadinessProbeName;
+  ready: boolean;
+  reason: string;
+  category?: UnlockFailureKind;
+  diagnostics: {
+    target_count: number;
+    selected_target: boolean;
+    lock_state: 'locked' | 'unlocked' | 'unknown' | 'not_checked';
+    container_found: boolean | null;
+    digit_count: number | null;
+    geometry_failure: boolean | null;
+    cooldown: 'cooldown' | 'not_cooldown' | 'ambiguous' | 'unknown';
+  };
+}
+
+function probeDiagnostics(
+  context: DeviceReadinessProbeContext,
+  selectedTarget: boolean,
+): DeviceReadinessProbeResult['diagnostics'] {
+  const snapshot = context.snapshot;
+  const reason = snapshot?.keypadDiag?.reason;
+  return {
+    target_count: context.targets.length,
+    selected_target: selectedTarget,
+    lock_state:
+      snapshot?.locked === true
+        ? 'locked'
+        : snapshot?.locked === false
+          ? 'unlocked'
+          : snapshot
+            ? 'unknown'
+            : 'not_checked',
+    container_found: snapshot?.keypadDiag?.containerFound ?? null,
+    digit_count: snapshot?.keypadDiag?.found ?? null,
+    geometry_failure: snapshot
+      ? reason === 'geometry_insane' || reason === 'digit_invalid'
+      : null,
+    cooldown: snapshot?.cooldown.state ?? 'unknown',
+  };
+}
+
+export function evaluateDeviceReadinessProbe(
+  context: DeviceReadinessProbeContext,
+  probe: ReadinessProbeName = 'device_readiness',
+): DeviceReadinessProbeResult {
+  const configured = context.configuredSerial?.trim();
+  const selectedTarget = Boolean(
+    configured ? context.targets.includes(configured) : context.targets.length === 1,
+  );
+  const diagnostics = probeDiagnostics(context, selectedTarget);
+  const fail = (reason: string, category?: UnlockFailureKind): DeviceReadinessProbeResult => ({
+    probe,
+    ready: false,
+    reason,
+    ...(category ? { category } : {}),
+    diagnostics,
+  });
+
+  if (probe === 'credential_state_ready') {
+    return context.credentialReady === true
+      ? { probe, ready: true, reason: 'credential state is ready', diagnostics }
+      : fail('credential state is not ready', 'credential_unavailable');
+  }
+  if (!selectedTarget) {
+    return fail(
+      configured
+        ? 'configured device is not online'
+        : context.targets.length === 0
+          ? 'no device target is online'
+          : 'multiple device targets require explicit target_serial',
+    );
+  }
+
+  const snapshot = context.snapshot;
+  if (!snapshot || snapshot.locked === undefined) {
+    return fail('lock state is not observable');
+  }
+  if (!snapshot.locked) {
+    return { probe, ready: true, reason: 'device is unlocked', diagnostics };
+  }
+
+  const keypadReason = snapshot.keypadDiag?.reason;
+  if (keypadReason === 'pin_container_not_found' ||
+      keypadReason === 'geometry_insane' ||
+      keypadReason === 'digit_invalid') {
+    return fail('lock layout is unsupported (' + keypadReason + ')', 'layout_unsupported');
+  }
+  if (keypadReason === 'digits_incomplete' ||
+      keypadReason === 'keys_hidden') {
+    return fail('lock UI is not settled (' + keypadReason + ')', 'ui_not_settled');
+  }
+  if (snapshot.cooldown.state !== 'not_cooldown') {
+    return fail('unlock cooldown is ' + snapshot.cooldown.state);
+  }
+  if (probe === 'adapter_capability_ready') {
+    return keypadReason === 'ok'
+      ? { probe, ready: true, reason: 'adapter can observe the lock keypad', diagnostics }
+      : fail('lock keypad capability is not ready', 'ui_not_settled');
+  }
+  return context.credentialReady === true
+    ? { probe, ready: true, reason: 'device gate can retry with the registered credential', diagnostics }
+    : fail('device is locked and no usable credential is available', 'credential_unavailable');
 }
 
 /**
@@ -98,6 +215,8 @@ export interface DeviceReadinessDeps {
   listTargets(): string[];
   /** 是否锁屏；无法判定 → undefined（不猜） */
   isLocked(serial: string): boolean | undefined;
+  /** Optional single-source snapshot for the supervisor's read-only probe. */
+  snapshot?(serial: string): LockScreenSnapshot;
   /** 非秘密唤醒（power-shell wakeup 等）——不涉及任何凭据 */
   wake(serial: string): void;
   /** 已关联到既有 Emulator profile/process 的 serial（用于 target_kind 正面分类） */
@@ -390,6 +509,7 @@ export interface DeviceGateOutcome {
   /** BLOCKED 走既有设备阻断契约，供上层归入 external_block（不是 capability FAIL） */
   blocking_class?: string;
   failure_kind?: string;
+  probe?: ReadinessProbeName;
 }
 
 export interface DeviceGateDecision {
@@ -433,6 +553,14 @@ export async function runDeviceReadinessGate(opts: {
   //   · 非 READY 分支硬编码 'failed' 且不带 serial。
   // 现在成败与 serial 都由事实本身说了算（codex 三轮 P1）。
   const attempt = res.unlockAttempt;
+  const probe: ReadinessProbeName | undefined =
+    res.state === 'AMBIGUOUS'
+      ? undefined
+      : attempt?.failureKind === 'credential_unavailable'
+        ? 'credential_state_ready'
+        : attempt?.failureKind === 'layout_unsupported'
+          ? 'adapter_capability_ready'
+          : 'device_readiness';
   if (attempt) {
     opts.emitEvent({
       type: 'device_unlock_attempt',
@@ -440,6 +568,7 @@ export async function runDeviceReadinessGate(opts: {
       serial: attempt.serial,
       outcome: attempt.outcome,
       ...(attempt.failureKind ? { failure_kind: attempt.failureKind } : {}),
+      ...(probe ? { probe } : {}),
       note: attempt.note,
     });
   }
@@ -473,6 +602,7 @@ export async function runDeviceReadinessGate(opts: {
     // 三类可行动归因随 halt 一并落盘，供 supervisor/probe **按类别**决定下一步
     // （重新登记 / 真机校准 / 自动重试），而不是去 grep notes 文案
     ...(attempt?.failureKind ? { unlock_failure_kind: attempt.failureKind } : {}),
+    ...(probe ? { probe } : {}),
     notes: res.notes,
   });
   return {
@@ -492,6 +622,7 @@ export async function runDeviceReadinessGate(opts: {
       ...(res.state === 'BLOCKED'
         ? { blocking_class: 'externalBlocked', failure_kind: 'device_blocked' }
         : {}),
+      ...(probe ? { probe } : {}),
     },
     notes: res.notes,
   };

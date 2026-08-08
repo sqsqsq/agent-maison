@@ -74,6 +74,15 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(eight!.status, 'covered', '#8 已实现（5a-1），登记态不得回退 pending');
     assertEq(eight!.coveredBy, 'goal', '#8 整机面由 goal stage 覆盖');
 
+    const four = m.CASE_REGISTRY.find(c => c.id === 4);
+    assert(four !== undefined, 'T2 5b 的 #4 必须在注册表');
+    assertEq(four!.status, 'covered', '#4 cache miss 行为已由整机 goal 覆盖');
+    assertEq(four!.coveredBy, 'goal', '#4 必须由真实 goal stage 覆盖');
+    const six = m.CASE_REGISTRY.find(c => c.id === 6);
+    assert(six !== undefined, 'T2 5c 的 #6 必须在注册表');
+    assertEq(six!.status, 'covered', '#6 原子失效 crash 窗已由整机 goal 覆盖');
+    assertEq(six!.coveredBy, 'goal', '#6 必须由真实 goal stage 覆盖');
+
     // 守门函数本身必须真的会拒——否则它只是个摆设
     let gap = false;
     try { m.assertCaseRegistryComplete(m.CASE_REGISTRY.filter(c => c.id !== 4)); } catch { gap = true; }

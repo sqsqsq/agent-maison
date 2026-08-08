@@ -4,7 +4,7 @@
 // ============================================================================
 
 import minimist from 'minimist';
-import { detectRepoLayout } from '../repo-layout';
+import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { loadGoalManifestFromRun } from './utils/goal-manifest';
@@ -23,7 +23,7 @@ import { verifyFeatureCompletion } from './utils/verify-feature-completion';
 
 async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'run-id'],
+    string: ['feature', 'run-id', 'project-root'],
     boolean: ['json', 'markdown', 'watch', 'help'],
     alias: { f: 'feature', h: 'help' },
     default: { 'run-id': 'latest' },
@@ -33,7 +33,7 @@ async function main(): Promise<number> {
     console.log(`
 Goal status — progress projection reader
 
-  npx ts-node scripts/goal-status.ts --feature <f> [--run-id latest|id] [--json|--markdown] [--watch] [--tail N] [--max-ticks N]
+  npx ts-node scripts/goal-status.ts --feature <f> [--run-id latest|id] [--project-root <root>] [--json|--markdown] [--watch] [--tail N] [--max-ticks N]
 `);
     return 0;
   }
@@ -44,7 +44,10 @@ Goal status — progress projection reader
     return 1;
   }
 
-  const layout = detectRepoLayout(__dirname);
+  const requestedProjectRoot = String(argv['project-root'] ?? '').trim();
+  const layout = requestedProjectRoot
+    ? inferRepoLayout(requestedProjectRoot)
+    : detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const frameworkRoot = layout.frameworkRoot;
   const cfg = loadFrameworkConfig(projectRoot);

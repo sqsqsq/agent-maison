@@ -286,7 +286,7 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   closure_timeout:
     'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume',
   pass_snapshot_unavailable:
-    'PASS 产物无法建立/判定可信冻结保护（head 损坏/快照失败/预期快照消失）——不做无保护重试，人工核查 trust-state 后 --resume',
+    'PASS 快照不可复用（head 损坏/快照失败/预期快照消失）——丢弃缓存，重跑责任阶段；若存储不可写则等待 external probe',
   closure_probe_error:
     'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume',
   closure_state_invariant:
@@ -296,9 +296,9 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   await_human_gate_deferral:
     '仅剩需真人签字/确认项（设计内求人时刻，内容重试无意义）——逐条完成人签后 --resume；语义同 AWAITING_HUMAN_REVIEW',
   pass_snapshot_restore_refused:
-    'PASS 冻结产物被改且无法自动恢复——人工核查产物与 trust-state 快照；生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT（使 resume 场景也可自动恢复）',
+    'PASS 冻结缓存不可复用——保留宿主现状，丢弃缓存并重跑责任阶段，经完整门禁重新建立快照',
   pass_snapshot_journal_unverifiable:
-    'PASS 快照失效 journal 无法验证（损坏/验签失败）——人工核查 trust-state 后 --resume，不得依据不可信 journal 改动快照',
+    'PASS 快照失效记录不可复用——按事件重放并丢弃缓存，重跑责任阶段，不读取旧 journal 恢复字节',
   await_human_visual_confirm:
     '待真人逐屏过目确认（设计内求人时刻，见下方引导）',
   framework_integrity_block:

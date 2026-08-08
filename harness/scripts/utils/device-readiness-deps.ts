@@ -29,7 +29,19 @@ import {
   type ScreenBounds,
   type UnlockDeps,
 } from './device-unlock-helper';
-import type { DeviceReadinessDeps, DeviceReadinessInput, EmulatorFallback } from './device-readiness-gate';
+import {
+  evaluateDeviceReadinessProbe,
+  type DeviceReadinessDeps,
+  type DeviceReadinessInput,
+  type DeviceReadinessProbeResult,
+  type EmulatorFallback,
+  type ReadinessProbeName,
+} from './device-readiness-gate';
+import {
+  canAttemptUnlock,
+  parseCredentialRef,
+  windowsCredentialProvider,
+} from './device-credential-store';
 
 /** 设备侧探测/操作的统一超时——任何一条都不得成为新的无限等待 */
 const HDC_PROBE_TIMEOUT_MS = 10_000;
@@ -657,6 +669,7 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
   const deps: DeviceReadinessDeps = {
     listTargets: listHdcTargets,
     isLocked: probeScreenLocked,
+    snapshot: readLockScreenSnapshot,
     wake: wakeDevice,
     knownEmulatorSerials: () => knownEmulatorSerialsFrom(listHdcTargets()),
     attestPhysical: attestPhysicalDevice,
@@ -718,4 +731,46 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
     emulatorFallback: resolveEmulatorFallback(projectRoot),
     deps,
   };
+}
+
+function credentialIsReady(ref: string | null, serial?: string): boolean {
+  const id = ref ? parseCredentialRef(ref) : null;
+  if (!id || (serial && id.serial !== serial)) return false;
+  return canAttemptUnlock(id, windowsCredentialProvider()).ok;
+}
+
+/**
+ * Read-only condition probe consumed by goal-supervise. It never wakes, unlocks,
+ * launches, or writes a device/session record.
+ */
+export function probeDeviceReadiness(
+  projectRoot: string,
+  probe: ReadinessProbeName = 'device_readiness',
+): DeviceReadinessProbeResult {
+  const input = buildDeviceReadinessInput(projectRoot);
+  const targets = input.deps.listTargets().map(s => s.trim()).filter(Boolean);
+  const configured = input.configuredSerial?.trim();
+  const selectedSerial =
+    configured && targets.includes(configured)
+      ? configured
+      : !configured && targets.length === 1
+        ? targets[0]
+        : undefined;
+  const snapshot =
+    probe === 'credential_state_ready' || !selectedSerial
+      ? undefined
+      : (input.deps.snapshot?.(selectedSerial) ?? {
+          locked: input.deps.isLocked(selectedSerial),
+          keypad: [],
+          cooldown: { state: 'ambiguous' as const, ruleId: 'snapshot_unavailable' },
+        });
+  return evaluateDeviceReadinessProbe(
+    {
+      configuredSerial: configured,
+      targets,
+      snapshot,
+      credentialReady: credentialIsReady(input.credentialRef ?? null, selectedSerial),
+    },
+    probe,
+  );
 }

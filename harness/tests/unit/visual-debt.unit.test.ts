@@ -8,6 +8,7 @@
 // ⑤披露门禁（有债务结论未提「视觉债务」→FAIL）。
 // ============================================================================
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,7 +25,11 @@ import {
 } from '../../scripts/utils/visual-debt';
 import { checkFidelityCapabilityPregate } from '../../scripts/check-spec';
 import { checkVisualDebtDisclosure } from '../../scripts/check-testing';
-import { evaluateFidelityTierPreflight, initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
+import {
+  evaluateFidelityTierPreflight,
+  evaluateFidelityTransitionAuthorization,
+  initializeFidelityRouting,
+} from '../../scripts/utils/goal-preflight';
 import {
   loadFidelityIntentSsot,
   resolveFidelityRoutingDecision,
@@ -32,6 +37,7 @@ import {
   writeFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
 import { buildCapabilityBlock, resolvePhaseCapabilityAdvisory } from '../../scripts/goal-runner';
+import { canonicalReceiptPayload, type ConfirmationReceipt, type TrustRegistry } from '../../scripts/utils/confirmation-receipt';
 import { generateGoalReportJson, writeGoalReport } from '../../scripts/utils/goal-report-generator';
 import { phaseInitDecision } from '../../scripts/fidelity-intent-init';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -251,6 +257,86 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         featuresDirRel: 'doc/features', chainStartsAtSpec: false,
       });
       assertEq(action.action, 'defer_capability_missing', JSON.stringify(action));
+    }),
+  },
+  {
+    name: 'T3 后继可复用 fidelity_downgrade receipt：只绑定 feature+需求 object_hash+expiry，不绑定物理 run_id',
+    run: async () => withTmpProject(async root => {
+      const feature = 'demo';
+      const requirement = '同一语义任务的降档授权可由 successor run 复用。';
+      const receiptRel = `doc/features/${feature}/fidelity-downgrade.json`;
+      const receiptAbs = path.join(root, receiptRel);
+      fs.mkdirSync(path.dirname(receiptAbs), { recursive: true });
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+      const objectHash = crypto.createHash('sha256').update(requirement, 'utf-8').digest('hex');
+      const now = () => new Date('2026-08-08T12:00:00.000Z');
+      const payload = {
+        action: 'fidelity_downgrade' as const,
+        feature,
+        object_hash: objectHash,
+        issued_at: '2026-08-08T11:00:00.000Z',
+        expiry: '2026-08-09T00:00:00.000Z',
+        run_id: 'source-run',
+      };
+      const receipt: ConfirmationReceipt = {
+        schema_version: '1.0',
+        receipt_id: 'fidelity-receipt-1',
+        issuer_id: 'ops-team',
+        key_id: 'k1',
+        alg: 'ed25519',
+        payload_schema_version: '1.0',
+        payload,
+        signature: crypto.sign(null, canonicalReceiptPayload(payload), privateKey).toString('base64'),
+      };
+      fs.writeFileSync(receiptAbs, JSON.stringify(receipt), 'utf-8');
+      const registry: TrustRegistry = {
+        schema_version: '1.0',
+        issuers: [{
+          issuer_id: 'ops-team',
+          keys: [{
+            key_id: 'k1',
+            alg: 'ed25519',
+            public_key_pem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+          }],
+        }],
+      };
+      const registryPath = path.join(root, 'trusted-receipts.json');
+      fs.writeFileSync(registryPath, JSON.stringify(registry), 'utf-8');
+      const previousRegistry = process.env.MAISON_TRUST_REGISTRY;
+      process.env.MAISON_TRUST_REGISTRY = registryPath;
+      try {
+        const init = (runId: string) => initializeFidelityRouting({
+          projectRoot: root,
+          frameworkRoot: root,
+          feature,
+          requirement,
+          featuresDirRel: 'doc/features',
+          executionIdentity: runId,
+          fidelityReceiptRel: receiptRel,
+          runIdForReceipt: runId,
+          now,
+        });
+        assertEq(init('source-run').receiptNote, '', '源 run receipt 应有效');
+        assertEq(init('successor-run').receiptNote, '', '换物理 run 后 receipt 仍应有效');
+        const transition = evaluateFidelityTransitionAuthorization({
+          projectRoot: root,
+          featuresDirRel: 'doc/features',
+          manifest: {
+            feature,
+            requirement,
+            run_id: 'successor-run',
+            fidelity: 'reference_only',
+            fidelity_receipt: receiptRel,
+          } as unknown as GoalManifest,
+          applied: { fidelity: false, fidelityReceipt: true },
+          now,
+        });
+        assertEq(transition.blockers.length, 0, 'successor transition 不得因源 run_id 失配而阻断');
+        assertTrue(transition.authorizedFields.has('fidelity_receipt'), '有效 receipt 应授权写入 fidelity_receipt');
+      } finally {
+        if (previousRegistry === undefined) delete process.env.MAISON_TRUST_REGISTRY;
+        else process.env.MAISON_TRUST_REGISTRY = previousRegistry;
+      }
     }),
   },
   {

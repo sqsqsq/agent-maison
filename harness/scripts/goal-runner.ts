@@ -112,6 +112,7 @@ import {
   computeManifestIdentityFields,
   computeManifestIdentityHash,
   diffManifestIdentityFields,
+  inheritSuccessorManifest,
   loadGoalManifestFile,
   loadGoalManifestFromRun,
   manifestIdentityFieldDigest,
@@ -178,33 +179,29 @@ import {
 } from './utils/agent-invoke';
 import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
 import {
-  commitInvalidationTx,
+  discardPassSnapshotCache,
   diffFrozenAgainstManifest,
-  readFrozenManifest,
   loadTrustedSnapshotContext,
   phaseHasFrozenSurface,
   PASS_SNAPSHOT_ANCHOR_ENV,
-  PASS_SNAPSHOT_HMAC_ENV,
   formatSnapshotAnchorEnv,
   readPassSnapshotHead,
-  recoverInvalidationJournal,
   resolveFrozenDeliverables,
-  restoreFrozenFromSnapshot,
   passSnapshotPhaseDir,
+  nextPassSnapshotEpoch,
   takePassSnapshot,
   recordCodingBase,
   resolveGitHeadSha,
   deleteRunTrustState,
   isValidRunIdBasename,
 } from './utils/pass-snapshot';
-import { runInvalidationTx } from './utils/invalidation-tx';
 import {
   checkPlanAuthority,
   resolveScopeReplanContext,
   tryScopeReplan,
   type ScopeReplanPromptContext,
 } from './utils/scope-replan';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHash } from 'crypto';
 import {
   produceCriticReceipt,
   produceSpecRefsReceipt,
@@ -724,6 +721,7 @@ export function runInvokeCapabilityGate(opts: {
     type: 'phase_halt',
     phase: opts.phase,
     halt_reason: 'await_human_capability_gap',
+    probe: 'capability_preflight_ready',
     verdict: 'FAIL',
   });
   console.error(
@@ -900,6 +898,12 @@ export function __testing_setInvokeCapabilityGate(fn: InvokeCapabilityGateFn | n
   injectedCapabilityGate = fn;
 }
 
+/** 测试缝：仅在真实 pass snapshot 落盘后触发一次副作用注入；生产路径永不设置。 */
+let injectedAfterPassSnapshot: (() => void) | null = null;
+export function __testing_setAfterPassSnapshot(fn: (() => void) | null): void {
+  injectedAfterPassSnapshot = fn;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
@@ -908,6 +912,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedLayout = null;
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
+  injectedAfterPassSnapshot = null;
 }
 
 async function runHarnessPhase(
@@ -2122,28 +2127,41 @@ export function resolveFrozenManifestHash(
 }
 
 /**
- * resume 起点的 invalidation 过滤：phase_invalidated 事件之后（事件序）没有该 phase 新的
- * PASS phase_verdict → 该 phase 的旧 outcome 剔除、resume 起点回退到链上最早被剔除位。
+ * resume 起点的 invalidation 过滤：新协议读取一条 phase_backtrack_requested 的
+ * invalidated_phases[]；旧协议继续读取逐 phase 的 phase_invalidated。事件之后没有该
+ * phase 新的 PASS phase_verdict → 该 phase 的旧 outcome 剔除、resume 起点回退到最早位。
  */
 export function applyInvalidationsToResume(
   chain: readonly FeaturePhase[],
   outcomes: GoalPhaseOutcome[],
-  events: ReadonlyArray<{ type?: string; phase?: string; verdict?: string }>,
-): { outcomes: GoalPhaseOutcome[]; startIndex: number } {
+  events: ReadonlyArray<{
+    type?: string;
+    phase?: string;
+    verdict?: string;
+    invalidated_phases?: unknown;
+  }>,
+): { outcomes: GoalPhaseOutcome[]; startIndex: number; invalidatedPhases: string[] } {
   const stillInvalidated = new Set<string>();
   events.forEach((e, idx) => {
-    if (e.type !== 'phase_invalidated' || typeof e.phase !== 'string') return;
-    const revalidated = events
-      .slice(idx + 1)
-      .some(later => later.type === 'phase_verdict' && later.phase === e.phase && later.verdict === 'PASS');
-    if (!revalidated) stillInvalidated.add(e.phase);
+    const phases = e.type === 'phase_backtrack_requested' && Array.isArray(e.invalidated_phases)
+      ? e.invalidated_phases.filter((p): p is string => typeof p === 'string')
+      : e.type === 'phase_invalidated' && typeof e.phase === 'string'
+        ? [e.phase]
+        : [];
+    for (const phase of phases) {
+      const revalidated = events
+        .slice(idx + 1)
+        .some(later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS');
+      if (!revalidated) stillInvalidated.add(phase);
+      else stillInvalidated.delete(phase);
+    }
   });
-  if (stillInvalidated.size === 0) return { outcomes, startIndex: chain.length };
+  if (stillInvalidated.size === 0) return { outcomes, startIndex: chain.length, invalidatedPhases: [] };
   const filtered = outcomes.filter(o => !stillInvalidated.has(o.phase));
   const earliest = Math.min(
     ...[...stillInvalidated].map(p => chain.indexOf(p as FeaturePhase)).filter(i => i >= 0),
   );
-  return { outcomes: filtered, startIndex: earliest };
+  return { outcomes: filtered, startIndex: earliest, invalidatedPhases: [...stillInvalidated] };
 }
 
 // ---------------------------------------------------------------------------
@@ -3602,7 +3620,7 @@ export async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
-      'run-id',
+      'run-id', 'supersede',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
       'requirement-file',
@@ -3780,6 +3798,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
       },
       { projectRoot, featuresDir, dryRun: dryRunMode },
     );
+  }
+
+  // T3①：自动后继的唯一 manifest 写入点继承源 run 的预算与指纹账本。
+  // 审计权仍来自后续 fresh run 的 supersede 事件；这里仅把启动约束和防震荡
+  // 指纹带入新 manifest，不能单独让旧 run 的阶段 PASS 跨 run 生效。
+  if (!argv.resume && !dryRunMode) {
+    const requestedSupersedeTargets =
+      Array.isArray(argv.supersede)
+        ? argv.supersede.filter((value): value is string => typeof value === 'string')
+        : typeof argv.supersede === 'string'
+          ? [argv.supersede]
+          : [];
+    const sourceRunId = requestedSupersedeTargets[0];
+    if (sourceRunId && isValidRunIdBasename(sourceRunId)) {
+      try {
+        const source = loadGoalManifestFromRun(projectRoot, sourceRunId, {
+          feature: manifest.feature,
+          featuresDir,
+        });
+        const sourceEvents = collectSupersededAncestorEvents({
+          projectRoot,
+          featuresDir,
+          feature: manifest.feature,
+          seedTargets: requestedSupersedeTargets,
+        });
+        const round: string[] = [];
+        const drift: string[] = [];
+        for (const event of sourceEvents) {
+          const record = event as unknown as {
+            round_fingerprint?: unknown;
+            drift_fingerprint?: unknown;
+          };
+          if (typeof record.round_fingerprint === 'string') round.push(record.round_fingerprint);
+          if (typeof record.drift_fingerprint === 'string') drift.push(record.drift_fingerprint);
+        }
+        manifest = inheritSuccessorManifest(manifest, source, { round, drift });
+      } catch (error) {
+        // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
+        // manifest，否则 --supersede 会悄悄刷新 end/预算/能力门。目标审计事件仍由
+        // 下方既有校验负责，但本次启动先 fail-closed，不制造合同不完整的后继。
+        throw new Error(
+          `[goal-runner] BLOCKER: 无法构造 supersede 后继 manifest（源=${sourceRunId}）：` +
+            `${(error as Error).message}`,
+        );
+      }
+    }
   }
 
   // plan a5f9c3e2 t3①：**中途升级** lineage 声明不可接受——resume 不接受 --vision-lineage。
@@ -4284,6 +4348,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         + '  处置：人工核查 events.jsonl 中 testing_write_violation 列出的文件、整理现场后**新开 run**。',
       );
       return 1;
+    }
+    for (const fingerprint of manifest.inherited_round_fingerprints ?? []) {
+      if (typeof fingerprint === 'string' && fingerprint) seenRoundFingerprints.add(fingerprint);
+    }
+    for (const fingerprint of manifest.inherited_drift_fingerprints ?? []) {
+      if (typeof fingerprint === 'string' && fingerprint) seenDriftFingerprints.add(fingerprint);
     }
     // v23 F1：整轮集合指纹从有效 events 恢复（直接读 round_fingerprint 字段，不从有界
     // defects[] 反算）；缺陷交接上下文取最近一条回退事件的 defects[]（一次遍历取两者）
@@ -4867,6 +4937,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
+      if (!dryRun && inv.invalidatedPhases.length > 0) {
+        // 失效事件已在 events.jsonl 中成为事实；缓存退位是可重复副作用，崩溃后
+        // resume 仍会从同一条记录重做，不需要 pending/completed journal。
+        const discarded = discardPassSnapshotCache({
+          projectRoot,
+          feature: manifest.feature,
+          runId: manifest.run_id,
+          phases: inv.invalidatedPhases,
+        });
+        if (discarded.diagnostics.length > 0) {
+          console.warn(`[pass-snapshot] resume 丢弃失效缓存遇到外部故障：${discarded.diagnostics.join('；')}`);
+        }
+      }
       goalEvents.emit({
         type: 'resume',
         start_index: chainStartIndex,
@@ -4918,115 +5001,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return guidance;
     };
 
-    // ------------------------------------------------------------------
-    // P0-3（plan 7c4f2e9b）：PASS 快照同进程内存信任锚 + invalidation journal 恢复。
-    // journal 恢复**先于任何 pass_snapshot head 读取**（codex 八轮 P0）：pending →
-    // 续跑 head 更新并幂等补 phase_invalidated 事件；不可验证 → fail-closed halt。
-    // ------------------------------------------------------------------
+    // PASS 快照只在当前进程作为内容缓存使用。失效事件已由 applyInvalidationsToResume
+    // 统一回放；缓存 head 的退位是可重复副作用，不再读取/恢复旧 journal。
     const passSnapshotMemory = new Map<
       string,
       { epoch: number; memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> } }
     >();
-    if (!dryRun) {
-      const jr = recoverInvalidationJournal(projectRoot, manifest.feature, manifest.run_id);
-      if (jr.kind === 'fail_closed') {
-        // b3e8d4c7 t5⑤：**崩溃窗不得退化成求人**。无 HMAC 环境 macFor 恒返回 null、写入
-        // mac=null、读回恒 ok_unauthenticated（pass-snapshot.ts:316/328），于是
-        // beginInvalidationTx → 进程死 → 未 commit 的崩溃窗，下次 resume 恒 halt——
-        // t5 的自动回退在它自己的崩溃窗里失效。
-        // 定稿：**完全不读旧 journal 的 payload**（phase/epoch/generation 一律不采信），
-        // 只按当前 run manifest 的 chain 从 plan 起重建一笔新事务覆盖它，然后回 plan 重跑。
-        // 「不读 payload 也不会漏失效」的论证（**重构后已更新**：事务入口已统一）：
-        // 生产侧一切失效事务都经 `runInvalidationTx`（utils/invalidation-tx.ts），当前三个
-        // 调用点的失效**下限**分别是 coding / coding / plan，均不早于 plan，
-        // 所以从 plan 起重建**覆盖**本仓一切可能的 journal（超集或相等——scope replan
-        // 自身的失效区间就是 plan→链尾，那一档是相等，不是严格超集）。
-        // 其中授权/漂移回退那处写作 `chain.slice(codingIdx >= 0 ? codingIdx : 0, …)`，
-        // 字面上像是能落到链首（可能是 spec），但该分支**不可达**：进入它要么是
-        // authorized_backtrack（截断链在更早处已 halt authorized_mutation_requires_full_chain），
-        // 要么是 decide() 判出的 recover——而 `chain_has_coding_review === false` 时
-        // backtrackBlocked 直接拦下（adjudication.ts:443），不会返回 recover。
-        // 故执行到失效时 chain 必含 coding。
-        // **边界（改动即失效）**：新增调用点的下限若早于 plan，或上述 chain 守卫被放宽，
-        // 本处重建下限必须同步前移，否则会漏失效。
-        // 旧 journal 只留审计说明，不新建 quarantine 系统。
-        goalEvents.emit({
-          type: 'pass_snapshot_journal_untrusted',
-          phase: chain[chainStartIndex],
-          detail: jr.reason,
-        });
-        const rebuilt = tryScopeReplan({
-          projectRoot,
-          feature: manifest.feature,
-          runId: manifest.run_id,
-          chain: chain.map(String),
-          endPhaseIdx: chain.length - 1,
-          // 启动期不按 outcome 过滤：outcome 视图此时可能尚未重建完，而
-          // beginInvalidationTx 对「无 PASS head 的 phase」本就跳过（pass-snapshot.ts:1277）。
-          phasesWithOutcome: null,
-          backtracksUsed,
-          maxBacktracks: DEFAULT_MAX_BACKTRACKS,
-          trigger: 'invalidation_journal_untrusted',
-          causePhase: String(chain[chainStartIndex]),
-          detail: jr.reason,
-          dryRun,
-          passSnapshotMemory,
-          emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-        });
-        if (rebuilt.kind === 'replanned') {
-          // 重建**吃回退预算**：否则确定性崩溃 = 每次 resume 重建再崩 = 无限自动循环；
-          // 吃预算才能在耗尽后收敛到既有等待机制。
-          // 诚实边界：backtracksUsed 从 events 计数重建（:5373），而 events 无 MAC、
-          // agent 可写——**同进程是硬预算，跨进程只是 best-effort 恢复提示**，
-          // 配不配 HMAC 都一样（HMAC 只保护 pass-snapshot / vision trust，不保护 events）。
-          backtracksUsed++;
-          outcomes = outcomes.filter(o => !rebuilt.invalidatedPhases.includes(String(o.phase)));
-          chainStartIndex = rebuilt.planIdx;
-          console.error(
-            `\n===== invalidation_journal_untrusted =====\n${jr.reason}\n` +
-            `→ 不采信旧事务 payload，已从 plan 重建失效事务（tx=${rebuilt.txId}）并自动回退 plan 重新签发。\n` +
-            `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
-          );
-        } else {
-          // 回退预算耗尽 / chain 不含 plan → 走**既有**等待机制（不新造分类）
-          goalEvents.emit({
-            type: 'phase_halt',
-            phase: chain[chainStartIndex],
-            halt_reason: 'pass_snapshot_journal_unverifiable',
-            detail: `${jr.reason}；自动重建不可用：${rebuilt.detail}`,
-          });
-          console.error(`\n===== pass_snapshot_journal_unverifiable =====\n${jr.reason}\n自动重建不可用：${rebuilt.detail}\n人工核查 trust-state 后 --resume。\n`);
-          outcomes.push({
-            phase: chain[chainStartIndex],
-            verdict: 'FAIL',
-            halted: true,
-            retries: 0,
-            halt_reason: 'pass_snapshot_journal_unverifiable',
-          });
-          halted = true;
-        }
-      }
-      if (jr.kind === 'pending_heads_applied') {
-        // 与正常路径同构：heads 已幂等应用 → 幂等补事件 → **最后** commit（post-impl P0#1：
-        // commit 提前会让「commit 后事件补齐前」的二次崩溃永久丢事件）。
-        const priorEv = loadAuthoritativeEvents(eventsPath);
-        for (const ph of jr.invalidatedPhases) {
-          const already = priorEv.some(
-            e => e.type === 'phase_invalidated' && e.phase === ph && e.invalidation_tx_id === jr.txId,
-          );
-          if (!already) {
-            goalEvents.emit({
-              type: 'phase_invalidated',
-              phase: ph,
-              cause_phase: 'journal_recovery',
-              reason: 'invalidation_journal_recovered',
-              invalidation_tx_id: jr.txId,
-            });
-          }
-        }
-        commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, jr.txId);
-      }
-    }
+
 
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
@@ -5361,9 +5342,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // post-impl round2 P0#2：**spawn agent 之前**做一次统一可信快照加载，整个 attempt
-        // 复用内存副本（防 attempt 中途盘上换 manifest）；坏 MAC/shape/上下文绑定/
-        // head↔manifest 绑定 → 在 agent 有机会碰产物**之前** halt。
+        // **spawn agent 之前**做一次统一缓存加载，整个 attempt 复用内存副本。缓存坏掉只
+        // 触发「丢缓存、重跑当前责任阶段」；不恢复旧字节，也不把缓存故障交给人裁决。
         const psMemAnchor = passSnapshotMemory.get(String(phase));
         const trustedSnapshot = dryRun
           ? ({ kind: 'none' } as const)
@@ -5372,24 +5352,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
               manifest.feature,
               manifest.run_id,
               String(phase),
-              // post-impl round3 P0#1：同进程内存锚在场时，盘上 head 消失/退位/换代
-              // 一律 spawn 前 fail_closed（两轮绕过：先删 head 再改产物）
+              // 同进程内存锚在场时，head 消失/退位/换代即缓存失效；随后重跑当前阶段。
               psMemAnchor
                 ? { epoch: psMemAnchor.epoch, manifestSha256: psMemAnchor.memoryDigest.manifestSha256 }
                 : null,
             );
         if (trustedSnapshot.kind === 'fail_closed') {
+          const discarded = discardPassSnapshotCache({
+            projectRoot,
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phases: [String(phase)],
+          });
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'pass_snapshot_unavailable',
             detail: `pre-spawn 可信快照加载失败：${trustedSnapshot.reason}`,
+            ...runDispositionFields(decide(
+              { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
-          console.error(
-            `\n===== pass_snapshot_unavailable =====\n可信快照加载失败（${trustedSnapshot.reason}）——在 agent 启动前拦截，不给它碰产物的机会。\n人工核查 trust-state 后 --resume。\n`,
-          );
-          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_unavailable' });
-          halted = true;
+          if (discarded.diagnostics.length > 0) {
+            goalEvents.emit({
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'pre_invoke_snapshot_failed',
+              detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
+              probe: 'storage_ready',
+              ...runDispositionFields(decide(
+                { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
+            });
+            console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
+          passSnapshotMemory.delete(String(phase));
+          // for 的 ++ 后仍落回当前 phase；缓存缺失不烧 backtrack 预算。
+          phaseIdx--;
+          console.warn(`\n===== pass_snapshot_unavailable =====\n${trustedSnapshot.reason}\n缓存已丢弃，重跑责任阶段。\n`);
           phaseDone = true;
           continue;
         }
@@ -5417,7 +5425,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             memoryAnchor: passSnapshotMemory.get('plan'),
           });
           if (authority.kind === 'ok') {
-            // HMAC 恢复出的锚**必须写回内存**——scopeAnchorEnv 才会把**同一个值**传给
+            // loader 读出的缓存锚必须写回内存——scopeAnchorEnv 才会把**同一个值**传给
             // gate；否则「preflight 读 A、gate 又读 B」是 TOCTOU。
             passSnapshotMemory.set('plan', authority.anchor);
             return false;
@@ -5460,16 +5468,39 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
             return true;
           }
-          // 回退预算耗尽 / chain 不含 plan → 走**既有**等待机制（既有 halt_reason，不新造）
+          // chain 不含 plan 仍是证据缓存故障的保守恢复：留下 RECOVERY_PENDING，
+          // 截断链按 successor_required 开后继 run。**但回退预算耗尽已有明确的
+          // backtrack_limit 终局语义**，不得继续投影 RECOVERY_PENDING 让 supervisor
+          // 无限重启同一个 run。
           const guidance = `${authority.detail}；自动回退不可用：${replan.detail}`;
+          const budgetExhausted =
+            replan.kind === 'unavailable' && replan.reason === 'backtrack_budget_exhausted';
+          const haltReason = budgetExhausted ? 'backtrack_limit' : 'pass_snapshot_unavailable';
+          const authorityDecision = decide(
+            { incident: haltReason, phase: String(phase) },
+            NO_AUTHORITY,
+            {
+              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              invocation: argv.resume ? 'resume' : 'fresh',
+            },
+          );
           goalEvents.emit({
             type: 'phase_halt',
             phase,
-            halt_reason: 'pass_snapshot_unavailable',
+            halt_reason: haltReason,
             detail: guidance,
+            halt_guidance: guidance,
+            successor_required: !budgetExhausted && replan.kind === 'unavailable' && replan.reason === 'chain_lacks_plan',
+            ...runDispositionFields(authorityDecision),
           });
-          console.error(`\n===== pass_snapshot_unavailable =====\n${guidance}\n人工核查 trust-state 后 --resume。\n`);
-          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_unavailable' });
+          console.error(
+            `\n===== ${haltReason} =====\n${guidance}\n` +
+              (budgetExhausted ? '回退预算已耗尽，当前 run 终止。\n' : '等待 supervisor 自动恢复。\n'),
+          );
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: haltReason, halt_guidance: guidance,
+          });
           halted = true;
           return true;
         };
@@ -5799,11 +5830,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed',
             reason: preInvokeSourceSnap.failureReason,
+            probe: 'storage_ready',
+            ...runDispositionFields(decide(
+              { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: preInvokeSourceSnap.failureReason ?? undefined },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
           console.error(
             `\n===== pre_invoke_snapshot_failed =====\n`
             + `invoke 前快照失败：${preInvokeSourceSnap.failureReason ?? preInvokeSourceSnap.sha256}\n`
-            + `没有可信基线不得调用 agent（testing 写保护无从谈起）。请核查产品层配置/目录后重试。\n`,
+            + `没有可信基线不得调用 agent（testing 写保护无从谈起）。等待存储/目录条件恢复后由 probe 唤醒。\n`,
           );
           outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
           halted = true;
@@ -6352,15 +6389,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         // ------------------------------------------------------------------
-        // P0-3（plan 7c4f2e9b）：closure-only 冻结差异判定与恢复（harness 之前——先恢复
-        // 再评审，恢复后的产物若仍 PASS 则 advance_blocked 续计由事件回放统计自然封顶）。
-        // 信任两层：同进程内存 digest 即可恢复；resume 后须 HMAC；恢复被拒 → halt 求人。
+        // closure-only 冻结差异判定：发现漂移即丢缓存并重跑责任阶段；不恢复旧字节。
         // ------------------------------------------------------------------
         if (!dryRun) {
-          const psMem = passSnapshotMemory.get(String(phase));
-          // post-impl round2 P0#2：复用 pre-spawn 可信加载的内存副本——不再从盘上重读
-          // head/manifest（attempt 中途盘上被换的 manifest 不参与保护判定；坏 MAC/绑定
-          // 已在 spawn 前 halt）。
+          // 复用 pre-spawn 可信加载的内存副本——不再从盘上重读 head/manifest。
           if (trustedSnapshot.kind === 'active') {
             const psHeadBody = trustedSnapshot.head;
             const psManifest = { body: trustedSnapshot.manifest };
@@ -6376,45 +6408,47 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   pass_epoch: psHeadBody.pass_epoch,
                   diffs: diffs.slice(0, 30),
                 });
-                const outcome = restoreFrozenFromSnapshot({
+                const discarded = discardPassSnapshotCache({
                   projectRoot,
                   feature: manifest.feature,
                   runId: manifest.run_id,
-                  phase: String(phase),
-                  diffs,
-                  trust: psMem ? { tier: 'in_process', memoryDigest: psMem.memoryDigest } : { tier: 'resume' },
-                  // post-impl round3 P0#2：恢复资格以 attempt 级不可变上下文为依据（防
-                  // diff 用快照 A、restore 被换成快照 B 的 TOCTOU）
-                  context: trustedSnapshot,
+                  phases: [String(phase)],
                 });
-                if (outcome.refused) {
+                passSnapshotMemory.delete(String(phase));
+                if (discarded.diagnostics.length > 0) {
                   goalEvents.emit({
                     type: 'phase_halt',
                     phase,
-                    halt_reason: 'pass_snapshot_restore_refused',
-                    detail: outcome.refused,
+                    halt_reason: 'pre_invoke_snapshot_failed',
+                    detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
+                    probe: 'storage_ready',
+                    ...runDispositionFields(decide(
+                      { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
+                      NO_AUTHORITY,
+                      { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                    )),
                   });
-                  console.error(
-                    `\n===== pass_snapshot_restore_refused =====\nPASS 冻结产物被改且无法自动恢复（${outcome.refused}）。\n` +
-                    '人工核查产物与 trust-state 快照后 --resume（生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT，使 resume 场景也可自动恢复）。\n',
-                  );
-                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_restore_refused' });
+                  console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
+                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
                   halted = true;
                   phaseDone = true;
                   continue;
                 }
                 goalEvents.emit({
-                  type: 'pass_snapshot_restored',
+                  type: 'phase_halt',
                   phase,
-                  invoke_id: invokeId,
-                  pass_epoch: psHeadBody.pass_epoch,
-                  restored: outcome.restored,
-                  deleted_added: outcome.deletedAdded,
+                  halt_reason: 'pass_snapshot_unavailable',
+                  detail: `PASS 快照检测到 ${diffs.length} 项漂移；缓存已丢弃，重跑责任阶段。`,
+                  ...runDispositionFields(decide(
+                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
                 });
-                console.warn(
-                  `[pass-snapshot] closure-only attempt 改动冻结产物已恢复（restored=${outcome.restored.length}, ` +
-                  `removed_added=${outcome.deletedAdded.length}）——违规计入 advance_blocked 累计`,
-                );
+                console.warn(`[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移；丢弃缓存，重跑责任阶段。`);
+                phaseIdx--;
+                phaseDone = true;
+                continue;
               }
             }
           }
@@ -6893,16 +6927,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           haltReason = 'operator_interrupt';
         } else if (closureFinalizationError) {
-          driverGuardAction = 'halt';
-          haltReason = 'closure_finalization_failed';
-          awaitConfirmGuidance =
-            `closure finalizer 未能完成原子闭环：${closureFinalizationError}。` +
-            ' 请修复磁盘/权限/绑定不一致后 --resume；不得重跑内容阶段掩盖该错误。';
+          // finalizer 失败是当前责任阶段的可重复事务，不是产品内容问题；让同一阶段
+          // 自动重试 closure，不走 waiting(human)/terminal，也不把提示塞给 agent 修产物。
+          driverGuardAction = 'retry';
+          haltReason = undefined;
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'closure_finalization_failed',
             detail: closureFinalizationError,
+            ...runDispositionFields(decide(
+              { incident: 'closure_finalization_failed', phase: String(phase), detail: closureFinalizationError },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
         } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
           driverGuardAction = 'halt';
@@ -6927,10 +6965,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           console.log(`\n===== framework_integrity_block =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'closure_finalization_failed' && verdict !== 'PASS') {
-          driverGuardAction = 'halt';
-          haltReason = 'closure_finalization_failed';
-          awaitConfirmGuidance = 'closure finalization 失败：请人工修复闭环产物、磁盘绑定或权限后 --resume。';
-          console.log(`\n===== closure_finalization_failed =====\n${awaitConfirmGuidance}\n`);
+          driverGuardAction = 'retry';
+          haltReason = undefined;
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'closure_finalization_failed',
+            detail: 'closure finalization 失败，重试当前责任阶段事务。',
+            ...runDispositionFields(decide(
+              { incident: 'closure_finalization_failed', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.log('\n===== closure_finalization_failed =====\n自动重试当前责任阶段 closure 事务。\n');
         } else if (failureKind === 'framework_bug' && verdict !== 'PASS') {
           // P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误——框架缺陷只能人修（回灌源仓），
           // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
@@ -7182,16 +7230,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // P0-3（plan 7c4f2e9b）：PASS+advance_blocked → 冻结 frozen deliverables。
           // 事故 i2 正是此态被重试后产物遭 i3 冷启动重写毁掉——快照落 runner trust-state
           // 独立命名空间，内存 digest 为同进程信任锚；已有活跃快照（violation 循环）不重取。
-          // post-impl review P0#2：**可信快照完整建立是 closure retry 的前置条件**——
-          // head 损坏/建立失败/表非空却零产物 一律 fail-closed halt（无保护重试=重开
-          // 「PASS 产物被毁」的洞）；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
+          // **可信快照完整建立是 closure retry 的前置条件**——
+          // head 损坏/建立失败/表非空却零产物都不在无保护下 retry；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
           // 产出走 closure-attestation）时按设计跳过。
           if (driverGuardAction === 'retry' && !dryRun) {
             let protectionFailure: string | null = null;
             try {
               const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-              if (headNow.mac === 'invalid') {
-                protectionFailure = 'pass_snapshot head 损坏/跨协议/验签失败——不得在无保护下 closure retry';
+              if (headNow.status === 'invalid') {
+                protectionFailure = 'pass_snapshot head 损坏/上下文不匹配——不得在无保护下 closure retry';
               } else if (!passSnapshotMemory.has(String(phase)) || headNow.body?.state !== 'active') {
                 if (!phaseHasFrozenSurface(phase)) {
                   // 设计内不适用（产出表全空：源码树产出由 closure-attestation 承载）
@@ -7200,7 +7247,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   if (frozen.length === 0) {
                     protectionFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
                   } else {
-                    const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                    const epoch = nextPassSnapshotEpoch(
+                      projectRoot, manifest.feature, manifest.run_id, String(phase),
+                    );
                     const taken = takePassSnapshot({
                       projectRoot,
                       feature: manifest.feature,
@@ -7226,16 +7275,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
             if (protectionFailure) {
               driverGuardAction = 'halt';
-              haltReason = 'pass_snapshot_unavailable';
+              haltReason = 'pre_invoke_snapshot_failed';
               goalEvents.emit({
                 type: 'phase_halt',
                 phase,
-                halt_reason: 'pass_snapshot_unavailable',
+                halt_reason: 'pre_invoke_snapshot_failed',
                 detail: protectionFailure,
+                probe: 'storage_ready',
+                ...runDispositionFields(decide(
+                  { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: protectionFailure },
+                  NO_AUTHORITY,
+                  { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                )),
               });
               console.error(
-                `\n===== pass_snapshot_unavailable =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
-                '不做无保护 closure retry（那会重开「PASS 产物被毁」的洞）；人工核查 trust-state/产物后 --resume。\n',
+                `\n===== pre_invoke_snapshot_failed =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
+                '不做无保护 closure retry；等待存储条件恢复后由 probe 唤醒。\n',
               );
             }
           }
@@ -7306,16 +7361,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
               const syncExit = syncResult.exitCode;
               if (syncResult.finalizationError) {
-                driverGuardAction = 'halt';
-                haltReason = 'closure_finalization_failed';
-                awaitConfirmGuidance =
-                  `closure finalizer 未能完成原子闭环：${syncResult.finalizationError}。` +
-                  ' 请修复磁盘/权限/绑定不一致后 --resume。';
+                driverGuardAction = 'retry';
+                haltReason = undefined;
                 goalEvents.emit({
                   type: 'phase_halt',
                   phase,
                   halt_reason: 'closure_finalization_failed',
                   detail: syncResult.finalizationError,
+                  ...runDispositionFields(decide(
+                    { incident: 'closure_finalization_failed', phase: String(phase), detail: syncResult.finalizationError },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
                 });
               }
               // round3 P1#4 + round4 P1#3：分流收敛为纯函数（矩阵测试锁定契约）
@@ -7323,7 +7380,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ? 'closure_finalization_failed'
                 : resolveClosureSyncOutcome(syncExit, closureOnlyAttempt, invoke.timed_out === true);
               if (syncOutcome === 'closure_finalization_failed') {
-                // Already translated to a terminal driver halt above.
+                // 已转为当前责任阶段的自动 retry，不进入人工/终局通道。
               } else if (syncOutcome === 'advance') {
                 driverGuardAction = 'advance';
                 haltReason = undefined;
@@ -7362,8 +7419,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // c4e8b1d3 G1-1（pre-coding 锚定）：**plan 正常 PASS advance 前必建 pass snapshot**
         // ——coding 的 ui_diff_within_declared_files 白名单唯一来源。原实现只在
         // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
-        // 无快照。失败 fail-closed halt（pass_snapshot_unavailable），与 closure retry
-        // 分支同语义；resume 场景盘上已有 active 快照则可信加载复验、不重取。
+        // 无快照时建立新的缓存；缓存坏掉重跑 plan，写入失败则等待外部存储条件。
         if (
           verdict === 'PASS' &&
           driverGuardAction !== 'halt' &&
@@ -7371,16 +7427,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           !dryRun
         ) {
           let planFreezeFailure: string | null = null;
+          let planFreezeCacheMiss = false;
           try {
             const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-            if (headNow.mac === 'invalid') {
-              planFreezeFailure = 'pass_snapshot head 损坏/验签失败——不得在无可信冻结下 advance';
+            if (headNow.status === 'invalid') {
+              planFreezeCacheMiss = true;
+              planFreezeFailure = 'pass_snapshot head 损坏/上下文不匹配——缓存需重建';
             } else if (headNow.body?.state === 'active') {
               if (!passSnapshotMemory.has(String(phase))) {
                 const trusted = loadTrustedSnapshotContext(
                   projectRoot, manifest.feature, manifest.run_id, String(phase), null,
                 );
                 if (trusted.kind !== 'active') {
+                  planFreezeCacheMiss = trusted.kind === 'fail_closed';
                   planFreezeFailure = `盘上 head active 但可信加载失败：${
                     trusted.kind === 'fail_closed' ? trusted.reason : trusted.kind}`;
                 }
@@ -7391,7 +7450,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               if (frozen.length === 0) {
                 planFreezeFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
               } else {
-                const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                const epoch = nextPassSnapshotEpoch(
+                  projectRoot, manifest.feature, manifest.run_id, String(phase),
+                );
                 const taken = takePassSnapshot({
                   projectRoot,
                   feature: manifest.feature,
@@ -7409,20 +7470,53 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   manifest_sha256: taken.manifestSha256,
                   files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
                 });
+                injectedAfterPassSnapshot?.();
               }
             }
           } catch (e) {
             planFreezeFailure = `快照建立失败：${(e as Error).message}`;
           }
           if (planFreezeFailure) {
+            if (planFreezeCacheMiss) {
+              const discarded = discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: [String(phase)],
+              });
+              if (discarded.diagnostics.length === 0) {
+                passSnapshotMemory.delete(String(phase));
+                goalEvents.emit({
+                  type: 'phase_halt',
+                  phase,
+                  halt_reason: 'pass_snapshot_unavailable',
+                  detail: `${planFreezeFailure}；缓存已丢弃，重跑 plan。`,
+                  ...runDispositionFields(decide(
+                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
+                });
+                phaseIdx--;
+                phaseDone = true;
+                continue;
+              }
+              planFreezeFailure += `；缓存丢弃失败：${discarded.diagnostics.join('；')}`;
+            }
             driverGuardAction = 'halt';
-            haltReason = 'pass_snapshot_unavailable';
+            haltReason = 'pre_invoke_snapshot_failed';
             goalEvents.emit({
-              type: 'phase_halt', phase, halt_reason: 'pass_snapshot_unavailable', detail: planFreezeFailure,
+              type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed', detail: planFreezeFailure,
+              probe: 'storage_ready',
+              ...runDispositionFields(decide(
+                { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: planFreezeFailure },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
             });
             console.error(
-              `\n===== pass_snapshot_unavailable =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
-              '不做无冻结 advance（coding 的 UI scope 门将失去白名单来源）；人工核查 trust-state/产物后 --resume。\n',
+              `\n===== pre_invoke_snapshot_failed =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
+              '不做无冻结 advance；等待存储条件恢复后由 probe 唤醒。\n',
             );
           }
         }
@@ -7652,63 +7746,98 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // plan e7c2a4d8 T4d（codex 四轮 P0-c）：goal 环境专用 blocker 出现时短路内容
         // 重试——reconciliation 门放宽为「action!=='retry' ∨ 存在该 blocker」，同一事故
         // 一个出口（unauthorized halt），不转化为 harness FAIL 后的内容重试循环。
-        const hasPostReviewMutationBlocker =
+        const hasPostReviewReconciliationBlocker =
           (summary?.blockers ?? []).some(
-            (b) => (b as { id?: string }).id === 'goal_post_review_source_mutation_unresolved',
+            (b) => {
+              const id = (b as { id?: string }).id;
+              return id === 'goal_post_review_source_mutation_unresolved' ||
+                id === 'goal_review_closure_baseline_unavailable';
+            },
           );
         if (
           !dryRun && (phase === 'ut' || phase === 'testing') &&
-          (action !== 'retry' || hasPostReviewMutationBlocker)
+          (action !== 'retry' || hasPostReviewReconciliationBlocker)
         ) {
-          const driftDecision = reconcileMutablePhaseSourceDrift({
+          let driftDecision = reconcileMutablePhaseSourceDrift({
             projectRoot,
             manifest,
             phase,
             frozenManifestHash,
             goalEnv: true,
           });
-          // T4d（codex 五/六轮 P0）：goal 环境 attestation 缺失/损坏 → 不走
-          // reconciliation（无基线可对账）→ 直接 halt（run 终态），guidance 只指向
-          // 新起 coding 起点 run（两态路由已撤销——「只删/删+改码」无证据源可分）。
-          if (driftDecision.baselineUnavailable) {
-            const baselineGuidance = [
-              `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
-              'goal 环境无源码基线，既判不了「review 后漂移」也不得放行（fail-closed）。',
-              '恢复路径（当前 run 不可达，resume 只会重入本 phase）：',
-              '  新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃。',
-              '不读取 run-start diff、不采信 gap-notes 授权（无基线时的降级通道即洗白通道）。',
-            ].join('\n');
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'goal_review_closure_baseline_unavailable',
-              verdict,
-              halt_guidance: baselineGuidance,
-            });
-            console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
-            outcomes.push({
-              phase, verdict, halted: true, retries,
-              halt_reason: 'goal_review_closure_baseline_unavailable',
-              halt_guidance: baselineGuidance,
-            });
-            halted = true;
-            phaseDone = true;
-            continue;
+          // T4d：goal 环境 attestation 缺失/损坏 → 不得放行；按既有
+          // backtrack_to_coding 责任阶段重新建立基线。若当前链截断，交给 T3 的后继
+          // run 路由，不伪造当前 run 的连续性。
+          const chainHasCodingReview =
+            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
+          const baselineUnavailable = Boolean(driftDecision.baselineUnavailable);
+          if (baselineUnavailable) {
+            const baselineDecision = decide(
+              {
+                incident: 'goal_review_closure_baseline_unavailable',
+                phase: String(phase),
+                chain_has_coding_review: chainHasCodingReview,
+                backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
+              },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            );
+            if (baselineDecision.kind === 'recover' && baselineDecision.action === 'backtrack_to_coding') {
+              // 让下面唯一的 backtrack 路由完成事件落盘、缓存退位和执行指针移动。
+              driftDecision = { kind: 'unauthorized', files: [], violations: ['review closure baseline unavailable'] };
+            } else {
+              const baselineGuidance = [
+                `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
+                '当前链无法在本 run 回到 coding 建立基线；不读取 run-start diff、不采信 gap-notes 授权。',
+                'T3 将在截断链不可回退时自动 supersede 并生成 coding 起点后继 run。',
+              ].join('\n');
+              goalEvents.emit({
+                type: 'phase_halt',
+                phase,
+                halt_reason: 'goal_review_closure_baseline_unavailable',
+                verdict,
+                halt_guidance: baselineGuidance,
+                successor_required: true,
+                ...runDispositionFields({ kind: 'recover', action: 'backtrack_to_coding', reason: baselineDecision.reason }),
+              });
+              console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
+              outcomes.push({
+                phase, verdict, halted: true, retries,
+                halt_reason: 'goal_review_closure_baseline_unavailable',
+                halt_guidance: baselineGuidance,
+              });
+              halted = true;
+              phaseDone = true;
+              continue;
+            }
           }
           // T3b（codex 二轮 P0-b 方案 1）：authorized_backtrack 仅当当前 chain 同时含
           // coding 与 review——截断链即使裁决有效也无法在本 run 回退重验。
-          const chainHasCodingReview =
-            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
           // plan a5f9c3e2 t3②：未受信漂移的**保守恢复**裁决（统一内核给出，不在此就地判）。
           // 恢复本身不降低保证——失效旧 coding closure 及其后阶段、把 diff 当未受信候选
           // 完整重走 coding→review→ut→testing，故**不需要任何授权**。
           // 纪律：复用执行机制（失效事务 / 回退预算 / phase 回退执行器），
           // **不复用授权语义**——不产 matched_receipts、不标 authorized。
-          let untrustedRevalidation = false;
+          let untrustedRevalidation = baselineUnavailable;
           let untrustedTerminalReason = '';
           // codex 八轮 P2：**保存真实裁决结果**供后续事件投影原样复用——此前落事件时
           // 手工重造 Decision，今天结果一致，但 decide() 一改，执行动作与报告投影就会分叉。
-          let untrustedDecision: Decision | null = null;
+          let untrustedDecision: Decision | null = baselineUnavailable ? decide(
+            {
+              incident: 'goal_review_closure_baseline_unavailable',
+              phase: String(phase),
+              chain_has_coding_review: chainHasCodingReview,
+              backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
+            },
+            NO_AUTHORITY,
+            {
+              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              invocation: argv.resume ? 'resume' : 'fresh',
+            },
+          ) : null;
           if (driftDecision.kind === 'unauthorized') {
             const driftFp = driftDecision.driftFingerprint ?? null;
             const driftDisposition = decide(
@@ -7773,11 +7902,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             (untrustedRevalidation && driftDecision.kind === 'unauthorized')
           ) {
             if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
+              const backtrackLimitDecision = decide(
+                { incident: 'backtrack_limit', phase: String(phase) },
+                NO_AUTHORITY,
+                {
+                  orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                  invocation: argv.resume ? 'resume' : 'fresh',
+                },
+              );
               goalEvents.emit({
                 type: 'phase_halt',
                 phase,
                 halt_reason: 'backtrack_limit',
                 verdict,
+                ...runDispositionFields(backtrackLimitDecision),
               });
               console.error(`\n===== backtrack_limit =====\n回退预算已耗尽（授权回退与缺陷回退共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人（防回退震荡烧预算）。\n`);
               outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'backtrack_limit' });
@@ -7790,44 +7928,49 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const invalidatedPhases = chain
               .slice(codingIdx >= 0 ? codingIdx : 0, phaseIdx + 1)
               .filter(p => outcomes.some(o => o.phase === p));
-            // P0-3（plan 7c4f2e9b，codex 七/八轮）：失效走可恢复事务——journal pending →
-            // 全部受影响 pass_snapshot head/tombstone → 幂等事件（携 tx_id）→ commit。
-            // events 仅审计投影；恢复资格 SSOT 在 trust-state journal/head。
+            // 失效事实一次性落盘；缓存 head/内存锚是其后的可重复副作用。
             const invalidationTxId = `${manifest.run_id}-bt${backtracksUsed}`;
-            runInvalidationTx({
-              projectRoot,
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              causePhase: String(phase),
-              invalidatedPhases: invalidatedPhases.map(String),
-              txId: invalidationTxId,
-              reason: untrustedRevalidation
-                ? UNTRUSTED_DRIFT_REASON
-                : 'authorized_source_mutation_backtrack',
-              extraEventFields: { files: driftDecision.files.slice(0, 20) },
-              dryRun,
-              passSnapshotMemory,
-              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-            });
+            const backtrackReason = untrustedRevalidation
+              ? UNTRUSTED_DRIFT_REASON
+              : 'authorized_source_mutation_backtrack';
+            const backtrackProjection = driftDecision.kind === 'authorized_backtrack'
+              ? {
+                  reason: backtrackReason,
+                  authorized: true,
+                  matched_receipts: driftDecision.matched.map(r => r.approved_by),
+                }
+              : {
+                  reason: UNTRUSTED_DRIFT_REASON,
+                  authorized: false,
+                  // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
+                  // 重启失忆=同一漂移白吃一次回退预算。
+                  drift_fingerprint: driftDecision.driftFingerprint ?? null,
+                  // t4④：统一投影只经唯一出口 runDispositionFields()，且**投影的是
+                  // 真实裁决结果本身**（不重造 Decision——执行与报告不得有第二个真值源）。
+                  ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
+                };
+
             goalEvents.emit({
               type: 'phase_backtrack_requested',
+              phase: String(phase),
               from_phase: phase,
               to_phase: chain[Math.max(codingIdx, 0)],
-              // 授权回退才带 receipt 语义；保守恢复路**恒不产该字段**（不冒充授权）。
-              ...(driftDecision.kind === 'authorized_backtrack'
-                ? { matched_receipts: driftDecision.matched.map(r => r.approved_by) }
-                : {
-                    reason: UNTRUSTED_DRIFT_REASON,
-                    authorized: false,
-                    // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
-                    // 重启失忆=同一漂移白吃一次回退预算。
-                    drift_fingerprint: driftDecision.driftFingerprint ?? null,
-                    // t4④：统一投影只经唯一出口 runDispositionFields()，且**投影的是
-                    // 真实裁决结果本身**（不重造 Decision——执行与报告不得有第二个真值源）。
-                    ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
-                  }),
+              invalidated_phases: invalidatedPhases.map(String),
+              ...backtrackProjection,
               files: driftDecision.files.slice(0, 20),
+              defects: [],
+              fingerprint: driftDecision.driftFingerprint ?? null,
+              invalidation_tx_id: invalidationTxId,
             });
+            if (!dryRun) {
+              for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
+              discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: invalidatedPhases.map(String),
+              });
+            }
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
             // 被失效 attempt 从 outcomes 剔除（goal report/resume 只见最新有效 attempt；
             // 常驻 summary 将被回退后的重跑覆盖，upstream gate 消费面天然新鲜化）
@@ -8088,10 +8231,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
             // 对齐其他 halt 分支惯例：专项事件落盘（resume/审计按事件恢复语境，
             // outcome.halt_reason 只进 goal report）
+            const backtrackLimitReached =
+              codingIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
+            const backtrackLimitDecision = backtrackLimitReached
+              ? decide(
+                  { incident: 'backtrack_limit', phase: String(phase) },
+                  NO_AUTHORITY,
+                  {
+                    orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                    invocation: argv.resume ? 'resume' : 'fresh',
+                  },
+                )
+              : null;
             goalEvents.emit({
               type: 'phase_halt', phase, halt_reason: haltReason,
               round_fingerprint: roundFp,
               backtracks_used: backtracksUsed,
+              ...(backtrackLimitDecision ? runDispositionFields(backtrackLimitDecision) : {}),
             });
             console.error(
               `\n===== ${haltReason} =====\n`
@@ -8109,28 +8265,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
               .slice(codingIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
             const txIdBt = `${manifest.run_id}-defectbt${backtracksUsed}`;
-            // **顺序修复**：此处原为 begin → delete → **commit** → 事件，与
-            // pass-snapshot 定下的「事件先于 commit」不变量相反——commit 后崩溃时
-            // journal 已被移除，phase_invalidated 永久补不回来，resume 会把已 supersede
-            // 的阶段当成仍然完成。改走唯一实现 runInvalidationTx。
-            runInvalidationTx({
-              projectRoot,
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              causePhase: String(phase),
-              invalidatedPhases: invalidatedBt.map(String),
-              txId: txIdBt,
-              reason: 'actionable_defect_backtrack',
-              dryRun,
-              passSnapshotMemory,
-              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-            });
+            // 事件先落盘，缓存退位随后执行；两者都可在 resume 中重复。
             goalEvents.emit({
               type: 'phase_backtrack_requested',
-              phase,
+              phase: String(phase),
+              from_phase: String(phase),
               to_phase: 'coding',
+              invalidated_phases: invalidatedBt.map(String),
               invoke_id: invokeId,
               reason: 'actionable_testing_defects',
+              authorized: false,
               // v23：完整 round_fingerprint（熔断恢复唯一依据）+ 有界 defects[]（交接内容；
               // 指纹恢复**不**从它反算——截断+上限 20 无法可靠重建）
               round_fingerprint: roundFp,
@@ -8142,8 +8286,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 evidence_path: d.evidence_path,
               })),
               defect_count: driverActionableDefects.length,
+              files: driverActionableDefects.map(d => d.evidence_path).filter(Boolean).slice(0, 20),
+              fingerprint: roundFp,
               invalidation_tx_id: txIdBt,
             });
+            if (!dryRun) {
+              for (const p of invalidatedBt) passSnapshotMemory.delete(String(p));
+              discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: invalidatedBt.map(String),
+              });
+            }
             console.error(
               `\n===== backtrack_to_coding =====\n`
               + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`

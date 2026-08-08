@@ -85,6 +85,10 @@ export interface GoalManifest {
     max_files: number;
     approved_by?: string;
   }>;
+  /** T3 successor metadata; the audited supersede event remains the authority. */
+  successor_of?: string;
+  inherited_round_fingerprints?: string[];
+  inherited_drift_fingerprints?: string[];
 }
 
 export interface GoalManifestParseOptions {
@@ -142,6 +146,11 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
     fields.vision_lineage = manifest.vision_lineage ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
+    fields.successor_of = manifest.successor_of ?? null;
+    fields.inherited_round_fingerprints = manifest.inherited_round_fingerprints ?? null;
+    fields.inherited_drift_fingerprints = manifest.inherited_drift_fingerprints ?? null;
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(fields)) {
@@ -485,6 +494,48 @@ export function buildGoalManifestFromInput(
     run_id: runId,
     report_dir: reportDir,
     created_at: new Date().toISOString(),
+  };
+}
+
+export function inheritSuccessorManifest(
+  manifest: GoalManifest,
+  source: GoalManifest,
+  fingerprints: {
+    round: readonly string[];
+    drift: readonly string[];
+  },
+): GoalManifest {
+  const unique = (values: readonly string[]): string[] =>
+    [...new Set(values.map(value => value.trim()).filter(Boolean))];
+  if (manifest.feature !== source.feature) {
+    throw new Error(
+      `[goal-manifest] successor feature 不一致（当前=${manifest.feature}，源=${source.feature}）`,
+    );
+  }
+
+  // 后继不是一个“默认 fresh manifest 再补预算”的新契约：源 manifest 才是本条
+  // supersede 链的合同 SSOT。只替换新 run 的身份与明确要求的新起点；其余字段（end/
+  // requirement/adapter/chain/fidelity/dependency/预授权等）全部原样继承。阶段完成态
+  // 不在 manifest 中，故不会跨 run 复制；预算/无人值守深拷贝只是避免调用方后续改写源对象。
+  const freshHasVisionLineage = Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage');
+  const inherited = JSON.parse(JSON.stringify(source)) as GoalManifest;
+  // `vision_lineage` from source is a one-shot birth instruction. The source
+  // run has already consumed it; carrying it into a fresh successor would
+  // repeat the reset/quarantine path. A fresh successor may explicitly issue
+  // its own birth instruction, which is restored below.
+  delete inherited.vision_lineage;
+  const sourceRound = source.inherited_round_fingerprints ?? [];
+  const sourceDrift = source.inherited_drift_fingerprints ?? [];
+  return {
+    ...inherited,
+    start_phase: manifest.start_phase,
+    run_id: manifest.run_id,
+    report_dir: manifest.report_dir,
+    created_at: manifest.created_at,
+    ...(freshHasVisionLineage ? { vision_lineage: manifest.vision_lineage } : {}),
+    successor_of: source.run_id,
+    inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
+    inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
   };
 }
 

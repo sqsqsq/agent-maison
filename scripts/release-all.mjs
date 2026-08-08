@@ -76,7 +76,16 @@ function main() {
       REPO_ROOT,
     );
 
-    // 6. promote 到 dist/（verify 通过才落地）；修正 sidecar manifest.zipPath 指向最终路径
+    // verify 只证明发布包结构/清单正确；发布门还必须对**同一份 staged zip**跑
+    // consumer lifecycle。smoke 通过后才允许 rename，避免 pack→verify→直接进 dist
+    // 绕过整机闭环。
+    run(
+      process.execPath,
+      ['scripts/smoke-consumer-lifecycle.mjs', '--zip', stagedZip],
+      REPO_ROOT,
+    );
+
+    // 7. promote 到 dist/（verify + 同字节 smoke 都通过才落地）；修正 sidecar manifest.zipPath 指向最终路径
     fs.mkdirSync(distDir, { recursive: true });
     fs.renameSync(stagedZip, path.join(distDir, zipName));
     const manifest = JSON.parse(fs.readFileSync(stagedManifest, 'utf8'));

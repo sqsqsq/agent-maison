@@ -21,7 +21,10 @@ import * as path from 'path';
 import { statefilePath } from '../../config';
 import type { HarnessResolvedProfile } from './types';
 import { resolvePhasePersonalPrerequisites } from './phase-personal-prerequisites';
-import { ensurePersonalSetup } from './personal-setup-gate';
+import {
+  ensurePersonalSetup,
+  evaluatePersonalSetupGate,
+} from './personal-setup-gate';
 
 export interface CapabilityPreflightGap {
   ok: false;
@@ -37,6 +40,32 @@ export interface CapabilityPreflightGap {
 }
 
 export type CapabilityPreflightResult = { ok: true } | CapabilityPreflightGap;
+
+export interface CapabilityPreflightProbeResult {
+  ready: boolean;
+  code?: string;
+  reason?: string;
+}
+
+interface ToolchainCapabilityProbe {
+  evaluateCapabilityGapAtPreflight: (
+    root: string,
+  ) => { failure_code: string; evidence: string[]; observed_at?: string } | null;
+}
+
+function readToolchainCapabilityGap(projectRoot: string):
+  | { gap: { failure_code: string; evidence: string[]; observed_at?: string } }
+  | { error: unknown }
+  | { gap: null } {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as ToolchainCapabilityProbe;
+    return { gap: probeMod.evaluateCapabilityGapAtPreflight(projectRoot) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND') return { gap: null };
+    return { error };
+  }
+}
 
 const STOP_GUIDANCE =
   '出口②（诚实停止）：若当前环境暂不具备该能力且你确认不在本机修复——请回复确认后停止本任务；' +
@@ -72,14 +101,12 @@ export function runCapabilityPreflight(
   // 已在探针层校验；capability_failed 恒拦截——解除仅靠配置漂移自动失效 / --ensure 人工
   // reprobe / wrapper 真实编译改写，见 toolchain-probe.ts；判定纯读，双入口天然一致）。
   if (prereqs.has('deveco_toolchain')) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as {
-        evaluateCapabilityGapAtPreflight: (
-          root: string,
-        ) => { failure_code: string; evidence: string[]; observed_at?: string } | null;
-      };
-      const failed = probeMod.evaluateCapabilityGapAtPreflight(projectRoot);
+    const toolchainProbe = readToolchainCapabilityGap(projectRoot);
+    if ('error' in toolchainProbe) {
+      // 可见 fail-open（cursor MAJOR）：探针模块异常≠能力缺口，但必须留痕，不得静默。
+      console.warn(`[capability-preflight] toolchain-probe 探针异常（按 unknown 放行）：${(toolchainProbe.error as Error).message}`);
+    } else {
+      const failed = toolchainProbe.gap;
       if (failed) {
         return {
           ok: false,
@@ -99,15 +126,44 @@ export function runCapabilityPreflight(
           guidance_stop: STOP_GUIDANCE,
         };
       }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'MODULE_NOT_FOUND') {
-        // 可见 fail-open（cursor MAJOR）：探针模块异常≠能力缺口，但必须留痕，不得静默。
-        console.warn(`[capability-preflight] toolchain-probe 探针异常（按 unknown 放行）：${(err as Error).message}`);
-      }
     }
   }
   return { ok: true };
+}
+
+/**
+ * supervisor 专用的纯读能力 probe：只复用 personal prerequisite gate 与既有
+ * toolchain capability probe，绝不调用 ensurePersonalSetup（后者可写 local config）。
+ * 结果只回答“条件是否转绿”，不写事件、不改变任何授权或配置。
+ */
+export function probeCapabilityPreflight(
+  projectRoot: string,
+  phase: string,
+  resolvedProfile: HarnessResolvedProfile,
+): CapabilityPreflightProbeResult {
+  const prereqs = resolvePhasePersonalPrerequisites(phase, resolvedProfile);
+  const gate = evaluatePersonalSetupGate(projectRoot, { requiredPrerequisites: prereqs });
+  if (!gate.ok) {
+    return { ready: false, code: gate.code, reason: gate.message };
+  }
+  if (prereqs.has('deveco_toolchain')) {
+    const toolchainProbe = readToolchainCapabilityGap(projectRoot);
+    if ('error' in toolchainProbe) {
+      return {
+        ready: false,
+        code: 'capability_probe_error',
+        reason: `toolchain capability probe failed: ${(toolchainProbe.error as Error).message}`,
+      };
+    }
+    if (toolchainProbe.gap) {
+      return {
+        ready: false,
+        code: 'deveco_toolchain_capability_failed',
+        reason: `hvigor capability gap remains (${toolchainProbe.gap.failure_code})`,
+      };
+    }
+  }
+  return { ready: true, reason: 'capability preflight prerequisites are ready' };
 }
 
 /** 机读 preflight 结果的持久化位置（.current-phase.json 同目录） */

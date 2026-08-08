@@ -38,12 +38,12 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a",
-        "current_sha256": "548f9f207f89d08c60edd2a34429d82c79d2166876dd13073b51eb8e90f66da3"
+        "current_sha256": "074b259eb39bb7046c431bbc495fcf2457649ee86e846bf275f970eb32cedde9"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",
         "verified_sha256": "a80f72383700737b04cbf5b0d03408526bb80514dd7baad833c8eeb325e85234",
-        "current_sha256": "d1e519779eba4171b91f127543d27a0e40243df9135f7d098dd1a3acc8a77629"
+        "current_sha256": "391793f2048e4feac972e443b22ed5c0da164908928987de2e67287f54dfcb5d"
       },
       {
         "path": "harness/scripts/utils/device-unlock-helper.ts",

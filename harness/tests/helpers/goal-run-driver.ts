@@ -117,6 +117,27 @@ export interface GoalRunOutcome {
   /** 最后一条 run_end 的 reason / error（T1① 优雅收口后，死因在事件里而非 throw） */
   runEndReason: string | null;
   runEndError: string | null;
+  failureKinds?: string[];
+  phaseHalts: Array<{
+    phase?: string;
+    halt_reason?: string;
+    detail?: string;
+    failure_kind_classified?: string;
+  }>;
+  /** 5c：原子失效 record 的关键上下文，供 smoke 直接核对交接未丢。 */
+  invalidationRecords: Array<{
+    reason?: string;
+    invalidated_phases?: string[];
+    to_phase?: string;
+    files?: string[];
+    defects?: unknown[];
+    fingerprint?: string | null;
+  }>;
+  /** T3：由生产 supervisor CLI 做出的动作与实际 spawn 参数。 */
+  supervisorAction?: string | null;
+  supervisorRunnerArgs?: string[];
+  /** fresh successor 场景的最终 manifest（由生产 runner 写盘后读取）。 */
+  manifest?: Record<string, unknown> | null;
 }
 
 function w(root: string, rel: string, content: string): void {
@@ -220,7 +241,26 @@ export function setupMinimalHost(feature: string, profile: 'generic' | 'hmos-app
   return root;
 }
 
-interface DriverEvent { type: string; phase?: string; reason?: string; error?: string }
+interface DriverEvent {
+  type: string;
+  phase?: string;
+  reason?: string;
+  halt_reason?: string;
+  detail?: string;
+  error?: string;
+  invalidated_phases?: string[];
+  to_phase?: string;
+  files?: string[];
+  defects?: unknown[];
+  fingerprint?: string | null;
+  failure_kind_classified?: string;
+  probe?: string;
+  run_disposition?: string;
+  run_wait_kind?: string;
+  action?: string;
+  successor_required?: boolean;
+  successor_start_phase?: string;
+}
 
 /** 按 run 目录名排序合并读全部 events（run id 前缀是 UTC 时间戳，字典序=时间序） */
 function readEvents(root: string, feature: string): DriverEvent[] {
@@ -232,12 +272,29 @@ function readEvents(root: string, feature: string): DriverEvent[] {
     if (!fs.existsSync(f)) continue;
     for (const line of fs.readFileSync(f, 'utf-8').split('\n').filter(Boolean)) {
       try {
-        const e = JSON.parse(line) as { type?: string; phase?: string; reason?: string; error?: string };
+        const e = JSON.parse(line) as DriverEvent;
         out.push({
           type: e.type ?? '?',
           ...(typeof e.phase === 'string' ? { phase: e.phase } : {}),
           ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
+          ...(typeof e.halt_reason === 'string' ? { halt_reason: e.halt_reason } : {}),
+          ...(typeof e.detail === 'string' ? { detail: e.detail } : {}),
           ...(typeof e.error === 'string' ? { error: e.error } : {}),
+          ...(Array.isArray(e.invalidated_phases) ? { invalidated_phases: e.invalidated_phases } : {}),
+          ...(typeof e.to_phase === 'string' ? { to_phase: e.to_phase } : {}),
+          ...(Array.isArray(e.files) ? { files: e.files } : {}),
+          ...(Array.isArray(e.defects) ? { defects: e.defects } : {}),
+          ...((typeof e.fingerprint === 'string' || e.fingerprint === null)
+            ? { fingerprint: e.fingerprint } : {}),
+          ...(typeof e.failure_kind_classified === 'string'
+            ? { failure_kind_classified: e.failure_kind_classified } : {}),
+          ...(typeof e.probe === 'string' ? { probe: e.probe } : {}),
+          ...(typeof e.run_disposition === 'string' ? { run_disposition: e.run_disposition } : {}),
+          ...(typeof e.run_wait_kind === 'string' ? { run_wait_kind: e.run_wait_kind } : {}),
+          ...(typeof e.action === 'string' ? { action: e.action } : {}),
+          ...(e.successor_required === true ? { successor_required: true } : {}),
+          ...(typeof e.successor_start_phase === 'string'
+            ? { successor_start_phase: e.successor_start_phase } : {}),
         });
       } catch { out.push({ type: '?' }); }
     }
@@ -299,7 +356,13 @@ async function runScenario(args: {
   extra?: string;
 }): Promise<GoalRunOutcome> {
   const { scenario, feature, frameworkRoot, projectRoot: root, extra } = args;
+  const isSupervisorScenario = scenario === 'supervisor_probe_wake'
+    || scenario === 'supervisor_successor_wake';
+  const isSupervisorSuccessorScenario = scenario === 'supervisor_successor_wake';
   const { goal, config } = loadFrameworkModules(frameworkRoot);
+  const scope = require(path.join(frameworkRoot, 'harness/scripts/utils/scope-replan')) as {
+    __testing_setAfterInvalidationRequested?: (fn: (() => void) | null) => void;
+  };
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
   if (scenario === 'trust_dir_unwritable') {
     // codex P1-2 实测形态：trust 根路径中段是普通文件 → mkdir/write 全程 ENOTDIR
@@ -336,14 +399,37 @@ async function runScenario(args: {
 
   (goal.__testing_setRepoLayout as (l: unknown) => void)(deriveRepoLayout(root, frameworkRoot));
   let agentCalls = 0;
-  (goal.__testing_setInvokeAgent as (f: unknown) => void)(async () => {
+  let crashMutationInjected = false;
+  let utSourceMutationInjected = false;
+  let utSourceMutationBlockerEmitted = false;
+  (goal.__testing_setInvokeAgent as (f: unknown) => void)(async (
+    _plan: unknown, _agentRoot: unknown, invokeOpts: { outputLogPath?: string } = {},
+  ) => {
     agentCalls += 1;
+    const phase = /[\\/]phases[\\/]([a-z-]+)[\\/]/.exec(invokeOpts.outputLogPath ?? '')?.[1] ?? '';
+    if ((scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash')
+      && phase === 'coding' && !crashMutationInjected) {
+      crashMutationInjected = true;
+      w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
+    }
+    if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
+      utSourceMutationInjected = true;
+      w(root, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets',
+        'struct AllBanksPage { build() { Text("mutated-during-ut") } }');
+    }
     return { exitCode: 0, timedOut: false, stdout: '', stderr: '', command: 'noop' };
   });
   (goal.__testing_setRunHarnessPhase as (f: unknown) => void)(async () => ({ verdict: 'PASS', blockers: [] }));
 
   const isDeviceScenario = scenario === 'device_park' || scenario === 'resume_after_park'
-    || scenario === 'resume_with_device_ready';
+    || scenario === 'resume_with_device_ready' || scenario === 'cache_miss_seed'
+    || scenario === 'cache_miss_resume' || scenario === 'cache_miss_in_run'
+    || scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash'
+    || scenario === 'successor_manifest_probe'
+    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure'
+    || scenario === 'crash_scope_seed' || scenario === 'crash_after_scope_event'
+    || scenario === 'resume_after_crash_scope';
+  const isSeedRunScenario = scenario === 'cache_miss_seed' || scenario === 'crash_scope_seed';
   // T2 5a-1：桩集对**全部场景**统一（此前仅设备场景）——seed_head_mismatch 翻转为
   // 目标行为后要验"自动 discontinuity 且 spec 真 PASS 收官"，同样需要写盘桩/闭环
   // 探针桩/capability 桩；多注入对旧行为无影响（generic 宿主本就用不到设备 capability）。
@@ -365,6 +451,43 @@ async function runScenario(args: {
       const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
+    const failureBlockers =
+        scenario === 'ut_source_mutation' && String(ph) === 'ut'
+          && utSourceMutationInjected && !utSourceMutationBlockerEmitted
+          ? [{
+              id: 'goal_post_review_source_mutation_unresolved',
+              classification: 'goal_post_review_source_mutation_unresolved',
+              affected_files: ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'],
+              details_excerpt: 'UT agent 在 review closure 后改写产品源码。',
+            }]
+          : scenario === 'ut_build_failure' && String(ph) === 'ut'
+            ? [
+                {
+                  id: 'ut_hvigor_build',
+                  classification: 'project_build',
+                  details_excerpt: '注入：UT hvigor 编译失败。',
+                },
+                {
+                  id: 'ut_hvigor_test',
+                  classification: 'project_build',
+                  details_excerpt: 'ut_hvigor_build 已 FAIL，test 阶段自动短路。',
+                },
+              ]
+            : null;
+      if (failureBlockers) {
+        // 失败轮不写 receipt/closure；只留下与正式 summary 同形的 blocker，
+        // 让 runner 真实走 source-drift / build-attribution 分支。
+        if (scenario === 'ut_source_mutation') utSourceMutationBlockerEmitted = true;
+        fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
+          schema_version: '1.2', assurance: 'full',
+          capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+          verdict: 'FAIL', blocker_count: failureBlockers.length,
+          receipt_status: 'missing', closure_status: 'open', next_action: 'fix_blockers',
+          report_validity: 'PASS', release_readiness: 'BLOCKED', completion_status: 'complete',
+          blockers: failureBlockers, checks: [],
+        }, null, 2), 'utf-8');
+        return { exitCode: 1, timedOut: false };
+      }
       fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), [
         `# ${String(ph)} 阶段完成回执`, '',
         `- 模块: ${feat}`, `- 阶段: ${String(ph)}`, '- 结论: PASS',
@@ -418,12 +541,29 @@ async function runScenario(args: {
         status: 'passed', receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`, exit_code: 0,
       }),
     );
+    if (scenario === 'cache_miss_in_run') {
+      let corrupted = false;
+      (goal.__testing_setAfterPassSnapshot as (f: (() => void) | null) => void)(() => {
+        if (corrupted) return;
+        corrupted = true;
+        const passSnapshot = req('harness/scripts/utils/pass-snapshot');
+        const headPath = (passSnapshot.passSnapshotHeadPath as (p: string, f: string, r: string, h: string) => string)(
+          root, feature, (latestRunId(root, feature) ?? ''), 'plan',
+        );
+        fs.writeFileSync(headPath, '{"corrupt":true}\n', 'utf-8');
+      });
+    }
     // 设备门桩：两种形态——
     // · BLOCKED（halted:false + externalBlocked，fa0663 同形）：park / 仍锁 resume；
     // · READY（`resume_with_device_ready`，codex 第九批 P0）：验证"设备恢复后同一 run
     //   无钥匙**真正完成**"的后半闭环——此前 smoke 只证明了"仍锁时能再次停放"。
     //   target 自称 physical：模拟真机就绪（设备真实性封顶因此不触发，完成态可满）。
-    const deviceReady = scenario === 'resume_with_device_ready';
+    const deviceReady = scenario === 'resume_with_device_ready'
+      || scenario === 'cache_miss_resume' || scenario === 'cache_miss_in_run'
+      || scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash'
+      || scenario === 'successor_manifest_probe' || scenario === 'crash_after_scope_event'
+      || scenario === 'resume_after_crash_scope'
+      || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure';
     (goal.__testing_setDeviceReadinessGate as (f: unknown) => void)(
       async (opts: { phase: string; retries: number; emitEvent: (e: unknown) => void }) => {
         if (deviceReady) {
@@ -433,7 +573,7 @@ async function runScenario(args: {
           };
         }
         opts.emitEvent({
-          type: 'phase_halt', phase: opts.phase, halt_reason: 'device_not_ready',
+          type: 'phase_halt', phase: opts.phase, halt_reason: 'device_not_ready', probe: 'device_readiness',
           verdict: 'FAIL', reason: '注入：设备锁屏（smoke 恢复场景）', notes: ['injected-device-gate'],
         });
         return {
@@ -448,9 +588,122 @@ async function runScenario(args: {
     );
   }
 
+  if (scenario === 'cache_miss_resume') {
+    if (!extra) throw new Error('cache_miss_resume 需要 extra=runId');
+    const passSnapshot = require(path.join(frameworkRoot, 'harness/scripts/utils/pass-snapshot')) as {
+      passSnapshotHeadPath: (projectRoot: string, feature: string, runId: string, phase: string) => string;
+    };
+    const headPath = passSnapshot.passSnapshotHeadPath(root, feature, extra, 'plan');
+    if (!fs.existsSync(headPath)) throw new Error(`cache_miss_resume 缺 plan head：${headPath}`);
+    fs.writeFileSync(headPath, '{"corrupt":true}\n', 'utf-8');
+  }
+
+  if (scenario === 'crash_after_scope_event') {
+    if (!extra) throw new Error('crash_after_scope_event 需要 extra=runId');
+    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n  - 01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets\n`);
+    scope.__testing_setAfterInvalidationRequested?.(() => {
+      throw new Error('injected crash after phase_backtrack_requested');
+    });
+  }
+
+  if (scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash') {
+    scope.__testing_setAfterInvalidationRequested?.(() => {
+      throw new Error('injected crash after phase_backtrack_requested');
+    });
+  }
+
+  if (scenario === 'resume_after_crash_scope') {
+    if (!extra) throw new Error('resume_after_crash_scope 需要 extra=runId');
+    // 修复 live 漂移；恢复只消费已落盘的失效 record，不再重复制造新交接。
+    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n`);
+  }
+
+  if (scenario === 'successor_manifest_probe') {
+    if (!extra) throw new Error('successor_manifest_probe 需要 extra=source runId');
+    // 源 crash 场景故意在 coding agent 窗口制造 live contracts 漂移；
+    // successor 的责任阶段就是 coding，先按既有 resume 夹具恢复上游 SSOT，
+    // 让真实启动继续走到后继 manifest 与 coding，而不是把夹具缺口误报成产品门禁缺陷。
+    w(root, `doc/features/${feature}/contracts.yaml`, `feature: ${feature}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n`);
+  }
+
+  let supervisorMain: (() => Promise<number>) | null = null;
+  let supervisorReset: (() => void) | null = null;
+  let supervisorSpawnRecord: string | null = null;
+  if (isSupervisorScenario) {
+    if (!extra) throw new Error('supervisor_probe_wake 闇€瑕 extra=parked runId');
+    const supervisor = require(path.join(frameworkRoot, 'harness/scripts/goal-supervise')) as {
+      __testing_main: () => Promise<number>;
+      __testing_setRunnerScript: (scriptPath: string | null) => void;
+      __testing_setConditionProbe: (
+        probe: ((probe: string) => { ready: boolean; reason?: string }) | null,
+      ) => void;
+      __testing_appendSupervisorEvent?: (eventsPath: string, event: Record<string, unknown>) => void;
+    };
+    const stub = path.join(root, '.goal-supervisor-runner.js');
+    supervisorSpawnRecord = path.join(root, '.goal-supervisor-spawn.json');
+    fs.rmSync(supervisorSpawnRecord, { force: true });
+    w(root, '.goal-supervisor-runner.js', [
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(supervisorSpawnRecord)}, JSON.stringify(process.argv.slice(2)));`,
+    ].join('\n'));
+    const beacon = require(path.join(frameworkRoot, 'harness/scripts/utils/liveness-beacon')) as {
+      livenessBeaconPath: (projectRoot: string, reportDir: string) => string;
+    };
+    fs.rmSync(beacon.livenessBeaconPath(root, `doc/features/${feature}/goal-runs/${extra}`), { force: true });
+    if (isSupervisorSuccessorScenario) {
+      if (!supervisor.__testing_appendSupervisorEvent) {
+        throw new Error('发布件 supervisor 缺少真实事件 writer seam');
+      }
+      supervisor.__testing_appendSupervisorEvent(
+        path.join(root, 'doc', 'features', feature, 'goal-runs', extra!, 'events.jsonl'),
+        {
+          type: 'phase_halt',
+          phase: 'coding',
+          halt_reason: 'goal_review_closure_baseline_unavailable',
+          run_disposition: 'RECOVERY_PENDING',
+          successor_required: true,
+        },
+      );
+      // supervisor writer 是真实 JSONL writer，但本夹具是在 crash 后才进入 supervisor
+      // 进程，直接 append 会把 successor halt 写到 run_end 之后。生产 run_end 是封口，
+      // reducer 必须忽略其后的旁路事件；把这条真实 writer 产出的记录移到封口前，
+      // 复现生产事件序列，而不是放宽 reducer 去消费封口后的 stale 元数据。
+      const eventsPath = path.join(root, 'doc', 'features', feature, 'goal-runs', extra!, 'events.jsonl');
+      const lines = fs.readFileSync(eventsPath, 'utf-8').split(/\r?\n/).filter(Boolean);
+      const successorLine = lines.pop();
+      if (!successorLine) throw new Error('successor halt writer 未落盘');
+      let runEndIndex = lines.length;
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        try {
+          if ((JSON.parse(lines[i]) as { type?: string }).type === 'run_end') {
+            runEndIndex = i;
+            break;
+          }
+        } catch { /* malformed historical line remains in place */ }
+      }
+      lines.splice(runEndIndex, 0, successorLine);
+      fs.writeFileSync(eventsPath, `${lines.join('\n')}\n`, 'utf-8');
+    } else {
+      supervisor.__testing_setConditionProbe(() => ({ ready: true, reason: 'injected device probe green' }));
+    }
+    supervisor.__testing_setRunnerScript(stub);
+    supervisorMain = supervisor.__testing_main;
+    supervisorReset = () => {
+      supervisor.__testing_setRunnerScript(null);
+      supervisor.__testing_setConditionProbe(null);
+    };
+  }
+
   const preCount = readEvents(root, feature).length;
   const argvBase = ['node', 'goal-runner.ts', '--feature', feature, '--adapter', 'cursor', '--foreground-ok'];
-  if (scenario === 'resume_after_park' || scenario === 'resume_with_device_ready') {
+  if (isSupervisorScenario) {
+    process.argv = [
+      'node', 'goal-supervise.ts', '--feature', feature, '--run-id', extra!,
+      '--project-root', root,
+    ];
+  } else if (scenario === 'resume_after_park' || scenario === 'resume_with_device_ready'
+    || scenario === 'cache_miss_resume' || scenario === 'crash_after_scope_event'
+    || scenario === 'resume_after_crash_scope') {
     if (!extra) throw new Error(`${scenario} 需要 extra=runId`);
     process.argv = [...argvBase, '--resume', extra];
   } else if (scenario === 'device_park') {
@@ -465,6 +718,22 @@ async function runScenario(args: {
       '--start', 'spec', '--end', 'testing', '--force',
       '--vision-lineage', 'reset',
     ];
+  } else if (scenario === 'successor_manifest_probe') {
+    if (!extra) throw new Error('successor_manifest_probe 需要 extra=source runId');
+    process.argv = [
+      ...argvBase,
+      '--requirement', `T4 driver scenario=${scenario}`,
+      '--start', 'coding', '--end', 'testing', '--force', '--supersede', extra,
+    ];
+  } else if (scenario === 'cache_miss_in_run' || scenario === 'crash_scope_in_run'
+    || scenario === 'successor_source_crash'
+    || scenario === 'ut_source_mutation' || scenario === 'ut_build_failure' || isSeedRunScenario) {
+    process.argv = [
+      ...argvBase,
+      '--requirement', `T4 driver scenario=${scenario}`,
+      '--start', 'spec', '--end', 'testing', '--force',
+      ...(scenario === 'successor_source_crash' ? ['--vision-lineage', 'reset'] : []),
+    ];
   } else {
     process.argv = [
       ...argvBase,
@@ -478,25 +747,80 @@ async function runScenario(args: {
   let exitCode: number | null = null;
   let error: string | null = null;
   try {
-    exitCode = await (goal.main as () => Promise<number>)();
+    exitCode = isSupervisorScenario
+      ? await supervisorMain!()
+      : await (goal.main as () => Promise<number>)();
   } catch (e) {
     error = (e as Error).message;
   }
+  if (isSupervisorScenario && supervisorSpawnRecord) {
+    const deadline = Date.now() + 2_000;
+    while (!fs.existsSync(supervisorSpawnRecord) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
   const all = readEvents(root, feature);
   const lastRunEnd = [...all].reverse().find(e => e.type === 'run_end');
+  const finalRunId = latestRunId(root, feature);
+  let finalManifest: Record<string, unknown> | null = null;
+  if (finalRunId) {
+    try {
+      finalManifest = JSON.parse(fs.readFileSync(
+        path.join(root, 'doc/features', feature, 'goal-runs', finalRunId, 'manifest.json'),
+        'utf-8',
+      )) as Record<string, unknown>;
+    } catch { /* no manifest: preserve the driver outcome for the caller */ }
+  }
   const out: GoalRunOutcome = {
     exitCode,
     error,
     eventTypes: all.map(e => e.type),
     agentCalls,
-    runId: latestRunId(root, feature),
+    runId: finalRunId,
     phaseStartsThisCall: all.slice(preCount)
       .filter(e => e.type === 'phase_start' && typeof e.phase === 'string')
       .map(e => e.phase as string),
     runEndReason: lastRunEnd?.reason ?? null,
     runEndError: lastRunEnd?.error ?? null,
+    failureKinds: all
+      .filter(e => e.type === 'phase_verdict' && typeof e.failure_kind_classified === 'string')
+      .map(e => e.failure_kind_classified as string),
+    phaseHalts: all
+      .filter(e => e.type === 'phase_halt' || (e.type === 'phase_verdict' && e.action === 'halt'))
+      .map(e => ({
+        ...(typeof e.phase === 'string' ? { phase: e.phase } : {}),
+        ...(typeof (e as { halt_reason?: unknown }).halt_reason === 'string'
+          ? { halt_reason: (e as { halt_reason: string }).halt_reason } : {}),
+        ...(typeof (e as { detail?: unknown }).detail === 'string'
+          ? { detail: (e as { detail: string }).detail } : {}),
+        ...(typeof (e as { failure_kind_classified?: unknown }).failure_kind_classified === 'string'
+          ? { failure_kind_classified: (e as { failure_kind_classified: string }).failure_kind_classified } : {}),
+      })),
+    invalidationRecords: all
+      .filter(e => e.type === 'phase_backtrack_requested')
+      .map(e => ({
+        ...(typeof (e as { reason?: unknown }).reason === 'string'
+          ? { reason: (e as { reason: string }).reason } : {}),
+        ...(Array.isArray(e.invalidated_phases) ? { invalidated_phases: e.invalidated_phases } : {}),
+        ...(typeof e.to_phase === 'string' ? { to_phase: e.to_phase } : {}),
+        ...(Array.isArray(e.files) ? { files: e.files } : {}),
+        ...(Array.isArray(e.defects) ? { defects: e.defects } : {}),
+        ...((typeof e.fingerprint === 'string' || e.fingerprint === null)
+          ? { fingerprint: e.fingerprint } : {}),
+      })),
+    manifest: finalManifest,
+    ...(isSupervisorScenario
+      ? {
+          supervisorAction: [...all].reverse().find(e => e.type === 'supervisor_restart')?.action ?? null,
+          ...(supervisorSpawnRecord && fs.existsSync(supervisorSpawnRecord)
+            ? { supervisorRunnerArgs: JSON.parse(fs.readFileSync(supervisorSpawnRecord, 'utf-8')) as string[] }
+            : {}),
+        }
+      : {}),
   };
+  supervisorReset?.();
   (goal.__testing_resetGoalRunnerSeams as () => void)();
+  scope.__testing_setAfterInvalidationRequested?.(null);
   // 宿主目录**不在此删**——谁建谁删，见 runScenario 的 projectRoot 注释
   return out;
 }

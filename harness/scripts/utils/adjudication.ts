@@ -187,11 +187,7 @@ export interface IncidentSpec {
    * 结构前提不满足（截断链 / 预算耗尽 / 指纹重现）→ terminal。
    */
   recover_action?: RecoverAction;
-  /**
-   * plan a5f9c3e2 t2：**只映射不改行为**。这些 incident 的现行分类存疑（框架内部事务
-   * 失败却走了求人通道），但行为订正归后续 plan（先复现后改）。本字段仅作登记标注，
-   * 不影响 decide 输出。
-   */
+  /** plan e5d8a2c4 5b：保留 incident 的来源标注，行为由 class/recover_action 决定。 */
   suspected_misclassified?: boolean;
 }
 
@@ -333,16 +329,25 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   supersede_target_invalid: { class: 'operator' },
   device_toolchain: { class: 'external' },
 
-  // --- 疑似误分类：**只映射不改行为**（行为订正归后续 plan，先复现后改） -------
-  // 这六条是框架自己的快照/事务失败，却走了求人通道而人也修不了。此处按
-  // 保持现行行为的类登记（operator=停下求人，与今天一致），仅打标注。
-  pass_snapshot_unavailable: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_restore_refused: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_journal_unverifiable: { class: 'operator', suspected_misclassified: true },
-  pre_invoke_snapshot_failed: { class: 'operator', suspected_misclassified: true },
-  closure_finalization_failed: { class: 'operator', suspected_misclassified: true },
+  // --- 5b：快照/事务故障的行为映射 -----------------------------------------
+  // 证据缓存只负责让责任阶段重新取得 PASS；它不产生人工授权，也不把旧字节写回宿主。
+  // pre-invoke 的失败点在写保护边界，可能是磁盘/权限等外部条件，因此保留 external
+  // 等 probe；其余纯缓存/事务故障走可重复的责任阶段恢复。
+  pass_snapshot_unavailable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_restore_refused: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_journal_unverifiable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
+  closure_finalization_failed: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
   goal_review_closure_baseline_unavailable: {
-    class: 'operator', structurally_terminal: true, suspected_misclassified: true,
+    class: 'recoverable', recover_action: 'backtrack_to_coding', suspected_misclassified: true,
   },
 } as const satisfies Record<string, IncidentSpec>);
 
@@ -555,7 +560,9 @@ export function decide(
               '显式记录断裂 → 新 generation 全量重采重验（不冒充连续，也不停死）',
         };
       }
-      const blocked = backtrackBlocked(facts);
+      // retry_transaction 只重跑当前责任阶段，不消费回退预算，也不依赖 coding/review
+      // 链；预算/截断/指纹只约束真正跨阶段的 backtrack_to_coding。
+      const blocked = action === 'backtrack_to_coding' ? backtrackBlocked(facts) : null;
       if (blocked) return { kind: 'terminal', reason: blocked };
       return {
         kind: 'recover',

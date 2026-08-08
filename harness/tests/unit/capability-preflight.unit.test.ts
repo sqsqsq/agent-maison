@@ -13,8 +13,10 @@ import * as path from 'path';
 import {
   emitHarnessPreflightGap,
   harnessPreflightPath,
+  probeCapabilityPreflight,
   type CapabilityPreflightGap,
 } from '../../scripts/utils/capability-preflight';
+import { setupMinimalHost } from '../helpers/goal-run-driver';
 
 interface UnitCaseResult {
   name: string;
@@ -49,6 +51,23 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(parsed.code === 'deveco_toolchain_capability_failed', 'code 保真');
         assert(parsed.guidance_install === 'install' && parsed.guidance_stop === 'stop', '双出口指引保真');
         assert(typeof parsed.at === 'string', '时间戳');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'probeCapabilityPreflight：supervisor 侧只读复用 gate，不调用 ensure 写回 local',
+    run: () => {
+      const root = setupMinimalHost('capability-probe');
+      try {
+        const localPath = path.join(root, 'framework.local.json');
+        const before = fs.readFileSync(localPath, 'utf-8');
+        const result = probeCapabilityPreflight('' + root, 'spec', {
+          personalPrerequisites: {},
+        } as never);
+        assert(result.ready === true, `最小宿主的 spec 能力 probe 应转绿：${JSON.stringify(result)}`);
+        assert(fs.readFileSync(localPath, 'utf-8') === before, '纯读 probe 不得改写 framework.local.json');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

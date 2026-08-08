@@ -301,7 +301,6 @@ const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
   // 通用 ut_no_src_mutation 维持缺省（还承载 legacy fallback/stale_diff_base 等
   // 机器可修形态）。
   'goal_post_review_source_mutation_unresolved',
-  'goal_review_closure_baseline_unavailable',
 ]);
 /** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3） */
 const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
@@ -309,7 +308,6 @@ const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
   'await_human_p0_skip',
   'await_human_fidelity_tier',
   'capability_missing_strong_intent',
-  'closure_finalization_failed',
 ]);
 
 export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActionability {

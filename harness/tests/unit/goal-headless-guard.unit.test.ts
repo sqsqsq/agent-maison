@@ -433,6 +433,15 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      name: 'T4#7 classifyFailureKind: legacy coding/UT hvigor build ids -> code_regression',
+      run: () => {
+        for (const id of ['coding_hvigor_build', 'ut_hvigor_build']) {
+          const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id }] });
+          assert(k === 'code_regression', `${id} => ${k}`);
+        }
+      },
+    },
+    {
       name: 'T6 classifyFailureKind: visual_diff_capture → capture',
       run: () => {
         const k = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'visual_diff_capture' }] });

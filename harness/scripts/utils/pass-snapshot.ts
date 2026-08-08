@@ -1,18 +1,18 @@
 // ============================================================================
-// pass-snapshot.ts — PASS 态冻结：artifact-class resolver / 双协议域快照 / 失效 journal
+// pass-snapshot.ts — PASS 态冻结：artifact-class resolver / 可丢弃的缓存快照
 // （plan 7c4f2e9b P0-3，OpenSpec change cc-spec-deadlock-hardening）
 // ============================================================================
 // 事故根因：spec-i2 harness 全门禁 PASS 仅因 agent_timeout_unclosed 被整轮重试，i3 冷启动
 // 重写毁掉 PASS 产物且不可恢复。本模块提供：
-//   1) artifact-class resolver（四类，唯一纯函数，快照/差异/恢复三处共同消费）；
+//   1) artifact-class resolver（四类，唯一纯函数，快照/差异/加载三处共同消费）；
 //   2) runner-owned 快照存储：不可变 pass_snapshot_manifest（文件清单+逐文件哈希，历史
-//      永不重写）+ 可变 pass_snapshot_head（仅 active/superseded 两态；唯一改状态处）——
-//      HMAC 协议域与 vision checkpoint 隔离（跨协议互塞必须 invalid）；
-//   3) run 级全局 invalidation journal（唯一事务 pending SSOT；resume 先恢复 journal 再读
-//      任何 head；不可验证 → fail-closed，限 --resume/重启路径）；
-//   4) 恢复安全：逐级 lstat 拒 symlink/junction、realpath 域内、单 buffer TOCTOU、原子写。
-// 信任分两层（codex 三轮#1）：同进程内存 digest 验真即可恢复（与 HMAC 无关）；
-// resume/重启须 HMAC 验签，未配密钥只检测+halt，绝不用弱信任快照覆盖用户文件。
+//      永不重写）+ 可变 pass_snapshot_head（仅 active/superseded 两态）；它只是可丢弃的
+//      内容缓存，不是授权、回退或恢复来源；
+//   3) 失效事件落盘后，缓存可安全丢弃并由责任阶段重新生成；旧 journal 仅作为遗留磁盘
+//      垃圾，不再参与运行决策；
+//   4) 缓存读写仍逐级 lstat 拒 symlink/junction、realpath 域内、原子写。
+// 任何缓存缺失、损坏或上下文失配都归为 cache miss；恢复旧字节的路径已删除，生产流程
+// 必须重新通过完整门禁后再产生新快照。
 //
 // 【场外状态红线（plan b7e4d2a9）】场外数据 = 活跃/可恢复 run 的临时恢复区，**不是
 // 历史档案库**：per-run 状态只在 run 活跃或可恢复期间存在，成功封卷或明确 supersede
@@ -24,14 +24,13 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import { artifactReadCandidatePaths, featureDir, featureFilePath, resolveFeatureArtifact } from '../../config';
 import {
   PHASE_OUTPUT_FILES_BY_PHASE,
   PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE,
   PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE,
-  stableStringify,
 } from './phase-evidence-manifest';
 import type { Phase } from './types';
 
@@ -39,8 +38,6 @@ import type { Phase } from './types';
 // trust-state 根（与 goal-runner.visionTrustDir 同一约定——泛化为共享导出；
 // MAISON_GOAL_CHECKPOINT_DIR 覆盖、该 env 已由 agent-invoke 从 agent 子进程剥离）
 // ---------------------------------------------------------------------------
-
-export const PASS_SNAPSHOT_HMAC_ENV = 'MAISON_HMAC_GOAL_CHECKPOINT';
 
 /**
  * plan b3e8d4c7 t4：**scope 内存锚的跨进程载体**（`<phase>:<epoch>:<manifestSha256>`）。
@@ -132,8 +129,26 @@ export function passSnapshotHeadPath(projectRoot: string, feature: string, runId
   return path.join(passSnapshotRunDir(projectRoot, feature, runId), phase, 'head.json');
 }
 
-export function invalidationJournalPath(projectRoot: string, feature: string, runId: string): string {
-  return path.join(passSnapshotRunDir(projectRoot, feature, runId), 'invalidation.json');
+/**
+ * Return the next immutable cache epoch.  The head is only an active pointer;
+ * after a cache miss it may be absent or malformed while the old epoch
+ * directory remains on disk, so choosing `head.pass_epoch + 1` is not safe.
+ */
+export function nextPassSnapshotEpoch(
+  projectRoot: string,
+  feature: string,
+  runId: string,
+  phase: string,
+): number {
+  const phaseDir = path.join(passSnapshotRunDir(projectRoot, feature, runId), phase);
+  let maxEpoch = 0;
+  if (!fs.existsSync(phaseDir)) return 1;
+  for (const entry of fs.readdirSync(phaseDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    const epoch = Number(entry.name);
+    if (Number.isSafeInteger(epoch) && epoch > maxEpoch) maxEpoch = epoch;
+  }
+  return maxEpoch + 1;
 }
 
 /** coding 基线锚（c4e8b1d3 G1-1）：与 pass-snapshots 同 run 命名空间的兄弟文件。 */
@@ -287,50 +302,11 @@ export interface PassSnapshotHeadBody {
   feature: string;
   run_id: string;
   phase: string;
-  /** 事务 pending 语义唯一存于 run 级 journal——head 仅两态（codex 九轮 P1） */
+  /** head 仅两态；失效事实由事件日志承载，head 退位是可重复副作用。 */
   state: 'active' | 'superseded';
   pass_epoch: number;
   generation: number;
   manifest_sha256: string;
-}
-
-export interface InvalidationJournalBody {
-  kind: 'pass_snapshot_invalidation';
-  schema_version: '1.0';
-  project_identity_hash: string;
-  feature: string;
-  run_id: string;
-  tx_id: string;
-  state: 'pending' | 'committed';
-  cause_phase: string;
-  invalidated_phases: string[];
-  old_head_hashes: Record<string, string | null>;
-  target_generations: Record<string, number>;
-}
-
-// ---------------------------------------------------------------------------
-// HMAC 协议域（复用 MAISON_HMAC_GOAL_CHECKPOINT 密钥模型；签名体独立 kind+域前缀，
-// checkpoint/head/HWM/reseal ↔ manifest/head/journal 跨协议互塞必须 invalid）
-// ---------------------------------------------------------------------------
-
-function macFor(body: { kind: string }): string | null {
-  const key = process.env[PASS_SNAPSHOT_HMAC_ENV]?.trim();
-  if (!key) return null;
-  return createHmac('sha256', key).update(`${body.kind}:${stableStringify(body)}`, 'utf-8').digest('hex');
-}
-
-export type MacVerdict = 'ok' | 'ok_unauthenticated' | 'invalid';
-
-function verifyMac(body: { kind: string }, mac: unknown): MacVerdict {
-  const expected = macFor(body);
-  if (expected === null) {
-    // 未配密钥：如实降级（不冒充强信任）——写入时 mac=null
-    return typeof mac === 'string' && mac ? 'invalid' : 'ok_unauthenticated';
-  }
-  if (typeof mac !== 'string' || !mac) return 'invalid';
-  const a = Buffer.from(expected, 'utf-8');
-  const b = Buffer.from(mac, 'utf-8');
-  return a.length === b.length && timingSafeEqual(a, b) ? 'ok' : 'invalid';
 }
 
 export function sha256Buf(buf: Buffer): string {
@@ -377,18 +353,6 @@ function assertInsideRoot(targetAbs: string, rootAbs: string): void {
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error(`[pass-snapshot] 路径越界（词法包含失败）：${targetAbs} 不在 ${rootAbs} 内`);
   }
-}
-
-/** 单 buffer TOCTOU 安全安装：读一次→验哈希→同一 buffer 写同目录临时文件→原子 rename。 */
-export function installBufferAtomic(srcAbs: string, expectedSha256: string, destAbs: string): void {
-  const buf = fs.readFileSync(srcAbs);
-  const actual = sha256Buf(buf);
-  if (actual !== expectedSha256) {
-    throw new Error(`[pass-snapshot] 快照字节验哈希失败：${srcAbs} expected=${expectedSha256} actual=${actual}`);
-  }
-  const tmp = path.join(path.dirname(destAbs), `.pass-restore-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tmp`);
-  fs.writeFileSync(tmp, buf);
-  fs.renameSync(tmp, destAbs);
 }
 
 function writeJsonAtomic(absPath: string, doc: unknown): void {
@@ -463,9 +427,8 @@ export function resolveFrozenDeliverables(input: FrozenResolveInput): FrozenFile
 
 /** round5 P0：必需 frozen 产物的候选 rel 集（canonical+legacy，**磁盘无关**——纯注册表
  * 推导）。根级契约（spec 的 acceptance.yaml / plan 的 contracts.yaml）不在 watched_roots
- * 目录域内，manifest.files 是其唯一差异判定入口：弱信任 resume 伪造 manifest 只删该
- * 条目（roots 保持精确等价、其余 files 合法）即可让改毁根级产物零 diff 通过。
- * 完整性对账据此表在建快照与可信加载两端同构执行。 */
+ * 目录域内，manifest.files 是其唯一差异判定入口；完整性对账据此表在建快照与缓存加载两端
+ * 同构执行。缓存缺条目即丢弃重跑，不把它升级为凭据或人工门禁。 */
 export function requiredFrozenRelCandidates(
   projectRoot: string,
   feature: string,
@@ -490,8 +453,8 @@ export function requiredFrozenRelCandidates(
  * watched_roots 目录域之外的产物（acceptance.yaml / contracts.yaml / use-cases.yaml 等
  * 非 phase-scoped artifact 落 feature 根），manifest 条目与本候选表是其仅有的两条检测
  * 通道：diff 的 added 域与弱信任载侧对账都据此表消费。
- * 诚实边界：无 HMAC 时，若 optional 文件与其 manifest 条目在 resume 前被**一并**删除，
- * 其历史存在性无从证明（候选表只知"可能有"，不知"曾经有"）——强抗篡改仍须配 HMAC。 */
+ * 诚实边界：可选文件与其 manifest 条目若在 resume 前被**一并**删除，历史存在性无从
+ * 证明；这属于内容缓存能力边界，完整门禁会在缓存失效后重跑责任阶段，不引入凭据机制。 */
 export function rootLevelFrozenCandidateRels(
   projectRoot: string,
   feature: string,
@@ -536,7 +499,7 @@ export function findMissingRequiredFrozenRels(
 }
 
 // ---------------------------------------------------------------------------
-// 快照建立 / head / journal
+// 快照建立 / head
 // ---------------------------------------------------------------------------
 
 export interface TakenSnapshot {
@@ -620,9 +583,8 @@ export function takePassSnapshot(input: {
     watched_roots: watchedRootsForPhase(phase),
     files: files.map(f => ({ rel: f.rel, sha256: f.sha256, bytes: f.bytes })),
   };
-  const manifestDoc = { ...manifest, mac: macFor(manifest) };
-  writeJsonAtomic(path.join(phaseDir, 'manifest.json'), manifestDoc);
-  const manifestSha256 = sha256Buf(Buffer.from(JSON.stringify(manifestDoc, null, 2), 'utf-8'));
+  writeJsonAtomic(path.join(phaseDir, 'manifest.json'), manifest);
+  const manifestSha256 = sha256Buf(Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'));
 
   const prevHead = readPassSnapshotHead(projectRoot, feature, runId, phase);
   const head: PassSnapshotHeadBody = {
@@ -637,7 +599,7 @@ export function takePassSnapshot(input: {
     generation: (prevHead.body?.generation ?? 0) + 1,
     manifest_sha256: manifestSha256,
   };
-  writeJsonAtomic(passSnapshotHeadPath(projectRoot, feature, runId, phase), { ...head, mac: macFor(head) });
+  writeJsonAtomic(passSnapshotHeadPath(projectRoot, feature, runId, phase), head);
 
   const fileHashes: Record<string, string> = {};
   for (const f of files) fileHashes[f.rel] = f.sha256;
@@ -676,28 +638,27 @@ export function readCodingBase(
   projectRoot: string,
   feature: string,
   runId: string,
-): { body: CodingBaseBody | null; mac: MacVerdict | 'absent' } {
+): { body: CodingBaseBody | null; status: 'ok' | 'invalid' | 'absent' } {
   const p = codingBasePath(projectRoot, feature, runId);
-  if (!fs.existsSync(p)) return { body: null, mac: 'absent' };
+  if (!fs.existsSync(p)) return { body: null, status: 'absent' };
   try {
-    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as CodingBaseBody & { mac?: unknown };
-    const { mac, ...body } = doc;
+    const body = JSON.parse(fs.readFileSync(p, 'utf-8')) as CodingBaseBody;
     if (body.kind !== 'coding_base' || body.schema_version !== '1.0') {
-      return { body: null, mac: 'invalid' };
+      return { body: null, status: 'invalid' };
     }
     if (!isValidCodingBaseShape(body as unknown as Record<string, unknown>)) {
-      return { body: null, mac: 'invalid' };
+      return { body: null, status: 'invalid' };
     }
     if (
       body.project_identity_hash !== projectIdentityHash(projectRoot) ||
       body.feature !== feature ||
       body.run_id !== runId
     ) {
-      return { body: null, mac: 'invalid' }; // 跨 project/feature/run 重放
+      return { body: null, status: 'invalid' }; // 跨 project/feature/run 重放
     }
-    return { body: body as CodingBaseBody, mac: verifyMac(body, mac) };
+    return { body: body as CodingBaseBody, status: 'ok' };
   } catch {
-    return { body: null, mac: 'invalid' };
+    return { body: null, status: 'invalid' };
   }
 }
 
@@ -724,11 +685,11 @@ export function recordCodingBase(input: {
 }): CodingBaseRecordOutcome {
   const { projectRoot, feature, runId, baseSha } = input;
   const existing = readCodingBase(projectRoot, feature, runId);
-  if (existing.body && existing.mac !== 'invalid') {
+  if (existing.body && existing.status === 'ok') {
     return { kind: 'reused', body: existing.body }; // write-once：resume 复用原 SHA
   }
-  if (existing.mac === 'invalid') {
-    // 损坏/伪造的既有记录不重签洗白——保留现场，调用方与门禁侧 fail-closed
+  if (existing.status === 'invalid') {
+    // 损坏/不匹配的既有记录不覆盖洗白——保留现场，调用方与门禁侧 fail-closed
     return { kind: 'invalid_existing' };
   }
   const body: CodingBaseBody = {
@@ -740,13 +701,13 @@ export function recordCodingBase(input: {
     base_sha: baseSha,
     recorded_at: new Date().toISOString(),
   };
-  writeJsonAtomic(codingBasePath(projectRoot, feature, runId), { ...body, mac: macFor(body) });
+  writeJsonAtomic(codingBasePath(projectRoot, feature, runId), body);
   return { kind: 'recorded', body };
 }
 
 export interface HeadReadResult {
   body: PassSnapshotHeadBody | null;
-  mac: MacVerdict | 'absent';
+  status: 'ok' | 'invalid' | 'absent';
 }
 
 // post-impl round2 P0#2：运行时 shape 校验——kind/schema_version 只挡跨协议互塞，
@@ -815,53 +776,45 @@ function isValidManifestShape(b: Record<string, unknown>): boolean {
   return true;
 }
 
-function isValidJournalShape(b: Record<string, unknown>): boolean {
-  return (
-    typeof b.project_identity_hash === 'string' &&
-    typeof b.feature === 'string' &&
-    typeof b.run_id === 'string' &&
-    typeof b.tx_id === 'string' &&
-    (b.state === 'pending' || b.state === 'committed') &&
-    typeof b.cause_phase === 'string' &&
-    Array.isArray(b.invalidated_phases) && (b.invalidated_phases as unknown[]).every(p => typeof p === 'string') &&
-    !!b.old_head_hashes && typeof b.old_head_hashes === 'object' &&
-    !!b.target_generations && typeof b.target_generations === 'object'
-  );
-}
-
 export function readPassSnapshotHead(projectRoot: string, feature: string, runId: string, phase: string): HeadReadResult {
   const p = passSnapshotHeadPath(projectRoot, feature, runId, phase);
-  if (!fs.existsSync(p)) return { body: null, mac: 'absent' };
+  if (!fs.existsSync(p)) return { body: null, status: 'absent' };
   try {
-    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as PassSnapshotHeadBody & { mac?: unknown };
-    const { mac, ...body } = doc;
+    const body = JSON.parse(fs.readFileSync(p, 'utf-8')) as PassSnapshotHeadBody;
     if (body.kind !== 'pass_snapshot_head' || body.schema_version !== '1.0') {
-      return { body: null, mac: 'invalid' }; // 跨协议互塞 → invalid
+      return { body: null, status: 'invalid' }; // 跨协议互塞 → invalid
     }
     if (!isValidHeadShape(body as unknown as Record<string, unknown>)) {
-      return { body: null, mac: 'invalid' };
+      return { body: null, status: 'invalid' };
     }
-    return { body: body as PassSnapshotHeadBody, mac: verifyMac(body, mac) };
+    if (
+      body.project_identity_hash !== projectIdentityHash(projectRoot) ||
+      body.feature !== feature ||
+      body.run_id !== runId ||
+      body.phase !== phase
+    ) {
+      return { body: null, status: 'invalid' };
+    }
+    return { body: body as PassSnapshotHeadBody, status: 'ok' };
   } catch {
-    return { body: null, mac: 'invalid' };
+    return { body: null, status: 'invalid' };
   }
 }
 
-export function readFrozenManifest(phaseDir: string): { body: FrozenManifestBody | null; mac: MacVerdict } {
+export function readFrozenManifest(phaseDir: string): { body: FrozenManifestBody | null; status: 'ok' | 'invalid' } {
   const p = path.join(phaseDir, 'manifest.json');
-  if (!fs.existsSync(p)) return { body: null, mac: 'invalid' };
+  if (!fs.existsSync(p)) return { body: null, status: 'invalid' };
   try {
-    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as FrozenManifestBody & { mac?: unknown };
-    const { mac, ...body } = doc;
+    const body = JSON.parse(fs.readFileSync(p, 'utf-8')) as FrozenManifestBody;
     if (body.kind !== 'pass_snapshot_manifest' || body.schema_version !== '1.0') {
-      return { body: null, mac: 'invalid' };
+      return { body: null, status: 'invalid' };
     }
     if (!isValidManifestShape(body as unknown as Record<string, unknown>)) {
-      return { body: null, mac: 'invalid' };
+      return { body: null, status: 'invalid' };
     }
-    return { body: body as FrozenManifestBody, mac: verifyMac(body, mac) };
+    return { body: body as FrozenManifestBody, status: 'ok' };
   } catch {
-    return { body: null, mac: 'invalid' };
+    return { body: null, status: 'invalid' };
   }
 }
 
@@ -880,9 +833,9 @@ export function readFrozenSnapshotFile(phaseDir: string, rel: string, expectedSh
 }
 
 // ---------------------------------------------------------------------------
-// post-impl round2 P0#2：统一可信快照加载——**spawn agent 之前**调用一次，整个 attempt
-// 复用返回值（内存副本，防"attempt 中途盘上换 manifest"）。任何坏 MAC/shape/上下文
-// 绑定/head↔manifest 绑定 → fail_closed（调用方 halt，不 spawn agent）。
+// 统一快照加载——**spawn agent 之前**调用一次，整个 attempt 复用返回值（内存副本，防
+// "attempt 中途盘上换 manifest"）。shape/上下文/head↔manifest 失配只表示缓存不可用，
+// 调用方必须丢缓存并重跑责任阶段，不得用它恢复旧字节或停放求人。
 // ---------------------------------------------------------------------------
 
 export type TrustedSnapshotContext =
@@ -891,9 +844,7 @@ export type TrustedSnapshotContext =
   | {
       kind: 'active';
       head: PassSnapshotHeadBody;
-      headMac: MacVerdict;
       manifest: FrozenManifestBody;
-      manifestMac: MacVerdict;
       phaseDir: string;
     }
   | { kind: 'fail_closed'; reason: string };
@@ -909,12 +860,13 @@ export function loadTrustedSnapshotContext(
   expectedAnchor?: { epoch: number; manifestSha256: string } | null,
 ): TrustedSnapshotContext {
   const head = readPassSnapshotHead(projectRoot, feature, runId, phase);
-  if (head.mac === 'invalid') return { kind: 'fail_closed', reason: 'head 损坏/跨协议/shape 非法/验签失败' };
   if (!head.body) {
     if (expectedAnchor) {
-      return { kind: 'fail_closed', reason: '同进程内存锚在场但盘上 head 消失——判篡改（两轮绕过形态）' };
+      return { kind: 'fail_closed', reason: '同进程内存锚在场但盘上 head 消失——缓存失效' };
     }
-    return { kind: 'none' };
+    return head.status === 'invalid'
+      ? { kind: 'fail_closed', reason: 'head 缺失/损坏/上下文不匹配——缓存失效' }
+      : { kind: 'none' };
   }
   if (expectedAnchor) {
     if (head.body.state !== 'active') {
@@ -935,8 +887,8 @@ export function loadTrustedSnapshotContext(
   if (head.body.state !== 'active') return { kind: 'inactive' };
   const phaseDir = passSnapshotPhaseDir(projectRoot, feature, runId, phase, head.body.pass_epoch);
   const manifest = readFrozenManifest(phaseDir);
-  if (!manifest.body || manifest.mac === 'invalid') {
-    return { kind: 'fail_closed', reason: 'head active 但 manifest 缺失/损坏/shape 非法/验签失败' };
+  if (!manifest.body || manifest.status === 'invalid') {
+    return { kind: 'fail_closed', reason: 'head active 但 manifest 缺失/损坏/shape 非法——缓存失效' };
   }
   if (
     manifest.body.project_identity_hash !== head.body.project_identity_hash ||
@@ -963,24 +915,7 @@ export function loadTrustedSnapshotContext(
       reason: `manifest 完整性对账失败：缺必需 frozen 产物 ${missingRequired.join(', ')}（根级产物仅凭 files 条目参与差异判定，缺席即保护面被洗）`,
     };
   }
-  // round6 P1（弱信任载侧）：manifest 未认证（MAC 非 ok 且无内存锚）时，磁盘在场的根级
-  // 候选（含 optional，如 use-cases.yaml）缺条目 → fail_closed（伪造删条目形态，spawn 前
-  // 拦截）。认证态（HMAC ok / 同进程锚）下 manifest 可信，同况只能是 PASS 后漂移——由
-  // diff 'added' 检出并恢复，不误拉 trust 闸。诚实边界：无 HMAC 且文件+条目被一并删除
-  // 时历史存在性无从证明，强抗篡改仍须配 HMAC。
-  const manifestAuthenticated = manifest.mac === 'ok' || !!expectedAnchor;
-  if (!manifestAuthenticated) {
-    const featDirForAudit = featureDir(projectRoot, feature);
-    for (const rel of rootLevelFrozenCandidateRels(projectRoot, feature, phase)) {
-      if (manifestFileRels.has(rel)) continue;
-      if (!lstatOrNull(path.join(featDirForAudit, rel))) continue;
-      return {
-        kind: 'fail_closed',
-        reason: `manifest 完整性对账失败：磁盘在场的根级 frozen 产物 ${rel} 无 files 条目（未认证 manifest 疑似伪造删条目——该文件在 watched_roots 之外，缺条目即不参与任何差异判定）`,
-      };
-    }
-  }
-  return { kind: 'active', head: head.body, headMac: head.mac as MacVerdict, manifest: manifest.body, manifestMac: manifest.mac, phaseDir };
+  return { kind: 'active', head: head.body, manifest: manifest.body, phaseDir };
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,8 +951,7 @@ export function diffFrozenAgainstManifest(input: {
     }
     if (!st.isFile()) {
       // post-impl round2 P1#5：frozen 文件被换成目录/FIFO 等非常规类型——按结构差异
-      // （modified）处理，恢复侧先移除再安装；旧实现直接 readFileSync 抛 EISDIR 崩掉
-      // 整个保护链（violation 记不上、恢复不执行、runner uncaught）。
+      // （modified）处理；旧实现直接 readFileSync 抛 EISDIR 会让诊断链 uncaught。
       out.push({ rel, class: 'modified' });
       continue;
     }
@@ -1037,9 +971,8 @@ export function diffFrozenAgainstManifest(input: {
         const rel = path.relative(featDir, abs).replace(/\\/g, '/');
         if (ent.isSymbolicLink()) {
           if (classifyPassArtifact(phase, rel) === 'frozen_deliverable') {
-            // P1#3（post-impl review）：known link=清单文件被换成链接 → 'link'（恢复原字节）；
-            // 新增 link（不在清单）→ 'added'（恢复时删除——旧实现记 'link' 后因查不到
-            // manifest SHA 被 continue 静默留存）。
+            // P1#3（post-impl review）：known link=清单文件被换成链接 → 'link'；
+            // 新增 link（不在清单）→ 'added'，两者都必须进入差异结果。
             out.push({ rel, class: known.has(rel) ? 'link' : 'added' });
           }
           continue;
@@ -1057,7 +990,7 @@ export function diffFrozenAgainstManifest(input: {
 
   // round6 P1：added 域补根级候选（三表推导、watched_roots 之外）——known 之外磁盘在场
   // 即 added。合法 manifest 经建侧全集对账必含其条目；不在 known = 伪造删条目（弱信任
-  // →restore 拒绝并 halt）或 PASS 后新增（强信任→restore 删除），两况都不得零 diff。
+  // →缓存失效并重跑）或 PASS 后新增，两况都不得零 diff。
   for (const rel of rootLevelFrozenCandidateRels(projectRoot, feature, phase)) {
     if (known.has(rel)) continue;
     if (!lstatOrNull(path.join(featDir, rel))) continue;
@@ -1067,305 +1000,47 @@ export function diffFrozenAgainstManifest(input: {
 }
 
 // ---------------------------------------------------------------------------
-// 恢复（两层信任 + 路径安全）
+// 缓存丢弃（事件已落盘后可重复执行；不恢复旧字节）
 // ---------------------------------------------------------------------------
 
-export type RestoreTrust =
-  | { tier: 'in_process'; memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> } }
-  | { tier: 'resume' };
-
-export interface RestoreOutcome {
-  restored: string[];
-  deletedAdded: string[];
-  refused?: string;
+export interface PassSnapshotDiscardResult {
+  discardedPhases: string[];
+  diagnostics: string[];
 }
 
 /**
- * 恢复资格判定 + 执行。拒绝路径返回 refused（调用方 halt 求人），绝不部分恢复弱信任内容。
- * post-impl round3 P0#2：恢复资格以 **pre-spawn 可信上下文（内存副本）** 为依据——
- * 不再从盘上重读 head/manifest 作判定（diff 用快照 A、restore 被换成快照 B 的 TOCTOU）；
- * 仅复核「盘上 head 仍与上下文逐字段一致」（换盘即拒），快照字节在安装时逐一验哈希。
- * - in_process：内存 digest 为锚——manifest sha 须与内存一致（HMAC 无关）。
- * - resume：上下文的 head+manifest MAC 均须 'ok'；ok_unauthenticated → refused。
+ * 将受失效事件覆盖的 head 退位为 superseded。该动作只影响缓存，不改变事件事实；
+ * 即使进程在事件落盘后、缓存退位前崩溃，resume 仍会重放这条记录并再次执行本函数。
+ * 损坏的 head 直接删除；任何磁盘故障只记录诊断，由调用方按基础设施故障处置。
  */
-export function restoreFrozenFromSnapshot(input: {
+export function discardPassSnapshotCache(input: {
   projectRoot: string;
   feature: string;
   runId: string;
-  phase: string;
-  diffs: FrozenDiffEntry[];
-  trust: RestoreTrust;
-  /** pre-spawn loadTrustedSnapshotContext 的 active 结果（attempt 级不可变上下文） */
-  context: Extract<TrustedSnapshotContext, { kind: 'active' }>;
-}): RestoreOutcome {
-  const { projectRoot, feature, runId, phase, diffs, trust, context } = input;
-  // 换盘复核：盘上 head 须与上下文逐字段一致（generation/epoch/manifest_sha/五元组）
-  const headNow = readPassSnapshotHead(projectRoot, feature, runId, phase);
-  if (!headNow.body) return { restored: [], deletedAdded: [], refused: `盘上 head 消失/损坏（${headNow.mac}）——与 attempt 上下文失配` };
-  const c = context.head;
-  if (
-    headNow.body.state !== c.state ||
-    headNow.body.pass_epoch !== c.pass_epoch ||
-    headNow.body.generation !== c.generation ||
-    headNow.body.manifest_sha256 !== c.manifest_sha256 ||
-    headNow.body.project_identity_hash !== c.project_identity_hash ||
-    headNow.body.feature !== c.feature ||
-    headNow.body.run_id !== c.run_id ||
-    headNow.body.phase !== c.phase
-  ) {
-    return { restored: [], deletedAdded: [], refused: '盘上 head 与 attempt 上下文失配（attempt 中途被换盘）' };
-  }
-  const phaseDir = context.phaseDir;
-  const manifest = { body: context.manifest };
-
-  if (trust.tier === 'in_process') {
-    if (trust.memoryDigest.manifestSha256 !== c.manifest_sha256) {
-      return { restored: [], deletedAdded: [], refused: '内存 digest 与上下文 manifest 失配（同进程锚被换）' };
-    }
-  } else {
-    if (context.headMac !== 'ok' || context.manifestMac !== 'ok') {
-      return {
-        restored: [],
-        deletedAdded: [],
-        refused: `resume 信任层要求 HMAC 验签通过（head=${context.headMac} manifest=${context.manifestMac}）——未配密钥只检测不恢复`,
-      };
-    }
-  }
-
-  const featDir = featureDir(projectRoot, feature);
-  const shaByRel = new Map(manifest.body.files.map(f => [f.rel, f.sha256]));
-  const restored: string[] = [];
-  const deletedAdded: string[] = [];
-  for (const d of diffs) {
-    const destAbs = path.join(featDir, d.rel);
-    assertInsideRoot(destAbs, featDir);
-    if (d.class === 'added') {
-      // 冻结域内新增替代产物：删除（frozen 域内文件不属任何 mutable 类才会判 added）。
-      // post-impl round2 P1#4：existsSync 会跟随链接——dangling symlink 判 false 导致
-      // 「宣称删除实际残留」；改 lexists 语义 + rm 后 lstat 复核。
-      assertNoLinkInChain(path.dirname(destAbs), featDir);
-      fs.rmSync(destAbs, { recursive: true, force: true });
-      if (lstatOrNull(destAbs)) {
-        return { restored, deletedAdded, refused: `added 项删除失败仍残留：${d.rel}` };
-      }
-      deletedAdded.push(d.rel);
-      continue;
-    }
-    const sha = shaByRel.get(d.rel);
-    if (!sha) {
-      // 防御（P1#3 同族）：非 added 分类却查不到清单 SHA——不静默留存，删除后计入清理
-      fs.rmSync(destAbs, { recursive: true, force: true });
-      if (lstatOrNull(destAbs)) {
-        return { restored, deletedAdded, refused: `无清单 SHA 项删除失败仍残留：${d.rel}` };
-      }
-      deletedAdded.push(d.rel);
-      continue;
-    }
-    const srcAbs = path.join(phaseDir, d.rel.replace(/\//g, '__'));
-    if (trust.tier === 'in_process') {
-      const memSha = trust.memoryDigest.fileHashes[d.rel];
-      if (memSha !== sha) {
-        return { restored, deletedAdded, refused: `内存 digest 与 manifest 文件哈希失配：${d.rel}` };
-      }
-    }
-    if (d.class === 'link') {
-      // 目标本体是链接：先移除链接本体再恢复（不跟随）
-      fs.rmSync(destAbs, { force: true });
-    }
-    // post-impl round2 P1#5：目标被换成目录等非常规类型——rename 无法覆盖目录，
-    // 路径安全验证后先移除再安装
-    const destSt = lstatOrNull(destAbs);
-    if (destSt && !destSt.isFile()) {
-      assertNoLinkInChain(path.dirname(destAbs), featDir);
-      fs.rmSync(destAbs, { recursive: true, force: true });
-    }
+  phases: readonly string[];
+}): PassSnapshotDiscardResult {
+  const discardedPhases: string[] = [];
+  const diagnostics: string[] = [];
+  for (const phase of [...new Set(input.phases.map(String))]) {
+    const headPath = passSnapshotHeadPath(input.projectRoot, input.feature, input.runId, phase);
+    const head = readPassSnapshotHead(input.projectRoot, input.feature, input.runId, phase);
     try {
-      fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-      assertNoLinkInChain(path.dirname(destAbs), featDir);
-      installBufferAtomic(srcAbs, sha, destAbs);
+      if (head.body) {
+        if (head.body.state !== 'superseded') {
+          writeJsonAtomic(headPath, {
+            ...head.body,
+            state: 'superseded',
+            generation: head.body.generation + 1,
+          } satisfies PassSnapshotHeadBody);
+        }
+        discardedPhases.push(phase);
+      } else if (head.status === 'invalid') {
+        fs.rmSync(headPath, { force: true });
+        discardedPhases.push(phase);
+      }
     } catch (e) {
-      // 快照 bytes 被篡改（验哈希失败）/路径链被换 junction → 拒绝并交调用方 halt，
-      // 绝不部分安装未验真内容
-      return { restored, deletedAdded, refused: `恢复安装失败：${(e as Error).message}` };
+      diagnostics.push(`${phase}: ${(e as Error).message}`);
     }
-    restored.push(d.rel);
   }
-  return { restored, deletedAdded };
-}
-
-// ---------------------------------------------------------------------------
-// run 级 invalidation journal（codex 八轮 P0：唯一事务 pending SSOT）
-// ---------------------------------------------------------------------------
-
-export function readInvalidationJournal(projectRoot: string, feature: string, runId: string): {
-  body: InvalidationJournalBody | null;
-  mac: MacVerdict | 'absent';
-} {
-  const p = invalidationJournalPath(projectRoot, feature, runId);
-  if (!fs.existsSync(p)) return { body: null, mac: 'absent' };
-  try {
-    const doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as InvalidationJournalBody & { mac?: unknown };
-    const { mac, ...body } = doc;
-    if (body.kind !== 'pass_snapshot_invalidation' || body.schema_version !== '1.0') {
-      return { body: null, mac: 'invalid' };
-    }
-    if (!isValidJournalShape(body as unknown as Record<string, unknown>)) {
-      return { body: null, mac: 'invalid' };
-    }
-    return { body: body as InvalidationJournalBody, mac: verifyMac(body, mac) };
-  } catch {
-    return { body: null, mac: 'invalid' };
-  }
-}
-
-function writeJournal(projectRoot: string, feature: string, runId: string, body: InvalidationJournalBody): void {
-  writeJsonAtomic(invalidationJournalPath(projectRoot, feature, runId), { ...body, mac: macFor(body) });
-}
-
-export interface InvalidationTxResult {
-  txId: string;
-  /** 事件层按 (tx_id, phase) 幂等追加——调用方据此补 phase_invalidated 事件投影 */
-  invalidatedPhases: string[];
-}
-
-/**
- * 失效事务：journal pending → 全部受影响 head 置 superseded → （调用方追加事件）→ commit。
- * 崩溃窗恢复：resume 先 recoverInvalidationJournal 再读任何 head。
- */
-export function beginInvalidationTx(input: {
-  projectRoot: string;
-  feature: string;
-  runId: string;
-  causePhase: string;
-  invalidatedPhases: string[];
-  txId: string;
-}): InvalidationTxResult {
-  const { projectRoot, feature, runId, causePhase, invalidatedPhases, txId } = input;
-  const oldHashes: Record<string, string | null> = {};
-  const targetGen: Record<string, number> = {};
-  for (const ph of invalidatedPhases) {
-    const h = readPassSnapshotHead(projectRoot, feature, runId, ph);
-    oldHashes[ph] = h.body ? h.body.manifest_sha256 : null;
-    targetGen[ph] = (h.body?.generation ?? 0) + 1;
-  }
-  writeJournal(projectRoot, feature, runId, {
-    kind: 'pass_snapshot_invalidation',
-    schema_version: '1.0',
-    project_identity_hash: projectIdentityHash(projectRoot),
-    feature,
-    run_id: runId,
-    tx_id: txId,
-    state: 'pending',
-    cause_phase: causePhase,
-    invalidated_phases: invalidatedPhases,
-    old_head_hashes: oldHashes,
-    target_generations: targetGen,
-  });
-  applyInvalidationHeads(projectRoot, feature, runId, invalidatedPhases, targetGen);
-  return { txId, invalidatedPhases };
-}
-
-function applyInvalidationHeads(
-  projectRoot: string,
-  feature: string,
-  runId: string,
-  phases: string[],
-  targetGen: Record<string, number>,
-): void {
-  for (const ph of phases) {
-    const h = readPassSnapshotHead(projectRoot, feature, runId, ph);
-    if (!h.body) continue; // 无 PASS head 的 phase：合法（cause phase 可能从未 PASS）
-    if (h.body.state === 'superseded' && h.body.generation >= (targetGen[ph] ?? 0)) continue; // 幂等
-    const next: PassSnapshotHeadBody = {
-      ...h.body,
-      state: 'superseded',
-      generation: Math.max(h.body.generation + 1, targetGen[ph] ?? 0),
-    };
-    writeJsonAtomic(passSnapshotHeadPath(projectRoot, feature, runId, ph), { ...next, mac: macFor(next) });
-  }
-}
-
-/**
- * post-impl round2 P0#1 + round3 P0#3：commit 不得重新信任磁盘 body（洗白通道）；
- * **完成态=journal 文件不存在**——先写 committed（供「commit 后删除前崩溃」的
- * authenticated 清理路径识别），再原子移除。round3 病灶：无 HMAC 环境 mac=null，
- * 「pending 被篡改成 committed」若被当完成态忽略，未竟 heads/events 永不恢复——改用
- * 删除语义后，unauth 面上任何**在场** journal 一律 fail-closed 交人工。
- */
-export function commitInvalidationTx(
-  projectRoot: string,
-  feature: string,
-  runId: string,
-  expectedTxId: string,
-  // round4 P1#2：崩溃窗故障注入点（仅测试消费）——模拟「committed 已写盘、rm 前崩溃」，
-  // 使 recover 的 authenticated 残留清理分支可被真实命中（合法 MAC 的 committed 残留）。
-  opts?: { crashBeforeRemoveForTest?: boolean },
-): void {
-  const p = invalidationJournalPath(projectRoot, feature, runId);
-  const j = readInvalidationJournal(projectRoot, feature, runId);
-  if (!j.body) {
-    if (j.mac === 'absent') return; // 已完成（幂等——完成态=不存在）
-    throw new Error(`[pass-snapshot] commit 失败：journal 损坏（expected tx=${expectedTxId}）`);
-  }
-  if (j.mac === 'invalid') {
-    throw new Error(`[pass-snapshot] commit 拒绝：journal MAC 无效——不得重签洗白（expected tx=${expectedTxId}）`);
-  }
-  if (j.body.tx_id !== expectedTxId) {
-    throw new Error(`[pass-snapshot] commit 拒绝：journal tx_id=${j.body.tx_id} 与预期 ${expectedTxId} 失配`);
-  }
-  writeJournal(projectRoot, feature, runId, { ...j.body, state: 'committed' });
-  if (opts?.crashBeforeRemoveForTest) return; // 故障注入：崩溃于 rm 之前
-  fs.rmSync(p, { force: true });
-}
-
-export type JournalRecovery =
-  | { kind: 'none' }
-  | { kind: 'pending_heads_applied'; txId: string; invalidatedPhases: string[] }
-  | { kind: 'fail_closed'; reason: string };
-
-/**
- * resume/启动恢复：**先于任何 head 读取**调用。pending → 续跑 head 更新并返回待补事件，
- * **不在此 commit**（post-impl review P0#1：恢复顺序必须与正常路径同构 pending → heads →
- * events → commit——若本函数先 commit，「commit 后、事件补齐前」二次崩溃会让缺失事件
- * 永久不可修复：下次 resume 见 committed 直接 none）。调用方幂等补完 phase_invalidated
- * 事件后 **必须** 调 commitInvalidationTx()。head 更新幂等，重复恢复安全。
- * journal 不可验证（authenticated 环境下坏 MAC/损坏）→ fail_closed（不得改任何 head）。
- * 未配 HMAC（ok_unauthenticated）：journal 出自弱信任面——同样 fail_closed 交人工，
- * 不得依据不可信 journal 改 head（codex 九轮 P1；同进程路径不经此函数）。
- */
-export function recoverInvalidationJournal(projectRoot: string, feature: string, runId: string): JournalRecovery {
-  const j = readInvalidationJournal(projectRoot, feature, runId);
-  if (j.mac === 'absent' || !j.body) {
-    return j.mac === 'invalid'
-      ? { kind: 'fail_closed', reason: 'invalidation journal 损坏/跨协议/验签失败' }
-      : { kind: 'none' };
-  }
-  // post-impl round2 P0#1 + round3 P0#3：**MAC/绑定先于 state**，且完成态=文件不存在。
-  // state 是攻击者可写字段：坏 MAC 或（unauth 面）无 MAC 的 committed 都不得被当完成态
-  // 忽略——unauth 环境下任何**在场** journal 一律 fail-closed 交人工（正常完成路径已
-  // 原子移除文件，不会走到这里）。
-  if (j.mac === 'invalid') {
-    return { kind: 'fail_closed', reason: 'invalidation journal MAC 无效——不论 state 一律不信' };
-  }
-  if (
-    j.body.project_identity_hash !== projectIdentityHash(projectRoot) ||
-    j.body.feature !== feature ||
-    j.body.run_id !== runId
-  ) {
-    return { kind: 'fail_closed', reason: 'invalidation journal 上下文绑定失配（跨 project/feature/run 重放）' };
-  }
-  if (j.mac !== 'ok') {
-    return {
-      kind: 'fail_closed',
-      reason: `invalidation journal 在场但信任不足（mac=${j.mac}，state=${j.body.state}）——完成态应为文件不存在，任何在场弱信任 journal 交人工`,
-    };
-  }
-  if (j.body.state === 'committed') {
-    // authenticated 清理路径：commit 写盘后、删除前崩溃——验签通过的 committed 残留
-    // 安全清除，完成态收敛到「不存在」。
-    fs.rmSync(invalidationJournalPath(projectRoot, feature, runId), { force: true });
-    return { kind: 'none' };
-  }
-  applyInvalidationHeads(projectRoot, feature, runId, j.body.invalidated_phases, j.body.target_generations);
-  return { kind: 'pending_heads_applied', txId: j.body.tx_id, invalidatedPhases: j.body.invalidated_phases };
+  return { discardedPhases, diagnostics };
 }

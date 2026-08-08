@@ -40,7 +40,14 @@ export function restartBackoffMs(restartsSoFar: number): number {
 
 export type SupervisorDecision =
   | { action: 'no_op'; reason: string }
-  | { action: 'resume'; reason: string; backoff_ms: number; restart_seq: number }
+  | {
+      action: 'resume';
+      reason: string;
+      backoff_ms: number;
+      restart_seq: number;
+      successor_required?: boolean;
+      successor_start_phase?: string;
+    }
   | { action: 'never_restart'; reason: string }
   /** 重启次数已达上限——与 never_restart 分开，便于报告区分「结构上不该重启」与「已重启太多次」 */
   | { action: 'restart_budget_exhausted'; reason: string; restarts: number };
@@ -51,6 +58,45 @@ export interface SupervisorInput {
   /** 本 run 已由 supervisor 重启过几次（从 events 的 supervisor_restart 计数） */
   restartsSoFar: number;
   beaconStale: boolean;
+  /** Same-source condition probe recorded on a machine-observable WAITING halt. */
+  condition?: { probe: string; ready: boolean; reason?: string; phase?: string };
+}
+
+function eventAtCurrentProjection(
+  events: readonly unknown[],
+  sourceEventIndex: number | null,
+): Record<string, unknown> | null {
+  if (sourceEventIndex === null || sourceEventIndex < 0 || sourceEventIndex >= events.length) return null;
+  const raw = events[sourceEventIndex];
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+}
+
+function currentExternalWaitingProbe(
+  events: readonly unknown[],
+  sourceEventIndex: number | null,
+): { probe: string; phase?: string } | null {
+  const event = eventAtCurrentProjection(events, sourceEventIndex);
+  if (
+    !event || event.type !== 'phase_halt' || event.run_disposition !== 'WAITING' ||
+    event.run_wait_kind !== 'external' || typeof event.probe !== 'string' || !event.probe.trim()
+  ) {
+    return null;
+  }
+  return {
+    probe: event.probe.trim(),
+    ...(typeof event.phase === 'string' && event.phase.trim() ? { phase: event.phase.trim() } : {}),
+  };
+}
+
+function currentSuccessorRequest(
+  events: readonly unknown[],
+  sourceEventIndex: number | null,
+): string | null {
+  const event = eventAtCurrentProjection(events, sourceEventIndex);
+  return event?.type === 'phase_halt' && event.successor_required === true &&
+    typeof event.phase === 'string' && event.phase.trim()
+    ? event.phase.trim()
+    : null;
 }
 
 /**
@@ -59,10 +105,20 @@ export interface SupervisorInput {
  */
 export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   const state = reduceRunState(input.events);
-  const base: SupervisorAction = supervisorAction({
-    beaconStale: input.beaconStale,
-    state,
-  });
+  const waitingProbe = currentExternalWaitingProbe(input.events, state.source_event_index);
+  const probeWokeWaiting =
+    input.beaconStale &&
+    state.run_disposition === 'WAITING' &&
+    waitingProbe !== null &&
+    input.condition?.probe === waitingProbe.probe &&
+    input.condition.ready === true;
+  const successorStartPhase = currentSuccessorRequest(input.events, state.source_event_index);
+  const base: SupervisorAction = probeWokeWaiting
+    ? 'resume'
+    : supervisorAction({
+        beaconStale: input.beaconStale,
+        state,
+      });
   if (base === 'no_op') {
     return {
       action: 'no_op',
@@ -87,6 +143,9 @@ export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   }
   return {
     action: 'resume',
+    ...(successorStartPhase
+      ? { successor_required: true, successor_start_phase: successorStartPhase }
+      : {}),
     restart_seq: input.restartsSoFar + 1,
     backoff_ms: restartBackoffMs(input.restartsSoFar),
     reason:
@@ -116,13 +175,30 @@ export function superviseRun(args: {
   runId: string;
   events: readonly unknown[];
   probe?: ProcessProbe;
+  conditionProbe?: (probe: string, phase?: string) => { ready: boolean; reason?: string };
 }): SupervisorDecision {
   const beacon = readLivenessBeacon(args.projectRoot, args.reportDir);
   const verdict = assessLivenessBeacon({ beacon, runId: args.runId, probe: args.probe });
+  const state = reduceRunState(args.events);
+  const waitingProbe = currentExternalWaitingProbe(args.events, state.source_event_index);
   return decideSupervision({
     events: args.events,
     restartsSoFar: countSupervisorRestarts(args.events),
     beaconStale: isBeaconStale(verdict),
+    condition: (() => {
+      if (!waitingProbe || !args.conditionProbe) return undefined;
+      try {
+        const result = args.conditionProbe(waitingProbe.probe, waitingProbe.phase);
+        return { probe: waitingProbe.probe, phase: waitingProbe.phase, ready: result.ready, reason: result.reason };
+      } catch (error) {
+        return {
+          probe: waitingProbe.probe,
+          phase: waitingProbe.phase,
+          ready: false,
+          reason: 'probe failed: ' + String((error as Error).message),
+        };
+      }
+    })(),
   });
 }
 
