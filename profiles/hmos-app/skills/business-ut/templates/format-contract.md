@@ -25,11 +25,12 @@
 | 允许 | 禁止 |
 |------|------|
 | `[AC-1] 描述` | 无标签开头 |
-| `[BRANCH-happy_path][AC-1] 描述` | `[BD-1] 描述`（正则不认 BD 开头） |
-| `[AC-1][BD-1] 描述` | `[BD-1-a]` 等 acceptance.yaml 中不存在的子 ID |
+| `[BD-1] 描述` | `[BD-1-a]` 等 acceptance.yaml 中不存在的子 ID |
+| `[BRANCH-happy_path][AC-1] 描述` | `[AC-999]` 等 acceptance.yaml 中不存在的 ID |
+| `[AC-1][BD-1] 描述` | 仅在正文中提及 ID、名称开头无标签 |
 
 ## 写入前 5 秒自检
 
 - [ ] audit：有 `records:` + 每条 `acceptance_id` 与 acceptance.yaml 一致
 - [ ] mock-plan：纯 YAML，`ts_expr` 带 `as` 或 `new`
-- [ ] it()：以 `[AC-` 或 `[BRANCH-` 开头
+- [ ] it()：以 `[AC-`、`[BD-` 或 `[BRANCH-` 开头，且 ID 来自当前 feature 规约

@@ -108,6 +108,13 @@ structure_checks:
   # B. DAG 与 use-cases.yaml 的结构一致性
   # -----------------------------------------------------------------
 
+  dag_files_parseable:
+    description: >
+      archived/ephemeral DAG 候选必须能解析为 YAML mapping。harness 须报告
+      实际探测目录、候选路径、来源类型与解析错误；存在但损坏的 DAG 不得静默
+      跳过或误报为“未找到 DAG”。
+    severity: BLOCKER
+
   dag_schema_compliance:
     description: >
       DAG 文件必须符合 DAG Schema：必填 flow_id / flow_name / module /
@@ -357,13 +364,14 @@ structure_checks:
 
   it_name_has_ac_or_branch_tag:
     description: >
-      每条 it() 的用例名称以 [AC-X] 或 [BRANCH-<id>] 起始标签起始（可组合），
-      便于追溯验收/分支。
+      每条 it() 的用例名称以 [AC-X]、[BD-X] 或 [BRANCH-<id>] 标签起始（可组合），
+      便于追溯验收标准、边界或分支。
     severity: BLOCKER
     rule:
       for_each_test_case:
         name_matches_any_of:
           - '^\[AC-[^\]]+\]'
+          - '^\[BD-[^\]]+\]'
           - '^\[BRANCH-[^\]]+\]'
 
   it_drives_flow:
@@ -402,6 +410,19 @@ structure_checks:
   # -----------------------------------------------------------------
   # C0. 可测性预检 + mock-plan + DAG spy_preset（v2.3）
   # -----------------------------------------------------------------
+
+  ut_testability_audit_parseable:
+    description: >
+      已存在的 <features_dir>/{feature}/ut/testability-audit.md 必须能完整解析；
+      任一 fenced YAML 块损坏、根节点非 mapping 或 records 非数组均 BLOCKER，
+      不得用另一个可解析块掩盖。
+    severity: BLOCKER
+
+  ut_mock_plan_parseable:
+    description: >
+      已存在的 <features_dir>/{feature}/ut/mock-plan.yaml 必须是可解析的纯 YAML
+      mapping；存在但损坏时须报告 canonical 路径，不得按“文件缺失”继续判定。
+    severity: BLOCKER
 
   ut_testability_audit_present:
     description: >
@@ -565,19 +586,22 @@ traceability_checks:
     description: >
       当 feature 存在 in-scope unit/both P0/P1 时，须产出
       <features_dir>/{feature}/ut/reports/coverage-evidence.json（business-ut 写入，harness 不自造 mapping）。
-      缺失时 BLOCKER/FAIL。
+      缺失或 invalid 时 BLOCKER/FAIL；UT tag / DAG linkage 只能作为 mapping 的底层依据，
+      不能替代 required 文件本身。报告须给出 canonical relative + absolute path。
     severity: BLOCKER
 
   ut_coverage_evidence_resolves:
     description: >
       in-scope unit/both P0/P1 的每条 AC/BD 须在 coverage-evidence 映射、
-      UT 标签、DAG linked（含 nodes[]）或 ac-coverage.json 中可解析；否则 FAIL。
+      精确 UT 标签/linked branch、DAG linked（含 nodes[]）或 ac-coverage.json 中可解析；
+      AC 与 BD 同数字后缀不得交叉覆盖。失败须列出实际 scoped UT / DAG / evidence 路径。
     severity: BLOCKER
 
   ut_coverage_evidence_mappings_complete:
     description: >
       当 coverage-evidence.json 存在且存在 unit/both P0/P1 范围时，mappings[]
-      须覆盖每条 P0/P1 scope_id，且每条 mapping 须有可解析依据（非空壳行）。
+      须覆盖每条 P0/P1 scope_id，且每条 mapping 须有与 declared evidence_source
+      一致的可解析依据（非空壳行）；dag_archived 与 dag_ephemeral 不得互相冒充。
     severity: BLOCKER
 
   origin_tag_required:
@@ -606,13 +630,14 @@ traceability_checks:
   ut_case_per_unit_ac:
     description: >
       acceptance.yaml 中 ut_layer in [unit, both] 且 priority in [P0, P1]
-      的每条 AC/BD，UT 中必须有 it() 能追溯到（name 含 [AC-<id>] 或其
-      linked branch 对应的 it 名含 [BRANCH-<branch>]）。
+      的每条 AC/BD 必须有可解析 UT 覆盖证据。优先用精确 it() 标签/linked branch；
+      兼容 coverage-evidence 所声明并由底层事实支撑的 DAG / ac-coverage 来源。
+      至少须有一个 scoped UT 文件，且失败详情必须列出实际检查集合。
     severity: BLOCKER
     rule:
       source: "acceptance.yaml > criteria + boundaries"
       filter: 'ut_layer in ["unit","both"] and priority in ["P0","P1"]'
-      target: "UT it() cases"
+      target: "resolvable UT evidence (tag/branch, backed mapping, DAG, ac-coverage)"
       coverage: "100%"
       matching:
         any_of:
@@ -621,13 +646,14 @@ traceability_checks:
 
   acceptance_coverage:
     description: >
-      P0/P1 验收标准的 UT 覆盖率（分母只计 ut_layer ∈ [unit, both] 的 AC；
-      ut_layer = device 的 AC 不纳入 UT 分母，交 device-testing 负责）。
+      P0/P1 验收标准的 DAG 追溯覆盖率：只读取已解析 DAG 顶层/nodes[] 的
+      linked_acceptance / linked_boundaries，不读取 it() 名。分母只计
+      ut_layer ∈ [unit, both] 的 AC；device AC 交 device-testing 负责。
     severity: BLOCKER
     rule:
       source: "acceptance.yaml > criteria"
       filter: 'priority in ["P0","P1"] and ut_layer in ["unit","both"]'
-      target: "UT it() cases"
+      target: "parsed DAG linked_acceptance / linked_boundaries"
       coverage: "100%"
 
   dag_to_source:

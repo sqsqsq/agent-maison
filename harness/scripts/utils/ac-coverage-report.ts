@@ -7,6 +7,7 @@ import * as path from 'path';
 import type { AcceptanceSpec } from './types';
 import { isUnitUtLayer } from './acceptance-layering';
 import { featureFilePath } from '../../config';
+import { hasExactUtScopeTag } from './ut-tag-match';
 
 export interface AcCoverageEntry {
   id: string;
@@ -31,21 +32,13 @@ export interface AcCoverageReport {
   };
 }
 
-function normalizeId(id: string): string {
-  return id.toUpperCase().replace(/\s/g, '');
-}
-
 function collectItTagsForAc(
   acId: string,
   itNames: string[],
 ): string[] {
-  const norm = normalizeId(acId);
   const tags: string[] = [];
-  const direct = new RegExp(`\\[${acId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'i');
-  const acNum = acId.replace(/^(AC|BD)-/, '');
-  const loose = new RegExp(`\\[(AC|BD)-${acNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'i');
   for (const name of itNames) {
-    if (direct.test(name) || loose.test(name)) tags.push(name);
+    if (hasExactUtScopeTag(name, acId)) tags.push(name);
   }
   return tags;
 }

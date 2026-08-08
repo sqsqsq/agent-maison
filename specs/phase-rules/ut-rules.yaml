@@ -9,6 +9,7 @@
 #   - framework/harness/prompts/verify-ut.md
 #
 # v2.3 增补 structure 规则 id（路径/模板细则在 profile 叠加层 YAML，实现见 check-ut.ts）：
+#   dag_files_parseable、ut_testability_audit_parseable、ut_mock_plan_parseable、
 #   ut_testability_audit_present、ut_unsupported_targets_handled、ut_mock_plan_present、
 #   ut_mock_plan_typed、ut_mock_plan_contracts_consistent、dag_spy_preset_resolvable
 # ============================================================================

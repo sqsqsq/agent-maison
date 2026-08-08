@@ -82,24 +82,32 @@ import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { runAcceptanceYamlStructureChecks, acceptanceHasDeviceFocusRef } from './utils/check-acceptance';
 import {
+  acCoverageCoversScope,
   buildAcCoverageReport,
   writeAcCoverageReport,
   type AcCoverageReport,
 } from './utils/ac-coverage-report';
 import {
-  loadCoverageEvidence,
+  readCoverageEvidence,
   listUnitBothScopeItems,
+  dagLinksScopeId,
   dagsAllCharacterization,
   scopeHasResolvableEvidence,
   mappingBackedByResolvableEvidence,
   ephemeralFlowDagDir,
-  coverageEvidenceRel,
   type CoverageEvidenceFile,
 } from './utils/coverage-evidence';
+import {
+  validateCoverageEvidenceContent,
+  validateMockPlanFile,
+  validateTestabilityAuditFile,
+} from './utils/ut-artifact-validate';
 import {
   collectContractPackagePathPollution,
   mergePollutionViolations,
 } from './utils/harness-path-guard';
+import { extractUtItBlocks } from './utils/ut-it-blocks';
+import { hasExactUtBranchTag, hasExactUtScopeTag } from './utils/ut-tag-match';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -210,6 +218,46 @@ interface DagFile {
   nodes?: DagNode[];
 }
 
+export interface LoadedDagFile {
+  path: string;
+  dag: DagFile;
+  raw: string;
+  source: 'archived' | 'ephemeral';
+}
+
+export interface DagLoadIssue {
+  path: string;
+  source: 'archived' | 'ephemeral';
+  error: string;
+}
+
+export interface DagLoadObservation {
+  files: LoadedDagFile[];
+  candidatePaths: string[];
+  probedDirs: string[];
+  issues: DagLoadIssue[];
+}
+
+export type CoverageEvidenceObservation =
+  | {
+      status: 'missing';
+      absPath: string;
+      relPath: string;
+    }
+  | {
+      status: 'invalid';
+      absPath: string;
+      relPath: string;
+      errors: string[];
+    }
+  | {
+      status: 'loaded';
+      absPath: string;
+      relPath: string;
+      evidence: CoverageEvidenceFile;
+      warnings: string[];
+    };
+
 // --------------------------------------------------------------------------
 // Constants
 // --------------------------------------------------------------------------
@@ -253,20 +301,31 @@ function truncateList(items: string[], max: number): string {
 // DAG Loading
 // --------------------------------------------------------------------------
 
-function loadDagFiles(ctx: CheckContext): Array<{ path: string; dag: DagFile; raw: string }> {
-  const results: Array<{ path: string; dag: DagFile; raw: string }> = [];
+export function loadDagFiles(ctx: CheckContext): DagLoadObservation {
+  const files: LoadedDagFile[] = [];
+  const candidatePaths: string[] = [];
+  const probedDirs: string[] = [];
+  const issues: DagLoadIssue[] = [];
   const seen = new Set<string>();
 
-  const pushDag = (dagPath: string) => {
+  const pushDag = (dagPath: string, source: LoadedDagFile['source']) => {
     const relPath = path.relative(ctx.projectRoot, dagPath).replace(/\\/g, '/');
     if (seen.has(relPath)) return;
     seen.add(relPath);
+    candidatePaths.push(relPath);
     try {
       const raw = fs.readFileSync(dagPath, 'utf-8');
-      const dag = YAML.parse(raw) as DagFile;
-      results.push({ path: relPath, dag, raw });
-    } catch {
-      /* skip malformed */
+      const parsed = YAML.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('DAG 根节点必须是 YAML mapping/object');
+      }
+      files.push({ path: relPath, dag: parsed as DagFile, raw, source });
+    } catch (e) {
+      issues.push({
+        path: relPath,
+        source,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -274,20 +333,101 @@ function loadDagFiles(ctx: CheckContext): Array<{ path: string; dag: DagFile; ra
   if (contracts?.modules?.length) {
     for (const mod of contracts.modules) {
       const dagDir = path.join(ctx.projectRoot, mod.package_path, 'test', 'dag');
+      probedDirs.push(path.relative(ctx.projectRoot, dagDir).replace(/\\/g, '/'));
       for (const dagPath of findFilesRecursive(dagDir, /\.dag\.yaml$/)) {
-        pushDag(dagPath);
+        pushDag(dagPath, 'archived');
       }
     }
   }
 
   const ephemeralDir = ephemeralFlowDagDir(ctx.projectRoot, ctx.feature);
+  probedDirs.push(path.relative(ctx.projectRoot, ephemeralDir).replace(/\\/g, '/'));
   if (fs.existsSync(ephemeralDir)) {
     for (const dagPath of findFilesRecursive(ephemeralDir, /\.dag\.yaml$/)) {
-      pushDag(dagPath);
+      pushDag(dagPath, 'ephemeral');
     }
   }
 
-  return results;
+  return {
+    files,
+    candidatePaths,
+    probedDirs: [...new Set(probedDirs)],
+    issues,
+  };
+}
+
+export function checkDagFilesParseable(
+  ctx: CheckContext,
+  observation: DagLoadObservation,
+): CheckResult[] {
+  const id = 'dag_files_parseable';
+  if (observation.issues.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `${observation.issues.length} 个 DAG 候选存在但无法解析：\n` +
+        truncateList(observation.issues.map(i => `${i.path} (${i.source}): ${i.error}`), 12) +
+        `\n探测目录：${observation.probedDirs.join(', ') || '(无)'}`,
+      affected_files: observation.issues.map(i => i.path),
+      suggestion: '修复上述 DAG YAML；harness 已找到文件，不需要移动文件或执行 git add。',
+    }];
+  }
+  if (observation.candidatePaths.length === 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: `未发现 *.dag.yaml 候选；已探测目录：${observation.probedDirs.join(', ') || '(无)'}`,
+    }];
+  }
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `已解析 ${observation.files.length}/${observation.candidatePaths.length} 个 DAG：${observation.files.map(f => `${f.path} (${f.source})`).join(', ')}`,
+  }];
+}
+
+export function inspectCoverageEvidence(ctx: CheckContext): CoverageEvidenceObservation {
+  const observed = readCoverageEvidence(ctx.projectRoot, ctx.feature);
+  if (observed.status === 'missing') return observed;
+  if (observed.status === 'invalid') {
+    return {
+      status: 'invalid',
+      absPath: observed.absPath,
+      relPath: observed.relPath,
+      errors: [observed.error],
+    };
+  }
+
+  const validation = validateCoverageEvidenceContent(observed.raw, observed.absPath);
+  const errors = validation.errors.map(e => `${e.field}: ${e.message}`);
+  if (observed.evidence.feature?.trim() && observed.evidence.feature !== ctx.feature) {
+    errors.push(`feature: 文件声明 ${observed.evidence.feature}，当前 feature 为 ${ctx.feature}`);
+  }
+  if (errors.length > 0) {
+    return {
+      status: 'invalid',
+      absPath: observed.absPath,
+      relPath: observed.relPath,
+      errors,
+    };
+  }
+  return {
+    status: 'loaded',
+    absPath: observed.absPath,
+    relPath: observed.relPath,
+    evidence: observed.evidence,
+    warnings: validation.warnings.map(w => `${w.field}: ${w.message}`),
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -612,7 +752,7 @@ function checkUtAssertionExists(
   const affectedFiles: string[] = [];
 
   for (const { path: utPath, content } of utFiles) {
-    const itBlocks = extractItBlocks(content);
+    const itBlocks = extractUtItBlocks(content);
     for (const block of itBlocks) {
       if (!block.body.includes('expect(') && !block.body.includes('expect (')) {
         noAssertionCases.push(`${utPath}: "${block.name}"`);
@@ -982,39 +1122,6 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
           '禁止以"便利性"借口直接修改业务源码。' +
           configHint,
   }];
-}
-
-function extractItBlocks(content: string): Array<{ name: string; body: string }> {
-  const blocks: Array<{ name: string; body: string }> = [];
-  const itRe = /it\s*\(\s*['"`]([^'"`]+)['"`]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = itRe.exec(content)) !== null) {
-    const name = match[1];
-    const startIdx = match.index;
-    let braceCount = 0;
-    let bodyStart = -1;
-    let bodyEnd = -1;
-
-    for (let i = startIdx; i < content.length; i++) {
-      if (content[i] === '{') {
-        if (bodyStart === -1) bodyStart = i;
-        braceCount++;
-      } else if (content[i] === '}') {
-        braceCount--;
-        if (braceCount === 0 && bodyStart !== -1) {
-          bodyEnd = i;
-          break;
-        }
-      }
-    }
-
-    if (bodyStart !== -1 && bodyEnd !== -1) {
-      blocks.push({ name, body: content.substring(bodyStart, bodyEnd + 1) });
-    }
-  }
-
-  return blocks;
 }
 
 function checkMockStubForAsync(
@@ -1753,7 +1860,7 @@ function checkBoundariesAllStubbed(
   }];
 }
 
-function checkItNameHasAcOrBranchTag(
+export function checkItNameHasAcOrBranchTag(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
 ): CheckResult[] {
@@ -1772,9 +1879,9 @@ function checkItNameHasAcOrBranchTag(
   const affected: string[] = [];
   for (const { path: p, content } of utFiles) {
     if (isSuiteEntryShim(ctx, content)) continue;
-    const blocks = extractItBlocks(content);
+    const blocks = extractUtItBlocks(content);
     for (const b of blocks) {
-      if (!/^\s*\[(AC|BRANCH)-/.test(b.name)) {
+      if (!/^\s*\[(AC|BD|BRANCH)-/i.test(b.name)) {
         untagged.push(`${p}: "${b.name}"`);
         affected.push(p);
       }
@@ -1788,7 +1895,7 @@ function checkItNameHasAcOrBranchTag(
       description: ruleDesc(ctx, 'structure_checks', 'it_name_has_ac_or_branch_tag'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 it() 用例均带有 [AC-X] 或 [BRANCH-X] 起始标签。',
+      details: '所有 it() 用例均带有 [AC-X]、[BD-X] 或 [BRANCH-X] 起始标签。',
     }];
   }
 
@@ -1800,7 +1907,7 @@ function checkItNameHasAcOrBranchTag(
     status: 'FAIL',
     details: `${untagged.length} 个 it() 用例无追溯标签：\n${truncateList(untagged, 15)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'it() 名称必须以 [AC-xxx] 或 [BRANCH-xxx] 开头，可组合使用（如 [BRANCH-happy_path][AC-1]）。',
+    suggestion: 'it() 名称必须以 [AC-xxx]、[BD-xxx] 或 [BRANCH-xxx] 开头；边界可直接写 [BD-1]，也可组合使用（如 [BRANCH-happy_path][AC-1] 或 [AC-1][BD-1]）。',
   }];
 }
 
@@ -1830,7 +1937,7 @@ function checkItDrivesFlow(
 
   for (const { path: p, content } of utFiles) {
     if (isSuiteEntryShim(ctx, content)) continue;
-    const blocks = extractItBlocks(content);
+    const blocks = extractUtItBlocks(content);
     for (const b of blocks) {
       const portHits = b.body.match(portCallRe) ?? [];
       const stateHits = b.body.match(stateRe) ?? [];
@@ -2021,9 +2128,10 @@ function checkDagToAcceptance(
   }];
 }
 
-function checkAcceptanceCoverage(
+export function checkAcceptanceCoverage(
   ctx: CheckContext,
   dags: Array<{ path: string; dag: DagFile }>,
+  observation?: DagLoadObservation,
 ): CheckResult[] {
   if (dagsAreCharacterization(dags)) {
     return [{
@@ -2054,7 +2162,10 @@ function checkAcceptanceCoverage(
       description: ruleDesc(ctx, 'traceability_checks', 'acceptance_coverage'),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: '无 DAG 文件可分析。',
+      details:
+        '证据口径：acceptance_coverage 只读取 DAG 顶层/nodes[] 的 linked_acceptance / linked_boundaries，不读取 it() 名。\n' +
+        `无已成功解析的 DAG；候选=${observation?.candidatePaths.join(', ') || '(无)'}；` +
+        `探测目录=${observation?.probedDirs.join(', ') || '(未知)'}；解析失败=${observation?.issues.length ?? 0}。`,
     }];
   }
 
@@ -2088,6 +2199,9 @@ function checkAcceptanceCoverage(
   const deviceOnly = acceptance.criteria.filter(c => c.ut_layer === 'device').length;
 
   const details: string[] = [];
+  details.push('证据口径: DAG linked_acceptance / linked_boundaries only（不读取 it() 名）');
+  details.push(`已解析 DAG: ${dags.map(d => d.path).join(', ')}`);
+  details.push(`DAG 已声明 scope id: ${[...coveredACs].sort().join(', ') || '(空)'}`);
   details.push(`P0 覆盖率(UT 分母): ${p0Covered}/${p0Count}`);
   details.push(`P1 覆盖率(UT 分母): ${p1Covered}/${p1Count}`);
   details.push(`BD 覆盖率(UT 分母): ${allBoundaries.length - uncoveredBD.length}/${allBoundaries.length}`);
@@ -2118,7 +2232,10 @@ function checkAcceptanceCoverage(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: details.join('\n'),
-    suggestion: `请为未覆盖的 ${uncoveredP0P1.length} 个 P0/P1 AC 补充 DAG 和 UT。`,
+    affected_files: dags.map(d => d.path),
+    suggestion:
+      `在上述已加载 DAG 的顶层或 assertion nodes[] 为 ${uncoveredP0P1.map(c => c.id).join(', ')} ` +
+      '补充精确 linked_acceptance；修改 it() 名或执行 git add 不会改变本 gate。',
   }];
 }
 
@@ -2197,7 +2314,7 @@ function collectItNames(
   const names: string[] = [];
   for (const { content } of utFiles) {
     if (isSuiteEntryShim(ctx, content)) continue;
-    const blocks = extractItBlocks(content);
+    const blocks = extractUtItBlocks(content);
     for (const b of blocks) names.push(b.name);
   }
   return names;
@@ -2210,7 +2327,7 @@ function collectItBlocks(
   const blocks: Array<{ path: string; name: string; body: string }> = [];
   for (const f of utFiles) {
     if (isSuiteEntryShim(ctx, f.content)) continue;
-    for (const b of extractItBlocks(f.content)) {
+    for (const b of extractUtItBlocks(f.content)) {
       blocks.push({ path: f.path, ...b });
     }
   }
@@ -2345,9 +2462,8 @@ function checkBranchCoverageFull(
 
   for (const uc of spec.use_cases ?? []) {
     for (const br of uc.branches ?? []) {
-      const tagRe = new RegExp(`\\[BRANCH-${br.id}\\]`);
       const found = blocks.some(b =>
-        tagRe.test(b.name) || b.body.includes(br.id),
+        hasExactUtBranchTag(b.name, br.id) || b.body.includes(br.id),
       );
       if (!found) {
         missing.push(`${uc.id} > branch "${br.id}": 无对应 it() 用例`);
@@ -2384,12 +2500,10 @@ function acHasUtTagOrBranchCoverage(
 ): boolean {
   const itNames = collectItNames(ctx, utFiles);
   const blocks = collectItBlocks(ctx, utFiles);
-  const acTagRe = new RegExp(`\\[AC-${ac.id.replace(/^AC-/, '').replace(/^BD-/, '')}\\]`);
-  const directTagRe = new RegExp(`\\[${ac.id}\\]`);
-  const foundByTag = itNames.some(n => directTagRe.test(n) || acTagRe.test(n));
+  const foundByTag = itNames.some(n => hasExactUtScopeTag(n, ac.id));
   const branchId = ac.linked_branch;
   const foundByBranch = !!branchId && blocks.some(b =>
-    new RegExp(`\\[BRANCH-${branchId}\\]`).test(b.name) || b.body.includes(branchId),
+    hasExactUtBranchTag(b.name, branchId) || b.body.includes(branchId),
   );
   return foundByTag || foundByBranch;
 }
@@ -2406,7 +2520,77 @@ function collectTargetUnitBothP0P1(acceptance: AcceptanceSpec) {
   ];
 }
 
-function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
+type CoverageTarget = ReturnType<typeof collectTargetUnitBothP0P1>[number];
+
+function coverageObservationSummary(observed: CoverageEvidenceObservation): string {
+  if (observed.status === 'loaded') return `loaded:${observed.relPath}`;
+  if (observed.status === 'invalid') return `invalid:${observed.relPath}`;
+  return `missing:${observed.relPath}`;
+}
+
+function describeScopeEvidenceAttempt(
+  ctx: CheckContext,
+  utFiles: Array<{ path: string; content: string }>,
+  target: CoverageTarget,
+  dags: Array<{ path: string; dag: DagFile; source?: 'archived' | 'ephemeral' }>,
+  observed: CoverageEvidenceObservation,
+  acReport?: AcCoverageReport | null,
+): string {
+  const byTags = acHasUtTagOrBranchCoverage(ctx, utFiles, target);
+  const byDag = dags.some(d => dagLinksScopeId(d.dag, target.id));
+  const byAcCoverage = acCoverageCoversScope(
+    ctx.projectRoot,
+    ctx.feature,
+    target.id,
+    acReport,
+  );
+  const row = observed.status === 'loaded'
+    ? observed.evidence.mappings?.find(m => m.scope_id === target.id)
+    : undefined;
+  const mapping = row
+    ? `${row.evidence_source}:${mappingBackedByResolvableEvidence(
+        row,
+        dags,
+        byTags,
+        ctx.projectRoot,
+        ctx.feature,
+        acReport,
+      ) ? 'resolved' : 'unresolved'}${row.evidence_ref ? ` ref=${row.evidence_ref}` : ''}`
+    : 'none';
+  return `${target.id}: ut_tag_or_branch=${byTags}, dag_link=${byDag}, ac_coverage=${byAcCoverage}, mapping=${mapping}`;
+}
+
+function checkedCoverageInputs(
+  utFiles: Array<{ path: string }>,
+  dags: Array<{ path: string }>,
+  observed: CoverageEvidenceObservation,
+): string {
+  return [
+    `scoped_ut_files=${utFiles.map(f => f.path).join(', ') || '(无)'}`,
+    `loaded_dags=${dags.map(d => d.path).join(', ') || '(无)'}`,
+    `coverage_evidence=${coverageObservationSummary(observed)}`,
+  ].join('\n');
+}
+
+export function checkUtCoverageEvidencePresent(
+  ctx: CheckContext,
+  observed: CoverageEvidenceObservation,
+): CheckResult[] {
+  if (observed.status === 'invalid') {
+    return [{
+      id: 'ut_coverage_evidence_present',
+      category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `coverage-evidence.json 已存在但无效。\n` +
+        `canonical_rel=${observed.relPath}\ncanonical_abs=${observed.absPath}\n` +
+        truncateList(observed.errors, 10),
+      affected_files: [observed.relPath],
+      suggestion: `修复 ${observed.relPath} 的 JSON/字段问题；文件已经被 harness 找到，不需要 git add。`,
+    }];
+  }
   const scope = listUnitBothScopeItems(ctx.featureSpec.acceptance);
   if (scope.length === 0) {
     return [{
@@ -2418,11 +2602,9 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
       details: '无 unit/both UT 范围，跳过 coverage-evidence.json 强制。',
     }];
   }
-  const rel = coverageEvidenceRel(ctx.projectRoot, ctx.feature);
   const acceptance = ctx.featureSpec.acceptance;
   const targetAcs = acceptance ? collectTargetUnitBothP0P1(acceptance) : [];
-  const ev = loadCoverageEvidence(ctx.projectRoot, ctx.feature);
-  if (!ev) {
+  if (observed.status === 'missing') {
     if (targetAcs.length > 0) {
       return [{
         id: 'ut_coverage_evidence_present',
@@ -2430,8 +2612,10 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: `缺少 ${rel}；存在 in-scope unit/both P0/P1（${targetAcs.length} 条），须由 business-ut 产出 coverage-evidence.json。`,
-        suggestion: `写入 ${rel}，或为每条 AC/BD 提供可解析的 UT 标签 / DAG linked_acceptance（见 coverage-evidence-schema）。`,
+        details:
+          `缺少 canonical coverage evidence；存在 in-scope unit/both P0/P1（${targetAcs.length} 条）。\n` +
+          `canonical_rel=${observed.relPath}\ncanonical_abs=${observed.absPath}`,
+        suggestion: `必须写入 ${observed.relPath}；UT 标签或 DAG linkage 可作为 mapping 的底层依据，但不能替代 required 文件本身。`,
       }];
     }
     return [{
@@ -2440,7 +2624,7 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
       severity: 'MAJOR',
       status: 'WARN',
-      details: `缺少 ${rel}；无 P0/P1 unit/both 强制范围，建议 business-ut 仍写入以便追溯。`,
+      details: `缺少 ${observed.relPath}（${observed.absPath}）；无 P0/P1 unit/both 强制范围，建议 business-ut 仍写入以便追溯。`,
     }];
   }
   return [{
@@ -2449,13 +2633,18 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
     description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_present'),
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `已找到 ${rel}（schema_version=${ev.schema_version ?? 'n/a'}）。`,
+    details:
+      `已找到并验证 ${observed.relPath}（schema_version=${observed.evidence.schema_version}）。\n` +
+      `canonical_abs=${observed.absPath}` +
+      (observed.warnings.length > 0 ? `\n警告：\n${truncateList(observed.warnings, 8)}` : ''),
   }];
 }
 
-function checkUtCoverageEvidenceMappingsComplete(
+export function checkUtCoverageEvidenceMappingsComplete(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
+  observed: CoverageEvidenceObservation,
+  dags: LoadedDagFile[],
   acReport?: AcCoverageReport | null,
 ): CheckResult[] {
   const acceptance = ctx.featureSpec.acceptance;
@@ -2480,23 +2669,23 @@ function checkUtCoverageEvidenceMappingsComplete(
       details: '无 unit/both P0/P1 范围，跳过 mapping 完整性。',
     }];
   }
-  const evidence = loadCoverageEvidence(ctx.projectRoot, ctx.feature);
-  if (!evidence) {
+  if (observed.status !== 'loaded') {
     return [{
       id: 'ut_coverage_evidence_mappings_complete',
       category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_mappings_complete'),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: '无 coverage-evidence.json（由 present 规则 FAIL）。',
+      details: `coverage-evidence 状态=${observed.status}（由 ut_coverage_evidence_present 规则报告 canonical 路径与原因）。`,
     }];
   }
-  const dagCtx = loadDagFiles(ctx).map(d => ({ path: d.path, dag: d.dag }));
+  const evidence = observed.evidence;
+  const dagCtx = dags.map(d => ({ path: d.path, dag: d.dag, source: d.source }));
   const gaps: string[] = [];
   for (const ac of targetAcs) {
     const row = evidence.mappings?.find(m => m.scope_id === ac.id);
     if (!row) {
-      gaps.push(`${ac.id}: 缺少 mappings[] 行`);
+      gaps.push(`${ac.id}: 缺少 mappings[] 行；${describeScopeEvidenceAttempt(ctx, utFiles, ac, dagCtx, observed, acReport)}`);
       continue;
     }
     const byTags = acHasUtTagOrBranchCoverage(ctx, utFiles, ac);
@@ -2508,7 +2697,10 @@ function checkUtCoverageEvidenceMappingsComplete(
       ctx.feature,
       acReport,
     )) {
-      gaps.push(`${ac.id}: mapping 无有效依据（须与 evidence_source 一致：ut_tags / DAG linked / ac-coverage ut_covered）`);
+      gaps.push(
+        `${ac.id}: declared evidence_source=${row.evidence_source} 无对应底层证据；` +
+        describeScopeEvidenceAttempt(ctx, utFiles, ac, dagCtx, observed, acReport),
+      );
     }
   }
   if (gaps.length === 0) {
@@ -2518,7 +2710,9 @@ function checkUtCoverageEvidenceMappingsComplete(
       description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_mappings_complete'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `coverage-evidence.json 含 ${targetAcs.length} 条 P0/P1 unit/both 的完整 mapping 且均有依据。`,
+      details:
+        `coverage-evidence.json 含 ${targetAcs.length} 条 P0/P1 unit/both 的完整 mapping 且均有依据。\n` +
+        checkedCoverageInputs(utFiles, dagCtx, observed),
     }];
   }
   return [{
@@ -2527,14 +2721,21 @@ function checkUtCoverageEvidenceMappingsComplete(
     description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_mappings_complete'),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `${gaps.length} 条 P0/P1 mapping 不完整或无依据：\n${truncateList(gaps, 12)}`,
-    suggestion: 'business-ut 须为每条 in-scope P0/P1 AC/BD 写入 mappings[]（evidence_source + 可解析依据）。',
+    details:
+      `${gaps.length} 条 P0/P1 mapping 不完整或无依据：\n${truncateList(gaps, 12)}\n` +
+      checkedCoverageInputs(utFiles, dagCtx, observed),
+    affected_files: [observed.relPath, ...utFiles.map(f => f.path), ...dagCtx.map(d => d.path)],
+    suggestion:
+      `修复 ${observed.relPath} 的 mappings[]：每个 scope_id 一行，且 declared evidence_source 必须由对应 ` +
+      'UT tag、同类 archived/ephemeral DAG linkage 或 ac-coverage ut_covered=true 支撑。',
   }];
 }
 
-function checkUtCoverageEvidenceResolves(
+export function checkUtCoverageEvidenceResolves(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
+  observed: CoverageEvidenceObservation,
+  dags: LoadedDagFile[],
   acReport?: AcCoverageReport | null,
 ): CheckResult[] {
   const acceptance = ctx.featureSpec.acceptance;
@@ -2559,22 +2760,10 @@ function checkUtCoverageEvidenceResolves(
       details: '无 unit/both P0/P1 范围，跳过。',
     }];
   }
-  if (utFiles.length === 0) {
-    return [{
-      id: 'ut_coverage_evidence_resolves',
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_resolves'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: '无 UT 文件；in-scope unit/both 无法解析覆盖证据。',
-      suggestion: '补 UT 或写入 coverage-evidence.json 说明 allowlist 降级原因。',
-    }];
-  }
-
-  const evidence = loadCoverageEvidence(ctx.projectRoot, ctx.feature);
+  const evidence = observed.status === 'loaded' ? observed.evidence : undefined;
   const missing: string[] = [];
 
-  const dagCtx = loadDagFiles(ctx).map(d => ({ path: d.path, dag: d.dag }));
+  const dagCtx = dags.map(d => ({ path: d.path, dag: d.dag, source: d.source }));
 
   for (const ac of targetAcs) {
     const byTags = acHasUtTagOrBranchCoverage(ctx, utFiles, ac);
@@ -2588,7 +2777,10 @@ function checkUtCoverageEvidenceResolves(
       mapping: row,
       acReport,
     })) {
-      missing.push(`${ac.id} (${ac.priority}${ac.ut_layer ? `, ut_layer=${ac.ut_layer}` : ''})`);
+      missing.push(
+        `${ac.id} (${ac.priority}${ac.ut_layer ? `, ut_layer=${ac.ut_layer}` : ''}); ` +
+        describeScopeEvidenceAttempt(ctx, utFiles, ac, dagCtx, observed, acReport),
+      );
     }
   }
 
@@ -2599,7 +2791,10 @@ function checkUtCoverageEvidenceResolves(
       description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_resolves'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `所有 in-scope unit/both P0/P1（${targetAcs.length} 条）均有可解析覆盖证据（mapping 或 UT 标签/branch）。`,
+      details:
+        `所有 in-scope unit/both P0/P1（${targetAcs.length} 条）均有可解析覆盖证据` +
+        '（UT tag/branch、DAG、ac-coverage 或受底层证据支撑的 mapping）。\n' +
+        checkedCoverageInputs(utFiles, dagCtx, observed),
     }];
   }
 
@@ -2609,15 +2804,21 @@ function checkUtCoverageEvidenceResolves(
     description: ruleDesc(ctx, 'traceability_checks', 'ut_coverage_evidence_resolves'),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `${missing.length} 条 in-scope AC/BD 无覆盖证据（非 allowlist SKIP）：\n${truncateList(missing, 15)}`,
-    suggestion: '补 it() 标签、[BRANCH-*]、ephemeral/archived DAG，或在 coverage-evidence.json 登记映射。',
+    details:
+      `${missing.length} 条 in-scope AC/BD 无覆盖证据（非 allowlist SKIP）：\n${truncateList(missing, 15)}\n` +
+      checkedCoverageInputs(utFiles, dagCtx, observed),
+    affected_files: [...utFiles.map(f => f.path), ...dagCtx.map(d => d.path), observed.relPath],
+    suggestion:
+      '按每条诊断补精确 it() tag/linked branch、DAG linkage 或 ac-coverage 事实；若写 mapping，' +
+      `在 ${observed.relPath} 声明与底层证据一致的 evidence_source。git add 不会改变解析结果。`,
   }];
 }
 
-function checkUtCasePerUnitAc(
+export function checkUtCasePerUnitAc(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
-  dags?: Array<{ path: string; dag: DagFile }>,
+  observed: CoverageEvidenceObservation,
+  dags?: Array<{ path: string; dag: DagFile; source?: 'archived' | 'ephemeral' }>,
   acReport?: AcCoverageReport | null,
 ): CheckResult[] {
   if (dags && dagsAreCharacterization(dags)) {
@@ -2659,12 +2860,16 @@ function checkUtCasePerUnitAc(
       description: ruleDesc(ctx, 'traceability_checks', 'ut_case_per_unit_ac'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: '无 UT 文件可分析；in-scope unit/both 缺证据 → FAIL/INCOMPLETE。',
+      details:
+        '无 scoped UT 文件可分析；ut_case_per_unit_ac 至少要求当前 feature 有一个可分析 UT 文件。\n' +
+        checkedCoverageInputs([], dags ?? [], observed),
+      suggestion:
+        '在 contracts.modules[].package_path 对应的单元测试目录下补测试文件，并以精确 [AC-*] / [BRANCH-*] 标签关联；无需 git add。',
     }];
   }
 
-  const evidence = loadCoverageEvidence(ctx.projectRoot, ctx.feature);
-  const dagCtx = (dags ?? loadDagFiles(ctx)).map(d => ({ path: d.path, dag: d.dag }));
+  const evidence = observed.status === 'loaded' ? observed.evidence : undefined;
+  const dagCtx = (dags ?? []).map(d => ({ path: d.path, dag: d.dag, source: d.source }));
   const missing: string[] = [];
   for (const ac of targetAcs) {
     const byTags = acHasUtTagOrBranchCoverage(ctx, utFiles, ac);
@@ -2678,7 +2883,10 @@ function checkUtCasePerUnitAc(
       mapping: row,
       acReport,
     })) {
-      missing.push(`${ac.id} (${ac.priority}${ac.ut_layer ? `, ut_layer=${ac.ut_layer}` : ''}): ${ac.description}`);
+      missing.push(
+        `${ac.id} (${ac.priority}${ac.ut_layer ? `, ut_layer=${ac.ut_layer}` : ''}): ${ac.description}; ` +
+        describeScopeEvidenceAttempt(ctx, utFiles, ac, dagCtx, observed, acReport),
+      );
     }
   }
 
@@ -2689,7 +2897,9 @@ function checkUtCasePerUnitAc(
       description: ruleDesc(ctx, 'traceability_checks', 'ut_case_per_unit_ac'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: `所有 ut_layer∈{unit,both} 且 P0/P1 的 ${targetAcs.length} 条 AC/BD 均有对应 UT 用例。`,
+      details:
+        `所有 ut_layer∈{unit,both} 且 P0/P1 的 ${targetAcs.length} 条 AC/BD 均有可解析 UT 覆盖证据。\n` +
+        checkedCoverageInputs(utFiles, dagCtx, observed),
     }];
   }
 
@@ -2699,8 +2909,13 @@ function checkUtCasePerUnitAc(
     description: ruleDesc(ctx, 'traceability_checks', 'ut_case_per_unit_ac'),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `${missing.length} 条 in-scope AC/BD 无覆盖证据：\n${truncateList(missing, 15)}`,
-    suggestion: '为上述 AC/BD 补 it() 用例，其名称以 [AC-<id>] 或 [BRANCH-<linked_branch>] 起始。',
+    details:
+      `${missing.length} 条 in-scope AC/BD 无覆盖证据：\n${truncateList(missing, 15)}\n` +
+      checkedCoverageInputs(utFiles, dagCtx, observed),
+    affected_files: [...utFiles.map(f => f.path), ...dagCtx.map(d => d.path), observed.relPath],
+    suggestion:
+      '优先为上述 AC/BD 补精确 it() 标签（名称以 [AC-<完整 id>] 或 [BRANCH-<linked_branch>] 起始）；' +
+      '若使用 DAG/ac-coverage/mapping 证据，须让对应 source 可解析。git add 不会改变证据。',
   }];
 }
 
@@ -2760,10 +2975,9 @@ function checkBoundaryCoverage(
 
   const missing: string[] = [];
   for (const bd of targetBds) {
-    const directRe = new RegExp(`\\[${bd.id}\\]`);
-    const foundByIt = itNames.some(n => directRe.test(n));
+    const foundByIt = itNames.some(n => hasExactUtScopeTag(n, bd.id));
     const foundByBody = !!bd.linked_branch && blocks.some(b =>
-      new RegExp(`\\[BRANCH-${bd.linked_branch}\\]`).test(b.name) || b.body.includes(bd.linked_branch!),
+      hasExactUtBranchTag(b.name, bd.linked_branch!) || b.body.includes(bd.linked_branch!),
     );
     const foundByDag = dagLinked.has(bd.id);
     const foundByBranchSpec = branchLinked.has(bd.id);
@@ -2825,6 +3039,142 @@ function mockPlanPath(ctx: CheckContext): string {
   return featureArtifactPath(ctx.projectRoot, ctx.feature, 'mock-plan.yaml');
 }
 
+export type UtMachineArtifactObservation<T> =
+  | { status: 'missing'; absPath: string; relPath: string }
+  | { status: 'invalid'; absPath: string; relPath: string; errors: string[] }
+  | { status: 'loaded'; absPath: string; relPath: string; value: T; warnings: string[] };
+
+function artifactIssuesByField(
+  issues: Array<{ field: string; message: string }>,
+  fields: ReadonlySet<string>,
+): string[] {
+  return issues
+    .filter(issue => fields.has(issue.field))
+    .map(issue => `${issue.field}: ${issue.message}`);
+}
+
+export function inspectTestabilityAudit(
+  ctx: CheckContext,
+): UtMachineArtifactObservation<TestabilityAuditRecord[]> {
+  const absPath = testabilityAuditPath(ctx);
+  const relPath = path.relative(ctx.projectRoot, absPath).replace(/\\/g, '/');
+  if (!fs.existsSync(absPath)) return { status: 'missing', absPath, relPath };
+  const validation = validateTestabilityAuditFile(absPath);
+  const parseErrors = artifactIssuesByField(
+    validation.errors,
+    new Set(['format', 'yaml', 'records', 'file']),
+  );
+  if (parseErrors.length > 0) {
+    return {
+      status: 'invalid',
+      absPath,
+      relPath,
+      errors: parseErrors,
+    };
+  }
+  return {
+    status: 'loaded',
+    absPath,
+    relPath,
+    value: parseTestabilityAuditFile(absPath),
+    warnings: validation.warnings.map(w => `${w.field}: ${w.message}`),
+  };
+}
+
+export function inspectMockPlan(
+  ctx: CheckContext,
+): UtMachineArtifactObservation<MockPlanSpec> {
+  const absPath = mockPlanPath(ctx);
+  const relPath = path.relative(ctx.projectRoot, absPath).replace(/\\/g, '/');
+  if (!fs.existsSync(absPath)) return { status: 'missing', absPath, relPath };
+  const validation = validateMockPlanFile(absPath);
+  const plan = parseMockPlanFile(absPath);
+  const parseErrors = artifactIssuesByField(
+    validation.errors,
+    new Set(['format', 'root', 'yaml', 'parse', 'file']),
+  );
+  if (parseErrors.length > 0 || !plan) {
+    return {
+      status: 'invalid',
+      absPath,
+      relPath,
+      errors: parseErrors.length > 0
+        ? parseErrors
+        : ['parse: mock-plan.yaml 无法解析为 YAML mapping/object'],
+    };
+  }
+  return {
+    status: 'loaded',
+    absPath,
+    relPath,
+    value: plan,
+    warnings: validation.warnings.map(w => `${w.field}: ${w.message}`),
+  };
+}
+
+export function checkUtMachineArtifactParseable<T>(
+  ctx: CheckContext,
+  id: 'ut_testability_audit_parseable' | 'ut_mock_plan_parseable',
+  label: string,
+  observed: UtMachineArtifactObservation<T>,
+): CheckResult[] {
+  if (observed.status === 'missing') {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: `${label} 不存在；canonical_rel=${observed.relPath}；由对应 presence gate 决定是否必需。`,
+    }];
+  }
+  if (observed.status === 'invalid') {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `${label} 已存在但无法作为机器产物消费。\n` +
+        `canonical_rel=${observed.relPath}\ncanonical_abs=${observed.absPath}\n` +
+        truncateList(observed.errors, 12),
+      affected_files: [observed.relPath],
+      suggestion: `修复 ${observed.relPath} 的 YAML/根节点/字段格式；文件已被 harness 找到，不需要 git add。`,
+    }];
+  }
+  return [{
+    id,
+    category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', id),
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details:
+      `${label} 已解析：${observed.relPath}` +
+      (observed.warnings.length > 0 ? `\n警告：\n${truncateList(observed.warnings, 8)}` : ''),
+  }];
+}
+
+function skipBecauseArtifactInvalid(
+  ctx: CheckContext,
+  id: string,
+  category: 'structure' | 'traceability',
+  relPath: string,
+): CheckResult[] {
+  return [{
+    id,
+    category,
+    description: ruleDesc(
+      ctx,
+      category === 'structure' ? 'structure_checks' : 'traceability_checks',
+      id,
+    ),
+    severity: 'BLOCKER',
+    status: 'SKIP',
+    details: `${relPath} 存在但无效；由对应 *_parseable / present BLOCKER 报告解析原因，本检查不重复误报为缺失。`,
+  }];
+}
+
 function auditLevelNorm(level?: string): string {
   return (level ?? '').trim().toUpperCase();
 }
@@ -2866,7 +3216,10 @@ function resolveAuditEntryPoint(ctx: CheckContext, record: TestabilityAuditRecor
   return undefined;
 }
 
-function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
+function checkUtTestabilityAuditPresent(
+  ctx: CheckContext,
+  observed: UtMachineArtifactObservation<TestabilityAuditRecord[]>,
+): CheckResult[] {
   const id = 'ut_testability_audit_present';
   const requiredIds = collectUnitScopeAcceptanceIds(ctx);
   if (requiredIds.length === 0) {
@@ -2880,8 +3233,10 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const p = testabilityAuditPath(ctx);
-  if (!fs.existsSync(p)) {
+  if (observed.status === 'invalid') {
+    return skipBecauseArtifactInvalid(ctx, id, 'structure', observed.relPath);
+  }
+  if (observed.status === 'missing') {
     return [{
       id,
       category: 'structure',
@@ -2889,13 +3244,13 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        `缺少 ${path.relative(ctx.projectRoot, p).replace(/\\/g, '/')}\n` +
+        `缺少 ${observed.relPath}\ncanonical_abs=${observed.absPath}\n` +
         `模板：${utSuggestionPaths(ctx).testabilityAuditTemplateRel}`,
       suggestion: '为每条 unit/both 的 AC/BD 写入 testability-audit.md（Markdown 内嵌 YAML，根字段 records[]）',
     }];
   }
 
-  const records = parseTestabilityAuditFile(p);
+  const records = observed.value;
   const byAc = new Map(records.map(r => [r.acceptance_id, r]));
   const missing = requiredIds.filter(aid => !byAc.has(aid));
 
@@ -2921,11 +3276,16 @@ function checkUtTestabilityAuditPresent(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
+function checkUtUnsupportedTargetsHandled(
+  ctx: CheckContext,
+  observed: UtMachineArtifactObservation<TestabilityAuditRecord[]>,
+): CheckResult[] {
   const id = 'ut_unsupported_targets_handled';
 
-  const p = testabilityAuditPath(ctx);
-  if (!fs.existsSync(p)) {
+  if (observed.status === 'invalid') {
+    return skipBecauseArtifactInvalid(ctx, id, 'structure', observed.relPath);
+  }
+  if (observed.status === 'missing') {
     return [{
       id,
       category: 'structure',
@@ -2936,7 +3296,7 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const records = parseTestabilityAuditFile(p);
+  const records = observed.value;
   const l3 = records.filter(r => auditLevelNorm(r.testability_level) === 'L3');
   if (l3.length === 0) {
     return [{
@@ -3004,7 +3364,11 @@ function checkUtUnsupportedTargetsHandled(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditRecord[]): CheckResult[] {
+function checkUtMockPlanPresent(
+  ctx: CheckContext,
+  records: TestabilityAuditRecord[],
+  observed: UtMachineArtifactObservation<MockPlanSpec>,
+): CheckResult[] {
   const id = 'ut_mock_plan_present';
   const need = auditRecordsNeedMockPlan(records);
   if (need.length === 0) {
@@ -3018,7 +3382,10 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
     }];
   }
 
-  const mp = parseMockPlanFile(mockPlanPath(ctx));
+  if (observed.status === 'invalid') {
+    return skipBecauseArtifactInvalid(ctx, id, 'structure', observed.relPath);
+  }
+  const mp = observed.status === 'loaded' ? observed.value : null;
   const entries = getMockPlanEntries(mp);
   if (!mp || entries.length === 0) {
     return [{
@@ -3485,7 +3852,13 @@ function statusLabel(r: CheckResult | undefined): string {
 
 function buildUtRunStatusResult(
   results: CheckResult[],
-  scopeInfo?: { allCount: number; scopedCount: number; scopeSources: string[] },
+  scopeInfo?: {
+    allCount: number;
+    scopedCount: number;
+    scopeSources: string[];
+    scopedFiles: string[];
+    scopeDiagnostics: string[];
+  },
 ): CheckResult {
   const build = findFirst(results, 'ut_hvigor_build');
   const test = findFirst(results, 'ut_hvigor_test');
@@ -3508,7 +3881,14 @@ function buildUtRunStatusResult(
   const lines = [
     'UT 阶段状态面板：',
     ...(scopeInfo
-      ? [`- UT 文件范围：all=${scopeInfo.allCount}, scoped=${scopeInfo.scopedCount}（${scopeInfo.scopeSources.join(', ')}）`]
+      ? [
+          `- UT 文件范围：all=${scopeInfo.allCount}, scoped=${scopeInfo.scopedCount}`,
+          `- scope 来源：${scopeInfo.scopeSources.slice(0, 12).join(', ') || '(无)'}`,
+          `- scoped 文件：${scopeInfo.scopedFiles.slice(0, 12).join(', ') || '(无)'}`,
+          ...(scopeInfo.scopeDiagnostics.length > 0
+            ? [`- scope 诊断：${scopeInfo.scopeDiagnostics.slice(0, 8).join(' | ')}`]
+            : []),
+        ]
       : []),
     `- 静态/结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
     `- tsc 静态编译：${statusLabel(tsc)}`,
@@ -3560,20 +3940,35 @@ const checker: PhaseChecker = {
       ];
     }
 
-    const dags = loadDagFiles(ctx);
+    const dagObservation = loadDagFiles(ctx);
+    const dags = dagObservation.files;
+    const coverageObservation = inspectCoverageEvidence(ctx);
+    const auditObservation = inspectTestabilityAudit(ctx);
+    const mockPlanObservation = inspectMockPlan(ctx);
     const allUtFiles = utHost.loadUtFiles(ctx);
     const partition = utHost.partitionUtFiles?.(ctx, allUtFiles) ?? {
       all: allUtFiles,
       scoped: allUtFiles,
       scopeSources: ['fallback:all'],
+      scopeDiagnostics: ['profile-partitioner-unavailable'],
     };
     const scopedUtFiles = partition.scoped;
-    const mockPlanDoc = parseMockPlanFile(mockPlanPath(ctx));
-    const auditRecordsEarly = parseTestabilityAuditFile(testabilityAuditPath(ctx));
+    const mockPlanDoc = mockPlanObservation.status === 'loaded' ? mockPlanObservation.value : null;
+    const auditRecordsEarly = auditObservation.status === 'loaded' ? auditObservation.value : [];
 
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
+
+    results.push(...safeRun(() => checkDagFilesParseable(ctx, dagObservation), 'dag_files_parseable'));
+    results.push(...safeRun(
+      () => checkUtMachineArtifactParseable(ctx, 'ut_testability_audit_parseable', 'testability-audit.md', auditObservation),
+      'ut_testability_audit_parseable',
+    ));
+    results.push(...safeRun(
+      () => checkUtMachineArtifactParseable(ctx, 'ut_mock_plan_parseable', 'mock-plan.yaml', mockPlanObservation),
+      'ut_mock_plan_parseable',
+    ));
 
     results.push(
       ...safeRun(
@@ -3612,11 +4007,21 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNamedBusinessHandler(ctx), 'named_business_handler'));
 
     // v2.3：可测性预检 + mock-plan（先于 DAG 拓扑之后的 trace，但逻辑上属于 UT 规约门禁）
-    results.push(...safeRun(() => checkUtTestabilityAuditPresent(ctx), 'ut_testability_audit_present'));
-    results.push(...safeRun(() => checkUtUnsupportedTargetsHandled(ctx), 'ut_unsupported_targets_handled'));
-    results.push(...safeRun(() => checkUtMockPlanPresent(ctx, auditRecordsEarly), 'ut_mock_plan_present'));
-    results.push(...safeRun(() => checkUtMockPlanTyped(ctx, mockPlanDoc), 'ut_mock_plan_typed'));
-    results.push(...safeRun(() => checkUtMockPlanContractsConsistent(ctx, mockPlanDoc), 'ut_mock_plan_contracts_consistent'));
+    results.push(...safeRun(() => checkUtTestabilityAuditPresent(ctx, auditObservation), 'ut_testability_audit_present'));
+    results.push(...safeRun(() => checkUtUnsupportedTargetsHandled(ctx, auditObservation), 'ut_unsupported_targets_handled'));
+    results.push(...safeRun(() => checkUtMockPlanPresent(ctx, auditRecordsEarly, mockPlanObservation), 'ut_mock_plan_present'));
+    results.push(...safeRun(
+      () => mockPlanObservation.status === 'invalid'
+        ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_typed', 'structure', mockPlanObservation.relPath)
+        : checkUtMockPlanTyped(ctx, mockPlanDoc),
+      'ut_mock_plan_typed',
+    ));
+    results.push(...safeRun(
+      () => mockPlanObservation.status === 'invalid'
+        ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_contracts_consistent', 'structure', mockPlanObservation.relPath)
+        : checkUtMockPlanContractsConsistent(ctx, mockPlanDoc),
+      'ut_mock_plan_contracts_consistent',
+    ));
 
     // v1 保留 + v2 修订：DAG 结构
     results.push(...safeRun(() => checkDagSchemaCompliance(ctx, dags), 'dag_schema_compliance'));
@@ -3628,14 +4033,21 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDagBoundaryMatchesSpec(ctx, dags), 'dag_boundary_matches_spec'));
     results.push(...safeRun(() => checkDagAssertionLinkedBranch(ctx, dags), 'dag_assertion_linked_branch'));
     results.push(...safeRun(() => checkDagCohesion(ctx, dags), 'dag_cohesion'));
-    results.push(...safeRun(() => checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc), 'dag_spy_preset_resolvable'));
+    results.push(...safeRun(
+      () => mockPlanObservation.status === 'invalid'
+        ? skipBecauseArtifactInvalid(ctx, 'dag_spy_preset_resolvable', 'structure', mockPlanObservation.relPath)
+        : checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc),
+      'dag_spy_preset_resolvable',
+    ));
 
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
     results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
     results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
     results.push(
       ...safeRun(
-        () => checkUtHypiumMockkitPolicy(ctx, mockPlanDoc, allUtFiles, auditRecordsEarly),
+        () => mockPlanObservation.status === 'invalid'
+          ? skipBecauseArtifactInvalid(ctx, 'ut_hypium_mockkit_policy', 'structure', mockPlanObservation.relPath)
+          : checkUtHypiumMockkitPolicy(ctx, mockPlanDoc, allUtFiles, auditRecordsEarly),
         'ut_hypium_mockkit_policy',
       ),
     );
@@ -3700,7 +4112,7 @@ const checker: PhaseChecker = {
 
     // --- Traceability checks ---
     results.push(...safeRun(() => checkDagToAcceptance(ctx, dags), 'dag_to_acceptance'));
-    results.push(...safeRun(() => checkAcceptanceCoverage(ctx, dags), 'acceptance_coverage'));
+    results.push(...safeRun(() => checkAcceptanceCoverage(ctx, dags, dagObservation), 'acceptance_coverage'));
     results.push(...safeRun(() => checkDagToSource(ctx, dags), 'dag_to_source'));
 
     let acCoverageReport: AcCoverageReport | null = null;
@@ -3718,13 +4130,13 @@ const checker: PhaseChecker = {
     }
 
     // v2 Traceability（须在 ac-coverage.json 落盘之后，以便 ac_coverage 证据首轮可解析）
-    results.push(...safeRun(() => checkUtCoverageEvidencePresent(ctx), 'ut_coverage_evidence_present'));
-    results.push(...safeRun(() => checkUtCoverageEvidenceMappingsComplete(ctx, scopedUtFiles, acCoverageReport), 'ut_coverage_evidence_mappings_complete'));
-    results.push(...safeRun(() => checkUtCoverageEvidenceResolves(ctx, scopedUtFiles, acCoverageReport), 'ut_coverage_evidence_resolves'));
+    results.push(...safeRun(() => checkUtCoverageEvidencePresent(ctx, coverageObservation), 'ut_coverage_evidence_present'));
+    results.push(...safeRun(() => checkUtCoverageEvidenceMappingsComplete(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_coverage_evidence_mappings_complete'));
+    results.push(...safeRun(() => checkUtCoverageEvidenceResolves(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_coverage_evidence_resolves'));
     results.push(...safeRun(() => checkOriginTagRequired(dags, ctx), 'origin_tag_required'));
     results.push(...safeRun(() => checkCharacterizationTraceMatches(ctx, dags, scopedUtFiles), 'characterization_trace_matches'));
     results.push(...safeRun(() => checkBranchCoverageFull(ctx, scopedUtFiles, dags), 'branch_coverage_full'));
-    results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, scopedUtFiles, dags, acCoverageReport), 'ut_case_per_unit_ac'));
+    results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_case_per_unit_ac'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, scopedUtFiles, dags), 'boundary_coverage'));
 
     if (acCoverageReport && acCoverageRel) {
@@ -3754,6 +4166,8 @@ const checker: PhaseChecker = {
       allCount: partition.all.length,
       scopedCount: partition.scoped.length,
       scopeSources: partition.scopeSources,
+      scopedFiles: partition.scoped.map(f => f.path),
+      scopeDiagnostics: partition.scopeDiagnostics ?? [],
     }));
 
     return results;

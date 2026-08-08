@@ -31,15 +31,28 @@ function initGitRepo(dir: string): void {
   execSync('git commit -m init', { cwd: dir, stdio: 'ignore' });
 }
 
-function makeCtx(projectRoot: string, feature: string): CheckContext {
+function makeCtx(
+  projectRoot: string,
+  feature: string,
+  featureSpec: CheckContext['featureSpec'] = {} as CheckContext['featureSpec'],
+): CheckContext {
   return {
     projectRoot,
     feature,
     frameworkRoot: projectRoot,
     phaseRule: {} as CheckContext['phaseRule'],
-    featureSpec: {} as CheckContext['featureSpec'],
+    featureSpec,
     resolvedProfile: { name: 'hmos-app', profileDir: '', subVariant: undefined, personalPrerequisites: {} },
   } as CheckContext;
+}
+
+function withTmpDir(fn: (dir: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-file-scope-nongit-'));
+  try {
+    fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function withTmpRepo(fn: (dir: string) => void): void {
@@ -101,11 +114,81 @@ function testGitWorkingTreeScoped(): void {
   });
 }
 
+function writeContextPath(dir: string, feature: string, testPath: string): void {
+  const explDir = path.join(dir, `doc/features/${feature}/ut`);
+  fs.mkdirSync(explDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(explDir, 'context-exploration.md'),
+    ['---', 'source_code_paths:', `  - ${testPath}`, '---', ''].join('\n'),
+    'utf-8',
+  );
+}
+
+function testIgnoredFileScopedByContextPath(): void {
+  withTmpRepo(dir => {
+    fs.writeFileSync(path.join(dir, '.gitignore'), `${TEST_B}\n`, 'utf-8');
+    const abs = path.join(dir, TEST_B);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, "it('[AC-01] ignored but relevant', 0, () => { expect(true); });\n", 'utf-8');
+    writeContextPath(dir, 'demo', TEST_B);
+    const all = [
+      { path: TEST_A, content: "it('[AC-01] same local id from old feature', 0, () => { expect(true); });" },
+      { path: TEST_B, content: fs.readFileSync(abs, 'utf-8') },
+    ];
+    const part = partitionUtFiles(makeCtx(dir, 'demo'), all);
+    assert(part.scoped.length === 1, `expected context-only scope, got ${part.scoped.length}`);
+    assert(part.scoped[0].path === TEST_B, part.scoped.map(f => f.path).join(','));
+    assert(part.scopeSources.some(s => s === `context:${TEST_B}`), part.scopeSources.join(','));
+    assert(!part.scopeSources.some(s => s === `git:${TEST_B}`), 'ignored test must not rely on git');
+  });
+}
+
+function testNonGitContextScopeAndFallbackDiagnostics(): void {
+  withTmpDir(dir => {
+    const all = [
+      { path: TEST_A, content: "it('[AC-01] relevant', 0, () => { expect(true); });" },
+      { path: TEST_B, content: "it('[AC-99] unrelated', 0, () => { expect(true); });" },
+    ];
+    writeContextPath(dir, 'demo', TEST_A);
+    const contextual = partitionUtFiles(makeCtx(dir, 'demo'), all);
+    assert(contextual.scoped.length === 1 && contextual.scoped[0].path === TEST_A, 'non-git context scope');
+    assert(contextual.scopeSources.includes(`context:${TEST_A}`), contextual.scopeSources.join(','));
+    assert(contextual.scopeDiagnostics.some(s => s.startsWith('git-unavailable:')), contextual.scopeDiagnostics.join(','));
+
+    fs.rmSync(path.join(dir, 'doc'), { recursive: true, force: true });
+    const fallback = partitionUtFiles(makeCtx(dir, 'demo'), all);
+    assert(fallback.scoped.length === 2, 'non-git fallback must keep all files');
+    assert(fallback.scopeSources.includes('fallback:all'), fallback.scopeSources.join(','));
+    assert(fallback.scopeDiagnostics.some(s => s.startsWith('git-unavailable:')), fallback.scopeDiagnostics.join(','));
+  });
+}
+
+function testSameLocalAcDoesNotExpandGitScope(): void {
+  withTmpRepo(dir => {
+    const currentAbs = path.join(dir, TEST_B);
+    fs.mkdirSync(path.dirname(currentAbs), { recursive: true });
+    fs.writeFileSync(currentAbs, "it('[AC-01] current feature', 0, () => { expect(true); });\n", 'utf-8');
+    const all = [
+      { path: TEST_A, content: "it('[AC-01] previous feature', 0, () => { expect(true); });" },
+      { path: TEST_B, content: fs.readFileSync(currentAbs, 'utf-8') },
+    ];
+    const part = partitionUtFiles(makeCtx(dir, 'current-feature', {
+      acceptance: { criteria: [{ id: 'AC-01' }], boundaries: [] },
+    } as unknown as CheckContext['featureSpec']), all);
+    assert(part.scoped.length === 1 && part.scoped[0].path === TEST_B, part.scoped.map(f => f.path).join(','));
+    assert(part.scopeSources.includes(`git:${TEST_B}`), part.scopeSources.join(','));
+    assert(!part.scoped.some(file => file.path === TEST_A), 'same local AC id must not assign old file to feature');
+  });
+}
+
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
     { name: 'fallback all when no scope', fn: testFallbackAllWhenNoScope },
     { name: 'context-exploration declares scoped test', fn: testContextExplorationScoped },
     { name: 'git working tree scopes changed test', fn: testGitWorkingTreeScoped },
+    { name: 'ignored test is scoped by explicit feature context', fn: testIgnoredFileScopedByContextPath },
+    { name: 'non-git context scope and fallback are deterministic', fn: testNonGitContextScopeAndFallbackDiagnostics },
+    { name: 'same local AC id does not expand current feature scope', fn: testSameLocalAcDoesNotExpandGitScope },
   ];
   return cases.map(({ name, fn }) => {
     try {

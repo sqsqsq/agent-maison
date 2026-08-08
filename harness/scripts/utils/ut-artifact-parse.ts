@@ -125,61 +125,72 @@ function mergeParsedYamlDocuments(docs: unknown[]): TestabilityAuditRecord[] {
   return out;
 }
 
+export interface TestabilityAuditParseResult {
+  records: TestabilityAuditRecord[];
+  errors: string[];
+}
+
+function validateAuditDocumentShape(doc: unknown, label: string, errors: string[]): void {
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    errors.push(`${label}: 根节点必须是 YAML mapping/object`);
+    return;
+  }
+  const value = doc as Record<string, unknown>;
+  if ('records' in value && !Array.isArray(value.records)) {
+    errors.push(`${label}: records 必须是数组`);
+    return;
+  }
+  if (!('records' in value) && typeof value.acceptance_id !== 'string') {
+    errors.push(`${label}: 须包含 records[] 或单条 acceptance_id`);
+  }
+}
+
+export function parseTestabilityAuditFromTextDetailed(text: string): TestabilityAuditParseResult {
+  const docs: unknown[] = [];
+  const errors: string[] = [];
+  const fenced = extractYamlFencedBlocks(text);
+  if (fenced.length > 0) {
+    fenced.forEach((block, index) => {
+      const label = `fenced yaml #${index + 1}`;
+      try {
+        const doc = YAML.parse(block);
+        validateAuditDocumentShape(doc, label, errors);
+        docs.push(doc);
+      } catch (e) {
+        errors.push(`${label}: YAML 解析失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+  } else {
+    try {
+      const doc = YAML.parse(text);
+      validateAuditDocumentShape(doc, 'document', errors);
+      docs.push(doc);
+    } catch (e) {
+      errors.push(`document: YAML 解析失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { records: mergeParsedYamlDocuments(docs), errors };
+}
+
 /**
  * 解析 testability-audit.md：支持纯 YAML 或 Markdown + fenced yaml。
  */
 export function parseTestabilityAuditFile(filePath: string): TestabilityAuditRecord[] {
   if (!fs.existsSync(filePath)) return [];
   const text = fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '');
-  const docs: unknown[] = [];
-
-  const fenced = extractYamlFencedBlocks(text);
-  if (fenced.length > 0) {
-    for (const block of fenced) {
-      try {
-        docs.push(YAML.parse(block));
-      } catch {
-        /* skip corrupt block */
-      }
-    }
-  } else {
-    try {
-      docs.push(YAML.parse(text));
-    } catch {
-      return [];
-    }
-  }
-
-  return mergeParsedYamlDocuments(docs);
+  return parseTestabilityAuditFromTextDetailed(text).records;
 }
 
 /** 从文本解析 testability-audit（不落盘）。 */
 export function parseTestabilityAuditFromText(text: string): TestabilityAuditRecord[] {
-  const docs: unknown[] = [];
-  const fenced = extractYamlFencedBlocks(text);
-  if (fenced.length > 0) {
-    for (const block of fenced) {
-      try {
-        docs.push(YAML.parse(block));
-      } catch {
-        /* skip corrupt block */
-      }
-    }
-  } else {
-    try {
-      docs.push(YAML.parse(text));
-    } catch {
-      return [];
-    }
-  }
-  return mergeParsedYamlDocuments(docs);
+  return parseTestabilityAuditFromTextDetailed(text).records;
 }
 
 export function parseMockPlanFile(filePath: string): MockPlanSpec | null {
   if (!fs.existsSync(filePath)) return null;
   try {
     const doc = YAML.parse(fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''));
-    if (!doc || typeof doc !== 'object') return null;
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null;
     return doc as MockPlanSpec;
   } catch {
     return null;

@@ -35,6 +35,8 @@ Generated: 2026-07-29 · current window: `3.0.0`
   - `testing误伤与回修缺口_生成物分类与真机缺陷回退_d9e4b7c1.plan.md`
 - **ut 签名/环境缺口失败分类修正 + 分层诊断头部化 + 装机失败话术硬约束** — > [4/5 completed]
   - `ut-sign-gap-toolchain-classify_签名环境缺口误归code-regression与诊断头部化_b4e7a2c9.plan.md`
+- **UT 诊断真实性 — feature scope 归属与覆盖证据收口** — business-UT gate correctness 收口：① AC 与 BD 的同数字后缀不再互相冒充覆盖；② coverage-evidence 的 dag_archived/dag_ephemeral 声明必须匹配真实 DAG 来源；③ 存在但损坏的 DAG、coverage-evidence、testability-audit、mock-plan 从静默跳过或按缺失处理改为路径明确的 BLOCKER；④ it() 名称门直接接受 [BD-<id>] 起始。canonical 路径与 schema 未变，无需迁移。 [1/1 completed]
+  - `ut_diagnostic_truth_scope_and_evidence_d3f8a1c6.plan.md`
 - **vision-canary 缓存生命周期与探测有效性加固 — probe_version 迁移 + 严格判卷 + TTL** — (no overview) [0/0 completed]
   - `vision-canary-probe-validity_探测失败不落盲档缓存_c7d2e9a4.plan.md`
 - **场外信任状态最小化 — 测试隔离 / 生命周期回收 / 单写者修复 / 金丝雀临时化** — > [4/4 completed]

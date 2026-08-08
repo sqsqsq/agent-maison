@@ -51,7 +51,9 @@
 
 **优先级**（高→低）：`dag_archived` > `dag_ephemeral` > `ac_coverage` > `ut_tags`
 
-**DAG 追溯**：`linked_acceptance` / `linked_boundaries` 可在 DAG 顶层或 `nodes[]`（如 assertion 节点）声明。
+**DAG 追溯**：`linked_acceptance` / `linked_boundaries` 可在 DAG 顶层或 `nodes[]`（如 assertion 节点）声明；`dag_archived` 只能由模块 `test/dag/` 下的 DAG 支撑，`dag_ephemeral` 只能由本 feature `ut/reports/flow-dag/` 下的 DAG 支撑。
+
+**精确 ID**：`[AC-01]` 只覆盖 `AC-01`，不得因数字后缀相同而覆盖 `BD-01`（反向亦同）。Git staging 状态不属于证据；无需通过 `git add` 让 harness 识别标签。
 
 **ac_coverage**：须对应 `ut/reports/ac-coverage.json` 中该 `scope_id` 的 `ut_covered: true`（harness UT 阶段写入）。
 

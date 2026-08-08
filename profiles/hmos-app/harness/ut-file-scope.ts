@@ -22,6 +22,7 @@ export interface UtFilePartition {
   all: UtFileEntry[];
   scoped: UtFileEntry[];
   scopeSources: string[];
+  scopeDiagnostics: string[];
 }
 
 const TEST_FILE_RE = /\.test\.ets$/i;
@@ -35,12 +36,18 @@ function isUtTestPath(rel: string): boolean {
   return TEST_FILE_RE.test(rel) && OHOSTEST_PATH_RE.test(rel);
 }
 
-function collectDeclaredTestPathsFromContextExploration(projectRoot: string, feature: string): string[] {
+interface ScopeProbe {
+  paths: string[];
+  diagnostics: string[];
+}
+
+function collectDeclaredTestPathsFromContextExploration(projectRoot: string, feature: string): ScopeProbe {
   const candidates = [
     featureFilePath(projectRoot, feature, path.join('ut', 'context-exploration.md')),
     featureFilePath(projectRoot, feature, 'context-exploration.md'),
   ];
   const out = new Set<string>();
+  const diagnostics: string[] = [];
   for (const p of candidates) {
     if (!fs.existsSync(p)) continue;
     const text = fs.readFileSync(p, 'utf-8').replace(/^\uFEFF/, '');
@@ -56,8 +63,10 @@ function collectDeclaredTestPathsFromContextExploration(projectRoot: string, fea
             }
           }
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        diagnostics.push(
+          `context-yaml-invalid:${normalizeRel(path.relative(projectRoot, p))}:${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
     const pathLike = text.match(/[`"]?([^\s`"]+\.test\.ets)[`"]?/gi) ?? [];
@@ -68,13 +77,22 @@ function collectDeclaredTestPathsFromContextExploration(projectRoot: string, fea
       }
     }
   }
-  return [...out];
+  return { paths: [...out], diagnostics };
 }
 
-function collectGitScopedTestPaths(projectRoot: string): string[] {
+function collectGitScopedTestPaths(projectRoot: string): ScopeProbe {
   const diff = diffChangedFiles({ projectRoot, baseRef: 'working' });
-  if (!diff.executed) return [];
-  return diff.changedFiles.map(normalizeRel).filter(isUtTestPath);
+  if (!diff.executed) {
+    return {
+      paths: [],
+      diagnostics: [`git-unavailable:${diff.error?.trim() || 'not-a-git-worktree'}`],
+    };
+  }
+  const paths = diff.changedFiles.map(normalizeRel).filter(isUtTestPath);
+  return {
+    paths,
+    diagnostics: paths.length === 0 ? ['git:no-matching-test-paths'] : [],
+  };
 }
 
 /**
@@ -89,13 +107,18 @@ export function partitionUtFiles(
   allUtFiles: UtFileEntry[],
 ): UtFilePartition {
   const scopeSources: string[] = [];
+  const scopeDiagnostics: string[] = [];
   const scopedPaths = new Set<string>();
 
-  for (const p of collectGitScopedTestPaths(ctx.projectRoot)) {
+  const git = collectGitScopedTestPaths(ctx.projectRoot);
+  scopeDiagnostics.push(...git.diagnostics);
+  for (const p of git.paths) {
     scopedPaths.add(p);
     scopeSources.push(`git:${p}`);
   }
-  for (const p of collectDeclaredTestPathsFromContextExploration(ctx.projectRoot, ctx.feature)) {
+  const context = collectDeclaredTestPathsFromContextExploration(ctx.projectRoot, ctx.feature);
+  scopeDiagnostics.push(...context.diagnostics);
+  for (const p of context.paths) {
     scopedPaths.add(p);
     scopeSources.push(`context:${p}`);
   }
@@ -104,13 +127,15 @@ export function partitionUtFiles(
   for (const p of [...scopedPaths]) {
     if (!allPaths.has(p)) {
       scopedPaths.delete(p);
+      scopeDiagnostics.push(`scope-path-not-discovered:${p}`);
     }
   }
 
   if (scopedPaths.size === 0) {
-    return { all: allUtFiles, scoped: allUtFiles, scopeSources: ['fallback:all'] };
+    scopeDiagnostics.push('fallback:all:no-resolvable-context-or-git-test-path');
+    return { all: allUtFiles, scoped: allUtFiles, scopeSources: ['fallback:all'], scopeDiagnostics };
   }
 
   const scoped = allUtFiles.filter(f => scopedPaths.has(normalizeRel(f.path)));
-  return { all: allUtFiles, scoped, scopeSources };
+  return { all: allUtFiles, scoped, scopeSources, scopeDiagnostics };
 }

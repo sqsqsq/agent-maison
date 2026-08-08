@@ -25,7 +25,7 @@ cases:
     entry: ExampleRepository.fetchData
     spy_preset: success
     assertions: [returns_non_empty, field_complete]
-  - it_name: "[AC-1][BD-1] 空列表回落"
+  - it_name: "[BD-1] 空列表回落"
     entry: ExampleRepository.fetchData
     spy_preset: empty
     assertions: [fallback_value]

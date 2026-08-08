@@ -10,6 +10,12 @@ import {
   validateMockPlanContent,
   validateTestabilityAuditContent,
 } from '../../scripts/utils/ut-artifact-validate';
+import {
+  checkUtMachineArtifactParseable,
+  inspectMockPlan,
+  inspectTestabilityAudit,
+} from '../../scripts/check-ut';
+import type { CheckContext } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
   name: string;
@@ -61,6 +67,104 @@ function testMockPlanAcceptsPureYaml(): void {
   assert(r.ok, `expected ok, got ${JSON.stringify(r.errors)}`);
 }
 
+function testAuditRejectsPartiallyMalformedFencedYaml(): void {
+  const text = [
+    '```yaml',
+    'records:',
+    '  - acceptance_id: AC-1',
+    '```',
+    '```yaml',
+    'records: [',
+    '```',
+  ].join('\n');
+  const r = validateTestabilityAuditContent(text);
+  assert(!r.ok, 'one valid block must not hide another malformed block');
+  assert(r.errors.some(e => e.field === 'yaml' && e.message.includes('fenced yaml #2')), JSON.stringify(r.errors));
+}
+
+function testMockPlanRejectsArrayRoot(): void {
+  const r = validateMockPlanContent('- target_class: Api\n');
+  assert(!r.ok, 'array root must fail');
+  assert(r.errors.some(e => e.field === 'root'), JSON.stringify(r.errors));
+}
+
+function makeCtx(projectRoot: string): CheckContext {
+  return {
+    projectRoot,
+    frameworkRoot: projectRoot,
+    feature: 'demo',
+    phaseRule: {
+      structure_checks: {
+        ut_testability_audit_parseable: { description: 'audit parseable' },
+        ut_mock_plan_parseable: { description: 'mock parseable' },
+      },
+    } as unknown as CheckContext['phaseRule'],
+    featureSpec: {},
+    resolvedProfile: { name: 'hmos-app', profileDir: '', personalPrerequisites: {} },
+  } as CheckContext;
+}
+
+function testInspectorsKeepCorruptArtifactPaths(): void {
+  withTmp(dir => {
+    const ctx = makeCtx(dir);
+    const missingAudit = inspectTestabilityAudit(ctx);
+    const missingMock = inspectMockPlan(ctx);
+    fs.mkdirSync(path.dirname(missingAudit.absPath), { recursive: true });
+    fs.writeFileSync(
+      missingAudit.absPath,
+      '```yaml\nrecords:\n  - acceptance_id: AC-1\n```\n```yaml\nrecords: [\n```\n',
+      'utf-8',
+    );
+    fs.mkdirSync(path.dirname(missingMock.absPath), { recursive: true });
+    fs.writeFileSync(missingMock.absPath, '- target_class: Api\n', 'utf-8');
+
+    const audit = inspectTestabilityAudit(ctx);
+    const mock = inspectMockPlan(ctx);
+    assert(audit.status === 'invalid', audit.status);
+    assert(mock.status === 'invalid', mock.status);
+    const result = checkUtMachineArtifactParseable(
+      ctx,
+      'ut_testability_audit_parseable',
+      'testability-audit.md',
+      audit,
+    )[0];
+    assert(result.status === 'FAIL', result.status);
+    assert(result.details.includes(missingAudit.absPath), result.details);
+    assert(result.details.includes('fenced yaml #2'), result.details);
+    assert(result.suggestion?.includes('不需要 git add') === true, result.suggestion ?? '');
+  });
+}
+
+function testMockPlanSemanticIssueRemainsLoaded(): void {
+  withTmp(dir => {
+    const ctx = makeCtx(dir);
+    const missing = inspectMockPlan(ctx);
+    fs.mkdirSync(path.dirname(missing.absPath), { recursive: true });
+    fs.writeFileSync(
+      missing.absPath,
+      [
+        'schema_version: "1.0"',
+        'spies:',
+        '  - target_class: Api',
+        '    methods:',
+        '      - name: fetch',
+        '        returns: []',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const observed = inspectMockPlan(ctx);
+    assert(observed.status === 'loaded', `semantic issue must reach typed gate: ${observed.status}`);
+    const parseable = checkUtMachineArtifactParseable(
+      ctx,
+      'ut_mock_plan_parseable',
+      'mock-plan.yaml',
+      observed,
+    )[0];
+    assert(parseable.status === 'PASS', JSON.stringify(parseable));
+  });
+}
+
 function testResolvePathFromProjectRoot(): void {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const rel = 'doc/features/_nonexistent_probe_/ut/mock-plan.yaml';
@@ -90,6 +194,10 @@ export function runAll(): UnitCaseResult[] {
     { name: 'mock-plan accepts yaml standalone comment', fn: testMockPlanAcceptsYamlStandaloneComment },
     { name: 'mock-plan rejects markdown fence', fn: testMockPlanRejectsMarkdownFence },
     { name: 'mock-plan accepts pure yaml', fn: testMockPlanAcceptsPureYaml },
+    { name: 'audit rejects partially malformed fenced yaml', fn: testAuditRejectsPartiallyMalformedFencedYaml },
+    { name: 'mock-plan rejects array root', fn: testMockPlanRejectsArrayRoot },
+    { name: 'inspectors keep corrupt artifact paths', fn: testInspectorsKeepCorruptArtifactPaths },
+    { name: 'mock-plan semantic issue remains loaded for typed gate', fn: testMockPlanSemanticIssueRemainsLoaded },
     { name: 'resolve path from project root', fn: testResolvePathFromProjectRoot },
     { name: 'resolve path prefers cwd when file exists', fn: testResolvePathPrefersExistingCwd },
   ];

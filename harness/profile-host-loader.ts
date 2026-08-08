@@ -39,6 +39,7 @@ export type UtFilePartition = {
   all: UtFileEntry[];
   scoped: UtFileEntry[];
   scopeSources: string[];
+  scopeDiagnostics?: string[];
 };
 
 export type UtHostImpl = {

@@ -47,6 +47,8 @@
 
 **关键澄清**：被测单元 = 命名业务入口（非强制 UseCase 类）；外部依赖抽象用 `data_boundaries[]`（引用 contracts.yaml 既有 data 层类，非新造 Port）；无 UseCase 代码产物，`use-cases.yaml` 只是文档规约；Stub 用子类化/原型替换（非实现 Port 接口）；一个 `it()` 端到端驱动一个 branch（或一条 AC/BD），断言含 state 序列+调用序列+数据；UI 交互交 device-testing。
 
+**追溯标签（BLOCKER）**：每个 `it()` 名称必须以 acceptance.yaml 中真实存在的 `[AC-<id>]`、`[BD-<id>]` 或 use-cases.yaml 中真实存在的 `[BRANCH-<id>]` 起始；BD 可直接写成 `it('[BD-1] 空列表回落', ...)`，无需虚构或附带无关 AC。组合覆盖可写 `[AC-1][BD-1]`，复杂流推荐 `[BRANCH-happy_path][AC-1]`。
+
 ## 输入
 
 | 输入项 | 必需 | 说明 |
@@ -112,11 +114,11 @@
 | ut_import_whitelist | UT 未 import 禁止清单符号 | BLOCKER |
 | ut_tsc_compiles | UT 文件 tsc --noEmit 零 Error | BLOCKER |
 | boundaries_all_stubbed | 每个 data_boundary 有替身证据 | BLOCKER |
-| it_name_has_ac_or_branch_tag | 用例名带 [AC-X]/[BRANCH-X] 标签 | BLOCKER |
+| it_name_has_ac_or_branch_tag | 用例名以 [AC-X]/[BD-X]/[BRANCH-X] 标签起始 | BLOCKER |
 | it_drives_flow | 路径 A 严格判；路径 B 退化为 ≥2 expect | MAJOR |
 | branch_coverage_full | 每个 branch 都有对应 it() | BLOCKER |
-| ut_case_per_unit_ac | 每条 unit/both P0/P1 AC 都有 it() | BLOCKER |
-| acceptance_coverage | 分母只计 ut_layer∈{unit,both} | BLOCKER |
+| ut_case_per_unit_ac | 每条 unit/both P0/P1 AC/BD 有精确 tag/branch 或其他可解析底层证据 | BLOCKER |
+| acceptance_coverage | 只查 DAG `linked_acceptance`；分母只计 unit/both P0/P1 AC，不读 `it()` | BLOCKER |
 | boundary_coverage | 每条 unit/both 的 BD 都有覆盖 | MAJOR |
 
 不通过项定位后自动修复重检，直到全部通过。

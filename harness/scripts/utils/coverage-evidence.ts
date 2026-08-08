@@ -25,6 +25,26 @@ export interface CoverageEvidenceFile {
   skip_reason?: string;
 }
 
+export type CoverageEvidenceReadObservation =
+  | {
+      status: 'missing';
+      absPath: string;
+      relPath: string;
+    }
+  | {
+      status: 'invalid';
+      absPath: string;
+      relPath: string;
+      error: string;
+    }
+  | {
+      status: 'loaded';
+      absPath: string;
+      relPath: string;
+      raw: string;
+      evidence: CoverageEvidenceFile;
+    };
+
 const EVIDENCE_PRIORITY: EvidenceSourceKind[] = [
   'dag_archived',
   'dag_ephemeral',
@@ -50,18 +70,47 @@ export function resolveCoverageEvidencePath(projectRoot: string, feature: string
   return featureFilePath(projectRoot, feature, path.join('ut', 'reports', 'coverage-evidence.json'));
 }
 
+export function readCoverageEvidence(
+  projectRoot: string,
+  feature: string,
+): CoverageEvidenceReadObservation {
+  const absPath = resolveCoverageEvidencePath(projectRoot, feature);
+  const relPath = coverageEvidenceRel(projectRoot, feature);
+  if (!fs.existsSync(absPath)) return { status: 'missing', absPath, relPath };
+  try {
+    const raw = fs.readFileSync(absPath, 'utf-8').replace(/^\uFEFF/, '');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        status: 'invalid',
+        absPath,
+        relPath,
+        error: 'coverage-evidence 根节点必须是 JSON object',
+      };
+    }
+    return {
+      status: 'loaded',
+      absPath,
+      relPath,
+      raw,
+      evidence: parsed as CoverageEvidenceFile,
+    };
+  } catch (e) {
+    return {
+      status: 'invalid',
+      absPath,
+      relPath,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export function loadCoverageEvidence(
   projectRoot: string,
   feature: string,
 ): CoverageEvidenceFile | null {
-  const abs = resolveCoverageEvidencePath(projectRoot, feature);
-  if (!fs.existsSync(abs)) return null;
-  try {
-    const raw = fs.readFileSync(abs, 'utf-8');
-    return JSON.parse(raw) as CoverageEvidenceFile;
-  } catch {
-    return null;
-  }
+  const observed = readCoverageEvidence(projectRoot, feature);
+  return observed.status === 'loaded' ? observed.evidence : null;
 }
 
 export function writeCoverageEvidence(
@@ -135,6 +184,12 @@ export interface DagEvidenceLink {
   nodes?: DagEvidenceNodeLink[];
 }
 
+export interface DagEvidenceRecord {
+  dag: DagEvidenceLink;
+  path?: string;
+  source?: 'archived' | 'ephemeral';
+}
+
 export function dagLinksScopeId(dag: DagEvidenceLink, scopeId: string): boolean {
   if ((dag.linked_acceptance ?? []).includes(scopeId)) return true;
   if ((dag.linked_boundaries ?? []).includes(scopeId)) return true;
@@ -159,7 +214,7 @@ export function dagsAllCharacterization(dags: Array<{ dag: DagEvidenceLink }>): 
 /** Strict per declared evidence_source (mapping row must match its claimed source). */
 export function mappingBackedByResolvableEvidence(
   mapping: CoverageEvidenceMapping,
-  dags: Array<{ dag: DagEvidenceLink }>,
+  dags: DagEvidenceRecord[],
   hasUtTagForScope: boolean,
   projectRoot: string,
   feature: string,
@@ -169,8 +224,9 @@ export function mappingBackedByResolvableEvidence(
     case 'ut_tags':
       return hasUtTagForScope;
     case 'dag_archived':
+      return dags.some(d => d.source === 'archived' && dagLinksScopeId(d.dag, mapping.scope_id));
     case 'dag_ephemeral':
-      return dags.some(d => dagLinksScopeId(d.dag, mapping.scope_id));
+      return dags.some(d => d.source === 'ephemeral' && dagLinksScopeId(d.dag, mapping.scope_id));
     case 'ac_coverage':
       return acCoverageCoversScope(projectRoot, feature, mapping.scope_id, acReportOverride);
     default:
@@ -183,7 +239,7 @@ export function scopeHasResolvableEvidence(opts: {
   projectRoot: string;
   feature: string;
   scopeId: string;
-  dags: Array<{ dag: DagEvidenceLink }>;
+  dags: DagEvidenceRecord[];
   hasUtTag: boolean;
   mapping?: CoverageEvidenceMapping;
   acReport?: AcCoverageReport | null;

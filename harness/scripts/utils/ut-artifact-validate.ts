@@ -9,7 +9,7 @@ import {
   collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
   parseMockPlanFile,
-  parseTestabilityAuditFromText,
+  parseTestabilityAuditFromTextDetailed,
 } from './ut-artifact-parse';
 import type { CoverageEvidenceFile } from './coverage-evidence';
 import { highestEvidenceSource } from './coverage-evidence';
@@ -67,7 +67,11 @@ export function validateTestabilityAuditContent(text: string, filePath?: string)
     );
   }
 
-  const records = parseTestabilityAuditFromText(text);
+  const parsed = parseTestabilityAuditFromTextDetailed(text);
+  for (const message of parsed.errors) {
+    errors.push(err('yaml', `${label}: ${message}`));
+  }
+  const records = parsed.records;
   if (records.length === 0) {
     errors.push(err('records', `${label} 未解析到任何 records[] 条目（需 fenced yaml 或纯 YAML）`));
   }
@@ -109,8 +113,10 @@ export function validateMockPlanContent(text: string, filePath?: string): Artifa
   let plan: ReturnType<typeof parseMockPlanFile> = null;
   try {
     const doc = YAML.parse(text.replace(/^\uFEFF/, ''));
-    if (doc && typeof doc === 'object') {
+    if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
       plan = doc as ReturnType<typeof parseMockPlanFile>;
+    } else {
+      errors.push(err('root', `${label} 根节点必须是 YAML mapping/object`));
     }
   } catch (e) {
     errors.push(err('yaml', `YAML 解析失败：${(e as Error).message}`));

@@ -95,7 +95,7 @@ criteria:
 
 business-ut 不追求“行覆盖率看起来很高”，而追求每个测试能回答三个问题：
 
-1. 这条 `it()` 覆盖哪个 `AC` 或 `BRANCH`？
+1. 这条 `it()` 覆盖哪个 `AC`、`BD` 或 `BRANCH`？
 2. 它从哪个命名入口驱动业务？
 3. 它断言了哪些 state 与 data boundary？
 
@@ -106,6 +106,8 @@ it('[BRANCH-sms_fail_rollback][AC-3] 短验失败回滚', 0, async () => {
   // ...
 })
 ```
+
+边界用例可以直接以 `[BD-<id>]` 起始，不需要附带无关 AC；同一用例同时覆盖验收标准与边界时可写 `[AC-1][BD-1]`。
 
 ---
 
@@ -185,7 +187,7 @@ flowchart TD
 | 业务编排源码 | `Flow` / Page 方法等 | **被测的命名入口**；UT 必须从这里进，不绕过业务编排。 |
 | data 边界 | `Repository` / `Client` 等 | **可打桩的边界**；Stub/Spy 针对「真实 data 类」，不为 UT 新造 `Port` 专供测试。 |
 
-`UT 规划清单` 在图里指 **Step 1 里那张表**（在 SKILL 里要用户确认的），不默认是仓库里固定文件名的单文件；它的结果会**体现**在：DAG 覆盖范围、`it()` 名字里的 `[AC-*]` / `[BRANCH-*]` 标签、以及表格式文字说明中。
+`UT 规划清单` 在图里指 **Step 1 里那张表**（在 SKILL 里要用户确认的），不默认是仓库里固定文件名的单文件；它的结果会**体现**在：DAG 覆盖范围、`it()` 名字里的 `[AC-*]` / `[BD-*]` / `[BRANCH-*]` 标签、以及表格式文字说明中。
 
 **中间区：三样交付物**
 
@@ -218,7 +220,7 @@ flowchart LR
 **脚本 Harness（`check-ut.ts`）**
 
 - **管什么（确定性、可复现）**：  
-  文件与 schema 是否齐（含 v2.3 下 testability-audit / mock-plan 等契约）、`it()` 是否带上 `[AC-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **profile 注册的编译/运行类检查**（能力侧为 `ut.compile` / `ut.run`；**hmos-app** 报告常见 ID：`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`；细则见 [§6](#6-质量门禁) 与 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)）。
+  文件与 schema 是否齐（含 v2.3 下 testability-audit / mock-plan 等契约）、`it()` 是否带上 `[AC-]` / `[BD-]` / `[BRANCH-]` 标签、DAG 与 `use-cases`/`acceptance` 是否对得上、import 是否踩了 UI 禁线、以及 **profile 注册的编译/运行类检查**（能力侧为 `ut.compile` / `ut.run`；**hmos-app** 报告常见 ID：`ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`；细则见 [§6](#6-质量门禁) 与 [`../profiles/hmos-app-harness-toolchain.md`](../profiles/hmos-app-harness-toolchain.md)）。
 - **产出**：`doc/features/<feature>/ut/reports/` 下的 `script-report.json`、**宿主构建/运行**日志（hmos-app：hvigor/hdc）、以及流程中的 `trace.json`（与改源码对账用）。
 
 **AI Harness（`verify-ut.md`）**
@@ -385,7 +387,7 @@ flowchart TD
 | AC/BD | 被测单元 | DAG | UT |
 | --- | --- | --- | --- |
 | `AC-1` | `HomeRepository.getServiceEntries` | `home_page_ut.dag.yaml` | `[AC-1] 首页服务入口数据契约完整` |
-| `BD-1` | `HomeRepository.getPromoList` | `home_page_ut.dag.yaml` | `[AC-1][BD-1] 推广位为空时返回空列表` |
+| `BD-1` | `HomeRepository.getPromoList` | `home_page_ut.dag.yaml` | `[BD-1] 推广位为空时返回空列表` |
 
 这条路径不强求“端到端业务编排”，但仍要求至少有被测函数调用与 expect 断言。
 
@@ -397,7 +399,7 @@ DAG 是测试计划的结构化表达，不是为了炫技。它要让人一眼�
 - 经过哪些用户动作；
 - 调用了哪些 data boundary；
 - state 如何迁移；
-- 哪些 assertion 对应哪个 AC / branch。
+- 哪些 assertion 对应哪个 AC / BD / branch。
 
 关键节点类型：
 
@@ -493,11 +495,13 @@ agent / CI 优先读取 `summary.json` 里的 `verdict`、`blockers`、`next_act
 | --- | --- | --- |
 | `usecase_spec_schema` | BLOCKER | `use-cases.yaml` 存在但结构不合法 |
 | `dag_schema_compliance` | BLOCKER | DAG 缺关键字段 |
+| `dag_files_parseable` | BLOCKER | DAG 存在但 YAML 损坏却被误当成“没找到” |
 | `dag_acyclic` | BLOCKER | DAG 有环 |
 | `dag_linked_usecase` | BLOCKER | DAG 引用不存在的 use_case / branch |
-| `it_name_has_ac_or_branch_tag` | BLOCKER | `it()` 无法追溯到 AC / branch |
+| `it_name_has_ac_or_branch_tag` | BLOCKER | `it()` 未以 AC / BD / branch 标签起始 |
 | `branch_coverage_full` | BLOCKER | `use-cases.yaml` 的 branch 没有测试 |
-| `acceptance_coverage` | BLOCKER | P0/P1 且 unit/both 的 AC 没有测试 |
+| `ut_case_per_unit_ac` | BLOCKER | P0/P1 unit/both 的 AC/BD 无精确 tag/branch 或其他可解析底层证据 |
+| `acceptance_coverage` | BLOCKER | P0/P1 unit/both 的 AC 没有被已解析 DAG 的 `linked_acceptance` 挂链（本 gate 不读 `it()`） |
 
 ### 6.2 UT 代码合规
 
@@ -600,4 +604,3 @@ AI Harness 重点看脚本难以判断的内容：
 <!--
   last-synced: 2026-06-12 (2.3.0: profile-host-loader / capability-registry 路径复核)
 -->
-
