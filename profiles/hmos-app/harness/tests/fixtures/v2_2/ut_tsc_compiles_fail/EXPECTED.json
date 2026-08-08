@@ -2,9 +2,9 @@
   "rules": [
     {
       "id": "ut_tsc_compiles",
-      "status": "FAIL",
+      "status": "WARN",
       "severity": "BLOCKER",
-      "details_includes": "TS"
+      "details_includes": "以 ut_hvigor_build 真实编译为准"
     }
   ]
 }

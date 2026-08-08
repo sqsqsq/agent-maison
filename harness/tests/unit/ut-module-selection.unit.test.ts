@@ -7,7 +7,7 @@
 // 与需求无关的模块筛掉，避免误判整轮 UT 失败。
 // ============================================================================
 
-import { selectUtModulesToCompile } from '../../../profiles/hmos-app/harness/ut-host-impl';
+import { orderUtModulesForCompile, selectUtModulesToCompile } from '../../../profiles/hmos-app/harness/ut-host-impl';
 
 export interface UnitCaseResult {
   name: string;
@@ -81,6 +81,31 @@ function testFallbackAllScopeKeepsTemplateModule(): void {
   );
 }
 
+// plan 423e5d0f P0：feature 新增 UT 归属的模块必须排最前——真实编译错误仍会短路循环，
+// 顺带被触碰的存量模块（如 Phone 的 Main.test.ets 被加 AC 标签）不得把真目标模块挤出执行窗口。
+function testOrdersFeatureNewModuleFirst(): void {
+  const scoped = [
+    { path: '01-Product/Phone/src/ohosTest/ets/test/Main.test.ets' },
+    { path: '02-Feature/WalletMain/src/ohosTest/ets/test/not_login.test.ets' },
+  ];
+  const featureNew = [
+    { path: '02-Feature/WalletMain/src/ohosTest/ets/test/not_login.test.ets' },
+  ];
+  const out = orderUtModulesForCompile([PHONE, WALLET], scoped, featureNew);
+  assert(out[0].name === 'WalletMain', `feature-new module first, got ${out[0].name}`);
+  assert(out[1].name === 'Phone', `touched-legacy module second, got ${out[1].name}`);
+}
+
+// 无 featureNew 信息 → 保持原顺序（稳定，不回归）。
+function testOrderStableWithoutFeatureNew(): void {
+  const scoped = [
+    { path: '01-Product/Phone/src/ohosTest/ets/test/Main.test.ets' },
+    { path: '02-Feature/WalletMain/src/ohosTest/ets/test/a.test.ets' },
+  ];
+  const out = orderUtModulesForCompile([PHONE, WALLET], scoped, []);
+  assert(out[0].name === 'Phone' && out[1].name === 'WalletMain', `stable order, got ${names(out).join(',')}`);
+}
+
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
     { name: 'excludes module without scoped UT (Phone)', fn: testExcludesModuleWithoutScopedUt },
@@ -88,6 +113,8 @@ export function runAll(): UnitCaseResult[] {
     { name: 'fallback to full set when scoped empty', fn: testFallbackWhenScopedEmpty },
     { name: 'fallback to full set when none match', fn: testFallbackWhenNoneMatch },
     { name: 'fallback:all scope keeps template-only module (locked)', fn: testFallbackAllScopeKeepsTemplateModule },
+    { name: 'orders feature-new module first (423e5d0f)', fn: testOrdersFeatureNewModuleFirst },
+    { name: 'order stable without feature-new info', fn: testOrderStableWithoutFeatureNew },
   ];
   return cases.map(({ name, fn }) => {
     try {

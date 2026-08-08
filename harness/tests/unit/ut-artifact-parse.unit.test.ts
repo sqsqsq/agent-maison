@@ -11,8 +11,10 @@ import {
   collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
   buildMockkitVarClassMap,
+  collectMockFuncVarInfo,
   collectUnparsedHypiumWhenIssues,
   collectUtMockkitGovernanceIssues,
+  collectUtMockkitGovernanceReport,
   extractUtMockkitTargets,
   extractYamlFencedBlocks,
   getMockPlanEntries,
@@ -22,6 +24,40 @@ import {
   TYPED_EXPR_RE,
   utFileImportsHypiumMockkit,
 } from '../../scripts/utils/ut-artifact-parse';
+
+// 宿主真实存量 UT 摘录（WalletHarmony Main.test.ets，hypium@1.0.24 标准写法实录）——
+// 夹具纪律：mockkit 语法支持面必须对着真实消费者代码验证，不得只锁自创形态。
+const HOST_LEGACY_MAIN_TEST = [
+  'import { afterAll, beforeAll, describe, expect, it, MockKit, when } from "@ohos/hypium";',
+  'import { util } from "@kit.ArkTS";',
+  'import { main } from "../../../main/ets/Main";',
+  'import { ServiceModel } from "../../../main/ets/serviceOrchestration/model/ServiceModel";',
+  'export default function defaultTest() {',
+  "  describe('mainTest', () => {",
+  '    const duringConstructor: Function = ServiceModel.builderForDuringStartUp;',
+  '    const during = ServiceModel.builderForDuringStartUp();',
+  '    const after = ServiceModel.builderForAfterStartUp();',
+  '    let duringCounter: number = 0;',
+  '    beforeAll(() => {',
+  '      util.Aspect.replace(ServiceModel, "builderForDuringStartUp", true, () => {',
+  '        return during;',
+  '      });',
+  '      const mockKit = new MockKit();',
+  '      const mockDuringFunction: Function = mockKit.mockFunc(during, during.toRegister);',
+  '      const mockAfterFunction: Function = mockKit.mockFunc(after, after.toRegister);',
+  '      when(mockDuringFunction)().afterAction(() => {',
+  '        duringCounter++;',
+  '      })',
+  '      when(mockAfterFunction)().afterAction(() => {',
+  '      })',
+  '    })',
+  "    it('[AC-01] mainTest', 0, () => {",
+  '      main();',
+  '      expect(2).assertEqual(duringCounter);',
+  '    })',
+  '  });',
+  '}',
+].join('\n');
 
 export interface UnitCaseResult {
   name: string;
@@ -224,6 +260,75 @@ export function runAll(): UnitCaseResult[] {
     });
     assert(issues.length === 1, JSON.stringify(issues));
     assert(issues[0].includes('returns.ts_expr 或 throws.ts_expr'), issues[0]);
+  }));
+
+  results.push(run('collectMockFuncVarInfo 解析宿主真实 mockFunc 形态（存量实录）', () => {
+    const info = collectMockFuncVarInfo(HOST_LEGACY_MAIN_TEST);
+    const during = info.get('mockDuringFunction');
+    assert(!!during && during.method === 'toRegister' && during.objVar === 'during', JSON.stringify([...info.entries()]));
+    // builder 工厂返回未导出内部类：不得误归因到 ServiceModel
+    assert(during!.targetClass === undefined, `builder 对象不应猜类：${during!.targetClass}`);
+    assert(info.has('mockAfterFunction'), 'second mockFunc var');
+  }));
+
+  results.push(run('when(mockedFn) 真实语法不再落入 unparsed（宿主实录）', () => {
+    const varToClass = buildMockkitVarClassMap(HOST_LEGACY_MAIN_TEST);
+    const issues = collectUnparsedHypiumWhenIssues(HOST_LEGACY_MAIN_TEST, varToClass);
+    assert(issues.length === 0, JSON.stringify(issues));
+  }));
+
+  results.push(run('治理分层：目标类不可判定 → unresolved（WARN 材料）而非 violation', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'ServiceModel',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'builderForDuringStartUp' }, { name: 'builderForAfterStartUp' }],
+      }],
+    };
+    const report = collectUtMockkitGovernanceReport(HOST_LEGACY_MAIN_TEST, plan, new Set());
+    assert(report.violations.length === 0, `violations 应为空：${JSON.stringify(report.violations)}`);
+    assert(report.unresolved.some(u => u.includes('toRegister')), JSON.stringify(report.unresolved));
+  }));
+
+  results.push(run('治理分层：方法名弱对齐不消除嫌疑 → 仍 unresolved 不全绿', () => {
+    const plan = {
+      doubles: [{
+        target_class: 'ServiceModel',
+        strategy: 'mockkit' as const,
+        methods: [{ name: 'toRegister' }],
+      }],
+    };
+    const report = collectUtMockkitGovernanceReport(HOST_LEGACY_MAIN_TEST, plan, new Set());
+    assert(report.violations.length === 0, JSON.stringify(report.violations));
+    // 方法名同名只是弱对齐，不能证明打的是声明的类——诚实语义 = unresolved（WARN），交 verifier 复核
+    assert(report.unresolved.length === 1 && report.unresolved[0].includes('弱对齐'), JSON.stringify(report.unresolved));
+  }));
+
+  results.push(run('mockFunc 目标类可判定（new Class()，hypium 文档形态）→ 类级治理照常', () => {
+    // @ohos/hypium 官方文档示例形态
+    const ut = [
+      "import { MockKit, when } from '@ohos/hypium';",
+      'let mocker: MockKit = new MockKit();',
+      'let claser: ClassName = new ClassName();',
+      'let mockfunc: Function = mocker.mockFunc(claser, claser.method_1);',
+      "when(mockfunc)('test').afterReturn('1');",
+    ].join('\n');
+    const info = collectMockFuncVarInfo(ut);
+    assert(info.get('mockfunc')?.targetClass === 'ClassName', JSON.stringify([...info.entries()]));
+    // 可判定类未在 mock-plan 声明 = 已证明违规（不因 mockFunc 语法而放水）
+    const report = collectUtMockkitGovernanceReport(ut, { doubles: [] }, new Set());
+    assert(report.violations.some(v => v.includes('ClassName')), JSON.stringify(report));
+    assert(collectUnparsedHypiumWhenIssues(ut, buildMockkitVarClassMap(ut)).length === 0, 'when(mockfunc) 可解析');
+  }));
+
+  results.push(run('mockFunc 第二参为 Class.method 静态形态 → targetClass 直接判定', () => {
+    const ut = [
+      'const kit = new MockKit();',
+      'const fn = kit.mockFunc(gateway, RemoteGateway.validate);',
+      'when(fn)(1).afterReturn(true);',
+    ].join('\n');
+    const info = collectMockFuncVarInfo(ut);
+    assert(info.get('fn')?.targetClass === 'RemoteGateway' && info.get('fn')?.method === 'validate', JSON.stringify([...info.entries()]));
   }));
 
   results.push(run('collectMockPlanTypedIssues 接受 returns 与 throws 类型化表达式', () => {

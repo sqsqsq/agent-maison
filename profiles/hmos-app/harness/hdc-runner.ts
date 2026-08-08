@@ -1001,10 +1001,12 @@ export function diagnoseHdcInstallFailure(output: string, exitCode: number): Hdc
     return {
       kind: 'install_downgrade',
       summary: `疑为版本降级或设备端版本更高导致拒绝覆盖（hdc install exit=${exitCode}）。`,
+      // 本诊断被 UT 与 testing 链共用：只陈述场景中立的事实与风险，
+      // 各链路的处置策略（UT=等用户手动处理 / testing=受控卸载重试通道）由各自聚合层追加。
       suggestion: [
-        '在 AppScope/app.json5 提高 app.versionCode 后重新编译打 HAP；或',
-        '手动卸载设备上的该应用后再装：`hdc shell bm uninstall -n <bundleName>`；',
-        '自动化（慎用）：设置环境变量 HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL=1 后重跑 testing harness。',
+        '设备上已装更高 versionCode 的同名应用，安装被拒绝——这是设备环境问题，不是代码或工具链问题。',
+        '⚠️ 卸载可解除冲突，但会清除该应用在设备上的全部用户数据（钱包类=卡片/凭据），属破坏性动作。',
+        '不要为绕过而提高 app.versionCode：受源码改动门禁约束，且治标不治本。',
       ].join('\n'),
     };
   }

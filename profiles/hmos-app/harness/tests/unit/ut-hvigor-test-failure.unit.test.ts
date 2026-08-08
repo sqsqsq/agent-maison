@@ -192,6 +192,36 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    // plan 423e5d0f P0-4（codex 实锤回归）：宿主真实路径=预检漏判 → 运行期 hdc install
+    // 返回 9568263 → installDiagnosis.kind='install_downgrade'。该路径必须映射为
+    // needsConfirmation（用户处理设备），不得压成 device_install_failed/device_toolchain。
+    name: 'runtime install_downgrade → install_needs_confirmation / needsConfirmation',
+    run: () => {
+      const output = buildUtHvigorTestFailDetails([
+        {
+          module: 'LifecycleFramework',
+          result: result(
+            {
+              failedAt: 'install',
+              installDiagnosis: {
+                kind: 'install_downgrade',
+                summary: '疑为版本降级或设备端版本更高导致拒绝覆盖（hdc install exit=255）。',
+                suggestion: '请用户自行卸载设备上的该应用或换测试机后重跑。',
+              },
+            },
+            { executed: true, exitCode: 1, errors: [{ message: '失败阶段：install' }] },
+          ),
+        },
+      ]);
+      assertEq(output.failureKind, 'install_needs_confirmation', 'runtime downgrade kind');
+      assertEq(output.blockingClass, 'needsConfirmation', 'runtime downgrade blocking class');
+      // UT 专属处置由聚合层追加（底层诊断保持场景中立，见 hdc-runner 单测）
+      assert(output.suggestion.includes('UT 链没有自动卸载能力'), output.suggestion);
+      assert(output.suggestion.includes('用户'), output.suggestion);
+      assert(firstLine(output).includes('安装阶段失败'), firstLine(output));
+    },
+  },
+  {
     name: '工具链四 kind 正例与 stageHint 文本兜底负例',
     run: () => {
       const entries: Array<[HvigorRunResult, string]> = [

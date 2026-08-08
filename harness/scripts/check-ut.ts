@@ -32,10 +32,12 @@ import { takeArray } from './utils/shape-guards';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
+  listFilesAtRef,
   readApprovedMutations,
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
+import { readCodingBase } from './utils/pass-snapshot';
 import { findFilesRecursive } from './utils/find-files-recursive';
 import {
   CANONICAL_UT_COMPILE_ID,
@@ -66,7 +68,7 @@ import {
   buildMockPlanPresetIndex,
   collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
-  collectUtMockkitGovernanceIssues,
+  collectUtMockkitGovernanceReport,
   getMockPlanEntries,
   mockPlanAllowsHypiumMockkit,
   mockPlanHasEntries,
@@ -1881,7 +1883,9 @@ export function checkItNameHasAcOrBranchTag(
     if (isSuiteEntryShim(ctx, content)) continue;
     const blocks = extractUtItBlocks(content);
     for (const b of blocks) {
-      if (!/^\s*\[(AC|BD|BRANCH)-/i.test(b.name)) {
+      // [CHAR-*]：path-c characterization 用例的合法追溯标签（无 acceptance 场景，
+      // 不得强迫其虚构 feature AC——plan 423e5d0f P0，解除 path-c 自死锁）。
+      if (!/^\s*\[(AC|BD|BRANCH|CHAR)-/i.test(b.name)) {
         untagged.push(`${p}: "${b.name}"`);
         affected.push(p);
       }
@@ -1895,7 +1899,7 @@ export function checkItNameHasAcOrBranchTag(
       description: ruleDesc(ctx, 'structure_checks', 'it_name_has_ac_or_branch_tag'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 it() 用例均带有 [AC-X]、[BD-X] 或 [BRANCH-X] 起始标签。',
+      details: '所有 it() 用例均带有 [AC-X]、[BD-X]、[BRANCH-X] 或 [CHAR-X] 起始标签。',
     }];
   }
 
@@ -1907,7 +1911,7 @@ export function checkItNameHasAcOrBranchTag(
     status: 'FAIL',
     details: `${untagged.length} 个 it() 用例无追溯标签：\n${truncateList(untagged, 15)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'it() 名称必须以 [AC-xxx]、[BD-xxx] 或 [BRANCH-xxx] 开头；边界可直接写 [BD-1]，也可组合使用（如 [BRANCH-happy_path][AC-1] 或 [AC-1][BD-1]）。',
+    suggestion: 'it() 名称必须以 [AC-xxx]、[BD-xxx]、[BRANCH-xxx] 开头（characterization 用例用 [CHAR-xxx]）；边界可直接写 [BD-1]，也可组合使用（如 [BRANCH-happy_path][AC-1] 或 [AC-1][BD-1]）。',
   }];
 }
 
@@ -3460,13 +3464,20 @@ function collectForbiddenMockkitEntryClasses(
   return forbidden;
 }
 
-function checkUtHypiumMockkitPolicy(
+export function checkUtHypiumMockkitPolicy(
   ctx: CheckContext,
   plan: MockPlanSpec | null,
   utFiles: Array<{ path: string; content: string }>,
   auditRecords: TestabilityAuditRecord[],
+  legacyExempt: Array<{ path: string; content: string }> = [],
+  scopeNote = '',
 ): CheckResult[] {
   const id = 'ut_hypium_mockkit_policy';
+  const legacyMockkitUsers = legacyExempt.filter(f => utFileImportsHypiumMockkit(f.content));
+  const legacyNote = legacyMockkitUsers.length > 0
+    ? `\n责任域外豁免：${legacyMockkitUsers.length} 个 UT 文件使用 MockKit/when 但不在本 feature 责任域（基线已存在的存量，或不在 scoped 集合），不要求本 feature mock-plan/contracts 登记：\n${truncateList(legacyMockkitUsers.map(f => f.path), 8)}`
+    : '';
+  const noteSuffix = `${scopeNote}${legacyNote}`;
   const offenders = utFiles.filter(f => utFileImportsHypiumMockkit(f.content));
   if (offenders.length === 0) {
     return [{
@@ -3475,7 +3486,7 @@ function checkUtHypiumMockkitPolicy(
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: 'UT 未从 @ohos/hypium 导入 MockKit/when，跳过 @ohos/hypium mock 策略门禁。',
+      details: `本 feature 责任域内的 UT 未从 @ohos/hypium 导入 MockKit/when，跳过 mock 策略门禁。${noteSuffix}`,
     }];
   }
 
@@ -3487,8 +3498,8 @@ function checkUtHypiumMockkitPolicy(
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        `${offenders.length} 个 UT 文件导入了 MockKit 或 hypium when，但 mock-plan 无 strategy=mockkit 条目：\n` +
-        truncateList(offenders.map(f => f.path), 10),
+        `${offenders.length} 个本 feature 责任域内的 UT 文件导入了 MockKit 或 hypium when，但 mock-plan 无 strategy=mockkit 条目：\n` +
+        truncateList(offenders.map(f => f.path), 10) + noteSuffix,
       suggestion:
         '在 mock-plan.yaml 为外部边界声明 strategy: mockkit 与 presets；或改用 Spy/whenXxx。禁止在消费者 framework 子模块改 ts-compile.ts。',
     }];
@@ -3529,22 +3540,39 @@ function checkUtHypiumMockkitPolicy(
   }
 
   const forbiddenEntries = collectForbiddenMockkitEntryClasses(ctx, auditRecords);
-  const usageIssues: string[] = [];
+  const violations: string[] = [];
+  const unresolved: string[] = [];
   for (const f of offenders) {
-    for (const msg of collectUtMockkitGovernanceIssues(f.content, plan, forbiddenEntries)) {
-      usageIssues.push(`${f.path}: ${msg}`);
-    }
+    const report = collectUtMockkitGovernanceReport(f.content, plan, forbiddenEntries);
+    for (const msg of report.violations) violations.push(`${f.path}: ${msg}`);
+    for (const msg of report.unresolved) unresolved.push(`${f.path}: ${msg}`);
   }
-  if (usageIssues.length > 0) {
+  if (violations.length > 0) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `MockKit/when 用法未与 mock-plan mockkit 条目对齐：\n${truncateList(usageIssues, 15)}`,
+      details: `MockKit/when 用法未与 mock-plan mockkit 条目对齐：\n${truncateList(violations, 15)}${noteSuffix}`,
       suggestion:
-        'MockKit.mock / when(Class.method) 仅允许 mock-plan 已声明的 mockkit 边界与方法；禁止 mock entry_point/coordinator；when 须引用 plan presets[].id。',
+        '仅允许 mock mock-plan 已声明的 mockkit 边界与方法（支持 MockKit.mock(Class)、kit.mock(Class)、kit.mockFunc(obj, obj.method)）；' +
+        '禁止 mock entry_point/coordinator；声明了 presets 时 when 行为须引用 presets[].id。',
+    }];
+  }
+
+  if (unresolved.length > 0) {
+    return [{
+      id,
+      category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', id),
+      severity: 'BLOCKER',
+      status: 'WARN',
+      details:
+        `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when；无已证明的违规，但 ${unresolved.length} 处静态解析不出（解析不出 ≠ 违规）：\n` +
+        `${truncateList(unresolved, 15)}${noteSuffix}`,
+      suggestion:
+        '如需可追溯性，将上述方法补进 mock-plan mockkit 条目 methods[]；无法静态判定目标类的 mockFunc 用法由 AI verifier 语义复核，不阻塞脚本门禁。',
     }];
   }
 
@@ -3554,7 +3582,7 @@ function checkUtHypiumMockkitPolicy(
     description: ruleDesc(ctx, 'structure_checks', id),
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when，mock-plan mockkit 策略、contracts 与用法追溯均已对齐。`,
+    details: `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when，mock-plan mockkit 策略、contracts 与用法追溯均已对齐。${noteSuffix}`,
   }];
 }
 
@@ -3841,6 +3869,72 @@ function checkHarnessHostArtifactPollution(ctx: CheckContext, utHost: UtHostImpl
   ];
 }
 
+/**
+ * UT 文件基线身份（P0，plan 423e5d0f · codex P0 三修）：
+ * 基线 ref 下已存在的文件 = 存量（legacy）；其余 = 本 feature 新增。
+ * ref 只认**agent 动手之前锚定**的可信起点：
+ *   ① HARNESS_DIFF_BASE_REF（用户显式，与 ut_no_src_mutation 同信任模型）；
+ *   ② goal run（MAISON_GOAL_RUN_ID 在场）下 runner 在首次 coding invoke 前锚定的
+ *      coding_base_sha（write-once + 跨 project/feature/run 重放校验）。
+ * **绝不消费 trace.start_commit**：它是本次 harness 启动时才记录的当前 HEAD——
+ * "新增 UT → commit → 首跑 ut harness" 时该 HEAD 已含新 UT，会把本轮新文件洗成存量
+ * （与 ui-scope-gate 同款纪律："其记录时点在 agent 之后"）。也不回退裸 HEAD（同理）。
+ * 无可信前置锚 → available=false，按 scoped 全量问责（fail-closed，等于改造前行为）。
+ */
+export function computeUtFileBaseline(ctx: CheckContext): {
+  available: boolean;
+  ref?: string;
+  existing: Set<string>;
+  note: string;
+} {
+  const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  let baseRef: string | undefined;
+  let anchorSource = '';
+  if (envBaseRef && envBaseRef !== 'working') {
+    baseRef = envBaseRef;
+    anchorSource = 'HARNESS_DIFF_BASE_REF';
+  } else {
+    const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
+    if (runId) {
+      const base = readCodingBase(ctx.projectRoot, ctx.feature, runId);
+      if (base.status === 'ok' && base.body) {
+        baseRef = base.body.base_sha;
+        anchorSource = 'coding_base_sha';
+      } else if (base.status === 'invalid') {
+        return {
+          available: false,
+          existing: new Set(),
+          note: 'coding_base 记录损坏/上下文不匹配——基线不可信，按 scoped 全量问责（不回退 trace.start_commit：其记录时点在 agent 之后）。',
+        };
+      }
+    }
+  }
+  if (!baseRef) {
+    return {
+      available: false,
+      existing: new Set(),
+      note:
+        '无可信前置基线锚：按 scoped 全量问责。goal run 由 runner 自动锚定 coding_base_sha；' +
+        '手动重跑请设 HARNESS_DIFF_BASE_REF=<feature 开始前的 commit> 以启用存量豁免' +
+        '（不消费 trace.start_commit——其记录时点在 agent 之后，会把已提交的本轮新 UT 洗成存量）。',
+    };
+  }
+  const listed = listFilesAtRef(ctx.projectRoot, baseRef);
+  if (!listed.executed) {
+    return {
+      available: false,
+      existing: new Set(),
+      note: `基线身份不可判定（${listed.error ?? 'git 不可用'}）：按 scoped 全量问责。`,
+    };
+  }
+  return {
+    available: true,
+    ref: baseRef,
+    existing: listed.files,
+    note: `基线=${baseRef}（锚=${anchorSource}）`,
+  };
+}
+
 function findFirst(results: CheckResult[], id: string): CheckResult | undefined {
   return results.find(r => r.id === id);
 }
@@ -4043,20 +4137,38 @@ const checker: PhaseChecker = {
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
     results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
     results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
+    // plan 423e5d0f P0：mockkit 政策只问责本 feature 责任域（基线新增的 scoped 文件），
+    // 存量（基线已存在）UT 的 MockKit 用法不得倒逼本 feature mock-plan/contracts 登记。
+    const utBaseline = computeUtFileBaseline(ctx);
+    const featureNewUtFiles = utBaseline.available
+      ? scopedUtFiles.filter(f => !utBaseline.existing.has(f.path))
+      : scopedUtFiles;
+    const featureNewUtPaths = new Set(featureNewUtFiles.map(f => f.path));
+    const legacyExemptUtFiles = allUtFiles.filter(f => !featureNewUtPaths.has(f.path));
     results.push(
       ...safeRun(
         () => mockPlanObservation.status === 'invalid'
           ? skipBecauseArtifactInvalid(ctx, 'ut_hypium_mockkit_policy', 'structure', mockPlanObservation.relPath)
-          : checkUtHypiumMockkitPolicy(ctx, mockPlanDoc, allUtFiles, auditRecordsEarly),
+          : checkUtHypiumMockkitPolicy(
+              ctx,
+              mockPlanDoc,
+              featureNewUtFiles,
+              auditRecordsEarly,
+              legacyExemptUtFiles,
+              `\n身份基线：${utBaseline.note}`,
+            ),
         'ut_hypium_mockkit_policy',
       ),
     );
     results.push(...safeRun(() => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
-    // v2.2 方案 A：静态 tsc --noEmit 检查
+    // v2.2 方案 A：静态 tsc --noEmit 检查。plan 423e5d0f P0-1：全量跑但只作快速诊断
+    // （WARN）——模拟 tsc 会对存量代码产生真实工具链不报的假错，编译 BLOCKER 唯一来源
+    // 是真实编译门禁（canonical id: ut_compile）；仅当 profile 把 ut.compile 声明 SKIP
+    // 时 tsc 保持 FAIL（仅存护城河不降级）。降级逻辑在 profile checkUtTscCompiles 内。
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
     const hvigorBuildResults = safeRun(
-      () => utHost.checkUtHvigorBuild(ctx, scopedUtFiles),
+      () => utHost.checkUtHvigorBuild(ctx, scopedUtFiles, featureNewUtFiles),
       'ut_hvigor_build',
     );
     results.push(...hvigorBuildResults);
@@ -4107,7 +4219,14 @@ const checker: PhaseChecker = {
     // v2 C: UT 代码（feature-scoped 追溯/命名）
     results.push(...safeRun(() => checkUtImportWhitelist(ctx, scopedUtFiles), 'ut_import_whitelist'));
     results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, scopedUtFiles), 'boundaries_all_stubbed'));
-    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, scopedUtFiles), 'it_name_has_ac_or_branch_tag'));
+    // plan 423e5d0f P0（R3 一轮回灌实锤）：标签只问责 feature 责任域——存量文件被
+    // context-exploration 提及/git 触碰仍会进 scoped，但"提及 ≠ 归属"，存量 it 不得
+    // 被逼挂本需求 AC 标签（那是假覆盖的源头）。
+    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, featureNewUtFiles), 'it_name_has_ac_or_branch_tag')
+      .map(r => ({
+        ...r,
+        details: `${r.details}\n身份口径：只问责本 feature 责任域 UT（${featureNewUtFiles.length} 个）。${utBaseline.note}`,
+      })));
     results.push(...safeRun(() => checkItDrivesFlow(ctx, scopedUtFiles), 'it_drives_flow'));
 
     // --- Traceability checks ---

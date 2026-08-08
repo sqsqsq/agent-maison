@@ -450,6 +450,49 @@ export function mergeHvigorLogForUtClassification(
     .join('\n');
 }
 
+/** 日志文件名里的模块名消毒（模块名理论上是标识符，防御性处理路径分隔等字符） */
+export function sanitizeLogModuleName(moduleName: string): string {
+  return moduleName.replace(/[^\w.-]/g, '_') || 'module';
+}
+
+/**
+ * 识别 hvigor「task 不存在」失败（plan 423e5d0f P0）：
+ *   `ERROR: Task 'genOnDeviceTestHap' was not found in project ...`
+ * 这是**工程构建配置形态**问题（常见：该模块未注册 ohosTest target，hvigor 因此不挂载
+ * 对应 hook task），不是 UT 代码问题——不得引导改 UT 或 ohpm install。
+ */
+export function detectHvigorTaskNotFound(log: string): { task: string } | null {
+  const cleaned = stripAnsi(log);
+  const m = /Task\s+['"]?([\w:@.-]+)['"]?\s+(?:was\s+)?not\s+found/i.exec(cleaned);
+  if (m) return { task: m[1] };
+  return null;
+}
+
+/**
+ * 探测工程根 build-profile.json5 中某模块是否注册了 ohosTest target。
+ * 返回三态：true / false / undefined（文件缺失、解析失败、模块未找到——不可判定）。
+ * 仅用于失败归因的证据增强，**不**作为跳过编译的硬前置（探测失败不拦真实编译）。
+ */
+export function moduleDeclaresOhosTestTarget(
+  projectRoot: string,
+  moduleName: string,
+): boolean | undefined {
+  try {
+    const buildProfile = path.join(projectRoot, 'build-profile.json5');
+    if (!fs.existsSync(buildProfile)) return undefined;
+    const obj = parseProductJson5(fs.readFileSync(buildProfile, 'utf-8')) as {
+      modules?: Array<{ name?: string; targets?: Array<{ name?: string }> }>;
+    };
+    const mod = (obj?.modules ?? []).find(x => x?.name === moduleName);
+    if (!mod) return undefined;
+    const targets = mod.targets;
+    if (!Array.isArray(targets)) return false;
+    return targets.some(t => typeof t?.name === 'string' && /ohosTest/i.test(t.name));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 粗粒度识别「hvigor 命令形态未对齐 ohosTest / DevEco」导致的伪编译失败。
  * 命中时应优先修 harness/参数，而不是引导 `ohpm install`。
@@ -1726,7 +1769,9 @@ export function runHvigorBuild(
       invokeHvigor({
         ...opts,
         spawnPlan: resolved.spawnPlan,
-        logBasename: 'hvigor-ut-build.log',
+        // plan 423e5d0f P0：每模块独立日志——多模块循环时共用一个 'w' 打开的文件会互相覆盖，
+        // 最终只剩最后一次调用的内容，无法证明前面模块编译过。
+        logBasename: `hvigor-ut-build.${sanitizeLogModuleName(opts.moduleName)}.log`,
         timeoutKind: 'ut',
         requireSuccessMarker: false,
         metaExtras: {

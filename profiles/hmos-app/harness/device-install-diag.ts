@@ -27,11 +27,6 @@ export interface InstallBlockingDiagnosis {
   deviceAvailable?: boolean;
 }
 
-function envTruthy(name: string): boolean {
-  const v = (process.env[name] ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
-}
-
 export function detectInstallDowngrade(
   candidateVersionCode: number | null,
   installed: { installed: boolean; versionCode: number | null },
@@ -87,27 +82,21 @@ export function diagnoseInstallBlocking(projectRoot: string): InstallBlockingDia
 
   const downgradeDetected = detectInstallDowngrade(candVc, installedParse);
 
-  if (downgradeDetected && !envTruthy('HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL')) {
-    return {
-      kind: 'selfHealable',
-      details:
-        `检测到版本降级：设备 versionCode=${devVc} > 候选 ${candVc}。` +
-        `设置 HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL=1 后重跑可尝试自愈。`,
-      nextAction: 'set_HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL_then_rerun',
-      bundleName: candidate.bundleName,
-      candidateVersionCode: candVc,
-      deviceVersionCode: devVc,
-      downgradeDetected: true,
-      hdcPresent: true,
-      deviceAvailable: true,
-    };
-  }
-
+  // plan 423e5d0f P0-4（codex review 二连修正）：卸载是破坏性动作（清除该应用在设备上的
+  // 用户数据，钱包类=卡片/凭据），且 **UT 链没有任何卸载执行逻辑**（runHvigorTest 对非
+  // clear 预检一律直接返回；HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL 只被 testing
+  // provider 消费）。因此本诊断对降级**恒 needsConfirmation**：不给 selfHealable 假承诺
+  // （会死循环），也不把 env 当授权证明（agent 同样能设置）。用户手动处理设备后重跑。
   if (downgradeDetected) {
     return {
       kind: 'needsConfirmation',
       details:
-        `版本降级已检测（device=${devVc}, candidate=${candVc}），需用户确认是否卸载重装或提升 versionCode。`,
+        `检测到版本降级：设备 versionCode=${devVc} > 候选 ${candVc}，安装会被拒绝。\n` +
+        `处置需用户手动完成（agent 不得自行执行，UT 链没有自动卸载能力）：\n` +
+        `  a) 用户自行卸载设备上的该应用后重跑：⚠️ 卸载会清除该应用在设备上的全部用户数据（钱包类=卡片/凭据）；\n` +
+        `  b) 或换测试机后重跑。\n` +
+        `不要为绕过而提高 app.versionCode：受源码改动门禁约束，且治标不治本（下轮仍会撞）。`,
+      nextAction: 'user_resolve_device_downgrade_then_rerun',
       bundleName: candidate.bundleName,
       candidateVersionCode: candVc,
       deviceVersionCode: devVc,
@@ -176,19 +165,30 @@ export function mapInstallBlockingToUtCheckFields(diag: InstallBlockingDiagnosis
             : '修复设备环境后重跑 UT harness。',
       };
     case 'selfHealable':
+      // UT 链的降级诊断已恒 needsConfirmation，本分支仅为类型完整性保留（不应到达）。
       return {
         failure_kind: 'install_downgrade_self_healable',
         blocking_class: 'selfHealable',
-        suggestion:
-          '设置 HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL=1 后重跑 harness（详见 ut-install-diag.json）。',
+        suggestion: '按 ut-install-diag.json 诊断处理后重跑。',
       };
     case 'needsConfirmation':
-      return {
-        failure_kind: 'install_needs_confirmation',
-        blocking_class: 'needsConfirmation',
-        suggestion:
-          '向用户展示 ut-install-diag.json 诊断，确认卸载重装或提升 versionCode 后重跑。',
-      };
+      // needsConfirmation ≠ 版本降级：还覆盖元数据读取失败等预检不确定场景，
+      // 卸载/丢数据/versionCode 话术只适用于确凿的降级（downgradeDetected）。
+      return diag.downgradeDetected
+        ? {
+            failure_kind: 'install_needs_confirmation',
+            blocking_class: 'needsConfirmation',
+            suggestion:
+              '向用户展示 ut-install-diag.json 诊断并等待用户手动处理设备（卸载会清除设备上该应用的用户数据，UT 链无自动卸载能力）；' +
+              '不要自行卸载或提高 app.versionCode。模块编译已通过的事实保留在报告中。',
+          }
+        : {
+            failure_kind: 'install_needs_confirmation',
+            blocking_class: 'needsConfirmation',
+            suggestion:
+              '装机预检不确定（见 ut-install-diag.json，常见为 AppScope/app.json5 缺失、解析失败或 bundleName 无效）：' +
+              '核对并修复 AppScope/app.json5 元数据后重跑；如需修改工程配置，按源码变更授权流程处理（gap-notes approved_src_mutations）。无需卸载设备应用。',
+          };
     default:
       return {
         failure_kind: 'install_blocked',

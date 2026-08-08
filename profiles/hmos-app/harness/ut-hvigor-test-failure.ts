@@ -8,7 +8,9 @@ export type UtHvigorTestFailureKind =
   | 'device_tool_missing'
   | 'ohos_test_sign_gap'
   | 'ohos_test_hap_missing'
-  | 'device_install_failed';
+  | 'device_install_failed'
+  /** 运行期 hdc install 才识别出的版本降级（预检漏判路径）——须走用户确认，不得压成通用安装失败 */
+  | 'install_needs_confirmation';
 
 export interface UtHvigorTestFailureModule {
   module: string;
@@ -73,6 +75,13 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
     };
   }
   if (evidence?.failedAt === 'install') {
+    // plan 423e5d0f P0-4（codex 实锤）：宿主真实路径=预检漏判 → 运行期 hdc install 返回
+    // 9568263 → installDiagnosis.kind='install_downgrade'。此处必须消费该结构化分类：
+    // 降级是"用户确认处理设备"类问题，压成通用 device_install_failed/device_toolchain
+    // 会把用户决策问题误导成工具链修复问题。
+    if (evidence.installDiagnosis?.kind === 'install_downgrade') {
+      return { ...entry, toolchain: true, phase: 'install', failureKind: 'install_needs_confirmation' };
+    }
     return { ...entry, toolchain: true, phase: 'install', failureKind: 'device_install_failed' };
   }
   const phase =
@@ -140,7 +149,7 @@ function aggregateHeader(items: ClassifiedFailure[]): string {
 }
 function singleToolchainHeader(item: ClassifiedFailure): string {
   if (item.failureKind === 'device_tool_missing') return '工具链不可用：未找到 hvigor/hdc';
-  if (item.failureKind === 'device_install_failed') {
+  if (item.failureKind === 'device_install_failed' || item.failureKind === 'install_needs_confirmation') {
     const diagnosis = item.result.onDeviceFailureEvidence?.installDiagnosis;
     return diagnosis?.summary
       ? `安装阶段失败：${diagnosis.summary}`
@@ -239,6 +248,14 @@ function actionFor(item: ClassifiedFailure): string {
   if (item.failureKind === 'ohos_test_hap_missing') {
     return '核对 ohosTest 构建产物路径与 genOnDeviceTestHap 完整日志，不推断签名原因。';
   }
+  if (item.failureKind === 'install_needs_confirmation') {
+    // UT 专属处置追加在场景中立的底层诊断之后（底层被 testing 链共用，不得写死 UT 策略）。
+    const base = item.result.onDeviceFailureEvidence?.installDiagnosis?.suggestion ?? '';
+    return (
+      `${base}${base ? '\n' : ''}` +
+      'UT 链没有自动卸载能力：请等待用户手动处理设备（自行卸载或换测试机）后重跑；agent 不得自行卸载或设置卸载环境变量。'
+    );
+  }
   if (item.failureKind === 'device_install_failed') {
     return (
       item.result.onDeviceFailureEvidence?.installDiagnosis?.suggestion ??
@@ -287,6 +304,11 @@ export function buildUtHvigorTestFailDetails(
   if (allDeviceBlocked) {
     blockingClass = 'externalBlocked';
     failureKind = 'device_blocked';
+  }
+  // plan 423e5d0f P0-4：runtime 降级（全员）→ needsConfirmation 契约，decideNextAction
+  // 才会落 confirm 分支而不是 device_toolchain 的"修工具链"误导。
+  if (failureKind === 'install_needs_confirmation') {
+    blockingClass = 'needsConfirmation';
   }
   const activeInstallBlockings = items
     .map(item => item.result.installBlocking)

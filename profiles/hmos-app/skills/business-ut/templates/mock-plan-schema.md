@@ -98,11 +98,13 @@ fixtures:
 | `fake` | 轻量内存替身（如无网络 Repository） | 手写 Fake 类，签名与 contracts 一致 |
 | `prototype_patch` | 少量方法可安全替换 | `base_strategy: prototype_override` 或显式本 strategy |
 
-**MockKit 约束（harness `ut_hypium_mockkit_policy` BLOCKER）**：
+**MockKit 约束（harness `ut_hypium_mockkit_policy` BLOCKER；只问责本 feature 责任域内新增 UT，基线已存在的存量 UT 豁免）**：
 
 - 仅 mock `contracts.yaml` 已登记的 **外部 data 边界**；
 - **禁止** mock 被测 Flow / Coordinator / Page handler；
-- UT 导入 `MockKit`/`when` 时，mock-plan **必须**至少一条 `strategy: mockkit`（可用 `doubles[]`）；
+- 本 feature 新增 UT 导入 `MockKit`/`when` 时，mock-plan **必须**至少一条 `strategy: mockkit`（可用 `doubles[]`）；
+- 受支持的打桩形态（对齐 hypium 真实 API）：`MockKit.mock(Class)`、`kit.mock(Class)`、`kit.mockFunc(obj, obj.method)` + `when(mockedFn)(args).afterReturn/afterAction`；
+- `mockFunc` 对象来自工厂/builder（目标类静态不可判定）时**解析不出 ≠ 违规**：harness 最多 WARN，建议把方法名补进 mockkit 条目 `methods[]` 以便追溯；
 - **禁止**在消费者工程内改 `framework/.../ts-compile.ts` 过关。
 
 ```yaml

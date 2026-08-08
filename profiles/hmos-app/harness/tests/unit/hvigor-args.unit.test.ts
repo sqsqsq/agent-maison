@@ -33,6 +33,9 @@ import {
   looksLikeUtHvigorCommandMismatch,
   buildCodingHvigorArgs,
   analyzeProjectDependencyIssue,
+  detectHvigorTaskNotFound,
+  moduleDeclaresOhosTestTarget,
+  sanitizeLogModuleName,
 } from '../../../../../harness/scripts/utils/hvigor-runner';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
 import { DEFAULT_LAYOUT } from '../../../../../harness/tests/utils/layout-test-helper';
@@ -673,6 +676,51 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (looksLikeUtHvigorCommandMismatch(log)) {
         throw new Error('不应误判已对齐命令');
       }
+    },
+  },
+  {
+    // plan 423e5d0f P0：宿主实录形态（含 ANSI 转义也须命中）
+    name: 'detectHvigorTaskNotFound: 命中宿主实录形态',
+    run: () => {
+      const hit = detectHvigorTaskNotFound(
+        "ERROR: Task 'genOnDeviceTestHap' was not found in project phone.\n",
+      );
+      assertEq(hit?.task, 'genOnDeviceTestHap', '应抽出 task 名');
+      const ansi = detectHvigorTaskNotFound(
+        "[91mERROR: [31mTask 'genOnDeviceTestHap' was not found[0m",
+      );
+      assertEq(ansi?.task, 'genOnDeviceTestHap', 'ANSI 日志也应命中');
+      const miss = detectHvigorTaskNotFound('ArkTS:ERROR File: x.ets:31:9 arkts-no-method-reassignment');
+      assertEq(miss, null, '普通编译错误不得误判');
+    },
+  },
+  {
+    name: 'moduleDeclaresOhosTestTarget: 三态（有/无/不可判定）',
+    run: () => withTmpDir(root => {
+      fs.writeFileSync(
+        path.join(root, 'build-profile.json5'),
+        [
+          '{',
+          '  // 工程根 build-profile（含注释与尾逗号，考验 JSON5 容错）',
+          '  "modules": [',
+          '    { "name": "LifecycleFramework", "srcPath": "./03/L", "targets": [ { "name": "default" }, { "name": "ohosTest" }, ] },',
+          '    { "name": "phone", "srcPath": "./01/phone", "targets": [ { "name": "default" } ] },',
+          '  ],',
+          '}',
+        ].join('\n'),
+        'utf-8',
+      );
+      assertEq(moduleDeclaresOhosTestTarget(root, 'LifecycleFramework'), true, '已注册 ohosTest');
+      assertEq(moduleDeclaresOhosTestTarget(root, 'phone'), false, '未注册 ohosTest');
+      assertEq(moduleDeclaresOhosTestTarget(root, 'NoSuchModule'), undefined, '模块未列出 → 不可判定');
+    }),
+  },
+  {
+    name: 'sanitizeLogModuleName: 模块名消毒',
+    run: () => {
+      assertEq(sanitizeLogModuleName('LifecycleFramework'), 'LifecycleFramework', '常规名不变');
+      assertEq(sanitizeLogModuleName('a/b\\c d'), 'a_b_c_d', '路径分隔与空格转下划线');
+      assertEq(sanitizeLogModuleName(''), 'module', '空名兜底');
     },
   },
 ];

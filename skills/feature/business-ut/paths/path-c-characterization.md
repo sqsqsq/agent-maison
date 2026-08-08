@@ -25,13 +25,13 @@
 ## Step C5 — characterization UT
 
 - 文件后缀 `*_characterization.test.ets`
-- `it()` 名含 `[CHAR-<flowName>]`
+- `it()` 名以 `[CHAR-<flowName>]` **起始**（`it_name_has_ac_or_branch_tag` 按起始标签匹配，接受 AC/BD/BRANCH/CHAR；无 acceptance 场景不得虚构 `[AC-*]`）
 - 断言：边界调用序列、状态迁移、返回 shape（与 DAG trace 一致）
 
 ## Step C6 — 共同收尾
 
 - 产出 `coverage-evidence.json`（`evidence_source` 以 ephemeral DAG / UT 标签为主）
-- 跑 harness `--phase ut`；path-c 下需求侧规则（`branch_coverage_full` 等）自动 SKIP
+- 跑 harness `--phase ut`；需求侧规则按各自前提自然 SKIP（如 `branch_coverage_full` 无 use-cases、AC 覆盖族无 acceptance）；`[CHAR-*]` 起始标签直接满足 it 命名门禁
 
 ## 升级路径
 

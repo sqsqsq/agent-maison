@@ -30,7 +30,11 @@ import {
   writeUtInstallDiagJson,
 } from './device-install-diag';
 import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
-import { hasDependencyResolutionFailure as hasDepResolutionFailureSignal } from './hvigor-runner';
+import {
+  hasDependencyResolutionFailure as hasDepResolutionFailureSignal,
+  detectHvigorTaskNotFound,
+  moduleDeclaresOhosTestTarget,
+} from './hvigor-runner';
 import {
   buildUtHvigorTestFailDetails,
   type UtHvigorTestFailureModule,
@@ -249,23 +253,32 @@ function checkUtTscCompiles(
     .map(([f, n]) => `${f}: ${n} 条`)
     .slice(0, 10);
 
+  // plan 423e5d0f P0-1：模拟 tsc 永不做编译 BLOCKER——权威性排序=真实 hvigor > 模拟 tsc
+  // （R2 实锤：存量 Main.test.ets 被裸 tsc 判 TS2749，同一文件真实 hvigor 编译 PASS）。
+  // 唯一编译 BLOCKER 是 ut_hvigor_build 真实编译；tsc 保留为快速诊断（WARN）。
+  // 例外护栏：profile 把 ut.compile 声明为 SKIP 时，tsc 是仅存的编译门禁，不降级。
+  const realCompileSkipped = isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile');
+
   return [
     {
       id: 'ut_tsc_compiles',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
       severity: 'BLOCKER',
-      status: 'FAIL',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
+      status: realCompileSkipped ? 'FAIL' : 'WARN',
       details:
         `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${report.durationMs} ms）。\n` +
         `按文件：\n${summaryByFile.join('\n')}\n\n` +
-        `前 ${preview.length} 条诊断：\n${preview.join('\n')}`,
+        `前 ${preview.length} 条诊断：\n${preview.join('\n')}\n\n` +
+        (realCompileSkipped
+          ? '注意：ut.compile 已被 profile 声明 SKIP，模拟 tsc 是仅存的编译门禁——本结果保持 FAIL，不降级。'
+          : '口径：模拟 tsc 仅作快速诊断（WARN），编译通过与否以 ut_hvigor_build 真实编译为准；' +
+            '报错落在存量文件且真实编译 PASS 时属模拟器假错，不要为此修改存量代码。'),
       affected_files: Array.from(groupedByFile.keys()),
-      suggestion:
-        'UT 文件必须先通过 tsc --noEmit。请根据上方 TS 错误码修正代码；常见原因：' +
-        '(1) 符号未 import；(2) 调用签名与被测函数不符；(3) 类型字面量错误。' +
-        '若含 TS2614 且为 MockKit/when：在 mock-plan 声明 strategy=mockkit，勿改消费者 framework 内 ts-compile.ts。' +
-        '修完再跑 harness；该规则是 ut_hvigor_build 之前的第一道护城河。',
+      suggestion: realCompileSkipped
+        ? 'ut.compile 为 SKIP：请按上方 TS 错误码修正 UT 代码后重跑；常见原因：(1) 符号未 import；(2) 调用签名不符；(3) 类型字面量错误。'
+        : '新写 UT 的报错请按 TS 错误码修正（符号未 import / 签名不符 / 类型字面量错误）；' +
+          '存量文件的报错以 ut_hvigor_build 真实编译结论为准，不要修改存量代码，也不要改消费者 framework 内 ts-compile.ts。',
     },
   ];
 }
@@ -301,9 +314,32 @@ export function selectUtModulesToCompile(
   return owned.length > 0 ? owned : mods; // 兜底：筛空则退回全集
 }
 
+/**
+ * 编译顺序（plan 423e5d0f P0）：含**本 feature 新增** UT 文件的模块排最前，其次含 scoped
+ * 文件的模块，其余殿后——真实编译错误仍会短路循环，必须保证"报告能回答本 feature
+ * 的被测模块过没过"，不能让顺带被触碰的存量模块把真目标模块挤出执行窗口。
+ * 同一优先级内保持原有顺序（稳定排序）。
+ */
+export function orderUtModulesForCompile(
+  mods: Array<{ name: string; package_path: string }>,
+  scopedUtFiles: Array<{ path: string }>,
+  featureNewUtFiles: Array<{ path: string }>,
+): Array<{ name: string; package_path: string }> {
+  const rank = (m: { package_path: string }): number => {
+    if (featureNewUtFiles.some(f => f.path.includes(m.package_path))) return 0;
+    if (scopedUtFiles.some(f => f.path.includes(m.package_path))) return 1;
+    return 2;
+  };
+  return mods
+    .map((m, i) => ({ m, i, r: rank(m) }))
+    .sort((a, b) => (a.r - b.r) || (a.i - b.i))
+    .map(x => x.m);
+}
+
 function checkUtHvigorBuild(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
+  featureNewUtFiles: Array<{ path: string }> = [],
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
@@ -329,7 +365,11 @@ function checkUtHvigorBuild(
     ];
   }
 
-  const mods = selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles);
+  const mods = orderUtModulesForCompile(
+    selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles),
+    scopedUtFiles,
+    featureNewUtFiles,
+  );
   if (mods.length === 0) {
     return [
       {
@@ -343,7 +383,7 @@ function checkUtHvigorBuild(
     ];
   }
 
-  const perModule: Array<{ module: string; result: any }> = [];
+  const perModule: Array<{ module: string; result: any; taskNotFound?: { task: string } }> = [];
   for (const mod of mods) {
     const res = dispatchUtCompile(ctx, {
       projectRoot: ctx.projectRoot,
@@ -354,9 +394,34 @@ function checkUtHvigorBuild(
       target: 'ohosTest',
       skipEnvVar: 'HARNESS_SKIP_HVIGOR',
     });
-    perModule.push({ module: mod.name, result: res });
-    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
+    const entry: { module: string; result: any; taskNotFound?: { task: string } } = {
+      module: mod.name,
+      result: res,
+    };
+    if (res.executed && res.exitCode !== 0) {
+      const tnf = detectHvigorTaskNotFound(mergeUtCompileLogForClassification(ctx, res));
+      if (tnf) entry.taskNotFound = tnf;
+    }
+    perModule.push(entry);
+    if (res.toolMissing || res.skippedByEnv) break; // 全局性问题：后续模块必然同因失败
+    // task-not-found 是单模块的工程配置形态问题（plan 423e5d0f P0）：继续编译其余模块，
+    // 保证报告能给出每个模块的事实；真实编译错误仍短路（修复靶点已明确，省时）。
+    if (res.executed && res.exitCode !== 0 && !entry.taskNotFound) break;
   }
+
+  const perModuleStatusLines = [
+    '逐模块编译状态：',
+    ...perModule.map(x => {
+      const r = x.result;
+      const st = r.toolMissing ? 'TOOL_MISSING'
+        : r.skippedByEnv ? 'ENV_SKIP'
+        : !r.executed ? 'NOT_EXECUTED'
+        : r.exitCode === 0 && r.errors.length === 0 ? 'PASS'
+        : x.taskNotFound ? `FAIL（task_not_found: ${x.taskNotFound.task}）` : 'FAIL';
+      return `  - ${x.module}: ${st}${r.logPath ? `（日志：${r.logPath}）` : ''}`;
+    }),
+    ...mods.slice(perModule.length).map(m => `  - ${m.name}: NOT_EXECUTED（前序失败短路）`),
+  ];
 
   const bad = perModule.filter(
     x =>
@@ -380,14 +445,18 @@ function checkUtHvigorBuild(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}`,
+        details:
+          `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}\n` +
+          perModuleStatusLines.join('\n'),
       },
     ];
   }
 
-  const first = bad[0].result;
-  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
-  const failureClass = classifyUtHvigorBuildFailure(first, ctx, bad[0].module, ctx.projectRoot);
+  // 详细展开优先选"真实编译失败"的模块；全是 task-not-found 时才展开该形态。
+  const detailEntry = bad.find(x => !x.taskNotFound) ?? bad[0];
+  const first = detailEntry.result;
+  const lines: string[] = [...perModuleStatusLines, '', `ohosTest 模块 "${detailEntry.module}" 编译失败：`];
+  const failureClass = classifyUtHvigorBuildFailure(first, ctx, detailEntry.module, ctx.projectRoot);
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor 可执行文件（请在 framework.local.json > toolchain.devEcoStudio 配置本机 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
@@ -436,7 +505,7 @@ function checkUtHvigorBuild(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: lines.join('\n'),
-      affected_files: [bad[0].module + '@ohosTest'],
+      affected_files: bad.map(x => `${x.module}@ohosTest`),
       failure_kind: failureClass.kind,
       blocking_class:
         failureClass.kind === 'external_project_build_blocker'
@@ -453,6 +522,7 @@ type UtHvigorFailureKind =
   | 'toolchain'
   | 'env_skip'
   | 'ut_hvigor_command_mismatch'
+  | 'ut_module_target_unregistered'
   | 'ut_code'
   | 'feature_code'
   | 'project_dependency_missing'
@@ -509,6 +579,31 @@ function classifyUtHvigorBuildFailure(
   }
 
   const mergedLog = mergeUtCompileLogForClassification(ctx, res);
+
+  // plan 423e5d0f P0：hvigor "Task ... was not found" = 工程构建配置形态问题（该模块未注册
+  // 对应构建目标 / hvigor 版本差异），不是 UT 代码问题——归因给 build-profile targets，
+  // 不按 module.json5 type 武断归因，也不引导 ohpm install / 改 UT。
+  const taskNotFound = detectHvigorTaskNotFound(mergedLog);
+  if (taskNotFound) {
+    const probe = moduleDeclaresOhosTestTarget(projectRoot, moduleName);
+    const probeNote =
+      probe === false
+        ? `工程根 build-profile.json5 的 modules[] 中模块 "${moduleName}" 的 targets 未含 ohosTest —— hvigor 因此不会为其挂载该 task（与日志现象一致）。`
+        : probe === true
+          ? `工程根 build-profile.json5 中模块 "${moduleName}" 已注册 ohosTest target，但 hvigor 仍未挂载该 task——多为 hvigor 版本/插件差异，需在 DevEco 对该模块实测 "Run ohosTest" 确认。`
+          : `未能从工程根 build-profile.json5 读取模块 "${moduleName}" 的 targets（文件缺失/解析失败/模块未列出），请人工核对。`;
+    return {
+      kind: 'ut_module_target_unregistered',
+      explanation:
+        `hvigor 报 Task '${taskNotFound.task}' was not found：该模块当前构建配置下不存在此构建目标任务。` +
+        `这是工程配置形态问题，不是 UT 代码问题。${probeNote}`,
+      suggestion:
+        `选项 A：在工程根 build-profile.json5 为模块 "${moduleName}" 的 targets 注册 ohosTest target（对照可正常 Run ohosTest 的模块写法），在 DevEco 实测通过后重跑；` +
+        '选项 B：若该模块本不属于本需求被测范围（仅因存量测试文件被顺带触碰而进入编译集合），恢复对该文件的改动使其退出 scope，不要为过门禁修改无关模块配置。' +
+        '注意：build-profile.json5 受源码改动门禁约束，确需保留改动须登记 gap-notes approved_src_mutations。',
+    };
+  }
+
   if (looksLikeUtCompileCommandMismatch(ctx, mergedLog)) {
     return {
       kind: 'ut_hvigor_command_mismatch',

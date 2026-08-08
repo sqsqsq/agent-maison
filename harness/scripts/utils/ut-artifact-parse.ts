@@ -261,8 +261,19 @@ export function utFileImportsHypiumMockkit(content: string): boolean {
 }
 
 export interface UtMockkitTargetUsage {
-  targetClass: string;
+  /** 静态可判定的目标类；mockFunc 打桩对象来自工厂/builder（返回未导出内部类）时无法判定 → undefined */
+  targetClass?: string;
   method?: string;
+}
+
+/** `kit.mockFunc(obj, obj.method)` 赋值出的 mock 函数变量信息（hypium 真实 API 形态） */
+export interface MockFuncVarInfo {
+  /** mockFunc 第一参（被打桩对象变量名） */
+  objVar: string;
+  /** 被打桩方法名（mockFunc 第二参的成员名） */
+  method: string;
+  /** 尽力解析出的目标类；解析不出时 undefined（解析不出 ≠ 违规） */
+  targetClass?: string;
 }
 
 /** ArkTS/TS 可选类型注解：const id: Type = */
@@ -305,7 +316,15 @@ function collectHypiumWhenInners(content: string): string[] {
 function parseWhenInnerUsage(
   inner: string,
   varToClass: Map<string, string>,
+  mockFuncVars?: Map<string, MockFuncVarInfo>,
 ): UtMockkitTargetUsage | null {
+  // hypium 真实 API：when(mockedFn)(args).afterReturn/afterAction —— when(...) 括号内是
+  // kit.mockFunc(obj, obj.method) 赋值出的**裸变量**（宿主 hypium@1.0.24 d.ts 实证形态）。
+  const bare = /^([A-Za-z_$][\w$]*)$/.exec(inner);
+  if (bare && mockFuncVars?.has(bare[1])) {
+    const info = mockFuncVars.get(bare[1])!;
+    return { targetClass: info.targetClass, method: info.method };
+  }
   const staticHead = /^([A-Z][A-Za-z0-9_]*)\.([A-Za-z_]\w*)([\s\S]*)$/.exec(inner);
   if (staticHead) {
     const rest = staticHead[3].trim();
@@ -360,18 +379,60 @@ export function buildMockkitVarClassMap(content: string): Map<string, string> {
   return varToClass;
 }
 
+/**
+ * 尽力解析对象变量的静态类型：
+ *   ① `objVar: ClassName` 显式类型注解；② `objVar = new ClassName(...)`。
+ * `objVar = ClassName.factory(...)` 不猜——工厂/builder 常返回未导出内部类，
+ * 按类名归因会造成错误的治理判定（宿主实证：`ServiceModel.builderForDuringStartUp()`
+ * 返回的是 builder 内部类而非 ServiceModel）。
+ */
+function resolveObjVarClass(content: string, objVar: string): string | undefined {
+  const annot = new RegExp(`\\b${objVar}\\s*:\\s*([A-Z][A-Za-z0-9_]*)\\b`).exec(content);
+  if (annot) return annot[1];
+  const ctor = new RegExp(
+    `\\b${objVar}${TS_TYPE_ANNOT}=\\s*new\\s+([A-Z][A-Za-z0-9_]*)\\s*\\(`,
+  ).exec(content);
+  if (ctor) return ctor[1];
+  return undefined;
+}
+
+/**
+ * 收集 hypium 真实 mock API 的赋值：`mockVar = kit.mockFunc(obj, obj.method | Class.method)`
+ * （kit 为 `new MockKit()` 实例）。返回 mockVar → { objVar, method, targetClass? }。
+ */
+export function collectMockFuncVarInfo(content: string): Map<string, MockFuncVarInfo> {
+  const kitVars = collectMockkitKitVars(content);
+  const out = new Map<string, MockFuncVarInfo>();
+  const re = new RegExp(
+    `(\\w+)${TS_TYPE_ANNOT}=\\s*(\\w+)\\.mockFunc\\s*\\(\\s*(\\w+)\\s*,\\s*([\\w$]+(?:\\.[\\w$]+)?)\\s*\\)`,
+    'g',
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const [, mockVar, kitVar, objVar, funcExpr] = m;
+    if (kitVar !== 'MockKit' && !kitVars.has(kitVar)) continue;
+    const dot = funcExpr.lastIndexOf('.');
+    const method = dot >= 0 ? funcExpr.slice(dot + 1) : funcExpr;
+    const head = dot >= 0 ? funcExpr.slice(0, dot) : '';
+    const targetClass = /^[A-Z]/.test(head) ? head : resolveObjVarClass(content, objVar);
+    out.set(mockVar, { objVar, method, targetClass });
+  }
+  return out;
+}
+
 function pushUsage(usages: UtMockkitTargetUsage[], u: UtMockkitTargetUsage): void {
-  const key = `${u.targetClass}::${u.method ?? ''}`;
-  if (!usages.some(x => `${x.targetClass}::${x.method ?? ''}` === key)) {
+  const key = `${u.targetClass ?? ''}::${u.method ?? ''}`;
+  if (!usages.some(x => `${x.targetClass ?? ''}::${x.method ?? ''}` === key)) {
     usages.push(u);
   }
 }
 
-/** 从 UT 源码粗解析 MockKit.mock / when(...) 目标（不依赖 AST） */
+/** 从 UT 源码粗解析 MockKit.mock / mockFunc / when(...) 目标（不依赖 AST） */
 export function extractUtMockkitTargets(content: string): UtMockkitTargetUsage[] {
   const usages: UtMockkitTargetUsage[] = [];
   const varToClass = buildMockkitVarClassMap(content);
   const kitVars = collectMockkitKitVars(content);
+  const mockFuncVars = collectMockFuncVarInfo(content);
   let m: RegExpExecArray | null;
 
   for (const [, cls] of varToClass) {
@@ -390,24 +451,31 @@ export function extractUtMockkitTargets(content: string): UtMockkitTargetUsage[]
     }
   }
 
+  // hypium 真实 API：mockFunc 赋值本身即打桩声明（无论是否再出现 when）
+  for (const [, info] of mockFuncVars) {
+    pushUsage(usages, { targetClass: info.targetClass, method: info.method });
+  }
+
   for (const inner of collectHypiumWhenInners(content)) {
-    const u = parseWhenInnerUsage(inner, varToClass);
+    const u = parseWhenInnerUsage(inner, varToClass, mockFuncVars);
     if (u) pushUsage(usages, u);
   }
 
   return usages;
 }
 
-/** 无法解析为受支持模式的 hypium when(...) 调用 */
+/** 无法解析为受支持模式的 hypium when(...) 调用（解析不出 ≠ 违规：调用方应输出 WARN 级 unresolved，不作 BLOCKER） */
 export function collectUnparsedHypiumWhenIssues(
   content: string,
   varToClass: Map<string, string>,
+  mockFuncVars?: Map<string, MockFuncVarInfo>,
 ): string[] {
   const issues: string[] = [];
+  const funcVars = mockFuncVars ?? collectMockFuncVarInfo(content);
   for (const inner of collectHypiumWhenInners(content)) {
-    if (parseWhenInnerUsage(inner, varToClass)) continue;
+    if (parseWhenInnerUsage(inner, varToClass, funcVars)) continue;
     issues.push(
-      `when(${inner}) 无法解析为受支持的 MockKit 模式（须 MockKit.mock(Class)、kit.mock(Class) 或 when(repo.method)）`,
+      `when(${inner}) 未能静态解析（支持形态：when(Class.method) / when(var.method)（var=MockKit.mock(Class) 或 kit.mock(Class)）/ when(mockedFn)（mockedFn=kit.mockFunc(obj, obj.method)））`,
     );
   }
   return issues;
@@ -430,47 +498,69 @@ function collectMockkitPresetIds(plan: MockPlanSpec): Set<string> {
   return ids;
 }
 
+/** MockKit/when 治理结论分层：已证明违规（BLOCKER 材料）与静态解析不出（WARN 材料） */
+export interface UtMockkitGovernanceReport {
+  /** 已证明的违规：mock 被测入口 / 可判定类未在 mock-plan 声明 / 方法未声明 / preset 未引用 */
+  violations: string[];
+  /** 静态解析不出、无法证明违规的用法——解析不出 ≠ 违规，只配 WARN 与补声明建议 */
+  unresolved: string[];
+}
+
 /**
  * UT 中 MockKit/when 用法须与 mock-plan mockkit 条目及禁止 mock 的入口类对齐。
  * @param forbiddenEntryClasses 被测 entry_point 类名（来自 testability-audit）
  */
-export function collectUtMockkitGovernanceIssues(
+export function collectUtMockkitGovernanceReport(
   content: string,
   plan: MockPlanSpec,
   forbiddenEntryClasses: Set<string>,
-): string[] {
-  const issues: string[] = [];
+): UtMockkitGovernanceReport {
+  const violations: string[] = [];
+  const unresolved: string[] = [];
   const varToClass = buildMockkitVarClassMap(content);
+  const mockFuncVars = collectMockFuncVarInfo(content);
   const usages = extractUtMockkitTargets(content);
   const hasWhenCall = utContentUsesHypiumWhenCall(content);
-  if (usages.length === 0 && !hasWhenCall) return issues;
+  if (usages.length === 0 && !hasWhenCall) return { violations, unresolved };
 
   if (hasWhenCall) {
-    for (const msg of collectUnparsedHypiumWhenIssues(content, varToClass)) {
-      issues.push(msg);
-    }
+    unresolved.push(...collectUnparsedHypiumWhenIssues(content, varToClass, mockFuncVars));
   }
 
   const mockkitEntries = getMockPlanEntries(plan).filter(e => e.strategy === 'mockkit');
   const mockkitClasses = new Set(mockkitEntries.map(e => e.target_class));
+  const declaredMethods = new Set(
+    mockkitEntries.flatMap(e => (e.methods ?? []).map(meth => meth.name)),
+  );
   const methodIndex = buildMockPlanPresetIndex(plan);
 
   for (const u of usages) {
-    if (forbiddenEntryClasses.has(u.targetClass)) {
-      const sym = u.method ? `${u.targetClass}.${u.method}` : u.targetClass;
-      issues.push(`禁止 mock 被测入口 ${sym}（testability-audit entry_point）`);
-      continue;
-    }
-    if (!mockkitClasses.has(u.targetClass)) {
-      const sym = u.method ? `${u.targetClass}.${u.method}` : u.targetClass;
-      issues.push(`MockKit/when 目标 ${sym} 未在 mock-plan 声明 strategy=mockkit`);
-      continue;
-    }
-    if (u.method) {
-      const key = `${u.targetClass}::${u.method}`;
-      if (!methodIndex.has(key)) {
-        issues.push(`MockKit/when 方法 ${u.targetClass}.${u.method} 未在 mock-plan mockkit 条目中声明`);
+    if (u.targetClass) {
+      if (forbiddenEntryClasses.has(u.targetClass)) {
+        const sym = u.method ? `${u.targetClass}.${u.method}` : u.targetClass;
+        violations.push(`禁止 mock 被测入口 ${sym}（testability-audit entry_point）`);
+        continue;
       }
+      if (!mockkitClasses.has(u.targetClass)) {
+        const sym = u.method ? `${u.targetClass}.${u.method}` : u.targetClass;
+        violations.push(`MockKit/when 目标 ${sym} 未在 mock-plan 声明 strategy=mockkit`);
+        continue;
+      }
+      if (u.method) {
+        const key = `${u.targetClass}::${u.method}`;
+        if (!methodIndex.has(key)) {
+          violations.push(`MockKit/when 方法 ${u.targetClass}.${u.method} 未在 mock-plan mockkit 条目中声明`);
+        }
+      }
+    } else if (u.method) {
+      // 目标类静态不可判定（mockFunc 对象来自工厂/builder）：一律 unresolved——方法名与
+      // mockkit 条目同名只是弱对齐，不能证明打的是声明的那个类，不得据此显示全绿；
+      // 同样也不能证明违规，不给 BLOCKER。语义对齐交 AI verifier 复核。
+      unresolved.push(
+        declaredMethods.has(u.method)
+          ? `mockFunc 打桩方法 ${u.method} 的目标类无法静态判定（方法名与 mockkit 条目弱对齐，是否同类由 verifier 语义复核）`
+          : `mockFunc 打桩方法 ${u.method} 的目标类无法静态判定，且方法名未出现在任何 mockkit 条目 methods[]（建议在 mock-plan 补充声明以便追溯）`,
+      );
     }
   }
 
@@ -482,12 +572,21 @@ export function collectUtMockkitGovernanceIssues(
         new RegExp(`['"]${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`).test(content),
       );
       if (cited.length === 0) {
-        issues.push(
+        violations.push(
           'UT 使用 when(...) 但未引用 mock-plan mockkit presets[].id（须在源码中以字符串标注 preset id）',
         );
       }
     }
   }
 
-  return issues;
+  return { violations, unresolved };
+}
+
+/** 兼容包装：仅返回已证明违规（历史调用方语义 = BLOCKER 材料） */
+export function collectUtMockkitGovernanceIssues(
+  content: string,
+  plan: MockPlanSpec,
+  forbiddenEntryClasses: Set<string>,
+): string[] {
+  return collectUtMockkitGovernanceReport(content, plan, forbiddenEntryClasses).violations;
 }

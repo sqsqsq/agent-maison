@@ -334,6 +334,52 @@ export function diffChangedFilesWithStatus(opts: {
   return { executed: true, baseRef, entries };
 }
 
+export interface ListFilesAtRefResult {
+  executed: boolean;
+  ref: string;
+  /** ref 树下全部文件相对路径（正斜杠归一） */
+  files: Set<string>;
+  error?: string;
+}
+
+/**
+ * 列出 ref 树下的全部文件路径（`git ls-tree -r --name-only -z <ref>`）。
+ * 用于「基线身份」判定：文件在基线 ref 已存在 = 存量（legacy），否则 = 本轮新增。
+ * ref 不可达 / 非 git 仓库 → executed=false（调用方保守处理，不假装能判定）。
+ */
+export function listFilesAtRef(projectRoot: string, ref: string): ListFilesAtRefResult {
+  const cwd = projectRoot;
+  const trimmed = ref.trim();
+  if (!trimmed) {
+    return { executed: false, ref: '', files: new Set(), error: 'ref 为空' };
+  }
+  const verify = spawnSync('git', ['rev-parse', '--verify', `${trimmed}^{commit}`], {
+    cwd, encoding: 'utf-8', shell: false,
+  });
+  if (verify.status !== 0) {
+    return {
+      executed: false, ref: trimmed, files: new Set(),
+      error: `ref 不可达（非 git 仓库或 commit 不存在）：${trimmed}`,
+    };
+  }
+  const ls = spawnSync(
+    'git',
+    ['ls-tree', '-r', '--name-only', '-z', trimmed],
+    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (ls.status !== 0) {
+    return {
+      executed: false, ref: trimmed, files: new Set(),
+      error: `git ls-tree 失败：${(ls.stderr ?? Buffer.alloc(0)).toString('utf-8').trim()}`,
+    };
+  }
+  const files = new Set<string>();
+  for (const p of (ls.stdout as Buffer).toString('utf-8').split('\0').filter(Boolean)) {
+    files.add(p.replace(/\\/g, '/'));
+  }
+  return { executed: true, ref: trimmed, files };
+}
+
 /** 读取 base 侧文件内容（`git show <ref>:<path>`）；不存在/失败 → null。 */
 export function readFileAtRef(projectRoot: string, ref: string, relPath: string): Buffer | null {
   const res = spawnSync(

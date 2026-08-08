@@ -47,7 +47,7 @@
 
 **关键澄清**：被测单元 = 命名业务入口（非强制 UseCase 类）；外部依赖抽象用 `data_boundaries[]`（引用 contracts.yaml 既有 data 层类，非新造 Port）；无 UseCase 代码产物，`use-cases.yaml` 只是文档规约；Stub 用子类化/原型替换（非实现 Port 接口）；一个 `it()` 端到端驱动一个 branch（或一条 AC/BD），断言含 state 序列+调用序列+数据；UI 交互交 device-testing。
 
-**追溯标签（BLOCKER）**：每个 `it()` 名称必须以 acceptance.yaml 中真实存在的 `[AC-<id>]`、`[BD-<id>]` 或 use-cases.yaml 中真实存在的 `[BRANCH-<id>]` 起始；BD 可直接写成 `it('[BD-1] 空列表回落', ...)`，无需虚构或附带无关 AC。组合覆盖可写 `[AC-1][BD-1]`，复杂流推荐 `[BRANCH-happy_path][AC-1]`。
+**追溯标签（BLOCKER）**：每个 `it()` 名称必须以 acceptance.yaml 中真实存在的 `[AC-<id>]`、`[BD-<id>]` 或 use-cases.yaml 中真实存在的 `[BRANCH-<id>]` 起始；BD 可直接写成 `it('[BD-1] 空列表回落', ...)`，无需虚构或附带无关 AC。组合覆盖可写 `[AC-1][BD-1]`，复杂流推荐 `[BRANCH-happy_path][AC-1]`。**例外**：path-c characterization 用例以 `[CHAR-<flowName>]` 起始（该场景无 acceptance，**禁止**为过门禁虚构 `[AC-*]`；见 path-c 细则）。
 
 ## 输入
 
@@ -63,7 +63,7 @@
 | plan.md / spec.md | 可选 | plan 缺失时从 acceptance、业务源码 diff scope 与 module catalog 推导测试对象 |
 | doc/architecture.md | ✅ | 架构与依赖红线 |
 
-**缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段。
+**缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段（**例外**：提供脱敏日志切片时走 path-c characterization，不要求先补 spec，见三路径路由）。
 
 **保证等级**：Harness 在 checker 前一次性解析 contract capabilities 与输入 source chain，机械写入 `summary.assurance` 和 `capability_resolutions`；Skill 不得手写 `full/basic` 档位。可裁剪能力会以受控理由投影到质量轴，核心输入缺失仍不可闭环；acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 

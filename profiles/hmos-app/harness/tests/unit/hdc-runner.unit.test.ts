@@ -36,6 +36,9 @@ import {
   loadAppInstallCandidateMeta,
   parseInstalledBundleVersionFromDump,
   diagnoseHdcInstallFailure,
+} from '../../hdc-runner';
+import { mapInstallBlockingToUtCheckFields } from '../../device-install-diag';
+import {
   mergeEnvWithHdcOnPath,
   resetHdcExecutableCache,
   buildHdcSpawnOptions,
@@ -507,7 +510,40 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const d = diagnoseHdcInstallFailure('install failed: downgrade versionCode lower than installed', 255);
       assertEq(d.kind, 'install_downgrade', 'kind');
-      assertIncludes(d.suggestion, 'HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL', '应提示可选 env');
+      // plan 423e5d0f #16：本诊断被 UT/testing 共用——底层必须**场景中立**：
+      // 只报事实（降级+丢数据风险+禁改 versionCode），不得写死任一链路的处置策略
+      //（UT 专属"等用户手动处理"由 ut-hvigor-test-failure 聚合层追加并有专属断言）。
+      assert(!d.suggestion.includes('UT 链'), `底层诊断不得写死 UT 策略：${d.suggestion}`);
+      assert(!d.suggestion.includes('HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL'),
+        `底层不引导任何链路的 env 通道：${d.suggestion}`);
+      assertIncludes(d.suggestion, '用户数据', '须含丢数据警示');
+      assertIncludes(d.suggestion, '不要为绕过而提高 app.versionCode', '不得引导改 versionCode');
+    },
+  },
+  {
+    // plan 423e5d0f #17：needsConfirmation ≠ 版本降级——按 downgradeDetected 分支建议。
+    name: 'mapInstallBlockingToUtCheckFields: needsConfirmation 按 downgradeDetected 分支',
+    run: () => {
+      const downgrade = mapInstallBlockingToUtCheckFields({
+        kind: 'needsConfirmation',
+        details: 'x',
+        downgradeDetected: true,
+      });
+      assertEq(downgrade.blocking_class, 'needsConfirmation', 'downgrade blocking');
+      assertIncludes(downgrade.suggestion, '用户数据', '降级分支须含丢数据警示');
+      assertIncludes(downgrade.suggestion, '不要自行卸载', '降级分支须禁自行卸载');
+
+      const metaFailure = mapInstallBlockingToUtCheckFields({
+        kind: 'needsConfirmation',
+        details: '读取应用版本元数据失败：AppScope/app.json5 缺失',
+        downgradeDetected: false,
+      });
+      assertEq(metaFailure.blocking_class, 'needsConfirmation', 'meta blocking');
+      // 非降级：修复元数据是正解，不得禁改配置造成无解重跑，也不得灌卸载话术
+      assertIncludes(metaFailure.suggestion, 'AppScope/app.json5', '应指向元数据修复');
+      assertIncludes(metaFailure.suggestion, '授权流程', '改配置走既有授权流程');
+      assertIncludes(metaFailure.suggestion, '无需卸载', '不得灌卸载话术');
+      assert(!metaFailure.suggestion.includes('用户数据'), `非降级不引导丢数据决策：${metaFailure.suggestion}`);
     },
   },
   {
