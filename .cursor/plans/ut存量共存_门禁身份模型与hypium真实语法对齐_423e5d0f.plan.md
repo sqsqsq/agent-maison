@@ -1,9 +1,22 @@
 ---
 name: UT 存量共存 — 门禁身份模型与 hypium 真实语法对齐
-version: 3.1.0
-deferred_to: 3.1.0
-# 窗口说明：3.0.0 发布门 = 既定三 plan 不追加（用户 2026-08-05 裁定），本 plan 逻辑上
-# 只能归下一窗口；deferred_to 满足 check-plan-version 门禁。窗口归属终裁权在用户。
+version: 3.0.0
+# 窗口说明：用户 2026-08-09 裁定本 plan 在 3.0.0 做完（发布门自此含本 plan）。
+# 注意：发版解析器只读 frontmatter todos（正文 checkbox 不进 release 门禁）——
+# R3c 以 pending todo 物化在此，挡 release 直到真机验证完成（codex 五轮 #5 实锤）。
+todos:
+  - id: p0-legacy-exemption-and-diagnostics
+    content: P0 解除误判与遮蔽（hypium 真语法/责任域豁免/tsc WARN/设备诊断真话），已提交 b2791de5，宿主 R3b 验证通过。
+    status: completed
+  - id: p1-target-resolver-ratchet-verdicts
+    content: P1 统一 target 解析器（targetCaseView/multiset 增量）+ suite 授权基线棘轮（module 级身份）+ 两结论面板。
+    status: completed
+  - id: p2-mode-entries
+    content: P2 工作模式机器化（MAISON_UT_MODE/MAISON_UT_TARGETS，repair/cover_existing fail-closed + 需求门禁分流）与 skill 薄入口。
+    status: completed
+  - id: r3c-host-device-verification
+    content: 宿主真机收尾：设备接回后解锁+用户授权卸载旧包+重跑真机执行环节，确认 hypium 用例真实运行与棘轮/两结论输出。
+    status: pending
 overview: >
   宿主 2.3.0 UT 实锤暴露：框架只支持"发现存量 UT 并按当前 feature 问责"，不支持存量身份。
   P0 解除 mockkit 自创语法误判/CHAR 死锁/hvigor 诊断遮蔽，tsc 在真实编译能力在场时恒 WARN、降级恒等用户确认，
@@ -13,7 +26,7 @@ overview: >
 
 # UT 存量共存：门禁身份模型与 hypium 真实语法对齐（423e5d0f）
 
-状态：**P0 已关账（R3b 宿主验证通过，待 commit；R3c 真机收尾确认待设备）**；P1/P2 未开工（2026-08-08）
+状态：**P0 已关账并提交（b2791de5）；P1/P2 已实施待 review/commit**（2026-08-08）；R3c 真机收尾确认待设备；验收场景 3/4（repair / cover_existing 实测）待宿主真实场景回灌
 触发：宿主 WalletHarmony（framework 2.3.0）lifecycle-not-login feature UT 阶段两枚 BLOCKER 实锤；codex Explore 复核补充 5 条新实锤（均已对 ground truth 核实）。
 
 ---
@@ -149,13 +162,43 @@ Git diff / context 提及只是**发现候选**的线索，不决定责任。当
 - [x] 18. plan frontmatter overview 与正文对齐（target/suite 模型、seam registry 移出主线）。
 - [x] 19. （第五轮收尾）非降级 needsConfirmation 文案修复：AppScope/app.json5 元数据异常的正解就是修元数据——指向修复+授权流程，不再"禁改配置"造成无解重跑；补 mapInstallBlockingToUtCheckFields 两态直接单测；hdc-runner 底层断言改为验证中立性（不含 "UT 链"），UT 专属话术断言移至聚合层测试；补 coding_base_sha 成功路径集成测试（真实 recordCodingBase writer 造锚）；plan "tsc 恒 WARN" 措辞加"真实编译能力在场时"限定。
 
-### P1 三个能力（codex 简化版，替代原三桶/用例级归属/ratchet 重设计）
-- [ ] P1-1 **统一 target 解析器**：优先级=用户明确目标 > 工作模式声明 > feature 已声明测试路径/用例 > Git/context 候选线索；输出仅 targetFiles/targetCases/targetModules/selectionReasons；复用现有 context，不建 UtWorkContext 大对象；mockkit/标签/覆盖族全部换成消费它（替代临时 featureNewUtFiles）。
-- [ ] P1-2 **阶段入口前后对比**：UT 开始时快照 suite 当前失败用例 + 业务源码状态；结束时比较（target 红转绿/新测试通过、suite 无新增失败、阶段内无新增源码改动）。同时解决：存量套件本有失败、用户本地非需求改动被 `ut_no_src_mutation` 误判为 UT 擅改。报告放现有 feature run 目录，不建历史库。
-- [ ] P1-3 **两个结论**：`feature_verdict = PASS|FAIL|INCOMPLETE` + `suite_health = HEALTHY|DEGRADED|UNKNOWN`，不再增加平行 verdict。
+### P1 三个能力——**已实施（2026-08-08，经 codex 第四轮 review 三 P0 修正后定稿，unit 3111 + fixtures 44 全绿，待 commit）**
+- [x] P1-1 **统一 target 解析器**（`ut-target-resolver.ts`）：优先级=用户明确目标（`MAISON_UT_TARGETS`，可指向未在 scoped 的存量文件）> scoped 内基线判定（新建文件全责 + legacy 文件内新增 it 用例级升格）；输出 targetFiles / legacyIncrements / **targetCaseView**（新文件原样 + legacy 新增 import/it 合成条目）/ selectionReasons。**全部需求房规**（mockkit / 标签 / import 白名单 / boundaries / it_drives_flow / 覆盖族 / ac-coverage / hvigor targetItNames）统一消费 targetCaseView（codex 修正：此前只有标签/mockkit 消费增量，其余仍吃 featureNewUtFiles=增量可绕多项规则）；mockkit 增量按 **multiset 计数差**（codex 修正：集合去重会吞"基线已 mock 同方法的新增使用"）。无基线锚时行为与改造前逐字等价（fixtures 全绿佐证）。
+- [x] P1-2 **suite 失败棘轮**（`ut-suite-baseline.ts`，codex 修正版）：基线是**授权工件**（编排在 agent 动手前真实采样写入，或用户确认后放置），**本轮执行不得反推基线**——首轮自动建基线会把本轮新增回归洗成历史（codex P0 实锤，已废）。无基线=不豁免任何失败（suite_health=UNKNOWN）；有基线=基线内非 target 失败豁免报 DEGRADED、基线外=回归 FAIL、**target 失败永不豁免**、基线只收紧不增长（本轮不再失败的条目自动剔除）。执行面（codex P0 修正）：用例失败**不短路**后续模块（棘轮需全量结果，半途 PASS=假绿）；豁免判定先于 exitCode（用例失败令 aa test 非零退出，不得据此绕过棘轮）；PASS 须全部选中模块真实执行（防御分支已加）。**实施偏差（如实披露）**：原案"业务源码入口快照"不做 direct 自动化——direct 首跑快照仍是 agent 动手后时点（同 trace 不可信问题）；正路=显式锚 `HARNESS_DIFF_BASE_REF`（ut_no_src_mutation 既有消费）或 goal 链 review-closure；cover_existing_code 模式文档要求显式锚，**不宣称 direct 自动区分入口前改动**。
+- [x] P1-3 **两个结论**：状态面板输出 `feature_verdict: PASS|FAIL|INCOMPLETE` 与 `suite_health: HEALTHY|DEGRADED|UNKNOWN`（后者从 ut_hvigor_test details 机器行提取），不增平行 verdict。
 
-### P2 一层薄入口
-- [ ] 三个 skill 入口（修已有 UT / 给存量代码写 UT / 给需求代码写 UT）调用同一引擎，只改变 target 选择方式；修已有 UT=复现→分类→修目标→前后对比，不强制补 feature AC；存量写 UT=REG/CHAR，阶段开始前源码状态是输入、阶段内新增源码改动仍阻止。
+### P2 一层薄入口——**已实施（机器化通道 + 文档，codex 修正后不再是纯文档能力）**
+- [x] 工作模式机器化（codex P0 修正）：`MAISON_UT_MODE`（repair_existing_ut / cover_existing_code / 缺省 cover_feature_change）+ `MAISON_UT_TARGETS`（分号/逗号分隔目标文件路径）→ resolver 直接消费；显式目标在**全部已发现文件**中匹配（不限 scoped——repair 正需要点名未触碰的存量文件）。`[REG-*]` 标签**仅 repair/cover_existing 模式放行**（cover_feature_change 禁用——codex 实锤：全局放开会让需求 UT 借 REG 绕 AC 绑定）；`[CHAR-*]` 维持全放行（path-c 是 feature 内合法路径）。
+- [x] SKILL.md 三工作模式路由 + 触发词 + `paths/path-repair-existing.md`（复现→六分类分诊→按权限修复→四类差异报告；出口=目标红转绿+suite 无新增失败，不强制 AC/DAG/mock-plan）；cover_existing_code 免先补 spec。
+
+### codex 第四轮 review（P1/P2 实施审查，三 P0 两 P1 全部核实修复，2026-08-08）
+- [x] ①（P0）mode/target 机器化接入：`MAISON_UT_MODE`/`MAISON_UT_TARGETS` → resolver（显式目标全量匹配不限 scoped）；REG 仅 repair/cover_existing 放行。
+- [x] ②（P0）棘轮基线可信化：废"首轮执行自动建基线"（会把本轮回归洗成历史）；基线=授权工件；无基线不豁免；只收紧不增长。
+- [x] ③（P0）多模块执行：用例失败不短路（棘轮需全量结果）；豁免判定先于 exitCode；PASS 须全部选中模块真实执行（防御分支+元门禁 suggestion）。
+- [x] ④（P1）targetCaseView 合成视图（新增 import 行+新增 it 块），import 白名单/boundaries/it_drives_flow/覆盖族/ac-coverage/hvigor targetItNames 全部统一消费。
+- [x] ⑤（P1）mockkit 增量 multiset 计数差（extractUtMockkitTargetsRaw），同 key 重复使用不被折叠。
+- [x] ⑥（P1）P1-2 源码入口快照如实标注为实施偏差（显式锚正路），SKILL 明示 cover_existing/repair 须带 HARNESS_DIFF_BASE_REF。
+- [x] ⑦ OpenSpec change 补建：`openspec/changes/ut-legacy-coexistence`（proposal/tasks/specs harness-gates 四条 Requirement），openspec:validate 53/53 PASS。
+- ~~版本窗口待用户裁定~~ **已裁定（2026-08-09）**：本 plan 在 3.0.0 做完，version=3.0.0（3.0.0 发布门自此含本 plan；R3c 开放 todo 挡 release 门直到真机验证完成）。
+
+### codex 第五轮 review（五条全部核实修复，2026-08-09）
+- [x] ①repair/cover_existing 成为真实独立模式：需求工件门禁（use-cases/audit/mock-plan/DAG/acceptance 覆盖族/facts gate/upstream verdict/acceptance-yaml 结构族/mockkit 政策/mock_stub_for_async）经 `featureGate` 按模式统一 SKIP；显式目标**保持存量身份**（不进 targetCaseView 房规问责——修的就是存量用例，不得逼挂 feature 标签），但强制进编译/执行集合与棘轮"永不豁免"名单（否则修复目标可能被历史基线豁免=假修复）。
+- [x] ②基线授权口径修正：读入校验 feature 绑定+条目形状（含 module）；信任模型如实声明=与 gap-notes approved_src_mutations 同级（普通授权文件+review 纪律，不做密码学防伪——顶层裁定 Stability over total control，codex 的签名回执方案据此裁剪）；删"编排采样已存在"虚承诺（writeOnce 标注为未来编排接口）。
+- [x] ③失败身份含 module（`module::suite::test`）：跨模块同名 suite/test 不互相豁免；聚合层保留 perModule.module。
+- [x] ④repair/cover_existing fail-closed：无可信锚 / repair 无显式目标或未命中 / cover_existing 责任域为空 → 新增 `ut_target_resolution` BLOCKER FAIL（不静默继续）；命中时 PASS 输出 selectionReasons。
+- [x] ⑤R3c 物化进 frontmatter todos（发版解析器只读 frontmatter，正文 checkbox 不进 release 门——我上一轮"会正确挡住 release"是核实失误，release 输出列表里并无本 plan）；P0/P1/P2 同步物化为 completed todo。
+
+### codex 第六轮 review（五条全部核实修复，2026-08-09）
+- [x] ①显式目标**部分命中**同样 fail-closed：`explicitMatched !== explicitRequested` → FAIL（两模式通用）；repair 另要求 requested>0。此前只拦"全不中"，请求 A、B 只命中 A 会静默少修一个目标。
+- [x] ②target 身份补齐模块（`module::test`，`targetCaseKey`）：此前失败身份已含 module 但 target 判定只看 test 名——模块 A 的目标用例名会把模块 B 的同名历史失败也标成 target，使其无法按基线豁免（我修 #3 时留下的对称性漏洞）。check-ut 改传 `targetCases:{path,test}[]`，模块由 package_path 归属推导。
+- [x] ③基线收紧须全模块真实执行：`evaluateSuiteRatchet(allModulesExecuted)`——部分执行时"本轮未复现"可能只是没跑到，删条目=永久丢失历史失败记录。
+- [x] ④非需求模式不生成/覆写 `ac-coverage.json`：追溯门禁已 SKIP 但报告仍会被 repair/REG 的 target view 重写掉原需求覆盖证据。
+- [x] ⑤状态面板披露 `work_mode` + 责任域计数（含显式目标命中比）+「需求门禁：SKIP（模式不适用）」，且静态/结构 PASS 行在非需求模式标注"仅通用/安全门禁"——防止大量模式性 SKIP 被读成"通过了完整需求门禁"。
+
+### codex 第七轮 review（三条组合场景漏洞，全部核实修复，2026-08-09）
+- [x] ①基线收紧条件收严：`allModulesExecuted`（本轮选中模块跑完）不足以证明基线**涉及模块**都跑过，且 `executed && testResult` 对 `total=0` 也成立 → 未选中/零用例模块的历史失败会被永久误删。改为 `modulesWithValidResults`（本轮真跑出 total>0 的模块集合），基线涉及的每个模块都在集合内才整体收紧。
+- [x] ②设备阻塞不得掩盖其他 BLOCKER：`feature_verdict=INCOMPLETE` 与 `partial_readiness` 现在都要求"设备阻塞是唯一 BLOCKER"；与 `ut_target_resolution`/标签/源码红线 FAIL 并存时判 FAIL 并列出其他阻塞项。
+- [x] ③`cover_existing_code` 空转 PASS 封堵：显式目标只决定执行范围，不构成测试产出证据。**判据=新建测试文件 ∪ 存量文件内新增 it**（八轮修正：初版还认"整文件文本变化 `changedLegacyPaths`"，被 codex 驳回并采纳——改注释/空格即可蒙混，且这类变化不进 targetCaseView 受验收、失败还可能被基线豁免、面板责任域显示 0；该分支整条删除，不扩展文本 diff 模型。改写已有 it 的支持须做到"识别具体变更用例并全链路升格 target"，本轮不做）。
 
 ### 待宿主回灌
 - ~~R1. phone build-profile targets 追问~~ **obsolete**：phone 已退出当前编译范围，无需再向宿主追问（task-not-found 归因与探测器已落地，下个真实撞上的场景自然验证）。

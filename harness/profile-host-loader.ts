@@ -64,7 +64,12 @@ export type UtHostImpl = {
     /** 基线新增（本 feature 责任域）的 scoped UT 文件；用于编译顺序：feature 归属模块优先 */
     featureNewUtFiles?: Array<{ path: string }>,
   ): CheckResult[];
-  checkUtHvigorTest(ctx: CheckContext, scopedUtFiles?: Array<{ path: string }>): CheckResult[];
+  checkUtHvigorTest(
+    ctx: CheckContext,
+    scopedUtFiles?: Array<{ path: string }>,
+    /** 本 feature 责任域用例（含文件路径，供推导 module::test 身份；target 失败永不豁免） */
+    targetCases?: Array<{ path: string; test: string }>,
+  ): CheckResult[];
   checkTestRegistration(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,

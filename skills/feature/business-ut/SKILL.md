@@ -25,15 +25,35 @@
 
 ## 触发条件
 
-"生成 UT"、"生成单元测试"、"写 UT"、"业务级 UT"、"端到端测试"、"UseCase 测试"、"分支覆盖 UT"、"生成 SpyPort/生成打桩类"、"存量 UT"、"回归网"、"characterization 测试"、"基于日志生成 UT"、"给现有流程补测试"。
+"生成 UT"、"生成单元测试"、"写 UT"、"业务级 UT"、"端到端测试"、"UseCase 测试"、"分支覆盖 UT"、"生成 SpyPort/生成打桩类"、"存量 UT"、"回归网"、"characterization 测试"、"基于日志生成 UT"、"给现有流程补测试"、"修存量 UT"、"存量测试挂了"、"修复失败用例"（后三者路由 repair_existing_ut）。
 
-### 三路径路由（同触发词「生成 UT」）
+### 三种工作模式（v3 · plan 423e5d0f）：同一引擎，只有 target 来源不同
+
+| 工作模式 | target 来源 | 出口 |
+|---|---|---|
+| **cover_feature_change**（默认） | 当前 feature 声明的测试（下方 path-a/b 路由） | 现行全套 AC/DAG/coverage 门禁 |
+| **repair_existing_ut** | 用户明确指定的已有失败用例 | 目标红转绿 + suite 无新增失败；不强制 AC/DAG/mock-plan，细则 [`paths/path-repair-existing.md`](paths/path-repair-existing.md) |
+| **cover_existing_code** | 用户指定的存量/本地代码与新增测试 | `[REG-*]`（代码驱动回归网）或 `[CHAR-*]`（日志驱动，path-c）追溯；不虚构 feature AC |
+
+责任域纪律（harness 已机器化）：Git diff / context 提及只是发现候选的线索，**不决定责任**；
+存量 UT 文件与其基线已有用例不受需求房规问责；存量文件内**新增**的 it/mock 用法按用例级
+升格问责；suite 历史失败走棘轮（授权基线内豁免但报告 `suite_health=DEGRADED`，新增失败=回归；
+无基线不豁免——基线由用户确认放置或编排在 agent 动手前采样，本轮执行不得反推）。
+
+**模式与目标的机器化通道**：跑 harness 时设环境变量 `MAISON_UT_MODE`（`repair_existing_ut` /
+`cover_existing_code`，缺省 cover_feature_change）声明工作模式；`MAISON_UT_TARGETS`（分号/逗号
+分隔的相对路径）点名目标文件（可指向未被触碰的存量文件）。`[REG-*]` 标签仅前两种模式合法。
+cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_BASE_REF`（本地已有的
+非需求源码改动以显式锚区分，direct 场景框架不自动推断入口状态）。
+
+### cover_feature_change 内部路由（同触发词「生成 UT」）
 
 | 条件 | 路径 | 细则 |
 |------|------|------|
 | 有 `use-cases.yaml` | path-a | 本文 Step 1~3（UseCase 驱动） |
 | 无 use-cases，有 `acceptance.yaml` | path-b | 按 AC/BD + DAG |
 | 均无且提供脱敏日志切片 | path-c | [`paths/path-c-characterization.md`](paths/path-c-characterization.md) |
+| 均无且用户指定代码范围 | cover_existing_code | 新测试用 `[REG-*]`，不要求先补 spec |
 | 否则 | — | 提示先运行 spec 阶段 |
 
 **模块级 seam/mock**：feature 级 audit/mock-plan 优先引用 `doc/modules/<module>/ut-registry/`（见 `` `profile-skill-asset:business-ut/module_seam_registry_schema` ``）。
@@ -47,7 +67,7 @@
 
 **关键澄清**：被测单元 = 命名业务入口（非强制 UseCase 类）；外部依赖抽象用 `data_boundaries[]`（引用 contracts.yaml 既有 data 层类，非新造 Port）；无 UseCase 代码产物，`use-cases.yaml` 只是文档规约；Stub 用子类化/原型替换（非实现 Port 接口）；一个 `it()` 端到端驱动一个 branch（或一条 AC/BD），断言含 state 序列+调用序列+数据；UI 交互交 device-testing。
 
-**追溯标签（BLOCKER）**：每个 `it()` 名称必须以 acceptance.yaml 中真实存在的 `[AC-<id>]`、`[BD-<id>]` 或 use-cases.yaml 中真实存在的 `[BRANCH-<id>]` 起始；BD 可直接写成 `it('[BD-1] 空列表回落', ...)`，无需虚构或附带无关 AC。组合覆盖可写 `[AC-1][BD-1]`，复杂流推荐 `[BRANCH-happy_path][AC-1]`。**例外**：path-c characterization 用例以 `[CHAR-<flowName>]` 起始（该场景无 acceptance，**禁止**为过门禁虚构 `[AC-*]`；见 path-c 细则）。
+**追溯标签（BLOCKER）**：每个 `it()` 名称必须以 acceptance.yaml 中真实存在的 `[AC-<id>]`、`[BD-<id>]` 或 use-cases.yaml 中真实存在的 `[BRANCH-<id>]` 起始；BD 可直接写成 `it('[BD-1] 空列表回落', ...)`，无需虚构或附带无关 AC。组合覆盖可写 `[AC-1][BD-1]`，复杂流推荐 `[BRANCH-happy_path][AC-1]`。**例外**：path-c characterization 用例以 `[CHAR-<flowName>]` 起始、cover_existing_code 回归网用例以 `[REG-<主题>]` 起始（这两类不绑定本 feature AC，**禁止**为过门禁虚构 `[AC-*]`）；存量文件中基线已有的 it 不受本规则问责（只查本需求新增用例）。
 
 ## 输入
 

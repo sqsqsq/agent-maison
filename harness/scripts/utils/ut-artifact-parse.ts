@@ -427,8 +427,8 @@ function pushUsage(usages: UtMockkitTargetUsage[], u: UtMockkitTargetUsage): voi
   }
 }
 
-/** 从 UT 源码粗解析 MockKit.mock / mockFunc / when(...) 目标（不依赖 AST） */
-export function extractUtMockkitTargets(content: string): UtMockkitTargetUsage[] {
+/** 非去重收集（multiset）：每处 mock 声明/when 用法各计一次，供增量差集防"同 key 折叠吞新增" */
+export function extractUtMockkitTargetsRaw(content: string): UtMockkitTargetUsage[] {
   const usages: UtMockkitTargetUsage[] = [];
   const varToClass = buildMockkitVarClassMap(content);
   const kitVars = collectMockkitKitVars(content);
@@ -436,31 +436,40 @@ export function extractUtMockkitTargets(content: string): UtMockkitTargetUsage[]
   let m: RegExpExecArray | null;
 
   for (const [, cls] of varToClass) {
-    pushUsage(usages, { targetClass: cls });
+    usages.push({ targetClass: cls });
   }
 
   const mockRe = /MockKit\.mock\s*\(\s*([A-Z][A-Za-z0-9_]*)\s*\)/g;
   while ((m = mockRe.exec(content)) !== null) {
-    pushUsage(usages, { targetClass: m[1] });
+    usages.push({ targetClass: m[1] });
   }
 
   const instanceMockRe = /(\w+)\.mock\s*\(\s*([A-Z][A-Za-z0-9_]*)\s*\)/g;
   while ((m = instanceMockRe.exec(content)) !== null) {
     if (m[1] !== 'MockKit' && kitVars.has(m[1])) {
-      pushUsage(usages, { targetClass: m[2] });
+      usages.push({ targetClass: m[2] });
     }
   }
 
   // hypium 真实 API：mockFunc 赋值本身即打桩声明（无论是否再出现 when）
   for (const [, info] of mockFuncVars) {
-    pushUsage(usages, { targetClass: info.targetClass, method: info.method });
+    usages.push({ targetClass: info.targetClass, method: info.method });
   }
 
   for (const inner of collectHypiumWhenInners(content)) {
     const u = parseWhenInnerUsage(inner, varToClass, mockFuncVars);
-    if (u) pushUsage(usages, u);
+    if (u) usages.push(u);
   }
 
+  return usages;
+}
+
+/** 从 UT 源码粗解析 MockKit.mock / mockFunc / when(...) 目标（去重视图，不依赖 AST） */
+export function extractUtMockkitTargets(content: string): UtMockkitTargetUsage[] {
+  const usages: UtMockkitTargetUsage[] = [];
+  for (const u of extractUtMockkitTargetsRaw(content)) {
+    pushUsage(usages, u);
+  }
   return usages;
 }
 
@@ -498,6 +507,52 @@ function collectMockkitPresetIds(plan: MockPlanSpec): Set<string> {
   return ids;
 }
 
+function usageKey(u: UtMockkitTargetUsage): string {
+  return `${u.targetClass ?? ''}::${u.method ?? ''}`;
+}
+
+function countByKey<T>(items: T[], keyOf: (t: T) => string): Map<string, { count: number; sample: T }> {
+  const m = new Map<string, { count: number; sample: T }>();
+  for (const it of items) {
+    const k = keyOf(it);
+    const cur = m.get(k);
+    if (cur) cur.count++;
+    else m.set(k, { count: 1, sample: it });
+  }
+  return m;
+}
+
+/**
+ * 相对基线内容的**新增** mock 面（plan 423e5d0f P1-1 用例级归属 · multiset 差）：
+ * legacy 文件中基线已有的 MockKit 用法不受本 feature 问责，只有新增的进入治理。
+ * 按出现次数做差（非集合去重差）——基线已 mock 过 Gateway.call 时，新用例再次 mock
+ * 同一方法（新 preset/参数/行为）仍计为新增，不得被 key 折叠吞掉。
+ */
+export function collectNewMockkitSurface(
+  content: string,
+  baselineContent: string,
+): { newUsages: UtMockkitTargetUsage[]; newUnparsed: string[] } {
+  const curCounts = countByKey(extractUtMockkitTargetsRaw(content), usageKey);
+  const baseCounts = countByKey(extractUtMockkitTargetsRaw(baselineContent), usageKey);
+  const newUsages: UtMockkitTargetUsage[] = [];
+  for (const [k, cur] of curCounts) {
+    if (cur.count > (baseCounts.get(k)?.count ?? 0)) newUsages.push(cur.sample);
+  }
+  const curUnparsed = countByKey(
+    collectUnparsedHypiumWhenIssues(content, buildMockkitVarClassMap(content)),
+    s => s,
+  );
+  const baseUnparsed = countByKey(
+    collectUnparsedHypiumWhenIssues(baselineContent, buildMockkitVarClassMap(baselineContent)),
+    s => s,
+  );
+  const newUnparsed: string[] = [];
+  for (const [k, cur] of curUnparsed) {
+    if (cur.count > (baseUnparsed.get(k)?.count ?? 0)) newUnparsed.push(k);
+  }
+  return { newUsages, newUnparsed };
+}
+
 /** MockKit/when 治理结论分层：已证明违规（BLOCKER 材料）与静态解析不出（WARN 材料） */
 export interface UtMockkitGovernanceReport {
   /** 已证明的违规：mock 被测入口 / 可判定类未在 mock-plan 声明 / 方法未声明 / preset 未引用 */
@@ -514,16 +569,25 @@ export function collectUtMockkitGovernanceReport(
   content: string,
   plan: MockPlanSpec,
   forbiddenEntryClasses: Set<string>,
+  opts?: {
+    /** legacy 文件增量治理（P1-1）：提供基线内容时只治理相对基线**新增**的用法 */
+    baselineContent?: string;
+  },
 ): UtMockkitGovernanceReport {
   const violations: string[] = [];
   const unresolved: string[] = [];
   const varToClass = buildMockkitVarClassMap(content);
   const mockFuncVars = collectMockFuncVarInfo(content);
-  const usages = extractUtMockkitTargets(content);
+  let usages = extractUtMockkitTargets(content);
   const hasWhenCall = utContentUsesHypiumWhenCall(content);
   if (usages.length === 0 && !hasWhenCall) return { violations, unresolved };
 
-  if (hasWhenCall) {
+  if (opts?.baselineContent !== undefined) {
+    const surface = collectNewMockkitSurface(content, opts.baselineContent);
+    usages = surface.newUsages;
+    unresolved.push(...surface.newUnparsed);
+    if (usages.length === 0 && surface.newUnparsed.length === 0) return { violations, unresolved };
+  } else if (hasWhenCall) {
     unresolved.push(...collectUnparsedHypiumWhenIssues(content, varToClass, mockFuncVars));
   }
 

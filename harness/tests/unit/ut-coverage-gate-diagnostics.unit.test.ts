@@ -15,6 +15,12 @@ import {
 import type { CheckContext } from '../../scripts/utils/types';
 import type { UnitCaseResult } from './ut-artifact-validate.unit.test';
 import { codingBasePath, recordCodingBase } from '../../scripts/utils/pass-snapshot';
+import { resolveUtTargets } from '../../scripts/utils/ut-target-resolver';
+import {
+  evaluateSuiteRatchet,
+  targetCaseKey,
+  writeSuiteFailureBaselineOnce,
+} from '../../scripts/utils/ut-suite-baseline';
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -80,6 +86,68 @@ function testCharTagIsValidNamePrefix(): void {
     content: "it('[CHAR-openCard] replay observed flow', 0, () => { expect(true); });",
   }])[0];
   assert(charTagged.status === 'PASS', charTagged.details);
+  // [REG-*] 仅 repair/cover_existing 工作模式合法（allowRegTag=true 时放行）；
+  // cover_feature_change（默认）不放行——防需求 UT 借 REG 绕开 AC 绑定。
+  const regFile = [{
+    path: 'module/src/ohosTest/ets/test/legacy_regression.test.ets',
+    content: "it('[REG-walletInit] guard existing behavior', 0, () => { expect(true); });",
+  }];
+  const regDefault = checkItNameHasAcOrBranchTag(ctx, regFile)[0];
+  assert(regDefault.status === 'FAIL', `默认模式 REG 不放行：${regDefault.status}`);
+  const regAllowed = checkItNameHasAcOrBranchTag(ctx, regFile, undefined, { allowRegTag: true })[0];
+  assert(regAllowed.status === 'PASS', regAllowed.details);
+}
+
+// P1-1 显式 target（MAISON_UT_TARGETS）：可指向未在 scoped 的存量文件——repair 模式的机器化通道。
+function testResolverExplicitTargetsBeyondScoped(): void {
+  withTmpGitRepo(repo => {
+    withEnv({
+      HARNESS_DIFF_BASE_REF: 'HEAD~1',
+      MAISON_GOAL_RUN_ID: undefined,
+      MAISON_UT_MODE: 'repair_existing_ut',
+      MAISON_UT_TARGETS: 'mod/src/ohosTest/ets/test/Main.test.ets',
+    }, () => {
+      const legacy = { path: 'mod/src/ohosTest/ets/test/Main.test.ets', content: 'legacy' };
+      const all = [legacy, { path: 'mod/src/ohosTest/ets/test/Other.test.ets', content: 'x' }];
+      // Main.test.ets 未在 scoped（未触碰/未提及），但被用户明确指定 → 强制进入执行责任域；
+      // 身份仍是存量（codex 五轮 #1）：不得进 targetCaseView 被房规问责其存量 it
+      const r = resolveUtTargets(baselineCtx(repo), all, []);
+      assert(r.mode === 'repair_existing_ut', r.mode);
+      assert(r.explicitRequested === 1 && r.explicitMatched === 1,
+        `显式命中计数：${r.explicitRequested}/${r.explicitMatched}`);
+      assert(r.explicitTargetFiles.length === 1 && r.explicitTargetFiles[0].path === legacy.path,
+        `显式指定进执行责任域：${JSON.stringify(r.explicitTargetFiles.map(f => f.path))}`);
+      assert(!r.targetCaseView.some(f => f.path === legacy.path),
+        '存量身份的显式目标（无新增 it）不得进入房规问责视图');
+      assert(r.selectionReasons.some(s => s.includes('显式执行目标')), r.selectionReasons.join(' | '));
+      // 拼错路径 → 未命中计数与诊断（runner 层 fail-closed 消费）
+      const miss = resolveUtTargets(baselineCtx(repo), all, [], {
+        explicitTargets: ['mod/src/ohosTest/ets/test/NoSuch.test.ets'],
+      });
+      assert(miss.explicitRequested === 1 && miss.explicitMatched === 0, '未命中应计数为 0');
+      assert(miss.selectionReasons.some(s => s.includes('未在已发现 UT 文件中命中')), miss.selectionReasons.join(' | '));
+      // codex 七轮：cover_existing_code 的有效产出只认"新建文件 / 存量新增 it"——
+      // 显式点名存量文件、或只改注释空格 import 等文本，责任域必须仍为空
+      //（check-ut 的 ut_target_resolution 据此 FAIL，不得空转 PASS）。
+      assert(r.targetFiles.length === 0 && r.legacyIncrements.length === 0,
+        `原样点名不构成产出：${JSON.stringify({ t: r.targetFiles.length, i: r.legacyIncrements.length })}`);
+      const commentOnly = resolveUtTargets(
+        baselineCtx(repo),
+        [{ path: legacy.path, content: 'legacy // 只加了注释，没有新增用例' }],
+        [{ path: legacy.path, content: 'legacy // 只加了注释，没有新增用例' }],
+      );
+      assert(commentOnly.targetFiles.length === 0 && commentOnly.legacyIncrements.length === 0,
+        `注释级变化不构成测试产出：${JSON.stringify(commentOnly.selectionReasons)}`);
+      // 真新增 it → 责任域非空（正向对照）
+      const withNewCase = resolveUtTargets(
+        baselineCtx(repo),
+        [{ path: legacy.path, content: "legacy\nit('[REG-x] new guard', 0, () => {});" }],
+        [{ path: legacy.path, content: "legacy\nit('[REG-x] new guard', 0, () => {});" }],
+      );
+      assert(withNewCase.legacyIncrements.length === 1,
+        `新增 it 才算产出：${JSON.stringify(withNewCase.selectionReasons)}`);
+    });
+  });
 }
 
 const LEGACY_MOCKKIT_UT = {
@@ -103,17 +171,54 @@ function testMockkitPolicyExemptsLegacyFiles(): void {
   assert(results[0].details.includes('Main.test.ets'), results[0].details);
 }
 
-// 【已知限制锁定 · P1-1 修复目标】责任域是文件粒度：本需求若在**存量文件里新增 it()**，
-// 该文件仍整体豁免（新 it 的 MockKit/标签都不被问责）→ 假绿窗口。统一 target 解析器
-// （用例级）落地前，本用例锁定该行为——它开始 FAIL 时说明粒度已改，须同步 plan 423e5d0f。
-function testKnownLimitationLegacyFileNewCaseIsExempt(): void {
+// P1-1 已修复原"文件级豁免"已知限制：纯 legacy（无新增用法）仍豁免；
+// 但 legacy 文件内**新增的 mock 用法**通过 legacyIncrements 通道进入增量问责。
+function testLegacyFileWithoutNewUsageStillExempt(): void {
   const ctx = makeCtx();
-  const legacyWithNewCase = {
+  const results = checkUtHypiumMockkitPolicy(ctx, null, [], [], [LEGACY_MOCKKIT_UT], '');
+  assert(results[0].status === 'SKIP', `纯 legacy 无新增应豁免：${results[0].status}`);
+}
+
+function testLegacyIncrementNewMockUsageIsGoverned(): void {
+  const ctx = makeCtx();
+  const newContent = [
+    LEGACY_MOCKKIT_UT.content,
+    'const fn2: Function = mockKit.mockFunc(gw, NewGateway.call);',
+    'when(fn2)().afterReturn(1);',
+    "it('[AC-01] new case', 0, () => { expect(1).assertEqual(1); });",
+  ].join('\n');
+  const increment = {
     path: LEGACY_MOCKKIT_UT.path,
-    content: `${LEGACY_MOCKKIT_UT.content}\nit('本需求新增却无标签', 0, () => { expect(1).assertEqual(1); });`,
+    content: newContent,
+    baselineContent: LEGACY_MOCKKIT_UT.content,
+    newCases: new Set(['[AC-01] new case']),
   };
-  const results = checkUtHypiumMockkitPolicy(ctx, null, [], [], [legacyWithNewCase], '');
-  assert(results[0].status === 'SKIP', `当前文件级粒度下应整体豁免（已知限制）：${results[0].status}`);
+  // 无 mock-plan mockkit 条目 + 存量文件内新增 mock 用法 → FAIL（增量问责，不再整体豁免）
+  const results = checkUtHypiumMockkitPolicy(ctx, null, [], [], [], '', [increment]);
+  assert(results[0].status === 'FAIL', `新增 mock 用法应被问责：${results[0].status}: ${results[0].details}`);
+  assert(results[0].details.includes('存量文件内新增 mock 用法'), results[0].details);
+  // 基线已有用法不升级问责：增量为空时仍 SKIP
+  const noNew = { ...increment, content: LEGACY_MOCKKIT_UT.content, newCases: new Set<string>() };
+  const results2 = checkUtHypiumMockkitPolicy(ctx, null, [], [], [], '', [noNew]);
+  assert(results2[0].status === 'SKIP', `无新增用法应豁免：${results2[0].status}`);
+}
+
+// P1-1 标签门禁用例级：legacy 文件只问责新增 it，基线已有的无标签 it 不再中招。
+function testTagGateOnlyChecksLegacyNewCases(): void {
+  const ctx = makeCtx();
+  const file = {
+    path: 'mod/src/ohosTest/ets/test/Main.test.ets',
+    content: [
+      "it('mainTest', 0, () => { expect(1).assertEqual(1); });", // 基线已有，无标签
+      "it('[AC-01] added by feature', 0, () => { expect(1).assertEqual(1); });",
+      "it('added but untagged', 0, () => { expect(1).assertEqual(1); });",
+    ].join('\n'),
+  };
+  const newCases = new Map([[file.path, new Set(['[AC-01] added by feature', 'added but untagged'])]]);
+  const results = checkItNameHasAcOrBranchTag(ctx, [file], newCases);
+  assert(results[0].status === 'FAIL', results[0].details);
+  assert(results[0].details.includes('added but untagged'), '新增无标签 it 应被问责');
+  assert(!results[0].details.includes('"mainTest"'), `基线已有 it 不得中招：${results[0].details}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +290,110 @@ function testBaselineFailClosedWithoutTrustedAnchor(): void {
       assert(b.note.includes('不消费 trace.start_commit'), b.note);
     });
   });
+}
+
+// P1-1 resolver：legacy 文件内新增 it → 用例级升格（legacyIncrements 检出）；
+// 新建文件 → target 全责。走真实 git 仓完整路径。
+function testResolverDetectsLegacyNewCases(): void {
+  withTmpGitRepo(repo => {
+    // 基线版 Main.test.ets 是 'legacy' 纯文本（无 it）；工作区版本加一个 it
+    const legacyPath = 'mod/src/ohosTest/ets/test/Main.test.ets';
+    const legacyNewContent = "legacy\nit('[AC-01] feature added in legacy file', 0, () => {});";
+    fs.writeFileSync(path.join(repo, legacyPath), legacyNewContent, 'utf-8');
+    withEnv({ HARNESS_DIFF_BASE_REF: 'HEAD~1', MAISON_GOAL_RUN_ID: undefined }, () => {
+      const all = [
+        { path: legacyPath, content: legacyNewContent },
+        { path: 'mod/src/ohosTest/ets/test/NotLogin.test.ets', content: "it('[AC-02] x', 0, () => {});" },
+      ];
+      const r = resolveUtTargets(baselineCtx(repo), all, all);
+      assert(r.targetFiles.length === 1 && r.targetFiles[0].path.endsWith('NotLogin.test.ets'),
+        `新建文件应为 target：${JSON.stringify(r.targetFiles.map(f => f.path))}`);
+      assert(r.legacyIncrements.length === 1, `应检出 legacy 增量：${r.selectionReasons.join(' | ')}`);
+      assert(r.legacyIncrements[0].newCases.has('[AC-01] feature added in legacy file'),
+        JSON.stringify([...r.legacyIncrements[0].newCases]));
+      assert(r.legacyIncrements[0].baselineContent === 'legacy', '应携带基线内容供增量治理');
+      // targetCaseView：新文件原样 + legacy 合成条目（只含新增 it，供全部需求房规统一消费）
+      const viewLegacy = r.targetCaseView.find(f => f.path === legacyPath);
+      assert(!!viewLegacy && viewLegacy.content.includes('[AC-01] feature added in legacy file'),
+        `合成视图应含新增 it：${viewLegacy?.content}`);
+      assert(!viewLegacy!.content.includes('legacy\n'), '合成视图不得含基线存量内容');
+      assert(r.targetCaseView.some(f => f.path.endsWith('NotLogin.test.ets')), '新文件原样入视图');
+    });
+  });
+}
+
+// P1-2 ratchet（codex 修正语义）：无基线**不豁免**（本轮执行不得反推历史）；
+// 授权基线（pre-agent 写入）内豁免、基线外判回归、target 永不豁免、基线只收紧。
+function testSuiteRatchetLifecycle(): void {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-ratchet-'));
+  const frameworkRoot = path.resolve(__dirname, '../../..');
+  try {
+    // target 身份含模块：ModA 的目标用例不得把 ModB 的同名用例也标成 target
+    const targetSet = new Set([targetCaseKey('ModA', '[AC-01] target case')]);
+    // ① 无基线：全部失败照常问责（包括非 target），suiteHealth=UNKNOWN——首轮执行不得洗基线
+    const noBaseline = evaluateSuiteRatchet({
+      projectRoot: repo,
+      feature: 'demo',
+      frameworkRoot,
+      failures: [
+        { module: 'ModA', suite: 'LegacySuite', test: 'old broken case' },
+        { module: 'ModA', suite: 'NewSuite', test: '[AC-01] target case' },
+      ],
+      targetKeys: targetSet,
+      modulesWithValidResults: new Set(['ModA', 'ModB']),
+    });
+    assert(noBaseline.suiteHealth === 'UNKNOWN', noBaseline.suiteHealth);
+    assert(!noBaseline.baselineAvailable, '本轮执行不得生成基线');
+    assert(noBaseline.newNonTargetFailures.length === 1, `无基线不豁免：${JSON.stringify(noBaseline)}`);
+    assert(noBaseline.targetFailures.length === 1, 'target 失败照常');
+    // ② 授权基线（模拟编排 pre-agent 写入，含两条历史失败）
+    assert(
+      writeSuiteFailureBaselineOnce(repo, 'demo', [
+        { module: 'ModA', suite: 'LegacySuite', test: 'old broken case' },
+        { module: 'ModA', suite: 'LegacySuite', test: 'flaky fixed case' },
+      ], frameworkRoot),
+      '授权基线写入',
+    );
+    const withBaseline = evaluateSuiteRatchet({
+      projectRoot: repo,
+      feature: 'demo',
+      frameworkRoot,
+      failures: [
+        { module: 'ModA', suite: 'LegacySuite', test: 'old broken case' },
+        { module: 'ModA', suite: 'LegacySuite', test: 'newly broken case' },
+        // 跨模块同名（codex 五轮 #3）：ModB 的同名 suite/test 不得被 ModA 的基线豁免
+        { module: 'ModB', suite: 'LegacySuite', test: 'old broken case' },
+        { module: 'ModA', suite: 'NewSuite', test: '[AC-01] target case' },
+      ],
+      targetKeys: targetSet,
+      modulesWithValidResults: new Set(['ModA', 'ModB']),
+    });
+    assert(withBaseline.baselineExempt.length === 1 && withBaseline.baselineExempt[0].module === 'ModA',
+      `仅同模块基线失败豁免：${JSON.stringify(withBaseline.baselineExempt)}`);
+    assert(withBaseline.newNonTargetFailures.length === 2
+      && withBaseline.newNonTargetFailures.some(f => f.module === 'ModB' && f.test === 'old broken case'),
+      `跨模块同名失败必须判回归：${JSON.stringify(withBaseline.newNonTargetFailures)}`);
+    assert(withBaseline.targetFailures.length === 1, 'target 失败永不豁免');
+    assert(withBaseline.suiteHealth === 'DEGRADED', withBaseline.suiteHealth);
+    // 基线涉及模块（ModA）本轮有有效结果 → 允许收紧：'flaky fixed case' 不再失败被剔除
+    assert(withBaseline.baselineTightenedTo === 1, `基线应收紧至 1 条：${withBaseline.baselineTightenedTo}`);
+    // ③ 跨模块 target 身份：ModB 的同名 '[AC-01] target case' 不得被当作 target
+    const crossModuleTarget = evaluateSuiteRatchet({
+      projectRoot: repo,
+      feature: 'demo',
+      frameworkRoot,
+      failures: [{ module: 'ModB', suite: 'NewSuite', test: '[AC-01] target case' }],
+      targetKeys: targetSet,
+      modulesWithValidResults: new Set(['ModB']), // ModA 未跑出有效结果 → 不得收紧
+    });
+    assert(crossModuleTarget.targetFailures.length === 0,
+      `ModB 同名用例不得被判为 ModA 的 target：${JSON.stringify(crossModuleTarget.targetFailures)}`);
+    // 基线里 ModA 的条目本轮没有有效结果（modulesWithValidResults 只含 ModB）→ 不得收紧
+    assert(crossModuleTarget.baselineTightenedTo === undefined,
+      '基线涉及模块未跑出有效结果时不得收紧（codex 六轮 #1）');
+  } finally {
+    try { fs.rmSync(repo, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
 }
 
 // 成功路径：goal run 下 runner 锚定的 coding_base_sha 被自动识别，正确分离新旧 UT。
@@ -361,7 +570,12 @@ export function runAll(): UnitCaseResult[] {
     { name: 'direct boundary tag is a valid test-name prefix', fn: testBoundaryTagIsValidNamePrefix },
     { name: 'characterization CHAR tag is a valid test-name prefix (423e5d0f)', fn: testCharTagIsValidNamePrefix },
     { name: 'mockkit policy exempts out-of-scope legacy files (423e5d0f)', fn: testMockkitPolicyExemptsLegacyFiles },
-    { name: 'KNOWN LIMITATION: new case inside legacy file is exempt (P1-1 target)', fn: testKnownLimitationLegacyFileNewCaseIsExempt },
+    { name: 'legacy file without new mock usage still exempt (P1-1)', fn: testLegacyFileWithoutNewUsageStillExempt },
+    { name: 'legacy increment: new mock usage is governed (P1-1 fixes known limitation)', fn: testLegacyIncrementNewMockUsageIsGoverned },
+    { name: 'tag gate only checks legacy new cases (P1-1 case-level)', fn: testTagGateOnlyChecksLegacyNewCases },
+    { name: 'resolver detects legacy new cases via real git baseline (P1-1)', fn: testResolverDetectsLegacyNewCases },
+    { name: 'resolver explicit targets beyond scoped (repair mode wiring)', fn: testResolverExplicitTargetsBeyondScoped },
+    { name: 'suite ratchet: no-baseline no-exempt / authorized baseline / tighten (P1-2)', fn: testSuiteRatchetLifecycle },
     { name: 'baseline: explicit env anchor separates legacy from new UT (423e5d0f P0)', fn: testBaselineExplicitEnvAnchor },
     { name: 'baseline: fail-closed without trusted pre-agent anchor (no trace/HEAD fallback)', fn: testBaselineFailClosedWithoutTrustedAnchor },
     { name: 'baseline: recorded coding_base_sha is auto-detected (goal run success path)', fn: testBaselineUsesRecordedCodingBase },

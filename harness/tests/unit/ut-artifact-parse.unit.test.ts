@@ -12,6 +12,7 @@ import {
   collectMockPlanTypedIssues,
   buildMockkitVarClassMap,
   collectMockFuncVarInfo,
+  collectNewMockkitSurface,
   collectUnparsedHypiumWhenIssues,
   collectUtMockkitGovernanceIssues,
   collectUtMockkitGovernanceReport,
@@ -329,6 +330,26 @@ export function runAll(): UnitCaseResult[] {
     ].join('\n');
     const info = collectMockFuncVarInfo(ut);
     assert(info.get('fn')?.targetClass === 'RemoteGateway' && info.get('fn')?.method === 'validate', JSON.stringify([...info.entries()]));
+  }));
+
+  results.push(run('collectNewMockkitSurface：multiset 差——基线已 mock 同方法时新增使用仍计新增', () => {
+    const baseline = [
+      'const kit = new MockKit();',
+      'const fn1 = kit.mockFunc(gw, Gateway.call);',
+      'when(fn1)(1).afterReturn(true);',
+    ].join('\n');
+    const current = [
+      baseline,
+      // 新用例再次 mock 同一方法（新行为）——集合去重会吞掉，multiset 必须计新增
+      'const fn2 = kit.mockFunc(gw, Gateway.call);',
+      'when(fn2)(2).afterReturn(false);',
+    ].join('\n');
+    const surface = collectNewMockkitSurface(current, baseline);
+    assert(surface.newUsages.some(u => u.targetClass === 'Gateway' && u.method === 'call'),
+      `同 key 重复使用应计新增：${JSON.stringify(surface)}`);
+    // 无新增时为空
+    const same = collectNewMockkitSurface(baseline, baseline);
+    assert(same.newUsages.length === 0 && same.newUnparsed.length === 0, JSON.stringify(same));
   }));
 
   results.push(run('collectMockPlanTypedIssues 接受 returns 与 throws 类型化表达式', () => {

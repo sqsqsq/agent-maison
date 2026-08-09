@@ -39,6 +39,11 @@ import {
   buildUtHvigorTestFailDetails,
   type UtHvigorTestFailureModule,
 } from './ut-hvigor-test-failure';
+import {
+  evaluateSuiteRatchet,
+  suiteFailureKey,
+  targetCaseKey,
+} from '../../../harness/scripts/utils/ut-suite-baseline';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -703,6 +708,8 @@ function formatDependencyIssue(issue: any): string {
 function checkUtHvigorTest(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
+  /** 责任域用例（含所属文件路径）——模块由 package_path 归属推导，构成 module::test 身份 */
+  targetCases: Array<{ path: string; test: string }> = [],
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
@@ -800,6 +807,9 @@ function checkUtHvigorTest(
     ];
   }
 
+  // plan 423e5d0f P1-2（codex 修正）：**用例失败不短路**——棘轮裁决需要全部选中模块的
+  // 完整结果（半途 PASS=假绿）；只有链路级失败（工具缺失/未执行/无测试结果的异常退出）
+  // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
   const perModule: UtHvigorTestFailureModule[] = [];
   for (const mod of mods) {
     const res = dispatchUtRun(ctx, {
@@ -811,33 +821,110 @@ function checkUtHvigorTest(
       moduleSrcPath: mod.package_path,
     });
     perModule.push({ module: mod.name, result: res });
-    if (
-      res.toolMissing ||
-      (res.executed && (res.exitCode !== 0 || (res.testResult && res.testResult.failed > 0)))
-    ) {
+    const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;
+    if (res.toolMissing || (!caseLevelFailure && (!res.executed || res.exitCode !== 0))) {
       break;
     }
   }
+  const allModulesExecuted =
+    perModule.length === mods.length &&
+    perModule.every(x => x.result.executed && x.result.testResult);
 
+  // suite 失败棘轮：基线是授权工件（用户确认放置；信任模型与 gap-notes approved_src_mutations
+  // 同级——普通授权文件+review 纪律，不做密码学防伪，见顶层裁定），本轮执行不生成；
+  // 无基线 → 不豁免任何失败（suite_health=UNKNOWN）。失败身份含 module（跨模块同名不互豁免）。
+  const allFailures = perModule.flatMap(x =>
+    (x.result.testResult?.failures ?? []).map((f: { suite: string; test: string }) => ({
+      module: x.module,
+      suite: f.suite,
+      test: f.test,
+    })),
+  );
+  const anyRealResult = perModule.some(x => x.result.executed && x.result.testResult);
+  // target 身份含模块（codex 五轮 #2）：模块 A 的目标用例名不得把模块 B 的同名历史失败
+  // 也标成 target——否则那条无关存量失败无法按基线豁免，又回到"存量拖死当前修复"。
+  const targetKeys = new Set(
+    targetCases.flatMap(c => {
+      const owner = mods.find(m => c.path.includes(m.package_path));
+      return owner ? [targetCaseKey(owner.name, c.test)] : mods.map(m => targetCaseKey(m.name, c.test));
+    }),
+  );
+  // 只有"真实跑出用例结果（total>0）"的模块才有资格证明其历史失败已恢复；
+  // executed 但 total=0（未跑到任何用例）不算（codex 六轮 #1）。
+  const modulesWithValidResults = new Set(
+    perModule
+      .filter(x => x.result.executed && (x.result.testResult?.total ?? 0) > 0)
+      .map(x => x.module),
+  );
+  const ratchet = anyRealResult
+    ? evaluateSuiteRatchet({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        frameworkRoot: ctx.frameworkRoot,
+        failures: allFailures,
+        targetKeys,
+        modulesWithValidResults,
+      })
+    : null;
+  const suiteHealthLine = `suite_health: ${ratchet ? ratchet.suiteHealth : 'UNKNOWN'}`;
+  const ratchetNote = ratchet && ratchet.baselineExempt.length > 0
+    ? `\n${suiteHealthLine}（${ratchet.baselineExempt.length} 条基线内历史失败已豁免，不计入本 feature 结论${
+        ratchet.baselineTightenedTo !== undefined ? `；基线已自动收紧至 ${ratchet.baselineTightenedTo} 条` : ''
+      }）：\n` +
+      ratchet.baselineExempt.slice(0, 10).map(f => `  - [${f.suite}] ${f.test}`).join('\n')
+    : ratchet && !ratchet.baselineAvailable && allFailures.length > 0
+      ? `\n${suiteHealthLine}（无可信 suite 失败基线：全部失败照常问责。如存量套件确有已知历史失败，` +
+        `由用户确认后放置 suite-failure-baseline.json（条目须含 module/suite/test，feature 字段须匹配）——` +
+        `本轮执行不得反推基线，agent 不得自行创建该文件）`
+      : `\n${suiteHealthLine}`;
+
+  const exemptKeys = new Set((ratchet?.baselineExempt ?? []).map(suiteFailureKey));
   const bad = perModule.filter(x => {
     const r = x.result;
     if (r.toolMissing) return true;
     if (!r.executed) return true;
-    if (r.exitCode !== 0) return true;
     const t = r.testResult;
+    if (t && (t.total ?? 0) > 0 && (t.failed ?? 0) > 0) {
+      // 豁免判定先于 exitCode：用例失败会让 aa test 以非零退出，不得因此绕过棘轮；
+      // 失败身份含模块名——A 模块的基线不得豁免 B 模块的同名失败。
+      const allExempt = (t.failures ?? []).every(
+        (f: { suite: string; test: string }) =>
+          exemptKeys.has(suiteFailureKey({ module: x.module, suite: f.suite, test: f.test })),
+      );
+      return !(allExempt && (t.failures ?? []).length > 0);
+    }
+    if (r.exitCode !== 0) return true;
     if (!t) return true;
     if (t.total <= 0) return true;
-    if (t.failed > 0) return true;
     return false;
   });
+
+  if (bad.length === 0 && !allModulesExecuted) {
+    // 防御：豁免使 bad 清空但并非所有选中模块都真实执行 → 不得宣称 PASS
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `选中 ${mods.length} 个模块，仅 ${perModule.length} 个产生真实执行结果——不完整的执行不得判 PASS。` +
+          `已执行：${perModule.map(x => x.module).join(', ') || '(无)'}${ratchetNote}`,
+        suggestion:
+          '检查未执行模块的链路失败原因（见已执行模块的日志与归因），修复后重跑；不得以部分模块结果宣称 UT 通过。',
+      },
+    ];
+  }
 
   if (bad.length === 0) {
     const totals = perModule.reduce(
       (acc, x) => ({
         total: acc.total + (x.result.testResult?.total ?? 0),
         passed: acc.passed + (x.result.testResult?.passed ?? 0),
+        failed: acc.failed + (x.result.testResult?.failed ?? 0),
       }),
-      { total: 0, passed: 0 },
+      { total: 0, passed: 0, failed: 0 },
     );
     return [
       {
@@ -847,9 +934,9 @@ function checkUtHvigorTest(
         severity: 'BLOCKER',
         status: 'PASS',
         details:
-          `全部 ${perModule.length} 个 ohosTest 模块装机执行通过：` +
-          `total=${totals.total}, passed=${totals.passed}, failed=0；` +
-          `目标设备：${devProbe.targets.join(' / ')}`,
+          `全部 ${perModule.length} 个 ohosTest 模块装机执行通过（target 无失败）：` +
+          `total=${totals.total}, passed=${totals.passed}, failed=${totals.failed}；` +
+          `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}`,
       },
     ];
   }
@@ -862,7 +949,7 @@ function checkUtHvigorTest(
       description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: formatted.lines.join('\n'),
+      details: formatted.lines.join('\n') + ratchetNote,
       affected_files: formatted.affectedFiles,
       failure_kind: formatted.failureKind,
       blocking_class: formatted.blockingClass,

@@ -37,7 +37,16 @@ import {
   readTraceStartCommit,
   analyzeDiffStaleness,
 } from './utils/git-diff';
-import { readCodingBase } from './utils/pass-snapshot';
+import {
+  resolveUtTargets,
+  computeUtFileBaseline as resolverComputeUtFileBaseline,
+  UT_TARGETS_ENV,
+  type UtLegacyIncrement,
+  type UtTargetResolution,
+} from './utils/ut-target-resolver';
+
+/** re-export：单测与既有消费方从 check-ut 导入（实现已移至 ut-target-resolver，P1-1） */
+export const computeUtFileBaseline = resolverComputeUtFileBaseline;
 import { findFilesRecursive } from './utils/find-files-recursive';
 import {
   CANONICAL_UT_COMPILE_ID,
@@ -68,6 +77,7 @@ import {
   buildMockPlanPresetIndex,
   collectDoublesMissingStrategy,
   collectMockPlanTypedIssues,
+  collectNewMockkitSurface,
   collectUtMockkitGovernanceReport,
   getMockPlanEntries,
   mockPlanAllowsHypiumMockkit,
@@ -1865,6 +1875,15 @@ function checkBoundariesAllStubbed(
 export function checkItNameHasAcOrBranchTag(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
+  /** P1-1 用例级归属：map 中的文件（legacy）只问责集合内的新增 it 名 */
+  legacyNewCases?: Map<string, Set<string>>,
+  opts?: {
+    /**
+     * [REG-*] 仅在 repair_existing_ut / cover_existing_code 工作模式下合法
+     * （cover_feature_change 不放行——否则需求 UT 可借 REG 绕开 AC 绑定）。
+     */
+    allowRegTag?: boolean;
+  },
 ): CheckResult[] {
   if (utFiles.length === 0) {
     return [{
@@ -1881,11 +1900,18 @@ export function checkItNameHasAcOrBranchTag(
   const affected: string[] = [];
   for (const { path: p, content } of utFiles) {
     if (isSuiteEntryShim(ctx, content)) continue;
+    const onlyCases = legacyNewCases?.get(p);
     const blocks = extractUtItBlocks(content);
     for (const b of blocks) {
-      // [CHAR-*]：path-c characterization 用例的合法追溯标签（无 acceptance 场景，
-      // 不得强迫其虚构 feature AC——plan 423e5d0f P0，解除 path-c 自死锁）。
-      if (!/^\s*\[(AC|BD|BRANCH|CHAR)-/i.test(b.name)) {
+      // legacy 文件：基线已有的 it 不受本 feature 标签问责，只查新增用例
+      if (onlyCases && !onlyCases.has(b.name)) continue;
+      // [CHAR-*]：path-c characterization 用例（无 acceptance 场景，不得虚构 feature AC）；
+      // [REG-*]：仅 repair/cover_existing 工作模式合法（回归网标签，不绑定 feature AC），
+      // cover_feature_change 不放行——plan 423e5d0f。
+      const tagRe = opts?.allowRegTag
+        ? /^\s*\[(AC|BD|BRANCH|CHAR|REG)-/i
+        : /^\s*\[(AC|BD|BRANCH|CHAR)-/i;
+      if (!tagRe.test(b.name)) {
         untagged.push(`${p}: "${b.name}"`);
         affected.push(p);
       }
@@ -1899,7 +1925,7 @@ export function checkItNameHasAcOrBranchTag(
       description: ruleDesc(ctx, 'structure_checks', 'it_name_has_ac_or_branch_tag'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 it() 用例均带有 [AC-X]、[BD-X]、[BRANCH-X] 或 [CHAR-X] 起始标签。',
+      details: '所有 it() 用例均带有 [AC-X]、[BD-X]、[BRANCH-X]、[CHAR-X] 或 [REG-X] 起始标签。',
     }];
   }
 
@@ -1911,7 +1937,7 @@ export function checkItNameHasAcOrBranchTag(
     status: 'FAIL',
     details: `${untagged.length} 个 it() 用例无追溯标签：\n${truncateList(untagged, 15)}`,
     affected_files: [...new Set(affected)],
-    suggestion: 'it() 名称必须以 [AC-xxx]、[BD-xxx]、[BRANCH-xxx] 开头（characterization 用例用 [CHAR-xxx]）；边界可直接写 [BD-1]，也可组合使用（如 [BRANCH-happy_path][AC-1] 或 [AC-1][BD-1]）。',
+    suggestion: 'it() 名称必须以 [AC-xxx]、[BD-xxx]、[BRANCH-xxx] 开头（characterization 用 [CHAR-xxx]，存量回归网用 [REG-xxx]）；边界可直接写 [BD-1]，也可组合使用（如 [BRANCH-happy_path][AC-1] 或 [AC-1][BD-1]）。',
   }];
 }
 
@@ -3471,6 +3497,7 @@ export function checkUtHypiumMockkitPolicy(
   auditRecords: TestabilityAuditRecord[],
   legacyExempt: Array<{ path: string; content: string }> = [],
   scopeNote = '',
+  legacyIncrements: UtLegacyIncrement[] = [],
 ): CheckResult[] {
   const id = 'ut_hypium_mockkit_policy';
   const legacyMockkitUsers = legacyExempt.filter(f => utFileImportsHypiumMockkit(f.content));
@@ -3479,18 +3506,29 @@ export function checkUtHypiumMockkitPolicy(
     : '';
   const noteSuffix = `${scopeNote}${legacyNote}`;
   const offenders = utFiles.filter(f => utFileImportsHypiumMockkit(f.content));
-  if (offenders.length === 0) {
+  // P1-1 用例级归属：legacy 文件内新增 it 时，只治理**相对基线新增**的 mock 用法；
+  // 基线已有的 MockKit 面继续豁免（否则又回到存量误伤）。
+  const incrementOffenders = legacyIncrements.filter(f => {
+    if (!utFileImportsHypiumMockkit(f.content)) return false;
+    const surface = collectNewMockkitSurface(f.content, f.baselineContent);
+    return surface.newUsages.length > 0 || surface.newUnparsed.length > 0;
+  });
+  if (offenders.length === 0 && incrementOffenders.length === 0) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: `本 feature 责任域内的 UT 未从 @ohos/hypium 导入 MockKit/when，跳过 mock 策略门禁。${noteSuffix}`,
+      details: `本 feature 责任域内的 UT 未从 @ohos/hypium 导入 MockKit/when（或存量文件无新增 mock 用法），跳过 mock 策略门禁。${noteSuffix}`,
     }];
   }
 
   if (!plan || !mockPlanAllowsHypiumMockkit(plan)) {
+    const offenderPaths = [
+      ...offenders.map(f => f.path),
+      ...incrementOffenders.map(f => `${f.path}（存量文件内新增 mock 用法）`),
+    ];
     return [{
       id,
       category: 'structure',
@@ -3498,8 +3536,8 @@ export function checkUtHypiumMockkitPolicy(
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        `${offenders.length} 个本 feature 责任域内的 UT 文件导入了 MockKit 或 hypium when，但 mock-plan 无 strategy=mockkit 条目：\n` +
-        truncateList(offenders.map(f => f.path), 10) + noteSuffix,
+        `${offenderPaths.length} 个本 feature 责任域内的 UT 文件使用了 MockKit/hypium when，但 mock-plan 无 strategy=mockkit 条目：\n` +
+        truncateList(offenderPaths, 10) + noteSuffix,
       suggestion:
         '在 mock-plan.yaml 为外部边界声明 strategy: mockkit 与 presets；或改用 Spy/whenXxx。禁止在消费者 framework 子模块改 ts-compile.ts。',
     }];
@@ -3547,6 +3585,14 @@ export function checkUtHypiumMockkitPolicy(
     for (const msg of report.violations) violations.push(`${f.path}: ${msg}`);
     for (const msg of report.unresolved) unresolved.push(`${f.path}: ${msg}`);
   }
+  // P1-1 增量治理：legacy 文件只对相对基线新增的 mock 用法问责
+  for (const f of incrementOffenders) {
+    const report = collectUtMockkitGovernanceReport(f.content, plan, forbiddenEntries, {
+      baselineContent: f.baselineContent,
+    });
+    for (const msg of report.violations) violations.push(`${f.path}（增量）: ${msg}`);
+    for (const msg of report.unresolved) unresolved.push(`${f.path}（增量）: ${msg}`);
+  }
   if (violations.length > 0) {
     return [{
       id,
@@ -3569,7 +3615,7 @@ export function checkUtHypiumMockkitPolicy(
       severity: 'BLOCKER',
       status: 'WARN',
       details:
-        `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when；无已证明的违规，但 ${unresolved.length} 处静态解析不出（解析不出 ≠ 违规）：\n` +
+        `${offenders.length + incrementOffenders.length} 个 UT 使用 @ohos/hypium MockKit/when；无已证明的违规，但 ${unresolved.length} 处静态解析不出（解析不出 ≠ 违规）：\n` +
         `${truncateList(unresolved, 15)}${noteSuffix}`,
       suggestion:
         '如需可追溯性，将上述方法补进 mock-plan mockkit 条目 methods[]；无法静态判定目标类的 mockFunc 用法由 AI verifier 语义复核，不阻塞脚本门禁。',
@@ -3582,7 +3628,7 @@ export function checkUtHypiumMockkitPolicy(
     description: ruleDesc(ctx, 'structure_checks', id),
     severity: 'BLOCKER',
     status: 'PASS',
-    details: `${offenders.length} 个 UT 使用 @ohos/hypium MockKit/when，mock-plan mockkit 策略、contracts 与用法追溯均已对齐。${noteSuffix}`,
+    details: `${offenders.length + incrementOffenders.length} 个 UT 使用 @ohos/hypium MockKit/when，mock-plan mockkit 策略、contracts 与用法追溯均已对齐。${noteSuffix}`,
   }];
 }
 
@@ -3869,72 +3915,6 @@ function checkHarnessHostArtifactPollution(ctx: CheckContext, utHost: UtHostImpl
   ];
 }
 
-/**
- * UT 文件基线身份（P0，plan 423e5d0f · codex P0 三修）：
- * 基线 ref 下已存在的文件 = 存量（legacy）；其余 = 本 feature 新增。
- * ref 只认**agent 动手之前锚定**的可信起点：
- *   ① HARNESS_DIFF_BASE_REF（用户显式，与 ut_no_src_mutation 同信任模型）；
- *   ② goal run（MAISON_GOAL_RUN_ID 在场）下 runner 在首次 coding invoke 前锚定的
- *      coding_base_sha（write-once + 跨 project/feature/run 重放校验）。
- * **绝不消费 trace.start_commit**：它是本次 harness 启动时才记录的当前 HEAD——
- * "新增 UT → commit → 首跑 ut harness" 时该 HEAD 已含新 UT，会把本轮新文件洗成存量
- * （与 ui-scope-gate 同款纪律："其记录时点在 agent 之后"）。也不回退裸 HEAD（同理）。
- * 无可信前置锚 → available=false，按 scoped 全量问责（fail-closed，等于改造前行为）。
- */
-export function computeUtFileBaseline(ctx: CheckContext): {
-  available: boolean;
-  ref?: string;
-  existing: Set<string>;
-  note: string;
-} {
-  const envBaseRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
-  let baseRef: string | undefined;
-  let anchorSource = '';
-  if (envBaseRef && envBaseRef !== 'working') {
-    baseRef = envBaseRef;
-    anchorSource = 'HARNESS_DIFF_BASE_REF';
-  } else {
-    const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
-    if (runId) {
-      const base = readCodingBase(ctx.projectRoot, ctx.feature, runId);
-      if (base.status === 'ok' && base.body) {
-        baseRef = base.body.base_sha;
-        anchorSource = 'coding_base_sha';
-      } else if (base.status === 'invalid') {
-        return {
-          available: false,
-          existing: new Set(),
-          note: 'coding_base 记录损坏/上下文不匹配——基线不可信，按 scoped 全量问责（不回退 trace.start_commit：其记录时点在 agent 之后）。',
-        };
-      }
-    }
-  }
-  if (!baseRef) {
-    return {
-      available: false,
-      existing: new Set(),
-      note:
-        '无可信前置基线锚：按 scoped 全量问责。goal run 由 runner 自动锚定 coding_base_sha；' +
-        '手动重跑请设 HARNESS_DIFF_BASE_REF=<feature 开始前的 commit> 以启用存量豁免' +
-        '（不消费 trace.start_commit——其记录时点在 agent 之后，会把已提交的本轮新 UT 洗成存量）。',
-    };
-  }
-  const listed = listFilesAtRef(ctx.projectRoot, baseRef);
-  if (!listed.executed) {
-    return {
-      available: false,
-      existing: new Set(),
-      note: `基线身份不可判定（${listed.error ?? 'git 不可用'}）：按 scoped 全量问责。`,
-    };
-  }
-  return {
-    available: true,
-    ref: baseRef,
-    existing: listed.files,
-    note: `基线=${baseRef}（锚=${anchorSource}）`,
-  };
-}
-
 function findFirst(results: CheckResult[], id: string): CheckResult | undefined {
   return results.find(r => r.id === id);
 }
@@ -3953,6 +3933,14 @@ function buildUtRunStatusResult(
     scopedFiles: string[];
     scopeDiagnostics: string[];
   },
+  modeInfo?: {
+    mode: string;
+    featureGatesActive: boolean;
+    explicitRequested: number;
+    explicitMatched: number;
+    targetFileCount: number;
+    legacyIncrementCases: number;
+  },
 ): CheckResult {
   const build = findFirst(results, 'ut_hvigor_build');
   const test = findFirst(results, 'ut_hvigor_test');
@@ -3965,6 +3953,11 @@ function buildUtRunStatusResult(
   const compilePassed = build?.status === 'PASS';
   const blockerFails = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
   const canClaimDone = blockerFails.length === 0 && test?.status === 'PASS';
+  // 设备阻塞是否为唯一 BLOCKER（决定 INCOMPLETE 而非 FAIL 的资格）
+  const deviceBlockedIsOnlyBlocker =
+    deviceExternalBlocked &&
+    compilePassed &&
+    blockerFails.every(r => r.id === 'ut_hvigor_test');
 
   const staticBlockerFails = blockerFails.filter(r =>
     r.id !== 'ut_hvigor_build' &&
@@ -3984,17 +3977,54 @@ function buildUtRunStatusResult(
             : []),
         ]
       : []),
-    `- 静态/结构规则：${staticBlockerFails.length === 0 ? 'PASS' : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`}`,
+    // plan 423e5d0f P2（codex 五轮 #5）：模式与责任域必须显式披露——大量"模式不适用"的
+    // SKIP 不得被汇总成"静态/结构规则 PASS"，否则 repair/cover_existing 结果看起来像
+    // 通过了完整需求门禁。
+    ...(modeInfo
+      ? [
+          `work_mode: ${modeInfo.mode}`,
+          `- 责任域：新建文件 ${modeInfo.targetFileCount} 个 + 存量文件内新增用例 ${modeInfo.legacyIncrementCases} 个` +
+            (modeInfo.explicitRequested > 0
+              ? `；显式目标 ${modeInfo.explicitMatched}/${modeInfo.explicitRequested} 命中`
+              : ''),
+          `- 需求门禁（use-cases/audit/mock-plan/DAG/AC 覆盖族）：${
+            modeInfo.featureGatesActive
+              ? '已执行'
+              : `SKIP（工作模式 ${modeInfo.mode} 不适用；本轮未验证需求追溯，AC 覆盖报告未生成/未覆写）`
+          }`,
+        ]
+      : []),
+    `- 静态/结构规则：${
+      staticBlockerFails.length === 0
+        ? modeInfo && !modeInfo.featureGatesActive
+          ? 'PASS（仅通用/安全门禁；需求门禁按模式 SKIP）'
+          : 'PASS'
+        : `FAIL（${staticBlockerFails.map(r => r.id).join(', ')}）`
+    }`,
     `- tsc 静态编译：${statusLabel(tsc)}`,
     `- 宿主测试模块编译：${statusLabel(build)}`,
     `- 真机/模拟器执行：${shortCircuited ? '未执行（ut_hvigor_build 失败短路）' : statusLabel(test)}`,
     `- 源码改动检查：${statusLabel(mutation)}`,
+    // plan 423e5d0f P1-3：两结论分离——本 feature 结论与套件健康各自成行，
+    // feature_verdict=PASS 可与 suite_health=DEGRADED 并存（历史失败不拖死本需求）。
+    // INCOMPLETE 仅当设备阻塞是**唯一** BLOCKER（codex 六轮 #2）：同时存在目标解析/
+    // 标签/源码红线等 FAIL 时必须是 FAIL，否则设备离线会掩盖真实缺陷。
+    `feature_verdict: ${
+      canClaimDone ? 'PASS' : deviceBlockedIsOnlyBlocker ? 'INCOMPLETE' : 'FAIL'
+    }`,
+    `suite_health: ${/suite_health:\s*(HEALTHY|DEGRADED)/.exec(test?.details ?? '')?.[1] ?? 'UNKNOWN'}`,
     `- 当前是否可以宣称 UT 完成：${canClaimDone ? '是' : '否'}`,
     `can_claim_done: ${canClaimDone ? 'YES' : 'NO'}`,
   ];
 
-  if (deviceExternalBlocked && compilePassed) {
+  if (deviceBlockedIsOnlyBlocker) {
     lines.push('- partial_readiness: compile_passed_device_blocked（harness verdict 应为 INCOMPLETE，非 PASS）');
+  } else if (deviceExternalBlocked && compilePassed) {
+    lines.push(
+      `- 设备阻塞与其他 BLOCKER 并存：不适用 partial_readiness（verdict=FAIL）；其他阻塞项=${
+        blockerFails.filter(r => r.id !== 'ut_hvigor_test').map(r => r.id).join(', ')
+      }`,
+    );
   }
 
   if (!canClaimDone) {
@@ -4050,116 +4080,176 @@ const checker: PhaseChecker = {
     const mockPlanDoc = mockPlanObservation.status === 'loaded' ? mockPlanObservation.value : null;
     const auditRecordsEarly = auditObservation.status === 'loaded' ? auditObservation.value : [];
 
+    // plan 423e5d0f P1-1/P2：统一 target 解析（提前到所有门禁之前——工作模式决定
+    // 需求工件门禁是否适用）。repair_existing_ut / cover_existing_code 不强制
+    // use-cases/AC/DAG/mock-plan（需求工件门禁按模式 SKIP），但源码红线、真实编译/执行、
+    // 棘轮、UI 禁入、命名/注册等通用与安全门禁照常。
+    const targetResolution: UtTargetResolution = resolveUtTargets(ctx, allUtFiles, scopedUtFiles);
+    const utBaseline = targetResolution.baseline;
+    const featureNewUtFiles = targetResolution.targetFiles;
+    const legacyIncrements = targetResolution.legacyIncrements;
+    const legacyExemptUtFiles = targetResolution.exemptFiles;
+    const featureGatesActive = targetResolution.mode === 'cover_feature_change';
+    const modeSkip = (
+      id: string,
+      category: CheckResult['category'],
+      section: 'structure_checks' | 'semantic_checks' | 'traceability_checks' = 'structure_checks',
+    ): CheckResult[] => [{
+      id,
+      category,
+      description: ruleDesc(ctx, section, id),
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: `工作模式=${targetResolution.mode}：需求工件门禁不适用（repair_existing_ut / cover_existing_code 不强制 use-cases/AC/DAG/mock-plan——plan 423e5d0f P2）。`,
+    }];
+
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
 
-    results.push(...safeRun(() => checkDagFilesParseable(ctx, dagObservation), 'dag_files_parseable'));
-    results.push(...safeRun(
-      () => checkUtMachineArtifactParseable(ctx, 'ut_testability_audit_parseable', 'testability-audit.md', auditObservation),
-      'ut_testability_audit_parseable',
-    ));
-    results.push(...safeRun(
-      () => checkUtMachineArtifactParseable(ctx, 'ut_mock_plan_parseable', 'mock-plan.yaml', mockPlanObservation),
-      'ut_mock_plan_parseable',
-    ));
+    // repair/cover_existing 模式 fail-closed（codex 五轮 #4）：显式目标未命中/缺基线锚
+    // 不得静默继续——配合历史失败基线可能把真正要修的失败全部豁免。
+    if (!featureGatesActive) {
+      const failTargetResolution = (details: string, suggestion: string): void => {
+        results.push({
+          id: 'ut_target_resolution',
+          category: 'structure',
+          description: 'UT 工作模式目标解析（repair/cover_existing fail-closed）',
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details,
+          suggestion,
+        });
+      };
+      if (!utBaseline.available) {
+        failTargetResolution(
+          `工作模式=${targetResolution.mode} 但无可信基线锚：${utBaseline.note}`,
+          '设置 HARNESS_DIFF_BASE_REF=<动手前 commit> 后重跑（repair/cover_existing 必须显式锚区分存量与本轮改动）。',
+        );
+      } else if (targetResolution.mode === 'repair_existing_ut' && targetResolution.explicitRequested === 0) {
+        failTargetResolution(
+          `repair_existing_ut 要求显式声明修复目标：${UT_TARGETS_ENV} 为空。\n${targetResolution.selectionReasons.join('\n')}`,
+          '设置 MAISON_UT_TARGETS=<目标 UT 文件相对路径>（分号/逗号分隔）后重跑。',
+        );
+      } else if (targetResolution.explicitRequested > 0
+        && targetResolution.explicitMatched !== targetResolution.explicitRequested) {
+        // 部分命中同样 fail-closed（codex 五轮 #1）：每条显式路径都是用户的责任域声明，
+        // 拼错一条就静默少修一个目标，且其失败可能被历史基线豁免掉。
+        failTargetResolution(
+          `显式目标未全部命中：requested=${targetResolution.explicitRequested}, matched=${targetResolution.explicitMatched}。\n${targetResolution.selectionReasons.join('\n')}`,
+          '核对 MAISON_UT_TARGETS 中每条路径（须是相对项目根、且已被 harness 发现的测试文件）后重跑。',
+        );
+      } else if (targetResolution.mode === 'cover_existing_code'
+        && featureNewUtFiles.length === 0
+        && legacyIncrements.length === 0) {
+        // 有效产出只认**新建测试文件**或**存量文件内新增 it**（codex 七轮）：
+        // 显式目标只决定"跑哪些"不构成产出证据；文本变化（注释/空格/import）同样不算——
+        // 它既不进 targetCaseView 受验收，失败还可能被 suite 基线豁免。
+        failTargetResolution(
+          `cover_existing_code 无实际测试产出：既无新建测试文件，也无存量文件内新增用例。\n${targetResolution.selectionReasons.join('\n')}`,
+          '新建 [REG-*] 测试文件，或在存量文件中新增 [REG-*] 用例后重跑（显式目标仅决定执行范围，改注释/格式等文本变化不构成测试产出）。',
+        );
+      } else {
+        results.push({
+          id: 'ut_target_resolution',
+          category: 'structure',
+          description: 'UT 工作模式目标解析（repair/cover_existing fail-closed）',
+          severity: 'BLOCKER',
+          status: 'PASS',
+          details: `工作模式=${targetResolution.mode}；${utBaseline.note}\n${targetResolution.selectionReasons.slice(0, 12).join('\n')}`,
+        });
+      }
+    }
 
-    results.push(
-      ...safeRun(
-        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'ut', {
-          phaseRule: ctx.phaseRule,
-          profileName: ctx.resolvedProfile.name,
-          frameworkRoot: ctx.frameworkRoot,
-        }),
-        'context_exploration_gate',
-      ),
-    );
+    results.push(...(featureGatesActive
+      ? safeRun(() => checkDagFilesParseable(ctx, dagObservation), 'dag_files_parseable')
+      : modeSkip('dag_files_parseable', 'structure')));
+    const featureGate = (id: string, run: () => CheckResult[], category: CheckResult['category'] = 'structure', section: 'structure_checks' | 'semantic_checks' | 'traceability_checks' = 'structure_checks'): void => {
+      results.push(...(featureGatesActive ? safeRun(run, id) : modeSkip(id, category, section)));
+    };
+
+    featureGate('ut_testability_audit_parseable', () =>
+      checkUtMachineArtifactParseable(ctx, 'ut_testability_audit_parseable', 'testability-audit.md', auditObservation));
+    featureGate('ut_mock_plan_parseable', () =>
+      checkUtMachineArtifactParseable(ctx, 'ut_mock_plan_parseable', 'mock-plan.yaml', mockPlanObservation));
+
+    featureGate('context_exploration_gate', () =>
+      checkFactsArtifact(ctx.projectRoot, ctx.feature, 'ut', {
+        phaseRule: ctx.phaseRule,
+        profileName: ctx.resolvedProfile.name,
+        frameworkRoot: ctx.frameworkRoot,
+      }));
 
     // --- blind-visual-hardening d1 切片一：上游裁决传播（review 不通过不得进 ut）---
-    results.push(
-      ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut' }),
-        'upstream_verdict_gate',
-      ),
-    );
+    featureGate('upstream_verdict_gate', () =>
+      checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut' }));
 
-    results.push(
-      ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
-        ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
-      ),
-    );
+    if (featureGatesActive) {
+      results.push(
+        ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
+          ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
+        ),
+      );
+    } else {
+      results.push(...modeSkip('acceptance_yaml_structure', 'structure'));
+    }
 
-    // --- Structure checks ---
+    // --- Structure checks ---（宿主产物污染是安全红线，任何模式都查）
     results.push(
       ...safeRun(() => checkHarnessHostArtifactPollution(ctx, utHost), 'harness_host_artifact_pollution'),
     );
     // v2 A: use-cases.yaml 自身
-    results.push(...safeRun(() => checkUseCaseSpecRecommended(ctx), 'usecase_spec_recommended'));
-    results.push(...safeRun(() => checkUseCaseSpecSchema(ctx), 'usecase_spec_schema'));
-    results.push(...safeRun(() => checkUseCaseUiBindingsNonempty(ctx), 'usecase_ui_bindings_nonempty'));
-    results.push(...safeRun(() => checkBoundaryMatchesContracts(ctx), 'boundary_matches_contracts'));
-    results.push(...safeRun(() => checkNamedBusinessHandler(ctx), 'named_business_handler'));
+    featureGate('usecase_spec_recommended', () => checkUseCaseSpecRecommended(ctx));
+    featureGate('usecase_spec_schema', () => checkUseCaseSpecSchema(ctx));
+    featureGate('usecase_ui_bindings_nonempty', () => checkUseCaseUiBindingsNonempty(ctx));
+    featureGate('boundary_matches_contracts', () => checkBoundaryMatchesContracts(ctx));
+    featureGate('named_business_handler', () => checkNamedBusinessHandler(ctx));
 
     // v2.3：可测性预检 + mock-plan（先于 DAG 拓扑之后的 trace，但逻辑上属于 UT 规约门禁）
-    results.push(...safeRun(() => checkUtTestabilityAuditPresent(ctx, auditObservation), 'ut_testability_audit_present'));
-    results.push(...safeRun(() => checkUtUnsupportedTargetsHandled(ctx, auditObservation), 'ut_unsupported_targets_handled'));
-    results.push(...safeRun(() => checkUtMockPlanPresent(ctx, auditRecordsEarly, mockPlanObservation), 'ut_mock_plan_present'));
-    results.push(...safeRun(
-      () => mockPlanObservation.status === 'invalid'
+    featureGate('ut_testability_audit_present', () => checkUtTestabilityAuditPresent(ctx, auditObservation));
+    featureGate('ut_unsupported_targets_handled', () => checkUtUnsupportedTargetsHandled(ctx, auditObservation));
+    featureGate('ut_mock_plan_present', () => checkUtMockPlanPresent(ctx, auditRecordsEarly, mockPlanObservation));
+    featureGate('ut_mock_plan_typed', () =>
+      mockPlanObservation.status === 'invalid'
         ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_typed', 'structure', mockPlanObservation.relPath)
-        : checkUtMockPlanTyped(ctx, mockPlanDoc),
-      'ut_mock_plan_typed',
-    ));
-    results.push(...safeRun(
-      () => mockPlanObservation.status === 'invalid'
+        : checkUtMockPlanTyped(ctx, mockPlanDoc));
+    featureGate('ut_mock_plan_contracts_consistent', () =>
+      mockPlanObservation.status === 'invalid'
         ? skipBecauseArtifactInvalid(ctx, 'ut_mock_plan_contracts_consistent', 'structure', mockPlanObservation.relPath)
-        : checkUtMockPlanContractsConsistent(ctx, mockPlanDoc),
-      'ut_mock_plan_contracts_consistent',
-    ));
+        : checkUtMockPlanContractsConsistent(ctx, mockPlanDoc));
 
     // v1 保留 + v2 修订：DAG 结构
-    results.push(...safeRun(() => checkDagSchemaCompliance(ctx, dags), 'dag_schema_compliance'));
-    results.push(...safeRun(() => checkDagNodeTypeValid(ctx, dags), 'dag_node_type_valid'));
-    results.push(...safeRun(() => checkDagAcyclic(ctx, dags), 'dag_acyclic'));
-    results.push(...safeRun(() => checkDagSourceFileExists(ctx, dags), 'dag_source_file_exists'));
+    featureGate('dag_schema_compliance', () => checkDagSchemaCompliance(ctx, dags));
+    featureGate('dag_node_type_valid', () => checkDagNodeTypeValid(ctx, dags));
+    featureGate('dag_acyclic', () => checkDagAcyclic(ctx, dags));
+    featureGate('dag_source_file_exists', () => checkDagSourceFileExists(ctx, dags));
     // v2 B: DAG ↔ use-cases 关联
-    results.push(...safeRun(() => checkDagLinkedUseCase(ctx, dags), 'dag_linked_usecase'));
-    results.push(...safeRun(() => checkDagBoundaryMatchesSpec(ctx, dags), 'dag_boundary_matches_spec'));
-    results.push(...safeRun(() => checkDagAssertionLinkedBranch(ctx, dags), 'dag_assertion_linked_branch'));
-    results.push(...safeRun(() => checkDagCohesion(ctx, dags), 'dag_cohesion'));
-    results.push(...safeRun(
-      () => mockPlanObservation.status === 'invalid'
+    featureGate('dag_linked_usecase', () => checkDagLinkedUseCase(ctx, dags));
+    featureGate('dag_boundary_matches_spec', () => checkDagBoundaryMatchesSpec(ctx, dags));
+    featureGate('dag_assertion_linked_branch', () => checkDagAssertionLinkedBranch(ctx, dags));
+    featureGate('dag_cohesion', () => checkDagCohesion(ctx, dags));
+    featureGate('dag_spy_preset_resolvable', () =>
+      mockPlanObservation.status === 'invalid'
         ? skipBecauseArtifactInvalid(ctx, 'dag_spy_preset_resolvable', 'structure', mockPlanObservation.relPath)
-        : checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc),
-      'dag_spy_preset_resolvable',
-    ));
+        : checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc));
 
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
     results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
     results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
-    // plan 423e5d0f P0：mockkit 政策只问责本 feature 责任域（基线新增的 scoped 文件），
-    // 存量（基线已存在）UT 的 MockKit 用法不得倒逼本 feature mock-plan/contracts 登记。
-    const utBaseline = computeUtFileBaseline(ctx);
-    const featureNewUtFiles = utBaseline.available
-      ? scopedUtFiles.filter(f => !utBaseline.existing.has(f.path))
-      : scopedUtFiles;
-    const featureNewUtPaths = new Set(featureNewUtFiles.map(f => f.path));
-    const legacyExemptUtFiles = allUtFiles.filter(f => !featureNewUtPaths.has(f.path));
-    results.push(
-      ...safeRun(
-        () => mockPlanObservation.status === 'invalid'
-          ? skipBecauseArtifactInvalid(ctx, 'ut_hypium_mockkit_policy', 'structure', mockPlanObservation.relPath)
-          : checkUtHypiumMockkitPolicy(
-              ctx,
-              mockPlanDoc,
-              featureNewUtFiles,
-              auditRecordsEarly,
-              legacyExemptUtFiles,
-              `\n身份基线：${utBaseline.note}`,
-            ),
-        'ut_hypium_mockkit_policy',
-      ),
-    );
+    // mockkit 政策=需求工件门禁（要求 mock-plan/contracts 登记），repair/cover_existing 模式
+    // 无 feature 工件可对齐 → 按模式 SKIP（新增 mock 用法由 verifier/review 兜底）。
+    featureGate('ut_hypium_mockkit_policy', () =>
+      mockPlanObservation.status === 'invalid'
+        ? skipBecauseArtifactInvalid(ctx, 'ut_hypium_mockkit_policy', 'structure', mockPlanObservation.relPath)
+        : checkUtHypiumMockkitPolicy(
+            ctx,
+            mockPlanDoc,
+            featureNewUtFiles,
+            auditRecordsEarly,
+            legacyExemptUtFiles,
+            `\n身份基线：${utBaseline.note}`,
+            legacyIncrements,
+          ));
     results.push(...safeRun(() => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
     // v2.2 方案 A：静态 tsc --noEmit 检查。plan 423e5d0f P0-1：全量跑但只作快速诊断
     // （WARN）——模拟 tsc 会对存量代码产生真实工具链不报的假错，编译 BLOCKER 唯一来源
@@ -4168,7 +4258,12 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
     const hvigorBuildResults = safeRun(
-      () => utHost.checkUtHvigorBuild(ctx, scopedUtFiles, featureNewUtFiles),
+      // 显式目标文件（repair）必须进编译/执行集合，即使不在 scoped
+      () => utHost.checkUtHvigorBuild(
+        ctx,
+        [...scopedUtFiles, ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path))],
+        featureNewUtFiles,
+      ),
       'ut_hvigor_build',
     );
     results.push(...hvigorBuildResults);
@@ -4210,36 +4305,60 @@ const checker: PhaseChecker = {
         },
       );
     } else {
-      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, scopedUtFiles), 'ut_hvigor_test'));
+      // P1-2：target it 名传给真实执行门禁——suite 棘轮中 target 失败永不豁免
+      // 棘轮"永不豁免"名单 = 责任域用例 + 显式目标文件的**全部** it（repair 修的就是
+      // 存量失败用例——若它在历史基线里被豁免，修复就永远无法被验证）。
+      // 携带 path：模块身份由 profile 按 package_path 归属推导（module::test）。
+      const collectCases = (files: Array<{ path: string; content: string }>): Array<{ path: string; test: string }> =>
+        files.flatMap(f => collectItNames(ctx, [f]).map(test => ({ path: f.path, test })));
+      const targetCases = [
+        ...collectCases(targetResolution.targetCaseView),
+        ...collectCases(targetResolution.explicitTargetFiles),
+      ];
+      const runScope = [
+        ...scopedUtFiles,
+        ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path)),
+      ];
+      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
-    results.push(...safeRun(() => checkMockStubForAsync(ctx, dags, allUtFiles), 'mock_stub_for_async'));
+    featureGate('mock_stub_for_async', () => checkMockStubForAsync(ctx, dags, allUtFiles));
     results.push(...safeRun(() => utHost.checkTestRegistration(ctx, allUtFiles), 'test_registration'));
-    // v2 C: UT 代码（feature-scoped 追溯/命名）
-    results.push(...safeRun(() => checkUtImportWhitelist(ctx, scopedUtFiles), 'ut_import_whitelist'));
-    results.push(...safeRun(() => checkBoundariesAllStubbed(ctx, scopedUtFiles), 'boundaries_all_stubbed'));
-    // plan 423e5d0f P0（R3 一轮回灌实锤）：标签只问责 feature 责任域——存量文件被
-    // context-exploration 提及/git 触碰仍会进 scoped，但"提及 ≠ 归属"，存量 it 不得
-    // 被逼挂本需求 AC 标签（那是假覆盖的源头）。
-    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, featureNewUtFiles), 'it_name_has_ac_or_branch_tag')
+    // v2 C: UT 代码——P1-1 需求房规**统一消费 targetCaseView**（新建文件原样 + legacy
+    // 文件内新增 import/it 的合成条目），存量文件基线已有内容不受问责，新增内容与
+    // 新文件同等问责（codex 第四轮：不得只有标签/mockkit 消费增量）。
+    const targetCaseView = targetResolution.targetCaseView;
+    results.push(...safeRun(() => checkUtImportWhitelist(ctx, targetCaseView), 'ut_import_whitelist'));
+    featureGate('boundaries_all_stubbed', () => checkBoundariesAllStubbed(ctx, targetCaseView));
+    // 标签只问责 feature 责任域——存量文件被 context 提及/git 触碰仍会进 scoped，
+    // 但"提及 ≠ 归属"；基线已有的存量 it 不得被逼挂本需求 AC 标签（假覆盖源头）。
+    // [REG-*] 仅 repair/cover_existing 模式放行（cover_feature_change 禁用，防绕 AC 绑定）。
+    const allowRegTag = targetResolution.mode !== 'cover_feature_change';
+    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, targetCaseView, undefined, { allowRegTag }), 'it_name_has_ac_or_branch_tag')
       .map(r => ({
         ...r,
-        details: `${r.details}\n身份口径：只问责本 feature 责任域 UT（${featureNewUtFiles.length} 个）。${utBaseline.note}`,
+        details: `${r.details}\n身份口径：只问责本 feature 责任域（新建 ${featureNewUtFiles.length} 个文件 + 存量文件内新增 ${legacyIncrements.reduce((s, f) => s + f.newCases.size, 0)} 个用例；工作模式=${targetResolution.mode}）。${utBaseline.note}`,
       })));
-    results.push(...safeRun(() => checkItDrivesFlow(ctx, scopedUtFiles), 'it_drives_flow'));
+    featureGate('it_drives_flow', () => checkItDrivesFlow(ctx, targetCaseView));
 
-    // --- Traceability checks ---
-    results.push(...safeRun(() => checkDagToAcceptance(ctx, dags), 'dag_to_acceptance'));
-    results.push(...safeRun(() => checkAcceptanceCoverage(ctx, dags, dagObservation), 'acceptance_coverage'));
-    results.push(...safeRun(() => checkDagToSource(ctx, dags), 'dag_to_source'));
+    // --- Traceability checks ---（需求追溯族：按模式分流）
+    featureGate('dag_to_acceptance', () => checkDagToAcceptance(ctx, dags), 'traceability', 'traceability_checks');
+    featureGate('acceptance_coverage', () => checkAcceptanceCoverage(ctx, dags, dagObservation), 'traceability', 'traceability_checks');
+    featureGate('dag_to_source', () => checkDagToSource(ctx, dags), 'traceability', 'traceability_checks');
 
+    // P1-1：覆盖计算与追溯族统一消费 targetCaseView——存量 it 不再稀释本需求 ac-coverage
+    //（假覆盖防护）；legacy 文件内新增 it 经合成条目并入覆盖统计与全部追溯规则。
+    //（无基线锚时 view=scoped、increments 空，行为与改造前逐字等价。）
+    const coverageUtFiles = targetCaseView;
     let acCoverageReport: AcCoverageReport | null = null;
     let acCoverageRel = '';
-    const acceptanceForReport = ctx.featureSpec.acceptance;
+    // 非需求模式不得生成/覆写本 feature 的 AC 覆盖证据（codex 五轮 #4）：repair/REG 的
+    // target view 会把原需求覆盖报告重写成空或无关内容。
+    const acceptanceForReport = featureGatesActive ? ctx.featureSpec.acceptance : undefined;
     if (acceptanceForReport && scopedUtFiles.length > 0) {
       try {
-        const itNames = collectItNames(ctx, scopedUtFiles);
+        const itNames = collectItNames(ctx, coverageUtFiles);
         acCoverageReport = buildAcCoverageReport(ctx.feature, acceptanceForReport, itNames);
         const outPath = writeAcCoverageReport(ctx.projectRoot, ctx.feature, acCoverageReport);
         acCoverageRel = path.relative(ctx.projectRoot, outPath).replace(/\\/g, '/');
@@ -4249,14 +4368,14 @@ const checker: PhaseChecker = {
     }
 
     // v2 Traceability（须在 ac-coverage.json 落盘之后，以便 ac_coverage 证据首轮可解析）
-    results.push(...safeRun(() => checkUtCoverageEvidencePresent(ctx, coverageObservation), 'ut_coverage_evidence_present'));
-    results.push(...safeRun(() => checkUtCoverageEvidenceMappingsComplete(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_coverage_evidence_mappings_complete'));
-    results.push(...safeRun(() => checkUtCoverageEvidenceResolves(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_coverage_evidence_resolves'));
-    results.push(...safeRun(() => checkOriginTagRequired(dags, ctx), 'origin_tag_required'));
-    results.push(...safeRun(() => checkCharacterizationTraceMatches(ctx, dags, scopedUtFiles), 'characterization_trace_matches'));
-    results.push(...safeRun(() => checkBranchCoverageFull(ctx, scopedUtFiles, dags), 'branch_coverage_full'));
-    results.push(...safeRun(() => checkUtCasePerUnitAc(ctx, scopedUtFiles, coverageObservation, dags, acCoverageReport), 'ut_case_per_unit_ac'));
-    results.push(...safeRun(() => checkBoundaryCoverage(ctx, scopedUtFiles, dags), 'boundary_coverage'));
+    featureGate('ut_coverage_evidence_present', () => checkUtCoverageEvidencePresent(ctx, coverageObservation), 'traceability', 'traceability_checks');
+    featureGate('ut_coverage_evidence_mappings_complete', () => checkUtCoverageEvidenceMappingsComplete(ctx, coverageUtFiles, coverageObservation, dags, acCoverageReport), 'traceability', 'traceability_checks');
+    featureGate('ut_coverage_evidence_resolves', () => checkUtCoverageEvidenceResolves(ctx, coverageUtFiles, coverageObservation, dags, acCoverageReport), 'traceability', 'traceability_checks');
+    featureGate('origin_tag_required', () => checkOriginTagRequired(dags, ctx), 'traceability', 'traceability_checks');
+    featureGate('characterization_trace_matches', () => checkCharacterizationTraceMatches(ctx, dags, coverageUtFiles), 'traceability', 'traceability_checks');
+    featureGate('branch_coverage_full', () => checkBranchCoverageFull(ctx, coverageUtFiles, dags), 'traceability', 'traceability_checks');
+    featureGate('ut_case_per_unit_ac', () => checkUtCasePerUnitAc(ctx, coverageUtFiles, coverageObservation, dags, acCoverageReport), 'traceability', 'traceability_checks');
+    featureGate('boundary_coverage', () => checkBoundaryCoverage(ctx, coverageUtFiles, dags), 'traceability', 'traceability_checks');
 
     if (acCoverageReport && acCoverageRel) {
       const blockers = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
@@ -4281,13 +4400,24 @@ const checker: PhaseChecker = {
       });
     }
 
-    results.push(buildUtRunStatusResult(results, {
-      allCount: partition.all.length,
-      scopedCount: partition.scoped.length,
-      scopeSources: partition.scopeSources,
-      scopedFiles: partition.scoped.map(f => f.path),
-      scopeDiagnostics: partition.scopeDiagnostics ?? [],
-    }));
+    results.push(buildUtRunStatusResult(
+      results,
+      {
+        allCount: partition.all.length,
+        scopedCount: partition.scoped.length,
+        scopeSources: partition.scopeSources,
+        scopedFiles: partition.scoped.map(f => f.path),
+        scopeDiagnostics: partition.scopeDiagnostics ?? [],
+      },
+      {
+        mode: targetResolution.mode,
+        featureGatesActive,
+        explicitRequested: targetResolution.explicitRequested,
+        explicitMatched: targetResolution.explicitMatched,
+        targetFileCount: featureNewUtFiles.length,
+        legacyIncrementCases: legacyIncrements.reduce((s, f) => s + f.newCases.size, 0),
+      },
+    ));
 
     return results;
   },
