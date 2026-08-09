@@ -7,7 +7,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { collectPolicyStatus, enroll, setPolicy } from '../../scripts/device-policy';
+import { collectPolicyStatus, enroll, setPolicy, rebind } from '../../scripts/device-policy';
 import { clearFrameworkConfigCache } from '../../config';
 import { FakeCredentialProvider } from '../helpers/fake-credential-provider';
 import type { UnitCaseResult } from '../run-unit';
@@ -160,6 +160,161 @@ export function runAll(): UnitCaseResult[] {
     assertEq(setPolicy(rootC, { unlockMode: 'manual' }), 0, 'setPolicy 应成功');
     clearFrameworkConfigCache();
     assertEq(collectPolicyStatus(rootC).credential_ref, null, '切回手工解锁须清掉凭据引用');
+  });
+
+  run(results, 't1 device:set 经 updateLocalConfig 无损：写 emulator 档位不丢 device.unlock.credential_ref + vision + toolchain', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'device-policy-'));
+    tmpRoots.push(root);
+    fs.writeFileSync(
+      path.join(root, 'framework.config.json'),
+      JSON.stringify({ schema_version: '1.1', project_name: 'T' }),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(root, 'framework.local.json'),
+      JSON.stringify({
+        schema_version: '1.0',
+        agent_adapter: 'cursor',
+        vision: { image_input_override: 'native_attach' },
+        toolchain: { devEcoStudio: { installPath: 'C:/DevEco' } },
+        device: { unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' }, target_serial: 'PHONE-1' },
+      }),
+      'utf-8',
+    );
+    clearFrameworkConfigCache();
+    assertEq(setPolicy(root, { emulatorFallback: 'managed' }), 0, 'setPolicy 应成功');
+    clearFrameworkConfigCache();
+    const local = JSON.parse(
+      fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+    ) as {
+      device?: { unlock?: { mode?: string; credential_ref?: string }; emulator_fallback?: string; target_serial?: string };
+      vision?: { image_input_override?: string };
+      toolchain?: { devEcoStudio?: { installPath?: string } };
+    };
+    assertEq(local.device?.unlock?.mode, 'credential', 'device.unlock.mode 应保留');
+    assertEq(local.device?.unlock?.credential_ref, 'maison/device/PHONE-1/v3', 'credential_ref 应原样保留（本次事故根因）');
+    assertEq(local.device?.target_serial, 'PHONE-1', 'target_serial 应保留');
+    assertEq(local.device?.emulator_fallback, 'managed', 'emulator_fallback 落盘');
+    assertEq(local.vision?.image_input_override, 'native_attach', 'vision 应保留');
+    assertEq(local.toolchain?.devEcoStudio?.installPath, 'C:/DevEco', 'toolchain 应保留');
+  });
+
+  run(results, 't4 device:rebind ready 成功写回（经 updateLocalConfig，其余字段不丢）', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'device-policy-'));
+    tmpRoots.push(root);
+    fs.writeFileSync(
+      path.join(root, 'framework.config.json'),
+      JSON.stringify({ schema_version: '1.1', project_name: 'T' }),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(root, 'framework.local.json'),
+      JSON.stringify({
+        schema_version: '1.0',
+        agent_adapter: 'cursor',
+        vision: { image_input_override: 'native_attach' },
+        toolchain: { devEcoStudio: { installPath: 'C:/DevEco' } },
+        device: { unlock: { mode: 'manual' }, target_serial: 'OLD' },
+      }),
+      'utf-8',
+    );
+    clearFrameworkConfigCache();
+    const provider = new FakeCredentialProvider();
+    provider.seedReady({ serial: 'PHONE-1', version: 3 }, '123456');
+    assertEq(rebind(root, 'PHONE-1', '3', provider), 0, 'ready 应放行');
+    clearFrameworkConfigCache();
+    const local = JSON.parse(
+      fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+    ) as {
+      device?: { unlock?: { mode?: string; credential_ref?: string }; target_serial?: string };
+      vision?: { image_input_override?: string };
+      toolchain?: { devEcoStudio?: { installPath?: string } };
+    };
+    assertEq(local.device?.unlock?.mode, 'credential', 'mode 须改为 credential');
+    assertEq(local.device?.unlock?.credential_ref, 'maison/device/PHONE-1/v3', 'credential_ref 须写回');
+    assertEq(local.device?.target_serial, 'PHONE-1', 'target_serial 须写回');
+    assertEq(local.vision?.image_input_override, 'native_attach', 'vision 须保留（updateLocalConfig 无损）');
+    assertEq(local.toolchain?.devEcoStudio?.installPath, 'C:/DevEco', 'toolchain 须保留');
+  });
+
+  run(results, 't4 device:rebind 五个拒绝分支（burned / in_flight / unsupported / absent 无 error / absent 有 error）', () => {
+    const root = hostWith();
+    const id = { serial: 'PHONE-1', version: 3 };
+    const errs: string[] = [];
+    const origErr = console.error;
+    console.error = (m: unknown) => { errs.push(String(m)); };
+    try {
+      // burned
+      const burned = new FakeCredentialProvider();
+      burned.burnCredential(id, '口令错误');
+      assertEq(rebind(root, 'PHONE-1', '3', burned) !== 0, true, 'burned 须拒绝');
+      assert(errs.join('\n').includes('重新登记'), 'burned 指引须指向重新登记');
+
+      // in_flight（上次崩在临界区遗留 claim）
+      errs.length = 0;
+      const inflight = new FakeCredentialProvider();
+      inflight.seedClaim(id, 'aaaaaaaaaaaaaaaa', '123456');
+      assertEq(rebind(root, 'PHONE-1', '3', inflight) !== 0, true, 'in_flight 须拒绝');
+      assert(errs.join('\n').includes('稍后重试'), 'in_flight 指引须先稍后重试，不得默认立即重登记');
+
+      // unsupported
+      errs.length = 0;
+      const unsupported = new FakeCredentialProvider();
+      unsupported.blobs.set('MaisonDeviceUnlock:PHONE-1:v3', 'abcd');
+      assertEq(rebind(root, 'PHONE-1', '3', unsupported) !== 0, true, 'unsupported 须拒绝');
+
+      // absent 无 error
+      errs.length = 0;
+      const absent = new FakeCredentialProvider();
+      assertEq(rebind(root, 'PHONE-1', '3', absent) !== 0, true, 'absent 无 error 须拒绝');
+
+      // absent 有 error（provider 不可读）
+      errs.length = 0;
+      const absentErr = new FakeCredentialProvider({ inspectError: 'cred vault unreachable' });
+      assertEq(rebind(root, 'PHONE-1', '3', absentErr) !== 0, true, 'absent 有 error 须拒绝');
+      assert(errs.join('\n').includes('凭据库不可读'), 'absent 有 error 须原样报告不可读，而非 unsupported');
+    } finally {
+      console.error = origErr;
+    }
+
+    // 所有拒绝分支都不得写盘（引用保持原样）
+    clearFrameworkConfigCache();
+    const local = JSON.parse(
+      fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'),
+    ) as { device?: unknown };
+    assertEq(local.device, undefined, '拒绝分支不得写入任何 device 配置');
+  });
+
+  run(results, 't4 device:rebind 参数校验：serial 不合规 / 缺 version / version 非正整数', () => {
+    const root = hostWith();
+    const provider = new FakeCredentialProvider();
+    assertEq(rebind(root, "bad'; inj", '3', provider) !== 0, true, 'serial 含非法字符须拒绝');
+    assertEq(rebind(root, 'PHONE-1', '', provider) !== 0, true, '缺 version 须拒绝');
+    assertEq(rebind(root, 'PHONE-1', '0', provider) !== 0, true, 'version 0 须拒绝');
+    assertEq(rebind(root, 'PHONE-1', '-2', provider) !== 0, true, 'version 负数须拒绝');
+    assertEq(rebind(root, 'PHONE-1', '1.5', provider) !== 0, true, 'version 小数须拒绝');
+    assertEq(rebind(root, 'PHONE-1', 'abc', provider) !== 0, true, 'version 非数字须拒绝');
+  });
+
+  run(results, 't4 **进程级**：--rebind 缺参/非法参数 → 非零退出 + version 来源提示（不触碰凭据库）', () => {
+    const root = hostWith();
+    const script = path.join(__dirname, '..', '..', 'scripts', 'device-policy.ts');
+    // 缺 --version → 非零 + 提示 version 来源与禁止枚举说明
+    const r1 = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--rebind', '--serial', 'PHONE-1', '--project-root', root],
+      { encoding: 'utf-8', cwd: path.join(__dirname, '..', '..'), timeout: 60_000, env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' } },
+    );
+    assertEq(r1.status, 2, '缺 --version 须非零退出（实得 ' + r1.status + '）');
+    assert(/MaisonDeviceUnlock/.test(r1.stderr ?? ''), '缺参时应提示 version 来源（凭据管理器 target 名）');
+    assert(/#burned/.test(r1.stderr ?? ''), '应提示 `#burned` 墓碑不可用');
+    // 非法 serial → 非零
+    const r2 = spawnSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', script, '--rebind', '--serial', "bad'; inj", '--version', '3', '--project-root', root],
+      { encoding: 'utf-8', cwd: path.join(__dirname, '..', '..'), timeout: 60_000, env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' } },
+    );
+    assertEq(r2.status, 2, '非法 serial 须非零退出（实得 ' + r2.status + '）');
   });
 
   run(results, '**进程级**：--check --json 的 stdout 可直接 JSON.parse，退出码恒 0', () => {

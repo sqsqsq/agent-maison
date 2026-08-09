@@ -101,7 +101,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'executeInitTask record-adapter writes local',
+    name: 't1 executeInitTask record-adapter（非 goal record-adapter）经 updateLocalConfig 无损：device/unlock.credential_ref + vision + toolchain 交叉保真',
     run: () => {
       const root = mkTmp();
       const layout = detectRepoLayout(path.join(__dirname, '../..'));
@@ -119,6 +119,16 @@ const cases: Array<{ name: string; run: () => void }> = [
             cross_module_exports_file: 'index.ets',
           },
           paths: { features_dir: 'doc/features' },
+        }, null, 2),
+      );
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({
+          schema_version: '1.0',
+          agent_adapter: 'cursor',
+          vision: { image_input_override: 'tool_read', canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: '2026-07-09T00:00:00.000Z' } },
+          toolchain: { devEcoStudio: { installPath: 'C:/DevEco' } },
+          device: { unlock: { mode: 'credential', credential_ref: 'maison/device/3UJ0/v2' }, target_serial: '3UJ0225321000395' },
         }, null, 2),
       );
       fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
@@ -143,6 +153,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       executeInitTask(task, 'run', ctx);
       const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
       assert.strictEqual(local.agent_adapter, 'claude');
+      assert.strictEqual(local.device?.unlock?.mode, 'credential', 'device.unlock.mode 应保留');
+      assert.strictEqual(local.device?.unlock?.credential_ref, 'maison/device/3UJ0/v2', 'credential_ref 应原样保留（本次事故根因）');
+      assert.strictEqual(local.device?.target_serial, '3UJ0225321000395', 'target_serial 应保留');
+      assert.strictEqual(local.vision?.image_input_override, 'tool_read', 'vision 应保留');
+      assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, 'C:/DevEco', 'toolchain 应保留');
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },
@@ -169,6 +184,16 @@ const cases: Array<{ name: string; run: () => void }> = [
         }, null, 2),
       );
       fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# stub\n');
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify({
+          schema_version: '1.0',
+          agent_adapter: 'cursor',
+          vision: { image_input_override: 'tool_read' },
+          toolchain: { devEcoStudio: { installPath: 'C:/old' } },
+          device: { unlock: { mode: 'credential', credential_ref: 'maison/device/3UJ0/v2' }, target_serial: '3UJ0225321000395' },
+        }, null, 2),
+      );
 
       const fakeInstall = path.join(root, 'fake-deveco');
       const hvigorBin = path.join(
@@ -214,6 +239,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
         assert.strictEqual(local.agent_adapter, 'claude');
         assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, fakeInstall);
+        assert.strictEqual(local.device?.unlock?.credential_ref, 'maison/device/3UJ0/v2', 't1：--ensure toolchain 写回不得丢 device.unlock.credential_ref');
+        assert.strictEqual(local.vision?.image_input_override, 'tool_read', 't1：--ensure toolchain 写回不得丢 vision');
       } finally {
         __testing_setDetectScanForEnsure(null);
         clearFrameworkConfigCache();

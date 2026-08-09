@@ -5663,8 +5663,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             outcomes.push(decision.outcome as GoalPhaseOutcome);
             console.error(
               `\n===== ${decision.outcome.halt_reason} =====\n${decision.outcome.halt_guidance ?? ''}\n` +
-                `${decision.notes.join('\n')}\n` +
-                '设备就绪后重跑/--resume 继续；框架不会替你解锁设备。\n',
+                `${decision.notes.join('\n')}\n`,
             );
             break;
           }

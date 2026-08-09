@@ -38,7 +38,7 @@ goal_capability:
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (codex exec …, prompt via STDIN — NOT the {{PROMPT}} argv below).
-    headless_invoke: 'codex exec --sandbox workspace-write --ask-for-approval never "{{PROMPT}}"'
+    headless_invoke: 'codex --ask-for-approval never exec --sandbox workspace-write "{{PROMPT}}"'
     unattended:
       write_mode: workspace-write
       approval_mode: never

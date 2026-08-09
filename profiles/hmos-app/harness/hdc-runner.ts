@@ -1330,7 +1330,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     if (preReady.blocked) {
       const msg =
         `设备锁屏且未能自动解锁——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
-        '修复建议：请人工解锁设备后重跑；框架不会尝试任何口令。';
+        '修复建议：按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。';
       return finalize({
         executed: false,
         failedAt: 'install',
@@ -1344,7 +1344,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
           diagnosis: {
             kind: 'device_locked',
             summary: `设备锁屏且未能自动解锁——已在 UT 装机前阻断。${preReady.note}`,
-            suggestion: '请人工解锁设备后重跑；框架不会尝试任何口令。',
+            suggestion: '按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。',
           },
         },
         logExcerpt: `${logChunks.join('\n')}\n[device] BLOCKED: ${msg}`,

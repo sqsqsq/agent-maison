@@ -38,7 +38,8 @@
     "visual-diff-nav:migrate": "ts-node ../profiles/hmos-app/harness/visual-diff-nav-migrate.ts",
     "device:policy": "ts-node scripts/device-policy.ts --check --json",
     "device:enroll": "ts-node scripts/device-policy.ts --enroll",
-    "device:set": "ts-node scripts/device-policy.ts --set"
+    "device:set": "ts-node scripts/device-policy.ts --set",
+    "device:rebind": "ts-node scripts/device-policy.ts --rebind"
   },
   "dependencies": {
     "chalk": "^4.1.2",

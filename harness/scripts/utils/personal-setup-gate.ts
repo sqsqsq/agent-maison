@@ -7,7 +7,6 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 
 import {
-  clearFrameworkConfigCache,
   deriveHvigorBinFromInstallPath,
   getFrameworkPersonalSetupStatus,
   loadDevEcoConfig,
@@ -25,7 +24,7 @@ import {
 import {
   LOCAL_SCHEMA_VERSION,
   loadLocalConfig,
-  writeLocalConfig,
+  updateLocalConfig,
   type FrameworkLocalConfig,
 } from './framework-local-config';
 import type { PersonalPrerequisiteId } from './phase-personal-prerequisites';
@@ -44,46 +43,14 @@ export function __testing_setDetectScanForEnsure(fn: DetectScanFn | null): void 
 }
 
 /**
- * 与 init-task-executor mergeLocal 一致：保留既有 toolchain 等字段。
- * vision 无感保留（I1 修复 plan b7e42d19）：原实现只 spread agent_adapter/toolchain，
- * --ensure 一跑就把 goal/交互式金丝雀写入的 vision.canary 整段抹掉——探测缓存本应无感
- * 持久，此处按 patch 优先、否则保留 base 的既有 vision。
- */
-function mergeLocalPatch(
-  projectRoot: string,
-  patch: Partial<FrameworkLocalConfig>,
-): FrameworkLocalConfig {
-  const existing = loadLocalConfig(projectRoot);
-  const base: FrameworkLocalConfig = existing ?? { schema_version: LOCAL_SCHEMA_VERSION };
-  const next: FrameworkLocalConfig = {
-    schema_version: LOCAL_SCHEMA_VERSION,
-    ...(base.agent_adapter ? { agent_adapter: base.agent_adapter } : {}),
-    ...(base.toolchain ? { toolchain: { ...base.toolchain } } : {}),
-    ...(base.vision ? { vision: { ...base.vision } } : {}),
-  };
-  if (patch.agent_adapter) next.agent_adapter = patch.agent_adapter;
-  if (patch.toolchain?.devEcoStudio) {
-    next.toolchain = {
-      ...(next.toolchain ?? {}),
-      devEcoStudio: {
-        ...(next.toolchain?.devEcoStudio ?? {}),
-        ...patch.toolchain.devEcoStudio,
-      },
-    };
-  }
-  if (patch.vision) {
-    next.vision = { ...(next.vision ?? {}), ...patch.vision };
-  }
-  return next;
-}
-
-/**
  * 确定性把运行身份写入 framework.local.json（与 fallback 修复 / record-adapter 同一机制）。
  * goal-mode `--override-adapter` 的唯一合法写盘路径走此处。
+ *
+ * 经 t1 的 updateLocalConfig 无损写回：只改 agent_adapter，其余字段（device 含
+ * `unlock.credential_ref`、vision、toolchain）原样保留——修复白名单 merge 丢 device 的事故。
  */
 export function recordAdapterToLocal(projectRoot: string, adapter: string): void {
-  writeLocalConfig(projectRoot, mergeLocalPatch(projectRoot, { agent_adapter: adapter }));
-  clearFrameworkConfigCache();
+  updateLocalConfig(projectRoot, (cur) => ({ ...cur, agent_adapter: adapter }));
 }
 
 export type PersonalSetupGateFailureCode =
@@ -201,13 +168,16 @@ function ensureDevecoToolchain(projectRoot: string): { ok: boolean; message: str
   }
   const report = detectScanForEnsure();
   if (report.recommended?.status === 'ok' && report.recommended.installPath) {
-    writeLocalConfig(
-      projectRoot,
-      mergeLocalPatch(projectRoot, {
-        toolchain: { devEcoStudio: { installPath: report.recommended.installPath } },
-      }),
-    );
-    clearFrameworkConfigCache();
+    updateLocalConfig(projectRoot, (cur) => ({
+      ...cur,
+      toolchain: {
+        ...cur.toolchain,
+        devEcoStudio: {
+          ...cur.toolchain?.devEcoStudio,
+          installPath: report.recommended!.installPath,
+        },
+      },
+    }));
     if (isDevecoToolchainReady(projectRoot)) {
       recordEnsureProbeBestEffort(projectRoot);
       return {
@@ -502,11 +472,7 @@ function attemptEnsureAdapterFromFallback(
         },
       };
     }
-    writeLocalConfig(
-      projectRoot,
-      mergeLocalPatch(projectRoot, { agent_adapter: only }),
-    );
-    clearFrameworkConfigCache();
+    updateLocalConfig(projectRoot, (cur) => ({ ...cur, agent_adapter: only }));
     return { repaired: true, ensured: 'auto_single_adapter' };
   }
 
@@ -530,11 +496,7 @@ function attemptEnsureAdapterFromFallback(
   const selected = selectAdapter?.trim();
   if (selected) {
     if (candidates.includes(selected)) {
-      writeLocalConfig(
-        projectRoot,
-        mergeLocalPatch(projectRoot, { agent_adapter: selected }),
-      );
-      clearFrameworkConfigCache();
+      updateLocalConfig(projectRoot, (cur) => ({ ...cur, agent_adapter: selected }));
       return { repaired: true, ensured: 'auto_selected_adapter' };
     }
     return {

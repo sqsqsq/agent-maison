@@ -455,6 +455,29 @@ export function writeLocalConfig(projectRoot: string, config: FrameworkLocalConf
   }
 }
 
+/**
+ * 无损写回（事故修复四件套 plan c9f4e7a2 t1）：**唯一**的局部更新入口。
+ *
+ * 此前个人级配置的写盘分散在多个手写白名单 merge（personal-setup-gate mergeLocalPatch、
+ * init-task-executor mergeLocal），各自只保留 agent_adapter/toolchain/vision 的**子集**，
+ * 已在两起事故中把 `device`（含 `device.unlock.credential_ref`）与 `vision` 整段抹掉——
+ * 凭据仍在 OS 库，框架却丢了引用。这里改为：读取完整合法配置（文件不存在时以
+ * `{schema_version: LOCAL_SCHEMA_VERSION}` 为基线）→ updater 只返回目标字段修改后的
+ * **完整**配置 → 复用既有 validateLocalSchema + tmp/fsync/rename 原子写。不做通用深合并、
+ * 不加字段白名单、不扩展并发锁机制。
+ */
+export function updateLocalConfig(
+  projectRoot: string,
+  updater: (current: FrameworkLocalConfig) => FrameworkLocalConfig,
+): void {
+  const current = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
+  const next = updater(current);
+  writeLocalConfig(projectRoot, next);
+  // 延迟 require 避免与 config.ts 的运行时循环依赖（config.ts 静态 import 本模块）。
+  const { clearFrameworkConfigCache } = require('../../config') as typeof import('../../config');
+  clearFrameworkConfigCache();
+}
+
 export function resolveAgentAdapterSource(
   projectRoot: string,
   projectRaw: Record<string, unknown> | null,

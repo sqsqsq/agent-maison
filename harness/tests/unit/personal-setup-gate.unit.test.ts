@@ -57,10 +57,10 @@ function writeProjectConfig(root: string, materialized: string[], profileName = 
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'mergeLocalPatch 无感保留 vision（I1 修复 plan b7e42d19）：写 agent_adapter 不抹掉已有 vision.canary',
+    name: 't1 recordAdapterToLocal（goal --override-adapter 唯一写盘路径）经 updateLocalConfig 无损：device/unlock.credential_ref + vision + toolchain 交叉保真',
     run: () => {
       const root = mkTmp();
-      // 既有 local：vision.canary（交互式金丝雀写入）+ image_input_override
+      // 事故夹具：带 device.unlock.credential_ref 的配置切 adapter 后 credential_ref 原样保留
       writeLocalConfig(root, {
         schema_version: '1.0',
         agent_adapter: 'cursor',
@@ -68,14 +68,24 @@ const cases: Array<{ name: string; run: () => void }> = [
           image_input_override: 'tool_read',
           canary: { adapter: 'cursor', verdict: 'tool_read', probed_at: '2026-07-09T00:00:00.000Z', probed_via: 'interactive' },
         },
+        toolchain: { devEcoStudio: { installPath: 'C:/DevEco' } },
+        device: {
+          unlock: { mode: 'credential', credential_ref: 'maison/device/3UJ0/v2' },
+          target_serial: '3UJ0225321000395',
+        },
       });
-      // recordAdapterToLocal → mergeLocalPatch：修复前会把整段 vision 抹掉
-      recordAdapterToLocal(root, 'cursor');
+      // recordAdapterToLocal → updateLocalConfig：修复前白名单 merge 会把 device 整段抹掉。
+      // 断言真实切换（cursor → claude），否则即使不更新 adapter 也会通过（P2 review 修正）。
+      recordAdapterToLocal(root, 'claude');
       const after = loadLocalConfig(root);
-      assert.strictEqual(after?.agent_adapter, 'cursor');
+      assert.strictEqual(after?.agent_adapter, 'claude', 'adapter 必须真正从 cursor 切到 claude');
       assert.strictEqual(after?.vision?.image_input_override, 'tool_read', 'image_input_override 应保留');
       assert.strictEqual(after?.vision?.canary?.verdict, 'tool_read', 'vision.canary 应保留（修复前被抹掉）');
       assert.strictEqual(after?.vision?.canary?.probed_via, 'interactive');
+      assert.strictEqual(after?.toolchain?.devEcoStudio?.installPath, 'C:/DevEco', 'toolchain 应保留');
+      assert.strictEqual(after?.device?.unlock?.mode, 'credential', 'device.unlock.mode 应保留');
+      assert.strictEqual(after?.device?.unlock?.credential_ref, 'maison/device/3UJ0/v2', 'credential_ref 应原样保留（本次事故根因）');
+      assert.strictEqual(after?.device?.target_serial, '3UJ0225321000395', 'target_serial 应保留');
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     },

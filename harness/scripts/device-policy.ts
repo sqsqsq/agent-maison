@@ -17,7 +17,7 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
 import { detectRepoLayout } from '../repo-layout';
-import { loadLocalConfig, writeLocalConfig, localConfigPath } from './utils/framework-local-config';
+import { loadLocalConfig, updateLocalConfig, localConfigPath } from './utils/framework-local-config';
 import {
   allocateCredentialVersion,
   credentialRefOf,
@@ -77,10 +77,14 @@ export function collectPolicyStatus(
       : [
           '本链路含需要设备的阶段，但尚未配置设备策略。请向用户询问四选一：',
           '  ① 手工解锁（人工保证设备可用；框架不碰口令）',
-          '  ② 启用自动解锁 → 在**用户自己的终端**运行：npx ts-node scripts/device-policy.ts --enroll --serial <序列号>',
+          '  ② 启用自动解锁 → 在**用户自己的终端**运行：npx ts-node scripts/device-policy.ts --enroll --serial <序列号>（登记后设备阶段由框架自动解锁，PIN 全程不经对话与 agent）',
           '  ③ 允许模拟器降级（existing 复用已开实例 / managed 由框架起停）',
           '  ④ 本次停止',
           '注意：口令只能在真实 TTY 中输入，**绝不要**让用户把口令发到对话里。',
+          '若凭据**已登记过**（OS 凭据库里已有 `MaisonDeviceUnlock:<serial>:v<N>`），只是 framework.local.json 里的引用丢失，',
+          '可**复用已登记凭据**恢复引用，无需重输 PIN：npx ts-node scripts/device-policy.ts --rebind --serial <序列号> --version <N>',
+          '（版本 N 看 enroll 输出回显，或凭据管理器的非秘密 target 名；含 `#burned` 后缀者为墓碑不可用）。',
+          'rebind 只允许 `ready` 状态的凭据，**不枚举版本、不选最高、不回退旧版本**。',
         ].join('\n'),
   };
 }
@@ -126,15 +130,14 @@ export function enroll(projectRoot: string, serial: string): number {
     return 1;
   }
 
-  const local = loadLocalConfig(projectRoot) ?? { schema_version: '1.0' };
-  writeLocalConfig(projectRoot, {
-    ...local,
+  updateLocalConfig(projectRoot, (cur) => ({
+    ...cur,
     device: {
-      ...local.device,
+      ...cur.device,
       unlock: { mode: 'credential', credential_ref: credentialRefOf(id) },
       target_serial: serial,
     },
-  });
+  }));
   console.log(`[device-policy] 已登记设备 ${serial} 的解锁凭据（版本 v${version}）。`);
   console.log(`  凭据存于 Windows 凭据管理器；${path.basename(localConfigPath(projectRoot))} 只记录引用，不含口令。`);
   if (version > 1) {
@@ -161,22 +164,115 @@ export function setPolicy(
     console.error(`[device-policy] serial 含非法字符：${opts.targetSerial}`);
     return 2;
   }
-  const local = loadLocalConfig(projectRoot) ?? { schema_version: '1.0' };
-  const device = { ...local.device };
-  if (opts.unlockMode === 'manual') {
-    // 选"手工解锁" = 明确表达不启用自动解锁；**不保留任何 credential_ref**
-    device.unlock = { mode: 'manual' };
-  }
-  if (opts.emulatorFallback) device.emulator_fallback = opts.emulatorFallback;
-  if (opts.emulatorProfile) device.emulator_profile = opts.emulatorProfile;
-  if (opts.targetSerial) device.target_serial = opts.targetSerial;
-  writeLocalConfig(projectRoot, { ...local, device });
+  updateLocalConfig(projectRoot, (cur) => {
+    const device = { ...cur.device };
+    if (opts.unlockMode === 'manual') {
+      // 选"手工解锁" = 明确表达不启用自动解锁；**不保留任何 credential_ref**
+      device.unlock = { mode: 'manual' };
+    }
+    if (opts.emulatorFallback) device.emulator_fallback = opts.emulatorFallback;
+    if (opts.emulatorProfile) device.emulator_profile = opts.emulatorProfile;
+    if (opts.targetSerial) device.target_serial = opts.targetSerial;
+    return { ...cur, device };
+  });
+  const device = loadLocalConfig(projectRoot)?.device ?? {};
   console.log('[device-policy] 已写入设备策略：');
   console.log(`  unlock.mode=${device.unlock?.mode ?? '(未设)'}`);
   console.log(`  emulator_fallback=${device.emulator_fallback ?? '(未设)'}`);
   if (device.emulator_profile) console.log(`  emulator_profile=${device.emulator_profile}`);
   if (device.target_serial) console.log(`  target_serial=${device.target_serial}`);
   return 0;
+}
+
+/**
+ * 显式、无猜测的凭据引用重绑（事故修复四件套 plan c9f4e7a2 t4）。
+ *
+ * 根因：白名单 merge 抹掉 `device.unlock.credential_ref` 后**没有恢复路径**——凭据本体还在
+ * OS 凭据库，丢的只是 framework.local.json 里的引用。rebind 显式重建该引用，不必重输 PIN。
+ *
+ * 状态映射（真实 CredentialState = absent | ready | in_flight | unsupported | burned，
+ * device-credential-store L138，按 canAttemptUnlock L254-277 既有语义）：
+ * - `ready` → 放行：经 updateLocalConfig 原子写入 device.unlock={mode:'credential',
+ *   credential_ref}+target_serial，其余字段不丢；
+ * - `burned` → 该版本已因失败永久禁用，重新登记生成新版本；
+ * - `in_flight` → 正被另一进程使用或上次崩在临界区，**先稍后重试**（不得默认建议立即重登记）；
+ * - `absent` 无 error → 未登记（或此前失败后已被烧毁），须登记；
+ * - `absent` 有 error → 凭据库不可读，原样报告该 error（provider 不可用表现为此形态，
+ *   不是 unsupported）；
+ * - `unsupported` → 登记的凭据形态不受支持（仅支持 4–16 位数字 PIN）。
+ *
+ * 不自动枚举版本、不选"最高版本"、不回退旧版本、不做 orphan 自动检测；缺 --version 即拒绝；
+ * rebind 全程不触碰口令本体。
+ */
+export function rebind(
+  projectRoot: string,
+  serial: string,
+  versionInput: string,
+  provider: CredentialProvider = windowsCredentialProvider(),
+): number {
+  if (!isValidSerial(serial)) {
+    console.error(`[device-policy] serial 含非法字符（允许 A-Za-z0-9 . _ : -）：${serial}`);
+    return 2;
+  }
+  const trimmed = versionInput.trim();
+  const version = Number(trimmed);
+  if (!trimmed || !Number.isInteger(version) || version <= 0) {
+    console.error(`[device-policy] --version 必须是正整数，收到 ${JSON.stringify(versionInput)}`);
+    return 2;
+  }
+  if (!provider.available()) {
+    console.error('[device-policy] 非 Windows 平台暂不支持凭据托管——请用手工解锁或模拟器降级。');
+    return 2;
+  }
+  const id: CredentialIdentity = { serial, version };
+  const read = provider.inspect(id);
+  switch (read.state) {
+    case 'ready': {
+      updateLocalConfig(projectRoot, (cur) => ({
+        ...cur,
+        device: {
+          ...cur.device,
+          unlock: { mode: 'credential', credential_ref: credentialRefOf(id) },
+          target_serial: serial,
+        },
+      }));
+      console.log(`[device-policy] 已重绑设备 ${serial} 的凭据引用（版本 v${version}）。`);
+      console.log(`  凭据本体未改动，框架现在又能指向 OS 凭据库中的该条记录了。`);
+      return 0;
+    }
+    case 'burned':
+      console.error(
+        `[device-policy] 该版本已因失败永久禁用（${read.reason ?? '原因未记录'}）——` +
+          '须重新登记生成新版本（device:enroll）。',
+      );
+      return 1;
+    case 'in_flight':
+      console.error(
+        '[device-policy] 该凭据正被另一进程使用，或上次解锁崩在临界区——' +
+          '请稍后重试；不要立即重新登记（生成新版本会隐式回退不到旧版本）。',
+      );
+      return 1;
+    case 'unsupported':
+      console.error(
+        '[device-policy] 登记的凭据形态不受支持（仅支持 4–16 位数字 PIN）——须重新登记。',
+      );
+      return 1;
+    case 'absent':
+      if (read.error) {
+        console.error(
+          `[device-policy] 凭据库不可读：${read.error}——provider 不可用，请先排查凭据库读取。`,
+        );
+        return 1;
+      }
+      console.error(
+        '[device-policy] 该版本未登记（或此前失败后已被烧毁）——不能绑定不存在的凭据，' +
+          '请重新登记生成新版本（device:enroll）。',
+      );
+      return 1;
+    default:
+      console.error(`[device-policy] 凭据状态未知：${read.state}`);
+      return 1;
+  }
 }
 
 export function main(argv: string[]): number {
@@ -187,6 +283,17 @@ export function main(argv: string[]): number {
   // `--project-root` 与 check-personal-setup 同惯例：默认按脚本位置推导仓库根，
   // 显式传入时以传入为准（多仓/发布包布局下必需，也让进程级测试能构造真实 host）。
   const projectRoot = valueOf('--project-root') || resolveProjectRoot();
+  if (argv.includes('--rebind')) {
+    const serial = valueOf('--serial');
+    const version = valueOf('--version');
+    if (!serial || !version) {
+      console.error('[device-policy] --rebind 需要 --serial <序列号> --version <版本号>');
+      console.error('  版本号获取方式：enroll 输出会回显 v<N>；亦可在 Windows 凭据管理器查看非秘密');
+      console.error('  target 名 `MaisonDeviceUnlock:<serial>:v<N>`（含 `#burned` 后缀者为墓碑，不可用）。');
+      return 2;
+    }
+    return rebind(projectRoot, serial, version);
+  }
   if (argv.includes('--set')) {
     const em = valueOf('--emulator');
     if (em && !['disabled', 'existing', 'managed'].includes(em)) {

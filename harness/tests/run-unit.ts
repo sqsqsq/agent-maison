@@ -255,6 +255,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
+  { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },

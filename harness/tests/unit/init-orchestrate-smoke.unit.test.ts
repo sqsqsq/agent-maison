@@ -100,7 +100,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'legacy config UPDATE：migrate-config 外迁 personal 字段',
+    name: 'legacy config UPDATE：migrate-config 外迁 personal 字段（t1 无损：probe/hvigorBin/vision/device 交叉保真）',
     run: () => {
       const root = mkTmp();
       const configPath = path.join(root, 'framework.config.json');
@@ -114,6 +114,24 @@ const cases: Array<{ name: string; run: () => void }> = [
             architecture: minimalArchitecture(),
             paths: { features_dir: 'doc/features' },
             toolchain: { devEcoStudio: { installPath: 'C:/DevEco/Studio' } },
+          },
+          null,
+          2,
+        ),
+      );
+      // 既有 local：toolchain.probe + hvigorBin + vision + device —— migrate-config 不得抹掉
+      fs.writeFileSync(
+        path.join(root, 'framework.local.json'),
+        JSON.stringify(
+          {
+            schema_version: '1.0',
+            agent_adapter: 'cursor',
+            toolchain: {
+              devEcoStudio: { installPath: 'C:/old', hvigorBin: 'C:/hvigor/bin' },
+              probe: { project_compile: { status: 'verified', observed_at: '2026-08-01T00:00:00.000Z' } },
+            },
+            vision: { image_input_override: 'native_attach' },
+            device: { unlock: { mode: 'credential', credential_ref: 'maison/device/PHONE-1/v3' }, target_serial: 'PHONE-1' },
           },
           null,
           2,
@@ -142,6 +160,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       const local = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf-8'));
       assert.strictEqual(local.agent_adapter, 'claude');
       assert.strictEqual(local.toolchain?.devEcoStudio?.installPath, 'C:/DevEco/Studio');
+      // t1 交叉保真：migrate-config 只合并 agent_adapter + toolchain.devEcoStudio，其余不得丢
+      assert.strictEqual(local.toolchain?.devEcoStudio?.hvigorBin, 'C:/hvigor/bin', '既有 hvigorBin 应保留');
+      assert.strictEqual(local.toolchain?.probe?.project_compile?.status, 'verified', 'toolchain.probe 应保留');
+      assert.strictEqual(local.vision?.image_input_override, 'native_attach', 'vision 应保留');
+      assert.strictEqual(local.device?.unlock?.credential_ref, 'maison/device/PHONE-1/v3', 'device.unlock.credential_ref 应保留');
+      assert.strictEqual(local.device?.target_serial, 'PHONE-1', 'target_serial 应保留');
 
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();

@@ -48,7 +48,7 @@
       {
         "path": "harness/scripts/utils/device-unlock-helper.ts",
         "verified_sha256": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4",
-        "current_sha256": "b8b972bc8356bbcbf1f2afddf760810e4dc22914efde697b9e2bd6cc49741481"
+        "current_sha256": "543e589e70452d26c211c52f0570ee07f2eea4751f92205a59283a2295436811"
       }
     ]
   }

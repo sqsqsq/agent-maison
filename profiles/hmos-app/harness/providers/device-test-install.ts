@@ -363,7 +363,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
         diagnosis: {
           kind: 'device_locked',
           summary: `设备锁屏且未能自动解锁——已在装机前阻断（未执行卸载或安装）。${preReady.note}`,
-          suggestion: '请人工解锁设备后重跑；框架不会尝试任何口令。',
+          suggestion: '按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。',
         },
       };
       ok = false;

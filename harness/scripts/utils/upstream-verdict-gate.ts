@@ -103,7 +103,7 @@ export function evaluateUpstreamViews(views: UpstreamPhaseView[]): UpstreamViola
               // t1（openspec device-readiness-and-completion）：措辞须明确主语是**人**——
               // 原文"解锁真机"被 agent 读作自我指令，07-28 事故中 agent 据此对用户真机
               // 枚举 10 组常见 PIN 致设备锁定。指引只描述人的动作，不给 agent 留自解锁暗示。
-              `请人修复环境（如请人解锁真机并保持前台）后重跑 ${v.phase} harness 即可解除；` +
+              `请人修复环境（无可用 ready 凭据或自动恢复未完成时，请人解锁真机并保持前台）后重跑 ${v.phase} harness 即可解除；` +
               `勿改产品代码，也不要尝试自行解锁设备`
             : ''),
       });

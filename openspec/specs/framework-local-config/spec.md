@@ -90,3 +90,27 @@ round-trip 读写 MUST NOT 丢失字段；旧配置（无 `device` 键）MUST �
 - **WHEN** Goal A 持有 v1 期间用户轮换至 v2
 - **THEN** Goal A 继续按冻结的 v1 身份执行；MUST NOT 以 v1 的锁存状态使用 v2 的 secret
 
+### Requirement: Explicit credential rebind recovery
+
+The system SHALL provide an explicit `device:rebind --serial <s> --version <n>`
+command to rebuild a lost `device.unlock.credential_ref` reference without re-entering
+the PIN. Rebind MUST only bind a credential whose OS-vault state is `ready`; MUST NOT
+enumerate versions, select the highest version, or roll back to an older version; and
+MUST report distinct guidance for `burned`, `in_flight`, `unsupported`, and `absent`
+(with or without a read error). Rebind MUST NOT touch the PIN itself.
+
+#### Scenario: Rebind only binds a ready credential
+- **WHEN** `device:rebind --serial <s> --version <n>` runs and the OS vault reports the
+  credential as `ready`
+- **THEN** `framework.local.json` MUST gain `device.unlock.mode=credential` and
+  `device.unlock.credential_ref=maison/device/<s>/v<n>` (plus `target_serial`), preserving
+  all other fields
+
+#### Scenario: Rebind rejects non-ready states without rollback
+- **WHEN** the OS vault reports `burned`, `in_flight`, `unsupported`, or `absent`
+- **THEN** rebind MUST exit non-zero with state-specific guidance and MUST NOT write any
+  config change
+
+> **Enforced by:** `harness/scripts/device-policy.ts`, `harness/package.json`
+> (`device:rebind`), `harness/tests/unit/device-policy-cli.unit.test.ts`
+

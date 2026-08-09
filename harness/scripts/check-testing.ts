@@ -1652,7 +1652,7 @@ function buildDeviceInstallFailResults(
         status: 'FAIL',
         details: `${fallbackDetails}\n\n设备锁屏且未能自动解锁——这是外部阻断，不是代码或签名问题。`,
         suggestion:
-          '请人工解锁设备后重跑 testing harness；框架不会尝试任何口令。' +
+          '请人工解锁设备后重跑 testing harness；框架不会猜测或枚举未登记的口令。' +
           '若希望框架自动解锁，先在**自己的终端**运行 device-policy --enroll 登记 PIN。',
         failure_kind: 'device_blocked',
         blocking_class: 'externalBlocked',
@@ -2507,7 +2507,7 @@ function checkDeviceTestRunGate(
           ...(deviceLocked ? { failure_kind: 'device_blocked' } : {}),
           details: [
             deviceLocked
-              ? `设备锁屏且自动恢复失败（exit=${run.exitCode}）——请人工解锁设备后重跑；框架不会尝试任何口令。`
+              ? `设备锁屏且自动恢复未完成（exit=${run.exitCode}）——请查看随附错误，按提示稍后重试或重新登记；也可人工解锁后重跑。`
               : `真机自动化执行失败：exit=${run.exitCode}`,
             `命令：${run.command}`,
             `日志：${run.logPath}`,

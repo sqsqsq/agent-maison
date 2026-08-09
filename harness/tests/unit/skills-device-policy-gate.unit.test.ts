@@ -108,7 +108,7 @@ export function runAll(): UnitCaseResult[] {
       /绝不要让用户把 PIN 发到对话里/.test(doc) && /不得代跑|代为输入/.test(doc),
       '须保留"PIN 不进对话、agent 不代跑"红线',
     );
-    assert(/任何一次解锁失败即机器级烧毁/.test(doc), '须说明失败即烧毁（止损设计要让人看懂）');
+    assert(/实际尝试输入后/.test(doc) && /才烧毁/.test(doc), '须说明仅实际尝试输入后才烧毁（零输入分支不烧毁，止损设计要让人看懂）');
   });
 
   run(results, 'phase→skill 登记表**覆盖** PHASE_CAPABILITY_MAP（新增 phase 漏登记即红）', () => {

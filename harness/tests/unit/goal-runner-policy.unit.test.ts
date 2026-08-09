@@ -39,6 +39,12 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
+function assertDeepStrictEqual(actual: unknown, expected: unknown, message: string): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${message}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`);
+  }
+}
+
 const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
 
 const cases: Array<{ name: string; run: () => void }> = [
@@ -178,6 +184,36 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       assert(cmd.includes('demo'), cmd);
       assert(cmd.includes('spec'), cmd);
+    },
+  },
+  {
+    name: 't2 codex argv 完整顺序：审批旗标放 exec 之前；deepStrictEqual 整数组；覆盖 never 与 on-request',
+    run: () => {
+      // 审批旗标 `--ask-for-approval` 是 codex **顶层旗标**，必须在 `exec` 之前
+      // （0.138.0 实测：`codex -a never exec --help` 成功、`codex exec -a never --help` 报
+      // `unexpected argument '-a' found`）。不走 `-c approval_policy=…`，prompt 仍走 stdin。
+      const cases: Array<{ approval: string; writeMode: string; sandbox: string }> = [
+        { approval: 'never', writeMode: 'workspace-write', sandbox: 'workspace-write' },
+        { approval: 'on-request', writeMode: 'full-access', sandbox: 'danger-full-access' },
+      ];
+      for (const c of cases) {
+        const plan = defaultHeadlessInvokePlan('codex', {
+          write_mode: c.writeMode,
+          approval_mode: c.approval,
+        } as never, 'p');
+        // deepStrictEqual 整个数组：argv[0] 为 binary（'codex' 或解析到的路径），其后固定旗标顺序
+        assertDeepStrictEqual(
+          plan.argv,
+          [plan.argv[0], '--ask-for-approval', c.approval, 'exec', '--sandbox', c.sandbox],
+          `${c.approval}/${c.sandbox} 完整 argv 顺序：${plan.argv.join(' ')}`,
+        );
+        // argv[0] 必须是 codex（或解析到的 codex 二进制）
+        assert(
+          plan.argv[0] === 'codex' || /codex/i.test(plan.argv[0]),
+          `argv[0] 须为 codex：${plan.argv[0]}`,
+        );
+        assert(plan.useStdin === true, 'prompt 走 stdin 铁律不动');
+      }
     },
   },
   {

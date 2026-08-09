@@ -20,11 +20,8 @@ import {
   resolveProfileNameFromRaw,
 } from './config-field-merger';
 import { ensureCanonicalGitignore } from './canonical-gitignore';
-import {
-  loadLocalConfig,
-  writeLocalConfig,
-  type FrameworkLocalConfig,
-} from './framework-local-config';
+import { updateLocalConfig } from './framework-local-config';
+import type { FrameworkLocalConfig } from './framework-local-config';
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
 import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skill-bridge-cleanup';
@@ -430,30 +427,6 @@ function runGlobalPhases(harnessRoot: string, projectRoot: string): string {
   return `全局 phase 完成: ${notes.join(', ')}（projectRoot=${projectRoot}）`;
 }
 
-function mergeLocal(
-  projectRoot: string,
-  patch: Partial<FrameworkLocalConfig>,
-): FrameworkLocalConfig {
-  const existing = loadLocalConfig(projectRoot);
-  const base: FrameworkLocalConfig = existing ?? { schema_version: '1.0' };
-  const next: FrameworkLocalConfig = {
-    schema_version: '1.0',
-    ...(base.agent_adapter ? { agent_adapter: base.agent_adapter } : {}),
-    ...(base.toolchain ? { toolchain: { ...base.toolchain } } : {}),
-  };
-  if (patch.agent_adapter) next.agent_adapter = patch.agent_adapter;
-  if (patch.toolchain?.devEcoStudio) {
-    next.toolchain = {
-      ...(next.toolchain ?? {}),
-      devEcoStudio: {
-        ...(next.toolchain?.devEcoStudio ?? {}),
-        ...patch.toolchain.devEcoStudio,
-      },
-    };
-  }
-  return next;
-}
-
 function assertAdapterMaterialized(projectRoot: string, adapterName: string): string {
   const { adapter } = loadInspectorEnv({ projectRoot, harnessRoot: '', plan: {} as InitTaskPlan }, adapterName);
   if (!adapter.entryFile) {
@@ -537,8 +510,22 @@ export function executeInitTask(
         confirm: false,
       });
       if (legacyLocal) {
-        writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, legacyLocal));
-        clearFrameworkConfigCache();
+        // 无损回写（t1）：只定向合并 `agent_adapter` 与 `toolchain.devEcoStudio` 两个目标字段，
+        // 不得展开整个 legacyLocal 覆盖顶层——否则会删掉 cur.toolchain.probe 与既有 hvigorBin。
+        updateLocalConfig(ctx.projectRoot, (cur) => {
+          const next: FrameworkLocalConfig = { ...cur };
+          if (legacyLocal.agent_adapter) next.agent_adapter = legacyLocal.agent_adapter;
+          if (legacyLocal.toolchain?.devEcoStudio) {
+            next.toolchain = {
+              ...cur.toolchain,
+              devEcoStudio: {
+                ...cur.toolchain?.devEcoStudio,
+                ...legacyLocal.toolchain.devEcoStudio,
+              },
+            };
+          }
+          return next;
+        });
         return { message: `${mergeMsg}；已外迁 personal 字段到 framework.local.json` };
       }
       return { message: mergeMsg };
@@ -632,8 +619,7 @@ export function executeInitTask(
     case 'record-adapter': {
       const active = ctx.activeAdapter?.trim();
       if (!active) throw new Error('record-adapter 需要 executionContext.activeAdapter');
-      writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, { agent_adapter: active }));
-      clearFrameworkConfigCache();
+      updateLocalConfig(ctx.projectRoot, (cur) => ({ ...cur, agent_adapter: active }));
 
       const prereqs = resolveAllPersonalPrerequisites(ctx.projectRoot);
       const ensureResult = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites: prereqs });
@@ -669,13 +655,16 @@ export function executeInitTask(
       if (!ctx.devecoInstallPath?.trim()) {
         return { message: '未提供 devecoInstallPath，跳过写入 local' };
       }
-      writeLocalConfig(
-        ctx.projectRoot,
-        mergeLocal(ctx.projectRoot, {
-          toolchain: { devEcoStudio: { installPath: ctx.devecoInstallPath.trim() } },
-        }),
-      );
-      clearFrameworkConfigCache();
+      updateLocalConfig(ctx.projectRoot, (cur) => ({
+        ...cur,
+        toolchain: {
+          ...cur.toolchain,
+          devEcoStudio: {
+            ...cur.toolchain?.devEcoStudio,
+            installPath: ctx.devecoInstallPath!.trim(),
+          },
+        },
+      }));
       return { message: '已写入 framework.local.json toolchain.devEcoStudio.installPath' };
     }
     default:

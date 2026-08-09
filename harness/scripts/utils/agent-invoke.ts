@@ -307,15 +307,17 @@ function claudeArgv(
 }
 
 function codexArgv(unattended: UnattendedContract): string[] {
-  const argv = ['codex', 'exec'];
-  argv.push(
-    '--sandbox',
-    unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write',
-  );
-  argv.push(
+  // 事故修复（plan c9f4e7a2 t2）：`--ask-for-approval` 是 **codex 顶层旗标**，必须放在
+  // `exec` 之前。0.138.0 实测：`codex -a never exec --help` 成功；
+  // `codex exec -a never --help` → `unexpected argument '-a' found`。
+  const argv = [
+    'codex',
     '--ask-for-approval',
     unattended.approval_mode === 'never' ? 'never' : 'on-request',
-  );
+    'exec',
+    '--sandbox',
+    unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write',
+  ];
   // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
