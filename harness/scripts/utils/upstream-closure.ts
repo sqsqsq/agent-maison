@@ -50,6 +50,8 @@ export interface UpstreamClosureInput {
   recommendation: AssessRecommendation;
   goalRunId: string;
   attemptId: string;
+  /** plan d7f3a9c4 t3：最终裁决后的 model pin value（无 pin 不传）——随 goalIdentity 透传 check-receipt 子进程 */
+  modelPin?: string;
   /** 关环子进程的剩余预算（ms）；<=0 视为零预算，**调 validator 之前**即拦截 */
   remainingBudgetMs: number;
   /** owner fencing / closure mutex——finalize 之前调用，抛错即视为 blocked */
@@ -105,6 +107,8 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
         runId: input.goalRunId,
         attemptId: input.attemptId,
         attemptPhase: input.currentPhase,
+        // plan d7f3a9c4 t3：check-receipt 子进程同链透传 model pin（无 pin 不传）。
+        ...(input.modelPin ? { modelPin: input.modelPin } : {}),
       },
     },
   );

@@ -126,7 +126,10 @@ UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜�
   （stale-if-error，runner 日志如实注明），否则本次 run 回退 adapter 声明路径、下次自动重探；
 - **强制重探**：换模型/账号后想立即刷新，goal-runner 加 `--refresh-vision-probe`
   （自然语言对 agent 说「强制刷新视觉探测」即映射此 flag）；或手删 `vision.canary` 节点
-  （只删该节点，勿删整个 local 文件）。
+  （只删该节点，勿删整个 local 文件）；
+- **模型钉绑定（`--adapter-model`）**：pinned run 的 canary receipt 记 pin 模型值，采信/跳过
+  须 run + 模型同时命中（resume 改 pin 同 run_id 的旧模型缓存、并发窗口切走模型的旧缓存
+  都会自动失效重探）；未 pin 的 run receipt 仍记 `unknown`、采信行为与现状一致。
 
 ## 两级校验
 

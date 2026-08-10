@@ -27,6 +27,7 @@ import { computeGateFingerprint } from './gate-fingerprint';
 import { loadSpecMarkdown, refElementsAbsPath } from './fidelity-shared';
 import { loadLocalConfig } from './framework-local-config';
 import {
+  canaryAdmissibleForExecution,
   collectAuthoritativeImagePaths,
   isVisionCanaryFresh,
   probeAdapterImageInput,
@@ -262,41 +263,8 @@ export function sha256File(absPath: string): string | null {
 // ---------------------------------------------------------------------------
 // 采信谓词（能力真值单一裁决 · plan d8c5f3a7 T1）
 // ---------------------------------------------------------------------------
-
-/**
- * 「这份 canary 能否被当前 run 采信为 run_probed 实测」——**唯一判据**。
- *
- * 背景（2026-07-24 bc-openCard 事故）：判定曾一分为二——goal-preflight 的
- * `decideVisionCanaryProbe` 只看 `isVisionCanaryFresh`（TTL）决定「要不要重探」，而三轴
- * resolver 另加「goal 来源须 run_id 命中当前 run」决定「可不可采信」。两把尺子打架的后果是
- * **同一份缓存「新到不必再探」且「旧到不能采信」**：07-18 实测 tool_read（4/4 全对）的
- * canary 在 07-24 的新 run 上既不被重探、也不被采信 → hasVision=false → pixel_1to1 被钳成
- * semantic_layout → 盲档协议接管 → UI 大幅倒退。
- *
- * 更隐蔽的是其**永久形态**：goal·tool_read 的正结论 TTL=7d，故即便 canary 已按规范写了
- * `run_id`，下一个 run 的 runId 必然不同 → 仍不可采信、仍因 fresh 不重探 →
- * 「每 7 天只有第一个 run 有视觉，其余全盲」。
- *
- * 故本谓词由 resolver 与 preflight **共同消费**：resolver 用它判采信，preflight 用
- * 「fresh ∧ admissible」判是否跳过重探——不可采信即当场重探，悖论自然消解。
- *
- * 语义：
- *  - `interactive` 来源：不绑 run（IDE 会话内实测），fresh 即可采信；
- *  - `goal` 来源（含缺省）：`run_probed 不跨 run`——须 `runId` 在场且与 `canary.run_id` 相等；
- *    旧缓存无 `run_id` 字段者一律不可采信（无从证明属于本 run）。
- *
- * 注意：本谓词**不含新鲜度判定**，调用方须自行合取 `isVisionCanaryFresh`（两者关注点分离：
- * 新鲜度=证据是否过期，采信度=证据是否属于当前执行身份）。
- */
-export function canaryAdmissibleForRun(
-  canary: { probed_via?: string; run_id?: string } | undefined | null,
-  args: { runId?: string },
-): boolean {
-  if (!canary) return false;
-  const viaGoal = (canary.probed_via ?? 'goal') === 'goal';
-  if (!viaGoal) return true;
-  return Boolean(args.runId && canary.run_id && canary.run_id === args.runId);
-}
+// `canaryAdmissibleForRun` 与 `canaryAdmissibleForExecution` 定义在 multimodal-probe.ts
+// （review 后去环：谓词按依赖方向单向驻留，本模块只导入不定义，不新建架构层）。
 
 // ---------------------------------------------------------------------------
 // 三轴解析
@@ -314,6 +282,8 @@ export interface ResolveVisionContextArgs {
   artifactHashes?: string[];
   /** 运行身份 adapter（goal 态传 manifest.adapter——运行身份可与 config 不同）；缺省读 config */
   adapter?: string;
+  /** plan d7f3a9c4 t3：最终裁决后的 model pin value（无 pin 时不传）——采信追加模型匹配 */
+  modelPin?: string;
   frameworkRoot?: string;
 }
 
@@ -370,7 +340,10 @@ function resolveCapabilityAxis(args: ResolveVisionContextArgs): VisionCapability
     // 「要不要重探」与本处的「可不可采信」**必须同源**，否则出现「新到不必探、旧到不可信」
     // 的悖论（2026-07-24 事故：07-18 的 tool_read canary 因跨 run 不被采信、又因 TTL 未过
     // 不被重探 → 凭空致盲）。
-    if (canaryAdmissibleForRun(canary, { runId: args.runId })) {
+    // plan d7f3a9c4 t3：执行身份升级为 `{runId, modelPin}` 二元——canaryAdmissibleForExecution
+    // 复用 canaryAdmissibleForRun（run 必查），pin 在场时追加模型匹配；无 pin 时精确退化为
+    // 现状（中央两处**始终**合取 run 绑定，不因本 plan 削弱）。
+    if (canaryAdmissibleForExecution(canary, { runId: args.runId, modelPin: args.modelPin })) {
       return {
         verdict:
           canary!.verdict === 'tool_read' ? 'tool_read' : canary!.verdict === 'none' ? 'none' : 'unknown',

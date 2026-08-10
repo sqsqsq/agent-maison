@@ -27,6 +27,7 @@ import {
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { finalizePhaseClosure } from './phase-closure-finalizer';
+import { deleteEnvKeyCaseInsensitive } from './process-integrity';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
 import { assessAndRenderNextStep } from './assess-renderer';
@@ -86,6 +87,27 @@ export const MAISON_GOAL_HEADLESS_ENV = 'MAISON_GOAL_HEADLESS';
 
 /** Comma-separated goal manifest `unattended.allowed_tools` for harness-runner image_input 降级。 */
 export const MAISON_GOAL_ALLOWED_TOOLS_ENV = 'MAISON_GOAL_ALLOWED_TOOLS';
+
+/**
+ * plan d7f3a9c4 t3：最终裁决后的 model pin value（生产代码与测试共用同一 SSOT）。
+ * 注入纪律沿用 `MAISON_GOAL_RUN_ID`：注入前先清大小写变体再写唯一大写键；无 pin 时
+ * **删除/不注入**（不得把 undefined/空串/`unknown` 当 pin）。子进程消费方取不到即按无 pin
+ * 处理（现状语义，不得臆造）。
+ */
+export const MAISON_GOAL_MODEL_PIN_ENV = 'MAISON_GOAL_MODEL_PIN';
+
+/**
+ * plan d7f3a9c4 t3：model pin env 注入的**唯一执行器**（三条子进程路径共用 + 测试共用）：
+ * 先按大小写不敏感清理全部变体（Windows 混写残留会与注入键并存，读取哪个是未定义行为），
+ * 再写唯一大写键；无 pin（undefined/空串）时只清理不写入——不得把 undefined/空串/`unknown`
+ * 当 pin。调用方在**任何**子进程 spawn 前对本键执行一次，即保证「无 pin 不泄漏陈旧值」。
+ */
+export function applyGoalModelPinEnv(env: NodeJS.ProcessEnv, modelPinValue: string | undefined): void {
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_MODEL_PIN_ENV);
+  if (modelPinValue) {
+    env[MAISON_GOAL_MODEL_PIN_ENV] = modelPinValue;
+  }
+}
 
 export function isGoalOrchestrationEnv(): boolean {
   return (
@@ -270,9 +292,11 @@ export function tryValidateReceipt(
   // plan b3e8d4c7 t1：`goalIdentity` 透传 goal 身份 env——runner 从不给自己设 MAISON_GOAL_*，
   // 此前本函数 spawn 的 check-receipt 因此 goal 门禁**全部静默跳过**（权威路径最松、
   // agent 修复路径最严）。传入后两侧执行同一套门禁。
+  // plan d7f3a9c4 t3：`modelPin` 随 goalIdentity 同链透传（子进程 env 注入的唯一 key 按
+  // 大小写不敏感清理后写入；无 pin 时不注入并显式清理父环境残留）。
   opts?: {
     timeoutMs?: number;
-    goalIdentity?: { runId: string; attemptId: string; attemptPhase: string };
+    goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string };
   },
 ): ReceiptValidation {
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
@@ -310,6 +334,21 @@ export function tryValidateReceipt(
   }
 
   const isWin = process.platform === 'win32';
+  // plan d7f3a9c4 t3：goalIdentity 子进程 env 构造——先清大小写变体（Windows 混写残留会与
+  // 注入键并存，读取哪个是未定义行为），再写唯一大写键；model pin 无 pin 时显式清理。
+  const childEnv: NodeJS.ProcessEnv = opts?.goalIdentity
+    ? { ...process.env }
+    : process.env;
+  if (opts?.goalIdentity) {
+    for (const k of ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE']) {
+      deleteEnvKeyCaseInsensitive(childEnv, k);
+    }
+    childEnv.MAISON_GOAL_RUN_ID = opts.goalIdentity.runId;
+    childEnv.MAISON_GOAL_ATTEMPT = opts.goalIdentity.attemptId;
+    childEnv.MAISON_GOAL_ATTEMPT_PHASE = opts.goalIdentity.attemptPhase;
+    // plan d7f3a9c4 t3：model pin 走共享注入执行器（先清大小写变体、无 pin 只清理不写入）。
+    applyGoalModelPinEnv(childEnv, opts.goalIdentity.modelPin);
+  }
   const result = spawnSync(
     isWin ? 'npx.cmd' : 'npx',
     [
@@ -328,16 +367,7 @@ export function tryValidateReceipt(
       encoding: 'utf-8',
       shell: isWin,
       ...(opts?.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}),
-      ...(opts?.goalIdentity
-        ? {
-            env: {
-              ...process.env,
-              MAISON_GOAL_RUN_ID: opts.goalIdentity.runId,
-              MAISON_GOAL_ATTEMPT: opts.goalIdentity.attemptId,
-              MAISON_GOAL_ATTEMPT_PHASE: opts.goalIdentity.attemptPhase,
-            },
-          }
-        : {}),
+      ...(opts?.goalIdentity ? { env: childEnv } : {}),
     },
   );
 

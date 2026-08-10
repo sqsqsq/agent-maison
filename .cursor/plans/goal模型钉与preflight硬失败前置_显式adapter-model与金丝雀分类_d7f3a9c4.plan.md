@@ -214,7 +214,7 @@ todos:
       两例都逐项断言 image_input / OCR / tool_read / fidelity / pixel_1to1 门禁；
       **不是纯函数测试，须走真实消费链路**（含子进程 env 传播：断言三条注入路径
       各自把 {runId, pin} 送达对应消费者）。
-    status: pending
+    status: completed
   - id: t4-canary-hard-failure-blocker
     content: >
       金丝雀 CLI 硬失败前置 BLOCKER——**作用域双重收窄**（codex review 三轮 P2#5）。

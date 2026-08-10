@@ -15,7 +15,7 @@ import {
   shouldUseCrossSpawn,
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
-import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
+import { MAISON_GOAL_HEADLESS_ENV, MAISON_GOAL_MODEL_PIN_ENV, applyGoalModelPinEnv } from './phase-state';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
 import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
@@ -914,6 +914,10 @@ export function buildAgentSpawnEnv(
     deleteEnvKeyCaseInsensitive(merged, k);
     merged[k] = v;
   }
+  // plan d7f3a9c4 t3：model pin 只随 extraEnv 显式带入——无 pin（extraEnv 缺键/空值）时显式
+  // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
+  // 执行器 applyGoalModelPinEnv（与 gateInjectedEnv / goalIdentity child env 同源）。
+  applyGoalModelPinEnv(merged, extraEnv?.[MAISON_GOAL_MODEL_PIN_ENV]);
   // 角色位定档前先清大小写变体（extraEnv 注入 `maison_goal_headless=''` 会与大写键并存，
   // Windows 子进程读取哪个是未定义行为）——保证子进程 env 恰有一个大写 HEADLESS='1'。
   deleteEnvKeyCaseInsensitive(merged, MAISON_GOAL_HEADLESS_ENV);

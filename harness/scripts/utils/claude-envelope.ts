@@ -61,6 +61,23 @@ export function parseClaudeInitModel(raw: string): string | null {
 }
 
 /**
+ * plan d7f3a9c4 t3：pin 与自报 observed model 的一致性判定（**纯函数、warning-only**）。
+ *  - 无 pin / 无 observed / 两者相等 → null（不产生告警）；
+ *  - pin 在场且 observed ≠ pin → { pin, observed }（调用方据此 emit `pin_verify_mismatch`
+ *    告警注记并投影 goal-report）。
+ * 本函数**无任何副作用**（不改 manifest、不改 verdict、不改 routing、不改 capability 结果）——
+ * 生产路径（goal-runner telemetry）与测试共用同一判定，告警语义即此纯度。
+ */
+export function resolvePinVerifyMismatch(opts: {
+  pin?: string;
+  observed?: string;
+}): { pin: string; observed: string } | null {
+  if (!opts.pin || !opts.observed) return null;
+  if (opts.observed === opts.pin) return null;
+  return { pin: opts.pin, observed: opts.observed };
+}
+
+/**
  * 图片 Read 事件路径收集（原 critic-receipt-producer.parseClaudeImageReadEvents 本体，
  * 收敛至此；原导出保留为薄壳）。assistant 消息 content 内 type=tool_use、name=Read、
  * input.file_path 以图片扩展名结尾。只认结构化字段。

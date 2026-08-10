@@ -23,9 +23,10 @@ import {
   loadGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
-import { resolveGoalEffectiveImageInput, isVisionCanaryFresh } from './multimodal-probe';
+import { resolveGoalEffectiveImageInput, isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-probe';
 // plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
-import { canaryAdmissibleForRun } from './effective-vision-context';
+// plan d7f3a9c4 t3：执行身份升级 `{runId, modelPin}` 二元——重探判定与采信判定共用
+// canaryAdmissibleForExecution（无 pin 时精确退化为 canaryAdmissibleForRun）。
 import { planUsesClaudeStreamJson } from './claude-envelope';
 import {
   invokeAgentHeadless,
@@ -254,6 +255,8 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     frameworkRoot,
     adapter,
     manifest.unattended,
+    // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（review P1-1 补漏）。
+    { runId: manifest.run_id, modelPin: manifest.adapter_model_pin?.value },
   );
   if (
     effectiveMm.imageInput === 'none' &&
@@ -321,12 +324,17 @@ export function decideVisionCanaryProbe(input: {
   // 在三轴 resolver 处落 adapter_declared → blind_safe，凭空致盲；且 goal·tool_read
   // 正结论 TTL=7d，等于「每 7 天只有第一个 run 有视觉，其余全盲」的永久陷阱。
   const canary = local?.vision?.canary;
+  // plan d7f3a9c4 t3：**中央重探判定**——始终 `fresh && canaryAdmissibleForExecution(...)`。
+  // 无 pin 时 modelPin=undefined，谓词精确退化为 canaryAdmissibleForRun（run 绑定一步不少，
+  // 防 v5 公式把本处退化到只剩 fresh 而重新引入 07-24 跨 run 缓存事故）；pin 在场时才追加
+  // 模型匹配（resume 改 pin 同 run_id 的旧模型缓存不再被跳过重探）。
+  const modelPin = manifest.adapter_model_pin?.value;
   if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
-    if (canaryAdmissibleForRun(canary, { runId: manifest.run_id })) {
+    if (canaryAdmissibleForExecution(canary, { runId: manifest.run_id, modelPin })) {
       return { action: 'skip', reason: 'fresh_cache_present' };
     }
-    // 新鲜但本 run 不可采信（跨 run 的 goal canary / 旧缓存无 run_id）→ 当场重探，
-    // 探测结果会带本 run 的 run_id 写盘，消费面随即可采信。
+    // 新鲜但本 run 不可采信（跨 run 的 goal canary / 旧缓存无 run_id / pin 在场但模型不配）
+    // → 当场重探，探测结果会带本 run 的 run_id 与 pin 模型写盘，消费面随即可采信。
     return { action: 'probe', reason: 'fresh_but_not_admissible_for_run' };
   }
   return { action: 'probe' };
@@ -427,7 +435,9 @@ export async function runVisionCanaryProbe(input: {
           probe_version: VISION_CANARY_PROBE_VERSION,
           // S3（visual-capability-truth）：receipt 增维——adapter 层无法证明实际模型路由
           // （cursor auto 等），诚实记 unknown；scope 判级据此封顶 run_probed 且不跨 run。
-          model: 'unknown',
+          // plan d7f3a9c4 t3：**pin 在场时前提不再成立**——模型是用户显式指定并已回放进
+          // argv，receipt 记 pin.value（采信须模型匹配）；无 pin 时继续记 'unknown'（现状）。
+          model: manifest.adapter_model_pin?.value ?? 'unknown',
           probe_context: 'goal_preflight',
           run_id: manifest.run_id,
         },
@@ -511,7 +521,7 @@ export interface FidelityPreflightInput {
 function resolvePolicyVisualForRouting(
   projectRoot: string,
   feature: string,
-  identity?: { runId?: string; adapter?: string; frameworkRoot?: string; phase?: string },
+  identity?: { runId?: string; adapter?: string; frameworkRoot?: string; phase?: string; modelPin?: string },
 ): boolean {
   try {
     let artifactHashes: string[] | undefined;
@@ -528,6 +538,7 @@ function resolvePolicyVisualForRouting(
       ...(identity?.adapter ? { adapter: identity.adapter } : {}),
       ...(identity?.frameworkRoot ? { frameworkRoot: identity.frameworkRoot } : {}),
       ...(identity?.phase ? { phase: identity.phase } : {}),
+      ...(identity?.modelPin ? { modelPin: identity.modelPin } : {}),
       ...(artifactHashes ? { artifactHashes } : {}),
     } as Parameters<typeof resolveEffectiveVisionContext>[0]);
     return vctx.effective_policy.mode === 'visual';
@@ -550,6 +561,8 @@ export interface FidelityRoutingInitInput {
   fidelityFromCli?: boolean;
   fidelityReceiptRel?: string;
   runIdForReceipt?: string;
+  /** plan d7f3a9c4 t3：最终裁决后的 model pin value（goal 态由 manifest 派生；无 pin 不传） */
+  modelPin?: string;
   now?: () => Date;
 }
 
@@ -587,15 +600,24 @@ export function initializeFidelityRouting(
     if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
   }
   // capability snapshot（v3 P1-4 同源：一次探测，preflight/prompt/check-spec/intent 四消费面共用）
-  const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter);
+  // plan d7f3a9c4 t3：probe（image_input 旁路）与 policy meet（中央三轴 resolver）都带
+  // {runId, modelPin} 执行身份——pin 在场时旧模型缓存不得影响能力探测。
+  const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter, {
+    runId: input.runIdForReceipt,
+    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
+  });
   const policyVisual = resolvePolicyVisualForRouting(input.projectRoot, input.feature, {
     runId: input.runIdForReceipt,
     adapter: input.adapter,
     frameworkRoot: input.frameworkRoot,
     phase: 'spec',
+    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
   });
   const hasVision = probe.supported && policyVisual;
-  const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter);
+  const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter, {
+    runId: input.runIdForReceipt,
+    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
+  });
   const requirementSha =
     computeRequirementShaFromText(
       input.projectRoot, input.feature, input.requirement ?? deref.combined, input.featuresDirRel,
@@ -650,6 +672,8 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     fidelityFromCli: input.fidelityFromCli,
     fidelityReceiptRel: manifest.fidelity_receipt,
     runIdForReceipt: manifest.run_id,
+    // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
     now: input.now,
   });
   if (routing.rejectedDowngrade) {

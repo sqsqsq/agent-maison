@@ -182,8 +182,6 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invo
 
 #### Scenario: Pin binds the canary receipt and its admissibility
 
-> ⚠ 前瞻规格（plan d7f3a9c4 t5 先行成文）：对应 t3 **尚未实现**，`goal-runner.ts`/`goal-preflight.ts` 尚不写 `model=pin.value`、也不做模型匹配采信。实现后本 Scenario 才生效。
-
 - **WHEN** an explicit `--adapter-model` pin is present
 - **THEN** the vision canary receipt SHALL record `model = pin.value`, and a canary SHALL only be admitted or skipped when its model matches the pin value; the observed model SHALL remain append-only telemetry and SHALL NOT become a pin source or participate in any policy branch
 
@@ -234,5 +232,5 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-prefl
 - **WHEN** the canary probe is skipped due to a fresh admissible cache
 - **THEN** no probe is spawned and no hard-failure classification occurs
 
-> 前瞻规格注记：本 Requirement 与上一个「Pin binds the canary receipt and its admissibility」Scenario 对应 plan d7f3a9c4 的 t3/t4，属 t5 **先行成文**，相关代码**尚未实现**（`hard_cli_failure` 分类、BLOCKER 接线、`model=pin.value` 采信均不存在）。实现后本段才生效。
+> 前瞻规格注记：本 Requirement（金丝雀硬失败前置 BLOCKER）对应 plan d7f3a9c4 的 t4，属 t5 **先行成文**，相关代码**尚未实现**（`hard_cli_failure` 分类、BLOCKER 接线均不存在）。实现后本段才生效。「Pin binds the canary receipt and its admissibility」Scenario（t3）已实现。
 

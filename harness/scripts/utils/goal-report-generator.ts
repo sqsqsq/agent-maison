@@ -514,6 +514,20 @@ export function generateGoalReportMarkdown(
       for (const a of advisories) {
         lines.push(`| ↳ 预算提示 | — | — | — | — | ${a.replace(/\|/g, '\\|')} | — |`);
       }
+      // plan d7f3a9c4 t3：pin 与自报模型失配的告警注记投影（仅告警，不参与任何裁决）。
+      const pinMismatches = options.events.filter(
+        e =>
+          e.type === 'pin_verify_mismatch' &&
+          e.phase === String(p.phase) &&
+          typeof e.pin === 'string' &&
+          typeof e.observed === 'string',
+      );
+      for (const m of pinMismatches) {
+        lines.push(
+          `| ↳ 模型核验 | — | — | — | — | adapter_model_observed=${String(m.observed).replace(/\|/g, '\\|')}` +
+            ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（仅告警，verdict/路由不变） | — |`,
+        );
+      }
     }
   }
 

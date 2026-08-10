@@ -1294,6 +1294,7 @@ export function resolveOcrAvailableForRun(
   projectRoot: string,
   profileDir: string,
   adapterName: string | undefined,
+  identity?: import('./multimodal-probe').CanaryExecutionIdentity,
 ): boolean {
-  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName);
+  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName, identity);
 }

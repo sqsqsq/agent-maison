@@ -117,6 +117,7 @@ import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
+  MAISON_GOAL_MODEL_PIN_ENV,
   mergeAndWritePhaseState,
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
@@ -185,10 +186,14 @@ function resolvePolicyVisualForHarness(projectRoot: string, feature: string): bo
       artifactHashes = [h];
     }
     const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+    const modelPin = process.env[MAISON_GOAL_MODEL_PIN_ENV]?.trim();
     const vctx = resolveEffectiveVisionContext({
       projectRoot,
       feature,
       ...(goalRunId ? { runId: goalRunId } : {}),
+      // plan d7f3a9c4 t3：model pin 随 env 注入链到达 gate harness——本 legacy/fallback
+      // 路径同样走中央 resolver 的 pin-aware 采信（取不到即按无 pin，现状语义）。
+      ...(modelPin ? { modelPin } : {}),
       ...(artifactHashes ? { artifactHashes } : {}),
     });
     return vctx.effective_policy.mode === 'visual';

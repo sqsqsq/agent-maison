@@ -33,7 +33,7 @@ import {
   detectDesiredFidelity,
   resolveFidelityRoutingDecision,
 } from '../../scripts/utils/fidelity-shared';
-import { canaryAdmissibleForRun } from '../../scripts/utils/effective-vision-context';
+import { canaryAdmissibleForRun } from '../../scripts/utils/multimodal-probe';
 import { collectActionableDefects } from '../../scripts/goal-runner';
 import { clearFrameworkConfigCache } from '../../config';
 import * as os from 'os';

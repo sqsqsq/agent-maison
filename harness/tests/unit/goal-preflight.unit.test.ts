@@ -16,7 +16,7 @@ import {
   runVisionCanaryProbe,
 } from '../../scripts/utils/goal-preflight';
 import { writeLocalConfig, loadLocalConfig } from '../../scripts/utils/framework-local-config';
-import { canaryAdmissibleForRun } from '../../scripts/utils/effective-vision-context';
+import { canaryAdmissibleForRun } from '../../scripts/utils/multimodal-probe';
 import { buildCanaryPrompt, VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 import type { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';

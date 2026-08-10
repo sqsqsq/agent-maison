@@ -10,6 +10,7 @@ import type { UnattendedContract } from './goal-manifest';
 import {
   isGoalOrchestrationEnv,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
+  MAISON_GOAL_MODEL_PIN_ENV,
 } from './phase-state';
 import { loadLocalConfig, type FrameworkLocalConfigVisionCanary } from './framework-local-config';
 import { isClaudeKernelAdapter } from './types';
@@ -25,6 +26,102 @@ export interface MultimodalProbeResult {
   reason: string;
   /** I2（plan b7e42d19）：存在该 adapter 的 interactive 金丝雀缓存但已超龄——本结果已回退声明式/heuristic，非采信旧 verdict。 */
   staleInteractiveCanary?: boolean;
+}
+
+/**
+ * plan d7f3a9c4 t3：金丝雀**执行身份**（{runId, modelPin} 二元）——
+ *  - 子进程消费方（gate harness / check-receipt / profile 门禁）由 env 注入、不显式传参；
+ *  - runner 进程内消费方（goal-runner 的 fidelity/LKG 面）显式传 manifest 派生身份。
+ * 取不到 pin 即按无 pin 处理（现状语义），不得臆造。
+ */
+export interface CanaryExecutionIdentity {
+  /** goal run id（与 canaryAdmissibleForRun 的 runId 同语义） */
+  runId?: string;
+  /** 最终裁决后的 model pin value（无 pin 时不传） */
+  modelPin?: string;
+}
+
+/** 显式身份缺省时回退 env（子进程注入链：gateInjectedEnv / agent extraEnv / phase-state child env）。 */
+function resolveCanaryExecutionIdentity(explicit?: CanaryExecutionIdentity): CanaryExecutionIdentity {
+  if (explicit) return explicit;
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const modelPin = process.env[MAISON_GOAL_MODEL_PIN_ENV]?.trim();
+  return { runId: runId || undefined, modelPin: modelPin || undefined };
+}
+
+/**
+ * 「这份 canary 能否被当前 run 采信为 run_probed 实测」——**唯一判据**（plan d8c5f3a7 T1）。
+ *
+ * 背景（2026-07-24 bc-openCard 事故）：判定曾一分为二——goal-preflight 的
+ * `decideVisionCanaryProbe` 只看 `isVisionCanaryFresh`（TTL）决定「要不要重探」，而三轴
+ * resolver 另加「goal 来源须 run_id 命中当前 run」决定「可不可采信」。两把尺子打架的后果是
+ * **同一份缓存「新到不必再探」且「旧到不能采信」**：07-18 实测 tool_read（4/4 全对）的
+ * canary 在 07-24 的新 run 上既不被重探、也不被采信 → hasVision=false → pixel_1to1 被钳成
+ * semantic_layout → 盲档协议接管 → UI 大幅倒退。
+ *
+ * 本谓词由 resolver 与 preflight **共同消费**：resolver 用它判采信，preflight 用
+ * 「fresh ∧ admissible」判是否跳过重探——不可采信即当场重探，悖论自然消解。
+ *
+ * 语义：
+ *  - `interactive` 来源：不绑 run（IDE 会话内实测），fresh 即可采信；
+ *  - `goal` 来源（含缺省）：`run_probed 不跨 run`——须 `runId` 在场且与 `canary.run_id` 相等；
+ *  - 旧缓存无 `run_id` 字段者一律不可采信（无从证明属于本 run）。
+ *
+ * 注意：本谓词**不含新鲜度判定**，调用方须自行合取 `isVisionCanaryFresh`（两者关注点分离：
+ * 新鲜度=证据是否过期，采信度=证据是否属于当前执行身份）。
+ */
+export function canaryAdmissibleForRun(
+  canary: { probed_via?: string; run_id?: string } | undefined | null,
+  args: { runId?: string },
+): boolean {
+  if (!canary) return false;
+  const viaGoal = (canary.probed_via ?? 'goal') === 'goal';
+  if (!viaGoal) return true;
+  return Boolean(args.runId && canary.run_id && canary.run_id === args.runId);
+}
+
+/**
+ * plan d7f3a9c4 t3：**执行身份**共享谓词——`{runId, modelPin}` 二元。
+ *
+ * 语义（v6 收敛，见 plan 硬约束 5/6）：
+ *   canaryAdmissibleForExecution(canary, {runId, modelPin}) =
+ *     canaryAdmissibleForRun(canary, {runId}) &&
+ *     (!modelPin || canary.model === modelPin)
+ *
+ *  - **run 必查**：复用 canaryAdmissibleForRun（interactive 不绑 run、goal 须 run_id 命中
+ *    当前 run）——只比 model 不够，同模型跨 run 的旧缓存仍须拒（visual-capability-truth
+ *    `run_probed SHALL NOT cross runs`，spec L18）。
+ *  - **model 按 pin 追加**：pin 缺席时 `(!modelPin || …)` 短路为 true，谓词精确退化为
+ *    canaryAdmissibleForRun——调用方据此保证无 pin 时中央两处等价现状。
+ *  - 本谓词**不含新鲜度判定**，调用方须自行合取 `isVisionCanaryFresh`（与 canaryAdmissibleForRun
+ *    同款关注点分离：新鲜度=证据是否过期，执行身份=证据是否属于当前 {run, model} 执行身份）。
+ */
+export function canaryAdmissibleForExecution(
+  canary: { probed_via?: string; run_id?: string; model?: string } | undefined | null,
+  args: { runId?: string; modelPin?: string },
+): boolean {
+  if (!canary) return false;
+  if (!canaryAdmissibleForRun(canary, { runId: args.runId })) return false;
+  return !args.modelPin || canary.model === args.modelPin;
+}
+
+/**
+ * plan d7f3a9c4 t3：**旁路消费面**统一判据——`fresh && (!modelPin || canaryAdmissibleForExecution)`。
+ *  - 无 pin 时精确退化为仅 `isVisionCanaryFresh`（现状逐分支一致，跨 run 复用属既有行为）；
+ *  - 有 pin 时追加 `{runId, modelPin}` 全套身份检查（旧模型/跨 run 缓存不得流入旁路）。
+ * 中央两处（重探判定 / 三轴 resolver）**不用本函数**，而是始终合取
+ * `canaryAdmissibleForExecution`（run 绑定一步不少）——见 effective-vision-context / goal-preflight。
+ */
+export function isFreshCanaryForExecution(
+  canary: FrameworkLocalConfigVisionCanary | undefined | null,
+  adapter: string,
+  identity: CanaryExecutionIdentity,
+  now: number = Date.now(),
+): boolean {
+  return (
+    isVisionCanaryFresh(canary, adapter, now) &&
+    (!identity.modelPin || canaryAdmissibleForExecution(canary, { runId: identity.runId, modelPin: identity.modelPin }))
+  );
 }
 
 /**
@@ -190,6 +287,7 @@ function resolveBaseImageInput(
   projectRoot: string,
   frameworkRoot: string,
   adapterName: string | undefined,
+  identity?: CanaryExecutionIdentity,
 ): MultimodalProbeResult {
   const adapter = (adapterName ?? 'generic').trim() || 'generic';
   const local = tryLoadLocalConfig(projectRoot);
@@ -203,7 +301,9 @@ function resolveBaseImageInput(
   }
   const canary = local?.vision?.canary;
   // I2：唯一新鲜度判据——超龄 interactive 缓存不再当"新鲜实测"采信（①②），回退声明式/heuristic 并标 stale（③）。
-  if (isVisionCanaryFresh(canary, adapter)) {
+  // plan d7f3a9c4 t3：旁路消费面规则 `fresh && (!modelPin || canaryAdmissibleForExecution(...))`——
+  // 无 pin 时精确退化为仅 fresh（既有行为逐分支一致）；pin 在场时追加 {runId, modelPin} 全套身份检查。
+  if (isFreshCanaryForExecution(canary, adapter, resolveCanaryExecutionIdentity(identity))) {
     const cachedImageInput: ImageInputMode = canary!.verdict === 'tool_read' ? 'tool_read' : 'none';
     return toProbeResult(
       adapter,
@@ -231,10 +331,12 @@ function resolveBaseImageInput(
 export function readCanaryOcrCapableSignal(
   projectRoot: string,
   adapterName: string | undefined,
+  identity?: CanaryExecutionIdentity,
 ): boolean {
   const adapter = (adapterName ?? 'generic').trim() || 'generic';
   const canary = tryLoadLocalConfig(projectRoot)?.vision?.canary;
-  return Boolean(canary && isVisionCanaryFresh(canary, adapter) && canary.verdict === 'ocr_capable');
+  // plan d7f3a9c4 t3：旁路规则 `fresh && (!modelPin || canaryAdmissibleForExecution(...))`。
+  return Boolean(canary && isFreshCanaryForExecution(canary, adapter, resolveCanaryExecutionIdentity(identity)) && canary.verdict === 'ocr_capable');
 }
 
 /**
@@ -245,10 +347,12 @@ export function readCanaryOcrCapableSignal(
 export function readCanaryToolReadSignal(
   projectRoot: string,
   adapterName: string | undefined,
+  identity?: CanaryExecutionIdentity,
 ): boolean {
   const adapter = (adapterName ?? 'generic').trim() || 'generic';
   const canary = tryLoadLocalConfig(projectRoot)?.vision?.canary;
-  return Boolean(canary && isVisionCanaryFresh(canary, adapter) && canary.verdict === 'tool_read');
+  // plan d7f3a9c4 t3：旁路规则 `fresh && (!modelPin || canaryAdmissibleForExecution(...))`。
+  return Boolean(canary && isFreshCanaryForExecution(canary, adapter, resolveCanaryExecutionIdentity(identity)) && canary.verdict === 'tool_read');
 }
 
 /** 读取 agents/<adapter>/adapter.yaml 的 image_input / multimodal 声明 */
@@ -317,8 +421,9 @@ export function resolveGoalEffectiveImageInput(
   frameworkRoot: string,
   adapterName: string | undefined,
   unattended?: UnattendedContract,
+  identity?: CanaryExecutionIdentity,
 ): MultimodalProbeResult {
-  const base = resolveBaseImageInput(projectRoot, frameworkRoot, adapterName);
+  const base = resolveBaseImageInput(projectRoot, frameworkRoot, adapterName, identity);
   if (base.imageInput !== 'tool_read') {
     return base;
   }
@@ -354,6 +459,7 @@ export function resolveContextAdapterImageInput(
   projectRoot: string,
   frameworkRoot: string,
   adapterName: string | undefined,
+  identity?: CanaryExecutionIdentity,
 ): MultimodalProbeResult {
   const tools = parseGoalAllowedToolsFromEnv();
   if (tools?.length) {
@@ -361,9 +467,9 @@ export function resolveContextAdapterImageInput(
       allowed_tools: tools,
       write_mode: 'workspace-write',
       approval_mode: 'never',
-    });
+    }, identity);
   }
-  return resolveBaseImageInput(projectRoot, frameworkRoot, adapterName);
+  return resolveBaseImageInput(projectRoot, frameworkRoot, adapterName, identity);
 }
 
 /** 从 spec visual handoff 收集图片路径用于多模态注入 */

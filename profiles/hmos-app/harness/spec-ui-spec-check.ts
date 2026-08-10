@@ -20,7 +20,7 @@ import {
 import { missingUiSpecGateScreens } from './ui-spec-gate';
 import { checkUiKitDeclarationRequired } from './ui-kit-conformance-check';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
-import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
+import { isGoalHeadlessEnv, MAISON_GOAL_MODEL_PIN_ENV } from '../../../harness/scripts/utils/phase-state';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
 import { loadFrameworkConfig } from '../../../harness/config';
@@ -333,6 +333,11 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         phase: ctx.phase,
         runId: chain.runId ?? undefined,
         invokeId: chain.expectedInvoke ?? undefined,
+        // plan d7f3a9c4 t3：中央三轴 resolver 带 goal env 注入的 model pin（取不到即无 pin，
+        // 现状语义不臆造；review P1-1 补漏）。
+        ...(process.env[MAISON_GOAL_MODEL_PIN_ENV]?.trim()
+          ? { modelPin: process.env[MAISON_GOAL_MODEL_PIN_ENV].trim() }
+          : {}),
         artifactHashes: [uiSpecHash],
       });
       const att = vctx.artifact_attestation[uiSpecHash];

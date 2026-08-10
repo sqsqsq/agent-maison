@@ -56,7 +56,7 @@ import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
@@ -177,7 +177,7 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
-import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
+import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   discardPassSnapshotCache,
   diffFrozenAgainstManifest,
@@ -281,7 +281,9 @@ import {
 } from './utils/visual-rounds-ledger';
 import {
   applyClosurePatchFromReceiptValidation,
+  applyGoalModelPinEnv,
   isGoalHeadlessEnv,
+  MAISON_GOAL_MODEL_PIN_ENV,
   MAISON_GOAL_RUNNER_ENV,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
   runSyncClosureDetailed,
@@ -969,6 +971,9 @@ async function runHarnessPhase(
     // 这里显式透传，与 agent 侧同源。
     ...deviceTargetEnv,
   };
+  // plan d7f3a9c4 t3：model pin 注入链②（gate harness）——有 pin 才携带；无 pin 显式清理
+  //（共享执行器：先清大小写变体再写唯一大写键，父环境残留不会漏入子进程）。
+  applyGoalModelPinEnv(childEnv, manifest?.adapter_model_pin?.value);
   for (const [k, v] of Object.entries(gateInjectedEnv)) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
     childEnv[k] = v;
@@ -2012,12 +2017,18 @@ export function resolvePhaseCapabilityAdvisory(
   if (intentSsot) desired = intentSsot.selected_fidelity;
   const capSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
 
-  const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
+  const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  });
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
   // 判定其无视觉）——OR 进 ocrAvailable，不替代框架自身 OCR 环境探测（后者更可靠/确定性）。
   // cursor review（E6 后）：与 harness-runner.ts 门禁钳制共用同一口径，不再各算一遍。
-  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter);
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter, {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  });
   // visual-capability-truth S3：hasVision = meet(adapter/allowed_tools 探测, 三轴 effective_policy)
   // ——反证器降级 blind-safe 后，后续 phase（spec retry/plan/coding）的能力块与钳制同步转盲，
   // 消费面统一走 resolveEffectiveVisionContext（不再各读 local/canary 自行判级）。
@@ -2038,6 +2049,8 @@ export function resolvePhaseCapabilityAdvisory(
       phase,
       adapter: manifest.adapter,
       frameworkRoot,
+      // plan d7f3a9c4 t3：中央三轴 resolver 带最终裁决 pin——pin 在场时采信追加模型匹配。
+      ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
       // 四轮 review P1：ui-spec 已存在时以当前 hash 参与 meet——unverified 产物（含
       // unverified_clean）不再因"无独立降级行"漏出 visual（prompt 注入面同源收口）。
       ...(policyArtifactHashes ? { artifactHashes: policyArtifactHashes } : {}),
@@ -2067,6 +2080,8 @@ export function resolvePhaseCapabilityAdvisory(
         adapter: manifest.adapter, profileDir: resolvedProfile.profileDir,
         manifestFidelity: manifest.fidelity, fidelityReceiptRel: manifest.fidelity_receipt,
         runIdForReceipt: manifest.run_id,
+        // plan d7f3a9c4 t3：能力重建同样带最终裁决 pin。
+        ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
       });
       effectiveIntent = loadFidelityIntentSsot(projectRoot, manifest.feature);
       effectiveSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
@@ -4228,8 +4243,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let lkg: { probed_at: string; verdict: string } | null = null;
         try {
           const canary = loadFrameworkLocalConfig(projectRoot)?.vision?.canary;
-          if (canary && isVisionCanaryFresh(canary, manifest.adapter ?? 'generic')) {
-            lkg = { probed_at: canary.probed_at, verdict: canary.verdict };
+          // plan d7f3a9c4 t3：旁路规则 `fresh && (!modelPin || canaryAdmissibleForExecution)`——
+          // 旧模型/跨 run 缓存在本 run 其实不可消费（image_input/OCR/tool_read/门禁都不采信），
+          // LKG 日志必须与消费面口径一致，否则谎报"沿用旧缓存"。
+          if (isFreshCanaryForExecution(canary, manifest.adapter ?? 'generic', {
+            runId: manifest.run_id,
+            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+          })) {
+            lkg = { probed_at: canary!.probed_at, verdict: canary!.verdict };
           }
         } catch { /* local 读不出 → 按无缓存处理 */ }
         console.warn(
@@ -6016,6 +6037,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // plan b3e8d4c7 t1：见 runHarnessPhase 同款注入——agent 侧自跑 harness /
             // check-receipt 也要能分辨"这个 attempt 属于哪个 phase"。
             MAISON_GOAL_ATTEMPT_PHASE: String(phase),
+            // plan d7f3a9c4 t3：model pin 注入链①（agent 子进程）——有 pin 才携带；
+            // 无 pin 不注入（buildAgentSpawnEnv 会清理父环境残留，见 agent-invoke.ts）。
+            ...(manifest.adapter_model_pin
+              ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value }
+              : {}),
             ...deviceEnv,
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
@@ -6059,6 +6085,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
         // init 事件，append-only 新事件承载；不回写冻结 manifest / 不改 run 前 adapter_probe
         // / 不为 telemetry 造 capability receipt / 不参与能力真值与任何策略分支。
+        // plan d7f3a9c4 t3：**只加一条**——pin 在场时把既有 observedModel 与 pin 比对，
+        // 失配 emit `pin_verify_mismatch` 告警注记（投影 goal-report）。判定走共享纯函数
+        // resolvePinVerifyMismatch（不改 manifest/verdict/routing/capability，warning-only）。
         if (!dryRun && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const eventsAbsForModel = agentEventsLogPath(outputLogPath);
@@ -6074,6 +6103,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 model: observedModel,
                 source: 'structured_event_init',
               });
+              const mismatch = resolvePinVerifyMismatch({
+                pin: manifest.adapter_model_pin?.value,
+                observed: observedModel,
+              });
+              if (mismatch) {
+                goalEvents.emit({
+                  type: 'pin_verify_mismatch',
+                  phase,
+                  invoke_id: invokeId,
+                  adapter: manifest.adapter ?? 'generic',
+                  pin: mismatch.pin,
+                  observed: mismatch.observed,
+                });
+                console.warn(
+                  `[goal-runner] ⚠ adapter_model_observed=${mismatch.observed} ≠ adapter_model_pin=${mismatch.pin}（phase=${phase}）——` +
+                    '仅告警，不影响 verdict/路由/能力判定；请核对自报是否被并发窗口切走。',
+                );
+              }
             }
           } catch { /* telemetry 缺失不阻断 */ }
         }
@@ -6679,7 +6726,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phase,
             manifest.feature,
             // b3e8d4c7 t1：权威路径与 agent 路径执行同一套 goal 门禁
-            { goalIdentity: { runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase) } },
+            { goalIdentity: { runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase),
+              // plan d7f3a9c4 t3：check-receipt 子进程同链透传 model pin。
+              ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}) } },
           );
           inFlowReceiptValidation = receiptValidation;
           if (receiptValidation.status === 'passed') {
@@ -7371,6 +7420,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     timeoutMs: Math.min(300_000, probeRemainingMs),
                     goalIdentity: {
                       runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase),
+                      // plan d7f3a9c4 t3：check-receipt 子进程同链透传 model pin。
+                      ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
                     },
                   },
                 )
@@ -7648,6 +7699,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             recommendation: assessment.recommendation,
             goalRunId: manifest.run_id,
             attemptId: visualAttemptId,
+            // plan d7f3a9c4 t3：上游关环的 check-receipt 子进程同链透传 model pin。
+            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
             remainingBudgetMs: wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS,
             fence: () => {
               if (runControl) {
