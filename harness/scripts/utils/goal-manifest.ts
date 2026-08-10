@@ -26,6 +26,13 @@ export interface GoalBudget {
   max_transient_api_retries?: number;
 }
 
+export interface AdapterModelPin {
+  /** 最终 effective adapter（resolveFinalModelPin 单点裁决后写入） */
+  adapter: string;
+  /** 用户显式 --adapter-model 的权威模型值 */
+  value: string;
+}
+
 export interface UnattendedContract {
   write_mode: 'workspace-write' | 'accept-edits' | 'full-access';
   approval_mode: 'never' | 'on-request' | 'always';
@@ -53,6 +60,13 @@ export interface GoalManifest {
   fidelity?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
   /** t6：降档 confirmation receipt 文件（项目根相对）；flag 本身不构成授权 */
   fidelity_receipt?: string;
+  /**
+   * plan d7f3a9c4 t1/t2：显式模型钉——用户 `--adapter-model` 的权威输入，
+   * 随 headless argv 回放。adapter 必须等于最终 effective adapter（由
+   * resolveFinalModelPin 单点裁决）。条件入身份哈希（键在场即入，旧 manifest
+   * 无键不受影响——见 computeManifestIdentityFields）。
+   */
+  adapter_model_pin?: AdapterModelPin;
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
@@ -146,6 +160,11 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
     fields.vision_lineage = manifest.vision_lineage ?? null;
+  }
+  // plan d7f3a9c4 t2：adapter_model_pin 按 vision_lineage 同款条件入集——键在场即在
+  // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
+    fields.adapter_model_pin = manifest.adapter_model_pin ?? null;
   }
   if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
     fields.successor_of = manifest.successor_of ?? null;
@@ -351,6 +370,51 @@ function parsePreAuthorizedMutations(
   return out.length > 0 ? out : undefined;
 }
 
+function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[goal-manifest] adapter_model_pin 必须为对象');
+  }
+  const r = raw as Record<string, unknown>;
+  validateAdapterModelPinValue(r.adapter, r.value);
+  return { adapter: String(r.adapter).trim(), value: String(r.value).trim() };
+}
+
+/** 已知 adapter 集（model pin 形状校验的 adapter ∈ 已知集约束）。 */
+const KNOWN_MODEL_PIN_ADAPTERS = new Set([
+  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic',
+]);
+
+/**
+ * shape 校验（**运行时**，不信任 TS 类型——JSON 解析后的不可信值须逐项检查）。
+ * adapter 须为非空字符串且 ∈ 已知集；value 须为字符串、trim 后非空 ≤128 无控制字符。
+ * 违规整体拒绝加载/解析。
+ */
+export function validateAdapterModelPinValue(adapter: unknown, value: unknown): void {
+  if (typeof adapter !== 'string' || !adapter.trim()) {
+    throw new Error('[goal-manifest] adapter_model_pin.adapter 必填且须为非空字符串');
+  }
+  const a = adapter.trim();
+  if (!KNOWN_MODEL_PIN_ADAPTERS.has(a)) {
+    throw new Error(
+      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${['codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic'].join('|')}）`,
+    );
+  }
+  if (typeof value !== 'string') {
+    throw new Error('[goal-manifest] adapter_model_pin.value 必填且须为字符串');
+  }
+  const v = value.trim();
+  if (!v) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 必填');
+  }
+  if (v.length > 128) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 长度须 ≤128');
+  }
+  if (/[\u0000-\u001F\u007F]/.test(v)) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 不得含控制字符');
+  }
+}
+
 function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'full'> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -470,11 +534,15 @@ export function buildGoalManifestFromInput(
       `[goal-manifest] vision_lineage 值非法（${String(rawLineage)}）——须 continue|reset`,
     );
   }
+  // plan d7f3a9c4 t1：---manifest 文件可携带 adapter_model_pin（fresh 由
+  // resolveFinalModelPin 落键；此处仅保真解析 + shape 校验）
+  const adapterModelPin = normalizeAdapterModelPin(input.adapter_model_pin);
 
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     ...(rawLineage !== undefined ? { vision_lineage: rawLineage } : {}),
+    ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
@@ -524,6 +592,11 @@ export function inheritSuccessorManifest(
   // repeat the reset/quarantine path. A fresh successor may explicitly issue
   // its own birth instruction, which is restored below.
   delete inherited.vision_lineage;
+  // plan d7f3a9c4 t2：adapter_model_pin **与 vision_lineage 语义相反**——是出生持续
+  // 的模型钉，successor 默认继承源 run pin（覆盖继承值须显式 --adapter-model 出生
+  // 输入，由 resolveFinalModelPin 裁决）。故此处**不得剥离**，随 ...inherited 原样继承。
+  // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
+  // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
   const sourceRound = source.inherited_round_fingerprints ?? [];
   const sourceDrift = source.inherited_drift_fingerprints ?? [];
   return {
@@ -716,6 +789,14 @@ export function validateLoadedGoalManifest(
   if (reportDir !== canonical) {
     throw new Error(
       `[goal-manifest] manifest.report_dir 必须为 feature 绑定路径: ${canonical}（收到: ${reportDir}）`,
+    );
+  }
+  // plan d7f3a9c4 t2：加载时 shape 校验 adapter_model_pin（adapter/value shape 违规
+  // 整体拒绝加载——停机篡改应命中既有 manifest_identity_drift）。
+  if (manifest.adapter_model_pin !== undefined) {
+    validateAdapterModelPinValue(
+      manifest.adapter_model_pin.adapter,
+      manifest.adapter_model_pin.value,
     );
   }
 }

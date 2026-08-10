@@ -33,12 +33,6 @@ function normalize(text: string): string {
     .replace(/\s+/g, '');
 }
 
-/** 返回文本中含有的无条件 burn 断言（归一化后匹配） */
-function unconditionalBurnMatches(text: string): string[] {
-  const t = normalize(text);
-  return ABSOLUTE_BURN.filter((b) => t.includes(normalize(b)));
-}
-
 /** 返回文本中含有的旧绝对句（归一化后匹配） */
 function absoluteOldPhraseMatches(text: string): string[] {
   const t = normalize(text);

@@ -229,6 +229,10 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     FEATURE: manifest.feature,
     PHASE: manifest.start_phase,
   };
+  // plan d7f3a9c4 t1：binary-gate 的纯 plan 构造**刻意不带 pin**——本 plan 只用于
+  // validateHeadlessBinaryForPlan（只校验 argv[0] 可否 spawn，与后续 flag 无关），
+  // 不实际 spawn；chrys/generic 的"不支持 pin"错误在更早的 resolveFinalModelPin()
+  // 即 fail-fast 退出，根本走不到此处。
   const plan = resolveHeadlessInvokePlan(
     adapter,
     cap.capability!,
@@ -383,7 +387,14 @@ export async function runVisionCanaryProbe(input: {
       FEATURE: manifest.feature,
       PHASE: manifest.start_phase,
     };
-    const plan = resolveHeadlessInvokePlan(adapter, cap.capability, manifest.unattended, prompt, vars);
+    const plan = resolveHeadlessInvokePlan(
+      adapter,
+      cap.capability,
+      manifest.unattended,
+      prompt,
+      vars,
+      manifest.adapter_model_pin?.value,
+    );
     const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
     const decision = resolveCanaryCacheDecision({
       stdout: invoke.stdout,

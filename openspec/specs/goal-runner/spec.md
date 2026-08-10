@@ -159,3 +159,80 @@ The runner SHALL treat assess fuse as a phase-boundary reconciliation result, pr
 - **WHEN** a monitor reaches its polling fuse
 - **THEN** it SHALL stop polling without terminating an otherwise active detached run
 
+### Requirement: Headless goal runs pin an explicit adapter model
+
+The runner SHALL accept a user-supplied `--adapter-model <id>` that is the authoritative model input for a headless run. It SHALL be replayed into every headless agent argv that actually performs work (the formal per-phase invocation and the vision canary probe), SHALL be recorded in the manifest as `adapter_model_pin: {adapter, value}` with `adapter` equal to the final effective adapter, and SHALL be echoed in dry-run plan output. The CLI value SHALL be trimmed then validated to be non-empty, at most 128 characters, and free of control characters; no model-name allowlist SHALL be introduced. The runner SHALL NOT read any adapter private configuration as a pin source, and SHALL NOT use Codex `-c model=<raw>`.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/goal-manifest-cli.ts`
+
+#### Scenario: Replay flags carry the pinned model
+
+- **WHEN** a run is started with `--adapter-model <id>` and the effective adapter is codex/claude/codeagent/cursor/opencode
+- **THEN** the formal phase invocation and the vision canary probe argv SHALL carry the model as `--model <id>` (codex/claude/codeagent/cursor) or `-m <id>` (opencode), and the resolveHeadlessInvokePlan call used only for binary validation SHALL NOT carry it
+
+#### Scenario: Unsupported adapter fails fast on a pin
+
+- **WHEN** `--adapter-model` is supplied, or the loaded manifest / successor inheritance carries an `adapter_model_pin`, and the effective adapter is chrys or generic
+- **THEN** the run SHALL BLOCKER-fail during single-point pin adjudication, before any manifest identity computation or plan construction
+
+#### Scenario: No pin leaves behavior unchanged
+
+- **WHEN** no `--adapter-model` is supplied, the loaded manifest has no `adapter_model_pin`, and no successor inheritance carries a pin
+- **THEN** every adapter's argv SHALL be element-for-element identical to the pre-pin baseline and no manifest key SHALL be added
+
+#### Scenario: Pin binds the canary receipt and its admissibility
+
+> ⚠ 前瞻规格（plan d7f3a9c4 t5 先行成文）：对应 t3 **尚未实现**，`goal-runner.ts`/`goal-preflight.ts` 尚不写 `model=pin.value`、也不做模型匹配采信。实现后本 Scenario 才生效。
+
+- **WHEN** an explicit `--adapter-model` pin is present
+- **THEN** the vision canary receipt SHALL record `model = pin.value`, and a canary SHALL only be admitted or skipped when its model matches the pin value; the observed model SHALL remain append-only telemetry and SHALL NOT become a pin source or participate in any policy branch
+
+### Requirement: Adapter model pin lifecycle is adjudicated at a single point
+
+The final model pin SHALL be decided by exactly one pure function (`resolveFinalModelPin`) wired after adapter reconciliation and before manifest identity computation. Fresh, fresh-with-manifest, resume, force-resume, successor, and adapter-change authorization SHALL follow the documented matrix: a resume or manifest-bound drift requires `--override-manifest`; a resume that changes both adapter and model requires both `--override-adapter` and `--override-manifest`; `--force-resume` SHALL NOT bypass pin drift; a successor's explicit `--adapter-model` is a birth input that overrides the inherited value without `--override-manifest`, and a successor that changes adapter SHALL require `--override-adapter` with a new model. `adapter_model_pin` SHALL enter the manifest identity hash only when the key is present, so old manifests without the key remain compatible. Tampering with the pin value while stopped SHALL surface through the existing `manifest_identity_drift` path.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manifest-cli.ts`, `harness/scripts/utils/goal-manifest.ts`
+
+#### Scenario: Resume with a drifted pin requires override-manifest
+
+- **WHEN** a resume supplies `--adapter-model` differing from the frozen manifest pin (or adding a new pin) without `--override-manifest`
+- **THEN** the run SHALL BLOCKER-fail during `resolveFinalModelPin`
+
+#### Scenario: Resume replacing adapter and model requires both overrides
+
+- **WHEN** a resume supplies `--adapter-model` while also changing the effective adapter and lacks either `--override-adapter` or `--override-manifest`
+- **THEN** the run SHALL BLOCKER-fail rather than partially authorize the change
+
+#### Scenario: Successor may override the inherited pin at birth
+
+- **WHEN** a successor run supplies an explicit `--adapter-model` over the inherited source pin
+- **THEN** the explicit value SHALL win without `--override-manifest`, and a successor that changes adapter without `--override-adapter` plus a new model SHALL BLOCKER-fail
+
+#### Scenario: Old manifest without the pin key stays compatible
+
+- **WHEN** loading a manifest that has no `adapter_model_pin` key
+- **THEN** identity computation SHALL not add the key, resume SHALL proceed with no pin, and no drift shall be reported for the absent key
+
+#### Scenario: Tampered pin surfaces as manifest identity drift
+
+- **WHEN** a stopped run's `adapter_model_pin.value` is altered without touching the birth event baseline
+- **THEN** the resume SHALL report `manifest_identity_drift` for the `adapter_model_pin` field
+
+### Requirement: Canary probe hard CLI failure is a pre-phase blocker
+
+When the vision canary probe actually executes (`decideVisionCanaryProbe` returns `action === 'probe'`), a structured hard CLI failure SHALL be classified separately from ordinary invoke failures and SHALL escalate to a run-level BLOCKER before the first formal phase. The two newly covered classes are a child spawn race and a CLI/config argument incompatibility (unknown/unexpected/unrecognized argument or config load error). The probe SHALL return a `hard_cli_failure` outcome distinct from the existing invoke/invalid outcomes; only `hard_cli_failure` SHALL block. The existing resolved-binary preflight gate SHALL be preserved unchanged and SHALL NOT be double-counted as new protection. Skip paths (cache hit, dry-run, chain without a UI phase, local override) SHALL NOT gain this protection. Ordinary quota/API/auth errors and invalid vision answers SHALL remain non-blocking, and the existing binary gate behavior SHALL be unchanged.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/agent-invoke.ts`
+
+#### Scenario: Unknown argument during an actual probe blocks the run
+
+- **WHEN** the canary probe executes and the child exits with a nonzero code after a CLI `unknown argument` error on stderr
+- **THEN** the probe SHALL return `hard_cli_failure` and the run SHALL BLOCKER-fail before the first formal phase
+
+#### Scenario: Cache-hit skip path has no hard-failure protection
+
+- **WHEN** the canary probe is skipped due to a fresh admissible cache
+- **THEN** no probe is spawned and no hard-failure classification occurs
+
+> 前瞻规格注记：本 Requirement 与上一个「Pin binds the canary receipt and its admissibility」Scenario 对应 plan d7f3a9c4 的 t3/t4，属 t5 **先行成文**，相关代码**尚未实现**（`hard_cli_failure` 分类、BLOCKER 接线、`model=pin.value` 采信均不存在）。实现后本段才生效。
+

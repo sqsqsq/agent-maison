@@ -19,6 +19,7 @@
 | `requirement` | 否 | 需求描述 |
 | `start_phase` / `end_phase` | 否 | 默认由 workflow 决定 |
 | `adapter` | 否 | 按 personal setup 的已物化 adapter 解析 |
+| `adapter_model` | 否 | **仅 headless/unattended（含 `--detach`）**：并发多窗口跑不同模型或要钉住本 run 模型时，启动 goal run 传 `--adapter-model <id>`——权威模型输入，随 headless argv 回放（`chrys`/`generic` 不支持，传即 BLOCKER）。**有人在场（in-session attended）不适用**——由宿主会话自跑，本 Skill 不消费该字段，不得静默未钉 |
 | `run_mode` | 条件 | 明确意图直接映射；歧义时走 `goal.run_mode` |
 
 ## 每轮唯一循环

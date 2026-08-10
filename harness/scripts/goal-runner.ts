@@ -339,6 +339,8 @@ import { snapshotPhaseHarness } from './utils/goal-phase-snapshot';
 import {
   applyManifestCliOverrides,
   validateManifestCliOverrides,
+  normalizeAdapterModelCliValue,
+  resolveFinalModelPin,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
 import {
@@ -3627,6 +3629,9 @@ export async function main(): Promise<number> {
       // plan a5f9c3e2 t3①：vision lineage 处置的**唯一输入入口**（continue|reset）。
       // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
       'vision-lineage',
+      // plan d7f3a9c4 t1：显式模型钉（仅 headless runner 链路；in-session attended
+      // 由宿主会话自跑不适用）。
+      'adapter-model',
     ],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
@@ -3653,6 +3658,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
     [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
+    [--adapter-model <id>]   play the explicit model into headless argv (codex/claude/codeagent/cursor/opencode)
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
@@ -3699,6 +3705,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const manifestCliCheck = validateManifestCliOverrides(manifestArgv);
   if (!manifestCliCheck.ok) {
     console.error(manifestCliCheck.message);
+    process.exit(1);
+  }
+
+  // plan d7f3a9c4 t1：--adapter-model CLI 值归一 + fail-fast 校验（trim/非空/≤128/无控制
+  // 字符；不做模型名白名单）。raw boolean 裸旗标（minimist 置 true）也拒绝。
+  let cliAdapterModel: string | undefined;
+  try {
+    cliAdapterModel = normalizeAdapterModelCliValue(argv['adapter-model']);
+  } catch (err) {
+    console.error((err as Error).message);
     process.exit(1);
   }
 
@@ -3879,6 +3895,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 不互相搭车）；违规=BLOCKER。applied 判 string 过滤后的 manifestArgv（与
   // applyManifestCliOverrides 同一来源——裸旗标 --fidelity 没应用任何值，不进校验面）。
   let fidelityTransitionFields: ReadonlySet<string> = new Set<string>();
+  // plan d7f3a9c4 t2（codex P1）：adapter 变化判定须基于 **所有改写前** 的原始 adapter。
+  // applyManifestCliOverrides（下方）可经 --adapter+--override-manifest 改写 manifest.adapter，
+  // reconcile 又会读 local——若此刻才捕获，local 已被别窗切走时会把"换 adapter"误判为未变。
+  // 故在 applyManifestCliOverrides 之前捕获 manifest 既有 adapter。
+  const manifestAdapterBeforeCliOverrides = manifest.adapter;
   {
     applyManifestCliOverrides(manifest, manifestArgv);
     const ft = evaluateFidelityTransitionAuthorization({
@@ -3918,6 +3939,32 @@ Goal runner — tool-agnostic multi-phase orchestrator
     manifest.adapter = adapterDecision.effectiveAdapter;
     manifest.adapter_provenance = adapterDecision.provenance;
     if (adapterDecision.writeLocal) pendingAdapterWriteback = adapterDecision.effectiveAdapter;
+  }
+
+  // plan d7f3a9c4 t2：final pin **单点裁决**——接线位置在 adapter reconcile 之后、
+  // manifest 身份哈希计算之前。只在此处产生 final adapter_model_pin；不散落修改。
+  {
+    const finalPin = resolveFinalModelPin({
+      cliValue: cliAdapterModel,
+      effectiveAdapter: manifest.adapter!,
+      originalAdapter: manifestAdapterBeforeCliOverrides,
+      manifestPin: manifest.adapter_model_pin,
+      isResume: Boolean(argv.resume),
+      hasManifestFlag: Boolean(argv.manifest),
+      isSuccessor: Boolean(manifest.successor_of),
+      overrideManifest: Boolean(argv['override-manifest']),
+      overrideAdapter: Boolean(argv['override-adapter']),
+    });
+    if (!finalPin.ok) {
+      console.error(finalPin.message);
+      process.exit(1);
+    }
+    if (finalPin.pin) {
+      manifest.adapter_model_pin = finalPin.pin;
+    } else {
+      // 无 pin：不落键（与旧 manifest 兼容 + 身份字段集条件纳入同源约束）。
+      delete manifest.adapter_model_pin;
+    }
   }
 
   const dryRun = dryRunMode;
@@ -5588,7 +5635,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest.unattended,
           prompt,
           vars,
+          manifest.adapter_model_pin?.value,
         );
+        // plan d7f3a9c4 t1：dry-run 在 plan 输出回显 pin（用户权威输入可见）。
+        if (dryRun) {
+          console.log(
+            `[goal-runner] [dry-run] ${phase} plan: ${invokePlan.label}` +
+              (manifest.adapter_model_pin
+                ? `（adapter_model_pin=${manifest.adapter_model_pin.adapter}:${manifest.adapter_model_pin.value}）`
+                : ''),
+          );
+        }
 
         const outputLogPath = path.join(phaseDir, 'agent-output.log');
         // t1（f7a3d9c2，终审遗留②）：invoke_id 升级为 run 级持久序数（totalTurns 从 events

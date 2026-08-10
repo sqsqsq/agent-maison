@@ -256,6 +256,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
+  // plan d7f3a9c4 t1/t2：显式 --adapter-model 模型钉（五家回放 argv / 单点裁决授权矩阵）
+  { id: 'goal-model-pin-d7f3a9c4', modulePath: './unit/goal-model-pin-d7f3a9c4.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },

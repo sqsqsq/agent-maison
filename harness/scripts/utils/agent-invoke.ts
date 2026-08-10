@@ -286,6 +286,7 @@ function claudeArgv(
   unattended: UnattendedContract,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
   binary: string = 'claude',
+  modelPin?: string,
 ): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
@@ -303,10 +304,14 @@ function claudeArgv(
   } else {
     argv.push('--permission-mode', 'acceptEdits');
   }
+  // plan d7f3a9c4 t1：显式模型钉回放（claude 与 codeagent 共用本函数，仅 binary 不同）。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
+  }
   return argv;
 }
 
-function codexArgv(unattended: UnattendedContract): string[] {
+function codexArgv(unattended: UnattendedContract, modelPin?: string): string[] {
   // 事故修复（plan c9f4e7a2 t2）：`--ask-for-approval` 是 **codex 顶层旗标**，必须放在
   // `exec` 之前。0.138.0 实测：`codex -a never exec --help` 成功；
   // `codex exec -a never --help` → `unexpected argument '-a' found`。
@@ -315,9 +320,14 @@ function codexArgv(unattended: UnattendedContract): string[] {
     '--ask-for-approval',
     unattended.approval_mode === 'never' ? 'never' : 'on-request',
     'exec',
-    '--sandbox',
-    unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write',
   ];
+  // plan d7f3a9c4 t1：显式模型钉回放——`--model` 置于 `exec` 与 `--sandbox` 之间
+  // （位置随 c9 t2 修正后形态：exec --model <v> --sandbox <m>）。取消数据裸值陷阱：
+  // 不使用 `-c model=<raw>`。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
+  }
+  argv.push('--sandbox', unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write');
   // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
@@ -331,11 +341,16 @@ export function cursorHeadlessPlan(
   unattended: UnattendedContract,
   prompt: string,
   resolved: ResolvedHeadlessBinary | null,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   const binary = resolved?.path ?? 'cursor-agent';
   const argv = [binary, '-p'];
   if (unattended.approval_mode === 'never') {
     argv.push('--force', '--trust');
+  }
+  // plan d7f3a9c4 t1：显式模型钉回放——`--model <v>`。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
   }
   const base = path.basename(binary);
   return {
@@ -380,10 +395,15 @@ function chrysHeadlessPlan(vars: InvokeTemplateVars, promptContent: string): Hea
 export function opencodeHeadlessPlan(
   vars: InvokeTemplateVars,
   promptContent: string,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   const resolved = resolveHeadlessBinary([...OPENCODE_HEADLESS_BINARY_CANDIDATES]);
   const binary = resolved?.path ?? 'opencode';
   const argv = [binary, 'run', '--dangerously-skip-permissions', '--dir', vars.PROJECT_ROOT];
+  // plan d7f3a9c4 t1：显式模型钉回放——opencode 用 `-m <v>`（非 --model）。
+  if (modelPin !== undefined) {
+    argv.push('-m', modelPin);
+  }
   const base = path.basename(binary);
   return {
     argv,
@@ -460,27 +480,28 @@ export function defaultHeadlessInvokePlan(
   unattended: UnattendedContract,
   promptContent: string,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
+  modelPin?: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(unattended, toolEventProvenance);
+    const argv = claudeArgv(unattended, toolEventProvenance, 'claude', modelPin);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   // codeagent（plan c7a9e2f4）：Claude Code 内核 fork，argv 全套复用（仅二进制名不同）；
   // prompt 走 stdin 同款铁律（codeagentcli 亦为 Windows cmd shim，实证 stdin 喂 prompt 可用）。
   if (adapterName === 'codeagent') {
-    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli');
+    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli', modelPin);
     const plan = attachResolvedBinary(argv, CODEAGENT_HEADLESS_BINARY_CANDIDATES, 'codeagentcli -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
-    const argv = codexArgv(unattended);
+    const argv = codexArgv(unattended, modelPin);
     const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
-    return { ...cursorHeadlessPlan(unattended, promptContent, resolved), adapterName };
+    return { ...cursorHeadlessPlan(unattended, promptContent, resolved, modelPin), adapterName };
   }
   if (adapterName === 'chrys') {
     return {
@@ -512,6 +533,7 @@ export function defaultHeadlessInvokePlan(
           PHASE: '',
         },
         promptContent,
+        modelPin,
       ),
       adapterName,
     };
@@ -531,16 +553,20 @@ export function resolveHeadlessInvokePlan(
   unattended: UnattendedContract,
   promptContent: string,
   vars: InvokeTemplateVars,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'chrys') {
     return chrysHeadlessPlan(vars, promptContent);
   }
   if (adapterName === 'opencode') {
-    return opencodeHeadlessPlan(vars, promptContent);
+    return opencodeHeadlessPlan(vars, promptContent, modelPin);
   }
   if (KNOWN_STRUCTURED_ADAPTERS.has(adapterName)) {
-    // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）
-    return defaultHeadlessInvokePlan(adapterName, unattended, promptContent, capability.tool_event_provenance);
+    // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）；
+    // d7f3a9c4 t1：显式模型钉随 modelPin 回放。
+    return defaultHeadlessInvokePlan(
+      adapterName, unattended, promptContent, capability.tool_event_provenance, modelPin,
+    );
   }
   const custom = capability.external_runner?.headless_invoke?.trim();
   if (custom) {
