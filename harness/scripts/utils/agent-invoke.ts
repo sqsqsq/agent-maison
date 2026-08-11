@@ -124,6 +124,12 @@ export interface ChildSettledResult {
   exitCode: number;
   signal: string | null;
   lingering_pipe: boolean;
+  /**
+   * plan d7f3a9c4 t4：child spawn race 的结构化事实（binary preflight 通过后 spawn 仍失败）。
+   * 与 resolvedBinary 短路路径（invokeAgentHeadless）产出**同一种**事实——不靠 stderr 猜
+   * spawn failure。
+   */
+  spawn_error?: { code?: string; message: string };
 }
 
 export interface AwaitChildSettledOptions {
@@ -161,6 +167,7 @@ export function createChildSettleWaiter(
   let settled = false;
   let exitCode = 1;
   let signal: string | null = null;
+  let spawnError: { code?: string; message: string } | undefined;
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveFn!: (r: ChildSettledResult) => void;
@@ -179,7 +186,12 @@ export function createChildSettleWaiter(
     }
     child.stdout?.destroy();
     child.stderr?.destroy();
-    resolveFn({ exitCode, signal, lingering_pipe });
+    resolveFn({
+      exitCode,
+      signal,
+      lingering_pipe,
+      ...(spawnError ? { spawn_error: spawnError } : {}),
+    });
   };
 
   const armForceSettleAfterKill = (): void => {
@@ -189,7 +201,11 @@ export function createChildSettleWaiter(
     }, forceSettleAfterKillMs);
   };
 
-  child.on('error', () => {
+  // plan d7f3a9c4 t4：不再丢弃 spawn 错误对象——结构化保留 {code, message}（resolvedBinary
+  // 短路与真实 child error 同构，见 invokeAgentHeadless）。spawn race 是 t4 新增硬失败之一。
+  child.on('error', (err) => {
+    const e = err as NodeJS.ErrnoException;
+    spawnError = { code: e.code, message: e.message };
     exitCode = 1;
     void finalize(false);
   });
@@ -844,6 +860,11 @@ export interface AgentInvokeResult {
   kill_error?: string | null;
   /** C-ab-eval：按 adapter 声明采集的用量（采集失败/none → confidence: proxy，token 字段 null） */
   usage?: AgentInvokeUsage;
+  /**
+   * plan d7f3a9c4 t4：child spawn race 的结构化事实（resolvedBinary 短路与真实 child error
+   * 同一种 shape）——金丝雀硬失败分类据此判定，不靠 stderr 猜。
+   */
+  spawn_error?: { code?: string; message: string };
 }
 
 export interface AgentInvokeOptions {
@@ -1168,6 +1189,8 @@ async function spawnHeadlessAsync(
     completion_observed: completionObserved || undefined,
     signal,
     lingering_pipe: settled.lingering_pipe || undefined,
+    // plan d7f3a9c4 t4：spawn race 结构化事实透传（child 'error' 事件）。
+    spawn_error: settled.spawn_error,
     kill_attempted: killResult.kill_attempted,
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
@@ -1207,11 +1230,15 @@ export async function invokeAgentHeadless(
   if (plan.resolvedBinary && !headlessBinarySpawnable(plan.resolvedBinary)) {
     const adapterGuess = diagnoseAdapterForBinaryIssue(plan);
     const candidates = STRUCTURED_BINARY_CANDIDATES[adapterGuess] ?? [...CURSOR_HEADLESS_BINARY_CANDIDATES];
+    const stderr = formatHeadlessBinaryIssue(adapterGuess, [...candidates], plan.resolvedBinary);
+    // plan d7f3a9c4 t4：resolvedBinary 短路与真实 child error 产出**同一种** spawn_error 结构化
+    // 事实（不靠 stderr 猜 spawn failure）——金丝雀硬失败分类据此统一判定。
     return {
       exitCode: 1,
       stdout: '',
-      stderr: formatHeadlessBinaryIssue(adapterGuess, [...candidates], plan.resolvedBinary),
+      stderr,
       command,
+      spawn_error: { code: 'resolved_binary_unspawnable', message: stderr },
     };
   }
 

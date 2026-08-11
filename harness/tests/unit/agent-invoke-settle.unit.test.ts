@@ -57,13 +57,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'createChildSettleWaiter: error resolves with exit 1',
+    name: 'createChildSettleWaiter: error resolves with exit 1 and structured spawn_error',
     run: async () => {
       const child = fakeChild();
       const { promise } = createChildSettleWaiter(child, { graceMs: 50 });
-      child.emit('error', new Error('spawn fail'));
+      // plan d7f3a9c4 t4：真实 child spawn error 事件携带 ErrnoException（code/message）——
+      // 链路 `child.on(\'error\') → createChildSettleWaiter → ChildSettledResult` 必须保留
+      // 结构化 spawn_error（resolvedBinary 短路同构；下游硬失败分类据此判定，不靠 stderr 猜）。
+      const err = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+      child.emit('error', err);
       const settled = await promise;
       assert(settled.exitCode === 1, 'exitCode');
+      assert(settled.spawn_error?.code === 'ENOENT', `spawn_error.code=${String(settled.spawn_error?.code)}`);
+      assert(settled.spawn_error?.message === 'spawn ENOENT', `spawn_error.message=${String(settled.spawn_error?.message)}`);
     },
   },
   {

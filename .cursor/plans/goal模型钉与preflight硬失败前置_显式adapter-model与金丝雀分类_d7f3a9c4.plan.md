@@ -249,7 +249,7 @@ todos:
       普通额度/API/auth 错误**不**升 BLOCKER；无效视觉答卷仍非阻断；缓存跳过路径
       不调用分类；既有 binary 门禁路径行为不变（回归断言）；10KB 长行 stderr 夹具
       无回溯灾难。
-    status: pending
+    status: completed
 isProject: false
 ---
 

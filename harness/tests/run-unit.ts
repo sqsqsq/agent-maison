@@ -260,6 +260,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'goal-model-pin-d7f3a9c4', modulePath: './unit/goal-model-pin-d7f3a9c4.unit.test' },
   // plan d7f3a9c4 t3：pin 与金丝雀身份绑定 + receipt/消费面/三 env 链/telemetry/两条生产链回归
   { id: 'goal-canary-pin-binding-d7f3a9c4', modulePath: './unit/goal-canary-pin-binding-d7f3a9c4.unit.test' },
+  // plan d7f3a9c4 t4：金丝雀 CLI 硬失败前置 BLOCKER（spawn race / CLI·config 参数不兼容）
+  { id: 'goal-canary-hard-cli-d7f3a9c4', modulePath: './unit/goal-canary-hard-cli-d7f3a9c4.unit.test' },
   { id: 'visual-confirm', modulePath: './unit/visual-confirm.unit.test' },
   { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
   { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },

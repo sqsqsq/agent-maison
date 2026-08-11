@@ -220,7 +220,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 
 When the vision canary probe actually executes (`decideVisionCanaryProbe` returns `action === 'probe'`), a structured hard CLI failure SHALL be classified separately from ordinary invoke failures and SHALL escalate to a run-level BLOCKER before the first formal phase. The two newly covered classes are a child spawn race and a CLI/config argument incompatibility (unknown/unexpected/unrecognized argument or config load error). The probe SHALL return a `hard_cli_failure` outcome distinct from the existing invoke/invalid outcomes; only `hard_cli_failure` SHALL block. The existing resolved-binary preflight gate SHALL be preserved unchanged and SHALL NOT be double-counted as new protection. Skip paths (cache hit, dry-run, chain without a UI phase, local override) SHALL NOT gain this protection. Ordinary quota/API/auth errors and invalid vision answers SHALL remain non-blocking, and the existing binary gate behavior SHALL be unchanged.
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/agent-invoke.ts`
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/vision-canary.ts`
 
 #### Scenario: Unknown argument during an actual probe blocks the run
 
@@ -232,5 +232,5 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-prefl
 - **WHEN** the canary probe is skipped due to a fresh admissible cache
 - **THEN** no probe is spawned and no hard-failure classification occurs
 
-> 前瞻规格注记：本 Requirement（金丝雀硬失败前置 BLOCKER）对应 plan d7f3a9c4 的 t4，属 t5 **先行成文**，相关代码**尚未实现**（`hard_cli_failure` 分类、BLOCKER 接线均不存在）。实现后本段才生效。「Pin binds the canary receipt and its admissibility」Scenario（t3）已实现。
+> 注记：本 Requirement（金丝雀硬失败前置 BLOCKER）对应 plan d7f3a9c4 的 t4，已实现——`hard_cli_failure` 分类（child spawn race / CLI·config 参数不兼容）与只在该分类上的 run 级 BLOCKER 接线均已落地；skip 路径不获得该保护，既有 binary 门禁与普通 auth/quota/API/无效答卷语义保持不变。
 

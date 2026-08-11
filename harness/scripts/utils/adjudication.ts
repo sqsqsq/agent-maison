@@ -263,6 +263,12 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   agent_no_output: { class: 'external' },
   agent_timeout_repeated: { class: 'external' },
   closure_timeout: { class: 'external' },
+  /**
+   * plan d7f3a9c4 t4：金丝雀 CLI 硬失败（child spawn race / CLI·config 参数不兼容）——
+   * CLI/adapter 兼容性问题、**非需求代码**。修复 adapter 版本/配置/环境后可重跑
+   * （--refresh-vision-probe 触发重探）；不是内容失败（agent 做不对），也不是框架缺陷。
+   */
+  canary_cli_hard_failure: { class: 'external' },
 
   // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
   //     budget 字段已入 manifest identity 冻结） ------------------------------

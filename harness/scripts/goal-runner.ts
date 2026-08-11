@@ -823,6 +823,16 @@ export function __testing_setInvokeAgent(fn: InvokeAgentFn | null): void {
 }
 
 /**
+ * plan d7f3a9c4 t4：金丝雀 probe 的 invoke 注入（测试用；null=走真实 invokeAgentHeadless）。
+ * 与 injectedInvokeAgent 分立——probe 走 runVisionCanaryProbe 的 invokeFn 缝，phase invoke
+ * 走 injectedInvokeAgent；不混用，避免集成测试里 probe 与 phase 的注入互相污染。
+ */
+let injectedCanaryProbeInvoke: InvokeAgentFn | null = null;
+export function __testing_setCanaryProbeInvoke(fn: InvokeAgentFn | null): void {
+  injectedCanaryProbeInvoke = fn;
+}
+
+/**
  * b3e8d4c7 t4：把 runner 内存里的 **plan** PASS 快照锚编成 gate harness 的 env。
  * 只有 plan 锚需要跨进程——ui-scope-gate 的白名单唯一来源就是它。
  * 内存里没有（未到 plan PASS / 已被合法 supersede 清除）→ 不注入，消费方退回既有行为。
@@ -917,6 +927,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
   injectedAfterPassSnapshot = null;
+  injectedCanaryProbeInvoke = null;
 }
 
 async function runHarnessPhase(
@@ -4232,9 +4243,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
       dryRun,
       forceRefresh: Boolean(argv['refresh-vision-probe']),
     });
+    // plan d7f3a9c4 t4：金丝雀 CLI 硬失败（spawn race / CLI·config 参数不兼容）**只有**在
+    // 真实 action==='probe' 路径上记录并升 run 级 BLOCKER；终态发射在 manifest 落盘后
+    //（见 writeGoalManifest 之后的 canary_cli_hard_failure 块），保证 run 有可监控终态。
+    let canaryHardCliFailure: string | null = null;
     if (visionProbeDecision.action === 'probe') {
-      const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
-      if (probeResult.ran && probeResult.outcome === 'valid_cached') {
+      const probeResult = await runVisionCanaryProbe({
+        projectRoot, frameworkRoot, manifest,
+        ...(injectedCanaryProbeInvoke ? { invokeFn: injectedCanaryProbeInvoke } : {}),
+      });
+      if (probeResult.outcome === 'hard_cli_failure') {
+        canaryHardCliFailure = probeResult.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题';
+      } else if (probeResult.ran && probeResult.outcome === 'valid_cached') {
         console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
       } else if (probeResult.ran) {
         // plan c7d2e9a4 t3（stale-if-error）：探测无效/调用失败**未写盘**——日志须与消费面
@@ -4275,6 +4295,30 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
     }
     writeGoalManifest(manifest, projectRoot);
+
+    // plan d7f3a9c4 t4：金丝雀 CLI 硬失败 BLOCKER——复用既有启动期 HALT 模式（与下方
+    // declared_product_layer_missing 同款），**不在 probe 块内 process.exit**：
+    // 先写 manifest（run 可监控、可表达 --resume），再落 phase_halt（含 halt_guidance）+
+    // run_end{HALTED}，标记 runConcluded 后 return 1。fresh 由此有结构化终态；resume
+    // 不会保留旧 disposition。
+    if (canaryHardCliFailure) {
+      const guidance =
+        `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
+        '这是 CLI/config 参数不兼容或 spawn race——请核对 adapter 版本/配置/环境后重跑' +
+        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
+      goalEvents.emit({
+        type: 'phase_halt',
+        phase: chain[0],
+        halt_reason: 'canary_cli_hard_failure',
+        verdict: 'FAIL',
+        reason: canaryHardCliFailure,
+        halt_guidance: guidance,
+      });
+      goalEvents.emit({ type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure' });
+      runConcluded = true;
+      console.error(`\n===== canary_cli_hard_failure =====\n${guidance}\n`);
+      return 1;
+    }
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
 
@@ -6069,6 +6113,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           timed_out: invoke.timed_out,
           silent_killed: invoke.silent_killed,
           lingering_pipe: invoke.lingering_pipe,
+          // plan d7f3a9c4 t4：spawn race 结构化事实进事件（诊断保真；不改变任何裁决）。
+          ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
           kill_attempted: invoke.kill_attempted,
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,

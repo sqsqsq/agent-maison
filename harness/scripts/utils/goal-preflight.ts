@@ -40,6 +40,7 @@ import {
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
   resolveCanaryCacheDecision,
+  resolveCanaryHardCliFailure,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
 
@@ -343,7 +344,8 @@ export function decideVisionCanaryProbe(input: {
 export type VisionCanaryProbeOutcome =
   | 'valid_cached'
   | 'invalid_not_cached'
-  | 'invoke_failed_not_cached';
+  | 'invoke_failed_not_cached'
+  | 'hard_cli_failure';
 
 /**
  * E1：实际执行金丝雀探测——生成资产、headless 问答、严格判卷、按有效性决定是否写缓存。
@@ -354,7 +356,9 @@ export type VisionCanaryProbeOutcome =
  * （空输出/额度错误文本/prompt echo/残卷）一律**不落缓存**（消费面按既有语义回退：盘上有
  * fresh last-known-good 则沿用，否则 adapter 声明路径——stale-if-error，日志由 goal-runner
  * 按盘上缓存现查二分）；只有有效作答（严格解析的 canonical answer）才 classify 并连同
- * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER。
+ * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER
+ * （plan d7f3a9c4 t3 沿此；**t4 例外**：child spawn race / CLI·config 参数不兼容由
+ * resolveCanaryHardCliFailure 判定为 hard_cli_failure，goal-runner 据此升 run 级 BLOCKER）。
  */
 export async function runVisionCanaryProbe(input: {
   projectRoot: string;
@@ -404,6 +408,15 @@ export async function runVisionCanaryProbe(input: {
       manifest.adapter_model_pin?.value,
     );
     const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
+    // 不兼容只这两类升 hard_cli_failure（由 goal-runner 在 action==='probe' 真实路径升 BLOCKER）；
+    // 其余 invoke 结果（auth/quota/API/无效答卷/超时/静默杀）保持既有非阻断语义。
+    // "无有效 stdout" 复用 parseCanaryAnswer（传 answerKey）——CLI banner 等非答卷不压签名。
+    const canaryStructuredStdout = planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance);
+    const hardCli = resolveCanaryHardCliFailure(invoke, { answerKey, structuredStdout: canaryStructuredStdout });
+    if (hardCli) {
+      return { ran: true, outcome: 'hard_cli_failure', error: hardCli };
+    }
     const decision = resolveCanaryCacheDecision({
       stdout: invoke.stdout,
       exitCode: invoke.exitCode,
@@ -412,7 +425,7 @@ export async function runVisionCanaryProbe(input: {
       skipped: invoke.skipped,
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
-      structured_stdout: planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance),
+      structured_stdout: canaryStructuredStdout,
     }, answerKey);
     if (decision.kind !== 'valid') {
       return {
