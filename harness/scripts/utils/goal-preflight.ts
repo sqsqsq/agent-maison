@@ -498,6 +498,7 @@ import {
   writeFidelityIntentSsot,
   type FidelityRoutingDecision,
   type FidelityTarget,
+  type RequirementProvenance,
 } from './fidelity-shared';
 import { resolveEffectiveVisionContext, sha256File as sha256FileVc } from './effective-vision-context';
 import { uiSpecAbsPath as uiSpecAbsPathT6 } from './ui-spec-shared';
@@ -576,6 +577,11 @@ export interface FidelityRoutingInitInput {
   runIdForReceipt?: string;
   /** plan d7f3a9c4 t3：最终裁决后的 model pin value（goal 态由 manifest 派生；无 pin 不传） */
   modelPin?: string;
+  /** plan c8e5b3f1 t1：需求来源（必填——TS 必填参数防漏接，漏传即编译不过）：
+   * goal_manifest=goal 模式（preflight / vision policy 收紧重建）；explicit_cli=手动显式非空
+   * 需求；intent_fallback=仅靠 collectIntentTextWithPhaseFallback 兜底。不提供默认值、不看
+   * 环境变量猜、不叠运行时校验。 */
+  requirementProvenance: RequirementProvenance;
   now?: () => Date;
 }
 
@@ -656,6 +662,8 @@ export function initializeFidelityRouting(
   writeFidelityIntentSsot(input.projectRoot, input.feature, routing, {
     executionIdentity: input.executionIdentity,
     requirementSha,
+    // plan c8e5b3f1 t1：writer 必须写调用方显式裁决的需求来源（必填入参，TS 防漏接）。
+    requirementProvenance: input.requirementProvenance,
   });
   return { routing, receiptNote, requirementSha };
 }
@@ -685,6 +693,8 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     fidelityFromCli: input.fidelityFromCli,
     fidelityReceiptRel: manifest.fidelity_receipt,
     runIdForReceipt: manifest.run_id,
+    // plan c8e5b3f1 t1：goal preflight 需求来源=goal manifest。
+    requirementProvenance: 'goal_manifest',
     // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
     ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
     now: input.now,

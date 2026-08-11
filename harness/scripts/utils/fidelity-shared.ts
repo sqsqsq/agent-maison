@@ -783,6 +783,20 @@ export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): Fid
 
 export const FIDELITY_INTENT_SCHEMA_VERSION = '2.0';
 
+/**
+ * plan c8e5b3f1 t1：需求来源裁判——`goal_manifest`=goal 模式（preflight vision policy 收紧重建）；
+ * `explicit_cli`=手动阶段驱动显式 `--requirement(-file)`（解析结果 trim 非空）；`intent_fallback`=
+ * 手动路径仅靠宽泛意图文本兜底（README/笔记/spec.md），**不**具备权威需求语义。
+ * 字段省略=旧版 doc（legacy 兼容，不判 corrupt、也不解锁 derive.requirement）；在场但枚举非法
+ * → 判 corrupt（半写/篡改不得被当 legacy 混过去）。`FIDELITY_INTENT_SCHEMA_VERSION` 不 bump。
+ */
+export type RequirementProvenance = 'goal_manifest' | 'explicit_cli' | 'intent_fallback';
+const REQUIREMENT_PROVENANCES = new Set<RequirementProvenance>(['goal_manifest', 'explicit_cli', 'intent_fallback']);
+
+export function isValidRequirementProvenance(v: unknown): v is RequirementProvenance {
+  return typeof v === 'string' && REQUIREMENT_PROVENANCES.has(v as RequirementProvenance);
+}
+
 export interface FidelityIntentSsot {
   schema_version: string;
   inferred_fidelity: FidelityTarget;
@@ -795,6 +809,8 @@ export interface FidelityIntentSsot {
   decision: { source: FidelityDecisionSource; rationale: string; decision_id: string };
   execution_identity: string;
   requirement_sha256: string;
+  /** plan c8e5b3f1 t1：可选——writer 从此永远写；缺字段=旧版 doc（legacy 兼容）。 */
+  requirement_provenance?: RequirementProvenance;
 }
 
 export function fidelityIntentSsotPath(projectRoot: string, feature: string): string {
@@ -839,6 +855,9 @@ function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string):
       typeof doc?.decision?.decision_id !== 'string' || !/^[0-9a-f]{16}$/i.test(doc.decision.decision_id) ||
       typeof doc?.execution_identity !== 'string' || !doc.execution_identity.trim() ||
       typeof doc?.requirement_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(doc.requirement_sha256) ||
+      // plan c8e5b3f1 t1：requirement_provenance 在场但枚举非法 → corrupt（半写/篡改不得当 legacy）；
+      // 缺字段=旧版 doc，按 legacy 兼容不判 corrupt（不 bump schema_version）。
+      (doc.requirement_provenance !== undefined && !isValidRequirementProvenance(doc.requirement_provenance)) ||
       // clamp 关系：clamped=true 须携合法 reason；false 不得携（半改写即 corrupt）
       (doc.clamped === true && doc.clamp_reason !== 'no_vision_ocr_available' && doc.clamp_reason !== 'no_vision_no_ocr') ||
       (doc.clamped === false && doc.clamp_reason !== undefined) ||
@@ -858,7 +877,7 @@ export function writeFidelityIntentSsot(
   projectRoot: string,
   feature: string,
   d: FidelityRoutingDecision,
-  ids: { executionIdentity: string; requirementSha: string },
+  ids: { executionIdentity: string; requirementSha: string; requirementProvenance: RequirementProvenance },
 ): string {
   const p = fidelityIntentSsotPath(projectRoot, feature);
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -874,6 +893,8 @@ export function writeFidelityIntentSsot(
     decision: d.decision,
     execution_identity: ids.executionIdentity,
     requirement_sha256: ids.requirementSha,
+    // plan c8e5b3f1 t1：writer 从此永远写（必填入参，TS 防漏接）。
+    requirement_provenance: ids.requirementProvenance,
   };
   // post-impl3 P1-4：tmp+rename 原子替换（半写崩溃不得留下截断 SSOT）
   const tmp = `${p}.${process.pid}.tmp`;

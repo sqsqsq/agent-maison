@@ -209,6 +209,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         projectRoot: root, frameworkRoot: root, feature: 'demo',
         requirement: hostReq, featuresDirRel: 'doc/features',
         executionIdentity: 'phase:demo:spec',
+        requirementProvenance: 'explicit_cli',
       });
       assertEq(routing.inferred, 'pixel_1to1', 'inferred=pixel（枚举字面量 pixel_1to1 识别）');
       assertEq(routing.strictness, 'best_effort', '「尽量」=best_effort（素材声明不进质量轴）');
@@ -228,6 +229,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           projectRoot: root, frameworkRoot: root, feature: 'demo',
           requirement: '页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。',
           featuresDirRel: 'doc/features', executionIdentity: 'phase:demo:spec',
+          requirementProvenance: 'explicit_cli',
         });
       };
       initHard();
@@ -240,6 +242,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         projectRoot: root, frameworkRoot: root, feature: 'demo',
         requirement: '页面完全参考截图，尽量还原。',
         featuresDirRel: 'doc/features', executionIdentity: 'phase:demo:spec',
+        requirementProvenance: 'explicit_cli',
       });
       const [soft] = checkFidelityCapabilityPregate(ctx);
       assertEq(soft.status, 'PASS', soft.details);
@@ -314,6 +317,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           executionIdentity: runId,
           fidelityReceiptRel: receiptRel,
           runIdForReceipt: runId,
+          requirementProvenance: 'goal_manifest',
           now,
         });
         assertEq(init('source-run').receiptNote, '', '源 run receipt 应有效');
@@ -350,6 +354,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(d.effective, 'pixel_1to1', '有视觉不钳（三档矩阵上限）');
       writeFidelityIntentSsot(root, 'demo', d, {
         executionIdentity: 'phase:demo:spec', requirementSha: 'a'.repeat(64),
+        requirementProvenance: 'explicit_cli',
       });
       writeCapabilitySnapshot(root, 'demo', {
         execution_identity: 'phase:demo:spec',
@@ -384,6 +389,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         projectRoot: root, frameworkRoot: root, feature: 'demo',
         requirement: hostReq, featuresDirRel: 'doc/features',
         executionIdentity: '20260724T000000Z-goal1',
+        requirementProvenance: 'goal_manifest',
       });
       const manifest = {
         feature: 'demo', requirement: hostReq, run_id: '20260724T000000Z-goal1',
@@ -445,6 +451,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         projectRoot: root, frameworkRoot: root, feature: 'demo',
         requirement: '页面完全参考截图，尽量还原。无高保真素材时可从原始截图裁剪获取。',
         featuresDirRel: 'doc/features', executionIdentity: 'r-report',
+        requirementProvenance: 'goal_manifest',
       });
       const reportDir = 'doc/features/demo/goal-runs/r-report';
       const report = generateGoalReportJson('r-report', 'demo', 'COMPLETED', []);

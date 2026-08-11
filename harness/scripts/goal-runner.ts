@@ -2091,6 +2091,8 @@ export function resolvePhaseCapabilityAdvisory(
         adapter: manifest.adapter, profileDir: resolvedProfile.profileDir,
         manifestFidelity: manifest.fidelity, fidelityReceiptRel: manifest.fidelity_receipt,
         runIdForReceipt: manifest.run_id,
+        // plan c8e5b3f1 t1：vision policy 收紧重建需求来源=goal manifest。
+        requirementProvenance: 'goal_manifest',
         // plan d7f3a9c4 t3：能力重建同样带最终裁决 pin。
         ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
       });

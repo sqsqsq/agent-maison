@@ -13,7 +13,11 @@
  *
  * 用法：
  *   node scripts/fidelity-intent-init.ts --feature <f> [--requirement "<需求文本>"]
- * 缺省需求来源：feature 根目录需求文档（*.md/*.txt）+ spec.md（与 check-spec 意图收集同源）。
+ *   node scripts/fidelity-intent-init.ts --feature <f> [--requirement-file <path>]
+ * `--requirement` 与 `--requirement-file` 互斥（共享 goal-manifest 的 resolveRequirementInput，
+ * fail-closed）；显式传了空/纯空白 `--requirement` 也会 fail-fast（不得静默降级成宽泛意图文本）。
+ * 缺省需求来源：feature 根目录需求文档（*.md/*.txt）+ spec.md（与 check-spec 意图收集同源）；
+ * 该缺省属 `intent_fallback` provenance，**不**解锁 derive.requirement（见 plan c8e5b3f1）。
  */
 
 import minimist from 'minimist';
@@ -21,6 +25,7 @@ import { detectRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
 import { loadResolvedProfile } from '../profile-loader';
 import { initializeFidelityRouting } from './utils/goal-preflight';
+import { resolveRequirementInput } from './utils/goal-manifest';
 import { computeRequirementShaFromText, loadFidelityIntentSsotState } from './utils/fidelity-shared';
 import { collectIntentTextWithPhaseFallback } from './check-spec';
 
@@ -51,7 +56,7 @@ export function phaseInitDecision(
 }
 
 function main(): number {
-  const argv = minimist(process.argv.slice(2), { string: ['feature', 'requirement'] });
+  const argv = minimist(process.argv.slice(2), { string: ['feature', 'requirement', 'requirement-file'] });
   const feature = typeof argv.feature === 'string' ? argv.feature.trim() : '';
   if (!feature) {
     console.error('[fidelity-intent-init] BLOCKER: --feature 必填');
@@ -61,10 +66,37 @@ function main(): number {
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDirRel = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
-  const requirementEarly =
-    typeof argv.requirement === 'string' && argv.requirement.trim()
-      ? argv.requirement
-      : collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
+  // plan c8e5b3f1 t1-②：局部预检 + 共享 resolver。顺序固定：
+  // ① 先看原始 flag——用户**显式给了** --requirement 但 trim 后为空 → fail-fast（即便同时
+  //    给了有效 --requirement-file，也不许 file 分支把这个显式空值盖过去；resolver 在该组合
+  //    下会静默采用 file，:459，故必须由本 CLI 预检拦下，共享 resolver 一行不改）。
+  const explicitRequirement = typeof argv.requirement === 'string' ? argv.requirement : undefined;
+  if (explicitRequirement !== undefined && explicitRequirement.trim().length === 0) {
+    console.error(
+      '[fidelity-intent-init] BLOCKER: --requirement 显式给了空/纯空白值——需求不能为空，' +
+        '也不得静默降级读宽泛意图文本解锁。请提供非空需求文本，或用 --requirement-file 指向非空文件。',
+    );
+    return 1;
+  }
+  // ② 再交给 resolveRequirementInput 做既有的互斥 / projectRoot 相对路径解析 / 读文件 / 空文件判定。
+  let resolvedExplicit: string | undefined;
+  try {
+    resolvedExplicit = resolveRequirementInput({
+      requirement: explicitRequirement,
+      requirementFile: argv['requirement-file'],
+      projectRoot,
+    });
+  } catch (error) {
+    console.error(`[fidelity-intent-init] BLOCKER: ${(error as Error).message}`);
+    return 1;
+  }
+  const explicitNonEmpty = Boolean(resolvedExplicit && resolvedExplicit.trim());
+  // plan c8e5b3f1 t1-①'：本 CLI 只可能传 explicit_cli（收到显式非空需求）或 intent_fallback
+  //（仅靠 collectIntentTextWithPhaseFallback 兜底）；不得判断或写入 goal_manifest。
+  const requirementProvenance = explicitNonEmpty ? 'explicit_cli' : 'intent_fallback';
+  const requirementEarly = explicitNonEmpty
+    ? resolvedExplicit!
+    : collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
   const newSha = requirementEarly
     ? computeRequirementShaFromText(projectRoot, feature, requirementEarly, featuresDirRel)
     : null;
@@ -91,6 +123,8 @@ function main(): number {
     executionIdentity: `phase:${feature}:spec`,
     adapter: cfg.agent_adapter,
     profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
+    // plan c8e5b3f1 t1：本 CLI 显式裁决需求来源（explicit_cli / intent_fallback）。
+    requirementProvenance,
   });
   console.log(
     `[fidelity-intent-init] ${routing.decision.rationale}（source=${routing.decision.source}，` +

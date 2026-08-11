@@ -183,6 +183,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'device-test-case-kernel', modulePath: './unit/device-test-case-kernel.unit.test' },
   { id: 'quality-tiers', modulePath: './unit/quality-tiers.unit.test' },
   { id: 'capability-degradation', modulePath: './unit/capability-degradation.unit.test' },
+  // plan c8e5b3f1 t1：阶段驱动 /spec 需求 provenance（SSOT explicit_cli 解锁 + 反例锁 + 血缘）
+  { id: 'spec-requirement-provenance', modulePath: './unit/spec-requirement-provenance.unit.test' },
   { id: 'goal-adapter-routing', modulePath: './unit/goal-adapter-routing.unit.test' },
   { id: 'goal-reconcile-observation', modulePath: './unit/goal-reconcile-observation.unit.test' },
   { id: 'goal-reconcile-boundary-fixtures', modulePath: './unit/goal-reconcile-boundary-fixtures.unit.test' },

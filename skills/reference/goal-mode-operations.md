@@ -57,6 +57,11 @@ manifest**，`--resume` 只认冻结值、不会重读源文件——所以源�
 > 就是为它准备的。包装脚本的实际代价是——每次 run 重新发明一遍、文件名各不相同，下次谁
 > 重跑旧 launcher 就会把**上一轮的旧需求**带进新 run（宿主已出现两份不同名的需求文件）。
 
+> **goal 路径零变化（plan c8e5b3f1 t1）**：`derive.requirement` 的 provenance 收紧只影响手动
+> 阶段驱动路径；goal 模式需求来源恒为 manifest，`goal_manifest` provenance 由 goal-runner
+> preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
+> 一致，goal run 无需任何调整。
+
 同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
 
 ```bash

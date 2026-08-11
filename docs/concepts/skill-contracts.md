@@ -32,6 +32,18 @@ capabilities:
 
 解析先运行 track 与命名 applicability provider；若不适用，capability 是 `not_applicable`，且不会尝试 source。适用后 source 依声明顺序解析：`resolved` 停止成功，`absent` 回退，`invalid` 停止并使 capability `blocked`。可用 capability 的最终状态只有 `resolved`、`pruned`、`blocked`；input 的缺失政策只由 capability 的 `on_missing` 决定。
 
+### `derive.requirement` 来源表（plan c8e5b3f1 t1）
+
+`derive.requirement` 是 spec 阶段 `capability_spec_requirement` 的唯一来源，按序尝试三段；前一段 `absent` 才落入下一段：
+
+| 顺序 | 来源 | 判据 | resolved 依赖绑定 |
+|---|---|---|---|
+| ① | goal manifest | `options.requirement` 非空（goal 模式经 `MAISON_GOAL_RUN_ID` 注入） | 空（goal 需求由 manifest 身份与 closure 独立绑定） |
+| ② | fidelity-intent SSOT | `state==='valid'` ∧ `requirement_provenance==='explicit_cli'` ∧ `execution_identity === phase:<feature>:spec`（不跨身份导入历史 goal 残留） | 只绑 `spec/reports/fidelity-intent.json`（真实 path + sha256） |
+| ③ | `change.md`（legacy） | 文件存在 | `change.md` path + sha256 |
+
+**不解锁**：`intent_fallback` provenance、缺 `requirement_provenance` 字段的旧版 SSOT（legacy 兼容、不判 corrupt）、`state==='corrupt'`（按 absent 继续，不升 invalid）、SSOT 身份与当前阶段不符、feature 根宽泛文本（README/笔记/`spec.md`）——这些都不是权威需求来源。三段全无时 input 为 `absent`、capability 因 `on_missing: fail` 变 `blocked`，`detail` 会列出已尝试来源与两条修复路径（goal 模式经 manifest；手动模式带需求文本重跑 Step 1 的 `fidelity-intent-init --requirement(-file)`）。
+
 ## 一次性报告、保证等级与新鲜度
 
 phase runner 在 checker 之前只生成一次不可变 `CapabilityResolutionReport`。报告只描述 artifact/derive 的前置可用性；build、install、device run、trace 等运行时事实仍由 checker 的 `CheckResult` 与 holder 管理，绝不回写报告。

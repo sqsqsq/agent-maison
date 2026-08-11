@@ -22,6 +22,7 @@ import {
   type PhaseContract,
   type SkillContract,
 } from './skill-contract';
+import { fidelityIntentSsotPath, loadFidelityIntentSsotState } from './fidelity-shared';
 
 export type InputResolutionState = 'resolved' | 'absent' | 'invalid' | 'not_applicable';
 export type CapabilityResolutionState = 'resolved' | 'pruned' | 'blocked' | 'not_applicable';
@@ -174,7 +175,63 @@ function resolveDerive(
           detail: `goal_requirement:${stableFingerprint(options.requirement.trim()).slice(0, 16)}`,
         };
       }
+      // plan c8e5b3f1 t1：阶段驱动路径——fidelity-intent SSOT 是本路径唯一权威需求来源。
+      // SSOT 段判据：state==='valid' 且 requirement_provenance==='explicit_cli' 且
+      // execution_identity 等于当前阶段身份（phase:<feature>:spec，不跨身份导入历史 goal 残留
+      // 决策）。intent_fallback / 缺字段旧版 SSOT / corrupt / 跨身份一律**不解锁**，继续落
+      // 到 change.md（legacy）。corrupt 按 absent 继续、不升 invalid、不抢 fidelity 门禁裁决权。
+      // **只在 spec 阶段启用**（review P1）：lite 的 change 阶段也用 derive.requirement，但必须
+      // 保持纯 change.md 分支零变化——否则创建 spec SSOT 会让语义未变的 change closure 被判 stale。
       const change = featureFilePath(projectRoot, feature, 'change.md');
+      if (options.phase === 'spec') {
+        const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
+        const ssot = ssotState.state === 'valid' ? ssotState.doc : null;
+        const ssotPath = fidelityIntentSsotPath(projectRoot, feature);
+        // 身份口径：reader 用 phase:<feature>:<options.phase>（唯一 writer 硬编码 phase:<feature>:spec）。
+        // 目前仅 spec 生成显式匹配身份；若将来给其它 phase 加 derive.requirement，须先对齐 writer
+        // 身份口径，勿在此静默扩匹配。
+        const expectedIdentity = `phase:${feature}:${options.phase}`;
+        if (
+          ssot &&
+          ssot.requirement_provenance === 'explicit_cli' &&
+          ssot.execution_identity === expectedIdentity
+        ) {
+          // ④ 该段依赖**只绑 fidelity-intent.json 本身**（真实 path + sha256）——需求变更 → 重跑
+          // Step 1 → initializer 重新签发 → 文件哈希变 → 旧 closure 经既有
+          // capabilityResolutionEvidenceInputs → productionEvidence 链自然 stale。不记源文件路径、
+          // 不存第二份 sha、不做实时验源。
+          return {
+            state: 'resolved',
+            dependencies: [dependency(ssotPath, 'derive')],
+            detail: `fidelity_intent_ssot:${ssotPath}`,
+          };
+        }
+        // review P1：spec 的 fallback/absent 分支**无条件**绑定 SSOT 路径（missing/corrupt 也以
+        // exists:false 记录，符合 openspec "freshness binds all actual attempts…absent paths with
+        // exists:false"）——否则"先经 change.md 形成旧 closure，再签发 explicit_cli SSOT"时旧
+        // closure 因从未记录 fidelity-intent.json 而永久 fresh。goal 分支（上方 options.requirement
+        // 非空）仍返回空 deps，不含此处绑定。
+        const deps = dedupeDependencies([
+          dependency(ssotPath, 'derive'),
+          dependency(change, 'derive'),
+        ]);
+        if (fs.existsSync(change)) {
+          return { state: 'resolved', dependencies: deps, detail: change };
+        }
+        // ⑤ 失败话术：三段全 absent 时 detail 机器可读且可行动（列出已尝试三段与关键路径，给两条
+        // 修复路径），不写"框架缺陷"。
+        return {
+          state: 'absent',
+          dependencies: deps,
+          detail:
+            'requirement 来源缺失：已尝试 ① goal manifest ② fidelity-intent SSOT（explicit_cli+身份匹配）' +
+            `（${ssotPath}）③ change.md（legacy）均无可解析需求。修复路径：goal 模式经 manifest 提供需求；` +
+            '手动阶段驱动模式带需求文本重跑 Step 1：`fidelity-intent-init --feature ' +
+            '<feature> --requirement "<需求文本>"`（或 `--requirement-file <path>`）。',
+        };
+      }
+      // 非 spec（lite change 等）：保留既有纯 change.md 分支（逐元素零变化——SSOT 不加载、不匹配、
+      // 不绑定，spec SSOT 的创建/变化不得影响 change closure 的新鲜度判定）。
       const deps = [dependency(change, 'derive')];
       return fs.existsSync(change)
         ? { state: 'resolved', dependencies: deps, detail: change }
