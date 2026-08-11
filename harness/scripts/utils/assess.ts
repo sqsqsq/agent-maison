@@ -33,6 +33,8 @@ import {
   type Assurance,
   type MinimumAssurance,
 } from './skill-contract';
+import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './capability-resolution';
+import type { CapabilityResolution } from './capability-resolution';
 
 export type AssessGapKind =
   | 'missing'
@@ -101,6 +103,8 @@ export interface AssessPhaseObservation {
   deferred: boolean;
   summary_fingerprint: string | null;
   evidence_fingerprint: string | null;
+  /** plan c8e5b3f1 t2 D：该 phase 的本地 blocked capability 事实（供 failed gap.detail 丰富；非 AssessResult 持久化 gap shape）。 */
+  blocked_capabilities?: BlockedCapabilityFact[];
 }
 
 export interface AssessDegradation {
@@ -162,6 +166,11 @@ export interface AssessRecommendation {
   runner_action?: PhaseVerdictAction;
 }
 
+/** plan c8e5b3f1 t2 review：持久化到 next.json / AssessResult.observed.phases 的 phase 观察类型——
+ * 显式剔除内部诊断字段 blocked_capabilities（运行时已剥离，类型契约同步，避免 schema 1.0 落盘 shape
+ * 与公开类型不一致）。 */
+export type PersistedAssessPhaseObservation = Omit<AssessPhaseObservation, 'blocked_capabilities'>;
+
 export interface AssessResult {
   schema_version: '1.0';
   kind: 'assess@1';
@@ -172,7 +181,7 @@ export interface AssessResult {
   authorization_context: AssessAuthorizationContext;
   observed_fingerprint: string;
   fingerprints: AssessObservation['fingerprints'];
-  observed: { phases: AssessPhaseObservation[]; degradations?: AssessDegradation[]; pruned_propagations?: AssessPrunedPropagation[] };
+  observed: { phases: PersistedAssessPhaseObservation[]; degradations?: AssessDegradation[]; pruned_propagations?: AssessPrunedPropagation[] };
   gaps: AssessGap[];
   recommendation: AssessRecommendation;
   alternatives: AssessRecommendation[];
@@ -257,6 +266,50 @@ function isDeferredSummary(summary: Record<string, unknown>): boolean {
       String(blocker.blocking_class ?? blocker.classification ?? ''),
     ),
   ) ?? false;
+}
+
+/**
+ * plan c8e5b3f1 t2 D：summary 是否含**本地** blocked capability（相关 unresolved attempts 均无
+ * upstream_producer）。真 device/external/deferred 场景（verdict=INCOMPLETE 且 blockers 为
+ * external/device）会命中 isDeferredSummary 的 blockers 分支，本函数不覆盖——只有"verdict=INCOMPLETE
+ * 且无 external blocker、且确有本地 blocked capability"时返回 true，从而让该 phase 走 failed 而非
+ * 被 isDeferredSummary 一律标成 deferred。（与 collectPrunedPropagations 的 upstream_producer 语义
+ * 一致：带 producer 的 unresolved attempt 交给上游 pruned 传播，不在此当本地失败。）
+ */
+function hasLocalBlockedCapability(summary: Record<string, unknown>): boolean {
+  // review P2：显式 external/device blocker **或** completion_status==='deferred' 都**优先**保持
+  // deferred——本地 blocked 不得吞掉真实外部/显式延迟（含 completion_status 显式置 deferred 的场景）。
+  const hasExternalBlocker = (summary.blockers as Array<Record<string, unknown>> | undefined)?.some((blocker) =>
+    ['externalBlocked', 'external_block', 'device_blocked'].includes(
+      String(blocker.blocking_class ?? blocker.classification ?? ''),
+    ),
+  ) ?? false;
+  if (hasExternalBlocker) return false;
+  if (String(summary.completion_status ?? '') === 'deferred') return false;
+  return capabilityEntries(summary).some((capability) => {
+    if (capability.active !== true || capability.state !== 'blocked') return false;
+    const inputs = Array.isArray(capability.inputs) ? capability.inputs : [];
+    for (const input of inputs) {
+      if (!input || typeof input !== 'object') continue;
+      const attempts = (input as Record<string, unknown>).attempts;
+      if (!Array.isArray(attempts)) continue;
+      for (const attempt of attempts) {
+        if (!attempt || typeof attempt !== 'object') continue;
+        const rec = attempt as Record<string, unknown>;
+        const state = rec.state;
+        if (state === 'absent' || state === 'invalid' || state === 'not_applicable') {
+          if (typeof rec.upstream_producer === 'string' && rec.upstream_producer) return false;
+        }
+      }
+    }
+    return true;
+  });
+}
+
+function blockedCapabilityFactsFor(summary: Record<string, unknown>): BlockedCapabilityFact[] {
+  return collectBlockedCapabilityFacts({
+    capabilities: capabilityEntries(summary) as unknown as CapabilityResolution[],
+  });
 }
 
 function capabilityEntries(summary: Record<string, unknown>): Record<string, unknown>[] {
@@ -429,7 +482,10 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       assurance,
       required_assurance: requiredAssurance,
       assurance_satisfied: assuranceSatisfied,
-      deferred: isDeferredSummary(summary),
+      // plan c8e5b3f1 t2 D：不把 verdict=INCOMPLETE 一律当 deferred——本地 blocked capability
+      //（unresolved attempts 均无 upstream_producer）应走 failed；真 device/external 仍 deferred。
+      deferred: isDeferredSummary(summary) && !hasLocalBlockedCapability(summary),
+      blocked_capabilities: blockedCapabilityFactsFor(summary),
       summary_fingerprint: fileHash(summaryPath),
       evidence_fingerprint: fileHash(evidencePath),
     };
@@ -544,7 +600,32 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       continue;
     }
     if (phase.verdict !== 'PASS') {
-      gaps.push({ phase: phase.phase, kind: 'failed', detail: `verdict=${phase.verdict ?? 'missing'}` });
+      // plan c8e5b3f1 t2 D：本地 blocked capability 时把泛化 detail 丰富为 capability/input/attempt
+      // + 修复动作（gap.kind 仍为 failed → recommendation 仍 rerun_phase）。无本地 blocked 时保持原样。
+      const blocked = phase.blocked_capabilities ?? [];
+      if (blocked.length > 0) {
+        const capDetail = blocked.map((fact) => {
+          const unresolved = fact.unresolved.length > 0
+            ? fact.unresolved
+              .map((u) => {
+                const deps = u.dependencies.filter((d) => !!d.path).map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ');
+                return `input=${u.input} source=${u.source}${u.detail ? `: ${u.detail}` : ''}${u.upstream_producer ? ` (producer=${u.upstream_producer})` : ''}${deps ? ` path=[${deps}]` : ''}`;
+              })
+              .join('; ')
+            : `applicability invalid（provider=${fact.applicability_provider ?? 'n/a'}` +
+              (fact.applicability_dependencies.length > 0
+                ? `，path=[${fact.applicability_dependencies.map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ')}]` : '') +
+              `）`;
+          return `capability=${fact.capability} ${unresolved}`;
+        }).join('；');
+        gaps.push({
+          phase: phase.phase,
+          kind: 'failed',
+          detail: `verdict=${phase.verdict ?? 'missing'}；${capDetail}；补齐该输入后重跑当前 phase`,
+        });
+      } else {
+        gaps.push({ phase: phase.phase, kind: 'failed', detail: `verdict=${phase.verdict ?? 'missing'}` });
+      }
       continue;
     }
     if (phase.closure === 'stale') {
@@ -697,7 +778,10 @@ export function assessObservation(
     observed_fingerprint: observation.fingerprints.observed,
     fingerprints: observation.fingerprints,
     observed: {
-      phases: observation.phases,
+      // plan c8e5b3f1 t2 review：blocked_capabilities 是**内部诊断数据**，供 gapsFromObservation
+      // 丰富 failed gap.detail；持久化前剥离，不进入 AssessResult.observed.phases / next.json
+      //（schema 仍 1.0，零 observed/schema 扩展）。
+      phases: observation.phases.map(({ blocked_capabilities: _bc, ...rest }) => rest),
       degradations: observation.degradations ?? [],
       pruned_propagations: observation.pruned_propagations ?? [],
     },

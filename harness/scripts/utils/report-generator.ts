@@ -30,6 +30,7 @@ import {
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
+import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
 
 // --------------------------------------------------------------------------
@@ -506,11 +507,52 @@ export function generateMergedReport(
   }
   lines.push('');
 
+  // plan c8e5b3f1 t2 A：blocked capability 明细（人读面，非门禁）——从 capability_resolutions 确定性
+  // 提取 active ∧ blocked 的事实。requirement 专属话术只来自该 capability 的 attempt.detail（原样转述），
+  // 通用段不夹带专属建议。
+  const blockedFacts = collectBlockedCapabilityFacts({ capabilities: scriptReport.capability_resolutions });
+  if (blockedFacts.length > 0) {
+    lines.push('## 二·五、blocked capability 明细');
+    lines.push('');
+    for (const fact of blockedFacts) {
+      lines.push(`### capability: ${fact.capability}（axis=${fact.axis}）`);
+      lines.push('');
+      if (fact.unresolved.length === 0) {
+        lines.push(
+          `- applicability invalid：provider=${fact.applicability_provider ?? 'n/a'}` +
+            (fact.applicability_dependencies.length > 0
+              ? `，path=${fact.applicability_dependencies.map((d) => d.path).join(', ')}`
+              : '') +
+            '。补齐该输入后重跑当前 phase。',
+        );
+      }
+      for (const u of fact.unresolved) {
+        lines.push(`- input=${u.input} source=${u.source}${u.detail ? `：${u.detail}` : ''}`);
+        if (u.upstream_producer) {
+          lines.push(`  upstream_producer=${u.upstream_producer}`);
+        }
+        if (u.dependencies.length > 0) {
+          lines.push(
+            `  dependencies: ${u.dependencies.map((d) => `${d.path}${d.exists ? '' : ' (missing)'}`).join(', ')}`,
+          );
+        }
+      }
+      lines.push('');
+    }
+  }
+
   // 最终裁定
   lines.push('## 三、最终裁定');
   lines.push('');
   if (scriptReport.summary.verdict === 'FAIL') {
     lines.push(`**FAIL** — 存在 ${scriptReport.summary.blockers} 个 BLOCKER 级别失败，必须修复后重新验证。`);
+  } else if (blockedFacts.length > 0) {
+    // review P2：已列出 blocked capability（脚本 checks 或无 BLOCKER，但 capability unresolved）——
+    // 不得宣告 PASS，明确阶段 INCOMPLETE、先补输入重跑（不改 ScriptReport 领域模型）。
+    lines.push(
+      `**INCOMPLETE** — 脚本 Harness 未发现 BLOCKER 失败，但存在 ${blockedFacts.length} 个 blocked capability（见上「blocked capability 明细」）；` +
+      '阶段因 capability 输入未解析为 INCOMPLETE，请补齐输入后重跑当前 phase。',
+    );
   } else {
     lines.push('**PASS** — 脚本 Harness 未发现 BLOCKER 失败。注意：脚本 PASS 不代表阶段闭环完成，仍必须继续执行 verifier 语义验证并填写 completion receipt。');
   }

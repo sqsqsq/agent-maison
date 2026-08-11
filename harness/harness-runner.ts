@@ -47,6 +47,7 @@ import {
   deriveSummaryVerdictLattice,
   projectCompletionStatus,
   projectReleaseReadiness,
+  resolveEffectiveVerdict,
   validateSummaryV11,
 } from './scripts/utils/quality-axes';
 import { createHash } from 'crypto';
@@ -149,6 +150,7 @@ import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
 import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
+  collectBlockedCapabilityFacts,
   resolveCapabilityReport,
   type CapabilityResolutionReport,
 } from './scripts/utils/capability-resolution';
@@ -1330,6 +1332,10 @@ function writeRunSummaryBase(
     }));
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
+  // plan c8e5b3f1 t2 A：blocked capability 通用诊断——确定性提取（capability_input_unresolved）。
+  // 通用投影只转述 capability/input/attempt/dependency；requirement 专属话术只来自 derive.requirement
+  // 自己的 attempt.detail（经 fact.unresolved[].detail 原样带出），此处不硬编码。
+  readinessSignals.push(...capabilityBlockedReadinessSignals(report));
   // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
   // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
   const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
@@ -1337,8 +1343,10 @@ function writeRunSummaryBase(
   // summary.visual_round 与账本一致）。
   const visualRound = consumeVisualRoundPayload(projectRoot, report);
   // blind-visual-hardening d1 切片二：多轴产品裁决 + report_validity（harness 派生，
-  // 非 agent 自报）。外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle——
-  // projected_verdict 与 legacy verdict 不一致=派生缺陷，显式落 readiness signal 不静默。
+  // 非 agent 自报）。外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle。
+  // plan c8e5b3f1 t2 B：归因统一走共享 deriveSummaryVerdictLattice（暴露 pre/post/has_blocked），
+  // runner 与测试同源；post 已含 hasBlocked 顶层钳制（不拿 rawPost 归因，否则 visual/asset blocked
+  // 会漏判），pre 供 pre!==legacy 的真派生缺陷判定。
   const lattice = deriveSummaryVerdictLattice(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
@@ -1346,6 +1354,7 @@ function writeRunSummaryBase(
       ? undefined
       : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
   );
+  const { has_blocked: hasBlocked, pre_projection_verdict: pre, projected_verdict: post } = lattice;
   // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
   // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
   // 任一漂移 → STALE（needs_human），不复制裸 PASS。应用后重投影。
@@ -1370,23 +1379,24 @@ function writeRunSummaryBase(
   } catch {
     /* 债务面异常时不落 revision（继承侧按缺失 fail-closed） */
   }
-  // 不变量对账（codex 实施 review P0-2 fail-closed）：投影与 legacy 不一致=框架派生缺陷——
-  // 顶层 verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。
-  const VERDICT_STRICTNESS: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
-  let effectiveVerdict = report.summary.verdict;
-  if (lattice.projected_verdict !== report.summary.verdict) {
-    const stricter =
-      (VERDICT_STRICTNESS[lattice.projected_verdict] ?? 2) > (VERDICT_STRICTNESS[report.summary.verdict] ?? 2)
-        ? lattice.projected_verdict
-        : report.summary.verdict;
+  // 不变量对账（codex 实施 review P0-2 fail-closed）：顶层 verdict 取**更严一侧**
+  //（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。plan c8e5b3f1 t2 B 因果归因：
+  //   · 仅 pre===legacy && post!==legacy → 差异由 capability 合法投影造成，**不报** mismatch；
+  //   · pre!==legacy → 独立派生缺陷，即使同时存在 blocked 也**照报** mismatch。
+  const legacy = report.summary.verdict;
+  // plan c8e5b3f1 t2 B：顶层 verdict 归因统一走共享纯函数 resolveEffectiveVerdict（评审：裁决逻辑
+  // 不该埋在 runner 内联，且 FAIL 降级保护须有守门测试）。它保证投影取更严侧、不把既有 FAIL 降级，
+  // mismatch 只在 pre!==legacy 时报（pre===legacy 的 capability 合法投影不报）。
+  const { verdict: effectiveVerdict, mismatch } = resolveEffectiveVerdict({ pre, post, legacy });
+  if (mismatch) {
+    // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
-      `   ⚠ [quality-axes] 投影(${lattice.projected_verdict}) ≠ legacy(${report.summary.verdict})——不变量破坏，按更严侧 ${stricter} 落盘（框架派生缺陷，请回灌源仓）`,
+      `   ⚠ [quality-axes] 投影前(pre=${pre}) ≠ legacy(${legacy})（post=${post} 已按 capability 投影/钳制）——独立派生缺陷，按更严侧 ${effectiveVerdict} 落盘（框架缺陷，请回灌源仓）`,
     );
-    effectiveVerdict = stricter as typeof effectiveVerdict;
     readinessSignals.push({
       id: 'quality_axes_projection_mismatch',
       status: 'incomplete',
-      message: `quality_axes 投影=${lattice.projected_verdict} ≠ legacy=${report.summary.verdict}，已按更严侧 ${stricter} 落盘（派生缺陷回灌源仓）`,
+      message: `quality_axes 投影前(pre=${pre}) ≠ legacy=${legacy}（post=${post}）——独立派生缺陷，已按更严侧 ${effectiveVerdict} 落盘`,
     });
   }
   const summary: HarnessRunSummary = {
@@ -1414,7 +1424,10 @@ function writeRunSummaryBase(
     blocking_skips: blockingSkips,
     blockers,
     // base 初值：未闭环/等待 receipt——closure 定稿归 patchRunSummaryClosure。
-    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
+    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals, {
+      effectiveVerdict,
+      capabilityBlocked: hasBlocked,
+    }),
     closure_status: 'open',
     assurance: report.assurance,
     capability_resolutions: report.capability_resolutions,
@@ -1573,7 +1586,11 @@ function decideNextAction(
   runStatuses: HarnessRunSummary['run_statuses'],
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
+  opts?: { effectiveVerdict?: string; capabilityBlocked?: boolean },
 ): string {
+  // plan c8e5b3f1 t2：effective verdict = 顶层钳制后的最终值（capability blocked 时 ≠ legacy PASS）。
+  // 开头的 legacy INCOMPLETE/device-external 分支保持原语义（legacy 变 INCOMPLETE 的唯一路径就是
+  // device-external 例外），不得换成 effective。
   if (report.summary.verdict === 'INCOMPLETE') {
     return report.phase === 'testing' ? 'device_ready_then_rerun_testing' : 'device_ready_then_rerun_ut';
   }
@@ -1604,13 +1621,26 @@ function decideNextAction(
   if (runStatuses.some(s => s.can_claim_done === false)) {
     return 'fix_run_status_blockers_then_rerun';
   }
+  // plan c8e5b3f1 t2 C：capability 动作插在具名 blocker 链与 run_status 之后、readiness 通用动作
+  // 之前。位置不算保证——必须显式前置条件（真实 blocker/SKIP/run-status 在场时一律不给 capability 动作）。
+  if (
+    opts?.capabilityBlocked === true &&
+    blockers.length === 0 &&
+    blockingSkips.length === 0 &&
+    !runStatuses.some(s => s.can_claim_done === false)
+  ) {
+    return 'resolve_capability_inputs_then_rerun';
+  }
   if (readinessSignals.some(s => s.status === 'incomplete')) {
     return 'complete_readiness_warnings_then_continue';
   }
-  if (report.summary.verdict === 'PASS' && blockingSkips.length > 0) {
+  // plan c8e5b3f1 t2 C：最后的 PASS 判定用 effective verdict——capability blocked（effective≠PASS）
+  // 时不得落 run_verifier_then_receipt。
+  const effectiveVerdict = opts?.effectiveVerdict ?? report.summary.verdict;
+  if (effectiveVerdict === 'PASS' && blockingSkips.length > 0) {
     return 'review_blocking_skips_then_verifier';
   }
-  if (report.summary.verdict === 'PASS') return 'run_verifier_then_receipt';
+  if (effectiveVerdict === 'PASS') return 'run_verifier_then_receipt';
   if (blockers.some(b => b.id === 'ut_no_src_mutation' && /baseRef 可能过旧|HARNESS_DIFF_BASE_REF=working/.test(b.details_excerpt))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }
@@ -1772,6 +1802,37 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
   }
 
   return signals;
+}
+
+/**
+ * plan c8e5b3f1 t2 A：blocked capability 的通用诊断 readiness signals（capability_input_unresolved）。
+ * 从 report.capability_resolutions 确定性提取 active ∧ blocked 的事实（按 capability id 稳定排序）；
+ * message 只转述 capability/input/attempt/dependency，requirement 专属话术只经 fact.unresolved[].detail
+ * 原样带出（derive.requirement 自己的 detail），不在此硬编码。applicability invalid 的 blocked（无
+ * 普通 input attempt）也产出，避免整项静默漏掉。
+ */
+function capabilityBlockedReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
+  return collectBlockedCapabilityFacts({ capabilities: report.capability_resolutions }).map((fact) => {
+    const parts = fact.unresolved.length > 0
+      ? fact.unresolved.map((u) => {
+          // 展示**全部**相关 dependency path（不只第一个），保证尝试路径可诊断（review P2）。
+          const deps = u.dependencies.filter((d) => !!d.path).map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ');
+          return `input=${u.input} source=${u.source}` +
+            (u.detail ? `: ${u.detail}` : '') +
+            (deps ? ` path=[${deps}]` : '');
+        }).join('；')
+      // applicability invalid 的 blocked：展示 provider + 全部 applicability_dependencies path（review P2）。
+      : `applicability invalid（provider=${fact.applicability_provider ?? 'n/a'}` +
+        (fact.applicability_dependencies.length > 0
+          ? `，path=[${fact.applicability_dependencies.map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ')}]` : '') +
+        `）`;
+    return {
+      id: 'capability_input_unresolved',
+      status: 'incomplete' as const,
+      source_check: fact.capability,
+      message: `capability=${fact.capability} 输入未解析：${parts}`,
+    };
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -2377,7 +2438,12 @@ function printAvailableSpecs(
 // 入口
 // --------------------------------------------------------------------------
 
-main().catch(err => {
-  console.error('致命错误:', err);
-  process.exit(2);
-});
+export { decideNextAction };
+export { capabilityBlockedReadinessSignals };
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('致命错误:', err);
+    process.exit(2);
+  });
+}

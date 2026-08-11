@@ -499,3 +499,66 @@ export function capabilityResolutionAssurance(report: CapabilityResolutionReport
   if (!(report.assurance in ASSURANCE_RANK)) throw new Error(`[capability-resolution] 非法 assurance ${report.assurance}`);
   return report.assurance;
 }
+
+// ============================================================================
+// plan c8e5b3f1 t2：blocked capability 可诊断投影的数据源（pre-check fact，不产 CheckResult）
+// ============================================================================
+
+/** 单个 blocked capability 面向诊断的确定性事实（readiness signal / merged-report / assess 共用）。 */
+export interface BlockedCapabilityFact {
+  capability: string;
+  axis: ContractCapability['axis'];
+  /** applicability invalid 导致的 blocked（无普通 input attempt）时非空，供诊断不静默漏项 */
+  applicability_provider: string | null;
+  applicability_dependencies: ResolutionDependency[];
+  /** 未解析（absent/invalid/not_applicable）的 input attempt 明细，按 input id + source 稳定排序 */
+  unresolved: Array<{
+    input: string;
+    source: string;
+    detail?: string;
+    upstream_producer?: string;
+    dependencies: ResolutionDependency[];
+  }>;
+}
+
+/**
+ * 从报告确定性提取 active ∧ blocked 的能力事实（t2 投影的唯一数据源，跨 readiness/merged-report
+ * 复用）。**不**含 requirement 专属修复话术——那些只存在于 derive.requirement 自己的 attempt.detail
+ * 里，由消费方原样转述，防止通用投影夹带专属建议。applicability invalid 的 blocked（inputs 为空）
+ * 仍产出 fact，只展示 capability/applicability provider/dependency，不整项静默漏掉。
+ */
+export function collectBlockedCapabilityFacts(
+  report: Pick<CapabilityResolutionReport, 'capabilities'>,
+): BlockedCapabilityFact[] {
+  const facts: BlockedCapabilityFact[] = [];
+  for (const capability of report.capabilities) {
+    if (!capability.active || capability.state !== 'blocked') continue;
+    const unresolved: BlockedCapabilityFact['unresolved'] = [];
+    // defensive：宽松输入（assess 的 capabilityEntries）可能缺 inputs——按空处理，不 TypeError。
+    const inputs = Array.isArray(capability.inputs) ? capability.inputs : [];
+    for (const input of inputs) {
+      const attempts = Array.isArray(input.attempts) ? input.attempts : [];
+      for (const attempt of attempts) {
+        if (!attempt || typeof attempt !== 'object') continue;
+        if (attempt.state !== 'absent' && attempt.state !== 'invalid' && attempt.state !== 'not_applicable') continue;
+        unresolved.push({
+          input: input.id,
+          source: attempt.source,
+          ...(attempt.detail ? { detail: attempt.detail } : {}),
+          ...(attempt.upstream_producer ? { upstream_producer: attempt.upstream_producer } : {}),
+          dependencies: Array.isArray(attempt.dependencies) ? attempt.dependencies : [],
+        });
+      }
+    }
+    unresolved.sort((a, b) => `${a.input}|${a.source}`.localeCompare(`${b.input}|${b.source}`));
+    facts.push({
+      capability: capability.id,
+      axis: capability.axis,
+      applicability_provider: capability.applicability_provider_id ?? null,
+      applicability_dependencies: Array.isArray(capability.applicability_dependencies) ? capability.applicability_dependencies : [],
+      unresolved,
+    });
+  }
+  facts.sort((a, b) => a.capability.localeCompare(b.capability));
+  return facts;
+}

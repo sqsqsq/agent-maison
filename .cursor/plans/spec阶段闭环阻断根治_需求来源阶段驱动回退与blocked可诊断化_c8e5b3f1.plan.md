@@ -201,7 +201,7 @@ todos:
       返回 `complete_readiness_warnings_then_continue` 而非 `fix_blockers_then_rerun`
       （:1607 早于 :1620）。codex 建议补通用兜底——**属既有行为改动、超出本缺陷**，
       记录在此待用户裁定，本 plan 只保证新动作不加剧它（靠上面的三项前置条件）。
-    status: pending
+    status: completed
   - id: t3-tests-openspec-docs
     content: >
       测试盲区收口 + 成文 + 文档 + 宿主回撤。
@@ -266,8 +266,19 @@ todos:
         `checkFidelityCapabilityPregate`（check-spec.ts:228-233）判 BLOCKER FAIL → 顶层
         FAIL，测不到"合法 SSOT 但非显式需求 → blocked → INCOMPLETE"这条目标路径；
         用 `intent_fallback` 反而直接验中本次新增的 provenance 边界。
-      【回归】goal 模式 spec 逐元素不变；lite 轨 change 阶段不变；其它 phase 的既有
-      blocked 场景（ut 缺 acceptance）除新增 readiness/next_action/assess 投影外不变。
+      【回归】goal 模式 spec 逐元素不变；lite 轨 change 阶段不变。
+      【既有行为改动·用户 2026-08-11 裁定收下】其它 phase 的既有 blocked 场景（如 goal 模式
+      ut 缺 `acceptance.yaml`）除新增 readiness/next_action/merged-report 投影外，**assess 侧
+      分类也变**：原先 `isDeferredSummary` 对任何 `verdict==='INCOMPLETE'` 一律返回 true →
+      贴 `deferred`/`resolve_deferred`（"等外部条件"）；现在"INCOMPLETE + 本地 blocked
+      capability（unresolved attempt 均无 upstream_producer）"改走 `failed`/`rerun_phase`
+      （"补齐输入后重跑"）。真外部阻塞优先级更高（external/device blocker 在场仍 deferred，
+      已有混合场景回归锁）。
+      **收下的理由**（备忘，勿再回退成"只对 spec 生效"）：同批的 next_action /
+      readiness signal / merged-report 三处**本来就全 phase 生效**，assess 若收窄到 spec，
+      就会出现"harness 让 agent 补输入重跑、assess 却说等外部条件"的口径分裂。
+      **宿主回灌须留意**：goal 无人值守的重试路径由此改变（原走 deferred 分支的场景现在会
+      让 agent 补输入再跑一轮），实测影响归入 3.0.0 宿主回归清单观察项。
       【OpenSpec】**只 ADDED，不改既有条款**（blocked-无-CheckResult 那条保持原样）。步骤：
       ① `npm run openspec -- archive "fidelity-intent-auto-routing" --yes`（tasks 11/11）；
       ② `npm run openspec -- archive "capability-degradation-model" --yes`（tasks 25/25）；
@@ -439,8 +450,10 @@ summary 里的 `capability_resolutions` 没有任何消费方把它翻译成原�
 - E2E（生产接线）：无 `MAISON_GOAL_RUN_ID` 手动跑 spec，带需求文本跑 Step 1 → summary
   PASS 且 `check-receipt` exit 0；**不带 requirement 跑 Step 1**（合法 `intent_fallback`
   SSOT）→ INCOMPLETE + 诊断三件套 + check-receipt 仍拒（**不用删 SSOT 制造反例**）。
-- 回归：goal 模式 spec、lite 轨 change、其它 phase 既有 blocked 场景（ut 缺 acceptance）
-  除新增投影外逐分支不变。
+- 回归：goal 模式 spec、lite 轨 change 逐分支不变。其它 phase 既有 blocked 场景（ut 缺
+  acceptance）除新增投影外，**assess 分类由 `deferred`/`resolve_deferred` 改为
+  `failed`/`rerun_phase`**——用户 2026-08-11 裁定收下（理由与宿主观察项见 t2 段）；
+  真外部阻塞仍 deferred（混合场景回归锁）。
 - 文档：spec SKILL 步骤 1 写明"不给需求文本 → spec 无法闭环"的因果与 `--requirement(-file)`
   用法；`docs/concepts/skill-contracts.md` 有 derive 来源表。
 - 交付宿主：回撤指引（`on_missing` 改回 `fail` + 删 allowlist 条目 + 手动 L2 起步须带需求
@@ -493,3 +506,55 @@ summary 里的 `capability_resolutions` 没有任何消费方把它翻译成原�
 - [P2·测试假阳性，已修] goal-runner 行为断言补 `execution_identity==='r-prov-runner'`（旧 SSOT 是 r-prov-goal）——仅凭 provenance=goal_manifest 会被前置 evaluateFidelityTierPreflight 写的旧 SSOT 误通过；现在能确证第三个调用点确实重签了 SSOT。
 - [P3·文档同步，已修] openspec tasks.md 单测计数 14→15 例、验收 unit 3192→3193，并补 lite change 回归锁说明。
 - 复验：`cd harness && npm test` typecheck 绿 + unit **3193/0** + fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；测试后 `doc/features` 无增量（仅预存 demo-feature）。
+
+---
+
+## 实施记录（t2，2026-08-11）
+
+**范围**：t2-blocked-projection-and-causal-mismatch + P2-3 可重跑 E2E。未提交、未 bump 版本、未改既有 openspec 条款。
+
+**改动**：
+- `capability-resolution.ts`：导出 `collectBlockedCapabilityFacts`（确定性提取 active∧blocked 事实，供 readiness/merged-report/assess 复用；applicability invalid 的 blocked 不静默漏）。
+- `harness-runner.ts`：① readiness_signals 追加 `capability_input_unresolved`（按 capability 稳定排序，通用投影不夹带 requirement 专属话术）；② mismatch 因果归因（手动投影得 pre/rawPost/post，`post` 含 hasBlocked 顶层钳制；仅 pre===legacy && post!==legacy 归 capability 不报 mismatch，pre!==legacy 照报）；③ `decideNextAction` 增 `resolve_capability_inputs_then_rerun`（具名 blocker 链与 run_status 之后、readiness 之前，显式四前置条件；PASS 判定改用 effective verdict）；④ 导出 `decideNextAction`/`capabilityBlockedReadinessSignals` + `require.main` guard。
+- `report-generator.ts`：merged-report 增「blocked capability 明细」段（人读面非门禁）。
+- `assess.ts`：`isDeferredSummary` 最小区分——本地 blocked capability（unresolved attempts 均无 upstream_producer）走既有 failed，真 device/external 仍 deferred；failed gap.detail 丰富为 capability/input/attempt+修复动作；AssessPhaseObservation 增 `blocked_capabilities`（观察中间结构，非 AssessResult gap shape）。
+- 单测 `blocked-capability-projection.unit.test.ts`（15 例：契约零变化/因果四例/next_action 六例/assess 五断言/readiness/merged-report）+ `e2e-spec-requirement-closure.unit.test.ts`（2 例可重跑 E2E）。
+
+**验收命令**：
+- `cd harness && npm test`：typecheck 绿 + unit **3210/0**（基线 3208，+2 E2E）+ fixtures 44/44。
+- `node scripts/check-plan-version.mjs` PASS；`npm run openspec:validate` 53/0；`git diff --check` 干净。
+- E2E（真实 consumer 工程 + 随机临时目录 + 严格清理，不设 MAISON_GOAL_RUN_ID）：正例带 --requirement → summary **PASS** / capability **resolved** / check-receipt **exit 0**（完整闭环回执）；反例不带 requirement（合法 intent_fallback SSOT）→ summary **INCOMPLETE** / capability **blocked** / readiness 含 `capability_input_unresolved`（无 mismatch）/ next_action=**resolve_capability_inputs_then_rerun** / merged-report 有 blocked 明细 / check-receipt **slim_summary_not_pass 拒**。测试后 repo `doc/features` 无新增。
+
+**偏离/遗留**：
+- 无。契约零变化（blocked 仍 0 条 CheckResult、双射/轴映射/计数/legacy verdict 不动）由单测 + E2E 实证。
+
+**Review 修复（2026-08-11，双 reviewer 二轮）**：
+- [F1/P1，已修] 归因统一收进共享 `deriveSummaryVerdictLattice`（暴露 `pre_projection_verdict`/`projected_verdict`/`has_blocked`）：harness-runner 与测试的 attribution() 都调它，删掉内联与第三份拷贝（测试回到生产接线）。同时**保持更严侧落盘**：capability 投影只能收紧（PASS→INCOMPLETE），不得把同轴既有 FAIL 覆盖降成 INCOMPLETE（硬 FAIL + blocked 同在 → 最终仍 FAIL）。新增因果例 (F1 review)。
+- [F2/P1，裁定保留 + 补覆盖] `isDeferredSummary` 最小区分（本地 blocked 走 failed）是 plan 明确要求，语义正确（缺输入不是 deferred），**保留**；但影响面是既有场景（INCOMPLETE + 本地 blocked 会从 resolve_deferred 翻成 rerun_phase）。补一条穿生产路径 `observeFeatureState` 的真测试锁 deferred=false。**是否长期收**待用户裁定。
+- [P1 assess schema] `blocked_capabilities` 是内部诊断数据：`assessObservation` 持久化前从 `observed.phases` 剥离（不进入 next.json / AssessResult.observed.phases，schema 仍 1.0）；`collectBlockedCapabilityFacts` 加 defensive parsing（缺 inputs 不 TypeError）。
+- [P2 诊断出口] readiness/assess 展示全部相关 dependency path；applicability invalid 展示 provider + applicability_dependencies；merged-report 最终裁定在 blocked 时明确「INCOMPLETE，先补输入重跑」，不再宣告 PASS。
+- [P2 测试] 补：硬 FAIL+blocked 保持 FAIL、applicability invalid deps、AssessResult.observed.phases 无新增字段、E2E 反例断言 assess（NEXT_STEP 的 rerun_phase + capability/input）。
+- 复验：`cd harness && npm test` typecheck 绿 + unit **3213/0**（+3）+ fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净；E2E 后 repo `doc/features` 无污染。
+- 批 1 commit `3c6c898d` 已由用户在上一轮明确指示「整理并提交」后落盘（非本会话自动提交）。
+
+**Review 3 修复（2026-08-11，双 reviewer 三轮）**：
+- [P1] capability 投影**不得覆盖既有 axis FAIL**：`applyCapabilityResolutionProjection` 对 axis 已 FAIL 时保留 verdict/blocking_class/resolution，仅追加 capability source（顶层 FAIL / axis UNVERIFIED 分裂消除）。F1 review 用例改为断言 `functional axis` 与 `projected_verdict` 均保持 FAIL（不再锁 post=INCOMPLETE）。
+- [P1] 裁决收进纯函数 `resolveEffectiveVerdict({pre,post,legacy}) → {verdict, mismatch}`（quality-axes.ts，评审 F1）：runner 与单测共用，四组合测试（pre===legacy&&post 更严 / post 更宽 FAIL+blocked / pre!==legacy 报 mismatch / 无差异）各一例——不再靠 E2E FAIL 场景守门。
+- [P2] F2 混合：显式 external/device/deferred blocker **优先**保持 deferred（`hasLocalBlockedCapability` 先查 external blocker，有则返回 false）；补「external blocker + 本地 blocked 并存 → 仍 deferred」混合反例（穿 observeFeatureState）。
+- [P2] 类型剥离：`AssessResult.observed.phases` 改用 `PersistedAssessPhaseObservation = Omit<AssessPhaseObservation, 'blocked_capabilities'>`（运行时已剥离，类型契约同步，schema 1.0 落盘 shape 与公开类型一致）。
+- 复验：`cd harness && npm test` typecheck 绿 + unit **3215/0**（+2）+ fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净；E2E 后 repo `doc/features` 无污染。
+
+**Review 4 修复（2026-08-11，双 reviewer 四轮）**：
+- [P2] `resolveEffectiveVerdict` 的 `post===legacy` 分支由恒 `mismatch:false` 改为 `mismatch: pre !== legacy`——pre!==legacy 属独立派生缺陷，即使最终 verdict 未变也要报告（pre=PASS/post=INCOMPLETE/legacy=INCOMPLETE）。补第五组合测试。
+- [P2] `hasLocalBlockedCapability` 识别 `completion_status==='deferred'`：显式 deferred（非仅 external/device blocker）与本地 blocked 并存时仍保持 deferred。补生产路径混合测试。
+- 复验：`cd harness && npm test` typecheck 绿 + unit **3216/0**（+1）+ fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净；E2E 后 repo `doc/features` 无污染。
+- **归 t3**：代码与 `capability-degradation-model/specs/capability-degradation/spec.md` 条款字面冲突（「blocked SHALL force axis to UNVERIFIED」vs 已 FAIL 保留 FAIL）——语义上新行为对（确定性 FAIL 不应洗成 UNVERIFIED），t3 改条款补「unless the axis already carries a deterministic FAIL, which SHALL be preserved」；同时 t3 需先解 capability-degradation-model 归档的预存 header 失配。
+
+**Review 5（2026-08-11，P3 文案 + t3 记账补全）**：
+- [P3，已修] `resolveEffectiveVerdict` docstring 第一条 stale（post===legacy→mismatch=false）改为「mismatch 仍按 pre!==legacy 判定」；`blocked-capability-projection` 单测名「四组合」→「五组合」。
+- [P2，t3 记账补全] OpenSpec 同步范围不止 `specs/capability-degradation/spec.md`，还有 `specs/harness-gates/spec.md`（仍写 mapped-axis UNVERIFIED、projected INCOMPLETE）与 `design.md`（仍写 blocked 强制轴 UNVERIFIED）。t3 归档时统一为：**已有确定性 FAIL 保留 FAIL；否则 blocked 投影为 UNVERIFIED；顶层 verdict 至少 INCOMPLETE**——三处一并改，避免只改一份。
+
+**Review 6（2026-08-11，P3 诊断文案自相矛盾）**：
+- [①，已修] mismatch 告警与 readiness signal 文案改为**按 pre 说话**：`投影前(pre=${pre}) ≠ legacy(${legacy})（post=${post}）`——不再写「投影≠legacy」（post===legacy && pre!==legacy 时会印假话，就是这个 plan 一开始要修的毛病）。
+- [②，已修] quality-axes.ts 模块头第④条补「pre===legacy 的 capability 合法投影除外」（不一致≠恒框架缺陷）。
+- 复验：`cd harness && npm test` typecheck 绿 + unit 3216/0 + fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净。

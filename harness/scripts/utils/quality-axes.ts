@@ -11,7 +11,8 @@
 //     （release_readiness + completion_status 标签）；
 //   ④ 防 split-brain：外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle
 //     （不重复实现 device-external 判定），且 deriveSummaryVerdictLattice 输出
-//     projected_verdict 供写盘方与 legacy verdict 对账（不一致=框架缺陷，显式记录）。
+//     projected_verdict 供写盘方与 legacy verdict 对账（不一致=独立派生缺陷，显式记录；
+//     pre===legacy 的 capability 合法投影除外——t2 因果归因，不报）。
 // 状态语义严格复用现行两类（verify-feature-completion.ts CleanPassIssueKind）：
 //   needs_fix（确定性故障→修复重跑，投 PARTIAL/FEATURE_INCOMPLETE）；
 //   needs_human（设计内求人→AWAITING_HUMAN_REVIEW 封顶）；
@@ -53,8 +54,12 @@ export type ReleaseReadiness = 'READY' | 'BLOCKED';
 export interface VerdictLattice {
   report_validity: ReportValidity;
   quality_axes: QualityAxes;
-  /** phase-advance 投影（应与 legacy 顶层 verdict 一致；写盘方对账） */
+  /** capability 投影前的 phase-advance verdict（t2 因果归因的 pre）。 */
+  pre_projection_verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  /** 含 hasBlocked 顶层钳制的最终投影 verdict（t2 因果归因的 post；不拿 rawPost 归因）。 */
   projected_verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  /** capability 投影是否产生 blocked（t2 因果归因/next_action 需要）。 */
+  has_blocked: boolean;
   release_readiness: ReleaseReadiness;
   completion_status: string;
 }
@@ -381,18 +386,41 @@ export function applyCapabilityResolutionProjection(
     if (!capability.active || capability.state !== 'blocked') continue;
     const axis = axes[capability.axis];
     const resolution: AxisResolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+    // review P1：capability 投影**不得**把既有 FAIL 降成 UNVERIFIED——axis 已 FAIL 时保留其
+    // verdict/blocking_class/resolution，只追加 capability source（否则顶层被 runner 救回 FAIL 而
+    // axis 却是 UNVERIFIED，形成分裂）。非 FAIL 轴才投影为 UNVERIFIED（blocked → 阻断）。
+    const alreadyFail = axis.verdict === 'FAIL';
     axes[capability.axis] = {
       ...axis,
       applicable: true,
       required_for_release: true,
-      verdict: 'UNVERIFIED',
-      blocking_class: resolution.class,
+      ...(alreadyFail ? {} : { verdict: 'UNVERIFIED' as const, blocking_class: resolution.class, resolution }),
       source_checks: [...new Set([...axis.source_checks, `capability:${capability.id}`])].sort(),
-      resolution,
     };
     hasBlocked = true;
   }
   return { hasBlocked };
+}
+
+/**
+ * plan c8e5b3f1 t2 B：顶层 verdict 的因果归因纯函数——runner 与单测共用（评审：裁决逻辑不应埋在
+ * runner 内联，且须有守门测试）。规则：
+ *   · post===legacy → verdict=legacy；mismatch 仍按 pre!==legacy 判定（独立派生缺陷照报）；
+ *   · post!==legacy → verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS）——capability 投影只能收紧
+ *     （PASS→INCOMPLETE），不得把既有 FAIL 降成 INCOMPLETE；
+ *   · mismatch = pre!==legacy（独立派生缺陷照报；pre===legacy 的 capability 合法投影不报）。
+ */
+export function resolveEffectiveVerdict(input: {
+  pre: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  post: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  legacy: 'PASS' | 'FAIL' | 'INCOMPLETE';
+}): { verdict: 'PASS' | 'FAIL' | 'INCOMPLETE'; mismatch: boolean } {
+  // review：post===legacy 时 verdict 就是 legacy，但 mismatch 仍须按 pre!==legacy 判定——
+  // pre!==legacy 属独立派生缺陷，即使最终 verdict 未变也要报告（如 pre=PASS/post=INCOMPLETE/legacy=INCOMPLETE）。
+  if (input.post === input.legacy) return { verdict: input.legacy, mismatch: input.pre !== input.legacy };
+  const strictness: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
+  const stricter = strictness[input.post] > strictness[input.legacy] ? input.post : input.legacy;
+  return { verdict: stricter, mismatch: input.pre !== input.legacy };
 }
 
 export function deriveSummaryVerdictLattice(
@@ -402,14 +430,21 @@ export function deriveSummaryVerdictLattice(
 ): VerdictLattice {
   const quality_axes = deriveQualityAxes(checks, opts, capabilityReport);
   const report_validity = deriveReportValidity(checks);
-  const capabilityProjection = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
-  const projected = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  // plan c8e5b3f1 t2：手动投影以暴露 pre/rawPost/post 供因果归因——projectPhaseAdvanceVerdict 纯函数、
+  // applyCapabilityResolutionProjection 原地改 axes，前后各调一次即得标量；post 必须含 hasBlocked 顶层
+  // 钳制（visual/asset blocked 依赖它，否则会被误判）。
+  const pre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const { hasBlocked } = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
+  const rawPost = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const post = hasBlocked && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
   return {
     report_validity,
     quality_axes,
-    projected_verdict: capabilityProjection.hasBlocked && projected === 'PASS' ? 'INCOMPLETE' : projected,
-    release_readiness: capabilityProjection.hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
-    completion_status: capabilityProjection.hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
+    pre_projection_verdict: pre,
+    projected_verdict: post,
+    has_blocked: hasBlocked,
+    release_readiness: hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
+    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
   };
 }
 

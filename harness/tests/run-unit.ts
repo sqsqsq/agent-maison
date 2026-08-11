@@ -185,6 +185,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string }> = [
   { id: 'capability-degradation', modulePath: './unit/capability-degradation.unit.test' },
   // plan c8e5b3f1 t1：阶段驱动 /spec 需求 provenance（SSOT explicit_cli 解锁 + 反例锁 + 血缘）
   { id: 'spec-requirement-provenance', modulePath: './unit/spec-requirement-provenance.unit.test' },
+  // plan c8e5b3f1 t2：blocked capability 可诊断投影 + mismatch 因果归因 + next_action + assess
+  { id: 'blocked-capability-projection', modulePath: './unit/blocked-capability-projection.unit.test' },
+  // plan c8e5b3f1 t2 P2-3：可重跑 E2E（真实 consumer 工程跑 init/harness-runner/check-receipt）
+  { id: 'e2e-spec-requirement-closure', modulePath: './unit/e2e-spec-requirement-closure.unit.test' },
   { id: 'goal-adapter-routing', modulePath: './unit/goal-adapter-routing.unit.test' },
   { id: 'goal-reconcile-observation', modulePath: './unit/goal-reconcile-observation.unit.test' },
   { id: 'goal-reconcile-boundary-fixtures', modulePath: './unit/goal-reconcile-boundary-fixtures.unit.test' },
