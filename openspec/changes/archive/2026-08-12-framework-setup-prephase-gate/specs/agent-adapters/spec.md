@@ -1,6 +1,6 @@
 # Delta: Agent Adapters — No framework-setup command
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Claude slash commands exclude personal setup
 

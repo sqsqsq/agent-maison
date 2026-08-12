@@ -37,14 +37,29 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 
 ### Requirement: Goal runner preflight blocks invalid adapter capability
 
-The system SHALL BLOCKER-fail preflight when `goal_capability` is missing or `unattended` contract is incomplete for the active adapter.
+The system SHALL BLOCKER-fail preflight when `goal_capability` is missing, `unattended` contract is incomplete, `manifest.adapter` is not materialized, adapter entry artifacts are missing, headless CLI is not resolvable, or adapter provenance is `fallback` (no personal setup and no explicit/manifest adapter source).
 
-Enforcement: `harness/scripts/goal-runner.ts`, `agents/adapter-schema.yaml`
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`, `agents/adapter-schema.yaml`
 
 #### Scenario: Missing goal_capability at runner start
 
 - **WHEN** goal-runner starts with an adapter lacking `goal_capability`
 - **THEN** preflight exits non-zero before any agent invocation
+
+#### Scenario: Explicit adapter bypasses fallback personal-setup guard
+
+- **WHEN** user invokes goal-runner with `--adapter cursor`, cursor is in `materialized_adapters`, and entry artifacts exist, without `framework.local.json`
+- **THEN** preflight passes and runner may start (headless CLI resolvability still enforced)
+
+#### Scenario: Fallback provenance blocks without personal setup
+
+- **WHEN** goal-runner starts without `--adapter`/`--manifest`/`--resume`, no `framework.local.json`, and provenance resolves to `fallback`
+- **THEN** preflight exits non-zero with guidance to run `check-personal-setup --ensure`
+
+#### Scenario: Manifest resume provenance not blocked by missing local
+
+- **WHEN** user invokes goal-runner with `--resume <run-id> --feature <f>` and manifest.adapter is materialized
+- **THEN** preflight does not fail solely because `framework.local.json` is absent
 
 ### Requirement: Device readiness gate before agent_invoke_start
 
@@ -265,4 +280,421 @@ Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-run
 
 - **WHEN** inferred is pixel_1to1+hard and a valid downgrade receipt selects semantic_layout
 - **THEN** the run proceeds, inferred stays pixel_1to1, and `isHardPixelContract` is false downstream
+
+### Requirement: Build-generated source files are classified, not treated as violations
+
+goal-runner 在 testing 阶段 invoke 前后快照 diff 的消费处（violation 裁决时刻，早于receipt/journal/gate）MUST 将变更逐项交由 profile 生成物分类器判定。三判据全中的条目MUST 降级为 `testing_generated_file_change` 事件（透明记录文件清单），MUST NOT halt、MUST NOT 进入 run 终止态（`--resume` 不受影响）：
+
+1. 路径等于根 build-profile.json5 某 `modules[].srcPath + '/BuildProfile.ets'`（模块根，
+   任意嵌套目录 MUST NOT 进入例外）；
+2. 变化类型仅 added/modified（removed/type-changed MUST 维持 violation）；
+3. 盘上现内容为合法 hvigor 模板结构（模板外零多余语句）且四常量值与 attempt 冻结配置
+   推导结果逐值一致。
+
+混合场景（真违规与生成物并存）MUST 维持 violation 与 halt，violation 事件的 `changed`
+MUST 只列真违规，生成物 MUST 单列 `generated_changed` 字段。分类器不可用或判定异常时
+MUST 全部按 violation 处理（fail-closed）。快照采集范围与算法 MUST NOT 因此改变。
+
+#### Scenario: hvigor 合法重写模块根 BuildProfile.ets
+- **WHEN** testing invoke 内 harness 构建重写三个模块根的 BuildProfile.ets，内容与冻结
+  配置推导一致
+- **THEN** 记 `testing_generated_file_change` 事件，不 halt，receipt/journal/gate 照常，
+  同 run 后续 `--resume` 不被拒绝
+
+#### Scenario: 篡改的 BuildProfile.ets 仍是违规
+- **WHEN** 变更文件含模板外语句，或常量值与冻结配置推导不符，或文件被删除/变类型
+- **THEN** 维持 `testing_write_violation` 终止态语义
+
+### Requirement: Device-test build configuration is frozen per attempt
+
+goal-runner MUST 在 testing attempt 开始时解析并冻结 {product, buildMode}，并经环境变量`HARNESS_DEVICE_TEST_PRODUCT`/`HARNESS_DEVICE_TEST_BUILD_MODE` 同发 agent 与 gate harness、直传生成物分类器（三方同源）。注入前 MUST 对目标键执行大小写无关清理后只写唯一大写键。agent 在其子进程内临时覆盖这两个变量属不受支持行为；生成物与冻结值不符MUST 判 violation（fail-closed）。
+
+#### Scenario: agent 内临时覆盖不导致分类漂移
+- **WHEN** agent 子进程内以不同 buildMode 触发构建，生成物常量与冻结配置不符
+- **THEN** 分类器按冻结配置判定为 violation，不采用 agent 侧环境值
+
+### Requirement: Device-test defects join the existing backtrack loop
+
+`ActionableDefect.source` MUST 支持 `'device_test'`。goal-runner 的缺陷收集 MUST 只消费正式 gate 写出的 `device-test-evidence.json`，且 MUST 在 spawn gate harness 之前删除该文件（窗口内单写者防伪）。消费前 MUST 校验：goal_run_id/attempt_id 与当前精确相等；device_target 与当前 attempt 冻结设备元组精确相等（由 runner 内存直传，MUST NOT 从事件反推）；install_executed 与 install_ok 为真；trace_path 与权威 trace resolver 结果一致；`written_at`（collector 唯一时间裁决字段，文件 mtime 仅诊断）与 run meta 的run_started_at/run_ended_at 同落本 attempt 的 harness_start~harness_end 窗口。
+
+仅 `device_target.target_kind === 'physical'` 且 `classification === 'product_actionable'`
+的 case MUST 进入 ActionableDefect 走既有 `backtrack_to_coding` 与 roundFingerprint
+无进展熔断；根/级联三分 MUST 复用 test_case_flow triage，级联 case MUST NOT 产生缺陷；
+其余（emulator/unknown、environment/test_contract/unknown 分类、evidence 在场但任一
+校验不满足）MUST 进入 unverified 通路；evidence 文件缺失 MUST 视为本轮无 device_test
+信号（不产生缺陷也不产生 unverified——正式 gate 未达写入门槛时 run 门禁本身已 FAIL，
+由既有重试路径接管；旧 trace/旧产物因此天然不驱动回修）。unverified entries MUST 携带
+source（visual|device_test），retry/halt 指引 MUST 按 source 分支；事件类型名
+`unverifiable_must_fix` MUST 保持不变。
+
+#### Scenario: 真机 spec 锚点缺失自动回修
+- **WHEN** 正式 gate evidence 中某根故障 case 分类为 product_actionable 且
+  target_kind=physical，全部身份校验通过
+- **THEN** 生成 source='device_test' 的 ActionableDefect，runner 回退 coding 并注入缺陷
+
+#### Scenario: 身份或设备不匹配不驱动回修
+- **WHEN** evidence 的 run/attempt/device_target/trace/时间窗任一与当前 attempt 不符，
+  或 target_kind 非 physical
+- **THEN** 相关 case 进入 unverified 通路（retry 引导重采，耗尽 halt），不回退 coding
+
+### Requirement: Integrity blockers classify as framework_integrity_block and halt on first touch
+
+When a fresh harness summary contains any blocker with `blocking_class === 'integrity'`, the goal-runner SHALL classify the failure as `framework_integrity_block`, collect `integrity_subtypes[]` from ALL such blockers' `classification` values (deduplicated; top-level `summary.failure_kind` fallback only when the list is empty AND `summary.blocking_class === 'integrity'`), and halt on first touch. Guidance SHALL be assembled per subtype (drift → human-named `drift_allowlist` / restore / upstream; foreign_file → cleanup or human allowlist; manifest_corrupt/empty → reinstall or restore from release; manifest_tampered → restore from release, manual recompute forbidden; manifest_sidecar_missing → framework-init UPDATE, agent hand-writing forbidden). The retry prompt SHALL NOT contain repair instructions for this kind: goal agents are forbidden from any automated write (including reverts) to framework release files.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: Host hotfix drift is not auto-reverted
+
+- **WHEN** a plan-phase harness run reports 7 drifted framework files (host-applied fixes) with a fresh summary
+- **THEN** the run SHALL halt with `framework_integrity_block` and per-subtype guidance instead of feeding a "revert first" retry prompt to the goal agent
+
+#### Scenario: Coexisting subtypes are all surfaced
+
+- **WHEN** a summary contains `framework_manifest_sidecar_missing`, `framework_drift`, and `framework_foreign_file` blockers simultaneously
+- **THEN** `integrity_subtypes` SHALL contain all three values and the halt guidance SHALL list each remediation in repair order (manifest anchor first)
+
+### Requirement: Timeout attribution follows the freshness decision table
+
+For a timed-out attempt the classifier SHALL apply, in order: stale summary → `agent_timeout`; fresh summary containing any integrity blocker → `framework_integrity_block`; fresh summary with a non-empty blocker set consisting entirely of `framework_bug` → `framework_bug`; otherwise (mixed or content-only) → `agent_timeout`. The all-framework_bug branch SHALL require `blockers.length > 0`.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`
+
+#### Scenario: Fresh integrity evidence is not masked by timeout
+
+- **WHEN** an attempt is tree-killed at its timeout budget and the post-kill harness summary (stale_summary=false) contains a framework_drift blocker
+- **THEN** classification SHALL be `framework_integrity_block` (halt) rather than `agent_timeout` (free retry)
+
+### Requirement: Retry prompts carry continuation context decoupled from the content-retry budget
+
+The runner SHALL derive `continuation: {cause, process_resumed} | null` from the current phase's most recent attempt window (no invoke_start → null; start without end → unknown; end with timed_out=true and no verdict → agent_timeout; end without verdict → unknown; verdict present → its classified cause), independent of the `retries` counter. Whenever `continuation !== null`, the prompt SHALL include prior-failure evidence and/or the timeout/API-drop resume block (partial artifacts, checkpoint skip-list, effective budget), with block wording matched to the cause. A PASS+timeout prior attempt SHALL still produce the resume block. `harness_start`/`harness_end`/`phase_verdict` events SHALL carry `invoke_id`; legacy logs without it SHALL be windowed by event order.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runner-phase.ts`
+
+#### Scenario: Timeout retry is no longer a cold start
+
+- **WHEN** an attempt times out and the runner retries in-process (retries counter unchanged per the free-retry policy)
+- **THEN** the new prompt SHALL contain the timeout resume block with partial artifacts and skip-lines
+
+#### Scenario: Resume into a fresh phase injects nothing
+
+- **WHEN** the runner restarts with --resume and the current phase has no historical agent_invoke_start
+- **THEN** continuation SHALL be null and the prompt SHALL contain no continuation blocks
+
+### Requirement: Wall-clock budget is a hard deadline across all paths
+
+The runner SHALL enforce `wallDeadlineMs = wallClockStartMs + wallClockBudgetMs` across agent invokes, harness runs, and transient backoff sleeps. Both agent and harness SHALL NOT be started when `deadline - now - FINALIZE_RESERVE_MS <= 0` (a computed timeout of 0 must never reach a timer, since 0 disables it); a backoff sleep SHALL NOT be started when the remaining budget cannot fit the configured backoff (terminate with `budget_wall_clock` instead of sleeping a truncated remainder). Windows process-tree kill SHALL be asynchronous and bounded (execFile taskkill.exe without shell, bounded wait, helper killed and stdio destroyed on timeout, `kill_process_tree_timeout` reported), and any kill on the agent/harness paths SHALL be paired with `armForceSettleAfterKill` so a failed kill still settles within the force-settle window. The kill grace used in the acceptance bound SHALL be derived from the actual termination contract constants (all four: child settle grace, force settle after kill, kill tree wait, inflight drain) via a single `resolveKillGraceMs()`. On the agent/harness/backoff paths, total runtime SHALL NOT exceed the wall limit plus `resolveKillGraceMs()`.
+
+Post-run_end finalization (completion receipt etc.) is **pre-check-gated best-effort**, not part of the hard bound: it consists of synchronous filesystem work for which no in-process executable bound exists (a sync hang also blocks any in-process watchdog; hard-killing mid-write corrupts receipts; moving it to a killable worker process is the only true bound and is deliberately out of scope — recorded as plan d9b4f7e2 open item 5 / rev8 deviation ①). It SHALL be skipped entirely (`finalize_skipped`) when the deadline has already passed before it starts, and any overrun of an already-started finalization SHALL be recorded honestly via a `finalize_overrun` event carrying the finalization duration (feeding FINALIZE_RESERVE_MS calibration).
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/utils/agent-invoke.ts`
+
+#### Scenario: Zero effective budget prevents agent start
+
+- **WHEN** raw wall remaining is positive but `deadline - now - FINALIZE_RESERVE_MS <= 0`
+- **THEN** the runner SHALL NOT build a prompt, write agent_invoke_start, or invoke the adapter, and SHALL end the run with `budget_wall_clock`
+
+#### Scenario: Hung taskkill cannot unbound the wall
+
+- **WHEN** the taskkill helper never exits during a tree-kill
+- **THEN** the bounded kill SHALL terminate the helper, release its handles, report `kill_process_tree_timeout`, and the runner SHALL still exit within the derived grace
+
+### Requirement: Consecutive timeouts escalate once then halt
+
+The runner SHALL count consecutive `agent_timeout` outcomes per phase from the events log (signature-independent, including PASS+unclosed). After the second consecutive timeout the next attempt's base timeout SHALL be escalated ×1.5 (default-table-derived values only; explicit overrides untouched). A third consecutive timeout SHALL halt with `agent_timeout_repeated` and guidance including per-attempt durations. The effective timeout of every attempt SHALL be computed before prompt construction and recorded as `effective_timeout_ms` on `agent_invoke_start`; progress/status/dead-man consumers SHALL prefer the event value over manifest re-resolution (manifest as legacy fallback).
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Escalated attempt is not reported stalled
+
+- **WHEN** the runner escalates an attempt's timeout to 1.5× the default
+- **THEN** progress liveness SHALL judge staleness against the event-recorded effective timeout, not the manifest-derived base value
+
+### Requirement: Dead runs never project as RUNNING
+
+The liveness projection SHALL detect a terminated-but-incomplete run from the event stream alone, independent of lock presence, so a run whose orchestrator died can never project as `RUNNING`. A `harness_start` with no following `harness_end`/`phase_verdict` past the phase timeout SHALL be a hard stall, and silence beyond `DEAD_MAN_FACTOR × phase_timeout` (a live runner heartbeats ~every 60s) SHALL be a hard stall.
+
+Enforcement: `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Dangling harness_start with cleaned locks does not project RUNNING
+
+- **WHEN** `events.jsonl` ends with `agent_invoke_end` then a `harness_start` with no later `harness_end`/`phase_verdict`, no lock is present, and the last event is hours old
+- **THEN** projection SHALL report a non-`RUNNING` status (`STALLED`) and liveness `STALLED`, not `RUNNING`/`soft_quiet_window`
+
+#### Scenario: Absolute dead-man catches lock-independent silence
+
+- **WHEN** the run has no terminal `run_end` and the last activity is older than `DEAD_MAN_FACTOR × phase_timeout`
+- **THEN** projection SHALL report a hard stall regardless of whether any lock file exists
+
+#### Scenario: Live harness window is not a false stall
+
+- **WHEN** a `harness_start` is within the phase timeout and heartbeat events are fresh
+- **THEN** projection SHALL keep the run `RUNNING` and MUST NOT report a stall
+
+### Requirement: Abnormal exit writes a terminal event
+
+On any abnormal termination (catchable signal, uncaught exception, or process exit), the runner SHALL write `run_end{status:"INTERRUPTED"}` to `events.jsonl` synchronously and idempotently before releasing locks, so an interrupted run is never silent. A normal terminal `run_end` SHALL suppress the interrupted event. The projection SHALL treat `INTERRUPTED` as a terminal status and SHALL NOT apply freshness degradation to it.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Signal writes INTERRUPTED before async cleanup
+
+- **WHEN** the runner receives a catchable signal (`SIGINT`/`SIGBREAK`) or crashes mid-run
+- **THEN** `run_end{status:"INTERRUPTED"}` SHALL be appended (via `appendFileSync`) before any asynchronous tree-kill, and only once even if multiple exit hooks fire
+
+#### Scenario: INTERRUPTED projects as terminal
+
+- **WHEN** `events.jsonl` contains a `run_end{status:"INTERRUPTED"}`
+- **THEN** projection SHALL report status `INTERRUPTED` and liveness `DONE`, and freshness degradation SHALL be a no-op
+
+#### Scenario: Windows SIGBREAK is registered
+
+- **WHEN** running on Windows where `SIGTERM` is not catchable
+- **THEN** the runner SHALL register `SIGBREAK` (Ctrl-Break / console close) so a graceful host signal still writes the terminal event
+
+### Requirement: A blocked PASS freezes phase deliverables under a runner-owned snapshot epoch
+
+When a phase verdict is `PASS` with `advance_blocked` (any closure reason), the runner SHALL classify phase artifacts through a single artifact-class resolver — `frozen_deliverable` (all three phase-output tables of the phase evidence manifest, including `spec/asset-manifest.yaml`), `mutable_closure` (`phase-completion-receipt.md`, `headless-assumptions.jsonl/.md`), `mutable_control_plane` (individually registered control-plane files such as `spec/fidelity-downgrade.receipt.json`, `spec/crop-provenance/*.receipt.json`, `vision/capability-receipt.json`, `vision/spec-refs-receipt.json`, and the vision append-only ledgers; wildcard `*.receipt.*` registration SHALL NOT be used), and `derived` (reports, caches) — and snapshot the frozen set into a runner-owned trust-state namespace `goal-checkpoints/<project>/<feature>/<run>/pass-snapshots/<phase>/<epoch>/`. The next attempt SHALL be closure-only: its prompt declares the frozen list read-only; after it ends the runner SHALL diff the watched namespace (baseline inventory minus mutable minus derived) across modified/added/deleted/link entry classes. Any frozen-class difference SHALL emit a `pass_snapshot_violation` event, restore per the trust tiers, and count toward the existing advance-blocked halt threshold; legitimate additions of `mutable_closure`/`mutable_control_plane` files SHALL NOT be flagged or reverted.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/pass-snapshot.ts`（新增）, `harness/scripts/utils/phase-evidence-manifest.ts`
+
+#### Scenario: the incident's i3 rewrite is reverted and the i2 PASS advances
+
+- **WHEN** a spec attempt reaches PASS with `agent_timeout_unclosed`, the snapshot is taken, and the closure-only attempt rewrites `spec/ui-spec.yaml` with a broken key
+- **THEN** the runner SHALL record `pass_snapshot_violation`, restore the frozen file bytes, and after re-running harness and closing the receipt the phase SHALL advance with the PASS-epoch artifacts
+
+#### Scenario: a legitimate control-plane receipt written during closure is not treated as tampering
+
+- **WHEN** the closure-only attempt writes `vision/capability-receipt.json` while frozen deliverables stay untouched
+- **THEN** no violation SHALL be recorded and the file SHALL NOT be deleted by restore
+
+### Requirement: Snapshot trust is two-tier and restore is path- and TOCTOU-safe
+
+Within the same runner process the snapshot manifest/digest held in memory SHALL be the trust anchor: restore is permitted after per-file hash verification regardless of HMAC deployment. Across `--resume`/process restart, automatic restore SHALL require HMAC verification; without a deployed HMAC key the runner SHALL only detect violations and halt for a human (never overwrite user files from a weak-trust snapshot). Snapshot creation and restore SHALL lstat the target and every parent directory (any symlink/junction/reparse point is fail-closed), keep realpath inside the project/feature roots, and install bytes via read-once-buffer → verify hash on that buffer → write same-dir temp file → atomic rename (no separate hash-then-copy window, no link following).
+
+Enforcement: `harness/scripts/utils/pass-snapshot.ts`（新增）, `harness/scripts/goal-runner.ts`
+
+#### Scenario: default host without HMAC still recovers in-process
+
+- **WHEN** no HMAC key is deployed and the closure-only attempt corrupts a frozen file within the same runner process
+- **THEN** the runner SHALL restore from the snapshot after verifying bytes against the in-memory digest and continue the closure flow
+
+#### Scenario: resume without HMAC refuses automatic restore
+
+- **WHEN** the runner restarts with `--resume`, no HMAC key is deployed, and a frozen-file difference is detected
+- **THEN** the runner SHALL halt for human disposition without restoring
+
+### Requirement: Pass-snapshot protocol domains separate immutable manifest from mutable head
+
+The snapshot store SHALL use two kinds signed in distinct protocol domains reusing only the existing HMAC envelope/key model: `pass_snapshot_manifest` (immutable — kind, schema_version, canonical stable-stringified body, project identity hash, feature, run_id, phase, pass_epoch, file list with per-file hashes; historical manifests are never rewritten) and `pass_snapshot_head` (mutable, HMAC-protected — current manifest SHA, state limited to `active`/`superseded`, generation; the only place state changes). Cross-protocol substitution (vision checkpoint/head/HWM/reseal documents placed at snapshot paths or vice versa, including the invalidation journal kind) SHALL validate as invalid.
+
+Manifest validation SHALL enforce, beyond field shape (canonical unique rels, exact `watched_roots` set equality with the phase registry, unconditional non-negative-integer `bytes`), a completeness reconciliation against the registry-derived required frozen deliverables of the phase: every required output artifact (over its disk-independent canonical+legacy rel candidates) SHALL be present in `files`, at both snapshot creation (refuse to create an incomplete manifest) and trusted load (fail closed). Root-level contracts (`acceptance.yaml`, `contracts.yaml`) live outside the watched-roots directory domain, so their `files` entry is their only drift-detection channel; a weak-trust forgery that drops such an entry while keeping roots exact SHALL therefore fail closed instead of washing the diff.
+
+Completeness SHALL cover all three phase-output tables, not only the required one. At snapshot creation the provided file list SHALL additionally be reconciled against the resolver's full current set (required + optional files + optional relpaths) and refuse to create a manifest that omits any currently resolvable frozen deliverable (e.g. a root-level `use-cases.yaml` present at PASS). The drift (`added`) detection domain SHALL include the registry-derived root-level candidate rels outside the watched roots: a disk-present candidate absent from `files` SHALL surface as `added` (restored — i.e. removed — under authenticated trust; detect-and-halt under weak trust). On trusted load with an unauthenticated manifest (no valid MAC and no in-process anchor), a disk-present root-level candidate missing its `files` entry SHALL fail closed before any agent is spawned; under authenticated trust the same condition is post-PASS drift and SHALL be handled by the diff/restore path rather than a trust failure. Honest boundary: without HMAC, if an optional deliverable and its manifest entry are deleted together before resume, its historical existence cannot be proven — strong tamper resistance still requires the HMAC key.
+
+Enforcement: `harness/scripts/utils/pass-snapshot.ts`（新增）
+
+#### Scenario: a superseded epoch with a valid MAC cannot be replayed
+
+- **WHEN** an old snapshot manifest and its files are intact with valid MACs but the head marks the epoch superseded
+- **THEN** restore eligibility SHALL be denied
+
+#### Scenario: dropping a root-level required deliverable from a consistently forged manifest fails closed
+
+- **WHEN** an unauthenticated manifest+head pair is rewritten consistently with `watched_roots` kept exactly equal but the root-level `acceptance.yaml` entry removed from `files`
+- **THEN** trusted snapshot load SHALL fail closed on completeness reconciliation instead of returning an active context whose diff can no longer see that deliverable
+
+#### Scenario: dropping a root-level optional deliverable's entry cannot wash the diff either
+
+- **WHEN** a root-level optional deliverable (e.g. `use-cases.yaml`) existed at PASS and an unauthenticated manifest+head pair is consistently rewritten with only that `files` entry removed
+- **THEN** trusted load SHALL fail closed (disk-present root-level candidate without an entry), and independently the diff SHALL report the file as `added` rather than yielding zero drift
+
+### Requirement: Invalidation is a recoverable run-level journal transaction
+
+Snapshot invalidation (phase invalidation/backtrack) SHALL be driven by a run-level journal at the fixed path `pass-snapshots/invalidation.json` (own kind `pass_snapshot_invalidation`, HMAC same key distinct domain) with at least `tx_id`, `state: pending|committed`, `cause_phase`, `invalidated_phases`, `old_head_hashes`, `target_generations`. Transaction order SHALL be: write journal pending → update every affected phase head/tombstone → append idempotent `phase_invalidated` events carrying the same `invalidation_tx_id` (deduplicated by `(tx_id, phase)`) → commit the journal. On startup and resume the runner SHALL recover the journal before reading any phase head (a pending journal is completed first; no snapshot restore may happen under an uncommitted transaction). The fail-closed rule for an unverifiable journal (missing HMAC where the store is authenticated, bad MAC, unparseable) applies to the resume/restart path — the runner SHALL halt without mutating any head; in-process operation continues to rely on the in-memory digest tier.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/pass-snapshot.ts`（新增）
+
+#### Scenario: crash between journal pending and events is recovered without restoring stale snapshots
+
+- **WHEN** the journal is pending, some heads are updated, and the process crashes before `phase_invalidated` events are appended
+- **THEN** on resume the runner SHALL complete head updates and events from the journal, commit it, and refuse to restore any snapshot of the invalidated phases
+
+#### Scenario: one backtrack invalidates multiple phases atomically
+
+- **WHEN** a backtrack invalidates several completed phases in one transaction
+- **THEN** all their heads SHALL be superseded under a single `tx_id` and events SHALL appear exactly once per `(tx_id, phase)` even across repeated recovery
+
+### Requirement: Closure-only attempts are classified by a receipt-probe total function and budgeted by closure kind
+
+The closure path taken after a blocked PASS SHALL be chosen by a deterministic function over the full `ReceiptValidation` status set obtained from the read-only receipt probe (never mapped from `advance_block_reason`, which stays telemetry-only): `passed` → `deterministic_recheck` (runner performs receipt state sync/closure without invoking an agent); `missing`/`failed` → `receipt_repair_with_verifier` (agent attempt using the phase's full current effective timeout — no invented shorter verifier budget); `error` → immediate HALT classified `closure_probe_error`/framework-bug semantics without invoking an agent; `not_applicable` while still advance-blocked → immediate HALT `closure_state_invariant`. Fresh attempts SHALL reuse the receipt validation already obtained in the control flow; resume re-probes with the subprocess timeout bounded by remaining wall clock and the finalize reserve. Closure-only timeout SHALL surface as closure timeout for human disposition, never re-entering content retries.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`
+
+#### Scenario: probe error is a framework fault, not an agent repair job
+
+- **WHEN** the receipt probe itself fails to execute (script missing, spawn failure)
+- **THEN** the run SHALL halt with `closure_probe_error` and no agent SHALL be invoked to "repair" the receipt
+
+### Requirement: Timeout budget ratchets on granted high-water and observed completions
+
+The per-attempt agent timeout SHALL be `max(base, granted_highwater, ceil(1.2 × max_completed_duration))`, where `granted_highwater` is the highest effective timeout ever granted to the phase and a completed duration is an invocation with `exit_code === 0 && timed_out !== true`; both SHALL be rebuilt from events on resume. Explicit host-configured phase timeouts remain a hard cap the ratchet cannot exceed, but when observed completions approach or exceed the explicit value the report SHALL state that the configured budget appears too small. `timeout_escalated` events SHALL record their source (`consecutive_timeouts` | `granted_highwater` | `observed_ratchet`). All budgets remain clamped by wall clock and the finalize reserve.
+
+Enforcement: `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: the incident's i4 no longer falls back to the base budget
+
+- **WHEN** attempts time out twice, escalation grants 67.5 minutes, and the third attempt completes at 49.6 minutes with exit 0 but fails content gates
+- **THEN** the next attempt's budget SHALL be 67.5 minutes (granted high-water), not the 45-minute base
+
+### Requirement: Blocker actionability joins the decision ladder at a single position and splits timeouts in four steps
+
+Aggregated blocker actionability (from the shared registry) SHALL enter the attempt decision ladder at exactly one position: after safety terminal states (operator interrupt, interaction/no-output, integrity, framework-bug) and transient-API backoff, before content retry/no-progress and closure routing. At that position: any `toolchain_blocked` blocker → halt `await_operator_toolchain` (an environment task, never phrased as a signature request); otherwise blockers non-empty and all `human_only` → halt `await_human_gate_deferral` reusing the awaiting-human-review semantics with per-item signature guidance; otherwise retry with the failure feedback restricted to `agent_fixable` items, `human_only` items marked as parked, and `human_only` ids excluded from the no-progress signature. For timed-out attempts with fresh blockers the classification SHALL follow four steps: integrity/framework-bug → safety terminal; ∃ toolchain_blocked → `await_operator_toolchain`; blockers non-empty and all human_only → the headless-interaction family (human outlet); otherwise `agent_timeout`. Peripheral state machines (vision trust/reseal startup terminals and fidelity transition preflight before the attempt; unauthorized-source-mutation and backtrack-limit reconciliation after the verdict) SHALL keep their existing positions and semantics — the aggregation layer only consumes blockers not claimed by them. The agent-written headless ledger SHALL never trigger these outcomes by itself (record-not-authorization); it is surfaced as guidance only.
+
+Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failure-classifier.ts`
+
+#### Scenario: timeout plus toolchain-only blockers goes to the operator, not another blind retry
+
+- **WHEN** an attempt times out and the fresh summary's only BLOCKER is the OCR-toolchain-unavailable gate
+- **THEN** the run SHALL halt `await_operator_toolchain` instead of classifying `agent_timeout` and burning another content retry
+
+#### Scenario: remaining human-only signature items stop consuming attempts
+
+- **WHEN** all agent-fixable capture items are resolved and the only failing BLOCKER is the unsigned fidelity-deferrals gate in a headless run
+- **THEN** one failing attempt SHALL move the run to `await_human_gate_deferral` listing the items to sign, without further content retries
+
+### Requirement: Attempt reporting uses four orthogonal axes
+
+Halt reporting for no-progress-family reasons SHALL be synthesized from per-attempt records on four orthogonal axes — agent termination (timeout/exit0/error) × harness verdict (PASS/FAIL/unavailable) × transition (advanced/advance_blocked/halted/retried) × artifact delta (changed/unchanged/restored) — rendered as a per-attempt timeline; summaries SHALL NOT present overlapping axes as mutually exclusive counts.
+
+Enforcement: `harness/scripts/utils/goal-report-generator.ts`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: the incident's i2 is reported on both axes instead of miscounted
+
+- **WHEN** an attempt both timed out and produced a harness PASS blocked from advancing
+- **THEN** the timeline SHALL show `timeout × PASS × advance_blocked` for that attempt and totals SHALL reconcile with the number of attempts
+
+### Requirement: Observed adapter model is append-only telemetry
+
+After each invocation the runner MAY parse the structured events file's init record through the shared envelope parser and append an `adapter_model_observed` event (`phase`, `invoke_id`, `adapter`, `model`, `source`); it SHALL NOT rewrite the frozen manifest or the pre-run `adapter_probe` event, SHALL NOT mint capability receipts for telemetry, and the observed model SHALL NOT feed vision-capability truth or any policy branch. Reports project the latest observation.
+
+Enforcement: `harness/scripts/goal-runner.ts`
+
+#### Scenario: the incident's MiniMax identity becomes visible without touching trust surfaces
+
+- **WHEN** the events file's init record reports `"model":"MiniMax-M2.7"`
+- **THEN** an `adapter_model_observed` event SHALL carry it while the manifest bytes and capability routing stay unchanged
+
+### Requirement: Preflight before agent_invoke_start
+
+goal-runner MUST 在每 phase 每 attempt 的 agent_invoke_start 事件之前执行共享工具链 preflight（初跑与 --resume 均重检）；探测到显式前置能力缺口（deveco_toolchain_missing / deveco_toolchain_capability_failed 类 prerequisite code）时 MUST NOT 产生 agent_invoke_start，MUST 直接写 run_end=HALTED 与 halt_reason=await_human_capability_gap 并以非零退出。该 halt MUST NOT 计入 CUMULATIVE_HALT_FAMILY（agent 未开跑，无累计语义）。
+
+#### Scenario: 缺口不烧 agent 轮次
+- **WHEN** phase 前置能力缺口存在且 goal-runner 启动该 phase attempt
+- **THEN** events.jsonl 无本 attempt 的 agent_invoke_start；run_end=HALTED，halt_reason=await_human_capability_gap
+
+#### Scenario: resume 重检
+- **WHEN** 用户修好环境后 --resume
+- **THEN** preflight 重检通过，attempt 正常产生 agent_invoke_start；仍缺口则再次首触 halt
+
+#### Scenario: 运行后失败不入本通道
+- **WHEN** ut/testing 运行后产生 ohos_test_sign_gap 等 failure_kind
+- **THEN** 走既有 toolchain 失败分类语义，不触发 await_human_capability_gap
+
+> **Enforced by:** `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runner-phase.ts`
+
+### Requirement: Goal monitor provides bounded notification reads
+
+The system SHALL provide `harness/scripts/goal-monitor.ts` as a read-only bounded monitor over goal run evidence. The monitor MUST read existing run evidence and live progress projection without starting, resuming, killing, or mutating a goal run.
+
+Enforcement: `harness/scripts/goal-monitor.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Phase verdict produces notification
+
+- **WHEN** `events.jsonl` contains a `phase_verdict` event after the supplied `--since-event` cursor
+- **THEN** `goal-monitor --markdown` SHALL emit one agent-facing notification containing the phase, verdict/action, current run status, next phase when available, and evidence paths
+
+#### Scenario: Bounded timeout is no-op
+
+- **WHEN** no notification-worthy event appears before `--max-seconds`
+- **THEN** `goal-monitor` SHALL exit successfully with a no-op result and MUST NOT alter any goal run files
+
+#### Scenario: Monitor timeout is harmless
+
+- **WHEN** a host shell or tool kills `goal-monitor` before it returns
+- **THEN** the goal run SHALL remain unaffected because the monitor is read-only
+
+### Requirement: Goal monitor uses stable event cursors
+
+The system SHALL define `event_index` as the zero-based line index in `events.jsonl`. `goal-monitor --since-event <n>` SHALL only edge-notify on events with index greater than `<n>`, while still using the complete event stream to compute current status.
+
+Enforcement: `harness/scripts/goal-monitor.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Since-event filters old verdicts
+
+- **WHEN** a run contains prior `phase_verdict` events at or before `--since-event`
+- **THEN** `goal-monitor` MUST NOT emit those old verdicts as new edge notifications
+
+#### Scenario: Cross-turn recovery summarizes current state
+
+- **WHEN** an agent resumes monitoring without reliable in-memory `last_seen`
+- **THEN** the monitor SHALL allow the agent to rebuild current state and recent verdicts from `events.jsonl` and live projection without requiring a persisted notified marker
+
+### Requirement: Heartbeat notifications are throttled by event time
+
+The system SHALL treat ACTIVE heartbeat summaries as notification-worthy only when the run has had no phase-changing event for at least `SOFT_STALL_MS = 10min` according to event/live snapshot timestamps, not according to the duration of the current monitor invocation.
+
+Enforcement: `harness/scripts/goal-monitor.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Short monitor does not trigger heartbeat by itself
+
+- **WHEN** `goal-monitor --max-seconds 240` waits for a running phase with no phase verdict
+- **THEN** the 240 second local wait alone MUST NOT produce a heartbeat notification unless the event-time threshold is already crossed
+
+#### Scenario: Same-phase heartbeat deduplicates
+
+- **WHEN** multiple monitor calls observe the same phase after a low-frequency heartbeat summary was already emitted for the same status window
+- **THEN** subsequent calls MUST NOT emit duplicate heartbeat summaries unless the threshold boundary or material status summary changes
+
+### Requirement: Hard liveness anomalies edge-notify once
+
+The system SHALL surface hard liveness anomalies (`STALLED`, `ORPHAN_SUSPECTED`) as `goal-monitor` notifications, but MUST edge-trigger them: a given anomaly SHALL be emitted only when new evidence (a higher `event_index`) has appeared past `--since-event`. An orphaned or hard-stalled run whose event stream is frozen MUST NOT re-emit an identical liveness notification on every monitor call; subsequent calls SHALL fall through to the bounded no-op.
+
+Enforcement: `harness/scripts/goal-monitor.ts`
+
+#### Scenario: Stalled run notifies once then deduplicates
+
+- **WHEN** a run is `STALLED`/`ORPHAN_SUSPECTED` with no newer events and the agent passes the previously returned `event_index` back as `--since-event`
+- **THEN** the first call SHALL emit a `liveness` notification and a subsequent call with no newer events SHALL return a bounded no-op instead of repeating it
+
+### Requirement: Completed phase durations stop at completion
+
+The system SHALL project completed phase durations using an `ended_at` timestamp rather than current time. Normal `ended_at` SHALL come from the phase `phase_verdict.ts`; legacy or recovery gaps MAY fall back to the next phase `phase_start.ts` or `run_end.ts`.
+
+Enforcement: `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: Passed phase duration remains stable
+
+- **WHEN** a phase has a `phase_start` and subsequent `phase_verdict`
+- **THEN** `goal-status` and `goal-monitor` projections SHALL report that phase duration as `phase_verdict.ts - phase_start.ts`, regardless of the current time
+
+#### Scenario: Running phase duration still grows
+
+- **WHEN** the current phase has started but has not ended
+- **THEN** progress projection SHALL continue reporting duration as current time minus the phase start time
+
+### Requirement: Cursor headless invoke uses cursor-agent or agent with positional prompt
+
+The system SHALL invoke Cursor goal phases via `cursor-agent` (fallback `agent`) with `-p`, passing the phase prompt as a positional argv element; it SHALL NOT use `cursor agent --print`. On Windows `.cmd` shims it SHALL use `cross-spawn` for spawn.
+
+Enforcement: `harness/scripts/utils/agent-invoke.ts`, `agents/cursor/adapter.yaml`, `harness/package.json`
+
+#### Scenario: Cursor plan uses positional prompt in argv
+
+- **WHEN** goal-runner resolves headless plan for adapter `cursor`
+- **THEN** invoke plan passes prompt as the final argv element (not via shell string concatenation)
+
+#### Scenario: Headless CLI PATH check for structured adapters
+
+- **WHEN** goal-runner preflight runs for adapter `claude`, `codex`, or `cursor`
+- **THEN** preflight BLOCKER-fails if the headless binary is not resolvable on PATH
 

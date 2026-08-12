@@ -13,9 +13,13 @@ Global cross-phase contracts (`acceptance.yaml`, `contracts.yaml`,
 `use-cases.yaml`, `boundaries.yaml`, `compat.yaml`) SHALL remain at the feature
 root directory.
 
-#### Scenario: PRD written under prd subdirectory
+#### Scenario: Spec written under spec subdirectory
 - **WHEN** an agent writes `spec.md` for feature `demo`
 - **THEN** the canonical path SHALL be `doc/features/demo/spec/spec.md`
+
+#### Scenario: Plan written under plan subdirectory
+- **WHEN** an agent writes `plan.md` for feature `demo`
+- **THEN** the canonical path SHALL be `doc/features/demo/plan/plan.md`
 
 #### Scenario: Global contract stays at feature root
 - **WHEN** harness loads `contracts.yaml` for feature `demo`
@@ -24,12 +28,17 @@ root directory.
 ### Requirement: Dual-read legacy flat paths on read
 
 On read, the framework SHALL prefer the canonical nested path when it exists.
-When only a legacy flat path at the feature root exists, the framework SHALL
-return that path as `actualPath` with `usedLegacy=true`.
+When only legacy paths exist (`prd/spec.md`, flat `spec.md`, `design/design.md`,
+flat `design.md`), the framework SHALL return the legacy file as `actualPath`
+with `usedLegacy=true`.
+
+#### Scenario: Legacy nested PRD still readable
+- **WHEN** `doc/features/demo/spec/spec.md` exists and `doc/features/demo/spec/spec.md` does not
+- **THEN** `resolveFeatureArtifact` for `spec.md` SHALL set `exists=true`, `usedLegacy=true`
 
 #### Scenario: Legacy flat PRD still readable
-- **WHEN** `doc/features/demo/spec.md` exists and `doc/features/demo/spec/spec.md` does not
-- **THEN** `resolveFeatureArtifact` SHALL set `exists=true`, `usedLegacy=true`, and `actualPath` to the legacy file
+- **WHEN** `doc/features/demo/spec.md` exists and canonical spec path does not
+- **THEN** `resolveFeatureArtifact` for `spec.md` SHALL set `exists=true`, `usedLegacy=true`
 
 ### Requirement: Legacy duplicate warning
 
@@ -75,4 +84,59 @@ Enforcement: `harness/scripts/utils/fidelity-shared.ts`, `harness/scripts/utils/
 
 - **WHEN** the initializer runs for a feature whose requirement says assets come from screenshot cropping
 - **THEN** fidelity-intent.json exists with asset_acquisition_mode=auto_crop before any spec.md is generated, and the subsequent harness CheckContext loads assetAcquisitionMode=auto_crop from the same SSOT
+
+### Requirement: facts.md is the single exploration artifact per feature
+
+feature 级探索事实 MUST 落盘于 `<features_dir>/<feature>/context/facts.md`，由该 track 的首个 feature phase 建立（full=spec、lite=change）；后续每个 active feature phase MUST 以 `phase_delta` 增量节追加（无新事实须显式写 "none"），MUST NOT 重做全量探索或另建 per-phase 探索文件。路径 MUST 经 `paths.features_dir` 解析。
+
+#### Scenario: coding 阶段复用 spec 的探索
+- **WHEN** full track 的 coding phase 开始且 facts.md 已由 spec 建立
+- **THEN** coding 只追加 `phase_delta: coding` 节，探索校验通过，不要求新建 context-exploration.md
+
+#### Scenario: review/ut/testing 不留断层
+- **WHEN** full track 的 review phase 校验探索凭证
+- **THEN** 校验对象为 facts.md 的 `phase_delta: review` 节（receipt 凭证同源）
+
+> **Enforced by:** `specs/phase-rules/*-rules.yaml`, `harness/scripts/check-receipt.ts`
+
+### Requirement: Legacy per-phase exploration remains readable
+
+旧 per-phase `context-exploration.md` 布局 MUST 保持可读可校验（WARN 提示可 backfill）；`backfill-context-exploration.ts` MUST 提供幂等的旧布局→facts.md 归并。
+
+#### Scenario: 存量 feature 零迁移
+- **WHEN** 存量 feature 只有旧 per-phase 探索文件
+- **THEN** 各 phase 校验按旧契约通过，仅出 WARN 建议 backfill
+
+> **Enforced by:** `harness/scripts/backfill-context-exploration.ts`, `specs/phase-rules/*-rules.yaml`
+
+### Requirement: Feature lifecycle artifact retention
+
+After a feature workflow completes, the framework SHALL retain `contracts.yaml`,
+`use-cases.yaml`, and `acceptance.yaml` permanently at the feature root.
+The framework MAY allow `plan/plan.md` narrative to be archived or downgraded.
+
+#### Scenario: Plan ephemeral after feature close
+- **WHEN** a feature reaches testing PASS and is marked closed
+- **THEN** harness SHALL still resolve `contracts.yaml` at the feature root indefinitely
+
+### Requirement: Process checklist items excluded from main templates
+
+The framework SHALL NOT require operational process sections (admin console
+scheduling, analytics/SVN, translation, TA coordination, demo scheduling) in
+core `spec` or `plan` templates. Hosts MAY supply them via extension checklists
+or lifecycle hooks.
+
+#### Scenario: Core spec template has no SVN section
+- **WHEN** harness validates a generic profile spec against phase-rules
+- **THEN** absence of an SVN archival section SHALL NOT fail structure checks
+
+### Requirement: Phase completion receipt template (slim, schema 2.0)
+
+phase-completion-receipt.md 模板 MUST 以 frontmatter `receipt_schema: "2.0"` 标识新格式；字段集 MUST 为：feature/phase、agent_model/agent_runtime、claimed_completion_at、claimed_completion_commit_sha、verifier_subagent（invoked_via + verdict 摘录）、反假设三 checkbox、testing_run_artifacts（仅 testing）、evidence_manifest 指针（机器回写）。缺 `receipt_schema` 键的存量回执 MUST 按旧格式（1.x）全量校验规则处理。
+
+#### Scenario: 双格式共存
+- **WHEN** 实例中同时存在旧格式回执（无 receipt_schema）与新模板产出的 2.0 回执
+- **THEN** check-receipt 按各自格式分派校验，旧格式行为零变化
+
+> **Enforced by:** `harness/templates/phase-completion-receipt.md`, `harness/scripts/check-receipt.ts`
 

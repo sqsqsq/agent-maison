@@ -313,3 +313,302 @@ state applies.
 > `harness/tests/unit/init-next-steps.unit.test.ts`,
 > `harness/tests/unit/module-graph-probe.unit.test.ts`,
 > `harness/tests/unit/skills-index-init-steps.unit.test.ts`
+
+### Requirement: Init proposes project_scale with user confirmation
+
+framework-init MUST 按 catalog 模块数（≤3）与代码量估算建议 `project_scale: small|standard`，经用户确认后写入 config；缺省（未声明）MUST 为 standard 且行为与引入前一致。确认点 MUST 登记 confirmation-registry。
+
+#### Scenario: 单模块小工程建议 small
+- **WHEN** init 扫描到 catalog 模块数 ≤3
+- **THEN** 建议 small 档并停等用户确认，确认后写入 config
+
+#### Scenario: 缺省零变化
+- **WHEN** 消费者 config 无 project_scale 字段
+- **THEN** 全部行为按 standard（现状）
+
+> **Enforced by:** `skills/project/framework-init/SKILL.md`, `harness/scripts/utils/config-builder.ts`
+
+### Requirement: phases_disabled union semantics
+
+`config.phases_disabled` 与 profile `phases_disabled` MUST 取并集，由 profile-loader 与 C0 `resolvePhaseChain` 统一裁剪 phase set；small 档 MUST 默认将 `module-graph` 加入 config 禁用集（用户可移除）。
+
+#### Scenario: small 档 module-graph 被裁剪
+- **WHEN** small 档实例运行 `--phase module-graph`
+- **THEN** runner 报该 phase 已按 scale 禁用
+
+> **Enforced by:** `harness/profile-loader.ts`, `harness/scripts/utils/runtime-policy.ts`
+
+### Requirement: Unified AGENTS.md.template rendering
+
+The system SHALL render `framework/templates/AGENTS.md.template` through a single
+shared module (`harness/scripts/utils/template-renderer.ts`) for both the
+`render-agents-md` CLI and init adapter entry materialization (`check-init` /
+`init-task-executor`). After rendering, the system MUST assert that no
+`{{UPPER_SNAKE_CASE}}` placeholders remain.
+
+The architecture summary placeholder `ARCHITECTURE_SUMMARY` MUST use DSL reference
+wording (referencing `cross_module_exports_file`) and MUST NOT inline the config
+file value (e.g. `Index.ets`) as the summary text.
+
+#### Scenario: No unreplaced placeholders after init materialize
+- **WHEN** init S3 materializes `CLAUDE.md` or `AGENTS.md` from the shared template
+- **THEN** the rendered file MUST NOT contain `{{EXTENSION_SKILL_SECTION}}` or any
+  other template placeholder tokens
+
+#### Scenario: render-agents-md CLI without --summary
+- **WHEN** `render-agents-md.ts` runs with `--entry-file` and `--out` but omits `--summary`
+- **THEN** it MUST compute `ARCHITECTURE_SUMMARY` from `config.architecture` using the
+  same DSL-reference style as the init path
+- **AND** MUST exit zero when rendering succeeds
+
+### Requirement: Two-phase init execution context derivation
+
+For `--execute`, the orchestrator SHALL derive execution context in two phases:
+
+1. **Planning phase** (`deriveBaseContextForPlanning`): strip staging reserved
+   fields; run `validateMaterializedAdaptersCrossCheck` on pre-sync context;
+   then `syncDecisionAdaptersIntoContext` from `decision.materialized_adapters`
+   (decision is SSOT); then `withInitContextDefaults`.
+2. **Execution phase** (`deriveContextForExecution`): after `InitTaskPlan` is known,
+   if `plan.mode` is `update` and `configWritePayload` is absent, derive minimal
+   payload from disk (`project_name`, `project_profile`, `architecture` only);
+   `materialized_adapters` MUST come from `decision.materialized_adapters` via sync.
+
+Preflight and `executeInitPlan` MUST receive the same `finalContext` object from
+phase 2.
+
+#### Scenario: UPDATE execute without S2 configWritePayload uses disk minimal payload
+- **WHEN** `--execute` runs in UPDATE mode with legal decision and empty
+  `context.configWritePayload`
+- **THEN** preflight MUST pass when disk `framework.config.json` contains required
+  architecture fields
+- **AND** executor MUST write config using the same derived payload as preflight
+
+#### Scenario: CREATE missing configWritePayload still blocked
+- **WHEN** `--execute` runs in CREATE mode without `configWritePayload` and
+  `ensure-config` resolves to a write action
+- **THEN** preflight MUST fail atomically without project business writes
+
+#### Scenario: Adapter cross-check before sync
+- **WHEN** staging `context` lists `materializedAdapters` that disagree with
+  `decision.materialized_adapters` before sync
+- **THEN** execute MUST fail with blocked run-log before `executeInitPlan`
+- **AND** MUST NOT overwrite context adapters silently
+
+### Requirement: UPDATE emit staging prefill
+
+The system SHALL pre-fill emitted `context.configWritePayload` with minimal semantic
+fields from disk (`project_name`, `project_profile`, `architecture` only) when
+`--emit-staging-template` runs for `plan.mode === update`. The emitted payload MUST
+NOT include `materialized_adapters` from disk. `decision.materialized_adapters` MUST
+remain `[]` until S2 user selection; execute phase `syncDecisionAdaptersIntoContext`
+MUST apply `decision.materialized_adapters` as SSOT.
+
+#### Scenario: Emit includes minimal payload without framework defaults
+- **WHEN** emit runs against an UPDATE project with existing `framework.config.json`
+- **THEN** stdout `context.configWritePayload` MUST include `project_name`,
+  `architecture`, and `project_profile` when present on disk
+- **AND** MUST NOT include `state_machine` or `toolchain` keys from disk-only defaults
+  unless explicitly present in minimal extraction (they are excluded by derive)
+- **AND** MUST NOT include `materialized_adapters` from disk in emit prefill
+
+### Requirement: Project init decision records materialized adapter evidence
+
+For `scope: project`, the decision JSON (`schema_version` `1.0`) SHALL include
+`materialized_adapters` as a non-empty `string[]` representing the user's
+S2 `init.materialized_adapters` selection for the current run. For
+`scope: personal`, `materialized_adapters` on the decision object MUST NOT be
+required.
+
+`assertDecisionStructure` SHALL validate `materialized_adapters` element types
+only when the field is present. Missing or empty `materialized_adapters` for
+project scope MUST be rejected in `validateDecisionJson` / `preflightExecute`
+with a blocked run-log (not an uncaught throw before run-log).
+
+#### Scenario: Project execute without materialized_adapters blocked with run-log
+- **WHEN** `--execute` runs with `scope: project` and decision omits
+  `materialized_adapters` or supplies an empty array
+- **THEN** preflight MUST fail with a blocked run-log
+- **AND** no project business or mechanism artifacts MUST be modified
+
+#### Scenario: Personal execute does not require decision materialized_adapters
+- **WHEN** `--execute` runs with `scope: personal` and decision omits
+  `materialized_adapters`
+- **THEN** preflight MUST NOT fail solely for that omission
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: S3 execution plan uses decision materialized_adapters as SSOT
+
+For project `--execute`, the orchestrator MUST derive
+`materialize-adapter:*` tasks from `decision.materialized_adapters` before
+relying on `context.materializedAdapters` or `configWritePayload.materialized_adapters`.
+Context/config values MAY be used as UPDATE recommendations but MUST NOT
+override a validated decision list. When both decision and context supply lists,
+they MUST match as sets or preflight MUST block.
+
+#### Scenario: Decision claude with context cursor blocked
+- **WHEN** preflight runs with `decision.materialized_adapters: ["claude"]` and
+  context `materializedAdapters: ["cursor"]`
+- **THEN** preflight MUST fail with a blocked run-log citing mismatch
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/scripts/utils/init-task-planner.ts`
+
+### Requirement: Staging context excludes CLI root fields
+
+`context.json` for staging MUST NOT include `projectRoot`, `harnessRoot`, or
+`plan`. When reading context for execute, the orchestrator MUST strip these
+fields if present and MUST apply CLI `--project-root` / harness root after
+context defaults so context cannot override CLI paths.
+
+#### Scenario: Context projectRoot does not override CLI
+- **WHEN** execute runs with CLI `--project-root` A and context contains
+  `projectRoot` B
+- **THEN** `executeInitPlan` MUST use A as `projectRoot`
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: Satisfied dependency explicit skip does not break closure
+
+The system SHALL NOT treat an explicit `skip` on a dependency task whose plan
+`status` is `satisfied` as a dependency-closure violation when validating
+decisions.
+
+#### Scenario: harness-install satisfied and explicitly skipped
+- **WHEN** `harness-install` has `status: satisfied` and decision marks it
+  `skip`, and `run-global-phases` is `run`
+- **THEN** `validateDecisionJson` MUST NOT report dependency closure violation
+  for that pair
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: Emit staging template without pre-existing context file
+
+When `--emit-staging-template` is used, the CLI SHALL treat a missing
+`--context-file` path as empty context and emit a staging template (including
+`decision.materialized_adapters: []` as a placeholder). The `--execute` path
+MUST still require a readable context file when `--context-file` is supplied.
+
+#### Scenario: Emit without context file succeeds
+- **WHEN** `--emit-staging-template --context-file <missing>` runs
+- **THEN** the CLI MUST exit 0 and print JSON with `decision` and `context`
+- **AND** `decision.materialized_adapters` MUST be `[]`
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`
+
+### Requirement: Tier_1 init readiness is machine-verifiable before S1
+
+The system SHALL provide `harness/scripts/init-readiness.mjs` that uses only Node.js
+built-in modules to verify Tier_1 harness dependencies before any `npx ts-node`
+invocation of init orchestration. The script MUST check
+`node_modules/ts-node/package.json`, `node_modules/@types/node/package.json`,
+`package.json` under the harness root, and that the current working directory is
+the harness directory. It MUST output JSON `{ ok, missing, recommended_command }`
+with `recommended_command` of `cd framework/harness && npm install`. It MUST NOT
+run `npm install` automatically.
+
+#### Scenario: Missing local node_modules reported before orchestrate
+- **WHEN** `init-readiness.mjs` runs with cwd `framework/harness` and
+  `node_modules/@types/node/package.json` is absent
+- **THEN** `ok` MUST be `false` and `missing` MUST name the absent artifacts
+- **AND** agents MUST NOT invoke `npx ts-node scripts/init-orchestrate.ts` until
+  the user runs the recommended install command
+
+> **Enforced by:** `harness/scripts/init-readiness.mjs`,
+> `harness/tests/unit/init-readiness.unit.test.ts`,
+> `skills/project/framework-init/SKILL.md`
+
+### Requirement: Run-log entries carry optional skip reason
+
+The orchestrator SHALL allow `InitRunLogEntry` to include optional `reason` with values
+`satisfied`, `drift_default_keep`, `decision_skip`, `keep`, `preflight_blocked`,
+or `dependency_blocked`. `schema_version` on the run-log MUST remain `"1.0"`.
+Human-facing `message` MUST reflect the skip category; `buildRunSummary` MAY
+continue to display `message` only.
+
+#### Scenario: Satisfied task skip is auditable
+- **WHEN** `executeInitPlan` skips a task with `status: satisfied`
+- **THEN** the entry MUST have `reason: satisfied` and message `已满足，跳过`
+
+#### Scenario: Doc drift default skip is auditable
+- **WHEN** a doc task has `status: drift`, `default_action: skip`, and resolved
+  action `skip`
+- **THEN** the entry MUST have `reason: drift_default_keep` and message
+  `drift 默认保留，跳过`
+
+#### Scenario: Preflight and dependency blocks carry reason
+- **WHEN** `buildPreflightBlockedLog` marks tasks skipped after a violation
+- **THEN** those entries MUST have `reason: preflight_blocked`
+- **WHEN** a task is skipped because a dependency failed
+- **THEN** the entry MUST have `reason: dependency_blocked`
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: Run-log top-level audit metadata
+
+The orchestrator SHALL allow `InitRunLog` to include optional `mode`, `plan_generated_at`, `project_root`, and
+`materialized_adapters`. CLI execute and blocked preflight paths MUST populate
+available fields. `buildRunSummary` MUST include a short metadata section when
+present.
+
+#### Scenario: Successful execute run-log includes audit fields
+- **WHEN** `--execute` completes for a project init with adapters `["claude"]`
+- **THEN** written `run-log.json` MUST include `project_root` and
+  `materialized_adapters` when supplied by the orchestrator
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: Staging context metadata is normalized
+
+`normalizeStagingContext` MUST strip `projectRoot`, `harnessRoot`, `plan`,
+`schema_version`, and `scope` from staging `context.json` before execution context
+is built. Execution payloads (`configWritePayload`, `docWritePayload`,
+`materializedAdapters`, etc.) MUST be retained.
+
+#### Scenario: schema_version and scope stripped before execute
+- **WHEN** `context.json` includes `schema_version`, `scope`, and `configWritePayload`
+- **THEN** `normalizeStagingContext` MUST remove the metadata keys
+- **AND** MUST retain `configWritePayload` for S3 execution
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: Smart implicit task action respects allowed_actions
+
+The system SHALL ensure that when `decision_mode` is `smart` and no explicit
+decision entry exists for a task, `resolveTaskAction` MUST choose only actions
+listed in `allowed_actions`, using
+drift priority `overwrite` then `keep` then `skip`, and MUST throw when no action
+is allowed (e.g. never return `overwrite` for doc drift tasks that only allow
+`run` and `skip`).
+
+#### Scenario: Doc drift without explicit entry resolves to skip
+- **WHEN** `resolveTaskAction` runs in smart mode for a doc task with
+  `status: drift`, `default_action: skip`, `allowed_actions: ['run','skip']`, and
+  no explicit decision entry
+- **THEN** the resolved action MUST be `skip`
+
+> **Enforced by:** `harness/scripts/init-orchestrate.ts`,
+> `harness/tests/unit/init-orchestrate.unit.test.ts`
+
+### Requirement: S4 init summary lists optional next steps only
+
+framework-init and materialized `/framework-init` command templates MUST list optional
+downstream steps after init without prompting the user to immediately enter
+catalog-bootstrap, glossary-bootstrap, or spec (no default yes/no gate to
+the next Skill).
+
+#### Scenario: S4 does not prompt immediate catalog-bootstrap
+- **WHEN** framework-init completes successfully
+- **THEN** the agent summary MUST NOT ask「是否现在进入 catalog-bootstrap」or equivalent default yes/no gate
+- **AND** MUST only list optional next steps for the user to choose explicitly
+
+> **Enforced by:** `skills/project/framework-init/SKILL.md`,
+> `agents/claude/templates/commands/framework-init.md`
+

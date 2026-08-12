@@ -97,8 +97,6 @@ is allowed (e.g. never return `overwrite` for doc drift tasks that only allow
 > **Enforced by:** `harness/scripts/init-orchestrate.ts`,
 > `harness/tests/unit/init-orchestrate.unit.test.ts`
 
-## MODIFIED Requirements
-
 ### Requirement: S4 init summary lists optional next steps only
 
 framework-init and materialized `/framework-init` command templates MUST list optional

@@ -1,6 +1,6 @@
 # Delta: Feature Artifact Layout — 瘦身版 receipt 模板
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Phase completion receipt template (slim, schema 2.0)
 

@@ -34,15 +34,17 @@ from the artifact. Source repo `npm test` (unit + fixtures) remains the develope
 The system SHALL enforce each harness phase using a dedicated check script paired
 with a phase-rules YAML file under `specs/phase-rules/`.
 
-#### Scenario: PRD phase has check and rule pair
-- **WHEN** harness-runner executes the `prd` phase
+#### Scenario: Spec phase has check and rule pair
+- **WHEN** harness-runner executes the `spec` phase
 - **THEN** it MUST invoke `harness/scripts/check-spec.ts` against `specs/phase-rules/spec-rules.yaml`
+
+#### Scenario: Plan phase has check and rule pair
+- **WHEN** harness-runner executes the `plan` phase
+- **THEN** it MUST invoke `harness/scripts/check-plan.ts` against `specs/phase-rules/plan-rules.yaml`
 
 #### Scenario: Workflow DAG defines phase dependencies
 - **WHEN** harness resolves the active workflow
 - **THEN** it MUST load `workflows/spec-driven.workflow.yaml` (or the configured `active_workflow`) and honor each artifact's `requires` dependencies
-
-> **Enforced by:** `workflows/spec-driven.workflow.yaml`, `specs/workflow-schema.json`, `harness/scripts/check-*.ts`, `specs/phase-rules/*.yaml`
 
 ### Requirement: Release verify is mandatory for dev-tool changes
 
@@ -368,4 +370,435 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts
 
 - **WHEN** a summary carries an explicit external/device blocker or `completion_status: deferred` alongside a locally-blocked capability
 - **THEN** the phase SHALL stay `deferred` and the recommendation SHALL remain `resolve_deferred` (local blocked reclassification must not swallow explicit external deferral)
+
+### Requirement: Formal goal testing gate force-installs and writes the sole evidence
+
+goal 模式 testing 的外层 gate harness 内，device_test.install MUST 在`HARNESS_DEVICE_TEST_FORCE_INSTALL`（既有开关，仅由 runner 注入 gate harness 子进程 env）在场时跳过复用、真实执行 `hdc install -r`。install provider MUST 在调用 hdc install 之前计算完整 64 hex 的 HAP sha256 并随结果回传（12 hex 截断指纹的既有消费者 MUST NOT 受影响）。
+
+`device-test-evidence.json` MUST 由 check-testing 协调层在 build→install→run 全部完成后
+统一写入（run provider 与 install provider 均 MUST NOT 各自写入）。写入门槛全部满足才写：
+`MAISON_GOAL_GATE_HARNESS === '1'`；goal run/attempt 身份完整；install executed 且 ok；
+device_test.run 已执行且本轮 hylyre trace 路径非空；写前复算当前 HAP 完整 sha 与装机前
+一致。trace_path MUST 直取本轮 pipeline holder 的 trace 路径（writer MUST NOT 自行调用
+authoritative resolver 寻找 trace）。schema MUST 含 `written_at`（写入时刻，供 collector
+作唯一时间裁决字段）与 device_target{serial, target_kind, session_id}（取 gate 进程 env
+中就绪门冻结注入的设备身份）。
+
+真实安装与 device_test.run 都已成功而 evidence 未能写出（compose 失败——含写前复算 HAP
+sha 与装机前不一致——或写盘异常）时，check-testing MUST 产出 `device_test_evidence`
+BLOCKER FAIL 并进入 results（MUST NOT 静默吞——否则 collector 把缺文件当无信号，旧包/
+被改写 HAP 的结果可能被误当有效放行）。上游 install/run 本身失败时本步 MUST 返回空
+（由既有 install/run 门禁裁决，不重复报）。
+
+普通模式（无 flag、无 goal 身份）的 install 复用策略与既有行为 MUST 保持零变化。
+
+#### Scenario: 正式 gate 强装并产出 evidence
+- **WHEN** goal testing gate harness 完成 build→install→run 且门槛全部满足
+- **THEN** 覆盖式写入 device-test-evidence.json，含身份/设备元组/full sha/written_at/cases
+
+#### Scenario: 安装成功但 run 未产出 trace 不写 evidence
+- **WHEN** install ok 但 device_test.run 未执行或本轮 trace 缺失
+- **THEN** 不写 evidence（防误用历史 trace）；run gate 本身 FAIL，collector 不产生
+  device_test 信号
+
+#### Scenario: 真实安装与 run 已成功但 evidence 写不出
+- **WHEN** 强装与 device_test.run 均成功，但 compose 失败（如 HAP 装机后被并发改写）或
+  evidence 写盘异常
+- **THEN** check-testing 产出 device_test_evidence BLOCKER FAIL（不静默）
+
+#### Scenario: 普通模式行为不变
+- **WHEN** 普通模式跑 check-testing（无 gate flag、无 goal 身份）
+- **THEN** install 复用策略与既有一致，不写 evidence
+
+### Requirement: Device-test defect cases carry machine-derived classification
+
+evidence 的 cases[] MUST 由机器产物合成：失败 step MUST 从 trace notes 的机器写入`failure_artifacts` 子句严格解析（basename MUST 落在 failure_dir 内；文件名的 case id 与step index MUST 与该 case 一致；再于选中派生计划中查得该 step 的 selector/动作定义）；缺失、多义或冲突 MUST 标 unjoinable，MUST NOT 按最大 step 或任意现存文件猜测。
+
+classification MUST 为四分类之一：`product_actionable` 须三条件齐备——selector 可归到
+spec 声明锚点并推导出 expected screen、失败 step 的 UI dump 命中该 screen 的其他 identity
+锚点、仅目标 selector 缺失或形态不满足；`environment` MUST 只消费既有结构化来源（run 级
+RunFailureKind 与 install diagnosis kind），MUST NOT 重新扫描散文日志；selector 无 spec
+依据或派生计划步骤与 spec 对不上 → `test_contract`；其余 → `unknown`。
+
+#### Scenario: 多组诊断文件只认机器指名的失败 step
+- **WHEN** 某 case 的 failure_dir 同时存在多个 step 的诊断文件
+- **THEN** 仅按 trace notes failure_artifacts 指名的 step 参与 join，其余不作数
+
+#### Scenario: 环境类失败不归产品缺陷
+- **WHEN** run 级 RunFailureKind 为 device_locked/device_disconnect 等环境类
+- **THEN** 该轮 cases 分类为 environment，不进入 product_actionable
+
+### Requirement: hmos-app generated-source classifier contract
+
+hmos-app profile MUST 提供生成物分类器：路径判据 MUST 限定到根 build-profile.json5 声明的模块根；内容判据 MUST 为模板结构白名单加四常量逐值等值（HAR_VERSION 取该模块根oh-package.json5 version；BUILD_MODE_NAME/DEBUG 与冻结 buildMode 互相一致；TARGET_NAME按模块 targets 与冻结 product 推导，无显式声明回落 'default'）；MUST NOT 做字节等值比对（hvigor 版本间模板注释措辞可漂移）。
+
+#### Scenario: 常量与冻结配置逐值一致才降级
+- **WHEN** 文件为纯模板且 HAR_VERSION/BUILD_MODE_NAME/DEBUG/TARGET_NAME 与冻结配置推导
+  完全一致
+- **THEN** 分类为合法生成物；任一值不符则不是
+
+### Requirement: Gate internal errors are attributed as framework_bug, not agent content failures
+
+When a phase checker throws a programmer error (TypeError/RangeError/SyntaxError), the `safeRun` wrapper SHALL keep the fail-closed BLOCKER FAIL and additionally set `failure_kind: 'framework_bug'` and `blocking_class: 'framework_internal'` on the result (reusing existing CheckResult/summary-blocker fields — no schema change). Downstream goal-runner classification SHALL treat a fresh, non-empty, all-framework_bug blocker set as `framework_bug` and halt on first touch with guidance to upstream the defect (agent must not modify framework release files nor keep mutating its own artifacts to work around the gate).
+
+Enforcement: `harness/scripts/check-spec.ts`, `check-plan.ts`, `check-coding.ts`, `check-review.ts`, `check-ut.ts` (safeRun), `harness/scripts/utils/goal-failure-classifier.ts`
+
+#### Scenario: Gate crash stops feeding the agent retry loop
+
+- **WHEN** a checker crashes with a TypeError while parsing an agent-authored YAML and the summary is fresh
+- **THEN** the goal run SHALL halt with `framework_bug` guidance naming the checker id and stack head, instead of retrying the agent against an unfixable blocker
+
+### Requirement: Agent-authored YAML shape deviations produce structured FAILs, never crashes
+
+Checkers consuming agent-writable YAML/JSON fields (per the source-artifact→loader→field→consumer inventory: ui-spec.yaml assets/screens trees, visual-parity.yaml mappings, asset-crop-vl.yaml entries, contracts/acceptance/use-cases collections) SHALL iterate via a shared `asArray()` guard so that non-array truthy values (`{}`, `""`, nested dicts) or a null parse cannot throw. Each guarded site SHALL be paired with a shape validation that reports a structured FAIL (expected shape + minimal valid sample); an invalid shape passing silently is a defect.
+
+Enforcement: `profiles/hmos-app/harness/*` inventory sites, shared `asArray` util
+
+#### Scenario: Dict-shaped assets fail with guidance instead of crashing
+
+- **WHEN** an agent writes `assets: {}` (or `mappings.components` as a dict) into ui-spec.yaml / visual-parity.yaml
+- **THEN** the affected checker SHALL emit a structured FAIL describing the expected list shape and SHALL NOT throw `[Harness 内部错误]`
+
+#### Scenario: Invalid shapes are not silently washed
+
+- **WHEN** `asArray()` converts a non-array value to an empty list at a guarded site
+- **THEN** the paired shape validation SHALL still surface a FAIL for that field (coverage asserted by the fixture matrix: `{}`, `""`, nested dict, parse-null)
+
+### Requirement: PRD-to-code traceability entries are validated per entry, not in aggregate
+
+The `plan_to_code` gate SHALL validate every `prd_to_code_traceability` entry individually before running the aggregate file-existence check: each entry SHALL have a non-blank `prd_id` (string, trimmed non-empty); each entry SHALL map at least one key file (`key_files.length > 0`); every key-file path SHALL be a trimmed non-empty, project-root-relative safe path (no absolute paths, drive letters, or `..` segments — reusing `validateProjectRelativePath`, with its throw wrapped into a gate verdict) and SHALL resolve to a regular file (`stat.isFile()`, not a directory). Any violation SHALL produce a BLOCKER FAIL on `plan_to_code` naming the offending entries — never an internal `[Harness 内部错误]` and never a vacuous PASS over an empty or fabricated set.
+
+Enforcement: `harness/scripts/check-coding.ts` (checkDesignToCode)
+
+#### Scenario: A partially empty entry cannot hide behind a valid one
+
+- **WHEN** one entry has `key_files: []` while another entry maps an existing file
+- **THEN** the gate SHALL FAIL as BLOCKER, naming the empty entry's `prd_id` and the empty/total count (aggregate-only checking that passes because "all 1 mapped files exist" is forbidden)
+
+#### Scenario: Fabricated paths do not count as traceability
+
+- **WHEN** `key_files` contains `""`, `"."`, a directory path, or a `../`-escaping path
+- **THEN** the gate SHALL FAIL as BLOCKER with an actionable message (path must be a project-root-relative regular file), not an internal error
+
+#### Scenario: Entries without a PRD identity fail
+
+- **WHEN** an entry omits `prd_id`, or sets it to `""` or whitespace-only
+- **THEN** the gate SHALL FAIL as BLOCKER stating the entry cannot be traced to any PRD, even if its key files exist
+
+#### Scenario: Fully valid traceability passes
+
+- **WHEN** every entry has a non-blank `prd_id` and at least one safe relative path resolving to an existing regular file
+- **THEN** the gate SHALL PASS (per-entry strictness must not reject legitimate traceability)
+
+### Requirement: Evidence-tiered hvigor error classification
+
+hvigor build 链失败 MUST 按错误码结构化分类：00303217 MUST 归 sdk_home_missing_or_invalid（并提示 framework 调用链已自动派生 DEVECO_SDK_HOME）；00303168 MUST 归 sdk_component_missing（中性事实）；仅当同时取得 SDK manifest 格式/SDK 版本/hvigor 版本证据时才 MAY 升级为 sdk_layout_or_version_incompatible_suspected 并给出装配套 SDK/降级 hvigor/IDE 编译三选一指引。诊断 MUST 头部化（details 首行 ≤180 字，经共享 diagnostic util），构建日志移后。
+
+#### Scenario: 无证据不得断言不兼容
+- **WHEN** hvigor 报 00303168 而 SDK manifest/版本证据未取得
+- **THEN** 诊断输出 sdk_component_missing 与取证指引，不得出现"版本不兼容"断言
+
+#### Scenario: 诊断不埋日志尾
+- **WHEN** compile 失败 details 含 5KB 构建日志
+- **THEN** 首行即结构化诊断头（错误码+归类+下一步），日志在其后
+
+> **Enforced by:** `profiles/hmos-app/harness/hvigor-runner.ts`, 共享 diagnostic util
+
+### Requirement: Summary blockers carry scalar actionability from a single registry
+
+`CheckResult`/summary blockers SHALL support a scalar `actionability` field limited to `agent_fixable | human_only | toolchain_blocked` (no mixed value — mixed gate output is expressed by the existing separate blocker ids along the gate lifecycle). Resolution SHALL follow a single shared registry pure function (colocated with the failure classifier, reusing the existing toolchain id/blocking-class predicates — no third taxonomy) with the priority chain: explicit `actionability` on the check result → failure-kind/blocking-class compatibility mapping → default `agent_fixable`. The initial migration table SHALL at least map: `capture_completeness_external` → agent_fixable; `fidelity_deferrals_human_sign` and the awaiting-human-confirmation family (including `fidelity_capability_pregate`, `capability_missing_strong_intent`, `await_human_fidelity_tier`) → human_only; `capture_completeness_external_ocr_unavailable` and `blocking_class=device_toolchain` → toolchain_blocked. Summary mapping, runner retry-prompt projection, and reports SHALL consume the same registry; a drift test SHALL bind registry ↔ classifier ↔ schema.
+
+Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/utils/summary-blockers.ts`, `harness/scripts/utils/types.ts`, `harness/schemas/summary.schema.json`
+
+#### Scenario: an unregistered blocker keeps today's behavior
+
+- **WHEN** a blocker id appears in no registry entry and carries no explicit actionability
+- **THEN** it SHALL resolve to `agent_fixable` and the retry flow SHALL behave exactly as before this change
+
+### Requirement: ui-spec schema rejects unknown screen and component keys with a rename hint
+
+`ui-spec.schema.json` SHALL set `additionalProperties:false` on both the screen and componentNode definitions (after a one-time inventory registers all legitimate existing keys), and the runtime validator SHALL derive its allowed-key sets from the schema (JSON Schema stays the single source of truth). Unknown-key errors SHALL include a did-you-mean hint when the unknown key is within edit distance 3 of (or a prefix-stripped match for) a legal key. A three-way drift test SHALL bind schema ↔ validator ↔ TypeScript types.
+
+Enforcement: `harness/schemas/ui-spec.schema.json`, `profiles/hmos-app/harness/ui-spec-schema-validate.ts`
+
+#### Scenario: the incident's wrong key is caught with the correct name
+
+- **WHEN** a screen carries `must_have:` instead of `must_have_elements:`
+- **THEN** validation SHALL FAIL naming the illegal key and suggesting `must_have_elements`, instead of silently dropping the coverage list
+
+### Requirement: Capture-completeness messaging names real fields and real paths
+
+The capture-completeness gates SHALL reference the field name `must_have_elements` verbatim in failure details, and their `affected_files`/details SHALL use the same `spec/`-relative path the gate actually reads (`spec/ref-elements.yaml` via the fidelity path helpers), never the feature-root projection that misled the incident agent into copying files to the wrong location.
+
+Enforcement: `profiles/hmos-app/harness/capture-completeness-check.ts`
+
+#### Scenario: the error message no longer teaches the wrong field name
+
+- **WHEN** must-have coverage fails
+- **THEN** the details SHALL say `must_have_elements` and point at `doc/features/<f>/spec/ref-elements.yaml`
+
+### Requirement: Gate guidance separates agent and operator audiences
+
+Generic auto-guidance and per-gate suggestions delivered to the retrying agent SHALL contain only artifact-level actions; framework-internal mechanics (implementation lookups, memory-manifest injection routes) SHALL move to an `operator_note` field rendered in goal reports but excluded from the agent retry-prompt failure feedback. The retry feedback block SHALL end with an explicit red line against reading or modifying framework internals to pass gates. When the previous failure contained an unknown-schema-key BLOCKER, the next retry prompt SHALL append the legal key list generated from the schema SSOT (model-agnostic trigger).
+
+Enforcement: `harness/scripts/utils/report-generator.ts`, `harness/schemas/summary.schema.json`, `harness/scripts/goal-runner.ts`
+
+#### Scenario: the agent no longer gets sent into framework source
+
+- **WHEN** a gate fails whose remediation note mentions the structured-ref-elements memory manifest
+- **THEN** the retry prompt SHALL show only the artifact-level fix while the goal report carries the operator_note
+
+### Requirement: Machine-readable personal-setup preflight exit
+
+harness-runner 的 personal-setup 前置校验失败时 MUST 在退出前输出并持久化机读 HARNESS_PREFLIGHT 结果（含 code/capability/prerequisite/双出口指引），退出码非零语义不变；机器行为恒 MUST 为"输出结构化缺口 + 非零退出"——MUST NOT 读 stdin、MUST NOT 生成任何确认 receipt、MUST NOT 放行或绕过 phase。
+
+#### Scenario: goal 侧可分类
+- **WHEN** goal 链（或交互态）遭遇 deveco_toolchain_missing 类前置缺口
+- **THEN** 存在机读 HARNESS_PREFLIGHT 产物供 goal-runner 分类为 await_human_capability_gap，而非裸 console.error
+
+#### Scenario: 交互态双出口
+- **WHEN** 交互态 agent 收到该 preflight 失败
+- **THEN** 文案含双出口（引导安装默认 | 用户确认后诚实停止并 resume 恢复），且注明用户确认仅为知情记录、不构成任何授权
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/utils/personal-setup-gate.ts`
+
+### Requirement: Terminology gate degrades on small scale
+
+`project_scale: small` 下 spec 的术语消歧 MUST 降级为一次性对照 architecture.md 模块清单确认：映射表仍产出，免逐行 `[x]` gate；glossary MUST 允许最小种子。headless 例外规则沿用既有 §9 语义。
+
+#### Scenario: small 档 spec 术语步骤
+- **WHEN** small 档实例执行 spec 阶段术语消歧
+- **THEN** 产出映射表 + 一次性确认即可通过 check-spec 术语门禁，无逐行 [x] BLOCKER
+
+> **Enforced by:** `harness/scripts/check-spec.ts`, `specs/phase-rules/spec-rules.yaml`
+
+### Requirement: Scope red lines survive small scale
+
+`diff_within_scope` 与 spec 的 Scope 声明章节校验在 small 档 MUST 保持与 standard 一致，MUST NOT 随 scale 降级。
+
+#### Scenario: small 档越界照拦
+- **WHEN** small 档 feature 的 coding diff 触及 out_of_scope 模块
+- **THEN** `diff_within_scope` BLOCKER FAIL（与 standard 行为一致）
+
+> **Enforced by:** `harness/scripts/check-coding.ts`, `specs/phase-rules/coding-rules.yaml`
+
+### Requirement: Receipt hard blocks dispatch by policy
+
+check-receipt 的 verifier / invoked_via / trace_json / context_exploration / self_check 硬必需块 MUST 先查 evidence policy：`required` 走现有校验；`off` 记 `skipped_by_policy` 不 FAIL；`optional` 缺失仅 WARN；lite feature MUST 整体返回 exit 0 + 顶层 `not_applicable` 机读标注。
+
+#### Scenario: balanced 下 verifier off 的 receipt 通过
+- **WHEN** full×balanced 的 review phase receipt 无 verifier 节
+- **THEN** check-receipt 记 verifier=skipped_by_policy 且 exit 0
+
+#### Scenario: strict 行为不变
+- **WHEN** 缺省 strict 下 receipt 缺 verifier verdict
+- **THEN** BLOCKER FAIL（与现状一致）
+
+> **Enforced by:** `harness/scripts/check-receipt.ts`
+
+### Requirement: Two-layer evidence snapshot
+
+receipt frontmatter 与 `.current-phase.json` MUST 记录 `evidence_policy_snapshot`，每凭证项含两栏：policy 档（`required|optional|off|not_applicable`）与 `validation_status`（`provided|missing|skipped_by_policy|not_applicable`）。快照 MUST 带 `policy_schema_version` 并与 C0 fail-safe 语义共用 schema。
+
+#### Scenario: receipt 保留但 trace opt-in 关闭可稳定校验
+- **WHEN** full×balanced 的 receipt 声明 trace policy=optional、validation_status=missing
+- **THEN** 校验通过且组合判据机读可查，不依赖散文 N/A
+
+> **Enforced by:** `harness/scripts/check-receipt.ts`, `harness/harness-runner.ts`
+
+### Requirement: Closure source dispatches by policy
+
+closure MUST 按 policy 分派三态：full = receipt `passed`；lite = exit 报告 PASS + change.md checkbox 全勾（`closed_by_exit_report`）；`not_applicable` MUST NOT 映射为 receipt-passed。Resume Gate 对 not_applicable MUST 走 lite 闭环判据。
+
+#### Scenario: lite feature 跨会话续跑不误判
+- **WHEN** 新会话对已完成 lite feature 跑 Resume Gate（check-receipt 返回 not_applicable）
+- **THEN** 闭环判定读 exit 报告 + checkbox，而非要求 receipt
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`, `agents/claude/templates/hooks/check-phase-completion.mjs`
+
+### Requirement: Legacy phase id alias with warning
+
+The harness SHALL accept legacy phase ids `prd` and `design` as aliases for
+`spec` and `plan` respectively, normalizing them before check execution and
+emitting a WARN on first use per run.
+
+#### Scenario: Legacy prd phase id runs spec checks
+- **WHEN** harness-runner is invoked with `--phase prd`
+- **THEN** it MUST execute spec-phase checks and emit a deprecation WARN
+
+#### Scenario: In-flight current-phase resumes with legacy id
+- **WHEN** `.current-phase.json` contains `"phase": "plan"` after framework upgrade
+- **THEN** goal-runner or harness MUST normalize to `plan` and continue without manual edit
+
+### Requirement: Spec to plan traceability gate
+
+The harness SHALL verify that structured non-functional, security, performance,
+and DFX constraints declared in spec (`acceptance.yaml` or spec.md structured
+blocks) have corresponding implementation entries in `plan.md` or
+`contracts.yaml`.
+
+#### Scenario: Missing plan mapping fails trace check
+- **WHEN** spec declares a BLOCKER security constraint without a plan/contracts mapping
+- **THEN** the spec→plan traceability check SHALL FAIL with severity BLOCKER
+
+### Requirement: Check id alias for renamed gates
+
+The harness SHALL resolve legacy check ids (`prd_p0_coverage`,
+`scope_consistency_with_prd`, etc.) to renamed counterparts (`spec_p0_coverage`,
+`scope_consistency_with_spec`) when reading `phase_rules_overlays` and
+`compat.yaml` exempt patterns.
+
+#### Scenario: Overlay references legacy prd check id
+- **WHEN** an instance overlay keys `prd_p0_coverage` after rename
+- **THEN** harness MUST apply the overlay to `spec_p0_coverage` and emit a WARN
+
+### Requirement: UT phase detects host artifacts under harness root
+
+The system SHALL detect when host project artifacts (especially UT-related trees
+derived from `contracts.modules[].package_path`) are written under `ctx.harnessRoot`
+instead of under `ctx.projectRoot`, and MUST report `harness_host_artifact_pollution`
+as BLOCKER when any violation is found.
+
+#### Scenario: Misplaced package_path under consumer harness
+- **WHEN** `framework/harness/{package_path}/` exists on disk for a module declared in `contracts.yaml`
+- **AND** harness-runner executes the `ut` phase for that feature
+- **THEN** `check-ut.ts` MUST emit `harness_host_artifact_pollution` with status FAIL and severity BLOCKER
+- **AND** details MUST include layout-resilient display paths and migration guidance
+
+#### Scenario: Profile may extend pollution patterns
+- **WHEN** the active project profile implements optional `collectHarnessPollutionExtras`
+- **THEN** violations from profile extras MUST be merged with core contract-path violations
+- **AND** any non-empty merged set MUST trigger BLOCKER (parallel merge, not sequential gates)
+
+> **Enforced by:** `harness/scripts/check-ut.ts`, `harness/scripts/utils/harness-path-guard.ts`, `specs/phase-rules/ut-rules.yaml`
+
+### Requirement: Shared layer must not contain platform tool names
+
+The system MUST forbid `AskUserQuestion` and `AskQuestion` in publishable shared
+layers (`skills/`, `profiles/`, `agents/shared/`, `templates/`). Platform tool
+names SHALL only appear in adapter-specific directories (`agents/claude/**`,
+`agents/cursor/**`, etc.).
+
+#### Scenario: Skills directory lint passes
+- **WHEN** `check-skills-confirmation-ux.ts` scans publishable shared layers
+- **THEN** no file under `skills/`, `profiles/`, `agents/shared/`, or
+  `templates/` MUST match `AskUserQuestion` or `AskQuestion`
+
+> **Enforced by:** `harness/scripts/check-skills-confirmation-ux.ts`
+
+### Requirement: Confirmation registry schema 2.0 completeness
+
+The system SHALL require `confirmation-registry.yaml` to use `schema_version: "2.0"`
+with complete `options` (or `matrix_options`) for all registered confirmation
+entries, and MUST NOT contain deprecated `widget_hint` or `widget_options_ref`
+fields.
+
+#### Scenario: Registry lint rejects legacy fields
+- **WHEN** confirmation UX lint runs against `confirmation-registry.yaml`
+- **THEN** entries with class `enum|gate|freeform_approval|artifact_checkbox` MUST
+  have non-empty `options` arrays and the file MUST NOT contain `widget_hint:` or
+  `widget_options_ref:`
+
+> **Enforced by:** `harness/scripts/check-skills-confirmation-ux.ts`,
+> `skills/reference/confirmation-registry.yaml`
+
+### Requirement: Interaction layer consumer smoke test
+
+The system SHALL provide `harness/scripts/smoke-interaction-renderer.ts` that
+validates both framework source templates and consumer-level artifact paths after
+simulated init materialization.
+
+#### Scenario: Smoke test passes in CI
+- **WHEN** `npx ts-node harness/scripts/smoke-interaction-renderer.ts` runs from
+  the framework repository
+- **THEN** it MUST pass Phase A (claude source templates) and Phase B (tmpdir
+  consumer smoke including deprecated artifact cleanup and generic bundle-root
+  renderer relocation)
+
+> **Enforced by:** `harness/scripts/smoke-interaction-renderer.ts`,
+> `docs/operations/release-checklist.md`
+
+### Requirement: Base summary is receipt-independent and atomic
+
+writeRunSummary MUST 拆为 base 与 closure patch 两段：base summary MUST 不依赖任何 receipt 校验结果、MUST 为完整 schema-valid 快照（next_action 以"未闭环/等待 receipt"初值填充、closure_status=open）、MUST 原子写入；closure patch MUST 只更新 receipt_status/closure_status/next_action，MUST NOT 首建文件。进程在 patch 前中断时，磁盘上 MUST 仍是合法 open 态 summary。
+
+#### Scenario: patch 前崩溃
+- **WHEN** base summary 已写、closure patch 未执行时进程终止
+- **THEN** summary.json 通过 schema 校验且 closure_status=open，不残留旧 closed 态
+
+> **Enforced by:** `harness/harness-runner.ts`
+
+### Requirement: check-receipt reads current-run base summary
+
+新格式（receipt_schema 2.0）下 check-receipt MUST 以本次 base summary 为唯一机器事实源：MUST 校验 feature/phase 精确匹配、verdict=PASS 且 blocker_count=0、gate_fingerprint 与当前门禁集重算一致；summary 缺失或不可解析 MUST 产 BLOCKER（禁止静默）。
+
+#### Scenario: 旧 PASS summary 冒充
+- **WHEN** 本次 harness FAIL（base summary verdict=FAIL）而磁盘存在上次 PASS 的旧 summary
+- **THEN** check-receipt 以本次 base 为准判 FAIL；伪造 gate_fingerprint 的旧件因指纹重算不一致被拒
+
+#### Scenario: 他 feature summary 串目录
+- **WHEN** receipt 声明 feature=A 而 canonical path 下 summary.feature=B
+- **THEN** check-receipt BLOCKER（feature/phase 精确匹配失败）
+
+> **Enforced by:** `harness/scripts/check-receipt.ts`
+
+### Requirement: Slim receipt keeps only non-derivable self-attestation
+
+新模板 MUST 删除 script_harness 镜像块、trace_json 块、self_check q1/q3；MUST 保留 agent 身份、claimed_completion_at/commit_sha、verifier 摘录、反假设 checkbox、testing_run_artifacts。骨架 MUST 仅在 verdict=PASS 且 receipt 缺失时幂等生成，checkbox 全未勾，且 MUST NOT 构成闭环。
+
+#### Scenario: 骨架未签不闭环
+- **WHEN** runner 生成瘦身骨架而 agent 未勾反假设 checkbox
+- **THEN** check-receipt FAIL，phase 不闭环；agent 补签后 PASS
+
+> **Enforced by:** `harness/templates/phase-completion-receipt.md`, `harness/scripts/check-receipt.ts`
+
+### Requirement: Process-integrity SSOT stays runner-side
+
+新格式下预加载注入检测 SSOT MUST 为 runner 的 runProcessIntegrityPreflight CheckResult（BLOCKER 时 base summary 必 FAIL）；MUST NOT 新增 summary/trace 专用扫描；旧格式 receipt 兼容期 MUST 继续执行 script_harness.command 注入特征校验。
+
+#### Scenario: 直启 harness 预加载注入
+- **WHEN** NODE_OPTIONS 携带 --require 预加载启动 harness
+- **THEN** process_integrity BLOCKER → base summary FAIL → 闭环不成立（不依赖 receipt 层扫描）
+
+> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/utils/process-integrity.ts`, `harness/scripts/check-receipt.ts`
+
+### Requirement: Personal setup gate covers catalog and glossary
+
+`harness-runner` MUST evaluate personal setup before feature phases including
+`catalog` and `glossary`. Exempt phases MUST be limited to `init` and `docs`.
+
+#### Scenario: catalog phase requires personal setup
+- **WHEN** harness-runner runs with `--phase catalog` and personal setup is incomplete
+- **THEN** the runner exits non-zero before script harness unless internal init exempt applies
+
+> **Enforced by:** `harness/harness-runner.ts`
+
+### Requirement: Init internal global phases may bypass personal gate
+
+When `HARNESS_INIT_INTERNAL_GLOBAL_RUN=1` is set, `harness-runner` MUST skip
+personal setup gate **only** for `catalog` and `glossary` phases spawned from
+`run-global-phases`. Other phases (e.g. `prd`, `coding`) MUST still run the gate
+even if the env is set. This env MUST NOT be documented for ordinary phase entry.
+
+#### Scenario: run-global-phases after init succeeds without local json
+- **WHEN** `init-task-executor` runs `run-global-phases` with `HARNESS_INIT_INTERNAL_GLOBAL_RUN=1`
+- **THEN** catalog/glossary/docs harness invocations proceed without personal gate failure
+
+> **Enforced by:** `harness/scripts/utils/init-task-executor.ts`, `harness/harness-runner.ts`
+
+### Requirement: check-personal-setup ensure mode
+
+`check-personal-setup.ts --ensure` MUST deterministically ensure personal setup:
+auto-write local when exactly one materialized adapter with entry exists;
+return `needs_adapter_choice` when multiple; `no_materialized_adapter` when none.
+
+#### Scenario: single materialized adapter auto ensured
+- **WHEN** `--json --ensure` runs with fallback status and one materialized adapter with entry file
+- **THEN** JSON has `ok: true`, `ensured: "auto_single_adapter"`, and `framework.local.json` is written
+
+#### Scenario: zero materialized adapters
+- **WHEN** `--json --ensure` runs with fallback and empty `materialized_adapters`
+- **THEN** JSON has `ok: false`, `code: "no_materialized_adapter"`, no local file written
+
+> **Enforced by:** `harness/scripts/check-personal-setup.ts`, `harness/scripts/utils/personal-setup-gate.ts`
 
