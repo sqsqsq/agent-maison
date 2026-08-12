@@ -311,6 +311,35 @@ export function runAll(): UnitCaseResult[] {
     );
   });
 
+  // ==========================================================================
+  // 环 B（plan f3a8c6d2 t2）：缓存失效后重跑责任阶段 → 必须真跑。
+  // 事故：三处 phaseIdx-- 出口重入 phase 循环令 retries 归零 → 判"非重试轮"→ skip
+  // → closure 只能由 agent 重签却永远等不到 agent（bc-openCard i5/i6/i8 全 0ms）。
+  // ==========================================================================
+  run(results, '环B：responsibilityRerunPending=true 必不 skip，且不占用 retries 配额', () => {
+    const base = {
+      baselineComplete: true,
+      retries: 0,
+      pendingHandoffCount: 0,
+      evidenceRunId: 'run-A',
+      currentRunId: 'run-A',
+    };
+    assertEq(decideSkipAgentInvoke(base).skip, true, '前提：四条满足本可跳过');
+
+    const pending = decideSkipAgentInvoke({ ...base, responsibilityRerunPending: true });
+    assertEq(pending.skip, false, '缓存失效重跑轮必须真跑');
+    assert(pending.reason.includes('缓存失效后重跑责任阶段'), pending.reason);
+
+    // 预算不变量：pending 不是"重试轮"——理由不得复用 retries 文案，
+    // 调用方也无须递增 retries（retries 是内容重试配额，缓存失效按既有设计不烧它）。
+    assert(!pending.reason.includes('上一轮判失败'), `不得伪装成内容重试轮：${pending.reason}`);
+    assertEq(
+      decideSkipAgentInvoke({ ...base, responsibilityRerunPending: false }).skip,
+      true,
+      'pending=false 时行为与改动前逐字一致（回归）',
+    );
+  });
+
   run(results, '有界参数取定值：poll 2s / grace 5s（防实现漂移成无限等待）', () => {
     assertEq(DEFAULT_COMPLETION_POLL_MS, 2_000, 'poll 间隔');
     assertEq(DEFAULT_COMPLETION_GRACE_MS, 5_000, 'grace 上限');

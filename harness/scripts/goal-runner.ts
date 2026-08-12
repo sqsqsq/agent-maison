@@ -271,6 +271,7 @@ import {
   countRepeatedSignatureInFamily,
   classifyClosureKind,
   resolveClosureSyncOutcome,
+  responsibilityRerunPending,
   shouldHaltClosureTimeout,
   type ContinuationCause,
 } from './utils/goal-runner-phase';
@@ -6035,6 +6036,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // R7：证据齐全**且**通过新鲜度判据时才跳过 agent 调用。
         // 只判"齐全"会破坏 backtrack——回退重跑时上一轮 receipt 仍在盘上，跳过会让
         // coding 只跑一次、修复指令注入不进去（实证：4 个集成用例同时红）。
+        // 环 B（plan f3a8c6d2 t2）：缓存失效重跑待办态从 phaseStartEvents 派生。
+        // 用 phase 循环体开头读盘的快照即可、无需在 attempt 内重读：三处 `phaseIdx--`
+        // 出口都先 emit halt 再 continue，for 的 ++ 落回本 phase 时 :5136 重新读盘，
+        // 故重入首轮必见该 halt；而同 phase 内的第 2+ 个 attempt 必有 retries>0
+        // （closure retry 与内容 retry 都走 :8529/:8531 递增），本就不会 skip——
+        // 快照陈旧不会影响任何 skip 决策。跨 --resume 同理（events.jsonl 是事实源）。
+        const rerunPending = responsibilityRerunPending(phaseStartEvents, String(phase));
         const skipDecision = completion
           ? decideSkipAgentInvoke({
               baselineComplete: completion.baselineComplete,
@@ -6042,6 +6050,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               pendingHandoffCount: backtrackCodingContext.length,
               evidenceRunId: completion.baselineRunId,
               currentRunId: manifest.run_id,
+              responsibilityRerunPending: rerunPending,
             })
           : { skip: false, reason: 'dry-run' };
         if (completion?.baselineComplete) {
@@ -6585,18 +6594,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   phaseDone = true;
                   continue;
                 }
+                // t2（plan f3a8c6d2）：**漂移条目必须呈现给人**——原实现只报数量，
+                // 具体文件仅存在于 pass_snapshot_violation 事件里；bc-openCard 事故中
+                // 真凶 `plan/context-exploration.md` 因此要靠挖 events.jsonl 才能定位，
+                // 而它恰是可无限重复的结构性漂移。复用既有 detail 字段，不新增字段。
+                const driftDigest = diffs
+                  .slice(0, 5)
+                  .map(d => `${d.rel}(${d.class})`)
+                  .join('、') + (diffs.length > 5 ? ` …共 ${diffs.length} 项` : '');
                 goalEvents.emit({
                   type: 'phase_halt',
                   phase,
                   halt_reason: 'pass_snapshot_unavailable',
-                  detail: `PASS 快照检测到 ${diffs.length} 项漂移；缓存已丢弃，重跑责任阶段。`,
+                  detail: `PASS 快照检测到 ${diffs.length} 项漂移：${driftDigest}；缓存已丢弃，重跑责任阶段。`,
                   ...runDispositionFields(decide(
                     { incident: 'pass_snapshot_unavailable', phase: String(phase) },
                     NO_AUTHORITY,
                     { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
                   )),
                 });
-                console.warn(`[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移；丢弃缓存，重跑责任阶段。`);
+                console.warn(
+                  `[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移：${driftDigest}；` +
+                  '丢弃缓存，重跑责任阶段。',
+                );
                 phaseIdx--;
                 phaseDone = true;
                 continue;
@@ -7507,12 +7527,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             } else if (route.kind === 'deterministic_recheck') {
               // runner 不调 agent：正式 receipt state sync/closure patch → 直接推进
+              // 环 C（plan f3a8c6d2 t2）：提交侧透传当前 attempt 身份——sync-closure 在写
+              // phase state / 提交 summary closure 之前再做一次严格 attempt 等值校验，
+              // 上面 probe 的严格校验不作为提交侧的免检理由（纵深防御）。
               const syncResult = runSyncClosureDetailed(
                 path.join(frameworkRoot, 'harness'),
                 projectRoot,
                 manifest.feature,
                 String(phase),
                 frameworkRoot,
+                {
+                  goalIdentity: {
+                    runId: manifest.run_id,
+                    attemptId: visualAttemptId,
+                    attemptPhase: String(phase),
+                    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+                  },
+                },
               );
               const syncExit = syncResult.exitCode;
               if (syncResult.finalizationError) {
@@ -7848,11 +7879,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
             fused: assessment.stop.fused,
             failureKind,
           });
+          // t2（plan f3a8c6d2）：**gap 归属阶段不得被当前 phase 吞掉**。事件的 `phase`
+          // 是"在哪一阶段停下"，而 assess 的 gap 可能属于**上游别的阶段**——bc-openCard
+          // run 20260808T071335Z-4b0136 的 plan-i4 即：recommendation.phase='spec'
+          // （spec 的 evidence manifest stale），却呈现为"plan 阶段 framework_bug:
+          // stale: phase evidence manifest 非 fresh"，读者（含事后复盘）必然误读成 plan
+          // 自己的证据链坏了。此处只在 reason 文案里补明归属，复用既有字符串字段，
+          // 不新增事件字段、不改 halt 分类（catch-all 归 framework_bug 是设计内的
+          // fail-closed，见上方注释）。
+          const gapPhase = assessment.recommendation.phase;
+          const crossPhaseNote =
+            gapPhase && gapPhase !== String(phase)
+              ? `[gap 属于 ${gapPhase} 阶段，非当前 ${String(phase)}] `
+              : '';
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: haltReason,
-            reason: assessReason || 'assess returned halt without a driver-owned reason',
+            reason:
+              crossPhaseNote +
+              (assessReason || 'assess returned halt without a driver-owned reason'),
           });
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);

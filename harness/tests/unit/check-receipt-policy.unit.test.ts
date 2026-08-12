@@ -13,7 +13,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { tryValidateReceipt } from '../../scripts/utils/phase-state';
+import { runSyncClosureDetailed, tryValidateReceipt } from '../../scripts/utils/phase-state';
+import { registryGateIdsForPhase } from '../../scripts/utils/headless-assumptions';
+import { statefilePath } from '../../config';
 
 export interface UnitCaseResult {
   name: string;
@@ -41,6 +43,15 @@ interface ReceiptOpts {
   evidenceProfile?: 'balanced';
   omitVerifier?: boolean;
   omitTrace?: boolean;
+  /** 环 C（plan f3a8c6d2 t2）：goal 下的 attempt 身份自证字段；省略=非 goal 夹具（现状） */
+  claimedAttemptId?: string;
+  /**
+   * 环 C：goal 身份在场时 check-receipt 另行强制 headless-assumptions 账本
+   * （registry 中该 phase 的每个 gate 都须有记录）。传入 runId 即补齐合法账本，
+   * 使 attempt 等值成为**唯一**被消融的变量——否则两个用例都会栽在账本 BLOCKER 上，
+   * 负向用例的"失败"与 attempt 校验无关（假绿）。
+   */
+  goalLedgerRunId?: string;
 }
 
 /** 构造一个「除被消融字段外全部合法」的 full track 工程；返回 { root, sha, phase }。 */
@@ -127,6 +138,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     'agent_runtime: "test-runtime"',
     'claimed_completion_at: "2026-07-08T10:00:00+08:00"',
     `claimed_completion_commit_sha: "${sha}"`,
+    ...(opts.claimedAttemptId ? [`claimed_attempt_id: "${opts.claimedAttemptId}"`] : []),
     'script_harness:',
     '  exit_code: 0',
     '  blocker_count: 0',
@@ -153,6 +165,33 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
     '',
   ].join('\n');
   fs.writeFileSync(path.join(featureDir, 'phase-completion-receipt.md'), receipt, 'utf-8');
+
+  // 环 C：goal 夹具补齐 headless-assumptions 账本——registry 中本 phase 的每个 gate
+  // 都须有条目（crossCheckLedgerAgainstRegistry），否则闭环栽在账本 BLOCKER 上，
+  // attempt 等值根本走不到，负向用例就成了假绿。
+  if (opts.goalLedgerRunId) {
+    const gateIds = registryGateIdsForPhase(
+      path.join(HARNESS_ROOT, '..', 'skills', 'reference', 'confirmation-registry.yaml'),
+      phase,
+    );
+    if (!gateIds.readable) throw new Error('夹具前提失效：confirmation-registry.yaml 不可读');
+    const ledger = gateIds.ids
+      .map((gateId, idx) =>
+        JSON.stringify({
+          decision_id: `${phase}-fixture-${idx}`,
+          run_id: opts.goalLedgerRunId,
+          phase,
+          gate_id: gateId,
+          class: 'artifact_checkbox',
+          decision: 'n/a: unit fixture',
+          must_review: false,
+          source: 'agent',
+          ts: '2026-07-08T10:00:00.000Z',
+        }),
+      )
+      .join('\n');
+    fs.writeFileSync(path.join(featureDir, 'headless-assumptions.jsonl'), `${ledger}\n`, 'utf-8');
+  }
 
   return { root, sha };
 }
@@ -260,6 +299,94 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(
           (r.stdout ?? '').includes('profile_resolved=balanced'),
           `stdout 应含 HARNESS_EVIDENCE_POLICY 标记行；实际:\n${r.stdout}`,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  // ==========================================================================
+  // 环 C（plan f3a8c6d2 t2）：closure **提交侧**的严格 attempt 等值校验。
+  // 事故：receipt claimed_attempt_id=i7 与终局 attempt i8 失配；而 runSyncClosureDetailed
+  // 此前调 tryValidateReceipt 不带 goalIdentity → goal 门禁在提交侧静默跳过（最松一环）。
+  // 修法只加"透传身份"，不引入迁移/改绑协议、不新增控制流：失配即不闭环，
+  // 只有 agent 把 receipt 重签为当前 attempt 才允许提交。
+  // ==========================================================================
+  {
+    name: '环C：attempt 失配时 closure 提交被拒——不写闭环 state、不改绑',
+    run: () => {
+      const { root } = buildProject('review', { claimedAttemptId: 'i7', goalLedgerRunId: 'run-X' });
+      try {
+        // 先取裁决原文：必须**因 attempt 身份**被拒，而不是碰巧栽在别的门禁上
+        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', {
+          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
+        });
+        assert(probe.status === 'failed', `probe 应 failed，实得 ${probe.status}`);
+        assert(
+          /attempt/i.test(probe.message ?? '') && (probe.message ?? '').includes('i7'),
+          `拒绝原因须指向 attempt 身份失配，实得：${probe.message}`,
+        );
+
+        const res = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', undefined, {
+          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
+        });
+        assert(res.exitCode !== 0, `attempt 失配必须拒绝闭环，实得 exitCode=${res.exitCode}`);
+        // 关键：必须**在 receipt 校验阶段就被拒**，而不是走进 finalize 后才失败。
+        // finalizationError 有值 = receipt 被判 passed、已进入闭环提交（身份校验没生效）——
+        // 那正是"提交侧是最松一环"的旧缺陷形态，单看 exitCode!==0 无法区分（会假绿）。
+        assert(
+          res.finalizationError === undefined,
+          `失配须在校验阶段拒绝、不得进入闭环提交；实得 finalizationError=${res.finalizationError}`,
+        );
+
+        // 不得写入闭环态（receipt.status=passed）——state 文件可因 harness_finished 存在，
+        // 但绝不能出现 passed；也不得把 receipt 的 i7 改绑成 i8。
+        const stateAbs = statefilePath(root);
+        if (fs.existsSync(stateAbs)) {
+          const state = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as { receipt?: { status?: string } };
+          assert(
+            state.receipt?.status !== 'passed',
+            `失配态不得写入 receipt.status=passed，实得 ${JSON.stringify(state.receipt)}`,
+          );
+        }
+        const receiptRaw = fs.readFileSync(
+          path.join(root, 'doc', 'features', 'demo', 'review', 'phase-completion-receipt.md'),
+          'utf-8',
+        );
+        assert(receiptRaw.includes('claimed_attempt_id: "i7"'), 'receipt 的 attempt 身份不得被改绑');
+        assert(!receiptRaw.includes('"i8"'), 'receipt 不得被写入当前 attempt 身份（禁止迁移采信）');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '环C：receipt 重签为当前 attempt 后校验放行（证明拒绝仅来自身份失配）',
+    run: () => {
+      // 与上一用例**同一夹具**，只把 claimed_attempt_id 由 i7 改签为 i8：
+      // 若这里仍失败，说明上一用例的"拒绝"来自别的门禁而非 attempt 等值（假绿）。
+      const { root } = buildProject('review', { claimedAttemptId: 'i8', goalLedgerRunId: 'run-X' });
+      try {
+        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', {
+          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
+        });
+        assert(
+          probe.status === 'passed',
+          `重签为当前 attempt 后应放行，实得 ${probe.status}；msg=${probe.message}`,
+        );
+        // 关键：必须经过**本次真正被改的函数** runSyncClosureDetailed（codex 抓出的缺口
+        // ——只验 tryValidateReceipt 的话，即使它对匹配的 i8 也一律拒绝，正负两例仍会全绿）。
+        // 夹具刻意不含 reports/summary.json，于是身份放行后必然**推进到 finalizer** 才失败：
+        //   · finalizationError 有值 = 身份校验放行、已进入闭环提交（本例期望）
+        //   · finalizationError === undefined = 在校验阶段就被拒（负向用例期望）
+        // 两者构成阶段对照，无需补完整 summary 夹具即可证明"拒绝仅来自身份失配"。
+        const res = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', undefined, {
+          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
+        });
+        assert(
+          res.finalizationError !== undefined,
+          '身份一致时须放行至 finalizer（本夹具因刻意缺 summary.json 才在提交阶段失败）；' +
+            `实得 finalizationError=undefined、exitCode=${res.exitCode}——说明仍被身份校验拦下`,
         );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });

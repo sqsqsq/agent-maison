@@ -185,15 +185,42 @@ todos:
       环 B 验收：**三条出口各一 fixture**（pre-invoke unavailable / post-agent drift /
       plan-freeze），断言重跑后 decideSkipAgentInvoke 不再判"非重试轮"、agent 被
       真实调起。
-      验收（用户裁定拆两 fixture——单一"i7+i8 不死锁"不足以证明没有暗中迁移）：
-      a) **i8 尚未创建**：i7 error 终止+产物完整 → attempt 生命周期之前的只读
-      reconciliation 补完 closure，closure 采信 attempt id=i7，并附**四条硬断言**
-      （用户三轮裁定）：无任何 invoke_id=*-i8 的事件或锚点；totalTurns 未消耗；
-      未执行新 attempt 的 capability/device gate；prompt 及其他 attempt 产物未被
-      覆盖。b) **i8 已创建**：i7 失效，走 agent 真实重签，closure 采信 attempt id
-      只能=i8（断言不存在任何 i7 产物被改绑到 i8）。另：漂移条目出现在 halt
-      呈现；framework_bug halt 的 assess 指向正确阶段。
-    status: pending
+      **环 C 范围变更（实施期第六轮 review 裁定，已执行）**：删除"attempt 生命周期前
+      reconciliation + 自动 phase 推进"——定位实证它在本次事故**零触发**（closure_open
+      的 i6/i8 恰都是 skip 轮，真跑的 i7 结束于漂移 halt），且环 B 已通过"让 agent 真实
+      重签"覆盖 receipt 失配；允许为此多跑一轮 agent。改为**提交侧纵深防御**：
+      runSyncClosureDetailed 新增可选 goalIdentity，在最终 closure 提交前再次执行严格
+      attempt 等值校验（此前它调 tryValidateReceipt **不带身份**，goal 门禁在提交侧
+      静默跳过=最松一环）；非 goal 调用保持现状。不新增迁移协议、不新增控制流。
+      环 C 验收：i8 已创建而 receipt 仍 claimed i7 → **在校验阶段即拒**
+      （finalizationError 必须为 undefined，证明未进入闭环提交）、不写 receipt.status=
+      passed、receipt 的 i7 不被改绑；同一夹具改签为 i8 → 校验放行（证明拒绝仅来自
+      身份失配）。另：漂移条目出现在 halt 呈现；assess halt 的 gap 归属阶段显式标注。
+      ---
+      **实施完成（2026-08-12）**：环 A=resolveFrozenDeliverables 补 watched_roots 同源
+      扫描（pass-snapshot.ts:396）+ 三不变量单测；环 B=新增纯函数
+      responsibilityRerunPending（goal-runner-phase.ts，从既有 phase_halt/
+      agent_invoke_end 派生、跨 resume 成立、零新字段）+ decideSkipAgentInvoke 新增
+      同名入参（**不复用 retries**：它兼作内容重试配额，既有设计明确"缓存缺失不烧
+      预算"，故独立入参）；环 C 如上；另收口 assess gap 归属阶段呈现 + 漂移条目进
+      halt detail（原实现只报数量，真凶文件只能靠挖 events.jsonl 定位）。
+      **七轮突变验真**（废同源扫描 / 改用豁免路线 / 关 pending 分支 / 去 skipped 判别 /
+      去身份透传 / 删 skip 决策 pending 接线 / 删 sync-closure goalIdentity 接线）
+      全部被对应用例抓住。
+      **实施期第七轮 review 补齐两处验收缺口（均为"测试没打在生产接线上"）**：
+      ① 环 B 三出口原用三组只差 `detail` 的手工事件，而 detail **不参与判定**=同一用例
+      跑三遍（假覆盖）；改为**生产源码结构断言**：三处 `phaseIdx--;` 语句各自前置窗口内
+      必须有 `halt_reason:'pass_snapshot_unavailable'`，出口数变化即失败，另钉三条调用方
+      接线（pending 派生 / 传入 skip 决策 / sync-closure 透传身份）。该断言落地即抓出
+      一处自身缺陷——正则误匹配注释里的 `` `phaseIdx--` ``（4 处而非 3 处），已收紧为
+      语句形态。② 环 C 正向用例原只调 `tryValidateReceipt`，**绕过本次真正被改的**
+      `runSyncClosureDetailed`（它若对匹配身份也一律拒绝，正负两例仍全绿）；改为经该函数
+      并断言 `finalizationError !== undefined`——身份放行→推进到 finalizer→因夹具刻意缺
+      summary.json 才失败，与负向的 `=== undefined`（校验阶段即拒）构成**阶段对照**，
+      无需补完整 summary 夹具。
+      验收：unit 3226/3226、fixtures 44/44、openspec 33/33、check-plan-version PASS、
+      typecheck 干净、`git diff --check` 干净、无 MUTATION-PROBE 残留。
+    status: completed
   - id: t3-screen-identity-attest
     content: >
       【P1】截图页面身份验真——张冠李戴零容忍。事实：

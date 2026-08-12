@@ -534,6 +534,80 @@ const cases: Array<{ name: string; run: () => void }> = [
       } finally { env.restore(); }
     },
   },
+  // ==========================================================================
+  // 环 A（plan f3a8c6d2 t2）：建侧/验侧集合等价三条不变量。
+  // 事故复现：`<phase>/context-exploration.md` 三张注册表皆无，但 classifyPassArtifact
+  // 兜底判 frozen_deliverable → 旧实现建侧不收、验侧判 added，重建快照也不收敛。
+  // ==========================================================================
+  {
+    name: '环A①: 未登记但兜底判 frozen 的产物（context-exploration）建快照时纳入，零 diff',
+    run: () => {
+      const env = setupEnv();
+      try {
+        // 事故文件：agent 每阶段必写、三张注册表皆无
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'context-exploration.md'), '# ctx v1\n', 'utf-8');
+        if (classifyPassArtifact('plan', 'plan/context-exploration.md') !== 'frozen_deliverable') {
+          throw new Error('前提失效：该文件已不再被兜底判 frozen_deliverable');
+        }
+        take(env, 'plan');
+        const manifest = readManifest(env, 'plan');
+        if (!manifest.files.some(f => f.rel === 'plan/context-exploration.md')) {
+          throw new Error(`建侧未收该文件（集合不对称）：${JSON.stringify(manifest.files.map(f => f.rel))}`);
+        }
+        const diffs = changed(env, 'plan');
+        if (diffs.length !== 0) throw new Error(`应零 diff，实得：${JSON.stringify(diffs)}`);
+      } finally { env.restore(); }
+    },
+  },
+  {
+    name: '环A②: 快照建立后才新增的未登记 frozen 产物仍判 added（冻结语义不被削弱）',
+    run: () => {
+      const env = setupEnv();
+      try {
+        take(env, 'plan');
+        // 快照之后才出现 → 必须仍是 added，不得因同源扫描而被放行
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'context-exploration.md'), '# ctx late\n', 'utf-8');
+        const diffs = changed(env, 'plan');
+        const hit = diffs.find(d => d.rel === 'plan/context-exploration.md');
+        if (!hit || hit.class !== 'added') {
+          throw new Error(`快照后新增应判 added，实得：${JSON.stringify(diffs)}`);
+        }
+      } finally { env.restore(); }
+    },
+  },
+  {
+    name: '环A③: 任意未登记文件——建侧收录集合与验侧 frozen 分类逐条一致',
+    run: () => {
+      const env = setupEnv();
+      try {
+        // 三类未登记文件混放：兜底 frozen / derived(reports) / mutable_closure(receipt)
+        fs.mkdirSync(path.join(env.featDir, 'plan', 'reports'), { recursive: true });
+        fs.mkdirSync(path.join(env.featDir, 'plan', 'nested', 'deep'), { recursive: true });
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'context-exploration.md'), '# ctx\n', 'utf-8');
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'nested', 'deep', 'notes.md'), '# deep\n', 'utf-8');
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'reports', 'summary.json'), '{}\n', 'utf-8');
+        fs.writeFileSync(path.join(env.featDir, 'plan', 'phase-completion-receipt.md'), '# receipt\n', 'utf-8');
+        const built = new Set(
+          resolveFrozenDeliverables({ projectRoot: env.root, feature: FEATURE, phase: 'plan' }).map(f => f.rel),
+        );
+        // 验侧口径：watched_roots 目录域内凡 frozen_deliverable 者，建侧必须已收
+        const expectFrozen = ['plan/plan.md', 'plan/context-exploration.md', 'plan/nested/deep/notes.md'];
+        for (const rel of expectFrozen) {
+          if (classifyPassArtifact('plan', rel) !== 'frozen_deliverable') throw new Error(`前提失效：${rel}`);
+          if (!built.has(rel)) throw new Error(`建侧漏收 frozen：${rel}（集合不对称）`);
+        }
+        // 非 frozen 类两侧同样一致豁免
+        for (const rel of ['plan/reports/summary.json', 'plan/phase-completion-receipt.md']) {
+          if (classifyPassArtifact('plan', rel) === 'frozen_deliverable') throw new Error(`前提失效：${rel}`);
+          if (built.has(rel)) throw new Error(`建侧误收非 frozen：${rel}`);
+        }
+        // 端到端：混放后建快照仍零 diff
+        take(env, 'plan');
+        const diffs = changed(env, 'plan');
+        if (diffs.length !== 0) throw new Error(`应零 diff，实得：${JSON.stringify(diffs)}`);
+      } finally { env.restore(); }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

@@ -453,8 +453,23 @@ export function runSyncClosureDetailed(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  // 环 C（plan f3a8c6d2 t2）：goal 调用方透传当前 run/attempt/phase 身份——**最终 closure
+  // 提交前再执行一次严格 attempt 等值校验**（纵深防御，不接受"调用方已先校验"的弱边界）。
+  //
+  // 事故（bc-openCard run 20260808T071335Z-4b0136）：receipt 的 claimed_attempt_id=i7
+  // 与终局 attempt i8 失配。本函数此前调 tryValidateReceipt **不带 goalIdentity**，
+  // 而 check-receipt 的 attempt 等值判据只在 goal 身份在场时生效（phase-state.ts:292-294：
+  // "runner 从不给自己设 MAISON_GOAL_*，此前本函数 spawn 的 check-receipt 因此 goal 门禁
+  // 全部静默跳过"）——即提交侧是最松的一环。补齐后：i8 已创建而 receipt 仍 claimed i7 时
+  // 提交必然失败，不写 phase state、不提交 summary closure、不改绑；只有 agent 把 receipt
+  // 重签为 i8 才允许闭环（禁止任何迁移/改绑协议）。
+  //
+  // 非 goal 调用（harness-runner 的 --sync-closure 等）省略本参数即保持现状。
+  opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string } },
 ): SyncClosureResult {
-  const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
+  const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature, {
+    ...(opts?.goalIdentity ? { goalIdentity: opts.goalIdentity } : {}),
+  });
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
   if (receiptValidation.status === 'not_applicable') {

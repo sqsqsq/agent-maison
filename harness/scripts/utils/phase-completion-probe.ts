@@ -274,8 +274,18 @@ export function decideSkipAgentInvoke(input: {
   evidenceRunId?: string | null;
   /** 当前 run 身份 */
   currentRunId?: string | null;
+  /**
+   * 环 B（plan f3a8c6d2 t2）：该 phase 处于"缓存失效后重跑责任阶段"待办态
+   * （三处 pass_snapshot_unavailable 出口置位，由 responsibilityRerunPending 从既有
+   * events 重建、跨 resume 成立）。与 retries **不共用**：retries 是内容重试配额，
+   * 缓存失效按既有设计不烧该配额，故独立入参而非递增 retries。
+   */
+  responsibilityRerunPending?: boolean;
 }): SkipDecision {
   if (!input.baselineComplete) return { skip: false, reason: '基线证据不完整' };
+  if (input.responsibilityRerunPending) {
+    return { skip: false, reason: '缓存失效后重跑责任阶段——须真跑' };
+  }
   if (input.retries > 0) {
     return { skip: false, reason: `本 phase 第 ${input.retries + 1} 轮（上一轮判失败）——须真跑` };
   }

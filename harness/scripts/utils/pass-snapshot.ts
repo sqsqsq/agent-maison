@@ -408,6 +408,49 @@ export function resolveFrozenDeliverables(input: FrozenResolveInput): FrozenFile
     assertNoLinkInChain(abs, featDir);
     absSet.set(rel, abs);
   };
+  // ---------------------------------------------------------------------------
+  // 环 A（plan f3a8c6d2 t2）：建侧与验侧**集合等价**——本扫描域与
+  // diffFrozenAgainstManifest 的 added 域逐条同构（watched_roots 目录树 +
+  // classifyPassArtifact 兜底），注册表退化为"必需项存在性校验"。
+  //
+  // 事故（bc-openCard run 20260808T071335Z-4b0136）：建侧只认三张注册表、验侧遍历
+  // 目录并用 classifyPassArtifact（**黑名单兜底、默认 frozen_deliverable**）判定，
+  // 于是 agent 每阶段必写的 `<phase>/context-exploration.md`（三表皆无）恒判 added
+  // ——重建快照仍不收它，结构上不可能收敛，plan 阶段两轮 closure_wall 直接 TERMINAL。
+  //
+  // 修法**不是**把该文件移出冻结面：它是 agent 写入且参与阶段验真的研究证据，既非
+  // closure/control-plane 也非 derived，豁免等于允许 closure-only 阶段篡改 PASS 依据。
+  // 同源扫描后它在建快照时自然进入冻结清单，误报自消，且"快照后才新增"仍判 added。
+  // ---------------------------------------------------------------------------
+  for (const root of watchedRootsForPhase(phase)) {
+    const rootAbs = path.join(featDir, root);
+    if (!fs.existsSync(rootAbs)) continue;
+    const stack = [rootAbs];
+    while (stack.length) {
+      const dir = stack.pop()!;
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, ent.name);
+        if (ent.isSymbolicLink()) {
+          // 与验侧对称（diff 把 frozen symlink 判 link/added=违规）：frozen 面上的
+          // 链接一律 fail-closed，不入快照也不静默跳过；非 frozen 类照常豁免。
+          const rel = path.relative(featDir, abs).replace(/\\/g, '/');
+          if (classifyPassArtifact(phase, rel) === 'frozen_deliverable') {
+            assertNoLinkInChain(abs, featDir);
+          }
+          continue;
+        }
+        if (ent.isDirectory()) {
+          stack.push(abs);
+          continue;
+        }
+        push(abs);
+      }
+    }
+  }
+  // 注册表三张表：根级产物（acceptance.yaml / contracts.yaml / use-cases.yaml 等落
+  // feature 根、不在 watched_roots 目录域内）的唯一入口——与验侧 added 域的
+  // rootLevelFrozenCandidateRels 同源；phase 内条目已被上面的目录扫描收全，此处按
+  // rel 去重不会重复。
   for (const name of PHASE_OUTPUT_FILES_BY_PHASE[phase as Phase] ?? []) {
     push(resolveFeatureArtifact(projectRoot, feature, name).actualPath);
   }

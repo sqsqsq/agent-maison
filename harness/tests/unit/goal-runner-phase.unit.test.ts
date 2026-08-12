@@ -30,6 +30,7 @@ import {
   buildHalfPhaseRecoveryEvents,
   findUnclosedAgentInvokeStart,
   isReceiptFreshForInvokeStart,
+  responsibilityRerunPending,
 } from '../../scripts/utils/goal-runner-phase';
 import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
@@ -553,6 +554,113 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       assert(status === 'HALTED', status);
       assert(outcomes.length < chain.length, 'stopped before end');
+    },
+  },
+  // ==========================================================================
+  // 环 B（plan f3a8c6d2 t2）：responsibilityRerunPending 从既有事件重建。
+  // 零新增事件/字段/持久状态——只消费 phase_halt(pass_snapshot_unavailable) 与
+  // agent_invoke_end{skipped}，故跨 --resume（新进程读同一 events.jsonl）同样成立。
+  // ==========================================================================
+  {
+    name: '环B：三处真实 phaseIdx-- 出口都发 pass_snapshot_unavailable（生产源码结构）',
+    run: () => {
+      // 上一版这里用三组只差 `detail` 的手工事件——而 detail **不参与判定**，
+      // 等于同一个用例跑三遍（codex 抓出的假覆盖）。判据只认 halt_reason，故真正要
+      // 钉的是「每一处重跑出口都确实发出该 halt_reason」这条**生产接线**契约：
+      // 任一 phaseIdx-- 分支漏发/改名，pending 就永远不会置位，死锁原样复发。
+      const runner = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/goal-runner.ts'),
+        'utf8',
+      );
+      // 匹配语句形态（带分号）——注释里的 `phaseIdx--` 引用不算出口
+      const exits = [...runner.matchAll(/phaseIdx--;/g)];
+      assert(
+        exits.length === 3,
+        `已知重跑出口为 3 处（pre-invoke / post-agent drift / plan-freeze）；实得 ${exits.length} 处——` +
+          '新增出口必须同步纳入 responsibilityRerunPending 的置位面并更新本断言',
+      );
+      for (const m of exits) {
+        const before = runner.slice(Math.max(0, (m.index ?? 0) - 2000), m.index ?? 0);
+        assert(
+          /halt_reason:\s*'pass_snapshot_unavailable'/.test(before),
+          `phaseIdx-- 出口（源码偏移 ${m.index}）之前未发 halt_reason='pass_snapshot_unavailable'——` +
+            '该出口的重跑不会置 pending，agent 会被继续 skip',
+        );
+      }
+    },
+  },
+  {
+    name: '环B：goal-runner 接线在位——pending 派生自 events 且传入 skip 决策',
+    run: () => {
+      // 纯函数再正确，调用方断线一样死锁。这两条钉的就是 codex 点名的两种回归：
+      // ① 删掉 responsibilityRerunPending(...) 的派生；② 不再把它传给 decideSkipAgentInvoke。
+      const runner = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/goal-runner.ts'),
+        'utf8',
+      );
+      assert(
+        /responsibilityRerunPending\(\s*phaseStartEvents\s*,/.test(runner),
+        'pending 必须自 phaseStartEvents（phase 循环体开头读盘、跨 resume 成立）派生',
+      );
+      assert(
+        /decideSkipAgentInvoke\(\{[\s\S]{0,400}responsibilityRerunPending:/.test(runner),
+        'pending 必须传入 decideSkipAgentInvoke——否则判据拿不到它，等于没修',
+      );
+      assert(
+        /runSyncClosureDetailed\([\s\S]{0,600}goalIdentity:/.test(runner),
+        '环C：closure 提交侧必须透传 goalIdentity，否则 attempt 等值校验在提交环节静默跳过',
+      );
+    },
+  },
+  {
+    name: '环B：被 skip 的一轮不算消费——真实 invoke 结束后才清除 pending',
+    run: () => {
+      const halt = { type: 'phase_halt', phase: 'plan', halt_reason: 'pass_snapshot_unavailable' };
+      // 事故实锤序列（bc-openCard i5）：runner 先发 start，再判 skip，end 带 skipped=true。
+      // 只看 start 会把这一轮误记为已消费，于是下一轮继续 skip → 死锁不解。
+      const skipped = [
+        halt,
+        { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i6' },
+        // 真实事件另带 action='skip_agent_invoke'，判据不消费该字段故夹具从简
+        { type: 'completion_evidence_pre_existing', phase: 'plan', invoke_id: 'plan-i6' },
+        { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i6', skipped: true },
+      ];
+      assert(responsibilityRerunPending(skipped, 'plan') === true, 'skip 轮不得清除 pending');
+
+      // 真跑一轮（end 无 skipped）→ 消费
+      const real = [
+        ...skipped,
+        { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i7' },
+        { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i7', exit_code: 0 },
+      ];
+      assert(responsibilityRerunPending(real, 'plan') === false, '真实 invoke 后应消费 pending');
+
+      // 消费后又一次漂移 → 重新 pending（每次缓存失效都要求真跑）
+      const again = [...real, halt];
+      assert(responsibilityRerunPending(again, 'plan') === true, '再次漂移应重新置 pending');
+    },
+  },
+  {
+    name: '环B：pending 跨 resume 从 events 重建，且按 phase 隔离、无 halt 时恒 false',
+    run: () => {
+      // 跨 resume：新进程内存归零，但 events.jsonl 仍在——判据只读事件即可重建。
+      const persisted = [
+        { type: 'phase_halt', phase: 'plan', halt_reason: 'pass_snapshot_unavailable' },
+        { type: 'run_end', status: 'HALTED' },
+        // ↓ resume 后的新进程从这里继续
+        { type: 'phase_start', phase: 'plan' },
+      ];
+      assert(responsibilityRerunPending(persisted, 'plan') === true, 'resume 后应重建 pending');
+
+      // phase 隔离：plan 的漂移不得影响 spec
+      assert(responsibilityRerunPending(persisted, 'spec') === false, 'pending 不得跨 phase 泄漏');
+
+      // 其它 halt 原因不置位（只认缓存失效类）
+      const otherHalt = [
+        { type: 'phase_halt', phase: 'plan', halt_reason: 'closure_wall_repeated' },
+      ];
+      assert(responsibilityRerunPending(otherHalt, 'plan') === false, '非缓存失效 halt 不得置 pending');
+      assert(responsibilityRerunPending([], 'plan') === false, '无事件恒 false');
     },
   },
 ];

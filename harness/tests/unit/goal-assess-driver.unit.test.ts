@@ -359,8 +359,11 @@ const cases: TestCase[] = [
         !/haltReason\s*=\s*EXTERNAL_RETRY_RESPONSIBILITY_KINDS/.test(runner),
         'runner 不得就地按 FailureKind 拼 halt 标签（判据只有一处）',
       );
+      // plan f3a8c6d2 t2：reason 前会拼一个"gap 归属阶段"标注（crossPhaseNote），
+      // 故不再要求 `reason: assessReason ||` 紧邻。守护的契约不变：assessReason 原文
+      // 必须出现在 reason 字段的赋值里，只是允许前置补充说明。
       assert(
-        /reason: assessReason \|\|/.test(runner),
+        /reason:[\s\S]{0,120}assessReason \|\|/.test(runner),
         '详细 assess 原因不得丢失（仍须原样写进 reason 字段）',
       );
       assert(
