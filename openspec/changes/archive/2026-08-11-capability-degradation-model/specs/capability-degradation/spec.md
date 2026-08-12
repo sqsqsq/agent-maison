@@ -92,8 +92,11 @@ A pruned capability SHALL remain explicit in assurance, capability-resolution pr
 and assess observed degradations, but SHALL NOT alter a quality axis, axis resolution,
 phase advance, closure, or release readiness. An explicit `minimum_assurance` floor is
 the goal-level gate for an otherwise authorized pruned degradation. A blocked capability
-SHALL force its axis to `UNVERIFIED`, release readiness to `BLOCKED`, and the top-level
-projected verdict to at least `INCOMPLETE` regardless of axis advance exemptions.
+SHALL force release readiness to `BLOCKED` and the top-level projected verdict to at
+least `INCOMPLETE` regardless of axis advance exemptions. Its mapped axis SHALL become
+`UNVERIFIED` **unless** the axis already carries a deterministic `FAIL`, which SHALL be
+preserved (a deterministic FAIL must not be washed into "unverified"); the top-level
+projected verdict SHALL NOT downgrade an existing `FAIL` to `INCOMPLETE`.
 
 > **Enforced by:** `harness/scripts/utils/quality-axes.ts`, summary projection,
 > `harness/scripts/utils/phase-closure-finalizer.ts`, and `harness/scripts/utils/assess.ts`.

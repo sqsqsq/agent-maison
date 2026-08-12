@@ -302,7 +302,7 @@ todos:
       （他们走的通道本身是对的），并说明手动 L2 起步须带需求文本跑 Step 1。
       【发布】修完走既有发布流程重出包（打包/校验/manifest 都是脚本自己的事，本 plan
       不写发布工程）。版本号听用户，不擅自 bump。
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -558,3 +558,18 @@ summary 里的 `capability_resolutions` 没有任何消费方把它翻译成原�
 - [①，已修] mismatch 告警与 readiness signal 文案改为**按 pre 说话**：`投影前(pre=${pre}) ≠ legacy(${legacy})（post=${post}）`——不再写「投影≠legacy」（post===legacy && pre!==legacy 时会印假话，就是这个 plan 一开始要修的毛病）。
 - [②，已修] quality-axes.ts 模块头第④条补「pre===legacy 的 capability 合法投影除外」（不一致≠恒框架缺陷）。
 - 复验：`cd harness && npm test` typecheck 绿 + unit 3216/0 + fixtures 44/44；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净。
+
+---
+
+## 实施记录（t3 仓内收口，2026-08-11）
+
+**范围**：仅 OpenSpec / Maison 文档核对 / plan 状态；未改生产代码、未 bump 版本、未打发布包、未处理宿主事项。
+
+1. **capability-degradation-model 三处语义统一**（`specs/capability-degradation/spec.md`、`specs/harness-gates/spec.md`、`design.md`）：最终规则 = axis 已有确定性 FAIL 时保留 FAIL；否则 blocked 才投影为 UNVERIFIED；release readiness BLOCKED；顶层 projected verdict 至少 INCOMPLETE、既有 FAIL 不得降成 INCOMPLETE。同步修正写死"必定 UNVERIFIED / 必定 INCOMPLETE"的 scenario。
+2. **归档 header 失配修复**（不改正文语义）：`harness-gates` MODIFIED header → canonical「Summary 1.2 distinguishes verified closure and quality depth」；`reconcile-assessment` MODIFIED →「Required quality depth is phase-specific」；`skill-quality-tiers` 前 3 个 MODIFIED → canonical「Business UT supports full and basic depth」/「Device testing supports artifact and adhoc case inputs」/「Code review supports explicit basic depth」（第 4 个本已匹配）。未用 `--skip-specs`。
+3. **spec-requirement-provenance 补全**：新增 blocked capability 可诊断投影的 ADDED requirement（capability_input_unresolved / resolve_capability_inputs_then_rerun 前置 / assess gap detail+merged-report / blocked 不产 CheckResult / 合法投影不误报 mismatch / 独立真 mismatch 照报 / deterministic FAIL 保留）；proposal/tasks 同步 t1+t2 实际交付。
+4. **Maison 文档核对**：spec SKILL Step 1、`docs/concepts/skill-contracts.md` derive 来源表、goal-mode runbook 均准确，未重复改写。
+5. **归档**：`npm run openspec -- archive "capability-degradation-model" --yes`（+10 ~8 -2）与 `"spec-requirement-provenance" --yes`（+2）成功；canonical specs 已含新条款；两 change 已退出 active list（`openspec list --json` 核）。
+6. **plan 状态**：t1 / t2 / t3 全部 completed。
+
+**验收**：`npm run openspec:validate`（52/0）；`node scripts/check-plan-version.mjs` PASS；`git diff --check` 干净；`npm run openspec -- list --json` 确认两 change 退出 active list。未跑 harness 全量测试 / typecheck / E2E（本阶段仅改 OpenSpec/文档/plan）。

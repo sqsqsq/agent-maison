@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Summary 1.2 distinguishes verified closure, assurance, and capability provenance
+### Requirement: Summary 1.2 distinguishes verified closure and quality depth
 `harness/schemas/summary.schema.json` and mirrored TypeScript readers SHALL support
 summary 1.2 with `assurance`, normalized `capability_resolutions`, and a
 capability-resolution contract fingerprint in addition to versioned
@@ -47,8 +47,10 @@ Quality-axis derivation SHALL consume the pre-check capability report. Pruned st
 SHALL remain explicit only in assurance, resolution provenance, report disclosure, and
 assess observed degradations; they SHALL NOT alter a mapped axis, its resolution, phase
 advance, closure, release readiness, or completion status. Blocked states SHALL force
-mapped-axis UNVERIFIED, release BLOCKED, and projected verdict INCOMPLETE regardless
-of visual/asset advance exemptions. An explicit minimum assurance floor MAY produce an
+release BLOCKED and a projected verdict of at least INCOMPLETE regardless of visual/asset
+advance exemptions. The mapped axis SHALL become UNVERIFIED **unless** it already carries
+a deterministic FAIL, which SHALL be preserved; the projected verdict SHALL NOT downgrade
+an existing FAIL to INCOMPLETE. An explicit minimum assurance floor MAY produce an
 assess gap for a pruned degradation but MUST NOT weaken blocked projections.
 
 #### Scenario: Pruned asset capability leaves quality axes unchanged
@@ -56,8 +58,9 @@ assess gap for a pruned degradation but MUST NOT weaken blocked projections.
 - **THEN** its quality axes, projected verdict, release readiness, and completion status
   SHALL equal the same check set with no pruned capability report
 #### Scenario: Blocked capability cannot use visual advance exemption
-- **WHEN** a blocked visual capability is otherwise in an advance-exempt axis
-- **THEN** projected verdict SHALL still be INCOMPLETE
+- **WHEN** a blocked visual capability is otherwise in an advance-exempt axis and its
+  axis does not already carry a deterministic FAIL
+- **THEN** the mapped axis SHALL be UNVERIFIED and projected verdict SHALL be at least INCOMPLETE
 
 ### Requirement: Runtime capability consumption is checked after phase execution
 After a checker produces its results, the phase runner or checker finalization SHALL

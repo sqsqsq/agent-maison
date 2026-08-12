@@ -136,10 +136,12 @@ The report adapter preserves the existing quality-axis facts unless a capability
   and `assess.observed.degradations`; it MUST NOT alter an axis, its resolution, phase
   advance, closure, or release readiness. An explicit `minimum_assurance` floor remains
   the goal-level gate for a pruned degradation.
-- `blocked` forces its mapped axis to `UNVERIFIED`, release readiness to `BLOCKED`,
-  and a `needs_fix/agent/current_phase` resolution. Any blocked capability clamps the
-  top-level projected verdict to at least `INCOMPLETE`, including visual/asset axes
-  otherwise exempt from advance blocking.
+- `blocked` forces release readiness to `BLOCKED`, a `needs_fix/agent/current_phase`
+  resolution, and its mapped axis to `UNVERIFIED` **unless** the axis already carries a
+  deterministic `FAIL`, which SHALL be preserved (a deterministic FAIL must not be
+  washed into "unverified"). Any blocked capability clamps the top-level projected
+  verdict to at least `INCOMPLETE`, including visual/asset axes otherwise exempt from
+  advance blocking; an existing `FAIL` SHALL NOT be downgraded to `INCOMPLETE`.
 
 Assess consumes the existing non-PASS/unclosed paths for blocked states; it does not
 add a new assess gap kind. Neither outcome introduces a `PRUNED` public status.

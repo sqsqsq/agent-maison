@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Required assurance is phase-specific
+### Requirement: Required quality depth is phase-specific
 Assess SHALL read actual `assurance` from summary 1.2 capability-resolution data and
 compare it to optional sparse `minimum_assurance` entries in the goal manifest using
 `blocked < degraded < full`. A missing phase key SHALL add no goal-level floor. A

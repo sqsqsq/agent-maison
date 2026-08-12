@@ -1,6 +1,6 @@
 # Tasks — spec-requirement-provenance
 
-映射 plan c8e5b3f1 t1（v8 定稿）。批 1 不碰 t2（blocked 投影 / mismatch 归因 / next_action 留给批 2）。
+映射 plan c8e5b3f1 t1 + t2（v8 定稿）。
 
 - [x] 1. `FidelityIntentSsot` 增可选 `requirement_provenance`（goal_manifest / explicit_cli / intent_fallback）；writer `writeFidelityIntentSsot` 必写入参；loader：缺字段=legacy 兼容、枚举非法=corrupt；不 bump `FIDELITY_INTENT_SCHEMA_VERSION`。
 - [x] 2. 共享 `FidelityRoutingInitInput` 增必填 `requirementProvenance`；三调用点接线：goal-preflight `evaluateFidelityTierPreflight` 与 goal-runner vision 收紧重建传 `goal_manifest`；`fidelity-intent-init` CLI 只传 `explicit_cli`/`intent_fallback`。
@@ -10,3 +10,8 @@
 - [x] 5'. review 跟进：SSOT 段只在 `options.phase==='spec'` 启用（lite change 纯 change.md 分支零变化）；goal-runner 行为断言同时验 execution_identity 重建；CLI 清理路径用 `detectRepoLayout(__dirname).projectRoot`。
 - [x] 6. E2E：真实 harness-runner + fidelity-intent-init（不设 MAISON_GOAL_RUN_ID）——带需求 → summary PASS / capability resolved；不带需求（intent_fallback）→ INCOMPLETE / capability blocked / requirement absent；check-receipt 经 `slim_summary_not_pass` 拒非 PASS。
 - [x] 7. 验收：`cd harness && npm test` 全绿（typecheck + unit 3193/0 + fixtures 44/44）；`node scripts/check-plan-version.mjs`、`npm run openspec:validate` 通过。
+- [x] 8. **t2 blocked 可诊断投影**：readiness `capability_input_unresolved`（确定性排序、不夹带 requirement 专属话术、applicability invalid 展示 provider+deps）；`next_action` 增 `resolve_capability_inputs_then_rerun`（具名 blocker 链与 run_status 之后、readiness 之前，显式四前置条件；PASS 判定用 effective verdict）；assess failed gap detail 丰富（本地 blocked → `rerun_phase`，external/device/`completion_status=deferred` 优先 `resolve_deferred`）；merged-report blocked 明细（blocked 时不宣告 PASS）。
+- [x] 9. **t2 因果归因**：归因统一走共享 `deriveSummaryVerdictLattice`（pre/post/has_blocked）+ `resolveEffectiveVerdict({pre,post,legacy})`；capability 合法投影（pre===legacy && post≠legacy）不报 mismatch，独立真缺陷（pre≠legacy）照报；投影保留 axis 既有 deterministic FAIL，顶层取更严侧（FAIL 不得降 INCOMPLETE）。
+- [x] 10. **t2 契约零变化**：blocked 仍产 0 条 CheckResult、`assertCapabilityConsumption` 行为不变；`blocked_capabilities` 为内部诊断数据，不进入 AssessResult.observed.phases / next.json（PersistedAssessPhaseObservation 显式剔除）。
+- [x] 11. **t2 单测 + E2E**：`blocked-capability-projection.unit.test.ts` 21 例（契约零变化 / 因果五组合 / 硬 FAIL+blocked 保持 FAIL / next_action 前置六例 / assess failed·deferred·混合 / readiness / merged-report）；`e2e-spec-requirement-closure.unit.test.ts` 2 例（真实 init+harness-runner+check-receipt，正例 PASS+exit 0，反例 INCOMPLETE+诊断三件套+slim_summary_not_pass，随机临时目录+泄漏守卫）。
+- [x] 12. 验收：`cd harness && npm test` 全绿（typecheck + unit **3216/0** + fixtures 44/44）；`check-plan-version` PASS；`openspec:validate` 53/0；`git diff --check` 干净。

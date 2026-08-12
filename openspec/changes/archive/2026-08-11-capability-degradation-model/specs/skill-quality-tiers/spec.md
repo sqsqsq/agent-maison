@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Business UT resolves declared capabilities without weakening truth semantics
+### Requirement: Business UT supports full and basic depth
 The business-UT contract and `harness/scripts/check-ut.ts` SHALL resolve declared
 pre-check capabilities rather than select full/basic tiers. Required UT truth checks,
 acceptance coverage, and applicable toolchain gates SHALL remain governed by existing
@@ -12,7 +12,7 @@ pruned, or blocked only through the shared capability-resolution report.
 - **AND** its declared derive provider resolves test scope from diff scope and module catalog
 - **THEN** the report SHALL record the attempted artifact and selected derivation, and UT truth gates SHALL retain their existing PASS criteria
 
-### Requirement: Device testing separates pre-check capability resolution from runtime execution
+### Requirement: Device testing supports artifact and adhoc case inputs
 The device-testing contract SHALL declare artifact/derive inputs for normalized test
 cases and static testing gates. `harness/scripts/adhoc-device-test.ts` and the
 feature-phase testing path SHALL continue to share case normalization. Build, install,
@@ -27,7 +27,7 @@ not in the pre-check capability report.
 - **AND** supported explicit adhoc cases SHALL record the selected derive source while
   device build/install/run continues through the existing runtime holder and truth gates
 
-### Requirement: Code review resolves capability inputs and discloses degradations
+### Requirement: Code review supports explicit basic depth
 The code-review contract and checker SHALL use declared source resolution for its
 pre-check inputs. A non-UI visual capability SHALL be not applicable only through
 capability applicability preflight; absent optional review inputs SHALL be disclosed
