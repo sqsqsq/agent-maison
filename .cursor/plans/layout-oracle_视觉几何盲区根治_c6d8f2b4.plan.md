@@ -653,9 +653,16 @@ todos:
 步骤 4 的整条主线 B 演示（篡改 attest 证据 → harness 拦、critic ≥2 轮收敛或正确熔断、
 candidate-pass 前无 T2 批量确认请求）。
 
-本轮 effective fidelity 为 `semantic_layout`——盘上 fidelity SSOT
-（宿主 `spec/reports/fidelity-intent.json`，08-08）记的钳制原因是
-**`clamp_reason=no_vision_ocr_available`**，`clamped=true`；**不是** attestation
-（此前一版归因到 attestation，属误判，经 codex 核实纠正——attestation 的 `evidence_gap`
-是另一条独立的缺证事实）。故 A1 即便命中也只会是 WARN，**BLOCKER 档验收须待 pixel_1to1
-解锁后重跑**。
+本轮 effective fidelity 为 `semantic_layout`。SSOT 的直接字段是
+`clamp_reason=no_vision_ocr_available` / `clamped=true`（宿主
+`spec/reports/fidelity-intent.json`，08-08），**但该字段不证明「模型无视觉」**——它是
+[fidelity-shared.ts:621](harness/scripts/utils/fidelity-shared.ts:621) 钳制表里
+`hasVision=false && ocrAvailable=true` 那一格的标签。同期 `capability-snapshot.json` 记
+`vision.verdict=false` / `source=probe:tool_read·policy:blind_safe`：**金丝雀确认视觉能力
+存在**，是活动的 `artifact_visual_attestation=evidence_gap` 把策略收紧为 blind_safe，
+才使有效 `hasVision=false` 并生成该 clamp reason。即**策略盲，不是能力盲**（详见
+`f3a8c6d2` t5，该 plan 正在修这处误导文案）。
+
+故 A1 即便命中也只会是 WARN，**BLOCKER 档验收须待 pixel_1to1 解锁后重跑**。
+（判读纠错留痕：本段先后写错两版——第一版直接归因 attestation，第二版反过来说「与
+attestation 无关」；正确表述是上面这条分层链。）
