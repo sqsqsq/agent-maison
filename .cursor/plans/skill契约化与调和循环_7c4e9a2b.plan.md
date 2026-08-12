@@ -57,8 +57,13 @@ todos:
     content: 新增 docs/concepts/skill-contracts.md + docs/concepts/reconcile-loop.md；更新 phase-transition-policy.md（assess 为推荐 SSOT）/ goal-mode-runbook / user-confirmation-ux（下一步菜单）/ MIGRATION.md §v3.0
     status: completed
   - id: l5-release-gate
-    content: 过 release:check-plans（version 3.0.0）+ release:verify；两个 OpenSpec change 按依赖序 archive（skill-contracts-assess 先、goal-reconcile-loop 后）
-    status: in_progress
+    content: >
+      完成本 plan 范围收口：tests/docs 已验收，两个 OpenSpec change
+      已按依赖序归档（skill-contracts-assess 先、goal-reconcile-loop 后）。
+      只有当前版本所有 plan terminal 后才能通过的 release:check-plans，
+      以及默认不跳 plan 门的 release:verify，属 3.0.0 窗口级最终发布流程，
+      不作为本 todo 自身完成条件。
+    status: completed
 isProject: false
 ---
 
@@ -310,7 +315,12 @@ coding 无需新做：lite track（change → coding → exit）已是其降级�
 
 ### 5.3 发版门禁
 
-`release:check-plans`（3.0.0 绑定）→ `release:verify` → 两个 OpenSpec change **按依赖序 archive**（`skill-contracts-assess` 先、`goal-reconcile-loop` 后）。
+本 plan 的责任边界止于 tests/docs 验收与两个 OpenSpec change **按依赖序 archive**（`skill-contracts-assess` 先、`goal-reconcile-loop` 后）。
+
+窗口级 `release:check-plans` 与默认不跳 plan 门的 `release:verify`，由所有 3.0.0 plan terminal 后的最终发布流程统一执行：
+
+- `release:all` 路径：执行完整 plan 门与 release verify；
+- candidate 路径：`candidate:build` 仅显式跳过最终 plan 门（`--skip-plan-release-gate`），`candidate:promote` 再补跑该门并提升同一字节产物。
 
 ---
 
@@ -427,12 +437,14 @@ cd harness && NODE_PATH="$PWD/node_modules" node -e "require('ts-node').register
 
 | 项 | 状态 | 落点 |
 |---|---|---|
-| M1 assess 两条推荐路径合并 | **待施工**（已出工单交 codex） | `assess.ts` `recommendationForObservation()` + `assess.unit.test.ts` 对称用例 |
-| M2 mailbox 隔离+降级 | **待施工**（同上工单） | `goal-handoff.ts` + 4 个调用点 |
+| M1 assess 两条推荐路径合并 | **已完成**（`8064f76a`） | `assess.ts` `recommendationForObservation()`：driver 分支不再直取 `phases[currentIndex + 1]`，推进决策统一回落 gap 路径；本条 M1 复现命令现两路同结论（均 `complete_closure`） |
+| M2 mailbox 隔离+降级 | **已完成**（`8064f76a`） | `goal-handoff.ts` `readHandoffRequest()` 改为 `quarantineInvalidMailbox(invalid_json \| invalid_shape)` + 返回 `null`，不再 throw |
 | D1 删 next.json「读盘即得」承诺 | **已完成** | L2.3 修订段 / `l2-next-json` todo 注 / 关键风险条 |
 | D2 fuse 归 driver、assess 只投影 | **已完成** | 核心决策 9 / L4.1 循环级熔断条 / `l4-goal-skill-loop` todo 注 |
 | L1 l4 两项降级范围记账 | **已完成** | `l4-runner-boundary` / `l4-runner-rewire` todo 注 + L4.2「薄壳化不在 3.0.0 范围」定稿块 + 归档 OpenSpec `2026-07-31-goal-reconcile-loop/tasks.md` 尾部更正说明 |
 
-M1/M2 的施工顺序另见交付 codex 的收尾工单：**先把 8 个未提交文件 amend 进 e295d84b（属 d4f8b2a6，修坏 commit），再做 M1 → M2**，两者必须是不同 commit。
+M1/M2 的收尾工单（**先把 8 个未提交文件 amend 进 e295d84b（属 d4f8b2a6，修坏 commit），再做 M1 → M2**）已执行：amend 后该 commit 重写为 `2cffe555`（`e295d84b` 已不在 main 上）；M1/M2 实际同落 `8064f76a`，未按工单「两者必须是不同 commit」拆分——如实记录，不追溯重写历史。
 
-剩余唯一未结 todo=`l5-release-gate`（发布门），其阻塞项已不在本 plan 内（见 `release:check-plans` 的其余 3.0.0 窗口 plan）。
+l5 已按 plan-local 责任边界完成；尚未执行的窗口级发布门不是本 plan 未完成项，继续由 `release:all` / `candidate:promote` 最终强制执行。
+
+两个已归档 OpenSpec change 的 7.4（`openspec:validate` + `check-plan-version` + `release:verify`）保持历史未勾选，**不回写归档历史**——`2026-07-31-goal-reconcile-loop/tasks.md:59` 的「由 `l5-release-gate` 追踪」一并作为历史保留。该窗口级发布门的责任现由最终发布流程（`release:all` / `candidate:promote`）承接，**不代表门禁已经通过**。原 l5 验收把窗口级发布门写成自身完成条件，而该门必因 l5 未完成而失败（`release:verify` 内部亦调用同一门，见 [verify-release-pack.mjs](scripts/verify-release-pack.mjs) 的 `checkPlanVersions({ mode: 'release' })`）；现将其移出 plan-local todo，未降级、未绕过、未改门禁脚本。
