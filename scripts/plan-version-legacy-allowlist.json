@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-02T08:10:44.924Z",
+  "generatedAt": "2026-08-12T11:40:05.391Z",
   "note": "有 frontmatter、todos 非空且全 completed/cancelled、无 version/deferred_to；已分版或顺延者走正常校验",
   "files": [
     "adapter-update-policy_3b2e370d.plan.md",
@@ -44,7 +44,6 @@
     "skill6_hylyre_integration_313e3b0b.plan.md",
     "skill6_hylyre_安装与失败链_ca2a669e.plan.md",
     "skill6_即席真机优化_66bc068a.plan.md",
-    "skill6_派生计划_ssot_420a5005.plan.md",
     "skill6_端到端自动派生_0a3f4669.plan.md",
     "skill6_跨工程退化诊断_c2e8e682.plan.md",
     "spec-harness验证体系_27975623.plan.md",

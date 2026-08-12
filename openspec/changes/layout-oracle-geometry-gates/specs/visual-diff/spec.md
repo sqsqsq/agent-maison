@@ -106,3 +106,35 @@ Enforcement: `skills/reference/device-testing-workflow-detail.md`, `skills/featu
 
 - **WHEN** screens still carry unresolved deterministic FAIL signals
 - **THEN** the agent SHALL NOT initiate T2 batch confirmation
+
+### Requirement: Layout dump files have one canonical address
+
+Layout dump files SHALL be addressed through a single resolution path. New writes SHALL use the
+canonical sanitized slug; a legacy raw `screen_id` filename SHALL be accepted as a read-only
+compatibility fallback. When both a canonical-slug file and a legacy-raw file exist for the same
+screen, or when two distinct `screen_id` values normalize to the same slug, resolution SHALL
+fail closed rather than pick either candidate.
+
+#### Scenario: canonical slug wins for new writes
+
+- **WHEN** capture writes a layout dump for an overlay screen whose `screen_id` contains `__overlay__`
+- **THEN** the file SHALL be written under the canonical sanitized slug, and the checker SHALL
+  resolve it through the same shared helper
+
+#### Scenario: legacy raw name still readable
+
+- **WHEN** only a legacy `layout-<raw screen_id>.json` exists for a screen
+- **THEN** resolution SHALL accept it and the report SHALL note the legacy address
+
+#### Scenario: ambiguous address fails closed
+
+- **WHEN** both canonical-slug and legacy-raw dumps exist for one screen, or two `screen_id`
+  values collide after normalization
+- **THEN** resolution SHALL fail closed with an explicit ambiguity diagnostic, and SHALL NOT
+  silently prefer one file
+
+#### Scenario: naming mismatch is not reported as corruption
+
+- **WHEN** `layout_dump_status` claims `captured` but no dump resolves at either address
+- **THEN** the diagnostic SHALL distinguish "address/naming mismatch" from "file deleted or
+  corrupted", instead of asserting corruption

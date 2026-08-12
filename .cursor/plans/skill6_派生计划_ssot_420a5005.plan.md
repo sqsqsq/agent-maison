@@ -1,5 +1,10 @@
 ---
 name: Skill6 派生计划 SSOT
+version: 3.0.0
+# 版本说明：本 plan 原 6/6 全 completed，靠 legacy allowlist（terminal + 无 version）豁免版本校验。
+# 2026-08-12 因宿主实测暴露「执行产物写回旧 timestamp 目录」新增纠偏项
+# run-directory-freshness，不再 terminal → 豁免失效，按 dc27f455 的在研 plan 规则补 version。
+# 用户 2026-08-12 裁定：该纠偏项在 3.0.0 窗口内做完（不顺延），故 version === 当前窗口。
 overview: 根因是 harness 把 `testing/reports/` 下「任意已存在的 hylyre 派生文件」当作真源，且只做「派生 ⊆ 顶层」校验，从不根据 `test-plan.md` 判断覆盖是否过期/不完整；烟测占位因此长期劫持执行。按你选择的策略，在 `check-testing.ts` 增加以顶层计划为 SSOT 的覆盖/新鲜度门禁（BLOCKER），并修正「选最新派生目录」的启发式。
 todos:
   - id: util-derived-plan
@@ -20,6 +25,46 @@ todos:
   - id: home-page-derive
     content: home-page：新 timestamp 派生计划 + 处理 smoke 占位目录后重跑 testing
     status: completed
+  - id: run-directory-freshness
+    content: >
+      【纠偏项，2026-08-12 宿主实测新边界】执行产物写回旧 timestamp 目录导致溯源错乱。
+      事实：宿主 bc-openCard 08-12 的 device-test 执行结果（trace/report）被写进名为
+      `testing/reports/20260810T184000-codex-testing/` 的目录——目录名是 08-10、内容是 08-12。
+      于是 `report_trace_reconciliation` 的 BLOCKER 文案引用了一个 08-10 的路径来描述 08-12 的
+      数据，读者无法从目录名判断执行时间；同一目录里的顶层 `test-report.md` 仍是 08-10 旧件
+      （写着 TC-009~016 通过），与当轮 trace（8 个失败、`outcome=partial`）矛盾。
+      这是本 plan `util-derived-plan` 的「**mtime 选目录**」启发式 + check-testing 把新 report/trace
+      写回所选派生计划所在目录的直接结果——**属本 plan 责任域**，不是 goal 侧 run 生命周期问题
+      （与 f3a8c6d2 t7② 的 run-control/lock 回收是相关但不同的缺陷）。
+      落点（**复制前移，零新机制**——用户 2026-08-12 按简单原则裁定）：
+      ① 每次执行新建 `<timestamp>/hylyre/` 目录；
+      ② 把选中的 `test-plan.hylyre.md` **原样复制**到新目录；同目录的
+      `derive-manifest.json` 若存在也一并复制；
+      ③ 本轮 `test-report.md` / `trace.json` / `failures/` **全写入新目录**；
+      ④ 原派生计划目录**保持字节不变**（只读输入）；
+      ⑤ 新目录已存在则 **fail-closed**，不覆盖、不复用。
+      **为什么这样就够（已核实生产代码，无需改任何消费者）**：
+      · 选择器本就按 mtime 从新到旧取——
+        [derived-hylyre-plan.ts:636-638](harness/scripts/utils/derived-hylyre-plan.ts:636)
+        `sort((a,b) => b.mtimeMs - a.mtimeMs)`，新目录里刚复制的 plan mtime 最新，自然被选中；
+      · authoritative resolver 由此落在新目录，取到本轮 trace——
+        [testing-trace-gates.ts:104](harness/scripts/utils/testing-trace-gates.ts:104)；
+      · `device-test-evidence.ts:405/:413` 从 `dirname(tracePath)` 读 `test-plan.hylyre.md`
+        与 `failures/`，因②③同置于新目录而继续成立；
+      · 第二轮无 trace 时 resolver 返回 null 而**不回退第一轮**——`:107`
+        `return fs.existsSync(tracePath) ? tracePath : null` 已是现有行为。
+      故**不需要** `hylyre-attempt.json` 之类新绑定契约，**不需要**改造 resolver /
+      evidence composer，**不引入** PID / lease / 身份状态机。
+      （方案演进留痕：先提「只做目录新鲜度诊断」——不根治；再提「拆目录 + 绑定契约 +
+      改造两消费者」——过重且会切断现有两个消费者；最终收敛为复制前移。）
+      验收只锁四例：① 同一源计划连续执行两次 → 生成两个目录；② 原输入目录**字节不变**；
+      ③ 第二轮无 trace 时 resolver 返回无有效 trace，**不回退第一轮**；
+      ④ 目录冲突时**零写入并 fail-closed**。
+      实施时补一条最小 OpenSpec 行为说明即可，**不扩展成新平台**。
+      **开工前置**：本项改 `check-testing.ts`，与 `f3a8c6d2` 有交叉——须待 f3a8c6d2 提交后
+      对新基线重新核对再动手。
+      不改前 6 项的历史完成状态——它们按当时范围确实交付。
+    status: pending
 isProject: false
 ---
 

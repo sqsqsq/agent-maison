@@ -141,6 +141,26 @@ todos:
     # 完成注记：visual-diff-capture.ts layoutDumpFn 注入式（与 screenshotFn 同模式，可单测）；
     # 真机实现 buildHylyreLayoutDumpFn（visual-diff-hylyre-screenshot.ts，hylyre dump-ui --out）；
     # check-testing.ts 装配；merge 层保留 layout_dump_status；跳采屏不重 dump（preserved 分支不触碰）。
+  - id: t2b-layout-dump-addressing
+    content: >
+      【纠偏项，2026-08-12 宿主实测新边界】统一 dump 文件寻址口径。
+      事实：framework 自身写读一致——写在
+      `visual-diff-capture.ts:285/:332` 用 raw `screen_id`，读在
+      `visual-diff-check.ts:1950` 也用 raw `screen_id`；但同目录下 probe/identity 产物
+      （`:335` / `:648`）用的是 `sanitizeVisualDiffScreenSlug` 后的 slug，**两套命名并存**。
+      宿主 08-12 走 out-of-band 采集时按 slug 命名，两个 overlay 屏
+      （`select_card_type_sheet__overlay__…` / `sms_verify_sheet__overlay__…`
+      双下划线被压成单下划线）因此对不上，命中
+      `visual-diff-check.ts:1955` 的「声称已采集但 layout-<id>.json 缺失/不可解析——
+      文件被删或损坏，**须重采**」——把命名问题误导成证据损坏。
+      落点：① 收敛为单一寻址入口（新写入统一 canonical slug，legacy raw 仅作兼容 fallback；
+      raw 与 slug 同时存在、或不同 screen_id 归一后 slug 冲突 → fail-closed，
+      **不做无优先级的双查**，否则可能读到旧文件且无法判别）；
+      ② 缺文件诊断文案区分「命名不符」与「文件损坏/被删」两类。
+      **开工前置**：本项改 `visual-diff-capture.ts` / `visual-diff-check.ts`，与 `f3a8c6d2`
+      有交叉——须待 f3a8c6d2 提交后对新基线重新核对再动手。
+      不改 t2 的历史完成状态——t2 按当时范围确实交付，本项是宿主实测暴露的新边界。
+    status: pending
   - id: t3-layout-invariants-gate
     content: >
       新确定性信号 T8 `visual_diff_layout_invariants`（新文件

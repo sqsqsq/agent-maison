@@ -122,3 +122,37 @@ version: 2.1.0
 - 回填全部历史已完成 plan 的精确版本号（仅快照入 allowlist；如需历史归档可后续单独提案）。**注**：含未完成 todo 的在研 plan 不在豁免内，必须补版本、`cancelled` 或 `deferred_to` 顺延（见 #1）。
 - 自动从 plan 生成消费者向 `RELEASE-NOTES-vN.md`（仍人工撰写；`MAINTAINER-CHANGELOG.md` 仅作维护者速查与草稿来源）。
 - git tag 自动化（保留现有手工 `Br_release_*` 习惯）。
+
+## 已知覆盖缺口：正文 markdown checklist 对发布门禁不可见（2026-08-12 实测）
+
+本 plan 交付的 `check-plan-version.mjs` 只从 **frontmatter `todos:`** 解析待办
+（[plan-version-lib.mjs](scripts/plan-version-lib.mjs) 的 `out.todos.push(...)` 只在
+frontmatter 解析循环内），正文里的 `- [ ]` markdown checklist **一概看不见**。
+于是「用 markdown checklist 记待办、frontmatter 不写 `todos:`」的 plan，即便在窗且有未完项，
+`--release` 模式也照样放行。
+
+实测规模（2026-08-12，`version === 3.0.0` 且无 `deferred_to`）：
+
+| plan | 未勾 / 已勾 | 门禁可见性 |
+|---|---|---|
+| `视觉负向优化根治_…_d8c5f3a7` | **4 / 20** | ★ **完全不可见**（无 frontmatter `todos:`） |
+| `视觉闭环二期_…_e9c4a7f3` | **5 / 11** | ★ **完全不可见**（同上） |
+| `ut存量共存_…_423e5d0f` | 1 / 47 | 有 frontmatter todos，正文这 1 项另计 |
+| `结果级范围门禁_…_c4e8b1d3` | 2 / 3 | 同上 |
+
+即发布门当时报「8 个拦截」时，**另有 2 个在窗 plan、9 个未完项它看不到**；其中 `d8c5f3a7`
+正是 `c4e8b1d3` Todo 5 明写要「复演同一次」的那个 plan。
+
+与本 plan 设计意图的关系：#1 的规则原文是「含 `pending`/`in_progress` todo 的在研 plan **不得**
+进 allowlist」——规则本身没错，但它默认待办都写在 frontmatter；对只用 markdown checklist 的 plan
+形成了**注册制盲区**（同类教训：`CORE_SUITES` 显式注册表——新套件不注册＝假绿）。
+
+**本 plan 窗口（2.1.0）已关闭，此处只保留历史发现，不开 todo、不改本 plan 版本。**
+
+执行项已立独立窄 plan：[plan 待办 SSOT — frontmatter todos 唯一真源，正文未勾项拦截](.cursor/plans/plan待办SSOT_frontmatter唯一真源与正文未勾项拦截_a3e7d1c9.plan.md)
+（`a3e7d1c9`，version 3.0.0）。用户 2026-08-12 裁定的方案是**元门禁 + 存量迁移**：
+frontmatter `todos:` 为唯一机器待办 SSOT；当前及未来窗口的 plan **正文不得承载未完成的
+`- [ ]`**，出现即在**默认校验**中失败（合法 `deferred_to` 不构成豁免）；同时迁移
+`d8c5f3a7` / `e9c4a7f3` / `423e5d0f` / `c4e8b1d3` 四个含未勾项的存量 plan。
+历史 `- [x]` 可保留但不作为机器状态，重开任务须先在 frontmatter 登记。
+**明确不做正文 todo 解析器**——那需要先定义「哪些复选框算发布待办」，等于把歧义面搬进门禁。
