@@ -754,7 +754,16 @@ export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
 export function hasActionableVisualResidual(
   screens: VisualDiffScreenEntry[],
   hits: Array<{ id: string; status: 'FAIL' | 'WARN' }>,
+  /**
+   * t4（plan f3a8c6d2）：本轮**内容可行动**的 P0 缺屏（已由调用方剔除环境阻断态）。
+   * 事故：30 轮 ledger 全程 actionable_residual=false + defect_fingerprints=[]，
+   * 于是"全 pending、7 屏只采到 3 屏"的最烂轮次双重免疫熔断。缺屏本身就是"有事可修
+   * （修采集）"，必须计入残差。不合格轮由 `ctx.visualFuseEligibility` 在上游裁定为空集，
+   * 故此处只会收到内容态，不会把锁屏/权限故障改口成"修了没用"。
+   */
+  contentActionableMissingScreens?: readonly string[],
 ): boolean {
+  if ((contentActionableMissingScreens?.length ?? 0) > 0) return true;
   if (screens.some(s => s.verdict === 'fail' || (s.must_fix?.length ?? 0) > 0)) return true;
   if (hits.some(h => h.status === 'FAIL' && LOOP_ACTIONABLE_HIT_IDS.has(h.id))) return true;
   // 未解决 T8/M1 blocking WARN 亦属 loop-actionable（与 candidate-pass 阻断口径一致）
@@ -2313,9 +2322,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 消费方不得对该轮做熔断判定（同数异质问题会被计数近似误判成无进展）。
   // review-fix（codex P1-3）：资格=rev10 计数门 && 转录对账净——filler defects 轮
   // （凑数错配）虽过计数门，但其指纹是污染数据，不得进入熔断比较基线。
-  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty;
-  const roundFingerprints = fingerprintable ? collectDefectFingerprints(rep.screens) : [];
-  if (!fingerprintable) {
+  // t4（plan f3a8c6d2）：消费**唯一裁决对象**（capture 单点产出，capture 未运行时由
+  // check-testing 补 capture_not_run）。未设置＝非 device 采集路径，既有行为不变。
+  // 资格闸复用现有 `fingerprintable`：它同时是本轮熔断的必要条件、也是"能否作为下一轮
+  // 比较基线"的条件（visual-rounds-ledger 的 prevEligible 与 fuse 判定都要求它），
+  // 故并进去即**熔断资格层整体短路**——只清空缺屏集合是不够的，`fail_hit|visual_diff`
+  // 仍会进签名、`visual_diff` FAIL 又经既有白名单令 actionable 为真（review 已复现）。
+  const fuseEligibility = ctx.visualFuseEligibility;
+  const fuseIneligible = fuseEligibility !== undefined && !fuseEligibility.eligible;
+  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty && !fuseIneligible;
+  // t4（plan f3a8c6d2）：**内容可行动的 P0 缺屏 + 本轮 FAIL hit 身份并入现有指纹集合**。
+  // 旧实现只在 defects 非空时才写 [fingerprints] 行，于是"全 pending/采集失败"轮的指纹
+  // 恒为空 → "连续两轮逐字相同"判据无输入 → 采集烂到产不出 defects 的轮次反而永不熔断
+  // （bc-openCard 30 轮全程 fused=false 的第二个成因）。
+  // 签名按 plan 取**两元**：eligible P0 uncovered + source FAIL hit ids。
+  //   · 缺 FAIL hit 元会误熔断（review 复现：缺屏不变、FAIL 集从 visual_diff 变成
+  //     visual_diff+visual_diff_schema，问题明明变了，第二轮仍判无进展）；
+  //   · sourceFailHitIds 虽已随 ledger 行落盘，但熔断只比 defect_fingerprints，
+  //     不并进签名就等于没参与判定。
+  //   · 对有 defects 的正常轮同样并入：FAIL 集变化＝状态变化，判"不同"只会**推迟**
+  //     熔断，与既有 rev9 安全方向（宁可推迟、绝不误熔）一致。
+  // 缺屏集合直接取裁决对象的结论——不合格轮它本就是空集，无需在此重复分类。
+  const contentActionableMissing = fuseIneligible ? [] : (fuseEligibility?.actionableMissingIds ?? []);
+  const missingScreenFingerprints = contentActionableMissing.map(id => `missing_screen|${id}`);
+  const failHitFingerprints = [...new Set(hits.filter(h => h.status === 'FAIL').map(h => h.id))]
+    .sort()
+    .map(id => `fail_hit|${id}`);
+  const roundFingerprints = fingerprintable
+    ? [
+        ...collectDefectFingerprints(rep.screens),
+        ...missingScreenFingerprints,
+        ...failHitFingerprints,
+      ].sort()
+    : [];
+  if (fuseIneligible) {
+    referenceNotes.push(`[fingerprints] ineligible（本轮整体不参与熔断比较）：${fuseEligibility!.reason}`);
+  } else if (!fingerprintable) {
     referenceNotes.push(
       `[fingerprints] ineligible（存在 must_fix 未转录/未锚定的屏——本轮不参与熔断比较，先按 transcription 门禁逐条转录锚定）`,
     );
@@ -2368,8 +2410,17 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       ...unloggedWarnFindingIds,
     ]),
   ];
+  // t4：不合格轮的 actionable 也必须为 false——`fingerprintable=false` 已保证不熔断，
+  // 但 actionable 仍会被 `visual_diff` FAIL 经既有白名单置真，与"只有内容残差进
+  // actionable"的语义和报告真话不一致（账本行会记一个不存在的"可行动残差"）。
   const actionableResidual =
-    pixel1to1 && hasActionableVisualResidual(rep.screens, hits.map(h => ({ id: h.id, status: h.status })));
+    pixel1to1 &&
+    !fuseIneligible &&
+    hasActionableVisualResidual(
+      rep.screens,
+      hits.map(h => ({ id: h.id, status: h.status })),
+      contentActionableMissing,
+    );
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || null;
   // review-fix（cursor I-1）：交互态 loop_id 带「采集世代」=ui-spec 内容指纹——spec 变更

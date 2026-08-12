@@ -260,6 +260,32 @@ todos:
       重跑后旧 score/verdict **不再被消费**，最终表现为 p0CaptureFailures +
       P0 uncovered；正确页 dump → 正常入库；invisible/屏外节点伪命中被过滤
       （facets 过滤回归）。
+      ---
+      **部分完成（2026-08-12）——根因未证实修复，故保持 pending**：
+      ②（旧裁决失效）**机制已建成但当前不开通**：`mergeVisualDiffReports` 的可选
+      `invalidateScreenIds`（含零成功采集早退路径的同步剪除）与其测试完整保留，
+      主屏/overlay 两处 gate 的接线点也在；**但 `identityMismatchIds` 恒为空**——
+      与 t4 缺屏熔断同因：删除旧条目需要"确证是错页"，而 `mismatched` 目前只能靠应用
+      id 前缀推断，在"锁屏 + 残留应用旧页节点"形态下必然误判（review 实测）。
+      **误删比漏删更重**：会清掉**已有的真人视觉裁决**、再次要求人工签字——正是本 plan
+      t1 要消灭的现象。故该路径与熔断路径一并等 t3 收口。
+      证据图（_mismatch/）照常归档、正式目录仍零写入——取证与拦截不受影响。
+      回归断言已补"未确证失配不得删除旧裁决（含 confirmed_by 原样保留）"，
+      突变复现证实：一旦重新开通，该形态下 screens 会被清空。
+      ①（可见性剪枝）**已实现但在此宿主无效**：`extractLayoutDumpFacets` 现剪掉
+      `visible==='false'` 子树 / 零尺寸 / 屏外节点，属性缺失一律不推断。
+      **实测证伪**：宿主 08-09/08-10 真机 dump 抽样 `visible="true"` 121 处、
+      `visible="false"` **0 处**（`docs/operations/layout-oracle-calibration.md:33` 亦记
+      "无 visibility 字段→真机步骤 D4"）——若残留旧页保持正常全屏 bounds，本过滤剪不掉它，
+      错页身份仍会命中。故这三类剪枝是**正确但可能无效的加固**，不得当作根因已修。
+      取证已确认的部分：identity gate 与 nav 锚（每屏唯一 `<screen>_frame` id）
+      **在 08-08 包中都已存在且正确**（同为 653734e3 引入），日志显示它放行了错页
+      ⇒ 判定确实被骗过，但**骗过的具体形态未定**。
+      **剩余待办（须实机 dump 取证后再定判据）**：候选=zIndex / hostWindowId / hierarchy /
+      最上层可见 NavDestination；取证方式=在宿主导航到二级页后 dump，检查旧页节点的
+      visible/bounds/zIndex 实际取值。
+      当前验收：unit 3232+、fixtures 44/44、typecheck 干净；三处突变（去可见性剪枝 /
+      不丢弃失配屏旧条目 / 缺屏不计 actionable）各自被对应用例抓住。
     status: pending
   - id: t4-fuse-blindspot-empty-fingerprint
     content: >
@@ -299,7 +325,106 @@ todos:
       （现有两轮阈值），该类缺屏轮 actionable_residual=true；**负向=连续两轮锁屏
       或 capture failure 不产生 no_progress_fuse**，其分类与处置和现状逐字一致；
       有真实缺陷指纹的轮次行为与现状完全一致（回归）。
-    status: pending
+      ---
+      **实施状态：in_progress（2026-08-12，第五轮 review 后按矩阵收口重做）**
+      ——前四版是"打补丁"式演进，判据换了四轮（device id 白名单 → element_absent →
+      screensWritten 批次代理 → identity mismatch → results 分类扫描），每修掉一个局部
+      反例就冒出新的。**根因不是某条判据错，而是没有单一裁决点**：事实散落在 CheckResult
+      分类、capture 结果、三个 ctx 字段里，生产者与消费者各自"正确"而组合错误；测试又
+      大量打在纯函数与源码正则上，绕开了"锁屏 dump 最终被生产者归成什么"这条真链路。
+      **收口方案（删机制，不加机制）**：
+      · capture **单点产出**唯一裁决对象 `VisualFuseEligibility{eligible,
+        actionableMissingIds, reason}`；三个 ctx 字段合并为 `visualFuseEligibility` 一个；
+        删除 results 分类扫描（那条路四版都漏——device 阻断 id 是参数化的、run.ok=false
+        写 `device_toolchain`、build/install/ready 多数连字段都没有）。
+      · capture 未运行的路径由 check-testing 在派发前补 `CAPTURE_NOT_RUN_ELIGIBILITY`，
+        **结构上不可能漏**：ctx 上没有值就等于没跑过 capture，无需反推失败分类。
+      · identity gate 返回值从二值 `ok` 改为三态 `matched|mismatched|probe_failed`——
+        原实现把 dump 执行失败、JSON 解析失败、真身份失配压成同一个 `ok:false`，于是
+        dump IO 故障被当成"唯一正证据"，既进熔断又错删旧裁决。
+      · **缺屏熔断通道当前不开通**（review 五轮逐一证伪全部候选信号，最终结论）：
+        把缺屏送进熔断需先证明"应用当前在前台、只是渲染了错页"，而可用信号无一可靠——
+        `element_absent`（锁屏/卡顿同样得到）、批次级 `screensWritten`（串行采集双向
+        出错）、`none_of` 命中（该锚不保证属于本应用）、dump 中应用组件 id 前缀
+        （**t3 已确认 dump 会残留旧页组件树**，"锁屏节点 + 残留旧页节点"组合下前缀照样
+        命中——同一份 dump 既是 t3 的病灶又被当成 t4 的健康证据，自相矛盾）。
+        故 `resolveVisualFuseEligibility` 在**存在任何 P0 缺屏时一律 ineligible**，
+        结构与单点裁决语义完整保留，t3 拿出"当前可见页面/前台归属"事实后在此接入即可开通。
+        **同步作废 plan 早前的判断"t3 残余风险只会漏检、不会误熔断"**——review 已实测
+        复现误熔断形态，该判断不成立。
+      · 消费侧用同一对象同时约束 `fingerprintable`（熔断资格闸）与 `actionable_residual`。
+      **测试全部改为经真实生产者与真实消费者**，**禁止源码正则代替行为验证**：
+      · 生产侧（`captureVisualDiff` + 真实 layoutDumpFn/screenshotFn 夹具）：capture 未跑 /
+        dump 执行失败 / dump 不可解析 / 锁屏页（不命中但非错页）/ `none_of` 命中不算
+        所有权 / 应用前台错页 / 混合轮；
+      · 消费侧端到端（`checkVisualDiff` → 账本 → 第二轮裁决，手动 appendVisualRound
+        模拟 runner——check 只读账本、追加归 runner）：**合格轮同指纹两轮真熔断**（对照组，
+        证明链路本身通）vs **不合格轮在同一链路上绝不熔断**，两条除资格闸外逐字相同。
+      **边界修正**：曾声称"零成功截图/全屏 mismatch 也能熔断"——**已证伪**：全屏 mismatch
+      会把 screens 删空/不写报告，而空报告在 checkVisualDiff 早于账本逻辑返回。
+      按上面的定论该形态本就 ineligible，故此路径无需打通。
+      **t4 当前交付的能力（已端到端验证）**：单一裁决点 + 资格闸贯通——capture 未运行、
+      以及任何有 P0 缺屏的轮次，都会让本轮整体退出熔断比较（不产指纹、不记 actionable、
+      不作下一轮基线），环境故障因此绝不会被改口成"修了没用/跑了没修"。
+      **尚未交付**：让内容态缺屏**进入**熔断（原 t4 的正向目标）——阻塞于 t3。
+      **t4 与 t3 同步保持未完成，待 t3 提供可靠前台事实后一并整体复核。**
+      ---
+      历史记录（前四版，留档备查）：瞬时 disqualifier 走**既有内存注入模式**
+      （比照 `ctx.refElementsManifest`，types.ts 加三个**同 run 内存**字段，不落盘、
+      不进 summary、无新账本/状态机，也无需改 capability-registry 的 provider 签名）。
+      **判据=正证据放行，非排除法**（review 两轮修正）：初版按"device build/install/run
+      是否 FAIL"反推，有三个缺陷——注入点早于 `visual_diff_capture` 结果入 out、只查局部
+      out、且我猜的那几个 check id **根本不存在**；于是"device run 成功但截图 Permission
+      denied / dump·IO·hash 失败"被判成内容态 → 连续两轮误报 no_progress_fuse。
+      二轮又指出 `element_absent` 本身**不是内容正证据**（它只表示"无新增本应用 faultlog"，
+      锁屏/会话失效/设备卡顿同样得到），且混合轮只要一屏 element_absent 就整轮放行、
+      而明确属内容问题的 identity mismatch 反倒没进集合。
+      三轮又证伪了"批次级活性代理"：采集是**串行**的，第一屏成功后设备重新锁屏，后续屏
+      拿到"element_absent + 批次已有成功截图"会被**误放行**；反过来全部屏都 identity
+      mismatch 时 `screensWritten=0`，本该熔断的轮次又被**漏判**——同一个代理双向出错。
+      **定稿（纯函数 `resolveContentActionableMissing`，行为矩阵直测）**：
+      **唯一正证据＝identity mismatch**——该形态意味着导航执行完成、layout dump 取到了、
+      页面也渲染了，只是不是目标页，**设备活性由证据自身携带**，属纯导航/实现问题；
+      `element_absent` 与批次级 `screensWritten` 一并删除（前者无法区分锁屏/卡顿，且导航
+      失败时该屏根本没取到 dump＝没有任何活性证明）。混合轮 fail-safe：任一缺屏拿不出
+      证据即整轮按阻断。代价=bc-openCard 那 5 屏 element_absent 不再进熔断（真正的解是
+      修导航配置，plan 已划界不做），换取判据自洽、双向不误判。
+      **阻断判定分两层**（三轮定稿）：
+      ① **轮级**——在 `dispatchDeviceVisualDiff` **之前**扫**完整 results**：三道 device gate
+      与静态门禁此时都已跑完，是唯一能看到全部证据的时点。只在 capture 内注入会完全漏掉
+      "build/install 失败、run.ok=false、静态门禁提前返回"这些轮次（capture 根本不执行，
+      而外层仍会派发 visual diff，旧视觉状态照样可能触发熔断）。判据用**既有结构化分类
+      字段** `blocking_class==='externalBlocked'` / `failure_kind==='device_blocked'|'toolchain'`
+      ——device 阻断的 CheckResult **id 是参数化的**，按 id 白名单必漏（我前两版正栽在这，
+      甚至猜了几个根本不存在的 id）。
+      ② **屏级**——capture 侧的 identity mismatch 正证据（见上）。
+      **P0 短路落点**：环境阻断并进**现有资格闸 `fingerprintable`**——它同时是本轮熔断的
+      必要条件与"能否作为下一轮比较基线"的条件（visual-rounds-ledger 的 prevEligible 与
+      fuse 判定都要求它），故并进去即**熔断资格层整体短路**，零新增字段/状态机。
+      只清空缺屏集合是不够的：`fail_hit|visual_diff` 仍会进签名、`visual_diff` FAIL 又经
+      既有白名单令 actionable_residual=true，阻断轮照样 fused（review 已复现）。
+      **actionable 同受约束**（P1）：阻断轮 `actionable_residual` 也置 false，否则账本行会
+      记一个不存在的"可行动残差"，与"只有内容残差进 actionable"及报告真话不一致。
+      另修 P2 死分支：阻断说明原要求 `visualP0CaptureFailures.length>0`，而阻断时它恒为空，
+      说明永不显示；改由阻断标志本身驱动。
+      消费侧=`hasActionableVisualResidual` 新增可选缺屏入参（空集等价于不传，回归安全）+
+      **两元签名**并入现有 `roundFingerprints`：`missing_screen|<id>` 与
+      `fail_hit|<hit id>`——后者是 review 抓出的第二处（缺它则"缺屏不变、FAIL 集变化"
+      仍判无进展＝误熔断；sourceFailHitIds 虽已随 ledger 行落盘，但熔断只比
+      defect_fingerprints，不并进签名等于没参与判定）。对有 defects 的正常轮同样并入：
+      FAIL 集变化＝状态变化，判"不同"只会**推迟**熔断，与既有 rev9 安全方向一致。
+      `[fingerprints]` 行因此自然非空，现有"连续两轮逐字相同即熔断"阈值原样工作
+      （未加可配置 N）；环境阻断轮另写一行 reference note 说明不入熔断比较。
+      bc-openCard 对照验证：element_absent 那 5 屏所在轮有 3 屏采集成功（screensWritten>0）
+      → 整轮合格 → 进熔断（正是该熔断的轮次）；锁屏团灭轮 screensWritten=0 → 出局。
+      **验收补真实裁决用例**（review 指出源码正则接线断言覆盖不到语义）：直接打
+      `evaluateVisualRound`——环境阻断轮"build 变、指纹不变"连续两轮 **fused=false**，
+      对照组仅把资格闸打开即 **fused=true / attribution=ineffective_fix**（证明 false 来自
+      资格短路而非链路本来就不熔断）；另有资格三边界的纯函数矩阵。
+      验收：unit 3234/3234、fixtures 44/44、typecheck 干净；七处突变（缺屏不计 actionable /
+      去可见性剪枝 / 不丢弃旧条目 / 删 check-testing 注入接线 / 去 fail_hit 元 /
+      overlay 不记失效 / **去资格闸短路** / 去"链路存活"资格）各自被对应用例抓住。
+    status: in_progress
   - id: t5-degradation-wording-recovery-refcheck
     content: >
       【P1】保真降级修补：现有 capability 通道阻断 / 措辞修正 / 现有机制恢复。

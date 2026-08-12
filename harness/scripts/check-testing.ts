@@ -101,7 +101,10 @@ import {
 } from './utils/closure-attestation';
 import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { isPhaseDisabledByProfile } from '../profile-loader';
-import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
+import {
+  CAPTURE_NOT_RUN_ELIGIBILITY,
+  captureVisualDiff,
+} from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { parseTestCaseFlowBlock, triageCascade, validateTestCaseFlow } from './utils/test-case-flow';
@@ -2709,6 +2712,13 @@ function checkDeviceTestRunGate(
               : {}),
           });
           const p0Failed = cap.p0CaptureFailures ?? [];
+          // t4（plan f3a8c6d2）：把"哪些缺屏属内容可行动"注入 ctx，供随后的 visual diff
+          // 熔断资格判定消费（同 run 内存传递，比照 refElementsManifest；不落盘、无新协议）。
+          //
+          // t4（plan f3a8c6d2）：熔断资格由 capture **单点**裁决，此处只做透传。
+          // 不再扫 CheckResult 分类反推——那条路四版都漏（device 阻断的 id 是参数化的、
+          // run.ok=false 写的是 device_toolchain、build/install/ready 多数连字段都没有）。
+          ctx.visualFuseEligibility = cap.fuseEligibility;
           // P0-9c："新鲜"重定义——build 指纹有效的跳采（screensPreservedBuildValid）＝合法新鲜，
           // 不算陈旧证据；stalePreserved 只拦"未刷新且非 build 有效"的 preserved（采集失败回退
           // 旧 json / legacy 无指纹 preserved 照旧 FAIL，反陈旧证据语义不丢）。
@@ -3222,6 +3232,12 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 device_test.visual_diff`,
       });
     } else {
+      // t4（plan f3a8c6d2）：capture 未运行的路径（build/install/run 失败、静态门禁提前
+      // 返回等）在此补裁决。**结构上不可能漏**：ctx 上没有值就等于 captureVisualDiff
+      // 没跑过——不需要、也不再去反推不完整的失败分类。
+      if (!ctx.visualFuseEligibility) {
+        ctx.visualFuseEligibility = CAPTURE_NOT_RUN_ELIGIBILITY;
+      }
       results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
     }
 

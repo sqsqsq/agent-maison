@@ -23,7 +23,7 @@ import {
   type NavConfig,
   type NavConfigV2,
 } from '../../visual-diff-nav';
-import { captureVisualDiff } from '../../visual-diff-capture';
+import { captureVisualDiff, mergeVisualDiffReports } from '../../visual-diff-capture';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
 import { collectP0VisualTargetIds } from '../../visual-diff-targets';
 import type { UiSpecDoc } from '../../../../../harness/scripts/utils/ui-spec-shared';
@@ -194,6 +194,122 @@ export function runAll(): UnitCaseResult[] {
     if (!f.ids.includes('root') || !f.ids.includes('maison:x')) throw new Error(`ids 收集不全：${JSON.stringify(f.ids)}`);
   });
 
+  // ==========================================================================
+  // t3（plan f3a8c6d2）：身份判定只认可见节点。
+  // 事故：shot-add_card_home_collapsed.png 实拍为「全部银行」页却以添卡首页身份入库并
+  // 算出 score_floor=0.997。身份门与 nav 锚（每屏唯一 <screen>_frame id）都在且正确，
+  // 放行只能是被 dump 里残留的旧页节点骗过（Navigation push 后旧页组件树仍在树中）。
+  // ==========================================================================
+  run('t3: 明确 visible=false 的子树整体不参与身份判定（旧页残留不得伪命中）', () => {
+    const dump = {
+      tree: {
+        attributes: { bounds: '[0,0][1320,2120]', visible: 'true' },
+        children: [
+          // 当前页
+          {
+            attributes: {
+              id: 'maison:bc-opencard:all_banks:all_banks_frame',
+              text: '全部银行',
+              bounds: '[0,0][1320,2120]',
+              visible: 'true',
+            },
+          },
+          // 残留旧页：整棵不可见，其 frame id 与文案都不得进入 facets
+          {
+            attributes: {
+              id: 'maison:bc-opencard:add_card_home_collapsed:add_card_home_collapsed_frame',
+              bounds: '[0,0][1320,2120]',
+              visible: 'false',
+            },
+            children: [{ attributes: { text: '添加银行卡', visible: 'true', bounds: '[0,0][1320,300]' } }],
+          },
+        ],
+      },
+    };
+    const f = extractLayoutDumpFacets(dump);
+    if (!f.ids.includes('maison:bc-opencard:all_banks:all_banks_frame')) {
+      throw new Error(`可见页 id 必须保留：${JSON.stringify(f.ids)}`);
+    }
+    if (f.ids.includes('maison:bc-opencard:add_card_home_collapsed:add_card_home_collapsed_frame')) {
+      throw new Error('不可见旧页 frame id 混入 facets——身份门会被骗过（事故形态）');
+    }
+    if (f.texts.includes('添加银行卡')) {
+      throw new Error('不可见子树的文本混入 facets（父不可见则子必不可见）');
+    }
+    // 端到端：错页 dump × 添卡首页身份 → 必须判 mismatch
+    const ev = evaluateScreenIdentity(
+      { all_of: [{ id: 'maison:bc-opencard:add_card_home_collapsed:add_card_home_collapsed_frame' }] },
+      f,
+    );
+    if (ev.ok) throw new Error('全部银行页不得通过添卡首页的身份判定');
+  });
+
+  run('t3: 零尺寸/屏外节点不进 facets，但其可见子树仍照常遍历', () => {
+    const dump = {
+      tree: {
+        attributes: { bounds: '[0,0][1320,2120]' },
+        children: [
+          { attributes: { id: 'zero_size', bounds: '[100,100][100,100]' } },
+          { attributes: { id: 'offscreen_below', bounds: '[0,3000][1320,3200]' } },
+          { attributes: { id: 'offscreen_right', bounds: '[1400,0][1600,200]' } },
+          {
+            // 滚动容器本身在屏外，子项滚回屏内——子树不得被父的屏外状态连坐
+            attributes: { id: 'scroller', bounds: '[0,2200][1320,2400]' },
+            children: [{ attributes: { id: 'child_visible', bounds: '[0,100][1320,300]' } }],
+          },
+          { attributes: { id: 'onscreen', bounds: '[0,0][1320,200]' } },
+        ],
+      },
+    };
+    const f = extractLayoutDumpFacets(dump);
+    for (const gone of ['zero_size', 'offscreen_below', 'offscreen_right', 'scroller']) {
+      if (f.ids.includes(gone)) throw new Error(`${gone} 不应参与身份判定：${JSON.stringify(f.ids)}`);
+    }
+    if (!f.ids.includes('onscreen')) throw new Error('屏内节点被误删');
+    if (!f.ids.includes('child_visible')) throw new Error('屏外父节点的屏内子节点被连坐删除');
+  });
+
+  run('t3: 身份失配屏的旧裁决整条失效——错页高分不得跨轮存活', () => {
+    // 事故形态：add_card_home_collapsed 旧条目是「全部银行页」且 score_floor=0.997。
+    // mismatch 分支原本只 append+continue，而 merge 先装入全部旧 screens 再仅覆盖本轮
+    // 成功屏 → 该条目会一直被消费、继续喂出误导性视觉反馈。
+    const existing = {
+      schema_version: '1.1' as const,
+      screens: [
+        { screen_id: 'add_card_home_collapsed', verdict: 'pending' as const, score_floor: 0.997, screenshot_hash: 'wrongpage' },
+        { screen_id: 'all_banks', verdict: 'pass' as const, score_floor: 0.99, screenshot_hash: 'ok' },
+      ],
+    };
+    // 本轮该屏身份失配（无成功采集），另一屏不受影响
+    const merged = mergeVisualDiffReports(existing, [], null, ['add_card_home_collapsed']);
+    const ids = merged.report.screens.map(s => s.screen_id);
+    if (ids.includes('add_card_home_collapsed')) {
+      throw new Error(`身份失配屏的旧裁决必须失效，实得：${JSON.stringify(merged.report.screens)}`);
+    }
+    if (!ids.includes('all_banks')) throw new Error('未失配屏不得被牵连删除');
+    // 不传失效集合时行为与改动前逐字一致（回归）
+    const untouched = mergeVisualDiffReports(existing, [], null);
+    if (untouched.report.screens.length !== 2) {
+      throw new Error(`未指定失效集合时不得改变既有条目：${JSON.stringify(untouched.report.screens)}`);
+    }
+  });
+
+  run('t3: 缺 visible/bounds 属性时不做推断（行为与改动前一致）', () => {
+    const dump = {
+      tree: {
+        attributes: {},
+        children: [
+          { attributes: { text: '无属性节点' } },
+          { attributes: { id: 'no_bounds', visible: '' } },
+        ],
+      },
+    };
+    const f = extractLayoutDumpFacets(dump);
+    if (!f.texts.includes('无属性节点') || !f.ids.includes('no_bounds')) {
+      throw new Error(`属性缺失不得当作不可见：${JSON.stringify(f)}`);
+    }
+  });
+
   run('S2: evaluateScreenIdentity——20260718 错页形态（none_of 命中 + all_of 缺失）判 mismatch；正确页 ok', () => {
     const identity = {
       all_of: [{ text: '添加银行卡' }, { text: '招商银行' }],
@@ -249,7 +365,17 @@ export function runAll(): UnitCaseResult[] {
       });
       if (canonicalShots !== 0) throw new Error('mismatch 屏不得写正式截图');
       if (!(r.p0CaptureFailures ?? []).includes('add_bank_collapsed')) throw new Error('须记 P0 采集失败');
-      if (!r.errors.some(e => e.includes('screen_identity_mismatch'))) throw new Error(`须报 mismatch：${r.errors.join('|')}`);
+      // t4：本夹具的 identity 是**纯文本锚**，dump 里拿不到应用组件 id ⇒ 无法证明
+      // "应用在前台、只是错页"，故归 probe_failed（保守）。零写入/证据图/记 P0 失败
+      // 这三条既有行为不变——它们与所有权判定无关。
+      // 记法仍遵循 openspec（screen_identity_mismatch），但措辞不得断言成因。
+      const detail = r.errors.find(e => e.includes('add_bank_collapsed')) ?? '';
+      if (!/screen_identity_mismatch/.test(detail) || !/成因未确证/.test(detail)) {
+        throw new Error(`须记 spec 标识并标注成因未确证：${r.errors.join('|')}`);
+      }
+      if (r.fuseEligibility?.eligible !== false) {
+        throw new Error('拿不到应用所有权事实时不得给熔断资格');
+      }
       const shotsDir = path.join(root, 'doc', 'features', 'demo', 'device-testing', 'device-screenshots');
       if (fs.existsSync(path.join(shotsDir, 'shot-add_bank_collapsed.png'))) throw new Error('正式目录零写入');
       if (!fs.existsSync(path.join(shotsDir, '_mismatch', 'shot-add_bank_collapsed.png'))) throw new Error('证据图须归档 _mismatch/');

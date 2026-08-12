@@ -207,6 +207,11 @@ export interface VisualDiffCaptureResult {
   errors: string[];
   /** E1：P0 顶层屏尝试采集却失败（截图失败/hash 失败/骨架失败）的 screen_id；非顶层屏跳过不计入 */
   p0CaptureFailures?: string[];
+  /**
+   * t4（plan f3a8c6d2）：本轮视觉熔断资格的**唯一裁决**（单点产出/单点消费）。
+   * 矩阵与依赖见 `VisualFuseEligibility` 注释。
+   */
+  fuseEligibility?: VisualFuseEligibility;
   skippedReason?: string;
 }
 
@@ -493,14 +498,107 @@ export function mergeCapturedScreenEntry(
   return merged;
 }
 
+/**
+ * t4（plan f3a8c6d2）：**视觉熔断资格的唯一裁决对象**。
+ *
+ * 收敛动机（review 四轮后的方法论修正）：此前"本轮能否参与熔断"的事实散落在
+ * CheckResult 分类、capture 结果、以及三个可能互相矛盾的 ctx 字段里，生产者与消费者
+ * 可以各自"正确"而组合错误——判据换了四版（device id 白名单 → element_absent →
+ * screensWritten 批次代理 → identity mismatch → results 扫描），每修掉一个局部反例
+ * 就冒出新的。故改为**单点产出、单点消费**：由 capture 产出本对象，外层只在
+ * capture 未运行时补一条 `capture_not_run`。这是**删机制**，不新增状态/协议。
+ *
+ * 资格矩阵（穷举，勿再局部打补丁）：
+ *   | 本轮事实                                   | eligible |
+ *   |--------------------------------------------|----------|
+ *   | capture 根本未执行                          | false（外层补 capture_not_run） |
+ *   | dump / 截图 / 解析失败                      | false |
+ *   | 不能证明目标应用在前台                      | false |
+ *   | 应用在前台 + dump 成功 + 目标页身份失配      | true（该屏记 missing_screen） |
+ *   | 部分屏有正证据、部分屏无证据（混合轮）        | false（整轮） |
+ *   | 当前截图成功且存在视觉缺陷                   | true（既有 defects 通道） |
+ *
+ * 已知依赖（诚实标注）：唯一正证据 identity mismatch 依赖 t3 的身份判定。t3 当前
+ * **未完成**（可见性剪枝在宿主 dump 上无区分度），其残余风险方向是"本该 mismatched
+ * 被判 matched"＝漏检，而非把别的形态误判成 mismatched，故对本资格是安全侧；
+ * 但 t3 收口前不得把本判据当作已验证能力。
+ */
+export interface VisualFuseEligibility {
+  eligible: boolean;
+  /** 合格且由缺屏驱动时：内容可行动的缺屏 id（进 missing_screen 指纹）；否则空 */
+  actionableMissingIds: string[];
+  /** 机器可读的判定依据（进 reference notes，供人读与回归断言） */
+  reason: string;
+}
+
+/** capture 未运行时外层补的裁决——结构上不可能漏：ctx 上没有值就等于没跑过 capture。 */
+export const CAPTURE_NOT_RUN_ELIGIBILITY: VisualFuseEligibility = {
+  eligible: false,
+  actionableMissingIds: [],
+  reason: 'capture_not_run：本轮未执行视觉采集（build/install/run 或静态门禁提前返回），旧视觉状态不得参与熔断',
+};
+
+/**
+ * 按上表裁决本轮资格（纯函数；真实生产链由 captureVisualDiff 调用）。
+ *
+ * **当前实现：只要存在 P0 缺屏就判 ineligible——"缺屏进熔断"这条通道尚未开通。**
+ *
+ * 原因（review 实测推翻了先前判断，勿再补启发式绕过）：把缺屏送进熔断需要先证明
+ * "被测应用当前在前台、只是渲染了错页"。可用信号逐个证伪：
+ *   · `element_absent`（无新增 faultlog）—— 锁屏/会话失效/卡顿同样得到；
+ *   · 批次级 `screensWritten > 0` —— 采集是串行的，先成功后锁屏会误放行，
+ *     全失配轮又会漏判，同一代理双向出错；
+ *   · `none_of` 命中 —— 该锚不保证属于本应用（`none_of=[上滑解锁]` + 锁屏树即误判）；
+ *   · dump 中存在应用组件 id 前缀 —— **t3 已确认 dump 会残留旧页组件树**（这正是
+ *     张冠李戴的成因），"锁屏节点 + 残留旧页节点"的组合下前缀照样命中。同一份含残留
+ *     节点的 dump 既是 t3 的病灶、又被当成 t4 的健康证据，自相矛盾。
+ * 结论：**在 t3 拿出可靠的"当前可见页面/前台归属"事实之前，缺屏一律不具备熔断资格。**
+ * 本函数保留完整结构与单点裁决语义，t3 收口后只需在此接入该事实即可开通。
+ *
+ * 仍然生效的部分（已端到端验证）：资格闸本身——capture 未运行、以及任何有缺屏的轮次，
+ * 都会让本轮整体退出熔断比较（不产指纹、不记 actionable、不作下一轮基线）。
+ */
+export function resolveVisualFuseEligibility(input: {
+  p0CaptureFailures: readonly string[];
+  /** 逐屏 identity gate 结论（当前仅用于诊断文案；开通前不作放行依据） */
+  screenEvidence: ReadonlyMap<string, 'mismatched' | 'probe_failed'>;
+}): VisualFuseEligibility {
+  const failures = [...new Set(input.p0CaptureFailures.filter(s => typeof s === 'string' && s.trim()))].sort();
+  if (failures.length === 0) {
+    return { eligible: true, actionableMissingIds: [], reason: '无 P0 缺屏；资格由既有 defects 通道决定' };
+  }
+  // 措辞与 gate detail 同口径：只说"身份不通过"，不断言成因（见 runScreenIdentityGate）
+  const notMatched = failures.filter(id => input.screenEvidence.has(id));
+  return {
+    eligible: false,
+    actionableMissingIds: [],
+    reason:
+      `${failures.length} 个 P0 缺屏——缺屏熔断通道未开通（需 t3 提供可靠的前台/当前页事实；` +
+      `dump 可能残留旧页组件树，现有信号均无法区分锁屏与错页）` +
+      `${notMatched.length > 0 ? `；其中 ${notMatched.length} 屏身份不通过（成因未确证）：${notMatched.slice(0, 5).join('、')}` : ''}` +
+      '——本轮整体不参与熔断比较',
+  };
+}
+
 export function mergeVisualDiffReports(
   existing: VisualDiffReport | null,
   capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }>,
   currentBuildFingerprint?: string | null,
+  /**
+   * t3（plan f3a8c6d2）：本轮**瞬时**失效的 screen id（当前仅 identity mismatch）。
+   * 这些屏本轮拿不出可信截图，其旧条目（score/verdict）不得继续被消费——否则
+   * "错页高分"会跨轮存活（bc-openCard 的 0.997 即此形态）。瞬时=不落盘、不进 schema、
+   * 不新增持久状态；下一轮身份对上并成功采集即自然恢复。
+   */
+  invalidateScreenIds?: readonly string[],
 ): { report: VisualDiffReport; preserved: number; updated: number; invalidated: number } {
   const byId = new Map<string, VisualDiffScreenEntry>();
+  const dropped = new Set(
+    (invalidateScreenIds ?? []).filter(id => typeof id === 'string' && id.trim()),
+  );
   for (const s of existing?.screens ?? []) {
     if (typeof s.screen_id === 'string' && s.screen_id.trim()) {
+      if (dropped.has(s.screen_id)) continue; // 身份失配屏：旧裁决整条丢弃
       byId.set(s.screen_id, s);
     }
   }
@@ -631,6 +729,42 @@ export function skipAllowedByIdentity(
 }
 
 /**
+ * t4（plan f3a8c6d2）：身份 gate 的**可区分**结论。
+ *   · matched       —— 身份命中（或无 identity/无 dump 能力，按既有契约放行）
+ *   · mismatched    —— dump 取到了、**且证据显示被测应用确实在渲染**，但不是目标页
+ *                      ＝纯导航/实现问题，唯一可作内容正证据的形态
+ *   · probe_failed  —— dump 执行失败/不可解析，或 dump 里找不到被测应用的任何组件
+ *                      （锁屏页、桌面、系统弹窗都会落这里）——对页面一无所知，不得当证据
+ * 旧实现把这三者压成同一个 `ok:false`，于是 dump IO 故障被当成"唯一正证据"既进熔断、
+ * 又错误删除旧裁决（review 抓出）。`ok` 保留给既有调用点做放行判断，语义不变。
+ */
+export interface ScreenIdentityGateResult {
+  ok: boolean;
+  status: 'matched' | 'mismatched' | 'probe_failed';
+  detail?: string;
+}
+
+/**
+ * 被测应用的组件 id 前缀（`maison:<feature>:`）——从**已声明的 identity 锚**推导，
+ * 不硬编码。dump 里出现任一该前缀 id ⇒ 被测应用的组件树在树中＝应用确实在渲染。
+ * 推导不出前缀（identity 只用 text/route）时返回空集，调用方据此 fail-safe。
+ */
+function appComponentIdPrefixes(opts: VisualDiffCaptureOptions): string[] {
+  const out = new Set<string>();
+  for (const identity of opts.screenIdentity?.values() ?? []) {
+    const members = [...(identity.all_of ?? []), ...(identity.any_of ?? []), ...(identity.none_of ?? [])];
+    for (const m of members) {
+      if (typeof m.id !== 'string') continue;
+      const parts = m.id.split(':');
+      if (parts.length >= 3 && parts[0].trim() && parts[1].trim()) {
+        out.add(`${parts[0]}:${parts[1]}:`);
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
  * S2 P0-C：页面身份 gate——navigate 后、screenshot 落正式目录前执行。
  * 顺序契约：navigate → dump uitree（_identity 探测位）→ identity gate → screenshot →
  * canonical write。无 identity/proposed 候选/无 dump 能力 → 直接放行（强制策略由
@@ -640,10 +774,10 @@ function runScreenIdentityGate(
   opts: VisualDiffCaptureOptions,
   screenId: string,
   reportDir: string,
-): { ok: boolean; detail?: string } {
+): ScreenIdentityGateResult {
   const identity = opts.screenIdentity?.get(screenId);
-  if (!identity || identity.proposed === true) return { ok: true };
-  if (!opts.layoutDumpFn) return { ok: true };
+  if (!identity || identity.proposed === true) return { ok: true, status: 'matched' };
+  if (!opts.layoutDumpFn) return { ok: true, status: 'matched' };
   const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
   const probeAbs = path.join(reportDir, '_identity', `layout-${slug}.json`);
   try {
@@ -658,15 +792,22 @@ function runScreenIdentityGate(
     bundleName: opts.bundleName,
   });
   if (!d.ok) {
-    return { ok: false, detail: `identity 探测 dump 失败${d.error ? ` — ${d.error}` : ''}（身份未验不得落正式截图）` };
+    // t4：探测失败 ≠ 身份失配。dump 拿不到时我们对页面**一无所知**（设备可能锁屏/离线），
+    // 归 probe_failed——绝不能当成"页面渲染了只是错页"的内容证据。
+    return {
+      ok: false,
+      status: 'probe_failed',
+      detail: `identity 探测 dump 失败${d.error ? ` — ${d.error}` : ''}（身份未验不得落正式截图）`,
+    };
   }
   let json: unknown;
   try {
     json = JSON.parse(fs.readFileSync(probeAbs, 'utf-8'));
   } catch (e) {
-    return { ok: false, detail: `identity dump 不可解析：${(e as Error).message}` };
+    return { ok: false, status: 'probe_failed', detail: `identity dump 不可解析：${(e as Error).message}` };
   }
-  const ev = evaluateScreenIdentity(identity, extractLayoutDumpFacets(json));
+  const facets = extractLayoutDumpFacets(json);
+  const ev = evaluateScreenIdentity(identity, facets);
   if (!ev.ok) {
     const evidenceAbs = path.join(reportDir, '_mismatch', `shot-${slug}.png`);
     try {
@@ -675,12 +816,34 @@ function runScreenIdentityGate(
     } catch {
       /* 证据图 best-effort，不影响 mismatch 判定 */
     }
+    // 身份不命中还不够——`dump-ui` 不绑 bundle，锁屏页/桌面/系统弹窗同样会"不命中"。
+    // 判"应用错页"必须有**应用所有权**的确定事实：dump 里存在被测应用的组件 id 前缀
+    // （ArkUI `.id()` 透传，系统页不会有）。
+    //
+    // 曾试图把 `none_of` 命中也当所有权证明（为纯文本锚工程兜底）——**已证伪**：
+    // `none_of` 的契约只是"目标页禁入锚点"，不保证该锚属于本应用；把
+    // `none_of=[上滑解锁]` 配上真实锁屏树，锁屏就会被判成"应用错页"并进熔断。
+    // 拿不到所有权事实时一律 probe_failed（宁可漏检，不可把环境故障算成内容问题）。
+    const prefixes = appComponentIdPrefixes(opts);
+    const appRendered = prefixes.length > 0 && facets.ids.some(id => prefixes.some(p => id.startsWith(p)));
+    // 记法遵循 openspec `visual-diff` 契约：身份规则不通过一律记 `screen_identity_mismatch`
+    // （证据图归档 _mismatch/、正式目录零写入、该屏按缺证据处理）。
+    // **措辞不得越过证据**：`appRendered` 只是"树里有本应用组件 id"，t3 已确认 dump 会
+    // 残留旧页组件树，故它既不能证明"确是错页"，反过来也不能证明"确非错页"。
+    // 两个分支都如实标注成因未确证——与 fuseEligibility 的口径保持一致（此前 detail 用
+    // 确证语气说"是错页"、资格却说"无法确证"，同一轮两处口径打架）。
+    const cause = appRendered
+      ? '成因未确证：树中含本应用组件 id，疑似应用内走错页；但 dump 可能残留旧页节点，锁屏/系统页遮挡时同样如此'
+      : '成因未确证：树中无本应用组件 id，疑似锁屏/桌面/系统弹窗；但纯文本锚工程本就取不到 id 锚';
     return {
       ok: false,
-      detail: `screen_identity_mismatch — ${ev.detail}（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
+      status: appRendered ? 'mismatched' : 'probe_failed',
+      detail:
+        `screen_identity_mismatch — ${ev.detail}（${cause}；待 t3 前台事实收口）` +
+        `（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
     };
   }
-  return { ok: true };
+  return { ok: true, status: 'matched' };
 }
 
 export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCaptureResult {
@@ -765,6 +928,13 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
+  // t3（plan f3a8c6d2）：本轮**确证**身份失配屏的瞬时失效集合——不落盘、不进 schema，
+  // 仅用于 merge 前剔除该屏的旧条目（见 mergeVisualDiffReports 的 invalidateScreenIds）。
+  // **当前恒为空**：确证"是错页而非锁屏/系统页"的能力阻塞于 t3（详见两处 gate 分支注释）。
+  // 保留变量与接线，t3 收口后填充即可开通；merge 侧能力与测试保持完整。
+  const identityMismatchIds: string[] = [];
+  // t4：逐屏 identity gate 结论（唯一的内容正证据来源，不做任何反推）
+  const screenEvidence = new Map<string, 'mismatched' | 'probe_failed'>();
   // golden 解析失败 fail-closed：contract 要求的屏无法成为采集目标 = 采集失败，
   // 绝不静默跳过（否则 evaluator 端只见"缺屏"，丢了真因）。
   if (golden) {
@@ -863,6 +1033,14 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (!idGate.ok) {
       errors.push(`${screen.id}: ${idGate.detail}`);
       p0CaptureFailures.push(screen.id);
+      if (idGate.status !== 'matched') screenEvidence.set(screen.id, idGate.status);
+      // t3（plan f3a8c6d2）：**"失配即删除旧裁决"当前不开通**——与 t4 的缺屏熔断同因。
+      // 删除旧条目需要"确证是错页"，而 `mismatched` 现在只能靠应用 id 前缀推断，
+      // 在"锁屏 + 残留应用旧页节点"形态下必然误判（review 实测）。误删的后果比漏删更重：
+      // 会清掉**已有的真人视觉裁决**、再次要求人工签字——正是本 plan t1 要消灭的现象。
+      // 故 identityMismatchIds 暂不填充；merge 侧的失效能力与其测试保持完整，
+      // 等 t3 拿出可靠的"当前可见页面"事实后在此接入即可开通。
+      // 证据图（_mismatch/）照常归档，正式目录仍零写入——取证与拦截都不受影响。
       continue;
     }
     // t2/t4b：取材统一入口——旧路径=单 shot+dump；静稳路径=双 shot 双 dump（仅 pixel_1to1 装配）
@@ -946,6 +1124,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       if (!ovIdGate.ok) {
         errors.push(`${ov.id}: ${ovIdGate.detail}`);
         p0CaptureFailures.push(ov.id);
+        if (ovIdGate.status !== 'matched') screenEvidence.set(ov.id, ovIdGate.status);
+        // t3：overlay 与主屏同规则——删除旧裁决的路径同样暂不开通（见主屏分支注释）。
         continue;
       }
       // t2/t4b：overlay 屏在 sheet 开启态（导航后）取材——与主屏同一统一入口
@@ -1057,6 +1237,25 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   }
 
   if (capturedScreens.length === 0) {
+    // t3（plan f3a8c6d2）：**零成功采集也必须清掉身份失配屏的旧裁决**。
+    // 本早退路径原样保留盘上 json（"无成功截图不写盘"），于是全屏失败那轮里，
+    // 已被证伪的错页条目（如 add_card_home_collapsed=全部银行页 0.997）会继续存活并
+    // 喂出误导性反馈——与 merge 路径的处置自相矛盾。此处只做**删除**（不新增条目、
+    // 不改其他屏），失配屏随后表现为"缺屏"，与 identity gate 的结论一致。
+    if (identityMismatchIds.length > 0 && existingReportEarly) {
+      const kept = existingReportEarly.screens.filter(
+        s => !identityMismatchIds.includes(s.screen_id),
+      );
+      if (kept.length !== existingReportEarly.screens.length) {
+        const pruned: VisualDiffReport = { ...existingReportEarly, schema_version: '1.1', screens: kept };
+        fs.writeFileSync(jsonPath, `${JSON.stringify(pruned, null, 2)}\n`, 'utf-8');
+        fs.writeFileSync(
+          mdPath,
+          buildVisualDiffMdBody(pruned, { p0CaptureFailures, preservedBuildValidIds }),
+          'utf-8',
+        );
+      }
+    }
     // P0-9a：全部屏均因 build 指纹有效而合法跳采（判定持久）→ 非"无采集"失败，md 照常再生。
     if (preservedBuildValidIds.length > 0 && p0CaptureFailures.length === 0 && existingReportEarly) {
       fs.writeFileSync(
@@ -1075,6 +1274,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         screensPreservedBuildValid: preservedBuildValidIds.length,
         errors,
         p0CaptureFailures,
+        fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
       };
     }
     return {
@@ -1088,11 +1288,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         : {}),
       errors: errors.length ? errors : ['无成功截图，未写入 visual-diff.json'],
       p0CaptureFailures,
+      fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
       skippedReason: 'no_captures',
     };
   }
 
-  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReportEarly, capturedScreens, currentFp);
+  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(
+    existingReportEarly,
+    capturedScreens,
+    currentFp,
+    identityMismatchIds,
+  );
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
 
@@ -1110,5 +1316,6 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     screensPreservedBuildValid: preservedBuildValidIds.length,
     errors,
     p0CaptureFailures,
+    fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
   };
 }

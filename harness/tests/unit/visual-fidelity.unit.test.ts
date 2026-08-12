@@ -3893,5 +3893,96 @@ export function runAll(): UnitCaseResult[] {
     if (deriveEffectiveAdapterImageInput(true, 'tool_read') !== 'tool_read') throw new Error('快照 visual 保留探测值');
     if (deriveEffectiveAdapterImageInput(null, 'native_attach') !== 'native_attach') throw new Error('无快照回落探测');
   });
+
+  // ==========================================================================
+  // t4（plan f3a8c6d2）：**端到端**熔断链路——checkVisualDiff → 账本 → 第二轮裁决。
+  // review 指出：此前只验到 captureVisualDiff 的裁决对象，没贯通到消费者，
+  // 于是"资格 true 却永远走不到账本"这类断点测不出来。以下两条走真实消费链。
+  // ==========================================================================
+  // 复用既有 fuse 链路手法（f7a3_fuse_two_rounds_*）：checkVisualDiff **只读**账本，
+  // 追加由 runner 完成，故单测须手动 appendVisualRound 模拟 runner 那一步。
+  // 两条用例除 `visualFuseEligibility` 外逐字相同——唯一变量就是资格闸。
+  const runFuseRound = (root: string, eligibility: { eligible: boolean; actionableMissingIds: string[]; reason: string }) => {
+    const ctxOpts = { fidelityTarget: 'pixel_1to1' as const, visualFuseEligibility: eligibility };
+    const r1 = checkVisualDiff(baseCtx(root, ctxOpts));
+    const p1 = (r1[0] as { structured?: VisualDiffStructuredPayload }).structured;
+    const ledgerPath = visualRoundsLedgerPath(root, 'bank-card');
+    // 伪造"上一轮"：同缺陷指纹、不同 screens_hash（＝状态变了但问题没变）。
+    // 该行必须**有资格**才能当基线，否则第二轮无从比较——这正是资格闸的作用面。
+    const prior = evaluateVisualRound(ledgerPath, {
+      loopId: p1?.loop_id ?? 'x',
+      attemptId: null,
+      goalRunId: null,
+      buildFingerprint: p1?.build_fingerprint ?? '',
+      screensHash: 'prev-round-screens',
+      defectFingerprints: p1?.defect_fingerprints ?? [],
+      sourceFailHitIds: p1?.source_fail_hit_ids ?? [],
+      fingerprintable: true,
+      awaitHumanOnly: false,
+      actionableResidual: true,
+    });
+    appendVisualRound(ledgerPath, prior.row);
+    const r2 = checkVisualDiff(baseCtx(root, ctxOpts));
+    return { p1, hit2: r2[0] as { details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload } };
+  };
+
+  run('t4 e2e: 合格轮经真实消费链熔断（对照组——证明链路本身通）', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      writeFuseFixture(root);
+      const { hit2 } = runFuseRound(root, {
+        eligible: true,
+        actionableMissingIds: [],
+        reason: '无 P0 缺屏；资格由既有 defects 通道决定',
+      });
+      if (hit2.failure_kind !== 'no_progress_fuse') {
+        throw new Error(`合格轮同指纹两轮必须熔断，实得 failure_kind=${hit2.failure_kind}`);
+      }
+    } finally {
+      if (prevRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t4 e2e: 不合格轮（capture_not_run）在同一链路上绝不熔断——资格闸贯通到账本', () => {
+    if (!isJimpAvailable()) return;
+    const root = mkProject();
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
+    const prevAttempt = process.env.MAISON_GOAL_ATTEMPT;
+    delete process.env.MAISON_GOAL_RUN_ID;
+    delete process.env.MAISON_GOAL_ATTEMPT;
+    try {
+      writeFuseFixture(root);
+      const { p1, hit2 } = runFuseRound(root, {
+        eligible: false,
+        actionableMissingIds: [],
+        reason: 'capture_not_run：本轮未执行视觉采集',
+      });
+      if (hit2.failure_kind === 'no_progress_fuse') {
+        throw new Error('不合格轮绝不能熔断——锁屏/未采集不得被改口成"修了没用"');
+      }
+      if (p1?.fingerprintable !== false) {
+        throw new Error(`不合格轮的 fingerprintable 必须为 false，实得 ${p1?.fingerprintable}`);
+      }
+      if (p1?.actionable_residual !== false) {
+        throw new Error(`不合格轮不得记"可行动残差"，实得 ${p1?.actionable_residual}`);
+      }
+      if (!/ineligible（本轮整体不参与熔断比较）/.test(hit2.details ?? '')) {
+        throw new Error(`须如实给出不参与比较的理由：${(hit2.details ?? '').slice(0, 300)}`);
+      }
+    } finally {
+      if (prevRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prevRunId;
+      if (prevAttempt === undefined) delete process.env.MAISON_GOAL_ATTEMPT; else process.env.MAISON_GOAL_ATTEMPT = prevAttempt;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   return results;
 }

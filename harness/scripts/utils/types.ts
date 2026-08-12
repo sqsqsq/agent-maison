@@ -826,6 +826,25 @@ export interface CheckContext {
   refElementsManifest?: RefElementEntry[];
   /** refElementsManifest 溯源说明（报告/details 用） */
   refElementsManifestDetail?: string;
+  /**
+   * t4（plan f3a8c6d2）：视觉熔断资格的**唯一裁决**（同 run 内存传递，不落盘、
+   * 不进 summary/schema）。
+   *
+   * 单点产出：`captureVisualDiff` 按穷举矩阵裁决；capture 未运行的路径由 check-testing
+   * 在派发 visual diff 前补 `CAPTURE_NOT_RUN_ELIGIBILITY`——**结构上不可能漏**，
+   * 因为"ctx 上没有值"就等于"没跑过 capture"，无需再去反推不完整的失败分类。
+   * 单点消费：visual-diff-check 用它同时约束 `fingerprintable`（熔断资格闸）与
+   * `actionable_residual`，不再维持多个可能互相矛盾的字段。
+   *
+   * 未设置（undefined）= 非 device 采集路径（如单测直调 checkVisualDiff）→ 既有行为不变。
+   * 形状见 profiles/hmos-app/harness/visual-diff-capture.ts 的 `VisualFuseEligibility`
+   *（core 不反向依赖 profile 类型，此处按结构声明）。
+   */
+  visualFuseEligibility?: {
+    eligible: boolean;
+    actionableMissingIds: string[];
+    reason: string;
+  };
   /** adapter 是否声明 multimodal（M3）；不支持则上下文注入降级 */
   adapterMultimodal?: boolean;
   /** adapter 图片输入能力分级（M3）；none | tool_read | native_attach */
