@@ -102,5 +102,27 @@
 
 ## Archive checklist（归档那一刻执行，非实现任务）
 
-- [ ] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
+- [x] 归档期 openspec artifacts 重生成：rerun `node scripts/patch-openspec-artifacts.mjs`
       （前提：脚本幂等修复 plan f4b2c8e6 已落地，或人工确认目标文件未被 patch 过）
+      —— 2026-08-12 执行：全部 12 个目标报 `unchanged`，产物已是最新、无需重写；
+      **脚本运行未新增 `.cursor/` `.codex/` diff**。核心反 fake-pass 行为已获宿主实测背书
+      （见下「宿主实测背书」段）。
+
+## 宿主实测背书（2026-08-12，bc-openCard 真机全链）
+
+宿主 SimulatedWalletForHmos 装 3.0.0 候选包跑完 device-testing 全链，终态
+`verdict=FAIL / blocker_count=8 / can_claim_done=NO`。**本 change 建立的多条反 fake-pass
+门禁在同一轮里各自独立命中，没有任何一条被洗成 PASS**：
+
+| 门禁 | 实测命中 |
+|---|---|
+| `report_trace_reconciliation` | 顶层 test-report.md 写 TC-009~TC-016 通过，Hylyre trace 全部失败 + `outcome=partial` → BLOCKER。经查是 08-10 旧报告未随本轮 trace 刷新，门禁拒绝采信 |
+| `upstream_verdict_gate` | spec/plan/review 证据链因 `ui-spec.yaml` 变更判 stale + coding `verdict=FAIL` → 阻断下游。**这正是本 change 立项时那次「review 不通过 + 3 BLOCKER 仍照常进 ut/testing 直至达标可发布」事故的直接对照面** |
+| `review_closure_attestation` | review 闭环后 3 个产品文件被改（`MaisonBottomSheetScaffold.ets` / `SelectBankCardPage.ets` / `SelectCardTypeSheet.ets`）→ 判「review 审过的代码与当前代码不是同一份」 |
+| `visual_diff` | `screens=8; pass=0; warn=0; fail=0; pending=8` → 无有效视觉 PASS，pending 未被当通过 |
+| `visual_diff_capture` | nav 配置含非 P0 屏 `bank_card_detail` → 判「不匹配任何 P0 target 的多余/错写屏名」 |
+| `p0_semantic_coverage_integrity` | AC-8/AC-10/AC-16 + 两条 flow 边「步序合规但 trace 非通过」→ 拒绝以步序合规冒充状态迁移证据 |
+
+诚实边界：本段只背书**门禁行为**，不代表宿主验收 todo 完成。宿主侧 8/16 用例真实失败、
+视觉终判与人工 receipt 均未产生，相关 plan（`a9d4c7e2` p1g、`c4e8b1d3` #5、`c6d8f2b4` t11、
+`f7a3d9c2` t9、`423e5d0f` R3c）的 todo 一律保持未完成。

@@ -185,13 +185,38 @@ todos:
       run 终态被 a7 封顶 PARTIAL 属预期，验收看事件/产物而非终态。
       宿主产品代码 2026-07-30 已决定全部回退重写，不单修 DEF-001/002；历史 fixture 是唯一
       可复现黄金样本，必须在宿主回归前落单测。
+      【2026-08-12 收口】(b) 宿主真机已执行：新 build `ea97ac522049` 强装、7/7 P0 屏
+      navigation+identity 通过、8 屏截图与布局树均 `layout_dump_status=captured`、
+      `visual-diff.json` 与 `device-screenshots` 非空——**主链确实走过 device_test_run
+      进入视觉采集**，t7(b) 的链路前提达成。
+      归因四态**正式出口本轮未执行**，因此不适用「一种都没出现也通过」条款：
+      `device-test-evidence.json` 的写入门槛是 `MAISON_GOAL_GATE_HARNESS==='1'`（goal 正式
+      testing gate 专属标记）+ goal run/attempt 身份完整 + **本轮真实安装成功**
+      （`installExecuted && installOk`，注释明写「installPassed 合并了 reuse 不作数」）+
+      本轮 trace 在盘（[check-testing.ts](harness/scripts/check-testing.ts) d9e4b7c1 T2 段）。
+      宿主本轮**执行了真实 hdc install**（`device_test_install` 详情为「已安装: …」，
+      非「复用装机（跳过 hdc install）」分支，即 `installExecuted=true`；
+      `device_test_build` 复用已有 HAP、跳过 hvigor 属另一回事，writer 判的是安装是否执行，
+      见 [check-testing.ts:1974](harness/scripts/check-testing.ts:1974)
+      `installExecuted = res.executed === true && res.reused !== true`）。
+      **真正未满足的门槛是 `MAISON_GOAL_GATE_HARNESS==='1'` 与 goal run/attempt 身份**——
+      本轮为普通 `harness-runner.ts --phase testing`，故正式出口未启用；宿主目录
+      **不存在** `device-test-evidence.json`——即分类器根本没运行，**不是运行后零命中**。
+      （此前一版写「HAP 为复用安装」，把 build 复用与 install 复用混为一谈，属误判。）
+      诚实边界（禁止升格）：`p0_semantic_coverage_integrity` 报的「步序合规但 trace 非通过」
+      不是四态归因产物，**不得记作 product_state 实证**。
+      关闭条件：须经 **goal 正式 gate** 跑一次（`MAISON_GOAL_GATE_HARNESS=1` + 真实安装非
+      reuse），产出 `device-test-evidence.json` 后，才能按零命中条款判完成。
     status: in_progress
 isProject: false
 ---
 
 # 真机归因精度 (e3c7d95f)
 
-状态：**v4 — 根因与落地判据经六轮审视定稿，待实施**
+状态：**6/7 todo 完成，t7 in_progress** —— v4 根因与落地判据经六轮审视定稿后 t1–t6 实施完毕。
+t7 于 2026-08-12 完成 (b) 的**真机采集链前提验证**（主链进 device_test_run 与视觉采集、产物非空），
+但归因四态的**正式出口未执行**（需 goal 正式 gate + 真实安装），故 t7 保持未完成。
+原「v4 待实施」标记为定稿期遗留，已更正。
 
 ## 判读纠错记录（本 plan 的核心价值之一，禁删）
 

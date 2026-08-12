@@ -45,8 +45,8 @@ todos:
     content: "六用例：HomeTab 未声明→best_effort BLOCKER；CardPackPage 已声明→PASS；只改 live contracts→仍 FAIL；expansion 重取快照→PASS；正常 plan PASS 也建快照；agent 改码并 commit 后仍检出越界"
     status: completed
   - id: 3
-    content: "consumer golden evaluator：固定 golden screen contract（10 固定正向需求屏含 P1 bank_card_list_sheet + capture ID 映射，精确集合相等）+ 生产接线（golden 显式 targets 绕 P0 过滤，普通 visual-diff 仍 P0-only，缺失/形态不符 fail-closed）+ HomeTab forbidden anchor + 三用例"
-    status: completed
+    content: "consumer golden evaluator：固定 golden screen contract（10 固定正向需求屏含 P1 bank_card_list_sheet + capture ID 映射，精确集合相等）+ 生产接线（golden 显式 targets 绕 P0 过滤，普通 visual-diff 仍 P0-only，缺失/形态不符 fail-closed）+ HomeTab forbidden anchor + 三用例。【2026-08-12 重新打开】生产接线只验到 capture 函数层：三个接线用例均把 goldenTargets 直接注入 opts（profiles/hmos-app/harness/tests/unit/golden-capture-targets.unit.test.ts:56/164/210/239），绕过了真实入口的 nav 校验。真实入口下 check-testing.ts:2627 只构建纯 P0 集合交 validateNavConfigV2 做严格集合相等，golden 点名的 P1 屏无处声明导航步骤、写入即判「多余/错写屏名」（宿主 bank_card_detail 实测命中）。补齐项：nav 校验与采集共用同一份解析后 canonical target 集合 P0 ∪ golden positive ∪ golden forbidden nav targets（forbidden 不可漏，HomeTab 负向证据同样需导航步骤），并补入口级测试（经 check-testing 而非注入 opts）"
+    status: in_progress
   - id: 4
     content: "candidate 模式：candidate=持久化 zip+sidecar manifest+zip sha256，只跳发布 plan 门禁；evaluator 随包发布并校验 manifest/run ID；PASS 后补门禁移动同一字节 zip，禁止重新 pack"
     status: completed
@@ -57,7 +57,12 @@ todos:
 
 # 结果级范围门禁——UI 文件级 scope 门 + 消费者结果 golden (c4e8b1d3)
 
-状态：**v17 已实施 + 实施 review 两轮（round19：5P1+1P2；round20：3P1+1P2）全修——待用户 review 提交；Todo 5 与 d8c5f3a7 复演同一次宿主统一回归（须先重跑 candidate:build——现存 candidate zip 是修复前构建）**
+状态（2026-08-12 更新）：**Todo 1 / 2 / 4 completed；Todo 3 因 golden/nav 真实入口接线缺口
+重新打开为 in_progress（见文末「Todo 3 重新打开」段）；Todo 5 pending，待 Todo 3 修复后随宿主
+统一回归**——Todo 5 与 d8c5f3a7 复演同一次宿主统一回归，须先重跑 `candidate:build`
+（现存 candidate zip 为 08-07 构建，其后本仓已有多个 commit 落地）。
+
+v17 已实施 + 实施 review 两轮（round19：5P1+1P2；round20：3P1+1P2）全修，为 2026-07-27 当时状态，按当时口径保留。
 
 > **实施 review 第 2 轮（round20，2026-07-27，全采纳）**
 > ① 素材门改按**真实 summary 契约**消费（writer 无 checks 字段）：quality_axes.asset 轴
@@ -103,6 +108,10 @@ todos:
 >   require profile 的 hashScreenshotFile，不本地复刻公式）。
 > ⑥（P2）重复 screen ID 不被 Map 吞——ten_fixed_screens_exact_set 点名重复并 FAIL。
 
+> **状态更新（2026-08-12）**：Todo 1 / 2 / 4 完成；**Todo 3 因 nav 目标集合未接线重新打开**
+> （生产接线只验到 capture 函数层，真实入口被 P0-only nav 校验阻断——详见文末「Todo 3
+> 重新打开」段）；Todo 5 保持 pending。以下 2026-07-27 记录按当时状态保留。
+>
 > **实施记录（2026-07-27，Todo 1-4）**
 > - **G1 门禁**：`harness/scripts/utils/ui-scope-gate.ts`（核心）+ check-coding.ts 注册
 >   `ui_diff_within_declared_files`（traceability，恒 BLOCKER）+ coding-rules.yaml 声明；
@@ -371,7 +380,8 @@ promote，记 sha256）→ 宿主安装 candidate zip 统一回归（d8 的干�
       ④ scope expansion：更新 contracts.files + 重取 plan PASS snapshot → PASS；
       ⑤ **正常 plan PASS（非 advance_blocked）也建快照**（runner 用例）；
       ⑥ **agent 改码并自行 commit 后仍检出越界文件**（coding_base_sha 基线用例）
-- [x] 3. 精简 bc-openCard consumer golden evaluator：**固定 golden screen contract**
+- [ ] 3. 【2026-08-12 重新打开——见下「Todo 3 重新打开」段】精简 bc-openCard consumer
+      golden evaluator：**固定 golden screen contract**
       （10 个固定正向需求屏 = 9 P0 + P1 bank_card_list_sheet，declared↔capture ID 映射
       一并固定，精确集合相等——缺失/重复/替换/多余均 FAIL；随 candidate zip 发布）
       + **生产接线**（golden 模式把 contract 十屏作显式 capture targets 传既有采集器、
@@ -389,3 +399,74 @@ promote，记 sha256）→ 宿主安装 candidate zip 统一回归（d8 的干�
       时只标 candidate eligible；普通 JSON 诊断报告（不签名、不复用）
 - [ ] 5. 一次真实宿主回归（与 d8c5f3a7 复演同一次）：两 run + fault-injection +
       golden 十固定屏 + HomeTab + AllBanks，evaluator 裁决并归档
+
+## Todo 5 首轮宿主执行结果（2026-08-12，bc-openCard · build `ea97ac522049`）—— **Todo 5 保持 pending**
+
+**本轮做到的（不足以关闭 Todo 5）**
+
+- 一次采集 run 完成：宿主 HAP 重建并强装得 `evaluated_build_fingerprint=ea97ac522049`、
+  7/7 P0 屏 navigation+identity 通过、8 屏 `layout_dump_status=captured`。
+
+**明确不构成本 plan 的实证（判读纠错）**
+
+本轮 `review_closure_attestation` 命中（review 闭环后 3 个产品文件被改）**只能算独立的
+anti-fake-pass 实证，不能记作 Todo 1 / Todo 2① 的实证**——两者检查的不是同一件事：
+
+- `review_closure_attestation`：review 之后代码是否发生变化；
+- Todo 1 的 `ui_diff_within_declared_files`：变更的 UI 文件是否超出 plan PASS snapshot
+  冻结的 `contracts.files`。
+
+本轮**没有** `ui_diff_within_declared_files` 命中记录，故本 plan 的 scope gate 在宿主侧
+仍属未验证。（此前一版曾把前者当作后者的反向实证，属归因错误，经 codex 核实纠正。）
+
+**未做，因此不关闭**
+
+两 run（本轮只 1 run）、fault-injection、golden 十固定屏、HomeTab 负向证据、AllBanks、
+evaluator 裁决与归档——全部未执行。且 Todo 5 原文要求先重跑 `candidate:build`：宿主装的是
+**08-07 候选包**，其后本仓已有 11 个 commit（含 `33cf9516` UT P1/P2、`346179a4` 事故四件套、
+model pin 与金丝雀前置），因此本轮结论**不能算 Todo 5 的复演**。
+
+**G3 golden targets 的一处真缺口（本轮新发现）**
+
+Todo 3 交付的「golden 显式选择 P1 屏」在采集侧确实生效
+（[visual-diff-capture.ts:709-723](profiles/hmos-app/harness/visual-diff-capture.ts:709)
+`targets = [...p0Screens, ...golden.extraScreens]`，注释「不受 P0 过滤」），
+但 **nav 配置校验侧未接线**：[check-testing.ts:2627](harness/scripts/check-testing.ts:2627)
+构建的是纯 `collectP0VisualTargetIds(navUiDoc)`，`validateNavConfigV2` 又要求与之严格集合相等。
+后果——golden 点名的 P1 屏**无处声明导航步骤**，一旦写入 nav 配置即被判
+「不匹配任何 P0 target 的多余/错写屏名」（宿主本轮 `visual_diff_capture` BLOCKER 即此因，
+屏为 `bank_card_detail`）。
+
+修法：nav 校验应消费与采集侧**同一份**已解析 target 集合，口径为
+
+```
+P0 targets ∪ golden positive targets（extraScreens/extraOverlays）∪ golden forbidden navigation targets
+```
+
+第三项不可漏——采集器的导航解析集合本就含 `goldenForbidden`
+（[visual-diff-capture.ts:746](profiles/hmos-app/harness/visual-diff-capture.ts:746)：
+`resolveNavForTargets(navConfig, [...targets, ...overlayTargets, ...goldenForbidden.map(f => f.id)])`），
+`HomeTab` 负向证据同样需要导航步骤；漏掉它则配置 HomeTab 仍会被严格集合校验判为多余键。
+且须共用**解析后的 canonical target ID**，不得直接拼 raw contract 名称（否则又是一处双真源）。
+
+### Todo 3 重新打开（2026-08-12）
+
+这不是"独立的后续优化"，而是 **Todo 3 自身的集成缺陷**，故 Todo 3 由 `completed` 退回
+`in_progress`（Todo 1/2/4 不受影响，Todo 5 继续 pending；`goal-fakepass-hardening`
+的归档不回退）。
+
+**判据**：Todo 3 的交付物含「10 固定正向需求屏**含 P1 `bank_card_list_sheet`**」与接线用例
+①「golden 显式选择 P1 → 产出 `bank_card_list_sheet__overlay__0`」。但三个接线用例都是把
+`goldenTargets` **直接注入 capture 函数的 opts**
+（[golden-capture-targets.unit.test.ts:56/164/210/239](profiles/hmos-app/harness/tests/unit/golden-capture-targets.unit.test.ts:56)），
+**绕过了真实入口的 nav 校验**。真实入口下 golden 点名的 P1 屏无处声明导航步骤，写入 nav 即被
+判「多余/错写屏名」——宿主 `bank_card_detail` 实测命中 `visual_diff_capture` BLOCKER。
+即：capture 函数层通了，**入口层没通**。
+
+**补齐项**：① nav 校验与采集共用同一份解析后 canonical target 集合
+（`P0 ∪ golden positive ∪ golden forbidden nav`）；② 补**入口级**测试——经 `check-testing`
+真实路径而非注入 opts，覆盖「golden P1 屏可声明 nav 步骤且不被判多余键」与
+「HomeTab forbidden 目标同样可声明 nav 步骤」两条。
+
+**同类教训**：与既有记录「验收必须对准生产接线而非夹具」同一类——夹具注入口径通过
+不等于调用方接线通过，调用方接线需单独覆盖。

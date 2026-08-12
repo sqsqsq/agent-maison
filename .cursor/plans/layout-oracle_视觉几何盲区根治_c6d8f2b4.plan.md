@@ -615,3 +615,47 @@ todos:
 4. **主线 B 演示 run**：篡改 attest 证据路径 → harness 拦；critic 迭代 ≥2 轮收敛或正确熔断；
    candidate-pass 前无 T2 批量确认请求。
 5. 未命中项回校准报告登记为诚实边界，不粉饰。
+
+### t11 首轮宿主执行结果（2026-08-12，bc-openCard · build `ea97ac522049`）—— **t11 未关闭**
+
+**已达成的部分**
+
+- 步骤 1 D1：**overlay 确实进树**——`layout-select_card_type_sheet__overlay__select_card_type_sheet_frame.json`
+  含 17 个 maison 锚点，SMS overlay 含 11 个。t0 的「不进树则置 cancelled」分支**不触发**。
+- 步骤 2：宿主 ui-spec 已补 `forbidden_overlap: - [close, bank_surface]`（[ui-spec.yaml:122](/D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard/spec/ui-spec.yaml:122)），
+  pair 两元素**均定位成功**。
+- 采集面：7/7 P0 屏 navigation+identity 通过，8 屏 `layout_dump_status=captured`。
+
+**A1 正确 no-hit（不是门禁未运行）**
+
+运行时 bounds 实测：`close=[1164,896][1272,1004]`、`bank_surface=[72,1028][1248,1148]`，
+二者垂直间隔 **24px，无相交**。故 `A1_forbidden_overlap` 未产生 finding——**产品当前不存在
+该重叠缺陷**，这是真实 no-hit，按步骤 5 如实登记。
+
+**B 类断言被跳过（locator 覆盖率）**
+
+`select_card_type_sheet` overlay 覆盖率 **60%**、SMS overlay **17%**，均低于
+`LOCATOR_COVERAGE_THRESHOLD = 0.8` → B 类 SKIP（不带病判定）。A4/C 类 advisory 有输出。
+
+**口径更正（原步骤 3「X 重叠被 T8-A1 拦 BLOCKER」表述不完整）**
+
+正确口径为：pair 可定位且**真实重叠**时产生 A1；`effective fidelity = pixel_1to1` 时经
+`fidelityRatchetFailOrWarn` 升为 BLOCKER，否则按降级模型出 **MAJOR WARN**
+（[visual-diff-check.ts:2002](profiles/hmos-app/harness/visual-diff-check.ts:2002)）；无重叠时如实记 no-hit。
+**80% locator 覆盖率只约束 B 类断言，不是 A1 的前置**——A1 在
+[layout-oracle-check.ts:334](profiles/hmos-app/harness/layout-oracle-check.ts:334) 执行，覆盖率在
+[:467](profiles/hmos-app/harness/layout-oracle-check.ts:467) 才计算，二者无依赖。
+（此前一版曾把 80% 写成 A1 前置，属误判，经 codex 核实纠正。）
+
+**未做，t11 因此保持 pending**
+
+步骤 3 的 (a) t6 spec 合同前置拦截、M1 常数/抄 floor 拦截与 `evaluation_invalidated` 重评；
+步骤 4 的整条主线 B 演示（篡改 attest 证据 → harness 拦、critic ≥2 轮收敛或正确熔断、
+candidate-pass 前无 T2 批量确认请求）。
+
+本轮 effective fidelity 为 `semantic_layout`——盘上 fidelity SSOT
+（宿主 `spec/reports/fidelity-intent.json`，08-08）记的钳制原因是
+**`clamp_reason=no_vision_ocr_available`**，`clamped=true`；**不是** attestation
+（此前一版归因到 attestation，属误判，经 codex 核实纠正——attestation 的 `evidence_gap`
+是另一条独立的缺证事实）。故 A1 即便命中也只会是 WARN，**BLOCKER 档验收须待 pixel_1to1
+解锁后重跑**。
