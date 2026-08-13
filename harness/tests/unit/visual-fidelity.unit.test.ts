@@ -27,6 +27,7 @@ import {
 } from '../../../profiles/hmos-app/harness/authoritative-ref-images';
 import { checkAssetAcquisition } from '../../../profiles/hmos-app/harness/asset-acquisition';
 import { checkFidelityGovernance } from '../../../profiles/hmos-app/harness/fidelity-governance-check';
+import { writeCapabilitySnapshot } from '../../scripts/utils/fidelity-shared';
 import { checkCaptureCompleteness, checkCaptureStyleFields } from '../../../profiles/hmos-app/harness/capture-completeness-check';
 import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-manifest-check';
 import { collectSemanticColorBindingIssues, collectVariantParityIssues, hasSolidButtonBackground } from '../../../profiles/hmos-app/harness/visual-parity-backstop';
@@ -3925,6 +3926,117 @@ export function runAll(): UnitCaseResult[] {
     const r2 = checkVisualDiff(baseCtx(root, ctxOpts));
     return { p1, hit2: r2[0] as { details?: string; failure_kind?: string; structured?: VisualDiffStructuredPayload } };
   };
+
+  run('t5: 钳制成因分家——能力实测有视觉时须说"策略性按盲处理"，不得说"无视觉能力"', () => {
+    const root = mkProject();
+    const prevHeadless = process.env.MAISON_GOAL_HEADLESS;
+    try {
+      process.env.MAISON_GOAL_HEADLESS = '1';
+      const reqDir = path.join(root, 'doc', 'features', '原始需求');
+      fs.mkdirSync(reqDir, { recursive: true });
+      fs.writeFileSync(path.join(reqDir, '原始需求.md'), '本需求页面布局完全参考 1.首页-无卡.jpg，数据全部 mock。');
+      const specMd = [
+        '```yaml', 'ui_change: new_or_changed', 'fidelity_target: pixel_1to1',
+        'visual_handoff:', '  kind: screenshot_pack', '  authoritative_refs:',
+        '    - id: home', '      path: doc/features/原始需求/1.png', '```',
+      ].join('\n');
+      const ctx = baseCtx(root, {
+        fidelityTarget: 'semantic_layout',
+        declaredFidelityTarget: 'pixel_1to1',
+        fidelityClamped: true,
+        fidelityClampReason: 'no_vision_ocr_available',
+      });
+      // 事故形态：金丝雀实测**有**视觉（tool_read），却因证据缺口走盲档。
+      // 旧文案一句"当前宿主无视觉能力"把策略问题说成能力问题，用户与复盘者都据此认定
+      // "这台机器看不见"，两天没人去补参考图（真正的解）。
+      writeCapabilitySnapshot(root, 'bank-card', {
+        decision_id: 'd1',
+        execution_identity: 'phase:bank-card:spec',
+        vision: { verdict: true, source: 'run_probed' },
+        ocr: { verdict: true, source: 'profile' },
+      });
+      const declared = checkFidelityGovernance(ctx, specMd).find(x => x.id === 'fidelity_target_declared');
+      const details = String(declared?.details ?? '');
+      // 「能力钳制」四字是下游 readiness signal 的消费契约，必须保留
+      if (!details.includes('能力钳制')) throw new Error(`消费方契约词不得丢：${details}`);
+      if (/无视觉能力/.test(details)) {
+        throw new Error(`能力实测有视觉时不得声称"无视觉能力"（策略盲≠能力盲）：${details}`);
+      }
+      if (!/策略性按盲处理/.test(details)) throw new Error(`须点明是策略降级：${details}`);
+      if (!/换模型无助于此/.test(details)) throw new Error(`须给出正确处方（补证据而非换模型）：${details}`);
+
+      // ---- review 纠正：unknown ≠ none，三分而非两分 ----
+      // canary probed_via=interactive 不绑 run（canaryAdmissibleForRun），本 check 不传 runId
+      // 也可采信——用真实 canary 通道造能力轴，不 stub。
+      const writeCanary = (verdict: string): void => {
+        fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({
+          schema_version: '1.0',
+          agent_adapter: 'cursor',
+          vision: {
+            canary: {
+              adapter: 'cursor', verdict, probed_at: new Date().toISOString(),
+              probed_via: 'interactive', probe_version: VISION_CANARY_PROBE_VERSION,
+            },
+          },
+        }), 'utf-8');
+        clearFrameworkConfigCache();
+      };
+
+      // ① unknown（探针未给出结论）：保守降级，但**不得**说成"无视觉能力"
+      writeCanary('ocr_capable');
+      const unk = String(checkFidelityGovernance(ctx, specMd)
+        .find(x => x.id === 'fidelity_target_declared')?.details ?? '');
+      if (!unk.includes('能力钳制')) throw new Error(`消费方契约词不得丢：${unk}`);
+      if (/无视觉能力/.test(unk)) {
+        throw new Error(`unknown 只是尚未证实，不等于 none，不得声称"无视觉能力"：${unk}`);
+      }
+      if (!/尚未证实/.test(unk)) throw new Error(`unknown 须说明是"尚未证实"：${unk}`);
+      // unknown 也不得挪用"策略盲"结论——那要以"能力实测有视觉"为前提，此刻并没有
+      if (/策略性按盲处理/.test(unk)) {
+        throw new Error(`unknown 尚无能力结论，不得断言是策略盲：${unk}`);
+      }
+
+      // ② none（实测确认无视觉）：这才是真·能力盲，保留旧措辞与"换模型"处方
+      writeCanary('none');
+      const noneDetails = String(checkFidelityGovernance(ctx, specMd)
+        .find(x => x.id === 'fidelity_target_declared')?.details ?? '');
+      if (!/无视觉能力/.test(noneDetails)) {
+        throw new Error(`能力实测 none 时必须如实说无视觉能力：${noneDetails}`);
+      }
+      if (!/能力实测=none/.test(noneDetails)) throw new Error(`须标注判据来源：${noneDetails}`);
+    } finally {
+      if (prevHeadless === undefined) delete process.env.MAISON_GOAL_HEADLESS;
+      else process.env.MAISON_GOAL_HEADLESS = prevHeadless;
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  run('t1: await_human_only=false 时报告须显式否定人签并给下一步（经真实 checkVisualDiff）', () => {
+    const root = mkProject();
+    try {
+      // 事故形态：有 must_fix 的 FAIL 屏（机器还有活儿要干），await_human_only 必为 false。
+      // 此前框架此刻什么都不说，agent 于是自行推断"只剩视觉验真，需要你写 confirmed_by"。
+      writeFuseFixture(root);
+      const r = checkVisualDiff(baseCtx(root, { fidelityTarget: 'pixel_1to1' }));
+      const details = r.map((x: { details?: string }) => x.details ?? '').join('\n');
+      if (!/【当前不需要真人签字】/.test(details)) {
+        throw new Error(`须显式否定人签时点：${details.slice(0, 500)}`);
+      }
+      if (!/下一步=/.test(details)) throw new Error('须给出下一步（第一条 must_fix）');
+      // 下一步必须引用**夹具里真实的** must_fix 原文，不能是泛化话术
+      if (!/修复 close 与卡面的重叠/.test(details)) {
+        throw new Error(`下一步须引用真实 must_fix 内容：${details.slice(0, 500)}`);
+      }
+      // 反向：不得同时出现人签引导（两者互斥）
+      if (/await_human_visual_confirm/.test(details)) {
+        throw new Error('await_human_only=false 时不得输出人签引导');
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   run('t4 e2e: 合格轮经真实消费链熔断（对照组——证明链路本身通）', () => {
     if (!isJimpAvailable()) return;

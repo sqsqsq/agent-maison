@@ -88,7 +88,7 @@ import {
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
-import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { checkUpstreamVerdictGate, readUpstreamPhaseView } from './utils/upstream-verdict-gate';
 import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
@@ -125,6 +125,7 @@ import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
   parseReportConclusionVerdict,
+  parseReportExecutionResults,
   reconcileReportWithHylyreTrace,
   resolveAuthoritativeHylyreTracePath,
   evaluateUiEntryCoverage,
@@ -737,7 +738,155 @@ function checkExecutionResultTable(ctx: CheckContext, report: string | null): Ch
   }];
 }
 
-function checkPassRateCalculated(ctx: CheckContext, report: string | null): CheckResult[] {
+/**
+ * t6（plan f3a8c6d2）：弱化类旗标的**披露与口径**门禁。
+ *
+ * 事故（bc-openCard）：`device-test-run.meta.json` 的真实命令含 `--skip-assert-expected`
+ * （goal 路径恒开），于是 trace.outcome=success 只说明动作链未报错——自然语言预期、
+ * 性能、视觉断言全部没跑。而 test-report.md 把 16 个用例写成"通过"、通过率 100% 达标，
+ * 与同期 summary.json 的 verdict=FAIL 并存，且通篇未提这个旗标。
+ *
+ * 两条规则（复用既有 meta + 报告正文，零新协议、零新状态）：
+ *   ① 命令含弱化旗标 → 报告必须披露（否则读者无从知道"通过"是打了折的）；
+ *   ② 披露之余，不得把"执行完成"直接说成"验收通过"——须明确区分二者。
+ * 命令里没有弱化旗标，或读不到 meta（老报告/非设备路径）→ 不干预，返回 null。
+ */
+/**
+ * 从「通过率统计」章节取**总体**通过率百分比。只认与"总/总计/合计/overall"同处一行的
+ * 数值——分优先级的 `P0 通过率 100%` 在总体 80% 时是合法的，不能拿它当总体高报。
+ * 段落/表格两种写法都走同一条按行扫描（表格行 `| 总计 | 16 | 16 | 100% |` 同样命中）。
+ * 取不到 → 返回 null（不比较，不误伤没写总体的老报告）。
+ */
+function extractDeclaredOverallRate(section: string | null): number | null {
+  if (!section) return null;
+  for (const line of section.split(/\r?\n/)) {
+    const kw = /总计|总体|合计|overall/i.exec(line);
+    if (!kw) continue;
+    // 取关键词**之后**的第一个百分比：单行写法 `P0 通过率 100%，P1 0%，总计 50%` 里
+    // 行首那个 100% 是分优先级值，拿它当总体会误判高报（曾写成"行内第一个"，是 bug）。
+    const m = /(\d+(?:\.\d+)?)\s*%/.exec(line.slice(kw.index));
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): string[] {
+  let command = '';
+  let traceSummary: {
+    cases_count?: unknown;
+    failed_count?: unknown;
+    blocked_count?: unknown;
+    skipped_count?: unknown;
+  } | null = null;
+  try {
+    const metaPath = path.join(
+      featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
+      'device-test-run.meta.json',
+    );
+    if (!fs.existsSync(metaPath)) return [];
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+      command?: unknown;
+      trace_summary?: {
+        cases_count?: unknown;
+        failed_count?: unknown;
+        blocked_count?: unknown;
+        skipped_count?: unknown;
+      };
+    };
+    command = typeof meta.command === 'string' ? meta.command : '';
+    traceSummary = meta.trace_summary ?? null;
+  } catch {
+    return []; // meta 不可读＝无从判定，不误报
+  }
+  const WEAKENING_FLAGS = ['--skip-assert-expected'];
+  const used = WEAKENING_FLAGS.filter(f => command.includes(f));
+
+  const issues: string[] = [];
+
+  // ③ 分子对账（与是否带旗标无关），三条机器证据各查一次：用例表自身 / trace / summary。
+  let reportedPass = 0;
+  // 用例表口径复用**既有唯一解析器** `parseReportExecutionResults`（report↔trace 对账消费
+  // 的同一个），不另写一套表格解析——两套解析器迟早对同一张表给出两种读数。
+  const execStatuses = parseReportExecutionResults(report);
+  const reportedTotal = execStatuses.size;
+  reportedPass = [...execStatuses.values()].filter(s => s.trim() === '通过').length;
+
+  // 声明通过率 vs 执行结果表自算通过率。**高报即 FAIL**——否则"全部跳过却写 100%"照样过门
+  // （我第一版的"正例"正是这个形态，被 review 抓出）。只在两侧都取得到数时比较，
+  // 允许 0.5pt 四舍五入余量；表缺席/无数据行 → 不比较，不误伤老报告。
+  const declaredOverall = extractDeclaredOverallRate(getSectionContent(report, '通过率'));
+  if (declaredOverall !== null && reportedTotal > 0) {
+    const actualRate = (reportedPass / reportedTotal) * 100;
+    if (declaredOverall > actualRate + 0.5) {
+      issues.push(
+        `声称总体通过率 ${declaredOverall}%，但执行结果表实为 ${reportedPass}/${reportedTotal}` +
+        `（${actualRate.toFixed(1)}%）——通过率必须由用例表算出，不得高报。`,
+      );
+    }
+  }
+  const casesCount = typeof traceSummary?.cases_count === 'number' ? traceSummary.cases_count : null;
+  const failedCount = typeof traceSummary?.failed_count === 'number' ? traceSummary.failed_count : null;
+  const blockedCount = typeof traceSummary?.blocked_count === 'number' ? traceSummary.blocked_count : 0;
+  const skippedCount = typeof traceSummary?.skipped_count === 'number' ? traceSummary.skipped_count : 0;
+  if (casesCount !== null && failedCount !== null) {
+    const tracePassCeiling = Math.max(0, casesCount - failedCount - blockedCount - skippedCount);
+    if (reportedPass > tracePassCeiling) {
+      issues.push(
+        `报告自称"通过" ${reportedPass} 条，超过 trace 证明可通过的 ${tracePassCeiling} 条` +
+        `（cases=${casesCount}、failed=${failedCount}、blocked=${blockedCount}、skipped=${skippedCount}）` +
+        '——失败、阻塞与跳过均不得计入通过分子。',
+      );
+    }
+  }
+
+  // summary 腿（事故正形态）：`testing/reports/summary.json` verdict=FAIL 与报告"16/16 通过、
+  // 通过率 100%"**并存**。读既有 `readUpstreamPhaseView`（summary.json 唯一读入口，自带
+  // verdict/blockers/quality_axes/新鲜度），不自己解析 summary。
+  // **只在 freshness==='fresh' 时对账**：证据链未漂移 ⇒ 那份负面机器裁决就是当下事实；
+  // agent 真去修了 → 证据变 → stale → 本条自动让路，不误伤"修完重跑"的正常流程。
+  const machine = readUpstreamPhaseView(ctx.projectRoot, ctx.feature, ctx.phase);
+  const claimsCleanSweep = (reportedTotal > 0 && reportedPass === reportedTotal) || declaredOverall === 100;
+  if (
+    machine.summaryExists && machine.verdictReadable && machine.freshness === 'fresh' &&
+    machine.verdict !== 'PASS' && claimsCleanSweep
+  ) {
+    issues.push(
+      `报告声称全部通过（${reportedPass}/${reportedTotal}${declaredOverall === 100 ? '、通过率 100%' : ''}），` +
+      `但同阶段机器裁决 summary.json verdict=${machine.verdict} 且证据链未漂移（fresh）` +
+      `${machine.blockerIds.length > 0 ? `，blockers=[${machine.blockerIds.slice(0, 5).join(', ')}]` : ''}` +
+      `${machine.axisNotes?.length ? `，未过轴=[${machine.axisNotes.join(', ')}]` : ''}` +
+      '——报告结论不得与机器裁决相反（事故正形态：16/16"通过"与 verdict=FAIL 并存）。',
+    );
+  }
+
+  if (used.length === 0) return issues;
+
+  // ① 披露：命令带弱化旗标，报告必须写明
+  if (!used.every(f => report.includes(f))) {
+    issues.push(
+      `本轮真机执行命令带弱化旗标 ${used.join('、')}，但 test-report.md 未披露——` +
+      '读者会把"通过"误读为完整验收（自然语言预期/性能/视觉断言实际未跑）。',
+    );
+  }
+  // ② 口径：带旗标时"执行完成"不得写成"验收通过"，也不得计入验收 PASS 分子。
+  //    仅靠一句免责声明不作数——**表里仍写"通过"就是没改口径**（review 抓出的假通过口）。
+  const distinguishes = /执行完成|动作链|未验证自然语言预期|未断言预期|非验收通过/.test(report);
+  if (!distinguishes) {
+    issues.push(
+      '报告未区分"动作链执行完成"与"验收通过"：带该旗标时 trace.outcome=success 只证明步骤没报错，' +
+      '不得据此把用例计入验收通过分子。',
+    );
+  }
+  if (reportedPass > 0) {
+    issues.push(
+      `执行结果表仍有 ${reportedPass} 条标为"通过"，而本轮预期断言被 ${used.join('、')} 跳过——` +
+      '这些用例只是"执行完成"，把它们计入验收通过分子即为假通过（加免责声明不改变分子口径）。',
+    );
+  }
+  return issues;
+}
+
+export function checkPassRateCalculated(ctx: CheckContext, report: string | null): CheckResult[] {
   const id = 'pass_rate_calculated';
   if (!report) {
     return [{
@@ -766,21 +915,35 @@ function checkPassRateCalculated(ctx: CheckContext, report: string | null): Chec
   const hasOverall = /总/.test(section) || /总计/.test(section) || /合计/.test(section) || /overall/i.test(section);
   const hasPercentage = /\d+\s*%|\d+%/.test(section);
 
-  if (hasPerPriority && hasPercentage) {
+  // t6（plan f3a8c6d2）：**动作链执行成功 ≠ 验收通过**。
+  // 事故（bc-openCard）：真实执行命令带 `--skip-assert-expected`（goal 路径下恒开，
+  // 见本文件 device_test.run 调用点），trace.outcome=success 只证明"动作链没报错"，
+  // 不证明自然语言预期/性能/视觉达标；而 test-report.md 把 16 个用例全写成"通过"、
+  // 通过率 100%，与同期机器裁决 verdict=FAIL 并存，且通篇未披露该旗标。
+  // 判据取既有产物（device-test-run.meta.json 的真实命令 + trace_summary + 报告正文），零新协议。
+  // **只做追加约束**：不早退、不短路原有 P0/P1/总体通过率检查（早退会让"加一句免责声明就过门"，
+  // 正是本条要堵的假通过）。
+  const disclosureIssues = checkSkipFlagDisclosure(ctx, report);
+
+  const issues: string[] = [];
+  // 既有门禁条件保持原样（overall 仅进文案、不参与判定），本 todo 只追加约束、不改既有语义
+  if (!(hasPerPriority && hasPercentage)) {
+    if (!hasPerPriority) issues.push('缺少分优先级（P0/P1）的通过率');
+    if (!hasPercentage) issues.push('缺少通过率百分比数值');
+    if (!hasOverall) issues.push('缺少总体通过率');
+  }
+  issues.push(...disclosureIssues);
+
+  if (issues.length === 0) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '通过率统计章节包含各优先级通过率数值。',
+      details: '通过率统计章节包含各优先级通过率数值，且分子与机器证据/执行口径一致。',
     }];
   }
-
-  const issues: string[] = [];
-  if (!hasPerPriority) issues.push('缺少分优先级（P0/P1）的通过率');
-  if (!hasPercentage) issues.push('缺少通过率百分比数值');
-  if (!hasOverall) issues.push('缺少总体通过率');
 
   return [{
     id,

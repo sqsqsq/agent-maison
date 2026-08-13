@@ -88,17 +88,51 @@ export interface ClosureWallGuidanceOpts {
 export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[] {
   const { feature, runId, phase, receiptPathRel, harnessPrefixRel, receiptStatus, cumulativeBlockedCount } = opts;
   const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  const verifyCmd = `npm --prefix ${harnessPrefixRel} run check:${phase} -- --feature ${feature}`;
+  // t1（plan f3a8c6d2）：**按 receipt 的真实状态给原因，不再统一猜"多为人签"**。
+  // 事故（bc-openCard run 20260808T071335Z-4b0136）：receipt 的 verifier_subagent.verdict
+  // 其实是 PASS，真因是 claimed_attempt_id 与终局 attempt 失配 + evidence manifest stale，
+  // 而本话术开口就说"多为某项只能真人签署的确认"，把人直接引向签字——用户据此以为
+  // "只剩视觉验真等我签"。分类复用既有 ReceiptValidation 五态（不新建分类、不加字段）。
+  const byStatus: Record<string, string[]> = {
+    failed: [
+      `  1. 回执**存在但校验未通过**。先看校验输出的 BLOCKER 列表定位真因（不要预设是"人签"）：`,
+      `     ${verifyCmd}`,
+      '     常见真因：claimed_attempt_id 与本轮 attempt 失配、evidence manifest 非 fresh、',
+      '     反假设条款未全勾、verifier 报告缺失/过期。其中 attempt 失配与 stale 都不是人能签掉的。',
+      `  2. 若校验输出显示 verifier_subagent.verdict=FAIL 且原因确属只能真人签署的确认项`,
+      `     （视觉保真/裁剪授权类），才走人工审阅 ${receiptPathRel} 后补签再续跑。`,
+    ],
+    missing: [
+      `  1. **回执缺失**——agent 没有写出 ${receiptPathRel}。这不是人签问题：`,
+      '     让 agent 按阶段完成回执模板补写（含 verifier 调用自证与 attempt 身份），再续跑。',
+    ],
+    error: [
+      '  1. **回执校验探针自身执行失败**（framework/toolchain 问题，非产物问题）。',
+      '     不要修改产物或 framework 发布件绕过；修复环境或把完整错误回灌 agent-maison 源仓。',
+    ],
+    passed: [
+      '  1. 回执校验**已通过**却仍未推进——阻塞在 closure 提交侧（phase state / summary closure）。',
+      `     跑 ${verifyCmd} 看最终提交环节的报错，不要去补签名。`,
+    ],
+    not_applicable: [
+      '  1. 本 track（lite）**不产生回执**却出现 advance_blocked——runner 状态机不变量违例，',
+      '     属框架缺陷，请回灌 agent-maison 源仓核查，不要试图补签或改产物。',
+    ],
+  };
+  const unknownStatus = [
+    `  1. 尚无回执校验结果（可能从未跑到该步）。先跑 ${verifyCmd} 取得确定结论，`,
+    '     再按其 BLOCKER 列表处置；在拿到结论前不要预设是"只差人签"。',
+  ];
   return [
     `【${feature} · run ${runId} · ${phase}】脚本门禁已第 ${cumulativeBlockedCount} 次达到 PASS，但闭环/回执一直未完成` +
       (receiptStatus ? `（receipt_status=${receiptStatus}）` : '') +
       '——agent 无法自证突破，继续重试只是空转，需要你看一眼再决定。',
     '',
     '请检查：',
-    `  1. ${receiptPathRel} 的 verifier_subagent.verdict 与具体原因（多为某项只能真人签署的确认，`,
-    '     如视觉保真/裁剪授权类——headless 下没有人可签，agent 每次都会诚实报告 FAIL，重试不会变）；',
-    '  2. 若确认是"只差人签"：人工审阅相应产物后手动补全该签名字段，再续跑；',
-    '  3. 若怀疑是"预算不够、每轮都在做新探索但没收尾"：可提高该 phase 的 phase_timeout_ms 后续跑；',
-    '  4. 若怀疑是环境/工具链问题（如 OCR 不可用）：先修复环境，问题若随之消失即证实。',
+    ...(receiptStatus && byStatus[receiptStatus] ? byStatus[receiptStatus] : unknownStatus),
+    '  · 若怀疑是"预算不够、每轮都在做新探索但没收尾"：可提高该 phase 的 phase_timeout_ms 后续跑；',
+    '  · 若怀疑是环境/工具链问题（如 OCR 不可用）：先修复环境，问题若随之消失即证实。',
     '',
     `处理完后续跑：${resumeCmd}`,
   ];

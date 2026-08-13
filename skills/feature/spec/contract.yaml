@@ -7,9 +7,13 @@ phases:
     inputs:
       - { id: requirement, sources: [{ kind: derive, provider_id: derive.requirement }] }
       - { id: codebase, sources: [{ kind: derive, provider_id: derive.codebase }] }
+      - { id: visual_reference, sources: [{ kind: derive, provider_id: derive.visual-reference }] }
     capabilities:
       - { id: capability_spec_requirement, axis: functional, inputs: [requirement], tracks: [full], on_missing: fail }
       - { id: capability_spec_codebase, axis: functional, inputs: [codebase], tracks: [full], on_missing: prune }
+      # plan f3a8c6d2 t5a：pixel_1to1 定档下参考图是**输入**，缺基准即 blocked（既有 capability
+      # unresolved 通道，四处诊断投影自动获得）。非 pixel 档由 applicability 判 not_applicable。
+      - { id: capability_spec_visual_reference, axis: visual, inputs: [visual_reference], tracks: [full], applicability_provider_id: applicability.pixel_fidelity, on_missing: fail }
     produces:
       - { artifact: spec@1 }
       - { artifact: acceptance@1 }

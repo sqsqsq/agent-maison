@@ -24,7 +24,13 @@ import {
   type VisualDebtDoc,
 } from '../../scripts/utils/visual-debt';
 import { checkFidelityCapabilityPregate } from '../../scripts/check-spec';
-import { checkVisualDebtDisclosure } from '../../scripts/check-testing';
+import {
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+  writeReceiptManifestPointer,
+} from '../../scripts/utils/phase-evidence-manifest';
+import { collectBlockedCapabilityFacts, resolveCapabilityReport } from '../../scripts/utils/capability-resolution';
+import { checkPassRateCalculated, checkVisualDebtDisclosure } from '../../scripts/check-testing';
 import {
   evaluateFidelityTierPreflight,
   evaluateFidelityTransitionAuthorization,
@@ -219,6 +225,69 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
       const [r] = checkFidelityCapabilityPregate(ctx);
       assertEq(r.status, 'PASS', `零询问零 HALT（${r.details}）`);
+    }),
+  },
+  {
+    // t5（plan f3a8c6d2）：事故第一张多米诺——需求把参考图指向不存在的目录，框架当时
+    // 一声不响，spec 空手写完 ui-spec 才在下游被判 evidence_gap 并按盲档降级两天。
+    name: 't5a 参考图基准走**现有 capability unresolved 通道**：pixel_1to1 无图 → capability blocked（assurance=blocked，四处投影自动获得）；有图 → resolved；非 pixel 档 → not_applicable',
+    run: async () => withTmpProject(async root => {
+      const frameworkRoot = path.resolve(__dirname, '..', '..', '..');
+      const resolve = (): ReturnType<typeof resolveCapabilityReport> => resolveCapabilityReport({
+        projectRoot: root, frameworkRoot, feature: 'demo', phase: 'spec', track: 'full',
+      });
+      const visualCap = (rep: ReturnType<typeof resolveCapabilityReport>) =>
+        rep.capabilities.find(c => c.id === 'capability_spec_visual_reference')!;
+
+      // ① SSOT 未签发 → not_applicable（不得让"还没定档"退化成阻塞）
+      assertEq(visualCap(resolve()).state, 'not_applicable', 'SSOT 未签发时不参与');
+
+      // ② pixel_1to1 定档 + 一张参考图都没有 → blocked（事故第一张多米诺当场说话）
+      initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo',
+        requirement: '对照参考截图保真实现（pixel_1to1 意图），尽量一致。',
+        featuresDirRel: 'doc/features', executionIdentity: 'phase:demo:spec',
+        requirementProvenance: 'explicit_cli',
+      });
+      const blockedRep = resolve();
+      assertEq(visualCap(blockedRep).state, 'blocked', 'pixel_1to1 缺参考图须 blocked');
+      assertEq(blockedRep.assurance, 'blocked', 'assurance 须为 blocked（closure finalizer 据此拒发 PASS）');
+      // 走**既有**投影数据源，证明 readiness/next_action/assess/merged-report 四处自动获得
+      const facts = collectBlockedCapabilityFacts(blockedRep);
+      const fact = facts.find(f => f.capability === 'capability_spec_visual_reference');
+      assertTrue(!!fact, '必须进既有 blocked capability 投影（不另产 CheckResult）');
+      assertEq(fact!.axis, 'visual', 'axis=visual');
+      assertEq(fact!.unresolved[0].input, 'visual_reference', 'unresolved input id');
+      assertTrue(/一张参考图都取不到/.test(fact!.unresolved[0].detail ?? ''), fact!.unresolved[0].detail ?? '');
+      assertTrue(/补齐后重跑 spec 阶段即恢复/.test(fact!.unresolved[0].detail ?? ''), '须写明恢复路径（不加回升驱动器）');
+
+      // ③ 放入参考图 → resolved（不得误报）
+      const uxDir = path.join(root, 'doc', 'features', 'demo', 'ux-reference');
+      fs.mkdirSync(uxDir, { recursive: true });
+      fs.writeFileSync(path.join(uxDir, 'home.png'), 'PNG-BYTES');
+      const okRep = resolve();
+      assertEq(visualCap(okRep).state, 'resolved', '参考图就位后须 resolved');
+      assertTrue(
+        !collectBlockedCapabilityFacts(okRep).some(f => f.capability === 'capability_spec_visual_reference'),
+        '参考图就位后不得继续报缺基准',
+      );
+
+      // ④ 非 pixel 档（语义布局）+ 无图 → not_applicable（语义档本就不需要像素基准）
+      fs.rmSync(uxDir, { recursive: true, force: true });
+      initializeFidelityRouting({
+        projectRoot: root, frameworkRoot: root, feature: 'demo2',
+        requirement: '实现一个设置页，结构清晰即可，无参考图。',
+        featuresDirRel: 'doc/features', executionIdentity: 'phase:demo2:spec',
+        requirementProvenance: 'explicit_cli',
+      });
+      const semanticRep = resolveCapabilityReport({
+        projectRoot: root, frameworkRoot, feature: 'demo2', phase: 'spec', track: 'full',
+      });
+      assertEq(
+        semanticRep.capabilities.find(c => c.id === 'capability_spec_visual_reference')!.state,
+        'not_applicable',
+        '非 pixel 档不得被参考图缺失阻塞',
+      );
     }),
   },
   {
@@ -482,6 +551,156 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(bad.failure_kind, 'visual_debt_undisclosed', 'failure_kind');
       const [ok] = checkVisualDebtDisclosure(ctxT, '## 结论\n**测试结论**: 达标\n视觉债务：1 项 open，见 visual-debt.md');
       assertEq(ok.status, 'PASS', '已披露');
+    }),
+  },
+  {
+    // t6（plan f3a8c6d2）：事故里真实命令带 --skip-assert-expected（goal 路径恒开），
+    // trace.outcome=success 只证明动作链没报错；报告却写 16/16「通过」、通过率 100%，
+    // 与同期 summary verdict=FAIL 并存，且通篇未提这个旗标。
+    name: 't6 弱化旗标（经真实门禁 checkPassRateCalculated）：未披露/只加免责声明/分子超机器证据 → FAIL；如实报告 → PASS；且披露检查不得短路原有 P0/P1 检查',
+    run: async () => withTmpProject(async root => {
+      const ctxT = {
+        phase: 'testing', feature: 'demo', projectRoot: root,
+        phaseRule: { structure_checks: { pass_rate_calculated: { description: 'd' } } },
+      } as unknown as CheckContext;
+      const reportsDir = path.join(featureDir(root, 'demo'), 'testing', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const writeMeta = (command: string, traceSummary?: {
+        cases_count: number;
+        failed_count: number;
+        blocked_count?: number;
+        skipped_count?: number;
+      }): void => {
+        fs.writeFileSync(
+          path.join(reportsDir, 'device-test-run.meta.json'),
+          JSON.stringify({ command, ok: true, exit_code: 0, ...(traceSummary ? { trace_summary: traceSummary } : {}) }),
+          'utf-8',
+        );
+      };
+      // 完整的通过率章节（原有 P0/P1/百分比三项齐备），使本用例只变化"披露/口径/分子"维度
+      const RATE = '## 通过率统计\nP0 通过率 100%，P1 通过率 100%，总计 100%\n';
+      // 执行结果表：status 为参数，走既有 extractTables/getColumnValues 解析
+      const execTable = (status: string): string =>
+        '## 测试执行结果\n\n| 用例编号 | 执行状态 |\n|---|---|\n| TC-001 | ' + status + ' |\n\n';
+
+      // ① 无 meta → 不干预（老报告/非设备路径），原有检查照常给 PASS
+      assertEq(checkPassRateCalculated(ctxT, RATE)[0].status, 'PASS', '无 meta 不误报');
+      // ② 命令无弱化旗标 → 不干预
+      writeMeta('python -m hylyre run --plan p.md --feature demo');
+      assertEq(checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0].status, 'PASS', '无弱化旗标不干预');
+
+      // ③ 带旗标但未披露 → FAIL（事故形态）
+      writeMeta('python -m hylyre run --plan p.md --skip-assert-expected --feature demo');
+      const undisclosed = checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0];
+      assertEq(undisclosed.status, 'FAIL', '未披露弱化旗标须 FAIL');
+      assertTrue(/未披露/.test(undisclosed.details), undisclosed.details);
+
+      // ④ **review P0 的核心反例**：披露了、也加了免责声明，但执行结果表仍写"通过"
+      //    → 仍须 FAIL。加一句声明不改变分子口径。
+      const disclaimerOnly = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成，自然语言预期未断言）\n' +
+        RATE + execTable('通过'),
+      )[0];
+      assertEq(disclaimerOnly.status, 'FAIL', '免责声明+表里仍写"通过"须 FAIL');
+      assertTrue(/计入验收通过分子即为假通过/.test(disclaimerOnly.details), disclaimerOnly.details);
+
+      // ⑤ **review 抓出的假正例**：表里 1 条全"跳过"，通过率栏却写 100% —— 必须 FAIL。
+      //    （第一版把这个形态当作"如实报告"的正例，等于放行"全跳过 + 100%"。）
+      const skippedButHundred = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（仅动作链执行完成，预期未断言）\n' +
+        RATE + execTable('跳过'),
+      )[0];
+      assertEq(skippedButHundred.status, 'FAIL', '全部跳过却声称 100% 须 FAIL');
+      assertTrue(/不得高报/.test(skippedButHundred.details), skippedButHundred.details);
+
+      // ⑥ 真·如实报告：披露 + 口径区分 + 表里不写"通过" + **通过率与表一致（0%）** → PASS
+      const honest = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（仅动作链执行完成，预期未断言）\n' +
+        '## 通过率统计\nP0 验收通过率 0%，P1 验收通过率 0%，总计 0%（16/16 仅动作链执行完成）\n' +
+        execTable('跳过'),
+      )[0];
+      assertEq(honest.status, 'PASS', `如实报告须 PASS：${honest.details}`);
+
+      // ⑦ 分优先级 100% 不得被当成总体高报：P0 全过（1/1）而总体 50%（1 过 1 失败），
+      //    与表一致 → 必须 PASS。判据只认"总计"**之后**的百分比。
+      writeMeta('python -m hylyre run --plan p.md --feature demo');
+      const mixed = checkPassRateCalculated(
+        ctxT,
+        '## 通过率统计\nP0 通过率 100%（1/1），P1 通过率 0%，总计 50%\n' +
+        '## 测试执行结果\n\n| 用例编号 | 执行状态 |\n|---|---|\n| TC-001 | 通过 |\n| TC-002 | 失败 |\n\n',
+      )[0];
+      assertEq(mixed.status, 'PASS', `分优先级 100% 不得冒充总体：${mixed.details}`);
+
+      // ⑧ **summary 腿（事故正形态）**：报告 16/16"通过"、100%，与同阶段
+      //    testing/reports/summary.json verdict=FAIL 并存。summary 走既有唯一读入口
+      //    readUpstreamPhaseView；manifest 用**生产 writer** 冻结，freshness 才是真 fresh。
+      const CLEAN = '## 通过率统计\nP0 通过率 100%，P1 通过率 100%，总计 100%\n' + execTable('通过');
+      const noSummary = checkPassRateCalculated(ctxT, CLEAN)[0];
+      assertEq(noSummary.status, 'PASS', `无 summary 不干预：${noSummary.details}`);
+
+      fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify({
+        schema_version: '1.0', feature: 'demo', phase: 'testing',
+        verdict: 'FAIL',
+        blockers: [{ id: 'visual_diff' }],
+      }), 'utf-8');
+      // 未冻结 manifest → freshness=no_manifest → 不对账（机器裁决新鲜度无从判定，不冤枉）
+      const staleish = checkPassRateCalculated(ctxT, CLEAN)[0];
+      assertEq(staleish.status, 'PASS', `无 manifest 不对账：${staleish.details}`);
+
+      fs.writeFileSync(
+        path.join(featureDir(root, 'demo'), 'testing', 'phase-completion-receipt.md'),
+        ['---', 'receipt_schema: "2.0"', 'feature: "demo"', 'phase: "testing"', '---', ''].join('\n'),
+        'utf-8',
+      );
+      const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: 'demo', phase: 'testing' });
+      const written = writePhaseEvidenceManifest(root, manifest);
+      writeReceiptManifestPointer(
+        root, 'demo', 'testing',
+        path.relative(root, written.absPath).split(path.sep).join('/'),
+        written.sha256,
+      );
+      const contradiction = checkPassRateCalculated(ctxT, CLEAN)[0];
+      assertEq(contradiction.status, 'FAIL', '报告全过 vs 机器 verdict=FAIL（fresh）须 FAIL');
+      assertTrue(/verdict=FAIL/.test(contradiction.details), contradiction.details);
+      assertTrue(/visual_diff/.test(contradiction.details), `须点名 blocker：${contradiction.details}`);
+
+      // 同一份 fresh 的负面 summary 下，如实报告（表里不写通过、通过率 0%）不受牵连
+      const honestUnderFail = checkPassRateCalculated(
+        ctxT,
+        '## 通过率统计\nP0 验收通过率 0%，P1 验收通过率 0%，总计 0%\n' + execTable('失败'),
+      )[0];
+      assertEq(honestUnderFail.status, 'PASS', `如实报告不受负面裁决牵连：${honestUnderFail.details}`);
+
+      // ⑨ **不早退**（review P0）：披露齐备且口径区分（③④ 两条披露约束均不触发），
+      //    但通过率章节缺 P0/P1 —— 原有检查必须照常判 FAIL。旧实现在此早退返回 PASS。
+      const missingPriority = checkPassRateCalculated(
+        ctxT,
+        '## 测试环境\n执行命令含 --skip-assert-expected（动作链执行完成）\n' +
+        '## 通过率统计\n总计 100%\n' + execTable('跳过'),
+      )[0];
+      assertEq(missingPriority.status, 'FAIL', '披露检查不得短路原有 P0/P1 通过率检查');
+      assertTrue(/缺少分优先级/.test(missingPriority.details), missingPriority.details);
+
+      // ⑩ 分子对账（与是否带旗标无关）：报告自称通过数 > trace 证明完成数 → FAIL
+      writeMeta('python -m hylyre run --plan p.md --feature demo', { cases_count: 1, failed_count: 1 });
+      const overclaim = checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0];
+      assertEq(overclaim.status, 'FAIL', '通过数超过机器证据须 FAIL');
+      assertTrue(/超过 trace 证明可通过的 0 条/.test(overclaim.details), overclaim.details);
+
+      // ⑪ trace 已明确该用例为跳过时，即使没有可用的负面 summary，报告也不得改写成通过。
+      fs.rmSync(path.join(reportsDir, 'summary.json'), { force: true });
+      writeMeta('python -m hylyre run --plan p.md --feature demo', {
+        cases_count: 1,
+        failed_count: 0,
+        blocked_count: 0,
+        skipped_count: 1,
+      });
+      const skippedClaimedPass = checkPassRateCalculated(ctxT, RATE + execTable('通过'))[0];
+      assertEq(skippedClaimedPass.status, 'FAIL', 'trace=跳过的用例不得被报告成通过');
+      assertTrue(/blocked=0、skipped=1/.test(skippedClaimedPass.details), skippedClaimedPass.details);
     }),
   },
 ];

@@ -24,12 +24,14 @@ export const DERIVE_PROVIDER_IDS = [
   'derive.requirement',
   'derive.test-targets',
   'derive.adhoc-cases',
+  'derive.visual-reference',
 ] as const;
 export type DeriveProviderId = typeof DERIVE_PROVIDER_IDS[number];
 
 export const APPLICABILITY_PROVIDER_IDS = [
   'applicability.always',
   'applicability.ui',
+  'applicability.pixel_fidelity',
 ] as const;
 export type ApplicabilityProviderId = typeof APPLICABILITY_PROVIDER_IDS[number];
 

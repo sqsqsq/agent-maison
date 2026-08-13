@@ -2514,10 +2514,31 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       '逐屏审阅 device-screenshots/shot-*.png 对照参考原图，认可后在 visual-diff.json ' +
       'screens[].confirmed_by 填真人署名（user_requirement/自动化身份无效）并重跑 harness；' +
       '不认可的屏改 verdict=fail 并写 must_fix。';
-  } else if (roundEvaluation?.decision.fused && pixel1to1) {
-    // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
-    // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
-    finalResult.failure_kind = 'no_progress_fuse';
+  } else {
+    if (roundEvaluation?.decision.fused && pixel1to1) {
+      // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
+      // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
+      finalResult.failure_kind = 'no_progress_fuse';
+    }
+    // t1（plan f3a8c6d2）：**显式否定人签时点**。
+    // 事故：await_human_only=false（7 个 P0 只采到 3 个且全 pending、visual_diff
+    // needs_fix），框架此处却什么都不说，agent 于是自行推断"只剩视觉验真，需要你写
+    // confirmed_by"——用户被叫来签一份机器根本没准备好的东西。
+    // 物理门（P0-9b）本身是对的，缺的是**把这个否定说出来**：机器判据已经算好了，
+    // 只是没进面向 agent 的报告。此处零新字段、零新分类，只把既有布尔如实呈现。
+    const failBlockers = hits.filter(h => h.status === 'FAIL');
+    if (failBlockers.length > 0) {
+      const firstMustFix = rep.screens.find(s => (s.must_fix?.length ?? 0) > 0);
+      const nextAction = firstMustFix
+        ? `修 ${firstMustFix.screen_id} 的 must_fix「${firstMustFix.must_fix![0]}」`
+        : `修 ${failBlockers[0].id}`;
+      finalResult.details +=
+        '\n【当前不需要真人签字】await_human_only=false——本轮仍有机器可判的阻塞项，' +
+        '真人签字（confirmed_by）此刻既不适用也不会被受理：' +
+        `${failBlockers.slice(0, 5).map(h => h.id).join('、')}` +
+        `${failBlockers.length > 5 ? `…共 ${failBlockers.length} 项` : ''}。` +
+        `下一步=${nextAction}；全部机器阻塞清零后本行会自动变为人签引导，届时再叫人。`;
+    }
   }
 
   // t0③：进程内结构化 payload（runner 消费追加账本 + summary.visual_round；不进 summary

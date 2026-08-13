@@ -29,6 +29,59 @@ import {
   uiSpecRelPath,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
+import { resolveEffectiveVisionContext } from '../../../harness/scripts/utils/effective-vision-context';
+
+/**
+ * t5（plan f3a8c6d2）：钳制成因分家——**"策略盲"不等于"能力盲"**，两者处方相反。
+ *
+ * 事故（bc-openCard）：金丝雀实测 `verdict=tool_read`、reason「几何/颜色题 4/4 全对——
+ * 真视觉实锤」，随后因参考图路径错位产不出视觉证据 → evidence_gap → blind-safe **策略**
+ * 降级。而本 check 一句"当前宿主无视觉能力"把它说成了**能力**问题，用户与事后复盘都据此
+ * 认定"这台机器看不见"，两天没人去补参考图（真正的解），弱 OCR 乱码灾难由此而来。
+ * check-spec.ts:511 早已自警"这是策略降级，不等于已证明模型无视觉能力"，只是没传到这里。
+ *
+ * 判据取既有事实、不新造：`resolveEffectiveVisionContext` 的
+ * `vision_capability.verdict`（金丝雀实测轴）与 `effective_policy.downgrade_reasons`。
+ * 解析失败时回落到旧措辞（诊断不可用不阻断主流程）。
+ */
+function describeClampCause(ctx: CheckContext): string {
+  const noOcr = ctx.fidelityClampReason === 'no_vision_no_ocr';
+  const fallback = noOcr ? '当前宿主无视觉能力且 OCR 不可用' : '当前宿主无视觉能力（OCR 辅助）';
+  try {
+    const vision = resolveEffectiveVisionContext({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      frameworkRoot: ctx.frameworkRoot,
+    });
+    const probed = vision.vision_capability.verdict;
+    // 三分（review 纠正：unknown ≠ none）——把"尚未证实"说成"无能力"是同一类错误归因：
+    //   none    = 实测确认无视觉 → 真·能力盲，处方=换模型/修环境
+    //   unknown = 尚未探测/探测未果 → 保守降级，处方=先跑金丝雀把能力探出来
+    //   有视觉  = 策略盲（见下），处方=补证据
+    if (probed === 'none') {
+      return `${fallback}（能力实测=none）`;
+    }
+    if (probed === 'unknown') {
+      return (
+        '**视觉能力尚未证实（unknown，非"已确认无能力"）→ 保守降级**：' +
+        `${noOcr ? '且 OCR 不可用；' : ''}尚未拿到金丝雀实测结论，故按盲档保守跑——` +
+        '先把能力探出来（goal 模式 `--refresh-vision-probe` 强制重探），' +
+        '探到有视觉即自动回升；此刻**不能**据此断言宿主看不见，也不必先换模型'
+      );
+    }
+    // 能力轴有视觉却仍走盲档 ⇒ 策略降级，处方=补证据而非换模型
+    const reasons = vision.effective_policy.downgrade_reasons;
+    const why = reasons.length > 0 ? reasons.slice(0, 2).join('；') : '未知策略原因';
+    return (
+      `**策略性按盲处理（非能力不足）**：模型视觉能力实测为 ${probed}，` +
+      `但本 run 视觉证据不足以采信，故保守降级——原因：${why}` +
+      `${noOcr ? '；且 OCR 不可用' : ''}。` +
+      '补齐证据（如参考图就位后重跑该阶段）即自动恢复，换模型无助于此'
+    );
+  } catch {
+    return fallback;
+  }
+}
 
 function ruleDesc(ctx: CheckContext, id: string): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -98,8 +151,11 @@ export function checkFidelityGovernance(ctx: CheckContext, specMarkdown: string)
     details: [
       `fidelity_target=${fidelityTarget}`,
       // E2④：钳制事实在首屏显著提示（goal report / summary 最先读到的 check）。
+      // 注意：「能力钳制」四字是**下游消费方契约**（harness-runner 据此产
+      // fidelity_capability_clamped readiness signal），不得改写；t5 只改其后的**成因描述**。
       capabilityClamped
-        ? `（能力钳制：desired=${declaredFidelityTarget} 因${ctx.fidelityClampReason === 'no_vision_no_ocr' ? '当前宿主无视觉能力且 OCR 不可用' : '当前宿主无视觉能力（OCR 辅助）'}钳至 ${fidelityTarget}；更换视觉模型/修复环境后可 ratchet 回升，desired 已保留不受影响）`
+        ? `（能力钳制：desired=${declaredFidelityTarget} 因${describeClampCause(ctx)}钳至 ${fidelityTarget}；` +
+          '成因消除后可 ratchet 回升，desired 已保留不受影响）'
         : '',
       `asset_acquisition_mode=${declaredAsset}`,
       effectiveAsset !== declaredAsset ? `effective_asset_mode=${effectiveAsset}（pixel_1to1 联动抬升）` : '',

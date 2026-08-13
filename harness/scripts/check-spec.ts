@@ -52,7 +52,6 @@ import {
   clampFidelityByCapability,
   collectRequirementIntentText,
   computeRunRequirementSha,
-  dereferenceRequirementDocs,
   detectFidelityIntent,
   isHardPixelContract,
   isHumanSignedDeferral,
@@ -111,39 +110,10 @@ export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
  * 落盘 spec/reports/fidelity-intent.json：reference_intent{value,source}/desired/effective/
  * downgrade_receipt（desired 永不被自动改写——ratchet 回升锚点）。
  */
-/**
- * 意图文本收集（含 phase-driven 回退）：collectRequirementIntentText 只读 goal-run
- * manifest——逐阶段驱动路径（无 goal-runs）恒空串，正是覆盖缺口的实体。回退源：
- * feature 根目录需求文档（*.md/*.txt，产物投影 visual-debt.md 除外）+ spec.md，
- * 各自过 dereferenceRequirementDocs（同源解引用，勿 fork）。
- */
-export function collectIntentTextWithPhaseFallback(
-  projectRoot: string,
-  feature: string,
-  featuresDirRel: string,
-): string {
-  const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
-  if (goalText.trim()) return goalText;
-  const parts: string[] = [];
-  const featRoot = path.join(projectRoot, featuresDirRel, feature);
-  const EXCLUDE = new Set(['visual-debt.md']);
-  try {
-    if (fs.existsSync(featRoot)) {
-      for (const ent of fs.readdirSync(featRoot, { withFileTypes: true })) {
-        if (!ent.isFile() || EXCLUDE.has(ent.name) || !/\.(md|txt)$/i.test(ent.name)) continue;
-        try {
-          parts.push(fs.readFileSync(path.join(featRoot, ent.name), 'utf-8'));
-        } catch { /* 单文件失败跳过 */ }
-      }
-    }
-  } catch { /* ignore */ }
-  const specMd = loadSpecMarkdown(projectRoot, feature);
-  if (specMd) parts.push(specMd);
-  if (parts.length === 0) return '';
-  return parts
-    .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
-    .join('\n\n');
-}
+// 定义已下沉至 utils/fidelity-shared.ts（其三个依赖本就都在那里），使
+// capability-resolution 的 derive.visual-reference 能复用同源收集器而不反向依赖本脚本。
+// 此处保留原导出名，既有消费方（fidelity-intent-init 等）零改动。
+export { collectIntentTextWithPhaseFallback } from './utils/fidelity-shared';
 
 /**
  * plan e7c2a4d8 T1d 补全（实施 round2 P1）：goal-runs 权威枚举的 corrupt 残留
@@ -324,17 +294,20 @@ export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[]
       blocking_class: 'await_human_fidelity_tier',
     }];
   }
-  return [{
-    id, category: 'structure', description,
-    severity: 'BLOCKER', status: 'PASS',
-    details:
-      `路由：inferred=${ssot.inferred_fidelity} selected=${ssot.selected_fidelity} ` +
-      `effective=${ssot.effective_fidelity}${ssot.clamped ? `（clamped:${ssot.clamp_reason}）` : ''} ` +
-      `strictness=${ssot.acceptance_strictness} asset=${ssot.asset_acquisition_mode} ` +
-      `source=${ssot.decision.source}` +
-      (ssot.clamped ? '——自动定档不洗白：视觉债务/封顶语义照常生效。' : '。'),
-  }];
+  return [
+    {
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details:
+        `路由：inferred=${ssot.inferred_fidelity} selected=${ssot.selected_fidelity} ` +
+        `effective=${ssot.effective_fidelity}${ssot.clamped ? `（clamped:${ssot.clamp_reason}）` : ''} ` +
+        `strictness=${ssot.acceptance_strictness} asset=${ssot.asset_acquisition_mode} ` +
+        `source=${ssot.decision.source}` +
+        (ssot.clamped ? '——自动定档不洗白：视觉债务/封顶语义照常生效。' : '。'),
+    },
+  ];
 }
+
 
 // --------------------------------------------------------------------------
 // blind-visual-hardening d5/P1-F：盲档素材问人清单（素材是输入不是推断）

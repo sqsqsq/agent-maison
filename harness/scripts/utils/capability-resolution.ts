@@ -5,7 +5,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { artifactReadCandidatePaths, catalogPath, featureFilePath } from '../../config';
+import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
 import {
@@ -22,7 +22,12 @@ import {
   type PhaseContract,
   type SkillContract,
 } from './skill-contract';
-import { fidelityIntentSsotPath, loadFidelityIntentSsotState } from './fidelity-shared';
+import {
+  collectIntentTextWithPhaseFallback,
+  discoverReferenceImagesForOcrPrescan,
+  fidelityIntentSsotPath,
+  loadFidelityIntentSsotState,
+} from './fidelity-shared';
 
 export type InputResolutionState = 'resolved' | 'absent' | 'invalid' | 'not_applicable';
 export type CapabilityResolutionState = 'resolved' | 'pruned' | 'blocked' | 'not_applicable';
@@ -237,6 +242,41 @@ function resolveDerive(
         ? { state: 'resolved', dependencies: deps, detail: change }
         : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
     }
+    // plan f3a8c6d2 t5a：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
+    // capability input unresolved 通道（readiness/next_action/assess/merged-report 四处投影
+    // 自动获得），不另产 CheckResult、不另造 pregate。
+    // 事故（bc-openCard）：需求把参考图指向不存在的 ux-reference/（实际十张图在别处），
+    // spec 空手写 ui-spec → 下游判 evidence_gap → 按盲档跑两天。第一张多米诺就在这里。
+    case 'derive.visual-reference': {
+      const featuresDirRel =
+        (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+      const intentText = collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
+      const refs = discoverReferenceImagesForOcrPrescan(projectRoot, feature, intentText);
+      // 依赖只绑**真实图片文件**（换图/删图 → 既有 stale 链自然重算）。不绑 ux-reference/
+      // 目录本身：证据 manifest 的 hasher 只认 isFile()，目录会被永久记成 exists:false，
+      // 图补齐后也不变——那是误导性诊断，不是新鲜度信号。缺图时 capability 直接 blocked、
+      // 根本形不成 closure，无需靠依赖失效来恢复，故 absent 分支不记依赖（与
+      // derive.requirement 的 goal 分支同形）。本项不加任何回升驱动器。
+      if (refs.length > 0) {
+        const deps = dedupeDependencies(
+          refs.slice(0, 20).map((r) => dependency(path.isAbsolute(r) ? r : path.join(projectRoot, r), 'derive')),
+        );
+        return { state: 'resolved', dependencies: deps, detail: `reference_images:${refs.length}` };
+      }
+      return {
+        state: 'absent',
+        dependencies: [],
+        detail:
+          'fidelity 意图为 pixel_1to1，但一张参考图都取不到——像素级比对没有基准，' +
+          '继续跑只会产出无视觉证据的 ui-spec，随后被下游判 evidence_gap 并按盲档降级。' +
+          `已查：需求文本中锚定 ${featuresDirRel}/${feature} 的显式路径引用、以及回退目录 ` +
+          `${featuresDirRel}/${feature}/ux-reference/，均无图片文件。修复路径：` +
+          '① 把参考图放到该 feature 的 ux-reference/ 下，或在需求文本里写明它们的真实目录' +
+          '（发现器认需求中锚定 features_dir 的显式路径）；② 若本特性确实没有参考图，' +
+          '把 fidelity 意图改为 semantic_layout/reference_only 后重新初始化 SSOT，' +
+          '不要在无基准时声称 pixel_1to1。补齐后重跑 spec 阶段即恢复。',
+      };
+    }
     case 'derive.test-targets': {
       const deps = sourceTreeDependency(projectRoot);
       return deps.every((entry) => entry.exists)
@@ -289,6 +329,20 @@ function resolveApplicability(
   if (!capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
   const provider = capability.applicability_provider_id ?? 'applicability.always';
   if (provider === 'applicability.always') return { applicable: true, dependencies: [] };
+  // plan f3a8c6d2 t5a：仅当 fidelity SSOT 已定档 pixel_1to1 时才要求参考图基准。
+  // SSOT 未签发/未定档/非 pixel 一律 not_applicable——语义布局与仅参考档本就不需要像素基准，
+  // 也不得让"SSOT 还没建"退化成阻塞（那会打破既有"零询问自动定档"）。
+  if (provider === 'applicability.pixel_fidelity') {
+    const ssotPath = fidelityIntentSsotPath(options.projectRoot, options.feature);
+    const dependencies = [dependency(ssotPath, 'applicability')];
+    const state = loadFidelityIntentSsotState(options.projectRoot, options.feature);
+    if (state.state !== 'valid') {
+      return { applicable: false, dependencies, detail: `fidelity ssot ${state.state}` };
+    }
+    return state.doc.selected_fidelity === 'pixel_1to1'
+      ? { applicable: true, dependencies, detail: 'selected_fidelity=pixel_1to1' }
+      : { applicable: false, dependencies, detail: `selected_fidelity=${state.doc.selected_fidelity}` };
+  }
   // UI is independently decided before any capability input. A missing spec is unknown,
   // therefore still applicable and later pruned by its declared input; explicit non-UI
   // metadata is the only NOT_APPLICABLE route.

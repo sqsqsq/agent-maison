@@ -999,6 +999,45 @@ export function loadSpecMarkdown(projectRoot: string, feature: string): string |
   return fs.readFileSync(p, 'utf-8');
 }
 
+/**
+ * 意图文本收集（含 phase-driven 回退）：collectRequirementIntentText 只读 goal-run
+ * manifest——逐阶段驱动路径（无 goal-runs）恒空串，正是覆盖缺口的实体。回退源：
+ * feature 根目录需求文档（*.md/*.txt，产物投影 visual-debt.md 除外）+ spec.md，
+ * 各自过 dereferenceRequirementDocs（同源解引用，勿 fork）。
+ *
+ * plan f3a8c6d2 t5a：由 check-spec.ts 下沉至此（三个依赖 collectRequirementIntentText /
+ * dereferenceRequirementDocs / loadSpecMarkdown 本就都在本文件），使 capability-resolution
+ * 的 derive.visual-reference 可复用同源收集器而不反向依赖 check 脚本。check-spec.ts 保留
+ * 同名 re-export，既有消费方（fidelity-intent-init）零改动。
+ */
+export function collectIntentTextWithPhaseFallback(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel: string,
+): string {
+  const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
+  if (goalText.trim()) return goalText;
+  const parts: string[] = [];
+  const featRoot = path.join(projectRoot, featuresDirRel, feature);
+  const EXCLUDE = new Set(['visual-debt.md']);
+  try {
+    if (fs.existsSync(featRoot)) {
+      for (const ent of fs.readdirSync(featRoot, { withFileTypes: true })) {
+        if (!ent.isFile() || EXCLUDE.has(ent.name) || !/\.(md|txt)$/i.test(ent.name)) continue;
+        try {
+          parts.push(fs.readFileSync(path.join(featRoot, ent.name), 'utf-8'));
+        } catch { /* 单文件失败跳过 */ }
+      }
+    }
+  } catch { /* ignore */ }
+  const specMd = loadSpecMarkdown(projectRoot, feature);
+  if (specMd) parts.push(specMd);
+  if (parts.length === 0) return '';
+  return parts
+    .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
+    .join('\n\n');
+}
+
 export function loadHandoffDocFromFeature(projectRoot: string, feature: string): Record<string, unknown> | null {
   const md = loadSpecMarkdown(projectRoot, feature);
   if (!md) return null;

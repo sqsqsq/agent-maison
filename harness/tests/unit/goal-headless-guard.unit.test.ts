@@ -1888,6 +1888,44 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
+      // t1（plan f3a8c6d2）：事故里 receipt 的 verifier verdict 其实是 PASS，真因是
+      // claimed_attempt_id 失配 + evidence manifest stale，而话术开口就说"多为某项只能
+      // 真人签署的确认"，把人直接引向签字——用户据此以为"只剩视觉验真等我签"。
+      name: 't1 closure wall 话术：按 receipt 真实状态给原因，不得开口就猜"人签"',
+      run: () => {
+        const base = {
+          feature: 'bc-openCard',
+          runId: '20260808T071335Z-4b0136',
+          phase: 'plan',
+          receiptPathRel: 'doc/features/bc-openCard/plan/phase-completion-receipt.md',
+          harnessPrefixRel: 'framework/harness',
+          cumulativeBlockedCount: 2,
+        };
+        // failed（事故形态）：必须先引导去看校验输出定位真因，且显式点名 attempt 失配/stale
+        const failedText = buildClosureWallGuidance({ ...base, receiptStatus: 'failed' }).join('\n');
+        assert(/不要预设是"人签"/.test(failedText), `failed 须明确不预设人签：${failedText}`);
+        assert(/claimed_attempt_id/.test(failedText), 'failed 须点名 attempt 身份失配这一真实可能');
+        assert(/manifest/.test(failedText), 'failed 须点名 evidence manifest stale 这一真实可能');
+        assert(
+          failedText.indexOf('check:plan') < failedText.indexOf('补签'),
+          '定位命令须排在补签建议之前（先查真因再谈签字）',
+        );
+        // missing：回执压根没写，与人签无关
+        const missingText = buildClosureWallGuidance({ ...base, receiptStatus: 'missing' }).join('\n');
+        assert(/这不是人签问题/.test(missingText), `missing 须否定人签：${missingText}`);
+        // error：探针崩溃＝框架/工具链问题
+        const errorText = buildClosureWallGuidance({ ...base, receiptStatus: 'error' }).join('\n');
+        assert(/不要试图补签|不要修改产物/.test(errorText), `error 须否定补签：${errorText}`);
+        // 无状态：先取确定结论，不得预设
+        const unknownText = buildClosureWallGuidance({ ...base }).join('\n');
+        assert(/不要预设是"只差人签"/.test(unknownText), `未知状态须否定预设：${unknownText}`);
+        // 所有分支都不得保留旧的统一猜测句
+        for (const t of [failedText, missingText, errorText, unknownText]) {
+          assert(!/多为某项只能真人签署/.test(t), `旧猜测句不得回归：${t.slice(0, 200)}`);
+        }
+      },
+    },
+    {
       name: 'P0-B §七.3 buildEffectiveBlockerSignature: 无 blocker + agent_timeout → agent_timeout@<phase>',
       run: () => {
         const sig = buildEffectiveBlockerSignature({ verdict: 'PASS' }, 'agent_timeout', 'spec');
